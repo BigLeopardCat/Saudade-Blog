@@ -126,7 +126,7 @@ const ReadArticle = () => {
                              <MarkdownNavbar 
                                 source={content} 
                                 ordered={false} 
-                                headingTopOffset={100}
+                                headingTopOffset={260}
                              />
                         </div>
                     </div>

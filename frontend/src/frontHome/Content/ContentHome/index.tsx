@@ -102,7 +102,7 @@ const ContentHome = () => {
                    <h2>Hi!👋</h2>
                    <h2>I'm <span style={{color: '#7880d1'}}>{author}</span></h2>
                </div>
-                <h3>Sereno da Saudade</h3>
+                <h3 className="home-title-h3">Sereno da Saudade</h3>
                 <div className="Social">
                     <SocialButton SocialName='QQ' url={social?.socialQQ}/>
                     <SocialButton SocialName='Github' url={social?.socialGithub}/>
@@ -117,7 +117,7 @@ const ContentHome = () => {
                 transition={{ duration: 1 }}
                 style={{display:'flex',width:'200px',justifyContent:'center',bottom:'0',position:"absolute"}}
             >
-            <p style={{position:'absolute',bottom:"20px", whiteSpace: "nowrap", font: '600 12px ""'}}>{oneSay}</p>
+            <p className="home-one-say" style={{position:'absolute',bottom:"20px", whiteSpace: "nowrap", font: '600 12px ""'}}>{oneSay}</p>
                 <i className="iconfont icon-rcd-angle-double-down upAndDown" style={{fontSize: 50,position:"absolute",bottom: 20,color:'skyblue'}} onClick={handleScrollDown}/></motion.div>
         </div>
         <div className="ContentContainer dark-pic">

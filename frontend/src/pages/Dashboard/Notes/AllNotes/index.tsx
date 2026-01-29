@@ -34,9 +34,10 @@ import {renderNoteTags} from "../../../../apis/TagMethods.tsx";
 import {delAllNotes, delNote, getAdminNotes, searchAdminNotes, updateNoteStatus} from "../../../../apis/NoteMethods.tsx";
 interface AdvancedSearchFormProps {
     setSearchNotes: (value: (((prevState: any[]) => any[]) | any[])) => void,
+    onReset?: () => void
 }
 
-const AdvancedSearchForm = ({setSearchNotes}: AdvancedSearchFormProps) => {
+const AdvancedSearchForm = ({setSearchNotes, onReset}: AdvancedSearchFormProps) => {
     //hooks区域
     const { RangePicker } = DatePicker;
     const { token } = theme.useToken();
@@ -51,7 +52,7 @@ const AdvancedSearchForm = ({setSearchNotes}: AdvancedSearchFormProps) => {
             is_top: values.top,
             start_date: values.time && values.time[0] ? dayjs(values.time[0]).format('YYYY-MM-DD') : undefined,
             end_date: values.time && values.time[1] ? dayjs(values.time[1]).format('YYYY-MM-DD') : undefined,
-            // tagsLab: values.tagsLab.toString()
+            tagsLab: values.tagsLab ? values.tagsLab.toString() : undefined
         }
         try {
             const res = await searchAdminNotes(data)
@@ -94,7 +95,7 @@ const AdvancedSearchForm = ({setSearchNotes}: AdvancedSearchFormProps) => {
                         name='top'
                         label='是否置顶'
                     >
-                        <Select placeholder="请选择是否置顶" options={[
+                        <Select allowClear placeholder="请选择是否置顶" options={[
                             { value: 1, label: '是' },
                             { value: 0, label: '否' },
                         ]}>
@@ -106,7 +107,7 @@ const AdvancedSearchForm = ({setSearchNotes}: AdvancedSearchFormProps) => {
                         name='categories'
                         label='文章分类'
                     >
-                        <Select placeholder="请选择文章分类">
+                        <Select allowClear placeholder="请选择文章分类">
                             {categories.map((category: { key: React.Key | null | undefined; categoryTitle: string | number | boolean | React.ReactElement<any, string | React.JSXElementConstructor<any>> | Iterable<React.ReactNode> | React.ReactPortal | null | undefined; }) => (
                                 <Select.Option key={category.key} value={category.categoryTitle}>
                                     {category.categoryTitle}
@@ -157,6 +158,7 @@ const AdvancedSearchForm = ({setSearchNotes}: AdvancedSearchFormProps) => {
                             <Button
                                 onClick={() => {
                                     form.resetFields();
+                                    onReset && onReset();
                                 }}
                             >
                                 重置
@@ -452,7 +454,7 @@ const AllNotes = () => {
     }
     return <>
         <div className="AllCard">
-            <AdvancedSearchForm setSearchNotes={setStaticDate}/>
+            <AdvancedSearchForm setSearchNotes={setStaticDate} onReset={initNotes}/>
             <Fab color="primary" aria-label="add" size='small' onClick={() => navigate('newnote')} style={{marginLeft:15,marginTop:15}}>
                 <AddIcon />
             </Fab>

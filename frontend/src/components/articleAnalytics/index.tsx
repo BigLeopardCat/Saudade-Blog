@@ -35,13 +35,6 @@ const ArticleAnalytics = () => {
             value: tagCount,
             bgColor: '#91ccef',
             path: '/dashboard/notes/alltags'
-        },
-        {
-            index: 4,
-            name: '标签统计',
-            isComponent: true,
-            bgColor: 'transparent',
-            path: null
         }
     ]
     const formatter = (value: React.ReactText): React.ReactNode => (

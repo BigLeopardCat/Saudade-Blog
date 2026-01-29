@@ -65,15 +65,17 @@ html
     width: 80%
     height: auto
     padding: 20px
-    margin: 0 20px 0
+    margin: 0 auto 0
     border-radius: 8px
     word-wrap: break-word
     display: flex
-    justify-content: center
+    flex-direction: column
+    align-items: center
     position: relative
 
     .markdown-body
-      width: 880px
+      width: 100%
+      max-width: 880px
       color: var(--font-title-color)
       color: var(--font-title-color)
       color: var(--font-title-color)
@@ -111,18 +113,10 @@ html
         top: 12%
         overflow-y: auto
         transition: all .8s
-      .markdown-navigation .title-anchor.active
-        background-color: transparent
-        border-left: 3px solid silver
-        color: #5297b9
-        &:hover
-          transform: scale(1)
-      .title-anchor
-        color: #a4a2a1
-        transition-duration: 0.3s
-        &:hover
-          transform: scale(1.1)
-          background-color: transparent
+      // Removing the nested color rules here to avoid confusion. Handled by root rules below.
+      // .markdown-navigation .title-anchor
+      //   color: #1c1c1c
+      // ...
 
     article
       max-width: 880px
@@ -191,3 +185,28 @@ html
     ul, ol
       margin-bottom: 15px
 
+
+/* CLEAN ROOT LEVEL OVERRIDES FOR TOC */
+
+/* Default Light Mode - Fully Qualified Path */
+html .readContainer .readContent .navigation .markdown-navigation .title-anchor
+  color: #333333 !important
+  transition-duration: 0.3s
+
+html .readContainer .readContent .navigation .markdown-navigation .title-anchor:hover
+  transform: scale(1.02)
+  background-color: transparent
+
+html .readContainer .readContent .navigation .markdown-navigation .title-anchor.active
+  color: #1a56ff !important
+  background-color: transparent !important
+  border-left: 3px solid #1a56ff !important
+  font-weight: 700
+
+/* Dark Mode - Same Specificity, Different Selector (or Higher) */
+html[data-theme='dark'] .readContainer .readContent .navigation .markdown-navigation .title-anchor
+  color: #ffffff !important
+
+html[data-theme='dark'] .readContainer .readContent .navigation .markdown-navigation .title-anchor.active
+  color: #1a56ff !important
+  border-left: 3px solid #1a56ff !important

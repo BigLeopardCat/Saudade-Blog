@@ -1,5 +1,7 @@
 import { DeleteOutlined } from '@ant-design/icons';
-import {Calendar, Card, ConfigProvider, Progress, Space, theme, Checkbox, Input, Badge, Modal, Avatar} from "antd";
+import {Calendar, Card, ConfigProvider, Progress, Space, theme, Checkbox, Input, Badge, Modal, Avatar, Select, Radio, Col, Row} from "antd";
+import localeData from "dayjs/plugin/localeData";
+dayjs.extend(localeData);
 import './index.sass';
 import React, {useContext, useEffect, useRef, useState} from "react";
 import axios from "axios";
@@ -168,20 +170,83 @@ const Home = () => {
                <ConfigProvider locale={zhCN}>
                    <div style={wrapperStyle}>
                        <TheYearPass/>
-                       <div style={{
-                           width: '100%', 
-                           textAlign: 'center', 
-                           fontWeight: 'bold', 
-                           margin: '10px 0',
-                           color: isDark ? '#fff' : '#000'
-                        }}>
-                           今天也要加油呀😀
-                       </div>
                        <Calendar 
                             fullscreen={false} 
                             style={{boxShadow:'0 1px 22px -8px rgba(26, 26, 26, .6)'}}
                             onSelect={onSelectDate}
                             cellRender={dateCellRender}
+                            headerRender={({ value, type, onChange, onTypeChange }) => {
+                                const start = 0;
+                                const end = 12;
+                                const monthOptions = [];
+
+                                const localeData = value.localeData();
+                                const months = [];
+                                for (let i = 0; i < 12; i++) {
+                                    months.push(localeData.monthsShort(value.month(i)));
+                                }
+
+                                for (let i = start; i < end; i++) {
+                                    monthOptions.push(
+                                        <Select.Option key={i} value={i} className="month-item">
+                                            {months[i]}
+                                        </Select.Option>,
+                                    );
+                                }
+
+                                const year = value.year();
+                                const month = value.month();
+                                const options = [];
+                                for (let i = year - 10; i < year + 10; i += 1) {
+                                    options.push(
+                                        <Select.Option key={i} value={i} className="year-item">
+                                            {i}
+                                        </Select.Option>,
+                                    );
+                                }
+                                return (
+                                    <div style={{ padding: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <div style={{display: 'flex', gap: 8}}>
+                                            <Select
+                                                size="small"
+                                                popupMatchSelectWidth={false}
+                                                className="my-year-select"
+                                                value={year}
+                                                onChange={(newYear) => {
+                                                    const now = value.clone().year(newYear);
+                                                    onChange(now);
+                                                }}
+                                            >
+                                                {options}
+                                            </Select>
+                                            <Select
+                                                size="small"
+                                                popupMatchSelectWidth={false}
+                                                value={month}
+                                                onChange={(newMonth) => {
+                                                    const now = value.clone().month(newMonth);
+                                                    onChange(now);
+                                                }}
+                                            >
+                                                {monthOptions}
+                                            </Select>
+                                        </div>
+                                        
+                                        <div style={{ fontWeight: 'bold', color: isDark ? '#fff' : '#000' }}>
+                                           今天也要加油呀😀
+                                        </div>
+
+                                        <Radio.Group
+                                            size="small"
+                                            onChange={(e) => onTypeChange(e.target.value)}
+                                            value={type}
+                                        >
+                                            <Radio.Button value="month">月</Radio.Button>
+                                            <Radio.Button value="year">年</Radio.Button>
+                                        </Radio.Group>
+                                    </div>
+                                );
+                            }}
                        />
                    </div>
                </ConfigProvider>

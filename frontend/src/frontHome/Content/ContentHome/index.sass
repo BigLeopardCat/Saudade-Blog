@@ -313,7 +313,9 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
       .ArticleContent
         display: flex
         flex-direction: column
-        justify-content: space-between
+        justify-content: flex-start
+        align-items: flex-start
+        gap: 12px
         position: relative
         z-index: 40
         padding: 3rem
@@ -501,38 +503,11 @@ html[data-theme='dark'] .SayWords h2
 
 /* V7 Final SpecFix */
 :global(html:not([data-theme='light']) .SayWords h2)
-  color: #ffffff !important
-:global(body:not([data-theme='light']) .SayWords h2)
-  color: #ffffff !important
 
-
-/* V9 Fix for Home Text Colors (h3 and generic text) */
-:global(html[data-theme='dark']) .SayWords h3,
-:global(html[data-theme='dark']) .SayWords h2 span,
-:global(html[data-theme='dark']) .SayWords h2,
-:global(html[data-theme='dark']) .SayWords p,
-:global(body[data-theme='dark']) .SayWords h3,
-:global(body[data-theme='dark']) .SayWords h2 span,
-:global(body[data-theme='dark']) .SayWords h2,
-:global(body[data-theme='dark']) .SayWords p,
-.dark .SayWords h3,
-.dark .SayWords h2 span,
-.dark .SayWords h2,
-.dark .SayWords p
-  color: #ffffff !important
-
-
-/* V9 Fix for Home Text Colors (h3 and generic text) */
-:global(html[data-theme='dark']) .SayWords h3,
-:global(html[data-theme='dark']) .SayWords h2 span,
-:global(html[data-theme='dark']) .SayWords h2,
-:global(html[data-theme='dark']) .SayWords p,
-:global(body[data-theme='dark']) .SayWords h3,
-:global(body[data-theme='dark']) .SayWords h2 span,
-:global(body[data-theme='dark']) .SayWords h2,
-:global(body[data-theme='dark']) .SayWords p,
-.dark .SayWords h3,
-.dark .SayWords h2 span,
-.dark .SayWords h2,
-.dark .SayWords p
+/* V13 Real Fix for frontDark Text */
+.frontDark .home-title-h3,
+.frontDark .home-one-say,
+.frontDark .SayWords h2,
+.frontDark .SayWords h3,
+.frontDark .SayWords p
   color: #ffffff !important

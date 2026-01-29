@@ -433,7 +433,7 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
   .cardInfo
     box-shadow: 0 1px 22px -8px rgba(26, 26, 26, .6)
     width: 100%
-    height: 13%
+    height: 25%
     padding: 10px
     font-weight: 600
     overflow-y: scroll
@@ -443,5 +443,20 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
       height: 10px
 
     &::-webkit-scrollbar-thumb
-      background: linear-gradient(to bottom right, #4d7fff 0%, #1a56ff 100%)
+      background: #c1c1c1 !important
       border-radius: 5px
+      &:hover
+        background: linear-gradient(to bottom right, #4d7fff 0%, #1a56ff 100%) !important
+
+/* Scrollbar Fix Overrides */
+.home .cardInfo::-webkit-scrollbar
+  width: 5px
+  height: 10px
+  scrollbar-width: thin
+  scrollbar-color: #c1c1c1 transparent
+
+.home .cardInfo::-webkit-scrollbar-thumb
+  background: #c1c1c1 !important
+  border-radius: 5px
+  &:hover
+    background: linear-gradient(to bottom right, #4d7fff 0%, #1a56ff 100%) !important
