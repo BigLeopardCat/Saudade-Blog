@@ -199,4 +199,11 @@
     -webkit-transform: translateY(-50%);
     -ms-transform: translateY(-50%);
     transform: translateY(-50%);
+}.theme-switch__checkbox:checked + .theme-switch__container::before {
+    box-shadow: none !important;
+    -webkit-box-shadow: none !important;
+}
+.theme-switch__checkbox:checked + .theme-switch__container::before {
+    box-shadow: none !important;
+    -webkit-box-shadow: none !important;
 }

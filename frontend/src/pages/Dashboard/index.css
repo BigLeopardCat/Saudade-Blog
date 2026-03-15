@@ -214,20 +214,22 @@ li.search-box input {
 }
 
 .menu-bar {
+    scrollbar-width: none !important;
+    -ms-overflow-style: none !important;
     height: calc(100% - 55px);
     display: flex;
     flex-direction: column;
     justify-content: space-between;
-    overflow-y: scroll;
+    overflow-y: scroll; overflow-x: hidden;
 }
 
 .menu-bar::-webkit-scrollbar {
-    display: none;
+    display: none !important;
 }
 
 .menu-bar .mode{
     border-radius: 6px;
-    background-color: var(--primary-color-light);
+    background-color: transparent !important;
     position: relative;
     transition: all 0.3s ease;
 }
@@ -252,6 +254,7 @@ li.search-box input {
 .toggle-switch{
     position: absolute;
     right: 0;
+    transform: translateX(8%);
     height: 100%;
     min-width: 60px;
     display: flex;
@@ -748,3 +751,4 @@ html[data-theme='dark'] .shell li:hover .icon, html[data-theme='dark'] .shell li
 
 html[data-theme='dark'] .shell li a:hover { background-color: transparent !important; border: 1px solid #1677ff !important; box-shadow: 0 0 8px rgba(22, 119, 255, 0.4) !important; opacity: 1 !important; }
 html[data-theme='dark'] .shell li:hover .icon, html[data-theme='dark'] .shell li:hover .text { color: #ffffff !important; }
+
