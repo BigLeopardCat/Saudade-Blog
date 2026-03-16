@@ -142,22 +142,25 @@ html
     .navigation
       height: 100%
       position: absolute
-      right: -500px
+      right: -350px
       z-index: 99
-      width: 400px
-      @media only screen and (max-width: 1300px)
+      width: 320px
+      @media only screen and (max-width: 1550px)
         display: none
       .markdown-navigation
         position: sticky
-        width: max-content
+        width: 100%
         top: 12%
         overflow-y: auto
         transition: all .8s
-      // Removing the nested color rules here to avoid confusion. Handled by root rules below.
-      // .markdown-navigation .title-anchor
-      //   color: #1c1c1c
-      // ...
-
+        backdrop-filter: blur(5px)
+        border-radius: 8px
+        padding: 10px
+        max-height: 80vh
+        
+        // Increase font size slightly to make it "larger" as requested
+        font-size: 1.1em 
+        
     article
       max-width: 880px
 
@@ -227,26 +230,40 @@ html
 
 
 /* CLEAN ROOT LEVEL OVERRIDES FOR TOC */
+/* REDUCE PADDING AND SPACING HERE */
 
-/* Default Light Mode - Fully Qualified Path */
-html .readContainer .readContent .navigation .markdown-navigation .title-anchor
+/* Default Light Mode */
+.frontRoot:not(.frontDark) .readContainer .readContent .navigation .markdown-navigation .title-anchor
   color: #333333 !important
   transition-duration: 0.3s
+  padding: 2px 8px  
+  // ^ Reduced from 4px to 2px
 
-html .readContainer .readContent .navigation .markdown-navigation .title-anchor:hover
+.frontRoot:not(.frontDark) .readContainer .readContent .navigation .markdown-navigation .title-anchor:hover
   transform: scale(1.02)
-  background-color: transparent
+  background-color: rgba(0,0,0,0.05)
+  border-radius: 4px
 
-html .readContainer .readContent .navigation .markdown-navigation .title-anchor.active
+.frontRoot:not(.frontDark) .readContainer .readContent .navigation .markdown-navigation .title-anchor.active
   color: #1a56ff !important
   background-color: transparent !important
   border-left: 3px solid #1a56ff !important
   font-weight: 700
 
-/* Dark Mode - Same Specificity, Different Selector (or Higher) */
-html[data-theme='dark'] .readContainer .readContent .navigation .markdown-navigation .title-anchor
+/* Dark Mode */
+.frontDark .readContainer .readContent .navigation .markdown-navigation .title-anchor
   color: #ffffff !important
+  transition-duration: 0.3s
+  padding: 2px 8px
+  // ^ Reduced from 4px to 2px
 
-html[data-theme='dark'] .readContainer .readContent .navigation .markdown-navigation .title-anchor.active
-  color: #1a56ff !important
-  border-left: 3px solid #1a56ff !important
+.frontDark .readContainer .readContent .navigation .markdown-navigation .title-anchor:hover
+  transform: scale(1.02)
+  background-color: rgba(255,255,255,0.1)
+  border-radius: 4px
+
+.frontDark .readContainer .readContent .navigation .markdown-navigation .title-anchor.active
+  color: #569cfa !important
+  background-color: transparent !important
+  border-left: 3px solid #569cfa !important
+  font-weight: 700
