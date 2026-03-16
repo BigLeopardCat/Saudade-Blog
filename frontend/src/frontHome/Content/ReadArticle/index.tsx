@@ -59,6 +59,38 @@ const ReadArticle = () => {
     
     const content = article?.noteContent || '';
 
+    useEffect(() => {
+        if (isLoading) return;
+        let observer: MutationObserver | null = null;
+        const timer = setTimeout(() => {
+            const navContainer = document.querySelector('.markdown-navigation');
+            if (navContainer) {
+                observer = new MutationObserver((mutations) => {
+                    for (const mutation of mutations) {
+                        if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
+                            const target = mutation.target as HTMLElement;
+                            if (target.classList.contains('active')) {
+                                const top = target.offsetTop;
+                                const height = navContainer.clientHeight;
+                                const itemHeight = target.offsetHeight;
+                                navContainer.scrollTo({
+                                    top: top - height / 2 + itemHeight / 2,
+                                    behavior: 'smooth'
+                                });
+                                break;
+                            }
+                        }
+                    }
+                });
+                observer.observe(navContainer, { attributes: true, subtree: true, attributeFilter: ['class'] });
+            }
+        }, 500);
+        return () => {
+            clearTimeout(timer);
+            if (observer) observer.disconnect();
+        };
+    }, [isLoading, content]);
+
     return (
         <div className='readContainer'>
             {isLoading ? (
