@@ -1,5 +1,5 @@
 import './index.sass'
-import {useEffect, useState} from "react";
+import {useEffect, useState, useRef} from "react";
 import {useParams} from "react-router-dom";
 import {NoteType} from "../../../interface/NoteType";
 import { motion } from 'framer-motion';
@@ -40,6 +40,9 @@ const ReadArticle = () => {
     const {id} = useParams()
     const [isLoading, setLoading] = useState(true)
     const [article, setArticle] = useState<NoteType|null>(null)
+    
+    // Lock ref to prevent TOC auto-scroll during manual click
+    const isClickingTocRef = useRef(false);
 
     useEffect(() => {
         if (id) {
@@ -59,46 +62,7 @@ const ReadArticle = () => {
     
     const content = article?.noteContent || '';
 
-    // Effect to handle link clicks by delegation (Open in new tab)
-    useEffect(() => {
-        const handleClick = (e: MouseEvent) => {
-            const target = e.target as HTMLElement;
-            // Find the closest anchor tag if clicked on child
-            const link = target.closest('a');
-            
-            if (link) {
-                const href = link.getAttribute('href');
-                // Check if external link (not starting with #)
-                if (href && !href.startsWith('#')) {
-                    e.preventDefault();
-                    window.open(href, '_blank', 'noopener,noreferrer');
-                }
-            }
-        };
-
-        const markdownBody = document.querySelector('.markdown-body');
-        if (markdownBody) {
-            markdownBody.addEventListener('click', handleClick);
-        } else {
-            // Fallback to document level delegation if markdown-body isn't ready
-            document.addEventListener('click', (e) => {
-                const target = e.target as HTMLElement;
-                if (target.closest('.markdown-body')) {
-                    handleClick(e);
-                }
-            });
-        }
-
-        return () => {
-            if (markdownBody) {
-                markdownBody.removeEventListener('click', handleClick);
-            }
-            // Remove global listener if we bound one? Actually let's just use document level delegator for simplicity and robustness
-            // Refactored below for cleaner implementation
-        };
-    }, []); // Run once on mount is enough for delegation
-
-    // Robust delegation implementation
+    // Effect to handle link clicks by delegation (Open in new tab), cleanup duplicate effects
     useEffect(() => {
         const handleGlobalClick = (e: MouseEvent) => {
             const target = e.target as HTMLElement;
@@ -124,19 +88,37 @@ const ReadArticle = () => {
         };
     }, []);
 
-
     // Effect for TOC auto-scroll
     useEffect(() => {
         if (isLoading) return;
         
+        // Add click listener to TOC container to detect manual interaction
+        const handleTocClick = () => {
+            isClickingTocRef.current = true;
+            // Unlock after animation/scroll finishes (approx 1s safe buffer)
+            setTimeout(() => {
+                isClickingTocRef.current = false;
+            }, 1000);
+        };
+
         let observer: MutationObserver | null = null;
+        let navContainerRef: Element | null = null;
+
         const intervalId = setInterval(() => {
             const navContainer = document.querySelector('.markdown-navigation');
             
             if (navContainer) {
                 clearInterval(intervalId);
+                navContainerRef = navContainer;
+                
+                // Add click listener
+                navContainer.addEventListener('mousedown', handleTocClick);
+                navContainer.addEventListener('click', handleTocClick);
 
                 observer = new MutationObserver((mutations) => {
+                    // Specific check: if user is manually clicking TOC, do not auto-scroll sidebar
+                    if (isClickingTocRef.current) return;
+
                     let targetElement: HTMLElement | null = null;
 
                     for (const mutation of mutations) {
@@ -185,6 +167,10 @@ const ReadArticle = () => {
         return () => {
             clearInterval(intervalId);
             if (observer) observer.disconnect();
+            if (navContainerRef) {
+                navContainerRef.removeEventListener('mousedown', handleTocClick);
+                navContainerRef.removeEventListener('click', handleTocClick);
+            }
         };
     }, [isLoading, content]);
 
