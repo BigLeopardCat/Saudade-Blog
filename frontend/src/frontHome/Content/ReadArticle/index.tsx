@@ -70,12 +70,9 @@ const ReadArticle = () => {
                         if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
                             const target = mutation.target as HTMLElement;
                             if (target.classList.contains('active')) {
-                                const top = target.offsetTop;
-                                const height = navContainer.clientHeight;
-                                const itemHeight = target.offsetHeight;
-                                navContainer.scrollTo({
-                                    top: top - height / 2 + itemHeight / 2,
-                                    behavior: 'smooth'
+                                target.scrollIntoView({
+                                    behavior: 'smooth',
+                                    block: 'nearest'
                                 });
                                 break;
                             }
@@ -84,7 +81,7 @@ const ReadArticle = () => {
                 });
                 observer.observe(navContainer, { attributes: true, subtree: true, attributeFilter: ['class'] });
             }
-        }, 500);
+        }, 800);
         return () => {
             clearTimeout(timer);
             if (observer) observer.disconnect();
