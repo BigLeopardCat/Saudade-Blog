@@ -11,6 +11,7 @@ import UserData from "../../interface/UserData";
 const Login: React.FC = () => {
     const [account, setAccount] = useState<string>('');
     const [password, setPassword] = useState<string>('');
+    const [isLoading, setIsLoading] = useState<boolean>(false);
     const dispatch = useDispatch();
     const navigate = useNavigate();
 
@@ -32,24 +33,33 @@ const Login: React.FC = () => {
 
     const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
+        
+        if (isLoading) return;
+
         const data:UserData = {
             username:account,
             password,
         };
+        
+        setIsLoading(true);
         try {
-            const status:number = await dispatch<any>(fetchToken(data))
+            const status:number = await dispatch<any>(fetchToken(data));
             if (status === 200) {
                 message.success('登录成功');
                 navigate('/dashboard');
             }
         } catch (error) {
             message.error('登录失败，账号或密码错误！');
+        } finally {
+            setIsLoading(false);
         }
     };
 
     const handleInvalid = (e: React.FormEvent<HTMLInputElement>) => {
         e.preventDefault();
-        message.warning(`请填写${e.currentTarget.placeholder}`);
+        if (!isLoading) {
+             message.warning(`请填写${e.currentTarget.placeholder}`);
+        }
     };
 
     return (
@@ -63,6 +73,7 @@ const Login: React.FC = () => {
                            onChange={handleChange}
                            onInvalid={handleInvalid}
                            autoComplete='off'
+                           disabled={isLoading}
                     />
                     <label>Username</label>
                 </div>
@@ -73,6 +84,7 @@ const Login: React.FC = () => {
                            onChange={handleChange}
                            onInvalid={handleInvalid}
                            autoComplete='off'
+                           disabled={isLoading}
                     />
                     <label>Password</label>
                 </div>
@@ -82,9 +94,17 @@ const Login: React.FC = () => {
                         <span></span>
                         <span></span>
                         <span></span>
-                        <input type="submit" value="Submit" />
+                        <input 
+                            type="submit" 
+                            value={isLoading ? "Logging in..." : "Submit"} 
+                            disabled={isLoading}
+                            style={{ 
+                                cursor: isLoading ? "not-allowed" : "pointer",
+                                opacity: isLoading ? 0.7 : 1
+                            }}
+                        />
                     </a>
-                    <a onClick={() => navigate("/")} className="return-btn" style={{ cursor: "pointer" }}>
+                    <a onClick={() => !isLoading && navigate("/")} className="return-btn" style={{ cursor: "pointer", opacity: isLoading ? 0.5 : 1, pointerEvents: isLoading ? 'none' : 'auto' }}>
                         <span></span>
                         <span></span>
                         <span></span>
