@@ -1,9 +1,9 @@
 import './index.sass';
 import { message } from 'antd';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import * as React from 'react';
 import { useDispatch } from 'react-redux';
-import {fetchToken} from "../../store/components/user.tsx";
+import { fetchToken } from "../../store/components/user.tsx";
 import { useNavigate } from 'react-router-dom';
 import getToken from '../../apis/getToken';
 import UserData from "../../interface/UserData";
@@ -12,8 +12,10 @@ const Login: React.FC = () => {
     const [account, setAccount] = useState<string>('');
     const [password, setPassword] = useState<string>('');
     const [isLoading, setIsLoading] = useState<boolean>(false);
+    const [messageApi, contextHolder] = message.useMessage();
     const dispatch = useDispatch();
     const navigate = useNavigate();
+    const submitBtnRef = useRef<HTMLButtonElement>(null);
 
     useEffect(() => {
         const token = getToken();
@@ -36,20 +38,23 @@ const Login: React.FC = () => {
         
         if (isLoading) return;
 
-        const data:UserData = {
-            username:account,
+        const data: UserData = {
+            username: account,
             password,
         };
         
         setIsLoading(true);
         try {
-            const status:number = await dispatch<any>(fetchToken(data));
-            if (status === 200) {
-                message.success('登录成功');
-                navigate('/dashboard');
+            // @ts-ignore
+            const status = await dispatch(fetchToken(data));
+            if (Number(status) === 200) {
+                messageApi.success('登录成功');
+                setTimeout(() => navigate('/dashboard'), 500);
+            } else {
+                messageApi.error('登录失败，账号或密码错误！');
             }
         } catch (error) {
-            message.error('登录失败，账号或密码错误！');
+            messageApi.error('登录失败，账号或密码错误！');
         } finally {
             setIsLoading(false);
         }
@@ -58,62 +63,73 @@ const Login: React.FC = () => {
     const handleInvalid = (e: React.FormEvent<HTMLInputElement>) => {
         e.preventDefault();
         if (!isLoading) {
-             message.warning(`请填写${e.currentTarget.placeholder}`);
+             const target = e.target as HTMLInputElement;
+             messageApi.warning(`请填写${target.name === 'account' ? '用户名' : '密码'}`);
+        }
+    };
+
+    const handleLoginClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+        e.preventDefault();
+        if (!isLoading) {
+            if (submitBtnRef.current) {
+                submitBtnRef.current.click();
+            } else {
+                const form = e.currentTarget.closest('form');
+                if (form) form.requestSubmit();
+            }
         }
     };
 
     return (
-        <div className="login-box">
-            <h2>Saudade Blog</h2>
-            <form action="" onSubmit={handleSubmit}>
-                <div className="user-box">
-                    <input type="text" name="account"
-                           value={account}
-                           required
-                           onChange={handleChange}
-                           onInvalid={handleInvalid}
-                           autoComplete='off'
-                           disabled={isLoading}
-                    />
-                    <label>Username</label>
-                </div>
-                <div className="user-box">
-                    <input type="password" name="password"
-                           required
-                           value={password}
-                           onChange={handleChange}
-                           onInvalid={handleInvalid}
-                           autoComplete='off'
-                           disabled={isLoading}
-                    />
-                    <label>Password</label>
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <a>
-                        <span></span>
-                        <span></span>
-                        <span></span>
-                        <span></span>
-                        <input 
-                            type="submit" 
-                            value={isLoading ? "Logging in..." : "Submit"} 
-                            disabled={isLoading}
-                            style={{ 
-                                cursor: isLoading ? "not-allowed" : "pointer",
-                                opacity: isLoading ? 0.7 : 1
-                            }}
+        <>
+            {contextHolder}
+            <div className="login-box">
+                <h2>Saudade Blog</h2>
+                <form onSubmit={handleSubmit}>
+                    <button type="submit" ref={submitBtnRef} style={{ display: 'none' }}></button>
+                    <div className="user-box">
+                        <input type="text" name="account"
+                               value={account}
+                               required
+                               onChange={handleChange}
+                               onInvalid={handleInvalid}
+                               autoComplete='off'
+                               disabled={isLoading}
                         />
-                    </a>
-                    <a onClick={() => !isLoading && navigate("/")} className="return-btn" style={{ cursor: "pointer", opacity: isLoading ? 0.5 : 1, pointerEvents: isLoading ? 'none' : 'auto' }}>
-                        <span></span>
-                        <span></span>
-                        <span></span>
-                        <span></span>
-                        Return
-                    </a>
-                </div>
-            </form>
-        </div>
+                        <label>Username</label>
+                    </div>
+                    <div className="user-box">
+                        <input type="password" name="password"
+                               required
+                               value={password}
+                               onChange={handleChange}
+                               onInvalid={handleInvalid}
+                               autoComplete='off'
+                               disabled={isLoading}
+                        />
+                        <label>Password</label>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <a href="#" onClick={handleLoginClick} style={{ cursor: isLoading ? 'not-allowed' : 'pointer' }}>
+                            <span></span>
+                            <span></span>
+                            <span></span>
+                            <span></span>
+                            <div className="login-text">
+                                {isLoading ? 'Logged in...' : 'Login'}
+                            </div>
+                        </a>
+                        <a href="/" className="return-btn">
+                             <span></span>
+                            <span></span>
+                            <span></span>
+                            <span></span>
+                            Return
+                        </a>
+                    </div>
+                </form>
+            </div>
+        </>
     );
 };
 

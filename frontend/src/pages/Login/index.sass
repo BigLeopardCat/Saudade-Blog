@@ -67,23 +67,31 @@ body
     transition: .5s
     margin-top: 40px
     letter-spacing: 4px
-    input
-      background: transparent
-      border: none
-      color: #03e9f4
-      font-size: 20px
-    font-weight: 600
+    cursor: pointer
+    
+    // Style the text span inside the anchor to match original input look
+    .login-text
+       background: transparent
+       border: none
+       color: #03e9f4
+       font-size: 18px
+       font-weight: 600
+       transition: .5s
 
     &:hover
       background: #03e9f4
       color: #fff
       border-radius: 5px
       box-shadow: 0 0 5px #03e9f4, 0 0 25px #03e9f4, 0 0 50px #03e9f4, 0 0 100px #03e9f4
+      
+      .login-text
+          color: #fff
 
     span
       position: absolute
       display: block
-
+    
+    // Animation lines
     span:nth-child(1)
       top: 0
       left: -100%
@@ -143,14 +151,8 @@ body
   50%, 100%
     bottom: 100%
 
-.login-box form a.return-btn
+.login-box form a:last-child
   color: #fff1eb !important
-  text-transform: capitalize !important
-  font-weight: 600 !important
-  input
-    color: #fff1eb !important
-  text-transform: capitalize !important
-  font-weight: 600 !important
   &:hover
     background: #fff1eb !important
     color: #03e9f4 !important
