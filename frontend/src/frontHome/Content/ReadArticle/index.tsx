@@ -59,22 +59,54 @@ const ReadArticle = () => {
     
     const content = article?.noteContent || '';
 
+    // Effect to handle link targets (Open in new tab)
+    useEffect(() => {
+        if (isLoading) return;
+
+        const updateLinks = () => {
+            const markdownBody = document.querySelector('.markdown-body');
+            if (markdownBody) {
+                const links = markdownBody.querySelectorAll('a');
+                links.forEach(link => {
+                    const href = link.getAttribute('href');
+                    if (href && !href.startsWith('#')) {
+                        link.setAttribute('target', '_blank');
+                        link.setAttribute('rel', 'noopener noreferrer');
+                    }
+                });
+            }
+        };
+
+        // Run initially
+        updateLinks();
+
+        // Observe for dynamic content changes inside markdown body
+        const markdownBody = document.querySelector('.markdown-body');
+        let observer: MutationObserver | null = null;
+        if (markdownBody) {
+            observer = new MutationObserver(updateLinks);
+            observer.observe(markdownBody, { childList: true, subtree: true });
+        }
+
+        return () => {
+            if (observer) observer.disconnect();
+        };
+    }, [isLoading, content]);
+
+    // Effect for TOC auto-scroll
     useEffect(() => {
         if (isLoading) return;
         
-        // Use an interval to poll for the container existence more reliably
         let observer: MutationObserver | null = null;
         const intervalId = setInterval(() => {
             const navContainer = document.querySelector('.markdown-navigation');
             
             if (navContainer) {
-                // Container found, stop polling
                 clearInterval(intervalId);
 
                 observer = new MutationObserver((mutations) => {
                     let targetElement: HTMLElement | null = null;
 
-                    // Check if an active element appeared or changed
                     for (const mutation of mutations) {
                         if (mutation.type === 'attributes' && mutation.attributeName === 'class') {
                             const target = mutation.target as HTMLElement;
@@ -83,7 +115,6 @@ const ReadArticle = () => {
                                 break;
                             }
                         } else if (mutation.type === 'childList') {
-                            // In case the list is re-rendered
                             const active = navContainer.querySelector('.active') as HTMLElement;
                             if (active) {
                                 targetElement = active;
@@ -93,7 +124,6 @@ const ReadArticle = () => {
                     }
 
                     if (targetElement) {
-                        // Use scrollIntoView with 'nearest' to keep it in view without unnecessary movement
                         targetElement.scrollIntoView({
                             behavior: 'smooth',
                             block: 'nearest',
@@ -102,7 +132,6 @@ const ReadArticle = () => {
                     }
                 });
 
-                // Observe both attributes (for class changes) and childList (for re-renders)
                 observer.observe(navContainer, { 
                     attributes: true, 
                     childList: true, 
@@ -110,7 +139,6 @@ const ReadArticle = () => {
                     attributeFilter: ['class'] 
                 });
                 
-                // Initial check in case we already have an active element
                 const initialActive = navContainer.querySelector('.active') as HTMLElement;
                 if (initialActive) {
                     initialActive.scrollIntoView({
@@ -120,7 +148,7 @@ const ReadArticle = () => {
                     });
                 }
             }
-        }, 200); // Check every 200ms
+        }, 200);
 
         return () => {
             clearInterval(intervalId);
