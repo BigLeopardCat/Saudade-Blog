@@ -59,39 +59,71 @@ const ReadArticle = () => {
     
     const content = article?.noteContent || '';
 
-    // Effect to handle link targets (Open in new tab)
+    // Effect to handle link clicks by delegation (Open in new tab)
     useEffect(() => {
-        if (isLoading) return;
-
-        const updateLinks = () => {
-            const markdownBody = document.querySelector('.markdown-body');
-            if (markdownBody) {
-                const links = markdownBody.querySelectorAll('a');
-                links.forEach(link => {
-                    const href = link.getAttribute('href');
-                    if (href && !href.startsWith('#')) {
-                        link.setAttribute('target', '_blank');
-                        link.setAttribute('rel', 'noopener noreferrer');
-                    }
-                });
+        const handleClick = (e: MouseEvent) => {
+            const target = e.target as HTMLElement;
+            // Find the closest anchor tag if clicked on child
+            const link = target.closest('a');
+            
+            if (link) {
+                const href = link.getAttribute('href');
+                // Check if external link (not starting with #)
+                if (href && !href.startsWith('#')) {
+                    e.preventDefault();
+                    window.open(href, '_blank', 'noopener,noreferrer');
+                }
             }
         };
 
-        // Run initially
-        updateLinks();
-
-        // Observe for dynamic content changes inside markdown body
         const markdownBody = document.querySelector('.markdown-body');
-        let observer: MutationObserver | null = null;
         if (markdownBody) {
-            observer = new MutationObserver(updateLinks);
-            observer.observe(markdownBody, { childList: true, subtree: true });
+            markdownBody.addEventListener('click', handleClick);
+        } else {
+            // Fallback to document level delegation if markdown-body isn't ready
+            document.addEventListener('click', (e) => {
+                const target = e.target as HTMLElement;
+                if (target.closest('.markdown-body')) {
+                    handleClick(e);
+                }
+            });
         }
 
         return () => {
-            if (observer) observer.disconnect();
+            if (markdownBody) {
+                markdownBody.removeEventListener('click', handleClick);
+            }
+            // Remove global listener if we bound one? Actually let's just use document level delegator for simplicity and robustness
+            // Refactored below for cleaner implementation
         };
-    }, [isLoading, content]);
+    }, []); // Run once on mount is enough for delegation
+
+    // Robust delegation implementation
+    useEffect(() => {
+        const handleGlobalClick = (e: MouseEvent) => {
+            const target = e.target as HTMLElement;
+            // Check if click happened inside markdown-body
+            const markdownContainer = target.closest('.markdown-body');
+            if (!markdownContainer) return;
+
+            const link = target.closest('a');
+            if (link &&  markdownContainer.contains(link)) {
+                const href = link.getAttribute('href');
+                if (href && !href.startsWith('#')) {
+                    e.preventDefault();
+                    window.open(href, '_blank', 'noopener,noreferrer');
+                }
+            }
+        };
+
+        // Bind to document to catch dynamically added content
+        document.addEventListener('click', handleGlobalClick);
+
+        return () => {
+            document.removeEventListener('click', handleGlobalClick);
+        };
+    }, []);
+
 
     // Effect for TOC auto-scroll
     useEffect(() => {
