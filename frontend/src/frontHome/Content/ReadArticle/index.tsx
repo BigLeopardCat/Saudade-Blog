@@ -48,7 +48,7 @@ const ReadArticle = () => {
         if (id) {
             setLoading(true)
             getNoteById(id).then((res) => {
-                setArticle({
+                document.title = (res.data?.data?.noteTitle || "Article"); setArticle({
                     ...res.data.data
                 });
             }).catch((err) => {

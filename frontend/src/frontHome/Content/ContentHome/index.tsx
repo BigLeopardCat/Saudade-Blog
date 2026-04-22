@@ -12,17 +12,24 @@ import {useNavigate} from "react-router-dom";
 import {SocialType} from "../../../interface/SocialType";
 import {getNotePage, getTopNotes} from "../../../apis/NoteMethods.tsx";
 import dayjs from "dayjs";
+
+let cachedOtherArticles: NoteType[] = [];
+let cachedTopArticles: NoteType[] = [];
+let cachedCurrentPage = 1;
+let cachedHasMoreArticles = true;
+let isCachedOther = false;
+
 const ContentHome = () => {
     const [currentTop,setCurrentTop] = useState(0)
-    const [currentPage,setCurrentPage] = useState(1)
-    const [hasMoreArticles, setHasMoreArticles] = useState(true);
+    const [currentPage,setCurrentPage] = useState(cachedCurrentPage)
+    const [hasMoreArticles, setHasMoreArticles] = useState(cachedHasMoreArticles);
     const [loading, setLoading] = useState(false);
     const avatar = useSelector((state:{user:UserState}) => state.user.avatar)
     const name = useSelector((state:{user:UserState}) => state.user.name)
     const oneSay = useSelector((state:{user:UserState}) => state.user.talk)
     const navigate = useNavigate()
-    const [otherArticles,setOtherArticles] = useState<NoteType[]>([])
-    const [topArticles,setTopArticles] = useState<NoteType[]>([])
+    const [otherArticles,setOtherArticles] = useState<NoteType[]>(cachedOtherArticles)
+    const [topArticles,setTopArticles] = useState<NoteType[]>(cachedTopArticles)
     const Categories = useSelector((state: { categories: categoryList }) => state.categories.categories);
     const tagList = useSelector((state: {tags: any}) => state.tags.tag)
     const social = useSelector((state:{user:{social: SocialType}}) => state.user.social)
@@ -38,29 +45,36 @@ const ContentHome = () => {
     },[currentTop])
 
     useEffect(() => {
+        if (isCachedOther) return;
         getNotePage({
             page: 1,
             pageSize: 6
         }).then(res => {
-            setOtherArticles(res.data.data.map((item: formatNote) => {
+             const mapped = res.data.data.map((item: formatNote) => {
                 return {
                     ...item,
                     key: item.noteKey,
                     noteTags: item.noteTags ? item.noteTags.split(',').map(tag => parseInt(tag, 10)) : [],
                 }
-            }))
+            });
+            setOtherArticles(mapped);
+            cachedOtherArticles = mapped;
+            isCachedOther = true;
         })
     }, []);
 
     useEffect(() => {
+        if (cachedTopArticles.length > 0) return;
         getTopNotes().then(res => {
-            setTopArticles(res.data.data.map((item: formatNote) => {
+             const mapped = res.data.data.map((item: formatNote) => {
                 return {
                     ...item,
                     key: item.noteKey,
                     noteTags: item.noteTags ? item.noteTags.split(',').map(tag => parseInt(tag, 10)) : [],
                 }
-            }))
+            });
+            setTopArticles(mapped);
+            cachedTopArticles = mapped;
         })
     }, []);
     const handleScrollDown = () => {
@@ -76,19 +90,22 @@ const ContentHome = () => {
             pageSize: 6
         }).then(res => {
             if (res.data.data.length === 0) {
-                setHasMoreArticles(false);
+                setHasMoreArticles(false); cachedHasMoreArticles = false;;
             } else {
-                setCurrentPage(currentPage + 1);
-                setOtherArticles(prevArticles => [
-                    ...prevArticles,
-                    ...res.data.data.map((item: formatNote) => ({
-                        ...item,
-                        key: item.noteKey,
-                        noteTags: item.noteTags ? item.noteTags.split(',').map(tag => parseInt(tag, 10)) : [],
-                    }))
-                ]);
-                if(res.data.data.length < 6)
-                    setHasMoreArticles(false)
+                setCurrentPage(currentPage + 1); cachedCurrentPage = currentPage + 1;
+                setOtherArticles(prevArticles => {
+                    const newArts = [
+                        ...prevArticles,
+                        ...res.data.data.map((item: formatNote) => ({
+                            ...item,
+                            key: item.noteKey,
+                            noteTags: item.noteTags ? item.noteTags.split(',').map(tag => parseInt(tag, 10)) : [],
+                        }))
+                    ];
+                    cachedOtherArticles = newArts;
+                    return newArts;
+                });
+                if(res.data.data.length < 6) { setHasMoreArticles(false); cachedHasMoreArticles = false; }
             }
         }).finally(() => {
             setLoading(false);
@@ -121,7 +138,7 @@ const ContentHome = () => {
                 <i className="iconfont icon-rcd-angle-double-down upAndDown" style={{fontSize: 50,position:"absolute",bottom: 20,color:'skyblue'}} onClick={handleScrollDown}/></motion.div>
         </div>
         <div className="ContentContainer dark-pic">
-            {topArticles.length>0&&<div className="TopArticle" onClick={() => navigate(`/article/${topArticles[currentTop]?.key}`)}>
+            {topArticles.length>0&&<div className="TopArticle" onClick={() => window.open(`/article/${topArticles[currentTop]?.key}`, '_blank')}>
                 <div className="Top" style={{transform: 'translateY(-40%)'}}><i className="iconfont icon-sticky1" style={{fontSize: 20,verticalAlign:'middle',marginRight:5}}></i>置顶</div>
                 <div className="TopCover">
                     {topArticles.map((item,index) => (
