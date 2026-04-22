@@ -141,65 +141,68 @@ const ContentHome = () => {
                 <i className="iconfont icon-rcd-angle-double-down upAndDown" style={{fontSize: 50,position:"absolute",bottom: 20,color:'skyblue'}} onClick={handleScrollDown}/></motion.div>
         </div>
         <div className="ContentContainer dark-pic">
-            {topArticles.length>0&&<div className="TopArticle" onClick={() => window.open(`/article/${topArticles[currentTop]?.key}`, '_blank')}>
-                <div className="Top" style={{transform: 'translateY(-40%)'}}><i className="iconfont icon-sticky1" style={{fontSize: 20,verticalAlign:'middle',marginRight:5}}></i>置顶</div>
-                <div className="TopCover">
-                    {topArticles.map((item,index) => (
-                        <img
-                            src={item.cover}
-                            key={item.key}
-                            className={`fade-in-out ${slideDir === 'right' ? (currentTop === index ? 'show right-in' : 'right-out') : (currentTop === index ? 'show left-in' : 'left-out')}`}
-                        />
-                    ))}
+            {topArticles.length>0&&<div className="TopArticle" style={{ display: 'flex', overflow: 'hidden', position: 'relative' }}>
+                <div className="Top" style={{transform: 'translateY(-40%)', zIndex: 10}}><i className="iconfont icon-sticky1" style={{fontSize: 20,verticalAlign:'middle',marginRight:5}}></i>置顶</div>
+                <div style={{ display: 'flex', width: '100%', height: '100%', transition: 'transform 0.8s cubic-bezier(0.25, 1, 0.5, 1)', transform: `translateX(-${currentTop * 100}%)` }}>
+                    {topArticles.map((item, index) => (
+                        <div className="TopArticleInner" key={item.key} onClick={() => window.open(`/article/${item.key}`, '_blank')} style={{ width: '100%', flexShrink: 0, height: '100%' }}>
+                            <div className="TopCover">
+                                <img
+                                    src={item.cover}
+                                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                />
+                                <span className="thumbnail-screen"></span>
+                            </div>
+                            <div className="topContent">
+                                <h4># {Categories.find(c => c.categoryKey === item.noteCategory)?.categoryTitle}</h4>
+                                <h3 className="contentTitle">{item.noteTitle}</h3>
+                                <div className="ArticleDescription" style={{marginBottom: 20}}> {item.description}</div>
+                                <div className='tags' style={{ width: '100%', marginTop: '10px' }}>
+                                    {item.noteTags.map(noteTag => {
+                                        let color;
+                                        let name;
+                                        tagList.forEach((tag: { tagKey: number; color: string; title: string; children: any[]; }) => {
+                                            if (tag.tagKey === noteTag) {
+                                                color = tag.color;
+                                                name = tag.title;
+                                            } else if (tag.children && tag.children.some(child => child.tagKey === noteTag)) {
+                                                color = tag.color;
+                                                name = tag.children.find(child => child.tagKey === noteTag).title;
+                                            }
+                                        });
 
-                    <span className="thumbnail-screen"></span>
-                    <div className="topDots">
-                        {topArticles.map((item,index) => <div className={`topDot ${currentTop===index&&'dotCurrent'}`} key={item.key} onMouseEnter={() => {
-                            if (index > currentTop) setSlideDir('right');
-                            else if (index < currentTop) setSlideDir('left');
-                            setCurrentTop(index);
-                        }}></div>)}
-                    </div>
-                </div>
-                <div className="topContent">
-                    <h4># {Categories.find(item => item.categoryKey === topArticles[currentTop]?.noteCategory)?.categoryTitle}</h4>
-                    <h3 className="contentTitle">{topArticles[currentTop]?.noteTitle}</h3>
-                    <p> {topArticles[currentTop]?.description}</p>
-                    <div className='tags' style={{ width: '100%', marginTop: '10px' }}>
-                        {topArticles[currentTop]?.noteTags.map(noteTag => {
-                            let color;
-                            let name;
-                            tagList.forEach((tag: { tagKey: number; color: string; title: string; children: any[]; }) => {
-                                if (tag.tagKey === noteTag) {
-                                    color = tag.color;
-                                    name = tag.title;
-                                } else if (tag.children && tag.children.some(child => child.tagKey === noteTag)) {
-                                    color = tag.color;
-                                    name = tag.children.find(child => child.tagKey === noteTag).title;
-                                }
-                            });
-
-                            return (
-                                <Tag color={color} key={noteTag} style={{ margin: 5 }}>
-                                    {name}
-                                </Tag>
-                            );
-                        })}
-                    </div>
-                    <div className="topFooter" style={{ display: 'flex', alignItems: 'center', paddingBottom: '20px' }}>
-                        <Avatar src={avatar} size={40} style={{ marginRight: 10 }} />
-                        <span style={{ fontWeight: 'bold', marginRight: 10, lineHeight: '22px', fontSize: '14px' }}>{name}</span>
-                        <div style={{ position: 'relative', display: 'flex', flexDirection: 'column' }}>
-                             <span style={{ fontSize: 12, color: '#7f7e7e', lineHeight: '22px' }} className='post-date'>
-                                <i className="iconfont icon-naozhong icon" style={{ fontSize: 14, display: 'inline', marginRight: '4px' }}></i>
-                                发布于 {dayjs(topArticles[currentTop]?.createTime).format('YYYY-MM-DD')}
-                             </span>
-                             <span style={{ position: 'absolute', top: '100%', marginTop: '6px', left: 0, fontSize: 12, color: '#7f7e7e', lineHeight: '22px', whiteSpace: 'nowrap' }} className='post-date'>
-                                <i className="iconfont icon-naozhong icon" style={{ fontSize: 14, display: 'inline', marginRight: '4px' }}></i>
-                                更新于 {dayjs(topArticles[currentTop]?.updateTime).format('YYYY-MM-DD')}
-                             </span>
+                                        return (
+                                            <Tag color={color} key={noteTag} style={{ margin: 5 }}>
+                                                {name}
+                                            </Tag>
+                                        );
+                                    })}
+                                </div>
+                                <div className="topFooter" style={{ display: 'flex', alignItems: 'center', paddingBottom: '20px' }}>
+                                    <Avatar src={avatar} size={40} style={{ marginRight: 10 }} />
+                                    <span style={{ fontWeight: 'bold', marginRight: 10, lineHeight: '22px', fontSize: '14px' }}>{name}</span>
+                                    <div style={{ position: 'relative', display: 'flex', flexDirection: 'column' }}>
+                                         <span style={{ fontSize: 12, color: '#7f7e7e', lineHeight: '22px' }} className='post-date'>
+                                            <i className="iconfont icon-naozhong icon" style={{ fontSize: 14, display: 'inline', marginRight: '4px' }}></i>
+                                            发布于 {dayjs(item.createTime).format('YYYY-MM-DD')}
+                                         </span>
+                                         <span style={{ position: 'absolute', top: '100%', marginTop: '6px', left: 0, fontSize: 12, color: '#7f7e7e', lineHeight: '22px', whiteSpace: 'nowrap' }} className='post-date'>
+                                            <i className="iconfont icon-naozhong icon" style={{ fontSize: 14, display: 'inline', marginRight: '4px' }}></i>
+                                            更新于 {dayjs(item.updateTime).format('YYYY-MM-DD')}
+                                         </span>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
-                    </div>
+                    ))}
+                </div>
+                
+                <div className="topDotsContainer" style={{ position: 'absolute', bottom: '20px', left: '35%', display: 'flex', zIndex: 10 }}>
+                    {topArticles.map((item,index) => <div className={`topDot ${currentTop===index&&'dotCurrent'}`} key={item.key} onMouseEnter={() => {
+                        if (index > currentTop) setSlideDir('right');
+                        else if (index < currentTop) setSlideDir('left');
+                        setCurrentTop(index);
+                    }}></div>)}
                 </div>
             </div>}
 

@@ -68,10 +68,11 @@ const Article:React.FC<ArticleOption> = ({ item, index, Categories, avatar, name
                     </h4>
                     <h3 className='ArticleTitle'>{item.noteTitle}</h3>
                     <p className="ArticleDescription">{item.description}</p>
-                    <div className='tags' style={{ width: '100%', marginTop: '10px' }}>
-                        {renderNoteTags(item.noteTags,tagList)}
-                    </div>
-                    <div className="ArticleFooter" style={{ display: 'flex', alignItems: 'center', paddingBottom: '20px' }}>
+                    <div style={{ width: '100%', marginTop: 'auto', flexShrink: 0 }}>
+                        <div className='tags' style={{ width: '100%', marginTop: '10px' }}>
+                            {renderNoteTags(item.noteTags,tagList)}
+                        </div>
+                        <div className="ArticleFooter" style={{ display: 'flex', alignItems: 'center', paddingBottom: '20px', marginTop: '10px' }}>
                         <Avatar src={avatar} size={40} style={{ marginRight: 10 }} />
                         <span style={{ fontWeight: 'bold', marginRight: 10, lineHeight: '22px', fontSize: '14px' }}>{name}</span>
                         <div style={{ position: 'relative', display: 'flex', flexDirection: 'column' }}>
@@ -84,6 +85,7 @@ const Article:React.FC<ArticleOption> = ({ item, index, Categories, avatar, name
                                 更新于 {dayjs(item.updateTime).format('YYYY-MM-DD')}
                              </span>
                         </div>
+                    </div>
                     </div>
                 </div>
             </div>

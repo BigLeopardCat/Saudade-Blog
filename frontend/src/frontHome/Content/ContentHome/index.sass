@@ -133,11 +133,11 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
     --tw-shadow: 0 10px 15px -3px rgba(0, 0, 0, .1), 0 4px 6px -2px rgba(0, 0, 0, .05)
     border-radius: 15px
     box-shadow: var(--box-shadow-color)
-    grid-template-columns: repeat(2, minmax(0, 1fr))
+    
     grid-template-rows: none
     display: grid
-      display: grid
-      grid-template-rows: repeat(3, minmax(0, 1fr))
+      display: flex
+      flex-direction: column
       grid-template-columns: repeat(1, minmax(0, 1fr))
       width: 90%
 
@@ -167,6 +167,8 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
       border-radius: 15px 0 0 15px
       position: relative
       height: 100%
+      overflow: hidden
+      overflow: hidden
       .topDots
         position: absolute
         bottom: 20px
@@ -188,9 +190,8 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
         background-size: cover
         display: block
         object-fit: cover
-        position: absolute
         height: 100%
-        width: 120%
+        width: 100%
         transition: opacity 0.5s ease-in-out
           height: 120%
           border-radius: 15px 15px 0 0
@@ -295,14 +296,18 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
       overflow: hidden
       position: relative
       transition: 0.3s
-      display: grid
-      grid-template-rows: repeat(3, minmax(0, 1fr))
+      display: flex
+      flex-direction: column
       cursor: pointer
       &:hover
         transform: scale(1.03)
 
       .ArticleCover
         position: relative
+        height: 200px
+        flex-shrink: 0
+        height: 200px
+        flex-shrink: 0
         &:after
           pointer-events: none
           content: ""
@@ -336,7 +341,8 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
         border: none
         z-index: 99
         border-radius: 0 15px 15px 0
-        height: max-content
+        height: 100%
+          flex: 1
           padding: 2rem
         h4
           font-size: 20px
@@ -353,6 +359,11 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
           -webkit-line-clamp: 3
           -webkit-box-orient: vertical
           overflow: hidden
+          white-space: pre-wrap
+          word-break: break-all
+                  width: 100%
+          white-space: pre-wrap
+          word-break: break-all
           transition: max-height 0.8s ease
           max-height: 4.5em
           &:hover
@@ -537,3 +548,55 @@ html[data-theme='dark'] .SayWords h2
 .frontDark .SayWords h3,
 .frontDark .SayWords p
   color: #ffffff !important
+
+.ArticleDescription
+  color: var(--font-p-color)
+  text-indent: 1em
+  display: -webkit-box
+  -webkit-line-clamp: 3
+  width: 100%
+  -webkit-box-orient: vertical
+  overflow: hidden
+  white-space: pre-wrap
+  word-break: break-all
+  transition: max-height 0.8s ease
+  max-height: 4.5em
+  &:hover
+    -webkit-line-clamp: unset
+    max-height: 300px
+    padding-bottom: 10px
+    overflow: auto
+
+.TopArticleInner
+  display: grid
+  grid-template-columns: 7fr 3fr
+  width: 100%
+  height: 100%
+  @media screen and (max-width: 768px)
+    display: flex
+    flex-direction: column
+
+
+@media screen and (max-width: 768px)
+  .TopCover
+    height: 200px !important
+    border-radius: 15px 15px 0 0 !important
+    width: 100% !important
+  .TopArticleInner
+    display: flex !important
+    flex-direction: column !important
+  .TopArticle
+    height: auto !important
+    display: block !important
+
+@media screen and (max-width: 768px)
+  .TopCover
+    height: 200px !important
+    border-radius: 15px 15px 0 0 !important
+    width: 100% !important
+  .TopArticleInner
+    display: flex !important
+    flex-direction: column !important
+  .TopArticle
+    height: auto !important
+    display: block !important
