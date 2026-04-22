@@ -20,7 +20,8 @@ let cachedHasMoreArticles = true;
 let isCachedOther = false;
 
 const ContentHome = () => {
-    const [currentTop,setCurrentTop] = useState(0)
+    const [currentTop,setCurrentTop] = useState(0);
+    const [slideDir, setSlideDir] = useState<'left' | 'right'>('right');
     const [currentPage,setCurrentPage] = useState(cachedCurrentPage)
     const [hasMoreArticles, setHasMoreArticles] = useState(cachedHasMoreArticles);
     const [loading, setLoading] = useState(false);
@@ -36,13 +37,15 @@ const ContentHome = () => {
     const author =  useSelector((state: { user: UserState }) => state.user.name);
 
     useEffect(() => {
+        if(topArticles.length <= 1) return;
         const timer = setInterval(() => {
-            setCurrentTop(prevTop => (prevTop + 1) % topArticles.length);
+            setCurrentTop(prevTop => {
+            setSlideDir('right');
+            return (prevTop + 1) % topArticles.length;
+        });
         }, 3000);
-        if(topArticles.length === 0)
-            clearInterval(timer)
         return () => clearInterval(timer);
-    },[currentTop])
+    }, [topArticles.length])
 
     useEffect(() => {
         if (isCachedOther) return;
@@ -145,13 +148,17 @@ const ContentHome = () => {
                         <img
                             src={item.cover}
                             key={item.key}
-                            className={currentTop === index ? 'fade-in-out show' : 'fade-in-out'}
+                            className={`fade-in-out ${slideDir === 'right' ? (currentTop === index ? 'show right-in' : 'right-out') : (currentTop === index ? 'show left-in' : 'left-out')}`}
                         />
                     ))}
 
                     <span className="thumbnail-screen"></span>
                     <div className="topDots">
-                        {topArticles.map((item,index) => <div className={`topDot ${currentTop===index&&'dotCurrent'}`} key={item.key} onMouseEnter={()=>setCurrentTop(index)}></div>)}
+                        {topArticles.map((item,index) => <div className={`topDot ${currentTop===index&&'dotCurrent'}`} key={item.key} onMouseEnter={() => {
+                            if (index > currentTop) setSlideDir('right');
+                            else if (index < currentTop) setSlideDir('left');
+                            setCurrentTop(index);
+                        }}></div>)}
                     </div>
                 </div>
                 <div className="topContent">

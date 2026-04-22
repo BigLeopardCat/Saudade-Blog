@@ -19,9 +19,20 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
 // 动画
 .fade-in-out
   opacity: 0
-  transform: translateX(-40px)
   transition: all 0.5s ease-in-out
-.show
+  position: absolute
+  top: 0
+  height: 100%
+  width: 120%
+.fade-in-out.right-out
+  transform: translateX(-40px)
+.fade-in-out.right-in
+  transform: translateX(40px)
+.fade-in-out.left-out
+  transform: translateX(40px)
+.fade-in-out.left-in
+  transform: translateX(-40px)
+.fade-in-out.show
   opacity: 1
   transform: translateX(0)
 @keyframes up-down
@@ -329,21 +340,34 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
           padding: 2rem
         h4
           font-size: 20px
-        p
-          display: -webkit-box
-          -webkit-line-clamp: 4
-          -webkit-box-orient: vertical
-          overflow: hidden
+        
         .ArticleTitle
           font-weight: 900
           font-size: 30px
-          margin-bottom: 40px
+          margin-bottom: 10px
 
-        p
+        .ArticleDescription
           color: var(--font-p-color)
           text-indent: 1em
+          display: -webkit-box
+          -webkit-line-clamp: 3
+          -webkit-box-orient: vertical
+          overflow: hidden
+          transition: max-height 0.8s ease
+          max-height: 4.5em
+          &:hover
+            -webkit-line-clamp: unset
+            max-height: 300px
+            padding-bottom: 10px
+            overflow: auto
+            
+        .tags
+          flex-shrink: 0
+
         .ArticleFooter
-          margin-top: 40px
+          margin-top: auto
+          width: 100%
+          flex-shrink: 0
           .post-date
             background-color: #1e73be26
             font-size: 12px

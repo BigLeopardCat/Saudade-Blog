@@ -67,7 +67,7 @@ const Article:React.FC<ArticleOption> = ({ item, index, Categories, avatar, name
                         # {Categories.filter(category => category.categoryKey === item.noteCategory).map(item => item.categoryTitle)}
                     </h4>
                     <h3 className='ArticleTitle'>{item.noteTitle}</h3>
-                    <p>{item.description}</p>
+                    <p className="ArticleDescription">{item.description}</p>
                     <div className='tags' style={{ width: '100%', marginTop: '10px' }}>
                         {renderNoteTags(item.noteTags,tagList)}
                     </div>
