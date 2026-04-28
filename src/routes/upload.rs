@@ -81,7 +81,6 @@ pub async fn delete_images(
             .await 
         {
             // Delete file logic: Extract filename from URL
-            // Support both old /upload/ and new /download/ formats
             let filename_opt = if let Some(part) = url.split("/upload/").nth(1) {
                 Some(part) 
             } else if let Some(part) = url.split("/download/").nth(1) {
@@ -91,8 +90,10 @@ pub async fn delete_images(
             };
 
             if let Some(filename) = filename_opt {
-                 let path = Path::new(upload_dir).join(filename);
-                 let _ = fs::remove_file(path).await;
+                 if let Some(safe_name) = std::path::Path::new(filename).file_name() {
+                     let path = std::path::Path::new(upload_dir).join(safe_name);
+                     let _ = tokio::fs::remove_file(path).await;
+                 }
             }
             
             // Delete from DB

@@ -12,9 +12,13 @@ pub async fn auth_guard(req: Request<Body>, next: Next) -> Result<Response, Stat
         .and_then(|header| header.to_str().ok());
 
     match auth_header {
-        Some(token) if token.starts_with("mock-token-for-") => {
-            // In a real app, verify signature/expiration here
-            Ok(next.run(req).await)
+        Some(token) => {
+            let clean_token = token.strip_prefix("Bearer ").unwrap_or(token);
+            if crate::auth_jwt::verify_token(clean_token).is_some() {
+                Ok(next.run(req).await)
+            } else {
+                Err(StatusCode::UNAUTHORIZED)
+            }
         }
         _ => Err(StatusCode::UNAUTHORIZED),
     }
