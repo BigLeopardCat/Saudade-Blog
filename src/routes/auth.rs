@@ -29,7 +29,7 @@ pub async fn login(
 
     if let Some(u) = user {
         // Generate a token.
-        let token = format!("mock-token-for-{}", u.id);
+        let token = crate::auth_jwt::create_token(u.id);
         return Json(ApiResponse::success(token));
     }
 
