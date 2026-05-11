@@ -3,7 +3,7 @@ import getToken from "./getToken.tsx"
 
 const http = axios.create({
     baseURL: import.meta.env.VITE_HTTP_BASEURL || '',
-    timeout: 5000
+    timeout: 15000
 })
 
 // 添加请求拦截器
