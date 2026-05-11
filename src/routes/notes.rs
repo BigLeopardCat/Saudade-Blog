@@ -105,7 +105,7 @@ pub async fn list_public_notes(
         .unwrap_or(vec![]);
 
     let dtos = notes.into_iter().map(|(n, cat)| {
-        map_note(n, cat)
+        map_note_summary(n, cat)
     }).collect();
 
     Json(ApiResponse::success(dtos))
@@ -124,7 +124,7 @@ pub async fn list_all_notes(
         .unwrap_or(vec![]);
 
     let dtos = notes.into_iter().map(|(n, cats)| {
-        map_note(n, cats.into_iter().next())
+        map_note_summary(n, cats.into_iter().next())
     }).collect();
 
     Json(ApiResponse::success(dtos))
@@ -186,7 +186,7 @@ pub async fn search_notes(
         .unwrap_or(vec![]);
 
     let dtos = notes.into_iter().map(|(n, cats)| {
-        map_note(n, cats.into_iter().next())
+        map_note_summary(n, cats.into_iter().next())
     }).collect();
 
     Json(ApiResponse::success(dtos))
@@ -256,7 +256,7 @@ pub async fn search_all_notes(
         .unwrap_or(vec![]);
 
     let dtos = notes.into_iter().map(|(n, cats)| {
-        map_note(n, cats.into_iter().next())
+        map_note_summary(n, cats.into_iter().next())
     }).collect();
 
     Json(ApiResponse::success(dtos))
@@ -300,7 +300,7 @@ pub async fn get_top_notes(
         .unwrap_or(vec![]);
 
      let dtos = notes.into_iter().map(|(n, cats)| {
-        map_note(n, cats.into_iter().next())
+        map_note_summary(n, cats.into_iter().next())
     }).collect();
 
     Json(ApiResponse::success(dtos))
@@ -420,4 +420,9 @@ pub async fn get_note_detail(
     });
 
     Json(ApiResponse::success(dto))
+}fn map_note_summary(n: note::Model, cat: Option<category::Model>) -> NoteDto {
+    let mut dto = map_note(n, cat);
+    dto.content = String::new();
+    dto.content_raw = String::new();
+    dto
 }
