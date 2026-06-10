@@ -8,11 +8,14 @@ import { motion } from 'framer-motion';
 import {formatNote, NoteType} from "../../../interface/NoteType";
 import {categoryList} from "../../../store/components/categories.tsx";
 import Article from "./Article.tsx";
-import {useNavigate} from "react-router-dom";
+import {useNavigate, useLocation} from "react-router-dom";
 import {SocialType} from "../../../interface/SocialType";
 import {getNotePage, getTopNotes} from "../../../apis/NoteMethods.tsx";
 import dayjs from "dayjs";
+import { resolveApiAssetUrl } from '../../../utils/runtimeApi';
 
+
+// 模块级缓存：只在同一次 SPA 会话内复用，离开 Dashboard 后自动失效
 let cachedOtherArticles: NoteType[] = [];
 let cachedTopArticles: NoteType[] = [];
 let cachedCurrentPage = 1;
@@ -22,15 +25,26 @@ let isCachedOther = false;
 const ContentHome = () => {
     const [currentTop,setCurrentTop] = useState(0);
     const [slideDir, setSlideDir] = useState<'left' | 'right'>('right');
-    const [currentPage,setCurrentPage] = useState(cachedCurrentPage)
-    const [hasMoreArticles, setHasMoreArticles] = useState(cachedHasMoreArticles);
+    const [currentPage,setCurrentPage] = useState(1)
+    const [hasMoreArticles, setHasMoreArticles] = useState(true);
     const [loading, setLoading] = useState(false);
+    const location = useLocation();
+    
+    // 从 Dashboard 返回时清除缓存，确保数据最新
+    if (location.state?.fromDashboard) {
+        cachedOtherArticles = [];
+        cachedTopArticles = [];
+        cachedCurrentPage = 1;
+        cachedHasMoreArticles = true;
+        isCachedOther = false;
+    }
+    
     const avatar = useSelector((state:{user:UserState}) => state.user.avatar)
     const name = useSelector((state:{user:UserState}) => state.user.name)
     const oneSay = useSelector((state:{user:UserState}) => state.user.talk)
     const navigate = useNavigate()
-    const [otherArticles,setOtherArticles] = useState<NoteType[]>(cachedOtherArticles)
-    const [topArticles,setTopArticles] = useState<NoteType[]>(cachedTopArticles)
+    const [otherArticles,setOtherArticles] = useState<NoteType[]>([])
+    const [topArticles,setTopArticles] = useState<NoteType[]>([])
     const Categories = useSelector((state: { categories: categoryList }) => state.categories.categories);
     const tagList = useSelector((state: {tags: any}) => state.tags.tag)
     const social = useSelector((state:{user:{social: SocialType}}) => state.user.social)
@@ -48,12 +62,14 @@ const ContentHome = () => {
     }, [topArticles.length])
 
     useEffect(() => {
+        // 从 Dashboard 返回时重新获取（isCachedOther 会被 Dashboard 操作重置）
         if (isCachedOther) return;
         getNotePage({
             page: 1,
             pageSize: 6
         }).then(res => {
-             const mapped = res.data.data.map((item: formatNote) => {
+             const notePage = Array.isArray(res?.data?.data) ? res.data.data : [];
+             const mapped = notePage.map((item: formatNote) => {
                 return {
                     ...item,
                     key: item.noteKey,
@@ -69,7 +85,8 @@ const ContentHome = () => {
     useEffect(() => {
         if (cachedTopArticles.length > 0) return;
         getTopNotes().then(res => {
-             const mapped = res.data.data.map((item: formatNote) => {
+             const topNotes = Array.isArray(res?.data?.data) ? res.data.data : [];
+             const mapped = topNotes.map((item: formatNote) => {
                 return {
                     ...item,
                     key: item.noteKey,
@@ -92,14 +109,17 @@ const ContentHome = () => {
             page: currentPage + 1,
             pageSize: 6
         }).then(res => {
-            if (res.data.data.length === 0) {
-                setHasMoreArticles(false); cachedHasMoreArticles = false;;
+            const nextPage = Array.isArray(res?.data?.data) ? res.data.data : [];
+            if (nextPage.length === 0) {
+                setHasMoreArticles(false);
+                cachedHasMoreArticles = false;
             } else {
-                setCurrentPage(currentPage + 1); cachedCurrentPage = currentPage + 1;
+                setCurrentPage(currentPage + 1);
+                cachedCurrentPage = currentPage + 1;
                 setOtherArticles(prevArticles => {
                     const newArts = [
                         ...prevArticles,
-                        ...res.data.data.map((item: formatNote) => ({
+                        ...nextPage.map((item: formatNote) => ({
                             ...item,
                             key: item.noteKey,
                             noteTags: item.noteTags ? item.noteTags.split(',').map(tag => parseInt(tag, 10)) : [],
@@ -108,7 +128,7 @@ const ContentHome = () => {
                     cachedOtherArticles = newArts;
                     return newArts;
                 });
-                if(res.data.data.length < 6) { setHasMoreArticles(false); cachedHasMoreArticles = false; }
+                if(nextPage.length < 6) { setHasMoreArticles(false); cachedHasMoreArticles = false; }
             }
         }).finally(() => {
             setLoading(false);
@@ -148,7 +168,7 @@ const ContentHome = () => {
                         <div className="TopArticleInner" key={item.key} onClick={() => window.open(`/article/${item.key}`, '_blank')} style={{ width: '100%', flexShrink: 0, height: '100%' }}>
                             <div className="TopCover">
                                 <img
-                                    src={item.cover}
+                                    src={resolveApiAssetUrl(item.cover)}
                                     style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                                 />
                                 <span className="thumbnail-screen"></span>
@@ -158,7 +178,7 @@ const ContentHome = () => {
                                 <h3 className="contentTitle">{item.noteTitle}</h3>
                                 <div className="ArticleDescription" style={{marginBottom: 20}}> {item.description}</div>
                                 <div className='tags' style={{ width: '100%', marginTop: '10px' }}>
-                                    {item.noteTags.map(noteTag => {
+                                    {(Array.isArray(item.noteTags) ? item.noteTags : []).map(noteTag => {
                                         let color;
                                         let name;
                                         tagList.forEach((tag: { tagKey: number; color: string; title: string; children: any[]; }) => {

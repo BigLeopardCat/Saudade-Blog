@@ -19,6 +19,7 @@ import generateResponse from "../../../../apis/chatgpt.tsx";
 import {createNote, getNoteById, updateNote} from "../../../../apis/NoteMethods.tsx";
 import ImageCompression from "../../../../apis/ImageCompression.tsx";
 import {uploadImages, getImageList} from "../../../../apis/ImageMethods.tsx";
+import { resolveApiAssetUrl } from '../../../../utils/runtimeApi';
 
 type FileType = Parameters<GetProp<UploadProps, 'beforeUpload'>>[0];
 
@@ -66,7 +67,7 @@ const NewNotes = () => {
         if (galleryOpen) {
             getImageList().then(res => {
                 if(res.status === 200) {
-                   setGalleryImages(res.data.data);
+                   setGalleryImages(Array.isArray(res?.data?.data) ? res.data.data : []);
                 }
             });
         }
@@ -105,13 +106,13 @@ const NewNotes = () => {
                         uid: '-1',
                         name: 'Cover',
                         status: 'done',
-                        url: res.data.data.cover,
+                        url: resolveApiAssetUrl(res.data.data.cover),
                     }]);
                     form.setFieldValue('cover', [{
                         uid: '-1',
                         name: 'Cover',
                         status: 'done',
-                        url: res.data.data.cover,
+                        url: resolveApiAssetUrl(res.data.data.cover),
                     }]);
                 }
             }catch (error){
@@ -140,7 +141,7 @@ const NewNotes = () => {
                 uid: file.uid,
                 name: file.name,
                 status: 'done' as const,
-                url: response.data.data,
+                url: resolveApiAssetUrl(response.data.data),
             };
             setFileList([newFile]);
             form.setFieldValue('cover', [newFile]);
@@ -310,7 +311,7 @@ const NewNotes = () => {
                             <Col span={6} key={img.imageKey}>
                                 <Card
                                     hoverable
-                                    cover={<img alt="example" src={img.imageUrl} style={{ height: 100, objectFit: 'cover' }} />}
+                                    cover={<img alt="example" src={resolveApiAssetUrl(img.imageUrl)} style={{ height: 100, objectFit: 'cover' }} />}
                                     onClick={() => selectGalleryImage(img.imageUrl)}
                                 >
                                 </Card>

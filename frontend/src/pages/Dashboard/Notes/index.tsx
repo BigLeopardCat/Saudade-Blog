@@ -38,7 +38,7 @@ const Notes = () => {
     const navigate = useNavigate()
     const [currentHashCode,setCurrentHashCode] = useState('')
     //夜间模式判断
-    const isDark = JSON.parse(useContext(MainContext))
+    const isDark = useContext(MainContext) === 'true'
 
     useEffect(() => {
        setCurrentHashCode(location.hash)

@@ -30,8 +30,9 @@ const fetchCategories = () => {
     return async (dispatch:Dispatch<PayloadAction<CategoriesType[]>>) => {
         try {
             const res = await getCategories()
-            dispatch(setCategories(res.data.data))
-            dispatch(setCategoryCount(res.data.data.length))
+            const categories = Array.isArray(res?.data?.data) ? res.data.data : []
+            dispatch(setCategories(categories))
+            dispatch(setCategoryCount(categories.length))
         }catch (error) {
             console.log(error)
         }

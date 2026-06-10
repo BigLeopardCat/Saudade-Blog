@@ -1,12 +1,12 @@
 import { DeleteOutlined } from '@ant-design/icons';
 import {Calendar, Card, ConfigProvider, Progress, Space, theme, Checkbox, Input, Badge, Modal, Avatar, Select, Radio, Col, Row} from "antd";
+import dayjs from "dayjs";
 import localeData from "dayjs/plugin/localeData";
 dayjs.extend(localeData);
 import './index.sass';
 import React, {useContext, useEffect, useRef, useState} from "react";
 import axios from "axios";
 import {Dayjs} from "dayjs";
-import dayjs from "dayjs";
 import 'dayjs/locale/zh-cn';
 import zhCN from "antd/lib/locale/zh_CN";
 import ArticleRecord from "../../../components/articleRecord";
@@ -127,7 +127,7 @@ const Home = () => {
         };
     }, []);
 
-    const isDark = JSON.parse(useContext(MainContext))
+    const isDark = useContext(MainContext) === 'true'
         return (
         <div className="home">
 

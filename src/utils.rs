@@ -1,5 +1,7 @@
 use serde::Serialize;
 use sha2::{Sha256, Digest};
+use std::path::PathBuf;
+use std::env;
 
 #[derive(Serialize)]
 pub struct ApiResponse<T> {
@@ -31,4 +33,15 @@ pub fn encrypt_password(input: &str) -> String {
     hasher.update(input);
     let result = hasher.finalize();
     hex::encode(result)
+}
+
+pub fn upload_dir() -> PathBuf {
+    if let Ok(dir) = env::var("UPLOAD_DIR") {
+        return PathBuf::from(dir);
+    }
+
+    match env::current_dir() {
+        Ok(dir) => dir.join("uploads"),
+        Err(_) => PathBuf::from("uploads"),
+    }
 }

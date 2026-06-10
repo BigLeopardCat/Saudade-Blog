@@ -3,6 +3,7 @@
  */
 
 import React, { useRef, useEffect, useState } from 'react';
+import { resolveApiAssetUrl } from '../../utils/runtimeApi';
 
 interface LazyImageProps {
     src: string;
@@ -41,7 +42,7 @@ const LazyImage: React.FC<LazyImageProps> = ({ src, threshold = 0.5 }) => {
         <>
         <img
             ref={imgRef}
-            src={isVisible ? src : 'https://cdn.jsdelivr.net/gh/LinMoQC/LinmoBlogCDN@d4a74e1de7b957cca9a9e4ca261ad53b1affcc94/loading.svg'}
+            src={isVisible ? resolveApiAssetUrl(src) : 'https://cdn.jsdelivr.net/gh/LinMoQC/LinmoBlogCDN@d4a74e1de7b957cca9a9e4ca261ad53b1affcc94/loading.svg'}
         />
             </>
     );

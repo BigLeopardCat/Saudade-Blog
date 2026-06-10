@@ -30,18 +30,17 @@ const tagSlice = createSlice({
 
 const fetchTags = () => {
     return async (dispatch:Dispatch<PayloadAction<TagLevelOne[]>>) => {
-        const tagone = await http({
+        const tagoneResponse = await http({
             url: '/api/public/tagone',
             method: 'GET'
-        }).then((res) => {
-            return res.data.data
         });
-        const tagtwo = await http({
+        const tagone = Array.isArray(tagoneResponse?.data?.data) ? tagoneResponse.data.data : [];
+
+        const tagtwoResponse = await http({
             url: '/api/public/tagtwo',
             method: 'GET'
-        }).then((res) => {
-            return res.data.data
         });
+        const tagtwo = Array.isArray(tagtwoResponse?.data?.data) ? tagtwoResponse.data.data : [];
 
         const tree = tagone.map((item: { children: TagLevelTwo[]; title: string; }) => {
             item.children = tagtwo.filter((child: { fatherTag: string; }) => child.fatherTag === item.title);
