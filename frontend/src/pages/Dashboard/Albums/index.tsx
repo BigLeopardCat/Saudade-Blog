@@ -11,6 +11,7 @@ import CheckButton from "../../../components/Buttons/CheckButton";
 import {ImgUrl} from "../../../interface/ImgTypes";
 import {delImages, getImageList, uploadImages} from "../../../apis/ImageMethods.tsx";
 import ImageCompression from "../../../apis/ImageCompression.tsx";
+import { resolveApiAssetUrl } from '../../../utils/runtimeApi';
 
 
 const Albums = () => {
@@ -180,7 +181,7 @@ const Albums = () => {
                             />
                         </div>
                         <img
-                            src={item.imageUrl}
+                            src={resolveApiAssetUrl(item.imageUrl)}
                             onClick={() => handleItemClick(item)}
                             style={{ maxWidth: 250, maxHeight: 250, margin: 40, marginLeft: 45, marginTop: 30, borderRadius: 10 }}
                             className='imgShade'

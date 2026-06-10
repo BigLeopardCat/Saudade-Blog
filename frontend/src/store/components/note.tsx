@@ -40,8 +40,9 @@ const fetchNoteList = () => {
             } else {
                  res = await getNotes();
             }
-            
-            const processedData = res.data.data.map((item: { noteTags: string; }) => ({
+
+            const noteList = Array.isArray(res?.data?.data) ? res.data.data : [];
+            const processedData = noteList.map((item: { noteTags: string; }) => ({
                 ...item,
                 noteTags: item.noteTags ? item.noteTags.split(',').map(tag => parseInt(tag, 10)) : [],
             }));

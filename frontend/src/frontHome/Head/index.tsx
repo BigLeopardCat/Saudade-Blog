@@ -33,6 +33,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
     const navigate = useNavigate();
     const [animation,setAnimation] = useState('');
     const categoryList = useSelector((state: any) => state.categories.categories)
+    const safeCategoryList = Array.isArray(categoryList) ? categoryList : []
     const avatar = useSelector((state:{user:UserState}) => state.user.avatar)
     const blogTitle = useSelector((state:{user:{blogTitle: string}}) => state.user.blogTitle)
 
@@ -161,7 +162,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                                          style={{fontSize: 30}}></i>分类</div>
                             </li>
                             {showMobileCategory && <ul className='twoBar'>
-                                {categoryList.map((item: { categoryKey: Key | null | undefined; pathName: any; icon: any; categoryTitle: string | number | boolean | ReactElement | Iterable<ReactNode> | ReactPortal | null | undefined; }) => (
+                                {safeCategoryList.map((item: { categoryKey: Key | null | undefined; pathName: any; icon: any; categoryTitle: string | number | boolean | ReactElement | Iterable<ReactNode> | ReactPortal | null | undefined; }) => (
                                     <li key={item.categoryKey} onClick={() => navigate(`category/${item.pathName}`)} style={{fontSize: 15}}><i className={`fa ${item.icon}`} aria-hidden="true" style={{verticalAlign: 'middle'}}></i>{item.categoryTitle}</li>
                                 ))}
                             </ul>}
@@ -219,7 +220,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                                     color: 'rgba(0, 0, 0, 0.83)'
                                 }}></i>
                                 <ul>
-                                    {categoryList.map((item: { categoryKey: Key | null | undefined; pathName: any; icon: any; categoryTitle: string | number | boolean | ReactElement | Iterable<ReactNode> | ReactPortal | null | undefined; }) => (
+                                    {safeCategoryList.map((item: { categoryKey: Key | null | undefined; pathName: any; icon: any; categoryTitle: string | number | boolean | ReactElement | Iterable<ReactNode> | ReactPortal | null | undefined; }) => (
                                         <li key={item.categoryKey} onClick={() => navigate(`category/${item.pathName}`)}><i className={`iconfont ${item.icon}`} style={{fontSize: 20}}></i>{item.categoryTitle}</li>
                                     ))}
                                 </ul>

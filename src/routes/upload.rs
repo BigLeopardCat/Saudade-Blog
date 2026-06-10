@@ -4,7 +4,7 @@ use axum::{
 };
 use std::sync::Arc;
 use crate::routes::AppState;
-use crate::utils::ApiResponse;
+use crate::utils::{ApiResponse, upload_dir};
 use std::path::Path;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
@@ -16,7 +16,7 @@ pub async fn upload_image(
     State(state): State<Arc<AppState>>,
     mut multipart: Multipart,
 ) -> Json<ApiResponse<String>> {
-    let upload_dir = "/opt/memory_blog_rust/uploads";
+    let upload_dir = upload_dir();
     
     // Iterate over fields
     while let Ok(Some(field)) = multipart.next_field().await {
@@ -29,7 +29,7 @@ pub async fn upload_image(
              // Prepend timestamp to avoid collision
              let timestamp = chrono::Utc::now().with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap()).format("%Y%m%d%H%M%S").to_string();
              let new_name = format!("{}_{}", timestamp, file_name);
-             let file_path = Path::new(upload_dir).join(&new_name);
+             let file_path = upload_dir.join(&new_name);
 
              if let Ok(data) = field.bytes().await {
                  if let Ok(mut file) = fs::File::create(&file_path).await {
@@ -72,7 +72,7 @@ pub async fn delete_images(
     State(state): State<Arc<AppState>>,
     Json(urls): Json<Vec<String>>,
 ) -> Json<ApiResponse<String>> {
-    let upload_dir = "/opt/memory_blog_rust/uploads";
+    let upload_dir = upload_dir();
     for url in urls {
         // Find in DB
         if let Ok(Some(img)) = image::Entity::find()
@@ -91,7 +91,7 @@ pub async fn delete_images(
 
             if let Some(filename) = filename_opt {
                  if let Some(safe_name) = std::path::Path::new(filename).file_name() {
-                     let path = std::path::Path::new(upload_dir).join(safe_name);
+                     let path = upload_dir.join(safe_name);
                      let _ = tokio::fs::remove_file(path).await;
                  }
             }

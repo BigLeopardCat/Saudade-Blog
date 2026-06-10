@@ -89,7 +89,8 @@ function delTag(selectedKeys: React.Key[]) {
 }
 
 function renderNoteTags(noteTags: number[],tagList: any){
-    return noteTags.map(noteTag => {
+    const safeNoteTags = Array.isArray(noteTags) ? noteTags : [];
+    return safeNoteTags.map(noteTag => {
         let color;
         let name;
         tagList.forEach((tag: { tagKey: number; color: string; title: string; children: any[]; }) => {

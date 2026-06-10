@@ -1,9 +1,10 @@
 import axios from "axios";
 import getToken from "./getToken.tsx"
 import { message } from "antd";
+import { runtimeBaseURL } from "../utils/runtimeApi";
 
 const http = axios.create({
-    baseURL: import.meta.env.VITE_HTTP_BASEURL || '',
+    baseURL: runtimeBaseURL,
     timeout: 15000
 })
 
