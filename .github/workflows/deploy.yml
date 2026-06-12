@@ -13,27 +13,33 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          toolchain: stable
+          toolchain: 1.92.0
 
       - name: Build Backend
         run: cargo build --release
         working-directory: ./
 
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 20
 
       - name: Build Frontend
         run: |
-          npm install
+          npm ci
           npm run build
         working-directory: ./frontend
+
+      - name: Prepare deploy artifacts
+        run: |
+          mkdir -p deploy_artifacts
+          cp target/release/saudade_blog_bin deploy_artifacts/
+          cp -r frontend/dist deploy_artifacts/
 
       - name: Deploy to Server
         uses: easingthemes/ssh-deploy@v4
@@ -42,9 +48,7 @@ jobs:
           REMOTE_HOST: ${{ secrets.SERVER_HOST }}
           REMOTE_USER: ${{ secrets.SERVER_USER }}
           TARGET: /home/ubuntu/memory_blog_rust
-          SOURCE: |
-            target/release/saudade_blog_bin
-            frontend/dist/
+          SOURCE: deploy_artifacts/
 
       - name: Restart Backend
         uses: appleboy/ssh-action@v1
@@ -53,7 +57,9 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            pkill -f saudade_blog_bin 2>/dev/null; sleep 1
-            chmod +x /home/ubuntu/memory_blog_rust/target/release/saudade_blog_bin
-            nohup /home/ubuntu/memory_blog_rust/target/release/saudade_blog_bin > /home/ubuntu/memory_blog_rust/server_run.log 2>&1 &
+            pkill -f "saudade_blog_bin" 2>/dev/null || true
+            sleep 2
+            chmod +x /home/ubuntu/memory_blog_rust/saudade_blog_bin
+            nohup /home/ubuntu/memory_blog_rust/saudade_blog_bin > /home/ubuntu/memory_blog_rust/server_run.log 2>&1 &
+            sleep 1
             echo "✅ 后端已重启"
