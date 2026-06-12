@@ -91,12 +91,7 @@ pub async fn get_web_settings(
         infos.iter().find(|i| i.key_name == key).map(|i| i.value.clone())
     };
 
-    let user = user::Entity::find_by_id(1).one(&state.db).await.unwrap_or(None);
-    let (u_acc, u_pass) = if let Some(u) = user {
-        (Some("".to_string()), Some("".to_string()))
-    } else {
-        (Some("".to_string()), Some("".to_string()))
-    };
+    let (u_acc, u_pass) = (Some("".to_string()), Some("".to_string()));
 
     let payload = WebSettingPayload {
         blog_title: get_val("blog_title"),
