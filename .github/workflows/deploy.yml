@@ -1,0 +1,59 @@
+name: Deploy Blog
+
+on:
+  push:
+    branches: [cn_sora_blog]
+
+env:
+  CARGO_TERM_COLOR: always
+  R2_URL: https://pub-e4770f593eaa40edae7748b2b9cae11c.r2.dev
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Build Backend
+        run: cargo build --release
+        working-directory: ./
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - name: Build Frontend
+        run: |
+          npm install
+          npm run build
+        working-directory: ./frontend
+
+      - name: Deploy to Server
+        uses: easingthemes/ssh-deploy@v4
+        with:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          REMOTE_HOST: ${{ secrets.SERVER_HOST }}
+          REMOTE_USER: ${{ secrets.SERVER_USER }}
+          TARGET: /home/ubuntu/memory_blog_rust
+          SOURCE: |
+            target/release/saudade_blog_bin
+            frontend/dist/
+
+      - name: Restart Backend
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            pkill -f saudade_blog_bin 2>/dev/null; sleep 1
+            chmod +x /home/ubuntu/memory_blog_rust/target/release/saudade_blog_bin
+            nohup /home/ubuntu/memory_blog_rust/target/release/saudade_blog_bin > /home/ubuntu/memory_blog_rust/server_run.log 2>&1 &
+            echo "✅ 后端已重启"
