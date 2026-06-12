@@ -43,8 +43,8 @@ const ContentHome = () => {
     const name = useSelector((state:{user:UserState}) => state.user.name)
     const oneSay = useSelector((state:{user:UserState}) => state.user.talk)
     const navigate = useNavigate()
-    const [otherArticles,setOtherArticles] = useState<NoteType[]>([])
-    const [topArticles,setTopArticles] = useState<NoteType[]>([])
+    const [otherArticles,setOtherArticles] = useState<NoteType[]>(cachedOtherArticles)
+    const [topArticles,setTopArticles] = useState<NoteType[]>(cachedTopArticles)
     const Categories = useSelector((state: { categories: categoryList }) => state.categories.categories);
     const tagList = useSelector((state: {tags: any}) => state.tags.tag)
     const social = useSelector((state:{user:{social: SocialType}}) => state.user.social)

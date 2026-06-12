@@ -119,7 +119,7 @@ const Login: React.FC = () => {
                                 {isLoading ? 'Logged in...' : 'Login'}
                             </div>
                         </a>
-                        <a href="/" className="return-btn">
+                        <a href="/" className="return-btn" onClick={(e) => { e.preventDefault(); navigate('/'); }}>
                              <span></span>
                             <span></span>
                             <span></span>
