@@ -57,7 +57,9 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            pkill -f saudade_blog_bin 2>/dev/null; sleep 1
+            pkill -f "saudade_blog_bin" 2>/dev/null || true
+            sleep 2
             chmod +x /home/ubuntu/memory_blog_rust/saudade_blog_bin
             nohup /home/ubuntu/memory_blog_rust/saudade_blog_bin > /home/ubuntu/memory_blog_rust/server_run.log 2>&1 &
+            sleep 1
             echo "✅ 后端已重启"
