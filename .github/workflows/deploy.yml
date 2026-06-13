@@ -8,32 +8,59 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  check-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'src/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+            frontend:
+              - 'frontend/src/**'
+              - 'frontend/package.json'
+              - 'frontend/package-lock.json'
+
   build-and-deploy:
+    needs: check-changes
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Rust
+        if: needs.check-changes.outputs.backend == 'true'
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: 1.92.0
 
       - name: Build Backend
+        if: needs.check-changes.outputs.backend == 'true'
         run: cargo build --release
 
       - name: Setup Node.js
+        if: needs.check-changes.outputs.frontend == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
       - name: Build Frontend
+        if: needs.check-changes.outputs.frontend == 'true'
         run: |
           npm ci
           npm run build
         working-directory: ./frontend
 
-      - name: Upload to R2
+      - name: Package & Upload to R2
         env:
           R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
           R2_ACCESS_KEY: ${{ secrets.R2_ACCESS_KEY }}
@@ -41,9 +68,14 @@ jobs:
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
         run: |
           pip3 install boto3 -q
-          python3 upload_to_r2.py
+          if [ "${{ needs.check-changes.outputs.backend }}" == "true" ] || [ "${{ needs.check-changes.outputs.frontend }}" == "true" ]; then
+            python3 upload_to_r2.py
+          else
+            echo "没有代码变更，跳过部署"
+          fi
 
       - name: Trigger server deploy
+        if: needs.check-changes.outputs.backend == 'true' || needs.check-changes.outputs.frontend == 'true'
         env:
           SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           HOST: ${{ secrets.SERVER_HOST }}
