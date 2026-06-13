@@ -58,6 +58,9 @@ const ReadArticle = () => {
             });
         }
         scrollToTop();
+        return () => {
+            document.title = 'Saudade Blog';
+        };
     }, [id]);
     
     const content = article?.noteContent || '';
