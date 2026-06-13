@@ -42,33 +42,23 @@ jobs:
           cp target/release/saudade_blog_bin deploy_artifacts/target/release/
           cp -r frontend/dist deploy_artifacts/frontend/
 
-      - name: Deploy to Server
-        uses: easingthemes/ssh-deploy@v4
-        with:
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          REMOTE_HOST: ${{ secrets.SERVER_HOST }}
-          REMOTE_USER: ${{ secrets.SERVER_USER }}
-          TARGET: /home/ubuntu/memory_blog_rust
-          SOURCE: deploy_artifacts/
-
-      - name: Restart Backend
-        env:
-          SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          HOST: ${{ secrets.SERVER_HOST }}
-          USER: ${{ secrets.SERVER_USER }}
-        shell: bash
+      - name: Upload to R2
         run: |
-          set +e
-          mkdir -p ~/.ssh
-          echo "$SSH_KEY" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
-          ssh -o ConnectTimeout=15 -o ServerAliveInterval=5 -o StrictHostKeyChecking=no "$USER@$HOST" "
-            cd /home/ubuntu/memory_blog_rust
-            pkill -f 'saudade_blog_bin' 2>/dev/null || true
-            sleep 2
-            chmod +x target/release/saudade_blog_bin
-            nohup ./target/release/saudade_blog_bin > server_run.log 2>&1 &
-            sleep 1
-            echo '后端已重启'
-          "
+          pip3 install boto3 -q
+          python3 -c "
+import boto3, os
+from botocore.config import Config
+s3 = boto3.client('s3',
+    endpoint_url='https://f3bdcb44deeea98157f2a9298ad43ab0.r2.cloudflarestorage.com',
+    aws_access_key_id='f5c83240b6dd56f0062811b769a5cde9',
+    aws_secret_access_key='8a973b6ce131fc16b53ebd83b19a795fedc898140b21743e76c576f06161bd36',
+    config=Config(signature_version='s3v4'),
+    region_name='auto')
+s3.upload_file('target/release/saudade_blog_bin', 'saudade-blog', 'deploy/saudade_blog_bin')
+for root, dirs, files in os.walk('frontend/dist'):
+    for f in files:
+        path = os.path.join(root, f)
+        key = 'deploy/' + path
+        s3.upload_file(path, 'saudade-blog', key)
+print('✅ 已上传到 R2')
+"
