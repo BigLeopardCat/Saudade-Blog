@@ -28,41 +28,40 @@
       height: 100% !important
       overflow-x: hidden
 
-// Dark Mode Support - Target HTML directly for reliability
-:global(html[data-theme='dark'])
-  .AllCard
-    // Fix Form Labels (Search Box area)
-    .ant-form-item-label > label
-      color: rgba(255, 255, 255, 0.85) !important
-      
-    // Fix Pagination Arrows (Left/Right)
-    .ant-pagination-item-link
-      background-color: transparent !important
-      border-color: #424242 !important
-      color: rgba(255, 255, 255, 0.85) !important
-      span
-        color: rgba(255, 255, 255, 0.85) !important
-      .anticon
-        color: rgba(255, 255, 255, 0.85) !important
-        
-    .ant-pagination-disabled .ant-pagination-item-link
-      border-color: #424242 !important
-      color: rgba(255, 255, 255, 0.3) !important
-      span
-        color: rgba(255, 255, 255, 0.3) !important
-      .anticon
-        color: rgba(255, 255, 255, 0.3) !important
-
-    // Fix Pagination Numbers (Unselected)
-    .ant-pagination-item
-      background-color: transparent !important
-      border-color: #424242 !important
-      a
-        color: rgba(255, 255, 255, 0.85) !important
+// Dark Mode Support - Dashboard uses .dark class (not html[data-theme])
+:global(.dark) .AllCard, :global(.contentDark) .AllCard
+  // Fix Form Labels (Search Box area)
+  .ant-form-item-label > label
+    color: rgba(255, 255, 255, 0.85) !important
     
-    // Fix Pagination Numbers (Selected)
-    .ant-pagination-item-active
-      background-color: #1677ff !important
-      border-color: #1677ff !important
-      a
-        color: #ffffff !important
+  // Fix Pagination Arrows (Left/Right)
+  .ant-pagination-item-link
+    background-color: transparent !important
+    border-color: #424242 !important
+    color: #ffffff !important
+    span
+      color: #ffffff !important
+    .anticon
+      color: #ffffff !important
+      
+  .ant-pagination-disabled .ant-pagination-item-link
+    border-color: #424242 !important
+    color: rgba(255, 255, 255, 0.3) !important
+    span
+      color: rgba(255, 255, 255, 0.3) !important
+    .anticon
+      color: rgba(255, 255, 255, 0.3) !important
+
+  // Fix Pagination Numbers (Unselected)
+  .ant-pagination-item
+    background-color: transparent !important
+    border-color: #424242 !important
+    a
+      color: rgba(255, 255, 255, 0.85) !important
+  
+  // Fix Pagination Numbers (Selected)
+  .ant-pagination-item-active
+    background-color: #1677ff !important
+    border-color: #1677ff !important
+    a
+      color: #ffffff !important
