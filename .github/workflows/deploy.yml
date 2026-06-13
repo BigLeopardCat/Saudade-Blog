@@ -16,10 +16,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
       - uses: dorny/paths-filter@v3
         id: filter
         with:
+          base: ${{ github.event.before }}
+          ref: ${{ github.sha }}
           filters: |
             backend:
               - 'src/**'
@@ -78,11 +80,11 @@ jobs:
         if: needs.check-changes.outputs.backend == 'true' || needs.check-changes.outputs.frontend == 'true'
         env:
           SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          HOST: ${{ secrets.SERVER_HOST }}
-          USER: ${{ secrets.SERVER_USER }}
+          SSH_HOST: ${{ secrets.SERVER_HOST }}
+          SSH_USER: ${{ secrets.SERVER_USER }}
         run: |
           echo "$SSH_KEY" > /tmp/deploy_key
           chmod 600 /tmp/deploy_key
-          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i /tmp/deploy_key "$USER@$HOST" "nohup bash /home/ubuntu/memory_blog_rust/deploy_from_r2.sh > /home/ubuntu/memory_blog_rust/deploy_trigger.log 2>&1 &"
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i /tmp/deploy_key "${SSH_USER}@${SSH_HOST}" "nohup bash /home/ubuntu/memory_blog_rust/deploy_from_r2.sh > /home/ubuntu/memory_blog_rust/deploy_trigger.log 2>&1 &"
           echo "✅ 部署已触发"
           rm -f /tmp/deploy_key
