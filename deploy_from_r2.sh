@@ -5,7 +5,7 @@ cd /home/ubuntu/memory_blog_rust
 export $(grep -v '^\s*#' .env | grep -v '^\s*$' | xargs) 2>/dev/null || true
 echo "=== 从 R2 拉取更新 ==="
 
-python3 << 'PYEOF'
+python3 << 'PYEOF2'
 import boto3, tarfile, os
 from botocore.config import Config
 
@@ -21,15 +21,21 @@ with tarfile.open('/tmp/deploy.tar.gz') as tar:
     tar.extractall()
 os.remove('/tmp/deploy.tar.gz')
 print("✅ 部署文件下载解压完成")
-PYEOF
+PYEOF2
 
-# 复制新二进制到 target/release/
-cp -f saudade_blog_bin target/release/saudade_blog_bin
-chmod +x target/release/saudade_blog_bin
-rm -f saudade_blog_bin
+# 如果存在后端二进制则替换并重启
+if [ -f saudade_blog_bin ]; then
+  cp -f saudade_blog_bin target/release/saudade_blog_bin
+  chmod +x target/release/saudade_blog_bin
+  rm -f saudade_blog_bin
+  pkill -f saudade_blog_bin 2>/dev/null || true
+  sleep 2
+  nohup ./target/release/saudade_blog_bin > server_run.log 2>&1 &
+  echo "✅ 后端已更新并重启"
+else
+  echo "ℹ️ 后端无变更，跳过重启"
+fi
 
-pkill -f saudade_blog_bin 2>/dev/null || true
-sleep 2
-nohup ./target/release/saudade_blog_bin > server_run.log 2>&1 &
-sleep 1
+# 前端 dist 已直接解压到正确位置，Nginx 自动服务新文件
+echo "✅ 前端已更新"
 echo "✅ 部署完成"
