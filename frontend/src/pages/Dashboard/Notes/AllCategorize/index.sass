@@ -1,30 +1,45 @@
-// Dark Mode - Pagination (same as AllNotes)
-:global(.dark) .AllCard, :global(.contentDark) .AllCard
-  .ant-pagination-item-link
-    background-color: transparent !important
-    border-color: #424242 !important
-    color: #ffffff !important
-    span
-      color: #ffffff !important
-    .anticon
-      color: #ffffff !important
+// Dark Mode - Pagination
+.dark .AllCard .ant-pagination-item-link,
+.contentDark .AllCard .ant-pagination-item-link
+  background-color: transparent !important
+  border-color: #424242 !important
+  color: #ffffff !important
 
-  .ant-pagination-disabled .ant-pagination-item-link
-    border-color: #424242 !important
-    color: rgba(255, 255, 255, 0.3) !important
-    span
-      color: rgba(255, 255, 255, 0.3) !important
-    .anticon
-      color: rgba(255, 255, 255, 0.3) !important
+.dark .AllCard .ant-pagination-item-link span,
+.contentDark .AllCard .ant-pagination-item-link span
+  color: #ffffff !important
 
-  .ant-pagination-item
-    background-color: transparent !important
-    border-color: #424242 !important
-    a
-      color: rgba(255, 255, 255, 0.85) !important
+.dark .AllCard .ant-pagination-item-link .anticon,
+.contentDark .AllCard .ant-pagination-item-link .anticon
+  color: #ffffff !important
 
-  .ant-pagination-item-active
-    background-color: #1677ff !important
-    border-color: #1677ff !important
-    a
-      color: #ffffff !important
+.dark .AllCard .ant-pagination-disabled .ant-pagination-item-link,
+.contentDark .AllCard .ant-pagination-disabled .ant-pagination-item-link
+  border-color: #424242 !important
+  color: rgba(255, 255, 255, 0.3) !important
+
+.dark .AllCard .ant-pagination-disabled .ant-pagination-item-link span,
+.contentDark .AllCard .ant-pagination-disabled .ant-pagination-item-link span
+  color: rgba(255, 255, 255, 0.3) !important
+
+.dark .AllCard .ant-pagination-disabled .ant-pagination-item-link .anticon,
+.contentDark .AllCard .ant-pagination-disabled .ant-pagination-item-link .anticon
+  color: rgba(255, 255, 255, 0.3) !important
+
+.dark .AllCard .ant-pagination-item,
+.contentDark .AllCard .ant-pagination-item
+  background-color: transparent !important
+  border-color: #424242 !important
+
+.dark .AllCard .ant-pagination-item a,
+.contentDark .AllCard .ant-pagination-item a
+  color: rgba(255, 255, 255, 0.85) !important
+
+.dark .AllCard .ant-pagination-item-active,
+.contentDark .AllCard .ant-pagination-item-active
+  background-color: #1677ff !important
+  border-color: #1677ff !important
+
+.dark .AllCard .ant-pagination-item-active a,
+.contentDark .AllCard .ant-pagination-item-active a
+  color: #ffffff !important
