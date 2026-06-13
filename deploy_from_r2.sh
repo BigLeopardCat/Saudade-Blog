@@ -4,7 +4,7 @@ cd /home/ubuntu/memory_blog_rust
 echo "=== 从 R2 拉取更新 ==="
 
 python3 << 'PYEOF'
-import boto3, os, tarfile
+import boto3, tarfile, os
 from botocore.config import Config
 
 s3 = boto3.client('s3',
@@ -14,24 +14,16 @@ s3 = boto3.client('s3',
     config=Config(signature_version='s3v4'),
     region_name='auto')
 
-# 下载 binary
-os.makedirs('target/release', exist_ok=True)
-s3.download_file('saudade-blog', 'deploy/saudade_blog_bin', 'target/release/saudade_blog_bin')
-print("✅ binary 下载完成")
-
-# 下载前端压缩包并解压
-s3.download_file('saudade-blog', 'deploy/frontend.tar.gz', '/tmp/frontend.tar.gz')
-with tarfile.open('/tmp/frontend.tar.gz') as tar:
+s3.download_file('saudade-blog', 'deploy/deploy.tar.gz', '/tmp/deploy.tar.gz')
+with tarfile.open('/tmp/deploy.tar.gz') as tar:
     tar.extractall()
-os.remove('/tmp/frontend.tar.gz')
-print("✅ 前端文件下载完成")
+os.remove('/tmp/deploy.tar.gz')
+print("✅ 部署文件下载解压完成")
 PYEOF
 
-# 重启后端
-echo "=== 重启后端 ==="
+chmod +x target/release/saudade_blog_bin
 pkill -f saudade_blog_bin 2>/dev/null || true
 sleep 2
-chmod +x target/release/saudade_blog_bin
 nohup ./target/release/saudade_blog_bin > server_run.log 2>&1 &
 sleep 1
 echo "✅ 部署完成"

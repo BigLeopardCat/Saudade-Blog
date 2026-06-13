@@ -1,4 +1,4 @@
-import boto3, os, tarfile, io
+import boto3, tarfile, io
 from botocore.config import Config
 
 s3 = boto3.client('s3',
@@ -8,12 +8,10 @@ s3 = boto3.client('s3',
     config=Config(signature_version='s3v4'),
     region_name='auto')
 
-s3.upload_file('target/release/saudade_blog_bin', 'saudade-blog', 'deploy/saudade_blog_bin')
-print('✅ binary 上传完成')
-
 buf = io.BytesIO()
 with tarfile.open(fileobj=buf, mode='w:gz') as tar:
+    tar.add('target/release/saudade_blog_bin', arcname='saudade_blog_bin')
     tar.add('frontend/dist', arcname='frontend/dist')
 buf.seek(0)
-s3.upload_fileobj(buf, 'saudade-blog', 'deploy/frontend.tar.gz')
-print('✅ 前端压缩包上传完成')
+s3.upload_fileobj(buf, 'saudade-blog', 'deploy/deploy.tar.gz')
+print('✅ 全部文件打包上传完成')
