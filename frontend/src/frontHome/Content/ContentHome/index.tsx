@@ -167,7 +167,7 @@ const ContentHome = () => {
                 <div className="Top" style={{transform: 'translateY(-40%)', zIndex: 10}}><i className="iconfont icon-sticky1" style={{fontSize: 20,verticalAlign:'middle',marginRight:5}}></i>置顶</div>
                 <div style={{ width: '100%', height: '100%', borderRadius: '15px', overflow: 'hidden' }}><div style={{ display: 'flex', width: '100%', height: '100%', transition: 'transform 0.8s cubic-bezier(0.25, 1, 0.5, 1)', transform: `translateX(-${currentTop * 100}%)` }}>
                     {topArticles.map((item, index) => (
-                        <div className="TopArticleInner" key={item.key} onClick={() => window.open(`/article/${item.key}`, '_blank')} style={{ width: '100%', flexShrink: 0, height: '100%' }}>
+                        <div className="TopArticleInner" key={item.key} onClick={() => navigate(`/article/${item.key}`)} style={{ width: '100%', flexShrink: 0, height: '100%' }}>
                             <div className="TopCover">
                                 <img
                                     src={resolveApiAssetUrl(item.cover)}
