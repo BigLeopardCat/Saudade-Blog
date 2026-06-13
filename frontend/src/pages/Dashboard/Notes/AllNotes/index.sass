@@ -1,12 +1,10 @@
 // Force styles with very high specificity
 :global body .AllCard
   margin-top: 10px
-  // Use vh to ensure height is explicit relative to window
   height: 84vh !important
   max-height: 800px
 
   .searchRes
-    // Reset specific properties
     line-height: normal
     text-align: center
     background: transparent
@@ -14,54 +12,59 @@
     margin-top: 16px
     max-width: 98%
     margin-left: 1%
-    // Force scroll behavior
     overflow-y: auto !important
     overflow-x: hidden
     height: 100% !important
     
-    // Ant Design Table Wrapper Overrides
     .ant-table-wrapper
-       // Ensure table respects container
        height: 100%
        
     @media only screen and (max-width: 1530px)
       height: 100% !important
       overflow-x: hidden
 
-// Dark Mode Support - Dashboard uses .dark class (not html[data-theme])
-:global(.dark) .AllCard, :global(.contentDark) .AllCard
-  // Fix Form Labels (Search Box area)
-  .ant-form-item-label > label
-    color: rgba(255, 255, 255, 0.85) !important
-    
-  // Fix Pagination Arrows (Left/Right)
-  .ant-pagination-item-link
-    background-color: transparent !important
-    border-color: #424242 !important
-    color: #ffffff !important
-    span
-      color: #ffffff !important
-    .anticon
-      color: #ffffff !important
-      
-  .ant-pagination-disabled .ant-pagination-item-link
-    border-color: #424242 !important
-    color: rgba(255, 255, 255, 0.3) !important
-    span
-      color: rgba(255, 255, 255, 0.3) !important
-    .anticon
-      color: rgba(255, 255, 255, 0.3) !important
+// Dark Mode
+.dark .AllCard .ant-pagination-item-link,
+.contentDark .AllCard .ant-pagination-item-link
+  background-color: transparent !important
+  border-color: #424242 !important
+  color: #ffffff !important
 
-  // Fix Pagination Numbers (Unselected)
-  .ant-pagination-item
-    background-color: transparent !important
-    border-color: #424242 !important
-    a
-      color: rgba(255, 255, 255, 0.85) !important
-  
-  // Fix Pagination Numbers (Selected)
-  .ant-pagination-item-active
-    background-color: #1677ff !important
-    border-color: #1677ff !important
-    a
-      color: #ffffff !important
+.dark .AllCard .ant-pagination-item-link span,
+.contentDark .AllCard .ant-pagination-item-link span
+  color: #ffffff !important
+
+.dark .AllCard .ant-pagination-item-link .anticon,
+.contentDark .AllCard .ant-pagination-item-link .anticon
+  color: #ffffff !important
+
+.dark .AllCard .ant-pagination-disabled .ant-pagination-item-link,
+.contentDark .AllCard .ant-pagination-disabled .ant-pagination-item-link
+  border-color: #424242 !important
+  color: rgba(255, 255, 255, 0.3) !important
+
+.dark .AllCard .ant-pagination-disabled .ant-pagination-item-link span,
+.contentDark .AllCard .ant-pagination-disabled .ant-pagination-item-link span
+  color: rgba(255, 255, 255, 0.3) !important
+
+.dark .AllCard .ant-pagination-disabled .ant-pagination-item-link .anticon,
+.contentDark .AllCard .ant-pagination-disabled .ant-pagination-item-link .anticon
+  color: rgba(255, 255, 255, 0.3) !important
+
+.dark .AllCard .ant-pagination-item,
+.contentDark .AllCard .ant-pagination-item
+  background-color: transparent !important
+  border-color: #424242 !important
+
+.dark .AllCard .ant-pagination-item a,
+.contentDark .AllCard .ant-pagination-item a
+  color: rgba(255, 255, 255, 0.85) !important
+
+.dark .AllCard .ant-pagination-item-active,
+.contentDark .AllCard .ant-pagination-item-active
+  background-color: #1677ff !important
+  border-color: #1677ff !important
+
+.dark .AllCard .ant-pagination-item-active a,
+.contentDark .AllCard .ant-pagination-item-active a
+  color: #ffffff !important
