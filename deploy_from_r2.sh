@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 cd /home/ubuntu/memory_blog_rust
-# 加载 .env
+
 export $(grep -v '^\s*#' .env | grep -v '^\s*$' | xargs) 2>/dev/null || true
 echo "=== 从 R2 拉取更新 ==="
 
@@ -23,7 +23,11 @@ os.remove('/tmp/deploy.tar.gz')
 print("✅ 部署文件下载解压完成")
 PYEOF
 
+# 复制新二进制到 target/release/
+cp -f saudade_blog_bin target/release/saudade_blog_bin
 chmod +x target/release/saudade_blog_bin
+rm -f saudade_blog_bin
+
 pkill -f saudade_blog_bin 2>/dev/null || true
 sleep 2
 nohup ./target/release/saudade_blog_bin > server_run.log 2>&1 &
