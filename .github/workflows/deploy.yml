@@ -37,9 +37,10 @@ jobs:
 
       - name: Prepare deploy artifacts
         run: |
-          mkdir -p deploy_artifacts
-          cp target/release/saudade_blog_bin deploy_artifacts/
-          cp -r frontend/dist deploy_artifacts/
+          mkdir -p deploy_artifacts/target/release
+          mkdir -p deploy_artifacts/frontend
+          cp target/release/saudade_blog_bin deploy_artifacts/target/release/
+          cp -r frontend/dist deploy_artifacts/frontend/
 
       - name: Deploy to Server
         uses: easingthemes/ssh-deploy@v4
@@ -57,9 +58,10 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
+            cd /home/ubuntu/memory_blog_rust
             pkill -f "saudade_blog_bin" 2>/dev/null || true
             sleep 2
-            chmod +x /home/ubuntu/memory_blog_rust/saudade_blog_bin
-            nohup /home/ubuntu/memory_blog_rust/saudade_blog_bin > /home/ubuntu/memory_blog_rust/server_run.log 2>&1 &
+            chmod +x target/release/saudade_blog_bin
+            nohup ./target/release/saudade_blog_bin > server_run.log 2>&1 &
             sleep 1
             echo "✅ 后端已重启"
