@@ -62,8 +62,8 @@ const ContentHome = () => {
     }, [topArticles.length])
 
     useEffect(() => {
-        // 从 Dashboard 返回时重新获取（isCachedOther 会被 Dashboard 操作重置）
         if (isCachedOther) return;
+        setLoading(true);
         getNotePage({
             page: 1,
             pageSize: 6
@@ -79,6 +79,8 @@ const ContentHome = () => {
             setOtherArticles(mapped);
             cachedOtherArticles = mapped;
             isCachedOther = true;
+        }).finally(() => {
+            setLoading(false);
         })
     }, []);
 
