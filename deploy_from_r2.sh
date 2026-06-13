@@ -1,9 +1,10 @@
 #!/bin/bash
-# 从 R2 拉取最新构建产物并部署
+set -e
 cd /home/ubuntu/memory_blog_rust
+echo "=== 从 R2 拉取更新 ==="
 
 python3 << 'PYEOF'
-import boto3, os, shutil
+import boto3, os
 from botocore.config import Config
 
 BUCKET = 'saudade-blog'
@@ -17,9 +18,14 @@ s3 = boto3.client('s3',
     config=Config(signature_version='s3v4'),
     region_name='auto')
 
-paginator = s3.get_paginator('list_objects_v2')
-pages = paginator.paginate(Bucket=BUCKET, Prefix=PREFIX)
+# 下载 binary
+os.makedirs(f'{LOCAL}/target/release', exist_ok=True)
+s3.download_file(BUCKET, f'{PREFIX}saudade_blog_bin', f'{LOCAL}/target/release/saudade_blog_bin')
+print("  ✅ binary 下载完成")
 
+# 下载前端文件
+paginator = s3.get_paginator('list_objects_v2')
+pages = paginator.paginate(Bucket=BUCKET, Prefix=f'{PREFIX}frontend/dist/')
 for page in pages:
     for obj in page.get('Contents', []):
         key = obj['Key']
@@ -27,15 +33,14 @@ for page in pages:
         local_path = os.path.join(LOCAL, rel_path)
         os.makedirs(os.path.dirname(local_path), exist_ok=True)
         s3.download_file(BUCKET, key, local_path)
-        print(f"Downloaded: {rel_path}")
-
-print("✅ R2 同步完成")
+print("  ✅ 前端文件下载完成")
 PYEOF
 
 # 重启后端
+echo "=== 重启后端 ==="
 pkill -f saudade_blog_bin 2>/dev/null || true
 sleep 2
 chmod +x target/release/saudade_blog_bin
 nohup ./target/release/saudade_blog_bin > server_run.log 2>&1 &
 sleep 1
-echo "✅ 后端已重启"
+echo "✅ 部署完成"

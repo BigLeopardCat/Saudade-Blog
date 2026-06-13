@@ -33,11 +33,12 @@ jobs:
           npm run build
         working-directory: ./frontend
 
-      - name: Package artifacts
+      - name: Upload to R2
         run: |
-          tar czf deploy.tar.gz             target/release/saudade_blog_bin             frontend/dist
+          pip3 install boto3 -q
+          python3 upload_to_r2.py
 
-      - name: Deploy & Restart
+      - name: Trigger server deploy
         env:
           SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           HOST: ${{ secrets.SERVER_HOST }}
@@ -45,16 +46,5 @@ jobs:
         run: |
           echo "$SSH_KEY" > /tmp/deploy_key
           chmod 600 /tmp/deploy_key
-          scp -o StrictHostKeyChecking=no -i /tmp/deploy_key deploy.tar.gz "$USER@$HOST:/home/ubuntu/memory_blog_rust/deploy.tar.gz"
-          ssh -o StrictHostKeyChecking=no -i /tmp/deploy_key "$USER@$HOST" "
-            cd /home/ubuntu/memory_blog_rust
-            tar xzf deploy.tar.gz
-            rm -f deploy.tar.gz
-            pkill -f saudade_blog_bin 2>/dev/null || true
-            sleep 2
-            chmod +x target/release/saudade_blog_bin
-            nohup ./target/release/saudade_blog_bin > server_run.log 2>&1 &
-            sleep 1
-            echo '✅ 部署完成'
-          "
+          ssh -o StrictHostKeyChecking=no -i /tmp/deploy_key "$USER@$HOST" "bash /home/ubuntu/memory_blog_rust/deploy_from_r2.sh"
           rm -f /tmp/deploy_key
