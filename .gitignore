@@ -8,3 +8,8 @@
 .idea
 uploads/
 backend.log
+# Build artifacts
+dist/
+saudade_blog_bin*
+deploy/
+deploy_artifacts/
