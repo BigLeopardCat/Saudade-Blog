@@ -46,6 +46,6 @@ jobs:
         run: |
           echo "$SSH_KEY" > /tmp/deploy_key
           chmod 600 /tmp/deploy_key
-          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -o ServerAliveInterval=5 -i /tmp/deploy_key "$USER@$HOST" "nohup bash /home/ubuntu/memory_blog_rust/deploy_from_r2.sh > /home/ubuntu/memory_blog_rust/deploy_trigger.log 2>&1 &"
-          echo "✅ 部署已触发（后台运行中）"
+          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i /tmp/deploy_key "$USER@$HOST" "nohup bash /home/ubuntu/memory_blog_rust/deploy_from_r2.sh > /home/ubuntu/memory_blog_rust/deploy_trigger.log 2>&1 &"
+          echo "✅ 部署已触发"
           rm -f /tmp/deploy_key
