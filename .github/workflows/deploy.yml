@@ -47,6 +47,10 @@ jobs:
         run: |
           echo "$SSH_KEY" > /tmp/deploy_key
           chmod 600 /tmp/deploy_key
+          ssh -o StrictHostKeyChecking=no -i /tmp/deploy_key "$USER@$HOST" "
+            rm -rf /home/ubuntu/memory_blog_rust/target/release
+            rm -rf /home/ubuntu/memory_blog_rust/frontend/dist
+          "
           scp -o StrictHostKeyChecking=no -i /tmp/deploy_key -r deploy/* "$USER@$HOST:/home/ubuntu/memory_blog_rust/"
           ssh -o StrictHostKeyChecking=no -i /tmp/deploy_key "$USER@$HOST" "
             cd /home/ubuntu/memory_blog_rust
