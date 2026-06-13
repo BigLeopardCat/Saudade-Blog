@@ -56,17 +56,19 @@ jobs:
           SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           HOST: ${{ secrets.SERVER_HOST }}
           USER: ${{ secrets.SERVER_USER }}
+        shell: bash
         run: |
+          set +e
           mkdir -p ~/.ssh
           echo "$SSH_KEY" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
-          ssh -o ConnectTimeout=10 -o ServerAliveInterval=5 "$USER@$HOST" "
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+          ssh -o ConnectTimeout=15 -o ServerAliveInterval=5 -o StrictHostKeyChecking=no "$USER@$HOST" "
             cd /home/ubuntu/memory_blog_rust
             pkill -f 'saudade_blog_bin' 2>/dev/null || true
             sleep 2
             chmod +x target/release/saudade_blog_bin
             nohup ./target/release/saudade_blog_bin > server_run.log 2>&1 &
             sleep 1
-            echo '✅ 后端已重启'
+            echo '后端已重启'
           "
