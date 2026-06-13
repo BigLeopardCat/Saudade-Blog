@@ -25,8 +25,8 @@ let isCachedOther = false;
 const ContentHome = () => {
     const [currentTop,setCurrentTop] = useState(0);
     const [slideDir, setSlideDir] = useState<'left' | 'right'>('right');
-    const [currentPage,setCurrentPage] = useState(1)
-    const [hasMoreArticles, setHasMoreArticles] = useState(true);
+    const [currentPage,setCurrentPage] = useState(cachedCurrentPage)
+    const [hasMoreArticles, setHasMoreArticles] = useState(cachedHasMoreArticles);
     const [loading, setLoading] = useState(false);
     const location = useLocation();
     
