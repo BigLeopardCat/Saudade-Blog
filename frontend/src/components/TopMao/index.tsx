@@ -1,23 +1,19 @@
 import './index.sass';
-import { useEffect, useState } from 'react';
+import React from 'react';
 
-const TopMao = () => {
-    const [visible, setVisible] = useState(false);
+interface TopMaoProps {
+    currentScrollHeight: number;
+}
 
-    useEffect(() => {
-        const handleScroll = () => {
-            setVisible(window.scrollY > 500);
-        };
-        handleScroll();
-        window.addEventListener('scroll', handleScroll);
-        return () => window.removeEventListener('scroll', handleScroll);
-    }, []);
-
+const TopMao: React.FC<TopMaoProps> = ({ currentScrollHeight }) => {
     const BackToTop = () => {
-        window.scrollTo({ top: 0, behavior: 'smooth' });
+        window.scrollTo({
+            top: 0,
+            behavior: 'smooth'
+        });
     };
     return (
-        <div className={`TopMao ${visible ? 'TopMaoShow' : ''}`} onClick={BackToTop}></div>
+        <div className={`TopMao ${currentScrollHeight > 500 ? 'TopMaoShow' : ''} shake`} onClick={BackToTop}></div>
     );
 };
 
