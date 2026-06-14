@@ -140,11 +140,13 @@ const ReadArticle = () => {
                         }
                     }
 
-                    if (targetElement) {
-                        targetElement.scrollIntoView({
-                            behavior: 'smooth',
-                            block: 'nearest',
-                            inline: 'nearest'
+                    if (targetElement && navContainer) {
+                        const containerRect = navContainer.getBoundingClientRect();
+                        const elementRect = targetElement.getBoundingClientRect();
+                        const relativeTop = elementRect.top - containerRect.top + navContainer.scrollTop;
+                        navContainer.scrollTo({
+                            top: relativeTop - 20,
+                            behavior: 'smooth'
                         });
                     }
                 });
@@ -157,11 +159,13 @@ const ReadArticle = () => {
                 });
                 
                 const initialActive = navContainer.querySelector('.active') as HTMLElement;
-                if (initialActive) {
-                    initialActive.scrollIntoView({
-                        behavior: 'smooth',
-                        block: 'nearest',
-                        inline: 'nearest'
+                if (initialActive && navContainer) {
+                    const containerRect = navContainer.getBoundingClientRect();
+                    const elementRect = initialActive.getBoundingClientRect();
+                    const relativeTop = elementRect.top - containerRect.top + navContainer.scrollTop;
+                    navContainer.scrollTo({
+                        top: relativeTop - 20,
+                        behavior: 'smooth'
                     });
                 }
             }
