@@ -26,7 +26,7 @@ function App() {
     return (
         <div className={isDark ? 'frontDark frontRoot' : 'frontRoot'}>
             <Head setDark={setDark} isDark={isDark} scrollHeight={scrollHeight}/>
-            <TopMao currentScrollHeight={scrollHeight}/>
+            <TopMao />
             <Outlet />
             <Footer />
             <BottomMenu scrollHeight={scrollHeight} isDark={isDark} setDark={setDark}/>
