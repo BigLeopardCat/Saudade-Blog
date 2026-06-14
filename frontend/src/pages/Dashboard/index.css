@@ -213,34 +213,6 @@ li.search-box input {
     color: var(--shell-color);
 }
 
-/* 暗黑模式 hover 改用边框高亮 */
-.dark .shell li:hover {
-    outline: 1px solid #695CFE !important;
-    outline-offset: -1px !important;
-    border-radius: 6px !important;
-    background-color: transparent !important;
-}
-
-.dark .shell li:hover .icon,
-.dark .shell li:hover .text,
-.dark .nav-links:hover .icon,
-.dark .nav-links:hover .text {
-    color: #695CFE !important;
-}
-
-/* 暗黑模式 nav_select 选中样式 */
-.dark .nav_select {
-    background-color: transparent !important;
-    outline: 1px solid #695CFE !important;
-    outline-offset: -1px !important;
-    border-radius: 6px !important;
-}
-
-.dark .nav_select .icon,
-.dark .nav_select .text {
-    color: #695CFE !important;
-}
-
 .menu-bar {
     scrollbar-width: none !important;
     -ms-overflow-style: none !important;
@@ -384,17 +356,6 @@ li.search-box input {
     background-color: #b7dcfa;
     border-radius: 6px;
     transition: 0.5s;
-}
-
-.dark .nav_select{
-    background-color: transparent;
-    outline: 1px solid #695CFE;
-    outline-offset: -1px;
-}
-
-.dark .nav_select .icon,
-.dark .nav_select .text {
-    color: #695CFE;
 }
 
 
