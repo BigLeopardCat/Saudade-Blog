@@ -47,6 +47,7 @@ const Dashboard = () => {
                         location.hash === '#/dashboard/albums' ? 4 :
                             location.hash === '#/dashboard/friends' ? 5 :
                                 location.hash === '#/dashboard/analytics' ? 6 :
+                                    location.hash === '#/dashboard/usercontrol' ? 7 :
                                     location.hash.startsWith('#/dashboard/notes') ? 2 : 1;
         setSelectCurrent(currentHashCode)
         setLoading(true);
@@ -256,7 +257,7 @@ const Dashboard = () => {
                                     </div>
 
                                     <div className="bottom-content">
-                                        <li className="nav-links" onClick={() => navigate('/dashboard/usercontrol')}>
+                                        <li className={`nav-links ${SelectCurrent === 7 ? 'nav_select' : ''}`} onClick={() => { navigate('/dashboard/usercontrol'); setSelectCurrent(7); }}>
                                             <i className="iconfont icon-iconfontcog icon"></i>
                                             <span className="text nac-text">用户管理</span>
                                         </li>
@@ -281,7 +282,7 @@ const Dashboard = () => {
                                 </div>
                             </nav>
                         </div>
-                        <Card style={{ width: "90%",height: '95%' ,marginLeft:80}} className={`Card ${isDarkMode ? 'CardDark' : ''}`}>
+                        <Card style={{ width: isShellClosed ? "calc(100% - 140px)" : "calc(100% - 300px)", height: '95%' ,marginLeft: isShellClosed ? 100 : 260}} className={`Card ${isDarkMode ? 'CardDark' : ''}`}>
                             <MainContext.Provider value={isDarkMode.toString()}>
                                 <Outlet />
                             </MainContext.Provider>
