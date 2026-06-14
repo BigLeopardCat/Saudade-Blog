@@ -5,6 +5,7 @@ import {useNavigate} from "react-router-dom";
 import {debounce} from 'lodash';
 import Switch from "../../components/Switch";
 import SearchButton2 from "../../components/Buttons/SearchButton2";
+import TopMao from "../../components/TopMao";
 import {fetchCategories} from "../../store/components/categories.tsx";
 import {useDispatch, useSelector} from "react-redux";
 import {fetchTags} from "../../store/components/tags.tsx";
@@ -32,7 +33,6 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
     const navigate = useNavigate();
     const [animation,setAnimation] = useState('');
     const categoryList = useSelector((state: any) => state.categories.categories)
-    const safeCategoryList = Array.isArray(categoryList) ? categoryList : []
     const avatar = useSelector((state:{user:UserState}) => state.user.avatar)
     const blogTitle = useSelector((state:{user:{blogTitle: string}}) => state.user.blogTitle)
 
@@ -161,7 +161,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                                          style={{fontSize: 30}}></i>分类</div>
                             </li>
                             {showMobileCategory && <ul className='twoBar'>
-                                {safeCategoryList.map((item: { categoryKey: Key | null | undefined; pathName: any; icon: any; categoryTitle: string | number | boolean | ReactElement | Iterable<ReactNode> | ReactPortal | null | undefined; }) => (
+                                {categoryList.map((item: { categoryKey: Key | null | undefined; pathName: any; icon: any; categoryTitle: string | number | boolean | ReactElement | Iterable<ReactNode> | ReactPortal | null | undefined; }) => (
                                     <li key={item.categoryKey} onClick={() => navigate(`category/${item.pathName}`)} style={{fontSize: 15}}><i className={`fa ${item.icon}`} aria-hidden="true" style={{verticalAlign: 'middle'}}></i>{item.categoryTitle}</li>
                                 ))}
                             </ul>}
@@ -178,7 +178,8 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                     </div>
                 </div>
             </div>
-<div className="headContainer" style={{
+            <TopMao currentScrollHeight={scrollHeight}/>
+            <div className="headContainer" style={{
                 margin: scrollHeight ? 0 : '',
                 borderRadius: scrollHeight ? 0 : '',
                 background: scrollHeight ? 'rgba(0,0,0,0.66)' : '',
@@ -218,7 +219,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                                     color: 'rgba(0, 0, 0, 0.83)'
                                 }}></i>
                                 <ul>
-                                    {safeCategoryList.map((item: { categoryKey: Key | null | undefined; pathName: any; icon: any; categoryTitle: string | number | boolean | ReactElement | Iterable<ReactNode> | ReactPortal | null | undefined; }) => (
+                                    {categoryList.map((item: { categoryKey: Key | null | undefined; pathName: any; icon: any; categoryTitle: string | number | boolean | ReactElement | Iterable<ReactNode> | ReactPortal | null | undefined; }) => (
                                         <li key={item.categoryKey} onClick={() => navigate(`category/${item.pathName}`)}><i className={`iconfont ${item.icon}`} style={{fontSize: 20}}></i>{item.categoryTitle}</li>
                                     ))}
                                 </ul>
