@@ -4,6 +4,7 @@ import Footer from "./frontHome/Footer";
 import './frontHome/main.css';
 import { useEffect, useState } from "react";
 import './App.sass';
+import TopMao from './components/TopMao'
 import BottomMenu from "./components/BottomMenu";
 
 function App() {
@@ -25,6 +26,7 @@ function App() {
     return (
         <div className={isDark ? 'frontDark frontRoot' : 'frontRoot'}>
             <Head setDark={setDark} isDark={isDark} scrollHeight={scrollHeight}/>
+            <TopMao currentScrollHeight={scrollHeight}/>
             <Outlet />
             <Footer />
             <BottomMenu scrollHeight={scrollHeight} isDark={isDark} setDark={setDark}/>

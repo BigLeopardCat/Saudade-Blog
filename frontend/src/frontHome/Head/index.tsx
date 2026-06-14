@@ -5,7 +5,6 @@ import {useNavigate} from "react-router-dom";
 import {debounce} from 'lodash';
 import Switch from "../../components/Switch";
 import SearchButton2 from "../../components/Buttons/SearchButton2";
-import TopMao from "../../components/TopMao";
 import {fetchCategories} from "../../store/components/categories.tsx";
 import {useDispatch, useSelector} from "react-redux";
 import {fetchTags} from "../../store/components/tags.tsx";
@@ -179,8 +178,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                     </div>
                 </div>
             </div>
-            <TopMao currentScrollHeight={scrollHeight}/>
-            <div className="headContainer" style={{
+<div className="headContainer" style={{
                 margin: scrollHeight ? 0 : '',
                 borderRadius: scrollHeight ? 0 : '',
                 background: scrollHeight ? 'rgba(0,0,0,0.66)' : '',
