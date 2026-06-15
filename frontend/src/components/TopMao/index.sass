@@ -1,14 +1,13 @@
-@keyframes topMaoShake
-  0%
-    transform: translateY(-900px)
+@keyframes catDangle
+  0%, 100%
+    transform: translateY(0)
   50%
-    transition: translateY(-890px)
-  100%
-    transform: translateY(-900px)
+    transform: translateY(-10px)
+    animation-timing-function: ease-in-out
 
 .TopMao
   width: 70px
-  height: 82vh
+  height: 88vh
   max-height: 900px
   position: absolute
   top: -100vh
@@ -22,3 +21,4 @@
 
 .TopMaoShow
   top: 0
+  animation: catDangle 2.5s ease-in-out infinite
