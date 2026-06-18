@@ -21,8 +21,10 @@ import frontmatter from "@bytemd/plugin-frontmatter";
 import gemoji from "@bytemd/plugin-gemoji";
 import highlight from "@bytemd/plugin-highlight";
 import mediumZoom from '@bytemd/plugin-medium-zoom'
+import mermaid from '@bytemd/plugin-mermaid'
 import 'bytemd/dist/index.css'
 import 'github-markdown-css/github-markdown-light.css'
+import '@bytemd/plugin-mermaid/mermaid.css'
 import 'highlight.js/styles/atom-one-dark.css' // Import Highlight.js styles
 
 const plugins = [
@@ -31,7 +33,8 @@ const plugins = [
     frontmatter(),
     gemoji(),
     highlight(),
-    mediumZoom()
+    mediumZoom(),
+    mermaid()
 ]
 
 const ReadArticle = () => {
