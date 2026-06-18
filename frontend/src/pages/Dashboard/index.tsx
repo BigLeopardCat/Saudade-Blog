@@ -238,14 +238,14 @@ const Dashboard = () => {
                                     <div className="menu">
                                         <li className="search-box" onClick={handleSearchClick}>
                                             <i className="iconfont icon-sousuo1 icon"></i>
-                                            <input type="text" placeholder="search..." value={searchVal} onChange={(e) => setSearchVal(e.target.value)} onKeyDown={(e) => {if(e.key === "Enter") { navigate("notes?keyword="+searchVal) }}} />
+                                            <input type="text" placeholder="search..." value={searchVal} onChange={(e) => setSearchVal(e.target.value)} onKeyDown={(e) => {if(e.key === "Enter") { navigate('/dashboard/notes?keyword=' + searchVal) }}} />
                                         </li>
 
                                         <ul className="menu-links">
                                             {sidebar.map(item => (
                                                 <li className={`nav-links ${SelectCurrent === item.index ? 'nav_select' : ''}`}
                                                     onClick={() => {
-                                                        navigate(item.to)
+                                                        navigate(item.to ? `/dashboard/${item.to}` : '/dashboard')
                                                         setSelectCurrent(item.index)
                                                     }} key={item.index}>
                                                     <i className={`iconfont ${item.icon} icon`}></i>
@@ -256,7 +256,7 @@ const Dashboard = () => {
                                     </div>
 
                                     <div className="bottom-content">
-                                        <li className="nav-links" onClick={() => navigate('usercontrol')}>
+                                        <li className="nav-links" onClick={() => navigate('/dashboard/usercontrol')}>
                                             <i className="iconfont icon-iconfontcog icon"></i>
                                             <span className="text nac-text">用户管理</span>
                                         </li>

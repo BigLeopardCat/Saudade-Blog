@@ -127,7 +127,7 @@ const Home = () => {
         };
     }, []);
 
-    const isDark = JSON.parse(useContext(MainContext))
+    const isDark = useContext(MainContext) === 'true'
         return (
         <div className="home">
 
