@@ -24,7 +24,6 @@ import mediumZoom from '@bytemd/plugin-medium-zoom'
 import mermaid from '@bytemd/plugin-mermaid'
 import 'bytemd/dist/index.css'
 import 'github-markdown-css/github-markdown-light.css'
-import '@bytemd/plugin-mermaid/mermaid.css'
 import 'highlight.js/styles/atom-one-dark.css' // Import Highlight.js styles
 
 const plugins = [
