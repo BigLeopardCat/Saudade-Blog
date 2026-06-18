@@ -57,6 +57,8 @@ jobs:
 
       - name: Build Frontend
         if: needs.check-changes.outputs.frontend == 'true'
+        env:
+          NODE_OPTIONS: "--max-old-space-size=4096"
         run: |
           npm ci
           npm run build
