@@ -111,4 +111,23 @@ function renderNoteTags(noteTags: number[],tagList: any){
     })
 }
 
-export {getTagOne,getTagTwo,buildTagTree,delTag,initTree,addTagOne,addTagTwo,renderNoteTags}
+
+// 更新一级标签
+function updateTagOne(id: number, data: { title: string; color: string }) {
+    return http({
+        url: `/api/protected/tagone/${id}`,
+        method: 'PUT',
+        data: data
+    })
+}
+
+// 更新二级标签
+function updateTagTwo(id: number, data: { title: string; color: string }) {
+    return http({
+        url: `/api/protected/tagtwo/${id}`,
+        method: 'PUT',
+        data: data
+    })
+}
+
+export {getTagOne,getTagTwo,buildTagTree,delTag,initTree,addTagOne,addTagTwo,renderNoteTags,updateTagOne,updateTagTwo}

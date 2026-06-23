@@ -126,3 +126,49 @@ pub async fn delete_tags(
         
     Json(ApiResponse::success("Deleted".to_string()))
 }
+
+#[derive(Deserialize)]
+pub struct UpdateTagOne {
+    pub title: String,
+    pub color: String,
+}
+
+pub async fn update_tag_one(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<i32>,
+    Json(payload): Json<UpdateTagOne>,
+) -> Json<ApiResponse<String>> {
+    use sea_orm::EntityTrait;
+    
+    let t = tag_one::ActiveModel {
+        id: Set(id),
+        name: Set(payload.title),
+        color: Set(Some(payload.color)),
+        ..Default::default()
+    };
+    tag_one::Entity::update(t).exec(&state.db).await.unwrap();
+    Json(ApiResponse::success("Updated".to_string()))
+}
+
+#[derive(Deserialize)]
+pub struct UpdateTagTwo {
+    pub title: String,
+    pub color: String,
+}
+
+pub async fn update_tag_two(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<i32>,
+    Json(payload): Json<UpdateTagTwo>,
+) -> Json<ApiResponse<String>> {
+    use sea_orm::EntityTrait;
+    
+    let t = tag_two::ActiveModel {
+        id: Set(id),
+        name: Set(payload.title),
+        color: Set(Some(payload.color)),
+        ..Default::default()
+    };
+    tag_two::Entity::update(t).exec(&state.db).await.unwrap();
+    Json(ApiResponse::success("Updated".to_string()))
+}
