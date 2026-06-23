@@ -1,7 +1,6 @@
 import LazyImage from "../../../components/LazyImage";
 import {Avatar} from "antd";
 import {motion} from "framer-motion";
-import {useNavigate} from "react-router-dom";
 import React, {useEffect, useRef, useState} from "react";
 import {NoteType} from "../../../interface/NoteType";
 import {CategoriesType} from "../../../interface/CategoriesType";
@@ -25,7 +24,6 @@ interface ArticleOption {
 }
 
 const Article:React.FC<ArticleOption> = ({ item, index, Categories, avatar, name, tagList }) => {
-    const navigate = useNavigate();
     const [isVisible, setIsVisible] = useState(false);
     const elementRef = useRef(null);
 
@@ -57,7 +55,7 @@ const Article:React.FC<ArticleOption> = ({ item, index, Categories, avatar, name
             ref={elementRef}
             className="article"
         >
-            <div className="ArticleCard" onClick={() => navigate(`/article/${item.key}`)}>
+            <div className="ArticleCard" onClick={() => window.open(`/article/${item.key}`, "_blank")}>
                 <div className="ArticleCover">
                     {isVisible && <LazyImage src={item.cover} />}
                 </div>
