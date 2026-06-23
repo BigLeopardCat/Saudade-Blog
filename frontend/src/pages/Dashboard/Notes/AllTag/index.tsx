@@ -4,6 +4,7 @@ import {
     ColorPicker,
     Form,
     Input,
+    Modal,
     Select,
     Tag,
     Tree,
@@ -11,32 +12,49 @@ import {
 } from "antd";
 import React, {useEffect, useRef, useState} from "react";
 import {TagsOutlined} from '@ant-design/icons'
-import {TagLevelOne,newTag} from "../../../../interface/TagType";
+import {TagLevelOne} from "../../../../interface/TagType";
 import {fetchTags} from "../../../../store/components/tags.tsx";
 import {useDispatch} from "react-redux";
-import {addTagOne, addTagTwo, delTag, initTree} from "../../../../apis/TagMethods.tsx";
+import {addTagOne, addTagTwo, delTag, initTree, updateTagOne, updateTagTwo} from "../../../../apis/TagMethods.tsx";
 
 const AllTag = () => {
-    // hooks区域
     const tree = useRef(null)
     const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([]);
+    const [selectedNode, setSelectedNode] = useState<any>(null);
     const [level,setLevel] = useState('level_1')
     const [staticDate,setStaticDate] = useState<TagLevelOne[]>([])
+    const [editModalOpen, setEditModalOpen] = useState(false);
+    const [editNode, setEditNode] = useState<any>(null);
     const dispatch = useDispatch()
+
     useEffect(() => {
         initTree().then((res) => {
             setStaticDate(res)
         })
     }, []);
 
-    //回调函数
+    // 查找选中节点
+    const findNodeByKey = (key: React.Key, nodes: TagLevelOne[]): any => {
+        for (const node of nodes) {
+            if (node.key === key) return node;
+            if (node.children) {
+                const found = node.children.find(c => c.key === key);
+                if (found) return found;
+            }
+        }
+        return null;
+    };
+
     const onSelect = (selectedKeysValue: React.Key[]) => {
-        console.log(selectedKeysValue)
         setSelectedKeys(selectedKeysValue);
+        if (selectedKeysValue.length === 1) {
+            setSelectedNode(findNodeByKey(selectedKeysValue[0], staticDate));
+        } else {
+            setSelectedNode(null);
+        }
     };
 
     const handleTagTypeChange = (value:string) => {
-        console.log(value)
         setLevel(value);
     };
 
@@ -45,34 +63,68 @@ const AllTag = () => {
             message.warning('待选中')
             return
         }
-
         const res = await delTag(selectedKeys)
         if(res.status === 200){
             const Tree = await initTree()
             setStaticDate(Tree)
             setSelectedKeys([])
-            if(tree.current)
-            { // @ts-ignore
+            setSelectedNode(null)
+            if(tree.current) {
+                // @ts-ignore
                 tree.current.state.selectedKeys = []
             }
             dispatch<any>(fetchTags())
             message.success("删除成功")
         }
     };
-    const onfinish = async (values: newTag) => {
+
+    // 打开编辑弹窗
+    const openEdit = () => {
+        if (!selectedNode) {
+            message.warning('请先选中一个标签')
+            return
+        }
+        setEditNode({...selectedNode})
+        setEditModalOpen(true)
+    };
+
+    // 提交编辑
+    const handleEditOk = async () => {
+        if (!editNode) return
+        try {
+            const isLevel1 = !editNode.fatherTag
+            const data = {
+                title: editNode.title,
+                color: editNode.color
+            }
+            if (isLevel1) {
+                await updateTagOne(editNode.key, data)
+            } else {
+                await updateTagTwo(editNode.key, data)
+            }
+            const Tree = await initTree()
+            setStaticDate(Tree)
+            dispatch<any>(fetchTags())
+            setEditModalOpen(false)
+            setEditNode(null)
+            message.success('更新成功')
+        } catch (error) {
+            message.error('更新失败')
+        }
+    };
+
+    const onfinish = async (values: any) => {
         if (values.level === 'level_1') {
             let color: string
             if (values.color && values.color.toHexString) {
                 color = values.color.toHexString();
             } else {
-                color = 'black'; // 否则使用默认颜色 #fff
+                color = 'black';
             }
-
             const newTag = {
                 title: values.title,
                 color: color,
             };
-
             try {
                 const res = await addTagOne(newTag)
                 if(res.status === 200){
@@ -94,7 +146,6 @@ const AllTag = () => {
                     color: fatherTag.color,
                     fatherTag: fatherTag.key,
                 }
-
                 try {
                     const res = await addTagTwo(newTag)
                     if(res.status === 200){
@@ -114,7 +165,6 @@ const AllTag = () => {
         <div className="tag_card">
             <div className='newTagForm'>
                 <Form
-                    // onFinish={onFinish}
                     initialValues={{ tagType: '一级标签' }}
                     style={{ maxWidth: '400px' }}
                     name="标签管理"
@@ -144,7 +194,7 @@ const AllTag = () => {
                         label="父标签"
                         shouldUpdate
                     >
-                        <Select options={staticDate.map(({ children, ...rest }) => ({ ...rest })).map(tag => ({
+                        <Select options={staticDate.map(({ children, ...rest }) => rest).map(tag => ({
                             value: tag.key,
                             label: tag.title
                         }))} />
@@ -158,16 +208,12 @@ const AllTag = () => {
                     </Form.Item>}
 
                     <Form.Item>
-                        <Button type="primary"  htmlType="submit">
-                            添加
-                        </Button>
-                        <Button type="primary" style={{marginLeft: 20,backgroundColor: '#f5222d'}} onClick={Delete}>
-                            删除
-                        </Button>
-
+                        <Button type="primary" htmlType="submit">添加</Button>
+                        <Button type="primary" style={{marginLeft: 20}} onClick={openEdit}>编辑</Button>
+                        <Button type="primary" style={{marginLeft: 20, backgroundColor: '#f5222d'}} onClick={Delete}>删除</Button>
                     </Form.Item>
                     <Alert 
-                        message={`选中删除标签：${selectedKeys.length} 个`} 
+                        message={`选中标签：${selectedKeys.length} 个`} 
                         type="warning" 
                         showIcon 
                         style={{
@@ -197,9 +243,39 @@ const AllTag = () => {
                     height={500}
                 />
             </div>
-
         </div>
+
+        {/* 编辑标签弹窗 */}
+        <Modal
+            title="编辑标签"
+            open={editModalOpen}
+            onOk={handleEditOk}
+            onCancel={() => { setEditModalOpen(false); setEditNode(null); }}
+            okText="保存"
+            cancelText="取消"
+        >
+            {editNode && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                    <div>
+                        <label style={{ display: 'block', marginBottom: 4 }}>标签名称</label>
+                        <Input
+                            value={editNode.title}
+                            onChange={(e) => setEditNode({...editNode, title: e.target.value})}
+                        />
+                    </div>
+                    <div>
+                        <label style={{ display: 'block', marginBottom: 4 }}>标签颜色</label>
+                        <ColorPicker
+                            value={editNode.color}
+                            onChange={(c) => setEditNode({...editNode, color: c.toHexString()})}
+                            showText
+                            format="hex"
+                        />
+                    </div>
+                </div>
+            )}
+        </Modal>
     </>
 }
 
-export default  AllTag
+export default AllTag

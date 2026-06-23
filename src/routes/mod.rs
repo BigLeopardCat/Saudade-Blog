@@ -98,6 +98,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/protected/tagone", post(tags::create_tag_one))
         .route("/api/protected/tagtwo", post(tags::create_tag_two))
         .route("/api/protected/tag", delete(tags::delete_tags))
+        .route("/api/protected/tagone/:id", put(tags::update_tag_one))
+        .route("/api/protected/tagtwo/:id", put(tags::update_tag_two))
 
         // Friends
         .route("/api/protected/friend", post(friends::create_friend)) 
