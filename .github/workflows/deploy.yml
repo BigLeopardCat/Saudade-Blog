@@ -78,6 +78,57 @@ jobs:
             echo "没有代码变更，跳过部署"
           fi
 
+
+      - name: Upload frontend dist to R2 (for CDN)
+        if: needs.check-changes.outputs.frontend == 'true'
+        env:
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_ACCESS_KEY: ${{ secrets.R2_ACCESS_KEY }}
+          R2_SECRET_KEY: ${{ secrets.R2_SECRET_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          pip3 install boto3 -q
+          python3 << 'PYEOF'
+          import boto3, os, mimetypes
+          from botocore.config import Config
+
+          mimetypes.add_type('text/css', '.css')
+          mimetypes.add_type('application/javascript', '.js')
+          mimetypes.add_type('application/javascript', '.mjs')
+          mimetypes.add_type('image/svg+xml', '.svg')
+          mimetypes.add_type('font/woff', '.woff')
+          mimetypes.add_type('font/woff2', '.woff2')
+          mimetypes.add_type('font/ttf', '.ttf')
+          mimetypes.add_type('application/vnd.ms-fontobject', '.eot')
+
+          s3 = boto3.client('s3',
+              endpoint_url=os.environ["R2_ENDPOINT"],
+              aws_access_key_id=os.environ["R2_ACCESS_KEY"],
+              aws_secret_access_key=os.environ["R2_SECRET_KEY"],
+              config=Config(signature_version="s3v4"),
+              region_name="auto")
+
+          bucket = os.environ["R2_BUCKET"]
+          dist = "frontend/dist"
+
+          for root, dirs, files in os.walk(dist):
+              for f in files:
+                  local_path = os.path.join(root, f)
+                  rel_path = os.path.relpath(local_path, ".")
+                  r2_key = f"deploy/{rel_path.replace(os.sep, chr(47))}"
+
+                  content_type, _ = mimetypes.guess_type(f)
+                  if not content_type:
+                      content_type = "application/octet-stream"
+
+                  extra_args = {"ContentType": content_type}
+                  if f.endswith(".html"):
+                      extra_args["CacheControl"] = "no-store, no-cache, must-revalidate"
+
+                  s3.upload_file(local_path, bucket, r2_key, ExtraArgs=extra_args)
+                  print(f"✅ {r2_key}")
+          print("✅ 前端dist已上传到R2 (CDN)")
+          PYEOF
       - name: Trigger server deploy
         if: needs.check-changes.outputs.backend == 'true' || needs.check-changes.outputs.frontend == 'true'
         env:
