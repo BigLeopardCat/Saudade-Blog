@@ -132,6 +132,8 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
     }
 
     return (
+        <>
+            {phoneBarShow && <div className="phoneSideOverlay" onClick={() => setPhoneBarShow(false)} />}
         <header style={{display: 'flex', flexDirection: 'row', position: 'sticky', width: '100%', top: 0, zIndex: '999'}} className={isDark ? 'frontDark' : ''}>
             <div className={`${phoneBarShow ? 'openBar' : ''} phoneSide`} style={{position: "sticky"}}>
                 <div className="phoneBarContainer">
@@ -191,7 +193,8 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                             fontSize: 35,
                             marginLeft: 260,
                             cursor: 'pointer',
-                            transition: '0.5s'
+                            transition: '0.5s',
+                            color: 'rgba(255,0,0,0.7)'
                         }} onClick={() => setPhoneBarShow(false)}></i> :
                         <i className="iconfont icon-bars"
                            style={{fontSize: 35, marginLeft: 10, cursor: 'pointer', transition: '0.5s'}}
@@ -364,6 +367,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
             </ConfigProvider>
             {animation !== '' && <MoonToSun status={animation} />}
         </header>
+        </>
     );
 };
 
