@@ -312,6 +312,7 @@ const  AllCategorize = () => {
             onCancel={handleCancel}
             okText={isEdit=== 0? '添加' : '保存'}
             cancelText='取消'
+            getContainer={false}
         >
             <Form {...formItemLayout} variant="filled" style={{ maxWidth: 600 }} form={form} onFinish={onfinish}>
                 <Form.Item label="分类名称" name="categorie" >
@@ -343,7 +344,7 @@ const  AllCategorize = () => {
             </Form>
         </Modal>
 
-        <Modal title="删除确认" open={isModalOpen} onOk={handledelOk} onCancel={handledelCancel} okText="确定" cancelText="取消">
+        <Modal title="删除确认" open={isModalOpen} onOk={handledelOk} onCancel={handledelCancel} okText="确定" cancelText="取消" getContainer={false}>
             是否删除选中所有分类?
         </Modal>
     </>
