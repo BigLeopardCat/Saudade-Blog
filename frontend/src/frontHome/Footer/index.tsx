@@ -20,9 +20,13 @@ const Footer = () => {
             <em><p style={{marginTop: 10}}>{onySay}</p></em>
             <p style={{marginTop:10,marginBottom:10,textAlign:"center"}}><a className="link" target="_blank" rel="noreferrer" href="https://beian.miit.gov.cn/">{blogIcp}</a> | <img src={beianIcon} style={{width:16,height:16,verticalAlign:"middle",marginRight:4}} /><a className="link" href="https://beian.mps.gov.cn/#/query/webSearch?code=37048102006993" rel="noreferrer" target="_blank">鲁公网安备37048102006993号</a></p>
             <p>Powered by <span>Memory</span></p>
-            <p style={{marginTop:8,fontSize:'0.8em',opacity:0.6,textAlign:'center'}}>
-                Hosted on <a href="https://cloud.tencent.com" target="_blank" rel="noreferrer" style={{color:'inherit'}}>Tencent Cloud</a>
-                &amp; <a href="https://www.cloudflare.com" target="_blank" rel="noreferrer" style={{color:'inherit'}}>Cloudflare</a>
+            <p style={{marginTop:8,fontSize:'0.8em',opacity:0.6,textAlign:'center',display:'flex',justifyContent:'center',gap:12,alignItems:'center'}}>
+                <a href="https://cloud.tencent.com" target="_blank" rel="noreferrer" title="Tencent Cloud">
+                    <img src="https://cloud.tencent.com/favicon.ico" style={{width:18,height:18}} />
+                </a>
+                <a href="https://www.cloudflare.com" target="_blank" rel="noreferrer" title="Cloudflare">
+                    <img src="https://www.cloudflare.com/favicon.ico" style={{width:18,height:18}} />
+                </a>
             </p>
         </footer>
     </>
