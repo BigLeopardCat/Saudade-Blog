@@ -17,7 +17,7 @@ const Footer = () => {
             <p style={{ marginTop: 5, fontSize: '0.9em', opacity: 0.8, textAlign: 'center', width: '100%' }}>Based on work refactored, extended and optimized with <span style={{ fontWeight: 'bold', color: '#dea584' }}>Rust</span> &amp; <span style={{ fontWeight: 'bold', color: '#667ea5' }}>Axum</span>.</p>
             <p style={{ marginTop: 5, fontSize: '0.9em', opacity: 0.8, textAlign: 'center', width: '100%' }}>Copyright &copy; 2026 Sora Saudade.</p>
             <em><p style={{marginTop: 10}}>{onySay}</p></em>
-            <p style={{marginTop:10,marginBottom:10}}><a className="link" target="_blank" rel="noreferrer" href="https://beian.miit.gov.cn/">{blogIcp}</a></p>
+            <p style={{marginTop:10,marginBottom:10,textAlign:"center"}}><a className="link" target="_blank" rel="noreferrer" href="https://beian.miit.gov.cn/">{blogIcp}</a> | <a href="https://beian.mps.gov.cn/#/query/webSearch?code=37048102006993" rel="noreferrer" target="_blank">鲁公网安备37048102006993号</a></p>
             <p>Powered by <span>Memory</span></p>
         </footer>
     </>
