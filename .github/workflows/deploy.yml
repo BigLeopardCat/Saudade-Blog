@@ -130,7 +130,7 @@ jobs:
           print("✅ 前端dist已上传到R2 (CDN)")
           PYEOF
       - name: Trigger server deploy
-        if: needs.check-changes.outputs.backend == 'true'
+        if: needs.check-changes.outputs.backend == 'true' || needs.check-changes.outputs.frontend == 'true'
         env:
           SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           SSH_HOST: ${{ secrets.SERVER_HOST }}

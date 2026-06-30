@@ -24,10 +24,10 @@ const Footer = () => {
             <p>Powered by <span>Memory</span></p>
             <p style={{marginTop:8,fontSize:'0.8em',opacity:0.6,textAlign:'center',display:'flex',justifyContent:'center',gap:12,alignItems:'center'}}>
                 <a href="https://cloud.tencent.com" target="_blank" rel="noreferrer" title="Tencent Cloud">
-                    <img src={txLogo} style={{width:26,height:26}} />
+                    <img src={txLogo} style={{width:20,height:20}} />
                 </a>
                 <a href="https://www.cloudflare.com" target="_blank" rel="noreferrer" title="Cloudflare">
-                    <img src={cfLogo} style={{width:26,height:26}} />
+                    <img src={cfLogo} style={{width:20,height:20}} />
                 </a>
             </p>
         </footer>
