@@ -1,5 +1,7 @@
 import './index.sass'
 import beianIcon from '../../assets/备案图标.png'
+import cfLogo from '../../assets/Cloudflare_Logo.svg'
+import txLogo from '../../assets/Tencent_Cloud_logo.svg'
 import {useEffect, useState} from "react";
 import axios from "axios";
 import {useSelector} from "react-redux";
@@ -22,10 +24,10 @@ const Footer = () => {
             <p>Powered by <span>Memory</span></p>
             <p style={{marginTop:8,fontSize:'0.8em',opacity:0.6,textAlign:'center',display:'flex',justifyContent:'center',gap:12,alignItems:'center'}}>
                 <a href="https://cloud.tencent.com" target="_blank" rel="noreferrer" title="Tencent Cloud">
-                    <img src="https://cloud.tencent.com/favicon.ico" style={{width:18,height:18}} />
+                    <img src={txLogo} style={{width:20,height:20}} />
                 </a>
                 <a href="https://www.cloudflare.com" target="_blank" rel="noreferrer" title="Cloudflare">
-                    <img src="https://www.cloudflare.com/favicon.ico" style={{width:18,height:18}} />
+                    <img src={cfLogo} style={{width:20,height:20}} />
                 </a>
             </p>
         </footer>
