@@ -2,7 +2,7 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig({
-    base: '/',
+    base: 'https://cdn.cat0.qzz.io/deploy/frontend/dist/',
     mode: 'production',
     plugins: [
         react(),
