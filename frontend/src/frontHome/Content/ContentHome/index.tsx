@@ -1,4 +1,4 @@
-import AnnouncementModal from "../../components/AnnouncementModal";
+import AnnouncementModal from "../../../components/AnnouncementModal";
 import './index.sass'
 import {Avatar, Tag} from "antd";
 import SocialButton from "../../../components/Buttons/SocialButton";

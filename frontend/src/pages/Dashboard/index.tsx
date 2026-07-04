@@ -138,13 +138,6 @@ const Dashboard = () => {
         },
         {
             index: 4,
-        {
-            index: 5,
-            name: '公告',
-            icon: 'icon-gonggao',
-            to: 'announcement',
-            active: false
-        },
             name: '图库',
             icon: 'icon-xiangce',
             to: 'albums',
@@ -152,13 +145,20 @@ const Dashboard = () => {
         },
         {
             index: 5,
+            name: '公告',
+            icon: 'icon-gonggao',
+            to: 'announcement',
+            active: false
+        },
+        {
+            index: 6,
             name: '友链圈',
             icon: 'icon-youlianguanli',
             to: 'friends',
             active: false
         },
         {
-            index: 6,
+            index: 7,
             name: '数据板',
             icon: 'icon-zhexiantu',
             to: 'analytics',
