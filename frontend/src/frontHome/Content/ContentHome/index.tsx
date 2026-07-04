@@ -1,3 +1,4 @@
+import AnnouncementModal from "../../components/AnnouncementModal";
 import './index.sass'
 import {Avatar, Tag} from "antd";
 import SocialButton from "../../../components/Buttons/SocialButton";
@@ -139,6 +140,8 @@ const ContentHome = () => {
 
     return <>
         <div className="SelfDescription">
+            <AnnouncementModal />
+
             <div className="SayWords">
                <div>
                    <h2>Hi!👋</h2>
@@ -220,13 +223,14 @@ const ContentHome = () => {
                 </div>
                 </div>
                 
-                <div className="topGlassBar"></div>
-                <div className="topDotsContainer" style={{ position: 'absolute', bottom: '20px', left: '35%', display: 'flex', zIndex: 10 }}>
-                    {topArticles.map((item,index) => <div className={`topDot ${currentTop===index&&'dotCurrent'}`} key={item.key} onMouseEnter={() => {
+                <div className="topDotsGlass">
+                    <div className="topDotsContainer">
+                        {topArticles.map((item,index) => <div className={`topDot ${currentTop===index&&'dotCurrent'}`} key={item.key} onMouseEnter={() => {
                         if (index > currentTop) setSlideDir('right');
                         else if (index < currentTop) setSlideDir('left');
                         setCurrentTop(index);
                     }}></div>)}
+                    </div>
                 </div>
             </div>}
 
