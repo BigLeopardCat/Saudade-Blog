@@ -4,6 +4,7 @@ pub mod categories;
 pub mod tags;
 pub mod friends;
 pub mod web_info;
+pub mod announcements;
 pub mod talks;
 pub mod upload;
 
@@ -48,6 +49,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/tagtwo", get(tags::list_tags_two)) 
         .route("/api/public/tagone", get(tags::list_tags_one)) 
         .route("/api/public/tagtwo", get(tags::list_tags_two)) 
+        .route("/api/public/announcements", get(announcements::list_announcements))
         
         // Friends
         .route("/api/friends", get(friends::list_friends)) 
@@ -98,6 +100,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/protected/tagone", post(tags::create_tag_one))
         .route("/api/protected/tagtwo", post(tags::create_tag_two))
         .route("/api/protected/tag", delete(tags::delete_tags))
+        .route("/api/protected/announcements", post(announcements::create_announcement).delete(announcements::delete_announcement))
+        .route("/api/protected/announcements/:id", put(announcements::update_announcement))
         .route("/api/protected/tagone/:id", put(tags::update_tag_one))
         .route("/api/protected/tagtwo/:id", put(tags::update_tag_two))
 

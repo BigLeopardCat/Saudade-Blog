@@ -13,6 +13,7 @@ import AllNotes from "../pages/Dashboard/Notes/AllNotes/index";
 import NewNotes from "../pages/Dashboard/Notes/NewNotes/index";
 import AllCategorize from "../pages/Dashboard/Notes/AllCategorize/index";
 import AllTag from "../pages/Dashboard/Notes/AllTag/index";
+import AnnouncementManagement from "../pages/Dashboard/Announcement";
 import ContentHome from "../frontHome/Content/ContentHome";
 import App from "../App.tsx";
 import AboutMe from "../frontHome/Content/AboutMe";
@@ -107,6 +108,10 @@ const router = createBrowserRouter([
             {
                 path: 'analytics',
                 element: <Analytics />
+            },
+            {
+                path: 'announcement',
+                element: <AnnouncementManagement />
             },
             {
                 path: 'usercontrol',
