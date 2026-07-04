@@ -220,6 +220,7 @@ const ContentHome = () => {
                 </div>
                 </div>
                 
+                <div className="topGlassBar"></div>
                 <div className="topDotsContainer" style={{ position: 'absolute', bottom: '20px', left: '35%', display: 'flex', zIndex: 10 }}>
                     {topArticles.map((item,index) => <div className={`topDot ${currentTop===index&&'dotCurrent'}`} key={item.key} onMouseEnter={() => {
                         if (index > currentTop) setSlideDir('right');
