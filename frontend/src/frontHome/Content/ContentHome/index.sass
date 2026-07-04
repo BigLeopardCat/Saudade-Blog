@@ -240,9 +240,17 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
         overflow: hidden
       .contentTitle
         font-weight: 900
-        //color: white
         font-size: 40px
         margin-bottom: 60px
+        overflow: hidden
+        text-overflow: ellipsis
+        display: -webkit-box
+        -webkit-line-clamp: 2
+        -webkit-box-orient: vertical
+        transition: all 0.3s ease
+        &:hover
+          -webkit-line-clamp: unset
+          overflow: auto
           font-size: 35px
           margin-bottom: 40px
       p
@@ -352,6 +360,15 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
           font-weight: 900
           font-size: 30px
           margin-bottom: 10px
+          overflow: hidden
+          text-overflow: ellipsis
+          display: -webkit-box
+          -webkit-line-clamp: 2
+          -webkit-box-orient: vertical
+          transition: all 0.3s ease
+          &:hover
+            -webkit-line-clamp: unset
+            overflow: auto
 
         .ArticleDescription
           color: var(--font-p-color)
@@ -506,10 +523,25 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
     color: var(--font-title-color)
 
 .TopArticle .topContent
+  overflow: hidden
   h3
     color: var(--font-title-color)
+    overflow: hidden
+    text-overflow: ellipsis
+    display: -webkit-box
+    -webkit-line-clamp: 2
+    -webkit-box-orient: vertical
+    transition: all 0.3s ease
+    &:hover
+      -webkit-line-clamp: unset
+      overflow: auto
   h4
     color: var(--font-title-color) !important
+  .ArticleDescription
+    display: -webkit-box
+    -webkit-line-clamp: 2
+    -webkit-box-orient: vertical
+    overflow: hidden
   .topFooter
     color: var(--font-title-color)
 
