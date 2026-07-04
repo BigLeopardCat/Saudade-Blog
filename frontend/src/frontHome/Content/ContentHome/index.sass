@@ -639,20 +639,13 @@ html[data-theme='dark'] .SayWords h2
     height: auto !important
     display: block !important
 
-.topDotsGlass
+.topDotsContainer
   position: absolute
   bottom: 20px
-  left: 50%
-  transform: translateX(-50%)
-  background: rgba(0, 0, 0, 0.3)
-  backdrop-filter: blur(8px)
-  -webkit-backdrop-filter: blur(8px)
-  border-radius: 20px
-  padding: 8px 16px
-  z-index: 10
-
-.topDotsContainer
+  left: 30%
   display: flex
+  transform: translate(-50%,-50%)
+  z-index: 10
   gap: 8px
   .topDot
     cursor: pointer

@@ -146,7 +146,7 @@ const Dashboard = () => {
         {
             index: 5,
             name: '公告',
-            icon: 'icon-gonggao',
+            icon: 'fa-bullhorn',
             to: 'announcement',
             active: false
         },
@@ -255,7 +255,7 @@ const Dashboard = () => {
                                                         navigate(item.to ? `/dashboard/${item.to}` : '/dashboard')
                                                         setSelectCurrent(item.index)
                                                     }} key={item.index}>
-                                                    <i className={`iconfont ${item.icon} icon`}></i>
+                                                    <i className={`${item.icon.startsWith("fa-") ? "fa " : "iconfont"} ${item.icon} icon`}></i>
                                                     <span className="text nac-text">{item.name}</span>
                                                 </li>
                                             ))}

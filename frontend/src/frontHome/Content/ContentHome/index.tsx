@@ -223,14 +223,12 @@ const ContentHome = () => {
                 </div>
                 </div>
                 
-                <div className="topDotsGlass">
-                    <div className="topDotsContainer">
-                        {topArticles.map((item,index) => <div className={`topDot ${currentTop===index&&'dotCurrent'}`} key={item.key} onMouseEnter={() => {
+                <div className="topDotsContainer">
+                    {topArticles.map((item,index) => <div className={`topDot ${currentTop===index&&'dotCurrent'}`} key={item.key} onMouseEnter={() => {
                         if (index > currentTop) setSlideDir('right');
                         else if (index < currentTop) setSlideDir('left');
                         setCurrentTop(index);
                     }}></div>)}
-                    </div>
                 </div>
             </div>}
 
