@@ -9,7 +9,7 @@ pub struct Claims {
 }
 
 pub fn create_token(user_id: i32) -> String {
-    let secret = env::var("JWT_SECRET").unwrap_or_else(|_| "my_secure_default_secret_key_12345".to_string());
+    let secret = env::var("JWT_SECRET").expect("JWT_SECRET must be set in environment");
     let expiration = chrono::Utc::now()
         .checked_add_signed(chrono::Duration::days(7))
         .expect("valid timestamp")
@@ -24,7 +24,7 @@ pub fn create_token(user_id: i32) -> String {
 }
 
 pub fn verify_token(token: &str) -> Option<Claims> {
-    let secret = env::var("JWT_SECRET").unwrap_or_else(|_| "my_secure_default_secret_key_12345".to_string());
+    let secret = env::var("JWT_SECRET").expect("JWT_SECRET must be set in environment");
     decode::<Claims>(token, &DecodingKey::from_secret(secret.as_ref()), &Validation::default())
         .map(|data| data.claims)
         .ok()
