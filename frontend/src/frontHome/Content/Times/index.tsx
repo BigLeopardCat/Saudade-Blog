@@ -4,7 +4,7 @@ import {Timeline} from 'antd';
 import dayjs from "dayjs";
 import { motion } from 'framer-motion';
 import scrollToTop from "../../../utils/scrollToTop.tsx";
-import {getNotes} from "../../../apis/NoteMethods.tsx";
+import {getNotePage} from "../../../apis/NoteMethods.tsx";
 import {useNavigate} from "react-router-dom";
 const Times = () => {
     const [timeList, setTimeList] = useState([]);
@@ -18,7 +18,7 @@ const Times = () => {
 
     useEffect(() => {
         scrollToTop();
-        getNotes().then((res) => {
+        getNotePage({page:1, page_size:999}).then((res) => {
             setTimeList(res.data.data.map((item: { createTime: Date; noteTitle: string; noteKey:string}) => {
                 return {
                     children:<p style={{width:'90%',display:'flex',justifyContent:'space-between'}} className='Link' onClick={() => navigate(`/article/${item.noteKey}`)}>{item.noteTitle}<span>{dayjs(String(item.createTime || '').replace(' ', 'T')).isValid() ? dayjs(String(item.createTime || '').replace(' ', 'T')).format('YYYY-MM-DD') : 'Published Date'}</span></p>
