@@ -10,6 +10,7 @@ use crate::utils::ApiResponse;
 pub struct NoteQuery {
     pub category_id: Option<i32>,
     pub page: Option<u64>,
+    pub page_size: Option<u64>,
 }
 
 #[derive(Serialize)]
@@ -91,7 +92,7 @@ pub async fn list_public_notes(
 
     // PAGINATION LOGIC
     let page = query.page.unwrap_or(1);
-    let per_page = 6;
+    let per_page = query.page_size.unwrap_or(6) as u64;
     
     let paginator = note::Entity::find()
         .filter(condition)
