@@ -5,6 +5,7 @@ import './frontHome/main.css';
 import { useEffect, useState } from "react";
 import './App.sass';
 import BottomMenu from "./components/BottomMenu";
+import Live2dAgent from "./components/Live2dAgent";
 
 function App() {
     const [isDark, setDark] = useState(false);
@@ -28,6 +29,7 @@ function App() {
             <Outlet />
             <Footer />
             <BottomMenu scrollHeight={scrollHeight} isDark={isDark} setDark={setDark}/>
+            <Live2dAgent />
         </div>
     );
 }

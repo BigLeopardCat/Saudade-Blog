@@ -105,6 +105,10 @@ const Live2dAgent = forwardRef<Live2dAgentHandle>((_props, ref) => {
                 const hairFront = Math.sin(hairTimeRef.current * 1.2 + 1) * 5
                 cm.setParameterValueById('ParamHairFront', hairFront, 1)
 
+                // 5. 耳朵抖动（周期性小幅度）
+                const earVal = Math.sin(hairTimeRef.current * 3.5 + 2) * 8
+                cm.setParameterValueById('Param3', earVal, 1)
+
                 // 4. 平滑过渡嘴部参数
                 const diff = speakTargetRef.current - speakCurrentRef.current
                 if (Math.abs(diff) > 0.01) {
