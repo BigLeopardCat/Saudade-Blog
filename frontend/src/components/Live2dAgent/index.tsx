@@ -1,7 +1,7 @@
-import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle } from 'react'
+import { useEffect, useRef, forwardRef, useImperativeHandle } from 'react'
 import * as PIXI from 'pixi.js'
 import { Live2DModel } from 'pixi-live2d-display'
-// 加载 Live2D Cubism 4 Core
+
 const CUBISM_CORE_URL = 'https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js'
 
 function loadCubismCore(): Promise<void> {
@@ -11,15 +11,12 @@ function loadCubismCore(): Promise<void> {
         script.src = CUBISM_CORE_URL
         script.async = true
         script.onload = () => {
-            // Core loaded, now import cubism4 spec
             import('pixi-live2d-display/cubism4').then(() => resolve()).catch(reject)
         }
         script.onerror = () => reject(new Error('Failed to load Live2D Cubism Core'))
         document.head.appendChild(script)
     })
 }
-
-import { Live2DModel } from 'pixi-live2d-display'
 
 export interface Live2dAgentHandle {
     setMouthOpen: (open: boolean) => void
@@ -36,7 +33,6 @@ const Live2dAgent = forwardRef<Live2dAgentHandle>((_props, ref) => {
     const speakTargetRef = useRef<number>(0)
     const speakCurrentRef = useRef<number>(0)
 
-    // 暴露给父组件的控制接口
     useImperativeHandle(ref, () => ({
         setMouthOpen(open: boolean) {
             speakTargetRef.current = open ? 1 : 0
@@ -48,7 +44,6 @@ const Live2dAgent = forwardRef<Live2dAgentHandle>((_props, ref) => {
 
     useEffect(() => {
         if (!canvasRef.current) return
-
         let destroyed = false
 
         loadCubismCore().then(() => {
@@ -64,79 +59,67 @@ const Live2dAgent = forwardRef<Live2dAgentHandle>((_props, ref) => {
             appRef.current = app
             canvasRef.current!.appendChild(app.view as HTMLCanvasElement)
 
-            return Live2DModel.from('/Live2d_agent/agent_2.model3.json', {
-            motionPreload: 'IDLE',
-        }).then(model => {
-            if (destroyed) { model.destroy(); return }
+            Live2DModel.from('/Live2d_agent/agent_2.model3.json', { motionPreload: 'IDLE' }).then(model => {
+                if (destroyed) { model.destroy(); return }
+                modelRef.current = model
+                model.anchor.set(0.5, 1)
+                model.position.set(app.screen.width / 2, app.screen.height)
+                model.scale.set(0.22)
+                app.stage.addChild(model)
 
-            modelRef.current = model
-            model.anchor.set(0.5, 1)
-            model.position.set(app.screen.width / 2, app.screen.height)
-            model.scale.set(0.22)
-            app.stage.addChild(model)
+                const cm = model.internalModel.coreModel
+                const eyeLIdx = cm.getParameterIndex('ParamEyeLOpen')
+                const eyeRIdx = cm.getParameterIndex('ParamEyeROpen')
 
-            // 启用自动眨眼
-            const cm = model.internalModel.coreModel
-            const eyeLIdx = cm.getParameterIndex('ParamEyeLOpen')
-            const eyeRIdx = cm.getParameterIndex('ParamEyeROpen')
+                app.ticker.add(() => {
+                    if (!modelRef.current) return
 
-            // 自定义 Tick 循环动画
-            app.ticker.add(() => {
-                if (!modelRef.current) return
-
-                // 1. 眨眼（随机间隔，平滑闭合/睁开）
-                blinkRef.current += app.ticker.deltaMS / 1000
-                const blinkInterval = 3 + Math.random() * 2 // 3~5秒
-                if (blinkRef.current > blinkInterval) {
-                    blinkRef.current = 0
-                    // 闭眼动画
-                    let closeTime = 0
-                    const closeStep = () => {
-                        closeTime += 0.05
-                        const val = Math.min(closeTime / 0.1, 1)
-                        cm.setParameterValueByIndex(eyeLIdx, 1 - val, 1)
-                        cm.setParameterValueByIndex(eyeRIdx, 1 - val, 1)
-                        if (closeTime < 0.1) {
-                            requestAnimationFrame(closeStep)
-                        } else {
-                            // 睁眼动画
-                            let openTime = 0
-                            const openStep = () => {
-                                openTime += 0.04
-                                const val = Math.min(openTime / 0.12, 1)
-                                cm.setParameterValueByIndex(eyeLIdx, val, 1)
-                                cm.setParameterValueByIndex(eyeRIdx, val, 1)
-                                if (openTime < 0.12) requestAnimationFrame(openStep)
+                    // 1. 眨眼
+                    blinkRef.current += app.ticker.deltaMS / 1000
+                    if (blinkRef.current > 3 + Math.random() * 2) {
+                        blinkRef.current = 0
+                        let t = 0
+                        const step = () => {
+                            t += 0.05
+                            const v = Math.min(t / 0.1, 1)
+                            cm.setParameterValueByIndex(eyeLIdx, 1 - v, 1)
+                            cm.setParameterValueByIndex(eyeRIdx, 1 - v, 1)
+                            if (t < 0.1) { requestAnimationFrame(step) }
+                            else {
+                                let t2 = 0
+                                const step2 = () => {
+                                    t2 += 0.04
+                                    const v2 = Math.min(t2 / 0.12, 1)
+                                    cm.setParameterValueByIndex(eyeLIdx, v2, 1)
+                                    cm.setParameterValueByIndex(eyeRIdx, v2, 1)
+                                    if (t2 < 0.12) requestAnimationFrame(step2)
+                                }
+                                requestAnimationFrame(step2)
                             }
-                            requestAnimationFrame(openStep)
                         }
+                        requestAnimationFrame(step)
                     }
-                    requestAnimationFrame(closeStep)
-                }
 
-                // 2. 尾巴摇动（循环正弦）
-                tailTimeRef.current += app.ticker.deltaMS / 1000
-                const tailVal = Math.sin(tailTimeRef.current * 2.5) * 30
-                cm.setParameterValueById('ParamTail', tailVal, 1)
+                    // 2. 尾巴
+                    tailTimeRef.current += app.ticker.deltaMS / 1000
+                    cm.setParameterValueById('ParamTail', Math.sin(tailTimeRef.current * 2.5) * 30, 1)
 
-                // 3. 呆毛/头发自然晃动
-                hairTimeRef.current += app.ticker.deltaMS / 1000
-                const daiMao = Math.sin(hairTimeRef.current * 1.8) * 20
-                cm.setParameterValueById('ParamDaiMao', daiMao, 1)
-                const hairFront = Math.sin(hairTimeRef.current * 1.2 + 1) * 5
-                cm.setParameterValueById('ParamHairFront', hairFront, 1)
+                    // 3. 呆毛/头发
+                    hairTimeRef.current += app.ticker.deltaMS / 1000
+                    cm.setParameterValueById('ParamDaiMao', Math.sin(hairTimeRef.current * 1.8) * 20, 1)
+                    cm.setParameterValueById('ParamHairFront', Math.sin(hairTimeRef.current * 1.2 + 1) * 5, 1)
 
-                // 5. 耳朵抖动（周期性小幅度）
-                const earVal = Math.sin(hairTimeRef.current * 3.5 + 2) * 8
-                cm.setParameterValueById('Param3', earVal, 1)
+                    // 4. 耳朵
+                    cm.setParameterValueById('Param3', Math.sin(hairTimeRef.current * 3.5 + 2) * 8, 1)
 
-                // 4. 平滑过渡嘴部参数
-                const diff = speakTargetRef.current - speakCurrentRef.current
-                if (Math.abs(diff) > 0.01) {
-                    speakCurrentRef.current += diff * 0.08
-                    cm.setParameterValueById('ParamSpeak', speakCurrentRef.current, 1)
-                    cm.setParameterValueById('ParamMouthOpenY', speakCurrentRef.current * 0.8, 1)
-                }
+                    // 5. 嘴部
+                    const diff = speakTargetRef.current - speakCurrentRef.current
+                    if (Math.abs(diff) > 0.01) {
+                        speakCurrentRef.current += diff * 0.08
+                        cm.setParameterValueById('ParamSpeak', speakCurrentRef.current, 1)
+                        cm.setParameterValueById('ParamMouthOpenY', speakCurrentRef.current * 0.8, 1)
+                    }
+                })
             })
         }).catch(err => {
             console.error('Live2D 模型加载失败:', err)
