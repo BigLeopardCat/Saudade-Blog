@@ -1,7 +1,25 @@
 import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle } from 'react'
 import * as PIXI from 'pixi.js'
 import { Live2DModel } from 'pixi-live2d-display'
-import 'pixi-live2d-display/cubism4'
+// 加载 Live2D Cubism 4 Core
+const CUBISM_CORE_URL = 'https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js'
+
+function loadCubismCore(): Promise<void> {
+    return new Promise((resolve, reject) => {
+        if ((window as any).Live2DCubismCore) { resolve(); return }
+        const script = document.createElement('script')
+        script.src = CUBISM_CORE_URL
+        script.async = true
+        script.onload = () => {
+            // Core loaded, now import cubism4 spec
+            import('pixi-live2d-display/cubism4').then(() => resolve()).catch(reject)
+        }
+        script.onerror = () => reject(new Error('Failed to load Live2D Cubism Core'))
+        document.head.appendChild(script)
+    })
+}
+
+import { Live2DModel } from 'pixi-live2d-display'
 
 export interface Live2dAgentHandle {
     setMouthOpen: (open: boolean) => void
@@ -31,19 +49,22 @@ const Live2dAgent = forwardRef<Live2dAgentHandle>((_props, ref) => {
     useEffect(() => {
         if (!canvasRef.current) return
 
-        const app = new PIXI.Application({
-            width: 250,
-            height: 400,
-            transparent: true,
-            antialias: true,
-            backgroundAlpha: 0,
-        })
-        appRef.current = app
-        canvasRef.current.appendChild(app.view as HTMLCanvasElement)
-
         let destroyed = false
 
-        Live2DModel.from('/Live2d_agent/agent_2.model3.json', {
+        loadCubismCore().then(() => {
+            if (destroyed) return
+
+            const app = new PIXI.Application({
+                width: 250,
+                height: 400,
+                transparent: true,
+                antialias: true,
+                backgroundAlpha: 0,
+            })
+            appRef.current = app
+            canvasRef.current!.appendChild(app.view as HTMLCanvasElement)
+
+            return Live2DModel.from('/Live2d_agent/agent_2.model3.json', {
             motionPreload: 'IDLE',
         }).then(model => {
             if (destroyed) { model.destroy(); return }
