@@ -43,6 +43,8 @@
     "katex": "^0.16.27",
     "lodash": "^4.17.21",
     "markdown-navbar": "^1.4.3",
+    "pixi-live2d-display": "^0.4.0",
+    "pixi.js": "^7.4.3",
     "react": "^18.2.0",
     "react-countup": "^6.5.0",
     "react-dom": "^18.2.0",
