@@ -41,7 +41,10 @@ const Live2dAgent = forwardRef<Live2dAgentHandle>((_props, ref) => {
                 })
             }
 
-            // 2. 动态导入 pixi-live2d-display（必须在 Core 加载之后）
+            // 2. 创建空 Cubism2 兼容对象(绕过 window.Live2D 检测)
+            (window as any).Live2D = (window as any).Live2D || {};
+
+            // 3. 动态导入 pixi-live2d-display（必须在 Core 加载之后）
             const PIXI = await import('pixi.js')
             await import('pixi-live2d-display/cubism4')
             const { Live2DModel } = await import('pixi-live2d-display')
