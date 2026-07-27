@@ -43,8 +43,8 @@ const Live2dAgent = forwardRef<Live2dAgentHandle>((_props, ref) => {
 
             // 2. 动态导入 pixi-live2d-display（必须在 Core 加载之后）
             const PIXI = await import('pixi.js')
-            const { Live2DModel } = await import('pixi-live2d-display')
             await import('pixi-live2d-display/cubism4')
+            const { Live2DModel } = await import('pixi-live2d-display')
 
             if (destroyed) return
 
