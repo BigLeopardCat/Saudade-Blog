@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<style>*{margin:0;padding:0;overflow:hidden}body{background:transparent}canvas{display:block}</style>
+<script src="https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js"></script>
+</head><body><canvas id="c"></canvas>
+<script>
+const C=document.getElementById('c'),gl=C.getContext('webgl',{premultipliedAlpha:true,transparent:true})
+C.width=250;C.height=400;gl.viewport(0,0,250,400)
+const core=Live2DCubismCore
+let model=null,moc=null,texture=null,paramIdx={},drawables=[]
+let speakVal=0,speakTarget=0
+
+// 简单顶点着色器
+const vsSrc='precision mediump float;attribute vec2 aPos;attribute vec2 aUV;varying vec2 vUV;uniform vec2 uScale;void main(){gl_Position=vec4(aPos*uScale,0,1);vUV=aUV;}'
+const fsSrc='precision mediump float;varying vec2 vUV;uniform sampler2D uTex;void main(){gl_FragColor=texture2D(uTex,vUV);}'
+const vs=gl.createShader(gl.VERTEX_SHADER);gl.shaderSource(vs,vsSrc);gl.compileShader(vs)
+const fs=gl.createShader(gl.FRAGMENT_SHADER);gl.shaderSource(fs,fsSrc);gl.compileShader(fs)
+const prog=gl.createProgram();gl.attachShader(prog,vs);gl.attachShader(prog,fs);gl.linkProgram(prog)
+gl.useProgram(prog)
+const aPos=gl.getAttribLocation(prog,'aPos'),aUV=gl.getAttribLocation(prog,'aUV')
+const uScale=gl.getUniformLocation(prog,'uScale'),uTex=gl.getUniformLocation(prog,'uTex')
+gl.uniform2f(uScale,2/250,-2/400)
+gl.enable(gl.BLEND);gl.blendFunc(gl.ONE,gl.ONE_MINUS_SRC_ALPHA)
+// 全屏四边形
+const verts=new Float32Array([0,0,1,0,0,1,1,1])
+const vbo=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,vbo);gl.bufferData(gl.ARRAY_BUFFER,verts,gl.STATIC_DRAW)
+gl.enableVertexAttribArray(aPos);gl.vertexAttribPointer(aPos,2,gl.FLOAT,false,16,0)
+gl.enableVertexAttribArray(aUV);gl.vertexAttribPointer(aUV,2,gl.FLOAT,false,16,8)
+
+async function loadModel(){
+    const base='/Live2d_agent/'
+    const s=await(await fetch(base+'agent_2.model3.json')).json()
+    const mocData=new Uint8Array(await(await fetch(base+s.FileReferences.Moc)).arrayBuffer())
+    moc=core.Moc.fromArrayBuffer(mocData.buffer)
+    model=moc.createModel()
+    // 加载纹理
+    const img=await new Promise(rs=>{const i=new Image();i.crossOrigin='anonymous';i.onload=()=>rs(i);i.src=base+s.FileReferences.Textures[0]})
+    texture=gl.createTexture();gl.bindTexture(gl.TEXTURE_2D,texture);gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,img)
+    gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR)
+    // 参数
+    const ids=model.parameterIds
+    ;['ParamSpeak','ParamMouthOpenY','ParamTail','ParamDaiMao','ParamHairFront','Param3','ParamEyeLOpen','ParamEyeROpen'].forEach(p=>{const i=Array.from(ids).indexOf(p);if(i>=0)paramIdx[p]=i})
+    // 简化 drawable 信息
+    for(let i=0;i<model.drawableCount;i++)drawables.push(i)
+    let t=0,blink=3+Math.random()*2
+    function draw(){
+        const dt=1/60;t+=dt;blink-=dt
+        const mv=model.parameterValues,mn=model.parameterMinimumValues,mx=model.parameterMaximumValues
+        const set=(p,v)=>{const i=paramIdx[p];if(i===undefined)return;mv[i]=Math.max(mn[i],Math.min(mx[i],v))}
+        if(blink<=0){blink=3+Math.random()*2;const iL=paramIdx['ParamEyeLOpen'],iR=paramIdx['ParamEyeROpen'];if(iL!==undefined)mv[iL]=mn[iL];if(iR!==undefined)mv[iR]=mn[iR]}else{const iL=paramIdx['ParamEyeLOpen'],iR=paramIdx['ParamEyeROpen'];if(iL!==undefined)mv[iL]=mx[iL];if(iR!==undefined)mv[iR]=mx[iR]}
+        set('ParamTail',Math.sin(t*2.5)*30)
+        set('ParamDaiMao',Math.sin(t*1.8)*20)
+        set('ParamHairFront',Math.sin(t*1.2+1)*5)
+        set('Param3',Math.sin(t*3.5+2)*8)
+        const d=speakTarget-speakVal;if(Math.abs(d)>0.01){speakVal+=d*0.08;set('ParamSpeak',speakVal);set('ParamMouthOpenY',speakVal*0.8)}
+        model.update()
+        gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT)
+        gl.bindTexture(gl.TEXTURE_2D,texture)
+        gl.uniform1i(uTex,0)
+        gl.drawArrays(gl.TRIANGLE_STRIP,0,4)
+        requestAnimationFrame(draw)
+    }
+    draw()
+}
+loadModel().catch(e=>console.error('Live2D-error:',e))
+window.addEventListener('message',e=>{if(e.data.type==='mouth')speakTarget=e.data.value})
+</script></body></html>
