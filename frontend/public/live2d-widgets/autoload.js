@@ -1,9 +1,9 @@
 (async () => {
-  // 清除已存在的 waifu 避免 SPA 路由下重复加载
-  const existingWaifu = document.getElementById('waifu');
-  if (existingWaifu) existingWaifu.remove();
-  const existingToggle = document.getElementById('waifu-toggle');
-  if (existingToggle) existingToggle.remove();
+  // SPA 路由下如果看板娘已存在则跳过全部初始化
+  if (document.getElementById('waifu')) {
+    console.log('[Live2D] waifu already exists, skipping');
+    return;
+  }
 
   const live2d_path = '/live2d-widgets/';
   const modelPath = '/live2d_model/agent_2.model3.json';
