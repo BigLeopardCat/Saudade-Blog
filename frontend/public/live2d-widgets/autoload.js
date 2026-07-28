@@ -174,7 +174,7 @@
     <div id="waifu-chat">
       <div class="chat-messages" id="chat-messages"></div>
       <div class="chat-input-area">
-        <input class="chat-input" id="chat-input" type="text" placeholder="和看板娘对话..." />
+        <textarea class="chat-input" id="chat-input" placeholder="和看板娘对话..." rows="1"></textarea>
         <button class="chat-send" id="chat-send">发送</button>
       </div>
       <div class="chat-nav-confirm" id="chat-nav-confirm">
@@ -205,7 +205,14 @@
       const addMsg = (text, type) => {
         const div = document.createElement('div');
         div.className = 'chat-msg ' + type;
-        div.textContent = text;
+        const label = document.createElement('span');
+        label.className = 'msg-label';
+        label.textContent = type === 'user' ? '你: ' : '看板娘: ';
+        const content = document.createElement('span');
+        content.className = 'msg-text';
+        content.textContent = text;
+        div.appendChild(label);
+        div.appendChild(content);
         messages.appendChild(div);
         messages.scrollTop = messages.scrollHeight;
       };
@@ -234,9 +241,25 @@
             addMsg(data.reply, 'agent');
             // Check if the agent suggests a navigation
             const navMatch = data.reply.match(/(?:转跳|跳转|打开|前往|导航到)\s*(https?:\/\/[^\s，。,.]+)/i);
-            if (navMatch) {
-              pendingNavUrl = navMatch[1];
-              navQuestion.textContent = '看板娘建议跳转: ' + pendingNavUrl;
+            const navUrl = (() => {
+              const m1 = data.reply.match(/NAVIGATE:(https?:\/\/[^\s]+)/);
+              if (m1) return m1[1];
+              const m2 = data.reply.match(/\[([^\]]+)\]\(((?:https?:)?\/\/)?([^)]+)\)/);
+              if (m2) {
+                let url = m2[3];
+                if (url.startsWith('//')) url = 'https:' + url;
+                else if (!url.startsWith('http')) url = 'https://' + url;
+                return url;
+              }
+              const m2b = data.reply.match(/\[([^\]]+)\]\(\/([^)]+)\)/);
+              if (m2b) return 'https://saudade.site/' + m2b[2];
+              const m3 = data.reply.match(/(?:转跳|跳转|打开|前往|导航到)\s*(https?:\/\/[^\s，。,.]+)/i);
+              if (m3) return m3[1];
+              return null;
+            })();
+            if (navUrl) {
+              pendingNavUrl = navUrl;
+              navQuestion.textContent = '看板娘建议跳转到: ' + navUrl;
               navConfirm.classList.add('active');
             }
           } else {
@@ -269,7 +292,17 @@
       injectChatBtn();
 
       sendBtn.addEventListener('click', sendMessage);
-      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendMessage(); });
+      // Auto-resize textarea
+      input.addEventListener('input', () => {
+        input.style.height = 'auto';
+        input.style.height = Math.min(input.scrollHeight, 80) + 'px';
+      });
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          sendMessage();
+        }
+      });
 
       document.getElementById('nav-yes').addEventListener('click', () => {
         if (pendingNavUrl) {
