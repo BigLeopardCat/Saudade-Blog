@@ -22,7 +22,7 @@ pub struct ChatResponse {
     pub error: Option<String>,
 }
 
-use sea_orm::{EntityTrait, Set, QueryOrder};
+use sea_orm::{EntityTrait, Set, QueryOrder, QueryFilter, ColumnTrait, QueryTrait, ActiveModelTrait};
 use crate::entity::chat_history;
 
 pub async fn chat_handler(
@@ -58,11 +58,57 @@ pub async fn chat_handler(
     let agent_path = std::env::var("AGENT_PATH")
         .unwrap_or_else(|_| "/home/ubuntu/memory_blog_rust/saudade-blog-agent".to_string());
 
+    let uid = user_id.unwrap_or(0);
+    // 保存用户消息
+    if uid > 0 {
+        let _ = chat_history::ActiveModel {
+            user_id: Set(uid),
+            role: Set("user".into()),
+            content: Set(payload.message.clone()),
+            ..Default::default()
+        }.save(&state.db).await;
+    }
+    // 读取最近历史
+    let history_ctx = if uid > 0 {
+        let mut recent = chat_history::Entity::find()
+            .filter(chat_history::Column::UserId.eq(uid))
+            .order_by_desc(chat_history::Column::CreatedAt)
+            
+            .all(&state.db)
+            .await.unwrap_or_default();
+        let lines: Vec<String> = recent.iter().rev().map(|h| format!("{}: {}", h.role, h.content)).collect();
+        if lines.is_empty() { String::new() } else { format!("\n[最近对话]:\n{}", lines.join("\n")) }
+    } else { String::new() };
+
+    let full_prompt = format!("[系统: 用户当前在页面 '{}' (标题: {})。用户ID: {}。{}]\n用户消息: {}",
+        payload.current_url.as_deref().unwrap_or(""),
+        payload.page_title.as_deref().unwrap_or(""),
+        uid,
+        history_ctx,
+        payload.message
+    );
+
     let output = Command::new("./.venv/bin/python3")
-        .args(["main.py", "--ask", &format!("[系统: 用户当前在页面 '{}' (标题: {})。用户ID: {}。如果需要导航请使用 navigate_to 工具。]\n用户消息: {}", payload.current_url.as_deref().unwrap_or(""), payload.page_title.as_deref().unwrap_or(""), user_id.unwrap_or(0), payload.message)])
+        .args(["main.py", "--ask", &full_prompt])
         .current_dir(&agent_path)
         .output()
         .await;
+
+    // 保存 Agent 回复
+    if uid > 0 {
+        if let Ok(ref out) = output {
+            let reply = String::from_utf8_lossy(&out.stdout);
+            let reply_text = if reply.contains("Agent: ") {
+                reply.split("Agent: ").nth(1).unwrap_or(&reply).trim().to_string()
+            } else { reply.trim().to_string() };
+            let _ = chat_history::ActiveModel {
+                user_id: Set(uid),
+                role: Set("assistant".into()),
+                content: Set(reply_text),
+                ..Default::default()
+            }.save(&state.db).await;
+        }
+    }
 
     match output {
         Ok(out) => {
