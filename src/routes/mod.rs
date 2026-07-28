@@ -70,13 +70,8 @@ pub fn create_router(state: AppState) -> Router {
         // Agent Chat
         .route("/api/chat", post(chat::chat_handler))
         
-        // Knowledge Base
-        .route("/api/knowledge", get(knowledge::list_knowledge).post(knowledge::add_knowledge))
-        .route("/api/knowledge/:id", delete(knowledge::delete_knowledge))
-        
-        // Temp Users
-        .route("/api/temp-users", get(temp_user::list_temp_users).post(temp_user::create_temp_user))
-        .route("/api/temp-users/:id", delete(temp_user::delete_temp_user))
+        // Knowledge Base (GET public for agent)
+        .route("/api/knowledge", get(knowledge::list_knowledge))
         
         // Static Image Download (Public)
         .nest_service("/api/protect/download", ServeDir::new(upload_dir()))
@@ -139,6 +134,14 @@ pub fn create_router(state: AppState) -> Router {
              .put(talks::update_talk) 
         )
 
+        // Knowledge Base (write/admin)
+        .route("/api/knowledge", post(knowledge::add_knowledge))
+        .route("/api/knowledge/:id", delete(knowledge::delete_knowledge))
+        
+        // Temp Users
+        .route("/api/temp-users", get(temp_user::list_temp_users).post(temp_user::create_temp_user))
+        .route("/api/temp-users/:id", delete(temp_user::delete_temp_user))
+        
         // WebSettings
         .route("/api/protected/websetting", 
             get(web_info::get_web_settings)
