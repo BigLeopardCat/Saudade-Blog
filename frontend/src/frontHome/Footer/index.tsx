@@ -23,6 +23,9 @@ const Footer = () => {
             <p style={{marginTop:10,marginBottom:10,textAlign:"center"}}><a className="link" target="_blank" rel="noreferrer" href="https://beian.miit.gov.cn/">{blogIcp}</a> | <img src={beianIcon} style={{width:16,height:16,verticalAlign:"middle",marginRight:4}} /><a className="link" href="https://beian.mps.gov.cn/#/query/webSearch?code=37048102006993" rel="noreferrer" target="_blank">鲁公网安备37048102006993号</a></p>
             <p>Powered by <span>Memory</span></p>
             <p style={{marginTop:8,fontSize:'0.8em',opacity:0.6,textAlign:'center',display:'flex',justifyContent:'center',gap:12,alignItems:'center'}}>
+                <a href="https://www.aliyun.com/product/bailian" target="_blank" rel="noreferrer" title="阿里云百炼">
+                    <img src="https://img.alicdn.com/imgextra/i1/O1CN01IU2US71Ciicsi3Br3_!!6000000000115-55-tps-357-76.svg" style={{width:50,height:50}} />
+                </a>
                 <a href="https://cloud.tencent.com" target="_blank" rel="noreferrer" title="Tencent Cloud">
                     <img src={txLogo} style={{width:50,height:50}} />
                 </a>
