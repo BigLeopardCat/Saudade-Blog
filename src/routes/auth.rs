@@ -28,7 +28,6 @@ pub async fn login(
         .unwrap_or(None);
 
     if let Some(u) = user {
-        // Generate a token.
         let token = crate::auth_jwt::create_token(u.id);
         return Json(ApiResponse::success(token));
     }
