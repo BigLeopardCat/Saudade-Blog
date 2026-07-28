@@ -7,6 +7,10 @@ use crate::routes::AppState;
 #[derive(Deserialize)]
 pub struct ChatRequest {
     pub message: String,
+    #[serde(default)]
+    pub current_url: Option<String>,
+    #[serde(default)]
+    pub page_title: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -25,7 +29,7 @@ pub async fn chat_handler(
         .unwrap_or_else(|_| "/home/ubuntu/memory_blog_rust/saudade-blog-agent".to_string());
 
     let output = Command::new("./.venv/bin/python3")
-        .args(["main.py", "--ask", &payload.message])
+        .args(["main.py", "--ask", &format!("{} [当前页面: {} / {}]", payload.message, payload.current_url.as_deref().unwrap_or(""), payload.page_title.as_deref().unwrap_or(""))])
         .current_dir(&agent_path)
         .output()
         .await;
