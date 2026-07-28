@@ -8,3 +8,4 @@ pub mod talk;
 pub mod web_info;
 pub mod announcement;
 pub mod image;
+pub mod chat_history;
