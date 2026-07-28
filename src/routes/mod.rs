@@ -146,7 +146,7 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route("/api/protected/social", put(web_info::update_social_info))
         
-        .route_layer(middleware::from_fn(crate::middleware::auth_guard));
+        .route_layer(middleware::from_fn_with_state(state_arc.clone(), crate::middleware::auth_guard));
 
     public_routes
         .merge(protected_routes)
