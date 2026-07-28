@@ -1,4 +1,10 @@
 (async () => {
+  // 清除已存在的 waifu 避免 SPA 路由下重复加载
+  const existingWaifu = document.getElementById('waifu');
+  if (existingWaifu) existingWaifu.remove();
+  const existingToggle = document.getElementById('waifu-toggle');
+  if (existingToggle) existingToggle.remove();
+
   const live2d_path = '/live2d-widgets/';
   const modelPath = '/live2d_model/agent_2.model3.json';
 
@@ -55,6 +61,9 @@
   };
   initCanvas();
 
+  if (document.getElementById('waifu')) {
+    console.warn('[Live2D] waifu already exists, skipping init');
+  } else {
   initWidget({
     waifuPath: live2d_path + 'waifu-tips.json',
     cubism5Path: '/cubism5/live2dcubismcore.min.js',
@@ -75,7 +84,8 @@
     },
   }]);
 
-    // 注入循环动作参数 + 口型接口
+    }
+  // 注入循环动作参数 + 口型接口
     (function startCustomAnim() {
       const getSub = () => {
         try {
