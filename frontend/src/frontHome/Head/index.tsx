@@ -143,7 +143,10 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                             size={100}/>
                          <div style={{ marginTop: "5px", display: "flex", justifyContent: "center", gap: "10px" }}>
                             {isLogin ? (
+                                <>
                                 <div className="theme-btn" onClick={() => navigate("dashboard")} style={{ padding: "5px 15px", background: "#ace0f9", color: "#fff", borderRadius: "5px", cursor: "pointer", fontSize: "14px" }}>心境</div>
+                                <div className="theme-btn" onClick={() => { localStorage.removeItem('tokenKey'); navigate('/'); }} style={{ padding: "5px 15px", background: "#e74c3c", color: "#fff", borderRadius: "5px", cursor: "pointer", fontSize: "14px" }}>退出</div>
+                                </>
                             ) : (
                                 <div className="theme-btn" onClick={() => navigate("login")} style={{ padding: "5px 15px", background: "#ace0f9", color: "#fff", borderRadius: "5px", cursor: "pointer", fontSize: "14px" }}>登录</div>
                             )}
@@ -245,7 +248,10 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                             gap: '5px'
                         }}>
                             {isLogin ? (
+                                <>
                                 <div className="theme-btn" onClick={() => navigate("dashboard")}>心境</div>
+                                <div className="theme-btn" onClick={() => { localStorage.removeItem('tokenKey'); navigate('/'); }} style={{ color: "#e74c3c" }}>退出</div>
+                                </>
                             ) : (
                                 <div className="theme-btn" onClick={() => navigate("login")}>登录</div>
                             )}
