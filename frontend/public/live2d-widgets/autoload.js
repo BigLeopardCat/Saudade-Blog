@@ -168,4 +168,116 @@
       };
       window.__setMouthClose = () => { window.__setMouthOpen(0); };
     })();
+
+    // ── Chat Panel ──
+    const chatHTML = `
+    <div id="waifu-chat">
+      <div class="chat-messages" id="chat-messages"></div>
+      <div class="chat-input-area">
+        <input class="chat-input" id="chat-input" type="text" placeholder="和看板娘对话..." />
+        <button class="chat-send" id="chat-send">发送</button>
+      </div>
+      <div class="chat-nav-confirm" id="chat-nav-confirm">
+        <div class="nav-question" id="nav-question-text"></div>
+        <div class="chat-nav-btns">
+          <button class="chat-nav-btn yes" id="nav-yes">确定</button>
+          <button class="chat-nav-btn no" id="nav-no">取消</button>
+        </div>
+      </div>
+    </div>
+`;
+
+    const initChat = () => {
+      const waifu = document.getElementById('waifu');
+      if (!waifu) { setTimeout(initChat, 500); return; }
+      waifu.insertAdjacentHTML('beforeend', chatHTML);
+
+      const chatPanel = document.getElementById('waifu-chat');
+      const messages = document.getElementById('chat-messages');
+      const input = document.getElementById('chat-input');
+      const sendBtn = document.getElementById('chat-send');
+      const navConfirm = document.getElementById('chat-nav-confirm');
+      const navQuestion = document.getElementById('nav-question-text');
+
+      let pendingNavUrl = '';
+      let isSending = false;
+
+      const addMsg = (text, type) => {
+        const div = document.createElement('div');
+        div.className = 'chat-msg ' + type;
+        div.textContent = text;
+        messages.appendChild(div);
+        messages.scrollTop = messages.scrollHeight;
+      };
+
+      const sendMessage = async () => {
+        const msg = input.value.trim();
+        if (!msg || isSending) return;
+        input.value = '';
+        addMsg(msg, 'user');
+        isSending = true;
+        sendBtn.disabled = true;
+        input.disabled = true;
+
+        try {
+          const resp = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: msg }),
+          });
+          const data = await resp.json();
+          if (data.success) {
+            addMsg(data.reply, 'agent');
+            // Check if the agent suggests a navigation
+            const navMatch = data.reply.match(/(?:转跳|跳转|打开|前往|导航到)\s*(https?:\/\/[^\s，。,.]+)/i);
+            if (navMatch) {
+              pendingNavUrl = navMatch[1];
+              navQuestion.textContent = '看板娘建议跳转: ' + pendingNavUrl;
+              navConfirm.classList.add('active');
+            }
+          } else {
+            addMsg('出错了: ' + (data.error || '未知错误'), 'error');
+          }
+        } catch(e) {
+          addMsg('网络错误: ' + e.message, 'error');
+        }
+        isSending = false;
+        sendBtn.disabled = false;
+        input.disabled = false;
+        input.focus();
+      };
+
+      // 注入聊天按钮到工具栏
+      const injectChatBtn = () => {
+        const tool = document.getElementById('waifu-tool');
+        if (!tool) { setTimeout(injectChatBtn, 500); return; }
+        const btn = document.createElement('span');
+        btn.id = 'waifu-tool-chat';
+        btn.title = '对话';
+        btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H5.17L4 17.17V4h16v12z"/><path d="M7 9h10v2H7zm0-3h7v2H7z"/></svg>';
+        btn.style.cssText = 'cursor:pointer;display:flex;align-items:center;justify-content:center;padding:4px;';
+        btn.addEventListener('click', () => {
+          chatPanel.classList.toggle('active');
+          if (chatPanel.classList.contains('active')) input.focus();
+        });
+        tool.appendChild(btn);
+      };
+      injectChatBtn();
+
+      sendBtn.addEventListener('click', sendMessage);
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendMessage(); });
+
+      document.getElementById('nav-yes').addEventListener('click', () => {
+        if (pendingNavUrl) {
+          navConfirm.classList.remove('active');
+          window.open(pendingNavUrl, '_blank');
+          pendingNavUrl = '';
+        }
+      });
+      document.getElementById('nav-no').addEventListener('click', () => {
+        navConfirm.classList.remove('active');
+        pendingNavUrl = '';
+      });
+    };
+    initChat();
 })();
