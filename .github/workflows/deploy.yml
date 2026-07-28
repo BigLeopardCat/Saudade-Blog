@@ -134,7 +134,7 @@ jobs:
         env:
           SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           SSH_HOST: ${{ secrets.SERVER_HOST }}
-          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_USER: ${{ secrets.SERVER_USER }}
           SSH_PORT: ${{ secrets.SSH_PORT }}
         run: |
           echo "$SSH_KEY" > /tmp/deploy_key

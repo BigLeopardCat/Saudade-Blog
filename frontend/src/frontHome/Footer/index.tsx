@@ -33,7 +33,7 @@ const Footer = () => {
                     <img src={cfLogo} style={{width:50,height:50}} />
                 </a>
                 <a href="https://www.live2d.com/zh-CHS/" target="_blank" rel="noreferrer" title="Live2D Cubism">
-                    <img src="https://www.live2d.com/wp-content/themes/cubism_new/assets/img/cubism-logo.png" style={{width:50,height:50}} />
+                    <img src="https://www.live2d.com/wp-content/themes/cubism_new/assets/img/cubism-logo.png" style={{width:60,height:15}} />
                 </a>
             </p>
         </footer>
