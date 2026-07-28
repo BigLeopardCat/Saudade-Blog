@@ -363,6 +363,17 @@
     };
     initChat();
 
+    // 页面跳转时清空对话框消息（SPA 路由变化）
+    let lastUrl = window.location.href;
+    setInterval(() => {
+      const cur = window.location.href;
+      if (cur !== lastUrl) {
+        lastUrl = cur;
+        const msgs = document.getElementById('chat-messages');
+        if (msgs) msgs.innerHTML = '';
+      }
+    }, 500);
+
     // 监听 waifu-tips 的"欢迎阅读"消息，显示在 agent 对话框中
     const observeTips = () => {
       const tips = document.getElementById('waifu-tips');
