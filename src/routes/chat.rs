@@ -29,7 +29,7 @@ pub async fn chat_handler(
         .unwrap_or_else(|_| "/home/ubuntu/memory_blog_rust/saudade-blog-agent".to_string());
 
     let output = Command::new("./.venv/bin/python3")
-        .args(["main.py", "--ask", &format!("{} [当前页面: {} / {}]", payload.message, payload.current_url.as_deref().unwrap_or(""), payload.page_title.as_deref().unwrap_or(""))])
+        .args(["main.py", "--ask", &format!("[系统: 用户当前在页面 '{}' (标题: {})。如果需要导航请使用 navigate_to 工具。]\n用户消息: {}", payload.current_url.as_deref().unwrap_or(""), payload.page_title.as_deref().unwrap_or(""), payload.message)])
         .current_dir(&agent_path)
         .output()
         .await;
