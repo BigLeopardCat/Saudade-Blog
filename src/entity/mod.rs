@@ -8,4 +8,5 @@ pub mod talk;
 pub mod web_info;
 pub mod announcement;
 pub mod image;
+pub mod knowledge_base;
 pub mod chat_history;
