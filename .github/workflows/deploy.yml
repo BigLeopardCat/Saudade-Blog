@@ -78,7 +78,6 @@ jobs:
             echo "没有代码变更，跳过部署"
           fi
 
-
       - name: Upload frontend dist to R2 (for CDN)
         if: needs.check-changes.outputs.frontend == 'true'
         env:
@@ -102,42 +101,52 @@ jobs:
           mimetypes.add_type('application/vnd.ms-fontobject', '.eot')
 
           s3 = boto3.client('s3',
-              endpoint_url=os.environ["R2_ENDPOINT"],
-              aws_access_key_id=os.environ["R2_ACCESS_KEY"],
-              aws_secret_access_key=os.environ["R2_SECRET_KEY"],
-              config=Config(signature_version="s3v4"),
-              region_name="auto")
+              endpoint_url=os.environ['R2_ENDPOINT'],
+              aws_access_key_id=os.environ['R2_ACCESS_KEY'],
+              aws_secret_access_key=os.environ['R2_SECRET_KEY'],
+              config=Config(signature_version='s3v4'),
+              region_name='auto')
 
-          bucket = os.environ["R2_BUCKET"]
-          dist = "frontend/dist"
+          bucket = os.environ['R2_BUCKET']
+          dist = 'frontend/dist'
 
           for root, dirs, files in os.walk(dist):
               for f in files:
                   local_path = os.path.join(root, f)
-                  rel_path = os.path.relpath(local_path, ".")
-                  r2_key = f"deploy/{rel_path.replace(os.sep, chr(47))}"
+                  rel_path = os.path.relpath(local_path, '.')
+                  r2_key = f'deploy/{rel_path.replace(os.sep, chr(47))}'
 
                   content_type, _ = mimetypes.guess_type(f)
                   if not content_type:
-                      content_type = "application/octet-stream"
+                      content_type = 'application/octet-stream'
 
-                  extra_args = {"ContentType": content_type}
-                  if f.endswith(".html"):
-                      extra_args["CacheControl"] = "no-store, no-cache, must-revalidate"
+                  extra_args = {'ContentType': content_type}
+                  if f.endswith('.html'):
+                      extra_args['CacheControl'] = 'no-store, no-cache, must-revalidate'
 
                   s3.upload_file(local_path, bucket, r2_key, ExtraArgs=extra_args)
-                  print(f"✅ {r2_key}")
-          print("✅ 前端dist已上传到R2 (CDN)")
+                  print(f'✅ {r2_key}')
+          print('✅ 前端dist已上传到R2 (CDN)')
           PYEOF
+
       - name: Trigger server deploy
         if: needs.check-changes.outputs.backend == 'true' || needs.check-changes.outputs.frontend == 'true'
         env:
           SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           SSH_HOST: ${{ secrets.SERVER_HOST }}
-          SSH_USER: ${{ secrets.SERVER_USER }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
         run: |
           echo "$SSH_KEY" > /tmp/deploy_key
           chmod 600 /tmp/deploy_key
-          ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 -i /tmp/deploy_key "${SSH_USER}@${SSH_HOST}" "nohup bash /home/ubuntu/memory_blog_rust/deploy_from_r2.sh > /home/ubuntu/memory_blog_rust/deploy_trigger.log 2>&1 &"
+          ssh -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -o BatchMode=yes \
+              -o IdentitiesOnly=yes \
+              -o ServerAliveInterval=10 \
+              -o ServerAliveCountMax=3 \
+              -o ConnectTimeout=10 \
+              -p "${SSH_PORT:-22}" \
+              -i /tmp/deploy_key "${SSH_USER}@${SSH_HOST}" "nohup bash /home/ubuntu/memory_blog_rust/deploy_from_r2.sh > /home/ubuntu/memory_blog_rust/deploy_trigger.log 2>&1 &"
           echo "✅ 部署已触发"
           rm -f /tmp/deploy_key
