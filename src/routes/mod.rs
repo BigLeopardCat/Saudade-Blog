@@ -7,6 +7,7 @@ pub mod web_info;
 pub mod announcements;
 pub mod talks;
 pub mod upload;
+pub mod chat;
 
 use axum::{
     routing::{get, post, delete, put},
@@ -63,6 +64,9 @@ pub fn create_router(state: AppState) -> Router {
         // Web/User Public
         .route("/api/public/user", get(web_info::get_user_info))
         .route("/api/public/social", get(web_info::get_social_info))
+        
+        // Agent Chat
+        .route("/api/chat", post(chat::chat_handler))
         
         // Static Image Download (Public)
         .nest_service("/api/protect/download", ServeDir::new(upload_dir()))
