@@ -6,9 +6,10 @@ use std::env;
 pub struct Claims {
     pub sub: i32,
     pub exp: usize,
+    pub role: String,
 }
 
-pub fn create_token(user_id: i32) -> String {
+pub fn create_token(user_id: i32, role: &str) -> String {
     let secret = env::var("JWT_SECRET").expect("JWT_SECRET must be set in environment");
     let expiration = chrono::Utc::now()
         .checked_add_signed(chrono::Duration::days(7))
@@ -18,6 +19,7 @@ pub fn create_token(user_id: i32) -> String {
     let claims = Claims {
         sub: user_id,
         exp: expiration,
+        role: role.to_string(),
     };
 
     encode(&Header::default(), &claims, &EncodingKey::from_secret(secret.as_ref())).unwrap()

@@ -14,8 +14,12 @@ pub async fn auth_guard(req: Request<Body>, next: Next) -> Result<Response, Stat
     match auth_header {
         Some(token) => {
             let clean_token = token.strip_prefix("Bearer ").unwrap_or(token);
-            if crate::auth_jwt::verify_token(clean_token).is_some() {
-                Ok(next.run(req).await)
+            if let Some(claims) = crate::auth_jwt::verify_token(clean_token) {
+                if claims.role == "admin" {
+                    Ok(next.run(req).await)
+                } else {
+                    Err(StatusCode::FORBIDDEN)
+                }
             } else {
                 Err(StatusCode::UNAUTHORIZED)
             }
