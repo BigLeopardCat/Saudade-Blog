@@ -174,7 +174,7 @@
     <div id="waifu-chat">
       <div class="chat-messages" id="chat-messages"></div>
       <div class="chat-input-area">
-        <textarea class="chat-input" id="chat-input" placeholder="和看板娘对话..." rows="1"></textarea>
+        <textarea class="chat-input" id="chat-input" placeholder="和泠月喵对话..." rows="1"></textarea>
         <button class="chat-send" id="chat-send">发送</button>
       </div>
       <div class="chat-nav-confirm" id="chat-nav-confirm">
@@ -208,7 +208,7 @@
         div.className = 'chat-msg ' + type;
         const label = document.createElement('span');
         label.className = 'msg-label';
-        label.textContent = type === 'user' ? '你: ' : '看板娘: ';
+        label.textContent = type === 'user' ? '你: ' : '泠月喵: ';
         const content = document.createElement('span');
         content.className = 'msg-text';
         content.textContent = text;
@@ -221,6 +221,15 @@
       const sendMessage = async () => {
         const msg = input.value.trim();
         if (!msg || isSending) return;
+
+        // 登录检查
+        const token = localStorage.getItem('tokenKey');
+        if (!token) {
+          const notice = '尊敬的访客：\n\n本站部署的AI虚拟形象Agent（导航/解读助手）仅供技术学习交流与功能展示使用，不视为面向公众开放的经营性AI服务。\n\n为严格遵守《生成式人工智能服务管理暂行办法》等相关法律法规，履行合规义务，本项目已采取访问限制措施，当前未向不特定公众开放。\n\n如您确因学习、交流或前端技术测试需要体验该功能，请通过博客底部或关于页面的联系方式，联系管理员申请临时体验账号。管理员将在确认您的需求后，为您开通限时访问权限。\n\n感谢您的理解与支持！我们始终坚持合规先导，也期待与各位爱好者共同交流学习。\n\nSaudade Blog\n2026年7月29日';
+          addMsg(notice, 'agent');
+          return;
+        }
+
         input.value = '';
         addMsg(msg, 'user');
         isSending = true;
@@ -230,7 +239,7 @@
         try {
           const resp = await fetch('/api/chat', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
             body: JSON.stringify({ 
               message: msg, 
               current_url: window.location.href, 
@@ -260,7 +269,7 @@
             })();
             if (navUrl) {
               pendingNavUrl = navUrl;
-              navQuestion.textContent = '看板娘建议跳转到: ' + navUrl;
+              navQuestion.textContent = '泠月喵建议跳转到: ' + navUrl;
               navConfirm.classList.add('active');
             }
           } else {
@@ -358,7 +367,7 @@
             div.className = 'chat-msg agent';
             const label = document.createElement('span');
             label.className = 'msg-label';
-            label.textContent = '看板娘: ';
+            label.textContent = '泠月喵: ';
             const content = document.createElement('span');
             content.className = 'msg-text';
             content.textContent = text;
