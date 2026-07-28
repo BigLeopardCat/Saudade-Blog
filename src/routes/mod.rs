@@ -7,6 +7,7 @@ pub mod web_info;
 pub mod announcements;
 pub mod talks;
 pub mod upload;
+pub mod knowledge;
 pub mod chat;
 
 use axum::{
@@ -67,6 +68,10 @@ pub fn create_router(state: AppState) -> Router {
         
         // Agent Chat
         .route("/api/chat", post(chat::chat_handler))
+        
+        // Knowledge Base
+        .route("/api/knowledge", get(knowledge::list_knowledge).post(knowledge::add_knowledge))
+        .route("/api/knowledge/:id", delete(knowledge::delete_knowledge))
         
         // Static Image Download (Public)
         .nest_service("/api/protect/download", ServeDir::new(upload_dir()))
