@@ -55,9 +55,6 @@ pub async fn chat_handler(
         });
     }
 
-    let agent_path = std::env::var("AGENT_PATH")
-        .unwrap_or_else(|_| "/home/ubuntu/memory_blog_rust/saudade-blog-agent".to_string());
-
     let uid = user_id.unwrap_or(0);
     // 保存用户消息
     if uid > 0 {
@@ -69,82 +66,50 @@ pub async fn chat_handler(
         }.save(&state.db).await;
     }
     // 读取最近历史
-    let history_ctx = if uid > 0 {
-        let mut recent = chat_history::Entity::find()
+        let history_items: Vec<serde_json::Value> = if uid > 0 {
+        let recent = chat_history::Entity::find()
             .filter(chat_history::Column::UserId.eq(uid))
             .order_by_desc(chat_history::Column::CreatedAt)
-            
             .all(&state.db)
             .await.unwrap_or_default();
-        let lines: Vec<String> = recent.iter().rev().map(|h| format!("{}: {}", h.role, h.content)).collect();
-        if lines.is_empty() { String::new() } else { format!("\n[最近对话]:\n{}", lines.join("\n")) }
-    } else { String::new() };
+        recent.iter().rev().map(|h| serde_json::json!({"role": h.role, "content": h.content})).collect()
+    } else { vec![] };
 
-    let full_prompt = format!("[系统: 用户当前在页面 '{}' (标题: {})。用户ID: {}。{}]\n用户消息: {}",
-        payload.current_url.as_deref().unwrap_or(""),
-        payload.page_title.as_deref().unwrap_or(""),
-        uid,
-        history_ctx,
-        payload.message
-    );
+    let agent_url = std::env::var("AGENT_URL").unwrap_or_else(|_| "http://127.0.0.1:8010/chat".to_string());
+    let body = serde_json::json!({
+        "message": payload.message,
+        "current_url": payload.current_url.as_deref().unwrap_or(""),
+        "page_title": payload.page_title.as_deref().unwrap_or(""),
+        "user_id": uid,
+        "history": history_items,
+    });
 
-    let output = Command::new("./.venv/bin/python3")
-        .args(["main.py", "--ask", &full_prompt])
-        .current_dir(&agent_path)
-        .output()
+    let resp = reqwest::Client::new().post(&agent_url)
+        .json(&body)
+        .timeout(std::time::Duration::from_secs(60))
+        .send()
         .await;
 
-    // 保存 Agent 回复
-    if uid > 0 {
-        if let Ok(ref out) = output {
-            let reply = String::from_utf8_lossy(&out.stdout);
-            let reply_text = if reply.contains("Agent: ") {
-                reply.split("Agent: ").nth(1).unwrap_or(&reply).trim().to_string()
-            } else { reply.trim().to_string() };
-            let _ = chat_history::ActiveModel {
-                user_id: Set(uid),
-                role: Set("assistant".into()),
-                content: Set(reply_text),
-                ..Default::default()
-            }.save(&state.db).await;
-        }
-    }
-
-    match output {
-        Ok(out) => {
-            let stdout = String::from_utf8_lossy(&out.stdout).to_string();
-            let stderr = String::from_utf8_lossy(&out.stderr).to_string();
-
-            let reply = if stdout.contains("Agent: ") {
-                stdout.split("Agent: ")
-                    .nth(1)
-                    .unwrap_or(&stdout)
-                    .trim()
-                    .to_string()
+    match resp {
+        Ok(r) => {
+            if r.status().is_success() {
+                let data: serde_json::Value = r.json().await.unwrap_or_default();
+                let reply = data["reply"].as_str().unwrap_or("").to_string();
+                if uid > 0 {
+                    let _ = chat_history::ActiveModel {
+                        user_id: Set(uid),
+                        role: Set("assistant".into()),
+                        content: Set(reply.clone()),
+                        ..Default::default()
+                    }.save(&state.db).await;
+                }
+                Json(ChatResponse { reply, success: true, error: None })
             } else {
-                stdout.trim().to_string()
-            };
-
-            if !out.status.success() {
-                Json(ChatResponse {
-                    reply: String::new(),
-                    success: false,
-                    error: Some(stderr.trim().to_string()),
-                })
-            } else {
-                Json(ChatResponse {
-                    reply,
-                    success: true,
-                    error: None,
-                })
+                Json(ChatResponse { reply: String::new(), success: false, error: Some(format!("Agent error: {}", r.status())) })
             }
         }
         Err(e) => {
-            Json(ChatResponse {
-                reply: String::new(),
-                success: false,
-                error: Some(e.to_string()),
-            })
+            Json(ChatResponse { reply: String::new(), success: false, error: Some(format!("Agent unavailable: {}", e)) })
         }
     }
 }
