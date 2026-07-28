@@ -172,7 +172,6 @@
     // ── Chat Panel ──
     const chatHTML = `
     <div id="waifu-chat">
-      <button id="chat-close" title="关闭">✖</button>
       <div class="chat-messages" id="chat-messages"></div>
       <div class="chat-input-area">
         <textarea class="chat-input" id="chat-input" placeholder="和看板娘对话..." rows="1"></textarea>
@@ -289,6 +288,34 @@
         });
       };
       repurposeHitokoto();
+
+      // 拖动
+      let isDragging = false, isResizing = false, sX, sY, sW, sH;
+      chatPanel.addEventListener('mousedown', (e) => {
+        if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'BUTTON') return;
+        isDragging = true;
+        sX = e.clientX - chatPanel.offsetLeft;
+        sY = e.clientY - chatPanel.offsetTop;
+      });
+      document.addEventListener('mousemove', (e) => {
+        if (isDragging) {
+          chatPanel.style.left = (e.clientX - sX) + 'px';
+          chatPanel.style.top = (e.clientY - sY) + 'px';
+          chatPanel.style.right = 'auto';
+          chatPanel.style.bottom = 'auto';
+        }
+        if (isResizing) {
+          chatPanel.style.width = Math.max(180, sW + e.clientX - sX) + 'px';
+          chatPanel.style.height = Math.max(120, sH + e.clientY - sY) + 'px';
+        }
+      });
+      document.addEventListener('mouseup', () => { isDragging = false; isResizing = false; });
+      // 缩放把手
+      const rh = document.createElement('div');
+      rh.style.cssText = 'position:absolute;right:0;bottom:0;width:14px;height:14px;cursor:nwse-resize;background:transparent;z-index:2;';
+      rh.innerHTML = '<svg viewBox="0 0 10 10" width="14" height="14"><path d="M0 10 L10 0 L10 10 Z" fill="#ccc"/></svg>';
+      rh.addEventListener('mousedown', (e) => { e.stopPropagation(); isResizing = true; sX = e.clientX; sY = e.clientY; sW = chatPanel.offsetWidth; sH = chatPanel.offsetHeight; });
+      chatPanel.appendChild(rh);
 
       sendBtn.addEventListener('click', sendMessage);
       // Auto-resize textarea
