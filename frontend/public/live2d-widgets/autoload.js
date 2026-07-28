@@ -172,6 +172,7 @@
     // ── Chat Panel ──
     const chatHTML = `
     <div id="waifu-chat">
+      <button id="chat-close" title="关闭">✖</button>
       <div class="chat-messages" id="chat-messages"></div>
       <div class="chat-input-area">
         <textarea class="chat-input" id="chat-input" placeholder="和看板娘对话..." rows="1"></textarea>
@@ -198,6 +199,11 @@
       const sendBtn = document.getElementById('chat-send');
       const navConfirm = document.getElementById('chat-nav-confirm');
       const navQuestion = document.getElementById('nav-question-text');
+      
+      // 关闭按钮
+      document.getElementById('chat-close-btn')?.addEventListener('click', () => {
+        chatPanel.classList.remove('active');
+      });
 
       let pendingNavUrl = '';
       let isSending = false;
@@ -274,22 +280,19 @@
         input.focus();
       };
 
-      // 注入聊天按钮到工具栏
-      const injectChatBtn = () => {
-        const tool = document.getElementById('waifu-tool');
-        if (!tool) { setTimeout(injectChatBtn, 500); return; }
-        const btn = document.createElement('span');
-        btn.id = 'waifu-tool-chat';
-        btn.title = '对话';
-        btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H5.17L4 17.17V4h16v12z"/><path d="M7 9h10v2H7zm0-3h7v2H7z"/></svg>';
-        btn.style.cssText = 'cursor:pointer;display:flex;align-items:center;justify-content:center;padding:4px;';
-        btn.addEventListener('click', () => {
+      // 将 waifu-tool-hitokoto 改为聊天面板开关
+      const repurposeHitokoto = () => {
+        const hitokotoBtn = document.getElementById('waifu-tool-hitokoto');
+        if (!hitokotoBtn) { setTimeout(repurposeHitokoto, 500); return; }
+        hitokotoBtn.title = '对话';
+        hitokotoBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          e.preventDefault();
           chatPanel.classList.toggle('active');
           if (chatPanel.classList.contains('active')) input.focus();
         });
-        tool.appendChild(btn);
       };
-      injectChatBtn();
+      repurposeHitokoto();
 
       sendBtn.addEventListener('click', sendMessage);
       // Auto-resize textarea
