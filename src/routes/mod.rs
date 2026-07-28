@@ -7,6 +7,7 @@ pub mod web_info;
 pub mod announcements;
 pub mod talks;
 pub mod upload;
+pub mod temp_user;
 pub mod knowledge;
 pub mod chat;
 
@@ -72,6 +73,10 @@ pub fn create_router(state: AppState) -> Router {
         // Knowledge Base
         .route("/api/knowledge", get(knowledge::list_knowledge).post(knowledge::add_knowledge))
         .route("/api/knowledge/:id", delete(knowledge::delete_knowledge))
+        
+        // Temp Users
+        .route("/api/temp-users", get(temp_user::list_temp_users).post(temp_user::create_temp_user))
+        .route("/api/temp-users/:id", delete(temp_user::delete_temp_user))
         
         // Static Image Download (Public)
         .nest_service("/api/protect/download", ServeDir::new(upload_dir()))

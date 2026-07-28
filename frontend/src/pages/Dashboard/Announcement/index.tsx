@@ -83,8 +83,69 @@ const AnnouncementPage = () => {
                     </Form.Item>
                 </Form>
             </Modal>
+
+            {/* ── 临时用户管理 ── */}
+            <div style={{ marginTop: 48, borderTop: '1px solid #eee', paddingTop: 24 }}>
+                <h3>临时用户管理</h3>
+                <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+                    <input
+                        id="temp-username"
+                        placeholder="用户名"
+                        style={{ flex: 1, padding: '4px 8px', borderRadius: 4, border: '1px solid #d9d9d9' }}
+                    />
+                    <input
+                        id="temp-password"
+                        type="password"
+                        placeholder="密码"
+                        style={{ flex: 1, padding: '4px 8px', borderRadius: 4, border: '1px solid #d9d9d9' }}
+                    />
+                    <Button type="primary" onClick={async () => {
+                        const username = (document.getElementById('temp-username') as HTMLInputElement)?.value;
+                        const password = (document.getElementById('temp-password') as HTMLInputElement)?.value;
+                        if (!username || !password) { message.warning('请输入用户名和密码'); return; }
+                        try {
+                            const token = localStorage.getItem('tokenKey');
+                            const res = await fetch('/api/temp-users', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+                                body: JSON.stringify({ username, password }),
+                            });
+                            const data = await res.json();
+                            if (data.code === 200) { message.success('创建成功'); loadTempUsers(); }
+                            else { message.error(data.message); }
+                        } catch { message.error('请求失败'); }
+                    }}>新建临时用户</Button>
+                </div>
+                <div id="temp-user-list" />
+            </div>
         </div>
     )
 }
+
+// 加载临时用户列表
+const loadTempUsers = async () => {
+    try {
+        const token = localStorage.getItem('tokenKey');
+        const res = await fetch('/api/temp-users', { headers: { 'Authorization': 'Bearer ' + token } });
+        const data = await res.json();
+        const container = document.getElementById('temp-user-list');
+        if (!container) return;
+        container.innerHTML = '';
+        if (!data || data.length === 0) { container.innerHTML = '<div style=\"color: #999; padding: 8px;\">暂无临时用户</div>'; return; }
+        data.forEach((u: any) => {
+            const row = document.createElement('div');
+            row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f0f0f0';
+            row.innerHTML = '<span>' + u.username.slice(0, 8) + '... (ID: ' + u.id + ')</span>' +
+                '<button style=\"background:#ff4d4f;color:#fff;border:none;border-radius:4px;padding:2px 10px;cursor:pointer\"' +
+                ' onclick=\"fetch(\'/api/temp-users/' + u.id + '\',{method:\'DELETE\',headers:{\'Authorization\':\'Bearer ' + token + '\'}}).then(r=>r.json()).then(d=>{if(d.code===200){loadTempUsers();message.success(\'已删除\')}})\">删除</button>';
+            container.appendChild(row);
+        });
+    } catch {}
+};
+
+// 页面加载后自动加载临时用户列表
+const origOnload = window.onload;
+window.onload = (e) => { if (origOnload) origOnload(e); setTimeout(loadTempUsers, 1000); };
+setTimeout(loadTempUsers, 1000);
 
 export default AnnouncementPage
