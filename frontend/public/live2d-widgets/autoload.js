@@ -223,7 +223,11 @@
           const resp = await fetch('/api/chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: msg }),
+            body: JSON.stringify({ 
+              message: msg, 
+              current_url: window.location.href, 
+              page_title: document.title 
+            }),
           });
           const data = await resp.json();
           if (data.success) {
@@ -270,7 +274,7 @@
       document.getElementById('nav-yes').addEventListener('click', () => {
         if (pendingNavUrl) {
           navConfirm.classList.remove('active');
-          window.open(pendingNavUrl, '_blank');
+          window.location.href = pendingNavUrl;
           pendingNavUrl = '';
         }
       });
