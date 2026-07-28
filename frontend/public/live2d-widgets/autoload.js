@@ -200,10 +200,6 @@
       const navConfirm = document.getElementById('chat-nav-confirm');
       const navQuestion = document.getElementById('nav-question-text');
       
-      // 关闭按钮
-      document.getElementById('chat-close-btn')?.addEventListener('click', () => {
-        chatPanel.classList.remove('active');
-      });
 
       let pendingNavUrl = '';
       let isSending = false;
@@ -320,4 +316,34 @@
       });
     };
     initChat();
+
+    // 监听 waifu-tips 的"欢迎阅读"消息，显示在 agent 对话框中
+    const observeTips = () => {
+      const tips = document.getElementById('waifu-tips');
+      if (!tips) { setTimeout(observeTips, 500); return; }
+      const observer = new MutationObserver(() => {
+        const text = tips.textContent || '';
+        if (text.includes('欢迎阅读')) {
+          const chatPanel = document.getElementById('waifu-chat');
+          const messages = document.getElementById('chat-messages');
+          if (chatPanel && messages && chatPanel.classList.contains('active')) {
+            const div = document.createElement('div');
+            div.className = 'chat-msg agent';
+            const label = document.createElement('span');
+            label.className = 'msg-label';
+            label.textContent = '看板娘: ';
+            const content = document.createElement('span');
+            content.className = 'msg-text';
+            content.textContent = text;
+            div.appendChild(label);
+            div.appendChild(content);
+            messages.appendChild(div);
+            messages.scrollTop = messages.scrollHeight;
+          }
+        }
+      });
+      observer.observe(tips, { childList: true, subtree: true, characterData: true });
+    };
+    observeTips();
+
 })();
