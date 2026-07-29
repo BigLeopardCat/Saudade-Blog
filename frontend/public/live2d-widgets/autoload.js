@@ -237,28 +237,32 @@
 
       // --- 预留口型控制接口 ---
       window.__setMouthOpen = (value) => {
-        if (window.__mouthDebugCount === undefined) window.__mouthDebugCount = 0;
-        if (++window.__mouthDebugCount <= 5) console.log('[Mouth] __setMouthOpen called, value=', value, 'override=', window.__mouthOverride);
         window.__mouthOverride = value;
         try {
           const model = getModel();
-          if (!model) { if (window.__mouthDebugCount <= 5) console.warn('[Mouth] getModel() returned null'); return; }
-          const rawModel = model._model || model;
-          const core = rawModel.getModel ? rawModel.getModel() : rawModel;
-          if (!core) { if (window.__mouthDebugCount <= 5) console.warn('[Mouth] core is null'); return; }
+          if (!model) return;
+          const core = model.getModel ? model.getModel() : model._model;
+          if (!core || typeof core.setParameterValueById !== 'function') return;
           const v = Math.max(0, Math.min(1, value));
-            setCoreParam(core, 'ParamMouthOpenY', v);
-            setCoreParam(core, 'ParamSpeak', v);
-            
-            // 触发渲染：尝试多种方式
-          if (core._csmUpdateModel && typeof core._csmUpdateModel === 'function') {
-            core._csmUpdateModel();
-          } else if (core._model && typeof core._model.update === 'function') {
+          // 用和 applyParams 中 set() 完全相同的机制设置口型
+          const doSet = (name, val) => {
+            core.setParameterValueById(name, val, 1.0);
+            const cnt = core.getParameterCount();
+            for (let i = 0; i < cnt; i++) {
+              const pid = core.getParameterId(i);
+              if (pid && pid._id && pid._id.s === name) {
+                core._parameterValues[i] = val;
+                break;
+              }
+            }
+          };
+          doSet('ParamMouthOpenY', v);
+          doSet('ParamSpeak', v);
+          // 渲染（与 applyParams 后调用的 _model.update() 相同）
+          if (core._model && typeof core._model.update === 'function') {
             core._model.update();
           } else if (typeof core.update === 'function') {
             core.update();
-          } else if (rawModel.update && typeof rawModel.update === 'function') {
-            rawModel.update();
           }
         } catch(e) { console.warn('[Live2D] mouth error:', e); }
       };
