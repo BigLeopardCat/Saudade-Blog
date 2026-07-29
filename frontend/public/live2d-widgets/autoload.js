@@ -444,16 +444,33 @@
       };
       repurposeHitokoto();
       
-      // 看板娘第3按钮（switch-model）→ 切换模型，恢复动画钩子
+      // 看板娘第3按钮（switch-model）→ 切换模型 + 弹出消息
       setTimeout(() => {
         const btn = document.getElementById('waifu-tool-switch-model');
-        if (btn) btn.title = '换人';
+        if (!btn) return;
+        btn.title = '换人';
+        btn.addEventListener('click', (e) => {
+          // 不阻止默认行为，让库继续执行模型切换
+          setTimeout(() => {
+            const panel = document.getElementById('waifu-chat');
+            if (panel) panel.classList.add('active');
+            addMsg('目前博客只有泠月喵一个人服务呢，还没有招聘到新员工替本喵顶班~', 'agent');
+          }, 100);
+        });
       }, 1000);
       
-      // 看板娘第4按钮（switch-texture）→ 切换皮肤，恢复动画钩子
+      // 看板娘第4按钮（switch-texture）→ 切换皮肤 + 弹出消息
       setTimeout(() => {
         const btn = document.getElementById('waifu-tool-switch-texture');
-        if (btn) btn.title = '换装';
+        if (!btn) return;
+        btn.title = '换装';
+        btn.addEventListener('click', (e) => {
+          setTimeout(() => {
+            const panel = document.getElementById('waifu-chat');
+            if (panel) panel.classList.add('active');
+            addMsg('本喵还没有新衣服呢，要不要给本喵买一件呢~', 'agent');
+          }, 100);
+        });
       }, 1000);
       
       // 新增星标按钮（对话按钮上方）
@@ -481,6 +498,8 @@
         if (e.clientX > rect.right - 30 && e.clientY > rect.bottom - 30) return;
         isDragging = true;
         isResizing = false;
+        // 固定当前宽度，防止移除 right:0 后宽度变化
+        chatPanel.style.width = chatPanel.offsetWidth + 'px';
         offsetX = e.clientX - chatPanel.offsetLeft;
         offsetY = e.clientY - chatPanel.offsetTop;
       });
