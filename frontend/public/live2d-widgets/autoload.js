@@ -158,8 +158,10 @@
             // origModelUpdate 已经调用完毕，现在参数可能已被 _model.update() 固化
             // 所以我们在 origModelUpdate 之后调用 applyParams 并重新触发一次 _model.update()
             applyParams(core);
-            if (core && core && core.update) {
-              core._model.update();  // 用我们的参数重新更新渲染器
+            if (core && core._model && core._model.update) {
+              core._model.update();
+            } else if (core && typeof core.update === 'function') {
+              core.update();  // 用我们的参数重新更新渲染器
             }
           };
           model.__customAnimHooked = true;
@@ -201,20 +203,29 @@
           const model = getModel();
           if (!model) return;
           const core = model.getModel ? model.getModel() : model._model;
-          if (!core) return;
+          if (!core || typeof core.setParameterValueById !== 'function') return;
           const v = Math.max(0, Math.min(1, value));
-          core.setParameterValueById('ParamMouthOpenY', v, 1.0);
-          core.setParameterValueById('ParamSpeak', v, 1.0);
-          const cnt = core.getParameterCount();
-          for (let i = 0; i < cnt; i++) {
-            const pid = core.getParameterId(i);
-            if (pid && pid._id && (pid._id.s === 'ParamMouthOpenY' || pid._id.s === 'ParamSpeak')) {
-              core._parameterValues[i] = v;
+          // 用和 applyParams 中 set() 完全相同的方式设置参数
+          const doSet = (name, val) => {
+            core.setParameterValueById(name, val, 1.0);
+            const cnt = core.getParameterCount();
+            for (let i = 0; i < cnt; i++) {
+              const pid = core.getParameterId(i);
+              if (pid && pid._id && pid._id.s === name) {
+                core._parameterValues[i] = val;
+                break;
+              }
             }
+          };
+          doSet('ParamMouthOpenY', v);
+          doSet('ParamSpeak', v);
+          // 直接触发模型渲染，和 applyParams 后的 c._model.update() 相同
+          if (core._model && typeof core._model.update === 'function') {
+            core._model.update();
+          } else if (typeof core.update === 'function') {
+            core.update();
           }
-          // 立即渲染，让张嘴在当前帧可见
-          if (core._model && core._model.update) core._model.update();
-        } catch {}
+        } catch(e) { console.warn('[Live2D] mouth error:', e); }
       };
       window.__setMouthClose = () => { window.__mouthOverride = -1; window.__setMouthOpen(0); };
     })();
