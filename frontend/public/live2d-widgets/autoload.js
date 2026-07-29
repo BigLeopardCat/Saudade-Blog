@@ -165,23 +165,26 @@
           model.__customAnimHooked = true;
         }
 
-        // 保底 setInterval + 检测模型切换
+        // 保底 setInterval + 检测模型切换（动态获取当前 core）
         setInterval(() => { 
           try { 
-            applyParams(core);
+            const curModel = getModel();
+            if (!curModel) return;
+            const curCore = curModel.getModel ? curModel.getModel() : curModel._model;
+            if (!curCore) return;
+            applyParams(curCore);
             // 检测模型是否被切换（新模型没有__customAnimHooked）
-            const m = getModel();
-            if (m && !m.__customAnimHooked) {
-              const origUpdate = m.update.bind(m);
-              m.update = function() {
+            if (!curModel.__customAnimHooked) {
+              const origUpdate = curModel.update.bind(curModel);
+              curModel.update = function() {
                 origUpdate();
-                const c = m.getModel ? m.getModel() : m._model;
+                const c = curModel.getModel ? curModel.getModel() : curModel._model;
                 if (c) {
                   applyParams(c);
                   if (c && c._model && c._model.update) c._model.update();
                 }
               };
-              m.__customAnimHooked = true;
+              curModel.__customAnimHooked = true;
               console.log('[Live2D] re-hooked new model');
             }
           } catch {} 
@@ -201,6 +204,7 @@
           if (!core) return;
           const v = Math.max(0, Math.min(1, value));
           core.setParameterValueById('ParamMouthOpenY', v, 1.0);
+          core.setParameterValueById('ParamSpeak', v, 1.0);
           const cnt = core.getParameterCount();
           for (let i = 0; i < cnt; i++) {
             const pid = core.getParameterId(i);
@@ -208,6 +212,8 @@
               core._parameterValues[i] = v;
             }
           }
+          // 立即渲染，让张嘴在当前帧可见
+          if (core._model && core._model.update) core._model.update();
         } catch {}
       };
       window.__setMouthClose = () => { window.__mouthOverride = -1; window.__setMouthOpen(0); };
@@ -377,7 +383,8 @@
                 msgs.scrollTop = msgs.scrollHeight;
               } else {
                 clearInterval(typeInterval);
-                // 流式结束，口型归位
+                // 流式结束，口型归位（禁用 override 让模型恢复默认）
+                window.__mouthOverride = -1;
                 if (window.__setMouthOpen) window.__setMouthOpen(0);
                 // 最终完整文本保存到 localStorage
                 try {
