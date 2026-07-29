@@ -469,6 +469,12 @@
                 navConfirm.classList.add('active');
               }
             }
+            // 处理特效切换命令
+            const effectMatch = data.reply.match(/EFFECT:(\w+)/);
+            if (effectMatch) {
+              const eff = effectMatch[1];
+              toggleEffect(eff);
+            }
           } else {
             addMsg('出错了: ' + (data.error || '未知错误'), 'error');
           }
@@ -572,18 +578,42 @@
           btn.active = false;
           btn.addEventListener('click', (e) => {
             e.stopPropagation();
-            btn.active = !btn.active;
-            btn.style.filter = btn.active ? 'brightness(1.3) drop-shadow(0 0 3px gold)' : 'none';
-            const fnName = eff.startFn;
-            if (btn.active) {
-              if (window[fnName]) window[fnName]();
-            } else {
-              const stopFn = eff.stopFn;
-              if (window[stopFn]) window[stopFn]();
-            }
+            toggleEffect(eff.id.replace('effect-', ''));
           });
           subContainer.appendChild(btn);
         });
+        
+        // 全局特效切换函数（按钮/agent 共用）
+        window.toggleEffect = (name) => {
+          const effectMap = {
+            sakura: { start: 'startSakura', stop: 'stopSakura', id: 'effect-sakura' },
+            rain:   { start: 'startRain',   stop: 'stopRain',   id: 'effect-rain' },
+            snow:   { start: 'startSnow',   stop: 'stopSnow',   id: 'effect-snow' },
+          };
+          if (name === 'off') {
+            Object.values(effectMap).forEach(e => {
+              if (window[e.stop]) window[e.stop]();
+              const btn = document.getElementById(e.id);
+              if (btn) { btn.active = false; btn.style.filter = 'none'; }
+            });
+            return;
+          }
+          const eff = effectMap[name];
+          if (!eff) return;
+          const btn = document.getElementById(eff.id);
+          if (btn) {
+            btn.active = !btn.active;
+            btn.style.filter = btn.active ? 'brightness(1.3) drop-shadow(0 0 3px gold)' : 'none';
+            if (btn.active) {
+              if (window[eff.start]) window[eff.start]();
+            } else {
+              if (window[eff.stop]) window[eff.stop]();
+            }
+          } else {
+            // 按钮还没创建时直接调用
+            if (window[eff.start]) window[eff.start]();
+          }
+        };
         
         // 星星点击展开/收起
         let expanded = false;
