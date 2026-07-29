@@ -144,11 +144,11 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                          <div style={{ marginTop: "5px", display: "flex", justifyContent: "center", gap: "10px" }}>
                             {isLogin ? (
                                 <>
-                                <div className="theme-btn" onClick={() => navigate("dashboard")} style={{ padding: "5px 15px", background: "#ace0f9", color: "#fff", borderRadius: "5px", cursor: "pointer", fontSize: "14px" }}>心境</div>
-                                <div className="theme-btn" onClick={() => { localStorage.removeItem('tokenKey'); navigate('/'); }} style={{ padding: "5px 15px", background: "#e74c3c", color: "#fff", borderRadius: "5px", cursor: "pointer", fontSize: "14px" }}>退出</div>
+                                <div className="theme-btn" onClick={() => navigate("dashboard")}>心境</div>
+                                <div className="theme-btn logout-btn" onClick={() => { localStorage.removeItem('tokenKey'); setLogin(0); navigate('/'); }}>退出</div>
                                 </>
                             ) : (
-                                <div className="theme-btn" onClick={() => navigate("login")} style={{ padding: "5px 15px", background: "#ace0f9", color: "#fff", borderRadius: "5px", cursor: "pointer", fontSize: "14px" }}>登录</div>
+                                <div className="theme-btn" onClick={() => navigate("login")}>登录</div>
                             )}
                         </div>
                     </div>
@@ -242,7 +242,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                     <div className={'homeSwitch'}><Switch handleModeSwitch={handleModeSwitch} isDarkMode={isDark}/></div>
                     <div className={`homeLogo ${isHovered&&'BigAvatar'}`} onMouseEnter={handleMouseEnter} onMouseLeave={handleMouseLeave}>
                         <Avatar src={avatar} size='large'/>
-                        <div className="loginCard" style={{
+                        <div className={`loginCard${isLogin ? " logged-in" : ""}`} style={{
                             display: (showStatus && isHovered) ? 'flex' : 'none',
                             flexDirection: 'column',
                             gap: '5px'
@@ -250,7 +250,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                             {isLogin ? (
                                 <>
                                 <div className="theme-btn" onClick={() => navigate("dashboard")}>心境</div>
-                                <div className="theme-btn" onClick={() => { localStorage.removeItem('tokenKey'); navigate('/'); }} style={{ color: "#e74c3c" }}>退出</div>
+                                <div className="theme-btn logout-btn" onClick={() => { localStorage.removeItem('tokenKey'); setLogin(0); navigate('/'); }}>退出</div>
                                 </>
                             ) : (
                                 <div className="theme-btn" onClick={() => navigate("login")}>登录</div>

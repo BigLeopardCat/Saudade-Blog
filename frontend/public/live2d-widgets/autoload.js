@@ -212,7 +212,19 @@
 
       let pendingNavUrl = '';
       let isSending = false;
-
+      // 从 JWT 提取用户 ID
+      const getUserId = () => {
+        try {
+          const t = localStorage.getItem('tokenKey');
+          if (!t) return '';
+          const payload = JSON.parse(atob(t.split('.')[1]));
+          return payload.sub || '';
+        } catch { return ''; }
+      };
+      const userLabel = (() => {
+        const uid = getUserId();
+        return uid ? '用户' + uid + '（你）: ' : '你: ';
+      })();
       // 从 localStorage 加载最近 10 条历史消息
       try {
         const key = 'chat_history_' + (localStorage.getItem('tokenKey') || 'guest');
@@ -223,10 +235,17 @@
           div.className = 'chat-msg ' + item.type;
           const label = document.createElement('span');
           label.className = 'msg-label';
-          label.textContent = item.type === 'user' ? '你: ' : '泠月喵: ';
+          label.textContent = item.type === 'user' ? userLabel : '泠月喵: ';
           const content = document.createElement('span');
           content.className = 'msg-text';
-          content.textContent = item.text;
+          if (item.type === 'user') {
+            const bubble = document.createElement('span');
+            bubble.className = 'msg-bubble';
+            bubble.textContent = item.text;
+            content.appendChild(bubble);
+          } else {
+            content.textContent = item.text;
+          }
           div.appendChild(label);
           div.appendChild(content);
           messages.appendChild(div);
@@ -239,10 +258,17 @@
         div.className = 'chat-msg ' + type;
         const label = document.createElement('span');
         label.className = 'msg-label';
-        label.textContent = type === 'user' ? '你: ' : '泠月喵: ';
+        label.textContent = type === 'user' ? userLabel : '泠月喵: ';
         const content = document.createElement('span');
         content.className = 'msg-text';
-        content.textContent = text;
+        if (type === 'user') {
+          const bubble = document.createElement('span');
+          bubble.className = 'msg-bubble';
+          bubble.textContent = text;
+          content.appendChild(bubble);
+        } else {
+          content.textContent = text;
+        }
         div.appendChild(label);
         div.appendChild(content);
         messages.appendChild(div);
