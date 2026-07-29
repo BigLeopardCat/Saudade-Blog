@@ -213,6 +213,27 @@
       let pendingNavUrl = '';
       let isSending = false;
 
+      // 从 localStorage 加载最近 10 条历史消息
+      try {
+        const key = 'chat_history_' + (localStorage.getItem('tokenKey') || 'guest');
+        const saved = JSON.parse(localStorage.getItem(key) || '[]');
+        const recent = saved.slice(-10);
+        recent.forEach(item => {
+          const div = document.createElement('div');
+          div.className = 'chat-msg ' + item.type;
+          const label = document.createElement('span');
+          label.className = 'msg-label';
+          label.textContent = item.type === 'user' ? '你: ' : '泠月喵: ';
+          const content = document.createElement('span');
+          content.className = 'msg-text';
+          content.textContent = item.text;
+          div.appendChild(label);
+          div.appendChild(content);
+          messages.appendChild(div);
+        });
+        messages.scrollTop = messages.scrollHeight;
+      } catch(e) {/* ignore */}
+
       const addMsg = (text, type) => {
         const div = document.createElement('div');
         div.className = 'chat-msg ' + type;
@@ -226,8 +247,15 @@
         div.appendChild(content);
         messages.appendChild(div);
         messages.scrollTop = messages.scrollHeight;
+        // 持久化到 localStorage
+        try {
+          const key = 'chat_history_' + (localStorage.getItem('tokenKey') || 'guest');
+          let saved = JSON.parse(localStorage.getItem(key) || '[]');
+          saved.push({text, type, time: Date.now()});
+          if (saved.length > 50) saved = saved.slice(-50);
+          localStorage.setItem(key, JSON.stringify(saved));
+        } catch(e) {/* ignore */}
       };
-
       const sendMessage = async () => {
         const msg = input.value.trim();
         if (!msg || isSending) return;
