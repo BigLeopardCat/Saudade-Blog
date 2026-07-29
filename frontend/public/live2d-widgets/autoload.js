@@ -262,8 +262,8 @@
             // Check if the agent suggests a navigation
             const navMatch = data.reply.match(/(?:转跳|跳转|打开|前往|导航到)\s*(https?:\/\/[^\s，。,.]+)/i);
             const navUrl = (() => {
-              const m1 = data.reply.match(/NAVIGATE:(https?:\/\/[^\s]+)/);
-              if (m1) return m1[1];
+              const m1 = data.reply.match(/(AUTO_NAVIGATE|NAVIGATE):(https?:\/\/[^\s]+)/);
+              if (m1) return m1[2];
               const m2 = data.reply.match(/\[([^\]]+)\]\(((?:https?:)?\/\/)?([^)]+)\)/);
               if (m2) {
                 let url = m2[3];
@@ -278,9 +278,14 @@
               return null;
             })();
             if (navUrl) {
-              pendingNavUrl = navUrl;
-              navQuestion.textContent = '泠月喵建议跳转到: ' + navUrl;
-              navConfirm.classList.add('active');
+              const isDirect = data.reply.startsWith('AUTO_NAVIGATE:');
+              if (isDirect) {
+                window.location.href = navUrl;
+              } else {
+                pendingNavUrl = navUrl;
+                navQuestion.textContent = '泠月喵建议跳转到: ' + navUrl;
+                navConfirm.classList.add('active');
+              }
             }
           } else {
             addMsg('出错了: ' + (data.error || '未知错误'), 'error');
@@ -363,16 +368,7 @@
     };
     initChat();
 
-    // 页面跳转时清空对话框消息（SPA 路由变化）
-    let lastUrl = window.location.href;
-    setInterval(() => {
-      const cur = window.location.href;
-      if (cur !== lastUrl) {
-        lastUrl = cur;
-        const msgs = document.getElementById('chat-messages');
-        if (msgs) msgs.innerHTML = '';
-      }
-    }, 500);
+
 
     // 监听 waifu-tips 的"欢迎阅读"消息，显示在 agent 对话框中
     const observeTips = () => {
