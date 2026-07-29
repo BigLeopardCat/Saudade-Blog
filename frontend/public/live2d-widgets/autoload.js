@@ -165,8 +165,27 @@
           model.__customAnimHooked = true;
         }
 
-        // 保底 setInterval
-        setInterval(() => { try { applyParams(core); } catch {} }, 50);
+        // 保底 setInterval + 检测模型切换
+        setInterval(() => { 
+          try { 
+            applyParams(core);
+            // 检测模型是否被切换（新模型没有__customAnimHooked）
+            const m = getModel();
+            if (m && !m.__customAnimHooked) {
+              const origUpdate = m.update.bind(m);
+              m.update = function() {
+                origUpdate();
+                const c = m.getModel ? m.getModel() : m._model;
+                if (c) {
+                  applyParams(c);
+                  if (c && c._model && c._model.update) c._model.update();
+                }
+              };
+              m.__customAnimHooked = true;
+              console.log('[Live2D] re-hooked new model');
+            }
+          } catch {} 
+        }, 50);
         return true;
       };
       const tryStart = () => { if (startAnim()) return; setTimeout(tryStart, 500); };
@@ -425,35 +444,17 @@
       };
       repurposeHitokoto();
       
-      // 看板娘第3按钮（switch-model）→ 员工提示
-      const repurposeSwitchModel = () => {
+      // 看板娘第3按钮（switch-model）→ 切换模型，恢复动画钩子
+      setTimeout(() => {
         const btn = document.getElementById('waifu-tool-switch-model');
-        if (!btn) { setTimeout(repurposeSwitchModel, 500); return; }
-        btn.title = '招新';
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          e.preventDefault();
-          const chatPanel = document.getElementById('waifu-chat');
-          if (chatPanel) chatPanel.classList.add('active');
-          addMsg('目前博客只有泠月喵一个人服务呢，还没有招聘到新员工替本喵顶班~', 'agent');
-        });
-      };
-      repurposeSwitchModel();
+        if (btn) btn.title = '换人';
+      }, 1000);
       
-      // 看板娘第4按钮（switch-texture）→ 衣服提示
-      const repurposeSwitchTexture = () => {
+      // 看板娘第4按钮（switch-texture）→ 切换皮肤，恢复动画钩子
+      setTimeout(() => {
         const btn = document.getElementById('waifu-tool-switch-texture');
-        if (!btn) { setTimeout(repurposeSwitchTexture, 500); return; }
-        btn.title = '换装';
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          e.preventDefault();
-          const chatPanel = document.getElementById('waifu-chat');
-          if (chatPanel) chatPanel.classList.add('active');
-          addMsg('本喵还没有新衣服呢，要不要给本喵买一件呢~', 'agent');
-        });
-      };
-      repurposeSwitchTexture();
+        if (btn) btn.title = '换装';
+      }, 1000);
       
       // 新增星标按钮（对话按钮上方）
       const addStarButton = () => {
@@ -468,14 +469,19 @@
       };
       addStarButton();
 
-      // 拖动
+      // 拖动（通过聊天消息区域的空白处）
       let isDragging = false, isResizing = false, sX, sY, sW, sH;
-      chatPanel.addEventListener('mousedown', (e) => {
-        if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'BUTTON') return;
-        isDragging = true;
-        sX = e.clientX - chatPanel.offsetLeft;
-        sY = e.clientY - chatPanel.offsetTop;
-      });
+      // 聊天消息区域作为拖动手柄
+      const dragHandle = document.getElementById('chat-messages');
+      if (dragHandle) {
+        dragHandle.style.cursor = 'grab';
+        dragHandle.addEventListener('mousedown', (e) => {
+          if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'BUTTON' || e.target.tagName === 'A') return;
+          isDragging = true;
+          sX = e.clientX - chatPanel.offsetLeft;
+          sY = e.clientY - chatPanel.offsetTop;
+        });
+      }
       document.addEventListener('mousemove', (e) => {
         if (isDragging) {
           chatPanel.style.left = (e.clientX - sX) + 'px';
