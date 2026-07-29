@@ -119,53 +119,53 @@
     tick();
   }
 
-  // ---------- 樱花 ----------
+  // ---------- 樱花（右上向左下倾斜飘落）----------
   window.startSakura = function() {
     startEffect('sakura', (container) => {
-      const size = 8 + Math.random() * 14;
-      const r = 180 + Math.floor(Math.random() * 75); // pink hues
+      const size = 10 + Math.random() * 16;
+      const r = 180 + Math.floor(Math.random() * 75);
       const g = 120 + Math.floor(Math.random() * 60);
       const b = 150 + Math.floor(Math.random() * 80);
       return new Particle(container, {
-        x: Math.random() * window.innerWidth,
-        y: -50 - Math.random() * 100,
+        x: window.innerWidth + 30 + Math.random() * 80,
+        y: -50 - Math.random() * 200,
         w: size,
         h: size * 0.7,
-        speedY: 0.5 + Math.random() * 1.0,
-        speedX: -0.3 + Math.random() * 0.6,
+        speedY: 1.0 + Math.random() * 1.5,
+        speedX: -(1.5 + Math.random() * 2.0),
         rotation: Math.random() * 360,
-        rotSpeed: (Math.random() - 0.5) * 6,
-        swingAmp: 20 + Math.random() * 40,
-        swingFreq: 0.01 + Math.random() * 0.02,
+        rotSpeed: (Math.random() - 0.5) * 8,
+        swingAmp: 15 + Math.random() * 25,
+        swingFreq: 0.015 + Math.random() * 0.025,
         opacity: 0.7 + Math.random() * 0.3,
-        life: 0.8 + Math.random() * 0.8,
+        life: 0.8 + Math.random() * 0.6,
         borderRadius: '50% 0 50% 0',
-        bgColor: 'rgba(' + r + ',' + g + ',' + b + ',0.8)',
+        bgColor: 'rgba(' + r + ',' + g + ',' + b + ',0.85)',
       });
-    }, 60);
+    }, 80);
   };
 
   window.stopSakura = function() {
     if (EFFECTS.sakura) EFFECTS.sakura.stop();
   };
 
-  // ---------- 大雨 ----------
+  // ---------- 大雨（更密集）----------
   window.startRain = function() {
     startEffect('rain', (container) => {
-      const len = 15 + Math.random() * 25;
+      const len = 20 + Math.random() * 35;
       return new Particle(container, {
-        x: Math.random() * window.innerWidth,
-        y: -30 - Math.random() * 50,
-        w: 1.5,
+        x: Math.random() * (window.innerWidth + 60) - 30,
+        y: -40 - Math.random() * 60,
+        w: 2,
         h: len,
-        speedY: 8 + Math.random() * 12,
-        speedX: -2 + Math.random() * 0,
-        opacity: 0.3 + Math.random() * 0.4,
-        life: 0.3 + Math.random() * 0.3,
-        bgColor: 'rgba(150,180,220,' + (0.3 + Math.random() * 0.4) + ')',
+        speedY: 12 + Math.random() * 16,
+        speedX: -(1 + Math.random() * 2),
+        opacity: 0.3 + Math.random() * 0.5,
+        life: 0.2 + Math.random() * 0.2,
+        bgColor: 'rgba(150,180,220,' + (0.3 + Math.random() * 0.5) + ')',
         borderRadius: '0',
       });
-    }, 150);
+    }, 250);
   };
 
   window.stopRain = function() {
