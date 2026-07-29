@@ -121,20 +121,50 @@
             // --- 直接挂钩 model.update()，在 loadParameters() 之后、_model.update() 之前注入参数 ---
       window.__mouthOverride = -1;
 
-      const applyParams = (core) => {
-        if (!core || typeof core.setParameterValueById !== 'function') return;
-        const t = performance.now();
-        const set = (name, val) => {
-          core.setParameterValueById(name, val, 1.0);
-          const cnt = core.getParameterCount();
-          for (let i = 0; i < cnt; i++) {
-            const pid = core.getParameterId(i);
-            if (pid && pid._id && pid._id.s === name) {
-              core._parameterValues[i] = val;
-              break;
-            }
+      const setCoreParam = (core, name, val) => {
+        if (!core) return;
+        if (window.__mouthDebugCount === undefined) window.__mouthDebugCount = 0;
+        const isMouth = name === 'ParamMouthOpenY' || name === 'ParamSpeak';
+        const v = Number.isFinite(val) ? val : 0;
+
+        // 1) 优先使用 index 写入，兼容部分 Cubism 包装层对字符串 ID 的限制。
+        if (typeof core.getParameterIndex === 'function' && typeof core.setParameterValueByIndex === 'function') {
+          const idx = core.getParameterIndex(name);
+          if (typeof idx === 'number' && idx >= 0) {
+            core.setParameterValueByIndex(idx, v, 1.0);
+            return;
           }
-        };
+        }
+
+        // 2) 其次尝试按 ID 写入。
+        if (typeof core.setParameterValueById === 'function') {
+          core.setParameterValueById(name, v, 1.0);
+        }
+
+        // 3) 兜底：直接写内部参数数组（某些最小构建仅暴露内部结构）。
+        const cnt = typeof core.getParameterCount === 'function' ? core.getParameterCount() : 0;
+        if (cnt <= 0) return;
+        for (let i = 0; i < cnt; i++) {
+          const pid = typeof core.getParameterId === 'function' ? core.getParameterId(i) : null;
+          const idStr = pid && typeof pid === 'object'
+            ? (pid._id && pid._id.s ? pid._id.s : (pid.s || pid.name || ''))
+            : '';
+          if (idStr === name) {
+            if (core._parameterValues && i < core._parameterValues.length) {
+              core._parameterValues[i] = v;
+            }
+            if (core._motionParameterValues && i < core._motionParameterValues.length) {
+              core._motionParameterValues[i] = v;
+            }
+            break;
+          }
+        }
+      };
+
+      const applyParams = (core) => {
+        if (!core) return;
+        const t = performance.now();
+          const set = (name, val) => setCoreParam(core, name, val);
         // 流式输出时覆盖口型参数（抵抗 motion 重置）
         if (window.__mouthOverride >= 0) {
           const mv = Math.max(0, Math.min(1, window.__mouthOverride));
@@ -207,56 +237,20 @@
 
       // --- 预留口型控制接口 ---
       window.__setMouthOpen = (value) => {
+        if (window.__mouthDebugCount === undefined) window.__mouthDebugCount = 0;
+        if (++window.__mouthDebugCount <= 5) console.log('[Mouth] __setMouthOpen called, value=', value, 'override=', window.__mouthOverride);
         window.__mouthOverride = value;
         try {
           const model = getModel();
-          if (!model) return;
+          if (!model) { if (window.__mouthDebugCount <= 5) console.warn('[Mouth] getModel() returned null'); return; }
           const rawModel = model._model || model;
           const core = rawModel.getModel ? rawModel.getModel() : rawModel;
-          if (!core) return;
+          if (!core) { if (window.__mouthDebugCount <= 5) console.warn('[Mouth] core is null'); return; }
           const v = Math.max(0, Math.min(1, value));
-          
-          // 方法1: 使用 setParameterValueById（Cubism 5 标准 API）
-          if (typeof core.setParameterValueById === 'function') {
-            core.setParameterValueById('ParamMouthOpenY', v, 1.0);
-            core.setParameterValueById('ParamSpeak', v, 1.0);
-          }
-          
-          // 方法2: 直接操作 _parameterValues 数组
-          const cnt = typeof core.getParameterCount === 'function' ? core.getParameterCount() : 0;
-          if (cnt > 0) {
-            for (let i = 0; i < cnt; i++) {
-              const pid = typeof core.getParameterId === 'function' ? core.getParameterId(i) : null;
-              let idStr = '';
-              if (pid && typeof pid === 'object') {
-                idStr = pid._id && pid._id.s ? pid._id.s : (pid.s || pid.name || '');
-              }
-              if (idStr === 'ParamMouthOpenY' || idStr === 'ParamSpeak') {
-                if (core._parameterValues && i < core._parameterValues.length) {
-                  core._parameterValues[i] = v;
-                }
-                if (core._motionParameterValues && i < core._motionParameterValues.length) {
-                  core._motionParameterValues[i] = v;
-                }
-              }
-            }
-          }
-          
-          // 方法3: 尝试 _csmGetParameterValues API
-          if (typeof core._csmGetParameterValues === 'function') {
-            const arr = core._csmGetParameterValues();
-            if (arr) {
-              for (let i = 0; i < cnt; i++) {
-                const pid = core.getParameterId(i);
-                if (pid && pid._id && pid._id.s && (pid._id.s === 'ParamMouthOpenY' || pid._id.s === 'ParamSpeak')) {
-                  arr.set(i, v);
-                  break;
-                }
-              }
-            }
-          }
-          
-          // 触发渲染：尝试多种方式
+            setCoreParam(core, 'ParamMouthOpenY', v);
+            setCoreParam(core, 'ParamSpeak', v);
+            
+            // 触发渲染：尝试多种方式
           if (core._csmUpdateModel && typeof core._csmUpdateModel === 'function') {
             core._csmUpdateModel();
           } else if (core._model && typeof core._model.update === 'function') {
@@ -431,13 +425,14 @@
                 charIdx = showLen;
                 // 口型同步：交替开闭
                 mouthOpen = !mouthOpen;
-                if (window.__setMouthOpen) window.__setMouthOpen(mouthOpen ? 0.8 : 0.2);
+                if (window.__setMouthOpen) { window.__setMouthOpen(mouthOpen ? 0.8 : 0.2); }
+                else { console.warn('[Mouth] __setMouthOpen not defined'); }
                 msgs.scrollTop = msgs.scrollHeight;
               } else {
                 clearInterval(typeInterval);
-                // 流式结束，口型归位（禁用 override 让模型恢复默认）
-                window.__mouthOverride = -1;
-                if (window.__setMouthOpen) window.__setMouthOpen(0);
+                // 流式结束，口型归位，再关闭 override 让模型恢复默认驱动
+                  if (window.__setMouthOpen) window.__setMouthOpen(0);
+                  window.__mouthOverride = -1;
                 // 最终完整文本保存到 localStorage
                 try {
                   const key = 'chat_history_' + (localStorage.getItem('tokenKey') || 'guest');
