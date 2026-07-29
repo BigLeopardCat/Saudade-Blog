@@ -470,27 +470,31 @@
       addStarButton();
 
       // 拖动（整个面板除右下角缩放区域外均可拖拽）
-      let isDragging = false, isResizing = false, sX, sY, sW, sH;
+      let isDragging = false, isResizing = false, startX, startY, startW, startH, offsetX, offsetY;
       chatPanel.addEventListener('mousedown', (e) => {
-        // 排除输入框、按钮、链接、右下角缩放把手区域
+        // 阻止事件冒泡到 #waifu（live2d-widgets 的拖拽会冲突）
+        e.stopPropagation();
+        // 排除输入框、按钮、链接
         if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'BUTTON' || e.target.tagName === 'A') return;
         const rect = chatPanel.getBoundingClientRect();
-        // 排除右下角 20x20 缩放区域
-        if (e.clientX > rect.right - 20 && e.clientY > rect.bottom - 20) return;
+        // 排除右下角缩放把手区域
+        if (e.clientX > rect.right - 30 && e.clientY > rect.bottom - 30) return;
         isDragging = true;
-        sX = e.clientX - chatPanel.offsetLeft;
-        sY = e.clientY - chatPanel.offsetTop;
+        isResizing = false;
+        offsetX = e.clientX - chatPanel.offsetLeft;
+        offsetY = e.clientY - chatPanel.offsetTop;
       });
       document.addEventListener('mousemove', (e) => {
+        if (!isDragging && !isResizing) return;
         if (isDragging) {
-          chatPanel.style.left = (e.clientX - sX) + 'px';
-          chatPanel.style.top = (e.clientY - sY) + 'px';
+          chatPanel.style.left = (e.clientX - offsetX) + 'px';
+          chatPanel.style.top = (e.clientY - offsetY) + 'px';
           chatPanel.style.right = 'auto';
           chatPanel.style.bottom = 'auto';
         }
         if (isResizing) {
-          chatPanel.style.width = Math.max(180, sW + e.clientX - sX) + 'px';
-          chatPanel.style.height = Math.max(120, sH + e.clientY - sY) + 'px';
+          chatPanel.style.width = Math.max(180, startW + e.clientX - startX) + 'px';
+          chatPanel.style.height = Math.max(120, startH + e.clientY - startY) + 'px';
         }
       });
       document.addEventListener('mouseup', () => { isDragging = false; isResizing = false; });
@@ -498,7 +502,16 @@
       const rh = document.createElement('div');
       rh.style.cssText = 'position:absolute;right:0;bottom:0;width:14px;height:14px;cursor:nwse-resize;background:transparent;z-index:2;';
       rh.innerHTML = '<svg viewBox="0 0 10 10" width="14" height="14"><path d="M0 10 L10 0 L10 10 Z" fill="#ccc"/></svg>';
-      rh.addEventListener('mousedown', (e) => { e.stopPropagation(); isResizing = true; sX = e.clientX; sY = e.clientY; sW = chatPanel.offsetWidth; sH = chatPanel.offsetHeight; });
+      rh.addEventListener('mousedown', (e) => { 
+        e.stopPropagation(); 
+        e.preventDefault();
+        isDragging = false;
+        isResizing = true; 
+        startX = e.clientX; 
+        startY = e.clientY; 
+        startW = chatPanel.offsetWidth; 
+        startH = chatPanel.offsetHeight; 
+      });
       chatPanel.appendChild(rh);
 
       sendBtn.addEventListener('click', sendMessage);
