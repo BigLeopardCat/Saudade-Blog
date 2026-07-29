@@ -49,10 +49,18 @@
     await new Promise(r => setTimeout(r, 50));
   }
 
+  // 加载特效脚本（用常规 script 标签，非 module 模式确保全局变量）
+  await new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = '/effects.js';
+    s.onload = () => resolve(s.src);
+    s.onerror = () => reject(s.src);
+    document.head.appendChild(s);
+  });
+  
   await Promise.all([
     loadExternalResource(live2d_path + 'waifu.css', 'css'),
     loadExternalResource(live2d_path + 'waifu-tips.js', 'js'),
-    loadExternalResource('/effects.js', 'js')
   ]);
 
   // 确保 canvas 尺寸正确
