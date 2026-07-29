@@ -469,19 +469,18 @@
       };
       addStarButton();
 
-      // 拖动（通过聊天消息区域的空白处）
+      // 拖动（整个面板除右下角缩放区域外均可拖拽）
       let isDragging = false, isResizing = false, sX, sY, sW, sH;
-      // 聊天消息区域作为拖动手柄
-      const dragHandle = document.getElementById('chat-messages');
-      if (dragHandle) {
-        dragHandle.style.cursor = 'grab';
-        dragHandle.addEventListener('mousedown', (e) => {
-          if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'BUTTON' || e.target.tagName === 'A') return;
-          isDragging = true;
-          sX = e.clientX - chatPanel.offsetLeft;
-          sY = e.clientY - chatPanel.offsetTop;
-        });
-      }
+      chatPanel.addEventListener('mousedown', (e) => {
+        // 排除输入框、按钮、链接、右下角缩放把手区域
+        if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'BUTTON' || e.target.tagName === 'A') return;
+        const rect = chatPanel.getBoundingClientRect();
+        // 排除右下角 20x20 缩放区域
+        if (e.clientX > rect.right - 20 && e.clientY > rect.bottom - 20) return;
+        isDragging = true;
+        sX = e.clientX - chatPanel.offsetLeft;
+        sY = e.clientY - chatPanel.offsetTop;
+      });
       document.addEventListener('mousemove', (e) => {
         if (isDragging) {
           chatPanel.style.left = (e.clientX - sX) + 'px';
