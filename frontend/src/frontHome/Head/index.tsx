@@ -242,7 +242,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                     <div className={'homeSwitch'}><Switch handleModeSwitch={handleModeSwitch} isDarkMode={isDark}/></div>
                     <div className={`homeLogo ${isHovered&&'BigAvatar'}`} onMouseEnter={handleMouseEnter} onMouseLeave={handleMouseLeave}>
                         <Avatar src={avatar} size='large'/>
-                        <div className={`loginCard${isLogin ? " logged-in" : ""}`} style={{
+                        <div className="loginCard" style={{
                             display: (showStatus && isHovered) ? 'flex' : 'none',
                             flexDirection: 'column',
                             gap: '5px'

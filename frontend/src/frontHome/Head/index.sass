@@ -429,24 +429,3 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
 .theme-btn.logout-btn
   background: #e74c3c !important
   color: #fff !important
-
-// 登录状态卡片：横向排列，定位到头像右侧
-.loginCard
-  &.logged-in
-    flex-direction: row !important
-    gap: 6px !important
-    width: auto !important
-    top: 50% !important
-    right: auto !important
-    left: calc(100% + 8px) !important
-    transform: translateY(-50%) !important
-    animation: cardIn 0.6s
-    animation-fill-mode: forwards
-
-    .theme-btn
-      white-space: nowrap
-      width: auto !important
-      height: auto !important
-      padding: 6px 14px !important
-      font-size: 13px !important
-      line-height: normal !important

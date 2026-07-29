@@ -312,7 +312,50 @@
           });
           const data = await resp.json();
           if (data.success) {
-            addMsg(data.reply, 'agent');
+            // 流式输出 + 口型同步
+            const fullText = data.reply;
+            // 创建消息 DOM（不经过 addMsg，避免空消息存到 localStorage）
+            const msgs = document.getElementById('chat-messages');
+            const div = document.createElement('div');
+            div.className = 'chat-msg agent';
+            const label = document.createElement('span');
+            label.className = 'msg-label';
+            label.textContent = '泠月喵: ';
+            const contentSpan = document.createElement('span');
+            contentSpan.className = 'msg-text';
+            div.appendChild(label);
+            div.appendChild(contentSpan);
+            msgs.appendChild(div);
+            msgs.scrollTop = msgs.scrollHeight;
+            
+            let charIdx = 0;
+            let mouthOpen = false;
+            const TICK = 30;
+            const CHUNK = 3;
+            const typeInterval = setInterval(() => {
+              if (charIdx < fullText.length) {
+                const showLen = Math.min(charIdx + CHUNK, fullText.length);
+                contentSpan.textContent = fullText.slice(0, showLen);
+                charIdx = showLen;
+                // 口型同步：交替开闭
+                mouthOpen = !mouthOpen;
+                if (window.__setMouthOpen) window.__setMouthOpen(mouthOpen ? 0.8 : 0.2);
+                msgs.scrollTop = msgs.scrollHeight;
+              } else {
+                clearInterval(typeInterval);
+                // 流式结束，口型归位
+                if (window.__setMouthOpen) window.__setMouthOpen(0);
+                // 最终完整文本保存到 localStorage
+                try {
+                  const key = 'chat_history_' + (localStorage.getItem('tokenKey') || 'guest');
+                  let saved = JSON.parse(localStorage.getItem(key) || '[]');
+                  saved.push({text: fullText, type: 'agent', time: Date.now()});
+                  if (saved.length > 50) saved = saved.slice(-50);
+                  localStorage.setItem(key, JSON.stringify(saved));
+                } catch(e) {/* ignore */}
+              }
+            }, TICK);
+            
             // Check if the agent suggests a navigation
             const navMatch = data.reply.match(/(?:转跳|跳转|打开|前往|导航到)\s*(https?:\/\/[^\s，。,.]+)/i);
             const navUrl = (() => {
