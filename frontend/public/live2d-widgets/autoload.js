@@ -51,7 +51,8 @@
 
   await Promise.all([
     loadExternalResource(live2d_path + 'waifu.css', 'css'),
-    loadExternalResource(live2d_path + 'waifu-tips.js', 'js')
+    loadExternalResource(live2d_path + 'waifu-tips.js', 'js'),
+    loadExternalResource('/effects.js', 'js')
   ]);
 
   // 确保 canvas 尺寸正确
@@ -554,9 +555,9 @@
         
         // 三个特效图标
         const effects = [
-          { src: '/icons/樱花-copy.png', title: '樱花', id: 'effect-sakura' },
-          { src: '/icons/大雨.png', title: '大雨', id: 'effect-rain' },
-          { src: '/icons/雪花.png', title: '雪花', id: 'effect-snow' },
+          { src: '/icons/樱花-copy.png', title: '樱花', id: 'effect-sakura', startFn: 'startSakura', stopFn: 'stopSakura' },
+          { src: '/icons/大雨.png', title: '大雨', id: 'effect-rain', startFn: 'startRain', stopFn: 'stopRain' },
+          { src: '/icons/雪花.png', title: '雪花', id: 'effect-snow', startFn: 'startSnow', stopFn: 'stopSnow' },
         ];
         effects.forEach((eff, idx) => {
           const btn = document.createElement('button');
@@ -568,9 +569,18 @@
           img.src = eff.src;
           img.style.cssText = 'width:22px;height:22px;display:block;';
           btn.appendChild(img);
+          btn.active = false;
           btn.addEventListener('click', (e) => {
             e.stopPropagation();
-            // 预留：未来关联特效开关
+            btn.active = !btn.active;
+            btn.style.filter = btn.active ? 'brightness(1.3) drop-shadow(0 0 3px gold)' : 'none';
+            const fnName = eff.startFn;
+            if (btn.active) {
+              if (window[fnName]) window[fnName]();
+            } else {
+              const stopFn = eff.stopFn;
+              if (window[stopFn]) window[stopFn]();
+            }
           });
           subContainer.appendChild(btn);
         });
