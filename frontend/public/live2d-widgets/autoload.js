@@ -498,7 +498,7 @@
       setTimeout(() => {
         const btn = document.getElementById('waifu-tool-switch-model');
         if (!btn) return;
-        btn.title = '换人';
+        btn.title = '更换看板娘';
         btn.addEventListener('click', (e) => {
           // 不阻止默认行为，让库继续执行模型切换
           setTimeout(() => {
@@ -523,16 +523,79 @@
         });
       }, 1000);
       
-      // 新增星标按钮（对话按钮上方）
+      // 星标按钮（对话按钮下方）+ 展开特效图标
       const addStarButton = () => {
         const hitokotoBtn = document.getElementById('waifu-tool-hitokoto');
         if (!hitokotoBtn) { setTimeout(addStarButton, 500); return; }
-        const star = document.createElement('li');
-        star.className = 'waifu-tool';
-        star.id = 'waifu-tool-default';
-        star.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><path fill="currentColor" d="M287.9 0c9.2 0 17.6 5.2 21.6 13.5l68.6 141.3 153.2 22.6c9 1.3 16.5 7.6 19.3 16.3s.5 18.1-5.9 24.5L433.6 328.4l26.2 155.6c1.5 9-2.2 18.1-9.7 23.5s-17.3 6-25.3 1.6l-137-73.2L151 509.1c-8.1 4.3-17.9 3.7-25.3-1.6s-11.2-14.5-9.7-23.5l26.2-155.6L31.1 218.2c-6.5-6.4-8.7-15.9-5.9-24.5s10.3-14.9 19.3-16.3l153.2-22.6L266.3 13.5C270.4 5.2 278.7 0 287.9 0z"/></svg>';
-        star.title = '默认';
-        hitokotoBtn.parentNode.insertBefore(star, hitokotoBtn);
+        const parent = hitokotoBtn.parentNode;
+        
+        // 星星主按钮
+        const starLi = document.createElement('li');
+        starLi.className = 'waifu-tool';
+        starLi.id = 'waifu-tool-star';
+        starLi.style.position = 'relative';
+        const starImg = document.createElement('img');
+        starImg.src = '/icons/星星.png';
+        starImg.style.cssText = 'width:25px;height:25px;cursor:pointer;display:block;';
+        starLi.title = '特效';
+        starLi.appendChild(starImg);
+        // 插入到对话按钮后面（交换位置）
+        if (hitokotoBtn.nextSibling) {
+          parent.insertBefore(starLi, hitokotoBtn.nextSibling);
+        } else {
+          parent.appendChild(starLi);
+        }
+        
+        // 三个子特效图标容器
+        const subContainer = document.createElement('div');
+        subContainer.className = 'star-sub-icons';
+        subContainer.style.cssText = 'position:absolute;left:100%;top:50%;transform:translateY(-50%);display:none;white-space:nowrap;z-index:99;';
+        starLi.appendChild(subContainer);
+        
+        // 三个特效图标
+        const effects = [
+          { src: '/icons/樱花-copy.png', title: '樱花', id: 'effect-sakura' },
+          { src: '/icons/大雨.png', title: '大雨', id: 'effect-rain' },
+          { src: '/icons/雪花.png', title: '雪花', id: 'effect-snow' },
+        ];
+        effects.forEach((eff, idx) => {
+          const btn = document.createElement('button');
+          btn.className = 'star-sub-btn';
+          btn.id = eff.id;
+          btn.title = eff.title;
+          btn.style.cssText = 'border:none;background:transparent;cursor:pointer;padding:4px;opacity:0;transition:all 0.3s ease;display:inline-block;';
+          const img = document.createElement('img');
+          img.src = eff.src;
+          img.style.cssText = 'width:22px;height:22px;display:block;';
+          btn.appendChild(img);
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            // 预留：未来关联特效开关
+          });
+          subContainer.appendChild(btn);
+        });
+        
+        // 星星点击展开/收起
+        let expanded = false;
+        starLi.addEventListener('click', (e) => {
+          e.stopPropagation();
+          expanded = !expanded;
+          subContainer.style.display = expanded ? 'block' : 'none';
+          if (expanded) {
+            const btns = subContainer.querySelectorAll('.star-sub-btn');
+            btns.forEach((btn, i) => {
+              setTimeout(() => { btn.style.opacity = '1'; btn.style.transform = 'translateX(' + ((i + 1) * 5) + 'px)'; }, i * 80);
+            });
+          }
+        });
+        // 点击其他地方收起
+        document.addEventListener('click', (e) => {
+          if (expanded && !starLi.contains(e.target)) {
+            expanded = false;
+            subContainer.style.display = 'none';
+            subContainer.querySelectorAll('.star-sub-btn').forEach(b => { b.style.opacity = '0'; b.style.transform = ''; });
+          }
+        });
       };
       addStarButton();
 
