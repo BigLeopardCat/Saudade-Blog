@@ -110,6 +110,8 @@
       };
 
             // --- 直接挂钩 model.update()，在 loadParameters() 之后、_model.update() 之前注入参数 ---
+      window.__mouthOverride = -1;
+
       const applyParams = (core) => {
         if (!core || typeof core.setParameterValueById !== 'function') return;
         const t = performance.now();
@@ -124,6 +126,12 @@
             }
           }
         };
+        // 流式输出时覆盖口型参数（抵抗 motion 重置）
+        if (window.__mouthOverride >= 0) {
+          const mv = Math.max(0, Math.min(1, window.__mouthOverride));
+          set('ParamMouthOpenY', mv);
+          set('ParamSpeak', mv);
+        }
         set('ParamTail', Math.sin(t / 600) * 30);
         set('Param3', (()=>{const p=(t%3000)/3000;return p<0.10?Math.sin(p/0.10*Math.PI*4)*60:0;})());
         set('ParamDaiMao', Math.sin(t / 800) * 100);
@@ -166,6 +174,7 @@
 
       // --- 预留口型控制接口 ---
       window.__setMouthOpen = (value) => {
+        window.__mouthOverride = value;
         try {
           const model = getModel();
           if (!model) return;
@@ -173,10 +182,16 @@
           if (!core) return;
           const v = Math.max(0, Math.min(1, value));
           core.setParameterValueById('ParamMouthOpenY', v, 1.0);
-          core.setParameterValueById('ParamSpeak', v, 1.0);
+          const cnt = core.getParameterCount();
+          for (let i = 0; i < cnt; i++) {
+            const pid = core.getParameterId(i);
+            if (pid && pid._id && (pid._id.s === 'ParamMouthOpenY' || pid._id.s === 'ParamSpeak')) {
+              core._parameterValues[i] = v;
+            }
+          }
         } catch {}
       };
-      window.__setMouthClose = () => { window.__setMouthOpen(0); };
+      window.__setMouthClose = () => { window.__mouthOverride = -1; window.__setMouthOpen(0); };
     })();
 
     // ── Chat Panel ──
@@ -409,6 +424,49 @@
         });
       };
       repurposeHitokoto();
+      
+      // 看板娘第3按钮（switch-model）→ 员工提示
+      const repurposeSwitchModel = () => {
+        const btn = document.getElementById('waifu-tool-switch-model');
+        if (!btn) { setTimeout(repurposeSwitchModel, 500); return; }
+        btn.title = '招新';
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          const chatPanel = document.getElementById('waifu-chat');
+          if (chatPanel) chatPanel.classList.add('active');
+          addMsg('目前博客只有泠月喵一个人服务呢，还没有招聘到新员工替本喵顶班~', 'agent');
+        });
+      };
+      repurposeSwitchModel();
+      
+      // 看板娘第4按钮（switch-texture）→ 衣服提示
+      const repurposeSwitchTexture = () => {
+        const btn = document.getElementById('waifu-tool-switch-texture');
+        if (!btn) { setTimeout(repurposeSwitchTexture, 500); return; }
+        btn.title = '换装';
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          const chatPanel = document.getElementById('waifu-chat');
+          if (chatPanel) chatPanel.classList.add('active');
+          addMsg('本喵还没有新衣服呢，要不要给本喵买一件呢~', 'agent');
+        });
+      };
+      repurposeSwitchTexture();
+      
+      // 新增星标按钮（对话按钮上方）
+      const addStarButton = () => {
+        const hitokotoBtn = document.getElementById('waifu-tool-hitokoto');
+        if (!hitokotoBtn) { setTimeout(addStarButton, 500); return; }
+        const star = document.createElement('li');
+        star.className = 'waifu-tool';
+        star.id = 'waifu-tool-star';
+        star.innerHTML = '<svg viewBox="0 0 576 512" width="18" height="18"><path fill="currentColor" d="M259.3 17.8L194 150.2 47.9 171.5c-26.2 3.8-36.7 36.1-17.7 54.6l105.7 103-25 145.5c-4.5 26.3 23.2 46 46.4 33.7L288 439.6l130.7 68.7c23.2 12.2 50.9-7.4 46.4-33.7l-25-145.5 105.7-103c19-18.5 8.5-50.8-17.7-54.6L382 150.2 316.7 17.8c-11.7-23.6-45.6-23.9-57.4 0z"/></svg>';
+        star.title = '收藏';
+        hitokotoBtn.parentNode.insertBefore(star, hitokotoBtn);
+      };
+      addStarButton();
 
       // 拖动
       let isDragging = false, isResizing = false, sX, sY, sW, sH;
