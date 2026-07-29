@@ -202,28 +202,60 @@
         try {
           const model = getModel();
           if (!model) return;
-          const core = model.getModel ? model.getModel() : model._model;
-          if (!core || typeof core.setParameterValueById !== 'function') return;
+          const rawModel = model._model || model;
+          const core = rawModel.getModel ? rawModel.getModel() : rawModel;
+          if (!core) return;
           const v = Math.max(0, Math.min(1, value));
-          // 用和 applyParams 中 set() 完全相同的方式设置参数
-          const doSet = (name, val) => {
-            core.setParameterValueById(name, val, 1.0);
-            const cnt = core.getParameterCount();
+          
+          // 方法1: 使用 setParameterValueById（Cubism 5 标准 API）
+          if (typeof core.setParameterValueById === 'function') {
+            core.setParameterValueById('ParamMouthOpenY', v, 1.0);
+            core.setParameterValueById('ParamSpeak', v, 1.0);
+          }
+          
+          // 方法2: 直接操作 _parameterValues 数组
+          const cnt = typeof core.getParameterCount === 'function' ? core.getParameterCount() : 0;
+          if (cnt > 0) {
             for (let i = 0; i < cnt; i++) {
-              const pid = core.getParameterId(i);
-              if (pid && pid._id && pid._id.s === name) {
-                core._parameterValues[i] = val;
-                break;
+              const pid = typeof core.getParameterId === 'function' ? core.getParameterId(i) : null;
+              let idStr = '';
+              if (pid && typeof pid === 'object') {
+                idStr = pid._id && pid._id.s ? pid._id.s : (pid.s || pid.name || '');
+              }
+              if (idStr === 'ParamMouthOpenY' || idStr === 'ParamSpeak') {
+                if (core._parameterValues && i < core._parameterValues.length) {
+                  core._parameterValues[i] = v;
+                }
+                if (core._motionParameterValues && i < core._motionParameterValues.length) {
+                  core._motionParameterValues[i] = v;
+                }
               }
             }
-          };
-          doSet('ParamMouthOpenY', v);
-          doSet('ParamSpeak', v);
-          // 直接触发模型渲染，和 applyParams 后的 c._model.update() 相同
-          if (core._model && typeof core._model.update === 'function') {
+          }
+          
+          // 方法3: 尝试 _csmGetParameterValues API
+          if (typeof core._csmGetParameterValues === 'function') {
+            const arr = core._csmGetParameterValues();
+            if (arr) {
+              for (let i = 0; i < cnt; i++) {
+                const pid = core.getParameterId(i);
+                if (pid && pid._id && pid._id.s && (pid._id.s === 'ParamMouthOpenY' || pid._id.s === 'ParamSpeak')) {
+                  arr.set(i, v);
+                  break;
+                }
+              }
+            }
+          }
+          
+          // 触发渲染：尝试多种方式
+          if (core._csmUpdateModel && typeof core._csmUpdateModel === 'function') {
+            core._csmUpdateModel();
+          } else if (core._model && typeof core._model.update === 'function') {
             core._model.update();
           } else if (typeof core.update === 'function') {
             core.update();
+          } else if (rawModel.update && typeof rawModel.update === 'function') {
+            rawModel.update();
           }
         } catch(e) { console.warn('[Live2D] mouth error:', e); }
       };
@@ -340,7 +372,7 @@
         // 登录检查
         const token = localStorage.getItem('tokenKey');
         if (!token) {
-          const notice = '尊敬的访客：\n\n本站部署的AI虚拟形象Agent（导航/解读助手）仅供技术学习交流与功能展示使用，不视为面向公众开放的经营性AI服务。\n\n为严格遵守《生成式人工智能服务管理暂行办法》等相关法律法规，履行合规义务，本项目已采取访问限制措施，当前未向不特定公众开放。\n\n如您确因学习、交流或前端技术测试需要体验该功能，请通过博客底部或关于页面的联系方式，联系管理员申请临时体验账号。管理员将在确认您的需求后，为您开通限时访问权限。\n\n感谢您的理解与支持！\n我们始终坚持合规先导，也期待与各位爱好者共同交流学习。\n\nSaudade Blog\n2026年7月29日';
+          const notice = '尊敬的访客：\n\n本站部署的AI虚拟形象Agent（导航/解读助手）仅供技术学习交流与功能展示使用，不视为面向公众开放的经营性AI服务。\n\n为严格遵守《生成式人工智能服务管理暂行办法》等相关法律法规，履行合规义务，本项目已采取访问限制措施，当前未向不特定公众开放。\n\n如您确因学习、交流或前端技术测试需要体验该功能，请通过博客顶部或关于页面的联系方式，联系管理员申请临时体验账号。管理员将在确认您的需求后，为您开通限时访问权限。\n\n感谢您的理解与支持！\n我们始终坚持合规先导，也期待与各位爱好者共同交流学习。\n\nSaudade Blog\n2026年7月29日';
           addMsg(notice, 'agent');
           return;
         }
@@ -497,9 +529,9 @@
         if (!hitokotoBtn) { setTimeout(addStarButton, 500); return; }
         const star = document.createElement('li');
         star.className = 'waifu-tool';
-        star.id = 'waifu-tool-star';
-        star.innerHTML = '<svg viewBox="0 0 576 512" width="18" height="18"><path fill="currentColor" d="M259.3 17.8L194 150.2 47.9 171.5c-26.2 3.8-36.7 36.1-17.7 54.6l105.7 103-25 145.5c-4.5 26.3 23.2 46 46.4 33.7L288 439.6l130.7 68.7c23.2 12.2 50.9-7.4 46.4-33.7l-25-145.5 105.7-103c19-18.5 8.5-50.8-17.7-54.6L382 150.2 316.7 17.8c-11.7-23.6-45.6-23.9-57.4 0z"/></svg>';
-        star.title = '收藏';
+        star.id = 'waifu-tool-default';
+        star.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><path fill="currentColor" d="M287.9 0c9.2 0 17.6 5.2 21.6 13.5l68.6 141.3 153.2 22.6c9 1.3 16.5 7.6 19.3 16.3s.5 18.1-5.9 24.5L433.6 328.4l26.2 155.6c1.5 9-2.2 18.1-9.7 23.5s-17.3 6-25.3 1.6l-137-73.2L151 509.1c-8.1 4.3-17.9 3.7-25.3-1.6s-11.2-14.5-9.7-23.5l26.2-155.6L31.1 218.2c-6.5-6.4-8.7-15.9-5.9-24.5s10.3-14.9 19.3-16.3l153.2-22.6L266.3 13.5C270.4 5.2 278.7 0 287.9 0z"/></svg>';
+        star.title = '默认';
         hitokotoBtn.parentNode.insertBefore(star, hitokotoBtn);
       };
       addStarButton();
