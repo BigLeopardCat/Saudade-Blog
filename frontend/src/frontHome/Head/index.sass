@@ -424,3 +424,18 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
 .frontDark .SayWords h2
   color: #ffffff !important
 
+
+// 退出按钮红底白字
+.theme-btn.logout-btn
+  background: #e74c3c !important
+  color: #fff !important
+
+// 登录状态卡片改为横向排列，不遮挡头像
+.loginCard
+  &.logged-in
+    flex-direction: row !important
+    gap: 4px !important
+    width: auto !important
+    top: 0 !important
+    right: -10px !important
+    transform: translateY(calc(-100% - 5px)) !important
