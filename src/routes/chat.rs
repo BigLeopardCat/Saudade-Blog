@@ -1,7 +1,6 @@
 use axum::{Json, extract::{State, Request}, http::header};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tokio::process::Command;
 use crate::routes::AppState;
 use crate::auth_jwt;
 
@@ -22,7 +21,7 @@ pub struct ChatResponse {
     pub error: Option<String>,
 }
 
-use sea_orm::{EntityTrait, Set, QueryOrder, QueryFilter, ColumnTrait, QueryTrait, QuerySelect, ActiveModelTrait, PaginatorTrait};
+use sea_orm::{EntityTrait, Set, QueryOrder, QueryFilter, ColumnTrait, QuerySelect, ActiveModelTrait, PaginatorTrait};
 use crate::entity::{chat_history, chat_summary};
 
 pub async fn chat_handler(
