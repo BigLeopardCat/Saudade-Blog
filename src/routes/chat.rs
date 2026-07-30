@@ -22,8 +22,8 @@ pub struct ChatResponse {
     pub error: Option<String>,
 }
 
-use sea_orm::{EntityTrait, Set, QueryOrder, QueryFilter, ColumnTrait, QueryTrait, QuerySelect, ActiveModelTrait};
-use crate::entity::chat_history;
+use sea_orm::{EntityTrait, Set, QueryOrder, QueryFilter, ColumnTrait, QueryTrait, QuerySelect, ActiveModelTrait, PaginatorTrait};
+use crate::entity::{chat_history, chat_summary};
 
 pub async fn chat_handler(
     State(state): State<Arc<AppState>>,
@@ -76,6 +76,25 @@ pub async fn chat_handler(
         recent.iter().rev().map(|h| serde_json::json!({"role": h.role, "content": h.content})).collect()
     } else { vec![] };
 
+    // 加载压缩摘要
+    let summary_text = if uid > 0 {
+        chat_summary::Entity::find()
+            .filter(chat_summary::Column::UserId.eq(uid))
+            .one(&state.db)
+            .await.unwrap_or_default()
+            .map(|s| s.summary)
+            .unwrap_or_default()
+    } else { String::new() };
+
+    // 统计总消息数，决定是否触发压缩
+    let total_count: i64 = if uid > 0 {
+        chat_history::Entity::find()
+            .filter(chat_history::Column::UserId.eq(uid))
+            .count(&state.db)
+            .await.unwrap_or(0) as i64
+    } else { 0 };
+    let needs_summary = uid > 0 && total_count > 20 && (total_count % 10 == 0 || total_count % 10 == 1);
+
     let agent_url = std::env::var("AGENT_URL").unwrap_or_else(|_| "http://127.0.0.1:8010/chat".to_string());
     let body = serde_json::json!({
         "message": payload.message,
@@ -83,6 +102,8 @@ pub async fn chat_handler(
         "page_title": payload.page_title.as_deref().unwrap_or(""),
         "user_id": uid,
         "history": history_items,
+        "summary": summary_text,
+        "needs_summary": needs_summary,
     });
 
     let resp = reqwest::Client::new().post(&agent_url)
@@ -103,6 +124,28 @@ pub async fn chat_handler(
                         content: Set(reply.clone()),
                         ..Default::default()
                     }.save(&state.db).await;
+                }
+                // 如果 agent 返回了新的摘要，保存
+                if let Some(new_summary) = data["new_summary"].as_str() {
+                    if uid > 0 && !new_summary.is_empty() {
+                        let existing = chat_summary::Entity::find()
+                            .filter(chat_summary::Column::UserId.eq(uid))
+                            .one(&state.db)
+                            .await.unwrap_or_default();
+                        if let Some(rec) = existing {
+                            let mut am: chat_summary::ActiveModel = rec.into();
+                            am.summary = Set(new_summary.to_string());
+                            am.message_count = Set(total_count as i32);
+                            let _ = am.update(&state.db).await;
+                        } else {
+                            let _ = chat_summary::ActiveModel {
+                                user_id: Set(uid),
+                                summary: Set(new_summary.to_string()),
+                                message_count: Set(total_count as i32),
+                                ..Default::default()
+                            }.save(&state.db).await;
+                        }
+                    }
                 }
                 Json(ChatResponse { reply, success: true, error: None })
             } else {
