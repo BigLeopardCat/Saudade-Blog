@@ -531,11 +531,11 @@
         starBox.style.cssText = 'position:absolute;left:-10px;top:70px;display:flex;flex-direction:column;gap:5px;align-items:center;opacity:0;transition:opacity 1s;z-index:99;';
         waifu.appendChild(starBox);
         // 鼠标移入 #waifu 时显示
+        let expanded = false;
         waifu.addEventListener('mouseenter', () => { starBox.style.opacity = '1'; });
         waifu.addEventListener('mouseleave', () => { 
-          // 如果子菜单展开则不隐藏
-          const sub = starBox.querySelector('.star-sub-icons');
-          if (!sub || sub.style.display !== 'block') starBox.style.opacity = '0';
+          // 如果特效菜单展开则不隐藏
+          if (!expanded) starBox.style.opacity = '0';
         });
         
         // 星星主按钮
@@ -548,34 +548,39 @@
         starLi.appendChild(starImg);
         starBox.appendChild(starLi);
         
-        // 三个子特效图标容器
-        const subContainer = document.createElement('div');
-        subContainer.className = 'star-sub-icons';
-        subContainer.style.cssText = 'position:absolute;left:100%;top:50%;transform:translateY(-50%);display:none;white-space:nowrap;z-index:99;';
-        starLi.appendChild(subContainer);
-        
-        // 三个特效图标
+        // 三个子特效图标 — 右侧半圆展开（放在 starBox 中，独立于 starLi）
         const effects = [
           { src: '/icons/樱花-copy.png', title: '樱花', id: 'effect-sakura', startFn: 'startSakura', stopFn: 'stopSakura' },
           { src: '/icons/大雨.png', title: '大雨', id: 'effect-rain', startFn: 'startRain', stopFn: 'stopRain' },
           { src: '/icons/雪花.png', title: '雪花', id: 'effect-snow', startFn: 'startSnow', stopFn: 'stopSnow' },
         ];
+        const effectBtns = [];
+        const RADIUS = 40;
+        const ANGLE_START = -50;
+        const ANGLE_END = 50;
         effects.forEach((eff, idx) => {
           const btn = document.createElement('button');
           btn.className = 'star-sub-btn';
           btn.id = eff.id;
           btn.title = eff.title;
-          btn.style.cssText = 'border:none;background:transparent;cursor:pointer;padding:4px;opacity:0;transition:all 0.3s ease;display:inline-block;';
+          const angle = ANGLE_START + (ANGLE_END - ANGLE_START) * idx / (effects.length - 1);
+          const rad = angle * Math.PI / 180;
+          const tx = Math.cos(rad) * RADIUS;
+          const ty = Math.sin(rad) * RADIUS;
+          btn.style.cssText = 'position:absolute;left:50%;top:50%;margin-left:-15px;margin-top:-15px;width:30px;height:30px;border:none;border-radius:50%;background:rgba(255,255,255,0.15);cursor:pointer;padding:4px;opacity:0;pointer-events:none;transition:all 0.35s cubic-bezier(0.34,1.56,0.64,1);z-index:98;';
           const img = document.createElement('img');
           img.src = eff.src;
-          img.style.cssText = 'width:22px;height:22px;display:block;';
+          img.style.cssText = 'width:22px;height:22px;display:block;margin:auto;';
           btn.appendChild(img);
           btn.active = false;
+          btn._tx = tx;
+          btn._ty = ty;
           btn.addEventListener('click', (e) => {
             e.stopPropagation();
             toggleEffect(eff.id.replace('effect-', ''));
           });
-          subContainer.appendChild(btn);
+          starBox.appendChild(btn);
+          effectBtns.push(btn);
         });
         
         // 全局特效切换函数（按钮/agent 共用）
@@ -610,16 +615,23 @@
           }
         };
         
-        // 星星点击展开/收起
-        let expanded = false;
+        // 星星点击展开/收起 — 右侧半圆动画
         starLi.addEventListener('click', (e) => {
           e.stopPropagation();
           expanded = !expanded;
-          subContainer.style.display = expanded ? 'block' : 'none';
           if (expanded) {
-            const btns = subContainer.querySelectorAll('.star-sub-btn');
-            btns.forEach((btn, i) => {
-              setTimeout(() => { btn.style.opacity = '1'; btn.style.transform = 'translateX(' + ((i + 1) * 5) + 'px)'; }, i * 80);
+            effectBtns.forEach((btn, i) => {
+              setTimeout(() => {
+                btn.style.opacity = '1';
+                btn.style.pointerEvents = 'auto';
+                btn.style.transform = 'translate(' + btn._tx + 'px, ' + btn._ty + 'px)';
+              }, i * 80);
+            });
+          } else {
+            effectBtns.forEach((btn) => {
+              btn.style.opacity = '0';
+              btn.style.pointerEvents = 'none';
+              btn.style.transform = 'translate(0, 0)';
             });
           }
         });
@@ -627,8 +639,11 @@
         document.addEventListener('click', (e) => {
           if (expanded && !starLi.contains(e.target)) {
             expanded = false;
-            subContainer.style.display = 'none';
-            subContainer.querySelectorAll('.star-sub-btn').forEach(b => { b.style.opacity = '0'; b.style.transform = ''; });
+            effectBtns.forEach((btn) => {
+              btn.style.opacity = '0';
+              btn.style.pointerEvents = 'none';
+              btn.style.transform = 'translate(0, 0)';
+            });
           }
         });
       };
