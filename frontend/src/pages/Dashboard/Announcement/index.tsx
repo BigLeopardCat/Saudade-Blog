@@ -11,6 +11,14 @@ const AnnouncementPage = () => {
     const [form] = Form.useForm()
     const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([])
 
+    // ── 临时用户状态 ──
+    const [tempUsers, setTempUsers] = useState<any[]>([])
+    const [tempUsername, setTempUsername] = useState('')
+    const [tempPassword, setTempPassword] = useState('')
+    const [pwModalOpen, setPwModalOpen] = useState(false)
+    const [pwTarget, setPwTarget] = useState<any>(null)
+    const [pwNewPassword, setPwNewPassword] = useState('')
+
     const load = async () => {
         const res = await getAnnouncements()
         if (res.status === 200) {
@@ -54,6 +62,70 @@ const AnnouncementPage = () => {
         }
     ]
 
+    // ── 临时用户操作 ──
+    const token = localStorage.getItem('tokenKey')
+
+    const loadTempUsers = async () => {
+        try {
+            const res = await fetch('/api/temp-users', { headers: { 'Authorization': 'Bearer ' + token } })
+            const data = await res.json()
+            if (Array.isArray(data)) setTempUsers(data)
+        } catch { /* ignore */ }
+    }
+
+    useEffect(() => {
+        setTimeout(loadTempUsers, 1000)
+    }, [])
+
+    const handleCreateTempUser = async () => {
+        if (!tempUsername || !tempPassword) { message.warning('请输入用户名和密码'); return }
+        try {
+            const res = await fetch('/api/temp-users', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+                body: JSON.stringify({ username: tempUsername, password: tempPassword }),
+            })
+            const data = await res.json()
+            if (data.code === 200) {
+                message.success('创建成功')
+                setTempUsername('')
+                setTempPassword('')
+                loadTempUsers()
+            } else {
+                message.error(data.message)
+            }
+        } catch { message.error('请求失败') }
+    }
+
+    const handleDeleteTempUser = async (id: number) => {
+        try {
+            const res = await fetch('/api/temp-users/' + id, { method: 'DELETE', headers: { 'Authorization': 'Bearer ' + token } })
+            const data = await res.json()
+            if (data.code === 200) { message.success('已删除'); loadTempUsers() }
+            else { message.error(data.message) }
+        } catch { message.error('请求失败') }
+    }
+
+    const openPwModal = (user: any) => {
+        setPwTarget(user)
+        setPwNewPassword('')
+        setPwModalOpen(true)
+    }
+
+    const handleChangePassword = async () => {
+        if (!pwNewPassword || pwNewPassword.length < 3) { message.warning('密码至少3位'); return }
+        try {
+            const res = await fetch('/api/temp-users/' + pwTarget.id + '/password', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+                body: JSON.stringify({ password: pwNewPassword }),
+            })
+            const data = await res.json()
+            if (data.code === 200) { message.success('密码已修改'); setPwModalOpen(false) }
+            else { message.error(data.message) }
+        } catch { message.error('请求失败') }
+    }
+
     return (
         <div style={{ padding: 24 }}>
             <div style={{ marginBottom: 16, display: 'flex', gap: 12 }}>
@@ -88,64 +160,64 @@ const AnnouncementPage = () => {
             <div style={{ marginTop: 48, borderTop: '1px solid #eee', paddingTop: 24 }}>
                 <h3>临时用户管理</h3>
                 <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
-                    <input
-                        id="temp-username"
+                    <Input
                         placeholder="用户名"
-                        style={{ flex: 1, padding: '4px 8px', borderRadius: 4, border: '1px solid #d9d9d9' }}
+                        value={tempUsername}
+                        onChange={e => setTempUsername(e.target.value)}
+                        style={{ flex: 1 }}
                     />
-                    <input
-                        id="temp-password"
-                        type="password"
+                    <Input.Password
                         placeholder="密码"
-                        style={{ flex: 1, padding: '4px 8px', borderRadius: 4, border: '1px solid #d9d9d9' }}
+                        value={tempPassword}
+                        onChange={e => setTempPassword(e.target.value)}
+                        style={{ flex: 1 }}
                     />
-                    <Button type="primary" onClick={async () => {
-                        const username = (document.getElementById('temp-username') as HTMLInputElement)?.value;
-                        const password = (document.getElementById('temp-password') as HTMLInputElement)?.value;
-                        if (!username || !password) { message.warning('请输入用户名和密码'); return; }
-                        try {
-                            const token = localStorage.getItem('tokenKey');
-                            const res = await fetch('/api/temp-users', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-                                body: JSON.stringify({ username, password }),
-                            });
-                            const data = await res.json();
-                            if (data.code === 200) { message.success('创建成功'); loadTempUsers(); }
-                            else { message.error(data.message); }
-                        } catch { message.error('请求失败'); }
-                    }}>新建临时用户</Button>
+                    <Button type="primary" onClick={handleCreateTempUser}>新建临时用户</Button>
                 </div>
-                <div id="temp-user-list" />
+
+                {/* 临时用户列表 */}
+                {tempUsers.length === 0 ? (
+                    <div style={{ color: '#999', padding: 8 }}>暂无临时用户</div>
+                ) : (
+                    <div style={{ border: '1px solid #f0f0f0', borderRadius: 6, overflow: 'hidden' }}>
+                        {tempUsers.map((u: any) => (
+                            <div key={u.id} style={{
+                                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                                padding: '10px 12px', borderBottom: '1px solid #f0f0f0'
+                            }}>
+                                <div>
+                                    <strong>{u.username}</strong>
+                                    <span style={{ color: '#999', marginLeft: 12 }}>ID: {u.id}</span>
+                                </div>
+                                <div style={{ display: 'flex', gap: 8 }}>
+                                    <Button size="small" onClick={() => openPwModal(u)}>修改密码</Button>
+                                    <Button size="small" danger onClick={() => handleDeleteTempUser(u.id)}>删除</Button>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
             </div>
+
+            {/* 修改密码 Modal */}
+            <Modal
+                title={'修改密码 - ' + (pwTarget?.username || '')}
+                open={pwModalOpen}
+                onOk={handleChangePassword}
+                onCancel={() => setPwModalOpen(false)}
+                okText="确认修改"
+                cancelText="取消"
+            >
+                <div style={{ marginTop: 16 }}>
+                    <Input.Password
+                        placeholder="输入新密码"
+                        value={pwNewPassword}
+                        onChange={e => setPwNewPassword(e.target.value)}
+                    />
+                </div>
+            </Modal>
         </div>
     )
 }
-
-// 加载临时用户列表
-const loadTempUsers = async () => {
-    try {
-        const token = localStorage.getItem('tokenKey');
-        const res = await fetch('/api/temp-users', { headers: { 'Authorization': 'Bearer ' + token } });
-        const data = await res.json();
-        const container = document.getElementById('temp-user-list');
-        if (!container) return;
-        container.innerHTML = '';
-        if (!data || data.length === 0) { container.innerHTML = '<div style=\"color: #999; padding: 8px;\">暂无临时用户</div>'; return; }
-        data.forEach((u: any) => {
-            const row = document.createElement('div');
-            row.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f0f0f0';
-            row.innerHTML = '<span>' + u.username.slice(0, 8) + '... (ID: ' + u.id + ')</span>' +
-                '<button style=\"background:#ff4d4f;color:#fff;border:none;border-radius:4px;padding:2px 10px;cursor:pointer\"' +
-                ' onclick=\"fetch(\'/api/temp-users/' + u.id + '\',{method:\'DELETE\',headers:{\'Authorization\':\'Bearer ' + token + '\'}}).then(r=>r.json()).then(d=>{if(d.code===200){loadTempUsers();message.success(\'已删除\')}})\">删除</button>';
-            container.appendChild(row);
-        });
-    } catch {}
-};
-
-// 页面加载后自动加载临时用户列表
-const origOnload = window.onload;
-window.onload = (e) => { if (origOnload) origOnload(e); setTimeout(loadTempUsers, 1000); };
-setTimeout(loadTempUsers, 1000);
 
 export default AnnouncementPage

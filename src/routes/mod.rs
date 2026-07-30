@@ -141,6 +141,7 @@ pub fn create_router(state: AppState) -> Router {
         // Temp Users
         .route("/api/temp-users", get(temp_user::list_temp_users).post(temp_user::create_temp_user))
         .route("/api/temp-users/:id", delete(temp_user::delete_temp_user))
+          .route("/api/temp-users/:id/password", post(temp_user::change_password))
         
         // WebSettings
         .route("/api/protected/websetting", 
