@@ -121,54 +121,23 @@
             // --- 直接挂钩 model.update()，在 loadParameters() 之后、_model.update() 之前注入参数 ---
       window.__mouthOverride = -1;
 
-      const setCoreParam = (core, name, val) => {
-        if (!core) return;
-        if (window.__mouthDebugCount === undefined) window.__mouthDebugCount = 0;
-        const isMouth = name === 'ParamMouthOpenY' || name === 'ParamSpeak';
-        const v = Number.isFinite(val) ? val : 0;
-
-        // 1) 优先使用 index 写入，兼容部分 Cubism 包装层对字符串 ID 的限制。
-        if (typeof core.getParameterIndex === 'function' && typeof core.setParameterValueByIndex === 'function') {
-          const idx = core.getParameterIndex(name);
-          if (typeof idx === 'number' && idx >= 0) {
-            core.setParameterValueByIndex(idx, v, 1.0);
-            return;
-          }
-        }
-
-        // 2) 其次尝试按 ID 写入。
-        if (typeof core.setParameterValueById === 'function') {
-          core.setParameterValueById(name, v, 1.0);
-        }
-
-        // 3) 兜底：直接写内部参数数组（某些最小构建仅暴露内部结构）。
-        const cnt = typeof core.getParameterCount === 'function' ? core.getParameterCount() : 0;
-        if (cnt <= 0) return;
-        for (let i = 0; i < cnt; i++) {
-          const pid = typeof core.getParameterId === 'function' ? core.getParameterId(i) : null;
-          const idStr = pid && typeof pid === 'object'
-            ? (pid._id && pid._id.s ? pid._id.s : (pid.s || pid.name || ''))
-            : '';
-          if (idStr === name) {
-            if (core._parameterValues && i < core._parameterValues.length) {
-              core._parameterValues[i] = v;
-            }
-            if (core._motionParameterValues && i < core._motionParameterValues.length) {
-              core._motionParameterValues[i] = v;
-            }
-            break;
-          }
-        }
-      };
-
       const applyParams = (core) => {
-        if (!core) return;
+        if (!core || typeof core.setParameterValueById !== 'function') return;
         const t = performance.now();
-          const set = (name, val) => setCoreParam(core, name, val);
-        // 流式输出时覆盖口型参数（抵抗 motion 重置）
+        const set = (name, val) => {
+          core.setParameterValueById(name, val, 1.0);
+          const cnt = core.getParameterCount();
+          for (let i = 0; i < cnt; i++) {
+            const pid = core.getParameterId(i);
+            if (pid && pid._id && pid._id.s === name) {
+              core._parameterValues[i] = val;
+              break;
+            }
+          }
+        };
+        // 流式输出时控制口型（ParamSpeak 为嘴部动作参数）
         if (window.__mouthOverride >= 0) {
           const mv = Math.max(0, Math.min(1, window.__mouthOverride));
-          set('ParamMouthOpenY', mv);
           set('ParamSpeak', mv);
         }
         set('ParamTail', Math.sin(t / 600) * 30);
@@ -256,7 +225,6 @@
               }
             }
           };
-          doSet('ParamMouthOpenY', v);
           doSet('ParamSpeak', v);
           // 渲染（与 applyParams 后调用的 _model.update() 相同）
           if (core._model && typeof core._model.update === 'function') {
@@ -537,13 +505,13 @@
         });
       }, 1000);
       
-      // 星标按钮（对话按钮下方）+ 展开特效图标
+      // 星标按钮（对话按钮上方）+ 展开特效图标
       const addStarButton = () => {
         const hitokotoBtn = document.getElementById('waifu-tool-hitokoto');
         if (!hitokotoBtn) { setTimeout(addStarButton, 500); return; }
         const parent = hitokotoBtn.parentNode;
         
-        // 星星主按钮
+        // 星星主按钮（插入到对话按钮前面，即左侧/上方）
         const starLi = document.createElement('li');
         starLi.className = 'waifu-tool';
         starLi.id = 'waifu-tool-star';
@@ -553,12 +521,7 @@
         starImg.style.cssText = 'width:25px;height:25px;cursor:pointer;display:block;';
         starLi.title = '特效';
         starLi.appendChild(starImg);
-        // 插入到对话按钮后面（交换位置）
-        if (hitokotoBtn.nextSibling) {
-          parent.insertBefore(starLi, hitokotoBtn.nextSibling);
-        } else {
-          parent.appendChild(starLi);
-        }
+        parent.insertBefore(starLi, hitokotoBtn);
         
         // 三个子特效图标容器
         const subContainer = document.createElement('div');
