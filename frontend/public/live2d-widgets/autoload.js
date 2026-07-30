@@ -306,6 +306,28 @@
         div.appendChild(content);
         messages.appendChild(div);
         messages.scrollTop = messages.scrollHeight;
+        // 非流式 agent 消息也触发嘴部动作
+        if (type === 'agent') {
+          try {
+            const ad = window.__cubism5model;
+            const sub = ad && ad.subdelegates && ad.subdelegates.getSize() ? ad.subdelegates.at(0) : null;
+            const mgr = sub ? sub.getLive2DManager() : null;
+            const m = mgr && mgr._models && mgr._models.getSize() ? mgr._models.at(0) : null;
+            if (m) {
+              const c = m.getModel ? m.getModel() : m._model;
+              if (c && typeof c.setParameterValueById === 'function') {
+                c.setParameterValueById('ParamSpeak', 0.7, 1.0);
+                if (c._csmUpdateModel) c._csmUpdateModel();
+                else if (c._model && c._model.update) c._model.update();
+                setTimeout(() => {
+                  c.setParameterValueById('ParamSpeak', 0, 1.0);
+                  if (c._csmUpdateModel) c._csmUpdateModel();
+                  else if (c._model && c._model.update) c._model.update();
+                }, Math.min(1500, Math.max(300, text.length * 20)));
+              }
+            }
+          } catch(e) {}
+        }
         // 持久化到 localStorage
         try {
           const key = 'chat_history_' + (localStorage.getItem('tokenKey') || 'guest');
