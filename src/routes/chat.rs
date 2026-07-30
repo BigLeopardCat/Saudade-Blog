@@ -22,7 +22,7 @@ pub struct ChatResponse {
     pub error: Option<String>,
 }
 
-use sea_orm::{EntityTrait, Set, QueryOrder, QueryFilter, ColumnTrait, QueryTrait, ActiveModelTrait};
+use sea_orm::{EntityTrait, Set, QueryOrder, QueryFilter, ColumnTrait, QueryTrait, QuerySelect, ActiveModelTrait};
 use crate::entity::chat_history;
 
 pub async fn chat_handler(
@@ -70,7 +70,7 @@ pub async fn chat_handler(
         let recent = chat_history::Entity::find()
             .filter(chat_history::Column::UserId.eq(uid))
             .order_by_desc(chat_history::Column::CreatedAt)
-            .limit(20)
+            .limit(Some(20))
             .all(&state.db)
             .await.unwrap_or_default();
         recent.iter().rev().map(|h| serde_json::json!({"role": h.role, "content": h.content})).collect()
