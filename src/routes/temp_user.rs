@@ -12,6 +12,11 @@ pub struct CreateTempUser {
     pub password: String,
 }
 
+#[derive(Deserialize)]
+pub struct ChangePasswordReq {
+    pub password: String,
+}
+
 #[derive(Serialize)]
 pub struct TempUserInfo {
     pub id: i32,
@@ -36,11 +41,10 @@ pub async fn create_temp_user(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<CreateTempUser>,
 ) -> Json<crate::utils::ApiResponse<String>> {
-    let encrypted_username = encrypt_password(&payload.username);
     let encrypted_password = encrypt_password(&payload.password);
 
     let existing = user::Entity::find()
-        .filter(user::Column::Username.eq(&encrypted_username))
+        .filter(user::Column::Username.eq(&payload.username))
         .one(&state.db)
         .await
         .unwrap_or(None);
@@ -50,7 +54,7 @@ pub async fn create_temp_user(
     }
 
     let _ = user::ActiveModel {
-        username: Set(encrypted_username),
+        username: Set(payload.username.clone()),
         password: Set(encrypted_password),
         role: Set("user".into()),
         ..Default::default()
@@ -63,12 +67,34 @@ pub async fn delete_temp_user(
     State(state): State<Arc<AppState>>,
     Path(user_id): Path<i32>,
 ) -> Json<crate::utils::ApiResponse<String>> {
-    // Delete chat history
     let _ = crate::entity::chat_history::Entity::delete_many()
         .filter(crate::entity::chat_history::Column::UserId.eq(user_id))
         .exec(&state.db).await;
-    // Delete user
     let _ = user::Entity::delete_by_id(user_id)
         .exec(&state.db).await;
     Json(crate::utils::ApiResponse::success("用户已删除".to_string()))
+}
+
+pub async fn change_password(
+    State(state): State<Arc<AppState>>,
+    Path(user_id): Path<i32>,
+    Json(payload): Json<ChangePasswordReq>,
+) -> Json<crate::utils::ApiResponse<String>> {
+    if payload.password.len() < 3 {
+        return Json(crate::utils::ApiResponse::error("密码长度至少3位"));
+    }
+    let user_opt = user::Entity::find_by_id(user_id)
+        .one(&state.db)
+        .await
+        .unwrap_or(None);
+    match user_opt {
+        Some(u) => {
+            let mut am: user::ActiveModel = u.into();
+            am.password = Set(encrypt_password(&payload.password));
+            am.role = Set("user".into());
+            let _ = am.update(&state.db).await;
+            Json(crate::utils::ApiResponse::success("密码修改成功".to_string()))
+        }
+        None => Json(crate::utils::ApiResponse::error("用户不存在")),
+    }
 }
