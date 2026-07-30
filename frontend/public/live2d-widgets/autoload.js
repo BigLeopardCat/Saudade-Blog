@@ -206,33 +206,8 @@
 
       // --- 预留口型控制接口 ---
       window.__setMouthOpen = (value) => {
+        // 只设 override，让 applyParams 在下一帧通过正常渲染管线设置 ParamSpeak
         window.__mouthOverride = value;
-        try {
-          const model = getModel();
-          if (!model) return;
-          const core = model.getModel ? model.getModel() : model._model;
-          if (!core || typeof core.setParameterValueById !== 'function') return;
-          const v = Math.max(0, Math.min(1, value));
-          // 用和 applyParams 中 set() 完全相同的机制设置口型
-          const doSet = (name, val) => {
-            core.setParameterValueById(name, val, 1.0);
-            const cnt = core.getParameterCount();
-            for (let i = 0; i < cnt; i++) {
-              const pid = core.getParameterId(i);
-              if (pid && pid._id && pid._id.s === name) {
-                core._parameterValues[i] = val;
-                break;
-              }
-            }
-          };
-          doSet('ParamSpeak', v);
-          // 渲染（与 applyParams 后调用的 _model.update() 相同）
-          if (core._model && typeof core._model.update === 'function') {
-            core._model.update();
-          } else if (typeof core.update === 'function') {
-            core.update();
-          }
-        } catch(e) { console.warn('[Live2D] mouth error:', e); }
       };
       window.__setMouthClose = () => { window.__mouthOverride = -1; window.__setMouthOpen(0); };
     })();
@@ -397,8 +372,25 @@
                 charIdx = showLen;
                 // 口型同步：交替开闭
                 mouthOpen = !mouthOpen;
-                if (window.__setMouthOpen) { window.__setMouthOpen(mouthOpen ? 0.8 : 0.2); }
-                else { console.warn('[Mouth] __setMouthOpen not defined'); }
+                window.__mouthOverride = mouthOpen ? 0.8 : 0.2;
+                // 直接设置并渲染（双重保障）
+                try {
+                  const ad = window.__cubism5model;
+                  const sub = ad && ad.subdelegates && ad.subdelegates.getSize() ? ad.subdelegates.at(0) : null;
+                  const mgr = sub ? sub.getLive2DManager() : null;
+                  const m = mgr && mgr._models && mgr._models.getSize() ? mgr._models.at(0) : null;
+                  if (m) {
+                    const c = m.getModel ? m.getModel() : m._model;
+                    if (c && typeof c.setParameterValueById === 'function') {
+                      const v = mouthOpen ? 0.8 : 0.2;
+                      c.setParameterValueById('ParamSpeak', v, 1.0);
+                      // 尝试多种渲染方式
+                      if (c._csmUpdateModel) c._csmUpdateModel();
+                      else if (c._model && c._model.update) c._model.update();
+                      else if (c.update) c.update();
+                    }
+                  }
+                } catch(e) {}
                 msgs.scrollTop = msgs.scrollHeight;
               } else {
                 clearInterval(typeInterval);
