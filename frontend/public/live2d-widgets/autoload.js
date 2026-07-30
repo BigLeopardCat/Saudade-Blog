@@ -243,6 +243,14 @@
       const navQuestion = document.getElementById('nav-question-text');
       
 
+      // 可靠滚动到底部（等待布局完成后执行）
+      const scrollToBottom = (el) => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            el.scrollTop = el.scrollHeight;
+          });
+        });
+      };
       let pendingNavUrl = '';
       let isSending = false;
       // 从 JWT 提取用户 ID
@@ -283,7 +291,7 @@
           div.appendChild(content);
           messages.appendChild(div);
         });
-        messages.scrollTop = messages.scrollHeight;
+        scrollToBottom(messages);
       } catch(e) {/* ignore */}
 
       const addMsg = (text, type) => {
@@ -305,7 +313,7 @@
         div.appendChild(label);
         div.appendChild(content);
         messages.appendChild(div);
-        messages.scrollTop = messages.scrollHeight;
+        scrollToBottom(messages);
         // 非流式 agent 消息也触发嘴部动作
         if (type === 'agent') {
           try {
@@ -383,7 +391,7 @@
             div.appendChild(label);
             div.appendChild(contentSpan);
             msgs.appendChild(div);
-            msgs.scrollTop = msgs.scrollHeight;
+            scrollToBottom(msgs);
             
             let charIdx = 0;
             let mouthOpen = false;
@@ -415,7 +423,7 @@
                     }
                   }
                 } catch(e) {}
-                msgs.scrollTop = msgs.scrollHeight;
+                scrollToBottom(msgs);
               } else {
                 clearInterval(typeInterval);
                 // 流式结束，口型归位，再关闭 override 让模型恢复默认驱动
@@ -746,7 +754,7 @@
             div.appendChild(label);
             div.appendChild(content);
             messages.appendChild(div);
-            messages.scrollTop = messages.scrollHeight;
+            scrollToBottom(messages);
           }
         }
       });
