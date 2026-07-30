@@ -317,11 +317,13 @@
               const c = m.getModel ? m.getModel() : m._model;
               if (c && typeof c.setParameterValueById === 'function') {
                 c.setParameterValueById('ParamSpeak', 0.7, 1.0);
-                if (c._csmUpdateModel) c._csmUpdateModel();
+                if (m.update && typeof m.update === 'function') m.update();
+                else if (c._csmUpdateModel) c._csmUpdateModel();
                 else if (c._model && c._model.update) c._model.update();
                 setTimeout(() => {
                   c.setParameterValueById('ParamSpeak', 0, 1.0);
-                  if (c._csmUpdateModel) c._csmUpdateModel();
+                  if (m.update && typeof m.update === 'function') m.update();
+                  else if (c._csmUpdateModel) c._csmUpdateModel();
                   else if (c._model && c._model.update) c._model.update();
                 }, Math.min(1500, Math.max(300, text.length * 20)));
               }
@@ -406,10 +408,10 @@
                     if (c && typeof c.setParameterValueById === 'function') {
                       const v = mouthOpen ? 0.8 : 0.2;
                       c.setParameterValueById('ParamSpeak', v, 1.0);
-                      // 尝试多种渲染方式
-                      if (c._csmUpdateModel) c._csmUpdateModel();
+                      // 直接触发模型完整 update 渲染管线
+                      if (m.update && typeof m.update === 'function') m.update();
+                      else if (c._csmUpdateModel) c._csmUpdateModel();
                       else if (c._model && c._model.update) c._model.update();
-                      else if (c.update) c.update();
                     }
                   }
                 } catch(e) {}
@@ -519,23 +521,32 @@
         });
       }, 1000);
       
-      // 星标按钮（对话按钮上方）+ 展开特效图标
+      // 星标按钮（看板娘左侧独立容器）+ 展开特效图标
       const addStarButton = () => {
-        const hitokotoBtn = document.getElementById('waifu-tool-hitokoto');
-        if (!hitokotoBtn) { setTimeout(addStarButton, 500); return; }
-        const parent = hitokotoBtn.parentNode;
+        // 在 #waifu 左侧创建独立容器
+        const waifu = document.getElementById('waifu');
+        if (!waifu) { setTimeout(addStarButton, 500); return; }
+        const starBox = document.createElement('div');
+        starBox.id = 'waifu-tool-star-box';
+        starBox.style.cssText = 'position:absolute;left:-10px;top:70px;display:flex;flex-direction:column;gap:5px;align-items:center;opacity:0;transition:opacity 1s;z-index:99;';
+        waifu.appendChild(starBox);
+        // 鼠标移入 #waifu 时显示
+        waifu.addEventListener('mouseenter', () => { starBox.style.opacity = '1'; });
+        waifu.addEventListener('mouseleave', () => { 
+          // 如果子菜单展开则不隐藏
+          const sub = starBox.querySelector('.star-sub-icons');
+          if (!sub || sub.style.display !== 'block') starBox.style.opacity = '0';
+        });
         
-        // 星星主按钮（插入到对话按钮前面，即左侧/上方）
-        const starLi = document.createElement('li');
-        starLi.className = 'waifu-tool';
-        starLi.id = 'waifu-tool-star';
-        starLi.style.position = 'relative';
+        // 星星主按钮
+        const starLi = document.createElement('div');
+        starLi.style.cssText = 'position:relative;width:25px;height:25px;';
         const starImg = document.createElement('img');
         starImg.src = '/icons/星星.png';
         starImg.style.cssText = 'width:25px;height:25px;cursor:pointer;display:block;';
         starLi.title = '特效';
         starLi.appendChild(starImg);
-        parent.insertBefore(starLi, hitokotoBtn);
+        starBox.appendChild(starLi);
         
         // 三个子特效图标容器
         const subContainer = document.createElement('div');
