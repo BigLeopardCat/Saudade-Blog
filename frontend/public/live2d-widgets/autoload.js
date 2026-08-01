@@ -59,7 +59,7 @@
   });
   
   await Promise.all([
-    loadExternalResource(live2d_path + 'waifu.css', 'css'),
+    loadExternalResource(live2d_path + 'waifu.css?v=20260801e', 'css'),
     loadExternalResource(live2d_path + 'waifu-tips.js', 'js'),
   ]);
 
@@ -125,20 +125,24 @@
         if (!core || typeof core.setParameterValueById !== 'function') return;
         const t = performance.now();
         const set = (name, val) => {
-          core.setParameterValueById(name, val, 1.0);
-          const cnt = core.getParameterCount();
-          for (let i = 0; i < cnt; i++) {
-            const pid = core.getParameterId(i);
-            if (pid && pid._id && pid._id.s === name) {
-              core._parameterValues[i] = val;
-              break;
+          try {
+            core.setParameterValueById(name, val, 1.0);
+            const cnt = core.getParameterCount();
+            for (let i = 0; i < cnt; i++) {
+              const pid = core.getParameterId(i);
+              if (pid && pid._id && pid._id.s === name) {
+                core._parameterValues[i] = val;
+                break;
+              }
             }
-          }
+          } catch (e) {}
         };
-        // 流式输出时控制口型（ParamSpeak 为嘴部动作参数）
+        // 流式输出时控制口型：ParamSpeak 为该模型自定义说话参数（范围大，×100 后由核心钳制到实际范围），
+        // ParamMouthOpenY 为标准嘴部开闭参数（0~1），双保险
         if (window.__mouthOverride >= 0) {
           const mv = Math.max(0, Math.min(1, window.__mouthOverride));
-          set('ParamSpeak', mv);
+          set('ParamSpeak', mv * 100);
+          set('ParamMouthOpenY', mv);
         }
         set('ParamTail', Math.sin(t / 600) * 30);
         set('Param3', (()=>{const p=(t%3000)/3000;return p<0.10?Math.sin(p/0.10*Math.PI*4)*60:0;})());
@@ -212,9 +216,87 @@
       window.__setMouthClose = () => { window.__mouthOverride = -1; window.__setMouthOpen(0); };
     })();
 
+    // 渲染消息内容并应用渲染后增强（代码高亮 + 公式，与博客插件一致）
+    const applyMsg = (el, text) => {
+      el.innerHTML = renderMarkdown(text);
+      try {
+        if (window.__chatEnhance && typeof window.__chatEnhance === 'function') {
+          window.__chatEnhance(el);
+        }
+      } catch(e) {}
+    };
+
+    // ── Markdown 渲染 ──
+    // 优先复用博客文章同款渲染器（由前端 src/utils/chatMarkdown.ts 注册的全局，
+    // 与 bytemd Viewer 同一套 unified 管线，gfm 删除线/任务列表/表格等全部支持）；
+    // 页面未加载时回退自包含迷你实现（先转义保证安全），若加载了 marked 也支持。
+    const renderMarkdown = (text) => {
+      if (!text) return '';
+      try {
+        if (window.__chatRenderMarkdown && typeof window.__chatRenderMarkdown === 'function') {
+          return window.__chatRenderMarkdown(text);
+        }
+        if (window.marked && typeof window.marked.parse === 'function') {
+          return window.marked.parse(text, { breaks: true });
+        }
+      } catch(e) {}
+      const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const escInline = (s) => {
+        s = esc(s);
+        s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+        // 图片必须优先于链接匹配
+        s = s.replace(/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g, '<img src="$2" alt="$1" loading="lazy" />');
+        s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+        s = s.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+        s = s.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+        s = s.replace(/_([^_]+)_/g, '<em>$1</em>');
+        s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+        return s;
+      };
+      let html = '';
+      const blocks = text.split(/```/);
+      blocks.forEach((block, i) => {
+        if (i % 2 === 1) {
+          // 代码块：去掉语言标记行
+          html += '<pre><code>' + esc(block.replace(/^[^\n]*\n/, '')) + '</code></pre>';
+          return;
+        }
+        block.split(/\n{2,}/).forEach((para) => {
+          para = para.trim();
+          if (!para) return;
+          let m = para.match(/^(#{1,6})\s+(.*)$/);
+          if (m) { html += '<h' + m[1].length + '>' + escInline(m[2]) + '</h' + m[1].length + '>'; return; }
+          // 表格：首行表头 + 分隔行（|---|）+ 数据行
+          const tLines = para.split('\n');
+          if (tLines.length >= 2 && /^\s*\|.*\|\s*$/.test(tLines[0]) && /^\s*\|[\s:|-]+\|\s*$/.test(tLines[1])) {
+            const rows = tLines.map(l => l.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim()));
+            let t = '<table><thead><tr>' + rows[0].map(c => '<th>' + escInline(c) + '</th>').join('') + '</tr></thead><tbody>';
+            rows.slice(2).forEach(r => { t += '<tr>' + r.map(c => '<td>' + escInline(c) + '</td>').join('') + '</tr>'; });
+            html += t + '</tbody></table>';
+            return;
+          }
+          if (para.startsWith('> ')) { html += '<blockquote>' + escInline(para.slice(2).replace(/\n/g, '<br>')) + '</blockquote>'; return; }
+          if (/^[-*]\s+/.test(para)) {
+            html += '<ul>' + para.split('\n').map(li => '<li>' + escInline(li.replace(/^[-*]\s+/, '')) + '</li>').join('') + '</ul>';
+            return;
+          }
+          if (/^\d+\.\s+/.test(para)) {
+            html += '<ol>' + para.split('\n').map(li => '<li>' + escInline(li.replace(/^\d+\.\s+/, '')) + '</li>').join('') + '</ol>';
+            return;
+          }
+          html += '<p>' + escInline(para).replace(/\n/g, '<br>') + '</p>';
+        });
+      });
+      return html;
+    };
+
     // ── Chat Panel ──
     const chatHTML = `
     <div id="waifu-chat">
+      <div class="chat-drag-bar-t"></div>
+      <div class="chat-drag-bar-l"></div>
+      <div class="chat-inner-border"></div>
+      <div class="chat-close" id="chat-close">×</div>
       <div class="chat-messages" id="chat-messages"></div>
       <div class="chat-input-area">
         <textarea class="chat-input" id="chat-input" placeholder="和泠月喵对话..." rows="1"></textarea>
@@ -266,32 +348,47 @@
         const uid = getUserId();
         return uid ? '用户' + uid + '（你）: ' : '你: ';
       })();
-      // 从 localStorage 加载最近 10 条历史消息
+      // 渲染全部历史消息（像聊天软件一样保留完整记录）
+      const syncHistory = () => {
+        if (isSending) return; // 流式输出中不重绘，避免打断
+        try {
+          const key = 'chat_history_' + (localStorage.getItem('tokenKey') || 'guest');
+          const saved = JSON.parse(localStorage.getItem(key) || '[]');
+          messages.innerHTML = '';
+          saved.forEach(item => {
+            const div = document.createElement('div');
+            div.className = 'chat-msg ' + item.type;
+            const label = document.createElement('span');
+            label.className = 'msg-label';
+            label.textContent = item.type === 'user' ? userLabel : '泠月喵: ';
+            const content = document.createElement('span');
+            content.className = 'msg-text';
+            if (item.type === 'user') {
+              const bubble = document.createElement('span');
+              bubble.className = 'msg-bubble';
+              applyMsg(bubble, item.text);
+              content.appendChild(bubble);
+            } else {
+              applyMsg(content, item.text);
+            }
+            div.appendChild(label);
+            div.appendChild(content);
+            messages.appendChild(div);
+          });
+          scrollToBottom(messages);
+        } catch(e) {/* ignore */}
+      };
+      // 初始化时渲染历史
+      syncHistory();
+
+      // 导航跳转返回后：默认打开对话框并滚动到对话底部
       try {
-        const key = 'chat_history_' + (localStorage.getItem('tokenKey') || 'guest');
-        const saved = JSON.parse(localStorage.getItem(key) || '[]');
-        const recent = saved.slice(-10);
-        recent.forEach(item => {
-          const div = document.createElement('div');
-          div.className = 'chat-msg ' + item.type;
-          const label = document.createElement('span');
-          label.className = 'msg-label';
-          label.textContent = item.type === 'user' ? userLabel : '泠月喵: ';
-          const content = document.createElement('span');
-          content.className = 'msg-text';
-          if (item.type === 'user') {
-            const bubble = document.createElement('span');
-            bubble.className = 'msg-bubble';
-            bubble.textContent = item.text;
-            content.appendChild(bubble);
-          } else {
-            content.textContent = item.text;
-          }
-          div.appendChild(label);
-          div.appendChild(content);
-          messages.appendChild(div);
-        });
-        scrollToBottom(messages);
+        if (sessionStorage.getItem('chat_open')) {
+          sessionStorage.removeItem('chat_open');
+          chatPanel.classList.add('active');
+          syncHistory(); // 同步其他页面产生的新对话
+          setTimeout(() => scrollToBottom(messages), 60);
+        }
       } catch(e) {/* ignore */}
 
       const addMsg = (text, type) => {
@@ -305,10 +402,10 @@
         if (type === 'user') {
           const bubble = document.createElement('span');
           bubble.className = 'msg-bubble';
-          bubble.textContent = text;
+          applyMsg(bubble, text);
           content.appendChild(bubble);
         } else {
-          content.textContent = text;
+          applyMsg(content, text);
         }
         div.appendChild(label);
         div.appendChild(content);
@@ -324,12 +421,14 @@
             if (m) {
               const c = m.getModel ? m.getModel() : m._model;
               if (c && typeof c.setParameterValueById === 'function') {
-                c.setParameterValueById('ParamSpeak', 0.7, 1.0);
+                c.setParameterValueById('ParamSpeak', 70, 1.0);
+                c.setParameterValueById('ParamMouthOpenY', 0.7, 1.0);
                 if (m.update && typeof m.update === 'function') m.update();
                 else if (c._csmUpdateModel) c._csmUpdateModel();
                 else if (c._model && c._model.update) c._model.update();
                 setTimeout(() => {
                   c.setParameterValueById('ParamSpeak', 0, 1.0);
+                  c.setParameterValueById('ParamMouthOpenY', 0, 1.0);
                   if (m.update && typeof m.update === 'function') m.update();
                   else if (c._csmUpdateModel) c._csmUpdateModel();
                   else if (c._model && c._model.update) c._model.update();
@@ -388,6 +487,7 @@
             label.textContent = '泠月喵: ';
             const contentSpan = document.createElement('span');
             contentSpan.className = 'msg-text';
+            contentSpan.classList.add('msg-streaming'); // 流式纯文本阶段用 pre-line 换行
             div.appendChild(label);
             div.appendChild(contentSpan);
             msgs.appendChild(div);
@@ -395,6 +495,7 @@
             
             let charIdx = 0;
             let mouthOpen = false;
+            let lastMouthFlip = 0;
             const TICK = 30;
             const CHUNK = 3;
             const typeInterval = setInterval(() => {
@@ -402,10 +503,18 @@
                 const showLen = Math.min(charIdx + CHUNK, fullText.length);
                 contentSpan.textContent = fullText.slice(0, showLen);
                 charIdx = showLen;
-                // 口型同步：交替开闭
-                mouthOpen = !mouthOpen;
-                window.__mouthOverride = mouthOpen ? 0.8 : 0.2;
-                // 直接设置并渲染（双重保障）
+                // 口型同步：按正常说话节奏翻转（约 300ms 一相），与打字速度解耦，避免高速抖动
+                const now = performance.now();
+                if (now - lastMouthFlip >= 300) {
+                  lastMouthFlip = now;
+                  mouthOpen = !mouthOpen;
+                  window.__mouthOverride = mouthOpen ? 0.8 : 0.2;
+                } else {
+                  // 未到翻转时机，本 tick 直接由渲染管线的 applyParams 保持当前口型
+                  scrollToBottom(msgs);
+                  return;
+                }
+                // 直接设置并渲染（双重保障，值变化时才触发）
                 try {
                   const ad = window.__cubism5model;
                   const sub = ad && ad.subdelegates && ad.subdelegates.getSize() ? ad.subdelegates.at(0) : null;
@@ -415,7 +524,8 @@
                     const c = m.getModel ? m.getModel() : m._model;
                     if (c && typeof c.setParameterValueById === 'function') {
                       const v = mouthOpen ? 0.8 : 0.2;
-                      c.setParameterValueById('ParamSpeak', v, 1.0);
+                      c.setParameterValueById('ParamSpeak', v * 100, 1.0);
+                      c.setParameterValueById('ParamMouthOpenY', v, 1.0);
                       // 直接触发模型完整 update 渲染管线
                       if (m.update && typeof m.update === 'function') m.update();
                       else if (c._csmUpdateModel) c._csmUpdateModel();
@@ -426,6 +536,9 @@
                 scrollToBottom(msgs);
               } else {
                 clearInterval(typeInterval);
+                contentSpan.classList.remove('msg-streaming'); // 渲染完成后恢复 normal，与博客一致
+                // 流式结束：以 Markdown 渲染完整回复
+                applyMsg(contentSpan, fullText);
                 // 流式结束，口型归位，再关闭 override 让模型恢复默认驱动
                   if (window.__setMouthOpen) window.__setMouthOpen(0);
                   window.__mouthOverride = -1;
@@ -445,22 +558,28 @@
             const navUrl = (() => {
               const m1 = data.reply.match(/(AUTO_NAVIGATE|NAVIGATE):(https?:\/\/[^\s]+)/);
               if (m1) return m1[2];
-              const m2 = data.reply.match(/\[([^\]]+)\]\(((?:https?:)?\/\/)?([^)]+)\)/);
+              // 站内相对路径必须最先匹配：[文字](/article/16) → 站点根路径
+              // （排除 // 开头，避免误吞协议相对地址）
+              const m2b = data.reply.match(/\[([^\]]+)\]\((\/(?!\/)[^)]+)\)/);
+              if (m2b) return 'https://saudade.site' + m2b[2];
+              // 完整 URL：scheme 必须存在（http(s):// 或 // 开头），
+              // 否则 [文字](/article/16) 会被拼成 https:///article/16 这种坏链接
+              const m2 = data.reply.match(/\[([^\]]+)\]\(((?:https?:)?\/\/[^)]+)\)/);
               if (m2) {
-                let url = m2[3];
+                let url = m2[2];
                 if (url.startsWith('//')) url = 'https:' + url;
-                else if (!url.startsWith('http')) url = 'https://' + url;
                 return url;
               }
-              const m2b = data.reply.match(/\[([^\]]+)\]\(\/([^)]+)\)/);
-              if (m2b) return 'https://saudade.site/' + m2b[2];
-              const m3 = data.reply.match(/(?:转跳|跳转|打开|前往|导航到)\s*(https?:\/\/[^\s，。,.]+)/i);
-              if (m3) return m3[1];
+              // 中文命令 + 裸 URL：排除空白/中日韩字符（URL 内合法的 . 和 , 保留），
+              // 仅去掉结尾的 ASCII 标点（避免 https://example.com 被截成 https://example）
+              const m3 = data.reply.match(/(?:转跳|跳转|打开|前往|导航到)\s*(https?:\/\/[^\s一-鿿　-〿＀-￯]+)/i);
+              if (m3) return m3[1].replace(/[,.;!?]+$/, '');
               return null;
             })();
             if (navUrl) {
               const isDirect = data.reply.startsWith('AUTO_NAVIGATE:');
               if (isDirect) {
+                sessionStorage.setItem('chat_open', '1');  // 跳转后默认打开对话框并滚动到底部
                 window.location.href = navUrl;
               } else {
                 pendingNavUrl = navUrl;
@@ -495,7 +614,10 @@
           e.stopPropagation();
           e.preventDefault();
           chatPanel.classList.toggle('active');
-          if (chatPanel.classList.contains('active')) input.focus();
+          if (chatPanel.classList.contains('active')) {
+            syncHistory(); // 每次打开都同步所有页面的聊天记录
+            input.focus();
+          }
         });
       };
       repurposeHitokoto();
@@ -510,6 +632,7 @@
           setTimeout(() => {
             const panel = document.getElementById('waifu-chat');
             if (panel) panel.classList.add('active');
+            syncHistory();
             addMsg('目前博客只有泠月喵一个人服务呢，还没有招聘到新员工替本喵顶班~', 'agent');
           }, 100);
         });
@@ -524,6 +647,7 @@
           setTimeout(() => {
             const panel = document.getElementById('waifu-chat');
             if (panel) panel.classList.add('active');
+            syncHistory();
             addMsg('本喵还没有新衣服呢，要不要给本喵买一件呢~', 'agent');
           }, 100);
         });
@@ -657,16 +781,14 @@
       };
       addStarButton();
 
-      // 拖动（整个面板除右下角缩放区域外均可拖拽）
-      let isDragging = false, isResizing = false, startX, startY, startW, startH, offsetX, offsetY;
+      // 拖动（仅通过顶部/左侧边框条移动面板，其余区域允许选中文本）
+      let isDragging = false, isResizing = false, resizeCorner = 'br', startX, startY, startW, startH, startLeft, startTop, offsetX, offsetY;
       chatPanel.addEventListener('mousedown', (e) => {
-        // 阻止事件冒泡到 #waifu（live2d-widgets 的拖拽会冲突）
+        // 仅在边框条上按下时启动拖动，其余区域不做拦截以便选中/复制文本
+        if (!e.target.closest('.chat-drag-bar-t, .chat-drag-bar-l')) return;
+        // 阻止事件冒泡到 #waifu（live2d-widgets 的拖拽会冲突）并防止选中文本
         e.stopPropagation();
-        // 排除输入框、按钮、链接
-        if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'BUTTON' || e.target.tagName === 'A') return;
-        const rect = chatPanel.getBoundingClientRect();
-        // 排除右下角缩放把手区域
-        if (e.clientX > rect.right - 30 && e.clientY > rect.bottom - 30) return;
+        e.preventDefault();
         isDragging = true;
         isResizing = false;
         // 固定当前宽度，防止移除 right:0 后宽度变化
@@ -683,26 +805,50 @@
           chatPanel.style.bottom = 'auto';
         }
         if (isResizing) {
-          chatPanel.style.width = Math.max(180, startW + e.clientX - startX) + 'px';
-          chatPanel.style.height = Math.max(120, startH + e.clientY - startY) + 'px';
+          if (resizeCorner === 'tl') {
+            // 左上角缩放：固定右下角不动，左上角跟随鼠标
+            const w = Math.max(260, startW + (startX - e.clientX));
+            const h = Math.max(180, startH + (startY - e.clientY));
+            chatPanel.style.width = w + 'px';
+            chatPanel.style.height = h + 'px';
+            chatPanel.style.left = (startLeft - (w - startW)) + 'px';
+            chatPanel.style.top = (startTop - (h - startH)) + 'px';
+            chatPanel.style.right = 'auto';
+            chatPanel.style.bottom = 'auto';
+          } else {
+            chatPanel.style.width = Math.max(260, startW + e.clientX - startX) + 'px';
+            chatPanel.style.height = Math.max(180, startH + e.clientY - startY) + 'px';
+          }
         }
       });
       document.addEventListener('mouseup', () => { isDragging = false; isResizing = false; });
-      // 缩放把手
-      const rh = document.createElement('div');
-      rh.style.cssText = 'position:absolute;right:0;bottom:0;width:14px;height:14px;cursor:nwse-resize;background:transparent;z-index:2;';
-      rh.innerHTML = '<svg viewBox="0 0 10 10" width="14" height="14"><path d="M0 10 L10 0 L10 10 Z" fill="#ccc"/></svg>';
-      rh.addEventListener('mousedown', (e) => { 
-        e.stopPropagation(); 
-        e.preventDefault();
-        isDragging = false;
-        isResizing = true; 
-        startX = e.clientX; 
-        startY = e.clientY; 
-        startW = chatPanel.offsetWidth; 
-        startH = chatPanel.offsetHeight; 
-      });
-      chatPanel.appendChild(rh);
+      // 缩放把手：右下角 + 左上角（红色三角，与发送按钮同色）
+      const makeResizeHandle = (corner) => {
+        const isTL = corner === 'tl';
+        const h = document.createElement('div');
+        h.style.cssText = 'position:absolute;' + (isTL ? 'left:0;top:0' : 'right:0;bottom:0') +
+          ';width:24px;height:24px;cursor:nwse-resize;background:transparent;z-index:5;';
+        // 三角形方向：BR 角朝左上，TL 角朝右下（圆角三角：stroke-linejoin:round）
+        h.innerHTML = isTL
+          ? '<svg viewBox="0 0 10 10" width="22" height="22"><path d="M0 0 L10 0 L0 10 Z" fill="#e74c3c" stroke="#e74c3c" stroke-width="1.5" stroke-linejoin="round" opacity="0.85"/></svg>'
+          : '<svg viewBox="0 0 10 10" width="22" height="22"><path d="M0 10 L10 0 L10 10 Z" fill="#e74c3c" stroke="#e74c3c" stroke-width="1.5" stroke-linejoin="round" opacity="0.85"/></svg>';
+        h.addEventListener('mousedown', (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          isDragging = false;
+          isResizing = true;
+          resizeCorner = isTL ? 'tl' : 'br';
+          startX = e.clientX;
+          startY = e.clientY;
+          startW = chatPanel.offsetWidth;
+          startH = chatPanel.offsetHeight;
+          startLeft = chatPanel.offsetLeft;
+          startTop = chatPanel.offsetTop;
+        });
+        chatPanel.appendChild(h);
+      };
+      makeResizeHandle('br');
+      makeResizeHandle('tl');
 
       sendBtn.addEventListener('click', sendMessage);
       // Auto-resize textarea
@@ -720,6 +866,7 @@
       document.getElementById('nav-yes').addEventListener('click', () => {
         if (pendingNavUrl) {
           navConfirm.classList.remove('active');
+          sessionStorage.setItem('chat_open', '1');  // 跳转后默认打开对话框并滚动到底部
           window.location.href = pendingNavUrl;
           pendingNavUrl = '';
         }
@@ -727,6 +874,11 @@
       document.getElementById('nav-no').addEventListener('click', () => {
         navConfirm.classList.remove('active');
         pendingNavUrl = '';
+      });
+
+      // 右上角关闭按钮：收起聊天面板
+      document.getElementById('chat-close').addEventListener('click', () => {
+        chatPanel.classList.remove('active');
       });
     };
     initChat();
@@ -750,7 +902,7 @@
             label.textContent = '泠月喵: ';
             const content = document.createElement('span');
             content.className = 'msg-text';
-            content.textContent = text;
+            applyMsg(content, text);
             div.appendChild(label);
             div.appendChild(content);
             messages.appendChild(div);

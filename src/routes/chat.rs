@@ -105,14 +105,28 @@ pub async fn chat_handler(
         "needs_summary": needs_summary,
     });
 
-    let resp = reqwest::Client::new().post(&agent_url)
-        .json(&body)
-        .timeout(std::time::Duration::from_secs(60))
-        .send()
-        .await;
+    // 传输层偶发失败（agent worker 重启、瞬时断连等）自动重试最多 3 次，
+    // 避免对话偶发 "connection closed before message completed" 报错
+    let mut resp_opt: Option<reqwest::Response> = None;
+    let mut last_err = String::new();
+    for attempt in 0..3 {
+        match reqwest::Client::new().post(&agent_url)
+            .json(&body)
+            .timeout(std::time::Duration::from_secs(60))
+            .send()
+            .await {
+            Ok(r) => { resp_opt = Some(r); break; }
+            Err(e) => {
+                last_err = e.to_string();
+                if attempt < 2 {
+                    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+                }
+            }
+        }
+    }
 
-    match resp {
-        Ok(r) => {
+    match resp_opt {
+        Some(r) => {
             if r.status().is_success() {
                 let data: serde_json::Value = r.json().await.unwrap_or_default();
                 let reply = data["reply"].as_str().unwrap_or("").to_string();
@@ -151,8 +165,8 @@ pub async fn chat_handler(
                 Json(ChatResponse { reply: String::new(), success: false, error: Some(format!("Agent error: {}", r.status())) })
             }
         }
-        Err(e) => {
-            Json(ChatResponse { reply: String::new(), success: false, error: Some(format!("Agent unavailable: {}", e)) })
+        None => {
+            Json(ChatResponse { reply: String::new(), success: false, error: Some(format!("Agent unavailable: {}", last_err)) })
         }
     }
 }
