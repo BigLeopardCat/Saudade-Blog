@@ -1,4 +1,6 @@
 import { useEffect, useRef } from 'react';
+// 注册 window.__chatRenderMarkdown / __chatHighlight，供看板娘对话框复用博客同款 markdown 渲染
+import '../../utils/chatMarkdown';
 
 /**
  * 使用 live2d-widgets autoload 方式加载看板娘
@@ -13,7 +15,7 @@ const Live2dAgent: React.FC = () => {
 
     // 注入 autoload 脚本，让 live2d-widgets 自己管理一切
     const s = document.createElement('script');
-    s.src = '/live2d-widgets/autoload.js?v=20260729c';
+    s.src = '/live2d-widgets/autoload.js?v=20260801e';
     s.async = true;
     document.head.appendChild(s);
 

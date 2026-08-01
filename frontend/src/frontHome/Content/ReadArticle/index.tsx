@@ -22,9 +22,11 @@ import gemoji from "@bytemd/plugin-gemoji";
 import highlight from "@bytemd/plugin-highlight";
 import mediumZoom from '@bytemd/plugin-medium-zoom'
 import mermaid from '@bytemd/plugin-mermaid'
+import math from "@bytemd/plugin-math";
 import 'bytemd/dist/index.css'
 import 'github-markdown-css/github-markdown-light.css'
 import 'highlight.js/styles/atom-one-dark.css' // Import Highlight.js styles
+import 'katex/dist/katex.css' // KaTeX 公式样式（与编辑器一致，公式在外部展示页正常渲染）
 
 const plugins = [
     gfm(),
@@ -33,7 +35,8 @@ const plugins = [
     gemoji(),
     highlight(),
     mediumZoom(),
-    mermaid()
+    mermaid(),
+    math()
 ]
 
 const ReadArticle = () => {

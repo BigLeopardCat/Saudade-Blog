@@ -226,8 +226,16 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
     .homeLogo
       margin-left: 20px
       margin-right: 20px
+      /* 全局 box-sizing:border-box：46px 盒 = 40px 头像 + 3px 圆环，
+         flex 居中保证圆环与头像严格同心（原来靠行盒基线对齐会偏位） */
+      width: 46px
+      height: 46px
+      padding: 0
       border: 3px solid rgba(255,255,255,0.66)
       border-radius: 50%
+      display: flex
+      justify-content: center
+      align-items: center
       cursor: pointer
       position: relative
       transition: 0.3s
@@ -236,21 +244,6 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
 
       &.BigAvatar
         transform: scale(2) translateY(15px) translateX(-10px)
-
-  .loginCard
-    width: 60px
-    height: 80px
-    background: #fff1eb
-    position: absolute
-    right: -9px
-    top: 20px
-    z-index: -1
-    border-radius: 9px
-    transition: 0.6s
-    animation: cardIn 0.6s
-    animation-fill-mode: forwards
-    justify-content: center
-    align-items: center
 
 .searchModal
   display: flex
