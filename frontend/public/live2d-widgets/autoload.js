@@ -606,11 +606,12 @@
                 navConfirm.classList.add('active');
               }
             }
-            // 处理特效切换命令
-            const effectMatch = data.reply.match(/EFFECT:(\w+)/);
+            // 处理特效切换命令（支持 EFFECT:name 按钮式切换 / EFFECT:name:on|off 显式开关）
+            const effectMatch = data.reply.match(/EFFECT:(\w+):?(\w+)?/);
             if (effectMatch) {
               const eff = effectMatch[1];
-              toggleEffect(eff);
+              const action = effectMatch[2];
+              toggleEffect(eff, action);
             }
           } else {
             addMsg('出错了: ' + (data.error || '未知错误'), 'error');
@@ -738,8 +739,10 @@
           effectBtns.push(btn);
         });
         
-        // 全局特效切换函数（按钮/agent 共用）
-        window.toggleEffect = (name) => {
+        // 全局特效切换函数（按钮/agent 共用）。
+        // action 为 'on'/'off' 时按显式意图开关（agent 命令），不会因重复命令翻转状态；
+        // 无 action 时保持按钮点击的 toggle 语义
+        window.toggleEffect = (name, action) => {
           const effectMap = {
             sakura: { start: 'startSakura', stop: 'stopSakura', id: 'effect-sakura' },
             rain:   { start: 'startRain',   stop: 'stopRain',   id: 'effect-rain' },
@@ -756,7 +759,19 @@
           const eff = effectMap[name];
           if (!eff) return;
           const btn = document.getElementById(eff.id);
-          if (btn) {
+          const wantOn = (action === 'on' || action === 'off') ? action === 'on' : null;
+          if (wantOn !== null) {
+            // agent 显式开关：设置目标状态（start/stop 本身幂等，重复执行安全）
+            if (btn) {
+              btn.active = wantOn;
+              btn.style.filter = wantOn ? 'brightness(1.3) drop-shadow(0 0 3px gold)' : 'none';
+            }
+            if (wantOn) {
+              if (window[eff.start]) window[eff.start]();
+            } else {
+              if (window[eff.stop]) window[eff.stop]();
+            }
+          } else if (btn) {
             btn.active = !btn.active;
             btn.style.filter = btn.active ? 'brightness(1.3) drop-shadow(0 0 3px gold)' : 'none';
             if (btn.active) {
