@@ -181,8 +181,13 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
 
   .loginCard
     position: absolute
-    right: -9px
-    top: 15px
+    /* 父级 .BigAvatar 为 scale(2) translateY(15px) translateX(-10px)，
+       子元素坐标先平移后缩放（等效位移翻倍）：visual = (2*left-43, 2*top+7)。
+       left:10px → 视觉居中于放大头像正下方；top:45px → 视觉 y=97，
+       恰好贴住放大头像底部（93px）下方 4px，不再遮挡头像 */
+    left: 10px
+    right: auto
+    top: 45px
     z-index: 100
     display: flex
     flex-direction: column
