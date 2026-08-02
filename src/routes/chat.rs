@@ -11,6 +11,8 @@ pub struct ChatRequest {
     pub current_url: Option<String>,
     #[serde(default)]
     pub page_title: Option<String>,
+    #[serde(default)]
+    pub current_effects: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -99,6 +101,7 @@ pub async fn chat_handler(
         "message": payload.message,
         "current_url": payload.current_url.as_deref().unwrap_or(""),
         "page_title": payload.page_title.as_deref().unwrap_or(""),
+        "current_effects": payload.current_effects.as_deref().unwrap_or(""),
         "user_id": uid,
         "history": history_items,
         "summary": summary_text,

@@ -476,7 +476,8 @@
               body: JSON.stringify({
                 message: msg,
                 current_url: window.location.href,
-                page_title: document.title
+                page_title: document.title,
+                current_effects: (window.__effectStateList || '') // 实时特效状态，供 agent 感知
               }),
               signal: ctrl.signal,
             });
@@ -739,6 +740,13 @@
           effectBtns.push(btn);
         });
         
+        // 特效实时状态跟踪：手动按钮与 agent 命令都会更新，随对话上报给 agent，
+        // 让 agent 感知真实开关状态（避免它只靠自己的调用记忆而失同步）
+        window.__effectState = { sakura: false, rain: false, snow: false };
+        const syncEffectState = () => {
+          window.__effectStateList = Object.keys(window.__effectState).filter(k => window.__effectState[k]).join(',');
+        };
+
         // 全局特效切换函数（按钮/agent 共用）。
         // action 为 'on'/'off' 时按显式意图开关（agent 命令），不会因重复命令翻转状态；
         // 无 action 时保持按钮点击的 toggle 语义
@@ -753,7 +761,9 @@
               if (window[e.stop]) window[e.stop]();
               const btn = document.getElementById(e.id);
               if (btn) { btn.active = false; btn.style.filter = 'none'; }
+              window.__effectState[e.id.replace('effect-', '')] = false;
             });
+            syncEffectState();
             return;
           }
           const eff = effectMap[name];
@@ -771,6 +781,7 @@
             } else {
               if (window[eff.stop]) window[eff.stop]();
             }
+            window.__effectState[name] = wantOn;
           } else if (btn) {
             btn.active = !btn.active;
             btn.style.filter = btn.active ? 'brightness(1.3) drop-shadow(0 0 3px gold)' : 'none';
@@ -779,10 +790,13 @@
             } else {
               if (window[eff.stop]) window[eff.stop]();
             }
+            window.__effectState[name] = btn.active;
           } else {
             // 按钮还没创建时直接调用
             if (window[eff.start]) window[eff.start]();
+            window.__effectState[name] = true;
           }
+          syncEffectState();
         };
         
         // 星星点击展开/收起 — 右侧半圆动画
