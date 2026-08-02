@@ -6,7 +6,8 @@ html
   min-height: calc(100vh - 172.4px)
   width: 100%
   background: url("https://img.picgo.net/2024/05/04/readBackground9c847f76adae05d1.png")
-  backdrop-filter: blur(10px)
+  // 整页级 backdrop-filter 性能开销大（与主页 frontRoot 同类），注释
+  // backdrop-filter: blur(10px)
   display: flex
   flex-direction: column
   align-items: center
