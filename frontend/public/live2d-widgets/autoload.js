@@ -849,8 +849,10 @@
       const makeResizeHandle = (corner) => {
         const isTL = corner === 'tl';
         const h = document.createElement('div');
+        // flex 对齐使 svg 贴住对应角：TL 贴左上角、BR 贴右下角，两个把手样式完全一致
         h.style.cssText = 'position:absolute;' + (isTL ? 'left:0;top:0' : 'right:0;bottom:0') +
-          ';width:24px;height:24px;cursor:nwse-resize;background:transparent;z-index:5;';
+          ';width:24px;height:24px;cursor:nwse-resize;background:transparent;z-index:5;' +
+          ';display:flex;' + (isTL ? 'align-items:flex-start;justify-content:flex-start' : 'align-items:flex-end;justify-content:flex-end');
         // 三角形方向：BR 角朝左上，TL 角朝右下（圆角三角：stroke-linejoin:round）
         h.innerHTML = isTL
           ? '<svg viewBox="0 0 10 10" width="22" height="22"><path d="M0 0 L10 0 L0 10 Z" fill="#e74c3c" stroke="#e74c3c" stroke-width="1.5" stroke-linejoin="round" opacity="0.85"/></svg>'
