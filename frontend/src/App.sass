@@ -9,4 +9,7 @@
   background-size: cover
   // 整页 backdrop-filter 是性能杀手，且背景图已 404、背后无内容可模糊，暂时注释
   // backdrop-filter: blur(5px)
+  // 原 backdrop-filter 会创建层叠上下文，把内部元素的 z-index 关在根容器内；
+  // 注释后卡片 z-index(99) 会直接压过看板娘(z-index:1)，用 isolation 重建层叠上下文保持层级
+  isolation: isolate
   background-attachment: fixed
