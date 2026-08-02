@@ -106,18 +106,20 @@ pub async fn chat_handler(
     });
 
     // 传输层偶发失败（agent worker 重启、瞬时断连等）自动重试最多 3 次，
-    // 避免对话偶发 "connection closed before message completed" 报错
+    // 避免对话偶发 "connection closed before message completed" 报错。
+    // 超时不重试：长回答（公式推导等）单次生成可长达 180s，超时重试只会从头再生成一遍
     let mut resp_opt: Option<reqwest::Response> = None;
     let mut last_err = String::new();
     for attempt in 0..3 {
         match reqwest::Client::new().post(&agent_url)
             .json(&body)
-            .timeout(std::time::Duration::from_secs(60))
+            .timeout(std::time::Duration::from_secs(180))
             .send()
             .await {
             Ok(r) => { resp_opt = Some(r); break; }
             Err(e) => {
                 last_err = e.to_string();
+                if e.is_timeout() { break; } // 超时说明生成确实很慢，重试无意义
                 if attempt < 2 {
                     tokio::time::sleep(std::time::Duration::from_millis(800)).await;
                 }
