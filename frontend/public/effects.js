@@ -10,6 +10,9 @@
   const EFFECTS = {};
   let sakuraAnimId = null, rainAnimId = null, snowAnimId = null;
 
+  // 真实樱花花瓣图片（方案来源 sakura_fall1，保留原始宽高比）
+  const PETAL_SRC = ['/icons/sakura/1.png', '/icons/sakura/2.png', '/icons/sakura/3.png', '/icons/sakura/4.png'];
+
   // ========== 樱花（snowfall 方式：DOM <img> 飘落）==========
   function createSakuraPetals(count) {
     const container = document.createElement('div');
@@ -18,34 +21,14 @@
     document.body.appendChild(container);
 
     const petals = [];
-    // 生成粉色花瓣图片（Canvas 绘制避免跨域问题）
-    function makePetalImage(variant) {
-      const c = document.createElement('canvas');
-      c.width = 24; c.height = 20;
-      const ctx = c.getContext('2d');
-      const r = [240, 230, 220, 250, 235][variant % 5];
-      const g = [150, 140, 180, 160, 130][variant % 5];
-      const b = [180, 170, 200, 190, 160][variant % 5];
-      ctx.fillStyle = `rgba(${r},${g},${b},0.85)`;
-      // 花瓣形状：椭圆旋转
-      ctx.beginPath();
-      ctx.ellipse(12, 10, 10, 7, 0, 0, Math.PI * 2);
-      ctx.fill();
-      // 中心小缺口
-      ctx.fillStyle = `rgba(${r-20},${g-10},${b-10},0.6)`;
-      ctx.beginPath();
-      ctx.ellipse(12, 10, 3, 2, 0, 0, Math.PI * 2);
-      ctx.fill();
-      return c.toDataURL();
-    }
 
     for (let i = 0; i < count; i++) {
       const img = new Image();
-      img.src = makePetalImage(i);
+      img.src = PETAL_SRC[Math.floor(Math.random() * PETAL_SRC.length)];
       img.style.cssText = 'position:absolute;pointer-events:none;opacity:0;';
-      const size = 12 + Math.random() * 18;
+      const size = 18 + Math.random() * 18; // 真实花瓣细节更丰富，稍大一点
       img.style.width = size + 'px';
-      img.style.height = (size * 0.8) + 'px';
+      img.style.height = 'auto'; // 保持花瓣原始宽高比
       container.appendChild(img);
       petals.push({
         el: img,
@@ -76,22 +59,11 @@
       // 补充新花瓣
       if (state.petals.length < 80 && spawnTimer % 4 === 0) {
         const img = new Image();
-        const c = document.createElement('canvas');
-        c.width = 24; c.height = 20;
-        const ctx = c.getContext('2d');
-        const vi = Math.floor(Math.random() * 5);
-        const r = [240, 230, 220, 250, 235][vi % 5];
-        const g = [150, 140, 180, 160, 130][vi % 5];
-        const b = [180, 170, 200, 190, 160][vi % 5];
-        ctx.fillStyle = `rgba(${r},${g},${b},0.85)`;
-        ctx.beginPath();
-        ctx.ellipse(12, 10, 10, 7, 0, 0, Math.PI * 2);
-        ctx.fill();
-        img.src = c.toDataURL();
-        const size = 12 + Math.random() * 18;
+        img.src = PETAL_SRC[Math.floor(Math.random() * PETAL_SRC.length)];
+        const size = 18 + Math.random() * 18;
         img.style.cssText = 'position:absolute;pointer-events:none;opacity:0;';
         img.style.width = size + 'px';
-        img.style.height = (size * 0.8) + 'px';
+        img.style.height = 'auto';
         state.container.appendChild(img);
         state.petals.push({
           el: img,
