@@ -183,9 +183,10 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
     position: absolute
     /* 父级 .BigAvatar 为 scale(2) translateY(15px) translateX(-10px)，
        子元素坐标先平移后缩放（等效位移翻倍）：visual = (2*left-43, 2*top+7)。
-       left:10px → 视觉居中于放大头像正下方；top:45px → 视觉 y=97，
-       恰好贴住放大头像底部（93px）下方 4px，不再遮挡头像 */
-    left: 10px
+       卡片视觉中心 = 2*left+7，放大头像视觉中心 = 3 →
+       left:-2px 时二者完全对齐（中垂线重合）；
+       top:45px → 视觉 y=97，恰好贴住放大头像底部（93px）下方 4px，不再遮挡头像 */
+    left: -2px
     right: auto
     top: 45px
     z-index: 100
@@ -199,26 +200,6 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
     animation-fill-mode: forwards
     justify-content: center
     align-items: center
-
-    .theme-btn
-      width: 50px
-      height: 20px
-      line-height: 20px
-      background: #ace0f9
-      color: #fff
-      border-radius: 5px
-      font-size: 12px
-      cursor: pointer
-      text-align: center
-      transition: all 0.3s
-      font-weight: 600
-      box-shadow: none
-      padding: 0
-      display: flex
-      justify-content: center
-      align-items: center
-      &:hover
-        background: #517498
 
     
 
@@ -429,6 +410,27 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
 .frontDark .SayWords h2
   color: #ffffff !important
 
+
+// 按钮样式（桌面端登录卡与移动端抽屉共用）
+.theme-btn
+  width: 50px
+  height: 20px
+  line-height: 20px
+  background: #ace0f9
+  color: #fff
+  border-radius: 5px
+  font-size: 12px
+  cursor: pointer
+  text-align: center
+  transition: all 0.3s
+  font-weight: 600
+  box-shadow: none
+  padding: 0
+  display: flex
+  justify-content: center
+  align-items: center
+  &:hover
+    background: #517498
 
 // 退出按钮红底白字
 .theme-btn.logout-btn
