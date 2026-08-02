@@ -69,6 +69,7 @@ pub fn create_router(state: AppState) -> Router {
         
         // Agent Chat
         .route("/api/chat", post(chat::chat_handler))
+        .route("/api/chat/stream", post(chat::chat_stream_handler))
         
         // Knowledge Base (GET public for agent)
         .route("/api/knowledge", get(knowledge::list_knowledge))

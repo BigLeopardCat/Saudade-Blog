@@ -216,6 +216,15 @@
       window.__setMouthClose = () => { window.__mouthOverride = -1; window.__setMouthOpen(0); };
     })();
 
+    // 剔除 agent 文本中的命令行（NAVIGATE:/AUTO_NAVIGATE:/EFFECT:/SUMMARY:），仅用于展示
+    const cleanAgentText = (text) => {
+      if (!text) return '';
+      return text.split('\n')
+        .filter(l => !/^(NAVIGATE:|AUTO_NAVIGATE:|EFFECT:|SUMMARY:)/.test(l.trim()))
+        .join('\n')
+        .trim();
+    };
+
     // 渲染消息内容并应用渲染后增强（代码高亮 + 公式，与博客插件一致）
     const applyMsg = (el, text) => {
       el.innerHTML = renderMarkdown(text);
@@ -369,7 +378,7 @@
               applyMsg(bubble, item.text);
               content.appendChild(bubble);
             } else {
-              applyMsg(content, item.text);
+              applyMsg(content, cleanAgentText(item.text));
             }
             div.appendChild(label);
             div.appendChild(content);
@@ -465,126 +474,130 @@
         input.disabled = true;
 
         try {
-          // 客户端超时兜底（后端最坏 ~180s，这里留余量），避免无限等待
+          // SSE 流式对话：agent 首 token 即上屏，不再等待完整回复
           const ctrl = new AbortController();
-          const timer = setTimeout(() => ctrl.abort(), 200000);
-          let resp;
-          try {
-            resp = await fetch('/api/chat', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-              body: JSON.stringify({
-                message: msg,
-                current_url: window.location.href,
-                page_title: document.title,
-                current_effects: (window.__effectStateList || '') // 实时特效状态，供 agent 感知
-              }),
-              signal: ctrl.signal,
-            });
-          } finally {
-            clearTimeout(timer);
-          }
-          // 网关/代理超时可能返回 HTML 错误页（如 504），先读文本再解析，
-          // 避免出现 "Unexpected token '<'" 这种不可读的报错
-          const text = await resp.text();
-          let data;
-          try {
-            data = JSON.parse(text);
-          } catch(e) {
+          // 空闲超时：超过 120s 无任何数据帧则中止（正常生成中每帧都会重置）
+          let idleTimer = setTimeout(() => ctrl.abort(), 120000);
+          const armIdle = () => {
+            clearTimeout(idleTimer);
+            idleTimer = setTimeout(() => ctrl.abort(), 120000);
+          };
+          const resp = await fetch('/api/chat/stream', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+            body: JSON.stringify({
+              message: msg,
+              current_url: window.location.href,
+              page_title: document.title,
+              current_effects: (window.__effectStateList || '') // 实时特效状态，供 agent 感知
+            }),
+            signal: ctrl.signal,
+          });
+          if (!resp.ok) {
+            // 网关/代理超时可能返回 HTML 错误页（如 504），先读文本再解析
+            const text = await resp.text();
+            let d = null;
+            try { d = JSON.parse(text); } catch(e) {}
             if (resp.status >= 500) throw new Error('服务暂时繁忙（' + resp.status + '），请稍后再试');
-            throw new Error('服务响应异常（' + resp.status + '），请稍后再试');
+            throw new Error((d && d.error) || ('服务响应异常（' + resp.status + '），请稍后再试'));
           }
-          if (data.success) {
-            // 流式输出 + 口型同步
-            const fullText = data.reply;
-            // 创建消息 DOM（不经过 addMsg，避免空消息存到 localStorage）
-            const msgs = document.getElementById('chat-messages');
-            const div = document.createElement('div');
-            div.className = 'chat-msg agent';
-            const label = document.createElement('span');
-            label.className = 'msg-label';
-            label.textContent = '泠月喵: ';
-            const contentSpan = document.createElement('span');
-            contentSpan.className = 'msg-text';
-            contentSpan.classList.add('msg-streaming'); // 流式纯文本阶段用 pre-line 换行
-            div.appendChild(label);
-            div.appendChild(contentSpan);
-            msgs.appendChild(div);
-            scrollToBottom(msgs);
-            
-            let charIdx = 0;
-            let mouthOpen = false;
-            let lastMouthFlip = 0;
-            const TICK = 30;
-            const CHUNK = 3;
-            const typeInterval = setInterval(() => {
-              if (charIdx < fullText.length) {
-                const showLen = Math.min(charIdx + CHUNK, fullText.length);
-                contentSpan.textContent = fullText.slice(0, showLen);
-                charIdx = showLen;
-                // 口型同步：按正常说话节奏翻转（约 300ms 一相），与打字速度解耦，避免高速抖动
-                const now = performance.now();
-                if (now - lastMouthFlip >= 300) {
-                  lastMouthFlip = now;
-                  mouthOpen = !mouthOpen;
-                  // 闭嘴相位取 0（完全闭合嘴型，模型嘴部与面部同层 PSD），不再用 0.2 的微张状态
-                  window.__mouthOverride = mouthOpen ? 0.8 : 0;
-                } else {
-                  // 未到翻转时机，本 tick 直接由渲染管线的 applyParams 保持当前口型
-                  scrollToBottom(msgs);
-                  return;
-                }
-                // 直接设置并渲染（双重保障，值变化时才触发）
-                try {
-                  const ad = window.__cubism5model;
-                  const sub = ad && ad.subdelegates && ad.subdelegates.getSize() ? ad.subdelegates.at(0) : null;
-                  const mgr = sub ? sub.getLive2DManager() : null;
-                  const m = mgr && mgr._models && mgr._models.getSize() ? mgr._models.at(0) : null;
-                  if (m) {
-                    const c = m.getModel ? m.getModel() : m._model;
-                    if (c && typeof c.setParameterValueById === 'function') {
-                      const v = mouthOpen ? 0.8 : 0;
-                      c.setParameterValueById('ParamSpeak', v * 100, 1.0);
-                      c.setParameterValueById('ParamMouthOpenY', v, 1.0);
-                      // 直接触发模型完整 update 渲染管线
-                      if (m.update && typeof m.update === 'function') m.update();
-                      else if (c._csmUpdateModel) c._csmUpdateModel();
-                      else if (c._model && c._model.update) c._model.update();
-                    }
-                  }
-                } catch(e) {}
-                scrollToBottom(msgs);
-              } else {
-                clearInterval(typeInterval);
-                contentSpan.classList.remove('msg-streaming'); // 渲染完成后恢复 normal，与博客一致
-                // 流式结束：以 Markdown 渲染完整回复
-                applyMsg(contentSpan, fullText);
-                // 流式结束，口型归位，再关闭 override 让模型恢复默认驱动
-                  if (window.__setMouthOpen) window.__setMouthOpen(0);
-                  window.__mouthOverride = -1;
-                // 最终完整文本保存到 localStorage
-                try {
-                  const key = 'chat_history_' + (localStorage.getItem('tokenKey') || 'guest');
-                  let saved = JSON.parse(localStorage.getItem(key) || '[]');
-                  saved.push({text: fullText, type: 'agent', time: Date.now()});
-                  if (saved.length > 50) saved = saved.slice(-50);
-                  localStorage.setItem(key, JSON.stringify(saved));
-                } catch(e) {/* ignore */}
+          if (!resp.body) throw new Error('浏览器不支持流式响应');
+
+          // 创建消息 DOM（不经过 addMsg，避免空消息存到 localStorage）
+          const msgs = document.getElementById('chat-messages');
+          const div = document.createElement('div');
+          div.className = 'chat-msg agent';
+          const label = document.createElement('span');
+          label.className = 'msg-label';
+          label.textContent = '泠月喵: ';
+          const contentSpan = document.createElement('span');
+          contentSpan.className = 'msg-text';
+          contentSpan.classList.add('msg-streaming'); // 流式纯文本阶段用 pre-line 换行
+          div.appendChild(label);
+          div.appendChild(contentSpan);
+          msgs.appendChild(div);
+          scrollToBottom(msgs);
+
+          // 消费 SSE：帧 = "data: <payload>\n\n"，payload 为 JSON 编码文本或终端标记
+          const reader = resp.body.getReader();
+          const decoder = new TextDecoder();
+          let buf = '';
+          let displayText = ''; // 展示文本（不含命令行）
+          let cmdText = '';     // NAVIGATE:/EFFECT: 命令行（不展示，仅用于解析与历史保存）
+          let mouthOpen = false;
+          let lastMouthFlip = 0;
+          const tickMouth = () => {
+            const now = performance.now();
+            if (now - lastMouthFlip >= 300) {
+              lastMouthFlip = now;
+              mouthOpen = !mouthOpen;
+              // 闭嘴相位取 0（完全闭合嘴型，模型嘴部与面部同层 PSD）
+              window.__mouthOverride = mouthOpen ? 0.8 : 0;
+            }
+          };
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            armIdle();
+            buf += decoder.decode(value, { stream: true });
+            let sep;
+            while ((sep = buf.indexOf('\n\n')) >= 0) {
+              const frame = buf.slice(0, sep);
+              buf = buf.slice(sep + 2);
+              let payload = frame;
+              if (payload.startsWith('data: ')) payload = payload.slice(6);
+              if (!payload) continue;
+              if (payload.startsWith('__ERROR__:')) {
+                let detail = payload.slice(10);
+                try { detail = JSON.parse(detail); } catch(e) {}
+                throw new Error(detail);
               }
-            }, TICK);
-            
+              if (payload === '__END__' || payload === '__NAV_END__') continue;
+              let text = payload;
+              try { text = JSON.parse(payload); } catch(e) {}
+              if (!text) continue;
+              // 命令行与展示文本分流：命令行不渲染
+              if (/^(NAVIGATE:|AUTO_NAVIGATE:|EFFECT:)/.test(text)) {
+                cmdText += text + '\n';
+              } else {
+                displayText += text;
+                contentSpan.textContent = displayText;
+                tickMouth();
+                scrollToBottom(msgs);
+              }
+            }
+          }
+          clearTimeout(idleTimer);
+          // 流结束：口型归位，关闭 override 让模型恢复默认驱动
+          if (window.__setMouthOpen) window.__setMouthOpen(0);
+          window.__mouthOverride = -1;
+          contentSpan.classList.remove('msg-streaming'); // 渲染完成后恢复 normal，与博客一致
+          // 完整文本（命令行前置，导航/特效解析与历史保存沿用原格式）
+          const fullText = cmdText + displayText;
+          // 最终展示：剔除命令行与 SUMMARY 摘要行后渲染 markdown
+          applyMsg(contentSpan, cleanAgentText(fullText));
+          // 完整文本保存到 localStorage（含命令行，与后端历史一致）
+          try {
+            const key = 'chat_history_' + (localStorage.getItem('tokenKey') || 'guest');
+            let saved = JSON.parse(localStorage.getItem(key) || '[]');
+            saved.push({text: fullText, type: 'agent', time: Date.now()});
+            if (saved.length > 50) saved = saved.slice(-50);
+            localStorage.setItem(key, JSON.stringify(saved));
+          } catch(e) {/* ignore */}
+
             // Check if the agent suggests a navigation
-            const navMatch = data.reply.match(/(?:转跳|跳转|打开|前往|导航到)\s*(https?:\/\/[^\s，。,.]+)/i);
+            const navMatch = fullText.match(/(?:转跳|跳转|打开|前往|导航到)\s*(https?:\/\/[^\s，。,.]+)/i);
             const navUrl = (() => {
-              const m1 = data.reply.match(/(AUTO_NAVIGATE|NAVIGATE):(https?:\/\/[^\s]+)/);
+              const m1 = fullText.match(/(AUTO_NAVIGATE|NAVIGATE):(https?:\/\/[^\s]+)/);
               if (m1) return m1[2];
               // 站内相对路径必须最先匹配：[文字](/article/16) → 站点根路径
               // （排除 // 开头，避免误吞协议相对地址）
-              const m2b = data.reply.match(/\[([^\]]+)\]\((\/(?!\/)[^)]+)\)/);
+              const m2b = fullText.match(/\[([^\]]+)\]\((\/(?!\/)[^)]+)\)/);
               if (m2b) return 'https://saudade.site' + m2b[2];
               // 完整 URL：scheme 必须存在（http(s):// 或 // 开头），
               // 否则 [文字](/article/16) 会被拼成 https:///article/16 这种坏链接
-              const m2 = data.reply.match(/\[([^\]]+)\]\(((?:https?:)?\/\/[^)]+)\)/);
+              const m2 = fullText.match(/\[([^\]]+)\]\(((?:https?:)?\/\/[^)]+)\)/);
               if (m2) {
                 let url = m2[2];
                 if (url.startsWith('//')) url = 'https:' + url;
@@ -592,12 +605,12 @@
               }
               // 中文命令 + 裸 URL：排除空白/中日韩字符（URL 内合法的 . 和 , 保留），
               // 仅去掉结尾的 ASCII 标点（避免 https://example.com 被截成 https://example）
-              const m3 = data.reply.match(/(?:转跳|跳转|打开|前往|导航到)\s*(https?:\/\/[^\s一-鿿　-〿＀-￯]+)/i);
+              const m3 = fullText.match(/(?:转跳|跳转|打开|前往|导航到)\s*(https?:\/\/[^\s一-鿿　-〿＀-￯]+)/i);
               if (m3) return m3[1].replace(/[,.;!?]+$/, '');
               return null;
             })();
             if (navUrl) {
-              const isDirect = data.reply.startsWith('AUTO_NAVIGATE:');
+              const isDirect = fullText.startsWith('AUTO_NAVIGATE:');
               if (isDirect) {
                 sessionStorage.setItem('chat_open', '1');  // 跳转后默认打开对话框并滚动到底部
                 window.location.href = navUrl;
@@ -608,18 +621,15 @@
               }
             }
             // 处理特效切换命令（支持 EFFECT:name 按钮式切换 / EFFECT:name:on|off 显式开关）
-            const effectMatch = data.reply.match(/EFFECT:(\w+):?(\w+)?/);
+            const effectMatch = fullText.match(/EFFECT:(\w+):?(\w+)?/);
             if (effectMatch) {
               const eff = effectMatch[1];
               const action = effectMatch[2];
               toggleEffect(eff, action);
             }
-          } else {
-            addMsg('出错了: ' + (data.error || '未知错误'), 'error');
-          }
         } catch(e) {
           if (e && e.name === 'AbortError') {
-            addMsg('请求超时：回答内容较长，请稍后重试', 'error');
+            addMsg('长时间未收到回复，请稍后重试', 'error');
           } else {
             addMsg('网络错误: ' + e.message, 'error');
           }
