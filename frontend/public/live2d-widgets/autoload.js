@@ -526,7 +526,8 @@
                 if (now - lastMouthFlip >= 300) {
                   lastMouthFlip = now;
                   mouthOpen = !mouthOpen;
-                  window.__mouthOverride = mouthOpen ? 0.8 : 0.2;
+                  // 闭嘴相位取 0（完全闭合嘴型，模型嘴部与面部同层 PSD），不再用 0.2 的微张状态
+                  window.__mouthOverride = mouthOpen ? 0.8 : 0;
                 } else {
                   // 未到翻转时机，本 tick 直接由渲染管线的 applyParams 保持当前口型
                   scrollToBottom(msgs);
@@ -541,7 +542,7 @@
                   if (m) {
                     const c = m.getModel ? m.getModel() : m._model;
                     if (c && typeof c.setParameterValueById === 'function') {
-                      const v = mouthOpen ? 0.8 : 0.2;
+                      const v = mouthOpen ? 0.8 : 0;
                       c.setParameterValueById('ParamSpeak', v * 100, 1.0);
                       c.setParameterValueById('ParamMouthOpenY', v, 1.0);
                       // 直接触发模型完整 update 渲染管线
