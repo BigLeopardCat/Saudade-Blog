@@ -59,7 +59,7 @@
   });
   
   await Promise.all([
-    loadExternalResource(live2d_path + 'waifu.css?v=20260801e', 'css'),
+    loadExternalResource(live2d_path + 'waifu.css?v=20260801f', 'css'),
     loadExternalResource(live2d_path + 'waifu-tips.js', 'js'),
   ]);
 
@@ -465,16 +465,34 @@
         input.disabled = true;
 
         try {
-          const resp = await fetch('/api/chat', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-            body: JSON.stringify({ 
-              message: msg, 
-              current_url: window.location.href, 
-              page_title: document.title 
-            }),
-          });
-          const data = await resp.json();
+          // 客户端超时兜底（后端最坏 ~180s，这里留余量），避免无限等待
+          const ctrl = new AbortController();
+          const timer = setTimeout(() => ctrl.abort(), 200000);
+          let resp;
+          try {
+            resp = await fetch('/api/chat', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+              body: JSON.stringify({
+                message: msg,
+                current_url: window.location.href,
+                page_title: document.title
+              }),
+              signal: ctrl.signal,
+            });
+          } finally {
+            clearTimeout(timer);
+          }
+          // 网关/代理超时可能返回 HTML 错误页（如 504），先读文本再解析，
+          // 避免出现 "Unexpected token '<'" 这种不可读的报错
+          const text = await resp.text();
+          let data;
+          try {
+            data = JSON.parse(text);
+          } catch(e) {
+            if (resp.status >= 500) throw new Error('服务暂时繁忙（' + resp.status + '），请稍后再试');
+            throw new Error('服务响应异常（' + resp.status + '），请稍后再试');
+          }
           if (data.success) {
             // 流式输出 + 口型同步
             const fullText = data.reply;
@@ -597,7 +615,11 @@
             addMsg('出错了: ' + (data.error || '未知错误'), 'error');
           }
         } catch(e) {
-          addMsg('网络错误: ' + e.message, 'error');
+          if (e && e.name === 'AbortError') {
+            addMsg('请求超时：回答内容较长，请稍后重试', 'error');
+          } else {
+            addMsg('网络错误: ' + e.message, 'error');
+          }
         }
         isSending = false;
         sendBtn.disabled = false;
