@@ -9,7 +9,7 @@ import {
     Upload, Switch, Radio, TreeSelect, ConfigProvider, UploadProps, UploadFile, GetProp, message, Row, Col, Card
 } from "antd";
 import {PlusOutlined, PictureOutlined} from "@ant-design/icons";
-import React, {useEffect,  useState, useContext} from "react";
+import React, {useEffect,  useState, useContext, useRef} from "react";
 import MainContext from "../../../../components/conText.tsx";
 import dayjs from "dayjs";
 import {useDispatch, useSelector} from "react-redux";
@@ -40,6 +40,48 @@ const NewNotes = () => {
     const { id } = useParams();
     const isDarkMode = useContext(MainContext) === 'true';
     const [form] = Form.useForm();
+
+    // ── 草稿自动保存（localStorage）─────────────────────────────
+    // 防止转跳 URL / 切换界面时未手动保存导致标题与正文丢失。
+    // 按笔记 id 隔离：新笔记 note_draft_new，编辑 note_draft_{id}。
+    const draftKey = 'note_draft_' + (id || 'new');
+    const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const draftLatest = useRef({ title: '', content: '' });
+    draftLatest.current = { title: noteTitle, content: noteContent };
+
+    const saveDraftNow = () => {
+        try {
+            localStorage.setItem(draftKey, JSON.stringify({
+                ...draftLatest.current,
+                updatedAt: Date.now(),
+            }));
+        } catch (e) { /* localStorage 不可用时静默 */ }
+    };
+
+    // 内容变化 1.5s 后自动落盘
+    useEffect(() => {
+        if (draftTimer.current) clearTimeout(draftTimer.current);
+        draftTimer.current = setTimeout(saveDraftNow, 1500);
+        return () => { if (draftTimer.current) clearTimeout(draftTimer.current); };
+    }, [noteTitle, noteContent]);
+
+    // 组件卸载（转跳/切界面）时立即落盘，防止防抖未触发丢失最后输入
+    useEffect(() => () => { saveDraftNow(); }, []);
+
+    const restoreDraft = () => {
+        try {
+            const raw = localStorage.getItem(draftKey);
+            if (!raw) return;
+            const d = JSON.parse(raw);
+            if (d && (d.title || d.content)) {
+                setTitle(d.title || '');
+                setNoteContent(d.content || '');
+                if (d.title) form.setFieldValue('noteTitle', d.title);
+                message.info('已恢复未保存的草稿内容');
+            }
+        } catch (e) { /* ignore */ }
+    };
+
     const tagList = useSelector((state: {tags: any}) => state.tags.tag)
     const categories = useSelector((state: {categories: any}) => state.categories.categories);
 
@@ -61,6 +103,11 @@ const NewNotes = () => {
     useEffect(() => {
         initNote()
     },[id])
+
+    // 新笔记（无 id）：直接恢复未保存草稿
+    useEffect(() => {
+        if (!id) restoreDraft();
+    }, [id])
 
     // Load images when gallery opens
     useEffect(() => {
@@ -115,6 +162,8 @@ const NewNotes = () => {
                         url: resolveApiAssetUrl(res.data.data.cover),
                     }]);
                 }
+                // 数据库内容加载完成后，再恢复未保存草稿（草稿优先，避免丢失上次编辑）
+                restoreDraft();
             }catch (error){
                 message.error("获取文章信息出错")
             }
@@ -237,6 +286,7 @@ const NewNotes = () => {
                 if(res.status === 200){
                     dispatch<any>(fetchNoteList())
                     message.success("文章更新成功")
+                    localStorage.removeItem(draftKey) // 发布成功清除草稿
                     setOpen(false); // Close modal
                     navigate('/dashboard/notes')
                 }
@@ -262,6 +312,7 @@ const NewNotes = () => {
                 if (res.status === 200) {
                     dispatch<any>(fetchNoteList())
                     message.success("文章创建成功")
+                    localStorage.removeItem(draftKey) // 发布成功清除草稿
                     setOpen(false); // Close modal on create success
                     
                     // Reset fields
