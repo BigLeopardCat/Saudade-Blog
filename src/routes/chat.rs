@@ -19,6 +19,8 @@ pub struct ChatRequest {
     pub page_title: Option<String>,
     #[serde(default)]
     pub current_effects: Option<String>,
+    #[serde(default)]
+    pub current_darkmode: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -131,6 +133,7 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, Js
         "current_url": payload.current_url.as_deref().unwrap_or(""),
         "page_title": payload.page_title.as_deref().unwrap_or(""),
         "current_effects": payload.current_effects.as_deref().unwrap_or(""),
+        "current_darkmode": payload.current_darkmode.as_deref().unwrap_or(""),
         "user_id": uid,
         "history": history_items,
         "summary": summary_text,
@@ -261,6 +264,45 @@ fn find_frame_end(buf: &[u8]) -> Option<usize> {
     buf.windows(2).position(|w| w == b"\n\n").map(|i| i + 2)
 }
 
+/// 流式对话中断清理：客户端中途断开（用户点击"停止生成"、关闭标签页、网络中断）时，
+/// 本轮已写入 chat_history 的用户消息及其后的残缺回复一并删除——
+/// 被终止的对话不进入记忆（history 上下文 / 摘要），避免残缺问答污染后续对话。
+///
+/// Drop 在 SSE 生成器（body_stream）被取消时同步执行；DB 删除是异步操作，用 tokio::spawn 异步完成。
+/// 仅当流未正常收尾（未收到终止标记即被取消）时才清理；正常结束由 done 标记关闭清理，
+/// 保留既有行为（含上游异常时保存残缺回复的逻辑，见 chat_stream_handler 尾部）。
+struct DiscardAbortedExchange {
+    state: Arc<AppState>,
+    uid: i32,
+    done: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Drop for DiscardAbortedExchange {
+    fn drop(&mut self) {
+        if self.done.load(std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
+        let state = self.state.clone();
+        let uid = self.uid;
+        // 删除该用户最后一条 user 消息及其后的所有记录（最多一条残缺 assistant 回复）。
+        // id 单调递增，user 消息之后只会出现本轮自己的回复
+        tokio::spawn(async move {
+            let last_user = chat_history::Entity::find()
+                .filter(chat_history::Column::UserId.eq(uid))
+                .filter(chat_history::Column::Role.eq("user"))
+                .order_by_desc(chat_history::Column::Id)
+                .one(&state.db)
+                .await;
+            let Ok(Some(u)) = last_user else { return };
+            let _ = chat_history::Entity::delete_many()
+                .filter(chat_history::Column::UserId.eq(uid))
+                .filter(chat_history::Column::Id.gte(u.id))
+                .exec(&state.db)
+                .await;
+        });
+    }
+}
+
 /// SSE 流式对话：转发 agent /chat/stream，边转发边累积文本，
 /// 流结束后保存历史与摘要（agent 端 payload 为 JSON 编码，避免 \n\n 破坏帧边界）
 pub async fn chat_stream_handler(
@@ -298,6 +340,11 @@ pub async fn chat_stream_handler(
         let mut reply = String::new();
         let mut terminal = false;
 
+        // 客户端中断清理（见 DiscardAbortedExchange）：流被取消时删除本轮已入库的用户消息；
+        // 正常走完 while 循环后置位 done，关闭清理
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let _guard = DiscardAbortedExchange { state: state.clone(), uid, done: done.clone() };
+
         while let Some(chunk) = upstream_stream.next().await {
             let chunk = match chunk {
                 Ok(c) => c,
@@ -331,6 +378,9 @@ pub async fn chat_stream_handler(
             }
             if terminal { break; }
         }
+
+        // 正常收尾（无论是否收到终止标记）：不再触发中断清理
+        done.store(true, std::sync::atomic::Ordering::SeqCst);
 
         // 上游中断且未收到终止标记：显式告知前端（否则静默截断无法区分）
         if !terminal {
