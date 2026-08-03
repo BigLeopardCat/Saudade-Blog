@@ -59,7 +59,7 @@
   });
   
   await Promise.all([
-    loadExternalResource(live2d_path + 'waifu.css?v=20260801f', 'css'),
+    loadExternalResource(live2d_path + 'waifu.css?v=20260801j', 'css'),
     loadExternalResource(live2d_path + 'waifu-tips.js', 'js'),
   ]);
 
@@ -220,7 +220,7 @@
     const cleanAgentText = (text) => {
       if (!text) return '';
       return text.split('\n')
-        .filter(l => !/^(NAVIGATE:|AUTO_NAVIGATE:|EFFECT:|SUMMARY:)/.test(l.trim()))
+        .filter(l => !/^(NAVIGATE:|AUTO_NAVIGATE:|EFFECT:|DARKMODE:|SUMMARY:)/.test(l.trim()))
         .join('\n')
         .trim();
     };
@@ -344,6 +344,10 @@
       };
       let pendingNavUrl = '';
       let isSending = false;
+      // 停止生成：输出中点击发送按钮 → abort 当前流；用户停止后丢弃本轮对话（不加入记忆）
+      let streamCtrl = null;
+      let stoppedByUser = false;
+      let discardTurn = false;
       // 从 JWT 提取用户 ID
       const getUserId = () => {
         try {
@@ -468,14 +472,24 @@
         }
 
         input.value = '';
+        // 程序清空不会触发 input 事件：主动重置高度，避免空输入框残留多行高度
+        // （flex 布局下还会连带拉伸发送按钮导致变形）
+        resizeInput();
         addMsg(msg, 'user');
         isSending = true;
-        sendBtn.disabled = true;
+        stoppedByUser = false;
+        discardTurn = false;
+        // 发送按钮切换为"停止生成"（主流对话 UI 形态），点击即中止输出
+        sendBtn.disabled = false;
+        sendBtn.title = '停止生成';
+        sendBtn.innerHTML = '<span class="chat-stop-icon"></span>';
+        sendBtn.classList.add('stop-mode');
         input.disabled = true;
 
         try {
           // SSE 流式对话：agent 首 token 即上屏，不再等待完整回复
           const ctrl = new AbortController();
+          streamCtrl = ctrl;
           // 空闲超时：超过 120s 无任何数据帧则中止（正常生成中每帧都会重置）
           let idleTimer = setTimeout(() => ctrl.abort(), 120000);
           const armIdle = () => {
@@ -489,7 +503,8 @@
               message: msg,
               current_url: window.location.href,
               page_title: document.title,
-              current_effects: (window.__effectStateList || '') // 实时特效状态，供 agent 感知
+              current_effects: (window.__effectStateList || ''), // 实时特效状态，供 agent 感知
+              current_darkmode: (window.__darkMode ? 'on' : 'off'), // 实时夜间模式状态（与特效同理），供 agent 感知
             }),
             signal: ctrl.signal,
           });
@@ -627,17 +642,49 @@
               const action = effectMatch[2];
               toggleEffect(eff, action);
             }
+            // 处理夜间模式命令（DARKMODE:on|off）
+            // 通过对话让 agent 调节同样代表访客意愿：标记 darkModeUserChoice，夜间自动切换让位
+            const darkMatch = fullText.match(/DARKMODE:(on|off)/);
+            if (darkMatch) {
+              try { localStorage.setItem('darkModeUserChoice', 'true'); } catch(e2) {/* ignore */}
+              applyDarkMode(darkMatch[1] === 'on');
+            }
         } catch(e) {
+          clearTimeout(idleTimer);
           if (e && e.name === 'AbortError') {
-            addMsg('长时间未收到回复，请稍后重试', 'error');
+            if (stoppedByUser) {
+              // 用户主动停止生成：标记丢弃本轮，清理放在 isSending 复位之后统一执行
+              // （syncHistory 在 isSending 时直接 return，此时调用无法重绘）
+              discardTurn = true;
+            } else {
+              addMsg('长时间未收到回复，请稍后重试', 'error');
+            }
           } else {
             addMsg('网络错误: ' + e.message, 'error');
           }
         }
         isSending = false;
+        streamCtrl = null;
         sendBtn.disabled = false;
+        sendBtn.title = '发送';
+        sendBtn.innerHTML = '发送';
+        sendBtn.classList.remove('stop-mode');
         input.disabled = false;
         input.focus();
+        if (discardTurn) {
+          // 丢弃本轮用户输入与部分回复（不加入记忆）：
+          // 1) 前端 localStorage 历史移除本轮用户消息（部分回复从未写入，仅残留在 DOM）
+          // 2) 后端 DB 记忆由 Rust /chat/stream 在流中断时自动清理（chat.rs DiscardAbortedExchange）
+          try {
+            const key = 'chat_history_' + (localStorage.getItem('tokenKey') || 'guest');
+            let saved = JSON.parse(localStorage.getItem(key) || '[]');
+            for (let i = saved.length - 1; i >= 0; i--) {
+              if (saved[i].type === 'user') { saved.splice(i, 1); break; }
+            }
+            localStorage.setItem(key, JSON.stringify(saved));
+          } catch(e2) {/* ignore */}
+          syncHistory();
+        }
       };
 
       // 将 waifu-tool-hitokoto 改为聊天面板开关
@@ -715,11 +762,12 @@
         starLi.appendChild(starImg);
         starBox.appendChild(starLi);
         
-        // 三个子特效图标 — 右侧半圆展开（放在 starBox 中，独立于 starLi）
+        // 特效图标 + 夜间模式按钮 — 右侧半圆展开（放在 starBox 中，独立于 starLi）
         const effects = [
           { src: '/icons/樱花-copy.png', title: '樱花', id: 'effect-sakura', startFn: 'startSakura', stopFn: 'stopSakura' },
           { src: '/icons/大雨.png', title: '大雨', id: 'effect-rain', startFn: 'startRain', stopFn: 'stopRain' },
           { src: '/icons/雪花.png', title: '雪花', id: 'effect-snow', startFn: 'startSnow', stopFn: 'stopSnow' },
+          { emoji: '🌙', title: '夜间模式', id: 'effect-darkmode', dark: true },
         ];
         const effectBtns = [];
         const RADIUS = 40;
@@ -735,15 +783,32 @@
           const tx = Math.cos(rad) * RADIUS;
           const ty = Math.sin(rad) * RADIUS;
           btn.style.cssText = 'position:absolute;left:50%;top:50%;margin-left:-15px;margin-top:-15px;width:30px;height:30px;border:none;border-radius:50%;background:rgba(255,255,255,0.15);cursor:pointer;padding:4px;opacity:0;pointer-events:none;transition:all 0.35s cubic-bezier(0.34,1.56,0.64,1);z-index:98;';
-          const img = document.createElement('img');
-          img.src = eff.src;
-          img.style.cssText = 'width:22px;height:22px;display:block;margin:auto;';
-          btn.appendChild(img);
-          btn.active = false;
+          if (eff.dark) {
+            // 夜间模式按钮：月亮 emoji，激活样式与实际暗色状态同步
+            const sp = document.createElement('span');
+            sp.textContent = '🌙';
+            sp.style.cssText = 'font-size:18px;line-height:1;display:block;';
+            btn.appendChild(sp);
+            window.__darkBtn = btn;
+            btn.active = !!window.__darkMode;
+            btn.style.filter = btn.active ? 'brightness(1.3) drop-shadow(0 0 3px gold)' : 'none';
+          } else {
+            const img = document.createElement('img');
+            img.src = eff.src;
+            img.style.cssText = 'width:22px;height:22px;display:block;margin:auto;';
+            btn.appendChild(img);
+          }
+          btn.active = btn.active || false;
           btn._tx = tx;
           btn._ty = ty;
           btn.addEventListener('click', (e) => {
             e.stopPropagation();
+            if (eff.dark) {
+              // 访客手动切换：标记意愿（夜间自动切换让位）+ 翻转状态
+              try { localStorage.setItem('darkModeUserChoice', 'true'); } catch(err) {/* ignore */}
+              applyDarkMode(!window.__darkMode);
+              return;
+            }
             toggleEffect(eff.id.replace('effect-', ''));
           });
           starBox.appendChild(btn);
@@ -841,7 +906,37 @@
           }
         });
       };
+      // 先于 addStarButton 初始化（月亮按钮创建时读取 __darkMode 以同步激活样式）
+      try { window.__darkMode = localStorage.getItem('isDarkMode') === 'true'; } catch(e) {/* ignore */}
       addStarButton();
+
+      // ── 夜间模式控制（agent DARKMODE: 命令 + 星星菜单按钮 + 夜间自动切换）──
+      // 统一入口：持久化状态 + 通知 React 应用（App 监听 darkmode-change 事件同步 isDark）
+      const applyDarkMode = (on) => {
+        window.__darkMode = !!on;
+        try { localStorage.setItem('isDarkMode', JSON.stringify(!!on)); } catch(e) {/* ignore */}
+        try { window.dispatchEvent(new CustomEvent('darkmode-change', { detail: !!on })); } catch(e) {/* ignore */}
+        // 星星菜单月亮按钮的激活样式与实际状态保持一致
+        if (window.__darkBtn) {
+          window.__darkBtn.active = !!on;
+          window.__darkBtn.style.filter = on ? 'brightness(1.3) drop-shadow(0 0 3px gold)' : 'none';
+        }
+      };
+      window.applyDarkMode = applyDarkMode;
+
+      // 夜间自动切换：23:00-次日06:00 主动为访客开启夜间模式，其余时段自动恢复日间，
+      // 但访客手动选择过（darkModeUserChoice，含对话里让 agent 调节）则尊重访客意愿不覆盖
+      const checkNightMode = () => {
+        try {
+          if (localStorage.getItem('darkModeUserChoice')) return;
+          const h = new Date().getHours();
+          const night = (h >= 23 || h < 6);
+          if (night !== !!window.__darkMode) applyDarkMode(night);
+        } catch(e) {/* ignore */}
+      };
+      checkNightMode();
+      setInterval(checkNightMode, 10 * 60 * 1000);
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) checkNightMode(); });
 
       // 拖动（仅通过顶部/左侧边框条移动面板，其余区域允许选中文本）
       let isDragging = false, isResizing = false, resizeCorner = 'br', startX, startY, startW, startH, startLeft, startTop, offsetX, offsetY;
@@ -914,12 +1009,23 @@
       makeResizeHandle('br');
       makeResizeHandle('tl');
 
-      sendBtn.addEventListener('click', sendMessage);
-      // Auto-resize textarea
-      input.addEventListener('input', () => {
+      sendBtn.addEventListener('click', () => {
+        if (isSending) {
+          // 输出中点击 = 停止生成
+          stoppedByUser = true;
+          if (streamCtrl) streamCtrl.abort();
+          return;
+        }
+        sendMessage();
+      });
+      // 输入框自适应高度：先置 auto 再按内容高度回填，内容为空时回到 min-height
+      const resizeInput = () => {
         input.style.height = 'auto';
         input.style.height = Math.min(input.scrollHeight, 80) + 'px';
-      });
+      };
+      input.addEventListener('input', resizeInput);
+      // IME 输入法合成结束（含取消合成）后兜底重算，防止残留的组合文本高度
+      input.addEventListener('compositionend', resizeInput);
       input.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
           e.preventDefault();
