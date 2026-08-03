@@ -1,5 +1,5 @@
 use axum::{Json, extract::{State, Path}};
-use sea_orm::{EntityTrait, Set, QueryFilter, ColumnTrait, ActiveModelTrait, DeleteMany};
+use sea_orm::{EntityTrait, Set, QueryFilter, ColumnTrait, ActiveModelTrait};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use crate::routes::AppState;
