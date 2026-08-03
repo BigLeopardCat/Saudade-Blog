@@ -1,6 +1,6 @@
 import {Avatar, Button, Card, ConfigProvider, Modal, message} from 'antd'
 import './index.sass'
-import {Key, ReactElement, ReactNode, ReactPortal, useEffect, useState} from "react";
+import {Key, ReactElement, ReactNode, ReactPortal, useEffect, useRef, useState} from "react";
 import {useNavigate} from "react-router-dom";
 import {debounce} from 'lodash';
 import Switch from "../../components/Switch";
@@ -59,14 +59,25 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
         setShowStatus(true);
     }, 300);
 
+    // 悬浮宽限期：鼠标短暂离开头像（如滑向按钮、跨过间隙）不立即收回菜单，
+    // 避免"刚移出一点按钮就消失"。重新进入时取消宽限计时。
+    const hoverLeaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
     const handleMouseEnter = () => {
+        if (hoverLeaveTimer.current) {
+            clearTimeout(hoverLeaveTimer.current);
+            hoverLeaveTimer.current = null;
+        }
         startAnimationDebounced();
         setIsHovered(true);
     };
 
     const handleMouseLeave = () => {
-        setShowStatus(false);
-        setIsHovered(false);
+        if (hoverLeaveTimer.current) clearTimeout(hoverLeaveTimer.current);
+        hoverLeaveTimer.current = setTimeout(() => {
+            setShowStatus(false);
+            setIsHovered(false);
+        }, 500);
     };
 
     const [isModalOpen, setIsModalOpen] = useState(false);
