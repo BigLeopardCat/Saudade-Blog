@@ -1030,6 +1030,29 @@
           // 输出中点击 = 停止生成
           stoppedByUser = true;
           if (streamCtrl) streamCtrl.abort();
+          // 保险：极端情况下（浏览器对已开始读取的流 abort 不触发 AbortError）catch 不会执行，
+          // UI 会卡死在"停止生成"状态——3s 后强制恢复并丢弃本轮，保证界面必能继续使用
+          setTimeout(() => {
+            if (isSending && stoppedByUser) {
+              isSending = false;
+              streamCtrl = null;
+              sendBtn.disabled = false;
+              sendBtn.title = '发送';
+              sendBtn.innerHTML = '发送';
+              sendBtn.classList.remove('stop-mode');
+              input.disabled = false;
+              // 与 discardTurn 分支相同的丢弃逻辑（abort 未触发时手动清理）
+              try {
+                const key = 'chat_history_' + (localStorage.getItem('tokenKey') || 'guest');
+                let saved = JSON.parse(localStorage.getItem(key) || '[]');
+                for (let i = saved.length - 1; i >= 0; i--) {
+                  if (saved[i].type === 'user') { saved.splice(i, 1); break; }
+                }
+                localStorage.setItem(key, JSON.stringify(saved));
+              } catch(e2) {/* ignore */}
+              syncHistory();
+            }
+          }, 3000);
           return;
         }
         sendMessage();
