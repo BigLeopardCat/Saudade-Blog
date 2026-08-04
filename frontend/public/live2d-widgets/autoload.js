@@ -651,6 +651,18 @@
               const action = effectMatch[2];
               toggleEffect(eff, action);
             }
+            // 兜底：模型未真正调用工具、仅把工具调用写进正文时（如 toggle_effect(effect="sakura", action="on")），
+            // 按工具调用签名解析并执行，保证特效/夜间模式必定生效
+            const toolCall = fullText.match(/toggle_effect\s*\(\s*effect\s*=\s*["'](\w+)["']\s*,?\s*action\s*=\s*["'](on|off)["']\s*\)/i)
+              || fullText.match(/toggle_dark_mode\s*\(\s*mode\s*=\s*["'](on|off)["']\s*\)/i);
+            if (toolCall) {
+              if (toolCall[0].startsWith('toggle_effect')) {
+                toggleEffect(toolCall[1], toolCall[2]);
+              } else if (toolCall[0].startsWith('toggle_dark_mode')) {
+                try { localStorage.setItem('darkModeUserChoice', 'true'); } catch(e2) {/* ignore */}
+                applyDarkMode(toolCall[1] === 'on', true);
+              }
+            }
             // 处理夜间模式命令（DARKMODE:on|off）
             // 通过对话让 agent 调节同样代表访客意愿：标记 darkModeUserChoice，夜间自动切换让位；
             // animate=true 触发与手动点击切换按钮相同的日月过渡动画
