@@ -59,7 +59,7 @@
   });
   
   await Promise.all([
-    loadExternalResource(live2d_path + 'waifu.css?v=20260801j', 'css'),
+    loadExternalResource(live2d_path + 'waifu.css?v=20260801m', 'css'),
     loadExternalResource(live2d_path + 'waifu-tips.js', 'js'),
   ]);
 
@@ -636,18 +636,20 @@
               }
             }
             // 处理特效切换命令（支持 EFFECT:name 按钮式切换 / EFFECT:name:on|off 显式开关）
-            const effectMatch = fullText.match(/EFFECT:(\w+):?(\w+)?/);
+            // 冒号后容忍空格：模型幻觉输出 SNOW_EFFECT:snow: on 等变形命令时也能按显式意图执行
+            const effectMatch = fullText.match(/EFFECT:(\w+):?\s*(\w+)?/);
             if (effectMatch) {
               const eff = effectMatch[1];
               const action = effectMatch[2];
               toggleEffect(eff, action);
             }
             // 处理夜间模式命令（DARKMODE:on|off）
-            // 通过对话让 agent 调节同样代表访客意愿：标记 darkModeUserChoice，夜间自动切换让位
+            // 通过对话让 agent 调节同样代表访客意愿：标记 darkModeUserChoice，夜间自动切换让位；
+            // animate=true 触发与手动点击切换按钮相同的日月过渡动画
             const darkMatch = fullText.match(/DARKMODE:(on|off)/);
             if (darkMatch) {
               try { localStorage.setItem('darkModeUserChoice', 'true'); } catch(e2) {/* ignore */}
-              applyDarkMode(darkMatch[1] === 'on');
+              applyDarkMode(darkMatch[1] === 'on', true);
             }
         } catch(e) {
           clearTimeout(idleTimer);
@@ -762,12 +764,12 @@
         starLi.appendChild(starImg);
         starBox.appendChild(starLi);
         
-        // 特效图标 + 夜间模式按钮 — 右侧半圆展开（放在 starBox 中，独立于 starLi）
+        // 三个子特效图标 — 右侧半圆展开（放在 starBox 中，独立于 starLi）
+        // 夜间模式不在此处：博客头部已有独立切换按钮，看板娘侧仅保留 agent 内置 DARKMODE: 命令
         const effects = [
           { src: '/icons/樱花-copy.png', title: '樱花', id: 'effect-sakura', startFn: 'startSakura', stopFn: 'stopSakura' },
           { src: '/icons/大雨.png', title: '大雨', id: 'effect-rain', startFn: 'startRain', stopFn: 'stopRain' },
           { src: '/icons/雪花.png', title: '雪花', id: 'effect-snow', startFn: 'startSnow', stopFn: 'stopSnow' },
-          { emoji: '🌙', title: '夜间模式', id: 'effect-darkmode', dark: true },
         ];
         const effectBtns = [];
         const RADIUS = 40;
@@ -783,32 +785,15 @@
           const tx = Math.cos(rad) * RADIUS;
           const ty = Math.sin(rad) * RADIUS;
           btn.style.cssText = 'position:absolute;left:50%;top:50%;margin-left:-15px;margin-top:-15px;width:30px;height:30px;border:none;border-radius:50%;background:rgba(255,255,255,0.15);cursor:pointer;padding:4px;opacity:0;pointer-events:none;transition:all 0.35s cubic-bezier(0.34,1.56,0.64,1);z-index:98;';
-          if (eff.dark) {
-            // 夜间模式按钮：月亮 emoji，激活样式与实际暗色状态同步
-            const sp = document.createElement('span');
-            sp.textContent = '🌙';
-            sp.style.cssText = 'font-size:18px;line-height:1;display:block;';
-            btn.appendChild(sp);
-            window.__darkBtn = btn;
-            btn.active = !!window.__darkMode;
-            btn.style.filter = btn.active ? 'brightness(1.3) drop-shadow(0 0 3px gold)' : 'none';
-          } else {
-            const img = document.createElement('img');
-            img.src = eff.src;
-            img.style.cssText = 'width:22px;height:22px;display:block;margin:auto;';
-            btn.appendChild(img);
-          }
-          btn.active = btn.active || false;
+          const img = document.createElement('img');
+          img.src = eff.src;
+          img.style.cssText = 'width:22px;height:22px;display:block;margin:auto;';
+          btn.appendChild(img);
+          btn.active = false;
           btn._tx = tx;
           btn._ty = ty;
           btn.addEventListener('click', (e) => {
             e.stopPropagation();
-            if (eff.dark) {
-              // 访客手动切换：标记意愿（夜间自动切换让位）+ 翻转状态
-              try { localStorage.setItem('darkModeUserChoice', 'true'); } catch(err) {/* ignore */}
-              applyDarkMode(!window.__darkMode);
-              return;
-            }
             toggleEffect(eff.id.replace('effect-', ''));
           });
           starBox.appendChild(btn);
@@ -910,17 +895,21 @@
       try { window.__darkMode = localStorage.getItem('isDarkMode') === 'true'; } catch(e) {/* ignore */}
       addStarButton();
 
-      // ── 夜间模式控制（agent DARKMODE: 命令 + 星星菜单按钮 + 夜间自动切换）──
+      // ── 夜间模式控制（agent DARKMODE: 命令 + 夜间自动切换）──
       // 统一入口：持久化状态 + 通知 React 应用（App 监听 darkmode-change 事件同步 isDark）
-      const applyDarkMode = (on) => {
+      // animate=true 时触发与手动点击博客头部切换按钮相同的日月全屏过渡动画
+      // （Head 组件监听 moon-sun-animation 事件渲染 MoonToSun）
+      const applyDarkMode = (on, animate) => {
+        const prev = !!window.__darkMode;
         window.__darkMode = !!on;
         try { localStorage.setItem('isDarkMode', JSON.stringify(!!on)); } catch(e) {/* ignore */}
         try { window.dispatchEvent(new CustomEvent('darkmode-change', { detail: !!on })); } catch(e) {/* ignore */}
-        // 星星菜单月亮按钮的激活样式与实际状态保持一致
-        if (window.__darkBtn) {
-          window.__darkBtn.active = !!on;
-          window.__darkBtn.style.filter = on ? 'brightness(1.3) drop-shadow(0 0 3px gold)' : 'none';
-        }
+        // 状态实际变化且为显式切换（agent 命令/访客操作）才播动画；自动切换静默进行
+        try {
+          if (animate && !!on !== prev) {
+            window.dispatchEvent(new CustomEvent('moon-sun-animation', { detail: on ? 'moon' : 'sun' }));
+          }
+        } catch(e) {/* ignore */}
       };
       window.applyDarkMode = applyDarkMode;
 
@@ -931,7 +920,7 @@
           if (localStorage.getItem('darkModeUserChoice')) return;
           const h = new Date().getHours();
           const night = (h >= 23 || h < 6);
-          if (night !== !!window.__darkMode) applyDarkMode(night);
+          if (night !== !!window.__darkMode) applyDarkMode(night, false);
         } catch(e) {/* ignore */}
       };
       checkNightMode();

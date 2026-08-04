@@ -52,6 +52,14 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
             setLogin(1)
         }
 
+        // 看板娘 agent 的 DARKMODE: 命令切换夜间模式时，触发与手动点击相同的日月过渡动画
+        // （autoload.js applyDarkMode 在状态实际变化时派发 moon-sun-animation）
+        const handleMoonSun = (e: Event) => {
+            const s = (e as CustomEvent).detail;
+            if (s === 'sun' || s === 'moon') setAnimation(s);
+        };
+        window.addEventListener('moon-sun-animation', handleMoonSun);
+        return () => window.removeEventListener('moon-sun-animation', handleMoonSun);
     }, []);
 
     // 定义防抖函数，设置延迟时间为 300 毫秒
