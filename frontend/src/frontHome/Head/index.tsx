@@ -85,7 +85,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
         hoverLeaveTimer.current = setTimeout(() => {
             setShowStatus(false);
             setIsHovered(false);
-        }, 500);
+        }, 200);
     };
 
     const [isModalOpen, setIsModalOpen] = useState(false);
