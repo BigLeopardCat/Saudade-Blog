@@ -643,8 +643,9 @@
               }
             }
             // 处理特效切换命令（支持 EFFECT:name 按钮式切换 / EFFECT:name:on|off 显式开关）
-            // 冒号后容忍空格：模型幻觉输出 SNOW_EFFECT:snow: on 等变形命令时也能按显式意图执行
-            const effectMatch = fullText.match(/EFFECT:(\w+):?\s*(\w+)?/);
+            // 容忍格式漂移：模型可能在正文里输出 "EFFECT: sakura on"（带空格/无冒号分隔）等变形，
+            // 一律按显式意图执行；中文/无命令参数（EFFECT: 后跟正文）不会被 \w+ 匹配，安全
+            const effectMatch = fullText.match(/EFFECT:\s*(\w+)\s*:?\s*(\w+)?/);
             if (effectMatch) {
               const eff = effectMatch[1];
               const action = effectMatch[2];
@@ -653,7 +654,7 @@
             // 处理夜间模式命令（DARKMODE:on|off）
             // 通过对话让 agent 调节同样代表访客意愿：标记 darkModeUserChoice，夜间自动切换让位；
             // animate=true 触发与手动点击切换按钮相同的日月过渡动画
-            const darkMatch = fullText.match(/DARKMODE:(on|off)/);
+            const darkMatch = fullText.match(/DARKMODE:\s*(on|off)/);
             if (darkMatch) {
               try { localStorage.setItem('darkModeUserChoice', 'true'); } catch(e2) {/* ignore */}
               applyDarkMode(darkMatch[1] === 'on', true);
