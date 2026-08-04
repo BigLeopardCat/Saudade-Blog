@@ -499,6 +499,9 @@
             clearTimeout(idleTimer);
             idleTimer = setTimeout(() => ctrl.abort(), 120000);
           };
+          // 总超时（300s，与后端 STREAM_TOTAL_TIMEOUT 对齐）：agent 工具调用循环等场景
+          // 每轮都有帧会重置空闲计时，此计时器不被重置，保证界面必然恢复
+          const totalTimer = setTimeout(() => ctrl.abort(), 300000);
           const resp = await fetch('/api/chat/stream', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
@@ -587,6 +590,7 @@
             }
           }
           clearTimeout(idleTimer);
+          clearTimeout(totalTimer);
           // 流结束：口型归位，关闭 override 让模型恢复默认驱动
           if (window.__setMouthOpen) window.__setMouthOpen(0);
           window.__mouthOverride = -1;
@@ -656,6 +660,7 @@
             }
         } catch(e) {
           clearTimeout(idleTimer);
+          clearTimeout(totalTimer);
           if (e && e.name === 'AbortError') {
             if (stoppedByUser) {
               // 用户主动停止生成：标记丢弃本轮，清理放在 isSending 复位之后统一执行
