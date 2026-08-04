@@ -216,11 +216,14 @@
       window.__setMouthClose = () => { window.__mouthOverride = -1; window.__setMouthOpen(0); };
     })();
 
-    // 剔除 agent 文本中的命令行（NAVIGATE:/AUTO_NAVIGATE:/EFFECT:/SUMMARY:），仅用于展示
+    // 剔除 agent 文本中的命令行（NAVIGATE:/AUTO_NAVIGATE:/EFFECT:/DARKMODE:/SUMMARY:），仅用于展示。
+    // 前缀正则放宽：模型可能在正文里幻觉输出 SNOW_EFFECT:/TOKK_EFFECT: 等变形工具命令，
+    // 一律按命令行剔除，不进入对话框
+    const COMMAND_LINE_RE = /^(?:[A-Za-z0-9_]*EFFECT|DARKMODE|NAVIGATE|AUTO_NAVIGATE|SUMMARY)\s*:/;
     const cleanAgentText = (text) => {
       if (!text) return '';
       return text.split('\n')
-        .filter(l => !/^(NAVIGATE:|AUTO_NAVIGATE:|EFFECT:|DARKMODE:|SUMMARY:)/.test(l.trim()))
+        .filter(l => !COMMAND_LINE_RE.test(l.trim()))
         .join('\n')
         .trim();
     };
@@ -572,8 +575,8 @@
               let text = payload;
               try { text = JSON.parse(payload); } catch(e) {}
               if (!text) continue;
-              // 命令行与展示文本分流：命令行不渲染
-              if (/^(NAVIGATE:|AUTO_NAVIGATE:|EFFECT:)/.test(text)) {
+              // 命令行与展示文本分流：命令行不渲染（含模型幻觉输出的变形命令如 SNOW_EFFECT:）
+              if (COMMAND_LINE_RE.test(text)) {
                 cmdText += text + '\n';
               } else {
                 displayText += text;
