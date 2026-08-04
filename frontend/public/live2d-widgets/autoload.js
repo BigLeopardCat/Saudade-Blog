@@ -896,6 +896,12 @@
       };
       // 先于 addStarButton 初始化（月亮按钮创建时读取 __darkMode 以同步激活样式）
       try { window.__darkMode = localStorage.getItem('isDarkMode') === 'true'; } catch(e) {/* ignore */}
+      // 博客头部手动切换夜间模式（Head handleModeSwitch）也会派发 darkmode-change，
+      // 同步 __darkMode 保证 current_darkmode 上报真实状态；本文件 applyDarkMode 派发的事件
+      // 到达这里时值相同，幂等无副作用
+      window.addEventListener('darkmode-change', (e) => {
+        try { window.__darkMode = !!(e && e.detail); } catch(err) {/* ignore */}
+      });
       addStarButton();
 
       // ── 夜间模式控制（agent DARKMODE: 命令 + 夜间自动切换）──
