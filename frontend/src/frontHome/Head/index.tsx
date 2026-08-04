@@ -103,6 +103,9 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
         setDark(!isDark)
         setAnimation(isDark === true ? "sun" : "moon");
         localStorage.setItem("isDarkMode", JSON.stringify(!isDark));
+        // 同步看板娘 agent 的全局状态：autoload.js 监听 darkmode-change 更新 __darkMode，
+        // 否则页面内手动切换后 current_darkmode 上报陈旧值，agent 感知只能靠对话记忆
+        try { window.dispatchEvent(new CustomEvent('darkmode-change', { detail: !isDark })); } catch (e) {/* ignore */}
     };
 
     // Debounced search function
