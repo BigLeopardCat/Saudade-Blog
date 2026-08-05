@@ -222,10 +222,24 @@
     const COMMAND_LINE_RE = /^(?:[A-Za-z0-9_]*EFFECT|DARKMODE|NAVIGATE|AUTO_NAVIGATE|SUMMARY)\s*:/;
     const cleanAgentText = (text) => {
       if (!text) return '';
-      return text.split('\n')
+      let cleaned = text.split('\n')
         .filter(l => !COMMAND_LINE_RE.test(l.trim()))
         .join('\n')
         .trim();
+      // 兜底：模型格式漂移输出的无前缀裸摘要（与后端 server.py/_strip_summary_from_reply
+      // 同一套特征判定）——回复末尾独立段，以"访客/用户"第三人称开头 + 会话时序词 + 无互动语气词。
+      // 只影响显示；入库记忆由后端剥离（Rust save_assistant_reply 同样兜底）
+      const paras = cleaned.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
+      if (paras.length > 1) {
+        const last = paras[paras.length - 1];
+        if (/^(访客|用户)/.test(last)
+            && /(之前|随后|最后|接着|首先|然后)/.test(last)
+            && !/[呜~～!！?？🐱😿🐾😂😭]/.test(last)
+            && last.length <= 300) {
+          cleaned = paras.slice(0, -1).join('\n\n').trim();
+        }
+      }
+      return cleaned;
     };
 
     // 渲染消息内容并应用渲染后增强（代码高亮 + 公式，与博客插件一致）
