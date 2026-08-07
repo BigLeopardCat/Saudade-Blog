@@ -23,7 +23,8 @@ async fn main() {
     ];
     println!("Server starting... exposing endpoints for: {:?}", items);
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
+    // 仅监听本机回环（A9 修复）：nginx 已 proxy_pass 127.0.0.1:3000，公网一律走 443 反代，避免明文 JWT 被嗅探
+    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
     println!("listening on {}", addr);
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();

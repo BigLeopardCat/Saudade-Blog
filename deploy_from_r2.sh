@@ -18,10 +18,18 @@ s3 = boto3.client('s3',
 
 s3.download_file(os.environ['R2_BUCKET'], 'deploy/deploy.tar.gz', '/tmp/deploy.tar.gz')
 with tarfile.open('/tmp/deploy.tar.gz') as tar:
-    tar.extractall()
+    # A10 修复：filter='data' 拒绝 ../ 等路径穿越条目（Python 3.12 默认值，显式声明防回归）
+    tar.extractall(filter='data')
 os.remove('/tmp/deploy.tar.gz')
 print("✅ 部署文件下载解压完成")
 PYEOF2
+
+# A10 修复补充：后端二进制必须是 ELF 可执行文件，拒绝被替换为任意脚本/文件
+if [ -f saudade_blog_bin ] && ! file saudade_blog_bin | grep -q "ELF"; then
+  echo "❌ $(date "+%H:%M:%S") saudade_blog_bin 不是 ELF 可执行文件，部署中止"
+  rm -f saudade_blog_bin
+  exit 1
+fi
 
 # 如果存在后端二进制则替换并重启
 if [ -f saudade_blog_bin ]; then
