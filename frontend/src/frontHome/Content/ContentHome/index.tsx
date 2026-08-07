@@ -149,10 +149,10 @@ const ContentHome = () => {
                </div>
                 <h3 className="home-title-h3">Sereno da Saudade</h3>
                 <div className="Social">
-                    <SocialButton SocialName='QQ' url={social?.socialQQ}/>
+                    <SocialButton SocialName='QQ' img='/QQ.png'/>
                     <SocialButton SocialName='Github' url={social?.socialGithub}/>
-                    <SocialButton SocialName='Netease' url={social?.socialNeteaseCloud}/>
-                    <SocialButton SocialName='Email' url={social?.socialEmail}/>
+                    <SocialButton SocialName='Bilibili' url='https://space.bilibili.com/442724375'/>
+                    <SocialButton SocialName='Email' img='/QQ-Email.png' copyText='sora.saudade@qq.com'/>
                 </div>
             </div>
             <Avatar src={avatar} size={320} className='frontAvatar'/>

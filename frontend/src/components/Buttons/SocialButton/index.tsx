@@ -1,11 +1,14 @@
 import './index.sass'
 import React from "react";
+import {message} from "antd";
 
 interface SocialButtonProps {
     SocialName: string;
-    url: string
+    url?: string;
+    img?: string;       // 悬浮在图标上方展示的图片（QQ 二维码 / 邮箱卡片）
+    copyText?: string;  // 点击时复制到剪贴板的内容（如邮箱地址）
 }
-const SocialButton: React.FC<SocialButtonProps> = ({SocialName,url}) => {
+const SocialButton: React.FC<SocialButtonProps> = ({SocialName,url,img,copyText}) => {
     const SocialList = [
         {
             socialName: 'QQ',
@@ -20,14 +23,9 @@ const SocialButton: React.FC<SocialButtonProps> = ({SocialName,url}) => {
             svg:    <svg fill="white" viewBox="0 0 496 512" height="1.6em"><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"></path></svg>
         },
         {
-            socialName: 'Netease',
-            color: '#ce7397',
-            svg: <svg width="24px" height="24px" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">\n' +
-                '    <g>\n' +
-                '        <path fill="none" d="M0 0h24v24H0z"/>\n' +
-                '        <path d="M12 22C6.477 22 2 17.523 2 12S6.477 2 12 2s10 4.477 10 10-4.477 10-10 10zm-1.086-10.432c.24-.84 1.075-1.541 1.99-1.648.187.694.388 1.373.545 2.063.053.23.037.495-.018.727-.213.892-1.248 1.242-1.978.685-.53-.405-.742-1.12-.539-1.827zm3.817-.197c-.125-.465-.256-.927-.393-1.42.5.13.908.36 1.255.698 1.257 1.221 1.385 3.3.294 4.731-1.135 1.49-3.155 2.134-5.028 1.605-2.302-.65-3.808-2.952-3.441-5.316.274-1.768 1.27-3.004 2.9-3.733.407-.182.58-.56.42-.93-.157-.364-.54-.504-.944-.343-2.721 1.089-4.32 4.134-3.67 6.987.713 3.118 3.495 5.163 6.675 4.859 1.732-.165 3.164-.948 4.216-2.347 1.506-2.002 1.297-4.783-.463-6.499-.666-.65-1.471-1.018-2.39-1.153-.083-.013-.217-.052-.232-.106-.087-.313-.18-.632-.206-.954-.029-.357.29-.64.65-.645.253-.003.434.13.603.3.303.3.704.322.988.062.29-.264.296-.678.018-1.008-.566-.672-1.586-.891-2.43-.523-.847.37-1.321 1.187-1.2 2.093.038.28.11.557.167.842l-.26.072c-.856.24-1.561.704-2.098 1.414-.921 1.22-.936 2.828-.041 3.947 1.274 1.594 3.747 1.284 4.523-.568.284-.676.275-1.368.087-2.065z"/>\n' +
-                '    </g>\n' +
-                '</svg>
+            socialName: 'Bilibili',
+            color: '#00a1d6',
+            svg: <svg height="1.6em" viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg"><path d="M977.2 208.2c33.4 36.2 48.8 79.4 46.6 131.4v404.8c-0.8 52.8-18.4 96.2-53 130.2-34.4 34-78.2 51.8-131 53.4H184.04c-52.9-1.6-96.42-19.6-130.56-54.4C19.364 838.8 1.534 793 0 736.4V339.6c1.534-52 19.364-95.2 53.48-131.4C87.62 175.5 131.14 157.54 184.04 156h58.76L192.1 104.38c-11.5-11.46-17.26-26-17.26-43.58 0-17.6 5.76-32.12 17.26-43.594C203.6 5.736 218.2 0 235.8 0s32.2 5.736 43.8 17.206L426.2 156h176l149-138.794C763.4 5.736 778.4 0 796 0c17.6 0 32.2 5.736 43.8 17.206 11.4 11.474 17.2 25.994 17.2 43.594 0 17.58-5.8 32.12-17.2 43.58L789.2 156h58.6c52.8 1.54 96 19.5 129.4 52.2z m-77.6 139.4c-0.8-19.2-7.4-34.8-21.4-47-10.4-12.2-28-18.8-45.4-19.6H192.1c-19.18 0.8-34.9 7.4-47.16 19.6-12.28 12.2-18.8 27.8-19.56 47v388.8c0 18.4 6.52 34 19.56 47s28.76 19.6 47.16 19.6H832.8c18.4 0 34-6.6 46.6-19.6 12.6-13 19.4-28.6 20.2-47V347.6z m-528.6 85.4c12.6 12.6 19.4 28.2 20.2 46.4V546c-0.8 18.4-7.4 33.8-19.6 46.4-12.4 12.6-28 19-47.2 19-19.2 0-35-6.4-47.2-19-12.2-12.6-18.8-28-19.6-46.4v-66.6c0.8-18.2 7.6-33.8 20.2-46.4 12.6-12.6 26.4-19.2 46.6-20 18.4 0.8 34 7.4 46.6 20z m383 0c12.6 12.6 19.4 28.2 20.2 46.4V546c-0.8 18.4-7.4 33.8-19.6 46.4-12.2 12.6-28 19-47.2 19-19.2 0-34.8-6.4-47.2-19-14-12.6-18.8-28-19.4-46.4v-66.6c0.6-18.2 7.4-33.8 20-46.4 12.6-12.6 28.2-19.2 46.6-20 18.4 0.8 34 7.4 46.6 20z" p-id="1701"></path></svg>
         },
         {
             socialName: 'Email',
@@ -49,8 +47,53 @@ const SocialButton: React.FC<SocialButtonProps> = ({SocialName,url}) => {
     if (!social) {
         return null; // Return null if the social name is not found
     }
+
+    // 点击复制到剪贴板（邮箱），navigator.clipboard 失败时降级 execCommand
+    const handleCopy = (e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!copyText) return;
+        const done = () => message.success('邮箱已复制到剪贴板');
+        if (navigator.clipboard?.writeText) {
+            navigator.clipboard.writeText(copyText).then(done).catch(() => {
+                const ta = document.createElement('textarea');
+                ta.value = copyText!;
+                ta.style.position = 'fixed';
+                document.body.appendChild(ta);
+                ta.select();
+                try { document.execCommand('copy'); } catch (_) {}
+                document.body.removeChild(ta);
+                done();
+            });
+        } else {
+            const ta = document.createElement('textarea');
+            ta.value = copyText;
+            ta.style.position = 'fixed';
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); } catch (_) {}
+            document.body.removeChild(ta);
+            done();
+        }
+    };
+
+    // 悬浮展示图片模式（QQ 二维码 / 邮箱卡片）：不跳转 URL
+    if (img) {
+        return <>
+            <div className="SocialBtn SocialBtnImg" title={SocialName}>
+                <div className="SocialPop">
+                    <img src={img} alt={SocialName} />
+                </div>
+                <span className="svgContainer" onClick={copyText ? handleCopy : undefined}>
+                    {social.svg}
+                </span>
+                <span className="BG" style={{background: `${social.color}`}}></span>
+            </div>
+        </>
+    }
+
     return <>
-        <a className="SocialBtn" href={url} target="_blank">
+        <a className="SocialBtn" href={url} target="_blank" rel="noopener noreferrer" title={SocialName}>
             <span className="svgContainer">
                 {social.svg}
             </span>
