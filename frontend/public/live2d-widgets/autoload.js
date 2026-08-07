@@ -227,15 +227,17 @@
         .join('\n')
         .trim();
       // 兜底：模型格式漂移输出的无前缀裸摘要（与后端 server.py/_strip_summary_from_reply
-      // 同一套特征判定）——回复末尾独立段，以"访客/用户"第三人称开头 + 会话时序词 + 无互动语气词。
+      // 同一套特征判定）——回复末尾独立段，以"访客/用户/助手"第三人称开头 + 会话时序词
+      // + 无互动语气词（剔除引号内内容后检测）+ 长度 40-300（下限滤掉短句正常回复）。
       // 只影响显示；入库记忆由后端剥离（Rust save_assistant_reply 同样兜底）
       const paras = cleaned.split(/\n\s*\n/).map(p => p.trim()).filter(Boolean);
       if (paras.length > 1) {
         const last = paras[paras.length - 1];
-        if (/^(访客|用户)/.test(last)
-            && /(之前|随后|最后|接着|首先|然后)/.test(last)
-            && !/[呜~～!！?？🐱😿🐾😂😭]/.test(last)
-            && last.length <= 300) {
+        const noQuote = last.replace(/[“”『』"'「」][^“”『』"'「」]*[“”『』"'「」]/g, '');
+        if (/^(访客|用户|助手)/.test(last)
+            && /(之前|随后|最后|接着|首先|然后|后来|先后|起初|初期|最终|期间)/.test(last)
+            && !/[呜~～!！?？🐱😿🐾😂😭]/.test(noQuote)
+            && last.length >= 40 && last.length <= 300) {
           cleaned = paras.slice(0, -1).join('\n\n').trim();
         }
       }

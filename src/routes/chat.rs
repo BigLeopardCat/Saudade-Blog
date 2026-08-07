@@ -148,24 +148,39 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, Js
 }
 
 /// 判断一段文本是否为模型未带 SUMMARY: 前缀输出的裸摘要（格式漂移兜底）。
-/// 特征：以"访客/用户"第三人称开头 + 含会话时序词（之前/随后/最后/接着/首先/然后）
-/// + 无互动语气词（喵/波浪号/感叹问号/颜文字）。判定较严格，正常对话回复不会被误删。
+/// 特征：以"访客/用户/助手"第三人称开头 + 含会话时序词（之前/随后/最后/接着/首先/然后/
+/// 后来/先后/起初/初期/最终/期间）+ 无互动语气词（剔除引号内内容后检测——摘要常引用
+/// 用户原话含标点）。长度 40-300（下限滤掉短句正常回复，避免误删）。
 fn looks_like_summary_paragraph(text: &str) -> bool {
     let t = text.trim();
-    if t.is_empty() || t.chars().count() > 300 {
+    let len = t.chars().count();
+    if len < 40 || len > 300 {
         return false;
     }
-    if !(t.starts_with("访客") || t.starts_with("用户")) {
+    if !(t.starts_with("访客") || t.starts_with("用户") || t.starts_with("助手")) {
         return false;
     }
-    if !["之前", "随后", "最后", "接着", "首先", "然后"]
+    if !["之前", "随后", "最后", "接着", "首先", "然后", "后来", "先后", "起初", "初期", "最终", "期间"]
         .iter()
         .any(|w| t.contains(w))
     {
         return false;
     }
-    // 互动语气词排除（"喵"单独不算——"泠月喵"是 agent 名字，摘要中常出现）
-    if t.chars().any(|c| "呜~～!！?？🐱😿🐾😂😭".contains(c)) {
+    // 剔除引号包裹的内容后检测互动词（摘要常引用用户原话含标点；"喵"单独不算）
+    let mut t2 = String::new();
+    let mut in_quote = false;
+    for c in t.chars() {
+        if c == '"' || c == '\'' || c == '“' || c == '”' || c == '‘' || c == '’'
+            || c == '『' || c == '』' || c == '「' || c == '」'
+        {
+            in_quote = !in_quote;
+            continue;
+        }
+        if !in_quote {
+            t2.push(c);
+        }
+    }
+    if t2.chars().any(|c| "呜~～!！?？🐱😿🐾😂😭".contains(c)) {
         return false;
     }
     true
@@ -480,11 +495,30 @@ mod summary_tests {
     #[test]
     fn strips_bare_summary_paragraph_when_needs_summary() {
         // 模型格式漂移：无 SUMMARY: 前缀的裸摘要，需剥离且入库为摘要
-        let raw = "好的喵~\n\n访客之前多次要求开启夜间模式，随后询问了物联网控制台，最后称赞了泠月喵。";
+        let raw = "好的喵~\n\n访客之前多次要求开启夜间模式，随后确认了状态，最后表示满意，期间还咨询了物联网控制台的使用方法。";
         let (reply, summary) = strip_summary_from_reply(raw, true, None);
         assert_eq!(reply, "好的喵~");
         assert!(summary.is_some());
         assert!(summary.unwrap().starts_with("访客之前多次"));
+    }
+
+    #[test]
+    fn strips_bare_summary_with_quoted_punctuation() {
+        // 摘要引用用户原话（含感叹号/引号）时也应识别——互动词检测需剔除引号内内容
+        let raw = "好的喵~\n\n访客多次要求显示特定文字（如“金晶是大笨狗！”、“泠月喵最可爱”），助手在初期失误后严格遵循系统指令，最终成功将最新内容下发至设备并确认执行状态。";
+        let (reply, summary) = strip_summary_from_reply(raw, true, None);
+        assert_eq!(reply, "好的喵~");
+        assert!(summary.is_some());
+        assert!(summary.unwrap().starts_with("访客多次要求"));
+    }
+
+    #[test]
+    fn keeps_short_paragraph_with_quote_markers() {
+        // 短句（<40 字符）即使形似总结也不剥离，避免误删正常回复
+        let raw = "好的喵~\n\n访客大人，后来我又想了想，确实如此。";
+        let (reply, summary) = strip_summary_from_reply(raw, true, None);
+        assert_eq!(reply, raw);
+        assert!(summary.is_none());
     }
 
     #[test]
@@ -517,8 +551,10 @@ mod summary_tests {
 
     #[test]
     fn looks_like_summary_paragraph_detection() {
-        assert!(looks_like_summary_paragraph("访客之前多次要求开启夜间模式，随后确认了状态，最后表示满意。"));
+        assert!(looks_like_summary_paragraph("访客之前多次要求开启夜间模式，随后确认了状态，最后表示满意，期间还咨询了物联网控制台的使用方法。"));
         assert!(!looks_like_summary_paragraph("访客大人之前的问题我来解答一下喵~"));
         assert!(!looks_like_summary_paragraph("好的，之前说的都办好了！"));
+        assert!(!looks_like_summary_paragraph("访客大人，后来我又想了想，确实如此。")); // 短句不误删
+        assert!(looks_like_summary_paragraph("访客多次要求显示特定文字（如“金晶是大笨狗！”），助手在初期失误后严格遵循系统指令，最终成功将最新内容下发至设备并确认执行状态。")); // 引号内标点不误杀
     }
 }
