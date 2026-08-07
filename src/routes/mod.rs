@@ -10,6 +10,7 @@ pub mod upload;
 pub mod temp_user;
 pub mod knowledge;
 pub mod chat;
+pub mod sitemap;
 
 use axum::{
     routing::{get, post, delete, put},
@@ -53,6 +54,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/public/tagone", get(tags::list_tags_one)) 
         .route("/api/public/tagtwo", get(tags::list_tags_two)) 
         .route("/api/public/announcements", get(announcements::list_announcements))
+        .route("/sitemap.xml", get(sitemap::sitemap_xml))
         
         // Friends
         .route("/api/friends", get(friends::list_friends)) 
