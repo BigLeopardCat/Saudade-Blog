@@ -4,7 +4,7 @@
 use axum::{
     extract::State,
     http::header,
-    response::{IntoResponse, Response},
+    response::Response,
 };
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
 use std::sync::Arc;
