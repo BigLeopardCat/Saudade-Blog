@@ -57,9 +57,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/sitemap.xml", get(sitemap::sitemap_xml))
         
         // Friends
-        .route("/api/friends", get(friends::list_friends)) 
-        .route("/api/public/friends", get(friends::list_public_friends)
-            .post(friends::create_friend))
+        .route("/api/friends", get(friends::list_friends))
+        // A6 修复：下线公开 POST（友链申请只走管理员后台 /api/protected/friend），杜绝匿名提交 javascript: 协议 XSS
+        .route("/api/public/friends", get(friends::list_public_friends))
         
         // Talks
         .route("/api/talk", get(talks::list_talks))

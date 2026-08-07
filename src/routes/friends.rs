@@ -65,10 +65,19 @@ pub struct UpsertFriend {
     status: Option<i32>,
 }
 
+// A6 修复：友链 URL 仅允许 http/https，杜绝 javascript:/data: 等协议注入（前端渲染防不住后端入库）
+fn validate_site_url(url: &str) -> bool {
+    let lower = url.trim().to_ascii_lowercase();
+    lower.starts_with("http://") || lower.starts_with("https://")
+}
+
 pub async fn create_friend(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<UpsertFriend>,
 ) -> Json<ApiResponse<String>> {
+    if !validate_site_url(&payload.url) {
+        return Json(ApiResponse::error("siteUrl 仅允许 http/https 协议"));
+    }
     let f = friend::ActiveModel {
         name: Set(payload.name),
         link: Set(payload.url),
@@ -86,6 +95,9 @@ pub async fn update_friend(
     Path(id): Path<i32>,
     Json(payload): Json<UpsertFriend>,
 ) -> Json<ApiResponse<String>> {
+    if !validate_site_url(&payload.url) {
+        return Json(ApiResponse::error("siteUrl 仅允许 http/https 协议"));
+    }
     let f = friend::Entity::find_by_id(id).one(&state.db).await.unwrap();
     if let Some(x) = f {
         let mut a: friend::ActiveModel = x.into();

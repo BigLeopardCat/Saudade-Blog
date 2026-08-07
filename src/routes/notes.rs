@@ -410,7 +410,10 @@ pub async fn get_note_detail(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i32>,
 ) -> Json<ApiResponse<Option<NoteDto>>> {
+    // 公开详情仅返回已发布文章（A4 修复：与列表/搜索接口的过滤条件一致，防枚举自增 id 读取草稿/私密文章）
     let res = note::Entity::find_by_id(id)
+        .filter(note::Column::IsPublic.eq(true))
+        .filter(note::Column::Status.ne("draft"))
         .find_with_related(category::Entity)
         .all(&state.db)
         .await
