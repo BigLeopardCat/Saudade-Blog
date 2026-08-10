@@ -26,6 +26,8 @@ let isCachedOther = false;
 const ContentHome = () => {
     const [currentTop,setCurrentTop] = useState(0);
     const [slideDir, setSlideDir] = useState<'left' | 'right'>('right');
+    // 鼠标悬浮轮播图时暂停自动滚动（移开恢复）
+    const [hoverPaused, setHoverPaused] = useState(false);
     const [currentPage,setCurrentPage] = useState(cachedCurrentPage)
     const [hasMoreArticles, setHasMoreArticles] = useState(cachedHasMoreArticles);
     const [loading, setLoading] = useState(false);
@@ -53,14 +55,15 @@ const ContentHome = () => {
 
     useEffect(() => {
         if(topArticles.length <= 1) return;
+        if (hoverPaused) return; // 悬浮暂停：清除定时器，移开后再重建
         const timer = setInterval(() => {
             setCurrentTop(prevTop => {
             setSlideDir('right');
             return (prevTop + 1) % topArticles.length;
         });
-        }, 3000);
+        }, 5000);
         return () => clearInterval(timer);
-    }, [topArticles.length])
+    }, [topArticles.length, hoverPaused])
 
     useEffect(() => {
         if (isCachedOther) return;
@@ -166,7 +169,10 @@ const ContentHome = () => {
                 <i className="iconfont icon-rcd-angle-double-down upAndDown" style={{fontSize: 50,position:"absolute",bottom: 20,color:'skyblue'}} onClick={handleScrollDown}/></motion.div>
         </div>
         <div className="ContentContainer dark-pic">
-            {topArticles.length>0&&<div className="TopArticle" style={{ display: 'flex', position: 'relative' }}>
+            {topArticles.length>0&&<div className="TopArticle" style={{ display: 'flex', position: 'relative' }}
+                onMouseEnter={() => setHoverPaused(true)}
+                onMouseLeave={() => setHoverPaused(false)}
+            >
                 <div className="Top" style={{transform: 'translateY(-40%)', zIndex: 10}}><i className="iconfont icon-sticky1" style={{fontSize: 20,verticalAlign:'middle',marginRight:5}}></i>置顶</div>
                 <div style={{ width: '100%', height: '100%', borderRadius: '15px', overflow: 'hidden' }}><div style={{ display: 'flex', width: '100%', height: '100%', transition: 'transform 0.8s cubic-bezier(0.25, 1, 0.5, 1)', transform: `translateX(-${currentTop * 100}%)` }}>
                     {topArticles.map((item, index) => (
