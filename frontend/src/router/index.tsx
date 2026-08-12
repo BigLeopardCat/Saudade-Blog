@@ -56,6 +56,12 @@ const router = createBrowserRouter([
             {
                 path: 'article/:id',
                 element: <ReadArticle />
+            },
+            // 兜底：未知路径渲染 NotFound，但保留 App 布局（头部/底部/看板娘聊天面板）。
+            // 若作为顶层路由，agent 误跳转（如 /iot）后整站布局和聊天面板会全部丢失
+            {
+                path: '*',
+                element: <NotFound />
             }
         ]
     },
@@ -118,10 +124,6 @@ const router = createBrowserRouter([
                 element: <UserControl />
             }
         ]
-    },
-    {
-        path: '*',
-        element: <NotFound />
     }
 ])
 

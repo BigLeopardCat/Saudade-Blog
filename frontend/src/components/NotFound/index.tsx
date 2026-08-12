@@ -14,7 +14,7 @@ const NotFound = () => {
                 We can't seem to find that page. It might have been removed or doesn't
                 exist anymore.
             </div>
-            <button className="action" onClick={() => navigate('')}>Go Home</button>
+            <button className="action" onClick={() => navigate('/')}>Go Home</button>
         </div>
     </div>
 }

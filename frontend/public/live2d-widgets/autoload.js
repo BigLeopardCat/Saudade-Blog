@@ -651,9 +651,20 @@
             })();
             if (navUrl) {
               const isDirect = fullText.startsWith('AUTO_NAVIGATE:');
+              // 防呆：自动整页跳转前校验目标是博客真实路由。agent 可能幻觉出不存在的
+              // 页面（如 /iot），跳过去会丢失整站布局与聊天面板（曾导致"文本框卡死"）。
+              // 不在白名单内的目标取消跳转，并在对话框追加系统提示。
+              const BLOG_ROUTES = [/^\/$/, /^\/about$/, /^\/friends$/, /^\/talk$/, /^\/times$/, /^\/login$/, /^\/dashboard/, /^\/category\//, /^\/article\//, /^\/device-console\//];
+              const navPath = (() => { try { return new URL(navUrl).pathname; } catch(e3) { return null; } })();
+              const navOk = !!navPath && BLOG_ROUTES.some(r => r.test(navPath));
               if (isDirect) {
-                sessionStorage.setItem('chat_open', '1');  // 跳转后默认打开对话框并滚动到底部
-                window.location.href = navUrl;
+                if (!navOk) {
+                  console.warn('[agent] 已取消跳转到非博客页面: ' + navUrl);
+                  contentSpan.insertAdjacentHTML('beforeend', '<div class="nav-skip-note">（系统：该地址不是博客页面，已取消自动跳转）</div>');
+                } else {
+                  sessionStorage.setItem('chat_open', '1');  // 跳转后默认打开对话框并滚动到底部
+                  window.location.href = navUrl;
+                }
               } else {
                 pendingNavUrl = navUrl;
                 navQuestion.textContent = '泠月喵建议跳转到: ' + navUrl;
