@@ -25,6 +25,7 @@ import mermaid from '@bytemd/plugin-mermaid'
 import math from "@bytemd/plugin-math";
 import 'bytemd/dist/index.css'
 import 'github-markdown-css/github-markdown-light.css'
+import { bytemdStickers } from '../../../utils/stickers'
 import 'highlight.js/styles/atom-one-dark.css' // Import Highlight.js styles
 import 'katex/dist/katex.css' // KaTeX 公式样式（与编辑器一致，公式在外部展示页正常渲染）
 
@@ -36,7 +37,8 @@ const plugins = [
     highlight(),
     mediumZoom(),
     mermaid(),
-    math()
+    math(),
+    bytemdStickers
 ]
 
 const ReadArticle = () => {

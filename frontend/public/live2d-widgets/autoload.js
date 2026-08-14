@@ -273,6 +273,13 @@
       const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
       const escInline = (s) => {
         s = esc(s);
+        // 内置表情包：:名字: → 图片（仅转换 window.__stickers 清单内的名字，其余原样保留）
+        if (window.__stickers) {
+          s = s.replace(/:([^:\s]{1,12}):/g, (_, n) => {
+            const st = window.__stickers.find(x => x.name === n);
+            return st ? '<img src="' + st.src + '" alt="' + st.name + '" class="sticker" loading="lazy" />' : ':' + n + ':';
+          });
+        }
         s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
         // 图片必须优先于链接匹配
         s = s.replace(/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g, '<img src="$2" alt="$1" loading="lazy" />');
@@ -330,8 +337,10 @@
       <div class="chat-messages" id="chat-messages"></div>
       <div class="chat-input-area">
         <textarea class="chat-input" id="chat-input" placeholder="和泠月喵对话..." rows="1"></textarea>
+        <button class="chat-sticker-btn" id="chat-sticker-btn" title="表情包">😊</button>
         <button class="chat-send" id="chat-send">发送</button>
       </div>
+      <div class="chat-sticker-panel" id="chat-sticker-panel"></div>
       <div class="chat-nav-confirm" id="chat-nav-confirm">
         <div class="nav-question" id="nav-question-text"></div>
         <div class="chat-nav-btns">
@@ -351,6 +360,56 @@
       const messages = document.getElementById('chat-messages');
       const input = document.getElementById('chat-input');
       const sendBtn = document.getElementById('chat-send');
+
+      // ── 内置表情包选择器 ──
+      // 点击 😊 弹出面板（内容取自 React 侧注册的 window.__stickers，懒填充），
+      // 点击表情在光标处插入 :名字: 文本；点外部/再点按钮关闭
+      const stickerBtn = document.getElementById('chat-sticker-btn');
+      const stickerPanel = document.getElementById('chat-sticker-panel');
+      const buildStickerPanel = () => {
+        if (stickerPanel.dataset.built) return;
+        stickerPanel.dataset.built = '1';
+        const list = (window.__stickers || []).slice();
+        if (list.length === 0) {
+          stickerPanel.innerHTML = '<div style="font-size:12px;color:#999;padding:4px">表情包加载中…</div>';
+          return;
+        }
+        stickerPanel.innerHTML = '';
+        list.forEach((st) => {
+          const img = document.createElement('img');
+          img.src = st.src;
+          img.alt = st.name;
+          img.title = ':' + st.name + ':';
+          img.loading = 'lazy';
+          img.addEventListener('click', () => {
+            if (input.disabled) return; // 生成中禁止编辑输入框
+            const start = input.selectionStart != null ? input.selectionStart : input.value.length;
+            const end = input.selectionEnd != null ? input.selectionEnd : input.value.length;
+            const token = ':' + st.name + ':';
+            input.value = input.value.slice(0, start) + token + input.value.slice(end);
+            const pos = start + token.length;
+            input.setSelectionRange(pos, pos);
+            input.focus();
+            // 与手动输入一致：调整高度 + 触发输入事件（enableSend 等依赖）
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+          });
+          stickerPanel.appendChild(img);
+        });
+      };
+      const toggleStickerPanel = () => {
+        if (stickerPanel.classList.contains('active')) {
+          stickerPanel.classList.remove('active');
+          return;
+        }
+        buildStickerPanel();
+        stickerPanel.classList.add('active');
+      };
+      if (stickerBtn) stickerBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleStickerPanel(); });
+      // 点击面板内部不关闭；点击面板外关闭
+      if (stickerPanel) {
+        stickerPanel.addEventListener('click', (e) => e.stopPropagation());
+        document.addEventListener('click', () => stickerPanel.classList.remove('active'));
+      }
       const navConfirm = document.getElementById('chat-nav-confirm');
       const navQuestion = document.getElementById('nav-question-text');
       

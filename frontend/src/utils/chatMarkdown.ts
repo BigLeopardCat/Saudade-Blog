@@ -21,16 +21,18 @@ import gfm from '@bytemd/plugin-gfm'
 import breaks from '@bytemd/plugin-breaks'
 import gemoji from '@bytemd/plugin-gemoji'
 import math from '@bytemd/plugin-math'
+import { remarkStickers, registerStickersGlobal } from './stickers'
 
 // 与 bytemd Viewer 相同：克隆默认 schema 并允许 className（供高亮等插件使用）
 const schema = JSON.parse(JSON.stringify(defaultSchema)) as { attributes: Record<string, string[]> }
 schema.attributes['*'].push('className')
 
-// 渲染管线（gfm 删除线/表格/任务列表、breaks 硬换行、gemoji 表情、math 公式、raw HTML 白名单过滤）
+// 渲染管线（gfm 删除线/表格/任务列表、breaks 硬换行、gemoji 表情、math 公式、内置表情包、raw HTML 白名单过滤）
 let processor: Processor = unified().use(remarkParse)
 for (const plugin of [gfm(), breaks(), gemoji(), math()]) {
   if (plugin.remark) processor = plugin.remark(processor)
 }
+processor = processor.use(remarkStickers)
 processor = processor
   .use(remarkRehype, { allowDangerousHtml: true })
   .use(rehypeRaw)
@@ -79,9 +81,11 @@ declare global {
   interface Window {
     __chatRenderMarkdown?: (text: string) => string
     __chatEnhance?: (root: HTMLElement) => void
+    __stickers?: { name: string; src: string }[]
   }
 }
 
 // 模块加载即注册，Live2dAgent 在注入看板娘脚本前 import 本模块即可
 window.__chatRenderMarkdown = renderBlogMarkdown
 window.__chatEnhance = enhanceChatContent
+registerStickersGlobal()

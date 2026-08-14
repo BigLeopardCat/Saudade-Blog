@@ -87,6 +87,12 @@ html
       color: var(--font-title-color)
       color: var(--font-title-color)
       background: transparent
+      // 内置表情包（:名字: → <img class="sticker">）行内尺寸（class 与 src 前缀双保险）
+      img.sticker, img[src^="/stickers/"]
+        height: 1.8em
+        vertical-align: middle
+        display: inline-block
+        margin: 0 2px
       @media only screen and (max-width: 1300px)
         max-width: 100vw
       pre

@@ -9,6 +9,7 @@ import { Editor} from '@bytemd/react'
 import mediumZoom from '@bytemd/plugin-medium-zoom'
 import 'bytemd/dist/index.css'
 import zhCN from 'bytemd/locales/zh_Hans.json'
+import { bytemdStickers } from '../../utils/stickers'
 import 'github-markdown-css/github-markdown-dark.css'
 import './index.css'
 import http from "../../apis/axios.tsx";
@@ -21,7 +22,8 @@ const plugins = [
     frontmatter(),
     gemoji(),
     highlight(),
-    mediumZoom()
+    mediumZoom(),
+    bytemdStickers
 ]
 
 interface Editor_Props {
