@@ -177,7 +177,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
         <>
             {phoneBarShow && <div className="phoneSideOverlay" onClick={() => setPhoneBarShow(false)} />}
         <header style={{display: 'flex', flexDirection: 'row', position: 'sticky', width: '100%', top: 0, zIndex: '999'}} className={isDark ? 'frontDark' : ''} onClick={() => { if (phoneBarShow) setPhoneBarShow(false); }}>
-            <div className={`${phoneBarShow ? 'openBar' : ''} phoneSide`} style={{position: "sticky"}} onClick={(e) => e.stopPropagation()}>
+            <div className={`${phoneBarShow ? 'openBar' : ''} phoneSide`} onClick={(e) => e.stopPropagation()}>
                 <div className="phoneBarContainer">
                     <div className="barLogo">
                         <Avatar

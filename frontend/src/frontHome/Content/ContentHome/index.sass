@@ -683,3 +683,39 @@ html[data-theme='dark'] .SayWords h2
           font-size: 11px !important
           line-height: 18px !important
           padding: 3px 8px !important
+
+// ── Mobile (≤768px)：文章卡片两列、约 1/4 尺寸（V15）──
+// 卡片面积约缩到原来的 1/4（封面 90px + 紧凑内容 ≈ 240px 高、约半屏宽），一页信息量翻倍
+@media screen and (max-width: 768px)
+  .allArticles
+    grid-template-columns: repeat(2, 1fr) !important
+    gap: 12px !important
+    .ArticleCard
+      .ArticleCover
+        height: 90px !important
+      .ArticleContent
+        padding: 0.75rem !important
+        gap: 6px !important
+        h4
+          font-size: 14px !important
+          margin-bottom: 4px !important
+          line-height: 1.3 !important
+        .ArticleTitle
+          font-size: 16px !important
+          margin-bottom: 4px !important
+          line-height: 1.3 !important
+        .ArticleDescription
+          font-size: 14px !important
+          line-height: 1.5 !important
+        .tags
+          display: none !important
+        .ArticleFooter
+          margin-top: 6px !important
+          padding-bottom: 8px !important
+          .ant-avatar
+            min-width: 24px !important
+            min-height: 24px !important
+          span
+            font-size: 12px !important
+          .post-date
+            display: none !important

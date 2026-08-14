@@ -1008,26 +1008,20 @@
       });
       document.addEventListener('pointermove', (e) => {
         if (!isDragging && !isResizing) return;
-        const isTouch = e.pointerType === 'touch';
+        // 触屏与鼠标同路径：不做视口边界 clamp。
+        // （面板定位在 #waifu 内是负坐标，此前触屏 clamp 把初始位置钳到 0 导致
+        //   向上拖动被锁死；恢复桌面端一致的自由拖动/缩放）
         if (isDragging) {
-          let nx = e.clientX - offsetX;
-          let ny = e.clientY - offsetY;
-          if (isTouch) {
-            // 触屏拖动时限制在视口内，防止面板被拖出屏幕（鼠标行为不变）
-            nx = Math.min(Math.max(nx, -chatPanel.offsetWidth + 60), window.innerWidth - 60);
-            ny = Math.min(Math.max(ny, 0), window.innerHeight - 60);
-          }
-          chatPanel.style.left = nx + 'px';
-          chatPanel.style.top = ny + 'px';
+          chatPanel.style.left = (e.clientX - offsetX) + 'px';
+          chatPanel.style.top = (e.clientY - offsetY) + 'px';
           chatPanel.style.right = 'auto';
           chatPanel.style.bottom = 'auto';
         }
         if (isResizing) {
           if (resizeCorner === 'tl') {
             // 左上角缩放：固定右下角不动，左上角跟随指针
-            let w = Math.max(260, startW + (startX - e.clientX));
-            let h = Math.max(180, startH + (startY - e.clientY));
-            if (isTouch) { w = Math.min(w, window.innerWidth - 30); h = Math.min(h, window.innerHeight - 30); }
+            const w = Math.max(260, startW + (startX - e.clientX));
+            const h = Math.max(180, startH + (startY - e.clientY));
             chatPanel.style.width = w + 'px';
             chatPanel.style.height = h + 'px';
             chatPanel.style.left = (startLeft - (w - startW)) + 'px';
@@ -1035,11 +1029,8 @@
             chatPanel.style.right = 'auto';
             chatPanel.style.bottom = 'auto';
           } else {
-            let w = Math.max(260, startW + e.clientX - startX);
-            let h = Math.max(180, startH + e.clientY - startY);
-            if (isTouch) { w = Math.min(w, window.innerWidth - 30); h = Math.min(h, window.innerHeight - 30); }
-            chatPanel.style.width = w + 'px';
-            chatPanel.style.height = h + 'px';
+            chatPanel.style.width = Math.max(260, startW + e.clientX - startX) + 'px';
+            chatPanel.style.height = Math.max(180, startH + e.clientY - startY) + 'px';
           }
         }
       });

@@ -14,7 +14,12 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
 .phoneSide
   display: none
   @media only screen and (max-width: 1200px)
+    // 固定定位锚定视口左上角：不依赖 sticky（部分机型 html overflow-x:hidden 会破坏 sticky），
+    // 任何滚动位置打开抽屉都稳定显示在屏幕左侧
     position: fixed
+    top: 0
+    left: 0
+    z-index: 999
     width: 290px
     height: 100%
     display: flex
