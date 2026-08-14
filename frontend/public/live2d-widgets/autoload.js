@@ -993,7 +993,7 @@
 
       // 拖动（仅通过顶部/左侧边框条移动面板，其余区域允许选中文本）
       let isDragging = false, isResizing = false, resizeCorner = 'br', startX, startY, startW, startH, startLeft, startTop, offsetX, offsetY;
-      chatPanel.addEventListener('mousedown', (e) => {
+      chatPanel.addEventListener('pointerdown', (e) => {
         // 仅在边框条上按下时启动拖动，其余区域不做拦截以便选中/复制文本
         if (!e.target.closest('.chat-drag-bar-t, .chat-drag-bar-l')) return;
         // 阻止事件冒泡到 #waifu（live2d-widgets 的拖拽会冲突）并防止选中文本
@@ -1006,19 +1006,28 @@
         offsetX = e.clientX - chatPanel.offsetLeft;
         offsetY = e.clientY - chatPanel.offsetTop;
       });
-      document.addEventListener('mousemove', (e) => {
+      document.addEventListener('pointermove', (e) => {
         if (!isDragging && !isResizing) return;
+        const isTouch = e.pointerType === 'touch';
         if (isDragging) {
-          chatPanel.style.left = (e.clientX - offsetX) + 'px';
-          chatPanel.style.top = (e.clientY - offsetY) + 'px';
+          let nx = e.clientX - offsetX;
+          let ny = e.clientY - offsetY;
+          if (isTouch) {
+            // 触屏拖动时限制在视口内，防止面板被拖出屏幕（鼠标行为不变）
+            nx = Math.min(Math.max(nx, -chatPanel.offsetWidth + 60), window.innerWidth - 60);
+            ny = Math.min(Math.max(ny, 0), window.innerHeight - 60);
+          }
+          chatPanel.style.left = nx + 'px';
+          chatPanel.style.top = ny + 'px';
           chatPanel.style.right = 'auto';
           chatPanel.style.bottom = 'auto';
         }
         if (isResizing) {
           if (resizeCorner === 'tl') {
-            // 左上角缩放：固定右下角不动，左上角跟随鼠标
-            const w = Math.max(260, startW + (startX - e.clientX));
-            const h = Math.max(180, startH + (startY - e.clientY));
+            // 左上角缩放：固定右下角不动，左上角跟随指针
+            let w = Math.max(260, startW + (startX - e.clientX));
+            let h = Math.max(180, startH + (startY - e.clientY));
+            if (isTouch) { w = Math.min(w, window.innerWidth - 30); h = Math.min(h, window.innerHeight - 30); }
             chatPanel.style.width = w + 'px';
             chatPanel.style.height = h + 'px';
             chatPanel.style.left = (startLeft - (w - startW)) + 'px';
@@ -1026,25 +1035,28 @@
             chatPanel.style.right = 'auto';
             chatPanel.style.bottom = 'auto';
           } else {
-            chatPanel.style.width = Math.max(260, startW + e.clientX - startX) + 'px';
-            chatPanel.style.height = Math.max(180, startH + e.clientY - startY) + 'px';
+            let w = Math.max(260, startW + e.clientX - startX);
+            let h = Math.max(180, startH + e.clientY - startY);
+            if (isTouch) { w = Math.min(w, window.innerWidth - 30); h = Math.min(h, window.innerHeight - 30); }
+            chatPanel.style.width = w + 'px';
+            chatPanel.style.height = h + 'px';
           }
         }
       });
-      document.addEventListener('mouseup', () => { isDragging = false; isResizing = false; });
+      document.addEventListener('pointerup', () => { isDragging = false; isResizing = false; });
       // 缩放把手：右下角 + 左上角（红色三角，与发送按钮同色）
       const makeResizeHandle = (corner) => {
         const isTL = corner === 'tl';
         const h = document.createElement('div');
         // flex 对齐使 svg 贴住对应角：TL 贴左上角、BR 贴右下角，两个把手样式完全一致
         h.style.cssText = 'position:absolute;' + (isTL ? 'left:0;top:0' : 'right:0;bottom:0') +
-          ';width:24px;height:24px;cursor:nwse-resize;background:transparent;z-index:5;' +
+          ';width:24px;height:24px;cursor:nwse-resize;background:transparent;z-index:5;touch-action:none;' +
           ';display:flex;' + (isTL ? 'align-items:flex-start;justify-content:flex-start' : 'align-items:flex-end;justify-content:flex-end');
         // 三角形方向：BR 角朝左上，TL 角朝右下（圆角三角：stroke-linejoin:round）
         h.innerHTML = isTL
           ? '<svg viewBox="0 0 10 10" width="22" height="22"><path d="M0 0 L10 0 L0 10 Z" fill="#e74c3c" stroke="#e74c3c" stroke-width="1.5" stroke-linejoin="round" opacity="0.85"/></svg>'
           : '<svg viewBox="0 0 10 10" width="22" height="22"><path d="M0 10 L10 0 L10 10 Z" fill="#e74c3c" stroke="#e74c3c" stroke-width="1.5" stroke-linejoin="round" opacity="0.85"/></svg>';
-        h.addEventListener('mousedown', (e) => {
+        h.addEventListener('pointerdown', (e) => {
           e.stopPropagation();
           e.preventDefault();
           isDragging = false;

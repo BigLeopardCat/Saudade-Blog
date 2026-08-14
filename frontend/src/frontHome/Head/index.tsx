@@ -62,6 +62,26 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
         return () => window.removeEventListener('moon-sun-animation', handleMoonSun);
     }, []);
 
+    // 抽屉菜单打开时锁定页面滚动：背景不随手指滑动，仅抽屉内部可滚动
+    useEffect(() => {
+        if (!phoneBarShow) return;
+        const prevOverflow = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+        const onTouchMove = (e: TouchEvent) => {
+            const t = e.target as HTMLElement | null;
+            if (t && t.closest('.phoneSide')) return; // 抽屉内部放行（自身可滚动）
+            e.preventDefault(); // 其余区域禁止滚动（兼容 iOS 橡皮筋）
+        };
+        document.addEventListener('touchmove', onTouchMove, { passive: false });
+        return () => {
+            document.body.style.overflow = prevOverflow;
+            document.removeEventListener('touchmove', onTouchMove);
+        };
+    }, [phoneBarShow]);
+
+    // 关闭抽屉菜单（同时收起分类子菜单），所有导航入口共用
+    const closePhoneBar = () => { setPhoneBarShow(false); setShowMobileCategory(false); };
+
     // 定义防抖函数，设置延迟时间为 300 毫秒
     const startAnimationDebounced = debounce(() => {
         setShowStatus(true);
@@ -156,8 +176,8 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
     return (
         <>
             {phoneBarShow && <div className="phoneSideOverlay" onClick={() => setPhoneBarShow(false)} />}
-        <header style={{display: 'flex', flexDirection: 'row', position: 'sticky', width: '100%', top: 0, zIndex: '999'}} className={isDark ? 'frontDark' : ''}>
-            <div className={`${phoneBarShow ? 'openBar' : ''} phoneSide`} style={{position: "sticky"}}>
+        <header style={{display: 'flex', flexDirection: 'row', position: 'sticky', width: '100%', top: 0, zIndex: '999'}} className={isDark ? 'frontDark' : ''} onClick={() => { if (phoneBarShow) setPhoneBarShow(false); }}>
+            <div className={`${phoneBarShow ? 'openBar' : ''} phoneSide`} style={{position: "sticky"}} onClick={(e) => e.stopPropagation()}>
                 <div className="phoneBarContainer">
                     <div className="barLogo">
                         <Avatar
@@ -166,21 +186,21 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                          <div style={{ marginTop: "5px", display: "flex", justifyContent: "center", gap: "10px" }}>
                             {isLogin ? (
                                 <>
-                                <div className="theme-btn" onClick={() => navigate("dashboard")}>心境</div>
-                                <div className="theme-btn logout-btn" onClick={() => { localStorage.removeItem('tokenKey'); setLogin(0); navigate('/'); }}>退出</div>
+                                <div className="theme-btn" onClick={() => { closePhoneBar(); navigate("dashboard"); }}>心境</div>
+                                <div className="theme-btn logout-btn" onClick={() => { closePhoneBar(); localStorage.removeItem('tokenKey'); setLogin(0); navigate('/'); }}>退出</div>
                                 </>
                             ) : (
-                                <div className="theme-btn" onClick={() => navigate("login")}>登录</div>
+                                <div className="theme-btn" onClick={() => { closePhoneBar(); navigate("login"); }}>登录</div>
                             )}
                         </div>
                     </div>
-                    <input className="mSearchInput" type="search" placeholder="搜索..." onClick={showModal} readOnly />
+                    <input className="mSearchInput" type="search" placeholder="搜索..." onClick={() => { closePhoneBar(); showModal(); }} readOnly />
                     <div className="barContent">
                         <ul className='oneBar'>
-                            <li onClick={() => navigate('')}><i className="iconfont icon-shouye4"
+                            <li onClick={() => { closePhoneBar(); navigate('/'); }}><i className="iconfont icon-shouye4"
                                                                 style={{fontSize: 30}}></i>首页
                             </li>
-                            <li onClick={() => navigate('times')}><i className="iconfont icon-guidang3"
+                            <li onClick={() => { closePhoneBar(); navigate('times'); }}><i className="iconfont icon-guidang3"
                                                                      style={{fontSize: 25}}></i>归档
                             </li>
                             <li onClick={() => setShowMobileCategory(!showMobileCategory)}>
@@ -189,16 +209,16 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                             </li>
                             {showMobileCategory && <ul className='twoBar'>
                                 {categoryList.map((item: { categoryKey: Key | null | undefined; pathName: any; icon: any; categoryTitle: string | number | boolean | ReactElement | Iterable<ReactNode> | ReactPortal | null | undefined; }) => (
-                                    <li key={item.categoryKey} onClick={() => navigate(`category/${item.pathName}`)} style={{fontSize: 15}}><i className={`fa ${item.icon}`} aria-hidden="true" style={{verticalAlign: 'middle'}}></i>{item.categoryTitle}</li>
+                                    <li key={item.categoryKey} onClick={() => { closePhoneBar(); navigate(`category/${item.pathName}`); }} style={{fontSize: 15}}><i className={`fa ${item.icon}`} aria-hidden="true" style={{verticalAlign: 'middle'}}></i>{item.categoryTitle}</li>
                                 ))}
                             </ul>}
-                            <li onClick={() => navigate('talk')}><i className="iconfont icon-riji"
+                            <li onClick={() => { closePhoneBar(); navigate('talk'); }}><i className="iconfont icon-riji"
                                                                     style={{fontSize: 30}}></i>说说
                             </li>
-                            <li onClick={() => navigate('friends')}><i className="iconfont icon-lianjie"
+                            <li onClick={() => { closePhoneBar(); navigate('friends'); }}><i className="iconfont icon-lianjie"
                                                                        style={{fontSize: 30}}></i>友人链
                             </li>
-                            <li onClick={() => navigate('about')}><i className="iconfont icon-leaf-01"
+                            <li onClick={() => { closePhoneBar(); navigate('about'); }}><i className="iconfont icon-leaf-01"
                                                                      style={{fontSize: 30}}></i>关于我
                             </li>
                         </ul>

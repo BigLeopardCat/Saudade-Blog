@@ -277,3 +277,29 @@ html
   background-color: transparent !important
   border-left: 3px solid #569cfa !important
   font-weight: 700
+
+// ── Mobile (≤768px)：屏幕利用率优化 ──
+@media only screen and (max-width: 768px)
+  .readContent
+    width: 100%
+    padding: 12px 10px
+  .readDescription
+    width: 100%
+    padding: 12px
+  .readCover
+    height: 200px
+    .readInfo
+      bottom: 25px
+      h1
+        font-size: 1.4rem
+  .markdown-body
+    max-width: 100%
+    h1
+      font-size: 1.6rem
+    p
+      line-height: 1.7em
+    pre
+      white-space: pre-wrap
+      word-break: break-all
+      overflow-x: hidden
+      font-size: 13px
