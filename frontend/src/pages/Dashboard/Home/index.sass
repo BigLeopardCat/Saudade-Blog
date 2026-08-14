@@ -16,15 +16,17 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
   @media only screen and (max-width: 1200px)
     // 固定定位锚定视口左上角：不依赖 sticky（部分机型 html overflow-x:hidden 会破坏 sticky），
     // 任何滚动位置打开抽屉都稳定显示在屏幕左侧
+    // 宽度与内容容器一致（250px）且关闭时平移 -260px 完全移出屏幕：
+    // 此前 290px 宽只移 251px，右侧露出 39px 透明命中区正好盖住汉堡按钮，导致菜单点不开
     position: fixed
     top: 0
     left: 0
     z-index: 999
-    width: 290px
+    width: 250px
     height: 100%
     display: flex
     align-items: flex-start
-    transform: translateX(-251px)
+    transform: translateX(-260px)
     transition: 0.5s
 
     .phoneBarContainer
