@@ -14,7 +14,18 @@ async fn main() {
     let db_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let db = Database::connect(&db_url).await.expect("Failed to connect to DB");
 
-    let app_state = AppState { db };
+    // H2 修复：登录限流器 —— 密码错误 5 次/5 分钟窗口，锁定 15 分钟
+    let max_attempts = env::var("LOGIN_MAX_ATTEMPTS")
+        .ok().and_then(|v| v.parse().ok()).unwrap_or(5);
+    let window_secs = env::var("LOGIN_WINDOW_SECS")
+        .ok().and_then(|v| v.parse().ok()).unwrap_or(300);
+    let lockout_secs = env::var("LOGIN_LOCKOUT_SECS")
+        .ok().and_then(|v| v.parse().ok()).unwrap_or(900);
+    let rate_limiter = saudade_blog::rate_limiter::LoginRateLimiter::new(
+        max_attempts, window_secs, lockout_secs,
+    );
+
+    let app_state = AppState { db, rate_limiter };
     let app = create_router(app_state);
 
     let items = vec![

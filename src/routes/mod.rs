@@ -18,16 +18,30 @@ use axum::{
     middleware,
 };
 use sea_orm::DatabaseConnection;
-use tower_http::{cors::{Any, CorsLayer}, services::ServeDir};
+use tower_http::{cors::{Any, CorsLayer, AllowOrigin}, services::ServeDir};
 use crate::utils::upload_dir;
+use crate::rate_limiter::LoginRateLimiter;
 
 pub struct AppState {
     pub db: DatabaseConnection,
+    pub rate_limiter: LoginRateLimiter,
 }
 
 pub fn create_router(state: AppState) -> Router {
+    // H5 修复：CORS 白名单。默认仅允许博客域名，可通过 CORS_ALLOWED_ORIGINS 环境变量
+    // 追加多个来源（逗号分隔，如 "https://saudade.site,http://localhost:5173"）
+    let cors_origins = std::env::var("CORS_ALLOWED_ORIGINS")
+        .unwrap_or_else(|_| "https://saudade.site".to_string());
+    let origins: Vec<axum::http::HeaderValue> = cors_origins
+        .split(',')
+        .filter_map(|s| {
+            let s = s.trim();
+            if s.is_empty() { return None; }
+            axum::http::HeaderValue::try_from(s).ok()
+        })
+        .collect();
     let cors = CorsLayer::new()
-        .allow_origin(Any)
+        .allow_origin(AllowOrigin::list(origins))
         .allow_methods(Any)
         .allow_headers(Any);
     
