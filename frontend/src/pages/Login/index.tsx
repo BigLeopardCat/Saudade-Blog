@@ -46,12 +46,12 @@ const Login: React.FC = () => {
         setIsLoading(true);
         try {
             // @ts-ignore
-            const status = await dispatch(fetchToken(data));
-            if (Number(status) === 200) {
+            const result = await dispatch(fetchToken(data));
+            if (result.status === 200) {
                 messageApi.success('登录成功');
                 setTimeout(() => navigate('/dashboard'), 500);
             } else {
-                messageApi.error('登录失败，账号或密码错误！');
+                messageApi.error(result.message || '登录失败，账号或密码错误！');
             }
         } catch (error) {
             messageApi.error('登录失败，账号或密码错误！');

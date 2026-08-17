@@ -52,9 +52,9 @@ const fetchToken = (data: UserData) => {
             if (res.data.code === 200) {
                 const token = res.data.data;
                 dispatch(setToken({ token: token}));
-                return 200;
+                return { status: 200 };
             } else {
-                return res.data.code || 500;
+                return { status: res.data.code || 500, message: res.data.message || '登录失败' };
             }
         } catch (error) {
             throw error;
