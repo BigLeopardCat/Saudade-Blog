@@ -38,6 +38,16 @@ body
       outline: none
       background: transparent
 
+    // 浏览器自动填充时保持暗色背景，label 正确浮起
+    input:-webkit-autofill,
+    input:-webkit-autofill:hover,
+    input:-webkit-autofill:focus,
+    input:-webkit-autofill:active
+      -webkit-background-clip: text
+      -webkit-text-fill-color: #fff
+      transition: background-color 5000s ease-in-out 0s
+      box-shadow: 0 0 0 1000px transparent inset
+
     label
       position: absolute
       top: 0
@@ -49,7 +59,8 @@ body
       transition: .5s
 
     input:focus ~ label,
-    input:valid ~ label
+    input:valid ~ label,
+    input:-webkit-autofill ~ label
       top: -20px
       left: 0
       color: #03e9f4
