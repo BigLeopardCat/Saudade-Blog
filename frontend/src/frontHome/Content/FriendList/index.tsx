@@ -5,6 +5,7 @@ import {message} from "antd";
 import { motion } from 'framer-motion';
 import scrollToTop from "../../../utils/scrollToTop.tsx";
 import {getFriendsList} from "../../../apis/FriendMethods.tsx";
+import SeoHelmet from "../../../components/SeoHelmet";
 
 // A6 修复：渲染前强制 http(s) 协议白名单，防 javascript:/data: 注入 href
 const safeSiteUrl = (url: string): string => {
@@ -28,7 +29,7 @@ const FriendList = () => {
     }
 
     return <div className='FriendsContainer'>
-
+        <SeoHelmet title="友情链接" url="/friends" />
         <div className="FriendList">
             <h3>Friends</h3>
             <ul className='link-items' style={{gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))'}}>

@@ -6,6 +6,7 @@ import { motion } from 'framer-motion';
 import scrollToTop from "../../../utils/scrollToTop.tsx";
 import {getNotePage} from "../../../apis/NoteMethods.tsx";
 import {useNavigate} from "react-router-dom";
+import SeoHelmet from "../../../components/SeoHelmet";
 const Times = () => {
     const [timeList, setTimeList] = useState([]);
     const navigate = useNavigate()
@@ -56,7 +57,7 @@ const Times = () => {
     }, []);
 
     return <div className='TimesContainer'>
-
+            <SeoHelmet title="归档" url="/times" />
             <div className="timePass">
                 <h2>归档</h2>
                 <h3>共有 {timeList.length} 篇文章，再接再厉</h3>

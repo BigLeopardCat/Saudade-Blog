@@ -12,6 +12,7 @@ import 'markdown-navbar/dist/navbar.css'
 import Loading from "../../Loading";
 import scrollToTop from "../../../utils/scrollToTop.tsx";
 import {getNoteById} from "../../../apis/NoteMethods.tsx";
+import SeoHelmet from "../../../components/SeoHelmet";
 
 // ByteMD imports
 import { Viewer } from '@bytemd/react'
@@ -53,9 +54,7 @@ const ReadArticle = () => {
         if (id) {
             setLoading(true)
             getNoteById(id).then((res) => {
-                document.title = (res.data?.data?.noteTitle || "Article"); setArticle({
-                    ...res.data.data
-                });
+                setArticle({ ...res.data.data });
             }).catch((err) => {
                 console.error('获取失败', err)
             }).finally(() => {
@@ -63,9 +62,6 @@ const ReadArticle = () => {
             });
         }
         scrollToTop();
-        return () => {
-            document.title = 'Saudade Blog';
-        };
     }, [id]);
     
     const content = article?.noteContent || '';
@@ -188,6 +184,7 @@ const ReadArticle = () => {
 
     return (
         <div className='readContainer'>
+            <SeoHelmet title={article ? article.noteTitle : '文章加载中'} description={article?.description || undefined} image={article?.cover || undefined} url={`/article/${id}`} type="article" />
             {isLoading ? (
                 <div style={{width:'100vw',height:'100vh',display:'flex',justifyContent:'center',alignItems:'center'}}>
                     <Loading />

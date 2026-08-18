@@ -8,6 +8,7 @@ import { motion } from 'framer-motion';
 import dayjs from "dayjs";
 import scrollToTop from "../../../utils/scrollToTop.tsx";
 import {getTalkList} from "../../../apis/TalkMethods.tsx";
+import SeoHelmet from "../../../components/SeoHelmet";
 
 const TalkList = () => {
     const [talkList,setTalkList] = useState<Talk[]>([])
@@ -22,7 +23,7 @@ const TalkList = () => {
     }, [])
 
     return <div className='TalkContainer'>
-
+        <SeoHelmet title="说说" url="/talk" />
         <h2>说说</h2>
         {talkList.map((talk:Talk,index) => (
             <motion.div

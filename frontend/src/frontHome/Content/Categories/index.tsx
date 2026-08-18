@@ -10,6 +10,7 @@ import scrollToTop from "../../../utils/scrollToTop.tsx";
 import {searchNotes} from "../../../apis/NoteMethods.tsx";
 import {message} from "antd";
 import LazyImage from "../../../components/LazyImage";
+import SeoHelmet from "../../../components/SeoHelmet";
 const Categories = () => {
     const { id } = useParams();
     const [categoryTitle, setCategoryTitle] = useState('');
@@ -35,6 +36,7 @@ const Categories = () => {
 
     return (
         <div className="CategoriesContainer">
+            <SeoHelmet title={categoryTitle ? `分类-${categoryTitle}` : '分类'} url={`/category/${id}`} />
             <h2>分类-{categoryTitle}</h2>
             <h3>共有{articleList.length}篇文章</h3>
             <ul className='ArticleList'>

@@ -1,3 +1,4 @@
+import SeoHelmet from "../../../components/SeoHelmet";
 import AnnouncementModal from "../../../components/AnnouncementModal";
 import './index.sass'
 import {Avatar, Tag} from "antd";
@@ -142,6 +143,7 @@ const ContentHome = () => {
     };
 
     return <>
+        <SeoHelmet title="首页" description="个人技术博客 — Rust、React、IoT 开发经验与项目实践" url="/" />
         <div className="SelfDescription">
             <AnnouncementModal />
 

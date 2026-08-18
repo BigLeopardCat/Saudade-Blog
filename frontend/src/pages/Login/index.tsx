@@ -7,6 +7,7 @@ import { fetchToken } from "../../store/components/user.tsx";
 import { useNavigate } from 'react-router-dom';
 import getToken from '../../apis/getToken';
 import UserData from "../../interface/UserData";
+import SeoHelmet from "../../components/SeoHelmet";
 
 const Login: React.FC = () => {
     const [account, setAccount] = useState<string>('');
@@ -29,6 +30,16 @@ const Login: React.FC = () => {
         if (name === 'account') {
             setAccount(value);
         } else if (name === 'password') {
+            setPassword(value);
+        }
+    };
+
+    // 处理浏览器自动填充（onInput 比 onChange 更早触发 autofill 事件）
+    const handleInput = (e: React.FormEvent<HTMLInputElement>) => {
+        const { name, value } = e.currentTarget;
+        if (name === 'account' && value !== account) {
+            setAccount(value);
+        } else if (name === 'password' && value !== password) {
             setPassword(value);
         }
     };
@@ -82,6 +93,7 @@ const Login: React.FC = () => {
 
     return (
         <>
+            <SeoHelmet title="登录" url="/login" />
             {contextHolder}
             <div className="login-box">
                 <h2>Saudade Blog</h2>
@@ -92,8 +104,9 @@ const Login: React.FC = () => {
                                value={account}
                                required
                                onChange={handleChange}
+                               onInput={handleInput}
                                onInvalid={handleInvalid}
-                               autoComplete='off'
+                               autoComplete='username'
                                disabled={isLoading}
                         />
                         <label>Username</label>
@@ -103,8 +116,9 @@ const Login: React.FC = () => {
                                required
                                value={password}
                                onChange={handleChange}
+                               onInput={handleInput}
                                onInvalid={handleInvalid}
-                               autoComplete='off'
+                               autoComplete='current-password'
                                disabled={isLoading}
                         />
                         <label>Password</label>
