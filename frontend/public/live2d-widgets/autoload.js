@@ -654,7 +654,8 @@
               // 防呆：自动整页跳转前校验目标是博客真实路由。agent 可能幻觉出不存在的
               // 页面（如 /iot），跳过去会丢失整站布局与聊天面板（曾导致"文本框卡死"）。
               // 不在白名单内的目标取消跳转，并在对话框追加系统提示。
-              const BLOG_ROUTES = [/^\/$/, /^\/about$/, /^\/friends$/, /^\/talk$/, /^\/times$/, /^\/login$/, /^\/dashboard/, /^\/category\//, /^\/article\//, /^\/device-console\//];
+              // 注意：/device-console/ 是独立静态页，非 React SPA，跳转会丢失聊天面板，故不加入白名单
+              const BLOG_ROUTES = [/^\/$/, /^\/about$/, /^\/friends$/, /^\/talk$/, /^\/times$/, /^\/login$/, /^\/dashboard/, /^\/category\//, /^\/article\//];
               const navPath = (() => { try { return new URL(navUrl).pathname; } catch(e3) { return null; } })();
               const navOk = !!navPath && BLOG_ROUTES.some(r => r.test(navPath));
               if (isDirect) {
@@ -666,9 +667,14 @@
                   window.location.href = navUrl;
                 }
               } else {
-                pendingNavUrl = navUrl;
-                navQuestion.textContent = '泠月喵建议跳转到: ' + navUrl;
-                navConfirm.classList.add('active');
+                if (!navOk) {
+                  console.warn('[agent] 已取消跳转到非博客页面: ' + navUrl);
+                  contentSpan.insertAdjacentHTML('beforeend', '<div class="nav-skip-note">（系统：该地址不是博客页面，已取消建议跳转）</div>');
+                } else {
+                  pendingNavUrl = navUrl;
+                  navQuestion.textContent = '泠月喵建议跳转到: ' + navUrl;
+                  navConfirm.classList.add('active');
+                }
               }
             }
             // 处理特效切换命令（支持 EFFECT:name 按钮式切换 / EFFECT:name:on|off 显式开关）
