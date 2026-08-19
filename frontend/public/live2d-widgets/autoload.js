@@ -97,33 +97,47 @@
 
     }
 
-  // 强制看板娘从底部滑入（WAAPI + MutationObserver 兜底）：
-  // 上游 waifu-tips.js 在模型加载完成时才加 waifu-active——模型命中缓存时，"插入 DOM
-  // + 加类"可能落在同一帧样式批次里：CSS transition 因起始样式已等于终态不触发，
-  // CSS animation 也会被同帧样式合并吞掉，看板娘直接凭空出现在最终位置。
-  //（对话框是 #waifu 的子元素，看起来"对话框在滑、看板娘没滑"。）
-  // Web Animations API 的 fill:'backwards' 让 from 帧在动画开始时即接管渲染，
-  // 无论加类发生在哪个阶段，首个渲染帧必然从底部 -500px（与 CSS 退场偏移一致）滑入，
-  // 消除竞态；不动 transform，避免覆盖 #waifu:hover 的上浮。
+  // 看板娘从底部滑入（等角色真正可绘制后才开始，WAAPI 保证过渡必然可见）：
+  // 上游 waifu-tips.js 在"模型加载完成"时加 waifu-active，但 cubism5 运行时在全部
+  // 纹理上传到 GPU 之前（_state != CompleteSetup），update/draw 直接 return——角色首帧
+  // 通常晚于加类数百毫秒（冷缓存更久）。若加类即滑：空画布滑上来，角色随后"凭空"
+  // 出现在最终位置，看起来没有过渡动画。
+  // 方案：rAF 轮询等待 ①waifu-active 已加 ②cubism5 模型 _state===CompleteSetup(22，
+  // 下一帧必然绘制角色)——齐备瞬间启动滑入，角色在滑动全程可见。
+  // 用 Web Animations API（fill:'backwards'，与 CSS 退场偏移同为 -500px），
+  // 不受"插入DOM+加类同帧"样式合并影响；不动 transform，避免覆盖 hover 上浮。
   (function forceSlideInFromBottom() {
-    if (!Element.prototype.animate) return; // 老浏览器直接依赖 CSS transition
-    const run = (el) => {
-      if (el.dataset.slideInOnce) return; // 只强制首次入场（重开面板走 CSS transition）
-      el.dataset.slideInOnce = '1';
-      el.animate(
-        [{ bottom: '-500px' }, { bottom: '0px' }],
-        { duration: 800, easing: 'ease-in-out', fill: 'backwards' }
-      );
+    if (!Element.prototype.animate) return; // 老浏览器依赖 CSS transition 原行为
+    const isModelReady = () => {
+      try {
+        const ad = window.__cubism5model;
+        if (!ad || !ad.subdelegates || !ad.subdelegates.getSize()) return false;
+        const sub = ad.subdelegates.at(0);
+        const mgr = sub.getLive2DManager();
+        if (!mgr || !mgr._models || !mgr._models.getSize()) return false;
+        // hs.CompleteSetup = 22：模型与全部纹理已上传 GPU，下一帧必然绘制
+        return mgr._models.at(0)._state === 22;
+      } catch { return false; }
     };
-    const check = () => {
+    let activeSince = 0; // waifu-active 出现时刻（用于 25s 兜底：角色始终没就绪就直接滑）
+    const tick = () => {
       const el = document.getElementById('waifu');
-      if (el && el.classList.contains('waifu-active')) run(el);
+      if (!el || el.dataset.slideInOnce) return; // 元素未创建（禁用/失败）或已滑过
+      if (el.classList.contains('waifu-active')) {
+        if (!activeSince) activeSince = performance.now();
+        const ready = isModelReady() || performance.now() - activeSince > 25000;
+        if (ready) {
+          el.dataset.slideInOnce = '1';
+          el.animate(
+            [{ bottom: '-500px' }, { bottom: '0px' }],
+            { duration: 800, easing: 'ease-in-out', fill: 'backwards' }
+          );
+          return;
+        }
+      }
+      requestAnimationFrame(tick);
     };
-    check(); // SPA 路由下元素可能已就绪
-    const obs = new MutationObserver(check);
-    obs.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
-    // 模型冷加载极端慢时 CSS transition 本身会正常触发，观察器 15s 后释放
-    setTimeout(() => obs.disconnect(), 15000);
+    requestAnimationFrame(tick);
   })();
 
   // 注入循环动作参数 + 口型接口
