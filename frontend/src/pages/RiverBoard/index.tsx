@@ -27,7 +27,15 @@ const DEMO_MESSAGES = [
     "愿你所求皆如愿，所行化坦途。",
 ];
 
-type Wish = { id: number; v: number; msg: string };
+/* 心愿分类：愿 / 寄 / 忆 / 诉（后续可让留言用户自选类型） */
+const CATS = ["愿", "寄", "忆", "诉"];
+const catOf = (s: string) => {
+    let h = 5381;
+    for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+    return CATS[h % CATS.length];
+};
+
+type Wish = { id: number; v: number; msg: string; cat: string };
 
 /* ------------------------- 灯笼精灵预渲染 -------------------------
    三种花样：莲花灯 / 八角灯 / 圆笼灯，全部用 Canvas 手绘，
@@ -265,19 +273,29 @@ function buildSprites(): string[] {
 
 /* ------------------------- 场景参数 ------------------------- */
 
-const ZN = 1.12; // 近景视距
-const ZF = 9.0; // 远山/地平线视距
-const dOf = (z: number) => {
-    const a = 1 - ZN / z;
-    const b = 1 - ZN / ZF;
-    return Math.max(0, Math.min(1, a / b));
+/* 月相：按上海时区日期计算（2000-01-06 18:14 UTC 为已知新月），
+   返回明暗交界圆心的偏移量 e（以月盘半径为单位）与亮面占比 k。
+   年龄 age∈[0,1)：0 新月 / 0.25 上弦 / 0.5 满月 / 0.75 下弦 */
+const moonPhase = () => {
+    const K0 = Date.UTC(2000, 0, 6, 18, 14);
+    const t = (Date.now() + 8 * 3600e3 - K0) / 86400000; // 折算到上海时区
+    const age = ((t / 29.53058867) % 1 + 1) % 1;
+    const dark = (1 + Math.cos(2 * Math.PI * age)) / 2; // 暗面占比
+    let th = Math.acos(1 - dark) * 1.55; // 初值，Newton 求解 2θ−sin2θ = π·dark
+    for (let i = 0; i < 8; i++) {
+        const f = 2 * th - Math.sin(2 * th) - Math.PI * dark;
+        const fp = 2 - 2 * Math.cos(2 * th);
+        if (Math.abs(fp) < 1e-9) break;
+        th = Math.max(0, Math.min(Math.PI / 2, th - f / fp));
+    }
+    return { age, k: 1 - dark, e: 2 * Math.cos(th) };
 };
 
 interface LanternMeta {
     id: number;
     v: number;
     u: number;
-    z: number;
+    d: number; // 世界景深 0..1：0=远山方向，1=眼前
     w: number;
     sway: number;
     hue: number;
@@ -289,7 +307,7 @@ interface Amb {
     streaks: { u: number; d: number; spd: number; ph: number; len: number; warm: boolean }[];
     glints: { u: number; d: number; ph: number; spd: number; warm: boolean; br: number }[];
     bands: { d0: number; wd: number; spd: number; ph: number }[];
-    fireflies: { x: number; y: number; vx: number; vy: number; ph: number }[];
+    fireflies: { u: number; d: number; ph: number; flap: number }[];
     skyGlows: { x: number; y: number; spd: number; ph: number }[];
     grass: { x: number; y: number; len: number; lean: number; ph: number; s: number }[];
     reeds: { x: number; y: number; len: number; ph: number }[];
@@ -314,6 +332,7 @@ export default function RiverBoard() {
     const [sprites] = useState<string[]>(buildSprites);
     const [lanterns, setLanterns] = useState<Wish[]>([]);
     const [ready, setReady] = useState(false);
+    const [modal, setModal] = useState<Wish | null>(null); // 正中弹窗内的心愿
 
     /* 布局：视口与投影常量 */
     const layout = (w: number, h: number) => {
@@ -333,7 +352,7 @@ export default function RiverBoard() {
     const riverY = (d: number) => {
         const v = viewRef.current;
         // d 可能因重生为负数：pow 负数小数次幂是 NaN，会传染整帧绘制
-        return v.yH + (v.h * 1.06 - v.yH) * Math.pow(Math.max(0, d), 1.38);
+        return v.yH + (v.h * 1.06 - v.yH) * Math.pow(Math.max(0, d), 1.24);
     };
 
     /* 场景初始化 */
@@ -396,15 +415,14 @@ export default function RiverBoard() {
             });
         }
         const fireflies: Amb["fireflies"] = [];
-        const nFf = Math.round(15 * dens);
+        const nFf = Math.round(17 * dens);
         for (let i = 0; i < nFf; i++) {
-            const left = Math.random() < 0.55;
             fireflies.push({
-                x: left ? Math.random() * 0.17 : 0.83 + Math.random() * 0.17,
-                y: 0.2 + Math.random() * 0.75,
-                vx: 0,
-                vy: 0,
+                // 全部分布在河道上方：u 横跨河面，d 随深度（远处少、近处密）
+                u: 0.05 + Math.random() * 0.9,
+                d: 0.05 + Math.pow(Math.random(), 1.5) * 0.6,
                 ph: Math.random() * Math.PI * 2,
+                flap: 1.4 + Math.random() * 2.4,
             });
         }
         const skyGlows: Amb["skyGlows"] = [];
@@ -444,7 +462,8 @@ export default function RiverBoard() {
     };
 
     const respawnStreak = (s: Amb["streaks"][number]) => {
-        s.d = -0.06 - Math.random() * 0.12;
+        // 上游流向：从眼前（近端）出发，流向远山消散
+        s.d = 0.9 + Math.random() * 0.08;
         s.u = Math.pow(Math.random(), 1.3) * 0.92 + 0.04;
         s.ph = Math.random() * Math.PI * 2;
         s.warm = Math.random() < 0.22;
@@ -525,30 +544,37 @@ export default function RiverBoard() {
                 ctx.fill();
             }
 
-            // 月亮（上弦 + 光晕）
+            // 月亮：光晕 + 全亮月盘，再以暗面圆盘按真实月相切出明暗（无蒙版偏移错位）
             const mxMoon = w * 0.66;
             const myMoon = h * 0.16;
+            const ph = moonPhase();
+            const haloK = 0.35 + 0.65 * ph.k; // 新月时几乎无光晕
             const halo = ctx.createRadialGradient(mxMoon, myMoon, 0, mxMoon, myMoon, w * 0.34);
-            halo.addColorStop(0, "rgba(255,238,200,0.34)");
-            halo.addColorStop(0.28, "rgba(255,226,170,0.12)");
+            halo.addColorStop(0, `rgba(255,238,200,${0.34 * haloK})`);
+            halo.addColorStop(0.28, `rgba(255,226,170,${0.12 * haloK})`);
             halo.addColorStop(1, "rgba(255,226,170,0)");
             ctx.fillStyle = halo;
             ctx.fillRect(mxMoon - w * 0.36, myMoon - w * 0.36, w * 0.72, w * 0.72);
             const rMoon = Math.min(w, h) * 0.052;
+            const rD = rMoon * 0.82;
             ctx.fillStyle = "rgba(255,246,222,0.96)";
             ctx.beginPath();
-            ctx.arc(mxMoon, myMoon, rMoon * 0.82, 0, Math.PI * 2);
+            ctx.arc(mxMoon, myMoon, rD, 0, Math.PI * 2);
             ctx.fill();
-            ctx.globalCompositeOperation = "destination-out";
+            const eMoon = ph.e * rD;
+            const dir = ph.age < 0.5 ? -1 : 1; // 盈月暗面在左，亏月暗面在右
+            // 暗面圆盘几乎贴住天光底色，边缘带一点地照余晖
+            const shad = ctx.createRadialGradient(
+                mxMoon + dir * eMoon, myMoon, rD * 0.82,
+                mxMoon + dir * eMoon, myMoon, rD + 2
+            );
+            shad.addColorStop(0, "rgba(8,12,32,0.97)");
+            shad.addColorStop(0.965, "rgba(11,17,40,0.97)");
+            shad.addColorStop(1, "rgba(120,140,200,0.10)");
+            ctx.fillStyle = shad;
             ctx.beginPath();
-            ctx.arc(mxMoon - rMoon * 0.34, myMoon - rMoon * 0.24, rMoon * 0.78, 0, Math.PI * 2);
+            ctx.arc(mxMoon + dir * eMoon, myMoon, rD + 2, 0, Math.PI * 2);
             ctx.fill();
-            ctx.globalCompositeOperation = "source-over";
-            ctx.strokeStyle = "rgba(255,240,210,0.5)";
-            ctx.lineWidth = 1.6;
-            ctx.beginPath();
-            ctx.arc(mxMoon, myMoon, rMoon * 0.82, 0, Math.PI * 2);
-            ctx.stroke();
 
             // 云影（静态，随视差层缓慢移动）
             ctx.fillStyle = "rgba(24,32,60,0.10)";
@@ -635,7 +661,7 @@ export default function RiverBoard() {
         draw(back);
 
         prep(front);
-        front.drawImage(backCv, -MARGIN, -MARGIN);
+        front.drawImage(backCv, -MARGIN, -MARGIN, w + MARGIN * 2, h + MARGIN * 2);
         // 前层：两岸剪影、苇丛、草、柳、雾
         const bankGrad = front.createLinearGradient(0, v.yH, 0, h);
         bankGrad.addColorStop(0, "#050a18");
@@ -768,19 +794,20 @@ export default function RiverBoard() {
         traceRiver(ctx, 0, 1.14, false);
         ctx.clip();
 
-        // 宽幅水光带（缓慢漂移的整体明暗起伏）
+        // 宽幅水光带（随流向向远方缓慢漂移的整体明暗，羽化边避免块状感）
         for (const bd of amb.bands) {
-            bd.d0 += bd.wd * 0.7 * (reduce ? 0.15 : 1) * 0.022;
-            if (bd.d0 > 1.12) bd.d0 = -0.1 - Math.random() * 0.05;
+            bd.d0 -= bd.wd * 0.7 * (reduce ? 0.15 : 1) * 0.022;
+            if (bd.d0 + bd.wd < -0.05) bd.d0 = 0.96 + Math.random() * 0.04;
             const dTop = bd.d0, dBot = bd.d0 + bd.wd;
             const yT = riverY(dTop), yB = riverY(dBot);
             if (yB < v.yH - 4) continue;
             if (yT > h + 30) continue;
             const N = 22;
+            const wobAmp = 0.011 * (0.4 + 0.6 * bd.wd * 4);
             ctx.beginPath();
             for (let i = 0; i <= N; i++) {
                 const u = i / N;
-                const wob = Math.sin(u * 7.4 + t * 0.5 * (reduce ? 0.2 : 1) + bd.ph) * 0.006;
+                const wob = Math.sin(u * 7.4 + t * 0.5 * (reduce ? 0.2 : 1) + bd.ph) * wobAmp;
                 ctx.lineTo(riverX(u, Math.min(1.09, dTop + wob * 0.3)), riverY(dTop + wob));
             }
             for (let i = N; i >= 0; i--) {
@@ -789,23 +816,27 @@ export default function RiverBoard() {
             }
             ctx.closePath();
             const g = ctx.createLinearGradient(0, yT, 0, yB);
-            const balpha = bd.wd > 0.05 ? 0.085 : 0.058;
+            const balpha = bd.wd > 0.05 ? 0.05 : 0.036;
             g.addColorStop(0, "rgba(150,178,240,0)");
+            g.addColorStop(0.3, `rgba(150,178,240,${balpha * 0.7})`);
             g.addColorStop(0.5, `rgba(150,178,240,${balpha})`);
+            g.addColorStop(0.7, `rgba(150,178,240,${balpha * 0.7})`);
             g.addColorStop(1, "rgba(150,178,240,0)");
             ctx.fillStyle = g;
             ctx.fill();
         }
 
-        // 月光碎影（垂直碎光柱）
+        // 月光碎影（垂直碎光柱，整体随波呼吸）
         const uM = 0.5;
         const glowC = ctx.createLinearGradient(0, v.yH * 0.99, 0, h);
         glowC.addColorStop(0, "rgba(255,224,160,0)");
         glowC.addColorStop(0.5, "rgba(255,224,160,0.05)");
         glowC.addColorStop(1, "rgba(255,224,160,0)");
         traceRiver(ctx, 0, 1.08, false);
+        ctx.globalAlpha = 0.75 + 0.25 * Math.sin(t * 0.9);
         ctx.fillStyle = glowC;
         ctx.fill();
+        ctx.globalAlpha = 1;
         for (let i = 0; i < 46; i++) {
             const k = i / 46;
             const d = Math.pow(k, 1.08) * 1.0;
@@ -825,35 +856,35 @@ export default function RiverBoard() {
             ctx.stroke();
         }
 
-        // 流向纹（顺流向线性亮纹，越近越长越快）
+        // 流向纹（顺流向的线性亮纹：自眼前出发，向远山方向流动消散）
         for (const s of amb.streaks) {
-            s.d += (0.06 + s.d * s.d * 0.62) * s.spd * 0.016 * (reduce ? 0.12 : 1);
-            if (s.d > 1.02) respawnStreak(s);
-            const d0 = Math.max(-0.02, s.d);
-            const len = (0.02 + 0.11 * d0 * d0) * s.len;
-            const d1 = d0 + len;
-            const y0 = riverY(d0), y1 = riverY(d1);
-            if (y0 < v.yH - 6 || y1 > h + 40) continue;
-            const x0 = riverX(s.u, d0), x1 = riverX(s.u, d1);
+            s.d -= (0.06 + s.d * s.d * 0.62) * s.spd * 0.016 * (reduce ? 0.12 : 1);
+            if (s.d < -0.04) respawnStreak(s);
+            const dHead = Math.max(-0.02, s.d);
+            const len = (0.02 + 0.11 * dHead * dHead) * s.len;
+            const dTail = Math.min(1.02, dHead + len);
+            const yH0 = riverY(dHead), yTl = riverY(dTail);
+            if (yH0 < v.yH - 6 || yTl > h + 40) continue;
+            const xH = riverX(s.u, dHead), xT = riverX(s.u, dTail);
             const midU = s.u + Math.sin(t * 0.9 + s.ph) * 0.006;
-            const xm = riverX(midU, (d0 + d1) / 2);
-            const alpha = (0.05 + 0.072 * d0) * (0.6 + 0.4 * Math.sin(t * 1.7 + s.ph));
+            const xm = riverX(midU, (dHead + dTail) / 2);
+            const alpha = (0.05 + 0.072 * dHead) * (0.6 + 0.4 * Math.sin(t * 1.7 + s.ph));
             ctx.strokeStyle = s.warm
                 ? `rgba(255,216,164,${Math.min(0.4, alpha * 1.15)})`
-                : `rgba(198,216,255,${alpha * (d0 > 0.5 ? 0.85 : 1)})`;
-            ctx.lineWidth = 0.7 + d0 * 2.2;
+                : `rgba(198,216,255,${alpha * (dHead > 0.5 ? 0.85 : 1)})`;
+            ctx.lineWidth = 0.7 + dHead * 2.2;
             ctx.lineCap = "round";
             ctx.beginPath();
-            ctx.moveTo(x0, y0);
-            ctx.quadraticCurveTo(xm, (y0 + y1) / 2, x1, y1);
+            ctx.moveTo(xT, yTl);
+            ctx.quadraticCurveTo(xm, (yH0 + yTl) / 2, xH, yH0);
             ctx.stroke();
         }
 
-        // 波面碎光点
+        // 波面碎光点（随流向向远方游动）
         for (const g of amb.glints) {
-            g.d += (0.06 + g.d * g.d * 0.62) * g.spd * 0.016 * (reduce ? 0.12 : 1);
-            if (g.d > 1.02) {
-                g.d = -0.02 - Math.random() * 0.08;
+            g.d -= (0.06 + g.d * g.d * 0.62) * g.spd * 0.016 * (reduce ? 0.12 : 1);
+            if (g.d < -0.03) {
+                g.d = 0.88 + Math.random() * 0.12;
                 g.u = Math.pow(Math.random(), 1.25) * 0.9 + 0.05;
             }
             if (g.d < 0) continue;
@@ -876,6 +907,21 @@ export default function RiverBoard() {
                 ctx.arc(x, y, 0.7 + g.d, 0, Math.PI * 2);
                 ctx.fill();
             }
+        }
+
+        // 河灯周围的水面涟漪（缓缓扩散的椭圆环）
+        for (const m of metaRef.current) {
+            if (m.d < 0.28) continue;
+            const ph2 = (amb.now * 0.34 + m.sway) % 1;
+            const rr = 12 + ph2 * 30;
+            const rx = riverX(m.u, m.d);
+            const ry = riverY(m.d) + 6;
+            const ra = Math.sin(ph2 * Math.PI) * 0.16 * (0.35 + 0.65 * m.d);
+            ctx.strokeStyle = `rgba(205,222,255,${ra})`;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.ellipse(rx, ry, rr, rr * 0.24, 0, 0, Math.PI * 2);
+            ctx.stroke();
         }
         ctx.restore();
 
@@ -902,23 +948,23 @@ export default function RiverBoard() {
             }
         }
 
-        /* 萤火虫 */
+        /* 萤火虫（沿河道低空逡巡：横向漂移 + 缓慢逆行 + 纵向微微起伏） */
         for (const f of amb.fireflies) {
-            const target = Math.sin(t * 0.21 + f.ph) * 26 + Math.sin(t * 0.53 + f.ph * 1.7) * 16;
-            f.vx += (target - f.vx) * 0.02;
-            const targetY = Math.sin(t * 0.17 + f.ph * 2.3) * 20;
-            f.vy += (targetY - f.vy) * 0.02;
-            f.x += f.vx * 0.0016 * (reduce ? 0.1 : 1);
-            f.y += f.vy * 0.0011 * (reduce ? 0.1 : 1);
-            if (f.x < 0.01) f.x = 0.01;
-            if (f.x > 0.99) f.x = 0.99;
-            const fx = f.x * w + px * 0.5;
-            const fy = f.y * h + py * 0.35;
-            const fl = 0.35 + 0.65 * Math.abs(Math.sin(t * 2.2 + f.ph * 5));
+            f.u +=
+                (Math.sin(t * 0.07 + f.ph) * 0.0011 + Math.sin(t * 0.19 + f.ph * 1.7) * 0.0005) *
+                (reduce ? 0.1 : 1);
+            f.d -= (Math.sin(t * 0.045 + f.ph * 2.3) * 0.0002 + 0.00004) * (reduce ? 0.1 : 1);
+            if (f.u < 0.04) f.u = 0.04;
+            if (f.u > 0.96) f.u = 0.96;
+            if (f.d < 0.045) f.d = 0.9 + Math.random() * 0.06;
+            if (f.d > 0.92) f.d = 0.92;
+            const fx = riverX(f.u, f.d) + px * 0.5;
+            const fy = riverY(f.d) - 22 - Math.sin(t * 1.3 + f.ph) * 5;
+            const fl = 0.35 + 0.65 * Math.abs(Math.sin(t * f.flap + f.ph * 5));
             if (fl < 0.2) continue;
             const grad = ctx.createRadialGradient(fx, fy, 0, fx, fy, 7);
             grad.addColorStop(0, `rgba(236,255,170,${0.85 * fl})`);
-            grad.addColorStop(0.5, `rgba(200,236,120,${0.3 * fl})`);
+            grad.addColorStop(0.5, `rgba(200,236,120,${0.32 * fl})`);
             grad.addColorStop(1, "rgba(180,220,100,0)");
             ctx.fillStyle = grad;
             ctx.beginPath();
@@ -985,17 +1031,19 @@ export default function RiverBoard() {
         }
     };
 
-    /* 灯笼逐帧驱动 */
+    /* 灯笼逐帧驱动：与河水同向，向远方缓流。
+   在 d 空间以 d^-0.24 变速推进，使屏幕上的竖向速度基本恒定，
+   不会再出现"中后段越流越快、很快消失"的观感。 */
     const driveLanterns = (dt: number) => {
         const px = (mouseRef.current.x - 0.5) * 10;
         for (const m of metaRef.current) {
-            m.z -= dt * m.w;
-            if (m.z < ZN) {
-                m.z = ZF * (0.9 + Math.random() * 0.1);
+            m.d -= dt * m.w * Math.pow(Math.max(0.06, m.d), -0.24);
+            if (m.d < -0.02) {
+                m.d = 0.94 + Math.random() * 0.05; // 眼前重入
                 m.u = 0.36 + Math.random() * 0.28;
-                m.w = 0.055 + Math.random() * 0.04;
+                m.w = 0.03 + Math.random() * 0.045;
             }
-            const d = dOf(m.z);
+            const d = Math.max(0, m.d);
             const bobY = Math.sin(amb!.now * 1.2 + m.sway) * 1.6 * (0.3 + d);
             const rot = Math.sin(amb!.now * 0.55 + m.sway) * 3.2;
             const scl = Math.pow(d, 1.15);
@@ -1108,19 +1156,20 @@ export default function RiverBoard() {
             const views: Wish[] = [];
             for (let i = 0; i < count; i++) {
                 const u = 0.34 + Math.random() * 0.32;
-                // 初始分布偏近景：开场就能看到大河灯顺流而来，也保证近场始终有灯
-                const z = ZN + (ZF - ZN) * Math.pow(Math.random(), 1.8);
+                // 初始分布偏近景：开场即见大河灯，且近场始终有灯
+                const d = 1 - Math.pow(Math.random(), 1.8);
+                const msg = msgs[i % msgs.length];
                 metas.push({
                     id: i,
                     v: Math.floor(Math.random() * 3),
                     u,
-                    z,
-                    w: 0.055 + Math.random() * 0.045,
+                    d,
+                    w: 0.03 + Math.random() * 0.045,
                     sway: Math.random() * Math.PI * 2,
                     hue: Math.round((Math.random() - 0.5) * 26),
                     bright: 0.85 + Math.random() * 0.25,
                 });
-                views.push({ id: i, v: metas[i].v, msg: msgs[i % msgs.length] });
+                views.push({ id: i, v: metas[i].v, msg, cat: catOf(msg) });
             }
             metaRef.current = metas;
             setLanterns(views);
@@ -1143,7 +1192,12 @@ export default function RiverBoard() {
                       : [];
                 const texts = arr.map((x) => String(x?.content ?? "").trim()).filter(Boolean);
                 if (texts.length >= 4) {
-                    setLanterns((prev) => prev.map((p, i) => ({ ...p, msg: texts[i % texts.length] })));
+                    setLanterns((prev) =>
+                        prev.map((p, i) => {
+                            const msg = texts[i % texts.length];
+                            return { ...p, msg, cat: catOf(msg) };
+                        })
+                    );
                 }
             })
             .catch(() => {})
@@ -1168,25 +1222,60 @@ export default function RiverBoard() {
             const th = text.offsetHeight;
             const dy = Math.max(0, th - hh + 14);
             inner.style.setProperty("--dy", dy + "px");
-            inner.style.setProperty("--dur", Math.max(7, dy / 16) + "s");
+            // 滚动占总周期约 34%（0→18% 读完，18→52% 滚动中，52→85% 停住，85→100% 归位）
+            // 换算后约每秒 11px 的阅读速度，慢而从容
+            inner.style.setProperty("--dur", Math.max(9, dy / 3.7) + "s");
         }
     }, [lanterns]);
 
-    /* 触屏开关气泡（pointerdown 直达触屏，click 仅兜底鼠标端） */
-    const lastTouchToggle = useRef(0);
-    const toggleMsg = (id: number) => {
-        const handle = document.querySelector(`[data-lid="${id}"]`) as HTMLElement | null;
-        if (handle) {
-            handle.classList.toggle("rz-open");
-            const openOthers = () => {
-                document.querySelectorAll<HTMLElement>(".rz-open").forEach((el) => {
-                    if (el !== handle) el.classList.remove("rz-open");
-                });
-                document.removeEventListener("click", openOthers);
-            };
-            document.addEventListener("click", openOthers);
-        }
+    /* 气泡滚动从头开始（点击重开时复位动画） */
+    const restartScroll = (handle: HTMLElement) => {
+        const msg = handle.querySelector(".rz-msg") as HTMLElement | null;
+        if (!msg) return;
+        msg.style.animation = "none";
+        void msg.offsetWidth; // 强制回流，重新启动 keyframes
+        msg.style.animation = "";
     };
+
+    /* 开关气泡（pointerdown 直达触屏，click 仅兜底鼠标端） */
+    const lastTouchToggle = useRef(0);
+    const toggleMsg = (id: number, open?: boolean) => {
+        const handle = document.querySelector(`[data-lid="${id}"]`) as HTMLElement | null;
+        if (!handle) return;
+        const willOpen = open ?? !handle.classList.contains("rz-open");
+        handle.classList.toggle("rz-open", willOpen);
+        if (willOpen) restartScroll(handle);
+        const openOthers = () => {
+            document.querySelectorAll<HTMLElement>(".rz-open").forEach((el) => {
+                if (el !== handle) el.classList.remove("rz-open");
+            });
+            document.removeEventListener("click", openOthers);
+        };
+        document.removeEventListener("click", openOthers);
+        if (willOpen) document.addEventListener("click", openOthers);
+    };
+
+    /* 点按河灯：气泡常显 + 正中弹窗细读 */
+    const lastWishTouch = useRef(0);
+    const openWish = (ln: Wish, fromTouch = false) => {
+        toggleMsg(ln.id, true);
+        if (fromTouch) lastWishTouch.current = Date.now();
+        setModal(ln);
+    };
+    const closeModal = () => setModal(null);
+    /* 触屏打开弹窗后，同一次点按的合成 click 会落在遮罩上误关；
+       800ms 内的遮罩点击视为那次点按的跟随事件，忽略 */
+    const dismissModal = () => {
+        if (Date.now() - lastWishTouch.current < 800) return;
+        setModal(null);
+    };
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === "Escape") setModal(null);
+        };
+        window.addEventListener("keydown", onKey);
+        return () => window.removeEventListener("keydown", onKey);
+    }, []);
 
     if (sprites.length === 0) return <div className="rz-root" />;
 
@@ -1205,22 +1294,34 @@ export default function RiverBoard() {
                         role="button"
                         tabIndex={0}
                         aria-label="河灯心愿"
-                        onMouseEnter={() => nodesRef.current.get(ln.id)?.classList.add("rz-open")}
-                        onMouseLeave={() => nodesRef.current.get(ln.id)?.classList.remove("rz-open")}
-                        onFocus={() => nodesRef.current.get(ln.id)?.classList.add("rz-open")}
-                        onBlur={() => nodesRef.current.get(ln.id)?.classList.remove("rz-open")}
+                        onMouseEnter={() => {
+                            nodesRef.current.get(ln.id)?.classList.add("rz-open");
+                            const h = nodesRef.current.get(ln.id);
+                            if (h) restartScroll(h);
+                        }}
+                        onMouseLeave={() => {
+                            if (!modal) nodesRef.current.get(ln.id)?.classList.remove("rz-open");
+                        }}
+                        onFocus={() => {
+                            nodesRef.current.get(ln.id)?.classList.add("rz-open");
+                            const h = nodesRef.current.get(ln.id);
+                            if (h) restartScroll(h);
+                        }}
+                        onBlur={() => {
+                            if (!modal) nodesRef.current.get(ln.id)?.classList.remove("rz-open");
+                        }}
                         onPointerDown={(e) => {
                             if (e.pointerType === "touch") {
                                 lastTouchToggle.current = Date.now();
-                                toggleMsg(ln.id);
+                                openWish(ln, true);
                             }
                         }}
                         onKeyDown={(e) => {
-                            if (e.key === "Enter") toggleMsg(ln.id);
+                            if (e.key === "Enter") openWish(ln);
                         }}
                         onClick={() => {
                             if (Date.now() - lastTouchToggle.current < 500) return;
-                            toggleMsg(ln.id);
+                            openWish(ln);
                         }}
                     >
                         <div className="rz-halo" />
@@ -1242,7 +1343,7 @@ export default function RiverBoard() {
                             <div className="rz-scroll">
                                 <div className="rz-msg">{ln.msg}</div>
                             </div>
-                            <span className="rz-seal">愿</span>
+                            <span className="rz-seal">{ln.cat}</span>
                         </div>
                     </div>
                 ))}
@@ -1251,11 +1352,31 @@ export default function RiverBoard() {
                 <header className="rz-title">
                     <i />
                     河灯寄语
-                    <em>随水而去的留言板</em>
+                    <div className="rz-couplet">
+                        <span>
+                            <b>「</b>醉后不知天在水<b>」</b>
+                        </span>
+                        <span>
+                            <b>「</b>满船清梦压星河<b>」</b>
+                        </span>
+                    </div>
                 </header>
-                <p className="rz-hint">把光标停在河灯上 · 读一份心愿</p>
+                <p className="rz-hint">悬停河灯读心愿 · 点按细细端详</p>
             </div>
             <div className="rz-veg" />
+            {modal && (
+                <div className="rz-modal" onClick={dismissModal} role="dialog" aria-modal="true" aria-label="心愿细读">
+                    <div className="rz-modal-box" onClick={(e) => e.stopPropagation()}>
+                        <div className="rz-modal-msg">{modal.msg}</div>
+                        <span className="rz-seal rz-modal-seal">{modal.cat}</span>
+                        <button className="rz-modal-close" type="button" onClick={closeModal}>
+                            <span>关闭</span>
+                            <i className="rz-close-stem" />
+                            <i className="rz-close-tri" />
+                        </button>
+                    </div>
+                </div>
+            )}
             <div className={ready ? "rz-boot rz-boot-off" : "rz-boot"}>
                 <div className="rz-boot-glow" />
                 <p>河灯将明 · 稍候</p>
