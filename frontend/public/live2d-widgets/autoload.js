@@ -59,7 +59,7 @@
   });
   
   await Promise.all([
-    loadExternalResource(live2d_path + 'waifu.css?v=20260819a', 'css'),
+    loadExternalResource(live2d_path + 'waifu.css?v=20260819b', 'css'),
     loadExternalResource(live2d_path + 'waifu-tips.js', 'js'),
   ]);
 
@@ -96,6 +96,36 @@
   }]);
 
     }
+
+  // 强制看板娘从底部滑入（WAAPI + MutationObserver 兜底）：
+  // 上游 waifu-tips.js 在模型加载完成时才加 waifu-active——模型命中缓存时，"插入 DOM
+  // + 加类"可能落在同一帧样式批次里：CSS transition 因起始样式已等于终态不触发，
+  // CSS animation 也会被同帧样式合并吞掉，看板娘直接凭空出现在最终位置。
+  //（对话框是 #waifu 的子元素，看起来"对话框在滑、看板娘没滑"。）
+  // Web Animations API 的 fill:'backwards' 让 from 帧在动画开始时即接管渲染，
+  // 无论加类发生在哪个阶段，首个渲染帧必然从底部 -500px（与 CSS 退场偏移一致）滑入，
+  // 消除竞态；不动 transform，避免覆盖 #waifu:hover 的上浮。
+  (function forceSlideInFromBottom() {
+    if (!Element.prototype.animate) return; // 老浏览器直接依赖 CSS transition
+    const run = (el) => {
+      if (el.dataset.slideInOnce) return; // 只强制首次入场（重开面板走 CSS transition）
+      el.dataset.slideInOnce = '1';
+      el.animate(
+        [{ bottom: '-500px' }, { bottom: '0px' }],
+        { duration: 800, easing: 'ease-in-out', fill: 'backwards' }
+      );
+    };
+    const check = () => {
+      const el = document.getElementById('waifu');
+      if (el && el.classList.contains('waifu-active')) run(el);
+    };
+    check(); // SPA 路由下元素可能已就绪
+    const obs = new MutationObserver(check);
+    obs.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+    // 模型冷加载极端慢时 CSS transition 本身会正常触发，观察器 15s 后释放
+    setTimeout(() => obs.disconnect(), 15000);
+  })();
+
   // 注入循环动作参数 + 口型接口
     (function startCustomAnim() {
       const getSub = () => {
