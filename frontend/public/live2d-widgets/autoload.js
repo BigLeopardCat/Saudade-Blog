@@ -220,8 +220,9 @@
 
     // 剔除 agent 文本中的命令行（NAVIGATE:/AUTO_NAVIGATE:/EFFECT:/DARKMODE:/SUMMARY:），仅用于展示。
     // 前缀正则放宽：模型可能在正文里幻觉输出 SNOW_EFFECT:/TOKK_EFFECT: 等变形工具命令，
-    // 一律按命令行剔除，不进入对话框
-    const COMMAND_LINE_RE = /^(?:[A-Za-z0-9_]*EFFECT|DARKMODE|NAVIGATE|AUTO_NAVIGATE|SUMMARY)\s*:/;
+    // 一律按命令行剔除，不进入对话框。SYSTEM 兜底：[System: …] 是模型对系统注记的
+    // 复述/幻觉（prompt 已禁止但 qwen 偶发原样透出），同样不展示
+    const COMMAND_LINE_RE = /^(?:[A-Za-z0-9_]*EFFECT|DARKMODE|NAVIGATE|AUTO_NAVIGATE|SUMMARY|\[?System)\]?\s*:/;
     const cleanAgentText = (text) => {
       if (!text) return '';
       let cleaned = text.split('\n')
@@ -626,9 +627,27 @@
             localStorage.setItem(key, JSON.stringify(saved));
           } catch(e) {/* ignore */}
 
-            // Check if the agent suggests a navigation
-            const navMatch = fullText.match(/(?:转跳|跳转|打开|前往|导航到)\s*(https?:\/\/[^\s，。,.]+)/i);
-            const navUrl = (() => {
+            // ── 导航命令解析（命令行优先，正文兜底）──
+            // 历史教训：模型幻觉"去X板块"时不在正文里调用 navigate_to，而是手写命令文本
+            // （且多为相对路径 AUTO_NAVIGATE:/talk）；旧实现只认完整 URL 且依赖整段
+            // startsWith('AUTO_NAVIGATE:')，幻觉命令静默失效并退化为"建议跳转"确认框
+            // → 用户看到"没转跳"。因此：① cmdText 命令行锚定解析（AUTO_NAVIGATE→直接跳
+            // / NAVIGATE→确认，支持相对路径与格式漂移）；② 无命令行时回退正文链接
+            // （确认式，行为不变）。后端强制跳转命令作为流首帧进 cmdText，此处必然命中。
+            const cmdNav = (() => {
+              for (const line of cmdText.split('\n')) {
+                const m = line.match(/^\s*(AUTO_NAVIGATE|NAVIGATE)\s*:\s*((?:https?:)?\/\/[^\s]+|\/[^\s]+)/i);
+                if (!m) continue;
+                // 去掉行尾中文/ASCII 标点（URL 内合法的 . 必须保留——域名全靠它）
+                let url = m[2].replace(/[，。,.?!；;]+$/, '');
+                if (url.startsWith('//')) url = 'https:' + url;       // 协议相对 → 补全 scheme
+                else if (!/^https?:/i.test(url)) url = 'https://saudade.site' + url; // 相对路径 /talk → 站点根
+                if (!/^https?:\/\//i.test(url)) continue;
+                return { url, direct: m[1].toUpperCase() === 'AUTO_NAVIGATE' };
+              }
+              return null;
+            })();
+            const navUrl = cmdNav ? cmdNav.url : (() => {
               const m1 = fullText.match(/(AUTO_NAVIGATE|NAVIGATE):(https?:\/\/[^\s]+)/);
               if (m1) return m1[2];
               // 站内相对路径必须最先匹配：[文字](/article/16) → 站点根路径
@@ -650,15 +669,18 @@
               return null;
             })();
             if (navUrl) {
-              const isDirect = fullText.startsWith('AUTO_NAVIGATE:');
+              const isDirect = !!cmdNav && cmdNav.direct;
               // 防呆：自动整页跳转前校验目标是博客真实路由。agent 可能幻觉出不存在的
               // 页面（如 /iot），跳过去会丢失整站布局与聊天面板（曾导致"文本框卡死"）。
               // 不在白名单内的目标取消跳转，并在对话框追加系统提示。
               const BLOG_ROUTES = [/^\/$/, /^\/about$/, /^\/friends$/, /^\/talk$/, /^\/times$/, /^\/login$/, /^\/dashboard/, /^\/category\//, /^\/article\//, /^\/device-console\//];
               const navPath = (() => { try { return new URL(navUrl).pathname; } catch(e3) { return null; } })();
               const navOk = !!navPath && BLOG_ROUTES.some(r => r.test(navPath));
+              // 直接跳转额外校验同源：白名单只查 pathname，幻觉的
+              // AUTO_NAVIGATE:https://evil.com/talk 路径合法但会带用户离开本站 → 阻断（降级确认式）
+              const hostOk = (() => { try { return new URL(navUrl).host === window.location.host; } catch(e4) { return false; } })();
               if (isDirect) {
-                if (!navOk) {
+                if (!navOk || !hostOk) {
                   console.warn('[agent] 已取消跳转到非博客页面: ' + navUrl);
                   contentSpan.insertAdjacentHTML('beforeend', '<div class="nav-skip-note">（系统：该地址不是博客页面，已取消自动跳转）</div>');
                 } else {
