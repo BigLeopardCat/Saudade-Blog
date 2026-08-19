@@ -59,7 +59,7 @@
   });
   
   await Promise.all([
-    loadExternalResource(live2d_path + 'waifu.css?v=20260801m', 'css'),
+    loadExternalResource(live2d_path + 'waifu.css?v=20260819a', 'css'),
     loadExternalResource(live2d_path + 'waifu-tips.js', 'js'),
   ]);
 
