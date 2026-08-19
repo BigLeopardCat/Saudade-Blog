@@ -1,6 +1,7 @@
 import { createBrowserRouter } from "react-router-dom";
 import Login from "../pages/Login";
 import Dashboard from "../pages/Dashboard";
+import RiverBoard from "../pages/RiverBoard/index";
 import { AuthRouter } from "../components/AuthRouter.tsx";
 import Home from "../pages/Dashboard/Home";
 import Notes from "../pages/Dashboard/Notes";
@@ -68,6 +69,11 @@ const router = createBrowserRouter([
     {
         path: 'login',
         element: <Login />
+    },
+    // 隐藏路由：河灯留言板（/he 河灯）。前端无任何入口按钮，仅有完整地址才能到达。
+    {
+        path: 'he',
+        element: <RiverBoard />
     },
     {
         path: '/dashboard',

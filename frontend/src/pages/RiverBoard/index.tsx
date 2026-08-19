@@ -1,0 +1,1265 @@
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import "./index.scss";
+import { runtimeBaseURL } from "../../utils/runtimeApi";
+
+/* 河灯留言板 ── 一条只存在于路由之下的河。
+   整页为独立顶层路由（/he），不挂博客的头部与底部。
+   画面全部为 Canvas 逐帧绘制 + 预渲染灯笼精灵的 DOM 放置。 */
+
+/* ------------------------- 心愿文案 ------------------------- */
+
+const DEMO_MESSAGES = [
+    "愿所有等待，终将迎来相逢。",
+    "把今晚的月色，寄给远方的你。",
+    "愿你走过的路，都开成了花。",
+    "祝我爱的人和爱我的人，平安喜乐。",
+    "愿你历尽千帆，归来仍是少年。",
+    "想攒够温柔，洒给明天的自己。",
+    "月亮不睡我不睡，把烦恼都丢进河里。",
+    "愿世间美好，都与你我不期而遇。",
+    "此时莺飞草长，爱的人正在路上。",
+    "愿你三冬暖，愿你春不寒。",
+    "别再熬夜赶工了，早点睡吧。",
+    "希望某一天的灯下，见到想见的人。",
+    "河灯会飘向远方，心事请留在这里。",
+    "愿今年的愿望，明年还能在河里捞得到。",
+    "把难过留在此刻的河面上，天亮就出发。",
+    "愿你所求皆如愿，所行化坦途。",
+];
+
+type Wish = { id: number; v: number; msg: string };
+
+/* ------------------------- 灯笼精灵预渲染 -------------------------
+   三种花样：莲花灯 / 八角灯 / 圆笼灯，全部用 Canvas 手绘，
+   比 CSS 拼装的灯笼精致得多，且只有一次离屏绘制成本。 */
+
+const SPRITE_SIZE = 288;
+
+function drawLotus(ctx: CanvasRenderingContext2D, S: number) {
+    const cx = S / 2, cy = S / 2;
+    // —— 外层花瓣环 ——
+    const petalRim = S * 0.30, petalLen = S * 0.42;
+    const petals = 7;
+    for (let i = 0; i < petals; i++) {
+        const a = (i / petals) * Math.PI * 2 - Math.PI / 2;
+        const back = i % 2 === 0;
+        ctx.save();
+        ctx.translate(cx, cy);
+        ctx.rotate(a);
+        const grad = ctx.createLinearGradient(0, 0, 0, -petalLen);
+        grad.addColorStop(0, back ? "rgba(214,130,58,0.95)" : "rgba(240,168,90,0.98)");
+        grad.addColorStop(0.6, back ? "rgba(250,196,120,0.9)" : "rgba(255,216,146,0.97)");
+        grad.addColorStop(1, "rgba(255,228,170,0.92)");
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.quadraticCurveTo(petalRim * 0.55, -petalLen * 0.30, 0, -petalLen); // 右缘
+        ctx.quadraticCurveTo(-petalRim * 0.55, -petalLen * 0.30, 0, 0);        // 左缘
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = "rgba(168,86,32,0.35)";
+        ctx.lineWidth = S * 0.008;
+        ctx.stroke();
+        // 花瓣中脉
+        ctx.strokeStyle = "rgba(255,240,205,0.5)";
+        ctx.lineWidth = S * 0.008;
+        ctx.beginPath();
+        ctx.moveTo(0, -petalLen * 0.08);
+        ctx.quadraticCurveTo(petalRim * 0.14, -petalLen * 0.55, 0, -petalLen * 0.94);
+        ctx.stroke();
+        ctx.restore();
+    }
+    // —— 灯碗 ——
+    const bowl = ctx.createRadialGradient(cx, cy, S * 0.02, cx, cy, S * 0.30);
+    bowl.addColorStop(0, "rgba(255,238,196,0.98)");
+    bowl.addColorStop(0.55, "rgba(252,196,112,0.98)");
+    bowl.addColorStop(0.85, "rgba(226,138,62,0.98)");
+    bowl.addColorStop(1, "rgba(176,92,34,0.98)");
+    ctx.fillStyle = bowl;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, S * 0.30, S * 0.145, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // 灯碗骨线（向中心聚拢的竖肋）
+    ctx.strokeStyle = "rgba(150,74,22,0.30)";
+    ctx.lineWidth = S * 0.008;
+    for (let i = 0; i < 9; i++) {
+        const a = (i / 9) * Math.PI * 2;
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(a) * S * 0.015, cy + Math.sin(a) * S * 0.007);
+        ctx.quadraticCurveTo(
+            cx + Math.cos(a) * S * 0.16,
+            cy + S * 0.10 + Math.sin(a) * S * 0.05,
+            cx + Math.cos(a) * S * 0.295,
+            cy + Math.sin(a) * S * 0.143
+        );
+        ctx.stroke();
+    }
+    // 碗沿
+    ctx.strokeStyle = "rgba(255,238,200,0.55)";
+    ctx.lineWidth = S * 0.010;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, S * 0.30, S * 0.145, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    // —— 火焰 ——
+    const fg = ctx.createRadialGradient(cx, cy - S * 0.01, 0, cx, cy - S * 0.01, S * 0.09);
+    fg.addColorStop(0, "rgba(255,250,224,1)");
+    fg.addColorStop(0.4, "rgba(255,228,150,0.95)");
+    fg.addColorStop(1, "rgba(255,180,80,0)");
+    ctx.fillStyle = fg;
+    ctx.beginPath();
+    ctx.arc(cx, cy - S * 0.01, S * 0.09, 0, Math.PI * 2);
+    ctx.fill();
+    // 焰心竖滴（火苗）
+    const tip = ctx.createLinearGradient(0, cy - S * 0.085, 0, cy + S * 0.015);
+    tip.addColorStop(0, "rgba(255,252,235,0.95)");
+    tip.addColorStop(1, "rgba(255,196,96,0)");
+    ctx.fillStyle = tip;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy - S * 0.035, S * 0.028, S * 0.052, 0, 0, Math.PI * 2);
+    ctx.fill();
+}
+
+function drawOct(ctx: CanvasRenderingContext2D, S: number) {
+    const cx = S / 2, cy = S / 2;
+    const W = S * 0.30, H = S * 0.40;
+    // 六角灯笼身：六条竖棱的异形桶
+    const pts: [number, number][] = [
+        [cx, cy - H],
+        [cx + W * 0.7, cy - H * 0.55],
+        [cx + W, cy],
+        [cx + W * 0.7, cy + H * 0.55],
+        [cx, cy + H],
+        [cx - W * 0.7, cy + H * 0.55],
+        [cx - W, cy],
+        [cx - W * 0.7, cy - H * 0.55],
+    ];
+    const body = ctx.createRadialGradient(cx, cy, 0, cx, cy, W);
+    body.addColorStop(0, "rgba(255,240,198,0.98)");
+    body.addColorStop(0.6, "rgba(250,196,120,0.97)");
+    body.addColorStop(1, "rgba(214,128,56,0.96)");
+    ctx.fillStyle = body;
+    ctx.beginPath();
+    pts.forEach((p, i) => (i === 0 ? ctx.moveTo(p[0], p[1]) : ctx.lineTo(p[0], p[1])));
+    ctx.closePath();
+    ctx.fill();
+    // 菱形编格
+    ctx.strokeStyle = "rgba(150,72,20,0.28)";
+    ctx.lineWidth = S * 0.008;
+    for (let i = -2; i <= 2; i++) {
+        ctx.beginPath();
+        ctx.moveTo(cx - W * 1.05, cy + i * H * 0.18);
+        ctx.lineTo(cx + W * 1.05, cy - i * H * 0.18);
+        ctx.stroke();
+    }
+    for (let i = -2; i <= 2; i++) {
+        ctx.beginPath();
+        ctx.moveTo(cx - W * 1.05, cy - i * H * 0.18);
+        ctx.lineTo(cx + W * 1.05, cy + i * H * 0.18);
+        ctx.stroke();
+    }
+    // 上下金箍
+    ctx.fillStyle = "rgba(196,124,52,0.95)";
+    ctx.fillRect(cx - W * 0.78, cy - H * 0.60, W * 1.56, S * 0.035);
+    ctx.fillRect(cx - W * 0.78, cy + H * 0.60 - S * 0.035, W * 1.56, S * 0.035);
+    // 顶部提环（迷你）
+    ctx.strokeStyle = "rgba(200,140,70,0.9)";
+    ctx.lineWidth = S * 0.014;
+    ctx.beginPath();
+    ctx.arc(cx, cy - H - S * 0.015, S * 0.03, Math.PI * 1.15, Math.PI * 1.85, true);
+    ctx.stroke();
+    // 火焰
+    const fg = ctx.createRadialGradient(cx, cy, 0, cx, cy, S * 0.10);
+    fg.addColorStop(0, "rgba(255,250,230,1)");
+    fg.addColorStop(0.45, "rgba(255,226,148,0.95)");
+    fg.addColorStop(1, "rgba(255,176,80,0)");
+    ctx.fillStyle = fg;
+    ctx.beginPath();
+    ctx.arc(cx, cy, S * 0.10, 0, Math.PI * 2);
+    ctx.fill();
+    const tip = ctx.createLinearGradient(0, cy - S * 0.09, 0, cy + S * 0.02);
+    tip.addColorStop(0, "rgba(255,252,238,0.95)");
+    tip.addColorStop(1, "rgba(255,196,96,0)");
+    ctx.fillStyle = tip;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, S * 0.030, S * 0.055, 0, 0, Math.PI * 2);
+    ctx.fill();
+}
+
+function drawDrum(ctx: CanvasRenderingContext2D, S: number) {
+    const cx = S / 2, cy = S / 2;
+    const W = S * 0.24, H = S * 0.34;
+    // 圆笼灯笼身
+    const body = ctx.createRadialGradient(cx, cy, 0, cx, cy, W);
+    body.addColorStop(0, "rgba(255,238,192,0.98)");
+    body.addColorStop(0.55, "rgba(248,190,110,0.98)");
+    body.addColorStop(1, "rgba(208,124,54,0.98)");
+    ctx.fillStyle = body;
+    ctx.beginPath();
+    ctx.moveTo(cx - W, cy - H * 0.8);
+    ctx.quadraticCurveTo(cx - W * 1.35, cy, cx - W, cy + H * 0.8);
+    ctx.quadraticCurveTo(cx, cy + H, cx + W, cy + H * 0.8);
+    ctx.quadraticCurveTo(cx + W * 1.35, cy, cx + W, cy - H * 0.8);
+    ctx.quadraticCurveTo(cx, cy - H, cx - W, cy - H * 0.8);
+    ctx.closePath();
+    ctx.fill();
+    // 纵向肋
+    ctx.strokeStyle = "rgba(140,68,18,0.30)";
+    ctx.lineWidth = S * 0.008;
+    for (let i = -2; i <= 2; i++) {
+        ctx.beginPath();
+        ctx.moveTo(cx + i * W * 0.4, cy - H * 0.78);
+        ctx.quadraticCurveTo(cx + i * W * 0.52, cy, cx + i * W * 0.4, cy + H * 0.78);
+        ctx.stroke();
+    }
+    // 横箍
+    ctx.strokeStyle = "rgba(200,120,52,0.6)";
+    ctx.lineWidth = S * 0.012;
+    for (const t of [-0.5, 0, 0.5]) {
+        ctx.beginPath();
+        const y = cy + t * H * 0.9;
+        ctx.moveTo(cx - W * 1.04, y);
+        ctx.quadraticCurveTo(cx, y + H * 0.16, cx + W * 1.04, y);
+        ctx.stroke();
+    }
+    // 上下盖
+    ctx.fillStyle = "rgba(176,100,40,0.98)";
+    ctx.beginPath();
+    ctx.ellipse(cx, cy - H * 0.90, W * 0.9, S * 0.05, 0, 0, Math.PI * 2);
+    ctx.ellipse(cx, cy + H * 0.90, W * 0.9, S * 0.05, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // 火焰
+    const fg = ctx.createRadialGradient(cx, cy, 0, cx, cy, S * 0.08);
+    fg.addColorStop(0, "rgba(255,251,232,1)");
+    fg.addColorStop(0.5, "rgba(255,228,152,0.95)");
+    fg.addColorStop(1, "rgba(255,178,80,0)");
+    ctx.fillStyle = fg;
+    ctx.beginPath();
+    ctx.arc(cx, cy, S * 0.08, 0, Math.PI * 2);
+    ctx.fill();
+    const tip = ctx.createLinearGradient(0, cy - S * 0.075, 0, cy + S * 0.02);
+    tip.addColorStop(0, "rgba(255,252,238,0.95)");
+    tip.addColorStop(1, "rgba(255,196,96,0)");
+    ctx.fillStyle = tip;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, S * 0.026, S * 0.05, 0, 0, Math.PI * 2);
+    ctx.fill();
+}
+
+function buildSprites(): string[] {
+    const c = document.createElement("canvas");
+    c.width = SPRITE_SIZE;
+    c.height = SPRITE_SIZE;
+    const s = c.getContext("2d");
+    if (!s) return [];
+    const S = SPRITE_SIZE;
+    s.clearRect(0, 0, S, S);
+    drawLotus(s, S);
+    const a = c.toDataURL("image/png");
+    s.clearRect(0, 0, S, S);
+    drawOct(s, S);
+    const b = c.toDataURL("image/png");
+    s.clearRect(0, 0, S, S);
+    drawDrum(s, S);
+    return [a, b, c.toDataURL("image/png")];
+}
+
+/* ------------------------- 场景参数 ------------------------- */
+
+const ZN = 1.12; // 近景视距
+const ZF = 9.0; // 远山/地平线视距
+const dOf = (z: number) => {
+    const a = 1 - ZN / z;
+    const b = 1 - ZN / ZF;
+    return Math.max(0, Math.min(1, a / b));
+};
+
+interface LanternMeta {
+    id: number;
+    v: number;
+    u: number;
+    z: number;
+    w: number;
+    sway: number;
+    hue: number;
+    bright: number;
+}
+
+interface Amb {
+    stars: { x: number; y: number; r: number; tw: number; ph: number; warm: boolean; fl: boolean }[];
+    streaks: { u: number; d: number; spd: number; ph: number; len: number; warm: boolean }[];
+    glints: { u: number; d: number; ph: number; spd: number; warm: boolean; br: number }[];
+    bands: { d0: number; wd: number; spd: number; ph: number }[];
+    fireflies: { x: number; y: number; vx: number; vy: number; ph: number }[];
+    skyGlows: { x: number; y: number; spd: number; ph: number }[];
+    grass: { x: number; y: number; len: number; lean: number; ph: number; s: number }[];
+    reeds: { x: number; y: number; len: number; ph: number }[];
+    shoot: { t: number; x0: number; y0: number; dx: number; dy: number } | null;
+    shootAt: number;
+    now: number;
+}
+
+let amb: Amb | null = null;
+
+/* ------------------------- 组件 ------------------------- */
+
+export default function RiverBoard() {
+    const canvasRef = useRef<HTMLCanvasElement | null>(null);
+    const layerRef = useRef<HTMLDivElement | null>(null);
+    const metaRef = useRef<LanternMeta[]>([]);
+    const nodesRef = useRef<Map<number, HTMLDivElement | null>>(new Map());
+    const viewRef = useRef({ w: 0, h: 0, yH: 0, dpr: 1, reduced: false });
+    const mouseRef = useRef({ x: 0.5, y: 0.5, tx: 0.5, ty: 0.5 });
+    const touchRef = useRef(false);
+
+    const [sprites] = useState<string[]>(buildSprites);
+    const [lanterns, setLanterns] = useState<Wish[]>([]);
+    const [ready, setReady] = useState(false);
+
+    /* 布局：视口与投影常量 */
+    const layout = (w: number, h: number) => {
+        const v = viewRef.current;
+        v.w = w;
+        v.h = h;
+        v.yH = h * 0.33;
+    };
+
+    const riverX = (u: number, d: number) => {
+        const v = viewRef.current;
+        const bend = Math.sin(0.6 + d * 2.2);
+        const c = v.w * (0.5 + 0.05 * bend);
+        const hw = v.w * (0.24 + d * d * 0.96);
+        return c + (u - 0.5) * 2 * hw;
+    };
+    const riverY = (d: number) => {
+        const v = viewRef.current;
+        // d 可能因重生为负数：pow 负数小数次幂是 NaN，会传染整帧绘制
+        return v.yH + (v.h * 1.06 - v.yH) * Math.pow(Math.max(0, d), 1.38);
+    };
+
+    /* 场景初始化 */
+    const buildAmb = () => {
+        const v = viewRef.current;
+        const dens = Math.min(1, Math.max(0.45, (v.w * v.h) / (1440 * 900)));
+        const stars: Amb["stars"] = [];
+        const nStar = Math.round(330 * dens);
+        for (let i = 0; i < nStar; i++) {
+            stars.push({
+                x: Math.random(),
+                y: Math.pow(Math.random(), 1.35) * 0.34,
+                r: 0.4 + Math.random() * 1.4,
+                tw: 0.6 + Math.random() * 2.4,
+                ph: Math.random() * Math.PI * 2,
+                warm: Math.random() < 0.14,
+                fl: Math.random() < 0.1 && Math.random() > 0.02,
+            });
+        }
+        const streaks: Amb["streaks"] = [];
+        const nStreak = Math.round(170 * dens);
+        for (let i = 0; i < nStreak; i++) {
+            streaks.push({
+                u: Math.pow(Math.random(), 1.3) * 0.92 + 0.04,
+                d: Math.random(),
+                spd: 0.6 + Math.random() * 1.6,
+                ph: Math.random() * Math.PI * 2,
+                len: 0.5 + Math.random() * 1.5,
+                warm: Math.random() < 0.22,
+            });
+        }
+        const glints: Amb["glints"] = [];
+        const nGlint = Math.round(140 * dens);
+        for (let i = 0; i < nGlint; i++) {
+            glints.push({
+                u: Math.pow(Math.random(), 1.25) * 0.9 + 0.05,
+                d: Math.random(),
+                ph: Math.random() * Math.PI * 2,
+                spd: 0.7 + Math.random() * 1.8,
+                warm: Math.random() < 0.35,
+                br: 0.4 + Math.random() * 0.6,
+            });
+        }
+        const bands: Amb["bands"] = [];
+        for (let i = 0; i < 9; i++) {
+            bands.push({
+                d0: i / 9 + Math.random() * 0.03,
+                wd: 0.012 + Math.random() * 0.03,
+                spd: 0.05 + Math.random() * 0.06,
+                ph: Math.random() * Math.PI * 2,
+            });
+        }
+        // 宽幅水光带（缓慢漂移的整体明暗起伏）
+        for (let i = 0; i < 3; i++) {
+            bands.push({
+                d0: 0.05 + Math.random() * 0.3,
+                wd: 0.06 + Math.random() * 0.07,
+                spd: 0.028 + Math.random() * 0.03,
+                ph: Math.random() * Math.PI * 2,
+            });
+        }
+        const fireflies: Amb["fireflies"] = [];
+        const nFf = Math.round(15 * dens);
+        for (let i = 0; i < nFf; i++) {
+            const left = Math.random() < 0.55;
+            fireflies.push({
+                x: left ? Math.random() * 0.17 : 0.83 + Math.random() * 0.17,
+                y: 0.2 + Math.random() * 0.75,
+                vx: 0,
+                vy: 0,
+                ph: Math.random() * Math.PI * 2,
+            });
+        }
+        const skyGlows: Amb["skyGlows"] = [];
+        const nGlow = Math.round(3 * dens) + 1;
+        for (let i = 0; i < nGlow; i++) {
+            skyGlows.push({
+                x: 0.15 + Math.random() * 0.7,
+                y: 0.55 + Math.random() * 0.2,
+                spd: 0.012 + Math.random() * 0.015,
+                ph: Math.random() * Math.PI * 2,
+            });
+        }
+        const grass: Amb["grass"] = [];
+        for (let i = 0; i < 30; i++) {
+            grass.push({
+                x: Math.random() * 0.15,
+                y: 0.92 + Math.random() * 0.08,
+                len: 60 + Math.random() * 110,
+                lean: (Math.random() - 0.5) * 0.5,
+                ph: Math.random() * Math.PI * 2,
+                s: 0.8 + Math.random() * 0.6,
+            });
+        }
+        const reeds: Amb["reeds"] = [];
+        for (let i = 0; i < 8; i++) {
+            reeds.push({
+                x: 0.02 + Math.random() * 0.09,
+                y: 0.52 + Math.random() * 0.16,
+                len: 40 + Math.random() * 60,
+                ph: Math.random() * Math.PI * 2,
+            });
+        }
+        amb = {
+            stars, streaks, glints, bands, fireflies, skyGlows, grass, reeds,
+            shoot: null, shootAt: 4 + Math.random() * 5, now: 0,
+        };
+    };
+
+    const respawnStreak = (s: Amb["streaks"][number]) => {
+        s.d = -0.06 - Math.random() * 0.12;
+        s.u = Math.pow(Math.random(), 1.3) * 0.92 + 0.04;
+        s.ph = Math.random() * Math.PI * 2;
+        s.warm = Math.random() < 0.22;
+    };
+
+    /* 河流路径辅助（水里所有动态物件都画在它内部） */
+    const traceRiver = (ctx: CanvasRenderingContext2D, dFrom: number, dTo: number, easeUDepth: boolean) => {
+        const N = 46;
+        const yF = riverY(dFrom), yT = riverY(dTo);
+        ctx.beginPath();
+        if (yF <= yT) {
+            ctx.moveTo(riverX(0, dFrom), yF);
+            for (let i = 1; i <= N; i++) {
+                const d = dFrom + (dTo - dFrom) * (easeUDepth ? i / N : i / N);
+                ctx.lineTo(riverX(0, d), riverY(d));
+            }
+            for (let i = N; i >= 0; i--) {
+                const d = dFrom + (dTo - dFrom) * (i / N);
+                ctx.lineTo(riverX(1, d), riverY(d));
+            }
+        } else {
+            ctx.moveTo(riverX(0, dFrom), yF);
+            for (let i = 1; i <= N; i++) {
+                const d = dFrom + (dTo - dFrom) * (i / N);
+                ctx.lineTo(riverX(0, d), riverY(d));
+            }
+            for (let i = N; i >= 0; i--) {
+                const d = dFrom + (dTo - dFrom) * (i / N);
+                ctx.lineTo(riverX(1, d), riverY(d));
+            }
+        }
+        ctx.closePath();
+    };
+
+    /* ════════════════════════════════════════════════════════════
+       分层渲染（DPR 修正）
+       baseBack / baseFront：静态层，仅窗口变化时重绘一次
+         baseBack  ：夜空、星辰、月、云影、远山、河水底色、河心天光带
+         baseFront ：两岸剪影、苇丛、前景草、垂柳、近景水汽
+       drawScene  ：逐帧动态层（宽幅水光带、月光碎影、流向纹、碎光点、
+                     星光闪烁、萤火虫、孔明灯、流星）
+       ──────────────────────────────────────────────────────────── */
+
+    const MARGIN = 40; // 静态层出血边，给鼠标视差留位移余地
+
+    /* ---- 静态层（背景） ---- */
+    const renderBase = (
+        backCv: HTMLCanvasElement,
+        frontCv: HTMLCanvasElement
+    ) => {
+        const a = amb;
+        if (!a) return;
+        const back = backCv.getContext("2d")!;
+        const front = frontCv.getContext("2d")!;
+        const v = viewRef.current;
+        const { w, h } = v;
+        const prep = (ctx: CanvasRenderingContext2D) => {
+            ctx.setTransform(v.dpr, 0, 0, v.dpr, 0, 0);
+            ctx.translate(MARGIN, MARGIN);
+            ctx.clearRect(-MARGIN, -MARGIN, w + MARGIN * 2, h + MARGIN * 2);
+        };
+        const draw = (ctx: CanvasRenderingContext2D) => {
+
+            // 夜空
+            const sky = ctx.createLinearGradient(0, 0, 0, v.yH * 1.25);
+            sky.addColorStop(0, "#02040c");
+            sky.addColorStop(0.42, "#081029");
+            sky.addColorStop(0.78, "#101a3c");
+            sky.addColorStop(1, "#1c2450");
+            ctx.fillStyle = sky;
+            ctx.fillRect(-MARGIN, -MARGIN, w + MARGIN * 2, v.yH * 1.25 + MARGIN * 2);
+
+            // 星辰（静态基色）
+            for (const st of a.stars) {
+                ctx.fillStyle = st.warm ? "rgba(255,236,205,0.62)" : "rgba(214,228,255,0.68)";
+                ctx.beginPath();
+                ctx.arc(st.x * w, st.y * h, st.r, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // 月亮（上弦 + 光晕）
+            const mxMoon = w * 0.66;
+            const myMoon = h * 0.16;
+            const halo = ctx.createRadialGradient(mxMoon, myMoon, 0, mxMoon, myMoon, w * 0.34);
+            halo.addColorStop(0, "rgba(255,238,200,0.34)");
+            halo.addColorStop(0.28, "rgba(255,226,170,0.12)");
+            halo.addColorStop(1, "rgba(255,226,170,0)");
+            ctx.fillStyle = halo;
+            ctx.fillRect(mxMoon - w * 0.36, myMoon - w * 0.36, w * 0.72, w * 0.72);
+            const rMoon = Math.min(w, h) * 0.052;
+            ctx.fillStyle = "rgba(255,246,222,0.96)";
+            ctx.beginPath();
+            ctx.arc(mxMoon, myMoon, rMoon * 0.82, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.globalCompositeOperation = "destination-out";
+            ctx.beginPath();
+            ctx.arc(mxMoon - rMoon * 0.34, myMoon - rMoon * 0.24, rMoon * 0.78, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.globalCompositeOperation = "source-over";
+            ctx.strokeStyle = "rgba(255,240,210,0.5)";
+            ctx.lineWidth = 1.6;
+            ctx.beginPath();
+            ctx.arc(mxMoon, myMoon, rMoon * 0.82, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // 云影（静态，随视差层缓慢移动）
+            ctx.fillStyle = "rgba(24,32,60,0.10)";
+            for (let c = 0; c < 3; c++) {
+                const cx = ((c * 431) % (w + 500)) * 0.6 + w * 0.1 + c * 120;
+                const cy = h * (0.08 + c * 0.09);
+                for (let b = 0; b < 5; b++) {
+                    const bx = cx + Math.sin(c * 7.3 + b * 1.9) * 90;
+                    const by = cy + Math.cos(c * 5.1 + b * 2.7) * 22;
+                    const br = 60 + b * 26;
+                    const g = ctx.createRadialGradient(bx, by, 0, bx, by, br);
+                    g.addColorStop(0, "rgba(23,31,58,0.10)");
+                    g.addColorStop(1, "rgba(23,31,58,0)");
+                    ctx.fillStyle = g;
+                    ctx.beginPath();
+                    ctx.arc(bx, by, br, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+
+            // 远山三层
+            const ridge = (base: number, seed: number, amp: number, c1: string) => {
+                ctx.beginPath();
+                ctx.moveTo(-MARGIN - 20, h + MARGIN);
+                ctx.lineTo(-MARGIN - 20, base);
+                for (let x = -MARGIN - 20; x <= w + MARGIN + 20; x += 9) {
+                    ctx.lineTo(
+                        x,
+                        base +
+                            Math.sin(x * 0.0042 + seed) * amp * 1.2 +
+                            Math.sin(x * 0.011 + seed * 2.7) * amp * 0.7 +
+                            Math.sin(x * 0.023 + seed * 5.1) * amp * 0.28
+                    );
+                }
+                ctx.lineTo(w + MARGIN + 20, h + MARGIN);
+                ctx.closePath();
+                ctx.fillStyle = c1;
+                ctx.fill();
+            };
+            ridge(v.yH * 0.82, 3.1, h * 0.045, "#0b1230");
+            ridge(v.yH * 0.92, 8.7, h * 0.062, "#070d22");
+            ridge(v.yH * 0.97, 1.7, h * 0.05, "#050a18");
+            ctx.strokeStyle = "rgba(140,170,255,0.10)";
+            ctx.lineWidth = 1.2;
+            for (const [seed, base, amp] of [
+                [8.7, v.yH * 0.92, h * 0.062],
+                [3.1, v.yH * 0.82, h * 0.045],
+            ] as const) {
+                ctx.beginPath();
+                for (let x = -MARGIN - 20; x <= w + MARGIN + 20; x += 9) {
+                    const y =
+                        base +
+                        Math.sin(x * 0.0042 + seed) * amp * 1.2 +
+                        Math.sin(x * 0.011 + seed * 2.7) * amp * 0.7 +
+                        Math.sin(x * 0.023 + seed * 5.1) * amp * 0.28;
+                    x === -MARGIN - 20 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+                }
+                ctx.stroke();
+            }
+
+            // 河水底色 + 河心天光带
+            const riverBase = ctx.createLinearGradient(0, v.yH, 0, h);
+            riverBase.addColorStop(0, "#1a2350");
+            riverBase.addColorStop(0.3, "#0e1734");
+            riverBase.addColorStop(0.62, "#080f24");
+            riverBase.addColorStop(1, "#040818");
+            traceRiver(ctx, 0, 1.14, false);
+            ctx.fillStyle = riverBase;
+            ctx.fill();
+            traceRiver(ctx, 0, 1.14, false);
+            ctx.save();
+            ctx.clip();
+            const heart = ctx.createLinearGradient(0, v.yH * 0.98, 0, h);
+            heart.addColorStop(0, "rgba(150,180,255,0.19)");
+            heart.addColorStop(0.45, "rgba(120,150,235,0.09)");
+            heart.addColorStop(1, "rgba(90,120,210,0.03)");
+            traceRiver(ctx, 0, 1.14, false);
+            ctx.fillStyle = heart;
+            ctx.fill();
+            ctx.restore();
+        };
+
+        prep(back);
+        draw(back);
+
+        prep(front);
+        front.drawImage(backCv, -MARGIN, -MARGIN);
+        // 前层：两岸剪影、苇丛、草、柳、雾
+        const bankGrad = front.createLinearGradient(0, v.yH, 0, h);
+        bankGrad.addColorStop(0, "#050a18");
+        bankGrad.addColorStop(0.55, "#020408");
+        bankGrad.addColorStop(1, "#010205");
+        front.fillStyle = bankGrad;
+        front.beginPath();
+        front.moveTo(-MARGIN - 8, h + 30);
+        for (let i = 0; i <= 34; i++) {
+            const d = (i / 34) * 1.16;
+            const edge = -0.06 + Math.sin(i * 1.9) * 0.015 * (1 - d) + Math.sin(i * 2.7) * 0.008;
+            front.lineTo(riverX(edge, d), riverY(d));
+        }
+        front.lineTo(riverX(-0.05, 0), v.yH - 4);
+        front.lineTo(-MARGIN - 8, v.yH - 4);
+        front.closePath();
+        front.fill();
+        front.beginPath();
+        front.moveTo(w + MARGIN + 8, h + 30);
+        for (let i = 0; i <= 34; i++) {
+            const d = (i / 34) * 1.16;
+            const edge = 1.06 + Math.sin(i * 1.9) * 0.015 * (1 - d) - Math.sin(i * 2.7) * 0.008;
+            front.lineTo(riverX(edge, d), riverY(d));
+        }
+        front.lineTo(riverX(1.05, 0), v.yH - 4);
+        front.lineTo(w + MARGIN + 8, v.yH - 4);
+        front.closePath();
+        front.fill();
+
+        // 苇丛（左岸中景）
+        front.strokeStyle = "#04091a";
+        front.lineWidth = 3;
+        for (const r of a.reeds) {
+            const rx = r.x * w;
+            const ry = r.y * h;
+            front.beginPath();
+            front.moveTo(rx, ry);
+            front.quadraticCurveTo(rx, ry - r.len * 0.4, rx, ry - r.len);
+            front.stroke();
+            front.fillStyle = "rgba(90,110,170,0.35)";
+            front.beginPath();
+            front.ellipse(rx, ry - r.len - 2, 3.4, 9, 0, 0, Math.PI * 2);
+            front.fill();
+        }
+
+        // 前景草丛（左下）
+        for (const g0 of a.grass) {
+            const gx = g0.x * w;
+            const gy = g0.y * h;
+            front.strokeStyle = `rgba(${4 + g0.s * 6}, ${9 + g0.s * 10}, ${22 + g0.s * 15}, 0.95)`;
+            front.lineWidth = 1.6 * g0.s;
+            front.beginPath();
+            front.moveTo(gx, gy);
+            front.quadraticCurveTo(gx + g0.lean * 20, gy - g0.len * 0.55, gx + g0.lean * 40, gy - g0.len);
+            front.stroke();
+            front.beginPath();
+            front.moveTo(gx, gy);
+            front.quadraticCurveTo(gx + g0.lean * 20 - 6, gy - g0.len * 0.45, gx + g0.lean * 30 - 5, gy - g0.len * 0.72);
+            front.stroke();
+        }
+
+        // 垂柳（右上空枝）
+        front.strokeStyle = "#01030a";
+        for (let s = 0; s < 6; s++) {
+            const tx = w * 0.985 + s * 14;
+            const ty = h * 0.05 + s * 26;
+            front.lineWidth = 9 - s * 1.4;
+            front.beginPath();
+            front.moveTo(w * 0.985, h * 0.02);
+            front.quadraticCurveTo(w * 0.985 + 18, h * 0.05 + 40, tx, ty);
+            front.stroke();
+        }
+        front.lineWidth = 1.4;
+        for (let s = 0; s < 7; s++) {
+            const bx = w * 0.985 + s * 13;
+            const by = h * 0.02 + s * 22 + 12;
+            const hang = h * 0.5 * (0.55 + (s % 3) * 0.18);
+            front.beginPath();
+            front.moveTo(bx, by);
+            front.quadraticCurveTo(bx - 6, by + hang * 0.5, bx - 12, by + hang);
+            front.stroke();
+            for (let l = 0; l < 5; l++) {
+                const lt = l / 4;
+                const lx = bx - 6 * 2 * lt - 6 * lt;
+                const ly = by + hang * (lt * 0.85 + 0.15);
+                front.save();
+                front.translate(lx, ly);
+                front.rotate(0.9);
+                front.fillStyle = "rgba(4,8,16,0.85)";
+                front.beginPath();
+                front.ellipse(0, 0, 7, 2.2, 0, 0, Math.PI * 2);
+                front.fill();
+                front.restore();
+            }
+        }
+
+        // 近景水汽（横雾）
+        for (const [base, amp, al] of [
+            [v.yH * 0.98, 16, 0.11],
+            [v.yH * 1.02, 30, 0.08],
+        ] as const) {
+            const fog = front.createLinearGradient(0, base - amp, 0, base + amp);
+            fog.addColorStop(0, "rgba(120,150,220,0)");
+            fog.addColorStop(0.5, `rgba(120,150,220,${al})`);
+            fog.addColorStop(1, "rgba(120,150,220,0)");
+            front.fillStyle = fog;
+            front.fillRect(-MARGIN, base - amp, w + MARGIN * 2, amp * 2);
+        }
+    };
+
+    /* ---- 逐帧动态层 ---- */
+    const drawScene = (ctx: CanvasRenderingContext2D, t: number, reduce: boolean, baseBack: HTMLCanvasElement, baseFront: HTMLCanvasElement) => {
+        if (!amb) return;
+        const v = viewRef.current;
+        const { w, h } = v;
+        const px = (mouseRef.current.x - 0.5) * 26;
+        const py = (mouseRef.current.y - 0.5) * 14;
+        if (reduce) {
+            mouseRef.current.x = 0.5;
+            mouseRef.current.y = 0.5;
+        }
+        ctx.clearRect(0, 0, w, h);
+
+        // 静态层合成（带视差）
+        ctx.drawImage(baseBack, px * 0.2 - MARGIN, py * 0.1 - MARGIN, w + MARGIN * 2, h + MARGIN * 2);
+        ctx.drawImage(baseFront, px * 0.42 - MARGIN, py * 0.2 - MARGIN, w + MARGIN * 2, h + MARGIN * 2);
+
+        // 水面动态（河流裁剪区内）
+        ctx.save();
+        traceRiver(ctx, 0, 1.14, false);
+        ctx.clip();
+
+        // 宽幅水光带（缓慢漂移的整体明暗起伏）
+        for (const bd of amb.bands) {
+            bd.d0 += bd.wd * 0.7 * (reduce ? 0.15 : 1) * 0.022;
+            if (bd.d0 > 1.12) bd.d0 = -0.1 - Math.random() * 0.05;
+            const dTop = bd.d0, dBot = bd.d0 + bd.wd;
+            const yT = riverY(dTop), yB = riverY(dBot);
+            if (yB < v.yH - 4) continue;
+            if (yT > h + 30) continue;
+            const N = 22;
+            ctx.beginPath();
+            for (let i = 0; i <= N; i++) {
+                const u = i / N;
+                const wob = Math.sin(u * 7.4 + t * 0.5 * (reduce ? 0.2 : 1) + bd.ph) * 0.006;
+                ctx.lineTo(riverX(u, Math.min(1.09, dTop + wob * 0.3)), riverY(dTop + wob));
+            }
+            for (let i = N; i >= 0; i--) {
+                const u = i / N;
+                ctx.lineTo(riverX(u, dBot), riverY(dBot));
+            }
+            ctx.closePath();
+            const g = ctx.createLinearGradient(0, yT, 0, yB);
+            const balpha = bd.wd > 0.05 ? 0.085 : 0.058;
+            g.addColorStop(0, "rgba(150,178,240,0)");
+            g.addColorStop(0.5, `rgba(150,178,240,${balpha})`);
+            g.addColorStop(1, "rgba(150,178,240,0)");
+            ctx.fillStyle = g;
+            ctx.fill();
+        }
+
+        // 月光碎影（垂直碎光柱）
+        const uM = 0.5;
+        const glowC = ctx.createLinearGradient(0, v.yH * 0.99, 0, h);
+        glowC.addColorStop(0, "rgba(255,224,160,0)");
+        glowC.addColorStop(0.5, "rgba(255,224,160,0.05)");
+        glowC.addColorStop(1, "rgba(255,224,160,0)");
+        traceRiver(ctx, 0, 1.08, false);
+        ctx.fillStyle = glowC;
+        ctx.fill();
+        for (let i = 0; i < 46; i++) {
+            const k = i / 46;
+            const d = Math.pow(k, 1.08) * 1.0;
+            const flick = 0.05 + 0.5 * Math.abs(Math.sin(t * 2.6 + i * 7.7) * Math.sin(t * 1.1 + i * 3.3));
+            if (k > 0.3 && flick < 0.16) continue;
+            const u = uM + Math.pow(k, 1.3) * 0.05 * Math.sin(t * 1.4 + i * 2.1);
+            const spreadU = 0.010 + 0.016 * k;
+            const y = riverY(d);
+            const xl = riverX(u - spreadU, d);
+            const xr = riverX(u + spreadU, d);
+            ctx.strokeStyle = `rgba(255,232,178,${flick * (1 - k * 0.35)})`;
+            ctx.lineWidth = 1.0 + k * 1.6;
+            ctx.lineCap = "round";
+            ctx.beginPath();
+            ctx.moveTo(xl, y);
+            ctx.lineTo(xr, y);
+            ctx.stroke();
+        }
+
+        // 流向纹（顺流向线性亮纹，越近越长越快）
+        for (const s of amb.streaks) {
+            s.d += (0.06 + s.d * s.d * 0.62) * s.spd * 0.016 * (reduce ? 0.12 : 1);
+            if (s.d > 1.02) respawnStreak(s);
+            const d0 = Math.max(-0.02, s.d);
+            const len = (0.02 + 0.11 * d0 * d0) * s.len;
+            const d1 = d0 + len;
+            const y0 = riverY(d0), y1 = riverY(d1);
+            if (y0 < v.yH - 6 || y1 > h + 40) continue;
+            const x0 = riverX(s.u, d0), x1 = riverX(s.u, d1);
+            const midU = s.u + Math.sin(t * 0.9 + s.ph) * 0.006;
+            const xm = riverX(midU, (d0 + d1) / 2);
+            const alpha = (0.05 + 0.072 * d0) * (0.6 + 0.4 * Math.sin(t * 1.7 + s.ph));
+            ctx.strokeStyle = s.warm
+                ? `rgba(255,216,164,${Math.min(0.4, alpha * 1.15)})`
+                : `rgba(198,216,255,${alpha * (d0 > 0.5 ? 0.85 : 1)})`;
+            ctx.lineWidth = 0.7 + d0 * 2.2;
+            ctx.lineCap = "round";
+            ctx.beginPath();
+            ctx.moveTo(x0, y0);
+            ctx.quadraticCurveTo(xm, (y0 + y1) / 2, x1, y1);
+            ctx.stroke();
+        }
+
+        // 波面碎光点
+        for (const g of amb.glints) {
+            g.d += (0.06 + g.d * g.d * 0.62) * g.spd * 0.016 * (reduce ? 0.12 : 1);
+            if (g.d > 1.02) {
+                g.d = -0.02 - Math.random() * 0.08;
+                g.u = Math.pow(Math.random(), 1.25) * 0.9 + 0.05;
+            }
+            if (g.d < 0) continue;
+            const y = riverY(g.d);
+            if (y < v.yH - 4 || y > h + 30) continue;
+            const x = riverX(g.u, g.d);
+            const a = 0.1 + 0.6 * g.br * Math.pow(0.5 + 0.5 * Math.sin(t * 3.1 + g.ph * 3.7), 3);
+            if (a < 0.07) continue;
+            ctx.strokeStyle = g.warm ? `rgba(255,226,172,${a})` : `rgba(205,220,255,${a})`;
+            ctx.lineWidth = 0.6 + g.d * 1.4;
+            ctx.lineCap = "round";
+            const len = 1.0 + g.d * 2.4;
+            ctx.beginPath();
+            ctx.moveTo(x - len, y);
+            ctx.lineTo(x + len, y);
+            ctx.stroke();
+            if (g.br > 0.8) {
+                ctx.fillStyle = g.warm ? `rgba(255,240,205,${a * 0.7})` : `rgba(225,235,255,${a * 0.5})`;
+                ctx.beginPath();
+                ctx.arc(x, y, 0.7 + g.d, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+        ctx.restore();
+
+        /* 星光闪烁（只有少数亮星动态叠加） */
+        if (!reduce) {
+            for (const st of amb.stars) {
+                if (!st.fl) continue;
+                const tw = 0.35 + 0.65 * Math.pow(0.5 + 0.5 * Math.sin(t * st.tw + st.ph), 2);
+                const sx = st.x * w + px * 0.18;
+                const sy = st.y * h + py * 0.1;
+                if (tw < 0.45) continue;
+                ctx.strokeStyle = `rgba(210,226,255,${tw * 0.3})`;
+                ctx.lineWidth = 0.8;
+                ctx.beginPath();
+                ctx.moveTo(sx - st.r * 3.2, sy);
+                ctx.lineTo(sx + st.r * 3.2, sy);
+                ctx.moveTo(sx, sy - st.r * 3.2);
+                ctx.lineTo(sx, sy + st.r * 3.2);
+                ctx.stroke();
+                ctx.fillStyle = `rgba(225,235,255,${tw * 0.9})`;
+                ctx.beginPath();
+                ctx.arc(sx, sy, st.r, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        /* 萤火虫 */
+        for (const f of amb.fireflies) {
+            const target = Math.sin(t * 0.21 + f.ph) * 26 + Math.sin(t * 0.53 + f.ph * 1.7) * 16;
+            f.vx += (target - f.vx) * 0.02;
+            const targetY = Math.sin(t * 0.17 + f.ph * 2.3) * 20;
+            f.vy += (targetY - f.vy) * 0.02;
+            f.x += f.vx * 0.0016 * (reduce ? 0.1 : 1);
+            f.y += f.vy * 0.0011 * (reduce ? 0.1 : 1);
+            if (f.x < 0.01) f.x = 0.01;
+            if (f.x > 0.99) f.x = 0.99;
+            const fx = f.x * w + px * 0.5;
+            const fy = f.y * h + py * 0.35;
+            const fl = 0.35 + 0.65 * Math.abs(Math.sin(t * 2.2 + f.ph * 5));
+            if (fl < 0.2) continue;
+            const grad = ctx.createRadialGradient(fx, fy, 0, fx, fy, 7);
+            grad.addColorStop(0, `rgba(236,255,170,${0.85 * fl})`);
+            grad.addColorStop(0.5, `rgba(200,236,120,${0.3 * fl})`);
+            grad.addColorStop(1, "rgba(180,220,100,0)");
+            ctx.fillStyle = grad;
+            ctx.beginPath();
+            ctx.arc(fx, fy, 7, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        /* 孔明灯（远方天际的暖点） */
+        for (const g of amb.skyGlows) {
+            g.y -= g.spd * 0.004 * (reduce ? 0.05 : 1);
+            if (g.y < 0.02) {
+                g.y = 0.5 + Math.random() * 0.2;
+                g.x = 0.12 + Math.random() * 0.76;
+            }
+            const gx = g.x * w + Math.sin(t * 0.3 + g.ph) * 8;
+            const gy = g.y * h;
+            const pulse = 0.5 + 0.5 * Math.sin(t * 0.9 + g.ph);
+            const grad = ctx.createRadialGradient(gx, gy, 0, gx, gy, 10);
+            grad.addColorStop(0, `rgba(255,214,140,${0.16 + 0.1 * pulse})`);
+            grad.addColorStop(1, "rgba(255,200,120,0)");
+            ctx.fillStyle = grad;
+            ctx.beginPath();
+            ctx.arc(gx, gy, 10, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        /* 流星 */
+        if (amb.shoot) {
+            if (reduce) {
+                amb.shoot = null;
+                amb.shootAt = amb.now + 7 + Math.random() * 12;
+            } else {
+                amb.shoot.t += 0.016;
+                if (amb.shoot.t > 1) {
+                    amb.shoot = null;
+                    amb.shootAt = amb.now + 7 + Math.random() * 12;
+                } else {
+                    const sh = amb.shoot;
+                    const life = Math.min(1, sh.t / 0.18) * Math.min(1, (1 - sh.t) / 0.15);
+                    const sx = sh.x0 + sh.dx * sh.t;
+                    const sy = sh.y0 + sh.dy * sh.t;
+                    const tail = 90;
+                    const g = ctx.createLinearGradient(sx, sy, sx - sh.dx * 0.001 * tail, sy - sh.dy * 0.001 * tail);
+                    g.addColorStop(0, `rgba(255,250,230,${0.8 * life})`);
+                    g.addColorStop(1, "rgba(255,250,230,0)");
+                    ctx.strokeStyle = g;
+                    ctx.lineWidth = 1.6;
+                    ctx.beginPath();
+                    ctx.moveTo(sx, sy);
+                    ctx.lineTo(sx - sh.dx * 0.001 * tail, sy - sh.dy * 0.001 * tail);
+                    ctx.stroke();
+                }
+            }
+        } else if (amb.now > amb.shootAt) {
+            const ang = Math.PI * (0.7 + Math.random() * 0.35);
+            const spd = 380 + Math.random() * 240;
+            amb.shoot = {
+                t: 0,
+                x0: w * (0.1 + Math.random() * 0.6),
+                y0: h * 0.02 + Math.random() * h * 0.08,
+                dx: Math.cos(ang) * spd,
+                dy: Math.sin(ang) * spd,
+            };
+        }
+    };
+
+    /* 灯笼逐帧驱动 */
+    const driveLanterns = (dt: number) => {
+        const px = (mouseRef.current.x - 0.5) * 10;
+        for (const m of metaRef.current) {
+            m.z -= dt * m.w;
+            if (m.z < ZN) {
+                m.z = ZF * (0.9 + Math.random() * 0.1);
+                m.u = 0.36 + Math.random() * 0.28;
+                m.w = 0.055 + Math.random() * 0.04;
+            }
+            const d = dOf(m.z);
+            const bobY = Math.sin(amb!.now * 1.2 + m.sway) * 1.6 * (0.3 + d);
+            const rot = Math.sin(amb!.now * 0.55 + m.sway) * 3.2;
+            const scl = Math.pow(d, 1.15);
+            const x = riverX(m.u + Math.sin(amb!.now * 0.2 + m.sway) * 0.012, d) - px * 0.28;
+            const y = riverY(d) - bobY;
+            const node = nodesRef.current.get(m.id);
+            if (!node) continue;
+            node.style.transform =
+                `translate3d(${x}px, ${y}px, 0) translate(-50%, -50%) scale(${scl}) rotate(${rot}deg)`;
+            node.style.zIndex = String(200 + Math.round(d * 1000));
+            node.style.opacity = String(0.45 + 0.55 * Math.pow(d, 0.8));
+            node.style.filter = `brightness(${(0.72 + 0.34 * d) * m.bright}) hue-rotate(${m.hue}deg)`;
+            node.style.pointerEvents = d < 0.24 ? "none" : "auto";
+            const qt = node.querySelector(".rz-pool") as HTMLElement | null;
+            if (qt) qt.style.opacity = String(0.4 + 0.6 * d);
+        }
+    };
+
+    /* 主循环 */
+    useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext("2d", { alpha: false });
+        if (!ctx) return;
+
+        let raf = 0;
+        let last = performance.now();
+        let disposed = false;
+        let baseBack: HTMLCanvasElement | null = null;
+        let baseFront: HTMLCanvasElement | null = null;
+
+        const onResize = () => {
+            const dpr = Math.min(2, window.devicePixelRatio || 1);
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+            const v = viewRef.current;
+            v.dpr = dpr;
+            canvas.width = Math.round(w * dpr);
+            canvas.height = Math.round(h * dpr);
+            canvas.style.width = w + "px";
+            canvas.style.height = h + "px";
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            layout(w, h);
+            buildAmb();
+            const makeBase = () => {
+                const c = document.createElement("canvas");
+                c.width = Math.round((w + MARGIN * 2) * dpr);
+                c.height = Math.round((h + MARGIN * 2) * dpr);
+                return c;
+            };
+            baseBack = makeBase();
+            baseFront = makeBase();
+            renderBase(baseBack, baseFront);
+        };
+
+        onResize();
+        window.addEventListener("resize", onResize);
+
+        const onMove = (e: MouseEvent) => {
+            if (touchRef.current) return;
+            mouseRef.current.tx = e.clientX / window.innerWidth;
+            mouseRef.current.ty = e.clientY / window.innerHeight;
+        };
+        const onTouch = () => {
+            touchRef.current = true;
+        };
+        window.addEventListener("mousemove", onMove);
+        window.addEventListener("touchstart", onTouch, { once: true });
+
+        const frame = (now: number) => {
+            if (disposed) return;
+            const dt = Math.min(0.05, (now - last) / 1000);
+            last = now;
+            if (amb) amb.now += dt;
+            mouseRef.current.x += (mouseRef.current.tx - mouseRef.current.x) * 0.05;
+            mouseRef.current.y += (mouseRef.current.ty - mouseRef.current.y) * 0.05;
+            drawScene(
+                ctx,
+                amb ? amb.now : 0,
+                reduced(),
+                baseBack!,
+                baseFront!
+            );
+            driveLanterns(dt);
+            raf = requestAnimationFrame(frame);
+        };
+
+        const reduced = () =>
+            window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+        raf = requestAnimationFrame(frame);
+
+        return () => {
+            disposed = true;
+            cancelAnimationFrame(raf);
+            window.removeEventListener("resize", onResize);
+            window.removeEventListener("mousemove", onMove);
+        };
+    }, []);
+
+    /* 留言获取 + 点灯 */
+    useEffect(() => {
+        let cancelled = false;
+        const initLights = (msgs: string[]) => {
+            if (cancelled) return;
+            const v = viewRef.current;
+            const want = Math.round(((v.w * v.h) / (1920 * 1080)) * 16) + 8;
+            const count = Math.max(8, Math.min(22, want));
+            const metas: LanternMeta[] = [];
+            const views: Wish[] = [];
+            for (let i = 0; i < count; i++) {
+                const u = 0.34 + Math.random() * 0.32;
+                // 初始分布偏近景：开场就能看到大河灯顺流而来，也保证近场始终有灯
+                const z = ZN + (ZF - ZN) * Math.pow(Math.random(), 1.8);
+                metas.push({
+                    id: i,
+                    v: Math.floor(Math.random() * 3),
+                    u,
+                    z,
+                    w: 0.055 + Math.random() * 0.045,
+                    sway: Math.random() * Math.PI * 2,
+                    hue: Math.round((Math.random() - 0.5) * 26),
+                    bright: 0.85 + Math.random() * 0.25,
+                });
+                views.push({ id: i, v: metas[i].v, msg: msgs[i % msgs.length] });
+            }
+            metaRef.current = metas;
+            setLanterns(views);
+            // 入场渐显
+            requestAnimationFrame(() => requestAnimationFrame(() => setReady(true)));
+        };
+
+        initLights(DEMO_MESSAGES.slice(0, 12));
+
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 6000);
+        fetch(`${runtimeBaseURL}/api/public/talk`, { signal: ctrl.signal })
+            .then((r) => (r.ok ? r.json() : Promise.reject(new Error("bad status"))))
+            .then((j: unknown) => {
+                const data = (j as { data?: unknown })?.data;
+                const arr = Array.isArray(data)
+                    ? (data as Array<{ content?: unknown }>)
+                    : Array.isArray(j)
+                      ? (j as Array<{ content?: unknown }>)
+                      : [];
+                const texts = arr.map((x) => String(x?.content ?? "").trim()).filter(Boolean);
+                if (texts.length >= 4) {
+                    setLanterns((prev) => prev.map((p, i) => ({ ...p, msg: texts[i % texts.length] })));
+                }
+            })
+            .catch(() => {})
+            .finally(() => clearTimeout(timer));
+
+        return () => {
+            cancelled = true;
+            ctrl.abort();
+        };
+    }, []);
+
+    /* 气泡滚动偏移测量 */
+    const bubbleRefs = useRef<Map<number, HTMLDivElement | null>>(new Map());
+    useLayoutEffect(() => {
+        for (const ln of lanterns) {
+            const box = bubbleRefs.current.get(ln.id);
+            if (!box) continue;
+            const inner = box.querySelector(".rz-scroll") as HTMLElement | null;
+            const text = box.querySelector(".rz-msg") as HTMLElement | null;
+            if (!inner || !text) continue;
+            const hh = inner.clientHeight;
+            const th = text.offsetHeight;
+            const dy = Math.max(0, th - hh + 14);
+            inner.style.setProperty("--dy", dy + "px");
+            inner.style.setProperty("--dur", Math.max(7, dy / 16) + "s");
+        }
+    }, [lanterns]);
+
+    /* 触屏开关气泡（pointerdown 直达触屏，click 仅兜底鼠标端） */
+    const lastTouchToggle = useRef(0);
+    const toggleMsg = (id: number) => {
+        const handle = document.querySelector(`[data-lid="${id}"]`) as HTMLElement | null;
+        if (handle) {
+            handle.classList.toggle("rz-open");
+            const openOthers = () => {
+                document.querySelectorAll<HTMLElement>(".rz-open").forEach((el) => {
+                    if (el !== handle) el.classList.remove("rz-open");
+                });
+                document.removeEventListener("click", openOthers);
+            };
+            document.addEventListener("click", openOthers);
+        }
+    };
+
+    if (sprites.length === 0) return <div className="rz-root" />;
+
+    return (
+        <div className="rz-root">
+            <canvas ref={canvasRef} className="rz-canvas" aria-hidden />
+            <div ref={layerRef} className="rz-lanterns" aria-hidden>
+                {lanterns.map((ln) => (
+                    <div
+                        key={ln.id}
+                        data-lid={ln.id}
+                        ref={(el) => {
+                            nodesRef.current.set(ln.id, el);
+                        }}
+                        className="rz-lantern"
+                        role="button"
+                        tabIndex={0}
+                        aria-label="河灯心愿"
+                        onMouseEnter={() => nodesRef.current.get(ln.id)?.classList.add("rz-open")}
+                        onMouseLeave={() => nodesRef.current.get(ln.id)?.classList.remove("rz-open")}
+                        onFocus={() => nodesRef.current.get(ln.id)?.classList.add("rz-open")}
+                        onBlur={() => nodesRef.current.get(ln.id)?.classList.remove("rz-open")}
+                        onPointerDown={(e) => {
+                            if (e.pointerType === "touch") {
+                                lastTouchToggle.current = Date.now();
+                                toggleMsg(ln.id);
+                            }
+                        }}
+                        onKeyDown={(e) => {
+                            if (e.key === "Enter") toggleMsg(ln.id);
+                        }}
+                        onClick={() => {
+                            if (Date.now() - lastTouchToggle.current < 500) return;
+                            toggleMsg(ln.id);
+                        }}
+                    >
+                        <div className="rz-halo" />
+                        <div className="rz-pool">
+                            <span className="rz-pool-light" />
+                            <span className="rz-ring r1" />
+                            <span className="rz-ring r2" />
+                        </div>
+                        <div className="rz-sprite">
+                            <img src={sprites[ln.v]} alt="" draggable={false} />
+                            <div className="rz-flame" />
+                        </div>
+                        <div
+                            ref={(el) => {
+                                bubbleRefs.current.set(ln.id, el);
+                            }}
+                            className="rz-bubble"
+                        >
+                            <div className="rz-scroll">
+                                <div className="rz-msg">{ln.msg}</div>
+                            </div>
+                            <span className="rz-seal">愿</span>
+                        </div>
+                    </div>
+                ))}
+            </div>
+            <div className="rz-ui">
+                <header className="rz-title">
+                    <i />
+                    河灯寄语
+                    <em>随水而去的留言板</em>
+                </header>
+                <p className="rz-hint">把光标停在河灯上 · 读一份心愿</p>
+            </div>
+            <div className="rz-veg" />
+            <div className={ready ? "rz-boot rz-boot-off" : "rz-boot"}>
+                <div className="rz-boot-glow" />
+                <p>河灯将明 · 稍候</p>
+            </div>
+        </div>
+    );
+}

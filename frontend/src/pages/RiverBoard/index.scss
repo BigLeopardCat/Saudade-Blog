@@ -1,0 +1,368 @@
+/* ────────────────────────────────────────────────────────────────
+   河灯留言板 · 夜河场景
+   ──────────────────────────────────────────────────────────────── */
+
+.rz-root {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: #03050c;
+  font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "STSong", "SimSun", serif;
+  color: #f2e2c2;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: none;
+
+  .rz-canvas {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    display: block;
+  }
+
+  /* ---------------- 河灯 ---------------- */
+  .rz-lanterns {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    pointer-events: none;
+    perspective: 1200px;
+  }
+
+  .rz-lantern {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 0;
+    height: 0;
+    margin: 0;
+    will-change: transform, opacity, filter;
+    cursor: default;
+    outline: none;
+
+    /* 光晕 */
+    .rz-halo {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 300px;
+      height: 300px;
+      margin: -150px 0 0 -150px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(255, 190, 110, 0.34) 0%, rgba(255, 180, 96, 0.12) 34%, rgba(255, 175, 92, 0) 68%);
+      animation: rz-halo-breathe 3.6s ease-in-out infinite;
+      pointer-events: none;
+    }
+
+    /* 水面光斑与涟漪 */
+    .rz-pool {
+      position: absolute;
+      left: 50%;
+      top: calc(50% + 16px);
+      width: 230px;
+      height: 52px;
+      margin: -26px 0 0 -115px;
+      pointer-events: none;
+      opacity: 0.5;
+
+      .rz-pool-light {
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(ellipse at 50% 30%, rgba(255, 205, 130, 0.34) 0%, rgba(255, 190, 110, 0.1) 46%, rgba(255, 185, 105, 0) 74%);
+        animation: rz-pool-pulse 4.1s ease-in-out infinite;
+      }
+
+      .rz-ring {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 110px;
+        height: 24px;
+        margin: -12px 0 0 -55px;
+        border: 1.5px solid rgba(255, 208, 138, 0.5);
+        border-radius: 50%;
+        opacity: 0;
+        animation: rz-ring-out 3.4s cubic-bezier(0.22, 0.6, 0.35, 1) infinite;
+      }
+      .rz-ring.r2 {
+        animation-delay: -1.7s;
+      }
+    }
+
+    /* 灯笼本体（预渲染精灵） */
+    .rz-sprite {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 118px;
+      height: 118px;
+      margin: -59px 0 0 -59px;
+
+      img {
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+
+      .rz-flame {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 52px;
+        height: 60px;
+        margin: -52px 0 0 -26px;
+        border-radius: 50%;
+        background: radial-gradient(ellipse at 50% 62%, rgba(255, 248, 214, 1) 0%, rgba(255, 216, 122, 0.7) 42%, rgba(255, 182, 82, 0) 70%);
+        mix-blend-mode: screen;
+        transform-origin: 50% 84%;
+        animation: rz-flame-flick 1.15s steps(5, end) infinite, rz-flame-sway 3.2s ease-in-out infinite;
+        pointer-events: none;
+      }
+    }
+
+    /* 心愿气泡 */
+    .rz-bubble {
+      position: absolute;
+      left: 50%;
+      bottom: calc(50% + 64px);
+      width: 300px;
+      max-width: min(78vw, 340px);
+      transform: translateX(-50%) translateY(10px);
+      background: rgba(14, 12, 26, 0.74);
+      border: 1px solid rgba(255, 205, 140, 0.3);
+      border-radius: 13px;
+      box-shadow:
+        0 14px 40px rgba(0, 0, 0, 0.55),
+        inset 0 0 22px rgba(255, 180, 100, 0.07);
+      backdrop-filter: blur(7px) saturate(1.25);
+      -webkit-backdrop-filter: blur(7px) saturate(1.25);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s ease, transform 0.3s ease;
+      z-index: 5;
+
+      /* 小箭头 */
+      &::after {
+        content: "";
+        position: absolute;
+        bottom: -6px;
+        left: 50%;
+        width: 11px;
+        height: 11px;
+        margin-left: -5.5px;
+        background: rgba(14, 12, 26, 0.74);
+        border-right: 1px solid rgba(255, 205, 140, 0.3);
+        border-bottom: 1px solid rgba(255, 205, 140, 0.3);
+        transform: rotate(45deg);
+        border-radius: 0 0 3px 0;
+      }
+
+      .rz-scroll {
+        height: 118px;
+        overflow: hidden;
+        padding: 12px 16px 8px;
+      }
+
+      .rz-msg {
+        font-size: 15px;
+        line-height: 1.95;
+        letter-spacing: 0.14em;
+        color: #f2e2c2;
+        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+        padding: 0 2px 16px 0;
+        animation: rz-scroll var(--dur, 8s) cubic-bezier(0.4, 0, 0.2, 1) infinite;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      .rz-seal {
+        position: absolute;
+        top: 8px;
+        right: 9px;
+        font-size: 11px;
+        line-height: 1.7;
+        padding: 0 5px;
+        color: #ffe8c8;
+        background: #a33f30;
+        border-radius: 3px;
+        letter-spacing: 0.22em;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+        font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "SimSun", serif;
+      }
+    }
+  }
+
+  .rz-lantern:hover .rz-bubble,
+  .rz-lantern:focus .rz-bubble,
+  .rz-lantern.rz-open .rz-bubble {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  /* ---------------- 界面浮层 ---------------- */
+  .rz-ui {
+    position: absolute;
+    inset: 0;
+    z-index: 4;
+    pointer-events: none;
+
+    .rz-title {
+      position: absolute;
+      top: 28px;
+      left: 34px;
+      font-size: 20px;
+      letter-spacing: 0.42em;
+      color: rgba(242, 230, 205, 0.55);
+      text-shadow: 0 2px 14px rgba(255, 190, 110, 0.18);
+      margin: 0;
+
+      i {
+        display: inline-block;
+        width: 7px;
+        height: 7px;
+        margin-right: 12px;
+        border-radius: 50%;
+        background: radial-gradient(circle, #ffe9b8 0%, rgba(255, 200, 120, 0.35) 60%, transparent 100%);
+        vertical-align: 3px;
+        box-shadow: 0 0 14px rgba(255, 205, 130, 0.75);
+      }
+
+      em {
+        display: block;
+        margin-top: 7px;
+        font-size: 11px;
+        font-style: normal;
+        letter-spacing: 0.5em;
+        color: rgba(242, 230, 205, 0.3);
+      }
+    }
+
+    .rz-hint {
+      position: absolute;
+      bottom: 32px;
+      left: 50%;
+      transform: translateX(-50%);
+      margin: 0;
+      font-size: 13px;
+      letter-spacing: 0.36em;
+      color: rgba(240, 226, 200, 0.38);
+      white-space: nowrap;
+      animation: rz-hint-out 1.4s ease 8s forwards;
+    }
+  }
+
+  /* 暗角 */
+  .rz-veg {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    pointer-events: none;
+    background:
+      radial-gradient(ellipse at 50% 42%, transparent 56%, rgba(3, 5, 12, 0.42) 100%),
+      linear-gradient(to bottom, rgba(3, 5, 12, 0.55) 0%, transparent 13%, transparent 76%, rgba(2, 3, 8, 0.62) 100%);
+  }
+
+  /* 载入幕 */
+  .rz-boot {
+    position: absolute;
+    inset: 0;
+    z-index: 9;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(to bottom, #02040c 0%, #081029 100%);
+    transition: opacity 1.4s ease;
+
+    .rz-boot-glow {
+      width: 54px;
+      height: 54px;
+      border-radius: 50%;
+      background: radial-gradient(circle, #ffe9b8 0%, rgba(255, 201, 121, 0.55) 40%, rgba(255, 180, 90, 0) 72%);
+      box-shadow: 0 0 46px 12px rgba(255, 196, 118, 0.35);
+      animation: rz-boot-pulse 1.6s ease-in-out infinite;
+    }
+
+    p {
+      margin-top: 26px;
+      font-size: 13px;
+      letter-spacing: 0.5em;
+      color: rgba(240, 226, 200, 0.5);
+      text-indent: 0.5em;
+    }
+  }
+
+  .rz-boot-off {
+    opacity: 0;
+    pointer-events: none;
+  }
+}
+
+/* ---------------- 动画 ---------------- */
+
+@keyframes rz-halo-breathe {
+  0%, 100% { transform: scale(1); opacity: 0.85; }
+  50% { transform: scale(1.09); opacity: 1; }
+}
+
+@keyframes rz-pool-pulse {
+  0%, 100% { opacity: 0.75; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.12); }
+}
+
+@keyframes rz-ring-out {
+  0% { transform: scale(0.3, 0.3) translateY(2px); opacity: 0.55; }
+  100% { transform: scale(1.55, 0.55) translateY(-4px); opacity: 0; }
+}
+
+@keyframes rz-flame-flick {
+  0%, 100% { transform: scale(1, 1) rotate(-1deg); opacity: 0.92; }
+  20% { transform: scale(0.94, 0.82) rotate(1.4deg); opacity: 0.78; }
+  40% { transform: scale(1.04, 0.9) rotate(-1.8deg); opacity: 0.95; }
+  60% { transform: scale(0.97, 1.04) rotate(0.6deg); opacity: 0.74; }
+  80% { transform: scale(1.02, 0.87) rotate(-0.4deg); opacity: 0.9; }
+}
+
+@keyframes rz-flame-sway {
+  0%, 100% { margin-left: -26px; }
+  50% { margin-left: -22px; }
+}
+
+@keyframes rz-scroll {
+  0% { transform: translateY(0); }
+  14% { transform: translateY(0); }
+  40% { transform: translateY(calc(var(--dy, 0px) * -1)); }
+  74% { transform: translateY(calc(var(--dy, 0px) * -1)); }
+  90% { transform: translateY(0); }
+  100% { transform: translateY(0); }
+}
+
+@keyframes rz-hint-out {
+  to { opacity: 0; }
+}
+
+@keyframes rz-boot-pulse {
+  0%, 100% { transform: scale(1); opacity: 0.7; }
+  50% { transform: scale(1.22); opacity: 1; }
+}
+
+/* ---------------- 减弱动效 ---------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .rz-root .rz-lantern .rz-halo,
+  .rz-root .rz-lantern .rz-pool .rz-pool-light,
+  .rz-root .rz-lantern .rz-sprite .rz-flame,
+  .rz-root .rz-boot-glow {
+    animation: none;
+  }
+  .rz-root .rz-lantern .rz-pool .rz-ring {
+    animation-duration: 9s;
+  }
+  .rz-root .rz-msg {
+    animation: none;
+  }
+  .rz-root .rz-hint {
+    animation: none;
+  }
+}
