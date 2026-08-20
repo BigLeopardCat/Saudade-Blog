@@ -436,3 +436,16 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
 .theme-btn.logout-btn
   background: #e74c3c !important
   color: #fff !important
+
+// 留言板导航图标（古风信箱 SVG）：与文字垂直对齐
+.hb-icon
+  width: 27px
+  height: 27px
+  margin-right: 5px
+  display: inline-block
+  vertical-align: -6px
+  flex: none
+
+// 暗色主题下深蓝主体提亮，避免淹没在深色背景
+.frontDark .hb-icon
+  filter: brightness(1.65) saturate(0.9)

@@ -415,6 +415,26 @@
         display: flex;
         justify-content: center;
         margin-top: 6px;
+
+        /* 公告按钮：古籍朱砂印风格（覆盖通用 .rz-wish-primary 的现代胶囊） */
+        .rz-wish-primary {
+          padding: 7px 28px;
+          background: rgba(163, 63, 48, 0.68);
+          border: 1px solid rgba(228, 172, 106, 0.6);
+          border-radius: 4px;
+          color: #ffe8c8;
+          font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "SimSun", serif;
+          font-size: 14px;
+          letter-spacing: 0.42em;
+          text-indent: 0.42em;
+          box-shadow: inset 0 0 14px rgba(30, 12, 4, 0.45), 0 2px 10px rgba(0, 0, 0, 0.4);
+
+          &:hover:not(:disabled),
+          &:focus-visible:not(:disabled) {
+            background: #a33f30;
+            border-color: rgba(255, 214, 170, 0.7);
+          }
+        }
       }
     }
   }
@@ -549,7 +569,7 @@
         }
       }
 
-      /* 类型页签下的印章筛选行（四枚印章，可多选） */
+      /* 类型页签下的印章筛选行（四枚摆正的朱砂印章，可多选） */
       .rz-album-catf {
         display: flex;
         justify-content: center;
@@ -561,30 +581,31 @@
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          width: 34px;
-          height: 34px;
-          font-size: 14px;
-          background: rgba(20, 12, 4, 0.45);
-          border: 1px solid rgba(214, 172, 106, 0.35);
-          border-radius: 4px;
-          color: rgba(240, 222, 188, 0.55);
+          width: 36px;
+          height: 36px;
+          font-size: 15px;
+          background: rgba(163, 63, 48, 0.4);
+          border: 1px solid rgba(255, 214, 170, 0.28);
+          border-radius: 5px;
+          color: rgba(255, 232, 200, 0.78);
           font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "SimSun", serif;
           letter-spacing: 0.1em;
           text-indent: 0.1em;
           cursor: pointer;
-          transform: rotate(-2deg);
+          box-shadow: inset 0 0 10px rgba(30, 12, 4, 0.35), 0 1px 3px rgba(0, 0, 0, 0.35);
           transition: border-color 0.25s ease, color 0.25s ease, background 0.25s ease;
 
           &:hover {
-            border-color: rgba(244, 196, 92, 0.6);
-            color: rgba(244, 226, 196, 0.9);
+            border-color: rgba(255, 214, 170, 0.55);
+            color: #ffe8c8;
+            background: rgba(163, 63, 48, 0.62);
           }
 
           &.sel {
             background: #a33f30;
-            border-color: rgba(255, 214, 170, 0.55);
+            border-color: rgba(255, 214, 170, 0.6);
             color: #ffe8c8;
-            box-shadow: inset 0 0 0 1px rgba(255, 214, 170, 0.3), 0 1px 3px rgba(0, 0, 0, 0.4);
+            box-shadow: inset 0 0 0 1px rgba(255, 214, 170, 0.35), 0 1px 4px rgba(0, 0, 0, 0.45);
           }
         }
       }
@@ -676,8 +697,8 @@
   /* ---------------- 此心为灯 · 留言流程弹窗 ---------------- */
   .rz-wish-modal {
     .rz-wish-box {
-      width: min(94vw, 680px);
-      max-width: min(94vw, 680px);
+      width: min(94vw, 800px);
+      max-width: min(94vw, 800px);
 
       .rz-wish-step {
         padding: 6px 4px 2px;
@@ -795,9 +816,10 @@
             i {
               font-style: normal;
               font-size: 12px;
-              line-height: 1.6;
+              line-height: 1.7;
               letter-spacing: 0.05em;
               color: rgba(240, 226, 200, 0.5);
+              white-space: pre-line; /* 诗句逗号后换行 */
             }
           }
 
@@ -1202,4 +1224,20 @@
   .rz-root .rz-modal-box {
     animation: none;
   }
+}
+/* 弹窗宽度最终覆盖：.rz-modal .rz-modal-box（位置靠后）会以同特异性压过
+   上方各弹窗自身的 width/max-width，须置于文件尾重新声明才生效 */
+.rz-root .rz-wish-modal .rz-wish-box {
+  width: min(94vw, 800px);
+  max-width: min(94vw, 800px);
+}
+
+.rz-root .rz-album-modal .rz-album-box {
+  width: min(92vw, 640px);
+  max-width: min(92vw, 640px);
+}
+
+.rz-root .rz-notice-modal .rz-notice-box {
+  width: min(90vw, 480px);
+  max-width: min(90vw, 480px);
 }

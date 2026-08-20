@@ -1,4 +1,4 @@
-import { createBrowserRouter } from "react-router-dom";
+import { createBrowserRouter, Navigate } from "react-router-dom";
 import Login from "../pages/Login";
 import Dashboard from "../pages/Dashboard";
 import RiverBoard from "../pages/RiverBoard/index";
@@ -70,10 +70,15 @@ const router = createBrowserRouter([
         path: 'login',
         element: <Login />
     },
-    // 隐藏路由：河灯留言板（/he 河灯）。前端无任何入口按钮，仅有完整地址才能到达。
+    // 留言板（河灯）：主页导航"留言板"入口
+    {
+        path: 'guestbook',
+        element: <RiverBoard />
+    },
+    // 兼容旧地址 /he（早期隐藏路由），重定向到留言板
     {
         path: 'he',
-        element: <RiverBoard />
+        element: <Navigate to="/guestbook" replace />,
     },
     {
         path: '/dashboard',

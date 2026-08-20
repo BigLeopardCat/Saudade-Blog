@@ -403,6 +403,8 @@ export default function RiverBoard() {
     const [albumQuery, setAlbumQuery] = useState("");
     /* 留言留名（可选；预填当前账号昵称，可一键匿名；检索框按留名/用户名查找） */
     const [wishAuthor, setWishAuthor] = useState("");
+    /* 当前账号真实昵称（预填来源）：留名与之不一致时视为"匿名·自定义留名" */
+    const profileNickRef = useRef("");
     /* 未登录留言门禁：留言板公告 */
     const [noticeOpen, setNoticeOpen] = useState(false);
 
@@ -1538,11 +1540,16 @@ export default function RiverBoard() {
         if (!msg || wishBusy) return;
         setWishBusy(true);
         try {
+            // 留名规则：留空→纯匿名（无名）；与真实账号昵称一致→正常留名；
+            // 其他自定义留名→视为"匿名·自定义留名"，归入匿名类（作者维度）
+            const rawAuthor = wishAuthor.trim().slice(0, 20);
+            const author =
+                rawAuthor === "" ? "" : rawAuthor === profileNickRef.current ? rawAuthor : `匿名·${rawAuthor}`;
             const token = localStorage.getItem("tokenKey");
             const res = await fetch(`${runtimeBaseURL}/api/public/talk`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-                body: JSON.stringify({ content: msg, cat: wishCat, v: wishV, talkTitle: "", author: wishAuthor.trim().slice(0, 20) }),
+                body: JSON.stringify({ content: msg, cat: wishCat, v: wishV, talkTitle: "", author }),
             });
             if (!res.ok) throw new Error("bad status");
             const jj = (await res.json()) as { code?: number; message?: string };
@@ -1564,7 +1571,7 @@ export default function RiverBoard() {
                 ripT: -1,
             });
             metaRef.current = metas;
-            setLanterns((prev) => [...prev, { id, v: wishV, msg, cat: wishCat, author: wishAuthor.trim(), time: shortTime(new Date()) }]);
+            setLanterns((prev) => [...prev, { id, v: wishV, msg, cat: wishCat, author, time: shortTime(new Date()) }]);
             setWishDone(true);
         } catch (err) {
             setWishBusy(false);
@@ -1598,7 +1605,10 @@ export default function RiverBoard() {
                     headers: token ? { Authorization: `Bearer ${token}` } : undefined,
                 });
                 const j = (await res.json()) as { data?: { nickname?: string } };
-                if (j?.data?.nickname) setWishAuthor(j.data.nickname);
+                if (j?.data?.nickname) {
+                    profileNickRef.current = j.data.nickname;
+                    setWishAuthor(j.data.nickname);
+                }
             } catch {
                 /* 拉取失败则留空，可手填或匿名 */
             }
@@ -1838,7 +1848,7 @@ export default function RiverBoard() {
                                                 <b>
                                                     {c} · {CAT_INFO[c].name}
                                                 </b>
-                                                <i>{CAT_INFO[c].desc}</i>
+                                                <i>{CAT_INFO[c].desc.replace("，", "，\n")}</i>
                                             </span>
                                         </button>
                                     ))}
@@ -1921,8 +1931,10 @@ export default function RiverBoard() {
                         <div className="rz-notice-body">
                             <p>尊敬的访客：</p>
                             <p>本网站当前为非交互式个人站点。留言板等功能仅供内部测试、研究学习使用，暂不对公众开放交互服务。</p>
-                            <p>我们正在交互式网站备案的转型工作，预计将于12月完成升级。</p>
+                            <p>我们正在积极筹备交互式网站备案的转型工作，预计将于12月完成升级。</p>
                             <p>届时，欢迎您再次来访，体验完整的河灯留言互动功能。</p>
+                            <p>Saudade Blog</p>
+                            <p>2026年8月21日</p>
                         </div>
                         <div className="rz-notice-foot">
                             <button type="button" className="rz-wish-primary" onClick={() => setNoticeOpen(false)}>
