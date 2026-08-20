@@ -1241,3 +1241,16 @@
   width: min(90vw, 480px);
   max-width: min(90vw, 480px);
 }
+
+/* 第 18 轮：留言流程按步骤加宽（在 .rz-wish-box 基础宽度之上覆盖）
+   step-1 选一枚印章：800 → 960px（+20%）；step-2 以言载灯：800 → 1600px（+100%）
+   多一层 step 类 → 特异性高于上面的 .rz-root .rz-wish-modal .rz-wish-box，可正常覆盖 */
+.rz-root .rz-wish-modal .rz-wish-box.step-1 {
+  width: min(94vw, 960px);
+  max-width: min(94vw, 960px);
+}
+
+.rz-root .rz-wish-modal .rz-wish-box.step-2 {
+  width: min(96vw, 1600px);
+  max-width: min(96vw, 1600px);
+}

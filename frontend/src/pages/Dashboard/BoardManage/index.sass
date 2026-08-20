@@ -1,0 +1,92 @@
+.BoardManage
+  padding: 20px
+  height: 100%
+  overflow-y: auto
+  display: flex
+  flex-direction: column
+  gap: 14px
+
+  .bm-toolbar
+    display: flex
+    align-items: center
+    gap: 12px
+    flex-wrap: wrap
+
+    .bm-tabs
+      display: flex
+      gap: 8px
+      button
+        min-width: 52px
+        padding: 5px 14px
+        border: 1px solid #d9d9d9
+        border-radius: 6px
+        background: #fff
+        color: #444
+        cursor: pointer
+        transition: 0.25s
+        &:hover
+          border-color: #a33f30
+          color: #a33f30
+        &.sel
+          background: #a33f30
+          border-color: #a33f30
+          color: #ffe8c8
+          font-weight: 600
+
+    .bm-count
+      margin-left: auto
+      color: #888
+      font-size: 13px
+
+  .bm-seal
+    display: inline-flex
+    align-items: center
+    justify-content: center
+    width: 32px
+    height: 32px
+    border-radius: 5px
+    background: rgba(163, 63, 48, 0.4)
+    border: 1px solid rgba(228, 172, 106, 0.6)
+    color: #ffe8c8
+    font-family: "Noto Serif SC", "STSong", serif
+    font-size: 15px
+    box-shadow: inset 0 0 8px rgba(30, 12, 4, 0.35)
+
+  .bm-anon
+    color: #999
+    font-style: italic
+
+  .bm-user
+    display: flex
+    flex-direction: column
+    line-height: 1.4
+    i
+      font-style: normal
+      font-size: 12px
+      color: #999
+
+  .bm-note
+    margin: 0
+    color: #999
+    font-size: 12px
+    border-top: 1px dashed #ddd
+    padding-top: 10px
+
+// 暗色模式适配（后台 .contentDark 容器内）
+.contentDark
+  .BoardManage
+    .bm-tabs button
+      background: rgba(255, 255, 255, 0.08)
+      border-color: rgba(255, 255, 255, 0.18)
+      color: #ccc
+      &:hover
+        border-color: #c87a63
+        color: #e8b8a0
+      &.sel
+        background: #a33f30
+        border-color: #a33f30
+        color: #ffe8c8
+    .bm-count, .bm-anon, .bm-note
+      color: #888
+    .bm-note
+      border-top-color: rgba(255, 255, 255, 0.12)

@@ -7,7 +7,7 @@ import Home from "../pages/Dashboard/Home";
 import Notes from "../pages/Dashboard/Notes";
 import Comments from "../pages/Dashboard/Talks";
 import Albums from "../pages/Dashboard/Albums";
-import Friends from "../pages/Dashboard/Friends";
+import BoardManage from "../pages/Dashboard/BoardManage";
 import Analytics from "../pages/Dashboard/Analytics";
 import UserControl from "../pages/Dashboard/UserControl";
 import AllNotes from "../pages/Dashboard/Notes/AllNotes/index";
@@ -119,8 +119,9 @@ const router = createBrowserRouter([
                 element: <Albums />
             },
             {
-                path: 'friends',
-                element: <Friends />
+                // 留言管理（原友链管理板块改造）：河灯留言查询/筛选/删除，审核机制预留
+                path: 'talks',
+                element: <BoardManage />
             },
             {
                 path: 'analytics',

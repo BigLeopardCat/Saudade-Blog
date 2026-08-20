@@ -1424,7 +1424,7 @@ export default function RiverBoard() {
 
         const ctrl = new AbortController();
         const timer = setTimeout(() => ctrl.abort(), 6000);
-        fetch(`${runtimeBaseURL}/api/public/talk`, { signal: ctrl.signal })
+        fetch(`${runtimeBaseURL}/api/public/board`, { signal: ctrl.signal })
             .then((r) => (r.ok ? r.json() : Promise.reject(new Error("bad status"))))
             .then((j: unknown) => {
                 const data = (j as { data?: unknown })?.data;
@@ -1546,7 +1546,7 @@ export default function RiverBoard() {
             const author =
                 rawAuthor === "" ? "" : rawAuthor === profileNickRef.current ? rawAuthor : `匿名·${rawAuthor}`;
             const token = localStorage.getItem("tokenKey");
-            const res = await fetch(`${runtimeBaseURL}/api/public/talk`, {
+            const res = await fetch(`${runtimeBaseURL}/api/public/board`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
                 body: JSON.stringify({ content: msg, cat: wishCat, v: wishV, talkTitle: "", author }),
@@ -1624,7 +1624,7 @@ export default function RiverBoard() {
         try {
             // 带上 token：后端据此标记每条留言是否当前用户所放（"我的河灯"）
             const token = localStorage.getItem("tokenKey");
-            const res = await fetch(`${runtimeBaseURL}/api/public/talk`, {
+            const res = await fetch(`${runtimeBaseURL}/api/public/board`, {
                 headers: token ? { Authorization: `Bearer ${token}` } : undefined,
             });
             const j = (await res.json()) as { data?: unknown };
@@ -1803,7 +1803,10 @@ export default function RiverBoard() {
             {/* 此心为灯 · 留言流程：选灯型 → 选印章 → 书写放下 */}
             {wishOpen && (
                 <div className="rz-modal rz-wish-modal" onClick={closeWishFlow} role="dialog" aria-modal="true" aria-label="点一盏河灯">
-                    <div className="rz-modal-box rz-wish-box" onClick={(e) => e.stopPropagation()}>
+                    <div
+                        className={"rz-modal-box rz-wish-box" + (wishStep === 1 ? " step-1" : wishStep === 2 ? " step-2" : "")}
+                        onClick={(e) => e.stopPropagation()}
+                    >
                         {wishStep === 0 && (
                             <div className="rz-wish-step">
                                 <h3 className="rz-wish-title">点一盏河灯</h3>

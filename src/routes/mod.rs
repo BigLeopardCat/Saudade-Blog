@@ -77,9 +77,11 @@ pub fn create_router(state: AppState) -> Router {
         // A6 修复：下线公开 POST（友链申请只走管理员后台 /api/protected/friend），杜绝匿名提交 javascript: 协议 XSS
         .route("/api/public/friends", get(friends::list_public_friends))
         
-        // Talks
-        .route("/api/talk", get(talks::list_talks))
-        .route("/api/public/talk", get(talks::list_talks).post(talks::create_talk))
+        // Talks（说说）：前台说说页仅展示 src=talk；/api/talk 保留全量（统计口径）
+        .route("/api/talk", get(talks::list_all_talks))
+        .route("/api/public/talk", get(talks::list_talks))
+        // 河灯留言板（留言）：公开拉取，发布须登录，与说说各自独立（src=board）
+        .route("/api/public/board", get(talks::list_boards).post(talks::create_board))
 
         // Web/User Public
         .route("/api/public/user", get(web_info::get_user_info))
@@ -148,10 +150,15 @@ pub fn create_router(state: AppState) -> Router {
 
         // Talks
         .route("/api/protect/talk", post(talks::create_talk))
-        .route("/api/protect/talk/:id", 
+        .route("/api/protect/talk/:id",
              delete(talks::delete_talk)
-             .put(talks::update_talk) 
+             .put(talks::update_talk)
         )
+
+        // 留言管理（后台）：河灯留言列表/删除/内容审核（审核机制预留，暂未启用）
+        .route("/api/protect/board", get(talks::list_board_admin))
+        .route("/api/protect/board/:id", delete(talks::delete_board))
+        .route("/api/protect/board/:id/audit", put(talks::audit_board))
 
         // Knowledge Base (write/admin)
         .route("/api/knowledge", post(knowledge::add_knowledge))

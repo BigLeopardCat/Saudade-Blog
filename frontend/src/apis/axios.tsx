@@ -13,7 +13,8 @@ http.interceptors.request.use(
     function (config) {
         const token = getToken();
         if (token) {
-            config.headers.Authorization = token;
+            // 后端统一 Bearer 解析（strip_prefix("Bearer ")），裸 token 会导致鉴权失败
+            config.headers.Authorization = token.startsWith('Bearer ') ? token : 'Bearer ' + token;
         }
         return config;
     },

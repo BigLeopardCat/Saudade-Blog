@@ -13,6 +13,8 @@ pub struct Model {
     pub v: i8,
     pub author: String,
     pub user_id: i32, // 发布者用户 id（匿名河灯也留存，供溯源/维护）
+    pub src: String,  // 内容来源：talk=后台说说（前台"说说"页） / board=河灯留言（留言板），二者各自独立
+    pub approved: i8, // 内容审核状态：1=已通过（当前机制预留，暂未启用审核流程，默认全部通过）
     pub created_at: DateTime,
     pub updated_at: DateTime,
 }

@@ -45,7 +45,7 @@ const Dashboard = () => {
                 location.hash === '#/dashboard/notes' ? 2 :
                     location.hash === '#/dashboard/comments' ? 3 :
                         location.hash === '#/dashboard/albums' ? 4 :
-                            location.hash === '#/dashboard/friends' ? 5 :
+                            location.hash === '#/dashboard/talks' ? 5 :
                                 location.hash === '#/dashboard/analytics' ? 6 :
                                     location.hash.startsWith('#/dashboard/notes') ? 2 : 1;
         setSelectCurrent(currentHashCode)
@@ -152,9 +152,9 @@ const Dashboard = () => {
         },
         {
             index: 6,
-            name: '友链圈',
-            icon: 'icon-youlianguanli',
-            to: 'friends',
+            name: '留言管理',
+            icon: 'fa-envelope-o',
+            to: 'talks',
             active: false
         },
         {
