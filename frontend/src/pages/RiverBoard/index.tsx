@@ -568,13 +568,25 @@ export default function RiverBoard() {
             const mxMoon = w * MOON.x;
             const myMoon = h * MOON.y;
             const ph = moonPhase();
+            // 光晕只落在亮面一侧的半圆（盈月亮面在右、亏月在左），
+            // 不再画包住整个月盘的圆形光晕——否则像玻璃球
+            const beta = Math.PI * (1 - 2 * Math.max(0, Math.min(1, ph.age))); // 相位→光照角
+            const lInv = 1 / Math.hypot(Math.sin(beta), Math.cos(beta));
+            const lx = Math.sin(beta) * lInv, lz = Math.cos(beta) * lInv;
             const haloK = 0.35 + 0.65 * ph.k; // 新月时几乎无光晕
-            const halo = ctx.createRadialGradient(mxMoon, myMoon, 0, mxMoon, myMoon, w * 0.34);
-            halo.addColorStop(0, `rgba(255,238,200,${0.34 * haloK})`);
-            halo.addColorStop(0.28, `rgba(255,226,170,${0.12 * haloK})`);
+            const halo = ctx.createRadialGradient(mxMoon, myMoon, 0, mxMoon, myMoon, w * 0.3);
+            halo.addColorStop(0, `rgba(255,238,200,${0.26 * haloK})`);
+            halo.addColorStop(0.3, `rgba(255,226,170,${0.09 * haloK})`);
             halo.addColorStop(1, "rgba(255,226,170,0)");
+            ctx.save();
+            ctx.beginPath();
+            const hSide = lx >= 0 ? 1 : -1; // 亮面所在半圆（右 / 左）
+            ctx.arc(mxMoon, myMoon, w * 0.38, hSide > 0 ? -Math.PI / 2 : Math.PI / 2, hSide > 0 ? Math.PI / 2 : Math.PI * 1.5);
+            ctx.closePath();
+            ctx.clip();
             ctx.fillStyle = halo;
-            ctx.fillRect(mxMoon - w * 0.36, myMoon - w * 0.36, w * 0.72, w * 0.72);
+            ctx.fillRect(mxMoon - w * 0.42, myMoon - w * 0.42, w * 0.84, w * 0.84);
+            ctx.restore();
             const rMoon = Math.min(w, h) * MOON.r;
             const rD = rMoon * 0.82;
             const P = Math.max(8, Math.ceil(rD * 2 * v.dpr * 2));
@@ -583,9 +595,6 @@ export default function RiverBoard() {
             mc.width = mc.height = P;
             const mg = mc.getContext("2d")!;
             const img = mg.createImageData(P, P);
-            const beta = Math.PI * (1 - 2 * Math.max(0, Math.min(1, ph.age))); // 相位→光照角
-            const lInv = 1 / Math.hypot(Math.sin(beta), Math.cos(beta));
-            const lx = Math.sin(beta) * lInv, lz = Math.cos(beta) * lInv;
             const data = img.data;
             for (let py = 0; py < P; py++) {
                 const ny = (py + 0.5 - R) / R;
@@ -598,12 +607,13 @@ export default function RiverBoard() {
                     const nz = Math.sqrt(q);
                     const dot = nx * lx + nz * lz;
                     // —— 明暗（真实月相）：半影带精致过渡 ——
-                    // 暗面（dot≤0.02）不再是透明窗：填极暗的月灰（略高于夜空一档），
-                    // 月亮整体实心，星星不会透过月面看到
+                    // 暗面（dot≤0.02）填极暗的月灰：月亮整体实心挡住背后的星星，
+                    // 但暗面色调贴近夜空（光晕只落在亮面侧），月牙轮廓清晰，
+                    // 不会再被圆形光晕包成"半亮半黑"的玻璃球
                     if (dot <= 0.02) {
-                        data[i4] = 27;
-                        data[i4 + 1] = 33;
-                        data[i4 + 2] = 56;
+                        data[i4] = 18;
+                        data[i4 + 1] = 24;
+                        data[i4 + 2] = 44;
                         data[i4 + 3] = 255;
                         continue;
                     }
@@ -900,7 +910,7 @@ export default function RiverBoard() {
 
         // 宽幅水光带（随流向向远方缓慢漂移的整体明暗，羽化边避免块状感）
         for (const bd of amb.bands) {
-            bd.d0 -= bd.wd * 0.7 * (reduce ? 0.15 : 1) * 0.022;
+            bd.d0 -= bd.wd * 0.7 * (reduce ? 0.15 : 1) * 0.005; // 宽幅水光带：慢漂（≈河灯速度的 1/4）
             if (bd.d0 + bd.wd < -0.05) bd.d0 = 0.96 + Math.random() * 0.04;
             const dTop = bd.d0, dBot = bd.d0 + bd.wd;
             const yT = riverY(dTop), yB = riverY(dBot);
@@ -930,83 +940,40 @@ export default function RiverBoard() {
             ctx.fill();
         }
 
-        // 月光倒影（电影级）：月亮正下方投下的纵向光柱——扇形展开、边缘随水波
-        // 呼吸，河岸外被外层河流 clip 裁掉；水面细碎光斑呈纵向光丝顺流向散落，
-        // 不再是一排整齐的交替横线
-        const shaftX = w * MOON.x;
-        const Ns = 30;
-        const shaftBot = h * 0.98;
-        // 主体光柱（扇形，近端更宽）
-        const shaft = ctx.createLinearGradient(0, v.yH, 0, h);
-        shaft.addColorStop(0, "rgba(255,226,170,0)");
-        shaft.addColorStop(0.32, "rgba(255,230,180,0.22)");
-        shaft.addColorStop(0.68, "rgba(255,228,172,0.14)");
-        shaft.addColorStop(1, "rgba(255,220,160,0)");
-        ctx.beginPath();
-        ctx.moveTo(shaftX, v.yH - 2);
-        for (let i = 1; i <= Ns; i++) {
-            const k = i / Ns;
-            const y = v.yH + (shaftBot - v.yH) * k;
-            const half =
-                w * (0.009 + 0.085 * Math.pow(k, 1.9)) *
-                (1 + 0.07 * Math.sin(t * 0.6 + i * 2.7) * Math.sin(i * 5.3 + 1.1));
-            ctx.lineTo(shaftX + half, y);
-        }
-        for (let i = Ns; i >= 1; i--) {
-            const k = i / Ns;
-            const y = v.yH + (shaftBot - v.yH) * k;
-            const half =
-                w * (0.009 + 0.085 * Math.pow(k, 1.9)) *
-                (1 + 0.07 * Math.sin(t * 0.6 + i * 2.7) * Math.sin(i * 5.3 + 1.1));
-            ctx.lineTo(shaftX - half, y);
-        }
-        ctx.closePath();
-        ctx.fillStyle = shaft;
+        // 月光碎影（垂直碎光柱）：恢复经典月光反光——纵向柔光带叠一列
+        // 交替碎光横线，随波闪烁
+        const uM = 0.5;
+        ctx.save();
+        const glowC = ctx.createLinearGradient(0, v.yH * 0.99, 0, h);
+        glowC.addColorStop(0, "rgba(255,224,160,0)");
+        glowC.addColorStop(0.5, "rgba(255,224,160,0.05)");
+        glowC.addColorStop(1, "rgba(255,224,160,0)");
+        traceRiver(ctx, 0, 1.08, false);
+        ctx.fillStyle = glowC;
         ctx.fill();
-        // 核心亮带（光柱最亮的中轴，略窄）
-        const core = ctx.createLinearGradient(0, v.yH, 0, shaftBot);
-        core.addColorStop(0, "rgba(255,240,205,0.08)");
-        core.addColorStop(0.55, "rgba(255,242,210,0.20)");
-        core.addColorStop(1, "rgba(255,235,190,0)");
-        ctx.beginPath();
-        ctx.moveTo(shaftX, v.yH - 2);
-        for (let i = 1; i <= Ns; i++) {
-            const k = i / Ns;
-            const y = v.yH + (shaftBot - v.yH) * k;
-            const half = w * (0.004 + 0.026 * Math.pow(k, 2.1));
-            ctx.lineTo(shaftX + half, y);
-        }
-        for (let i = Ns; i >= 1; i--) {
-            const k = i / Ns;
-            const y = v.yH + (shaftBot - v.yH) * k;
-            const half = w * (0.004 + 0.026 * Math.pow(k, 2.1));
-            ctx.lineTo(shaftX - half, y);
-        }
-        ctx.closePath();
-        ctx.fillStyle = core;
-        ctx.fill();
-        // 光柱内细碎光丝（纵向短丝顺流向，独立闪烁，不做整齐横排）
-        for (let i = 0; i < 54; i++) {
-            const k = Math.pow(Math.random(), 1.35);
-            const y = v.yH + (shaftBot - v.yH) * k;
-            const half = w * (0.012 + 0.07 * Math.pow(k, 1.85));
-            const x = shaftX + (Math.random() * 2 - 1) * half;
-            const a =
-                (0.05 + 0.17 * Math.pow(Math.random(), 2)) *
-                (0.45 + 0.55 * Math.sin(t * (1.4 + Math.random() * 1.6) + i * 9.1));
-            if (a < 0.03) continue;
-            ctx.strokeStyle = `rgba(255,234,190,${a})`;
-            ctx.lineWidth = 0.7 + Math.random() * 1.1;
+        for (let i = 0; i < 46; i++) {
+            const k = i / 46;
+            const d = 0.93 - Math.pow(k, 1.08) * 0.9; // 近景(0.93)→远景(0.03)
+            const flick = 0.05 + 0.5 * Math.abs(Math.sin(t * 2.6 + i * 7.7) * Math.sin(t * 1.1 + i * 3.3));
+            if (k > 0.3 && flick < 0.16) continue;
+            const u = uM + Math.pow(k, 1.3) * 0.05 * Math.sin(t * 1.4 + i * 2.1);
+            const spreadU = 0.010 + 0.016 * k;
+            const y = riverY(d);
+            const xl = riverX(u - spreadU, d);
+            const xr = riverX(u + spreadU, d);
+            ctx.strokeStyle = `rgba(255,232,178,${flick * (1 - k * 0.35)})`;
+            ctx.lineWidth = 1.0 + k * 1.6;
             ctx.lineCap = "round";
             ctx.beginPath();
-            ctx.moveTo(x, y);
-            ctx.lineTo(x, y - (2 + Math.random() * 7) * (0.4 + k * 0.9));
+            ctx.moveTo(xl, y);
+            ctx.lineTo(xr, y);
             ctx.stroke();
         }
+        ctx.restore();
 
         // 流向纹（顺流向的线性亮纹：自眼前出发，向远山方向流动消散）
         for (const s of amb.streaks) {
-            s.d -= (0.06 + s.d * s.d * 0.62) * s.spd * 0.016 * (reduce ? 0.12 : 1);
+            s.d -= (0.06 + s.d * s.d * 0.62) * s.spd * 0.0035 * (reduce ? 0.12 : 1); // 流向纹：慢流（≈河灯速度 1/4）
             if (s.d < -0.04) respawnStreak(s);
             const dHead = Math.max(-0.02, s.d);
             const len = (0.02 + 0.11 * dHead * dHead) * s.len;
@@ -1030,7 +997,7 @@ export default function RiverBoard() {
 
         // 波面碎光点（随流向向远方游动）
         for (const g of amb.glints) {
-            g.d -= (0.06 + g.d * g.d * 0.62) * g.spd * 0.016 * (reduce ? 0.12 : 1);
+            g.d -= (0.06 + g.d * g.d * 0.62) * g.spd * 0.0035 * (reduce ? 0.12 : 1); // 碎光点：慢流（≈河灯速度 1/4）
             if (g.d < -0.03) {
                 g.d = 0.88 + Math.random() * 0.12;
                 g.u = Math.pow(Math.random(), 1.25) * 0.9 + 0.05;
@@ -1113,8 +1080,12 @@ export default function RiverBoard() {
                 ctx.arc(sx, sy, st.r, 0, Math.PI * 2);
                 ctx.fill();
             }
-            /* 萤火虫（低空逡巡的荧光点）也走山体遮罩：河面上方、山脊之下的
-               部分正常显示，落入远山剪影内的被裁掉——山上不再有光点透过 */
+        }
+        ctx.restore(); // 山体遮罩作用于星光闪烁；孔明灯在天际更高处，不被裁剪
+
+        /* 萤火虫（低空逡巡的荧光点）：画在山体遮罩之外——遮罩把"山脊线以下
+           （含整条河）"都裁掉了，萤火虫在河面上方低空飞，必须走无裁剪路径 */
+        if (!reduce) {
             for (const f of amb.fireflies) {
                 f.u +=
                     (Math.sin(t * 0.07 + f.ph) * 0.0011 + Math.sin(t * 0.19 + f.ph * 1.7) * 0.0005) *
@@ -1138,7 +1109,6 @@ export default function RiverBoard() {
                 ctx.fill();
             }
         }
-        ctx.restore(); // 山体遮罩作用于星光闪烁与萤火虫；孔明灯在天际更高处，不被裁剪
 
         /* 孔明灯（远方天际的暖点） */
         for (const g of amb.skyGlows) {
@@ -1591,15 +1561,16 @@ export default function RiverBoard() {
                 <header className="rz-title">
                     <i />
                     河灯寄语
+                    {/* 诗句：位于标题正下方、相对标题水平居中；右→左古文顺序 */}
+                    <div className="rz-couplet">
+                        <span>
+                            <b>「</b>醉后不知天在水<b>」</b>
+                        </span>
+                        <span>
+                            <b>「</b>满船清梦压星河<b>」</b>
+                        </span>
+                    </div>
                 </header>
-                <div className="rz-couplet">
-                    <span>
-                        <b>「</b>醉后不知天在水<b>」</b>
-                    </span>
-                    <span>
-                        <b>「</b>满船清梦压星河<b>」</b>
-                    </span>
-                </div>
                 <p className="rz-hint">悬停河灯读心愿 · 点按细细端详</p>
             </div>
             <div className="rz-veg" />

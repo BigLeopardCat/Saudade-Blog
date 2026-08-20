@@ -235,30 +235,32 @@
         vertical-align: 3px;
         box-shadow: 0 0 14px rgba(255, 205, 130, 0.75);
       }
-    }
 
-    /* 对联：位于"河灯寄语"正下方、全屏水平居中；从右到左古文顺序（上联在右） */
-    .rz-couplet {
-      position: absolute;
-      left: 50%;
-      top: 62px;
-      transform: translateX(-50%);
-      display: flex;
-      flex-direction: row-reverse;
-      gap: 18px;
+      /* 对联：位于"河灯寄语"标题正下方、相对标题水平居中；
+         从右到左古文顺序（上联"醉后"在右） */
+      .rz-couplet {
+        position: absolute;
+        left: 50%;
+        top: calc(100% + 10px);
+        transform: translateX(-50%);
+        display: flex;
+        flex-direction: row-reverse;
+        gap: 18px;
+        white-space: nowrap;
 
-      > span {
-        writing-mode: vertical-rl;
-        text-orientation: upright;
-        font-size: 15px;
-        letter-spacing: 0.24em;
-        color: rgba(242, 230, 205, 0.72);
-        text-shadow: 0 1px 12px rgba(255, 190, 110, 0.24);
+        > span {
+          writing-mode: vertical-rl;
+          text-orientation: upright;
+          font-size: 15px;
+          letter-spacing: 0.24em;
+          color: rgba(242, 230, 205, 0.72);
+          text-shadow: 0 1px 12px rgba(255, 190, 110, 0.24);
 
-        b {
-          font-weight: normal;
-          font-size: 16px;
-          color: rgba(255, 205, 140, 0.92);
+          b {
+            font-weight: normal;
+            font-size: 16px;
+            color: rgba(255, 205, 140, 0.92);
+          }
         }
       }
     }
