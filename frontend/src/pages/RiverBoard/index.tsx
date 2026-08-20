@@ -392,6 +392,8 @@ export default function RiverBoard() {
     const [wishBusy, setWishBusy] = useState(false);
     const [wishDone, setWishDone] = useState(false);
     const wishSeq = useRef(0); // 新河灯自增 id（避开现有 0..n）
+    /* 刚放下的灯快照："再看一眼"按同一盏灯重新点放（复用其留名/灯型/内容） */
+    const lastDroppedWish = useRef<Wish | null>(null);
 
     /* 灯影集：收录全部留言的古籍卷册 */
     const [albumOpen, setAlbumOpen] = useState(false);
@@ -1571,7 +1573,10 @@ export default function RiverBoard() {
                 ripT: -1,
             });
             metaRef.current = metas;
-            setLanterns((prev) => [...prev, { id, v: wishV, msg, cat: wishCat, author, time: shortTime(new Date()) }]);
+            const wish: Wish = { id, v: wishV, msg, cat: wishCat, author, time: shortTime(new Date()) };
+            // 快照刚放的灯："再看一眼"时按同一盏灯重新点放（留名/灯型/内容一致）
+            lastDroppedWish.current = wish;
+            setLanterns((prev) => [...prev, wish]);
             setWishDone(true);
         } catch (err) {
             setWishBusy(false);
@@ -1615,12 +1620,13 @@ export default function RiverBoard() {
         }
     };
 
-    /* 灯影集：打开时拉取全部留言 */
+    /* 灯影集：打开时拉取全部留言。
+       每次打开都重新拉取（不缓存）：放下新灯后灯影集实时同步最新留言，
+       否则会话内只取一次，放灯后需手动刷新网页才更新 */
     const openAlbum = async () => {
         setAlbumOpen(true);
         setAlbumSearch(false);
         setAlbumQuery("");
-        if (albumItems.length > 0) return;
         try {
             // 带上 token：后端据此标记每条留言是否当前用户所放（"我的河灯"）
             const token = localStorage.getItem("tokenKey");
@@ -1917,7 +1923,36 @@ export default function RiverBoard() {
                                 <h3 className="rz-wish-title">灯已入河</h3>
                                 <p className="rz-wish-sub">{CAT_INFO[wishCat].desc}</p>
                                 <div className="rz-wish-foot">
-                                    <button type="button" className="rz-wish-primary" onClick={closeWishFlow}>
+                                    <button
+                                        type="button"
+                                        className="rz-wish-primary"
+                                        onClick={() => {
+                                            const w = lastDroppedWish.current;
+                                            closeWishFlow();
+                                            if (!w) return;
+                                            // 与灯影集选中同款：灯排到近景列队起始 + 亮起气泡 + 打开弹窗详情
+                                            const metas = metaRef.current;
+                                            const id = 10000 + wishSeq.current++;
+                                            metas.push({
+                                                id,
+                                                v: w.v,
+                                                u: 0.3 + Math.random() * 0.4,
+                                                d: 0.88, // 列队起始位置：眼前近景
+                                                w: 0.03 + Math.random() * 0.04,
+                                                sway: Math.random() * Math.PI * 2,
+                                                hue: 0,
+                                                bright: 1,
+                                                oX: 0,
+                                                oY: 0,
+                                                rip: 0.6,
+                                                ripT: -1,
+                                            });
+                                            metaRef.current = metas;
+                                            const again: Wish = { ...w, id };
+                                            setLanterns((prev) => [...prev, again]);
+                                            requestAnimationFrame(() => openWish(again)); // 气泡 + 弹窗详情
+                                        }}
+                                    >
                                         再看一眼
                                     </button>
                                 </div>
