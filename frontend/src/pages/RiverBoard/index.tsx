@@ -320,6 +320,8 @@ interface LanternMeta {
     bright: number;
     oX: number; // 碰撞位移（屏幕像素，随时间衰减）
     oY: number;
+    rip: number; // 涟漪倒计时（秒）：每灯独立随机触发，避免全场同时泛起
+    ripT: number; // 当前一轮涟漪的进行时间（秒），-1 = 无涟漪进行中
 }
 
 interface Amb {
@@ -338,6 +340,9 @@ interface Amb {
 }
 
 let amb: Amb | null = null;
+
+/* 月亮几何（组件内多处共享：绘制与星光避让用同一份常量） */
+const MOON = { x: 0.7, y: 0.16, r: 0.062 } as const;
 
 /* ------------------------- 组件 ------------------------- */
 
@@ -367,7 +372,7 @@ export default function RiverBoard() {
         const v = viewRef.current;
         const bend = Math.sin(0.6 + d * 2.2);
         const c = v.w * (0.51 + 0.045 * bend);
-        const hw = v.w * (0.085 + d * d * 1.08); // 远处收窄、近处展开，透视更深远
+        const hw = v.w * (0.10 + d * d * 1.24); // 远处收窄、近处展开，透视更深远（第 10 轮整体加宽让水面更开阔）
         return c + (u - 0.5) * 2 * hw;
     };
     const riverY = (d: number) => {
@@ -571,8 +576,8 @@ export default function RiverBoard() {
             // 月亮：真实月相（球面光照，无圆盘轮廓——暗面完全透明不画出）
             // 光方向绕盘面左右旋转：β=0 满月（正面照），β=±π/2 上下弦（侧照），
             // 盈月亮面在右、亏月亮面在左（北半球可见月相），β=±π 新月（背照）
-            const mxMoon = w * 0.66;
-            const myMoon = h * 0.16;
+            const mxMoon = w * MOON.x;
+            const myMoon = h * MOON.y;
             const ph = moonPhase();
             const haloK = 0.35 + 0.65 * ph.k; // 新月时几乎无光晕
             const halo = ctx.createRadialGradient(mxMoon, myMoon, 0, mxMoon, myMoon, w * 0.34);
@@ -581,7 +586,7 @@ export default function RiverBoard() {
             halo.addColorStop(1, "rgba(255,226,170,0)");
             ctx.fillStyle = halo;
             ctx.fillRect(mxMoon - w * 0.36, myMoon - w * 0.36, w * 0.72, w * 0.72);
-            const rMoon = Math.min(w, h) * 0.052;
+            const rMoon = Math.min(w, h) * MOON.r;
             const rD = rMoon * 0.82;
             const P = Math.max(8, Math.ceil(rD * 2 * v.dpr * 2));
             const R = P / 2;
@@ -629,9 +634,9 @@ export default function RiverBoard() {
                     // 表面颗粒噪声（沿光方向的高地纹理，确定性哈希）
                     const hsh = Math.abs(Math.sin(nx * 21.7 + ny * 9.3) * 43758.53);
                     b *= 0.965 + 0.035 * (hsh - Math.floor(hsh));
-                    // 月缘软边：最外侧 6% 半径渐变透明，避免硬圆边
-                    const limbA = Math.min(1, (1 - radial) / 0.06);
-                    const a = Math.round(b * limbA * 255);
+                    // 月面完全不透明（实心遮挡后方星空；暗面/盘外由 dot≤0.02 裁掉，
+                    // 保留月相形状）。月缘不必额外做 alpha 渐变——色彩本身受 radial 暗化
+                    const a = Math.round(b * 255);
                     if (a <= 0) continue;
                     // 受光处偏暖、暗部偏冷灰
                     data[i4] = Math.round((252 - (1 - b) * 56) + 6 * Math.max(0, dot));
@@ -758,34 +763,14 @@ export default function RiverBoard() {
 
         prep(front);
         front.drawImage(backCv, -MARGIN, -MARGIN, w + MARGIN * 2, h + MARGIN * 2);
-        // 前层：两岸剪影、苇丛、草、柳、雾
-        const bankGrad = front.createLinearGradient(0, v.yH, 0, h);
-        bankGrad.addColorStop(0, "#050a18");
-        bankGrad.addColorStop(0.55, "#020408");
-        bankGrad.addColorStop(1, "#010205");
-        front.fillStyle = bankGrad;
-        front.beginPath();
-        front.moveTo(-MARGIN - 8, h + 30);
-        for (let i = 0; i <= 34; i++) {
-            const d = (i / 34) * 1.16;
-            const edge = -0.06 + Math.sin(i * 1.9) * 0.015 * (1 - d) + Math.sin(i * 2.7) * 0.008;
-            front.lineTo(riverX(edge, d), riverY(d));
-        }
-        front.lineTo(riverX(-0.05, 0), v.yH - 4);
-        front.lineTo(-MARGIN - 8, v.yH - 4);
-        front.closePath();
-        front.fill();
-        front.beginPath();
-        front.moveTo(w + MARGIN + 8, h + 30);
-        for (let i = 0; i <= 34; i++) {
-            const d = (i / 34) * 1.16;
-            const edge = 1.06 + Math.sin(i * 1.9) * 0.015 * (1 - d) - Math.sin(i * 2.7) * 0.008;
-            front.lineTo(riverX(edge, d), riverY(d));
-        }
-        front.lineTo(riverX(1.05, 0), v.yH - 4);
-        front.lineTo(w + MARGIN + 8, v.yH - 4);
-        front.closePath();
-        front.fill();
+        // 前层打底：河流两侧不再铺大块暗坡——整幅夜色水面渐变（水天一色延伸），
+        // 河道由 backCv 的 riverBase 提亮出明暗层次，弧线边缘微光勾勒河道边界
+        const shoreGrad = front.createLinearGradient(0, v.yH - 4, 0, h + 40);
+        shoreGrad.addColorStop(0, "#0a132c");
+        shoreGrad.addColorStop(0.55, "#061022");
+        shoreGrad.addColorStop(1, "#040918");
+        front.fillStyle = shoreGrad;
+        front.fillRect(-MARGIN - 8, v.yH - 4, w + MARGIN * 2 + 16, h + 44);
 
         // 河流弧线边缘露出来：沿两岸内侧描一条月色微光（阴影区不再整个盖住水缘）
         front.strokeStyle = "rgba(158,186,255,0.22)";
@@ -802,8 +787,8 @@ export default function RiverBoard() {
         }
         front.lineCap = "butt";
 
-        // 苇丛（左岸中景，只保留茎秆）
-        front.strokeStyle = "#04091a";
+        // 苇丛（左岸中景，只保留茎秆；夜色水面底色上稍亮一点保持剪影清晰）
+        front.strokeStyle = "#0b1a33";
         front.lineWidth = 3;
         for (const r of a.reeds) {
             const rx = r.x * w;
@@ -1060,13 +1045,14 @@ export default function RiverBoard() {
         }
 
         // 河灯周围的水面涟漪（缓缓扩散的椭圆环）。
-        // 显示逻辑：仅 d≥0.28（河中段及更远）的灯笼；每只灯以 0.34Hz 相位推移半径
-        // 12→42px（涟漪一波一波往外扩），透明度按相位正弦衰减（相位居中时最亮）。
-        // 近景灯此前"看不出涟漪"是因为灯体本身（DOM 精灵 118-130px）比涟漪环大，
-        // 环被灯笼压在下面看不见；这里涟漪半径随 scl 放大（近灯环更大，正好超出灯体边缘）
+        // 显示逻辑：仅 d≥0.28 的灯笼；每灯独立随机倒计时（2.6-7s）触发一轮
+        // 1.25s 的扩散（半径 12→42px 线性推移，alpha 按 sin(π·t) 渐强渐弱），
+        // 因此涟漪零散偶发、彼此错开，不是所有灯同一节奏循环。
+        // 近景灯此前"看不出涟漪"是灯体（DOM 精灵 118-130px）比环大盖住了它；
+        // 半径随 scl 放大后近灯环正好超出灯体边缘可见。
         for (const m of metaRef.current) {
-            if (m.d < 0.28) continue;
-            const ph2 = (amb.now * 0.34 + m.sway) % 1;
+            if (m.d < 0.28 || m.ripT < 0) continue;
+            const ph2 = Math.min(1, m.ripT / 1.25);
             const scl = Math.pow(Math.max(0, m.d), 1.15); // 与 DOM scale 同一缩放
             const rr = (12 + ph2 * 30) * (0.55 + 1.05 * scl);
             const li = lanternXY(m); // 与灯笼 DOM 同源坐标：涟漪以灯笼为中心
@@ -1089,13 +1075,17 @@ export default function RiverBoard() {
         ctx.translate(px * 0.2, py * 0.1);
         ctx.clip(amb.skyClip, "evenodd");
         ctx.translate(-px * 0.2, -py * 0.1);
-        /* 星光闪烁（只有少数亮星动态叠加） */
+        /* 星光闪烁（只有少数亮星动态叠加；月盘内的星略过——月亮实心应遮挡星空） */
+        const moonR = Math.min(w, h) * MOON.r * 0.82;
+        const moonCX = w * MOON.x, moonCY = h * MOON.y;
         if (!reduce) {
             for (const st of amb.stars) {
                 if (!st.fl) continue;
                 const tw = 0.35 + 0.65 * Math.pow(0.5 + 0.5 * Math.sin(t * st.tw + st.ph), 2);
                 const sx = st.x * w + px * 0.18;
                 const sy = st.y * h + py * 0.1;
+                const mdx = sx - moonCX, mdy = sy - moonCY;
+                if (mdx * mdx + mdy * mdy < moonR * moonR * 1.3) continue;
                 if (tw < 0.45) continue;
                 ctx.strokeStyle = `rgba(210,226,255,${tw * 0.3})`;
                 ctx.lineWidth = 0.8;
@@ -1208,13 +1198,29 @@ export default function RiverBoard() {
         const ms = metaRef.current;
         const pos: { m: LanternMeta; x: number; y: number; r: number }[] = [];
         for (const m of ms) {
-            m.d -= dt * m.w * (0.3 + 0.9 * Math.pow(Math.max(0.03, m.d), 1.35));
+            // 流速整体再放缓（第 10 轮：系数 0.3/0.9 → 0.21/0.63，约 -30%）
+            m.d -= dt * m.w * (0.21 + 0.63 * Math.pow(Math.max(0.03, m.d), 1.35));
+            // 涟漪随机触发：每灯独立倒计时，回合 1.25s 扩散；不随全局相位同步
+            m.rip -= dt;
+            if (m.ripT < 0 && m.rip <= 0) {
+                m.rip = 2.6 + Math.random() * 4.4;
+                m.ripT = 0;
+            }
+            if (m.ripT >= 0) {
+                m.ripT += dt;
+                if (m.ripT > 1.25) {
+                    m.ripT = -1;
+                    m.rip = 2.6 + Math.random() * 4.4; // 上一轮结束，排下一轮
+                }
+            }
             if (m.d < -0.02) {
                 m.d = 0.94 + Math.random() * 0.05; // 眼前重入
                 m.u = 0.36 + Math.random() * 0.28;
                 m.w = 0.03 + Math.random() * 0.045;
                 m.oX = 0;
                 m.oY = 0;
+                m.rip = 1 + Math.random() * 3;
+                m.ripT = -1;
             }
             const d = Math.max(0, m.d);
             const scl = Math.pow(d, 1.15);
@@ -1371,6 +1377,8 @@ export default function RiverBoard() {
                     bright: 0.85 + Math.random() * 0.25,
                     oX: 0,
                     oY: 0,
+                    rip: 0.5 + Math.random() * 4.5, // 初始即错开相位
+                    ripT: -1,
                 });
                 views.push({ id: i, v: metas[i].v, msg, cat: catOf(msg) });
             }
@@ -1585,13 +1593,12 @@ export default function RiverBoard() {
                     <div className="rz-modal-box" onClick={(e) => e.stopPropagation()}>
                         <div className="rz-scroll">
                             <div className="rz-msg">{modal.msg}</div>
+                            {/* 关闭钮放进内容流：滚动到文本末尾才能看到，不再是悬浮在框底压住文本 */}
+                            <button className="rz-modal-close" type="button" onClick={closeModal}>
+                                <span>关闭</span>
+                            </button>
                         </div>
                         <span className="rz-seal">{modal.cat}</span>
-                        <button className="rz-modal-close" type="button" onClick={closeModal}>
-                            <span>关闭</span>
-                            <i className="rz-close-stem" />
-                            <i className="rz-close-tri" />
-                        </button>
                     </div>
                 </div>
             )}
