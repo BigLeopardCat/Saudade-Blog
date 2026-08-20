@@ -333,7 +333,6 @@ interface Amb {
     skyGlows: { x: number; y: number; spd: number; ph: number }[];
     mountain: Path2D; // 远山剪影（base 坐标系），用于遮挡动态星星/流星
     skyClip: Path2D; // 全屏矩形挖去山体（evenodd），动态天空元素只画在山体之外
-    reeds: { x: number; y: number; len: number; ph: number }[];
     shoot: { t: number; x0: number; y0: number; dx: number; dy: number } | null;
     shootAt: number;
     now: number;
@@ -372,7 +371,7 @@ export default function RiverBoard() {
         const v = viewRef.current;
         const bend = Math.sin(0.6 + d * 2.2);
         const c = v.w * (0.51 + 0.045 * bend);
-        const hw = v.w * (0.10 + d * d * 1.24); // 远处收窄、近处展开，透视更深远（第 10 轮整体加宽让水面更开阔）
+        const hw = v.w * (0.085 + d * d * 0.95); // 远处收窄、近处展开（第 11 轮回拢：河道两侧露出，河灯可散布全河宽）
         return c + (u - 0.5) * 2 * hw;
     };
     const riverY = (d: number) => {
@@ -473,19 +472,9 @@ export default function RiverBoard() {
                 ph: Math.random() * Math.PI * 2,
             });
         }
-        const reeds: Amb["reeds"] = [];
-        for (let i = 0; i < 8; i++) {
-            reeds.push({
-                x: 0.02 + Math.random() * 0.09,
-                y: 0.52 + Math.random() * 0.16,
-                len: 40 + Math.random() * 60,
-                ph: Math.random() * Math.PI * 2,
-            });
-        }
         amb = {
             stars, streaks, glints, bands, fireflies, skyGlows,
             mountain: new Path2D(), skyClip: new Path2D(),
-            reeds,
             shoot: null, shootAt: 4 + Math.random() * 5, now: 0,
         };
     };
@@ -608,8 +597,16 @@ export default function RiverBoard() {
                     const radial = Math.sqrt(1 - q); // 0=月心 1=月缘
                     const nz = Math.sqrt(q);
                     const dot = nx * lx + nz * lz;
-                    // —— 明暗（真实月相）：半影带精致过渡，暗面完全透明无圆盘轮廓 ——
-                    if (dot <= 0.02) continue;
+                    // —— 明暗（真实月相）：半影带精致过渡 ——
+                    // 暗面（dot≤0.02）不再是透明窗：填极暗的月灰（略高于夜空一档），
+                    // 月亮整体实心，星星不会透过月面看到
+                    if (dot <= 0.02) {
+                        data[i4] = 27;
+                        data[i4 + 1] = 33;
+                        data[i4 + 2] = 56;
+                        data[i4 + 3] = 255;
+                        continue;
+                    }
                     // t 归一化受光强度（0=明暗界 1=最亮），指数让亮面更饱满
                     let b = Math.pow(Math.max(0, (dot - 0.02) / 0.96), 0.9);
                     // 边缘暗化（月面边缘微微变暗，不突兀）＋ 受光侧微热
@@ -634,8 +631,7 @@ export default function RiverBoard() {
                     // 表面颗粒噪声（沿光方向的高地纹理，确定性哈希）
                     const hsh = Math.abs(Math.sin(nx * 21.7 + ny * 9.3) * 43758.53);
                     b *= 0.965 + 0.035 * (hsh - Math.floor(hsh));
-                    // 月面完全不透明（实心遮挡后方星空；暗面/盘外由 dot≤0.02 裁掉，
-                    // 保留月相形状）。月缘不必额外做 alpha 渐变——色彩本身受 radial 暗化
+                    // 月面完全不透明（实心遮挡后方星空）；月缘不再做 alpha 渐变
                     const a = Math.round(b * 255);
                     if (a <= 0) continue;
                     // 受光处偏暖、暗部偏冷灰
@@ -772,33 +768,6 @@ export default function RiverBoard() {
         front.fillStyle = shoreGrad;
         front.fillRect(-MARGIN - 8, v.yH - 4, w + MARGIN * 2 + 16, h + 44);
 
-        // 河流弧线边缘露出来：沿两岸内侧描一条月色微光（阴影区不再整个盖住水缘）
-        front.strokeStyle = "rgba(158,186,255,0.22)";
-        front.lineWidth = 1.6;
-        front.lineCap = "round";
-        for (const edge of [0.012, 0.988]) {
-            front.beginPath();
-            for (let i = 0; i <= 30; i++) {
-                const d = (i / 30) * 1.16;
-                const ex = edge + Math.sin(i * 1.9) * 0.008 * (1 - d);
-                front.lineTo(riverX(ex, d) - 3, riverY(d));
-            }
-            front.stroke();
-        }
-        front.lineCap = "butt";
-
-        // 苇丛（左岸中景，只保留茎秆；夜色水面底色上稍亮一点保持剪影清晰）
-        front.strokeStyle = "#0b1a33";
-        front.lineWidth = 3;
-        for (const r of a.reeds) {
-            const rx = r.x * w;
-            const ry = r.y * h;
-            front.beginPath();
-            front.moveTo(rx, ry);
-            front.quadraticCurveTo(rx, ry - r.len * 0.4, rx, ry - r.len);
-            front.stroke();
-        }
-
         // 垂柳（右上空枝，加粗加密保证剪影清晰可见）
         front.strokeStyle = "#01030a";
         for (let s = 0; s < 7; s++) {
@@ -868,7 +837,7 @@ export default function RiverBoard() {
                 }
             }
         };
-        willow(riverX(-0.035, 0.42) - 6, riverY(0.42) - 2, 0.8, 1);
+        // 左岸垂柳已按需求移除（左岸保持干净水面）；右岸保留一株平衡构图
         willow(riverX(1.038, 0.6) + 12, riverY(0.6) - 4, 1.05, -1);
 
         // 岸畔小亭剪影（右岸中景，飞檐翘角）
@@ -961,33 +930,77 @@ export default function RiverBoard() {
             ctx.fill();
         }
 
-        // 月光碎影（垂直碎光柱，整体随波呼吸）
-        const uM = 0.5;
-        const glowC = ctx.createLinearGradient(0, v.yH * 0.99, 0, h);
-        glowC.addColorStop(0, "rgba(255,224,160,0)");
-        glowC.addColorStop(0.5, "rgba(255,224,160,0.05)");
-        glowC.addColorStop(1, "rgba(255,224,160,0)");
-        traceRiver(ctx, 0, 1.08, false);
-        ctx.globalAlpha = 0.75 + 0.25 * Math.sin(t * 0.9);
-        ctx.fillStyle = glowC;
+        // 月光倒影（电影级）：月亮正下方投下的纵向光柱——扇形展开、边缘随水波
+        // 呼吸，河岸外被外层河流 clip 裁掉；水面细碎光斑呈纵向光丝顺流向散落，
+        // 不再是一排整齐的交替横线
+        const shaftX = w * MOON.x;
+        const Ns = 30;
+        const shaftBot = h * 0.98;
+        // 主体光柱（扇形，近端更宽）
+        const shaft = ctx.createLinearGradient(0, v.yH, 0, h);
+        shaft.addColorStop(0, "rgba(255,226,170,0)");
+        shaft.addColorStop(0.32, "rgba(255,230,180,0.22)");
+        shaft.addColorStop(0.68, "rgba(255,228,172,0.14)");
+        shaft.addColorStop(1, "rgba(255,220,160,0)");
+        ctx.beginPath();
+        ctx.moveTo(shaftX, v.yH - 2);
+        for (let i = 1; i <= Ns; i++) {
+            const k = i / Ns;
+            const y = v.yH + (shaftBot - v.yH) * k;
+            const half =
+                w * (0.009 + 0.085 * Math.pow(k, 1.9)) *
+                (1 + 0.07 * Math.sin(t * 0.6 + i * 2.7) * Math.sin(i * 5.3 + 1.1));
+            ctx.lineTo(shaftX + half, y);
+        }
+        for (let i = Ns; i >= 1; i--) {
+            const k = i / Ns;
+            const y = v.yH + (shaftBot - v.yH) * k;
+            const half =
+                w * (0.009 + 0.085 * Math.pow(k, 1.9)) *
+                (1 + 0.07 * Math.sin(t * 0.6 + i * 2.7) * Math.sin(i * 5.3 + 1.1));
+            ctx.lineTo(shaftX - half, y);
+        }
+        ctx.closePath();
+        ctx.fillStyle = shaft;
         ctx.fill();
-        ctx.globalAlpha = 1;
-        for (let i = 0; i < 46; i++) {
-            const k = i / 46;
-            const d = Math.pow(k, 1.08) * 1.0;
-            const flick = 0.05 + 0.5 * Math.abs(Math.sin(t * 2.6 + i * 7.7) * Math.sin(t * 1.1 + i * 3.3));
-            if (k > 0.3 && flick < 0.16) continue;
-            const u = uM + Math.pow(k, 1.3) * 0.05 * Math.sin(t * 1.4 + i * 2.1);
-            const spreadU = 0.010 + 0.016 * k;
-            const y = riverY(d);
-            const xl = riverX(u - spreadU, d);
-            const xr = riverX(u + spreadU, d);
-            ctx.strokeStyle = `rgba(255,232,178,${flick * (1 - k * 0.35)})`;
-            ctx.lineWidth = 1.0 + k * 1.6;
+        // 核心亮带（光柱最亮的中轴，略窄）
+        const core = ctx.createLinearGradient(0, v.yH, 0, shaftBot);
+        core.addColorStop(0, "rgba(255,240,205,0.08)");
+        core.addColorStop(0.55, "rgba(255,242,210,0.20)");
+        core.addColorStop(1, "rgba(255,235,190,0)");
+        ctx.beginPath();
+        ctx.moveTo(shaftX, v.yH - 2);
+        for (let i = 1; i <= Ns; i++) {
+            const k = i / Ns;
+            const y = v.yH + (shaftBot - v.yH) * k;
+            const half = w * (0.004 + 0.026 * Math.pow(k, 2.1));
+            ctx.lineTo(shaftX + half, y);
+        }
+        for (let i = Ns; i >= 1; i--) {
+            const k = i / Ns;
+            const y = v.yH + (shaftBot - v.yH) * k;
+            const half = w * (0.004 + 0.026 * Math.pow(k, 2.1));
+            ctx.lineTo(shaftX - half, y);
+        }
+        ctx.closePath();
+        ctx.fillStyle = core;
+        ctx.fill();
+        // 光柱内细碎光丝（纵向短丝顺流向，独立闪烁，不做整齐横排）
+        for (let i = 0; i < 54; i++) {
+            const k = Math.pow(Math.random(), 1.35);
+            const y = v.yH + (shaftBot - v.yH) * k;
+            const half = w * (0.012 + 0.07 * Math.pow(k, 1.85));
+            const x = shaftX + (Math.random() * 2 - 1) * half;
+            const a =
+                (0.05 + 0.17 * Math.pow(Math.random(), 2)) *
+                (0.45 + 0.55 * Math.sin(t * (1.4 + Math.random() * 1.6) + i * 9.1));
+            if (a < 0.03) continue;
+            ctx.strokeStyle = `rgba(255,234,190,${a})`;
+            ctx.lineWidth = 0.7 + Math.random() * 1.1;
             ctx.lineCap = "round";
             ctx.beginPath();
-            ctx.moveTo(xl, y);
-            ctx.lineTo(xr, y);
+            ctx.moveTo(x, y);
+            ctx.lineTo(x, y - (2 + Math.random() * 7) * (0.4 + k * 0.9));
             ctx.stroke();
         }
 
@@ -1045,16 +1058,16 @@ export default function RiverBoard() {
         }
 
         // 河灯周围的水面涟漪（缓缓扩散的椭圆环）。
-        // 显示逻辑：仅 d≥0.28 的灯笼；每灯独立随机倒计时（2.6-7s）触发一轮
-        // 1.25s 的扩散（半径 12→42px 线性推移，alpha 按 sin(π·t) 渐强渐弱），
-        // 因此涟漪零散偶发、彼此错开，不是所有灯同一节奏循环。
-        // 近景灯此前"看不出涟漪"是灯体（DOM 精灵 118-130px）比环大盖住了它；
-        // 半径随 scl 放大后近灯环正好超出灯体边缘可见。
+        // 显示逻辑：仅 d≥0.28 的灯笼；每灯独立随机倒计时（1.2-3.8s）触发一轮
+        // 1.8s 的扩散（半径 12→68px 线性推移，alpha 按 sin(π·t) 渐强渐弱）。
+        // 各灯计时独立、起点错开——同一时刻通常有多盏在各自扩散，但绝不全场
+        // 齐步同现。近景灯此前"看不出涟漪"是灯体（DOM 精灵 118-130px）比环大
+        // 盖住了它；半径随 scl 放大后近灯环正好超出灯体边缘可见。
         for (const m of metaRef.current) {
             if (m.d < 0.28 || m.ripT < 0) continue;
-            const ph2 = Math.min(1, m.ripT / 1.25);
+            const ph2 = Math.min(1, m.ripT / 1.8);
             const scl = Math.pow(Math.max(0, m.d), 1.15); // 与 DOM scale 同一缩放
-            const rr = (12 + ph2 * 30) * (0.55 + 1.05 * scl);
+            const rr = (12 + ph2 * 56) * (0.55 + 1.05 * scl);
             const li = lanternXY(m); // 与灯笼 DOM 同源坐标：涟漪以灯笼为中心
             const rx = li.x;
             // 圆笼灯（v=2）灯身最低处在灯笼中心下方 ≈42px·scl：涟漪从笼底溢出；
@@ -1100,32 +1113,32 @@ export default function RiverBoard() {
                 ctx.arc(sx, sy, st.r, 0, Math.PI * 2);
                 ctx.fill();
             }
+            /* 萤火虫（低空逡巡的荧光点）也走山体遮罩：河面上方、山脊之下的
+               部分正常显示，落入远山剪影内的被裁掉——山上不再有光点透过 */
+            for (const f of amb.fireflies) {
+                f.u +=
+                    (Math.sin(t * 0.07 + f.ph) * 0.0011 + Math.sin(t * 0.19 + f.ph * 1.7) * 0.0005) *
+                    (reduce ? 0.1 : 1);
+                f.d -= (Math.sin(t * 0.045 + f.ph * 2.3) * 0.0002 + 0.00004) * (reduce ? 0.1 : 1);
+                if (f.u < 0.04) f.u = 0.04;
+                if (f.u > 0.96) f.u = 0.96;
+                if (f.d < 0.045) f.d = 0.9 + Math.random() * 0.06;
+                if (f.d > 0.92) f.d = 0.92;
+                const fx = riverX(f.u, f.d) + px * 0.5;
+                const fy = riverY(f.d) - 22 - Math.sin(t * 1.3 + f.ph) * 5;
+                const fl = 0.35 + 0.65 * Math.abs(Math.sin(t * f.flap + f.ph * 5));
+                if (fl < 0.2) continue;
+                const grad = ctx.createRadialGradient(fx, fy, 0, fx, fy, 7);
+                grad.addColorStop(0, `rgba(236,255,170,${0.85 * fl})`);
+                grad.addColorStop(0.5, `rgba(200,236,120,${0.32 * fl})`);
+                grad.addColorStop(1, "rgba(180,220,100,0)");
+                ctx.fillStyle = grad;
+                ctx.beginPath();
+                ctx.arc(fx, fy, 7, 0, Math.PI * 2);
+                ctx.fill();
+            }
         }
-        ctx.restore(); // 山体遮罩只作用于星光闪烁；萤火虫/孔明灯在河面上方，不被裁剪
-
-        /* 萤火虫（沿河道低空逡巡：横向漂移 + 缓慢逆行 + 纵向微微起伏） */
-        for (const f of amb.fireflies) {
-            f.u +=
-                (Math.sin(t * 0.07 + f.ph) * 0.0011 + Math.sin(t * 0.19 + f.ph * 1.7) * 0.0005) *
-                (reduce ? 0.1 : 1);
-            f.d -= (Math.sin(t * 0.045 + f.ph * 2.3) * 0.0002 + 0.00004) * (reduce ? 0.1 : 1);
-            if (f.u < 0.04) f.u = 0.04;
-            if (f.u > 0.96) f.u = 0.96;
-            if (f.d < 0.045) f.d = 0.9 + Math.random() * 0.06;
-            if (f.d > 0.92) f.d = 0.92;
-            const fx = riverX(f.u, f.d) + px * 0.5;
-            const fy = riverY(f.d) - 22 - Math.sin(t * 1.3 + f.ph) * 5;
-            const fl = 0.35 + 0.65 * Math.abs(Math.sin(t * f.flap + f.ph * 5));
-            if (fl < 0.2) continue;
-            const grad = ctx.createRadialGradient(fx, fy, 0, fx, fy, 7);
-            grad.addColorStop(0, `rgba(236,255,170,${0.85 * fl})`);
-            grad.addColorStop(0.5, `rgba(200,236,120,${0.32 * fl})`);
-            grad.addColorStop(1, "rgba(180,220,100,0)");
-            ctx.fillStyle = grad;
-            ctx.beginPath();
-            ctx.arc(fx, fy, 7, 0, Math.PI * 2);
-            ctx.fill();
-        }
+        ctx.restore(); // 山体遮罩作用于星光闪烁与萤火虫；孔明灯在天际更高处，不被裁剪
 
         /* 孔明灯（远方天际的暖点） */
         for (const g of amb.skyGlows) {
@@ -1198,24 +1211,25 @@ export default function RiverBoard() {
         const ms = metaRef.current;
         const pos: { m: LanternMeta; x: number; y: number; r: number }[] = [];
         for (const m of ms) {
-            // 流速整体再放缓（第 10 轮：系数 0.3/0.9 → 0.21/0.63，约 -30%）
-            m.d -= dt * m.w * (0.21 + 0.63 * Math.pow(Math.max(0.03, m.d), 1.35));
-            // 涟漪随机触发：每灯独立倒计时，回合 1.25s 扩散；不随全局相位同步
+            // 流速持续放缓（第 11 轮：系数 0.21/0.63 → 0.15/0.44，再降约 30%）
+            m.d -= dt * m.w * (0.15 + 0.44 * Math.pow(Math.max(0.03, m.d), 1.35));
+            // 涟漪随机触发：每灯独立倒计时（1.2-3.8s），回合 1.8s 扩散。
+            // 间隔较短 + 起始错开 → 同一时刻有多盏灯在各自扩散（不同步齐整）
             m.rip -= dt;
             if (m.ripT < 0 && m.rip <= 0) {
-                m.rip = 2.6 + Math.random() * 4.4;
+                m.rip = 1.2 + Math.random() * 2.6;
                 m.ripT = 0;
             }
             if (m.ripT >= 0) {
                 m.ripT += dt;
-                if (m.ripT > 1.25) {
+                if (m.ripT > 1.8) {
                     m.ripT = -1;
-                    m.rip = 2.6 + Math.random() * 4.4; // 上一轮结束，排下一轮
+                    m.rip = 1.2 + Math.random() * 2.6; // 上一轮结束，排下一轮
                 }
             }
             if (m.d < -0.02) {
                 m.d = 0.94 + Math.random() * 0.05; // 眼前重入
-                m.u = 0.36 + Math.random() * 0.28;
+                m.u = 0.25 + Math.random() * 0.45;
                 m.w = 0.03 + Math.random() * 0.045;
                 m.oX = 0;
                 m.oY = 0;
@@ -1362,7 +1376,8 @@ export default function RiverBoard() {
             const metas: LanternMeta[] = [];
             const views: Wish[] = [];
             for (let i = 0; i < count; i++) {
-                const u = 0.34 + Math.random() * 0.32;
+                // 河灯散布整个河面宽度（河道两侧也适当有灯），不挤在河心
+                const u = 0.25 + Math.random() * 0.45;
                 // 初始分布偏近景：开场即见大河灯，且近场始终有灯
                 const d = 1 - Math.pow(Math.random(), 1.8);
                 const msg = msgs[i % msgs.length];
@@ -1576,15 +1591,15 @@ export default function RiverBoard() {
                 <header className="rz-title">
                     <i />
                     河灯寄语
-                    <div className="rz-couplet">
-                        <span>
-                            <b>「</b>醉后不知天在水<b>」</b>
-                        </span>
-                        <span>
-                            <b>「</b>满船清梦压星河<b>」</b>
-                        </span>
-                    </div>
                 </header>
+                <div className="rz-couplet">
+                    <span>
+                        <b>「</b>醉后不知天在水<b>」</b>
+                    </span>
+                    <span>
+                        <b>「</b>满船清梦压星河<b>」</b>
+                    </span>
+                </div>
                 <p className="rz-hint">悬停河灯读心愿 · 点按细细端详</p>
             </div>
             <div className="rz-veg" />
