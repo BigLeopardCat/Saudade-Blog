@@ -54,6 +54,9 @@ pub struct WebSettingPayload {
     pub user_account: Option<String>,
     #[serde(rename = "userPassword")]
     pub user_password: Option<String>,
+    // 用户昵称：存在 user 表（博客主账号 id=1），面板读写经此字段
+    #[serde(rename = "userNickname")]
+    pub user_nickname: Option<String>,
     #[serde(rename = "userAvatar")]
     pub user_avatar: Option<String>,
     #[serde(rename = "userTalk")]
@@ -92,6 +95,13 @@ pub async fn get_web_settings(
     };
 
     let (u_acc, u_pass) = (Some("".to_string()), Some("".to_string()));
+    // 昵称以 user 表为准（已有账户默认昵称=账号）
+    let u_nickname = user::Entity::find_by_id(1)
+        .one(&state.db)
+        .await
+        .unwrap_or(None)
+        .map(|u| u.nickname)
+        .filter(|n| !n.is_empty());
 
     let payload = WebSettingPayload {
         blog_title: get_val("blog_title"),
@@ -99,9 +109,10 @@ pub async fn get_web_settings(
         blog_domain: get_direct("blogDomain"),
         blog_description: get_direct("blogDescription"),
         blog_icp: get_val("icp"),
-        
+
         user_account: u_acc,
         user_password: u_pass,
+        user_nickname: u_nickname,
         user_avatar: get_val("avatar"),
         user_talk: get_val("talk"),
         
@@ -169,13 +180,25 @@ pub async fn update_web_info(
              if let Some(u) = user {
                  let enc_acc = encrypt_password(acc);
                  let enc_pass = encrypt_password(pass);
-                 
+
                  let mut active: user::ActiveModel = u.into();
                  active.username = Set(enc_acc);
                  active.password = Set(enc_pass);
                  let _ = active.update(&state.db).await;
                  info!("User credentials updated with encryption.");
              }
+        }
+    }
+    // 昵称独立于账号密码更新（面板"用户信息"页可单独配置）
+    if let Some(nick) = payload.user_nickname {
+        let nick = nick.trim();
+        if !nick.is_empty() {
+            if let Some(u) = user::Entity::find_by_id(1).one(&state.db).await.unwrap_or(None) {
+                let mut active: user::ActiveModel = u.into();
+                active.nickname = Set(nick.chars().take(32).collect::<String>());
+                let _ = active.update(&state.db).await;
+                info!("User nickname updated.");
+            }
         }
     }
 

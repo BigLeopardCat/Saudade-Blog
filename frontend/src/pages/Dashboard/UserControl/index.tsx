@@ -18,6 +18,7 @@ const UserControl = () => {
         blogIcp: '',
         userAccount: '',
         userPassword: '',
+        userNickname: '',
         userAvatar: '',
         userTalk: '',
         socialGithub: '',
@@ -143,6 +144,17 @@ const UserControl = () => {
             label: <h3>用户信息</h3>,
             children: <>
                 <form className='web_setting' onSubmit={handleSubmit}>
+                    <TextField
+                        id="userNickname"
+                        label="用户昵称"
+                        variant="outlined"
+                        size='medium'
+                        color='primary'
+                        focused
+                        style={{ width: '70%', marginBottom: 20 }}
+                        onChange={handleChange}
+                        value={webInfo.userNickname}
+                    />
                     <TextField
                         id="userAccount"
                         label="用户账号"

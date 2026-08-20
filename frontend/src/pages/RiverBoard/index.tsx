@@ -43,11 +43,16 @@ const CAT_INFO: Record<string, { name: string; desc: string }> = {
 };
 /* 三种灯型名称（与精灵 v 对应） */
 const LAMP_NAMES = ["莲花灯", "八角灯", "圆笼灯"];
+/* 河灯上的简短时刻（月-日 时:分），与灯影集完整时间区分 */
+const shortTime = (d: Date) => {
+    const p = (n: number) => String(n).padStart(2, "0");
+    return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
 
 /* 灯影集条目 */
 type AlbumItem = { id: number; v: number; cat: string; author: string; msg: string; time: string };
 
-type Wish = { id: number; v: number; msg: string; cat: string };
+type Wish = { id: number; v: number; msg: string; cat: string; author?: string; time?: string };
 
 /* ------------------------- 灯笼精灵预渲染 -------------------------
    三种花样：莲花灯 / 八角灯 / 圆笼灯，全部用 Canvas 手绘，
@@ -353,7 +358,7 @@ interface Amb {
 let amb: Amb | null = null;
 
 /* 月亮几何（组件内多处共享：绘制与星光避让用同一份常量） */
-const MOON = { x: 0.7, y: 0.16, r: 0.093 } as const; // r 自 0.062 放大 50%
+const MOON = { x: 0.7, y: 0.16, r: 0.073 } as const; // r 0.093 → 0.073：月亮缩小
 
 /* ------------------------- 组件 ------------------------- */
 
@@ -385,8 +390,12 @@ export default function RiverBoard() {
     const [albumOpen, setAlbumOpen] = useState(false);
     const [albumItems, setAlbumItems] = useState<AlbumItem[]>([]);
     const [albumTabs, setAlbumTabs] = useState<"time" | "author" | "cat">("time");
+    const [albumTimeAsc, setAlbumTimeAsc] = useState(false); // 时序正序/倒序
+    const [albumCatFilter, setAlbumCatFilter] = useState<string[]>([]); // 类型筛选（空=全部）
     const [albumSearch, setAlbumSearch] = useState(false);
     const [albumQuery, setAlbumQuery] = useState("");
+    /* 留言留名（可选；检索框按留名/用户名查找） */
+    const [wishAuthor, setWishAuthor] = useState("");
 
     /* 布局：视口与投影常量 */
     const layout = (w: number, h: number) => {
@@ -583,46 +592,41 @@ export default function RiverBoard() {
             ctx.fillStyle = sky;
             ctx.fillRect(-MARGIN, -MARGIN, w + MARGIN * 2, v.yH * 1.25 + MARGIN * 2);
 
-            // 星辰（静态基色）
+            // 月亮常量先行：星辰绘制需跳过月盘（星星不得透过月亮）
+            const mxMoon = w * MOON.x;
+            const myMoon = h * MOON.y;
+            const rMoon = Math.min(w, h) * MOON.r;
+
+            // 星辰（静态基色）；月盘内的星略过——月亮实心，星星不得透过
             for (const st of a.stars) {
+                const sx = st.x * w, sy = st.y * h;
+                const mdx = sx - mxMoon, mdy = sy - myMoon;
+                if (mdx * mdx + mdy * mdy < rMoon * rMoon * 1.15) continue;
                 ctx.fillStyle = st.warm ? "rgba(255,236,205,0.62)" : "rgba(214,228,255,0.68)";
                 ctx.beginPath();
-                ctx.arc(st.x * w, st.y * h, st.r, 0, Math.PI * 2);
+                ctx.arc(sx, sy, st.r, 0, Math.PI * 2);
                 ctx.fill();
             }
 
             // 月亮：真实月相（球面光照，无圆盘轮廓——暗面完全透明不画出）
             // 光方向绕盘面左右旋转：β=0 满月（正面照），β=±π/2 上下弦（侧照），
             // 盈月亮面在右、亏月亮面在左（北半球可见月相），β=±π 新月（背照）
-            const mxMoon = w * MOON.x;
-            const myMoon = h * MOON.y;
             const ph = moonPhase();
             // 八种标准月相（按真实时间量化）：新月/蛾眉/上弦/盈凸/满月/亏凸/下弦/残月
             const qAge = Math.round(ph.age * 8) / 8;
             const beta = Math.PI * (1 - 2 * Math.max(0, Math.min(1, qAge))); // 相位→光照角
             const lInv = 1 / Math.hypot(Math.sin(beta), Math.cos(beta));
             const lx = Math.sin(beta) * lInv, lz = Math.cos(beta) * lInv;
-            const rMoon = Math.min(w, h) * MOON.r;
-            // 光晕以发光区域（亮月牙）中心为圆心向外扩散：圆心向亮面侧偏移
-            // 半个月盘，且裁剪掉不发光侧——光晕永不包住暗面，不再是玻璃球
+            // 光晕以发光区域（亮月牙）中心为圆心向四周完整扩散（不再裁剪半圆）：
+            // 圆心随月相偏到亮面侧，暗面侧自然远离光心渐弱，不再有生硬的半圆边界
             const haloK = 0.35 + 0.65 * ph.k; // 新月时几乎无光晕
             const hx = mxMoon + lx * rMoon * 0.5, hy = myMoon;
-            const halo = ctx.createRadialGradient(hx, hy, 0, hx, hy, w * 0.26);
+            const halo = ctx.createRadialGradient(hx, hy, 0, hx, hy, w * 0.22);
             halo.addColorStop(0, `rgba(255,238,200,${0.26 * haloK})`);
             halo.addColorStop(0.3, `rgba(255,226,170,${0.09 * haloK})`);
             halo.addColorStop(1, "rgba(255,226,170,0)");
-            ctx.save();
-            if (Math.abs(lx) > 0.12) {
-                // 蛾眉/弦/凸月：只保留亮面侧半圆的光晕（满月/新月不裁剪）
-                ctx.beginPath();
-                const hSide = lx >= 0 ? 1 : -1; // 亮面所在半圆（右 / 左）
-                ctx.arc(mxMoon, myMoon, w * 0.34, hSide > 0 ? -Math.PI / 2 : Math.PI / 2, hSide > 0 ? Math.PI / 2 : Math.PI * 1.5);
-                ctx.closePath();
-                ctx.clip();
-            }
             ctx.fillStyle = halo;
-            ctx.fillRect(hx - w * 0.36, hy - w * 0.36, w * 0.72, w * 0.72);
-            ctx.restore();
+            ctx.fillRect(hx - w * 0.32, hy - w * 0.32, w * 0.64, w * 0.64);
             const rD = rMoon * 0.82;
             const P = Math.max(8, Math.ceil(rD * 2 * v.dpr * 2));
             const R = P / 2;
@@ -676,8 +680,9 @@ export default function RiverBoard() {
                     // 表面颗粒噪声（沿光方向的高地纹理，确定性哈希）
                     const hsh = Math.abs(Math.sin(nx * 21.7 + ny * 9.3) * 43758.53);
                     b *= 0.965 + 0.035 * (hsh - Math.floor(hsh));
-                    // 月面完全不透明（实心遮挡后方星空）；月缘不再做 alpha 渐变
-                    const a = Math.round(b * 255);
+                    // 月面完全不透明（实心遮挡后方星空）：alpha 下限 180，
+                    // 月缘即便受光微弱也保持深色实心，星星无法透过月盘边缘
+                    const a = Math.max(180, Math.round(b * 255));
                     if (a <= 0) continue;
                     // 受光处偏暖、暗部偏冷灰
                     data[i4] = Math.round((252 - (1 - b) * 56) + 6 * Math.max(0, dot));
@@ -1420,15 +1425,17 @@ export default function RiverBoard() {
             .then((j: unknown) => {
                 const data = (j as { data?: unknown })?.data;
                 const arr = Array.isArray(data)
-                    ? (data as Array<{ content?: unknown; cat?: unknown; v?: unknown }>)
+                    ? (data as Array<{ content?: unknown; cat?: unknown; v?: unknown; author?: unknown; createTime?: unknown }>)
                     : Array.isArray(j)
-                      ? (j as Array<{ content?: unknown; cat?: unknown; v?: unknown }>)
+                      ? (j as Array<{ content?: unknown; cat?: unknown; v?: unknown; author?: unknown; createTime?: unknown }>)
                       : [];
                 const items = arr
                     .map((x) => ({
                         msg: String(x?.content ?? "").trim(),
                         cat: CATS.includes(String(x?.cat ?? "")) ? String(x.cat) : "",
                         v: [0, 1, 2].includes(Number(x?.v)) ? Number(x.v) : -1,
+                        author: String(x?.author ?? ""),
+                        time: String(x?.createTime ?? "").slice(5, 16), // MM-DD HH:mm
                     }))
                     .filter((i) => i.msg);
                 if (items.length >= 4) {
@@ -1438,7 +1445,7 @@ export default function RiverBoard() {
                             // 同步 meta 的 v：圆笼灯（v=2）的涟漪偏移以 meta.v 为准
                             const meta = metaRef.current[i];
                             if (meta && it.v >= 0) meta.v = it.v;
-                            return { ...p, msg: it.msg, cat: it.cat || catOf(it.msg), v: it.v >= 0 ? it.v : p.v };
+                            return { ...p, msg: it.msg, cat: it.cat || catOf(it.msg), v: it.v >= 0 ? it.v : p.v, author: it.author, time: it.time };
                         })
                     );
                 }
@@ -1532,7 +1539,7 @@ export default function RiverBoard() {
             const res = await fetch(`${runtimeBaseURL}/api/public/talk`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ content: msg, cat: wishCat, v: wishV, talkTitle: "" }),
+                body: JSON.stringify({ content: msg, cat: wishCat, v: wishV, talkTitle: "", author: wishAuthor.trim().slice(0, 20) }),
             });
             if (!res.ok) throw new Error("bad status");
             const metas = metaRef.current;
@@ -1552,7 +1559,7 @@ export default function RiverBoard() {
                 ripT: -1,
             });
             metaRef.current = metas;
-            setLanterns((prev) => [...prev, { id, v: wishV, msg, cat: wishCat }]);
+            setLanterns((prev) => [...prev, { id, v: wishV, msg, cat: wishCat, author: wishAuthor.trim(), time: shortTime(new Date()) }]);
             setWishDone(true);
         } catch {
             setWishBusy(false);
@@ -1564,6 +1571,7 @@ export default function RiverBoard() {
         setWishBusy(false);
         setWishStep(0);
         setWishText("");
+        setWishAuthor("");
     };
 
     /* 灯影集：打开时拉取全部留言 */
@@ -1612,9 +1620,9 @@ export default function RiverBoard() {
             ripT: -1,
         });
         metaRef.current = metas;
-        const wish: Wish = { id, v: it.v, msg: it.msg, cat: it.cat };
+        const wish: Wish = { id, v: it.v, msg: it.msg, cat: it.cat, author: it.author, time: it.time };
         setLanterns((prev) => [...prev, wish]);
-        setAlbumOpen(false);
+        // 不关闭灯影集：读完弹窗详情后回到检索界面继续翻卷
         requestAnimationFrame(() => openWish(wish)); // 气泡 + 弹窗详情
     };
     useEffect(() => {
@@ -1625,14 +1633,16 @@ export default function RiverBoard() {
         return () => window.removeEventListener("keydown", onKey);
     }, []);
 
-    /* 灯影集：按当前页签排序 + 按检索词过滤 */
+    /* 灯影集：按当前页签排序 + 类型筛选 + 按检索词过滤 */
     const q = albumQuery.trim();
     const albumSorted = [...albumItems]
+        .filter((it) => albumCatFilter.length === 0 || albumCatFilter.includes(it.cat))
         .filter((it) => q === "" || it.msg.includes(q) || it.author.includes(q) || it.cat === q)
         .sort((a, b) => {
-            if (albumTabs === "cat") return a.cat.localeCompare(b.cat, "zh");
-            if (albumTabs === "author") return (a.author || "无名").localeCompare(b.author || "无名", "zh");
-            return a.time < b.time ? 1 : a.time > b.time ? -1 : b.id - a.id;
+            if (albumTabs === "cat") return a.cat.localeCompare(b.cat, "zh") || b.id - a.id;
+            if (albumTabs === "author") return (a.author || "无名").localeCompare(b.author || "无名", "zh") || b.id - a.id;
+            const cmp = a.time < b.time ? -1 : a.time > b.time ? 1 : 0;
+            return albumTimeAsc ? cmp || a.id - b.id : -cmp || b.id - a.id;
         });
 
     if (sprites.length === 0) return <div className="rz-root" />;
@@ -1703,6 +1713,11 @@ export default function RiverBoard() {
                         >
                             <div className="rz-scroll">
                                 <div className="rz-msg">{ln.msg}</div>
+                                {(ln.author || ln.time) && (
+                                    <div className="rz-who">
+                                        {ln.author || "无名"} · {ln.time || ""}
+                                    </div>
+                                )}
                             </div>
                             <span className="rz-seal">{ln.cat}</span>
                         </div>
@@ -1822,6 +1837,13 @@ export default function RiverBoard() {
                                     maxLength={200}
                                 />
                                 <div className="rz-wish-count">{wishText.length}/200</div>
+                                <input
+                                    className="rz-wish-author"
+                                    value={wishAuthor}
+                                    onChange={(e) => setWishAuthor(e.target.value.slice(0, 20))}
+                                    placeholder="留名（可选，便于他人在灯影集里寻到）"
+                                    maxLength={20}
+                                />
                                 <div className="rz-wish-foot">
                                     <button type="button" className="rz-wish-ghost" onClick={() => setWishStep(1)}>
                                         上一步
@@ -1883,8 +1905,18 @@ export default function RiverBoard() {
                             </div>
                         )}
                         <div className="rz-album-tabs">
-                            <button type="button" className={albumTabs === "time" ? "sel" : ""} onClick={() => setAlbumTabs("time")}>
-                                时序
+                            <button
+                                type="button"
+                                className={albumTabs === "time" ? "sel" : ""}
+                                onClick={() => {
+                                    if (albumTabs === "time") setAlbumTimeAsc((a) => !a); // 再点切换正/倒序
+                                    else {
+                                        setAlbumTabs("time");
+                                        setAlbumTimeAsc(false); // 切回时序默认倒序（新近在前）
+                                    }
+                                }}
+                            >
+                                时序{albumTabs === "time" && (albumTimeAsc ? "↑" : "↓")}
                             </button>
                             <button type="button" className={albumTabs === "author" ? "sel" : ""} onClick={() => setAlbumTabs("author")}>
                                 账户
@@ -1893,6 +1925,25 @@ export default function RiverBoard() {
                                 类型
                             </button>
                         </div>
+                        {/* 类型页签：四枚印章手动筛选（可多选） */}
+                        {albumTabs === "cat" && (
+                            <div className="rz-album-catf">
+                                {CATS.map((c) => (
+                                    <button
+                                        key={c}
+                                        type="button"
+                                        className={"rz-seal rz-album-catf-seal" + (albumCatFilter.includes(c) ? " sel" : "")}
+                                        onClick={() =>
+                                            setAlbumCatFilter((prev) =>
+                                                prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]
+                                            )
+                                        }
+                                    >
+                                        {c}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
                         <div className="rz-album-list">
                             {albumSorted.map((it) => (
                                 <button key={it.id} type="button" className="rz-album-item" onClick={() => lightFromAlbum(it)}>
@@ -1914,6 +1965,11 @@ export default function RiverBoard() {
                     <div className="rz-modal-box" onClick={(e) => e.stopPropagation()}>
                         <div className="rz-scroll">
                             <div className="rz-msg">{modal.msg}</div>
+                            {(modal.author || modal.time) && (
+                                <div className="rz-who">
+                                    {modal.author || "无名"} · {modal.time || ""}
+                                </div>
+                            )}
                             {/* 关闭钮放进内容流：滚动到文本末尾才能看到，不再是悬浮在框底压住文本 */}
                             <button className="rz-modal-close" type="button" onClick={closeModal}>
                                 <span>关闭</span>

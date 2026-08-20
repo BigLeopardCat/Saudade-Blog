@@ -6,6 +6,7 @@ export interface webInfo{
     blogIcp: string;
     userAccount: string;
     userPassword: string;
+    userNickname: string;
     userAvatar: string;
     userTalk: string;
     socialGithub: string;
