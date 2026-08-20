@@ -27,13 +27,22 @@ const DEMO_MESSAGES = [
     "愿你所求皆如愿，所行化坦途。",
 ];
 
-/* 心愿分类：愿 / 寄 / 忆 / 诉（后续可让留言用户自选类型） */
+/* 心愿分类：愿 / 寄 / 忆 / 诉（留言用户自选类型） */
 const CATS = ["愿", "寄", "忆", "诉"];
 const catOf = (s: string) => {
     let h = 5381;
     for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
     return CATS[h % CATS.length];
 };
+/* 四枚印章的介绍：愿 · 心灯祈愿 / 寄 · 尺素传情 / 忆 · 旧梦拾光 / 诉 · 临灯自语 */
+const CAT_INFO: Record<string, { name: string; desc: string }> = {
+    愿: { name: "心灯祈愿", desc: "长愿灯花照此身，人间万事俱成真。" },
+    寄: { name: "尺素传情", desc: "欲寄彩笺兼尺素，灯影长流知我意。" },
+    忆: { name: "旧梦拾光", desc: "故人入我梦，明灯寄此情。" },
+    诉: { name: "临灯自语", desc: "此心幽处无人解，借得河灯说与听。" },
+};
+/* 三种灯型名称（与精灵 v 对应） */
+const LAMP_NAMES = ["莲花灯", "八角灯", "圆笼灯"];
 
 type Wish = { id: number; v: number; msg: string; cat: string };
 
@@ -341,7 +350,7 @@ interface Amb {
 let amb: Amb | null = null;
 
 /* 月亮几何（组件内多处共享：绘制与星光避让用同一份常量） */
-const MOON = { x: 0.7, y: 0.16, r: 0.062 } as const;
+const MOON = { x: 0.7, y: 0.16, r: 0.093 } as const; // r 自 0.062 放大 50%
 
 /* ------------------------- 组件 ------------------------- */
 
@@ -358,6 +367,16 @@ export default function RiverBoard() {
     const [lanterns, setLanterns] = useState<Wish[]>([]);
     const [ready, setReady] = useState(false);
     const [modal, setModal] = useState<Wish | null>(null); // 正中弹窗内的心愿
+
+    /* 此心为灯 · 留言流程：0 选灯型 → 1 选印章 → 2 书写/放下 */
+    const [wishOpen, setWishOpen] = useState(false);
+    const [wishStep, setWishStep] = useState<0 | 1 | 2>(0);
+    const [wishV, setWishV] = useState(0);
+    const [wishCat, setWishCat] = useState("愿");
+    const [wishText, setWishText] = useState("");
+    const [wishBusy, setWishBusy] = useState(false);
+    const [wishDone, setWishDone] = useState(false);
+    const wishSeq = useRef(0); // 新河灯自增 id（避开现有 0..n）
 
     /* 布局：视口与投影常量 */
     const layout = (w: number, h: number) => {
@@ -568,26 +587,32 @@ export default function RiverBoard() {
             const mxMoon = w * MOON.x;
             const myMoon = h * MOON.y;
             const ph = moonPhase();
-            // 光晕只落在亮面一侧的半圆（盈月亮面在右、亏月在左），
-            // 不再画包住整个月盘的圆形光晕——否则像玻璃球
-            const beta = Math.PI * (1 - 2 * Math.max(0, Math.min(1, ph.age))); // 相位→光照角
+            // 八种标准月相（按真实时间量化）：新月/蛾眉/上弦/盈凸/满月/亏凸/下弦/残月
+            const qAge = Math.round(ph.age * 8) / 8;
+            const beta = Math.PI * (1 - 2 * Math.max(0, Math.min(1, qAge))); // 相位→光照角
             const lInv = 1 / Math.hypot(Math.sin(beta), Math.cos(beta));
             const lx = Math.sin(beta) * lInv, lz = Math.cos(beta) * lInv;
+            const rMoon = Math.min(w, h) * MOON.r;
+            // 光晕以发光区域（亮月牙）中心为圆心向外扩散：圆心向亮面侧偏移
+            // 半个月盘，且裁剪掉不发光侧——光晕永不包住暗面，不再是玻璃球
             const haloK = 0.35 + 0.65 * ph.k; // 新月时几乎无光晕
-            const halo = ctx.createRadialGradient(mxMoon, myMoon, 0, mxMoon, myMoon, w * 0.3);
+            const hx = mxMoon + lx * rMoon * 0.5, hy = myMoon;
+            const halo = ctx.createRadialGradient(hx, hy, 0, hx, hy, w * 0.26);
             halo.addColorStop(0, `rgba(255,238,200,${0.26 * haloK})`);
             halo.addColorStop(0.3, `rgba(255,226,170,${0.09 * haloK})`);
             halo.addColorStop(1, "rgba(255,226,170,0)");
             ctx.save();
-            ctx.beginPath();
-            const hSide = lx >= 0 ? 1 : -1; // 亮面所在半圆（右 / 左）
-            ctx.arc(mxMoon, myMoon, w * 0.38, hSide > 0 ? -Math.PI / 2 : Math.PI / 2, hSide > 0 ? Math.PI / 2 : Math.PI * 1.5);
-            ctx.closePath();
-            ctx.clip();
+            if (Math.abs(lx) > 0.12) {
+                // 蛾眉/弦/凸月：只保留亮面侧半圆的光晕（满月/新月不裁剪）
+                ctx.beginPath();
+                const hSide = lx >= 0 ? 1 : -1; // 亮面所在半圆（右 / 左）
+                ctx.arc(mxMoon, myMoon, w * 0.34, hSide > 0 ? -Math.PI / 2 : Math.PI / 2, hSide > 0 ? Math.PI / 2 : Math.PI * 1.5);
+                ctx.closePath();
+                ctx.clip();
+            }
             ctx.fillStyle = halo;
-            ctx.fillRect(mxMoon - w * 0.42, myMoon - w * 0.42, w * 0.84, w * 0.84);
+            ctx.fillRect(hx - w * 0.36, hy - w * 0.36, w * 0.72, w * 0.72);
             ctx.restore();
-            const rMoon = Math.min(w, h) * MOON.r;
             const rD = rMoon * 0.82;
             const P = Math.max(8, Math.ceil(rD * 2 * v.dpr * 2));
             const R = P / 2;
@@ -1369,8 +1394,11 @@ export default function RiverBoard() {
             }
             metaRef.current = metas;
             setLanterns(views);
-            // 入场渐显
-            requestAnimationFrame(() => requestAnimationFrame(() => setReady(true)));
+            // 入场渐显（加载幕多停留 1 秒，让"河灯将明"的氛围充分呈现）
+            setTimeout(() => {
+                if (cancelled) return;
+                requestAnimationFrame(() => requestAnimationFrame(() => setReady(true)));
+            }, 1000);
         };
 
         initLights(DEMO_MESSAGES.slice(0, 12));
@@ -1382,16 +1410,25 @@ export default function RiverBoard() {
             .then((j: unknown) => {
                 const data = (j as { data?: unknown })?.data;
                 const arr = Array.isArray(data)
-                    ? (data as Array<{ content?: unknown }>)
+                    ? (data as Array<{ content?: unknown; cat?: unknown; v?: unknown }>)
                     : Array.isArray(j)
-                      ? (j as Array<{ content?: unknown }>)
+                      ? (j as Array<{ content?: unknown; cat?: unknown; v?: unknown }>)
                       : [];
-                const texts = arr.map((x) => String(x?.content ?? "").trim()).filter(Boolean);
-                if (texts.length >= 4) {
+                const items = arr
+                    .map((x) => ({
+                        msg: String(x?.content ?? "").trim(),
+                        cat: CATS.includes(String(x?.cat ?? "")) ? String(x.cat) : "",
+                        v: [0, 1, 2].includes(Number(x?.v)) ? Number(x.v) : -1,
+                    }))
+                    .filter((i) => i.msg);
+                if (items.length >= 4) {
                     setLanterns((prev) =>
                         prev.map((p, i) => {
-                            const msg = texts[i % texts.length];
-                            return { ...p, msg, cat: catOf(msg) };
+                            const it = items[i % items.length];
+                            // 同步 meta 的 v：圆笼灯（v=2）的涟漪偏移以 meta.v 为准
+                            const meta = metaRef.current[i];
+                            if (meta && it.v >= 0) meta.v = it.v;
+                            return { ...p, msg: it.msg, cat: it.cat || catOf(it.msg), v: it.v >= 0 ? it.v : p.v };
                         })
                     );
                 }
@@ -1474,6 +1511,49 @@ export default function RiverBoard() {
     const dismissModal = () => {
         if (Date.now() - lastWishTouch.current < 800) return;
         closeModal();
+    };
+
+    /* 此心为灯：把留言放下河——新灯在近景出现，随后随流漂远 */
+    const dropLantern = async () => {
+        const msg = wishText.trim();
+        if (!msg || wishBusy) return;
+        setWishBusy(true);
+        try {
+            const res = await fetch(`${runtimeBaseURL}/api/public/talk`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ content: msg, cat: wishCat, v: wishV, talkTitle: "" }),
+            });
+            if (!res.ok) throw new Error("bad status");
+            const metas = metaRef.current;
+            const id = 10000 + wishSeq.current++;
+            metas.push({
+                id,
+                v: wishV,
+                u: 0.32 + Math.random() * 0.36,
+                d: 0.8, // 近景放下，开场即见
+                w: 0.03 + Math.random() * 0.04,
+                sway: Math.random() * Math.PI * 2,
+                hue: 0,
+                bright: 1,
+                oX: 0,
+                oY: 0,
+                rip: 0.8,
+                ripT: -1,
+            });
+            metaRef.current = metas;
+            setLanterns((prev) => [...prev, { id, v: wishV, msg, cat: wishCat }]);
+            setWishDone(true);
+        } catch {
+            setWishBusy(false);
+        }
+    };
+    const closeWishFlow = () => {
+        setWishOpen(false);
+        setWishDone(false);
+        setWishBusy(false);
+        setWishStep(0);
+        setWishText("");
     };
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
@@ -1571,8 +1651,128 @@ export default function RiverBoard() {
                         </span>
                     </div>
                 </header>
-                <p className="rz-hint">悬停河灯读心愿 · 点按细细端详</p>
+                <p className="rz-hint">灯浮星河处，停舟问心语。轻触荧惑光，细看灯中字。</p>
+                {/* 左下角留言入口 */}
+                <button
+                    className="rz-wish-btn"
+                    type="button"
+                    onClick={() => {
+                        setWishText("");
+                        setWishStep(0);
+                        setWishDone(false);
+                        setWishOpen(true);
+                    }}
+                >
+                    <i />
+                    此心为灯
+                </button>
             </div>
+            {/* 此心为灯 · 留言流程：选灯型 → 选印章 → 书写放下 */}
+            {wishOpen && (
+                <div className="rz-modal rz-wish-modal" onClick={closeWishFlow} role="dialog" aria-modal="true" aria-label="点一盏河灯">
+                    <div className="rz-modal-box rz-wish-box" onClick={(e) => e.stopPropagation()}>
+                        {wishStep === 0 && (
+                            <div className="rz-wish-step">
+                                <h3 className="rz-wish-title">点一盏河灯</h3>
+                                <p className="rz-wish-sub">先挑一盏喜欢的灯</p>
+                                <div className="rz-lamp-grid">
+                                    {[0, 1, 2].map((lv) => (
+                                        <button
+                                            key={lv}
+                                            type="button"
+                                            className={"rz-lamp-card" + (wishV === lv ? " sel" : "")}
+                                            onClick={() => setWishV(lv)}
+                                        >
+                                            <img src={sprites[lv]} alt="" draggable={false} />
+                                            <span>{LAMP_NAMES[lv]}</span>
+                                        </button>
+                                    ))}
+                                </div>
+                                <div className="rz-wish-foot">
+                                    <button type="button" className="rz-wish-ghost" onClick={closeWishFlow}>
+                                        再想想
+                                    </button>
+                                    <button type="button" className="rz-wish-primary" onClick={() => setWishStep(1)}>
+                                        下一程
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                        {wishStep === 1 && (
+                            <div className="rz-wish-step">
+                                <h3 className="rz-wish-title">选一枚印章</h3>
+                                <p className="rz-wish-sub">为这盏灯盖一枚心印</p>
+                                <div className="rz-cat-grid">
+                                    {CATS.map((c) => (
+                                        <button
+                                            key={c}
+                                            type="button"
+                                            className={"rz-cat-card" + (wishCat === c ? " sel" : "")}
+                                            onClick={() => setWishCat(c)}
+                                        >
+                                            <span className="rz-seal rz-cat-seal">{c}</span>
+                                            <span className="rz-cat-name">
+                                                <b>
+                                                    {c} · {CAT_INFO[c].name}
+                                                </b>
+                                                <i>{CAT_INFO[c].desc}</i>
+                                            </span>
+                                        </button>
+                                    ))}
+                                </div>
+                                <div className="rz-wish-foot">
+                                    <button type="button" className="rz-wish-ghost" onClick={() => setWishStep(0)}>
+                                        上一步
+                                    </button>
+                                    <button type="button" className="rz-wish-primary" onClick={() => setWishStep(2)}>
+                                        下一程
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                        {wishStep === 2 && !wishDone && (
+                            <div className="rz-wish-step">
+                                <h3 className="rz-wish-title">写下心愿</h3>
+                                <p className="rz-wish-sub">点亮的是灯，留下的是心</p>
+                                <textarea
+                                    className="rz-wish-input"
+                                    value={wishText}
+                                    onChange={(e) => setWishText(e.target.value.slice(0, 200))}
+                                    placeholder="此刻想说的话…"
+                                    rows={4}
+                                    maxLength={200}
+                                />
+                                <div className="rz-wish-count">{wishText.length}/200</div>
+                                <div className="rz-wish-foot">
+                                    <button type="button" className="rz-wish-ghost" onClick={() => setWishStep(1)}>
+                                        上一步
+                                    </button>
+                                    <button
+                                        type="button"
+                                        className="rz-wish-primary"
+                                        disabled={!wishText.trim() || wishBusy}
+                                        onClick={dropLantern}
+                                    >
+                                        {wishBusy ? "放下中…" : "放下河灯"}
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                        {wishDone && (
+                            <div className="rz-wish-step rz-wish-done">
+                                <div className="rz-wish-done-glow" />
+                                <h3 className="rz-wish-title">灯已入河</h3>
+                                <p className="rz-wish-sub">愿你的心愿，顺水远行，被月光照见</p>
+                                <div className="rz-wish-foot">
+                                    <button type="button" className="rz-wish-primary" onClick={closeWishFlow}>
+                                        再看一眼
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
             <div className="rz-veg" />
             {modal && (
                 <div className="rz-modal" onClick={dismissModal} role="dialog" aria-modal="true" aria-label="心愿细读">

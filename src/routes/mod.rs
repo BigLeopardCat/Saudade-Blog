@@ -77,7 +77,7 @@ pub fn create_router(state: AppState) -> Router {
         
         // Talks
         .route("/api/talk", get(talks::list_talks))
-        .route("/api/public/talk", get(talks::list_talks))
+        .route("/api/public/talk", get(talks::list_talks).post(talks::create_talk))
 
         // Web/User Public
         .route("/api/public/user", get(web_info::get_user_info))

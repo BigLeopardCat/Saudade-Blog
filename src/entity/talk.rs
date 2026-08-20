@@ -9,6 +9,8 @@ pub struct Model {
     pub title: Option<String>,
     #[sea_orm(column_type = "Text")]
     pub content: String,
+    pub cat: String,
+    pub v: i8,
     pub created_at: DateTime,
     pub updated_at: DateTime,
 }

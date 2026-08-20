@@ -277,6 +277,305 @@
       white-space: nowrap;
       animation: rz-hint-out 1.4s ease 8s forwards;
     }
+
+    /* 左下角留言入口：此心为灯 */
+    .rz-wish-btn {
+      position: absolute;
+      left: 34px;
+      bottom: 32px;
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      padding: 10px 20px;
+      background: rgba(14, 12, 26, 0.6);
+      border: 1px solid rgba(255, 205, 140, 0.28);
+      border-radius: 999px;
+      cursor: pointer;
+      pointer-events: auto;
+      color: rgba(244, 228, 200, 0.85);
+      font-family: inherit;
+      font-size: 14px;
+      letter-spacing: 0.3em;
+      text-indent: 0.3em;
+      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+      transition: color 0.25s ease, border-color 0.25s ease, background 0.25s ease;
+
+      i {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: radial-gradient(circle, #ffe9b8 0%, rgba(255, 200, 120, 0.4) 60%, transparent 100%);
+        box-shadow: 0 0 12px rgba(255, 205, 130, 0.8);
+      }
+
+      &:hover,
+      &:focus-visible {
+        color: #ffe9c4;
+        border-color: rgba(255, 205, 140, 0.5);
+        background: rgba(24, 20, 40, 0.72);
+        outline: none;
+      }
+    }
+  }
+
+  /* ---------------- 此心为灯 · 留言流程弹窗 ---------------- */
+  .rz-wish-modal {
+    .rz-wish-box {
+      width: min(92vw, 560px);
+      max-width: min(92vw, 560px);
+
+      .rz-wish-step {
+        padding: 6px 4px 2px;
+      }
+
+      .rz-wish-title {
+        margin: 0;
+        font-size: 19px;
+        font-weight: normal;
+        letter-spacing: 0.4em;
+        text-indent: 0.4em;
+        color: rgba(244, 230, 205, 0.92);
+        text-shadow: 0 1px 10px rgba(255, 190, 110, 0.2);
+      }
+
+      .rz-wish-sub {
+        margin: 10px 0 0;
+        font-size: 12px;
+        letter-spacing: 0.22em;
+        color: rgba(240, 226, 200, 0.45);
+      }
+
+      /* 选灯型：三张灯卡 */
+      .rz-lamp-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+        margin-top: 18px;
+
+        .rz-lamp-card {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 4px;
+          padding: 14px 6px 12px;
+          background: rgba(10, 9, 22, 0.5);
+          border: 1px solid rgba(255, 205, 140, 0.16);
+          border-radius: 12px;
+          cursor: pointer;
+          color: rgba(240, 226, 200, 0.72);
+          font-family: inherit;
+          transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
+
+          img {
+            width: 84px;
+            height: 84px;
+            filter: brightness(1.08) drop-shadow(0 4px 14px rgba(255, 180, 100, 0.25));
+            pointer-events: none;
+          }
+
+          span {
+            font-size: 13px;
+            letter-spacing: 0.24em;
+            text-indent: 0.24em;
+          }
+
+          &:hover,
+          &:focus-visible {
+            border-color: rgba(255, 205, 140, 0.45);
+            background: rgba(20, 17, 36, 0.65);
+            outline: none;
+          }
+
+          &.sel {
+            border-color: rgba(255, 200, 130, 0.75);
+            background: rgba(34, 26, 48, 0.75);
+            box-shadow: 0 0 0 1px rgba(255, 200, 130, 0.25), 0 0 22px rgba(255, 180, 100, 0.12);
+            transform: translateY(-2px);
+          }
+        }
+      }
+
+      /* 选印章：四枚心印卡 */
+      .rz-cat-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+        margin-top: 18px;
+
+        .rz-cat-card {
+          display: flex;
+          align-items: flex-start;
+          gap: 10px;
+          padding: 12px 12px 11px;
+          text-align: left;
+          background: rgba(10, 9, 22, 0.5);
+          border: 1px solid rgba(255, 205, 140, 0.16);
+          border-radius: 12px;
+          cursor: pointer;
+          color: rgba(240, 226, 200, 0.8);
+          font-family: inherit;
+          transition: border-color 0.2s ease, background 0.2s ease;
+
+          .rz-cat-seal {
+            position: static;
+            flex: none;
+            margin-top: 1px;
+            font-size: 15px;
+            line-height: 1.6;
+            padding: 2px 9px;
+          }
+
+          .rz-cat-name {
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+
+            b {
+              font-size: 14px;
+              font-weight: normal;
+              letter-spacing: 0.16em;
+              color: rgba(244, 230, 205, 0.92);
+            }
+
+            i {
+              font-style: normal;
+              font-size: 12px;
+              line-height: 1.6;
+              letter-spacing: 0.05em;
+              color: rgba(240, 226, 200, 0.5);
+            }
+          }
+
+          &:hover,
+          &:focus-visible {
+            border-color: rgba(255, 205, 140, 0.45);
+            background: rgba(20, 17, 36, 0.65);
+            outline: none;
+          }
+
+          &.sel {
+            border-color: rgba(255, 200, 130, 0.75);
+            background: rgba(34, 26, 48, 0.75);
+            box-shadow: 0 0 0 1px rgba(255, 200, 130, 0.25), 0 0 22px rgba(255, 180, 100, 0.12);
+          }
+        }
+      }
+
+      /* 书写心愿 */
+      .rz-wish-input {
+        display: block;
+        width: 100%;
+        box-sizing: border-box;
+        margin-top: 18px;
+        padding: 12px 14px;
+        background: rgba(8, 7, 18, 0.66);
+        border: 1px solid rgba(255, 205, 140, 0.22);
+        border-radius: 10px;
+        color: #f2e2c2;
+        font-family: inherit;
+        font-size: 14px;
+        line-height: 1.9;
+        letter-spacing: 0.08em;
+        resize: none;
+        outline: none;
+        transition: border-color 0.2s ease;
+
+        &::placeholder {
+          color: rgba(240, 226, 200, 0.32);
+        }
+
+        &:focus {
+          border-color: rgba(255, 205, 140, 0.5);
+        }
+      }
+
+      .rz-wish-count {
+        margin-top: 6px;
+        text-align: right;
+        font-size: 11px;
+        letter-spacing: 0.12em;
+        color: rgba(240, 226, 200, 0.35);
+      }
+
+      /* 底部按钮 */
+      .rz-wish-foot {
+        display: flex;
+        justify-content: flex-end;
+        gap: 12px;
+        margin-top: 18px;
+
+        .rz-wish-ghost {
+          padding: 8px 18px;
+          background: transparent;
+          border: 1px solid rgba(255, 205, 140, 0.2);
+          border-radius: 999px;
+          cursor: pointer;
+          color: rgba(240, 226, 200, 0.6);
+          font-family: inherit;
+          font-size: 13px;
+          letter-spacing: 0.24em;
+          text-indent: 0.24em;
+          transition: color 0.2s ease, border-color 0.2s ease;
+
+          &:hover,
+          &:focus-visible {
+            color: #ffe9c4;
+            border-color: rgba(255, 205, 140, 0.45);
+            outline: none;
+          }
+        }
+
+        .rz-wish-primary {
+          padding: 8px 22px;
+          background: rgba(255, 205, 140, 0.12);
+          border: 1px solid rgba(255, 205, 140, 0.4);
+          border-radius: 999px;
+          cursor: pointer;
+          color: #ffe9c4;
+          font-family: inherit;
+          font-size: 13px;
+          letter-spacing: 0.26em;
+          text-indent: 0.26em;
+          box-shadow: 0 0 18px rgba(255, 190, 110, 0.12);
+          transition: background 0.2s ease, border-color 0.2s ease, opacity 0.2s ease;
+
+          &:hover:not(:disabled),
+          &:focus-visible:not(:disabled) {
+            background: rgba(255, 205, 140, 0.2);
+            border-color: rgba(255, 205, 140, 0.6);
+            outline: none;
+          }
+
+          &:disabled {
+            opacity: 0.4;
+            cursor: default;
+          }
+        }
+      }
+
+      /* 放下成功 */
+      .rz-wish-done {
+        text-align: center;
+        padding: 22px 4px 12px;
+
+        .rz-wish-done-glow {
+          width: 46px;
+          height: 46px;
+          margin: 0 auto 16px;
+          border-radius: 50%;
+          background: radial-gradient(circle, #ffe9b8 0%, rgba(255, 201, 121, 0.55) 42%, rgba(255, 180, 90, 0) 74%);
+          box-shadow: 0 0 40px 10px rgba(255, 196, 118, 0.3);
+          animation: rz-boot-pulse 1.6s ease-in-out infinite;
+        }
+
+        .rz-wish-foot {
+          justify-content: center;
+          margin-top: 22px;
+        }
+      }
+    }
   }
 
   /* 暗角 */

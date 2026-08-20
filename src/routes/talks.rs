@@ -13,6 +13,8 @@ pub struct TalkDto {
     #[serde(rename = "talkTitle")]
     pub title: String,
     pub content: String,
+    pub cat: String,
+    pub v: i32,
     #[serde(rename = "createTime")]
     pub created_at: String,
     #[serde(rename = "updateTime")]
@@ -27,6 +29,8 @@ pub async fn list_talks(
         id: t.id,
         title: t.title.unwrap_or_default(),
         content: t.content,
+        cat: t.cat,
+        v: t.v as i32,
         created_at: t.created_at.and_utc().with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap()).format("%Y-%m-%d %H:%M:%S").to_string(),
         updated_at: t.updated_at.and_utc().with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap()).format("%Y-%m-%d %H:%M:%S").to_string(),
     }).collect();
@@ -38,15 +42,38 @@ pub struct UpsertTalk {
     #[serde(rename = "talkTitle")]
     title: String,
     content: String,
+    // 河灯留言：印章类型（愿/寄/忆/诉）与灯型（0 莲花 / 1 八角 / 2 圆笼）
+    #[serde(default)]
+    cat: String,
+    #[serde(default)]
+    v: i8,
 }
 
 pub async fn create_talk(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<UpsertTalk>,
 ) -> Json<ApiResponse<String>> {
+    // 河灯留言：匿名公开提交，做基础校验防滥用（长度封顶 + 印章/灯型白名单）
+    let content = payload.content.trim();
+    let cat = match payload.cat.as_str() {
+        "愿" | "寄" | "忆" | "诉" => payload.cat,
+        _ => "愿".to_string(),
+    };
+    let v = match payload.v {
+        0..=2 => payload.v,
+        _ => 0,
+    };
+    if content.is_empty() {
+        return Json(ApiResponse::error("留言不能为空"));
+    }
+    if content.chars().count() > 500 {
+        return Json(ApiResponse::error("留言过长（最多 500 字）"));
+    }
     let t = talk::ActiveModel {
-        title: Set(Some(payload.title)),
-        content: Set(payload.content),
+        title: Set(Some(cat.clone())),
+        content: Set(content.to_string()),
+        cat: Set(cat),
+        v: Set(v),
         created_at: Set(chrono::Utc::now().naive_utc()),
         updated_at: Set(chrono::Utc::now().naive_utc()),
         ..Default::default()
