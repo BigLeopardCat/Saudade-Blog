@@ -1228,8 +1228,8 @@
 /* 弹窗宽度最终覆盖：.rz-modal .rz-modal-box（位置靠后）会以同特异性压过
    上方各弹窗自身的 width/max-width，须置于文件尾重新声明才生效 */
 .rz-root .rz-wish-modal .rz-wish-box {
-  width: min(94vw, 800px);
-  max-width: min(94vw, 800px);
+  width: min(92vw, 560px);
+  max-width: min(92vw, 560px);
 }
 
 .rz-root .rz-album-modal .rz-album-box {
