@@ -369,6 +369,56 @@
     }
   }
 
+  /* ---------------- 留言板公告（未登录门禁） ---------------- */
+  .rz-notice-modal {
+    .rz-notice-box {
+      width: min(90vw, 480px);
+      max-width: min(90vw, 480px);
+      background:
+        radial-gradient(ellipse at 20% 8%, rgba(120, 84, 48, 0.24), transparent 55%),
+        linear-gradient(170deg, #33241756 0%, #2e2114ee 60%, #261a10f2 100%);
+      border: 1px solid rgba(214, 172, 106, 0.45);
+      outline: 1px solid rgba(214, 172, 106, 0.18);
+      outline-offset: 3px;
+      box-shadow:
+        inset 0 0 40px rgba(20, 12, 4, 0.5),
+        0 14px 44px rgba(0, 0, 0, 0.5);
+      padding: 28px 30px 22px;
+
+      .rz-notice-title {
+        margin: 0 0 16px;
+        text-align: center;
+        font-size: 19px;
+        font-weight: normal;
+        letter-spacing: 0.5em;
+        text-indent: 0.5em;
+        color: rgba(244, 226, 196, 0.95);
+        text-shadow: 0 0 16px rgba(255, 186, 104, 0.25);
+      }
+
+      .rz-notice-body {
+        p {
+          margin: 0 0 12px;
+          font-size: 13px;
+          line-height: 1.95;
+          letter-spacing: 0.1em;
+          color: rgba(242, 226, 194, 0.82);
+          text-indent: 0;
+        }
+
+        p:first-child {
+          margin-bottom: 14px;
+        }
+      }
+
+      .rz-notice-foot {
+        display: flex;
+        justify-content: center;
+        margin-top: 6px;
+      }
+    }
+  }
+
   /* ---------------- 灯影集 · 古籍卷册弹窗 ---------------- */
   .rz-album-modal {
     .rz-album-box {
@@ -593,7 +643,6 @@
         box-shadow: inset 0 0 0 1px rgba(255, 214, 170, 0.35), 0 1px 3px rgba(0, 0, 0, 0.4);
         letter-spacing: 0.1em;
         text-indent: 0.1em;
-        transform: rotate(-2deg);
       }
 
       .rz-album-msg {
@@ -627,8 +676,8 @@
   /* ---------------- 此心为灯 · 留言流程弹窗 ---------------- */
   .rz-wish-modal {
     .rz-wish-box {
-      width: min(92vw, 560px);
-      max-width: min(92vw, 560px);
+      width: min(94vw, 680px);
+      max-width: min(94vw, 680px);
 
       .rz-wish-step {
         padding: 6px 4px 2px;
@@ -803,29 +852,61 @@
         color: rgba(240, 226, 200, 0.35);
       }
 
-      /* 留名（可选）：检索灯影集时按留名/用户名寻灯 */
-      .rz-wish-author {
-        display: block;
-        width: 100%;
-        box-sizing: border-box;
+      /* 留名行（默认预填账号昵称，可一键匿名归入无名） */
+      .rz-wish-author-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
         margin-top: 10px;
-        padding: 9px 14px;
-        background: rgba(8, 7, 18, 0.5);
-        border: 1px solid rgba(255, 205, 140, 0.18);
-        border-radius: 8px;
-        color: #f2e2c2;
-        font-family: inherit;
-        font-size: 13px;
-        letter-spacing: 0.1em;
-        outline: none;
-        transition: border-color 0.2s ease;
 
-        &::placeholder {
-          color: rgba(240, 226, 200, 0.3);
+        .rz-wish-author {
+          flex: 1;
+          min-width: 0;
+          box-sizing: border-box;
+          padding: 9px 14px;
+          background: rgba(8, 7, 18, 0.5);
+          border: 1px solid rgba(255, 205, 140, 0.18);
+          border-radius: 8px;
+          color: #f2e2c2;
+          font-family: inherit;
+          font-size: 13px;
+          letter-spacing: 0.1em;
+          outline: none;
+          transition: border-color 0.2s ease;
+
+          &::placeholder {
+            color: rgba(240, 226, 200, 0.3);
+          }
+
+          &:focus {
+            border-color: rgba(255, 205, 140, 0.45);
+          }
         }
 
-        &:focus {
-          border-color: rgba(255, 205, 140, 0.45);
+        .rz-wish-anon {
+          flex: none;
+          padding: 9px 16px;
+          background: rgba(8, 7, 18, 0.5);
+          border: 1px solid rgba(255, 205, 140, 0.18);
+          border-radius: 8px;
+          color: rgba(240, 226, 200, 0.55);
+          font-family: inherit;
+          font-size: 13px;
+          letter-spacing: 0.2em;
+          text-indent: 0.2em;
+          cursor: pointer;
+          transition: border-color 0.2s ease, color 0.2s ease, background 0.2s ease;
+
+          &:hover {
+            border-color: rgba(255, 205, 140, 0.4);
+            color: rgba(244, 228, 200, 0.9);
+          }
+
+          &.on {
+            color: #ffe8c8;
+            background: rgba(90, 40, 28, 0.6);
+            border-color: rgba(214, 110, 80, 0.55);
+          }
         }
       }
 

@@ -50,6 +50,8 @@ pub fn create_router(state: AppState) -> Router {
     let public_routes = Router::new()
         // Auth
         .route("/api/login", post(auth::login))
+        // 当前登录用户信息（自身鉴权，不经过 admin 守卫）：留言留名预填
+        .route("/api/protected/profile", get(auth::profile))
         
         // Public Notes
         .route("/api/public/notes", get(notes::list_public_notes))

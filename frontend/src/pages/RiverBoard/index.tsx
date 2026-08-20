@@ -50,7 +50,7 @@ const shortTime = (d: Date) => {
 };
 
 /* 灯影集条目 */
-type AlbumItem = { id: number; v: number; cat: string; author: string; msg: string; time: string };
+type AlbumItem = { id: number; v: number; cat: string; author: string; msg: string; time: string; mine: boolean };
 
 type Wish = { id: number; v: number; msg: string; cat: string; author?: string; time?: string };
 
@@ -324,6 +324,13 @@ const CRATERS: [number, number, number][] = [
     [-0.42, -0.24, 0.05],
     [0.05, -0.42, 0.03],
     [-0.28, -0.02, 0.03],
+    // 补充环形山暗区：让月面纹理更丰富（大坑 + 小坑群）
+    [0.1, -0.2, 0.042],
+    [-0.5, 0.08, 0.032],
+    [0.32, 0.3, 0.028],
+    [-0.2, -0.35, 0.026],
+    [0.48, 0.1, 0.022],
+    [-0.05, 0.05, 0.02],
 ];
 
 interface LanternMeta {
@@ -389,13 +396,15 @@ export default function RiverBoard() {
     /* 灯影集：收录全部留言的古籍卷册 */
     const [albumOpen, setAlbumOpen] = useState(false);
     const [albumItems, setAlbumItems] = useState<AlbumItem[]>([]);
-    const [albumTabs, setAlbumTabs] = useState<"time" | "author" | "cat">("time");
+    const [albumTabs, setAlbumTabs] = useState<"time" | "mine" | "cat">("time");
     const [albumTimeAsc, setAlbumTimeAsc] = useState(false); // 时序正序/倒序
     const [albumCatFilter, setAlbumCatFilter] = useState<string[]>([]); // 类型筛选（空=全部）
     const [albumSearch, setAlbumSearch] = useState(false);
     const [albumQuery, setAlbumQuery] = useState("");
-    /* 留言留名（可选；检索框按留名/用户名查找） */
+    /* 留言留名（可选；预填当前账号昵称，可一键匿名；检索框按留名/用户名查找） */
     const [wishAuthor, setWishAuthor] = useState("");
+    /* 未登录留言门禁：留言板公告 */
+    const [noticeOpen, setNoticeOpen] = useState(false);
 
     /* 布局：视口与投影常量 */
     const layout = (w: number, h: number) => {
@@ -645,44 +654,37 @@ export default function RiverBoard() {
                     const radial = Math.sqrt(1 - q); // 0=月心 1=月缘
                     const nz = Math.sqrt(q);
                     const dot = nx * lx + nz * lz;
-                    // —— 明暗（真实月相）：半影带精致过渡 ——
-                    // 暗面（dot≤0.02）填极暗的月灰：月亮整体实心挡住背后的星星，
-                    // 但暗面色调贴近夜空（光晕只落在亮面侧），月牙轮廓清晰，
-                    // 不会再被圆形光晕包成"半亮半黑"的玻璃球
-                    if (dot <= 0.02) {
-                        data[i4] = 18;
-                        data[i4 + 1] = 24;
-                        data[i4 + 2] = 44;
-                        data[i4 + 3] = 255;
-                        continue;
-                    }
-                    // t 归一化受光强度（0=明暗界 1=最亮），指数让亮面更饱满
+                    // —— 明暗（真实月相）：暗面不画出（直接透出背景天空，
+                    // 背景已被发光中心的完整圆形光晕染色，成为光晕的一部分）；
+                    // 残缺部分（明暗交界带）alpha 从透明逐渐过渡到清晰
+                    if (dot <= 0.02) continue;
+                    // t 归一化受光强度（0=明暗界 1=最亮），指数让亮面更饱满；
+                    // alpha 随受光强度渐增：残缺月牙边缘半透明 → 亮面完全清晰
                     let b = Math.pow(Math.max(0, (dot - 0.02) / 0.96), 0.9);
                     // 边缘暗化（月面边缘微微变暗，不突兀）＋ 受光侧微热
                     b *= 1 - 0.26 * Math.pow(radial, 2.6);
                     b *= 1 + 0.10 * dot * dot;
-                    // 月海（静海/澄海/湿海等大块暗斑，柔边）
+                    // 月海（静海/澄海/湿海等大块暗斑，柔边，暗区更明显）
                     for (const [cx, cy, rx, ry] of MARIA) {
                         const dx = nx - cx, dy = ny - cy;
                         const d2 = (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry);
-                        if (d2 < 1) b *= 1 - 0.5 * (1 - d2) * 0.5;
+                        if (d2 < 1) b *= 1 - 0.6 * (1 - d2) * 0.55;
                     }
-                    // 环形山：暗坑 + 受光侧亮缘
+                    // 环形山：暗坑加深 + 受光侧亮缘
                     for (const [cxc, cyc, rc] of CRATERS) {
                         const dx = nx - cxc, dy = ny - cyc;
                         const d2 = (dx * dx + dy * dy) / (rc * rc);
                         if (d2 < 1) {
                             const inner = 1 - d2;
-                            b *= 1 - 0.30 * inner; // 坑底变暗
-                            if (d2 > 0.55 && dx * lx > 0) b *= 1 + 0.14 * inner; // 迎光壁更亮
+                            b *= 1 - 0.44 * inner; // 坑底变暗（暗区更明显）
+                            if (d2 > 0.55 && dx * lx > 0) b *= 1 + 0.18 * inner; // 迎光壁更亮
                         }
                     }
                     // 表面颗粒噪声（沿光方向的高地纹理，确定性哈希）
                     const hsh = Math.abs(Math.sin(nx * 21.7 + ny * 9.3) * 43758.53);
                     b *= 0.965 + 0.035 * (hsh - Math.floor(hsh));
-                    // 月面完全不透明（实心遮挡后方星空）：alpha 下限 180，
-                    // 月缘即便受光微弱也保持深色实心，星星无法透过月盘边缘
-                    const a = Math.max(180, Math.round(b * 255));
+                    // alpha 即受光强度：残缺带半透明到清晰（暗面全透明透背景）
+                    const a = Math.round(b * 255);
                     if (a <= 0) continue;
                     // 受光处偏暖、暗部偏冷灰
                     data[i4] = Math.round((252 - (1 - b) * 56) + 6 * Math.max(0, dot));
@@ -1536,12 +1538,15 @@ export default function RiverBoard() {
         if (!msg || wishBusy) return;
         setWishBusy(true);
         try {
+            const token = localStorage.getItem("tokenKey");
             const res = await fetch(`${runtimeBaseURL}/api/public/talk`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
                 body: JSON.stringify({ content: msg, cat: wishCat, v: wishV, talkTitle: "", author: wishAuthor.trim().slice(0, 20) }),
             });
             if (!res.ok) throw new Error("bad status");
+            const jj = (await res.json()) as { code?: number; message?: string };
+            if (jj?.code !== 200) throw new Error(jj?.message || "留言失败");
             const metas = metaRef.current;
             const id = 10000 + wishSeq.current++;
             metas.push({
@@ -1561,8 +1566,10 @@ export default function RiverBoard() {
             metaRef.current = metas;
             setLanterns((prev) => [...prev, { id, v: wishV, msg, cat: wishCat, author: wishAuthor.trim(), time: shortTime(new Date()) }]);
             setWishDone(true);
-        } catch {
+        } catch (err) {
             setWishBusy(false);
+            // 登录失效/未登录 → 弹公告引导登录
+            if (String(err).includes("登录")) setNoticeOpen(true);
         }
     };
     const closeWishFlow = () => {
@@ -1574,6 +1581,30 @@ export default function RiverBoard() {
         setWishAuthor("");
     };
 
+    /* 此心为灯：未登录先弹留言板公告；已登录进入留言流程并预填账号昵称 */
+    const openWishFlow = async () => {
+        if (!localStorage.getItem("tokenKey")) {
+            setNoticeOpen(true);
+            return;
+        }
+        setWishText("");
+        setWishStep(0);
+        setWishDone(false);
+        setWishOpen(true);
+        if (!wishAuthor) {
+            try {
+                const token = localStorage.getItem("tokenKey");
+                const res = await fetch(`${runtimeBaseURL}/api/protected/profile`, {
+                    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+                });
+                const j = (await res.json()) as { data?: { nickname?: string } };
+                if (j?.data?.nickname) setWishAuthor(j.data.nickname);
+            } catch {
+                /* 拉取失败则留空，可手填或匿名 */
+            }
+        }
+    };
+
     /* 灯影集：打开时拉取全部留言 */
     const openAlbum = async () => {
         setAlbumOpen(true);
@@ -1581,10 +1612,14 @@ export default function RiverBoard() {
         setAlbumQuery("");
         if (albumItems.length > 0) return;
         try {
-            const res = await fetch(`${runtimeBaseURL}/api/public/talk`);
+            // 带上 token：后端据此标记每条留言是否当前用户所放（"我的河灯"）
+            const token = localStorage.getItem("tokenKey");
+            const res = await fetch(`${runtimeBaseURL}/api/public/talk`, {
+                headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+            });
             const j = (await res.json()) as { data?: unknown };
             const arr = Array.isArray(j?.data)
-                ? (j.data as Array<{ talkKey?: unknown; v?: unknown; cat?: unknown; author?: unknown; content?: unknown; createTime?: unknown }>)
+                ? (j.data as Array<{ talkKey?: unknown; v?: unknown; cat?: unknown; author?: unknown; content?: unknown; createTime?: unknown; mine?: unknown }>)
                 : [];
             setAlbumItems(
                 arr.map((x) => ({
@@ -1594,6 +1629,7 @@ export default function RiverBoard() {
                     author: String(x?.author ?? ""),
                     msg: String(x?.content ?? ""),
                     time: String(x?.createTime ?? "").slice(0, 16),
+                    mine: x?.mine === true,
                 }))
             );
         } catch {
@@ -1636,11 +1672,13 @@ export default function RiverBoard() {
     /* 灯影集：按当前页签排序 + 类型筛选 + 按检索词过滤 */
     const q = albumQuery.trim();
     const albumSorted = [...albumItems]
+        .filter((it) => albumTabs !== "mine" || it.mine) // 我的河灯：仅当前登录用户所放
         .filter((it) => albumCatFilter.length === 0 || albumCatFilter.includes(it.cat))
         .filter((it) => q === "" || it.msg.includes(q) || it.author.includes(q) || it.cat === q)
         .sort((a, b) => {
             if (albumTabs === "cat") return a.cat.localeCompare(b.cat, "zh") || b.id - a.id;
-            if (albumTabs === "author") return (a.author || "无名").localeCompare(b.author || "无名", "zh") || b.id - a.id;
+            // 我的河灯：仅按时间（新近在前）
+            if (albumTabs === "mine") return a.time < b.time ? 1 : a.time > b.time ? -1 : b.id - a.id;
             const cmp = a.time < b.time ? -1 : a.time > b.time ? 1 : 0;
             return albumTimeAsc ? cmp || a.id - b.id : -cmp || b.id - a.id;
         });
@@ -1747,16 +1785,7 @@ export default function RiverBoard() {
                     </svg>
                     <span>灯影集</span>
                 </button>
-                <button
-                    className="rz-wish-btn"
-                    type="button"
-                    onClick={() => {
-                        setWishText("");
-                        setWishStep(0);
-                        setWishDone(false);
-                        setWishOpen(true);
-                    }}
-                >
+                <button className="rz-wish-btn" type="button" onClick={openWishFlow}>
                     <i />
                     此心为灯
                 </button>
@@ -1837,13 +1866,23 @@ export default function RiverBoard() {
                                     maxLength={200}
                                 />
                                 <div className="rz-wish-count">{wishText.length}/200</div>
-                                <input
-                                    className="rz-wish-author"
-                                    value={wishAuthor}
-                                    onChange={(e) => setWishAuthor(e.target.value.slice(0, 20))}
-                                    placeholder="留名（可选，便于他人在灯影集里寻到）"
-                                    maxLength={20}
-                                />
+                                <div className="rz-wish-author-row">
+                                    <input
+                                        className="rz-wish-author"
+                                        value={wishAuthor}
+                                        onChange={(e) => setWishAuthor(e.target.value.slice(0, 20))}
+                                        placeholder="留名（默认当前账号昵称）"
+                                        maxLength={20}
+                                    />
+                                    <button
+                                        type="button"
+                                        className={"rz-wish-anon" + (wishAuthor.trim() === "" ? " on" : "")}
+                                        onClick={() => setWishAuthor("")}
+                                        title="匿名放灯：清空留名，归入无名"
+                                    >
+                                        匿名
+                                    </button>
+                                </div>
                                 <div className="rz-wish-foot">
                                     <button type="button" className="rz-wish-ghost" onClick={() => setWishStep(1)}>
                                         上一步
@@ -1871,6 +1910,25 @@ export default function RiverBoard() {
                                 </div>
                             </div>
                         )}
+                    </div>
+                </div>
+            )}
+            {/* 未登录留言门禁：留言板公告 */}
+            {noticeOpen && (
+                <div className="rz-modal rz-notice-modal" onClick={() => setNoticeOpen(false)} role="dialog" aria-modal="true" aria-label="留言板公告">
+                    <div className="rz-modal-box rz-notice-box" onClick={(e) => e.stopPropagation()}>
+                        <h3 className="rz-notice-title">留言板公告</h3>
+                        <div className="rz-notice-body">
+                            <p>尊敬的访客：</p>
+                            <p>本网站当前为非交互式个人站点。留言板等功能仅供内部测试、研究学习使用，暂不对公众开放交互服务。</p>
+                            <p>我们正在交互式网站备案的转型工作，预计将于12月完成升级。</p>
+                            <p>届时，欢迎您再次来访，体验完整的河灯留言互动功能。</p>
+                        </div>
+                        <div className="rz-notice-foot">
+                            <button type="button" className="rz-wish-primary" onClick={() => setNoticeOpen(false)}>
+                                我知道了
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}
@@ -1918,8 +1976,8 @@ export default function RiverBoard() {
                             >
                                 时序{albumTabs === "time" && (albumTimeAsc ? "↑" : "↓")}
                             </button>
-                            <button type="button" className={albumTabs === "author" ? "sel" : ""} onClick={() => setAlbumTabs("author")}>
-                                账户
+                            <button type="button" className={albumTabs === "mine" ? "sel" : ""} onClick={() => setAlbumTabs("mine")}>
+                                我的河灯
                             </button>
                             <button type="button" className={albumTabs === "cat" ? "sel" : ""} onClick={() => setAlbumTabs("cat")}>
                                 类型

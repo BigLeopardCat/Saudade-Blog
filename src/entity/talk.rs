@@ -12,6 +12,7 @@ pub struct Model {
     pub cat: String,
     pub v: i8,
     pub author: String,
+    pub user_id: i32, // 发布者用户 id（匿名河灯也留存，供溯源/维护）
     pub created_at: DateTime,
     pub updated_at: DateTime,
 }

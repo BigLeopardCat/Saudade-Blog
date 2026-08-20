@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::entity::user;
 use crate::routes::AppState;
 use crate::utils::{ApiResponse, encrypt_password};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
 pub struct LoginRequest {
@@ -81,4 +81,38 @@ pub async fn login(
 
     // Return generic error if not found
     Json(ApiResponse::error("账号或密码错误"))
+}
+
+/// 当前登录用户信息（任意角色，非仅 admin）：留言留名预填用
+/// 挂公共路由但自身鉴权：无有效 token 返回 401 语义的错误
+#[derive(Serialize, Default)]
+pub struct ProfileDto {
+    pub username: String,
+    pub nickname: String,
+}
+
+pub async fn profile(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Json<ApiResponse<ProfileDto>> {
+    let uid = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .and_then(|token| crate::auth_jwt::verify_token(token))
+        .map(|claims| claims.sub);
+
+    match uid {
+        Some(id) => match user::Entity::find_by_id(id).one(&state.db).await.unwrap_or(None) {
+            Some(u) => {
+                let nick = if u.nickname.is_empty() { u.username.clone() } else { u.nickname };
+                Json(ApiResponse::success(ProfileDto {
+                    username: u.username,
+                    nickname: nick,
+                }))
+            }
+            None => Json(ApiResponse::error("账号不存在")),
+        },
+        None => Json(ApiResponse::error("未登录")),
+    }
 }

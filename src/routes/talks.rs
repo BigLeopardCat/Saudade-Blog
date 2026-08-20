@@ -1,10 +1,20 @@
-use axum::{Json, extract::{State, Path}};
+use axum::{Json, extract::{State, Path}, http::HeaderMap};
 use sea_orm::{EntityTrait, Set, QueryOrder};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use crate::entity::talk;
 use crate::routes::AppState;
 use crate::utils::ApiResponse;
+
+/// 从请求头提取 Bearer 中的用户 id（无 token / 无效则 None；公开接口可选鉴权）
+fn current_uid(headers: &HeaderMap) -> Option<i32> {
+    headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .and_then(|token| crate::auth_jwt::verify_token(token))
+        .map(|claims| claims.sub)
+}
 
 #[derive(Serialize)]
 pub struct TalkDto {
@@ -16,6 +26,8 @@ pub struct TalkDto {
     pub cat: String,
     pub v: i32,
     pub author: String,
+    /// 是否当前登录用户所放（"我的河灯"分组用）
+    pub mine: bool,
     #[serde(rename = "createTime")]
     pub created_at: String,
     #[serde(rename = "updateTime")]
@@ -24,7 +36,9 @@ pub struct TalkDto {
 
 pub async fn list_talks(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
 ) -> Json<ApiResponse<Vec<TalkDto>>> {
+    let uid = current_uid(&headers);
     let talks = talk::Entity::find().order_by_desc(talk::Column::CreatedAt).all(&state.db).await.unwrap_or(vec![]);
     let dtos = talks.into_iter().map(|t| TalkDto {
         id: t.id,
@@ -33,6 +47,7 @@ pub async fn list_talks(
         cat: t.cat,
         v: t.v as i32,
         author: t.author,
+        mine: uid.map(|u| t.user_id == u).unwrap_or(false),
         created_at: t.created_at.and_utc().with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap()).format("%Y-%m-%d %H:%M:%S").to_string(),
         updated_at: t.updated_at.and_utc().with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap()).format("%Y-%m-%d %H:%M:%S").to_string(),
     }).collect();
@@ -56,9 +71,14 @@ pub struct UpsertTalk {
 
 pub async fn create_talk(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(payload): Json<UpsertTalk>,
 ) -> Json<ApiResponse<String>> {
-    // 河灯留言：匿名公开提交，做基础校验防滥用（长度封顶 + 印章/灯型白名单）
+    // 河灯留言：必须登录（昵称/匿名都会在 user_id 留存，供溯源与维护）
+    let Some(uid) = current_uid(&headers) else {
+        return Json(ApiResponse::error("请先登录后再放灯"));
+    };
+    // 基础校验防滥用（长度封顶 + 印章/灯型白名单）
     let content = payload.content.trim();
     let cat = match payload.cat.as_str() {
         "愿" | "寄" | "忆" | "诉" => payload.cat,
@@ -86,6 +106,7 @@ pub async fn create_talk(
         cat: Set(cat),
         v: Set(v),
         author: Set(author),
+        user_id: Set(uid),
         created_at: Set(chrono::Utc::now().naive_utc()),
         updated_at: Set(chrono::Utc::now().naive_utc()),
         ..Default::default()
