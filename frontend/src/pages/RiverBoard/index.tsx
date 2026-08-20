@@ -38,11 +38,14 @@ const catOf = (s: string) => {
 const CAT_INFO: Record<string, { name: string; desc: string }> = {
     愿: { name: "心灯祈愿", desc: "长愿灯花照此身，人间万事俱成真。" },
     寄: { name: "尺素传情", desc: "欲寄彩笺兼尺素，灯影长流知我意。" },
-    忆: { name: "旧梦拾光", desc: "故人入我梦，明灯寄此情。" },
-    诉: { name: "临灯自语", desc: "此心幽处无人解，借得河灯说与听。" },
+    忆: { name: "旧梦拾光", desc: "故人往事随波去，一盏河灯一梦回。" },
+    诉: { name: "临灯自语", desc: "此心幽处无人解，且付清波与灯听。" },
 };
 /* 三种灯型名称（与精灵 v 对应） */
 const LAMP_NAMES = ["莲花灯", "八角灯", "圆笼灯"];
+
+/* 灯影集条目 */
+type AlbumItem = { id: number; v: number; cat: string; author: string; msg: string; time: string };
 
 type Wish = { id: number; v: number; msg: string; cat: string };
 
@@ -377,6 +380,13 @@ export default function RiverBoard() {
     const [wishBusy, setWishBusy] = useState(false);
     const [wishDone, setWishDone] = useState(false);
     const wishSeq = useRef(0); // 新河灯自增 id（避开现有 0..n）
+
+    /* 灯影集：收录全部留言的古籍卷册 */
+    const [albumOpen, setAlbumOpen] = useState(false);
+    const [albumItems, setAlbumItems] = useState<AlbumItem[]>([]);
+    const [albumTabs, setAlbumTabs] = useState<"time" | "author" | "cat">("time");
+    const [albumSearch, setAlbumSearch] = useState(false);
+    const [albumQuery, setAlbumQuery] = useState("");
 
     /* 布局：视口与投影常量 */
     const layout = (w: number, h: number) => {
@@ -1555,6 +1565,58 @@ export default function RiverBoard() {
         setWishStep(0);
         setWishText("");
     };
+
+    /* 灯影集：打开时拉取全部留言 */
+    const openAlbum = async () => {
+        setAlbumOpen(true);
+        setAlbumSearch(false);
+        setAlbumQuery("");
+        if (albumItems.length > 0) return;
+        try {
+            const res = await fetch(`${runtimeBaseURL}/api/public/talk`);
+            const j = (await res.json()) as { data?: unknown };
+            const arr = Array.isArray(j?.data)
+                ? (j.data as Array<{ talkKey?: unknown; v?: unknown; cat?: unknown; author?: unknown; content?: unknown; createTime?: unknown }>)
+                : [];
+            setAlbumItems(
+                arr.map((x) => ({
+                    id: Number(x?.talkKey ?? 0),
+                    v: [0, 1, 2].includes(Number(x?.v)) ? Number(x.v) : 0,
+                    cat: CATS.includes(String(x?.cat ?? "")) ? String(x.cat) : catOf(String(x?.content ?? "")),
+                    author: String(x?.author ?? ""),
+                    msg: String(x?.content ?? ""),
+                    time: String(x?.createTime ?? "").slice(0, 16),
+                }))
+            );
+        } catch {
+            /* 拉取失败则保持空卷 */
+        }
+    };
+
+    /* 灯影集：选中一条留言 → 河灯排到近景列队起始位置 + 亮起气泡 + 打开弹窗详情 */
+    const lightFromAlbum = (it: AlbumItem) => {
+        const metas = metaRef.current;
+        const id = 10000 + wishSeq.current++;
+        metas.push({
+            id,
+            v: it.v,
+            u: 0.3 + Math.random() * 0.4,
+            d: 0.88, // 列队起始位置：眼前近景
+            w: 0.03 + Math.random() * 0.04,
+            sway: Math.random() * Math.PI * 2,
+            hue: 0,
+            bright: 1,
+            oX: 0,
+            oY: 0,
+            rip: 0.6,
+            ripT: -1,
+        });
+        metaRef.current = metas;
+        const wish: Wish = { id, v: it.v, msg: it.msg, cat: it.cat };
+        setLanterns((prev) => [...prev, wish]);
+        setAlbumOpen(false);
+        requestAnimationFrame(() => openWish(wish)); // 气泡 + 弹窗详情
+    };
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
             if (e.key === "Escape") setModal(null);
@@ -1562,6 +1624,16 @@ export default function RiverBoard() {
         window.addEventListener("keydown", onKey);
         return () => window.removeEventListener("keydown", onKey);
     }, []);
+
+    /* 灯影集：按当前页签排序 + 按检索词过滤 */
+    const q = albumQuery.trim();
+    const albumSorted = [...albumItems]
+        .filter((it) => q === "" || it.msg.includes(q) || it.author.includes(q) || it.cat === q)
+        .sort((a, b) => {
+            if (albumTabs === "cat") return a.cat.localeCompare(b.cat, "zh");
+            if (albumTabs === "author") return (a.author || "无名").localeCompare(b.author || "无名", "zh");
+            return a.time < b.time ? 1 : a.time > b.time ? -1 : b.id - a.id;
+        });
 
     if (sprites.length === 0) return <div className="rz-root" />;
 
@@ -1651,8 +1723,15 @@ export default function RiverBoard() {
                         </span>
                     </div>
                 </header>
-                <p className="rz-hint">灯浮星河处，停舟问心语。轻触荧惑光，细看灯中字。</p>
-                {/* 左下角留言入口 */}
+                <p className="rz-hint">灯浮星河处，停舟问心语。 轻触荧惑光，细看灯中字。</p>
+                {/* 左下角留言入口组 */}
+                <button className="rz-album-btn" type="button" onClick={openAlbum}>
+                    <svg viewBox="0 0 1024 1024" width="30" height="30" fill="currentColor" aria-hidden>
+                        <path d="M637.213 212.88H765.33v372.705H637.213V212.88zM153.856 954.683h124.235V768.331h-62.12v-23.293h62.12V522.502h-62.12V499.21h62.12V271.392h-62.12v-23.294h62.12V61.745H153.856z" />
+                        <path d="M311.086 69.316v892.939h559.058V69.315H311.086z m477.536 539.638H613.916V189.661h174.706v419.293z" />
+                    </svg>
+                    <span>灯影集</span>
+                </button>
                 <button
                     className="rz-wish-btn"
                     type="button"
@@ -1732,7 +1811,7 @@ export default function RiverBoard() {
                         )}
                         {wishStep === 2 && !wishDone && (
                             <div className="rz-wish-step">
-                                <h3 className="rz-wish-title">写下心愿</h3>
+                                <h3 className="rz-wish-title">以言载灯</h3>
                                 <p className="rz-wish-sub">点亮的是灯，留下的是心</p>
                                 <textarea
                                     className="rz-wish-input"
@@ -1762,7 +1841,7 @@ export default function RiverBoard() {
                             <div className="rz-wish-step rz-wish-done">
                                 <div className="rz-wish-done-glow" />
                                 <h3 className="rz-wish-title">灯已入河</h3>
-                                <p className="rz-wish-sub">愿你的心愿，顺水远行，被月光照见</p>
+                                <p className="rz-wish-sub">{CAT_INFO[wishCat].desc}</p>
                                 <div className="rz-wish-foot">
                                     <button type="button" className="rz-wish-primary" onClick={closeWishFlow}>
                                         再看一眼
@@ -1770,6 +1849,62 @@ export default function RiverBoard() {
                                 </div>
                             </div>
                         )}
+                    </div>
+                </div>
+            )}
+            {/* 灯影集：收录全部留言的古籍卷册 */}
+            {albumOpen && (
+                <div className="rz-modal rz-album-modal" onClick={() => setAlbumOpen(false)} role="dialog" aria-modal="true" aria-label="灯影集">
+                    <div className="rz-album-box" onClick={(e) => e.stopPropagation()}>
+                        <button
+                            className={"rz-album-find" + (albumSearch ? " on" : "")}
+                            type="button"
+                            onClick={() => setAlbumSearch((s) => !s)}
+                        >
+                            <svg viewBox="0 0 1024 1024" width="20" height="20" aria-hidden>
+                                <path d="M898.3 420s-56.9 2.6-117.8 30.3c8.6-73.5-13.3-157.4-13.3-157.4s-53 14.6-104.1 43.3c-30.2-50.8-68.9-90.5-68.9-90.5s-38.7 39.7-68.9 90.5c-51-28.6-104.1-43.3-104.1-43.3s-20.9 80.6-13.7 153C351.3 424.5 302 423.3 302 423.3s19.5 107.4 98.8 175.1c34.6 29.5 70.1 52.2 101.2 65.9-30.7 5.8-50.3 14.5-50.3 24.2 0 17.7 65.1 32 145.4 32 80.3 0 145.4-14.3 145.4-32 0-8.6-15.5-16.4-40.6-22.2 31.3-14.4 67-38.1 101.6-69.1 77.8-69.5 94.8-177.2 94.8-177.2" fill="#FCC75B" />
+                                <path d="M525.5 627.4c-31.1 0-60.1-18.1-81.6-50.9-20.6-31.5-32-73.2-32-117.4 0-38.3 18.1-83.8 53.6-135.3 26.1-37.8 51.8-64.2 53-65.3 1.8-1.9 4.4-3 7-3s5.2 1 7 3c1.1 1.1 26.8 27.6 53 65.3 35.6 51.4 53.6 97 53.6 135.3 0 44.2-11.4 85.9-32 117.4-21.6 32.8-50.5 50.9-81.6 50.9z m0-347.5c-23 25.4-93.9 109.7-93.9 179.2 0 40.4 10.2 78.3 28.8 106.6 17.7 27 40.9 42 65.1 42 24.3 0 47.4-14.9 65.1-42 18.6-28.3 28.8-66.2 28.8-106.6 0-69.6-71-153.9-93.9-179.2z m2.8 470.1c-39.5 0-76.8-3.4-105-9.6-33.8-7.4-50.3-18-50.3-32.2 0-14.2 16.5-24.8 50.3-32.2 28.2-6.2 65.4-9.6 105-9.6 39.5 0 76.8 3.4 105 9.6 33.8 7.4 50.3 18 50.3 32.2 0 14.2-16.5 24.8-50.3 32.2-28.2 6.1-65.4 9.6-105 9.6z m-135.1-41.9c2.7 2.8 13.1 8.9 39.8 14.2 26.1 5.2 59.9 8 95.3 8s69.2-2.9 95.3-8c26.6-5.3 37-11.4 39.8-14.2-2.7-2.8-13.1-8.9-39.8-14.2-26.1-5.2-59.9-8-95.3-8s-69.2 2.9-95.3 8c-26.7 5.3-37.1 11.4-39.8 14.2z" fill="#ECB823" />
+                                <path d="M491.1 708.8c-13.6 0-29.8-3.4-48-10.2-36.6-13.7-78.4-39.6-117.6-73.1-42.4-36.2-67.9-83.4-81.8-116.6-15-35.8-20.1-63-20.2-64.2-0.6-2.9 0.3-5.9 2.2-8.2 1.9-2.2 4.7-3.5 7.7-3.4 1.1 0 28.8 0.7 66.6 10 35 8.6 85.5 26.3 127.9 62.6 39.2 33.5 71.4 70.6 90.6 104.7 20.8 37 24.2 66.8 9.3 84.2-8.1 9.5-20.6 14.2-36.7 14.2z m-245.3-255c2.9 11 8 28.2 16.3 48 13 31 36.9 75.1 76.2 108.7 37.5 32 77.1 56.7 111.7 69.6 30.5 11.4 54 12 62.8 1.7 8.8-10.3 4.6-33.4-11.4-61.8-18.1-32.1-48.7-67.4-86.2-99.4-60.2-51.2-138.9-63.8-169.4-66.8z" fill="#ECB823" />
+                                <path d="M488 637.2c-8.9 0-18.1-1.3-27.4-3.8-42.2-11.4-83.9-47-111.4-95.5-18.8-33.2-25.5-81.8-20-144.4 4.1-45.9 13.4-81.9 13.8-83.4 0.6-2.6 2.3-4.7 4.6-6.1 2.3-1.3 5-1.7 7.5-1 1.5 0.4 36.8 10.2 77.9 29.6 56.1 26.4 94.1 56.7 113 89.9 21.7 38.3 32.3 80.2 30 118-2.5 39.3-18.6 69.6-45.6 85.4-12.6 7.6-27 11.3-42.4 11.3zM359.8 325c-7.4 33.5-27.5 143 6.6 203.2 25 44 62.1 76.2 99.4 86.2 20.5 5.5 39.4 3.6 54.8-5.4 21.1-12.4 33.8-37.1 35.9-69.7 2.2-34-7.6-72-27.4-107-34.3-60.2-137.1-97-169.3-107.3z" fill="#ECB823" />
+                                <path d="M664.7 561c0 74.6-58.3 141.9-135 141.9-76.6 0-142.4-67.4-142.4-141.9s138.6-184.6 138.6-184.6S664.7 486.5 664.7 561z" fill="#FFFFFF" />
+                                <path d="M529.8 712.8c-81.1 0-152.2-70.9-152.2-151.8 0-33.5 24.2-76.2 72-127 34.7-37 69-64.2 70.4-65.3 3.6-2.9 8.6-2.9 12.2 0 1.4 1.1 35.6 28.4 70.4 65.3 47.8 50.8 72 93.5 72 127 0 38.6-15 77.1-41.4 105.5-27.5 29.9-64.2 46.3-103.4 46.3zM526 389.2c-11.4 9.5-37 31.6-62.3 58.6-43.5 46.2-66.5 85.4-66.5 113.3 0 70.3 61.9 132.1 132.6 132.1 67.8 0 125.1-60.5 125.1-132.1 0-27.9-23-67-66.5-113.4-25.3-26.9-50.9-49-62.4-58.5z" fill="#ECB823" />
+                                <path d="M558.6 419.6s-122 96.8-122 162.3c0 28.7 11.1 56.2 29.4 78.1 21.8 18.1 49.3 29.4 78.6 29.4 67.4 0 118.7-59.2 118.7-124.7 0-34.1-33-76.6-64.6-109.5-22.2-21.4-40.1-35.6-40.1-35.6z" fill="#FCC75B" />
+                            </svg>
+                            寻灯
+                        </button>
+                        <h3 className="rz-album-title">灯影集</h3>
+                        {albumSearch && (
+                            <div className="rz-album-search">
+                                <input
+                                    value={albumQuery}
+                                    onChange={(e) => setAlbumQuery(e.target.value)}
+                                    placeholder="检索心愿、留名或印章…"
+                                />
+                            </div>
+                        )}
+                        <div className="rz-album-tabs">
+                            <button type="button" className={albumTabs === "time" ? "sel" : ""} onClick={() => setAlbumTabs("time")}>
+                                时序
+                            </button>
+                            <button type="button" className={albumTabs === "author" ? "sel" : ""} onClick={() => setAlbumTabs("author")}>
+                                账户
+                            </button>
+                            <button type="button" className={albumTabs === "cat" ? "sel" : ""} onClick={() => setAlbumTabs("cat")}>
+                                类型
+                            </button>
+                        </div>
+                        <div className="rz-album-list">
+                            {albumSorted.map((it) => (
+                                <button key={it.id} type="button" className="rz-album-item" onClick={() => lightFromAlbum(it)}>
+                                    <span className="rz-seal rz-album-seal">{it.cat}</span>
+                                    <span className="rz-album-msg">{it.msg}</span>
+                                    <span className="rz-album-meta">
+                                        {it.author || "无名"} · {it.time}
+                                    </span>
+                                </button>
+                            ))}
+                            {albumSorted.length === 0 && <p className="rz-album-empty">卷中暂无留言</p>}
+                        </div>
                     </div>
                 </div>
             )}

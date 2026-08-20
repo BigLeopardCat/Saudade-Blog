@@ -11,6 +11,7 @@ pub struct Model {
     pub content: String,
     pub cat: String,
     pub v: i8,
+    pub author: String,
     pub created_at: DateTime,
     pub updated_at: DateTime,
 }

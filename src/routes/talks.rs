@@ -15,6 +15,7 @@ pub struct TalkDto {
     pub content: String,
     pub cat: String,
     pub v: i32,
+    pub author: String,
     #[serde(rename = "createTime")]
     pub created_at: String,
     #[serde(rename = "updateTime")]
@@ -31,6 +32,7 @@ pub async fn list_talks(
         content: t.content,
         cat: t.cat,
         v: t.v as i32,
+        author: t.author,
         created_at: t.created_at.and_utc().with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap()).format("%Y-%m-%d %H:%M:%S").to_string(),
         updated_at: t.updated_at.and_utc().with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap()).format("%Y-%m-%d %H:%M:%S").to_string(),
     }).collect();
@@ -47,6 +49,9 @@ pub struct UpsertTalk {
     cat: String,
     #[serde(default)]
     v: i8,
+    // 留名（灯影集"按账户"分组用，可空）
+    #[serde(default)]
+    author: String,
 }
 
 pub async fn create_talk(
@@ -69,11 +74,18 @@ pub async fn create_talk(
     if content.chars().count() > 500 {
         return Json(ApiResponse::error("留言过长（最多 500 字）"));
     }
+    let author = payload.author.trim();
+    let author = if author.chars().count() > 20 {
+        author.chars().take(20).collect::<String>()
+    } else {
+        author.to_string()
+    };
     let t = talk::ActiveModel {
         title: Set(Some(cat.clone())),
         content: Set(content.to_string()),
         cat: Set(cat),
         v: Set(v),
+        author: Set(author),
         created_at: Set(chrono::Utc::now().naive_utc()),
         updated_at: Set(chrono::Utc::now().naive_utc()),
         ..Default::default()
