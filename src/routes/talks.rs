@@ -241,7 +241,12 @@ pub async fn list_board_admin(
         .await
         .unwrap_or(vec![]);
     let user_ids: Vec<i32> = talks.iter().map(|t| t.user_id).collect();
-    let users = user::Entity::find_by_ids(user_ids).all(&state.db).await.unwrap_or(vec![]);
+    // sea-orm 0.12 无 find_by_ids，用 is_in 批量过滤
+    let users = user::Entity::find()
+        .filter(user::Column::Id.is_in(user_ids))
+        .all(&state.db)
+        .await
+        .unwrap_or(vec![]);
     let umap: std::collections::HashMap<i32, user::Model> = users.into_iter().map(|u| (u.id, u)).collect();
     let dtos = talks.into_iter().map(|t| {
         let u = umap.get(&t.user_id);
