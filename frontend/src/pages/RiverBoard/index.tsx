@@ -1804,7 +1804,7 @@ export default function RiverBoard() {
             {wishOpen && (
                 <div className="rz-modal rz-wish-modal" onClick={closeWishFlow} role="dialog" aria-modal="true" aria-label="点一盏河灯">
                     <div
-                        className={"rz-modal-box rz-wish-box" + (wishStep === 2 ? " step-2" : "")}
+                        className="rz-modal-box rz-wish-box"
                         onClick={(e) => e.stopPropagation()}
                     >
                         {wishStep === 0 && (

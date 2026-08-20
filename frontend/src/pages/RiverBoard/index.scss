@@ -1241,11 +1241,3 @@
   width: min(90vw, 480px);
   max-width: min(90vw, 480px);
 }
-
-/* 第 18 轮修订：留言流程窗口宽度——选一枚印章回退 800px（同基础宽度），
-   仅以言载灯加宽 80%：800 → 1440px
-   多一层 step 类 → 特异性高于上面的 .rz-root .rz-wish-modal .rz-wish-box，可正常覆盖 */
-.rz-root .rz-wish-modal .rz-wish-box.step-2 {
-  width: min(94vw, 1440px);
-  max-width: min(94vw, 1440px);
-}

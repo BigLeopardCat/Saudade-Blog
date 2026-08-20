@@ -19,7 +19,6 @@ import ContentHome from "../frontHome/Content/ContentHome";
 import App from "../App.tsx";
 import AboutMe from "../frontHome/Content/AboutMe";
 import Categories from "../frontHome/Content/Categories";
-import FriendList from "../frontHome/Content/FriendList";
 import Talk from "../frontHome/Content/Talk";
 import Times from "../frontHome/Content/Times";
 import NotFound from "../components/NotFound";
@@ -39,8 +38,9 @@ const router = createBrowserRouter([
                 element: <AboutMe />
             },
             {
+                // 原友链页已废弃：/friends 重定向到留言板（河灯留言）
                 path: 'friends',
-                element: <FriendList />
+                element: <Navigate to="/guestbook" replace />
             },
             {
                 path: "talk",

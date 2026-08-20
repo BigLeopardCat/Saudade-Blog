@@ -29,7 +29,7 @@ pub async fn sitemap_xml(State(st): State<Arc<AppState>>) -> Response {
         ("/", "1.0"),
         ("/times", "0.9"),
         ("/talk", "0.8"),
-        ("/friends", "0.8"),
+        ("/guestbook", "0.8"),
         ("/about", "0.8"),
         ("/device-console/", "0.7"),
     ];
