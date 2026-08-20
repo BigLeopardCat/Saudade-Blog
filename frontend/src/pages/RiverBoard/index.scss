@@ -171,9 +171,9 @@
         color: #f2e2c2;
         text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
         padding: 0 2px 16px 0;
-        animation: rz-scroll var(--dur, 8s) cubic-bezier(0.4, 0, 0.2, 1) infinite;
         white-space: pre-wrap;
         word-break: break-word;
+        will-change: transform;
       }
 
       .rz-seal {
@@ -289,28 +289,29 @@
     .rz-modal-box {
       position: relative;
       max-width: min(560px, 86vw);
-      padding: 34px 48px 42px;
+      padding: 18px 22px 22px;
       background: rgba(14, 12, 26, 0.84);
       border: 1px solid rgba(255, 205, 140, 0.32);
-      border-radius: 14px;
+      border-radius: 13px;
       box-shadow:
         0 18px 60px rgba(0, 0, 0, 0.62),
-        inset 0 0 30px rgba(255, 180, 100, 0.06);
+        inset 0 0 22px rgba(255, 180, 100, 0.07);
       backdrop-filter: blur(8px) saturate(1.25);
       -webkit-backdrop-filter: blur(8px) saturate(1.25);
       animation: rz-modal-in 0.3s cubic-bezier(0.2, 0.7, 0.3, 1.05);
 
+      /* 文字排版与河灯上方气泡完全一致 */
       .rz-modal-msg {
-        font-size: 16px;
-        line-height: 2.2;
-        letter-spacing: 0.1em;
+        font-size: 15px;
+        line-height: 1.95;
+        letter-spacing: 0.14em;
         color: #f2e2c2;
         text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
         white-space: pre-wrap;
         word-break: break-word;
         max-height: 56vh;
         overflow-y: auto;
-        padding-right: 26px;
+        padding: 14px 42px 10px 14px; /* 右侧留白给印章 */
       }
 
       .rz-modal-seal {
@@ -434,14 +435,6 @@
   50% { margin-left: -22px; }
 }
 
-@keyframes rz-scroll {
-  0% { transform: translateY(0); }
-  18% { transform: translateY(0); }
-  52% { transform: translateY(calc(var(--dy, 0px) * -1)); }
-  85% { transform: translateY(calc(var(--dy, 0px) * -1)); }
-  100% { transform: translateY(0); }
-}
-
 @keyframes rz-hint-out {
   to { opacity: 0; }
 }
@@ -470,9 +463,6 @@
   }
   .rz-root .rz-lantern .rz-pool .rz-ring {
     animation-duration: 9s;
-  }
-  .rz-root .rz-msg {
-    animation: none;
   }
   .rz-root .rz-hint {
     animation: none;

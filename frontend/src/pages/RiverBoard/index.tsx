@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import "./index.scss";
 import { runtimeBaseURL } from "../../utils/runtimeApi";
 
@@ -300,6 +300,8 @@ interface LanternMeta {
     sway: number;
     hue: number;
     bright: number;
+    oX: number; // 碰撞位移（屏幕像素，随时间衰减）
+    oY: number;
 }
 
 interface Amb {
@@ -309,6 +311,7 @@ interface Amb {
     bands: { d0: number; wd: number; spd: number; ph: number }[];
     fireflies: { u: number; d: number; ph: number; flap: number }[];
     skyGlows: { x: number; y: number; spd: number; ph: number }[];
+    birds: { x: number; y: number; spd: number; ph: number; wing: boolean }[];
     grass: { x: number; y: number; len: number; lean: number; ph: number; s: number }[];
     reeds: { x: number; y: number; len: number; ph: number }[];
     shoot: { t: number; x0: number; y0: number; dx: number; dy: number } | null;
@@ -345,14 +348,14 @@ export default function RiverBoard() {
     const riverX = (u: number, d: number) => {
         const v = viewRef.current;
         const bend = Math.sin(0.6 + d * 2.2);
-        const c = v.w * (0.5 + 0.05 * bend);
-        const hw = v.w * (0.24 + d * d * 0.96);
+        const c = v.w * (0.51 + 0.045 * bend);
+        const hw = v.w * (0.085 + d * d * 1.08); // 远处收窄、近处展开，透视更深远
         return c + (u - 0.5) * 2 * hw;
     };
     const riverY = (d: number) => {
         const v = viewRef.current;
         // d 可能因重生为负数：pow 负数小数次幂是 NaN，会传染整帧绘制
-        return v.yH + (v.h * 1.06 - v.yH) * Math.pow(Math.max(0, d), 1.24);
+        return v.yH + (v.h * 1.06 - v.yH) * Math.pow(Math.max(0, d), 1.42);
     };
 
     /* 场景初始化 */
@@ -435,6 +438,18 @@ export default function RiverBoard() {
                 ph: Math.random() * Math.PI * 2,
             });
         }
+        // 远空鸟群剪影（右→左掠过，两笔线形）
+        const birds: Amb["birds"] = [];
+        const nBird = Math.round(1 * dens) + 1;
+        for (let i = 0; i < nBird; i++) {
+            birds.push({
+                x: 0.9 + Math.random() * 0.7,
+                y: 0.16 + Math.random() * 0.16,
+                spd: 0.018 + Math.random() * 0.02,
+                ph: Math.random() * Math.PI * 2,
+                wing: Math.random() < 0.5,
+            });
+        }
         const grass: Amb["grass"] = [];
         for (let i = 0; i < 30; i++) {
             grass.push({
@@ -456,7 +471,7 @@ export default function RiverBoard() {
             });
         }
         amb = {
-            stars, streaks, glints, bands, fireflies, skyGlows, grass, reeds,
+            stars, streaks, glints, bands, fireflies, skyGlows, birds, grass, reeds,
             shoot: null, shootAt: 4 + Math.random() * 5, now: 0,
         };
     };
@@ -563,18 +578,23 @@ export default function RiverBoard() {
             ctx.fill();
             const eMoon = ph.e * rD;
             const dir = ph.age < 0.5 ? -1 : 1; // 盈月暗面在左，亏月暗面在右
-            // 暗面圆盘几乎贴住天光底色，边缘带一点地照余晖
+            // 暗面圆盘只切月盘以内，边界在月盘边缘处自然截止——
+            // 天上不再出现一个完整的深色圆与月亮重叠（半影带渐变为地照余晖）
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(mxMoon, myMoon, rD - 0.5, 0, Math.PI * 2);
+            ctx.clip();
             const shad = ctx.createRadialGradient(
-                mxMoon + dir * eMoon, myMoon, rD * 0.82,
-                mxMoon + dir * eMoon, myMoon, rD + 2
+                mxMoon + dir * eMoon, myMoon, rD * 0.78,
+                mxMoon + dir * eMoon, myMoon, rD + 6
             );
             shad.addColorStop(0, "rgba(8,12,32,0.97)");
-            shad.addColorStop(0.965, "rgba(11,17,40,0.97)");
-            shad.addColorStop(1, "rgba(120,140,200,0.10)");
+            shad.addColorStop(0.7, "rgba(11,17,40,0.93)");
+            shad.addColorStop(0.94, "rgba(60,86,160,0.45)");
+            shad.addColorStop(1, "rgba(120,140,200,0.16)");
             ctx.fillStyle = shad;
-            ctx.beginPath();
-            ctx.arc(mxMoon + dir * eMoon, myMoon, rD + 2, 0, Math.PI * 2);
-            ctx.fill();
+            ctx.fillRect(mxMoon - rD * 2, myMoon - rD * 2, rD * 4, rD * 4);
+            ctx.restore();
 
             // 云影（静态，随视差层缓慢移动）
             ctx.fillStyle = "rgba(24,32,60,0.10)";
@@ -655,6 +675,29 @@ export default function RiverBoard() {
             ctx.fillStyle = heart;
             ctx.fill();
             ctx.restore();
+
+            // 岸线内侧柔光带：水面贴着两岸有一层青色微光，岸线不再生硬
+            for (const [edge, side] of [
+                [0, 1],
+                [1, -1],
+            ] as const) {
+                for (let i = 0; i < 7; i++) {
+                    const u0 = i / 7;
+                    ctx.beginPath();
+                    for (let s = 0; s <= 30; s++) {
+                        const d = (s / 30) * 1.16;
+                        ctx.lineTo(riverX(edge + side * u0 * 0.035, d), riverY(d));
+                    }
+                    for (let s = 30; s >= 0; s--) {
+                        const d = (s / 30) * 1.16;
+                        ctx.lineTo(riverX(edge + side * ((u0 + 1) / 7) * 0.035, d), riverY(d));
+                    }
+                    ctx.closePath();
+                    const al = (1 - u0) * 0.10 + 0.02;
+                    ctx.fillStyle = `rgba(${side > 0 ? "155,185,255" : "150,180,250"},${al.toFixed(3)})`;
+                    ctx.fill();
+                }
+            }
         };
 
         prep(back);
@@ -690,6 +733,28 @@ export default function RiverBoard() {
         front.lineTo(w + MARGIN + 8, v.yH - 4);
         front.closePath();
         front.fill();
+
+        // 岸外两侧再压一层柔和过渡（贴着岸线的夜色渐变，消掉硬边界）
+        for (const [edge, side, tint] of [
+            [0, -1, "52,84,150"],
+            [1, 1, "48,78,142"],
+        ] as const) {
+            for (let i = 0; i < 8; i++) {
+                const u0 = i / 8;
+                front.beginPath();
+                for (let s = 0; s <= 26; s++) {
+                    const d = (s / 26) * 1.16;
+                    front.lineTo(riverX(edge + side * u0 * 0.05, d), riverY(d));
+                }
+                for (let s = 26; s >= 0; s--) {
+                    const d = (s / 26) * 1.16;
+                    front.lineTo(riverX(edge + side * ((u0 + 1) / 8) * 0.05, d), riverY(d));
+                }
+                front.closePath();
+                front.fillStyle = `rgba(${tint},${((1 - u0) * 0.10).toFixed(3)})`;
+                front.fill();
+            }
+        }
 
         // 苇丛（左岸中景）
         front.strokeStyle = "#04091a";
@@ -757,6 +822,118 @@ export default function RiverBoard() {
                 front.restore();
             }
         }
+
+        // 岸边垂柳（左岸中景 / 右岸中景，多株增加层次）
+        const willow = (x: number, y: number, k: number, dir: number) => {
+            front.strokeStyle = "#02050c";
+            for (let s = 0; s < 5; s++) {
+                front.lineWidth = (7 - s * 1.2) * k;
+                front.beginPath();
+                front.moveTo(x - dir * 30 * k, y + 8 * k);
+                front.quadraticCurveTo(x - dir * 42 * k, y - 30 * k, x + dir * (s * 16 - 30) * k, y - (24 + s * 16) * k);
+                front.stroke();
+            }
+            front.lineWidth = 1.3 * k;
+            for (let s = 0; s < 6; s++) {
+                const bx = x + dir * (s * 15 - 24) * k;
+                const by = y - (18 + s * 12) * k;
+                const hang = (58 + (s % 3) * 24) * k;
+                front.beginPath();
+                front.moveTo(bx, by);
+                front.quadraticCurveTo(bx - dir * 4 * k, by + hang * 0.5, bx - dir * 9 * k, by + hang);
+                front.stroke();
+                for (let l = 0; l < 4; l++) {
+                    const lt = l / 3;
+                    const lx = bx - dir * 10 * k * lt;
+                    const ly = by + hang * (lt * 0.85 + 0.15);
+                    front.save();
+                    front.translate(lx, ly);
+                    front.rotate(0.9);
+                    front.fillStyle = "rgba(4,8,16,0.8)";
+                    front.beginPath();
+                    front.ellipse(0, 0, 6 * k, 2 * k, 0, 0, Math.PI * 2);
+                    front.fill();
+                    front.restore();
+                }
+            }
+        };
+        willow(riverX(-0.035, 0.42) - 6, riverY(0.42) - 2, 0.8, 1);
+        willow(riverX(1.038, 0.6) + 12, riverY(0.6) - 4, 1.05, -1);
+
+        // 岸畔小亭剪影（右岸中景，飞檐翘角）
+        const pkx = riverX(1.05, 0.62);
+        const pky = riverY(0.62);
+        front.fillStyle = "#03070f";
+        front.fillRect(pkx - 40, pky - 6, 80, 9);
+        front.fillRect(pkx - 30, pky - 54, 6.5, 48);
+        front.fillRect(pkx + 24, pky - 54, 6.5, 48);
+        front.beginPath();
+        front.moveTo(pkx - 56, pky - 44);
+        front.quadraticCurveTo(pkx - 34, pky - 42, pkx - 33, pky - 56);
+        front.lineTo(pkx - 13, pky - 80);
+        front.quadraticCurveTo(pkx, pky - 87, pkx + 13, pky - 80);
+        front.lineTo(pkx + 33, pky - 56);
+        front.quadraticCurveTo(pkx + 34, pky - 42, pkx + 56, pky - 44);
+        front.closePath();
+        front.fill();
+        front.fillStyle = "#050a18";
+        front.fillRect(pkx + 13, pky - 78, 3.5, 22);
+        front.beginPath();
+        front.arc(pkx + 14.75, pky - 86, 4.5, 0, Math.PI * 2);
+        front.fill();
+
+        // 前景树枝：左下粗干伸入 + 右下呼应细枝
+        front.lineCap = "round";
+        front.strokeStyle = "#010309";
+        front.lineWidth = 15;
+        front.beginPath();
+        front.moveTo(-34, h + 24);
+        front.quadraticCurveTo(w * 0.05, h * 0.93, w * 0.155, h * 0.8);
+        front.stroke();
+        front.lineWidth = 8;
+        front.beginPath();
+        front.moveTo(w * 0.052, h * 0.93);
+        front.quadraticCurveTo(w * 0.02, h * 0.73, -16, h * 0.57);
+        front.stroke();
+        front.lineWidth = 5;
+        front.beginPath();
+        front.moveTo(w * 0.115, h * 0.865);
+        front.quadraticCurveTo(w * 0.17, h * 0.72, w * 0.105, h * 0.6);
+        front.stroke();
+        front.lineWidth = 2.3;
+        for (let i = 0; i < 5; i++) {
+            front.beginPath();
+            front.moveTo(w * 0.128, h * 0.795);
+            front.quadraticCurveTo(w * 0.15 + i * 4, h * 0.76 - i * 13, w * 0.18 + i * 5, h * 0.72 - i * 17);
+            front.stroke();
+        }
+        // 枝梢叶影
+        front.fillStyle = "rgba(3,7,16,0.92)";
+        for (let i = 0; i < 6; i++) {
+            const lx = w * 0.18 + i * 5 - 2;
+            const ly = h * 0.72 - i * 17 + 4;
+            front.save();
+            front.translate(lx, ly);
+            front.rotate(0.5 + i * 0.22);
+            front.beginPath();
+            front.ellipse(0, 0, 16, 5.4, 0, 0, Math.PI * 2);
+            front.fill();
+            front.restore();
+        }
+        // 右下呼应小枝
+        front.lineWidth = 6;
+        front.beginPath();
+        front.moveTo(w + 26, h + 16);
+        front.quadraticCurveTo(w * 0.97, h * 0.9, w * 0.9, h * 0.84);
+        front.stroke();
+        front.lineWidth = 2.2;
+        for (let i = 0; i < 3; i++) {
+            front.beginPath();
+            front.moveTo(w * 0.955, h * 0.88);
+            front.quadraticCurveTo(w * 0.93 + i * 6, h * 0.84 - i * 10, w * 0.9 + i * 6, h * 0.8 - i * 14);
+            front.stroke();
+        }
+        front.lineCap = "butt";
 
         // 近景水汽（横雾）
         for (const [base, amp, al] of [
@@ -991,6 +1168,30 @@ export default function RiverBoard() {
             ctx.fill();
         }
 
+        /* 远空鸟群剪影（缓缓右→左掠过，两笔弧线） */
+        ctx.strokeStyle = "rgba(6,10,22,0.72)";
+        ctx.lineWidth = 1.4;
+        ctx.lineCap = "round";
+        for (const b of amb.birds) {
+            b.x -= b.spd * 0.004 * (reduce ? 0.05 : 1);
+            if (b.x < -0.12) {
+                b.x = 1.05 + Math.random() * 0.25;
+                b.y = 0.14 + Math.random() * 0.18;
+            }
+            const bx = b.x * w;
+            const by = b.y * h + Math.sin(t * 1.6 + b.ph) * 4;
+            const flap = b.wing ? 0.22 + 0.4 * Math.abs(Math.sin(t * 3.4 + b.ph)) : 0;
+            const span = 9 + Math.random();
+            const a0 = -0.35 - flap;
+            for (let sgn of [-1, 1]) {
+                ctx.beginPath();
+                ctx.moveTo(bx, by);
+                ctx.quadraticCurveTo(bx, by - span * (1 + flap * 2.2), bx + sgn * span, by + a0 * span - (flap > 0.1 ? 6 : 0));
+                ctx.stroke();
+            }
+        }
+        ctx.lineCap = "butt";
+
         /* 流星 */
         if (amb.shoot) {
             if (reduce) {
@@ -1036,21 +1237,56 @@ export default function RiverBoard() {
    不会再出现"中后段越流越快、很快消失"的观感。 */
     const driveLanterns = (dt: number) => {
         const px = (mouseRef.current.x - 0.5) * 10;
-        for (const m of metaRef.current) {
+        const ms = metaRef.current;
+        const pos: { m: LanternMeta; x: number; y: number; r: number }[] = [];
+        for (const m of ms) {
             m.d -= dt * m.w * Math.pow(Math.max(0.06, m.d), -0.24);
             if (m.d < -0.02) {
                 m.d = 0.94 + Math.random() * 0.05; // 眼前重入
                 m.u = 0.36 + Math.random() * 0.28;
                 m.w = 0.03 + Math.random() * 0.045;
+                m.oX = 0;
+                m.oY = 0;
             }
+            const d = Math.max(0, m.d);
+            const bobY = Math.sin(amb!.now * 1.2 + m.sway) * 1.6 * (0.3 + d);
+            const scl = Math.pow(d, 1.15);
+            const x = riverX(m.u + Math.sin(amb!.now * 0.2 + m.sway) * 0.012, d) - px * 0.28;
+            const y = riverY(d) - bobY;
+            pos.push({ m, x, y, r: scl * 46 + 7 });
+        }
+        // 体积碰撞：圆-圆分离，位移小且按景深加权，随后随流衰减归位
+        for (let i = 0; i < pos.length; i++) {
+            for (let j = i + 1; j < pos.length; j++) {
+                const A = pos[i], B = pos[j];
+                const dx = B.x + B.m.oX - A.x - A.m.oX;
+                const dy = B.y + B.m.oY - A.y - A.m.oY;
+                const d2 = dx * dx + dy * dy;
+                const rr = A.r + B.r;
+                if (d2 >= rr * rr || d2 < 0.001) continue;
+                const dist = Math.sqrt(d2);
+                const pen = (rr - dist) * 0.5;
+                const nx = dx / dist, ny = dy / dist;
+                // d 可能落在 (-0.02, 0) 的待重生区间：负底数小数次幂是 NaN，会把位移污染成 NaN
+                const da = Math.max(0, A.m.d), db = Math.max(0, B.m.d);
+                const wa = Math.pow(da, 0.9) + 0.25;
+                const wb = Math.pow(db, 0.9) + 0.25;
+                const sa = pen * (wb / (wa + wb)), sb = pen * (wa / (wa + wb));
+                A.m.oX -= nx * sa; A.m.oY -= ny * sa;
+                B.m.oX += nx * sb; B.m.oY += ny * sb;
+            }
+        }
+        for (const m of ms) {
+            m.oX *= Math.pow(0.9, dt * 60);
+            m.oY *= Math.pow(0.9, dt * 60);
+            const node = nodesRef.current.get(m.id);
+            if (!node) continue;
             const d = Math.max(0, m.d);
             const bobY = Math.sin(amb!.now * 1.2 + m.sway) * 1.6 * (0.3 + d);
             const rot = Math.sin(amb!.now * 0.55 + m.sway) * 3.2;
             const scl = Math.pow(d, 1.15);
-            const x = riverX(m.u + Math.sin(amb!.now * 0.2 + m.sway) * 0.012, d) - px * 0.28;
-            const y = riverY(d) - bobY;
-            const node = nodesRef.current.get(m.id);
-            if (!node) continue;
+            const x = riverX(m.u + Math.sin(amb!.now * 0.2 + m.sway) * 0.012, d) - px * 0.28 + m.oX;
+            const y = riverY(d) - bobY + m.oY;
             node.style.transform =
                 `translate3d(${x}px, ${y}px, 0) translate(-50%, -50%) scale(${scl}) rotate(${rot}deg)`;
             node.style.zIndex = String(200 + Math.round(d * 1000));
@@ -1128,6 +1364,7 @@ export default function RiverBoard() {
                 baseFront!
             );
             driveLanterns(dt);
+            if (!reduced()) scrollTick(dt);
             raf = requestAnimationFrame(frame);
         };
 
@@ -1168,6 +1405,8 @@ export default function RiverBoard() {
                     sway: Math.random() * Math.PI * 2,
                     hue: Math.round((Math.random() - 0.5) * 26),
                     bright: 0.85 + Math.random() * 0.25,
+                    oX: 0,
+                    oY: 0,
                 });
                 views.push({ id: i, v: metas[i].v, msg, cat: catOf(msg) });
             }
@@ -1209,32 +1448,36 @@ export default function RiverBoard() {
         };
     }, []);
 
-    /* 气泡滚动偏移测量 */
+    /* 气泡长文滚动：JS 逐帧显式推进（CSS animation 偶发卡死不滚，改为可控的 transform） */
     const bubbleRefs = useRef<Map<number, HTMLDivElement | null>>(new Map());
-    useLayoutEffect(() => {
-        for (const ln of lanterns) {
-            const box = bubbleRefs.current.get(ln.id);
-            if (!box) continue;
-            const inner = box.querySelector(".rz-scroll") as HTMLElement | null;
-            const text = box.querySelector(".rz-msg") as HTMLElement | null;
-            if (!inner || !text) continue;
-            const hh = inner.clientHeight;
-            const th = text.offsetHeight;
-            const dy = Math.max(0, th - hh + 14);
-            inner.style.setProperty("--dy", dy + "px");
-            // 滚动占总周期约 34%（0→18% 读完，18→52% 滚动中，52→85% 停住，85→100% 归位）
-            // 换算后约每秒 11px 的阅读速度，慢而从容
-            inner.style.setProperty("--dur", Math.max(9, dy / 3.7) + "s");
-        }
-    }, [lanterns]);
-
-    /* 气泡滚动从头开始（点击重开时复位动画） */
+    const scrollState = useRef<{ msg: HTMLElement; max: number; pos: number } | null>(null);
     const restartScroll = (handle: HTMLElement) => {
+        const box = handle.querySelector(".rz-scroll") as HTMLElement | null;
         const msg = handle.querySelector(".rz-msg") as HTMLElement | null;
-        if (!msg) return;
-        msg.style.animation = "none";
-        void msg.offsetWidth; // 强制回流，重新启动 keyframes
-        msg.style.animation = "";
+        if (!box || !msg) return;
+        const max = msg.offsetHeight - box.clientHeight + 12;
+        if (max <= 2) {
+            scrollState.current = null;
+            return;
+        }
+        msg.style.transform = "translateY(0px)";
+        scrollState.current = { msg, max, pos: 0 };
+    };
+    // 每帧推进滚动（在 rAF 主循环里调用）；reduced-motion 时不动作
+    const scrollTick = (dt: number) => {
+        const st = scrollState.current;
+        if (!st) return;
+        if (!st.msg.isConnected) {
+            scrollState.current = null;
+            return;
+        }
+        st.pos += dt * 24; // ≈24px/s，慢速可读
+        if (st.pos >= st.max) {
+            st.msg.style.transform = `translateY(${-st.max}px)`;
+            scrollState.current = null; // 停在末尾；再次打开从头滚
+        } else {
+            st.msg.style.transform = `translateY(${-st.pos}px)`;
+        }
     };
 
     /* 开关气泡（pointerdown 直达触屏，click 仅兜底鼠标端） */
@@ -1262,12 +1505,18 @@ export default function RiverBoard() {
         if (fromTouch) lastWishTouch.current = Date.now();
         setModal(ln);
     };
-    const closeModal = () => setModal(null);
+    const closeModal = () => {
+        // 弹窗关闭后，悬浮于河灯上的文本气泡一并收起
+        document.querySelectorAll<HTMLElement>(".rz-open").forEach((el) => {
+            el.classList.remove("rz-open");
+        });
+        setModal(null);
+    };
     /* 触屏打开弹窗后，同一次点按的合成 click 会落在遮罩上误关；
        800ms 内的遮罩点击视为那次点按的跟随事件，忽略 */
     const dismissModal = () => {
         if (Date.now() - lastWishTouch.current < 800) return;
-        setModal(null);
+        closeModal();
     };
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
