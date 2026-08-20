@@ -299,6 +299,15 @@ const MARIA: [number, number, number, number][] = [
     [0.3, -0.12, 0.14, 0.1],
     [-0.3, 0.18, 0.11, 0.08],
 ];
+// 环形山：[cx, cy, r]（归一化坐标），暗坑 + 迎光侧亮缘
+const CRATERS: [number, number, number][] = [
+    [0.22, 0.05, 0.055],
+    [-0.12, 0.32, 0.045],
+    [0.4, -0.18, 0.035],
+    [-0.42, -0.24, 0.05],
+    [0.05, -0.42, 0.03],
+    [-0.28, -0.02, 0.03],
+];
 
 interface LanternMeta {
     id: number;
@@ -322,7 +331,6 @@ interface Amb {
     skyGlows: { x: number; y: number; spd: number; ph: number }[];
     mountain: Path2D; // 远山剪影（base 坐标系），用于遮挡动态星星/流星
     skyClip: Path2D; // 全屏矩形挖去山体（evenodd），动态天空元素只画在山体之外
-    grass: { x: number; y: number; len: number; lean: number; ph: number; s: number }[];
     reeds: { x: number; y: number; len: number; ph: number }[];
     shoot: { t: number; x0: number; y0: number; dx: number; dy: number } | null;
     shootAt: number;
@@ -338,7 +346,6 @@ export default function RiverBoard() {
     const layerRef = useRef<HTMLDivElement | null>(null);
     const metaRef = useRef<LanternMeta[]>([]);
     const nodesRef = useRef<Map<number, HTMLDivElement | null>>(new Map());
-    const hitTRef = useRef<Map<string, number>>(new Map()); // 碰撞对冷却时间（防抖，避免同对反复相撞抖动）
     const viewRef = useRef({ w: 0, h: 0, yH: 0, dpr: 1, reduced: false });
     const mouseRef = useRef({ x: 0.5, y: 0.5, tx: 0.5, ty: 0.5 });
     const touchRef = useRef(false);
@@ -461,17 +468,6 @@ export default function RiverBoard() {
                 ph: Math.random() * Math.PI * 2,
             });
         }
-        const grass: Amb["grass"] = [];
-        for (let i = 0; i < 30; i++) {
-            grass.push({
-                x: Math.random() * 0.15,
-                y: 0.92 + Math.random() * 0.08,
-                len: 60 + Math.random() * 110,
-                lean: (Math.random() - 0.5) * 0.5,
-                ph: Math.random() * Math.PI * 2,
-                s: 0.8 + Math.random() * 0.6,
-            });
-        }
         const reeds: Amb["reeds"] = [];
         for (let i = 0; i < 8; i++) {
             reeds.push({
@@ -484,7 +480,7 @@ export default function RiverBoard() {
         amb = {
             stars, streaks, glints, bands, fireflies, skyGlows,
             mountain: new Path2D(), skyClip: new Path2D(),
-            grass, reeds,
+            reeds,
             shoot: null, shootAt: 4 + Math.random() * 5, now: 0,
         };
     };
@@ -604,19 +600,44 @@ export default function RiverBoard() {
                     const q = 1 - nx * nx - ny * ny;
                     const i4 = (py * P + px) * 4;
                     if (q <= 0) continue;
+                    const radial = Math.sqrt(1 - q); // 0=月心 1=月缘
                     const nz = Math.sqrt(q);
-                    if (nx * lx + nz * lz <= 0.012) continue; // 暗面全透明
-                    let b = Math.pow(Math.min(1, nx * lx + nz * lz), 1.1);
-                    // 月面印记（静海/澄海等暗斑，仅在亮面可见）
+                    const dot = nx * lx + nz * lz;
+                    // —— 明暗（真实月相）：半影带精致过渡，暗面完全透明无圆盘轮廓 ——
+                    if (dot <= 0.02) continue;
+                    // t 归一化受光强度（0=明暗界 1=最亮），指数让亮面更饱满
+                    let b = Math.pow(Math.max(0, (dot - 0.02) / 0.96), 0.9);
+                    // 边缘暗化（月面边缘微微变暗，不突兀）＋ 受光侧微热
+                    b *= 1 - 0.26 * Math.pow(radial, 2.6);
+                    b *= 1 + 0.10 * dot * dot;
+                    // 月海（静海/澄海/湿海等大块暗斑，柔边）
                     for (const [cx, cy, rx, ry] of MARIA) {
                         const dx = nx - cx, dy = ny - cy;
                         const d2 = (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry);
-                        if (d2 < 1) b *= 1 - 0.38 * (1 - d2);
+                        if (d2 < 1) b *= 1 - 0.5 * (1 - d2) * 0.5;
                     }
-                    data[i4] = 255;
-                    data[i4 + 1] = Math.round(248 - b * 16);
-                    data[i4 + 2] = Math.round(226 - b * 24);
-                    data[i4 + 3] = 255;
+                    // 环形山：暗坑 + 受光侧亮缘
+                    for (const [cxc, cyc, rc] of CRATERS) {
+                        const dx = nx - cxc, dy = ny - cyc;
+                        const d2 = (dx * dx + dy * dy) / (rc * rc);
+                        if (d2 < 1) {
+                            const inner = 1 - d2;
+                            b *= 1 - 0.30 * inner; // 坑底变暗
+                            if (d2 > 0.55 && dx * lx > 0) b *= 1 + 0.14 * inner; // 迎光壁更亮
+                        }
+                    }
+                    // 表面颗粒噪声（沿光方向的高地纹理，确定性哈希）
+                    const hsh = Math.abs(Math.sin(nx * 21.7 + ny * 9.3) * 43758.53);
+                    b *= 0.965 + 0.035 * (hsh - Math.floor(hsh));
+                    // 月缘软边：最外侧 6% 半径渐变透明，避免硬圆边
+                    const limbA = Math.min(1, (1 - radial) / 0.06);
+                    const a = Math.round(b * limbA * 255);
+                    if (a <= 0) continue;
+                    // 受光处偏暖、暗部偏冷灰
+                    data[i4] = Math.round((252 - (1 - b) * 56) + 6 * Math.max(0, dot));
+                    data[i4 + 1] = Math.round(249 - (1 - b) * 62);
+                    data[i4 + 2] = Math.round(230 - (1 - b) * 82);
+                    data[i4 + 3] = a;
                 }
             }
             mg.putImageData(img, 0, 0);
@@ -766,8 +787,22 @@ export default function RiverBoard() {
         front.closePath();
         front.fill();
 
-        // 岸外两侧再压一层柔和过渡（贴着岸线的夜色渐变，消掉硬边界）
-        // 苇丛（左岸中景，只保留茎秆——不再画竖椭圆穗头）
+        // 河流弧线边缘露出来：沿两岸内侧描一条月色微光（阴影区不再整个盖住水缘）
+        front.strokeStyle = "rgba(158,186,255,0.22)";
+        front.lineWidth = 1.6;
+        front.lineCap = "round";
+        for (const edge of [0.012, 0.988]) {
+            front.beginPath();
+            for (let i = 0; i <= 30; i++) {
+                const d = (i / 30) * 1.16;
+                const ex = edge + Math.sin(i * 1.9) * 0.008 * (1 - d);
+                front.lineTo(riverX(ex, d) - 3, riverY(d));
+            }
+            front.stroke();
+        }
+        front.lineCap = "butt";
+
+        // 苇丛（左岸中景，只保留茎秆）
         front.strokeStyle = "#04091a";
         front.lineWidth = 3;
         for (const r of a.reeds) {
@@ -779,38 +814,22 @@ export default function RiverBoard() {
             front.stroke();
         }
 
-        // 前景草丛（左下）
-        for (const g0 of a.grass) {
-            const gx = g0.x * w;
-            const gy = g0.y * h;
-            front.strokeStyle = `rgba(${4 + g0.s * 6}, ${9 + g0.s * 10}, ${22 + g0.s * 15}, 0.95)`;
-            front.lineWidth = 1.6 * g0.s;
-            front.beginPath();
-            front.moveTo(gx, gy);
-            front.quadraticCurveTo(gx + g0.lean * 20, gy - g0.len * 0.55, gx + g0.lean * 40, gy - g0.len);
-            front.stroke();
-            front.beginPath();
-            front.moveTo(gx, gy);
-            front.quadraticCurveTo(gx + g0.lean * 20 - 6, gy - g0.len * 0.45, gx + g0.lean * 30 - 5, gy - g0.len * 0.72);
-            front.stroke();
-        }
-
-        // 垂柳（右上空枝）
+        // 垂柳（右上空枝，加粗加密保证剪影清晰可见）
         front.strokeStyle = "#01030a";
-        for (let s = 0; s < 6; s++) {
-            const tx = w * 0.985 + s * 14;
-            const ty = h * 0.05 + s * 26;
-            front.lineWidth = 9 - s * 1.4;
+        for (let s = 0; s < 7; s++) {
+            const tx = w * 0.985 + s * 13;
+            const ty = h * 0.05 + s * 24;
+            front.lineWidth = 10 - s * 1.3;
             front.beginPath();
             front.moveTo(w * 0.985, h * 0.02);
             front.quadraticCurveTo(w * 0.985 + 18, h * 0.05 + 40, tx, ty);
             front.stroke();
         }
-        front.lineWidth = 1.4;
-        for (let s = 0; s < 7; s++) {
-            const bx = w * 0.985 + s * 13;
-            const by = h * 0.02 + s * 22 + 12;
-            const hang = h * 0.5 * (0.55 + (s % 3) * 0.18);
+        front.lineWidth = 1.7;
+        for (let s = 0; s < 9; s++) {
+            const bx = w * 0.985 + s * 11;
+            const by = h * 0.02 + s * 18 + 12;
+            const hang = h * 0.52 * (0.55 + (s % 3) * 0.18);
             front.beginPath();
             front.moveTo(bx, by);
             front.quadraticCurveTo(bx - 6, by + hang * 0.5, bx - 12, by + hang);
@@ -888,72 +907,6 @@ export default function RiverBoard() {
         front.beginPath();
         front.arc(pkx + 14.75, pky - 86, 4.5, 0, Math.PI * 2);
         front.fill();
-
-        // 前景树枝：左下粗干深入河面 + 向河心延伸的侧枝 + 右下呼应细枝（镜头感）
-        front.lineCap = "round";
-        front.strokeStyle = "#010309";
-        front.lineWidth = 15;
-        front.beginPath();
-        front.moveTo(-34, h + 24);
-        front.quadraticCurveTo(w * 0.05, h * 0.93, w * 0.155, h * 0.8);
-        front.stroke();
-        front.lineWidth = 8;
-        front.beginPath();
-        front.moveTo(w * 0.052, h * 0.93);
-        front.quadraticCurveTo(w * 0.02, h * 0.73, -16, h * 0.57);
-        front.stroke();
-        // 向河心延伸的侧枝：越过左岸线伸进水面（更贴近镜头的取景框）
-        front.lineWidth = 6;
-        front.beginPath();
-        front.moveTo(w * 0.13, h * 0.86);
-        front.quadraticCurveTo(w * 0.23, h * 0.72, w * 0.315, h * 0.615);
-        front.stroke();
-        front.lineWidth = 2.6;
-        for (let i = 0; i < 3; i++) {
-            front.beginPath();
-            front.moveTo(w * 0.195 + i * 5, h * 0.765 - i * 6);
-            front.quadraticCurveTo(w * 0.215 + i * 7, h * 0.74 - i * 8, w * 0.24 + i * 8, h * 0.7 - i * 10);
-            front.stroke();
-        }
-        front.lineWidth = 5;
-        front.beginPath();
-        front.moveTo(w * 0.115, h * 0.865);
-        front.quadraticCurveTo(w * 0.17, h * 0.72, w * 0.105, h * 0.6);
-        front.stroke();
-        front.lineWidth = 2.3;
-        for (let i = 0; i < 5; i++) {
-            front.beginPath();
-            front.moveTo(w * 0.128, h * 0.795);
-            front.quadraticCurveTo(w * 0.15 + i * 4, h * 0.76 - i * 13, w * 0.18 + i * 5, h * 0.72 - i * 17);
-            front.stroke();
-        }
-        // 枝梢叶影
-        front.fillStyle = "rgba(3,7,16,0.92)";
-        for (let i = 0; i < 6; i++) {
-            const lx = w * 0.18 + i * 5 - 2;
-            const ly = h * 0.72 - i * 17 + 4;
-            front.save();
-            front.translate(lx, ly);
-            front.rotate(0.5 + i * 0.22);
-            front.beginPath();
-            front.ellipse(0, 0, 16, 5.4, 0, 0, Math.PI * 2);
-            front.fill();
-            front.restore();
-        }
-        // 右下呼应小枝：稍微延伸进河内呼应左枝
-        front.lineWidth = 6;
-        front.beginPath();
-        front.moveTo(w + 26, h + 16);
-        front.quadraticCurveTo(w * 0.97, h * 0.9, w * 0.87, h * 0.845);
-        front.stroke();
-        front.lineWidth = 2.2;
-        for (let i = 0; i < 3; i++) {
-            front.beginPath();
-            front.moveTo(w * 0.925, h * 0.885);
-            front.quadraticCurveTo(w * 0.9 + i * 6, h * 0.84 - i * 10, w * 0.87 + i * 6, h * 0.8 - i * 14);
-            front.stroke();
-        }
-        front.lineCap = "butt";
 
         // 近景水汽（横雾）
         for (const [base, amp, al] of [
@@ -1106,14 +1059,21 @@ export default function RiverBoard() {
             }
         }
 
-        // 河灯周围的水面涟漪（缓缓扩散的椭圆环）
+        // 河灯周围的水面涟漪（缓缓扩散的椭圆环）。
+        // 显示逻辑：仅 d≥0.28（河中段及更远）的灯笼；每只灯以 0.34Hz 相位推移半径
+        // 12→42px（涟漪一波一波往外扩），透明度按相位正弦衰减（相位居中时最亮）。
+        // 近景灯此前"看不出涟漪"是因为灯体本身（DOM 精灵 118-130px）比涟漪环大，
+        // 环被灯笼压在下面看不见；这里涟漪半径随 scl 放大（近灯环更大，正好超出灯体边缘）
         for (const m of metaRef.current) {
             if (m.d < 0.28) continue;
             const ph2 = (amb.now * 0.34 + m.sway) % 1;
-            const rr = 12 + ph2 * 30;
+            const scl = Math.pow(Math.max(0, m.d), 1.15); // 与 DOM scale 同一缩放
+            const rr = (12 + ph2 * 30) * (0.55 + 1.05 * scl);
             const li = lanternXY(m); // 与灯笼 DOM 同源坐标：涟漪以灯笼为中心
             const rx = li.x;
-            const ry = li.y + 6;
+            // 圆笼灯（v=2）灯身最低处在灯笼中心下方 ≈42px·scl：涟漪从笼底溢出；
+            // 八角/莲花仍以灯笼中心起始
+            const ry = li.y + (m.v === 2 ? 42 * scl : 0) + 6;
             const ra = Math.sin(ph2 * Math.PI) * 0.16 * (0.35 + 0.65 * m.d);
             ctx.strokeStyle = `rgba(205,222,255,${ra})`;
             ctx.lineWidth = 1;
@@ -1151,6 +1111,7 @@ export default function RiverBoard() {
                 ctx.fill();
             }
         }
+        ctx.restore(); // 山体遮罩只作用于星光闪烁；萤火虫/孔明灯在河面上方，不被裁剪
 
         /* 萤火虫（沿河道低空逡巡：横向漂移 + 缓慢逆行 + 纵向微微起伏） */
         for (const f of amb.fireflies) {
@@ -1195,7 +1156,11 @@ export default function RiverBoard() {
             ctx.fill();
         }
 
-        /* 流星 */
+        /* 流星（山体遮罩：只画在山脊之上，不会砸进河里） */
+        ctx.save();
+        ctx.translate(px * 0.2, py * 0.1);
+        ctx.clip(amb.skyClip, "evenodd");
+        ctx.translate(-px * 0.2, -py * 0.1);
         if (amb.shoot) {
             if (reduce) {
                 amb.shoot = null;
@@ -1238,7 +1203,7 @@ export default function RiverBoard() {
 
     /* 灯笼逐帧驱动：与河水同向，向远方缓流。
    速度按 d^1.35 递减：眼前出发快，中后段渐慢，最后一段接近远山时最慢，
-   与视觉"渐行渐远（河面在远处收窄）"一致；碰撞带冷却防抖，避免同对反复相撞抖动。 */
+   与视觉"渐行渐远（河面在远处收窄）"一致。 */
     const driveLanterns = (dt: number) => {
         const ms = metaRef.current;
         const pos: { m: LanternMeta; x: number; y: number; r: number }[] = [];
@@ -1254,12 +1219,9 @@ export default function RiverBoard() {
             const d = Math.max(0, m.d);
             const scl = Math.pow(d, 1.15);
             const li = lanternXY(m);
-            // 八角灯/圆笼灯骨架更大：碰撞半径略增，恰好包住灯焰
-            const body = m.v >= 1 ? 53 : 46;
-            pos.push({ m, x: li.x - m.oX, y: li.y - m.oY, r: scl * body + (m.v >= 1 ? 9 : 7) });
+            pos.push({ m, x: li.x - m.oX, y: li.y - m.oY, r: scl * 46 + 7 });
         }
-        // 体积碰撞：圆-圆分离，位移小且按景深加权，随后随流衰减归位
-        const nowT = amb!.now;
+        // 体积碰撞（原始方案）：圆-圆分离，位移小且按景深加权，随后随流衰减归位
         for (let i = 0; i < pos.length; i++) {
             for (let j = i + 1; j < pos.length; j++) {
                 const A = pos[i], B = pos[j];
@@ -1268,10 +1230,6 @@ export default function RiverBoard() {
                 const d2 = dx * dx + dy * dy;
                 const rr = A.r + B.r;
                 if (d2 >= rr * rr || d2 < 0.001) continue;
-                const key = A.m.id < B.m.id ? `${A.m.id}_${B.m.id}` : `${B.m.id}_${A.m.id}`;
-                const lastT = hitTRef.current.get(key);
-                if (lastT !== undefined && nowT - lastT < 0.45) continue; // 冷却防抖
-                hitTRef.current.set(key, nowT);
                 const dist = Math.sqrt(d2);
                 const pen = (rr - dist) * 0.5;
                 const nx = dx / dist, ny = dy / dist;
