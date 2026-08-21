@@ -392,6 +392,9 @@ const FIREFLY_SPRITE = glowSprite(7, [
 
 /* 月光碎影静态光晕独立层：在 renderBase 构建一次，drawScene 每帧一次 drawImage */
 let moonGlowCv: HTMLCanvasElement | null = null;
+/* 河灯水面照明贴图（第 29 轮）：512×256 椭圆暖光，drawScene 每帧在每盏灯所在
+   河面 lighter 合成——灯真正"照亮"周围水面（此前只有 DOM 300px 光晕，河面依旧黑） */
+let lanternLightCv: HTMLCanvasElement | null = null;
 /* 慢层（流向纹/碎光点/涟漪）：离屏缓冲 ≈20fps 重绘，主画布每帧一次 drawImage 合成 */
 let slowCv: HTMLCanvasElement | null = null;
 let slowTick = 0;
@@ -572,6 +575,22 @@ export default function RiverBoard() {
                 flap: 1.4 + Math.random() * 2.4,
             });
         }
+        // 河灯照明贴图：椭圆暖光（横向椭圆，贴图 scale(1,0.5) 压扁），
+        // 内芯暖白 → 外围淡橙渐隐；绘制时随灯 scl 缩放、近亮远暗
+        lanternLightCv = document.createElement("canvas");
+        lanternLightCv.width = 512;
+        lanternLightCv.height = 256;
+        const lg = lanternLightCv.getContext("2d")!;
+        const lgrad = lg.createRadialGradient(256, 128, 0, 256, 128, 256);
+        lgrad.addColorStop(0, "rgba(255,232,178,1)");
+        lgrad.addColorStop(0.18, "rgba(255,206,132,0.75)");
+        lgrad.addColorStop(0.42, "rgba(255,185,110,0.32)");
+        lgrad.addColorStop(1, "rgba(255,185,110,0)");
+        lg.save();
+        lg.scale(1, 0.5);
+        lg.fillStyle = lgrad;
+        lg.fillRect(0, 0, 512, 512); // scale 后视觉覆盖 512×256
+        lg.restore();
         amb = {
             stars, streaks, glints, bands, fireflies,
             shoot: null, shootAt: 4 + Math.random() * 5, now: 0,
@@ -1076,6 +1095,25 @@ export default function RiverBoard() {
             sc.beginPath();
             sc.ellipse(rx, ry, rr, rr * 0.24, 0, 0, Math.PI * 2);
             sc.stroke();
+        }
+
+        // 河灯对水面的照明（第 29 轮）：lighter 合成暖光斑到灯下河面——
+        // 光斑宽 = 灯视觉宽(~106·scl)的 ~3.8 倍、扁椭圆，垂直范围从灯身下半
+        // 延伸到灯下河面（顶在 li.y-0.15·lh，中心在灯底附近）；近亮远暗，远到
+        // 看不见的灯（scl<0.06）跳过。贴图只构建一次，每帧仅 22 次 drawImage。
+        if (lanternLightCv) {
+            sc.save();
+            sc.globalCompositeOperation = "lighter";
+            for (const m of metaRef.current) {
+                const scl = Math.min(1, Math.pow(Math.max(0, m.d), 1.15) * 1.25);
+                if (scl < 0.06) continue;
+                const li = lanternXY(m);
+                const lw = 420 * scl;
+                const lh = lw * 0.5;
+                sc.globalAlpha = 0.6 + 0.4 * scl;
+                sc.drawImage(lanternLightCv, li.x - lw / 2, li.y - lh * 0.15, lw, lh);
+            }
+            sc.restore();
         }
         sc.restore();
     }

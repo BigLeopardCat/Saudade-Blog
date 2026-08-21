@@ -164,6 +164,10 @@
   - 实测根因：.rz-wish-step padding 仅 6px/4px/2px → 内容距窗口边缘 1px；3 张灯卡距窗口左右边缘仅 5px；卡内 padding 横向 6px、图与文字间距 4px——"贴边 + 太满"实锤
   - 修复：.rz-wish-step padding → 22px/24px/18px（子容器距窗口边缘 25px）；灯卡 padding 14/6/12 → 18/14/16、图字间距 4→8、卡间 12→14、灯图 84→92px
   - 验证：qa32（卡片距窗口边缘 ≥20px、卡内横向 padding ≥12、图字间距 ≥6、卡间 ≥12）实测 25/14/8/14 全达标；qa46/qa54/qa56 回归全绿；截图 r32 目检通过
+- 第 29 轮 ✅ 河灯照明增强（用户反馈"照明效果不明显，感觉照不亮河面，有灯还是黑漆漆的"）：
+  - 根因：此前灯只有 DOM 层 300px 光晕（halo），canvas 河面完全没被照亮——水面深色带与无灯处几乎无差别
+  - 方案：canvas 预渲染 512×256 椭圆暖光贴图（radial 渐变，scale(1,0.5) 压扁，只构建一次），drawScene 涟漪循环后对每盏灯 `globalCompositeOperation="lighter"` + drawImage 合成光斑到灯下河面——光斑宽 = 灯视觉宽的 ~3.8 倍（420·scl）、扁椭圆、顶在灯身下半（y-0.15·lh）、近亮远暗（globalAlpha 0.6+0.4·scl，scl<0.06 的不可见灯跳过）；每帧仅 ~22 次 drawImage，无几何重绘
+  - 验证：qa33_light（截图 + getImageData 采样灯下 vs 同深度无灯处亮度）实测 underLight 207.7 vs farAway 130（+78）；截图 r33 目检——近灯下河面明显暖亮、远灯渐暗、无过曝；qa46/qa54/qa56 回归全绿
 - 待办：P1-1b 火焰 mix-blend-mode: screen A/B 测试、P1-3 远景灯停动画、P2-1 水光纹理滚动、P2-3 自适应降级
 
 ### 阶段 P1 — 合成层瘦身（预计再降 20~30%）
