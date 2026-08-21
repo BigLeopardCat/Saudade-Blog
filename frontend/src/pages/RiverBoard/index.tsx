@@ -346,6 +346,7 @@ interface LanternMeta {
     oY: number;
     rip: number; // 涟漪倒计时（秒）：每灯独立随机触发，避免全场同时泛起
     ripT: number; // 当前一轮涟漪的进行时间（秒），-1 = 无涟漪进行中
+    _dq?: number; // 景深档位缓存（性能：filter/zIndex 换档才重写，不逐帧写）
 }
 
 interface Amb {
@@ -366,6 +367,35 @@ let amb: Amb | null = null;
 
 /* 月亮几何（组件内多处共享：绘制与星光避让用同一份常量） */
 const MOON = { x: 0.7, y: 0.16, r: 0.073 } as const; // r 0.093 → 0.073：月亮缩小
+
+/* 萤火虫/孔明灯光点贴图：同参数的 radial 渐变只渲染一次（2x 超采样），
+   之后逐帧 drawImage —— 消除每帧 createRadialGradient + arc 填充 */
+const glowSprite = (r: number, stops: Array<[number, string]>) => {
+    const s = (r * 2 + 4) * 2;
+    const c = document.createElement("canvas");
+    c.width = c.height = s;
+    const g = c.getContext("2d")!;
+    const grad = g.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, r * 2);
+    for (const [p, col] of stops) grad.addColorStop(p, col);
+    g.fillStyle = grad;
+    g.fillRect(0, 0, s, s);
+    return c;
+};
+const FIREFLY_SPRITE = glowSprite(7, [
+    [0, "rgba(236,255,170,1)"],
+    [0.5, "rgba(200,236,120,0.38)"],
+    [1, "rgba(180,220,100,0)"],
+]);
+const KONGLING_SPRITE = glowSprite(10, [
+    [0, "rgba(255,214,140,1)"],
+    [1, "rgba(255,200,120,0)"],
+]);
+
+/* 月光碎影静态光晕独立层：在 renderBase 构建一次，drawScene 每帧一次 drawImage */
+let moonGlowCv: HTMLCanvasElement | null = null;
+/* 慢层（流向纹/碎光点/涟漪）：离屏缓冲 ≈20fps 重绘，主画布每帧一次 drawImage 合成 */
+let slowCv: HTMLCanvasElement | null = null;
+let slowTick = 0;
 
 /* ------------------------- 组件 ------------------------- */
 
@@ -930,7 +960,129 @@ export default function RiverBoard() {
             front.fillStyle = fog;
             front.fillRect(-MARGIN, base - amp, w + MARGIN * 2, amp * 2);
         }
+
+        // 月光碎影静态光晕独立层：渐变+路径只构建一次，drawScene 每帧一次
+        // drawImage 合成——保持原合成顺序（bands 之上），避免烘焙进基底被遮挡
+        const glow = document.createElement("canvas");
+        glow.width = Math.round((w + MARGIN * 2) * v.dpr);
+        glow.height = Math.round((h + MARGIN * 2) * v.dpr);
+        const gc = glow.getContext("2d")!;
+        gc.setTransform(v.dpr, 0, 0, v.dpr, 0, 0);
+        gc.translate(MARGIN, MARGIN);
+        traceRiver(gc, 0, 1.14, false);
+        gc.save();
+        gc.clip();
+        const glowC = gc.createLinearGradient(0, v.yH * 0.99, 0, h);
+        glowC.addColorStop(0, "rgba(255,224,160,0)");
+        glowC.addColorStop(0.5, "rgba(255,224,160,0.05)");
+        glowC.addColorStop(1, "rgba(255,224,160,0)");
+        traceRiver(gc, 0, 1.08, false);
+        gc.fillStyle = glowC;
+        gc.fill();
+        moonGlowCv = glow;
+
+        // 慢层离屏缓冲（流向纹/碎光点/涟漪）：resize 时重建并立即画首帧
+        const slow = document.createElement("canvas");
+        slow.width = Math.round((w + MARGIN * 2) * v.dpr);
+        slow.height = Math.round((h + MARGIN * 2) * v.dpr);
+        slowCv = slow;
+        slowTick = 0;
+        renderSlow(slow.getContext("2d")!);
     };
+
+    /* 慢层（流向纹/碎光点/涟漪）：合并到离屏缓冲，每 3 帧重绘一次（≈20fps）。
+       三者流速极慢（每帧约 0.3-2px），低频重绘视觉无差；主画布每帧仅一次
+       drawImage 合成——每帧约 320 次绘制调用降为 1 次 */
+    function renderSlow(sc: CanvasRenderingContext2D) {
+        if (!amb) return;
+        const v = viewRef.current;
+        const { w, h } = v;
+        const t = amb.now;
+        const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        sc.setTransform(v.dpr, 0, 0, v.dpr, 0, 0);
+        sc.translate(MARGIN, MARGIN);
+        sc.clearRect(-MARGIN, -MARGIN, v.w + MARGIN * 2, v.h + MARGIN * 2);
+        traceRiver(sc, 0, 1.14, false);
+        sc.save();
+        sc.clip();
+        // 流向纹（顺流向的线性亮纹：自眼前出发，向远山方向流动消散）
+        for (const s of amb.streaks) {
+            s.d -= (0.06 + s.d * s.d * 0.62) * s.spd * 0.0035 * (reduce ? 0.12 : 1); // 流向纹：慢流（≈河灯速度 1/4）
+            if (s.d < -0.04) respawnStreak(s);
+            const dHead = Math.max(-0.02, s.d);
+            const len = (0.02 + 0.11 * dHead * dHead) * s.len;
+            const dTail = Math.min(1.02, dHead + len);
+            const yH0 = riverY(dHead), yTl = riverY(dTail);
+            if (yH0 < v.yH - 6 || yTl > h + 40) continue;
+            const xH = riverX(s.u, dHead), xT = riverX(s.u, dTail);
+            const midU = s.u + Math.sin(t * 0.9 + s.ph) * 0.006;
+            const xm = riverX(midU, (dHead + dTail) / 2);
+            const alpha = (0.05 + 0.072 * dHead) * (0.6 + 0.4 * Math.sin(t * 1.7 + s.ph));
+            sc.strokeStyle = s.warm
+                ? `rgba(255,216,164,${Math.min(0.4, alpha * 1.15)})`
+                : `rgba(198,216,255,${alpha * (dHead > 0.5 ? 0.85 : 1)})`;
+            sc.lineWidth = 0.7 + dHead * 2.2;
+            sc.lineCap = "round";
+            sc.beginPath();
+            sc.moveTo(xT, yTl);
+            sc.quadraticCurveTo(xm, (yH0 + yTl) / 2, xH, yH0);
+            sc.stroke();
+        }
+
+        // 波面碎光点（随流向向远方游动）
+        for (const g of amb.glints) {
+            g.d -= (0.06 + g.d * g.d * 0.62) * g.spd * 0.0035 * (reduce ? 0.12 : 1); // 碎光点：慢流（≈河灯速度 1/4）
+            if (g.d < -0.03) {
+                g.d = 0.88 + Math.random() * 0.12;
+                g.u = Math.pow(Math.random(), 1.25) * 0.9 + 0.05;
+            }
+            if (g.d < 0) continue;
+            const y = riverY(g.d);
+            if (y < v.yH - 4 || y > h + 30) continue;
+            const x = riverX(g.u, g.d);
+            const a = 0.1 + 0.6 * g.br * Math.pow(0.5 + 0.5 * Math.sin(t * 3.1 + g.ph * 3.7), 3);
+            if (a < 0.07) continue;
+            sc.strokeStyle = g.warm ? `rgba(255,226,172,${a})` : `rgba(205,220,255,${a})`;
+            sc.lineWidth = 0.6 + g.d * 1.4;
+            sc.lineCap = "round";
+            const len = 1.0 + g.d * 2.4;
+            sc.beginPath();
+            sc.moveTo(x - len, y);
+            sc.lineTo(x + len, y);
+            sc.stroke();
+            if (g.br > 0.8) {
+                sc.fillStyle = g.warm ? `rgba(255,240,205,${a * 0.7})` : `rgba(225,235,255,${a * 0.5})`;
+                sc.beginPath();
+                sc.arc(x, y, 0.7 + g.d, 0, Math.PI * 2);
+                sc.fill();
+            }
+        }
+
+        // 河灯周围的水面涟漪（缓缓扩散的椭圆环）。
+        // 显示逻辑：仅 d≥0.28 的灯笼；每灯独立随机倒计时（1.2-3.8s）触发一轮
+        // 1.8s 的扩散（半径 12→68px 线性推移，alpha 按 sin(π·t) 渐强渐弱）。
+        // 各灯计时独立、起点错开——同一时刻通常有多盏在各自扩散，但绝不全场
+        // 齐步同现。近景灯此前"看不出涟漪"是灯体（DOM 精灵 118-130px）比环大
+        // 盖住了它；半径随 scl 放大后近灯环正好超出灯体边缘可见。
+        for (const m of metaRef.current) {
+            if (m.d < 0.28 || m.ripT < 0) continue;
+            const ph2 = Math.min(1, m.ripT / 1.8);
+            const scl = Math.pow(Math.max(0, m.d), 1.15); // 与 DOM scale 同一缩放
+            const rr = (12 + ph2 * 56) * (0.55 + 1.05 * scl);
+            const li = lanternXY(m); // 与灯笼 DOM 同源坐标：涟漪以灯笼为中心
+            const rx = li.x;
+            // 圆笼灯（v=2）灯身最低处在灯笼中心下方 ≈42px·scl：涟漪从笼底溢出；
+            // 八角/莲花仍以灯笼中心起始
+            const ry = li.y + (m.v === 2 ? 42 * scl : 0) + 6;
+            const ra = Math.sin(ph2 * Math.PI) * 0.16 * (0.35 + 0.65 * m.d);
+            sc.strokeStyle = `rgba(205,222,255,${ra})`;
+            sc.lineWidth = 1;
+            sc.beginPath();
+            sc.ellipse(rx, ry, rr, rr * 0.24, 0, 0, Math.PI * 2);
+            sc.stroke();
+        }
+        sc.restore();
+    }
 
     /* ---- 逐帧动态层 ---- */
     const drawScene = (ctx: CanvasRenderingContext2D, t: number, reduce: boolean, baseBack: HTMLCanvasElement, baseFront: HTMLCanvasElement) => {
@@ -987,16 +1139,10 @@ export default function RiverBoard() {
         }
 
         // 月光碎影（垂直碎光柱）：恢复经典月光反光——纵向柔光带叠一列
-        // 交替碎光横线，随波闪烁
+        // 交替碎光横线，随波闪烁（静态光晕为独立预渲染层，bands 之上合成）
+        if (moonGlowCv) ctx.drawImage(moonGlowCv, -MARGIN, -MARGIN, w + MARGIN * 2, h + MARGIN * 2);
         const uM = 0.5;
         ctx.save();
-        const glowC = ctx.createLinearGradient(0, v.yH * 0.99, 0, h);
-        glowC.addColorStop(0, "rgba(255,224,160,0)");
-        glowC.addColorStop(0.5, "rgba(255,224,160,0.05)");
-        glowC.addColorStop(1, "rgba(255,224,160,0)");
-        traceRiver(ctx, 0, 1.08, false);
-        ctx.fillStyle = glowC;
-        ctx.fill();
         for (let i = 0; i < 46; i++) {
             const k = i / 46;
             const d = 0.93 - Math.pow(k, 1.08) * 0.9; // 近景(0.93)→远景(0.03)
@@ -1017,82 +1163,9 @@ export default function RiverBoard() {
         }
         ctx.restore();
 
-        // 流向纹（顺流向的线性亮纹：自眼前出发，向远山方向流动消散）
-        for (const s of amb.streaks) {
-            s.d -= (0.06 + s.d * s.d * 0.62) * s.spd * 0.0035 * (reduce ? 0.12 : 1); // 流向纹：慢流（≈河灯速度 1/4）
-            if (s.d < -0.04) respawnStreak(s);
-            const dHead = Math.max(-0.02, s.d);
-            const len = (0.02 + 0.11 * dHead * dHead) * s.len;
-            const dTail = Math.min(1.02, dHead + len);
-            const yH0 = riverY(dHead), yTl = riverY(dTail);
-            if (yH0 < v.yH - 6 || yTl > h + 40) continue;
-            const xH = riverX(s.u, dHead), xT = riverX(s.u, dTail);
-            const midU = s.u + Math.sin(t * 0.9 + s.ph) * 0.006;
-            const xm = riverX(midU, (dHead + dTail) / 2);
-            const alpha = (0.05 + 0.072 * dHead) * (0.6 + 0.4 * Math.sin(t * 1.7 + s.ph));
-            ctx.strokeStyle = s.warm
-                ? `rgba(255,216,164,${Math.min(0.4, alpha * 1.15)})`
-                : `rgba(198,216,255,${alpha * (dHead > 0.5 ? 0.85 : 1)})`;
-            ctx.lineWidth = 0.7 + dHead * 2.2;
-            ctx.lineCap = "round";
-            ctx.beginPath();
-            ctx.moveTo(xT, yTl);
-            ctx.quadraticCurveTo(xm, (yH0 + yTl) / 2, xH, yH0);
-            ctx.stroke();
-        }
-
-        // 波面碎光点（随流向向远方游动）
-        for (const g of amb.glints) {
-            g.d -= (0.06 + g.d * g.d * 0.62) * g.spd * 0.0035 * (reduce ? 0.12 : 1); // 碎光点：慢流（≈河灯速度 1/4）
-            if (g.d < -0.03) {
-                g.d = 0.88 + Math.random() * 0.12;
-                g.u = Math.pow(Math.random(), 1.25) * 0.9 + 0.05;
-            }
-            if (g.d < 0) continue;
-            const y = riverY(g.d);
-            if (y < v.yH - 4 || y > h + 30) continue;
-            const x = riverX(g.u, g.d);
-            const a = 0.1 + 0.6 * g.br * Math.pow(0.5 + 0.5 * Math.sin(t * 3.1 + g.ph * 3.7), 3);
-            if (a < 0.07) continue;
-            ctx.strokeStyle = g.warm ? `rgba(255,226,172,${a})` : `rgba(205,220,255,${a})`;
-            ctx.lineWidth = 0.6 + g.d * 1.4;
-            ctx.lineCap = "round";
-            const len = 1.0 + g.d * 2.4;
-            ctx.beginPath();
-            ctx.moveTo(x - len, y);
-            ctx.lineTo(x + len, y);
-            ctx.stroke();
-            if (g.br > 0.8) {
-                ctx.fillStyle = g.warm ? `rgba(255,240,205,${a * 0.7})` : `rgba(225,235,255,${a * 0.5})`;
-                ctx.beginPath();
-                ctx.arc(x, y, 0.7 + g.d, 0, Math.PI * 2);
-                ctx.fill();
-            }
-        }
-
-        // 河灯周围的水面涟漪（缓缓扩散的椭圆环）。
-        // 显示逻辑：仅 d≥0.28 的灯笼；每灯独立随机倒计时（1.2-3.8s）触发一轮
-        // 1.8s 的扩散（半径 12→68px 线性推移，alpha 按 sin(π·t) 渐强渐弱）。
-        // 各灯计时独立、起点错开——同一时刻通常有多盏在各自扩散，但绝不全场
-        // 齐步同现。近景灯此前"看不出涟漪"是灯体（DOM 精灵 118-130px）比环大
-        // 盖住了它；半径随 scl 放大后近灯环正好超出灯体边缘可见。
-        for (const m of metaRef.current) {
-            if (m.d < 0.28 || m.ripT < 0) continue;
-            const ph2 = Math.min(1, m.ripT / 1.8);
-            const scl = Math.pow(Math.max(0, m.d), 1.15); // 与 DOM scale 同一缩放
-            const rr = (12 + ph2 * 56) * (0.55 + 1.05 * scl);
-            const li = lanternXY(m); // 与灯笼 DOM 同源坐标：涟漪以灯笼为中心
-            const rx = li.x;
-            // 圆笼灯（v=2）灯身最低处在灯笼中心下方 ≈42px·scl：涟漪从笼底溢出；
-            // 八角/莲花仍以灯笼中心起始
-            const ry = li.y + (m.v === 2 ? 42 * scl : 0) + 6;
-            const ra = Math.sin(ph2 * Math.PI) * 0.16 * (0.35 + 0.65 * m.d);
-            ctx.strokeStyle = `rgba(205,222,255,${ra})`;
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.ellipse(rx, ry, rr, rr * 0.24, 0, 0, Math.PI * 2);
-            ctx.stroke();
-        }
+        // 流向纹/碎光点/涟漪：慢层离屏缓冲每 3 帧重绘，主画布每帧一次合成
+        if (slowTick++ % 3 === 0 && slowCv) renderSlow(slowCv.getContext("2d")!);
+        if (slowCv) ctx.drawImage(slowCv, -MARGIN, -MARGIN, w + MARGIN * 2, h + MARGIN * 2);
         ctx.restore();
 
         /* 星光闪烁 + 流星：整体裁剪在山体轮廓之外（星星/流星不再透过山的剪影，
@@ -1145,14 +1218,10 @@ export default function RiverBoard() {
                 const fy = riverY(f.d) - 22 - Math.sin(t * 1.3 + f.ph) * 5;
                 const fl = 0.35 + 0.65 * Math.abs(Math.sin(t * f.flap + f.ph * 5));
                 if (fl < 0.2) continue;
-                const grad = ctx.createRadialGradient(fx, fy, 0, fx, fy, 7);
-                grad.addColorStop(0, `rgba(236,255,170,${0.85 * fl})`);
-                grad.addColorStop(0.5, `rgba(200,236,120,${0.32 * fl})`);
-                grad.addColorStop(1, "rgba(180,220,100,0)");
-                ctx.fillStyle = grad;
-                ctx.beginPath();
-                ctx.arc(fx, fy, 7, 0, Math.PI * 2);
-                ctx.fill();
+                // 预渲染光点贴图：globalAlpha 携带闪烁系数，省略渐变创建与路径填充
+                ctx.globalAlpha = fl * 0.85;
+                ctx.drawImage(FIREFLY_SPRITE, fx - 7, fy - 7, 14, 14);
+                ctx.globalAlpha = 1;
             }
         }
 
@@ -1166,13 +1235,9 @@ export default function RiverBoard() {
             const gx = g.x * w + Math.sin(t * 0.3 + g.ph) * 8;
             const gy = g.y * h;
             const pulse = 0.5 + 0.5 * Math.sin(t * 0.9 + g.ph);
-            const grad = ctx.createRadialGradient(gx, gy, 0, gx, gy, 10);
-            grad.addColorStop(0, `rgba(255,214,140,${0.16 + 0.1 * pulse})`);
-            grad.addColorStop(1, "rgba(255,200,120,0)");
-            ctx.fillStyle = grad;
-            ctx.beginPath();
-            ctx.arc(gx, gy, 10, 0, Math.PI * 2);
-            ctx.fill();
+            ctx.globalAlpha = 0.16 + 0.1 * pulse;
+            ctx.drawImage(KONGLING_SPRITE, gx - 10, gy - 10, 20, 20);
+            ctx.globalAlpha = 1;
         }
 
         /* 流星（山体遮罩：只画在山脊之上，不会砸进河里） */
@@ -1289,10 +1354,20 @@ export default function RiverBoard() {
             const li = lanternXY(m);
             node.style.transform =
                 `translate3d(${li.x}px, ${li.y}px, 0) translate(-50%, -50%) scale(${scl}) rotate(${rot}deg)`;
-            node.style.zIndex = String(200 + Math.round(d * 1000));
             node.style.opacity = String(0.45 + 0.55 * Math.pow(d, 0.8));
-            node.style.filter = `brightness(${(0.72 + 0.34 * d) * m.bright}) hue-rotate(${m.hue}deg)`;
             node.style.pointerEvents = d < 0.24 ? "none" : "auto";
+            // 性能：filter/zIndex 只在景深换档（0.05 一档）时重写——filter 逐帧变化
+            // 会强制元素重栅格化（GPU 最贵操作）；降频后亮度/层级渐变肉眼不可察。
+            // hue-rotate(0deg) 为无效操作，灯型不变时省略
+            const dq = Math.round(d * 20) / 20;
+            if (dq !== m._dq) {
+                m._dq = dq;
+                node.style.zIndex = String(200 + Math.round(dq * 1000));
+                node.style.filter =
+                    m.hue === 0
+                        ? `brightness(${(0.72 + 0.34 * dq) * m.bright})`
+                        : `brightness(${(0.72 + 0.34 * dq) * m.bright}) hue-rotate(${m.hue}deg)`;
+            }
             const qt = node.querySelector(".rz-pool") as HTMLElement | null;
             if (qt) qt.style.opacity = String(0.4 + 0.6 * d);
         }

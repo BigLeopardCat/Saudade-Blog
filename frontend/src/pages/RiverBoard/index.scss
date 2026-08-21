@@ -37,7 +37,9 @@
     width: 0;
     height: 0;
     margin: 0;
-    will-change: transform, opacity, filter;
+    /* 只保 transform 常驻合成层：opacity 是合成器属性无需分层；
+       filter 已降频为换档写入（不逐帧变），无需预分层 */
+    will-change: transform;
     cursor: default;
     outline: none;
 
@@ -1184,8 +1186,8 @@
 }
 
 @keyframes rz-flame-sway {
-  0%, 100% { margin-left: -26px; }
-  50% { margin-left: -22px; }
+  0%, 100% { transform: translateX(0); }
+  50% { transform: translateX(4px); }
 }
 
 @keyframes rz-hint-out {
