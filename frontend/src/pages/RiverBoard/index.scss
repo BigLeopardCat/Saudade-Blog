@@ -107,40 +107,27 @@
         display: block;
       }
 
-      /* 火焰两层分离（性能轮修复灯焰退化）：flick（scale/rotate）与 sway（translateX）
-         都动画 transform 时互相覆盖（后声明动画 sway 会覆盖 flick 的缩放/旋转）——
-         wrap 层只做 sway 平移，flame 层只做 flick 闪烁，互不干扰 */
-      .rz-flame-wrap {
+      /* 灯焰（f056f800 版）：单元素，flick（scale/rotate）与 sway 走不同属性——
+         flick 动画 transform，sway 动画 margin-left，互不覆盖 */
+      .rz-flame {
         position: absolute;
         left: 50%;
         top: 50%;
         width: 52px;
         height: 60px;
         margin: -52px 0 0 -26px;
-        transform-origin: 50% 84%;
-        animation: rz-flame-sway 3.2s ease-in-out infinite;
-      }
-
-      .rz-flame {
-        position: absolute;
-        left: 0;
-        top: 0;
-        width: 100%;
-        height: 100%;
         border-radius: 50%;
         background: radial-gradient(ellipse at 50% 62%, rgba(255, 248, 214, 1) 0%, rgba(255, 216, 122, 0.7) 42%, rgba(255, 182, 82, 0) 70%);
         mix-blend-mode: screen;
         transform-origin: 50% 84%;
-        animation: rz-flame-flick 1.15s steps(5, end) infinite;
+        animation: rz-flame-flick 1.15s steps(5, end) infinite, rz-flame-sway 3.2s ease-in-out infinite;
       }
 
       /* 八角灯/圆笼灯（骨架更大）：火焰光晕整体收进笼身内，不再冒出灯顶 */
-      &.rz-oct .rz-flame-wrap {
+      &.rz-oct .rz-flame {
         width: 44px;
         height: 52px;
         margin: -40px 0 0 -22px;
-      }
-      &.rz-oct .rz-flame {
         background: radial-gradient(ellipse at 50% 64%, rgba(255, 248, 214, 0.95) 0%, rgba(255, 216, 122, 0.6) 40%, rgba(255, 182, 82, 0) 66%);
         pointer-events: none;
       }
@@ -151,9 +138,11 @@
       position: absolute;
       left: 50%;
       bottom: calc(50% + 64px);
-      width: 300px;
-      max-width: min(78vw, 340px);
-      transform: translateX(-50%) translateY(10px);
+      width: 320px;
+      max-width: min(78vw, 360px);
+      /* --bs 由 JS 每帧写入（灯体 scl 的倒数，clamp [1, 4.5]）：抵消父级
+         scale(scl)，远段灯的气泡也保持全尺寸可读；默认 1 不缩放 */
+      transform: translateX(-50%) translateY(10px) scale(var(--bs, 1));
       background: rgba(14, 12, 26, 0.74);
       border: 1px solid rgba(255, 205, 140, 0.3);
       border-radius: 13px;
@@ -184,13 +173,13 @@
       }
 
       .rz-scroll {
-        height: 118px;
+        height: 126px;
         overflow: hidden;
         padding: 16px 34px 10px 34px; /* 左右等距，刚好让开右侧印章，不再过宽 */
       }
 
       .rz-msg {
-        font-size: 15px;
+        font-size: 16px;
         line-height: 1.95;
         letter-spacing: 0.14em;
         color: #f2e2c2;
@@ -203,7 +192,7 @@
 
       /* 文本末尾的 留名 · 时刻（气泡与详情弹窗共用） */
       .rz-who {
-        font-size: 11px;
+        font-size: 12px;
         line-height: 1.6;
         letter-spacing: 0.12em;
         color: rgba(242, 226, 194, 0.55);
@@ -233,7 +222,7 @@
   .rz-lantern:focus .rz-bubble,
   .rz-lantern.rz-open .rz-bubble {
     opacity: 1;
-    transform: translateX(-50%) translateY(0);
+    transform: translateX(-50%) translateY(0) scale(var(--bs, 1));
   }
 
   /* ---------------- 界面浮层 ---------------- */
@@ -1076,7 +1065,7 @@
       }
 
       .rz-msg {
-        font-size: 15px;
+        font-size: 16px;
         line-height: 1.95;
         letter-spacing: 0.14em;
         color: #f2e2c2;
@@ -1087,7 +1076,7 @@
       }
 
       .rz-who {
-        font-size: 11px;
+        font-size: 12px;
         line-height: 1.6;
         letter-spacing: 0.12em;
         color: rgba(242, 226, 194, 0.55);
@@ -1201,8 +1190,8 @@
 }
 
 @keyframes rz-flame-sway {
-  0%, 100% { transform: translateX(0); }
-  50% { transform: translateX(4px); }
+  0%, 100% { margin-left: -26px; }
+  50% { margin-left: -22px; }
 }
 
 @keyframes rz-hint-out {

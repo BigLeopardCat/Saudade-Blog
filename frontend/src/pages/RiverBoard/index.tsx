@@ -1063,7 +1063,7 @@ export default function RiverBoard() {
         for (const m of metaRef.current) {
             if (m.d < 0.28 || m.ripT < 0) continue;
             const ph2 = Math.min(1, m.ripT / 1.8);
-            const scl = Math.pow(Math.max(0, m.d), 1.15); // 与 DOM scale 同一缩放
+            const scl = Math.pow(Math.max(0, m.d), 1.0); // 与 DOM scale 同一缩放
             const rr = (12 + ph2 * 56) * (0.55 + 1.05 * scl);
             const li = lanternXY(m); // 与灯笼 DOM 同源坐标：涟漪以灯笼为中心
             const rx = li.x;
@@ -1149,7 +1149,10 @@ export default function RiverBoard() {
             }
             ctx.closePath();
             const g = ctx.createLinearGradient(0, yT, 0, yB);
-            const balpha = bd.wd > 0.05 ? 0.042 : 0.03; // 第 22 轮：河面亮度略降
+            // 远端渐隐：水光带只在中近段有（d 中点 < 0.2 完全淡出），
+            // 河流尽头远端不保留反光
+            const farFade = Math.min(1, Math.max(0, (dTop + dBot) / 2 - 0.2) / 0.3);
+            const balpha = farFade * (bd.wd > 0.05 ? 0.042 : 0.03); // 第 22 轮：河面亮度略降
             g.addColorStop(0, "rgba(150,178,240,0)");
             g.addColorStop(0.3, `rgba(150,178,240,${balpha * 0.7})`);
             g.addColorStop(0.5, `rgba(150,178,240,${balpha})`);
@@ -1159,23 +1162,30 @@ export default function RiverBoard() {
             ctx.fill();
         }
 
-        // 月光碎影（垂直碎光柱）：恢复经典月光反光——纵向柔光带叠一列
-        // 交替碎光横线，随波闪烁（静态光晕为独立预渲染层，bands 之上合成）
+        // 月光碎影（"波光粼粼"）：贴水面的碎光横线列，自脚下向河心延伸
+        // （静态光晕为独立预渲染层，bands 之上合成）。第 24 轮细节优化：
+        // ① 透视修正——近景线粗长、远景线细短（旧版 lineWidth 随 k 变粗、spread 变宽，
+        //    反透视）；
+        // ② 每行带按 i 固定的伪随机横向错落（抖动仅水平、随波不随形），
+        //    碎感真实，不再是一条均匀的线列；
+        // ③ 范围收止 d≈0.31——河流尽头远端不保留反光（旧版一路画到 d=0.03）；
+        // ④ 远段闪烁熄灭门槛更高，闪灭节奏越远越碎。
         if (moonGlowCv) ctx.drawImage(moonGlowCv, -MARGIN, -MARGIN, w + MARGIN * 2, h + MARGIN * 2);
         const uM = 0.5;
         ctx.save();
         for (let i = 0; i < 46; i++) {
             const k = i / 46;
-            const d = 0.93 - Math.pow(k, 1.08) * 0.9; // 近景(0.93)→远景(0.03)
-            const flick = 0.05 + 0.5 * Math.abs(Math.sin(t * 2.6 + i * 7.7) * Math.sin(t * 1.1 + i * 3.3));
-            if (k > 0.3 && flick < 0.16) continue;
-            const u = uM + Math.pow(k, 1.3) * 0.05 * Math.sin(t * 1.4 + i * 2.1);
-            const spreadU = 0.010 + 0.016 * k;
+            const d = 0.93 - Math.pow(k, 1.16) * 0.62; // 近景 0.93 → 远景 0.31（远端收止）
+            const flick = 0.06 + 0.52 * Math.abs(Math.sin(t * 2.6 + i * 7.7) * Math.sin(t * 1.1 + i * 3.3));
+            if (k > 0.32 && flick < 0.17) continue;
+            const jit = (Math.sin(i * 12.9898) * 0.5 + Math.sin(i * 78.233 + 3) * 0.5) * 0.006;
+            const u = uM + Math.pow(k, 1.5) * 0.05 * Math.sin(t * 1.4 + i * 2.1) + jit;
+            const spreadU = 0.022 - 0.012 * k; // 近宽远窄（透视）
             const y = riverY(d);
             const xl = riverX(u - spreadU, d);
             const xr = riverX(u + spreadU, d);
-            ctx.strokeStyle = `rgba(255,232,178,${flick * (1 - k * 0.35)})`;
-            ctx.lineWidth = 1.0 + k * 1.6;
+            ctx.strokeStyle = `rgba(255,232,178,${flick * (1 - k * 0.62)})`;
+            ctx.lineWidth = 1.6 - k * 1.05; // 近粗远细（透视）
             ctx.lineCap = "round";
             ctx.beginPath();
             ctx.moveTo(xl, y);
@@ -1325,20 +1335,24 @@ export default function RiverBoard() {
                 advanceMsg(m.id); // 批次轮播：重入时换上更早一批的留言
             }
             const d = Math.max(0, m.d);
-            const scl = Math.pow(d, 1.15);
+            const scl = Math.pow(d, 1.0);
             const li = lanternXY(m);
-            pos.push({ m, x: li.x - m.oX, y: li.y - m.oY, r: scl * 46 + 7 });
+            pos.push({ m, x: li.x - m.oX, y: li.y - m.oY, r: scl * 53 });
         }
-        /* 体积碰撞：完全分离 + 6% 余量（不再每帧只推一半穿透量——半推会残留重叠，
-           下一帧立即再次碰撞，短时间高频推挤正是"抖动"观感的根源）；
-           深重叠（重入落点压住别的灯）按帧封顶 0.4rr，两三轮内干净分开，不会瞬间弹飞。
-           分离分两路：
-           ① oX/oY 瞬态推挤（随流衰减 0.975/帧，约 1.5s 归零）——碰撞瞬间的"顶开"感；
-           ② 法线水平分量整段转入 u 空间（dx/du = 2*hw，u 不衰减）——持久分离。
-           u 滑移是碰撞的"最终解"：u 不衰减 → 分解后不会因 oX 衰减而重新叠回，
-           一次碰撞一次分开；河道持续收窄导致的再次接触是缓慢挤压（~1px/帧），
-           每次都是小幅、单帧解完的平滑接触。旧方案（slide*0.35）的 u 滑移太弱：
-           oX 衰减期 7 帧左右就重新叠回再撞，观感仍是"撞开-弹回"的短时高频抖动 */
+        /* 水面漂浮物软排斥（PBD 式松弛，无余量）：只在真实重叠（dist < rr）时推挤——
+           相切对（dist === rr）零受力，刚接触的灯不会抖；每帧只消解重叠的一小部分
+           （pen*0.28，封顶 1.5px/帧），指数松弛收敛、无过冲——浅接触近乎无感，
+           深重叠 20-30 帧缓缓让开，观感是"挤过去"而不是"撞过去"。
+           分离分三路（都吃同一份软推力，不留任何"整段穿透"硬推）：
+           ① oX/oY 瞬态推挤（随流衰减 0.975/帧，≈1.5s 消散）——接触瞬间的轻微"顶开"；
+           ② 法线水平分量约一半转入 u 空间（dx/du ≈ 2*hw，u 不衰减）——横向让行：
+           河道收窄挤住的灯对缓缓侧滑互相让过，一次让开不再叠回；
+           ③ 近垂直对（|nx| < 0.25）再把约一半转入 d 空间——d 不衰减且更深者流速更快
+           （自增强），前后对随流错开；软推下局部导数的小幅低估只会让分离稍慢、
+           不会过冲震荡（第 23 轮的 1.15 补偿是为整段穿透准备的，已随硬推一起移除）。
+           垂直分量留在 oX/oY 而非 d 空间：同向同速对由流速差自然拉开；
+           半径 r = scl*53 与灯体视觉尺寸同源（无 +7 常数）——远端不再有
+           "视觉未接触却判定碰撞"的幻影重叠 */
         const vNow = viewRef.current;
         for (let i = 0; i < pos.length; i++) {
             for (let j = i + 1; j < pos.length; j++) {
@@ -1349,31 +1363,27 @@ export default function RiverBoard() {
                 const rr = A.r + B.r;
                 if (d2 >= rr * rr || d2 < 0.001) continue;
                 const dist = Math.sqrt(d2);
-                const pen = Math.min(rr * 1.06 - dist, rr * 0.4);
+                const pen = rr - dist;                      // >0 仅真实重叠
+                const push = Math.min(pen * 0.28, 1.5);
                 const nx = dx / dist, ny = dy / dist;
                 // d 可能落在 (-0.02, 0) 的待重生区间：负底数小数次幂是 NaN，会把位移污染成 NaN
                 const da = Math.max(0, A.m.d), db = Math.max(0, B.m.d);
-                const wa = Math.pow(da, 0.9) + 0.25;
+                const wa = Math.pow(da, 0.9) + 0.25;        // 景深加权：浅灯让位更多
                 const wb = Math.pow(db, 0.9) + 0.25;
-                const sa = pen * (wb / (wa + wb)), sb = pen * (wa / (wa + wb));
+                const sa = push * (wb / (wa + wb)), sb = push * (wa / (wa + wb));
                 A.m.oX -= nx * sa; A.m.oY -= ny * sa;
                 B.m.oX += nx * sb; B.m.oY += ny * sb;
-                // 持久横向分离：整段穿透转入 u 空间（u 不衰减，clamp 在河道内）。
-                // 浅的灯让位更多（sa/sb 已按景深加权）
+                // 横向让行：约一半推力转入 u 空间（u 不衰减，clamp 在河道内）
                 const hwA = vNow.w * (0.15 + da * da * 1.08);
                 const hwB = vNow.w * (0.15 + db * db * 1.08);
-                A.m.u = Math.max(0.13, Math.min(0.87, A.m.u - nx * (sa / (2 * hwA))));
-                B.m.u = Math.max(0.13, Math.min(0.87, B.m.u + nx * (sb / (2 * hwB))));
-                // 近垂直对（法线水平分量弱）：整段穿透转入 d 空间——d 不衰减，
-                // 且更深者流速更快（自增强），分离持久。否则 oY 衰减 7 帧就弹回，
-                // 同速同列的灯对会以 ~0.12s 周期反复轻撞（正是"轻推→又撞"观感）。
-                // 1.15 补偿：d^1.42 凹曲线下，区间位移比局部导数小 ~13%，不补偿
-                // 会在 oY 衰减后重新贴回接触阈值，产生间隔 0.5s 的零星小撞
+                A.m.u = Math.max(0.13, Math.min(0.87, A.m.u - nx * ((sa * 0.5) / (2 * hwA))));
+                B.m.u = Math.max(0.13, Math.min(0.87, B.m.u + nx * ((sb * 0.5) / (2 * hwB))));
+                // 近垂直对（法线水平分量弱，u 让行无力）：纵向让行转入 d 空间
                 if (Math.abs(nx) < 0.25) {
                     const kA = (vNow.h * 1.06 - vNow.yH) * 1.42 * Math.pow(da, 0.42);
                     const kB = (vNow.h * 1.06 - vNow.yH) * 1.42 * Math.pow(db, 0.42);
-                    A.m.d = Math.max(0.02, Math.min(1, A.m.d - ny * ((sa * 1.15) / kA)));
-                    B.m.d = Math.max(0.02, Math.min(1, B.m.d + ny * ((sb * 1.15) / kB)));
+                    A.m.d = Math.max(0.02, Math.min(1, A.m.d - ny * ((sa * 0.5) / kA)));
+                    B.m.d = Math.max(0.02, Math.min(1, B.m.d + ny * ((sb * 0.5) / kB)));
                 }
             }
         }
@@ -1384,10 +1394,14 @@ export default function RiverBoard() {
             if (!node) continue;
             const d = Math.max(0, m.d);
             const rot = Math.sin(amb!.now * 0.55 + m.sway) * 3.2;
-            const scl = Math.pow(d, 1.15);
+            const scl = Math.pow(d, 1.0);
             const li = lanternXY(m);
             node.style.transform =
                 `translate3d(${li.x}px, ${li.y}px, 0) translate(-50%, -50%) scale(${scl}) rotate(${rot}deg)`;
+            // 气泡反缩放：bubble 是灯体的子元素，随父级 scale 一起缩小——远段灯
+            // 缩得太小导致文字不可读；--bs 反向补偿（clamp 上限 4.5：极远端的气泡
+            // 不再等大，缓缓缩小收敛进视野），让气泡在整条可交互河段保持全尺寸
+            node.style.setProperty("--bs", String(Math.max(1, Math.min(4.5, 1 / scl)).toFixed(2)));
             node.style.opacity = String(0.45 + 0.55 * Math.pow(d, 0.8));
             node.style.pointerEvents = d < 0.24 ? "none" : "auto";
             // 性能：filter/zIndex 只在景深换档（0.05 一档）时重写——filter 逐帧变化
@@ -1902,9 +1916,7 @@ export default function RiverBoard() {
                             style={ln.v >= 1 ? { width: 130, height: 130, margin: "-65px 0 0 -65px" } : undefined}
                         >
                             <img src={sprites[ln.v]} alt="" draggable={false} />
-                            <div className="rz-flame-wrap">
-                                <div className="rz-flame" />
-                            </div>
+                            <div className="rz-flame" />
                         </div>
                         <div
                             ref={(el) => {
