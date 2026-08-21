@@ -1063,7 +1063,7 @@ export default function RiverBoard() {
         for (const m of metaRef.current) {
             if (m.d < 0.28 || m.ripT < 0) continue;
             const ph2 = Math.min(1, m.ripT / 1.8);
-            const scl = Math.min(1, Math.pow(Math.max(0, m.d), 1.15) * 1.25); // 与 DOM scale 同一缩放
+            const scl = Math.min(1.3, Math.pow(Math.max(0, m.d), 1.15) * 1.3); // 与 DOM scale 同一缩放（第 26 轮封顶 1.3）
             const rr = (12 + ph2 * 56) * (0.55 + 1.05 * scl);
             const li = lanternXY(m); // 与灯笼 DOM 同源坐标：涟漪以灯笼为中心
             const rx = li.x;
@@ -1335,7 +1335,7 @@ export default function RiverBoard() {
                 advanceMsg(m.id); // 批次轮播：重入时换上更早一批的留言
             }
             const d = Math.max(0, m.d);
-            const scl = Math.min(1, Math.pow(d, 1.15) * 1.25); // 整体等比放大（保原透视形状）
+            const scl = Math.min(1.3, Math.pow(d, 1.15) * 1.3); // 整体等比放大：封顶抬到 1.3，近半段河面可见变大（第 26 轮）
             const li = lanternXY(m);
             pos.push({ m, x: li.x - m.oX, y: li.y - m.oY, r: scl * 53 });
         }
@@ -1394,7 +1394,7 @@ export default function RiverBoard() {
             if (!node) continue;
             const d = Math.max(0, m.d);
             const rot = Math.sin(amb!.now * 0.55 + m.sway) * 3.2;
-            const scl = Math.min(1, Math.pow(d, 1.15) * 1.25); // 与 pos 同一缩放（整体等比放大）
+            const scl = Math.min(1.3, Math.pow(d, 1.15) * 1.3); // 与 pos 同一缩放（整体等比放大，第 26 轮封顶 1.3）
             const li = lanternXY(m);
             node.style.transform =
                 `translate3d(${li.x}px, ${li.y}px, 0) translate(-50%, -50%) scale(${scl}) rotate(${rot}deg)`;
