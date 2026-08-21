@@ -356,8 +356,6 @@ interface Amb {
     bands: { d0: number; wd: number; spd: number; ph: number }[];
     fireflies: { u: number; d: number; ph: number; flap: number }[];
     skyGlows: { x: number; y: number; spd: number; ph: number }[];
-    mountain: Path2D; // 远山剪影（base 坐标系），用于遮挡动态星星/流星
-    skyClip: Path2D; // 全屏矩形挖去山体（evenodd），动态天空元素只画在山体之外
     shoot: { t: number; x0: number; y0: number; dx: number; dy: number } | null;
     shootAt: number;
     now: number;
@@ -486,7 +484,7 @@ export default function RiverBoard() {
         const v = viewRef.current;
         const bend = Math.sin(0.6 + d * 2.2);
         const c = v.w * (0.51 + 0.045 * bend);
-        const hw = v.w * (0.085 + d * d * 0.95); // 远处收窄、近处展开（第 11 轮回拢：河道两侧露出，河灯可散布全河宽）
+        const hw = v.w * (0.12 + d * d * 1.08); // 远处收窄、近处展开（第 22 轮：0.085/0.95 → 0.12/1.08 河面再加宽约 20%）
         return c + (u - 0.5) * 2 * hw;
     };
     const riverY = (d: number) => {
@@ -589,7 +587,6 @@ export default function RiverBoard() {
         }
         amb = {
             stars, streaks, glints, bands, fireflies, skyGlows,
-            mountain: new Path2D(), skyClip: new Path2D(),
             shoot: null, shootAt: 4 + Math.random() * 5, now: 0,
         };
     };
@@ -801,20 +798,6 @@ export default function RiverBoard() {
                 ctx.closePath();
                 ctx.fillStyle = c1;
                 ctx.fill();
-                // 同步把最前山层轮廓累积进遮罩 path（用于遮挡动态星星/流星）
-                if (c1 === "#050a18") {
-                    for (let x = -MARGIN - 20; x <= w + MARGIN + 20; x += 9) {
-                        const y =
-                            base +
-                            Math.sin(x * 0.0042 + seed) * amp * 1.2 +
-                            Math.sin(x * 0.011 + seed * 2.7) * amp * 0.7 +
-                            Math.sin(x * 0.023 + seed * 5.1) * amp * 0.28;
-                        x === -MARGIN - 20 ? skyPath.moveTo(x, y) : skyPath.lineTo(x, y);
-                    }
-                    skyPath.lineTo(w + MARGIN + 20, h + MARGIN);
-                    skyPath.lineTo(-MARGIN - 20, h + MARGIN);
-                    skyPath.closePath();
-                }
             };
             ridge(v.yH * 0.82, 3.1, h * 0.045, "#0b1230");
             ridge(v.yH * 0.92, 8.7, h * 0.062, "#070d22");
@@ -822,10 +805,10 @@ export default function RiverBoard() {
 
             // 河水底色 + 河心天光带
             const riverBase = ctx.createLinearGradient(0, v.yH, 0, h);
-            riverBase.addColorStop(0, "#1a2350");
-            riverBase.addColorStop(0.3, "#0e1734");
-            riverBase.addColorStop(0.62, "#080f24");
-            riverBase.addColorStop(1, "#040818");
+            riverBase.addColorStop(0, "#161e46");
+            riverBase.addColorStop(0.3, "#0c142d");
+            riverBase.addColorStop(0.62, "#070d1f");
+            riverBase.addColorStop(1, "#030714");
             traceRiver(ctx, 0, 1.14, false);
             ctx.fillStyle = riverBase;
             ctx.fill();
@@ -833,9 +816,9 @@ export default function RiverBoard() {
             ctx.save();
             ctx.clip();
             const heart = ctx.createLinearGradient(0, v.yH * 0.98, 0, h);
-            heart.addColorStop(0, "rgba(150,180,255,0.19)");
-            heart.addColorStop(0.45, "rgba(120,150,235,0.09)");
-            heart.addColorStop(1, "rgba(90,120,210,0.03)");
+            heart.addColorStop(0, "rgba(150,180,255,0.15)");
+            heart.addColorStop(0.45, "rgba(120,150,235,0.07)");
+            heart.addColorStop(1, "rgba(90,120,210,0.02)");
             traceRiver(ctx, 0, 1.14, false);
             ctx.fillStyle = heart;
             ctx.fill();
@@ -866,16 +849,7 @@ export default function RiverBoard() {
         };
 
         prep(back);
-        const skyPath = new Path2D(); // 由最前山层轮廓累积；随后转换进 amb 山体遮罩
         draw(back);
-        if (amb) {
-            const mountain = new Path2D();
-            mountain.addPath(skyPath);
-            amb.skyClip = new Path2D();
-            amb.skyClip.rect(-MARGIN - 120, -MARGIN - 120, w + MARGIN * 2 + 240, h + MARGIN * 2 + 240);
-            amb.skyClip.addPath(mountain);
-            amb.mountain = mountain;
-        }
 
         prep(front);
         front.drawImage(backCv, -MARGIN, -MARGIN, w + MARGIN * 2, h + MARGIN * 2);
@@ -1119,6 +1093,31 @@ export default function RiverBoard() {
     }
 
     /* ---- 逐帧动态层 ---- */
+
+    /* 山体剪影裁剪路径（就地构建，第 22 轮修复"星星透过山的剪影"）：
+       三层山由远到近叠放（0b1230 → 070d22 → 050a18），后画的覆盖前层下部，
+       最终可见的山体上缘 = 三层脊线曲线逐 x 取最小值；clip 用
+       「全屏矩形 + 山体区域」evenodd 镂空 → 动态星星/流星只画在山体之外。
+       此前经 renderBase 传递 amb.skyClip 未生效（且只裁最前层，前两层透星），
+       改为每帧就地构建；w/h 缓存，resize 才重建 */
+    let skyClipCache: { w: number; h: number; p: Path2D } | null = null;
+    const buildSkyClip = (w: number, h: number) => {
+        if (skyClipCache && skyClipCache.w === w && skyClipCache.h === h) return skyClipCache.p;
+        const p = new Path2D();
+        p.rect(-MARGIN - 120, -MARGIN - 120, w + MARGIN * 2 + 240, h + MARGIN * 2 + 240);
+        p.moveTo(-MARGIN - 20, h + MARGIN + 2);
+        for (let x = -MARGIN - 20; x <= w + MARGIN + 20; x += 9) {
+            const yH0 = viewRef.current.yH;
+            const y1 = yH0 * 0.82 + h * 0.045 * (1.2 * Math.sin(x * 0.0042 + 3.1) + 0.7 * Math.sin(x * 0.011 + 3.1 * 2.7) + 0.28 * Math.sin(x * 0.023 + 3.1 * 5.1));
+            const y2 = yH0 * 0.92 + h * 0.062 * (1.2 * Math.sin(x * 0.0042 + 8.7) + 0.7 * Math.sin(x * 0.011 + 8.7 * 2.7) + 0.28 * Math.sin(x * 0.023 + 8.7 * 5.1));
+            const y3 = yH0 * 0.97 + h * 0.05 * (1.2 * Math.sin(x * 0.0042 + 1.7) + 0.7 * Math.sin(x * 0.011 + 1.7 * 2.7) + 0.28 * Math.sin(x * 0.023 + 1.7 * 5.1));
+            p.lineTo(x, Math.min(y1, y2, y3));
+        }
+        p.closePath();
+        skyClipCache = { w, h, p };
+        return p;
+    };
+
     const drawScene = (ctx: CanvasRenderingContext2D, t: number, reduce: boolean, baseBack: HTMLCanvasElement, baseFront: HTMLCanvasElement) => {
         if (!amb) return;
         const v = viewRef.current;
@@ -1162,7 +1161,7 @@ export default function RiverBoard() {
             }
             ctx.closePath();
             const g = ctx.createLinearGradient(0, yT, 0, yB);
-            const balpha = bd.wd > 0.05 ? 0.05 : 0.036;
+            const balpha = bd.wd > 0.05 ? 0.042 : 0.03; // 第 22 轮：河面亮度略降
             g.addColorStop(0, "rgba(150,178,240,0)");
             g.addColorStop(0.3, `rgba(150,178,240,${balpha * 0.7})`);
             g.addColorStop(0.5, `rgba(150,178,240,${balpha})`);
@@ -1206,7 +1205,7 @@ export default function RiverBoard() {
            更不会"砸进"河里——clip 与 base 山体使用同一视差，裁剪随视差同步） */
         ctx.save();
         ctx.translate(px * 0.2, py * 0.1);
-        ctx.clip(amb.skyClip, "evenodd");
+        ctx.clip(buildSkyClip(w, h), "evenodd");
         ctx.translate(-px * 0.2, -py * 0.1);
         /* 星光闪烁（只有少数亮星动态叠加；月盘内的星略过——月亮实心应遮挡星空） */
         const moonR = Math.min(w, h) * MOON.r * 0.82;
@@ -1277,7 +1276,7 @@ export default function RiverBoard() {
         /* 流星（山体遮罩：只画在山脊之上，不会砸进河里） */
         ctx.save();
         ctx.translate(px * 0.2, py * 0.1);
-        ctx.clip(amb.skyClip, "evenodd");
+        ctx.clip(buildSkyClip(w, h), "evenodd");
         ctx.translate(-px * 0.2, -py * 0.1);
         if (amb.shoot) {
             if (reduce) {
@@ -1344,7 +1343,7 @@ export default function RiverBoard() {
             }
             if (m.d < -0.02) {
                 m.d = 0.94 + Math.random() * 0.05; // 眼前重入
-                m.u = 0.25 + Math.random() * 0.45;
+                m.u = 0.15 + Math.random() * 0.7; // 河面加宽后灯散布更开（0.15-0.85）
                 m.w = 0.03 + Math.random() * 0.045;
                 m.oX = 0;
                 m.oY = 0;
@@ -1504,7 +1503,7 @@ export default function RiverBoard() {
             const views: Wish[] = [];
             for (let i = 0; i < count; i++) {
                 // 河灯散布整个河面宽度（河道两侧也适当有灯），不挤在河心
-                const u = 0.25 + Math.random() * 0.45;
+                const u = 0.15 + Math.random() * 0.7; // 河面加宽后灯散布更开（0.15-0.85）
                 // 初始分布偏近景：开场即见大河灯，且近场始终有灯
                 const d = 1 - Math.pow(Math.random(), 1.8);
                 const msg = msgs[i % msgs.length];
@@ -1894,7 +1893,9 @@ export default function RiverBoard() {
                             style={ln.v >= 1 ? { width: 130, height: 130, margin: "-65px 0 0 -65px" } : undefined}
                         >
                             <img src={sprites[ln.v]} alt="" draggable={false} />
-                            <div className="rz-flame" />
+                            <div className="rz-flame-wrap">
+                                <div className="rz-flame" />
+                            </div>
                         </div>
                         <div
                             ref={(el) => {

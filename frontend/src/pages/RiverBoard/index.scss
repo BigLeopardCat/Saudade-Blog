@@ -107,25 +107,40 @@
         display: block;
       }
 
-      .rz-flame {
+      /* 火焰两层分离（性能轮修复灯焰退化）：flick（scale/rotate）与 sway（translateX）
+         都动画 transform 时互相覆盖（后声明动画 sway 会覆盖 flick 的缩放/旋转）——
+         wrap 层只做 sway 平移，flame 层只做 flick 闪烁，互不干扰 */
+      .rz-flame-wrap {
         position: absolute;
         left: 50%;
         top: 50%;
         width: 52px;
         height: 60px;
         margin: -52px 0 0 -26px;
+        transform-origin: 50% 84%;
+        animation: rz-flame-sway 3.2s ease-in-out infinite;
+      }
+
+      .rz-flame {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
         border-radius: 50%;
         background: radial-gradient(ellipse at 50% 62%, rgba(255, 248, 214, 1) 0%, rgba(255, 216, 122, 0.7) 42%, rgba(255, 182, 82, 0) 70%);
         mix-blend-mode: screen;
         transform-origin: 50% 84%;
-        animation: rz-flame-flick 1.15s steps(5, end) infinite, rz-flame-sway 3.2s ease-in-out infinite;
+        animation: rz-flame-flick 1.15s steps(5, end) infinite;
       }
 
       /* 八角灯/圆笼灯（骨架更大）：火焰光晕整体收进笼身内，不再冒出灯顶 */
-      &.rz-oct .rz-flame {
+      &.rz-oct .rz-flame-wrap {
         width: 44px;
         height: 52px;
         margin: -40px 0 0 -22px;
+      }
+      &.rz-oct .rz-flame {
         background: radial-gradient(ellipse at 50% 64%, rgba(255, 248, 214, 0.95) 0%, rgba(255, 216, 122, 0.6) 40%, rgba(255, 182, 82, 0) 66%);
         pointer-events: none;
       }
