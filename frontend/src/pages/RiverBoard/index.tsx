@@ -575,21 +575,26 @@ export default function RiverBoard() {
                 flap: 1.4 + Math.random() * 2.4,
             });
         }
-        // 河灯照明贴图：椭圆暖光（横向椭圆，贴图 scale(1,0.5) 压扁），
-        // 内芯暖白 → 外围淡橙渐隐；绘制时随灯 scl 缩放、近亮远暗
+        // 河灯照明贴图：椭圆暖光（横向椭圆，贴图 scale(1,0.625) 压扁），
+        // 内芯暖白 → 外围淡橙渐隐；绘制时随灯 scl 缩放、近亮远暗。
+        // 第 30 轮：渐变圆心取 (256,256) 而非 (256,128)——圆心会被 scale 变换
+        // 一并缩放，原写法压扁后圆心落在 y=64、椭圆上缘伸出画布顶边，y=0 处
+        // 残留 alpha≈0.28 暖色，被画布顶边硬切成水平亮线（"光晕上侧水平截断"）。
+        // 现圆心 scale 后落在 (256,160)，椭圆 256×160 完美内切 512×320，四周
+        // 弧形渐隐到 alpha 0，无任何平边；纵向加高让光晕上部弧线更完整。
         lanternLightCv = document.createElement("canvas");
         lanternLightCv.width = 512;
-        lanternLightCv.height = 256;
+        lanternLightCv.height = 320;
         const lg = lanternLightCv.getContext("2d")!;
-        const lgrad = lg.createRadialGradient(256, 128, 0, 256, 128, 256);
+        const lgrad = lg.createRadialGradient(256, 256, 0, 256, 256, 256);
         lgrad.addColorStop(0, "rgba(255,232,178,1)");
         lgrad.addColorStop(0.18, "rgba(255,206,132,0.75)");
         lgrad.addColorStop(0.42, "rgba(255,185,110,0.32)");
         lgrad.addColorStop(1, "rgba(255,185,110,0)");
         lg.save();
-        lg.scale(1, 0.5);
+        lg.scale(1, 0.625);
         lg.fillStyle = lgrad;
-        lg.fillRect(0, 0, 512, 512); // scale 后视觉覆盖 512×256
+        lg.fillRect(0, 0, 512, 512); // scale 后视觉覆盖 512×320
         lg.restore();
         amb = {
             stars, streaks, glints, bands, fireflies,
@@ -1097,10 +1102,12 @@ export default function RiverBoard() {
             sc.stroke();
         }
 
-        // 河灯对水面的照明（第 29 轮）：lighter 合成暖光斑到灯下河面——
-        // 光斑宽 = 灯视觉宽(~106·scl)的 ~3.8 倍、扁椭圆，垂直范围从灯身下半
-        // 延伸到灯下河面（顶在 li.y-0.15·lh，中心在灯底附近）；近亮远暗，远到
-        // 看不见的灯（scl<0.06）跳过。贴图只构建一次，每帧仅 22 次 drawImage。
+        // 河灯对水面的照明（第 30 轮）：lighter 合成暖光斑，以灯底为中心——
+        // 第 29 轮光斑顶在灯身下沿且上缘被水平硬切（贴图圆心偏移 bug，见上），
+        // 且光斑重心在灯下方，上部没有光晕形状。现光斑中心上移到灯底上方
+        // 0.05·lh（≈灯身下 1/4 处）：上部弧线从灯顶上方 ~38px 完整弧形渐隐
+        // （灯身两侧可见环绕光），下部延伸到灯下 ~118px 河面。近亮远暗，
+        // 远到看不见的灯（scl<0.06）跳过。贴图只构建一次，每帧仅 22 次 drawImage。
         if (lanternLightCv) {
             sc.save();
             sc.globalCompositeOperation = "lighter";
@@ -1109,9 +1116,9 @@ export default function RiverBoard() {
                 if (scl < 0.06) continue;
                 const li = lanternXY(m);
                 const lw = 420 * scl;
-                const lh = lw * 0.5;
-                sc.globalAlpha = 0.6 + 0.4 * scl;
-                sc.drawImage(lanternLightCv, li.x - lw / 2, li.y - lh * 0.15, lw, lh);
+                const lh = lw * 0.625; // 贴图 512×320 纵横比
+                sc.globalAlpha = 0.45 + 0.35 * scl; // 第 30 轮：整体亮度降约 20%
+                sc.drawImage(lanternLightCv, li.x - lw / 2, li.y - lh * 0.55, lw, lh);
             }
             sc.restore();
         }
