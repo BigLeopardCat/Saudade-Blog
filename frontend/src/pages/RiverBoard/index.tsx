@@ -355,7 +355,6 @@ interface Amb {
     glints: { u: number; d: number; ph: number; spd: number; warm: boolean; br: number }[];
     bands: { d0: number; wd: number; spd: number; ph: number }[];
     fireflies: { u: number; d: number; ph: number; flap: number }[];
-    skyGlows: { x: number; y: number; spd: number; ph: number }[];
     shoot: { t: number; x0: number; y0: number; dx: number; dy: number } | null;
     shootAt: number;
     now: number;
@@ -389,10 +388,6 @@ const FIREFLY_SPRITE = glowSprite(7, [
     [0, "rgba(236,255,170,1)"],
     [0.5, "rgba(200,236,120,0.38)"],
     [1, "rgba(180,220,100,0)"],
-]);
-const KONGLING_SPRITE = glowSprite(10, [
-    [0, "rgba(255,214,140,1)"],
-    [1, "rgba(255,200,120,0)"],
 ]);
 
 /* 月光碎影静态光晕独立层：在 renderBase 构建一次，drawScene 每帧一次 drawImage */
@@ -434,7 +429,6 @@ export default function RiverBoard() {
     从批次序列取下一条留言换上 → 窗口整体向更早推进，滚到最早一条后
     回到最新一批循环（指针取模）。窗口移动节奏 = 灯的漂流周期（约 1 分钟一批）。
     演示灯阶段（数据未回）不推进。 */
-    const [allTalks, setAllTalks] = useState<Wish[]>([]);
     const allTalksRef = useRef<Wish[]>([]);
     const batchPtr = useRef(0); // 已发放条数（含初始最新一批）
     const lanternCountRef = useRef(0);
@@ -443,6 +437,9 @@ export default function RiverBoard() {
     const advanceMsg = (id: number) => {
         const items = allTalksRef.current;
         if (items.length === 0) return;
+        // 池子被灯数全覆盖（留言数 ≤ 灯数）：不做轮换，重入保持原留言——
+        // 轮换语义是「更多留言分批涌来」，池内每条的归属已经唯一，轮换只会制造瞬时重复
+        if (items.length <= lanternCountRef.current) return;
         const it = items[batchPtr.current % items.length];
         batchPtr.current++;
         setLanterns((prev) =>
@@ -484,7 +481,7 @@ export default function RiverBoard() {
         const v = viewRef.current;
         const bend = Math.sin(0.6 + d * 2.2);
         const c = v.w * (0.51 + 0.045 * bend);
-        const hw = v.w * (0.12 + d * d * 1.08); // 远处收窄、近处展开（第 22 轮：0.085/0.95 → 0.12/1.08 河面再加宽约 20%）
+        const hw = v.w * (0.15 + d * d * 1.08); // 远处收窄、近处展开（第 23 轮：0.12 → 0.15 远端再加宽，前端基本不变）
         return c + (u - 0.5) * 2 * hw;
     };
     const riverY = (d: number) => {
@@ -496,7 +493,7 @@ export default function RiverBoard() {
     /* 灯笼像素坐标（与 DOM 写入完全同源：视差+晃摆+碰撞位移一次算齐，
        涟漪与灯笼本体再不会错位） */
     const lanternXY = (m: LanternMeta) => {
-        const px = (mouseRef.current.x - 0.5) * 10;
+        const px = (mouseRef.current.x - 0.5) * 14;
         const d = Math.max(0, m.d);
         const bobY = Math.sin(amb!.now * 1.2 + m.sway) * 1.6 * (0.3 + d);
         return {
@@ -575,18 +572,8 @@ export default function RiverBoard() {
                 flap: 1.4 + Math.random() * 2.4,
             });
         }
-        const skyGlows: Amb["skyGlows"] = [];
-        const nGlow = Math.round(3 * dens) + 1;
-        for (let i = 0; i < nGlow; i++) {
-            skyGlows.push({
-                x: 0.15 + Math.random() * 0.7,
-                y: 0.55 + Math.random() * 0.2,
-                spd: 0.012 + Math.random() * 0.015,
-                ph: Math.random() * Math.PI * 2,
-            });
-        }
         amb = {
-            stars, streaks, glints, bands, fireflies, skyGlows,
+            stars, streaks, glints, bands, fireflies,
             shoot: null, shootAt: 4 + Math.random() * 5, now: 0,
         };
     };
@@ -805,10 +792,11 @@ export default function RiverBoard() {
 
             // 河水底色 + 河心天光带
             const riverBase = ctx.createLinearGradient(0, v.yH, 0, h);
-            riverBase.addColorStop(0, "#161e46");
-            riverBase.addColorStop(0.3, "#0c142d");
-            riverBase.addColorStop(0.62, "#070d1f");
-            riverBase.addColorStop(1, "#030714");
+            // 第 23 轮：整体调暗到接近背景（山体 #050a18-#0b1230），河面不再比远山更亮
+            riverBase.addColorStop(0, "#0e1738");
+            riverBase.addColorStop(0.3, "#081030");
+            riverBase.addColorStop(0.62, "#050b22");
+            riverBase.addColorStop(1, "#02040d");
             traceRiver(ctx, 0, 1.14, false);
             ctx.fillStyle = riverBase;
             ctx.fill();
@@ -1004,7 +992,7 @@ export default function RiverBoard() {
     function renderSlow(sc: CanvasRenderingContext2D) {
         if (!amb) return;
         const v = viewRef.current;
-        const { w, h } = v;
+        const { h } = v;
         const t = amb.now;
         const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
         sc.setTransform(v.dpr, 0, 0, v.dpr, 0, 0);
@@ -1122,7 +1110,7 @@ export default function RiverBoard() {
         if (!amb) return;
         const v = viewRef.current;
         const { w, h } = v;
-        const px = (mouseRef.current.x - 0.5) * 26;
+        const px = (mouseRef.current.x - 0.5) * 40; // 第 23 轮：左右视角加大（26 → 40）
         const py = (mouseRef.current.y - 0.5) * 14;
         if (reduce) {
             mouseRef.current.x = 0.5;
@@ -1258,21 +1246,6 @@ export default function RiverBoard() {
             }
         }
 
-        /* 孔明灯（远方天际的暖点） */
-        for (const g of amb.skyGlows) {
-            g.y -= g.spd * 0.004 * (reduce ? 0.05 : 1);
-            if (g.y < 0.02) {
-                g.y = 0.5 + Math.random() * 0.2;
-                g.x = 0.12 + Math.random() * 0.76;
-            }
-            const gx = g.x * w + Math.sin(t * 0.3 + g.ph) * 8;
-            const gy = g.y * h;
-            const pulse = 0.5 + 0.5 * Math.sin(t * 0.9 + g.ph);
-            ctx.globalAlpha = 0.16 + 0.1 * pulse;
-            ctx.drawImage(KONGLING_SPRITE, gx - 10, gy - 10, 20, 20);
-            ctx.globalAlpha = 1;
-        }
-
         /* 流星（山体遮罩：只画在山脊之上，不会砸进河里） */
         ctx.save();
         ctx.translate(px * 0.2, py * 0.1);
@@ -1356,7 +1329,17 @@ export default function RiverBoard() {
             const li = lanternXY(m);
             pos.push({ m, x: li.x - m.oX, y: li.y - m.oY, r: scl * 46 + 7 });
         }
-        // 体积碰撞（原始方案）：圆-圆分离，位移小且按景深加权，随后随流衰减归位
+        /* 体积碰撞：完全分离 + 6% 余量（不再每帧只推一半穿透量——半推会残留重叠，
+           下一帧立即再次碰撞，短时间高频推挤正是"抖动"观感的根源）；
+           深重叠（重入落点压住别的灯）按帧封顶 0.4rr，两三轮内干净分开，不会瞬间弹飞。
+           分离分两路：
+           ① oX/oY 瞬态推挤（随流衰减 0.975/帧，约 1.5s 归零）——碰撞瞬间的"顶开"感；
+           ② 法线水平分量整段转入 u 空间（dx/du = 2*hw，u 不衰减）——持久分离。
+           u 滑移是碰撞的"最终解"：u 不衰减 → 分解后不会因 oX 衰减而重新叠回，
+           一次碰撞一次分开；河道持续收窄导致的再次接触是缓慢挤压（~1px/帧），
+           每次都是小幅、单帧解完的平滑接触。旧方案（slide*0.35）的 u 滑移太弱：
+           oX 衰减期 7 帧左右就重新叠回再撞，观感仍是"撞开-弹回"的短时高频抖动 */
+        const vNow = viewRef.current;
         for (let i = 0; i < pos.length; i++) {
             for (let j = i + 1; j < pos.length; j++) {
                 const A = pos[i], B = pos[j];
@@ -1366,7 +1349,7 @@ export default function RiverBoard() {
                 const rr = A.r + B.r;
                 if (d2 >= rr * rr || d2 < 0.001) continue;
                 const dist = Math.sqrt(d2);
-                const pen = (rr - dist) * 0.5;
+                const pen = Math.min(rr * 1.06 - dist, rr * 0.4);
                 const nx = dx / dist, ny = dy / dist;
                 // d 可能落在 (-0.02, 0) 的待重生区间：负底数小数次幂是 NaN，会把位移污染成 NaN
                 const da = Math.max(0, A.m.d), db = Math.max(0, B.m.d);
@@ -1375,11 +1358,28 @@ export default function RiverBoard() {
                 const sa = pen * (wb / (wa + wb)), sb = pen * (wa / (wa + wb));
                 A.m.oX -= nx * sa; A.m.oY -= ny * sa;
                 B.m.oX += nx * sb; B.m.oY += ny * sb;
+                // 持久横向分离：整段穿透转入 u 空间（u 不衰减，clamp 在河道内）。
+                // 浅的灯让位更多（sa/sb 已按景深加权）
+                const hwA = vNow.w * (0.15 + da * da * 1.08);
+                const hwB = vNow.w * (0.15 + db * db * 1.08);
+                A.m.u = Math.max(0.13, Math.min(0.87, A.m.u - nx * (sa / (2 * hwA))));
+                B.m.u = Math.max(0.13, Math.min(0.87, B.m.u + nx * (sb / (2 * hwB))));
+                // 近垂直对（法线水平分量弱）：整段穿透转入 d 空间——d 不衰减，
+                // 且更深者流速更快（自增强），分离持久。否则 oY 衰减 7 帧就弹回，
+                // 同速同列的灯对会以 ~0.12s 周期反复轻撞（正是"轻推→又撞"观感）。
+                // 1.15 补偿：d^1.42 凹曲线下，区间位移比局部导数小 ~13%，不补偿
+                // 会在 oY 衰减后重新贴回接触阈值，产生间隔 0.5s 的零星小撞
+                if (Math.abs(nx) < 0.25) {
+                    const kA = (vNow.h * 1.06 - vNow.yH) * 1.42 * Math.pow(da, 0.42);
+                    const kB = (vNow.h * 1.06 - vNow.yH) * 1.42 * Math.pow(db, 0.42);
+                    A.m.d = Math.max(0.02, Math.min(1, A.m.d - ny * ((sa * 1.15) / kA)));
+                    B.m.d = Math.max(0.02, Math.min(1, B.m.d + ny * ((sb * 1.15) / kB)));
+                }
             }
         }
         for (const m of ms) {
-            m.oX *= Math.pow(0.9, dt * 60);
-            m.oY *= Math.pow(0.9, dt * 60);
+            m.oX *= Math.pow(0.975, dt * 60);
+            m.oY *= Math.pow(0.975, dt * 60);
             const node = nodesRef.current.get(m.id);
             if (!node) continue;
             const d = Math.max(0, m.d);
@@ -1541,12 +1541,13 @@ export default function RiverBoard() {
             .then((j: unknown) => {
                 const data = (j as { data?: unknown })?.data;
                 const arr = Array.isArray(data)
-                    ? (data as Array<{ content?: unknown; cat?: unknown; v?: unknown; author?: unknown; createTime?: unknown }>)
+                    ? (data as Array<{ talkKey?: unknown; content?: unknown; cat?: unknown; v?: unknown; author?: unknown; createTime?: unknown }>)
                     : Array.isArray(j)
-                      ? (j as Array<{ content?: unknown; cat?: unknown; v?: unknown; author?: unknown; createTime?: unknown }>)
+                      ? (j as Array<{ talkKey?: unknown; content?: unknown; cat?: unknown; v?: unknown; author?: unknown; createTime?: unknown }>)
                       : [];
                 const items = arr
                     .map((x) => ({
+                        id: Number(x?.talkKey ?? 0),
                         msg: String(x?.content ?? "").trim(),
                         cat: CATS.includes(String(x?.cat ?? "")) ? String(x.cat) : "",
                         v: [0, 1, 2].includes(Number(x?.v)) ? Number(x.v) : -1,
@@ -1554,14 +1555,23 @@ export default function RiverBoard() {
                         time: String(x?.createTime ?? "").slice(5, 16), // MM-DD HH:mm
                     }))
                     .filter((i) => i.msg);
-                if (items.length >= 4) {
-                    // 全量数据入批次轮播池；初始灯已承载最新一批（前 N 条），
-                    // 指针从第 N 条起 → 重入时换上更早一批
+                if (items.length >= 1) {
+                    // 留言少于灯数时裁掉多余灯：否则 items[i % items.length] 取模回绕，
+                    // 同一条留言会被分配到多盏灯同时漂浮（"双胞胎"）——重复不是轮播造成的，
+                    // 是填满河面时取模的必然结果；裁到与留言数一致后每条留言只占一盏灯
+                    //（1-3 条留言同理：哪怕河面变疏也不该出现同一条留言重复占灯）
+                    const over = lanternCountRef.current - items.length;
+                    if (over > 0) {
+                        // 只裁 meta 与数量，DOM 由 React 在 views 收缩时自行卸载
+                        //（手动 remove 会与 React 卸载冲突）；nodesRef 残留条目无引用方，无害
+                        metaRef.current = metaRef.current.slice(0, items.length);
+                        lanternCountRef.current = items.length;
+                    }
+                    // 全量数据入批次轮播池；初始灯承载全部留言（池 > 灯时才截最新一批）
                     allTalksRef.current = items;
-                    setAllTalks(items);
                     batchPtr.current = lanternCountRef.current || items.length;
                     setLanterns((prev) =>
-                        prev.map((p, i) => {
+                        prev.slice(0, lanternCountRef.current).map((p, i) => {
                             const it = items[i % items.length];
                             // 同步 meta 的 v：圆笼灯（v=2）的涟漪偏移以 meta.v 为准
                             const meta = metaRef.current[i];
@@ -1776,7 +1786,6 @@ export default function RiverBoard() {
                 .filter((t) => t.msg);
             if (talks.length >= 4) {
                 allTalksRef.current = talks;
-                setAllTalks(talks);
                 batchPtr.current = lanternCountRef.current || talks.length;
             }
         } catch {
@@ -1930,7 +1939,7 @@ export default function RiverBoard() {
                         </span>
                     </div>
                 </header>
-                <p className="rz-hint">灯浮星河处，停舟问心语。 轻触荧惑光，细看灯中字。</p>
+                <p className="rz-hint">灯浮星河处，停舟问归期。 轻触荧惑光，细听灯中语。</p>
                 {/* 左下角留言入口组 */}
                 <button className="rz-album-btn" type="button" onClick={openAlbum}>
                     <svg viewBox="0 0 1024 1024" width="30" height="30" fill="currentColor" aria-hidden>
