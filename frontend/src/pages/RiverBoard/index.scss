@@ -138,9 +138,9 @@
       position: absolute;
       left: 50%;
       bottom: calc(50% + 64px);
-      width: 340px;
-      max-width: min(78vw, 380px);
-      transform: translateX(var(--cx, -50%)) translateY(10px); /* --cx 由 JS 每帧钳制进视口（第 27 轮） */
+      width: 320px;
+      max-width: min(78vw, 360px);
+      transform: translateX(-50%) translateY(10px);
       background: rgba(14, 12, 26, 0.74);
       border: 1px solid rgba(255, 205, 140, 0.3);
       border-radius: 13px;
@@ -171,11 +171,9 @@
       }
 
       .rz-scroll {
-        height: 148px; /* 第 27 轮：126→148，2 行留言 + 署名完整显示不裁 */
+        height: 126px;
         overflow: hidden;
-        padding: 24px 52px 18px 38px; /* 右 52 给右上角印章让位（第 25 轮 34 会与文本行重叠）；上下留边 */
-        display: flex;
-        flex-direction: column; /* 文本区限高截断，署名始终沉底完整（超长留言不挤掉署名） */
+        padding: 20px 34px 14px 34px; /* 上下留出容器边缘距离（第 25 轮：子容器距边更和谐） */
       }
 
       .rz-msg {
@@ -184,16 +182,14 @@
         letter-spacing: 0.14em;
         color: #f2e2c2;
         text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
-        padding: 0 2px 20px 0; /* 第 27 轮：与署名间距 16→20 */
+        padding: 0 2px 16px 0;
         white-space: pre-wrap;
         word-break: break-word;
-        overflow: hidden; /* 超长留言在文本块内截断（flex 限高），署名不受影响 */
         will-change: transform;
       }
 
       /* 文本末尾的 留名 · 时刻（气泡与详情弹窗共用） */
       .rz-who {
-        flex: 0 0 auto; /* 第 27 轮：署名固定沉底，不随长文本被顶出/裁掉 */
         font-size: 12px;
         line-height: 1.6;
         letter-spacing: 0.12em;
@@ -205,8 +201,8 @@
 
       .rz-seal {
         position: absolute;
-        top: 18px;   /* 第 27 轮：印章更靠角、更透气（15 轮 8px 太贴，25 轮 14px 与文本重叠） */
-        right: 20px;
+        top: 14px;   /* 第 25 轮：印章离开容器角部，与文本区边距更和谐 */
+        right: 16px;
         font-size: 11px;
         line-height: 1.7;
         padding: 0 5px;
@@ -224,7 +220,7 @@
   .rz-lantern:focus .rz-bubble,
   .rz-lantern.rz-open .rz-bubble {
     opacity: 1;
-    transform: translateX(var(--cx, -50%)) translateY(0);
+    transform: translateX(-50%) translateY(0);
   }
 
   /* ---------------- 界面浮层 ---------------- */
@@ -709,7 +705,8 @@
       max-width: min(94vw, 800px);
 
       .rz-wish-step {
-        padding: 6px 4px 2px;
+        /* 第 28 轮（585919b 基础上）：子容器距窗口边缘留出适当距离（原 6/4/2px 几乎贴边） */
+        padding: 22px 24px 18px;
       }
 
       .rz-wish-title {
@@ -733,15 +730,15 @@
       .rz-lamp-grid {
         display: grid;
         grid-template-columns: repeat(3, 1fr);
-        gap: 12px;
+        gap: 14px; /* 第 28 轮：卡间 12→14 */
         margin-top: 18px;
 
         .rz-lamp-card {
           display: flex;
           flex-direction: column;
           align-items: center;
-          gap: 4px;
-          padding: 14px 6px 12px;
+          gap: 8px; /* 第 28 轮：图与文字间距 4→8，卡内透气 */
+          padding: 18px 14px 16px; /* 第 28 轮：横向 6→14，内容不再贴卡边 */
           background: rgba(10, 9, 22, 0.5);
           border: 1px solid rgba(255, 205, 140, 0.16);
           border-radius: 12px;
@@ -751,8 +748,8 @@
           transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
 
           img {
-            width: 84px;
-            height: 84px;
+            width: 92px; /* 第 28 轮：84→92，与加大后的卡片比例更协调 */
+            height: 92px;
             filter: brightness(1.08) drop-shadow(0 4px 14px rgba(255, 180, 100, 0.25));
             pointer-events: none;
           }

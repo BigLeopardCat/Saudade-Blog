@@ -1063,7 +1063,7 @@ export default function RiverBoard() {
         for (const m of metaRef.current) {
             if (m.d < 0.28 || m.ripT < 0) continue;
             const ph2 = Math.min(1, m.ripT / 1.8);
-            const scl = Math.min(1.3, Math.pow(Math.max(0, m.d), 1.15) * 1.3); // 与 DOM scale 同一缩放（第 26 轮封顶 1.3）
+            const scl = Math.min(1, Math.pow(Math.max(0, m.d), 1.15) * 1.25); // 与 DOM scale 同一缩放
             const rr = (12 + ph2 * 56) * (0.55 + 1.05 * scl);
             const li = lanternXY(m); // 与灯笼 DOM 同源坐标：涟漪以灯笼为中心
             const rx = li.x;
@@ -1335,7 +1335,7 @@ export default function RiverBoard() {
                 advanceMsg(m.id); // 批次轮播：重入时换上更早一批的留言
             }
             const d = Math.max(0, m.d);
-            const scl = Math.min(1.3, Math.pow(d, 1.15) * 1.3); // 整体等比放大：封顶抬到 1.3，近半段河面可见变大（第 26 轮）
+            const scl = Math.min(1, Math.pow(d, 1.15) * 1.25); // 整体等比放大（保原透视形状）
             const li = lanternXY(m);
             pos.push({ m, x: li.x - m.oX, y: li.y - m.oY, r: scl * 53 });
         }
@@ -1394,21 +1394,10 @@ export default function RiverBoard() {
             if (!node) continue;
             const d = Math.max(0, m.d);
             const rot = Math.sin(amb!.now * 0.55 + m.sway) * 3.2;
-            const scl = Math.min(1.3, Math.pow(d, 1.15) * 1.3); // 与 pos 同一缩放（整体等比放大，第 26 轮封顶 1.3）
+            const scl = Math.min(1, Math.pow(d, 1.15) * 1.25); // 与 pos 同一缩放（整体等比放大）
             const li = lanternXY(m);
             node.style.transform =
                 `translate3d(${li.x}px, ${li.y}px, 0) translate(-50%, -50%) scale(${scl}) rotate(${rot}deg)`;
-            // 气泡水平钳制进视口（第 27 轮）：默认以灯中心展开（--cx = -50%），
-            // 灯贴视口边缘时整体平移让气泡不越出窗口（12px 安全边）。
-            // 写入自身 transform 会被父级 scale 放大，故除以 scl 得 CSS 单位值。
-            const bb = bubbleRefs.current.get(m.id);
-            if (bb) {
-                const bw = 340 * scl; // 与 CSS width 同源（窄视口 max-width 更小，钳制偏保守只多留边）
-                let tx = -bw / 2;
-                tx = Math.max(tx, 12 - li.x);
-                tx = Math.min(tx, vNow.w - 12 - li.x - bw);
-                bb.style.setProperty("--cx", (tx / scl).toFixed(2) + "px");
-            }
             node.style.opacity = String(0.45 + 0.55 * Math.pow(d, 0.8));
             node.style.pointerEvents = d < 0.24 ? "none" : "auto";
             // 性能：filter/zIndex 只在景深换档（0.05 一档）时重写——filter 逐帧变化
