@@ -582,14 +582,17 @@ export default function RiverBoard() {
         // 残留 alpha≈0.28 暖色，被画布顶边硬切成水平亮线（"光晕上侧水平截断"）。
         // 现圆心 scale 后落在 (256,160)，椭圆 256×160 完美内切 512×320，四周
         // 弧形渐隐到 alpha 0，无任何平边；纵向加高让光晕上部弧线更完整。
+        // 第 31 轮：内芯 alpha 1.0 → 0.5 并整体压暗柔化（用户反馈光晕太亮不
+        // 自然、灯焰被淹没）——渐变衰减放缓（0.18 处 0.75→0.38、0.42 处
+        // 0.32→0.18），近灯处不再白亮一片。
         lanternLightCv = document.createElement("canvas");
         lanternLightCv.width = 512;
         lanternLightCv.height = 320;
         const lg = lanternLightCv.getContext("2d")!;
         const lgrad = lg.createRadialGradient(256, 256, 0, 256, 256, 256);
-        lgrad.addColorStop(0, "rgba(255,232,178,1)");
-        lgrad.addColorStop(0.18, "rgba(255,206,132,0.75)");
-        lgrad.addColorStop(0.42, "rgba(255,185,110,0.32)");
+        lgrad.addColorStop(0, "rgba(255,232,178,0.5)");
+        lgrad.addColorStop(0.18, "rgba(255,206,132,0.38)");
+        lgrad.addColorStop(0.42, "rgba(255,185,110,0.18)");
         lgrad.addColorStop(1, "rgba(255,185,110,0)");
         lg.save();
         lg.scale(1, 0.625);
@@ -1102,12 +1105,13 @@ export default function RiverBoard() {
             sc.stroke();
         }
 
-        // 河灯对水面的照明（第 30 轮）：lighter 合成暖光斑，以灯底为中心——
-        // 第 29 轮光斑顶在灯身下沿且上缘被水平硬切（贴图圆心偏移 bug，见上），
-        // 且光斑重心在灯下方，上部没有光晕形状。现光斑中心上移到灯底上方
-        // 0.05·lh（≈灯身下 1/4 处）：上部弧线从灯顶上方 ~38px 完整弧形渐隐
-        // （灯身两侧可见环绕光），下部延伸到灯下 ~118px 河面。近亮远暗，
-        // 远到看不见的灯（scl<0.06）跳过。贴图只构建一次，每帧仅 22 次 drawImage。
+        // 河灯对水面的照明（第 31 轮）：lighter 合成暖光斑，以灯底为中心——
+        // 第 30 轮上部弧线完整环绕灯身后，用户反馈光晕太亮不自然、灯焰被
+        // 淹没。本轮：光斑中心从灯底上方 0.05·lh 下移到灯底下方 0.08·lh
+        // （上部弧线止于灯顶附近，火焰区域完全脱离光斑不再被罩住），
+        // globalAlpha 0.45+0.35·scl → 0.35+0.3·scl，叠加贴图内芯 0.5，
+        // 近灯处有效亮度约为第 29 轮的 1/3。下部仍延伸到灯下 ~150px 河面。
+        // 近亮远暗，远到看不见的灯（scl<0.06）跳过。贴图只构建一次。
         if (lanternLightCv) {
             sc.save();
             sc.globalCompositeOperation = "lighter";
@@ -1117,8 +1121,8 @@ export default function RiverBoard() {
                 const li = lanternXY(m);
                 const lw = 420 * scl;
                 const lh = lw * 0.625; // 贴图 512×320 纵横比
-                sc.globalAlpha = 0.45 + 0.35 * scl; // 第 30 轮：整体亮度降约 20%
-                sc.drawImage(lanternLightCv, li.x - lw / 2, li.y - lh * 0.55, lw, lh);
+                sc.globalAlpha = 0.35 + 0.3 * scl;
+                sc.drawImage(lanternLightCv, li.x - lw / 2, li.y - lh * 0.42, lw, lh);
             }
             sc.restore();
         }
