@@ -1398,6 +1398,17 @@ export default function RiverBoard() {
             const li = lanternXY(m);
             node.style.transform =
                 `translate3d(${li.x}px, ${li.y}px, 0) translate(-50%, -50%) scale(${scl}) rotate(${rot}deg)`;
+            // 气泡水平钳制进视口（第 27 轮）：默认以灯中心展开（--cx = -50%），
+            // 灯贴视口边缘时整体平移让气泡不越出窗口（12px 安全边）。
+            // 写入自身 transform 会被父级 scale 放大，故除以 scl 得 CSS 单位值。
+            const bb = bubbleRefs.current.get(m.id);
+            if (bb) {
+                const bw = 340 * scl; // 与 CSS width 同源（窄视口 max-width 更小，钳制偏保守只多留边）
+                let tx = -bw / 2;
+                tx = Math.max(tx, 12 - li.x);
+                tx = Math.min(tx, vNow.w - 12 - li.x - bw);
+                bb.style.setProperty("--cx", (tx / scl).toFixed(2) + "px");
+            }
             node.style.opacity = String(0.45 + 0.55 * Math.pow(d, 0.8));
             node.style.pointerEvents = d < 0.24 ? "none" : "auto";
             // 性能：filter/zIndex 只在景深换档（0.05 一档）时重写——filter 逐帧变化

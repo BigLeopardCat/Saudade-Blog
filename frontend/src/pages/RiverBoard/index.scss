@@ -138,9 +138,9 @@
       position: absolute;
       left: 50%;
       bottom: calc(50% + 64px);
-      width: 320px;
-      max-width: min(78vw, 360px);
-      transform: translateX(-50%) translateY(10px);
+      width: 340px;
+      max-width: min(78vw, 380px);
+      transform: translateX(var(--cx, -50%)) translateY(10px); /* --cx 由 JS 每帧钳制进视口（第 27 轮） */
       background: rgba(14, 12, 26, 0.74);
       border: 1px solid rgba(255, 205, 140, 0.3);
       border-radius: 13px;
@@ -171,9 +171,11 @@
       }
 
       .rz-scroll {
-        height: 126px;
+        height: 148px; /* 第 27 轮：126→148，2 行留言 + 署名完整显示不裁 */
         overflow: hidden;
-        padding: 20px 34px 14px 34px; /* 上下留出容器边缘距离（第 25 轮：子容器距边更和谐） */
+        padding: 24px 52px 18px 38px; /* 右 52 给右上角印章让位（第 25 轮 34 会与文本行重叠）；上下留边 */
+        display: flex;
+        flex-direction: column; /* 文本区限高截断，署名始终沉底完整（超长留言不挤掉署名） */
       }
 
       .rz-msg {
@@ -182,14 +184,16 @@
         letter-spacing: 0.14em;
         color: #f2e2c2;
         text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
-        padding: 0 2px 16px 0;
+        padding: 0 2px 20px 0; /* 第 27 轮：与署名间距 16→20 */
         white-space: pre-wrap;
         word-break: break-word;
+        overflow: hidden; /* 超长留言在文本块内截断（flex 限高），署名不受影响 */
         will-change: transform;
       }
 
       /* 文本末尾的 留名 · 时刻（气泡与详情弹窗共用） */
       .rz-who {
+        flex: 0 0 auto; /* 第 27 轮：署名固定沉底，不随长文本被顶出/裁掉 */
         font-size: 12px;
         line-height: 1.6;
         letter-spacing: 0.12em;
@@ -201,8 +205,8 @@
 
       .rz-seal {
         position: absolute;
-        top: 14px;   /* 第 25 轮：印章离开容器角部，与文本区边距更和谐 */
-        right: 16px;
+        top: 18px;   /* 第 27 轮：印章更靠角、更透气（15 轮 8px 太贴，25 轮 14px 与文本重叠） */
+        right: 20px;
         font-size: 11px;
         line-height: 1.7;
         padding: 0 5px;
@@ -220,7 +224,7 @@
   .rz-lantern:focus .rz-bubble,
   .rz-lantern.rz-open .rz-bubble {
     opacity: 1;
-    transform: translateX(-50%) translateY(0);
+    transform: translateX(var(--cx, -50%)) translateY(0);
   }
 
   /* ---------------- 界面浮层 ---------------- */
