@@ -368,6 +368,12 @@ let amb: Amb | null = null;
 /* 月亮几何（组件内多处共享：绘制与星光避让用同一份常量） */
 const MOON = { x: 0.7, y: 0.16, r: 0.073 } as const; // r 0.093 → 0.073：月亮缩小
 
+/* 性能（P2-2）：canvas 场景 dpr 上限。dpr 2 → 1.5 时全屏像素量 -44%
+（576万 → 324万/帧），是砍全屏重绘 GPU 填充的最大单刀；
+1.5 下 2D 光效场景清晰度差异极小（DOM 河灯是 CSS 渲染不受影响）。
+真机观感不满意可调回 1.75 / 2。 */
+const DPR_CAP = 1.5;
+
 /* 萤火虫/孔明灯光点贴图：同参数的 radial 渐变只渲染一次（2x 超采样），
    之后逐帧 drawImage —— 消除每帧 createRadialGradient + arc 填充 */
 const glowSprite = (r: number, stops: Array<[number, string]>) => {
@@ -424,6 +430,34 @@ export default function RiverBoard() {
     const wishSeq = useRef(0); // 新河灯自增 id（避开现有 0..n）
     /* 刚放下的灯快照："再看一眼"按同一盏灯重新点放（复用其留名/灯型/内容） */
     const lastDroppedWish = useRef<Wish | null>(null);
+
+    /* 河流留言批次轮播（第 22 轮）：全量留言按时间倒序（最新在前）。
+    初始时河灯承载最新一批（前 N 条）；每盏灯漂出视野「眼前重入」时，
+    从批次序列取下一条留言换上 → 窗口整体向更早推进，滚到最早一条后
+    回到最新一批循环（指针取模）。窗口移动节奏 = 灯的漂流周期（约 1 分钟一批）。
+    演示灯阶段（数据未回）不推进。 */
+    const [allTalks, setAllTalks] = useState<Wish[]>([]);
+    const allTalksRef = useRef<Wish[]>([]);
+    const batchPtr = useRef(0); // 已发放条数（含初始最新一批）
+    const lanternCountRef = useRef(0);
+
+    /* 灯 id 重入时换上批次序列下一条留言 */
+    const advanceMsg = (id: number) => {
+        const items = allTalksRef.current;
+        if (items.length === 0) return;
+        const it = items[batchPtr.current % items.length];
+        batchPtr.current++;
+        setLanterns((prev) =>
+            prev.map((p) =>
+                p.id === id
+                    ? { ...p, msg: it.msg, cat: it.cat || catOf(it.msg), v: it.v, author: it.author, time: it.time }
+                    : p
+            )
+        );
+        // 灯型（v）同步进 meta：圆笼灯（v=2）的涟漪偏移以 meta.v 为准
+        const meta = metaRef.current.find((m) => m.id === id);
+        if (meta && it.v >= 0) meta.v = it.v;
+    };
 
     /* 灯影集：收录全部留言的古籍卷册 */
     const [albumOpen, setAlbumOpen] = useState(false);
@@ -1316,6 +1350,7 @@ export default function RiverBoard() {
                 m.oY = 0;
                 m.rip = 1 + Math.random() * 3;
                 m.ripT = -1;
+                advanceMsg(m.id); // 批次轮播：重入时换上更早一批的留言
             }
             const d = Math.max(0, m.d);
             const scl = Math.pow(d, 1.15);
@@ -1387,7 +1422,7 @@ export default function RiverBoard() {
         let baseFront: HTMLCanvasElement | null = null;
 
         const onResize = () => {
-            const dpr = Math.min(2, window.devicePixelRatio || 1);
+            const dpr = Math.min(DPR_CAP, window.devicePixelRatio || 1);
             const w = window.innerWidth;
             const h = window.innerHeight;
             const v = viewRef.current;
@@ -1464,6 +1499,7 @@ export default function RiverBoard() {
             const v = viewRef.current;
             const want = Math.round(((v.w * v.h) / (1920 * 1080)) * 16) + 8;
             const count = Math.max(8, Math.min(22, want));
+            lanternCountRef.current = count;
             const metas: LanternMeta[] = [];
             const views: Wish[] = [];
             for (let i = 0; i < count; i++) {
@@ -1520,6 +1556,11 @@ export default function RiverBoard() {
                     }))
                     .filter((i) => i.msg);
                 if (items.length >= 4) {
+                    // 全量数据入批次轮播池；初始灯已承载最新一批（前 N 条），
+                    // 指针从第 N 条起 → 重入时换上更早一批
+                    allTalksRef.current = items;
+                    setAllTalks(items);
+                    batchPtr.current = lanternCountRef.current || items.length;
                     setLanterns((prev) =>
                         prev.map((p, i) => {
                             const it = items[i % items.length];
@@ -1723,6 +1764,22 @@ export default function RiverBoard() {
                     mine: x?.mine === true,
                 }))
             );
+            // 顺带刷新河流批次轮播池（新放灯的留言进入轮播序列，指针回到最新一批）
+            const talks: Wish[] = arr
+                .map((x) => ({
+                    id: Number(x?.talkKey ?? 0),
+                    v: [0, 1, 2].includes(Number(x?.v)) ? Number(x.v) : 0,
+                    cat: CATS.includes(String(x?.cat ?? "")) ? String(x.cat) : catOf(String(x?.content ?? "")),
+                    author: String(x?.author ?? ""),
+                    msg: String(x?.content ?? ""),
+                    time: String(x?.createTime ?? "").slice(0, 16),
+                }))
+                .filter((t) => t.msg);
+            if (talks.length >= 4) {
+                allTalksRef.current = talks;
+                setAllTalks(talks);
+                batchPtr.current = lanternCountRef.current || talks.length;
+            }
         } catch {
             /* 拉取失败则保持空卷 */
         }
@@ -1759,6 +1816,11 @@ export default function RiverBoard() {
         window.addEventListener("keydown", onKey);
         return () => window.removeEventListener("keydown", onKey);
     }, []);
+
+    /* QA 钩子：暴露批次推进，供自动化验证轮播（生产环境无害） */
+    useEffect(() => {
+        (window as unknown as { __qaBoard?: { advanceMsg: (id: number) => void } }).__qaBoard = { advanceMsg };
+    });
 
     /* 灯影集：按当前页签排序 + 类型筛选 + 按检索词过滤 */
     const q = albumQuery.trim();
