@@ -140,9 +140,7 @@
       bottom: calc(50% + 64px);
       width: 320px;
       max-width: min(78vw, 360px);
-      /* --bs 由 JS 每帧写入（灯体 scl 的倒数，clamp [1, 4.5]）：抵消父级
-         scale(scl)，远段灯的气泡也保持全尺寸可读；默认 1 不缩放 */
-      transform: translateX(-50%) translateY(10px) scale(var(--bs, 1));
+      transform: translateX(-50%) translateY(10px);
       background: rgba(14, 12, 26, 0.74);
       border: 1px solid rgba(255, 205, 140, 0.3);
       border-radius: 13px;
@@ -175,7 +173,7 @@
       .rz-scroll {
         height: 126px;
         overflow: hidden;
-        padding: 16px 34px 10px 34px; /* 左右等距，刚好让开右侧印章，不再过宽 */
+        padding: 20px 34px 14px 34px; /* 上下留出容器边缘距离（第 25 轮：子容器距边更和谐） */
       }
 
       .rz-msg {
@@ -203,8 +201,8 @@
 
       .rz-seal {
         position: absolute;
-        top: 8px;
-        right: 9px;
+        top: 14px;   /* 第 25 轮：印章离开容器角部，与文本区边距更和谐 */
+        right: 16px;
         font-size: 11px;
         line-height: 1.7;
         padding: 0 5px;
@@ -222,7 +220,7 @@
   .rz-lantern:focus .rz-bubble,
   .rz-lantern.rz-open .rz-bubble {
     opacity: 1;
-    transform: translateX(-50%) translateY(0) scale(var(--bs, 1));
+    transform: translateX(-50%) translateY(0);
   }
 
   /* ---------------- 界面浮层 ---------------- */

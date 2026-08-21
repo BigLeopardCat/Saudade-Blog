@@ -151,6 +151,11 @@
   - 灯焰还原 f056f800：单元素 .rz-flame（52×60px，margin -52px 0 0 -26px，oct 44×52px），sway 关键帧改回 margin-left -26→-22px（与 flick 的 transform 不同属性，互不覆盖；第 22 轮曾因 transform 冲突拆双元素，现 margin 布局回退同样消除冲突）
   - agent 进程重启（uvicorn 8010，2 workers，health agent_ready: true）
   - 验证：sim_collision6 PASS；qa46/qa54 回归全绿；qa55（结构断言）——单元素火焰动画含 flick+sway、--bs 全部 ∈[1,4.5]、气泡 scale 1.28 = 1/父级 0.78、采样帧最大灯位移 0px、无 JS 错误
+- 第 25 轮 ✅ 修正气泡反缩放 + 气泡边距 + 波光加长：
+  - 气泡反缩放撤销（用户反馈：气泡失去"跟随灯一起变小"的透视关系）——--bs CSS 变量机制整体移除，气泡回到灯体子元素随父级 scale 等比缩放；放大改为整体曲线 min(1, pow(d,1.15)*1.25)——保留原 1.15 透视形状、全域 +25%（近端 d≥0.82 封顶 1），河灯与气泡相对关系回到原逻辑；碰撞半径同步（r=scl*53，sim_collision6 按新半径重新标定后 9 场景仍全 PASS，远端幻影 9.4px 半径和 < 12px 视觉分离仍零接触）
+  - 气泡子容器边距：.rz-seal top 8→14px、right 9→16px；.rz-scroll padding 16/10 → 20/14px（子容器距容器边缘留出距离，比例更和谐）
+  - 波光粼粼加长：月光碎影收止 d≈0.31 → d≈0.19（系数 0.62→0.74），远段闪烁熄灭门槛与亮度衰减相应调陡（k>0.45、1-k*0.7），加长段渐隐不突兀
+  - 验证：qa56（结构断言）——气泡 transform 无 scale 分量（bubbleScale=1，透视恢复）、seal 14/16、scroll padding 20/14、灯 scl 采样 [1, 0.803, 0.674, ...]（min(1, d^1.15*1.25) 形态）、msg0、无 JS 错误；qa46/qa54 回归全绿
 - 待办：P1-1b 火焰 mix-blend-mode: screen A/B 测试、P1-3 远景灯停动画、P2-1 水光纹理滚动、P2-3 自适应降级
 
 ### 阶段 P1 — 合成层瘦身（预计再降 20~30%）

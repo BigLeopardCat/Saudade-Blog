@@ -1063,7 +1063,7 @@ export default function RiverBoard() {
         for (const m of metaRef.current) {
             if (m.d < 0.28 || m.ripT < 0) continue;
             const ph2 = Math.min(1, m.ripT / 1.8);
-            const scl = Math.pow(Math.max(0, m.d), 1.0); // 与 DOM scale 同一缩放
+            const scl = Math.min(1, Math.pow(Math.max(0, m.d), 1.15) * 1.25); // 与 DOM scale 同一缩放
             const rr = (12 + ph2 * 56) * (0.55 + 1.05 * scl);
             const li = lanternXY(m); // 与灯笼 DOM 同源坐标：涟漪以灯笼为中心
             const rx = li.x;
@@ -1168,23 +1168,23 @@ export default function RiverBoard() {
         //    反透视）；
         // ② 每行带按 i 固定的伪随机横向错落（抖动仅水平、随波不随形），
         //    碎感真实，不再是一条均匀的线列；
-        // ③ 范围收止 d≈0.31——河流尽头远端不保留反光（旧版一路画到 d=0.03）；
-        // ④ 远段闪烁熄灭门槛更高，闪灭节奏越远越碎。
+        // ③ 范围收止 d≈0.19（第 25 轮加长，原 0.31）——河流尽头远端不保留反光；
+        // ④ 远段闪烁熄灭门槛更高、亮度衰减更陡，闪灭节奏越远越碎。
         if (moonGlowCv) ctx.drawImage(moonGlowCv, -MARGIN, -MARGIN, w + MARGIN * 2, h + MARGIN * 2);
         const uM = 0.5;
         ctx.save();
         for (let i = 0; i < 46; i++) {
             const k = i / 46;
-            const d = 0.93 - Math.pow(k, 1.16) * 0.62; // 近景 0.93 → 远景 0.31（远端收止）
+            const d = 0.93 - Math.pow(k, 1.16) * 0.74; // 近景 0.93 → 远景 0.19（远端收止）
             const flick = 0.06 + 0.52 * Math.abs(Math.sin(t * 2.6 + i * 7.7) * Math.sin(t * 1.1 + i * 3.3));
-            if (k > 0.32 && flick < 0.17) continue;
+            if (k > 0.45 && flick < 0.17) continue;
             const jit = (Math.sin(i * 12.9898) * 0.5 + Math.sin(i * 78.233 + 3) * 0.5) * 0.006;
             const u = uM + Math.pow(k, 1.5) * 0.05 * Math.sin(t * 1.4 + i * 2.1) + jit;
             const spreadU = 0.022 - 0.012 * k; // 近宽远窄（透视）
             const y = riverY(d);
             const xl = riverX(u - spreadU, d);
             const xr = riverX(u + spreadU, d);
-            ctx.strokeStyle = `rgba(255,232,178,${flick * (1 - k * 0.62)})`;
+            ctx.strokeStyle = `rgba(255,232,178,${flick * (1 - k * 0.7)})`;
             ctx.lineWidth = 1.6 - k * 1.05; // 近粗远细（透视）
             ctx.lineCap = "round";
             ctx.beginPath();
@@ -1335,7 +1335,7 @@ export default function RiverBoard() {
                 advanceMsg(m.id); // 批次轮播：重入时换上更早一批的留言
             }
             const d = Math.max(0, m.d);
-            const scl = Math.pow(d, 1.0);
+            const scl = Math.min(1, Math.pow(d, 1.15) * 1.25); // 整体等比放大（保原透视形状）
             const li = lanternXY(m);
             pos.push({ m, x: li.x - m.oX, y: li.y - m.oY, r: scl * 53 });
         }
@@ -1394,14 +1394,10 @@ export default function RiverBoard() {
             if (!node) continue;
             const d = Math.max(0, m.d);
             const rot = Math.sin(amb!.now * 0.55 + m.sway) * 3.2;
-            const scl = Math.pow(d, 1.0);
+            const scl = Math.min(1, Math.pow(d, 1.15) * 1.25); // 与 pos 同一缩放（整体等比放大）
             const li = lanternXY(m);
             node.style.transform =
                 `translate3d(${li.x}px, ${li.y}px, 0) translate(-50%, -50%) scale(${scl}) rotate(${rot}deg)`;
-            // 气泡反缩放：bubble 是灯体的子元素，随父级 scale 一起缩小——远段灯
-            // 缩得太小导致文字不可读；--bs 反向补偿（clamp 上限 4.5：极远端的气泡
-            // 不再等大，缓缓缩小收敛进视野），让气泡在整条可交互河段保持全尺寸
-            node.style.setProperty("--bs", String(Math.max(1, Math.min(4.5, 1 / scl)).toFixed(2)));
             node.style.opacity = String(0.45 + 0.55 * Math.pow(d, 0.8));
             node.style.pointerEvents = d < 0.24 ? "none" : "auto";
             // 性能：filter/zIndex 只在景深换档（0.05 一档）时重写——filter 逐帧变化
