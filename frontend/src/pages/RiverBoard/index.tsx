@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import "./index.scss";
 import { runtimeBaseURL } from "../../utils/runtimeApi";
+import { MOON_TEX } from "./moon_tex";
 
 /* 河灯留言板 ── 一条只存在于路由之下的河。
    整页为独立顶层路由（/he），不挂博客的头部与底部。
@@ -383,6 +384,27 @@ let amb: Amb | null = null;
 
 /* 月亮几何（组件内多处共享：绘制与星光避让用同一份常量） */
 const MOON = { x: 0.7, y: 0.16, r: 0.073 } as const; // r 0.093 → 0.073：月亮缩小
+
+/* 第 34 轮：真实月球照片反照率纹理（sample_moon_tex.py 生成，192×192，
+   月盘外透明）。纹理就绪后替代手写 MARIA/CRATERS 分布——月海、环形山、
+   辐射纹等全部来自真实照片；异步加载，未就绪帧回退到手写分布 */
+const moonTexN = 192;
+let moonTexA: Float32Array | null = null;
+const loadMoonTex = () => {
+    if (moonTexA) return;
+    const im = new Image();
+    im.onload = () => {
+        const c = document.createElement("canvas");
+        c.width = c.height = moonTexN;
+        const g = c.getContext("2d")!;
+        g.drawImage(im, 0, 0, moonTexN, moonTexN);
+        const d = g.getImageData(0, 0, moonTexN, moonTexN).data;
+        const a = new Float32Array(moonTexN * moonTexN);
+        for (let i = 0; i < a.length; i++) a[i] = d[i * 4 + 3] > 128 ? d[i * 4] / 255 : -1;
+        moonTexA = a;
+    };
+    im.src = MOON_TEX;
+};
 
 /* 性能（P2-2）：canvas 场景 dpr 上限。dpr 2 → 1.5 时全屏像素量 -44%
 （576万 → 324万/帧），是砍全屏重绘 GPU 填充的最大单刀；
@@ -769,20 +791,30 @@ export default function RiverBoard() {
                     // 边缘暗化（月面边缘微微变暗，不突兀）＋ 受光侧微热
                     b *= 1 - 0.26 * Math.pow(radial, 2.6);
                     b *= 1 + 0.10 * dot * dot;
-                    // 月海（静海/澄海/湿海等大块暗斑，柔边，暗区更明显）
-                    for (const [cx, cy, rx, ry] of MARIA) {
-                        const dx = nx - cx, dy = ny - cy;
-                        const d2 = (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry);
-                        if (d2 < 1) b *= 1 - 0.6 * (1 - d2) * 0.55;
-                    }
-                    // 环形山：暗坑加深 + 受光侧亮缘
-                    for (const [cxc, cyc, rc] of CRATERS) {
-                        const dx = nx - cxc, dy = ny - cyc;
-                        const d2 = (dx * dx + dy * dy) / (rc * rc);
-                        if (d2 < 1) {
-                            const inner = 1 - d2;
-                            b *= 1 - 0.5 * inner; // 坑底变暗（第 33 轮 0.44→0.5：小月亮上环形山更可辨）
-                            if (d2 > 0.55 && dx * lx > 0) b *= 1 + 0.2 * inner; // 迎光壁更亮
+                    // 第 34 轮：真实照片反照率纹理（月海暗斑/环形山暗坑亮缘/辐射纹
+                    // 全部来自采样照片），就绪时替代下方手写 MARIA/CRATERS 分布；
+                    // 反照率 0.56+1.0·t 使均值≈1：月海/坑底变暗、高地/亮缘变亮
+                    if (moonTexA) {
+                        const ix = Math.min(moonTexN - 1, Math.max(0, Math.floor(((nx + 1) / 2) * moonTexN)));
+                        const iy = Math.min(moonTexN - 1, Math.max(0, Math.floor(((1 - ny) / 2) * moonTexN)));
+                        const t = moonTexA[iy * moonTexN + ix];
+                        if (t >= 0) b *= 0.56 + 1.0 * t;
+                    } else {
+                        // 月海（静海/澄海/湿海等大块暗斑，柔边，暗区更明显）
+                        for (const [cx, cy, rx, ry] of MARIA) {
+                            const dx = nx - cx, dy = ny - cy;
+                            const d2 = (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry);
+                            if (d2 < 1) b *= 1 - 0.6 * (1 - d2) * 0.55;
+                        }
+                        // 环形山：暗坑加深 + 受光侧亮缘
+                        for (const [cxc, cyc, rc] of CRATERS) {
+                            const dx = nx - cxc, dy = ny - cyc;
+                            const d2 = (dx * dx + dy * dy) / (rc * rc);
+                            if (d2 < 1) {
+                                const inner = 1 - d2;
+                                b *= 1 - 0.5 * inner; // 坑底变暗（第 33 轮 0.44→0.5：小月亮上环形山更可辨）
+                                if (d2 > 0.55 && dx * lx > 0) b *= 1 + 0.2 * inner; // 迎光壁更亮
+                            }
                         }
                     }
                     // 表面颗粒噪声（沿光方向的高地纹理，确定性哈希）
@@ -1183,6 +1215,7 @@ export default function RiverBoard() {
 
     const drawScene = (ctx: CanvasRenderingContext2D, t: number, reduce: boolean, baseBack: HTMLCanvasElement, baseFront: HTMLCanvasElement) => {
         if (!amb) return;
+        loadMoonTex(); // 第 34 轮：真实月面纹理（幂等，onload 后 moonTexA 就绪）
         const v = viewRef.current;
         const { w, h } = v;
         const px = (mouseRef.current.x - 0.5) * 40; // 第 23 轮：左右视角加大（26 → 40）
