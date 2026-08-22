@@ -390,8 +390,22 @@ const MOON = { x: 0.7, y: 0.16, r: 0.073 } as const; // r 0.093 → 0.073：月�
    辐射纹等全部来自真实照片；异步加载，未就绪帧回退到手写分布 */
 const moonTexN = 192;
 let moonTexA: Float32Array | null = null;
-const loadMoonTex = () => {
-    if (moonTexA) return;
+let moonTexLoading = false;
+const moonTexWaiters: Array<() => void> = [];
+/* 第 37 轮：支持就绪回调——月亮在静态层渲染，纹理异步就绪后必须重绘一次
+   静态层才能真正上月亮（此前仅 drawScene 每帧调用，静态层永不重画，
+   月亮一直用 fallback 手写分布+颗粒噪声渲染，照片纹理从未生效）。
+   加载中挂起的回调统一在 onload 后触发 */
+const loadMoonTex = (onReady?: () => void) => {
+    if (moonTexA) {
+        onReady?.();
+        return;
+    }
+    if (moonTexLoading) {
+        if (onReady) moonTexWaiters.push(onReady);
+        return;
+    }
+    moonTexLoading = true;
     const im = new Image();
     im.onload = () => {
         const c = document.createElement("canvas");
@@ -402,6 +416,10 @@ const loadMoonTex = () => {
         const a = new Float32Array(moonTexN * moonTexN);
         for (let i = 0; i < a.length; i++) a[i] = d[i * 4 + 3] > 128 ? d[i * 4] / 255 : -1;
         moonTexA = a;
+        moonTexLoading = false;
+        for (const w of moonTexWaiters) w();
+        moonTexWaiters.length = 0;
+        onReady?.();
     };
     im.src = MOON_TEX;
 };
@@ -447,7 +465,7 @@ export default function RiverBoard() {
     const layerRef = useRef<HTMLDivElement | null>(null);
     const metaRef = useRef<LanternMeta[]>([]);
     const nodesRef = useRef<Map<number, HTMLDivElement | null>>(new Map());
-    const viewRef = useRef({ w: 0, h: 0, yH: 0, dpr: 1, reduced: false });
+    const viewRef = useRef({ w: 0, h: 0, yH: 0, dpr: 1, reduced: false, texApplied: false });
     const mouseRef = useRef({ x: 0.5, y: 0.5, tx: 0.5, ty: 0.5 });
     const touchRef = useRef(false);
 
@@ -793,13 +811,13 @@ export default function RiverBoard() {
                     b *= 1 + 0.10 * dot * dot;
                     // 第 34 轮：真实照片反照率纹理（月海暗斑/环形山暗坑亮缘/辐射纹
                     // 全部来自采样照片），就绪时替代下方手写 MARIA/CRATERS 分布；
-                    // 第 36 轮：纹理已在采样端大幅平滑（BoxBlur3 + 拉伸 ×1.2），
-                    // 调制回归温和 0.55+1.1·t——再激进会把残余高频放大成"麻子"
+                    // 第 37 轮：纹理已大幅平滑（BoxBlur3），低频对比可以放开——
+                    // 0.5+1.2·t 让月海/高地差异明显且不会产生逐像素麻点
                     if (moonTexA) {
                         const ix = Math.min(moonTexN - 1, Math.max(0, Math.floor(((nx + 1) / 2) * moonTexN)));
                         const iy = Math.min(moonTexN - 1, Math.max(0, Math.floor(((1 - ny) / 2) * moonTexN)));
                         const t = moonTexA[iy * moonTexN + ix];
-                        if (t >= 0) b *= 0.55 + 1.1 * t;
+                        if (t >= 0) b *= 0.5 + 1.2 * t;
                     } else {
                         // 月海（静海/澄海/湿海等大块暗斑，柔边，暗区更明显）
                         for (const [cx, cy, rx, ry] of MARIA) {
@@ -1217,7 +1235,16 @@ export default function RiverBoard() {
 
     const drawScene = (ctx: CanvasRenderingContext2D, t: number, reduce: boolean, baseBack: HTMLCanvasElement, baseFront: HTMLCanvasElement) => {
         if (!amb) return;
-        loadMoonTex(); // 第 34 轮：真实月面纹理（幂等，onload 后 moonTexA 就绪）
+        // 第 34 轮：真实月面纹理（幂等，onload 后 moonTexA 就绪）
+        // 第 37 轮：月亮画在静态层（renderBase 仅初始化/resize 时渲染），
+        // 纹理异步就绪时静态层早已用 fallback 画完且永不重画——照片纹理从未
+        // 真正上月亮（用户看到的麻点=fallback 颗粒噪声）。就绪后重绘一次：
+        loadMoonTex(() => {
+            if (baseBack && !viewRef.current.texApplied) {
+                viewRef.current.texApplied = true;
+                renderBase(baseBack, baseFront);
+            }
+        });
         const v = viewRef.current;
         const { w, h } = v;
         const px = (mouseRef.current.x - 0.5) * 40; // 第 23 轮：左右视角加大（26 → 40）
@@ -1561,6 +1588,8 @@ export default function RiverBoard() {
             };
             baseBack = makeBase();
             baseFront = makeBase();
+            loadMoonTex(); // 第 37 轮：提前开始加载（renderBase 前），缩短 fallback 暴露时间
+            viewRef.current.texApplied = false; // 静态层重画后 drawScene 会按纹理就绪状态重绘一次
             renderBase(baseBack, baseFront);
         };
 

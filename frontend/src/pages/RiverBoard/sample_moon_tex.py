@@ -65,9 +65,11 @@ def albedo_map(gray: np.ndarray, r: float) -> np.ndarray:
     # 第 36 轮：麻点根治。前版 BoxBlur(1)+×1.35 拉伸后，照片高频细节在
     # 108px 小月亮上仍呈逐像素随机波动（2px 邻域差方均值 67，视觉=麻子）：
     # ① 平滑半径加大到 3（7×7 核，特征尺度 ≈8px，月海/环形山形状保留，
-    #    逐像素噪声被抹平）；② 拉伸降回 ×1.2（少放大噪声）
+    #    逐像素噪声被抹平）；
+    # 第 37 轮：平滑后低频对比放开——拉伸 ×1.8（围绕中位），月海/高地
+    # 明暗差接近真实月球反照率（0.07-0.18），且不产生逐像素麻点
     med = float(np.median(alb))
-    alb = np.clip((alb - med) * 1.2 + med, 0.0, 1.0)
+    alb = np.clip((alb - med) * 1.8 + med, 0.0, 1.0)
     img = Image.fromarray(np.clip(alb * 255, 0, 255).astype(np.uint8))
     alb = np.asarray(img.filter(ImageFilter.BoxBlur(3)), dtype=np.float64) / 255.0
     return alb
