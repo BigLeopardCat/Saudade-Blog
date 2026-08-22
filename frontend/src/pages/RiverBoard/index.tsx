@@ -793,13 +793,13 @@ export default function RiverBoard() {
                     b *= 1 + 0.10 * dot * dot;
                     // 第 34 轮：真实照片反照率纹理（月海暗斑/环形山暗坑亮缘/辐射纹
                     // 全部来自采样照片），就绪时替代下方手写 MARIA/CRATERS 分布；
-                    // 反照率 0.42+1.35·t 使均值≈1：月海/坑底显著变暗、高地/亮缘更亮
-                    // （对比度比初版 0.56+1.0 强——初版月海不够明显）
+                    // 第 36 轮：纹理已在采样端大幅平滑（BoxBlur3 + 拉伸 ×1.2），
+                    // 调制回归温和 0.55+1.1·t——再激进会把残余高频放大成"麻子"
                     if (moonTexA) {
                         const ix = Math.min(moonTexN - 1, Math.max(0, Math.floor(((nx + 1) / 2) * moonTexN)));
                         const iy = Math.min(moonTexN - 1, Math.max(0, Math.floor(((1 - ny) / 2) * moonTexN)));
                         const t = moonTexA[iy * moonTexN + ix];
-                        if (t >= 0) b *= 0.42 + 1.35 * t;
+                        if (t >= 0) b *= 0.55 + 1.1 * t;
                     } else {
                         // 月海（静海/澄海/湿海等大块暗斑，柔边，暗区更明显）
                         for (const [cx, cy, rx, ry] of MARIA) {

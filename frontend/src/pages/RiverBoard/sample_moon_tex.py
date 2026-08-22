@@ -62,12 +62,14 @@ def albedo_map(gray: np.ndarray, r: float) -> np.ndarray:
     alb = np.clip(gray / low, 0.0, 2.0)
     lo, hi = float(alb.min()), float(alb.max())
     alb = (alb - lo) / max(1e-6, hi - lo)
-    # 第 34 轮补丁：轻度平滑去噪（照片高 ISO 噪点会在小月亮上形成"老人脸"麻点）
-    # + 对比度拉伸（×1.35 围绕中位，让月海/环形山结构清晰）再裁剪回 0..1
+    # 第 36 轮：麻点根治。前版 BoxBlur(1)+×1.35 拉伸后，照片高频细节在
+    # 108px 小月亮上仍呈逐像素随机波动（2px 邻域差方均值 67，视觉=麻子）：
+    # ① 平滑半径加大到 3（7×7 核，特征尺度 ≈8px，月海/环形山形状保留，
+    #    逐像素噪声被抹平）；② 拉伸降回 ×1.2（少放大噪声）
     med = float(np.median(alb))
-    alb = np.clip((alb - med) * 1.35 + med, 0.0, 1.0)
+    alb = np.clip((alb - med) * 1.2 + med, 0.0, 1.0)
     img = Image.fromarray(np.clip(alb * 255, 0, 255).astype(np.uint8))
-    alb = np.asarray(img.filter(ImageFilter.BoxBlur(1)), dtype=np.float64) / 255.0
+    alb = np.asarray(img.filter(ImageFilter.BoxBlur(3)), dtype=np.float64) / 255.0
     return alb
 
 
