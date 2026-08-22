@@ -465,6 +465,9 @@ export default function RiverBoard() {
     const [albumCatFilter, setAlbumCatFilter] = useState<string[]>([]); // 类型筛选（空=全部）
     const [albumSearch, setAlbumSearch] = useState(false);
     const [albumQuery, setAlbumQuery] = useState("");
+    /* 灯影集：选中留言弹详情期间隐藏卷册，关闭后恢复原浏览位置（第 32 轮） */
+    const albumListRef = useRef<HTMLDivElement | null>(null); // 列表滚动容器
+    const albumResumeRef = useRef<number | null>(null); // 暂存恢复时的 scrollTop
     /* 留言留名（可选；预填当前账号昵称，可一键匿名；检索框按留名/用户名查找） */
     const [wishAuthor, setWishAuthor] = useState("");
     /* 当前账号真实昵称（预填来源）：留名与之不一致时视为"匿名·自定义留名" */
@@ -1712,6 +1715,15 @@ export default function RiverBoard() {
             el.classList.remove("rz-open");
         });
         setModal(null);
+        // 从灯影集进入的详情弹窗：关闭后重新展开灯影集，并还原到原浏览位置
+        if (albumResumeRef.current !== null) {
+            const pos = albumResumeRef.current;
+            albumResumeRef.current = null;
+            setAlbumOpen(true);
+            requestAnimationFrame(() => {
+                if (albumListRef.current) albumListRef.current.scrollTop = pos;
+            });
+        }
     };
     /* 触屏打开弹窗后，同一次点按的合成 click 会落在遮罩上误关；
        800ms 内的遮罩点击视为那次点按的跟随事件，忽略 */
@@ -1873,12 +1885,16 @@ export default function RiverBoard() {
         metaRef.current = metas;
         const wish: Wish = { id, v: it.v, msg: it.msg, cat: it.cat, author: it.author, time: it.time };
         setLanterns((prev) => [...prev, wish]);
-        // 不关闭灯影集：读完弹窗详情后回到检索界面继续翻卷
+        // 详情弹窗打开期间隐藏灯影集（避免两个浮层重叠），关闭后恢复到原浏览位置
+        // （记录列表 scrollTop，closeModal 时重新展开并还原；页签/筛选/检索状态
+        // 是独立 state 不受 albumOpen 影响，天然保留）
+        albumResumeRef.current = albumListRef.current?.scrollTop ?? 0;
+        setAlbumOpen(false);
         requestAnimationFrame(() => openWish(wish)); // 气泡 + 弹窗详情
     };
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
-            if (e.key === "Escape") setModal(null);
+            if (e.key === "Escape") closeModal(); // 与遮罩/关闭按钮同路径：弹窗关闭同时恢复灯影集
         };
         window.addEventListener("keydown", onKey);
         return () => window.removeEventListener("keydown", onKey);
@@ -2256,7 +2272,7 @@ export default function RiverBoard() {
                                 ))}
                             </div>
                         )}
-                        <div className="rz-album-list">
+                        <div className="rz-album-list" ref={albumListRef}>
                             {albumSorted.map((it) => (
                                 <button key={it.id} type="button" className="rz-album-item" onClick={() => lightFromAlbum(it)}>
                                     <span className="rz-seal rz-album-seal">{it.cat}</span>
