@@ -793,12 +793,13 @@ export default function RiverBoard() {
                     b *= 1 + 0.10 * dot * dot;
                     // 第 34 轮：真实照片反照率纹理（月海暗斑/环形山暗坑亮缘/辐射纹
                     // 全部来自采样照片），就绪时替代下方手写 MARIA/CRATERS 分布；
-                    // 反照率 0.56+1.0·t 使均值≈1：月海/坑底变暗、高地/亮缘变亮
+                    // 反照率 0.42+1.35·t 使均值≈1：月海/坑底显著变暗、高地/亮缘更亮
+                    // （对比度比初版 0.56+1.0 强——初版月海不够明显）
                     if (moonTexA) {
                         const ix = Math.min(moonTexN - 1, Math.max(0, Math.floor(((nx + 1) / 2) * moonTexN)));
                         const iy = Math.min(moonTexN - 1, Math.max(0, Math.floor(((1 - ny) / 2) * moonTexN)));
                         const t = moonTexA[iy * moonTexN + ix];
-                        if (t >= 0) b *= 0.56 + 1.0 * t;
+                        if (t >= 0) b *= 0.42 + 1.35 * t;
                     } else {
                         // 月海（静海/澄海/湿海等大块暗斑，柔边，暗区更明显）
                         for (const [cx, cy, rx, ry] of MARIA) {
@@ -816,10 +817,11 @@ export default function RiverBoard() {
                                 if (d2 > 0.55 && dx * lx > 0) b *= 1 + 0.2 * inner; // 迎光壁更亮
                             }
                         }
+                        // 表面颗粒噪声（沿光方向的高地纹理，确定性哈希）——仅手写 fallback 用；
+                        // 照片纹理自带高频细节，叠加确定性哈希会在小月亮上形成"老人脸"麻点
+                        const hsh = Math.abs(Math.sin(nx * 21.7 + ny * 9.3) * 43758.53);
+                        b *= 0.965 + 0.035 * (hsh - Math.floor(hsh));
                     }
-                    // 表面颗粒噪声（沿光方向的高地纹理，确定性哈希）
-                    const hsh = Math.abs(Math.sin(nx * 21.7 + ny * 9.3) * 43758.53);
-                    b *= 0.965 + 0.035 * (hsh - Math.floor(hsh));
                     // alpha 即受光强度：残缺带半透明到清晰（暗面全透明透背景）
                     const a = Math.round(b * 255);
                     if (a <= 0) continue;
