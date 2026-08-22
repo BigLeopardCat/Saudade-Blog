@@ -5,6 +5,12 @@
     return;
   }
 
+  // 收起状态恢复：quit 工具会写 waifu-display 24h 标记，上游 initWidget 发现后只建
+  // 左下角收回按钮、不初始化看板娘——刷新/返回后看板娘"消失"只剩按钮（曾报
+  // "对话按钮跑到收回按钮底部"BUG）。刷新/返回=重新访问，一律清除该标记让看板娘
+  // 恢复默认展示；SPA 内路由切换本文件不重跑（上方 skip），不受影响。
+  try { localStorage.removeItem('waifu-display'); } catch(e) {}
+
   const live2d_path = '/live2d-widgets/';
   const modelPath = '/live2d_model/agent_2.model3.json';
 
@@ -59,7 +65,7 @@
   });
   
   await Promise.all([
-    loadExternalResource(live2d_path + 'waifu.css?v=20260821a', 'css'),
+    loadExternalResource(live2d_path + 'waifu.css?v=20260822a', 'css'),
     loadExternalResource(live2d_path + 'waifu-tips.js', 'js'),
   ]);
 
