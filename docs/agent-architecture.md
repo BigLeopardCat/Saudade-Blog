@@ -51,6 +51,18 @@ flowchart TB
 一切连续性由 Rust 从 MySQL 读取后注入请求体实现。这是刻意的架构取舍——曾经 MemorySaver 线程累积导致
 长对话上下文与 worker 内存无限膨胀，最终被整体抛弃（详见 §4.6）。
 
+**关键设计决策速览**（每一条都是线上踩坑后的取舍，面试讲述"为什么"的素材）：
+
+| 决策 | 取舍 | 踩过的坑（详见对应章节） |
+|---|---|---|
+| 记忆权威在 DB，agent 无状态 | 每请求独立 thread_id + 请求体注入 20 条历史 + 滚动摘要 | MemorySaver 线程累积 → 上下文/worker 内存无限膨胀（§4.6） |
+| SSE 帧 JSON 编码 + `\n\n` 分隔 | 文本内换行不破坏帧边界；帧协议三端同步 | 曾按行分隔被文本换行破坏（§3.2⑤） |
+| 摘要剥离 Python/Rust 双端同构 | 两端各一份逐字符同构的特征代码，改一端必须改另一端 | 模型格式漂移（无前缀裸摘要）→ 摘要泄露给访客（§4.3） |
+| 强制路由 vs 模型自主调用 | "显示"类后端强制执行（保真）；"导航"类恢复模型自主（保体验），仅前端白名单兜底 | 导航强制路由曾上线后因牺牲自主性被撤销；显示类强制保留（§6.3） |
+| 命令走"工具返回 → 独立帧 → 前端执行" | 模型只负责调工具，命令由前端按显式意图执行 | 模型"表演调用"把命令写进正文（§6.2） |
+| 分层超时体系 | LLM 120s + 空闲 120s + 总时长 300s + recursion_limit 30 + 16 线程 | LLM 挂起占满线程池 → 全体对话排队卡死（§6.4） |
+| 空回复/中断兜底 | 后端补发人设内恢复语 + Rust 空回复不存库 + 中断 Drop 清理 | qwen 偶发空内容 / 客户端中断 → 前端"卡死"表象（§3.2⑤⑦ §4.4） |
+
 ---
 
 ## 2. 组件与目录
@@ -151,7 +163,13 @@ JWT 走 **Authorization: Bearer** 头（`localStorage.tokenKey`），不在 body
 4. **读摘要**：`chat_summary` 按 user_id 取一条 → `summary`。
 5. **统计与清理**：COUNT 总消息数决定 `needs_summary`；超 `CHAT_HISTORY_LIMIT`（默认 500）删最旧。
 
-组装请求体转发给 Agent（`user_id`、`history`、`summary`、`needs_summary` 都在这里产生）。
+组装请求体转发给 Agent（`user_id`、`history`、`summary`、`needs_summary` 都在这里产生）。请求体上限 1MB（[chat.rs:58](src/routes/chat.rs#L58)）。
+
+**非流式路径（/chat，内部与兼容用，看板娘走流式）**：Rust 调 agent `/chat`，传输层错误自动重试最多 3 次
+（间隔 800ms），**超时不重试**——超时说明生成确实很慢（长回答单次可达 180s，reqwest 超时即 180s），
+重试只会从头再生成一遍 [chat.rs:290-310](src/routes/chat.rs#L290-L310)。agent 端返回后先剥离摘要，
+**再拼接命令行**：EFFECT 追加到回复末尾、NAVIGATE/AUTO_NAVIGATE 前置到回复开头
+（在摘要剥离之后拼，避免 SUMMARY 截断把命令一起吞掉 [server.py:292-298](saudade-blog-agent/server.py#L292-L298)）。
 
 **③ Python _build_messages（server.py:143）——上下文组装**
 
@@ -194,12 +212,15 @@ flowchart LR
 - **超时双保险**：空闲 120s（每帧重置）+ 总时长 300s（不重置）→ 超时发 `__ERROR__:...` 帧终止。
 - **空回复兜底**：整轮无任何输出帧（qwen 偶发空内容）→ 补发 `_RECOVERY_SENTENCE`（人设内恢复语），
   前端不会静默"卡死"。
+- **生产者取消**：客户端提前断开（abort/关页）时 `finally` 取消尚未完成的线程池生产者任务，
+  避免队列与线程空转 [server.py:404-407](saudade-blog-agent/server.py#L404-L407)。
 
 **⑥ Rust 转发（chat.rs:409 body_stream）**
 
 `find_frame_end` 逐帧切分 → 终端标记（`__END__`/`__NAV_END__`/`__ERROR__`）原样转发 → 文本帧 JSON 解码后
 **累积进 reply 变量**（供流结束存库）→ 原样转发。上游中断且未收到终结标记 → 补发
-`__ERROR__:"与 Agent 的连接中断"`（否则前端无法区分静默截断）。响应头带 `X-Accel-Buffering: no`
+`__ERROR__:"与 Agent 的连接中断"`（否则前端无法区分静默截断），**但已累积的回复仍会正常存库**
+（客户端未断开时，残缺回答保留供上下文参考）。响应头带 `X-Accel-Buffering: no`
 （防 nginx 缓冲 SSE 到结束才下发）。
 
 **⑦ 前端消费（autoload.js）**
@@ -270,7 +291,7 @@ flowchart TB
 **摘要剥离（双端同套逻辑，防止格式漂移）**：
 - Python `_strip_summary_from_reply`（server.py:240）——非流式 `/chat` 路径，剥离后作为 `new_summary` 独立返回；
 - Rust `strip_summary_from_reply`（chat.rs:191）——流式路径，原始流里仍有 SUMMARY 行，Rust 剥离后写库。
-- **剥离规则**：`SUMMARY:` 前缀优先（取**最后**一条）；无前缀时仅当 `needs_summary` 才做**裸摘要特征兜底**——
+- **剥离规则**：`SUMMARY:` 前缀优先（**所有** SUMMARY: 行都从回复中剔除、不进历史；摘要内容 Python 端取**最后**一条 [server.py:245](saudade-blog-agent/server.py#L245)，Rust 端取**第一**条 [chat.rs:200](src/routes/chat.rs#L200)——双端实现存在差异，模型正常只输出一条 SUMMARY: 行，无实际影响）；无前缀时仅当 `needs_summary` 才做**裸摘要特征兜底**——
   `looks_like_summary_paragraph`：① 以"访客/用户/助手"开头 ② 含会话时序词（之前/随后/最后/接着/首先/然后/后来/先后/起初/初期/最终/期间）③ 剔除引号内内容后无互动语气词（呜~～!！?？🐱😿🐾😂😭）④ 长度 40-300 字符。
   这条规则是双端（Python `_looks_like_summary_paragraph` + Rust `looks_like_summary_paragraph`）**逐字符同构**实现的——改一端必须改另一端。
 
@@ -376,7 +397,7 @@ flowchart TB
 ### 6.3 后端强制路由（_force_display）——"显示"类请求的根治方案
 
 **问题**：qwen 在"把文字显示到设备屏幕"类请求上频繁幻觉——凭历史声称已下发而不调工具，prompt 注入只能缓解。
-**方案**（server.py:89-140）：命中显示意图（正则 `(屏幕|显示|OLED|设备|大屏|显示器)` 且 user_id>0）→
+**方案**（server.py:89-140，**/chat 与 /chat/stream 两个路径都生效**）：命中显示意图（正则 `(屏幕|显示|OLED|设备|大屏|显示器)` 且 user_id>0）→
 **后端直接执行** `device_oled_display`（用一个小 LLM 调用提取显示内容，≤64 字符，`NONE`/否定句不执行）→
 执行结果以 `[System: 系统已按访客要求执行设备屏幕显示…]` 注记追加到用户消息末尾 →
 模型只负责基于事实回复，**无论它说什么，显示动作都已完成**。
@@ -408,7 +429,9 @@ flowchart TB
 
 - **Provider 机制**（settings.py）：`LLM_PROVIDER=qwen|deepseek|openai` 三选一，各配独立 API key/base_url/model；
   当前生产 `qwen` → `qwen3.6-flash`（阿里云 MaaS compatible-mode）。
-- **关键参数**：`temperature=0.7`、`max_tokens=8192`、`timeout=120s`、`agent_max_iterations=10`。
+- **关键参数**：`temperature=0.7`、`max_tokens=8192`、`timeout=120s`。
+- ⚠️ `agent_max_iterations=10` / `agent_early_stopping_method` 在 settings.py 有定义但**从未被代码读取**
+  （create_agent 只接 model/tools/system_prompt/checkpointer）——死配置，实际生成有界性靠 `recursion_limit=30`（§6.4）。
 - **enable_thinking=False**（llm.py:41，走 `extra_body`）：Qwen3 默认思考模式在工具调用轮次会间歇性
   把思维链混入正文（回复开头英文规划文本），对话场景直接关闭，从根源消除泄露。
 - **TTS 关闭**（`tts_enabled=false`）：预留字段，未启用。
