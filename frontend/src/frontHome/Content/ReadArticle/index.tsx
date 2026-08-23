@@ -21,9 +21,9 @@ import breaks from "@bytemd/plugin-breaks";
 import frontmatter from "@bytemd/plugin-frontmatter";
 import gemoji from "@bytemd/plugin-gemoji";
 import highlight from "@bytemd/plugin-highlight";
-import mediumZoom from '@bytemd/plugin-medium-zoom'
 import mermaid from '@bytemd/plugin-mermaid'
 import math from "@bytemd/plugin-math";
+import { initZoomDelegation } from "./zoomOverlay";
 import 'bytemd/dist/index.css'
 import 'github-markdown-css/github-markdown-light.css'
 import 'highlight.js/styles/atom-one-dark.css' // Import Highlight.js styles
@@ -35,7 +35,6 @@ const plugins = [
     frontmatter(),
     gemoji(),
     highlight(),
-    mediumZoom(),
     mermaid(),
     math()
 ]
@@ -65,6 +64,14 @@ const ReadArticle = () => {
     }, [id]);
     
     const content = article?.noteContent || '';
+
+    // Effect: mermaid 图 + 正文图片单击放大(委托,兼容 mermaid 异步渲染)
+    useEffect(() => {
+        if (isLoading) return;
+        const content = document.getElementById("content");
+        if (!content) return;
+        return initZoomDelegation(content);
+    }, [isLoading]);
 
     // Effect to handle link clicks by delegation (Open in new tab), cleanup duplicate effects
     useEffect(() => {

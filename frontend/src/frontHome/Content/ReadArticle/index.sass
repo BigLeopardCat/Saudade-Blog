@@ -303,3 +303,114 @@ html
       word-break: break-all
       overflow-x: hidden
       font-size: 13px
+
+// ── mermaid 图独立框(第 38 轮):边界清晰 + 单击放大提示 ──
+.readContent .markdown-body .bytemd-mermaid
+  position: relative
+  margin: 22px 0
+  padding: 16px
+  background: #fff
+  border: 1px solid rgba(90, 102, 120, 0.4)
+  border-radius: 10px
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.07)
+  cursor: zoom-in
+  transition: border-color 0.2s, box-shadow 0.2s
+  &:hover
+    border-color: rgba(26, 86, 255, 0.6)
+    box-shadow: 0 2px 14px rgba(0, 0, 0, 0.12)
+  &::after
+    content: '🔍 点击放大'
+    position: absolute
+    top: 10px
+    right: 12px
+    font-size: 12px
+    line-height: 1
+    color: #57606a
+    background: rgba(255, 255, 255, 0.88)
+    border: 1px solid rgba(90, 102, 120, 0.25)
+    border-radius: 6px
+    padding: 4px 8px
+    opacity: 0
+    transition: opacity 0.2s
+    pointer-events: none
+  &:hover::after
+    opacity: 1
+  svg
+    display: block
+    margin: 0 auto
+
+// 暗色模式下:画布保持白色(mermaid 默认浅色主题),仅边框/阴影微调
+.frontDark .readContent .markdown-body .bytemd-mermaid
+  border-color: rgba(148, 163, 184, 0.55)
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.45)
+
+// ── 单击放大查看器浮层(第 38 轮) ──
+.md-zoom-overlay
+  position: fixed
+  inset: 0
+  z-index: 100000
+  background: rgba(8, 10, 16, 0.85)
+  backdrop-filter: blur(3px)
+  -webkit-backdrop-filter: blur(3px)
+  display: flex
+  align-items: center
+  justify-content: center
+  opacity: 1
+  transition: opacity 0.15s
+
+.md-zoom-stage
+  width: 100%
+  height: 100%
+  display: flex
+  align-items: center
+  justify-content: center
+  overflow: hidden
+  touch-action: none
+  cursor: grab
+  &.md-zoom-dragging
+    cursor: grabbing
+
+.md-zoom-content
+  transform-origin: center center
+  will-change: transform
+  img, svg
+    display: block
+    width: 100%
+    height: 100%
+    max-width: none
+    max-height: none
+    user-select: none
+    -webkit-user-drag: none
+    pointer-events: none
+
+.md-zoom-close
+  position: fixed
+  top: 18px
+  right: 22px
+  width: 44px
+  height: 44px
+  border: 1px solid rgba(255, 255, 255, 0.28)
+  border-radius: 50%
+  background: rgba(255, 255, 255, 0.1)
+  color: #fff
+  font-size: 20px
+  line-height: 1
+  cursor: pointer
+  z-index: 10
+  &:hover
+    background: rgba(255, 255, 255, 0.22)
+
+.md-zoom-tip
+  position: fixed
+  bottom: 26px
+  left: 50%
+  transform: translateX(-50%)
+  max-width: calc(100vw - 40px)
+  padding: 8px 16px
+  border-radius: 20px
+  background: rgba(0, 0, 0, 0.45)
+  color: rgba(255, 255, 255, 0.85)
+  font-size: 13px
+  white-space: nowrap
+  pointer-events: none
+  z-index: 10
