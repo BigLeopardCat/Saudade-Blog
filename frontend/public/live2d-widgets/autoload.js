@@ -723,7 +723,7 @@
               // 防呆：自动整页跳转前校验目标是博客真实路由。agent 可能幻觉出不存在的
               // 页面（如 /iot），跳过去会丢失整站布局与聊天面板（曾导致"文本框卡死"）。
               // 不在白名单内的目标取消跳转，并在对话框追加系统提示。
-              const BLOG_ROUTES = [/^\/$/, /^\/about$/, /^\/friends$/, /^\/talk$/, /^\/times$/, /^\/login$/, /^\/dashboard/, /^\/category\//, /^\/article\//, /^\/device-console\//];
+              const BLOG_ROUTES = [/^\/$/, /^\/about$/, /^\/friends$/, /^\/guestbook$/, /^\/talk$/, /^\/times$/, /^\/login$/, /^\/dashboard/, /^\/category\//, /^\/article\//, /^\/device-console\//];
               const navPath = (() => { try { return new URL(navUrl).pathname; } catch(e3) { return null; } })();
               const navOk = !!navPath && BLOG_ROUTES.some(r => r.test(navPath));
               // 直接跳转额外校验同源：白名单只查 pathname，幻觉的

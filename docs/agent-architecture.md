@@ -2,7 +2,7 @@
 
 > 面向维护者的全链路技术文档。覆盖看板娘对话系统的每一个环节：组件拓扑、一次对话的完整时序、
 > 记忆机制（记录 / 压缩 / 存储 / 读取 / 回滚）、工具系统、防幻觉与可靠性加固、超时体系、配置与部署。
-> 最后更新：2026-08-22（对应 agent 代码现状与 BUG 修复历史）。
+> 最后更新：2026-08-23（对应 agent 代码现状与 BUG 修复历史）。
 
 ---
 
@@ -49,7 +49,7 @@ flowchart TB
 
 **核心设计原则**：Python Agent **不持有任何对话状态**（每请求独立 thread_id、进程内 MemorySaver 形同虚设），
 一切连续性由 Rust 从 MySQL 读取后注入请求体实现。这是刻意的架构取舍——曾经 MemorySaver 线程累积导致
-长对话上下文与 worker 内存无限膨胀，最终被整体抛弃（详见 §5.5）。
+长对话上下文与 worker 内存无限膨胀，最终被整体抛弃（详见 §4.6）。
 
 ---
 
@@ -58,11 +58,13 @@ flowchart TB
 ```
 saudade-blog-agent/            # ★ Python Agent（.gitignore，改动需本地重启才生效）
 ├── server.py                  # FastAPI 入口：/chat、/chat/stream、/health；强制显示路由；流式编排
+├── main.py                    # CLI 调试入口（交互式 / --ask 单问，同 create_agent 图）
 ├── agent/
 │   ├── agent.py               # create_agent：LLM + 工具 + checkpointer + 系统提示词组装 LangGraph 图
-│   ├── memory.py              # get_checkpointer：MemorySaver（进程内，实际不承担记忆，见 §5.5）
+│   ├── memory.py              # get_checkpointer：MemorySaver（进程内，实际不承担记忆，见 §4.6）
 │   ├── prompts.py             # BLOG_ASSISTANT_PROMPT：猫猫女仆人设 + 工具约束 + SUMMARY 约定
 │   └── __init__.py
+├── chains/                    # LCEL chain 组合预留（当前仅占位）
 ├── tools/
 │   ├── base.py                # 21 个 @tool 工具 + _TOOL_REGISTRY + IoT JWT 代签 + 显示幂等去重
 │   └── __init__.py
@@ -71,7 +73,10 @@ saudade-blog-agent/            # ★ Python Agent（.gitignore，改动需本地
 │   └── __init__.py
 ├── config/
 │   └── settings.py            # pydantic-settings：全部可配项（LLM/超时/JWT/device-service）
-└── utils/                     # 日志等
+└── utils/
+    ├── logging.py             # 日志配置
+    ├── helpers.py             # 通用工具函数
+    └── tts.py                 # edge-tts 语音合成（预留，TTS 未启用）
 
 frontend/public/live2d-widgets/
 ├── autoload.js                # ★ 前端核心：脚本注入、SSE 消费、命令解析、导航白名单、特效/夜间同步
@@ -80,7 +85,7 @@ frontend/public/live2d-widgets/
 ├── waifu-tips.json            # 提示语配置
 └── chunk/index2.js            # cubism5 运行时（hs.CompleteSetup=22 状态机）
 
-frontend/src/components/Live2dAgent/index.tsx   # 注入 autoload.js（含缓存版本号 ?v=20260822a）
+frontend/src/components/Live2dAgent/index.tsx   # 注入 autoload.js（含缓存版本号 ?v=20260822b）
 
 src/routes/chat.rs             # Rust 侧：prepare_chat（记忆读写）+ 流式转发 + 中断清理
 src/entity/chat_history.rs     # 消息表实体
@@ -132,9 +137,9 @@ sequenceDiagram
 
 **① 前端发起（autoload.js `sendMessage`）**
 
-请求体携带 7 个字段：`message`、`current_url`（当前页面，供 agent 判断语境）、`page_title`、
-`current_effects`（`window.__effectStateList` 实时特效状态，如 `sakura,rain`）、`current_darkmode`（`on|off`）、
-以及 JWT（`localStorage.tokenKey`）。**特效与夜间状态实时上报**——agent 以 context 为准、不依赖自己的调用记忆
+请求体携带 5 个字段：`message`、`current_url`（当前页面，供 agent 判断语境）、`page_title`、
+`current_effects`（`window.__effectStateList` 实时特效状态，如 `sakura,rain`）、`current_darkmode`（`on|off`）；
+JWT 走 **Authorization: Bearer** 头（`localStorage.tokenKey`），不在 body 里。**特效与夜间状态实时上报**——agent 以 context 为准、不依赖自己的调用记忆
 （用户可能手动开关过）。无 token 时后端直接返回合规告知文案，不调 agent。
 
 **② Rust prepare_chat（[chat.rs:48](src/routes/chat.rs#L48)）——记忆的读与写**
@@ -185,7 +190,7 @@ flowchart LR
 ```
 
 - **帧分隔 `\n\n`，文本 JSON 编码**（防文本内换行破坏帧边界）。
-- **命令帧同时进 nav_line**（用于终结标记：有导航命令 → `__NAV_END__`）。
+- **命令帧同时进 nav_line**（用于终结标记：只要有任何命令帧——导航/特效/夜间——就发 `__NAV_END__`，纯文本轮发 `__END__`）。
 - **超时双保险**：空闲 120s（每帧重置）+ 总时长 300s（不重置）→ 超时发 `__ERROR__:...` 帧终止。
 - **空回复兜底**：整轮无任何输出帧（qwen 偶发空内容）→ 补发 `_RECOVERY_SENTENCE`（人设内恢复语），
   前端不会静默"卡死"。
@@ -233,7 +238,7 @@ flowchart TB
         C4 --> T2
     end
     subgraph Read[记忆如何读取]
-        R1[prepare_chat 取最近 20 条] --> R2[翻转正序 → history[]]
+        R1[prepare_chat 取最近 20 条] --> R2["翻转正序 → history[]"]
         R2 --> R3[_build_messages 取后 12 条<br/>HumanMessage 注入]
         R4[chat_summary 取摘要] --> R5[conversation_summary: 注入 System 上下文]
     end
@@ -352,7 +357,7 @@ flowchart TB
     A[全文本] --> B{cmdText 有命令行?}
     B -->|是| C[逐行锚定 ^AUTO_NAVIGATE/NAVIGATE:<br/>支持相对路径与格式漂移<br/>直接跳 or 确认框]
     B -->|否| D[正文兜底]
-    D --> D1[markdown 链接 [文]\(URL\) 确认式]
+    D --> D1["markdown 链接 [文](URL) 确认式"]
     D --> D2[中文命令+裸 URL 确认式]
     C --> E{直接跳?}
     E -->|是| F{白名单 BLOG_ROUTES<br/>+ 同源 host 校验}
@@ -361,7 +366,7 @@ flowchart TB
     E -->|否| I[弹确认框]
 ```
 
-- **导航白名单** `BLOG_ROUTES`：`/`、`/about`、`/guestbook`、`/talk`、`/times`、`/login`、`/dashboard*`、`/category/*`、`/article/*`、`/device-console/`——幻觉的 `/iot` 之类被拦截（曾导致整站布局丢失、文本框卡死）。
+- **导航白名单** `BLOG_ROUTES`：`/`、`/about`、`/friends`、`/guestbook`、`/talk`、`/times`、`/login`、`/dashboard*`、`/category/*`、`/article/*`、`/device-console/`——幻觉的 `/iot` 之类被拦截（曾导致整站布局丢失、文本框卡死）。⚠️ 历史遗留：commit 30bfba1 声称"白名单 /friends 替换为 /guestbook"，但 **autoload.js 白名单实际未改**（agent 改动不进博客 git，靠手动落盘，该次只落了 prompts.py/tools/base.py）——2026-08-23 文档核对时发现前端白名单仍只有 `/friends`，而 agent 侧（prompt、site_map、navigate_to 示例）已统一为 `/guestbook`，且 `/friends` 路由本身 301 到 `/guestbook`，导致 agent 跳 /guestbook 被白名单拦截。已修复：白名单两者并留（新老地址都放行）。
 - **同源校验**：`new URL(navUrl).host === location.host`，跨域降级为确认式（堵 `https://evil.com/talk`）。
 - **特效**：`EFFECT:name[:action]`（容忍格式漂移，`\w+` 不匹配中文）；**兜底**：正文里的
   `toggle_effect(effect="sakura", action="on")` 工具调用签名也能解析执行（模型"表演调用"时救场）。
@@ -422,7 +427,7 @@ flowchart TB
 - **口型/动作**：`__setMouthOpen`/`__mouthOverride` + `model.update` 挂钩（loadParameters 之后注入 ParamSpeak/
   ParamMouthOpenY/Tail/耳朵/头发/眨眼），流式输出 300ms 口型翻转。
 - **缓存版本号**：改 autoload.js/waifu.css 必须同步 bump `index.tsx` 的 `?v=` 与 autoload.js 内 waifu.css 的 `?v=`
-  （当前 20260822a）；nginx 对 `/live2d-widgets/` 等目录 1 年 immutable 缓存，`?v=` 换 query 即换缓存条目。
+  （当前 20260822b）；nginx 对 `/live2d-widgets/` 等目录 1 年 immutable 缓存，`?v=` 换 query 即换缓存条目。
 
 ---
 
@@ -456,4 +461,4 @@ flowchart TB
 4. **线程池挂起**：LLM API 无响应时任务占用线程 120s，16 线程下短时间 16 次对话即占满——超时参数是生命线。
 5. **MemorySaver 陷阱**：别恢复"线程复用"——DB 注入已承担全部连续性。
 6. **`enable_thinking` 只能走 extra_body**（Qwen 自有参数，model_kwargs 不收）。
-7. **agent 源码不在 git**：服务器重启/重建后需要手动还原（无版本管理，建议改动后复制一份备份）。
+7. **agent 源码不在博客仓库**：`saudade-blog-agent/` 被博客 repo gitignore，但**目录内自有独立 git 仓库**（remote: `BigLeopardCat/saudade-blog-agent`）。注意：30bfba1 之后的落盘改动（prompts.py / server.py / tools/base.py）**尚未 commit 到该子仓库**——服务器重建前务必 `git add -A && git commit`（或复制备份）保存，否则丢失。
