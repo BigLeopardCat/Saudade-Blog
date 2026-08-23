@@ -1049,19 +1049,9 @@
       };
       window.applyDarkMode = applyDarkMode;
 
-      // 夜间自动切换：23:00-次日06:00 主动为访客开启夜间模式，其余时段自动恢复日间，
-      // 但访客手动选择过（darkModeUserChoice，含对话里让 agent 调节）则尊重访客意愿不覆盖
-      const checkNightMode = () => {
-        try {
-          if (localStorage.getItem('darkModeUserChoice')) return;
-          const h = new Date().getHours();
-          const night = (h >= 23 || h < 6);
-          if (night !== !!window.__darkMode) applyDarkMode(night, false);
-        } catch(e) {/* ignore */}
-      };
-      checkNightMode();
-      setInterval(checkNightMode, 10 * 60 * 1000);
-      document.addEventListener('visibilitychange', () => { if (!document.hidden) checkNightMode(); });
+      // 夜间时段自动切换已迁移到前端默认行为（App.tsx，不依赖看板娘脚本/agent）：
+      // 23:00-次日06:00 主动开启夜间，其余时段恢复日间；访客选择过则尊重意愿不覆盖。
+      // 本文件仅保留 agent DARKMODE: 命令与状态同步，避免双份定时器竞争。
 
       // 拖动（仅通过顶部/左侧边框条移动面板，其余区域允许选中文本）
       let isDragging = false, isResizing = false, resizeCorner = 'br', startX, startY, startW, startH, startLeft, startTop, offsetX, offsetY;

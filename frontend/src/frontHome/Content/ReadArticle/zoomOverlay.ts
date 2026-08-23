@@ -1,10 +1,10 @@
 /**
  * 文章页统一"单击放大"查看器(mermaid 图 / 正文图片)
  *
- * - 单击打开,初始按视口适配
+ * - 单击打开,初始按视口适配;mermaid 连同图框(白底/边框)一起放大
  * - 滚轮 / 双指捏合缩放(以光标/触点为中心)
  * - 拖拽平移、双击在"适配 ↔ 2.5×适配"间切换
- * - Esc / × 按钮 / 轻点空白(无位移)关闭
+ * - Esc / × / 单击图框外的空白关闭;单击图片本体不关闭(可直接拖动)
  *
  * 纯原生 DOM 实现,不引入新依赖;克隆节点进浮层,关闭即销毁。
  */
@@ -17,12 +17,14 @@ let closeTimer: ReturnType<typeof setTimeout> | null = null
 
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v))
 
-/** 源元素自然尺寸(px):img 用 naturalWidth,svg 用 viewBox,兜底 getBoundingClientRect */
+const isSvgEl = (el: Element): boolean => el instanceof SVGSVGElement || el.tagName.toLowerCase() === "svg"
+
+/** 源元素自然尺寸(px):img 用 naturalWidth,svg 用 viewBox,mermaid 容器取其内部 svg;兜底 getBoundingClientRect */
 const naturalSize = (el: HTMLElement): [number, number] => {
-  if (el.tagName === "IMG") {
+  if (el.tagName.toLowerCase() === "img") {
     const img = el as HTMLImageElement
     if (img.naturalWidth > 0) return [img.naturalWidth, img.naturalHeight]
-  } else if (el.tagName === "SVG") {
+  } else if (isSvgEl(el)) {
     const svg = el as unknown as SVGSVGElement
     const vb = svg.viewBox?.baseVal
     if (vb && vb.width > 0 && vb.height > 0) return [vb.width, vb.height]
@@ -32,6 +34,9 @@ const naturalSize = (el: HTMLElement): [number, number] => {
     } catch {
       /* 未挂载的 svg 可能取不到 bbox */
     }
+  } else if (el.classList.contains("bytemd-mermaid")) {
+    const svg = el.querySelector("svg")
+    if (svg) return naturalSize(svg as HTMLElement)
   }
   const r = el.getBoundingClientRect()
   if (r.width > 0 && r.height > 0) return [r.width, r.height]
@@ -60,15 +65,31 @@ export const closeZoomOverlay = (): void => {
 export const openZoomOverlay = (source: HTMLElement): void => {
   if (overlay) closeZoomOverlay()
 
+  // mermaid 容器(带图框)整体克隆:浮层里保留白底/边框;图片/裸 svg 直接克隆
+  const isFrame = source.classList.contains("bytemd-mermaid")
   const [w0, h0] = naturalSize(source)
   const clone = source.cloneNode(true) as HTMLElement
-  // 去掉源上的行内尺寸约束,尺寸由浮层控制
-  clone.removeAttribute("width")
-  clone.removeAttribute("height")
-  clone.style.removeProperty("width")
-  clone.style.removeProperty("height")
-  clone.style.removeProperty("max-width")
-  clone.style.removeProperty("max-height")
+  // 去掉源上的行内尺寸约束(宽高/max-width),尺寸由浮层控制
+  const svg = isSvgEl(clone) ? clone : clone.querySelector("svg")
+  if (svg) {
+    svg.removeAttribute("width")
+    svg.removeAttribute("height")
+    ;(svg as HTMLElement).style.removeProperty("width")
+    ;(svg as HTMLElement).style.removeProperty("height")
+    ;(svg as HTMLElement).style.removeProperty("max-width")
+    ;(svg as HTMLElement).style.removeProperty("max-height")
+  }
+  clone.style.margin = "0"
+
+  // mermaid 图框的 padding/border 计入 content 尺寸,浮层里图框完整显示
+  let padX = 0
+  let padY = 0
+  if (isFrame) {
+    const cs = getComputedStyle(source)
+    const f = (v: string): number => parseFloat(v) || 0
+    padX = f(cs.paddingLeft) + f(cs.paddingRight) + f(cs.borderLeftWidth) + f(cs.borderRightWidth)
+    padY = f(cs.paddingTop) + f(cs.paddingBottom) + f(cs.borderTopWidth) + f(cs.borderBottomWidth)
+  }
 
   // ── 浮层骨架 ──
   overlay = document.createElement("div")
@@ -77,8 +98,8 @@ export const openZoomOverlay = (source: HTMLElement): void => {
   stage.className = "md-zoom-stage"
   const content = document.createElement("div")
   content.className = "md-zoom-content"
-  content.style.width = `${w0}px`
-  content.style.height = `${h0}px`
+  content.style.width = `${w0 + padX}px`
+  content.style.height = `${h0 + padY}px`
   content.appendChild(clone)
   const closeBtn = document.createElement("button")
   closeBtn.className = "md-zoom-close"
@@ -87,7 +108,7 @@ export const openZoomOverlay = (source: HTMLElement): void => {
   closeBtn.setAttribute("aria-label", "关闭放大视图")
   const tip = document.createElement("div")
   tip.className = "md-zoom-tip"
-  tip.textContent = "滚轮 / 捏合缩放 · 拖拽平移 · 双击还原 · Esc 关闭"
+  tip.textContent = "滚轮 / 捏合缩放 · 拖拽移动 · 双击还原 · 单击空白关闭 · Esc"
   stage.appendChild(content)
   overlay.appendChild(stage)
   overlay.appendChild(closeBtn)
@@ -111,7 +132,7 @@ export const openZoomOverlay = (source: HTMLElement): void => {
   }
   const fitScale = (): number => {
     const r = stage.getBoundingClientRect()
-    return clamp(Math.min((r.width - 56) / w0, (r.height - 72) / h0), 0.1, 1)
+    return clamp(Math.min((r.width - 56) / (w0 + padX), (r.height - 72) / (h0 + padY)), 0.1, 1)
   }
   const zoomAt = (factor: number, px: number, py: number): void => {
     const ns = clamp(scale * factor, 0.4, 16)
@@ -138,6 +159,10 @@ export const openZoomOverlay = (source: HTMLElement): void => {
 
   // ── 指针:拖拽平移 / 双指捏合缩放 / 轻点空白关闭 ──
   const onPointerDown = (e: PointerEvent): void => {
+    if (closeTimer) {
+      clearTimeout(closeTimer)
+      closeTimer = null // 任何新手势都取消 pending 关闭(防止轻点后立即拖动时被误关)
+    }
     stage.setPointerCapture(e.pointerId)
     points.set(e.pointerId, { id: e.pointerId, x: e.clientX, y: e.clientY })
     moved = 0
@@ -171,18 +196,24 @@ export const openZoomOverlay = (source: HTMLElement): void => {
     points.delete(e.pointerId)
     if (points.size !== 0) return
     stage.classList.remove("md-zoom-dragging")
-    // 无位移的轻点落在空白 → 延迟关闭;若 260ms 内再次轻点则视为双击,交给 dblclick 缩放
-    if (moved < 6 && e.target === stage) {
-      if (closeTimer) {
-        clearTimeout(closeTimer)
-        closeTimer = null
-        return
-      }
-      closeTimer = setTimeout(() => {
-        closeTimer = null
-        closeZoomOverlay()
-      }, 260)
+    if (moved >= 6) return // 拖动过,不算轻点
+    // 轻点落在图片(含图框)上:不关闭,便于继续拖动/放大
+    const cr = content.getBoundingClientRect()
+    const M = 24 // 图框外余量
+    const inContent =
+      e.clientX >= cr.left - M && e.clientX <= cr.right + M &&
+      e.clientY >= cr.top - M && e.clientY <= cr.bottom + M
+    if (inContent) return
+    // 轻点空白:延迟关闭;260ms 内再次轻点视为双击,交给 dblclick 缩放
+    if (closeTimer) {
+      clearTimeout(closeTimer)
+      closeTimer = null
+      return
     }
+    closeTimer = setTimeout(() => {
+      closeTimer = null
+      closeZoomOverlay()
+    }, 260)
   }
   stage.addEventListener("pointerdown", onPointerDown)
   stage.addEventListener("pointermove", onPointerMove)
@@ -228,8 +259,7 @@ export const initZoomDelegation = (root: HTMLElement): (() => void) => {
     const diagram = target.closest(".bytemd-mermaid")
     if (diagram) {
       e.preventDefault()
-      const svg = diagram.querySelector("svg") as HTMLElement | null
-      openZoomOverlay(svg ?? diagram)
+      openZoomOverlay(diagram as HTMLElement) // 整框克隆,mermaid 连同图框放大
       return
     }
     const img = target.closest("img")

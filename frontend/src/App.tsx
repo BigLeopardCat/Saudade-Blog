@@ -31,6 +31,31 @@ function App() {
         };
     }, []);
 
+    // 夜间/日间时段自动切换（前端默认行为，不依赖 agent/看板娘脚本）：
+    // 23:00-次日06:00 自动开启夜间，其余时段自动恢复日间；
+    // 访客手动选择过（darkModeUserChoice，含通过对话让 agent 调节）则尊重意愿不覆盖；
+    // 状态变化时仅切换一次，分钟级检查 + 页面回到前台时补查
+    useEffect(() => {
+        const prefersAuto = () => {
+            try {
+                if (localStorage.getItem('darkModeUserChoice')) return;
+                const h = new Date().getHours();
+                const night = h >= 23 || h < 6;
+                if (night !== (localStorage.getItem('isDarkMode') === 'true')) {
+                    window.dispatchEvent(new CustomEvent('darkmode-change', { detail: night }));
+                }
+            } catch (err) { /* ignore */ }
+        };
+        prefersAuto();
+        const timer = setInterval(prefersAuto, 60 * 1000);
+        const onVisible = () => { if (!document.hidden) prefersAuto(); };
+        document.addEventListener('visibilitychange', onVisible);
+        return () => {
+            clearInterval(timer);
+            document.removeEventListener('visibilitychange', onVisible);
+        };
+    }, []);
+
     return (
         <div className={isDark ? 'frontDark frontRoot' : 'frontRoot'}>
             <Head setDark={setDark} isDark={isDark} scrollHeight={scrollHeight}/>
