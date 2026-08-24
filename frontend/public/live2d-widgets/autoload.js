@@ -654,6 +654,15 @@
               let text = payload;
               try { text = JSON.parse(payload); } catch(e) {}
               if (!text) continue;
+              // REVISE 轮次重置：上一轮的文本/命令已被质检判定作废（reflector 打回），
+              // 清空累积重新渲染——最终用户只看到最后一轮的完整回复，
+              // 也不会把废轮次的导航命令误当最终意图
+              if (text === '__RESET__') {
+                cmdText = '';
+                displayText = '';
+                contentSpan.textContent = '';
+                continue;
+              }
               // 命令行与展示文本分流：命令行不渲染（含模型幻觉输出的变形命令如 SNOW_EFFECT:）
               if (COMMAND_LINE_RE.test(text)) {
                 cmdText += text + '\n';
@@ -692,6 +701,7 @@
             // / NAVIGATE→确认，支持相对路径与格式漂移）；② 无命令行时回退正文链接
             // （确认式，行为不变）。后端强制跳转命令作为流首帧进 cmdText，此处必然命中。
             const cmdNav = (() => {
+              let last = null;
               for (const line of cmdText.split('\n')) {
                 const m = line.match(/^\s*(AUTO_NAVIGATE|NAVIGATE)\s*:\s*((?:https?:)?\/\/[^\s一-鿿　-〿＀-￯]+|\/[\w\-._~/]*)/i);
                 if (!m) continue;
@@ -700,9 +710,9 @@
                 if (url.startsWith('//')) url = 'https:' + url;       // 协议相对 → 补全 scheme
                 else if (!/^https?:/i.test(url)) url = 'https://saudade.site' + url; // 相对路径 /talk → 站点根
                 if (!/^https?:\/\//i.test(url)) continue;
-                return { url, direct: m[1].toUpperCase() === 'AUTO_NAVIGATE' };
+                last = { url, direct: m[1].toUpperCase() === 'AUTO_NAVIGATE' };
               }
-              return null;
+              return last;  // 取最后命中：REVISE 轮次的旧命令已作废，最终轮的才算数
             })();
             // 正文兜底解析：模型可能把命令写进回复正文（token 分帧后进不了 cmdText）。
             // 旧实现只认 https:// 完整 URL——幻觉命令多为相对路径（AUTO_NAVIGATE:/talk）
@@ -711,7 +721,10 @@
             // URL 字符集天然截断粘连中文；② AUTO_NAVIGATE 前缀即使出现在正文也按
             // "直接跳"处理——BLOG_ROUTES 白名单 + 同源 host 校验兜底，不会放行非法目标。
             const fallbackNav = (() => {
-              const m1 = fullText.match(/(AUTO_NAVIGATE|NAVIGATE):\s*((?:https?:)?\/\/[^\s一-鿿　-〿＀-￯]+|\/[\w\-._~/]*)/i);
+              // 取最后一处命令命中：多轮 REVISE 文本拼接时，靠前的命令属于被作废的
+              // 旧轮次（曾出现旧轮次 AUTO_NAVIGATE:/ 根路径顶掉最终正确命令的案例）
+              const m1s = [...fullText.matchAll(/(AUTO_NAVIGATE|NAVIGATE):\s*((?:https?:)?\/\/[^\s一-鿿　-〿＀-￯]+|\/[\w\-._~/]*)/gi)];
+              const m1 = m1s.length ? m1s[m1s.length - 1] : null;
               if (m1) {
                 // 去掉行尾中文/ASCII 标点（URL 内合法的 . 必须保留——域名全靠它）
                 let url = m1[2].replace(/[，。,.?!；;]+$/, '');
