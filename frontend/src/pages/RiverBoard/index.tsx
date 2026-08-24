@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import "./index.scss";
 import { runtimeBaseURL } from "../../utils/runtimeApi";
 import { MOON_TEX } from "./moon_tex";
+import Live2dAgent from "../../components/Live2dAgent"; // 沉浸页也保留看板娘（顶层路由无 App 布局）
 
 /* 河灯留言板 ── 一条只存在于路由之下的河。
    整页为独立顶层路由（/he），不挂博客的头部与底部。
@@ -2009,7 +2010,8 @@ export default function RiverBoard() {
     if (sprites.length === 0) return <div className="rz-root" />;
 
     return (
-        <div className="rz-root">
+        <>
+            <div className="rz-root">
             <canvas ref={canvasRef} className="rz-canvas" aria-hidden />
             <div ref={layerRef} className="rz-lanterns" aria-hidden>
                 {lanterns.map((ln) => (
@@ -2398,6 +2400,8 @@ export default function RiverBoard() {
                 <div className="rz-boot-glow" />
                 <p>河灯将明 · 稍候</p>
             </div>
-        </div>
+            </div>
+            <Live2dAgent />
+        </>
     );
 }
