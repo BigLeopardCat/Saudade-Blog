@@ -65,7 +65,7 @@
   });
   
   await Promise.all([
-    loadExternalResource(live2d_path + 'waifu.css?v=20260823b', 'css'),
+    loadExternalResource(live2d_path + 'waifu.css?v=20260824c', 'css'),
     loadExternalResource(live2d_path + 'waifu-tips.js', 'js'),
   ]);
 
@@ -615,6 +615,71 @@
           msgs.appendChild(div);
           scrollToBottom(msgs);
 
+          // ── 执行过程行（类 Claude Code 灰色可折叠轨迹）──
+          // __PROCESS__:<text> 步骤帧 → 追加灰色步骤行；质检打回 __RESET__:<reason>
+          // → 把被打回轮次的文本归档进可展开子项再清空重绘：最终气泡只显示诚实输出，
+          //   中间过程（计划/工具调用/打回原因/被否定的回复）灰色折叠、可展开查看
+          const steps = [];
+          let processBox = null;
+          const ensureProcessBox = () => {
+            if (processBox) return processBox;
+            processBox = document.createElement('details');
+            processBox.className = 'agent-process';
+            const summary = document.createElement('summary');
+            summary.className = 'agent-process-head';
+            const label = document.createElement('span');
+            label.className = 'agent-process-label';
+            label.textContent = '执行过程';
+            const count = document.createElement('span');
+            count.className = 'agent-process-count';
+            summary.appendChild(label);
+            summary.appendChild(count);
+            const body = document.createElement('div');
+            body.className = 'agent-process-body';
+            processBox.appendChild(summary);
+            processBox.appendChild(body);
+            div.insertBefore(processBox, contentSpan);
+            return processBox;
+          };
+          const refreshCount = () => {
+            const cnt = processBox && processBox.querySelector('.agent-process-count');
+            if (cnt) cnt.textContent = steps.length ? '(' + steps.length + ')' : '';
+          };
+          const addStep = (cls, text) => {
+            const body = ensureProcessBox().querySelector('.agent-process-body');
+            const line = document.createElement('div');
+            line.className = 'agent-process-line ' + cls;
+            line.textContent = text;
+            body.appendChild(line);
+            steps.push({ cls, text });
+            refreshCount();
+            scrollToBottom(msgs);
+          };
+          const archiveRejected = (reason, rejectedText) => {
+            const box = ensureProcessBox();
+            const body = box.querySelector('.agent-process-body');
+            // 若最后一步是刚由 __PROCESS__ 帧打出的同原因"✗ 质检打回"行，升级为可展开
+            // 归档项（被打回轮次的完整文本放进去），避免同一原因重复出现
+            const last = steps[steps.length - 1];
+            if (last && last.cls === 'step' && reason && last.text.indexOf(reason) >= 0) {
+              body.removeChild(body.lastChild);
+              steps.pop();
+            }
+            const item = document.createElement('details');
+            item.className = 'agent-process-reject';
+            const sum = document.createElement('summary');
+            sum.textContent = '✗ 质检打回：' + reason;
+            const rejectedBody = document.createElement('div');
+            rejectedBody.className = 'agent-process-reject-body';
+            rejectedBody.textContent = rejectedText;
+            item.appendChild(sum);
+            item.appendChild(rejectedBody);
+            body.appendChild(item);
+            steps.push({ cls: 'reject', text: reason });
+            refreshCount();
+            scrollToBottom(msgs);
+          };
+
           // 消费 SSE：帧 = "data: <payload>\n\n"，payload 为 JSON 编码文本或终端标记
           const reader = resp.body.getReader();
           const decoder = new TextDecoder();
@@ -654,10 +719,22 @@
               let text = payload;
               try { text = JSON.parse(payload); } catch(e) {}
               if (!text) continue;
+              // 过程步骤帧：追加到灰色过程行（不参与展示文本/命令累积）
+              if (text.startsWith('__PROCESS__:')) {
+                addStep('step', text.slice('__PROCESS__:'.length));
+                continue;
+              }
               // REVISE 轮次重置：上一轮的文本/命令已被质检判定作废（reflector 打回），
               // 清空累积重新渲染——最终用户只看到最后一轮的完整回复，
-              // 也不会把废轮次的导航命令误当最终意图
-              if (text === '__RESET__') {
+              // 也不会把废轮次的导航命令误当最终意图；被打回的内容归档进过程行
+              if (text === '__RESET__' || text.startsWith('__RESET__:')) {
+                const reason = text.startsWith('__RESET__:') ? text.slice('__RESET__:'.length) : '质检未通过';
+                const rejected = (cmdText + displayText).trim();
+                if (rejected) {
+                  archiveRejected(reason, rejected);
+                } else {
+                  addStep('reject-empty', '✗ 质检打回：' + reason);
+                }
                 cmdText = '';
                 displayText = '';
                 contentSpan.textContent = '';

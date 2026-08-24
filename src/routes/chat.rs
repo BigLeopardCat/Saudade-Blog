@@ -452,6 +452,12 @@ pub async fn chat_stream_handler(
                         yield Ok(Bytes::from(format!("data: {}\n\n", payload)));
                         continue;
                     }
+                    if text.starts_with("__PROCESS__") {
+                        // 过程步骤帧（计划/工具调用/质检打回，前端灰色过程行展示）：
+                        // 属于"执行过程"而非最终回复，转发但不累积进历史
+                        yield Ok(Bytes::from(format!("data: {}\n\n", payload)));
+                        continue;
+                    }
                     reply.push_str(&text);
                     yield Ok(Bytes::from(format!("data: {}\n\n", payload)));
                 }
