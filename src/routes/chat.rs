@@ -444,6 +444,14 @@ pub async fn chat_stream_handler(
                 }
                 // 文本块：JSON 编码，解码后累积（用于历史保存），原样转发
                 if let Ok(text) = serde_json::from_str::<String>(&payload) {
+                    if text.starts_with("__RESET__") {
+                        // 质检重置帧：原样转发给前端清空重绘，但已累积的回复作废——
+                        // 被 REVISE 否定的轮次不入历史（否则 __RESET__ 标记与废轮文本
+                        // 会污染 chat_history，进而注入后续对话上下文，形成坏 few-shot）
+                        reply.clear();
+                        yield Ok(Bytes::from(format!("data: {}\n\n", payload)));
+                        continue;
+                    }
                     reply.push_str(&text);
                     yield Ok(Bytes::from(format!("data: {}\n\n", payload)));
                 }
