@@ -535,6 +535,13 @@
         const msg = input.value.trim();
         if (!msg || isSending) return;
 
+        // 新对话开始：自动关闭上一条遗留的"建议跳转"面板——用户没点击/没取消时
+        // 不应让它残留到下一轮（已确认的目标由用户点击触发，不受影响）
+        if (pendingNavUrl) {
+          navConfirm.classList.remove('active');
+          pendingNavUrl = '';
+        }
+
         // 登录检查
         const token = localStorage.getItem('tokenKey');
         if (!token) {
@@ -686,7 +693,7 @@
             // （确认式，行为不变）。后端强制跳转命令作为流首帧进 cmdText，此处必然命中。
             const cmdNav = (() => {
               for (const line of cmdText.split('\n')) {
-                const m = line.match(/^\s*(AUTO_NAVIGATE|NAVIGATE)\s*:\s*((?:https?:)?\/\/[^\s]+|\/[^\s]+)/i);
+                const m = line.match(/^\s*(AUTO_NAVIGATE|NAVIGATE)\s*:\s*((?:https?:)?\/\/[^\s一-鿿　-〿＀-￯]+|\/[\w\-._~/]*)/i);
                 if (!m) continue;
                 // 去掉行尾中文/ASCII 标点（URL 内合法的 . 必须保留——域名全靠它）
                 let url = m[2].replace(/[，。,.?!；;]+$/, '');
@@ -697,33 +704,54 @@
               }
               return null;
             })();
-            const navUrl = cmdNav ? cmdNav.url : (() => {
-              const m1 = fullText.match(/(AUTO_NAVIGATE|NAVIGATE):(https?:\/\/[^\s]+)/);
-              if (m1) return m1[2];
-              // 站内相对路径必须最先匹配：[文字](/article/16) → 站点根路径
+            // 正文兜底解析：模型可能把命令写进回复正文（token 分帧后进不了 cmdText）。
+            // 旧实现只认 https:// 完整 URL——幻觉命令多为相对路径（AUTO_NAVIGATE:/talk）
+            // 或与下文粘连无换行（AUTO_NAVIGATE:/device-console主人，...），解析失败
+            // 则静默无跳转。现在：① 命令前缀后支持完整 URL/协议相对/站内相对路径，
+            // URL 字符集天然截断粘连中文；② AUTO_NAVIGATE 前缀即使出现在正文也按
+            // "直接跳"处理——BLOG_ROUTES 白名单 + 同源 host 校验兜底，不会放行非法目标。
+            const fallbackNav = (() => {
+              const m1 = fullText.match(/(AUTO_NAVIGATE|NAVIGATE):\s*((?:https?:)?\/\/[^\s一-鿿　-〿＀-￯]+|\/[\w\-._~/]*)/i);
+              if (m1) {
+                // 去掉行尾中文/ASCII 标点（URL 内合法的 . 必须保留——域名全靠它）
+                let url = m1[2].replace(/[，。,.?!；;]+$/, '');
+                if (url.startsWith('//')) url = 'https:' + url;            // 协议相对 → 补全 scheme
+                else if (!/^https?:/i.test(url)) url = 'https://saudade.site' + url; // 相对路径 → 站点根
+                if (/^https?:\/\//i.test(url)) {
+                  return { url, direct: m1[1].toUpperCase() === 'AUTO_NAVIGATE' };
+                }
+              }
+              // 站内相对路径 markdown 链接（确认式）
               // （排除 // 开头，避免误吞协议相对地址）
               const m2b = fullText.match(/\[([^\]]+)\]\((\/(?!\/)[^)]+)\)/);
-              if (m2b) return 'https://saudade.site' + m2b[2];
-              // 完整 URL：scheme 必须存在（http(s):// 或 // 开头），
+              if (m2b) return { url: 'https://saudade.site' + m2b[2], direct: false };
+              // 完整 URL markdown 链接（确认式）：scheme 必须存在（http(s):// 或 // 开头），
               // 否则 [文字](/article/16) 会被拼成 https:///article/16 这种坏链接
               const m2 = fullText.match(/\[([^\]]+)\]\(((?:https?:)?\/\/[^)]+)\)/);
               if (m2) {
                 let url = m2[2];
                 if (url.startsWith('//')) url = 'https:' + url;
-                return url;
+                return { url, direct: false };
               }
-              // 中文命令 + 裸 URL：排除空白/中日韩字符（URL 内合法的 . 和 , 保留），
+              // 中文命令 + 裸 URL（确认式）：排除空白/中日韩字符（URL 内合法的 . 和 , 保留），
               // 仅去掉结尾的 ASCII 标点（避免 https://example.com 被截成 https://example）
               const m3 = fullText.match(/(?:转跳|跳转|打开|前往|导航到)\s*(https?:\/\/[^\s一-鿿　-〿＀-￯]+)/i);
-              if (m3) return m3[1].replace(/[,.;!?]+$/, '');
+              if (m3) return { url: m3[1].replace(/[,.;!?]+$/, ''), direct: false };
+              // 中文命令 + 裸站内相对路径（确认式）：无命令前缀的相对路径无法区分
+              // "转跳 /guestbook" 与正文里的 "/article/16" 引用，故不直接跳，弹确认框
+              const m3b = fullText.match(/(?:转跳|跳转|打开|前往|导航到)\s*(\/[\w\-._~/]+)/i);
+              if (m3b) return { url: 'https://saudade.site' + m3b[1], direct: false };
               return null;
             })();
+            const navUrl = cmdNav ? cmdNav.url : (fallbackNav && fallbackNav.url);
             if (navUrl) {
-              const isDirect = !!cmdNav && cmdNav.direct;
+              // 直接跳转 = 命令行锚定命中 AUTO_NAVIGATE，或正文兜底解析到 AUTO_NAVIGATE 前缀
+              const isDirect = (cmdNav ? cmdNav.direct : false) || (fallbackNav ? fallbackNav.direct : false);
               // 防呆：自动整页跳转前校验目标是博客真实路由。agent 可能幻觉出不存在的
               // 页面（如 /iot），跳过去会丢失整站布局与聊天面板（曾导致"文本框卡死"）。
               // 不在白名单内的目标取消跳转，并在对话框追加系统提示。
-              const BLOG_ROUTES = [/^\/$/, /^\/about$/, /^\/friends$/, /^\/guestbook$/, /^\/talk$/, /^\/times$/, /^\/login$/, /^\/dashboard/, /^\/category\//, /^\/article\//, /^\/device-console\//];
+              // 模型幻觉输出可能省略尾部斜杠（AUTO_NAVIGATE:/device-console）——device-console 的斜杠可选
+              const BLOG_ROUTES = [/^\/$/, /^\/about$/, /^\/friends$/, /^\/guestbook$/, /^\/talk$/, /^\/times$/, /^\/login$/, /^\/dashboard/, /^\/category\//, /^\/article\//, /^\/device-console\/?/];
               const navPath = (() => { try { return new URL(navUrl).pathname; } catch(e3) { return null; } })();
               const navOk = !!navPath && BLOG_ROUTES.some(r => r.test(navPath));
               // 直接跳转额外校验同源：白名单只查 pathname，幻觉的
