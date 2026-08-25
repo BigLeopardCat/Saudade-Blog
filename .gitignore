@@ -10,3 +10,4 @@ uploads/
 backend.log
 saudade_blog_bin
 /saudade-blog-agent
+/saudade-blog-agent.bak.*/
