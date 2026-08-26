@@ -1,4 +1,5 @@
-use memory_blog_rust::{create_router, AppState};
+use saudade_blog::rate_limiter::LoginRateLimiter;
+use saudade_blog::{create_router, AppState};
 use sea_orm::{DatabaseBackend, MockDatabase};
 use axum::{
     body::Body,
@@ -6,10 +7,14 @@ use axum::{
 };
 use tower::ServiceExt; // for `oneshot`
 
+fn test_state(db: sea_orm::DatabaseConnection) -> AppState {
+    AppState { db, rate_limiter: LoginRateLimiter::new(5, 60, 300) }
+}
+
 #[tokio::test]
 async fn test_404_not_found() {
     let db = MockDatabase::new(DatabaseBackend::MySql).into_connection();
-    let app = create_router(AppState { db });
+    let app = create_router(test_state(db));
 
     let response = app
         .oneshot(Request::builder().uri("/api/wrong_path").body(Body::empty()).unwrap())
@@ -24,7 +29,7 @@ async fn test_public_notes_route_structure() {
     let db = MockDatabase::new(DatabaseBackend::MySql)
         .into_connection();
 
-    let app = create_router(AppState { db });
+    let app = create_router(test_state(db));
 
     let response = app
         .oneshot(Request::builder().uri("/api/public/notes").body(Body::empty()).unwrap())
