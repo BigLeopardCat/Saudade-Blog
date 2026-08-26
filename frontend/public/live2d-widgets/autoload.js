@@ -67,7 +67,20 @@
       return out;
     };
     const capItems = (arr, max) => (arr.length > max ? arr.slice(-max) : arr);
-    return { genId, migrateItem, mergeItems, capItems, normText, matchText };
+    // 20260828f：跨窗收敛剪枝（详见 pullHistory 调用处注释）——'l' 条目在
+    // 无 process、内容未被 incoming 收养、超 60s 三条件齐备时视为孤儿剔除
+    const pruneStrays = (local, incoming, now) => {
+      if (!Array.isArray(local)) return local;
+      const t = (now === undefined ? Date.now() : now);
+      return local.filter(i => {
+        if (!i.id || !i.id.startsWith('l')) return true;
+        if (i.process) return true;
+        if (incoming && incoming.some(inc => inc.type === i.type
+            && matchText(i.text, inc.text))) return true;
+        return t - (i.time || 0) < 60000;
+      });
+    };
+    return { genId, migrateItem, mergeItems, capItems, normText, matchText, pruneStrays };
   })();
 
   const live2d_path = '/live2d-widgets/';
@@ -519,10 +532,21 @@
       const navQuestion = document.getElementById('nav-question-text');
       
 
-      // 可靠滚动到底部（等待布局完成后执行）
+      // 20260828f：滚动尊重用户位置——手动上滚看历史时，新帧/渲染不强制拉回
+      // 底部（"看对话记录被自动向下滚动对抗"）。用户滚回底部（60px 阈值内）
+      // 后自动恢复跟随。程序滚动触发的 scroll 事件落在底部 → 标志恒为 true，
+      // 不影响自动滚动；初始化/打开面板默认 true（滚到底）。
+      let userAtBottom = true;
+      try {
+        messages.addEventListener('scroll', () => {
+          userAtBottom = messages.scrollHeight - messages.scrollTop - messages.clientHeight < 60;
+        }, { passive: true });
+      } catch(e) {/* ignore */}
+      // 可靠滚动到底部（等待布局完成后执行；用户在历史区时不打扰）
       const scrollToBottom = (el) => {
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
+            if (!userAtBottom) return;
             el.scrollTop = el.scrollHeight;
           });
         });
@@ -584,7 +608,7 @@
       let remotectlTimer = null; // storage 事件防抖句柄
       // 版本自检：确认浏览器加载的是当前部署脚本（nginx 对 live2d-widgets 缓存 1 年，
       // 未强刷时可能仍在跑旧版——DB 权威历史/roundId 同步只在 20260828a 之后才有）
-      console.log('[agent-chat] autoload 20260828e, BroadcastChannel=' + !!chatChannel
+      console.log('[agent-chat] autoload 20260828f, BroadcastChannel=' + !!chatChannel
                   + ', storage=' + ('localStorage' in window));
       // 按 roundId 取/建 live 气泡（远端帧专用；本窗流由 makeLiveBubble 预建）
       const remoteLive = (roundId) => {
@@ -833,6 +857,13 @@
             time: it.time,
             process: it.role === 'user' ? undefined : lookupProcess(it.content),
           }));
+          // 20260828f：跨窗收敛剪枝——mergeItems 是单调并集（从不删本地条目），
+          // 双窗 items 各有一个对方没有的孤儿 'l' 条目时（连接中断被后端删除、
+          // 被放弃轮等），每次拉取合并结果恒不同 → 保存值恒不同 → storage 写→拉
+          // ping-pong 风暴（nginx 实测两窗各 1 次/秒持续 14s）。pruneStrays 剔除
+          // 超 60s 仍未收敛的孤儿（无 process、内容无匹配），双窗 items 即收敛
+          // 相等，风暴终止；刚收尾轮与 process 不受影响（收养时从缓存富化）。
+          items = __chatCore.pruneStrays(items, incoming);
           items = __chatCore.mergeItems(items, incoming);
           source = 'db';
           // 20260828c：渲染与合并隔离——items 已是最新（DB 收敛），渲染失败
@@ -855,7 +886,21 @@
         for (const item of items) {
           try {
             const mid = item.id || '';
-            if (byMid.has(mid)) { lastEl = byMid.get(mid); continue; }
+            if (byMid.has(mid)) {
+              // 20260828f：位置修复——DOM 已有该气泡但顺序与 items 不一致时重排。
+              // 旧逻辑无条件跳过（applyLocal 先渲染缓存、pull 后 byMid 命中永不
+              // 修正）——风暴期缓存被打乱后错位气泡永久残留（"旧消息排最底"形态）。
+              // 每次 reconcile 按 items 顺序校验相邻关系，错序时移动一次即自愈。
+              const el = byMid.get(mid);
+              const expectedNext = lastEl ? lastEl.nextSibling : messages.firstChild;
+              if (el !== expectedNext) {
+                if (lastEl && lastEl.nextSibling) messages.insertBefore(el, lastEl.nextSibling);
+                else if (lastEl) messages.appendChild(el);
+                else messages.insertBefore(el, messages.firstChild);
+              }
+              lastEl = el;
+              continue;
+            }
             // 内容碰撞收养（'l'→'d' id 换发 / pull 先于 done 收敛在途轮）：
             // 只收养未收敛元素（无 mid 或 'l' 前缀乐观 id）——已收敛的同内容元素
             // 不能收养，否则两条相同文本（如两次"你好"）会挤占同一气泡。
