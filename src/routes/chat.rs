@@ -2,7 +2,7 @@ use axum::{
     Json,
     body::{Body, Bytes},
     extract::{Request, State},
-    http::header,
+    http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Serialize};
@@ -55,6 +55,65 @@ fn trace_id_of(req: &Request) -> String {
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
         .unwrap_or_else(|| format!("r{}", uuid::Uuid::new_v4().simple()))
+}
+
+/// 从 Authorization: Bearer 头提取用户 id（与 prepare_chat 内联逻辑同源，
+/// 20260828 重构：聊天框前端改从 DB 拉权威历史，历史接口复用此鉴权）
+fn auth_uid(headers: &HeaderMap) -> Option<i32> {
+    headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .and_then(|token| auth_jwt::verify_token(token))
+        .map(|claims| claims.sub)
+}
+
+/// 历史条目（GET /api/chat/history 返回）：id = DB 主键（前端稳定去重 id）
+#[derive(Serialize)]
+pub struct HistoryItem {
+    pub id: i32,
+    pub role: String,
+    pub content: String,
+    pub time: i64,
+}
+
+/// 前端对话历史的权威数据源（20260828 重构：localStorage 降级为离线缓存）。
+/// 无/无效 token → 401（前端统一 fallback 本地 guest 历史；合规长文只属于
+/// "使用 AI 服务"，历史读取有本地兜底）；DB 查询失败 → 500（日志可定位）。
+pub async fn chat_history_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Response {
+    let Some(uid) = auth_uid(&headers) else {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"items": [], "count": 0, "error": "unauthorized"})),
+        )
+            .into_response();
+    };
+    // 最近 50 条（与前端显示上限一致）；order_by_desc(Id) 单调唯一，命中 idx_user 索引
+    let recent = chat_history::Entity::find()
+        .filter(chat_history::Column::UserId.eq(uid))
+        .order_by_desc(chat_history::Column::Id)
+        .limit(50)
+        .all(&state.db)
+        .await
+        .unwrap_or_default();
+    let items: Vec<HistoryItem> = recent
+        .iter()
+        .rev() // 时间升序（聊天软件阅读序）
+        .map(|h| HistoryItem {
+            id: h.id,
+            role: h.role.clone(),
+            content: h.content.clone(),
+            time: h.created_at.and_utc().timestamp_millis(),
+        })
+        .collect();
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({"items": items, "count": items.len()})),
+    )
+        .into_response()
 }
 
 /// 鉴权 + 请求体解析 + 保存用户消息 + 加载历史/摘要 + 组装 agent 请求体
