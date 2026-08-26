@@ -17,6 +17,25 @@
   // （条目换成 incoming 的 id/time，position 不动——根治旧 type|time 去重误判）；
   // 都不匹配 → 按 time 排序插入。
   const __chatCore = (() => {
+    // 20260828e：内容匹配统一走 matchText——缓存条目 text（收尾时
+    // cmdText+displayText 拼接）与 DB content（原始流式文本）的构造差异：
+    // ① 命令帧拼接带 '\n'（空白差异）；② 命令与正文分帧时 '\n' 插在无分隔的
+    // 命令/正文之间（"…/12" + '\n' + "喵呜～" vs 原文 "…/12喵呜～"，纯空白
+    // 折叠仍不等）。逐字匹配使 lookupProcess 富化/mergeItems 收养/收养渲染
+    // 全失配（"转跳后执行过程丢失"根因）。解法：逐行剥行首命令段（保留同行
+    // 正文，与 stripCommandPrefix 同语义）+ 空白归一后比较。
+    const COMMAND_RE = /^\s*(?:[A-Za-z0-9_]*EFFECT|DARKMODE|NAVIGATE|AUTO_NAVIGATE|SUMMARY|\[?System)\]?\s*:(?:((?:https?:)?\/\/[^\s一-鿿　-〿＀-￯]+)|(\/[\w\-._~/]*)|(\s*\S+))?/;
+    const stripCommand = (s) => {
+      let rest = s, m;
+      while ((m = rest.match(COMMAND_RE))) rest = rest.slice(m[0].length);
+      return rest;
+    };
+    const normText = (s) => (s || '').replace(/\s+/g, ' ').trim();
+    // 注意：COMMAND_RE 须与 initChat 的 stripCommandPrefix 正则同步（改一处改两处）
+    const matchText = (a, b) => {
+      const stripAll = (s) => (s || '').split('\n').map(stripCommand).join('\n');
+      return normText(stripAll(a)) === normText(stripAll(b));
+    };
     const genId = () => 'l' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
     // 旧 localStorage 条目无 id（20260828 前格式）→ 迁移补 id
     const migrateItem = (it) => ({
@@ -38,7 +57,7 @@
         let adopted = false;
         for (let j = 0; j < out.length; j++) {
           if (consumed.has(j)) continue;
-          if (out[j].type === inc.type && out[j].text === inc.text) {
+          if (out[j].type === inc.type && matchText(out[j].text, inc.text)) {
             out[j] = inc; consumed.add(j); adopted = true; break;  // 内容收养（不重复）
           }
         }
@@ -48,7 +67,7 @@
       return out;
     };
     const capItems = (arr, max) => (arr.length > max ? arr.slice(-max) : arr);
-    return { genId, migrateItem, mergeItems, capItems };
+    return { genId, migrateItem, mergeItems, capItems, normText, matchText };
   })();
 
   const live2d_path = '/live2d-widgets/';
@@ -351,6 +370,7 @@
     // "AUTO_NAVIGATE:…guestbookAUTO_NAVIGATE:…"）URL 组贪婪吞到空白，单次 replace
     // 只剥第一个；while 保证剥净，剩空白则整行删除由调用方处理）
     const stripCommandPrefix = (line) => {
+      // 注意：正则须与 __chatCore.COMMAND_RE 同步（改一处改两处，20260828e）
       const RE = /^\s*(?:[A-Za-z0-9_]*EFFECT|DARKMODE|NAVIGATE|AUTO_NAVIGATE|SUMMARY|\[?System)\]?\s*:(?:((?:https?:)?\/\/[^\s一-鿿　-〿＀-￯]+)|(\/[\w\-._~/]*)|(\s*\S+))?/;
       let rest = line, m;
       while ((m = rest.match(RE))) rest = rest.slice(m[0].length);
@@ -564,7 +584,7 @@
       let remotectlTimer = null; // storage 事件防抖句柄
       // 版本自检：确认浏览器加载的是当前部署脚本（nginx 对 live2d-widgets 缓存 1 年，
       // 未强刷时可能仍在跑旧版——DB 权威历史/roundId 同步只在 20260828a 之后才有）
-      console.log('[agent-chat] autoload 20260828d, BroadcastChannel=' + !!chatChannel
+      console.log('[agent-chat] autoload 20260828e, BroadcastChannel=' + !!chatChannel
                   + ', storage=' + ('localStorage' in window));
       // 按 roundId 取/建 live 气泡（远端帧专用；本窗流由 makeLiveBubble 预建）
       const remoteLive = (roundId) => {
@@ -611,6 +631,14 @@
             const h = remoteLive(m.roundId);
             if (m.t === 'token') {
               if (h.finished) return; // done/error 已到，丢弃乱序迟到帧
+              // 20260828e：token 帧标记 msg-streaming（与本地 makeLiveBubble 一致）。
+              // 远端气泡由 remoteLive 创建时无此 class，done 帧渲染条件①（流式 class）
+              // 永不命中 → 正常回复（无命令污染、文本非空）保持纯文本不渲染 markdown
+              // ——"其他窗口同步了记录但 markdown 没渲染"根因。加 class 后 done 帧
+              // 条件命中必渲染；pull 先收养场景 class 已被移除 → 幂等跳过（无双注记）
+              if (!h.contentSpan.classList.contains('msg-streaming')) {
+                h.contentSpan.classList.add('msg-streaming');
+              }
               // 20260828b 防御：远端不做命令分流，token 到达时按行剥离命令行
               // （旧版窗口广播原始 token / REVISE 拼接残留会带 AUTO_NAVIGATE 等，
               // 不剥离会显示在气泡里）；碎片命令由 done 帧含命令检测强制重渲染兜底
@@ -744,12 +772,16 @@
           }
         } catch(e) {/* ignore */}
       };
-      // DB 条目无 process（后端不存过程行）→ 按 (type,text) 从本地缓存富化
+      // DB 条目无 process（后端不存过程行）→ 按 (type,text) 从本地缓存富化。
+      // 20260828e：匹配过 matchText——缓存 text 是收尾拼接（命令帧带 '\n'、
+      // 分帧命令/正文间插入换行），DB content 是原始流式文本，逐字比较对导航轮
+      // 全失配（"转跳后执行过程丢失"根因）。matchText 剥命令段 + 空白归一再比
       const lookupProcess = (text) => {
         try {
           const local = JSON.parse(localStorage.getItem(historyKey()) || '[]');
           if (!Array.isArray(local)) return undefined;
-          const hit = local.find(i => i.type === 'agent' && i.text === text && Array.isArray(i.process) && i.process.length);
+          const hit = local.find(i => i.type === 'agent' && __chatCore.matchText(i.text, text)
+                                      && Array.isArray(i.process) && i.process.length);
           return hit ? hit.process : undefined;
         } catch(e) { return undefined; }
       };
@@ -826,11 +858,13 @@
             if (byMid.has(mid)) { lastEl = byMid.get(mid); continue; }
             // 内容碰撞收养（'l'→'d' id 换发 / pull 先于 done 收敛在途轮）：
             // 只收养未收敛元素（无 mid 或 'l' 前缀乐观 id）——已收敛的同内容元素
-            // 不能收养，否则两条相同文本（如两次"你好"）会挤占同一气泡
+            // 不能收养，否则两条相同文本（如两次"你好"）会挤占同一气泡。
+            // 20260828e：mtext 比较过 matchText（缓存/内存 text 与 DB content 的
+            // 构造差异：命令帧 '\n'、分帧命令/正文间换行——剥命令段+归一后比）
             let adopted = null;
             for (const child of messages.children) {
               if (child.dataset && child.dataset.mtype === item.type
-                  && child.dataset.mtext === item.text
+                  && __chatCore.matchText(child.dataset.mtext || '', item.text)
                   && (!child.dataset.mid || child.dataset.mid.startsWith('l'))) {
                 adopted = child; break;
               }
