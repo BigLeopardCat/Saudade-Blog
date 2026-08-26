@@ -145,7 +145,7 @@
   });
   
   await Promise.all([
-    loadExternalResource(live2d_path + 'waifu.css?v=20260828b', 'css'),
+    loadExternalResource(live2d_path + 'waifu.css?v=20260828h', 'css'),
     loadExternalResource(live2d_path + 'waifu-tips.js', 'js'),
   ]);
 
@@ -508,6 +508,7 @@
       <div class="chat-inner-border"></div>
       <div class="chat-close" id="chat-close">×</div>
       <div class="chat-messages" id="chat-messages"></div>
+      <div class="chat-new-msg-note" id="chat-new-msg-note"><span>↓ 有新消息</span></div>
       <div class="chat-input-area">
         <textarea class="chat-input" id="chat-input" placeholder="和泠月喵对话..." rows="1"></textarea>
         <button class="chat-send" id="chat-send">发送</button>
@@ -540,21 +541,43 @@
       const navQuestion = document.getElementById('nav-question-text');
       
 
-      // 20260828f：滚动尊重用户位置——手动上滚看历史时，新帧/渲染不强制拉回
-      // 底部（"看对话记录被自动向下滚动对抗"）。用户滚回底部（60px 阈值内）
-      // 后自动恢复跟随。程序滚动触发的 scroll 事件落在底部 → 标志恒为 true，
-      // 不影响自动滚动；初始化/打开面板默认 true（滚到底）。
+      // 滚动语义（聊天软件标准，20260828h）：
+      // ① 用户在底部（60px 阈值内）→ 新消息自动滚到底（跟随）；
+      // ② 用户在历史区（翻看旧记录）→ 新消息不强制拉回（20260828f 诉求），
+      //    但显示"↓ 有新消息"指示条——点击回底，滚回底部自动消失；
+      // ③ 主动行为（发送消息/打开面板/转跳返回/点击指示条）走 force 路径
+      //    无条件回底——"有最新对话就要看到最新位置"（20260828f 之前的问题）。
+      // 20260828f 教训：程序滚动触发的 scroll 事件落在底部 → 标志恒 true；
+      // 之前只做"不在底部就不滚"，导致翻过历史后新对话永远不可见——补上指示条。
       let userAtBottom = true;
+      let newMsgPending = false;
+      const newMsgNote = document.getElementById('chat-new-msg-note');
+      const showNewMsgNote = () => {
+        if (newMsgPending) return;
+        newMsgPending = true;
+        if (newMsgNote) newMsgNote.classList.add('active');
+      };
+      const hideNewMsgNote = () => {
+        if (!newMsgPending) return;
+        newMsgPending = false;
+        if (newMsgNote) newMsgNote.classList.remove('active');
+      };
+      if (newMsgNote) {
+        newMsgNote.addEventListener('click', () => scrollToBottom(messages, true));
+      }
       try {
         messages.addEventListener('scroll', () => {
           userAtBottom = messages.scrollHeight - messages.scrollTop - messages.clientHeight < 60;
+          if (userAtBottom) hideNewMsgNote();
         }, { passive: true });
       } catch(e) {/* ignore */}
-      // 可靠滚动到底部（等待布局完成后执行；用户在历史区时不打扰）
-      const scrollToBottom = (el) => {
+      // 可靠滚动到底部（等待布局完成后执行）：force=true 无条件回底并收起指示条；
+      // 默认语义尊重用户位置——在底部时跟随，在历史区时转为"有新消息"提示
+      const scrollToBottom = (el, force) => {
         requestAnimationFrame(() => {
           requestAnimationFrame(() => {
-            if (!userAtBottom) return;
+            if (!force && !userAtBottom) { showNewMsgNote(); return; }
+            hideNewMsgNote();
             el.scrollTop = el.scrollHeight;
           });
         });
@@ -616,7 +639,7 @@
       let remotectlTimer = null; // storage 事件防抖句柄
       // 版本自检：确认浏览器加载的是当前部署脚本（nginx 对 live2d-widgets 缓存 1 年，
       // 未强刷时可能仍在跑旧版——DB 权威历史/roundId 同步只在 20260828a 之后才有）
-      console.log('[agent-chat] autoload 20260828g, BroadcastChannel=' + !!chatChannel
+      console.log('[agent-chat] autoload 20260828h, BroadcastChannel=' + !!chatChannel
                   + ', storage=' + ('localStorage' in window));
       // 按 roundId 取/建 live 气泡（远端帧专用；本窗流由 makeLiveBubble 预建）
       const remoteLive = (roundId) => {
@@ -1061,7 +1084,7 @@
           sessionStorage.removeItem('chat_open');
           chatPanel.classList.add('active');
           pullHistory(); // 同步其他页面产生的新对话
-          setTimeout(() => scrollToBottom(messages), 60);
+          setTimeout(() => scrollToBottom(messages, true), 60); // 转跳返回 = 看最新对话
         }
       } catch(e) {/* ignore */}
 
@@ -1100,6 +1123,8 @@
         const userItem = __chatCore.migrateItem({ id: userItemId, type: 'user', text: msg, time: Date.now() });
         items.push(userItem);
         appendMsg(userItem);
+        // 发送即回底（聊天软件标准）：即使之前在翻历史，自己发的消息必须可见
+        scrollToBottom(messages, true);
         saveHistory(); // 游客立即落缓存；登录用户 DB 侧由 Rust 在流开始前入库
         broadcast({ t: 'user', id: userItemId, text: msg, time: userItem.time });
         isSending = true;
@@ -1596,6 +1621,8 @@
           if (chatPanel.classList.contains('active')) {
             pullHistory(); // 每次打开都同步所有窗口的聊天记录（DB 权威）
             input.focus();
+            // 打开面板 = 要看最新对话：强制回底（覆盖收起前的历史浏览位置）
+            setTimeout(() => scrollToBottom(messages, true), 50);
           }
         });
       };
@@ -1615,6 +1642,7 @@
             const it = __chatCore.migrateItem({ type: 'agent', text: '目前博客只有泠月喵一个人服务呢，还没有招聘到新员工替本喵顶班~', time: Date.now() });
             items.push(it);
             appendMsg(it);
+            scrollToBottom(messages, true);
             saveHistory();
           }, 100);
         });
@@ -1633,6 +1661,7 @@
             const it = __chatCore.migrateItem({ type: 'agent', text: '本喵还没有新衣服呢，要不要给本喵买一件呢~', time: Date.now() });
             items.push(it);
             appendMsg(it);
+            scrollToBottom(messages, true);
             saveHistory();
           }, 100);
         });
