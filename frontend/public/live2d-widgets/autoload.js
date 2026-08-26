@@ -65,7 +65,7 @@
   });
   
   await Promise.all([
-    loadExternalResource(live2d_path + 'waifu.css?v=20260827h', 'css'),
+    loadExternalResource(live2d_path + 'waifu.css?v=20260827i', 'css'),
     loadExternalResource(live2d_path + 'waifu-tips.js', 'js'),
   ]);
 
@@ -489,7 +489,7 @@
       const broadcast = (m) => { if (chatChannel) chatChannel.postMessage(m); };
       // 版本自检：确认浏览器加载的是当前部署脚本（nginx 对 live2d-widgets 缓存 1 年，
       // 未强刷时可能仍在跑旧版——多标签同步等功能只在 20260826b 之后才有）
-      console.log('[agent-chat] autoload 20260827h, BroadcastChannel=' + !!chatChannel
+      console.log('[agent-chat] autoload 20260827i, BroadcastChannel=' + !!chatChannel
                   + ', storage=' + ('localStorage' in window));
       window.addEventListener('storage', (e) => {
         if (e.key && e.key.indexOf('chat_history_') === 0 && !isSending) {
@@ -601,8 +601,11 @@
             if (bk2 && bkKey2 === key) {
               const bkArr = JSON.parse(bk2);
               if (Array.isArray(bkArr) && bkArr.length) {
-                const have = new Set(saved.map(i => i.type + '|' + i.time + '|' + i.text));
-                const missing = bkArr.filter(i => !have.has(i.type + '|' + i.time + '|' + i.text));
+                // 去重 key 只用 type|text（20260827i）：time 参与会误判——saveAgentMsg
+                // 与跳转备份的 time 差几毫秒 → 同一条 agent 回复被当作缺失重复合并，
+                // 新页面恢复时同轮回复显示两次
+                const have = new Set(saved.map(i => i.type + '|' + i.text));
+                const missing = bkArr.filter(i => !have.has(i.type + '|' + i.text));
                 if (missing.length) {
                   saved = saved.concat(missing);
                   saved.sort((a, b) => (a.time || 0) - (b.time || 0));
