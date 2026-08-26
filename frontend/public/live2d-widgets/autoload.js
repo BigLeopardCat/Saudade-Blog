@@ -488,6 +488,11 @@
 
       const chatPanel = document.getElementById('waifu-chat');
       const messages = document.getElementById('chat-messages');
+      if (!messages) {
+        // 20260828c 诊断：宿主页面缺聊天面板元素（静态页/结构变更）时所有渲染
+        // 静默失败，表现为"对话丢失/不刷新"——显式告警便于定位
+        console.error('[agent-chat] #chat-messages 不存在——聊天面板不可用，历史渲染将失败');
+      }
       const input = document.getElementById('chat-input');
       const sendBtn = document.getElementById('chat-send');
       const navConfirm = document.getElementById('chat-nav-confirm');
@@ -559,7 +564,7 @@
       let remotectlTimer = null; // storage 事件防抖句柄
       // 版本自检：确认浏览器加载的是当前部署脚本（nginx 对 live2d-widgets 缓存 1 年，
       // 未强刷时可能仍在跑旧版——DB 权威历史/roundId 同步只在 20260828a 之后才有）
-      console.log('[agent-chat] autoload 20260828b, BroadcastChannel=' + !!chatChannel
+      console.log('[agent-chat] autoload 20260828d, BroadcastChannel=' + !!chatChannel
                   + ', storage=' + ('localStorage' in window));
       // 按 roundId 取/建 live 气泡（远端帧专用；本窗流由 makeLiveBubble 预建）
       const remoteLive = (roundId) => {
@@ -749,9 +754,17 @@
         } catch(e) { return undefined; }
       };
       const applyLocal = () => {
-        items = loadLocalHistory();
-        source = 'local';
-        reconcileDOM();
+        try {
+          // 20260828c：本地兜底改为"内存权威 + 缓存补充"——DB 拉取失败时旧缓存
+          // 只补充缺失条目，绝不整体替换 items。整体替换会让 items 退化成旧快照，
+          // 后续收尾 saveHistory 把旧记录写回缓存并触发其他窗口重拉 → 连锁覆盖
+          const cached = loadLocalHistory();
+          items = __chatCore.mergeItems(items, cached);
+          source = 'local';
+          reconcileDOM();
+        } catch(e) {
+          console.error('[agent-chat] applyLocal 异常（不影响已渲染内容）:', e);
+        }
       };
       // DB 权威拉取：无 token/失败 → 本地兜底；成功 → mergeItems 收敛（内存乐观
       // 'l' 条目被 DB 'd' 条目内容收养）+ 增量渲染 + 缓存同步（值变更检测防循环）
@@ -790,9 +803,13 @@
           }));
           items = __chatCore.mergeItems(items, incoming);
           source = 'db';
-          reconcileDOM();
+          // 20260828c：渲染与合并隔离——items 已是最新（DB 收敛），渲染失败
+          // 不再整体降级本地缓存（旧版静默 catch → applyLocal 覆盖 items 导致
+          // 旧记录连锁覆盖其他窗口）；下次面板打开/新条目到达自动补渲染
+          try { reconcileDOM(); }
+          catch(e) { console.error('[agent-chat] pullHistory 渲染异常（items 已更新，不降级）:', e); }
           saveHistory(); // 缓存同步（值变更检测防写者风暴）
-        }).catch(() => { applyLocal(); })
+        }).catch(e => { console.error('[agent-chat] pullHistory 拉取失败，本地缓存兜底:', e); applyLocal(); })
           .finally(() => { clearTimeout(pt); });
       };
       // 增量渲染：只追加缺失条目、不重绘已有（替代 messages.innerHTML='' 全量重建）。
@@ -804,39 +821,46 @@
         }
         let lastEl = null;
         for (const item of items) {
-          const mid = item.id || '';
-          if (byMid.has(mid)) { lastEl = byMid.get(mid); continue; }
-          // 内容碰撞收养（'l'→'d' id 换发 / pull 先于 done 收敛在途轮）：
-          // 只收养未收敛元素（无 mid 或 'l' 前缀乐观 id）——已收敛的同内容元素
-          // 不能收养，否则两条相同文本（如两次"你好"）会挤占同一气泡
-          let adopted = null;
-          for (const child of messages.children) {
-            if (child.dataset && child.dataset.mtype === item.type
-                && child.dataset.mtext === item.text
-                && (!child.dataset.mid || child.dataset.mid.startsWith('l'))) {
-              adopted = child; break;
+          try {
+            const mid = item.id || '';
+            if (byMid.has(mid)) { lastEl = byMid.get(mid); continue; }
+            // 内容碰撞收养（'l'→'d' id 换发 / pull 先于 done 收敛在途轮）：
+            // 只收养未收敛元素（无 mid 或 'l' 前缀乐观 id）——已收敛的同内容元素
+            // 不能收养，否则两条相同文本（如两次"你好"）会挤占同一气泡
+            let adopted = null;
+            for (const child of messages.children) {
+              if (child.dataset && child.dataset.mtype === item.type
+                  && child.dataset.mtext === item.text
+                  && (!child.dataset.mid || child.dataset.mid.startsWith('l'))) {
+                adopted = child; break;
+              }
             }
-          }
-          if (adopted) {
-            adopted.dataset.mid = mid;
-            adopted.dataset.finished = '1';
-            // 在途轮被 pull 先收敛：live 句柄置 finished（拦截乱序迟到帧），
-            // 保留句柄供 done 帧幂等收尾（delete 会造成 remoteLive 重建空气泡）
-            for (const k in live) if (live[k].el === adopted) { live[k].finished = true; break; }
-            // 流式纯文本/空气泡 → 补最终渲染（done 到达时条件不再满足，幂等跳过）
-            const cs = adopted.querySelector('.msg-text');
-            if (cs && (cs.classList.contains('msg-streaming')
-                || (!cs.textContent && !cs.querySelector('.nav-skip-note')))) {
-              cs.classList.remove('msg-streaming');
-              renderAgentContent(cs, item.text);
+            if (adopted) {
+              adopted.dataset.mid = mid;
+              adopted.dataset.finished = '1';
+              // 在途轮被 pull 先收敛：live 句柄置 finished（拦截乱序迟到帧），
+              // 保留句柄供 done 帧幂等收尾（delete 会造成 remoteLive 重建空气泡）
+              for (const k in live) if (live[k].el === adopted) { live[k].finished = true; break; }
+              // 流式纯文本/空气泡 → 补最终渲染（done 到达时条件不再满足，幂等跳过）
+              const cs = adopted.querySelector('.msg-text');
+              if (cs && (cs.classList.contains('msg-streaming')
+                  || (!cs.textContent && !cs.querySelector('.nav-skip-note')))) {
+                cs.classList.remove('msg-streaming');
+                renderAgentContent(cs, item.text);
+              }
+              lastEl = adopted;
+              continue;
             }
-            lastEl = adopted;
-            continue;
+            const el = appendMsg(item);
+            if (lastEl && lastEl.nextSibling) messages.insertBefore(el, lastEl.nextSibling);
+            else messages.appendChild(el);
+            lastEl = el;
+          } catch(e) {
+            // 20260828c：渲染隔离——单条渲染失败跳过该条，不中断整批
+            // （旧 syncHistory 有同样隔离，20260828a 重构时丢失；单条抛错曾
+            // 经 catch→applyLocal 把全部窗口覆盖成旧缓存）
+            console.error('[agent-chat] 条目渲染失败已跳过:', item.id, e && e.message);
           }
-          const el = appendMsg(item);
-          if (lastEl && lastEl.nextSibling) messages.insertBefore(el, lastEl.nextSibling);
-          else messages.appendChild(el);
-          lastEl = el;
         }
         scrollToBottom(messages);
       };
@@ -853,6 +877,7 @@
         label.textContent = item.type === 'user' ? userLabel : '泠月喵: ';
         const content = document.createElement('span');
         content.className = 'msg-text';
+        let box = null; // 20260828d：process 框在 label/content 挂载后统一插入（见下）
         if (item.type === 'user') {
           const bubble = document.createElement('span');
           bubble.className = 'msg-bubble';
@@ -864,7 +889,7 @@
           div.dataset.finished = '1';
           // 恢复该轮执行过程行（跨整页转跳保留，见保存端 process 字段）
           if (Array.isArray(item.process) && item.process.length) {
-            const box = makeProcessBox(!getCollapsePref());
+            box = makeProcessBox(!getCollapsePref());
             const body = box.querySelector('.agent-process-body');
             const cnt = box.querySelector('.agent-process-count');
             item.process.forEach(p => {
@@ -874,11 +899,15 @@
               body.appendChild(line);
             });
             if (cnt) cnt.textContent = '(' + item.process.length + ')';
-            div.insertBefore(box, content);
           }
         }
         div.appendChild(label);
         div.appendChild(content);
+        // 20260828d 修复：process 框在 label/content 挂载后再插入。旧代码在挂载前
+        // 执行 div.insertBefore(box, content)——content 还不是 div 的子节点 →
+        // TypeError → pullHistory 静默 catch → applyLocal 旧记录覆盖所有窗口
+        // （"转跳后变成上次对话记录"根因，20260828c 日志暴露）
+        if (box) div.insertBefore(box, content);
         messages.appendChild(div);
         scrollToBottom(messages);
         // agent 消息触发嘴部动作（非流式/恢复场景）
