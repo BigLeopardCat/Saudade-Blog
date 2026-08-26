@@ -92,6 +92,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/chat/stream", post(chat::chat_stream_handler))
         // 对话历史（DB 权威源，前端转跳/多窗口恢复；handler 内手写鉴权）
         .route("/api/chat/history", get(chat::chat_history_handler))
+        // 主动停止丢弃本轮（前端"停止生成"按钮显式调用，全删 user+残缺回复）
+        .route("/api/chat/discard", post(chat::discard_handler))
         
         // Knowledge Base (GET public for agent)
         .route("/api/knowledge", get(knowledge::list_knowledge))
