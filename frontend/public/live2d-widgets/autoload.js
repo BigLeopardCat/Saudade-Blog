@@ -65,7 +65,7 @@
   });
   
   await Promise.all([
-    loadExternalResource(live2d_path + 'waifu.css?v=20260827f', 'css'),
+    loadExternalResource(live2d_path + 'waifu.css?v=20260827g', 'css'),
     loadExternalResource(live2d_path + 'waifu-tips.js', 'js'),
   ]);
 
@@ -489,7 +489,7 @@
       const broadcast = (m) => { if (chatChannel) chatChannel.postMessage(m); };
       // 版本自检：确认浏览器加载的是当前部署脚本（nginx 对 live2d-widgets 缓存 1 年，
       // 未强刷时可能仍在跑旧版——多标签同步等功能只在 20260826b 之后才有）
-      console.log('[agent-chat] autoload 20260827f, BroadcastChannel=' + !!chatChannel
+      console.log('[agent-chat] autoload 20260827g, BroadcastChannel=' + !!chatChannel
                   + ', storage=' + ('localStorage' in window));
       window.addEventListener('storage', (e) => {
         if (e.key && e.key.indexOf('chat_history_') === 0 && !isSending) {
@@ -590,6 +590,31 @@
               sessionStorage.removeItem('chat_history_backup_key');
             }
           }
+          // 备份合并兜底（20260827g）：localStorage 非空但缺最新轮时旧逻辑不读备份
+          // （跳转前备份直接读 localStorage，本轮保存失败 → 备份同样缺失 → 新页面丢失
+          // 最新对话与用户消息——用户实测形态）。新备份由跳转端内存强制写入
+          // （lastUserMsg + fullText），此处把备份中缺失条目按 (type,time,text) 合并补缺
+          // 并写回 localStorage，消费即删（跨多次跳转不累积）
+          try {
+            const bk2 = sessionStorage.getItem('chat_history_backup');
+            const bkKey2 = sessionStorage.getItem('chat_history_backup_key');
+            if (bk2 && bkKey2 === key) {
+              const bkArr = JSON.parse(bk2);
+              if (Array.isArray(bkArr) && bkArr.length) {
+                const have = new Set(saved.map(i => i.type + '|' + i.time + '|' + i.text));
+                const missing = bkArr.filter(i => !have.has(i.type + '|' + i.time + '|' + i.text));
+                if (missing.length) {
+                  saved = saved.concat(missing);
+                  saved.sort((a, b) => (a.time || 0) - (b.time || 0));
+                  if (saved.length > 50) saved = saved.slice(-50);
+                  try { localStorage.setItem(key, JSON.stringify(saved)); } catch(e2) {/* ignore */}
+                  console.warn('[agent-chat] 已从跳转备份合并 ' + missing.length + ' 条缺失对话');
+                }
+              }
+              sessionStorage.removeItem('chat_history_backup');
+              sessionStorage.removeItem('chat_history_backup_key');
+            }
+          } catch(e2) {/* ignore */}
           // 容量健康检查：历史序列化超 4MB（逼近 localStorage 5MB 上限）时，后续
           // 保存必然 QuotaExceeded 失败（曾现"转跳后新页面对话框停在旧消息、新内容
           // 全丢"——旧数据保留、新写入失败）。一次性裁剪到最近 30 条并写回止损。
@@ -607,6 +632,10 @@
           }
           messages.innerHTML = '';
           saved.forEach(item => {
+            // 逐条隔离（20260827g）：单条渲染抛错（markdown 管线/过程行异常数据等）
+            // 不再中断整批渲染——否则最新轮恰好出错时后续条目全部不显示，
+            // 用户看到"最新对话和问题都没了"（旧实现 forEach 无防护，静默全丢）
+            try {
             const div = document.createElement('div');
             div.className = 'chat-msg ' + item.type;
             const label = document.createElement('span');
@@ -643,6 +672,9 @@
             div.appendChild(label);
             div.appendChild(content);
             messages.appendChild(div);
+            } catch(e) {
+              console.warn('[agent-chat] 历史条目渲染失败（已跳过该条，不影响其他对话）: ' + e);
+            }
           });
           scrollToBottom(messages);
         } catch(e) {/* ignore */}
@@ -751,6 +783,7 @@
         // （flex 布局下还会连带拉伸发送按钮导致变形）
         resizeInput();
         addMsg(msg, 'user');
+        lastUserMsg = msg; // 记录本轮用户消息：跳转备份内存合并用（20260827g）
         isSending = true;
         stoppedByUser = false;
         discardTurn = false;
@@ -766,11 +799,13 @@
         let typingEl = null, typingTimer = null;
         // 命令行/展示文本累积变量提升到 try 外：catch 异常路径（流中断/__ERROR__）也要
         // 能访问已收到的命令帧——实测反射质检挂起 → 流中断 → catch 分支不解析导航，
-        // AUTO_NAVIGATE 命令白发、用户"卡死"且不跳转（20260827f 修复）
+        // AUTO_NAVIGATE 命令白发、用户"卡死"且不跳转（20260827g 修复）
         let cmdText = '', displayText = '';
-        // 过程行累积也提升到 try 外：catch 异常路径保存回复时要带过程行（20260827f）
+        // 过程行累积也提升到 try 外：catch 异常路径保存回复时要带过程行（20260827g）
         let steps = [];
-        // 命令解析执行（导航/特效/夜间模式）：正常收尾与异常中断共用（20260827f）。
+        // 本轮用户消息（跳转备份内存合并用，20260827g）——不依赖 localStorage 保存结果
+        let lastUserMsg = '';
+        // 命令解析执行（导航/特效/夜间模式）：正常收尾与异常中断共用（20260827g）。
         // 历史教训见原内联注释：模型幻觉"去X板块"时手写命令文本（多为相对路径
         // AUTO_NAVIGATE:/talk），旧实现只认完整 URL → 幻觉命令静默失效 → "没转跳"。
         // 因此：① fullText 命令行锚定解析（AUTO_NAVIGATE→直接跳 / NAVIGATE→确认，
@@ -856,10 +891,27 @@
                   sessionStorage.setItem('chat_nav_slide', '1');  // 站内转跳：跳过滑入动画（forceSlideInFromBottom）
                   // 转跳防御：备份当前对话历史到 sessionStorage（同标签页整页跳转后保留）。
                   // 新页面 syncHistory 若从 localStorage 恢复为空，用备份兜底渲染——
-                  // 转跳后对话"直接丢失"的最后一层保险（曾见整页转跳后历史不显示）
+                  // 转跳后对话"直接丢失"的最后一层保险（曾见整页转跳后历史不显示）。
+                  // 20260827g 增强：备份 = localStorage 全量 + 本轮 user/agent 从内存强制合并。
+                  // 旧实现直接读 localStorage 备份——若本轮保存失败（任何原因）备份同样缺失，
+                  // 新页面恢复后最新轮丢失（用户实测"转跳后最新对话和问题都没了"）。
+                  // 本轮回复（fullText）与用户消息（lastUserMsg）不依赖 localStorage 保存结果，
+                  // 恢复端按 time 合并补缺（见 syncHistory 备份合并逻辑）
                   try {
                     const bkKey = 'chat_history_' + (localStorage.getItem('tokenKey') || 'guest');
-                    sessionStorage.setItem('chat_history_backup', localStorage.getItem(bkKey) || '[]');
+                    let bk = [];
+                    try { bk = JSON.parse(localStorage.getItem(bkKey) || '[]'); } catch(e) {/* ignore */}
+                    if (!Array.isArray(bk)) bk = [];
+                    // 本轮用户消息：localStorage 可能缺（保存失败）→ 从内存补
+                    if (lastUserMsg && !bk.some(i => i.type === 'user' && i.text === lastUserMsg)) {
+                      bk.push({text: lastUserMsg, type: 'user', time: Date.now() - 1});
+                    }
+                    // 本轮 agent 回复：localStorage 可能缺 → 从内存补（含过程行）
+                    if (fullText.trim() && !bk.some(i => i.type === 'agent' && i.text === fullText)) {
+                      bk.push({text: fullText, type: 'agent', time: Date.now(),
+                               process: steps.map(s => ({cls: s.cls, text: s.text}))});
+                    }
+                    sessionStorage.setItem('chat_history_backup', JSON.stringify(bk));
                     sessionStorage.setItem('chat_history_backup_key', bkKey);
                   } catch(e) {/* ignore */}
                   window.location.href = navUrl;
@@ -901,7 +953,7 @@
             }
         };
         // agent 回复保存到 localStorage（含命令行与过程行，与后端历史一致）：
-        // 正常收尾与异常中断共用（20260827f）——此前 catch 路径不保存，跳转发生后
+        // 正常收尾与异常中断共用（20260827g）——此前 catch 路径不保存，跳转发生后
         // 新页面恢复只剩用户消息（addMsg 保存）、agent 回复丢失（转跳后"最新对话丢失"）。
         // 降级链：去 process → 裁剪最旧 15 条 → console 告警（失败多为容量超限/JSON 损坏）。
         const saveAgentMsg = (fullText, stepsArr) => {
@@ -1172,11 +1224,11 @@
             } else {
               addMsg('长时间未收到回复，请稍后重试', 'error');
               broadcast({t: 'error', msg: '长时间未收到回复，请稍后重试'});
-              // 异常中断也保存已收到的回复（20260827f）：断流不代表内容无效——
+              // 异常中断也保存已收到的回复（20260827g）：断流不代表内容无效——
               // 此前 catch 不保存 → 跳转（下方命令执行）发生后新页面恢复只剩用户消息、
               // agent 回复丢失（转跳后"最新对话丢失"的当前形态）。先保存再跳转。
               if ((cmdText + displayText).trim()) saveAgentMsg(cmdText + displayText, steps);
-              // 异常中断也执行已收到的命令帧（20260827f）：流中断不代表命令无效——
+              // 异常中断也执行已收到的命令帧（20260827g）：流中断不代表命令无效——
               // 反射质检挂起导致的断流里 AUTO_NAVIGATE/EFFECT/DARKMODE 帧可能已到达，
               // 旧实现 catch 不解析导航 → 命令白发、用户"卡死"且不跳转
               try { execAgentCommands(cmdText + displayText, null); } catch(e2) {/* ignore */}
