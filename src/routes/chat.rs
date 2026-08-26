@@ -43,6 +43,9 @@ struct ChatCtx {
     total_count: i64,
     trace_id: String,
     body: serde_json::Value,
+    /// 本轮 user 消息入库后的 DB 主键（None = 入库失败）。
+    /// 中断清理（DiscardAbortedExchange）按此快照只删其后残缺回复，保留用户消息本身
+    user_msg_id: Option<i32>,
 }
 
 /// 链路追踪：X-Request-ID 全链路透传（浏览器 → nginx → Rust → agent → LLM 日志）。
@@ -116,6 +119,38 @@ pub async fn chat_history_handler(
         .into_response()
 }
 
+/// 丢弃本轮（POST /api/chat/discard，20260828b 新增）：用户点击"停止生成"时前端显式调用，
+/// 删除该用户最后一条 user 消息及后续残缺回复（全删语义）——主动停止 = 用户明确
+/// 不想要这条进记忆，与连接中断清理（DiscardAbortedExchange 只删残缺、保留 user）互补。
+/// 无/无效 token → 401。幂等：无 user 消息时无操作返回 success。
+pub async fn discard_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Response {
+    let Some(uid) = auth_uid(&headers) else {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"success": false, "error": "unauthorized"})),
+        )
+            .into_response();
+    };
+    let last_user = chat_history::Entity::find()
+        .filter(chat_history::Column::UserId.eq(uid))
+        .filter(chat_history::Column::Role.eq("user"))
+        .order_by_desc(chat_history::Column::Id)
+        .one(&state.db)
+        .await;
+    let Ok(Some(u)) = last_user else {
+        return (StatusCode::OK, Json(serde_json::json!({"success": true}))).into_response();
+    };
+    let _ = chat_history::Entity::delete_many()
+        .filter(chat_history::Column::UserId.eq(uid))
+        .filter(chat_history::Column::Id.gte(u.id))
+        .exec(&state.db)
+        .await;
+    (StatusCode::OK, Json(serde_json::json!({"success": true}))).into_response()
+}
+
 /// 鉴权 + 请求体解析 + 保存用户消息 + 加载历史/摘要 + 组装 agent 请求体
 async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, Json<ChatResponse>> {
     // 先取链路追踪 id（headers 在 into_body 前可读）
@@ -147,13 +182,13 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, Js
         })),
     };
 
-    // 保存用户消息
-    let _ = chat_history::ActiveModel {
+    // 保存用户消息（取回主键供中断清理快照：只删其后的残缺回复，用户消息本体保留）
+    let user_msg_id = chat_history::ActiveModel {
         user_id: Set(uid),
         role: Set("user".into()),
         content: Set(payload.message.clone()),
         ..Default::default()
-    }.save(&state.db).await;
+    }.insert(&state.db).await.ok().map(|m| m.id);
 
     // 读取最近历史
     let history_items: Vec<serde_json::Value> = {
@@ -218,7 +253,7 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, Js
     if std::env::var("CHAT_DEBUG_BODY").is_ok() {
         eprintln!("[chat-debug] body={}", body);
     }
-    Ok(ChatCtx { uid, total_count, trace_id, body })
+    Ok(ChatCtx { uid, total_count, trace_id, body, user_msg_id })
 }
 
 
@@ -327,9 +362,15 @@ fn find_frame_end(buf: &[u8]) -> Option<usize> {
     buf.windows(2).position(|w| w == b"\n\n").map(|i| i + 2)
 }
 
-/// 流式对话中断清理：客户端中途断开（用户点击"停止生成"、关闭标签页、网络中断）时，
-/// 本轮已写入 chat_history 的用户消息及其后的残缺回复一并删除——
-/// 被终止的对话不进入记忆（history 上下文 / 摘要），避免残缺问答污染后续对话。
+/// 流式对话中断清理（20260828b 语义修正）：客户端中途断开（页面转跳/关闭标签页/网络中断）时，
+/// 删除本轮 user 消息之后的残缺 assistant 回复，**保留 user 消息本身**——
+/// 用户"发完消息不等回复就转跳"是最常见使用模式，转跳导致连接中断后，
+/// 新页面应从 DB 权威历史看到"消息已发出"（聊天软件形态）；只有残缺回复不入记忆
+/// （history 上下文 / 摘要），避免半截命令/问答污染后续对话。
+///
+/// 与主动停止的区别：用户点击"停止生成"是明确不想要这条，前端会显式调用
+/// POST /api/chat/discard 全删（user + 残缺）；这里的连接中断无法区分"跳走"与
+/// "删除意图"，一律保守保留 user。
 ///
 /// Drop 在 SSE 生成器（body_stream）被取消时同步执行；DB 删除是异步操作，用 tokio::spawn 异步完成。
 /// 仅当流未正常收尾（未收到终止标记即被取消）时才清理；正常结束由 done 标记关闭清理，
@@ -337,6 +378,10 @@ fn find_frame_end(buf: &[u8]) -> Option<usize> {
 struct DiscardAbortedExchange {
     state: Arc<AppState>,
     uid: i32,
+    /// 本轮 user 消息的 DB 主键快照（prepare_chat 入库时取得）。
+    /// 只删 id 大于快照的 assistant 记录——即使清理延迟执行（期间新轮 user 已插入），
+    /// role=user 的新记录也不会被误删。
+    user_msg_id: Option<i32>,
     done: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -345,21 +390,17 @@ impl Drop for DiscardAbortedExchange {
         if self.done.load(std::sync::atomic::Ordering::SeqCst) {
             return;
         }
+        let Some(user_msg_id) = self.user_msg_id else { return };
         let state = self.state.clone();
         let uid = self.uid;
-        // 删除该用户最后一条 user 消息及其后的所有记录（最多一条残缺 assistant 回复）。
-        // id 单调递增，user 消息之后只会出现本轮自己的回复
+        // 只删本轮 user 消息之后的残缺 assistant 回复（id 单调递增 + role 双重限定）。
+        // 若 drop 延迟到新轮已插入：新轮 user（role=user）不受影响；新轮尚未收尾，
+        // 其 assistant 记录不可能先于旧轮清理存在，不会误删
         tokio::spawn(async move {
-            let last_user = chat_history::Entity::find()
-                .filter(chat_history::Column::UserId.eq(uid))
-                .filter(chat_history::Column::Role.eq("user"))
-                .order_by_desc(chat_history::Column::Id)
-                .one(&state.db)
-                .await;
-            let Ok(Some(u)) = last_user else { return };
             let _ = chat_history::Entity::delete_many()
                 .filter(chat_history::Column::UserId.eq(uid))
-                .filter(chat_history::Column::Id.gte(u.id))
+                .filter(chat_history::Column::Id.gt(user_msg_id))
+                .filter(chat_history::Column::Role.eq("assistant"))
                 .exec(&state.db)
                 .await;
         });
@@ -398,6 +439,7 @@ pub async fn chat_stream_handler(
     let state = state.clone();
     let uid = ctx.uid;
     let total_count = ctx.total_count;
+    let user_msg_id = ctx.user_msg_id;
 
     let body_stream = stream! {
         let mut upstream_stream = upstream.bytes_stream();
@@ -407,10 +449,10 @@ pub async fn chat_stream_handler(
         // 独立摘要（agent 侧 needs_summary 轮后端总结的返回值，随 __SUMMARY__ 帧到达）
         let mut summary_override: Option<String> = None;
 
-        // 客户端中断清理（见 DiscardAbortedExchange）：流被取消时删除本轮已入库的用户消息；
-        // 正常走完 while 循环后置位 done，关闭清理
+        // 客户端中断清理（见 DiscardAbortedExchange）：流被取消时删除本轮 user 消息
+        // 之后的残缺回复（user 消息本体保留）；正常走完 while 循环后置位 done，关闭清理
         let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let _guard = DiscardAbortedExchange { state: state.clone(), uid, done: done.clone() };
+        let _guard = DiscardAbortedExchange { state: state.clone(), uid, user_msg_id, done: done.clone() };
 
         while let Some(chunk) = upstream_stream.next().await {
             let chunk = match chunk {

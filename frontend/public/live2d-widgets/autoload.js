@@ -105,7 +105,7 @@
   });
   
   await Promise.all([
-    loadExternalResource(live2d_path + 'waifu.css?v=20260828a', 'css'),
+    loadExternalResource(live2d_path + 'waifu.css?v=20260828b', 'css'),
     loadExternalResource(live2d_path + 'waifu-tips.js', 'js'),
   ]);
 
@@ -344,10 +344,27 @@
       div.textContent = note;
       el.appendChild(div);
     };
+    // 命令前缀剥离（20260828b）：命令与正文同行（agent 导航输出常无换行粘连，如
+    // "AUTO_NAVIGATE:https://saudade.site/guestbook/ 喵呜～…"）时只剥命令段保留正文——
+    // 旧实现按行整行过滤会连正文一起删；纯命令行剥后为空 → 行删除（原语义）
+    // 循环剥离直到行首不再出现命令（两个命令粘连无换行时（DB 实证：
+    // "AUTO_NAVIGATE:…guestbookAUTO_NAVIGATE:…"）URL 组贪婪吞到空白，单次 replace
+    // 只剥第一个；while 保证剥净，剩空白则整行删除由调用方处理）
+    const stripCommandPrefix = (line) => {
+      const RE = /^\s*(?:[A-Za-z0-9_]*EFFECT|DARKMODE|NAVIGATE|AUTO_NAVIGATE|SUMMARY|\[?System)\]?\s*:(?:((?:https?:)?\/\/[^\s一-鿿　-〿＀-￯]+)|(\/[\w\-._~/]*)|(\s*\S+))?/;
+      let rest = line, m;
+      while ((m = rest.match(RE))) rest = rest.slice(m[0].length);
+      return rest;
+    };
     const cleanAgentText = (text) => {
       if (!text) return '';
       let cleaned = text.split('\n')
-        .filter(l => !COMMAND_LINE_RE.test(l.trim()))
+        .map(l => {
+          if (!COMMAND_LINE_RE.test(l.trim())) return l; // 非命令行原样保留
+          const rest = stripCommandPrefix(l).trim();      // 命令行：剥前缀
+          return rest ? rest : null;                      // 剥空（纯命令）→ 标记删除
+        })
+        .filter(l => l !== null)
         .join('\n')
         .trim();
       // 兜底：模型格式漂移输出的无前缀裸摘要（与后端 server.py/_strip_summary_from_reply
@@ -542,7 +559,7 @@
       let remotectlTimer = null; // storage 事件防抖句柄
       // 版本自检：确认浏览器加载的是当前部署脚本（nginx 对 live2d-widgets 缓存 1 年，
       // 未强刷时可能仍在跑旧版——DB 权威历史/roundId 同步只在 20260828a 之后才有）
-      console.log('[agent-chat] autoload 20260828a, BroadcastChannel=' + !!chatChannel
+      console.log('[agent-chat] autoload 20260828b, BroadcastChannel=' + !!chatChannel
                   + ', storage=' + ('localStorage' in window));
       // 按 roundId 取/建 live 气泡（远端帧专用；本窗流由 makeLiveBubble 预建）
       const remoteLive = (roundId) => {
@@ -589,7 +606,19 @@
             const h = remoteLive(m.roundId);
             if (m.t === 'token') {
               if (h.finished) return; // done/error 已到，丢弃乱序迟到帧
-              h.contentSpan.textContent = (h.contentSpan.textContent || '') + m.text;
+              // 20260828b 防御：远端不做命令分流，token 到达时按行剥离命令行
+              // （旧版窗口广播原始 token / REVISE 拼接残留会带 AUTO_NAVIGATE 等，
+              // 不剥离会显示在气泡里）；碎片命令由 done 帧含命令检测强制重渲染兜底
+              const cleanToken = (m.text || '').split('\n')
+                .map(l => {
+                  if (!COMMAND_LINE_RE.test(l.trim())) return l;
+                  const rest = stripCommandPrefix(l).trim();
+                  return rest ? rest : null;
+                })
+                .filter(l => l !== null)
+                .join('\n');
+              if (!cleanToken) return;
+              h.contentSpan.textContent += cleanToken;
               scrollToBottom(messages);
             } else if (m.t === 'process') {
               if (h.finished) return;
@@ -623,10 +652,13 @@
               }
               // 最终渲染幂等（applyMsg 为 innerHTML 替换）：reconcile 先收养渲染时
               // class 已移除且内容非空 → 跳过；纯 token 帧/空气泡 → 现场补渲染。
-              // 渲染责任单一化：谁先到谁渲染，后到者只设标记（防双气泡/双注记）
+              // 渲染责任单一化：谁先到谁渲染，后到者只设标记（防双气泡/双注记）。
+              // 20260828b：token 帧可能带命令污染（碎片剥离漏网）——内容含命令行时
+              // 强制 clean 重渲染，保证 done 后气泡永不显示 AUTO_NAVIGATE 等命令文本
               const cs = h.contentSpan;
               if (cs.classList.contains('msg-streaming')
-                  || (!cs.textContent && !cs.querySelector('.nav-skip-note'))) {
+                  || (!cs.textContent && !cs.querySelector('.nav-skip-note'))
+                  || COMMAND_LINE_RE.test(cs.textContent.trim())) {
                 cs.classList.remove('msg-streaming');
                 renderAgentContent(cs, m.fullText);
               }
@@ -727,6 +759,18 @@
         if (isSending || streamCtrl) { pendingPull = true; return; } // 流式中永不重排
         const tk = localStorage.getItem('tokenKey');
         if (!tk) { applyLocal(); return; }
+        // 主动停止时通知后端删除本轮（POST /api/chat/discard，20260828b）：用户点
+        // "停止生成"= 明确不想要这条，DB 侧 user+残缺回复全删；连接中断（页面转跳/
+        // 关标签）则由 Rust DiscardAbortedExchange 只删残缺、保留 user（消息已发出）。
+        // 尽力而为：失败忽略（中断清理兜底只删残缺，下次拉取时用户消息仍在）
+        const apiDiscard = () => {
+          const tk = localStorage.getItem('tokenKey');
+          if (!tk) return;
+          fetch('/api/chat/discard', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + tk },
+          }).catch(() => {});
+        };
         // 8s 超时兜底：历史接口挂起时降级本地缓存（不阻塞面板打开）
         const pc = new AbortController();
         const pt = setTimeout(() => pc.abort(), 8000);
@@ -1004,8 +1048,10 @@
               // 防呆：自动整页跳转前校验目标是博客真实路由。agent 可能幻觉出不存在的
               // 页面（如 /iot），跳过去会丢失整站布局与聊天面板（曾导致"文本框卡死"）。
               // 不在白名单内的目标取消跳转，并在对话框追加系统提示。
-              // 模型幻觉输出可能省略尾部斜杠（AUTO_NAVIGATE:/device-console）——device-console 的斜杠可选
-              const BLOG_ROUTES = [/^\/$/, /^\/about$/, /^\/friends$/, /^\/guestbook$/, /^\/talk$/, /^\/times$/, /^\/login$/, /^\/dashboard/, /^\/category\//, /^\/article\//, /^\/device-console\/?/];
+              // 模型幻觉输出可能省略尾部斜杠（AUTO_NAVIGATE:/device-console）——device-console 的斜杠可选。
+              // 20260828b：命令与正文同行时也可能保留尾斜杠（AUTO_NAVIGATE:…/guestbook/ 喵呜～…），
+              // 全部站内页面路由统一容忍尾斜杠（曾把 /guestbook/ 误拦成"非博客页面"——实测案例）
+              const BLOG_ROUTES = [/^\/$/, /^\/about\/?$/, /^\/friends\/?$/, /^\/guestbook\/?$/, /^\/talk\/?$/, /^\/times\/?$/, /^\/login\/?$/, /^\/dashboard/, /^\/category\//, /^\/article\//, /^\/device-console\/?/];
               const navPath = (() => { try { return new URL(navUrl).pathname; } catch(e3) { return null; } })();
               const navOk = !!navPath && BLOG_ROUTES.some(r => r.test(navPath));
               // 直接跳转额外校验同源：白名单只查 pathname，幻觉的
@@ -1714,6 +1760,8 @@
           // 输出中点击 = 停止生成
           stoppedByUser = true;
           if (streamCtrl) streamCtrl.abort();
+          // 显式告知后端全删本轮（DB 侧 user+残缺回复；与连接中断"保留 user"互补）
+          apiDiscard();
           // 保险：极端情况下（浏览器对已开始读取的流 abort 不触发 AbortError）catch 不会执行，
           // UI 会卡死在"停止生成"状态——3s 后强制恢复并丢弃本轮，保证界面必能继续使用。
           // 与 sendMessage 收尾 discardTurn 分支相同的丢弃逻辑（abort 未触发时手动清理）
@@ -1736,6 +1784,7 @@
                 items = items.filter(i => i.id !== r.userItemId);
                 saveHistory();
                 broadcast({t: 'discard', roundId: r.roundId, userItemId: r.userItemId});
+                apiDiscard(); // 保险路径同样通知后端全删（避免 DB 残留半轮）
               }
             }
           }, 3000);
