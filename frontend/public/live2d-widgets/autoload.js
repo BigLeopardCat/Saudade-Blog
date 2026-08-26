@@ -1,9 +1,14 @@
 (async () => {
-  // SPA 路由下如果看板娘已存在则跳过全部初始化
-  if (document.getElementById('waifu')) {
-    console.log('[Live2D] waifu already exists, skipping');
+  // 20260828g：防重入升级为 window 标记 + DOM 存在双保险。旧逻辑只查 #waifu
+  // 存在性——若看板娘 DOM 被外部（组件卸载/路由清理）移除，二次注入会完整重
+  // 初始化 → 旧实例的 BroadcastChannel/storage/scroll 监听器全部残留 → 双实例
+  // 竞态（SPA 跳转后记录乱、滚动对抗的隐性根因）。标记与 DOM 无关，刷新时
+  // window 重置自动恢复；bfcache 返回时标记与 DOM 一致保留。
+  if (window.__agentChatLoaded || document.getElementById('waifu')) {
+    console.log('[Live2D] already loaded, skipping');
     return;
   }
+  window.__agentChatLoaded = true;
 
   // 收起状态恢复：quit 工具会写 waifu-display 24h 标记，上游 initWidget 发现后只建
   // 左下角收回按钮、不初始化看板娘——刷新/返回后看板娘"消失"只剩按钮（曾报
@@ -67,20 +72,23 @@
       return out;
     };
     const capItems = (arr, max) => (arr.length > max ? arr.slice(-max) : arr);
-    // 20260828f：跨窗收敛剪枝（详见 pullHistory 调用处注释）——'l' 条目在
-    // 无 process、内容未被 incoming 收养、超 60s 三条件齐备时视为孤儿剔除
-    const pruneStrays = (local, incoming, now) => {
-      if (!Array.isArray(local)) return local;
+    // 20260828g：服务器权威替换——incoming（DB 视图）整体替换本地 items，不保留
+    // 任何本地条目（合并启发式全删除）。唯一例外：60s 内新收尾但尚未入库的
+    // 'l' 轮追加尾部（DB 提交延迟窗口，防"刚发完被 pull 一闪而过"）；内容已被
+    // incoming 收录的 'l' 不追加（用 'd' 版即可）。time 最新，追加尾部顺序正确。
+    const replaceWithIncoming = (local, incoming, now) => {
+      const out = incoming.slice();
       const t = (now === undefined ? Date.now() : now);
-      return local.filter(i => {
-        if (!i.id || !i.id.startsWith('l')) return true;
-        if (i.process) return true;
-        if (incoming && incoming.some(inc => inc.type === i.type
-            && matchText(i.text, inc.text))) return true;
-        return t - (i.time || 0) < 60000;
-      });
+      for (const it of (local || [])) {
+        if (it.id && it.id.startsWith('l')
+            && (it.time || 0) >= t - 60000
+            && !incoming.some(inc => inc.type === it.type && matchText(inc.text, it.text))) {
+          out.push(it);
+        }
+      }
+      return out;
     };
-    return { genId, migrateItem, mergeItems, capItems, normText, matchText, pruneStrays };
+    return { genId, migrateItem, mergeItems, replaceWithIncoming, capItems, normText, matchText };
   })();
 
   const live2d_path = '/live2d-widgets/';
@@ -608,7 +616,7 @@
       let remotectlTimer = null; // storage 事件防抖句柄
       // 版本自检：确认浏览器加载的是当前部署脚本（nginx 对 live2d-widgets 缓存 1 年，
       // 未强刷时可能仍在跑旧版——DB 权威历史/roundId 同步只在 20260828a 之后才有）
-      console.log('[agent-chat] autoload 20260828f, BroadcastChannel=' + !!chatChannel
+      console.log('[agent-chat] autoload 20260828g, BroadcastChannel=' + !!chatChannel
                   + ', storage=' + ('localStorage' in window));
       // 按 roundId 取/建 live 气泡（远端帧专用；本窗流由 makeLiveBubble 预建）
       const remoteLive = (roundId) => {
@@ -772,8 +780,18 @@
         try {
           const arr = JSON.parse(localStorage.getItem(historyKey()) || '[]');
           if (!Array.isArray(arr)) return [];
+          // 20260828g：缓存是镜像（写入前已对齐），仅按 id 去重（旧版本可能残留
+          // 重复条目），不再内容收养——镜像数据不需要启发式合并。
           // 旧格式条目无 id → migrateItem 补 id（写回随下次 saveHistory 落地）
-          return __chatCore.capItems(__chatCore.mergeItems([], arr.map(it => __chatCore.migrateItem(it))), 50);
+          const seen = new Set();
+          const out = [];
+          for (const it of arr) {
+            const m = __chatCore.migrateItem(it);
+            if (seen.has(m.id)) continue;
+            seen.add(m.id);
+            out.push(m);
+          }
+          return __chatCore.capItems(out, 50);
         } catch(e) { return []; }
       };
       // 唯一历史写者：序列化 → cap → 值与现值相同则跳过（变更检测终结多窗
@@ -811,11 +829,11 @@
       };
       const applyLocal = () => {
         try {
-          // 20260828c：本地兜底改为"内存权威 + 缓存补充"——DB 拉取失败时旧缓存
-          // 只补充缺失条目，绝不整体替换 items。整体替换会让 items 退化成旧快照，
-          // 后续收尾 saveHistory 把旧记录写回缓存并触发其他窗口重拉 → 连锁覆盖
-          const cached = loadLocalHistory();
-          items = __chatCore.mergeItems(items, cached);
+          // 20260828g：本地兜底 = 缓存镜像整体替换（与 pull 同构，无合并启发式）。
+          // 缓存是唯一镜像写者（saveHistory）产生的权威快照——拉取失败时它就是
+          // 当时的最新视图，直接替换不会产生 'l'/'d' 混排。pull 成功后下次保存
+          // 自动覆盖为服务器视图。
+          items = loadLocalHistory();
           source = 'local';
           reconcileDOM();
         } catch(e) {
@@ -857,14 +875,12 @@
             time: it.time,
             process: it.role === 'user' ? undefined : lookupProcess(it.content),
           }));
-          // 20260828f：跨窗收敛剪枝——mergeItems 是单调并集（从不删本地条目），
-          // 双窗 items 各有一个对方没有的孤儿 'l' 条目时（连接中断被后端删除、
-          // 被放弃轮等），每次拉取合并结果恒不同 → 保存值恒不同 → storage 写→拉
-          // ping-pong 风暴（nginx 实测两窗各 1 次/秒持续 14s）。pruneStrays 剔除
-          // 超 60s 仍未收敛的孤儿（无 process、内容无匹配），双窗 items 即收敛
-          // 相等，风暴终止；刚收尾轮与 process 不受影响（收养时从缓存富化）。
-          items = __chatCore.pruneStrays(items, incoming);
-          items = __chatCore.mergeItems(items, incoming);
+          // 20260828g：服务器权威——items 整体替换为 DB 视图，删除全部合并启发式。
+          // 旧模型（mergeItems 并集 + 本地 'l' 条目混排）是乱序根源：本地条目
+          // time 与服务器不一致、孤儿永不收敛、双窗结果恒不同。替换后所有窗拉
+          // 同一份 incoming → 天然一致（写者风暴从机制上消失），缓存仅作镜像。
+          // replaceWithIncoming 保留 60s 内未入库的 'l' 轮（DB 提交延迟窗口防闪烁）。
+          items = __chatCore.replaceWithIncoming(items, incoming);
           source = 'db';
           // 20260828c：渲染与合并隔离——items 已是最新（DB 收敛），渲染失败
           // 不再整体降级本地缓存（旧版静默 catch → applyLocal 覆盖 items 导致
@@ -939,6 +955,25 @@
             // （旧 syncHistory 有同样隔离，20260828a 重构时丢失；单条抛错曾
             // 经 catch→applyLocal 把全部窗口覆盖成旧缓存）
             console.error('[agent-chat] 条目渲染失败已跳过:', item.id, e && e.message);
+          }
+        }
+        // 20260828g：滑动窗口对齐——items 是权威视图，DOM 中不属于 items 的元素
+        // 删除：① 带 mid 但不在 items（最老条目被挤出窗口 / 被放弃的轮）；② 无
+        // mid 且非在途气泡（孤儿残留）。在途气泡（live 句柄）豁免——远端流式
+        // 轮未收尾时不打断。删除在 items 循环之后执行：'l' 元素先经收养转正
+        // （mid 换成 'd'）→ 转正成功的保留，真孤儿才被删。聊天软件式滑动窗口：
+        // 新对话拉取后最早期记录自动覆盖。
+        {
+          const validMids = new Set();
+          for (const it of items) validMids.add(it.id || '');
+          const liveEls = new Set();
+          for (const k in live) liveEls.add(live[k].el);
+          for (const child of Array.from(messages.children)) {
+            try {
+              const mid = child.dataset && child.dataset.mid;
+              if (mid) { if (!validMids.has(mid)) messages.removeChild(child); }
+              else if (!liveEls.has(child)) messages.removeChild(child);
+            } catch(e) { /* 单元素删除失败不影响其余 */ }
           }
         }
         scrollToBottom(messages);
