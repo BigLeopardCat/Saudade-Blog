@@ -65,7 +65,7 @@
   });
   
   await Promise.all([
-    loadExternalResource(live2d_path + 'waifu.css?v=20260826a', 'css'),
+    loadExternalResource(live2d_path + 'waifu.css?v=20260826b', 'css'),
     loadExternalResource(live2d_path + 'waifu-tips.js', 'js'),
   ]);
 
@@ -114,6 +114,19 @@
   // 不受"插入DOM+加类同帧"样式合并影响；不动 transform，避免覆盖 hover 上浮。
   (function forceSlideInFromBottom() {
     if (!Element.prototype.animate) return; // 老浏览器依赖 CSS transition 原行为
+    // 站内整页转跳（agent 导航命令，见跳转前 chat_nav_slide 标记）：跳过滑入动画
+    // 立即到位——刷新/首次访问才滑入，转跳时位置应与转跳前一致（用户感知的
+    // "看板娘位置变了"主要来自重新滑入 + 模型重载期间的尺寸抖动）
+    let isInternalNav = false;
+    try {
+      isInternalNav = sessionStorage.getItem('chat_nav_slide') === '1';
+      sessionStorage.removeItem('chat_nav_slide');
+    } catch(e) {}
+    const el0 = document.getElementById('waifu');
+    if (isInternalNav && el0) {
+      el0.dataset.slideInOnce = '1';
+      return;
+    }
     const isModelReady = () => {
       try {
         const ad = window.__cubism5model;
@@ -414,12 +427,114 @@
           });
         });
       };
+      // 执行过程框偏好：默认展开；用户主动收起过一次 → 保持收起（social UI 惯例）
+      const getCollapsePref = () => {
+        try { return localStorage.getItem('chat_process_collapsed') === '1'; } catch(e) { return false; }
+      };
+      const setCollapsePref = (collapsed) => {
+        try { localStorage.setItem('chat_process_collapsed', collapsed ? '1' : '0'); } catch(e) {}
+      };
+      // 过程框 DOM 工厂（流式 / 历史恢复共用）：open 决定初始展开态
+      const makeProcessBox = (open) => {
+        const box = document.createElement('details');
+        box.className = 'agent-process';
+        box.open = open;
+        const summary = document.createElement('summary');
+        summary.className = 'agent-process-head';
+        const label = document.createElement('span');
+        label.className = 'agent-process-label';
+        label.textContent = '执行过程';
+        const count = document.createElement('span');
+        count.className = 'agent-process-count';
+        summary.appendChild(label);
+        summary.appendChild(count);
+        const body = document.createElement('div');
+        body.className = 'agent-process-body';
+        box.appendChild(summary);
+        box.appendChild(body);
+        return box;
+      };
       let pendingNavUrl = '';
       let isSending = false;
       // 停止生成：输出中点击发送按钮 → abort 当前流；用户停止后丢弃本轮对话（不加入记忆）
       let streamCtrl = null;
       let stoppedByUser = false;
       let discardTurn = false;
+
+      // ── 多标签页同步（社交软件式：所有窗口同屏同一会话）──
+      // 对话中的标签页把流式帧（token/过程行/重置/结束/错误）经 BroadcastChannel
+      // 广播给其他标签页实时渲染；用户消息与最终历史走 localStorage——保存后由
+      // storage 事件（其他标签页触发）全量重绘兜底（广播丢失/页面刚打开场景）。
+      // 两个信号源避免重复：用户消息不广播（storage 重绘自带），重绘会清掉
+      // 实时渲染的 agent 气泡，后续 token 帧会重建，天然自洽。
+      const chatChannel = 'BroadcastChannel' in window ? new BroadcastChannel('saudade-chat') : null;
+      const broadcast = (m) => { if (chatChannel) chatChannel.postMessage(m); };
+      window.addEventListener('storage', (e) => {
+        if (e.key && e.key.indexOf('chat_history_') === 0 && !isSending) {
+          syncHistory(); // 其他标签页保存历史 → 全量重绘（含新用户消息/完成回复）
+        }
+      });
+      if (chatChannel) {
+        chatChannel.onmessage = (ev) => {
+          if (isSending) return; // 本页正在对话：自己是生产者，不重复应用
+          const m = ev.data || {};
+          try {
+            let lastMsg = messages.lastElementChild;
+            const isLiveAgent = lastMsg && lastMsg.classList.contains('agent') && !lastMsg.dataset.finished;
+            if (!isLiveAgent) {
+              lastMsg = document.createElement('div');
+              lastMsg.className = 'chat-msg agent';
+              const label2 = document.createElement('span');
+              label2.className = 'msg-label';
+              label2.textContent = '泠月喵: ';
+              const content2 = document.createElement('span');
+              content2.className = 'msg-text';
+              lastMsg.appendChild(label2);
+              lastMsg.appendChild(content2);
+              messages.appendChild(lastMsg);
+            }
+            const contentSpan = lastMsg.querySelector('.msg-text');
+            if (m.t === 'token') {
+              contentSpan.textContent = (contentSpan.textContent || '') + m.text;
+              scrollToBottom(messages);
+            } else if (m.t === 'process') {
+              if (!lastMsg._remoteProcess) {
+                lastMsg._remoteProcess = makeProcessBox(!getCollapsePref());
+                lastMsg.insertBefore(lastMsg._remoteProcess, contentSpan);
+              }
+              const line = document.createElement('div');
+              line.className = 'agent-process-line ' + (m.cls || 'step');
+              line.textContent = m.text;
+              lastMsg._remoteProcess.querySelector('.agent-process-body').appendChild(line);
+              const cnt = lastMsg._remoteProcess.querySelector('.agent-process-count');
+              if (cnt) cnt.textContent = '(' + lastMsg._remoteProcess.querySelectorAll('.agent-process-line').length + ')';
+            } else if (m.t === 'reset') {
+              contentSpan.textContent = '';
+            } else if (m.t === 'done') {
+              if (!lastMsg.dataset.finished) {
+                // 正常顺序：live 气泡 → 最终 markdown 渲染 + 过程框补全
+                lastMsg.dataset.finished = '1';
+                applyMsg(contentSpan, cleanAgentText(m.fullText));
+                if (Array.isArray(m.process) && m.process.length && !lastMsg._remoteProcess) {
+                  lastMsg._remoteProcess = makeProcessBox(!getCollapsePref());
+                  const body = lastMsg._remoteProcess.querySelector('.agent-process-body');
+                  m.process.forEach(p => {
+                    const line = document.createElement('div');
+                    line.className = 'agent-process-line ' + (p.cls || 'step');
+                    line.textContent = p.text;
+                    body.appendChild(line);
+                  });
+                  lastMsg.insertBefore(lastMsg._remoteProcess, contentSpan);
+                }
+              }
+              // 乱序兜底：storage 重绘（syncHistory 的 finished 气泡）已含最终文本与过程框，跳过
+            } else if (m.t === 'error') {
+              lastMsg.dataset.finished = '1';
+              applyMsg(contentSpan, m.msg);
+            }
+          } catch(e) {/* 广播渲染失败不影响本页 */}
+        };
+      }
       // 从 JWT 提取用户 ID
       const getUserId = () => {
         try {
@@ -455,6 +570,23 @@
               content.appendChild(bubble);
             } else {
               applyMsg(content, cleanAgentText(item.text));
+              // 已完成标记：多标签 done 广播乱序时（storage 重绘先于广播到达），
+              // 不再对已完成的红绘气泡重复渲染
+              div.dataset.finished = '1';
+              // 恢复该轮执行过程行（跨整页转跳保留，见保存端 process 字段）
+              if (Array.isArray(item.process) && item.process.length) {
+                const box = makeProcessBox(!getCollapsePref());
+                const body = box.querySelector('.agent-process-body');
+                const cnt = box.querySelector('.agent-process-count');
+                item.process.forEach(p => {
+                  const line = document.createElement('div');
+                  line.className = 'agent-process-line ' + (p.cls || 'step');
+                  line.textContent = p.text;
+                  body.appendChild(line);
+                });
+                if (cnt) cnt.textContent = '(' + item.process.length + ')';
+                div.insertBefore(box, content);
+              }
             }
             div.appendChild(label);
             div.appendChild(content);
@@ -642,21 +774,11 @@
           let processBox = null;
           const ensureProcessBox = () => {
             if (processBox) return processBox;
-            processBox = document.createElement('details');
-            processBox.className = 'agent-process';
-            const summary = document.createElement('summary');
-            summary.className = 'agent-process-head';
-            const label = document.createElement('span');
-            label.className = 'agent-process-label';
-            label.textContent = '执行过程';
-            const count = document.createElement('span');
-            count.className = 'agent-process-count';
-            summary.appendChild(label);
-            summary.appendChild(count);
-            const body = document.createElement('div');
-            body.className = 'agent-process-body';
-            processBox.appendChild(summary);
-            processBox.appendChild(body);
+            processBox = makeProcessBox(!getCollapsePref());
+            // 用户手动展开/收起时记忆偏好：收起过一次后后续默认收起
+            processBox.addEventListener('toggle', () => {
+              setCollapsePref(!processBox.open);
+            });
             div.insertBefore(processBox, contentSpan);
             return processBox;
           };
@@ -673,6 +795,7 @@
             steps.push({ cls, text });
             refreshCount();
             scrollToBottom(msgs);
+            broadcast({t: 'process', text, cls});  // 多标签实时同步
           };
           const archiveRejected = (reason, rejectedText) => {
             const box = ensureProcessBox();
@@ -759,6 +882,7 @@
                 cmdText = '';
                 displayText = '';
                 contentSpan.textContent = '';
+                broadcast({t: 'reset', reason});  // 多标签同步：清空废轮次文本
                 continue;
               }
               // 命令行与展示文本分流：命令行不渲染（含模型幻觉输出的变形命令如 SNOW_EFFECT:）
@@ -769,6 +893,7 @@
                 contentSpan.textContent = displayText;
                 tickMouth();
                 scrollToBottom(msgs);
+                broadcast({t: 'token', text});  // 多标签实时同步
               }
             }
           }
@@ -783,13 +908,18 @@
           contentSpan.classList.remove('msg-streaming'); // 渲染完成后恢复 normal，与博客一致
           // 完整文本（命令行前置，导航/特效解析与历史保存沿用原格式）
           const fullText = cmdText + displayText;
+          // 多标签同步：在保存（触发 storage 重绘）之前广播，其他页先实时渲染
+          // 最终版，随后的 storage 全量重绘会覆盖同一气泡，不会重复
+          broadcast({t: 'done', fullText, process: steps.map(s => ({cls: s.cls, text: s.text}))});
           // 最终展示：剔除命令行与 SUMMARY 摘要行后渲染 markdown
           applyMsg(contentSpan, cleanAgentText(fullText));
           // 完整文本保存到 localStorage（含命令行，与后端历史一致）
           try {
             const key = 'chat_history_' + (localStorage.getItem('tokenKey') || 'guest');
             let saved = JSON.parse(localStorage.getItem(key) || '[]');
-            saved.push({text: fullText, type: 'agent', time: Date.now()});
+            // process：该轮执行过程行（跨整页转跳保留，syncHistory 恢复时重建）
+            saved.push({text: fullText, type: 'agent', time: Date.now(),
+                        process: steps.map(s => ({cls: s.cls, text: s.text}))});
             if (saved.length > 50) saved = saved.slice(-50);
             localStorage.setItem(key, JSON.stringify(saved));
           } catch(e) {/* ignore */}
@@ -877,6 +1007,7 @@
                   contentSpan.insertAdjacentHTML('beforeend', '<div class="nav-skip-note">（系统：该地址不是博客页面，已取消自动跳转）</div>');
                 } else {
                   sessionStorage.setItem('chat_open', '1');  // 跳转后默认打开对话框并滚动到底部
+                  sessionStorage.setItem('chat_nav_slide', '1');  // 站内转跳：跳过滑入动画（forceSlideInFromBottom）
                   window.location.href = navUrl;
                 }
               } else {
@@ -927,9 +1058,12 @@
               discardTurn = true;
             } else {
               addMsg('长时间未收到回复，请稍后重试', 'error');
+              broadcast({t: 'error', msg: '长时间未收到回复，请稍后重试'});
             }
           } else {
-            addMsg('网络错误: ' + e.message, 'error');
+            const errMsg = '网络错误: ' + (e && e.message ? e.message : '未知错误');
+            addMsg(errMsg, 'error');
+            broadcast({t: 'error', msg: errMsg});
           }
         }
         isSending = false;
@@ -1323,6 +1457,7 @@
         if (pendingNavUrl) {
           navConfirm.classList.remove('active');
           sessionStorage.setItem('chat_open', '1');  // 跳转后默认打开对话框并滚动到底部
+          sessionStorage.setItem('chat_nav_slide', '1');  // 站内转跳：跳过滑入动画（forceSlideInFromBottom）
           window.location.href = pendingNavUrl;
           pendingNavUrl = '';
         }
@@ -1347,7 +1482,9 @@
       if (!tips) { setTimeout(observeTips, 500); return; }
       const observer = new MutationObserver(() => {
         const text = tips.textContent || '';
-        if (text.includes('欢迎阅读')) {
+        // 欢迎语只在文章页（/article/*）显示：首页/列表页的"欢迎阅读「标题」"
+        // 语义错位（没有正在阅读的文章），且每次转跳触发都追加会刷屏
+        if (text.includes('欢迎阅读') && /^\/article\//.test(location.pathname)) {
           const chatPanel = document.getElementById('waifu-chat');
           const messages = document.getElementById('chat-messages');
           if (chatPanel && messages && chatPanel.classList.contains('active')) {
