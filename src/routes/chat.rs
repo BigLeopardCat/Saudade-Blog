@@ -40,7 +40,6 @@ use async_stream::stream;
 struct ChatCtx {
     uid: i32,
     total_count: i64,
-    needs_summary: bool,
     body: serde_json::Value,
 }
 
@@ -144,105 +143,21 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, Js
     if std::env::var("CHAT_DEBUG_BODY").is_ok() {
         eprintln!("[chat-debug] body={}", body);
     }
-    Ok(ChatCtx { uid, total_count, needs_summary, body })
+    Ok(ChatCtx { uid, total_count, body })
 }
 
-/// 判断一段文本是否为模型未带 SUMMARY: 前缀输出的裸摘要（格式漂移兜底）。
-/// 特征：以"访客/用户/助手"第三人称开头 + 含会话时序词（之前/随后/最后/接着/首先/然后/
-/// 后来/先后/起初/初期/最终/期间）+ 无互动语气词（剔除引号内内容后检测——摘要常引用
-/// 用户原话含标点）。长度 40-300（下限滤掉短句正常回复，避免误删）。
-fn looks_like_summary_paragraph(text: &str) -> bool {
-    let t = text.trim();
-    let len = t.chars().count();
-    if len < 40 || len > 300 {
-        return false;
-    }
-    if !(t.starts_with("访客") || t.starts_with("用户") || t.starts_with("助手")) {
-        return false;
-    }
-    if !["之前", "随后", "最后", "接着", "首先", "然后", "后来", "先后", "起初", "初期", "最终", "期间"]
-        .iter()
-        .any(|w| t.contains(w))
-    {
-        return false;
-    }
-    // 剔除引号包裹的内容后检测互动词（摘要常引用用户原话含标点；"喵"单独不算）
-    let mut t2 = String::new();
-    let mut in_quote = false;
-    for c in t.chars() {
-        if c == '"' || c == '\'' || c == '“' || c == '”' || c == '‘' || c == '’'
-            || c == '『' || c == '』' || c == '「' || c == '」'
-        {
-            in_quote = !in_quote;
-            continue;
-        }
-        if !in_quote {
-            t2.push(c);
-        }
-    }
-    if t2.chars().any(|c| "呜~～!！?？🐱😿🐾😂😭".contains(c)) {
-        return false;
-    }
-    true
-}
-
-/// 从回复中剥离摘要（SUMMARY: 前缀优先；无前缀时对 needs_summary 轮做裸摘要特征兜底）。
-/// 返回 (剥离后的回复, 新摘要或 None)。
-fn strip_summary_from_reply(
-    raw_reply: &str,
-    needs_summary: bool,
-    new_summary_override: Option<&str>,
-) -> (String, Option<String>) {
-    let mut new_summary = new_summary_override.map(|s| s.to_string());
-    let mut lines: Vec<&str> = Vec::new();
-    let mut found_prefix = false;
-    for line in raw_reply.lines() {
-        if let Some(rest) = line.trim_start().strip_prefix("SUMMARY:") {
-            found_prefix = true;
-            if new_summary.is_none() {
-                let s = rest.trim();
-                if !s.is_empty() {
-                    new_summary = Some(s.to_string());
-                }
-            }
-            continue;
-        }
-        lines.push(line);
-    }
-    // 无前缀裸摘要兜底：模型格式漂移不带 SUMMARY: 前缀时，摘要会原样显示给访客且无法入库
-    if !found_prefix && new_summary.is_none() && needs_summary {
-        let paragraphs: Vec<&str> = raw_reply
-            .split("\n\n")
-            .map(|p| p.trim())
-            .filter(|p| !p.is_empty())
-            .collect();
-        if let Some(last) = paragraphs.last() {
-            if looks_like_summary_paragraph(last) {
-                new_summary = Some(last.to_string());
-                if let Some(idx) = raw_reply.rfind(last) {
-                    return (raw_reply[..idx].trim().to_string(), new_summary);
-                }
-            }
-        }
-    }
-    (lines.join("\n"), new_summary)
-}
 
 /// 对话结束后保存 assistant 消息 + 摘要（/chat 与 /chat/stream 共用）。
-/// - 非流式路径：agent 已剥离 SUMMARY 并单独返回 new_summary，直接使用；
-/// - 流式路径：原始流里仍带 SUMMARY 行，此处剥离。
-/// 摘要指令行不写入历史。
+/// 摘要由 agent 侧独立生成（needs_summary 轮的后端总结调用，与回复解耦），
+/// 经 new_summary（非流式响应字段 / 流式 __SUMMARY__ 帧）传入；
+/// None 表示本轮无摘要，不写入 chat_summary（旧摘要保留）。
 async fn save_assistant_reply(
     db: &sea_orm::DatabaseConnection,
     uid: i32,
-    raw_reply: String,
-    new_summary_override: Option<String>,
+    reply: String,
+    new_summary: Option<String>,
     total_count: i64,
-    needs_summary: bool,
 ) {
-    let (reply, new_summary) =
-        strip_summary_from_reply(&raw_reply, needs_summary, new_summary_override.as_deref());
-
     let _ = chat_history::ActiveModel {
         user_id: Set(uid),
         role: Set("assistant".into()),
@@ -314,10 +229,10 @@ pub async fn chat_handler(
             if r.status().is_success() {
                 let data: serde_json::Value = r.json().await.unwrap_or_default();
                 let reply = data["reply"].as_str().unwrap_or("").to_string();
-                // 非流式：agent 已剥离 SUMMARY 并单独返回 new_summary
+                // 非流式：agent 独立生成摘要并返回 new_summary（needs_summary 轮才有值）
                 let agent_summary = data["new_summary"].as_str().map(|s| s.to_string());
                 if ctx.uid > 0 {
-                    save_assistant_reply(&state.db, ctx.uid, reply.clone(), agent_summary, ctx.total_count, ctx.needs_summary).await;
+                    save_assistant_reply(&state.db, ctx.uid, reply.clone(), agent_summary, ctx.total_count).await;
                 }
                 Json(ChatResponse { reply, success: true, error: None })
             } else {
@@ -404,13 +319,14 @@ pub async fn chat_stream_handler(
     let state = state.clone();
     let uid = ctx.uid;
     let total_count = ctx.total_count;
-    let needs_summary = ctx.needs_summary;
 
     let body_stream = stream! {
         let mut upstream_stream = upstream.bytes_stream();
         let mut frame_buf: Vec<u8> = Vec::new();
         let mut reply = String::new();
         let mut terminal = false;
+        // 独立摘要（agent 侧 needs_summary 轮后端总结的返回值，随 __SUMMARY__ 帧到达）
+        let mut summary_override: Option<String> = None;
 
         // 客户端中断清理（见 DiscardAbortedExchange）：流被取消时删除本轮已入库的用户消息；
         // 正常走完 while 循环后置位 done，关闭清理
@@ -441,6 +357,14 @@ pub async fn chat_stream_handler(
                     terminal = true;
                     yield Ok(Bytes::from(format!("data: {}\n\n", payload)));
                     break;
+                }
+                // 独立摘要结果帧：不终止流、不进回复（agent 在 __END__ 之前发出），
+                // 内容记入内存供流结束后写入 chat_summary
+                if let Some(s) = payload.strip_prefix("__SUMMARY__:") {
+                    if let Ok(s) = serde_json::from_str::<String>(s) {
+                        summary_override = Some(s);
+                    }
+                    continue;
                 }
                 // 文本块：JSON 编码，解码后累积（用于历史保存），原样转发
                 if let Ok(text) = serde_json::from_str::<String>(&payload) {
@@ -475,10 +399,9 @@ pub async fn chat_stream_handler(
             ));
         }
 
-        // 流结束：保存历史 + 摘要（流式路径 agent 未剥离 SUMMARY，此处解析；
-        // needs_summary 为真时还会对无前缀裸摘要做特征兜底，防止模型格式漂移导致摘要泄露给访客）
+        // 流结束：保存历史 + 独立摘要（来自 __SUMMARY__ 帧，无则不入库）
         if !reply.is_empty() && uid > 0 {
-            save_assistant_reply(&state.db, uid, reply, None, total_count, needs_summary).await;
+            save_assistant_reply(&state.db, uid, reply, summary_override, total_count).await;
         }
     };
 
@@ -492,83 +415,4 @@ pub async fn chat_stream_handler(
         ],
         Body::from_stream(body_stream),
     ).into_response()
-}
-
-#[cfg(test)]
-mod summary_tests {
-    use super::*;
-
-    #[test]
-    fn strips_summary_prefix_line() {
-        let (reply, summary) =
-            strip_summary_from_reply("好的喵~\nSUMMARY: 访客咨询了博客功能", true, None);
-        assert_eq!(reply, "好的喵~");
-        assert_eq!(summary.as_deref(), Some("访客咨询了博客功能"));
-    }
-
-    #[test]
-    fn strips_bare_summary_paragraph_when_needs_summary() {
-        // 模型格式漂移：无 SUMMARY: 前缀的裸摘要，需剥离且入库为摘要
-        let raw = "好的喵~\n\n访客之前多次要求开启夜间模式，随后确认了状态，最后表示满意，期间还咨询了物联网控制台的使用方法。";
-        let (reply, summary) = strip_summary_from_reply(raw, true, None);
-        assert_eq!(reply, "好的喵~");
-        assert!(summary.is_some());
-        assert!(summary.unwrap().starts_with("访客之前多次"));
-    }
-
-    #[test]
-    fn strips_bare_summary_with_quoted_punctuation() {
-        // 摘要引用用户原话（含感叹号/引号）时也应识别——互动词检测需剔除引号内内容
-        let raw = "好的喵~\n\n访客多次要求显示特定文字（如“金晶是大笨狗！”、“泠月喵最可爱”），助手在初期失误后严格遵循系统指令，最终成功将最新内容下发至设备并确认执行状态。";
-        let (reply, summary) = strip_summary_from_reply(raw, true, None);
-        assert_eq!(reply, "好的喵~");
-        assert!(summary.is_some());
-        assert!(summary.unwrap().starts_with("访客多次要求"));
-    }
-
-    #[test]
-    fn keeps_short_paragraph_with_quote_markers() {
-        // 短句（<40 字符）即使形似总结也不剥离，避免误删正常回复
-        let raw = "好的喵~\n\n访客大人，后来我又想了想，确实如此。";
-        let (reply, summary) = strip_summary_from_reply(raw, true, None);
-        assert_eq!(reply, raw);
-        assert!(summary.is_none());
-    }
-
-    #[test]
-    fn keeps_bare_summary_when_not_needs_summary() {
-        // 非摘要轮：正常回复段落即使形似总结也不剥离
-        let raw = "好的喵~\n\n访客之前问过这个问题，最后我们再确认一下就好啦。";
-        let (reply, summary) = strip_summary_from_reply(raw, false, None);
-        assert_eq!(reply, raw);
-        assert!(summary.is_none());
-    }
-
-    #[test]
-    fn keeps_interactive_reply_ending() {
-        // 带互动语气词的正常回复不误删
-        let raw = "好的喵~\n\n访客大人之前说的都对，最后我们看效果吧！";
-        let (reply, summary) = strip_summary_from_reply(raw, true, None);
-        assert_eq!(reply, raw);
-        assert!(summary.is_none());
-    }
-
-    #[test]
-    fn respects_new_summary_override() {
-        // 非流式路径：agent 已返回 new_summary，直接使用，不再从回复里提取
-        let raw = "好的喵~\n\n访客之前多次要求开启特效。";
-        let (reply, summary) =
-            strip_summary_from_reply(raw, true, Some("agent返回的摘要"));
-        assert_eq!(reply, raw);
-        assert_eq!(summary.as_deref(), Some("agent返回的摘要"));
-    }
-
-    #[test]
-    fn looks_like_summary_paragraph_detection() {
-        assert!(looks_like_summary_paragraph("访客之前多次要求开启夜间模式，随后确认了状态，最后表示满意，期间还咨询了物联网控制台的使用方法。"));
-        assert!(!looks_like_summary_paragraph("访客大人之前的问题我来解答一下喵~"));
-        assert!(!looks_like_summary_paragraph("好的，之前说的都办好了！"));
-        assert!(!looks_like_summary_paragraph("访客大人，后来我又想了想，确实如此。")); // 短句不误删
-        assert!(looks_like_summary_paragraph("访客多次要求显示特定文字（如“金晶是大笨狗！”），助手在初期失误后严格遵循系统指令，最终成功将最新内容下发至设备并确认执行状态。")); // 引号内标点不误杀
-    }
 }
