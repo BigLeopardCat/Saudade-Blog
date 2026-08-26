@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use crate::routes::AppState;
 use crate::auth_jwt;
+use tracing::info;
 
 #[derive(Deserialize)]
 pub struct ChatRequest {
@@ -40,11 +41,26 @@ use async_stream::stream;
 struct ChatCtx {
     uid: i32,
     total_count: i64,
+    trace_id: String,
     body: serde_json::Value,
+}
+
+/// 链路追踪：X-Request-ID 全链路透传（浏览器 → nginx → Rust → agent → LLM 日志）。
+/// 上游给了就用，没给生成一个（r 前缀区分 Rust 生成，agent 端无上游 id 时会再生成）。
+fn trace_id_of(req: &Request) -> String {
+    req.headers()
+        .get("x-request-id")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| format!("r{}", uuid::Uuid::new_v4().simple()))
 }
 
 /// 鉴权 + 请求体解析 + 保存用户消息 + 加载历史/摘要 + 组装 agent 请求体
 async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, Json<ChatResponse>> {
+    // 先取链路追踪 id（headers 在 into_body 前可读）
+    let trace_id = trace_id_of(&req);
     // 从 Authorization header 提取 token
     let user_id = req.headers()
         .get(header::AUTHORIZATION)
@@ -143,7 +159,7 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, Js
     if std::env::var("CHAT_DEBUG_BODY").is_ok() {
         eprintln!("[chat-debug] body={}", body);
     }
-    Ok(ChatCtx { uid, total_count, body })
+    Ok(ChatCtx { uid, total_count, trace_id, body })
 }
 
 
@@ -202,6 +218,7 @@ pub async fn chat_handler(
     };
 
     let agent_url = agent_chat_url();
+    info!(trace_id = %ctx.trace_id, user_id = ctx.uid, total_count = ctx.total_count, "chat: 转发 agent 非流式");
     // 传输层偶发失败（agent worker 重启、瞬时断连等）自动重试最多 3 次，
     // 避免对话偶发 "connection closed before message completed" 报错。
     // 超时不重试：长回答（公式推导等）单次生成可长达 180s，超时重试只会从头再生成一遍
@@ -209,6 +226,7 @@ pub async fn chat_handler(
     let mut last_err = String::new();
     for attempt in 0..3 {
         match reqwest::Client::new().post(&agent_url)
+            .header("X-Request-ID", &ctx.trace_id)
             .json(&ctx.body)
             .timeout(std::time::Duration::from_secs(180))
             .send()
@@ -301,9 +319,11 @@ pub async fn chat_stream_handler(
     };
 
     let stream_url = agent_chat_url().strip_suffix("/chat").unwrap_or("").to_string() + "/chat/stream";
+    info!(trace_id = %ctx.trace_id, user_id = ctx.uid, total_count = ctx.total_count, "chat: 转发 agent 流式");
     // 流式连接不设整体超时（长回答可达数分钟），connect/首字节由 reqwest 默认处理
     let upstream = match reqwest::Client::new()
         .post(&stream_url)
+        .header("X-Request-ID", &ctx.trace_id)
         .json(&ctx.body)
         .send()
         .await {
@@ -412,6 +432,8 @@ pub async fn chat_stream_handler(
             (header::CONNECTION, "keep-alive"),
             // 关键：告知 nginx 不要缓冲此响应，否则 SSE 会被攒到结束才一次性下发
             (header::HeaderName::from_static("x-accel-buffering"), "no"),
+            // 链路追踪：透传 trace id 给前端（前端可在网络面板按此 id 关联全链路日志）
+            (header::HeaderName::from_static("x-request-id"), &ctx.trace_id),
         ],
         Body::from_stream(body_stream),
     ).into_response()
