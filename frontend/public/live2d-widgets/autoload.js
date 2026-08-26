@@ -65,7 +65,7 @@
   });
   
   await Promise.all([
-    loadExternalResource(live2d_path + 'waifu.css?v=20260824c', 'css'),
+    loadExternalResource(live2d_path + 'waifu.css?v=20260826a', 'css'),
     loadExternalResource(live2d_path + 'waifu-tips.js', 'js'),
   ]);
 
@@ -564,6 +564,10 @@
         sendBtn.innerHTML = '<span class="chat-stop-icon"></span>';
         sendBtn.classList.add('stop-mode');
         input.disabled = true;
+        // 打字指示器（静默反馈）：流进行中 >1.2s 无帧（LLM 首 token/工具执行间隙）
+        // → 气泡内三点跳动；收到任意帧 → 隐藏并重新计时。声明在 try 外，
+        // catch/正常收尾都能安全清理（try 内 const 是块级作用域，catch 访问不到）
+        let typingEl = null, typingTimer = null;
 
         try {
           // SSE 流式对话：agent 首 token 即上屏，不再等待完整回复
@@ -614,6 +618,21 @@
           div.appendChild(contentSpan);
           msgs.appendChild(div);
           scrollToBottom(msgs);
+
+          // 打字指示器：插在气泡内 label 与正文之间，静默时三点跳动
+          typingEl = document.createElement('span');
+          typingEl.className = 'chat-typing';
+          typingEl.innerHTML = '<i></i><i></i><i></i>';
+          div.insertBefore(typingEl, contentSpan);
+          const kickTyping = () => {
+            if (typingTimer) clearTimeout(typingTimer);
+            typingEl.classList.remove('typing-visible');
+            typingTimer = setTimeout(() => {
+              typingEl.classList.add('typing-visible');
+              scrollToBottom(msgs);
+            }, 1200);
+          };
+          kickTyping();
 
           // ── 执行过程行（类 Claude Code 灰色可折叠轨迹）──
           // __PROCESS__:<text> 步骤帧 → 追加灰色步骤行；质检打回 __RESET__:<reason>
@@ -710,6 +729,8 @@
               let payload = frame;
               if (payload.startsWith('data: ')) payload = payload.slice(6);
               if (!payload) continue;
+              // 有帧即"在工作"：隐藏打字指示器并重新计时（任何帧类型都算）
+              kickTyping();
               if (payload.startsWith('__ERROR__:')) {
                 let detail = payload.slice(10);
                 try { detail = JSON.parse(detail); } catch(e) {}
@@ -753,7 +774,10 @@
           }
           clearTimeout(idleTimer);
           clearTimeout(totalTimer);
-          // 流结束：口型归位，关闭 override 让模型恢复默认驱动
+          // 流结束：移除打字指示器（正常收尾路径）
+          if (typingTimer) clearTimeout(typingTimer);
+          if (typingEl) typingEl.remove();
+          // 口型归位，关闭 override 让模型恢复默认驱动
           if (window.__setMouthOpen) window.__setMouthOpen(0);
           window.__mouthOverride = -1;
           contentSpan.classList.remove('msg-streaming'); // 渲染完成后恢复 normal，与博客一致
@@ -891,6 +915,9 @@
               applyDarkMode(darkMatch[1] === 'on', true);
             }
         } catch(e) {
+          // 异常路径兜底：移除打字指示器（AbortError/网络错误/__ERROR__ 帧）
+          if (typingTimer) clearTimeout(typingTimer);
+          if (typingEl) typingEl.remove();
           clearTimeout(idleTimer);
           clearTimeout(totalTimer);
           if (e && e.name === 'AbortError') {
