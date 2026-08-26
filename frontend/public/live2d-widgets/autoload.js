@@ -65,7 +65,7 @@
   });
   
   await Promise.all([
-    loadExternalResource(live2d_path + 'waifu.css?v=20260826b', 'css'),
+    loadExternalResource(live2d_path + 'waifu.css?v=20260827a', 'css'),
     loadExternalResource(live2d_path + 'waifu-tips.js', 'js'),
   ]);
 
@@ -469,6 +469,10 @@
       // 实时渲染的 agent 气泡，后续 token 帧会重建，天然自洽。
       const chatChannel = 'BroadcastChannel' in window ? new BroadcastChannel('saudade-chat') : null;
       const broadcast = (m) => { if (chatChannel) chatChannel.postMessage(m); };
+      // 版本自检：确认浏览器加载的是当前部署脚本（nginx 对 live2d-widgets 缓存 1 年，
+      // 未强刷时可能仍在跑旧版——多标签同步等功能只在 20260826b 之后才有）
+      console.log('[agent-chat] autoload 20260827a, BroadcastChannel=' + !!chatChannel
+                  + ', storage=' + ('localStorage' in window));
       window.addEventListener('storage', (e) => {
         if (e.key && e.key.indexOf('chat_history_') === 0 && !isSending) {
           syncHistory(); // 其他标签页保存历史 → 全量重绘（含新用户消息/完成回复）
