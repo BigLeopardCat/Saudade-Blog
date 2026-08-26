@@ -11,6 +11,46 @@
   // 恢复默认展示；SPA 内路由切换本文件不重跑（上方 skip），不受影响。
   try { localStorage.removeItem('waifu-display'); } catch(e) {}
 
+  // ═ ChatCore：聊天核心纯函数（无 DOM/闭包依赖，Node harness 可提取验证）══
+  // 消息 id 三来源：'d'+DB主键（DB 拉取，跨窗天然一致）/ 'l'+随机（乐观 user/远端轮）。
+  // mergeItems 规则：同 id 严格替换；id 不同但 type|text 内容碰撞 → 原位收养
+  // （条目换成 incoming 的 id/time，position 不动——根治旧 type|time 去重误判）；
+  // 都不匹配 → 按 time 排序插入。
+  const __chatCore = (() => {
+    const genId = () => 'l' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 7);
+    // 旧 localStorage 条目无 id（20260828 前格式）→ 迁移补 id
+    const migrateItem = (it) => ({
+      id: (it && it.id) || genId(),
+      type: (it && it.type) || 'agent',
+      text: (it && it.text) || '',
+      time: (it && it.time) || 0,
+      process: (it && Array.isArray(it.process) && it.process.length) ? it.process : undefined,
+    });
+    const mergeItems = (local, incoming) => {
+      const out = local.slice();
+      const byId = new Set(out.map(i => i.id));
+      const consumed = new Set();
+      for (const inc of incoming) {
+        if (byId.has(inc.id)) {
+          out[out.findIndex(i => i.id === inc.id)] = inc;   // 同 id 严格替换
+          continue;
+        }
+        let adopted = false;
+        for (let j = 0; j < out.length; j++) {
+          if (consumed.has(j)) continue;
+          if (out[j].type === inc.type && out[j].text === inc.text) {
+            out[j] = inc; consumed.add(j); adopted = true; break;  // 内容收养（不重复）
+          }
+        }
+        if (!adopted) out.push(inc);
+      }
+      out.sort((a, b) => (a.time || 0) - (b.time || 0));
+      return out;
+    };
+    const capItems = (arr, max) => (arr.length > max ? arr.slice(-max) : arr);
+    return { genId, migrateItem, mergeItems, capItems };
+  })();
+
   const live2d_path = '/live2d-widgets/';
   const modelPath = '/live2d_model/agent_2.model3.json';
 
@@ -65,7 +105,7 @@
   });
   
   await Promise.all([
-    loadExternalResource(live2d_path + 'waifu.css?v=20260827i', 'css'),
+    loadExternalResource(live2d_path + 'waifu.css?v=20260828a', 'css'),
     loadExternalResource(live2d_path + 'waifu-tips.js', 'js'),
   ]);
 
@@ -478,81 +518,146 @@
       let streamCtrl = null;
       let stoppedByUser = false;
       let discardTurn = false;
+      // ── 20260828a 重构：内存为唯一渲染数据源，DB/localStorage 只是历史源 ──
+      // items：已收尾条目（{id,type,text,time,process?}），id = 'd'+DB主键 / 'l'+随机；
+      // live：roundId → 在途气泡句柄（含远端轮）；pendingPull：流式中收到外部变更
+      // 信号，流结束后补拉一次（流式中永不 reconcile）；source：'db'（DB 权威）/
+      // 'local'（游客/离线，localStorage 权威）。
+      let items = [];
+      let live = {};
+      let pendingPull = false;
+      let source = 'local';
+      // 本轮锚点（sendMessage 赋值；3s 保险/停止生成在函数外也能精确清理）
+      let activeRound = { roundId: '', userItemId: '' };
 
-      // ── 多标签页同步（社交软件式：所有窗口同屏同一会话）──
-      // 对话中的标签页把流式帧（token/过程行/重置/结束/错误）经 BroadcastChannel
-      // 广播给其他标签页实时渲染；用户消息与最终历史走 localStorage——保存后由
-      // storage 事件（其他标签页触发）全量重绘兜底（广播丢失/页面刚打开场景）。
-      // 两个信号源避免重复：用户消息不广播（storage 重绘自带），重绘会清掉
-      // 实时渲染的 agent 气泡，后续 token 帧会重建，天然自洽。
+      // ── 多标签页同步（聊天软件式：所有窗口同屏同一会话）──
+      // 生产端（正在对话的标签页）把每一帧经 BroadcastChannel 广播；接收端按
+      // roundId 定位 live 气泡句柄挂帧——本窗轮次与远端轮次 roundId 不同，
+      // 双窗并发对话互不干扰（旧版 isSending 整体忽略会互相打断）。
+      // done/error 帧带完整条目供远端 mergeItems 转正进内存（远端轮不写
+      // localStorage，避免写者风暴；缓存非权威，下次 pull 必然收敛）。无
+      // BroadcastChannel 的老浏览器自动降级 storage 事件 + 本地历史。
       const chatChannel = 'BroadcastChannel' in window ? new BroadcastChannel('saudade-chat') : null;
       const broadcast = (m) => { if (chatChannel) chatChannel.postMessage(m); };
+      let remotectlTimer = null; // storage 事件防抖句柄
       // 版本自检：确认浏览器加载的是当前部署脚本（nginx 对 live2d-widgets 缓存 1 年，
-      // 未强刷时可能仍在跑旧版——多标签同步等功能只在 20260826b 之后才有）
-      console.log('[agent-chat] autoload 20260827i, BroadcastChannel=' + !!chatChannel
+      // 未强刷时可能仍在跑旧版——DB 权威历史/roundId 同步只在 20260828a 之后才有）
+      console.log('[agent-chat] autoload 20260828a, BroadcastChannel=' + !!chatChannel
                   + ', storage=' + ('localStorage' in window));
+      // 按 roundId 取/建 live 气泡（远端帧专用；本窗流由 makeLiveBubble 预建）
+      const remoteLive = (roundId) => {
+        let h = live[roundId];
+        if (h) return h;
+        const div = document.createElement('div');
+        div.className = 'chat-msg agent';
+        const label = document.createElement('span');
+        label.className = 'msg-label';
+        label.textContent = '泠月喵: ';
+        const content = document.createElement('span');
+        content.className = 'msg-text';
+        div.appendChild(label);
+        div.appendChild(content);
+        messages.appendChild(div);
+        h = { el: div, contentSpan: content, processBox: null, finished: false };
+        live[roundId] = h;
+        return h;
+      };
       window.addEventListener('storage', (e) => {
-        if (e.key && e.key.indexOf('chat_history_') === 0 && !isSending) {
-          syncHistory(); // 其他标签页保存历史 → 全量重绘（含新用户消息/完成回复）
+        // 其他标签页写本地历史 → 防抖 400ms 重放（DB 幂等收敛；游客走本地重放）。
+        // 流式中只置 pendingPull，不打断当前渲染，流结束补拉。
+        if (e.key && e.key.indexOf('chat_history_') === 0) {
+          if (isSending || streamCtrl) { pendingPull = true; return; }
+          clearTimeout(remotectlTimer);
+          remotectlTimer = setTimeout(() => {
+            if (!isSending && !streamCtrl) pullHistory();
+          }, 400);
         }
       });
       if (chatChannel) {
         chatChannel.onmessage = (ev) => {
-          if (isSending) return; // 本页正在对话：自己是生产者，不重复应用
           const m = ev.data || {};
           try {
-            let lastMsg = messages.lastElementChild;
-            const isLiveAgent = lastMsg && lastMsg.classList.contains('agent') && !lastMsg.dataset.finished;
-            if (!isLiveAgent) {
-              lastMsg = document.createElement('div');
-              lastMsg.className = 'chat-msg agent';
-              const label2 = document.createElement('span');
-              label2.className = 'msg-label';
-              label2.textContent = '泠月喵: ';
-              const content2 = document.createElement('span');
-              content2.className = 'msg-text';
-              lastMsg.appendChild(label2);
-              lastMsg.appendChild(content2);
-              messages.appendChild(lastMsg);
+            if (m.t === 'user') {
+              // 远端用户消息：mergeItems 去重（同 id 严格替换/内容收养）+ 增量渲染。
+              // 不写 localStorage（避免写者风暴），DB 拉取/收尾保存自然收敛。
+              const item = __chatCore.migrateItem({ id: m.id, type: 'user', text: m.text, time: m.time });
+              items = __chatCore.mergeItems(items, [item]);
+              appendMsg(item);
+              return;
             }
-            const contentSpan = lastMsg.querySelector('.msg-text');
+            if (!m.roundId) return;
+            const h = remoteLive(m.roundId);
             if (m.t === 'token') {
-              contentSpan.textContent = (contentSpan.textContent || '') + m.text;
+              if (h.finished) return; // done/error 已到，丢弃乱序迟到帧
+              h.contentSpan.textContent = (h.contentSpan.textContent || '') + m.text;
               scrollToBottom(messages);
             } else if (m.t === 'process') {
-              if (!lastMsg._remoteProcess) {
-                lastMsg._remoteProcess = makeProcessBox(!getCollapsePref());
-                lastMsg.insertBefore(lastMsg._remoteProcess, contentSpan);
+              if (h.finished) return;
+              if (!h.processBox) {
+                h.processBox = makeProcessBox(!getCollapsePref());
+                h.el.insertBefore(h.processBox, h.contentSpan);
               }
               const line = document.createElement('div');
               line.className = 'agent-process-line ' + (m.cls || 'step');
               line.textContent = m.text;
-              lastMsg._remoteProcess.querySelector('.agent-process-body').appendChild(line);
-              const cnt = lastMsg._remoteProcess.querySelector('.agent-process-count');
-              if (cnt) cnt.textContent = '(' + lastMsg._remoteProcess.querySelectorAll('.agent-process-line').length + ')';
+              h.processBox.querySelector('.agent-process-body').appendChild(line);
+              const cnt = h.processBox.querySelector('.agent-process-count');
+              if (cnt) cnt.textContent = '(' + h.processBox.querySelectorAll('.agent-process-line').length + ')';
             } else if (m.t === 'reset') {
-              contentSpan.textContent = '';
+              if (h.finished) return;
+              h.contentSpan.textContent = '';
             } else if (m.t === 'done') {
-              if (!lastMsg.dataset.finished) {
-                // 正常顺序：live 气泡 → 最终 markdown 渲染 + 过程框补全
-                lastMsg.dataset.finished = '1';
-                applyMsg(contentSpan, cleanAgentText(m.fullText));
-                if (Array.isArray(m.process) && m.process.length && !lastMsg._remoteProcess) {
-                  lastMsg._remoteProcess = makeProcessBox(!getCollapsePref());
-                  const body = lastMsg._remoteProcess.querySelector('.agent-process-body');
-                  m.process.forEach(p => {
-                    const line = document.createElement('div');
-                    line.className = 'agent-process-line ' + (p.cls || 'step');
-                    line.textContent = p.text;
-                    body.appendChild(line);
-                  });
-                  lastMsg.insertBefore(lastMsg._remoteProcess, contentSpan);
-                }
+              h.finished = true;
+              // 空回复：无内容可转正（生产端同样不保存），直接移除气泡
+              if (!m.fullText) {
+                delete live[m.roundId];
+                if (h.el.parentNode) h.el.parentNode.removeChild(h.el);
+                return;
               }
-              // 乱序兜底：storage 重绘（syncHistory 的 finished 气泡）已含最终文本与过程框，跳过
+              // 远端轮转正：mergeItems 进内存（同 id 严格替换，重复帧幂等）。
+              // 已收敛（pull 先收养、mid 已设）→ 条目已在 items（'d' id），跳过
+              // mergeItems 防止 'l' id 回写振荡（pull→'d'、done→'l' 来回换 id）
+              if (!h.el.dataset.mid) {
+                const item = __chatCore.migrateItem({ id: m.id, type: 'agent', text: m.fullText, time: m.time, process: m.process });
+                items = __chatCore.mergeItems(items, [item]);
+              }
+              // 最终渲染幂等（applyMsg 为 innerHTML 替换）：reconcile 先收养渲染时
+              // class 已移除且内容非空 → 跳过；纯 token 帧/空气泡 → 现场补渲染。
+              // 渲染责任单一化：谁先到谁渲染，后到者只设标记（防双气泡/双注记）
+              const cs = h.contentSpan;
+              if (cs.classList.contains('msg-streaming')
+                  || (!cs.textContent && !cs.querySelector('.nav-skip-note'))) {
+                cs.classList.remove('msg-streaming');
+                renderAgentContent(cs, m.fullText);
+              }
+              // 过程行补全（pull 收养先到时 processBox 未建，此处兜底）
+              if (Array.isArray(m.process) && m.process.length && !h.processBox) {
+                h.processBox = makeProcessBox(!getCollapsePref());
+                const body = h.processBox.querySelector('.agent-process-body');
+                m.process.forEach(p => {
+                  const line = document.createElement('div');
+                  line.className = 'agent-process-line ' + (p.cls || 'step');
+                  line.textContent = p.text;
+                  body.appendChild(line);
+                });
+                h.el.insertBefore(h.processBox, h.contentSpan);
+              }
+              h.el.dataset.mid = m.id;
+              h.el.dataset.finished = '1';
+              delete live[m.roundId];
+              scrollToBottom(messages);
             } else if (m.t === 'error') {
-              lastMsg.dataset.finished = '1';
-              applyMsg(contentSpan, m.msg);
+              h.finished = true;
+              h.el.dataset.finished = '1';
+              applyMsg(h.contentSpan, m.msg);
+              delete live[m.roundId];
+            } else if (m.t === 'discard') {
+              // 远端丢弃该轮：删句柄 + 删内存条目（用户消息 id 由 m.userItemId 指出）。
+              // DB 侧由 Rust DiscardAbortedExchange 删，双侧一致。
+              const victim = h.el;
+              delete live[m.roundId];
+              if (victim.parentNode) victim.parentNode.removeChild(victim);
+              items = items.filter(i => i.id !== m.userItemId);
             }
           } catch(e) {/* 广播渲染失败不影响本页 */}
         };
@@ -570,153 +675,170 @@
         const uid = getUserId();
         return uid ? '用户' + uid + '（你）: ' : '你: ';
       })();
-      // 渲染全部历史消息（像聊天软件一样保留完整记录）
-      const syncHistory = () => {
-        if (isSending) return; // 流式输出中不重绘，避免打断
+      // ── 历史存取：DB 权威（pullHistory），localStorage 仅离线/游客缓存 ──
+      const historyKey = () => 'chat_history_' + (localStorage.getItem('tokenKey') || 'guest');
+      const loadLocalHistory = () => {
+        // 20260828a 起备份键退役：转跳恢复改由 DB 权威，游客走本地缓存（清理残留）
+        try { sessionStorage.removeItem('chat_history_backup'); sessionStorage.removeItem('chat_history_backup_key'); } catch(e) {/* ignore */}
         try {
-          const key = 'chat_history_' + (localStorage.getItem('tokenKey') || 'guest');
-          let saved = JSON.parse(localStorage.getItem(key) || '[]');
-          // 转跳兜底：localStorage 恢复为空但有跳转前备份（sessionStorage 同标签页
-          // 整页跳转后保留，key 校验防串号）——恢复失败的最后一层保险，消费后即删
-          if (!saved.length) {
-            const bk = sessionStorage.getItem('chat_history_backup');
-            const bkKey = sessionStorage.getItem('chat_history_backup_key');
-            if (bk && bkKey === key) {
-              try {
-                saved = JSON.parse(bk);
-                console.warn('[agent-chat] localStorage 历史为空，已用转跳备份兜底恢复 ' + saved.length + ' 条');
-              } catch(e) {/* ignore */}
-              sessionStorage.removeItem('chat_history_backup');
-              sessionStorage.removeItem('chat_history_backup_key');
-            }
-          }
-          // 备份合并兜底（20260827g）：localStorage 非空但缺最新轮时旧逻辑不读备份
-          // （跳转前备份直接读 localStorage，本轮保存失败 → 备份同样缺失 → 新页面丢失
-          // 最新对话与用户消息——用户实测形态）。新备份由跳转端内存强制写入
-          // （lastUserMsg + fullText），此处把备份中缺失条目按 (type,time,text) 合并补缺
-          // 并写回 localStorage，消费即删（跨多次跳转不累积）
+          const arr = JSON.parse(localStorage.getItem(historyKey()) || '[]');
+          if (!Array.isArray(arr)) return [];
+          // 旧格式条目无 id → migrateItem 补 id（写回随下次 saveHistory 落地）
+          return __chatCore.capItems(__chatCore.mergeItems([], arr.map(it => __chatCore.migrateItem(it))), 50);
+        } catch(e) { return []; }
+      };
+      // 唯一历史写者：序列化 → cap → 值与现值相同则跳过（变更检测终结多窗
+      // 写→拉 ping-pong 与写者风暴；流式帧期间不被触发写）
+      const saveHistory = () => {
+        try {
+          const json = JSON.stringify(__chatCore.capItems(items, 50));
+          const key = historyKey();
+          if (localStorage.getItem(key) === json) return;
           try {
-            const bk2 = sessionStorage.getItem('chat_history_backup');
-            const bkKey2 = sessionStorage.getItem('chat_history_backup_key');
-            if (bk2 && bkKey2 === key) {
-              const bkArr = JSON.parse(bk2);
-              if (Array.isArray(bkArr) && bkArr.length) {
-                // 去重 key 只用 type|text（20260827i）：time 参与会误判——saveAgentMsg
-                // 与跳转备份的 time 差几毫秒 → 同一条 agent 回复被当作缺失重复合并，
-                // 新页面恢复时同轮回复显示两次
-                const have = new Set(saved.map(i => i.type + '|' + i.text));
-                const missing = bkArr.filter(i => !have.has(i.type + '|' + i.text));
-                if (missing.length) {
-                  saved = saved.concat(missing);
-                  saved.sort((a, b) => (a.time || 0) - (b.time || 0));
-                  if (saved.length > 50) saved = saved.slice(-50);
-                  try { localStorage.setItem(key, JSON.stringify(saved)); } catch(e2) {/* ignore */}
-                  console.warn('[agent-chat] 已从跳转备份合并 ' + missing.length + ' 条缺失对话');
-                }
-              }
-              sessionStorage.removeItem('chat_history_backup');
-              sessionStorage.removeItem('chat_history_backup_key');
-            }
-          } catch(e2) {/* ignore */}
-          // 容量健康检查：历史序列化超 4MB（逼近 localStorage 5MB 上限）时，后续
-          // 保存必然 QuotaExceeded 失败（曾现"转跳后新页面对话框停在旧消息、新内容
-          // 全丢"——旧数据保留、新写入失败）。一次性裁剪到最近 30 条并写回止损。
-          const raw = localStorage.getItem(key) || '';
-          console.log('[agent-chat] history restored: ' + saved.length + ' 条 / ' + (raw.length / 1048576).toFixed(2) + 'MB (key=' + key + ')');
-          if (raw.length > 4 * 1048576) {
-            try {
-              const trimmed = saved.slice(-30);
-              localStorage.setItem(key, JSON.stringify(trimmed));
-              saved = trimmed;
-              console.warn('[agent-chat] 历史超 4MB，已裁剪到最近 30 条止损（此前保存失败导致新对话丢失）');
-            } catch(e2) {
-              console.warn('[agent-chat] 历史裁剪写回失败: ' + e2);
+            localStorage.setItem(key, json);
+          } catch(e) {
+            // QuotaExceeded 止损：裁剪到最近 30 条重试（逼近 5MB 上限时旧数据
+            // 保留、新写入失败——曾现"转跳后新页面对话停在旧消息、新内容全丢"）
+            const trimmed = JSON.stringify(__chatCore.capItems(items, 30));
+            if (localStorage.getItem(key) !== trimmed) {
+              localStorage.setItem(key, trimmed);
+              console.warn('[agent-chat] 历史超限，已裁剪到最近 30 条止损');
             }
           }
-          messages.innerHTML = '';
-          saved.forEach(item => {
-            // 逐条隔离（20260827g）：单条渲染抛错（markdown 管线/过程行异常数据等）
-            // 不再中断整批渲染——否则最新轮恰好出错时后续条目全部不显示，
-            // 用户看到"最新对话和问题都没了"（旧实现 forEach 无防护，静默全丢）
-            try {
-            const div = document.createElement('div');
-            div.className = 'chat-msg ' + item.type;
-            const label = document.createElement('span');
-            label.className = 'msg-label';
-            label.textContent = item.type === 'user' ? userLabel : '泠月喵: ';
-            const content = document.createElement('span');
-            content.className = 'msg-text';
-            if (item.type === 'user') {
-              const bubble = document.createElement('span');
-              bubble.className = 'msg-bubble';
-              applyMsg(bubble, item.text);
-              content.appendChild(bubble);
-            } else {
-              // 命令型回复（纯 AUTO_NAVIGATE 等）恢复时兜底渲染灰色注记，不显示空气泡
-              renderAgentContent(content, item.text);
-              // 已完成标记：多标签 done 广播乱序时（storage 重绘先于广播到达），
-              // 不再对已完成的红绘气泡重复渲染
-              div.dataset.finished = '1';
-              // 恢复该轮执行过程行（跨整页转跳保留，见保存端 process 字段）
-              if (Array.isArray(item.process) && item.process.length) {
-                const box = makeProcessBox(!getCollapsePref());
-                const body = box.querySelector('.agent-process-body');
-                const cnt = box.querySelector('.agent-process-count');
-                item.process.forEach(p => {
-                  const line = document.createElement('div');
-                  line.className = 'agent-process-line ' + (p.cls || 'step');
-                  line.textContent = p.text;
-                  body.appendChild(line);
-                });
-                if (cnt) cnt.textContent = '(' + item.process.length + ')';
-                div.insertBefore(box, content);
-              }
-            }
-            div.appendChild(label);
-            div.appendChild(content);
-            messages.appendChild(div);
-            } catch(e) {
-              console.warn('[agent-chat] 历史条目渲染失败（已跳过该条，不影响其他对话）: ' + e);
-            }
-          });
-          scrollToBottom(messages);
         } catch(e) {/* ignore */}
       };
-      // 初始化时渲染历史
-      syncHistory();
-
-      // 导航跳转返回后：默认打开对话框并滚动到对话底部
-      try {
-        if (sessionStorage.getItem('chat_open')) {
-          sessionStorage.removeItem('chat_open');
-          chatPanel.classList.add('active');
-          syncHistory(); // 同步其他页面产生的新对话
-          setTimeout(() => scrollToBottom(messages), 60);
+      // DB 条目无 process（后端不存过程行）→ 按 (type,text) 从本地缓存富化
+      const lookupProcess = (text) => {
+        try {
+          const local = JSON.parse(localStorage.getItem(historyKey()) || '[]');
+          if (!Array.isArray(local)) return undefined;
+          const hit = local.find(i => i.type === 'agent' && i.text === text && Array.isArray(i.process) && i.process.length);
+          return hit ? hit.process : undefined;
+        } catch(e) { return undefined; }
+      };
+      const applyLocal = () => {
+        items = loadLocalHistory();
+        source = 'local';
+        reconcileDOM();
+      };
+      // DB 权威拉取：无 token/失败 → 本地兜底；成功 → mergeItems 收敛（内存乐观
+      // 'l' 条目被 DB 'd' 条目内容收养）+ 增量渲染 + 缓存同步（值变更检测防循环）
+      const pullHistory = () => {
+        if (isSending || streamCtrl) { pendingPull = true; return; } // 流式中永不重排
+        const tk = localStorage.getItem('tokenKey');
+        if (!tk) { applyLocal(); return; }
+        // 8s 超时兜底：历史接口挂起时降级本地缓存（不阻塞面板打开）
+        const pc = new AbortController();
+        const pt = setTimeout(() => pc.abort(), 8000);
+        fetch('/api/chat/history', {
+          headers: { 'Authorization': 'Bearer ' + tk },
+          credentials: 'same-origin',
+          signal: pc.signal,
+        }).then(r => (r.ok ? r.json() : null))
+          .then(data => {
+          if (!data || !Array.isArray(data.items)) { applyLocal(); return; }
+          const incoming = data.items.map(it => __chatCore.migrateItem({
+            id: 'd' + it.id,
+            type: it.role === 'user' ? 'user' : 'agent',
+            text: it.content,
+            time: it.time,
+            process: it.role === 'user' ? undefined : lookupProcess(it.content),
+          }));
+          items = __chatCore.mergeItems(items, incoming);
+          source = 'db';
+          reconcileDOM();
+          saveHistory(); // 缓存同步（值变更检测防写者风暴）
+        }).catch(() => { applyLocal(); })
+          .finally(() => { clearTimeout(pt); });
+      };
+      // 增量渲染：只追加缺失条目、不重绘已有（替代 messages.innerHTML='' 全量重建）。
+      // 索引 byMid（已收尾元素带 data-mid）；在途轮元素（无 mid）经内容收养原位转正。
+      const reconcileDOM = () => {
+        const byMid = new Map();
+        for (const child of messages.children) {
+          if (child.dataset && child.dataset.mid) byMid.set(child.dataset.mid, child);
         }
-      } catch(e) {/* ignore */}
-
-      const addMsg = (text, type) => {
+        let lastEl = null;
+        for (const item of items) {
+          const mid = item.id || '';
+          if (byMid.has(mid)) { lastEl = byMid.get(mid); continue; }
+          // 内容碰撞收养（'l'→'d' id 换发 / pull 先于 done 收敛在途轮）：
+          // 只收养未收敛元素（无 mid 或 'l' 前缀乐观 id）——已收敛的同内容元素
+          // 不能收养，否则两条相同文本（如两次"你好"）会挤占同一气泡
+          let adopted = null;
+          for (const child of messages.children) {
+            if (child.dataset && child.dataset.mtype === item.type
+                && child.dataset.mtext === item.text
+                && (!child.dataset.mid || child.dataset.mid.startsWith('l'))) {
+              adopted = child; break;
+            }
+          }
+          if (adopted) {
+            adopted.dataset.mid = mid;
+            adopted.dataset.finished = '1';
+            // 在途轮被 pull 先收敛：live 句柄置 finished（拦截乱序迟到帧），
+            // 保留句柄供 done 帧幂等收尾（delete 会造成 remoteLive 重建空气泡）
+            for (const k in live) if (live[k].el === adopted) { live[k].finished = true; break; }
+            // 流式纯文本/空气泡 → 补最终渲染（done 到达时条件不再满足，幂等跳过）
+            const cs = adopted.querySelector('.msg-text');
+            if (cs && (cs.classList.contains('msg-streaming')
+                || (!cs.textContent && !cs.querySelector('.nav-skip-note')))) {
+              cs.classList.remove('msg-streaming');
+              renderAgentContent(cs, item.text);
+            }
+            lastEl = adopted;
+            continue;
+          }
+          const el = appendMsg(item);
+          if (lastEl && lastEl.nextSibling) messages.insertBefore(el, lastEl.nextSibling);
+          else messages.appendChild(el);
+          lastEl = el;
+        }
+        scrollToBottom(messages);
+      };
+      // 消息气泡工厂：DOM 创建 + dataset（mid/mtype/mtext 供 reconcile 索引与收养）
+      // + 持久化（saveHistory 值变更检测）。调用方负责 items push。
+      const appendMsg = (item) => {
         const div = document.createElement('div');
-        div.className = 'chat-msg ' + type;
+        div.className = 'chat-msg ' + item.type;
+        div.dataset.mid = item.id || '';
+        div.dataset.mtype = item.type;
+        div.dataset.mtext = item.text;
         const label = document.createElement('span');
         label.className = 'msg-label';
-        label.textContent = type === 'user' ? userLabel : '泠月喵: ';
+        label.textContent = item.type === 'user' ? userLabel : '泠月喵: ';
         const content = document.createElement('span');
         content.className = 'msg-text';
-        if (type === 'user') {
+        if (item.type === 'user') {
           const bubble = document.createElement('span');
           bubble.className = 'msg-bubble';
-          applyMsg(bubble, text);
+          applyMsg(bubble, item.text);
           content.appendChild(bubble);
         } else {
-          applyMsg(content, text);
+          // 命令型回复（纯 AUTO_NAVIGATE 等）恢复时兜底渲染灰色注记，不显示空气泡
+          renderAgentContent(content, item.text);
+          div.dataset.finished = '1';
+          // 恢复该轮执行过程行（跨整页转跳保留，见保存端 process 字段）
+          if (Array.isArray(item.process) && item.process.length) {
+            const box = makeProcessBox(!getCollapsePref());
+            const body = box.querySelector('.agent-process-body');
+            const cnt = box.querySelector('.agent-process-count');
+            item.process.forEach(p => {
+              const line = document.createElement('div');
+              line.className = 'agent-process-line ' + (p.cls || 'step');
+              line.textContent = p.text;
+              body.appendChild(line);
+            });
+            if (cnt) cnt.textContent = '(' + item.process.length + ')';
+            div.insertBefore(box, content);
+          }
         }
         div.appendChild(label);
         div.appendChild(content);
         messages.appendChild(div);
         scrollToBottom(messages);
-        // 非流式 agent 消息也触发嘴部动作
-        if (type === 'agent') {
+        // agent 消息触发嘴部动作（非流式/恢复场景）
+        if (item.type === 'agent') {
           try {
             const ad = window.__cubism5model;
             const sub = ad && ad.subdelegates && ad.subdelegates.getSize() ? ad.subdelegates.at(0) : null;
@@ -736,32 +858,26 @@
                   if (m.update && typeof m.update === 'function') m.update();
                   else if (c._csmUpdateModel) c._csmUpdateModel();
                   else if (c._model && c._model.update) c._model.update();
-                }, Math.min(1500, Math.max(300, text.length * 20)));
+                }, Math.min(1500, Math.max(300, item.text.length * 20)));
               }
             }
           } catch(e) {}
         }
-        // 持久化到 localStorage
-        // 与 agent 消息保存同源加固：失败多为容量超限（QuotaExceeded——历史已满时
-        // 旧数据保留、新写入失败，曾现"转跳后新页面对话框停在旧消息、新内容全丢"）。
-        // 降级链：裁剪最旧 15 条重试 → console 告警（可定位）
-        const key = 'chat_history_' + (localStorage.getItem('tokenKey') || 'guest');
-        try {
-          let saved = JSON.parse(localStorage.getItem(key) || '[]');
-          saved.push({text, type, time: Date.now()});
-          if (saved.length > 50) saved = saved.slice(-50);
-          localStorage.setItem(key, JSON.stringify(saved));
-        } catch(e) {
-          try {
-            let saved2 = JSON.parse(localStorage.getItem(key) || '[]');
-            saved2.push({text, type, time: Date.now()});
-            localStorage.setItem(key, JSON.stringify(saved2.slice(-35)));
-            console.warn('[agent-chat] 历史保存降级（裁剪最旧 15 条）: ' + e);
-          } catch(e2) {
-            console.warn('[agent-chat] 历史保存失败（' + key + '，localStorage 已满/不可用）: ' + e2);
-          }
-        }
+        return div;
       };
+      // 初始化：DB 权威拉取（游客/失败自动降级本地）
+      pullHistory();
+
+      // 导航跳转返回后：默认打开对话框并滚动到对话底部
+      try {
+        if (sessionStorage.getItem('chat_open')) {
+          sessionStorage.removeItem('chat_open');
+          chatPanel.classList.add('active');
+          pullHistory(); // 同步其他页面产生的新对话
+          setTimeout(() => scrollToBottom(messages), 60);
+        }
+      } catch(e) {/* ignore */}
+
       const sendMessage = async () => {
         const msg = input.value.trim();
         if (!msg || isSending) return;
@@ -777,20 +893,28 @@
         const token = localStorage.getItem('tokenKey');
         if (!token) {
           const notice = '尊敬的访客：\n\n本站部署的AI虚拟形象Agent（导航/解读助手）仅供技术学习交流与功能展示使用，不视为面向公众开放的经营性AI服务。\n\n为严格遵守《生成式人工智能服务管理暂行办法》等相关法律法规，履行合规义务，本项目已采取访问限制措施，当前未向不特定公众开放。\n\n如您确因学习、交流或前端技术测试需要体验该功能，请通过博客顶部或关于页面的联系方式，联系管理员申请临时体验账号。管理员将在确认您的需求后，为您开通限时访问权限。\n\n感谢您的理解与支持！\n我们始终坚持合规先导，也期待与各位爱好者共同交流学习。\n\nSaudade Blog\n2026年7月29日';
-          addMsg(notice, 'agent');
+          const it = __chatCore.migrateItem({ type: 'agent', text: notice, time: Date.now() });
+          items.push(it);
+          appendMsg(it);
+          saveHistory();
           return;
         }
 
-        // 本轮用户消息（跳转备份内存合并用，20260827h）——声明必须在赋值之前：
-        // let 有暂时性死区（TDZ），声明前赋值会抛 ReferenceError，直接杀死整个
-        // sendMessage（实测表现：能输入文本但 agent 无响应）。不依赖 localStorage 保存结果
-        let lastUserMsg = '';
+        // 本轮 roundId：跨窗同步锚点（远端按它定位 live 气泡；本窗与远端轮次
+        // roundId 不同 → 双窗并发互不覆盖）。用户条目 id 独立生成（'l' 前缀），
+        // discard 广播按它双侧删除（Rust 侧已按用户消息删除 DB 记录）。
+        const roundId = __chatCore.genId();
+        const userItemId = __chatCore.genId();
+        activeRound = { roundId, userItemId }; // 供 3s 保险/外部清理精确锚定本轮
         input.value = '';
         // 程序清空不会触发 input 事件：主动重置高度，避免空输入框残留多行高度
         // （flex 布局下还会连带拉伸发送按钮导致变形）
         resizeInput();
-        addMsg(msg, 'user');
-        lastUserMsg = msg; // 记录本轮用户消息：跳转备份内存合并用（20260827h）
+        const userItem = __chatCore.migrateItem({ id: userItemId, type: 'user', text: msg, time: Date.now() });
+        items.push(userItem);
+        appendMsg(userItem);
+        saveHistory(); // 游客立即落缓存；登录用户 DB 侧由 Rust 在流开始前入库
+        broadcast({ t: 'user', id: userItemId, text: msg, time: userItem.time });
         isSending = true;
         stoppedByUser = false;
         discardTurn = false;
@@ -894,31 +1018,8 @@
                 } else {
                   sessionStorage.setItem('chat_open', '1');  // 跳转后默认打开对话框并滚动到底部
                   sessionStorage.setItem('chat_nav_slide', '1');  // 站内转跳：跳过滑入动画（forceSlideInFromBottom）
-                  // 转跳防御：备份当前对话历史到 sessionStorage（同标签页整页跳转后保留）。
-                  // 新页面 syncHistory 若从 localStorage 恢复为空，用备份兜底渲染——
-                  // 转跳后对话"直接丢失"的最后一层保险（曾见整页转跳后历史不显示）。
-                  // 20260827g 增强：备份 = localStorage 全量 + 本轮 user/agent 从内存强制合并。
-                  // 旧实现直接读 localStorage 备份——若本轮保存失败（任何原因）备份同样缺失，
-                  // 新页面恢复后最新轮丢失（用户实测"转跳后最新对话和问题都没了"）。
-                  // 本轮回复（fullText）与用户消息（lastUserMsg）不依赖 localStorage 保存结果，
-                  // 恢复端按 time 合并补缺（见 syncHistory 备份合并逻辑）
-                  try {
-                    const bkKey = 'chat_history_' + (localStorage.getItem('tokenKey') || 'guest');
-                    let bk = [];
-                    try { bk = JSON.parse(localStorage.getItem(bkKey) || '[]'); } catch(e) {/* ignore */}
-                    if (!Array.isArray(bk)) bk = [];
-                    // 本轮用户消息：localStorage 可能缺（保存失败）→ 从内存补
-                    if (lastUserMsg && !bk.some(i => i.type === 'user' && i.text === lastUserMsg)) {
-                      bk.push({text: lastUserMsg, type: 'user', time: Date.now() - 1});
-                    }
-                    // 本轮 agent 回复：localStorage 可能缺 → 从内存补（含过程行）
-                    if (fullText.trim() && !bk.some(i => i.type === 'agent' && i.text === fullText)) {
-                      bk.push({text: fullText, type: 'agent', time: Date.now(),
-                               process: steps.map(s => ({cls: s.cls, text: s.text}))});
-                    }
-                    sessionStorage.setItem('chat_history_backup', JSON.stringify(bk));
-                    sessionStorage.setItem('chat_history_backup_key', bkKey);
-                  } catch(e) {/* ignore */}
+                  // 20260828a：备份块已删除——本轮由 finishRound 的 saveHistory 落缓存，
+                  // 新页面 DB 权威拉取（/api/chat/history），localStorage 仅游客/离线兜底
                   window.location.href = navUrl;
                 }
               } else {
@@ -957,39 +1058,10 @@
               applyDarkMode(darkMatch[1] === 'on', true);
             }
         };
-        // agent 回复保存到 localStorage（含命令行与过程行，与后端历史一致）：
-        // 正常收尾与异常中断共用（20260827g）——此前 catch 路径不保存，跳转发生后
-        // 新页面恢复只剩用户消息（addMsg 保存）、agent 回复丢失（转跳后"最新对话丢失"）。
-        // 降级链：去 process → 裁剪最旧 15 条 → console 告警（失败多为容量超限/JSON 损坏）。
-        const saveAgentMsg = (fullText, stepsArr) => {
-          const savedKey = 'chat_history_' + (localStorage.getItem('tokenKey') || 'guest');
-          try {
-            let saved = JSON.parse(localStorage.getItem(savedKey) || '[]');
-            saved.push({text: fullText, type: 'agent', time: Date.now(),
-                        process: stepsArr.map(s => ({cls: s.cls, text: s.text}))});
-            if (saved.length > 50) saved = saved.slice(-50);
-            localStorage.setItem(savedKey, JSON.stringify(saved));
-            console.log('[agent-chat] history saved: ' + saved.length + ' 条 / ' + (JSON.stringify(saved).length / 1048576).toFixed(2) + 'MB');
-          } catch(e) {
-            try {
-              const saved2 = JSON.parse(localStorage.getItem(savedKey) || '[]');
-              saved2.push({text: fullText, type: 'agent', time: Date.now()});
-              if (saved2.length > 50) saved2 = saved2.slice(-50);
-              localStorage.setItem(savedKey, JSON.stringify(saved2));
-              console.warn('[agent-chat] 历史保存降级（去过程行）: ' + e);
-            } catch(e2) {
-              try {
-                const saved3 = JSON.parse(localStorage.getItem(savedKey) || '[]');
-                saved3.push({text: fullText, type: 'agent', time: Date.now()});
-                localStorage.setItem(savedKey, JSON.stringify(saved3.slice(-35)));
-                console.warn('[agent-chat] 历史保存降级（裁剪最旧 15 条）: ' + e2);
-              } catch(e3) {
-                console.warn('[agent-chat] 历史保存失败（localStorage 已满/不可用）: ' + e3);
-              }
-            }
-          }
-        };
+        // 20260828a：agent 回复保存统一走 saveHistory（唯一写者，含变更检测），
+        // saveAgentMsg 三级降级已并入（QuotaExceeded 止损/JSON 损坏兜底在 saveHistory 内）
 
+        let div = null, contentSpan = null; // live 气泡（catch 异常路径 failRound 也要引用转正，提升到 try 外）
         try {
           // SSE 流式对话：agent 首 token 即上屏，不再等待完整回复
           const ctrl = new AbortController();
@@ -1027,20 +1099,22 @@
           }
           if (!resp.body) throw new Error('浏览器不支持流式响应');
 
-          // 创建消息 DOM（不经过 addMsg，避免空消息存到 localStorage）
+          // 创建 live 气泡并注册到 live[roundId]（广播端按 roundId 定位；收尾
+          // 转正时补 data-mid 并移出 live）。不经过 appendMsg（避免空消息进缓存）
           const msgs = document.getElementById('chat-messages');
-          const div = document.createElement('div');
+          div = document.createElement('div');
           div.className = 'chat-msg agent';
           const label = document.createElement('span');
           label.className = 'msg-label';
           label.textContent = '泠月喵: ';
-          const contentSpan = document.createElement('span');
+          contentSpan = document.createElement('span');
           contentSpan.className = 'msg-text';
           contentSpan.classList.add('msg-streaming'); // 流式纯文本阶段用 pre-line 换行
           div.appendChild(label);
           div.appendChild(contentSpan);
           msgs.appendChild(div);
           scrollToBottom(msgs);
+          live[roundId] = { el: div, contentSpan, processBox: null, finished: false };
 
           // 打字指示器：插在气泡内 label 与正文之间，静默时三点跳动
           typingEl = document.createElement('span');
@@ -1086,7 +1160,7 @@
             steps.push({ cls, text });
             refreshCount();
             scrollToBottom(msgs);
-            broadcast({t: 'process', text, cls});  // 多标签实时同步
+            broadcast({t: 'process', text, cls, roundId});  // 多标签实时同步（roundId 定位气泡）
           };
           const archiveRejected = (reason, rejectedText) => {
             const box = ensureProcessBox();
@@ -1171,7 +1245,7 @@
                 cmdText = '';
                 displayText = '';
                 contentSpan.textContent = '';
-                broadcast({t: 'reset', reason});  // 多标签同步：清空废轮次文本
+                broadcast({t: 'reset', reason, roundId});  // 多标签同步：清空废轮次文本
                 continue;
               }
               // 命令行与展示文本分流：命令行不渲染（含模型幻觉输出的变形命令如 SNOW_EFFECT:）
@@ -1182,7 +1256,7 @@
                 contentSpan.textContent = displayText;
                 tickMouth();
                 scrollToBottom(msgs);
-                broadcast({t: 'token', text});  // 多标签实时同步
+                broadcast({t: 'token', text, roundId});  // 多标签实时同步（roundId 定位气泡）
               }
             }
           }
@@ -1195,26 +1269,35 @@
           if (window.__setMouthOpen) window.__setMouthOpen(0);
           window.__mouthOverride = -1;
           contentSpan.classList.remove('msg-streaming'); // 渲染完成后恢复 normal，与博客一致
-          // 完整文本（命令行前置，导航/特效解析与历史保存沿用原格式）
+          // 完整文本（命令行前置，导航/特效解析沿用原格式）
           const fullText = cmdText + displayText;
-          // 多标签同步：在保存（触发 storage 重绘）之前广播，其他页先实时渲染
-          // 最终版，随后的 storage 全量重绘会覆盖同一气泡，不会重复
-          broadcast({t: 'done', fullText, process: steps.map(s => ({cls: s.cls, text: s.text}))});
           // 最终展示：剔除命令行与 SUMMARY 摘要行后渲染 markdown；
           // 纯命令回复（模型未输出文案）由 renderAgentContent 兜底为灰色注记
           renderAgentContent(contentSpan, fullText);
-          // 空回复（无命令无展示文本）：不保存——历史里留一条"泠月喵:"空气泡
-          // （转跳后恢复会渲染成"（空）"），且污染后续对话上下文
-          if (!fullText.trim()) {
-            console.warn('[agent-chat] 空回复，跳过历史保存');
+          // live 转正：进 items（含过程行）+ 补 data-mid + 移出 live + saveHistory。
+          // 空回复不转正——历史里不留"泠月喵:"空气泡（转跳后恢复成"（空）"）
+          if (fullText.trim()) {
+            const finalItem = __chatCore.migrateItem({
+              id: roundId, type: 'agent', text: fullText, time: Date.now(),
+              process: steps.map(s => ({cls: s.cls, text: s.text})),
+            });
+            items = __chatCore.mergeItems(items, [finalItem]);
+            div.dataset.mid = finalItem.id;
+            div.dataset.finished = '1';
+            delete live[roundId];
+            // 广播 done 带完整条目：远端 mergeItems 转正（不写 localStorage 防写者风暴）
+            broadcast({t: 'done', id: finalItem.id, fullText, time: finalItem.time,
+                       process: steps.map(s => ({cls: s.cls, text: s.text})), roundId});
+            saveHistory();
           } else {
-          // 完整文本保存到 localStorage（含命令行与过程行，降级链见 saveAgentMsg）
-          saveAgentMsg(fullText, steps);
+            console.warn('[agent-chat] 空回复，跳过历史保存');
+            delete live[roundId];
+            if (div.parentNode) div.parentNode.removeChild(div);
+            broadcast({t: 'done', id: roundId, fullText: '', time: Date.now(), process: [], roundId});
           }
-
-            // 命令解析执行（导航/特效/夜间模式）——正常收尾路径：
-            // 完整文本含命令行（fullText = cmdText + displayText），已收到的命令帧在此执行
-            execAgentCommands(fullText, contentSpan);
+          // 命令解析执行（导航/特效/夜间模式）——正常收尾路径：
+          // 完整文本含命令行（fullText = cmdText + displayText），已收到的命令帧在此执行
+          execAgentCommands(fullText, contentSpan);
         } catch(e) {
           // 异常路径兜底：移除打字指示器（AbortError/网络错误/__ERROR__ 帧）
           if (typingTimer) clearTimeout(typingTimer);
@@ -1223,31 +1306,58 @@
           clearTimeout(totalTimer);
           if (e && e.name === 'AbortError') {
             if (stoppedByUser) {
-              // 用户主动停止生成：标记丢弃本轮，清理放在 isSending 复位之后统一执行
-              // （syncHistory 在 isSending 时直接 return，此时调用无法重绘）
+              // 用户主动停止生成：标记丢弃本轮，复位后 discardTurn() 统一清理
+              // （内存/缓存/DOM 删除 + discard 广播 + DB 由 Rust DiscardAbortedExchange 删）
               discardTurn = true;
             } else {
-              addMsg('长时间未收到回复，请稍后重试', 'error');
-              broadcast({t: 'error', msg: '长时间未收到回复，请稍后重试'});
+              const errMsg = '长时间未收到回复，请稍后重试';
+              applyMsg(contentSpan, errMsg);
+              broadcast({t: 'error', msg: errMsg, roundId});
               // 异常中断也保存已收到的回复（20260827g）：断流不代表内容无效——
-              // 此前 catch 不保存 → 跳转（下方命令执行）发生后新页面恢复只剩用户消息、
-              // agent 回复丢失（转跳后"最新对话丢失"的当前形态）。先保存再跳转。
-              if ((cmdText + displayText).trim()) saveAgentMsg(cmdText + displayText, steps);
+              // 先转正保存再跳转，新页面 DB/缓存恢复完整
+              if ((cmdText + displayText).trim()) {
+                const partialItem = __chatCore.migrateItem({
+                  id: roundId, type: 'agent', text: cmdText + displayText, time: Date.now(),
+                  process: steps.map(s => ({cls: s.cls, text: s.text})),
+                });
+                items = __chatCore.mergeItems(items, [partialItem]);
+                div.dataset.mid = roundId;
+                div.dataset.finished = '1';
+                delete live[roundId];
+                broadcast({t: 'done', id: partialItem.id, fullText: partialItem.text,
+                           time: partialItem.time, process: partialItem.process, roundId});
+                saveHistory();
+              } else {
+                delete live[roundId];
+              }
               // 异常中断也执行已收到的命令帧（20260827g）：流中断不代表命令无效——
-              // 反射质检挂起导致的断流里 AUTO_NAVIGATE/EFFECT/DARKMODE 帧可能已到达，
-              // 旧实现 catch 不解析导航 → 命令白发、用户"卡死"且不跳转
+              // 反射质检挂起导致的断流里 AUTO_NAVIGATE/EFFECT/DARKMODE 帧可能已到达
               try { execAgentCommands(cmdText + displayText, null); } catch(e2) {/* ignore */}
             }
           } else {
             const errMsg = '网络错误: ' + (e && e.message ? e.message : '未知错误');
-            addMsg(errMsg, 'error');
-            broadcast({t: 'error', msg: errMsg});
+            applyMsg(contentSpan, errMsg);
+            broadcast({t: 'error', msg: errMsg, roundId});
             // 同上：__ERROR__ 帧/网络错误也保存已收到的回复，再执行命令帧
-            if ((cmdText + displayText).trim()) saveAgentMsg(cmdText + displayText, steps);
+            if ((cmdText + displayText).trim()) {
+              const partialItem = __chatCore.migrateItem({
+                id: roundId, type: 'agent', text: cmdText + displayText, time: Date.now(),
+                process: steps.map(s => ({cls: s.cls, text: s.text})),
+              });
+              items = __chatCore.mergeItems(items, [partialItem]);
+              div.dataset.mid = roundId;
+              div.dataset.finished = '1';
+              delete live[roundId];
+              broadcast({t: 'done', id: partialItem.id, fullText: partialItem.text,
+                         time: partialItem.time, process: partialItem.process, roundId});
+              saveHistory();
+            } else {
+              delete live[roundId];
+            }
             try { execAgentCommands(cmdText + displayText, null); } catch(e2) {/* ignore */}
           }
         } finally {
-          // 复位必须在 finally：catch 内 addMsg/broadcast 万一抛错，
+          // 复位必须在 finally：catch 内 applyMsg/broadcast 万一抛错，
           // 未复位 isSending 会把对话框永久锁死（后续发送全部被拦，即"卡死"）
           isSending = false;
           streamCtrl = null;
@@ -1257,20 +1367,23 @@
           sendBtn.classList.remove('stop-mode');
           input.disabled = false;
           input.focus();
+          // 流式中被推迟的 DB 拉取在此补拉（storage 事件可能在流中到达）
+          if (pendingPull) { pendingPull = false; setTimeout(pullHistory, 0); }
         }
         if (discardTurn) {
           // 丢弃本轮用户输入与部分回复（不加入记忆）：
-          // 1) 前端 localStorage 历史移除本轮用户消息（部分回复从未写入，仅残留在 DOM）
+          // 1) 前端内存/缓存移除本轮用户消息与 live 气泡（部分回复从未写入缓存）
           // 2) 后端 DB 记忆由 Rust /chat/stream 在流中断时自动清理（chat.rs DiscardAbortedExchange）
-          try {
-            const key = 'chat_history_' + (localStorage.getItem('tokenKey') || 'guest');
-            let saved = JSON.parse(localStorage.getItem(key) || '[]');
-            for (let i = saved.length - 1; i >= 0; i--) {
-              if (saved[i].type === 'user') { saved.splice(i, 1); break; }
-            }
-            localStorage.setItem(key, JSON.stringify(saved));
-          } catch(e2) {/* ignore */}
-          syncHistory();
+          discardTurn = false;
+          const victim = live[roundId];
+          if (victim) {
+            if (victim.el && victim.el.parentNode) victim.el.parentNode.removeChild(victim.el);
+            delete live[roundId];
+          }
+          items = items.filter(i => i.id !== userItemId);
+          saveHistory();
+          broadcast({t: 'discard', roundId, userItemId}); // 远端同删该轮（DB 侧自动清理）
+          setTimeout(pullHistory, 0); // DB 可能已删（DiscardAbortedExchange），收敛一致
         }
       };
 
@@ -1292,7 +1405,7 @@
           e.preventDefault();
           chatPanel.classList.toggle('active');
           if (chatPanel.classList.contains('active')) {
-            syncHistory(); // 每次打开都同步所有页面的聊天记录
+            pullHistory(); // 每次打开都同步所有窗口的聊天记录（DB 权威）
             input.focus();
           }
         });
@@ -1309,8 +1422,11 @@
           setTimeout(() => {
             const panel = document.getElementById('waifu-chat');
             if (panel) panel.classList.add('active');
-            syncHistory();
-            addMsg('目前博客只有泠月喵一个人服务呢，还没有招聘到新员工替本喵顶班~', 'agent');
+            pullHistory();
+            const it = __chatCore.migrateItem({ type: 'agent', text: '目前博客只有泠月喵一个人服务呢，还没有招聘到新员工替本喵顶班~', time: Date.now() });
+            items.push(it);
+            appendMsg(it);
+            saveHistory();
           }, 100);
         });
       }, 1000);
@@ -1324,8 +1440,11 @@
           setTimeout(() => {
             const panel = document.getElementById('waifu-chat');
             if (panel) panel.classList.add('active');
-            syncHistory();
-            addMsg('本喵还没有新衣服呢，要不要给本喵买一件呢~', 'agent');
+            pullHistory();
+            const it = __chatCore.migrateItem({ type: 'agent', text: '本喵还没有新衣服呢，要不要给本喵买一件呢~', time: Date.now() });
+            items.push(it);
+            appendMsg(it);
+            saveHistory();
           }, 100);
         });
       }, 1000);
@@ -1596,7 +1715,8 @@
           stoppedByUser = true;
           if (streamCtrl) streamCtrl.abort();
           // 保险：极端情况下（浏览器对已开始读取的流 abort 不触发 AbortError）catch 不会执行，
-          // UI 会卡死在"停止生成"状态——3s 后强制恢复并丢弃本轮，保证界面必能继续使用
+          // UI 会卡死在"停止生成"状态——3s 后强制恢复并丢弃本轮，保证界面必能继续使用。
+          // 与 sendMessage 收尾 discardTurn 分支相同的丢弃逻辑（abort 未触发时手动清理）
           setTimeout(() => {
             if (isSending && stoppedByUser) {
               isSending = false;
@@ -1606,16 +1726,17 @@
               sendBtn.innerHTML = '发送';
               sendBtn.classList.remove('stop-mode');
               input.disabled = false;
-              // 与 discardTurn 分支相同的丢弃逻辑（abort 未触发时手动清理）
-              try {
-                const key = 'chat_history_' + (localStorage.getItem('tokenKey') || 'guest');
-                let saved = JSON.parse(localStorage.getItem(key) || '[]');
-                for (let i = saved.length - 1; i >= 0; i--) {
-                  if (saved[i].type === 'user') { saved.splice(i, 1); break; }
-                }
-                localStorage.setItem(key, JSON.stringify(saved));
-              } catch(e2) {/* ignore */}
-              syncHistory();
+              const r = activeRound;
+              const victim = live[r.roundId];
+              if (victim) {
+                if (victim.el && victim.el.parentNode) victim.el.parentNode.removeChild(victim.el);
+                delete live[r.roundId];
+              }
+              if (r.userItemId) {
+                items = items.filter(i => i.id !== r.userItemId);
+                saveHistory();
+                broadcast({t: 'discard', roundId: r.roundId, userItemId: r.userItemId});
+              }
             }
           }, 3000);
           return;
