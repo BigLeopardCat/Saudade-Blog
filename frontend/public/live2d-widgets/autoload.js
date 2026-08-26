@@ -65,7 +65,7 @@
   });
   
   await Promise.all([
-    loadExternalResource(live2d_path + 'waifu.css?v=20260827a', 'css'),
+    loadExternalResource(live2d_path + 'waifu.css?v=20260827b', 'css'),
     loadExternalResource(live2d_path + 'waifu-tips.js', 'js'),
   ]);
 
@@ -557,7 +557,22 @@
         if (isSending) return; // 流式输出中不重绘，避免打断
         try {
           const key = 'chat_history_' + (localStorage.getItem('tokenKey') || 'guest');
-          const saved = JSON.parse(localStorage.getItem(key) || '[]');
+          let saved = JSON.parse(localStorage.getItem(key) || '[]');
+          // 转跳兜底：localStorage 恢复为空但有跳转前备份（sessionStorage 同标签页
+          // 整页跳转后保留，key 校验防串号）——恢复失败的最后一层保险，消费后即删
+          if (!saved.length) {
+            const bk = sessionStorage.getItem('chat_history_backup');
+            const bkKey = sessionStorage.getItem('chat_history_backup_key');
+            if (bk && bkKey === key) {
+              try {
+                saved = JSON.parse(bk);
+                console.warn('[agent-chat] localStorage 历史为空，已用转跳备份兜底恢复 ' + saved.length + ' 条');
+              } catch(e) {/* ignore */}
+              sessionStorage.removeItem('chat_history_backup');
+              sessionStorage.removeItem('chat_history_backup_key');
+            }
+          }
+          console.log('[agent-chat] history restored: ' + saved.length + ' (key=' + key + ')');
           messages.innerHTML = '';
           saved.forEach(item => {
             const div = document.createElement('div');
@@ -1012,6 +1027,14 @@
                 } else {
                   sessionStorage.setItem('chat_open', '1');  // 跳转后默认打开对话框并滚动到底部
                   sessionStorage.setItem('chat_nav_slide', '1');  // 站内转跳：跳过滑入动画（forceSlideInFromBottom）
+                  // 转跳防御：备份当前对话历史到 sessionStorage（同标签页整页跳转后保留）。
+                  // 新页面 syncHistory 若从 localStorage 恢复为空，用备份兜底渲染——
+                  // 转跳后对话"直接丢失"的最后一层保险（曾见整页转跳后历史不显示）
+                  try {
+                    const bkKey = 'chat_history_' + (localStorage.getItem('tokenKey') || 'guest');
+                    sessionStorage.setItem('chat_history_backup', localStorage.getItem(bkKey) || '[]');
+                    sessionStorage.setItem('chat_history_backup_key', bkKey);
+                  } catch(e) {/* ignore */}
                   window.location.href = navUrl;
                 }
               } else {
