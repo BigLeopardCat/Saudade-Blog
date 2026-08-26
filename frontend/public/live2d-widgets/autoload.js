@@ -65,7 +65,7 @@
   });
   
   await Promise.all([
-    loadExternalResource(live2d_path + 'waifu.css?v=20260827g', 'css'),
+    loadExternalResource(live2d_path + 'waifu.css?v=20260827h', 'css'),
     loadExternalResource(live2d_path + 'waifu-tips.js', 'js'),
   ]);
 
@@ -489,7 +489,7 @@
       const broadcast = (m) => { if (chatChannel) chatChannel.postMessage(m); };
       // 版本自检：确认浏览器加载的是当前部署脚本（nginx 对 live2d-widgets 缓存 1 年，
       // 未强刷时可能仍在跑旧版——多标签同步等功能只在 20260826b 之后才有）
-      console.log('[agent-chat] autoload 20260827g, BroadcastChannel=' + !!chatChannel
+      console.log('[agent-chat] autoload 20260827h, BroadcastChannel=' + !!chatChannel
                   + ', storage=' + ('localStorage' in window));
       window.addEventListener('storage', (e) => {
         if (e.key && e.key.indexOf('chat_history_') === 0 && !isSending) {
@@ -778,12 +778,16 @@
           return;
         }
 
+        // 本轮用户消息（跳转备份内存合并用，20260827h）——声明必须在赋值之前：
+        // let 有暂时性死区（TDZ），声明前赋值会抛 ReferenceError，直接杀死整个
+        // sendMessage（实测表现：能输入文本但 agent 无响应）。不依赖 localStorage 保存结果
+        let lastUserMsg = '';
         input.value = '';
         // 程序清空不会触发 input 事件：主动重置高度，避免空输入框残留多行高度
         // （flex 布局下还会连带拉伸发送按钮导致变形）
         resizeInput();
         addMsg(msg, 'user');
-        lastUserMsg = msg; // 记录本轮用户消息：跳转备份内存合并用（20260827g）
+        lastUserMsg = msg; // 记录本轮用户消息：跳转备份内存合并用（20260827h）
         isSending = true;
         stoppedByUser = false;
         discardTurn = false;
@@ -803,8 +807,6 @@
         let cmdText = '', displayText = '';
         // 过程行累积也提升到 try 外：catch 异常路径保存回复时要带过程行（20260827g）
         let steps = [];
-        // 本轮用户消息（跳转备份内存合并用，20260827g）——不依赖 localStorage 保存结果
-        let lastUserMsg = '';
         // 命令解析执行（导航/特效/夜间模式）：正常收尾与异常中断共用（20260827g）。
         // 历史教训见原内联注释：模型幻觉"去X板块"时手写命令文本（多为相对路径
         // AUTO_NAVIGATE:/talk），旧实现只认完整 URL → 幻觉命令静默失效 → "没转跳"。
