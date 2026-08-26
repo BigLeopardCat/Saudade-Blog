@@ -65,7 +65,7 @@
   });
   
   await Promise.all([
-    loadExternalResource(live2d_path + 'waifu.css?v=20260827e', 'css'),
+    loadExternalResource(live2d_path + 'waifu.css?v=20260827f', 'css'),
     loadExternalResource(live2d_path + 'waifu-tips.js', 'js'),
   ]);
 
@@ -489,7 +489,7 @@
       const broadcast = (m) => { if (chatChannel) chatChannel.postMessage(m); };
       // 版本自检：确认浏览器加载的是当前部署脚本（nginx 对 live2d-widgets 缓存 1 年，
       // 未强刷时可能仍在跑旧版——多标签同步等功能只在 20260826b 之后才有）
-      console.log('[agent-chat] autoload 20260827e, BroadcastChannel=' + !!chatChannel
+      console.log('[agent-chat] autoload 20260827f, BroadcastChannel=' + !!chatChannel
                   + ', storage=' + ('localStorage' in window));
       window.addEventListener('storage', (e) => {
         if (e.key && e.key.indexOf('chat_history_') === 0 && !isSending) {
@@ -766,9 +766,11 @@
         let typingEl = null, typingTimer = null;
         // 命令行/展示文本累积变量提升到 try 外：catch 异常路径（流中断/__ERROR__）也要
         // 能访问已收到的命令帧——实测反射质检挂起 → 流中断 → catch 分支不解析导航，
-        // AUTO_NAVIGATE 命令白发、用户"卡死"且不跳转（20260827e 修复）
+        // AUTO_NAVIGATE 命令白发、用户"卡死"且不跳转（20260827f 修复）
         let cmdText = '', displayText = '';
-        // 命令解析执行（导航/特效/夜间模式）：正常收尾与异常中断共用（20260827e）。
+        // 过程行累积也提升到 try 外：catch 异常路径保存回复时要带过程行（20260827f）
+        let steps = [];
+        // 命令解析执行（导航/特效/夜间模式）：正常收尾与异常中断共用（20260827f）。
         // 历史教训见原内联注释：模型幻觉"去X板块"时手写命令文本（多为相对路径
         // AUTO_NAVIGATE:/talk），旧实现只认完整 URL → 幻觉命令静默失效 → "没转跳"。
         // 因此：① fullText 命令行锚定解析（AUTO_NAVIGATE→直接跳 / NAVIGATE→确认，
@@ -898,6 +900,38 @@
               applyDarkMode(darkMatch[1] === 'on', true);
             }
         };
+        // agent 回复保存到 localStorage（含命令行与过程行，与后端历史一致）：
+        // 正常收尾与异常中断共用（20260827f）——此前 catch 路径不保存，跳转发生后
+        // 新页面恢复只剩用户消息（addMsg 保存）、agent 回复丢失（转跳后"最新对话丢失"）。
+        // 降级链：去 process → 裁剪最旧 15 条 → console 告警（失败多为容量超限/JSON 损坏）。
+        const saveAgentMsg = (fullText, stepsArr) => {
+          const savedKey = 'chat_history_' + (localStorage.getItem('tokenKey') || 'guest');
+          try {
+            let saved = JSON.parse(localStorage.getItem(savedKey) || '[]');
+            saved.push({text: fullText, type: 'agent', time: Date.now(),
+                        process: stepsArr.map(s => ({cls: s.cls, text: s.text}))});
+            if (saved.length > 50) saved = saved.slice(-50);
+            localStorage.setItem(savedKey, JSON.stringify(saved));
+            console.log('[agent-chat] history saved: ' + saved.length + ' 条 / ' + (JSON.stringify(saved).length / 1048576).toFixed(2) + 'MB');
+          } catch(e) {
+            try {
+              const saved2 = JSON.parse(localStorage.getItem(savedKey) || '[]');
+              saved2.push({text: fullText, type: 'agent', time: Date.now()});
+              if (saved2.length > 50) saved2 = saved2.slice(-50);
+              localStorage.setItem(savedKey, JSON.stringify(saved2));
+              console.warn('[agent-chat] 历史保存降级（去过程行）: ' + e);
+            } catch(e2) {
+              try {
+                const saved3 = JSON.parse(localStorage.getItem(savedKey) || '[]');
+                saved3.push({text: fullText, type: 'agent', time: Date.now()});
+                localStorage.setItem(savedKey, JSON.stringify(saved3.slice(-35)));
+                console.warn('[agent-chat] 历史保存降级（裁剪最旧 15 条）: ' + e2);
+              } catch(e3) {
+                console.warn('[agent-chat] 历史保存失败（localStorage 已满/不可用）: ' + e3);
+              }
+            }
+          }
+        };
 
         try {
           // SSE 流式对话：agent 首 token 即上屏，不再等待完整回复
@@ -970,7 +1004,7 @@
           // __PROCESS__:<text> 步骤帧 → 追加灰色步骤行；质检打回 __RESET__:<reason>
           // → 把被打回轮次的文本归档进可展开子项再清空重绘：最终气泡只显示诚实输出，
           //   中间过程（计划/工具调用/打回原因/被否定的回复）灰色折叠、可展开查看
-          const steps = [];
+          steps = [];
           let processBox = null;
           const ensureProcessBox = () => {
             if (processBox) return processBox;
@@ -1117,37 +1151,8 @@
           if (!fullText.trim()) {
             console.warn('[agent-chat] 空回复，跳过历史保存');
           } else {
-          // 完整文本保存到 localStorage（含命令行，与后端历史一致）
-          // 保存失败会静默吞掉（曾报"转跳后停留在上一轮用户消息、agent 回复丢失"——
-          // 用户消息保存成功、带 process 的 agent 消息保存失败）。失败多为：
-          // ① localStorage 容量超限（QuotaExceeded）② 历史 JSON 损坏（parse 抛错）。
-          // 降级链：去 process → 裁剪最旧 15 条 → console 告警（下次复测可定位）
-          const savedKey = 'chat_history_' + (localStorage.getItem('tokenKey') || 'guest');
-          try {
-            let saved = JSON.parse(localStorage.getItem(savedKey) || '[]');
-            saved.push({text: fullText, type: 'agent', time: Date.now(),
-                        process: steps.map(s => ({cls: s.cls, text: s.text}))});
-            if (saved.length > 50) saved = saved.slice(-50);
-            localStorage.setItem(savedKey, JSON.stringify(saved));
-            console.log('[agent-chat] history saved: ' + saved.length + ' 条 / ' + (JSON.stringify(saved).length / 1048576).toFixed(2) + 'MB');
-          } catch(e) {
-            try {
-              const saved2 = JSON.parse(localStorage.getItem(savedKey) || '[]');
-              saved2.push({text: fullText, type: 'agent', time: Date.now()});
-              if (saved2.length > 50) saved2 = saved2.slice(-50);
-              localStorage.setItem(savedKey, JSON.stringify(saved2));
-              console.warn('[agent-chat] 历史保存降级（去过程行）: ' + e);
-            } catch(e2) {
-              try {
-                const saved3 = JSON.parse(localStorage.getItem(savedKey) || '[]');
-                saved3.push({text: fullText, type: 'agent', time: Date.now()});
-                localStorage.setItem(savedKey, JSON.stringify(saved3.slice(-35)));
-                console.warn('[agent-chat] 历史保存降级（裁剪最旧 15 条）: ' + e2);
-              } catch(e3) {
-                console.warn('[agent-chat] 历史保存失败（localStorage 已满/不可用）: ' + e3);
-              }
-            }
-          }
+          // 完整文本保存到 localStorage（含命令行与过程行，降级链见 saveAgentMsg）
+          saveAgentMsg(fullText, steps);
           }
 
             // 命令解析执行（导航/特效/夜间模式）——正常收尾路径：
@@ -1167,7 +1172,11 @@
             } else {
               addMsg('长时间未收到回复，请稍后重试', 'error');
               broadcast({t: 'error', msg: '长时间未收到回复，请稍后重试'});
-              // 异常中断也执行已收到的命令帧（20260827e）：流中断不代表命令无效——
+              // 异常中断也保存已收到的回复（20260827f）：断流不代表内容无效——
+              // 此前 catch 不保存 → 跳转（下方命令执行）发生后新页面恢复只剩用户消息、
+              // agent 回复丢失（转跳后"最新对话丢失"的当前形态）。先保存再跳转。
+              if ((cmdText + displayText).trim()) saveAgentMsg(cmdText + displayText, steps);
+              // 异常中断也执行已收到的命令帧（20260827f）：流中断不代表命令无效——
               // 反射质检挂起导致的断流里 AUTO_NAVIGATE/EFFECT/DARKMODE 帧可能已到达，
               // 旧实现 catch 不解析导航 → 命令白发、用户"卡死"且不跳转
               try { execAgentCommands(cmdText + displayText, null); } catch(e2) {/* ignore */}
@@ -1176,7 +1185,8 @@
             const errMsg = '网络错误: ' + (e && e.message ? e.message : '未知错误');
             addMsg(errMsg, 'error');
             broadcast({t: 'error', msg: errMsg});
-            // 同上：__ERROR__ 帧/网络错误也执行已收到的命令帧
+            // 同上：__ERROR__ 帧/网络错误也保存已收到的回复，再执行命令帧
+            if ((cmdText + displayText).trim()) saveAgentMsg(cmdText + displayText, steps);
             try { execAgentCommands(cmdText + displayText, null); } catch(e2) {/* ignore */}
           }
         } finally {
