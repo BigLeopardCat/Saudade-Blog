@@ -65,7 +65,7 @@
   });
   
   await Promise.all([
-    loadExternalResource(live2d_path + 'waifu.css?v=20260827c', 'css'),
+    loadExternalResource(live2d_path + 'waifu.css?v=20260827d', 'css'),
     loadExternalResource(live2d_path + 'waifu-tips.js', 'js'),
   ]);
 
@@ -286,6 +286,24 @@
     // 一律按命令行剔除，不进入对话框。SYSTEM 兜底：[System: …] 是模型对系统注记的
     // 复述/幻觉（prompt 已禁止但 qwen 偶发原样透出），同样不展示
     const COMMAND_LINE_RE = /^(?:[A-Za-z0-9_]*EFFECT|DARKMODE|NAVIGATE|AUTO_NAVIGATE|SUMMARY|\[?System)\]?\s*:/;
+    // 命令型回复渲染兜底：模型对导航等请求常只输出命令帧、不带确认文案
+    // （DB 实证：assistant 回复 = 纯 "AUTO_NAVIGATE:..."，cleanAgentText 后为空）。
+    // 旧实现渲染空气泡 → 用户误判"对话记录丢失/（空）"（本次报告的根因）。
+    // 兜底：清洗后为空但含命令 → 渲染灰色系统注记，如实说明指令已执行
+    const renderAgentContent = (el, fullText) => {
+      const clean = cleanAgentText(fullText);
+      if (clean) { applyMsg(el, clean); return; }
+      if (!fullText) return;
+      let note = '（系统指令已执行）';
+      if (/AUTO_NAVIGATE\s*:/i.test(fullText)) note = '（已自动跳转页面）';
+      else if (/NAVIGATE\s*:/i.test(fullText)) note = '（已弹出跳转确认）';
+      else if (/EFFECT\s*:/i.test(fullText)) note = '（已切换页面特效）';
+      else if (/DARKMODE\s*:/i.test(fullText)) note = '（已切换夜间模式）';
+      const div = document.createElement('div');
+      div.className = 'nav-skip-note';
+      div.textContent = note;
+      el.appendChild(div);
+    };
     const cleanAgentText = (text) => {
       if (!text) return '';
       let cleaned = text.split('\n')
@@ -471,7 +489,7 @@
       const broadcast = (m) => { if (chatChannel) chatChannel.postMessage(m); };
       // 版本自检：确认浏览器加载的是当前部署脚本（nginx 对 live2d-widgets 缓存 1 年，
       // 未强刷时可能仍在跑旧版——多标签同步等功能只在 20260826b 之后才有）
-      console.log('[agent-chat] autoload 20260827c, BroadcastChannel=' + !!chatChannel
+      console.log('[agent-chat] autoload 20260827d, BroadcastChannel=' + !!chatChannel
                   + ', storage=' + ('localStorage' in window));
       window.addEventListener('storage', (e) => {
         if (e.key && e.key.indexOf('chat_history_') === 0 && !isSending) {
@@ -572,7 +590,21 @@
               sessionStorage.removeItem('chat_history_backup_key');
             }
           }
-          console.log('[agent-chat] history restored: ' + saved.length + ' (key=' + key + ')');
+          // 容量健康检查：历史序列化超 4MB（逼近 localStorage 5MB 上限）时，后续
+          // 保存必然 QuotaExceeded 失败（曾现"转跳后新页面对话框停在旧消息、新内容
+          // 全丢"——旧数据保留、新写入失败）。一次性裁剪到最近 30 条并写回止损。
+          const raw = localStorage.getItem(key) || '';
+          console.log('[agent-chat] history restored: ' + saved.length + ' 条 / ' + (raw.length / 1048576).toFixed(2) + 'MB (key=' + key + ')');
+          if (raw.length > 4 * 1048576) {
+            try {
+              const trimmed = saved.slice(-30);
+              localStorage.setItem(key, JSON.stringify(trimmed));
+              saved = trimmed;
+              console.warn('[agent-chat] 历史超 4MB，已裁剪到最近 30 条止损（此前保存失败导致新对话丢失）');
+            } catch(e2) {
+              console.warn('[agent-chat] 历史裁剪写回失败: ' + e2);
+            }
+          }
           messages.innerHTML = '';
           saved.forEach(item => {
             const div = document.createElement('div');
@@ -588,7 +620,8 @@
               applyMsg(bubble, item.text);
               content.appendChild(bubble);
             } else {
-              applyMsg(content, cleanAgentText(item.text));
+              // 命令型回复（纯 AUTO_NAVIGATE 等）恢复时兜底渲染灰色注记，不显示空气泡
+              renderAgentContent(content, item.text);
               // 已完成标记：多标签 done 广播乱序时（storage 重绘先于广播到达），
               // 不再对已完成的红绘气泡重复渲染
               div.dataset.finished = '1';
@@ -674,13 +707,25 @@
           } catch(e) {}
         }
         // 持久化到 localStorage
+        // 与 agent 消息保存同源加固：失败多为容量超限（QuotaExceeded——历史已满时
+        // 旧数据保留、新写入失败，曾现"转跳后新页面对话框停在旧消息、新内容全丢"）。
+        // 降级链：裁剪最旧 15 条重试 → console 告警（可定位）
+        const key = 'chat_history_' + (localStorage.getItem('tokenKey') || 'guest');
         try {
-          const key = 'chat_history_' + (localStorage.getItem('tokenKey') || 'guest');
           let saved = JSON.parse(localStorage.getItem(key) || '[]');
           saved.push({text, type, time: Date.now()});
           if (saved.length > 50) saved = saved.slice(-50);
           localStorage.setItem(key, JSON.stringify(saved));
-        } catch(e) {/* ignore */}
+        } catch(e) {
+          try {
+            let saved2 = JSON.parse(localStorage.getItem(key) || '[]');
+            saved2.push({text, type, time: Date.now()});
+            localStorage.setItem(key, JSON.stringify(saved2.slice(-35)));
+            console.warn('[agent-chat] 历史保存降级（裁剪最旧 15 条）: ' + e);
+          } catch(e2) {
+            console.warn('[agent-chat] 历史保存失败（' + key + '，localStorage 已满/不可用）: ' + e2);
+          }
+        }
       };
       const sendMessage = async () => {
         const msg = input.value.trim();
@@ -932,8 +977,9 @@
           // 多标签同步：在保存（触发 storage 重绘）之前广播，其他页先实时渲染
           // 最终版，随后的 storage 全量重绘会覆盖同一气泡，不会重复
           broadcast({t: 'done', fullText, process: steps.map(s => ({cls: s.cls, text: s.text}))});
-          // 最终展示：剔除命令行与 SUMMARY 摘要行后渲染 markdown
-          applyMsg(contentSpan, cleanAgentText(fullText));
+          // 最终展示：剔除命令行与 SUMMARY 摘要行后渲染 markdown；
+          // 纯命令回复（模型未输出文案）由 renderAgentContent 兜底为灰色注记
+          renderAgentContent(contentSpan, fullText);
           // 空回复（无命令无展示文本）：不保存——历史里留一条"泠月喵:"空气泡
           // （转跳后恢复会渲染成"（空）"），且污染后续对话上下文
           if (!fullText.trim()) {
@@ -951,7 +997,7 @@
                         process: steps.map(s => ({cls: s.cls, text: s.text}))});
             if (saved.length > 50) saved = saved.slice(-50);
             localStorage.setItem(savedKey, JSON.stringify(saved));
-            console.log('[agent-chat] history saved: ' + saved.length);
+            console.log('[agent-chat] history saved: ' + saved.length + ' 条 / ' + (JSON.stringify(saved).length / 1048576).toFixed(2) + 'MB');
           } catch(e) {
             try {
               const saved2 = JSON.parse(localStorage.getItem(savedKey) || '[]');
