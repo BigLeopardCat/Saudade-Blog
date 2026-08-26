@@ -65,7 +65,7 @@
   });
   
   await Promise.all([
-    loadExternalResource(live2d_path + 'waifu.css?v=20260827b', 'css'),
+    loadExternalResource(live2d_path + 'waifu.css?v=20260827c', 'css'),
     loadExternalResource(live2d_path + 'waifu-tips.js', 'js'),
   ]);
 
@@ -471,7 +471,7 @@
       const broadcast = (m) => { if (chatChannel) chatChannel.postMessage(m); };
       // 版本自检：确认浏览器加载的是当前部署脚本（nginx 对 live2d-widgets 缓存 1 年，
       // 未强刷时可能仍在跑旧版——多标签同步等功能只在 20260826b 之后才有）
-      console.log('[agent-chat] autoload 20260827b, BroadcastChannel=' + !!chatChannel
+      console.log('[agent-chat] autoload 20260827c, BroadcastChannel=' + !!chatChannel
                   + ', storage=' + ('localStorage' in window));
       window.addEventListener('storage', (e) => {
         if (e.key && e.key.indexOf('chat_history_') === 0 && !isSending) {
@@ -724,11 +724,13 @@
           // SSE 流式对话：agent 首 token 即上屏，不再等待完整回复
           const ctrl = new AbortController();
           streamCtrl = ctrl;
-          // 空闲超时：超过 120s 无任何数据帧则中止（正常生成中每帧都会重置）
-          let idleTimer = setTimeout(() => ctrl.abort(), 120000);
+          // 空闲超时：超过 45s 无任何数据帧则中止（正常生成中每帧都会重置；
+          // LLM 工具调用间隙通常 <15s，45s 无帧 = 链路已挂，比旧的 120s 早恢复界面，
+          // 曾见请求挂起时用户等 2 分钟仍"卡死"、期间发送按钮被 isSending 拦住）
+          let idleTimer = setTimeout(() => ctrl.abort(), 45000);
           const armIdle = () => {
             clearTimeout(idleTimer);
-            idleTimer = setTimeout(() => ctrl.abort(), 120000);
+            idleTimer = setTimeout(() => ctrl.abort(), 45000);
           };
           // 总超时（300s，与后端 STREAM_TOTAL_TIMEOUT 对齐）：agent 工具调用循环等场景
           // 每轮都有帧会重置空闲计时，此计时器不被重置，保证界面必然恢复
@@ -932,16 +934,43 @@
           broadcast({t: 'done', fullText, process: steps.map(s => ({cls: s.cls, text: s.text}))});
           // 最终展示：剔除命令行与 SUMMARY 摘要行后渲染 markdown
           applyMsg(contentSpan, cleanAgentText(fullText));
+          // 空回复（无命令无展示文本）：不保存——历史里留一条"泠月喵:"空气泡
+          // （转跳后恢复会渲染成"（空）"），且污染后续对话上下文
+          if (!fullText.trim()) {
+            console.warn('[agent-chat] 空回复，跳过历史保存');
+          } else {
           // 完整文本保存到 localStorage（含命令行，与后端历史一致）
+          // 保存失败会静默吞掉（曾报"转跳后停留在上一轮用户消息、agent 回复丢失"——
+          // 用户消息保存成功、带 process 的 agent 消息保存失败）。失败多为：
+          // ① localStorage 容量超限（QuotaExceeded）② 历史 JSON 损坏（parse 抛错）。
+          // 降级链：去 process → 裁剪最旧 15 条 → console 告警（下次复测可定位）
+          const savedKey = 'chat_history_' + (localStorage.getItem('tokenKey') || 'guest');
           try {
-            const key = 'chat_history_' + (localStorage.getItem('tokenKey') || 'guest');
-            let saved = JSON.parse(localStorage.getItem(key) || '[]');
-            // process：该轮执行过程行（跨整页转跳保留，syncHistory 恢复时重建）
+            let saved = JSON.parse(localStorage.getItem(savedKey) || '[]');
             saved.push({text: fullText, type: 'agent', time: Date.now(),
                         process: steps.map(s => ({cls: s.cls, text: s.text}))});
             if (saved.length > 50) saved = saved.slice(-50);
-            localStorage.setItem(key, JSON.stringify(saved));
-          } catch(e) {/* ignore */}
+            localStorage.setItem(savedKey, JSON.stringify(saved));
+            console.log('[agent-chat] history saved: ' + saved.length);
+          } catch(e) {
+            try {
+              const saved2 = JSON.parse(localStorage.getItem(savedKey) || '[]');
+              saved2.push({text: fullText, type: 'agent', time: Date.now()});
+              if (saved2.length > 50) saved2 = saved2.slice(-50);
+              localStorage.setItem(savedKey, JSON.stringify(saved2));
+              console.warn('[agent-chat] 历史保存降级（去过程行）: ' + e);
+            } catch(e2) {
+              try {
+                const saved3 = JSON.parse(localStorage.getItem(savedKey) || '[]');
+                saved3.push({text: fullText, type: 'agent', time: Date.now()});
+                localStorage.setItem(savedKey, JSON.stringify(saved3.slice(-35)));
+                console.warn('[agent-chat] 历史保存降级（裁剪最旧 15 条）: ' + e2);
+              } catch(e3) {
+                console.warn('[agent-chat] 历史保存失败（localStorage 已满/不可用）: ' + e3);
+              }
+            }
+          }
+          }
 
             // ── 导航命令解析（命令行优先，正文兜底）──
             // 历史教训：模型幻觉"去X板块"时不在正文里调用 navigate_to，而是手写命令文本
@@ -1092,15 +1121,18 @@
             addMsg(errMsg, 'error');
             broadcast({t: 'error', msg: errMsg});
           }
+        } finally {
+          // 复位必须在 finally：catch 内 addMsg/broadcast 万一抛错，
+          // 未复位 isSending 会把对话框永久锁死（后续发送全部被拦，即"卡死"）
+          isSending = false;
+          streamCtrl = null;
+          sendBtn.disabled = false;
+          sendBtn.title = '发送';
+          sendBtn.innerHTML = '发送';
+          sendBtn.classList.remove('stop-mode');
+          input.disabled = false;
+          input.focus();
         }
-        isSending = false;
-        streamCtrl = null;
-        sendBtn.disabled = false;
-        sendBtn.title = '发送';
-        sendBtn.innerHTML = '发送';
-        sendBtn.classList.remove('stop-mode');
-        input.disabled = false;
-        input.focus();
         if (discardTurn) {
           // 丢弃本轮用户输入与部分回复（不加入记忆）：
           // 1) 前端 localStorage 历史移除本轮用户消息（部分回复从未写入，仅残留在 DOM）
