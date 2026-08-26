@@ -65,7 +65,7 @@
   });
   
   await Promise.all([
-    loadExternalResource(live2d_path + 'waifu.css?v=20260827d', 'css'),
+    loadExternalResource(live2d_path + 'waifu.css?v=20260827e', 'css'),
     loadExternalResource(live2d_path + 'waifu-tips.js', 'js'),
   ]);
 
@@ -489,7 +489,7 @@
       const broadcast = (m) => { if (chatChannel) chatChannel.postMessage(m); };
       // 版本自检：确认浏览器加载的是当前部署脚本（nginx 对 live2d-widgets 缓存 1 年，
       // 未强刷时可能仍在跑旧版——多标签同步等功能只在 20260826b 之后才有）
-      console.log('[agent-chat] autoload 20260827d, BroadcastChannel=' + !!chatChannel
+      console.log('[agent-chat] autoload 20260827e, BroadcastChannel=' + !!chatChannel
                   + ', storage=' + ('localStorage' in window));
       window.addEventListener('storage', (e) => {
         if (e.key && e.key.indexOf('chat_history_') === 0 && !isSending) {
@@ -764,6 +764,140 @@
         // → 气泡内三点跳动；收到任意帧 → 隐藏并重新计时。声明在 try 外，
         // catch/正常收尾都能安全清理（try 内 const 是块级作用域，catch 访问不到）
         let typingEl = null, typingTimer = null;
+        // 命令行/展示文本累积变量提升到 try 外：catch 异常路径（流中断/__ERROR__）也要
+        // 能访问已收到的命令帧——实测反射质检挂起 → 流中断 → catch 分支不解析导航，
+        // AUTO_NAVIGATE 命令白发、用户"卡死"且不跳转（20260827e 修复）
+        let cmdText = '', displayText = '';
+        // 命令解析执行（导航/特效/夜间模式）：正常收尾与异常中断共用（20260827e）。
+        // 历史教训见原内联注释：模型幻觉"去X板块"时手写命令文本（多为相对路径
+        // AUTO_NAVIGATE:/talk），旧实现只认完整 URL → 幻觉命令静默失效 → "没转跳"。
+        // 因此：① fullText 命令行锚定解析（AUTO_NAVIGATE→直接跳 / NAVIGATE→确认，
+        // 支持相对路径与格式漂移）；② 无命令行时回退正文链接（确认式）。
+        // contentSpan 为 null 时（catch 异常路径，错误气泡已提示）跳过注记插入。
+        const execAgentCommands = (fullText, contentSpan) => {
+            const cmdNav = (() => {
+              let last = null;
+              for (const line of fullText.split('\n')) {
+                const m = line.match(/^\s*(AUTO_NAVIGATE|NAVIGATE)\s*:\s*((?:https?:)?\/\/[^\s一-鿿　-〿＀-￯]+|\/[\w\-._~/]*)/i);
+                if (!m) continue;
+                // 去掉行尾中文/ASCII 标点（URL 内合法的 . 必须保留——域名全靠它）
+                let url = m[2].replace(/[，。,.?!；;]+$/, '');
+                if (url.startsWith('//')) url = 'https:' + url;       // 协议相对 → 补全 scheme
+                else if (!/^https?:/i.test(url)) url = 'https://saudade.site' + url; // 相对路径 /talk → 站点根
+                if (!/^https?:\/\//i.test(url)) continue;
+                last = { url, direct: m[1].toUpperCase() === 'AUTO_NAVIGATE' };
+              }
+              return last;  // 取最后命中：REVISE 轮次的旧命令已作废，最终轮的才算数
+            })();
+            // 正文兜底解析：模型可能把命令写进回复正文（token 分帧后进不了 cmdText）。
+            // 旧实现只认 https:// 完整 URL——幻觉命令多为相对路径（AUTO_NAVIGATE:/talk）
+            // 或与下文粘连无换行（AUTO_NAVIGATE:/device-console主人，...），解析失败
+            // 则静默无跳转。现在：① 命令前缀后支持完整 URL/协议相对/站内相对路径，
+            // URL 字符集天然截断粘连中文；② AUTO_NAVIGATE 前缀即使出现在正文也按
+            // "直接跳"处理——BLOG_ROUTES 白名单 + 同源 host 校验兜底，不会放行非法目标。
+            const fallbackNav = (() => {
+              // 取最后一处命令命中：多轮 REVISE 文本拼接时，靠前的命令属于被作废的
+              // 旧轮次（曾出现旧轮次 AUTO_NAVIGATE:/ 根路径顶掉最终正确命令的案例）
+              const m1s = [...fullText.matchAll(/(AUTO_NAVIGATE|NAVIGATE):\s*((?:https?:)?\/\/[^\s一-鿿　-〿＀-￯]+|\/[\w\-._~/]*)/gi)];
+              const m1 = m1s.length ? m1s[m1s.length - 1] : null;
+              if (m1) {
+                // 去掉行尾中文/ASCII 标点（URL 内合法的 . 必须保留——域名全靠它）
+                let url = m1[2].replace(/[，。,.?!；;]+$/, '');
+                if (url.startsWith('//')) url = 'https:' + url;            // 协议相对 → 补全 scheme
+                else if (!/^https?:/i.test(url)) url = 'https://saudade.site' + url; // 相对路径 → 站点根
+                if (/^https?:\/\//i.test(url)) {
+                  return { url, direct: m1[1].toUpperCase() === 'AUTO_NAVIGATE' };
+                }
+              }
+              // 站内相对路径 markdown 链接（确认式）
+              // （排除 // 开头，避免误吞协议相对地址）
+              const m2b = fullText.match(/\[([^\]]+)\]\((\/(?!\/)[^)]+)\)/);
+              if (m2b) return { url: 'https://saudade.site' + m2b[2], direct: false };
+              // 完整 URL markdown 链接（确认式）：scheme 必须存在（http(s):// 或 // 开头），
+              // 否则 [文字](/article/16) 会被拼成 https:///article/16 这种坏链接
+              const m2 = fullText.match(/\[([^\]]+)\]\(((?:https?:)?\/\/[^)]+)\)/);
+              if (m2) {
+                let url = m2[2];
+                if (url.startsWith('//')) url = 'https:' + url;
+                return { url, direct: false };
+              }
+              // 中文命令 + 裸 URL（确认式）：排除空白/中日韩字符（URL 内合法的 . 和 , 保留），
+              // 仅去掉结尾的 ASCII 标点（避免 https://example.com 被截成 https://example）
+              const m3 = fullText.match(/(?:转跳|跳转|打开|前往|导航到)\s*(https?:\/\/[^\s一-鿿　-〿＀-￯]+)/i);
+              if (m3) return { url: m3[1].replace(/[,.;!?]+$/, ''), direct: false };
+              // 中文命令 + 裸站内相对路径（确认式）：无命令前缀的相对路径无法区分
+              // "转跳 /guestbook" 与正文里的 "/article/16" 引用，故不直接跳，弹确认框
+              const m3b = fullText.match(/(?:转跳|跳转|打开|前往|导航到)\s*(\/[\w\-._~/]+)/i);
+              if (m3b) return { url: 'https://saudade.site' + m3b[1], direct: false };
+              return null;
+            })();
+            const navUrl = cmdNav ? cmdNav.url : (fallbackNav && fallbackNav.url);
+            if (navUrl) {
+              // 直接跳转 = 命令行锚定命中 AUTO_NAVIGATE，或正文兜底解析到 AUTO_NAVIGATE 前缀
+              const isDirect = (cmdNav ? cmdNav.direct : false) || (fallbackNav ? fallbackNav.direct : false);
+              // 防呆：自动整页跳转前校验目标是博客真实路由。agent 可能幻觉出不存在的
+              // 页面（如 /iot），跳过去会丢失整站布局与聊天面板（曾导致"文本框卡死"）。
+              // 不在白名单内的目标取消跳转，并在对话框追加系统提示。
+              // 模型幻觉输出可能省略尾部斜杠（AUTO_NAVIGATE:/device-console）——device-console 的斜杠可选
+              const BLOG_ROUTES = [/^\/$/, /^\/about$/, /^\/friends$/, /^\/guestbook$/, /^\/talk$/, /^\/times$/, /^\/login$/, /^\/dashboard/, /^\/category\//, /^\/article\//, /^\/device-console\/?/];
+              const navPath = (() => { try { return new URL(navUrl).pathname; } catch(e3) { return null; } })();
+              const navOk = !!navPath && BLOG_ROUTES.some(r => r.test(navPath));
+              // 直接跳转额外校验同源：白名单只查 pathname，幻觉的
+              // AUTO_NAVIGATE:https://evil.com/talk 路径合法但会带用户离开本站 → 阻断（降级确认式）
+              const hostOk = (() => { try { return new URL(navUrl).host === window.location.host; } catch(e4) { return false; } })();
+              if (isDirect) {
+                if (!navOk || !hostOk) {
+                  console.warn('[agent] 已取消跳转到非博客页面: ' + navUrl);
+                  if (contentSpan) contentSpan.insertAdjacentHTML('beforeend', '<div class="nav-skip-note">（系统：该地址不是博客页面，已取消自动跳转）</div>');
+                } else {
+                  sessionStorage.setItem('chat_open', '1');  // 跳转后默认打开对话框并滚动到底部
+                  sessionStorage.setItem('chat_nav_slide', '1');  // 站内转跳：跳过滑入动画（forceSlideInFromBottom）
+                  // 转跳防御：备份当前对话历史到 sessionStorage（同标签页整页跳转后保留）。
+                  // 新页面 syncHistory 若从 localStorage 恢复为空，用备份兜底渲染——
+                  // 转跳后对话"直接丢失"的最后一层保险（曾见整页转跳后历史不显示）
+                  try {
+                    const bkKey = 'chat_history_' + (localStorage.getItem('tokenKey') || 'guest');
+                    sessionStorage.setItem('chat_history_backup', localStorage.getItem(bkKey) || '[]');
+                    sessionStorage.setItem('chat_history_backup_key', bkKey);
+                  } catch(e) {/* ignore */}
+                  window.location.href = navUrl;
+                }
+              } else {
+                pendingNavUrl = navUrl;
+                navQuestion.textContent = '泠月喵建议跳转到: ' + navUrl;
+                navConfirm.classList.add('active');
+              }
+            }
+            // 处理特效切换命令（支持 EFFECT:name 按钮式切换 / EFFECT:name:on|off 显式开关）
+            // 容忍格式漂移：模型可能在正文里输出 "EFFECT: sakura on"（带空格/无冒号分隔）等变形，
+            // 一律按显式意图执行；中文/无命令参数（EFFECT: 后跟正文）不会被 \w+ 匹配，安全
+            const effectMatch = fullText.match(/EFFECT:\s*(\w+)\s*:?\s*(\w+)?/);
+            if (effectMatch) {
+              const eff = effectMatch[1];
+              const action = effectMatch[2];
+              toggleEffect(eff, action);
+            }
+            // 兜底：模型未真正调用工具、仅把工具调用写进正文时（如 toggle_effect(effect="sakura", action="on")），
+            // 按工具调用签名解析并执行，保证特效/夜间模式必定生效
+            const toolCall = fullText.match(/toggle_effect\s*\(\s*effect\s*=\s*["'](\w+)["']\s*,?\s*action\s*=\s*["'](on|off)["']\s*\)/i)
+              || fullText.match(/toggle_dark_mode\s*\(\s*mode\s*=\s*["'](on|off)["']\s*\)/i);
+            if (toolCall) {
+              if (toolCall[0].startsWith('toggle_effect')) {
+                toggleEffect(toolCall[1], toolCall[2]);
+              } else if (toolCall[0].startsWith('toggle_dark_mode')) {
+                try { localStorage.setItem('darkModeUserChoice', 'true'); } catch(e2) {/* ignore */}
+                applyDarkMode(toolCall[1] === 'on', true);
+              }
+            }
+            // 处理夜间模式命令（DARKMODE:on|off）
+            // 通过对话让 agent 调节同样代表访客意愿：标记 darkModeUserChoice，夜间自动切换让位；
+            // animate=true 触发与手动点击切换按钮相同的日月过渡动画
+            const darkMatch = fullText.match(/DARKMODE:\s*(on|off)/);
+            if (darkMatch) {
+              try { localStorage.setItem('darkModeUserChoice', 'true'); } catch(e2) {/* ignore */}
+              applyDarkMode(darkMatch[1] === 'on', true);
+            }
+        };
 
         try {
           // SSE 流式对话：agent 首 token 即上屏，不再等待完整回复
@@ -892,8 +1026,6 @@
           const reader = resp.body.getReader();
           const decoder = new TextDecoder();
           let buf = '';
-          let displayText = ''; // 展示文本（不含命令行）
-          let cmdText = '';     // NAVIGATE:/EFFECT: 命令行（不展示，仅用于解析与历史保存）
           let mouthOpen = false;
           let lastMouthFlip = 0;
           const tickMouth = () => {
@@ -1018,135 +1150,9 @@
           }
           }
 
-            // ── 导航命令解析（命令行优先，正文兜底）──
-            // 历史教训：模型幻觉"去X板块"时不在正文里调用 navigate_to，而是手写命令文本
-            // （且多为相对路径 AUTO_NAVIGATE:/talk）；旧实现只认完整 URL 且依赖整段
-            // startsWith('AUTO_NAVIGATE:')，幻觉命令静默失效并退化为"建议跳转"确认框
-            // → 用户看到"没转跳"。因此：① cmdText 命令行锚定解析（AUTO_NAVIGATE→直接跳
-            // / NAVIGATE→确认，支持相对路径与格式漂移）；② 无命令行时回退正文链接
-            // （确认式，行为不变）。后端强制跳转命令作为流首帧进 cmdText，此处必然命中。
-            const cmdNav = (() => {
-              let last = null;
-              for (const line of cmdText.split('\n')) {
-                const m = line.match(/^\s*(AUTO_NAVIGATE|NAVIGATE)\s*:\s*((?:https?:)?\/\/[^\s一-鿿　-〿＀-￯]+|\/[\w\-._~/]*)/i);
-                if (!m) continue;
-                // 去掉行尾中文/ASCII 标点（URL 内合法的 . 必须保留——域名全靠它）
-                let url = m[2].replace(/[，。,.?!；;]+$/, '');
-                if (url.startsWith('//')) url = 'https:' + url;       // 协议相对 → 补全 scheme
-                else if (!/^https?:/i.test(url)) url = 'https://saudade.site' + url; // 相对路径 /talk → 站点根
-                if (!/^https?:\/\//i.test(url)) continue;
-                last = { url, direct: m[1].toUpperCase() === 'AUTO_NAVIGATE' };
-              }
-              return last;  // 取最后命中：REVISE 轮次的旧命令已作废，最终轮的才算数
-            })();
-            // 正文兜底解析：模型可能把命令写进回复正文（token 分帧后进不了 cmdText）。
-            // 旧实现只认 https:// 完整 URL——幻觉命令多为相对路径（AUTO_NAVIGATE:/talk）
-            // 或与下文粘连无换行（AUTO_NAVIGATE:/device-console主人，...），解析失败
-            // 则静默无跳转。现在：① 命令前缀后支持完整 URL/协议相对/站内相对路径，
-            // URL 字符集天然截断粘连中文；② AUTO_NAVIGATE 前缀即使出现在正文也按
-            // "直接跳"处理——BLOG_ROUTES 白名单 + 同源 host 校验兜底，不会放行非法目标。
-            const fallbackNav = (() => {
-              // 取最后一处命令命中：多轮 REVISE 文本拼接时，靠前的命令属于被作废的
-              // 旧轮次（曾出现旧轮次 AUTO_NAVIGATE:/ 根路径顶掉最终正确命令的案例）
-              const m1s = [...fullText.matchAll(/(AUTO_NAVIGATE|NAVIGATE):\s*((?:https?:)?\/\/[^\s一-鿿　-〿＀-￯]+|\/[\w\-._~/]*)/gi)];
-              const m1 = m1s.length ? m1s[m1s.length - 1] : null;
-              if (m1) {
-                // 去掉行尾中文/ASCII 标点（URL 内合法的 . 必须保留——域名全靠它）
-                let url = m1[2].replace(/[，。,.?!；;]+$/, '');
-                if (url.startsWith('//')) url = 'https:' + url;            // 协议相对 → 补全 scheme
-                else if (!/^https?:/i.test(url)) url = 'https://saudade.site' + url; // 相对路径 → 站点根
-                if (/^https?:\/\//i.test(url)) {
-                  return { url, direct: m1[1].toUpperCase() === 'AUTO_NAVIGATE' };
-                }
-              }
-              // 站内相对路径 markdown 链接（确认式）
-              // （排除 // 开头，避免误吞协议相对地址）
-              const m2b = fullText.match(/\[([^\]]+)\]\((\/(?!\/)[^)]+)\)/);
-              if (m2b) return { url: 'https://saudade.site' + m2b[2], direct: false };
-              // 完整 URL markdown 链接（确认式）：scheme 必须存在（http(s):// 或 // 开头），
-              // 否则 [文字](/article/16) 会被拼成 https:///article/16 这种坏链接
-              const m2 = fullText.match(/\[([^\]]+)\]\(((?:https?:)?\/\/[^)]+)\)/);
-              if (m2) {
-                let url = m2[2];
-                if (url.startsWith('//')) url = 'https:' + url;
-                return { url, direct: false };
-              }
-              // 中文命令 + 裸 URL（确认式）：排除空白/中日韩字符（URL 内合法的 . 和 , 保留），
-              // 仅去掉结尾的 ASCII 标点（避免 https://example.com 被截成 https://example）
-              const m3 = fullText.match(/(?:转跳|跳转|打开|前往|导航到)\s*(https?:\/\/[^\s一-鿿　-〿＀-￯]+)/i);
-              if (m3) return { url: m3[1].replace(/[,.;!?]+$/, ''), direct: false };
-              // 中文命令 + 裸站内相对路径（确认式）：无命令前缀的相对路径无法区分
-              // "转跳 /guestbook" 与正文里的 "/article/16" 引用，故不直接跳，弹确认框
-              const m3b = fullText.match(/(?:转跳|跳转|打开|前往|导航到)\s*(\/[\w\-._~/]+)/i);
-              if (m3b) return { url: 'https://saudade.site' + m3b[1], direct: false };
-              return null;
-            })();
-            const navUrl = cmdNav ? cmdNav.url : (fallbackNav && fallbackNav.url);
-            if (navUrl) {
-              // 直接跳转 = 命令行锚定命中 AUTO_NAVIGATE，或正文兜底解析到 AUTO_NAVIGATE 前缀
-              const isDirect = (cmdNav ? cmdNav.direct : false) || (fallbackNav ? fallbackNav.direct : false);
-              // 防呆：自动整页跳转前校验目标是博客真实路由。agent 可能幻觉出不存在的
-              // 页面（如 /iot），跳过去会丢失整站布局与聊天面板（曾导致"文本框卡死"）。
-              // 不在白名单内的目标取消跳转，并在对话框追加系统提示。
-              // 模型幻觉输出可能省略尾部斜杠（AUTO_NAVIGATE:/device-console）——device-console 的斜杠可选
-              const BLOG_ROUTES = [/^\/$/, /^\/about$/, /^\/friends$/, /^\/guestbook$/, /^\/talk$/, /^\/times$/, /^\/login$/, /^\/dashboard/, /^\/category\//, /^\/article\//, /^\/device-console\/?/];
-              const navPath = (() => { try { return new URL(navUrl).pathname; } catch(e3) { return null; } })();
-              const navOk = !!navPath && BLOG_ROUTES.some(r => r.test(navPath));
-              // 直接跳转额外校验同源：白名单只查 pathname，幻觉的
-              // AUTO_NAVIGATE:https://evil.com/talk 路径合法但会带用户离开本站 → 阻断（降级确认式）
-              const hostOk = (() => { try { return new URL(navUrl).host === window.location.host; } catch(e4) { return false; } })();
-              if (isDirect) {
-                if (!navOk || !hostOk) {
-                  console.warn('[agent] 已取消跳转到非博客页面: ' + navUrl);
-                  contentSpan.insertAdjacentHTML('beforeend', '<div class="nav-skip-note">（系统：该地址不是博客页面，已取消自动跳转）</div>');
-                } else {
-                  sessionStorage.setItem('chat_open', '1');  // 跳转后默认打开对话框并滚动到底部
-                  sessionStorage.setItem('chat_nav_slide', '1');  // 站内转跳：跳过滑入动画（forceSlideInFromBottom）
-                  // 转跳防御：备份当前对话历史到 sessionStorage（同标签页整页跳转后保留）。
-                  // 新页面 syncHistory 若从 localStorage 恢复为空，用备份兜底渲染——
-                  // 转跳后对话"直接丢失"的最后一层保险（曾见整页转跳后历史不显示）
-                  try {
-                    const bkKey = 'chat_history_' + (localStorage.getItem('tokenKey') || 'guest');
-                    sessionStorage.setItem('chat_history_backup', localStorage.getItem(bkKey) || '[]');
-                    sessionStorage.setItem('chat_history_backup_key', bkKey);
-                  } catch(e) {/* ignore */}
-                  window.location.href = navUrl;
-                }
-              } else {
-                pendingNavUrl = navUrl;
-                navQuestion.textContent = '泠月喵建议跳转到: ' + navUrl;
-                navConfirm.classList.add('active');
-              }
-            }
-            // 处理特效切换命令（支持 EFFECT:name 按钮式切换 / EFFECT:name:on|off 显式开关）
-            // 容忍格式漂移：模型可能在正文里输出 "EFFECT: sakura on"（带空格/无冒号分隔）等变形，
-            // 一律按显式意图执行；中文/无命令参数（EFFECT: 后跟正文）不会被 \w+ 匹配，安全
-            const effectMatch = fullText.match(/EFFECT:\s*(\w+)\s*:?\s*(\w+)?/);
-            if (effectMatch) {
-              const eff = effectMatch[1];
-              const action = effectMatch[2];
-              toggleEffect(eff, action);
-            }
-            // 兜底：模型未真正调用工具、仅把工具调用写进正文时（如 toggle_effect(effect="sakura", action="on")），
-            // 按工具调用签名解析并执行，保证特效/夜间模式必定生效
-            const toolCall = fullText.match(/toggle_effect\s*\(\s*effect\s*=\s*["'](\w+)["']\s*,?\s*action\s*=\s*["'](on|off)["']\s*\)/i)
-              || fullText.match(/toggle_dark_mode\s*\(\s*mode\s*=\s*["'](on|off)["']\s*\)/i);
-            if (toolCall) {
-              if (toolCall[0].startsWith('toggle_effect')) {
-                toggleEffect(toolCall[1], toolCall[2]);
-              } else if (toolCall[0].startsWith('toggle_dark_mode')) {
-                try { localStorage.setItem('darkModeUserChoice', 'true'); } catch(e2) {/* ignore */}
-                applyDarkMode(toolCall[1] === 'on', true);
-              }
-            }
-            // 处理夜间模式命令（DARKMODE:on|off）
-            // 通过对话让 agent 调节同样代表访客意愿：标记 darkModeUserChoice，夜间自动切换让位；
-            // animate=true 触发与手动点击切换按钮相同的日月过渡动画
-            const darkMatch = fullText.match(/DARKMODE:\s*(on|off)/);
-            if (darkMatch) {
-              try { localStorage.setItem('darkModeUserChoice', 'true'); } catch(e2) {/* ignore */}
-              applyDarkMode(darkMatch[1] === 'on', true);
-            }
+            // 命令解析执行（导航/特效/夜间模式）——正常收尾路径：
+            // 完整文本含命令行（fullText = cmdText + displayText），已收到的命令帧在此执行
+            execAgentCommands(fullText, contentSpan);
         } catch(e) {
           // 异常路径兜底：移除打字指示器（AbortError/网络错误/__ERROR__ 帧）
           if (typingTimer) clearTimeout(typingTimer);
@@ -1161,11 +1167,17 @@
             } else {
               addMsg('长时间未收到回复，请稍后重试', 'error');
               broadcast({t: 'error', msg: '长时间未收到回复，请稍后重试'});
+              // 异常中断也执行已收到的命令帧（20260827e）：流中断不代表命令无效——
+              // 反射质检挂起导致的断流里 AUTO_NAVIGATE/EFFECT/DARKMODE 帧可能已到达，
+              // 旧实现 catch 不解析导航 → 命令白发、用户"卡死"且不跳转
+              try { execAgentCommands(cmdText + displayText, null); } catch(e2) {/* ignore */}
             }
           } else {
             const errMsg = '网络错误: ' + (e && e.message ? e.message : '未知错误');
             addMsg(errMsg, 'error');
             broadcast({t: 'error', msg: errMsg});
+            // 同上：__ERROR__ 帧/网络错误也执行已收到的命令帧
+            try { execAgentCommands(cmdText + displayText, null); } catch(e2) {/* ignore */}
           }
         } finally {
           // 复位必须在 finally：catch 内 addMsg/broadcast 万一抛错，
