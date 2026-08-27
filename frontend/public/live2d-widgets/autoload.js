@@ -145,7 +145,7 @@
   });
   
   await Promise.all([
-    loadExternalResource(live2d_path + 'waifu.css?v=20260828k', 'css'),
+    loadExternalResource(live2d_path + 'waifu.css?v=20260828l', 'css'),
     loadExternalResource(live2d_path + 'waifu-tips.js', 'js'),
   ]);
 
@@ -159,32 +159,33 @@
   // Cubism 模型切换/初始化期间，旧版交互库可能在 core 尚未创建时执行
   // hitTest，导致 getHitAreasCount 访问 null。模型就绪前暂时关闭画布命中，
   // 模型完成后恢复交互。
+  // ★ 20260828l 修复：旧实现守卫在 initWidget 之前调用——此时画布尚未创建
+  //   （#waifu 模板由 initWidget 注入），`if (!canvas) return` 直接空转，守卫
+  //   从未生效（onMouseMove→onTap→hitTest 崩溃仍在）。改为 initWidget 之后
+  //   调用 + 每帧持续轮询：模型拆建（switch-model）窗口期自动重新禁命中，
+  //   且 resetCanvas 重建画布后对新画布生效（每次 tick 重新 getElementById）。
   const guardLive2dHitTest = () => {
-    const canvas = document.getElementById('live2d');
-    if (!canvas || canvas.__hitTestGuarded) return;
-    canvas.__hitTestGuarded = true;
     const canHitTest = () => {
       try {
         const ad = window.__cubism5model;
         const sub = ad && ad.subdelegates && ad.subdelegates.getSize() ? ad.subdelegates.at(0) : null;
         const mgr = sub && sub.getLive2DManager ? sub.getLive2DManager() : null;
         const model = mgr && mgr._models && mgr._models.getSize() ? mgr._models.at(0) : null;
-        const core = model && (model.getModel ? model.getModel() : model._model);
-        return !!(core && typeof core.getHitAreasCount === 'function');
+        // 崩溃点（20260828k 用户 F12）：LAppModel.hitTest 读 this._modelSetting.getHitAreasCount()，
+        // _modelSetting 在模型加载完成前为 null。注意 CubismModel 本体没有 getHitAreasCount
+        // （这版运行时只有 Part/Parameter/Drawable 计数），必须检查 _modelSetting——
+        // 与 hitTest 崩溃的访问链严格一致，模型就绪后才放行 pointer-events
+        return !!(model && model._modelSetting &&
+          typeof model._modelSetting.getHitAreasCount === 'function');
       } catch (e) { return false; }
     };
-    const previousPointerEvents = canvas.style.pointerEvents;
     const tick = () => {
-      if (canHitTest()) {
-        canvas.style.pointerEvents = previousPointerEvents;
-        return;
-      }
-      canvas.style.pointerEvents = 'none';
+      const canvas = document.getElementById('live2d');
+      if (canvas) canvas.style.pointerEvents = canHitTest() ? '' : 'none';
       requestAnimationFrame(tick);
     };
     tick();
   };
-  guardLive2dHitTest();
 
   if (document.getElementById('waifu')) {
     console.warn('[Live2D] waifu already exists, skipping init');
@@ -212,6 +213,10 @@
   }]);
 
     }
+
+  // 守卫必须在 initWidget 之后调用：画布由 initWidget 注入 waifu 模板时才创建，
+  // 之前调用会因 canvas 不存在而空转（20260828l 修复，见 guardLive2dHitTest 注释）
+  guardLive2dHitTest();
 
   // 看板娘从底部滑入（等角色真正可绘制后才开始，WAAPI 保证过渡必然可见）：
   // 上游 waifu-tips.js 在"模型加载完成"时加 waifu-active，但 cubism5 运行时在全部
@@ -669,7 +674,7 @@
       let remotectlTimer = null; // storage 事件防抖句柄
       // 版本自检：确认浏览器加载的是当前部署脚本（nginx 对 live2d-widgets 缓存 1 年，
       // 未强刷时可能仍在跑旧版——DB 权威历史/roundId 同步只在 20260828a 之后才有）
-      console.log('[agent-chat] autoload 20260828k, BroadcastChannel=' + !!chatChannel
+      console.log('[agent-chat] autoload 20260828l, BroadcastChannel=' + !!chatChannel
                   + ', storage=' + ('localStorage' in window));
       // 按 roundId 取/建 live 气泡（远端帧专用；本窗流由 makeLiveBubble 预建）
       const remoteLive = (roundId) => {
