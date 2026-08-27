@@ -284,7 +284,7 @@ const NewNotes = () => {
             try {
                 const res = await updateNote(id, data)
                 if(res.status === 200){
-                    dispatch<any>(fetchNoteList())
+                    dispatch<any>(fetchNoteList(true))
                     message.success("文章更新成功")
                     localStorage.removeItem(draftKey) // 发布成功清除草稿
                     setOpen(false); // Close modal
@@ -310,7 +310,7 @@ const NewNotes = () => {
             try {
                 const res = await createNote(data)
                 if (res.status === 200) {
-                    dispatch<any>(fetchNoteList())
+                    dispatch<any>(fetchNoteList(true))
                     message.success("文章创建成功")
                     localStorage.removeItem(draftKey) // 发布成功清除草稿
                     setOpen(false); // Close modal on create success

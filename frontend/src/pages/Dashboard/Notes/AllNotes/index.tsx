@@ -223,7 +223,7 @@ const AllNotes = () => {
             const res = await delNote(key)
             if(res.status === 200){
                 await initNotes()
-                dispatch<any>(fetchNoteList())
+                dispatch<any>(fetchNoteList(true))
                 message.success('删除成功')
             }
         }catch (error){
@@ -236,7 +236,7 @@ const AllNotes = () => {
             const res = await delAllNotes(selectedRowKeys)
             if (res.status === 200) {
                 await initNotes()
-                dispatch<any>(fetchNoteList())
+                dispatch<any>(fetchNoteList(true))
                 setSelectedRowKeys([])
                 message.success('删除成功')
             }
