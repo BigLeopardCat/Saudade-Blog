@@ -38,7 +38,7 @@ const Dashboard = () => {
         dispatch<any>(fetchUserInfo())
         dispatch<any>(fetchCategories())
         dispatch<any>(fetchTags())
-        dispatch<any>(fetchNoteList())
+        dispatch<any>(fetchNoteList(true))
         const DarkSwitch = localStorage.getItem('isDarkMode')
         const currentHashCode =
             location.hash === '#/dashboard' ? 1 :

@@ -30,7 +30,7 @@ const Home = () => {
 
     // Init Data for Analytics
     useEffect(() => {
-        dispatch<any>(fetchNoteList());
+        dispatch<any>(fetchNoteList(true));
         dispatch<any>(fetchCategories());
         dispatch<any>(fetchTags());
     }, [dispatch]);

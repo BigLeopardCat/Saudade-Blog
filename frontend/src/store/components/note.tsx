@@ -28,18 +28,11 @@ const NoteSlice = createSlice({
     }
 })
 
-const fetchNoteList = () => {
+const fetchNoteList = (admin = false) => {
     return async (dispatch: Dispatch<PayloadAction<NoteType[]>>) => {
         try {
-            // Check if admin token exists
-            const token = localStorage.getItem('tokenKey');
-            let res;
-            if (token) {
-                 // Use admin API if logged in
-                 res = await getAdminNotes();
-            } else {
-                 res = await getNotes();
-            }
+              // 登录不等于管理员权限：前台始终使用公开列表，后台显式请求管理员列表。
+              const res = admin ? await getAdminNotes() : await getNotes();
 
             const noteList = Array.isArray(res?.data?.data) ? res.data.data : [];
             const processedData = noteList.map((item: { noteTags: string; }) => ({
