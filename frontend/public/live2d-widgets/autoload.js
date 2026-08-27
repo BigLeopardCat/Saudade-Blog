@@ -145,7 +145,7 @@
   });
   
   await Promise.all([
-    loadExternalResource(live2d_path + 'waifu.css?v=20260828l', 'css'),
+    loadExternalResource(live2d_path + 'waifu.css?v=20260828m', 'css'),
     loadExternalResource(live2d_path + 'waifu-tips.js', 'js'),
   ]);
 
@@ -159,7 +159,7 @@
   // Cubism 模型切换/初始化期间，旧版交互库可能在 core 尚未创建时执行
   // hitTest，导致 getHitAreasCount 访问 null。模型就绪前暂时关闭画布命中，
   // 模型完成后恢复交互。
-  // ★ 20260828l 修复：旧实现守卫在 initWidget 之前调用——此时画布尚未创建
+  // ★ 20260828m 修复：旧实现守卫在 initWidget 之前调用——此时画布尚未创建
   //   （#waifu 模板由 initWidget 注入），`if (!canvas) return` 直接空转，守卫
   //   从未生效（onMouseMove→onTap→hitTest 崩溃仍在）。改为 initWidget 之后
   //   调用 + 每帧持续轮询：模型拆建（switch-model）窗口期自动重新禁命中，
@@ -215,7 +215,7 @@
     }
 
   // 守卫必须在 initWidget 之后调用：画布由 initWidget 注入 waifu 模板时才创建，
-  // 之前调用会因 canvas 不存在而空转（20260828l 修复，见 guardLive2dHitTest 注释）
+  // 之前调用会因 canvas 不存在而空转（20260828m 修复，见 guardLive2dHitTest 注释）
   guardLive2dHitTest();
 
   // 看板娘从底部滑入（等角色真正可绘制后才开始，WAAPI 保证过渡必然可见）：
@@ -674,7 +674,7 @@
       let remotectlTimer = null; // storage 事件防抖句柄
       // 版本自检：确认浏览器加载的是当前部署脚本（nginx 对 live2d-widgets 缓存 1 年，
       // 未强刷时可能仍在跑旧版——DB 权威历史/roundId 同步只在 20260828a 之后才有）
-      console.log('[agent-chat] autoload 20260828l, BroadcastChannel=' + !!chatChannel
+      console.log('[agent-chat] autoload 20260828m, BroadcastChannel=' + !!chatChannel
                   + ', storage=' + ('localStorage' in window));
       // 按 roundId 取/建 live 气泡（远端帧专用；本窗流由 makeLiveBubble 预建）
       const remoteLive = (roundId) => {
