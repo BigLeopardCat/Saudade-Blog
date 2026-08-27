@@ -38,7 +38,7 @@ if [ -f saudade_blog_bin ]; then
   rm -f saudade_blog_bin
   pkill -f saudade_blog_bin 2>/dev/null || true
   sleep 2
-  nohup ./target/release/saudade_blog_bin > server_run.log 2>&1 &
+  nohup ./target/release/saudade_blog_bin > server_rust.log 2>&1 &
   echo "✅ $(date "+%H:%M:%S") 后端已更新并重启"
 else
   echo "ℹ️ $(date "+%H:%M:%S") 后端无变更，跳过重启"
