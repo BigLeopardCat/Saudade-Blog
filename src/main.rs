@@ -1,5 +1,6 @@
 use dotenvy::dotenv;
-use sea_orm::Database;
+use sea_orm::SqlxMySqlConnector;
+use sqlx::mysql::{MySqlConnectOptions, MySqlPoolOptions};
 use std::env;
 use std::net::SocketAddr;
 use tracing_subscriber;
@@ -12,7 +13,19 @@ async fn main() {
     tracing_subscriber::fmt::init();
 
     let db_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    let db = Database::connect(&db_url).await.expect("Failed to connect to DB");
+    // sqlx 默认把 MySQL 会话时区设为 UTC（time_zone 默认 "+00:00"），
+    // DEFAULT CURRENT_TIMESTAMP 会存 UTC 值——维护者直查 DB 差 8 小时。
+    // 覆盖为 +08:00：所有 CURRENT_TIMESTAMP 生成本地钟面时间。
+    // entity 全部用 NaiveDateTime（sea-orm DateTime），不涉时区换算，无 skew。
+    let conn_opt: MySqlConnectOptions = db_url
+        .parse::<MySqlConnectOptions>()
+        .expect("invalid DATABASE_URL")
+        .timezone(Some("+08:00".to_string()));
+    let pool = MySqlPoolOptions::new()
+        .connect_with(conn_opt)
+        .await
+        .expect("Failed to connect to DB");
+    let db = SqlxMySqlConnector::from_sqlx_mysql_pool(pool);
 
     // H2 修复：登录限流器 —— 密码错误 5 次/5 分钟窗口，锁定 15 分钟
     let max_attempts = env::var("LOGIN_MAX_ATTEMPTS")

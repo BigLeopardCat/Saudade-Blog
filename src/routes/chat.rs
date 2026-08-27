@@ -109,7 +109,7 @@ pub async fn chat_history_handler(
             id: h.id,
             role: h.role.clone(),
             content: h.content.clone(),
-            time: h.created_at.and_utc().timestamp_millis(),
+            time: h.created_at.and_local_timezone(chrono::Local).single().map(|dt| dt.timestamp_millis()).unwrap_or(0),
         })
         .collect();
     (

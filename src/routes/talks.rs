@@ -54,8 +54,8 @@ async fn list_by_src(
         v: t.v as i32,
         author: t.author,
         mine: uid.map(|u| t.user_id == u).unwrap_or(false),
-        created_at: t.created_at.and_utc().with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap()).format("%Y-%m-%d %H:%M:%S").to_string(),
-        updated_at: t.updated_at.and_utc().with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap()).format("%Y-%m-%d %H:%M:%S").to_string(),
+        created_at: t.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+        updated_at: t.updated_at.format("%Y-%m-%d %H:%M:%S").to_string(),
     }).collect();
     Json(ApiResponse::success(dtos))
 }
@@ -141,8 +141,8 @@ async fn insert_talk(
         user_id: Set(uid),
         src: Set(src.to_string()),
         approved: Set(1),
-        created_at: Set(chrono::Utc::now().naive_utc()),
-        updated_at: Set(chrono::Utc::now().naive_utc()),
+        created_at: Set(chrono::Local::now().naive_local()),
+        updated_at: Set(chrono::Local::now().naive_local()),
         ..Default::default()
     };
     talk::Entity::insert(t).exec(&state.db).await.unwrap();
@@ -199,7 +199,7 @@ pub async fn update_talk(
         let mut active_model: talk::ActiveModel = t.into();
         active_model.title = Set(Some(payload.title));
         active_model.content = Set(payload.content);
-        active_model.updated_at = Set(chrono::Utc::now().naive_utc());
+        active_model.updated_at = Set(chrono::Local::now().naive_local());
 
         talk::Entity::update(active_model).exec(&state.db).await.unwrap();
         Json(ApiResponse::success("Updated".to_string()))
@@ -256,7 +256,7 @@ pub async fn list_board_admin(
             cat: t.cat,
             v: t.v as i32,
             author: t.author,
-            created_at: t.created_at.and_utc().with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap()).format("%Y-%m-%d %H:%M:%S").to_string(),
+            created_at: t.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
             user_id: t.user_id,
             username: u.map(|x| x.username.clone()).unwrap_or_default(),
             nickname: u.map(|x| x.nickname.clone()).unwrap_or_default(),
@@ -301,7 +301,7 @@ pub async fn audit_board(
     };
     let mut active_model: talk::ActiveModel = t.into();
     active_model.approved = Set(if payload.approved == 0 { 0 } else { 1 });
-    active_model.updated_at = Set(chrono::Utc::now().naive_utc());
+    active_model.updated_at = Set(chrono::Local::now().naive_local());
     talk::Entity::update(active_model).exec(&state.db).await.unwrap();
     Json(ApiResponse::success("Audited".to_string()))
 }
