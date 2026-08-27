@@ -65,8 +65,8 @@ fn map_note(n: note::Model, cat: Option<category::Model>) -> NoteDto {
         content_raw: n.content,
         description: n.description.unwrap_or_default(),
         cover: n.cover.unwrap_or_default(),
-        created_at: n.created_at.and_utc().with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap()).format("%Y-%m-%d %H:%M:%S").to_string(),
-        updated_at: n.updated_at.and_utc().with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap()).format("%Y-%m-%d %H:%M:%S").to_string(),
+        created_at: n.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+        updated_at: n.updated_at.format("%Y-%m-%d %H:%M:%S").to_string(),
         is_top: n.is_top.unwrap_or(0),
         status: n.status.unwrap_or("published".to_string()),
         category_id: cat_id,
@@ -331,8 +331,8 @@ pub async fn create_note(
         cover: Set(payload.cover),
         is_top: Set(payload.is_top),
         status: Set(Some(status_str)),
-        created_at: Set(chrono::Utc::now().naive_utc()),
-        updated_at: Set(chrono::Utc::now().naive_utc()),
+        created_at: Set(chrono::Local::now().naive_local()),
+        updated_at: Set(chrono::Local::now().naive_local()),
         tags: Set(payload.tags),
         ..Default::default()
     };
@@ -382,7 +382,7 @@ pub async fn update_note(
              }
         }
 
-        active_model.updated_at = Set(chrono::Utc::now().naive_utc());
+        active_model.updated_at = Set(chrono::Local::now().naive_local());
         
         match active_model.update(&state.db).await {
             Ok(_) => Json(ApiResponse::success("Note updated successfully".to_string())),

@@ -26,8 +26,8 @@ pub async fn upload_image(
              // Simple sanitization: only keep basename
              let file_name = Path::new(&file_name).file_name().unwrap_or_default().to_string_lossy().to_string();
              
-             // Prepend timestamp to avoid collision
-             let timestamp = chrono::Utc::now().with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap()).format("%Y%m%d%H%M%S").to_string();
+             // Prepend timestamp to avoid collision（本地时区钟面，与 DB 时间约定一致）
+             let timestamp = chrono::Local::now().format("%Y%m%d%H%M%S").to_string();
              let new_name = format!("{}_{}", timestamp, file_name);
              let file_path = upload_dir.join(&new_name);
 
