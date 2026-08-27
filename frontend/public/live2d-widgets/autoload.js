@@ -156,7 +156,35 @@
   };
   initCanvas();
 
-
+  // Cubism 模型切换/初始化期间，旧版交互库可能在 core 尚未创建时执行
+  // hitTest，导致 getHitAreasCount 访问 null。模型就绪前暂时关闭画布命中，
+  // 模型完成后恢复交互。
+  const guardLive2dHitTest = () => {
+    const canvas = document.getElementById('live2d');
+    if (!canvas || canvas.__hitTestGuarded) return;
+    canvas.__hitTestGuarded = true;
+    const canHitTest = () => {
+      try {
+        const ad = window.__cubism5model;
+        const sub = ad && ad.subdelegates && ad.subdelegates.getSize() ? ad.subdelegates.at(0) : null;
+        const mgr = sub && sub.getLive2DManager ? sub.getLive2DManager() : null;
+        const model = mgr && mgr._models && mgr._models.getSize() ? mgr._models.at(0) : null;
+        const core = model && (model.getModel ? model.getModel() : model._model);
+        return !!(core && typeof core.getHitAreasCount === 'function');
+      } catch (e) { return false; }
+    };
+    const previousPointerEvents = canvas.style.pointerEvents;
+    const tick = () => {
+      if (canHitTest()) {
+        canvas.style.pointerEvents = previousPointerEvents;
+        return;
+      }
+      canvas.style.pointerEvents = 'none';
+      requestAnimationFrame(tick);
+    };
+    tick();
+  };
+  guardLive2dHitTest();
 
   if (document.getElementById('waifu')) {
     console.warn('[Live2D] waifu already exists, skipping init');
