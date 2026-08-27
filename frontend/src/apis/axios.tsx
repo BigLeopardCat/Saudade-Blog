@@ -38,14 +38,9 @@ http.interceptors.response.use(
             setTimeout(() => {
                 window.location.href = "/login";
             }, 1000);
-        } else if (error.response && error.response.status === 403) {
-            // token 有效但角色非 admin（后端 auth_guard 对非 admin 返回 403）：
-            // 进后台页面时报"Error fetching ..."静默失败很困惑，明确引导重新登录
-            localStorage.removeItem("tokenKey");
-            message.error("当前账号无后台管理权限，请使用管理员账号登录");
-            setTimeout(() => {
-                window.location.href = "/login";
-            }, 1000);
+        // 注意：403（token 有效但角色非 admin，AuthRouter 已提示"无权限访问后台"并跳回首页）
+        // 不在此处理——token 本身有效，清 token/强制登出会让普通用户陷入
+        // "登录→被踢→重新登录"循环，且与 AuthRouter 的提示重复
         }
         return Promise.reject(error);
     }
