@@ -429,7 +429,15 @@
           // time 与服务器不一致、孤儿永不收敛、双窗结果恒不同。替换后所有窗拉
           // 同一份 incoming → 天然一致（写者风暴从机制上消失），缓存仅作镜像。
           // replaceWithIncoming 保留 60s 内未入库的 'l' 轮（DB 提交延迟窗口防闪烁）。
-          ctx.state.items = __chatCore.replaceWithIncoming(ctx.state.items, incoming);
+          // 20260829b：回填源补充——刷新/重开窗口时 items 尚未从缓存恢复（DB 权威
+          // 替换前为空），带 images 的本地缩略图条目会全部失陪、被 DB 抹成占位块。
+          // 缓存镜像（saveHistory 唯一写者）与 items 同源，补充为回填源：60s 内
+          // 本次轮（'l' 或回填后的 'd'）按 thumbs 恢复真图；同 id 去重防双追加
+          const cachedImgs = (loadLocalHistory() || [])
+            .filter(it => it.images && it.images.length
+                          && !ctx.state.items.some(x => x.id === it.id));
+          ctx.state.items = __chatCore.replaceWithIncoming(
+            (ctx.state.items || []).concat(cachedImgs), incoming);
           ctx.state.source = 'db';
           // 20260828c：渲染与合并隔离——items 已是最新（DB 收敛），渲染失败
           // 不再整体降级本地缓存（旧版静默 catch → applyLocal 覆盖 items 导致
