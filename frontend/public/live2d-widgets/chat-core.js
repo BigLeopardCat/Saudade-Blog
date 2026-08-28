@@ -117,18 +117,25 @@
       for (const inc of out) {
         if (inc.type !== 'user') continue;
         if (!(inc.images && inc.images.length) && withImg.length && needFill(inc)) {
-          // 20260829b：匹配按（类型 + 剥标记文本）找本地同条消息；无 thumbs 的
-          // 会话内原图（dataURL 内存数据）限 60s 防旧轮错位；带 thumbs 的持久
-          // 缩略图同设备刷新 time 与 DB time 毫秒级对齐（Rust history 接口
-          // timestamp_millis）→ 60s 窗口恒通过（20260829c 曾完全取消窗口导致
-          // 跨会话同文本历史条目互为候选，20260829e 收回）
+          // 20260829b：匹配按（类型 + 剥标记文本）找本地同条消息。时间窗口：
+          // 无 thumbs 的会话内原图（dataURL 内存数据）限 60s 防旧轮错位；
+          // 带 thumbs 的持久缩略图**不设窗口**（20260829f）——DB time 是
+          // 服务器时钟、缓存 time 是客户端时钟，真实设备时钟偏差 >60s 时
+          // （手机/电脑时间不准常见）刷新/二次 pull 同消息时间差恒为偏差值，
+          // 60s 硬窗口会把回填全部拦掉 → hasImg 占位 + 缓存被 saveHistory
+          // 覆写成 hasImg-only 不可逆（用户实测"刷新一下窗口就过期"根因）。
+          // 安全性：consumed 一对一 + 数量一致性（candCount≥incCount 才匹配）
+          // + needFill（只服务 DB 带 [图片] 标记的真图消息）已在 20260829e
+          // 兜住"缓存不完整错配"——放宽窗口不会复活该 bug；同组多候选按
+          // 时间差排序取最近（恒定偏差不影响相对序）→ 正确配对
           const grp = grpOf(inc);
           const candidates = ((candCount[grp] || 0) >= (incCount[grp] || 0))
             ? withImg.filter(it =>
                 !consumed.has(it)
                 && it.type === inc.type
                 && stripImgMark(it.text) === stripImgMark(inc.text)
-                && Math.abs((it.time || 0) - (inc.time || 0)) < 60000)
+                && ((it.thumbs && it.thumbs.length)
+                    || Math.abs((it.time || 0) - (inc.time || 0)) < 60000))
             : [];
           const hit = candidates.sort((a, b) =>
             Math.abs((a.time || 0) - (inc.time || 0)) - Math.abs((b.time || 0) - (inc.time || 0)))[0];
