@@ -50,6 +50,13 @@
           return;
         }
 
+        // 20260829a：发送前同步压缩缩略图（180px/JPEG 0.7，每张几百字节~几 KB，
+        // canvas 小尺寸毫秒级，不阻塞发送）——随 userItem/广播携带：saveHistory
+        // 落盘 thumbs（刷新恢复真图）、pull 回填与远端窗口的缩略图来源一致。
+        // 压缩失败的条目被过滤掉（回退 hasImg 占位，刷新显示占位块而非丢历史）
+        const thumbs = imgs.length ? await makeThumbs(imgs) : [];
+        if (ctx.state.isSending) return; // 压缩 await 窗口期被并发点击发送，放弃本轮
+
         // 本轮 roundId：跨窗同步锚点（远端按它定位 live 气泡；本窗与远端轮次
         // roundId 不同 → 双窗并发互不覆盖）。用户条目 id 独立生成（'l' 前缀），
         // discard 广播按它双侧删除（Rust 侧已按用户消息删除 DB 记录）。
@@ -65,37 +72,27 @@
         renderPreviews();
         // 带图消息（20260828 改进②，20260828s 多图）：气泡内直接展示图片——
         // item.images 存 dataURL 数组（会话内渲染用）。20260829a 起落盘走本地
-        // 缩略图方案：原图不落盘，发送后异步压缩 180px 缩略图到 item.thumbs，
-        // saveHistory 落盘 thumbs——刷新/重开窗口恢复真图（不再回退占位块）；
-        // 旧缓存/缩略图未生成完的窗口期由 saveHistory 回退 hasImg 占位
+        // 缩略图方案：发送前同步压缩 180px 缩略图到 item.thumbs（上文），
+        // saveHistory 落盘 thumbs（原图不落盘）——刷新/重开窗口恢复真图
+        // （不再回退占位块）；旧缓存/压缩失败条目由 saveHistory 回退 hasImg 占位
         const userItem = __chatCore.migrateItem({
           id: userItemId, type: 'user', text: msg, time: Date.now(),
-          ...(imgs.length ? { images: imgs } : {}),
+          ...(imgs.length ? { images: imgs, thumbs } : {}),
         });
         ctx.state.items.push(userItem);
         appendMsg(userItem);
         // 发送即回底（聊天软件标准）：即使之前在翻历史，自己发的消息必须可见
         scrollToBottom(messages, true);
-        saveHistory(); // 游客立即落缓存；登录用户 DB 侧由 Rust 在流开始前入库
-        // 20260829a：异步生成缩略图落盘（刷新恢复用）——压缩完成前不阻塞发送；
-        // 本轮已被 discard/清理则跳过；补保存幂等（值相同 saveHistory 直接跳过）
-        if (imgs.length) {
-          makeThumbs(imgs).then((thumbs) => {
-            if (!(thumbs && thumbs.length)) return;
-            const hit = ctx.state.items.find(it => it.id === userItemId);
-            if (!hit) return;
-            hit.thumbs = thumbs;
-            saveHistory();
-          });
-        }
-        // 20260829a：user 帧带 images 跨窗广播——其他窗口直接渲染真图（用户要求
-        // "其他窗口不要只显示🖼️占位块"）。dataURL 广播内存可接受（≤6×1MB 会话级）；
-        // hasImg 保留作兜底（旧版广播/无图帧）。回环排除靠 from=windowId 已有。
-        // 注意：远端窗口 pullHistory 后 images 由 replaceWithIncoming 从本地回填，
-        // 会话内持续显示；新开标签页从 localStorage 恢复 thumbs 缩略图渲染真图
+        saveHistory(); // 游客立即落缓存（带 thumbs）；登录用户 DB 侧由 Rust 在流开始前入库
+        // 20260829a：user 帧带 images + thumbs 跨窗广播——其他窗口直接渲染真图
+        // （用户要求"其他窗口不要只显示🖼️占位块"），并随帧携带缩略图（远端窗口
+        // 的 saveHistory 同样落盘 thumbs，刷新同样恢复真图）。dataURL 广播内存
+        // 可接受（≤6×1MB 会话级）；hasImg 保留作兜底（旧版广播/无图帧）。
+        // 回环排除靠 from=windowId 已有。注意：远端窗口 pullHistory 后 images
+        // 由 replaceWithIncoming 从本地回填（回填同步透传 thumbs），会话内持续显示
         broadcast({
           t: 'user', id: userItemId, text: msg, time: userItem.time, from: engine.windowId,
-          ...(imgs.length ? { images: imgs } : {}),
+          ...(imgs.length ? { images: imgs, thumbs } : {}),
           hasImg: imgs.length ? 1 : 0,
         });
         ctx.state.isSending = true;
@@ -1027,9 +1024,10 @@
       };
       // 20260829a：本地缩略图——最长边 180px（匹配气泡 180px 网格展示尺寸，
       // 恢复不放大糊），JPEG 0.7（每张几百字节~几 KB）；带 alpha 的 PNG 保 PNG
-      // （JPEG 会把透明区压成黑底）。解码/绘制失败回退原 dataURL（不阻塞发送）
+      // （JPEG 会把透明区压成黑底）。解码/绘制失败 resolve(null)（由调用方过滤，
+      // 该条目回退 hasImg 占位——宁缺毋滥，大 dataURL 落盘会撑爆 localStorage）
       const thumbFromDataUrl = (dataUrl) => new Promise((resolve) => {
-        if (!dataUrl) return resolve(dataUrl);
+        if (!dataUrl) return resolve(null);
         const imgEl = new Image();
         imgEl.onload = () => {
           try {
@@ -1048,12 +1046,13 @@
             }
             c2.drawImage(imgEl, 0, 0, canvas.width, canvas.height);
             resolve(canvas.toDataURL(isPng ? 'image/png' : 'image/jpeg', 0.7));
-          } catch(e) { resolve(dataUrl); }
+          } catch(e) { resolve(null); }
         };
-        imgEl.onerror = () => resolve(dataUrl);
+        imgEl.onerror = () => resolve(null);
         imgEl.src = dataUrl;
       });
-      const makeThumbs = (dataUrls) => Promise.all((dataUrls || []).map(thumbFromDataUrl));
+      const makeThumbs = (dataUrls) =>
+        Promise.all((dataUrls || []).map(thumbFromDataUrl)).then(list => list.filter(Boolean));
       imgBtn.addEventListener('click', () => imgFile.click());
       imgFile.addEventListener('change', () => {
         const f = imgFile.files && imgFile.files[0];
