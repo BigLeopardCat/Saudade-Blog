@@ -56,7 +56,10 @@
       // 20260829a：thumbs 原样透传——刷新后 images 已被恢复成缩略图数组，
       // 若 thumbs 丢弃则下次 saveHistory 无 thumb 可存（回退 hasImg 占位）
       thumbs: (it && Array.isArray(it.thumbs) && it.thumbs.length) ? it.thumbs : undefined,
-      hasImg: (it && it.hasImg) ? 1 : undefined,
+      // 20260829d：hasImg 只在有缩略图证据时透传——无 thumbs 的 hasImg 残留
+      // （Rust 空数组 bug 窗口期误标消息被无条件补 hasImg 的污染条目、旧版
+      // 广播帧）按纯文本处理，不再渲染"图已过期"占位块（无图消息误报）
+      hasImg: (it && it.hasImg && Array.isArray(it.thumbs) && it.thumbs.length) ? 1 : undefined,
     });
     const mergeItems = (local, incoming) => {
       const out = local.slice();
@@ -120,7 +123,16 @@
         }
         if (/\[图片(?:×\d+)?\]/.test(inc.text || '')) {
           inc.text = stripImgMark(inc.text);
-          if (!inc.images) inc.hasImg = 1;
+          // 20260829d：补 hasImg 前查本地证据——占位块只显示"确凿有图但数据
+          // 过期"。误标消息（Rust 空数组 bug 窗口期入 DB 的假 [图片] 标记）
+          // 本地缓存无任何图证据 → 剥标记后按纯文本处理；hasImg-only 参考
+          // 条目不可信（同窗口期已被无条件补 hasImg 污染）。带 thumbs 的条目
+          // 已被上方 withImg 回填 images，不会走进本分支
+          if (!inc.images && (local || []).some(l =>
+            l.type === inc.type && stripImgMark(l.text) === stripImgMark(inc.text)
+            && ((l.images && l.images.length) || (l.thumbs && l.thumbs.length)))) {
+            inc.hasImg = 1;
+          }
         }
       }
       for (const it of (local || [])) {
