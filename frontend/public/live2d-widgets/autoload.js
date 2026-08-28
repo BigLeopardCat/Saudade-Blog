@@ -88,7 +88,29 @@
       }
       return out;
     };
-    return { genId, migrateItem, mergeItems, replaceWithIncoming, capItems, normText, matchText };
+    // ── 时间标签（微信式时间分组）：会话间隔 > TIME_GAP_MS 时在新一段会话的
+    // 首条消息上方显示时间。formatTimeLabel 供 Node harness 提取验证。
+    const TIME_GAP_MS = 5 * 60 * 1000;
+    const validTime = (t) => typeof t === 'number' && t > 0 && !isNaN(t);
+    const formatTimeLabel = (ts) => {
+      const d = new Date(ts);
+      const now = new Date();
+      // 本地日界差（非粗暴 24h 差）：23:59 与次日 00:01 不误判"昨天"
+      const startOfDay = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+      const dayDiff = Math.round((startOfDay(now) - startOfDay(d)) / 86400000);
+      const pad = (n) => String(n).padStart(2, '0');
+      const hm = pad(d.getHours()) + ':' + pad(d.getMinutes());
+      if (dayDiff <= 0) return hm;                       // 今天：HH:mm
+      if (dayDiff === 1) return '昨天 ' + hm;            // 昨天
+      if (d.getFullYear() === now.getFullYear()) return (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + hm;
+      return d.getFullYear() + '年' + (d.getMonth() + 1) + '月' + d.getDate() + '日 ' + hm;
+    };
+    // 首条恒显示；任一时间无效（旧缓存 time=0）→ 无标签（标签文本来自 cur.time，
+    // 不会渲染出 1970 日期；prev 无效视为"间隔未知"→ 显示 cur 的标签）
+    const shouldShowTime = (prev, cur) => !!cur && validTime(cur.time)
+      && (!prev || !validTime(prev.time) || (cur.time - prev.time > TIME_GAP_MS));
+    return { genId, migrateItem, mergeItems, replaceWithIncoming, capItems, normText, matchText,
+             TIME_GAP_MS, formatTimeLabel, shouldShowTime };
   })();
 
   const live2d_path = '/live2d-widgets/';
@@ -145,7 +167,7 @@
   });
   
   await Promise.all([
-    loadExternalResource(live2d_path + 'waifu.css?v=20260828m', 'css'),
+    loadExternalResource(live2d_path + 'waifu.css?v=20260828n', 'css'),
     loadExternalResource(live2d_path + 'waifu-tips.js', 'js'),
   ]);
 
@@ -159,7 +181,7 @@
   // Cubism 模型切换/初始化期间，旧版交互库可能在 core 尚未创建时执行
   // hitTest，导致 getHitAreasCount 访问 null。模型就绪前暂时关闭画布命中，
   // 模型完成后恢复交互。
-  // ★ 20260828m 修复：旧实现守卫在 initWidget 之前调用——此时画布尚未创建
+  // ★ 20260828n 修复：旧实现守卫在 initWidget 之前调用——此时画布尚未创建
   //   （#waifu 模板由 initWidget 注入），`if (!canvas) return` 直接空转，守卫
   //   从未生效（onMouseMove→onTap→hitTest 崩溃仍在）。改为 initWidget 之后
   //   调用 + 每帧持续轮询：模型拆建（switch-model）窗口期自动重新禁命中，
@@ -215,7 +237,7 @@
     }
 
   // 守卫必须在 initWidget 之后调用：画布由 initWidget 注入 waifu 模板时才创建，
-  // 之前调用会因 canvas 不存在而空转（20260828m 修复，见 guardLive2dHitTest 注释）
+  // 之前调用会因 canvas 不存在而空转（20260828n 修复，见 guardLive2dHitTest 注释）
   guardLive2dHitTest();
 
   // 看板娘从底部滑入（等角色真正可绘制后才开始，WAAPI 保证过渡必然可见）：
@@ -674,7 +696,7 @@
       let remotectlTimer = null; // storage 事件防抖句柄
       // 版本自检：确认浏览器加载的是当前部署脚本（nginx 对 live2d-widgets 缓存 1 年，
       // 未强刷时可能仍在跑旧版——DB 权威历史/roundId 同步只在 20260828a 之后才有）
-      console.log('[agent-chat] autoload 20260828m, BroadcastChannel=' + !!chatChannel
+      console.log('[agent-chat] autoload 20260828n, BroadcastChannel=' + !!chatChannel
                   + ', storage=' + ('localStorage' in window));
       // 按 roundId 取/建 live 气泡（远端帧专用；本窗流由 makeLiveBubble 预建）
       const remoteLive = (roundId) => {
@@ -949,6 +971,29 @@
         }).catch(e => { console.error('[agent-chat] pullHistory 拉取失败，本地缓存兜底:', e); applyLocal(); })
           .finally(() => { clearTimeout(pt); });
       };
+      // ── 时间标签幂等维护（微信式时间分组）──
+      // 标签是纯渲染物：不进 items、不序列化、不广播（items 权威同步后各窗本地
+      // 收敛一致）。锚定关系：标签 = 所属消息气泡的紧邻前驱兄弟。
+      // 调用方：appendMsg 末尾（新建/追加场景）+ reconcileDOM 循环（重排/收养场景）。
+      const patchDivider = (el, item) => {
+        const idx = items.indexOf(item);
+        const prev = idx > 0 ? items[idx - 1] : null;
+        const need = __chatCore.shouldShowTime(prev, item);
+        let td = el.previousSibling && el.previousSibling.classList
+              && el.previousSibling.classList.contains('chat-time-divider')
+              ? el.previousSibling : null;
+        if (need) {
+          if (!td) {
+            td = document.createElement('div');
+            td.className = 'chat-time-divider';
+            el.parentNode.insertBefore(td, el);
+          }
+          const text = __chatCore.formatTimeLabel(item.time);
+          if (td.textContent !== text) td.textContent = text; // 防跨天显示过期文本
+        } else if (td) {
+          td.parentNode.removeChild(td);
+        }
+      };
       // 增量渲染：只追加缺失条目、不重绘已有（替代 messages.innerHTML='' 全量重建）。
       // 索引 byMid（已收尾元素带 data-mid）；在途轮元素（无 mid）经内容收养原位转正。
       const reconcileDOM = () => {
@@ -960,53 +1005,57 @@
         for (const item of items) {
           try {
             const mid = item.id || '';
+            let el;
             if (byMid.has(mid)) {
               // 20260828f：位置修复——DOM 已有该气泡但顺序与 items 不一致时重排。
               // 旧逻辑无条件跳过（applyLocal 先渲染缓存、pull 后 byMid 命中永不
               // 修正）——风暴期缓存被打乱后错位气泡永久残留（"旧消息排最底"形态）。
               // 每次 reconcile 按 items 顺序校验相邻关系，错序时移动一次即自愈。
-              const el = byMid.get(mid);
-              const expectedNext = lastEl ? lastEl.nextSibling : messages.firstChild;
-              if (el !== expectedNext) {
-                if (lastEl && lastEl.nextSibling) messages.insertBefore(el, lastEl.nextSibling);
-                else if (lastEl) messages.appendChild(el);
-                else messages.insertBefore(el, messages.firstChild);
+              el = byMid.get(mid);
+            } else {
+              // 内容碰撞收养（'l'→'d' id 换发 / pull 先于 done 收敛在途轮）：
+              // 只收养未收敛元素（无 mid 或 'l' 前缀乐观 id）——已收敛的同内容元素
+              // 不能收养，否则两条相同文本（如两次"你好"）会挤占同一气泡。
+              // 20260828e：mtext 比较过 matchText（缓存/内存 text 与 DB content 的
+              // 构造差异：命令帧 '\n'、分帧命令/正文间换行——剥命令段+归一后比）
+              let adopted = null;
+              for (const child of messages.children) {
+                if (child.dataset && child.dataset.mtype === item.type
+                    && __chatCore.matchText(child.dataset.mtext || '', item.text)
+                    && (!child.dataset.mid || child.dataset.mid.startsWith('l'))) {
+                  adopted = child; break;
+                }
               }
-              lastEl = el;
-              continue;
-            }
-            // 内容碰撞收养（'l'→'d' id 换发 / pull 先于 done 收敛在途轮）：
-            // 只收养未收敛元素（无 mid 或 'l' 前缀乐观 id）——已收敛的同内容元素
-            // 不能收养，否则两条相同文本（如两次"你好"）会挤占同一气泡。
-            // 20260828e：mtext 比较过 matchText（缓存/内存 text 与 DB content 的
-            // 构造差异：命令帧 '\n'、分帧命令/正文间换行——剥命令段+归一后比）
-            let adopted = null;
-            for (const child of messages.children) {
-              if (child.dataset && child.dataset.mtype === item.type
-                  && __chatCore.matchText(child.dataset.mtext || '', item.text)
-                  && (!child.dataset.mid || child.dataset.mid.startsWith('l'))) {
-                adopted = child; break;
+              if (adopted) {
+                adopted.dataset.mid = mid;
+                adopted.dataset.finished = '1';
+                // 在途轮被 pull 先收敛：live 句柄置 finished（拦截乱序迟到帧），
+                // 保留句柄供 done 帧幂等收尾（delete 会造成 remoteLive 重建空气泡）
+                for (const k in live) if (live[k].el === adopted) { live[k].finished = true; break; }
+                // 流式纯文本/空气泡 → 补最终渲染（done 到达时条件不再满足，幂等跳过）
+                const cs = adopted.querySelector('.msg-text');
+                if (cs && (cs.classList.contains('msg-streaming')
+                    || (!cs.textContent && !cs.querySelector('.nav-skip-note')))) {
+                  cs.classList.remove('msg-streaming');
+                  renderAgentContent(cs, item.text);
+                }
+                el = adopted;
+              } else {
+                el = appendMsg(item);
               }
             }
-            if (adopted) {
-              adopted.dataset.mid = mid;
-              adopted.dataset.finished = '1';
-              // 在途轮被 pull 先收敛：live 句柄置 finished（拦截乱序迟到帧），
-              // 保留句柄供 done 帧幂等收尾（delete 会造成 remoteLive 重建空气泡）
-              for (const k in live) if (live[k].el === adopted) { live[k].finished = true; break; }
-              // 流式纯文本/空气泡 → 补最终渲染（done 到达时条件不再满足，幂等跳过）
-              const cs = adopted.querySelector('.msg-text');
-              if (cs && (cs.classList.contains('msg-streaming')
-                  || (!cs.textContent && !cs.querySelector('.nav-skip-note')))) {
-                cs.classList.remove('msg-streaming');
-                renderAgentContent(cs, item.text);
-              }
-              lastEl = adopted;
-              continue;
+            // 时间标签幂等维护（appendMsg 新建的已内部 patch，重复调用无害）
+            patchDivider(el, item);
+            // 位置对齐（带标签整体移动）：期望 [td?, el] 紧邻且位于 lastEl 之后。
+            // 标签是 el 的前驱兄弟不会跟着走——移动时须把 td 一起挪（20260828n）
+            const td = el.previousSibling && el.previousSibling.classList
+                     && el.previousSibling.classList.contains('chat-time-divider')
+                     ? el.previousSibling : null;
+            const ref = lastEl ? lastEl.nextSibling : messages.firstChild;
+            if (!(td ? (td === ref && el === td.nextSibling) : (el === ref))) {
+              if (td) messages.insertBefore(td, ref);
+              messages.insertBefore(el, td ? td.nextSibling : ref);
             }
-            const el = appendMsg(item);
-            if (lastEl && lastEl.nextSibling) messages.insertBefore(el, lastEl.nextSibling);
-            else messages.appendChild(el);
             lastEl = el;
           } catch(e) {
             // 20260828c：渲染隔离——单条渲染失败跳过该条，不中断整批
@@ -1028,6 +1077,9 @@
           for (const k in live) liveEls.add(live[k].el);
           for (const child of Array.from(messages.children)) {
             try {
+              // 20260828n：时间标签豁免——标签无 mid 且非 live，但它是消息气泡的
+              // 前导附属（由 patchDivider 幂等维护），不能当孤儿删
+              if (child.classList && child.classList.contains('chat-time-divider')) continue;
               const mid = child.dataset && child.dataset.mid;
               if (mid) { if (!validMids.has(mid)) messages.removeChild(child); }
               else if (!liveEls.has(child)) messages.removeChild(child);
@@ -1081,6 +1133,10 @@
         // （"转跳后变成上次对话记录"根因，20260828c 日志暴露）
         if (box) div.insertBefore(box, content);
         messages.appendChild(div);
+        // 20260828n：时间标签（微信式分组）——间隔大时在消息上方插标签。
+        // 覆盖 sendMessage 乐观插入/远端 user 帧/done 转正/游客 notice 等
+        // 全部非 reconcile 追加路径；reconcile 循环内新建的重复调用无害（幂等）。
+        patchDivider(div, item);
         scrollToBottom(messages);
         // agent 消息触发嘴部动作（非流式/恢复场景）
         if (item.type === 'agent') {
