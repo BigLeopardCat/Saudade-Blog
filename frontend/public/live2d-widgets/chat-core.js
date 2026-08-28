@@ -98,22 +98,42 @@
       //    hasImg——DB 文本标记是给无图端看的，hasImg 占位块语义更强且与远端一致；
       //    纯图轮原文为空靠时间窗口锚定
       const withImg = (local || []).filter(it => it.images && it.images.length);
+      const consumed = new Set(); // 20260829e：回填一对一——每条本地条目只服务一条 incoming
+      // 20260829e：数量一致性——同文本组缓存候选数 < incoming 数说明缓存不完整
+      // （cap 挤出/清理/多设备），此时贪心匹配会把剩余候选错配给没有对应图的
+      // incoming（实测"多条同文本消息全变最后一次的图"，用户报告）——宁缺毋滥：
+      // 整组不匹配，走下方剥标记补 hasImg → 显示"图已过期"占位，绝不用错图冒充
+      const grpOf = (it) => it.type + '|' + stripImgMark(it.text);
+      // 回填只服务真图消息（DB 带 [图片] 标记）——纯文本消息（无标记）即使与
+      // 带图条目同文本近时间也绝不回填（否则纯文本消息被错配成别人的图）
+      const needFill = (inc) => inc.type === 'user' && /\[图片(?:×\d+)?\]/.test(inc.text || '');
+      const candCount = {};
+      for (const it of withImg) candCount[grpOf(it)] = (candCount[grpOf(it)] || 0) + 1;
+      const incCount = {};
+      for (const inc of out) if (needFill(inc)) {
+        const g = grpOf(inc);
+        incCount[g] = (incCount[g] || 0) + 1;
+      }
       for (const inc of out) {
         if (inc.type !== 'user') continue;
-        if (!(inc.images && inc.images.length) && withImg.length) {
-          // 20260829b：带 thumbs 的条目放宽时间窗口——本地持久缩略图按（类型 +
-          // 剥标记文本）匹配即可（缓存是权威本地数据，文本相同即同条消息；实测
-          // ctrl+r/关闭重开 >60s 后被 60s 窗口挡掉、缩略图丢失）。无 thumbs 的
-          // 会话内原图（dataURL 内存数据）仍限 60s 防旧轮错位；多条同文本取
-          // 时间最近者（用户重复发同文本时不错位）
-          const candidates = withImg.filter(it =>
-            it.type === inc.type
-            && stripImgMark(it.text) === stripImgMark(inc.text)
-            && ((it.thumbs && it.thumbs.length)
-                || Math.abs((it.time || 0) - (inc.time || 0)) < 60000));
+        if (!(inc.images && inc.images.length) && withImg.length && needFill(inc)) {
+          // 20260829b：匹配按（类型 + 剥标记文本）找本地同条消息；无 thumbs 的
+          // 会话内原图（dataURL 内存数据）限 60s 防旧轮错位；带 thumbs 的持久
+          // 缩略图同设备刷新 time 与 DB time 毫秒级对齐（Rust history 接口
+          // timestamp_millis）→ 60s 窗口恒通过（20260829c 曾完全取消窗口导致
+          // 跨会话同文本历史条目互为候选，20260829e 收回）
+          const grp = grpOf(inc);
+          const candidates = ((candCount[grp] || 0) >= (incCount[grp] || 0))
+            ? withImg.filter(it =>
+                !consumed.has(it)
+                && it.type === inc.type
+                && stripImgMark(it.text) === stripImgMark(inc.text)
+                && Math.abs((it.time || 0) - (inc.time || 0)) < 60000)
+            : [];
           const hit = candidates.sort((a, b) =>
             Math.abs((a.time || 0) - (inc.time || 0)) - Math.abs((b.time || 0) - (inc.time || 0)))[0];
           if (hit) {
+            consumed.add(hit);
             inc.images = hit.images;
             // 20260829a：回填同步透传 thumbs——刷新后窗口（images=缩略图）被
             // DB 权威替换后，缩略图随回填保留，否则下次 saveHistory 丢图
@@ -123,16 +143,13 @@
         }
         if (/\[图片(?:×\d+)?\]/.test(inc.text || '')) {
           inc.text = stripImgMark(inc.text);
-          // 20260829d：补 hasImg 前查本地证据——占位块只显示"确凿有图但数据
-          // 过期"。误标消息（Rust 空数组 bug 窗口期入 DB 的假 [图片] 标记）
-          // 本地缓存无任何图证据 → 剥标记后按纯文本处理；hasImg-only 参考
-          // 条目不可信（同窗口期已被无条件补 hasImg 污染）。带 thumbs 的条目
-          // 已被上方 withImg 回填 images，不会走进本分支
-          if (!inc.images && (local || []).some(l =>
-            l.type === inc.type && stripImgMark(l.text) === stripImgMark(inc.text)
-            && ((l.images && l.images.length) || (l.thumbs && l.thumbs.length)))) {
-            inc.hasImg = 1;
-          }
+          // 20260829e：DB 标记 = 真图——空数组误标 bug（20260829c 已修：前端
+          // 省略空字段 + Rust 空数组防御）后新标记只来自 Rust 对真图消息的入库
+          // 拼接，存量误标标记已全部清理 → 无条件补 hasImg：换设备/清缓存场景
+          // （本地无 thumbs 证据）真图消息显示"图已过期"占位；无图消息 DB 无
+          // 标记不显示任何占位。migrateItem 侧收紧（20260829d）仍管住缓存里
+          // hasImg-only 污染条目（同设备不误报）
+          if (!inc.images) inc.hasImg = 1;
         }
       }
       for (const it of (local || [])) {
