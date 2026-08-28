@@ -22,9 +22,10 @@ pub struct ChatRequest {
     pub current_effects: Option<String>,
     #[serde(default)]
     pub current_darkmode: Option<String>,
-    // 多模态图片输入（20260828）：前端压缩后的 dataURL，透传 Python agent
+    // 多模态图片输入（20260828，20260828s 多图）：前端压缩后的 dataURL 数组
+    // （最多 6 张、每张 ≤1MB），透传 Python agent
     #[serde(default)]
-    pub image: Option<String>,
+    pub image: Option<Vec<String>>,
 }
 
 #[derive(Serialize)]
@@ -166,8 +167,9 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, Js
         .and_then(|token| auth_jwt::verify_token(token))
         .map(|claims| claims.sub);
 
-    // 解析请求体（2MB：多模态图片 base64 数据（前端已压缩 ≤900KB），原 1MB 会拒图）
-    let body_bytes = match axum::body::to_bytes(req.into_body(), 2 * 1024 * 1024).await {
+    // 解析请求体（8MB：多模态多图 base64 数据（最多 6 张 × 每张 ≤1MB dataURL），
+    // 原 2MB 会拒掉多图）
+    let body_bytes = match axum::body::to_bytes(req.into_body(), 8 * 1024 * 1024).await {
         Ok(b) => b,
         Err(_) => return Err(Json(ChatResponse { reply: String::new(), success: false, error: Some("请求体过大".into()) })),
     };
@@ -186,11 +188,12 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, Js
     };
 
     // 保存用户消息（取回主键供中断清理快照：只删其后的残缺回复，用户消息本体保留）
-    // 图片轮：落库加 "[图片]" 文本标记（后续轮历史中模型可感知该轮有图；图片本体不落库）
-    let stored_content = if payload.image.is_some() {
-        format!("{}\n[图片]", payload.message)
-    } else {
-        payload.message.clone()
+    // 图片轮：落库加 "[图片]"（单图）/"[图片×N]"（多图）文本标记（后续轮历史中模型
+    // 可感知该轮有图；图片本体不落库）
+    let stored_content = match payload.image.as_deref() {
+        Some(v) if v.len() > 1 => format!("{}\n[图片×{}]", payload.message, v.len()),
+        Some(_) => format!("{}\n[图片]", payload.message),
+        None => payload.message.clone(),
     };
     let user_msg_id = chat_history::ActiveModel {
         user_id: Set(uid),
@@ -260,7 +263,7 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, Js
         "page_title": payload.page_title.as_deref().unwrap_or(""),
         "current_effects": payload.current_effects.as_deref().unwrap_or(""),
         "current_darkmode": payload.current_darkmode.as_deref().unwrap_or(""),
-        "image": payload.image.as_deref().unwrap_or(""),
+        "image": payload.image.clone().unwrap_or_default(),
         "user_id": uid,
         "history": history_items,
         "summary": summary_text,

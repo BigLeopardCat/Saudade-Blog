@@ -27,6 +27,10 @@
       return rest;
     };
     const normText = (s) => (s || '').replace(/\s+/g, ' ').trim();
+    // 图片轮文本标记剥离（20260828s）：Rust 入库在原文后拼 "\n[图片]"/"\n[图片×N]"
+    // 标记，DB 拉回的文本与前端 items 原文不同——匹配前先剥标记再归一。
+    // 纯图轮（原文为空）剥后为空串，靠时间窗口 + 同类型锚定（见 replaceWithIncoming）
+    const stripImgMark = (s) => normText((s || '').replace(/\n?\s*\[图片(?:×\d+)?\]\s*$/g, ''));
     // 注意：COMMAND_RE 为全模块唯一权威（20260828o 起），stripCommandPrefix 与
     // 各处行级命令判断（cleanAgentText/SSE 分流/广播剥离）均引用本正则
     const matchText = (a, b) => {
@@ -41,9 +45,11 @@
       text: (it && it.text) || '',
       time: (it && it.time) || 0,
       process: (it && Array.isArray(it.process) && it.process.length) ? it.process : undefined,
-      // 多模态（20260828 改进②）：image = 会话内渲染用的 dataURL（不落盘）；
-      // hasImg = 远端/恢复标记（无图数据时渲染占位块）
-      image: (it && it.image) || undefined,
+      // 多模态（20260828 改进②/20260828s 多图）：images = 会话内渲染用的 dataURL 数组
+      // （不落盘，保存剥离）；hasImg = 远端/恢复标记（无图数据时渲染占位块）。
+      // 兼容旧缓存：单图时代的 image 字符串字段 → 转数组
+      images: (it && Array.isArray(it.images) && it.images.length) ? it.images
+        : (it && it.image) ? [it.image] : undefined,
       hasImg: (it && it.hasImg) ? 1 : undefined,
     });
     const mergeItems = (local, incoming) => {
@@ -75,6 +81,24 @@
     const replaceWithIncoming = (local, incoming, now) => {
       const out = incoming.slice();
       const t = (now === undefined ? Date.now() : now);
+      // 20260828s：图片回填（"气泡图片不显示"根因修复）——DB 权威替换会抹掉会话内
+      // images（dataURL 不落盘，DB 只有 [图片] 标记）。本地 items 中带 images 的用户
+      // 条目按（同类型 + 60s 时间窗口 + 剥标记后文本相等）回填进 incoming，并剥离
+      // incoming 文本的 [图片] 标记（避免图文重复展示）。纯图轮原文为空靠时间窗口锚定。
+      const withImg = (local || []).filter(it => it.images && it.images.length);
+      if (withImg.length) {
+        for (const inc of out) {
+          if (inc.type !== 'user' || (inc.images && inc.images.length)) continue;
+          const hit = withImg.find(it =>
+            it.type === inc.type
+            && Math.abs((it.time || 0) - (inc.time || 0)) < 60000
+            && stripImgMark(it.text) === stripImgMark(inc.text));
+          if (hit) {
+            inc.images = hit.images;
+            inc.text = stripImgMark(inc.text);
+          }
+        }
+      }
       for (const it of (local || [])) {
         if (it.id && it.id.startsWith('l')
             && (it.time || 0) >= t - 60000
@@ -105,7 +129,7 @@
     // 不会渲染出 1970 日期；prev 无效视为"间隔未知"→ 显示 cur 的标签）
     const shouldShowTime = (prev, cur) => !!cur && validTime(cur.time)
       && (!prev || !validTime(prev.time) || (cur.time - prev.time > TIME_GAP_MS));
-    return { genId, migrateItem, mergeItems, replaceWithIncoming, capItems, normText, matchText,
+    return { genId, migrateItem, mergeItems, replaceWithIncoming, capItems, normText, stripImgMark, matchText,
              COMMAND_RE, TIME_GAP_MS, formatTimeLabel, shouldShowTime };
   })();
 
