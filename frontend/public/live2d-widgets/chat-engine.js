@@ -132,6 +132,11 @@
       // BroadcastChannel 的老浏览器自动降级 storage 事件 + 本地历史。
       const chatChannel = 'BroadcastChannel' in window ? new BroadcastChannel('saudade-chat') : null;
       const broadcast = (m) => { if (chatChannel) chatChannel.postMessage(m); };
+      // 20260828s：BroadcastChannel 会把消息发回发送者自己——user 帧在发送窗会
+      // mergeItems 同 id 严格替换，把会话内 images（dataURL）换成 hasImg 占位标记
+      // （"气泡图片不显示"根因之一）。每个窗口一个随机 id，user 帧带 from 标记，
+      // onmessage 收到自己的帧直接跳过。token/done/process 帧经 roundId 幂等无需排除。
+      const windowId = Math.random().toString(36).slice(2, 10);
       let remotectlTimer = null; // storage 事件防抖句柄
       // 版本自检：确认浏览器加载的是当前部署脚本（nginx 对 live2d-widgets 缓存 1 年，
       // 未强刷时可能仍在跑旧版——DB 权威历史/roundId 同步只在 20260828a 之后才有）
@@ -174,6 +179,9 @@
           const m = ev.data || {};
           try {
             if (m.t === 'user') {
+              // 20260828s：跳过自己窗口广播的 user 帧（BroadcastChannel 回环——
+              // 同 id 严格替换会把会话内 images 换成 hasImg 占位标记，图片丢失）
+              if (m.from === windowId) return;
               // 远端用户消息：mergeItems 去重（同 id 严格替换/内容收养）+ 增量渲染。
               // 不写 localStorage（避免写者风暴），DB 拉取/收尾保存自然收敛。
               // hasImg 标记（20260828 改进②）：远端无图数据，渲染占位块而非真图
@@ -324,11 +332,11 @@
       // 写→拉 ping-pong 与写者风暴；流式帧期间不被触发写）
       const saveHistory = () => {
         try {
-          // 20260828 改进②：落盘剥离 image（dataURL 单张可达 900KB，50 条历史
-          // 会撑爆 5MB quota）——缓存存文本，刷新恢复显示 [图片] 标记（Rust DB
-          // 同格式）；会话内渲染用图不落盘
-          const forStorage = ctx.state.items.map(it => it.image
-            ? Object.assign({}, it, { image: undefined, hasImg: 1 }) : it);
+          // 20260828 改进②/s：落盘剥离 images（dataURL 单张可达 1MB × 6，50 条
+          // 历史会撑爆 5MB quota）——缓存存文本，刷新恢复显示 [图片] 标记（Rust
+          // DB 同格式）；会话内渲染用图不落盘（pull 时由 replaceWithIncoming 回填）
+          const forStorage = ctx.state.items.map(it => it.images
+            ? Object.assign({}, it, { images: undefined, hasImg: 1 }) : it);
           const json = JSON.stringify(__chatCore.capItems(forStorage, 50));
           const key = historyKey();
           if (localStorage.getItem(key) === json) return;
@@ -570,15 +578,21 @@
         if (item.type === 'user') {
           const bubble = document.createElement('span');
           bubble.className = 'msg-bubble';
-          // 多模态（20260828 改进②）：气泡内直接展示图片——item.image 有 dataURL
-          // 渲染真图（会话内）；仅有 hasImg 标记（远端窗口广播）渲染占位块；
-          // 刷新/DB 恢复无这两个字段 → 文本已含 [图片] 标记，原样显示
-          if (item.image) {
-            const im = document.createElement('img');
-            im.className = 'msg-img';
-            im.src = item.image;
-            im.alt = '图片';
-            bubble.appendChild(im);
+          // 多模态（20260828 改进②，20260828s 多图）：气泡内直接展示图片——
+          // item.images 有 dataURL 数组逐张渲染（网格横排）；仅有 hasImg 标记
+          // （远端窗口广播）渲染占位块；刷新/DB 恢复无这两个字段 → 文本已含
+          // [图片] 标记，原样显示
+          if (Array.isArray(item.images) && item.images.length) {
+            const grid = document.createElement('div');
+            grid.className = 'msg-img-grid';
+            for (const src of item.images) {
+              const im = document.createElement('img');
+              im.className = 'msg-img';
+              im.src = src;
+              im.alt = '图片';
+              grid.appendChild(im);
+            }
+            bubble.appendChild(grid);
           } else if (item.hasImg) {
             const ph = document.createElement('div');
             ph.className = 'msg-img-placeholder';
@@ -666,6 +680,7 @@
       api.pullHistory = pullHistory;
       api.saveHistory = saveHistory;
       api.apiDiscard = apiDiscard;
+      api.windowId = windowId; // user 帧广播标记（onmessage 排除自己的广播回环）
       api.appendMsg = appendMsg;
       api.makeLiveBubble = makeLiveBubble;
       api.remoteLive = remoteLive;

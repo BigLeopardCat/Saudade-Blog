@@ -156,12 +156,10 @@
       <div class="chat-messages" id="chat-messages"></div>
       <div class="chat-new-msg-note" id="chat-new-msg-note"><span>↓ 有新消息</span></div>
       <div class="chat-input-area">
-        <!-- 已选图片缩放图标（20260828 修正）：输入栏顶部常驻 40px 空白，选图后
-             显示缩略图（img/button 由 JS 控制 hidden），右上角 × 取消 -->
-        <div class="chat-img-preview" id="chat-img-preview">
-          <img id="chat-img-preview-img" alt="已选择图片" hidden>
-          <button id="chat-img-preview-remove" title="移除图片">×</button>
-        </div>
+        <!-- 已选图片缩放图标（20260828 修正 + 20260828s 多图）：输入栏顶部常驻留白
+             （输入栏加高的落点，缩略图 ≈ 按钮图标大小），选图后 JS 动态填充缩略图
+             容器（每张一个 .chat-img-preview-item，右上角 × 逐个移除，最多 6 张） -->
+        <div class="chat-img-preview" id="chat-img-preview"></div>
         <div class="chat-input-row">
           <textarea class="chat-input" id="chat-input" placeholder="和泠月喵对话..." rows="1"></textarea>
           <button class="chat-send" id="chat-send">发送</button>
