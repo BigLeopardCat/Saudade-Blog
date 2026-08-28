@@ -61,10 +61,11 @@
         resizeInput();
         // 图片已随本轮发送：清空预览与待发状态（abort 停止生成路径不清空，可重发）
         ctx.state.pendingImage = null;
-        const imgPreview = document.getElementById('chat-img-preview');
+        // 预览容器常驻（输入栏加高留白），只隐藏 img/×（20260828 修正）
         const imgPreviewImg = document.getElementById('chat-img-preview-img');
-        if (imgPreview && !imgPreview.hidden) imgPreview.hidden = true;
-        if (imgPreviewImg) imgPreviewImg.removeAttribute('src');
+        const imgPreviewRemove = document.getElementById('chat-img-preview-remove');
+        if (imgPreviewImg) { imgPreviewImg.hidden = true; imgPreviewImg.removeAttribute('src'); }
+        if (imgPreviewRemove) imgPreviewRemove.hidden = true;
         // 带图消息（20260828 改进②）：气泡内直接展示图片——item.image 存 dataURL
         // （会话内渲染用）；saveHistory 落盘时剥离（单张 900KB 会撑爆 localStorage，
         // 刷新/恢复后回退 [图片] 文本标记，与 Rust DB 一致）；广播只带 hasImg 标记
@@ -924,10 +925,9 @@
         sendMessage();
       });
       // 输入框自适应高度：先置 auto 再按内容高度回填，内容为空时回到 min-height
-      // （上限 110 与 CSS .chat-input max-height 120 对齐，留滚动条余量）
       const resizeInput = () => {
         input.style.height = 'auto';
-        input.style.height = Math.min(input.scrollHeight, 110) + 'px';
+        input.style.height = Math.min(input.scrollHeight, 80) + 'px';
       };
       input.addEventListener('input', resizeInput);
       // IME 输入法合成结束（含取消合成）后兜底重算，防止残留的组合文本高度
@@ -950,7 +950,8 @@
       const setPendingImage = (dataUrl) => {
         ctx.state.pendingImage = dataUrl;
         imgPreviewImg.src = dataUrl;
-        imgPreview.hidden = false;
+        imgPreviewImg.hidden = false;
+        imgPreviewRemove.hidden = false;
         input.focus();
       };
       // 压缩规则：base64 ≤800KB 原样走（PNG 透明小图不转 JPEG 保透明）；超过则 canvas
@@ -1004,8 +1005,9 @@
       });
       imgPreviewRemove.addEventListener('click', () => {
         ctx.state.pendingImage = null;
-        imgPreview.hidden = true;
+        imgPreviewImg.hidden = true;
         imgPreviewImg.removeAttribute('src');
+        imgPreviewRemove.hidden = true;
         input.focus();
       });
 
