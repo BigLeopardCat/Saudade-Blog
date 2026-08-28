@@ -78,7 +78,16 @@
         // 发送即回底（聊天软件标准）：即使之前在翻历史，自己发的消息必须可见
         scrollToBottom(messages, true);
         saveHistory(); // 游客立即落缓存；登录用户 DB 侧由 Rust 在流开始前入库
-        broadcast({ t: 'user', id: userItemId, text: msg, hasImg: imgs.length ? 1 : 0, time: userItem.time, from: engine.windowId });
+        // 20260829a：user 帧带 images 跨窗广播——其他窗口直接渲染真图（用户要求
+        // "其他窗口不要只显示🖼️占位块"）。dataURL 广播内存可接受（≤6×1MB 会话级）；
+        // hasImg 保留作兜底（旧版广播/无图帧）。回环排除靠 from=windowId 已有。
+        // 注意：远端窗口 pullHistory 后 images 由 replaceWithIncoming 从本地回填，
+        // 会话内持续显示；新开标签页（无本地 images）回退占位块（dataURL 不落盘）
+        broadcast({
+          t: 'user', id: userItemId, text: msg, time: userItem.time, from: engine.windowId,
+          ...(imgs.length ? { images: imgs } : {}),
+          hasImg: imgs.length ? 1 : 0,
+        });
         ctx.state.isSending = true;
         ctx.state.stoppedByUser = false;
         ctx.state.discardTurn = false;
@@ -1026,6 +1035,28 @@
             break;
           }
         }
+      });
+      // 拖拽图片入输入栏（20260829a）：文件拖到输入栏区域即加入预览队列（复用
+      // readImageFile 压缩/限流）。dragover preventDefault 是允许 drop 的必要条件
+      // （浏览器默认拒绝文件落点并打开图片）；只接管含文件的拖拽，纯文本拖拽不干扰
+      const inputArea = document.querySelector('.chat-input-area');
+      inputArea.addEventListener('dragover', (e) => {
+        const types = e.dataTransfer && e.dataTransfer.types;
+        if (types && Array.from(types).includes('Files')) {
+          e.preventDefault();
+          inputArea.classList.add('chat-drag-over');
+        }
+      });
+      inputArea.addEventListener('dragleave', () => inputArea.classList.remove('chat-drag-over'));
+      inputArea.addEventListener('drop', (e) => {
+        inputArea.classList.remove('chat-drag-over');
+        const files = e.dataTransfer && e.dataTransfer.files;
+        if (!files || !files.length) return;
+        const imgs = [...files].filter(f => f.type && f.type.startsWith('image/'));
+        if (!imgs.length) return;
+        e.preventDefault();
+        imgs.forEach(readImageFile);
+        input.focus();
       });
 
       document.getElementById('nav-yes').addEventListener('click', () => {

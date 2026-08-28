@@ -184,9 +184,11 @@
               if (m.from === windowId) return;
               // 远端用户消息：mergeItems 去重（同 id 严格替换/内容收养）+ 增量渲染。
               // 不写 localStorage（避免写者风暴），DB 拉取/收尾保存自然收敛。
-              // hasImg 标记（20260828 改进②）：远端无图数据，渲染占位块而非真图
+              // 20260829a：广播带 images 跨窗传真图（用户要求其他窗口显示真图）；
+              // hasImg 标记兜底（旧版广播/无图帧）→ 渲染占位块
               const item = __chatCore.migrateItem({
                 id: m.id, type: 'user', text: m.text, time: m.time,
+                ...(m.images && m.images.length ? { images: m.images } : {}),
                 ...(m.hasImg ? { hasImg: 1 } : {}),
               });
               ctx.state.items = __chatCore.mergeItems(ctx.state.items, [item]);
