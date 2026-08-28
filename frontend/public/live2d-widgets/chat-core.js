@@ -81,28 +81,36 @@
     const replaceWithIncoming = (local, incoming, now) => {
       const out = incoming.slice();
       const t = (now === undefined ? Date.now() : now);
-      // 20260828s：图片回填（"气泡图片不显示"根因修复）——DB 权威替换会抹掉会话内
-      // images（dataURL 不落盘，DB 只有 [图片] 标记）。本地 items 中带 images 的用户
-      // 条目按（同类型 + 60s 时间窗口 + 剥标记后文本相等）回填进 incoming，并剥离
-      // incoming 文本的 [图片] 标记（避免图文重复展示）。纯图轮原文为空靠时间窗口锚定。
+      // 20260828s：图片回填 + 标记归一（"气泡图片不显示"/多标签[图片×N]乱显示根因修复）
+      // ① DB 权威替换会抹掉会话内 images（dataURL 不落盘，DB 只有 [图片] 标记）——
+      //    本地带 images 的 user 条目按（同类型 + 60s 时间窗口 + 剥标记后文本相等）
+      //    回填进 incoming，并剥离 incoming 文本的 [图片] 标记（避免图文重复展示）
+      // ② 无图数据端（远端 hasImg 广播/刷新恢复窗口）也剥离 [图片×N] 文本标记并补
+      //    hasImg——DB 文本标记是给无图端看的，hasImg 占位块语义更强且与远端一致；
+      //    纯图轮原文为空靠时间窗口锚定
       const withImg = (local || []).filter(it => it.images && it.images.length);
-      if (withImg.length) {
-        for (const inc of out) {
-          if (inc.type !== 'user' || (inc.images && inc.images.length)) continue;
+      for (const inc of out) {
+        if (inc.type !== 'user') continue;
+        if (!(inc.images && inc.images.length) && withImg.length) {
           const hit = withImg.find(it =>
             it.type === inc.type
             && Math.abs((it.time || 0) - (inc.time || 0)) < 60000
             && stripImgMark(it.text) === stripImgMark(inc.text));
-          if (hit) {
-            inc.images = hit.images;
-            inc.text = stripImgMark(inc.text);
-          }
+          if (hit) { inc.images = hit.images; inc.hasImg = 1; }
+        }
+        if (/\[图片(?:×\d+)?\]/.test(inc.text || '')) {
+          inc.text = stripImgMark(inc.text);
+          if (!inc.images) inc.hasImg = 1;
         }
       }
       for (const it of (local || [])) {
+        // 60s 'l' 保留窗口：图片轮本地文本与 DB 版差 "[图片×N]" 标记，matchText
+        // 会失配 → 本地条目被误追加 → "多标签页把用户问题再次追加到底部"根因。
+        // 统一剥标记后比较（无图消息走 stripImgMark 等于 normText，行为不变）
         if (it.id && it.id.startsWith('l')
             && (it.time || 0) >= t - 60000
-            && !incoming.some(inc => inc.type === it.type && matchText(inc.text, it.text))) {
+            && !incoming.some(inc => inc.type === it.type
+                && stripImgMark(inc.text) === stripImgMark(it.text))) {
           out.push(it);
         }
       }
