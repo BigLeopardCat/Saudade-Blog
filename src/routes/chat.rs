@@ -190,15 +190,22 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, Js
         ..Default::default()
     }.insert(&state.db).await.ok().map(|m| m.id);
 
-    // 读取最近历史
+    // 读取最近历史（20260828 修复：排除刚插入的当前消息 user_msg_id——此前 history
+    // 含当前消息、agent 端又追加 last_msg，同一条消息注入 2 次，模型注意力被重复
+    // 文本分散并形成"自己提问自己回答"的假象。limit 21 保证排除后仍有 20 条历史）
     let history_items: Vec<serde_json::Value> = {
         let recent = chat_history::Entity::find()
             .filter(chat_history::Column::UserId.eq(uid))
             .order_by_desc(chat_history::Column::CreatedAt)
-            .limit(Some(20))
+            .limit(Some(21))
             .all(&state.db)
             .await.unwrap_or_default();
-        recent.iter().rev().map(|h| serde_json::json!({"role": h.role, "content": h.content})).collect()
+        recent.iter()
+            .filter(|h| Some(h.id) != user_msg_id)
+            .rev()
+            .take(20)
+            .map(|h| serde_json::json!({"role": h.role, "content": h.content}))
+            .collect()
     };
 
     // 加载压缩摘要
@@ -261,6 +268,26 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, Js
 /// 摘要由 agent 侧独立生成（needs_summary 轮的后端总结调用，与回复解耦），
 /// 经 new_summary（非流式响应字段 / 流式 __SUMMARY__ 帧）传入；
 /// None 表示本轮无摘要，不写入 chat_summary（旧摘要保留）。
+/// 剥离命令帧行（AUTO_NAVIGATE:/NAVIGATE:/EFFECT:/DARKMODE: 前缀行）。
+/// 帧是执行指令不是对话内容——前端已从流式帧/命令帧单独收到命令；存进
+/// chat_history 的带帧文本会污染 few-shot：历史 AI 消息全是帧开头，模型学到
+/// "回复要写帧"（自强化循环，12:30 轮最终回复即带 AUTO_NAVIGATE: 前缀）。
+/// 存库只留干净正文。
+fn strip_command_lines(reply: &str) -> String {
+    reply
+        .lines()
+        .filter(|l| {
+            !(l.starts_with("AUTO_NAVIGATE:")
+                || l.starts_with("NAVIGATE:")
+                || l.starts_with("EFFECT:")
+                || l.starts_with("DARKMODE:"))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
+}
+
 async fn save_assistant_reply(
     db: &sea_orm::DatabaseConnection,
     uid: i32,
@@ -271,7 +298,7 @@ async fn save_assistant_reply(
     let _ = chat_history::ActiveModel {
         user_id: Set(uid),
         role: Set("assistant".into()),
-        content: Set(reply.clone()),
+        content: Set(strip_command_lines(&reply)),
         ..Default::default()
     }.save(db).await;
 
