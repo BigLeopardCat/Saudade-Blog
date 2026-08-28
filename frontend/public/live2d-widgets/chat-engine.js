@@ -334,11 +334,18 @@
       // 写→拉 ping-pong 与写者风暴；流式帧期间不被触发写）
       const saveHistory = () => {
         try {
-          // 20260828 改进②/s：落盘剥离 images（dataURL 单张可达 1MB × 6，50 条
-          // 历史会撑爆 5MB quota）——缓存存文本，刷新恢复显示 [图片] 标记（Rust
-          // DB 同格式）；会话内渲染用图不落盘（pull 时由 replaceWithIncoming 回填）
-          const forStorage = ctx.state.items.map(it => it.images
-            ? Object.assign({}, it, { images: undefined, hasImg: 1 }) : it);
+          // 20260829a：本地缩略图方案——原图 dataURL 仍不落盘（单张可达 1MB × 6
+          // 会撑爆 quota），但发送时异步生成的 180px 压缩缩略图（thumbs，每张
+          // 几百字节~几 KB）落盘：刷新/重开窗口由 migrateItem 把 thumbs 恢复成
+          // images 渲染真图，不再回退 [图片] 占位块（Rust DB 仍只有文本标记）。
+          // 缩略图生成完成前的窗口期 / 旧缓存条目（无 thumbs）回退 hasImg 占位
+          const forStorage = ctx.state.items.map(it => {
+            if (it.images && it.images.length) {
+              return Object.assign({}, it, { images: undefined,
+                ...(it.thumbs && it.thumbs.length ? { thumbs: it.thumbs } : { hasImg: 1 }) });
+            }
+            return it;
+          });
           const json = JSON.stringify(__chatCore.capItems(forStorage, 50));
           const key = historyKey();
           if (localStorage.getItem(key) === json) return;
