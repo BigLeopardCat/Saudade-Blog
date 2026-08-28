@@ -26,8 +26,10 @@
       // 重试，chatHTML 尚未挂载）——此处独立等待，避免对 null 绑定事件
       if (!chatPanel) { setTimeout(init, 500); return; }
       const sendMessage = async () => {
+        // 图片随消息发送（多模态 20260828）：无文字只有图也允许（模型描述图片）
         const msg = input.value.trim();
-        if (!msg || ctx.state.isSending) return;
+        const img = ctx.state.pendingImage || '';
+        if ((!msg && !img) || ctx.state.isSending) return;
 
         // 新对话开始：自动关闭上一条遗留的"建议跳转"面板——用户没点击/没取消时
         // 不应让它残留到下一轮（已确认的目标由用户点击触发，不受影响）
@@ -57,13 +59,22 @@
         // 程序清空不会触发 input 事件：主动重置高度，避免空输入框残留多行高度
         // （flex 布局下还会连带拉伸发送按钮导致变形）
         resizeInput();
-        const userItem = __chatCore.migrateItem({ id: userItemId, type: 'user', text: msg, time: Date.now() });
+        // 图片已随本轮发送：清空预览与待发状态（abort 停止生成路径不清空，可重发）
+        ctx.state.pendingImage = null;
+        const imgPreview = document.getElementById('chat-img-preview');
+        const imgPreviewImg = document.getElementById('chat-img-preview-img');
+        if (imgPreview && !imgPreview.hidden) imgPreview.hidden = true;
+        if (imgPreviewImg) imgPreviewImg.removeAttribute('src');
+        // 带图消息：文本末尾拼 [图片] 标记（与 Rust 入库格式一致，历史恢复/远端窗口
+        // 语义统一；dataURL 本体不进气泡/缓存/广播——单张 900KB 会撑爆 localStorage）
+        const userText = img ? msg + '\n[图片]' : msg;
+        const userItem = __chatCore.migrateItem({ id: userItemId, type: 'user', text: userText, time: Date.now() });
         ctx.state.items.push(userItem);
         appendMsg(userItem);
         // 发送即回底（聊天软件标准）：即使之前在翻历史，自己发的消息必须可见
         scrollToBottom(messages, true);
         saveHistory(); // 游客立即落缓存；登录用户 DB 侧由 Rust 在流开始前入库
-        broadcast({ t: 'user', id: userItemId, text: msg, time: userItem.time });
+        broadcast({ t: 'user', id: userItemId, text: userText, time: userItem.time });
         ctx.state.isSending = true;
         ctx.state.stoppedByUser = false;
         ctx.state.discardTurn = false;
@@ -236,6 +247,7 @@
             headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
             body: JSON.stringify({
               message: msg,
+              image: img, // 多模态：dataURL 图片（前端已压缩 ≤900KB，Rust 上限 2MB）
               current_url: window.location.href,
               page_title: document.title,
               current_effects: (window.__effectStateList || ''), // 实时特效状态，供 agent 感知
@@ -920,6 +932,76 @@
           e.preventDefault();
           sendMessage();
         }
+      });
+
+      // ── 图片输入（多模态 20260828）：按钮选图 / 粘贴图片 → 压缩 → 预览 → 随消息发送 ──
+      // 状态放 ctx.state.pendingImage（跨函数共享）：abort 停止生成不清空，可重发；
+      // 单图模式——重复选图/粘贴新图直接替换旧图
+      const imgBtn = document.getElementById('chat-img-btn');
+      const imgFile = document.getElementById('chat-img-file');
+      const imgPreview = document.getElementById('chat-img-preview');
+      const imgPreviewImg = document.getElementById('chat-img-preview-img');
+      const imgPreviewRemove = document.getElementById('chat-img-preview-remove');
+      const setPendingImage = (dataUrl) => {
+        ctx.state.pendingImage = dataUrl;
+        imgPreviewImg.src = dataUrl;
+        imgPreview.hidden = false;
+        input.focus();
+      };
+      // 压缩规则：base64 ≤800KB 原样走（PNG 透明小图不转 JPEG 保透明）；超过则 canvas
+      // 缩放（最长边 1280 封顶，不放大）+ JPEG 0.85 重编码，保 ≤900KB（Rust 请求体 2MB
+      // 双保险；vite 侧无体积限制，900KB 是链路安全线）。两次降质仍超 1MB → 放弃并提示
+      const readImageFile = (file) => {
+        if (!file || !file.type || !file.type.startsWith('image/')) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+          const dataUrl = reader.result;
+          if (dataUrl.length <= 800 * 1024) { setPendingImage(dataUrl); return; }
+          const imgEl = new Image();
+          imgEl.onload = () => {
+            try {
+              const scale = Math.min(1, 1280 / Math.max(imgEl.width, imgEl.height));
+              const canvas = document.createElement('canvas');
+              canvas.width = Math.max(1, Math.round(imgEl.width * scale));
+              canvas.height = Math.max(1, Math.round(imgEl.height * scale));
+              canvas.getContext('2d').drawImage(imgEl, 0, 0, canvas.width, canvas.height);
+              let out = canvas.toDataURL('image/jpeg', 0.85);
+              if (out.length > 900 * 1024) out = canvas.toDataURL('image/jpeg', 0.7);
+              if (out.length > 1024 * 1024) { console.warn('[chat] 图片压缩后仍超限，已放弃'); return; }
+              setPendingImage(out);
+            } catch(e) { console.warn('[chat] 图片压缩失败', e); }
+          };
+          imgEl.onerror = () => console.warn('[chat] 图片解码失败');
+          imgEl.src = dataUrl;
+        };
+        reader.readAsDataURL(file);
+      };
+      imgBtn.addEventListener('click', () => imgFile.click());
+      imgFile.addEventListener('change', () => {
+        const f = imgFile.files && imgFile.files[0];
+        if (f) readImageFile(f);
+        imgFile.value = ''; // 置空：同一文件再次选择仍触发 change
+      });
+      // 粘贴图片（剪贴板截图/复制图片文件）：命中 image 条目即接管，阻止文本插入干扰
+      input.addEventListener('paste', (e) => {
+        const items = e.clipboardData && e.clipboardData.items;
+        if (!items) return;
+        for (const it of items) {
+          if (it.type && it.type.startsWith('image/')) {
+            const f = it.getAsFile();
+            if (f) {
+              e.preventDefault();
+              readImageFile(f);
+            }
+            break;
+          }
+        }
+      });
+      imgPreviewRemove.addEventListener('click', () => {
+        ctx.state.pendingImage = null;
+        imgPreview.hidden = true;
+        imgPreviewImg.removeAttribute('src');
+        input.focus();
       });
 
       document.getElementById('nav-yes').addEventListener('click', () => {
