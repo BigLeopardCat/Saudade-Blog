@@ -578,10 +578,15 @@
         if (item.type === 'user') {
           const bubble = document.createElement('span');
           bubble.className = 'msg-bubble';
-          // 多模态（20260828 改进②，20260828s 多图）：气泡内直接展示图片——
-          // item.images 有 dataURL 数组逐张渲染（网格横排）；仅有 hasImg 标记
-          // （远端窗口广播）渲染占位块；刷新/DB 恢复无这两个字段 → 文本已含
-          // [图片] 标记，原样显示
+          // 多模态（20260828 改进②，20260828s 多图，20260828t 渲染顺序修复）：
+          // 气泡内直接展示图片——item.images 有 dataURL 数组逐张渲染（网格横排）；
+          // 仅有 hasImg 标记（远端窗口广播）渲染占位块；刷新/DB 恢复无这两个字段
+          // → 文本已含 [图片] 标记，原样显示。
+          // ★ 顺序必须先 applyMsg 文本、后追加 grid/占位块：applyMsg 是
+          // innerHTML 整体替换（chat-render.js），图片先 append 会被文本渲染
+          // 覆盖删除——"气泡图片不显示"第三根因（渲染层），前两处修的是数据层
+          // （广播回环/DB 回填），这里修的是 DOM 组装
+          applyMsg(bubble, item.text);
           if (Array.isArray(item.images) && item.images.length) {
             const grid = document.createElement('div');
             grid.className = 'msg-img-grid';
@@ -599,7 +604,6 @@
             ph.textContent = '🖼️ 图片';
             bubble.appendChild(ph);
           }
-          applyMsg(bubble, item.text);
           content.appendChild(bubble);
         } else {
           // 命令型回复（纯 AUTO_NAVIGATE 等）恢复时兜底渲染灰色注记，不显示空气泡
