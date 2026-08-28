@@ -618,7 +618,9 @@
           } else if (item.hasImg) {
             const ph = document.createElement('div');
             ph.className = 'msg-img-placeholder';
-            ph.textContent = '🖼️ 图片';
+            // 20260829b：语义从"有图"改为"图已过期"——hasImg 表示有图但数据
+            // 不可得（缓存丢失/换设备/旧记录），"图片已过期"更诚实
+            ph.textContent = '🖼️ ⓘ图片已过期';
             bubble.appendChild(ph);
           }
           content.appendChild(bubble);

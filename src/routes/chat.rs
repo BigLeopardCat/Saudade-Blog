@@ -191,6 +191,9 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, Js
     // 图片轮：落库加 "[图片]"（单图）/"[图片×N]"（多图）文本标记（后续轮历史中模型
     // 可感知该轮有图；图片本体不落库）
     let stored_content = match payload.image.as_deref() {
+        // 20260829b：空数组不拼标记（防御旧客户端发 image:[]）——否则无图消息
+        // 也带 [图片] 落库，pull 后前端全部 user 气泡出现图片图标
+        Some(v) if v.is_empty() => payload.message.clone(),
         Some(v) if v.len() > 1 => format!("{}\n[图片×{}]", payload.message, v.len()),
         Some(_) => format!("{}\n[图片]", payload.message),
         None => payload.message.clone(),

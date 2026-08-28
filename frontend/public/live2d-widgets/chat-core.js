@@ -98,10 +98,18 @@
       for (const inc of out) {
         if (inc.type !== 'user') continue;
         if (!(inc.images && inc.images.length) && withImg.length) {
-          const hit = withImg.find(it =>
+          // 20260829b：带 thumbs 的条目放宽时间窗口——本地持久缩略图按（类型 +
+          // 剥标记文本）匹配即可（缓存是权威本地数据，文本相同即同条消息；实测
+          // ctrl+r/关闭重开 >60s 后被 60s 窗口挡掉、缩略图丢失）。无 thumbs 的
+          // 会话内原图（dataURL 内存数据）仍限 60s 防旧轮错位；多条同文本取
+          // 时间最近者（用户重复发同文本时不错位）
+          const candidates = withImg.filter(it =>
             it.type === inc.type
-            && Math.abs((it.time || 0) - (inc.time || 0)) < 60000
-            && stripImgMark(it.text) === stripImgMark(inc.text));
+            && stripImgMark(it.text) === stripImgMark(inc.text)
+            && ((it.thumbs && it.thumbs.length)
+                || Math.abs((it.time || 0) - (inc.time || 0)) < 60000));
+          const hit = candidates.sort((a, b) =>
+            Math.abs((a.time || 0) - (inc.time || 0)) - Math.abs((b.time || 0) - (inc.time || 0)))[0];
           if (hit) {
             inc.images = hit.images;
             // 20260829a：回填同步透传 thumbs——刷新后窗口（images=缩略图）被
