@@ -65,16 +65,20 @@
         const imgPreviewImg = document.getElementById('chat-img-preview-img');
         if (imgPreview && !imgPreview.hidden) imgPreview.hidden = true;
         if (imgPreviewImg) imgPreviewImg.removeAttribute('src');
-        // 带图消息：文本末尾拼 [图片] 标记（与 Rust 入库格式一致，历史恢复/远端窗口
-        // 语义统一；dataURL 本体不进气泡/缓存/广播——单张 900KB 会撑爆 localStorage）
-        const userText = img ? msg + '\n[图片]' : msg;
-        const userItem = __chatCore.migrateItem({ id: userItemId, type: 'user', text: userText, time: Date.now() });
+        // 带图消息（20260828 改进②）：气泡内直接展示图片——item.image 存 dataURL
+        // （会话内渲染用）；saveHistory 落盘时剥离（单张 900KB 会撑爆 localStorage，
+        // 刷新/恢复后回退 [图片] 文本标记，与 Rust DB 一致）；广播只带 hasImg 标记
+        // （远端无图数据渲染占位块，dataURL 不跨窗传）
+        const userItem = __chatCore.migrateItem({
+          id: userItemId, type: 'user', text: msg, time: Date.now(),
+          ...(img ? { image: img } : {}),
+        });
         ctx.state.items.push(userItem);
         appendMsg(userItem);
         // 发送即回底（聊天软件标准）：即使之前在翻历史，自己发的消息必须可见
         scrollToBottom(messages, true);
         saveHistory(); // 游客立即落缓存；登录用户 DB 侧由 Rust 在流开始前入库
-        broadcast({ t: 'user', id: userItemId, text: userText, time: userItem.time });
+        broadcast({ t: 'user', id: userItemId, text: msg, hasImg: img ? 1 : 0, time: userItem.time });
         ctx.state.isSending = true;
         ctx.state.stoppedByUser = false;
         ctx.state.discardTurn = false;
@@ -920,9 +924,10 @@
         sendMessage();
       });
       // 输入框自适应高度：先置 auto 再按内容高度回填，内容为空时回到 min-height
+      // （上限 110 与 CSS .chat-input max-height 120 对齐，留滚动条余量）
       const resizeInput = () => {
         input.style.height = 'auto';
-        input.style.height = Math.min(input.scrollHeight, 80) + 'px';
+        input.style.height = Math.min(input.scrollHeight, 110) + 'px';
       };
       input.addEventListener('input', resizeInput);
       // IME 输入法合成结束（含取消合成）后兜底重算，防止残留的组合文本高度

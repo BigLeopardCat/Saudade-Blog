@@ -176,7 +176,11 @@
             if (m.t === 'user') {
               // 远端用户消息：mergeItems 去重（同 id 严格替换/内容收养）+ 增量渲染。
               // 不写 localStorage（避免写者风暴），DB 拉取/收尾保存自然收敛。
-              const item = __chatCore.migrateItem({ id: m.id, type: 'user', text: m.text, time: m.time });
+              // hasImg 标记（20260828 改进②）：远端无图数据，渲染占位块而非真图
+              const item = __chatCore.migrateItem({
+                id: m.id, type: 'user', text: m.text, time: m.time,
+                ...(m.hasImg ? { hasImg: 1 } : {}),
+              });
               ctx.state.items = __chatCore.mergeItems(ctx.state.items, [item]);
               appendMsg(item);
               return;
@@ -320,7 +324,12 @@
       // 写→拉 ping-pong 与写者风暴；流式帧期间不被触发写）
       const saveHistory = () => {
         try {
-          const json = JSON.stringify(__chatCore.capItems(ctx.state.items, 50));
+          // 20260828 改进②：落盘剥离 image（dataURL 单张可达 900KB，50 条历史
+          // 会撑爆 5MB quota）——缓存存文本，刷新恢复显示 [图片] 标记（Rust DB
+          // 同格式）；会话内渲染用图不落盘
+          const forStorage = ctx.state.items.map(it => it.image
+            ? Object.assign({}, it, { image: undefined, hasImg: 1 }) : it);
+          const json = JSON.stringify(__chatCore.capItems(forStorage, 50));
           const key = historyKey();
           if (localStorage.getItem(key) === json) return;
           try {
@@ -328,7 +337,7 @@
           } catch(e) {
             // QuotaExceeded 止损：裁剪到最近 30 条重试（逼近 5MB 上限时旧数据
             // 保留、新写入失败——曾现"转跳后新页面对话停在旧消息、新内容全丢"）
-            const trimmed = JSON.stringify(__chatCore.capItems(ctx.state.items, 30));
+            const trimmed = JSON.stringify(__chatCore.capItems(forStorage, 30));
             if (localStorage.getItem(key) !== trimmed) {
               localStorage.setItem(key, trimmed);
               console.warn('[agent-chat] 历史超限，已裁剪到最近 30 条止损');
@@ -561,6 +570,21 @@
         if (item.type === 'user') {
           const bubble = document.createElement('span');
           bubble.className = 'msg-bubble';
+          // 多模态（20260828 改进②）：气泡内直接展示图片——item.image 有 dataURL
+          // 渲染真图（会话内）；仅有 hasImg 标记（远端窗口广播）渲染占位块；
+          // 刷新/DB 恢复无这两个字段 → 文本已含 [图片] 标记，原样显示
+          if (item.image) {
+            const im = document.createElement('img');
+            im.className = 'msg-img';
+            im.src = item.image;
+            im.alt = '图片';
+            bubble.appendChild(im);
+          } else if (item.hasImg) {
+            const ph = document.createElement('div');
+            ph.className = 'msg-img-placeholder';
+            ph.textContent = '🖼️ 图片';
+            bubble.appendChild(ph);
+          }
           applyMsg(bubble, item.text);
           content.appendChild(bubble);
         } else {
