@@ -267,7 +267,9 @@
             headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
             body: JSON.stringify({
               message: msg,
-              image: imgs, // 多模态（20260828s 多图）：dataURL 数组（每张 ≤1MB，最多 6 张，Rust 上限 8MB）
+              // 20260829b：无图消息省略 image 字段——发空数组会让 Rust 误拼
+              // [图片] 落库（Some(_) 分支），pull 后全部 user 气泡出现图片图标
+              ...(imgs.length ? { image: imgs } : {}), // 多模态：dataURL 数组（每张 ≤1MB，最多 6 张）
               current_url: window.location.href,
               page_title: document.title,
               current_effects: (window.__effectStateList || ''), // 实时特效状态，供 agent 感知
