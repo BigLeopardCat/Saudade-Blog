@@ -47,9 +47,15 @@
       process: (it && Array.isArray(it.process) && it.process.length) ? it.process : undefined,
       // 多模态（20260828 改进②/20260828s 多图）：images = 会话内渲染用的 dataURL 数组
       // （不落盘，保存剥离）；hasImg = 远端/恢复标记（无图数据时渲染占位块）。
-      // 兼容旧缓存：单图时代的 image 字符串字段 → 转数组
+      // 兼容旧缓存：单图时代的 image 字符串字段 → 转数组。
+      // 20260829a：thumbs = 本地落盘的 180px 压缩缩略图（刷新/重开窗口恢复用，
+      // 原图 dataURL 仍不落盘）——恢复时优先 thumbs（语义同 images 数组）
       images: (it && Array.isArray(it.images) && it.images.length) ? it.images
+        : (it && Array.isArray(it.thumbs) && it.thumbs.length) ? it.thumbs
         : (it && it.image) ? [it.image] : undefined,
+      // 20260829a：thumbs 原样透传——刷新后 images 已被恢复成缩略图数组，
+      // 若 thumbs 丢弃则下次 saveHistory 无 thumb 可存（回退 hasImg 占位）
+      thumbs: (it && Array.isArray(it.thumbs) && it.thumbs.length) ? it.thumbs : undefined,
       hasImg: (it && it.hasImg) ? 1 : undefined,
     });
     const mergeItems = (local, incoming) => {
@@ -96,7 +102,13 @@
             it.type === inc.type
             && Math.abs((it.time || 0) - (inc.time || 0)) < 60000
             && stripImgMark(it.text) === stripImgMark(inc.text));
-          if (hit) { inc.images = hit.images; inc.hasImg = 1; }
+          if (hit) {
+            inc.images = hit.images;
+            // 20260829a：回填同步透传 thumbs——刷新后窗口（images=缩略图）被
+            // DB 权威替换后，缩略图随回填保留，否则下次 saveHistory 丢图
+            if (hit.thumbs && hit.thumbs.length) inc.thumbs = hit.thumbs;
+            inc.hasImg = 1;
+          }
         }
         if (/\[图片(?:×\d+)?\]/.test(inc.text || '')) {
           inc.text = stripImgMark(inc.text);

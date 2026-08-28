@@ -64,11 +64,10 @@
         ctx.state.pendingImages = [];
         renderPreviews();
         // 带图消息（20260828 改进②，20260828s 多图）：气泡内直接展示图片——
-        // item.images 存 dataURL 数组（会话内渲染用）；saveHistory 落盘时剥离
-        // （单张 ≤1MB × 6 会撑爆 localStorage，刷新/恢复后回退 [图片] 文本标记，
-        // 与 Rust DB 一致；pull 时由 replaceWithIncoming 从内存回填）；广播只带
-        // hasImg 标记（远端无图数据渲染占位块，dataURL 不跨窗传）+ from 标记
-        // （排除广播回环，避免同 id 替换抹掉自己的图片）
+        // item.images 存 dataURL 数组（会话内渲染用）。20260829a 起落盘走本地
+        // 缩略图方案：原图不落盘，发送后异步压缩 180px 缩略图到 item.thumbs，
+        // saveHistory 落盘 thumbs——刷新/重开窗口恢复真图（不再回退占位块）；
+        // 旧缓存/缩略图未生成完的窗口期由 saveHistory 回退 hasImg 占位
         const userItem = __chatCore.migrateItem({
           id: userItemId, type: 'user', text: msg, time: Date.now(),
           ...(imgs.length ? { images: imgs } : {}),
@@ -78,11 +77,22 @@
         // 发送即回底（聊天软件标准）：即使之前在翻历史，自己发的消息必须可见
         scrollToBottom(messages, true);
         saveHistory(); // 游客立即落缓存；登录用户 DB 侧由 Rust 在流开始前入库
+        // 20260829a：异步生成缩略图落盘（刷新恢复用）——压缩完成前不阻塞发送；
+        // 本轮已被 discard/清理则跳过；补保存幂等（值相同 saveHistory 直接跳过）
+        if (imgs.length) {
+          makeThumbs(imgs).then((thumbs) => {
+            if (!(thumbs && thumbs.length)) return;
+            const hit = ctx.state.items.find(it => it.id === userItemId);
+            if (!hit) return;
+            hit.thumbs = thumbs;
+            saveHistory();
+          });
+        }
         // 20260829a：user 帧带 images 跨窗广播——其他窗口直接渲染真图（用户要求
         // "其他窗口不要只显示🖼️占位块"）。dataURL 广播内存可接受（≤6×1MB 会话级）；
         // hasImg 保留作兜底（旧版广播/无图帧）。回环排除靠 from=windowId 已有。
         // 注意：远端窗口 pullHistory 后 images 由 replaceWithIncoming 从本地回填，
-        // 会话内持续显示；新开标签页（无本地 images）回退占位块（dataURL 不落盘）
+        // 会话内持续显示；新开标签页从 localStorage 恢复 thumbs 缩略图渲染真图
         broadcast({
           t: 'user', id: userItemId, text: msg, time: userItem.time, from: engine.windowId,
           ...(imgs.length ? { images: imgs } : {}),
@@ -1015,6 +1025,35 @@
         };
         reader.readAsDataURL(file);
       };
+      // 20260829a：本地缩略图——最长边 180px（匹配气泡 180px 网格展示尺寸，
+      // 恢复不放大糊），JPEG 0.7（每张几百字节~几 KB）；带 alpha 的 PNG 保 PNG
+      // （JPEG 会把透明区压成黑底）。解码/绘制失败回退原 dataURL（不阻塞发送）
+      const thumbFromDataUrl = (dataUrl) => new Promise((resolve) => {
+        if (!dataUrl) return resolve(dataUrl);
+        const imgEl = new Image();
+        imgEl.onload = () => {
+          try {
+            const scale = Math.min(1, 180 / Math.max(imgEl.width, imgEl.height));
+            const canvas = document.createElement('canvas');
+            canvas.width = Math.max(1, Math.round(imgEl.width * scale));
+            canvas.height = Math.max(1, Math.round(imgEl.height * scale));
+            const c2 = canvas.getContext('2d');
+            let isPng = dataUrl.startsWith('data:image/png');
+            if (isPng) { // 仅 PNG 且真带 alpha 才保 PNG；全不透明 PNG 转 JPEG 更小
+              c2.drawImage(imgEl, 0, 0, canvas.width, canvas.height);
+              const d = c2.getImageData(0, 0, canvas.width, canvas.height).data;
+              let hasAlpha = false;
+              for (let i = 3; i < d.length; i += 4) { if (d[i] < 250) { hasAlpha = true; break; } }
+              isPng = hasAlpha;
+            }
+            c2.drawImage(imgEl, 0, 0, canvas.width, canvas.height);
+            resolve(canvas.toDataURL(isPng ? 'image/png' : 'image/jpeg', 0.7));
+          } catch(e) { resolve(dataUrl); }
+        };
+        imgEl.onerror = () => resolve(dataUrl);
+        imgEl.src = dataUrl;
+      });
+      const makeThumbs = (dataUrls) => Promise.all((dataUrls || []).map(thumbFromDataUrl));
       imgBtn.addEventListener('click', () => imgFile.click());
       imgFile.addEventListener('change', () => {
         const f = imgFile.files && imgFile.files[0];
