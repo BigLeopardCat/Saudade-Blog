@@ -41,6 +41,10 @@
       text: (it && it.text) || '',
       time: (it && it.time) || 0,
       process: (it && Array.isArray(it.process) && it.process.length) ? it.process : undefined,
+      // 多模态（20260828 改进②）：image = 会话内渲染用的 dataURL（不落盘）；
+      // hasImg = 远端/恢复标记（无图数据时渲染占位块）
+      image: (it && it.image) || undefined,
+      hasImg: (it && it.hasImg) ? 1 : undefined,
     });
     const mergeItems = (local, incoming) => {
       const out = local.slice();
