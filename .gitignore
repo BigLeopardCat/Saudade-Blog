@@ -11,3 +11,7 @@ backend.log
 saudade_blog_bin
 /saudade-blog-agent
 /saudade-blog-agent.bak.*/
+
+# Python 字节码
+__pycache__/
+*.pyc
