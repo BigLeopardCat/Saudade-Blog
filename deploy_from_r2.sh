@@ -36,9 +36,10 @@ if [ -f saudade_blog_bin ]; then
   cp -f saudade_blog_bin target/release/saudade_blog_bin
   chmod +x target/release/saudade_blog_bin
   rm -f saudade_blog_bin
-  pkill -f saudade_blog_bin 2>/dev/null || true
-  sleep 2
-  nohup ./target/release/saudade_blog_bin > server_rust.log 2>&1 &
+  # 20260829：Rust 已 systemd 化（saudade-rust 服务）——直接 restart，
+  # 崩溃自愈 + 开机自启 + 日志轮转由服务/ logrotate 接管（勿再 nohup 裸跑，
+  # 会与 systemd 抢 3000 端口）
+  sudo systemctl restart saudade-rust
   echo "✅ $(date "+%H:%M:%S") 后端已更新并重启"
 else
   echo "ℹ️ $(date "+%H:%M:%S") 后端无变更，跳过重启"
