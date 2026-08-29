@@ -11,9 +11,12 @@ use saudade_blog::{create_router, AppState};
 async fn main() {
     dotenv().ok();
     // 日志时间统一本地 +08:00 钟面（CLAUDE.md 时区约定）——tracing 默认 UTC，
-    // 与 agent 日志（systemd append 本地时间）混查时差 8 小时难对账
+    // 与 agent 日志（systemd append 本地时间）混查时差 8 小时难对账。
+    // with_ansi(false)：文件日志不输出 ANSI 转义（[2m/[32m/[0m 着色序列）——
+    // fmt 默认开启，落文件是噪音（干扰 grep、降低 logrotate 压缩率）
     tracing_subscriber::fmt()
         .with_timer(tracing_subscriber::fmt::time::ChronoLocal::rfc_3339())
+        .with_ansi(false)
         .init();
 
     let db_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
