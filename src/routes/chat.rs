@@ -127,9 +127,20 @@ pub async fn chat_history_handler(
 /// 删除该用户最后一条 user 消息及后续残缺回复（全删语义）——主动停止 = 用户明确
 /// 不想要这条进记忆，与连接中断清理（DiscardAbortedExchange 只删残缺、保留 user）互补。
 /// 无/无效 token → 401。幂等：无 user 消息时无操作返回 success。
+/// 可选 body {"text": 原文}（20260829 重发机制）：非空时要求最后一条 user 消息
+/// 与原文一致才删除——失败气泡重发路径防误删：用户失败后若已发新消息，绝不能用
+/// 新轮顶替删除（abort 路径不带 body，最后一条 user 即被停止的轮，无需校验）。
+/// 带图轮 DB content 是 "原文\n[图片…]" 拼接（prepare_chat 入库），校验兼容后缀。
+#[derive(Deserialize)]
+pub struct DiscardReq {
+    #[serde(default)]
+    pub text: Option<String>,
+}
+
 pub async fn discard_handler(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    payload: Option<Json<DiscardReq>>,
 ) -> Response {
     let Some(uid) = auth_uid(&headers) else {
         return (
@@ -147,6 +158,27 @@ pub async fn discard_handler(
     let Ok(Some(u)) = last_user else {
         return (StatusCode::OK, Json(serde_json::json!({"success": true}))).into_response();
     };
+    if let Some(Json(DiscardReq { text: Some(t) })) = payload {
+        if !t.is_empty()
+            && u.content != t
+            && !u
+                .content
+                .strip_prefix(t.as_str())
+                .map(|rest| rest.is_empty() || rest.starts_with("\n[图片"))
+                .unwrap_or(false)
+        {
+            // 不匹配：期间已发新消息或原文不一致——不删任何记录（保留新轮）
+            return (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "success": false,
+                    "reason": "mismatch",
+                    "error": "最后一条消息不是重发原文（可能已发送新消息），未删除"
+                })),
+            )
+                .into_response();
+        }
+    }
     let _ = chat_history::Entity::delete_many()
         .filter(chat_history::Column::UserId.eq(uid))
         .filter(chat_history::Column::Id.gte(u.id))
