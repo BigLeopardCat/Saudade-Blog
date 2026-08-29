@@ -26,6 +26,77 @@
       // 重试，chatHTML 尚未挂载）——此处独立等待，避免对 null 绑定事件
       if (!chatPanel) { setTimeout(init, 500); return; }
       const sendMessage = async () => {
+        // 失败气泡重发/编辑（20260829h 重发机制）：网络波动/空闲超时的失败轮——
+        // user 消息已入库（Rust 断连清理 DiscardAbortedExchange 只删残缺保留
+        // user，见 chat.rs），不重发的话下次请求 agent 会"补答"旧轮。
+        // 重发 = 删 DB 旧轮（discard 带原文校验，防误删期间已发的新轮）→ 恢复
+        // 原文（含图片）→ 走 sendMessage 主流程。编辑 = 删旧轮 + 文本填回输入框。
+        // 仅本窗可用（closure 捕获 msg/div）；远端错误气泡不渲染按钮（刷新收敛）。
+        const attachRetryActions = (contentSpan, div, msg) => {
+          const wrap = document.createElement('div');
+          wrap.className = 'chat-msg-retry';
+          const retryBtn = document.createElement('button');
+          retryBtn.type = 'button';
+          retryBtn.className = 'chat-retry-btn';
+          retryBtn.textContent = '↻ 重发';
+          const editBtn = document.createElement('button');
+          editBtn.type = 'button';
+          editBtn.className = 'chat-retry-btn';
+          editBtn.textContent = '✎ 编辑';
+          wrap.appendChild(retryBtn);
+          wrap.appendChild(editBtn);
+          contentSpan.appendChild(wrap);
+          // 双保险①：失败轮必须是当前最后一条 user 消息才允许操作
+          // （期间发了新消息 → 该轮已非最新，本地直接放弃）
+          const lastUserText = () => {
+            const last = [...ctx.state.items].reverse().find(i => i.type === 'user');
+            return last ? last.text : null;
+          };
+          // 双保险②：后端 discard 带原文校验（Rust chat.rs DiscardReq.text），
+          // mismatch（最后一条 user 不是原文）→ 不删任何记录，操作放弃
+          const discardFailedRound = async () => {
+            const tk = localStorage.getItem('tokenKey');
+            if (!tk) return false;
+            try {
+              const r = await fetch('/api/chat/discard', {
+                method: 'POST',
+                headers: { 'Authorization': 'Bearer ' + tk, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text: msg }),
+              });
+              const j = await r.json();
+              return !!(j && j.success);
+            } catch(e) { return false; }  // 网络异常放弃（残留重发会在历史里重复）
+          };
+          const restoreAndCleanup = () => {
+            // 恢复原文（含图片）到输入区——图片从 items 里的 user 条目取
+            // （pendingImages 发送后已清空）
+            const it = [...ctx.state.items].reverse().find(i => i.type === 'user' && i.text === msg);
+            if (it && it.images) { ctx.state.pendingImages = [...it.images]; renderPreviews(); }
+            input.value = msg;
+            resizeInput();
+            if (div && div.parentNode) div.parentNode.removeChild(div);
+          };
+          retryBtn.addEventListener('click', async () => {
+            if (lastUserText() !== msg) return;
+            retryBtn.disabled = true;
+            retryBtn.textContent = '重发中…';
+            if (!(await discardFailedRound())) {
+              retryBtn.disabled = false;
+              retryBtn.textContent = '↻ 重发';
+              return;
+            }
+            restoreAndCleanup();
+            sendMessage();  // 走主流程（新 roundId/广播/thumbs）
+          });
+          editBtn.addEventListener('click', async () => {
+            if (lastUserText() !== msg) return;
+            editBtn.disabled = true;
+            if (!(await discardFailedRound())) { editBtn.disabled = false; return; }
+            restoreAndCleanup();
+            input.focus();
+          });
+        };
+
         // 图片随消息发送（多模态 20260828，20260828s 多图）：无文字只有图也允许
         // （模型描述图片）；最多 6 张（addPendingImage 上限，发送时不再拦截）
         const msg = input.value.trim();
@@ -524,6 +595,8 @@
               // 异常中断也执行已收到的命令帧（20260827g）：流中断不代表命令无效——
               // 反射质检挂起导致的断流里 AUTO_NAVIGATE/EFFECT/DARKMODE 帧可能已到达
               try { execAgentCommands(cmdText + displayText, null); } catch(e2) {/* ignore */}
+              // 失败气泡重发/编辑按钮（20260829h）：非主动停止的失败轮
+              attachRetryActions(contentSpan, div, msg);
             }
           } else {
             const errMsg = '网络错误: ' + (e && e.message ? e.message : '未知错误');
