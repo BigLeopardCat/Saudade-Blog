@@ -148,6 +148,6 @@ jobs:
               -o ServerAliveCountMax=3 \
               -o ConnectTimeout=10 \
               -p "${SSH_PORT:-22}" \
-              -i /tmp/deploy_key "${SSH_USER}@${SSH_HOST}" "nohup bash /home/ubuntu/memory_blog_rust/deploy_from_r2.sh > /home/ubuntu/memory_blog_rust/deploy_trigger.log 2>&1 &"
+              -i /tmp/deploy_key "${SSH_USER}@${SSH_HOST}" "nohup bash /home/ubuntu/memory_blog_rust/deploy_from_r2.sh > /home/ubuntu/memory_blog_rust/logs/deploy.log 2>&1 &"
           echo "✅ 部署已触发"
           rm -f /tmp/deploy_key

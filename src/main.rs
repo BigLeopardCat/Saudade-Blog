@@ -10,7 +10,11 @@ use saudade_blog::{create_router, AppState};
 #[tokio::main]
 async fn main() {
     dotenv().ok();
-    tracing_subscriber::fmt::init();
+    // 日志时间统一本地 +08:00 钟面（CLAUDE.md 时区约定）——tracing 默认 UTC，
+    // 与 agent 日志（systemd append 本地时间）混查时差 8 小时难对账
+    tracing_subscriber::fmt()
+        .with_timer(tracing_subscriber::fmt::time::ChronoLocal::rfc_3339())
+        .init();
 
     let db_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     // sqlx 默认把 MySQL 会话时区设为 UTC（time_zone 默认 "+00:00"），

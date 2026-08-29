@@ -13,7 +13,7 @@ serde_json = "1"
 tower-http = { version = "0.5", features = ["cors", "trace", "fs"] }
 dotenvy = "0.15"
 tracing = "0.1"
-tracing-subscriber = "0.3"
+tracing-subscriber = { version = "0.3", features = ["chrono"] }
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }
 sha2 = "0.10"
