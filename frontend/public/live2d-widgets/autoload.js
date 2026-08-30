@@ -6,32 +6,25 @@
 (async () => {
   // ═ 前端错误上报（20260830，监控补齐 B）══
   // 全局 JS 异常 / 未捕获 Promise / API 失败（fetch 包装）→ POST /api/monitor/log
-  // （keepalive，Rust 落盘 logs/monitor.log）。注册在防重入分支之前：看板娘初始化
-  // 失败（子模块加载 return）也要能上报。策略：同 key（type+message 前 80 字+url）
-  // 会话去重 + 每分钟 ≤10 条 + 每会话 ≤50 条防风暴；AbortError（停止生成/超时 abort）
-  // 是正常用户操作不报；上报自身（/api/monitor/log）不报防循环。
+  // （keepalive，Rust 落盘 logs/frontend/monitor.log）。注册在防重入分支之前：看板娘
+  // 初始化失败（子模块加载 return）也要能上报。策略（20260830f 改全量）：仅同 key
+  // （type+message 前 80 字+url）会话内去重防同一 bug 刷屏，去掉条数限制，截断放宽
+  // （message 2000/stack 4000）——用户要求全量前端日志便于追踪 agent 问题；AbortError
+  // （停止生成/超时 abort）是正常用户操作不报；上报自身（/api/monitor/log）不报防循环。
   (function () {
     const REPORT_URL = '/api/monitor/log';
     const seen = new Set();
-    const timestamps = [];
-    let total = 0;
-    const MAX_PER_MIN = 10, MAX_SESSION = 50;
 
     function report(payload) {
-      const now = Date.now();
       const key = (payload.type || '') + '|' + String(payload.message || '').slice(0, 80) + '|' + (payload.url || '');
-      if (seen.has(key) || total >= MAX_SESSION) return;
-      while (timestamps.length && timestamps[0] <= now - 60000) timestamps.shift();
-      if (timestamps.length >= MAX_PER_MIN) return;
-      timestamps.push(now);
+      if (seen.has(key)) return;
       seen.add(key);
-      total++;
       let token = '';
       try { token = localStorage.getItem('tokenKey') || ''; } catch (e) { /* 隐私模式等 */ }
       const body = JSON.stringify({
         type: payload.type,
-        message: String(payload.message || '').slice(0, 500),
-        stack: String(payload.stack || '').slice(0, 1500),
+        message: String(payload.message || '').slice(0, 2000),
+        stack: String(payload.stack || '').slice(0, 4000),
         url: payload.url || location.href,
       });
       try {
@@ -102,7 +95,7 @@
   // ★ 版本号：nginx 对 live2d-widgets 目录 immutable 缓存 1 年，子模块变更只 bump
   // 这里一处（所有子模块 URL 统一拼 ?v=VER；Live2dAgent/index.tsx 的 autoload 引用
   // 也需同步 bump——否则浏览器不会重新请求本入口）
-  const VER = '20260830e';
+  const VER = '20260830f';
 
   function loadExternalResource(url, type) {
     return new Promise((resolve, reject) => {
