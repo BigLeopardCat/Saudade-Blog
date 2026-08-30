@@ -16,3 +16,14 @@ saudade_blog_bin
 # Python 字节码
 __pycache__/
 *.pyc
+
+# 死文件（20260830 清理，git rm --cached 后不再跟踪；磁盘文件保留）
+frontend/screenshots/
+frontend/stats.html
+static/
+frontend/Dockerfile
+frontend/.dockerignore
+frontend/nginx.conf
+frontend/.npmrc
+frontend/LICENSE
+frontend/public/live2d-widgets/chunk/*.map
