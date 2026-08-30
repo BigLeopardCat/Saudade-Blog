@@ -48,7 +48,8 @@
         type: 'js_error',
         message: e.message || 'UnknownError',
         stack: e.error && e.error.stack,
-        url: (e.filename || '') + (e.lineno ? ':' + e.lineno : ''),
+        // filename 为空（如 eval 内抛错）时退化为页面 URL，避免上报无意义的 ":1"
+        url: (e.filename || location.href) + (e.filename && e.lineno ? ':' + e.lineno : ''),
       });
     });
     window.addEventListener('unhandledrejection', function (e) {
@@ -101,7 +102,7 @@
   // ★ 版本号：nginx 对 live2d-widgets 目录 immutable 缓存 1 年，子模块变更只 bump
   // 这里一处（所有子模块 URL 统一拼 ?v=VER；Live2dAgent/index.tsx 的 autoload 引用
   // 也需同步 bump——否则浏览器不会重新请求本入口）
-  const VER = '20260830c';
+  const VER = '20260830d';
 
   function loadExternalResource(url, type) {
     return new Promise((resolve, reject) => {
@@ -195,9 +196,11 @@
     document.head.appendChild(s);
   });
 
+  // 20260830d：waifu-tips 模块图整体重命名（getHitAreasCount null 守卫需要换名
+  // 才能越过 nginx 1 年 immutable 缓存）——新名即 cache-bust，无需 ?v=
   await Promise.all([
     loadExternalResource(live2d_path + 'waifu.css?v=' + VER, 'css'),
-    loadExternalResource(live2d_path + 'waifu-tips.js', 'js'),
+    loadExternalResource(live2d_path + 'waifu-tips.20260830.js', 'js'),
   ]);
 
   // 看板娘初始化时序（与拆分前一致：canvas → initWidget → 命中守卫 → 滑入 → 动画）
