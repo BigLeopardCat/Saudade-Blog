@@ -4,6 +4,81 @@
 // 聊天逻辑分布：chat-core（纯函数）→ chat-render（渲染）→ chat-engine（数据层）→
 // chat-stream（交互层）。改聊天逻辑不用再动本文件，版本号只 bump 一处（VER）。
 (async () => {
+  // ═ 前端错误上报（20260830，监控补齐 B）══
+  // 全局 JS 异常 / 未捕获 Promise / API 失败（fetch 包装）→ POST /api/monitor/log
+  // （keepalive，Rust 落盘 logs/monitor.log）。注册在防重入分支之前：看板娘初始化
+  // 失败（子模块加载 return）也要能上报。策略：同 key（type+message 前 80 字+url）
+  // 会话去重 + 每分钟 ≤10 条 + 每会话 ≤50 条防风暴；AbortError（停止生成/超时 abort）
+  // 是正常用户操作不报；上报自身（/api/monitor/log）不报防循环。
+  (function () {
+    const REPORT_URL = '/api/monitor/log';
+    const seen = new Set();
+    const timestamps = [];
+    let total = 0;
+    const MAX_PER_MIN = 10, MAX_SESSION = 50;
+
+    function report(payload) {
+      const now = Date.now();
+      const key = (payload.type || '') + '|' + String(payload.message || '').slice(0, 80) + '|' + (payload.url || '');
+      if (seen.has(key) || total >= MAX_SESSION) return;
+      while (timestamps.length && timestamps[0] <= now - 60000) timestamps.shift();
+      if (timestamps.length >= MAX_PER_MIN) return;
+      timestamps.push(now);
+      seen.add(key);
+      total++;
+      let token = '';
+      try { token = localStorage.getItem('tokenKey') || ''; } catch (e) { /* 隐私模式等 */ }
+      const body = JSON.stringify({
+        type: payload.type,
+        message: String(payload.message || '').slice(0, 500),
+        stack: String(payload.stack || '').slice(0, 1500),
+        url: payload.url || location.href,
+      });
+      try {
+        fetch(REPORT_URL, {
+          method: 'POST', keepalive: true,
+          headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+          body,
+        });
+      } catch (e) { /* 上报自身失败静默 */ }
+    }
+
+    window.addEventListener('error', function (e) {
+      report({
+        type: 'js_error',
+        message: e.message || 'UnknownError',
+        stack: e.error && e.error.stack,
+        url: (e.filename || '') + (e.lineno ? ':' + e.lineno : ''),
+      });
+    });
+    window.addEventListener('unhandledrejection', function (e) {
+      const r = e.reason;
+      report({
+        type: 'unhandled_rejection',
+        message: (r && (r.message || r)) || String(r),
+        stack: r && r.stack,
+      });
+    });
+    const origFetch = window.fetch;
+    if (typeof origFetch === 'function') {
+      window.fetch = function (input, init) {
+        const url = (typeof input === 'string' ? input : (input && input.url) || '');
+        return origFetch.apply(this, arguments).then(function (resp) {
+          if (url.indexOf('/api/') === 0 && url.indexOf(REPORT_URL) !== 0 && resp.status >= 400) {
+            report({ type: 'http_status', message: resp.status + ' ' + url, url: url });
+          }
+          return resp;
+        }).catch(function (err) {
+          if (url.indexOf(REPORT_URL) !== 0 && !(err && err.name === 'AbortError')) {
+            report({ type: 'fetch_fail', message: (err && err.message) || String(err), url: url });
+          }
+          throw err;
+        });
+      };
+    }
+    window.__reportError = report;
+  })();
+
   // 20260828g：防重入升级为 window 标记 + DOM 存在双保险。旧逻辑只查 #waifu
   // 存在性——若看板娘 DOM 被外部（组件卸载/路由清理）移除，二次注入会完整重
   // 初始化 → 旧实例的 BroadcastChannel/storage/scroll 监听器全部残留 → 双实例
@@ -26,7 +101,7 @@
   // ★ 版本号：nginx 对 live2d-widgets 目录 immutable 缓存 1 年，子模块变更只 bump
   // 这里一处（所有子模块 URL 统一拼 ?v=VER；Live2dAgent/index.tsx 的 autoload 引用
   // 也需同步 bump——否则浏览器不会重新请求本入口）
-  const VER = '20260830b';
+  const VER = '20260830c';
 
   function loadExternalResource(url, type) {
     return new Promise((resolve, reject) => {
@@ -79,10 +154,13 @@
       await loadScript(live2d_path + name + '.js?v=' + VER);
     } catch (err) {
       console.error('[agent-chat] 子模块加载失败: ' + name + '.js（' + err + '），聊天功能不可用');
+      // 20260830：显式上报（loadScript 内部 catch 了错误，不会走 window error 监听）
+      if (window.__reportError) window.__reportError({ type: 'module_load_fail', message: '子模块加载失败: ' + name + '.js', url: live2d_path + name + '.js?v=' + VER });
       return;
     }
     if (typeof window[globalKey] === 'undefined') {
       console.error('[agent-chat] 子模块未注册全局: ' + globalKey + '（' + name + '.js 可能被缓存拦截）');
+      if (window.__reportError) window.__reportError({ type: 'module_load_fail', message: '子模块未注册全局: ' + globalKey, url: live2d_path + name + '.js?v=' + VER });
       return;
     }
   }

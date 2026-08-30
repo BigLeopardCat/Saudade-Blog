@@ -64,17 +64,6 @@ fn trace_id_of(req: &Request) -> String {
         .unwrap_or_else(|| format!("r{}", uuid::Uuid::new_v4().simple()))
 }
 
-/// 从 Authorization: Bearer 头提取用户 id（与 prepare_chat 内联逻辑同源，
-/// 20260828 重构：聊天框前端改从 DB 拉权威历史，历史接口复用此鉴权）
-fn auth_uid(headers: &HeaderMap) -> Option<i32> {
-    headers
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .and_then(|token| auth_jwt::verify_token(token))
-        .map(|claims| claims.sub)
-}
-
 /// 历史条目（GET /api/chat/history 返回）：id = DB 主键（前端稳定去重 id）
 #[derive(Serialize)]
 pub struct HistoryItem {
@@ -91,7 +80,7 @@ pub async fn chat_history_handler(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Response {
-    let Some(uid) = auth_uid(&headers) else {
+    let Some(uid) = auth_jwt::auth_uid(&headers) else {
         return (
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({"items": [], "count": 0, "error": "unauthorized"})),
@@ -142,7 +131,7 @@ pub async fn discard_handler(
     headers: HeaderMap,
     payload: Option<Json<DiscardReq>>,
 ) -> Response {
-    let Some(uid) = auth_uid(&headers) else {
+    let Some(uid) = auth_jwt::auth_uid(&headers) else {
         return (
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({"success": false, "error": "unauthorized"})),
@@ -191,13 +180,8 @@ pub async fn discard_handler(
 async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, Json<ChatResponse>> {
     // 先取链路追踪 id（headers 在 into_body 前可读）
     let trace_id = trace_id_of(&req);
-    // 从 Authorization header 提取 token
-    let user_id = req.headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .and_then(|token| auth_jwt::verify_token(token))
-        .map(|claims| claims.sub);
+    // 从 Authorization header 提取 token（auth_jwt::auth_uid，20260830 上移共享）
+    let user_id = auth_jwt::auth_uid(req.headers());
 
     // 解析请求体（8MB：多模态多图 base64 数据（最多 6 张 × 每张 ≤1MB dataURL），
     // 原 2MB 会拒掉多图）
