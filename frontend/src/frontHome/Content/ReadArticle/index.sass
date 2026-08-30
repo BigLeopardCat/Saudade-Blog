@@ -5,20 +5,22 @@ html
 .readContainer
   min-height: calc(100vh - 172.4px)
   width: 100%
-  background: url("https://img.picgo.net/2024/05/04/readBackground9c847f76adae05d1.png")
+  // 20260830：readBackground/homeBg 图床图已删除（picgo），404 不再渲染——
+  // 背景改用 CSS 变量体系，不依赖图床图；无 background-attachment: fixed
+  // （整页重绘，滚动卡顿主因）
+  background: transparent
   // 整页级 backdrop-filter 性能开销大（与主页 frontRoot 同类），注释
   // backdrop-filter: blur(10px)
   display: flex
   flex-direction: column
   align-items: center
   font-size: 1rem
-  // 20260830：白天模式背景改为主页同款明亮背景（--front-body-color 白色渐变
-  // 遮罩 + homeBg 图，与主页 frontRoot 一致）——深色 readBackground 图上
-  // github-markdown-light 的黑字看不清；暗色模式保留原深色图 + 白字，不动
+  // 20260830：白天背景与 /about 页一致（--container-background-color 半透明白
+  // 遮罩，AboutMe 同款）；暗色透明透 body 深蓝渐变（原视觉）
   .frontRoot:not(.frontDark) &
-    background: var(--front-body-color), url("https://img.picgo.net/2024/05/04/homeBg3c0f28da1a596884.jpeg") center
-    background-size: cover
-    background-attachment: fixed
+    background: var(--container-background-color)
+  .frontDark &
+    background: transparent
   .readCover
     position: relative
     width: 100%
