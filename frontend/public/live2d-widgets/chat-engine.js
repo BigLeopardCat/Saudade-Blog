@@ -174,6 +174,16 @@
           }, 400);
         }
       });
+      // 20260830 账号切换（React 登录/退出派发 auth-change）：面板停留在旧账号
+      // 会话（历史/用户标签错位）——清空当前会话重拉新账号历史。流式中只置
+      // pendingPull 流结束补拉，与 storage 重放同一约束。
+      window.addEventListener('auth-change', () => {
+        if (ctx.state.isSending || ctx.state.streamCtrl) { ctx.state.pendingPull = true; return; }
+        ctx.state.items = [];
+        ctx.state.live = {};
+        if (messages) messages.innerHTML = '';
+        pullHistory();
+      });
       if (chatChannel) {
         chatChannel.onmessage = (ev) => {
           const m = ev.data || {};
@@ -304,10 +314,13 @@
           return payload.sub || '';
         } catch { return ''; }
       };
-      const userLabel = (() => {
+      // 20260830：userLabel 从"初始化快照"改为"渲染时实时读"——登录/退出切换
+      // 账号（React 派发 auth-change）后新渲染的气泡必须用新账号标签；IIFE 快照
+      // 会永远显示切换前的用户名（getUserId 每次 atob 解 JWT，开销可忽略）
+      const userLabel = () => {
         const uid = getUserId();
         return uid ? '用户' + uid + '（你）: ' : '你: ';
-      })();
+      };
       // ── 历史存取：DB 权威（pullHistory），localStorage 仅离线/游客缓存 ──
       const historyKey = () => 'chat_history_' + (localStorage.getItem('tokenKey') || 'guest');
       const loadLocalHistory = () => {
@@ -588,7 +601,7 @@
         div.dataset.mtext = item.text;
         const label = document.createElement('span');
         label.className = 'msg-label';
-        label.textContent = item.type === 'user' ? userLabel : '泠月喵: ';
+        label.textContent = item.type === 'user' ? userLabel() : '泠月喵: ';
         const content = document.createElement('span');
         content.className = 'msg-text';
         let box = null; // 20260828d：process 框在 label/content 挂载后统一插入（见下）

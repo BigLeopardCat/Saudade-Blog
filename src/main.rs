@@ -15,7 +15,10 @@ async fn main() {
     // with_ansi(false)：文件日志不输出 ANSI 转义（[2m/[32m/[0m 着色序列）——
     // fmt 默认开启，落文件是噪音（干扰 grep、降低 logrotate 压缩率）
     tracing_subscriber::fmt()
-        .with_timer(tracing_subscriber::fmt::time::ChronoLocal::rfc_3339())
+        // 20260830：rfc_3339（纳秒精度 + T 分隔 + +08:00 后缀）在文件里与长字段
+        // 混排显得"糊"——改自定义格式：空格分隔 + 毫秒，与 agent 日志
+        // （2026-08-30 11:48:39 | server | INFO）视觉对齐、易 grep 对账
+        .with_timer(tracing_subscriber::fmt::time::ChronoLocal::new("%Y-%m-%d %H:%M:%S%.3f".to_string()))
         .with_ansi(false)
         .init();
 

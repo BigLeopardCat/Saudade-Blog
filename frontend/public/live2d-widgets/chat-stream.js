@@ -71,7 +71,17 @@
             // 恢复原文（含图片）到输入区——图片从 items 里的 user 条目取
             // （pendingImages 发送后已清空）
             const it = [...ctx.state.items].reverse().find(i => i.type === 'user' && i.text === msg);
-            if (it && it.images) { ctx.state.pendingImages = [...it.images]; renderPreviews(); }
+            if (it) {
+              if (it.images) { ctx.state.pendingImages = [...it.images]; renderPreviews(); }
+              // 20260830：删除旧用户消息气泡（DOM + items）——失败轮 user 消息
+              // 已入库，重发/编辑走主流程会再渲染一条同内容气泡；不删则"原气泡
+              // 下追加重复内容"（DB 侧 discard 已删旧轮，重复纯是渲染层/缓存层）。
+              // 双保险①已保证该轮是当前最后一条 user 消息；data-mid 精确锚定
+              // （genId 产物无选择器特殊字符）
+              const oldUserEl = messages.querySelector('[data-mtype="user"][data-mid="' + it.id + '"]');
+              if (oldUserEl && oldUserEl.parentNode) oldUserEl.parentNode.removeChild(oldUserEl);
+              ctx.state.items = ctx.state.items.filter(x => !(x.type === 'user' && x.id === it.id));
+            }
             input.value = msg;
             resizeInput();
             if (div && div.parentNode) div.parentNode.removeChild(div);

@@ -23,6 +23,9 @@ const userSlice = createSlice({
         setToken: (state: UserState, action: PayloadAction<{ token: string }>) => {
             state.token = action.payload.token;
             localStorage.setItem('tokenKey', action.payload.token);
+            // 20260830：通知聊天面板账号已切换（对话面板不感知 React 状态——
+            // 清空旧账号会话重拉新历史，见 chat-engine.js auth-change 监听）
+            window.dispatchEvent(new CustomEvent('auth-change'));
         },
         setUserInfo: (state: UserState,action: PayloadAction<{avatar:string,talk:string,name:string,blogTitle: string,blogIcp: string}>) => {
             state.avatar = action.payload.avatar;
