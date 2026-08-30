@@ -1,144 +1,98 @@
-# Memory Blog (Rust Rewrite)
+# Saudade Blog（泠月喵的博客）
 
-这是一个基于 **Rust** 重写的高性能博客后端系统，完全替代了原有的 Java Spring Boot 版本。本项目利用 Rust 的内存安全和并发特性，在保持与原有 **React 前端代码 (Admin Dashboard)** 100% 接口兼容的前提下，极大降低了资源占用。
+AI 看板娘博客系统：**Rust 高性能后端 + React 前端 + LangGraph AI 对话 Agent（看板娘"泠月喵"）+ ESP32 IoT 设备平台**。
+生产环境 https://saudade.site（本机即生产服务器：`/home/ubuntu/memory_blog_rust`）。
 
-## 🛠️ 技术栈 (Tech Stack)
+## 🛠️ 技术栈
 
 | 组件 | 选型 | 说明 |
 |------|------|------|
-| **语言** | Rust (2021 Edition) | 系统级编程语言，零开销抽象 |
-| **Web 框架** | [Axum](https://github.com/tokio-rs/axum) | 基于 Tokio 的现代 Web 框架 |
-| **ORM** | [SeaORM](https://www.sea-ql.org/SeaORM/) | 异步动态 ORM，支持 MySQL |
-| **运行时** | [Tokio](https://tokio.rs/) | Rust 下最流行的异步运行时 |
-| **数据库** | MySQL 8.0 | 兼容原版 Memory Blog 数据结构，并进行了扩展 |
-| **序列化** | Serde | 高效的 JSON 处理 |
+| **后端** | Rust（Axum + SeaORM + MySQL 8） | :3000，聊天转发 + 博客主流量，全局 access 日志 |
+| **前端** | React 18 + Vite 5 + Ant Design 5 + Bytemd | `frontend/`，SPA + 看板娘（Live2D） |
+| **AI Agent** | Python FastAPI + 手写 LangGraph（planner → model → tools → reflector） | `saudade-blog-agent/`（独立 git 仓库，:8010），对话生成 + 博客查询 + 导航/特效/夜间命令 |
+| **IoT** | EMQX MQTT + device-service（Rust） | ESP32 OLED 屏幕显示/查询，MQTT over TLS（:8883）|
+| **部署** | GitHub Actions CI → R2 → 服务器脚本 | 云端构建，本机 systemd 托管 |
 
-## 📂 项目结构 (Structure)
+## 📂 目录结构
 
 ```text
-/opt/memory_blog_rust/
-├── Cargo.toml          # 项目依赖管理
-├── .env                # 环境变量配置 (数据库连接)
-├── src/
-│   ├── main.rs         # 程序入口，服务器配置
-│   ├── utils.rs        # 通用工具 (统一 API 响应格式 ApiResponse)
-│   ├── entity/         # 数据实体层 (扩充了字段以匹配前端 Interface)
-│   │   ├── user.rs     # 用户
-│   │   ├── note.rs     # 文章 (含 cover, status, description 等字段)
-│   │   ├── category.rs # 分类 (含 icon, color, noteCount 等字段)
-│   │   ├── tag_one.rs  # 一级标签
-│   │   ├── tag_two.rs  # 二级标签 (嵌套结构)
-│   │   ├── friend.rs   # 友链
-│   │   └── ...
-│   └── routes/         # API 路由与控制器 (Controller)
-│       ├── notes.rs    # 文章管理 (支持批量删除、搜索、Top/Status 更新)
-│       ├── categories.rs # 分类管理 (支持 Note 计数)
-│       ├── tags.rs     # 标签管理 (树形结构组装)
-│       ├── web_info.rs # 站点/个人/社交信息管理
-│       └── mod.rs      # 路由注册中心
+memory_blog_rust/
+├── src/                  # Rust 后端（routes/ 路由、entity/ 实体、middleware/）
+├── frontend/             # React 前端（public/live2d-widgets 看板娘 + 聊天面板）
+├── saudade-blog-agent/   # ★ Python Agent（独立仓库，gitignore 排除，改动后重启服务生效）
+├── scripts/              # deploy（部署脚本）+ healthcheck.sh（心跳探针）
+├── logs/                 # 日志（分组，见下方）
+└── .github/workflows/    # deploy.yml：push → 云端构建 → R2 → SSH 触发部署
 ```
 
-## 🚀 快速开始 (Getting Started)
+## 🚀 开发与部署
 
-### 1. 环境准备
-确保已安装 [Rust](https://www.rust-lang.org/tools/install) 和连接可用的 MySQL 数据库。
-
+### 环境准备
 ```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+cp .env.example .env      # DATABASE_URL 等（.env 不进 git）
+cargo check               # 本机最多做轻量验证
 ```
 
-### 2.配置环境变量
-在项目根目录创建 `.env` 文件：
+### ⚠️ 部署约定（20260830 起）
+**部署一律走 CI——本机不编译、不手动构建**。机器仅 3.7GB 内存，`vite build`（3GB 堆）+ 常驻服务会 OOM 甚至拖垮整机（20260830 实际发生）。流程：
 
-```ini
-# .env
-DATABASE_URL=mysql://root:123456@localhost/memory_blog
-RUST_LOG=debug
-```
-*请将 `root:123456` 替换为实际的数据库账号密码，`memory_blog` 替换为实际库名。*
-*注意：Rust 版后端扩展了原有数据表字段（如 `note_tags`, `color`, `icon` 等），请确保数据库 Schema 已更新。*
-
-### 3. 运行项目
-
-开发模式：
-```bash
-cargo run
+```text
+git push cn_sora_blog → GitHub Actions 云端构建（Rust + 前端）
+  → 上传 R2 → SSH 触发 scripts/deploy/deploy_from_r2.sh
+  → 二进制替换 + systemctl restart saudade-rust；dist 直接覆盖
 ```
 
-生产构建：
-```bash
-cargo build --release
-./target/release/memory_blog_rust
+`scripts/deploy/upload_to_r2.py` 手动部署仅作 CI 故障逃生通道。
+
+### 服务管理
+- `saudade-rust`（:3000 博客后端）、`saudade-agent`（:8010 AI agent）、`saudade-device`（:3100 IoT）、EMQX（MQTT :8883/1883）、nginx（80/443）
+- 探针 `scripts/healthcheck.sh`（cron 每分钟）：存活检查 + uvicorn worker 崩溃检测 + nginx error.log 增量扫描 → `logs/health.log`
+
+## 📊 日志体系（20260830f 起按组分层）
+
+```text
+logs/
+├── agent/      # ★ agent 组：agent.log + traces/（对话执行 trace JSON，排障首选）
+├── frontend/   # ★ 前端组：monitor.log（前端 JS 异常/API 失败上报，全量——仅同 key 会话去重）
+├── rust.log    # 后端（含全局 access 行 http method= path= status= ms=）
+├── health.log  # 探针
+├── deploy.log  # CI 部署触发
+├── device.log  # IoT 设备服务
+└── archive/    # 轮转归档
 ```
 
-服务器默认监听端口：`3000`
+按日轮转由 `/etc/logrotate.d/saudade` 负责（daily + rotate 14 + gzip + copytruncate）。
 
-## 💻 前端项目 (Frontend)
+## 🔌 API 全览（均返回 `{ code, message, data }`）
 
-项目包含一个配套的 **React Admin Dashboard** 前端，源码位于 `frontend`。
+### 公开接口
+| 模块 | 方法 | 路径 |
+|------|------|------|
+| Auth | POST | `/api/login` |
+| Note | GET/POST | `/api/public/notes`（列表/搜索/详情/置顶） |
+| Category/Tag | GET | `/api/category`、`/api/tagone`、`/api/tagtwo` |
+| Friend/Talk | GET | `/api/friends`、`/api/talk`、`/api/public/board`（留言板公开可写） |
+| User/Social | GET | `/api/public/user`、`/api/public/social` |
+| **Chat** | POST | `/api/chat/stream`（SSE 对话，看板娘） |
+| Monitor | POST | `/api/monitor/log`（前端错误上报，匿名可写，body 8KB 上限） |
 
-### 1. 技术栈
-- **框架**: React 18 + Vite 5
-- **UI 组件库**: Ant Design 5 + Material UI
-- **数据状态**: Redux Toolkit
-- **Markdown**: Bytemd
+### 保护接口（需 JWT）
+| 模块 | 方法 | 路径 |
+|------|------|------|
+| Note | POST/DELETE | `/api/protected/notes`（创建/更新/批量删除） |
+| Image | POST/DELETE | `/api/protect/upload`、`/api/protect/delImg`（上传管理） |
+| Category/Tag/Friend/Talk | POST/DELETE | `/api/protected/*` |
+| Social | PUT | `/api/protected/social` |
+| 设备 | * | `/api/device-api/*`（nginx → device-service :3100，服务端校验 JWT） |
 
-### 2. 运行前端
-请确保后端服务已运行在 `3000` 端口。
+### 看板娘（Live2D）
+浏览器加载 `frontend/public/live2d-widgets/`（autoload.js 入口 + 聊天面板 + cubism5 运行时）。
+**nginx 对 live2d-widgets 目录 immutable 缓存 1 年**——子模块变更须 bump 版本号
+（autoload.js `VER` + `Live2dAgent/index.tsx` `?v=`），waifu-tips 模块图变更须整体重命名（详见 CLAUDE.md §1）。
 
-```bash
-cd frontend
-npm install
-npm run dev
-```
-前端默认运行在 `http://localhost:5173`，并已配置 Proxy 代理除 `/api` 开头的请求到 `http://localhost:3000`。
+## ✅ 测试与质量
+- Agent：`test_skills.py`（L0 秒级）+ `eval/run_golden.py`（L2 真实 LLM 端到端），nightly cron 自动跑
+- 探针/日志体系：`scripts/healthcheck.sh` + 前端错误上报闭环
 
-### 3. 构建部署
-```bash
-npm run build
-```
-构建产物位于 `dist/` 目录，可直接部署至 Nginx 或集成到 Rust Axum 的静态文件服务中。
-
-## 🔌 API 接口全览 (API Endpoints)
-
-本系统已针对 React 前端 `src/apis/*.tsx` 中的调用进行了全量适配。所有接口均返回统一格式：`{ code: 200, message: "...", data: ... }`。
-
-### 🔓 公开接口 (Public)
-| 模块 | 方法 | 路径 | 描述 |
-|------|------|------|------|
-| **Auth** | `POST` | `/api/login` | 管理员登录 |
-| **Note** | `GET` | `/api/public/notes` | 获取文章列表 (含分类/标签信息) |
-| **Note** | `POST` | `/api/public/notes/search` | 全文搜索 |
-| **Note** | `GET` | `/api/public/notes/:id` | 文章详情 |
-| **Cat** | `GET` | `/api/category`, `/api/public/category` | 分类列表 (含文章计数) |
-| **Tag** | `GET` | `/api/tagone` | 一级标签列表 |
-| **Tag** | `GET` | `/api/tagtwo` | 二级标签列表 (扁平化返回) |
-| **Friend** | `GET` | `/api/friends` | 友链列表 |
-| **Talk** | `GET` | `/api/talk` | 说说列表 |
-| **User** | `GET` | `/api/public/user` | 全局管理员信息 (Avatar, Talk, BlogTitle) |
-| **Social** | `GET` | `/api/public/social` | 社交媒体链接 |
-
-### 🔒 管理接口 (Protected) - 需鉴权
-| 模块 | 方法 | 路径 | 描述 | 前端对应方法 |
-|------|------|------|------|--------------|
-| **Note** | `POST` | `/api/protected/notes` | 创建文章 | `createNote` |
-| **Note** | `POST` | `/api/protected/notes/:id` | 更新文章 | `updateNote` |
-| **Note** | `DELETE` | `/api/protected/notes` | **批量**删除文章 (Body: `[id1, id2]`) | `delNote` / `delAllNotes` |
-| **Cat** | `POST` | `/api/protected/category` | 创建分类 | `addCategory` |
-| **Cat** | `POST` | `/api/protected/category/:id` | 更新分类 | `updateCategory` |
-| **Cat** | `DELETE` | `/api/protected/category` | **批量**删除分类 (Body: `[id...]`) | `delCategory` |
-| **Tag** | `POST` | `/api/protected/tagone` | 创建一级标签 | `addTagOne` |
-| **Tag** | `POST` | `/api/protected/tagtwo` | 创建二级标签 | `addTagTwo` |
-| **Tag** | `DELETE` | `/api/protected/tag` | **批量**删除标签 | `delTag` |
-| **Talk** | `POST` | `/api/protected/talk` | 发布说说 | `addTalk` |
-| **Web** | `PUT` | `/api/protected/social` | 更新社交信息 | `updateSocial` |
-
-## ✅ 开发进度与适配说明
-
-- [x] **字段对齐**: 已修正 `note_categories` -> `category_id`, `created_at` 格式, `isTop`, `cover` 等由于前后端命名不一致导致的问题。
-- [x] **批量操作**: 删除接口已升级为接收 JSON 数组，支持前端的批量选择删除功能。
-- [x] **数据聚合**: 分类列表 API 自动计算关联的文章数量 (`noteCount`)。
-- [x] **路由兼容**: 同时兼容 `/api/public/...` 和 `/api/...` 等遗留路径别名。
-
-## ⚠️ 迁移注意
-如果使用的是旧版 SpringBoot 的数据库，请务必执行 SQL 脚本添加 Rust 版所需的新列（如 `icon`, `color`, `path_name` 等），否则 API 可能会报错。
+## 📄 许可
+GPL-2.0
