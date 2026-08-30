@@ -332,13 +332,14 @@
           // SSE 流式对话：agent 首 token 即上屏，不再等待完整回复
           const ctrl = new AbortController();
           ctx.state.streamCtrl = ctrl;
-          // 空闲超时：超过 45s 无任何数据帧则中止（正常生成中每帧都会重置；
-          // LLM 工具调用间隙通常 <15s，45s 无帧 = 链路已挂，比旧的 120s 早恢复界面，
-          // 曾见请求挂起时用户等 2 分钟仍"卡死"、期间发送按钮被 isSending 拦住）
-          idleTimer = setTimeout(() => ctrl.abort(), 45000);
+          // 空闲超时：超过 60s 无任何数据帧则中止（正常生成中每帧都会重置；
+          // LLM 工具调用间隙通常 <15s，但慢生成（thinking 长思考/服务端排队，
+          // 20260830 事故 model 调用 118s/146.9s）期间零帧——45s 会误杀慢生成
+          // 显示"长时间未收到回复"，调 60s 后慢生成有更大机会熬出回复）
+          idleTimer = setTimeout(() => ctrl.abort(), 60000);
           const armIdle = () => {
             clearTimeout(idleTimer);
-            idleTimer = setTimeout(() => ctrl.abort(), 45000);
+            idleTimer = setTimeout(() => ctrl.abort(), 60000);
           };
           // 总超时（300s，与后端 STREAM_TOTAL_TIMEOUT 对齐）：agent 工具调用循环等场景
           // 每轮都有帧会重置空闲计时，此计时器不被重置，保证界面必然恢复
