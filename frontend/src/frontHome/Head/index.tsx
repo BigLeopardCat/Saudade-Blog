@@ -203,7 +203,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                             {isLogin ? (
                                 <>
                                 <div className="theme-btn" onClick={() => { closePhoneBar(); navigate("dashboard"); }}>心境</div>
-                                <div className="theme-btn logout-btn" onClick={() => { closePhoneBar(); localStorage.removeItem('tokenKey'); setLogin(0); navigate('/'); }}>退出</div>
+                                <div className="theme-btn logout-btn" onClick={() => { closePhoneBar(); localStorage.removeItem('tokenKey'); setLogin(0); navigate('/'); window.dispatchEvent(new CustomEvent('auth-change')); }}>退出</div>
                                 </>
                             ) : (
                                 <div className="theme-btn" onClick={() => { closePhoneBar(); navigate("login"); }}>登录</div>
@@ -307,7 +307,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                             {isLogin ? (
                                 <>
                                 <div className="theme-btn" onClick={() => navigate("dashboard")}>心境</div>
-                                <div className="theme-btn logout-btn" onClick={() => { localStorage.removeItem('tokenKey'); setLogin(0); navigate('/'); }}>退出</div>
+                                <div className="theme-btn logout-btn" onClick={() => { localStorage.removeItem('tokenKey'); setLogin(0); navigate('/'); window.dispatchEvent(new CustomEvent('auth-change')); }}>退出</div>
                                 </>
                             ) : (
                                 <div className="theme-btn" onClick={() => navigate("login")}>登录</div>
