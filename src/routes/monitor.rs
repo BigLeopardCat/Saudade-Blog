@@ -1,6 +1,7 @@
 // 前端错误上报端点（20260830，监控补齐 B）：
 // POST /api/monitor/log —— 浏览器侧 JS 异常 / 未捕获 Promise / API 失败（fetch 包装）
-// 经 keepalive fetch 上报，落盘 logs/monitor.log，纳入统一日志体系（logrotate 同规则轮转）。
+// 经 keepalive fetch 上报，落盘 logs/frontend/monitor.log（20260830f 日志分组：前端组），
+// 纳入统一日志体系（logrotate 同规则轮转）。
 //
 // 设计取舍：
 //   - 匿名可写：访客错误上报最有价值，不要求登录（带 token 时解析出 uid 标记来源）；
@@ -67,15 +68,17 @@ pub async fn report_log(req: Request<Body>) -> Response {
     };
 
     let kind = payload.kind.unwrap_or_else(|| "unknown".to_string());
-    let msg = truncate(&clean(payload.message.as_deref().unwrap_or("")), 500);
-    let stack = truncate(&clean(payload.stack.as_deref().unwrap_or("")), 1500);
+    // 20260830f：全量——截断放宽（message 2000/stack 4000，用户要求全量追踪 agent 问题）
+    let msg = truncate(&clean(payload.message.as_deref().unwrap_or("")), 2000);
+    let stack = truncate(&clean(payload.stack.as_deref().unwrap_or("")), 4000);
     let url = clean(payload.url.as_deref().unwrap_or(""));
 
     let level = if kind == "http_status" { "WARN" } else { "ERROR" };
     let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
     let line = format!("{ts} {level} [monitor] type={kind} uid={uid} url={url} msg={msg} stack={stack}\n");
 
-    let path = std::env::var("SAUDADE_MONITOR_LOG").unwrap_or_else(|_| "logs/monitor.log".to_string());
+    // 20260830f 日志分组：前端组 logs/frontend/（agent 组 logs/agent/、后端 rust.log 不动）
+    let path = std::env::var("SAUDADE_MONITOR_LOG").unwrap_or_else(|_| "logs/frontend/monitor.log".to_string());
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
         let _ = f.write_all(line.as_bytes());
     }
