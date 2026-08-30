@@ -12,6 +12,13 @@ html
   flex-direction: column
   align-items: center
   font-size: 1rem
+  // 20260830：白天模式背景改为主页同款明亮背景（--front-body-color 白色渐变
+  // 遮罩 + homeBg 图，与主页 frontRoot 一致）——深色 readBackground 图上
+  // github-markdown-light 的黑字看不清；暗色模式保留原深色图 + 白字，不动
+  .frontRoot:not(.frontDark) &
+    background: var(--front-body-color), url("https://img.picgo.net/2024/05/04/homeBg3c0f28da1a596884.jpeg") center
+    background-size: cover
+    background-attachment: fixed
   .readCover
     position: relative
     width: 100%
@@ -255,9 +262,10 @@ html
   border-radius: 4px
 
 .frontRoot:not(.frontDark) .readContainer .readContent .navigation .markdown-navigation .title-anchor.active
-  color: #1a56ff !important
+  // 20260830：蓝 #1a56ff 在背景图上辨识度低，换站点 accent 珊瑚红 #fc625d（Head 同款）
+  color: #fc625d !important
   background-color: transparent !important
-  border-left: 3px solid #1a56ff !important
+  border-left: 3px solid #fc625d !important
   font-weight: 700
 
 /* Dark Mode */
