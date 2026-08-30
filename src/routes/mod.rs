@@ -10,6 +10,7 @@ pub mod upload;
 pub mod temp_user;
 pub mod knowledge;
 pub mod chat;
+pub mod monitor;
 pub mod sitemap;
 
 use axum::{
@@ -97,6 +98,9 @@ pub fn create_router(state: AppState) -> Router {
         
         // Knowledge Base (GET public for agent)
         .route("/api/knowledge", get(knowledge::list_knowledge))
+
+        // 前端错误上报（20260830，监控补齐 B）：匿名可写，body 上限 8KB
+        .route("/api/monitor/log", post(monitor::report_log))
         
         // Static Image Download (Public)
         .nest_service("/api/protect/download", ServeDir::new(upload_dir()))
@@ -185,5 +189,7 @@ pub fn create_router(state: AppState) -> Router {
     public_routes
         .merge(protected_routes)
         .layer(cors)
+        // 20260830：全局 access 日志（后调用的 layer 最外层，先处理请求）；见 middleware.rs
+        .layer(middleware::from_fn(crate::middleware::access_log))
         .with_state(state_arc)
 }

@@ -2,6 +2,7 @@
 # 心跳探针（cron 每分钟）——20260829 事故后补的可观测性缺口：
 # uvicorn worker 静默崩溃时 systemd/uvicorn 都不留痕（无 traceback、无 OOM 日志），
 # 此脚本对比 worker 进程 pid 集合，发现"新 pid 顶替旧 pid"即判定发生过崩溃重启。
+# 20260830 增第 4 项：nginx error.log 增量扫描（监控补齐 C）。
 # 异常只追加 logs/health.log（轻量、不打扰），未来可接告警通道。
 LOG=/home/ubuntu/memory_blog_rust/logs/health.log
 STAMP=/tmp/health_state
@@ -39,4 +40,17 @@ for p in $procs; do
 done
 echo "MASTER_PID=$master" > "$STAMP"
 echo "LAST_PIDS='$new'" >> "$STAMP"
+
+# 4. nginx error.log 增量扫描（20260830，监控补齐 C）：nginx 日志保持 distro 位置
+# （/var/log/nginx，发行版 logrotate 管轮转），探针盯增量——记录上次字节数，
+# tail -c 增量段 grep 错误级别（error/crit/alert/emerg），发现即 WARN。
+# 文件变小（轮转/截断）时重置基线。
+NGX_ERR=/var/log/nginx/error.log
+ngx_size=$(stat -c %s "$NGX_ERR" 2>/dev/null || echo 0)
+[ "$ngx_size" -lt "${NGX_ERR_SIZE:-0}" ] && NGX_ERR_SIZE=0
+if [ "$ngx_size" -gt "${NGX_ERR_SIZE:-0}" ]; then
+  matched=$(tail -c $((ngx_size - ${NGX_ERR_SIZE:-0})) "$NGX_ERR" | grep -E "\[(error|crit|alert|emerg)\]" | tail -3 | tr '\n' ';')
+  [ -n "$matched" ] && fail "WARN nginx error.log 新错误级日志（截取3条）: $matched"
+fi
+echo "NGX_ERR_SIZE=$ngx_size" >> "$STAMP"
 exit 0
