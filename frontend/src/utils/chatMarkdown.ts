@@ -28,7 +28,9 @@ schema.attributes['*'].push('className')
 
 // 渲染管线（gfm 删除线/表格/任务列表、breaks 硬换行、gemoji 表情、math 公式、raw HTML 白名单过滤）
 let processor: Processor = unified().use(remarkParse)
-for (const plugin of [gfm(), breaks(), gemoji(), math()]) {
+// singleTilde: false——remark-gfm 默认允许单 ~ 成对作删除线，中文范围写法
+// （"30~50""10~15"）会被误渲染成 <del>（20260831 对话框实测，文章页/编辑器同步）
+for (const plugin of [gfm({ singleTilde: false }), breaks(), gemoji(), math()]) {
   if (plugin.remark) processor = plugin.remark(processor)
 }
 processor = processor

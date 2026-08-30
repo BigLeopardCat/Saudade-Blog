@@ -15,7 +15,7 @@ import http from "../../apis/axios.tsx";
 import {message} from "antd";
 
 const plugins = [
-    gfm(),
+    gfm({ singleTilde: false }),
     math(),
     breaks(),
     frontmatter(),
