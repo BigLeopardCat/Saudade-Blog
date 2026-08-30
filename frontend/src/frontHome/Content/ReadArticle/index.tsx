@@ -30,7 +30,7 @@ import 'highlight.js/styles/atom-one-dark.css' // Import Highlight.js styles
 import 'katex/dist/katex.css' // KaTeX 公式样式（与编辑器一致，公式在外部展示页正常渲染）
 
 const plugins = [
-    gfm(),
+    gfm({ singleTilde: false }),
     breaks(),
     frontmatter(),
     gemoji(),
