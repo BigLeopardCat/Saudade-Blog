@@ -978,15 +978,16 @@
         const isTL = corner === 'tl';
         const h = document.createElement('div');
         // flex 对齐使 svg 贴住对应角：TL 贴左上角、BR 贴右下角，两个把手样式完全一致。
-        // 20260901f：内移 2px（面板 border 宽）——子元素永远画在父元素 border 内侧，
-        // 贴角时三角形会被 2px 外框盖住（"缩放按钮被轮廓线侵蚀"）
-        h.style.cssText = 'position:absolute;' + (isTL ? 'left:2px;top:2px' : 'right:2px;bottom:2px') +
-          ';width:24px;height:24px;cursor:nwse-resize;background:transparent;z-index:5;touch-action:none;' +
+        // 20260901g：贴角（0,0）不内移——外框已从面板 border 移入 ::before（z6），
+        // 把手 z7 高于外框，24×24 三角能盖住外框线顶部末端（f 版把手内移 2px，
+        // 三角 22px 盖不住面板 border 的线，用户反馈"轮廓线顶部末端裸露"）
+        h.style.cssText = 'position:absolute;' + (isTL ? 'left:0;top:0' : 'right:0;bottom:0') +
+          ';width:24px;height:24px;cursor:nwse-resize;background:transparent;z-index:7;touch-action:none;' +
           ';display:flex;' + (isTL ? 'align-items:flex-start;justify-content:flex-start' : 'align-items:flex-end;justify-content:flex-end');
         // 三角形方向：BR 角朝左上，TL 角朝右下（圆角三角：stroke-linejoin:round）
         h.innerHTML = isTL
-          ? '<svg viewBox="0 0 10 10" width="22" height="22"><path d="M0 0 L10 0 L0 10 Z" fill="#e74c3c" stroke="#e74c3c" stroke-width="1.5" stroke-linejoin="round" opacity="0.85"/></svg>'
-          : '<svg viewBox="0 0 10 10" width="22" height="22"><path d="M0 10 L10 0 L10 10 Z" fill="#e74c3c" stroke="#e74c3c" stroke-width="1.5" stroke-linejoin="round" opacity="0.85"/></svg>';
+          ? '<svg viewBox="0 0 10 10" width="24" height="24"><path d="M0 0 L10 0 L0 10 Z" fill="#e74c3c" stroke="#e74c3c" stroke-width="1.5" stroke-linejoin="round" opacity="0.85"/></svg>'
+          : '<svg viewBox="0 0 10 10" width="24" height="24"><path d="M0 10 L10 0 L10 10 Z" fill="#e74c3c" stroke="#e74c3c" stroke-width="1.5" stroke-linejoin="round" opacity="0.85"/></svg>';
         h.addEventListener('pointerdown', (e) => {
           e.stopPropagation();
           e.preventDefault();
