@@ -2,6 +2,10 @@ import Head from  './frontHome/Head';
 import { Outlet } from "react-router-dom";
 import Footer from "./frontHome/Footer";
 import './frontHome/main.css';
+// 副作用：注册 window.__openZoomOverlay（文章页单击放大查看器），
+// 供看板娘对话框（live2d-widgets 原生脚本）点击委托复用——任何页面都需可用，
+// 不能只依赖 ReadArticle 路由加载（对话面板出现在所有页面）
+import './frontHome/Content/ReadArticle/zoomOverlay';
 import { useEffect, useState } from "react";
 import './App.sass';
 import BottomMenu from "./components/BottomMenu";
