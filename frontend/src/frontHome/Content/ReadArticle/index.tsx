@@ -123,7 +123,11 @@ const ReadArticle = () => {
                     if (h.getBoundingClientRect().top <= 100) cur = h;
                     else break;
                 }
-                const id = cur ? cur.dataset.id || cur.id : '';
+                // 20260831：hash 用标题文本而非 heading-N 编号——agent 从 current_url
+                // 的 #锚点感知读者段落，heading-N 无法得知是哪个标题；标题文本（含中文）
+                // 原样保留，仅 URL 特殊字符（# ? & = % / 空格）替换为 '-'，不污染 fragment
+                const text = (cur?.innerText || '').trim();
+                const id = text ? text.replace(/[#?&=%/\s]+/g, '-').replace(/-{2,}/g, '-') : '';
                 if (id && lastHash !== '#' + id) {
                     lastHash = '#' + id;
                     history.replaceState(null, '', location.pathname + location.search + '#' + id);
@@ -192,7 +196,10 @@ const ReadArticle = () => {
                         const relativeTop = elementRect.top - containerRect.top + navContainer.scrollTop;
                         navContainer.scrollTo({
                             top: relativeTop - 20,
-                            behavior: 'smooth'
+                            // 20260831：instant——目录高亮跟随只需要跳到位，平滑动画
+                            // 每帧驱动侧栏滚动成本高（MutationObserver 触发频繁），
+                            // 与文章页滚动卡顿同源
+                            behavior: 'instant'
                         });
                     }
                 });
