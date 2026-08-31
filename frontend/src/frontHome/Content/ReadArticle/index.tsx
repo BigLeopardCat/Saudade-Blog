@@ -102,6 +102,44 @@ const ReadArticle = () => {
     // Effect for TOC auto-scroll
     useEffect(() => {
         if (isLoading) return;
+        // 20260831：agent 段落感知恢复。markdown-navbar updateHashAuto 已关
+        // （其滚动实现是每次 scroll 都 setTimeout+replaceState，触发 Chrome
+        // "Throttling navigation" 节流警告），这里自建轻量跟踪替代：
+        // rAF 节流 + 仅在跨过标题边界时 replaceState——URL hash 仍随阅读
+        // 进度前进（agent 靠请求体 current_url 的 #锚点感知读者所在段落，
+        // chat-stream.js 上报 location.href），频率从"每次 scroll"降到
+        // "每跨一个标题一次"，无节流警告。
+        let rafId = 0;
+        let lastHash = window.location.hash;
+        const onScroll = () => {
+            cancelAnimationFrame(rafId);
+            rafId = requestAnimationFrame(() => {
+                const headings = document.querySelectorAll<HTMLElement>(
+                    '#content h1, #content h2, #content h3, #content h4, #content h5, #content h6'
+                );
+                // 最后一个"已滚过 headingTopOffset(100)"的标题 = 当前段落
+                let cur: HTMLElement | null = null;
+                for (const h of headings) {
+                    if (h.getBoundingClientRect().top <= 100) cur = h;
+                    else break;
+                }
+                const id = cur ? cur.dataset.id || cur.id : '';
+                if (id && lastHash !== '#' + id) {
+                    lastHash = '#' + id;
+                    history.replaceState(null, '', location.pathname + location.search + '#' + id);
+                }
+            });
+        };
+        document.addEventListener('scroll', onScroll, { passive: true });
+        return () => {
+            cancelAnimationFrame(rafId);
+            document.removeEventListener('scroll', onScroll);
+        };
+    }, [isLoading]);
+
+    // Effect for TOC auto-scroll
+    useEffect(() => {
+        if (isLoading) return;
         
         // Add click listener to TOC container to detect manual interaction
         const handleTocClick = () => {
