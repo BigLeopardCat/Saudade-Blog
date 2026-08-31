@@ -89,13 +89,6 @@ html
     flex-direction: column
     align-items: center
     position: relative
-    // 20260831：视口外正文块跳过渲染/光栅化（长文滚动 GPU 大头——滚动时
-    // 大量文本块重光栅）。标题排除在外：markdown-navbar 依赖标题 offsetTop
-    // 做 TOC 定位，标题必须保持真实布局。老内核不支持 content-visibility
-    // 时该属性被忽略，无副作用。
-    > *:not(h1):not(h2):not(h3):not(h4):not(h5):not(h6)
-      content-visibility: auto
-      contain-intrinsic-size: auto 200px
 
     .markdown-body
       width: 100%
