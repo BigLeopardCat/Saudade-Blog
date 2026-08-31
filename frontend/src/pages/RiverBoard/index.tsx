@@ -1533,6 +1533,9 @@ export default function RiverBoard() {
             const d = Math.max(0, m.d);
             const rot = Math.sin(amb!.now * 0.55 + m.sway) * 3.2;
             const scl = Math.min(1, Math.pow(d, 1.15) * 1.25); // 与 pos 同一缩放（整体等比放大）
+            // P1-3（20260831）：远景灯停内部动画层（halo/光斑/涟漪/火焰动画 none），
+            // 合成层数随远景灯比例大幅下降——老内核软渲染逐层合成的主成本来源
+            node.classList.toggle("rz-far", d < 0.15);
             const li = lanternXY(m);
             node.style.transform =
                 `translate3d(${li.x}px, ${li.y}px, 0) translate(-50%, -50%) scale(${scl}) rotate(${rot}deg)`;
@@ -1612,23 +1615,37 @@ export default function RiverBoard() {
             if (disposed) return;
             const dt = Math.min(0.05, (now - last) / 1000);
             last = now;
+            // P2-3（20260831）动态降级：实测帧耗时（rAF 间隔含绘制成本），EMA 平滑后
+            // 超预算自动切 reduced 渲染路径（星光/萤火虫/流星/水光带减速等），预算
+            // 恢复自动还原；滞回 13ms 进 / 9ms 出防抖——老内核软渲染或 GPU 忙时
+            // 帧耗时必然超标 → 自动降级，不再依赖系统 prefers-reduced-motion 偏好
+            const fms = now - lastFrameT;
+            lastFrameT = now;
+            perfEma = perfEma * 0.92 + Math.min(50, fms) * 0.08;
+            if (!perfDynReduce && perfEma > 13) perfDynReduce = true;
+            else if (perfDynReduce && perfEma < 9) perfDynReduce = false;
             if (amb) amb.now += dt;
             mouseRef.current.x += (mouseRef.current.tx - mouseRef.current.x) * 0.05;
             mouseRef.current.y += (mouseRef.current.ty - mouseRef.current.y) * 0.05;
             drawScene(
                 ctx,
                 amb ? amb.now : 0,
-                reduced(),
+                reduced() || perfDynReduce,
                 baseBack!,
                 baseFront!
             );
             driveLanterns(dt);
-            if (!reduced()) scrollTick(dt);
+            if (!reduced()) scrollTick(dt); // 气泡滚动是用户主动操作，不受动态降级影响
             raf = requestAnimationFrame(frame);
         };
 
         const reduced = () =>
             window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+        // P2-3 动态降级状态（frame 闭包内）：帧耗时 EMA + 降级标志 + 上一帧时间戳
+        let lastFrameT = performance.now();
+        let perfEma = 16.7;
+        let perfDynReduce = false;
 
         raf = requestAnimationFrame(frame);
 

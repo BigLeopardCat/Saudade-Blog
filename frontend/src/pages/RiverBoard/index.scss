@@ -107,6 +107,16 @@
         display: block;
       }
 
+      /* P1-3（20260831）：远景灯停内部动画层——d<0.15 的灯 scl≈0.18 以下，
+         呼吸/脉冲/涟漪/火焰细节不可察，动画层停掉后合成层数大减
+         （软渲染/老内核浏览器逐层软件合成，省的是最贵的逐帧合成成本） */
+      &.rz-far .rz-halo,
+      &.rz-far .rz-pool-light,
+      &.rz-far .rz-ring,
+      &.rz-far .rz-flame {
+        animation: none;
+      }
+
       /* 灯焰（f056f800 版）：单元素，flick（scale/rotate）与 sway 走不同属性——
          flick 动画 transform，sway 动画 margin-left，互不覆盖 */
       .rz-flame {
