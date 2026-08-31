@@ -111,7 +111,10 @@
         // （模型描述图片）；最多 6 张（addPendingImage 上限，发送时不再拦截）
         const msg = input.value.trim();
         const imgs = ctx.state.pendingImages || [];
-        if ((!msg && !imgs.length) || ctx.state.isSending) return;
+        // 20260901：远端窗口回复中（remoteRounds 非空）同样拦截——跨窗发送状态
+        // 同步的本地兜底（按钮禁用 + 守卫双保险，Enter 键/双击防穿透）
+        if ((!msg && !imgs.length) || ctx.state.isSending
+            || Object.keys(ctx.state.remoteRounds || {}).length) return;
 
         // 新对话开始：自动关闭上一条遗留的"建议跳转"面板——用户没点击/没取消时
         // 不应让它残留到下一轮（已确认的目标由用户点击触发，不受影响）
@@ -136,7 +139,7 @@
         // 落盘 thumbs（刷新恢复真图）、pull 回填与远端窗口的缩略图来源一致。
         // 压缩失败的条目被过滤掉（回退 hasImg 占位，刷新显示占位块而非丢历史）
         const thumbs = imgs.length ? await makeThumbs(imgs) : [];
-        if (ctx.state.isSending) return; // 压缩 await 窗口期被并发点击发送，放弃本轮
+        if (ctx.state.isSending || Object.keys(ctx.state.remoteRounds || {}).length) return; // 压缩 await 窗口期被并发点击发送，放弃本轮
 
         // 本轮 roundId：跨窗同步锚点（远端按它定位 live 气泡；本窗与远端轮次
         // roundId 不同 → 双窗并发互不覆盖）。用户条目 id 独立生成（'l' 前缀），
@@ -171,6 +174,12 @@
         // 可接受（≤6×1MB 会话级）；hasImg 保留作兜底（旧版广播/无图帧）。
         // 回环排除靠 from=windowId 已有。注意：远端窗口 pullHistory 后 images
         // 由 replaceWithIncoming 从本地回填（回填同步透传 thumbs），会话内持续显示
+        // 20260901：跨窗发送状态同步——sending 帧必须先于 user 帧广播（远端先
+        // 禁用发送按钮再渲染气泡，避免"气泡到了按钮还能发"的窗口期）。idle 帧
+        // 在流收尾 finally 广播解除；localStorage 标记供错过 sending 帧的新开
+        // 窗口恢复禁用态（chat-engine 初始化读取）
+        broadcast({ t: 'sending', roundId, from: engine.windowId });
+        try { localStorage.setItem('saudade-chat-busy', JSON.stringify({ roundId, ts: Date.now() })); } catch (e) {}
         broadcast({
           t: 'user', id: userItemId, text: msg, time: userItem.time, from: engine.windowId,
           ...(imgs.length ? { images: imgs, thumbs } : {}),
@@ -636,12 +645,18 @@
           // 未复位 isSending 会把对话框永久锁死（后续发送全部被拦，即"卡死"）
           ctx.state.isSending = false;
           ctx.state.streamCtrl = null;
-          sendBtn.disabled = false;
+          // 20260901：远端窗口回复中（remoteRounds 非空）时保持按钮禁用——
+          // 否则本窗收尾逻辑会把跨窗同步禁用错误解除
+          sendBtn.disabled = Object.keys(ctx.state.remoteRounds || {}).length > 0;
           sendBtn.title = '发送';
           sendBtn.innerHTML = '发送';
           sendBtn.classList.remove('stop-mode');
           input.disabled = false;
           input.focus();
+          // 20260901：跨窗 idle 广播 + 清除 busy 标记（与 sending 成对）——
+          // 其他窗口恢复发送按钮（正常收尾/异常中断/停止生成统一走 finally）
+          broadcast({ t: 'idle', roundId, from: engine.windowId });
+          try { localStorage.removeItem('saudade-chat-busy'); } catch (e) {}
           // 流式中被推迟的 DB 拉取在此补拉（storage 事件可能在流中到达）
           if (ctx.state.pendingPull) { ctx.state.pendingPull = false; setTimeout(pullHistory, 0); }
         }
@@ -1002,7 +1017,7 @@
             if (ctx.state.isSending && ctx.state.stoppedByUser) {
               ctx.state.isSending = false;
               ctx.state.streamCtrl = null;
-              sendBtn.disabled = false;
+              sendBtn.disabled = Object.keys(ctx.state.remoteRounds || {}).length > 0;
               sendBtn.title = '发送';
               sendBtn.innerHTML = '发送';
               sendBtn.classList.remove('stop-mode');
@@ -1017,6 +1032,10 @@
                 ctx.state.items = ctx.state.items.filter(i => i.id !== r.userItemId);
                 saveHistory();
                 broadcast({t: 'discard', roundId: r.roundId, userItemId: r.userItemId});
+                // 20260901：3s 保险路径同样广播 idle（abort 未触发时 finally 不执行，
+                // 其他窗口的发送按钮依赖 idle 解除禁用）
+                broadcast({ t: 'idle', roundId: r.roundId, from: engine.windowId });
+                try { localStorage.removeItem('saudade-chat-busy'); } catch (e) {}
                 apiDiscard(); // 保险路径同样通知后端全删（避免 DB 残留半轮）
               }
             }

@@ -143,6 +143,10 @@
         source: 'local',
         // 本轮锚点（sendMessage 赋值；3s 保险/停止生成在函数外也能精确清理）
         activeRound: { roundId: '', userItemId: '' },
+        // 20260901：跨窗发送状态同步——远端窗口进行中的轮次集合（roundId → true）
+        // + 兜底定时器句柄（发送窗口崩溃/断连不广播 idle 时本窗 6 分钟后强制恢复）
+        remoteRounds: {},
+        busyTimer: null,
       };
       const live = ctx.state.live;
 
@@ -165,6 +169,32 @@
       // 未强刷时可能仍在跑旧版——DB 权威历史/roundId 同步只在 20260828a 之后才有）
       console.log('[agent-chat] autoload ' + (ctx.ver || '?') + ', BroadcastChannel=' + !!chatChannel
                   + ', storage=' + ('localStorage' in window));
+      // ── 跨窗发送状态同步（20260901）──
+      // 远端任一窗口在回复（remoteRounds 非空）→ 本窗发送按钮禁用，从源头杜绝
+      // "另一窗口回答推理中发问"的并发串扰（B 窗口历史会含 A 窗口的孤儿用户消息
+      // 无回复 → 模型把 A 的问题当当前问题回答，见 20260901 trace 实证：椎名真白
+      // 被答成穹妹）。sending/idle 帧成对广播；本窗发送中（isSending）按钮处于
+      // 停止模式，由 stream 层管理，不受远端状态影响。
+      const BUSY_KEY = 'saudade-chat-busy';
+      const REMOTE_BUSY_FALLBACK_MS = 6 * 60 * 1000; // 服务端流式总时长上限 300s + 余量
+      const applyRemoteBusyUI = () => {
+        if (ctx.state.isSending) return;
+        const busy = Object.keys(ctx.state.remoteRounds).length > 0;
+        if (ctx.dom.sendBtn) ctx.dom.sendBtn.disabled = busy;
+      };
+      const clearRemoteBusyTimer = () => {
+        if (ctx.state.busyTimer) { clearTimeout(ctx.state.busyTimer); ctx.state.busyTimer = null; }
+      };
+      const resetRemoteBusyTimer = (ms) => {
+        clearRemoteBusyTimer();
+        ctx.state.busyTimer = setTimeout(() => {
+          // 发送窗口消失（崩溃/关标签页/断网）不会广播 idle——兜底恢复，
+          // 宁可早恢复一次，不可永久锁死发送
+          ctx.state.remoteRounds = {};
+          try { localStorage.removeItem(BUSY_KEY); } catch (e) {}
+          applyRemoteBusyUI();
+        }, ms);
+      };
       // 按 roundId 取/建 live 气泡统一工厂（20260828o 提取）：
       // 本窗 sendMessage 预建（streaming=true 带 msg-streaming 流式 class）
       // 与远端 remoteLive 复用同一份 DOM 创建逻辑（原两份内联拷贝）
@@ -211,6 +241,30 @@
         chatChannel.onmessage = (ev) => {
           const m = ev.data || {};
           try {
+            // 20260901：跨窗发送状态同步——远端窗口开始回复（sending）→ 禁用
+            // 本窗发送；结束（idle）→ 恢复。广播顺序保证 sending 先于 user 帧
+            // 到达，按钮禁用与气泡渲染互不干扰。
+            if (m.t === 'sending') {
+              if (m.from === windowId) return; // 回环跳过（同 user 帧）
+              ctx.state.remoteRounds[m.roundId] = true;
+              resetRemoteBusyTimer(REMOTE_BUSY_FALLBACK_MS);
+              applyRemoteBusyUI();
+              return;
+            }
+            if (m.t === 'idle') {
+              if (m.from === windowId) return;
+              delete ctx.state.remoteRounds[m.roundId];
+              if (!Object.keys(ctx.state.remoteRounds).length) {
+                clearRemoteBusyTimer();
+                // 匹配清除本地存储标记（多窗口并发时只清自己那轮的）
+                try {
+                  const b = JSON.parse(localStorage.getItem(BUSY_KEY) || 'null');
+                  if (b && b.roundId === m.roundId) localStorage.removeItem(BUSY_KEY);
+                } catch (e) {}
+              }
+              applyRemoteBusyUI();
+              return;
+            }
             if (m.t === 'user') {
               // 20260828s：跳过自己窗口广播的 user 帧（BroadcastChannel 回环——
               // 同 id 严格替换会把会话内 images 换成 hasImg 占位标记，图片丢失）
@@ -327,6 +381,21 @@
             }
           } catch(e) {/* 广播渲染失败不影响本页 */}
         };
+        // 20260901：新开窗口可能错过另一窗口的 sending 帧（回复进行中才打开）——
+        // 读 localStorage busy 标记恢复禁用态；标记过期（发送窗口崩溃残留）清除
+        try {
+          const b = JSON.parse(localStorage.getItem(BUSY_KEY) || 'null');
+          if (b && b.roundId && b.ts) {
+            const remain = REMOTE_BUSY_FALLBACK_MS - (Date.now() - b.ts);
+            if (remain > 0) {
+              ctx.state.remoteRounds[b.roundId] = true;
+              resetRemoteBusyTimer(remain);
+              applyRemoteBusyUI();
+            } else {
+              localStorage.removeItem(BUSY_KEY);
+            }
+          }
+        } catch (e) { /* 隐私模式等 */ }
       }
       // 从 JWT 提取用户 ID
       const getUserId = () => {
