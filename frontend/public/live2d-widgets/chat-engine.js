@@ -66,14 +66,15 @@
       } catch(e) {/* ignore */}
       // 消息内图片单击放大（20260901）：复用文章页 zoomOverlay——React 全局注册
       // window.__openZoomOverlay（App.tsx 副作用 import），样式在全局 App.sass；
-      // 范围：agent 的 markdown 图（.msg-text）+ 用户已发送图（.msg-img-grid），
-      // 发送前预览（.chat-img-preview，点 × 是移除）不放大
+      // 范围：agent 的 markdown 图（.msg-text）+ 用户已发送图（.msg-img-grid）+
+      // 发送前预览缩略图（.chat-img-preview-item，20260901 用户要求）——
+      // 仅排除 × 移除按钮（.chat-img-preview-remove，点 × 是删除不是放大）
       try {
         messages.addEventListener('click', (e) => {
           if (!window.__openZoomOverlay) return; // 文章页模块未加载（异常场景）静默
           const t = e.target;
           if (!(t instanceof Element)) return;
-          if (t.closest('.chat-img-preview')) return;
+          if (t.closest('.chat-img-preview-remove')) return;
           const img = t.closest('img');
           if (img) {
             e.preventDefault();
