@@ -274,3 +274,16 @@ export const initZoomDelegation = (root: HTMLElement): (() => void) => {
     closeZoomOverlay() // 组件卸载时关闭浮层,防止残留
   }
 }
+
+// ── 对话框复用（20260901）──
+// 看板娘对话框是 public/ 下的原生脚本,无法 import 本模块——按 __chatRenderMarkdown
+// 同模式由 React 全局注册,原生侧点击委托调 window.__openZoomOverlay。
+// App.tsx 副作用 import 本模块（任何页面都加载,浮层样式已在全局 App.sass）。
+declare global {
+  interface Window {
+    __openZoomOverlay?: (source: HTMLElement) => void
+    __closeZoomOverlay?: () => void
+  }
+}
+window.__openZoomOverlay = openZoomOverlay
+window.__closeZoomOverlay = closeZoomOverlay

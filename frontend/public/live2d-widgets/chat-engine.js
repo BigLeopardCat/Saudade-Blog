@@ -64,6 +64,23 @@
           if (userAtBottom) hideNewMsgNote();
         }, { passive: true });
       } catch(e) {/* ignore */}
+      // 消息内图片单击放大（20260901）：复用文章页 zoomOverlay——React 全局注册
+      // window.__openZoomOverlay（App.tsx 副作用 import），样式在全局 App.sass；
+      // 范围：agent 的 markdown 图（.msg-text）+ 用户已发送图（.msg-img-grid），
+      // 发送前预览（.chat-img-preview，点 × 是移除）不放大
+      try {
+        messages.addEventListener('click', (e) => {
+          if (!window.__openZoomOverlay) return; // 文章页模块未加载（异常场景）静默
+          const t = e.target;
+          if (!(t instanceof Element)) return;
+          if (t.closest('.chat-img-preview')) return;
+          const img = t.closest('img');
+          if (img) {
+            e.preventDefault();
+            window.__openZoomOverlay(img);
+          }
+        });
+      } catch(e) {/* ignore */}
       // 可靠滚动到底部（等待布局完成后执行）：force=true 无条件回底并收起指示条；
       // 默认语义尊重用户位置——在底部时跟随，在历史区时转为"有新消息"提示
       const scrollToBottom = (el, force) => {
