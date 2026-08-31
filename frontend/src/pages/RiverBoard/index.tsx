@@ -1571,8 +1571,17 @@ export default function RiverBoard() {
         let baseBack: HTMLCanvasElement | null = null;
         let baseFront: HTMLCanvasElement | null = null;
 
+        // 软渲染/老内核检测（20260831）：无 WebGL = 无 GPU 合成与硬件光栅化，
+        // canvas 全屏重绘与 DOM transform 动画全部 CPU 软件绘制，帧成本数倍于
+        // 硬件渲染——必须走降级（dpr 1 + 30fps + reduced 路径），否则"一卡一卡"
+        // （帧成本超 16.7ms 预算导致的掉帧；加渲染帧率只会更卡，降帧率到可
+        // 稳定值才平滑）
+        const softRender = !(
+            document.createElement("canvas").getContext("webgl") ||
+            document.createElement("canvas").getContext("experimental-webgl")
+        );
         const onResize = () => {
-            const dpr = Math.min(DPR_CAP, window.devicePixelRatio || 1);
+            const dpr = Math.min(softRender ? 1 : DPR_CAP, window.devicePixelRatio || 1);
             const w = window.innerWidth;
             const h = window.innerHeight;
             const v = viewRef.current;
@@ -1613,12 +1622,18 @@ export default function RiverBoard() {
 
         const frame = (now: number) => {
             if (disposed) return;
+            // 软渲染降频（20260831）：30fps 上限（每 2 帧处理 1 次）——帧预算从
+            // 16.7ms 翻倍到 33ms，掉帧抖动变为稳定平滑流动；硬件渲染不受影响
+            if (softRender && ++softSkip & 1) {
+                raf = requestAnimationFrame(frame);
+                return;
+            }
             const dt = Math.min(0.05, (now - last) / 1000);
             last = now;
             // P2-3（20260831）动态降级：实测帧耗时（rAF 间隔含绘制成本），EMA 平滑后
             // 超预算自动切 reduced 渲染路径（星光/萤火虫/流星/水光带减速等），预算
-            // 恢复自动还原；滞回 13ms 进 / 9ms 出防抖——老内核软渲染或 GPU 忙时
-            // 帧耗时必然超标 → 自动降级，不再依赖系统 prefers-reduced-motion 偏好
+            // 恢复自动还原；滞回 13ms 进 / 9ms 出防抖——GPU 忙时自动降级；软渲染
+            // 直接静态强制 reduced（softRender），不依赖系统偏好也不等 EMA
             const fms = now - lastFrameT;
             lastFrameT = now;
             perfEma = perfEma * 0.92 + Math.min(50, fms) * 0.08;
@@ -1630,7 +1645,7 @@ export default function RiverBoard() {
             drawScene(
                 ctx,
                 amb ? amb.now : 0,
-                reduced() || perfDynReduce,
+                reduced() || perfDynReduce || softRender,
                 baseBack!,
                 baseFront!
             );
@@ -1646,6 +1661,8 @@ export default function RiverBoard() {
         let lastFrameT = performance.now();
         let perfEma = 16.7;
         let perfDynReduce = false;
+        // 软渲染 30fps 节流计数器
+        let softSkip = 0;
 
         raf = requestAnimationFrame(frame);
 
