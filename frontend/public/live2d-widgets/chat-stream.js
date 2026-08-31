@@ -977,8 +977,10 @@
       const makeResizeHandle = (corner) => {
         const isTL = corner === 'tl';
         const h = document.createElement('div');
-        // flex 对齐使 svg 贴住对应角：TL 贴左上角、BR 贴右下角，两个把手样式完全一致
-        h.style.cssText = 'position:absolute;' + (isTL ? 'left:0;top:0' : 'right:0;bottom:0') +
+        // flex 对齐使 svg 贴住对应角：TL 贴左上角、BR 贴右下角，两个把手样式完全一致。
+        // 20260901f：内移 2px（面板 border 宽）——子元素永远画在父元素 border 内侧，
+        // 贴角时三角形会被 2px 外框盖住（"缩放按钮被轮廓线侵蚀"）
+        h.style.cssText = 'position:absolute;' + (isTL ? 'left:2px;top:2px' : 'right:2px;bottom:2px') +
           ';width:24px;height:24px;cursor:nwse-resize;background:transparent;z-index:5;touch-action:none;' +
           ';display:flex;' + (isTL ? 'align-items:flex-start;justify-content:flex-start' : 'align-items:flex-end;justify-content:flex-end');
         // 三角形方向：BR 角朝左上，TL 角朝右下（圆角三角：stroke-linejoin:round）
