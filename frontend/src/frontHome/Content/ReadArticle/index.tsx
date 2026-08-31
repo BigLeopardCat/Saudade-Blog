@@ -254,10 +254,17 @@ const ReadArticle = () => {
                             </div>
                         </motion.div>
                         <div className="navigation" id='toc'>
-                             <MarkdownNavbar 
-                                source={content} 
-                                ordered={false} 
+                             {/* updateHashAuto=false（20260831）：markdown-navbar 默认在滚动时
+                                 每次 scroll 事件都 setTimeout+replaceState 改 URL hash——
+                                 未节流的 document 级 scroll 监听在滚动期间高频触发定时器
+                                 内导航，Chrome 报 "Throttling navigation" 节流警告，且与
+                                 滚动卡顿同源（每帧遍历全页标题 + setState 高亮）；关闭后
+                                 滚动不再改地址栏 hash，目录高亮与点击跳转不受影响 */}
+                             <MarkdownNavbar
+                                source={content}
+                                ordered={false}
                                 headingTopOffset={100}
+                                updateHashAuto={false}
                              />
                         </div>
                     </div>
