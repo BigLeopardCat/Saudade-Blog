@@ -106,31 +106,17 @@ export const openZoomOverlay = (source: HTMLElement): void => {
   closeBtn.type = "button"
   closeBtn.textContent = "✕"
   closeBtn.setAttribute("aria-label", "关闭放大视图")
-  // 操作提示：全站只显示一次（localStorage 标记），显示 3.5s 淡出即移除——
-  // 20260901 用户反馈提示常驻底部挡视线（文章页/对话框共用本实现，改一处生效两处）
-  const tipSeenKey = "md_zoom_tip_seen"
-  let tipSeen = false
-  try {
-    tipSeen = localStorage.getItem(tipSeenKey) === "1"
-  } catch {
-    tipSeen = true // 无 localStorage（异常环境）不显示提示
-  }
-  if (!tipSeen) {
-    const tip = document.createElement("div")
-    tip.className = "md-zoom-tip"
-    tip.textContent = "滚轮 / 捏合缩放 · 拖拽移动 · 双击还原 · 单击空白关闭 · Esc"
-    overlay.appendChild(tip)
-    try {
-      localStorage.setItem(tipSeenKey, "1")
-    } catch {
-      /* ignore */
-    }
-    setTimeout(() => {
-      tip.style.transition = "opacity 0.4s"
-      tip.style.opacity = "0"
-      setTimeout(() => tip.remove(), 400)
-    }, 3500)
-  }
+  // 操作提示：每次打开浮层显示 3.5s 淡出移除（20260901——不常驻挡视线；
+  // 关闭浮层时 tip 随 overlay 一并销毁，定时器操作已移除节点无副作用）
+  const tip = document.createElement("div")
+  tip.className = "md-zoom-tip"
+  tip.textContent = "滚轮 / 捏合缩放 · 拖拽移动 · 双击还原 · 单击空白关闭 · Esc"
+  overlay.appendChild(tip)
+  setTimeout(() => {
+    tip.style.transition = "opacity 0.4s"
+    tip.style.opacity = "0"
+    setTimeout(() => tip.remove(), 400)
+  }, 3500)
   stage.appendChild(content)
   overlay.appendChild(stage)
   overlay.appendChild(closeBtn)
