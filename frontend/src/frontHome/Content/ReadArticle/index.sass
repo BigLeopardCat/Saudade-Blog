@@ -52,10 +52,9 @@ html
       display: flex
       justify-content: space-between
       align-items: center
-      // 20260831：backdrop-filter: blur(8px) 移除——滚动经过封面期间每帧对
-      // 背景做模糊重算，是文章页滚动 GPU 占用的大头之一；改为加深 rgba 底色
-      // 近似（半透明无模糊，视觉差异小，滚动成本归零）
-      background: rgba(0, 0, 0, 0.38)
+      background: rgba(0, 0, 0, 0.25)
+      backdrop-filter: blur(8px)
+      -webkit-backdrop-filter: blur(8px)
       padding: 16px 24px
       border-radius: 12px
 
