@@ -80,62 +80,59 @@ const ContentHome = () => {
         return () => observer.disconnect();
     }, []);
 
-    // 顶部背景视频无缝循环（20260902 二修，合并原 IO 暂停 + 接缝淡化）：
-    // 单视频+透明度淡化有根本缺陷——重播回到第 0 帧、花瓣位置复位是"内容跳变"，
-    // 淡化只是把它藏进灰幕/变暗里（用户两次反馈"打断感"）。双视频交叉淡化：
-    // A 播放、B 静止待命；A 剩 BLEND 秒时 B 从第 0 帧淡入、A 淡出，接缝时刻 B
-    // 已全不透明——花瓣运动始终连续，首尾 0.15% 像素的位移差变成 0.4s 溶解
-    // （配 sass .heroVideo transition），无灰幕无跳变。
-    // 成本：始终只解码一个视频（待命层暂停+复位，轮换时才起播）；hero 滚出视口
-    // IO 把两个都暂停（视频解码是持续 GPU 成本，离屏不再浪费）。B 起播失败则
-    // 保持 A 继续循环（loop 属性兜底），不恶化。
+    // 顶部背景视频无缝循环（20260902 三修）：前两版（单视频淡化/双视频交叉淡化）
+    // 都是在"把重播藏起来"——重播回到第 0 帧、花瓣位置复位是内容跳变，藏得再软
+    // 也有副作用：交叉淡化过渡期两层半透明、页面背景从中间透出=灰；B 层起播延迟
+    // =闪；淡化窗口=每 6s 一次可见的"重播感"（用户两次反馈"一闪一闪/重播感严重"）。
+    // ping-pong 倒带循环：到结尾 playbackRate=-1 倒放，花瓣平滑反向回流（如风
+    // 回吹，画面人物静止不受影响），到开头再转正放——运动全程连续，视频永远全
+    // 不透明，没有"重播"这个事件。只解码一层；负速不支持时保留 loop 硬循环兜底。
     useEffect(() => {
         const hero = heroRef.current;
         if (!hero) return;
-        const videos = Array.from(hero.querySelectorAll('video'));
-        if (videos.length < 2) return;
-        const [a, b] = videos;
-        const BLEND = 0.6; // 秒，需小于视频时长
-        let active = a;
-        let dormant = b;
-        let switching = false;
-        const startDormant = async () => {
-            if (switching) return;
-            switching = true;
-            try {
-                dormant.currentTime = 0;
-                await dormant.play(); // 起播失败则不换层，A 靠 loop 继续
-            } catch {
-                switching = false;
-                return;
-            }
-            dormant.style.opacity = '1';
-            active.style.opacity = '0';
-            active.pause();
-            active.currentTime = 0;
-            [active, dormant] = [dormant, active];
-            switching = false;
+        const video = hero.querySelector('video');
+        if (!video) return;
+        // 探测负速播放支持（个别旧实现不应用负 playbackRate）
+        video.playbackRate = -1;
+        const supported = video.playbackRate === -1;
+        video.playbackRate = 1;
+        if (!supported) return; // 不支持：保持 loop 属性硬循环（原行为）
+        let dir: 1 | -1 = 1;
+        const flip = (d: 1 | -1) => {
+            dir = d;
+            video.playbackRate = d;
+            video.play().catch(() => {});
         };
+        const onEnded = () => flip(dir === 1 ? -1 : 1);
+        // 兜底：个别实现负速到起点不触发 ended，靠 timeupdate 巡检翻转
         const onTime = () => {
-            if (!active.duration) return;
-            if (active.duration - active.currentTime < BLEND) startDormant();
+            if (dir === -1 && video.currentTime <= 0.05) flip(1);
         };
-        const onVisible = ([entry]: IntersectionObserverEntry[]) => {
-            if (entry.isIntersecting) {
-                active.play().catch(() => {});
-            } else {
-                videos.forEach(v => v.pause());
-            }
-        };
-        const io = new IntersectionObserver(onVisible, { threshold: 0.05 });
-        io.observe(hero);
-        a.addEventListener('timeupdate', onTime);
-        b.addEventListener('timeupdate', onTime);
+        video.loop = false;
+        video.addEventListener('ended', onEnded);
+        video.addEventListener('timeupdate', onTime);
         return () => {
-            io.disconnect();
-            a.removeEventListener('timeupdate', onTime);
-            b.removeEventListener('timeupdate', onTime);
+            video.removeEventListener('ended', onEnded);
+            video.removeEventListener('timeupdate', onTime);
         };
+    }, []);
+
+    // hero 滚出视口即暂停（视频解码是持续 GPU 成本，离屏不再浪费），回视口恢复
+    // 播放——暂停/恢复不改变 playbackRate，ping-pong 方向不受影响
+    useEffect(() => {
+        const hero = heroRef.current;
+        if (!hero) return;
+        const video = hero.querySelector('video');
+        if (!video) return;
+        const observer = new IntersectionObserver(([entry]) => {
+            if (entry.isIntersecting) {
+                video.play().catch(() => {});
+            } else {
+                video.pause();
+            }
+        }, { threshold: 0.05 });
+        observer.observe(hero);
+        return () => observer.disconnect();
     }, []);
 
     useEffect(() => {
@@ -226,18 +223,6 @@ const ContentHome = () => {
                 muted
                 loop
                 autoPlay
-                playsInline
-                preload="auto"
-                disablePictureInPicture
-                aria-hidden="true"
-            />
-            {/* 无缝循环 B 层：同源静默待命，由交叉淡化 effect 轮换（.heroB 初始 opacity 0） */}
-            <video
-                className="heroVideo heroB"
-                src={heroBg}
-                poster={heroPoster}
-                muted
-                loop
                 playsInline
                 preload="auto"
                 disablePictureInPicture
