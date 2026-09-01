@@ -80,43 +80,62 @@ const ContentHome = () => {
         return () => observer.disconnect();
     }, []);
 
-    // 顶部背景视频：hero 滚出视口即暂停（视频解码是持续 GPU 成本，离屏不再浪费），
-    // 回到视口恢复播放。与轮播暂停同模式。
+    // 顶部背景视频无缝循环（20260902 二修，合并原 IO 暂停 + 接缝淡化）：
+    // 单视频+透明度淡化有根本缺陷——重播回到第 0 帧、花瓣位置复位是"内容跳变"，
+    // 淡化只是把它藏进灰幕/变暗里（用户两次反馈"打断感"）。双视频交叉淡化：
+    // A 播放、B 静止待命；A 剩 BLEND 秒时 B 从第 0 帧淡入、A 淡出，接缝时刻 B
+    // 已全不透明——花瓣运动始终连续，首尾 0.15% 像素的位移差变成 0.4s 溶解
+    // （配 sass .heroVideo transition），无灰幕无跳变。
+    // 成本：始终只解码一个视频（待命层暂停+复位，轮换时才起播）；hero 滚出视口
+    // IO 把两个都暂停（视频解码是持续 GPU 成本，离屏不再浪费）。B 起播失败则
+    // 保持 A 继续循环（loop 属性兜底），不恶化。
     useEffect(() => {
         const hero = heroRef.current;
         if (!hero) return;
-        const video = hero.querySelector('video');
-        if (!video) return;
-        const observer = new IntersectionObserver(([entry]) => {
-            if (entry.isIntersecting) {
-                video.play().catch(() => {});
-            } else {
-                video.pause();
+        const videos = Array.from(hero.querySelectorAll('video'));
+        if (videos.length < 2) return;
+        const [a, b] = videos;
+        const BLEND = 0.6; // 秒，需小于视频时长
+        let active = a;
+        let dormant = b;
+        let switching = false;
+        const startDormant = async () => {
+            if (switching) return;
+            switching = true;
+            try {
+                dormant.currentTime = 0;
+                await dormant.play(); // 起播失败则不换层，A 靠 loop 继续
+            } catch {
+                switching = false;
+                return;
             }
-        }, { threshold: 0.05 });
-        observer.observe(hero);
-        return () => observer.disconnect();
-    }, []);
-
-    // 循环接缝淡化（20260902）：花瓣视频首尾帧不衔接，重播瞬间花瓣跳位产生
-    // "打断感"。结尾前 0.45s 内线性压低 video opacity，重播后恢复——透明度在
-    // 合成器层完成（配 sass 里 .heroVideo 的 transition）。
-    // 20260902 修正：首尾帧实测差异仅 0.15% 像素（花瓣缓慢漂移），原 0.8s→3%
-    // 透明度让视频每 6s 几乎全灰近 1.4s（"蒙了一层灰"）——压低窗口收短、最低
-    // 透明度抬到 0.55，跳位仍被掩盖但画面始终保持可见。改 playbackRate 无用：
-    // 跳位是首尾帧内容差，不是速度问题。
-    useEffect(() => {
-        const hero = heroRef.current;
-        if (!hero) return;
-        const video = hero.querySelector('video');
-        if (!video) return;
-        const FADE = 0.45; // 秒，需小于视频时长
-        const onTime = () => {
-            const remain = (video.duration || 6) - video.currentTime;
-            video.style.opacity = remain < FADE ? String(Math.max(remain / FADE, 0.55)) : '1';
+            dormant.style.opacity = '1';
+            active.style.opacity = '0';
+            active.pause();
+            active.currentTime = 0;
+            [active, dormant] = [dormant, active];
+            switching = false;
         };
-        video.addEventListener('timeupdate', onTime);
-        return () => video.removeEventListener('timeupdate', onTime);
+        const onTime = () => {
+            if (!active.duration) return;
+            if (active.duration - active.currentTime < BLEND) startDormant();
+        };
+        const onVisible = ([entry]: IntersectionObserverEntry[]) => {
+            if (entry.isIntersecting) {
+                active.play().catch(() => {});
+            } else {
+                videos.forEach(v => v.pause());
+            }
+        };
+        const io = new IntersectionObserver(onVisible, { threshold: 0.05 });
+        io.observe(hero);
+        a.addEventListener('timeupdate', onTime);
+        b.addEventListener('timeupdate', onTime);
+        return () => {
+            io.disconnect();
+            a.removeEventListener('timeupdate', onTime);
+            b.removeEventListener('timeupdate', onTime);
+        };
     }, []);
 
     useEffect(() => {
@@ -207,6 +226,18 @@ const ContentHome = () => {
                 muted
                 loop
                 autoPlay
+                playsInline
+                preload="auto"
+                disablePictureInPicture
+                aria-hidden="true"
+            />
+            {/* 无缝循环 B 层：同源静默待命，由交叉淡化 effect 轮换（.heroB 初始 opacity 0） */}
+            <video
+                className="heroVideo heroB"
+                src={heroBg}
+                poster={heroPoster}
+                muted
+                loop
                 playsInline
                 preload="auto"
                 disablePictureInPicture
