@@ -52,7 +52,6 @@ const ReadArticle = () => {
 
     // Lock ref to prevent TOC auto-scroll during manual click
     const isClickingTocRef = useRef(false);
-    const coverRef = useRef<HTMLImageElement>(null);
 
     useEffect(() => {
         if (id) {
@@ -265,10 +264,6 @@ const ReadArticle = () => {
                             initial={{ filter: "blur(10px)" }}
                             animate={{ filter: "blur(0px)" }}
                             transition={{ duration: 1 }}
-                            // 20260902：动画结束后清掉内联 filter——blur(0px) 视觉无效果，
-                            // 却让 framer-motion 把封面大图永久留在滤镜合成层
-                            //（大图滤镜层滚动时重栅格 = 文章页滚动 GPU 偏高的来源之一）
-                            onAnimationComplete={() => { if (coverRef.current) coverRef.current.style.filter = 'none'; }}
                         />
                         <motion.div
                             initial={{ opacity: 0, x: -30 }}
