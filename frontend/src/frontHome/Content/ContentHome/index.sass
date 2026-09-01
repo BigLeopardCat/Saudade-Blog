@@ -74,6 +74,9 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
   justify-content: flex-start
   align-items: center
   padding-left: 8%
+  // 20260902：文字/社交图标组再上移——内容盒下缘垫 12vh，垂直居中点上移约
+  // 6vh，避开视频人物面部（移动端 media 覆写回 50px，不受影响）
+  padding-bottom: 12vh
   // 顶部背景视频（20260902）：静态合成层，无动画/滤镜/backdrop——视频帧变化在图层
   // 内部完成，不触发页面重栅格（与 Live2D canvas 同类，成本可控）；离屏暂停见组件 IO。
   .heroVideo
@@ -85,8 +88,9 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
     z-index: 0
     pointer-events: none
     // 循环接缝淡化：JS 在结尾前按剩余时间压 opacity，重播后恢复——过渡在
-    // 合成器层完成，不触发重绘（视频本身是静态合成层）
-    transition: opacity 0.6s ease-out
+    // 合成器层完成，不触发重绘（视频本身是静态合成层）；0.4s 与 JS 端
+    // FADE=0.45/最低 0.55 配套，浅而短，不产生"蒙灰"观感
+    transition: opacity 0.4s ease-out
   // 文字可读性遮罩：浅色视频下压暗背景；暗色模式加强（见下方 .frontDark 覆写）
   .heroOverlay
     position: absolute

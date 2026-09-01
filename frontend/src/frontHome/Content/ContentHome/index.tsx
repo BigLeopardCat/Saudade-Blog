@@ -99,18 +99,21 @@ const ContentHome = () => {
     }, []);
 
     // 循环接缝淡化（20260902）：花瓣视频首尾帧不衔接，重播瞬间花瓣跳位产生
-    // "打断感"。结尾前 0.8s 内按剩余时间线性压低 video opacity，重播后恢复——
-    // 透明度在合成器层完成（配 sass 里 .heroVideo 的 transition），把跳位藏进
-    // 淡出/淡入里。注意不能改 playbackRate：跳位是首尾帧内容差，不是速度问题。
+    // "打断感"。结尾前 0.45s 内线性压低 video opacity，重播后恢复——透明度在
+    // 合成器层完成（配 sass 里 .heroVideo 的 transition）。
+    // 20260902 修正：首尾帧实测差异仅 0.15% 像素（花瓣缓慢漂移），原 0.8s→3%
+    // 透明度让视频每 6s 几乎全灰近 1.4s（"蒙了一层灰"）——压低窗口收短、最低
+    // 透明度抬到 0.55，跳位仍被掩盖但画面始终保持可见。改 playbackRate 无用：
+    // 跳位是首尾帧内容差，不是速度问题。
     useEffect(() => {
         const hero = heroRef.current;
         if (!hero) return;
         const video = hero.querySelector('video');
         if (!video) return;
-        const FADE = 0.8; // 秒，需小于视频时长
+        const FADE = 0.45; // 秒，需小于视频时长
         const onTime = () => {
             const remain = (video.duration || 6) - video.currentTime;
-            video.style.opacity = remain < FADE ? String(Math.max(remain / FADE, 0.03)) : '1';
+            video.style.opacity = remain < FADE ? String(Math.max(remain / FADE, 0.55)) : '1';
         };
         video.addEventListener('timeupdate', onTime);
         return () => video.removeEventListener('timeupdate', onTime);
