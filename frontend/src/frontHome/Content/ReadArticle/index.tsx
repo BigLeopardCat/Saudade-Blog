@@ -52,7 +52,6 @@ const ReadArticle = () => {
 
     // Lock ref to prevent TOC auto-scroll during manual click
     const isClickingTocRef = useRef(false);
-    const coverRef = useRef<HTMLImageElement>(null);
 
     useEffect(() => {
         if (id) {
@@ -260,16 +259,11 @@ const ReadArticle = () => {
             ) : (
                 <>
                     <div className="readCover">
-                        <motion.img
-                            src={article?.cover}
-                            initial={{ filter: "blur(10px)" }}
-                            animate={{ filter: "blur(0px)" }}
-                            transition={{ duration: 1 }}
-                            // 20260902：动画结束后清掉内联 filter——blur(0px) 视觉无效果，
-                            // 却让 framer-motion 把封面大图永久留在滤镜合成层
-                            //（大图滤镜层滚动时重栅格 = 文章页滚动 GPU 偏高的来源之一）
-                            onAnimationComplete={() => { if (coverRef.current) coverRef.current.style.filter = 'none'; }}
-                        />
+                        {/* 20260902：模糊入场改用纯 CSS 动画（无 fill 模式）——framer-motion
+                            animate 会把终值 blur(0px) 永久写进内联样式，视觉无效果却把封面大图
+                            留在滤镜合成层（滚动时重栅格 = 文章页滚动 GPU 偏高的来源之一）。
+                            CSS 动画结束后自动回到无 filter 基态，零残留。 */}
+                        <img src={article?.cover} />
                         <motion.div
                             initial={{ opacity: 0, x: -30 }}
                             animate={{ opacity: 1, x: 0 }}
