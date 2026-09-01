@@ -139,6 +139,10 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
         setDark(!isDark)
         setAnimation(isDark === true ? "sun" : "moon");
         localStorage.setItem("isDarkMode", JSON.stringify(!isDark));
+        // 20260902：手动切换 = 访客意愿，写入 darkModeUserChoice 让 App.tsx 的
+        // 自动夜间（23:00-6:00 分针检查）不再覆盖。此前只写 isDarkMode——夜间手动
+        // 切浅色后 1 分钟内被自动逻辑顶回深色（用户报"突然变成夜间模式"）
+        localStorage.setItem("darkModeUserChoice", !isDark ? 'dark' : 'light');
         // 同步看板娘 agent 的全局状态：autoload.js 监听 darkmode-change 更新 __darkMode，
         // 否则页面内手动切换后 current_darkmode 上报陈旧值，agent 感知只能靠对话记忆
         try { window.dispatchEvent(new CustomEvent('darkmode-change', { detail: !isDark })); } catch (e) {/* ignore */}

@@ -91,6 +91,8 @@ const Dashboard = () => {
     const handleModeSwitch = () => {
         setDarkMode(!isDarkMode);
         localStorage.setItem("isDarkMode", JSON.stringify(!isDarkMode));
+        // 同 Head：手动切换记入 darkModeUserChoice，自动夜间不再覆盖
+        localStorage.setItem("darkModeUserChoice", !isDarkMode ? 'dark' : 'light');
     };
 
     // 导航栏数据
