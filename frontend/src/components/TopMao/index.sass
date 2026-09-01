@@ -1,9 +1,14 @@
-// 20260902 性能改造（两轮实测确认）：
-// ① z-index: -1 时猫位于整页内容之下，catDangle 无限摆动每帧迫使合成器把整页
-//    重新合成一遍 → GPU 30%+（实测与猫出现强相关）。移除摆动后占用降至 3-10%。
-// ② 恢复上下轻晃且不烧 GPU：z-index 提到 500（内容区最高 100、sticky 导航 999、
-//    弹窗/缩放浮层 1000+ 之下）→ 猫成为独立顶层，摆动时合成器只把 70×828 小图层
-//    叠加在已缓存的页面纹理上，成本趋近于零。视觉差异：猫从"页后"变"页前"。
+// 20260902 性能改造（三轮实测 + Tracing 定位，根因查明）：
+// ① z-index:-1 摆动 → GPU 30%+；② 移除摆动 → 3-10%；③ 恢复摆动、z-index 提到 500
+//    （仍挂在 sticky header 内）→ GPU 仍 30%。
+// 最终定位（LayerTree + Tracing + 变量对照实测）：真凶不是 z-index 也不是动画本身，
+//   而是"transform 动画运行在 sticky header（z-999 合成上下文）内部"——猫摆动每帧
+//   使 header 图层子树整体失效并重新栅格化（Tracing 可见每帧 ~1000 次 RasterTask，
+//   暂停动画后栅格任务归零；同样配方挂到 header 外后 rAF 60fps 满帧）。
+// 方案：Head/index.tsx 将本组件渲染在 <header> 之外（frontRoot 内、header 的兄弟节点）
+//   + 本文件 position: fixed + z-index: 500 —— frontRoot(isolation: isolate)上下文内：
+//   内容区最高 100 < 猫 500 < sticky header 999 < 弹窗 1000+。
+//   → 猫在内容之上、导航栏之下（不挡登录按钮），摆动只动自己的合成层，成本趋近于零。
 
 @keyframes catDangle
   0%, 100%
@@ -16,7 +21,7 @@
   width: 70px
   height: 92vh
   max-height: 1200px
-  position: absolute
+  position: fixed
   top: -100vh
   right: 0
   background: url("../../assets/scroll.gif") no-repeat bottom

@@ -240,7 +240,6 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                     </div>
                 </div>
             </div>
-            <TopMao currentScrollHeight={scrollHeight}/>
             <div className="headContainer" style={{
                 margin: scrollHeight ? 0 : '',
                 borderRadius: scrollHeight ? 0 : '',
@@ -430,6 +429,12 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
             </ConfigProvider>
             {animation !== '' && <MoonToSun status={animation} />}
         </header>
+        {/* 猫必须渲染在 header 之外(frontRoot 内、header 的兄弟节点):
+            transform 动画在 sticky header 内时每帧迫使 header 图层子树重新栅格化(GPU 30%+);
+            移到 header 外后为独立合成层,摆动成本趋近于零(实测 60fps 满帧)。
+            且 frontRoot(isolation: isolate)上下文内 z-index 500 介于内容(≤100)与 header(999)之间,
+            不再遮挡导航栏登录按钮。见 components/TopMao/index.sass 注释。 */}
+        <TopMao currentScrollHeight={scrollHeight}/>
         </>
     );
 };
