@@ -15,6 +15,8 @@ import {SocialType} from "../../../interface/SocialType";
 import {getNotePage, getTopNotes} from "../../../apis/NoteMethods.tsx";
 import dayjs from "dayjs";
 import { resolveApiAssetUrl } from '../../../utils/runtimeApi';
+import heroBg from '../../assets/hero_bg.mp4';
+import heroPoster from '../../assets/hero_poster.jpg';
 
 
 // 模块级缓存：只在同一次 SPA 会话内复用，离开 Dashboard 后自动失效
@@ -32,6 +34,7 @@ const ContentHome = () => {
     // 轮播图滚出视口（如停在文章卡片区）时暂停自动滚动，避免离屏动画触发重绘
     const [topInView, setTopInView] = useState(true);
     const topRef = useRef<HTMLDivElement>(null);
+    const heroRef = useRef<HTMLDivElement>(null);
     const [currentPage,setCurrentPage] = useState(cachedCurrentPage)
     const [hasMoreArticles, setHasMoreArticles] = useState(cachedHasMoreArticles);
     const [loading, setLoading] = useState(false);
@@ -74,6 +77,24 @@ const ContentHome = () => {
         if (!el) return;
         const observer = new IntersectionObserver(([entry]) => setTopInView(entry.isIntersecting), { threshold: 0.1 });
         observer.observe(el);
+        return () => observer.disconnect();
+    }, []);
+
+    // 顶部背景视频：hero 滚出视口即暂停（视频解码是持续 GPU 成本，离屏不再浪费），
+    // 回到视口恢复播放。与轮播暂停同模式。
+    useEffect(() => {
+        const hero = heroRef.current;
+        if (!hero) return;
+        const video = hero.querySelector('video');
+        if (!video) return;
+        const observer = new IntersectionObserver(([entry]) => {
+            if (entry.isIntersecting) {
+                video.play().catch(() => {});
+            } else {
+                video.pause();
+            }
+        }, { threshold: 0.05 });
+        observer.observe(hero);
         return () => observer.disconnect();
     }, []);
 
@@ -155,7 +176,22 @@ const ContentHome = () => {
 
     return <>
         <SeoHelmet title="首页" description="个人技术博客 — Rust、React、IoT 开发经验与项目实践" url="/" />
-        <div className="SelfDescription">
+        <div className="SelfDescription" ref={heroRef}>
+            {/* 顶部背景视频：muted+playsInline 是自动播放的前提；poster 为加载期兜底；
+                离屏暂停由上面的 IntersectionObserver 处理。heroOverlay 保证文字可读性 */}
+            <video
+                className="heroVideo"
+                src={heroBg}
+                poster={heroPoster}
+                muted
+                loop
+                autoPlay
+                playsInline
+                preload="auto"
+                disablePictureInPicture
+                aria-hidden="true"
+            />
+            <div className="heroOverlay" />
             <AnnouncementModal />
 
             <div className="SayWords">
