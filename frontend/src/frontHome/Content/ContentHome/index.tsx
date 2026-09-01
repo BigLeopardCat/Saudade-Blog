@@ -93,6 +93,8 @@ const ContentHome = () => {
         if (!hero) return;
         const video = hero.querySelector('video');
         if (!video) return;
+        // 20260902: 花瓣运动 2.25 倍速（正值 playbackRate，无负速崩溃风险）
+        video.playbackRate = 2.25;
         const observer = new IntersectionObserver(([entry]) => {
             if (entry.isIntersecting) {
                 video.play().catch(() => {});
