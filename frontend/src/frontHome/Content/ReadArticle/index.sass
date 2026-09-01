@@ -173,10 +173,7 @@ html
         top: 12%
         overflow-y: auto
         transition: all .8s
-        // 20260902：backdrop-filter: blur(5px) 移除——TOC 面板 320×720 sticky 固定，
-        // 文章滚动时每帧重新采样+模糊下方内容（真实浏览器滚动 GPU 20% 的主源，
-        // 与主页导航栏同类问题）。改半透明底色保证可读性，视觉与原模糊面板接近。
-        background: rgba(255, 255, 255, 0.78)
+        backdrop-filter: blur(5px)
         border-radius: 8px
         padding: 10px
         max-height: 80vh
@@ -275,10 +272,6 @@ html
   font-weight: 700
 
 /* Dark Mode */
-.frontDark .readContainer .readContent .navigation .markdown-navigation
-  // 20260902：移除 backdrop-filter 后半透明暗色底（见上 light 版注释）
-  background: rgba(15, 23, 42, 0.72)
-
 .frontDark .readContainer .readContent .navigation .markdown-navigation .title-anchor
   color: #ffffff !important
   transition-duration: 0.3s
