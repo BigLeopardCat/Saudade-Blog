@@ -1,4 +1,4 @@
-use axum::{Json, extract::{State, Query, Path}};
+use axum::{Json, extract::{State, Query, Path}, http::StatusCode, response::{IntoResponse, Response}};
 use sea_orm::{EntityTrait, ColumnTrait, QueryFilter, QueryOrder, Condition, ActiveModelTrait, Set, PaginatorTrait};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -409,7 +409,7 @@ pub async fn delete_note(
 pub async fn get_note_detail(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i32>,
-) -> Json<ApiResponse<Option<NoteDto>>> {
+) -> Response {
     // 公开详情仅返回已发布文章（A4 修复：与列表/搜索接口的过滤条件一致，防枚举自增 id 读取草稿/私密文章）
     let res = note::Entity::find_by_id(id)
         .filter(note::Column::IsPublic.eq(true))
@@ -418,12 +418,23 @@ pub async fn get_note_detail(
         .all(&state.db)
         .await
         .unwrap_or(vec![]);
-    
+
     let dto = res.into_iter().next().map(|(n, cats)| {
         map_note(n, cats.into_iter().next())
     });
 
-    Json(ApiResponse::success(dto))
+    // 20260902：文章不存在/不可见时返回 HTTP 404（此前 200+data:null）——前端
+    // ReadArticle 的 notFound 判定依赖 err.response.status===404，200+null 会让
+    // 编造的文章链接（如 agent 幻觉输出的 /article/17）显示成"文章加载中"而非
+    // "文章不存在"，幻觉无法被用户戳穿。
+    match dto {
+        Some(dto) => (StatusCode::OK, Json(ApiResponse::success(dto))).into_response(),
+        None => (StatusCode::NOT_FOUND, Json(ApiResponse {
+            code: 404,
+            message: "文章不存在".to_string(),
+            data: Option::<NoteDto>::None,
+        })).into_response(),
+    }
 }fn map_note_summary(n: note::Model, cat: Option<category::Model>) -> NoteDto {
     let mut dto = map_note(n, cat);
     dto.content = String::new();
