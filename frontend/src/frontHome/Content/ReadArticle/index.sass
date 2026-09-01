@@ -41,14 +41,6 @@ html
       height: 100%
       object-fit: cover
       position: relative
-      // 20260902：模糊入场纯 CSS 动画，无 fill 模式——结束后自动回到无 filter 基态，
-      // 不残留滤镜合成层（framer-motion 会把 blur(0px) 永久写进内联样式）
-      animation: coverBlurIn 1s ease-out
-      @keyframes coverBlurIn
-        from
-          filter: blur(10px)
-        to
-          filter: blur(0px)
     .readInfo
       width: 880px
       max-width: 880px
