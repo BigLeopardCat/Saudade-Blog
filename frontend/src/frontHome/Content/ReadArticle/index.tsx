@@ -45,17 +45,26 @@ const ReadArticle = () => {
     const {id} = useParams()
     const [isLoading, setLoading] = useState(true)
     const [article, setArticle] = useState<NoteType|null>(null)
-    
+    // 20260901：文章不存在（404）标记——agent 幻觉链接/死链直达时渲染
+    // "文章不存在"提示，不再渲染空壳页（此前 fetch 失败只 console.error，
+    // article=null → 空封面+空正文的假页面，用户误以为"能打开"）
+    const [notFound, setNotFound] = useState(false)
+
     // Lock ref to prevent TOC auto-scroll during manual click
     const isClickingTocRef = useRef(false);
 
     useEffect(() => {
         if (id) {
             setLoading(true)
+            setNotFound(false)
             getNoteById(id).then((res) => {
                 setArticle({ ...res.data.data });
             }).catch((err) => {
                 console.error('获取失败', err)
+                if (err?.response?.status === 404) {
+                    setNotFound(true)
+                    setArticle(null)
+                }
             }).finally(() => {
                 setLoading(false)
             });
@@ -236,8 +245,14 @@ const ReadArticle = () => {
 
     return (
         <div className='readContainer'>
-            <SeoHelmet title={article ? article.noteTitle : '文章加载中'} description={article?.description || undefined} image={article?.cover || undefined} url={`/article/${id}`} type="article" />
-            {isLoading ? (
+            <SeoHelmet title={notFound ? '文章不存在' : (article ? article.noteTitle : '文章加载中')} description={article?.description || undefined} image={article?.cover || undefined} url={`/article/${id}`} type="article" />
+            {notFound ? (
+                <div style={{width:'100vw',height:'100vh',display:'flex',flexDirection:'column',justifyContent:'center',alignItems:'center',gap:16}}>
+                    <h1 style={{fontSize:28}}>文章不存在或已删除</h1>
+                    <p style={{opacity:0.6}}>你访问的文章 <code>/article/{id}</code> 未找到——可能是链接有误，或文章已下架。</p>
+                    <a href="/" style={{color:'#aec8c8'}}>← 返回首页</a>
+                </div>
+            ) : isLoading ? (
                 <div style={{width:'100vw',height:'100vh',display:'flex',justifyContent:'center',alignItems:'center'}}>
                     <Loading />
                 </div>
