@@ -546,9 +546,10 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
     color: var(--font-title-color)
 
 // Dark Mode Text Fix
-// 暗色模式：视频较亮，加强遮罩压暗保证白字可读（20260902）
+// 暗色模式：视频仅白天显示（20260902 用户要求），隐藏视频与遮罩回到纯色背景
+.frontDark .SelfDescription .heroVideo,
 .frontDark .SelfDescription .heroOverlay
-  background: linear-gradient(rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0.2))
+  display: none
 
 .dark .SayWords h2
   color: white !important

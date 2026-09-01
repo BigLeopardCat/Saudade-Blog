@@ -15,8 +15,8 @@ import {SocialType} from "../../../interface/SocialType";
 import {getNotePage, getTopNotes} from "../../../apis/NoteMethods.tsx";
 import dayjs from "dayjs";
 import { resolveApiAssetUrl } from '../../../utils/runtimeApi';
-import heroBg from '../../assets/hero_bg.mp4';
-import heroPoster from '../../assets/hero_poster.jpg';
+import heroBg from '../../../assets/hero_bg.mp4';
+import heroPoster from '../../../assets/hero_poster.jpg';
 
 
 // 模块级缓存：只在同一次 SPA 会话内复用，离开 Dashboard 后自动失效
@@ -207,7 +207,8 @@ const ContentHome = () => {
                     <SocialButton SocialName='Email' img='/QQ-Email.png' copyText='sora.saudade@qq.com'/>
                 </div>
             </div>
-            <Avatar src={avatar} size={320} className='frontAvatar'/>
+            {/* 20260902 暂时注释掉大圆头像窗口 */}
+            {/* <Avatar src={avatar} size={320} className='frontAvatar'/> */}
             <motion.div
                 initial={{ opacity: 0, y: 30 }}
                 animate={{ opacity: 1, y: 0 }}
