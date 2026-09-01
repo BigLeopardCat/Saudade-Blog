@@ -80,45 +80,14 @@ const ContentHome = () => {
         return () => observer.disconnect();
     }, []);
 
-    // 顶部背景视频无缝循环（20260902 三修）：前两版（单视频淡化/双视频交叉淡化）
-    // 都是在"把重播藏起来"——重播回到第 0 帧、花瓣位置复位是内容跳变，藏得再软
-    // 也有副作用：交叉淡化过渡期两层半透明、页面背景从中间透出=灰；B 层起播延迟
-    // =闪；淡化窗口=每 6s 一次可见的"重播感"（用户两次反馈"一闪一闪/重播感严重"）。
-    // ping-pong 倒带循环：到结尾 playbackRate=-1 倒放，花瓣平滑反向回流（如风
-    // 回吹，画面人物静止不受影响），到开头再转正放——运动全程连续，视频永远全
-    // 不透明，没有"重播"这个事件。只解码一层；负速不支持时保留 loop 硬循环兜底。
-    useEffect(() => {
-        const hero = heroRef.current;
-        if (!hero) return;
-        const video = hero.querySelector('video');
-        if (!video) return;
-        // 探测负速播放支持（个别旧实现不应用负 playbackRate）
-        video.playbackRate = -1;
-        const supported = video.playbackRate === -1;
-        video.playbackRate = 1;
-        if (!supported) return; // 不支持：保持 loop 属性硬循环（原行为）
-        let dir: 1 | -1 = 1;
-        const flip = (d: 1 | -1) => {
-            dir = d;
-            video.playbackRate = d;
-            video.play().catch(() => {});
-        };
-        const onEnded = () => flip(dir === 1 ? -1 : 1);
-        // 兜底：个别实现负速到起点不触发 ended，靠 timeupdate 巡检翻转
-        const onTime = () => {
-            if (dir === -1 && video.currentTime <= 0.05) flip(1);
-        };
-        video.loop = false;
-        video.addEventListener('ended', onEnded);
-        video.addEventListener('timeupdate', onTime);
-        return () => {
-            video.removeEventListener('ended', onEnded);
-            video.removeEventListener('timeupdate', onTime);
-        };
-    }, []);
-
+    // 顶部背景视频无缝循环（20260902 四修）：素材已裁为花瓣运动的 1s 周期循环
+    // （25fps 下取末秒 26 帧 [t=4.96s, 5.96s]，首尾帧为同一相位，接缝帧差
+    // ≈0.22 mean / >30 阈值 0.0000%——比素材自身逐帧步进（0.1~0.5）还小，
+    // 重播即续播，无"回到第 0 帧"的内容复位）。此前三版均靠 JS 掩盖 6s 素材的
+    // 接缝内容跳变，各有副作用：单视频淡化=蒙灰；双视频交叉淡化=闪+灰+重播感；
+    // ping-pong 倒带 playbackRate=-1 在 Chrome 抛 NotSupportedError 直接全站
+    // 崩溃（React Error Boundary）。现素材自对齐 + 原生 loop 属性，零 JS 干预。
     // hero 滚出视口即暂停（视频解码是持续 GPU 成本，离屏不再浪费），回视口恢复
-    // 播放——暂停/恢复不改变 playbackRate，ping-pong 方向不受影响
     useEffect(() => {
         const hero = heroRef.current;
         if (!hero) return;
