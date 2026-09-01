@@ -98,6 +98,24 @@ const ContentHome = () => {
         return () => observer.disconnect();
     }, []);
 
+    // 循环接缝淡化（20260902）：花瓣视频首尾帧不衔接，重播瞬间花瓣跳位产生
+    // "打断感"。结尾前 0.8s 内按剩余时间线性压低 video opacity，重播后恢复——
+    // 透明度在合成器层完成（配 sass 里 .heroVideo 的 transition），把跳位藏进
+    // 淡出/淡入里。注意不能改 playbackRate：跳位是首尾帧内容差，不是速度问题。
+    useEffect(() => {
+        const hero = heroRef.current;
+        if (!hero) return;
+        const video = hero.querySelector('video');
+        if (!video) return;
+        const FADE = 0.8; // 秒，需小于视频时长
+        const onTime = () => {
+            const remain = (video.duration || 6) - video.currentTime;
+            video.style.opacity = remain < FADE ? String(Math.max(remain / FADE, 0.03)) : '1';
+        };
+        video.addEventListener('timeupdate', onTime);
+        return () => video.removeEventListener('timeupdate', onTime);
+    }, []);
+
     useEffect(() => {
         if (isCachedOther) return;
         setLoading(true);
@@ -213,7 +231,7 @@ const ContentHome = () => {
                 initial={{ opacity: 0, y: 30 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 1 }}
-                style={{display:'flex',width:'200px',justifyContent:'center',bottom:'0',position:"absolute"}}
+                style={{display:'flex',width:'200px',justifyContent:'center',bottom:'0',left:'8%',position:"absolute"}}
             >
             <p className="home-one-say" style={{position:'absolute',bottom:"20px", whiteSpace: "nowrap", font: '600 12px ""'}}>{oneSay}</p>
                 <i className="iconfont icon-rcd-angle-double-down upAndDown" style={{fontSize: 50,position:"absolute",bottom: 20,color:'skyblue'}} onClick={handleScrollDown}/></motion.div>
