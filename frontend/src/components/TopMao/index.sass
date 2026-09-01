@@ -1,9 +1,7 @@
-@keyframes catDangle
-  0%, 100%
-    transform: translateY(0)
-  50%
-    transform: translateY(-10px)
-    animation-timing-function: ease-in-out
+// 20260902：catDangle 无限摆动已移除——TopMao 是 z-index:-1、位于整页内容之下，
+// 每次摆动帧都迫使合成器把整页重新合成一遍（实测 GPU 占用 30%+，与滚动位置强相关）。
+// 进入动画由 .TopMao 的 transition 承担（一次性），进入后静止即可，回到顶部按钮无需持续动画。
+// 若日后想恢复摆动：把动画加回来会同步恢复整页重合成开销，改用正 z-index 独立层可规避（视觉变前置）。
 
 .TopMao
   width: 70px
@@ -21,4 +19,3 @@
 
 .TopMaoShow
   top: 0
-  animation: catDangle 2.5s ease-in-out infinite

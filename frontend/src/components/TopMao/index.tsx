@@ -13,7 +13,7 @@ const TopMao: React.FC<TopMaoProps> = ({ currentScrollHeight }) => {
         });
     };
     return (
-        <div className={`TopMao ${currentScrollHeight > 500 ? 'TopMaoShow' : ''} shake`} onClick={BackToTop}></div>
+        <div className={`TopMao ${currentScrollHeight > 500 ? 'TopMaoShow' : ''}`} onClick={BackToTop}></div>
     );
 };
 
