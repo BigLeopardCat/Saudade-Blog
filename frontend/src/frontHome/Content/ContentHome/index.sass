@@ -87,10 +87,12 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
     object-fit: cover
     z-index: 0
     pointer-events: none
-    // 循环接缝淡化：JS 在结尾前按剩余时间压 opacity，重播后恢复——过渡在
-    // 合成器层完成，不触发重绘（视频本身是静态合成层）；0.4s 与 JS 端
-    // FADE=0.45/最低 0.55 配套，浅而短，不产生"蒙灰"观感
+    // 交叉淡化过渡：JS 在轮换时改两侧 opacity，过渡在合成器层完成，不触发
+    // 重绘（视频本身是静态合成层）；0.4s 与 JS 端 BLEND=0.6 配套
     transition: opacity 0.4s ease-out
+    // B 层初始全透明待命（只有轮换到的层才可见）
+    &.heroB
+      opacity: 0
   // 文字可读性遮罩：浅色视频下压暗背景；暗色模式加强（见下方 .frontDark 覆写）
   .heroOverlay
     position: absolute
