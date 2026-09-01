@@ -681,6 +681,42 @@
             } catch(e) { /* 单元素删除失败不影响其余 */ }
           }
         }
+        // ── 失败轮持久化提示（20260902，025943 事故修复）──
+        // 渲染：最后一条 user 消息命中失败标记（原文匹配）且其后无 agent 回复时，
+        // 在列表末尾追加"（未收到回复）"提示条——用户刷新/重开面板后仍能看到
+        // 失败痕迹（错误气泡是内存态，刷新即失；DB 只保留 user 消息无失败标记）。
+        // 标记由 chat-stream.js 在 abort/网络错误时写入、成功收尾时清除；24h 过期。
+        // 提示条是纯渲染物（同时间标签）：不进 items、不序列化、不广播。
+        try {
+          const failedRaw = localStorage.getItem('saudade-chat-failed');
+          let failedNoteEl = messages.querySelector('.chat-msg-failed-note');
+          if (failedRaw) {
+            const failed = JSON.parse(failedRaw);
+            const entry = Array.isArray(failed) && failed.length ? failed[0] : null;
+            const expired = entry && (Date.now() - entry.ts > 24 * 3600 * 1000);
+            const items = ctx.state.items;
+            const last = items.length ? items[items.length - 1] : null;
+            const lastIsFailedUser = !!entry && !expired && last && last.type === 'user'
+              && last.text === entry.text;
+            const hasAgentAfter = lastIsFailedUser && items.slice(0, -1)
+              .some((it, i) => it.id === last.id && items[i + 1]
+                && items[i + 1].type === 'agent' && items[i + 1].id !== last.id);
+            // 最后一条是 user 且匹配标记；其后不能有 agent 回复（已回复 = 重发成功/补答，不提示）
+            if (lastIsFailedUser && !hasAgentAfter) {
+              if (!failedNoteEl) {
+                failedNoteEl = document.createElement('div');
+                failedNoteEl.className = 'chat-msg-failed-note';
+                failedNoteEl.textContent = '⏳ 该条消息未收到回复（可能已超时或网络中断）';
+                messages.appendChild(failedNoteEl);
+              }
+            } else if (failedNoteEl) {
+              failedNoteEl.parentNode.removeChild(failedNoteEl);
+              failedNoteEl = null;
+            }
+          } else if (failedNoteEl) {
+            failedNoteEl.parentNode.removeChild(failedNoteEl);
+          }
+        } catch(e) { /* 失败提示渲染失败不影响对话渲染 */ }
         scrollToBottom(messages);
       };
       // 消息气泡工厂：DOM 创建 + dataset（mid/mtype/mtext 供 reconcile 索引与收养）
