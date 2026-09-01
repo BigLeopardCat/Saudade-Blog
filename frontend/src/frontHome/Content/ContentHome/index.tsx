@@ -3,7 +3,7 @@ import AnnouncementModal from "../../../components/AnnouncementModal";
 import './index.sass'
 import {Avatar, Tag} from "antd";
 import SocialButton from "../../../components/Buttons/SocialButton";
-import {useEffect,  useState} from "react";
+import {useEffect, useRef, useState} from "react";
 import {useSelector} from "react-redux";
 import UserState from "../../../interface/UserState";
 import { motion } from 'framer-motion';
@@ -29,6 +29,9 @@ const ContentHome = () => {
     const [slideDir, setSlideDir] = useState<'left' | 'right'>('right');
     // 鼠标悬浮轮播图时暂停自动滚动（移开恢复）
     const [hoverPaused, setHoverPaused] = useState(false);
+    // 轮播图滚出视口（如停在文章卡片区）时暂停自动滚动，避免离屏动画触发重绘
+    const [topInView, setTopInView] = useState(true);
+    const topRef = useRef<HTMLDivElement>(null);
     const [currentPage,setCurrentPage] = useState(cachedCurrentPage)
     const [hasMoreArticles, setHasMoreArticles] = useState(cachedHasMoreArticles);
     const [loading, setLoading] = useState(false);
@@ -56,7 +59,7 @@ const ContentHome = () => {
 
     useEffect(() => {
         if(topArticles.length <= 1) return;
-        if (hoverPaused) return; // 悬浮暂停：清除定时器，移开后再重建
+        if (hoverPaused || !topInView) return; // 悬浮/移出视口暂停：清除定时器，恢复后再重建
         const timer = setInterval(() => {
             setCurrentTop(prevTop => {
             setSlideDir('right');
@@ -64,7 +67,15 @@ const ContentHome = () => {
         });
         }, 5000);
         return () => clearInterval(timer);
-    }, [topArticles.length, hoverPaused])
+    }, [topArticles.length, hoverPaused, topInView])
+
+    useEffect(() => {
+        const el = topRef.current;
+        if (!el) return;
+        const observer = new IntersectionObserver(([entry]) => setTopInView(entry.isIntersecting), { threshold: 0.1 });
+        observer.observe(el);
+        return () => observer.disconnect();
+    }, []);
 
     useEffect(() => {
         if (isCachedOther) return;
@@ -171,7 +182,7 @@ const ContentHome = () => {
                 <i className="iconfont icon-rcd-angle-double-down upAndDown" style={{fontSize: 50,position:"absolute",bottom: 20,color:'skyblue'}} onClick={handleScrollDown}/></motion.div>
         </div>
         <div className="ContentContainer dark-pic">
-            {topArticles.length>0&&<div className="TopArticle" style={{ display: 'flex', position: 'relative' }}
+            {topArticles.length>0&&<div className="TopArticle" style={{ display: 'flex', position: 'relative' }} ref={topRef}
                 onMouseEnter={() => setHoverPaused(true)}
                 onMouseLeave={() => setHoverPaused(false)}
             >
@@ -184,7 +195,6 @@ const ContentHome = () => {
                                     src={resolveApiAssetUrl(item.cover)}
                                     style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                                 />
-                                <span className="thumbnail-screen"></span>
                             </div>
                             <div className="topContent">
                                 <h4># {Categories.find(c => c.categoryKey === item.noteCategory)?.categoryTitle}</h4>

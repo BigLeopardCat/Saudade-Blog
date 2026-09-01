@@ -188,12 +188,9 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
         height: 100%
         width: 100%
         transition: opacity 0.5s ease-in-out
-      span
-        border-radius: 15px 0 0 15px
-        position: absolute
-        width: 120%
-        height: 100%
-        mix-blend-mode: screen
+      // 20260902：删除 .thumbnail-screen 的 mix-blend-mode: screen——该 span 无任何背景
+      // 样式（完全透明、无视觉效果），但 blend-mode 迫使合成器在每次轮播滑动动画中
+      // 对整页背景（fixed 背景+所有下层内容）逐帧重新混合，是轮播区 GPU 30%+ 的第二主因。
       &:after
         pointer-events: none
         content: ''

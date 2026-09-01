@@ -12,7 +12,10 @@
   // 原 backdrop-filter 会创建层叠上下文，把内部元素的 z-index 关在根容器内；
   // 注释后卡片 z-index(99) 会直接压过看板娘(z-index:1)，用 isolation 重建层叠上下文保持层级
   isolation: isolate
-  background-attachment: fixed
+  // 20260902：移除 background-attachment: fixed——fixed 背景锚定视口，任何滚动帧/任何
+  // 内容失效（轮播动画、卡片入场、hover）都会触发整页背景重栅格化，GPU 占用 30%+ 的主因。
+  // 背景图已 404，剩一层水平渐变纵向恒定，去掉 fixed 视觉零差异。
+  // 日后若恢复背景图并要视差效果，改用独立 position: fixed 图层（只栅格化一次，不随帧重绘）。
 
 // ── 单击放大查看器浮层（20260901 从 ReadArticle/index.sass 移入全局）──
 // 文章页（mermaid 图/正文图片）与看板娘对话框（markdown 图片）共用同一套浮层样式；
