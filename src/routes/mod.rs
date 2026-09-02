@@ -98,7 +98,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/chat/discard", post(chat::discard_handler))
         // 会话管理（20260903 会话化；handler 内手写鉴权同 chat 系）
         .route("/api/chat/conversations", get(conversation::list_conversations).post(conversation::create_conversation))
-        .route("/api/chat/conversations/:id", delete(conversation::delete_conversation))
+        .route("/api/chat/conversations/:id", delete(conversation::delete_conversation).patch(conversation::update_conversation))
         
         // Knowledge Base (GET public for agent)
         .route("/api/knowledge", get(knowledge::list_knowledge))

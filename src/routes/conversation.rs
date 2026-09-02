@@ -5,6 +5,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set, TransactionTrait};
+use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
 use crate::routes::AppState;
@@ -83,8 +84,10 @@ pub async fn list_conversations(
         )
             .into_response();
     };
+    // 20260903b：置顶会话 pinned 优先（组内仍按最后活动倒序）
     let convs = conversation::Entity::find()
         .filter(conversation::Column::UserId.eq(uid))
+        .order_by_desc(conversation::Column::Pinned)
         .order_by_desc(conversation::Column::UpdatedAt)
         .order_by_desc(conversation::Column::Id) // datetime 秒精度并列时 id 兜底
         .limit(200)
@@ -100,6 +103,7 @@ pub async fn list_conversations(
                 "title": c.title,
                 "created_at": naive_ms(c.created_at),
                 "updated_at": naive_ms(c.updated_at),
+                "pinned": c.pinned,
             })
         })
         .collect();
@@ -186,6 +190,79 @@ pub async fn delete_conversation(
         Err(_) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"success": false, "error": "删除失败"})),
+        )
+            .into_response(),
+    }
+}
+
+/// PATCH /api/chat/conversations/:id：部分更新（重命名 title / 置顶 pinned）。
+/// 归属校验同 delete（不存在或非本人统一 404，防枚举）。
+#[derive(Deserialize)]
+pub struct UpdateConversationReq {
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    pinned: Option<bool>,
+}
+
+pub async fn update_conversation(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i32>,
+    headers: HeaderMap,
+    Json(req): Json<UpdateConversationReq>,
+) -> Response {
+    let Some(uid) = auth_jwt::auth_uid(&headers) else {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "unauthorized"})),
+        )
+            .into_response();
+    };
+    if req.title.is_none() && req.pinned.is_none() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"success": false, "error": "nothing_to_update"})),
+        )
+            .into_response();
+    }
+    let owned = conversation::Entity::find_by_id(id)
+        .filter(conversation::Column::UserId.eq(uid))
+        .one(&state.db)
+        .await
+        .ok()
+        .flatten();
+    let Some(model) = owned else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({"success": false, "error": "conversation_not_found"})),
+        )
+            .into_response();
+    };
+    // Model → ActiveModel 全字段 Set，只覆盖本次要改的字段
+    let mut am: conversation::ActiveModel = model.clone().into();
+    if let Some(t) = req.title {
+        let t = t.trim();
+        if t.is_empty() {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"success": false, "error": "title_empty"})),
+            )
+                .into_response();
+        }
+        // char 级截 64（title 列 varchar(64)，防 UTF-8 截断 panic）
+        am.title = Set(Some(t.chars().take(64).collect()));
+    }
+    if let Some(p) = req.pinned {
+        am.pinned = Set(p);
+    }
+    // updated_at 写回原值：重命名/置顶属整理操作，不刷新"最后发言"活动排序
+    //（防表结构日后带 ON UPDATE CURRENT_TIMESTAMP 时被自动 touch）
+    am.updated_at = Set(model.updated_at);
+    match am.update(&state.db).await {
+        Ok(_) => (StatusCode::OK, Json(json!({"success": true}))).into_response(),
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"success": false, "error": "更新失败"})),
         )
             .into_response(),
     }

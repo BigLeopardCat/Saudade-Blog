@@ -69,7 +69,9 @@ async fn test_conversations_require_auth() {
     // POST /api/chat/conversations 新建
     assert_eq!(req_status(app.clone(), "POST", "/api/chat/conversations").await, StatusCode::UNAUTHORIZED);
     // DELETE /api/chat/conversations/:id 删除
-    assert_eq!(req_status(app, "DELETE", "/api/chat/conversations/1").await, StatusCode::UNAUTHORIZED);
+    assert_eq!(req_status(app.clone(), "DELETE", "/api/chat/conversations/1").await, StatusCode::UNAUTHORIZED);
+    // PATCH /api/chat/conversations/:id 重命名/置顶
+    assert_eq!(req_status(app, "PATCH", "/api/chat/conversations/1").await, StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
