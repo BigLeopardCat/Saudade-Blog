@@ -30,7 +30,7 @@ nginx (/etc/nginx/sites-enabled/blog)
 | 8883 | EMQX | `emqx` | MQTT over TLS；设备 ↔ device-service 消息总线 |
 | 3306 | MySQL | `mysql` | 博客业务库 + 对话历史 + IoT 数据 |
 
-依赖：MySQL 8（`memory_blog` 库）、EMQX（`emqx.service`，MQTTS 证书在 `/etc/letsencrypt/live/saudade.site/`）。
+依赖：MySQL 8（`memory_blog` 库）、EMQX（`emqx.service`，MQTTS 证书在 `/etc/emqx/certs/`——与 `/etc/nginx/ssl/` 同源双副本，20260831 已续期至 2026-11-07）。
 
 ---
 
@@ -51,7 +51,7 @@ push 到 `cn_sora_blog` 分支触发 `build-and-deploy`：
 
 - **R2 只作部署中转，不当静态直服**（20260830 测速定论：R2 跨境 TTFB 0.7-1.3s vs 服务器骨干网毫秒级，3M 出站带宽下本地直服仍是正解；详见 agent 仓库 docs/问题记录.md 与 roadmap 记忆）。
 - 密钥全走 GitHub Secrets（`R2_ENDPOINT/ACCESS/SECRET/BUCKET`）与服务器 `.env`，无硬编码。
-- **前端强缓存**：`location ~* ^/(live2d_model|cubism5|live2d-widgets)/` 设 1 年 immutable（须置于 `\.(js|css|json)$` no-store 正则**之前**）；`autoload.js`/`waifu.css` 换版靠 `?v=` bump（4 处同步，见 §4）。
+- **前端强缓存**：`location ~* ^/(live2d_model|cubism5|live2d-widgets)/` 设 1 年 immutable（须置于 `\.(js|css|json)$` no-store 正则**之前**）；`autoload.js`/`waifu.css` 换版靠 `?v=` bump（手动同步 3 处：`Live2dAgent/index.tsx`、`device-console/index.html` 的 `?v=` + `autoload.js` 的 `VER`；waifu.css 由 VER 自动，见主仓库 CLAUDE.md §2）。
 
 ### 2.2 逃生通道（仅 CI 故障时）
 
@@ -67,18 +67,18 @@ python3 scripts/deploy/upload_to_r2.py && bash scripts/deploy/deploy_from_r2.sh
 - **本机不编译、不手动构建**：机器仅 3.7GB 内存，vite build（3072 堆）+ 常驻服务并发会 OOM
   拖垮整机（2026-08-30 实际发生，服务器重启 5 分钟）。部署一律走 CI 云端构建。
 - **本地验证用轻量命令**：前端不构建直接 push 等 CI；后端 `cargo check`（不 `build --release`）。
-- **CI 严格模式**：`RUSTFLAGS="-D warnings" cargo check`——任何 warning 会导致 CI 构建失败，提交前必跑。
+- **严格自检（可选）**：`RUSTFLAGS="-D warnings" cargo check`——CI 未设 RUSTFLAGS（deploy.yml 无 -D warnings），此模式是本地纪律非 CI 门槛；unused import 等 warning 提交前清掉。
 
 ---
 
 ## 3. 服务管理（systemd）
 
-三个 systemd 服务（均 `Restart=always` / `on-failure` 崩溃自愈 + `enable` 开机自启）：
+三个 systemd 服务（`saudade-rust`/`saudade-agent` 为 `Restart=always`、`saudade-device` 为 `Restart=on-failure`，均 `enable` 开机自启）：
 
 | 服务 | ExecStart | 日志 | 说明 |
 |---|---|---|---|
 | `saudade-rust` | `target/release/saudade_blog_bin`（WorkingDirectory=/home/ubuntu/memory_blog_rust） | `logs/rust.log` | dotenv 自动加载 WorkingDirectory 下 `.env` |
-| `saudade-agent` | `.venv/bin/python server.py`（2 workers） | `logs/agent/agent.log` | `TimeoutStopSec=120` 优雅停等在途对话 |
+| `saudade-agent` | `.venv/bin/uvicorn server:app --host 127.0.0.1 --port 8010 --workers 2 --no-access-log` | `logs/agent/agent.log` | `TimeoutStopSec=120` 优雅停等在途对话 |
 | `saudade-device` | `mqtt-demo/device-service/target/release/device-service` | `logs/device.log` | EnvironmentFile=`svc.env`（含 DEVICE_LOG_FILE） |
 
 **勿再 nohup 裸跑** Rust/agent（历史遗留习惯）——会与 systemd 抢 3000/8010 端口。

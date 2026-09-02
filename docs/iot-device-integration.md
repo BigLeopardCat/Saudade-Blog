@@ -229,7 +229,7 @@ esp_mqtt_client_config_t cfg = {
 
 - **安全组**：公网需放行 8883（MQTTS）。REST 全走 443 无需额外放行。
 - **证书**：MQTTS 证书与 HTTPS 同源（saudade.site），到期需续期并同步
-  `/etc/emqx/certs/`（2026 年 9 月 8 日到期——提前续期，勿等到设备全掉线）。
+  `/etc/emqx/certs/`（20260831 已续期至 **2026-11-07**；nginx 侧副本在 `/etc/nginx/ssl/`，双副本同源同步）。
 - **设备服务部署**：device-service 不在 git、不经 CI（mqtt-demo 目录），改动需手动
   `cargo build --release` + `systemctl restart saudade-device`（3.7GB 机器注意内存）。
 - **数据**：SQLite WAL（devices/config_history/telemetry/cmd_history），量小无需外部依赖。

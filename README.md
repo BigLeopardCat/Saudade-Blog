@@ -48,18 +48,18 @@ git push（主仓库 cn_sora_blog / agent 仓库）
 
 按组件：
 
-- **后端（本仓库 `src/`）**：本地只做 `RUSTFLAGS="-D warnings" cargo check`（与 CI 严格模式
-  对齐——unused import 等任何 warning 都会挂构建），push 即由 CI 编译部署。
+- **后端（本仓库 `src/`）**：本地只做 `RUSTFLAGS="-D warnings" cargo check`（严格自检；
+  CI 未设 RUSTFLAGS，warning 不挂构建——此模式是本地纪律非 CI 门槛），push 即由 CI 编译部署。
 - **前端（本仓库 `frontend/`）**：本地不构建。改动 push 走 CI；**改了 live2d-widgets 子模块
-  必须 bump 版本号**（nginx 对该目录 immutable 缓存 1 年：`autoload.js` 的 `VER` 与
-  `Live2dAgent/index.tsx` 的 `?v=` 同步，waifu.css 的 `?v=` 用 VER 自动）。
+  必须 bump 版本号**（nginx 对该目录 immutable 缓存 1 年：手动同步 3 处——`Live2dAgent/index.tsx`
+  与 `device-console/index.html` 的 `?v=`、`autoload.js` 的 `VER`；waifu.css 的 `?v=` 用 VER 自动）。
 - **Agent（`saudade-blog-agent/`，独立仓库）**：改技能/工具/prompt 后需重启服务生效
   （`sudo systemctl restart saudade-agent`）；push 走独立 CI。改技能注册表 / plan 契约 /
   摘要逻辑后必跑 `test_skills.py`（L0）与 `eval/run_golden.py`（L2 真实 LLM 端到端）。
 
 ## 部署与运维
 
-服务均为 systemd 托管（`Restart=always` 崩溃自愈）：
+服务均为 systemd 托管（agent/rust 为 `Restart=always` 崩溃自愈；device 为 `Restart=on-failure`）：
 
 | 服务 | 端口 | 说明 |
 |---|---|---|
