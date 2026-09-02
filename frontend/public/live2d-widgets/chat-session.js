@@ -4,13 +4,19 @@
 // 搜索过滤、rail 图标注入、当前会话标题（顶拖拽条内）。依赖 chat-engine 注入的
 // chatHTML 骨架（#chat-rail / #waifu-conv-panel / #conv-list / #chat-conv-title）。
 //
-// 20260903b 几何（用户拍板）：
+// 20260903c 几何（用户第二轮实测拍板）：
 // - 抽屉宽 CONV_WIDTH=182（waifu.css --conv-w，收窄 30%）
 // - rail（侧边栏）固定面板最左不动；☰ 顶、＋/历 底组（靠图片按钮往上堆叠）
-// - conv-open 面板宽度/消息区零位移；抽屉自适应：面板左缘到视口 ≥ 182+12 →
-//   conv-out 向左弹出（面板外），否则 conv-in 面板内覆盖（移动端恒 conv-in）
+// - 展开语义 = "拖拽栏不动，向左开拓出侧边栏区域"：conv-out（空间足够）面板
+//   整体左移+加宽 182（JS 管几何），CSS 把内部布局右移 182 → 消息区/拖拽栏
+//   视口位置不变，左 182 列成为会话侧边栏真窗格（不再是叠层）；
+//   conv-in（面板左缘距视口 <186px / 移动端）：rail 右缘起面板内覆盖兜底。
+//   开合快照即时逆推（close 由当前几何 -182），拖动/缩放中途开合不失真
 // - 会话标题不占消息区：写入顶拖拽条内 #chat-conv-title（非空才可见）
-// - 列表头：标题 + 搜索框（本地过滤行标题）；行 ⋯ → 菜单[删除/置顶/重命名]，
+// - 列表头：标题 + 搜索框（本地过滤行标题）；行 ⋯ → 纵向菜单默认向下展开
+//   （仅贴列表底会溢出下缘时翻上；旧 offsetTop 含列表头高度的判据已废——
+//   顶部行的菜单曾整体飞出被裁切）
+// - 行菜单：删除 / 加入书签|删除书签（置顶切换）/ 重命名，均带用户 SVG 图标；
 //   点非列表区域自动收起
 // 游客（无 token）无会话概念：rail 整条隐藏，界面零变化（旧行为零回归）。
 (function (g) {
@@ -21,7 +27,8 @@
       return null;
     }
     const CONV_WIDTH = 182; // 抽屉列宽（与 waifu.css --conv-w 一致，用户收窄 30%）
-    const DRAWER_OFFSET = 12; // conv-out 判定：面板左缘离视口左边的最小间距
+    const CONV_GAP = 4; // 左扩可行判据：面板左扩 182 后左缘距视口仍 ≥4px
+    // → rect.left ≥ CONV_WIDTH + CONV_GAP 才置 conv-out，否则 conv-in 覆盖兜底
     // 会话切换阻断：发送/流式中不切会话（收尾保存仍写原会话，见 chat-engine 注释）
     const switchBlocked = () => !!(ctx.state.isSending || ctx.state.streamCtrl
       || (ctx.state.remoteRounds && Object.keys(ctx.state.remoteRounds).length));
@@ -45,6 +52,11 @@
     const ICON_SIDEBAR = '<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"><path d="M810.666667 85.333333a128 128 0 0 1 128 128v597.333334a128 128 0 0 1-128 128H213.333333a128 128 0 0 1-128-128V213.333333a128 128 0 0 1 128-128h597.333334zM341.333333 170.666667H213.333333l-5.802666 0.426666a42.538667 42.538667 0 0 0-36.48 36.437334L170.666667 213.333333v597.333334l0.426666 5.802666a42.538667 42.538667 0 0 0 36.437334 36.48L213.333333 853.333333h128V170.666667z m469.333334 0h-384v682.666666h384l5.802666-0.426666a42.538667 42.538667 0 0 0 36.48-36.437334L853.333333 810.666667V213.333333l-0.426666-5.802666A42.538667 42.538667 0 0 0 810.666667 170.666667z" fill="#666666"/></svg>';
     const ICON_NEW = '<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"><path d="M938.666667 469.333333c-23.608889 0-42.666667 19.057778-42.666667 42.666667v85.333333c0 70.542222-57.457778 128-128 128h-149.333333c-11.377778 0-22.186667 4.551111-30.151111 12.515556L512 814.364444l-76.515556-76.515555c-7.964444-7.964444-18.773333-12.515556-30.151111-12.515556H256c-70.542222 0-128-57.457778-128-128V298.666667C128 228.124444 185.457778 170.666667 256 170.666667h341.333333c23.608889 0 42.666667-19.057778 42.666667-42.666667S620.942222 85.333333 597.333333 85.333333H256c-117.76 0-213.333333 95.573333-213.333333 213.333334V597.333333c0 117.76 95.573333 213.333333 213.333333 213.333334h131.697778l94.151111 94.151111c8.248889 8.248889 19.342222 12.515556 30.151111 12.515555s21.902222-4.266667 30.151111-12.515555l94.151111-94.151111H768c117.76 0 213.333333-95.573333 213.333333-213.333334v-85.333333c0-23.608889-19.057778-42.666667-42.666666-42.666667z" fill="#203042"/><path d="M967.111111 213.333333h-71.111111V142.222222c0-23.608889-19.057778-42.666667-42.666667-42.666666s-42.666667 19.057778-42.666666 42.666666v71.111111H739.555556c-23.608889 0-42.666667 19.057778-42.666667 42.666667s19.057778 42.666667 42.666667 42.666667h71.111111V369.777778c0 23.608889 19.057778 42.666667 42.666666 42.666666s42.666667-19.057778 42.666667-42.666666v-71.111111H967.111111c23.608889 0 42.666667-19.057778 42.666667-42.666667s-19.057778-42.666667-42.666667-42.666667z" fill="#203042"/></svg>';
     const ICON_HISTORY = '<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"><path d="M469.333333 554.666667l128 128 59.733334-59.733334-102.4-102.4V341.333333h-85.333334v213.333334zM85.333333 256l149.333334 149.333333 29.866666 29.866667C298.666667 332.8 396.8 256 512 256c140.8 0 256 115.2 256 256s-115.2 256-256 256c-128 0-234.666667-93.866667-251.733333-217.6l-85.333334-85.333333c-4.266667 17.066667-4.266667 29.866667-4.266666 46.933333 0 187.733333 153.6 341.333333 341.333333 341.333333s341.333333-153.6 341.333333-341.333333-153.6-341.333333-341.333333-341.333333C405.333333 170.666667 311.466667 221.866667 247.466667 298.666667l-42.666667-42.666667H85.333333z" fill="#444444"/></svg>';
+    // ── 行菜单图标（用户提供，20260903c 注入；尺寸由 CSS .conv-menu-item svg 控制）──
+    const ICON_PIN = '<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"><path d="M736 288H288a32 32 0 1 1 0-64h448a32 32 0 0 1 0 64z m-32 512a32 32 0 0 1-22.72-9.28L512 621.44l-169.28 169.28A32 32 0 0 1 288 768V384a32 32 0 0 1 32-32h384a32 32 0 0 1 32 32v384a32 32 0 0 1-32 32z m-192-256a32 32 0 0 1 22.72 9.28L672 690.56V416H352v274.88l137.28-137.28A32 32 0 0 1 512 544z" fill="#202425"/></svg>'; // 加入书签
+    const ICON_UNPIN = '<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"><path d="M468.394667 106.666667a42.666667 42.666667 0 0 1 3.2 85.226666l-3.2 0.106667H234.666667v641.237333l252.885333-185.002666a42.666667 42.666667 0 0 1 47.402667-2.005334l3.072 2.069334L789.333333 833.024V577.045333a42.666667 42.666667 0 0 1 39.466667-42.538666l3.2-0.128a42.666667 42.666667 0 0 1 42.56 39.488l0.106667 3.2V917.333333c0 33.877333-37.333333 53.824-65.28 36.202667l-2.666667-1.834667L512.682667 735.573333 217.194667 951.765333c-27.306667 19.989333-65.386667 1.706667-67.754667-31.210666L149.333333 917.333333V149.333333a42.666667 42.666667 0 0 1 39.466667-42.56L192 106.666667h276.394667zM746.666667 64c117.824 0 213.333333 95.509333 213.333333 213.333333s-95.509333 213.333333-213.333333 213.333334-213.333333-95.509333-213.333334-213.333334S628.842667 64 746.666667 64z m0 85.333333a128 128 0 1 0 0 256 128 128 0 0 0 0-256z m32 96a32 32 0 0 1 0 64h-64a32 32 0 0 1 0-64h64z" fill="#333333"/></svg>'; // 删除书签
+    const ICON_DELETE = '<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"><path d="M799.2 874.4c0 34.4-28.001 62.4-62.4 62.4H287.2c-34.4 0-62.4-28-62.4-62.4V212h574.4v662.4zM349.6 100c0-7.2 5.6-12.8 12.8-12.8h300c7.2 0 12.8 5.6 12.8 12.8v37.6H349.6V100z m636.8 37.6H749.6V100c0-48.001-39.2-87.2-87.2-87.2h-300c-48 0-87.2 39.199-87.2 87.2v37.6H37.6C16.8 137.6 0 154.4 0 175.2s16.8 37.6 37.6 37.6h112v661.6c0 76 61.6 137.6 137.6 137.6h449.6c76 0 137.6-61.6 137.6-137.6V212h112c20.8 0 37.6-16.8 37.6-37.6s-16.8-36.8-37.6-36.8zM512 824c20.8 0 37.6-16.8 37.6-37.6v-400c0-20.8-16.8-37.6-37.6-37.6s-37.6 16.8-37.6 37.6v400c0 20.8 16.8 37.6 37.6 37.6m-175.2 0c20.8 0 37.6-16.8 37.6-37.6v-400c0-20.8-16.8-37.6-37.6-37.6s-37.6 16.8-37.6 37.6v400c0.8 20.8 17.6 37.6 37.6 37.6m350.4 0c20.8 0 37.6-16.8 37.6-37.6v-400c0-20.8-16.8-37.6-37.6-37.6s-37.6 16.8-37.6 37.6v400c0 20.8 16.8 37.6 37.6 37.6" fill="#8A8A8A"/></svg>'; // 删除
+    const ICON_RENAME = ICON_SIDEBAR; // 重命名：用户指定同款双矩形图标（t=1788375596665，与侧边栏按钮同源）
 
     let chatPanel = null, convList = null, drawer = null, titleEl = null, rail = null, searchEl = null;
     let _rows = []; // 服务端全量（排序权威：pinned 优先 + updated_at DESC）
@@ -244,20 +256,20 @@
         more.className = 'conv-more';
         more.textContent = '⋯';
         more.title = '更多操作';
-        // 纵向菜单：删除（危险）/ 置顶切换 / 重命名
+        // 纵向菜单：删除（危险）/ 加入书签|删除书签（置顶切换）/ 重命名（图标+文字）
         const menu = document.createElement('div');
         menu.className = 'conv-row-menu';
-        const mk = (label, cls, fn) => {
+        const mk = (label, icon, cls, fn) => {
           const b = document.createElement('button');
           b.type = 'button';
           b.className = 'conv-menu-item' + (cls ? ' ' + cls : '');
-          b.textContent = label;
+          b.innerHTML = icon + '<span>' + label + '</span>';
           b.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
           return b;
         };
-        menu.appendChild(mk('删除', 'danger', () => armDelete(row)));
-        menu.appendChild(mk(c.pinned ? '取消置顶' : '置顶', '', () => togglePin(row, c)));
-        menu.appendChild(mk('重命名', '', () => startRename(row, c)));
+        menu.appendChild(mk('删除', ICON_DELETE, 'danger', () => armDelete(row)));
+        menu.appendChild(mk(c.pinned ? '删除书签' : '加入书签', c.pinned ? ICON_UNPIN : ICON_PIN, '', () => togglePin(row, c)));
+        menu.appendChild(mk('重命名', ICON_RENAME, '', () => startRename(row, c)));
         main.appendChild(t);
         main.appendChild(time);
         main.appendChild(more);
@@ -273,16 +285,21 @@
         });
         row.appendChild(main);
         row.appendChild(confirm);
-        // ⋯：开/关菜单（点行空白/非列表区自动收起）
+        // ⋯：开/关菜单（点行空白/非列表区自动收起）。方向默认从行当前位置
+        // 向下展开；仅当菜单会溢出列表下缘（被 conv-list-body overflow-y 裁切）
+        // 才向上翻。判据按列表内容区折算：row.offsetTop 的基准是面板（含列表头
+        // 高度），须减 body.offsetTop；滚动后 offsetTop 不变、scrollTop 补偿，
+        // 等价"可见窗口"判定——顶部行不再误判向上（旧判据的经典 bug）
         more.addEventListener('click', (e) => {
           e.stopPropagation();
           if (row.classList.contains('menu-open')) { clearMenuAll(); return; }
           clearMenuAll();
           row.classList.add('menu-open');
-          // 列表下部行：菜单改向上弹（防溢出被滚动区裁切）
           const body = convList;
           if (body) {
-            const up = row.offsetTop + row.offsetHeight + 96 > body.clientHeight + body.scrollTop;
+            const menuH = menu.offsetHeight || 100; // 显示后同帧度量（无绘制间隙）
+            const rowTopInBody = row.offsetTop - body.offsetTop;
+            const up = rowTopInBody + row.offsetHeight + menuH > body.clientHeight + body.scrollTop;
             row.classList.toggle('menu-up', up);
           }
         });
@@ -314,17 +331,28 @@
       try { ctx.dom.input && ctx.dom.input.focus(); } catch(e) {/* ignore */}
     };
 
-    // ── 抽屉开合（自适应方向）：面板宽/消息区零位移；抽屉为叠层 ──
-    // conv-out：面板左缘距视口左边 ≥ 182+12 → 抽屉在面板左缘外向左弹出
-    // conv-in（默认）：抽屉从 rail 右缘（x=24）起覆盖消息区左段；移动端恒 conv-in
+    // ── 抽屉开合（20260903c 用户拍板）：拖拽栏/消息区视口不动，向左开拓出 ──
+    // conv-out（空间足够）：面板整体左移 CONV_WIDTH + 加宽 CONV_WIDTH（几何由
+    //   JS 保证），CSS 同步把内部布局右移 var(--conv-w) → 消息区/rail/拖拽栏
+    //   视口位置零位移，左侧 182 列成为会话侧边栏真窗格（不再是面板外叠层——
+    //   旧实现被 #waifu-chat overflow:hidden 裁切，屏幕中段直接打不开）。
+    //   关闭还原用"当前几何逆推 -182"（close 时读数，不依赖打开快照）——
+    //   展开期间拖动/缩放窗口也不失真。
+    // conv-in（左缘贴边 rect.left <186px / 移动端）：抽屉从 rail 右缘（x=24）
+    //   起覆盖消息区左段兜底；conv-out 面板左扩不得把窗口推出屏外。
     const isOpen = () => !!(chatPanel && chatPanel.classList.contains('conv-open'));
     const openList = () => {
       if (isOpen()) return;
       chatPanel.classList.add('conv-open');
       if (window.innerWidth > 768) {
         const rect = chatPanel.getBoundingClientRect();
-        if (rect.left >= CONV_WIDTH + DRAWER_OFFSET) chatPanel.classList.add('conv-out');
-        else chatPanel.classList.add('conv-in');
+        if (rect.left >= CONV_WIDTH + CONV_GAP) {
+          chatPanel.style.left = (chatPanel.offsetLeft - CONV_WIDTH) + 'px'; // #waifu 内坐标
+          chatPanel.style.width = (chatPanel.offsetWidth + CONV_WIDTH) + 'px';
+          chatPanel.classList.add('conv-out');
+        } else {
+          chatPanel.classList.add('conv-in');
+        }
       } else {
         chatPanel.classList.add('conv-in'); // 移动端恒面板内覆盖
       }
@@ -332,7 +360,12 @@
     };
     const closeList = () => {
       if (!isOpen()) return;
+      const wasOut = chatPanel.classList.contains('conv-out');
       chatPanel.classList.remove('conv-open', 'conv-in', 'conv-out');
+      if (wasOut) { // 左扩还原：由当前几何逆推（期间拖动/缩放不丢位移）
+        chatPanel.style.left = (chatPanel.offsetLeft + CONV_WIDTH) + 'px';
+        chatPanel.style.width = (chatPanel.offsetWidth - CONV_WIDTH) + 'px';
+      }
     };
     const toggleList = () => (isOpen() ? closeList() : openList());
     // 面板被拖走/窗口改尺寸后旧方向可能失效（抽屉出屏）→ 一律收起（下次打开重估）
@@ -352,6 +385,9 @@
       const t = e.target;
       if (!chatPanel.contains(t)) { closeList(); clearMenuAll(); return; }
       if ((drawer && drawer.contains(t)) || (rail && rail.contains(t))) return;
+      // 拖拽栏/缩放把手上的按下 = 拖动/缩放窗口（不是"点别处收起"）——
+      // conv-out 期间若在此收起并还原左扩几何，会把正在进行的拖动首帧跳 182px
+      if (t.closest && t.closest('.chat-drag-bar-t, .chat-drag-bar-l, .conv-resize-handle')) return;
       closeList();
       clearMenuAll();
     };
