@@ -83,11 +83,16 @@ pub struct HistoryItem {
 }
 
 /// GET /api/chat/history 查询参数（20260903 会话化）：conversation_id 可选——
-/// 缺省 = 最新非空会话（部署过渡期旧前端不带参的降级路径，与 POST 的 None 语义对称）
+/// 缺省 = 最新非空会话（部署过渡期旧前端不带参的降级路径，与 POST 的 None 语义对称）。
+/// before_id（20260903e 内容搜索定位用）：只取 id < before_id 的会话内更早窗口
+/// （每页 50，升序回传）——前端定位"检索命中但不在最近 50 条窗口内"的消息时逐页
+/// 向前翻，直到命中或翻尽。
 #[derive(Deserialize)]
 pub struct HistoryQuery {
     #[serde(default)]
     pub conversation_id: Option<i32>,
+    #[serde(default)]
+    pub before_id: Option<i32>,
 }
 
 /// 前端对话历史的权威数据源（20260828 重构：localStorage 降级为离线缓存；
@@ -122,10 +127,15 @@ pub async fn chat_history_handler(
         }
     };
     // 会话内最近 50 条（与前端显示上限一致）；会话内 order_by_desc(Id) 单调唯一、
-    // 即时间序（单会话串行写入，CreatedAt 排序从此退役），命中 idx_conv_id 索引
-    let recent = chat_history::Entity::find()
+    // 即时间序（单会话串行写入，CreatedAt 排序从此退役），命中 idx_conv_id 索引。
+    // before_id 时改为"该 id 之前最近 50 条"（更早窗口翻页，仍升序回传）
+    let mut finder = chat_history::Entity::find()
         .filter(chat_history::Column::UserId.eq(uid))
-        .filter(chat_history::Column::ConversationId.eq(conv_id))
+        .filter(chat_history::Column::ConversationId.eq(conv_id));
+    if let Some(bid) = query.before_id {
+        finder = finder.filter(chat_history::Column::Id.lt(bid));
+    }
+    let recent = finder
         .order_by_desc(chat_history::Column::Id)
         .limit(50)
         .all(&state.db)

@@ -1,12 +1,13 @@
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
-use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set, TransactionTrait};
+use sea_orm::{ActiveModelTrait, ColumnTrait, Condition, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set, TransactionTrait};
 use serde::Deserialize;
 use serde_json::json;
+use std::collections::HashMap;
 use std::sync::Arc;
 use crate::routes::AppState;
 use crate::auth_jwt;
@@ -72,9 +73,34 @@ pub(crate) async fn resolve_conversation_id(
     }
 }
 
-/// GET /api/chat/conversations：当前用户会话列表（最后活动倒序）
+/// GET /api/chat/conversations 查询参数
+#[derive(Deserialize)]
+pub struct ListQuery {
+    /// 20260903e 会话搜索：非空时列表收窄为"标题 LIKE（库 collation 不区分大小写）
+    /// 或 会话内有消息内容命中"的会话，响应行带 hit_id = 该会话最新命中消息 id
+    /// （消息 id 全局自增，order_by_desc 首见即最新）；null = 标题命中/未搜索。
+    #[serde(default)]
+    q: Option<String>,
+}
+
+/// MySQL LIKE 默认反斜杠转义：用户输入的字面 % _ \ 若不转义，% _ 会当通配符、
+/// \ 会吞掉后续转义语义——内容搜索的用户输入注入面，须逐字符转义成 \% \_ \\
+fn like_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        if ch == '%' || ch == '_' || ch == '\\' {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out
+}
+
+/// GET /api/chat/conversations：当前用户会话列表（最后活动倒序）。
+/// q 参数（20260903e）：标题 LIKE OR 会话内消息内容命中过滤，并带 hit_id 供前端定位。
 pub async fn list_conversations(
     State(state): State<Arc<AppState>>,
+    Query(query): Query<ListQuery>,
     headers: HeaderMap,
 ) -> Response {
     let Some(uid) = auth_jwt::auth_uid(&headers) else {
@@ -84,12 +110,44 @@ pub async fn list_conversations(
         )
             .into_response();
     };
+    let q = query.q.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    // 内容命中（搜索时）：用户全历史消息内容 LIKE 扫描（带 % _ \ 转义），
+    // order_by_desc(Id) 下每会话首见即最新命中（id 全局自增、会话内亦单调）——
+    // hit_by_conv 既作列表过滤条件，也随行回传作定位锚点
+    let mut hit_by_conv: HashMap<i32, i32> = HashMap::new();
+    if let Some(q) = q {
+        let pat = format!("%{}%", like_escape(q));
+        let rows = chat_history::Entity::find()
+            .filter(chat_history::Column::UserId.eq(uid))
+            .filter(chat_history::Column::Content.like(&pat))
+            .order_by_desc(chat_history::Column::Id)
+            .all(&state.db)
+            .await
+            .unwrap_or_default();
+        for r in rows {
+            hit_by_conv.entry(r.conversation_id).or_insert(r.id);
+        }
+    }
     // 20260903b：置顶会话 pinned 优先（组内仍按最后活动倒序）
-    let convs = conversation::Entity::find()
+    let mut finder = conversation::Entity::find()
         .filter(conversation::Column::UserId.eq(uid))
         .order_by_desc(conversation::Column::Pinned)
         .order_by_desc(conversation::Column::UpdatedAt)
-        .order_by_desc(conversation::Column::Id) // datetime 秒精度并列时 id 兜底
+        .order_by_desc(conversation::Column::Id); // datetime 秒精度并列时 id 兜底
+    if let Some(q) = q {
+        let pat = format!("%{}%", like_escape(q));
+        // 标题 LIKE（Title 可 NULL：NULL LIKE 永不命中，天然安全）或内容命中会话；
+        // hits 为空时省略 in 支（MySQL 不接受空 IN () 列表）
+        let cond = if hit_by_conv.is_empty() {
+            Condition::any().add(conversation::Column::Title.like(&pat))
+        } else {
+            Condition::any()
+                .add(conversation::Column::Title.like(&pat))
+                .add(conversation::Column::Id.is_in(hit_by_conv.keys().copied()))
+        };
+        finder = finder.filter(cond);
+    }
+    let convs = finder
         .limit(200)
         .all(&state.db)
         .await
@@ -104,6 +162,9 @@ pub async fn list_conversations(
                 "created_at": naive_ms(c.created_at),
                 "updated_at": naive_ms(c.updated_at),
                 "pinned": c.pinned,
+                // 20260903e 搜索命中消息 id（null = 标题命中/未搜索）：前端点行
+                // 切换会话后定位闪烁到该消息
+                "hit_id": hit_by_conv.get(&c.id).copied(),
             })
         })
         .collect();
