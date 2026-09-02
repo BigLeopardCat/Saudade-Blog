@@ -15,6 +15,8 @@ pub struct Model {
     pub created_at: DateTime,
     /// 最后用户发言时间（用户消息入库时 touch；列表按它倒序，不用 assistant 收尾）
     pub updated_at: DateTime,
+    /// 置顶标记（20260903b：会话菜单置顶；列表 pinned 优先倒序）
+    pub pinned: bool,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
