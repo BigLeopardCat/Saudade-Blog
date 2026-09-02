@@ -1,7 +1,7 @@
 use axum::{
     Json,
     body::{Body, Bytes},
-    extract::{Request, State},
+    extract::{Query, Request, State},
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
@@ -26,6 +26,11 @@ pub struct ChatRequest {
     // （最多 6 张、每张 ≤1MB），透传 Python agent
     #[serde(default)]
     pub image: Option<Vec<String>>,
+    // 会话标识（20260903 会话化）：显式 id 不存在/非本人 → 404 conversation_not_found
+    // （在消息入库前拦截，不留脏行）；None → 服务端解析最新非空会话（无则自动新建），
+    // 兼容部署过渡期仍缓存的旧前端（今天的单桶行为即"续接最新会话"）
+    #[serde(default)]
+    pub conversation_id: Option<i32>,
 }
 
 #[derive(Serialize)]
@@ -37,13 +42,17 @@ pub struct ChatResponse {
 }
 
 use sea_orm::{EntityTrait, Set, QueryOrder, QueryFilter, ColumnTrait, QuerySelect, ActiveModelTrait, PaginatorTrait};
-use crate::entity::{chat_history, chat_summary};
+use sea_orm::sea_query::Expr; // Expr 不在 sea-orm 根（0.12.15 仅 pub use sea_query 全名）
+use crate::entity::{chat_history, chat_summary, conversation};
+use crate::routes::conversation::resolve_conversation_id;
 use futures::StreamExt;
 use async_stream::stream;
 
 /// 对话上下文：由 prepare_chat 组装，/chat 与 /chat/stream 共用
 struct ChatCtx {
     uid: i32,
+    /// 本轮消息所属会话（prepare_chat 内解析，用户消息入库前确定）
+    conversation_id: i32,
     total_count: i64,
     trace_id: String,
     body: serde_json::Value,
@@ -73,11 +82,22 @@ pub struct HistoryItem {
     pub time: i64,
 }
 
-/// 前端对话历史的权威数据源（20260828 重构：localStorage 降级为离线缓存）。
+/// GET /api/chat/history 查询参数（20260903 会话化）：conversation_id 可选——
+/// 缺省 = 最新非空会话（部署过渡期旧前端不带参的降级路径，与 POST 的 None 语义对称）
+#[derive(Deserialize)]
+pub struct HistoryQuery {
+    #[serde(default)]
+    pub conversation_id: Option<i32>,
+}
+
+/// 前端对话历史的权威数据源（20260828 重构：localStorage 降级为离线缓存；
+/// 20260903 会话化：改为按会话取最近 50 条）。
 /// 无/无效 token → 401（前端统一 fallback 本地 guest 历史；合规长文只属于
-/// "使用 AI 服务"，历史读取有本地兜底）；DB 查询失败 → 500（日志可定位）。
+/// "使用 AI 服务"，历史读取有本地兜底）；显式 id 不存在/非本人 → 404
+/// conversation_not_found（前端据此触发"当前会话已被删"恢复流程）；DB 查询失败 → 500。
 pub async fn chat_history_handler(
     State(state): State<Arc<AppState>>,
+    Query(query): Query<HistoryQuery>,
     headers: HeaderMap,
 ) -> Response {
     let Some(uid) = auth_jwt::auth_uid(&headers) else {
@@ -87,9 +107,25 @@ pub async fn chat_history_handler(
         )
             .into_response();
     };
-    // 最近 50 条（与前端显示上限一致）；order_by_desc(Id) 单调唯一，命中 idx_user 索引
+    // 会话解析（GET 不自动建会话，保持无副作用）：无会话 → 200 空列表
+    let conv_id = match resolve_conversation_id(&state.db, uid, query.conversation_id, false).await {
+        Ok(Some(c)) => c,
+        Ok(None) => {
+            return (StatusCode::OK, Json(serde_json::json!({"items": [], "count": 0}))).into_response();
+        }
+        Err(()) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"items": [], "count": 0, "error": "conversation_not_found"})),
+            )
+                .into_response();
+        }
+    };
+    // 会话内最近 50 条（与前端显示上限一致）；会话内 order_by_desc(Id) 单调唯一、
+    // 即时间序（单会话串行写入，CreatedAt 排序从此退役），命中 idx_conv_id 索引
     let recent = chat_history::Entity::find()
         .filter(chat_history::Column::UserId.eq(uid))
+        .filter(chat_history::Column::ConversationId.eq(conv_id))
         .order_by_desc(chat_history::Column::Id)
         .limit(50)
         .all(&state.db)
@@ -107,15 +143,25 @@ pub async fn chat_history_handler(
         .collect();
     (
         StatusCode::OK,
-        Json(serde_json::json!({"items": items, "count": items.len()})),
+        Json(serde_json::json!({
+            "items": items,
+            "count": items.len(),
+            // 20260903：回传实际会话 id——无参拉取（缺省=最新非空会话）时前端据此
+            // 采纳当前会话（分键/回传/广播都需要它），不必再猜
+            "conversation_id": conv_id
+        })),
     )
         .into_response()
 }
 
 /// 丢弃本轮（POST /api/chat/discard，20260828b 新增）：用户点击"停止生成"时前端显式调用，
-/// 删除该用户最后一条 user 消息及后续残缺回复（全删语义）——主动停止 = 用户明确
+/// 删除指定会话最后一条 user 消息及后续残缺回复（全删语义）——主动停止 = 用户明确
 /// 不想要这条进记忆，与连接中断清理（DiscardAbortedExchange 只删残缺、保留 user）互补。
 /// 无/无效 token → 401。幂等：无 user 消息时无操作返回 success。
+/// 20260903 会话化：范围收敛到 conversation_id（显式 / None → 最新非空会话；
+/// 会话已被删 → 空操作 success，不阻断前端 abort 流程——恢复由其他端点的
+/// conversation_not_found 驱动）。跨会话误删防护：新前端停止生成必带本轮的
+/// conversation_id（旧前端不带 → 落到"最新非空会话"，等于其消息所在会话）。
 /// 可选 body {"text": 原文}（20260829 重发机制）：非空时要求最后一条 user 消息
 /// 与原文一致才删除——失败气泡重发路径防误删：用户失败后若已发新消息，绝不能用
 /// 新轮顶替删除（abort 路径不带 body，最后一条 user 即被停止的轮，无需校验）。
@@ -124,6 +170,8 @@ pub async fn chat_history_handler(
 pub struct DiscardReq {
     #[serde(default)]
     pub text: Option<String>,
+    #[serde(default)]
+    pub conversation_id: Option<i32>,
 }
 
 pub async fn discard_handler(
@@ -138,8 +186,15 @@ pub async fn discard_handler(
         )
             .into_response();
     };
+    let conv_opt = payload.as_ref().and_then(|p| p.conversation_id);
+    // 会话解析：显式 id 已删 / 无任何会话 → 空操作 success（幂等设计，见上注释）
+    let conv_id = match resolve_conversation_id(&state.db, uid, conv_opt, false).await {
+        Ok(Some(c)) => c,
+        _ => return (StatusCode::OK, Json(serde_json::json!({"success": true}))).into_response(),
+    };
     let last_user = chat_history::Entity::find()
         .filter(chat_history::Column::UserId.eq(uid))
+        .filter(chat_history::Column::ConversationId.eq(conv_id))
         .filter(chat_history::Column::Role.eq("user"))
         .order_by_desc(chat_history::Column::Id)
         .one(&state.db)
@@ -147,7 +202,7 @@ pub async fn discard_handler(
     let Ok(Some(u)) = last_user else {
         return (StatusCode::OK, Json(serde_json::json!({"success": true}))).into_response();
     };
-    if let Some(Json(DiscardReq { text: Some(t) })) = payload {
+    if let Some(Json(DiscardReq { text: Some(t), .. })) = payload {
         if !t.is_empty()
             && u.content != t
             && !u
@@ -170,14 +225,18 @@ pub async fn discard_handler(
     }
     let _ = chat_history::Entity::delete_many()
         .filter(chat_history::Column::UserId.eq(uid))
+        .filter(chat_history::Column::ConversationId.eq(conv_id))
         .filter(chat_history::Column::Id.gte(u.id))
         .exec(&state.db)
         .await;
     (StatusCode::OK, Json(serde_json::json!({"success": true}))).into_response()
 }
 
-/// 鉴权 + 请求体解析 + 保存用户消息 + 加载历史/摘要 + 组装 agent 请求体
-async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, Json<ChatResponse>> {
+/// 鉴权 + 请求体解析 + 会话解析 + 保存用户消息 + 加载历史/摘要 + 组装 agent 请求体。
+/// 错误形态：Err(OK, …) = 历史 200 语义的 JSON 错误（合规文案/解析失败，前端既有
+/// 分支不变）；Err(NOT_FOUND, …) = 会话不存在/非本人（404；前端按 body.error ==
+/// conversation_not_found 恢复流程，与状态码无关）
+async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (StatusCode, Json<ChatResponse>)> {
     // 先取链路追踪 id（headers 在 into_body 前可读）
     let trace_id = trace_id_of(&req);
     // 从 Authorization header 提取 token（auth_jwt::auth_uid，20260830 上移共享）
@@ -187,20 +246,34 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, Js
     // 原 2MB 会拒掉多图）
     let body_bytes = match axum::body::to_bytes(req.into_body(), 8 * 1024 * 1024).await {
         Ok(b) => b,
-        Err(_) => return Err(Json(ChatResponse { reply: String::new(), success: false, error: Some("请求体过大".into()) })),
+        Err(_) => return Err((StatusCode::OK, Json(ChatResponse { reply: String::new(), success: false, error: Some("请求体过大".into()) }))),
     };
     let payload: ChatRequest = match serde_json::from_slice(&body_bytes) {
         Ok(p) => p,
-        Err(e) => return Err(Json(ChatResponse { reply: String::new(), success: false, error: Some(format!("JSON解析失败: {}", e)) })),
+        Err(e) => return Err((StatusCode::OK, Json(ChatResponse { reply: String::new(), success: false, error: Some(format!("JSON解析失败: {}", e)) }))),
     };
 
     let uid = match user_id {
         Some(id) => id,
-        None => return Err(Json(ChatResponse {
+        None => return Err((StatusCode::OK, Json(ChatResponse {
             reply: "尊敬的访客：\n\n本站部署的AI虚拟形象Agent（导航/解读助手）仅供技术学习交流与功能展示使用，不视为面向公众开放的经营性AI服务。\n\n为严格遵守《生成式人工智能服务管理暂行办法》等相关法律法规，履行合规义务，本项目已采取访问限制措施，当前未向不特定公众开放。\n\n如您确因学习、交流或前端技术测试需要体验该功能，请通过博客顶部或关于页面的联系方式，联系管理员申请临时体验账号。管理员将在确认您的需求后，为您开通限时访问权限。\n\n感谢您的理解与支持！\n我们始终坚持合规先导，也期待与各位爱好者共同交流学习。\n\nSaudade Blog\n2026年7月29日".into(),
             success: true,
             error: None,
-        })),
+        }))),
+    };
+
+    // 会话解析（20260903 会话化）——必须在用户消息入库前完成：显式 id 非法 → 404
+    // 拦截不留脏行；None → 最新非空会话（无则自动新建 = 历史单桶行为，旧前端降级）。
+    // 全部 Err 路径都在入库前返回，非法会话不产生任何写入
+    let conversation_id = match resolve_conversation_id(&state.db, uid, payload.conversation_id, true).await {
+        Ok(Some(c)) => c,
+        Ok(None) => {
+            // 仅建会话失败（DB 故障）会走到这里：按服务不可用返回，不落任何行
+            return Err((StatusCode::OK, Json(ChatResponse { reply: String::new(), success: false, error: Some("会话创建失败，请稍后重试".into()) })));
+        }
+        Err(()) => {
+            return Err((StatusCode::NOT_FOUND, Json(ChatResponse { reply: String::new(), success: false, error: Some("conversation_not_found".into()) })));
+        }
     };
 
     // 保存用户消息（取回主键供中断清理快照：只删其后的残缺回复，用户消息本体保留）
@@ -216,18 +289,46 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, Js
     };
     let user_msg_id = chat_history::ActiveModel {
         user_id: Set(uid),
+        conversation_id: Set(conversation_id),
         role: Set("user".into()),
-        content: Set(stored_content),
+        content: Set(stored_content.clone()),
         ..Default::default()
     }.insert(&state.db).await.ok().map(|m| m.id);
+
+    // 会话标题守卫 + 最后用户发言时间（列表排序），仅在消息真正入库后执行
+    if user_msg_id.is_some() {
+        // 标题 = 首条用户消息剥尾部图片标记后截 40 字符（derive_conv_title）。
+        // 条件 UPDATE 语句级原子：并发首条只有一个命中 = first-writer-wins；
+        // 剥空（纯图轮）保持 NULL，下一条文字消息自动补派生
+        if let Some(title) = derive_conv_title(&stored_content) {
+            let _ = conversation::Entity::update_many()
+                .col_expr(conversation::Column::Title, Expr::value(title).into())
+                .filter(conversation::Column::Id.eq(conversation_id))
+                .filter(
+                    Expr::col(conversation::Column::Title)
+                        .is_null()
+                        .or(Expr::col(conversation::Column::Title).eq("")),
+                )
+                .exec(&state.db)
+                .await;
+        }
+        let _ = conversation::Entity::update_many()
+            .col_expr(conversation::Column::UpdatedAt, Expr::current_timestamp().into())
+            .filter(conversation::Column::Id.eq(conversation_id))
+            .exec(&state.db)
+            .await;
+    }
 
     // 读取最近历史（20260828 修复：排除刚插入的当前消息 user_msg_id——此前 history
     // 含当前消息、agent 端又追加 last_msg，同一条消息注入 2 次，模型注意力被重复
     // 文本分散并形成"自己提问自己回答"的假象。limit 21 保证排除后仍有 20 条历史）
+    // 20260903 会话化：只取本会话（不再跨会话混拼——原上下文污染根因）；
+    // 会话内 order_by_desc(Id) 即时间序（单会话串行写入，CreatedAt 排序退役）
     let history_items: Vec<serde_json::Value> = {
         let recent = chat_history::Entity::find()
             .filter(chat_history::Column::UserId.eq(uid))
-            .order_by_desc(chat_history::Column::CreatedAt)
+            .filter(chat_history::Column::ConversationId.eq(conversation_id))
+            .order_by_desc(chat_history::Column::Id)
             .limit(Some(21))
             .all(&state.db)
             .await.unwrap_or_default();
@@ -239,30 +340,36 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, Js
             .collect()
     };
 
-    // 加载压缩摘要
-    let summary_text = chat_summary::Entity::find()
+    // 加载本会话压缩摘要（20260903 会话化后每会话独立；UserId 双保险，
+    // 权威键是 conversation_id——DB 唯一约束已改到该列）
+    let summary_row = chat_summary::Entity::find()
         .filter(chat_summary::Column::UserId.eq(uid))
+        .filter(chat_summary::Column::ConversationId.eq(conversation_id))
         .one(&state.db)
-        .await.unwrap_or_default()
-        .map(|s| s.summary)
-        .unwrap_or_default();
+        .await.unwrap_or_default();
+    let summary_text = summary_row.as_ref().map(|s| s.summary.clone()).unwrap_or_default();
 
-    // 统计总消息数，决定是否触发压缩
+    // 统计本会话消息数，决定是否触发压缩。needs_summary 补懒生成条款：会话 >20 条
+    // 且尚无摘要行（存量旧会话回访）也触发一次——摘要落库后条件自然关闭；
+    // %10∈{0,1} 为历史双触发节奏（summary 与回复并行生成，不阻塞对话）
     let total_count: i64 = chat_history::Entity::find()
         .filter(chat_history::Column::UserId.eq(uid))
+        .filter(chat_history::Column::ConversationId.eq(conversation_id))
         .count(&state.db)
         .await.unwrap_or(0) as i64;
-    let needs_summary = total_count > 20 && (total_count % 10 == 0 || total_count % 10 == 1);
+    let needs_summary = total_count > 20
+        && (total_count % 10 == 0 || total_count % 10 == 1 || summary_row.is_none());
 
-    // 保留策略：单用户历史最多保留 CHAT_HISTORY_LIMIT（默认 500）条，
-    // 超出时删除最旧的多余记录，控制表增长与磁盘/备份/隐私面。
-    // 提示词窗口只看最近 20 条，清理不影响对话连续性。
+    // 保留策略（20260903 会话化后按会话）：单个会话最多保留 CHAT_HISTORY_LIMIT
+    // （默认 500）条，超出删除该会话最旧的多余记录——清理不再跨会话删行；
+    // 提示词窗口只看本会话最近 20 条 + 摘要，删头不影响连续性
     let history_limit: i64 = std::env::var("CHAT_HISTORY_LIMIT")
         .ok().and_then(|v| v.parse().ok()).unwrap_or(500);
     let excess = total_count - history_limit;
     if excess > 0 {
         let oldest = chat_history::Entity::find()
             .filter(chat_history::Column::UserId.eq(uid))
+            .filter(chat_history::Column::ConversationId.eq(conversation_id))
             .order_by_asc(chat_history::Column::Id)
             .limit(excess as u64)
             .all(&state.db)
@@ -270,6 +377,7 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, Js
         if let Some(max_id) = oldest.last().map(|r| r.id) {
             let _ = chat_history::Entity::delete_many()
                 .filter(chat_history::Column::UserId.eq(uid))
+                .filter(chat_history::Column::ConversationId.eq(conversation_id))
                 .filter(chat_history::Column::Id.lte(max_id))
                 .exec(&state.db)
                 .await;
@@ -292,9 +400,25 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, Js
     if std::env::var("CHAT_DEBUG_BODY").is_ok() {
         eprintln!("[chat-debug] body={}", body);
     }
-    Ok(ChatCtx { uid, total_count, trace_id, body, user_msg_id })
+    Ok(ChatCtx { uid, conversation_id, total_count, trace_id, body, user_msg_id })
 }
 
+
+/// 会话标题派生（20260903）：首条用户消息剥尾部图片标记行后取前 40 字符。
+/// 入库格式最后一行可能是 "[图片]" / "[图片×N]"（prepare_chat 拼接）；剥空（纯图轮）
+/// → None：保持 NULL，前端显示"新对话"，下一条文字消息自动补派生。
+/// 截断用 .chars()（UTF-8 安全；字节切片 [..40] 遇中文会 panic）
+fn derive_conv_title(content: &str) -> Option<String> {
+    let mut lines: Vec<&str> = content.lines().collect();
+    while let Some(last) = lines.last() {
+        let is_marker = *last == "[图片]"
+            || (last.starts_with("[图片×") && last.ends_with(']'));
+        if is_marker { lines.pop(); } else { break; }
+    }
+    let text = lines.join("\n").trim().to_string();
+    if text.is_empty() { return None; }
+    Some(text.chars().take(40).collect())
+}
 
 /// 对话结束后保存 assistant 消息 + 摘要（/chat 与 /chat/stream 共用）。
 /// 摘要由 agent 侧独立生成（needs_summary 轮的后端总结调用，与回复解耦），
@@ -323,12 +447,14 @@ fn strip_command_lines(reply: &str) -> String {
 async fn save_assistant_reply(
     db: &sea_orm::DatabaseConnection,
     uid: i32,
+    conversation_id: i32,
     reply: String,
     new_summary: Option<String>,
     total_count: i64,
 ) {
     let _ = chat_history::ActiveModel {
         user_id: Set(uid),
+        conversation_id: Set(conversation_id),
         role: Set("assistant".into()),
         content: Set(strip_command_lines(&reply)),
         ..Default::default()
@@ -336,8 +462,10 @@ async fn save_assistant_reply(
 
     if let Some(new_summary) = new_summary {
         if !new_summary.is_empty() {
+            // 20260903 会话化：摘要按会话独立存取（权威键 conversation_id）
             let existing = chat_summary::Entity::find()
                 .filter(chat_summary::Column::UserId.eq(uid))
+                .filter(chat_summary::Column::ConversationId.eq(conversation_id))
                 .one(db)
                 .await.unwrap_or_default();
             if let Some(rec) = existing {
@@ -348,6 +476,7 @@ async fn save_assistant_reply(
             } else {
                 let _ = chat_summary::ActiveModel {
                     user_id: Set(uid),
+                    conversation_id: Set(conversation_id),
                     summary: Set(new_summary),
                     message_count: Set(total_count as i32),
                     ..Default::default()
@@ -364,10 +493,11 @@ fn agent_chat_url() -> String {
 pub async fn chat_handler(
     State(state): State<Arc<AppState>>,
     req: Request,
-) -> Json<ChatResponse> {
+) -> Response {
     let ctx = match prepare_chat(&state, req).await {
         Ok(c) => c,
-        Err(e) => return e,
+        // 404/200 错误按原样透传（含 conversation_not_found 与合规文案等）
+        Err(e) => return e.into_response(),
     };
 
     let agent_url = agent_chat_url();
@@ -403,15 +533,15 @@ pub async fn chat_handler(
                 // 非流式：agent 独立生成摘要并返回 new_summary（needs_summary 轮才有值）
                 let agent_summary = data["new_summary"].as_str().map(|s| s.to_string());
                 if ctx.uid > 0 {
-                    save_assistant_reply(&state.db, ctx.uid, reply.clone(), agent_summary, ctx.total_count).await;
+                    save_assistant_reply(&state.db, ctx.uid, ctx.conversation_id, reply.clone(), agent_summary, ctx.total_count).await;
                 }
-                Json(ChatResponse { reply, success: true, error: None })
+                Json(ChatResponse { reply, success: true, error: None }).into_response()
             } else {
-                Json(ChatResponse { reply: String::new(), success: false, error: Some(format!("Agent error: {}", r.status())) })
+                Json(ChatResponse { reply: String::new(), success: false, error: Some(format!("Agent error: {}", r.status())) }).into_response()
             }
         }
         None => {
-            Json(ChatResponse { reply: String::new(), success: false, error: Some(format!("Agent unavailable: {}", last_err)) })
+            Json(ChatResponse { reply: String::new(), success: false, error: Some(format!("Agent unavailable: {}", last_err)) }).into_response()
         }
     }
 }
@@ -432,11 +562,16 @@ fn find_frame_end(buf: &[u8]) -> Option<usize> {
 /// "删除意图"，一律保守保留 user。
 ///
 /// Drop 在 SSE 生成器（body_stream）被取消时同步执行；DB 删除是异步操作，用 tokio::spawn 异步完成。
+/// 20260903 会话化：删除范围带 conversation_id 快照——drop 可能延迟到用户已切到新会话
+/// 之后执行，不带会话过滤会误清新会话的残缺回复。
 /// 仅当流未正常收尾（未收到终止标记即被取消）时才清理；正常结束由 done 标记关闭清理，
 /// 保留既有行为（含上游异常时保存残缺回复的逻辑，见 chat_stream_handler 尾部）。
 struct DiscardAbortedExchange {
     state: Arc<AppState>,
     uid: i32,
+    /// 本轮消息所属会话快照（与 user_msg_id 同源于 prepare_chat）：
+    /// 清理双限（会话 + id 区间），drop 延迟执行时绝不越界误删其他会话
+    conversation_id: i32,
     /// 本轮 user 消息的 DB 主键快照（prepare_chat 入库时取得）。
     /// 只删 id 大于快照的 assistant 记录——即使清理延迟执行（期间新轮 user 已插入），
     /// role=user 的新记录也不会被误删。
@@ -452,12 +587,15 @@ impl Drop for DiscardAbortedExchange {
         let Some(user_msg_id) = self.user_msg_id else { return };
         let state = self.state.clone();
         let uid = self.uid;
-        // 只删本轮 user 消息之后的残缺 assistant 回复（id 单调递增 + role 双重限定）。
-        // 若 drop 延迟到新轮已插入：新轮 user（role=user）不受影响；新轮尚未收尾，
-        // 其 assistant 记录不可能先于旧轮清理存在，不会误删
+        let conversation_id = self.conversation_id;
+        // 只删本轮 user 消息之后的残缺 assistant 回复（id 单调递增 + role + 会话三重限定）。
+        // 若 drop 延迟到新轮已插入：新轮 user（role=user）不受影响；新轮同会话尚未收尾，
+        // 其 assistant 记录不可能先于旧轮清理存在，不会误删；跨会话（用户已切走）
+        // 由 conversation_id 限定天然隔离
         tokio::spawn(async move {
             let _ = chat_history::Entity::delete_many()
                 .filter(chat_history::Column::UserId.eq(uid))
+                .filter(chat_history::Column::ConversationId.eq(conversation_id))
                 .filter(chat_history::Column::Id.gt(user_msg_id))
                 .filter(chat_history::Column::Role.eq("assistant"))
                 .exec(&state.db)
@@ -497,6 +635,7 @@ pub async fn chat_stream_handler(
 
     let state = state.clone();
     let uid = ctx.uid;
+    let conversation_id = ctx.conversation_id;
     let total_count = ctx.total_count;
     let user_msg_id = ctx.user_msg_id;
 
@@ -511,7 +650,7 @@ pub async fn chat_stream_handler(
         // 客户端中断清理（见 DiscardAbortedExchange）：流被取消时删除本轮 user 消息
         // 之后的残缺回复（user 消息本体保留）；正常走完 while 循环后置位 done，关闭清理
         let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let _guard = DiscardAbortedExchange { state: state.clone(), uid, user_msg_id, done: done.clone() };
+        let _guard = DiscardAbortedExchange { state: state.clone(), uid, conversation_id, user_msg_id, done: done.clone() };
 
         while let Some(chunk) = upstream_stream.next().await {
             let chunk = match chunk {
@@ -581,7 +720,7 @@ pub async fn chat_stream_handler(
 
         // 流结束：保存历史 + 独立摘要（来自 __SUMMARY__ 帧，无则不入库）
         if !reply.is_empty() && uid > 0 {
-            save_assistant_reply(&state.db, uid, reply, summary_override, total_count).await;
+            save_assistant_reply(&state.db, uid, conversation_id, reply, summary_override, total_count).await;
         }
     };
 

@@ -64,7 +64,10 @@
             const r = await fetch('/api/chat/discard', {
               method: 'POST',
               headers: { 'Authorization': 'Bearer ' + tk, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ text: msg }),
+              // 20260903：定向删当前会话的旧轮（原文校验双保险防误删新轮）；
+              // conv=null（auto 未决议）省略字段 = 服务端最新非空决议
+              body: JSON.stringify({ text: msg,
+                ...(ctx.state.conv !== null ? { conversation_id: ctx.state.conv } : {}) }),
             });
             const j = await r.json();
             return !!(j && j.success);
@@ -149,6 +152,20 @@
         if ((!msg && !imgs.length) || ctx.state.isSending
             || Object.keys(ctx.state.remoteRounds || {}).length) return;
 
+        // 20260903 会话化：空白新对话态（convNeedCreate）发送前先 POST 建会话——
+        // 惰性创建（服务端空会话不落实体，"新对话"按钮只清视图置位，见
+        // engine.adoptConversation(null)）；auto 态无需建（无参请求服务端自动决议
+        // 最新非空会话）。建会话失败 → 本地错误气泡，输入保留可重试
+        if (!(await engine.ensureConversation())) {
+          const it = __chatCore.migrateItem({ type: 'agent', text: '创建新会话失败，请稍后重试', time: Date.now() });
+          ctx.state.items.push(it);
+          appendMsg(it);
+          scrollToBottom(messages, true);
+          return; // 输入未清空，可重试
+        }
+        if (ctx.state.isSending || Object.keys(ctx.state.remoteRounds || {}).length) return; // ensure 网络窗口期被并发点击发送，放弃本轮
+        const roundConvId = ctx.state.conv; // 本轮会话锚点：请求体/停止 discard/busy 共用
+
         // 新对话开始：自动关闭上一条遗留的"建议跳转"面板——用户没点击/没取消时
         // 不应让它残留到下一轮（已确认的目标由用户点击触发，不受影响）
         if (ctx.state.pendingNavUrl) {
@@ -179,7 +196,8 @@
         // discard 广播按它双侧删除（Rust 侧已按用户消息删除 DB 记录）。
         const roundId = __chatCore.genId();
         const userItemId = __chatCore.genId();
-        ctx.state.activeRound = { roundId, userItemId, msg }; // 供 3s 保险/外部清理精确锚定本轮（20260902 补 msg：保险的失败气泡重发需要原文）
+        // 20260903 补 convId：停止生成/3s 保险的 discard 定向删本轮所属会话
+        ctx.state.activeRound = { roundId, userItemId, msg, convId: roundConvId };
         input.value = '';
         // 程序清空不会触发 input 事件：主动重置高度，避免空输入框残留多行高度
         // （flex 布局下还会连带拉伸发送按钮导致变形）
@@ -212,7 +230,9 @@
         // 在流收尾 finally 广播解除；localStorage 标记供错过 sending 帧的新开
         // 窗口恢复禁用态（chat-engine 初始化读取）
         broadcast({ t: 'sending', roundId, from: engine.windowId });
-        try { localStorage.setItem('saudade-chat-busy', JSON.stringify({ roundId, ts: Date.now() })); } catch (e) {}
+        // 20260903：busy 标记带 convId——新开窗口 restore 时按会话判定是否锁本窗
+        // （跨会话发送互不阻塞）；roundId 精确匹配清除语义不变
+        try { localStorage.setItem('saudade-chat-busy', JSON.stringify({ roundId, convId: roundConvId, ts: Date.now() })); } catch (e) {}
         broadcast({
           t: 'user', id: userItemId, text: msg, time: userItem.time, from: engine.windowId,
           ...(imgs.length ? { images: imgs, thumbs } : {}),
@@ -395,6 +415,9 @@
             headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
             body: JSON.stringify({
               message: msg,
+              // 20260903 会话化：显式会话定向写入；roundConvId=null（auto 未决议）
+              // 省略字段 = 服务端 None → 最新非空会话（单桶时代语义，旧客户端降级）
+              ...(roundConvId !== null ? { conversation_id: roundConvId } : {}),
               // 20260829b：无图消息省略 image 字段——发空数组会让 Rust 误拼
               // [图片] 落库（Some(_) 分支），pull 后全部 user 气泡出现图片图标
               ...(imgs.length ? { image: imgs } : {}), // 多模态：dataURL 数组（每张 ≤1MB，最多 6 张）
@@ -410,6 +433,24 @@
             const text = await resp.text();
             let d = null;
             try { d = JSON.parse(text); } catch(e) {}
+            // 20260903 会话已删：发送路径显式会话 404（Rust 在用户消息入库前 resolve，
+            // 不留脏行）——乐观 user 条目/已清空的输入与图片全部还原，转会话已删恢复
+            // 流程（engine.handleConvGone：视图/缓存/会话态复位 + 无参回落），本轮
+            // 静默丢弃（错误气泡/重发按钮无归属——会话已不存在，重发只会再造新会话）
+            if (resp.status === 404 && d && d.error === 'conversation_not_found') {
+              ctx.state.pendingImages = imgs; // 还原图片（abort 停止生成同语义：可重发）
+              renderPreviews();
+              input.value = msg;
+              resizeInput();
+              const uEl = messages.querySelector('[data-mtype="user"][data-mid="' + userItemId + '"]');
+              if (uEl && uEl.parentNode) uEl.parentNode.removeChild(uEl);
+              ctx.state.items = ctx.state.items.filter(i => i.id !== userItemId);
+              saveHistory();
+              engine.handleConvGone(roundConvId); // 流式中：置 pendingPull，收尾 finally 补拉
+              const goneErr = new Error('会话已不存在');
+              goneErr.skipFailedPersist = true;
+              throw goneErr;
+            }
             if (resp.status >= 500) throw new Error('服务暂时繁忙（' + resp.status + '），请稍后再试');
             throw new Error((d && d.error) || ('服务响应异常（' + resp.status + '），请稍后再试'));
           }
@@ -609,6 +650,16 @@
           // 完整文本含命令行（fullText = cmdText + displayText），已收到的命令帧在此执行
           execAgentCommands(fullText, contentSpan);
         } catch(e) {
+          // 20260903 会话已删（skipFailedPersist 标记）：输入已还原、乐观条目已移除、
+          // handleConvGone 已触发恢复流程——这里只静默收尾（finally 复位 UI/busy/
+          // 补拉），不再渲染错误气泡/重发按钮/失败持久化标记（会话已不存在）
+          if (e && e.skipFailedPersist) {
+            if (typingTimer) clearTimeout(typingTimer);
+            if (typingEl) typingEl.remove();
+            clearTimeout(idleTimer);
+            clearTimeout(totalTimer);
+            return; // finally 仍执行（复位 isSending/按钮/busy + pendingPull 补拉）
+          }
           // 异常路径兜底：移除打字指示器（AbortError/网络错误/__ERROR__ 帧）
           if (typingTimer) clearTimeout(typingTimer);
           if (typingEl) typingEl.remove();
@@ -704,6 +755,9 @@
           try { localStorage.removeItem('saudade-chat-busy'); } catch (e) {}
           // 流式中被推迟的 DB 拉取在此补拉（storage 事件可能在流中到达）
           if (ctx.state.pendingPull) { ctx.state.pendingPull = false; setTimeout(pullHistory, 0); }
+          // 20260903：本轮收尾——标题派生/updated_at touch 都发生在服务端该轮
+          // 入库时，本地无从得知；通知 UI 重拉会话列表收敛（排序/标题/新建行）
+          engine.notifyListDirty();
         }
         if (ctx.state.discardTurn) {
           // 丢弃本轮用户输入与部分回复（不加入记忆）：
@@ -1057,7 +1111,8 @@
           ctx.state.stoppedByUser = true;
           if (ctx.state.streamCtrl) ctx.state.streamCtrl.abort();
           // 显式告知后端全删本轮（DB 侧 user+残缺回复；与连接中断"保留 user"互补）
-          apiDiscard();
+          // 20260903：带本轮会话 id 定向删（activeRound 在发送入口已捕获 convId）
+          apiDiscard(ctx.state.activeRound && ctx.state.activeRound.convId);
           // 保险：极端情况下（浏览器对已开始读取的流 abort 不触发 AbortError）catch 不会执行，
           // UI 会卡死在"停止生成"状态——3s 后强制恢复并丢弃本轮，保证界面必能继续使用。
           // 与 sendMessage 收尾 discardTurn 分支相同的丢弃逻辑（abort 未触发时手动清理）
@@ -1091,7 +1146,7 @@
                   // 其他窗口的发送按钮依赖 idle 解除禁用）
                   broadcast({ t: 'idle', roundId: r.roundId, from: engine.windowId });
                   try { localStorage.removeItem('saudade-chat-busy'); } catch (e) {}
-                  apiDiscard(); // 保险路径同样通知后端全删（避免 DB 残留半轮）
+                  apiDiscard(r.convId); // 保险路径同样通知后端全删（r = activeRound，已含 convId）
                 }
               } else if (victim) {
                 // 空闲/总超时：保留 user 消息，渲染失败气泡 + 重发/编辑 + 持久化标记
