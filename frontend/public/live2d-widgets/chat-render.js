@@ -193,7 +193,8 @@
         </div>
       </div>
       <!-- 会话历史面板：默认 display:none；#waifu-chat.conv-open 时由 chat-session.js
-           按自适应方向（conv-in 面板内覆盖 / conv-out 向左弹出）显示，动态渲染 -->
+           按自适应方向显示（conv-out 面板左扩、侧边栏真窗格 / conv-in 面板内覆盖），
+           方向选择在 session.js openList，本面板行/列表动态渲染 -->
       <div id="waifu-conv-panel" class="waifu-conv-panel">
         <div class="conv-list-head">
           <span class="conv-list-title">会话历史</span>

@@ -1080,6 +1080,9 @@
         // 20260901g：贴角（0,0）不内移——外框已从面板 border 移入 ::before（z6），
         // 把手 z7 高于外框，24×24 三角能盖住外框线顶部末端（f 版把手内移 2px，
         // 三角 22px 盖不住面板 border 的线，用户反馈"轮廓线顶部末端裸露"）
+        // 20260903c：把手带标识类——chat-session onDocDown 据此豁免收起
+        // （conv-out 左扩期间拖动/缩放窗口不得触发几何还原，否则首帧跳 182px）
+        h.className = 'conv-resize-handle';
         h.style.cssText = 'position:absolute;' + (isTL ? 'left:0;top:0' : 'right:0;bottom:0') +
           ';width:24px;height:24px;cursor:nwse-resize;background:transparent;z-index:7;touch-action:none;' +
           ';display:flex;' + (isTL ? 'align-items:flex-start;justify-content:flex-start' : 'align-items:flex-end;justify-content:flex-end');
