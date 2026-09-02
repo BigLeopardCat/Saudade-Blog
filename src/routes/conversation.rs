@@ -1,0 +1,192 @@
+use axum::{
+    Json,
+    extract::{Path, State},
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
+};
+use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set, TransactionTrait};
+use serde_json::json;
+use std::sync::Arc;
+use crate::routes::AppState;
+use crate::auth_jwt;
+use crate::entity::{chat_history, chat_summary, conversation};
+
+/// 会话 API（20260903 会话化）：新建/列表/删除 + 会话解析（chat 系端点共用）。
+/// 全部照 chat 系惯例：public_routes 组 + handler 内 auth_jwt::auth_uid 手写鉴权。
+
+/// DB 时间戳（+08:00 本地钟面，NaiveDateTime）→ 毫秒时间戳（与 HistoryItem.time 同约定）
+fn naive_ms(dt: chrono::NaiveDateTime) -> i64 {
+    dt.and_local_timezone(chrono::Local)
+        .single()
+        .map(|d| d.timestamp_millis())
+        .unwrap_or(0)
+}
+
+/// 会话解析（chat.rs 的 /chat、/chat/stream、history、discard 共用）：
+/// - 显式 id → 校验归属（不存在/非本人 → Err，统一 conversation_not_found，防 id 枚举探测他人会话）
+/// - None → 该用户最新非空会话（取最大消息 id 的归属——空会话无消息不会被解析到）
+/// - 仍无会话且 create_if_none → 新建空会话（标题由首条消息入库时派生）
+/// Ok(None) 只出现在"无会话且不新建"的只读降级路径（GET 历史无参 / discard 无会话空操作）
+pub(crate) async fn resolve_conversation_id(
+    db: &sea_orm::DatabaseConnection,
+    uid: i32,
+    requested: Option<i32>,
+    create_if_none: bool,
+) -> Result<Option<i32>, ()> {
+    if let Some(id) = requested {
+        let owned = conversation::Entity::find_by_id(id)
+            .filter(conversation::Column::UserId.eq(uid))
+            .one(db)
+            .await
+            .ok()
+            .flatten();
+        return match owned {
+            Some(_) => Ok(Some(id)),
+            None => Err(()),
+        };
+    }
+    // 最新非空会话：用户最大 id 的消息必然落在最近活跃会话中（idx_user/idx_conv_id 单查）
+    let last = chat_history::Entity::find()
+        .filter(chat_history::Column::UserId.eq(uid))
+        .order_by_desc(chat_history::Column::Id)
+        .one(db)
+        .await
+        .ok()
+        .flatten();
+    match last {
+        Some(h) => Ok(Some(h.conversation_id)),
+        None if create_if_none => {
+            // 结构体字面量不能直接作 match 判定式（{ 会被解析成 match 块），先绑变量
+            let model = conversation::ActiveModel {
+                user_id: Set(uid),
+                ..Default::default()
+            };
+            match model.insert(db).await {
+                Ok(m) => Ok(Some(m.id)),
+                // 建会话失败（DB 故障）：返回 None 由调用方按服务不可用处理，不留脏行
+                Err(_) => Ok(None),
+            }
+        }
+        None => Ok(None),
+    }
+}
+
+/// GET /api/chat/conversations：当前用户会话列表（最后活动倒序）
+pub async fn list_conversations(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Response {
+    let Some(uid) = auth_jwt::auth_uid(&headers) else {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "unauthorized"})),
+        )
+            .into_response();
+    };
+    let convs = conversation::Entity::find()
+        .filter(conversation::Column::UserId.eq(uid))
+        .order_by_desc(conversation::Column::UpdatedAt)
+        .order_by_desc(conversation::Column::Id) // datetime 秒精度并列时 id 兜底
+        .limit(200)
+        .all(&state.db)
+        .await
+        .unwrap_or_default();
+    let items: Vec<serde_json::Value> = convs
+        .iter()
+        .map(|c| {
+            json!({
+                "id": c.id,
+                // Option 原样透传：null = 未派生标题，前端显示"新对话"
+                "title": c.title,
+                "created_at": naive_ms(c.created_at),
+                "updated_at": naive_ms(c.updated_at),
+            })
+        })
+        .collect();
+    (StatusCode::OK, Json(json!({"conversations": items}))).into_response()
+}
+
+/// POST /api/chat/conversations：新建空会话（title NULL，首条用户消息入库时派生标题）。
+/// 前端"新对话"按钮本身不发请求——首次发送消息前惰性调用本端点拿 id。
+pub async fn create_conversation(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Response {
+    let Some(uid) = auth_jwt::auth_uid(&headers) else {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "unauthorized"})),
+        )
+            .into_response();
+    };
+    let model = conversation::ActiveModel {
+        user_id: Set(uid),
+        ..Default::default()
+    };
+    match model.insert(&state.db).await {
+        Ok(m) => (StatusCode::CREATED, Json(json!({"id": m.id}))).into_response(),
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "会话创建失败"})),
+        )
+            .into_response(),
+    }
+}
+
+/// DELETE /api/chat/conversations/:id：删除会话 + 级联删其历史与摘要（用户级清洗手段）。
+/// 归属校验合并为一个查询：不存在或非本人统一 404（防枚举）。
+pub async fn delete_conversation(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i32>,
+    headers: HeaderMap,
+) -> Response {
+    let Some(uid) = auth_jwt::auth_uid(&headers) else {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "unauthorized"})),
+        )
+            .into_response();
+    };
+    let owned = conversation::Entity::find_by_id(id)
+        .filter(conversation::Column::UserId.eq(uid))
+        .one(&state.db)
+        .await
+        .ok()
+        .flatten();
+    if owned.is_none() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({"success": false, "error": "conversation_not_found"})),
+        )
+            .into_response();
+    }
+    // 级联删除（应用层三条 delete，无 DB 外键——与全项目"实体零关系"惯例一致），
+    // 事务保证三步一致性（失败回滚，不出现孤儿消息/摘要）
+    let txn = match state.db.begin().await {
+        Ok(t) => t,
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"success": false, "error": "删除失败"})),
+            )
+                .into_response()
+        }
+    };
+    let _ = chat_history::Entity::delete_many()
+        .filter(chat_history::Column::ConversationId.eq(id))
+        .exec(&txn)
+        .await;
+    let _ = chat_summary::Entity::delete_many()
+        .filter(chat_summary::Column::ConversationId.eq(id))
+        .exec(&txn)
+        .await;
+    let _ = conversation::Entity::delete_by_id(id).exec(&txn).await;
+    match txn.commit().await {
+        Ok(_) => (StatusCode::OK, Json(json!({"success": true}))).into_response(),
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"success": false, "error": "删除失败"})),
+        )
+            .into_response(),
+    }
+}

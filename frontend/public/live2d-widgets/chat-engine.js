@@ -147,8 +147,144 @@
         // + 兜底定时器句柄（发送窗口崩溃/断连不广播 idle 时本窗 6 分钟后强制恢复）
         remoteRounds: {},
         busyTimer: null,
+        // ── 20260903 会话化状态 ──
+        // conv = 当前会话 id（null = 未定：auto 态由服务端决议最新非空会话 /
+        // 新对话空白态）；convNeedCreate = true 时发送前必须先 POST 建会话
+        // （点"新对话"或确认无任何会话；false + conv=null = auto 态，无参请求
+        // 落最新非空会话，服务端决议结果经 history 响应 conversation_id 回填）
+        conv: null,
+        convNeedCreate: false,
+        // chat-session.js（UI 层）注册的会话钩子——引擎做决策、UI 只负责渲染
+        ui: { onConvChange: null, onConvGone: null, onAuthChange: null, onListDirty: null },
       };
       const live = ctx.state.live;
+
+      // ── 20260903 会话态原语（init 最先执行——busy 恢复/分键/拉取都依赖）──
+      // ctx.state.conv 三态模型（会话 = 上下文隔离最小单位）：
+      //   conv=null + needCreate=false : auto 态。无参请求由服务端决议"最新非空
+      //     会话"，决议结果经 history 响应 conversation_id 回填（分键/回传/广播
+      //     都需要真实会话 id）
+      //   conv=null + needCreate=true  : 新对话空白态。不发无参拉取（会决议回旧
+      //     会话内容填进空白视图）；首条消息前 ensureConversation POST 建会话
+      //   conv=id                      : 显式会话
+      let pullSeq = 0; // 拉取序号：adopt/convGone/新拉取自增，在途旧响应据此作废
+      const convPrefKey = () => {
+        const tk = localStorage.getItem('tokenKey');
+        return 'chat_conv_' + (tk || 'guest');
+      };
+      // 缓存键按会话分桶（游客固定 'chat_history_guest' 不变）：多会话共键会让
+      // 'd'+DB主键 跨会话重叠错并（同号主键在不同会话内容不同），必须分键；
+      // conv 未定（auto 态）用 '_auto' 哨兵后缀
+      const historyKey = () => {
+        const tk = localStorage.getItem('tokenKey');
+        if (!tk) return 'chat_history_guest';
+        return 'chat_history_' + tk + (ctx.state.conv === null ? '_auto' : '_' + ctx.state.conv);
+      };
+      // 刷新恢复上次会话：有持久化 pref（上次显式会话）→ 采纳；无 → auto 态
+      // （服务端决议）。空白态（needCreate）不持久化——服务端无空会话实体，
+      // 刷新回落最新非空会话（与"删当前会话后回落"同一条无参决议路径）
+      const resumeConvPref = () => {
+        if (ctx.state.conv !== null) return; // init 重试防重复采纳
+        let id = null;
+        try {
+          const raw = localStorage.getItem(convPrefKey());
+          if (raw !== null) {
+            const n = parseInt(raw, 10);
+            if (Number.isInteger(n) && n > 0) id = n;
+          }
+        } catch (e) {}
+        ctx.state.conv = id;
+        ctx.state.convNeedCreate = false;
+      };
+      resumeConvPref();
+      // 会话决议统一入口：落状态 + 持久化 + 通知 UI（chat-session 刷新标题/列表）
+      const setConvState = (id, needCreate) => {
+        const changed = ctx.state.conv !== id || ctx.state.convNeedCreate !== needCreate;
+        ctx.state.conv = id;
+        ctx.state.convNeedCreate = needCreate;
+        try {
+          const k = convPrefKey();
+          if (id === null) localStorage.removeItem(k);
+          else localStorage.setItem(k, String(id));
+        } catch (e) {}
+        if (changed && ctx.state.ui && typeof ctx.state.ui.onConvChange === 'function') {
+          try { ctx.state.ui.onConvChange(id); } catch (e) {}
+        }
+      };
+      // 清理不再使用的会话缓存键（chat-session 拿到列表后调用，防 localStorage
+      // 膨胀；会话被删后其镜像随删）。游客键/当前键/_auto 不动
+      const pruneConvCaches = (keepIds) => {
+        try {
+          const tk = localStorage.getItem('tokenKey');
+          if (!tk) return;
+          const prefix = 'chat_history_' + tk + '_';
+          const keep = new Set(keepIds || []);
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (!k || k.indexOf(prefix) !== 0) continue;
+            const n = parseInt(k.slice(prefix.length), 10);
+            if (Number.isInteger(n) && n > 0 && k !== historyKey() && !keep.has(n)) {
+              localStorage.removeItem(k);
+              i--;
+            }
+          }
+        } catch (e) {/* ignore */}
+      };
+      // 惰性建会话（sendMessage 入口）：仅 fresh 态（convNeedCreate）POST 建会话；
+      // auto 态无需建——无参请求服务端自动决议/新建（= 单桶时代行为，游客同样
+      // 直接放行）。返回 Promise<boolean> 是否可发送
+      let ensuring = null; // 在途创建去重（防双击竞态建出双会话）
+      const ensureConversation = async () => {
+        const tk = localStorage.getItem('tokenKey');
+        if (!tk) return true;
+        if (ctx.state.convNeedCreate !== true) return true;
+        if (ensuring) return ensuring;
+        ensuring = fetch('/api/chat/conversations', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + tk },
+          credentials: 'same-origin',
+        }).then(r => (r.ok ? r.json() : null))
+          .then(d => {
+            if (d && typeof d.id === 'number' && d.id > 0) {
+              setConvState(d.id, false);
+              return true;
+            }
+            return false;
+          })
+          .catch(() => false)
+          .finally(() => { ensuring = null; });
+        return ensuring;
+      };
+      // 会话切换原语（UI 层调用）：先清本会话渲染视图再拉新会话——items/live/DOM
+      // 无会话标记，跨会话混拼会让 'd'+DB主键 错并（adopt 前必清）。
+      // id=null = 新对话空白态：只清视图置 needCreate，不发无参拉取（服务端会
+      // 决议回"最新非空会话"旧内容填进空白视图）
+      const adoptConversation = (id) => {
+        pullSeq++; // 作废在途旧会话拉取
+        ctx.state.items = [];
+        ctx.state.live = {};
+        if (messages) messages.innerHTML = '';
+        if (id === null) { setConvState(null, true); return; }
+        setConvState(id, false);
+        pullHistory();
+      };
+      // 会话已删恢复（404 conversation_not_found 统一入口；pullHistory 与
+      // chat-stream 发送路径共用）：清 pref/会话态 → 无参拉取回落最新非空会话
+      // 或空态。流式中不清视图（在途轮继续渲染收尾），置 pendingPull 由收尾补拉
+      const handleConvGone = (goneId) => {
+        pullSeq++;
+        if (ctx.state.ui && typeof ctx.state.ui.onConvGone === 'function') {
+          try { ctx.state.ui.onConvGone(goneId); } catch (e) {}
+        }
+        try { localStorage.removeItem(convPrefKey()); } catch (e) {}
+        ctx.state.conv = null;
+        ctx.state.convNeedCreate = false;
+        if (ctx.state.isSending || ctx.state.streamCtrl) { ctx.state.pendingPull = true; return; }
+        ctx.state.items = [];
+        ctx.state.live = {};
+        if (messages) messages.innerHTML = '';
+        pullHistory(); // 无参：落最新非空会话或置空态（needCreate）
+      };
 
       // ── 多标签页同步（聊天软件式：所有窗口同屏同一会话）──
       // 生产端（正在对话的标签页）把每一帧经 BroadcastChannel 广播；接收端按
@@ -158,7 +294,16 @@
       // localStorage，避免写者风暴；缓存非权威，下次 pull 必然收敛）。无
       // BroadcastChannel 的老浏览器自动降级 storage 事件 + 本地历史。
       const chatChannel = 'BroadcastChannel' in window ? new BroadcastChannel('saudade-chat') : null;
-      const broadcast = (m) => { if (chatChannel) chatChannel.postMessage(m); };
+      const broadcast = (m) => {
+        // 20260903 会话化：广播帧统一带 convId（业务帧 + sending/idle 状态帧），
+        // 接收端按会话过滤——双标签页各开各的会话时互不渲染/互不锁发送；帧显式
+        // 带了 convId（undefined 之外的任何值含 null）则原样保留——接收端对
+        // null/未知保守视为匹配（兼容旧客户端与 auto 未决议窗口）
+        if (chatChannel) {
+          chatChannel.postMessage(
+            Object.assign({}, m, { convId: m.convId === undefined ? ctx.state.conv : m.convId }));
+        }
+      };
       // 20260828s：BroadcastChannel 会把消息发回发送者自己——user 帧在发送窗会
       // mergeItems 同 id 严格替换，把会话内 images（dataURL）换成 hasImg 占位标记
       // （"气泡图片不显示"根因之一）。每个窗口一个随机 id，user 帧带 from 标记，
@@ -219,7 +364,10 @@
       window.addEventListener('storage', (e) => {
         // 其他标签页写本地历史 → 防抖 400ms 重放（DB 幂等收敛；游客走本地重放）。
         // 流式中只置 pendingPull，不打断当前渲染，流结束补拉。
-        if (e.key && e.key.indexOf('chat_history_') === 0) {
+        // 20260903：仅响应当前会话自己的键（全键相等比较——JWT 含 '_'，前缀判断
+        // 会误收其他会话/账号的写入 → 跨会话视图漂移）。同会话多窗仍互相同步；
+        // 旧版单桶键的写入窗口已过（loadLocalHistory 一次性迁移接手删除）
+        if (e.key && e.key === historyKey()) {
           if (ctx.state.isSending || ctx.state.streamCtrl) { ctx.state.pendingPull = true; return; }
           clearTimeout(remotectlTimer);
           remotectlTimer = setTimeout(() => {
@@ -231,6 +379,16 @@
       // 会话（历史/用户标签错位）——清空当前会话重拉新账号历史。流式中只置
       // pendingPull 流结束补拉，与 storage 重放同一约束。
       window.addEventListener('auth-change', () => {
+        // 20260903：账号切换 = 会话空间整体更换——旧账号 conv 状态/pref/在途拉取
+        // 全部作废，回落 auto 态无参重决议（新账号最新非空会话；无会话 → 空白态）。
+        // UI 钩子先行（列表清空/标题复位不依赖流状态），再处理视图切换
+        pullSeq++;
+        try { localStorage.removeItem(convPrefKey()); } catch (e) {}
+        ctx.state.conv = null;
+        ctx.state.convNeedCreate = false;
+        if (ctx.state.ui && typeof ctx.state.ui.onAuthChange === 'function') {
+          try { ctx.state.ui.onAuthChange(); } catch (e) {}
+        }
         if (ctx.state.isSending || ctx.state.streamCtrl) { ctx.state.pendingPull = true; return; }
         ctx.state.items = [];
         ctx.state.live = {};
@@ -241,6 +399,13 @@
         chatChannel.onmessage = (ev) => {
           const m = ev.data || {};
           try {
+            // 20260903 会话隔离：广播帧带 convId——收发双方都是明确会话且不同 →
+            // 丢弃（双标签页各开各的会话，互不渲染/互不锁 busy）。convId 空
+            // （旧客户端帧 / auto 未决议窗口发出）保守视为匹配；空白新对话态
+            // （needCreate）不渲染任何其他会话的帧——它还没有自己的会话
+            if (m.convId !== undefined && m.convId !== null && ctx.state.conv !== null
+                && m.convId !== ctx.state.conv) return;
+            if (m.convId !== undefined && m.convId !== null && ctx.state.convNeedCreate) return;
             // 20260901：跨窗发送状态同步——远端窗口开始回复（sending）→ 禁用
             // 本窗发送；结束（idle）→ 恢复。广播顺序保证 sending 先于 user 帧
             // 到达，按钮禁用与气泡渲染互不干扰。
@@ -386,6 +551,13 @@
         try {
           const b = JSON.parse(localStorage.getItem(BUSY_KEY) || 'null');
           if (b && b.roundId && b.ts) {
+            // 20260903：busy 按会话判定——restore 时本窗已知会话且与标记会话不同
+            // → 他会话的轮，不锁本窗（跨会话发送互不阻塞；标记等原窗 idle 自清，
+            // 本窗不越权删）。空白新对话态无在途轮 → 跳过。b.convId 空（旧客户端
+            // /auto 未决议窗口写入）保守视为匹配，维持旧同桶并发语义
+            if (ctx.state.convNeedCreate) return;
+            if (ctx.state.conv !== null && b.convId !== undefined && b.convId !== null
+                && b.convId !== ctx.state.conv) return;
             const remain = REMOTE_BUSY_FALLBACK_MS - (Date.now() - b.ts);
             if (remain > 0) {
               ctx.state.remoteRounds[b.roundId] = true;
@@ -414,10 +586,27 @@
         return uid ? '用户' + uid + '（你）: ' : '你: ';
       };
       // ── 历史存取：DB 权威（pullHistory），localStorage 仅离线/游客缓存 ──
-      const historyKey = () => 'chat_history_' + (localStorage.getItem('tokenKey') || 'guest');
+      // historyKey/convPrefKey 定义已上移到会话原语块（20260903：键随会话分桶）
       const loadLocalHistory = () => {
         // 20260828a 起备份键退役：转跳恢复改由 DB 权威，游客走本地缓存（清理残留）
         try { sessionStorage.removeItem('chat_history_backup'); sessionStorage.removeItem('chat_history_backup_key'); } catch(e) {/* ignore */}
+        // 20260903 一次性迁移：旧版单桶键（chat_history_<token>，无会话后缀）首次
+        // 读取时接手内容并删除——会话化换键平滑过渡，旧缓存不丢显示；当前键已有
+        // 值（分桶镜像已写入）则旧镜像弃（服务器视图将覆盖，无需保留）。游客键
+        // 无后缀（guest 键即历史键）天然跳过
+        try {
+          const tk = localStorage.getItem('tokenKey');
+          if (tk) {
+            const legacyKey = 'chat_history_' + tk;
+            if (legacyKey !== historyKey() && localStorage.getItem(legacyKey) !== null) {
+              if (localStorage.getItem(historyKey()) === null) {
+                const legacyRaw = localStorage.getItem(legacyKey);
+                try { localStorage.setItem(historyKey(), legacyRaw); } catch (e) {/* quota 等 */ }
+              }
+              localStorage.removeItem(legacyKey);
+            }
+          }
+        } catch(e) {/* ignore */}
         try {
           const arr = JSON.parse(localStorage.getItem(historyKey()) || '[]');
           if (!Array.isArray(arr)) return [];
@@ -497,31 +686,69 @@
       // "停止生成"= 明确不想要这条，DB 侧 user+残缺回复全删；连接中断（页面转跳/
       // 关标签）则由 Rust DiscardAbortedExchange 只删残缺、保留 user（消息已发出）。
       // 尽力而为：失败忽略（中断清理兜底只删残缺，下次拉取时用户消息仍在）
-      const apiDiscard = () => {
+      const apiDiscard = (convId) => {
         const tk = localStorage.getItem('tokenKey');
         if (!tk) return;
+        // 20260903：停止生成精确到会话——显式会话带 conversation_id 定向删（防
+        // 双会话并发时误删"最新非空会话"的轮）；convId 空（auto 未决议）不发
+        // body = 服务端 None → 最新非空会话，与发送时的无参决议一致
+        const body = (convId === null || convId === undefined)
+          ? undefined
+          : JSON.stringify({ conversation_id: convId });
         fetch('/api/chat/discard', {
           method: 'POST',
-          headers: { 'Authorization': 'Bearer ' + tk },
+          headers: Object.assign({ 'Authorization': 'Bearer ' + tk },
+            body ? { 'Content-Type': 'application/json' } : {}),
+          ...(body ? { body } : {}),
         }).catch(() => {});
       };
       // DB 权威拉取：无 token/失败 → 本地兜底；成功 → 服务器权威整体替换
       // （内存乐观 'l' 条目经 replaceWithIncoming 保留 60s 窗口）+ 增量渲染 +
-      // 缓存同步（值变更检测防循环）
+      // 缓存同步（值变更检测防循环）。
+      // 20260903 会话化：请求带 conversation_id（conv 已决议）或无参（auto 态——
+      // 服务端决议"最新非空会话"，响应 conversation_id 回填；无任何会话 → 置
+      // needCreate 空白态，后续首条消息前建会话）。404 conversation_not_found →
+      // 会话已删恢复（handleConvGone），不 applyLocal——已删会话的缓存镜像不是
+      // 权威，降级会把"已删会话"当历史救回来
       const pullHistory = () => {
         if (ctx.state.isSending || ctx.state.streamCtrl) { ctx.state.pendingPull = true; return; } // 流式中永不重排
+        if (ctx.state.conv === null && ctx.state.convNeedCreate) return; // 空白态：不发无参拉取（会决议回旧会话内容）
         const tk = localStorage.getItem('tokenKey');
         if (!tk) { applyLocal(); return; }
+        const reqSeq = ++pullSeq; // 本请求序号：期间会话切换（adopt/convGone）→ 在途响应作废
+        const reqConv = ctx.state.conv; // 请求锚定会话（adopt 可能在途换 conv）
+        const stale = () => pullSeq !== reqSeq;
         // 8s 超时兜底：历史接口挂起时降级本地缓存（不阻塞面板打开）
         const pc = new AbortController();
         const pt = setTimeout(() => pc.abort(), 8000);
-        fetch('/api/chat/history', {
+        fetch('/api/chat/history' + (reqConv === null ? '' : '?conversation_id=' + reqConv), {
           headers: { 'Authorization': 'Bearer ' + tk },
           credentials: 'same-origin',
           signal: pc.signal,
-        }).then(r => (r.ok ? r.json() : null))
-          .then(data => {
+        }).then(r => {
+          if (r.ok) return r.json();
+          if (r.status === 404) {
+            // history 404 body 是统一 JSON 形状（{items,count,error}），解析出错误码
+            return r.json().then(b => ({ __status: 404, __error: b && b.error }))
+              .catch(() => ({ __status: 404, __error: null }));
+          }
+          return null;
+        }).then(data => {
+          if (stale()) return; // 会话已切换，在途旧响应丢弃（不 applyLocal 覆盖新视图）
+          if (data && data.__status === 404) {
+            if (data.__error === 'conversation_not_found') { handleConvGone(reqConv); return; }
+            applyLocal(); // 其他 404 沿用旧降级语义
+            return;
+          }
           if (!data || !Array.isArray(data.items)) { applyLocal(); return; }
+          if (reqConv === null && !ctx.state.convNeedCreate) {
+            // auto 态决议：无参请求响应带会话 id（服务端已落最新非空会话）——有
+            // 会话 → 采纳为显式会话（此后分键/回传/广播一致）；conversation_id
+            // 为 null（无任何会话）→ 置空白态，首条消息前建会话
+            const resolved = data.conversation_id;
+            if (typeof resolved === 'number' && resolved > 0) setConvState(resolved, false);
+            else setConvState(null, true);
+          }
           const incoming = data.items.map(it => __chatCore.migrateItem({
             id: 'd' + it.id,
             type: it.role === 'user' ? 'user' : 'agent',
@@ -550,8 +777,10 @@
           try { reconcileDOM(); }
           catch(e) { console.error('[agent-chat] pullHistory 渲染异常（items 已更新，不降级）:', e); }
           saveHistory(); // 缓存同步（值变更检测防写者风暴）
-        }).catch(e => { console.error('[agent-chat] pullHistory 拉取失败，本地缓存兜底:', e); applyLocal(); })
-          .finally(() => { clearTimeout(pt); });
+        }).catch(e => {
+          if (stale()) return; // 会话已切换：失败的是旧会话请求，新会话视图已接管
+          console.error('[agent-chat] pullHistory 拉取失败，本地缓存兜底:', e); applyLocal();
+        }).finally(() => { clearTimeout(pt); });
       };
       // ── 时间标签幂等维护（微信式时间分组）──
       // 标签是纯渲染物：不进 items、不序列化、不广播（items 权威同步后各窗本地
@@ -837,6 +1066,18 @@
           setTimeout(() => scrollToBottom(messages, true), 60); // 转跳返回 = 看最新对话
         }
       } catch(e) {/* ignore */}
+      // chat-session（UI 层）注册会话钩子——引擎做决策、UI 只负责渲染（钩子函数
+      // 全部 try 包裹，UI 层异常不影响对话）
+      const setConvUI = (handlers) => {
+        ctx.state.ui = Object.assign({}, ctx.state.ui, handlers || {});
+      };
+      // 会话列表脏通知：该轮收尾（标题派生/updated_at touch 都在服务端发生，本地
+      // 无从得知）→ UI 重新拉列表收敛；删除/建会话由 UI 自行发起不依赖此
+      const notifyListDirty = () => {
+        if (ctx.state.ui && typeof ctx.state.ui.onListDirty === 'function') {
+          try { ctx.state.ui.onListDirty(); } catch (e) {}
+        }
+      };
       // 20260828o：闭包函数挂到 api（init 是唯一填充点；autoload 在 init() 返回后
       // 才调 stream 工厂，此时 API 已齐备；#waifu 缺失重试路径下 stream.init 有
       // 独立面板存在检查等待，不会拿到半成品）
@@ -845,6 +1086,14 @@
       api.pullHistory = pullHistory;
       api.saveHistory = saveHistory;
       api.apiDiscard = apiDiscard;
+      // 20260903 会话化原语导出（chat-session/chat-stream 调用）
+      api.setConvState = setConvState;
+      api.adoptConversation = adoptConversation;
+      api.ensureConversation = ensureConversation;
+      api.handleConvGone = handleConvGone;
+      api.setConvUI = setConvUI;
+      api.notifyListDirty = notifyListDirty;
+      api.pruneConvCaches = pruneConvCaches;
       api.windowId = windowId; // user 帧广播标记（onmessage 排除自己的广播回环）
       api.appendMsg = appendMsg;
       api.makeLiveBubble = makeLiveBubble;

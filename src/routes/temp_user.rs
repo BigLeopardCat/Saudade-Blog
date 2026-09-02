@@ -67,8 +67,16 @@ pub async fn delete_temp_user(
     State(state): State<Arc<AppState>>,
     Path(user_id): Path<i32>,
 ) -> Json<crate::utils::ApiResponse<String>> {
+    // 删除临时用户时级联清理其全部会话数据（20260903 会话化补全：原实现漏删
+    // chat_summary，属存量 bug；conversation 随会话化新增）
     let _ = crate::entity::chat_history::Entity::delete_many()
         .filter(crate::entity::chat_history::Column::UserId.eq(user_id))
+        .exec(&state.db).await;
+    let _ = crate::entity::chat_summary::Entity::delete_many()
+        .filter(crate::entity::chat_summary::Column::UserId.eq(user_id))
+        .exec(&state.db).await;
+    let _ = crate::entity::conversation::Entity::delete_many()
+        .filter(crate::entity::conversation::Column::UserId.eq(user_id))
         .exec(&state.db).await;
     let _ = user::Entity::delete_by_id(user_id)
         .exec(&state.db).await;

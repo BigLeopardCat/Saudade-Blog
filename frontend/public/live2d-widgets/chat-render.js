@@ -153,6 +153,9 @@
       <div class="chat-drag-bar-l"></div>
       <div class="chat-inner-border"></div>
       <div class="chat-close" id="chat-close">×</div>
+      <!-- 20260903 会话化：当前会话标题条（细高一条，位于拖拽栏右侧与消息区之间；
+          仅 #waifu-chat.show-title 时显示，替代消息区顶部 L 边线——见 waifu.css） -->
+      <div id="chat-conv-title" class="chat-conv-title"></div>
       <div class="chat-messages" id="chat-messages"></div>
       <div class="chat-new-msg-note" id="chat-new-msg-note"><span>↓ 有新消息</span></div>
       <div class="chat-input-area">
@@ -177,6 +180,24 @@
           <button class="chat-nav-btn yes" id="nav-yes">确定</button>
           <button class="chat-nav-btn no" id="nav-no">取消</button>
         </div>
+      </div>
+      <!-- 20260903 会话化：左侧窄图标栏（absolute 覆在左拖拽条上，兄弟元素定位法
+          同 chat-img-btn——点击不经过拖拽条不触发拖动）。一期文字/Unicode 占位图标：
+          ☰ 展开/收起列表 · ＋ 新对话 · 历 历史列表 -->
+      <div class="chat-rail" id="chat-rail">
+        <button type="button" class="chat-rail-btn" id="conv-toggle-btn" title="会话列表">☰</button>
+        <button type="button" class="chat-rail-btn" id="conv-new-btn" title="新对话">＋</button>
+        <button type="button" class="chat-rail-btn" id="conv-history-btn" title="历史会话">历</button>
+      </div>
+      <!-- 会话历史面板：默认 display:none；#waifu-chat.conv-open 时以双栏（桌面加宽）
+           或覆盖式（移动端 ≤768px）形态出现，内容由 chat-session.js 动态渲染 -->
+      <div id="waifu-conv-panel" class="waifu-conv-panel">
+        <div class="conv-list-head">
+          <span class="conv-list-title">会话历史</span>
+          <button type="button" class="conv-head-btn" id="conv-collapse-btn" title="收起列表">⟵</button>
+          <button type="button" class="conv-head-btn" id="conv-head-new-btn" title="新对话">✚</button>
+        </div>
+        <div class="conv-list-body" id="conv-list"></div>
       </div>
     </div>
 `;

@@ -10,6 +10,7 @@ pub mod upload;
 pub mod temp_user;
 pub mod knowledge;
 pub mod chat;
+pub mod conversation;
 pub mod monitor;
 pub mod sitemap;
 
@@ -95,6 +96,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/chat/history", get(chat::chat_history_handler))
         // 主动停止丢弃本轮（前端"停止生成"按钮显式调用，全删 user+残缺回复）
         .route("/api/chat/discard", post(chat::discard_handler))
+        // 会话管理（20260903 会话化；handler 内手写鉴权同 chat 系）
+        .route("/api/chat/conversations", get(conversation::list_conversations).post(conversation::create_conversation))
+        .route("/api/chat/conversations/:id", delete(conversation::delete_conversation))
         
         // Knowledge Base (GET public for agent)
         .route("/api/knowledge", get(knowledge::list_knowledge))

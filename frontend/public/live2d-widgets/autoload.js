@@ -95,7 +95,7 @@
   // ★ 版本号：nginx 对 live2d-widgets 目录 immutable 缓存 1 年，子模块变更只 bump
   // 这里一处（所有子模块 URL 统一拼 ?v=VER；Live2dAgent/index.tsx 的 autoload 引用
   // 也需同步 bump——否则浏览器不会重新请求本入口）
-  const VER = '20260902a';
+  const VER = '20260903a';
 
   function loadExternalResource(url, type) {
     return new Promise((resolve, reject) => {
@@ -141,6 +141,7 @@
     ['chat-render', '__waifuRender'],
     ['chat-engine', '__waifuEngine'],
     ['chat-stream', '__waifuStream'],
+    ['chat-session', '__waifuSession'], // 20260903 会话化 UI 壳（会话管理列表/双栏）
     ['live2d-widget', '__waifuWidget'],
   ];
   for (const [name, globalKey] of MODS) {
@@ -237,6 +238,16 @@
   engine.init();
   const stream = window.__waifuStream(ctx, engine);
   stream.init();
+  // 会话管理 UI 层（20260903 会话化）：依赖 engine 已注入 chatHTML 且会话态就绪
+  // （engine.init 的 boot 拉取可能仍在途，chat-session 自身有 500ms 重试兜底）。
+  // 失败只降级会话列表功能，对话不受影响
+  try {
+    const session = window.__waifuSession(ctx, engine);
+    if (session) session.init();
+  } catch (e) {
+    console.error('[agent-chat] chat-session 初始化失败（会话列表不可用，对话不受影响）:', e);
+    if (window.__reportError) window.__reportError({ type: 'session_init_fail', message: String(e && e.message || e), url: location.href });
+  }
 
   // 监听 waifu-tips 的"欢迎阅读"消息，显示在 agent 对话框中
   const observeTips = () => {
