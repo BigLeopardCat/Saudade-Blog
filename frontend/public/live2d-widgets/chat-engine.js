@@ -255,18 +255,87 @@
           .finally(() => { ensuring = null; });
         return ensuring;
       };
+      // 数字 id 提取（'d'+DB 主键 → 数字；'l' 乐观 id/其他 → 排尾）——回拉窗口
+      // 合流后按数字升序稳定排序（DB id 全局单调即时间序，保时间序阅读正确）
+      const numId = (id) => {
+        const n = Number(String(id).replace(/^d/, ''));
+        return Number.isNaN(n) ? Number.MAX_SAFE_INTEGER : n;
+      };
+      let hitTimer = null; // 命中闪烁定时器（重复定位先摘旧）
+      // 命中消息定位闪烁：滚动居中（messages 为滚动容器）+ .msg-hit 环形辉光
+      // （CSS 动画 1.8s）；摘除 class 后再点同一条 force reflow 重放动画
+      const flashHit = (el) => {
+        try { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+        catch (e) { try { el.scrollIntoView(); } catch (e2) {} }
+        if (hitTimer) clearTimeout(hitTimer);
+        el.classList.remove('msg-hit');
+        void el.offsetWidth; // reflow：同元素二次命中也能重放动画
+        el.classList.add('msg-hit');
+        hitTimer = setTimeout(() => el.classList.remove('msg-hit'), 2000);
+      };
+      // 内容搜索命中定位（adoptConversation 带 hitDbId 时私有续跑）：
+      // 目标 'd'+dbId 已在 DOM → flashHit 收工；否则以当前最老条目为 before_id
+      // 逐页回拉更早窗口（每页 50、服务端升序回传），合流（id 严格替换 + 数字
+      // 升序）后 reconcileDOM 重排前插——最多 4 页（≥250 条覆盖），翻尽未中放弃。
+      // 中止守卫：pullSeq 变化（他处 adopt/convGone/新拉取）或会话切换即停。
+      // items 为空（adopt 时 pull 被流式守卫推迟）→ 先无参取最近窗口自合并
+      const locateHit = (dbId, convId) => {
+        const want = 'd' + dbId;
+        const mySeq = pullSeq;
+        const dead = () => pullSeq !== mySeq || ctx.state.conv !== convId;
+        const scroll = () => {
+          if (dead()) return true; // 已中止：视作处理完，不再翻页
+          const el = messages && messages.querySelector('[data-mid="' + want + '"]');
+          if (!el) return false;
+          flashHit(el);
+          return true;
+        };
+        const tk = localStorage.getItem('tokenKey');
+        if (!tk || scroll()) return;
+        const fetchPage = (before, depth) => {
+          if (depth > 4 || dead()) return;
+          fetch('/api/chat/history?conversation_id=' + convId + (before ? '&before_id=' + before : ''), {
+            headers: { 'Authorization': 'Bearer ' + tk },
+            credentials: 'same-origin',
+          }).then(r => (r.ok ? r.json() : null)).then(data => {
+            if (dead()) return;
+            if (!data || !Array.isArray(data.items) || !data.items.length) {
+              console.warn('[agent-chat] 命中消息 ' + want + ' 不在回拉范围内，放弃定位');
+              return;
+            }
+            const older = mapDbItems(data.items);
+            const byId = new Map();
+            for (const x of ctx.state.items) byId.set(x.id, x);
+            for (const x of older) byId.set(x.id, x); // 同 id 严格替换（DB 权威）
+            ctx.state.items = [...byId.values()].sort((a, b) => numId(a.id) - numId(b.id));
+            try { reconcileDOM(); }
+            catch (e) { console.error('[agent-chat] 定位翻页渲染异常（items 已更新）:', e); }
+            if (scroll()) return;
+            const first = ctx.state.items[0]; // 最老条目 = 下一翻页锚点
+            fetchPage(first ? numId(first.id) : null, depth + 1);
+          }).catch(() => {}); // 单页失败静默放弃（保持现状视图）
+        };
+        const first = ctx.state.items[0];
+        fetchPage(first ? numId(first.id) : null, 1);
+      };
       // 会话切换原语（UI 层调用）：先清本会话渲染视图再拉新会话——items/live/DOM
       // 无会话标记，跨会话混拼会让 'd'+DB主键 错并（adopt 前必清）。
       // id=null = 新对话空白态：只清视图置 needCreate，不发无参拉取（服务端会
       // 决议回"最新非空会话"旧内容填进空白视图）
-      const adoptConversation = (id) => {
+      // hitDbId（20260903e 内容搜索定位，可选）：adopt 首屏拉取完成后目标消息若
+      // 不在窗口（>50 条会话的早前命中）→ locateHit 逐页回拉合并后定位闪烁
+      const adoptConversation = (id, hitDbId) => {
         pullSeq++; // 作废在途旧会话拉取
         ctx.state.items = [];
         ctx.state.live = {};
         if (messages) messages.innerHTML = '';
         if (id === null) { setConvState(null, true); return; }
         setConvState(id, false);
-        pullHistory();
+        Promise.resolve(pullHistory()).then(() => {
+          // 守卫：期间会话又被切换/拉取顶掉（pull 返回 false 亦同：流式推迟时
+          // 视图未就绪，放弃定位保持现状）——只有真拉了且会话未变才续跑
+          if (hitDbId && ctx.state.conv === id && !ctx.state.convNeedCreate) locateHit(Number(hitDbId), id);
+        });
       };
       // 会话已删恢复（404 conversation_not_found 统一入口；pullHistory 与
       // chat-stream 发送路径共用）：清 pref/会话态 → 无参拉取回落最新非空会话
@@ -710,18 +779,30 @@
       // needCreate 空白态，后续首条消息前建会话）。404 conversation_not_found →
       // 会话已删恢复（handleConvGone），不 applyLocal——已删会话的缓存镜像不是
       // 权威，降级会把"已删会话"当历史救回来
+      // DB 历史行 → 核心条目（pullHistory 与 locateHit 回拉共用同一映射：
+      // 'd'+DB 主键 / role→type / process 由 role 决定）
+      const mapDbItems = (rows) => rows.map(it => __chatCore.migrateItem({
+        id: 'd' + it.id,
+        type: it.role === 'user' ? 'user' : 'agent',
+        text: it.content,
+        time: it.time,
+        process: it.role === 'user' ? undefined : lookupProcess(it.content),
+      }));
       const pullHistory = () => {
-        if (ctx.state.isSending || ctx.state.streamCtrl) { ctx.state.pendingPull = true; return; } // 流式中永不重排
-        if (ctx.state.conv === null && ctx.state.convNeedCreate) return; // 空白态：不发无参拉取（会决议回旧会话内容）
+        // 返回值 Promise<boolean>（20260903e）：true = 本次拉取已执行（adopt 命中
+        // 定位据此续跑 locateHit）；false = 被守卫跳过（流式中暂缓 / 空白态 /
+        // 无 token 已本地兜底）——调用方勿依赖值本身，只作"是否真拉了"信号
+        if (ctx.state.isSending || ctx.state.streamCtrl) { ctx.state.pendingPull = true; return Promise.resolve(false); } // 流式中永不重排
+        if (ctx.state.conv === null && ctx.state.convNeedCreate) return Promise.resolve(false); // 空白态：不发无参拉取（会决议回旧会话内容）
         const tk = localStorage.getItem('tokenKey');
-        if (!tk) { applyLocal(); return; }
+        if (!tk) { applyLocal(); return Promise.resolve(false); }
         const reqSeq = ++pullSeq; // 本请求序号：期间会话切换（adopt/convGone）→ 在途响应作废
         const reqConv = ctx.state.conv; // 请求锚定会话（adopt 可能在途换 conv）
         const stale = () => pullSeq !== reqSeq;
         // 8s 超时兜底：历史接口挂起时降级本地缓存（不阻塞面板打开）
         const pc = new AbortController();
         const pt = setTimeout(() => pc.abort(), 8000);
-        fetch('/api/chat/history' + (reqConv === null ? '' : '?conversation_id=' + reqConv), {
+        const chain = fetch('/api/chat/history' + (reqConv === null ? '' : '?conversation_id=' + reqConv), {
           headers: { 'Authorization': 'Bearer ' + tk },
           credentials: 'same-origin',
           signal: pc.signal,
@@ -749,13 +830,7 @@
             if (typeof resolved === 'number' && resolved > 0) setConvState(resolved, false);
             else setConvState(null, true);
           }
-          const incoming = data.items.map(it => __chatCore.migrateItem({
-            id: 'd' + it.id,
-            type: it.role === 'user' ? 'user' : 'agent',
-            text: it.content,
-            time: it.time,
-            process: it.role === 'user' ? undefined : lookupProcess(it.content),
-          }));
+          const incoming = mapDbItems(data.items);
           // 20260828g：服务器权威——items 整体替换为 DB 视图，删除全部合并启发式。
           // 旧模型（mergeItems 并集 + 本地 'l' 条目混排）是乱序根源：本地条目
           // time 与服务器不一致、孤儿永不收敛、双窗结果恒不同。替换后所有窗拉
@@ -781,6 +856,7 @@
           if (stale()) return; // 会话已切换：失败的是旧会话请求，新会话视图已接管
           console.error('[agent-chat] pullHistory 拉取失败，本地缓存兜底:', e); applyLocal();
         }).finally(() => { clearTimeout(pt); });
+        return chain.then(() => true);
       };
       // ── 时间标签幂等维护（微信式时间分组）──
       // 标签是纯渲染物：不进 items、不序列化、不广播（items 权威同步后各窗本地
