@@ -711,6 +711,19 @@ pub async fn chat_stream_handler(
                         yield Ok(Bytes::from(format!("data: {}\n\n", payload)));
                         continue;
                     }
+                    // 命令帧（NAVIGATE:/AUTO_NAVIGATE:/EFFECT:/DARKMODE:）：执行指令
+                    // 不是对话内容，前端已单独收到命令并执行。不累积进 reply——
+                    // 命令帧先于叙述帧到达且无换行分隔时，单行拼接会让保存时的
+                    // strip_command_lines 整行剥空（20260903 实证 chat_history
+                    // 空行 3465 → 转跳后回复丢失）。转发仍照常（前端执行命令用）
+                    if text.starts_with("AUTO_NAVIGATE:")
+                        || text.starts_with("NAVIGATE:")
+                        || text.starts_with("EFFECT:")
+                        || text.starts_with("DARKMODE:")
+                    {
+                        yield Ok(Bytes::from(format!("data: {}\n\n", payload)));
+                        continue;
+                    }
                     reply.push_str(&text);
                     yield Ok(Bytes::from(format!("data: {}\n\n", payload)));
                 }
