@@ -77,8 +77,10 @@ pub(crate) async fn resolve_conversation_id(
 #[derive(Deserialize)]
 pub struct ListQuery {
     /// 20260903e 会话搜索：非空时列表收窄为"标题 LIKE（库 collation 不区分大小写）
-    /// 或 会话内有消息内容命中"的会话，响应行带 hit_id = 该会话最新命中消息 id
-    /// （消息 id 全局自增，order_by_desc 首见即最新）；null = 标题命中/未搜索。
+    /// 或 会话内有消息内容命中"的会话，响应行带 hit_id = 点行后应定位的消息：
+    /// 内容命中 → 该会话最新命中消息 id（消息 id 全局自增，desc 首见即最新）；
+    /// 仅标题命中 → 会话首条消息 id（标题 = 首条用户消息截断，定位到标题出处）。
+    /// null = 未搜索。
     #[serde(default)]
     q: Option<String>,
 }
@@ -152,6 +154,29 @@ pub async fn list_conversations(
         .all(&state.db)
         .await
         .unwrap_or_default();
+    // 仅标题命中的行补定位锚：标题 = 首条用户消息截断（标题出处），点行应定位
+    // 到该会话首条消息而非停留在"最新消息"处——idx_conv_id (conversation_id, id)
+    // 前缀命中的单行索引查询，标题命中行数少（个位~几十），逐行可接受
+    if q.is_some() {
+        // filter 闭包持 hit_by_conv 借用 → 先收集再逐行插入
+        let need: Vec<i32> = convs
+            .iter()
+            .filter(|c| !hit_by_conv.contains_key(&c.id))
+            .map(|c| c.id)
+            .collect();
+        for cid in need {
+            if let Some(h) = chat_history::Entity::find()
+                .filter(chat_history::Column::ConversationId.eq(cid))
+                .order_by_asc(chat_history::Column::Id)
+                .one(&state.db)
+                .await
+                .ok()
+                .flatten()
+            {
+                hit_by_conv.insert(cid, h.id);
+            }
+        }
+    }
     let items: Vec<serde_json::Value> = convs
         .iter()
         .map(|c| {
@@ -162,8 +187,8 @@ pub async fn list_conversations(
                 "created_at": naive_ms(c.created_at),
                 "updated_at": naive_ms(c.updated_at),
                 "pinned": c.pinned,
-                // 20260903e 搜索命中消息 id（null = 标题命中/未搜索）：前端点行
-                // 切换会话后定位闪烁到该消息
+                // 20260903e 点行定位锚：内容命中 = 最新命中消息；仅标题命中 =
+                // 会话首条消息（标题出处）；未搜索 = null
                 "hit_id": hit_by_conv.get(&c.id).copied(),
             })
         })
