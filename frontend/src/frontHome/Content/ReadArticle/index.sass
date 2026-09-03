@@ -353,3 +353,11 @@ html
 .frontDark .readContent .markdown-body .bytemd-mermaid
   border-color: rgba(148, 163, 184, 0.55)
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.45)
+
+// 内置表情包（:名字: → <img class="sticker">）行内尺寸（class 与 src 前缀双保险，
+// 20260903 泠月喵 PNG 贴纸素材；与 utils/stickers.ts 清单同步）
+.readContent .markdown-body img.sticker, .readContent .markdown-body img[src^="/stickers/"]
+  height: 1.8em
+  vertical-align: middle
+  display: inline-block
+  margin: 0 2px
