@@ -13,6 +13,7 @@ import 'github-markdown-css/github-markdown-dark.css'
 import './index.css'
 import http from "../../apis/axios.tsx";
 import {message} from "antd";
+import { bytemdStickers } from "../../utils/stickers";
 
 const plugins = [
     gfm({ singleTilde: false }),
@@ -21,7 +22,8 @@ const plugins = [
     frontmatter(),
     gemoji(),
     highlight(),
-    mediumZoom()
+    mediumZoom(),
+    bytemdStickers
 ]
 
 interface Editor_Props {

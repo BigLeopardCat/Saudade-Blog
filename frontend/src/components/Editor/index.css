@@ -6,6 +6,14 @@
     padding: 45px;
 }
 
+/* 编辑器预览里的内置表情包尺寸（:名字: → <img class="sticker">，class 与 src 前缀双保险） */
+.markdown-body img.sticker, .markdown-body img[src^="/stickers/"] {
+    height: 1.8em;
+    vertical-align: middle;
+    display: inline-block;
+    margin: 0 2px;
+}
+
 @media (max-width: 767px) {
     .markdown-body {
         padding: 15px;

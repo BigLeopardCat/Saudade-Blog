@@ -97,9 +97,19 @@
         }
       } catch(e) {}
       const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      // 内置表情包清单（20260903：与 src/utils/stickers.ts 的 STICKERS 同步，增删两处改）。
+      // 仅命中才替换，未知 :名字: 保留原样。
+      const STICKERS = {
+        头疼: '/stickers/touteng.png', 委屈: '/stickers/weiqu.png', 害羞: '/stickers/haixiu.png',
+        比耶: '/stickers/biye.png', 犯错: '/stickers/fancuo.png', 生气: '/stickers/shengqi.png',
+        贴贴: '/stickers/tietie.png', 震惊: '/stickers/zhenjing.png',
+      };
       const escInline = (s) => {
         s = esc(s);
         s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+        // 表情替换须在 code 包裹之后：行内代码已变成 <code>…</code>，内部 :xx: 不再被匹配
+        s = s.replace(/:([^:\s]{1,12}):/g, (all, n) => STICKERS[n]
+          ? '<img class="sticker" src="' + STICKERS[n] + '" alt="' + n + '" />' : all);
         // 图片必须优先于链接匹配
         s = s.replace(/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g, '<img src="$2" alt="$1" loading="lazy" />');
         s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');

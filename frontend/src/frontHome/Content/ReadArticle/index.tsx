@@ -24,6 +24,7 @@ import highlight from "@bytemd/plugin-highlight";
 import mermaid from '@bytemd/plugin-mermaid'
 import math from "@bytemd/plugin-math";
 import { initZoomDelegation } from "./zoomOverlay";
+import { bytemdStickers } from "../../../utils/stickers";
 import 'bytemd/dist/index.css'
 import 'github-markdown-css/github-markdown-light.css'
 import 'highlight.js/styles/atom-one-dark.css' // Import Highlight.js styles
@@ -36,7 +37,8 @@ const plugins = [
     gemoji(),
     highlight(),
     mermaid(),
-    math()
+    math(),
+    bytemdStickers
 ]
 
 const ReadArticle = () => {

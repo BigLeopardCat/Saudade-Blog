@@ -21,18 +21,21 @@ import gfm from '@bytemd/plugin-gfm'
 import breaks from '@bytemd/plugin-breaks'
 import gemoji from '@bytemd/plugin-gemoji'
 import math from '@bytemd/plugin-math'
+import { remarkStickers } from './stickers'
 
 // 与 bytemd Viewer 相同：克隆默认 schema 并允许 className（供高亮等插件使用）
 const schema = JSON.parse(JSON.stringify(defaultSchema)) as { attributes: Record<string, string[]> }
 schema.attributes['*'].push('className')
 
-// 渲染管线（gfm 删除线/表格/任务列表、breaks 硬换行、gemoji 表情、math 公式、raw HTML 白名单过滤）
+// 渲染管线（gfm 删除线/表格/任务列表、breaks 硬换行、gemoji 表情、内置表情包 :名字:、math 公式、raw HTML 白名单过滤）
 let processor: Processor = unified().use(remarkParse)
 // singleTilde: false——remark-gfm 默认允许单 ~ 成对作删除线，中文范围写法
 // （"30~50""10~15"）会被误渲染成 <del>（20260831 对话框实测，文章页/编辑器同步）
 for (const plugin of [gfm({ singleTilde: false }), breaks(), gemoji(), math()]) {
   if (plugin.remark) processor = plugin.remark(processor)
 }
+// 内置表情包在 gemoji 之后执行：:中文名: 与 :smile: 互不冲突（gemoji 只动 ASCII 名）
+processor = processor.use(remarkStickers)
 processor = processor
   .use(remarkRehype, { allowDangerousHtml: true })
   .use(rehypeRaw)
