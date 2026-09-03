@@ -263,11 +263,26 @@
       };
       let hitTimer = null; // 命中闪烁定时器（重复定位先摘旧）
       // 命中消息定位闪烁：滚动居中（messages 为滚动容器）+ .msg-hit 环形辉光
-      // （CSS 动画 1.8s）；摘除 class 后再点同一条 force reflow 重放动画
+      // （CSS 动画 1.8s）；摘除 class 后再点同一条 force reflow 重放动画。
+      // 20260903g 修复（headless 实测定位失效根因）：原实现 scrollIntoView
+      // smooth —— adopt 拉新会话时 appendMsg 内部 scrollToBottom 排了 double-rAF
+      // 回底（scrollToBottom 用双重 rAF 延迟执行），flashHit 的同步 scrollIntoView
+      // 动画被紧随帧的 rAF 回底 `el.scrollTop = el.scrollHeight` 掐死 → 视图停在
+      // 底部、命中处从不滚入视野。改用程序化居中（getBoundingClientRect 相对位移，
+      // 不受 offsetParent 链影响）+ 同步落位一次 + double-rAF 重放一次——重放排在
+      // appendMsg 已排的回底 rAF 之后，后写者赢，命中处必然最终可见
       const flashHit = (el) => {
-        try { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
-        catch (e) { try { el.scrollIntoView(); } catch (e2) {} }
         if (hitTimer) clearTimeout(hitTimer);
+        const place = () => {
+          const m = messages;
+          if (!m || !m.contains(el)) return;
+          const mr = m.getBoundingClientRect();
+          const er = el.getBoundingClientRect();
+          if (!mr.height) return;
+          m.scrollTop += (er.top + er.height / 2) - (mr.top + mr.height / 2);
+        };
+        place();
+        requestAnimationFrame(() => requestAnimationFrame(place)); // 压过 appendMsg 的 double-rAF 回底
         el.classList.remove('msg-hit');
         void el.offsetWidth; // reflow：同元素二次命中也能重放动画
         el.classList.add('msg-hit');
