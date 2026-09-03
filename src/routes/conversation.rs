@@ -353,3 +353,79 @@ pub async fn update_conversation(
             .into_response(),
     }
 }
+
+/// GET /api/chat/search 查询参数
+#[derive(Deserialize)]
+pub struct SearchQuery {
+    /// 20260903f 消息级检索词：trim 后非空必填，空 → 400 q_required。
+    #[serde(default)]
+    q: Option<String>,
+}
+
+/// GET /api/chat/search?q=：会话历史**消息级**内容检索（20260903f 用户拍板形态——
+/// 检索结果列表 = 命中的对话轮次（消息行）而非会话行；点行 → 切会话并定位到该
+/// 消息）。只按 content LIKE（标题 = 首条用户消息截断，搜标题词自然命中首条轮次，
+/// 无需单独标题匹配）；id desc（最新命中在前）limit 100；每行带会话标题供前端
+/// 分组显示。like_escape 同 list_conversations（防 % _ \ 通配注入）。
+pub async fn search_chat_messages(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<SearchQuery>,
+    headers: HeaderMap,
+) -> Response {
+    let Some(uid) = auth_jwt::auth_uid(&headers) else {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "unauthorized"})),
+        )
+            .into_response();
+    };
+    let q = query.q.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let Some(q) = q else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "q_required"})),
+        )
+            .into_response();
+    };
+    let pat = format!("%{}%", like_escape(q));
+    let rows = chat_history::Entity::find()
+        .filter(chat_history::Column::UserId.eq(uid))
+        .filter(chat_history::Column::Content.like(&pat))
+        .order_by_desc(chat_history::Column::Id)
+        .limit(100)
+        .all(&state.db)
+        .await
+        .unwrap_or_default();
+    // 命中消息的会话标题批量补查（列表行分组展示）
+    let mut title_by_conv: HashMap<i32, Option<String>> = HashMap::new();
+    {
+        let ids: std::collections::HashSet<i32> =
+            rows.iter().map(|r| r.conversation_id).collect();
+        if !ids.is_empty() {
+            let convs = conversation::Entity::find()
+                .filter(conversation::Column::Id.is_in(ids.iter().copied()))
+                .all(&state.db)
+                .await
+                .unwrap_or_default();
+            for c in convs {
+                title_by_conv.insert(c.id, c.title);
+            }
+        }
+    }
+    let hits: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|h| {
+            json!({
+                "id": h.id,
+                "conversation_id": h.conversation_id,
+                // Option 原样透传 null（纯图轮会话未派生标题）→ 前端显示"新对话"
+                "conv_title": title_by_conv.get(&h.conversation_id).cloned().flatten(),
+                "role": h.role,
+                // char 级截 200 防大 payload；完整内容由切会话后的 history 拉取
+                "content": h.content.chars().take(200).collect::<String>(),
+                "time": naive_ms(h.created_at),
+            })
+        })
+        .collect();
+    (StatusCode::OK, Json(json!({"hits": hits, "count": hits.len()}))).into_response()
+}

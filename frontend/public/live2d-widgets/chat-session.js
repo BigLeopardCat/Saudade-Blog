@@ -100,10 +100,12 @@
       }
     };
 
-    // ── 列表拉取统一入口（服务端排序权威：置顶在前 + updated_at DESC）──
-    // 20260903e 内容搜索：query 非空 → 请求带 ?q=（标题 LIKE OR 消息内容命中，
-    // 服务端过滤并回传 hit_id = 每会话最新命中消息 id），响应行本地不再二次过滤；
-    // query 空 → 全量。seq 守卫：连续输入/事件竞态时旧响应晚到直接作废
+    // ── 列表拉取统一入口 ──
+    // 浏览态（query 空）：GET /api/chat/conversations 会话全量（服务端排序权威：
+    // 置顶在前 + updated_at DESC）。搜索态（query 非空，20260903f 用户拍板）：
+    // GET /api/chat/search?q= 消息级检索——列表渲染"命中的对话轮次"（消息行），
+    // 点行 → 切会话并定位该消息；不再渲染会话行。seq 守卫：连续输入/事件竞态
+    // 时旧响应晚到直接作废
     let fetchSeq = 0;
     const fetchList = async () => {
       if (!convList) return;
@@ -117,18 +119,35 @@
       const seq = ++fetchSeq;
       const q = query; // 请求锚定词（期间输入继续变 → 本响应按 seq 作废）
       try {
-        const r = await fetch('/api/chat/conversations' + (q ? '?q=' + encodeURIComponent(q) : ''), {
+        const url = q ? '/api/chat/search?q=' + encodeURIComponent(q) : '/api/chat/conversations';
+        const r = await fetch(url, {
           headers: { 'Authorization': 'Bearer ' + tk },
           credentials: 'same-origin',
         });
         const j = r.ok ? await r.json().catch(() => null) : null;
         if (seq !== fetchSeq) return; // 已被更新的拉取顶掉：不渲染过期结果
-        const list = (j && Array.isArray(j.conversations)) ? j.conversations : [];
-        _rows = list.map(c => ({ id: c.id, title: c.title, updated_at: c.updated_at, pinned: !!c.pinned, hit_id: c.hit_id || null }));
-        _byId = new Map(_rows.map(c => [c.id, c]));
-        // 列表外的会话缓存键清理（会话被删/过期列表外 → 镜像随删防膨胀）
-        engine.pruneConvCaches(_rows.map(c => c.id));
-        renderRows(_rows);
+        if (q) {
+          // 搜索态：命中轮次列表。命中行会话信息并入 _byId（顶部标题条渲染用，
+          // 缺 updated_at 的字段不影响 title 读取）
+          const hits = (j && Array.isArray(j.hits)) ? j.hits : [];
+          _byId = new Map();
+          for (const h of hits) {
+            if (!_byId.has(h.conversation_id)) {
+              _byId.set(h.conversation_id, {
+                id: h.conversation_id, title: h.conv_title,
+                updated_at: h.time, pinned: false,
+              });
+            }
+          }
+          renderHits(hits);
+        } else {
+          const list = (j && Array.isArray(j.conversations)) ? j.conversations : [];
+          _rows = list.map(c => ({ id: c.id, title: c.title, updated_at: c.updated_at, pinned: !!c.pinned }));
+          _byId = new Map(_rows.map(c => [c.id, c]));
+          // 列表外的会话缓存键清理（会话被删/过期列表外 → 镜像随删防膨胀）
+          engine.pruneConvCaches(_rows.map(c => c.id));
+          renderRows(_rows);
+        }
         renderHeader();
         highlight();
       } catch(e) { /* 网络错误保留旧列表（下次事件重拉） */ }
@@ -230,14 +249,48 @@
     };
 
     // ── 行渲染：标题（截断+置顶标）+ 相对时间 + ⋯（菜单）＋ 删除确认条 ──
+    // ── 搜索态渲染：命中的对话轮次（20260903f 用户拍板：结果 = 消息行而非会话
+    // 行）── 行 = 顶行小字（会话标题 · 相对时间）+ 两行截断的消息片段；点击 →
+    // 切到所在会话并定位闪烁该消息（switchTo 带 hit 放行当前会话重定位）
+    const renderHits = (hits) => {
+      convList.innerHTML = '';
+      if (!hits.length) {
+        const empty = document.createElement('div');
+        empty.className = 'conv-list-empty';
+        empty.textContent = '没有匹配的对话轮次';
+        convList.appendChild(empty);
+        return;
+      }
+      for (const h of hits) {
+        const row = document.createElement('div');
+        row.className = 'conv-hit-row';
+        row.dataset.conv = String(h.conversation_id);
+        row.dataset.hit = String(h.id);
+        const meta = document.createElement('div');
+        meta.className = 'conv-hit-meta';
+        meta.textContent = (h.conv_title || '新对话') + ' · ' + relTime(h.time);
+        meta.title = meta.textContent;
+        const text = document.createElement('div');
+        text.className = 'conv-hit-text';
+        text.textContent = h.content || '';
+        row.appendChild(meta);
+        row.appendChild(text);
+        row.addEventListener('click', () => {
+          if (switchBlocked()) return; // 流式中不切会话（收尾保存仍写原会话）
+          clearMenuAll();
+          switchTo(Number(row.dataset.conv), row.dataset.hit);
+        });
+        convList.appendChild(row);
+      }
+    };
+
     const renderRows = (rows) => {
       convList.innerHTML = '';
       if (!rows.length) {
         const empty = document.createElement('div');
         empty.className = 'conv-list-empty';
-        empty.textContent = query
-          ? '没有匹配的会话'
-          : (getToken() ? '还没有会话，点 ＋ 开始新对话' : '登录后可管理会话历史');
+        // 浏览态空态（搜索态空态在 renderHits 处理，文案不同）
+        empty.textContent = getToken() ? '还没有会话，点 ＋ 开始新对话' : '登录后可管理会话历史';
         convList.appendChild(empty);
         return;
       }

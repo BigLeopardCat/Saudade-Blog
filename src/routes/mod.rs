@@ -96,6 +96,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/chat/history", get(chat::chat_history_handler))
         // 主动停止丢弃本轮（前端"停止生成"按钮显式调用，全删 user+残缺回复）
         .route("/api/chat/discard", post(chat::discard_handler))
+        // 消息级内容检索（20260903f：命中轮次列表形态；点行 → 切会话定位消息）
+        .route("/api/chat/search", get(conversation::search_chat_messages))
         // 会话管理（20260903 会话化；handler 内手写鉴权同 chat 系）
         .route("/api/chat/conversations", get(conversation::list_conversations).post(conversation::create_conversation))
         .route("/api/chat/conversations/:id", delete(conversation::delete_conversation).patch(conversation::update_conversation))
