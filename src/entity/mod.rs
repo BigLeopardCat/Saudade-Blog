@@ -11,4 +11,5 @@ pub mod image;
 pub mod knowledge_base;
 pub mod chat_history;
 pub mod chat_summary;
+pub mod execution_log;
 pub mod conversation;

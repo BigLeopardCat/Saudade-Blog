@@ -43,7 +43,7 @@ pub struct ChatResponse {
 
 use sea_orm::{EntityTrait, Set, QueryOrder, QueryFilter, ColumnTrait, QuerySelect, ActiveModelTrait, PaginatorTrait};
 use sea_orm::sea_query::Expr; // Expr 不在 sea-orm 根（0.12.15 仅 pub use sea_query 全名）
-use crate::entity::{chat_history, chat_summary, conversation};
+use crate::entity::{chat_history, chat_summary, conversation, execution_log};
 use crate::routes::conversation::resolve_conversation_id;
 use futures::StreamExt;
 use async_stream::stream;
@@ -359,6 +359,25 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
         .await.unwrap_or_default();
     let summary_text = summary_row.as_ref().map(|s| s.summary.clone()).unwrap_or_default();
 
+    // 跨轮执行记忆（20260904 C5）：读本会话最近 8 条执行回执（execution_log.detail
+    // 写时已渲染定稿，这里直取零映射）→ "· " 拼串注入 recent_executions=——
+    // 供"质疑上轮执行是否属实"据实作答（双向失真修复：编造"欢迎回来"/否认真实显示）。
+    // 读取失败（表未建/DB 抖动）→ 空串，agent 端按"无记录"如实处理，不阻断对话。
+    let executions_text: String = {
+        let recent = execution_log::Entity::find()
+            .filter(execution_log::Column::UserId.eq(uid))
+            .filter(execution_log::Column::ConversationId.eq(conversation_id))
+            .order_by_desc(execution_log::Column::Id)
+            .limit(Some(8))
+            .all(&state.db)
+            .await
+            .unwrap_or_default();
+        recent.iter().rev() // 倒序取回 → 升序拼串（旧→新）
+            .map(|r| r.detail.clone())
+            .collect::<Vec<_>>()
+            .join("\n· ")
+    };
+
     // 统计本会话消息数，决定是否触发压缩。needs_summary 补懒生成条款：会话 >20 条
     // 且尚无摘要行（存量旧会话回访）也触发一次——摘要落库后条件自然关闭；
     // %10∈{0,1} 为历史双触发节奏（summary 与回复并行生成，不阻塞对话）
@@ -405,6 +424,7 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
         "history": history_items,
         "summary": summary_text,
         "needs_summary": needs_summary,
+        "executions": executions_text,  // 20260904 C5：跨轮执行记忆（最近 8 条回执，"· " 拼串）
     });
 
     if std::env::var("CHAT_DEBUG_BODY").is_ok() {
@@ -496,6 +516,64 @@ async fn save_assistant_reply(
     }
 }
 
+/// 跨轮执行记忆渲染（20260904）：checker 验收回执行 → 中文动作行，写时一次定稿、
+/// 读时零映射（execution_log.detail 落的就是这里的产物，prepare_chat 直取拼串）。
+/// 输入 = Python agent __EXEC__ 帧里的 {skill,tool,args,result,ts}。动作词映射
+/// 按 tool 名；内容取自 args（文案注入后值——device_oled_display 的 args.text 即
+/// 实际屏文）；残余 [ ] 归一为「」（容 args 里带方括号的内容），截 ≤120 字。
+fn render_exec_row(row: &serde_json::Value) -> String {
+    let tool = row["tool"].as_str().unwrap_or("");
+    let args = row["args"].as_object().cloned().unwrap_or_default();
+    let arg = |k: &str| -> String {
+        args.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string()
+    };
+    let detail = match tool {
+        "device_oled_display" => format!("屏幕显示「{}」", arg("text")),
+        "navigate_to" => format!("跳转「{}」", arg("path")),
+        "toggle_effect" => {
+            let on = arg("action") != "off";
+            format!("特效「{}」已{}", arg("effect"), if on { "开" } else { "关" })
+        }
+        // Python 侧回执 args 值经 str() 落盘：bool on=True → "True"
+        "toggle_dark_mode" => format!(
+            "夜间模式已{}", if arg("on") == "True" { "开" } else { "关" }
+        ),
+        "search_notes" => format!("搜索「{}」", arg("keyword")),
+        "rag_search" => format!("站内检索「{}」", arg("query")),
+        "get_article_detail" => format!("读取文章 {}", arg("article_id")),
+        "list_devices" => "查看设备列表".to_string(),
+        "get_current_time" => "查看当前时间".to_string(),
+        "list_guestbook" => "查看留言板".to_string(),
+        "list_talks" => "查看说说".to_string(),
+        "get_announcements" => "查看公告".to_string(),
+        "list_notes" => "查看文章列表".to_string(),
+        _ => format!("操作记录({})", tool),
+    };
+    let detail = detail.replace('[', "「").replace(']', "」");
+    detail.chars().take(120).collect()
+}
+
+/// 跨轮执行记忆落库（20260904）：批量插入 checker 验收回执（渲染后存储）。
+/// 流式在 save_assistant_reply 后、同步在响应解析后调用；`let _ =` 吞错——
+/// 执行记忆是辅助事实，落库失败不影响回复主链路。断连/discard 刻意不清
+/// execution_log（执行是已发生事实，中断只弃残缺叙述不否定已验收执行）。
+async fn save_execution_log(
+    db: &sea_orm::DatabaseConnection,
+    uid: i32,
+    conversation_id: i32,
+    rows: &[serde_json::Value],
+) {
+    for row in rows {
+        let _ = execution_log::ActiveModel {
+            user_id: Set(uid),
+            conversation_id: Set(conversation_id),
+            skill: Set(row["skill"].as_str().unwrap_or("").chars().take(32).collect()),
+            detail: Set(render_exec_row(row)),
+            ..Default::default()
+        }.save(db).await;
+    }
+}
+
 fn agent_chat_url() -> String {
     std::env::var("AGENT_URL").unwrap_or_else(|_| "http://127.0.0.1:8010/chat".to_string())
 }
@@ -544,6 +622,13 @@ pub async fn chat_handler(
                 let agent_summary = data["new_summary"].as_str().map(|s| s.to_string());
                 if ctx.uid > 0 {
                     save_assistant_reply(&state.db, ctx.uid, ctx.conversation_id, reply.clone(), agent_summary, ctx.total_count).await;
+                    // 跨轮执行记忆（20260904 C5）：同步路径的回执在响应体 executions
+                    // （agent ChatResponse 新字段；agent 无回执时为 Null → 空数组跳过）
+                    let exec_rows: Vec<serde_json::Value> = data["executions"].as_array()
+                        .cloned().unwrap_or_default();
+                    if !exec_rows.is_empty() {
+                        save_execution_log(&state.db, ctx.uid, ctx.conversation_id, &exec_rows).await;
+                    }
                 }
                 Json(ChatResponse { reply, success: true, error: None }).into_response()
             } else {
@@ -656,6 +741,8 @@ pub async fn chat_stream_handler(
         let mut terminal = false;
         // 独立摘要（agent 侧 needs_summary 轮后端总结的返回值，随 __SUMMARY__ 帧到达）
         let mut summary_override: Option<String> = None;
+        // 跨轮执行记忆（20260904 C5）：checker 验收回执（__EXEC__ 帧 → execution_log 落库）
+        let mut exec_rows: Vec<serde_json::Value> = Vec::new();
 
         // 客户端中断清理（见 DiscardAbortedExchange）：流被取消时删除本轮 user 消息
         // 之后的残缺回复（user 消息本体保留）；正常走完 while 循环后置位 done，关闭清理
@@ -692,6 +779,18 @@ pub async fn chat_stream_handler(
                 if let Some(s) = payload.strip_prefix("__SUMMARY__:") {
                     if let Ok(s) = serde_json::from_str::<String>(s) {
                         summary_override = Some(s);
+                    }
+                    continue;
+                }
+                // 跨轮执行记忆（20260904 C5）：checker 验收回执帧。必须在下方 JSON 文本
+                // 解析之前拦截——payload 不是合法 JSON 字符串（serde 解析会静默丢弃）。
+                // 只镜像收集进 exec_rows（流结束落 execution_log），绝不 yield 转发——
+                // 前端无此帧协议，透传会被当作正文渲染
+                if let Some(rows) = payload.strip_prefix("__EXEC__:") {
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(rows) {
+                        if let Some(arr) = v.as_array() {
+                            exec_rows = arr.clone();
+                        }
                     }
                     continue;
                 }
@@ -744,6 +843,13 @@ pub async fn chat_stream_handler(
         // 流结束：保存历史 + 独立摘要（来自 __SUMMARY__ 帧，无则不入库）
         if !reply.is_empty() && uid > 0 {
             save_assistant_reply(&state.db, uid, conversation_id, reply, summary_override, total_count).await;
+        }
+        // 跨轮执行记忆（20260904 C5）：checker 验收回执落库（流式路径帧在 __EXEC__
+        // 分支已收进 exec_rows）。独立于 reply.is_empty()——断连/中断那轮的工具执行
+        // 是已发生事实（device 真显示了、页面真跳了），清不清残缺回复都不该抹掉执行
+        // 记录；客户端断连后照常写入（用户重连质疑"你刚做了没"仍能据实作答）。
+        if !exec_rows.is_empty() && uid > 0 {
+            save_execution_log(&state.db, uid, conversation_id, &exec_rows).await;
         }
     };
 
