@@ -87,6 +87,21 @@
     // 任何本地条目（合并启发式全删除）。唯一例外：60s 内新收尾但尚未入库的
     // 'l' 轮追加尾部（DB 提交延迟窗口，防"刚发完被 pull 一闪而过"）；内容已被
     // incoming 收录的 'l' 不追加（用 'd' 版即可）。time 最新，追加尾部顺序正确。
+    // 内容等价判据（20260905 修 phantom）：'l' 保留窗口与 mergeItems/reconcileDOM
+    // 收养判据三处语义必须一致。历史演进：① stripImgMark 只剥图片标记不剥命令段
+    // → 命令轮（darkmode/特效/导航）fullText = cmdText+displayText 含命令前缀
+    // （如 "DARKMODE:on\n…"），DB content 是纯叙述（命令帧 Rust/前端分流不累积）
+    // → 判据恒失配 → 'l' 残留每次 pull 被追加 → 双气泡 phantom（20260904 实测：
+    // darkmode 轮回复双显、纯聊天轮无——cmdText 空判据命中）。② matchText 逐行剥
+    // 命令但不剥图片标记（图片轮差 "[图片×N]" 后缀标记）。合并语义：剥命令段 +
+    // 剥图片标记 + 空白归一，作为三处统一的内容等价比较
+    const contentEq = (a, b) => {
+      const clean = (s) => (s || '').split('\n')
+        .map(stripCommand)
+        .map(l => l.replace(/\n?\s*\[图片(?:×\d+)?\]\s*$/g, ''))
+        .join('\n');
+      return normText(clean(a)) === normText(clean(b));
+    };
     const replaceWithIncoming = (local, incoming, now) => {
       const out = incoming.slice();
       const t = (now === undefined ? Date.now() : now);
@@ -160,13 +175,14 @@
         }
       }
       for (const it of (local || [])) {
-        // 60s 'l' 保留窗口：图片轮本地文本与 DB 版差 "[图片×N]" 标记，matchText
-        // 会失配 → 本地条目被误追加 → "多标签页把用户问题再次追加到底部"根因。
-        // 统一剥标记后比较（无图消息走 stripImgMark 等于 normText，行为不变）
+        // 60s 'l' 保留窗口：内容已被 incoming 收录的 'l' 不追加（用 'd' 版即可）。
+        // 20260905：判据改用 contentEq（剥命令段+剥图片标记+空白归一）——旧判据
+        // stripImgMark 不剥命令段，命令轮 fullText 含 cmdText 前缀与 DB 纯叙述
+        // 恒失配 → 'l' 每次 pull 被追加 → 双气泡 phantom（见 contentEq 注释）
         if (it.id && it.id.startsWith('l')
             && (it.time || 0) >= t - 60000
             && !incoming.some(inc => inc.type === it.type
-                && stripImgMark(inc.text) === stripImgMark(it.text))) {
+                && contentEq(inc.text, it.text))) {
           out.push(it);
         }
       }
