@@ -534,9 +534,11 @@ fn render_exec_row(row: &serde_json::Value) -> String {
             let on = arg("action") != "off";
             format!("特效「{}」已{}", arg("effect"), if on { "开" } else { "关" })
         }
-        // Python 侧回执 args 值经 str() 落盘：bool on=True → "True"
+        // Python 侧 toggle_dark_mode 实参 = {"mode": "on"|"off"}（skills.py 模板 $mode，
+        // 经 str() 落盘仍为字符串）——曾误读 arg("on") 且比 "True"（bool 形态属其他
+        // 工具），键值双错位导致每次执行记录恒渲染「已关」
         "toggle_dark_mode" => format!(
-            "夜间模式已{}", if arg("on") == "True" { "开" } else { "关" }
+            "夜间模式已{}", if arg("mode") == "on" { "开" } else { "关" }
         ),
         "search_notes" => format!("搜索「{}」", arg("keyword")),
         "rag_search" => format!("站内检索「{}」", arg("query")),

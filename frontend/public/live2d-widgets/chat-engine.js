@@ -975,6 +975,15 @@
         {
           const validMids = new Set();
           for (const it of ctx.state.items) validMids.add(it.id || '');
+          // 20260905 同 mid 双节点防御：items 每 id 唯一，DOM 同 mid 出现 >1 =
+          // 重建空气泡/收养漏网的残留副本（'l' 判据失配期的双气泡根因之一）。
+          // 先统计各 mid 出现次数，孤儿循环逐个递减——保留最后一个（与上方
+          // items 循环 byMid.get 后写覆盖取最后节点的语义一致），其余当孤儿删
+          const midCount = new Map();
+          for (const child of Array.from(messages.children)) {
+            const m = child.dataset && child.dataset.mid;
+            if (m) midCount.set(m, (midCount.get(m) || 0) + 1);
+          }
           const liveEls = new Set();
           for (const k in live) liveEls.add(live[k].el);
           for (const child of Array.from(messages.children)) {
@@ -984,7 +993,11 @@
               if (child.classList && child.classList.contains('chat-time-divider')) continue;
               const mid = child.dataset && child.dataset.mid;
               let doomed = false;
-              if (mid) doomed = !validMids.has(mid);
+              if (mid) {
+                const left = (midCount.get(mid) || 1) - 1;
+                midCount.set(mid, left);
+                doomed = !validMids.has(mid) || left > 0;
+              }
               else if (!liveEls.has(child)) doomed = true;
               if (doomed) {
                 // 20260828o 修复：气泡删除时连带删除其前导时间标签——标签是气泡的
