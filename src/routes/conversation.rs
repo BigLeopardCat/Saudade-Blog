@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use crate::routes::AppState;
 use crate::auth_jwt;
-use crate::entity::{chat_history, chat_summary, conversation};
+use crate::entity::{chat_history, chat_summary, conversation, execution_log};
 
 /// 会话 API（20260903 会话化）：新建/列表/删除 + 会话解析（chat 系端点共用）。
 /// 全部照 chat 系惯例：public_routes 组 + handler 内 auth_jwt::auth_uid 手写鉴权。
@@ -250,8 +250,8 @@ pub async fn delete_conversation(
         )
             .into_response();
     }
-    // 级联删除（应用层三条 delete，无 DB 外键——与全项目"实体零关系"惯例一致），
-    // 事务保证三步一致性（失败回滚，不出现孤儿消息/摘要）
+    // 级联删除（应用层四条 delete，无 DB 外键——与全项目"实体零关系"惯例一致），
+    // 事务保证四步一致性（失败回滚，不出现孤儿消息/摘要/执行回执）
     let txn = match state.db.begin().await {
         Ok(t) => t,
         Err(_) => {
@@ -268,6 +268,13 @@ pub async fn delete_conversation(
         .await;
     let _ = chat_summary::Entity::delete_many()
         .filter(chat_summary::Column::ConversationId.eq(id))
+        .exec(&txn)
+        .await;
+    // 跨轮执行记忆（20260904 C5）：执行回执随会话删除级联清理——会话删了，
+    // 其 execution_log 行无任何读取路径（prepare_chat 按 conversation_id 注入），
+    // 不清理会永久占表
+    let _ = execution_log::Entity::delete_many()
+        .filter(execution_log::Column::ConversationId.eq(id))
         .exec(&txn)
         .await;
     let _ = conversation::Entity::delete_by_id(id).exec(&txn).await;
