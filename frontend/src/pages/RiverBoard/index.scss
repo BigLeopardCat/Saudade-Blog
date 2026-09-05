@@ -1256,3 +1256,105 @@
   width: min(90vw, 480px);
   max-width: min(90vw, 480px);
 }
+
+/* ---------------- 我的河灯 · 状态标签 + 收回（20260905 issue8） ----------------
+   状态标签两处复用：灯影集「我的河灯」列表条目（紧贴留名行尾）、
+   心愿弹窗内状态行；收回按钮仅弹窗内出现（两步确认防误删） */
+
+/* 标签基形：细线药丸，随上下文缩字号 */
+.rz-root .rz-minetag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
+  border: 1px solid rgba(214, 172, 106, 0.4);
+  border-radius: 999px;
+  background: rgba(214, 172, 106, 0.06);
+  color: rgba(240, 222, 188, 0.62);
+  font-family: inherit;
+  font-style: normal;
+  font-size: 11px;
+  line-height: 1.6;
+  letter-spacing: 0.2em;
+  text-indent: 0.2em;
+  white-space: nowrap;
+}
+
+/* 灯影集条目内：贴住留名行，字号随 meta 收小 */
+.rz-root .rz-album-item .rz-minetag {
+  margin-left: 8px;
+  font-size: 10px;
+  vertical-align: 1px;
+}
+
+/* 待审：金——灯入河待点亮 */
+.rz-root .rz-minetag.rz-wait {
+  color: #f0c987;
+  border-color: rgba(240, 196, 110, 0.6);
+  background: rgba(240, 196, 110, 0.1);
+}
+
+/* 未通过：朱——与印章红同族 */
+.rz-root .rz-minetag.rz-no {
+  color: #ff9d8a;
+  border-color: rgba(231, 76, 60, 0.55);
+  background: rgba(231, 76, 60, 0.12);
+}
+
+/* 已点亮：灰金，弱于前两者（仅弹窗内出现） */
+.rz-root .rz-minetag.rz-ok {
+  color: rgba(240, 222, 188, 0.48);
+  border-color: rgba(214, 172, 106, 0.3);
+  background: transparent;
+}
+
+/* 心愿弹窗 · 状态行：与正文间一道虚金线分隔，收回钮靠右 */
+.rz-root .rz-modal-box .rz-mine-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin: 4px 2px 0;
+  padding: 9px 0 5px;
+  border-top: 1px dashed rgba(214, 172, 106, 0.22);
+}
+
+.rz-root .rz-modal-box .rz-reclaim {
+  margin-left: auto;
+  padding: 3px 14px;
+  background: rgba(255, 205, 140, 0.07);
+  border: 1px solid rgba(255, 205, 140, 0.28);
+  border-radius: 999px;
+  cursor: pointer;
+  color: rgba(242, 226, 194, 0.72);
+  font-family: inherit;
+  font-size: 12px;
+  letter-spacing: 0.22em;
+  text-indent: 0.22em;
+  transition: color 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+
+  &:hover,
+  &:focus-visible {
+    color: #ffe9c4;
+    background: rgba(255, 205, 140, 0.15);
+    outline: none;
+  }
+
+  &:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+
+  /* 第二击确认态：警示朱红，防误删的最后一道醒目 */
+  &.armed {
+    color: #ff9d8a;
+    border-color: rgba(231, 76, 60, 0.62);
+    background: rgba(231, 76, 60, 0.16);
+  }
+}
+
+.rz-root .rz-modal-box .rz-reclaim-err {
+  flex-basis: 100%;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: #ff9d8a;
+}

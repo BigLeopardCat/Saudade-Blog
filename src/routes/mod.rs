@@ -173,6 +173,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/protect/board", get(talks::list_board_admin))
         .route("/api/protect/board/:id", delete(talks::delete_board))
         .route("/api/protect/board/:id/audit", put(talks::audit_board))
+        // 我的河灯（20260905 issue8）：本人全部河灯（含待审/未通过）列表 + 收回
+        .route("/api/protect/board/mine", get(talks::list_my_boards))
+        .route("/api/protect/board/mine/:id", delete(talks::delete_my_board))
 
         // Knowledge Base (write/admin)
         .route("/api/knowledge", post(knowledge::add_knowledge))

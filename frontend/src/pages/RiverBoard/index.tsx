@@ -52,9 +52,30 @@ const shortTime = (d: Date) => {
 };
 
 /* 灯影集条目 */
-type AlbumItem = { id: number; v: number; cat: string; author: string; msg: string; time: string; mine: boolean };
+type AlbumItem = {
+    id: number;
+    v: number;
+    cat: string;
+    author: string;
+    msg: string;
+    time: string;
+    mine: boolean;
+    approved: number; // 1=通过 / 0=待审 / 2=未通过（仅"我的河灯"接口返回非 1）
+};
 
-type Wish = { id: number; v: number; msg: string; cat: string; author?: string; time?: string };
+type Wish = {
+    id: number;
+    v: number;
+    msg: string;
+    cat: string;
+    author?: string;
+    time?: string;
+    /* 灯影集条目点开的灯（20260905 issue8 收回/状态用）：
+       talkKey=留言 id；mine/approved 供弹窗显示状态标签与收回按钮 */
+    talkKey?: number;
+    mine?: boolean;
+    approved?: number;
+};
 
 /* ------------------------- 灯笼精灵预渲染 -------------------------
    三种花样：莲花灯 / 八角灯 / 圆笼灯，全部用 Canvas 手绘，
@@ -474,6 +495,10 @@ export default function RiverBoard() {
     const [lanterns, setLanterns] = useState<Wish[]>([]);
     const [ready, setReady] = useState(false);
     const [modal, setModal] = useState<Wish | null>(null); // 正中弹窗内的心愿
+    /* 收回河灯（20260905 issue8）：两步确认——先点「收回河灯」武装成「确认收回」再执行 */
+    const [reclaimArm, setReclaimArm] = useState(false);
+    const [reclaimBusy, setReclaimBusy] = useState(false);
+    const [reclaimErr, setReclaimErr] = useState("");
 
     /* 此心为灯 · 留言流程：0 选灯型 → 1 选印章 → 2 书写/放下 */
     const [wishOpen, setWishOpen] = useState(false);
@@ -483,6 +508,8 @@ export default function RiverBoard() {
     const [wishText, setWishText] = useState("");
     const [wishBusy, setWishBusy] = useState(false);
     const [wishDone, setWishDone] = useState(false);
+    // 放下结果进待审（后端人工复核开时 data="Pending"，20260905）：完成页提示
+    const [wishPending, setWishPending] = useState(false);
     const wishSeq = useRef(0); // 新河灯自增 id（避开现有 0..n）
     /* 刚放下的灯快照："再看一眼"按同一盏灯重新点放（复用其留名/灯型/内容） */
     const lastDroppedWish = useRef<Wish | null>(null);
@@ -520,6 +547,9 @@ export default function RiverBoard() {
     /* 灯影集：收录全部留言的古籍卷册 */
     const [albumOpen, setAlbumOpen] = useState(false);
     const [albumItems, setAlbumItems] = useState<AlbumItem[]>([]);
+    // "我的河灯"数据源（20260905 issue8）：本人全部河灯含待审(0)/未通过(2)——
+    // 公开列表只放行通过态，看不到自己的待审/被驳回的灯
+    const [albumMine, setAlbumMine] = useState<AlbumItem[]>([]);
     const [albumTabs, setAlbumTabs] = useState<"time" | "mine" | "cat">("time");
     const [albumTimeAsc, setAlbumTimeAsc] = useState(false); // 时序正序/倒序
     const [albumCatFilter, setAlbumCatFilter] = useState<string[]>([]); // 类型筛选（空=全部）
@@ -1830,6 +1860,8 @@ export default function RiverBoard() {
         toggleMsg(ln.id, true);
         if (fromTouch) lastWishTouch.current = Date.now();
         setModal(ln);
+        setReclaimArm(false); // 换一盏灯，收回确认态复位
+        setReclaimErr("");
     };
     const closeModal = () => {
         // 弹窗关闭后，悬浮于河灯上的文本气泡一并收起
@@ -1837,6 +1869,9 @@ export default function RiverBoard() {
             el.classList.remove("rz-open");
         });
         setModal(null);
+        setReclaimArm(false);
+        setReclaimBusy(false);
+        setReclaimErr("");
         // 从灯影集进入的详情弹窗：关闭后重新展开灯影集，并还原到原浏览位置
         if (albumResumeRef.current !== null) {
             const pos = albumResumeRef.current;
@@ -1872,8 +1907,13 @@ export default function RiverBoard() {
                 body: JSON.stringify({ content: msg, cat: wishCat, v: wishV, talkTitle: "", author }),
             });
             if (!res.ok) throw new Error("bad status");
-            const jj = (await res.json()) as { code?: number; message?: string };
+            const jj = (await res.json()) as { code?: number; message?: string; data?: unknown };
             if (jj?.code !== 200) throw new Error(jj?.message || "留言失败");
+            // 人工复核开启时新灯进待审（后端 approved=0 → data="Pending"）：
+            // 河面仍为自己点亮这一盏（放灯体感不变），但不入公开列表；
+            // 灯影集「我的河灯」页签可见，状态标签「待审」，审核通过后自动入册
+            const pending = jj?.data === "Pending";
+            setWishPending(pending);
             const metas = metaRef.current;
             const id = 10000 + wishSeq.current++;
             metas.push({
@@ -1905,6 +1945,7 @@ export default function RiverBoard() {
     const closeWishFlow = () => {
         setWishOpen(false);
         setWishDone(false);
+        setWishPending(false);
         setWishBusy(false);
         setWishStep(0);
         setWishText("");
@@ -1920,6 +1961,7 @@ export default function RiverBoard() {
         setWishText("");
         setWishStep(0);
         setWishDone(false);
+        setWishPending(false);
         setWishOpen(true);
         if (!wishAuthor) {
             try {
@@ -1938,6 +1980,71 @@ export default function RiverBoard() {
         }
     };
 
+    /* 我的河灯（20260905 issue8）：本人全部河灯（含待审 0/未通过 2）。
+       公开列表只放行通过态——被审核拦下的灯只有这里能看到状态并收回 */
+    const fetchMyAlbum = async () => {
+        const token = localStorage.getItem("tokenKey");
+        if (!token) return;
+        try {
+            const res = await fetch(`${runtimeBaseURL}/api/protect/board/mine`, {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            const j = (await res.json()) as { data?: unknown };
+            const arr = Array.isArray(j?.data)
+                ? (j.data as Array<{ talkKey?: unknown; v?: unknown; cat?: unknown; author?: unknown; content?: unknown; createTime?: unknown; approved?: unknown }>)
+                : [];
+            const mine = arr.map((x) => ({
+                id: Number(x?.talkKey ?? 0),
+                v: [0, 1, 2].includes(Number(x?.v)) ? Number(x.v) : 0,
+                cat: CATS.includes(String(x?.cat ?? "")) ? String(x.cat) : catOf(String(x?.content ?? "")),
+                author: String(x?.author ?? ""),
+                msg: String(x?.content ?? ""),
+                time: String(x?.createTime ?? "").slice(0, 16),
+                mine: true,
+                approved: [0, 1, 2].includes(Number(x?.approved)) ? Number(x.approved) : 1,
+            }));
+            setAlbumMine(mine);
+        } catch {
+            /* 拉取失败则保持旧数据（公开列表仍可用） */
+        }
+    };
+
+    /* 收回河灯（20260905 issue8）：删除自己放的河灯。
+       两步确认防误删：第一击武装（按钮变「确认收回？」），第二击执行 DELETE。
+       成功 → 从灯影集两数据源 + 河流轮播池剔除，撤下弹窗 */
+    const reclaimLantern = async () => {
+        const tk = modal?.talkKey;
+        const gid = modal?.id;
+        if (!tk || !modal?.mine || reclaimBusy) return;
+        if (!reclaimArm) {
+            setReclaimArm(true);
+            return;
+        }
+        setReclaimBusy(true);
+        setReclaimErr("");
+        try {
+            const token = localStorage.getItem("tokenKey");
+            const res = await fetch(`${runtimeBaseURL}/api/protect/board/mine/${tk}`, {
+                method: "DELETE",
+                headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+            });
+            const j = (await res.json()) as { code?: number; message?: string };
+            if (!res.ok || j?.code !== 200) throw new Error(j?.message || "收回失败");
+            setAlbumItems((prev) => prev.filter((x) => x.id !== tk));
+            setAlbumMine((prev) => prev.filter((x) => x.id !== tk));
+            if (allTalksRef.current.length) {
+                allTalksRef.current = allTalksRef.current.filter((t) => t.talkKey !== tk);
+            }
+            // 河面这盏灯（灯影集点起的实例）一并撤走
+            setLanterns((prev) => prev.filter((p) => p.id !== gid));
+            closeModal();
+        } catch (err) {
+            setReclaimBusy(false);
+            setReclaimArm(false);
+            setReclaimErr(String(err).replace(/^Error:\s*/, "") || "收回失败，请稍后再试");
+        }
+    };
+
     /* 灯影集：打开时拉取全部留言。
        每次打开都重新拉取（不缓存）：放下新灯后灯影集实时同步最新留言，
        否则会话内只取一次，放灯后需手动刷新网页才更新 */
@@ -1953,7 +2060,7 @@ export default function RiverBoard() {
             });
             const j = (await res.json()) as { data?: unknown };
             const arr = Array.isArray(j?.data)
-                ? (j.data as Array<{ talkKey?: unknown; v?: unknown; cat?: unknown; author?: unknown; content?: unknown; createTime?: unknown; mine?: unknown }>)
+                ? (j.data as Array<{ talkKey?: unknown; v?: unknown; cat?: unknown; author?: unknown; content?: unknown; createTime?: unknown; mine?: unknown; approved?: unknown }>)
                 : [];
             setAlbumItems(
                 arr.map((x) => ({
@@ -1964,8 +2071,10 @@ export default function RiverBoard() {
                     msg: String(x?.content ?? ""),
                     time: String(x?.createTime ?? "").slice(0, 16),
                     mine: x?.mine === true,
+                    approved: Number(x?.approved ?? 1), // 公开列表全为通过态
                 }))
             );
+            fetchMyAlbum();
             // 顺带刷新河流批次轮播池（新放灯的留言进入轮播序列，指针回到最新一批）
             const talks: Wish[] = arr
                 .map((x) => ({
@@ -1975,6 +2084,7 @@ export default function RiverBoard() {
                     author: String(x?.author ?? ""),
                     msg: String(x?.content ?? ""),
                     time: String(x?.createTime ?? "").slice(0, 16),
+                    talkKey: Number(x?.talkKey ?? 0), // 收回河灯时按留言 id 从轮播池剔除
                 }))
                 .filter((t) => t.msg);
             if (talks.length >= 4) {
@@ -2005,7 +2115,19 @@ export default function RiverBoard() {
             ripT: -1,
         });
         metaRef.current = metas;
-        const wish: Wish = { id, v: it.v, msg: it.msg, cat: it.cat, author: it.author, time: it.time };
+        // talkKey/mine/approved 随 Wish 带到弹窗（20260905 issue8）：自己点开的河灯
+        // 弹窗可显示审核状态标签 + 收回按钮（收回按 talkKey 调 DELETE）
+        const wish: Wish = {
+            id,
+            v: it.v,
+            msg: it.msg,
+            cat: it.cat,
+            author: it.author,
+            time: it.time,
+            talkKey: it.id,
+            mine: it.mine,
+            approved: it.approved,
+        };
         setLanterns((prev) => [...prev, wish]);
         // 详情弹窗打开期间隐藏灯影集（避免两个浮层重叠），关闭后恢复到原浏览位置
         // （记录列表 scrollTop，closeModal 时重新展开并还原；页签/筛选/检索状态
@@ -2027,10 +2149,14 @@ export default function RiverBoard() {
         (window as unknown as { __qaBoard?: { advanceMsg: (id: number) => void } }).__qaBoard = { advanceMsg };
     });
 
-    /* 灯影集：按当前页签排序 + 类型筛选 + 按检索词过滤 */
+    /* 灯影集：按当前页签排序 + 类型筛选 + 按检索词过滤
+       "我的河灯"数据源 = albumMine（本人全部河灯，含待审 0 / 未通过 2——公开列表
+       只放行通过态，看不到自己的待审/被驳回的灯，20260905 issue8）；
+       其余页签 = 公开列表 albumItems */
     const q = albumQuery.trim();
-    const albumSorted = [...albumItems]
-        .filter((it) => albumTabs !== "mine" || it.mine) // 我的河灯：仅当前登录用户所放
+    const albumBase = albumTabs === "mine" ? albumMine : albumItems;
+    const albumSorted = [...albumBase]
+        .filter((it) => albumTabs !== "mine" || it.mine) // mine 页签数据源已全为本人，此过滤保底
         .filter((it) => albumCatFilter.length === 0 || albumCatFilter.includes(it.cat))
         .filter((it) => q === "" || it.msg.includes(q) || it.author.includes(q) || it.cat === q)
         .sort((a, b) => {
@@ -2264,7 +2390,14 @@ export default function RiverBoard() {
                             <div className="rz-wish-step rz-wish-done">
                                 <div className="rz-wish-done-glow" />
                                 <h3 className="rz-wish-title">灯已入河</h3>
-                                <p className="rz-wish-sub">{CAT_INFO[wishCat].desc}</p>
+                                {wishPending ? (
+                                    <p className="rz-wish-sub">
+                                        灯入待审，通过后即在河面公开点亮。
+                                        可到灯影集「我的河灯」查看状态或收回
+                                    </p>
+                                ) : (
+                                    <p className="rz-wish-sub">{CAT_INFO[wishCat].desc}</p>
+                                )}
                                 <div className="rz-wish-foot">
                                     <button
                                         type="button"
@@ -2402,10 +2535,24 @@ export default function RiverBoard() {
                                     <span className="rz-album-msg">{it.msg}</span>
                                     <span className="rz-album-meta">
                                         {it.author || "无名"} · {it.time}
+                                        {/* 我的河灯：待审(0)/未通过(2)状态标签（20260905 issue8）——
+                                           点进详情可收回；通过态无标签 */}
+                                        {albumTabs === "mine" && it.approved === 0 && (
+                                            <i className="rz-minetag rz-wait" title="等待审核，通过后才在河面公开点亮">待审</i>
+                                        )}
+                                        {albumTabs === "mine" && it.approved === 2 && (
+                                            <i className="rz-minetag rz-no" title="审核未通过，仅在「我的河灯」可见">未通过</i>
+                                        )}
                                     </span>
                                 </button>
                             ))}
-                            {albumSorted.length === 0 && <p className="rz-album-empty">卷中暂无留言</p>}
+                            {albumSorted.length === 0 && (
+                                <p className="rz-album-empty">
+                                    {albumTabs === "mine" && !localStorage.getItem("tokenKey")
+                                        ? "登录后可在「我的河灯」查看与收回所放河灯"
+                                        : "卷中暂无留言"}
+                                </p>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -2419,6 +2566,35 @@ export default function RiverBoard() {
                             {(modal.author || modal.time) && (
                                 <div className="rz-who">
                                     {modal.author || "无名"} · {modal.time || ""}
+                                </div>
+                            )}
+                            {/* 自己的河灯（灯影集点开，20260905 issue8）：
+                               待审/未通过状态 + 收回河灯（两步确认） */}
+                            {modal.mine && modal.talkKey && (
+                                <div className="rz-mine-row">
+                                    {modal.approved === 0 && (
+                                        <span className="rz-minetag rz-wait">待审</span>
+                                    )}
+                                    {modal.approved === 2 && (
+                                        <span className="rz-minetag rz-no">未通过</span>
+                                    )}
+                                    {modal.approved !== 0 && modal.approved !== 2 && (
+                                        <span className="rz-minetag rz-ok">已点亮</span>
+                                    )}
+                                    <button
+                                        type="button"
+                                        className={"rz-reclaim" + (reclaimArm ? " armed" : "")}
+                                        disabled={reclaimBusy}
+                                        onClick={reclaimLantern}
+                                        title={
+                                            reclaimArm
+                                                ? "再点一次确认：河灯将从灯影集与河面移去，不可恢复"
+                                                : "收回这盏河灯（删除这条留言）"
+                                        }
+                                    >
+                                        {reclaimBusy ? "收回中…" : reclaimArm ? "确认收回？" : "收回河灯"}
+                                    </button>
+                                    {reclaimErr && <span className="rz-reclaim-err">{reclaimErr}</span>}
                                 </div>
                             )}
                             {/* 关闭钮放进内容流：滚动到文本末尾才能看到，不再是悬浮在框底压住文本 */}
