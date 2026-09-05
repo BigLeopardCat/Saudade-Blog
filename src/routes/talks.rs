@@ -192,11 +192,13 @@ async fn insert_talk(
         author.to_string()
     };
     // 20260905 留言审核：河灯留言（src=board）按 web_info 开关组合定 approved
-    // （说说 src=talk 恒 1 直接展示，不纳入审核——审核只针对公开访客留言）
-    let approved = if src == "board" {
+    // （说说 src=talk 恒 1 直接展示，不纳入审核——审核只针对公开访客留言）。
+    // issue9：AI 判定同步落库 ai_result——后台按「AI 审核 + 人工审核」两段展示，
+    // 判定是 pass/flag 即时生效后不回溯，留痕供管理端溯源
+    let (approved, ai_result) = if src == "board" {
         board_approved(state, content).await
     } else {
-        1
+        (1, None)
     };
     let t = talk::ActiveModel {
         title: Set(Some(cat.clone())),
@@ -207,6 +209,7 @@ async fn insert_talk(
         user_id: Set(uid),
         src: Set(src.to_string()),
         approved: Set(approved),
+        ai_result: Set(ai_result),
         created_at: Set(chrono::Local::now().naive_local()),
         updated_at: Set(chrono::Local::now().naive_local()),
         ..Default::default()
@@ -220,19 +223,22 @@ async fn insert_talk(
     }
 }
 
-/// 河灯留言入库审核判定（20260905）：返回 approved 值——1 直接展示 / 0 进待审。
+/// 河灯留言入库审核判定（20260905，issue9 起带 AI 留痕）：
+/// 返回 (approved, ai_result)——approved：1 直接展示 / 0 进待审；
+/// ai_result：Some("pass")=AI 通过 / Some("flag")=AI 拦截转人工 / None=未走 AI
+/// （AI 关、人工全审模式、agent 降级放行——降级不等于 AI 判过，不留 pass 假证）。
 /// 开关组合（两闸可叠加、可单独作用，用户拍板）：
 ///   · 人工复核开 → 一律 0 待审（人工同意才放行；AI 若同开仅作入队前过滤）
-///   · 仅 AI 开    → 同步调 agent /review：flag → 0 待审；pass → 1
-///   · 都关        → 1（维持 20260905 前全通过的现状）
+///   · 仅 AI 开    → 同步调 agent /review：flag → (0, "flag")；pass → (1, "pass")
+///   · 都关        → (1, None)（维持 20260905 前全通过的现状）
 /// agent 不可用/超时/解析失败 → 降级放行不拦正常留言（兑底，日志留痕）。
-async fn board_approved(state: &Arc<AppState>, content: &str) -> i8 {
+async fn board_approved(state: &Arc<AppState>, content: &str) -> (i8, Option<String>) {
     let (ai_on, manual_on) = super::web_info::review_switches(&state.db).await;
     if manual_on {
-        return 0;
+        return (0, None);
     }
     if !ai_on {
-        return 1;
+        return (1, None);
     }
     // 仅 AI 闸：同步调 agent（模型裁决上限 25s，这里网络超时 20s 先兜住）
     let url = std::env::var("AGENT_URL")
@@ -249,22 +255,22 @@ async fn board_approved(state: &Arc<AppState>, content: &str) -> i8 {
             match r.json::<serde_json::Value>().await {
                 Ok(v) if v.get("verdict").and_then(|x| x.as_str()) == Some("flag") => {
                     tracing::info!("[board] AI 审核拦下一条留言，进待审");
-                    0
+                    (0, Some("flag".to_string()))
                 }
-                Ok(_) => 1, // verdict=pass 或缺省 → 放行
+                Ok(_) => (1, Some("pass".to_string())), // verdict=pass 或缺省 → 放行
                 Err(e) => {
                     tracing::warn!("[board] AI 审核响应解析失败，降级放行: {e}");
-                    1
+                    (1, None)
                 }
             }
         }
         Ok(r) => {
             tracing::warn!("[board] AI 审核端点异常(HTTP {}），降级放行", r.status());
-            1
+            (1, None)
         }
         Err(e) => {
             tracing::warn!("[board] AI 审核不可用，降级放行: {e}");
-            1
+            (1, None)
         }
     }
 }
@@ -328,7 +334,8 @@ pub async fn update_talk(
     }
 }
 
-/// 后台留言管理：一条河灯留言的管理视图（精确到发布用户，供溯源/维护）
+/// 后台留言管理：一条河灯留言的管理视图（精确到发布用户，供溯源/维护）。
+/// issue9 双段状态：approved（人工侧 0 待审/1 通过/2 未通过）+ ai_result（AI 侧）
 #[derive(Serialize)]
 pub struct BoardAdminDto {
     #[serde(rename = "talkKey")]
@@ -344,6 +351,9 @@ pub struct BoardAdminDto {
     pub username: String,
     pub nickname: String,
     pub approved: i8,
+    /// AI 审核判定留痕（20260905 issue9）："pass"=AI通过 / "flag"=AI拦截转人工 /
+    /// null=未审（AI 关、人工全审、降级放行或存量历史行）
+    pub ai_result: Option<String>,
 }
 
 /// GET /api/protect/board：留言管理列表（全部河灯留言 + 发布用户信息，倒序）
@@ -381,6 +391,7 @@ pub async fn list_board_admin(
             username: u.map(|x| x.username.clone()).unwrap_or_default(),
             nickname: u.map(|x| x.nickname.clone()).unwrap_or_default(),
             approved: t.approved,
+            ai_result: t.ai_result,
         }
     }).collect();
     Json(ApiResponse::success(dtos))
@@ -408,7 +419,9 @@ pub struct AuditBody {
 
 /// PUT /api/protect/board/:id/audit：留言人工复核（20260905 启用——面板开关
 /// manualReviewEnabled 开启后新留言一律 approved=0 待审，管理端本接口 通过(1)
-/// 放行 / 驳回(2) 隐藏；AI 拦截进待审的留言同样走这里人工裁决）
+/// 放行 / 驳回(2) 隐藏；AI 拦截进待审的留言同样走这里人工裁决）。
+/// issue9：人工裁决只写 approved，不改写 ai_result——AI 判定作为历史留痕保留，
+/// 后台「AI 拦截 → 人工放行/驳回」双段状态由此完整呈现；驳回(2) 可改判回通过(1)
 pub async fn audit_board(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,

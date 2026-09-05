@@ -4,12 +4,17 @@ import { Button, Input, Popconfirm, Switch, Table, Tag, Tooltip, message } from 
 import type { ColumnsType } from 'antd/es/table';
 import http from "../../../apis/axios.tsx";
 
-/** 评论管理：河灯留言的查询/筛选/删除 + 审核（AI 审核/人工复核，20260905 启用）
+/** 评论管理：河灯留言的查询/筛选/删除 + 两段审核（20260905 issue9 双状态显示）
  *  数据来自 /api/protect/board（仅 src=board 的留言，与说说完全独立）。
  *  审核开关存 web_info（aiReviewEnabled/manualReviewEnabled），读写 /api/protected/websetting：
  *    · AI 审核开  → 每条新留言先经一次 AI 初审，疑似内容拦下（approved=0）进待审
- *    · 人工复核开 → 新留言一律先进待审，管理员「通过」才放行展示
- *    · 两闸可叠加、可单独作用；待审留言在本页审核列/操作列人工裁决
+ *    · 人工复核开 → 新留言一律先进待审，管理员裁决才放行展示
+ *    · 两闸可叠加、可单独作用；待审留言在本页人工审核列/操作列裁决
+ *  双段状态（每行独立两列，互不覆盖）：
+ *    · AI 审核  = ai_result：拦截（flag，AI 初审判疑似转人工）/ 通过（pass）/
+ *                 未审（null——AI 关、人工全审模式、降级放行或存量历史行）
+ *    · 人工审核 = approved：通过(1) 放行展示 / 待审(0) / 未通过(2, 驳回，issue8 起)
+ *      ——「AI 拦截 → 人工通过/驳回」的两段经过一目了然
  */
 interface BoardItem {
     talkKey: number;
@@ -22,6 +27,8 @@ interface BoardItem {
     username: string;
     nickname: string;
     approved: number;
+    /** AI 审核判定留痕（20260905 issue9）："pass" / "flag" / null=未审 */
+    ai_result?: string | null;
 }
 
 const CATS = ['愿', '寄', '忆', '诉'];
@@ -82,12 +89,13 @@ const BoardManage = () => {
         }
     };
 
-    /** 人工复核：通过(1)=放行展示 / 驳回(0)=隐藏（仅河灯留言，后端有 src 守卫） */
+    /** 人工复核：通过(1)=放行展示 / 驳回(0)=写未通过(2)隐藏，驳回可「恢复通过」改判
+     *  （仅河灯留言，后端有 src 守卫；人工裁决不改写 ai_result，AI 判定留痕保留） */
     const audit = async (id: number, approved: number) => {
         try {
             const res = await http.put(`/api/protect/board/${id}/audit`, { approved });
             if (res.data?.code === 200) {
-                message.success(approved === 1 ? '已通过，留言板展示' : '已驳回隐藏');
+                message.success(approved === 1 ? '已通过，留言板展示' : '已驳回（未通过），不展示');
                 load();
             } else {
                 message.error(res.data?.message || '操作失败');
@@ -155,25 +163,53 @@ const BoardManage = () => {
         },
         { title: '时间', dataIndex: 'createTime', width: 160 },
         {
-            title: '审核', key: 'audit', width: 120,
-            render: (_, r) => (
-                r.approved === 1 ? (
-                    <Tooltip title="已通过审核，留言板正常展示">
-                        <Tag color="green">已通过</Tag>
+            /* 两段审核之第一段：AI 初审判定留痕（issue9 起落库展示） */
+            title: 'AI 审核', key: 'ai', width: 110,
+            render: (_, r) =>
+                r.ai_result === 'flag' ? (
+                    <Tooltip title="AI 初审判定疑似，拦下转人工裁决">
+                        <Tag color="volcano">拦截</Tag>
+                    </Tooltip>
+                ) : r.ai_result === 'pass' ? (
+                    <Tooltip title="AI 初审通过，直接放行展示">
+                        <Tag color="green">通过</Tag>
                     </Tooltip>
                 ) : (
-                    <Tooltip title={manualOn ? '人工复核拦下：当前不展示，通过后放行' : 'AI 审核拦下：当前不展示，通过后放行'}>
-                        <Tag color="red">待审</Tag>
+                    <Tooltip title={manualOn ? '人工全审模式：新留言不经 AI 初判' : 'AI 审核关闭 / 降级放行 / 存量历史行，未留 AI 判定'}>
+                        <Tag>未审</Tag>
                     </Tooltip>
-                )
-            ),
+                ),
         },
         {
-            title: '操作', key: 'op', width: 140,
+            /* 两段审核之第二段：人工裁决结果（0 待审 / 1 通过 / 2 未通过=驳回） */
+            title: '人工审核', key: 'manual', width: 110,
+            render: (_, r) =>
+                r.approved === 1 ? (
+                    <Tooltip title="已放行，留言板公开展示">
+                        <Tag color="green">通过</Tag>
+                    </Tooltip>
+                ) : r.approved === 0 ? (
+                    <Tooltip title="待人工裁决：可「通过」放行或「驳回」隐藏">
+                        <Tag color="gold">待审</Tag>
+                    </Tooltip>
+                ) : (
+                    <Tooltip title="已驳回（未通过）：不公开展示，仅发布者在灯影集「我的河灯」可见；可恢复通过">
+                        <Tag color="red">未通过</Tag>
+                    </Tooltip>
+                ),
+        },
+        {
+            title: '操作', key: 'op', width: 190,
             render: (_, r) => (
                 <>
                     {r.approved === 0 && (
-                        <Button type="link" size="small" onClick={() => audit(r.talkKey, 1)}>通过</Button>
+                        <>
+                            <Button type="link" size="small" onClick={() => audit(r.talkKey, 1)}>通过</Button>
+                            <Button danger type="link" size="small" onClick={() => audit(r.talkKey, 0)}>驳回</Button>
+                        </>
+                    )}
+                    {r.approved === 2 && (
+                        <Button type="link" size="small" onClick={() => audit(r.talkKey, 1)}>恢复通过</Button>
                     )}
                     <Popconfirm
                         title="删除这条留言？"
@@ -233,8 +269,10 @@ const BoardManage = () => {
                 pagination={{ pageSize: 10, showTotal: (t) => `共 ${t} 条` }}
             />
             <p className="bm-note">
-                留言板与说说各自独立：本页仅管理留言板所放河灯。审核 = AI 审核 + 人工复核两闸（可叠加、可单独作用）；被拦下的留言 approved=0
-                不进公开列表、在下方「待审」中展示，可在此人工「通过」放行或删除。存量留言不受开关影响。
+                留言板与说说各自独立：本页仅管理留言板所放河灯。审核分两段展示——AI 审核（初审判定
+                留痕：拦截/通过/未审）+ 人工审核（裁决结果：通过/待审/未通过）。待审与未通过的留言不进
+                公开列表；可「通过」放行、「驳回」隐藏（驳回后可「恢复通过」改判）或删除。存量留言
+                不受开关影响。
             </p>
         </div>
     );
