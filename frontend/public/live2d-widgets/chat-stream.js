@@ -1062,20 +1062,20 @@
           }
         }
         if (isResizing) {
-          if (resizeCorner === 'tl') {
-            // 左上角缩放：固定右下角不动，左上角跟随指针
-            const w = Math.max(260, startW + (startX - e.clientX));
-            const h = Math.max(180, startH + (startY - e.clientY));
-            chatPanel.style.width = w + 'px';
-            chatPanel.style.height = h + 'px';
-            chatPanel.style.left = (startLeft - (w - startW)) + 'px';
-            chatPanel.style.top = (startTop - (h - startH)) + 'px';
-            chatPanel.style.right = 'auto';
-            chatPanel.style.bottom = 'auto';
-          } else {
-            chatPanel.style.width = Math.max(260, startW + e.clientX - startX) + 'px';
-            chatPanel.style.height = Math.max(180, startH + e.clientY - startY) + 'px';
-          }
+          // 四角缩放（20260905 泛化；原仅 tl 特判 + 其余按 br 处理）：
+          // 右/下缘是否跟鼠标由角决定，宽高 clamp 后锚定对角反推 left/top——
+          // clamp 到最小值期间对角不漂移（拖 tl/bl 时左缘 = 右锚 - w）
+          const dx = e.clientX - startX, dy = e.clientY - startY;
+          const rightEdge = (resizeCorner === 'br' || resizeCorner === 'tr');
+          const botEdge = (resizeCorner === 'br' || resizeCorner === 'bl');
+          const w = Math.max(260, startW + (rightEdge ? dx : -dx));
+          const h = Math.max(180, startH + (botEdge ? dy : -dy));
+          chatPanel.style.width = w + 'px';
+          chatPanel.style.height = h + 'px';
+          chatPanel.style.left = (rightEdge ? startLeft : (startLeft + startW - w)) + 'px';
+          chatPanel.style.top = (botEdge ? startTop : (startTop + startH - h)) + 'px';
+          chatPanel.style.right = 'auto';
+          chatPanel.style.bottom = 'auto';
         }
       });
       document.addEventListener('pointerup', () => {
@@ -1084,30 +1084,40 @@
         // 出屏回移 / conv-in 可升真列），见 chat-session.js refitOpen
         try { window.__refitConvOpen && window.__refitConvOpen(); } catch(err) {/* ignore */}
       });
-      // 缩放把手：右下角 + 左上角（红色三角，与发送按钮同色）
+      // 缩放把手：四角隐藏热区（20260905 四角化——原仅 TL/BR 两个常驻可见红
+      // 三角；现在四角齐全，默认透明（CSS .conv-resize-handle opacity:0），
+      // 鼠标悬浮到角热区光标变缩放并向内淡入三角提示，按住即拖；触屏无 hover
+      // 事件，媒体查询常驻弱显保留发现性。贴角（0,0）不内移：外框已移入
+      // ::before（z6），把手 z7 高于外框，24×24 三角盖住外框线末端（20260901g）
+      // 20260903c：把手带标识类——chat-session onDocDown 据此豁免收起
+      // （conv-out 左扩期间拖动/缩放窗口不得触发几何还原，否则首帧跳 182px）
       const makeResizeHandle = (corner) => {
-        const isTL = corner === 'tl';
+        const isT = corner[0] === 't';
+        const isL = corner[1] === 'l';
         const h = document.createElement('div');
-        // flex 对齐使 svg 贴住对应角：TL 贴左上角、BR 贴右下角，两个把手样式完全一致。
-        // 20260901g：贴角（0,0）不内移——外框已从面板 border 移入 ::before（z6），
-        // 把手 z7 高于外框，24×24 三角能盖住外框线顶部末端（f 版把手内移 2px，
-        // 三角 22px 盖不住面板 border 的线，用户反馈"轮廓线顶部末端裸露"）
-        // 20260903c：把手带标识类——chat-session onDocDown 据此豁免收起
-        // （conv-out 左扩期间拖动/缩放窗口不得触发几何还原，否则首帧跳 182px）
         h.className = 'conv-resize-handle';
-        h.style.cssText = 'position:absolute;' + (isTL ? 'left:0;top:0' : 'right:0;bottom:0') +
-          ';width:24px;height:24px;cursor:nwse-resize;background:transparent;z-index:7;touch-action:none;' +
-          ';display:flex;' + (isTL ? 'align-items:flex-start;justify-content:flex-start' : 'align-items:flex-end;justify-content:flex-end');
-        // 三角形方向：BR 角朝左上，TL 角朝右下（圆角三角：stroke-linejoin:round）
-        h.innerHTML = isTL
-          ? '<svg viewBox="0 0 10 10" width="24" height="24"><path d="M0 0 L10 0 L0 10 Z" fill="#e74c3c" stroke="#e74c3c" stroke-width="1.5" stroke-linejoin="round" opacity="0.85"/></svg>'
-          : '<svg viewBox="0 0 10 10" width="24" height="24"><path d="M0 10 L10 0 L10 10 Z" fill="#e74c3c" stroke="#e74c3c" stroke-width="1.5" stroke-linejoin="round" opacity="0.85"/></svg>';
+        // 对角缩放光标：TL/BR 同向（nwse），TR/BL 同向（nesw）
+        h.style.cssText = 'position:absolute;' + (isL ? 'left:0' : 'right:0') + ';' +
+          (isT ? 'top:0' : 'bottom:0') + ';width:24px;height:24px;' +
+          'cursor:' + (isT === isL ? 'nwse-resize' : 'nesw-resize') +
+          ';background:transparent;z-index:7;touch-action:none;';
+        // 三角 svg：直角顶点在各自角上（viewBox 10×10 的对应角象限），斜边朝面板
+        // 中心（圆角三角：stroke-linejoin:round）；TR/BL 为新增角的朝向
+        const paths = {
+          tl: 'M0 0 L10 0 L0 10 Z',
+          br: 'M0 10 L10 0 L10 10 Z',
+          tr: 'M10 0 L0 0 L10 10 Z',
+          bl: 'M0 10 L0 0 L10 10 Z',
+        };
+        h.innerHTML = '<svg viewBox="0 0 10 10" width="24" height="24"><path d="' +
+          paths[corner] + '" fill="#e74c3c" stroke="#e74c3c" stroke-width="1.5" ' +
+          'stroke-linejoin="round" opacity="0.85"/></svg>';
         h.addEventListener('pointerdown', (e) => {
           e.stopPropagation();
           e.preventDefault();
           isDragging = false;
           isResizing = true;
-          resizeCorner = isTL ? 'tl' : 'br';
+          resizeCorner = corner;
           startX = e.clientX;
           startY = e.clientY;
           startW = chatPanel.offsetWidth;
@@ -1117,8 +1127,7 @@
         });
         chatPanel.appendChild(h);
       };
-      makeResizeHandle('br');
-      makeResizeHandle('tl');
+      ['br', 'tl', 'tr', 'bl'].forEach(makeResizeHandle);
 
       sendBtn.addEventListener('click', () => {
         if (ctx.state.isSending) {
