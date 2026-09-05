@@ -183,7 +183,7 @@ const ContentHome = () => {
     };
 
     return <>
-        <SeoHelmet title="首页" description="个人技术博客 — Rust、React、IoT 开发经验与项目实践" url="/" />
+        <SeoHelmet title="Saudade Blog" description="个人技术博客 · Rust、React、IoT 开发经验与项目实践" url="/" suffix={false} />
         <div className="SelfDescription" ref={heroRef}>
             {/* 顶部背景视频：muted+playsInline 是自动播放的前提；poster 为加载期兜底；
                 离屏暂停由上面的 IntersectionObserver 处理。heroOverlay 保证文字可读性 */}
