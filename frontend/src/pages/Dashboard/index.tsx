@@ -40,14 +40,18 @@ const Dashboard = () => {
         dispatch<any>(fetchTags())
         dispatch<any>(fetchNoteList(true))
         const DarkSwitch = localStorage.getItem('isDarkMode')
+        // hash → 侧栏高亮索引（与下方 sidebar 数组 index 一一对应；
+        // 底部导航「站点设置」等无对应 menu 项不映射，回落 1）
+        const HASH_INDEX: Record<string, number> = {
+            '#/dashboard': 1,
+            '#/dashboard/comments': 3,
+            '#/dashboard/albums': 4,
+            '#/dashboard/announcement': 5,
+            '#/dashboard/users': 6,
+            '#/dashboard/analytics': 7,
+        };
         const currentHashCode =
-            location.hash === '#/dashboard' ? 1 :
-                location.hash === '#/dashboard/notes' ? 2 :
-                    location.hash === '#/dashboard/comments' ? 3 :
-                        location.hash === '#/dashboard/albums' ? 4 :
-                            location.hash === '#/dashboard/talks' ? 5 :
-                                location.hash === '#/dashboard/analytics' ? 6 :
-                                    location.hash.startsWith('#/dashboard/notes') ? 2 : 1;
+            location.hash.startsWith('#/dashboard/notes') ? 2 : (HASH_INDEX[location.hash] ?? 1);
         setSelectCurrent(currentHashCode)
         setLoading(true);
         if(DarkSwitch!==null){
@@ -154,9 +158,10 @@ const Dashboard = () => {
         },
         {
             index: 6,
-            name: '留言管理',
-            icon: 'fa-envelope-o',
-            to: 'talks',
+            name: '用户管理',
+            // gear+person 双形 SVG（20260905：账号管理 + 评论管理合并入口，用户拍板）
+            icon: 'svg-user-cog',
+            to: 'users',
             active: false
         },
         {
@@ -257,7 +262,21 @@ const Dashboard = () => {
                                                         navigate(item.to ? `/dashboard/${item.to}` : '/dashboard')
                                                         setSelectCurrent(item.index)
                                                     }} key={item.index}>
-                                                    <i className={`${item.icon.startsWith("fa-") ? "fa " : "iconfont"} ${item.icon} icon`}></i>
+                                                    {item.icon === 'svg-user-cog' ? (
+                                                        /* gear+person 双 path SVG：置 .icon 槽内，stroke=currentColor 随 hover/选中变色 */
+                                                        <span className="icon">
+                                                            <svg viewBox="0 0 24 24" className="nav-svg" fill="none"
+                                                                 stroke="currentColor" strokeWidth="1.7"
+                                                                 strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                                                <circle cx="6.4" cy="6.4" r="2.3"/>
+                                                                <path d="M1.6 19.6c0-2.9 2.2-4.8 4.8-4.8s4.8 1.9 4.8 4.8"/>
+                                                                <circle cx="17.4" cy="17.4" r="3.4"/>
+                                                                <path d="M17.4 11.5v2M17.4 21.3v2M11.5 17.4h2M23.3 17.4h-2M15 15l-1.3-1.3M19.8 15l1.3-1.3M15 19.8l-1.3 1.3M19.8 19.8l1.3 1.3"/>
+                                                            </svg>
+                                                        </span>
+                                                    ) : (
+                                                        <i className={`${item.icon.startsWith("fa-") ? "fa " : "iconfont"} ${item.icon} icon`}></i>
+                                                    )}
                                                     <span className="text nac-text">{item.name}</span>
                                                 </li>
                                             ))}
@@ -265,9 +284,10 @@ const Dashboard = () => {
                                     </div>
 
                                     <div className="bottom-content">
+                                        {/* 20260905：管理类并入侧栏「用户管理」，本项回归设置专属（站点信息/用户信息/社交/其他） */}
                                         <li className="nav-links" onClick={() => navigate('/dashboard/usercontrol')}>
                                             <i className="iconfont icon-iconfontcog icon"></i>
-                                            <span className="text nac-text">用户管理</span>
+                                            <span className="text nac-text">站点设置</span>
                                         </li>
 
                                         <li className="nav-links" onClick={openNotification}>
