@@ -75,6 +75,39 @@ def albedo_map(gray: np.ndarray, r: float) -> np.ndarray:
     return alb
 
 
+def denoise_tex(a: np.ndarray, inside: np.ndarray) -> np.ndarray:
+    """纹理域去噪（第 38 轮，20260905 用户反馈"噪声太多，只留明显深坑"）
+
+    前版在照片全分辨率域做 7×7 平滑后最近邻重投影——照片上千像素月盘上
+    7px 核≈无，重投影又无预滤波，tex 上仍是逐像素颗粒。本函数改在纹理域
+    （192×192，1 tex px ≈ 若干屏幕 px）处理：
+    1. a1 = BoxBlur(1)（3×3）：单像素颗粒先与邻域融合——颗粒会失掉大半
+       对比度，而 2px 以上的真环形山基本保形（只蚀掉 1px 缘）
+    2. s = BoxBlur(5)（11×11 结构层）：月海级大暗区/高地渐变归入 s，抹平
+       细碎反照率起伏
+    3. d = s − a1 逐像素偏离；|d| ≤ th 的像素是"颗粒/浅纹"→ 归平到结构层
+       s（彻底消除麻点）；|d| > th 的像素是真实月貌的大尺度偏离（深坑暗
+       部与它的亮缘都保留）→ 原样 a1（坑壁/缘口仍锐利）
+    阈值 th 按噪声幅度自适应：d 的绝对中位差 MAD ×1.4826 ≈ σ（对颗粒型
+    噪声稳健），3.0σ 以上才算"明显深坑"（高斯噪声超 3σ 概率仅 ~0.27%，
+    残存孤立亮点极少，且被步骤 1 压过的颗粒到不了这个幅度）。半径/阈值由
+    20260905 调参扫描定稿：blur5 + 3σ → keep≈5%（明显环形山 + 月海/高地
+    过渡缘），平坦区颗粒均值 ≈0.003（255 级下不足 1 级）；半径更大/阈值
+    更高收益趋平，只多蚀掉真实环形山
+    """
+    med = float(np.median(a))
+    pad = np.where(inside, a, med)  # 盘外填盘内中位：BoxBlur 不吞盘外暗边
+    arr = np.clip(pad * 255, 0, 255).astype(np.uint8)
+    im = Image.fromarray(arr)
+    a1 = np.asarray(im.filter(ImageFilter.BoxBlur(1)), dtype=np.float64) / 255.0
+    s = np.asarray(im.filter(ImageFilter.BoxBlur(5)), dtype=np.float64) / 255.0
+    d = s - a1
+    sig = 1.4826 * float(np.median(np.abs(d[inside] - np.median(d[inside]))))
+    th = max(0.02, 3.0 * sig)  # 下限 0.02：tex 域 255 级下 ≈5 级，防 MAD≈0 全平
+    keep = np.abs(d) > th
+    return np.where(keep, a1, s), keep, float(th)
+
+
 def build_tex(gray: np.ndarray, alb: np.ndarray, cx: float, cy: float, r: float,
               size: int, flip_x: bool) -> np.ndarray:
     """重投影反照率到 size×size 纹理（RGBA，月盘外透明）"""
@@ -87,11 +120,14 @@ def build_tex(gray: np.ndarray, alb: np.ndarray, cx: float, cy: float, r: float,
         nx = -nx
     px = np.clip(((nx[inside] * r) + cx).astype(int), 0, gray.shape[1] - 1)
     py = np.clip((cy - ny[inside] * r).astype(int), 0, gray.shape[0] - 1)
-    a = alb[py, px]
+    a = np.full((size, size), np.nan)  # 盘外 NaN
+    a[inside] = alb[py, px]
+    a, _keep, _th = denoise_tex(a, inside)
+    a = np.where(inside, a, 0.0)  # 盘外归 0（alpha 已透明，值仅防 NaN 脏数据）
     v = np.round(a * 255).astype(np.uint8)
-    out[..., 0][inside] = v
-    out[..., 1][inside] = v
-    out[..., 2][inside] = v
+    out[..., 0] = v
+    out[..., 1] = v
+    out[..., 2] = v
     out[..., 3][inside] = 255
     return out
 

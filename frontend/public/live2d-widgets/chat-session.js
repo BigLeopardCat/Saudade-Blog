@@ -5,7 +5,7 @@
 // chatHTML 骨架（#chat-rail / #waifu-conv-panel / #conv-list / #chat-conv-title）。
 //
 // 20260903d 几何（用户第三轮实测拍板）：
-// - 抽屉宽 CONV_WIDTH=182（waifu.css --conv-w，收窄 30%）
+// - 抽屉宽 convWidth=182（waifu.css --conv-w，收窄 30%）
 // - 左侧边栏形态 = 拖拽栏（rail 图标列）在复合窗口最外侧：rail 固定 x0..24
 //   原位不动；conv-out（右缘空间足够）面板右扩 182 → 列表列在 rail 右缘成为
 //   真列（x24..206，不覆盖消息区），消息区右移 182，形态 [拖拽栏|列表|消息]；
@@ -26,9 +26,19 @@
       console.error('[chat-session] 缺少 ctx/engine——chat-engine 未加载或加载顺序错误');
       return null;
     }
-    const CONV_WIDTH = 182; // 抽屉列宽（与 waifu.css --conv-w 一致，用户收窄 30%）
-    const CONV_GAP = 4; // 右扩可行判据：面板右扩 182 后右缘距视口仍 ≥4px
-    // → rect.right + CONV_WIDTH ≤ innerWidth - CONV_GAP 才置 conv-out，否则 conv-in 覆盖
+    // 抽屉列宽（20260905 起可调）：默认 182（用户收窄 30%），拖动抽屉右缘
+    // .conv-sizer 调宽并记忆 localStorage chatConvW（150..380）；全部几何经
+    // --conv-w CSS 变量（抽屉宽 + 消息区 margin calc 同源），JS 只在 conv-out
+    // 时把面板宽同步 ±Δ
+    const CONV_DEF = 182, CONV_MIN = 150, CONV_MAX = 380;
+    let convWidth = (() => {
+      try {
+        const v = parseInt(localStorage.getItem('chatConvW'), 10);
+        return (v >= CONV_MIN && v <= CONV_MAX) ? v : CONV_DEF;
+      } catch (e) { return CONV_DEF; }
+    })();
+    const CONV_GAP = 4; // 右扩可行判据：面板右扩 convWidth 后右缘距视口仍 ≥4px
+    // → rect.right + convWidth ≤ innerWidth - CONV_GAP 才置 conv-out，否则 conv-in 覆盖
     // 会话切换阻断：发送/流式中不切会话（收尾保存仍写原会话，见 chat-engine 注释）
     const switchBlocked = () => !!(ctx.state.isSending || ctx.state.streamCtrl
       || (ctx.state.remoteRounds && Object.keys(ctx.state.remoteRounds).length));
@@ -351,15 +361,32 @@
         main.appendChild(time);
         main.appendChild(more);
         main.appendChild(menu);
-        // 删除确认条（armDelete 后覆盖行内容，3s 过期还原）
+        // 删除确认条（armDelete 后覆盖行内容，3s 过期还原；20260905 拆两半：
+        // 左 橘红「确定删除」= 真删；右 白「取消」= 还原（不再整条都是删））
         const confirm = document.createElement('div');
         confirm.className = 'conv-row-confirm';
-        confirm.textContent = '确认删除该会话？';
-        confirm.addEventListener('click', (e) => {
-          e.stopPropagation();
+        const disarmRow = () => {
           if (delTimer) { clearTimeout(delTimer); delTimer = null; }
-          doDelete(c.id);
+          row.classList.remove('del-confirm');
+        };
+        const btnDel = document.createElement('button');
+        btnDel.type = 'button';
+        btnDel.className = 'conv-confirm-del';
+        btnDel.textContent = '确定删除';
+        btnDel.addEventListener('click', (e) => {
+          e.stopPropagation();
+          doDelete(c.id); // doDelete 首步 clearMenuAll（清 timer + del-confirm）
         });
+        const btnCancel = document.createElement('button');
+        btnCancel.type = 'button';
+        btnCancel.className = 'conv-confirm-cancel';
+        btnCancel.textContent = '取消';
+        btnCancel.addEventListener('click', (e) => {
+          e.stopPropagation();
+          disarmRow();
+        });
+        confirm.appendChild(btnDel);
+        confirm.appendChild(btnCancel);
         row.appendChild(main);
         row.appendChild(confirm);
         // ⋯：开/关菜单（点行空白/非列表区自动收起）。方向默认从行当前位置
@@ -414,7 +441,7 @@
 
     // ── 抽屉开合（20260903d 用户拍板几何）：rail 永居最外缘 x0..24（CSS 侧 ──
     //   左缘恒 0），列表 = rail 与消息区之间的真实列。conv-out（右缘空间足够）：
-    //   面板整体右扩 CONV_WIDTH（仅改 style.width，style.left 恒不动）→ 列表列
+    //   面板整体右扩 convWidth（仅改 style.width，style.left 恒不动）→ 列表列
     //   位于 x24..206；conv-in（右缘贴边/移动端）：面板不加宽，列表从 rail 右缘
     //   起覆盖消息区兜底。关闭还原用"当前几何逆推 -182"（close 时读数，不依赖
     //   打开快照）——展开期间拖动/缩放窗口也不失真。
@@ -422,7 +449,7 @@
     const isOpen = () => !!(chatPanel && chatPanel.classList.contains('conv-open'));
     const fitsRight = () => { // 右扩判据：面板右缘 + 182 ≤ 视口右缘 - 4
       const rect = chatPanel.getBoundingClientRect();
-      return rect.right + CONV_WIDTH <= window.innerWidth - CONV_GAP;
+      return rect.right + convWidth <= window.innerWidth - CONV_GAP;
     };
     // 20260905：右缘空间不足时先把面板整体左移腾出 182（消息区全程可见，不盖
     // 对话框）；左缘无余量（贴左缘/从未拖动走 CSS 默认位）/移动端才放弃 →
@@ -430,7 +457,7 @@
     // 缺额即可（拖动写的是 local 坐标，平移量与视口一致）
     const tryShiftToFit = () => {
       const rect = chatPanel.getBoundingClientRect();
-      const need = rect.right + CONV_WIDTH - (window.innerWidth - CONV_GAP);
+      const need = rect.right + convWidth - (window.innerWidth - CONV_GAP);
       if (need <= 0) return fitsRight();
       const cur = parseFloat(chatPanel.style.left || '');
       if (!isFinite(cur)) return false; // 从未拖动过（无 inline left）：不擅动面板
@@ -444,7 +471,7 @@
       if (window.innerWidth > 768 && !fitsRight()) tryShiftToFit();
       chatPanel.classList.add('conv-open');
       if (window.innerWidth > 768 && fitsRight()) {
-        chatPanel.style.width = (chatPanel.offsetWidth + CONV_WIDTH) + 'px'; // 右扩（rail 不动）
+        chatPanel.style.width = (chatPanel.offsetWidth + convWidth) + 'px'; // 右扩（rail 不动）
         chatPanel.classList.add('conv-out');
       } else {
         chatPanel.classList.add('conv-in'); // 覆盖式（右缘贴边/移动端）
@@ -457,7 +484,7 @@
       clearMenuAll(); // 收抽屉即清菜单/武装态（防重开时陈旧弹出层复活）
       chatPanel.classList.remove('conv-open', 'conv-in', 'conv-out');
       if (wasOut) { // 右扩还原：由当前几何逆推（期间拖动/缩放不丢位移）
-        chatPanel.style.width = (chatPanel.offsetWidth - CONV_WIDTH) + 'px';
+        chatPanel.style.width = (chatPanel.offsetWidth - convWidth) + 'px';
       }
     };
     const toggleList = () => (isOpen() ? closeList() : openList());
@@ -469,7 +496,7 @@
       const wasOut = chatPanel.classList.contains('conv-out');
       if (wantOut === wasOut) return;
       if (wantOut) { // conv-in → 空间恢复可回真列
-        chatPanel.style.width = (chatPanel.offsetWidth + CONV_WIDTH) + 'px';
+        chatPanel.style.width = (chatPanel.offsetWidth + convWidth) + 'px';
         chatPanel.classList.remove('conv-in');
         chatPanel.classList.add('conv-out');
         return;
@@ -477,7 +504,7 @@
       // conv-out 右扩失效（窗口变窄/面板右缘不足）：
       // 20260905：桌面先左移腾位保持真列（不退回盖消息区的 conv-in）
       if (window.innerWidth > 768 && tryShiftToFit()) return;
-      chatPanel.style.width = (chatPanel.offsetWidth - CONV_WIDTH) + 'px';
+      chatPanel.style.width = (chatPanel.offsetWidth - convWidth) + 'px';
       chatPanel.classList.remove('conv-out');
       chatPanel.classList.add('conv-in');
     };
@@ -532,6 +559,9 @@
       titleEl = document.getElementById('chat-conv-title');
       rail = document.getElementById('chat-rail');
       searchEl = document.getElementById('conv-search');
+      // 恢复记忆的抽屉宽：--conv-w 驱动抽屉宽 + 消息区 margin（conv-out 下再
+      // 由 openList 右扩 convWidth，宽度变更只改变量 + CSS var，两处同源）
+      chatPanel.style.setProperty('--conv-w', convWidth + 'px');
       // rail 图标注入（文字兜底在注入前瞬间可见，可忽略）
       const icons = { 'conv-toggle-btn': ICON_SIDEBAR, 'conv-new-btn': ICON_NEW, 'conv-history-btn': ICON_HISTORY };
       for (const id in icons) {
@@ -545,6 +575,41 @@
       bind('conv-toggle-btn', toggleList);   // 侧边栏：展开/收起抽屉
       bind('conv-new-btn', startNew);        // ＋ 新对话
       bind('conv-history-btn', openList);    // 历史：打开抽屉
+      // 抽屉右缘拖拽调宽（20260905 #3）：.conv-sizer 为 7px 隐形热区（CSS 在
+      // 抽屉右缘 calc(drag+conv)，conv-open 且非移动端才显示，hover 有浅红提示）
+      // —— 拖动改 convWidth + --conv-w（抽屉与消息区 margin 同源变化），conv-out
+      // 下把面板宽同步 ±Δ（真列右侧随动），pointerup 记忆 + 重估展开几何
+      const sizer = document.createElement('div');
+      sizer.className = 'conv-sizer';
+      p.appendChild(sizer);
+      let sizing = false;
+      sizer.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        sizing = true;
+        try { sizer.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+      });
+      sizer.addEventListener('pointermove', (e) => {
+        if (!sizing) return;
+        const rect = p.getBoundingClientRect();
+        const dragW = parseFloat(getComputedStyle(p).getPropertyValue('--drag-w')) || 24;
+        const w = Math.round(e.clientX - rect.left - dragW);
+        const nw = Math.max(CONV_MIN, Math.min(CONV_MAX, w));
+        if (nw === convWidth) return;
+        const wasOut = chatPanel.classList.contains('conv-out');
+        if (wasOut) chatPanel.style.width = (chatPanel.offsetWidth + (nw - convWidth)) + 'px';
+        convWidth = nw;
+        chatPanel.style.setProperty('--conv-w', convWidth + 'px');
+      });
+      const sizerEnd = (e) => {
+        if (!sizing) return;
+        sizing = false;
+        try { sizer.releasePointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+        try { localStorage.setItem('chatConvW', String(convWidth)); } catch (err) { /* ignore */ }
+        if (typeof window.__refitConvOpen === 'function') window.__refitConvOpen();
+      };
+      sizer.addEventListener('pointerup', sizerEnd);
+      sizer.addEventListener('pointercancel', sizerEnd);
       if (searchEl) {
         searchEl.addEventListener('input', () => {
           clearTimeout(searchTimer);

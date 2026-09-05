@@ -1084,11 +1084,10 @@
         // 出屏回移 / conv-in 可升真列），见 chat-session.js refitOpen
         try { window.__refitConvOpen && window.__refitConvOpen(); } catch(err) {/* ignore */}
       });
-      // 缩放把手：四角隐藏热区（20260905 四角化——原仅 TL/BR 两个常驻可见红
-      // 三角；现在四角齐全，默认透明（CSS .conv-resize-handle opacity:0），
-      // 鼠标悬浮到角热区光标变缩放并向内淡入三角提示，按住即拖；触屏无 hover
-      // 事件，媒体查询常驻弱显保留发现性。贴角（0,0）不内移：外框已移入
-      // ::before（z6），把手 z7 高于外框，24×24 三角盖住外框线末端（20260901g）
+      // 缩放把手：四角纯隐形热区（20260905f 去视觉化——用户反馈橙色三角
+      // 遮挡四角正常按钮功能）。热区 24×24 → 14×14 贴角：无任何图形内容、
+      // 无 hover 显现，悬浮到角缘仅光标变缩放形状，按住即拖；触屏无 hover
+      // 也无提示，四角缘直接按住拖即可。z7 高于外框 ::before 末端（20260901g）
       // 20260903c：把手带标识类——chat-session onDocDown 据此豁免收起
       // （conv-out 左扩期间拖动/缩放窗口不得触发几何还原，否则首帧跳 182px）
       const makeResizeHandle = (corner) => {
@@ -1098,20 +1097,9 @@
         h.className = 'conv-resize-handle';
         // 对角缩放光标：TL/BR 同向（nwse），TR/BL 同向（nesw）
         h.style.cssText = 'position:absolute;' + (isL ? 'left:0' : 'right:0') + ';' +
-          (isT ? 'top:0' : 'bottom:0') + ';width:24px;height:24px;' +
+          (isT ? 'top:0' : 'bottom:0') + ';width:14px;height:14px;' +
           'cursor:' + (isT === isL ? 'nwse-resize' : 'nesw-resize') +
           ';background:transparent;z-index:7;touch-action:none;';
-        // 三角 svg：直角顶点在各自角上（viewBox 10×10 的对应角象限），斜边朝面板
-        // 中心（圆角三角：stroke-linejoin:round）；TR/BL 为新增角的朝向
-        const paths = {
-          tl: 'M0 0 L10 0 L0 10 Z',
-          br: 'M0 10 L10 0 L10 10 Z',
-          tr: 'M10 0 L0 0 L10 10 Z',
-          bl: 'M0 10 L0 0 L10 10 Z',
-        };
-        h.innerHTML = '<svg viewBox="0 0 10 10" width="24" height="24"><path d="' +
-          paths[corner] + '" fill="#e74c3c" stroke="#e74c3c" stroke-width="1.5" ' +
-          'stroke-linejoin="round" opacity="0.85"/></svg>';
         h.addEventListener('pointerdown', (e) => {
           e.stopPropagation();
           e.preventDefault();
