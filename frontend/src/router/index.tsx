@@ -7,7 +7,7 @@ import Home from "../pages/Dashboard/Home";
 import Notes from "../pages/Dashboard/Notes";
 import Comments from "../pages/Dashboard/Talks";
 import Albums from "../pages/Dashboard/Albums";
-import BoardManage from "../pages/Dashboard/BoardManage";
+import Users from "../pages/Dashboard/Users";
 import Analytics from "../pages/Dashboard/Analytics";
 import UserControl from "../pages/Dashboard/UserControl";
 import AllNotes from "../pages/Dashboard/Notes/AllNotes/index";
@@ -119,9 +119,14 @@ const router = createBrowserRouter([
                 element: <Albums />
             },
             {
-                // 留言管理（原友链管理板块改造）：河灯留言查询/筛选/删除，审核机制预留
+                // 用户管理（20260905 拍板：账号管理 + 评论管理合并；原「留言管理」并入其评论管理 Tab）
+                path: 'users',
+                element: <Users />
+            },
+            {
+                // 旧「留言管理」地址 → 用户管理页（评论管理 Tab 内）
                 path: 'talks',
-                element: <BoardManage />
+                element: <Navigate to="/dashboard/users" replace />
             },
             {
                 path: 'analytics',

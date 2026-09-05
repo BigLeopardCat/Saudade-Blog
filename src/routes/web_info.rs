@@ -79,6 +79,13 @@ pub struct WebSettingPayload {
     pub netease_cookies: Option<String>,
     #[serde(rename = "githubToken")]
     pub github_token: Option<String>,
+
+    // 留言审核开关（20260905：AI 审核 + 人工复核，web_info key-value 零迁移存储，
+    // 值存 "true"/"false"；缺省 None = 关。读取方 = talks.rs 入库判定 + 面板开关）
+    #[serde(rename = "aiReviewEnabled")]
+    pub ai_review_enabled: Option<bool>,
+    #[serde(rename = "manualReviewEnabled")]
+    pub manual_review_enabled: Option<bool>,
 }
 
 pub async fn get_web_settings(
@@ -125,6 +132,9 @@ pub async fn get_web_settings(
         openai_token: get_direct("openAiToken"),
         netease_cookies: get_direct("neteaseCookies"),
         github_token: get_direct("githubToken"),
+
+        ai_review_enabled: get_direct("aiReviewEnabled").map(|v| v == "true"),
+        manual_review_enabled: get_direct("manualReviewEnabled").map(|v| v == "true"),
     };
 
     Json(ApiResponse::success(payload))
@@ -234,6 +244,9 @@ pub async fn update_web_info(
     if let Some(v) = payload.netease_cookies { map.insert("neteaseCookies", v); }
     if let Some(v) = payload.github_token { map.insert("githubToken", v); }
 
+    if let Some(v) = payload.ai_review_enabled { map.insert("aiReviewEnabled", v.to_string()); }
+    if let Some(v) = payload.manual_review_enabled { map.insert("manualReviewEnabled", v.to_string()); }
+
     for (k, v) in map {
         let entry = web_info::Entity::find()
             .filter(web_info::Column::KeyName.eq(k))
@@ -298,4 +311,20 @@ pub async fn update_social_info(
     }
 
     Json(ApiResponse::success("Social info updated".to_string()))
+}
+
+/// 留言审核开关读取（20260905，talks.rs 入库前调用）：(AI 审核, 人工复核) 二元组，
+/// 值存 "true"/"false"，缺 key/解析失败一律视为关（不影响既有默认全通过的现状）。
+pub async fn review_switches(db: &sea_orm::DatabaseConnection) -> (bool, bool) {
+    async fn get_bool(db: &sea_orm::DatabaseConnection, key: &str) -> bool {
+        web_info::Entity::find()
+            .filter(web_info::Column::KeyName.eq(key))
+            .one(db)
+            .await
+            .ok()
+            .flatten()
+            .map(|i| i.value == "true")
+            .unwrap_or(false)
+    }
+    (get_bool(db, "aiReviewEnabled").await, get_bool(db, "manualReviewEnabled").await)
 }

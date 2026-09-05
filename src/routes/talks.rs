@@ -45,6 +45,9 @@ async fn list_by_src(
     if src != "all" {
         query = query.filter(talk::Column::Src.eq(src));
     }
+    // 20260905：公开列表只放行 approved=1 的留言（审核开关开启后拦下的 0 不展示；
+    // 存量行全为 1，对现状零影响。管理视图 list_board_admin 不受此过滤）
+    query = query.filter(talk::Column::Approved.eq(1));
     let talks = query.order_by_desc(talk::Column::CreatedAt).all(&state.db).await.unwrap_or(vec![]);
     let dtos = talks.into_iter().map(|t| TalkDto {
         id: t.id,
@@ -132,6 +135,13 @@ async fn insert_talk(
     } else {
         author.to_string()
     };
+    // 20260905 留言审核：河灯留言（src=board）按 web_info 开关组合定 approved
+    // （说说 src=talk 恒 1 直接展示，不纳入审核——审核只针对公开访客留言）
+    let approved = if src == "board" {
+        board_approved(state, content).await
+    } else {
+        1
+    };
     let t = talk::ActiveModel {
         title: Set(Some(cat.clone())),
         content: Set(content.to_string()),
@@ -140,13 +150,67 @@ async fn insert_talk(
         author: Set(author),
         user_id: Set(uid),
         src: Set(src.to_string()),
-        approved: Set(1),
+        approved: Set(approved),
         created_at: Set(chrono::Local::now().naive_local()),
         updated_at: Set(chrono::Local::now().naive_local()),
         ..Default::default()
     };
     talk::Entity::insert(t).exec(&state.db).await.unwrap();
-    Json(ApiResponse::success("Created".to_string()))
+    // 审核拦下（approved=0）时 data="Pending"，供前台区分提示（灯已入河 → 待审核）
+    if approved == 0 {
+        Json(ApiResponse::success("Pending".to_string()))
+    } else {
+        Json(ApiResponse::success("Created".to_string()))
+    }
+}
+
+/// 河灯留言入库审核判定（20260905）：返回 approved 值——1 直接展示 / 0 进待审。
+/// 开关组合（两闸可叠加、可单独作用，用户拍板）：
+///   · 人工复核开 → 一律 0 待审（人工同意才放行；AI 若同开仅作入队前过滤）
+///   · 仅 AI 开    → 同步调 agent /review：flag → 0 待审；pass → 1
+///   · 都关        → 1（维持 20260905 前全通过的现状）
+/// agent 不可用/超时/解析失败 → 降级放行不拦正常留言（兑底，日志留痕）。
+async fn board_approved(state: &Arc<AppState>, content: &str) -> i8 {
+    let (ai_on, manual_on) = super::web_info::review_switches(&state.db).await;
+    if manual_on {
+        return 0;
+    }
+    if !ai_on {
+        return 1;
+    }
+    // 仅 AI 闸：同步调 agent（模型裁决上限 25s，这里网络超时 20s 先兜住）
+    let url = std::env::var("AGENT_URL")
+        .map(|u| u.trim_end_matches('/').trim_end_matches("/chat").to_string() + "/review")
+        .unwrap_or_else(|_| "http://127.0.0.1:8010/review".to_string());
+    let result = reqwest::Client::new()
+        .post(&url)
+        .json(&serde_json::json!({ "content": content }))
+        .timeout(std::time::Duration::from_secs(20))
+        .send()
+        .await;
+    match result {
+        Ok(r) if r.status().is_success() => {
+            match r.json::<serde_json::Value>().await {
+                Ok(v) if v.get("verdict").and_then(|x| x.as_str()) == Some("flag") => {
+                    tracing::info!("[board] AI 审核拦下一条留言，进待审");
+                    0
+                }
+                Ok(_) => 1, // verdict=pass 或缺省 → 放行
+                Err(e) => {
+                    tracing::warn!("[board] AI 审核响应解析失败，降级放行: {e}");
+                    1
+                }
+            }
+        }
+        Ok(r) => {
+            tracing::warn!("[board] AI 审核端点异常(HTTP {}），降级放行", r.status());
+            1
+        }
+        Err(e) => {
+            tracing::warn!("[board] AI 审核不可用，降级放行: {e}");
+            1
+        }
+    }
 }
 
 /// POST /api/public/board：河灯留言板放灯（强制登录）
@@ -285,8 +349,9 @@ pub struct AuditBody {
     approved: i8,
 }
 
-/// PUT /api/protect/board/:id/audit：留言内容审核（机制预留，暂未启用）
-/// 当前所有留言默认 approved=1 直接展示；后续启用审核时由管理端调用本接口即可，前端无需改动
+/// PUT /api/protect/board/:id/audit：留言人工复核（20260905 启用——面板开关
+/// manualReviewEnabled 开启后新留言一律 approved=0 待审，管理端本接口 通过(1)/
+/// 驳回(0) 放行/隐藏；AI 拦截进待审的留言同样走这里人工裁决）
 pub async fn audit_board(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -299,6 +364,10 @@ pub async fn audit_board(
     let Some(t) = talk::Entity::find_by_id(id).one(&state.db).await.unwrap() else {
         return Json(ApiResponse { code: 404, message: "Talk not found".to_string(), data: String::default() });
     };
+    // 审核只作用于河灯留言（说说 src=talk 不走审核流程，拒绝误审）
+    if t.src != "board" {
+        return Json(ApiResponse::error("仅河灯留言支持人工复核"));
+    }
     let mut active_model: talk::ActiveModel = t.into();
     active_model.approved = Set(if payload.approved == 0 { 0 } else { 1 });
     active_model.updated_at = Set(chrono::Local::now().naive_local());

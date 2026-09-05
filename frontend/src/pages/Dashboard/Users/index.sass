@@ -1,0 +1,71 @@
+// 用户管理页：账号管理 / 评论管理 双 Tab
+// Tabs 需要占满可用高度并把滚动交给各 Tab 内容（BoardManage 自身 padding+overflow 负责内边距与滚动）
+.users-page
+  height: 100%
+  padding: 0 8px
+  display: flex
+  flex-direction: column
+
+  .ant-tabs
+    flex: 1
+    min-height: 0
+    display: flex
+    flex-direction: column
+
+    .ant-tabs-nav
+      margin-bottom: 8px
+
+    .ant-tabs-content-holder
+      flex: 1
+      min-height: 0
+
+      .ant-tabs-content,
+      .ant-tabs-tabpane
+        height: 100%
+
+// ── 账号管理：临时用户 ──
+.tu-section
+  height: 100%
+  overflow-y: auto
+  padding: 12px 4px
+
+  .tu-create
+    display: flex
+    gap: 8px
+    margin-bottom: 8px
+
+  .tu-hint
+    margin: 0 0 14px
+    color: #999
+    font-size: 12px
+
+  .tu-empty
+    color: #999
+    padding: 8px
+
+  .tu-list
+    border: 1px solid #f0f0f0
+    border-radius: 6px
+    overflow: hidden
+
+    .tu-row
+      display: flex
+      align-items: center
+      justify-content: space-between
+      padding: 10px 12px
+      border-bottom: 1px solid #f0f0f0
+      &:last-child
+        border-bottom: none
+
+      .tu-id
+        color: #999
+        margin-left: 12px
+
+// 暗色适配（后台 .contentDark 容器内）
+.contentDark
+  .tu-list
+    border-color: rgba(255, 255, 255, 0.12)
+    .tu-row
+      border-bottom-color: rgba(255, 255, 255, 0.12)
+  .tu-hint
+    color: #888
