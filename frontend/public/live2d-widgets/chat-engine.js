@@ -98,6 +98,24 @@
           });
         });
       };
+      // 20260905 钉底跟随（根治"转跳后不在底部 / 新消息不彻底滚到底"）：
+      // 滚动若只在 appendMsg/reconcile 的双 rAF 里触发则存在两个洞——① 面板隐藏期
+      // 渲染（转跳返回时历史 fetch 快于面板可见，display:none 容器上设 scrollTop 无效，
+      // 渲染完成后面板才显示 → 停在顶部）；② 无 append 的 DOM 变化不触发任何滚动
+      // （历史批量插入后纯重排/收养、图片异步加载、markdown 增强长高）→ 停在中途。
+      // ResizeObserver 盯容器内容盒：只要用户仍在底部（userAtBottom，初始 true 且
+      // 隐藏期无 scroll 事件不会翻转），任何长高——含 hidden→visible 首帧——同步钉底；
+      // 用户上翻读历史（userAtBottom=false）自动不打扰，恢复"有新消息"指示条语义。
+      try {
+        if (typeof ResizeObserver !== 'undefined' && messages) {
+          const pinObserver = new ResizeObserver(() => {
+            if (!userAtBottom) return; // 用户在历史区：不拽走
+            hideNewMsgNote();
+            messages.scrollTop = messages.scrollHeight;
+          });
+          pinObserver.observe(messages);
+        }
+      } catch(e) {/* ignore */}
       // 执行过程框偏好：默认展开；用户主动收起过一次 → 保持收起（social UI 惯例）
       const getCollapsePref = () => {
         try { return localStorage.getItem('chat_process_collapsed') === '1'; } catch(e) { return false; }
@@ -1166,8 +1184,15 @@
         if (sessionStorage.getItem('chat_open')) {
           sessionStorage.removeItem('chat_open');
           chatPanel.classList.add('active');
-          pullHistory(); // 同步其他页面产生的新对话
+          // 同步其他页面产生的新对话——上方 init 已发起 DB 拉取（同一同步块内），
+          // 此处不重复请求，避免双 pullHistory 双 reconcile 竞态（20260905 去重；
+          // 历史接口挂起/空白态时重复调用同样被 pullHistory 自身守卫跳过）
           setTimeout(() => scrollToBottom(messages, true), 60); // 转跳返回 = 看最新对话
+          // 60ms 一击在历史拉取/面板入场晚于该时刻时落空（渲染发生在隐藏期，
+          // 旧版因此"转跳后 100% 不在底部"），补两轮重试；更晚的长高由上方
+          // ResizeObserver 钉底跟随兜底
+          setTimeout(() => scrollToBottom(messages, true), 500);
+          setTimeout(() => scrollToBottom(messages, true), 1500);
         }
       } catch(e) {/* ignore */}
       // chat-session（UI 层）注册会话钩子——引擎做决策、UI 只负责渲染（钩子函数
