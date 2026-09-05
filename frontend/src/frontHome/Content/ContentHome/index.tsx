@@ -221,9 +221,9 @@ const ContentHome = () => {
                 initial={{ opacity: 0, y: 30 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 1 }}
-                style={{display:'flex',width:'200px',justifyContent:'center',bottom:'0',left:'8%',position:"absolute"}}
+                style={{position:'absolute',left:0,right:0,bottom:0,display:'flex',justifyContent:'center'}}
             >
-            <p className="home-one-say" style={{position:'absolute',bottom:"20px", whiteSpace: "nowrap", font: '600 12px ""'}}>{oneSay}</p>
+            <p className="home-one-say">{oneSay}</p>
                 <i className="iconfont icon-rcd-angle-double-down upAndDown" style={{fontSize: 50,position:"absolute",bottom: 20,color:'skyblue'}} onClick={handleScrollDown}/></motion.div>
         </div>
         <div className="ContentContainer dark-pic">
