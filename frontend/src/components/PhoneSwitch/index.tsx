@@ -5,9 +5,20 @@ interface PhoneSwitchProps {
 }
 
 const PhoneSwitch = ({isDark,setDark}: PhoneSwitchProps) => {
+    // 20260905：移动端手动切换与桌面 Head.handleModeSwitch 同款持久化——此前裸
+    // setDark 绕过 storage/darkModeUserChoice/dispatch：刷新即回弹、夜间自动时段
+    // 无视手动选择顶回深色、看板娘 __darkMode 不更新（Head 20260902 已修同类，
+    // PhoneSwitch 漏网）
+    const handleChange = () => {
+        const next = !isDark;
+        setDark(next);
+        try { localStorage.setItem('isDarkMode', JSON.stringify(next)); } catch (e) {/* ignore */}
+        try { localStorage.setItem('darkModeUserChoice', next ? 'dark' : 'light'); } catch (e) {/* ignore */}
+        try { window.dispatchEvent(new CustomEvent('darkmode-change', { detail: next })); } catch (e) {/* ignore */}
+    };
     return <div className="phoneSwitch">
         <label htmlFor="switch" className="phoneSwitch-toggle">
-            <input type="checkbox" className="input" id="switch" checked={isDark} onChange={() => setDark(!isDark)}/>
+            <input type="checkbox" className="input" id="switch" checked={isDark} onChange={handleChange}/>
             <div className="phoneSwitch-icon icon--moon">
                 <svg
                     xmlns="http://www.w3.org/2000/svg"

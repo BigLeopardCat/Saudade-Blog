@@ -1053,6 +1053,13 @@
           chatPanel.style.top = (e.clientY - offsetY) + 'px';
           chatPanel.style.right = 'auto';
           chatPanel.style.bottom = 'auto';
+          // 20260905 特例钳制：会话抽屉右扩态(conv-out)下右缘出屏 → 左移回屏
+          // （对话框+列表全程可见）。仅此一态生效；其余自由拖动维持"不钳视口"
+          // ——负坐标/向上拖动锁死的教训见上方注释（CONV_GAP=4 同 chat-session）
+          if (chatPanel.classList.contains('conv-open') && chatPanel.classList.contains('conv-out')) {
+            const over = chatPanel.getBoundingClientRect().right - (window.innerWidth - 4);
+            if (over > 0) chatPanel.style.left = (parseFloat(chatPanel.style.left || '0') - over) + 'px';
+          }
         }
         if (isResizing) {
           if (resizeCorner === 'tl') {
@@ -1071,7 +1078,12 @@
           }
         }
       });
-      document.addEventListener('pointerup', () => { isDragging = false; isResizing = false; });
+      document.addEventListener('pointerup', () => {
+        isDragging = false; isResizing = false;
+        // 20260905：拖动/缩放结束 → 让 chat-session 重估展开几何（conv-out
+        // 出屏回移 / conv-in 可升真列），见 chat-session.js refitOpen
+        try { window.__refitConvOpen && window.__refitConvOpen(); } catch(err) {/* ignore */}
+      });
       // 缩放把手：右下角 + 左上角（红色三角，与发送按钮同色）
       const makeResizeHandle = (corner) => {
         const isTL = corner === 'tl';

@@ -183,29 +183,42 @@
     const doDelete = async (id) => {
       const tk = getToken();
       if (!tk) return;
+      if (switchBlocked()) return; // 流式中不删会话（收尾保存仍写原会话）
       const isCurrent = ctx.state.conv === id && !ctx.state.convNeedCreate;
       clearMenuAll();
-      if (isCurrent) {
-        // 删当前会话：走引擎恢复流程（清 pref/会话态 → 无参回落最新会话或空态）
-        engine.handleConvGone(id);
-        return;
-      }
+      const rearm = () => { // 删除失败：恢复确认条（红色可见、3s 后还原），不静默
+        const rowEl = convList.querySelector('.conv-row[data-id="' + id + '"]');
+        if (rowEl) armDelete(rowEl);
+      };
       try {
         const r = await fetch('/api/chat/conversations/' + id, {
           method: 'DELETE',
           headers: { 'Authorization': 'Bearer ' + tk },
         });
-        if (r.ok || r.status === 404) { // 404 = 已删（他端），本地同步移除
+        if (r.ok || r.status === 404) { // 404 = 已删（他端/幽灵会话），本地同步移除
+          if (isCurrent) {
+            // 删当前会话：服务端已删 → 引擎恢复流程（清 pref/会话态 → 无参回落
+            // 最新会话或空态）。20260905 根因修复：旧实现此分支不发 DELETE，服务端
+            // 决议回同一会话 → 视觉"删除无反应"
+            engine.handleConvGone(id);
+            return;
+          }
           const rowEl = convList.querySelector('.conv-row[data-id="' + id + '"]');
           if (rowEl && rowEl.parentNode) rowEl.parentNode.removeChild(rowEl);
           _byId.delete(id);
           _rows = _rows.filter(c => c.id !== id);
           engine.pruneConvCaches(_rows.map(c => c.id));
           fetchList(); // 收敛（防删除后行残留）
+        } else if (isCurrent) {
+          console.warn('[chat-session] 删除当前会话被拒', r.status);
+          rearm();
         } else {
           clearMenuAll();
         }
-      } catch(e) { clearMenuAll(); }
+      } catch(e) {
+        console.warn('[chat-session] 删除请求异常', e);
+        if (isCurrent) rearm(); else clearMenuAll();
+      }
     };
 
     // ── 置顶（PATCH pinned；成功重拉列表 → 服务端置顶重排）──
@@ -411,8 +424,24 @@
       const rect = chatPanel.getBoundingClientRect();
       return rect.right + CONV_WIDTH <= window.innerWidth - CONV_GAP;
     };
+    // 20260905：右缘空间不足时先把面板整体左移腾出 182（消息区全程可见，不盖
+    // 对话框）；左缘无余量（贴左缘/从未拖动走 CSS 默认位）/移动端才放弃 →
+    // 返回"左移后已满足右扩"与否。style.left 与 rect.left 同斜率平移，直接减
+    // 缺额即可（拖动写的是 local 坐标，平移量与视口一致）
+    const tryShiftToFit = () => {
+      const rect = chatPanel.getBoundingClientRect();
+      const need = rect.right + CONV_WIDTH - (window.innerWidth - CONV_GAP);
+      if (need <= 0) return fitsRight();
+      const cur = parseFloat(chatPanel.style.left || '');
+      if (!isFinite(cur)) return false; // 从未拖动过（无 inline left）：不擅动面板
+      chatPanel.style.left = (cur - need) + 'px';
+      return fitsRight();
+    };
     const openList = () => {
       if (isOpen()) return;
+      // 20260905：先试左移腾位（右扩真列），失败才 conv-in 覆盖——展开不再
+      // 无条件盖住对话框（用户反馈：空间不够时"展开直接盖住对话框"不合理）
+      if (window.innerWidth > 768 && !fitsRight()) tryShiftToFit();
       chatPanel.classList.add('conv-open');
       if (window.innerWidth > 768 && fitsRight()) {
         chatPanel.style.width = (chatPanel.offsetWidth + CONV_WIDTH) + 'px'; // 右扩（rail 不动）
@@ -439,17 +468,36 @@
       const wantOut = window.innerWidth > 768 && fitsRight();
       const wasOut = chatPanel.classList.contains('conv-out');
       if (wantOut === wasOut) return;
-      if (wantOut) {
+      if (wantOut) { // conv-in → 空间恢复可回真列
         chatPanel.style.width = (chatPanel.offsetWidth + CONV_WIDTH) + 'px';
         chatPanel.classList.remove('conv-in');
         chatPanel.classList.add('conv-out');
-      } else {
-        chatPanel.style.width = (chatPanel.offsetWidth - CONV_WIDTH) + 'px';
-        chatPanel.classList.remove('conv-out');
-        chatPanel.classList.add('conv-in');
+        return;
       }
+      // conv-out 右扩失效（窗口变窄/面板右缘不足）：
+      // 20260905：桌面先左移腾位保持真列（不退回盖消息区的 conv-in）
+      if (window.innerWidth > 768 && tryShiftToFit()) return;
+      chatPanel.style.width = (chatPanel.offsetWidth - CONV_WIDTH) + 'px';
+      chatPanel.classList.remove('conv-out');
+      chatPanel.classList.add('conv-in');
     };
     window.addEventListener('resize', relayoutOpen);
+    // 20260905：拖动/缩放面板后重估展开几何（chat-stream pointerup 调用）——
+    // conv-out 拖出/放大出右缘 → 左移回屏；conv-in 空间恢复 → 可升真列
+    const refitOpen = () => {
+      if (!isOpen()) return;
+      if (chatPanel.classList.contains('conv-out')) {
+        const rect = chatPanel.getBoundingClientRect();
+        const over = rect.right - (window.innerWidth - CONV_GAP);
+        if (over > 0) {
+          const cur = parseFloat(chatPanel.style.left || '');
+          if (isFinite(cur)) chatPanel.style.left = (cur - over) + 'px';
+        }
+        return;
+      }
+      relayoutOpen();
+    };
+    window.__refitConvOpen = refitOpen;
 
     // ── rail 可见性评估（游客无会话概念 → 整条隐藏，零回归）──
     const evalAuth = () => {
