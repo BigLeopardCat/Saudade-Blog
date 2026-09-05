@@ -15,7 +15,8 @@ const fmtCnTime = (s: string) => {
 }
 
 /**
- * 公告弹窗：公告栏.png 作为卡片背景，文本显示在图片中央浅色区。
+ * 公告弹窗：antd Modal 默认白底卡片形态（20260905 去背景图回归——曾用 公告栏.png
+ * 整卡背景图，图标文件已删除）。
  * 已读记忆按公告 id 对比（announcement_seen_id）：仅当存在比已看更新的公告时才弹出，
  * 避免旧实现（永久标记 announcement_seen）导致新公告永远无法触达老访客。
  */
@@ -51,54 +52,37 @@ const AnnouncementModal = () => {
             open={open}
             onCancel={handleClose}
             footer={null}
-            width={576}
+            width={520}
             centered
             maskClosable
             styles={{
-                content: { padding: 0, background: 'transparent', boxShadow: 'none', overflow: 'hidden' },
-                body: { padding: 0 },
-                close: {
-                    color: '#e74c3c',
-                    background: 'rgba(255, 255, 255, 0.9)',
-                    borderRadius: '50%',
-                    insetInlineEnd: 8,
-                    top: 8,
-                },
+                content: { borderRadius: 12, overflow: 'hidden' },
+                close: { insetInlineEnd: 10, top: 10 },
             }}
         >
-            {/* 公告卡片：背景图 4:3（576x432）。
-                实测图片结构：浅色文本区 x 27-559（中心偏右 0.9%→内容左移 1%），
-                y=407 为底部红色装饰线，y>410 为透明区域（按钮必须放在红线之上）。 */}
             <div style={{
-                aspectRatio: '4 / 3',
-                background: 'url(/icons/公告栏.png) center / 100% 100% no-repeat',
-                display: 'flex',
-                flexDirection: 'column',
+                padding: '28px 32px 24px',
+                maxHeight: '60vh',
+                overflowY: 'auto',
+                lineHeight: 1.9,
+                fontSize: 15,
+                color: '#333',
             }}>
-                <div style={{
-                    flex: 1,
-                    padding: '7% 9% 1% 7%',
-                    overflowY: 'auto',
-                    lineHeight: 1.9,
-                    fontSize: 15,
-                    color: '#5a4a3a',
-                    textAlign: 'center',
-                }}>
-                    {announcement?.title && (
-                        <div style={{
-                            fontWeight: 700,
-                            fontSize: 21,
-                            marginBottom: 10,
-                            color: '#4a3a2a',
-                            letterSpacing: 1,
-                        }}>
-                            {announcement.title}
-                        </div>
-                    )}
-                    <div style={{ whiteSpace: 'pre-wrap' }}>{announcement?.content}</div>
-                    <div style={{ marginTop: 12, fontSize: 12, color: '#8a7a6a' }}>
-                        {fmtCnTime(announcement?.updatedAt || announcement?.createdAt)}
+                {announcement?.title && (
+                    <div style={{
+                        fontWeight: 700,
+                        fontSize: 20,
+                        marginBottom: 14,
+                        color: '#222',
+                        letterSpacing: 1,
+                        textAlign: 'center',
+                    }}>
+                        {announcement.title}
                     </div>
+                )}
+                <div style={{ whiteSpace: 'pre-wrap', textAlign: 'justify' }}>{announcement?.content}</div>
+                <div style={{ marginTop: 16, fontSize: 12, color: '#999', textAlign: 'right' }}>
+                    {fmtCnTime(announcement?.updatedAt || announcement?.createdAt)}
                 </div>
             </div>
         </Modal>
