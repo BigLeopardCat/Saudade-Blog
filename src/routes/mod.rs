@@ -54,6 +54,11 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/login", post(auth::login))
         // 当前登录用户信息（自身鉴权，不经过 admin 守卫）：留言留名预填
         .route("/api/protected/profile", get(auth::profile))
+        // 我的河灯（20260905 issue8）：本人河灯列表/收回——普通登录用户专用，
+        // 必须挂在 admin 守卫之外（守卫域内全部接口仅管理员可用，见 protected_routes
+        // 末尾 route_layer；handler 内部 current_uid 自身鉴权，同 profile 先例）
+        .route("/api/protect/board/mine", get(talks::list_my_boards))
+        .route("/api/protect/board/mine/:id", delete(talks::delete_my_board))
         
         // Public Notes
         .route("/api/public/notes", get(notes::list_public_notes))
@@ -173,9 +178,6 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/protect/board", get(talks::list_board_admin))
         .route("/api/protect/board/:id", delete(talks::delete_board))
         .route("/api/protect/board/:id/audit", put(talks::audit_board))
-        // 我的河灯（20260905 issue8）：本人全部河灯（含待审/未通过）列表 + 收回
-        .route("/api/protect/board/mine", get(talks::list_my_boards))
-        .route("/api/protect/board/mine/:id", delete(talks::delete_my_board))
 
         // Knowledge Base (write/admin)
         .route("/api/knowledge", post(knowledge::add_knowledge))
