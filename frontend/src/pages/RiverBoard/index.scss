@@ -143,6 +143,18 @@
       }
     }
 
+    /* 未点亮（20260905 #4b）：approved 0(待审)/2(未通过) 的灯河面不提供
+       亮灯效果渲染——光晕/水面光斑/烛火全隐（涟漪保留：只是灯身入水的
+       物理扰动），灯笼本体压暗成未点燃轮廓；通过后（approved→1）自动点亮 */
+    &.rz-unlit .rz-halo,
+    &.rz-unlit .rz-pool-light,
+    &.rz-unlit .rz-flame {
+      display: none;
+    }
+    &.rz-unlit .rz-sprite img {
+      filter: brightness(0.6) saturate(0.7);
+    }
+
     /* 心愿气泡 */
     .rz-bubble {
       position: absolute;
@@ -1320,16 +1332,23 @@
 
 .rz-root .rz-modal-box .rz-reclaim {
   margin-left: auto;
-  padding: 3px 14px;
+  /* 20260905 #4a：与 .rz-minetag（已点亮标签）同尺寸——原 padding 3px 14px +
+     font 12px 药丸明显大一圈，用户反馈"收回河灯按钮太大"，改对齐标签基形
+     （11px / line-height 1.6 / padding 0 8px / letter-spacing 0.2em） */
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
   background: rgba(255, 205, 140, 0.07);
   border: 1px solid rgba(255, 205, 140, 0.28);
   border-radius: 999px;
   cursor: pointer;
   color: rgba(242, 226, 194, 0.72);
   font-family: inherit;
-  font-size: 12px;
-  letter-spacing: 0.22em;
-  text-indent: 0.22em;
+  font-size: 11px;
+  line-height: 1.6;
+  letter-spacing: 0.2em;
+  text-indent: 0.2em;
+  white-space: nowrap;
   transition: color 0.2s ease, background 0.2s ease, border-color 0.2s ease;
 
   &:hover,

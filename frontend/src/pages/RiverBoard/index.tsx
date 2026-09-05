@@ -1264,7 +1264,12 @@ export default function RiverBoard() {
         return p;
     };
 
-    const drawScene = (ctx: CanvasRenderingContext2D, t: number, reduce: boolean, baseBack: HTMLCanvasElement, baseFront: HTMLCanvasElement) => {
+    // reduce = 性能降级（perfDynReduce/软渲染/系统偏好任一命中：水流带减速、
+    // 视差归零等成本控制）；sysReduce = 仅系统 prefers-reduced-motion——星光/
+    // 萤火虫/流星等"氛围装饰"只随系统偏好关（20260905 用户反馈：软渲染静态
+    // 强制 reduced 把萤火虫也关了 → 装饰类改由 sysReduce 单独门控，性能降级
+    // 不再剥夺它们）
+    const drawScene = (ctx: CanvasRenderingContext2D, t: number, reduce: boolean, sysReduce: boolean, baseBack: HTMLCanvasElement, baseFront: HTMLCanvasElement) => {
         if (!amb) return;
         // 第 34 轮：真实月面纹理（幂等，onload 后 moonTexA 就绪）
         // 第 37 轮：月亮画在静态层（renderBase 仅初始化/resize 时渲染），
@@ -1376,7 +1381,7 @@ export default function RiverBoard() {
         /* 星光闪烁（只有少数亮星动态叠加；月盘内的星略过——月亮实心应遮挡星空） */
         const moonR = Math.min(w, h) * MOON.r * 0.82;
         const moonCX = w * MOON.x, moonCY = h * MOON.y;
-        if (!reduce) {
+        if (!sysReduce) {
             for (const st of amb.stars) {
                 if (!st.fl) continue;
                 const tw = 0.35 + 0.65 * Math.pow(0.5 + 0.5 * Math.sin(t * st.tw + st.ph), 2);
@@ -1402,13 +1407,15 @@ export default function RiverBoard() {
         ctx.restore(); // 山体遮罩作用于星光闪烁；孔明灯在天际更高处，不被裁剪
 
         /* 萤火虫（低空逡巡的荧光点）：画在山体遮罩之外——遮罩把"山脊线以下
-           （含整条河）"都裁掉了，萤火虫在河面上方低空飞，必须走无裁剪路径 */
-        if (!reduce) {
+           （含整条河）"都裁掉了，萤火虫在河面上方低空飞，必须走无裁剪路径。
+           20260905：只随系统 prefers-reduced-motion 关（软渲染/动态降级不再
+           剥夺——降级只控制 fps 与水流带成本，萤火虫每只仅 1 次预渲染贴图
+           drawImage，开销可忽略） */
+        if (!sysReduce) {
             for (const f of amb.fireflies) {
                 f.u +=
-                    (Math.sin(t * 0.07 + f.ph) * 0.0011 + Math.sin(t * 0.19 + f.ph * 1.7) * 0.0005) *
-                    (reduce ? 0.1 : 1);
-                f.d -= (Math.sin(t * 0.045 + f.ph * 2.3) * 0.0002 + 0.00004) * (reduce ? 0.1 : 1);
+                    (Math.sin(t * 0.07 + f.ph) * 0.0011 + Math.sin(t * 0.19 + f.ph * 1.7) * 0.0005);
+                f.d -= (Math.sin(t * 0.045 + f.ph * 2.3) * 0.0002 + 0.00004);
                 if (f.u < 0.04) f.u = 0.04;
                 if (f.u > 0.96) f.u = 0.96;
                 if (f.d < 0.045) f.d = 0.9 + Math.random() * 0.06;
@@ -1430,7 +1437,7 @@ export default function RiverBoard() {
         ctx.clip(buildSkyClip(w, h), "evenodd");
         ctx.translate(-px * 0.2, -py * 0.1);
         if (amb.shoot) {
-            if (reduce) {
+            if (sysReduce) {
                 amb.shoot = null;
                 amb.shootAt = amb.now + 7 + Math.random() * 12;
             } else {
@@ -1603,9 +1610,10 @@ export default function RiverBoard() {
 
         // 软渲染/老内核检测（20260831）：无 WebGL = 无 GPU 合成与硬件光栅化，
         // canvas 全屏重绘与 DOM transform 动画全部 CPU 软件绘制，帧成本数倍于
-        // 硬件渲染——必须走降级（dpr 1 + 30fps + reduced 路径），否则"一卡一卡"
-        // （帧成本超 16.7ms 预算导致的掉帧；加渲染帧率只会更卡，降帧率到可
-        // 稳定值才平滑）
+        // 硬件渲染——必须走降级（dpr 1 + 45fps 节流 + 水流带减速路径），否则
+        // "一卡一卡"（帧成本超 16.7ms 预算导致的掉帧）。20260905：帧率由
+        // 30fps 提到 45fps（用户反馈 30fps 下流动仍不流畅），且氛围装饰
+        // （星光/萤火虫/流星）不再被软渲染连坐关闭，只随系统偏好
         const softRender = !(
             document.createElement("canvas").getContext("webgl") ||
             document.createElement("canvas").getContext("experimental-webgl")
@@ -1652,18 +1660,20 @@ export default function RiverBoard() {
 
         const frame = (now: number) => {
             if (disposed) return;
-            // 软渲染降频（20260831）：30fps 上限（每 2 帧处理 1 次）——帧预算从
-            // 16.7ms 翻倍到 33ms，掉帧抖动变为稳定平滑流动；硬件渲染不受影响
-            if (softRender && ++softSkip & 1) {
+            // 软渲染降频（20260831 初版 30fps 每 2 帧处理 1 次；20260905 用户反馈
+            // "流动不流畅/萤火虫没了" → 帧率提到 45fps = 每 4 帧处理 3 帧（预算
+            // 22ms），并只降帧率、不再把氛围装饰连坐关掉；硬件渲染不受影响
+            if (softRender && (++softSkip & 3) === 3) {
                 raf = requestAnimationFrame(frame);
                 return;
             }
             const dt = Math.min(0.05, (now - last) / 1000);
             last = now;
             // P2-3（20260831）动态降级：实测帧耗时（rAF 间隔含绘制成本），EMA 平滑后
-            // 超预算自动切 reduced 渲染路径（星光/萤火虫/流星/水光带减速等），预算
+            // 超预算自动切 reduced 渲染路径（水流带减速/视差归零等成本控制），预算
             // 恢复自动还原；滞回 13ms 进 / 9ms 出防抖——GPU 忙时自动降级；软渲染
-            // 直接静态强制 reduced（softRender），不依赖系统偏好也不等 EMA
+            // 直接静态进 reduced（softRender）。20260905：reduced 只剩成本控制，
+            // 氛围装饰（星光/萤火虫/流星）改由 sysReduce（系统偏好）单独门控
             const fms = now - lastFrameT;
             lastFrameT = now;
             perfEma = perfEma * 0.92 + Math.min(50, fms) * 0.08;
@@ -1675,7 +1685,8 @@ export default function RiverBoard() {
             drawScene(
                 ctx,
                 amb ? amb.now : 0,
-                reduced() || perfDynReduce || softRender,
+                reduced() || perfDynReduce || softRender, // 性能降级（水流带减速等）
+                reduced(), // 系统级装饰门控：星光/萤火虫/流星只随系统偏好（20260905）
                 baseBack!,
                 baseFront!
             );
@@ -1691,7 +1702,7 @@ export default function RiverBoard() {
         let lastFrameT = performance.now();
         let perfEma = 16.7;
         let perfDynReduce = false;
-        // 软渲染 30fps 节流计数器
+        // 软渲染 45fps 节流计数器（每 4 帧跳过 1 帧）
         let softSkip = 0;
 
         raf = requestAnimationFrame(frame);
@@ -1910,8 +1921,10 @@ export default function RiverBoard() {
             const jj = (await res.json()) as { code?: number; message?: string; data?: unknown };
             if (jj?.code !== 200) throw new Error(jj?.message || "留言失败");
             // 人工复核开启时新灯进待审（后端 approved=0 → data="Pending"）：
-            // 河面仍为自己点亮这一盏（放灯体感不变），但不入公开列表；
-            // 灯影集「我的河灯」页签可见，状态标签「待审」，审核通过后自动入册
+            // 灯仍放上河面漂流但处于"未点亮"态（20260905 #4b：河面不给亮灯
+            // 光效——无光晕/水面光斑/烛火，见 .rz-lantern.rz-unlit），不入
+            // 公开列表；灯影集「我的河灯」页签可见，状态标签「待审」，
+            // 审核通过后自动入册点亮
             const pending = jj?.data === "Pending";
             setWishPending(pending);
             const metas = metaRef.current;
@@ -1931,7 +1944,9 @@ export default function RiverBoard() {
                 ripT: -1,
             });
             metaRef.current = metas;
-            const wish: Wish = { id, v: wishV, msg, cat: wishCat, author, time: shortTime(new Date()) };
+            // 待审（approved=0）：河面按"未点亮"渲染（rz-unlit）；通过态不带
+            // approved → 默认亮灯（undefined 与 1 均视为已点亮）
+            const wish: Wish = { id, v: wishV, msg, cat: wishCat, author, time: shortTime(new Date()), approved: pending ? 0 : undefined };
             // 快照刚放的灯："再看一眼"时按同一盏灯重新点放（留名/灯型/内容一致）
             lastDroppedWish.current = wish;
             setLanterns((prev) => [...prev, wish]);
@@ -2181,7 +2196,12 @@ export default function RiverBoard() {
                         ref={(el) => {
                             nodesRef.current.set(ln.id, el);
                         }}
-                        className="rz-lantern"
+                        className={
+                            "rz-lantern" +
+                            // 20260905 #4b：approved 0(待审)/2(未通过) = 未点亮——
+                            // 河面只放暗灯笼轮廓，不渲染亮灯光效；undefined/1 = 已点亮
+                            (ln.approved === undefined || ln.approved === 1 ? "" : " rz-unlit")
+                        }
                         role="button"
                         tabIndex={0}
                         aria-label="河灯心愿"
