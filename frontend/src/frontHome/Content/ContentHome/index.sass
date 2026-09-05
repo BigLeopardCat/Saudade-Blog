@@ -749,3 +749,29 @@ html[data-theme='dark'] .SayWords h2
             font-size: 12px !important
           .post-date
             display: none !important
+
+/* ===== 20260905g 签名一行：站酷快乐体 · hero 底部水平居中 · 明暗自适应 ===== */
+@font-face
+  font-family: 'ZCOOL KuaiLe'
+  src: url('../../../assets/fonts/zcool-kuaile-sig.woff2') format('woff2')
+  font-weight: 400
+  font-display: swap
+
+// 签名：横向居中靠 flex 容器（motion.div 全宽 justify-content:center，
+// 绝对定位子元素按"唯一 flex 项"取静态位 → 居中）；垂直在滚动箭头之上
+.home-one-say
+  position: absolute
+  bottom: 86px
+  margin: 0
+  white-space: nowrap
+  font-family: 'ZCOOL KuaiLe', 'Kaiti SC', 'STKaiti', 'KaiTi', serif
+  font-size: 17px
+  font-weight: 400
+  letter-spacing: 2px
+  color: rgba(30, 30, 44, 0.92)
+  text-shadow: 0 1px 3px rgba(255, 255, 255, 0.7)
+  cursor: default
+
+// 暗色模式：白字（上方 V13 .frontDark 规则已 !important 覆盖颜色），补暗色投影
+.frontDark .home-one-say
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6)
