@@ -28,6 +28,9 @@ pub struct TalkDto {
     pub author: String,
     /// 是否当前登录用户所放（"我的河灯"分组用）
     pub mine: bool,
+    /// 审核状态：1=通过（公开列表可见）/ 0=待审 / 2=未通过（驳回）。
+    /// 公开列表已过滤 approved=1 恒 1；我的河灯接口返回本人全部状态
+    pub approved: i8,
     #[serde(rename = "createTime")]
     pub created_at: String,
     #[serde(rename = "updateTime")]
@@ -57,10 +60,63 @@ async fn list_by_src(
         v: t.v as i32,
         author: t.author,
         mine: uid.map(|u| t.user_id == u).unwrap_or(false),
+        approved: t.approved, // 公开列表已过滤 approved=1，恒 1
         created_at: t.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
         updated_at: t.updated_at.format("%Y-%m-%d %H:%M:%S").to_string(),
     }).collect();
     Json(ApiResponse::success(dtos))
+}
+
+/// GET /api/protect/board/mine：我的河灯（当前登录用户所放全部，含待审/未通过）。
+/// 灯影集「我的河灯」页签数据源——公开列表只放行 approved=1，本人待审(0)/
+/// 未通过(2)的河灯需要本接口才能查看状态与收回（20260905 issue8）
+pub async fn list_my_boards(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Json<ApiResponse<Vec<TalkDto>>> {
+    let Some(uid) = current_uid(&headers) else {
+        return Json(ApiResponse::error("请先登录"));
+    };
+    let talks = talk::Entity::find()
+        .filter(talk::Column::Src.eq("board"))
+        .filter(talk::Column::UserId.eq(uid))
+        .order_by_desc(talk::Column::CreatedAt)
+        .all(&state.db)
+        .await
+        .unwrap_or(vec![]);
+    let dtos = talks.into_iter().map(|t| TalkDto {
+        id: t.id,
+        title: t.title.unwrap_or_default(),
+        content: t.content,
+        cat: t.cat,
+        v: t.v as i32,
+        author: t.author,
+        mine: true,
+        approved: t.approved,
+        created_at: t.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+        updated_at: t.updated_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+    }).collect();
+    Json(ApiResponse::success(dtos))
+}
+
+/// DELETE /api/protect/board/mine/:id：收回自己的河灯（归属校验——只能删自己
+/// 放的灯；管理端全量删除走 delete_board）。20260905 issue8
+pub async fn delete_my_board(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<i32>,
+) -> Json<ApiResponse<String>> {
+    let Some(uid) = current_uid(&headers) else {
+        return Json(ApiResponse::error("请先登录"));
+    };
+    let Some(t) = talk::Entity::find_by_id(id).one(&state.db).await.unwrap() else {
+        return Json(ApiResponse { code: 404, message: "Talk not found".to_string(), data: String::default() });
+    };
+    if t.src != "board" || t.user_id != uid {
+        return Json(ApiResponse::error("只能收回自己放的河灯"));
+    }
+    talk::Entity::delete_by_id(id).exec(&state.db).await.unwrap();
+    Json(ApiResponse::success("Deleted".to_string()))
 }
 
 /// GET /api/public/talk：前台"说说"页（仅后台发布的说说，与留言板各自独立）
@@ -345,13 +401,14 @@ pub async fn delete_board(
 
 #[derive(Deserialize)]
 pub struct AuditBody {
-    /// 0=驳回（隐藏） 1=通过
+    /// 1=通过（放行展示）；0=驳回——写 approved=2「未通过」，与待审(0)区分
+    /// （20260905 issue8：本人「我的河灯」按 0 显示待审标签、2 显示未通过标签）
     approved: i8,
 }
 
 /// PUT /api/protect/board/:id/audit：留言人工复核（20260905 启用——面板开关
-/// manualReviewEnabled 开启后新留言一律 approved=0 待审，管理端本接口 通过(1)/
-/// 驳回(0) 放行/隐藏；AI 拦截进待审的留言同样走这里人工裁决）
+/// manualReviewEnabled 开启后新留言一律 approved=0 待审，管理端本接口 通过(1)
+/// 放行 / 驳回(2) 隐藏；AI 拦截进待审的留言同样走这里人工裁决）
 pub async fn audit_board(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -369,7 +426,7 @@ pub async fn audit_board(
         return Json(ApiResponse::error("仅河灯留言支持人工复核"));
     }
     let mut active_model: talk::ActiveModel = t.into();
-    active_model.approved = Set(if payload.approved == 0 { 0 } else { 1 });
+    active_model.approved = Set(if payload.approved == 0 { 2 } else { 1 });
     active_model.updated_at = Set(chrono::Local::now().naive_local());
     talk::Entity::update(active_model).exec(&state.db).await.unwrap();
     Json(ApiResponse::success("Audited".to_string()))
