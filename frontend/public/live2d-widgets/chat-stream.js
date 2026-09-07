@@ -13,6 +13,12 @@
     const { messages, input, sendBtn, navConfirm, navQuestion, chatPanel } = ctx.dom;
     const scrollToBottom = engine.scrollToBottom;
     const broadcast = engine.broadcast;
+    // 主题日 = 以 06:00 为界（23:00-6:00 自动夜间的恢复边界）：手动/对话调节的
+    // 让位只在当前主题日内有效，跨 6:00 自动切换恢复（20260908 时效化，与 App 同语义）
+    const choiceDay = () => {
+      const d = new Date(Date.now() - 6 * 3600 * 1000);
+      return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    };
     const pullHistory = engine.pullHistory;
     const saveHistory = engine.saveHistory;
     const apiDiscard = engine.apiDiscard;
@@ -371,6 +377,7 @@
                 toggleEffect(toolCall[1], toolCall[2]);
               } else if (toolCall[0].startsWith('toggle_dark_mode')) {
                 try { localStorage.setItem('darkModeUserChoice', 'true'); } catch(e2) {/* ignore */}
+                try { localStorage.setItem('darkModeChoiceDay', choiceDay()); } catch(e2) {/* ignore */}
                 applyDarkMode(toolCall[1] === 'on', true);
               }
             }
@@ -380,6 +387,7 @@
             const darkMatch = fullText.match(/DARKMODE:\s*(on|off)/);
             if (darkMatch) {
               try { localStorage.setItem('darkModeUserChoice', 'true'); } catch(e2) {/* ignore */}
+              try { localStorage.setItem('darkModeChoiceDay', choiceDay()); } catch(e2) {/* ignore */}
               applyDarkMode(darkMatch[1] === 'on', true);
             }
         };
@@ -1005,7 +1013,8 @@
         });
       };
       // 先于 addStarButton 初始化（月亮按钮创建时读取 __darkMode 以同步激活样式）
-      try { window.__darkMode = localStorage.getItem('isDarkMode') === 'true'; } catch(e) {/* ignore */}
+      // 20260908：宽容读——兼容裸 'true'（20260823 前）与 JSON.stringify 的 '"true"'（现行）两种历史格式
+      try { const dm = localStorage.getItem('isDarkMode'); window.__darkMode = dm === 'true' || dm === '"true"'; } catch(e) {/* ignore */}
       // 博客头部手动切换夜间模式（Head handleModeSwitch）也会派发 darkmode-change，
       // 同步 __darkMode 保证 current_darkmode 上报真实状态；本文件 applyDarkMode 派发的事件
       // 到达这里时值相同，幂等无副作用

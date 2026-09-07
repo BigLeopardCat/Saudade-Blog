@@ -18,6 +18,7 @@ import '@fontsource/roboto/300.css';
 import '@fontsource/roboto/400.css';
 import '@fontsource/roboto/500.css';
 import '@fontsource/roboto/700.css';
+import { readDarkMode, recordUserChoice } from "../../theme";
 
 
 const Dashboard = () => {
@@ -39,7 +40,6 @@ const Dashboard = () => {
         dispatch<any>(fetchCategories())
         dispatch<any>(fetchTags())
         dispatch<any>(fetchNoteList(true))
-        const DarkSwitch = localStorage.getItem('isDarkMode')
         // hash → 侧栏高亮索引（与下方 sidebar 数组 index 一一对应；
         // 底部导航「站点设置」等无对应 menu 项不映射，回落 1）
         const HASH_INDEX: Record<string, number> = {
@@ -54,10 +54,7 @@ const Dashboard = () => {
             location.hash.startsWith('#/dashboard/notes') ? 2 : (HASH_INDEX[location.hash] ?? 1);
         setSelectCurrent(currentHashCode)
         setLoading(true);
-        if(DarkSwitch!==null){
-            setDarkMode(JSON.parse(DarkSwitch));
-
-        }
+        setDarkMode(readDarkMode());
     },[])
 
     //回调函数区域
@@ -95,8 +92,8 @@ const Dashboard = () => {
     const handleModeSwitch = () => {
         setDarkMode(!isDarkMode);
         localStorage.setItem("isDarkMode", JSON.stringify(!isDarkMode));
-        // 同 Head：手动切换记入 darkModeUserChoice，自动夜间不再覆盖
-        localStorage.setItem("darkModeUserChoice", !isDarkMode ? 'dark' : 'light');
+        // 同 Head：手动切换记入 darkModeUserChoice（含主题日，跨日自动恢复）
+        recordUserChoice(!isDarkMode ? 'dark' : 'light');
     };
 
     // 导航栏数据

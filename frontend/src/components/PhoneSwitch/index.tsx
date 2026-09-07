@@ -1,4 +1,5 @@
 import './index.sass'
+import { recordUserChoice } from '../../theme';
 interface PhoneSwitchProps {
     isDark: boolean
     setDark: (value: (((prevState: boolean) => boolean) | boolean)) => void
@@ -13,7 +14,7 @@ const PhoneSwitch = ({isDark,setDark}: PhoneSwitchProps) => {
         const next = !isDark;
         setDark(next);
         try { localStorage.setItem('isDarkMode', JSON.stringify(next)); } catch (e) {/* ignore */}
-        try { localStorage.setItem('darkModeUserChoice', next ? 'dark' : 'light'); } catch (e) {/* ignore */}
+        recordUserChoice(next ? 'dark' : 'light');
         try { window.dispatchEvent(new CustomEvent('darkmode-change', { detail: next })); } catch (e) {/* ignore */}
     };
     return <div className="phoneSwitch">
