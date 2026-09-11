@@ -208,7 +208,8 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
         .dotCurrent
           background: #7880d1
       img
-        border-radius: 15px 0 0 15px
+        // 20260912 圆角由 .TopCover（border-radius + overflow hidden）裁剪，img 自己不再设，
+        // 否则封面裁剪的 transform: scale 会把圆角一起放大
         background-repeat: no-repeat
         background-size: cover
         display: block
@@ -324,23 +325,16 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
         position: relative
         height: 200px
         flex-shrink: 0
-        height: 200px
-        flex-shrink: 0
-        &:after
-          pointer-events: none
-          content: ""
-          position: absolute
-          z-index: 35
-          top: 13%
-          left: 0
-          height: 120%
-          background: var(--pic-cover-color-m)
+        // 20260912 封面裁剪参数：焦点缩放会让图片放大溢出，必须在这里裁掉；
+        // 圆角也挪到被裁的容器上——放在 img 上会被 transform 一起放大。
+        // （原 img height:120% + 缺 width 的 :after 渐隐是失效的旧写法，一并清掉）
+        overflow: hidden
+        border-radius: 1rem 1rem 0 0
         img
           background-repeat: no-repeat
           background-size: cover
-          border-radius: 1rem 1rem 0 0
           display: block
-          height: 120%
+          height: 100%
           -o-object-fit: cover
           object-fit: cover
           position: absolute

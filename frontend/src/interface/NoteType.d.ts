@@ -7,6 +7,10 @@ export interface NoteType {
     noteTags: number[];
     key: string;
     cover: string;
+    // 封面裁剪参数（焦点归一化坐标 + 额外缩放倍数），null/缺省 = 未设置（按居中 cover 渲染）
+    coverFocusX?: number | null;
+    coverFocusY?: number | null;
+    coverZoom?: number | null;
     categories: string;
     isTop: boolean | number;
     createTime: Date;

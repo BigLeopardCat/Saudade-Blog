@@ -32,7 +32,14 @@ pub struct NoteDto {
     pub description: String,
     #[serde(rename = "cover")]
     pub cover: String,
-    
+    // 封面裁剪参数（焦点归一化坐标 + 额外缩放），null = 未设置
+    #[serde(rename = "coverFocusX")]
+    pub cover_focus_x: Option<f64>,
+    #[serde(rename = "coverFocusY")]
+    pub cover_focus_y: Option<f64>,
+    #[serde(rename = "coverZoom")]
+    pub cover_zoom: Option<f64>,
+
     #[serde(rename = "createTime")]
     pub created_at: String,
     #[serde(rename = "updateTime")]
@@ -53,6 +60,15 @@ pub struct NoteDto {
     pub tags: String, 
 }
 
+/// 封面裁剪参数兜底：焦点归一化到 0..1，缩放夹在 1..4；NaN/inf 等脏值退回默认。
+fn clamp01(v: f64) -> f64 {
+    if v.is_finite() { v.clamp(0.0, 1.0) } else { 0.5 }
+}
+
+fn clamp_zoom(v: f64) -> f64 {
+    if v.is_finite() { v.clamp(1.0, 4.0) } else { 1.0 }
+}
+
 fn map_note(n: note::Model, cat: Option<category::Model>) -> NoteDto {
     let cat_id = cat.as_ref().map(|c| c.id);
     let cat_name = cat.map(|c| c.name);
@@ -65,6 +81,9 @@ fn map_note(n: note::Model, cat: Option<category::Model>) -> NoteDto {
         content_raw: n.content,
         description: n.description.unwrap_or_default(),
         cover: n.cover.unwrap_or_default(),
+        cover_focus_x: n.cover_focus_x,
+        cover_focus_y: n.cover_focus_y,
+        cover_zoom: n.cover_zoom,
         created_at: n.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
         updated_at: n.updated_at.format("%Y-%m-%d %H:%M:%S").to_string(),
         is_top: n.is_top.unwrap_or(0),
@@ -278,7 +297,14 @@ pub struct UpsertNoteRequest {
     pub status: Option<String>,
     pub description: Option<String>,
     pub cover: Option<String>,
-    
+    // 封面裁剪参数：不传则不改动该列（编辑旧文章不会误清参数）
+    #[serde(rename = "coverFocusX")]
+    pub cover_focus_x: Option<f64>,
+    #[serde(rename = "coverFocusY")]
+    pub cover_focus_y: Option<f64>,
+    #[serde(rename = "coverZoom")]
+    pub cover_zoom: Option<f64>,
+
     #[serde(rename = "noteTags")]
     pub tags: Option<String>,
     
@@ -329,6 +355,9 @@ pub async fn create_note(
         category_id: Set(payload.category_id),
         description: Set(payload.description),
         cover: Set(payload.cover),
+        cover_focus_x: Set(payload.cover_focus_x.map(clamp01)),
+        cover_focus_y: Set(payload.cover_focus_y.map(clamp01)),
+        cover_zoom: Set(payload.cover_zoom.map(clamp_zoom)),
         is_top: Set(payload.is_top),
         status: Set(Some(status_str)),
         created_at: Set(chrono::Local::now().naive_local()),
@@ -359,6 +388,9 @@ pub async fn update_note(
         
         if let Some(v) = payload.description { active_model.description = Set(Some(v)); }
         if let Some(v) = payload.cover { active_model.cover = Set(Some(v)); }
+        if let Some(v) = payload.cover_focus_x { active_model.cover_focus_x = Set(Some(clamp01(v))); }
+        if let Some(v) = payload.cover_focus_y { active_model.cover_focus_y = Set(Some(clamp01(v))); }
+        if let Some(v) = payload.cover_zoom { active_model.cover_zoom = Set(Some(clamp_zoom(v))); }
         if let Some(v) = payload.is_top { active_model.is_top = Set(Some(v)); }
         if let Some(v) = payload.tags { active_model.tags = Set(Some(v)); }
         

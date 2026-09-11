@@ -6,6 +6,7 @@ import {NoteType} from "../../../interface/NoteType";
 import {CategoriesType} from "../../../interface/CategoriesType";
 import {renderNoteTags} from "../../../apis/TagMethods.tsx";
 import dayjs from "dayjs";
+import { coverCropStyle, cropFromRow } from "../../../utils/coverCrop";
 
 interface tag
 {
@@ -57,7 +58,7 @@ const Article:React.FC<ArticleOption> = ({ item, index, Categories, avatar, name
         >
             <div className="ArticleCard" onClick={() => window.open(`/article/${item.key}`, "_blank")}>
                 <div className="ArticleCover">
-                    {isVisible && <LazyImage src={item.cover} />}
+                    {isVisible && <LazyImage src={item.cover} style={coverCropStyle(cropFromRow(item))} />}
                 </div>
 
                 <div className="ArticleContent">

@@ -11,6 +11,7 @@ import MarkdownNavbar from 'markdown-navbar'
 import 'markdown-navbar/dist/navbar.css'
 import Loading from "../../Loading";
 import scrollToTop from "../../../utils/scrollToTop.tsx";
+import { coverCropMotionStyle, cropFromRow } from "../../../utils/coverCrop";
 import {getNoteById} from "../../../apis/NoteMethods.tsx";
 import SeoHelmet from "../../../components/SeoHelmet";
 
@@ -263,6 +264,7 @@ const ReadArticle = () => {
                     <div className="readCover">
                         <motion.img
                             src={article?.cover}
+                            style={coverCropMotionStyle(cropFromRow(article))}
                             initial={{ filter: "blur(10px)" }}
                             animate={{ filter: "blur(0px)" }}
                             transition={{ duration: 1 }}
