@@ -13,6 +13,10 @@ pub struct Model {
     #[sea_orm(column_type = "Text", nullable)]
     pub description: Option<String>,
     pub cover: Option<String>,
+    // 封面裁剪参数（0..1 归一化焦点 + 1..4 额外缩放），NULL = 未设置，展示端按居中 cover 渲染
+    pub cover_focus_x: Option<f64>,
+    pub cover_focus_y: Option<f64>,
+    pub cover_zoom: Option<f64>,
     pub is_top: Option<i32>, // 0 or 1
     pub status: Option<String>, // 'published', etc
     

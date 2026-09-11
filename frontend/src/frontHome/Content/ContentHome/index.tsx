@@ -15,6 +15,7 @@ import {SocialType} from "../../../interface/SocialType";
 import {getNotePage, getTopNotes} from "../../../apis/NoteMethods.tsx";
 import dayjs from "dayjs";
 import { resolveApiAssetUrl } from '../../../utils/runtimeApi';
+import { coverCropStyle, cropFromRow } from '../../../utils/coverCrop';
 import heroBg from '../../../assets/hero_bg.mp4';
 import heroPoster from '../../../assets/hero_poster.jpg';
 
@@ -238,7 +239,7 @@ const ContentHome = () => {
                             <div className="TopCover">
                                 <img
                                     src={resolveApiAssetUrl(item.cover)}
-                                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                    style={{ width: '100%', height: '100%', objectFit: 'cover', ...coverCropStyle(cropFromRow(item)) }}
                                 />
                             </div>
                             <div className="topContent">

@@ -1,0 +1,120 @@
+// 封面裁剪弹窗（20260912）
+// 深色编辑区 + 浅色预览区：用固定颜色而非主题变量，避免明暗主题下裁剪判断受环境影响。
+
+.CoverCropModal
+  .ant-modal-body
+    padding-top: 8px
+
+  .ccBody
+    display: flex
+    gap: 24px
+    align-items: flex-start
+
+  .ccEditor
+    flex-shrink: 0
+    width: 360px
+
+  .ccStage
+    position: relative
+    width: 360px
+    height: 360px
+    overflow: hidden
+    border-radius: 12px
+    background: #1b1b1f
+    cursor: grab
+    touch-action: none
+    user-select: none
+
+    &:active
+      cursor: grabbing
+
+    .ccStageImg
+      position: absolute
+      display: block
+      pointer-events: none
+
+    .ccGrid
+      position: absolute
+      inset: 0
+      pointer-events: none
+      background-image: linear-gradient(to right, rgba(255, 255, 255, .35) 1px, transparent 1px), linear-gradient(to bottom, rgba(255, 255, 255, .35) 1px, transparent 1px)
+      background-size: 33.333% 33.333%
+      background-position: -1px -1px
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .55)
+
+    .ccStageTip
+      position: absolute
+      inset: 0
+      display: flex
+      align-items: center
+      justify-content: center
+      color: #ddd
+      font-size: 14px
+
+  .ccHint
+    margin-top: 8px
+    color: #888
+    font-size: 12px
+    text-align: center
+
+  .ccZoom
+    display: flex
+    align-items: center
+    gap: 10px
+    margin-top: 4px
+
+    .ant-slider
+      flex: 1
+      margin: 6px 0
+
+    .ccZoomVal
+      width: 46px
+      color: #888
+      font-size: 12px
+      text-align: right
+
+  .ccNote
+    margin-top: 2px
+    color: #aaa
+    font-size: 12px
+    line-height: 1.6
+
+  .ccPreviews
+    flex: 1
+    min-width: 0
+
+  .ccPreviewItem
+    margin-bottom: 16px
+
+  .ccPreviewLabel
+    margin-bottom: 6px
+    color: #888
+    font-size: 12px
+
+  .ccPreviewFrame
+    width: 100%
+    max-width: 300px
+    overflow: hidden
+    border-radius: 10px
+    background: #e9e9e9
+
+  .ccPreviewNote
+    color: #aaa
+    font-size: 12px
+    line-height: 1.6
+
+  @media only screen and (max-width: 700px)
+    .ccBody
+      flex-direction: column
+      align-items: center
+
+    .ccEditor
+      width: 100%
+
+    .ccStage
+      width: 280px
+      height: 280px
+      margin: 0 auto
+
+    .ccPreviews
+      width: 100%

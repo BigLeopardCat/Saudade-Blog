@@ -10,6 +10,10 @@ interface updateNote{
     noteTitle: any;
     noteContent: string;
     cover: string;
+    // 封面裁剪参数（焦点归一化坐标 + 额外缩放倍数），null = 不改动
+    coverFocusX?: number | null;
+    coverFocusY?: number | null;
+    coverZoom?: number | null;
     description: string;
     noteCategory: any;
     noteTags: string;
@@ -22,6 +26,9 @@ interface newNote{
     noteTitle: any;
     noteContent: string;
     cover: string;
+    coverFocusX?: number | null;
+    coverFocusY?: number | null;
+    coverZoom?: number | null;
     description: string;
     noteCategory: any;
     noteTags: string;

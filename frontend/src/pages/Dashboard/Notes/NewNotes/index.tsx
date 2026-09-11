@@ -8,7 +8,7 @@ import {
     Select,
     Upload, Switch, Radio, TreeSelect, ConfigProvider, UploadProps, UploadFile, GetProp, message, Row, Col, Card
 } from "antd";
-import {PlusOutlined, PictureOutlined} from "@ant-design/icons";
+import {PlusOutlined, PictureOutlined, EditOutlined} from "@ant-design/icons";
 import React, {useEffect,  useState, useContext, useRef} from "react";
 import MainContext from "../../../../components/conText.tsx";
 import dayjs from "dayjs";
@@ -20,6 +20,8 @@ import {createNote, getNoteById, updateNote} from "../../../../apis/NoteMethods.
 import ImageCompression from "../../../../apis/ImageCompression.tsx";
 import {uploadImages, getImageList} from "../../../../apis/ImageMethods.tsx";
 import { resolveApiAssetUrl } from '../../../../utils/runtimeApi';
+import CoverCropModal from '../../../../components/CoverCropModal';
+import { DEFAULT_CROP, cropFromRow, type CoverCrop } from '../../../../utils/coverCrop';
 
 type FileType = Parameters<GetProp<UploadProps, 'beforeUpload'>>[0];
 
@@ -31,6 +33,10 @@ const NewNotes = () => {
     const [noteTitle,setTitle] = useState('')
     const [noteContent, setNoteContent] = useState('')
     const [coverImg,setCoverImg] = useState('')
+    // 封面裁剪参数（焦点+缩放）：上传/选图后弹裁剪窗，确认才写回；取消还原打开前的快照
+    const [coverCrop, setCoverCrop] = useState<CoverCrop>({...DEFAULT_CROP})
+    const [cropOpen, setCropOpen] = useState(false)
+    const cropSnap = useRef<CoverCrop>({...DEFAULT_CROP})
     const [aiContent,setAiContent] = useState('')
     const [noteTag, setNoteTag] = useState<number[]>([]);
     const [confirmLoading, setConfirmLoading] = useState(false);
@@ -149,6 +155,7 @@ const NewNotes = () => {
                 // Set cover if exists
                 if(res.data.data.cover) {
                     setCoverImg(res.data.data.cover);
+                    setCoverCrop(cropFromRow(res.data.data) ?? {...DEFAULT_CROP});
                     setFileList([{
                         uid: '-1',
                         name: 'Cover',
@@ -178,6 +185,16 @@ const NewNotes = () => {
         form.setFieldValue('description', openai);
     }
 
+    /**
+     * 打开封面裁剪窗。fresh = 换了新图（从默认居中开始，父组件已重置过参数），
+     * false = 点「调整裁剪」沿用当前参数。快照用于取消时还原。
+     */
+    const openCropper = (fresh: boolean) => {
+        cropSnap.current = coverCrop;
+        if (fresh) setCoverCrop({...DEFAULT_CROP});
+        setCropOpen(true);
+    };
+
     const upload = async (file: UploadFile) => {
         const compressedFile = await ImageCompression(file);
         const formData = new FormData();
@@ -194,6 +211,7 @@ const NewNotes = () => {
             };
             setFileList([newFile]);
             form.setFieldValue('cover', [newFile]);
+            openCropper(true); // 新图 → 打开裁剪窗，从默认居中开始
         }
     }
 
@@ -228,6 +246,7 @@ const NewNotes = () => {
         if (newFileList.length === 0) {
              form.setFieldValue('cover', []);
              setCoverImg('');
+             setCoverCrop({...DEFAULT_CROP});
         }
     };
 
@@ -261,6 +280,7 @@ const NewNotes = () => {
         form.setFieldValue('cover', [newFile]);
         setGalleryOpen(false);
         message.success('已选择封面');
+        openCropper(true); // 新图 → 打开裁剪窗
     };
 
     const onFinish = async (formValues: any) => {
@@ -273,6 +293,10 @@ const NewNotes = () => {
                 noteTitle: formValues.noteTitle,
                 noteContent: noteContent,
                 cover: coverImg,
+                // 有封面就总是回传数值参数（没调过即默认），保证线上渲染与裁剪预览一致
+                coverFocusX: coverImg ? coverCrop.x : null,
+                coverFocusY: coverImg ? coverCrop.y : null,
+                coverZoom: coverImg ? coverCrop.z : null,
                 description: aiContent,
                 noteCategory: formValues.noteCategory,
                 // @ts-ignore
@@ -298,6 +322,9 @@ const NewNotes = () => {
                 noteTitle: formValues.noteTitle,
                 noteContent: noteContent,
                 cover: coverImg,
+                coverFocusX: coverImg ? coverCrop.x : null,
+                coverFocusY: coverImg ? coverCrop.y : null,
+                coverZoom: coverImg ? coverCrop.z : null,
                 description: aiContent,
                 noteCategory: formValues.noteCategory,
                 // @ts-ignore
@@ -324,6 +351,7 @@ const NewNotes = () => {
                     form.resetFields()
                     setFileList([])
                     setCoverImg('')
+                    setCoverCrop({...DEFAULT_CROP})
                 }
             }catch (error){
                 message.error("文章创建失败：")
@@ -465,9 +493,14 @@ const NewNotes = () => {
                                 </Upload>
                             </Form.Item>
                             
-                            <Button icon={<PictureOutlined />} onClick={() => setGalleryOpen(true)}>
-                                图库选择
-                            </Button>
+                            <div style={{display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'flex-start'}}>
+                                <Button icon={<PictureOutlined />} onClick={() => setGalleryOpen(true)}>
+                                    图库选择
+                                </Button>
+                                <Button icon={<EditOutlined />} disabled={!coverImg} onClick={() => openCropper(false)}>
+                                    调整裁剪
+                                </Button>
+                            </div>
                          </div>
                     </Form.Item>
 
@@ -484,6 +517,15 @@ const NewNotes = () => {
                     </Form.Item>
                 </Form>
             </Modal>
+
+            {/*封面裁剪：确认写回参数，取消还原打开前的快照（图片保留）*/}
+            <CoverCropModal
+                open={cropOpen}
+                src={coverImg}
+                initial={coverCrop}
+                onCancel={() => { setCoverCrop(cropSnap.current); setCropOpen(false); }}
+                onConfirm={(c) => { setCoverCrop(c); setCropOpen(false); }}
+            />
         </div>
     </>
 }

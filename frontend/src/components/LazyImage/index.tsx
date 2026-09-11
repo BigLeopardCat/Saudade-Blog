@@ -8,9 +8,11 @@ import { resolveApiAssetUrl } from '../../utils/runtimeApi';
 interface LazyImageProps {
     src: string;
     threshold?: number;
+    /** 透传到 img 的行内样式（封面裁剪参数走这里） */
+    style?: React.CSSProperties;
 }
 
-const LazyImage: React.FC<LazyImageProps> = ({ src, threshold = 0.5 }) => {
+const LazyImage: React.FC<LazyImageProps> = ({ src, threshold = 0.5, style }) => {
     const imgRef = useRef<HTMLImageElement>(null);
     const [isVisible, setIsVisible] = useState(false);
 
@@ -42,6 +44,7 @@ const LazyImage: React.FC<LazyImageProps> = ({ src, threshold = 0.5 }) => {
         <>
         <img
             ref={imgRef}
+            style={style}
             src={isVisible ? resolveApiAssetUrl(src) : 'https://cdn.jsdelivr.net/gh/LinMoQC/LinmoBlogCDN@d4a74e1de7b957cca9a9e4ca261ad53b1affcc94/loading.svg'}
         />
             </>
