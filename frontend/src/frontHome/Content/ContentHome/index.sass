@@ -307,7 +307,7 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
     grid-gap: 30px
     justify-content: space-between
     .ArticleCard
-      height: 640px
+      height: 600px
       background: var(--pic-background-cover)
       --tw-shadow: 0 10px 15px -3px rgba(0, 0, 0, .1), 0 4px 6px -2px rgba(0, 0, 0, .05)
       border-radius: 15px
@@ -345,10 +345,15 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
         flex-direction: column
         justify-content: flex-start
         align-items: flex-start
-        gap: 12px
+        // 20260912：定高 600 + 标题 3 行的收支平衡。封面 200 后内容区只有 400px，
+        // 3 行标题（103.5）+ 3 行摘要（60）+ h4/标签/页脚 + 上下 padding 会超出约 36px；
+        // 超出的部分虽只是 padding（页脚文字不会被裁），但 `margin-top: auto` 会因此失效，
+        // 长标题卡片的标签行/页脚会比同排其他卡片低 36px（CDP 实测对照）。
+        // gap 12→8、padding 48→40/32 共收回 36px，三种标题行数下都装得下（余量约 7px）。
+        gap: 8px
         position: relative
         z-index: 40
-        padding: 3rem
+        padding: 2.5rem 3rem 2rem
         position: relative
         border: none
         z-index: 99
@@ -360,16 +365,19 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
         .ArticleTitle
           font-weight: 900
           font-size: 30px
+          // 显式行高：3 行标题的高度必须确定（103.5px），
+          // 否则 `line-height: normal` 会随访客浏览器默认中文字体的度量漂移，
+          // 600px 定高的收支平衡就会失守
+          line-height: 1.15
           margin-bottom: 10px
           overflow: hidden
           text-overflow: ellipsis
           display: -webkit-box
-          -webkit-line-clamp: 2
+          -webkit-line-clamp: 3
           -webkit-box-orient: vertical
           transition: all 0.3s ease
-          &:hover
-            -webkit-line-clamp: unset
-            overflow: auto
+          // 20260912：原来的 :hover 解除行数限制已删——定高卡片里它是溢出源
+          // （标题内滚动条 + 顶掉页脚），3 行足以覆盖绝大多数标题
 
         .ArticleDescription
           color: var(--font-p-color)
@@ -384,7 +392,10 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
           white-space: pre-wrap
           word-break: break-all
           transition: max-height 0.8s ease
-          max-height: 4.5em
+          // 行高与上限都写死：3 行 = 60px（clamp 3 与实际高度严格一致），
+          // 不再依赖默认字体度量（原 4.5em=72px 在部分字体下会多留一行的高度出来）
+          line-height: 20px
+          max-height: 60px
           &:hover
             -webkit-line-clamp: unset
             max-height: 300px
@@ -412,6 +423,16 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
             white-space: nowrap
             transition: all 0.8s ease!important
             line-height: 20px
+
+  // 列数探针（20260912）：复刻 .allArticles 的宽度/断点/gap（直接复用 class，不复制 CSS），
+  // 外加一个跨全轨的单格——`grid-column: 1/-1` 阻止 auto-fit 折叠空轨，
+  // 于是 computed `grid-template-columns` 恒等于容器的真实轨道数，与**已渲染条目数无关**。
+  // 单行零高，不占位、不可见、不参与命中测试。别当死代码删：删了列数会随条目数变化。
+  .allArticlesMeasure
+    height: 0
+    overflow: hidden
+    visibility: hidden
+    pointer-events: none
 
   .more
     transition: 0.3s
@@ -581,6 +602,8 @@ html[data-theme='dark'] .SayWords h2
     .ArticleContent
       height: auto !important
       padding: 1.5rem !important
+      // 桌面为容纳 3 行标题把 gap 收到 8px（见 .ArticleContent）；移动端卡片高度自适应、无收支压力，保持原间距
+      gap: 12px !important
 
 /* V7 Final SpecFix */
 :global(html:not([data-theme='light']) .SayWords h2)
@@ -743,6 +766,16 @@ html[data-theme='dark'] .SayWords h2
             font-size: 12px !important
           .post-date
             display: none !important
+
+// ── Tablet 窄档（769~820px）：补 auto-fit 的单列死区（20260912）──
+// 桌面档 `minmax(300px,1fr)` 排两列需容器宽 ≥ 630px（= 0.8·W），即 W ≥ 787.5；
+// 再算上滚动条占掉的十几像素，实测两列门线在 ≈803px —— 于是 769~803 这 35px
+// 只排得出 1 列，反而比 ≤768 的手机档（2 列）还挤。这里补一条二列。
+// 注意别改成 minmax(280px)：1920px 视口会从 4 列变 5 列（轨道数 = ⌊(0.8W+30)/(min+30)⌋
+// 的分界落在 1900~2025px），卡片窄到 283px 比手机还挤。
+@media screen and (min-width: 769px) and (max-width: 820px)
+  .allArticles
+    grid-template-columns: repeat(2, 1fr) !important
 
 /* ===== 20260905g 签名一行：站酷快乐体 · hero 底部水平居中 · 明暗自适应 ===== */
 @font-face

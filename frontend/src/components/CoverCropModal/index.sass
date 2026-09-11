@@ -10,14 +10,20 @@
     gap: 24px
     align-items: flex-start
 
+  // 页签：置顶轮播 / 文章卡片各一套参数，各占一页
+  .ccTabs
+    .ant-tabs-nav
+      margin-bottom: 12px
+
   .ccEditor
     flex-shrink: 0
     width: 360px
 
+  // 舞台就是裁剪窗本身：宽度撑满编辑列，**高度由行内 aspectRatio 决定**
+  // （1:1 轮播 360px 高、16:9 卡片窗 202.5px 高），不能再写死高度
   .ccStage
     position: relative
-    width: 360px
-    height: 360px
+    width: 100%
     overflow: hidden
     border-radius: 12px
     background: #1b1b1f
@@ -113,7 +119,6 @@
 
     .ccStage
       width: 280px
-      height: 280px
       margin: 0 auto
 
     .ccPreviews

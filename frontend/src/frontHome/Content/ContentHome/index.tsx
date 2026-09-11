@@ -15,7 +15,7 @@ import {SocialType} from "../../../interface/SocialType";
 import {getNotePage, getTopNotes} from "../../../apis/NoteMethods.tsx";
 import dayjs from "dayjs";
 import { resolveApiAssetUrl } from '../../../utils/runtimeApi';
-import { coverCropStyle, cropFromRow } from '../../../utils/coverCrop';
+import { carouselCropOf, coverCropStyle } from '../../../utils/coverCrop';
 import heroBg from '../../../assets/hero_bg.mp4';
 import heroPoster from '../../../assets/hero_poster.jpg';
 
@@ -26,6 +26,31 @@ let cachedTopArticles: NoteType[] = [];
 let cachedCurrentPage = 1;
 let cachedHasMoreArticles = true;
 let isCachedOther = false;
+// 与 cachedOtherArticles 配套的每页条数：缓存必须连页尺寸一起复用，
+// 否则「列数变化后重拉」与「More 续翻」会用到两个不同的 per_page（页偏移错位 → 重复/漏项）
+let cachedPageSize = 6;
+
+/** 每页条数 = 栅格列数 × 2（需求：默认显示满两行）。量不到列数时回退 6 = 改造前的固定值 */
+const FALLBACK_PAGE_SIZE = 6;
+const MAX_PAGE_SIZE = 48;
+
+/**
+ * 栅格真实列数。两个坑：
+ *  1) `auto-fit` 的空轨在 computed value 里序列化成 `0px`，必须过滤掉；
+ *  2) 更要命的是折叠会让「列数」变成「已渲染条目数」的函数（首屏 0 条 → 0 列）。
+ * 所以测量用的是一个空的探针格（.allArticlesMeasure，带一个 `grid-column: 1/-1` 的单格
+ * 阻止折叠），拿到的是**容器**的轨道数，与条目数无关。
+ */
+const colsOf = (el: HTMLElement | null): number => {
+    if (!el) return 0
+    return getComputedStyle(el).gridTemplateColumns
+        .split(' ')
+        .filter(t => t.endsWith('px') && parseFloat(t) > 0).length
+}
+
+/** 列数 → 每页条数（满两行）；越界/量不到时回退固定值 */
+const pageSizeFor = (cols: number): number =>
+    Number.isFinite(cols) && cols > 0 ? Math.min(cols * 2, MAX_PAGE_SIZE) : FALLBACK_PAGE_SIZE
 
 const ContentHome = () => {
     const [currentTop,setCurrentTop] = useState(0);
@@ -39,14 +64,22 @@ const ContentHome = () => {
     const [currentPage,setCurrentPage] = useState(cachedCurrentPage)
     const [hasMoreArticles, setHasMoreArticles] = useState(cachedHasMoreArticles);
     const [loading, setLoading] = useState(false);
+    // 每页条数由栅格列数决定（满两行）。不放进 state：没有任何地方渲染它，
+    // 用 ref 供 getMore / 测量回调读最新值（放进 state 反而会多一条「已声明未读取」的 tsc 报错）
+    const pageSizeRef = useRef(cachedPageSize);
+    // 列表世代号：整表替换（首屏/列数变化）时 +1，用于丢弃迟到的旧响应——
+    // 只靠 loading state 挡不住跨 tick 的竞态
+    const genRef = useRef(0);
+    const measureRef = useRef<HTMLDivElement>(null);
     const location = useLocation();
-    
+
     // 从 Dashboard 返回时清除缓存，确保数据最新
     if (location.state?.fromDashboard) {
         cachedOtherArticles = [];
         cachedTopArticles = [];
         cachedCurrentPage = 1;
         cachedHasMoreArticles = true;
+        cachedPageSize = FALLBACK_PAGE_SIZE;
         isCachedOther = false;
     }
     
@@ -107,15 +140,23 @@ const ContentHome = () => {
         return () => observer.disconnect();
     }, []);
 
-    useEffect(() => {
-        if (isCachedOther) return;
+    /**
+     * 拉第一页并整表替换（首屏 / 列数变化时）。ps 必须是「整页尺寸」：
+     * 页偏移 = (page-1)*per_page，之后 More 续翻必须沿用同一个 ps，否则会重复/漏项。
+     */
+    const fetchFirst = (ps: number) => {
+        // 立刻同步登记 ps：ResizeObserver 的首次回调（防抖 200ms 后）会拿它比对，
+        // 若等响应回来再写，慢网络下会被误判成「列数变了」而多发一次请求
+        pageSizeRef.current = ps;
+        const g = ++genRef.current;
         setLoading(true);
         getNotePage({
             page: 1,
-            pageSize: 6
+            pageSize: ps
         }).then(res => {
-             const notePage = Array.isArray(res?.data?.data) ? res.data.data : [];
-             const mapped = notePage.map((item: formatNote) => {
+            if (g !== genRef.current) return; // 迟到的旧世代响应：已被更新的整表替换取代
+            const notePage = Array.isArray(res?.data?.data) ? res.data.data : [];
+            const mapped = notePage.map((item: formatNote) => {
                 return {
                     ...item,
                     key: item.noteKey,
@@ -125,9 +166,42 @@ const ContentHome = () => {
             setOtherArticles(mapped);
             cachedOtherArticles = mapped;
             isCachedOther = true;
+            setCurrentPage(1);
+            cachedCurrentPage = 1;
+            cachedPageSize = ps;
+            // 首屏也要更新 More 的可见性（此前只有 getMore 会更新，More 会一直在）
+            const more = mapped.length === ps;
+            setHasMoreArticles(more);
+            cachedHasMoreArticles = more;
         }).finally(() => {
-            setLoading(false);
+            if (g === genRef.current) setLoading(false);
         })
+    };
+
+    // 首屏：**先测列数再请求**（同一个 effect 内同步读探针）——
+    // 否则窄屏/桌面首帧抖动会发出两次请求
+    useEffect(() => {
+        if (isCachedOther) return;
+        fetchFirst(pageSizeFor(colsOf(measureRef.current)));
+    }, []);
+
+    // 列数变化（resize 跨断点）→ 防抖 200ms → 只有每页条数真变了才整表重拉
+    useEffect(() => {
+        const el = measureRef.current;
+        if (!el) return;
+        let timer: ReturnType<typeof setTimeout> | null = null;
+        const ro = new ResizeObserver(() => {
+            if (timer) clearTimeout(timer);
+            timer = setTimeout(() => {
+                const ps = pageSizeFor(colsOf(el));
+                if (ps !== pageSizeRef.current) fetchFirst(ps);
+            }, 200);
+        });
+        ro.observe(el);
+        return () => {
+            if (timer) clearTimeout(timer);
+            ro.disconnect();
+        };
     }, []);
 
     useEffect(() => {
@@ -152,18 +226,24 @@ const ContentHome = () => {
         });
     }
     const getMore = () => {
+        // 续翻必须沿用当前整表的 per_page（页偏移 = (page-1)*per_page）；
+        // 世代号快照用于丢弃「列数变化已整表重拉」之后才到达的迟到响应
+        const ps = pageSizeRef.current;
+        const g = genRef.current;
+        const nextPageNum = currentPage + 1;
         setLoading(true)
         getNotePage({
-            page: currentPage + 1,
-            pageSize: 6
+            page: nextPageNum,
+            pageSize: ps
         }).then(res => {
+            if (g !== genRef.current) return;
             const nextPage = Array.isArray(res?.data?.data) ? res.data.data : [];
             if (nextPage.length === 0) {
                 setHasMoreArticles(false);
                 cachedHasMoreArticles = false;
             } else {
-                setCurrentPage(currentPage + 1);
-                cachedCurrentPage = currentPage + 1;
+                setCurrentPage(nextPageNum);
+                cachedCurrentPage = nextPageNum;
                 setOtherArticles(prevArticles => {
                     const newArts = [
                         ...prevArticles,
@@ -176,10 +256,10 @@ const ContentHome = () => {
                     cachedOtherArticles = newArts;
                     return newArts;
                 });
-                if(nextPage.length < 6) { setHasMoreArticles(false); cachedHasMoreArticles = false; }
+                if(nextPage.length < ps) { setHasMoreArticles(false); cachedHasMoreArticles = false; }
             }
         }).finally(() => {
-            setLoading(false);
+            if (g === genRef.current) setLoading(false);
         });
     };
 
@@ -239,7 +319,7 @@ const ContentHome = () => {
                             <div className="TopCover">
                                 <img
                                     src={resolveApiAssetUrl(item.cover)}
-                                    style={{ width: '100%', height: '100%', objectFit: 'cover', ...coverCropStyle(cropFromRow(item)) }}
+                                    style={{ width: '100%', height: '100%', objectFit: 'cover', ...coverCropStyle(carouselCropOf(item)) }}
                                 />
                             </div>
                             <div className="topContent">
@@ -302,10 +382,17 @@ const ContentHome = () => {
                 <div className='allContent'><i className="iconfont icon-wenzhang2" style={{fontSize: 25,verticalAlign:'sub',marginRight:5,color:'#7f7e7e'}}></i>文章</div>
             </div>
 
+            {/* 列数探针：量容器的真实轨道数决定「满两行」的每页条数。
+                不能直接量 .allArticles —— auto-fit 折叠空轨会让列数变成「已渲染条目数」的函数
+                （首屏 0 条 → 0 列），且它的空轨在 computed 值里序列化成 0px。 */}
+            <div className="allArticles allArticlesMeasure" aria-hidden="true" ref={measureRef}>
+                <div style={{ gridColumn: '1 / -1' }} />
+            </div>
+
             <div className="allArticles">
 
                 {otherArticles.map((item,index) => (
-                    <Article item={item} index={index} Categories={Categories} avatar={avatar} name={name} tagList={tagList} key={index}/>
+                    <Article item={item} index={index} Categories={Categories} avatar={avatar} name={name} tagList={tagList} key={item.key}/>
                 ))}
             </div>
             {loading ? (

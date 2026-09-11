@@ -12,6 +12,10 @@ import 'markdown-navbar/dist/navbar.css'
 import Loading from "../../Loading";
 import scrollToTop from "../../../utils/scrollToTop.tsx";
 import { coverCropMotionStyle, cropFromRow } from "../../../utils/coverCrop";
+import { resolveApiAssetUrl } from "../../../utils/runtimeApi";
+import { useIsDarkMode } from "../../../theme";
+import readDayVideo from '../../../assets/read_day.mp4';
+import readNightVideo from '../../../assets/read_night.mp4';
 import {getNoteById} from "../../../apis/NoteMethods.tsx";
 import SeoHelmet from "../../../components/SeoHelmet";
 
@@ -53,6 +57,19 @@ const ReadArticle = () => {
     // article=null → 空封面+空正文的假页面，用户误以为"能打开"）
     const [notFound, setNotFound] = useState(false)
 
+    // 顶部横幅的日夜背景视频（20260912）
+    const isDarkMode = useIsDarkMode()
+    // 视频开始播放后 poster 层淡出；换源先复位（见下面的 effect）
+    const [videoReady, setVideoReady] = useState(false)
+    // 素材加载失败 → 永久停用视频层，退回封面图（占位期/未上传素材时不至于空白）
+    const [videoFailed, setVideoFailed] = useState(false)
+    const coverRef = useRef<HTMLDivElement>(null)
+    const coverVideoRef = useRef<HTMLVideoElement>(null)
+    // 访客要求减少动效时不放视频（无障碍 / 省电）
+    const prefersReducedMotion = typeof window !== 'undefined'
+        && !!window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const videoEnabled = !prefersReducedMotion && !videoFailed
+
     // Lock ref to prevent TOC auto-scroll during manual click
     const isClickingTocRef = useRef(false);
 
@@ -76,6 +93,28 @@ const ReadArticle = () => {
     }, [id]);
     
     const content = article?.noteContent || '';
+
+    // 换源（切主题）→ 新 video 还在加载：先让 poster 层回来，等 onPlaying 再淡出
+    useEffect(() => {
+        setVideoReady(false)
+    }, [isDarkMode])
+
+    // 离屏暂停（抄首页 hero 的写法）：详情页一往下滚横幅就出视口，
+    // 不停会白烧 CPU/流量（视频解码是持续成本）
+    useEffect(() => {
+        const cover = coverRef.current
+        const video = coverVideoRef.current
+        if (!cover || !video) return
+        const observer = new IntersectionObserver(([entry]) => {
+            if (entry.isIntersecting) {
+                video.play().catch(() => {})
+            } else {
+                video.pause()
+            }
+        }, { threshold: 0.05 })
+        observer.observe(cover)
+        return () => observer.disconnect()
+    }, [videoEnabled, isDarkMode])
 
     // Effect: mermaid 图 + 正文图片单击放大(委托,兼容 mermaid 异步渲染)
     useEffect(() => {
@@ -261,14 +300,38 @@ const ReadArticle = () => {
                 </div>
             ) : (
                 <>
-                    <div className="readCover">
+                    <div className="readCover" ref={coverRef}>
+                        {/* poster 层 = 文章封面（沿用卡片那套裁剪参数）。视频播起来之前、
+                            素材缺失或访客要求减少动效时，这里就是画面，观感与改造前一致。
+                            不用 <video poster>：一整层 <img> 的 object-fit/裁剪控制更稳。 */}
                         <motion.img
-                            src={article?.cover}
+                            className={`readCoverPoster${videoReady ? ' isHidden' : ''}`}
+                            src={resolveApiAssetUrl(article?.cover)}
                             style={coverCropMotionStyle(cropFromRow(article))}
                             initial={{ filter: "blur(10px)" }}
                             animate={{ filter: "blur(0px)" }}
                             transition={{ duration: 1 }}
                         />
+                        {/* 背景视频（20260912）：横幅图片比例随视口在 2:1~4:1 间漂移、没法适配，
+                            改成循环视频；日夜各一段，key 换源即重新 autoplay。
+                            离屏暂停见下面的 IntersectionObserver：详情页一往下滚它立刻出视口。 */}
+                        {videoEnabled && (
+                            <video
+                                key={isDarkMode ? 'night' : 'day'}
+                                ref={coverVideoRef}
+                                className="readCoverVideo"
+                                src={isDarkMode ? readNightVideo : readDayVideo}
+                                muted
+                                loop
+                                autoPlay
+                                playsInline
+                                preload="metadata"
+                                disablePictureInPicture
+                                aria-hidden="true"
+                                onPlaying={() => setVideoReady(true)}
+                                onError={() => setVideoFailed(true)}
+                            />
+                        )}
                         <motion.div
                             initial={{ opacity: 0, x: -30 }}
                             animate={{ opacity: 1, x: 0 }}

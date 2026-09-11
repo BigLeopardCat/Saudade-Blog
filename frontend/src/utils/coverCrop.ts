@@ -24,17 +24,21 @@ export interface CoverCrop {
     z: number
 }
 
-/** 后端 DTO 里的三个字段（可选，null = 未设置） */
+/** 后端 DTO 里的字段（可选，null = 未设置）。cover* = 文章卡片那套，carousel* = 置顶轮播那套 */
 export interface CoverCropRow {
     coverFocusX?: number | null
     coverFocusY?: number | null
     coverZoom?: number | null
+    carouselFocusX?: number | null
+    carouselFocusY?: number | null
+    carouselZoom?: number | null
 }
 
 /** 默认参数：渲染结果与改造前的居中 cover 完全一致 */
 export const DEFAULT_CROP: CoverCrop = { x: 0.5, y: 0.5, z: 1 }
 
-/** 首页置顶轮播窗口比例 */
+/** 首页置顶轮播窗口比例（近似：.TopArticle 的封面实为「左列 × 640px 高」，1440 宽下 ≈1.08:1）。
+ *  比例只影响编辑舞台与预览窗的形状，不参与参数计算 —— 参数与窗口比例无关，见文件头推导。 */
 export const CAROUSEL_ASPECT = 1
 /** 首页文章卡片窗口比例（真实桌面宽下 ≈1.82:1，预览取 16:9 近似） */
 export const CARD_ASPECT = 16 / 9
@@ -64,6 +68,26 @@ export const cropFromRow = (row?: CoverCropRow | null): CoverCrop | null => {
     if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return null
     return { x: clamp01(x), y: clamp01(y), z: clampZoom(z) }
 }
+
+/**
+ * 置顶轮播专用参数（后端 carousel_focus_x/_y/_zoom）。
+ * 与 cropFromRow 同样按三元组**原子**判定：任一缺失/非有限数 → null（整组作废），
+ * 这样「只写入一列」的脏数据不会被半套参数渲染出错误裁剪。
+ */
+export const carouselCropFromRow = (row?: CoverCropRow | null): CoverCrop | null => {
+    if (!row) return null
+    const { carouselFocusX: x, carouselFocusY: y, carouselZoom: z } = row
+    if (typeof x !== 'number' || typeof y !== 'number' || typeof z !== 'number') return null
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return null
+    return { x: clamp01(x), y: clamp01(y), z: clampZoom(z) }
+}
+
+/**
+ * 置顶轮播实际使用的参数：有专用参数就用它，否则**回退跟随文章卡片那套**
+ * （= 拆分前的行为，存量文章零回归 —— carousel_* 三列默认 NULL）。
+ */
+export const carouselCropOf = (row?: CoverCropRow | null): CoverCrop | null =>
+    carouselCropFromRow(row) ?? cropFromRow(row)
 
 /**
  * 普通 <img>(object-fit: cover) 的裁剪样式。无参数/默认参数 → {}（不产生任何渲染差异）。
@@ -114,33 +138,46 @@ export const freeSpace = (W: number, H: number, aspect: number, crop: CoverCrop)
 }
 
 /**
- * 裁剪编辑器（方形裁剪窗，aspect = 1）的交互几何。
- * dx/dy = 指针屏幕位移(px)；ax/ay = 锚点相对舞台左上角的像素坐标；S = 舞台边长(px)。
+ * 裁剪编辑器的交互几何。
+ * dx/dy = 指针屏幕位移(px)；ax/ay = 锚点相对舞台左上角的像素坐标；
+ * view = 舞台像素尺寸 + 窗口宽高比（两者须自洽：height ≈ width / aspect）。
+ *
+ * 非方舞台的换算：裁剪窗在图片像素系 (win.x, win.y, win.w, win.h)，
+ * 恒有 win.w / win.h === aspect（cropWindowInImage 两轴同除 z 不改比例），
+ * 故 kx = view.width / win.w、ky = view.height / win.h —— 数学上两者相等，
+ * 拆开是为了让 CSS aspect-ratio 的 1/64px 量化误差不跨轴累积。
  */
+export interface CropViewport {
+    width: number
+    height: number
+    aspect: number
+}
 
-/** 拖拽平移：图片右移 ⇔ 裁剪窗在图片内左移 ⇒ 焦点 x 减小。k = 图片像素→屏幕像素 */
-export const panCrop = (crop: CoverCrop, dx: number, dy: number, W: number, H: number, S: number): CoverCrop => {
-    const win = cropWindowInImage(W, H, 1, crop)
-    const k = S / win.w
-    const free = freeSpace(W, H, 1, crop)
+/** 拖拽平移：图片右移 ⇔ 裁剪窗在图片内左移 ⇒ 焦点 x 减小。kx/ky = 图片像素→屏幕像素 */
+export const panCrop = (crop: CoverCrop, dx: number, dy: number, W: number, H: number, view: CropViewport): CoverCrop => {
+    const win = cropWindowInImage(W, H, view.aspect, crop)
+    const kx = view.width > 0 && win.w > 0 ? view.width / win.w : 1
+    const ky = view.height > 0 && win.h > 0 ? view.height / win.h : 1
+    const free = freeSpace(W, H, view.aspect, crop)
     return {
         z: crop.z,
-        x: free.x > 1e-6 ? clamp01(crop.x - dx / k / free.x) : crop.x,
-        y: free.y > 1e-6 ? clamp01(crop.y - dy / k / free.y) : crop.y,
+        x: free.x > 1e-6 ? clamp01(crop.x - dx / kx / free.x) : crop.x,
+        y: free.y > 1e-6 ? clamp01(crop.y - dy / ky / free.y) : crop.y,
     }
 }
 
 /** 以舞台内 (ax, ay) 为锚缩放：锚点下的图片内容点缩放前后停在同一屏幕位置 */
-export const zoomCrop = (crop: CoverCrop, factor: number, ax: number, ay: number, W: number, H: number, S: number): CoverCrop => {
+export const zoomCrop = (crop: CoverCrop, factor: number, ax: number, ay: number, W: number, H: number, view: CropViewport): CoverCrop => {
     const z = clampZoom(crop.z * factor)
     if (z === crop.z) return crop
-    const w0 = cropWindowInImage(W, H, 1, crop)
-    const w1 = cropWindowInImage(W, H, 1, { ...crop, z })
-    const fx = clamp01(ax / S)
-    const fy = clamp01(ay / S)
+    const w0 = cropWindowInImage(W, H, view.aspect, crop)
+    const w1 = cropWindowInImage(W, H, view.aspect, { ...crop, z })
+    // 锚点换成舞台内的归一化位置（旧式 fx = ax/S 即正方舞台下的特例）
+    const fx = view.width > 0 ? clamp01(ax / view.width) : 0.5
+    const fy = view.height > 0 ? clamp01(ay / view.height) : 0.5
     const x1 = w0.x + fx * (w0.w - w1.w)
     const y1 = w0.y + fy * (w0.h - w1.h)
-    const free = freeSpace(W, H, 1, { ...crop, z })
+    const free = freeSpace(W, H, view.aspect, { ...crop, z })
     return {
         z,
         x: free.x > 1e-6 ? clamp01(x1 / free.x) : 0.5,
