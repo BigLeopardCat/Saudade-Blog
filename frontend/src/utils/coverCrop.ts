@@ -72,8 +72,8 @@ export const coverCropStyle = (crop: CoverCrop | null): CSSProperties => {
     if (!crop || isDefaultCrop(crop)) return {}
     return {
         objectPosition: posPair(crop),
-        transform: `scale(${crop.z})`,
-        transformOrigin: posPair(crop),
+        // z=1 时缩放是恒等变换，不输出（免得平白多一个合成层/包含块）
+        ...(crop.z === 1 ? {} : { transform: `scale(${crop.z})`, transformOrigin: posPair(crop) }),
     }
 }
 
@@ -88,9 +88,7 @@ export const coverCropMotionStyle = (crop: CoverCrop | null): MotionStyle => {
     if (!crop || isDefaultCrop(crop)) return {}
     return {
         objectPosition: posPair(crop),
-        scale: crop.z,
-        originX: crop.x,
-        originY: crop.y,
+        ...(crop.z === 1 ? {} : { scale: crop.z, originX: crop.x, originY: crop.y }),
     }
 }
 
