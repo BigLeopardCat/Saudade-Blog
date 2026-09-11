@@ -10,6 +10,10 @@ use crate::utils::ApiResponse;
 pub struct NoteQuery {
     pub category_id: Option<i32>,
     pub page: Option<u64>,
+    // 前端传 camelCase `pageSize`（apis/NoteMethods.tsx），Times 归档页传 `page_size`（123 行）。
+    // 逐字段 rename + alias 让两种拼写都成立——注意**不要**图省事写 rename_all = "camelCase"，
+    // 那会把 category_id 一起改名，直接打断分类页/归档页的按分类过滤。
+    #[serde(rename = "pageSize", alias = "page_size")]
     pub page_size: Option<u64>,
 }
 
@@ -39,6 +43,13 @@ pub struct NoteDto {
     pub cover_focus_y: Option<f64>,
     #[serde(rename = "coverZoom")]
     pub cover_zoom: Option<f64>,
+    // 置顶轮播专用裁剪参数，null = 未设置（前端渲染时回退跟随 cover_* 那套）
+    #[serde(rename = "carouselFocusX")]
+    pub carousel_focus_x: Option<f64>,
+    #[serde(rename = "carouselFocusY")]
+    pub carousel_focus_y: Option<f64>,
+    #[serde(rename = "carouselZoom")]
+    pub carousel_zoom: Option<f64>,
 
     #[serde(rename = "createTime")]
     pub created_at: String,
@@ -84,6 +95,9 @@ fn map_note(n: note::Model, cat: Option<category::Model>) -> NoteDto {
         cover_focus_x: n.cover_focus_x,
         cover_focus_y: n.cover_focus_y,
         cover_zoom: n.cover_zoom,
+        carousel_focus_x: n.carousel_focus_x,
+        carousel_focus_y: n.carousel_focus_y,
+        carousel_zoom: n.carousel_zoom,
         created_at: n.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
         updated_at: n.updated_at.format("%Y-%m-%d %H:%M:%S").to_string(),
         is_top: n.is_top.unwrap_or(0),
@@ -110,9 +124,13 @@ pub async fn list_public_notes(
     condition = condition.add(note::Column::Status.ne("draft"));
 
     // PAGINATION LOGIC
-    let page = query.page.unwrap_or(1);
-    let per_page = query.page_size.unwrap_or(6) as u64;
-    
+    // page.max(1)：page=0 时 `page - 1` 会 u64 下溢（release 环绕成 u64::MAX → 静默空页）。
+    // page_size 夹到 1..1000：0 会让 sea-orm paginator panic（`page_size should not be zero`，
+    // 公网无鉴权接口可被任意触发，logs/rust.log 有实证）；上限留 1000 是因为 Times 归档页
+    // 用 page_size=999 一次拉全量（夹到常见分页值会让归档静默截断）。
+    let page = query.page.unwrap_or(1).max(1);
+    let per_page = query.page_size.unwrap_or(6).clamp(1, 1000) as u64;
+
     let paginator = note::Entity::find()
         .filter(condition)
         .order_by_desc(note::Column::CreatedAt)
@@ -304,6 +322,14 @@ pub struct UpsertNoteRequest {
     pub cover_focus_y: Option<f64>,
     #[serde(rename = "coverZoom")]
     pub cover_zoom: Option<f64>,
+    // 置顶轮播专用裁剪参数：同样不传则不改动该列；三列必须同进同出（渲染端按三元组原子判定，
+    // 只写其中一列会让整组失效 ⇒ 写入静默不生效）
+    #[serde(rename = "carouselFocusX")]
+    pub carousel_focus_x: Option<f64>,
+    #[serde(rename = "carouselFocusY")]
+    pub carousel_focus_y: Option<f64>,
+    #[serde(rename = "carouselZoom")]
+    pub carousel_zoom: Option<f64>,
 
     #[serde(rename = "noteTags")]
     pub tags: Option<String>,
@@ -358,6 +384,9 @@ pub async fn create_note(
         cover_focus_x: Set(payload.cover_focus_x.map(clamp01)),
         cover_focus_y: Set(payload.cover_focus_y.map(clamp01)),
         cover_zoom: Set(payload.cover_zoom.map(clamp_zoom)),
+        carousel_focus_x: Set(payload.carousel_focus_x.map(clamp01)),
+        carousel_focus_y: Set(payload.carousel_focus_y.map(clamp01)),
+        carousel_zoom: Set(payload.carousel_zoom.map(clamp_zoom)),
         is_top: Set(payload.is_top),
         status: Set(Some(status_str)),
         created_at: Set(chrono::Local::now().naive_local()),
@@ -391,6 +420,9 @@ pub async fn update_note(
         if let Some(v) = payload.cover_focus_x { active_model.cover_focus_x = Set(Some(clamp01(v))); }
         if let Some(v) = payload.cover_focus_y { active_model.cover_focus_y = Set(Some(clamp01(v))); }
         if let Some(v) = payload.cover_zoom { active_model.cover_zoom = Set(Some(clamp_zoom(v))); }
+        if let Some(v) = payload.carousel_focus_x { active_model.carousel_focus_x = Set(Some(clamp01(v))); }
+        if let Some(v) = payload.carousel_focus_y { active_model.carousel_focus_y = Set(Some(clamp01(v))); }
+        if let Some(v) = payload.carousel_zoom { active_model.carousel_zoom = Set(Some(clamp_zoom(v))); }
         if let Some(v) = payload.is_top { active_model.is_top = Set(Some(v)); }
         if let Some(v) = payload.tags { active_model.tags = Set(Some(v)); }
         

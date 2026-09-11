@@ -32,6 +32,7 @@ import EditIcon from "@mui/icons-material/Edit";
 import ChangeCircleIcon from "@mui/icons-material/ChangeCircle";
 import {renderNoteTags} from "../../../../apis/TagMethods.tsx";
 import {delAllNotes, delNote, getAdminNotes, searchAdminNotes, updateNoteStatus} from "../../../../apis/NoteMethods.tsx";
+import {resolveApiAssetUrl} from "../../../../utils/runtimeApi";
 interface AdvancedSearchFormProps {
     setSearchNotes: (value: (((prevState: any[]) => any[]) | any[])) => void,
     onReset?: () => void
@@ -297,7 +298,7 @@ const AllNotes = () => {
             dataIndex: 'cover',
             key: 'cover',
             align: "center",
-            render: (cover) => <Image src={cover} alt="封面缩略图" style={{ maxWidth: '100px',borderRadius: 5}} />
+            render: (cover) => <Image src={resolveApiAssetUrl(cover)} alt="封面缩略图" style={{ maxWidth: '100px',borderRadius: 5}} />
         },
         {
             title: '文章标题',

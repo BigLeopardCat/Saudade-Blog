@@ -21,7 +21,7 @@ import ImageCompression from "../../../../apis/ImageCompression.tsx";
 import {uploadImages, getImageList} from "../../../../apis/ImageMethods.tsx";
 import { resolveApiAssetUrl } from '../../../../utils/runtimeApi';
 import CoverCropModal from '../../../../components/CoverCropModal';
-import { DEFAULT_CROP, cropFromRow, type CoverCrop } from '../../../../utils/coverCrop';
+import { DEFAULT_CROP, carouselCropFromRow, cropFromRow, isDefaultCrop, type CoverCrop } from '../../../../utils/coverCrop';
 
 type FileType = Parameters<GetProp<UploadProps, 'beforeUpload'>>[0];
 
@@ -33,10 +33,15 @@ const NewNotes = () => {
     const [noteTitle,setTitle] = useState('')
     const [noteContent, setNoteContent] = useState('')
     const [coverImg,setCoverImg] = useState('')
-    // 封面裁剪参数（焦点+缩放）：上传/选图后弹裁剪窗，确认才写回；取消还原打开前的快照
+    // 封面裁剪参数（焦点+缩放）：上传/选图后弹裁剪窗，确认才写回；取消还原打开前的快照。
+    // 两套参数：coverCrop = 文章卡片那套（详情页横幅同用，有封面就总是回传）；
+    // coverCropCarousel = 置顶轮播那套（只在用户动过/换过图时才回传，
+    // 否则后端保持 NULL → 轮播继续跟随卡片那套，存量文章零回归）
     const [coverCrop, setCoverCrop] = useState<CoverCrop>({...DEFAULT_CROP})
+    const [coverCropCarousel, setCoverCropCarousel] = useState<CoverCrop>({...DEFAULT_CROP})
+    const [cropDirty, setCropDirty] = useState({carousel: false, card: false})
     const [cropOpen, setCropOpen] = useState(false)
-    const cropSnap = useRef<CoverCrop>({...DEFAULT_CROP})
+    const cropSnap = useRef<{carousel: CoverCrop; card: CoverCrop}>({carousel: {...DEFAULT_CROP}, card: {...DEFAULT_CROP}})
     const [aiContent,setAiContent] = useState('')
     const [noteTag, setNoteTag] = useState<number[]>([]);
     const [confirmLoading, setConfirmLoading] = useState(false);
@@ -156,6 +161,10 @@ const NewNotes = () => {
                 if(res.data.data.cover) {
                     setCoverImg(res.data.data.cover);
                     setCoverCrop(cropFromRow(res.data.data) ?? {...DEFAULT_CROP});
+                    // 轮播那套：老文章没有独立参数（NULL）→ 回填成卡片那套的值，
+                    // 否则一开弹窗「置顶轮播」页签会显示默认居中，与线上实际渲染不符
+                    setCoverCropCarousel(carouselCropFromRow(res.data.data) ?? cropFromRow(res.data.data) ?? {...DEFAULT_CROP});
+                    setCropDirty({carousel: false, card: false});
                     setFileList([{
                         uid: '-1',
                         name: 'Cover',
@@ -187,11 +196,22 @@ const NewNotes = () => {
 
     /**
      * 打开封面裁剪窗。fresh = 换了新图（从默认居中开始，父组件已重置过参数），
-     * false = 点「调整裁剪」沿用当前参数。快照用于取消时还原。
+     * false = 点「调整裁剪」沿用当前参数。快照用于取消时还原（两套一起）。
      */
     const openCropper = (fresh: boolean) => {
-        cropSnap.current = coverCrop;
-        if (fresh) setCoverCrop({...DEFAULT_CROP});
+        cropSnap.current = {carousel: coverCropCarousel, card: coverCrop};
+        if (fresh) {
+            // 换新图：旧图上的焦点对新图没有意义，两套都退回默认居中。
+            // 但只有「原来确实存过值」的那套才需要回传这套默认值 —— 否则会把该行固化成
+            // 0.5/0.5/1，让轮播从此不再跟随卡片那套（从未设过的应保持 NULL 走回退链）。
+            const hadCarousel = !isDefaultCrop(coverCropCarousel);
+            const hadCard = !isDefaultCrop(coverCrop);
+            setCoverCrop({...DEFAULT_CROP});
+            setCoverCropCarousel({...DEFAULT_CROP});
+            // 用 or 合并而非覆盖：中途「删掉封面又选回新图」时，删封面那一步已经把两套标脏
+            // （旧值看不见了，只能靠标脏保证重新选图后一定覆盖写入）
+            setCropDirty(d => ({carousel: d.carousel || hadCarousel, card: d.card || hadCard}));
+        }
         setCropOpen(true);
     };
 
@@ -247,6 +267,10 @@ const NewNotes = () => {
              form.setFieldValue('cover', []);
              setCoverImg('');
              setCoverCrop({...DEFAULT_CROP});
+             setCoverCropCarousel({...DEFAULT_CROP});
+             // 封面被删：库里可能还留着旧图的焦点值（后端无法清空列），标脏以保证
+             // 之后再选新图时会把两套参数覆盖写一遍，不残留旧图焦点
+             setCropDirty({carousel: true, card: true});
         }
     };
 
@@ -297,6 +321,11 @@ const NewNotes = () => {
                 coverFocusX: coverImg ? coverCrop.x : null,
                 coverFocusY: coverImg ? coverCrop.y : null,
                 coverZoom: coverImg ? coverCrop.z : null,
+                // 轮播那套只在用户动过时才回传：三列同进同出（后端按原子三元组判定，
+                // 只发一列会让整组被渲染端忽略 = 写入静默失效），未动则发 null 保持回退链
+                carouselFocusX: coverImg && cropDirty.carousel ? coverCropCarousel.x : null,
+                carouselFocusY: coverImg && cropDirty.carousel ? coverCropCarousel.y : null,
+                carouselZoom: coverImg && cropDirty.carousel ? coverCropCarousel.z : null,
                 description: aiContent,
                 noteCategory: formValues.noteCategory,
                 // @ts-ignore
@@ -325,6 +354,10 @@ const NewNotes = () => {
                 coverFocusX: coverImg ? coverCrop.x : null,
                 coverFocusY: coverImg ? coverCrop.y : null,
                 coverZoom: coverImg ? coverCrop.z : null,
+                // 同 update 分支：轮播那套只在用户动过时回传
+                carouselFocusX: coverImg && cropDirty.carousel ? coverCropCarousel.x : null,
+                carouselFocusY: coverImg && cropDirty.carousel ? coverCropCarousel.y : null,
+                carouselZoom: coverImg && cropDirty.carousel ? coverCropCarousel.z : null,
                 description: aiContent,
                 noteCategory: formValues.noteCategory,
                 // @ts-ignore
@@ -352,6 +385,8 @@ const NewNotes = () => {
                     setFileList([])
                     setCoverImg('')
                     setCoverCrop({...DEFAULT_CROP})
+                    setCoverCropCarousel({...DEFAULT_CROP})
+                    setCropDirty({carousel: false, card: false})
                 }
             }catch (error){
                 message.error("文章创建失败：")
@@ -518,13 +553,24 @@ const NewNotes = () => {
                 </Form>
             </Modal>
 
-            {/*封面裁剪：确认写回参数，取消还原打开前的快照（图片保留）*/}
+            {/*封面裁剪：两个页签各一套参数；确认写回，取消还原打开前的快照（图片保留）。
+               弹窗只上报「这次打开里动过哪套」，与父组件已有的 dirty 合并后决定回传哪些字段*/}
             <CoverCropModal
                 open={cropOpen}
                 src={coverImg}
-                initial={coverCrop}
-                onCancel={() => { setCoverCrop(cropSnap.current); setCropOpen(false); }}
-                onConfirm={(c) => { setCoverCrop(c); setCropOpen(false); }}
+                initialCarousel={coverCropCarousel}
+                initialCard={coverCrop}
+                onCancel={() => {
+                    setCoverCrop(cropSnap.current.card);
+                    setCoverCropCarousel(cropSnap.current.carousel);
+                    setCropOpen(false);
+                }}
+                onConfirm={(r) => {
+                    setCoverCrop(r.card);
+                    setCoverCropCarousel(r.carousel);
+                    setCropDirty(d => ({carousel: d.carousel || r.dirty.carousel, card: d.card || r.dirty.card}));
+                    setCropOpen(false);
+                }}
             />
         </div>
     </>

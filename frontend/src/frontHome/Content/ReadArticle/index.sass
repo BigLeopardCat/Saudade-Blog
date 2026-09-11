@@ -27,6 +27,28 @@ html
     height: 400px
     border-radius: 0 0 20px 20px
     overflow: hidden
+    // 层序（20260912 加背景视频后显式排定）：封面 poster / 视频 0 → 渐变遮罩 1 → 文字 2。
+    // 此前 img 没有 z-index、遮罩 99 压在 .readInfo（auto）之上，加视频后必须显式排开。
+    .readCoverPoster, .readCoverVideo
+      position: absolute
+      top: 0
+      left: 0
+      width: 100%
+      height: 100%
+      object-fit: cover
+      z-index: 0
+    // 视频开始播放后 poster 淡出；换主题时先复位再重新淡出（见组件里的 effect）
+    .readCoverPoster
+      transition: opacity 0.6s ease
+      &.isHidden
+        opacity: 0
+    // 保留原有的 img 规则（.readInfo 里的 antd 头像 img 靠它兜底尺寸）；
+    // poster 由上面更具体的选择器覆盖成绝对定位
+    img
+      width: 100%
+      height: 100%
+      object-fit: cover
+      position: relative
     &::before
       content: ' '
       position: absolute
@@ -35,13 +57,9 @@ html
       left: 0
       bottom: 0
       right: 0
-      z-index: 99
-    img
-      width: 100%
-      height: 100%
-      object-fit: cover
-      position: relative
+      z-index: 1
     .readInfo
+      z-index: 2
       width: 880px
       max-width: 880px
       position: absolute
