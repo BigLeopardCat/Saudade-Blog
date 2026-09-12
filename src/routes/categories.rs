@@ -47,6 +47,9 @@ pub async fn list_categories(
     for cat in categories {
         let count = note::Entity::find()
             .filter(note::Column::CategoryId.eq(cat.id))
+            // 编辑修改稿（20260912c）不算数：它是「正在编辑某篇文章」时自动保存落下的影子行，
+            // 编辑期间多出一行会让该分类计数凭空 +1（改完发布又 -1），与访客看到的文章数不符。
+            .filter(note::Column::DraftOf.is_null())
             .count(&state.db)
             .await
             .unwrap_or(0);
