@@ -777,10 +777,19 @@ html[data-theme='dark'] .SayWords h2
   .allArticles
     grid-template-columns: repeat(2, 1fr) !important
 
-/* ===== 20260905g 签名一行：站酷快乐体 · hero 底部水平居中 · 明暗自适应 ===== */
+/* ===== 20260905g 签名一行：hero 底部水平居中 · 明暗自适应 =====
+   20260912 换字：站酷快乐体没有「變」（U+8B8A）与「顔」（U+9854）两个繁体/日文写法，
+   签名里这两个字一直回退到系统楷体、风格突兀；纯日系手写体（Hachi Maru Pop / Yomogi /
+   Klee One / Mochiy Pop One / Zen Kurenaido）则缺「呐」（中文特有字，JIS 没有），
+   混排回退更明显。改用霞鹜文楷 LXGW WenKai TC —— 设计源头是日本的 Klee One（日系手写楷），
+   覆盖完整简繁，这句签名逐字验证过无缺字。
+   子集是 Google Fonts 按 text= 生成的（4.8KB，只含签名用到的字）：
+     https://fonts.googleapis.com/css2?family=LXGW+WenKai+TC&text=<URL 编码后的签名文本>
+   换签名文案后若出现缺字回退，用上面这条 URL 重新下一份覆盖到同名文件即可。
+   （zcool-kuaile-sig.woff2 保留在 assets/fonts 里以便一键回退） */
 @font-face
-  font-family: 'ZCOOL KuaiLe'
-  src: url('../../../assets/fonts/zcool-kuaile-sig.woff2') format('woff2')
+  font-family: 'LXGW WenKai TC'
+  src: url('../../../assets/fonts/lxgw-wenkai-tc-sig.woff2') format('woff2')
   font-weight: 400
   font-display: swap
 
@@ -791,7 +800,7 @@ html[data-theme='dark'] .SayWords h2
   bottom: 86px
   margin: 0
   white-space: nowrap
-  font-family: 'ZCOOL KuaiLe', 'Kaiti SC', 'STKaiti', 'KaiTi', serif
+  font-family: 'LXGW WenKai TC', 'Kaiti SC', 'STKaiti', 'KaiTi', serif
   font-size: 17px
   font-weight: 400
   letter-spacing: 2px
