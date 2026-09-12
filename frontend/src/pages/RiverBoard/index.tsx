@@ -816,7 +816,11 @@ export default function RiverBoard() {
             // 各占 1/8 月龄）。此前光照方向 β 虽量化 8 档，但亮面占比 k 仍按连续
             // age 渐变——相邻档的差异被连续渐变稀释，视觉上只感知到 4 种形态；
             // 现 k 与 β 同步按 qAge 量化，8 种月相各自稳定清晰、档间跳变分明
-            const qAge = Math.round(ph.age * 8) / 8;
+            // 8 档月相量化，但**夹住两端半档**（20260912 用户反馈"现在是峨眉月吧，结果月全食了"）：
+            // 月龄 0.5 天（真实是一弯细峨眉）在 round(0.017×8)/8 = 0 处被归成"新月"→ 亮面占比 0，
+            // 配合不透明月盘就成了夜空里一个黑盘（月全食观感）。夹到 1/16 后该相位是一弯细牙，
+            // 新月当天也始终有月牙可看（真实新月物理上确实几乎不可见，但观感上"没有月亮"更糟）
+            const qAge = Math.min(15 / 16, Math.max(1 / 16, Math.round(ph.age * 8) / 8));
             const beta = Math.PI * (1 - 2 * Math.max(0, Math.min(1, qAge))); // 相位→光照角
             const lInv = 1 / Math.hypot(Math.sin(beta), Math.cos(beta));
             const lx = Math.sin(beta) * lInv, lz = Math.cos(beta) * lInv;
@@ -839,6 +843,12 @@ export default function RiverBoard() {
             const mg = mc.getContext("2d")!;
             const img = mg.createImageData(P, P);
             const data = img.data;
+            // 地球反照单独一层（20260912 用户反馈"月亮带个黑色底盘太假"）：暗面**不能**
+            // 用不透明深灰画在月盘里——月亮周围有一圈环形光晕，天空本底比暗面还亮，
+            // 于是月盘成了一块比背景暗的黑板（月全食观感）。物理上地球反照是"加光"，
+            // 所以这里画第二张图用 `lighter` 叠加：只会在背景上加一层微光，永远不会压暗
+            const imgE = mg.createImageData(P, P);
+            const dataE = imgE.data;
             /* 写实化（20260912）三项：① alpha 与亮度解耦（旧写法 alpha = 受光强度，
                  月缘受光弱 → 半透明 → 整轮月亮糊进背景光晕，满月像一团棉球）；
                ② 暗面照常画（地球反照），不再是"透出天空的洞" → 月牙/凸月像个球；
@@ -846,11 +856,9 @@ export default function RiverBoard() {
                  满月看不出月海）。合成式是「太阳直射 + 地球反照」两束反射光相加，
                所以终止线是自然过渡而不是一刀切。 */
             const EXPOSURE = 0.70;     // 亮面峰值 ≈ 0.70×1.28 = 0.90（229/255）：明亮但不满溢
-            // 地球反照强度：与光晕同源（光晕强时暗面也抬起）+ 一个下限。
-            // 下限不是物理值（真实地球反照只有亮面的几个百分点）而是观感值——月盘现在是不透明的，
-            // 暗面若压到天空本底以下，新月就成了夜空里一个"黑洞"。取"略亮于月亮附近天空"的量级，
-            // 于是新月是隐约一整圆、蛾眉/残月是"一弯亮牙 + 一层薄纱"，正合真实照片的观感
-            const earthBase = 0.10 + 0.06 * haloK;
+            // 地球反照强度（叠加层）：亮面约 3-8% 的量级，取"能在夜空里看出一点轮廓"的值。
+            // 与光晕同源（光晕强时暗面也抬起），冷蓝灰＝地球反射的蓝白光
+            const earthBase = 0.036 + 0.024 * haloK;
             // 相位亮度归一（摄影语义：相机按月亮曝光，八种月相的最亮点亮度应一致）：
             // 不归一的话上下弦最亮点只有满月的约一半，叠加 8 档月相量化会看着"忽明忽暗"
             // 额外的周边限暗压得很轻（0.12）：照片纹理自身已带月缘暗化，叠加会double成"黑圈"
@@ -924,22 +932,39 @@ export default function RiverBoard() {
                         const hsh = Math.abs(Math.sin(nx * 21.7 + ny * 9.3) * 43758.53);
                         alb *= 0.965 + 0.035 * (hsh - Math.floor(hsh));
                     }
-                    // 地球反照：暗面是被地球反射的蓝白光极弱照亮的实体盘面。
-                    // 越靠月缘越暗（球面掠射）；受光侧必须按 dot 淡出——否则满月时它会均匀加到
-                    // 整个盘面上，把已经接近满溢的亮面推成一片纯白（毁掉月海对比）
-                    const shade = Math.max(0, 1 - Math.max(0, dot) * 4);
-                    const earthL = earthBase * shade * (0.55 + 0.45 * nz) * (1 - 0.22 * radial);
-                    const lum = Math.min(1, EXPOSURE * sunGain * sun * alb * limb + earthL);
+                    // 受光面：只有太阳直射那一项（地球反照走下面单独的叠加层）
+                    const lum = Math.min(1, EXPOSURE * sunGain * sun * alb * limb);
                     const warm = 1 + 0.05 * Math.max(0, dot); // 受光处偏暖
-                    // 颜色只表达色温/亮度，alpha 只表达几何覆盖（两者解耦是本轮的核心）
+                    // 颜色只表达色温/亮度，alpha 只表达几何覆盖（两者解耦是本轮的核心）。
+                    // occlude：只有**真的亮起来**的岩面才遮挡背景。暗面不遮挡——月盘周围那圈光晕
+                    // 是大气散射，物理上就在月亮前面，会照亮整个盘面；旧写法暗面也不透明，盖住
+                    // 光晕后成了夜空里一块比背景还暗的黑板（20260912 用户："黑底盘太假"）。
+                    // 用 lum 而不是 sun 做判据：明暗交界带本来就该是"从透明渐显"（柔和的终止线），
+                    // 而亮起来的部分（新月牙、满月盘）完全遮挡 → 月缘清晰
+                    const occlude = Math.min(1, lum * 6);
                     data[i4] = Math.round(255 * lum * warm);
                     data[i4 + 1] = Math.round(255 * lum * 0.975 * warm);
                     data[i4 + 2] = Math.round(255 * lum * 0.92);
-                    data[i4 + 3] = Math.round(cov * 255);
+                    data[i4 + 3] = Math.round(cov * occlude * 255);
+                    // 地球反照层：受光侧按 dot 淡出（否则满月时会均匀加到接近满溢的亮面上、
+                    // 把月海对比冲掉）；乘反照率 → 暗面也能隐约看出月海与高地（真实照片如此）
+                    const shade = Math.max(0, 1 - Math.max(0, dot) * 4);
+                    const earthL = earthBase * shade * alb * (0.55 + 0.45 * nz) * (1 - 0.22 * radial);
+                    // 冷蓝灰 × 强度；alpha = 覆盖率，配合 lighter 只加光不压暗
+                    dataE[i4] = Math.round(255 * earthL * 0.72);
+                    dataE[i4 + 1] = Math.round(255 * earthL * 0.82);
+                    dataE[i4 + 2] = Math.round(255 * earthL);
+                    dataE[i4 + 3] = Math.round(cov * 255);
                 }
             }
             mg.putImageData(img, 0, 0);
             back.drawImage(mc, mxMoon - rD, myMoon - rD, rD * 2, rD * 2);
+            // 地球反照叠加：putImageData 会整块换掉画布像素，所以复用同一张 mc 画两次
+            mg.putImageData(imgE, 0, 0);
+            back.save();
+            back.globalCompositeOperation = "lighter";
+            back.drawImage(mc, mxMoon - rD, myMoon - rD, rD * 2, rD * 2);
+            back.restore();
             /* 月缘近场辉光（写实化第 2 项的补偿）：月盘不再透光后，把原来的球形光晕
                压成紧贴月缘的一圈（长焦月照就是这个观感）。叠加而非覆盖 → 亮面不被洗白；
                画在月盘之后、front 副本之前，进静态层、逐帧零成本 */
