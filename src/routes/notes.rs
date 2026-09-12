@@ -187,6 +187,26 @@ pub struct SearchRequest {
     pub end_date: Option<String>,
 }
 
+/// 关键词相关度打分（20260912，search_notes 排序用）：命中标题 +100 / 命中标签 +30 /
+/// 正文出现次数（上限 10，防长文堆词刷分）。确定性、可解释；不追求语义相关，够覆盖
+/// 「专讲这个词的文章排在只顺带提一次的长文之前」即可。大小写不敏感——与查询侧
+/// `LIKE` 的排序规则（utf8mb4 默认 ci）一致，否则搜 "python" 时命中的标题一轮
+/// 打分全 0，排序退化成按时间。
+fn search_score(note: &note::Model, kw: &str) -> i64 {
+    let kw = kw.to_lowercase();
+    if kw.is_empty() {
+        return 0;
+    }
+    let mut score = 0i64;
+    if note.title.to_lowercase().contains(&kw) {
+        score += 100;
+    }
+    if note.tags.as_deref().unwrap_or("").to_lowercase().contains(&kw) {
+        score += 30;
+    }
+    score + note.content.to_lowercase().matches(&kw).count().min(10) as i64
+}
+
 pub async fn search_notes(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<SearchRequest>,
@@ -230,6 +250,27 @@ pub async fn search_notes(
         .all(&state.db)
         .await
         .unwrap_or(vec![]);
+
+    // 相关度排序（20260912）：本查询此前**无 ORDER BY**，返回顺序即存储顺序（实测主键升序）
+    // ——于是搜索「架构」的第一条是《Git从入门到入土》（它只在正文表格里顺带出现过一次该词），
+    // 而真正讲架构的那篇紧随其后。agent 侧 search_notes 取候选[0] 时因此读错文章（9/8 跑题
+    // 事故的供给端根因）。这里对已加载结果确定性打分排序，同分按 created_at 倒序（新的在前，
+    // 与 list_public_notes 一致）。注：本端点同时服务博客前端搜索（NoteMethods.tsx），
+    // 改动只影响**顺序**、不影响结果集与 DTO。
+    let notes = match payload.keyword.as_deref() {
+        Some(k) if !k.is_empty() => {
+            // 打分只算一次（正文全量扫描，不必在比较器里重复做）
+            let mut scored: Vec<(i64, (note::Model, Vec<category::Model>))> =
+                notes.into_iter().map(|r| (search_score(&r.0, k), r)).collect();
+            scored.sort_by(|a, b| {
+                let (sa, (na, _)) = a;
+                let (sb, (nb, _)) = b;
+                sb.cmp(sa).then_with(|| nb.created_at.cmp(&na.created_at))
+            });
+            scored.into_iter().map(|(_, r)| r).collect()
+        }
+        _ => notes,
+    };
 
     let dtos = notes.into_iter().map(|(n, cats)| {
         map_note_summary(n, cats.into_iter().next())

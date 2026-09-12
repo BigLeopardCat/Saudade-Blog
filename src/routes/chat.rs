@@ -542,7 +542,13 @@ fn render_exec_row(row: &serde_json::Value) -> String {
         ),
         "search_notes" => format!("搜索「{}」", arg("keyword")),
         "rag_search" => format!("站内检索「{}」", arg("query")),
-        "get_article_detail" => format!("读取文章 {}", arg("article_id")),
+        // 带标题（20260912）：回执顶层的 title（agent 侧从详情返回提取的 noteTitle，与
+        // args 平级——它是派生事实不是工具实参）非空时展示《标题》：下轮「那篇讲架构的」
+        // 要对得上号，只有 id 无从核对（跨轮指代锚点）。缺失（提取失败/旧回执）回落纯 id。
+        "get_article_detail" => match row["title"].as_str().unwrap_or("") {
+            "" => format!("读取文章 {}", arg("article_id")),
+            t => format!("读取文章 {}《{}》", arg("article_id"), t),
+        },
         "list_devices" => "查看设备列表".to_string(),
         "get_current_time" => "查看当前时间".to_string(),
         "list_guestbook" => "查看留言板".to_string(),
