@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./index.scss";
 import { runtimeBaseURL } from "../../utils/runtimeApi";
 import { MOON_TEX } from "./moon_tex";
@@ -389,6 +389,9 @@ interface LanternMeta {
     rip: number; // 涟漪倒计时（秒）：每灯独立随机触发，避免全场同时泛起
     ripT: number; // 当前一轮涟漪的进行时间（秒），-1 = 无涟漪进行中
     _dq?: number; // 景深档位缓存（性能：filter/zIndex 换档才重写，不逐帧写）
+    _pe?: string; // pointerEvents 缓存（性能：只在实际变化时写，不逐帧写）
+    _poolNode?: HTMLDivElement | null; // .rz-pool 查询时的节点身份（换节点才重新查）
+    _pool?: HTMLElement | null; // .rz-pool 子节点缓存（性能：消掉每帧每灯一次 querySelector）
 }
 
 interface Amb {
@@ -413,6 +416,10 @@ const MOON = { x: 0.7, y: 0.16, r: 0.073 } as const; // r 0.093 → 0.073：月�
 const moonTexN = 192;
 let moonTexA: Float32Array | null = null;
 let moonTexLoading = false;
+/* 反照率标定（加载时按盘内 p5/p95/中位数算出，见 loadMoonTex） */
+let moonTexLo = 0;
+let moonTexHi = 1;
+let moonTexMed = 0.5;
 const moonTexWaiters: Array<() => void> = [];
 /* 第 37 轮：支持就绪回调——月亮在静态层渲染，纹理异步就绪后必须重绘一次
    静态层才能真正上月亮（此前仅 drawScene 每帧调用，静态层永不重画，
@@ -437,6 +444,16 @@ const loadMoonTex = (onReady?: () => void) => {
         const d = g.getImageData(0, 0, moonTexN, moonTexN).data;
         const a = new Float32Array(moonTexN * moonTexN);
         for (let i = 0; i < a.length; i++) a[i] = d[i * 4 + 3] > 128 ? d[i * 4] / 255 : -1;
+        // 反照率区间自适应标定（20260912 写实化）：拿盘内值的 p5/p95 当 0..1 的锚，
+        // 渲染时映射到 0.70..1.30 的亮度区间（月海:高地 ≈ 1.6:1）。硬编码中位数不可靠——
+        // 纹理是离线脚本「围绕中位 ×1.8 + BoxBlur」做的，中位不一定落在 0.5
+        const vals = Array.from(a).filter((v) => v >= 0).sort((x, y) => x - y);
+        if (vals.length > 16) {
+            moonTexLo = vals[Math.floor(vals.length * 0.05)];
+            moonTexHi = vals[Math.floor(vals.length * 0.95)];
+            moonTexMed = vals[vals.length >> 1];
+            if (moonTexHi - moonTexLo < 0.05) { moonTexLo = 0; moonTexHi = 1; } // 极端平纹理兜底
+        }
         moonTexA = a;
         moonTexLoading = false;
         for (const w of moonTexWaiters) w();
@@ -523,8 +540,10 @@ export default function RiverBoard() {
     const batchPtr = useRef(0); // 已发放条数（含初始最新一批）
     const lanternCountRef = useRef(0);
 
-    /* 灯 id 重入时换上批次序列下一条留言 */
-    const advanceMsg = (id: number) => {
+    /* 灯 id 重入时换上批次序列下一条留言。
+       useCallback 空依赖：实现里只读 ref、只调 setState 与模块级 catOf，
+       所以首次闭包永久有效；稳定身份让下面的 QA effect 与河灯 DOM 的 memo 不被逐 render 打破 */
+    const advanceMsg = useCallback((id: number) => {
         const items = allTalksRef.current;
         if (items.length === 0) return;
         // 池子被灯数全覆盖（留言数 ≤ 灯数）：不做轮换，重入保持原留言——
@@ -542,7 +561,7 @@ export default function RiverBoard() {
         // 灯型（v）同步进 meta：圆笼灯（v=2）的涟漪偏移以 meta.v 为准
         const meta = metaRef.current.find((m) => m.id === id);
         if (meta && it.v >= 0) meta.v = it.v;
-    };
+    }, []);
 
     /* 灯影集：收录全部留言的古籍卷册 */
     const [albumOpen, setAlbumOpen] = useState(false);
@@ -820,41 +839,75 @@ export default function RiverBoard() {
             const mg = mc.getContext("2d")!;
             const img = mg.createImageData(P, P);
             const data = img.data;
+            /* 写实化（20260912）三项：① alpha 与亮度解耦（旧写法 alpha = 受光强度，
+                 月缘受光弱 → 半透明 → 整轮月亮糊进背景光晕，满月像一团棉球）；
+               ② 暗面照常画（地球反照），不再是"透出天空的洞" → 月牙/凸月像个球；
+               ③ 反照率进亮度域并拉开对比（旧的 0.5+1.2t 把照片纹理压成一片白，
+                 满月看不出月海）。合成式是「太阳直射 + 地球反照」两束反射光相加，
+               所以终止线是自然过渡而不是一刀切。 */
+            const EXPOSURE = 0.70;     // 亮面峰值 ≈ 0.70×1.28 = 0.90（229/255）：明亮但不满溢
+            // 地球反照强度：与光晕同源（光晕强时暗面也抬起）+ 一个下限。
+            // 下限不是物理值（真实地球反照只有亮面的几个百分点）而是观感值——月盘现在是不透明的，
+            // 暗面若压到天空本底以下，新月就成了夜空里一个"黑洞"。取"略亮于月亮附近天空"的量级，
+            // 于是新月是隐约一整圆、蛾眉/残月是"一弯亮牙 + 一层薄纱"，正合真实照片的观感
+            const earthBase = 0.10 + 0.06 * haloK;
+            // 相位亮度归一（摄影语义：相机按月亮曝光，八种月相的最亮点亮度应一致）：
+            // 不归一的话上下弦最亮点只有满月的约一半，叠加 8 档月相量化会看着"忽明忽暗"
+            // 额外的周边限暗压得很轻（0.12）：照片纹理自身已带月缘暗化，叠加会double成"黑圈"
+            const limbKp = 0.12 + 0.24 * (1 - Math.abs(lz));
+            const limbPeak = lz >= 0
+                ? 1 - limbKp * Math.pow(Math.abs(lx), 2.6)
+                : (1 - limbKp) * Math.pow(Math.abs(lx), 0.9);
+            const sunGain = Math.min(2.2, 1 / Math.max(0.05, limbPeak));
+            const rOut = R + 0.75;
             for (let py = 0; py < P; py++) {
-                const ny = (py + 0.5 - R) / R;
+                const Y = py + 0.5 - R;
                 for (let px = 0; px < P; px++) {
-                    const nx = (px + 0.5 - R) / R;
-                    const q = 1 - nx * nx - ny * ny;
+                    const X = px + 0.5 - R;
                     const i4 = (py * P + px) * 4;
-                    if (q <= 0) continue;
-                    const radial = Math.sqrt(1 - q); // 0=月心 1=月缘
-                    const nz = Math.sqrt(q);
+                    const rho2 = X * X + Y * Y;
+                    if (rho2 > rOut * rOut) continue;      // 盘外（含 1px 过渡带外侧）
+                    const rho = Math.sqrt(rho2);
+                    const cov = Math.min(1, rOut - rho);   // 覆盖率：外沿 0.75px 线性升到 1（抗锯齿）
+                    if (cov <= 0) continue;
+                    const nx = X / R, ny = Y / R;
+                    const radial = rho / R;                // 0=月心 1=月缘
+                    const nz = Math.sqrt(Math.max(0, 1 - radial * radial));
+                    // 终止线回到几何位置（旧写法 dot<=0.02 直接跳过 → 暗面整片消失）
                     const dot = nx * lx + nz * lz;
-                    // —— 明暗（真实月相）：暗面不画出（直接透出背景天空，
-                    // 背景已被发光中心的完整圆形光晕染色，成为光晕的一部分）；
-                    // 残缺部分（明暗交界带）alpha 从透明逐渐过渡到清晰
-                    if (dot <= 0.02) continue;
-                    // t 归一化受光强度（0=明暗界 1=最亮），指数让亮面更饱满；
-                    // alpha 随受光强度渐增：残缺月牙边缘半透明 → 亮面完全清晰
-                    let b = Math.pow(Math.max(0, (dot - 0.02) / 0.96), 0.9);
-                    // 边缘暗化（月面边缘微微变暗，不突兀）＋ 受光侧微热
-                    b *= 1 - 0.26 * Math.pow(radial, 2.6);
-                    b *= 1 + 0.10 * dot * dot;
-                    // 第 34 轮：真实照片反照率纹理（月海暗斑/环形山暗坑亮缘/辐射纹
-                    // 全部来自采样照片），就绪时替代下方手写 MARIA/CRATERS 分布；
-                    // 第 37 轮：纹理已大幅平滑（BoxBlur3），低频对比可以放开——
-                    // 0.5+1.2·t 让月海/高地差异明显且不会产生逐像素麻点
+                    const sun = Math.pow(Math.max(0, dot), 0.9);
+                    // 周边限暗：满月最平（真实满月本就没什么立体感），上下弦最陡
+                    const limb = 1 - limbKp * Math.pow(radial, 2.6);
+                    let alb = 1;
                     if (moonTexA) {
-                        const ix = Math.min(moonTexN - 1, Math.max(0, Math.floor(((nx + 1) / 2) * moonTexN)));
-                        const iy = Math.min(moonTexN - 1, Math.max(0, Math.floor(((1 - ny) / 2) * moonTexN)));
-                        const t = moonTexA[iy * moonTexN + ix];
-                        if (t >= 0) b *= 0.5 + 1.2 * t;
+                        // 双线性采样 + 区间自适应标定到 0.70..1.30（月海:高地 ≈ 1.6:1）。
+                        // 对比拉开后最近邻会露出 2× 块状，双线性只在静态层跑一次、成本可忽略；
+                        // 盘外(-1)按中位数顶替，避免月缘被 -1 拉出一圈黑边
+                        const fx = ((nx + 1) / 2) * moonTexN - 0.5;
+                        const fy = ((1 - ny) / 2) * moonTexN - 0.5;
+                        const ix0 = Math.floor(fx), iy0 = Math.floor(fy);
+                        const tx = fx - ix0, ty = fy - iy0;
+                        const cx0 = Math.min(moonTexN - 1, Math.max(0, ix0));
+                        const cx1 = Math.min(moonTexN - 1, Math.max(0, ix0 + 1));
+                        const cy0 = Math.min(moonTexN - 1, Math.max(0, iy0));
+                        const cy1 = Math.min(moonTexN - 1, Math.max(0, iy0 + 1));
+                        const s00 = moonTexA[cy0 * moonTexN + cx0];
+                        const s10 = moonTexA[cy0 * moonTexN + cx1];
+                        const s01 = moonTexA[cy1 * moonTexN + cx0];
+                        const s11 = moonTexA[cy1 * moonTexN + cx1];
+                        const t =
+                            ((s00 < 0 ? moonTexMed : s00) * (1 - tx) + (s10 < 0 ? moonTexMed : s10) * tx) * (1 - ty) +
+                            ((s01 < 0 ? moonTexMed : s01) * (1 - tx) + (s11 < 0 ? moonTexMed : s11) * tx) * ty;
+                        const n01 = (t - moonTexLo) / (moonTexHi - moonTexLo);
+                        // 0.80..1.28（月海:高地 ≈ 1.6:1）——下沿不再压到 0.70：纹理的月缘本来就暗，
+                        // 下沿过低会与周边限暗叠成"黑圈"（满月看着像镶了边）
+                        alb = 0.80 + 0.48 * (n01 < 0 ? 0 : n01 > 1 ? 1 : n01);
                     } else {
                         // 月海（静海/澄海/湿海等大块暗斑，柔边，暗区更明显）
                         for (const [cx, cy, rx, ry] of MARIA) {
                             const dx = nx - cx, dy = ny - cy;
                             const d2 = (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry);
-                            if (d2 < 1) b *= 1 - 0.6 * (1 - d2) * 0.55;
+                            if (d2 < 1) alb *= 1 - 0.6 * (1 - d2) * 0.55;
                         }
                         // 环形山：暗坑加深 + 受光侧亮缘
                         for (const [cxc, cyc, rc] of CRATERS) {
@@ -862,27 +915,44 @@ export default function RiverBoard() {
                             const d2 = (dx * dx + dy * dy) / (rc * rc);
                             if (d2 < 1) {
                                 const inner = 1 - d2;
-                                b *= 1 - 0.5 * inner; // 坑底变暗（第 33 轮 0.44→0.5：小月亮上环形山更可辨）
-                                if (d2 > 0.55 && dx * lx > 0) b *= 1 + 0.2 * inner; // 迎光壁更亮
+                                alb *= 1 - 0.5 * inner; // 坑底变暗（第 33 轮 0.44→0.5：小月亮上环形山更可辨）
+                                if (d2 > 0.55 && dx * lx > 0) alb *= 1 + 0.2 * inner; // 迎光壁更亮
                             }
                         }
                         // 表面颗粒噪声（沿光方向的高地纹理，确定性哈希）——仅手写 fallback 用；
                         // 照片纹理自带高频细节，叠加确定性哈希会在小月亮上形成"老人脸"麻点
                         const hsh = Math.abs(Math.sin(nx * 21.7 + ny * 9.3) * 43758.53);
-                        b *= 0.965 + 0.035 * (hsh - Math.floor(hsh));
+                        alb *= 0.965 + 0.035 * (hsh - Math.floor(hsh));
                     }
-                    // alpha 即受光强度：残缺带半透明到清晰（暗面全透明透背景）
-                    const a = Math.round(b * 255);
-                    if (a <= 0) continue;
-                    // 受光处偏暖、暗部偏冷灰
-                    data[i4] = Math.round((252 - (1 - b) * 56) + 6 * Math.max(0, dot));
-                    data[i4 + 1] = Math.round(249 - (1 - b) * 62);
-                    data[i4 + 2] = Math.round(230 - (1 - b) * 82);
-                    data[i4 + 3] = a;
+                    // 地球反照：暗面是被地球反射的蓝白光极弱照亮的实体盘面。
+                    // 越靠月缘越暗（球面掠射）；受光侧必须按 dot 淡出——否则满月时它会均匀加到
+                    // 整个盘面上，把已经接近满溢的亮面推成一片纯白（毁掉月海对比）
+                    const shade = Math.max(0, 1 - Math.max(0, dot) * 4);
+                    const earthL = earthBase * shade * (0.55 + 0.45 * nz) * (1 - 0.22 * radial);
+                    const lum = Math.min(1, EXPOSURE * sunGain * sun * alb * limb + earthL);
+                    const warm = 1 + 0.05 * Math.max(0, dot); // 受光处偏暖
+                    // 颜色只表达色温/亮度，alpha 只表达几何覆盖（两者解耦是本轮的核心）
+                    data[i4] = Math.round(255 * lum * warm);
+                    data[i4 + 1] = Math.round(255 * lum * 0.975 * warm);
+                    data[i4 + 2] = Math.round(255 * lum * 0.92);
+                    data[i4 + 3] = Math.round(cov * 255);
                 }
             }
             mg.putImageData(img, 0, 0);
             back.drawImage(mc, mxMoon - rD, myMoon - rD, rD * 2, rD * 2);
+            /* 月缘近场辉光（写实化第 2 项的补偿）：月盘不再透光后，把原来的球形光晕
+               压成紧贴月缘的一圈（长焦月照就是这个观感）。叠加而非覆盖 → 亮面不被洗白；
+               画在月盘之后、front 副本之前，进静态层、逐帧零成本 */
+            back.save();
+            back.globalCompositeOperation = "lighter";
+            const gx = mxMoon + lx * rMoon * 0.35, gy = myMoon;
+            const lg = back.createRadialGradient(gx, gy, rMoon * 1.0, gx, gy, rMoon * 2.2);
+            lg.addColorStop(0, `rgba(255,238,200,${0.16 * haloK})`);
+            lg.addColorStop(0.45, `rgba(255,226,170,${0.07 * haloK})`);
+            lg.addColorStop(1, "rgba(255,222,160,0)");
+            back.fillStyle = lg;
+            back.fillRect(gx - rMoon * 2.4, gy - rMoon * 2.4, rMoon * 4.8, rMoon * 4.8);
+            back.restore();
 
             // 云影（静态，随视差层缓慢移动）
             ctx.fillStyle = "rgba(24,32,60,0.10)";
@@ -1577,7 +1647,12 @@ export default function RiverBoard() {
             node.style.transform =
                 `translate3d(${li.x}px, ${li.y}px, 0) translate(-50%, -50%) scale(${scl}) rotate(${rot}deg)`;
             node.style.opacity = String(0.45 + 0.55 * Math.pow(d, 0.8));
-            node.style.pointerEvents = d < 0.24 ? "none" : "auto";
+            // pointerEvents 只在真正换档时写（逐帧写一个几乎不变的属性会白白触发样式失效计算）
+            const pe = d < 0.24 ? "none" : "auto";
+            if (pe !== m._pe) {
+                m._pe = pe;
+                node.style.pointerEvents = pe;
+            }
             // 性能：filter/zIndex 只在景深换档（0.05 一档）时重写——filter 逐帧变化
             // 会强制元素重栅格化（GPU 最贵操作）；降频后亮度/层级渐变肉眼不可察。
             // hue-rotate(0deg) 为无效操作，灯型不变时省略
@@ -1590,8 +1665,14 @@ export default function RiverBoard() {
                         ? `brightness(${(0.72 + 0.34 * dq) * m.bright})`
                         : `brightness(${(0.72 + 0.34 * dq) * m.bright}) hue-rotate(${m.hue}deg)`;
             }
-            const qt = node.querySelector(".rz-pool") as HTMLElement | null;
-            if (qt) qt.style.opacity = String(0.4 + 0.6 * d);
+            // 水面亮斑：原来每帧每灯一次 querySelector（22 次/帧、约 1300 次/秒）。
+            // 缓存子节点引用，只在「节点换了身份」时重查——React 换 key/重挂载后旧引用
+            // 会变成游离节点，所以用身份判断而不是查一次就永久信任。
+            if (m._poolNode !== node) {
+                m._poolNode = node;
+                m._pool = node.querySelector<HTMLElement>(".rz-pool");
+            }
+            if (m._pool) m._pool.style.opacity = String(0.4 + 0.6 * d);
         }
     };
 
@@ -1618,11 +1699,32 @@ export default function RiverBoard() {
             document.createElement("canvas").getContext("webgl") ||
             document.createElement("canvas").getContext("experimental-webgl")
         );
-        const onResize = () => {
-            const dpr = Math.min(softRender ? 1 : DPR_CAP, window.devicePixelRatio || 1);
+        const calcDpr = () => Math.min(softRender ? 1 : DPR_CAP, window.devicePixelRatio || 1);
+
+        /* 纯几何同步（不重建粒子/静态层）：拖动窗口时每帧只做这一趟，
+           否则防抖窗口内 canvas 的 CSS 尺寸停在旧值，放大窗口会在右侧/下侧露出
+           .rz-root 的底色黑边。静态层被 drawImage 拉伸贴上去（短暂发虚，松手即锐）。 */
+        const applySize = () => {
             const w = window.innerWidth;
             const h = window.innerHeight;
+            const dpr = calcDpr();
             const v = viewRef.current;
+            if (w === v.w && h === v.h && dpr === v.dpr) return; // 幂等：手机 URL 栏/软键盘抖动不打转
+            v.dpr = dpr;
+            canvas.width = Math.round(w * dpr);
+            canvas.height = Math.round(h * dpr);
+            canvas.style.width = w + "px";
+            canvas.style.height = h + "px";
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            layout(w, h);
+        };
+
+        const applyResize = () => {
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+            const dpr = calcDpr();
+            const v = viewRef.current;
+            if (w === v.w && h === v.h && dpr === v.dpr && baseBack && baseFront) return; // 幂等早退
             v.dpr = dpr;
             canvas.width = Math.round(w * dpr);
             canvas.height = Math.round(h * dpr);
@@ -1640,11 +1742,36 @@ export default function RiverBoard() {
             baseBack = makeBase();
             baseFront = makeBase();
             loadMoonTex(); // 第 37 轮：提前开始加载（renderBase 前），缩短 fallback 暴露时间
-            viewRef.current.texApplied = false; // 静态层重画后 drawScene 会按纹理就绪状态重绘一次
+            // 纹理已就绪就标 true：drawScene 里那个「纹理到达后补画一次」的回调是同步执行的
+            // （loadMoonTex 已加载时立即回调），标 false 会让每次 resize 白跑两遍 renderBase
+            //（含月面 10-15 万像素循环）
+            viewRef.current.texApplied = !!moonTexA;
             renderBase(baseBack, baseFront);
         };
 
-        onResize();
+        // resize 防抖（20260912）：下面这一趟会重建全部粒子 + 两张全屏画布 + renderBase
+        // （含月面 10-15 万像素逐像素循环），老设备上拖窗口＝每个事件"重开一次场景"，
+        // 直接卡成 PPT。尾防抖 150ms：拖动期间只记住尺寸，停下后一次性重建。
+        // 拖动期间走 applySize（几何即时同步，无黑边）；首次仍同步执行，不留白屏。
+        const RESIZE_DEBOUNCE_MS = 150;
+        let resizeTimer = 0;
+        let sizeRaf = 0;
+        const onResize = () => {
+            if (!sizeRaf) {
+                sizeRaf = requestAnimationFrame(() => {
+                    sizeRaf = 0;
+                    if (!disposed) applySize();
+                });
+            }
+            if (resizeTimer) window.clearTimeout(resizeTimer);
+            resizeTimer = window.setTimeout(() => {
+                resizeTimer = 0;
+                if (disposed) return;
+                applyResize();
+            }, RESIZE_DEBOUNCE_MS);
+        };
+
+        applyResize();
         window.addEventListener("resize", onResize);
 
         const onMove = (e: MouseEvent) => {
@@ -1707,9 +1834,28 @@ export default function RiverBoard() {
 
         raf = requestAnimationFrame(frame);
 
+        // 后台标签暂停（20260912）：切走时掐掉 rAF 链，切回时重置时间基准再无跳变续上。
+        // 现代浏览器本来就会挂起后台标签的 rAF，但老内核/webview 不保证；这一页每帧画满屏
+        // 加 22 盏灯的图层，后台空转纯烧 CPU。灯的位置是按帧积分（暂停即静止、切回不跳），
+        // 唯一需要处理的是回来第一帧的 dt——重置 last 让它从 0 重新累积。
+        const onVisibility = () => {
+            if (document.hidden) {
+                if (raf) { cancelAnimationFrame(raf); raf = 0; }
+            } else if (!raf && !disposed) {
+                last = performance.now();
+                lastFrameT = performance.now();
+                perfEma = 16.7; // 旧帧耗时样本（后台期间不可信）也一并丢掉
+                raf = requestAnimationFrame(frame);
+            }
+        };
+        document.addEventListener("visibilitychange", onVisibility);
+
         return () => {
             disposed = true;
             cancelAnimationFrame(raf);
+            if (sizeRaf) cancelAnimationFrame(sizeRaf);
+            if (resizeTimer) window.clearTimeout(resizeTimer);
+            document.removeEventListener("visibilitychange", onVisibility);
             window.removeEventListener("resize", onResize);
             window.removeEventListener("mousemove", onMove);
         };
@@ -1816,7 +1962,8 @@ export default function RiverBoard() {
     }, []);
 
     /* 气泡长文滚动：JS 逐帧显式推进（CSS animation 偶发卡死不滚，改为可控的 transform） */
-    const bubbleRefs = useRef<Map<number, HTMLDivElement | null>>(new Map());
+    /* 气泡节点表已删除（20260912）：bubbleRefs 只写不读，每次河灯列表重建都白写 22 次；
+       气泡滚动走的是 scrollState + restartScroll(handle)，不需要这张表 */
     const scrollState = useRef<{ msg: HTMLElement; max: number; pos: number } | null>(null);
     const restartScroll = (handle: HTMLElement) => {
         const box = handle.querySelector(".rz-scroll") as HTMLElement | null;
@@ -1950,6 +2097,11 @@ export default function RiverBoard() {
             // 快照刚放的灯："再看一眼"时按同一盏灯重新点放（留名/灯型/内容一致）
             lastDroppedWish.current = wish;
             setLanterns((prev) => [...prev, wish]);
+            // 作废灯影集缓存 + 「我的河灯」懒加载标记：下次打开灯影集重拉一次即可看到
+            // 刚放的灯（后端 POST 只回 "Created"/"Pending"，不返回新 talkKey，
+            // 所以本地补不出池子条目——交给那一次重拉）
+            boardCacheRef.current = null;
+            albumMineLoadedRef.current = false;
             setWishDone(true);
         } catch (err) {
             setWishBusy(false);
@@ -2027,6 +2179,14 @@ export default function RiverBoard() {
     /* 收回河灯（20260905 issue8）：删除自己放的河灯。
        两步确认防误删：第一击武装（按钮变「确认收回？」），第二击执行 DELETE。
        成功 → 从灯影集两数据源 + 河流轮播池剔除，撤下弹窗 */
+    /* 灯影集数据缓存（20260912）：打开灯影集原来每次都全量重拉两个接口——
+       挂载时已经拉过一次全量公开列表，同一次会话里同一份数据被拉 3 次。
+       TTL 内直接复用；放灯/收回会作废缓存（见 dropLantern）。 */
+    const BOARD_CACHE_TTL = 20000;
+    const albumSeqRef = useRef(0);           // 竞态守卫：只认最后一次请求的响应
+    const albumMineLoadedRef = useRef(false); // 「我的河灯」按需拉取的一次性标记
+    const boardCacheRef = useRef<{ at: number; items: AlbumItem[] } | null>(null);
+
     const reclaimLantern = async () => {
         const tk = modal?.talkKey;
         const gid = modal?.id;
@@ -2048,7 +2208,10 @@ export default function RiverBoard() {
             setAlbumItems((prev) => prev.filter((x) => x.id !== tk));
             setAlbumMine((prev) => prev.filter((x) => x.id !== tk));
             if (allTalksRef.current.length) {
-                allTalksRef.current = allTalksRef.current.filter((t) => t.talkKey !== tk);
+                // 两个写入点的结构不同：挂载时入池的条目只有 id（无 talkKey），
+                // 开灯影集时入池的条目两者都有。只比 talkKey 会让「没开过灯影集就收回」
+                // 变成空操作——被收回的留言仍留在轮播池里继续漂（20260912 修）
+                allTalksRef.current = allTalksRef.current.filter((t) => t.talkKey !== tk && t.id !== tk);
             }
             // 河面这盏灯（灯影集点起的实例）一并撤走
             setLanterns((prev) => prev.filter((p) => p.id !== gid));
@@ -2061,12 +2224,25 @@ export default function RiverBoard() {
     };
 
     /* 灯影集：打开时拉取全部留言。
-       每次打开都重新拉取（不缓存）：放下新灯后灯影集实时同步最新留言，
-       否则会话内只取一次，放灯后需手动刷新网页才更新 */
+       20260912：数据在 TTL 内复用（挂载时已拉过一次全量）+ 竞态守卫（连点/快速开关时
+       只认最后一次请求的响应，旧数据后到不再覆盖新数据）；「我的河灯」改为切到该页签
+       时才拉（原来看时序页签也会多拉一次 /api/protect/board/mine）。
+       放灯后会作废缓存（见 dropLantern），所以"刚放的灯要重开一次灯影集才看到"的
+       旧体验不变，但同一次浏览里反复开关灯影集不再重复打后端 */
     const openAlbum = async () => {
         setAlbumOpen(true);
         setAlbumSearch(false);
         setAlbumQuery("");
+        if (albumTabs === "mine") {
+            albumMineLoadedRef.current = true;
+            fetchMyAlbum();
+        }
+        const cached = boardCacheRef.current;
+        if (cached && Date.now() - cached.at < BOARD_CACHE_TTL) {
+            setAlbumItems(cached.items);
+            return; // 复用缓存：不动轮播池指针（重置指针会让轮播从头开始）
+        }
+        const seq = ++albumSeqRef.current;
         try {
             // 带上 token：后端据此标记每条留言是否当前用户所放（"我的河灯"）
             const token = localStorage.getItem("tokenKey");
@@ -2077,19 +2253,18 @@ export default function RiverBoard() {
             const arr = Array.isArray(j?.data)
                 ? (j.data as Array<{ talkKey?: unknown; v?: unknown; cat?: unknown; author?: unknown; content?: unknown; createTime?: unknown; mine?: unknown; approved?: unknown }>)
                 : [];
-            setAlbumItems(
-                arr.map((x) => ({
-                    id: Number(x?.talkKey ?? 0),
-                    v: [0, 1, 2].includes(Number(x?.v)) ? Number(x.v) : 0,
-                    cat: CATS.includes(String(x?.cat ?? "")) ? String(x.cat) : catOf(String(x?.content ?? "")),
-                    author: String(x?.author ?? ""),
-                    msg: String(x?.content ?? ""),
-                    time: String(x?.createTime ?? "").slice(0, 16),
-                    mine: x?.mine === true,
-                    approved: Number(x?.approved ?? 1), // 公开列表全为通过态
-                }))
-            );
-            fetchMyAlbum();
+            if (seq !== albumSeqRef.current) return; // 过期响应：丢弃（下一次请求才是权威）
+            const items: AlbumItem[] = arr.map((x) => ({
+                id: Number(x?.talkKey ?? 0),
+                v: [0, 1, 2].includes(Number(x?.v)) ? Number(x.v) : 0,
+                cat: CATS.includes(String(x?.cat ?? "")) ? String(x.cat) : catOf(String(x?.content ?? "")),
+                author: String(x?.author ?? ""),
+                msg: String(x?.content ?? ""),
+                time: String(x?.createTime ?? "").slice(0, 16),
+                mine: x?.mine === true,
+                approved: Number(x?.approved ?? 1), // 公开列表全为通过态
+            }));
+            setAlbumItems(items);
             // 顺带刷新河流批次轮播池（新放灯的留言进入轮播序列，指针回到最新一批）
             const talks: Wish[] = arr
                 .map((x) => ({
@@ -2102,6 +2277,7 @@ export default function RiverBoard() {
                     talkKey: Number(x?.talkKey ?? 0), // 收回河灯时按留言 id 从轮播池剔除
                 }))
                 .filter((t) => t.msg);
+            boardCacheRef.current = { at: Date.now(), items };
             if (talks.length >= 4) {
                 allTalksRef.current = talks;
                 batchPtr.current = lanternCountRef.current || talks.length;
@@ -2159,28 +2335,119 @@ export default function RiverBoard() {
         return () => window.removeEventListener("keydown", onKey);
     }, []);
 
-    /* QA 钩子：暴露批次推进，供自动化验证轮播（生产环境无害） */
+    /* QA 钩子：暴露批次推进，供自动化验证轮播（生产环境无害）。
+       advanceMsg 已 useCallback 稳定身份 → 这个 effect 只在挂载时跑一次（原来是
+       没有依赖数组，每次 render 都新建一个对象写 window） */
     useEffect(() => {
         (window as unknown as { __qaBoard?: { advanceMsg: (id: number) => void } }).__qaBoard = { advanceMsg };
-    });
+    }, [advanceMsg]);
 
     /* 灯影集：按当前页签排序 + 类型筛选 + 按检索词过滤
        "我的河灯"数据源 = albumMine（本人全部河灯，含待审 0 / 未通过 2——公开列表
        只放行通过态，看不到自己的待审/被驳回的灯，20260905 issue8）；
-       其余页签 = 公开列表 albumItems */
-    const q = albumQuery.trim();
-    const albumBase = albumTabs === "mine" ? albumMine : albumItems;
-    const albumSorted = [...albumBase]
-        .filter((it) => albumTabs !== "mine" || it.mine) // mine 页签数据源已全为本人，此过滤保底
-        .filter((it) => albumCatFilter.length === 0 || albumCatFilter.includes(it.cat))
-        .filter((it) => q === "" || it.msg.includes(q) || it.author.includes(q) || it.cat === q)
-        .sort((a, b) => {
-            if (albumTabs === "cat") return a.cat.localeCompare(b.cat, "zh") || b.id - a.id;
-            // 我的河灯：仅按时间（新近在前）
-            if (albumTabs === "mine") return a.time < b.time ? 1 : a.time > b.time ? -1 : b.id - a.id;
-            const cmp = a.time < b.time ? -1 : a.time > b.time ? 1 : 0;
-            return albumTimeAsc ? cmp || a.id - b.id : -cmp || b.id - a.id;
-        });
+       其余页签 = 公开列表 albumItems。
+       useMemo：这段要复制数组三遍 + 中文 localeCompare 排序，而河面主循环每 2.5-4s
+       就有一次 setLanterns 触发的整组件重渲染、输入框每敲一个字也重渲染一次——
+       没必要跟着跑；卷册没打开时（下面 {albumOpen && ...} 之外无人消费）直接给空数组 */
+    const albumSorted = useMemo(() => {
+        if (!albumOpen) return [] as typeof albumItems;
+        const q = albumQuery.trim();
+        const albumBase = albumTabs === "mine" ? albumMine : albumItems;
+        return [...albumBase]
+            .filter((it) => albumTabs !== "mine" || it.mine) // mine 页签数据源已全为本人，此过滤保底
+            .filter((it) => albumCatFilter.length === 0 || albumCatFilter.includes(it.cat))
+            .filter((it) => q === "" || it.msg.includes(q) || it.author.includes(q) || it.cat === q)
+            .sort((a, b) => {
+                if (albumTabs === "cat") return a.cat.localeCompare(b.cat, "zh") || b.id - a.id;
+                // 我的河灯：仅按时间（新近在前）
+                if (albumTabs === "mine") return a.time < b.time ? 1 : a.time > b.time ? -1 : b.id - a.id;
+                const cmp = a.time < b.time ? -1 : a.time > b.time ? 1 : 0;
+                return albumTimeAsc ? cmp || a.id - b.id : -cmp || b.id - a.id;
+            });
+    }, [albumOpen, albumItems, albumMine, albumTabs, albumCatFilter, albumQuery, albumTimeAsc]);
+
+    /* 河灯 DOM：用 useMemo 固定元素引用 —— React 对「同一个元素对象」会直接跳过整棵
+       子树的协调，于是输入框/灯影集检索/弹窗等高频 state 变化不再带着 22 盏灯的 200+
+       元素一起重渲染。位置与透明度永远由 rAF 直写 DOM，React 只在下面三个依赖变化时
+       重建（灯列表变化=批次轮换/放灯/收回；精灵图就绪；弹窗开关）。
+       安全前提：JSX 里用到的 handler（openWish/toggleMsg/restartScroll）只读写 ref 与
+       setState，复用旧闭包无副作用；若将来它们开始读 state，必须把那个 state 加进依赖 */
+    const lanternNodes = useMemo(
+        () =>
+            lanterns.map((ln) => (
+                <div
+                    key={ln.id}
+                    data-lid={ln.id}
+                    ref={(el) => {
+                        nodesRef.current.set(ln.id, el);
+                    }}
+                    className={
+                        "rz-lantern" +
+                        // 20260905 #4b：approved 0(待审)/2(未通过) = 未点亮——
+                        // 河面只放暗灯笼轮廓，不渲染亮灯光效；undefined/1 = 已点亮
+                        (ln.approved === undefined || ln.approved === 1 ? "" : " rz-unlit")
+                    }
+                    role="button"
+                    tabIndex={0}
+                    aria-label="河灯心愿"
+                    onMouseEnter={() => {
+                        nodesRef.current.get(ln.id)?.classList.add("rz-open");
+                        const h = nodesRef.current.get(ln.id);
+                        if (h) restartScroll(h);
+                    }}
+                    onMouseLeave={() => {
+                        if (!modal) nodesRef.current.get(ln.id)?.classList.remove("rz-open");
+                    }}
+                    onFocus={() => {
+                        nodesRef.current.get(ln.id)?.classList.add("rz-open");
+                        const h = nodesRef.current.get(ln.id);
+                        if (h) restartScroll(h);
+                    }}
+                    onBlur={() => {
+                        if (!modal) nodesRef.current.get(ln.id)?.classList.remove("rz-open");
+                    }}
+                    onPointerDown={(e) => {
+                        if (e.pointerType === "touch") {
+                            lastTouchToggle.current = Date.now();
+                            openWish(ln, true);
+                        }
+                    }}
+                    onKeyDown={(e) => {
+                        if (e.key === "Enter") openWish(ln);
+                    }}
+                    onClick={() => {
+                        if (Date.now() - lastTouchToggle.current < 500) return;
+                        openWish(ln);
+                    }}
+                >
+                    <div className="rz-halo" />
+                    <div className="rz-pool">
+                        <span className="rz-pool-light" />
+                        <span className="rz-ring r1" />
+                        <span className="rz-ring r2" />
+                    </div>
+                    <div
+                        className={"rz-sprite" + (ln.v >= 1 ? " rz-oct" : "")}
+                        style={ln.v >= 1 ? { width: 130, height: 130, margin: "-65px 0 0 -65px" } : undefined}
+                    >
+                        <img src={sprites[ln.v]} alt="" draggable={false} />
+                        <div className="rz-flame" />
+                    </div>
+                    <div className="rz-bubble">
+                        <div className="rz-scroll">
+                            <div className="rz-msg">{ln.msg}</div>
+                            {(ln.author || ln.time) && (
+                                <div className="rz-who">
+                                    {ln.author || "无名"} · {ln.time || ""}
+                                </div>
+                            )}
+                        </div>
+                        <span className="rz-seal">{ln.cat}</span>
+                    </div>
+                </div>
+            )),
+        [lanterns, sprites, modal]
+    );
 
     if (sprites.length === 0) return <div className="rz-root" />;
 
@@ -2189,83 +2456,7 @@ export default function RiverBoard() {
             <div className="rz-root">
             <canvas ref={canvasRef} className="rz-canvas" aria-hidden />
             <div ref={layerRef} className="rz-lanterns" aria-hidden>
-                {lanterns.map((ln) => (
-                    <div
-                        key={ln.id}
-                        data-lid={ln.id}
-                        ref={(el) => {
-                            nodesRef.current.set(ln.id, el);
-                        }}
-                        className={
-                            "rz-lantern" +
-                            // 20260905 #4b：approved 0(待审)/2(未通过) = 未点亮——
-                            // 河面只放暗灯笼轮廓，不渲染亮灯光效；undefined/1 = 已点亮
-                            (ln.approved === undefined || ln.approved === 1 ? "" : " rz-unlit")
-                        }
-                        role="button"
-                        tabIndex={0}
-                        aria-label="河灯心愿"
-                        onMouseEnter={() => {
-                            nodesRef.current.get(ln.id)?.classList.add("rz-open");
-                            const h = nodesRef.current.get(ln.id);
-                            if (h) restartScroll(h);
-                        }}
-                        onMouseLeave={() => {
-                            if (!modal) nodesRef.current.get(ln.id)?.classList.remove("rz-open");
-                        }}
-                        onFocus={() => {
-                            nodesRef.current.get(ln.id)?.classList.add("rz-open");
-                            const h = nodesRef.current.get(ln.id);
-                            if (h) restartScroll(h);
-                        }}
-                        onBlur={() => {
-                            if (!modal) nodesRef.current.get(ln.id)?.classList.remove("rz-open");
-                        }}
-                        onPointerDown={(e) => {
-                            if (e.pointerType === "touch") {
-                                lastTouchToggle.current = Date.now();
-                                openWish(ln, true);
-                            }
-                        }}
-                        onKeyDown={(e) => {
-                            if (e.key === "Enter") openWish(ln);
-                        }}
-                        onClick={() => {
-                            if (Date.now() - lastTouchToggle.current < 500) return;
-                            openWish(ln);
-                        }}
-                    >
-                        <div className="rz-halo" />
-                        <div className="rz-pool">
-                            <span className="rz-pool-light" />
-                            <span className="rz-ring r1" />
-                            <span className="rz-ring r2" />
-                        </div>
-                        <div
-                            className={"rz-sprite" + (ln.v >= 1 ? " rz-oct" : "")}
-                            style={ln.v >= 1 ? { width: 130, height: 130, margin: "-65px 0 0 -65px" } : undefined}
-                        >
-                            <img src={sprites[ln.v]} alt="" draggable={false} />
-                            <div className="rz-flame" />
-                        </div>
-                        <div
-                            ref={(el) => {
-                                bubbleRefs.current.set(ln.id, el);
-                            }}
-                            className="rz-bubble"
-                        >
-                            <div className="rz-scroll">
-                                <div className="rz-msg">{ln.msg}</div>
-                                {(ln.author || ln.time) && (
-                                    <div className="rz-who">
-                                        {ln.author || "无名"} · {ln.time || ""}
-                                    </div>
-                                )}
-                            </div>
-                            <span className="rz-seal">{ln.cat}</span>
-                        </div>
-                    </div>
-                ))}
+                {lanternNodes}
             </div>
             <div className="rz-ui">
                 <header className="rz-title">
@@ -2522,7 +2713,19 @@ export default function RiverBoard() {
                             >
                                 时序{albumTabs === "time" && (albumTimeAsc ? "↑" : "↓")}
                             </button>
-                            <button type="button" className={albumTabs === "mine" ? "sel" : ""} onClick={() => setAlbumTabs("mine")}>
+                            <button
+                                type="button"
+                                className={albumTabs === "mine" ? "sel" : ""}
+                                onClick={() => {
+                                    setAlbumTabs("mine");
+                                    // 「我的河灯」按需拉取：只在真的切到这个页签时请求
+                                    //（原来一开灯影集就无条件拉一次 /api/protect/board/mine）
+                                    if (!albumMineLoadedRef.current) {
+                                        albumMineLoadedRef.current = true;
+                                        fetchMyAlbum();
+                                    }
+                                }}
+                            >
                                 我的河灯
                             </button>
                             <button type="button" className={albumTabs === "cat" ? "sel" : ""} onClick={() => setAlbumTabs("cat")}>

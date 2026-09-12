@@ -207,7 +207,8 @@
         padding: 0 2px 16px 0;
         white-space: pre-wrap;
         word-break: break-word;
-        will-change: transform;
+        /* will-change 不写在这里：见文件下方 .rz-lantern:hover/:focus/.rz-open 那条 ——
+           22 个默认 opacity:0 的气泡全常驻合成层是白占图层成本，只有真正打开的那个需要 */
       }
 
       /* 文本末尾的 留名 · 时刻（气泡与详情弹窗共用） */
@@ -243,6 +244,15 @@
   .rz-lantern.rz-open .rz-bubble {
     opacity: 1;
     transform: translateX(-50%) translateY(0);
+  }
+
+  /* 气泡滚动（scrollTick 往 .rz-msg 写 translateY）才需要会变形的合成层。
+     收窄到「打开/悬停中」这一种状态：屏幕上同一时刻至多 1 个气泡在滚动，
+     旧写法让 22 个常驻层空占（老内核软渲染逐层合成的主成本来源之一）。 */
+  .rz-lantern:hover .rz-msg,
+  .rz-lantern:focus .rz-msg,
+  .rz-lantern.rz-open .rz-msg {
+    will-change: transform;
   }
 
   /* ---------------- 界面浮层 ---------------- */
@@ -1182,6 +1192,14 @@
   .rz-boot-off {
     opacity: 0;
     pointer-events: none;
+
+    /* 加载幕淡出后永久留在 DOM 里，原来 .rz-boot-glow 的 rz-boot-pulse 还在无限 tick
+       （每帧样式失效 + 一个 46px box-shadow 模糊层），零视觉收益。
+       animation-play-state 而不是 animation: none —— 保留相位，万一将来淡出被打断
+       也不会看到动画从头开始跳。 */
+    .rz-boot-glow {
+      animation-play-state: paused;
+    }
   }
 }
 

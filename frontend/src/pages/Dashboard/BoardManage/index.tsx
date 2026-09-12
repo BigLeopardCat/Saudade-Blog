@@ -96,7 +96,9 @@ const BoardManage = () => {
             const res = await http.put(`/api/protect/board/${id}/audit`, { approved });
             if (res.data?.code === 200) {
                 message.success(approved === 1 ? '已通过，留言板展示' : '已驳回（未通过），不展示');
-                load();
+                // 只改本地那一行（接口已确认成功）：原来每次都 load() 重拉全量列表，
+                // 连审 10 条就是 11 次全量请求、每次带全部content
+                setItems((prev) => prev.map((it) => (it.talkKey === id ? { ...it, approved } : it)));
             } else {
                 message.error(res.data?.message || '操作失败');
             }
@@ -129,7 +131,7 @@ const BoardManage = () => {
             const res = await http.delete(`/api/protect/board/${id}`);
             if (res.data?.code === 200) {
                 message.success('已删除');
-                load();
+                setItems((prev) => prev.filter((it) => it.talkKey !== id)); // 同上：本地剔除，不重拉全量
             } else {
                 message.error(res.data?.message || '删除失败');
             }
