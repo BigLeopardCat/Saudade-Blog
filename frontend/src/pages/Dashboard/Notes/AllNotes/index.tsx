@@ -304,7 +304,14 @@ const AllNotes = () => {
             title: '文章标题',
             dataIndex: 'noteTitle',
             key: 'title',
-            align: "center"
+            align: "center",
+            // 自动保存的「修改稿」是独立一行（draft_of 指向原文章），标出来免得看着像重复文章
+            render: (title, record: NoteType) => (
+                <Space size={4}>
+                    <span>{title}</span>
+                    {record?.draftOf ? <Tag color="orange">修改稿</Tag> : null}
+                </Space>
+            )
         },
         {
             title: '文章分类',
@@ -371,7 +378,9 @@ const AllNotes = () => {
             align: "center",
             render: (item) => (
                 <div style={{display: "flex",flexDirection:'row',alignItems:'center'}}>
-                    <Fab color="info" aria-label="edit" size='small' style={{marginRight:7}} onClick={() => navigate(`newnote/${item.key}`)}>
+                    {/* 草稿箱里点开一篇「修改稿」时，要编辑的是它的原文章（draftOf），
+                        否则保存会落到修改稿自己身上、发布后线上凭空多一篇同内容文章 */}
+                    <Fab color="info" aria-label="edit" size='small' style={{marginRight:7}} onClick={() => navigate(`newnote/${item.draftOf ?? item.key}`)}>
                         <EditIcon />
                     </Fab>
                     <Popconfirm

@@ -1,4 +1,4 @@
-import { createBrowserRouter, Navigate } from "react-router-dom";
+import { createBrowserRouter, Navigate, useParams } from "react-router-dom";
 import Login from "../pages/Login";
 import Dashboard from "../pages/Dashboard";
 import RiverBoard from "../pages/RiverBoard/index";
@@ -23,6 +23,16 @@ import Talk from "../frontHome/Content/Talk";
 import Times from "../frontHome/Content/Times";
 import NotFound from "../components/NotFound";
 import ReadArticle from "../frontHome/Content/ReadArticle";
+
+/**
+ * 编辑器路由包装：`newnote/:id?` 换 id（编辑 30 → 点侧栏「编辑文章」变新建）时 React 不会重挂载，
+ * 只是 param 变了——编辑器里上一篇的标题/正文/封面/裁剪参数会留着，自动保存再把它写进新建的草稿行，
+ * 等于把上一篇复制一遍。key 强制换实例：旧实例卸载时正常补发/清理自己的草稿，新实例从零开始。
+ */
+const NewNotesRoute = () => {
+    const { id } = useParams();
+    return <NewNotes key={id ?? 'new'} />;
+};
 
 const router = createBrowserRouter([
     {
@@ -98,7 +108,7 @@ const router = createBrowserRouter([
                     },
                     {
                         path: 'newnote/:id?', // 在:id后面加上问号?表示id参数可选
-                        element: <NewNotes />,
+                        element: <NewNotesRoute />,
                     },
                     {
                         path: 'allcategorize',

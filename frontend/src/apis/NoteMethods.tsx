@@ -14,6 +14,10 @@ interface updateNote{
     coverFocusX?: number | null;
     coverFocusY?: number | null;
     coverZoom?: number | null;
+    // 置顶轮播那套（与 cover_* 分立，三列同进同出）
+    carouselFocusX?: number | null;
+    carouselFocusY?: number | null;
+    carouselZoom?: number | null;
     description: string;
     noteCategory: any;
     noteTags: string;
@@ -29,6 +33,9 @@ interface newNote{
     coverFocusX?: number | null;
     coverFocusY?: number | null;
     coverZoom?: number | null;
+    carouselFocusX?: number | null;
+    carouselFocusY?: number | null;
+    carouselZoom?: number | null;
     description: string;
     noteCategory: any;
     noteTags: string;
@@ -36,6 +43,25 @@ interface newNote{
     status: any;
     createTime: string;
     updateTime: string;
+}
+
+// 自动保存（草稿）：只带编辑器里有的字段，后端按 id 决定写到哪一行
+// （新建→建一行草稿；编辑草稿→原地更新；编辑已发布/私密→落到它的「修改稿」行）
+export interface AutosaveDraftPayload{
+    id?: number | null;
+    noteTitle?: string;
+    noteContent?: string;
+    cover?: string;
+    coverFocusX?: number | null;
+    coverFocusY?: number | null;
+    coverZoom?: number | null;
+    carouselFocusX?: number | null;
+    carouselFocusY?: number | null;
+    carouselZoom?: number | null;
+    description?: string;
+    noteCategory?: number | null;
+    noteTags?: string;
+    isTop?: number;
 }
 
 function getNotes(){
@@ -126,6 +152,24 @@ function getAllNotes(){
     })
 }
 
+// 自动保存草稿（编辑中的文章落到草稿箱）
+function autosaveDraft(data: AutosaveDraftPayload){
+    return http({
+        url: '/api/protected/draft/autosave',
+        method: 'POST',
+        data: data
+    })
+}
+
+// 编辑器专用读入口：公开的 /api/public/notes/:id 会挡掉草稿/私密文章（A4 过滤），
+// 草稿箱点进去会 404。返回 { note, draft }（draft = 待继续编辑的修改稿或 null）
+function getNoteForEdit(id: string){
+    return http({
+        url: `/api/protected/draft/editor/${id}`,
+        method: 'GET'
+    })
+}
+
 // NEW ADMIN METHODS
 function getAdminNotes(){
     return http({
@@ -142,4 +186,4 @@ function searchAdminNotes(data:any){
     })
 }
 
-export {getNotes,delNote,delAllNotes,updateNoteStatus,getNoteById,updateNote,createNote,searchNotes,getNotePage,getTopNotes,getAllNotes,getAdminNotes,searchAdminNotes}
+export {getNotes,delNote,delAllNotes,updateNoteStatus,getNoteById,updateNote,createNote,searchNotes,getNotePage,getTopNotes,getAllNotes,getAdminNotes,searchAdminNotes,autosaveDraft,getNoteForEdit}

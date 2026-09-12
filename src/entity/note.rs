@@ -23,7 +23,11 @@ pub struct Model {
     pub carousel_zoom: Option<f64>,
     pub is_top: Option<i32>, // 0 or 1
     pub status: Option<String>, // 'published', etc
-    
+    // 编辑修改稿链接（20260912c）：本行是「哪篇文章的修改稿」。
+    // NULL = 普通文章/独立草稿；Some(原文章 id) = 编辑那篇文章时自动保存落下的独立行，
+    // 原文章行在编辑期间完全不动（线上仍是旧内容），发布时用它覆盖原文章行并删掉本行。
+    pub draft_of: Option<i32>,
+
     pub created_at: DateTime,
     pub updated_at: DateTime,
     pub is_public: bool,

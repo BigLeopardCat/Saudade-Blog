@@ -132,9 +132,16 @@ pub fn create_router(state: AppState) -> Router {
             post(notes::create_note)
             .delete(notes::delete_note)
         )
-        .route("/api/protected/notes/:id", 
-            post(notes::update_note) 
+        .route("/api/protected/notes/:id",
+            post(notes::update_note)
         )
+
+        // 编辑草稿（20260912c）：自动保存 + 编辑器专用读入口
+        // 读入口单独开是因为公开的 GET /api/public/notes/:id 会挡掉草稿/私密文章（A4 修复），
+        // 草稿箱里点开一篇草稿会 404。写法上用独立前缀 /api/protected/draft/，
+        // 不跟 /api/protected/notes/:id 的静态段/参数段混在同一层。
+        .route("/api/protected/draft/autosave", post(notes::autosave_note))
+        .route("/api/protected/draft/editor/:id", get(notes::get_note_for_edit))
 
         // Categories
         .route("/api/protected/category", 

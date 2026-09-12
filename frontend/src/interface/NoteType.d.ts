@@ -17,6 +17,8 @@ export interface NoteType {
     status: string;
     content: string;
     noteKey: string
+    // 编辑修改稿链接：有值 = 本行是那篇文章（id）的自动保存修改稿
+    draftOf?: number | null;
 }
 
 export interface formatNote {
