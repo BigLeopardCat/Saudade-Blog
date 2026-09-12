@@ -1,5 +1,5 @@
 use axum::{Json, extract::{State, Path}, http::HeaderMap};
-use sea_orm::{EntityTrait, Set, QueryOrder, QueryFilter, ColumnTrait};
+use sea_orm::{EntityTrait, Set, QueryOrder, QueryFilter, QuerySelect, ColumnTrait};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use crate::entity::{talk, user};
@@ -51,7 +51,23 @@ async fn list_by_src(
     // 20260905：公开列表只放行 approved=1 的留言（审核开关开启后拦下的 0 不展示；
     // 存量行全为 1，对现状零影响。管理视图 list_board_admin 不受此过滤）
     query = query.filter(talk::Column::Approved.eq(1));
-    let talks = query.order_by_desc(talk::Column::CreatedAt).all(&state.db).await.unwrap_or(vec![]);
+    // created_at 是秒级精度，同秒多行时排序不稳定（加索引后返回顺序可能变）；
+    // 补 id 兜底让结果确定 —— 前端灯影集本来就用 id 做次级比较，语义一致
+    let talks = match query
+        .order_by_desc(talk::Column::CreatedAt)
+        .order_by_desc(talk::Column::Id)
+        .all(&state.db)
+        .await
+    {
+        Ok(v) => v,
+        // 不再 unwrap_or(vec![])：那会把「数据库出错」伪装成「留言板没有留言」（200 + 空数组），
+        // 排障时只看到一条 200，症状却是"灯全没了"。返回 code=500 但 data 仍是空数组
+        //（ApiResponse::error 的 data 是 T::default），前端的 Array.isArray 分支照常走演示灯
+        Err(e) => {
+            tracing::error!("[board] list_by_src(src={}) 查询失败: {}", src, e);
+            return Json(ApiResponse::error("查询失败，请稍后再试"));
+        }
+    };
     let dtos = talks.into_iter().map(|t| TalkDto {
         id: t.id,
         title: t.title.unwrap_or_default(),
@@ -77,13 +93,20 @@ pub async fn list_my_boards(
     let Some(uid) = current_uid(&headers) else {
         return Json(ApiResponse::error("请先登录"));
     };
-    let talks = talk::Entity::find()
+    let talks = match talk::Entity::find()
         .filter(talk::Column::Src.eq("board"))
         .filter(talk::Column::UserId.eq(uid))
         .order_by_desc(talk::Column::CreatedAt)
+        .order_by_desc(talk::Column::Id) // 同秒多行排序确定（同 list_by_src）
         .all(&state.db)
         .await
-        .unwrap_or(vec![]);
+    {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!("[board] list_my_boards(uid={}) 查询失败: {}", uid, e);
+            return Json(ApiResponse::error("查询失败，请稍后再试"));
+        }
+    };
     let dtos = talks.into_iter().map(|t| TalkDto {
         id: t.id,
         title: t.title.unwrap_or_default(),
@@ -232,6 +255,19 @@ async fn insert_talk(
 ///   · 仅 AI 开    → 同步调 agent /review：flag → (0, "flag")；pass → (1, "pass")
 ///   · 都关        → (1, None)（维持 20260905 前全通过的现状）
 /// agent 不可用/超时/解析失败 → 降级放行不拦正常留言（兑底，日志留痕）。
+/// 审核用 HTTP 客户端（进程内单例）：原来每条留言都 `reqwest::Client::new()`，
+/// 等于每次重建连接池、放弃 keep-alive；连接池闲置 90s 由 reqwest 自行回收。
+/// 注意 .timeout 仍留在每请求上（挪进 builder 会变成全局默认值，语义不同）。
+fn review_http() -> &'static reqwest::Client {
+    static C: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    C.get_or_init(|| {
+        reqwest::Client::builder().build().unwrap_or_else(|e| {
+            tracing::warn!("[board] 审核用 HTTP 客户端构建失败，退回默认: {e}");
+            reqwest::Client::new()
+        })
+    })
+}
+
 async fn board_approved(state: &Arc<AppState>, content: &str) -> (i8, Option<String>) {
     let (ai_on, manual_on) = super::web_info::review_switches(&state.db).await;
     if manual_on {
@@ -244,7 +280,7 @@ async fn board_approved(state: &Arc<AppState>, content: &str) -> (i8, Option<Str
     let url = std::env::var("AGENT_URL")
         .map(|u| u.trim_end_matches('/').trim_end_matches("/chat").to_string() + "/review")
         .unwrap_or_else(|_| "http://127.0.0.1:8010/review".to_string());
-    let result = reqwest::Client::new()
+    let result = review_http()
         .post(&url)
         .json(&serde_json::json!({ "content": content }))
         .timeout(std::time::Duration::from_secs(20))
@@ -364,20 +400,45 @@ pub async fn list_board_admin(
     let Some(_uid) = current_uid(&headers) else {
         return Json(ApiResponse::error("请先登录"));
     };
-    let talks = talk::Entity::find()
+    let talks = match talk::Entity::find()
         .filter(talk::Column::Src.eq("board"))
         .order_by_desc(talk::Column::CreatedAt)
+        .order_by_desc(talk::Column::Id) // 同秒多行排序确定（同 list_by_src）
         .all(&state.db)
         .await
-        .unwrap_or(vec![]);
-    let user_ids: Vec<i32> = talks.iter().map(|t| t.user_id).collect();
-    // sea-orm 0.12 无 find_by_ids，用 is_in 批量过滤
-    let users = user::Entity::find()
-        .filter(user::Column::Id.is_in(user_ids))
-        .all(&state.db)
-        .await
-        .unwrap_or(vec![]);
-    let umap: std::collections::HashMap<i32, user::Model> = users.into_iter().map(|u| (u.id, u)).collect();
+    {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!("[board] list_board_admin 查询失败: {e}");
+            return Json(ApiResponse::error("查询失败，请稍后再试"));
+        }
+    };
+    // 去重后再 is_in：同一用户放多盏灯时原来会生成 IN (1,1,1,5,5,...)（19 行 → 19 个占位符，
+    // 去重后 1 个）。sort+dedup 保持首次出现顺序（SQL 可读、执行计划稳定）
+    let mut user_ids: Vec<i32> = talks.iter().map(|t| t.user_id).collect();
+    user_ids.sort_unstable();
+    user_ids.dedup();
+    // sea-orm 0.12 无 find_by_ids，用 is_in 批量过滤；空表不发 IN (NULL) 白查询。
+    // 只取用到的三列（find() 是 SELECT *，会把 password 哈希一起捞出来），
+    // 用 into_tuple 避免为三列再定义一个 FromQueryResult 结构体
+    let users: Vec<(i32, String, String)> = if user_ids.is_empty() {
+        vec![]
+    } else {
+        user::Entity::find()
+            .select_only()
+            .column(user::Column::Id)
+            .column(user::Column::Username)
+            .column(user::Column::Nickname)
+            .filter(user::Column::Id.is_in(user_ids))
+            .into_tuple::<(i32, String, String)>()
+            .all(&state.db)
+            .await
+            .unwrap_or_default()
+    };
+    let umap: std::collections::HashMap<i32, (String, String)> = users
+        .into_iter()
+        .map(|(id, username, nickname)| (id, (username, nickname)))
+        .collect();
     let dtos = talks.into_iter().map(|t| {
         let u = umap.get(&t.user_id);
         BoardAdminDto {
@@ -388,8 +449,8 @@ pub async fn list_board_admin(
             author: t.author,
             created_at: t.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
             user_id: t.user_id,
-            username: u.map(|x| x.username.clone()).unwrap_or_default(),
-            nickname: u.map(|x| x.nickname.clone()).unwrap_or_default(),
+            username: u.map(|x| x.0.clone()).unwrap_or_default(),
+            nickname: u.map(|x| x.1.clone()).unwrap_or_default(),
             approved: t.approved,
             ai_result: t.ai_result,
         }
