@@ -632,7 +632,7 @@
           renderAgentContent(contentSpan, fullText);
           // 20260905h：流式逐字滚动发生在纯文本高度上（textContent 直写），最终
           // markdown 整段重渲染会重排气泡高度（贴纸 img/代码块/标题边距）——重渲染
-          // 后不补滚，最新回复末尾就沉在折叠线下。59020bf 的 ResizeObserver 只盯
+          // 后不补滚，最新回复末尾就沉在折叠线下。9a13ef0 的 ResizeObserver 只盯
           // 容器盒（.chat-messages 是 flex:1 定高滚动容器，内部长高不触发），覆盖
           // 不了这个洞。补非强制回底（用户上翻读历史时仍走"有新消息"指示条语义），
           // 150ms 一枪兜异步图片加载导致的二次长高。
