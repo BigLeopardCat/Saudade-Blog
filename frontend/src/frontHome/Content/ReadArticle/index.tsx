@@ -29,6 +29,7 @@ import highlight from "@bytemd/plugin-highlight";
 import mermaid from '@bytemd/plugin-mermaid'
 import math from "@bytemd/plugin-math";
 import { initZoomDelegation } from "./zoomOverlay";
+import { decorateCodeBlocks } from "../../../utils/chatMarkdown";
 import { bytemdStickers } from "../../../utils/stickers";
 import 'bytemd/dist/index.css'
 import 'github-markdown-css/github-markdown-light.css'
@@ -123,6 +124,28 @@ const ReadArticle = () => {
         if (!content) return;
         return initZoomDelegation(content);
     }, [isLoading]);
+
+    // Effect: 代码块标签栏 + 复制按钮（20260914）——bytemd <Viewer> 只渲染 markdown,
+    // 没有语言标签栏/复制按钮（工具栏是 Editor 的）,渲染后统一装饰（与对话框共用
+    // decorateCodeBlocks）。mermaid 是异步把 pre 换成图、正文也是 React 渲染后才有,
+    // 故挂 MutationObserver 兜住后续节点；装饰幂等,只认自己的标签栏插入不触发死循环。
+    useEffect(() => {
+        if (isLoading) return;
+        const content = document.getElementById("content");
+        if (!content) return;
+        decorateCodeBlocks(content);
+        // 只插入了标签栏自身（无删除）的变更 → 忽略,避免自己触发自己
+        const onlyOwnHeads = (m: MutationRecord) =>
+            m.addedNodes.length > 0 && m.removedNodes.length === 0
+            && Array.from(m.addedNodes).every(
+                (n) => n instanceof HTMLElement && n.classList.contains('code-block-head'));
+        const observer = new MutationObserver((muts) => {
+            if (muts.every(onlyOwnHeads)) return;
+            decorateCodeBlocks(content);
+        });
+        observer.observe(content, { childList: true, subtree: true });
+        return () => observer.disconnect();
+    }, [isLoading, content]);
 
     // Effect to handle link clicks by delegation (Open in new tab), cleanup duplicate effects
     useEffect(() => {

@@ -133,6 +133,49 @@ html
         background: transparent
         padding: 0
         border-radius: 0
+      // 代码块标签栏 + 复制按钮（20260914）：由 utils/chatMarkdown.ts 的
+      // decorateCodeBlocks 渲染后注入（bytemd Viewer 自身没有标签栏/复制按钮）。
+      // 代码块底色两模式都是深色，故标签栏统一走深色，与块体连成一体。
+      .code-block-head
+        display: flex
+        align-items: center
+        justify-content: space-between
+        gap: 12px
+        margin: 16px 0 0
+        padding: 6px 12px
+        background: #1e293b
+        border: 1px solid rgba(255, 255, 255, 0.08)
+        border-bottom: none
+        border-radius: 10px 10px 0 0
+        color: #94a3b8
+        font-family: 'JetBrains Mono', Consolas, monospace
+        font-size: 12px
+        line-height: 1.4
+      .code-lang
+        overflow: hidden
+        text-overflow: ellipsis
+        white-space: nowrap
+      .code-block-head + pre
+        margin-top: 0 !important
+        border-radius: 0 0 10px 10px !important
+      .code-copy
+        flex: 0 0 auto
+        padding: 2px 10px
+        background: rgba(255, 255, 255, 0.08)
+        border: 1px solid rgba(255, 255, 255, 0.16)
+        border-radius: 6px
+        color: #cbd5e1
+        font-family: inherit
+        font-size: 12px
+        line-height: 1.5
+        cursor: pointer
+        transition: background 0.15s, color 0.15s, border-color 0.15s
+        &:hover
+          background: rgba(255, 255, 255, 0.18)
+          color: #fff
+        &.copied
+          color: #86efac
+          border-color: rgba(134, 239, 172, 0.45)
       table
         display: table !important
         border-collapse: collapse !important
@@ -371,6 +414,20 @@ html
 .frontDark .readContent .markdown-body .bytemd-mermaid
   border-color: rgba(148, 163, 184, 0.55)
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.45)
+
+// ── 夜间代码块对比度修复（20260914，用户实测「文章详情页夜间高亮看不清」）──
+// 夜间页面底色实测 rgb(18,26,39)，代码块底色 #0f172a——两者对比度仅 1.02:1，
+// 原 8% 白描边在深底上约等于看不见：块体与页面糊成一片。加白色轮廓（用户指定
+// 方案）+ 轻微外阴影让块体重成形；白天页面是浅色底、深色块本就跳得出来，故只
+// 改 .frontDark。阴影/box-shadow 不占布局，不引起重排。
+.frontDark .readContainer .readContent .markdown-body
+  pre, .code-block-head
+    border-color: rgba(255, 255, 255, 0.35)
+  pre
+    box-shadow: 0 2px 14px rgba(0, 0, 0, 0.45)
+  // 行内 code 同一根因（深底上深色块）：补一圈淡轮廓，与块体同风格
+  :not(pre) > code
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18)
 
 // 内置表情包（:名字: → <img class="sticker">）行内尺寸（class 与 src 前缀双保险，
 // 20260903 泠月喵 PNG 贴纸素材；与 utils/stickers.ts 清单同步）
