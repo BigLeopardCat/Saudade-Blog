@@ -555,6 +555,16 @@ fn render_exec_row(row: &serde_json::Value) -> String {
         "list_talks" => "查看说说".to_string(),
         "get_announcements" => "查看公告".to_string(),
         "list_notes" => "查看文章列表".to_string(),
+        // 站点信息类数据工具（20260913 入 planner 白名单）：此前 planner 点不到、
+        // 无从执行，渲染层也就没有对应动作词，落默认「操作记录(<tool>)」内部格式。
+        // 措辞与 agent 侧 server.py _NOARG_VERB 同源，跨轮执行记忆行才读得懂。
+        "get_blog_info" => "查看博客信息".to_string(),
+        "get_social_links" => "查看社交链接".to_string(),
+        "get_site_map" => "查看站点结构".to_string(),
+        "get_top_notes" => "查看置顶文章".to_string(),
+        "list_categories" => "查看分类".to_string(),
+        "list_tags" => "查看标签".to_string(),
+        "get_weather" => format!("查看天气「{}」", arg("location")),
         _ => format!("操作记录({})", tool),
     };
     let detail = detail.replace('[', "「").replace(']', "」");
