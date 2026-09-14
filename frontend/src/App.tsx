@@ -8,7 +8,7 @@ import './frontHome/main.css';
 import './frontHome/Content/ReadArticle/zoomOverlay';
 import { useEffect, useState } from "react";
 import './App.sass';
-import { readDarkMode, userChoiceActive } from './theme';
+import { readDarkMode, userChoiceActive, isNightHour } from './theme';
 import BottomMenu from "./components/BottomMenu";
 import Live2dAgent from "./components/Live2dAgent";
 
@@ -38,15 +38,15 @@ function App() {
 
     // 夜间/日间时段自动切换（前端默认行为，不依赖 agent/看板娘脚本）：
     // 23:00-次日06:00 自动开启夜间，其余时段自动恢复日间；
-    // 访客手动选择过（darkModeUserChoice，含通过对话让 agent 调节）则在当前主题日
-    // （06:00 为界）内尊重意愿不覆盖，跨日自动恢复跟随（20260908 时效化）；
+    // 访客【在夜间窗口内】手动选择过（darkModeUserChoice，含通过对话让 agent 调节）
+    // 则在本主题日（06:00 为界）内尊重意愿不覆盖，跨 6:00 自动恢复跟随；
+    // 白天的切换不记意愿（20260914：此前白天一次浅色会否掉当晚自动夜间）；
     // 状态变化时仅切换一次，分钟级检查 + 页面回到前台时补查
     useEffect(() => {
         const prefersAuto = () => {
             try {
                 if (userChoiceActive()) return;
-                const h = new Date().getHours();
-                const night = h >= 23 || h < 6;
+                const night = isNightHour();
                 if (night !== readDarkMode()) {
                     window.dispatchEvent(new CustomEvent('darkmode-change', { detail: night }));
                 }

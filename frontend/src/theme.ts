@@ -20,15 +20,33 @@ export function currentThemeDay(): string {
     return `${d.getFullYear()}-${mm}-${dd}`;
 }
 
-// 手动切换（含 agent DARKMODE 命令调节）= 访客意愿：记录偏好值 + 写入时的主题日
+// 夜间窗口 = 23:00-次日 06:00（自动夜间时段）。全站口径唯一来源：App.tsx 的自动
+// 切换、recordUserChoice 的记意愿判据都走这里，避免两处各写一份漂移。
+export function isNightHour(d: Date = new Date()): boolean {
+    const h = d.getHours();
+    return h >= 23 || h < 6;
+}
+
+// 手动切换（含 agent DARKMODE 命令调节）= 访客意愿：记录偏好值 + 写入时的主题日。
+// 20260914：只在【夜间窗口内】才记为意愿——白天手动切浅色不再否掉当晚的自动夜间
+// （20260908 语义的毛刺：白天一次浅色 → 当晚 23:00 不自动切，非等到次日 6:00 主题日
+// 翻篇才恢复；白天切深色则察觉不到）。窗口外一律清除标记：既保证语义，也避免
+// localStorage 残留旧值把"看存储判断状态"带偏。
 export function recordUserChoice(v: string): void {
     try {
+        if (!isNightHour()) {
+            localStorage.removeItem('darkModeUserChoice');
+            localStorage.removeItem('darkModeChoiceDay');
+            return;
+        }
         localStorage.setItem('darkModeUserChoice', v);
         localStorage.setItem('darkModeChoiceDay', currentThemeDay());
     } catch (e) { /* ignore */ }
 }
 
-// choice 是否在本次主题日内有效（无日期 = 旧版写入 → 视为已过期，自动切换恢复）
+// choice 是否在本次主题日内有效（无日期 = 旧版写入 → 视为已过期，自动切换恢复）。
+// 20260914 起 choice 只可能在夜间窗口内写入，而整个 23:00-06:00 属于同一主题日
+// （06:00 才翻篇），故"主题日内有效"= "当晚这段夜间窗口内有效"，06:00 自然过期。
 export function userChoiceActive(): boolean {
     try {
         return !!localStorage.getItem('darkModeUserChoice')
