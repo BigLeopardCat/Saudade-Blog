@@ -19,6 +19,21 @@
       const d = new Date(Date.now() - 6 * 3600 * 1000);
       return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
     };
+    // 访客意愿标记（20260914）：与 src/theme.ts 的 recordUserChoice 同口径——只在夜间窗口
+    // （23:00-次日 06:00）内记录，白天调节不记（否则白天让 agent 切一次浅色会否掉当晚的
+    // 自动夜间）；窗口外清除标记，避免残留旧值。改这段须与 theme.ts 一起改。
+    const markVisitorChoice = () => {
+      try {
+        const h = new Date().getHours();
+        if (!(h >= 23 || h < 6)) {
+          localStorage.removeItem('darkModeUserChoice');
+          localStorage.removeItem('darkModeChoiceDay');
+          return;
+        }
+        localStorage.setItem('darkModeUserChoice', 'true');
+        localStorage.setItem('darkModeChoiceDay', choiceDay());
+      } catch (e) {/* ignore */}
+    };
     const pullHistory = engine.pullHistory;
     const saveHistory = engine.saveHistory;
     const apiDiscard = engine.apiDiscard;
@@ -376,18 +391,17 @@
               if (toolCall[0].startsWith('toggle_effect')) {
                 toggleEffect(toolCall[1], toolCall[2]);
               } else if (toolCall[0].startsWith('toggle_dark_mode')) {
-                try { localStorage.setItem('darkModeUserChoice', 'true'); } catch(e2) {/* ignore */}
-                try { localStorage.setItem('darkModeChoiceDay', choiceDay()); } catch(e2) {/* ignore */}
+                markVisitorChoice();
                 applyDarkMode(toolCall[1] === 'on', true);
               }
             }
             // 处理夜间模式命令（DARKMODE:on|off）
-            // 通过对话让 agent 调节同样代表访客意愿：标记 darkModeUserChoice，夜间自动切换让位；
+            // 通过对话让 agent 调节同样代表访客意愿：夜间窗口内标记 darkModeUserChoice，
+            // 自动切换让位（白天调节不记，见 markVisitorChoice）；
             // animate=true 触发与手动点击切换按钮相同的日月过渡动画
             const darkMatch = fullText.match(/DARKMODE:\s*(on|off)/);
             if (darkMatch) {
-              try { localStorage.setItem('darkModeUserChoice', 'true'); } catch(e2) {/* ignore */}
-              try { localStorage.setItem('darkModeChoiceDay', choiceDay()); } catch(e2) {/* ignore */}
+              markVisitorChoice();
               applyDarkMode(darkMatch[1] === 'on', true);
             }
         };

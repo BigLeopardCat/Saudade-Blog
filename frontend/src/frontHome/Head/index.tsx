@@ -143,7 +143,9 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
         // 20260902：手动切换 = 访客意愿，写入 darkModeUserChoice 让 App.tsx 的
         // 自动夜间（23:00-6:00 分针检查）不再覆盖。此前只写 isDarkMode——夜间手动
         // 切浅色后 1 分钟内被自动逻辑顶回深色（用户报"突然变成夜间模式"）。
-        // 20260908：choice 带主题日（06:00 为界）——让位跨日自动失效，防一次手动永久失去自动
+        // 20260908：choice 带主题日（06:00 为界）——让位跨日自动失效，防一次手动永久失去自动。
+        // 20260914：只在夜间窗口内的切换才记意愿（见 theme.recordUserChoice）——白天切浅色
+        // 不再否掉当晚自动夜间；白天切换会顺手清掉残留标记
         recordUserChoice(!isDark ? 'dark' : 'light');
         // 同步看板娘 agent 的全局状态：autoload.js 监听 darkmode-change 更新 __darkMode，
         // 否则页面内手动切换后 current_darkmode 上报陈旧值，agent 感知只能靠对话记忆
