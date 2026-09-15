@@ -5,13 +5,23 @@
 //    ContentHome/index.sass:81-82），半透明观感一律靠 rgba 底色 + 静态渐变。
 //    合成器逐帧重算模糊会把首页帧率压垮，而这正是首页最重的区域。
 
+// 尺寸 = 社交按钮右侧空白区的 ~80%（20260915 用户要求放大）：宽 47vw + 900 上限、
+// 高 58vh + 640 上限，右缘固定让开右侧固定栏。空白区 = .SayWords 右缘 → .TopMao 左缘
+// （≤1200px 时 .TopMao 是 display:none，右边界退化成视口右缘，此时仍留 84px）。
+// 六视口实测见 docs/word-graph.md §8，最要紧的三档：
+//   1440×900  677×522  占空白区 83%  距左文 114  距底 59
+//   1920×1080 900×626  72%          332         93
+//   1366×768  642×445  86%          81          34 ← 最紧的一档，别再往下压高度
+// 900 那个上限只对 ≥1915px 生效（窄屏走 47vw）：没有它 1920 只有 780px = 空白区 62%。
+// 再宽的屏（2048/2560）占比自然掉到 65%/49%——空白区随视口线性长，固定比例填不满，
+// 且 640 的高度上限在 ≥1104px 高的屏上先绷住（2560×1440 实测 900×640，距底还有 265）。
 .vitrine
   position: absolute
   right: 96px
   top: 50%
   transform: translateY(-46%)
-  width: min(34vw, 620px)
-  height: min(46vh, 560px)
+  width: min(47vw, 900px)
+  height: min(58vh, 640px)
   z-index: 3
   display: flex
   flex-direction: column
@@ -211,8 +221,8 @@
 @media screen and (max-width: 1300px)
   .vitrine
     right: 84px
-    width: min(38vw, 520px)
-    height: min(44vh, 500px)
+    width: min(42vw, 560px)
+    height: min(52vh, 520px)
 
 // ≤1100px 直接不显示：这时左半屏的文字组已经压过来，硬塞会打架
 @media screen and (max-width: 1100px)

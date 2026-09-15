@@ -8,10 +8,15 @@ export const HOME_CAM: Camera = { yaw: 0.55, pitch: 0.16, dist: 4.3, target: [0,
 
 const FOV = (50 * Math.PI) / 180;
 const PITCH_LIMIT = 1.35;
-const DIST_MIN = 1.7;
+/** 滚轮缩放区间。点云半径实测：max 1.11 / p90 0.86 / p50 0.63（333 词产物）——原来
+ *  DIST_MIN=1.7 连最外层点都够不到（相机永远在球外），所以"还没放大多数就到极限了"
+ *  （20260915 用户报）。放到 0.4 才能真的钻进簇内部看单个词，仍远大于 NEAR=0.05，
+ *  贴脸裁切逻辑不受影响。 */
+const DIST_MIN = 0.4;
 const DIST_MAX = 9;
-/** 定位飞行时的最近距离。比 DIST_MIN 稍远一点，保证滚轮也能退回到同一档位 */
-const LOCATE_DIST_MIN = 1.9;
+/** 定位飞行时的最近距离。仍比 DIST_MIN 远（滚轮从这里还能继续往两边退），但 1.9 太保守：
+ *  单个词的包围球半径取 0.22，1.9 时它只占画面 1/4，看着像没飞过去。0.8 ≈ 占 6 成。 */
+const LOCATE_DIST_MIN = 0.8;
 
 /** 边按相似度分 4 档透明度，每档一次 stroke：569 条边 → 4 次绘制调用。
  *  逐条 stroke 在低端机上就是掉帧主因。 */
@@ -461,9 +466,17 @@ export class WordGraphEngine {
     private onWheel = (e: WheelEvent) => {
         e.preventDefault();
         this.anim = null;
-        this.cam.dist = Math.max(DIST_MIN, Math.min(DIST_MAX, this.cam.dist * Math.exp(e.deltaY * 0.0012)));
+        this.cam.dist = zoomBy(this.cam.dist, e.deltaY);
         this.invalidate();
     };
+}
+
+/** 滚轮一步的距离（正 deltaY = 拉远）。抽成纯函数是为了能在 node 里断言"到底要滚几格
+ *  才到极限"——区间放宽后这个手感就是功能本身，见 tests/wordgraph-engine.test.mjs。 */
+export function zoomBy(dist: number, deltaY: number): number {
+    // 0.0016/px：一格滚轮(Chrome 100px)约 17%，从默认 4.3 推到最近端 0.4 约 15 格；
+    // 区间放宽后还用 0.0012（12.7%/格）要 19 格才到底，手感是"滚半天没动"
+    return Math.max(DIST_MIN, Math.min(DIST_MAX, dist * Math.exp(deltaY * 0.0016)));
 }
 
 /**
