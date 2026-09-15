@@ -1,9 +1,11 @@
-// ═ 主题意愿语义回归 ══
+// ═ 主题边界语义回归 ══
 //   node tests/theme-choice.test.mjs
-// 覆盖 20260915 修的「夜间模式 1 分钟后自动切回白天」：根因不在某一边，而在
-// 「手动切换记意愿(recordUserChoice)」与「每分钟状态收敛(autoThemeDecision)」的交互里，
-// 所以两半一起测。全站四个入口都走这两个函数：App.tsx 的 prefersAuto（分钟收敛）、
-// Head 的桌面开关、PhoneSwitch 的移动开关、看板娘 chat-stream.js 的 DARKMODE 命令。
+// 测的是 20260916 用户口述的语义（**边界一次性**，取代旧的每分钟状态收敛）：
+//   23:00 进窗 → 自动切夜一次；窗内访客手动改 → 本窗口让位；
+//   06:00 出窗 → 若夜间则切回日间 + 清意愿；06:00-23:00 → 完全遵循访客。
+// 载体是 theme.ts 的 autoThemeDecision（闩式，会写 localStorage）× recordUserChoice。
+// 全站四个入口都走这两个函数：App.tsx 的分钟 ticker（边界探测）、Head 的桌面开关、
+// PhoneSwitch 的移动开关、看板娘 chat-stream.js 的 DARKMODE 命令。
 // theme.ts 是 TS，用 esbuild 单文件打包（本机禁止 vite build，见 CLAUDE.md §2）。
 import { execFileSync } from 'child_process';
 import { mkdtempSync, readFileSync } from 'fs';
@@ -56,79 +58,156 @@ const ok = (cond, name, detail) => {
 const eq = (got, want, name) => ok(got === want, name, { got, want });
 
 // ══════════════════════════════════════════════
-console.log('== 白天手动切夜间：必须活过分钟收敛（本次修的 bug）==');
+// 把 App.tsx 的分钟 ticker 复刻成一个可单步的驱动器：只有返回非 null 才"真的切了"，
+// 并把新状态写回存储（真实链路里这一步是 darkmode-change 事件的监听者做的）。
+function tick(now) {
+    const next = theme.autoThemeDecision(now);
+    if (next !== null) localStorage.setItem('isDarkMode', JSON.stringify(next));
+    return next;
+}
+const dark = () => theme.readDarkMode();
+
+console.log('== 23:00 进窗：自动切夜，且只切一次 ==');
 {
-    store.clear(); at(22, 10);                       // 前半夜：不是 23:00-6:00 窗口
-    localStorage.setItem('isDarkMode', '"true"');    // 访客拨了开关，状态已是夜间
-    theme.recordUserChoice('dark');                  // 开关同款调用（Head/index.tsx:149）
-    ok(theme.userChoiceActive(), '白天切夜间也记成了意愿');
-    eq(theme.autoThemeDecision(), null, '下一分钟收敛不动它（修复前这里返回 false → 被改回白天）');
+    store.clear(); at(22, 59);
+    localStorage.setItem('isDarkMode', '"false"');
+    eq(tick(new Date()), null, '22:59（窗口外）：完全不动');
 
-    // 反证：没有意愿时收敛确实会顶回日间——这就是 bug 现场，不是我们的臆测
-    store.delete('darkModeUserChoice'); store.delete('darkModeChoiceDay');
-    eq(theme.autoThemeDecision(), false, '反证：无意愿的白天会被收敛回日间');
+    at(23, 0);
+    eq(tick(new Date()), true, '23:00 进窗：自动切夜一次');
+    eq(dark(), true, '状态已落到夜间');
 
-    // 连跑 3 次分钟收敛（App.tsx setInterval 60s），状态必须稳住
-    store.clear(); at(22, 10);
+    // 边界是"一次事件"：接着每分钟跑，不能再动作（否则窗口内访客的改动会被反复顶掉）
+    for (const m of [[23, 1], [23, 2], [23, 30], [0, 15], [5, 58], [5, 59]]) {
+        at(m[0], m[1]);
+        eq(tick(new Date()), null, `${String(m[0]).padStart(2, '0')}:${String(m[1]).padStart(2, '0')} 窗内不再动作`);
+    }
+    eq(dark(), true, '整段夜窗保持夜间');
+}
+
+console.log('== 窗口内访客自己改：让位，本窗口不再自动改 ==');
+{
+    // 进窗时已是夜间（比如访客白天就开着）：入窗不重复动作，但边界照样算"处理过"
+    store.clear(); at(23, 30);
     localStorage.setItem('isDarkMode', '"true"');
+    eq(tick(new Date()), null, '已夜间 → 入窗不动作');
+    theme.recordUserChoice('light');                 // 访客当场切浅色（Head/index.tsx）
+    localStorage.setItem('isDarkMode', '"false"');
+    let cur = false;
+    for (const m of [[23, 31], [0, 15], [3, 40], [5, 59]]) {   // 跨到次日凌晨，仍在同一夜窗内
+        at(m[0], m[1]);
+        const d = tick(new Date());
+        if (d !== null) cur = d;
+    }
+    eq(cur, false, '窗内切浅色后每分钟都不再被顶回夜间');
+}
+{
+    // 反过来：进窗那一刻访客的意愿就已经在了（先表态、边界后到）→ 边界不动作
+    store.clear(); at(22, 50);
+    localStorage.setItem('isDarkMode', '"false"');
+    theme.recordUserChoice('dark');                  // 窗口外切夜间：任何时段都记（20260915）
+    at(23, 0);
+    eq(tick(new Date()), null, '进窗前已有的意愿 → 边界让位，不改成夜间');
+}
+{
+    // 窗口内切夜间：意愿存在（recordUserChoice 不变），且本来就已经是夜间
+    store.clear(); at(2, 0);
+    localStorage.setItem('isDarkMode', '"false"');
+    theme.recordUserChoice('dark');
+    ok(theme.userChoiceActive(), '深夜手动切夜间记意愿');
+    eq(tick(new Date()), null, '深夜入窗（闩未处理）也不动作：已是夜间且有意愿');
+}
+
+console.log('== 06:00 出窗：切回白天 + 清意愿与闩 ==');
+{
+    store.clear(); at(23, 0, 15);
+    localStorage.setItem('isDarkMode', '"false"');
+    eq(tick(new Date()), true, '23:00 进窗切夜');
+    at(5, 59, 16);
+    eq(tick(new Date()), null, '05:59 仍在窗内（主题日未翻篇）→ 不动');
+    eq(dark(), true, '凌晨仍是夜间');
+    at(6, 0, 16);
+    eq(tick(new Date()), false, '06:00 出窗：切回白天');
+    eq(dark(), false, '状态已回日间');
+    ok(!theme.userChoiceActive(), '出窗顺手清掉意愿（新的一天重新开始）');
+    ok(!localStorage.getItem('darkModeInWindow'), '出窗闩也清了');
+    at(6, 1, 16);
+    eq(tick(new Date()), null, '出窗后不再动作');
+
+    // 闩复位 ⇒ 当晚 23:00 还能自动切夜（不会被"今天已经处理过"卡住）
+    at(23, 0, 16);
+    eq(tick(new Date()), true, '次日 23:00 又能自动切夜（闩已复位）');
+}
+{
+    // 出窗时本来就是白天：不动作，但仍要清意愿与闩
+    store.clear(); at(23, 30, 15);
+    localStorage.setItem('isDarkMode', '"true"');
+    eq(tick(new Date()), null, '入窗：已夜间 → 不动作');
+    theme.recordUserChoice('light');                 // 访客窗内切成浅色
+    localStorage.setItem('isDarkMode', '"false"');
+    at(6, 0, 16);
+    eq(tick(new Date()), null, '出窗时已是白天 → 不重复切');
+    ok(!theme.userChoiceActive(), '意愿照样清空');
+}
+
+console.log('== 06:00-23:00 完全遵循访客：旧 bug 的防线 ==');
+{
+    // 修复前（每分钟状态收敛）这里返回 false → 白天手动开的夜间 60 秒后被顶回。
+    // 现在非窗口时间恒为 null，怎么跑都不动。
+    store.clear(); at(14, 0);
+    localStorage.setItem('isDarkMode', '"true"');
+    eq(tick(new Date()), null, '白天无意愿的夜间模式：不动它');
     theme.recordUserChoice('dark');
     let cur = true;
     for (let i = 1; i <= 3; i++) {
-        at(22, 10 + i);
-        const d = theme.autoThemeDecision();
+        at(14, i);
+        const d = tick(new Date());
         if (d !== null) cur = d;
     }
-    eq(cur, true, '3 分钟后仍是夜间（修复前第 1 分钟就变回白天）');
-}
+    eq(cur, true, '连跑 3 分钟仍是夜间');
 
-console.log('== 白天切浅色仍然不记意愿（20260914 语义不许回退）==');
-{
+    // 白天切浅色仍然不记意愿（20260914 语义不许回退）
     store.clear(); at(14, 0);
     localStorage.setItem('darkModeUserChoice', 'dark');   // 假设上一晚留下的标记
     localStorage.setItem('darkModeChoiceDay', theme.currentThemeDay());
     theme.recordUserChoice('light');
-    eq(theme.userChoiceActive(), false, '白天切浅色 → 标记被清（不否掉当晚的自动夜间）');
-    eq(theme.autoThemeDecision(), null, '白天 + 浅色：状态已一致，收敛也不动');
+    ok(!theme.userChoiceActive(), '白天切浅色 → 标记被清（不否掉当晚的自动切夜）');
+    eq(tick(new Date()), null, '白天 + 浅色：不动');
+    // 于是当晚 23:00 照常自动切夜
+    at(23, 0);
+    eq(tick(new Date()), true, '当晚 23:00 照常自动切夜');
 }
 
-console.log('== 夜间窗口（23:00-6:00）：切浅色让位、切夜间记意愿 ==');
+console.log('== 页面整夜关着 / 窗口内才打开 ==');
 {
-    store.clear(); at(23, 30);
-    localStorage.setItem('isDarkMode', '"true"');
-    theme.recordUserChoice('light');
-    ok(theme.userChoiceActive(), '夜间切浅色记意愿');
-    eq(theme.autoThemeDecision(), null, '当夜让位（否则又被自动逻辑顶回深色）');
+    // 关机一晚：23:00 那次切夜发生在关页之前（闩='1' 留在存储里），天亮后才重新打开。
+    // 出窗动作在下一个 tick 补上——这正是 ticker 必须每分钟跑、而不是只在挂载时跑的原因。
+    store.clear(); at(23, 0, 15);
+    localStorage.setItem('isDarkMode', '"false"');
+    eq(tick(new Date()), true, '睡前 23:00 切夜');
+    at(9, 0, 16);                                    // 整夜没 tick，直接到早上打开
+    eq(tick(new Date()), false, '开机第一次 tick 补上出窗：切回白天');
+    eq(dark(), false, '状态已回日间');
+    ok(!theme.userChoiceActive(), '意愿也清了');
+    at(9, 1, 16);
+    eq(tick(new Date()), null, '之后不再动作');
 }
 {
+    // 窗口内首次打开（没进过窗，闩为空）：切夜一次
     store.clear(); at(2, 0);
     localStorage.setItem('isDarkMode', '"false"');
-    theme.recordUserChoice('dark');
-    ok(theme.userChoiceActive(), '深夜切夜间记意愿');
-    eq(theme.autoThemeDecision(), null, '深夜已是夜间，收敛不动');
-}
-
-console.log('== 06:00 主题日边界：意愿自动过期 ==');
-{
-    store.clear(); at(23, 30, 15);
-    localStorage.setItem('isDarkMode', '"false"');
-    theme.recordUserChoice('light');
-    at(5, 59, 16);
-    ok(theme.userChoiceActive(), '次日 05:59（同一主题日）意愿仍有效');
-    at(6, 0, 16);
-    ok(!theme.userChoiceActive(), '06:00 主题日翻篇 → 意愿过期');
-    eq(theme.autoThemeDecision(), null, '06:00 天亮 + 当前浅色 → 收敛无动作');
+    eq(tick(new Date()), true, '窗口内首次打开 → 切夜一次');
+    at(2, 1);
+    eq(tick(new Date()), null, '下一分钟不再动作');
 }
 {
-    // 白天写入的意愿也是"当日有效"：白天开的夜间模式能撑过当晚，次日 06:00 归还自动
-    store.clear(); at(14, 0, 15);
+    // 前半夜关机、天亮后才开：**从没进过窗**（闩为空）→ 出窗动作不存在，完全不动。
+    // 别把这条写成"跟随系统偏好"——语义是"06:00-23:00 只认访客"。
+    store.clear(); at(22, 0, 15);
     localStorage.setItem('isDarkMode', '"true"');
-    theme.recordUserChoice('dark');
-    at(23, 30, 15);
-    ok(theme.userChoiceActive(), '白天写的意愿当晚仍有效');
-    at(5, 59, 16);
-    ok(theme.userChoiceActive(), '跨到次日凌晨（仍属同一主题日）仍有效');
-    at(6, 0, 16);
-    ok(!theme.userChoiceActive(), '次日 06:00 过期，自动夜间归还系统');
+    at(8, 0, 16);
+    eq(tick(new Date()), null, '整夜未进窗的夜间模式：白天打开也不动它');
+    eq(dark(), true, '仍是访客选择的夜间');
 }
 
 console.log('== 旧版残留 / agent 侧的值 ==');
@@ -136,7 +215,7 @@ console.log('== 旧版残留 / agent 侧的值 ==');
     store.clear(); at(23, 30);
     localStorage.setItem('darkModeUserChoice', 'true');   // 旧版写入，无 darkModeChoiceDay
     ok(!theme.userChoiceActive(), '无日期的旧标记不生效（20260908 语义）');
-    eq(theme.autoThemeDecision(), true, '夜间无有效意愿 → 自动切夜间');
+    eq(tick(new Date()), true, '夜间无有效意愿 → 进窗自动切夜');
 }
 {
     store.clear(); at(22, 0);
