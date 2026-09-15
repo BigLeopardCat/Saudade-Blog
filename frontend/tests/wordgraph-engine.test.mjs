@@ -257,5 +257,43 @@ console.log('== cameraFor ==');
     eq(out.length, 0, '大簇的全部命中点也在视锥内（取景系数够大）', out);
 }
 
+console.log('== 大小写：索引原形(小写) vs 节点显示形（20260916 修的 chip 不定位）==');
+{
+    // 真因：agent 侧索引 index.json 的 words 是**小写原形**（build_word_graph.py:644），
+    // 前端产物节点是**显示形**（Python/JWT/MQTT…），实跑 341 词里 44 个只差大小写。
+    // 修前 setHighlight / cameraFor / 组件 findIndex 三处都用精确匹配 → 向量路返回的小写词
+    // 被静默丢弃：不飞（cameraFor 查不到 → 原样返回）、不亮（hits 空）、不选中（findIndex −1）
+    // = 用户看到的"chip 点了没反应"；而本地兜底路 locate.ts 的 keyOf 本来就大小写不敏感，
+    // 于是出现"检索服务可用时反而不如降级准"的怪相。
+    const mixed = [mk(0, 'Python', 1, 0, 0, 1), mk(1, 'JWT', -1, 0, 0, 1), mk(2, '异步', 0, 1, 0, 1)];
+    const g = { ...GRAPH, nodes: mixed, edges: [] };
+
+    eq(engine.wordKey('Python'), 'python', 'wordKey：ASCII 折小写');
+    eq(engine.wordKey('Python'), engine.wordKey('python'), '显示形与索引原形同键');
+    eq(engine.wordKey('异步'), '异步', '非 ASCII 原样（中文无大小写）');
+
+    // 取景：小写查询必须落到显示形节点上
+    const cam = engine.cameraFor(g, [{ w: 'python', s: 1 }], CAM0);
+    ok(cam !== CAM0, '小写 python 有命中 → 不是"无命中原样返回"');
+    near(cam.target[0], mixed[0].x, 1e-6, 'target x = Python 节点位置');
+    near(cam.target[1], mixed[0].y, 1e-6, 'target y = Python 节点位置');
+    near(cam.target[2], mixed[0].z, 1e-6, 'target z = Python 节点位置');
+    const p = new engine.Projection(3);
+    engine.projectNodes(mixed, cam, 620, 460, p);
+    ok(p.x[0] >= 0 && p.x[0] <= 620 && p.y[0] >= 0 && p.y[0] <= 460, 'Python 落在视锥内（飞过去看得见）');
+
+    eq(engine.cameraFor(g, [{ w: 'c++', s: 1 }], CAM0), CAM0, '真不存在的词仍原样不动（没放宽成模糊匹配）');
+    // 多命中里混一个不存在的词：存在的那个照样算进质心
+    const cam2 = engine.cameraFor(g, [{ w: 'jwt', s: 1 }, { w: 'c++', s: 1 }], CAM0);
+    near(cam2.target[0], mixed[1].x, 1e-6, '混入未命中的词：仍定位到 JWT（不做平均拉偏）');
+
+    // 本地兜底路（locate.ts 的 keyOf 已改为 import wordKey）与向量路同判：
+    // 同一批小写查询词，两条路都必须命中显示形节点——这才是"两路一致"。
+    const ws = locate.locateLocal('python', g).map((h) => h.w);
+    truthy(ws.includes('Python'), "降级路也算命中 Python（两路同一 wordKey）", ws);
+    const ws2 = locate.locateLocal('jwt token', g).map((h) => h.w);
+    truthy(ws2.includes('JWT'), '降级路：小写 jwt 命中 JWT', ws2);
+}
+
 console.log(`\n${failed === 0 ? '✓' : '✗'} wordgraph-engine: ${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

@@ -97,7 +97,14 @@ body {
     opacity: 0;
 }
 
-header{
+/* ⚠️ 这条规则必须限定在 .shell 内（20260916 收作用域）。它原本是裸标签选择器
+   `header{position:relative;top:20px}`（给后台侧栏 logo 垂直位置用的），但本文件会进
+   首页 bundle ⇒ **全局匹配任何 `<header>`**：展示柜标题栏就因此被顶下去 20px（当时靠把
+   `<header>` 改成 `<div>` 绕开，见 Vitrine/index.tsx）。同类地雷别再加裸标签规则。
+   实测**未**受影响的同类：RiverBoard 的 `<header class="rz-title">`——它的类选择器自带
+   `position:absolute; top:28px`，优先级压过裸标签规则。
+   DOM 结构：div.shell > nav.shell > header。 */
+.shell header{
     position: relative;
     top: 20px;
 }

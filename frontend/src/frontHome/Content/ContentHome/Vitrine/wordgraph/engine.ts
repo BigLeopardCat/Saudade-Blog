@@ -48,6 +48,17 @@ const DRAG_DBL_GUARD = 300;
  *  会直接违反"空闲零 rAF"这条硬要求。 */
 const PULSE_MS = 1800;
 
+/** 词条匹配键（**唯一来源**，只此一处折小写）：ASCII 折小写，中文原样。
+ *
+ *  ⚠️ 别改回精确匹配：agent 侧索引 `index.json` 存的是**小写原形**（建图脚本写入
+ *  `words`），前端产物节点 `w` 存的是**显示形**（Python / asyncio / MQTT …）。341 词里
+ *  有 44 个只差大小写，精确匹配时向量检索返回的小写词会被静默丢弃 → 不飞
+ *  （cameraFor 里查不到点，直接 return 原机位）、不亮（hits 为空）、不选中
+ *  （组件 findIndex 返回 −1）——用户 20260916 报的「有些标签点击后不会在图谱里定位到
+ *  向量」就是它，而本地兜底路（locate.ts）一直大小写不敏感，于是"检索服务可用时反而
+ *  不如降级时准"。两侧同一个键 ⇒ 这个问题在结构上不会再回来。 */
+export function wordKey(w: string): string { return w.toLowerCase(); }
+
 export interface EngineOpts {
     onHover?: (node: number | null) => void;
     onActivate?: (node: number) => void;
@@ -98,6 +109,10 @@ export class WordGraphEngine {
     private labelW = new Map<string, number>();
     private placed: number[] = [];
     private zlist: number[] = [];               // 贴脸层候选（每帧复用，避免分配）
+    /** 本帧已经画过标签的节点。分层（C→N→Z→A→B）各层独立调 take()，没有这张表时
+     *  同一个词会被后一层**再画一次**（20260915b 给 hard 加四向候选位后，第二次调用
+     *  换个位置就放下了 ⇒ 一个词两个名字；用户 20260916 报的正是这个）。 */
+    private labeled = new Set<number>();
 
     // 交互状态
     private dragging = false;
@@ -225,9 +240,9 @@ export class WordGraphEngine {
         this.hits.clear();
         if (list && list.length) {
             const byWord = new Map<string, number>();
-            for (let i = 0; i < this.data.nodes.length; i++) byWord.set(this.data.nodes[i].w, i);
+            for (let i = 0; i < this.data.nodes.length; i++) byWord.set(wordKey(this.data.nodes[i].w), i);
             for (const hit of list) {
-                const i = byWord.get(hit.w);
+                const i = byWord.get(wordKey(hit.w));
                 if (i !== undefined && !this.hits.has(i)) this.hits.set(i, hit.s);
             }
             this.pulseT0 = performance.now();
@@ -389,7 +404,11 @@ export class WordGraphEngine {
         }
         for (let b = 0; b < EDGE_BUCKETS; b++) {
             const t = (b + 0.5) / EDGE_BUCKETS;
-            const base = 0.06 + 0.42 * t;
+            // 未选中时的连线基线（20260916 用户："没选中向量时连线太不明显，稍微明显一点点"）。
+            // 四档 t=0.125/0.375/0.625/0.875 → 0.158/0.273/0.388/0.503，
+            // 相比旧 0.06+0.42t（0.113/0.218/0.323/0.428）最弱的档提得最多（+40%）——
+            // "太不明显"的正是它。聚焦时的 0.22 压暗系数与热边那一路不动。
+            const base = 0.10 + 0.46 * t;
             ctx.lineWidth = 0.5 + 1.1 * t;
             // 聚焦时把无关的边整片压暗，让热点跳出来
             ctx.strokeStyle = `rgba(${PALETTE.edge}, ${(hi ? base * 0.22 : base).toFixed(3)})`;
@@ -449,6 +468,8 @@ export class WordGraphEngine {
         // ---- 标签：分层 + 贪心 AABB 防重叠
         const placed = this.placed;
         placed.length = 0;
+        const labeled = this.labeled;
+        labeled.clear();
         const cap = (this.quality === 1 ? LABEL_MAX : LABEL_MAX >> 1) << 2;   // 存的是 4 元组
         /** 与已放下的标签是否重叠（+1 是给描边留的余量） */
         const hitsOther = (x: number, y: number, tw: number, th: number): boolean => {
@@ -465,6 +486,9 @@ export class WordGraphEngine {
         const take = (i: number, force: boolean, dim: boolean, hard: boolean): boolean => {
             const depth = this.proj.d[i];
             if (depth <= 0.05) return false;
+            // 本帧已画过就不再画第二遍。层序是 C→N→Z→A→B，先到的总是更强的调用
+            // （C 的 force 亮色 → A/B 的暗色补位），所以"先画者胜"就是要的语义。
+            if (labeled.has(i)) return false;
             const n = data.nodes[i];
             const size = force || n.n > 0.55 ? 12.5 : 11;
             const font = `${force ? '600 ' : ''}${size}px ${LABEL_FONT}`;
@@ -499,6 +523,7 @@ export class WordGraphEngine {
                 y = Math.max(2, Math.min(cands[0][1], h - size - 2));
             }
             placed.push(x - 1, y - 1, x + tw + 1, y + size + 1);
+            labeled.add(i);
             ctx.font = font;
             ctx.globalAlpha = force ? 1 : (dim ? 0.55 : 0.9);
             ctx.lineWidth = 3;
@@ -670,12 +695,12 @@ export function wheelStep(dist: number, flightLen: number, deltaY: number): {
 export function cameraFor(g: GraphData, hits: LocateHit[], cur: Camera): Camera {
     if (!hits.length) return cur;
     const byWord = new Map<string, number>();
-    for (let i = 0; i < g.nodes.length; i++) byWord.set(g.nodes[i].w, i);
+    for (let i = 0; i < g.nodes.length; i++) byWord.set(wordKey(g.nodes[i].w), i);
 
     let sw = 0, cx = 0, cy = 0, cz = 0;
     const idx: number[] = [];
     for (const h of hits) {
-        const i = byWord.get(h.w);
+        const i = byWord.get(wordKey(h.w));
         if (i === undefined) continue;
         const w = Math.max(h.s, 1e-3);
         const n = g.nodes[i];
