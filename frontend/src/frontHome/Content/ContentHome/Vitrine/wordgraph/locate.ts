@@ -18,9 +18,14 @@ const FALLBACK_TOP = 8;
 
 /**
  * 查询词 → 图谱节点。**A 路（默认）走后端真 embedding**；只要有任何一步不成立
- * （未登录 / 网络失败 / 超时 / 后端 503 / 空结果）就静默退到 B 路本地关键词匹配。
+ * （未登录 / 网络失败 / 超时 / 后端 503）就静默退到 B 路本地关键词匹配。
  * 两条路产出同一种 LocateHit[]，所以下游的相机运动与高亮逻辑完全一致，
  * 降级对用户不可见（只是"找到的邻居没那么准"）。
+ *
+ * **例外：后端明确说"没匹配上"（reason=no_match，服务端 BM25 弃权闸）时不降级。**
+ * 那是结论不是故障，降级反而会把它盖掉——本地兜底对零命中的输入还有一层字符
+ * bigram 兜底（`保证任何输入都有落点`），那个落点正是弃权闸要消灭的东西。
+ * 返回空 hits + source='vector'，界面如实显示"没找到相关的词"。
  */
 export async function locate(raw: string, g: GraphData): Promise<LocateResult> {
     const q = raw.trim().slice(0, QUERY_MAX);
@@ -30,7 +35,9 @@ export async function locate(raw: string, g: GraphData): Promise<LocateResult> {
     // 没有 token 时那个请求必然 401，没必要先花一个往返。
     if (hasToken()) {
         const hits = await queryVector(q);
-        if (hits && hits.length) return { hits, source: 'vector' };
+        // 注意判的是 `!== null` 而不是 `.length`：空数组 = "闸判定图里没有"，
+        // 是一个要如实呈现的结论，不能掉进本地兜底把结论换成猜测。
+        if (hits !== null) return { hits, source: 'vector' };
     }
     return { hits: locateLocal(q, g), source: 'local' };
 }
@@ -39,7 +46,11 @@ function hasToken(): boolean {
     try { return !!localStorage.getItem('tokenKey'); } catch { return false; }
 }
 
-/** A 路：真 embedding。失败一律返回 null（调用方退本地），绝不抛。 */
+/**
+ * A 路：真 embedding。返回值三态，**别把它合并成两态**：
+ *   LocateHit[]   路通了（可能是空数组：弃权闸判定"图里没有这句话"）
+ *   null          路不通（未登录/网络/超时/后端故障）→ 调用方退本地兜底
+ */
 async function queryVector(q: string): Promise<LocateHit[] | null> {
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), TIMEOUT_MS);
@@ -57,6 +68,8 @@ async function queryVector(q: string): Promise<LocateHit[] | null> {
         });
         if (!res.ok) return null;
         const j = await res.json();
+        // 弃权闸（服务端 BM25）：图里没有任何一个词出现在查询里。这不是故障。
+        if (j && j.ok === false && j.reason === 'no_match') return [];
         if (!j || j.ok !== true || !Array.isArray(j.words)) return null;
         const out: LocateHit[] = [];
         for (const it of j.words) {
@@ -87,7 +100,14 @@ const keyOf = wordKey;
  */
 export function locateLocal(q: string, g: GraphData): LocateHit[] {
     const vocab = new Map<string, { w: string; n: number }>();
-    for (const node of g.nodes) vocab.set(keyOf(node.w), { w: node.w, n: node.n });
+    let maxCjk = 2;   // 中文最长匹配的上界，**从词表算**（见下）
+    for (const node of g.nodes) {
+        const k = keyOf(node.w);
+        vocab.set(k, { w: node.w, n: node.n });
+        // 上界写死 4 会漏掉更长的词：产物里已有的「兼容性问题」是 5 字，
+        // 写死 4 时连它自己当查询都匹配不到（服务端闸那边实测踩过同一个洞）。
+        if (!/^[\x00-\x7f]*$/.test(k)) maxCjk = Math.max(maxCjk, k.length);
+    }
 
     const hits: LocateHit[] = [];
     const seen = new Set<string>();
@@ -118,9 +138,9 @@ export function locateLocal(q: string, g: GraphData): LocateHit[] {
             }
             continue;
         }
-        // 中文段：最长匹配
+        // 中文段：最长匹配（上界 = 词表里最长的中文词，与服务端 match_terms 同一规则）
         let matched = 0;
-        for (let len = 4; len >= 2; len--) {
+        for (let len = maxCjk; len >= 2; len--) {
             if (i + len > s.length) continue;
             const sub = s.slice(i, i + len);
             if (!/^[一-鿿]+$/.test(sub)) continue;
