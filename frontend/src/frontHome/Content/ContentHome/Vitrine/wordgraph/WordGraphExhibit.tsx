@@ -174,7 +174,7 @@ export default function WordGraphExhibit() {
                         maxLength={64}
                         disabled={!token || busy || !data}
                         placeholder={token
-                            ? '输入一句话，定位到最近的词（回车）'
+                            ? '输入内容，定位到最近的向量'
                             : '登录后可用向量检索'}
                         aria-label="在图谱中定位关键词"
                     />
