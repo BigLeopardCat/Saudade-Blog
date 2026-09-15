@@ -54,10 +54,25 @@
   padding: 11px 14px 10px
   border-bottom: 1px solid rgba(255, 255, 255, 0.09)
 
+// ⚠️ 标题与角标的 `line-height` 必须**显式且相同**（16px），这是 20260916b 用户报的
+// 「向量更新时间文本没有和标题对齐」的根因所在，别再改回 `normal` / `1`：
+//   `normal` 的行盒高度取自**主字体**（拉丁体）的度量，但行内若有中文回退字体，
+//   行盒会被中文体的度量撑高（实测 DejaVu+Arial 形态下 13.5px 标题的行盒 16 → 20px，
+//   且是往上长），标题文字因此整体下移；而角标那边 `line-height: 1`（10px）比字体自然高
+//   （约 11.7px）还小，半行距为负，基线位置完全由主字体的 ascent 决定。
+//   两边各按各的规则算 ⇒ 真实中文环境下角标文字比标题文字高约 **2.75px**（有明显观感）。
+//   给两者同一个、比两边字体自然高都大的行高（16px），半行距为正且对称，文字盒在行盒里
+//   严格居中 ⇒ 实测差降到 0.75px（同字号 0.75px 是"两种字号共享行盒"的固有残差）。
+//   药丸高度不变（16px）：原来是 3+10+3，现在是 0+16+0，只有文字在药丸里的位置被修正。
+//   ⚠️ **本机无中文字体，这类问题在无头环境里量不出来**（量到的是 .notdef 方块，
+//   它的度量不会撑高行盒）——验证必须用真实中文字体（Google Fonts 的 Noto Sans SC 即可）。
+$bar-line: 16px
+
 .vit-title
   font-size: 13.5px
   font-weight: 600
   letter-spacing: 0.5px
+  line-height: $bar-line
   color: rgba(232, 240, 255, 0.92)
 
 // 角标 = 向量库更新时间（20260916 起，文案如「2026年09月16日 UTC+8 01:31:59」）。
@@ -67,8 +82,8 @@
   flex: none
   font-style: normal
   font-size: 10px
-  line-height: 1
-  padding: 3px 6px
+  line-height: $bar-line   // 与标题同一行盒（见上），上下内边距改由行高给
+  padding: 0 6px
   border-radius: 5px
   white-space: nowrap
   font-variant-numeric: tabular-nums

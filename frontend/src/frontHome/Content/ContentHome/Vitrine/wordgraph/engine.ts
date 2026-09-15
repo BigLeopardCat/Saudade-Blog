@@ -41,6 +41,21 @@ const LABEL_MAX = 40;
  *  `(1.7+3.1√n)*(dist/depth)` 在 target 平面上恰好等于括号里的值（≤4.8px）——
  *  放大只是把点摊开，并不会让点变大，那个阈值永远够不到（20260915b 无头实测：Z 层从未命中）。 */
 const NEAR_LABEL_D = 1.0;
+/** 点半径的透视缩放带：`dist/depth`（target 平面上 = 1）夹在 [0.62, 1.4]。
+ *  **上界贴着团外观测到的最坏值**（默认机位 dist=4.3、点云半径 1.11 ⇒ 最近的点 ratio≈1.35），
+ *  下界 0.62（−38%）是给"飞进去"留的余量 ⇒ 相机在团外时这条夹取**完全不生效**，
+ *  画面与改动前逐像素一致。
+ *  ⚠️ 为什么必须有下界（20260916b 用户报「明明在外面看得见的向量点，视角飞进去反而变小
+ *  看不见了」）：ratio 里带着**当前机位**的 dist，而 dist 一路能滚到 0.4（DIST_MIN）——
+ *  target 平面上的点在 ratio 里恒定，远处（depth≈dist+点云半径）的点却按 dist/depth 一起塌：
+ *  dist 0.4 时 depth 1.5 的点 ratio≈0.27 ⇒ 4.8px 的大词点缩成 1.3px，再叠上 alpha 下限
+ *  （0.3）就成了背景里的暗点。夹住下界后同样的点在 3px 上下、alpha 0.5 ⇒ 还看得见，
+ *  同时"远的暗一点小一点"这层纵深提示保留。 */
+const POINT_SCALE_MIN = 0.62;
+const POINT_SCALE_MAX = 1.4;
+/** 点透明度的下限。默认机位下最远的点算出来 ≈0.56 > 0.5 ⇒ 团外视角不变；
+ *  只有飞进团里（dist 小、远点算式早就为负）才由它兜住，别让点淡成背景。 */
+const POINT_ALPHA_MIN = 0.5;
 const LABEL_NEAR = 10;
 /** 拖动后多久内忽略 dblclick（ms）。没有这个守卫，"拖两下"会误触跳转。 */
 const DRAG_DBL_GUARD = 300;
@@ -404,11 +419,14 @@ export class WordGraphEngine {
         }
         for (let b = 0; b < EDGE_BUCKETS; b++) {
             const t = (b + 0.5) / EDGE_BUCKETS;
-            // 未选中时的连线基线（20260916 用户："没选中向量时连线太不明显，稍微明显一点点"）。
-            // 四档 t=0.125/0.375/0.625/0.875 → 0.158/0.273/0.388/0.503，
-            // 相比旧 0.06+0.42t（0.113/0.218/0.323/0.428）最弱的档提得最多（+40%）——
-            // "太不明显"的正是它。聚焦时的 0.22 压暗系数与热边那一路不动。
-            const base = 0.10 + 0.46 * t;
+            // 未选中时的连线基线。三版演进（20260916b 收敛）：
+            //   旧     0.06 + 0.42t → 0.113/0.218/0.323/0.428（用户："太不明显"）
+            //   上一版 0.10 + 0.46t → 0.158/0.273/0.388/0.503（整体提亮，最弱档 +40%）
+            //   本  版 0.048 + 0.52t → 0.113/0.243/0.373/0.503
+            // 上一版把**最弱那档**提得最多，而用户 20260916b 的反馈正是"最弱档又太亮了"
+            // 其余档没意见 ⇒ 两端对齐：最弱回到改动前 0.113，最强保持 0.503，中间均匀过渡。
+            // 聚焦时的 0.22 压暗系数与热边那一路不动。
+            const base = 0.048 + 0.52 * t;
             ctx.lineWidth = 0.5 + 1.1 * t;
             // 聚焦时把无关的边整片压暗，让热点跳出来
             ctx.strokeStyle = `rgba(${PALETTE.edge}, ${(hi ? base * 0.22 : base).toFixed(3)})`;
@@ -444,7 +462,7 @@ export class WordGraphEngine {
             if (depth <= 0.05) break;                    // 已排序，后面的只会更远
             const x = this.proj.x[i], y = this.proj.y[i], r = this.proj.r[i];
             if (x < -40 || y < -40 || x > w + 40 || y > h + 40) continue;
-            ctx.globalAlpha = Math.max(0.3, Math.min(1, 1.35 - depth / (this.cam.dist * 1.6)));
+            ctx.globalAlpha = Math.max(POINT_ALPHA_MIN, Math.min(1, 1.35 - depth / (this.cam.dist * 1.6)));
             ctx.fillStyle = artColor(data.nodes[i].a);
             ctx.beginPath();
             ctx.arc(x, y, Math.max(0.9, r), 0, Math.PI * 2);
@@ -771,8 +789,12 @@ export function projectNodes(nodes: GraphNode[], cam: Camera, w: number, h: numb
         const inv = f / depth;
         out.x[i] = hw + (vx * xx + vy * xy + vz * xz) * inv;
         out.y[i] = hh - (vx * yx + vy * yy + vz * yz) * inv;
-        // 基础半径按透视缩放（在 target 平面上正好等于括号里的值）
-        out.r[i] = (1.7 + 3.1 * Math.sqrt(n.n)) * (dist / depth);
+        // 基础半径按透视缩放（在 target 平面上正好等于括号里的值），比例夹在
+        // [POINT_SCALE_MIN, POINT_SCALE_MAX] 带内 —— 不夹的话相机一飞进去远处就全塌成
+        // 1px 暗点（见常数处注释）。
+        const k = dist / depth;
+        out.r[i] = (1.7 + 3.1 * Math.sqrt(n.n))
+            * (k < POINT_SCALE_MIN ? POINT_SCALE_MIN : (k > POINT_SCALE_MAX ? POINT_SCALE_MAX : k));
     }
 }
 

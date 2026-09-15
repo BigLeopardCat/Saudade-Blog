@@ -95,6 +95,27 @@ console.log('== projectNodes ==');
     eq(p.r[0], 0, '背后点半径归零');
     ok(p.x[0] < -1e5, '背后点坐标被踢出屏幕', { x: p.x[0] });
 }
+{
+    // 点半径的夹取带（20260916b 用户：「明明在外面看得见的向量点，视角飞进去反而变小
+    // 看不见了」）。探针放在世界 -z 上 ⇒ depth = dist + 1，ratio = dist/(dist+1)：
+    //   团外 dist=5   → 5/6 = 0.833（未触带，逐像素与改动前一致）
+    //   团内 dist=0.4 → 0.4/1.4 = 0.286 → 必须被抬到下限 0.62
+    const probe = [mk(0, 'far', 0, 0, -1, 1)];
+    const proj = (dist) => {
+        const p = new engine.Projection(1);
+        engine.projectNodes(probe, { ...CAM0, dist }, 800, 600, p);
+        return p.r[0];
+    };
+    const BASE = 1.7 + 3.1;                       // n=1 时的基础半径
+    near(proj(5), BASE * (5 / 6), 1e-4, '团外（dist=5）不触夹取带：仍按 dist/depth');
+    ok(proj(0.4) >= BASE * 0.62 - 1e-6,
+        '飞进团里（dist=0.4）远处点半径守住下限 0.62（不夹的话 0.286 ⇒ 4.8px 缩成 1.4px）',
+        { r: proj(0.4), 未夹: BASE * (0.4 / 1.4) });
+    // 上限：贴到相机上的点（depth≈0.06）ratio 会到 6.7，必须夹到 1.4 而不是画成大色块
+    const pn = new engine.Projection(1);
+    engine.projectNodes([mk(0, 'face', 0, 0, 0.34, 1)], { ...CAM0, dist: 0.4 }, 800, 600, pn);
+    ok(pn.r[0] <= BASE * 1.4 + 1e-6, '贴脸点的半径有上限', { r: pn.r[0] });
+}
 
 // ══════════════════════════════════════════════ 命中
 console.log('== pickNode ==');
