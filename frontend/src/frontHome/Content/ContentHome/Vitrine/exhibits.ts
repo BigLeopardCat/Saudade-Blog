@@ -18,7 +18,7 @@ export const EXHIBITS: Exhibit[] = [
         key: 'wordgraph',
         title: '文章向量空间',
         badge: '新',
-        hint: '拖动旋转 · 滚轮缩放 · 双击词跳文章',
+        hint: '拖动旋转 · 滚轮穿行 · 单击选中 · 双击跳文章',
         Component: lazy(() => import('./wordgraph/WordGraphExhibit')),
     },
 ];
