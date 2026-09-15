@@ -140,6 +140,29 @@ console.log('== locateLocal ==');
     eq(locate.locateLocal('', GRAPH).length, 0, '空串 → 空结果（不瞎猜）');
 }
 
+// ══════════════════════════════════════════════ 缩放区间
+console.log('== zoomBy ==');
+{
+    // 20260915 用户报「图谱放大范围太小，还没放大多数就到极限了」。点云半径实测
+    // max 1.11 / p90 0.86（333 词产物）：旧 DIST_MIN=1.7 连最外层点都够不到，
+    // 相机永远在球外——判据就是"放大到底必须能进到点云内部"。
+    const MIN = 0.4;
+    near(engine.zoomBy(4.3, -1e6), MIN, 1e-9, '一直放大到底 = 0.4（旧值 1.7）');
+    ok(engine.zoomBy(4.3, -1e6) < 1.11, '放大到底能进到点云内部（< 实测 max 半径 1.11）');
+    near(engine.zoomBy(4.3, 1e6), 9, 1e-9, '一直缩小到顶 = 9（上限没动）');
+    ok(engine.zoomBy(4.3, -100) < 4.3, '滚轮上滚一格 = 拉近');
+    ok(engine.zoomBy(4.3, 100) > 4.3, '滚轮下滚一格 = 拉远');
+    ok(engine.zoomBy(MIN, -100) === MIN, '已到最近端再滚不动（不会越界成负数）');
+    ok(engine.zoomBy(9, 100) === 9, '已到最远端再滚不动');
+    // 手感：从默认机位推到最近端不超过 20 格（Chrome 一格 wheel = deltaY 100）——
+    // 区间放宽后步长也得跟上，否则"范围是够了但要滚半天"
+    let d = 4.3, n = 0;
+    while (d > MIN + 1e-9 && n < 200) { d = engine.zoomBy(d, -100); n++; }
+    ok(n <= 20, `从默认 4.3 推到最近端 ${n} 格（≤20 才不累手）`, { n, end: d });
+    // 乘性步长必须精确可逆：拉近再拉远要回到原距离（否则来回滚会漂）
+    near(engine.zoomBy(engine.zoomBy(4.3, -400), 400), 4.3, 1e-9, '拉近再拉远精确回到原距离');
+}
+
 // ══════════════════════════════════════════════ 取景
 console.log('== cameraFor ==');
 {
@@ -158,7 +181,7 @@ console.log('== cameraFor ==');
     near(cam.target[2], cz / sw, 1e-6, 'target = 加权质心 z');
     eq(cam.yaw, CAM0.yaw, '朝向不变（只推进去，不绕着转）');
     eq(cam.pitch, CAM0.pitch, '俯仰不变');
-    ok(cam.dist >= 1.9 - 1e-9 && cam.dist <= 9, 'dist 落在滚轮可达区间', { dist: cam.dist });
+    ok(cam.dist >= 0.8 - 1e-9 && cam.dist <= 9, 'dist 落在滚轮可达区间', { dist: cam.dist });
 
     // ★ 硬要求：全部命中点都必须落在画面内，否则"定位"就是把人带到看不见的地方
     const p = new engine.Projection(NODES.length);

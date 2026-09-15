@@ -19,18 +19,26 @@
       const d = new Date(Date.now() - 6 * 3600 * 1000);
       return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
     };
-    // 访客意愿标记（20260914）：与 src/theme.ts 的 recordUserChoice 同口径——只在夜间窗口
-    // （23:00-次日 06:00）内记录，白天调节不记（否则白天让 agent 切一次浅色会否掉当晚的
-    // 自动夜间）；窗口外清除标记，避免残留旧值。改这段须与 theme.ts 一起改。
-    const markVisitorChoice = () => {
+    // 访客意愿标记：与 src/theme.ts 的 recordUserChoice 同口径（两处必须一起改）。
+    // 20260914：切【浅色】只在夜间窗口（23:00-次日 06:00）内记录——白天让 agent 切一次
+    // 浅色不该否掉当晚的自动夜间；窗口外顺手清残留标记。
+    // 20260915：切【夜间】任何时段都记。此前窗口外一律清标记，于是白天/前半夜让 agent 开的
+    // 夜间模式活不过 60 秒（App.tsx 的 prefersAuto 每分钟收敛一次状态，非夜间时段直接改回
+    // 日间）。切夜间与自动夜间同向，记意愿不会否掉当晚的自动切换。
+    const markVisitorChoice = (on) => {
       try {
+        if (on) {
+          localStorage.setItem('darkModeUserChoice', 'true');
+          localStorage.setItem('darkModeChoiceDay', choiceDay());
+          return;
+        }
         const h = new Date().getHours();
         if (!(h >= 23 || h < 6)) {
           localStorage.removeItem('darkModeUserChoice');
           localStorage.removeItem('darkModeChoiceDay');
           return;
         }
-        localStorage.setItem('darkModeUserChoice', 'true');
+        localStorage.setItem('darkModeUserChoice', 'false');
         localStorage.setItem('darkModeChoiceDay', choiceDay());
       } catch (e) {/* ignore */}
     };
@@ -391,17 +399,17 @@
               if (toolCall[0].startsWith('toggle_effect')) {
                 toggleEffect(toolCall[1], toolCall[2]);
               } else if (toolCall[0].startsWith('toggle_dark_mode')) {
-                markVisitorChoice();
+                markVisitorChoice(toolCall[1] === 'on');
                 applyDarkMode(toolCall[1] === 'on', true);
               }
             }
             // 处理夜间模式命令（DARKMODE:on|off）
-            // 通过对话让 agent 调节同样代表访客意愿：夜间窗口内标记 darkModeUserChoice，
-            // 自动切换让位（白天调节不记，见 markVisitorChoice）；
+            // 通过对话让 agent 调节同样代表访客意愿：开夜间任何时段都记，关夜间只在夜间
+            // 窗口内记（见 markVisitorChoice），自动切换据此让位；
             // animate=true 触发与手动点击切换按钮相同的日月过渡动画
             const darkMatch = fullText.match(/DARKMODE:\s*(on|off)/);
             if (darkMatch) {
-              markVisitorChoice();
+              markVisitorChoice(darkMatch[1] === 'on');
               applyDarkMode(darkMatch[1] === 'on', true);
             }
         };

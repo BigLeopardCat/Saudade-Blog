@@ -28,16 +28,26 @@ export function isNightHour(d: Date = new Date()): boolean {
 }
 
 // 手动切换（含 agent DARKMODE 命令调节）= 访客意愿：记录偏好值 + 写入时的主题日。
-// 20260914：只在【夜间窗口内】才记为意愿——白天手动切浅色不再否掉当晚的自动夜间
+// 20260914：切【浅色】只在夜间窗口内才记为意愿——白天手动切浅色不再否掉当晚的自动夜间
 // （20260908 语义的毛刺：白天一次浅色 → 当晚 23:00 不自动切，非等到次日 6:00 主题日
-// 翻篇才恢复；白天切深色则察觉不到）。窗口外一律清除标记：既保证语义，也避免
-// localStorage 残留旧值把"看存储判断状态"带偏。
+// 翻篇才恢复）。
+// 20260915：切【夜间】改为任何时段都记。此前窗口外一律清标记，于是白天/前半夜手动开的
+// 夜间模式活不过 60 秒——App.tsx 的 prefersAuto 是每分钟一次的状态收敛（非 23:00 一次性
+// 事件），非夜间时段 isNightHour()=false 又没有意愿让位，下一分钟就 dispatch
+// detail:false 把它改回日间（用户报「夜间模式 1 分钟后自动切回白天」）。切夜间与自动
+// 夜间同向，记意愿不可能否掉当晚的自动切换；主题日（06:00 为界）时效仍在，次日 06:00
+// 照常恢复自动。
+// ⚠️ 改这里必须同步改 public/live2d-widgets/chat-stream.js 的 markVisitorChoice（agent
+//    的 DARKMODE 命令走那条路），并 bump autoload.js 的 VER（nginx 对 live2d-widgets
+//    目录是 1 年 immutable，不 bump 老访客拿不到新脚本）。
 export function recordUserChoice(v: string): void {
     try {
-        if (!isNightHour()) {
-            localStorage.removeItem('darkModeUserChoice');
-            localStorage.removeItem('darkModeChoiceDay');
-            return;
+        if (v === 'light' || v === 'false') {
+            if (!isNightHour()) {
+                localStorage.removeItem('darkModeUserChoice');
+                localStorage.removeItem('darkModeChoiceDay');
+                return;
+            }
         }
         localStorage.setItem('darkModeUserChoice', v);
         localStorage.setItem('darkModeChoiceDay', currentThemeDay());
@@ -45,13 +55,30 @@ export function recordUserChoice(v: string): void {
 }
 
 // choice 是否在本次主题日内有效（无日期 = 旧版写入 → 视为已过期，自动切换恢复）。
-// 20260914 起 choice 只可能在夜间窗口内写入，而整个 23:00-06:00 属于同一主题日
-// （06:00 才翻篇），故"主题日内有效"= "当晚这段夜间窗口内有效"，06:00 自然过期。
+// 语义 = "直到下一个 06:00"：主题日 06:00 翻篇，故 23:00-06:00 整段属同一主题日，
+// 而 20260915 起白天写入的意愿也只是"当日有效"（次日 06:00 自然过期），
+// 不会让一次手动切换永久夺走自动夜间。
 export function userChoiceActive(): boolean {
     try {
         return !!localStorage.getItem('darkModeUserChoice')
             && localStorage.getItem('darkModeChoiceDay') === currentThemeDay();
     } catch (e) { return false; }
+}
+
+/**
+ * 自动切换此刻该切到哪：true = 切夜间、false = 切日间、null = 不动
+ * （访客意愿有效 = 让位；或者当前状态已经和目标一致 = 不用切）。
+ *
+ * App.tsx 的 prefersAuto 每分钟调一次做【状态收敛】——"每分钟"是这条链路的关键：
+ * 白天手动开的夜间模式如果没被 recordUserChoice 记成意愿，60 秒后就会在这里被判成
+ * false 顶回日间（20260915 用户报「夜间模式 1 分钟后自动切回白天」）。
+ * 抽成纯函数（只读 localStorage + 钟面）是为了让这条交互能在 node 里直接断言，
+ * 见 tests/theme-choice.test.mjs —— 改判据必须同时改那个测试。
+ */
+export function autoThemeDecision(): boolean | null {
+    if (userChoiceActive()) return null;
+    const night = isNightHour();
+    return night === readDarkMode() ? null : night;
 }
 
 /**
