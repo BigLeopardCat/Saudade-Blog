@@ -1,4 +1,5 @@
 import type { GraphData, LocateHit } from './types';
+import { wordKey } from './engine';
 import { runtimeBaseURL } from '../../../../../utils/runtimeApi';
 
 export interface LocateResult {
@@ -73,8 +74,10 @@ async function queryVector(q: string): Promise<LocateHit[] | null> {
 
 // ---------------------------------------------------------------- B 路：本地兜底
 
-/** 词的查询键：ASCII 折小写，中文原样 */
-const keyOf = (w: string) => (w.charCodeAt(0) < 128 ? w.toLowerCase() : w);
+/** 词的查询键。**统一用 engine 的 wordKey**——本地兜底路原来自己实现了一份大小写
+ *  不敏感的键，而向量路用精确匹配，于是"检索服务可用时反而不如降级准"（20260916 定位）。
+ *  两份实现合并成一个函数，两侧不可能再分叉。 */
+const keyOf = wordKey;
 
 /**
  * 纯前端关键词匹配。图谱自带的 300+ 个领域词就是现成词典——

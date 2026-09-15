@@ -1,4 +1,4 @@
-import { Suspense } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useIsDarkMode } from '../../../../theme';
 import { EXHIBITS } from './exhibits';
 import './index.sass';
@@ -18,16 +18,14 @@ export default function Vitrine() {
 
     return (
         <section className="vitrine" aria-label="展示柜">
-            {/* ⛔ 这里必须是 div，不能用 header：`pages/Dashboard/index.css:100` 有一条
-                裸标签全局规则 `header{position:relative;top:20px}`（给后台侧栏 logo 用的），
-                它对本页任何 <header> 都生效——整个标题栏会被顶下去 20px，窗口顶部留下
-                20px 死区、文字相对标题栏看起来"没垂直居中"，画布还会盖住文字下缘。
-                改回 header 前先把那条规则收进 Dashboard 作用域。 */}
-            <div className="vit-bar">
+            {/* 语义化 header 回来了（20260916）：`pages/Dashboard/index.css` 那条裸标签
+                规则 `header{position:relative;top:20px}` 已收进 `.shell` 作用域，
+                本页的 header 不再被顶下去 20px。改回去之前请先看那条规则还在不在。 */}
+            <header className="vit-bar">
                 <span className="vit-title">{ex.title}</span>
-                {ex.badge && <em className="vit-badge">{ex.badge}</em>}
+                <Badge of={ex} />
                 {ex.hint && <span className="vit-hint">{ex.hint}</span>}
-            </div>
+            </header>
             <div className="vit-body">
                 <Suspense fallback={<div className="vit-loading">加载中…</div>}>
                     <Body />
@@ -35,4 +33,19 @@ export default function Vitrine() {
             </div>
         </section>
     );
+}
+
+/** 角标：文案可能是异步取回的（如产物更新时间戳），读不到就整块不渲染。
+ *  独立成组件是为了让 useState/useEffect 无条件调用——Vitrine 在白天会早退，
+ *  hook 不能写在早退之后。 */
+function Badge({ of }: { of: (typeof EXHIBITS)[number] }) {
+    const [text, setText] = useState<string | null>(null);
+    useEffect(() => {
+        if (!of.badge) return;
+        let alive = true;
+        Promise.resolve(of.badge()).then((t) => { if (alive) setText(t || null); }).catch(() => { /* 角标是装饰，静默 */ });
+        return () => { alive = false; };
+    }, [of]);
+    if (!text) return null;
+    return <em className="vit-badge" title="向量数据库更新时间">{text}</em>;
 }

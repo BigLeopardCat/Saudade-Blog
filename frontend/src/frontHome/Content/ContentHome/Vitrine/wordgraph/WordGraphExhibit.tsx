@@ -4,7 +4,7 @@ import { useSelector } from 'react-redux';
 import UserState from '../../../../../interface/UserState';
 import { loadGraph } from './loader';
 import { locate } from './locate';
-import { WordGraphEngine, cameraFor } from './engine';
+import { WordGraphEngine, cameraFor, wordKey } from './engine';
 import type { GraphData, LocateHit } from './types';
 
 /** 展品：文章向量空间知识图谱。
@@ -81,7 +81,10 @@ export default function WordGraphExhibit() {
         focus([h]);
         const eng = engRef.current;
         if (!eng || !data) return;
-        const i = data.nodes.findIndex((n) => n.w === h.w);
+        // 必须走 wordKey：向量路返回的是小写词（python），产物节点是显示形（Python）。
+        // 精确匹配会让 findIndex 返回 −1 → 点了 chip 既不飞也不选中（20260916 用户报的 BUG）。
+        const k = wordKey(h.w);
+        const i = data.nodes.findIndex((n) => wordKey(n.w) === k);
         if (i >= 0) eng.setSelected(i);
     }, [focus, data]);
 
@@ -127,20 +130,24 @@ export default function WordGraphExhibit() {
             {failed && <div className="wg-veil">图谱数据加载失败</div>}
             {!failed && !data && <div className="wg-veil">正在绘制向量空间…</div>}
 
-            {hv && (
-                <div className="wg-card">
-                    <b>{hv.w}</b>
-                    <span className="wg-card-meta">
-                        重要度 {Math.round(hv.n * 100)}
-                        {hvArt ? ` · ${hvArt.t}` : ''}
-                    </span>
-                    <span className="wg-card-tip">
-                        {hover === null ? '已选中 · 双击跳转这篇文章' : '单击选中 · 双击跳转这篇文章'}
-                    </span>
-                </div>
-            )}
-
             <div className="wg-foot">
+                {/* 读数卡片放在 .wg-foot **内部**（绝对定位，不参与流）：它的定位基准是
+                    整条 foot（检索框 + 工具行 + chips），用 bottom: calc(100% + 8px) 恒坐在
+                    foot 上方。放在 foot 外面按固定像素算过：chips 行占底边上方 81~102.5px，
+                    卡片 bottom:92px ⇒ 实测重叠 10.5px（20260916 用户报"标签太靠上、和窗口
+                    重叠"）；chips 换行或 note 出现时更深。现在无论 foot 多高都不会撞。 */}
+                {hv && (
+                    <div className="wg-card">
+                        <b>{hv.w}</b>
+                        <span className="wg-card-meta">
+                            重要度 {Math.round(hv.n * 100)}
+                            {hvArt ? ` · ${hvArt.t}` : ''}
+                        </span>
+                        <span className="wg-card-tip">
+                            {hover === null ? '已选中 · 双击跳转这篇文章' : '单击选中 · 双击跳转这篇文章'}
+                        </span>
+                    </div>
+                )}
                 {chips.length > 0 && (
                     <div className="wg-chips">
                         {chips.map((c) => (
