@@ -231,7 +231,11 @@ $bar-line: 16px
     opacity: 1
     transform: none
 
-// 工具栏：现在只放「回到默认视角」一个按钮，右对齐——正好落在定位按钮正上方
+// 工具栏：现在只放「回到默认视角」一个按钮，右对齐。
+// ⚠️ 它在 .wg-foot 的 DOM 里必须排在 **.wg-chips 之前**（见 WordGraphExhibit 注释）：
+// 夹在 chips 与检索框之间时会凭空多出 6 + 26 + 6 = 38px 的空档
+// （20260916c 用户："检索出来的标签和检索框之间间隙太大"）。没有 chips 时
+// 这行仍然正好落在定位按钮正上方——`gap: 6px` 是整条 foot 的统一节奏。
 .wg-tools
   display: flex
   justify-content: flex-end
