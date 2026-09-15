@@ -149,11 +149,13 @@ export default function WordGraphExhibit() {
                     </div>
                 )}
                 {/* 回到默认视角：滚轮可以穿进点云内部再穿出去，走远了要有条明确的路回来。
-                    ⚠️ **顺序**：工具行必须在 chips **上面**。它原来是夹在 chips 与检索框
-                    之间的（DOM 顺序 = 视觉顺序），于是"检索出来的标签"和"检索框"之间凭空
-                    多了 6 + 26 + 6 = 38px 的空档（20260916c 用户："间隙太大，不美观"）。
-                    挪到 chips 之前以后，chips 紧贴检索框（同一个 gap: 6px），
-                    没有 chips 时这行本来就正好落在定位按钮正上方。 */}
+                    ⚠️ **顺序**：工具行与 note 都必须在 chips **上面**（DOM 顺序 = 视觉顺序）。
+                    工具行原来夹在 chips 与检索框之间，于是"检索出来的标签"和"检索框"之间
+                    凭空多了 6 + 26 + 6 = 38px 的空档（20260916c 用户："间隙太大，不美观"）；
+                    note 同样会插出 6 + 13 + 6 = 25px（降级提示那条路，线上验收实测到过）。
+                    两行都挪到 chips 之前以后，**"chips → 检索框"恒为 6px**，与 foot 的
+                    `gap: 6px` 一致；没有 chips 时这两行仍依次落在定位按钮正上方。
+                    note 摆在自己的标签上方也读得通："这一批标签是降级匹配来的"。 */}
                 <div className="wg-tools">
                     <button type="button" className="wg-home" onClick={() => engRef.current?.home()}
                         title="回到默认视角位置" aria-label="回到默认视角位置">
@@ -164,6 +166,7 @@ export default function WordGraphExhibit() {
                         </svg>
                     </button>
                 </div>
+                {note && <div className="wg-note">{note}</div>}
                 {chips.length > 0 && (
                     <div className="wg-chips">
                         {chips.map((c) => (
@@ -173,7 +176,6 @@ export default function WordGraphExhibit() {
                         <button type="button" className="wg-chip wg-chip-x" onClick={reset}>×</button>
                     </div>
                 )}
-                {note && <div className="wg-note">{note}</div>}
                 <div className={'wg-queri' + (busy || chips.length ? ' is-on' : '')}>
                     <input
                         className="wg-input"
