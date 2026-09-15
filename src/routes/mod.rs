@@ -13,6 +13,7 @@ pub mod chat;
 pub mod conversation;
 pub mod monitor;
 pub mod sitemap;
+pub mod graph;
 
 use axum::{
     routing::{get, post, delete, put},
@@ -112,6 +113,11 @@ pub fn create_router(state: AppState) -> Router {
 
         // 前端错误上报（20260830，监控补齐 B）：匿名可写，body 上限 8KB
         .route("/api/monitor/log", post(monitor::report_log))
+
+        // 展示柜图谱向量检索（20260915）：挂公开路由但 **handler 内要求登录**——
+        // protected_routes 那条链路是后台管理用的（auth_guard 全 admin），
+        // 而这里任何登录用户都该能用；查询要花 embedding 调用，也不能真匿名开放。
+        .route("/api/public/graph/query", post(graph::graph_query))
         
         // Static Image Download (Public)
         .nest_service("/api/protect/download", ServeDir::new(upload_dir()))

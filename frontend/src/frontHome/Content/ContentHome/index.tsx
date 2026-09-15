@@ -18,6 +18,7 @@ import { resolveApiAssetUrl } from '../../../utils/runtimeApi';
 import { carouselCropOf, coverCropStyle } from '../../../utils/coverCrop';
 import heroBg from '../../../assets/hero_bg.mp4';
 import heroPoster from '../../../assets/hero_poster.jpg';
+import Vitrine from './Vitrine';
 
 
 // 模块级缓存：只在同一次 SPA 会话内复用，离开 Dashboard 后自动失效
@@ -296,6 +297,8 @@ const ContentHome = () => {
                     <SocialButton SocialName='Email' img='/QQ-Email.png' copyText='sora.saudade@qq.com'/>
                 </div>
             </div>
+            {/* 展示柜窗口：仅夜间出现，占用右半屏空白区 */}
+            <Vitrine/>
             {/* 20260902 暂时注释掉大圆头像窗口 */}
             {/* <Avatar src={avatar} size={320} className='frontAvatar'/> */}
             <motion.div
