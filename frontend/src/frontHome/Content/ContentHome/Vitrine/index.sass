@@ -205,6 +205,8 @@ $bar-line: 16px
   &:hover
     background: rgba(255, 255, 255, 0.14)
 
+// 提示行（"没找到相关的词" / "已用本地匹配"）。**位置在 chips 之上**（同 .wg-tools，
+// 见上）：夹在 chips 与检索框之间会插出 25px 空档。
 .wg-note
   font-size: 11px
   color: rgba(214, 226, 246, 0.62)
@@ -232,10 +234,12 @@ $bar-line: 16px
     transform: none
 
 // 工具栏：现在只放「回到默认视角」一个按钮，右对齐。
-// ⚠️ 它在 .wg-foot 的 DOM 里必须排在 **.wg-chips 之前**（见 WordGraphExhibit 注释）：
-// 夹在 chips 与检索框之间时会凭空多出 6 + 26 + 6 = 38px 的空档
-// （20260916c 用户："检索出来的标签和检索框之间间隙太大"）。没有 chips 时
-// 这行仍然正好落在定位按钮正上方——`gap: 6px` 是整条 foot 的统一节奏。
+// ⚠️ 它和 .wg-note 在 .wg-foot 的 DOM 里都必须排在 **.wg-chips 之前**
+// （见 WordGraphExhibit 注释）。foot 的 DOM 顺序 = 视觉顺序，`gap: 6px` 是整条
+// foot 的统一节奏 ⇒ 任何插在 chips 与检索框之间的行都会变成
+// 「6 + 行高 + 6」的空档：工具行 38px（20260916c 用户："检索出来的标签和检索框
+// 之间间隙太大"）、note 25px（20260916d 线上验收量到）。**要往 foot 里加行，
+// 加在 chips 上面，别加在 chips 与检索框之间。**
 .wg-tools
   display: flex
   justify-content: flex-end
