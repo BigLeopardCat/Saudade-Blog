@@ -32,12 +32,17 @@ Rust 侧 `src/routes/graph.rs`（`POST /api/public/graph/query`）→ agent `rag
 | 文件 | 内容 | 缓存 |
 |---|---|---|
 | `graph-<id>.js` | `export default {v, model, dim, built, articles[], nodes[], edges[], stats{}}` | 1 年 immutable |
-| `manifest.json` | `{"v":"<id>","file":"graph-<id>.js","bytes":N}` 65 字节 | no-store |
+| `manifest.json` | `{"v":"<id>","file":"graph-<id>.js","bytes":N,"built":"<ISO+08:00>"}` 101 字节 | no-store |
+
+`manifest.json` 里的 `built` 与产物内那份**同源**（`build_word_graph.py` 写 manifest 时直接取
+payload 的 `built`）——展示柜标题栏那个「2026年09月16日 UTC+8 01:31:59」角标读的就是它（§8.9），
+所以**重出图后角标自动跟着走**，前端不必改一个字。`built` 可选：老 manifest 没有这个字段时
+`loadManifest()` 照样返回，`badge` 返回 null、角标不渲染（不会打出 `undefined年`）。
 
 **为什么用 `.js` 而不是 `.json`**：nginx 的 immutable 白名单是
 `-[a-zA-Z0-9_-]{8,}\.(js|css|woff2?|mp4|webm|jpe?g|png|webp)`（`sites-enabled/blog` 两个
 443 块各一份）——**`json` 不在里面**，产物叫 `.json` 会掉进下面那条 `\.(js|css|json)$` 的
-`no-store`，每次刷新重下 36KB。叫 `.js` 则命中 immutable，且文件名的 hash 段天然 cache-bust。
+`no-store`，每次刷新重下 37KB。叫 `.js` 则命中 immutable，且文件名的 hash 段天然 cache-bust。
 
 `manifest.json` 故意留在 no-store：前端靠它发现"当前该加载哪个 hash"，所以**重出图不必改
 前端代码、不必 bump 版本号**（`?v=` 那套是给文件名不变的资源用的，这里文件名自带内容标识）。
@@ -45,8 +50,8 @@ Rust 侧 `src/routes/graph.rs`（`POST /api/public/graph/query`）→ agent `rag
 文件名正则 `^graph-[A-Za-z0-9_-]{8,}\.js$` 在 `loader.ts:FILE_RE` 里校验——不是形式主义，
 **文件名不合规就会静默掉出 immutable 缓存**。
 
-字段名故意单字母（`w/x/y/z/n/a/a2`、边是 `[a,b,sim]`）：333 点 + 569 边，短键名让产物从
-49KB 降到 36KB。`types.ts` 是这份契约的注释版。
+字段名故意单字母（`w/x/y/z/n/a/a2`、边是 `[a,b,sim]`）：341 点 + 584 边，短键名让产物从
+52KB 降到 37KB。`types.ts` 是这份契约的注释版。
 
 > ⚠️ **`v` 里含构建时间戳**：`build_id = sha1(JSON(不含 v))[:12]`，而 payload 里有 `built`
 > 字段（本地钟面时间），所以**重跑一次就会得到新文件名，哪怕内容一字未改**。不是幂等内容
@@ -62,13 +67,13 @@ Rust 侧 `src/routes/graph.rs`（`POST /api/public/graph/query`）→ agent `rag
 
 | 文件 | 内容 |
 |---|---|
-| `index.json` | `{build_id, model, dim, count, built, strip_top, words[]}`（3145B） |
-| `vectors.f32` | L2 归一化后的节点向量，`count × dim` 小端 float32 行主序（1.37MB） |
+| `index.json` | `{build_id, model, dim, count, built, strip_top, words[]}`（3223B） |
+| `vectors.f32` | L2 归一化后的节点向量，`count × dim` 小端 float32 行主序（1396736B = 341×1024×4） |
 | `mean.f32` | 语料均值（dim 个 float） |
 | `dirs.f32` | 被剔除的主方向（`strip_top × dim`）——**`strip_top=0` 时本来就是 0 字节** |
 
 **生产 venv 里没有 numpy**（当初刻意没装）。所以 `rag/wordgraph.py` 用 stdlib `array('f')`
-读裸 float32，点积走 `map(operator.mul, row, q)`（C 循环）：333×1024 实测 17ms，不值得为它
+读裸 float32，点积走 `map(operator.mul, row, q)`（C 循环）：341×1024 实测 17ms，不值得为它
 给生产环境加一个编译依赖。`_read_f32()` 容忍 0 字节与截断文件。
 
 ### 1.3 查询侧变换必须与建图侧逐字节一致
@@ -99,8 +104,8 @@ PYTHONPATH=/home/ubuntu/graph-lib python3 scripts/build_word_graph.py --dry-run 
 | ① | 拉语料：列表 → 逐篇详情（正文走 `/notes/:id`，列表接口正文为空） | `--api-base` |
 | ② | 过滤：`EXCLUDE_IDS={9,10,11}`（测试文）+ 正文 <400 字 + 标题 `^(测试\|test\|hello\|aaa\|untitled)` | `--exclude-ids --min-chars` |
 | ③ | 清洗：去 front-matter/HTML 注释/图片/裸 URL，`[text](url)` 留 text，**保留代码围栏内容**（rust/axum/tokio 正是好词） | |
-| ④ | 抽词 `jieba.posseg`：`POS_DROP` 词性闸 + ASCII 3~16 字 + 中文 ≥2 字 + 停用词 + 词黑名单 + 词形折叠（log/logs 并成一个点） | `scripts/graph_blocklist.txt` |
-| ⑤ | 选词：每篇按 `imp=tf·idf` 取前 `clamp(round(0.9·√chars)+8, 14, 70)` 个，全局再按重要度裁到 `--max-nodes` | `--max-nodes`（默认 400） |
+| ④ | 抽词 `jieba.posseg`：`POS_DROP` 词性闸 + ASCII 3~16 字 + 中文 ≥2 字 + 停用词 + 词黑名单 + 词形折叠（log/logs 并成一个点） | `scripts/graph_blocklist.txt`、`scripts/graph_userdict.txt`（§2.1） |
+| ⑤ | 选词：每篇按 `imp=tf·idf` 取前 `clamp(round(0.9·√chars)+8, 14, 70)` 个，全局再按重要度裁到 `--max-nodes`，最后把允许清单里选中的词补回 | `--max-nodes`（默认 400）、`scripts/graph_allow.txt`（§2.1） |
 | ⑥ | 嵌入**裸词**（不拼上下文，与查询侧同构）：`text-embedding-v4` / 1024 维 / 批 10 / md5 缓存 | `--refresh` 强制重嵌 |
 | ⑦ | 降维：PCA（去均值 → `U[:,:3]·S[:3]^α` → 逐轴 `sign·\|z\|^γ` → 98 分位归一 → clip ±1.6） | `--alpha 0.3 --gamma 1.0 --clip 1.6` |
 | ⑧ | 布局：**语义弹簧松弛**（见 §3） | `--layout --layout-iters 400` |
@@ -113,6 +118,29 @@ PYTHONPATH=/home/ubuntu/graph-lib python3 scripts/build_word_graph.py --dry-run 
 - `eval/report/wordgraph/<ts>_build.json` — 全部参数、全部质量指标、top60、每篇词表
 
 选词是纯 CPU 的，**改词表/黑名单重跑零 API 成本**（只有新词才需要 embedding，md5 缓存命中）。
+
+### 2.1 词表三层：黑名单 / 用户词典 / 允许清单（20260916）
+
+成因为两处，修法也分两处——**别把两件事混成一件**：
+
+- **切分词性错（治不了配额）** → `scripts/graph_userdict.txt`（jieba 用户词典，`load_userdict`）。
+  实测：`前端` → 词性 `f`（方位词，被 `POS_DROP` 丢）、`后端` → 被切成 `后/f`+`端/v`、
+  `本地` → `r`（代词，被丢）、`索引` → `nr`（jieba 当人名，被丢）。词典里写 `前端 200 n`
+  把词性钉死成名词。**先加载再切词**——`load_userdict` 必须排在第一个 `pseg.cut` 之前，
+  否则那一遍切词已经用了旧词典，改了等于没改。
+- **词性对、配额挤掉** → `scripts/graph_allow.txt`（受控允许清单，≤12 词）。
+  `缓存`/`部署`/`编译`/`客户端`/`数据库`/`初始化`/`note` 都过了闸，但跨篇出现 → idf 低 →
+  排不过单篇里的代码标识符。允许清单在全局裁剪**之后**把这些词补回（`keep_set` 取并集），
+  所以它们不占别人的配额。
+
+**纪律：允许清单只收"语料里真有、且被配额挤掉"的词**。语料里 0 次出现的（`索引`/`向量`/`图谱`/
+`检索`/`框架`，逐词实测 0 次）**绝不塞**——那是凭空造节点，不是修 bug；`接口`(2 次)/`容器`(1 次)/
+`调试`(1 次) 同理（进图就是孤点）。`POS_DROP` 本体不动：那不是漏词，是闸的门槛。
+
+本轮净效果：333 → **341 词，零丢失、净增 8**。加 userdict 会让 tf 分布位移，`初始化`(6 次)
+与 `note`(4 次) 因此在配额边界掉出——它们是被这份允许清单**回补**的，不是我另外加的词。
+
+运行时会打一行 `（黑名单 N 词 / 允许清单 N 词 / 用户词典 N 词）`，对齐就说明三份都载入了。
 
 ---
 
@@ -137,6 +165,11 @@ PYTHONPATH=/home/ubuntu/graph-lib python3 scripts/build_word_graph.py --dry-run 
 | 边数 | 569 | 566（长线剔除 3） | |
 | 产物 | 37174 B | 37085 B | |
 | 质量门 | ✓ | ✓（rho 门只对 semantic 生效） | |
+
+上表是 20260915 那批（333 词）的 A/B。**当前线上产物**（341 词，`ffe31d5744b8`）的
+`stats` 实测：`fidelity 0.2933`（对照原始 embedding 0.2689）、`len_sim_rho −0.5078`、
+`n_nodes 341` / 584 边 / `n_rescued 20`（靠"补最近邻"救回的孤点）——三门全过，
+且比上一批还略好一点（词表变干净后语义结构更清楚了）。
 
 质量门（`--force` 可越过，**不建议**：产物直接上线给访客看）：
 
@@ -197,13 +230,22 @@ PYTHONPATH=/home/ubuntu/graph-lib python3 scripts/build_word_graph.py --dry-run 
 前端的 A/B 两条路：
 
 - **A（默认）真 embedding**：登录了就发请求。
-- **B 本地关键词匹配**：图谱自带的 333 词就是现成词典——ASCII 整词匹配（含前缀容错），
+- **B 本地关键词匹配**：图谱自带的 341 词就是现成词典——ASCII 整词匹配（含前缀容错），
   中文从左到右最长匹配（4→3→2 字）；零命中退回字符 bigram Jaccard 取 top8，
   **保证任何输入都有落点**（哪怕落点是错的，也好过按了回车什么都没发生）。
 
 两条路产出同一种 `LocateHit[]`，下游相机运动与高亮逻辑完全一致，
 **降级对 UI 不可见**——只有"已登录却仍走了 B"时才浮一行「检索服务暂时不可用，已用本地匹配」
 （这是服务侧真的有问题，不该悄悄咽掉）。
+
+> ⚠️ **两路的大小写口径必须一致——这是 20260916 修的"chips 点了不定位"的真因**（§8.7）。
+> agent 索引 `index.json` 的 `words` 是 **ASCII 小写原形**（`build_word_graph.py` 写词时就折了），
+> 而前端产物节点的 `w` 是**显示形**（`Python`/`JWT`/`MQTT`…），341 词里 44 个只差大小写。
+> 最初 `setHighlight` / `cameraFor` / 组件 `findIndex` 三处都是精确匹配，于是 A 路返回的小写词
+> **被静默丢弃**：不飞（`cameraFor` 查不到 → 原机位返回）、不亮（hits 为空）、不选中
+> （`findIndex` 返 −1）——而 B 路的 `keyOf` 本来就大小写不敏感，所以**"检索服务可用时反而不如
+> 降级准"**。现在 `wordKey()` 是唯一来源（`engine.ts` 导出，`locate.ts` 直接 import 它），
+> 三处匹配全部走它。**加新匹配点时也用 `wordKey`，别再各写一份 `toLowerCase`。**
 
 `query_words()` **绝不抛异常**；`_embed_one` 显式用 `settings.qwen_api_key/qwen_base_url`，
 **不跟 `active_llm_*`**——active provider 可能是 deepseek（没有 embeddings 端点），
@@ -222,7 +264,7 @@ PYTHONPATH=/home/ubuntu/graph-lib python3 scripts/build_word_graph.py --dry-run 
 
 `_load()` 比对 `index.json` 的 `build_id`，变了就整份换掉内存里的词表与向量。
 实测：重新出图后直接发一个查询，日志里出现
-`载入产物 b30f32cce678：333 词 × 1024 维`，同一次请求就返回了新结果。
+`载入产物 ffe31d5744b8：341 词 × 1024 维`，同一次请求就返回了新结果。
 
 ---
 
@@ -231,18 +273,21 @@ PYTHONPATH=/home/ubuntu/graph-lib python3 scripts/build_word_graph.py --dry-run 
 ```bash
 cd /home/ubuntu/memory_blog_rust/saudade-blog-agent
 
-# 1) 只改词表/黑名单的话，先干跑看一眼（零 API 成本）
+# 1) 只改词表/黑名单/用户词典/允许清单的话，先干跑看一眼（零 API 成本）
 PYTHONPATH=/home/ubuntu/graph-lib python3 scripts/build_word_graph.py --dry-run
 #    看 eval/report/wordgraph/<ts>_vocab.txt，确认没有误伤
+#    ⚠️ --dry-run 在 embedding 之前就 return，所以**拿不到质量门指标**（只看词表用它）
 
 # 2) 正式出图（写了两份产物：前端 public/graph + agent data/word_graph）
 PYTHONPATH=/home/ubuntu/graph-lib python3 scripts/build_word_graph.py
 
 # 3) 前端与 agent 的产物都在 git 里（agent data/word_graph 被 gitignore，但它不被代码引用，
 #    只被同一台机器上的 agent 进程读——所以出图后**不需要**任何同步动作）
-#    前端产物要提交：git add frontend/public/graph/
+#    前端产物要显式 add 当前那一代 + manifest（见 §1.1）：
+#      git add frontend/public/graph/graph-<新id>.js frontend/public/graph/manifest.json
 
 # 4) agent 不需要重启（热替换，见 §4.5）；前端产物随 CI 部署上线
+#    展示柜角标读 manifest 的 built，重出图后自动跟着走（§1.1）
 ```
 
 新增文章后**必须重跑**（否则新文章的词不在图里，双击也跳不到它）。
@@ -257,10 +302,19 @@ PYTHONPATH=/home/ubuntu/graph-lib python3 scripts/build_word_graph.py
 
 ```bash
 cd frontend
-node tests/wordgraph-engine.test.mjs      # 62 条：投影/命中/取景/缩放与穿云手感的纯数学
+node tests/wordgraph-engine.test.mjs      # 74 条：投影/命中/取景/缩放与穿云手感/大小写的纯逻辑
 node tests/wordgraph-artifact.test.mjs    # 30 条：产物契约 + 质量门 + nginx 命名
+node tests/theme-choice.test.mjs          # 53 条：主题边界（与本文无关，一起跑免得漏）
 python3 tests/wordgraph_render.py         # 20 条：playwright 真实渲染（不起服务）
+node /tmp/wg-labels.mjs                   # 18 条：引擎渲染语义（标签去重 / 连线基线），见下
 ```
+
+`/tmp/wg-labels.mjs` 是 20260916 加的一次性无头证据脚本（不入库）：它把真 `engine.ts` 打出来，
+喂一个**录音机版 2D context**（假 canvas、真渲染调用），直接驱动 `draw()` 断言两件只能这么测的事——
+**① 同一帧里任何文字都只画一次**；**② 未选中时连线各档的透明度落在新基线上**。
+它做过反证：把 `engine.ts` 里 `labeled.has(i)` 那行短路去掉 / 把边基线 sed 回旧公式，
+对应断言立刻红（`Python×2`、`0.112/0.427`）——**这两条不是同义反复**。
+`/tmp` 里的东西会被清掉，要复现按这个思路重写即可（esbuild + 假 ctx + 调私有 `draw()`）。
 
 `wordgraph_render.py` 用 `page.route` 把整个源从磁盘喂回去（**必须 `goto` 一个真 URL，
 不能 `set_content`**：`about:blank` 没有 base URL，相对 fetch 会直接 "Failed to parse URL"），
@@ -269,7 +323,7 @@ python3 tests/wordgraph_render.py         # 20 条：playwright 真实渲染（�
 其中两条断言是别处看不出问题、只有渲染测试能抓的：
 
 - **空闲 3 秒 rAF 计数增量为 0**（性能硬门槛）。首页是全站最重的页面，
-  这个组件拉着一个 333 点/569 边的画布，**绝不能有常驻渲染循环**。
+  这个组件拉着一个 341 点/584 边的画布，**绝不能有常驻渲染循环**。
   命中辉光因此是有上限的（`PULSE_MS = 1800`）——无限脉冲等于常驻循环。
   断言分两处：首屏后空闲 3s、以及定位动画 + 辉光都结束后再验一次。
 - **"画面变了没有"用逐像素差异，不用质心位移**。点云近似一个球，转它的时候亮的像素在
@@ -295,10 +349,10 @@ python3 tests/wordgraph_render.py         # 20 条：playwright 真实渲染（�
   在排"，没有常驻循环。由渲染测试断言。
 - 出视野（IntersectionObserver）/ 切后台（visibilitychange）冻结。
 - DPR 上限 1.5（3x 屏按原样渲染等于白烧 4 倍填充率，肉眼分不出）。
-- 边按相似度分 4 档，每档一次 `stroke`：569 条边走 4 次绘制调用，不是 569 次。
+- 边按相似度分 4 档，每档一次 `stroke`：584 条边走 4 次绘制调用，不是 584 次。
 - 标签分层（C 层命中/悬停/选中 → N 层选中词的邻居 → Z 层贴脸的 → A 层前 22 名常驻 →
   B 层按深度补到 40，见 §8.4）+ 贪心 AABB 防重叠 + 四向候选位，`measureText` 有缓存，
-  `document.fonts.ready` 后清缓存重绘。
+  `document.fonts.ready` 后清缓存重绘。**每帧一张"已画过标签"的表**做去重（§8.4）。
 - 数据懒加载：**只在夜间挂载的那一刻**才去取 manifest + 动态 import 产物，模块级 promise 缓存。
 - 帧耗时 EMA 滞回降档（连续偏慢 → DPR 1 + 标签减半），无 WebGL 的机器一开始就降档。
 - **⛔ 窗口不用 `backdrop-filter`**：站点为此出过两次事故（`App.sass:10-11`、
@@ -308,17 +362,21 @@ python3 tests/wordgraph_render.py         # 20 条：playwright 真实渲染（�
 
 ### 限制（写在这里免得后来者猜）
 
-- **词表 50% 是 ASCII 代码标识符**（333 词里 165 个）。这是 tf·idf 排序的自然结果：
+- **词表 48% 是 ASCII 代码标识符**（341 词里 165 个）。这是 tf·idf 排序的自然结果：
   代码标识符多只在单篇文章里反复出现 → idf 高 → 排得靠前。对这个博客并不算错
   （`AsyncClient`/`ESP32`/`EMQX`/`bisect` 确实是指向具体文章的锚点），但**它决定了查询的
   手感**：中文 query 走本地兜底时经常匹配不到东西。
-- **常见中文技术词缺失，两种成因（已核实）**：
+- **常见中文技术词缺失，两种成因（已核实，20260916 各修一半）**：
   - **被词性闸误伤**：`POS_DROP` 里有 `f`/`nr`，于是 **前端(f)、后端(后/f)、索引(nr，
-    jieba 把它当人名)** 直接被丢掉。这几个是闸的门槛问题，加白名单可治。
+    jieba 把它当人名)** 直接被丢掉。**已修**：`graph_userdict.txt` 钉死 `前端/后端/本地`
+    的切分词性（§2.1），这三个词现在是节点。`索引` 是 `nr` 但这个词在语料里出现 0 次，
+    进图只会是孤点，**故意不进**。
   - **被每篇 70 词配额挤掉**：缓存(v)/部署(n)/渲染(v)/接口(v) 过了闸也过了词性，
-    但它们跨篇出现 → idf 低 → 排不过单篇里的代码标识符。要救得调配额或专门提权。
-  - 反例（**不是**管线的问题）：性能/算法/主题/向量/检索 在语料里出现 0 次，
-    没有就是没有。
+    但它们跨篇出现 → idf 低 → 排不过单篇里的代码标识符。**已修一半**：`缓存/部署/编译/
+    客户端/数据库/初始化/note` 走允许清单补回；`渲染`/`接口`/`容器`/`调试` 按纪律不收
+    （语料 1~2 次，进图就是孤点）。**配额与全局 400 上限本体没动**。
+  - 反例（**不是**管线的问题）：性能/算法/主题/向量/检索/框架 在语料里出现 0 次，
+    没有就是没有——**不许为"图谱看起来该有这个词"而把它塞进允许清单**。
 - **零命中的中文 query 会"什么都没发生"**：本地兜底在整词/子串都匹配不到时会退到
   bigram Jaccard，而词表以 ASCII 为主 ⇒ 中文 bigram 与它无交集 ⇒ 返回空数组。
   UI 会浮一行「没找到相关的词，换个说法试试」且相机不动（这是设计好的分支），
@@ -329,43 +387,47 @@ python3 tests/wordgraph_render.py         # 20 条：playwright 真实渲染（�
   但 v1 硬编码取 `[0]`，等真有两件以上再谈切换）。
 
 ---
-## 8. 交互与几何（20260915b 第二轮：五个体验问题）
+## 8. 交互与几何
 
-上一轮放大窗口后用户提的五条，逐条对应到这里的实现与证据。
+`§8.1-8.6` 是 **20260915b 第二轮**（用户提的五条），`§8.7-8.9` 是 **20260916 第三轮**。
 几何证据一律用 playwright 打**线上首页 + 临时注入新版 CSS** 再 `getBoundingClientRect` 实测
-（`/tmp/vit_newgeom2.py`，一次性脚本不入库）；空白区 = `.SayWords` 右缘 → `.TopMao` 左缘。
+（第二轮 `/tmp/vit_newgeom2.py`、第三轮 `/tmp/vit_geom3.py`，一次性脚本不入库）；
+空白区 = `.SayWords` 右缘 → `.TopMao` 左缘。
 
 ### 8.1 窗口几何：左缘锚在签名右侧，底边钉住
 
 设计约束来自用户原话「左侧延伸到接近于 Sereno da Saudade 字样右侧，上方延伸两个检索框高度」：
 
 ```
-left: calc(8vw + 462px);  right: 96px;  bottom: 18.7vh;
+left: calc(8vw + 450px);  right: 96px;  bottom: 18.7vh;
 height: calc(min(58vh, 640px) + 72px);
 /* ≤1300px：right: 84px; height: calc(min(52vh,520px) + 72px)   ≤1100px：display:none */
 ```
 
-- **左 = 8vw + 438 + 24**。`.SayWords` 的左缘就是 `.SelfDescription` 的 `padding-left: 8%`，
-  而它的宽度 = 那行 h3 文字的宽度（2.5rem，实测 **437.9px**，系统 sans-serif）⇒ 左缘 = 8vw+462。
-  **别改成百分比系数**：h3 是定宽文本，8vw+438 在 1366/1440/1920/2560 上实测左缝都是 24.1，
+- **左 = 8vw + 438 + 12**。`.SayWords` 的左缘就是 `.SelfDescription` 的 `padding-left: 8%`，
+  而它的宽度 = 那行 h3 文字的宽度（2.5rem，实测 **437.9px**，系统 sans-serif）⇒ 左缘 = 8vw+450。
+  **别改成百分比系数**：h3 是定宽文本，8vw+438 在七档视口上实测左缝都是 12.1，
   换成 vw 还在窄屏会直接压到字上。
+  **20260916 第三轮"左移一点点"：缝 24 → 12**（用户第三次要求往左），实测左缝 12.1±0.1。
+  12 不是"贴上去"——h3 那 437.9 是 **Linux sans-serif** 的量；换霞鹜文楷等中文字体可能更宽，
+  这 12px 就是留给字体差异的余量，**别再往下压**。
 - **高 = 老式高度 + 72**（两个检索框 33×2 + 间隙 6）。**底边必须钉住**：若继续沿用
   `top:50% + translateY(-46%)`，增量会一半往下长，1366×768 那档（下缝只剩 34px）立刻压到签名上。
   18.7vh 就是老式定位折算出的底边留白（三档实测一致）。
-- 七视口实测（0 项不达标）：
+- 七视口实测（20260916 左移后重测，0 项不达标）：
 
 | 视口 | 窗口 | 左缝 | 右缝 | 上缝 | 下缝 | 画布宽 |
 |---|---|---|---|---|---|---|
-| 1152×720 | 514×446 | 24.2 | 84 | 139 | 25.6 | 511.8 |
-| 1280×800 | 632×488 | 24.1 | 84 | 162.4 | 40.6 | 629.6 |
-| 1366×768 | 699×517 | 24.1 | 96 | 107 | **34.6** | 696.7 |
-| 1440×900 | 767×594 | 24.1 | 96 | 137.7 | 59.3 | 764.8 |
-| 1600×900 | 914×594 | 24.1 | 96 | 137.7 | 59.3 | 912 |
-| 1920×1080 | **1208×698** | 24.1 | 96 | 179.7 | 93 | 1206.4 |
-| 2560×1440 | **1797×712** | 24.1 | 96 | 458.7 | 160.3 | 1795.2 |
+| 1152×720 | 526×446 | 12.2 | 84 | 139 | 25.6 | 523.8 |
+| 1280×800 | 644×488 | 12.1 | 84 | 162.4 | 40.6 | 641.6 |
+| 1366×768 | 711×517 | 12.1 | 96 | 107 | **34.6** | 708.7 |
+| 1440×900 | 779×594 | 12.1 | 96 | 137.7 | 59.3 | 776.8 |
+| 1600×900 | 926×594 | 12.1 | 96 | 137.7 | 59.3 | 924 |
+| 1920×1080 | **1220×698** | 12.1 | 96 | 179.7 | 93 | 1218.4 |
+| 2560×1440 | **1809×712** | 12.1 | 96 | 458.7 | 160.3 | 1807.2 |
 
-  对照上一轮的 `min(47vw,900) × min(58vh,640)`：1920 是 900×626 → **1208×698**，
-  2560 是 900×640 → 1797×712（高度被 640+72 上限先绷住，所以带鱼屏上窗口"横着长"）。
+  对照上一轮的 `min(47vw,900) × min(58vh,640)`：1920 是 900×626 → **1220×698**，
+  2560 是 900×640 → 1809×712（高度被 640+72 上限先绷住，所以带鱼屏上窗口"横着长"）。
 - 最紧的两档：**1366×768 的下缝 34.6**（`.home-one-say` 常在 659）、1280/1152 的右缝 84。
   要再加宽加高，先看这两处。
 
@@ -445,6 +507,23 @@ height: calc(min(58vh, 640px) + 72px);
 - 位置候选：右 → 左 → 上 → 下，`hard` 层挨个试（原来"右放不下改放左，再不行就放弃"，
   于是 `device` 这种前排词会被旁边 `git` 的名字顶掉——无头实测抓到的）；贴边的词夹回画布内。
 
+**20260916 修：同一帧里同一个词会被画两个标签**（用户报"已显示标签的向量被选中/被关联后
+又重复显示标签""重要度高的向量接近后也重复展示标签"）。
+
+根因是**分层各自独立调 `take()`，而 `take()` 里没有"这一帧这个节点已经画过"的记录**：
+一个词可以同时是
+① 查询命中（C 层 `force`）、② 选中词的邻居（N 层 `hard`）、③ 相机贴脸（Z 层 `hard`）、
+④ 重要度前 22（A 层 `hard`）——每层都成功放一次名，于是同帧两个（最多时看到 3 个）标签。
+第二轮给 `hard` 加的**四向候选位**恰好放大了它：原来只有"右/左"两个位置，第二次调用经常撞上
+同一个已占位置而失败；有了四个方向，换个方向就放下了。
+
+修法一行：`take()` 开头 `if (labeled.has(i)) return false;`，放下时 `labeled.add(i)`；
+`labeled` 是**每帧复用**的 `Set`（和 `placed` 一起在 `draw()` 开头 `clear()`）。
+层序 C→N→Z→A→B 不变，所以"先画者胜"正是要的语义——**留下的是最强的那次调用**
+（C 层的 `force` 亮色，而不是 A 层的暗色补位）。
+证据 `/tmp/wg-labels.mjs`（18 条，反证见 §6）：去掉这行短路后命中帧立刻出 `Python×2`、
+选中帧 3 处重复，与用户描述逐字对应。
+
 ### 8.5 复位按钮与隐身检索框
 
 - **回到默认视角**：`.wg-home`（用户给的十字准星 SVG，`fill="currentColor"`），位置在**定位按钮上方**
@@ -457,7 +536,7 @@ height: calc(min(58vh, 640px) + 72px);
 
 ### 8.6 缩放区间
 
-点云半径实测（333 词产物）：`max 1.114 / p99 1.020 / p90 0.864 / p50 0.631 / min 0.085`。
+点云半径实测（341 词产物）：`max 1.224 / p99 1.040 / p90 0.885 / p50 0.638 / min 0.125`。
 旧 `DIST_MIN = 1.7` ⇒ **相机永远在点云外面**，"放大"到极限连最外层的点都进不去——
 这就是"还没放大多数就到极限"的定量解释（不是错觉）。
 
@@ -471,3 +550,77 @@ height: calc(min(58vh, 640px) + 72px);
 抽成导出纯函数 `zoomBy(dist, deltaY)` 就是为了让这套手感在 node 里可断言
 （`tests/wordgraph-engine.test.mjs` 的 `== zoomBy ==` 段 9 条，含"推到最近端 ≤20 格"、
 "两端夹紧不越界"、以及**乘性步长精确可逆**——拉近再拉远要回到原距离，否则来回滚会漂）。
+
+### 8.7 未选中时的连线基线（20260916）
+
+用户原话：「未选中向量时连线太不明显，稍微明显一点点」。
+边按相似度分 4 档，每档透明度是 `base = A + B·t`（`t = (b+0.5)/EDGE_BUCKETS`）：
+
+| | 公式 | 四档实测 |
+|---|---|---|
+| 旧 | `0.06 + 0.42·t` | 0.112 / 0.218 / 0.323 / 0.427 |
+| 新 | **`0.10 + 0.46·t`** | **0.158 / 0.273 / 0.388 / 0.503** |
+
+两块系数一起动是有意的：**"太不明显"的正是最弱那一档**，而 4 档是等距切出来的，
+所以抬常数项比抬斜率更能加权到弱档（最弱档 +40%，最强档只 +18%）。
+两条边界**没动**：选中/悬停时无关边的 `×0.22` 压暗系数、以及热边单独一遍 stroke 的暖色那一路
+（`§8.3`）——用户说的是"没选中时"，聚焦态的手感是上一轮刚调好的。
+线宽仍是 `0.5 + 1.1·t`。
+
+证据 `/tmp/wg-labels.mjs` 第二段（反证见 §6）：它从录音机 ctx 里读出各档真实 alpha，
+断言最弱档落在 [0.15, 0.17]、最强档 ≈0.50、压暗后 ≈0.035（0.158×0.22，比例仍是 0.22）。
+
+### 8.8 检索结果 chips：两个问题，两个完全不同的根因（20260916）
+
+用户报「chips 有些点击后不在图谱里定位到向量」+「chips 太靠上、和向量信息窗口重叠」。
+**修之前必须分清这两条**：一个是**数据**问题（大小写，§4.3 末尾那段），一个是**几何**问题。
+
+**① 点了不定位 = 大小写**（详见 §4.3 末尾）：chip 上的词来自 agent 索引的小写原形，
+图谱节点是显示形，精确匹配把它们全丢了。修法是 `wordKey()` 单一来源。
+
+**② 重叠 = 卡片底边钉在了一个拍脑袋的固定像素上**：
+
+| | 旧 | 新 |
+|---|---|---|
+| `.wg-card` 的 DOM 位置 | `.wg-root` 的最后一个子元素 | **`.wg-foot` 的最后一个子元素**（仍是 `position:absolute`，不参与流） |
+| 定位基准 | `bottom: 92px`（相对 `.wg-root`） | `bottom: calc(100% + 8px)`（相对**整条 foot**） |
+| 有 chips 时 | chips 行占底边上方 **81~102.5px** ⇒ 与卡片**重叠 10.5px** | 永远坐在 foot 之上，chips 换行/note 出现都不会撞 |
+
+`.wg-foot` 是底边钉住的列（检索框 33 + 工具行 26 + 间距 6×2 + 内边距 10+8），
+**它会随 chips 换行、note 提示而长高**——所以基准必须是"foot 的顶边"而不是"底边往上数多少像素"。
+改成 `calc(100% + 8px)` 之后，这些都不需要再维护一个数字。
+一个可以直接在线上断的不变式：**`.wg-card` 的底边 ≤ `.wg-foot` 的顶边**（`/tmp/vit_geom3.py` 会打出来）。
+
+### 8.9 角标 = 向量数据库更新时间（20260916）
+
+原来是一个写死的「新」字。用户要求换成**向量库更新时间**，格式
+`2026年09月16日 UTC+8 01:31:59`（**只显示时间，不带「向量库」前缀**，prefix 放 `title`）。
+
+- 数据源是 `manifest.json` 的 `built`（§1.1）——**这个字段本来就是产物的构建时刻**，
+  上一轮已经写进 `graph-*.js` 里了，只是 manifest 与 `loader.ts` 没把它透出来。
+  本轮给 manifest 补上 `built`、`loader.ts` 加 `loadManifest()`（模块级缓存，65B 的请求不必重复发），
+  `exhibits.ts` 的 `badge` 从常量字符串改成 `() => string | null | Promise<...>`。
+- 格式化在 `exhibits.ts`：正则抓 `^(\d{4})-(\d{2})-(\d{2})T(\d{2}:\d{2}:\d{2})` 再拼中文年月日，
+  **不做时区换算**（`built` 本来就是 `+08:00` 本地钟面）。取不到就返回 null ⇒ 不渲染角标，
+  不会出现 `undefined年`。
+- 时间串比「新」字长得多，所以 `.vit-badge` 加了 `flex: none` + `nowrap` + `tabular-nums`
+  （数字等宽，避免每次重出图字宽跳），`.vit-hint` 加了 `min-width: 0` + 省略号
+  （窄窗口上先压提示、不把标题栏顶破）。
+
+---
+
+## 9. 为什么不加向量数据库（20260916 定论：不加）
+
+用户问过"需不需要加个向量数据库来管理"。**结论：这个规模不加，加了只有成本。**
+
+- **数据量**：341 词 × 1024 维 = 1396736 B 裸 float32（1.33 MiB），已经 L2 归一化，
+  检索就是一次点积 + top-k。纯 Python（`array` + `map(operator.mul, ...)`，C 循环）**实测 17ms**，
+  稳态端到端 ~200ms（§4.1），瓶颈在 embedding 那一次网络调用，不在检索。
+- **成本**：Qdrant/Milvus 在这台 3.7GB 的机器上要多 200~400MB RSS（现在 uvicorn 2 worker 是
+  调优过的边界，见 CLAUDE.md §4.10）+ 一份要运维的常驻服务 + 一份要备份的数据目录。
+  换来 **0** 召回率提升、**0** 延迟收益。
+- **真正需要的"管理"是版本与新鲜度，不是索引结构**：产物是可重生成的派生物，
+  谁都知道当前线上是哪一版最关键——那由 `build_id`（文件名/URL 标识）+ `built`（角标，§8.9）
+  + 质量报告（`eval/report/wordgraph/<ts>_build.json`，§2）三件套给出。
+- **什么时候再议**（同时满足才谈）：语料 > ~10k 块、查询 P95 > 300ms、需要元数据过滤
+  （如"只在编程类文章里搜"）。那时该做的是**先量再选**，不是先上服务。
