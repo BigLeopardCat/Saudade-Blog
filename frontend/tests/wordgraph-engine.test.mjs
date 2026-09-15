@@ -1,0 +1,190 @@
+// ═ 图谱引擎纯逻辑回归 ══
+//   node tests/wordgraph-engine.test.mjs
+// 覆盖投影（中心/方向/深度序/近裁剪）、pickNode 命中、locateLocal 关键词兜底、
+// cameraFor 取景。engine.ts / locate.ts 是 TS，用 esbuild 打成 ESM 再 import
+// ——本机禁止 vite build（3.7GB 内存会 OOM），单文件 esbuild 是既定替代手段。
+import { execFileSync } from 'child_process';
+import { mkdtempSync } from 'fs';
+import { tmpdir } from 'os';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const root = path.resolve(here, '..');
+const out = mkdtempSync(path.join(tmpdir(), 'wgt-'));
+
+// runtimeApi.ts 顶层读 import.meta.env 与 window.location，两个都得先备好
+const DEFINE = 'import.meta.env={"VITE_HTTP_BASEURL":"","VITE_CDN_BASEURL":"",'
+    + '"MODE":"production","DEV":false,"PROD":true,"BASE_URL":"/"}';
+
+function bundle(rel, name) {
+    const file = path.join(out, name);
+    execFileSync(path.join(root, 'node_modules/.bin/esbuild'), [
+        path.join(root, rel), '--bundle', '--format=esm', '--platform=neutral',
+        `--outfile=${file}`, `--define:${DEFINE}`, '--log-level=error',
+    ], { stdio: ['ignore', 'ignore', 'inherit'] });
+    return file;
+}
+
+globalThis.window ??= { location: { port: '', protocol: 'http:', hostname: 'localhost' } };
+
+const W = 'src/frontHome/Content/ContentHome/Vitrine/wordgraph/';
+const engine = await import(bundle(W + 'engine.ts', 'engine.mjs'));
+const locate = await import(bundle(W + 'locate.ts', 'locate.mjs'));
+
+// ── 断言小工具（与 chat-core.test.mjs 同款）──
+let passed = 0, failed = 0;
+const ok = (cond, name, detail) => {
+    if (cond) passed++;
+    else { failed++; console.log('  ✗ FAIL: ' + name + (detail !== undefined ? '  → ' + JSON.stringify(detail) : '')); }
+};
+const eq = (got, exp, name) => ok(got === exp, name, { got, exp });
+const near = (got, exp, tol, name) => ok(Math.abs(got - exp) <= tol, name, { got, exp, tol });
+const truthy = (v, name) => ok(!!v, name, { got: v });
+
+// ── 固定夹具：两个簇，方便测"定位到某个簇"──
+const ART = [{ id: 12, t: '异步架构', g: ['Rust'], c: '后端' }, { id: 14, t: '嵌入式笔记', g: ['IoT'], c: '硬件' }];
+const mk = (i, w, x, y, z, n, a = 0) => ({ i, w, x, y, z, n, a, a2: a });
+const NODES = [
+    mk(0, '异步', 1.00, 0.05, 0.10, 1.00),
+    mk(1, '并发', 0.85, 0.30, -0.10, 0.80),
+    mk(2, '线程', 1.10, -0.25, 0.20, 0.70),
+    mk(3, '协程', 0.75, -0.05, -0.30, 0.60),
+    mk(4, 'rust', -1.00, 0.55, 0.30, 0.90, 1),
+    mk(5, 'axum', -1.20, 0.75, 0.10, 0.65, 1),
+    mk(6, 'tokio', -0.85, 0.40, 0.50, 0.55, 1),
+];
+const GRAPH = {
+    v: 'test', model: 'x', dim: 3, built: '2026-09-15',
+    articles: ART, nodes: NODES, edges: [[0, 1, 0.8], [1, 2, 0.6], [4, 5, 0.7]],
+    stats: {},
+};
+
+const CAM0 = { yaw: 0, pitch: 0, dist: 5, target: [0, 0, 0] };
+
+// ══════════════════════════════════════════════ 投影
+console.log('== projectNodes ==');
+{
+    const p = new engine.Projection(1);
+    engine.projectNodes([mk(0, '原点', 0, 0, 0, 1)], CAM0, 800, 600, p);
+    near(p.x[0], 400, 1e-4, '原点投影到画布中心 x');
+    near(p.y[0], 300, 1e-4, '原点投影到画布中心 y');
+    near(p.d[0], 5, 1e-6, '原点深度 = dist');
+}
+{
+    const p = new engine.Projection(3);
+    const probe = [mk(0, 'x', 1, 0, 0, 1), mk(1, 'y', 0, 1, 0, 1), mk(2, 'z', 0, 0, 1, 1)];
+    engine.projectNodes(probe, CAM0, 800, 600, p);
+    ok(p.x[0] > 400, '世界 +x → 屏幕右侧', { x: p.x[0] });
+    ok(p.y[1] < 300, '世界 +y → 屏幕上方', { y: p.y[1] });
+    ok(p.d[2] < 5, '世界 +z（朝相机）→ 更近', { d: p.d[2] });
+    ok(p.r[2] > p.r[0], '更近的点屏幕半径更大（透视缩放）', { near: p.r[2], far: p.r[0] });
+}
+{
+    // yaw=π/2：相机绕到 +x 侧，世界 +x 的点应当变成"正对中心且最近"
+    const p = new engine.Projection(1);
+    engine.projectNodes([mk(0, 'x', 1, 0, 0, 1)], { ...CAM0, yaw: Math.PI / 2 }, 800, 600, p);
+    near(p.x[0], 400, 1e-3, 'yaw 90° → 世界 +x 落回画面中心');
+    near(p.d[0], 4, 1e-6, 'yaw 90° → 世界 +x 距离 4');
+}
+{
+    // 近裁剪：点跑到相机背后（eye 在 z=5，点在 z=7）
+    const p = new engine.Projection(1);
+    engine.projectNodes([mk(0, 'behind', 0, 0, 7, 1)], CAM0, 800, 600, p);
+    ok(p.d[0] < 0, '背后点深度为负', { d: p.d[0] });
+    eq(p.r[0], 0, '背后点半径归零');
+    ok(p.x[0] < -1e5, '背后点坐标被踢出屏幕', { x: p.x[0] });
+}
+
+// ══════════════════════════════════════════════ 命中
+console.log('== pickNode ==');
+{
+    const p = new engine.Projection(NODES.length);
+    engine.projectNodes(NODES, CAM0, 800, 600, p);
+    const c = engine.pickNode(p, p.x[0], p.y[0]);
+    eq(c, 0, '点在落点上 → 命中该点');
+    eq(engine.pickNode(p, p.x[0] + 400, p.y[0]), null, '偏出 400px → 不命中');
+    // 重叠：让一个点与另一个点屏幕位置重合但更近
+    const two = [mk(0, 'far', 0, 0, -1, 1), mk(1, 'near', 0, 0, 1, 1)];
+    const p2 = new engine.Projection(2);
+    engine.projectNodes(two, CAM0, 800, 600, p2);
+    near(p2.x[0], p2.x[1], 1e-4, '夹具：两点屏幕位置重合');
+    eq(engine.pickNode(p2, 400, 300), 1, '重叠时命中离相机更近的那个');
+}
+
+// ══════════════════════════════════════════════ 本地关键词兜底
+console.log('== locateLocal ==');
+{
+    const hit = locate.locateLocal('异步编程', GRAPH);
+    truthy(hit.length, '有命中');
+    eq(hit[0].w, '异步', '「异步编程」→ 最长匹配到「异步」（不是「步编」）');
+}
+{
+    const hit = locate.locateLocal('rust 的并发模型', GRAPH);
+    const ws = hit.map((h) => h.w);
+    truthy(ws.includes('rust'), '跨中英混合：命中 rust', ws);
+    truthy(ws.includes('并发'), '跨中英混合：命中 并发', ws);
+}
+{
+    const hit = locate.locateLocal('axum', GRAPH);
+    eq(hit[0].w, 'axum', 'ASCII 整词精确命中');
+}
+{
+    const hit = locate.locateLocal('axumx', GRAPH);   // 前缀兜底
+    ok(hit.some((h) => h.w === 'axum'), 'ASCII 前缀容错命中 axum', hit);
+}
+{
+    // 零命中必须仍有落点（bigram 兜底），不能按了回车什么都没有
+    const hit = locate.locateLocal('协程调度器', GRAPH);
+    truthy(hit.length, '即使精确词全不中，bigram 兜底也有落点');
+    eq(locate.locateLocal('', GRAPH).length, 0, '空串 → 空结果（不瞎猜）');
+}
+
+// ══════════════════════════════════════════════ 取景
+console.log('== cameraFor ==');
+{
+    eq(engine.cameraFor(GRAPH, [], CAM0), CAM0, '无命中 → 相机原样不动（同一对象引用）');
+}
+{
+    const hits = [{ w: '异步', s: 1 }, { w: '并发', s: 0.8 }, { w: '线程', s: 0.7 }, { w: '协程', s: 0.6 }];
+    const cam = engine.cameraFor(GRAPH, hits, CAM0);
+    let sw = 0, cx = 0, cy = 0, cz = 0;
+    for (const h of hits) {
+        const n = NODES.find((x) => x.w === h.w);
+        sw += h.s; cx += n.x * h.s; cy += n.y * h.s; cz += n.z * h.s;
+    }
+    near(cam.target[0], cx / sw, 1e-6, 'target = 加权质心 x');
+    near(cam.target[1], cy / sw, 1e-6, 'target = 加权质心 y');
+    near(cam.target[2], cz / sw, 1e-6, 'target = 加权质心 z');
+    eq(cam.yaw, CAM0.yaw, '朝向不变（只推进去，不绕着转）');
+    eq(cam.pitch, CAM0.pitch, '俯仰不变');
+    ok(cam.dist >= 1.9 - 1e-9 && cam.dist <= 9, 'dist 落在滚轮可达区间', { dist: cam.dist });
+
+    // ★ 硬要求：全部命中点都必须落在画面内，否则"定位"就是把人带到看不见的地方
+    const p = new engine.Projection(NODES.length);
+    engine.projectNodes(NODES, cam, 620, 460, p);
+    const inside = hits.map((h) => {
+        const i = NODES.findIndex((x) => x.w === h.w);
+        return { w: h.w, x: p.x[i], y: p.y[i], in: p.x[i] >= 0 && p.x[i] <= 620 && p.y[i] >= 0 && p.y[i] <= 460 };
+    });
+    ok(inside.every((v) => v.in), '全部命中点都在视锥内', inside);
+}
+{
+    // 大簇：走比例分支（不被 LOCATE_DIST_MIN 夹住）时也必须框得住
+    const wide = [
+        mk(0, 'a', 0, 0, 0, 1), mk(1, 'b', 2.4, 0, 0, 1),
+        mk(2, 'c', 0, 2.4, 0, 1), mk(3, 'd', 0, 0, 2.4, 1),
+    ];
+    const g2 = { ...GRAPH, nodes: wide };
+    const hits = wide.map((n) => ({ w: n.w, s: 1 }));
+    const cam = engine.cameraFor(g2, hits, CAM0);
+    ok(cam.dist < 9, '大簇没被顶到最远距离', { dist: cam.dist });
+    const p = new engine.Projection(4);
+    engine.projectNodes(wide, cam, 620, 460, p);
+    const out = wide.filter((_, i) => !(p.x[i] >= 0 && p.x[i] <= 620 && p.y[i] >= 0 && p.y[i] <= 460))
+        .map((n) => n.w);
+    eq(out.length, 0, '大簇的全部命中点也在视锥内（取景系数够大）', out);
+}
+
+console.log(`\n${failed === 0 ? '✓' : '✗'} wordgraph-engine: ${passed} passed, ${failed} failed`);
+process.exit(failed === 0 ? 0 : 1);
