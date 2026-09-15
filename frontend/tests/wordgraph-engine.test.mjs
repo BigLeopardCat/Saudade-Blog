@@ -163,6 +163,54 @@ console.log('== zoomBy ==');
     near(engine.zoomBy(engine.zoomBy(4.3, -400), 400), 4.3, 1e-9, '拉近再拉远精确回到原距离');
 }
 
+// ══════════════════════════════════════════════ 穿云（滚轮到底之后继续前进）
+console.log('== dollyBy / wheelStep ==');
+{
+    // 20260915 用户报「滚轮不能穿出向量空间，深处向量要旋转视角才看得到」：
+    // 只缩 dist 的话相机永远绕着锚点 0.4 打转，团中央的词只能转到正面才看得见。
+    // 判据：dist 到底之后继续上滚 → dist 不变、沿视线前进；下滚先退回锚点。
+    const MIN = 0.4;
+    ok(engine.dollyBy(-100) > 0, '上滚一格 = 前进（正位移）');
+    ok(engine.dollyBy(100) < 0, '下滚一格 = 后退（负位移）');
+    near(engine.dollyBy(-100), -engine.dollyBy(100), 1e-12, '前进/后退一格等长（精确可逆）');
+    const per = engine.dollyBy(-100);
+    ok(per > 0.1 && per < 0.3, `一格位移 ${per.toFixed(3)} 落在手感区间 (0.1, 0.3)`, { per });
+    // 穿过整团（直径 ≈2×1.11）要几格：太多说明"进去了出不来"，太少会一步穿爆
+    const across = (2 * 1.11) / per;
+    ok(across >= 8 && across <= 20, `穿过整团约 ${across.toFixed(1)} 格（8~20 格）`, { across });
+
+    const r1 = engine.wheelStep(MIN, 0, -100);
+    eq(r1.dist, MIN, '到底后继续上滚：dist 不再变小');
+    ok(r1.advance > 0, '到底后继续上滚：改为沿视线前进', r1);
+    const r1b = engine.wheelStep(MIN, 0.5, -100);
+    eq(r1b.dist, MIN, '已在团里再上滚：dist 保持');
+    ok(r1b.advance > 0, '已在团里再上滚：继续前进');
+
+    const r2 = engine.wheelStep(MIN, 0.5, 100);
+    eq(r2.dist, MIN, '有位移时下滚：先退位移，dist 不动');
+    near(r2.advance, -Math.min(per, 0.5), 1e-12, '下滚退回量 = min(一格, 剩余位移)');
+    const r2b = engine.wheelStep(MIN, 0.05, 100);
+    near(r2b.advance, -0.05, 1e-12, '剩余位移不足一格 → 一次退干净（不会退过头变成负位移）');
+    eq(r2b.dist, MIN, '退干净这步仍然不动 dist');
+
+    const r3 = engine.wheelStep(MIN, 0, 100);
+    ok(r3.advance === 0, '没有位移时下滚：回到普通缩放，不产生位移');
+    ok(r3.dist > MIN, '没有位移时下滚：dist 变大（退出团）', r3);
+    const r4 = engine.wheelStep(4.3, 0, -100);
+    eq(r4.advance, 0, '还没到底时上滚：只是缩放，不穿云');
+    ok(r4.dist < 4.3, '还没到底时上滚：dist 变小');
+
+    // 从默认机位一路滚到底再继续滚：应先在 15 格左右把 dist 压到 MIN，之后才开始穿云
+    let d = 4.3, n = 0, adv = 0;
+    while (n < 60) {
+        const r = engine.wheelStep(d, adv, -100);
+        d = r.dist; adv += r.advance; n++;
+        if (adv > 2.3) break;                       // 穿过整团
+    }
+    ok(adv > 2.22, `从默认机位滚 ${n} 格可穿过整团（位移 ${adv.toFixed(2)} > 直径 2.22）`, { n, adv });
+    ok(n <= 34, `穿团总格数 ${n} ≤ 34（别让人滚到手酸）`, { n });
+}
+
 // ══════════════════════════════════════════════ 取景
 console.log('== cameraFor ==');
 {

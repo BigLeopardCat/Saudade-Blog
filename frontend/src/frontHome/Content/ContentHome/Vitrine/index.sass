@@ -5,23 +5,28 @@
 //    ContentHome/index.sass:81-82），半透明观感一律靠 rgba 底色 + 静态渐变。
 //    合成器逐帧重算模糊会把首页帧率压垮，而这正是首页最重的区域。
 
-// 尺寸 = 社交按钮右侧空白区的 ~80%（20260915 用户要求放大）：宽 47vw + 900 上限、
-// 高 58vh + 640 上限，右缘固定让开右侧固定栏。空白区 = .SayWords 右缘 → .TopMao 左缘
-// （≤1200px 时 .TopMao 是 display:none，右边界退化成视口右缘，此时仍留 84px）。
-// 六视口实测见 docs/word-graph.md §8，最要紧的三档：
-//   1440×900  677×522  占空白区 83%  距左文 114  距底 59
-//   1920×1080 900×626  72%          332         93
-//   1366×768  642×445  86%          81          34 ← 最紧的一档，别再往下压高度
-// 900 那个上限只对 ≥1915px 生效（窄屏走 47vw）：没有它 1920 只有 780px = 空白区 62%。
-// 再宽的屏（2048/2560）占比自然掉到 65%/49%——空白区随视口线性长，固定比例填不满，
-// 且 640 的高度上限在 ≥1104px 高的屏上先绷住（2560×1440 实测 900×640，距底还有 265）。
+// 尺寸（20260915b 第二轮放大）：**左缘贴「Sereno da Saudade」右侧 24px，底边钉住，
+// 只往左+往上长**——用户在原来那版上继续要的两条："左侧延伸到近乎签名右侧""上方再抬
+// 两个检索框的高度"。
+//   左：.SayWords 的左缘是 .SelfDescription 的 padding-left:8%，它的宽度就是那行 h3
+//       文字的宽度（2.5rem，实测 437.9px@Linux sans-serif）⇒ 左缘 = 8vw + 438 + 24 缝。
+//       别改成百分比：h3 是**定宽文本**，8vw+438 在 1366/1920/2560 上实测都是 24px 缝，
+//       换成 vw 系数在窄屏会直接压到字上。
+//   上：高 = 老式高度 + 72px（两个检索框高 33×2 + 一行间隙 6）。底边必须钉住——继续用
+//       top:50% + translateY(-46%) 的话增量会一半往下长，1366×768 那档（间距只剩 34px）
+//       立刻压到签名上。18.7vh 就是老式定位折算出的底边留白（三档实测一致）。
+//   右：右缘固定让开右侧固定栏 .TopMao（≤1300px 收窄到 84px，≤1200px 时它 display:none）。
+// 七视口实测（20260915b，注入线上页面量得，见 docs/word-graph.md §8）：
+//   1366×768  699×517  左缝 24  上缝 107  下缝 34.6 ← 最紧的一档，别再往下压
+//   1440×900  767×594  24       137.7    59.3
+//   1920×1080 1208×698 24       179.7    93      （旧版 900×626，右半屏空白全利用）
+//   2560×1440 1797×712 24       458.7    160.3
 .vitrine
   position: absolute
+  left: calc(8vw + 462px)
   right: 96px
-  top: 50%
-  transform: translateY(-46%)
-  width: min(47vw, 900px)
-  height: min(58vh, 640px)
+  bottom: 18.7vh
+  height: calc(min(58vh, 640px) + 72px)
   z-index: 3
   display: flex
   flex-direction: column
@@ -37,7 +42,7 @@
 @keyframes vit-in
   from
     opacity: 0
-    transform: translateY(-43%)
+    transform: translateY(10px)
 
 .vit-bar
   flex: none
@@ -105,11 +110,11 @@
   color: rgba(200, 214, 238, 0.45)
   pointer-events: none
 
-// 悬停读数：贴在左下，避开右下角的查询输入框
+// 读数卡片：贴在左下，底边要抬到整条 .wg-foot（加了工具栏后 ~83px）之上
 .wg-card
   position: absolute
   left: 12px
-  bottom: 58px
+  bottom: 92px
   max-width: 62%
   display: flex
   flex-direction: column
@@ -174,9 +179,53 @@
   color: rgba(214, 226, 246, 0.62)
   padding-left: 2px
 
+// 检索框平时隐身，鼠标进到这块区域才浮出来（20260915b 用户要求）——画布是主角，
+// 一行输入框常驻会一直挡着右下角的向量。
+// 隐身用 opacity 而不是 display:none / visibility:hidden：透明度不参与命中测试，
+// 所以"摸黑"也能点中它、点中后 :focus-within 自己就亮回来（键盘 Tab 进来同理）。
+// 查询进行中 / 已有推荐词时挂 .is-on 常亮，否则打字打一半框会消失。
 .wg-queri
   display: flex
   gap: 6px
+  opacity: 0
+  transform: translateY(4px)
+  transition: opacity 0.18s ease, transform 0.18s ease
+  &:hover, &:focus-within, &.is-on
+    opacity: 1
+    transform: none
+
+// 触屏没有 hover：直接常亮，否则这个功能等于不存在
+@media (hover: none)
+  .wg-queri
+    opacity: 1
+    transform: none
+
+// 工具栏：现在只放「回到默认视角」一个按钮，右对齐——正好落在定位按钮正上方
+.wg-tools
+  display: flex
+  justify-content: flex-end
+
+.wg-home
+  display: flex
+  align-items: center
+  justify-content: center
+  width: 26px
+  height: 26px
+  padding: 0
+  border-radius: 8px
+  cursor: pointer
+  color: rgba(214, 226, 246, 0.62)
+  background: rgba(255, 255, 255, 0.05)
+  border: 1px solid rgba(255, 255, 255, 0.13)
+  transition: color 0.15s ease, background 0.15s ease
+  svg
+    width: 15px
+    height: 15px
+    display: block
+  &:hover
+    color: #ffe9a8
+    background: rgba(255, 233, 168, 0.14)
+    border-color: rgba(255, 233, 168, 0.32)
 
 .wg-input
   flex: 1
@@ -217,12 +266,12 @@
     border-color: rgba(255, 255, 255, 0.12)
 
 // ---------------------------------------------------------------- 自适应
-// ≤1300px 收窄并让开右侧固定的 .TopMao（70px 宽）
+// ≤1300px 让开右侧固定的 .TopMao（70px 宽）：宽度不再单列公式——左缘已经被签名钉死，
+// 只收右缘，宽度自然跟着缩。高度这一档也要 +72（同上）。
 @media screen and (max-width: 1300px)
   .vitrine
     right: 84px
-    width: min(42vw, 560px)
-    height: min(52vh, 520px)
+    height: calc(min(52vh, 520px) + 72px)
 
 // ≤1100px 直接不显示：这时左半屏的文字组已经压过来，硬塞会打架
 @media screen and (max-width: 1100px)
