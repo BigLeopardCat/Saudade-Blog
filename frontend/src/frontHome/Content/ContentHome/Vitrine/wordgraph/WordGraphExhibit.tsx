@@ -148,17 +148,12 @@ export default function WordGraphExhibit() {
                         </span>
                     </div>
                 )}
-                {chips.length > 0 && (
-                    <div className="wg-chips">
-                        {chips.map((c) => (
-                            <button key={c.w} type="button" className="wg-chip"
-                                onClick={() => pick(c)}>{c.w}</button>
-                        ))}
-                        <button type="button" className="wg-chip wg-chip-x" onClick={reset}>×</button>
-                    </div>
-                )}
-                {note && <div className="wg-note">{note}</div>}
-                {/* 回到默认视角：滚轮可以穿进点云内部再穿出去，走远了要有条明确的路回来 */}
+                {/* 回到默认视角：滚轮可以穿进点云内部再穿出去，走远了要有条明确的路回来。
+                    ⚠️ **顺序**：工具行必须在 chips **上面**。它原来是夹在 chips 与检索框
+                    之间的（DOM 顺序 = 视觉顺序），于是"检索出来的标签"和"检索框"之间凭空
+                    多了 6 + 26 + 6 = 38px 的空档（20260916c 用户："间隙太大，不美观"）。
+                    挪到 chips 之前以后，chips 紧贴检索框（同一个 gap: 6px），
+                    没有 chips 时这行本来就正好落在定位按钮正上方。 */}
                 <div className="wg-tools">
                     <button type="button" className="wg-home" onClick={() => engRef.current?.home()}
                         title="回到默认视角位置" aria-label="回到默认视角位置">
@@ -169,6 +164,16 @@ export default function WordGraphExhibit() {
                         </svg>
                     </button>
                 </div>
+                {chips.length > 0 && (
+                    <div className="wg-chips">
+                        {chips.map((c) => (
+                            <button key={c.w} type="button" className="wg-chip"
+                                onClick={() => pick(c)}>{c.w}</button>
+                        ))}
+                        <button type="button" className="wg-chip wg-chip-x" onClick={reset}>×</button>
+                    </div>
+                )}
+                {note && <div className="wg-note">{note}</div>}
                 <div className={'wg-queri' + (busy || chips.length ? ' is-on' : '')}>
                     <input
                         className="wg-input"
