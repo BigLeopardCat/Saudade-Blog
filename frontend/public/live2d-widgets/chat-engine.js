@@ -108,12 +108,26 @@
       // 用户上翻读历史（userAtBottom=false）自动不打扰，恢复"有新消息"指示条语义。
       try {
         if (typeof ResizeObserver !== 'undefined' && messages) {
-          const pinObserver = new ResizeObserver(() => {
+          const pin = () => {
             if (!userAtBottom) return; // 用户在历史区：不拽走
             hideNewMsgNote();
             messages.scrollTop = messages.scrollHeight;
-          });
-          pinObserver.observe(messages);
+          };
+          // ① 容器本身：覆盖 hidden→visible 首帧这类"容器自己变了"的情况
+          new ResizeObserver(pin).observe(messages);
+          // ② **内容晚到**也要钉底。容器是 flex:1 定高盒、内容长高它自己不变 ⇒ ①永远
+          //    收不到；而盯每条消息的 ResizeObserver 实测**也不触发**（竖向 flex 的
+          //    item 会被压缩，消息盒自身尺寸可以不变）。真正会响的是下面两类信号：
+          //    · 图片晚到（贴纸/文章配图）：img 的 load **不冒泡但能被捕获**——
+          //      实测贴纸慢 900ms 到位会把内容撑高 102px，面板停在半路再不回底
+          //      （20260916 用户报"总差一点"）；
+          //    · 结构变化（mermaid 异步插 SVG、代码高亮改 DOM）：MutationObserver。
+          messages.addEventListener('load', pin, true);
+          messages.addEventListener('error', pin, true);   // 图挂了占位塌陷，同样要重算
+          if (typeof MutationObserver !== 'undefined') {
+            new MutationObserver(() => requestAnimationFrame(pin))
+              .observe(messages, { childList: true, subtree: true });
+          }
         }
       } catch(e) {/* ignore */}
       // 执行过程框偏好：默认展开；用户主动收起过一次 → 保持收起（social UI 惯例）

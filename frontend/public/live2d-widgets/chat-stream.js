@@ -38,6 +38,15 @@
         try { applyMsg(span, errMsg); } catch (e3) { /* ignore */ }
       }
     };
+    /** 口型归位：关掉 override，让模型恢复默认驱动。
+     *  正常收尾一直有这一步，但**失败/停止路径漏了** ⇒ `__mouthOverride` 停在流式最后
+     *  一帧（多半是 0.8 = 张着），下一轮对话前嘴一直张着（20260916 用户报）。 */
+    const resetMouth = () => {
+      try {
+        if (window.__setMouthOpen) window.__setMouthOpen(0);
+        window.__mouthOverride = -1;
+      } catch (e) { /* 归位失败不该影响收尾 */ }
+    };
     const { messages, input, sendBtn, navConfirm, navQuestion, chatPanel } = ctx.dom;
     const scrollToBottom = engine.scrollToBottom;
     const broadcast = engine.broadcast;
@@ -672,8 +681,7 @@
           if (typingTimer) clearTimeout(typingTimer);
           if (typingEl) typingEl.remove();
           // 口型归位，关闭 override 让模型恢复默认驱动
-          if (window.__setMouthOpen) window.__setMouthOpen(0);
-          window.__mouthOverride = -1;
+          resetMouth();
           contentSpan.classList.remove('msg-streaming'); // 渲染完成后恢复 normal，与博客一致
           // 完整文本（命令行前置，导航/特效解析沿用原格式）
           const fullText = cmdText + displayText;
@@ -731,6 +739,7 @@
           if (typingEl) typingEl.remove();
           clearTimeout(idleTimer);
           clearTimeout(totalTimer);
+          resetMouth();   // 与成功收尾同口径：失败/主动停止也要把口型交还给默认驱动
           // 20260828o 修复：连接层失败（fetch 抛错/45s 空闲超时 abort）发生在
           // makeLiveBubble 之前时 contentSpan 为 null——下方 applyMsg(contentSpan)
           // 会抛 TypeError 导致错误文案丢失、气泡缺失（实测：断流时用户只看到
@@ -1212,6 +1221,7 @@
               sendBtn.innerHTML = '发送';
               sendBtn.classList.remove('stop-mode');
               input.disabled = false;
+              resetMouth();   // 3s 保险路径（abort 未触发时走这里）同样要归位口型
               const r = ctx.state.activeRound;
               const victim = ctx.state.live[r.roundId];
               if (ctx.state.stoppedByUser) {
