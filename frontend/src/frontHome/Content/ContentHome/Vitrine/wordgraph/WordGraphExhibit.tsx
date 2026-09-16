@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import UserState from '../../../../../interface/UserState';
 import { loadGraph } from './loader';
 import { locate } from './locate';
 import { WordGraphEngine, cameraFor, wordKey } from './engine';
+import { WG_PARAM, clearSaved, decideBoot, queryFromUrl, readSaved, writeSaved } from './remember';
 import type { GraphData, LocateHit } from './types';
+import type { SavedSearch } from './remember';
 
 /** 展品：文章向量空间知识图谱。
  *  性能前提：画布只在交互时出帧（引擎自己调度），空闲时 rAF 计数为 0；
@@ -23,7 +25,18 @@ export default function WordGraphExhibit() {
     const [note, setNote] = useState<string | null>(null);
 
     const nav = useNavigate();
+    const [sp, setSp] = useSearchParams();
     const token = useSelector((s: { user: UserState }) => s.user.token) || null;
+
+    /** 恢复载荷：**只在首次渲染算一次**——之后 URL 与缓存都会被我们自己改写，
+     *  再算一次就会把用户刚清空的检索又读回来。null / undefined 都表示"不恢复"。 */
+    const bootRef = useRef<SavedSearch | null | undefined>(undefined);
+    if (bootRef.current === undefined) {
+        bootRef.current = decideBoot(queryFromUrl((k) => sp.get(k)), readSaved());
+    }
+    /** 已经消费过恢复载荷的引擎实例。引擎重建（= `data` 变化）时恢复要能重放一次，
+     *  所以这里比对的是实例本身，不是布尔量。 */
+    const bootDoneRef = useRef<WordGraphEngine | null>(null);
 
     useEffect(() => {
         let alive = true;
@@ -64,6 +77,7 @@ export default function WordGraphExhibit() {
             ro?.disconnect();
             eng.dispose();
             engRef.current = null;
+            bootDoneRef.current = null;   // 引擎没了：下次重建要能重新恢复一次
         };
     }, [data, nav]);
 
@@ -86,36 +100,81 @@ export default function WordGraphExhibit() {
         const k = wordKey(h.w);
         const i = data.nodes.findIndex((n) => wordKey(n.w) === k);
         if (i >= 0) eng.setSelected(i);
-    }, [focus, data]);
+        // 选中词也进缓存：回来时把用户走之前选的那个重新选上。**不进 URL**——
+        // 分享出去的链接只要"搜了什么"，没必要带"点开了哪个"。
+        writeSaved({ q, hits: chips.length ? chips : null, sel: h.w });
+    }, [focus, data, q, chips]);
+
+    /** 把检索串写进 URL（见 remember.ts 顶部：URL 是跨页面跳转的真源）。用 `replace`
+     *  写——否则连搜三次、从文章页回来要点三次"后退"才离开首页；而被替换的正是
+     *  当前这条首页记录，从文章页后退回来照样带着参数。 */
+    const writeQ = useCallback((text: string | null) => {
+        setSp((prev) => {
+            const next = new URLSearchParams(prev);
+            if (text) next.set(WG_PARAM, text); else next.delete(WG_PARAM);
+            return next;
+        }, { replace: true });
+    }, [setSp]);
 
     const reset = useCallback(() => {
         setChips([]);
         setNote(null);
         setQ('');
+        writeQ(null);
+        clearSaved();
+        bootRef.current = null;   // 用户自己清空的：回到首页不该再被恢复出来
         const eng = engRef.current;
         if (eng) { eng.setSelected(null); eng.home(); }
-    }, []);
+    }, [writeQ]);
 
-    const runQuery = useCallback(async () => {
-        const text = q.trim();
-        if (!text || busy || !data) return;
+    /** 真正的检索。`persist=false` 用于**恢复**那一路：URL 与缓存就是它的来源，
+     *  再写一遍是空转，还会把"这是刚搜的"和"这是恢复的"混成一件事。 */
+    const runQueryText = useCallback(async (text: string, persist = true) => {
+        const t = text.trim();
+        // busy 期间不重复发请求（用户连按 Enter 的老行为）；恢复那一路不受它影响
+        // ——用户手一抖不该把"回到首页自动恢复"挤掉。
+        if (!t || !data || (persist && busy)) return;
         setBusy(true);
         setNote(null);
         try {
-            const r = await locate(text, data);
+            const r = await locate(t, data);
             if (!r.hits.length) {
                 setChips([]);
                 setNote('没找到相关的词，换个说法试试');
+                if (persist) { writeQ(t); writeSaved({ q: t, hits: null, sel: null }); }
                 return;
             }
             setChips(r.hits);
             focus(r.hits);
+            if (persist) { writeQ(t); writeSaved({ q: t, hits: r.hits, sel: null }); }
             // 已登录却仍退化到本地 = 服务侧有问题，如实说明（不是"悄悄降级"）
             if (r.source === 'local' && token) setNote('检索服务暂时不可用，已用本地匹配');
         } finally {
             setBusy(false);
         }
-    }, [q, busy, data, focus, token]);
+    }, [data, busy, focus, token, writeQ]);
+
+    const runQuery = useCallback(() => { void runQueryText(q); }, [q, runQueryText]);
+
+    /** 恢复上次的检索。**必须在引擎就绪之后**：高亮 / 相机 / 选中全落在引擎实例上，
+     *  而引擎要等 `data` 到了才建（见上面那个 effect）。每个引擎实例只消费一次，
+     *  所以用户随后的手动检索不会被它盖回去。 */
+    useEffect(() => {
+        const eng = engRef.current;
+        const boot = bootRef.current;
+        if (!data || !eng || !boot || bootDoneRef.current === eng) return;
+        bootDoneRef.current = eng;
+        setQ(boot.q);
+        if (boot.hits && boot.hits.length) {
+            setChips(boot.hits);
+            focus(boot.hits);                     // 与手动检索走同一条路，画面表现一致
+            const k = boot.sel ? wordKey(boot.sel) : '';
+            const i = k ? data.nodes.findIndex((n) => wordKey(n.w) === k) : -1;
+            if (i >= 0) eng.setSelected(i);
+            return;
+        }
+        void runQueryText(boot.q, false);         // 只有查询串（缓存里没命中列表）→ 重新检索
+    }, [data, focus, runQueryText]);
 
     // 读数卡片：悬停优先（临时的），没在悬停时显示选中的那个（持久的）。
     // 卡片上写明"双击"——单击只选中不跳转，不写清楚就会被当成"点了没反应"。
@@ -193,7 +252,7 @@ export default function WordGraphExhibit() {
                         aria-label="在图谱中定位关键词"
                     />
                     <button type="button" className="wg-go"
-                        onClick={runQuery} disabled={!token || busy || !data || !q.trim()}>
+                        onClick={() => runQuery()} disabled={!token || busy || !data || !q.trim()}>
                         {busy ? '…' : '定位'}
                     </button>
                 </div>
