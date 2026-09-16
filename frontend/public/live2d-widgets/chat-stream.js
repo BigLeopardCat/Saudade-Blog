@@ -10,6 +10,34 @@
     }
     const __chatCore = ctx.core;
     const { applyMsg, renderAgentContent } = ctx.render;
+    /** 失败收尾的正文渲染：**保留已经收到的部分**，提示接在它后面。
+     *
+     *  旧写法是 `applyMsg(span, errMsg)` —— innerHTML 整体替换，把用户已经看着流出来的
+     *  半截回复直接抹掉，屏幕上只剩一行"网络错误"。20260916 线上事故：agent worker 静默
+     *  崩溃（健康探针 10:46:01 抓到新的 worker pid），SSE 断在半句上，DB 里明明存着
+     *  3460 字的半截回复（`# 一句话总结` 那行断在"——现有"），用户屏幕上却是一片空白 +
+     *  错误文案，于是以为"前半段根本没生成"，只能再问一轮让 agent 补。
+     *
+     *  这里按**成功路径的口径**把已收到的部分重渲染成 markdown（流式期间是
+     *  `textContent` 纯文本 + `.msg-streaming` 的 pre-line，收尾才走 markdown），
+     *  再把提示作为一个独立节点追加在后面。
+     *  ⚠️ 提示**只进 DOM**：存进 items/DB 的仍旧是 agent 说过的话本身（下方 partialItem
+     *  用的还是 cmdText + displayText），否则错误文案会污染历史与记忆注入。 */
+    const renderFailed = (span, errMsg, partial) => {
+      if (!span) return;
+      try {
+        span.classList.remove('msg-streaming');   // 与成功收尾同口径：markdown 阶段不能再吃 pre-line
+        applyMsg(span, partial || '');
+        const note = document.createElement('div');
+        note.className = 'chat-msg-err-note';
+        note.textContent = errMsg;
+        span.appendChild(note);
+      } catch (e2) {
+        // 渲染失败也不能把"这轮失败了"这件事一起吞掉：退回最小可用形态（整段替成错误文案）。
+        // catch 里再抛会越过 finally 变成未处理拒绝，UI 复位了却什么都不显示。
+        try { applyMsg(span, errMsg); } catch (e3) { /* ignore */ }
+      }
+    };
     const { messages, input, sendBtn, navConfirm, navQuestion, chatPanel } = ctx.dom;
     const scrollToBottom = engine.scrollToBottom;
     const broadcast = engine.broadcast;
@@ -722,7 +750,8 @@
               ctx.state.discardTurn = true;
             } else {
               const errMsg = '长时间未收到回复，请稍后重试';
-              applyMsg(contentSpan, errMsg);
+              // 已收到的部分照旧留在气泡里（displayText 就是屏幕上那段文本）
+              renderFailed(contentSpan, errMsg, displayText);
               broadcast({t: 'error', msg: errMsg, roundId});
               // 异常中断也保存已收到的回复（20260827g）：断流不代表内容无效——
               // 先转正保存再跳转，新页面 DB/缓存恢复完整
@@ -751,7 +780,9 @@
             }
           } else {
             const errMsg = '网络错误: ' + (e && e.message ? e.message : '未知错误');
-            applyMsg(contentSpan, errMsg);
+            // 断流时**别丢已经收到的半截回复**（20260916 事故：worker 崩溃把 3460 字
+            // 的回复截断，旧写法整段替换成错误文案，用户以为前半段没生成出来）
+            renderFailed(contentSpan, errMsg, displayText);
             broadcast({t: 'error', msg: errMsg, roundId});
             // 同上：__ERROR__ 帧/网络错误也保存已收到的回复，再执行命令帧
             if ((cmdText + displayText).trim()) {
@@ -1202,7 +1233,13 @@
               } else if (victim) {
                 // 空闲/总超时：保留 user 消息，渲染失败气泡 + 重发/编辑 + 持久化标记
                 const errMsg = '长时间未收到回复，请稍后重试';
-                applyMsg(victim.contentSpan, errMsg);
+                // 远端轮的正文不在这层闭包里，只能从 DOM 取——**只在它还处在流式纯文本态时**
+                // 才敢拿（`textContent` 等于原文，重渲染无损）；已 markdown 化的文本重渲染
+                // 会把正文里的 markdown 记号二次解释，宁可不动它。
+                const remotePartial = victim.contentSpan
+                  && victim.contentSpan.classList.contains('msg-streaming')
+                  ? victim.contentSpan.textContent : '';
+                renderFailed(victim.contentSpan, errMsg, remotePartial);
                 broadcast({t: 'error', msg: errMsg, roundId: r.roundId});
                 attachRetryActions(victim.contentSpan, victim.el, r.msg);
                 persistFailedRound(r.msg);
