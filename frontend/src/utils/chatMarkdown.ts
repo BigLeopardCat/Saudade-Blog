@@ -21,6 +21,7 @@ import gfm from '@bytemd/plugin-gfm'
 import breaks from '@bytemd/plugin-breaks'
 import gemoji from '@bytemd/plugin-gemoji'
 import math from '@bytemd/plugin-math'
+import mermaid from '@bytemd/plugin-mermaid'
 import { remarkStickers } from './stickers'
 
 // 与 bytemd Viewer 相同：克隆默认 schema 并允许 className（供高亮等插件使用）
@@ -41,6 +42,8 @@ processor = processor
   .use(rehypeRaw)
   .use(rehypeSanitize, schema)
   .use(rehypeStringify)
+
+const mermaidViewerEffect = mermaid().viewerEffect
 
 export const renderBlogMarkdown = (text: string): string => {
   try {
@@ -151,6 +154,9 @@ export const enhanceChatContent = (root: HTMLElement): void => {
   try {
     decorateCodeBlocks(root)
   } catch { /* 装饰失败不影响正文 */ }
+  try {
+    mermaidViewerEffect?.({ markdownBody: root })
+  } catch { /* Mermaid 单图失败不影响正文 */ }
   // 代码高亮
   if (root.querySelector('pre>code')) {
     import('highlight.js').then((m) => {
