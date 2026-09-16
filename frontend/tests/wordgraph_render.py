@@ -102,6 +102,27 @@ JS_DIFF = """() => {
 }"""
 
 
+# 画布调用录音器：把 moveTo/lineTo/stroke 的坐标与当时的描边色记下来，用来验
+# "热边在近平面裁剪下仍然被画出来"——这条只能在真实 ctx 调用层观察
+# （像素法分不清"线被裁短"和"线整条没了"）。
+JS_REC_INSTALL = """() => {
+  if (window.__recInstalled) { window.__rec.strokes = []; window.__rec.bad = 0; return; }
+  window.__recInstalled = true;
+  window.__rec = { strokes: [], bad: 0 };
+  const P = CanvasRenderingContext2D.prototype;
+  const ob = P.beginPath, om = P.moveTo, ol = P.lineTo, os = P.stroke;
+  let segs = 0;
+  P.beginPath = function () { segs = 0; return ob.call(this); };
+  const chk = (x) => { if (!isFinite(x) || Math.abs(x) > 1e5) window.__rec.bad++; };
+  P.moveTo = function (x, y) { segs++; chk(x); return om.call(this, x, y); };
+  P.lineTo = function (x, y) { segs++; chk(x); return ol.call(this, x, y); };
+  P.stroke = function () { window.__rec.strokes.push({ style: String(this.strokeStyle), segs }); return os.call(this); };
+}"""
+
+# 与 palette.ts 的 PALETTE.edgeHot 同步（改了那里这里要一起改）
+EDGE_HOT_RGB = "255, 232, 168"
+
+
 def main() -> int:
     mf = GRAPH_DIR / "manifest.json"
     if not mf.exists():
@@ -224,9 +245,10 @@ def run(browser, manifest, artifact, js):
               words: window.__hits.map(h => h.w)};
     }""")
     ok(placed["n"] >= 3, "命中 ≥3 个词（'线程协程并发'）", placed)
-    # 0.15 而不是更大：线程/协程/并发**本来就该挨着**（语义近邻），散开度只要
-    # 远大于命中辉光的几像素半径，居中检查就不是恒真的。要的是"不是同一个点"。
-    ok(placed["spread"] > 0.15, "命中簇在世界空间里是散开的（否则居中检查恒真）", placed)
+    # 阈值只要"远大于同一个点"即可——这条是**防恒真**，不是测布局质量：命中簇
+    # 塌成一个点时质心居中就成了同义反复。20260917 换 UMAP 后 线程/协程/并发 从
+    # 0.19 收到 0.135（相关词更聚，正是换布局的目的），阈值随之从 0.15 放到 0.08。
+    ok(placed["spread"] > 0.08, "命中簇在世界空间里是散开的（否则居中检查恒真）", placed)
     ok(abs(placed["cx"] - 310) < 60 and abs(placed["cy"] - 230) < 60,
        "命中簇的投影质心落在画面中心附近（±60px）", placed)
 
@@ -244,12 +266,58 @@ def run(browser, manifest, artifact, js):
     hit = page.evaluate("""() => {
       const d = window.__data, p = new WG.Projection(d.nodes.length), cam = {yaw:0,pitch:0,dist:5,target:[0,0,0]};
       WG.projectNodes(d.nodes, cam, 620, 460, p);
-      const i = WG.pickNode(p, p.x[0], p.y[0]);
-      const j = WG.pickNode(p, p.x[0] + 500, p.y[0]);
-      return {same: i === 0, off: j};
+      // 挑"屏幕空间最孤立的点"来验命中：pickNode 取命中半径内**离相机最近**的那个，
+      // 20260917 换成 UMAP 布局后点挨得更近（22% 的点与邻居距离 <0.02），拿固定下标
+      // 当靶子会合法地命中邻居、把断言弄红——要测的是"点得中"，不是"点 0 号中 0 号"。
+      let best = -1, bestGap = -1;
+      for (let i = 0; i < d.nodes.length; i++) {
+        if (p.d[i] <= 0.05) continue;
+        let gap = Infinity;
+        for (let j = 0; j < d.nodes.length; j++) {
+          if (i === j || p.d[j] <= 0.05) continue;
+          gap = Math.min(gap, Math.hypot(p.x[i] - p.x[j], p.y[i] - p.y[j]));
+        }
+        if (gap > bestGap) { bestGap = gap; best = i; }
+      }
+      const i = WG.pickNode(p, p.x[best], p.y[best]);
+      const j = WG.pickNode(p, p.x[best] + 500, p.y[best]);
+      return {same: i === best, off: j, best, gap: Math.round(bestGap * 10) / 10};
     }""")
-    ok(hit["same"], "落点处命中对应节点")
+    ok(hit["same"], "孤立点的像素处命中的就是它自己", hit)
     ok(hit["off"] is None, "远偏移处不命中", hit)
+    print("== 6b. 邻居被推到相机后方时，热边仍要画出来（近平面裁剪）==")
+    page.evaluate(JS_REC_INSTALL)
+    picked = page.evaluate("""() => {
+      const d = window.__data, eng = window.__eng;
+      const deg = new Map();
+      for (const e of d.edges) { deg.set(e[0], (deg.get(e[0]) || 0) + 1); deg.set(e[1], (deg.get(e[1]) || 0) + 1); }
+      let sel = -1, nb = -1;
+      for (const e of d.edges) { if ((deg.get(e[0]) || 0) >= 2) { sel = e[0]; nb = e[1]; break; } }
+      if (sel < 0) return null;
+      eng.setSelected(sel);
+      const a = d.nodes[sel], b = d.nodes[nb];
+      // 相机摆成"看向 nb、眼睛落在 nb 前 0.02"：nb 的 depth = 0.02 ≤ NEAR（已在近平面内），
+      // sel 的 depth = |nb−sel|+0.02 > NEAR（仍在相机前方）——正是用户顺着高亮线飞过去的那一刻
+      const L = Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z) || 1;
+      const dir = [(b.x - a.x) / L, (b.y - a.y) / L, (b.z - a.z) / L];
+      const pitch = Math.asin(Math.max(-1, Math.min(1, dir[1])));
+      const yaw = Math.atan2(dir[0], dir[2]);
+      const eye = [b.x + dir[0] * 0.02, b.y + dir[1] * 0.02, b.z + dir[2] * 0.02];
+      const dist = eng.getCamera().dist;
+      eng.flyTo({ yaw, pitch, dist,
+                  target: [eye[0] - dir[0] * dist, eye[1] - dir[1] * dist, eye[2] - dir[2] * dist] }, 0);
+      return { sel, nb };
+    }""")
+    page.wait_for_timeout(300)
+    if not picked:
+        ok(False, "找到可测的选中点 + 邻居", picked)
+    else:
+        rec = page.evaluate("() => window.__rec")
+        hot = [st for st in rec["strokes"] if EDGE_HOT_RGB in st["style"] and st["segs"] > 0]
+        ok(bool(hot), "邻居落在近平面内时热边仍然被绘制（旧实现是整条丢）",
+           {"sel": picked, "hotStrokes": len(hot), "total": len(rec["strokes"])})
+        ok(rec["bad"] == 0, "没有任何线段坐标落到 FAR_X（−1e6）上", rec["bad"])
+
     ok(errors == [], "全程无 console error / pageerror", errors)
     ctx.close()
 

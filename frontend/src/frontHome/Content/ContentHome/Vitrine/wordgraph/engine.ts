@@ -438,9 +438,11 @@ export class WordGraphEngine {
                 if (this.edgeBucket[k] !== b) continue;
                 if (hi && hot.has(k)) continue;                 // 热边交给下面那遍
                 const e = edges[k];
-                if (this.proj.d[e[0]] <= 0.05 || this.proj.d[e[1]] <= 0.05) continue;
-                ctx.moveTo(this.proj.x[e[0]], this.proj.y[e[0]]);
-                ctx.lineTo(this.proj.x[e[1]], this.proj.y[e[1]]);
+                // 近平面裁剪（20260917）：整条都在相机后方才丢，否则画到近平面为止
+                const seg = clipEdge(this.proj, data.nodes, e[0], e[1]);
+                if (!seg) continue;
+                ctx.moveTo(seg[0], seg[1]);
+                ctx.lineTo(seg[2], seg[3]);
             }
             ctx.stroke();
         }
@@ -450,9 +452,11 @@ export class WordGraphEngine {
             ctx.beginPath();
             for (const k of hot) {
                 const e = edges[k];
-                if (this.proj.d[e[0]] <= 0.05 || this.proj.d[e[1]] <= 0.05) continue;
-                ctx.moveTo(this.proj.x[e[0]], this.proj.y[e[0]]);
-                ctx.lineTo(this.proj.x[e[1]], this.proj.y[e[1]]);
+                // 热边同样要裁：**这条曾经让"顺着高亮线飞过去"的高亮整个消失**
+                const seg = clipEdge(this.proj, data.nodes, e[0], e[1]);
+                if (!seg) continue;
+                ctx.moveTo(seg[0], seg[1]);
+                ctx.lineTo(seg[2], seg[3]);
             }
             ctx.stroke();
         }
@@ -758,6 +762,16 @@ export class Projection {
     y: Float32Array;
     d: Float32Array;
     r: Float32Array;
+    /** 本帧的相机基（世界系：eye 位置 + 三轴 + 焦距/半宽高），由 projectNodes 填。
+     *  近平面裁剪要用它把"线段与近平面的交点"重新投影——**透视除法是非线性的，
+     *  交点不能用两端点的屏幕坐标插值出来**（见 clipEdge）。 */
+    basis = {
+        ex: 0, ey: 0, ez: 0,
+        zx: 0, zy: 0, zz: 0,
+        xx: 0, xy: 0, xz: 0,
+        yx: 0, yy: 0, yz: 0,
+        f: 1, hw: 0, hh: 0,
+    };
     constructor(n: number) {
         this.x = new Float32Array(n);
         this.y = new Float32Array(n);
@@ -783,6 +797,13 @@ export function projectNodes(nodes: GraphNode[], cam: Camera, w: number, h: numb
     const yx = -sp * sy, yy = cp, yz = -sp * cy;
     const f = (h / 2) / Math.tan(FOV / 2);
     const hw = w / 2, hh = h / 2;
+    // 相机基留给近平面裁剪用（clipEdge 要重新投影交点）
+    const bz = out.basis;
+    bz.ex = ex; bz.ey = ey; bz.ez = ez;
+    bz.zx = zx; bz.zy = zy; bz.zz = zz;
+    bz.xx = xx; bz.xy = xy; bz.xz = xz;
+    bz.yx = yx; bz.yy = yy; bz.yz = yz;
+    bz.f = f; bz.hw = hw; bz.hh = hh;
     for (let i = 0; i < nodes.length; i++) {
         const n = nodes[i];
         const vx = n.x - ex, vy = n.y - ey, vz = n.z - ez;
@@ -799,6 +820,40 @@ export function projectNodes(nodes: GraphNode[], cam: Camera, w: number, h: numb
         out.r[i] = (1.7 + 3.1 * Math.sqrt(n.n))
             * (k < POINT_SCALE_MIN ? POINT_SCALE_MIN : (k > POINT_SCALE_MAX ? POINT_SCALE_MAX : k));
     }
+}
+
+/** 用一个已算好的相机基把世界坐标投影到屏幕（与 projectNodes 同一套公式）。 */
+function projectWorld(x: number, y: number, z: number,
+                      bz: Projection['basis']): [number, number] {
+    const vx = x - bz.ex, vy = y - bz.ey, vz = z - bz.ez;
+    const depth = Math.max(-(vx * bz.zx + vy * bz.zy + vz * bz.zz), 1e-6);
+    const inv = bz.f / depth;
+    return [bz.hw + (vx * bz.xx + vy * bz.xy + vz * bz.xz) * inv,
+            bz.hh - (vx * bz.yx + vy * bz.yy + vz * bz.yz) * inv];
+}
+
+/** 近平面裁剪：把一条边裁到相机前方，返回 `[x1, y1, x2, y2]`（屏幕像素）；
+ *  整条都在相机后方才返回 null。
+ *
+ *  为什么需要它（20260917 用户实测）：两处边通道此前都是"**任一端点 depth ≤ NEAR 就整条
+ *  丢掉**"——选中一个词、顺着高亮线飞过去看邻居时，相机一旦贴到或越过那个端点，线当场
+ *  消失，只能把视角拉远才回来。正确做法是把线段裁到近平面为止：线仍然朝着邻居的方向指着
+ *  （邻居在视野外时表现为线冲向屏幕边缘），而不是整条凭空不见。
+ *
+ *  depth 是世界坐标的**线性**函数，所以交点按 depth 线性插值即可；但屏幕坐标是透视除法
+ *  的结果（非线性），交点必须回世界系取出来再投影——插值屏幕坐标会得到一个错误的位置。 */
+export function clipEdge(p: Projection, nodes: GraphNode[], a: number, b: number):
+    [number, number, number, number] | null {
+    const da = p.d[a], db = p.d[b];
+    const okA = da > NEAR, okB = db > NEAR;
+    if (okA && okB) return [p.x[a], p.y[a], p.x[b], p.y[b]];
+    if (!okA && !okB) return null;
+    const t = (NEAR - da) / (db - da);
+    const na = nodes[a], nb = nodes[b];
+    const q = projectWorld(na.x + (nb.x - na.x) * t,
+                           na.y + (nb.y - na.y) * t,
+                           na.z + (nb.z - na.z) * t, p.basis);
+    return okA ? [p.x[a], p.y[a], q[0], q[1]] : [q[0], q[1], p.x[b], p.y[b]];
 }
 
 /** 命中测试：多个点重叠时取离相机最近的那个（近的挡着远的，符合视觉直觉）。
