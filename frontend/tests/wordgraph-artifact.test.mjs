@@ -102,11 +102,24 @@ console.log('== 质量指标 ==');
     const fid = stats.fidelity, rho = stats.len_sim_rho;
     truthy(typeof fid === 'number', 'stats.fidelity 存在', stats);
     truthy(typeof rho === 'number', 'stats.len_sim_rho 存在', stats);
-    ok(fid >= 0.15, '投影保真度 ≥ 0.15（3D 近邻仍是 1024 维近邻）', fid);
+    // 主门 = **保真度**：视图里的近邻是否还是 1024 维处理空间里的近邻。这是访客
+    // 实际感受到的东西（点一个词、它周围的词相不相关）。随机基线 10/(n-1)≈0.025，
+    // 20260917 的离线 A/B（scripts/layout_ab.py）实测：UMAP 0.433 / PCA+弹簧 0.255 /
+    // Isomap 0.18~0.21 / SMACOF（只优化边集）0.027≈随机。
+    ok(fid >= 0.30, '近邻保真度 ≥ 0.30（UMAP 布局实测 0.43）', fid);
+    if (stats.fidelity_k) {
+        // 多 k 曲线：k 从 5 到 20 不该塌（塌了说明只有最近的一圈被保住）
+        for (const k of ['k5', 'k10', 'k20']) {
+            ok(stats.fidelity_k[k] >= 0.25, `保真度曲线 ${k} ≥ 0.25`, stats.fidelity_k);
+        }
+    }
     // ⚠️ 符号约定：rho = spearman(线长, 相似度)，"越相似线越短" ⇒ 负值才正确。
     //    写成正数说明线长方向反了——那比"线长不带信息"更糟（在说谎）。
-    ok(rho <= -0.4, '线长-相似度秩相关 ≤ -0.4（负 = 越相似线越短）', rho);
-    ok(['semantic', 'pca'].includes(stats.layout), '记录了布局算法', stats.layout);
+    //    **但它不是质量门**：它只覆盖边集（占全部点对 0.9%），SMACOF 单独优化这 693 条边
+    //    就能做到 −1.000 而保真度塌到随机——可被游戏，且方向与"附近是否相关"相反。
+    //    这里只留一条符号 sanity（防方向写反）。
+    ok(rho < 0, '线长-相似度秩相关为负（方向没写反；数值仅供展示参考，不是门）', rho);
+    ok(['umap', 'semantic', 'pca'].includes(stats.layout), '记录了布局算法', stats.layout);
     truthy(g.built, '记录了构建时间', g.built);
     truthy(g.model && g.dim > 0, '记录了 embedding 模型与维度', { model: g.model, dim: g.dim });
     ok(stats.n_nodes === nodes.length, 'stats.n_nodes 与实际节点数一致', { stats: stats.n_nodes, real: nodes.length });
