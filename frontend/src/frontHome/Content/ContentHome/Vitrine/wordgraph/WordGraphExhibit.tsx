@@ -127,13 +127,13 @@ export default function WordGraphExhibit() {
         if (eng) { eng.setSelected(null); eng.home(); }
     }, [writeQ]);
 
-    /** 真正的检索。`persist=false` 用于**恢复**那一路：URL 与缓存就是它的来源，
-     *  再写一遍是空转，还会把"这是刚搜的"和"这是恢复的"混成一件事。 */
-    const runQueryText = useCallback(async (text: string, persist = true) => {
+    /** 真正的检索。**每一条结果都要落账**（URL + 缓存），恢复那一路也不例外：
+     *  恢复时"重新检索"只发生在 URL 与缓存对不上的时候，此时这次结果才是当前这一次
+     *  检索的正确答案——不写回去，缓存就停在旧查询上，之后从无参数的首页回来会还原出
+     *  上一次的检索（线上验收 D3 抓到的）。 */
+    const runQueryText = useCallback(async (text: string) => {
         const t = text.trim();
-        // busy 期间不重复发请求（用户连按 Enter 的老行为）；恢复那一路不受它影响
-        // ——用户手一抖不该把"回到首页自动恢复"挤掉。
-        if (!t || !data || (persist && busy)) return;
+        if (!t || !data || busy) return;   // busy 期间不重复发请求（用户连按 Enter 的老行为）
         setBusy(true);
         setNote(null);
         try {
@@ -141,12 +141,14 @@ export default function WordGraphExhibit() {
             if (!r.hits.length) {
                 setChips([]);
                 setNote('没找到相关的词，换个说法试试');
-                if (persist) { writeQ(t); writeSaved({ q: t, hits: null, sel: null }); }
+                writeQ(t);
+                writeSaved({ q: t, hits: null, sel: null });
                 return;
             }
             setChips(r.hits);
             focus(r.hits);
-            if (persist) { writeQ(t); writeSaved({ q: t, hits: r.hits, sel: null }); }
+            writeQ(t);
+            writeSaved({ q: t, hits: r.hits, sel: null });
             // 已登录却仍退化到本地 = 服务侧有问题，如实说明（不是"悄悄降级"）
             if (r.source === 'local' && token) setNote('检索服务暂时不可用，已用本地匹配');
         } finally {
@@ -173,7 +175,7 @@ export default function WordGraphExhibit() {
             if (i >= 0) eng.setSelected(i);
             return;
         }
-        void runQueryText(boot.q, false);         // 只有查询串（缓存里没命中列表）→ 重新检索
+        void runQueryText(boot.q);                // 只有查询串（缓存里没有对应命中）→ 重新检索
     }, [data, focus, runQueryText]);
 
     // 读数卡片：悬停优先（临时的），没在悬停时显示选中的那个（持久的）。
