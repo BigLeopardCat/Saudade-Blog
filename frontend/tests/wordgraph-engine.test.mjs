@@ -316,5 +316,33 @@ console.log('== 大小写：索引原形(小写) vs 节点显示形（20260916 �
     truthy(ws2.includes('JWT'), '降级路：小写 jwt 命中 JWT', ws2);
 }
 
+console.log('== 近平面裁剪（clipEdge）==');
+{
+    // 相机在 (0,0,2) 看向原点 ⇒ depth(p) = 2 − p.z（右手法见 projectNodes）
+    const cam = { yaw: 0, pitch: 0, dist: 2, target: [0, 0, 0] };
+    const mk = (i, w, x, z) => ({ i, w, x, y: 0, z, n: 1, a: 0, a2: 0 });
+    const nodes = [mk(0, 'a', 0.0, 0.0), mk(1, 'b', 0.3, 1.9), mk(2, 'c', 0.6, 3.0), mk(3, 'd', 0.9, 4.0)];
+    const p = new engine.Projection(nodes.length);
+    engine.projectNodes(nodes, cam, 400, 300, p);
+    eq(p.d[1] > engine.NEAR, true, '近点 depth 在近平面外（0.1 > 0.05）');
+    eq(p.d[2] <= engine.NEAR, true, '越界点 depth 落到近平面内（−1）');
+
+    const inFront = engine.clipEdge(p, nodes, 0, 1);
+    ok(inFront !== null && inFront[0] === p.x[0] && inFront[2] === p.x[1],
+       '两端都在前方：原样返回屏幕坐标', inFront);
+
+    // 一端在相机后方：**旧实现是整条丢掉**（用户顺着高亮线飞过去时线凭空消失）。
+    const clipped = engine.clipEdge(p, nodes, 1, 2);
+    ok(clipped !== null, '一端在近平面内：仍然返回一段（不再整条丢）', clipped);
+    if (clipped) {
+        ok(Number.isFinite(clipped[2]) && Math.abs(clipped[2]) < 1e5,
+           '裁剪点不在 FAR_X 上（是真实投影，不是哨兵值）', clipped);
+        ok(clipped[2] > p.x[1], '线朝邻居那一侧继续延伸（方向仍然指着它）', [clipped[2], p.x[1]]);
+        ok(clipped[0] === p.x[1] && clipped[1] === p.y[1], '保留可见那一端的坐标', clipped);
+    }
+
+    eq(engine.clipEdge(p, nodes, 2, 3), null, '两端都在相机后方：整条丢掉');
+}
+
 console.log(`\n${failed === 0 ? '✓' : '✗'} wordgraph-engine: ${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
