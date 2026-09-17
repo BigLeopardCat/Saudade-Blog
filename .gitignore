@@ -1,9 +1,7 @@
 /target
-/.env
 /frontend/node_modules
 /frontend/dist
-/frontend/.env
-**/*.log
+/frontend**/*.log
 .DS_Store
 .idea
 uploads/
@@ -27,3 +25,11 @@ frontend/nginx.conf
 frontend/.npmrc
 frontend/LICENSE
 frontend/public/live2d-widgets/chunk/*.map
+
+# 环境变量：**任何 .env* 变体都不进库**（20260917 修——原来只写了 /.env 与
+# /frontend/.env 两个精确名，于是 frontend/.env.production 被漏进来跟了好几个提交；
+# 它内容只是一个空的 VITE_CDN_BASEURL，不是密钥，但环境文件按约定不入库）。
+# 示例文件例外。CI 侧要注入构建期变量请用仓库 Variables（见 deploy.yml 的 Build Frontend）。
+.env*
+!.env.example
+!**/.env.example

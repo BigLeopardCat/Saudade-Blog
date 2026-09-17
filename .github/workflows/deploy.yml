@@ -60,6 +60,9 @@ jobs:
         if: needs.check-changes.outputs.frontend == 'true'
         env:
           NODE_OPTIONS: "--max-old-space-size=4096"
+          # CDN 域名走仓库 **Variable**（不是 Secret——VITE_ 变量会打进前端包，本来就是公开的）。
+          # 未设置时为空串，行为与未接 CDN 完全一致。本地构建会读 frontend/.env.production（不入库）。
+          VITE_CDN_BASEURL: ${{ vars.VITE_CDN_BASEURL }}
         run: |
           npm ci
           npm run build
