@@ -53,4 +53,26 @@ if [ "$ngx_size" -gt "${NGX_ERR_SIZE:-0}" ]; then
   [ -n "$matched" ] && fail "WARN nginx error.log 新错误级日志（截取3条）: $matched"
 fi
 echo "NGX_ERR_SIZE=$ngx_size" >> "$STAMP"
+# 5. 无头浏览器残留（20260917 事故：load 3.9 的根因）
+#    验收脚本被 timeout 掐断 / 崩掉时，Playwright 的 Chromium 会变成**孤儿进程**
+#    （父进程死 → 被 init 收养）继续跑：2026-08-31 启动的那只带软件 WebGL
+#    （--use-angle=swiftshader-webgl），GPU 进程常驻 216% CPU + 一个 renderer 28%，
+#    跑了 16 天没人发现，把 load average 顶到 3.9。合法测试不会超过一小时 ⇒
+#    超过 60 分钟一律判残留：记 WARN 并清掉（否则会一直烧 CPU / 拖慢整机）。
+PW_MAX_MIN=60
+for p in $(pgrep -f 'ms-playwright/chromium-[0-9]' 2>/dev/null); do
+  et=$(ps -o etimes= -p "$p" 2>/dev/null | tr -d ' ')
+  [ -z "$et" ] && continue
+  [ "$et" -le $((PW_MAX_MIN * 60)) ] && continue
+  # ⚠️ 杀之前**按 /proc/<pid>/exe 复核**：不用 pkill -f 模式匹配——调用方命令行里
+  #    恰好含这个模式时（比如手工带参跑），pkill 会把调用方自己一起杀掉（踩过两次）。
+  killed=0
+  for q in $(pgrep -f 'ms-playwright/chromium-[0-9]' 2>/dev/null); do
+    case "$(readlink -f /proc/$q/exe 2>/dev/null)" in
+      *ms-playwright*) kill -9 "$q" 2>/dev/null && killed=$((killed + 1)) ;;
+    esac
+  done
+  fail "WARN 无头浏览器残留 pid=$p 已跑 $((et / 3600))h（验收脚本被掐断留下的孤儿）→ 清理 $killed 个进程"
+  break
+done
 exit 0

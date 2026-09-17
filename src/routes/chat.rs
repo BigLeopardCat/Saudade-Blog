@@ -615,6 +615,8 @@ pub async fn chat_handler(
     let mut last_err = String::new();
     for attempt in 0..3 {
         match reqwest::Client::new().post(&agent_url)
+            // 身份断言：agent 验签后据此覆盖请求体里的 user_id（见 auth_jwt.rs）
+            .header("X-Agent-Assertion", crate::auth_jwt::create_agent_assertion(ctx.uid))
             .header("X-Request-ID", &ctx.trace_id)
             .json(&ctx.body)
             .timeout(std::time::Duration::from_secs(180))
@@ -733,6 +735,8 @@ pub async fn chat_stream_handler(
     // 流式连接不设整体超时（长回答可达数分钟），connect/首字节由 reqwest 默认处理
     let upstream = match reqwest::Client::new()
         .post(&stream_url)
+        // 身份断言（同上）：流式这条路同样要带，否则 agent 打开强制校验后它会 401
+        .header("X-Agent-Assertion", crate::auth_jwt::create_agent_assertion(ctx.uid))
         .header("X-Request-ID", &ctx.trace_id)
         .json(&ctx.body)
         .send()
