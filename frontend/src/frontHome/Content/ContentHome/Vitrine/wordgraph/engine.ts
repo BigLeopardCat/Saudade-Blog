@@ -6,7 +6,14 @@ import { artColor, PALETTE, LABEL_FONT } from './palette';
  *  继续前进（而不是无限缩小 dist），这样能真的钻进点云再穿出去。 */
 export interface Camera { yaw: number; pitch: number; dist: number; target: [number, number, number] }
 
-export const HOME_CAM: Camera = { yaw: 0.55, pitch: 0.16, dist: 4.3, target: [0, 0, 0] };
+/** 首页默认机位。**dist 是量出来定的**（20260917 用户报"太远了"）：
+ *  在 620×460 画布上量"有内容的像素包围盒占画布比例"——
+ *    dist 4.3 → 29%×25%（旧值，太小：点云缩在画面中间一小块）
+ *    dist 3.0 → 41%×37%   dist 2.6 → 46%×43%   dist 2.2 → 54%×53%
+ *  取 2.6（≈旧值的 1.6 倍视觉面积，四周仍留得出标签的余地）。
+ *  ⚠️ 调这里之后要跑 `python3 tests/wordgraph_render.py`：里面"定位后推近了"那条
+ *  断言以 HOME_CAM.dist 为基准（别再往测试里写死数字，换一次就要跟着改一次）。 */
+export const HOME_CAM: Camera = { yaw: 0.55, pitch: 0.16, dist: 2.6, target: [0, 0, 0] };
 
 const FOV = (50 * Math.PI) / 180;
 const PITCH_LIMIT = 1.35;
