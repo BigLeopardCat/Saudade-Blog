@@ -106,9 +106,9 @@ JS_DIFF = """() => {
 # "热边在近平面裁剪下仍然被画出来"——这条只能在真实 ctx 调用层观察
 # （像素法分不清"线被裁短"和"线整条没了"）。
 JS_REC_INSTALL = """() => {
-  if (window.__recInstalled) { window.__rec.strokes = []; window.__rec.bad = 0; return; }
+  if (window.__recInstalled) { window.__rec.strokes = []; window.__rec.bad = 0; window.__rec.texts = []; return; }
   window.__recInstalled = true;
-  window.__rec = { strokes: [], bad: 0 };
+  window.__rec = { strokes: [], bad: 0, texts: [] };
   const P = CanvasRenderingContext2D.prototype;
   const ob = P.beginPath, om = P.moveTo, ol = P.lineTo, os = P.stroke;
   let segs = 0;
@@ -117,6 +117,8 @@ JS_REC_INSTALL = """() => {
   P.moveTo = function (x, y) { segs++; chk(x); return om.call(this, x, y); };
   P.lineTo = function (x, y) { segs++; chk(x); return ol.call(this, x, y); };
   P.stroke = function () { window.__rec.strokes.push({ style: String(this.strokeStyle), segs }); return os.call(this); };
+  const oft = P.fillText;
+  P.fillText = function (t, x, y) { window.__rec.texts.push(String(t)); return oft.call(this, t, x, y); };
 }"""
 
 # 与 palette.ts 的 PALETTE.edgeHot 同步（改了那里这里要一起改）
@@ -318,6 +320,43 @@ def run(browser, manifest, artifact, js):
         ok(bool(hot), "邻居落在近平面内时热边仍然被绘制（旧实现是整条丢）",
            {"sel": picked, "hotStrokes": len(hot), "total": len(rec["strokes"])})
         ok(rec["bad"] == 0, "没有任何线段坐标落到 FAR_X（−1e6）上", rec["bad"])
+
+    print("== 6c. 悬浮时，邻居的名字也画在点上（N 层由悬停驱动）==")
+    # ⚠️ 这条必须挑一个"不悬浮时确实没有名字"的邻居——否则 A 层（重要度前 22 常驻）
+    #    或 B 层（按深度补位）早就把它画上了，断言会**空转**（第一版就是这么空转的：
+    #    挑中的 Bearer 本来就在 A 层里，把引擎改动暂存掉测试照样绿）。
+    page.evaluate("() => { window.__rec.texts = []; }")
+    page.mouse.move(3, 3)                        # 先把光标挪开，取"没有悬浮"的基线
+    page.wait_for_timeout(250)
+    base = set(page.evaluate("() => window.__rec.texts"))
+    pick = page.evaluate("""(baseline) => {
+      const d = window.__data, eng = window.__eng;
+      const cv = document.getElementById('c');
+      const w = cv.clientWidth, h = cv.clientHeight;
+      eng.setSelected(null);
+      const p = new WG.Projection(d.nodes.length);
+      WG.projectNodes(d.nodes, eng.getCamera(), w, h, p);
+      const inside = (i) => p.d[i] > 0.05 && p.x[i] > 24 && p.x[i] < w - 24 && p.y[i] > 24 && p.y[i] < h - 24;
+      for (const e of d.edges) {
+        for (const [a, b] of [[e[0], e[1]], [e[1], e[0]]]) {
+          if (!inside(a) || !inside(b)) continue;
+          if (baseline.includes(d.nodes[b].w)) continue;   // 不悬浮时就有名字 ⇒ 测不出 N 层
+          if (d.nodes[a].w === d.nodes[b].w) continue;
+          return { x: p.x[a], y: p.y[a], wa: d.nodes[a].w, wb: d.nodes[b].w };
+        }
+      }
+      return null;
+    }""", list(base))
+    if not pick:
+        ok(False, "找到一对「悬浮才有名字」的邻居（A/B 层不会提前画它）", pick)
+    else:
+        page.mouse.move(pick["x"], pick["y"])
+        page.wait_for_timeout(350)
+        texts = page.evaluate("() => window.__rec.texts")
+        ok(pick["wb"] in texts,
+           f"悬浮 {pick['wa']} 时，邻居 {pick['wb']} 的名字被画到画布上（不悬浮时没有）",
+           {"baseline_has": pick["wb"] in base, "texts": texts[:12]})
+        ok(pick["wa"] in texts, "被悬浮那个词自己的名字也在", texts[:12])
 
     ok(errors == [], "全程无 console error / pageerror", errors)
     ctx.close()

@@ -597,11 +597,16 @@ export class WordGraphEngine {
         for (const i of this.hits.keys()) take(i, true, false, true);
         if (this.hover !== null && !this.hits.has(this.hover)) take(this.hover, true, false, true);
         if (sel !== null && !this.hits.has(sel) && sel !== this.hover) take(sel, true, false, true);
-        // N 层：选中词的邻居（每节点 ≤3 条边）——连线亮了，名字也该跟上
-        if (sel !== null) {
+        // N 层：焦点词的邻居——连线亮了，名字也该跟上。
+        // 20260917：**悬停也算焦点**（用户："悬浮时在向量边上也要显示直接相连的名字"）。
+        // 此前只有 sel 触发，于是"悬浮有名字、它连着的点没名字"，得先点一下才看得到。
+        // 用并集而不是"悬停覆盖选中"：光标扫过画布时不该把刚选好那一片的名字擦掉。
+        // 每节点 ≤3 条边、最大度 9，并集最多几十个，预算 40 由 take 自己兜。
+        for (const f of new Set([this.hover, sel])) {
+            if (f === null) continue;
             for (const e of data.edges) {
-                if (e[0] === sel) take(e[1], false, true, true);
-                else if (e[1] === sel) take(e[0], false, true, true);
+                if (e[0] === f) take(e[1], false, true, true);
+                else if (e[1] === f) take(e[0], false, true, true);
             }
         }
         // Z 层：贴脸的（相机已站到跟前），只认画布内的——画面外的"近"不是"贴脸"
