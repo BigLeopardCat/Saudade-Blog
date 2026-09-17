@@ -229,7 +229,8 @@ def run(browser, manifest, artifact, js):
     cam2 = page.evaluate("window.__eng.getCamera()")
     ok(abs(cam2["target"][0]) + abs(cam2["target"][1]) + abs(cam2["target"][2]) > 1e-6,
        "定位后相机 target 离开了原点", cam2["target"])
-    ok(cam2["dist"] < 4.3 - 1e-6, "定位后推近了（dist < 首页机位）", cam2["dist"])
+    home_dist = page.evaluate("() => WG.HOME_CAM.dist")      # 别写死：默认机位会随实测调整
+    ok(cam2["dist"] < home_dist - 1e-6, "定位后推近了（dist < 首页机位）", cam2["dist"])
     placed = page.evaluate("""() => {
       const d = window.__data, cam = window.__eng.getCamera();
       const p = new WG.Projection(d.nodes.length);
@@ -334,7 +335,8 @@ def run(browser, manifest, artifact, js):
     }""")
     page2.wait_for_timeout(400)
     cam3 = page2.evaluate("window.__eng2.getCamera()")
-    ok(cam3["dist"] < 4.3 - 1e-6, "reduced-motion 下 flyTo 直接到位（不走动画）", cam3["dist"])
+    home_dist2 = page2.evaluate("() => WG.HOME_CAM.dist")
+    ok(cam3["dist"] < home_dist2 - 1e-6, "reduced-motion 下 flyTo 直接到位（不走动画）", cam3["dist"])
     s3 = page2.evaluate(JS_STATS)
     ok(s3["n"] > 2000, "reduced-motion 下照常渲染", s3)
     ok(errors2 == [], "reduced-motion 下无报错", errors2)
