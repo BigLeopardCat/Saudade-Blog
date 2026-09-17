@@ -86,7 +86,10 @@ nginx error.log 增量扫描，异常追加 health.log。
   前端监控上报 `/api/monitor/log`）；受保护（JWT：内容增删改、图片上传、`/device-api/*`）。
 - **SSE 帧协议**：`\n\n` 分隔 + JSON 编码；命令帧（导航/特效/夜间）、`__PROCESS__` 过程轨迹、
   `__RESET__` 否定轮清屏、`__END__` 结束。改协议三端（Python/Rust/前端）同步。
-- **开发约定与已知坑**（时区、模型行为边界、断连中断机制等）见 [CLAUDE.md](CLAUDE.md)。
+- **部署与运维**（拓扑端口、CI/CD 链路、systemd、日志体系、排查手册）见
+  [docs/deployment-and-ops.md](docs/deployment-and-ops.md)。
+- **Agent 侧机制**（模型行为边界、断连中断、防幻觉闸、评测体系）见
+  [saudade-blog-agent](https://github.com/BigLeopardCat/saudade-blog-agent) 的 `docs/`。
 
 ## 许可
 
