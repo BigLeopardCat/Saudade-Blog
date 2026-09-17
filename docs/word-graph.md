@@ -70,7 +70,7 @@ payload 的 `built`）——展示柜标题栏那个「2026年09月16日 UTC+8 0
 | `index.json` | `{build_id, model, dim, count, built, strip_top, words[]}`（3223B） |
 | `vectors.f32` | L2 归一化后的节点向量，`count × dim` 小端 float32 行主序（1638400B = 400×1024×4） |
 | `mean.f32` | 语料均值（dim 个 float） |
-| `dirs.f32` | 被剔除的主方向（`strip_top × dim`）——**`strip_top=0` 时本来就是 0 字节** |
+| `dirs.f32` | 被剔除的主方向（`strip_top × dim`）；当前 `strip_top=1` ⇒ **4096 B**（1×1024）。`strip_top=0` 时它是 0 字节——查询侧本来就按 `index.json` 的 `strip_top` 读，两种都能跑 |
 
 **生产 venv 里没有 numpy**（当初刻意没装）。所以 `rag/wordgraph.py` 用 stdlib `array('f')`
 读裸 float32，点积走 `map(operator.mul, row, q)`（C 循环）：400×1024 实测 22ms，不值得为它
@@ -107,9 +107,9 @@ PYTHONPATH=/home/ubuntu/graph-lib python3 scripts/build_word_graph.py --dry-run 
 | ④ | 抽词 `jieba.posseg`：`POS_DROP` 词性闸 + ASCII 3~16 字 + 中文 ≥2 字 + 停用词 + 词黑名单 + 词形折叠（log/logs 并成一个点） | `scripts/graph_blocklist.txt`、`scripts/graph_userdict.txt`（§2.1） |
 | ⑤ | 选词：每篇按 `imp=tf·idf` 取前 `clamp(round(0.9·√chars)+8, 14, 70)` 个，全局再按重要度裁到 `--max-nodes`，最后把允许清单里选中的词补回 | `--max-nodes`（默认 400）、`scripts/graph_allow.txt`（§2.1） |
 | ⑥ | 嵌入**裸词**（不拼上下文，与查询侧同构）：`text-embedding-v4` / 1024 维 / 批 10 / md5 缓存 | `--refresh` 强制重嵌 |
-| ⑦ | 处理空间变换：去均值 → 去主方向（`strip_top`）→ 软白化 `U[:,:3]·S[:3]^α` → 尾部压缩 `sign·\|z\|^γ` —— **连边/指标/查询都用这套语义**，三维坐标不再由它出 | `--alpha 0.3 --gamma 1.0 --clip 1.6` |
+| ⑦ | 处理空间变换：去均值 → **去主方向（`strip_top=1`，剥掉"语言轴"，见 §3.4）** → 软白化 `U[:,:3]·S[:3]^α` → 尾部压缩 `sign·\|z\|^γ` —— **连边/指标/查询都用这套语义**，三维坐标不再由它出 | `--strip-top 1 --alpha 0.3 --gamma 1.0 --clip 1.6` |
 | ⑧ | 布局：**UMAP 三维**（见 §3） | `--layout umap --umap-neighbors 15 --umap-min-dist 0.2` |
-| ⑨ | 连边：处理空间 kNN，`--knn-k 6`、`cos ≥ --knn-tau 0.30`；补最近邻救孤立点；每点 ≤3 条 | |
+| ⑨ | 连边：处理空间 kNN，`--knn-k 6`、`cos ≥ --knn-tau 0.20`（τ 跟 `strip_top` 一起调，理由见 §3 第 4 条）；补最近邻救孤立点；每点 ≤3 条 | |
 | ⑩ | 词→文章归属 `s(w,a)=tf·idf·(标题2.2/标签1.6/摘要1.3)`，取 max 为 `a`、次选 `a2` | |
 
 **每次运行都写两份报告**（人工过目用，不看产物也该看这个）：
@@ -163,7 +163,8 @@ PYTHONPATH=/home/ubuntu/graph-lib python3 scripts/build_word_graph.py --dry-run 
 | 布局 | 近邻保真度 10-NN | 对照原始 embedding | rho(线长~相似度) |
 |---|---|---|---|
 | PCA-3D + 语义弹簧（上一版） | 0.255 | 0.239 | −0.383 |
-| **UMAP-3D（现行）** | **0.426** | 0.374 | −0.254 |
+| **UMAP-3D（现行，`strip_top=1`）** | **0.446** | — | −0.455 |
+| UMAP-3D（`strip_top=0`） | 0.426 | 0.374 | −0.254 |
 | UMAP-3D（n_neighbors=30） | 0.406 | 0.356 | −0.269 |
 | UMAP + 弹簧（会吃掉大部分收益） | 0.250~0.275 | — | −0.27~−0.42 |
 | Isomap（kNN k=10/15/30） | 0.212 / 0.207 / 0.183 | — | −0.26 / −0.24 / −0.21 |
@@ -182,6 +183,14 @@ PYTHONPATH=/home/ubuntu/graph-lib python3 scripts/build_word_graph.py --dry-run 
    一个只覆盖 0.9% 点对、还能被轻易拉满、且优化方向与访客感受相反的指标，不适合当门
    （旧门 `rho ≤ −0.40` 实际上在把布局往"边好看、整体糊"的方向推——20260916 那次
    重出图卡在 −0.383 就是这个门的锅）。
+
+**4. 处理空间里那条"语言轴"要剥掉（20260917）**：第一主方向就是「中文 vs ASCII」——
+PC1 的组间方差里 **93%** 由脚本解释（随机方向 8%）。它给同语言虚高、给跨语言压分：
+剥掉之后跨语言相似度保留率 **35% → 77%**（设备↔device 0.414→0.731）、三维里那两团从
+"间距 1.84 倍半径和（空洞肉眼可见）"变成 **0.12（交融）**、保真度 0.426 → **0.446**，
+代价是同语言相似度虚高消失（0.437→0.375）。**当年 `strip_top=0` 是因为在纯 PCA 布局下
+剥它有害（0.191→0.154）——换 UMAP 后最优值反转**：PCA 把这条轴当最大方差方向优先投射，
+UMAP 只关心邻域、剥掉全局混杂方向反而更干净。τ 要跟着调（0.30→0.20），否则边从 693 掉到 475。
 
 **min_dist 的取舍**（UMAP 特有：它只管邻域，不管"铺得开"）：
 
