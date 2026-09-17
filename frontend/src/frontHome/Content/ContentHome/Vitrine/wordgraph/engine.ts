@@ -38,11 +38,12 @@ const FLIGHT_MAX = 3;
 /** 边按相似度分 4 档透明度，每档一次 stroke：569 条边 → 4 次绘制调用。
  *  逐条 stroke 在低端机上就是掉帧主因。 */
 const EDGE_BUCKETS = 4;
-/** 标签预算：Z 层（贴脸）+ A 层（重要度常驻）+ N 层（选中邻居）+ B 层（按深度补）总上限。
- *  C 层（悬停/选中/查询命中）不受限。34 → 40 是 20260915b 抬的：窗口放大后画布更宽，
- *  40 个 11px 标签远没到糊的程度，而「放大到脸上却没名字」体验上更不能接受。 */
+/** 标签预算：Z 层（贴脸）+ A 层（重要度常驻）+ N 层（邻居）+ B 层（按深度补）总上限。
+ *  C 层（悬停/选中/查询命中）不受限。34 → 40（20260915b）→ **50（20260917 用户要求）**：
+ *  窗口放大后画布更宽，50 个 11px 标签仍没到糊的程度，而"放大到脸上却没名字"体验上更不能接受。
+ *  注意 40 个时实测已经会挤掉个别邻居标签（线上 21 个邻居里 3 个没画上）。 */
 const LABEL_A = 22;
-const LABEL_MAX = 40;
+const LABEL_MAX = 50;
 /** Z 层（贴脸）阈值：相机离这个点 ≤ 这个深度就给它上标签。
  *
  *  **不能**用"投影半径 ≥ N px"当判据：点半径公式 `(1.7+3.1√n)*(dist/depth)` 在 target
@@ -542,8 +543,12 @@ export class WordGraphEngine {
         /** hard = 被显式关注的词（选中/邻居/贴脸/常驻重要度前 N）：一个位置放不下就换个位置，
          *  实在无处可放才放弃。false = 补位层，撞了就让开，免得满屏乱飘。
          *  force = 当前焦点（悬停/选中/查询命中）：连一个空位都没有时也照画——它是用户此刻
-         *  正在看的东西，被别人的名字挤掉比压在一起更糟（有描边光晕，压着也读得出）。 */
-        const take = (i: number, force: boolean, dim: boolean, hard: boolean): boolean => {
+         *  正在看的东西，被别人的名字挤掉比压在一起更糟（有描边光晕，压着也读得出）。
+         *
+         *  ⚠️ 20260917 删掉了一档 `dim`（邻居层与补位层原本 alpha 0.55 + 灰色 labelDim）：
+         *  用户看到灰标签以为是"重要度低"——它是**层级**不是重要度，而且既然要看邻居的名字，
+         *  就该看得清。现在只有两档：焦点（force，1.0 + 高亮色）与其余（0.9 + 常色）。 */
+        const take = (i: number, force: boolean, hard: boolean): boolean => {
             const depth = this.proj.d[i];
             if (depth <= 0.05) return false;
             // 本帧已画过就不再画第二遍。层序是 C→N→Z→A→B，先到的总是更强的调用
@@ -585,18 +590,18 @@ export class WordGraphEngine {
             placed.push(x - 1, y - 1, x + tw + 1, y + size + 1);
             labeled.add(i);
             ctx.font = font;
-            ctx.globalAlpha = force ? 1 : (dim ? 0.55 : 0.9);
+            ctx.globalAlpha = force ? 1 : 0.9;
             ctx.lineWidth = 3;
             ctx.strokeStyle = PALETTE.labelHalo;
             ctx.strokeText(n.w, x, y + size * 0.8);
-            ctx.fillStyle = force ? PALETTE.labelHit : (dim ? PALETTE.labelDim : PALETTE.label);
+            ctx.fillStyle = force ? PALETTE.labelHit : PALETTE.label;
             ctx.fillText(n.w, x, y + size * 0.8);
             return true;
         };
         // C 层（查询命中/悬停/选中）先占位——它们是当前看点，不该被常驻标签挤掉
-        for (const i of this.hits.keys()) take(i, true, false, true);
-        if (this.hover !== null && !this.hits.has(this.hover)) take(this.hover, true, false, true);
-        if (sel !== null && !this.hits.has(sel) && sel !== this.hover) take(sel, true, false, true);
+        for (const i of this.hits.keys()) take(i, true, true);
+        if (this.hover !== null && !this.hits.has(this.hover)) take(this.hover, true, true);
+        if (sel !== null && !this.hits.has(sel) && sel !== this.hover) take(sel, true, true);
         // N 层：焦点词的邻居——连线亮了，名字也该跟上。
         // 20260917：**悬停也算焦点**（用户："悬浮时在向量边上也要显示直接相连的名字"）。
         // 此前只有 sel 触发，于是"悬浮有名字、它连着的点没名字"，得先点一下才看得到。
@@ -605,8 +610,8 @@ export class WordGraphEngine {
         for (const f of new Set([this.hover, sel])) {
             if (f === null) continue;
             for (const e of data.edges) {
-                if (e[0] === f) take(e[1], false, true, true);
-                else if (e[1] === f) take(e[0], false, true, true);
+                if (e[0] === f) take(e[1], false, true);
+                else if (e[1] === f) take(e[0], false, true);
             }
         }
         // Z 层：贴脸的（相机已站到跟前），只认画布内的——画面外的"近"不是"贴脸"
@@ -620,10 +625,10 @@ export class WordGraphEngine {
             zl.push(i);
         }
         if (zl.length > 1) zl.sort((a, b) => this.proj.d[a] - this.proj.d[b]);   // 最近的先占位
-        for (let k = 0; k < zl.length && k < LABEL_NEAR; k++) take(zl[k], false, false, true);
+        for (let k = 0; k < zl.length && k < LABEL_NEAR; k++) take(zl[k], false, true);
         // A 层：全局重要度前 N 名常驻（hard——"重要度高的向量一直显式展示名字"）
         const byImp = this.byImportance;
-        for (let k = 0; k < byImp.length && k < LABEL_A; k++) take(byImp[k], false, false, true);
+        for (let k = 0; k < byImp.length && k < LABEL_A; k++) take(byImp[k], false, true);
         // B 层：其余按"离相机近"补位（拉近自然揭示更多）。只在查询聚焦时让位——
         // 悬停/选中一个词不该让别的名字全消失（那会让"选中看邻居"这件事没法看）。
         // ⚠️ 必须从**最近**的点往回补：this.order 是远→近排的（画家算法），照它正序走
@@ -632,7 +637,7 @@ export class WordGraphEngine {
             for (let oi = this.order.length - 1; oi >= 0 && placed.length < cap; oi--) {
                 const i = this.order[oi];
                 if (this.proj.d[i] <= 0.05) break;      // 被剔除的点按深度连续排在队尾，撞到就停
-                take(i, false, true, false);
+                take(i, false, false);
             }
         }
         ctx.globalAlpha = 1;
