@@ -28,11 +28,50 @@ impl<T> ApiResponse<T> {
     }
 }
 
+/// ⚠️ **旧格式密码哈希（SHA-256，无盐、单轮）**——20260917 起密码已改用
+/// [`hash_password`]（Argon2id）。这个函数现在只留给两类历史用途：
+///   ① 兼容旧用户名的哈希存储（`web_info` 把用户名也哈希过，登录的兼容分支按它查）；
+///   ② 校验 20260917 之前写入的密码哈希（见 [`verify_password`]）。
+/// **新代码不要再用它存密码。**
 pub fn encrypt_password(input: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(input);
     let result = hasher.finalize();
     hex::encode(result)
+}
+
+/// 密码哈希：Argon2id，PHC 字符串（自带算法、参数、随机盐），每行一个独立盐。
+///
+/// 为什么换：旧格式是**无盐单轮 SHA-256**——彩虹表直接命中、同密码哈希相同
+/// （撞库时一眼看出哪些账号同密码）、GPU 每秒可试几十亿次。Argon2id 是 OWASP
+/// 当前的推荐档，内存硬（默认 19MiB）+ 时间可调，把离线爆破成本抬到不可行。
+pub fn hash_password(input: &str) -> String {
+    use argon2::password_hash::{rand_core::OsRng, PasswordHasher, SaltString};
+    let salt = SaltString::generate(&mut OsRng);
+    argon2::Argon2::default()
+        .hash_password(input.as_bytes(), &salt)
+        .expect("argon2 哈希失败（参数合法、盐已生成）")
+        .to_string()
+}
+
+/// 校验密码：**同时认新格式与旧格式**（旧格式只在登录成功后被惰性升级，见 auth.rs）。
+pub fn verify_password(input: &str, stored: &str) -> bool {
+    use argon2::password_hash::{PasswordHash, PasswordVerifier};
+    if stored.starts_with("$argon2") {
+        return PasswordHash::new(stored)
+            .map(|h| argon2::Argon2::default().verify_password(input.as_bytes(), &h).is_ok())
+            .unwrap_or(false);
+    }
+    // 旧格式：确定性 SHA-256 十六进制——用常数时间比较（虽然这里的比较对象是
+    // 服务端算出来的，泄漏面很小，但没理由留一个非常数时间的比对）
+    let got = encrypt_password(input);
+    got.len() == stored.len()
+        && got.bytes().zip(stored.bytes()).fold(0u8, |acc, (a, b)| acc | (a ^ b)) == 0
+}
+
+/// 这个存储的哈希是否需要在登录成功后升级成 Argon2id。
+pub fn needs_rehash(stored: &str) -> bool {
+    !stored.starts_with("$argon2")
 }
 
 pub fn upload_dir() -> PathBuf {

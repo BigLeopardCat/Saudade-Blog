@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use crate::routes::AppState;
 use crate::entity::user;
-use crate::utils::encrypt_password;
+use crate::utils::hash_password;
 
 #[derive(Deserialize)]
 pub struct CreateTempUser {
@@ -41,7 +41,7 @@ pub async fn create_temp_user(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<CreateTempUser>,
 ) -> Json<crate::utils::ApiResponse<String>> {
-    let encrypted_password = encrypt_password(&payload.password);
+    let encrypted_password = hash_password(&payload.password);   // 20260917：Argon2id
 
     let existing = user::Entity::find()
         .filter(user::Column::Username.eq(&payload.username))
@@ -98,7 +98,7 @@ pub async fn change_password(
     match user_opt {
         Some(u) => {
             let mut am: user::ActiveModel = u.into();
-            am.password = Set(encrypt_password(&payload.password));
+            am.password = Set(hash_password(&payload.password));   // 20260917：Argon2id
             am.role = Set("user".into());
             let _ = am.update(&state.db).await;
             Json(crate::utils::ApiResponse::success("密码修改成功".to_string()))
