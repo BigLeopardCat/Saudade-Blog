@@ -17,6 +17,8 @@ tracing-subscriber = { version = "0.3", features = ["chrono"] }
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }
 sha2 = "0.10"
+# 密码哈希（20260917 起）：Argon2id，纯 Rust 实现、无 C 依赖
+argon2 = { version = "0.5", features = ["std"] }
 hex = "0.4"
 jsonwebtoken = { version = "10.3.0", features = ["rust_crypto"] }
 

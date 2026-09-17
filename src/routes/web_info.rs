@@ -3,7 +3,7 @@ use sea_orm::{EntityTrait, ColumnTrait, QueryFilter, ActiveModelTrait, Set};
 use std::sync::Arc;
 use crate::entity::{web_info, user};
 use crate::routes::AppState;
-use crate::utils::{ApiResponse, encrypt_password};
+use crate::utils::{ApiResponse, encrypt_password, hash_password};
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
@@ -188,8 +188,10 @@ pub async fn update_web_info(
         if !acc.is_empty() && !pass.is_empty() {
              let user = user::Entity::find_by_id(1).one(&state.db).await.unwrap_or(None);
              if let Some(u) = user {
+                 // 用户名仍用 sha256（登录的 legacy 兼容分支按哈希后的用户名查，
+                 // 换掉会让这批账号登不进来）；**密码换成 Argon2id**（20260917）。
                  let enc_acc = encrypt_password(acc);
-                 let enc_pass = encrypt_password(pass);
+                 let enc_pass = hash_password(pass);
 
                  let mut active: user::ActiveModel = u.into();
                  active.username = Set(enc_acc);
