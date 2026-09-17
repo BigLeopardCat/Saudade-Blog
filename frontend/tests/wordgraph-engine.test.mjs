@@ -344,5 +344,19 @@ console.log('== 近平面裁剪（clipEdge）==');
     eq(engine.clipEdge(p, nodes, 2, 3), null, '两端都在相机后方：整条丢掉');
 }
 
+console.log('== 邻居查询（neighborsOf，读数卡片用）==');
+{
+    const g = structuredClone(GRAPH);
+    const nb0 = engine.neighborsOf(g, 0);
+    eq(nb0.map((x) => x.w).join(','), '并发', '无向边：0 的邻居是 并发', nb0);
+    eq(nb0[0].s, 0.8, '带出边权（相似度）', nb0[0].s);
+    // 多条边时按相似度降序
+    g.edges = [[0, 1, 0.5], [0, 2, 0.9], [1, 0, 0.1]];
+    const nb = engine.neighborsOf(g, 0);
+    eq(nb.map((x) => x.w).join(','), '线程,并发', '按相似度降序（线程 0.9 在 并发 0.5 前）', nb);
+    eq(nb[1].s, 0.5, '同一对词出现多条边时留最大的那条（0.5 而不是 0.1）', nb);
+    eq(engine.neighborsOf(g, 3).length, 0, '孤立点返回空数组');
+}
+
 console.log(`\n${failed === 0 ? '✓' : '✗'} wordgraph-engine: ${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
