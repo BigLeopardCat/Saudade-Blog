@@ -90,13 +90,13 @@ payload 的 `built`）——展示柜标题栏那个「2026年09月16日 UTC+8 0
 
 `saudade-blog-agent/scripts/build_word_graph.py`（dev 工具，不进生产 venv）
 
-运行环境：**系统 python3.12 + `--target` 装到 `/home/ubuntu/graph-lib` 的 numpy/jieba**
+运行环境：**系统 python3.12 + `--target` 装到一个仓库外的独立目录**（下称 `$GRAPH_LIB`）**的 numpy/jieba**
 （`numpy 2.5.2` 来自系统 python）。完整命令：
 
 ```bash
-cd /home/ubuntu/memory_blog_rust/saudade-blog-agent
-PYTHONPATH=/home/ubuntu/graph-lib python3 scripts/build_word_graph.py            # 出图
-PYTHONPATH=/home/ubuntu/graph-lib python3 scripts/build_word_graph.py --dry-run  # 只看词表，不调 embedding
+cd saudade-blog-agent
+PYTHONPATH=$GRAPH_LIB python3 scripts/build_word_graph.py            # 出图
+PYTHONPATH=$GRAPH_LIB python3 scripts/build_word_graph.py --dry-run  # 只看词表，不调 embedding
 ```
 
 | 步 | 做什么 | 关键参数 |
@@ -313,15 +313,15 @@ UMAP 只关心邻域、剥掉全局混杂方向反而更干净。τ 要跟着调
 ## 5. 重建流程
 
 ```bash
-cd /home/ubuntu/memory_blog_rust/saudade-blog-agent
+cd saudade-blog-agent
 
 # 1) 只改词表/黑名单/用户词典/允许清单的话，先干跑看一眼（零 API 成本）
-PYTHONPATH=/home/ubuntu/graph-lib python3 scripts/build_word_graph.py --dry-run
+PYTHONPATH=$GRAPH_LIB python3 scripts/build_word_graph.py --dry-run
 #    看 eval/report/wordgraph/<ts>_vocab.txt，确认没有误伤
 #    ⚠️ --dry-run 在 embedding 之前就 return，所以**拿不到质量门指标**（只看词表用它）
 
 # 2) 正式出图（写了两份产物：前端 public/graph + agent data/word_graph）
-PYTHONPATH=/home/ubuntu/graph-lib python3 scripts/build_word_graph.py
+PYTHONPATH=$GRAPH_LIB python3 scripts/build_word_graph.py
 
 # 3) 前端与 agent 的产物都在 git 里（agent data/word_graph 被 gitignore，但它不被代码引用，
 #    只被同一台机器上的 agent 进程读——所以出图后**不需要**任何同步动作）

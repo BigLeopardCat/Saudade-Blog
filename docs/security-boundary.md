@@ -18,9 +18,9 @@
 三条硬事实（都实测过）：
 
 1. **只有 nginx 暴露在公网**。Rust（`main.rs`）与 agent（uvicorn `--host 127.0.0.1`）都只绑回环。
-2. **nginx 不代理 agent 8010**——`/etc/nginx/sites-enabled/blog` 里对 8010 零匹配。
+2. **nginx 不代理 agent 8010**——本机 nginx 站点配置里对 8010 零匹配。
    想从公网碰 agent，只有"经 Rust"这一条路。
-3. `device-service`（IoT，源码在 `/home/ubuntu/mqtt-demo/`，不在 git）同样只绑回环，
+3. `device-service`（IoT，源码在独立目录、不在本仓库）同样只绑回环，
    由 nginx 的 `/device-api/*` 反代，**它自己校验博客 JWT**。
 
 ## 2. 谁在鉴权、谁没有（逐端点）
@@ -114,7 +114,7 @@
 
 ```bash
 # ① 公网到不了 agent：nginx 不代理 8010
-grep -c 8010 /etc/nginx/sites-enabled/blog            # → 0
+grep -c 8010 "$NGINX_SITE"    # $NGINX_SITE = nginx 站点配置文件（路径见私有运行簿）；→ 0
 
 # ② 图谱检索的登录闸在 Rust 层（匿名应得 401 login_required）
 curl -s -X POST https://saudade.site/api/public/graph/query \

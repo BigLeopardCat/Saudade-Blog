@@ -60,7 +60,7 @@ device-service (:3100) ◄─────────── MQTT 1883 (本机内
 
 | 监听 | 地址 | 用途 |
 |---|---|---|
-| MQTTS **8883** | 公网 | **设备接入**（TLS，正式证书 `/etc/emqx/certs/saudade.site_bundle.crt`） |
+| MQTTS **8883** | 公网 | **设备接入**（TLS，正式证书，与 HTTPS 同源） |
 | TCP 1883 | 仅本机 | device-service 内部连接 |
 | WSS 8083 | 仅本机（nginx /mqtt） | 控制台实时流 |
 
@@ -192,8 +192,8 @@ A/B 分区 → 重启 → 遥测上报新 `firmware` 确认。
 
 ## 5. ESP32-S3 接入示例（参考实现）
 
-完整固件：[/home/ubuntu/ESP32-S3-OBC](../../ESP32-S3-OBC)（BigLeopardCat/ESP32-S3-OBC），
-接入细节见其 [docs/device-integration.md](../../ESP32-S3-OBC/docs/device-integration.md)。
+完整固件：[BigLeopardCat/ESP32-S3-OBC](https://github.com/BigLeopardCat/ESP32-S3-OBC)，
+接入细节见该仓库的 `docs/device-integration.md`。
 
 最小接入骨架（ESP-IDF）：
 
@@ -229,9 +229,9 @@ esp_mqtt_client_config_t cfg = {
 
 - **安全组**：公网需放行 8883（MQTTS）。REST 全走 443 无需额外放行。
 - **证书**：MQTTS 证书与 HTTPS 同源（saudade.site），到期需续期并同步
-  `/etc/emqx/certs/`（20260831 已续期至 **2026-11-07**；nginx 侧副本在 `/etc/nginx/ssl/`，双副本同源同步）。
-- **设备服务部署**：device-service 不在 git、不经 CI（mqtt-demo 目录），改动需手动
-  `cargo build --release` + `systemctl restart saudade-device`（3.7GB 机器注意内存）。
+  EMQX 的证书目录（20260831 已续期至 **2026-11-07**；nginx 侧另有一份同源副本，**续期要两处同步**）。
+- **设备服务部署**：device-service 不在本仓库、不经 CI（独立目录），改动需手动
+  `cargo build --release` + 重启 device 服务（3.7GB 机器注意内存）。
 - **数据**：SQLite WAL（devices/config_history/telemetry/cmd_history），量小无需外部依赖。
 - **日志**：`logs/device.log`（DEVICE_LOG_FILE 配置）；MQTT 三段式日志（已入队→发出→broker 确认）
   是排查"下发假成功"的第一入口（问题记录 2.2）。

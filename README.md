@@ -31,7 +31,7 @@ nginx（静态资源 + 反代 + MQTT WSS；JWT 校验在 Rust 侧）
 | **Rust 后端**（Axum + SeaORM + MySQL 8） | 博客主流量（文章/分类/标签/友链/留言板）、登录鉴权（JWT）、聊天链路中枢（鉴权 → 历史入库 → SSE 逐帧转发） | `src/` |
 | **前端**（React 18 + Vite + antd + bytemd） | SPA；看板娘与聊天面板由 `live2d-widgets/`（autoload.js 入口，纯 JS 子模块拆分）驱动 | `frontend/` |
 | **AI Agent**（FastAPI + 手写 LangGraph） | 看板娘大脑：对话生成、博客查询、导航/特效/夜间命令、IoT 设备显示。**独立 git 仓库** | `saudade-blog-agent/` |
-| **IoT**（EMQX 5 + Rust device-service） | ESP32 设备接入（MQTT over TLS）、OLED 显示、设备控制台（`/device-console/`） | `/home/ubuntu/mqtt-demo/` |
+| **IoT**（EMQX 5 + Rust device-service） | ESP32 设备接入（MQTT over TLS）、OLED 显示、设备控制台（`/device-console/`） | 独立目录（不在本仓库） |
 
 Agent 的核心理念是**把执行层的自由拿掉**（20260903 架构裁决，自由 ReAct / LLM 质检 / 重考轮已废除）：
 固定流程任务（导航/特效/夜间/设备显示）落地为 `skills.py` 里的静态技能定义，**planner 是唯一决策者**
@@ -61,7 +61,7 @@ git push（主仓库 cn_sora_blog / agent 仓库）
   必须 bump 版本号**（nginx 对该目录 immutable 缓存 1 年：手动同步 **2 处**——`Live2dAgent/index.tsx`
   的 `?v=` 与 `autoload.js` 的 `VER`；waifu.css 的 `?v=` 由 VER 自动拼接）。
 - **Agent（`saudade-blog-agent/`，独立仓库）**：改技能/工具/prompt 后需重启服务生效
-  （`sudo systemctl restart saudade-agent`）；push 走独立 CI。改技能注册表 / plan 契约 /
+  （改完要重启 agent 服务才生效）；push 走独立 CI。改技能注册表 / plan 契约 /
   摘要逻辑后必跑 `test_skills.py`（L0）与 `eval/run_golden.py`（L2 真实 LLM 端到端）。
 
 ## 部署与运维
@@ -70,9 +70,9 @@ git push（主仓库 cn_sora_blog / agent 仓库）
 
 | 服务 | 端口 | 说明 |
 |---|---|---|
-| `saudade-rust` | :3000 | 博客后端 |
-| `saudade-agent` | :8010 | AI 看板娘（2 workers；`TimeoutStopSec=120` 优雅停等在途对话） |
-| `saudade-device` | :3100 | IoT 设备服务（源码在 mqtt-demo，**不经 CI**，改后手动构建重启） |
+| Rust 后端 | :3000 | 博客 API + 对话编排 |
+| Python Agent | :8010 | AI 看板娘（2 workers；`TimeoutStopSec=120` 优雅停等在途对话） |
+| IoT device-service | :3100 | 设备服务（源码在独立目录，**不经 CI**，改后手动构建重启） |
 | nginx / EMQX | :443 / :8883 | 入口 / MQTT over TLS（8883 是唯一对公网开放的设备端口） |
 
 日志统一在 `logs/`，按组分层（logrotate 按日轮转，14 天归档）：
