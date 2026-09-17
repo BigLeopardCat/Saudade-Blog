@@ -33,3 +33,8 @@ frontend/public/live2d-widgets/chunk/*.map
 .env*
 !.env.example
 !**/.env.example
+
+# 项目说明（给 Coding Agent 用的开发/运维手册）：20260917 起**不进库**——
+# 里面是服务器坐标（nginx/systemd/logrotate/cron/部署流程/后台路由），
+# 保留在本地工作区即可（agent 会话照常读它）。
+/CLAUDE.md
