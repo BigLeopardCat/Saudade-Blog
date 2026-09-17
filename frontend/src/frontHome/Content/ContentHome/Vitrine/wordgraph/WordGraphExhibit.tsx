@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import UserState from '../../../../../interface/UserState';
 import { loadGraph } from './loader';
 import { locate } from './locate';
-import { WordGraphEngine, cameraFor, wordKey } from './engine';
+import { WordGraphEngine, cameraFor, neighborsOf, wordKey } from './engine';
 import { WG_PARAM, clearSaved, decideBoot, queryFromUrl, readSaved, writeSaved } from './remember';
 import type { GraphData, LocateHit } from './types';
 import type { SavedSearch } from './remember';
@@ -183,6 +183,14 @@ export default function WordGraphExhibit() {
     const shown = hover !== null ? hover : sel;
     const hv = shown !== null && data ? data.nodes[shown] : null;
     const hvArt = hv && data ? data.articles[hv.a] : null;
+    /** 这个词的直接邻居（按相似度降序）。20260917 用户要："悬浮时除了自己，也把
+     *  与它直接相连的展示出来"——"这个词连着谁"本来就是这张图最主要的信息，
+     *  以前只能靠肉眼顺着高亮线去找。悬停与选中共用同一张卡片，所以两者都列。
+     *  ⚠️ 只展示不可点：卡片是 pointer-events:none（见 index.sass），开了点击就得
+     *  让开画布拖拽/双击那块区域，得不偿失。 */
+    const nbWords = useMemo(
+        () => (shown !== null && data ? neighborsOf(data, shown) : []),
+        [shown, data]);
 
     return (
         <div className="wg-root">
@@ -204,6 +212,12 @@ export default function WordGraphExhibit() {
                             重要度 {Math.round(hv.n * 100)}
                             {hvArt ? ` · ${hvArt.t}` : ''}
                         </span>
+                        {nbWords.length > 0 && (
+                            <span className="wg-card-nb">
+                                相连 {nbWords.slice(0, 6).map((x) => x.w).join(' · ')}
+                                {nbWords.length > 6 ? ` …共 ${nbWords.length} 个` : ''}
+                            </span>
+                        )}
                         <span className="wg-card-tip">
                             {hover === null ? '已选中 · 双击跳转这篇文章' : '单击选中 · 双击跳转这篇文章'}
                         </span>

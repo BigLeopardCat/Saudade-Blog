@@ -165,6 +165,14 @@ $bar-line: 16px
     overflow: hidden
     text-overflow: ellipsis
     white-space: nowrap
+  /* 直接邻居（20260917 用户要）：一行放不下就换行，最多 6 个 + "共 N 个"。
+     颜色比 meta 亮、比正文暗——它是"顺带的线索"，不该抢主词的视觉权重。 */
+  .wg-card-nb
+    font-size: 11px
+    line-height: 1.45
+    color: rgba(214, 226, 246, 0.62)
+    white-space: normal
+    word-break: break-word
   .wg-card-tip
     font-size: 10.5px
     color: rgba(200, 214, 238, 0.42)
