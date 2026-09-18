@@ -57,6 +57,21 @@
     };
     // 行标题：title NULL（未派生/纯图轮）显示"新对话"（产品拍板）
     const rowTitle = (c) => (c && c.title && String(c.title).trim()) ? String(c.title).trim() : '新对话';
+    // 起点标记（20260918 A 方案·用户拍板）：跨天会话在行内时间后补"9-5 起"。
+    // 背景：标题只从首条用户消息派生一次且不再变，长会话会一直挂着旧标题
+    //   （例：09-05 开的"你都能做些上面"聊到今天共 240 条），而时间是当前
+    //   → 极易被读成"旧会话被刷新成最新"。标出起点即可一眼分辨
+    // "开了 N 天一直在聊"与"旧会话"。同日会话（创建日 = 最后活动日）返回 ''，
+    // 非跨天行零变化；created_at/updated_at 任一非数字（缺字段）也返回 ''。
+    const rowSince = (c) => {
+      const t = c && c.created_at, u = c && c.updated_at;
+      if (!(t > 0) || typeof t !== 'number' || !(u > 0) || typeof u !== 'number') return '';
+      const a = new Date(t), b = new Date(u), now = new Date();
+      if (a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth()
+          && a.getDate() === b.getDate()) return '';
+      const md = (a.getMonth() + 1) + '-' + a.getDate();
+      return (a.getFullYear() === now.getFullYear() ? md : a.getFullYear() + '-' + md) + ' 起';
+    };
 
     // ── rail 图标（用户提供 SVG，20260903b 起注入；文字为注入前兜底）──
     const ICON_SIDEBAR = '<svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"><path d="M810.666667 85.333333a128 128 0 0 1 128 128v597.333334a128 128 0 0 1-128 128H213.333333a128 128 0 0 1-128-128V213.333333a128 128 0 0 1 128-128h597.333334zM341.333333 170.666667H213.333333l-5.802666 0.426666a42.538667 42.538667 0 0 0-36.48 36.437334L170.666667 213.333333v597.333334l0.426666 5.802666a42.538667 42.538667 0 0 0 36.437334 36.48L213.333333 853.333333h128V170.666667z m469.333334 0h-384v682.666666h384l5.802666-0.426666a42.538667 42.538667 0 0 0 36.48-36.437334L853.333333 810.666667V213.333333l-0.426666-5.802666A42.538667 42.538667 0 0 0 810.666667 170.666667z" fill="#666666"/></svg>';
@@ -152,7 +167,7 @@
           renderHits(hits);
         } else {
           const list = (j && Array.isArray(j.conversations)) ? j.conversations : [];
-          _rows = list.map(c => ({ id: c.id, title: c.title, updated_at: c.updated_at, pinned: !!c.pinned }));
+          _rows = list.map(c => ({ id: c.id, title: c.title, created_at: c.created_at, updated_at: c.updated_at, pinned: !!c.pinned }));
           _byId = new Map(_rows.map(c => [c.id, c]));
           // 列表外的会话缓存键清理（会话被删/过期列表外 → 镜像随删防膨胀）
           engine.pruneConvCaches(_rows.map(c => c.id));
@@ -313,7 +328,9 @@
         const empty = document.createElement('div');
         empty.className = 'conv-list-empty';
         // 浏览态空态（搜索态空态在 renderHits 处理，文案不同）
-        empty.textContent = getToken() ? '还没有会话，点 ＋ 开始新对话' : '登录后可管理会话历史';
+        // 20260918：指引改为左侧 rail 的新对话按钮——右上角那枚 ＋ 早已不存在
+        // （新对话入口 20260903d 起固定在 rail，#conv-new-btn，title="新对话"）
+        empty.textContent = getToken() ? '还没有会话，点左侧 ＋ 开始新对话' : '登录后可管理会话历史';
         convList.appendChild(empty);
         return;
       }
@@ -338,6 +355,13 @@
         const time = document.createElement('span');
         time.className = 'conv-row-time';
         time.textContent = relTime(c.updated_at);
+        const since = rowSince(c); // A 方案：跨天会话补"9-5 起"（同日为空，零变化）
+        if (since) {
+          const s = document.createElement('span');
+          s.className = 'conv-row-since';
+          s.textContent = ' · ' + since;
+          time.appendChild(s);
+        }
         const more = document.createElement('button');
         more.type = 'button';
         more.className = 'conv-more';
