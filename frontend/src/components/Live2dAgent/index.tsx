@@ -21,7 +21,7 @@ const Live2dAgent: React.FC = () => {
 
     // 注入 autoload 脚本，让 live2d-widgets 自己管理一切
     const s = document.createElement('script');
-    s.src = '/live2d-widgets/autoload.js?v=20260916c';
+    s.src = '/live2d-widgets/autoload.js?v=20260918a';
     s.async = true;
     document.head.appendChild(s);
 
