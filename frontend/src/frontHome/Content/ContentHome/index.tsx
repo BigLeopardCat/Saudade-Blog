@@ -16,6 +16,7 @@ import {getNotePage, getTopNotes} from "../../../apis/NoteMethods.tsx";
 import dayjs from "dayjs";
 import { resolveApiAssetUrl } from '../../../utils/runtimeApi';
 import { carouselCropOf, coverCropStyle } from '../../../utils/coverCrop';
+import { parseNoteTags } from '../../../utils/noteTags';
 import heroBg from '../../../assets/hero_bg.mp4';
 import heroPoster from '../../../assets/hero_poster.jpg';
 import Vitrine from './Vitrine';
@@ -161,7 +162,7 @@ const ContentHome = () => {
                 return {
                     ...item,
                     key: item.noteKey,
-                    noteTags: item.noteTags ? item.noteTags.split(',').map(tag => parseInt(tag, 10)) : [],
+                    noteTags: parseNoteTags(item.noteTags),
                 }
             });
             setOtherArticles(mapped);
@@ -213,7 +214,7 @@ const ContentHome = () => {
                 return {
                     ...item,
                     key: item.noteKey,
-                    noteTags: item.noteTags ? item.noteTags.split(',').map(tag => parseInt(tag, 10)) : [],
+                    noteTags: parseNoteTags(item.noteTags),
                 }
             });
             setTopArticles(mapped);
@@ -251,7 +252,7 @@ const ContentHome = () => {
                         ...nextPage.map((item: formatNote) => ({
                             ...item,
                             key: item.noteKey,
-                            noteTags: item.noteTags ? item.noteTags.split(',').map(tag => parseInt(tag, 10)) : [],
+                            noteTags: parseNoteTags(item.noteTags),
                         }))
                     ];
                     cachedOtherArticles = newArts;

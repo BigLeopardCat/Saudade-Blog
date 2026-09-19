@@ -4,6 +4,8 @@ interface status{
     isTop: number
     status: string
     updateTime: string
+    /** 逗号分隔的标签 id 串（`joinNoteTags` 的产物）。后端"传了就写"，所以空串 = 清空标签 */
+    noteTags?: string
 }
 
 interface updateNote{

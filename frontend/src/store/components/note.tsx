@@ -2,6 +2,7 @@ import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import { Dispatch } from 'react';
 import {NoteType} from "../../interface/NoteType";
 import {getNotes, getAdminNotes} from "../../apis/NoteMethods.tsx";
+import {parseNoteTags} from "../../utils/noteTags";
 
 
 interface noteList {
@@ -37,7 +38,7 @@ const fetchNoteList = (admin = false) => {
             const noteList = Array.isArray(res?.data?.data) ? res.data.data : [];
             const processedData = noteList.map((item: { noteTags: string; }) => ({
                 ...item,
-                noteTags: item.noteTags ? item.noteTags.split(',').map(tag => parseInt(tag, 10)) : [],
+                noteTags: parseNoteTags(item.noteTags),
             }));
             dispatch(setNote(processedData));
             dispatch(setNoteCount(processedData.length));

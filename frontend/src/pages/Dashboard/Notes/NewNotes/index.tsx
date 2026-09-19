@@ -6,7 +6,7 @@ import {
     Form,
     Modal,
     Select,
-    Upload, Switch, Radio, TreeSelect, ConfigProvider, UploadProps, UploadFile, GetProp, message, Row, Col, Card
+    Upload, Switch, Radio, UploadProps, UploadFile, GetProp, message, Row, Col, Card
 } from "antd";
 import {PlusOutlined, PictureOutlined, EditOutlined} from "@ant-design/icons";
 import React, {useEffect,  useState, useContext, useRef} from "react";
@@ -22,6 +22,8 @@ import ImageCompression from "../../../../apis/ImageCompression.tsx";
 import {uploadImages, getImageList} from "../../../../apis/ImageMethods.tsx";
 import { resolveApiAssetUrl, runtimeBaseURL } from '../../../../utils/runtimeApi';
 import CoverCropModal from '../../../../components/CoverCropModal';
+import NoteTagSelect from '../../../../components/NoteTagSelect/index.tsx';
+import {readListReturn} from '../AllNotes/listState';
 import { DEFAULT_CROP, carouselCropFromRow, cropFromRow, isDefaultCrop, type CoverCrop } from '../../../../utils/coverCrop';
 
 type FileType = Parameters<GetProp<UploadProps, 'beforeUpload'>>[0];
@@ -230,7 +232,7 @@ const NewNotes = () => {
         return () => window.removeEventListener('pagehide', onHide);
     }, []);
 
-    const tagList = useSelector((state: {tags: any}) => state.tags.tag)
+    // 标签字典现在由 NoteTagSelect 自己从 redux 取（编辑器不再直接读 tagList）
     const categories = useSelector((state: {categories: any}) => state.categories.categories);
 
     // Gallery Modal State
@@ -540,7 +542,7 @@ const NewNotes = () => {
                         // 内容相同的「修改稿」，草稿箱里凭空多一个副本
                         stopAutosaveRef.current = true;
                         if (autosaveTimer.current) { clearTimeout(autosaveTimer.current); autosaveTimer.current = null; }
-                        navigate('/dashboard/notes')
+                        goBackToList()
                     }
                 } else {
                     publishingRef.current = false; // 接口返回非 200：放开自动保存并把内容补写回去
@@ -555,7 +557,7 @@ const NewNotes = () => {
                     stopAutosaveRef.current = true;
                     if (autosaveTimer.current) { clearTimeout(autosaveTimer.current); autosaveTimer.current = null; }
                     setOpen(false); // Close modal on create success
-                    navigate('/dashboard/notes')
+                    goBackToList()
                 } else {
                     publishingRef.current = false;
                     scheduleAutosave();
@@ -567,6 +569,33 @@ const NewNotes = () => {
             message.error("文章保存失败：" + error)
         }
     }
+    /**
+     * 回列表页：**带上列表原来的查询条件**。
+     *
+     * 列表页每次 URL 变化都会把 query 串写进 sessionStorage（`notes:listReturn`）。直接
+     * `navigate('/dashboard/notes')` 会把 tab / 页码 / 搜索条件全丢掉，用户从编辑器回来
+     * 又得重翻一遍 —— 就是「翻到一页改完文章配置，页码又回到第一页」的另一半原因
+     * （前半是改配置后整表重拉触发的分页钳制，见 AllNotes 的 onOk）。
+     *
+     * 三级兜底：有票据 → 回那个 URL；没票据但历史里有上一页 → 后退；直接打开编辑器
+     * （新标签页 / 书签）→ 回列表首页。
+     * 一律 `{replace:true}`：否则再按一次后退又回到刚提交完的编辑器。
+     */
+    const goBackToList = () => {
+        const ticket = readListReturn();
+        if (ticket !== null) {
+            const qs = ticket === '' ? '' : (ticket.startsWith('?') ? ticket : `?${ticket}`);
+            navigate(`/dashboard/notes${qs}`, {replace: true});
+            return;
+        }
+        const idx = (window.history.state as {idx?: unknown} | null)?.idx;
+        if (typeof idx === 'number' && idx > 0) {
+            navigate(-1);
+            return;
+        }
+        navigate('/dashboard/notes', {replace: true});
+    };
+
     const onChangeTag = (newTag: number[]) => {
         setNoteTag(newTag);
         form.setFieldValue('noteTags', newTag);
@@ -665,41 +694,14 @@ const NewNotes = () => {
                         </Select>
                     </Form.Item>
 
+                    {/* 20260919：原来的两级 TreeSelect 只能从既有字典里挑、不能就地新建，
+                        还带 required 强制必填（用户反馈"非常难用而且有错误"）。换成扁平多选，
+                        下拉底部可就地新建；不再强制必填 —— 标签是可选的元数据。 */}
                     <Form.Item
                         label="文章标签"
                         name="noteTags"
-                        rules={[{ required: true, message: 'Please input!' }]}
                     >
-                        <ConfigProvider
-                            theme={{
-                                components: {
-                                    TreeSelect: {
-                                    },
-                                },
-                            }}
-                        >
-                            <TreeSelect
-                                placeholder="请选择文章标签"
-                                showSearch
-                                style={{ width: '100%' }}
-                                dropdownStyle={{ maxHeight: 400, overflow: 'auto' }}
-                                allowClear
-                                multiple
-                                treeDefaultExpandAll
-                                treeData={tagList.map((tag: { tagKey: number; children: { tagKey: number; }[]; }) => ({
-                                    ...tag,
-                                    value: tag.tagKey,
-                                    key: tag.tagKey,
-                                    children: tag.children ? tag.children.map((child: { tagKey: number; }) => ({
-                                        ...child,
-                                        value: child.tagKey,
-                                        key: child.tagKey
-                                    })) : [] 
-                                }))}
-                                onChange={onChangeTag}
-                                value={noteTag}
-                            />
-                        </ConfigProvider>
+                        <NoteTagSelect onChange={onChangeTag} value={noteTag} />
                     </Form.Item>
 
                     <Form.Item label="文章封面" >

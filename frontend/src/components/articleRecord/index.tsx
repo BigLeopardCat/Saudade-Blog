@@ -6,6 +6,7 @@ import {NoteType} from "../../interface/NoteType";
 import dayjs from "dayjs";
 import {renderNoteTags} from "../../apis/TagMethods.tsx";
 import {getAllNotes} from "../../apis/NoteMethods.tsx";
+import {parseNoteTags} from "../../utils/noteTags";
 import {useNavigate} from "react-router-dom";
 
 interface ArticleRecordProps {
@@ -21,7 +22,7 @@ const ArticleRecord = ({isDark}: ArticleRecordProps) => {
             setNewNotes(res.data.data.map((item: { noteTags: string; }) => {
                 return {
                     ...item,
-                    noteTags: item.noteTags ? item.noteTags.split(',').map(tag => parseInt(tag, 10)) : [],
+                    noteTags: parseNoteTags(item.noteTags),
                 }
             }))
         })
