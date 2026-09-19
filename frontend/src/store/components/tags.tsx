@@ -42,8 +42,17 @@ const fetchTags = () => {
         });
         const tagtwo = Array.isArray(tagtwoResponse?.data?.data) ? tagtwoResponse.data.data : [];
 
-        const tree = tagone.map((item: { children: TagLevelTwo[]; title: string; }) => {
-            item.children = tagtwo.filter((child: { fatherTag: string; }) => child.fatherTag === item.title);
+        // 按父标签 **id** 挂载（fatherKey = tag_two.tag_one_id）。
+        // 这里以前是按名字匹配（`child.fatherTag === item.title`）：一级标签一改名，其下
+        // 所有二级标签就从每个选择器/列表里集体消失，两个同名一级标签还会共享子标签。
+        // fatherKey 缺失时才退回按名字（新前端撞上旧后端的过渡窗口）。
+        const tree = tagone.map((item: { children: TagLevelTwo[]; title: string; tagKey: number; key?: number }) => {
+            const selfKey = Number(item.tagKey ?? item.key);
+            item.children = tagtwo.filter((child: { fatherTag: string; fatherKey?: number }) =>
+                child.fatherKey !== undefined && child.fatherKey !== null
+                    ? child.fatherKey === selfKey
+                    : child.fatherTag === item.title
+            );
             return item;
         });
 
