@@ -249,7 +249,7 @@ const Dashboard = () => {
                                     <div className="menu">
                                         <li className="search-box" onClick={handleSearchClick}>
                                             <i className="iconfont icon-sousuo1 icon"></i>
-                                            <input type="text" placeholder="search..." value={searchVal} onChange={(e) => setSearchVal(e.target.value)} onKeyDown={(e) => {if(e.key === "Enter") { navigate('/dashboard/notes?keyword=' + searchVal) }}} />
+                                            <input type="text" placeholder="search..." value={searchVal} onChange={(e) => setSearchVal(e.target.value)} onKeyDown={(e) => {if(e.key === "Enter") { navigate('/dashboard/notes?kw=' + encodeURIComponent(searchVal.trim())) }}} />
                                         </li>
 
                                         <ul className="menu-links">

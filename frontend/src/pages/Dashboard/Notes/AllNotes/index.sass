@@ -1,27 +1,45 @@
-// Force styles with very high specificity
-:global body .AllCard
-  margin-top: 10px
-  height: 84vh !important
-  max-height: 800px
+// 20260919 重写这个文件的头部。
+//
+// 原来整个开头是一段 `:global body .AllCard` 包裹的规则块 —— 在**普通**（非 CSS Module）
+// 的 .sass 里 `:global` 是非法伪类，浏览器把整条选择器连同里面所有规则一起丢掉了：
+// `.AllCard{height:84vh}`、`.searchRes{overflow-x:hidden}` 从来没生效过（实测 computed
+// overflowX === 'visible'，编译产物里是字面量 `:global body .AllCard`）。现在换成普通选择器。
+//
+// 注意：**只**保留本次真正需要的声明。`height:84vh` / `max-height:800px` 那些一旦顺手
+// 激活就是一次视觉改版，不在本次范围里（列表页布局归列表页自己的改动管）。
 
+.AllCard
+  // 兜住任何残余的横向溢出。
+  //
+  // 横向滚动条的真正根因不是"文本太长"，是表格的 `scroll={{x:'max-content'}}`：rc-table
+  // 把它写成内联 `width:max-content`，表的宽度就固定成内容宽（实测 1314px）与视口无关 ——
+  // 1280 宽溢出 164px、1440 溢出 20px、1920 反而右侧空 412px。那个 prop 已经删掉（表回到
+  // CSS `width:100%`），这里再兜一道。
   .searchRes
-    line-height: normal
-    text-align: center
-    background: transparent
-    border-radius: 10px
-    margin-top: 16px
-    max-width: 98%
-    margin-left: 1%
-    overflow-y: auto !important
     overflow-x: hidden
-    height: 100% !important
-    
-    .ant-table-wrapper
-       height: 100%
-       
-    @media only screen and (max-width: 1530px)
-      height: 100% !important
-      overflow-x: hidden
+
+// 标题列的省略号必须自己写：antd 的 `ellipsis` 对 flex 子项无效（复合 render 里的 Space
+// 是 inline-flex），实测 computed `textOverflow` 仍是 `clip`，长标题只会被硬裁。
+// `min-width:0` 在**容器和文本两处**都要有，缺一个省略号都不生效。
+.note-title-cell
+  display: flex
+  align-items: center
+  justify-content: center
+  gap: 4px
+  min-width: 0
+
+.note-title-txt
+  // flex: 0 1 auto（不是 1 1 auto）：短标题保持自身宽度让整组居中，长标题才收缩出省略号
+  flex: 0 1 auto
+  min-width: 0
+  overflow: hidden
+  text-overflow: ellipsis
+  white-space: nowrap
+
+// 改完配置后不再属于当前 tab 的行：留在原地但压暗（而不是 Filter 掉 —— 那会改 total、
+// 触发分页钳制，就是用户说的"页码跳回第一页"）
+.note-row-off-tab
+  opacity: 0.55
 
 // Dark Mode
 .dark .AllCard .ant-pagination-item-link,
