@@ -1,8 +1,9 @@
 use axum::{Json, extract::{State, Query, Path}, http::StatusCode, response::{IntoResponse, Response}};
 use sea_orm::{EntityTrait, ColumnTrait, QueryFilter, QueryOrder, Condition, ActiveModelTrait, Set, PaginatorTrait, ActiveValue::NotSet};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
-use crate::entity::{note, category};
+use crate::entity::{note, category, tag_one, tag_two};
 use crate::routes::AppState;
 use crate::utils::ApiResponse;
 
@@ -179,6 +180,10 @@ pub async fn list_all_notes(
 #[derive(Deserialize)]
 pub struct SearchRequest {
     pub keyword: Option<String>,
+    /// 后台列表的「文章标题」筛选。**这个字段此前根本不存在**，而结构体又没开
+    /// `deny_unknown_fields` → 前端表单里的「文章标题」一直是静默空操作（填了也没用，
+    /// 也不报错）。见 `search_all_notes`。
+    pub title: Option<String>,
     pub categories: Option<String>,
     pub status: Option<String>,
     // NEW FILTERS ADDED
@@ -187,12 +192,61 @@ pub struct SearchRequest {
     pub end_date: Option<String>,
 }
 
+/// 读标签字典，返回 `id → 名字`。
+///
+/// 一级/二级是**两张独立自增**的表，id 命名空间并不隔离（历史上还有过重号），
+/// 所以这里用一张 map 装两级、二级后写覆盖一级。**只用于搜索命中与 `note.tags` 的
+/// id→名字解析，不要拿它建树/判层级**——那是 `tags.rs` 的 `fatherKey` 的活。
+async fn load_tag_names(db: &sea_orm::DatabaseConnection) -> HashMap<i32, String> {
+    let mut map: HashMap<i32, String> = HashMap::new();
+    if let Ok(rows) = tag_one::Entity::find().all(db).await {
+        for r in rows {
+            map.insert(r.id, r.name);
+        }
+    }
+    if let Ok(rows) = tag_two::Entity::find().all(db).await {
+        for r in rows {
+            map.insert(r.id, r.name);
+        }
+    }
+    map
+}
+
+/// 把 `note.tags`（逗号分隔的标签 **id** 串）解析成标签 **名字** 列表（去重、丢掉查不到的 id）。
+///
+/// 这是本文件里「标签能不能被搜索命中」的唯一正路：库里存的是 id，搜索框里打的是名字，
+/// 中间必须过一遍字典。
+fn note_tag_names(tags: Option<&str>, dict: &HashMap<i32, String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for piece in tags.unwrap_or("").split(',') {
+        if let Ok(id) = piece.trim().parse::<i32>() {
+            if let Some(name) = dict.get(&id) {
+                if !out.iter().any(|x| x == name) {
+                    out.push(name.clone());
+                }
+            }
+        }
+    }
+    out
+}
+
+/// 关键词是否命中这篇文章：标题 / 正文 / **标签名字**。`kw` 必须已小写化。
+fn note_hits_keyword(n: &note::Model, kw: &str, tag_names: &[String]) -> bool {
+    n.title.to_lowercase().contains(kw)
+        || n.content.to_lowercase().contains(kw)
+        || tag_names.iter().any(|t| t.to_lowercase().contains(kw))
+}
+
 /// 关键词相关度打分（20260912，search_notes 排序用）：命中标题 +100 / 命中标签 +30 /
 /// 正文出现次数（上限 10，防长文堆词刷分）。确定性、可解释；不追求语义相关，够覆盖
 /// 「专讲这个词的文章排在只顺带提一次的长文之前」即可。大小写不敏感——与查询侧
 /// `LIKE` 的排序规则（utf8mb4 默认 ci）一致，否则搜 "python" 时命中的标题一轮
 /// 打分全 0，排序退化成按时间。
-fn search_score(note: &note::Model, kw: &str) -> i64 {
+///
+/// `tag_names` 是该文标签的**名字**（由 `note_tag_names` 过字典得到）。旧版这里直接拿
+/// `note.tags` 的 id 串 `contains(kw)`：搜标签名永远 0 分，搜纯数字（"1"）却被
+/// id 1/10/21 全部加成 +30 —— 这就是「按相关度排序」里那部分假信号。
+fn search_score(note: &note::Model, kw: &str, tag_names: &[String]) -> i64 {
     let kw = kw.to_lowercase();
     if kw.is_empty() {
         return 0;
@@ -201,7 +255,7 @@ fn search_score(note: &note::Model, kw: &str) -> i64 {
     if note.title.to_lowercase().contains(&kw) {
         score += 100;
     }
-    if note.tags.as_deref().unwrap_or("").to_lowercase().contains(&kw) {
+    if tag_names.iter().any(|t| t.to_lowercase().contains(&kw)) {
         score += 30;
     }
     score + note.content.to_lowercase().matches(&kw).count().min(10) as i64
@@ -217,16 +271,20 @@ pub async fn search_notes(
     condition = condition.add(note::Column::IsPublic.eq(true));
     condition = condition.add(note::Column::Status.ne("draft"));
 
-    if let Some(ref k) = payload.keyword {
-         if !k.is_empty() {
-             condition = condition.add(
-                Condition::any()
-                    .add(note::Column::Title.contains(k))
-                    .add(note::Column::Content.contains(k)).add(note::Column::Tags.contains(k))
-             );
-         }
+    // 关键词**故意不做 SQL 侧过滤**（原来这里是 Title/Content/Tags 三个 LIKE 的 OR）。
+    // `note.tags` 存的是逗号分隔的标签 **id**，SQL 只能对 id 串做 `LIKE '%关键词%'`：
+    //   ① 搜标签名永远命中不到（库里根本没有名字）；
+    //   ② 搜纯数字（"1"）会假命中所有含 id 1 / 10 / 21 的文章。
+    // 标签名字必须先过字典才知道，只能在内存里判 —— 见下方命中+打分那一遍。
+    // 代价是关键词不再走 SQL 谓词、本端点全量加载；这个端点本来就没有分页
+    // （`list_public_notes` 同样 `.all()`），文章量小，不值得为此留着错谓词。
+    if let Some(ref t) = payload.title {
+        let t = t.trim();
+        if !t.is_empty() {
+            condition = condition.add(note::Column::Title.contains(t));
+        }
     }
-    
+
      if let Some(ref cat_name) = payload.categories {
         let cat_model = category::Entity::find()
             .filter(category::Column::Name.eq(cat_name))
@@ -251,17 +309,34 @@ pub async fn search_notes(
         .await
         .unwrap_or(vec![]);
 
-    // 相关度排序（20260912）：本查询此前**无 ORDER BY**，返回顺序即存储顺序（实测主键升序）
-    // ——于是搜索「架构」的第一条是《Git从入门到入土》（它只在正文表格里顺带出现过一次该词），
-    // 而真正讲架构的那篇紧随其后。agent 侧 search_notes 取候选[0] 时因此读错文章（9/8 跑题
-    // 事故的供给端根因）。这里对已加载结果确定性打分排序，同分按 created_at 倒序（新的在前，
-    // 与 list_public_notes 一致）。注：本端点同时服务博客前端搜索（NoteMethods.tsx），
-    // 改动只影响**顺序**、不影响结果集与 DTO。
-    let notes = match payload.keyword.as_deref() {
-        Some(k) if !k.is_empty() => {
-            // 打分只算一次（正文全量扫描，不必在比较器里重复做）
-            let mut scored: Vec<(i64, (note::Model, Vec<category::Model>))> =
-                notes.into_iter().map(|r| (search_score(&r.0, k), r)).collect();
+    // 关键词命中筛选 + 相关度排序（20260912 引入排序 / 20260919 把命中判定也收进来）。
+    //
+    // 排序的来由：本查询此前**无 ORDER BY**，返回顺序即存储顺序（实测主键升序）——于是搜索
+    // 「架构」的第一条是《Git从入门到入土》（它只在正文表格里顺带出现过一次该词），而真正讲
+    // 架构的那篇紧随其后。agent 侧 search_notes 取候选[0] 时因此读错文章（9/8 跑题事故的
+    // 供给端根因）。同分按 created_at 倒序（新的在前，与 list_public_notes 一致）。
+    //
+    // 命中判定为什么搬到这里：见上面「关键词故意不做 SQL 侧过滤」的说明——标签是 id 串，
+    // 只有过一遍字典才知道名字。一遍遍历同时完成判定与打分（正文全量扫描不必做两次）。
+    // 注：本端点同时服务博客前端搜索（NoteMethods.tsx）与 agent 的 search_notes，
+    // 改动影响结果集（数字关键词不再假命中、标签名开始能搜到）与顺序，不影响 DTO。
+    let dict = load_tag_names(&state.db).await;
+    let kw = payload
+        .keyword
+        .as_deref()
+        .map(|k| k.trim().to_lowercase())
+        .filter(|k| !k.is_empty());
+
+    let notes = match &kw {
+        Some(k) => {
+            let mut scored: Vec<(i64, (note::Model, Vec<category::Model>))> = Vec::new();
+            for r in notes {
+                let names = note_tag_names(r.0.tags.as_deref(), &dict);
+                if !note_hits_keyword(&r.0, k, &names) {
+                    continue;
+                }
+                scored.push((search_score(&r.0, k, &names), r));
+            }
             scored.sort_by(|a, b| {
                 let (sa, (na, _)) = a;
                 let (sb, (nb, _)) = b;
@@ -269,7 +344,7 @@ pub async fn search_notes(
             });
             scored.into_iter().map(|(_, r)| r).collect()
         }
-        _ => notes,
+        None => notes,
     };
 
     let dtos = notes.into_iter().map(|(n, cats)| {
@@ -284,17 +359,18 @@ pub async fn search_all_notes(
     Json(payload): Json<SearchRequest>,
 ) -> Json<ApiResponse<Vec<NoteDto>>> {
     let mut condition = Condition::all();
-    
+
     // NO PUBLIC SAFEGUARDS (Admin Route)
 
-    if let Some(ref k) = payload.keyword {
-         if !k.is_empty() {
-             condition = condition.add(
-                Condition::any()
-                    .add(note::Column::Title.contains(k))
-                    .add(note::Column::Content.contains(k)).add(note::Column::Tags.contains(k))
-             );
-         }
+    // 关键词与「文章标题」两个条件都不下 SQL：关键词的理由与 `search_notes` 完全相同
+    // （标签存的是 id 串，SQL 侧搜标签名恒空、搜数字恒假命中），命中判定统一放在下面
+    // 过完字典之后做。`title` 则是后台列表「文章标题」筛选的落地——这个字段以前压根不在
+    // `SearchRequest` 里，前端填了也白填。
+    if let Some(ref t) = payload.title {
+        let t = t.trim();
+        if !t.is_empty() {
+            condition = condition.add(note::Column::Title.contains(t));
+        }
     }
 
     if let Some(ref cat_name) = payload.categories {
@@ -337,10 +413,32 @@ pub async fn search_all_notes(
 
     let notes = note::Entity::find()
         .filter(condition)
+        // 后台列表要有确定顺序：本查询此前**无 ORDER BY**（返回顺序即存储顺序），而前端把
+        // 它整份装进 antd Table 做本地分页 —— 顺序不稳意味着同一篇文章可能在第 2 页和第 3 页
+        // 各出现一次、另一篇谁也没见过。与 `list_all_notes` 保持同序（新的在前）。
+        .order_by_desc(note::Column::CreatedAt)
         .find_with_related(category::Entity)
         .all(&state.db)
         .await
         .unwrap_or(vec![]);
+
+    // 关键词命中：标题 / 正文 / 标签**名字**（标签 id 先过字典）。后台列表不按相关度排序
+    // （它有自己的列排序/时间序），所以这里只做过滤，不打分。
+    let kw = payload
+        .keyword
+        .as_deref()
+        .map(|k| k.trim().to_lowercase())
+        .filter(|k| !k.is_empty());
+    let notes = match &kw {
+        Some(k) => {
+            let dict = load_tag_names(&state.db).await;
+            notes
+                .into_iter()
+                .filter(|(n, _)| note_hits_keyword(n, k, &note_tag_names(n.tags.as_deref(), &dict)))
+                .collect()
+        }
+        None => notes,
+    };
 
     let dtos = notes.into_iter().map(|(n, cats)| {
         map_note_summary(n, cats.into_iter().next())
