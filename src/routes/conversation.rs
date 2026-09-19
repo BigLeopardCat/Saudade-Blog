@@ -372,8 +372,10 @@ pub struct SearchQuery {
 /// GET /api/chat/search?q=：会话历史**消息级**内容检索（20260903f 用户拍板形态——
 /// 检索结果列表 = 命中的对话轮次（消息行）而非会话行；点行 → 切会话并定位到该
 /// 消息）。只按 content LIKE（标题 = 首条用户消息截断，搜标题词自然命中首条轮次，
-/// 无需单独标题匹配）；id desc（最新命中在前）limit 100；每行带会话标题供前端
-/// 分组显示。like_escape 同 list_conversations（防 % _ \ 通配注入）。
+/// 无需单独标题匹配）；取候选池 = id desc limit 100，再**按会话活动时间倒序**重排
+/// （20260919 用户拍板：与会话历史列表同序，行上时间 = 会话最后活动时间）；每行带
+/// 会话标题 + conv_updated_at + 命中轮次自身时间。like_escape 同 list_conversations
+/// （防 % _ \ 通配注入）。
 pub async fn search_chat_messages(
     State(state): State<Arc<AppState>>,
     Query(query): Query<SearchQuery>,
@@ -395,7 +397,8 @@ pub async fn search_chat_messages(
             .into_response();
     };
     let pat = format!("%{}%", like_escape(q));
-    let rows = chat_history::Entity::find()
+    // 候选池 = 最新 100 条命中（id desc），随后按**会话活动**重排（见下）
+    let mut rows = chat_history::Entity::find()
         .filter(chat_history::Column::UserId.eq(uid))
         .filter(chat_history::Column::Content.like(&pat))
         .order_by_desc(chat_history::Column::Id)
@@ -403,8 +406,8 @@ pub async fn search_chat_messages(
         .all(&state.db)
         .await
         .unwrap_or_default();
-    // 命中消息的会话标题批量补查（列表行分组展示）
-    let mut title_by_conv: HashMap<i32, Option<String>> = HashMap::new();
+    // 命中消息的会话元信息批量补查（标题 + 最后活动时间）
+    let mut meta_by_conv: HashMap<i32, (Option<String>, i64)> = HashMap::new();
     {
         let ids: std::collections::HashSet<i32> =
             rows.iter().map(|r| r.conversation_id).collect();
@@ -415,21 +418,38 @@ pub async fn search_chat_messages(
                 .await
                 .unwrap_or_default();
             for c in convs {
-                title_by_conv.insert(c.id, c.title);
+                meta_by_conv.insert(c.id, (c.title, naive_ms(c.updated_at)));
             }
         }
     }
+    // 20260919（用户拍板）：与会话历史列表**同序**——会话活动时间倒序，同会话内命中
+    // 消息 id 倒序。此前按消息 id 排 = 消息插入序：候选池里最旧会话的消息 id 也远大于
+    // 最新会话的消息 id，于是一条 9 天前说的命中照样顶在列表最前，把"真正刚聊过的
+    // 会话"压到下面。会话缺失（理论不可能：删会话在事务内级联删消息）记 0 排最后。
+    let act_of = |id: i32| meta_by_conv.get(&id).map(|m| m.1).unwrap_or(0);
+    rows.sort_by(|a, b| {
+        act_of(b.conversation_id)
+            .cmp(&act_of(a.conversation_id))
+            .then(b.id.cmp(&a.id))
+    });
     let hits: Vec<serde_json::Value> = rows
         .iter()
         .map(|h| {
+            let (title, act) = meta_by_conv
+                .get(&h.conversation_id)
+                .map(|m| (m.0.clone(), m.1))
+                .unwrap_or((None, 0));
             json!({
                 "id": h.id,
                 "conversation_id": h.conversation_id,
                 // Option 原样透传 null（纯图轮会话未派生标题）→ 前端显示"新对话"
-                "conv_title": title_by_conv.get(&h.conversation_id).cloned().flatten(),
+                "conv_title": title,
+                // 行上时间用它（= 会话最后活动时间），不是命中那条消息的时间
+                "conv_updated_at": act,
                 "role": h.role,
                 // char 级截 200 防大 payload；完整内容由切会话后的 history 拉取
                 "content": h.content.chars().take(200).collect::<String>(),
+                // 命中轮次自身的时间：前端挂在引文前，标注"这轮是什么时候说的"
                 "time": naive_ms(h.created_at),
             })
         })

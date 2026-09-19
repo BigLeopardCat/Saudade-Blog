@@ -7,6 +7,9 @@
 // 判据重点在**同日零变化**：创建日 = 最后活动日的会话（绝大多数）不加标记，
 //   行宽与观感与改动前完全一致；缺字段/脏值也一律不显示，绝不让异常时间冒出"起"。
 // 取的是**线上真实源文件**（chat-session.js）里那段纯函数，不是抄一份副本。
+// 20260919 追加：检索态命中行的行时间（hitActTime）——行上时间必须是**会话最后
+//   活动时间**（与服务端排序同源），命中轮次自身的时间移到引文前。测法同上：从真实
+//   源里抠函数实跑，并断言前端渲染/Rust 回传两侧都在（只改一半 = 恒定走兜底）。
 import { readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -56,6 +59,44 @@ eq('含正确文案', src.includes('还没有会话，点左侧 ＋ 开始新对
 eq('无陈旧"点 ＋ 开始新对话"（无方位）', /点\s＋\s开始新对话/.test(src), false);
 // rail 新对话按钮确实存在（文案指向的对象不能消失）
 eq('rail 有 #conv-new-btn', /id="conv-new-btn"/.test(readFileSync(path.join(here, '../public/live2d-widgets/chat-render.js'), 'utf8')), true);
+
+// ══ 检索态命中行的行时间（20260919 用户拍板）══
+//  行上时间 = **会话最后活动时间**（与服务端排序同源），命中轮次自身的时间移到
+//  引文前。此前两者混用 → 同一会话在列表里一会儿"刚刚"一会儿"9-5"。
+const mark2 = 'const hitActTime = ';
+const h0 = src.indexOf(mark2);
+if (h0 < 0) throw new Error('chat-session.js 里找不到 hitActTime 定义');
+const h1 = src.indexOf('\n    };', h0);
+if (h1 < 0) throw new Error('hitActTime 定义结尾未找到');
+const hitActTime = new Function('return (' + src.slice(h0 + mark2.length, h1 + 6) + ');')();
+
+console.log('hitActTime —— 行上取会话活动时间：');
+// 现网真实一例：会话 144 最后发言 09-18 11:02，命中一条 09-05 的老消息
+eq('会话活动时间优先于命中消息时间',
+  hitActTime({ conv_updated_at: ms(Y, 9, 18, 11, 2), time: ms(Y, 9, 5, 19, 45) }), ms(Y, 9, 18, 11, 2));
+eq('会话活动时间 = 命中消息时间（刚聊过就搜到）',
+  hitActTime({ conv_updated_at: ms(Y, 9, 18, 11, 2), time: ms(Y, 9, 18, 11, 2) }), ms(Y, 9, 18, 11, 2));
+eq('conv_updated_at 缺失（旧后端缓存）→ 退回命中消息时间',
+  hitActTime({ time: ms(Y, 9, 5, 19, 45) }), ms(Y, 9, 5, 19, 45));
+eq('conv_updated_at = 0（会话已删的兜底值）→ 退回命中消息时间',
+  hitActTime({ conv_updated_at: 0, time: ms(Y, 9, 5, 19, 45) }), ms(Y, 9, 5, 19, 45));
+eq('conv_updated_at 是字符串（类型不符）→ 退回命中消息时间',
+  hitActTime({ conv_updated_at: String(ms(Y, 9, 18)), time: ms(Y, 9, 5, 19, 45) }), ms(Y, 9, 5, 19, 45));
+eq('两者都缺 → 0（relTime 落绝对日期，不抛错）', hitActTime({}), 0);
+eq('h 为 null', hitActTime(null), 0);
+eq('conv_updated_at 为 NaN 时也退回', hitActTime({ conv_updated_at: NaN, time: ms(Y, 9, 5) }), ms(Y, 9, 5));
+
+console.log('检索行渲染 —— 三层来源一致（改一处不能只改一半）：');
+eq('renderHits 的 meta 走 hitActTime', /relTime\(hitActTime\(h\)\)/.test(src), true);
+eq('命中轮次时间挂在引文前（.conv-hit-at）', /className = 'conv-hit-at'/.test(src), true);
+eq('引文不再被整段覆盖（appendChild 而非 textContent=）',
+  /text\.appendChild\(document\.createTextNode\(h\.content \|\| ''\)\)/.test(src), true);
+eq('CSS 有 .conv-hit-at', /\.conv-hit-at\s*\{/.test(readFileSync(path.join(here, '../public/live2d-widgets/waifu.css'), 'utf8')), true);
+// 服务端必须同源回传（否则前端恒走兜底 = 白改）：字段 + 按会话活动重排
+const rust = readFileSync(path.join(here, '../../src/routes/conversation.rs'), 'utf8');
+eq('Rust 回传 conv_updated_at', /"conv_updated_at": act/.test(rust), true);
+eq('Rust 按会话活动时间重排命中',
+  /act_of\(b\.conversation_id\)\s*\.cmp\(&act_of\(a\.conversation_id\)\)/.test(rust), true);
 
 console.log('\n' + (fail ? '✗ ' : '✓ ') + pass + ' passed, ' + fail + ' failed');
 process.exit(fail ? 1 : 0);
