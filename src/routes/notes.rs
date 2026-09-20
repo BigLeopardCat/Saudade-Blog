@@ -237,6 +237,40 @@ fn note_hits_keyword(n: &note::Model, kw: &str, tag_names: &[String]) -> bool {
         || tag_names.iter().any(|t| t.to_lowercase().contains(kw))
 }
 
+/// 关键词切词（20260920）：按 Unicode 空白切（含全角空格），小写化、保序去重。
+///
+/// 为什么必须切：命中判定是**整串子串匹配**，用户口语里的多词查询一带空格就 0 命中。
+/// 实测（线上）：`search_notes("ESP32-S3 OBC")` → []（文章《ESP32-S3-OBC固件接入参考》
+/// 标题里没有这个空格形态），而 `"OBC"` / `"固件接入"` / `"ESP32-S3"` 都能命中它——
+/// agent 于是如实回答"站内没有这篇"（**假否定**，用户看得见）。
+///
+/// 丢弃长度 1 且非 ASCII 字母数字的 term：中文单字/标点（"的/了/是"）无语义判别力，
+/// 留着会把整库拉进候选。单词查询（无空白）走同一路径，行为与切词前一致。
+fn split_terms(kw: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for piece in kw.split_whitespace() {
+        let t = piece.to_lowercase();
+        if t.chars().count() < 2 && !t.chars().all(|c| c.is_ascii_alphanumeric()) {
+            continue;
+        }
+        if !out.iter().any(|x| x == &t) {
+            out.push(t);
+        }
+    }
+    out
+}
+
+/// 命中的 term 个数（0 = 不命中；`terms.len()` = 全中）。**档位即这个词数**——
+/// 前台按「全中优先、无全中才降级到部分命中」分档（见 search_notes）。
+fn term_hit_count(n: &note::Model, terms: &[String], tag_names: &[String]) -> usize {
+    terms.iter().filter(|t| note_hits_keyword(n, t, tag_names)).count()
+}
+
+/// 多词命中：任一 term 命中即算（后台筛选用——召回优先，后台列表自己排序）。
+fn note_hits_terms(n: &note::Model, terms: &[String], tag_names: &[String]) -> bool {
+    term_hit_count(n, terms, tag_names) > 0
+}
+
 /// 关键词相关度打分（20260912，search_notes 排序用）：命中标题 +100 / 命中标签 +30 /
 /// 正文出现次数（上限 10，防长文堆词刷分）。确定性、可解释；不追求语义相关，够覆盖
 /// 「专讲这个词的文章排在只顺带提一次的长文之前」即可。大小写不敏感——与查询侧
@@ -259,6 +293,15 @@ fn search_score(note: &note::Model, kw: &str, tag_names: &[String]) -> i64 {
         score += 30;
     }
     score + note.content.to_lowercase().matches(&kw).count().min(10) as i64
+}
+
+/// 多词打分（20260920）：每个 term 各按 `search_score` 计分后**求和**（档内排序用）。
+///
+/// 不再额外加"多词全中"奖励——命中词数由调用方的**档位**承担（全中优先），
+/// 档内只比"每个词命中的位置有多好"（标题 100 / 标签 30 / 正文次数）。
+/// 单词查询时与旧分数完全一致。
+fn search_score_terms(note: &note::Model, terms: &[String], tag_names: &[String]) -> i64 {
+    terms.iter().map(|t| search_score(note, t, tag_names)).sum()
 }
 
 pub async fn search_notes(
@@ -321,30 +364,45 @@ pub async fn search_notes(
     // 注：本端点同时服务博客前端搜索（NoteMethods.tsx）与 agent 的 search_notes，
     // 改动影响结果集（数字关键词不再假命中、标签名开始能搜到）与顺序，不影响 DTO。
     let dict = load_tag_names(&state.db).await;
-    let kw = payload
+    // 切成 terms 后逐词判定（20260920，见 split_terms：整串子串匹配对多词查询是假否定）；
+    // 空关键词（缺省/全空白）走原来的整表返回。
+    let terms = payload
         .keyword
         .as_deref()
-        .map(|k| k.trim().to_lowercase())
-        .filter(|k| !k.is_empty());
+        .map(split_terms)
+        .unwrap_or_default();
 
-    let notes = match &kw {
-        Some(k) => {
-            let mut scored: Vec<(i64, (note::Model, Vec<category::Model>))> = Vec::new();
-            for r in notes {
-                let names = note_tag_names(r.0.tags.as_deref(), &dict);
-                if !note_hits_keyword(&r.0, k, &names) {
-                    continue;
-                }
-                scored.push((search_score(&r.0, k, &names), r));
+    // 命中分档（20260920）：**全中优先**——多词查询先只留"每个词都命中"的文章（精度优先，
+    // 与切词前的严格度同源，agent 不会因为降级候选读到跑题文章）；一篇全中的都没有时，
+    // 才降级用"部分命中"（召回兜底：搜 "Docker 部署博客" 不该是一片空白）。
+    // 档内按各词分项求和（+ created_at 兜底）排序；单词查询只有一档，等价于旧行为。
+    let notes = if terms.is_empty() {
+        notes
+    } else {
+        let mut all: Vec<(usize, i64, (note::Model, Vec<category::Model>))> = Vec::new();
+        let mut part: Vec<(usize, i64, (note::Model, Vec<category::Model>))> = Vec::new();
+        for r in notes {
+            let names = note_tag_names(r.0.tags.as_deref(), &dict);
+            let hit = term_hit_count(&r.0, &terms, &names);
+            if hit == 0 {
+                continue;
             }
-            scored.sort_by(|a, b| {
-                let (sa, (na, _)) = a;
-                let (sb, (nb, _)) = b;
-                sb.cmp(sa).then_with(|| nb.created_at.cmp(&na.created_at))
-            });
-            scored.into_iter().map(|(_, r)| r).collect()
+            let row = (hit, search_score_terms(&r.0, &terms, &names), r);
+            if hit == terms.len() {
+                all.push(row);
+            } else {
+                part.push(row);
+            }
         }
-        None => notes,
+        let mut scored = if all.is_empty() { part } else { all };
+        scored.sort_by(|a, b| {
+            let (ha, sa, (na, _)) = a;
+            let (hb, sb, (nb, _)) = b;
+            hb.cmp(ha)
+                .then_with(|| sb.cmp(sa))
+                .then_with(|| nb.created_at.cmp(&na.created_at))
+        });
+        scored.into_iter().map(|(_, _, r)| r).collect()
     };
 
     let dtos = notes.into_iter().map(|(n, cats)| {
@@ -424,20 +482,23 @@ pub async fn search_all_notes(
 
     // 关键词命中：标题 / 正文 / 标签**名字**（标签 id 先过字典）。后台列表不按相关度排序
     // （它有自己的列排序/时间序），所以这里只做过滤，不打分。
-    let kw = payload
+    // 判定与前台同样先切词（20260920，见 split_terms）——否则后台搜"OBC 固件"是空、
+    // 前台却有结果，两边对不上。
+    let terms = payload
         .keyword
         .as_deref()
-        .map(|k| k.trim().to_lowercase())
-        .filter(|k| !k.is_empty());
-    let notes = match &kw {
-        Some(k) => {
-            let dict = load_tag_names(&state.db).await;
-            notes
-                .into_iter()
-                .filter(|(n, _)| note_hits_keyword(n, k, &note_tag_names(n.tags.as_deref(), &dict)))
-                .collect()
-        }
-        None => notes,
+        .map(split_terms)
+        .unwrap_or_default();
+    let notes = if terms.is_empty() {
+        notes
+    } else {
+        let dict = load_tag_names(&state.db).await;
+        notes
+            .into_iter()
+            .filter(|(n, _)| {
+                note_hits_terms(n, &terms, &note_tag_names(n.tags.as_deref(), &dict))
+            })
+            .collect()
     };
 
     let dtos = notes.into_iter().map(|(n, cats)| {
