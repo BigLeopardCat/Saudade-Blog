@@ -27,6 +27,15 @@
       return rest;
     };
     const normText = (s) => (s || '').replace(/\s+/g, ' ').trim();
+    // 20260920：**提及剥离**——引号/内联代码（含 ``` 围栏）里的命令前缀是"举例说明"
+    // （模型讲机制时会写 `EFFECT:sakura:on`），不是要执行的动作。不剥的话，模型在
+    // 回复里"谈论"命令这一行为本身就会把页面真的切了特效/夜间模式/跳转。
+    // 与 agent 侧 gate 的元讨论豁免是同一条口径（agent/graph.py `_cmd_prefix_directive`）：
+    // 那边放行"提及"，这边就必须不执行它，否则放行 = 新增一个"说说就生效"的洞。
+    // 真实命令不在此路：Python 的命令帧行首锚定进 cmdText（COMMAND_RE），无引号/反引号。
+    // 替换成空格而非空串：防剥完把相邻片段粘出一个新的假命令（"EFFE`x`CT:"）。
+    const MENTION_SPAN_RE = /`[^`]*`|“[^”]*”|「[^」]*」|『[^』]*』|"[^"]*"/g;
+    const stripMentionSpans = (s) => (s || '').replace(MENTION_SPAN_RE, ' ');
     // 图片轮文本标记剥离（20260828s）：Rust 入库在原文后拼 "\n[图片]"/"\n[图片×N]"
     // 标记，DB 拉回的文本与前端 items 原文不同——匹配前先剥标记再归一。
     // 纯图轮（原文为空）剥后为空串，靠时间窗口 + 同类型锚定（见 replaceWithIncoming）
@@ -210,7 +219,7 @@
     const shouldShowTime = (prev, cur) => !!cur && validTime(cur.time)
       && (!prev || !validTime(prev.time) || (cur.time - prev.time > TIME_GAP_MS));
     return { genId, migrateItem, mergeItems, replaceWithIncoming, capItems, normText, stripImgMark, matchText,
-             COMMAND_RE, TIME_GAP_MS, formatTimeLabel, shouldShowTime };
+             stripMentionSpans, COMMAND_RE, TIME_GAP_MS, formatTimeLabel, shouldShowTime };
   })();
 
   g.__waifuChatCore = __chatCore;

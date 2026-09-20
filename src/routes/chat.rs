@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use crate::routes::AppState;
 use crate::auth_jwt;
-use tracing::info;
+use crate::entity::user;
+use tracing::{info, warn};
 
 #[derive(Deserialize)]
 pub struct ChatRequest {
@@ -59,6 +60,10 @@ struct ChatCtx {
     /// 本轮 user 消息入库后的 DB 主键（None = 入库失败）。
     /// 中断清理（DiscardAbortedExchange）按此快照只删其后残缺回复，保留用户消息本身
     user_msg_id: Option<i32>,
+    /// 用户角色（20260920，查 DB 得到；None = 查不到）。只用于签进身份断言交给
+    /// agent 做权限判据（agent/src/authz.py），Rust 侧不用它做任何放行判断
+    /// ——后台准入走 middleware::auth_guard（那里的纪律是"不信 token 里的 role"）。
+    role: Option<String>,
 }
 
 /// 链路追踪：X-Request-ID 全链路透传（浏览器 → nginx → Rust → agent → LLM 日志）。
@@ -272,6 +277,19 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
         }))),
     };
 
+    // 角色（20260920，秘书类功能地基）：查 DB 而非读登录 token 里的 role——token
+    // 7 天有效，改过角色的用户会带着旧角色跑（与 middleware::auth_guard 同一条纪律）。
+    // 查不到/查失败一律 None：身份断言里就带 null，agent 按"身份不明 = 零权限"处理。
+    // **绝不因为读不到角色就默认授予任何一档**。DB 故障只降级（不阻断对话）。
+    let role: Option<String> = match user::Entity::find_by_id(uid).one(&state.db).await {
+        Ok(Some(u)) => Some(u.role),
+        Ok(None) => None,
+        Err(e) => {
+            warn!(uid = uid, error = %e, "角色查询失败，按身份不明下发（agent 侧零权限）");
+            None
+        }
+    };
+
     // 会话解析（20260903 会话化）——必须在用户消息入库前完成：显式 id 非法 → 404
     // 拦截不留脏行；None → 最新非空会话（无则自动新建 = 历史单桶行为，旧前端降级）。
     // 全部 Err 路径都在入库前返回，非法会话不产生任何写入
@@ -463,7 +481,7 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
     if std::env::var("CHAT_DEBUG_BODY").is_ok() {
         eprintln!("[chat-debug] body={}", body);
     }
-    Ok(ChatCtx { uid, conversation_id, total_count, trace_id, body, user_msg_id })
+    Ok(ChatCtx { uid, conversation_id, total_count, trace_id, body, user_msg_id, role })
 }
 
 
@@ -658,7 +676,7 @@ pub async fn chat_handler(
     for attempt in 0..3 {
         match reqwest::Client::new().post(&agent_url)
             // 身份断言：agent 验签后据此覆盖请求体里的 user_id（见 auth_jwt.rs）
-            .header("X-Agent-Assertion", crate::auth_jwt::create_agent_assertion(ctx.uid))
+            .header("X-Agent-Assertion", crate::auth_jwt::create_agent_assertion(ctx.uid, ctx.role.as_deref()))
             .header("X-Request-ID", &ctx.trace_id)
             .json(&ctx.body)
             .timeout(std::time::Duration::from_secs(180))
@@ -807,7 +825,7 @@ pub async fn chat_stream_handler(
     let upstream = match reqwest::Client::new()
         .post(&stream_url)
         // 身份断言（同上）：流式这条路同样要带，否则 agent 打开强制校验后它会 401
-        .header("X-Agent-Assertion", crate::auth_jwt::create_agent_assertion(ctx.uid))
+        .header("X-Agent-Assertion", crate::auth_jwt::create_agent_assertion(ctx.uid, ctx.role.as_deref()))
         .header("X-Request-ID", &ctx.trace_id)
         .json(&ctx.body)
         .send()
