@@ -752,6 +752,35 @@ impl Drop for DiscardAbortedExchange {
     }
 }
 
+/// 流式回合收尾的**分离式**落库（20260920 顺序契约）。
+///
+/// 两个要点：
+/// ① **先落库、再转发终止帧**。此前顺序相反（先 yield `__END__`，流收尾才写库）：
+///    客户端一见到 `__END__` 就断开时（流式探针实测；真实浏览器读连接关闭不受
+///    影响，见 chat-stream.js），响应体 future 被丢弃 ⇒ 尾部 await 跑不完 ⇒ 本轮
+///    回复与执行回执双双丢失。语义上"发出终止帧"就是本轮交换完成，落库不该依赖
+///    客户端还开着连接。
+/// ② 用 `tokio::spawn` 把写入从生成器生命周期里摘出来：即便这一行之后 future 被
+///    丢弃（断开正好落在 DB 写入的那几毫秒里），任务照常跑完。
+///
+/// 调用方**先**置 `done`：`DiscardAbortedExchange` 以 done 判定本轮是否正常收尾，
+/// 不先置位的话，紧接着的断开会让中断清理把刚写的正常回复当"残缺回复"删掉。
+fn spawn_save_assistant_reply(
+    state: Arc<AppState>,
+    uid: i32,
+    conversation_id: i32,
+    reply: String,
+    new_summary: Option<String>,
+    total_count: i64,
+) {
+    if uid <= 0 || reply.is_empty() {
+        return;
+    }
+    tokio::spawn(async move {
+        save_assistant_reply(&state.db, uid, conversation_id, reply, new_summary, total_count).await;
+    });
+}
+
 /// SSE 流式对话：转发 agent /chat/stream，边转发边累积文本，
 /// 流结束后保存历史与摘要（agent 端 payload 为 JSON 编码，避免 \n\n 破坏帧边界）
 pub async fn chat_stream_handler(
@@ -796,8 +825,8 @@ pub async fn chat_stream_handler(
         let mut terminal = false;
         // 独立摘要（agent 侧 needs_summary 轮后端总结的返回值，随 __SUMMARY__ 帧到达）
         let mut summary_override: Option<String> = None;
-        // 跨轮执行记忆（20260904 C5）：checker 验收回执（__EXEC__ 帧 → execution_log 落库）
-        let mut exec_rows: Vec<serde_json::Value> = Vec::new();
+        // 跨轮执行记忆（20260904 C5）：checker 验收回执（__EXEC__ 帧 → execution_log
+        // 落库）在下方帧循环里收到即写，不留内存副本——断开也不丢
 
         // 客户端中断清理（见 DiscardAbortedExchange）：流被取消时删除本轮 user 消息
         // 之后的残缺回复（user 消息本体保留）；正常走完 while 循环后置位 done，关闭清理
@@ -819,13 +848,23 @@ pub async fn chat_stream_handler(
                     .map(|p| String::from_utf8_lossy(p).to_string())
                     .unwrap_or_default();
                 if payload.is_empty() { continue; }
-                // 终端/错误标记：原样转发给前端
+                // 终端/错误标记：**先落库（分离写入）、再原样转发给前端**
+                // （20260920 顺序契约，见 spawn_save_assistant_reply：客户端见到
+                // 终止帧即断开也不该丢回复；done 先置位防中断清理误删刚写的回复）
                 if payload.starts_with("__END__") || payload.starts_with("__NAV_END__") {
                     terminal = true;
+                    done.store(true, std::sync::atomic::Ordering::SeqCst);
+                    spawn_save_assistant_reply(state.clone(), uid, conversation_id,
+                                               std::mem::take(&mut reply),
+                                               summary_override.take(), total_count);
                     yield Ok::<_, axum::Error>(Bytes::from(format!("data: {}\n\n", payload)));
                     break;
                 } else if payload.starts_with("__ERROR__:") {
                     terminal = true;
+                    done.store(true, std::sync::atomic::Ordering::SeqCst);
+                    spawn_save_assistant_reply(state.clone(), uid, conversation_id,
+                                               std::mem::take(&mut reply),
+                                               summary_override.take(), total_count);
                     yield Ok(Bytes::from(format!("data: {}\n\n", payload)));
                     break;
                 }
@@ -839,12 +878,21 @@ pub async fn chat_stream_handler(
                 }
                 // 跨轮执行记忆（20260904 C5）：checker 验收回执帧。必须在下方 JSON 文本
                 // 解析之前拦截——payload 不是合法 JSON 字符串（serde 解析会静默丢弃）。
-                // 只镜像收集进 exec_rows（流结束落 execution_log），绝不 yield 转发——
-                // 前端无此帧协议，透传会被当作正文渲染
+                // 只收进落库、绝不 yield 转发——前端无此帧协议，透传会被当作正文渲染。
+                // 20260920：**收到即写**（此前攒到流收尾），执行回执是执行事实的唯一
+                // 载体，攒到尾部意味着"客户端在收尾前断开 ⇒ 执行记录丢"——而断连恰恰
+                // 是执行后最常见的事（用户等不及关页面/转跳）。收到即写则之后任何时刻
+                // 断开都已持久化；断连/discard 不清 execution_log（执行是已发生事实）
                 if let Some(rows) = payload.strip_prefix("__EXEC__:") {
                     if let Ok(v) = serde_json::from_str::<serde_json::Value>(rows) {
                         if let Some(arr) = v.as_array() {
-                            exec_rows = arr.clone();
+                            if uid > 0 && !arr.is_empty() {
+                                let state = state.clone();
+                                let rows = arr.clone();
+                                tokio::spawn(async move {
+                                    save_execution_log(&state.db, uid, conversation_id, &rows).await;
+                                });
+                            }
                         }
                     }
                     continue;
@@ -895,17 +943,14 @@ pub async fn chat_stream_handler(
             ));
         }
 
-        // 流结束：保存历史 + 独立摘要（来自 __SUMMARY__ 帧，无则不入库）
+        // 兜底落库：正常路径（收到终止帧）已在转发终止帧之前落库——reply/summary
+        // 已被 take 空，这里自然跳过；剩下的只有"上游中断、没收到终止帧"的收尾
+        // （保持既有行为：保存残缺回复 + 独立摘要）
         if !reply.is_empty() && uid > 0 {
             save_assistant_reply(&state.db, uid, conversation_id, reply, summary_override, total_count).await;
         }
-        // 跨轮执行记忆（20260904 C5）：checker 验收回执落库（流式路径帧在 __EXEC__
-        // 分支已收进 exec_rows）。独立于 reply.is_empty()——断连/中断那轮的工具执行
-        // 是已发生事实（device 真显示了、页面真跳了），清不清残缺回复都不该抹掉执行
-        // 记录；客户端断连后照常写入（用户重连质疑"你刚做了没"仍能据实作答）。
-        if !exec_rows.is_empty() && uid > 0 {
-            save_execution_log(&state.db, uid, conversation_id, &exec_rows).await;
-        }
+        // 执行回执不在这里：收到 __EXEC__ 帧时就已落库（见上分支），
+        // 因此客户端在任何时刻断开（哪怕收尾前）都不会丢执行记录
     };
 
     (
