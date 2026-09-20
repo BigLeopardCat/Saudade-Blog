@@ -330,9 +330,14 @@
         // 支持相对路径与格式漂移）；② 无命令行时回退正文链接（确认式）。
         // contentSpan 为 null 时（catch 异常路径，错误气泡已提示）跳过注记插入。
         const execAgentCommands = (fullText, contentSpan) => {
+            // 20260920：正文兜底解析一律在**剥掉引号/内联代码区**的文本上做（scan）——
+            // 那些区里的命令前缀是模型在举例讲机制，不是要执行的动作（agent 侧 gate
+            // 同步豁免这类提及，见 chat-core.js stripMentionSpans 注释）。真实命令走
+            // fullText 里的行首命令帧（cmdText），无引号无反差，剥离不影响它们。
+            const scan = ctx.core.stripMentionSpans(fullText);
             const cmdNav = (() => {
               let last = null;
-              for (const line of fullText.split('\n')) {
+              for (const line of scan.split('\n')) {
                 const m = line.match(/^\s*(AUTO_NAVIGATE|NAVIGATE)\s*:\s*((?:https?:)?\/\/[^\s一-鿿　-〿＀-￯]+|\/[\w\-._~/]*)/i);
                 if (!m) continue;
                 // 去掉行尾中文/ASCII 标点（URL 内合法的 . 必须保留——域名全靠它）
@@ -353,7 +358,7 @@
             const fallbackNav = (() => {
               // 取最后一处命令命中：多轮 REVISE 文本拼接时，靠前的命令属于被作废的
               // 旧轮次（曾出现旧轮次 AUTO_NAVIGATE:/ 根路径顶掉最终正确命令的案例）
-              const m1s = [...fullText.matchAll(/(AUTO_NAVIGATE|NAVIGATE):\s*((?:https?:)?\/\/[^\s一-鿿　-〿＀-￯]+|\/[\w\-._~/]*)/gi)];
+              const m1s = [...scan.matchAll(/(AUTO_NAVIGATE|NAVIGATE):\s*((?:https?:)?\/\/[^\s一-鿿　-〿＀-￯]+|\/[\w\-._~/]*)/gi)];
               const m1 = m1s.length ? m1s[m1s.length - 1] : null;
               if (m1) {
                 // 去掉行尾中文/ASCII 标点（URL 内合法的 . 必须保留——域名全靠它）
@@ -366,11 +371,11 @@
               }
               // 站内相对路径 markdown 链接（确认式）
               // （排除 // 开头，避免误吞协议相对地址）
-              const m2b = fullText.match(/\[([^\]]+)\]\((\/(?!\/)[^)]+)\)/);
+              const m2b = scan.match(/\[([^\]]+)\]\((\/(?!\/)[^)]+)\)/);
               if (m2b) return { url: 'https://saudade.site' + m2b[2], direct: false };
               // 完整 URL markdown 链接（确认式）：scheme 必须存在（http(s):// 或 // 开头），
               // 否则 [文字](/article/16) 会被拼成 https:///article/16 这种坏链接
-              const m2 = fullText.match(/\[([^\]]+)\]\(((?:https?:)?\/\/[^)]+)\)/);
+              const m2 = scan.match(/\[([^\]]+)\]\(((?:https?:)?\/\/[^)]+)\)/);
               if (m2) {
                 let url = m2[2];
                 if (url.startsWith('//')) url = 'https:' + url;
@@ -378,11 +383,11 @@
               }
               // 中文命令 + 裸 URL（确认式）：排除空白/中日韩字符（URL 内合法的 . 和 , 保留），
               // 仅去掉结尾的 ASCII 标点（避免 https://example.com 被截成 https://example）
-              const m3 = fullText.match(/(?:转跳|跳转|打开|前往|导航到)\s*(https?:\/\/[^\s一-鿿　-〿＀-￯]+)/i);
+              const m3 = scan.match(/(?:转跳|跳转|打开|前往|导航到)\s*(https?:\/\/[^\s一-鿿　-〿＀-￯]+)/i);
               if (m3) return { url: m3[1].replace(/[,.;!?]+$/, ''), direct: false };
               // 中文命令 + 裸站内相对路径（确认式）：无命令前缀的相对路径无法区分
               // "转跳 /guestbook" 与正文里的 "/article/16" 引用，故不直接跳，弹确认框
-              const m3b = fullText.match(/(?:转跳|跳转|打开|前往|导航到)\s*(\/[\w\-._~/]+)/i);
+              const m3b = scan.match(/(?:转跳|跳转|打开|前往|导航到)\s*(\/[\w\-._~/]+)/i);
               if (m3b) return { url: 'https://saudade.site' + m3b[1], direct: false };
               return null;
             })();
@@ -422,7 +427,7 @@
             // 处理特效切换命令（支持 EFFECT:name 按钮式切换 / EFFECT:name:on|off 显式开关）
             // 容忍格式漂移：模型可能在正文里输出 "EFFECT: sakura on"（带空格/无冒号分隔）等变形，
             // 一律按显式意图执行；中文/无命令参数（EFFECT: 后跟正文）不会被 \w+ 匹配，安全
-            const effectMatch = fullText.match(/EFFECT:\s*(\w+)\s*:?\s*(\w+)?/);
+            const effectMatch = scan.match(/EFFECT:\s*(\w+)\s*:?\s*(\w+)?/);
             if (effectMatch) {
               const eff = effectMatch[1];
               const action = effectMatch[2];
@@ -430,8 +435,8 @@
             }
             // 兜底：模型未真正调用工具、仅把工具调用写进正文时（如 toggle_effect(effect="sakura", action="on")），
             // 按工具调用签名解析并执行，保证特效/夜间模式必定生效
-            const toolCall = fullText.match(/toggle_effect\s*\(\s*effect\s*=\s*["'](\w+)["']\s*,?\s*action\s*=\s*["'](on|off)["']\s*\)/i)
-              || fullText.match(/toggle_dark_mode\s*\(\s*mode\s*=\s*["'](on|off)["']\s*\)/i);
+            const toolCall = scan.match(/toggle_effect\s*\(\s*effect\s*=\s*["'](\w+)["']\s*,?\s*action\s*=\s*["'](on|off)["']\s*\)/i)
+              || scan.match(/toggle_dark_mode\s*\(\s*mode\s*=\s*["'](on|off)["']\s*\)/i);
             if (toolCall) {
               if (toolCall[0].startsWith('toggle_effect')) {
                 toggleEffect(toolCall[1], toolCall[2]);
@@ -444,7 +449,7 @@
             // 通过对话让 agent 调节同样代表访客意愿：开夜间任何时段都记，关夜间只在夜间
             // 窗口内记（见 markVisitorChoice），自动切换据此让位；
             // animate=true 触发与手动点击切换按钮相同的日月过渡动画
-            const darkMatch = fullText.match(/DARKMODE:\s*(on|off)/);
+            const darkMatch = scan.match(/DARKMODE:\s*(on|off)/);
             if (darkMatch) {
               markVisitorChoice(darkMatch[1] === 'on');
               applyDarkMode(darkMatch[1] === 'on', true);

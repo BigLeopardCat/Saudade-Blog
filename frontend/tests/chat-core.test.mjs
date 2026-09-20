@@ -204,6 +204,29 @@ console.log('== 命令正则权威 COMMAND_RE ==');
   assert.eq(strip('NAVIGATE:https://saudade.site/article/16喵呜'), '喵呜', 'URL 中文边界截断保留正文');
 }
 
+console.log('\n== stripMentionSpans（20260920：提及 ≠ 命令）==');
+{
+  const s = core.stripMentionSpans;
+  // 内联代码区：模型讲机制时的举例 —— 必须剥掉，否则 effectMatch 会真的切特效
+  const t1 = '系统的 `EFFECT:sakura:on` 只是帧格式，正文里写它不会执行喵';
+  assert.falsy(/EFFECT:\s*(\w+)\s*:?\s*(\w+)?/.test(s(t1)), '内联代码里的 EFFECT 被剥掉');
+  // 围栏代码块（``` 配对被 `[^`]*` 吃掉内容）
+  const t2 = '命令长这样：\n```\nAUTO_NAVIGATE:/talk\n```\n喵～';
+  assert.falsy(/AUTO_NAVIGATE/.test(s(t2)), '围栏代码块里的命令被剥掉');
+  // 引号区
+  const t3 = '我记得“DARKMODE:on”是系统内部的帧格式，不是给人看的';
+  assert.falsy(/DARKMODE:\s*(on|off)/.test(s(t3)), '中文引号里的 DARKMODE 被剥掉');
+  assert.falsy(/"NAVIGATE:\/talk"/.test(s('他说 "NAVIGATE:/talk" 不算数')), 'ASCII 双引号里的命令被剥掉');
+  // 真实命令（无引号无反差）必须原样保留 —— 正文兜底靠的就是它
+  const t4 = '好的，AUTO_NAVIGATE:/talk 这就带你去！';
+  assert.truthy(/AUTO_NAVIGATE/.test(s(t4)), '裸命令不被剥（正文兜底路径不受影响）');
+  assert.eq(s('好的，EFFECT:sakura:on'), '好的，EFFECT:sakura:on', '无跨度文本原样返回');
+  // 替换成空格而非空串：防把相邻片段粘出新的假命令
+  assert.eq(s('EFFE`x`CT:on'), 'EFFE CT:on', '剥离处补空格（防粘连出新命令）');
+  assert.eq(s(''), '', '空串安全');
+  assert.eq(s(undefined), '', 'undefined 安全（走 (s||\'\')）');
+}
+
 console.log('\n' + '─'.repeat(50));
 console.log((failed === 0 ? '✅ 全部通过' : '❌ 有失败') + `：${passed} 通过 / ${failed} 失败`);
 process.exit(failed === 0 ? 0 : 1);
