@@ -601,7 +601,16 @@ fn render_exec_row(row: &serde_json::Value) -> String {
         _ => format!("操作记录({})", tool),
     };
     let detail = detail.replace('[', "「").replace(']', "」");
-    detail.chars().take(120).collect()
+    // 实体摘要（20260920，agent/entities.py 产）：数据工具取回的条目/计数/候选标题，
+    // 随回执落库——工具帧只活当轮，不落这一行则下轮「第二条写了什么」只能把工具再跑
+    // 一遍（探针实测）。agent 只搬事实、Rust 只做拼接（语义渲染仍在数据所在的一侧）。
+    // 有摘要时上限放宽到列宽（varchar(300)），无摘要保持 120 不变。
+    let digest = row["digest"].as_str().unwrap_or("");
+    if digest.is_empty() {
+        detail.chars().take(120).collect()
+    } else {
+        format!("{} — {}", detail, digest).chars().take(300).collect()
+    }
 }
 
 /// 跨轮执行记忆落库（20260904）：批量插入 checker 验收回执（渲染后存储）。
