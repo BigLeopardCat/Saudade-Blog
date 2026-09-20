@@ -359,21 +359,54 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
         .await.unwrap_or_default();
     let summary_text = summary_row.as_ref().map(|s| s.summary.clone()).unwrap_or_default();
 
-    // 跨轮执行记忆（20260904 C5）：读本会话最近 8 条执行回执（execution_log.detail
-    // 写时已渲染定稿，这里直取零映射）→ "· " 拼串注入 recent_executions=——
-    // 供"质疑上轮执行是否属实"据实作答（双向失真修复：编造"欢迎回来"/否认真实显示）。
+    // 跨轮执行记忆（20260904 C5；20260920 批次 c 补时间戳 + 去重）：读本会话最近
+    // 40 条执行回执（execution_log.detail 写时已渲染定稿，这里直取零映射），**读侧**
+    // 去重后取最近 8 条 → "· " 拼串注入 recent_executions=——供"质疑上轮执行是否属实"
+    // 据实作答（双向失真修复：编造"欢迎回来"/否认真实显示）。
+    //  - **去重**：同一动作重复执行（连跑几遍同一个检索/同一句屏显）会占满 8 行窗口，
+    //    跨轮记忆里就只剩同一件事（20260920 实证：窗口里 4 行同款）；现按 detail
+    //    合并，保留最近一次的时间、附（×N）。取 40 去重是为了"8 条不同的动作"这个
+    //    窗口语义本身能被满足（先取 8 再去重会退化）。
+    //  - **时间戳**：行首 MM-DD HH:MM = created_at（+08:00 本机钟面，与全站时区约定
+    //    一致，不做二次偏移）；落库时刻 = 该轮回复收尾，与真实执行相差仅数秒。质疑轮
+    //    叙及"刚刚/刚才那次"才有依据——无时序的 8 行分不清哪次是刚发生的。
+    //  - 两处都在读侧 ⇒ DB 里的存量回执无需迁移/回填，旧会话回看即带时间。
     // 读取失败（表未建/DB 抖动）→ 空串，agent 端按"无记录"如实处理，不阻断对话。
     let executions_text: String = {
         let recent = execution_log::Entity::find()
             .filter(execution_log::Column::UserId.eq(uid))
             .filter(execution_log::Column::ConversationId.eq(conversation_id))
             .order_by_desc(execution_log::Column::Id)
-            .limit(Some(8))
+            .limit(Some(40))
             .all(&state.db)
             .await
             .unwrap_or_default();
-        recent.iter().rev() // 倒序取回 → 升序拼串（旧→新）
-            .map(|r| r.detail.clone())
+        // 由新到旧扫描：首次见到某动作 = 它最近的一次（记时间），之后同款只累加次数
+        let mut seen: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        let mut rows: Vec<(String, &str, usize)> = Vec::new();
+        for r in &recent {
+            match seen.get(r.detail.as_str()) {
+                Some(i) => rows[*i].2 += 1,
+                None => {
+                    seen.insert(r.detail.as_str(), rows.len());
+                    rows.push((
+                        r.created_at.format("%m-%d %H:%M").to_string(),
+                        r.detail.as_str(),
+                        1,
+                    ));
+                }
+            }
+        }
+        rows.truncate(8);
+        rows.iter()
+            .rev() // 新→旧取回 → 旧→新拼串
+            .map(|(at, detail, n)| {
+                if *n > 1 {
+                    format!("{at} {detail}（×{n}）")
+                } else {
+                    format!("{at} {detail}")
+                }
+            })
             .collect::<Vec<_>>()
             .join("\n· ")
     };
