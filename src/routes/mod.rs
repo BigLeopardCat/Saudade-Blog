@@ -164,6 +164,10 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/protected/tagone", post(tags::create_tag_one))
         .route("/api/protected/tagtwo", post(tags::create_tag_two))
         .route("/api/protected/tag", delete(tags::delete_tags))
+        // 换父级 / 一级↔二级互转（20260921）。独立路径而非塞进 PUT /tagtwo/:id：
+        // access_log 只有一行 `POST path=`，藏在改名接口里就分不清"改了个名"和"重写了
+        // 几百篇文章的 note.tags"；且它的契约与改名不同（可能改 id、可能被拒）。
+        .route("/api/protected/tag/move", post(tags::move_tag))
         .route("/api/protected/announcements", post(announcements::create_announcement).delete(announcements::delete_announcement))
         .route("/api/protected/announcements/:id", put(announcements::update_announcement))
         .route("/api/protected/tagone/:id", put(tags::update_tag_one))

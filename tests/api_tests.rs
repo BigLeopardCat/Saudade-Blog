@@ -75,6 +75,17 @@ async fn test_conversations_require_auth() {
 }
 
 #[tokio::test]
+async fn test_tag_move_requires_auth() {
+    // 换层级/换父级（20260921）：挂 protected_routes ⇒ auth_guard 全 admin，
+    // handler 内 auth_uid 在碰 DB 之前就返回 401（MockDatabase 零查询预期）。
+    let app = mock_app();
+    assert_eq!(
+        req_status(app, "POST", "/api/protected/tag/move").await,
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+#[tokio::test]
 async fn test_chat_history_requires_auth() {
     let app = mock_app();
     assert_eq!(req_status(app, "GET", "/api/chat/history").await, StatusCode::UNAUTHORIZED);

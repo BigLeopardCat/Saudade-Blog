@@ -651,6 +651,8 @@ fn arrow(row: &serde_json::Value) -> String {
 /// principal_role/op/article_id/before/after/tag_name/level（键名是 Python 写、
 /// Rust 读的跨语言契约，见 agent/graph.py 的 _RCPT_META_KEYS；两侧都要同步改）。
 /// 全部按字符串取——agent 侧落库前统一 str()，不留 int/str 混装。
+/// 20260921 第三轮补 `category_name` 与 `change`：标签改/删与分类增删改的渲染
+/// 需要一句人话描述（改名/改色/换层级/影响了几篇文章），它由 agent 侧生成。
 fn render_exec_row(row: &serde_json::Value) -> String {
     let tool = row["tool"].as_str().unwrap_or("");
     let args = row["args"].as_object().cloned().unwrap_or_default();
@@ -717,6 +719,50 @@ fn render_exec_row(row: &serde_json::Value) -> String {
                 format!("复用已有{}标签「{}」", lvl, name)
             } else {
                 format!("新建{}标签「{}」", lvl, name)
+            }
+        }
+        // 标签改/删 + 分类增删改（20260921 第三轮）：与 create_tag 同族，读的是回执
+        // **顶层 meta**（tag_name/level/category_name/change），不是工具实参。
+        // `change` 是一句中文描述（改名/改色/换层级/影响面），由 agent 侧生成——
+        // 渲染语义留在数据所在的一侧，这里只拼装。
+        "update_tag" => {
+            let name = row["tag_name"].as_str().unwrap_or("");
+            let change = row["change"].as_str().unwrap_or("");
+            if change.is_empty() {
+                format!("修改标签「{}」", name)
+            } else {
+                format!("修改标签「{}」：{}", name, change)
+            }
+        }
+        "delete_tag" => {
+            let name = row["tag_name"].as_str().unwrap_or("");
+            let lvl = if row["level"].as_str().unwrap_or("1") == "2" { "二级" } else { "一级" };
+            let change = row["change"].as_str().unwrap_or("");
+            if change.is_empty() {
+                format!("删除{}标签「{}」", lvl, name)
+            } else {
+                format!("删除{}标签「{}」：{}", lvl, name, change)
+            }
+        }
+        "create_category" => {
+            format!("新建分类「{}」", row["category_name"].as_str().unwrap_or(""))
+        }
+        "update_category" => {
+            let name = row["category_name"].as_str().unwrap_or("");
+            let change = row["change"].as_str().unwrap_or("");
+            if change.is_empty() {
+                format!("修改分类「{}」", name)
+            } else {
+                format!("修改分类「{}」：{}", name, change)
+            }
+        }
+        "delete_category" => {
+            let name = row["category_name"].as_str().unwrap_or("");
+            let change = row["change"].as_str().unwrap_or("");
+            if change.is_empty() {
+                format!("删除分类「{}」", name)
+            } else {
+                format!("删除分类「{}」：{}", name, change)
             }
         }
         "set_article_status" => format!("修改文章 {}：{}", arg("article_id"), arrow(row)),
@@ -1145,5 +1191,46 @@ mod tests {
         let row = json!({"tool": "create_tag", "args": {"title": "X"},
                          "op": "tag_create", "level": "1"});
         assert_eq!(render_exec_row(&row), "新建一级标签「」");
+    }
+
+    /// 标签改/删 + 分类增删改（20260921 第三轮）：与 create_tag 同族读顶层 meta。
+    /// 漏了这些分支会落进默认分支，把 `操作记录(update_tag)` 这种内部工具名写进
+    /// execution_log，narrator 跨轮读到会照抄给用户。
+    #[test]
+    fn exec_row_tag_update_and_delete() {
+        let up = json!({"tool": "update_tag", "args": {"name": "Asyncio"},
+                        "op": "update_tag", "tag_name": "编程 / Asyncio", "level": "2",
+                        "change": "改名叫「异步」并移到「编程」下"});
+        assert_eq!(
+            render_exec_row(&up),
+            "修改标签「编程 / Asyncio」：改名叫「异步」并移到「编程」下"
+        );
+        let del = json!({"tool": "delete_tag", "args": {"name": "小猫咪"},
+                         "op": "delete_tag", "tag_name": "小猫咪", "level": "1",
+                         "change": "连同 3 篇文章上的引用一起摘除"});
+        assert_eq!(
+            render_exec_row(&del),
+            "删除一级标签「小猫咪」：连同 3 篇文章上的引用一起摘除"
+        );
+        // change 缺失（旧回执/生成失败）时退化成不带描述的动作行，不渲染空冒号
+        let bare = json!({"tool": "delete_tag", "op": "delete_tag",
+                          "tag_name": "X", "level": "2"});
+        assert_eq!(render_exec_row(&bare), "删除二级标签「X」");
+    }
+
+    #[test]
+    fn exec_row_category_ops() {
+        let c = json!({"tool": "create_category", "args": {"categoryTitle": "随笔"},
+                       "op": "create_category", "category_name": "随笔"});
+        assert_eq!(render_exec_row(&c), "新建分类「随笔」");
+        let u = json!({"tool": "update_category", "op": "update_category",
+                       "category_name": "随笔", "change": "改名为「杂记」"});
+        assert_eq!(render_exec_row(&u), "修改分类「随笔」：改名为「杂记」");
+        let d = json!({"tool": "delete_category", "op": "delete_category",
+                       "category_name": "随笔", "change": "它有 4 篇文章，会变成没有分类"});
+        assert_eq!(
+            render_exec_row(&d),
+            "删除分类「随笔」：它有 4 篇文章，会变成没有分类"
+        );
     }
 }
