@@ -2,16 +2,16 @@ import { Modal } from 'antd'
 import { useEffect, useState } from 'react'
 import { getAnnouncements } from '../../apis/AnnouncementMethods.tsx'
 
-/** 后端公告时间为 UTC（DB 连接 time_zone=+00:00），固定转为中国时间（UTC+8）显示。
- * 注意：不能 setHours(getHours()+8)（会叠加浏览器时区）；用时间戳 +8h 后按 UTC 字段读取，
- * 跨天（UTC 晚 8 点后 +8 到次日）自动进位。 */
+/** 后端公告时间**已经是 +08:00 中国钟面**（DB 会话 time_zone=+08:00，见 CLAUDE.md 时区约定），
+ * 原样展示即可，这里只做"去掉秒"的规范化——**不做任何时区换算**。
+ * 20260922 修正：旧实现把 `s` 当 UTC（拼 'Z'）再 +8h，那是 20260827 统一时区**之前**的口径；
+ * 时区统一后（main.rs `timezone(Some("+08:00"))` + 存量数据已迁移）DB 值即本地钟面，
+ * 于是线上的公告时间整整多了 8 小时。刻意用字符串正则而不是 Date：只要不构造 Date，
+ * 就不可能出现"浏览器时区/UTC 解释"这类二次偏移。 */
 const fmtCnTime = (s: string) => {
     if (!s) return ''
-    const d = new Date(s.replace(' ', 'T') + 'Z')
-    if (isNaN(d.getTime())) return s
-    const cn = new Date(d.getTime() + 8 * 3600 * 1000)
-    const p = (n: number) => String(n).padStart(2, '0')
-    return `${cn.getUTCFullYear()}-${p(cn.getUTCMonth() + 1)}-${p(cn.getUTCDate())} ${p(cn.getUTCHours())}:${p(cn.getUTCMinutes())}`
+    const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(s)
+    return m ? `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}` : s
 }
 
 /**
