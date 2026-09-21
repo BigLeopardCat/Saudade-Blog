@@ -255,6 +255,10 @@ fn note_hits_keyword(n: &note::Model, kw: &str, tag_names: &[String]) -> bool {
 /// 长度规则对**单字符段**收紧了一格：只保留"整段查询本身就只有一个字符"的情形
 /// （用户就打了 `1` / `a`）。混排切出来的单字符残片（`第1章` 里的 `1`）一律丢弃——
 /// 那是切分副产品，留着会让 `第1章` 退化成"搜所有含数字 1 的文章"。
+///
+/// 注意"切完一个 term 都不剩"（`第1章` / 纯标点）与"没给关键词"是**两回事**：
+/// 前者必须回空结果，调用方用 `keyword_given` 区分（否则会落进"无关键词 → 返回整表"
+/// 的分支，搜 `第1章` 得到全站列表——那是假命中，与切词前那类假否定是同一处代码的两面）。
 fn split_terms(kw: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for piece in kw.split_whitespace() {
@@ -270,6 +274,15 @@ fn split_terms(kw: &str) -> Vec<String> {
         }
     }
     out
+}
+
+/// 用户**是否给了**关键词（`None` / 空串 / 全空白 = 没给，其余 = 给了）。
+///
+/// 存在的理由：`split_terms` 可能把一个**非空**关键词切成一无所有（`第1章`、纯标点），
+/// 而两个搜索处理函数都把"terms 为空"当作"没有关键词"、直接返回整表——于是这类查询
+/// 会得到全站文章列表。这是**假命中**，必须用本函数把它和"真的没给关键词"分开。
+fn keyword_given(kw: Option<&str>) -> bool {
+    kw.map(|k| !k.trim().is_empty()).unwrap_or(false)
 }
 
 /// 一段文本按**脚本类别**切成连续段：ASCII 字符算一类，其余（汉字 / 全角标点 / 假名 / emoji）算另一类。
@@ -411,6 +424,11 @@ pub async fn search_notes(
         .as_deref()
         .map(split_terms)
         .unwrap_or_default();
+    // 给了关键词却切不出任何可用 term（`第1章` / 纯标点）→ 回空，**不要**落到下面的
+    // "无关键词 → 返回整表"（那会把"站内没有这种东西"答成全站文章列表，见 keyword_given）。
+    if keyword_given(payload.keyword.as_deref()) && terms.is_empty() {
+        return Json(ApiResponse::success(vec![]));
+    }
 
     // 命中分档（20260920）：**全中优先**——多词查询先只留"每个词都命中"的文章（精度优先，
     // 与切词前的严格度同源，agent 不会因为降级候选读到跑题文章）；一篇全中的都没有时，
@@ -529,7 +547,10 @@ pub async fn search_all_notes(
         .as_deref()
         .map(split_terms)
         .unwrap_or_default();
-    let notes = if terms.is_empty() {
+    // 同 search_notes：给了关键词却切不出 term → 空结果（后台"没有匹配的文章"是正确答复）
+    let notes = if keyword_given(payload.keyword.as_deref()) && terms.is_empty() {
+        vec![]
+    } else if terms.is_empty() {
         notes
     } else {
         let dict = load_tag_names(&state.db).await;
@@ -1012,7 +1033,7 @@ pub async fn get_note_for_edit(
 
 #[cfg(test)]
 mod split_terms_tests {
-    use super::split_terms;
+    use super::{keyword_given, split_terms};
 
     fn terms(kw: &str) -> Vec<String> {
         split_terms(kw)
@@ -1048,5 +1069,20 @@ mod split_terms_tests {
     #[test]
     fn drops_single_char_fragments_from_split() {
         assert_eq!(terms("第1章"), Vec::<String>::new());
+    }
+
+    /// 切完一无所剩的**非空**关键词必须与"没给关键词"分开：前者回空结果、
+    /// 后者返回整表（分类页/文章列表就是靠后者一次拉全量）。混作一谈会让
+    /// `第1章` 这类查询拿到全站文章列表（假命中）。
+    #[test]
+    fn keyword_given_distinguishes_blank_from_unusable() {
+        assert!(keyword_given(Some("架构")));
+        assert!(keyword_given(Some("  架构  ")));
+        assert!(!keyword_given(Some("")));
+        assert!(!keyword_given(Some("   ")));
+        assert!(!keyword_given(None));
+        // 非空但切不出 term：这是"给了关键词"，不是"没给"
+        assert!(keyword_given(Some("第1章")) && terms("第1章").is_empty());
+        assert!(keyword_given(Some("。。。")) && terms("。。。").is_empty());
     }
 }
