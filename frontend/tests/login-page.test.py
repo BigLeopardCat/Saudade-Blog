@@ -70,6 +70,8 @@ export const Modal = (props: any) => {
     return React.createElement(
         'div', { className: 'ant-modal-mock', 'data-title': props.title, role: 'dialog' },
         React.createElement('div', { className: 'ant-modal-title' }, props.title),
+        // 真 antd 的关闭 X：重置密码弹窗现在没有页脚，关窗只能靠它/遮罩/Esc ⇒ 桩里必须有
+        React.createElement('button', { className: 'ant-modal-close', onClick: props.onCancel }, '×'),
         React.createElement('div', { className: 'ant-modal-body' }, props.children),
         props.footer ? React.createElement('div', { className: 'ant-modal-footer' }, props.footer) : null,
     );
@@ -187,27 +189,32 @@ with sync_playwright() as p:
     check("旧霓虹青已撤（页面无 #03e9f4）", "3, 233, 244" not in pg.evaluate(
         "() => [document.querySelector('.login-submit'), document.body].map(e=>getComputedStyle(e).backgroundImage).join()"))
 
-    print("④ 注册入口 → 不开放注册的合规声明（只有一个出口）")
+    print("④ 注册入口 → 不开放注册的声明（只有一个出口，且居中）")
     pg.click(".login-links button:nth-child(3)")
     pg.wait_for_timeout(250)
     dlg = pg.locator('.ant-modal-mock[data-title="注册账号"]')
     check("弹窗打开且标题=注册账号", dlg.count() == 1)
     body = dlg.inner_text() if dlg.count() else ""
     check("写明不开放自助注册", "不开放自助注册" in body)
-    check("含「无需登录」（访客功能说明）", "无需登录" in body)
+    check("阅读无需登录", "无需登录" in body)
+    check("发布功能需要登录（这句原先写错成「无需登录」）", "发布功能需要登录" in body)
+    check("不再说「留言无需登录」", "留言、说说、河灯等访客功能" not in body)
     check("含「账号安全维护」", "账号安全维护" in body)
-    check("交代账号从哪来（博开设）", "博主" in body)
+    check("交代账号从哪来（博主开设）", "博主" in body)
+    check("不再引导去留言板（那条路需要登录，走不通）", "河灯集" not in body)
     check("页脚只有一个出口：知道了",
           [t.strip() for t in pg.locator(".login-modal-foot button").all_inner_texts()] == ["知道了"],
           json.dumps([t.strip() for t in pg.locator(".login-modal-foot button").all_inner_texts()], ensure_ascii=False))
-    check("注册弹窗里没有留言板按钮",
-          pg.locator(".login-modal-foot .login-modal-ghost").count() == 0)
+    check("「知道了」水平居中", pg.evaluate(
+        "() => {const b=document.querySelector('.login-modal-foot button').getBoundingClientRect();"
+        "const f=document.querySelector('.login-modal-foot').getBoundingClientRect();"
+        "return Math.abs((b.left+b.right)/2 - (f.left+f.right)/2) <= 1;}"))
     pg.click(".login-modal-primary")
     pg.wait_for_timeout(200)
     check("点「知道了」关闭弹窗", pg.locator(".ant-modal-mock").count() == 0)
     check("关闭弹窗不产生跳转", pg.evaluate("() => (window.__nav || []).length") == 0)
 
-    print("⑤ 忘记密码入口 → 恢复码表单（页脚只有取消，兜底路径在正文里）")
+    print("⑤ 忘记密码入口 → 恢复码表单（无页脚，关窗靠 X/遮罩/Esc）")
     pg.click(".login-links button:nth-child(1)")
     pg.wait_for_timeout(250)
     dlg2 = pg.locator('.ant-modal-mock[data-title="重置密码"]')
@@ -219,10 +226,10 @@ with sync_playwright() as p:
           and dlg2.locator("input[placeholder='用户名']").count() == 1
           and dlg2.locator("input[placeholder='一次性恢复码']").count() == 1
           and dlg2.locator("input[placeholder='新密码（至少 8 位）']").count() == 1)
-    check("页脚只有「取消」（无「知道了」）",
-          [t.strip() for t in pg.locator(".login-modal-foot button").all_inner_texts()] == ["取消"],
-          json.dumps([t.strip() for t in pg.locator(".login-modal-foot button").all_inner_texts()], ensure_ascii=False))
-    check("兜底路径在正文里（河灯集留言链接）", pg.locator(".login-modal-hint a").count() == 1)
+    check("没有页脚（「取消」是多余的）", pg.locator(".login-modal-foot").count() == 0)
+    check("没有「拿不到恢复码」那行（走不通的引导）",
+          pg.locator(".login-modal-hint").count() == 0 and "河灯集" not in b2)
+    check("有右上角关闭 X", pg.locator(".ant-modal-close").count() == 1)
     # 布局：这几个 input 是弹窗内 flex 列的直接子项，content-box 时 padding 会把它撑出容器
     check("表单输入框不溢出弹窗正文", pg.evaluate(
         "() => {const b=document.querySelector('.ant-modal-body input').getBoundingClientRect();"
@@ -236,20 +243,15 @@ with sync_playwright() as p:
     # 关闭 → 重开：恢复码是一次性的，残留上次的值会让用户拿废码干试
     pg.fill(".login-reset-form input:nth-of-type(1)", "sora")
     pg.fill(".login-reset-form input:nth-of-type(2)", "STALECODE0000000000")
-    pg.click(".login-modal-ghost")
+    pg.click(".ant-modal-close")
     pg.wait_for_timeout(200)
-    check("点「取消」关闭弹窗且不跳转",
+    check("点右上角 X 关闭弹窗且不跳转",
           pg.locator(".ant-modal-mock").count() == 0
           and pg.evaluate("() => (window.__nav || []).length") == 0)
     pg.click(".login-links button:nth-child(1)")
     pg.wait_for_timeout(250)
     check("重开后表单是空的（不留上一次的恢复码）",
           pg.evaluate("() => [...document.querySelectorAll('.login-reset-form input')].every(i => i.value === '')"))
-    pg.click(".login-modal-hint a")
-    pg.wait_for_timeout(200)
-    check("点正文里的「去河灯集留言」跳到 /guestbook",
-          pg.evaluate("() => (window.__nav || []).includes('/guestbook')"))
-    check("跳转后弹窗关闭", pg.locator(".ant-modal-mock").count() == 0)
     check("弹窗挂了深色主题（ConfigProvider 传下 darkAlgorithm + 墨蓝底）", pg.evaluate(
         "() => (window.__cpThemes || []).some(t => t && t.algorithm === '__DARK_ALGORITHM__'"
         " && t.token && t.token.colorBgElevated)"))
@@ -315,6 +317,18 @@ with sync_playwright() as p:
     b3 = pg3.locator(".login-box").bounding_box()
     check("小屏卡片不溢出视口（左右各留 ≥8px）", b3["x"] >= 8 and b3["x"] + b3["width"] <= 372,
           f'x={b3["x"]:.1f} 右={b3["x"] + b3["width"]:.1f}')
+
+    print("⑩ 忘记密码自动带入登录账号")
+    # 必须排在所有"往 input#account 写字"的段之后：⑥ 已把账号填成 sora，此时重开应带过来。
+    # （⑤ 里那条"重开表单是空的"之所以成立，是因为那会儿登录框还是空的——两段各锁一种情形。）
+    pg.click(".login-links button:nth-child(1)")
+    pg.wait_for_timeout(250)
+    check("打开时把登录框里的账号带进「用户名」",
+          pg.input_value(".login-reset-form input:nth-of-type(1)") == "sora",
+          pg.input_value(".login-reset-form input:nth-of-type(1)"))
+    check("只带账号：恢复码与两个密码框仍为空",
+          pg.evaluate("() => [...document.querySelectorAll('.login-reset-form input')]"
+                      ".slice(1).every(i => i.value === '')"))
     br.close()
 
 shutil.rmtree(SANDBOX, ignore_errors=True)

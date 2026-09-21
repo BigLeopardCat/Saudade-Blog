@@ -180,6 +180,16 @@ with sync_playwright() as p:
     btn = pg.evaluate("() => window.__probeGrad('.login-modal-primary')")
     check("页脚主按钮文字压金渐变可读（最差色标 ≥ 4.5:1）", btn and btn["ratio"] >= 4.5,
           f'{btn["ratio"]:.2f}:1 各色标 ' + ", ".join(f"{r:.1f}" for r in (btn or {}).get("perStop", [])))
+    check("页脚只有一个出口（没有留言板按钮）",
+          pg.locator(".login-modal-foot button").count() == 1
+          and pg.locator(".login-modal-ghost").count() == 0)
+    check("「知道了」水平居中（不与正文左边界对齐）", pg.evaluate(
+        "() => {const f=document.querySelector('.login-modal-foot').getBoundingClientRect();"
+        "const b=document.querySelector('.login-modal-foot button').getBoundingClientRect();"
+        "return Math.abs((b.left + b.width/2) - (f.left + f.width/2)) <= 1;}"))
+    reg = pg.locator(".login-modal-body").inner_text()
+    check("合规声明与后端口径一致（发布需登录）",
+          "发布功能需要登录" in reg and "无需登录" in reg and "河灯集" not in reg)
     mrect = pg.evaluate("() => document.querySelector('.ant-modal').getBoundingClientRect().toJSON()")
     check("弹窗不溢出视口", mrect["top"] >= 0 and mrect["bottom"] <= 900,
           f'top={mrect["top"]:.0f} bottom={mrect["bottom"]:.0f}')
@@ -188,9 +198,15 @@ with sync_playwright() as p:
 
     print("② 重置密码弹窗（表单：输入框自身也要看得见）")
     pg = fresh_page()
+    # 先在登录框写账号，再开弹窗：验"自动带入账号"这条真渲染路径（桩脚本另有一段锁同一行为）
+    pg.fill("input#account", "sora")
     pg.click(".login-links button:nth-child(1)")
     pg.wait_for_selector(".login-reset-form input", timeout=5000)
     pg.wait_for_timeout(500)
+    check("打开时带入了登录框里的账号",
+          pg.input_value(".login-reset-form input") == "sora",
+          pg.input_value(".login-reset-form input"))
+    check("恢复码框仍为空（只带账号）", pg.input_value(".login-reset-form input >> nth=1") == "")
     inp = pg.evaluate("() => window.__probe('.login-reset-form input')")
     check("输入框文字对比度 ≥ 4.5:1", inp and inp["ratio"] >= 4.5, f'{inp["ratio"]:.2f}:1')
     check("输入框底色与弹窗底色不同（框看得见）",
@@ -202,15 +218,16 @@ with sync_playwright() as p:
     check("输入框有可见边框（宽度 ≥1px 且非透明）", pg.evaluate(
         "() => {const s=getComputedStyle(document.querySelector('.login-reset-form input'));"
         "return parseFloat(s.borderTopWidth) >= 1 && !s.borderTopColor.endsWith(', 0)');}"))
-    hint = pg.evaluate("() => window.__probe('.login-modal-hint')")
-    check("兜底提示对比度 ≥ 3:1（弱化但仍可读）", hint and hint["ratio"] >= 3, f'{hint["ratio"]:.2f}:1')
-    link = pg.evaluate("() => window.__probe('.login-modal-hint a')")
-    check("河灯集留言链接对比度 ≥ 4.5:1", link and link["ratio"] >= 4.5, f'{link["ratio"]:.2f}:1')
     sub = pg.evaluate("() => window.__probeGrad('.login-reset-form button')")
     check("提交按钮文字压金渐变可读（最差色标 ≥ 4.5:1）", sub and sub["ratio"] >= 4.5,
           f'{sub["ratio"]:.2f}:1 各色标 ' + ", ".join(f"{r:.1f}" for r in (sub or {}).get("perStop", [])))
-    cancel = pg.evaluate("() => window.__probe('.login-modal-ghost')")
-    check("「取消」对比度 ≥ 4.5:1", cancel and cancel["ratio"] >= 4.5, f'{cancel["ratio"]:.2f}:1')
+    check("没有页脚（「取消」是多余的：X/遮罩/Esc 都能关）",
+          pg.locator(".login-modal-foot").count() == 0)
+    check("没有「拿不到恢复码」引导行（那条路本身要登录，走不通）",
+          pg.locator(".login-modal-hint").count() == 0
+          and "河灯集" not in pg.locator(".ant-modal-content").inner_text())
+    close2 = pg.evaluate("() => window.__probe('.ant-modal-close')")
+    check("关闭 X 是唯一出口且可见（对比度 ≥ 3:1）", close2 and close2["ratio"] >= 3, f'{close2["ratio"]:.2f}:1')
     check("提交按钮与输入框同宽同左边界（不是居中小按钮）", pg.evaluate(
         "() => {const i=document.querySelector('.login-reset-form input').getBoundingClientRect();"
         "const b=document.querySelector('.login-reset-form button').getBoundingClientRect();"
