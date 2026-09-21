@@ -17,6 +17,9 @@ const Users = () => {
     const [pwModalOpen, setPwModalOpen] = useState(false)
     const [pwTarget, setPwTarget] = useState<any>(null)
     const [pwNewPassword, setPwNewPassword] = useState('')
+    const [recoveryModalOpen, setRecoveryModalOpen] = useState(false)
+    const [recoveryTarget, setRecoveryTarget] = useState<any>(null)
+    const [recoveryCode, setRecoveryCode] = useState('')
 
     const loadTempUsers = async () => {
         try {
@@ -79,6 +82,23 @@ const Users = () => {
         } catch { message.error('请求失败') }
     }
 
+    const handleCreateRecoveryCode = async (user: any) => {
+        try {
+            const res = await fetch('/api/temp-users/' + user.id + '/password-reset-token', {
+                method: 'POST',
+                headers: { 'Authorization': 'Bearer ' + token },
+            })
+            const data = await res.json()
+            if (data.code === 200) {
+                setRecoveryTarget(user)
+                setRecoveryCode(data.data)
+                setRecoveryModalOpen(true)
+            } else {
+                message.error(data.message || '恢复码生成失败')
+            }
+        } catch { message.error('请求失败') }
+    }
+
     const items: TabsProps['items'] = [
         {
             key: 'accounts',
@@ -115,6 +135,7 @@ const Users = () => {
                                     </div>
                                     <div style={{ display: 'flex', gap: 8 }}>
                                         <Button size="small" onClick={() => openPwModal(u)}>修改密码</Button>
+                                        <Button size="small" onClick={() => handleCreateRecoveryCode(u)}>生成恢复码</Button>
                                         <Button size="small" danger onClick={() => handleDeleteTempUser(u.id)}>删除</Button>
                                     </div>
                                 </div>
@@ -137,6 +158,16 @@ const Users = () => {
                                 onChange={e => setPwNewPassword(e.target.value)}
                             />
                         </div>
+                    </Modal>
+
+                    <Modal
+                        title={'一次性恢复码 - ' + (recoveryTarget?.username || '')}
+                        open={recoveryModalOpen}
+                        footer={null}
+                        onCancel={() => setRecoveryModalOpen(false)}
+                    >
+                        <p>请通过安全渠道把下面恢复码交给用户。恢复码 15 分钟内有效，生成新码会立即使旧码失效。</p>
+                        <Input value={recoveryCode} readOnly />
                     </Modal>
                 </div>
             ),

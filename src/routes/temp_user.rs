@@ -1,10 +1,13 @@
 use axum::{Json, extract::{State, Path}};
 use sea_orm::{EntityTrait, Set, QueryFilter, ColumnTrait, ActiveModelTrait};
+use chrono::{Duration, Utc};
+use uuid::Uuid;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use crate::routes::AppState;
-use crate::entity::user;
+use crate::entity::{password_reset_token, user};
 use crate::utils::hash_password;
+use crate::utils::encrypt_password;
 
 #[derive(Deserialize)]
 pub struct CreateTempUser {
@@ -105,4 +108,34 @@ pub async fn change_password(
         }
         None => Json(crate::utils::ApiResponse::error("用户不存在")),
     }
+}
+
+pub async fn create_password_reset_token(
+    State(state): State<Arc<AppState>>,
+    Path(user_id): Path<i32>,
+) -> Json<crate::utils::ApiResponse<String>> {
+    let Some(_) = user::Entity::find_by_id(user_id).one(&state.db).await.unwrap_or(None) else {
+        return Json(crate::utils::ApiResponse::error("用户不存在"));
+    };
+    password_reset_token::Entity::delete_many()
+        .filter(password_reset_token::Column::UserId.eq(user_id))
+        .exec(&state.db)
+        .await
+        .ok();
+
+    let code = Uuid::new_v4().simple().to_string();
+    let now = Utc::now().naive_utc();
+    let expires_at = now + Duration::minutes(15);
+    let record = password_reset_token::ActiveModel {
+        user_id: Set(user_id),
+        token_hash: Set(encrypt_password(&code)),
+        expires_at: Set(expires_at),
+        used_at: Set(None),
+        created_at: Set(now),
+        ..Default::default()
+    };
+    if record.insert(&state.db).await.is_err() {
+        return Json(crate::utils::ApiResponse::error("恢复码生成失败"));
+    }
+    Json(crate::utils::ApiResponse::success(code))
 }

@@ -198,6 +198,7 @@ body
 // 弹窗挂在 body 上（antd Portal），不继承 .login-page 的样式，所以这里用
 // 顶层选择器；正文是深色底上的默认配色，只调排版与页脚按钮。
 .login-modal-body
+  text-align: center
   color: rgba(255,255,255,.75)
   font-size: 13px
   line-height: 1.75
@@ -206,8 +207,10 @@ body
     margin: 0 0 10px
 
   ul
-    margin: 0
+    width: fit-content
+    margin: 0 auto
     padding-left: 18px
+    text-align: left
 
   li
     margin-bottom: 4px
@@ -244,6 +247,30 @@ body
 
     &:hover
       filter: brightness(1.05)
+
+.login-reset-form
+  display: flex
+  flex-direction: column
+  gap: 10px
+  color: rgba(255,255,255,.75)
+  text-align: center
+
+  p
+    margin: 0 0 4px
+
+  input
+    padding: 10px 12px
+    color: #fff
+    border: 1px solid rgba(255,255,255,.16)
+    border-radius: 8px
+    background: rgba(255,255,255,.06)
+
+  button
+    align-self: center
+    padding: 8px 16px
+    border: 0
+    border-radius: 8px
+    cursor: pointer
 
 @media (max-width: 480px)
   .login-box
