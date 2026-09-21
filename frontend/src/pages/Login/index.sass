@@ -234,21 +234,16 @@ body
   justify-content: flex-end
   gap: 10px
 
+  // 只有一个按钮的弹窗（注册声明）把按钮居中，别孤零零挂在右下角
+  &.is-center
+    justify-content: center
+
   button
     padding: 6px 16px
     font-size: 13px
     border-radius: 8px
     cursor: pointer
-    transition: color .2s, border-color .2s, filter .2s
-
-  .login-modal-ghost
-    color: rgba(255,255,255,.62)
-    border: 1px solid rgba(255,255,255,.2)
-    background: none
-
-    &:hover
-      color: #f0c987
-      border-color: rgba(240,196,110,.6)
+    transition: filter .2s
 
   .login-modal-primary
     color: #2a2113
@@ -272,20 +267,6 @@ body
 
   p
     margin: 0 0 4px
-
-  // 「拿不到恢复码」的兜底路径：跳转提示归正文，动作才放页脚（页脚只有一个"取消"）
-  .login-modal-hint
-    margin: -2px 0 2px
-    color: rgba(255,255,255,.42)
-    font-size: 12px
-
-    a
-      margin-left: 4px
-      color: #f0c987
-      text-decoration: none
-
-      &:hover
-        text-decoration: underline
 
   // 宽度与盒模型必须显式写：这几个 input 是 flex 列的直接子项，默认 content-box 时
   // padding 会加到等宽之外，整排输入框会横向溢出弹窗（20260922 用户实测的布局错位）。

@@ -209,7 +209,10 @@ const Login: React.FC = () => {
                         </button>
 
                         <div className="login-links">
-                            <button type="button" onClick={() => setNotice('forgot')}>忘记密码？</button>
+                            {/* 打开时把上面填的账号带过去：多数人是先输账号、再想起忘了密码 */}
+                            <button type="button" onClick={() => { setResetUsername(account); setNotice('forgot'); }}>
+                                忘记密码？
+                            </button>
                             <span className="sep">·</span>
                             <button type="button" onClick={() => setNotice('register')}>注册账号</button>
                         </div>
@@ -226,14 +229,14 @@ const Login: React.FC = () => {
                 </div>
 
                 <ConfigProvider theme={DARK_MODAL_THEME}>
-                    {/* 注册：本站不开自助注册，这里只做合规声明，不给任何"去注册"的出口 */}
+                    {/* 注册：本站不开自助注册，这里只做声明，不给任何"去注册"的出口 */}
                     <Modal
                         open={notice === 'register'}
                         title="注册账号"
                         centered
                         onCancel={closeNotice}
                         footer={(
-                            <div className="login-modal-foot">
+                            <div className="login-modal-foot is-center">
                                 <button type="button" className="login-modal-primary" onClick={closeNotice}>
                                     知道了
                                 </button>
@@ -243,38 +246,25 @@ const Login: React.FC = () => {
                         <div className="login-modal-body">
                             <p>本站<b>不开放自助注册</b>，账号由博主（管理员）在后台开设。</p>
                             <ul>
-                                <li>留言、说说、河灯等访客功能<b>无需登录</b>即可使用；</li>
-                                <li>确实需要账号时，在河灯集留言说明来意，由博主开设后再把账号交给你；</li>
+                                <li>浏览文章、首页等阅读功能<b>无需登录</b>；</li>
+                                <li>留言、说说、河灯留言等<b>发布功能需要登录</b>后才能使用；</li>
                                 <li>账号信息仅用于登录、身份识别和账号安全维护，不会出售、出租或用于与本站服务无关的用途。</li>
                             </ul>
                         </div>
                     </Modal>
 
-                    {/* 忘记密码：无邮箱账号，只能靠管理员签发的一次性恢复码 */}
+                    {/* 忘记密码：无邮箱账号，只能靠管理员签发的一次性恢复码。
+                        不开页脚——一条表单下面再放"取消"是多余的（右上角 X / 遮罩 / Esc 都能关）；
+                        关窗后的表单清理由 closeNotice 统一负责。 */}
                     <Modal
                         open={notice === 'forgot'}
                         title="重置密码"
                         centered
                         onCancel={closeNotice}
-                        footer={(
-                            <div className="login-modal-foot">
-                                <button type="button" className="login-modal-ghost" onClick={closeNotice}>
-                                    取消
-                                </button>
-                            </div>
-                        )}
+                        footer={null}
                     >
                         <form className="login-reset-form" onSubmit={handleResetPassword}>
                             <p>请向博主索取一次性恢复码（15 分钟内有效、只能用一次）。</p>
-                            <p className="login-modal-hint">
-                                拿不到恢复码？
-                                <a
-                                    href="/guestbook"
-                                    onClick={(e) => { e.preventDefault(); closeNotice(); navigate('/guestbook'); }}
-                                >
-                                    去河灯集留言
-                                </a>
-                            </p>
                             <input
                                 required
                                 value={resetUsername}
