@@ -784,6 +784,34 @@ fn render_exec_row(row: &serde_json::Value) -> String {
         "delete_announcement" => {
             format!("删除公告「{}」", row["announcement_title"].as_str().unwrap_or(""))
         }
+        // 河灯留言人工复核（20260922 第六轮）：同族，读回执顶层 meta
+        // （board_id/board_author/change）。**不带留言正文**——正文是访客写的、可能很长，
+        // 而 detail 列宽 300、读侧只取最近 8 行；更关键的是正文进了跨轮执行记忆就会被
+        // narrator 当作"我读过这条留言"的证据复述。指认留言只用 #id + 作者。
+        "audit_board_comment" => {
+            let id = row["board_id"].as_str().unwrap_or("");
+            let who = row["board_author"].as_str().unwrap_or("");
+            let change = row["change"].as_str().unwrap_or("");
+            let head = if who.is_empty() {
+                format!("人工复核留言 #{}", id)
+            } else {
+                format!("人工复核留言 #{}（{} 的留言）", id, who)
+            };
+            if change.is_empty() {
+                head
+            } else {
+                format!("{}：{}", head, change)
+            }
+        }
+        "delete_board_comment" => {
+            let id = row["board_id"].as_str().unwrap_or("");
+            let who = row["board_author"].as_str().unwrap_or("");
+            if who.is_empty() {
+                format!("删除留言 #{}", id)
+            } else {
+                format!("删除留言 #{}（{} 的留言）", id, who)
+            }
+        }
         "set_article_status" => format!("修改文章 {}：{}", arg("article_id"), arrow(row)),
         "set_article_tags" => format!("修改文章 {} 标签：{}", arg("article_id"), arrow(row)),
         _ => format!("操作记录({})", tool),
@@ -1285,5 +1313,32 @@ mod tests {
         let d = json!({"tool": "delete_announcement", "op": "announcement_delete",
                        "announcement_title": "维护通知"});
         assert_eq!(render_exec_row(&d), "删除公告「维护通知」");
+    }
+
+    /// 河灯留言人工复核（20260922 第六轮）：同族，读回执**顶层 meta**
+    /// （board_id/board_author/change）。两条纪律与公告那条同向：
+    /// ① 指认留言只能靠 #id + 作者（留言没有标题）；② **绝不把正文写进 detail**——
+    /// 正文是访客写的、可能很长，进了跨轮执行记忆会被 narrator 当成"我读过这条留言"的
+    /// 证据复述。change 缺失时退化成不带描述的动作行，不渲染空冒号。
+    #[test]
+    fn exec_row_board_moderation_ops() {
+        let a = json!({"tool": "audit_board_comment",
+                       "args": {"quote": "今天天气真好呀", "verdict": "reject"},
+                       "op": "board_audit", "board_id": "12", "board_author": "路人甲",
+                       "change": "待审 → 驳回"});
+        assert_eq!(
+            render_exec_row(&a),
+            "人工复核留言 #12（路人甲 的留言）：待审 → 驳回"
+        );
+        let bare = json!({"tool": "audit_board_comment", "op": "board_audit",
+                          "board_id": "12", "board_author": "路人甲"});
+        assert_eq!(render_exec_row(&bare), "人工复核留言 #12（路人甲 的留言）");
+        // 作者缺失（访客没填昵称）→ 只留 #id，不渲染空括号
+        let anon = json!({"tool": "audit_board_comment", "op": "board_audit",
+                          "board_id": "12", "change": "待审 → 通过"});
+        assert_eq!(render_exec_row(&anon), "人工复核留言 #12：待审 → 通过");
+        let d = json!({"tool": "delete_board_comment", "op": "board_delete",
+                       "board_id": "12", "board_author": "路人甲", "change": "已删除"});
+        assert_eq!(render_exec_row(&d), "删除留言 #12（路人甲 的留言）");
     }
 }
