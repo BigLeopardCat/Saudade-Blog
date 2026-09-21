@@ -7,9 +7,9 @@ import http from "../../../apis/axios.tsx";
 /** 评论管理：河灯留言的查询/筛选/删除 + 两段审核（20260905 issue9 双状态显示）
  *  数据来自 /api/protect/board（仅 src=board 的留言，与说说完全独立）。
  *  审核开关存 web_info（aiReviewEnabled/manualReviewEnabled），读写 /api/protected/websetting：
- *    · AI 审核开  → 每条新留言先经一次 AI 初审，疑似内容拦下（approved=0）进待审
- *    · 人工复核开 → 新留言一律先进待审，管理员裁决才放行展示
- *    · 两闸可叠加、可单独作用；待审留言在本页人工审核列/操作列裁决
+ *    · AI 审核开  → AI 通过/拒绝直接落地，存疑进入人工复核
+ *    · 人工复核开 → 无论 AI 结果如何，新留言都先进待审，管理员裁决后才完成审核
+ *    · 两闸可叠加；待审留言在本页人工审核列/操作列裁决
  *  双段状态（每行独立两列，互不覆盖）：
  *    · AI 审核  = ai_result：拦截（flag，AI 初审判疑似转人工）/ 通过（pass）/
  *                 未审（null——AI 关、人工全审模式、降级放行或存量历史行）
@@ -27,7 +27,7 @@ interface BoardItem {
     username: string;
     nickname: string;
     approved: number;
-    /** AI 审核判定留痕（20260905 issue9）："pass" / "flag" / null=未审 */
+    /** AI 审核判定留痕：pass / reject / flag（存疑）/ null=未审 */
     ai_result?: string | null;
 }
 
@@ -170,10 +170,14 @@ const BoardManage = () => {
             render: (_, r) =>
                 r.ai_result === 'flag' ? (
                     <Tooltip title="AI 初审判定疑似，拦下转人工裁决">
-                        <Tag color="volcano">拦截</Tag>
+                        <Tag color="gold">存疑</Tag>
+                    </Tooltip>
+                ) : r.ai_result === 'reject' ? (
+                    <Tooltip title={manualOn ? 'AI 判定拒绝，但人工复核已开启，仍需人工裁决' : 'AI 判定拒绝，已直接拒绝展示'}>
+                        <Tag color="red">拒绝</Tag>
                     </Tooltip>
                 ) : r.ai_result === 'pass' ? (
-                    <Tooltip title="AI 初审通过，直接放行展示">
+                    <Tooltip title={manualOn ? 'AI 判定通过，但人工复核已开启，仍需人工裁决' : 'AI 判定通过，已直接放行展示'}>
                         <Tag color="green">通过</Tag>
                     </Tooltip>
                 ) : (

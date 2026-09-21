@@ -1,10 +1,18 @@
 use axum::{Json, extract::State, http::HeaderMap};
 use sea_orm::{ActiveModelTrait, EntityTrait, ColumnTrait, QueryFilter, Set};
+use chrono::Utc;
 use std::sync::Arc;
-use crate::entity::user;
+use crate::entity::{password_reset_token, user};
 use crate::routes::AppState;
 use crate::utils::{ApiResponse, encrypt_password, hash_password, needs_rehash, verify_password};
 use serde::{Deserialize, Serialize};
+
+#[derive(Deserialize)]
+pub struct ResetPasswordRequest {
+    username: String,
+    recovery_code: String,
+    new_password: String,
+}
 
 #[derive(Deserialize)]
 pub struct LoginRequest {
@@ -85,6 +93,57 @@ pub async fn login(
 
     // Return generic error if not found
     Json(ApiResponse::error("账号或密码错误"))
+}
+
+/// 无邮箱账号的安全找回：恢复码由管理员签发，15 分钟内只能使用一次。
+pub async fn reset_password(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<ResetPasswordRequest>,
+) -> Json<ApiResponse<String>> {
+    let username = payload.username.trim();
+    let code = payload.recovery_code.trim();
+    if username.is_empty() || code.len() < 16 || payload.new_password.len() < 8 {
+        return Json(ApiResponse::error("账号、恢复码或新密码格式不正确"));
+    }
+
+    let names = [username.to_string(), encrypt_password(username)];
+    let Some(account) = user::Entity::find()
+        .filter(user::Column::Username.is_in(names))
+        .one(&state.db)
+        .await
+        .unwrap_or(None)
+    else {
+        return Json(ApiResponse::error("账号或恢复码无效"));
+    };
+
+    let token_hash = encrypt_password(code);
+    let now = Utc::now().naive_utc();
+    let Some(token) = password_reset_token::Entity::find()
+        .filter(password_reset_token::Column::UserId.eq(account.id))
+        .filter(password_reset_token::Column::TokenHash.eq(token_hash))
+        .filter(password_reset_token::Column::UsedAt.is_null())
+        .one(&state.db)
+        .await
+        .unwrap_or(None)
+    else {
+        return Json(ApiResponse::error("账号或恢复码无效"));
+    };
+    if token.expires_at <= now {
+        return Json(ApiResponse::error("恢复码已过期，请联系管理员重新生成"));
+    }
+
+    let mut user_active: user::ActiveModel = account.into();
+    user_active.password = Set(hash_password(&payload.new_password));
+    if user_active.update(&state.db).await.is_err() {
+        return Json(ApiResponse::error("密码修改失败，请稍后再试"));
+    }
+
+    let mut token_active: password_reset_token::ActiveModel = token.into();
+    token_active.used_at = Set(Some(now));
+    if token_active.update(&state.db).await.is_err() {
+        return Json(ApiResponse::error("恢复码确认失败，请联系管理员检查账号状态"));
+    }
+    Json(ApiResponse::success("密码修改成功，请使用新密码登录".to_string()))
 }
 
 /// 当前登录用户信息（任意角色，非仅 admin）：留言留名预填用
