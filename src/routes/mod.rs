@@ -54,6 +54,7 @@ pub fn create_router(state: AppState) -> Router {
     let public_routes = Router::new()
         // Auth
         .route("/api/login", post(auth::login))
+        .route("/api/password/reset", post(auth::reset_password))
         // 当前登录用户信息（自身鉴权，不经过 admin 守卫）：留言留名预填
         .route("/api/protected/profile", get(auth::profile))
         // 我的河灯（20260905 issue8）：本人河灯列表/收回——普通登录用户专用，
@@ -200,7 +201,8 @@ pub fn create_router(state: AppState) -> Router {
         // Temp Users
         .route("/api/temp-users", get(temp_user::list_temp_users).post(temp_user::create_temp_user))
         .route("/api/temp-users/:id", delete(temp_user::delete_temp_user))
-          .route("/api/temp-users/:id/password", post(temp_user::change_password))
+                .route("/api/temp-users/:id/password", post(temp_user::change_password))
+                .route("/api/temp-users/:id/password-reset-token", post(temp_user::create_password_reset_token))
         
         // 只读统计（20260921）：agent「管理助手」的用户数据报表供数。
         // 挂在守卫域内 ⇒ 自动只有 admin 拿得到（agent 以发起人身份代调，见 routes/stats.rs 头注）。

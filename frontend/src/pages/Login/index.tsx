@@ -17,6 +17,11 @@ const Login: React.FC = () => {
     const [isLoading, setIsLoading] = useState<boolean>(false);
     const [showPwd, setShowPwd] = useState<boolean>(false);
     const [notice, setNotice] = useState<NoticeKind>(null);
+    const [resetUsername, setResetUsername] = useState('');
+    const [resetCode, setResetCode] = useState('');
+    const [resetPassword, setResetPassword] = useState('');
+    const [resetPasswordAgain, setResetPasswordAgain] = useState('');
+    const [resetLoading, setResetLoading] = useState(false);
     const [messageApi, contextHolder] = message.useMessage();
     const dispatch = useDispatch();
     const navigate = useNavigate();
@@ -82,6 +87,40 @@ const Login: React.FC = () => {
         }
     };
 
+    const handleResetPassword = async (e: React.FormEvent<HTMLFormElement>) => {
+        e.preventDefault();
+        if (resetPassword !== resetPasswordAgain) {
+            messageApi.error('两次输入的新密码不一致');
+            return;
+        }
+        setResetLoading(true);
+        try {
+            const response = await fetch('/api/password/reset', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    username: resetUsername,
+                    recovery_code: resetCode,
+                    new_password: resetPassword,
+                }),
+            });
+            const result = await response.json();
+            if (response.ok && result.code === 200) {
+                messageApi.success('密码修改成功，请使用新密码登录');
+                setNotice(null);
+                setResetCode('');
+                setResetPassword('');
+                setResetPasswordAgain('');
+            } else {
+                messageApi.error(result.message || '恢复失败，请检查恢复码');
+            }
+        } catch {
+            messageApi.error('恢复服务暂不可用，请稍后再试');
+        } finally {
+            setResetLoading(false);
+        }
+    };
+
     // 提示弹窗的页脚：两个出口分得很清楚——"知道了"只关窗；"去河灯集留言"才跳转
     // （antd 默认的 ok/cancel 里 cancel 还兼管遮罩点击，语义会串，所以自绘页脚）
     const noticeFooter = (
@@ -104,7 +143,7 @@ const Login: React.FC = () => {
                 <div className="login-box">
                     <header className="login-brand">
                         <h2>Saudade Blog</h2>
-                        <p className="login-sub">登录后进入后台管理</p>
+                        <p className="login-sub">登录后体验完整服务</p>
                     </header>
 
                     <form onSubmit={handleSubmit}>
@@ -173,25 +212,25 @@ const Login: React.FC = () => {
                     </div>
                 </div>
 
-                {/* 注册：合规提示（暂不开放） */}
+                {/* 注册：合规声明 */}
                 <Modal
                     open={notice === 'register'}
-                    title="注册暂不开放"
+                    title="注册账号"
                     centered
                     onCancel={() => setNotice(null)}
                     footer={noticeFooter}
                 >
                     <div className="login-modal-body">
-                        <p>本站是个人博客，<b>不对外收集个人信息</b>，因此暂不开放自助注册。</p>
+                        <p>本站仅在提供账号服务所必需的范围内处理注册信息。</p>
                         <ul>
-                            <li>账号仅用于博主本人管理后台，由博主统一开通；</li>
-                            <li>留言、说说、河灯等访客功能<b>无需登录</b>即可使用；</li>
-                            <li>若确需账号，可在「河灯集」留言说明用途，博主会与你联系。</li>
+                            <li>注册信息仅用于登录、身份识别和账号安全维护；</li>
+                            <li>不会将账号信息出售、出租或用于与本站服务无关的用途；</li>
+                            <li>留言、说说、河灯等访客功能<b>无需登录</b>即可使用。</li>
                         </ul>
                     </div>
                 </Modal>
 
-                {/* 忘记密码：无邮箱/短信通道，只能人工重置 */}
+                {/* 忘记密码：当前没有可靠的邮箱身份核验通道 */}
                 <Modal
                     open={notice === 'forgot'}
                     title="重置密码"
@@ -199,14 +238,14 @@ const Login: React.FC = () => {
                     onCancel={() => setNotice(null)}
                     footer={noticeFooter}
                 >
-                    <div className="login-modal-body">
-                        <p>本站没有邮箱/短信通道，<b>不支持自助重置密码</b>。</p>
-                        <ul>
-                            <li>请在「河灯集」留言说明情况（写上账号名与用途）；</li>
-                            <li>博主核对身份后会为你重置，并把新口令单独告知你；</li>
-                            <li>拿到新口令后请尽快自行修改。</li>
-                        </ul>
-                    </div>
+                    <form className="login-reset-form" onSubmit={handleResetPassword}>
+                        <p>请向管理员获取 15 分钟内有效的一次性恢复码。</p>
+                        <input required value={resetUsername} onChange={e => setResetUsername(e.target.value)} placeholder="用户名" autoComplete="username" />
+                        <input required value={resetCode} onChange={e => setResetCode(e.target.value)} placeholder="一次性恢复码" autoComplete="one-time-code" />
+                        <input required minLength={8} type="password" value={resetPassword} onChange={e => setResetPassword(e.target.value)} placeholder="新密码（至少 8 位）" autoComplete="new-password" />
+                        <input required minLength={8} type="password" value={resetPasswordAgain} onChange={e => setResetPasswordAgain(e.target.value)} placeholder="再次输入新密码" autoComplete="new-password" />
+                        <button type="submit" className="login-modal-primary" disabled={resetLoading}>{resetLoading ? '修改中…' : '确认修改密码'}</button>
+                    </form>
                 </Modal>
             </div>
         </>

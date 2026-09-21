@@ -270,10 +270,10 @@ fn review_http() -> &'static reqwest::Client {
 
 async fn board_approved(state: &Arc<AppState>, content: &str) -> (i8, Option<String>) {
     let (ai_on, manual_on) = super::web_info::review_switches(&state.db).await;
-    if manual_on {
-        return (0, None);
-    }
     if !ai_on {
+        if manual_on {
+            return (0, None);
+        }
         return (1, None);
     }
     // 仅 AI 闸：同步调 agent（模型裁决上限 25s，这里网络超时 20s 先兜住）
@@ -289,24 +289,29 @@ async fn board_approved(state: &Arc<AppState>, content: &str) -> (i8, Option<Str
     match result {
         Ok(r) if r.status().is_success() => {
             match r.json::<serde_json::Value>().await {
-                Ok(v) if v.get("verdict").and_then(|x| x.as_str()) == Some("flag") => {
-                    tracing::info!("[board] AI 审核拦下一条留言，进待审");
-                    (0, Some("flag".to_string()))
-                }
-                Ok(_) => (1, Some("pass".to_string())), // verdict=pass 或缺省 → 放行
+                Ok(v) => match v.get("verdict").and_then(|x| x.as_str()) {
+                    Some("pass") if manual_on => (0, Some("pass".to_string())),
+                    Some("pass") => (1, Some("pass".to_string())),
+                    Some("reject") if manual_on => (0, Some("reject".to_string())),
+                    Some("reject") => (2, Some("reject".to_string())),
+                    Some("flag") | Some("uncertain") | Some("review") | _ => {
+                        tracing::info!("[board] AI 审核判定存疑，进人工复核");
+                        (0, Some("flag".to_string()))
+                    }
+                },
                 Err(e) => {
-                    tracing::warn!("[board] AI 审核响应解析失败，降级放行: {e}");
-                    (1, None)
+                    tracing::warn!("[board] AI 审核响应解析失败，进入人工复核: {e}");
+                    (0, None)
                 }
             }
         }
         Ok(r) => {
-            tracing::warn!("[board] AI 审核端点异常(HTTP {}），降级放行", r.status());
-            (1, None)
+            tracing::warn!("[board] AI 审核端点异常(HTTP {}），进入人工复核", r.status());
+            (0, None)
         }
         Err(e) => {
-            tracing::warn!("[board] AI 审核不可用，降级放行: {e}");
-            (1, None)
+            tracing::warn!("[board] AI 审核不可用，进入人工复核: {e}");
+            (0, None)
         }
     }
 }

@@ -13,3 +13,4 @@ pub mod chat_history;
 pub mod chat_summary;
 pub mod execution_log;
 pub mod conversation;
+pub mod password_reset_token;
