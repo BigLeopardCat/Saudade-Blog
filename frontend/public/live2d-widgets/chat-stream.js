@@ -51,17 +51,32 @@
             askBox, askQuestion, askBtns } = ctx.dom;
     const scrollToBottom = engine.scrollToBottom;
     const broadcast = engine.broadcast;
-    // ── 通用询问框（20260921，写操作确认弹窗）──────────────────────────────
+    // ── 通用询问卡片（20260921，写操作确认）────────────────────────────────
     // agent 在"需要用户授权/二次确认"时随回复发一条 __CONFIRM__ 帧：问题文本 +
-    // N 个选项 + 一个待办令牌。用户点「确定」→ 发一条**隐藏请求**（sendMessage 的
-    // silent 模式：不起用户气泡、不进历史——它代表一次点击而不是一条发言；
-    // 用户原话"会被认为是再次请求"就是这个毛病）；点「取消」→ 纯前端收起，
+    // N 个选项 + 一个待办令牌。卡片渲染在**对话流里**（#chat-ask 是 .chat-messages
+    // 的末位子节点，夹在问句气泡与结果气泡之间）。用户点「确定」→ 发一条**隐藏请求**
+    // （sendMessage 的 silent 模式：不起用户气泡、不进历史——它代表一次点击而不是
+    // 一条发言；用户原话"会被认为是再次请求"就是这个毛病）；点「取消」→ 纯前端收起，
     // **不发任何请求**（什么都没发生，令牌自然过期）。
-    // 弹窗只在发起该轮的那个标签页出现（帧是连接私有的）。
-    const hideAsk = () => {
-      askBox.classList.remove('active');
+    // 卡片只在发起该轮的那个标签页出现（帧是连接私有的）。
+    //
+    // ⚠️ 点按钮的实际处置（handleAskChoice）**必须定义在 init 里**、不能放在这一层：
+    //    它要调 sendMessage，而 sendMessage 是 init 的局部 const——放在这一层会
+    //    `ReferenceError: sendMessage is not defined`（前端错误上报 20260921 18:37 抓到），
+    //    点击回调里抛错 ⇒ 请求没发出、界面也没任何提示，用户看到的就是"点了确定，
+    //    轮次像被截断"。这类作用域错误只有真点一次才暴露，离线测试与探针都碰不到。
+    const askSettle = (note) => {          // 按钮换成一行灰字（卡片留在流里当记录）
       askBtns.innerHTML = '';
+      const el = document.createElement('div');
+      el.className = 'chat-ask-note';
+      el.textContent = note;
+      askBtns.appendChild(el);
+    };
+    const hideAsk = () => {                // 未点击的收场（用户改口打字说了别的）
+      const shown = askBox && askBox.classList.contains('active');
       ctx.state.pendingAsk = null;
+      if (shown) askSettle('已取消');
+      else if (askBtns) askBtns.innerHTML = '';
     };
     const showAsk = () => {
       const ask = ctx.state.pendingAsk;
@@ -77,17 +92,12 @@
         b.setAttribute('data-ask-value', op.value || 'yes');
         askBtns.appendChild(b);
       });
+      // 挂到消息流末位。切会话/拉历史会把 .chat-messages 清空（children 被整段
+      // 重建），而 #chat-ask 的节点引用还在 ctx.dom 里——appendChild 顺手把它接
+      // 回去（节点已脱离文档时 appendChild 就是"重新挂载"），这是它唯一的复活点。
+      messages.appendChild(askBox);
       askBox.classList.add('active');
-    };
-    const handleAskChoice = (value) => {
-      const ask = ctx.state.pendingAsk;
-      hideAsk();
-      if (!ask || value !== 'yes') return;        // 取消：零请求零副作用
-      if (ctx.state.isSending) return;            // 流还没收尾（极短窗口）：不叠发
-      // 隐藏确认请求：不进历史、不起气泡。令牌是唯一凭据（agent 侧验签），
-      // 合成 message 只作为"当前这条用户输入"喂给叙述层（服务端不落库）
-      sendMessage({ silent: true, confirmToken: ask.token, convId: ask.convId,
-                    message: ask.msg || ('确认执行：' + (ask.summary || ask.q || '')) });
+      scrollToBottom(messages, true);
     };
 
     // 主题日 = 以 06:00 为界（23:00-6:00 自动夜间的恢复边界）：手动/对话调节的
@@ -1540,9 +1550,25 @@
         ctx.state.pendingNavUrl = '';
       });
 
-      // ── 通用询问框（20260921）：agent 需要用户输入（写操作授权/二次确认）时弹出 ──
-      // 与"泠月喵建议跳转到"同款外观（同一套 class），按钮按帧里的 opts 动态生成
-      // （本轮固定 确定/取消；将来接别的用途不用改协议）。事件用委托——按钮是动态建的。
+      // ── 通用询问卡片（20260921）：agent 需要用户输入（写操作授权/二次确认）时弹 ──
+      // 按钮按帧里的 opts 动态生成（本轮固定 确定/取消；将来接别的用途不用改协议）。
+      // 事件用委托——按钮是动态建的。处置函数定义在此处（init 内层）而不是模块
+      // 工厂层：它要调 sendMessage，而 sendMessage 是 init 的局部 const。
+      const handleAskChoice = (value) => {
+        const ask = ctx.state.pendingAsk;
+        if (!ask) return;
+        if (ctx.state.isSending) return;   // 流还没收尾（极短窗口）：不叠发，卡片留着
+        ctx.state.pendingAsk = null;       // 一次点击只兑现一次
+        if (value !== 'yes') {             // 取消：零请求零副作用
+          askSettle('已取消');
+          return;
+        }
+        askSettle('已确认');               // 立即反馈：按钮先落地，结果由下一条气泡给出
+        // 隐藏确认请求：不进历史、不起气泡。令牌是唯一凭据（agent 侧验签），
+        // 合成 message 只作为"当前这条用户输入"喂给叙述层（服务端不落库）
+        sendMessage({ silent: true, confirmToken: ask.token, convId: ask.convId,
+                      message: ask.msg || ('确认执行：' + (ask.summary || ask.q || '')) });
+      };
       askBtns.addEventListener('click', (e) => {
         const btn = e.target && e.target.closest ? e.target.closest('button[data-ask-value]') : null;
         if (!btn) return;
