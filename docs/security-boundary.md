@@ -52,6 +52,31 @@
 ⚠️ 这条断言只解决"**uid 是不是真的**"，不解决"**这台机器上谁能调 agent**"（回环边界照旧）；
 一旦 agent 要跨机部署（或容器网络不再是 loopback），还是要加真正的服务间凭据（见 §6）。
 
+### 2.2 agent → Rust 的代调通道（20260921 新增，管理助手）
+
+上面那条是 **Rust → agent**；20260921 起反方向多了一条：agent 要读后台数据（留言审核状况、
+用户统计），于是**以本轮发起人的身份**去调 `/api/protected/*`。
+
+- **怎么代**：`tools/base.py` 用本轮的 uid 现签一条 **60 秒** HS256 JWT（payload 只有
+  `sub`/`exp`/`role`，**不带 `aud`**——Rust 的 `verify_token` 用 `Validation::default()`，
+  多一个 aud 会被判无效），打 `http://127.0.0.1:3000`。
+- **为什么 Rust 零改动**：`middleware::auth_guard` 本来就按 `claims.sub` **查库**判角色
+  （与 §2.1 同一条纪律：不信 token 里的 role）。所以 token 里的 `role` 只是日志可读，
+  **没有任何权威**——伪造不了权限，能通就说明库里这个人真是 admin。
+- **agent 侧还有一道**：这条通道对应的 scope 是 `admin.console`，属 `_HARD_SCOPES`——**不吃
+  `AGENT_AUTHZ_ENFORCE` 的 shadow 开关**。理由：shadow 是为了观测"既有流量会不会被拦"，
+  而管理助手是纯新增能力、没有观测期，shadow 期越权是可被利用的窗口。
+  四个工具同时**不进 planner 点名白名单**（结构上点不到），非 admin 的 planner 上下文里
+  也看不到对应技能。
+- **失败取向**：401/403 → `unavailable("当前身份无权访问后台数据")`，**不返回空**——
+  空结果在下游会被读成"没有待审留言"（把"没权限"说成"没问题"是这类功能最坏的失败形态）。
+
+**这条通道带来的新注入面（必须知道）**：agent 从此会读**攻击者可控的文本**——待审留言的
+正文会进入工具帧。本轮能力全是只读，注入最多导致**答错**、不导致**做错**；工具侧对这类文本
+做了命令前缀消毒（`agent/reports.py::sanitize_untrusted`，在命令词与冒号之间插 U+200B 零宽
+空格——它不是 Unicode 空白，Python 与 JS 的 `\s` 都不匹配，所以两侧的命令行识别一起失效，
+而文本仍然可读）。**做写操作之前，§3.4 的人在回路闸必须先真正跑通**。
+
 ## 3. 传输安全
 
 - **agent → 外部 HTTP**：`tools/base.py` 的共享 `httpx.Client` 使用**默认的 TLS 校验**
@@ -140,4 +165,12 @@ cd saudade-blog-agent && .venv/bin/python test_hardening.py
 # ④ agent 端点的鉴权事实：本机直连成功（回环 = 边界）
 curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:8010/graph/query \
      -H 'Content-Type: application/json' -d '{"q":"物联网"}'   # → 200
+
+# ⑤ 新增的后台统计端点确实在守卫域内（无 token / 伪 token 都应 401，实测均 401）
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3000/api/protected/stats/users
+curl -s -o /dev/null -w '%{http_code}\n' -H 'Authorization: Bearer bogus.token.here' \
+     http://127.0.0.1:3000/api/protected/stats/users
+
+# ⑥ 管理助手活体探针（真打 8010，两个身份各三问；uid 由参数传，不入库）
+cd saudade-blog-agent && .venv/bin/python eval/probe_admin_report.py --uid <管理员的 uid>
 ```
