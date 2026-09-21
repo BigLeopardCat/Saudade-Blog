@@ -47,9 +47,49 @@
         window.__mouthOverride = -1;
       } catch (e) { /* 归位失败不该影响收尾 */ }
     };
-    const { messages, input, sendBtn, navConfirm, navQuestion, chatPanel } = ctx.dom;
+    const { messages, input, sendBtn, navConfirm, navQuestion, chatPanel,
+            askBox, askQuestion, askBtns } = ctx.dom;
     const scrollToBottom = engine.scrollToBottom;
     const broadcast = engine.broadcast;
+    // ── 通用询问框（20260921，写操作确认弹窗）──────────────────────────────
+    // agent 在"需要用户授权/二次确认"时随回复发一条 __CONFIRM__ 帧：问题文本 +
+    // N 个选项 + 一个待办令牌。用户点「确定」→ 发一条**隐藏请求**（sendMessage 的
+    // silent 模式：不起用户气泡、不进历史——它代表一次点击而不是一条发言；
+    // 用户原话"会被认为是再次请求"就是这个毛病）；点「取消」→ 纯前端收起，
+    // **不发任何请求**（什么都没发生，令牌自然过期）。
+    // 弹窗只在发起该轮的那个标签页出现（帧是连接私有的）。
+    const hideAsk = () => {
+      askBox.classList.remove('active');
+      askBtns.innerHTML = '';
+      ctx.state.pendingAsk = null;
+    };
+    const showAsk = () => {
+      const ask = ctx.state.pendingAsk;
+      if (!ask || !askBox) return;
+      askQuestion.textContent = ask.q;
+      askBtns.innerHTML = '';
+      (ask.opts || []).forEach((op) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        // 复用导航确认框的按钮样式（.chat-nav-btn yes/no），观感与它完全一致
+        b.className = 'chat-nav-btn ' + (op.value === 'no' ? 'no' : 'yes');
+        b.textContent = op.label || '确定';
+        b.setAttribute('data-ask-value', op.value || 'yes');
+        askBtns.appendChild(b);
+      });
+      askBox.classList.add('active');
+    };
+    const handleAskChoice = (value) => {
+      const ask = ctx.state.pendingAsk;
+      hideAsk();
+      if (!ask || value !== 'yes') return;        // 取消：零请求零副作用
+      if (ctx.state.isSending) return;            // 流还没收尾（极短窗口）：不叠发
+      // 隐藏确认请求：不进历史、不起气泡。令牌是唯一凭据（agent 侧验签），
+      // 合成 message 只作为"当前这条用户输入"喂给叙述层（服务端不落库）
+      sendMessage({ silent: true, confirmToken: ask.token, convId: ask.convId,
+                    message: ask.msg || ('确认执行：' + (ask.summary || ask.q || '')) });
+    };
+
     // 主题日 = 以 06:00 为界（23:00-6:00 自动夜间的恢复边界）：手动/对话调节的
     // 让位只在当前主题日内有效，跨 6:00 自动切换恢复（20260908 时效化，与 App 同语义）
     const choiceDay = () => {
@@ -208,15 +248,23 @@
         } catch (e) {/* ignore */}
       };
 
-      const sendMessage = async () => {
+      // opts.silent + opts.confirmToken（20260921）= **隐藏确认请求**：
+      // 用户点了确认框的「确定」→ 走同一条 SSE 通道执行，但**不是一次发言**：
+      // 不读输入框、不清输入、不建用户气泡、不广播 user 帧、不落本地用户缓存。
+      // 其余（忙锁、超时、停止、渲染、转正、命令执行）全部复用同一条路径。
+      const sendMessage = async (opts) => {
+        opts = opts || {};
+        const silent = !!opts.silent;
         // 图片随消息发送（多模态 20260828，20260828s 多图）：无文字只有图也允许
         // （模型描述图片）；最多 6 张（addPendingImage 上限，发送时不再拦截）
-        const msg = input.value.trim();
-        const imgs = ctx.state.pendingImages || [];
+        const msg = silent ? (opts.message || '') : input.value.trim();
+        const imgs = silent ? [] : (ctx.state.pendingImages || []);
         // 20260901：远端窗口回复中（remoteRounds 非空）同样拦截——跨窗发送状态
         // 同步的本地兜底（按钮禁用 + 守卫双保险，Enter 键/双击防穿透）
         if ((!msg && !imgs.length) || ctx.state.isSending
             || Object.keys(ctx.state.remoteRounds || {}).length) return;
+        // 用户选择"直接说话"而不是点按钮：挂起的确认作废（否则它日后突然生效）
+        if (!silent && ctx.state.pendingAsk) hideAsk();
 
         // 20260903 会话化：空白新对话态（convNeedCreate）发送前先 POST 建会话——
         // 惰性创建（服务端空会话不落实体，"新对话"按钮只清视图置位，见
@@ -261,30 +309,35 @@
         // roundId 不同 → 双窗并发互不覆盖）。用户条目 id 独立生成（'l' 前缀），
         // discard 广播按它双侧删除（Rust 侧已按用户消息删除 DB 记录）。
         const roundId = __chatCore.genId();
-        const userItemId = __chatCore.genId();
+        // 隐藏确认请求（silent）没有用户气泡：userItemId 为 null，下游所有按它
+        // 删条目/广播 discard 的分支都必须先判空（见 discardTurn 分支与停止路径）
+        const userItemId = silent ? null : __chatCore.genId();
+        const sentAt = Date.now(); // 本轮用户消息时间（user 帧与条目共用同一值）
         // 20260903 补 convId：停止生成/3s 保险的 discard 定向删本轮所属会话
-        ctx.state.activeRound = { roundId, userItemId, msg, convId: roundConvId };
-        input.value = '';
-        // 程序清空不会触发 input 事件：主动重置高度，避免空输入框残留多行高度
-        // （flex 布局下还会连带拉伸发送按钮导致变形）
-        resizeInput();
-        // 图片已随本轮发送：清空预览与待发状态（abort 停止生成路径不清空，可重发）
-        ctx.state.pendingImages = [];
-        renderPreviews();
-        // 带图消息（20260828 改进②，20260828s 多图）：气泡内直接展示图片——
-        // item.images 存 dataURL 数组（会话内渲染用）。20260829a 起落盘走本地
-        // 缩略图方案：发送前同步压缩 180px 缩略图到 item.thumbs（上文），
-        // saveHistory 落盘 thumbs（原图不落盘）——刷新/重开窗口恢复真图
-        // （不再回退占位块）；旧缓存/压缩失败条目由 saveHistory 回退 hasImg 占位
-        const userItem = __chatCore.migrateItem({
-          id: userItemId, type: 'user', text: msg, time: Date.now(),
-          ...(imgs.length ? { images: imgs, thumbs } : {}),
-        });
-        ctx.state.items.push(userItem);
-        appendMsg(userItem);
-        // 发送即回底（聊天软件标准）：即使之前在翻历史，自己发的消息必须可见
-        scrollToBottom(messages, true);
-        saveHistory(); // 游客立即落缓存（带 thumbs）；登录用户 DB 侧由 Rust 在流开始前入库
+        ctx.state.activeRound = { roundId, userItemId, msg, convId: roundConvId, silent };
+        if (!silent) {
+          input.value = '';
+          // 程序清空不会触发 input 事件：主动重置高度，避免空输入框残留多行高度
+          // （flex 布局下还会连带拉伸发送按钮导致变形）
+          resizeInput();
+          // 图片已随本轮发送：清空预览与待发状态（abort 停止生成路径不清空，可重发）
+          ctx.state.pendingImages = [];
+          renderPreviews();
+          // 带图消息（20260828 改进②，20260828s 多图）：气泡内直接展示图片——
+          // item.images 存 dataURL 数组（会话内渲染用）。20260829a 起落盘走本地
+          // 缩略图方案：发送前同步压缩 180px 缩略图到 item.thumbs（上文），
+          // saveHistory 落盘 thumbs（原图不落盘）——刷新/重开窗口恢复真图
+          // （不再回退占位块）；旧缓存/压缩失败条目由 saveHistory 回退 hasImg 占位
+          const userItem = __chatCore.migrateItem({
+            id: userItemId, type: 'user', text: msg, time: sentAt,
+            ...(imgs.length ? { images: imgs, thumbs } : {}),
+          });
+          ctx.state.items.push(userItem);
+          appendMsg(userItem);
+          // 发送即回底（聊天软件标准）：即使之前在翻历史，自己发的消息必须可见
+          scrollToBottom(messages, true);
+          saveHistory(); // 游客立即落缓存（带 thumbs）；登录用户 DB 侧由 Rust 在流开始前入库
+        }
         // 20260829a：user 帧带 images + thumbs 跨窗广播——其他窗口直接渲染真图
         // （用户要求"其他窗口不要只显示🖼️占位块"），并随帧携带缩略图（远端窗口
         // 的 saveHistory 同样落盘 thumbs，刷新同样恢复真图）。dataURL 广播内存
@@ -294,16 +347,20 @@
         // 20260901：跨窗发送状态同步——sending 帧必须先于 user 帧广播（远端先
         // 禁用发送按钮再渲染气泡，避免"气泡到了按钮还能发"的窗口期）。idle 帧
         // 在流收尾 finally 广播解除；localStorage 标记供错过 sending 帧的新开
-        // 窗口恢复禁用态（chat-engine 初始化读取）
+        // 窗口恢复禁用态（chat-engine 初始化读取）。**sending 帧 silent 轮照发**
+        // （另一窗口也在跑同一轮，此时它必须锁住发送按钮）；user 帧不发（没有
+        // 用户发言可同步，远端不该凭空冒出一条用户消息）
         broadcast({ t: 'sending', roundId, from: engine.windowId });
         // 20260903：busy 标记带 convId——新开窗口 restore 时按会话判定是否锁本窗
         // （跨会话发送互不阻塞）；roundId 精确匹配清除语义不变
         try { localStorage.setItem('saudade-chat-busy', JSON.stringify({ roundId, convId: roundConvId, ts: Date.now() })); } catch (e) {}
-        broadcast({
-          t: 'user', id: userItemId, text: msg, time: userItem.time, from: engine.windowId,
-          ...(imgs.length ? { images: imgs, thumbs } : {}),
-          hasImg: imgs.length ? 1 : 0,
-        });
+        if (!silent) {
+          broadcast({
+            t: 'user', id: userItemId, text: msg, time: sentAt, from: engine.windowId,
+            ...(imgs.length ? { images: imgs, thumbs } : {}),
+            hasImg: imgs.length ? 1 : 0,
+          });
+        }
         ctx.state.isSending = true;
         ctx.state.stoppedByUser = false;
         ctx.state.discardTurn = false;
@@ -497,6 +554,9 @@
               page_title: document.title,
               current_effects: (window.__effectStateList || ''), // 实时特效状态，供 agent 感知
               current_darkmode: (window.__darkMode ? 'on' : 'off'), // 实时夜间模式状态（与特效同理），供 agent 感知
+              // 20260921 隐藏确认请求：带上弹窗令牌，Rust 见它就不把这条 message
+              // 当用户发言入库（agent 侧验签，失败即零执行）。非确认轮不带字段
+              ...(silent && opts.confirmToken ? { confirm_token: opts.confirmToken } : {}),
             }),
             signal: ctrl.signal,
           });
@@ -510,14 +570,18 @@
             // 流程（engine.handleConvGone：视图/缓存/会话态复位 + 无参回落），本轮
             // 静默丢弃（错误气泡/重发按钮无归属——会话已不存在，重发只会再造新会话）
             if (resp.status === 404 && d && d.error === 'conversation_not_found') {
-              ctx.state.pendingImages = imgs; // 还原图片（abort 停止生成同语义：可重发）
-              renderPreviews();
-              input.value = msg;
-              resizeInput();
-              const uEl = messages.querySelector('[data-mtype="user"][data-mid="' + userItemId + '"]');
-              if (uEl && uEl.parentNode) uEl.parentNode.removeChild(uEl);
-              ctx.state.items = ctx.state.items.filter(i => i.id !== userItemId);
-              saveHistory();
+              // 还原现场：silent 轮没有用户条目/输入框内容可还原（它代表一次
+              // 点击而非一条发言），只走会话已删的复位流程
+              if (!silent) {
+                ctx.state.pendingImages = imgs; // 还原图片（abort 停止生成同语义：可重发）
+                renderPreviews();
+                input.value = msg;
+                resizeInput();
+                const uEl = messages.querySelector('[data-mtype="user"][data-mid="' + userItemId + '"]');
+                if (uEl && uEl.parentNode) uEl.parentNode.removeChild(uEl);
+                ctx.state.items = ctx.state.items.filter(i => i.id !== userItemId);
+                saveHistory();
+              }
               engine.handleConvGone(roundConvId); // 流式中：置 pendingPull，收尾 finally 补拉
               const goneErr = new Error('会话已不存在');
               goneErr.skipFailedPersist = true;
@@ -649,6 +713,16 @@
               // 过程步骤帧：追加到灰色过程行（不参与展示文本/命令累积）
               if (text.startsWith('__PROCESS__:')) {
                 addStep('step', text.slice('__PROCESS__:'.length));
+                continue;
+              }
+              // 确认弹窗帧（20260921）：存下来，**等流收尾再弹**——此刻 isSending
+              // 还是 true，马上弹会让用户点下去撞上 sendMessage 的忙守卫（点了没反应）
+              if (text.startsWith('__CONFIRM__:')) {
+                let ask = null;
+                try { ask = JSON.parse(text.slice('__CONFIRM__:'.length)); } catch (e) {}
+                if (ask && ask.q && ask.token) {
+                  ctx.state.pendingAsk = Object.assign({}, ask, { convId: roundConvId });
+                }
                 continue;
               }
               // REVISE 轮次重置：上一轮的文本/命令已被质检判定作废（reflector 打回），
@@ -787,10 +861,13 @@
               // 异常中断也执行已收到的命令帧（20260827g）：流中断不代表命令无效——
               // 反射质检挂起导致的断流里 AUTO_NAVIGATE/EFFECT/DARKMODE 帧可能已到达
               try { execAgentCommands(cmdText + displayText, null); } catch(e2) {/* ignore */}
-              // 失败气泡重发/编辑按钮（20260829h）：非主动停止的失败轮
-              attachRetryActions(contentSpan, div, msg);
-              // 20260902：失败轮持久化标记（刷新后仍显示"未收到回复"，见定义处注释）
-              persistFailedRound(msg);
+              // 失败气泡重发/编辑按钮（20260829h）：非主动停止的失败轮。
+              // silent 轮不给（重发一条确认请求没有意义：它会变成一个真发言）
+              if (!silent) {
+                attachRetryActions(contentSpan, div, msg);
+                // 20260902：失败轮持久化标记（刷新后仍显示"未收到回复"，见定义处注释）
+                persistFailedRound(msg);
+              }
             }
           } else {
             const errMsg = '网络错误: ' + (e && e.message ? e.message : '未知错误');
@@ -817,7 +894,8 @@
             try { execAgentCommands(cmdText + displayText, null); } catch(e2) {/* ignore */}
             // 20260902：网络错误同样记持久化失败标记（与 AbortError 分支一致——
             // 用户刷新后要能看到"这条没收到回复"而不是只有一条孤立 user 消息）
-            persistFailedRound(msg);
+            // silent 轮无用户消息可标记（同上）
+            if (!silent) persistFailedRound(msg);
           }
         } finally {
           // 复位必须在 finally：catch 内 applyMsg/broadcast 万一抛错，
@@ -841,6 +919,15 @@
           // 20260903：本轮收尾——标题派生/updated_at touch 都发生在服务端该轮
           // 入库时，本地无从得知；通知 UI 重拉会话列表收敛（排序/标题/新建行）
           engine.notifyListDirty();
+          // 20260921 确认弹窗：帧循环只登记 pendingAsk（见 __CONFIRM__ 分支），
+          // 到收尾才真正弹出——运行中弹会被"刚发出的气泡+打字指示器"抢视线，
+          // 且用户可能还在读 narration。setTimeout(0) 让 finally 里刚复位的
+          // isSending/按钮态先生效（按钮回调据此判忙）。非 pendingAsk 轮顺手清
+          // 残留（上一轮的弹窗若在流中被 dismiss 过就不该再冒出来）
+          setTimeout(() => {
+            if (ctx.state.pendingAsk && !ctx.state.isSending) showAsk();
+            else if (ctx.state.pendingAsk) hideAsk();
+          }, 0);
         }
         if (ctx.state.discardTurn) {
           // 丢弃本轮用户输入与部分回复（不加入记忆）：
@@ -852,9 +939,14 @@
             if (victim.el && victim.el.parentNode) victim.el.parentNode.removeChild(victim.el);
             delete ctx.state.live[roundId];
           }
-          ctx.state.items = ctx.state.items.filter(i => i.id !== userItemId);
-          saveHistory();
-          broadcast({t: 'discard', roundId, userItemId}); // 远端同删该轮（DB 侧自动清理）
+          // silent 轮没有用户条目可删（userItemId=null），也**绝不能**广播 discard：
+          // 远端会照 userItemId 删一条不存在的消息；本轮的隐藏请求在 DB 侧由
+          // boundary 守卫清理（见 Rust prepare_chat/DiscardAbortedExchange）
+          if (!silent) {
+            ctx.state.items = ctx.state.items.filter(i => i.id !== userItemId);
+            saveHistory();
+            broadcast({t: 'discard', roundId, userItemId}); // 远端同删该轮（DB 侧自动清理）
+          }
           setTimeout(pullHistory, 0); // DB 可能已删（DiscardAbortedExchange），收敛一致
         }
       };
@@ -1208,7 +1300,10 @@
           if (ctx.state.streamCtrl) ctx.state.streamCtrl.abort();
           // 显式告知后端全删本轮（DB 侧 user+残缺回复；与连接中断"保留 user"互补）
           // 20260903：带本轮会话 id 定向删（activeRound 在发送入口已捕获 convId）
-          apiDiscard(ctx.state.activeRound && ctx.state.activeRound.convId);
+          // **silent 轮（隐藏确认请求）不发**：它是"用户消息 + 其后全部"的全删语义，
+          // 而确认轮本身没有用户消息 —— 发出去删掉的是**上一轮那条真实请求**及其回复
+          const rStop = ctx.state.activeRound;
+          if (rStop && !rStop.silent) apiDiscard(rStop.convId);
           // 保险：极端情况下（浏览器对已开始读取的流 abort 不触发 AbortError）catch 不会执行，
           // UI 会卡死在"停止生成"状态——3s 后强制恢复并丢弃本轮，保证界面必能继续使用。
           // 与 sendMessage 收尾 discardTurn 分支相同的丢弃逻辑（abort 未触发时手动清理）
@@ -1239,12 +1334,15 @@
                   ctx.state.items = ctx.state.items.filter(i => i.id !== r.userItemId);
                   saveHistory();
                   broadcast({t: 'discard', roundId: r.roundId, userItemId: r.userItemId});
-                  // 20260901：3s 保险路径同样广播 idle（abort 未触发时 finally 不执行，
-                  // 其他窗口的发送按钮依赖 idle 解除禁用）
-                  broadcast({ t: 'idle', roundId: r.roundId, from: engine.windowId });
-                  try { localStorage.removeItem('saudade-chat-busy'); } catch (e) {}
-                  apiDiscard(r.convId); // 保险路径同样通知后端全删（r = activeRound，已含 convId）
                 }
+                // silent 轮（隐藏确认请求）没有用户条目，discard 全删语义会误删
+                // 上一轮真实请求 —— 跳过；DB 侧的残缺回复由 boundary 守卫清理
+                if (!r.silent) apiDiscard(r.convId); // 保险路径同样通知后端全删（r = activeRound，已含 convId）
+                // 20260901：3s 保险路径同样广播 idle（abort 未触发时 finally 不执行，
+                // 其他窗口的发送按钮依赖 idle 解除禁用）——silent 轮同样要广播
+                // （sending 帧是发的，收尾必须成对）
+                broadcast({ t: 'idle', roundId: r.roundId, from: engine.windowId });
+                try { localStorage.removeItem('saudade-chat-busy'); } catch (e) {}
               } else if (victim) {
                 // 空闲/总超时：保留 user 消息，渲染失败气泡 + 重发/编辑 + 持久化标记
                 const errMsg = '长时间未收到回复，请稍后重试';
@@ -1256,8 +1354,10 @@
                   ? victim.contentSpan.textContent : '';
                 renderFailed(victim.contentSpan, errMsg, remotePartial);
                 broadcast({t: 'error', msg: errMsg, roundId: r.roundId});
-                attachRetryActions(victim.contentSpan, victim.el, r.msg);
-                persistFailedRound(r.msg);
+                if (!r.silent) { // 隐藏确认轮不给重发/失败标记（同 sendMessage 收尾）
+                  attachRetryActions(victim.contentSpan, victim.el, r.msg);
+                  persistFailedRound(r.msg);
+                }
                 delete ctx.state.live[r.roundId];
                 broadcast({ t: 'idle', roundId: r.roundId, from: engine.windowId });
                 try { localStorage.removeItem('saudade-chat-busy'); } catch (e) {}
@@ -1438,6 +1538,15 @@
       document.getElementById('nav-no').addEventListener('click', () => {
         navConfirm.classList.remove('active');
         ctx.state.pendingNavUrl = '';
+      });
+
+      // ── 通用询问框（20260921）：agent 需要用户输入（写操作授权/二次确认）时弹出 ──
+      // 与"泠月喵建议跳转到"同款外观（同一套 class），按钮按帧里的 opts 动态生成
+      // （本轮固定 确定/取消；将来接别的用途不用改协议）。事件用委托——按钮是动态建的。
+      askBtns.addEventListener('click', (e) => {
+        const btn = e.target && e.target.closest ? e.target.closest('button[data-ask-value]') : null;
+        if (!btn) return;
+        handleAskChoice(btn.getAttribute('data-ask-value'));
       });
 
       // 右上角关闭按钮：收起聊天面板

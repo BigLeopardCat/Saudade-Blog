@@ -32,6 +32,15 @@ pub struct ChatRequest {
     // 兼容部署过渡期仍缓存的旧前端（今天的单桶行为即"续接最新会话"）
     #[serde(default)]
     pub conversation_id: Option<i32>,
+    // 隐藏确认请求（20260921 写操作确认弹窗）：用户在确认框上点了「确定」时由前端
+    // 带上的 HMAC 待办令牌（agent 侧签发与验签，见 saudade-blog-agent/agent/confirm.py）。
+    // 语义是"这是一次已授权的执行"而不是一条用户发言：
+    //   ① **不落用户消息**（历史里不留空消息，否则污染 20 条注入窗口与标题派生）；
+    //   ② Rust 侧**不验签**（两个 worker、无状态；令牌的 uid/会话绑定由 agent 校验，
+    //      agent 拿到的 uid 是本端已鉴权的 uid）；
+    //   ③ 回复与执行回执照常落库（那就是真发生过的执行）。
+    #[serde(default)]
+    pub confirm_token: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -57,9 +66,11 @@ struct ChatCtx {
     total_count: i64,
     trace_id: String,
     body: serde_json::Value,
-    /// 本轮 user 消息入库后的 DB 主键（None = 入库失败）。
-    /// 中断清理（DiscardAbortedExchange）按此快照只删其后残缺回复，保留用户消息本身
-    user_msg_id: Option<i32>,
+    /// 中断清理边界（DiscardAbortedExchange）：删 id 大于它的残缺 assistant 回复。
+    /// 普通轮 = user_msg_id；**隐藏确认轮没有 user 消息**（user_msg_id 为 None），
+    /// 取会话当前最大 id（= 弹窗那条 assistant 消息）——不设边界的话，确认轮被
+    /// 中途停掉时半截回复会留在历史里（普通轮不会）。
+    boundary_id: Option<i32>,
     /// 用户角色（20260920，查 DB 得到；None = 查不到）。只用于签进身份断言交给
     /// agent 做权限判据（agent/src/authz.py），Rust 侧不用它做任何放行判断
     /// ——后台准入走 middleware::auth_guard（那里的纪律是"不信 token 里的 role"）。
@@ -307,6 +318,9 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
     // 保存用户消息（取回主键供中断清理快照：只删其后的残缺回复，用户消息本体保留）
     // 图片轮：落库加 "[图片]"（单图）/"[图片×N]"（多图）文本标记（后续轮历史中模型
     // 可感知该轮有图；图片本体不落库）
+    // 隐藏确认轮（20260921）：**不落用户消息**——它代表的是一次点击而非一条发言，
+    // 落一条空消息会占掉注入窗口、干扰标题派生，前端也不该出现这条气泡（前端同样不发）
+    let is_confirm = payload.confirm_token.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false);
     let stored_content = match payload.image.as_deref() {
         // 20260829b：空数组不拼标记（防御旧客户端发 image:[]）——否则无图消息
         // 也带 [图片] 落库，pull 后前端全部 user 气泡出现图片图标
@@ -315,19 +329,25 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
         Some(_) => format!("{}\n[图片]", payload.message),
         None => payload.message.clone(),
     };
-    let user_msg_id = chat_history::ActiveModel {
-        user_id: Set(uid),
-        conversation_id: Set(conversation_id),
-        role: Set("user".into()),
-        content: Set(stored_content.clone()),
-        ..Default::default()
-    }.insert(&state.db).await.ok().map(|m| m.id);
+    let user_msg_id = if is_confirm {
+        None
+    } else {
+        chat_history::ActiveModel {
+            user_id: Set(uid),
+            conversation_id: Set(conversation_id),
+            role: Set("user".into()),
+            content: Set(stored_content.clone()),
+            ..Default::default()
+        }.insert(&state.db).await.ok().map(|m| m.id)
+    };
 
-    // 会话标题守卫 + 最后用户发言时间（列表排序），仅在消息真正入库后执行
+    // 会话标题守卫 + 最后活动时间（列表排序）
     if user_msg_id.is_some() {
         // 标题 = 首条用户消息剥尾部图片标记后截 40 字符（derive_conv_title）。
         // 条件 UPDATE 语句级原子：并发首条只有一个命中 = first-writer-wins；
         // 剥空（纯图轮）保持 NULL，下一条文字消息自动补派生
+        // **确认轮跳过**（20260921）：它没有用户消息，拿合成文本派生标题
+        // 会把会话名写成"确认执行：…"，与"标题 = 首条用户消息"的语义不符
         if let Some(title) = derive_conv_title(&stored_content) {
             let _ = conversation::Entity::update_many()
                 .col_expr(conversation::Column::Title, Expr::value(title).into())
@@ -340,12 +360,32 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
                 .exec(&state.db)
                 .await;
         }
+    }
+    // 最后活动时间：**确认轮也要 bump**（20260921）——点确认是一次真实交互，
+    // 会话列表该按活动时间浮上来；它与"标题派生"是两件事，故不共用上面那个守卫
+    if user_msg_id.is_some() || is_confirm {
         let _ = conversation::Entity::update_many()
             .col_expr(conversation::Column::UpdatedAt, Expr::current_timestamp().into())
             .filter(conversation::Column::Id.eq(conversation_id))
             .exec(&state.db)
             .await;
     }
+
+    // 中断清理边界（见 ChatCtx::boundary_id）：确认轮没有本轮 user 消息，用会话
+    // 当前最大 id（= 弹窗那条 assistant 回复）当边界——它是这一轮的起点，删 id
+    // 大于它的 assistant 残缺回复即本轮半截话。查询走 idx(conversation_id) 倒序取一。
+    let boundary_id = if is_confirm {
+        chat_history::Entity::find()
+            .filter(chat_history::Column::UserId.eq(uid))
+            .filter(chat_history::Column::ConversationId.eq(conversation_id))
+            .order_by_desc(chat_history::Column::Id)
+            .one(&state.db)
+            .await
+            .unwrap_or(None)
+            .map(|r| r.id)
+    } else {
+        user_msg_id
+    };
 
     // 读取最近历史（20260828 修复：排除刚插入的当前消息 user_msg_id——此前 history
     // 含当前消息、agent 端又追加 last_msg，同一条消息注入 2 次，模型注意力被重复
@@ -466,6 +506,9 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
 
     let body = serde_json::json!({
         "message": payload.message,
+        // 20260921：会话 id 下发 agent——确认令牌里签了 conv_id，验签要拿它对账
+        // （令牌只对发起它的那个会话有效，避免用户切了会话后确认写到别处）
+        "conversation_id": conversation_id,
         "current_url": payload.current_url.as_deref().unwrap_or(""),
         "page_title": payload.page_title.as_deref().unwrap_or(""),
         "current_effects": payload.current_effects.as_deref().unwrap_or(""),
@@ -476,12 +519,15 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
         "summary": summary_text,
         "needs_summary": needs_summary,
         "executions": executions_text,  // 20260904 C5：跨轮执行记忆（最近 8 条回执，"· " 拼串）
+        // 20260921 确认弹窗：透传待办令牌（空串 = 普通轮）。agent 侧验签失败 →
+        // 零执行 + 如实告知"确认已过期"；验签通过 → 跳过 planner 直接执行签名里的动作
+        "confirm_token": payload.confirm_token.as_deref().unwrap_or(""),
     });
 
     if std::env::var("CHAT_DEBUG_BODY").is_ok() {
         eprintln!("[chat-debug] body={}", body);
     }
-    Ok(ChatCtx { uid, conversation_id, total_count, trace_id, body, user_msg_id, role })
+    Ok(ChatCtx { uid, conversation_id, total_count, trace_id, body, boundary_id, role })
 }
 
 
@@ -806,10 +852,10 @@ struct DiscardAbortedExchange {
     /// 本轮消息所属会话快照（与 user_msg_id 同源于 prepare_chat）：
     /// 清理双限（会话 + id 区间），drop 延迟执行时绝不越界误删其他会话
     conversation_id: i32,
-    /// 本轮 user 消息的 DB 主键快照（prepare_chat 入库时取得）。
+    /// 本轮起点快照（prepare_chat 计算，见 ChatCtx::boundary_id）。
     /// 只删 id 大于快照的 assistant 记录——即使清理延迟执行（期间新轮 user 已插入），
     /// role=user 的新记录也不会被误删。
-    user_msg_id: Option<i32>,
+    boundary_id: Option<i32>,
     done: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -818,7 +864,7 @@ impl Drop for DiscardAbortedExchange {
         if self.done.load(std::sync::atomic::Ordering::SeqCst) {
             return;
         }
-        let Some(user_msg_id) = self.user_msg_id else { return };
+        let Some(boundary_id) = self.boundary_id else { return };
         let state = self.state.clone();
         let uid = self.uid;
         let conversation_id = self.conversation_id;
@@ -830,7 +876,7 @@ impl Drop for DiscardAbortedExchange {
             let _ = chat_history::Entity::delete_many()
                 .filter(chat_history::Column::UserId.eq(uid))
                 .filter(chat_history::Column::ConversationId.eq(conversation_id))
-                .filter(chat_history::Column::Id.gt(user_msg_id))
+                .filter(chat_history::Column::Id.gt(boundary_id))
                 .filter(chat_history::Column::Role.eq("assistant"))
                 .exec(&state.db)
                 .await;
@@ -902,7 +948,7 @@ pub async fn chat_stream_handler(
     let uid = ctx.uid;
     let conversation_id = ctx.conversation_id;
     let total_count = ctx.total_count;
-    let user_msg_id = ctx.user_msg_id;
+    let boundary_id = ctx.boundary_id;
 
     let body_stream = stream! {
         let mut upstream_stream = upstream.bytes_stream();
@@ -917,7 +963,7 @@ pub async fn chat_stream_handler(
         // 客户端中断清理（见 DiscardAbortedExchange）：流被取消时删除本轮 user 消息
         // 之后的残缺回复（user 消息本体保留）；正常走完 while 循环后置位 done，关闭清理
         let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let _guard = DiscardAbortedExchange { state: state.clone(), uid, conversation_id, user_msg_id, done: done.clone() };
+        let _guard = DiscardAbortedExchange { state: state.clone(), uid, conversation_id, boundary_id, done: done.clone() };
 
         while let Some(chunk) = upstream_stream.next().await {
             let chunk = match chunk {
@@ -996,6 +1042,14 @@ pub async fn chat_stream_handler(
                     if text.starts_with("__PROCESS__") {
                         // 过程步骤帧（计划/工具调用/质检打回，前端灰色过程行展示）：
                         // 属于"执行过程"而非最终回复，转发但不累积进历史
+                        yield Ok(Bytes::from(format!("data: {}\n\n", payload)));
+                        continue;
+                    }
+                    if text.starts_with("__CONFIRM__") {
+                        // 确认弹窗帧（20260921）：前端据此弹「泠月喵」同款确认框。
+                        // 与 __PROCESS__ 同族——**只转发、不累积进 reply 不落库**：
+                        // 漏了这条分支，帧体（含待办令牌）会被拼进 assistant 回复
+                        // 并持久化（用户看到一坨 JSON，令牌还会进下一轮上下文）
                         yield Ok(Bytes::from(format!("data: {}\n\n", payload)));
                         continue;
                     }

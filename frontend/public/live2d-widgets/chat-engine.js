@@ -29,9 +29,14 @@
       const sendBtn = document.getElementById('chat-send');
       const navConfirm = document.getElementById('chat-nav-confirm');
       const navQuestion = document.getElementById('nav-question-text');
+      // 通用询问框（20260921 写操作确认弹窗）：与导航确认框同款外观，按钮动态生成
+      const askBox = document.getElementById('chat-ask');
+      const askQuestion = document.getElementById('chat-ask-text');
+      const askBtns = document.getElementById('chat-ask-btns');
 
       // 交互层（chat-stream）经 ctx.dom 访问的 DOM
       ctx.dom = { waifu, chatPanel, messages, input, sendBtn, navConfirm, navQuestion,
+                  askBox, askQuestion, askBtns,
                   newMsgNote: document.getElementById('chat-new-msg-note') };
 
       // 滚动语义（聊天软件标准，20260828h）：
@@ -376,6 +381,11 @@
         ctx.state.items = [];
         ctx.state.live = {};
         if (messages) messages.innerHTML = '';
+        // 切会话 = 丢掉挂起的确认弹窗（20260921）：令牌绑定了发起它的会话，
+        // 换会话后点「确定」要么被 agent 拒（对话不符），要么更糟——在另一会话里
+        // 执行。宁可让用户再说一次，也不留一个跨会话的"确定"按钮在屏幕上
+        ctx.state.pendingAsk = null;
+        if (ctx.dom.askBox) ctx.dom.askBox.classList.remove('active');
         if (id === null) { setConvState(null, true); return; }
         setConvState(id, false);
         Promise.resolve(pullHistory()).then(() => {
