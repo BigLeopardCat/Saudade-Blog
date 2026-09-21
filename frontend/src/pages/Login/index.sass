@@ -109,25 +109,35 @@ body
     transition: background-color 5000s ease-in-out 0s, caret-color 0s
     box-shadow: 0 0 0 1000px #191f28 inset
 
-// 密码框右侧的显隐按钮：绝对定位在输入框内，不吃 Tab 焦点
+// 密码框右侧的显隐按钮：绝对定位在输入框内，不吃 Tab 焦点。
+// 20260922 起是眼睛图标（与后台"修改密码"的 Input.Password 同一套 Eye/EyeInvisible），
+// 不再是「显示/隐藏」两个字——文字按钮既要比图标占更多横向空间，也和页面其它图标控件
+// 不是一套语言。字号即图标尺寸（antd 图标走 font-size），故按钮是 26×26 的方框。
 .field-pwd
   .pwd-toggle
     position: absolute
-    right: 10px
-    bottom: 11px
+    right: 8px
+    bottom: 7px
+    display: flex
+    align-items: center
+    justify-content: center
+    width: 26px
+    height: 26px
     padding: 0
-    color: rgba(255,255,255,.45)
-    font-size: 12px
+    color: rgba(255,255,255,.42)
+    font-size: 16px
     border: none
+    border-radius: 6px
     background: none
     cursor: pointer
-    transition: color .2s
+    transition: color .2s, background-color .2s
 
     &:hover
       color: #f0c987
+      background: rgba(255,255,255,.07)
 
   input
-    padding-right: 52px
+    padding-right: 42px
 
 .login-submit
   width: 100%
@@ -195,8 +205,9 @@ body
       color: #f0c987
 
 // ── 提示弹窗（注册 / 忘记密码）─────────────────────────────
-// 弹窗挂在 body 上（antd Portal），不继承 .login-page 的样式，所以这里用
-// 顶层选择器；正文是深色底上的默认配色，只调排版与页脚按钮。
+// 弹窗挂在 body 上（antd Portal），不继承 .login-page 的样式，所以这里用顶层选择器。
+// 底色不是这里定的：两个 Modal 都套了 ConfigProvider 的 darkAlgorithm（见 index.tsx），
+// 否则默认浅底会让下面这些浅色字直接看不见。这里只管排版与自绘的页脚/表单控件。
 .login-modal-body
   text-align: center
   color: rgba(255,255,255,.75)
@@ -248,6 +259,10 @@ body
     &:hover
       filter: brightness(1.05)
 
+    &:disabled
+      opacity: .62
+      cursor: not-allowed
+
 .login-reset-form
   display: flex
   flex-direction: column
@@ -258,19 +273,67 @@ body
   p
     margin: 0 0 4px
 
-  input
-    padding: 10px 12px
-    color: #fff
-    border: 1px solid rgba(255,255,255,.16)
-    border-radius: 8px
-    background: rgba(255,255,255,.06)
+  // 「拿不到恢复码」的兜底路径：跳转提示归正文，动作才放页脚（页脚只有一个"取消"）
+  .login-modal-hint
+    margin: -2px 0 2px
+    color: rgba(255,255,255,.42)
+    font-size: 12px
 
+    a
+      margin-left: 4px
+      color: #f0c987
+      text-decoration: none
+
+      &:hover
+        text-decoration: underline
+
+  // 宽度与盒模型必须显式写：这几个 input 是 flex 列的直接子项，默认 content-box 时
+  // padding 会加到等宽之外，整排输入框会横向溢出弹窗（20260922 用户实测的布局错位）。
+  input
+    width: 100%
+    padding: 10px 12px
+    box-sizing: border-box
+    color: #fff
+    font-size: 14px
+    border: 1px solid rgba(255,255,255,.16)
+    border-radius: 10px
+    outline: none
+    background: rgba(255,255,255,.06)
+    transition: border-color .25s, box-shadow .25s
+
+    &::placeholder
+      color: rgba(255,255,255,.28)
+
+    // 与登录卡片上的输入框同一套聚焦样式（金边 + 外发光），别两处各写一份观感
+    &:focus
+      border-color: #f0c987
+      box-shadow: 0 0 0 3px rgba(240,196,110,.16)
+
+    &:disabled
+      opacity: .6
+      cursor: not-allowed
+
+  // 与四个输入框同宽同左边界（居中的小按钮在一列等宽输入框下面会显得没对齐），
+  // 也与登录卡片上那个通栏主按钮是同一套观感
   button
-    align-self: center
-    padding: 8px 16px
+    align-self: stretch
+    padding: 10px
+    margin-top: 2px
+    color: #2a2113
+    font-size: 14px
+    font-weight: 600
     border: 0
-    border-radius: 8px
+    border-radius: 10px
+    background: linear-gradient(135deg, #f7dcae 0%, #e8b866 100%)
     cursor: pointer
+    transition: filter .2s
+
+    &:hover:not(:disabled)
+      filter: brightness(1.05)
+
+    &:disabled
+      opacity: .62
+      cursor: not-allowed
 
 @media (max-width: 480px)
   .login-box
