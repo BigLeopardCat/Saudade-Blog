@@ -765,6 +765,25 @@ fn render_exec_row(row: &serde_json::Value) -> String {
                 format!("删除分类「{}」：{}", name, change)
             }
         }
+        // 站内公告代发/改/删（20260922 第五轮）：同族，读回执顶层 meta
+        // （announcement_title/announcement_id/change）。**一律不带正文**——公告正文
+        // 可能有几百字，而 detail 列宽 300、读侧只取最近 8 行：把正文写进回执行会把
+        // 跨轮执行记忆的窗口占满，还会让"我发过这条公告"的正文跨轮被 narrator 复述。
+        "create_announcement" => {
+            format!("发布公告「{}」", row["announcement_title"].as_str().unwrap_or(""))
+        }
+        "update_announcement" => {
+            let title = row["announcement_title"].as_str().unwrap_or("");
+            let change = row["change"].as_str().unwrap_or("");
+            if change.is_empty() {
+                format!("修改公告「{}」", title)
+            } else {
+                format!("修改公告「{}」：{}", title, change)
+            }
+        }
+        "delete_announcement" => {
+            format!("删除公告「{}」", row["announcement_title"].as_str().unwrap_or(""))
+        }
         "set_article_status" => format!("修改文章 {}：{}", arg("article_id"), arrow(row)),
         "set_article_tags" => format!("修改文章 {} 标签：{}", arg("article_id"), arrow(row)),
         _ => format!("操作记录({})", tool),
@@ -1232,5 +1251,39 @@ mod tests {
             render_exec_row(&d),
             "删除分类「随笔」：它有 4 篇文章，会变成没有分类"
         );
+    }
+
+    /// 站内公告代发/改/删（20260922 第五轮）：同族，读回执**顶层 meta**
+    /// （announcement_title/change）。两条纪律：① 一律带标题，否则跨轮执行记忆里
+    /// 只剩「发布公告「」」这种读不懂的行；② **绝不把正文写进 detail**——正文可能有
+    /// 几百字，detail 列宽 300、读侧只取最近 8 行，塞进去会把窗口占满，还会让
+    /// narrator 跨轮把正文当"我说过的话"复述。
+    #[test]
+    fn exec_row_announcement_ops() {
+        let c = json!({"tool": "create_announcement",
+                       "args": {"title": "维护通知", "content": "今晚 23 点维护"},
+                       "op": "announcement_create", "announcement_id": "7",
+                       "announcement_title": "维护通知"});
+        assert_eq!(render_exec_row(&c), "发布公告「维护通知」");
+        // 改名：主语用**新**名字，change 里写的是"原「旧名」"——两边都写新名会读不出
+        // 改之前叫什么（见 agent 侧 tools/base._announce_change 的注释）
+        let u = json!({"tool": "update_announcement", "args": {"title": "维护通知"},
+                       "op": "announcement_update", "announcement_title": "维护改期",
+                       "change": "改名（原「维护通知」）"});
+        assert_eq!(
+            render_exec_row(&u),
+            "修改公告「维护改期」：改名（原「维护通知」）"
+        );
+        let body = json!({"tool": "update_announcement", "args": {"title": "维护通知"},
+                          "op": "announcement_update", "announcement_title": "维护通知",
+                          "change": "正文已更新"});
+        assert_eq!(render_exec_row(&body), "修改公告「维护通知」：正文已更新");
+        // change 缺失（旧回执 / 生成失败）退化成不带描述的动作行，不渲染空冒号
+        let bare = json!({"tool": "update_announcement", "op": "announcement_update",
+                          "announcement_title": "维护通知"});
+        assert_eq!(render_exec_row(&bare), "修改公告「维护通知」");
+        let d = json!({"tool": "delete_announcement", "op": "announcement_delete",
+                       "announcement_title": "维护通知"});
+        assert_eq!(render_exec_row(&d), "删除公告「维护通知」");
     }
 }
