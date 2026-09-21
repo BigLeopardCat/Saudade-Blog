@@ -14,6 +14,7 @@ pub mod conversation;
 pub mod monitor;
 pub mod sitemap;
 pub mod graph;
+pub mod stats;
 
 use axum::{
     routing::{get, post, delete, put},
@@ -201,8 +202,14 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/temp-users/:id", delete(temp_user::delete_temp_user))
           .route("/api/temp-users/:id/password", post(temp_user::change_password))
         
+        // 只读统计（20260921）：agent「管理助手」的用户数据报表供数。
+        // 挂在守卫域内 ⇒ 自动只有 admin 拿得到（agent 以发起人身份代调，见 routes/stats.rs 头注）。
+        // 独立前缀 /api/protected/stats/ 而不塞进某个既有资源下：它是聚合视图，
+        // 不属于 notes/tags/users 任何一族的 CRUD。
+        .route("/api/protected/stats/users", get(stats::user_stats))
+
         // WebSettings
-        .route("/api/protected/websetting", 
+        .route("/api/protected/websetting",
             get(web_info::get_web_settings)
             .post(web_info::update_web_info)
         )

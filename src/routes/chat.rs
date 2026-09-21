@@ -616,6 +616,13 @@ fn render_exec_row(row: &serde_json::Value) -> String {
         "list_categories" => "查看分类".to_string(),
         "list_tags" => "查看标签".to_string(),
         "get_weather" => format!("查看天气「{}」", arg("location")),
+        // 管理助手报表类（20260921）：措辞与 agent 侧 server.py _NOARG_VERB 同源。
+        // 这几个必须显式列出——漏了会落进默认分支，把 `操作记录(get_server_status)`
+        // 这种内部工具名连同下划线写进 execution_log，narrator 跨轮读到会照抄给用户。
+        "get_server_status" => "查看服务器状态".to_string(),
+        "get_service_health" => "查看服务健康".to_string(),
+        "get_moderation_status" => "查看审核状况".to_string(),
+        "get_user_stats" => "查看用户统计".to_string(),
         _ => format!("操作记录({})", tool),
     };
     let detail = detail.replace('[', "「").replace(']', "」");
