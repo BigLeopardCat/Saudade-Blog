@@ -567,11 +567,44 @@ async fn save_assistant_reply(
     }
 }
 
+/// 写操作行的执行身份前缀（20260921 第二轮，管理助手）。
+///
+/// detail 进生产库、之后又被注入回 narrator 的上下文，写操作**必须**留得下
+/// "这是谁动的"——那是审计记录唯一的存在形式（用户拍板"零迁移：写进 detail"）。
+/// 取不到角色（旧回执 / 字段缺失）返回**空串**而不是"访客"：写操作从不由访客
+/// 发起，把管理员的操作标成访客是伪造审计记录，宁可不写前缀。
+/// 只落角色、**不落 uid**（uid 会进生产库并被 narrator 念出来）。
+fn actor_prefix(row: &serde_json::Value) -> String {
+    match row["principal_role"].as_str().unwrap_or("") {
+        "admin" => "以管理员身份 · ".to_string(),
+        "secretary" => "以秘书身份 · ".to_string(),
+        _ => String::new(),
+    }
+}
+
+/// 变更前 → 变更后（agent 侧回执顶层 before/after，均为字符串）。
+/// 任一侧缺失就只显示有的那侧；两侧都缺 → 空串（调用方自己带上"修改文章 N："）。
+fn arrow(row: &serde_json::Value) -> String {
+    let before = row["before"].as_str().unwrap_or("");
+    let after = row["after"].as_str().unwrap_or("");
+    match (before.is_empty(), after.is_empty()) {
+        (false, false) => format!("{} → {}", before, after),
+        (false, true) => before.to_string(),
+        (true, false) => after.to_string(),
+        (true, true) => String::new(),
+    }
+}
+
 /// 跨轮执行记忆渲染（20260904）：checker 验收回执行 → 中文动作行，写时一次定稿、
 /// 读时零映射（execution_log.detail 落的就是这里的产物，prepare_chat 直取拼串）。
 /// 输入 = Python agent __EXEC__ 帧里的 {skill,tool,args,result,ts}。动作词映射
 /// 按 tool 名；内容取自 args（文案注入后值——device_oled_display 的 args.text 即
 /// 实际屏文）；残余 [ ] 归一为「」（容 args 里带方括号的内容），截 ≤120 字。
+///
+/// 20260921 第二轮起，**写操作**（write.console）的回执另带顶层
+/// principal_role/op/article_id/before/after/tag_name/level（键名是 Python 写、
+/// Rust 读的跨语言契约，见 agent/graph.py 的 _RCPT_META_KEYS；两侧都要同步改）。
+/// 全部按字符串取——agent 侧落库前统一 str()，不留 int/str 混装。
 fn render_exec_row(row: &serde_json::Value) -> String {
     let tool = row["tool"].as_str().unwrap_or("");
     let args = row["args"].as_object().cloned().unwrap_or_default();
@@ -623,8 +656,27 @@ fn render_exec_row(row: &serde_json::Value) -> String {
         "get_service_health" => "查看服务健康".to_string(),
         "get_moderation_status" => "查看审核状况".to_string(),
         "get_user_stats" => "查看用户统计".to_string(),
+        // 后台管理面（20260921 第二轮）：读一个 + 写三个。写行**刻意不带《标题》**
+        // ——回执会经 recent_executions 注入下一轮上下文，带《文章标题》会被读成
+        // "我读过这篇"的跨轮指代证据（rule 6b 的取值指代走 digest 那套）。
+        // 措辞与 agent 侧 server.py _NOARG_VERB / _tool_action_text 同源。
+        "list_admin_notes" => "查看后台文章列表".to_string(),
+        "create_tag" => {
+            let name = arg("tag_name");
+            let lvl = if row["level"].as_str().unwrap_or("1") == "2" { "二级" } else { "一级" };
+            if row["op"].as_str().unwrap_or("") == "tag_reuse" {
+                format!("复用已有{}标签「{}」", lvl, name)
+            } else {
+                format!("新建{}标签「{}」", lvl, name)
+            }
+        }
+        "set_article_status" => format!("修改文章 {}：{}", arg("article_id"), arrow(row)),
+        "set_article_tags" => format!("修改文章 {} 标签：{}", arg("article_id"), arrow(row)),
         _ => format!("操作记录({})", tool),
     };
+    // 写操作带执行身份前缀（20260921 第二轮）：非写回执没有 principal_role，
+    // actor_prefix 返回空串，行为与改动前逐字节一致。
+    let detail = format!("{}{}", actor_prefix(row), detail);
     let detail = detail.replace('[', "「").replace(']', "」");
     // 实体摘要（20260920，agent/entities.py 产）：数据工具取回的条目/计数/候选标题，
     // 随回执落库——工具帧只活当轮，不落这一行则下轮「第二条写了什么」只能把工具再跑
