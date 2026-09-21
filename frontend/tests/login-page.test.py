@@ -134,7 +134,7 @@ with sync_playwright() as p:
     check("无 JS 运行时报错", not errs, "; ".join(errs[:2]))
     check(".login-box 存在", pg.locator(".login-box").count() == 1)
     check("标题 Saudade Blog", "Saudade Blog" in pg.locator(".login-brand h2").inner_text())
-    check("副标题存在（登录后进入后台管理）", "后台管理" in pg.locator(".login-sub").inner_text())
+    check("副标题存在（登录后体验完整服务）", "登录后体验完整服务" in pg.locator(".login-sub").inner_text())
     check("可见 label：账号 / 密码",
           [t.strip() for t in pg.locator(".field label").all_inner_texts()] == ["账号", "密码"])
     check("两个输入框 id 正确", pg.locator("input#account").count() == 1 and pg.locator("input#password").count() == 1)
@@ -179,12 +179,12 @@ with sync_playwright() as p:
     print("④ 注册入口 → 合规提示弹窗")
     pg.click(".login-links button:nth-child(3)")
     pg.wait_for_timeout(250)
-    dlg = pg.locator('.ant-modal-mock[data-title="注册暂不开放"]')
-    check("弹窗打开且标题=注册暂不开放", dlg.count() == 1)
+    dlg = pg.locator('.ant-modal-mock[data-title="注册账号"]')
+    check("弹窗打开且标题=注册账号", dlg.count() == 1)
     body = dlg.inner_text() if dlg.count() else ""
-    check("含合规要点（不对外收集个人信息）", "不对外收集个人信息" in body)
+    check("含合规要点（账号服务所必需）", "账号服务所必需" in body)
     check("含「无需登录」（访客功能说明）", "无需登录" in body)
-    check("含「由博主统一开通」", "由博主统一开通" in body)
+    check("含「账号安全维护」", "账号安全维护" in body)
     check("两个出口按钮：去河灯集留言 / 知道了",
           [t.strip() for t in pg.locator(".login-modal-foot button").all_inner_texts()] == ["去河灯集留言", "知道了"])
     pg.click(".login-modal-primary")
@@ -198,7 +198,12 @@ with sync_playwright() as p:
     dlg2 = pg.locator('.ant-modal-mock[data-title="重置密码"]')
     check("弹窗打开且标题=重置密码", dlg2.count() == 1)
     b2 = dlg2.inner_text() if dlg2.count() else ""
-    check("说明不支持自助重置", "不支持自助重置密码" in b2)
+    check("说明需要一次性恢复码", "一次性恢复码" in b2)
+    check("找回密码表单字段齐全",
+          dlg2.locator("input").count() == 4
+          and dlg2.locator("input[placeholder='用户名']").count() == 1
+          and dlg2.locator("input[placeholder='一次性恢复码']").count() == 1
+          and dlg2.locator("input[placeholder='新密码（至少 8 位）']").count() == 1)
     check("给出人工途径（河灯集留言）", "河灯集" in b2)
     pg.click(".login-modal-ghost")
     pg.wait_for_timeout(200)
