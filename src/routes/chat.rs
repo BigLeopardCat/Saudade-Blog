@@ -708,7 +708,10 @@ fn render_exec_row(row: &serde_json::Value) -> String {
         // 措辞与 agent 侧 server.py _NOARG_VERB / _tool_action_text 同源。
         "list_admin_notes" => "查看后台文章列表".to_string(),
         "create_tag" => {
-            let name = arg("tag_name");
+            // tag_name 是回执**顶层** meta（与 op/level 同族，见 _RCPT_META_KEYS），
+            // 不是工具实参——曾误读 args["tag_name"]（该键不存在），生产上每次新建
+            // 标签都渲染成「新建一级标签「」」（名字恒空），跨轮执行记忆跟着失真。
+            let name = row["tag_name"].as_str().unwrap_or("");
             let lvl = if row["level"].as_str().unwrap_or("1") == "2" { "二级" } else { "一级" };
             if row["op"].as_str().unwrap_or("") == "tag_reuse" {
                 format!("复用已有{}标签「{}」", lvl, name)
@@ -1105,4 +1108,42 @@ pub async fn chat_stream_handler(
         ],
         Body::from_stream(body_stream),
     ).into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// create_tag 回执的 `tag_name`/`op`/`level` 全在**顶层**（agent 侧 `_RCPT_META_KEYS`），
+    /// args 里只有 title/parent_id/color。曾误读 `args["tag_name"]`（该键不存在）
+    /// ⇒ 生产上每次新建标签都渲染成「新建一级标签「」」。
+    #[test]
+    fn exec_row_create_tag_reads_toplevel_name() {
+        let row = json!({
+            "tool": "create_tag",
+            "args": {"title": "大笨狗"},
+            "op": "tag_create", "level": "1", "tag_name": "大笨狗", "tag_id": "15"
+        });
+        assert_eq!(render_exec_row(&row), "新建一级标签「大笨狗」");
+    }
+
+    #[test]
+    fn exec_row_create_tag_reuse_level2() {
+        let row = json!({
+            "tool": "create_tag",
+            "args": {"title": "泠月喵"},
+            "op": "tag_reuse", "level": "2", "tag_name": "泠月喵"
+        });
+        assert_eq!(render_exec_row(&row), "复用已有二级标签「泠月喵」");
+    }
+
+    /// 名字缺失（旧回执 / 提取失败）时渲染空名，但**绝不**回落去读 args["title"]
+    /// 或画上内部键名——args 的 title 是"请求参数"，与"实际建成的标签名"不是一回事。
+    #[test]
+    fn exec_row_create_tag_missing_name_stays_empty() {
+        let row = json!({"tool": "create_tag", "args": {"title": "X"},
+                         "op": "tag_create", "level": "1"});
+        assert_eq!(render_exec_row(&row), "新建一级标签「」");
+    }
 }
