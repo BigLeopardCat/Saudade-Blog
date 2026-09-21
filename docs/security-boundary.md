@@ -55,7 +55,8 @@
 ### 2.2 agent → Rust 的代调通道（20260921 新增，管理助手）
 
 上面那条是 **Rust → agent**；20260921 起反方向多了一条：agent 要读后台数据（留言审核状况、
-用户统计），于是**以本轮发起人的身份**去调 `/api/protected/*`。
+用户统计），于是**以本轮发起人的身份**去调 `/api/protected/*`。同日第二轮把这条通道的
+**写**方向也开了（标签创建、文章状态/置顶、文章标签，见 §2.2 末段）。
 
 - **怎么代**：`tools/base.py` 用本轮的 uid 现签一条 **60 秒** HS256 JWT（payload 只有
   `sub`/`exp`/`role`，**不带 `aud`**——Rust 的 `verify_token` 用 `Validation::default()`，
@@ -63,13 +64,20 @@
 - **为什么 Rust 零改动**：`middleware::auth_guard` 本来就按 `claims.sub` **查库**判角色
   （与 §2.1 同一条纪律：不信 token 里的 role）。所以 token 里的 `role` 只是日志可读，
   **没有任何权威**——伪造不了权限，能通就说明库里这个人真是 admin。
-- **agent 侧还有一道**：这条通道对应的 scope 是 `admin.console`，属 `_HARD_SCOPES`——**不吃
-  `AGENT_AUTHZ_ENFORCE` 的 shadow 开关**。理由：shadow 是为了观测"既有流量会不会被拦"，
-  而管理助手是纯新增能力、没有观测期，shadow 期越权是可被利用的窗口。
-  四个工具同时**不进 planner 点名白名单**（结构上点不到），非 admin 的 planner 上下文里
-  也看不到对应技能。
+- **agent 侧还有一道**：这条通道对应的 scope 是 `admin.console`（读）/ `write.console`（写），
+  两者都属 `_HARD_SCOPES`——**不吃 `AGENT_AUTHZ_ENFORCE` 的 shadow 开关**。理由：shadow 是
+  为了观测"既有流量会不会被拦"，而管理助手是纯新增能力、没有观测期，shadow 期越权是可被
+  利用的窗口。工具同时**不进 planner 点名白名单**（结构上点不到），非 admin 的 planner
+  上下文里也看不到对应技能。
 - **失败取向**：401/403 → `unavailable("当前身份无权访问后台数据")`，**不返回空**——
   空结果在下游会被读成"没有待审留言"（把"没权限"说成"没问题"是这类功能最坏的失败形态）。
+- **写方向多两道闸**（`_admin_post` 同一通道）：① `uid <= 0` **一个请求都不发**（身份不明时
+  绝不猜——这条同时是 golden 负向用例的安全底座）；② 除了 scope 授权，还要过**同意闸**
+  （`CONSENT_SCOPES`，本轮消息必须是命令句）与**目标有据**校验（`article_id` 须来自本轮读到的
+  帧/页面上下文/用户显式点到的数字，否则 `unknown_target`）。**一切"没做成"必须是
+  `unavailable`**：Rust 的 `ApiResponse::error` 是 **HTTP 200 + code 500**，只看状态码会把
+  "创建失败"读成成功，而成功回执会作为**系统确认事实**落进 `execution_log` 并在下一轮注入。
+  详见 `saudade-blog-agent/docs/secretary.md` §5.2。
 
 **这条通道带来的新注入面（必须知道）**：agent 从此会读**攻击者可控的文本**——待审留言的
 正文会进入工具帧。本轮能力全是只读，注入最多导致**答错**、不导致**做错**；工具侧对这类文本
@@ -138,7 +146,7 @@
 | 没有**按用户/IP 的限流** | 单个已登录用户可以连续发起对话占满并发槽 | Rust 侧也没有；只有总并发闸 |
 | **分块传输**（无 Content-Length）不过体积闸 | 构造性的大 body 能绕过 §4 的第一行 | 只靠字段级限额兜，已写在代码注释里 |
 | agent 端点**无服务间凭据** | 本机任意进程可调（含 `/chat/stream`） | 依赖回环边界；跨机部署前必须补。**"我代表谁"已由 §2.1 的断言解决，这条说的是"谁在调我"** |
-| **写操作的事前授权只覆盖了一半** | 设备屏显等"用户眼前"的写仍然只有"调用前查断连"这道防护；**代用户写站点内容**这一类已有人在回路闸，但**还没有这样的工具**，所以闸今天空转 | 20260920 起 agent 侧落地：需确认的 scope（`CONSENT_SCOPES = {write.content}`）未获用户**本轮消息**明确确认 → 产 `__ERROR__: 待确认[consent_required]` 帧、**不调用工具**，且 gate 5a 让叙述侧无法把它说成"已完成"（`agent/authz.py` + `test_authz.py` ⑨，见 `saudade-blog-agent/docs/secretary.md` §3.4）。**剩下的**：写通道凭据（④）、"以谁的名义"的审计落库（⑥）——`execution_log` 是事后记忆，不是审批 |
+| **写操作的事前授权只覆盖了一半** | 设备屏显等"用户眼前"的写仍然只有"调用前查断连"这道防护；**代用户写站点内容**这一类已有人在回路闸，但**还没有这样的工具**，所以闸今天空转 | 20260920 起 agent 侧落地：需确认的 scope（`CONSENT_SCOPES`）未获用户**本轮消息**明确确认 → 产 `__ERROR__: 待确认[consent_required]` 帧、**不调用工具**，且 gate 5a 让叙述侧无法把它说成"已完成"（`agent/authz.py` + `test_authz.py` ⑨，见 `saudade-blog-agent/docs/secretary.md` §3.4）。**20260921 第二轮**：后台写（标签创建/文章状态/文章标签）落在 `write.console`，闸**第一次真正承重**；"以谁的名义"的审计同步落地（写回执带 `principal_role`，零迁移渲染进 `execution_log.detail`）。**剩下的**：非 admin 收到写命令时**拒答措辞不稳**（约六到七成明确说"只有管理员"，其余被当 `content_query` 后转成"站内没有"被 gate 兜成 fallback——安全性质成立、措辞不干净），收口方向是给 `write.console` 加确定性拒绝，**待拍板**（§5.2 缺口③） |
 | 工具错误只分了**两类**（empty / unavailable），没有统一错误码枚举 | 想按错误类型做重试策略（超时 vs 鉴权失败）时还得读文案 | 20260916 已落地两类 + checker 的 `unavailable` 受阻码；更细的分类按需再加 |
 
 已完成（20260916，留档说明为什么值得做）：
@@ -173,4 +181,17 @@ curl -s -o /dev/null -w '%{http_code}\n' -H 'Authorization: Bearer bogus.token.h
 
 # ⑥ 管理助手活体探针（真打 8010，两个身份各三问；uid 由参数传，不入库）
 cd saudade-blog-agent && .venv/bin/python eval/probe_admin_report.py --uid <管理员的 uid>
+
+# ⑦ 管理助手**写**通道活体探针（默认零真写：非管理员写指令 / 管理员疑问句 / 打不存在的 id）
+#    真写（草稿置顶来回、标签加减、经生产入口真写一轮 + 跨轮复述）需显式 --allow-write；
+#    删临时标签会触发全表 prune_note_tags（不可回滚），另需 --allow-tag-delete
+cd saudade-blog-agent && .venv/bin/python eval/probe_admin_write.py --uid <管理员的 uid>
+
+# ⑧ 写侧不变量（秒级、零网络；与 §4 那组单测同源）
+cd saudade-blog-agent && .venv/bin/python test_admin_write.py
 ```
+
+**写通道不变量（写进代码、不在文档里承诺）**：`uid <= 0` → **不发请求**；非 admin →
+`_HARD_SCOPES` 硬拦（`authz_enforce=False` 下也拦，测试锁死）；疑问/假设句 → `consent_required`
+帧、零调用；目标无据 → `unknown_target`；任何失败路径 → `unavailable`（**绝不**把失败写成
+`ok("创建失败…")`——那会变成下一轮被念成"已创建"的"系统确认事实"）。
