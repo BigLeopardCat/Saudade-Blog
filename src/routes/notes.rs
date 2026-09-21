@@ -246,16 +246,56 @@ fn note_hits_keyword(n: &note::Model, kw: &str, tag_names: &[String]) -> bool {
 ///
 /// 丢弃长度 1 且非 ASCII 字母数字的 term：中文单字/标点（"的/了/是"）无语义判别力，
 /// 留着会把整库拉进候选。单词查询（无空白）走同一路径，行为与切词前一致。
+///
+/// **二次切分（20260921）**：空白切完还要在同一段内按**脚本类别**再切一次（见 `script_runs`）
+/// ——中文和 ASCII 混排是用户口语的常态，`search_notes("ESP32固件")` 这种整串在标题里
+/// 并不连续出现（标题是《ESP32-S3-OBC固件接入参考》），不切就是**假否定**（agent 如实回答
+/// "站内没有这篇"）。切完仍走「档位」判定（全部 term 命中才算全中），严格度不降。
+///
+/// 长度规则对**单字符段**收紧了一格：只保留"整段查询本身就只有一个字符"的情形
+/// （用户就打了 `1` / `a`）。混排切出来的单字符残片（`第1章` 里的 `1`）一律丢弃——
+/// 那是切分副产品，留着会让 `第1章` 退化成"搜所有含数字 1 的文章"。
 fn split_terms(kw: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for piece in kw.split_whitespace() {
-        let t = piece.to_lowercase();
-        if t.chars().count() < 2 && !t.chars().all(|c| c.is_ascii_alphanumeric()) {
-            continue;
+        let piece = piece.to_lowercase();
+        let whole_piece = piece.chars().count() == 1;
+        for t in script_runs(&piece) {
+            if t.chars().count() < 2 && !(whole_piece && t.chars().all(|c| c.is_ascii_alphanumeric())) {
+                continue;
+            }
+            if !out.iter().any(|x| x == &t) {
+                out.push(t);
+            }
         }
-        if !out.iter().any(|x| x == &t) {
-            out.push(t);
+    }
+    out
+}
+
+/// 一段文本按**脚本类别**切成连续段：ASCII 字符算一类，其余（汉字 / 全角标点 / 假名 / emoji）算另一类。
+/// 纯 ASCII 段或纯非 ASCII 段切出来仍是它自己（二次切分对它们零影响）。
+///
+/// 为什么按类别切、而不是"凡非字母数字都当分隔符"：`C++` / `ESP32-S3` / `node.js` 里的
+/// `+ - .` 是词的一部分，按标点切会把它们剁成单字符残片，其中 `c` 会命中几乎整个库。
+/// **只有跨脚本才切**。
+fn script_runs(piece: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut cur_is_ascii: Option<bool> = None;
+    for ch in piece.chars() {
+        let is_ascii = ch.is_ascii();
+        if let Some(prev) = cur_is_ascii {
+            if prev != is_ascii {
+                out.push(std::mem::take(&mut cur));
+                cur_is_ascii = Some(is_ascii);
+            }
+        } else {
+            cur_is_ascii = Some(is_ascii);
         }
+        cur.push(ch);
+    }
+    if !cur.is_empty() {
+        out.push(cur);
     }
     out
 }
@@ -968,4 +1008,45 @@ pub async fn get_note_for_edit(
     };
 
     (StatusCode::OK, Json(ApiResponse::success(dto))).into_response()
+}
+
+#[cfg(test)]
+mod split_terms_tests {
+    use super::split_terms;
+
+    fn terms(kw: &str) -> Vec<String> {
+        split_terms(kw)
+    }
+
+    /// 纯中文 / 纯 ASCII / 多空白段：**与二次切分前逐字一致**（不许有行为漂移）。
+    #[test]
+    fn unchanged_for_single_script() {
+        assert_eq!(terms("架构"), vec!["架构"]);
+        assert_eq!(terms("ESP32-S3 OBC"), vec!["esp32-s3", "obc"]);
+        assert_eq!(terms("C++"), vec!["c++"]);
+        assert_eq!(terms("node.js"), vec!["node.js"]);
+        assert_eq!(terms("架构 设计"), vec!["架构", "设计"]);
+        assert_eq!(terms("1"), vec!["1"]);          // 整段就是一个字符：既有行为保留
+        assert_eq!(terms("a b"), vec!["a", "b"]);
+        assert_eq!(terms("   "), Vec::<String>::new());
+        assert_eq!(terms("的"), Vec::<String>::new()); // 单字中文无语义判别力
+        assert_eq!(terms("架构架构 架构"), vec!["架构架构", "架构"]);
+    }
+
+    /// 中英混排按脚本类别切开（20260921 修的核心）：整串子串匹配对口语混排是假否定。
+    #[test]
+    fn splits_mixed_script() {
+        assert_eq!(terms("ESP32固件"), vec!["esp32", "固件"]);
+        assert_eq!(terms("ESP32-S3-OBC固件接入"), vec!["esp32-s3-obc", "固件接入"]);
+        // 中间夹一个单字中文：切成三段后该单字被长度规则丢掉，剩下的正是有判别力的两词
+        assert_eq!(terms("Python的asyncio"), vec!["python", "asyncio"]);
+        // ASCII 标点不断词（只有跨脚本才切）——"架构-设计" 切在 `-` 上是因为它两侧是不同脚本
+        assert_eq!(terms("架构-设计"), vec!["架构", "设计"]);
+    }
+
+    /// 混排切出来的**单字符残片**必须丢掉：`第1章` 若留下 `1`，就退化成"搜所有含数字 1 的文章"。
+    #[test]
+    fn drops_single_char_fragments_from_split() {
+        assert_eq!(terms("第1章"), Vec::<String>::new());
+    }
 }

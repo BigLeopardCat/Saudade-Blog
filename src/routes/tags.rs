@@ -1,11 +1,45 @@
 use axum::{Json, extract::State};
-use sea_orm::{EntityTrait, ColumnTrait, QueryFilter, Set, ActiveModelTrait};
+use sea_orm::{EntityTrait, ColumnTrait, QueryFilter, QuerySelect, Set, ActiveModelTrait};
+use sea_orm::DatabaseConnection;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use crate::entity::{note, tag_one, tag_two};
 use crate::routes::AppState;
 use crate::utils::ApiResponse;
+
+/// 每个标签的**公开可见**文章数 → `{tag_id: count}`（20260921）。
+///
+/// 口径与 `notes.rs::list_public_notes` **逐字一致**（`is_public = true` 且 `status != 'draft'`）
+/// ——改一处必须同步另一处，否则标签上写着「5 篇」、点进去只有 3 篇。
+/// `note.tags` 存的是逗号分隔的标签 **id** 串（不是名字）；同一篇里重复出现的 id 只算一次
+/// （库里有历史数据一个 id 写两遍）。
+///
+/// 只 select `tags` 一列：这个接口是公开的、标签页每次都会拉，正文（单篇可达几十 KB）没必要读。
+async fn public_note_tag_counts(db: &DatabaseConnection) -> HashMap<i32, i64> {
+    let rows: Vec<Option<String>> = note::Entity::find()
+        .select_only()
+        .column(note::Column::Tags)
+        .filter(note::Column::IsPublic.eq(true))
+        .filter(note::Column::Status.ne("draft"))
+        .into_tuple::<Option<String>>()
+        .all(db)
+        .await
+        .unwrap_or_default();
+    let mut counts: HashMap<i32, i64> = HashMap::new();
+    for tags in rows.into_iter().flatten() {
+        let mut seen: Vec<i32> = Vec::new();
+        for piece in tags.split(',') {
+            if let Ok(id) = piece.trim().parse::<i32>() {
+                if !seen.contains(&id) {
+                    seen.push(id);
+                    *counts.entry(id).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+    counts
+}
 
 #[derive(Serialize)]
 pub struct TagOneDto {
@@ -14,6 +48,10 @@ pub struct TagOneDto {
     pub title: String,
     pub color: String,
     pub level: i32,
+    /// 该标签下的**公开可见**文章数（20260921）。只统计**显式带了这个 id** 的文章，
+    /// 不含"父标签自动继承子标签"之类的展开——`note.tags` 里写了什么就是什么。
+    #[serde(rename = "noteCount")]
+    pub note_count: i64,
     // children not needed for getTagOne list as per frontend mapping?
     // Frontend maps manually?
     // "children: []" in frontend mapper implies it builds tree locally.
@@ -34,17 +72,22 @@ pub struct TagTwoDto {
     /// 父标签 **id**（= `tag_two.tag_one_id`），前端建树的正确键。
     #[serde(rename = "fatherKey")]
     pub father_key: Option<i32>,
+    /// 该标签下的**公开可见**文章数（20260921），语义同 `TagOneDto::note_count`。
+    #[serde(rename = "noteCount")]
+    pub note_count: i64,
 }
 
 pub async fn list_tags_one(
     State(state): State<Arc<AppState>>,
 ) -> Json<ApiResponse<Vec<TagOneDto>>> {
+    let counts = public_note_tag_counts(&state.db).await;
     let t1s = tag_one::Entity::find().all(&state.db).await.unwrap_or(vec![]);
     let dtos = t1s.into_iter().map(|t| TagOneDto {
         id: t.id,
         title: t.name,
         color: t.color.unwrap_or_default(),
         level: 1,
+        note_count: counts.get(&t.id).copied().unwrap_or(0),
     }).collect();
     Json(ApiResponse::success(dtos))
 }
@@ -52,12 +95,13 @@ pub async fn list_tags_one(
 pub async fn list_tags_two(
     State(state): State<Arc<AppState>>,
 ) -> Json<ApiResponse<Vec<TagTwoDto>>> {
+     let counts = public_note_tag_counts(&state.db).await;
      let t2s = tag_two::Entity::find().find_with_related(tag_one::Entity).all(&state.db).await.unwrap_or(vec![]);
-     
+
      let dtos = t2s.into_iter().map(|(t2, t1s)| {
          let t1 = t1s.into_iter().next();
          let father_name = t1.as_ref().map(|x| x.name.clone()).unwrap_or_default();
-         
+
          TagTwoDto {
              id: t2.id,
              title: t2.name,
@@ -65,6 +109,7 @@ pub async fn list_tags_two(
              level: 2,
              father_tag: father_name,
              father_key: t2.tag_one_id,
+             note_count: counts.get(&t2.id).copied().unwrap_or(0),
          }
      }).collect();
      
