@@ -409,6 +409,9 @@
         ctx.state.items = [];
         ctx.state.live = {};
         if (messages) messages.innerHTML = '';
+        // 清空消息区等于把确认卡片（#chat-ask）从文档里摘掉（20260921d）：同时
+        // 丢掉挂起的确认，否则 pendingAsk 还活着、下一轮收尾又会把它冒出来
+        ctx.state.pendingAsk = null;
         pullHistory(); // 无参：落最新非空会话或置空态（needCreate）
       };
 
@@ -519,6 +522,7 @@
         ctx.state.items = [];
         ctx.state.live = {};
         if (messages) messages.innerHTML = '';
+        ctx.state.pendingAsk = null;   // 同上：消息区一清，挂起的确认卡片随之作废
         pullHistory();
       });
       if (chatChannel) {
