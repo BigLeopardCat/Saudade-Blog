@@ -1,5 +1,6 @@
 import './index.sass';
-import { message, Modal } from 'antd';
+import { ConfigProvider, message, Modal, theme as antdTheme } from 'antd';
+import { EyeInvisibleOutlined, EyeOutlined } from '@ant-design/icons';
 import { useEffect, useState } from 'react';
 import * as React from 'react';
 import { useDispatch } from 'react-redux';
@@ -10,6 +11,21 @@ import UserData from "../../interface/UserData";
 import SeoHelmet from "../../components/SeoHelmet";
 
 type NoticeKind = 'register' | 'forgot' | null;
+
+// 弹窗配色：登录页是深色页面，而 antd 弹窗默认是浅色的（全站其余弹窗都长在浅色后台里，
+// 所以没有全局深色主题可用）⇒ 不套深色算法时，弹窗正文的浅色字全落在白底上，既"风格和
+// 外部不一致"，字也基本看不见（20260922 用户实测）。
+// 走官方途径（darkAlgorithm + 河灯金主色）而不是覆写 `.ant-modal-*` 的 CSS：antd v5 是
+// CSS-in-JS 注入，手写选择器得跟它拼特异性，且标题/关闭图标吃的是 token 而非一条
+// background——改一条治不了全身。
+const DARK_MODAL_THEME = {
+    algorithm: antdTheme.darkAlgorithm,
+    token: {
+        colorBgElevated: '#1b2330',   // 与登录卡片同族的墨蓝（不用 antd 默认的 #141414）
+        colorPrimary: '#e8b866',      // 河灯金深端，与 .login-submit 的渐变同源
+        borderRadius: 12,
+    },
+};
 
 const Login: React.FC = () => {
     const [account, setAccount] = useState<string>('');
@@ -32,6 +48,16 @@ const Login: React.FC = () => {
             navigate('/dashboard');
         }
     }, [navigate]);
+
+    // 关窗一律走这里：顺带清掉恢复表单的残留。恢复码是一次性的——留着上一次的码再提交
+    // 只会得到"账号或恢复码无效"，用户不知道为什么（20260922 修）。
+    const closeNotice = () => {
+        setNotice(null);
+        setResetUsername('');
+        setResetCode('');
+        setResetPassword('');
+        setResetPasswordAgain('');
+    };
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const { name, value } = e.target;
@@ -89,6 +115,8 @@ const Login: React.FC = () => {
 
     const handleResetPassword = async (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
+        // 回车也会走这条路，而按钮的 disabled 拦不住隐式提交（输入框仍可编辑）
+        if (resetLoading) return;
         if (resetPassword !== resetPasswordAgain) {
             messageApi.error('两次输入的新密码不一致');
             return;
@@ -105,12 +133,10 @@ const Login: React.FC = () => {
                 }),
             });
             const result = await response.json();
+            // 本仓的失败契约是 HTTP 200 + code 500，只看 response.ok 会把失败当成功
             if (response.ok && result.code === 200) {
                 messageApi.success('密码修改成功，请使用新密码登录');
-                setNotice(null);
-                setResetCode('');
-                setResetPassword('');
-                setResetPasswordAgain('');
+                closeNotice();
             } else {
                 messageApi.error(result.message || '恢复失败，请检查恢复码');
             }
@@ -120,20 +146,6 @@ const Login: React.FC = () => {
             setResetLoading(false);
         }
     };
-
-    // 提示弹窗的页脚：两个出口分得很清楚——"知道了"只关窗；"去河灯集留言"才跳转
-    // （antd 默认的 ok/cancel 里 cancel 还兼管遮罩点击，语义会串，所以自绘页脚）
-    const noticeFooter = (
-        <div className="login-modal-foot">
-            <button type="button" className="login-modal-ghost"
-                    onClick={() => { setNotice(null); navigate('/guestbook'); }}>
-                去河灯集留言
-            </button>
-            <button type="button" className="login-modal-primary" onClick={() => setNotice(null)}>
-                知道了
-            </button>
-        </div>
-    );
 
     return (
         <>
@@ -185,9 +197,10 @@ const Login: React.FC = () => {
                                 className="pwd-toggle"
                                 onClick={() => setShowPwd(v => !v)}
                                 aria-label={showPwd ? '隐藏密码' : '显示密码'}
+                                title={showPwd ? '隐藏密码' : '显示密码'}
                                 tabIndex={-1}
                             >
-                                {showPwd ? '隐藏' : '显示'}
+                                {showPwd ? <EyeInvisibleOutlined /> : <EyeOutlined />}
                             </button>
                         </div>
 
@@ -207,46 +220,107 @@ const Login: React.FC = () => {
                             href="/"
                             onClick={(e) => { e.preventDefault(); navigate('/'); }}
                         >
-                            ← 返回首页
+                            返回首页
                         </a>
                     </div>
                 </div>
 
-                {/* 注册：合规声明 */}
-                <Modal
-                    open={notice === 'register'}
-                    title="注册账号"
-                    centered
-                    onCancel={() => setNotice(null)}
-                    footer={noticeFooter}
-                >
-                    <div className="login-modal-body">
-                        <p>本站仅在提供账号服务所必需的范围内处理注册信息。</p>
-                        <ul>
-                            <li>注册信息仅用于登录、身份识别和账号安全维护；</li>
-                            <li>不会将账号信息出售、出租或用于与本站服务无关的用途；</li>
-                            <li>留言、说说、河灯等访客功能<b>无需登录</b>即可使用。</li>
-                        </ul>
-                    </div>
-                </Modal>
+                <ConfigProvider theme={DARK_MODAL_THEME}>
+                    {/* 注册：本站不开自助注册，这里只做合规声明，不给任何"去注册"的出口 */}
+                    <Modal
+                        open={notice === 'register'}
+                        title="注册账号"
+                        centered
+                        onCancel={closeNotice}
+                        footer={(
+                            <div className="login-modal-foot">
+                                <button type="button" className="login-modal-primary" onClick={closeNotice}>
+                                    知道了
+                                </button>
+                            </div>
+                        )}
+                    >
+                        <div className="login-modal-body">
+                            <p>本站<b>不开放自助注册</b>，账号由博主（管理员）在后台开设。</p>
+                            <ul>
+                                <li>留言、说说、河灯等访客功能<b>无需登录</b>即可使用；</li>
+                                <li>确实需要账号时，在河灯集留言说明来意，由博主开设后再把账号交给你；</li>
+                                <li>账号信息仅用于登录、身份识别和账号安全维护，不会出售、出租或用于与本站服务无关的用途。</li>
+                            </ul>
+                        </div>
+                    </Modal>
 
-                {/* 忘记密码：当前没有可靠的邮箱身份核验通道 */}
-                <Modal
-                    open={notice === 'forgot'}
-                    title="重置密码"
-                    centered
-                    onCancel={() => setNotice(null)}
-                    footer={noticeFooter}
-                >
-                    <form className="login-reset-form" onSubmit={handleResetPassword}>
-                        <p>请向管理员获取 15 分钟内有效的一次性恢复码。</p>
-                        <input required value={resetUsername} onChange={e => setResetUsername(e.target.value)} placeholder="用户名" autoComplete="username" />
-                        <input required value={resetCode} onChange={e => setResetCode(e.target.value)} placeholder="一次性恢复码" autoComplete="one-time-code" />
-                        <input required minLength={8} type="password" value={resetPassword} onChange={e => setResetPassword(e.target.value)} placeholder="新密码（至少 8 位）" autoComplete="new-password" />
-                        <input required minLength={8} type="password" value={resetPasswordAgain} onChange={e => setResetPasswordAgain(e.target.value)} placeholder="再次输入新密码" autoComplete="new-password" />
-                        <button type="submit" className="login-modal-primary" disabled={resetLoading}>{resetLoading ? '修改中…' : '确认修改密码'}</button>
-                    </form>
-                </Modal>
+                    {/* 忘记密码：无邮箱账号，只能靠管理员签发的一次性恢复码 */}
+                    <Modal
+                        open={notice === 'forgot'}
+                        title="重置密码"
+                        centered
+                        onCancel={closeNotice}
+                        footer={(
+                            <div className="login-modal-foot">
+                                <button type="button" className="login-modal-ghost" onClick={closeNotice}>
+                                    取消
+                                </button>
+                            </div>
+                        )}
+                    >
+                        <form className="login-reset-form" onSubmit={handleResetPassword}>
+                            <p>请向博主索取一次性恢复码（15 分钟内有效、只能用一次）。</p>
+                            <p className="login-modal-hint">
+                                拿不到恢复码？
+                                <a
+                                    href="/guestbook"
+                                    onClick={(e) => { e.preventDefault(); closeNotice(); navigate('/guestbook'); }}
+                                >
+                                    去河灯集留言
+                                </a>
+                            </p>
+                            <input
+                                required
+                                value={resetUsername}
+                                onChange={e => setResetUsername(e.target.value)}
+                                placeholder="用户名"
+                                aria-label="用户名"
+                                autoComplete="username"
+                                disabled={resetLoading}
+                            />
+                            <input
+                                required
+                                value={resetCode}
+                                onChange={e => setResetCode(e.target.value)}
+                                placeholder="一次性恢复码"
+                                aria-label="一次性恢复码"
+                                autoComplete="one-time-code"
+                                disabled={resetLoading}
+                            />
+                            <input
+                                required
+                                minLength={8}
+                                type="password"
+                                value={resetPassword}
+                                onChange={e => setResetPassword(e.target.value)}
+                                placeholder="新密码（至少 8 位）"
+                                aria-label="新密码"
+                                autoComplete="new-password"
+                                disabled={resetLoading}
+                            />
+                            <input
+                                required
+                                minLength={8}
+                                type="password"
+                                value={resetPasswordAgain}
+                                onChange={e => setResetPasswordAgain(e.target.value)}
+                                placeholder="再次输入新密码"
+                                aria-label="再次输入新密码"
+                                autoComplete="new-password"
+                                disabled={resetLoading}
+                            />
+                            <button type="submit" className="login-modal-primary" disabled={resetLoading}>
+                                {resetLoading ? '修改中…' : '确认修改密码'}
+                            </button>
+                        </form>
+                    </Modal>
+                </ConfigProvider>
             </div>
         </>
     );

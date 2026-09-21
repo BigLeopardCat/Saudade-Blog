@@ -40,7 +40,9 @@ def build_sandbox() -> pathlib.Path:
     stubs.mkdir()
 
     (stubs / "antd.tsx").write_text('''\
-// 极简 antd stub（只覆盖 Login 用到的 Modal / message）：真渲染 DOM，便于无头断言。
+// 极简 antd stub（只覆盖 Login 用到的 Modal / message / ConfigProvider）：真渲染 DOM，
+// 便于无头断言。ConfigProvider 只记录 props——真 antd 的深色是 CSS-in-JS 注入的，
+// 沙箱里没有它的样式表，所以能验的是**接线**（主题有没有传下去），不是最终观感。
 import * as React from 'react';
 export const __msgLog: string[] = [];
 (window as any).__msgLog = __msgLog;
@@ -53,6 +55,13 @@ export const message = {
         },
         null,
     ],
+};
+export const theme = { darkAlgorithm: '__DARK_ALGORITHM__' };
+export const __cpThemes: any[] = [];
+(window as any).__cpThemes = __cpThemes;
+export const ConfigProvider = (props: any) => {
+    __cpThemes.push(props.theme);
+    return React.createElement(React.Fragment, null, props.children);
 };
 export const __modalCalls: any[] = [];
 export const Modal = (props: any) => {
@@ -143,7 +152,9 @@ with sync_playwright() as p:
     check("提交按钮存在且文案=登 录", pg.locator("button.login-submit").inner_text().strip() == "登 录")
     check("两个入口按钮：忘记密码？/ 注册账号",
           [t.strip() for t in pg.locator(".login-links button").all_inner_texts()] == ["忘记密码？", "注册账号"])
-    check("返回首页入口存在", "返回首页" in pg.locator(".login-foot a").inner_text())
+    check("返回首页入口存在且不带箭头",
+          pg.locator(".login-foot a").inner_text().strip() == "返回首页",
+          pg.locator(".login-foot a").inner_text().strip())
 
     print("② 几何（居中 + 不溢出）")
     box = pg.locator(".login-box").bounding_box()
@@ -176,23 +187,27 @@ with sync_playwright() as p:
     check("旧霓虹青已撤（页面无 #03e9f4）", "3, 233, 244" not in pg.evaluate(
         "() => [document.querySelector('.login-submit'), document.body].map(e=>getComputedStyle(e).backgroundImage).join()"))
 
-    print("④ 注册入口 → 合规提示弹窗")
+    print("④ 注册入口 → 不开放注册的合规声明（只有一个出口）")
     pg.click(".login-links button:nth-child(3)")
     pg.wait_for_timeout(250)
     dlg = pg.locator('.ant-modal-mock[data-title="注册账号"]')
     check("弹窗打开且标题=注册账号", dlg.count() == 1)
     body = dlg.inner_text() if dlg.count() else ""
-    check("含合规要点（账号服务所必需）", "账号服务所必需" in body)
+    check("写明不开放自助注册", "不开放自助注册" in body)
     check("含「无需登录」（访客功能说明）", "无需登录" in body)
     check("含「账号安全维护」", "账号安全维护" in body)
-    check("两个出口按钮：去河灯集留言 / 知道了",
-          [t.strip() for t in pg.locator(".login-modal-foot button").all_inner_texts()] == ["去河灯集留言", "知道了"])
+    check("交代账号从哪来（博开设）", "博主" in body)
+    check("页脚只有一个出口：知道了",
+          [t.strip() for t in pg.locator(".login-modal-foot button").all_inner_texts()] == ["知道了"],
+          json.dumps([t.strip() for t in pg.locator(".login-modal-foot button").all_inner_texts()], ensure_ascii=False))
+    check("注册弹窗里没有留言板按钮",
+          pg.locator(".login-modal-foot .login-modal-ghost").count() == 0)
     pg.click(".login-modal-primary")
     pg.wait_for_timeout(200)
     check("点「知道了」关闭弹窗", pg.locator(".ant-modal-mock").count() == 0)
     check("关闭弹窗不产生跳转", pg.evaluate("() => (window.__nav || []).length") == 0)
 
-    print("⑤ 忘记密码入口 → 人工重置说明 + CTA 跳河灯集")
+    print("⑤ 忘记密码入口 → 恢复码表单（页脚只有取消，兜底路径在正文里）")
     pg.click(".login-links button:nth-child(1)")
     pg.wait_for_timeout(250)
     dlg2 = pg.locator('.ant-modal-mock[data-title="重置密码"]')
@@ -204,11 +219,40 @@ with sync_playwright() as p:
           and dlg2.locator("input[placeholder='用户名']").count() == 1
           and dlg2.locator("input[placeholder='一次性恢复码']").count() == 1
           and dlg2.locator("input[placeholder='新密码（至少 8 位）']").count() == 1)
-    check("给出人工途径（河灯集留言）", "河灯集" in b2)
+    check("页脚只有「取消」（无「知道了」）",
+          [t.strip() for t in pg.locator(".login-modal-foot button").all_inner_texts()] == ["取消"],
+          json.dumps([t.strip() for t in pg.locator(".login-modal-foot button").all_inner_texts()], ensure_ascii=False))
+    check("兜底路径在正文里（河灯集留言链接）", pg.locator(".login-modal-hint a").count() == 1)
+    # 布局：这几个 input 是弹窗内 flex 列的直接子项，content-box 时 padding 会把它撑出容器
+    check("表单输入框不溢出弹窗正文", pg.evaluate(
+        "() => {const b=document.querySelector('.ant-modal-body input').getBoundingClientRect();"
+        "const p=document.querySelector('.ant-modal-body').getBoundingClientRect();"
+        "return b.left>=p.left-0.5 && b.right<=p.right+0.5;}"))
+    check("四个输入框等宽且左对齐", pg.evaluate(
+        "() => {const r=[...document.querySelectorAll('.login-reset-form input')]"
+        ".map(i=>i.getBoundingClientRect());"
+        "return new Set(r.map(x=>Math.round(x.width))).size===1"
+        "&& new Set(r.map(x=>Math.round(x.left))).size===1;}"))
+    # 关闭 → 重开：恢复码是一次性的，残留上次的值会让用户拿废码干试
+    pg.fill(".login-reset-form input:nth-of-type(1)", "sora")
+    pg.fill(".login-reset-form input:nth-of-type(2)", "STALECODE0000000000")
     pg.click(".login-modal-ghost")
     pg.wait_for_timeout(200)
-    check("点「去河灯集留言」跳到 /guestbook", pg.evaluate("() => (window.__nav || []).includes('/guestbook')"))
+    check("点「取消」关闭弹窗且不跳转",
+          pg.locator(".ant-modal-mock").count() == 0
+          and pg.evaluate("() => (window.__nav || []).length") == 0)
+    pg.click(".login-links button:nth-child(1)")
+    pg.wait_for_timeout(250)
+    check("重开后表单是空的（不留上一次的恢复码）",
+          pg.evaluate("() => [...document.querySelectorAll('.login-reset-form input')].every(i => i.value === '')"))
+    pg.click(".login-modal-hint a")
+    pg.wait_for_timeout(200)
+    check("点正文里的「去河灯集留言」跳到 /guestbook",
+          pg.evaluate("() => (window.__nav || []).includes('/guestbook')"))
     check("跳转后弹窗关闭", pg.locator(".ant-modal-mock").count() == 0)
+    check("弹窗挂了深色主题（ConfigProvider 传下 darkAlgorithm + 墨蓝底）", pg.evaluate(
+        "() => (window.__cpThemes || []).some(t => t && t.algorithm === '__DARK_ALGORITHM__'"
+        " && t.token && t.token.colorBgElevated)"))
 
     print("⑥ 提交契约（空值 → 原生校验；成功 → 派发 fetchToken + 跳后台）")
     pg.evaluate("() => { window.__msgLog.length = 0; window.__nav = []; }")
@@ -244,10 +288,19 @@ with sync_playwright() as p:
     print("⑧ 密码显隐 + 会话重定向")
     pg.evaluate("() => { window.__loginStatus = 200; }")
     check("默认 type=password", pg.get_attribute("input#password", "type") == "password")
+    check("显隐按钮是图标不是文字（svg，无文本）",
+          pg.locator(".pwd-toggle svg").count() == 1
+          and pg.locator(".pwd-toggle").inner_text().strip() == "",
+          json.dumps(pg.locator(".pwd-toggle").inner_text(), ensure_ascii=False))
+    check("默认 aria-label=显示密码", pg.get_attribute(".pwd-toggle", "aria-label") == "显示密码")
     pg.click(".pwd-toggle")
     pg.wait_for_timeout(150)
     check("点显示 → type=text", pg.get_attribute("input#password", "type") == "text")
-    check("按钮文案同步为「隐藏」", pg.locator(".pwd-toggle").inner_text().strip() == "隐藏")
+    check("图标与 aria-label 同步为「隐藏密码」",
+          pg.locator(".pwd-toggle svg").count() == 1
+          and pg.get_attribute(".pwd-toggle", "aria-label") == "隐藏密码")
+    check("图标按钮横向不吃掉输入框（右内边距 ≥ 40）", pg.evaluate(
+        "() => parseFloat(getComputedStyle(document.querySelector('input#password')).paddingRight) >= 40"))
 
     pg2 = br.new_page(viewport={"width": 1280, "height": 900})
     pg2.add_init_script("window.__token = 'fake-token';")
