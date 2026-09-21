@@ -72,12 +72,16 @@
       return cleaned;
     };
 
-    // 渲染消息内容并应用渲染后增强（代码高亮 + 公式，与博客插件一致）
+    // 渲染消息内容并应用渲染后增强（代码高亮 + 公式 + 色块，与博客插件一致）
     const applyMsg = (el, text) => {
       el.innerHTML = renderMarkdown(text);
       try {
         if (window.__chatEnhance && typeof window.__chatEnhance === 'function') {
           window.__chatEnhance(el);
+        } else if (window.__chatDecorateColors && typeof window.__chatDecorateColors === 'function') {
+          // 迷你渲染器路径（React 那侧没加载）：__chatEnhance 里含色块装饰，
+          // 它不在时单独补一次（幂等，见 chatMarkdown.ts::decorateColorSwatches）
+          window.__chatDecorateColors(el);
         }
       } catch(e) {}
     };
@@ -190,6 +194,14 @@
           <button class="chat-nav-btn yes" id="nav-yes">确定</button>
           <button class="chat-nav-btn no" id="nav-no">取消</button>
         </div>
+      </div>
+      <!-- 通用询问框（20260921）：agent 需要用户输入（操作授权/二次确认）时弹这里，
+           外观与上面"泠月喵建议跳转到"完全同款（同一套 class，用户要求"同类型的窗口"）。
+           问题文本 + 按 opts 动态生成的 N 个按钮；按钮文案与数量都由帧决定
+           （chat-stream.js 渲染），这里只出容器。写操作确认 = 本轮唯一的用途。 -->
+      <div class="chat-nav-confirm chat-ask" id="chat-ask">
+        <div class="nav-question" id="chat-ask-text"></div>
+        <div class="chat-nav-btns" id="chat-ask-btns"></div>
       </div>
       <!-- 20260903 会话化：左侧窄图标栏（absolute 覆在左拖拽条上，兄弟元素定位法
            同 chat-img-btn——点击不经过拖拽条不触发拖动）。20260903b：顶部 = 侧边栏

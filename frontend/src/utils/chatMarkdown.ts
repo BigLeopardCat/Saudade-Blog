@@ -147,12 +147,79 @@ export const decorateCodeBlocks = (root: HTMLElement | null): void => {
   })
 }
 
+/**
+ * 渲染后装饰：给正文里出现的**站内色板色值**加一个色块预览（20260921 颜色预览）。
+ *
+ * 「agent 在决定颜色时回复颜色描述和颜色编码以及对应色块预览」——文字（色名）
+ * 与编码（#eb2f96）由 narrator 写在正文里，色块由这里渲染：**不让模型自己画符号**
+ * （模型画不出色块，只会写 🟥 或 ![img]，两边都不可控）。
+ *
+ * 三条约束：
+ *  ① 只认**站内 8 色板**内的色值（与 `agent/adminops.py::NEW_TAG_COLORS` 和
+ *    `components/NoteTagSelect/index.tsx` 同源）——色板是白名单，不是"任意 hex 都画"，
+ *     否则正文里随手一个 #fff 也会冒出色块；
+ *  ② 跳过 `pre`/`code`/`a` 内部的文本节点：代码块里的 #1677ff 不该被装饰；
+ *  ③ 幂等：色块与编码一起包进 `.chat-swatch-wrap`，再调用时整段被跳过
+ *     （装饰后的编码文本仍是文本，不包起来第二次就会再加一个色块）。
+ */
+export const chatColorPalette = ['#1677ff', '#52c41a', '#fa8c16', '#eb2f96',
+                                 '#722ed1', '#13c2c2', '#f5222d', '#a0d911'] as const
+
+const HEX_IN_TEXT_RE = /#[0-9a-fA-F]{6}\b/g
+// 非 /g 版本只用于"这段文本里有没有色值"的预筛——/g 正则带 lastIndex 状态，
+// 混用会在多次调用间留下陈旧游标
+const HEX_ANY_RE = /#[0-9a-fA-F]{6}\b/
+
+export const decorateColorSwatches = (root: HTMLElement | null): void => {
+  if (!root) return
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+  const targets: Text[] = []
+  let node = walker.nextNode()
+  while (node) {
+    const t = node as Text
+    const parent = t.parentElement
+    if (parent && !parent.closest('pre, code, a, .chat-swatch-wrap') && HEX_ANY_RE.test(t.data)) {
+      targets.push(t)
+    }
+    node = walker.nextNode()
+  }
+  targets.forEach((t) => {
+    const text = t.data
+    const frag = document.createDocumentFragment()
+    let last = 0
+    HEX_IN_TEXT_RE.lastIndex = 0
+    let m: RegExpExecArray | null
+    while ((m = HEX_IN_TEXT_RE.exec(text))) {
+      const hex = m[0].toLowerCase()
+      if (!(chatColorPalette as readonly string[]).includes(hex)) continue
+      if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)))
+      const wrap = document.createElement('span')
+      wrap.className = 'chat-swatch-wrap'
+      const chip = document.createElement('span')
+      chip.className = 'chat-swatch'
+      chip.style.background = hex
+      chip.setAttribute('aria-label', hex)
+      wrap.appendChild(chip)
+      wrap.appendChild(document.createTextNode(hex))
+      frag.appendChild(wrap)
+      last = m.index + m[0].length
+    }
+    if (!last) return
+    if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)))
+    t.parentNode?.replaceChild(frag, t)
+  })
+}
+
 // 渲染后增强：代码高亮（与 @bytemd/plugin-highlight 一致）+ KaTeX 公式（与 @bytemd/plugin-math 一致）。
 // 均懒加载，atom-one-dark / katex 样式已由文章页与编辑器全局注入。
 export const enhanceChatContent = (root: HTMLElement): void => {
   // 代码块标签栏 + 复制按钮（同步注入：不等 highlight.js 懒加载，标签栏先出来）
   try {
     decorateCodeBlocks(root)
+  } catch { /* 装饰失败不影响正文 */ }
+  // 色块预览（20260921）：站内色板色值 → 色块 + 编码并列
+  try {
+    decorateColorSwatches(root)
   } catch { /* 装饰失败不影响正文 */ }
   try {
     mermaidViewerEffect?.({ markdownBody: root })
@@ -187,9 +254,13 @@ declare global {
   interface Window {
     __chatRenderMarkdown?: (text: string) => string
     __chatEnhance?: (root: HTMLElement) => void
+    /** 色块装饰单独暴露（20260921）：chat-render.js 的迷你渲染器路径没有
+     *  __chatEnhance 时也能画色块（该函数幂等，重复调用安全） */
+    __chatDecorateColors?: (root: HTMLElement) => void
   }
 }
 
 // 模块加载即注册，Live2dAgent 在注入看板娘脚本前 import 本模块即可
 window.__chatRenderMarkdown = renderBlogMarkdown
 window.__chatEnhance = enhanceChatContent
+window.__chatDecorateColors = decorateColorSwatches
