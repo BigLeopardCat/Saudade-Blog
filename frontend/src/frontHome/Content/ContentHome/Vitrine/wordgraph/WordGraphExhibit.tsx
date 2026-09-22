@@ -254,6 +254,19 @@ export default function WordGraphExhibit() {
                 <div className={'wg-queri' + (busy || chips.length ? ' is-on' : '')}>
                     <input
                         className="wg-input"
+                        // 非凭据字段（20260923）：全页只有它是"无 type/无 name/无 autocomplete"的
+                        // 裸文本框，同源又存在带 name="account" + autoComplete="username" 的登录框
+                        // ⇒ 密码管理器把它当成本页的用户名候选回填。显式声明用途 + 各家忽略标记。
+                        name="wordgraph-query"
+                        type="text"
+                        autoComplete="off"
+                        autoCorrect="off"
+                        autoCapitalize="off"
+                        spellCheck={false}
+                        data-form-type="other"
+                        data-1p-ignore
+                        data-lpignore="true"
+                        data-bwignore
                         value={q}
                         onChange={(e) => setQ(e.target.value)}
                         onKeyDown={(e) => {
