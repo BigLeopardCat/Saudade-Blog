@@ -261,7 +261,10 @@ li.search-box input {
 .toggle-switch{
     position: absolute;
     right: 0;
-    transform: translateX(8%);
+    /* 20260923：原先还有个 `transform: translateX(8%)`（= 盒子再往右推 4.8px），
+       而 `.menu-bar` 是 overflow-x:hidden —— 开关居中在这个盒子里，右侧被裁掉约 3px，
+       用户实测「主题模式按钮右边被遮挡了一点、显示不完整」。贴右缘即可，不必再推。 */
+    transform: none;
     height: 100%;
     min-width: 60px;
     display: flex;
@@ -698,27 +701,12 @@ body[data-theme='dark'] .ant-picker-calendar .ant-picker-cell-inner {
     color: rgba(0, 0, 0, 0.85) !important;
 }
 
-/* 3. Sidebar Hover Fix */
-/* Structure: .shell li a */
-/* Active state is .nav_select */
-/* User wants hover to look like .nav_select */
-
-.shell li a:hover {
-    background-color: #b7dcfa !important; /* Match .nav_select bg */
-    border-radius: 6px;
-    transition: all 0.3s ease;
-}
-
-.shell li:hover .icon,
-.shell li:hover .text {
-    color: #000000 !important; /* Match .nav_select text */
-}
-
-/* Ensure sub-elements also turn black on hover of parent li */
-.shell li a:hover .icon,
-.shell li a:hover .text {
-    color: #000000 !important;
-}
+/* 3. Sidebar Hover Fix —— **悬停配色已收口到文件末尾「20260923 收口」那一节**。
+   这里原先那两条 `.shell li:hover .icon/.text { color:#000000 !important }` 已删：
+   夜间它们把图标染成黑压在 #171717 的侧栏上，等于隐身（用户实测）。
+   另注：`.shell li a:hover` 这几条**一条都命中不了**——侧栏的 li 里没有 <a>，图标与文字
+   是直挂 li 的（见 index.tsx），所以 V13/V14/V16 那几批"悬停背景"改动从未生效过。
+   留着只是不扩大改动面，不是它们有用。 */
 
 
 
@@ -733,32 +721,16 @@ body[data-theme='dark'] .ant-picker-calendar .ant-picker-cell:hover .ant-picker-
     color: inherit !important;
 }
 
-/* 2. Sidebar Hover (Double Check) */
+/* 2. Sidebar Hover (Double Check) —— 悬停背景（同上：li 里没有 <a>，命中不了，留着不动） */
 .shell li a:hover {
-    background-color: #b7dcfa !important; 
+    background-color: #b7dcfa !important;
     opacity: 1 !important;
 }
-.shell li:hover .icon, 
-.shell li:hover .text {
-    color: #000000 !important;
-    fill: #000000 !important;
-}
 
-
-/* V14 Fixes */
-html[data-theme='dark'] .shell li a:hover { background-color: transparent !important; border: 1px solid #1677ff !important; border-radius: 6px; opacity: 1 !important; }
-html[data-theme='dark'] .shell li:hover .icon, html[data-theme='dark'] .shell li:hover .text { color: #ffffff !important; }
-html:not([data-theme='dark']) .shell li a:hover { background-color: #b7dcfa !important; border: 1px solid transparent !important; }
-html:not([data-theme='dark']) .shell li:hover .icon, html:not([data-theme='dark']) .shell li:hover .text { color: #000000 !important; }
+/* V14 / V16 那两条 `html[data-theme='dark'] .shell li:hover .icon`（把悬停染色写成白色）
+   **是死规则，20260923 删**：全站没有任何地方给 html/body 设过 data-theme（实际主题靠
+   `.dark` 类，见 App.tsx / theme.ts）；留着只会让人以为夜间悬停是白的。 */
 .ArticleFooter { align-items: center !important; }
-
-/* V16 Fix Override */
-html[data-theme='dark'] .shell li a:hover { background-color: transparent !important; border: 1px solid #1677ff !important; opacity: 1 !important; }
-html[data-theme='dark'] .shell li:hover .icon, html[data-theme='dark'] .shell li:hover .text { color: #ffffff !important; }
-
-html[data-theme='dark'] .shell li a:hover { background-color: transparent !important; border: 1px solid #1677ff !important; box-shadow: 0 0 8px rgba(22, 119, 255, 0.4) !important; opacity: 1 !important; }
-html[data-theme='dark'] .shell li:hover .icon, html[data-theme='dark'] .shell li:hover .text { color: #ffffff !important; }
-
 
 /* 20260905：用户管理 gear+person 双形 SVG——svg 无 width/height 时按默认 300px 渲染
    （"图标比其他大"根因），置入 .icon 槽与 23px 字体图标同视觉尺寸 */
@@ -766,4 +738,28 @@ html[data-theme='dark'] .shell li:hover .icon, html[data-theme='dark'] .shell li
   width: 22px;
   height: 22px;
   display: block;
+}
+
+/* ── 20260923 收口：侧栏悬停配色**只有这一处说了算** ────────────────────────────
+   背景：V13/V14/V16 三批各自 !important 打补丁，最后真正生效的是 V13 的 `color:#000000`
+   （V14/V16 那几条 `html[data-theme='dark']` 是不存在的主题开关，从没生效过）。于是
+   夜间悬停 = 黑图标压在 #171717 的侧栏上，直接隐身（用户实测「鼠标悬上去变黑」）。
+
+   现在：浅色照旧黑（与选中态 .nav_select 同色），夜间换成登录页那支**河灯金**+ 光晕。
+   ⚠️ `.nav_select` 必须排除——选中项自带 #b7dcfa 浅蓝底，金压浅蓝几乎看不清，保持黑。 */
+.shell li:hover .icon,
+.shell li:hover .text {
+    color: #000000 !important;
+}
+
+.dark .shell li:not(.nav_select):hover .icon,
+.dark .shell li:not(.nav_select):hover .text {
+    color: #e8b866 !important;   /* 与 .ucGoldBtn / .login-submit 同族的河灯金 */
+    text-shadow: 0 0 10px rgba(240, 196, 110, 0.55), 0 0 22px rgba(240, 196, 110, 0.25);
+}
+
+/* SVG 图标（用户管理那枚 gear+person）走 stroke=currentColor，text-shadow 对它无效，
+   光晕改走 filter；色值取登录页那团月晕的 rgba(240,196,110,·)。 */
+.dark .shell li:not(.nav_select):hover .icon .nav-svg {
+    filter: drop-shadow(0 0 5px rgba(240, 196, 110, 0.85));
 }

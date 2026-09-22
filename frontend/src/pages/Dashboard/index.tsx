@@ -3,8 +3,7 @@ import './index.css';
 // import '../../assets/font/iconfont.js';
 // import '../../assets/font/iconfont.css';
 import {Outlet, useNavigate} from "react-router-dom";
-import deleteToken from "../../apis/deleteToken.tsx";
-import {Button, Space, notification, message, Card, Spin, Avatar} from "antd";
+import {Card, Spin, Avatar} from "antd";
 import MainContext from "../../components/conText.tsx";
 import Switch from "../../components/Switch";
 import SettingButton from "../../components/Buttons/SettingButton";
@@ -27,7 +26,6 @@ const Dashboard = () => {
     const [SelectCurrent,setSelectCurrent] = useState(1)
     const [isShellClosed, setShellClosed] = useState(true);
     const [isDarkMode, setDarkMode] = useState(false);
-    const [api, contextHolder] = notification.useNotification();
     const [loading, setLoading] = useState(false);
     const [searchVal, setSearchVal] = useState('');
     const dispatch = useDispatch();
@@ -58,28 +56,6 @@ const Dashboard = () => {
     },[])
 
     //回调函数区域
-    const openNotification = () => {
-        const key = `open${Date.now()}`
-        const btn = (
-            <Space>
-                <Button type="link" size="small" onClick={() => api.destroy()}>
-                    返回
-                </Button>
-                <Button type="primary" size="small" onClick={() => {
-                    deleteToken()
-                    navigate('/', { state: { fromDashboard: true } })
-                    message.success('退出成功')
-                }}>
-                    确认
-                </Button>
-            </Space>
-        );
-        api.open({
-            message: '退出确认',
-            btn,
-            key,
-        });
-    };
 
     const handleToggleClick = () => {
         setShellClosed(!isShellClosed);
@@ -287,9 +263,14 @@ const Dashboard = () => {
                                             <span className="text nac-text">站点设置</span>
                                         </li>
 
-                                        <li className="nav-links" onClick={openNotification}>
+                                        {/* 20260923 用户要求：这颗按钮**不再退出登录**，改为返回
+                                            外部首页（原先点它弹一次确认框、删掉 token 才回到首页）。
+                                            退出登录仍有入口——博客头部头像菜单里那颗「退出」。
+                                            所以这里既不 deleteToken 也不派发 auth-change：令牌留着，
+                                            回到前台仍是登录态。 */}
+                                        <li className="nav-links" onClick={() => navigate('/')}>
                                             <i className="iconfont icon-tuichu icon"></i>
-                                            <span className="text nac-text">退出登录</span>
+                                            <span className="text nac-text">返回首页</span>
                                         </li>
 
                                         <li className="mode">
@@ -319,8 +300,6 @@ const Dashboard = () => {
                             <SettingButton />
                         </div>
                     </div>
-
-            {contextHolder}
                 </>
                 )}
         </div>
