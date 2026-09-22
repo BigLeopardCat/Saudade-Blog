@@ -49,7 +49,7 @@ Agent 的核心理念是**把执行层的自由拿掉**（20260903 架构裁决�
 ```text
 git push（主仓库 cn_sora_blog / agent 仓库）
   → GitHub Actions 云端构建（Rust 编译 + 前端打包；agent 另有评测门禁）
-  → 上传 R2 → SSH 触发 scripts/deploy/deploy_from_r2.sh
+  → 上传 R2（按提交号归档 deploy/&lt;sha&gt;/）→ SSH 触发部署并**等它结束**（退出码 = 部署结果）
   → 二进制替换 + systemctl restart；dist 直接覆盖
 ```
 
