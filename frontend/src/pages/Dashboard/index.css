@@ -388,7 +388,8 @@ li.search-box input {
 
 /*}*/
 .dark .ant-form-item-label > label { color: rgba(255, 255, 255, 0.85) !important; }
-.dark .ant-picker-range-separator .ant-picker-separator { color: rgba(255, 255, 255, 0.85) !important; }
+/* RangePicker 已从全仓撤掉（笔记页「发布时间」那轮），随它一起死的那条分隔符
+   颜色规则 20260923 删。上面 `.ant-form-item-label > label` 那条仍是活的，保留。 */
 
 /* Dark Mode Tabs Fix */
 .dark .ant-tabs-tab-btn { color: rgba(255, 255, 255, 0.65) !important; }
@@ -397,7 +398,6 @@ li.search-box input {
 
 /* Protect FABs from shrinking */
 .MuiFab-root { flex-shrink: 0 !important; min-width: 40px !important; min-height: 40px !important; }
-
 
 
 /* Dark Mode Calendar Fixes —— **两整块都删（20260923）**。
@@ -432,39 +432,32 @@ li.search-box input {
 ::-webkit-scrollbar-thumb:hover {
     background: #555; 
 }
-[data-theme='dark'] ::-webkit-scrollbar-track {
+/* 20260923：这两条原先写的是不存在的主题开关（全站没有任何地方设过 data-theme），等于
+   从来没有深色滚动条 —— 深色页拖着一根亮轨。改成实际生效的 `.dark` 分支；
+   thumb 带 !important 是必须的：下面 V7 那条无条件 + important 的 thumb 规则会压过它。 */
+.dark ::-webkit-scrollbar-track {
     background: #222;
 }
-[data-theme='dark'] ::-webkit-scrollbar-thumb {
-    background: #666;
+.dark ::-webkit-scrollbar-thumb {
+    background: #666 !important;
 }
-[data-theme='dark'] .ant-picker-calendar .ant-picker-cell-inner {
-    color: #333333 !important; 
-}
-[data-theme='dark'] .ant-picker-calendar th {
-     color: #333333 !important;
-}
+/* 20260923 删：选择器全挂在不生效的主题开关上（data-theme / html.dark 全站从不设）。 */
+
+/* 20260923 删：选择器全挂在不生效的主题开关上（data-theme / html.dark 全站从不设）。 */
+
 
 /* Fixes V6 */
 
 /* Force Calendar Text Black in Dark Mode */
-html[data-theme='dark'] .ant-picker-calendar,
-html[data-theme='dark'] .ant-picker-panel,
-html[data-theme='dark'] .ant-picker-body {
-    background-color: #ffffff !important;
-}
+/* 20260923 删：选择器全挂在不生效的主题开关上（data-theme / html.dark 全站从不设）。 */
 
-html[data-theme='dark'] .ant-picker-calendar .ant-picker-cell-inner,
-html[data-theme='dark'] .ant-picker-calendar th,
-html[data-theme='dark'] .ant-picker-content th,
-html[data-theme='dark'] .ant-picker-body {
-    color: #000000 !important;
-}
+
+/* 20260923 删：选择器全挂在不生效的主题开关上（data-theme / html.dark 全站从不设）。 */
+
 
 /* Ensure Home Text is white in dark mode (Global override) */
-[data-theme='dark'] .SayWords h2 {
-    color: #ffffff !important;
-}
+/* 20260923 删：选择器全挂在不生效的主题开关上（data-theme / html.dark 全站从不设）。 */
+
 
 /* Scrollbar Fixes */
 ::-webkit-scrollbar {
@@ -494,15 +487,10 @@ html[data-theme='dark'] .ant-picker-body {
 }
 
 /* Force Calendar Text */
-html[data-theme='dark'] .ant-picker-calendar,
-html[data-theme='dark'] .ant-picker-panel, 
-html[data-theme='dark'] .ant-picker-body {
-    background: #ffffff !important;
-}
-html[data-theme='dark'] .ant-picker-calendar .ant-picker-cell-inner,
-html[data-theme='dark'] .ant-picker-content th {
-    color: #000000 !important;
-}
+/* 20260923 删：选择器全挂在不生效的主题开关上（data-theme / html.dark 全站从不设）。 */
+
+/* 20260923 删：选择器全挂在不生效的主题开关上（data-theme / html.dark 全站从不设）。 */
+
 
 /* V8 Fixes */
 
@@ -524,13 +512,8 @@ html[data-theme='dark'] .ant-picker-content th {
 /* 3. Global Home Text Fix (Ultra Specific) */
 /* Trying to target the structure in Home more aggressively */
 /* .SelfDescription .SayWords h2 */
-html[data-theme='dark'] .SelfDescription .SayWords h2,
-body[data-theme='dark'] .SelfDescription .SayWords h2,
-html.dark .SelfDescription .SayWords h2,
-body.dark .SelfDescription .SayWords h2 {
-    color: #ffffff !important;
-    -webkit-text-fill-color: #ffffff !important; /* Override potential gradient text */
-}
+/* 20260923 删：选择器全挂在不生效的主题开关上（data-theme / html.dark 全站从不设）。 */
+
 
 /* 4. Remove Global Scrollbar Force (It broke sidebar) */
 /* We will rely on default browser scrollbar or target specific containers */
@@ -597,12 +580,6 @@ body.dark .SelfDescription .SayWords h2 {
 }
 
 /* V11 Force Home Text White in Dark Mode (Refined) */
-html[data-theme='dark'] .SelfDescription .SayWords h2,
-html[data-theme='dark'] .SelfDescription .SayWords h3,
-html[data-theme='dark'] .SelfDescription .SayWords p,
-body[data-theme='dark'] .SelfDescription .SayWords h2,
-body[data-theme='dark'] .SelfDescription .SayWords h3,
-body[data-theme='dark'] .SelfDescription .SayWords p,
 .dark .SelfDescription .SayWords h2,
 .dark .SelfDescription .SayWords h3,
 .dark .SelfDescription .SayWords p {
@@ -610,12 +587,6 @@ body[data-theme='dark'] .SelfDescription .SayWords p,
 }
 
 /* V11 Force Home Text White in Dark Mode (Refined) */
-html[data-theme='dark'] .SelfDescription .SayWords h2,
-html[data-theme='dark'] .SelfDescription .SayWords h3,
-html[data-theme='dark'] .SelfDescription .SayWords p,
-body[data-theme='dark'] .SelfDescription .SayWords h2,
-body[data-theme='dark'] .SelfDescription .SayWords h3,
-body[data-theme='dark'] .SelfDescription .SayWords p,
 .dark .SelfDescription .SayWords h2,
 .dark .SelfDescription .SayWords h3,
 .dark .SelfDescription .SayWords p {
@@ -626,14 +597,6 @@ body[data-theme='dark'] .SelfDescription .SayWords p,
 /* V12 Fixes */
 
 /* 1. Home Text ID Override (Strongest) */
-html[data-theme='dark'] #SayWordsID h2,
-html[data-theme='dark'] #SayWordsID h3,
-html[data-theme='dark'] #SayWordsID p,
-html[data-theme='dark'] #SayWordsID span,
-body[data-theme='dark'] #SayWordsID h2,
-body[data-theme='dark'] #SayWordsID h3,
-body[data-theme='dark'] #SayWordsID p,
-body[data-theme='dark'] #SayWordsID span,
 .dark #SayWordsID h2,
 .dark #SayWordsID h3,
 .dark #SayWordsID p,
@@ -656,12 +619,9 @@ body[data-theme='dark'] #SayWordsID span,
    留着只是不扩大改动面，不是它们有用。 */
 
 
-
 /* V13 Adjustments */
 
 /* 1. Calendar Hover Fix: No Black Background */
-html[data-theme='dark'] .ant-picker-calendar .ant-picker-cell:hover .ant-picker-cell-inner,
-body[data-theme='dark'] .ant-picker-calendar .ant-picker-cell:hover .ant-picker-cell-inner,
 .dark .ant-picker-calendar .ant-picker-cell:hover .ant-picker-cell-inner {
     background: transparent !important; 
     border: 1px solid #1677ff !important;
