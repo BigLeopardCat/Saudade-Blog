@@ -106,6 +106,10 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
     font-weight: 700
 
   .SayWords
+    // 20260923 用户要求「左侧社交按钮和文本那一堆适当右移」= 60px：留出左边距。
+    // 展示柜的左缘下限跟着这个 60 走（Vitrine/index.sass 的 `8vw + 510px`：438 文本 +
+    // 60 这个右移 + 12 缝），**改这里必须同步那个常量**，否则窄屏上窗口会压到字上。
+    margin-left: 60px
     animation: left-in 1s forwards
       display: flex
       flex-direction: column
