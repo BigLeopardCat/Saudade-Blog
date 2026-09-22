@@ -48,8 +48,66 @@ jobs:
               - '.github/workflows/**'
               - 'scripts/deploy/**'
 
+  # 质量闸（20260923）：此前 CI **零测试零类型检查**——`npm run build` 走 esbuild 只转译不查
+  # 类型（存量 14 条类型错一路畅通到线上），`cargo build` 也只验"编译得过"，lint 从未跑过。
+  # 这个 job 把三样检查挡在部署前面：
+  #   ① `cargo test` —— tests/api_tests.rs 用 MockDatabase（不连库）+ 6 个文件里的内嵌单测，
+  #      CI 上跑得起来（此前 CI 只 `cargo build --release`，等于只验编译）；
+  #   ② `tsc --noEmit` —— 前端真类型检查（存量 14 条已于同日清零，故可直接设闸）；
+  #   ③ `npm test` —— tests/ 下 10 个 node 套件（此前 package.json 里那句 "test": "jest"
+  #      是死脚本：没配置也没依赖，谁都跑不了）。
+  # 它与"要不要部署"无关：**任何 push 都跑**（改了测试/tsconfig 也算），而部署被它 needs 住
+  # ——检查不过就不构建、不上传、不部署。`*.test.py` 那几套要 Playwright，故意不进 CI。
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: 1.92.0
+
+      - name: Cache cargo (test profile)
+        uses: Swatinem/rust-cache@v2
+        with:
+          # 与下面那个 release 构建分开缓存：测试跑的是 debug profile，
+          # 混用同一个 target 缓存会把两种产物搅在一起
+          key: cargo-test
+
+      - name: Rust tests（MockDatabase，不连库）
+        run: cargo test
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend deps
+        run: npm ci
+        working-directory: ./frontend
+
+      - name: Type check（tsc --noEmit）
+        run: npx --no-install tsc --noEmit -p tsconfig.json
+        working-directory: ./frontend
+
+      - name: Frontend test suites
+        run: npm test
+        working-directory: ./frontend
+
+      - name: ESLint（暂只报不拦）
+        # 存量 144 条 error（97 条 no-explicit-any、29 条 ban-ts-comment 居多，散布在后台各页），
+        # 一次性清掉是另一件事 ⇒ 先让它出现在日志里（此前 CI 从未跑过 lint），
+        # 等清到 0 再把 continue-on-error 摘掉变成真闸。
+        continue-on-error: true
+        run: npm run lint
+        working-directory: ./frontend
+
   build-and-deploy:
-    needs: check-changes
+    needs: [check-changes, check]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
