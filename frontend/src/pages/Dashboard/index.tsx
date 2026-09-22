@@ -1,4 +1,4 @@
-import {useEffect, useRef, useState} from 'react';
+import {useEffect, useRef, useState, type ReactNode} from 'react';
 import './index.css';
 // import '../../assets/font/iconfont.js';
 // import '../../assets/font/iconfont.css';
@@ -20,6 +20,37 @@ import '@fontsource/roboto/700.css';
 import { readDarkMode, recordUserChoice } from "../../theme";
 import Live2dAgent from "../../components/Live2dAgent"; // 后台是顶层路由（不在 App 布局里），看板娘得自己挂
 
+/** 用户提供的填充型图标（20260923 换掉 公告的 fa-bullhorn 与 用户管理的 gear+person）。
+ *  这些是"设计稿直接给的一段 svg"，不是图标库 —— 落库约定：
+ *   · 根 svg 只留 viewBox + className="nav-svg" + fill="currentColor" + aria-hidden，
+ *     原标签上的 t / class / p-id / version / xmlns / width / height 一律去掉（那串 p-id
+ *     是设计工具的临时编号，留着只是噪音；width/height=200 会盖掉 .nav-svg 的 22px）。
+ *   · **每条 path 上的 fill 也要去掉**：留着就盖掉根上的 currentColor，于是夜间悬停金、
+ *     选中黑只变一半（原色 #77808F / #979797 只作参考记录，不落代码）。
+ *   · 两枚 viewBox 不同（公告 1024²、用户管理 1097×1024），所以不能合成一个 svg 模板，
+ *     但都由 .nav-svg 定 22×22 + 默认 preserveAspectRatio 居中，视觉尺寸一致。
+ *  数据里写 key，渲染时查这张表；表里没有的仍走 iconfont / Font Awesome 那支。 */
+const NAV_FILL_SVG: Record<string, { viewBox: string; body: ReactNode }> = {
+    // 喇叭（公告）
+    'svg-announcement': {
+        viewBox: '0 0 1024 1024',
+        body: (
+            <path d="M921.9 468.6H749.6c-9.4 0-18.4 3.8-25 10.5-6.6 6.7-10.3 15.7-10.3 25.1v11.1c0 19.6 15.9 35.5 35.4 35.5h172.2c19.5 0 35.3-15.9 35.3-35.5v-11.1c0-9.4-3.7-18.4-10.3-25.1-6.6-6.7-15.6-10.5-25-10.5zM522.4 163.9c-53.6 42.6-165.7 102.3-246.3 159.8h-0.1c-0.9 0.6-1.8 3.8-2.8 4.3-9.5 5.4-13.8 20.1-65.6 20.1h-101c-26 0-42 12.2-42 39.6V631c0 27.4 14.7 40.9 42 40.9H208c51.5 0.1 55.7 14.8 65.2 20.1 0.9 0.5 1.8 3.7 2.7 4.3h0.1c78.2 57.5 191 121.8 246.4 162.7 16.7 12.3 72.1 33.9 72.1-42.1v-614c0-76.1-55.9-51.8-72.1-39z m159 167.8c9.2 16.1 27.3 20.2 40.5 9l141.5-119.3c13.3-11.1 16.5-33.2 7.4-49.4l-5.2-9.1c-9.1-16.1-27.3-20.1-40.5-9L683.6 273.2c-13.2 11.2-16.5 33.2-7.4 49.4l5.2 9.1z m40.4 347.4c-13.2-11.1-31.3-7-40.4 9l-5.2 9.1c-9.1 16.1-5.8 38.2 7.4 49.4L825.1 866c13.2 11.1 31.3 7.1 40.4-9l5.2-9.1c9.1-16.1 5.8-38.2-7.4-49.4L721.8 679.1z m0 0" />
+        ),
+    },
+    // 人 + 列表（用户管理：账号管理 + 评论管理合并入口，20260905 用户拍板）
+    'svg-user-list': {
+        viewBox: '0 0 1097 1024',
+        body: (
+            <>
+                <path d="M635.026286 560.786286c91.721143 0 166.253714-73.581714 166.253714-164.571429s-74.605714-164.571429-166.253714-164.571428c-91.721143 0-166.253714 73.581714-166.253715 164.571428s74.605714 164.571429 166.253715 164.571429z m0-73.142857a92.306286 92.306286 0 0 1-93.110857-91.428572c0-50.468571 41.545143-91.428571 93.110857-91.428571 51.492571 0 93.110857 40.96 93.110857 91.428571 0 50.395429-41.618286 91.428571-93.110857 91.428572z" />
+                <path d="M887.661714 737.499429c0-138.093714-113.225143-249.856-252.635428-249.856-139.483429 0-252.708571 111.762286-252.708572 249.856a36.571429 36.571429 0 1 0 73.142857 0c0-97.499429 80.310857-176.713143 179.565715-176.713143s179.492571 79.213714 179.492571 176.713143a36.571429 36.571429 0 0 0 73.142857 0zM60.928 292.571429h243.858286a36.571429 36.571429 0 1 0 0-73.142858H60.928a36.571429 36.571429 0 1 0 0 73.142858zM60.928 512h243.858286a36.571429 36.571429 0 1 0 0-73.142857H60.928a36.571429 36.571429 0 1 0 0 73.142857zM60.928 731.428571h243.858286a36.571429 36.571429 0 1 0 0-73.142857H60.928a36.571429 36.571429 0 1 0 0 73.142857z" />
+                <path d="M292.571429 0h658.285714a146.285714 146.285714 0 0 1 146.285714 146.285714v731.428572a146.285714 146.285714 0 0 1-146.285714 146.285714H292.571429a146.285714 146.285714 0 0 1-146.285715-146.285714V146.285714a146.285714 146.285714 0 0 1 146.285715-146.285714z m0 73.142857a73.142857 73.142857 0 0 0-73.142858 73.142857v731.428572a73.142857 73.142857 0 0 0 73.142858 73.142857h658.285714a73.142857 73.142857 0 0 0 73.142857-73.142857V146.285714a73.142857 73.142857 0 0 0-73.142857-73.142857H292.571429z" />
+            </>
+        ),
+    },
+};
+
 
 const Dashboard = () => {
     //hooks区域
@@ -39,8 +70,10 @@ const Dashboard = () => {
         dispatch<any>(fetchCategories())
         dispatch<any>(fetchTags())
         dispatch<any>(fetchNoteList(true))
-        // hash → 侧栏高亮索引（与下方 sidebar 数组 index 一一对应；
-        // 底部导航「站点设置」等无对应 menu 项不映射，回落 1）
+        // hash → 侧栏高亮索引（与下方 sidebar 数组 index 一一对应）。
+        // 底部那两颗（站点设置 / 返回首页）不在 sidebar 数组里，但**必须在这里映射**：
+        // 「站点设置」落在 #/dashboard/usercontrol，不映射就回落 1 ⇒ 刷新后高亮跑到「主页」。
+        // 索引用 8（sidebar 只到 7，子菜单是 201+），与顶部菜单不冲突。
         const HASH_INDEX: Record<string, number> = {
             '#/dashboard': 1,
             '#/dashboard/comments': 3,
@@ -48,6 +81,7 @@ const Dashboard = () => {
             '#/dashboard/announcement': 5,
             '#/dashboard/users': 6,
             '#/dashboard/analytics': 7,
+            '#/dashboard/usercontrol': 8,
         };
         const currentHashCode =
             location.hash.startsWith('#/dashboard/notes') ? 2 : (HASH_INDEX[location.hash] ?? 1);
@@ -126,15 +160,15 @@ const Dashboard = () => {
         {
             index: 5,
             name: '公告',
-            icon: 'fa-bullhorn',
+            icon: 'svg-announcement',
             to: 'announcement',
             active: false
         },
         {
             index: 6,
             name: '用户管理',
-            // gear+person 双形 SVG（20260905：账号管理 + 评论管理合并入口，用户拍板）
-            icon: 'svg-user-cog',
+            // 人+列表 填充型 SVG（20260905：账号管理 + 评论管理合并入口，用户拍板）
+            icon: 'svg-user-list',
             to: 'users',
             active: false
         },
@@ -230,22 +264,20 @@ const Dashboard = () => {
                                         </li>
 
                                         <ul className="menu-links">
-                                            {sidebar.map(item => (
+                                            {sidebar.map(item => {
+                                                const fillSvg = NAV_FILL_SVG[item.icon];
+                                                return (
                                                 <li className={`nav-links ${SelectCurrent === item.index ? 'nav_select' : ''}`}
                                                     onClick={() => {
                                                         navigate(item.to ? `/dashboard/${item.to}` : '/dashboard')
                                                         setSelectCurrent(item.index)
                                                     }} key={item.index}>
-                                                    {item.icon === 'svg-user-cog' ? (
-                                                        /* gear+person 双 path SVG：置 .icon 槽内，stroke=currentColor 随 hover/选中变色 */
+                                                    {fillSvg ? (
+                                                        /* 填充型 SVG：置 .icon 槽内，fill=currentColor 随 hover/选中变色 */
                                                         <span className="icon">
-                                                            <svg viewBox="0 0 24 24" className="nav-svg" fill="none"
-                                                                 stroke="currentColor" strokeWidth="1.7"
-                                                                 strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                                                                <circle cx="6.4" cy="6.4" r="2.3"/>
-                                                                <path d="M1.6 19.6c0-2.9 2.2-4.8 4.8-4.8s4.8 1.9 4.8 4.8"/>
-                                                                <circle cx="17.4" cy="17.4" r="3.4"/>
-                                                                <path d="M17.4 11.5v2M17.4 21.3v2M11.5 17.4h2M23.3 17.4h-2M15 15l-1.3-1.3M19.8 15l1.3-1.3M15 19.8l-1.3 1.3M19.8 19.8l1.3 1.3"/>
+                                                            <svg viewBox={fillSvg.viewBox} className="nav-svg"
+                                                                 fill="currentColor" aria-hidden="true">
+                                                                {fillSvg.body}
                                                             </svg>
                                                         </span>
                                                     ) : (
@@ -253,13 +285,20 @@ const Dashboard = () => {
                                                     )}
                                                     <span className="text nac-text">{item.name}</span>
                                                 </li>
-                                            ))}
+                                                );
+                                            })}
                                         </ul>
                                     </div>
 
                                     <div className="bottom-content">
-                                        {/* 20260905：管理类并入侧栏「用户管理」，本项回归设置专属（站点信息/用户信息/社交/其他） */}
-                                        <li className="nav-links" onClick={() => navigate('/dashboard/usercontrol')}>
+                                        {/* 20260905：管理类并入侧栏「用户管理」，本项回归设置专属（站点信息/用户信息/社交/其他）。
+                                            20260923：补 nav_select —— 它不在 sidebar 数组里，原来只 navigate 不置高亮，
+                                            于是点它之后蓝色容器仍停在上一个被点的图标上（用户报的"选中没跟上"）。 */}
+                                        <li className={`nav-links ${SelectCurrent === 8 ? 'nav_select' : ''}`}
+                                            onClick={() => {
+                                                navigate('/dashboard/usercontrol');
+                                                setSelectCurrent(8);
+                                            }}>
                                             <i className="iconfont icon-iconfontcog icon"></i>
                                             <span className="text nac-text">站点设置</span>
                                         </li>

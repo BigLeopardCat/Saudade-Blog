@@ -1,5 +1,5 @@
 import { DeleteOutlined } from '@ant-design/icons';
-import {Calendar, Card, ConfigProvider, Progress, Space, theme, Checkbox, Input, Badge, Modal, Avatar, Select, Radio} from "antd";
+import {Calendar, Card, ConfigProvider, theme, Checkbox, Input, Badge, Modal, Avatar, Select, Radio} from "antd";
 import dayjs from "dayjs";
 import localeData from "dayjs/plugin/localeData";
 dayjs.extend(localeData);
@@ -137,11 +137,8 @@ const Home = () => {
                        <Avatar src={avatar} size={130} style={{ border: "2px solid #b7b7b7" }} />
                        <div ref={typedRef} className="typed"></div>
                    </div>
-                   <Space wrap style={{marginTop: 20}} className='p_hidden'>
-                       <Progress type="circle" percent={70} size={70} format={() => <span style={{color:isDark?"white":'black'}}>CPU</span>}/>
-                       <Progress type="circle" percent={50} size={70} format={() => <span style={{color:isDark?"white":'black'}}>内存</span>} />
-                       <Progress type="circle" percent={70} size={70} format={() => <span style={{color:isDark?"white":'black'}}>磁盘</span>} />
-                   </Space>
+                   {/* 三个 CPU/内存/磁盘 表盘已删（20260923）：percent 是写死的常量，
+                       不接任何真实指标 —— 假仪表比没有仪表更误导。 */}
                </div>
                {/* Updated to include WordCloud inside ArticleAnalytics */}
                <ArticleAnalytics />

@@ -732,8 +732,9 @@ body[data-theme='dark'] .ant-picker-calendar .ant-picker-cell:hover .ant-picker-
    `.dark` 类，见 App.tsx / theme.ts）；留着只会让人以为夜间悬停是白的。 */
 .ArticleFooter { align-items: center !important; }
 
-/* 20260905：用户管理 gear+person 双形 SVG——svg 无 width/height 时按默认 300px 渲染
-   （"图标比其他大"根因），置入 .icon 槽与 23px 字体图标同视觉尺寸 */
+/* 20260905：用户管理那枚内联 SVG——svg 无 width/height 时按默认 300px 渲染
+   （"图标比其他大"根因），置入 .icon 槽与 23px 字体图标同视觉尺寸。
+   20260923 起这枚与公告的喇叭共用（两枚 viewBox 不同，由默认 preserveAspectRatio 居中）。 */
 .nav-svg {
   width: 22px;
   height: 22px;
@@ -758,7 +759,7 @@ body[data-theme='dark'] .ant-picker-calendar .ant-picker-cell:hover .ant-picker-
     text-shadow: 0 0 10px rgba(240, 196, 110, 0.55), 0 0 22px rgba(240, 196, 110, 0.25);
 }
 
-/* SVG 图标（用户管理那枚 gear+person）走 stroke=currentColor，text-shadow 对它无效，
+/* SVG 图标（公告的喇叭 / 用户管理的人+列表）走 fill=currentColor，text-shadow 对它无效，
    光晕改走 filter；色值取登录页那团月晕的 rgba(240,196,110,·)。 */
 .dark .shell li:not(.nav_select):hover .icon .nav-svg {
     filter: drop-shadow(0 0 5px rgba(240, 196, 110, 0.85));
