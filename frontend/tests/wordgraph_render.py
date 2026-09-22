@@ -12,6 +12,11 @@
   3. 定位后视图确实朝命中簇移动，且命中簇被摆到画面中心
   4. **空闲 3 秒 rAF 计数增量为 0**（定位动画与辉光结束后必须彻底停下来）
   5. prefers-reduced-motion 下不抛错且瞬移到位
+
+第 8 条（20260923 加）是**锁定态**的判据：引擎 `setLocked(true)` 后滚轮必须**穿透到页面**
+（`window.scrollY` 增加、相机 dist 不变），解锁后反回来。这是"锁定"这个功能的全部意义
+（用户报"鼠标下滚总落在展示柜上、页面不翻"），所以它是数值断言而不是肉眼验收。
+页面因此带一条 1600px 的占位块——没有可滚动的文档，这条腿量不到任何东西。
 """
 from __future__ import annotations
 
@@ -64,7 +69,7 @@ def bundle() -> str:
 PAGE = f"""<!doctype html><html><head><meta charset="utf-8"><style>
   html,body{{margin:0;background:#101623}}
   #c{{display:block;width:{CANVAS_W}px;height:{CANVAS_H}px}}
-</style></head><body><canvas id="c"></canvas></body></html>"""
+</style></head><body><canvas id="c"></canvas><div id="sp" style="height:1600px"></div></body></html>"""
 
 # 画布统计 + 相机读数。都在页面里算，避免把几十万像素搬过 CDP。
 JS_STATS = """() => {
@@ -357,6 +362,42 @@ def run(browser, manifest, artifact, js):
            f"悬浮 {pick['wa']} 时，邻居 {pick['wb']} 的名字被画到画布上（不悬浮时没有）",
            {"baseline_has": pick["wb"] in base, "texts": texts[:12]})
         ok(pick["wa"] in texts, "被悬浮那个词自己的名字也在", texts[:12])
+
+    print("== 8. 锁定：滚轮穿透到页面（该开关存在的全部理由）==")
+    # 这一节只用引擎，不走 React 遮罩：遮罩管的是指针，而"页面能不能滚"取决于引擎有没有在
+    # onWheel 里 preventDefault——两者是两套机制，这里验的是后者（前者只能靠浏览器里点）。
+    page.evaluate("() => { window.scrollTo(0, 0); window.__eng.setLocked(true); }")
+    d0 = page.evaluate("() => window.__eng.getCamera().dist")
+    page.mouse.move(310, 230)
+    page.mouse.wheel(0, 300)
+    page.wait_for_timeout(300)
+    sc1 = page.evaluate("() => window.scrollY")
+    d1 = page.evaluate("() => window.__eng.getCamera().dist")
+    ok(sc1 > 0, "锁定时滚轮把页面滚下去了（事件没被 preventDefault 吃掉）", {"scrollY": sc1})
+    ok(d1 == d0, "锁定时滚轮没有动相机（画布不吃滚轮）", {"before": d0, "after": d1})
+
+    page.evaluate("() => { window.scrollTo(0, 0); window.__eng.setLocked(false); }")
+    page.mouse.move(310, 230)
+    page.mouse.wheel(0, 300)
+    page.wait_for_timeout(300)
+    sc2 = page.evaluate("() => window.scrollY")
+    d2 = page.evaluate("() => window.__eng.getCamera().dist")
+    ok(d2 != d1, "解锁后滚轮改的是相机 dist（缩放/穿云恢复）", {"before": d1, "after": d2})
+    ok(sc2 == 0, "解锁后页面不被滚轮带走（preventDefault 回来了）", {"scrollY": sc2})
+
+    print("== 8b. 锁定：拖动/双击也不生效（遮罩之外的第二道闸）==")
+    page.evaluate("() => { window.__eng.setLocked(true); }")
+    camL0 = page.evaluate("() => window.__eng.getCamera()")
+    page.mouse.move(300, 220)
+    page.mouse.down()
+    for x in range(300, 420, 20):
+        page.mouse.move(x, 230)
+    page.mouse.up()
+    page.wait_for_timeout(200)
+    camL1 = page.evaluate("() => window.__eng.getCamera()")
+    ok(camL1["yaw"] == camL0["yaw"] and camL1["pitch"] == camL0["pitch"],
+       "锁定时拖拽不改变机位（onDown/onMove 早退）", {"before": camL0["yaw"], "after": camL1["yaw"]})
+    page.evaluate("() => { window.__eng.setLocked(false); }")
 
     ok(errors == [], "全程无 console error / pageerror", errors)
     ctx.close()

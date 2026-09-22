@@ -26,7 +26,9 @@ export const EXHIBITS: Exhibit[] = [
             const m = await loadManifest();
             return m?.built ? fmtBuilt(m.built) : null;
         },
-        hint: '拖动旋转 · 滚轮穿行 · 单击选中 · 双击跳文章',
+        // 提示词跟着"默认锁定"改了：窗口锁定时滚轮是穿透给页面的（见 engine.setLocked），
+        // 原来那句"滚轮穿行"会让用户以为滚不动是坏了。重要的话放句首，窄窗口省略号截尾。
+        hint: '默认锁定（滚轮正常翻页）· 点解锁后：拖动旋转 / 滚轮穿云 / 双击跳文章',
         Component: lazy(() => import('./wordgraph/WordGraphExhibit')),
     },
 ];
