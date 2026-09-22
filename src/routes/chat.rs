@@ -641,6 +641,23 @@ fn arrow(row: &serde_json::Value) -> String {
     }
 }
 
+/// 回执 args 里**列表参数**的取回（20260923）。
+///
+/// agent 侧落回执前把每个实参统一 `str(v)`（`agent/graph.py` execute_node 的
+/// rcpt 构造——那是为了跨语言契约里只留一种类型），所以一个 `[7, 8]` 到了这里
+/// 是**字符串** `"[7, 8]"`（Python 的 list repr）。这个函数把那串 repr 里的正整数
+/// 取回来；形态认不出就返回空（调用方自会退回不带列表的说法，绝不猜编号）。
+fn py_int_list(raw: &str) -> Vec<String> {
+    raw.trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .split(',')
+        .map(|s| s.trim().trim_matches(|c| c == '\'' || c == '"'))
+        .filter(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()))
+        .map(|s| s.to_string())
+        .collect()
+}
+
 /// 跨轮执行记忆渲染（20260904）：checker 验收回执行 → 中文动作行，写时一次定稿、
 /// 读时零映射（execution_log.detail 落的就是这里的产物，prepare_chat 直取拼串）。
 /// 输入 = Python agent __EXEC__ 帧里的 {skill,tool,args,result,ts}。动作词映射
@@ -810,6 +827,35 @@ fn render_exec_row(row: &serde_json::Value) -> String {
                 format!("删除留言 #{}", id)
             } else {
                 format!("删除留言 #{}（{} 的留言）", id, who)
+            }
+        }
+        // 用户自己的数据（20260923）：**读三个 + 写三个**。读的措辞与 agent 侧
+        // server.py _NOARG_VERB 同源——漏了会落默认分支，把 `操作记录(list_my_favorites)`
+        // 这种带下划线的内部工具名写进 execution_log 被下一轮 narrator 照抄。
+        "list_my_favorites" => "查看我的收藏".to_string(),
+        "get_unread_summary" => "查看未读汇总".to_string(),
+        "list_notifications" => "查看站内通知".to_string(),
+        // 写三件（scope=write.own）：**回执不带 meta**——AUDIT_SCOPES 只含 write.console
+        // （test_authz 精确锁着），所以这里只能从 args 渲染。args 一律是字符串
+        // （见 py_int_list 的头注：`all` 的 bool 过来是 Python repr 的 "True"）。
+        // 收藏行**刻意不带《标题》**：同上面那句纪律（会经 recent_executions 注入
+        // 下一轮，被读成"我读过这篇"的跨轮指代证据）。
+        // 措辞与 agent 侧 server.py _tool_action_text 的同名臂**逐字一致**：预告帧
+        // 与落库回执行是同一件事的两处渲染，不一致会让主人以为发生了两件事。
+        "add_favorite" => format!("收藏文章 {}", arg("article_id")),
+        "remove_favorite" => format!("取消收藏文章 {}", arg("article_id")),
+        "read_notifications" => {
+            let want_all = matches!(arg("all").as_str(), "True" | "true" | "1");
+            if want_all {
+                "标记站内通知已读（全部未读）".to_string()
+            } else {
+                let ids = py_int_list(&arg("ids"));
+                match ids.len() {
+                    0 => "标记站内通知已读".to_string(),
+                    n if n > 3 => format!("标记站内通知已读（{} 等 {} 条）",
+                                          ids[..3].join("、"), n),
+                    _ => format!("标记站内通知已读（{}）", ids.join("、")),
+                }
             }
         }
         "set_article_status" => format!("修改文章 {}：{}", arg("article_id"), arrow(row)),
