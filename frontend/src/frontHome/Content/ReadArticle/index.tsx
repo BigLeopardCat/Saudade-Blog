@@ -129,7 +129,7 @@ const ReadArticle = () => {
             const res = faved ? await removeFavorite(Number(id)) : await addFavorite(Number(id))
             if (ok(res)) {
                 setFaved(!faved)
-                message.success(faved ? '已取消收藏' : '已收藏（可在「个人中心 → 收藏的文章」里查看）')
+                message.success(faved ? '已取消收藏' : '已收藏（可在「设置 → 收藏的文章」里查看）')
             } else {
                 message.error(errMsg(res))
             }

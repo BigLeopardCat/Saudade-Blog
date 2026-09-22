@@ -741,7 +741,7 @@ with sync_playwright() as p:
           btn["color"] == "rgb(42, 33, 19)" and btn["border"] == "0px", str(btn))
     dk.close()
 
-    print("⑫ 头部：头像右上角红点 + 点「个人中心」打开个人中心（挂真 Head 组件跑）")
+    print("⑫ 头部：头像右上角红点 + 点「设置」打开个人中心窗口（挂真 Head 组件跑）")
     hp = br.new_page(viewport={"width": 1280, "height": 900})
     head_errs = []
     hp.on("pageerror", lambda e: head_errs.append(str(e)))
@@ -780,14 +780,17 @@ with sync_playwright() as p:
     check("登录卡贴在头部右缘（没有被挤走的位移）",
           abs(pg_geo["right"] - pg_geo["hRight"]) <= 40 and pg_geo["top"] >= pg_geo["hTop"] - 40,
           str(pg_geo))
-    uc_btn = hp.locator(".homeRight .loginCard .theme-btn", has_text="个人中心")
-    check("普通用户的按钮文案已从「心境」改成「个人中心」",
+    uc_btn = hp.locator(".homeRight .loginCard .theme-btn", has_text="设置")
+    check("普通用户的按钮文案已从「心境」→「个人中心」→「设置」（20260922 晚改）",
           uc_btn.count() == 1
-          and hp.locator(".homeRight .loginCard .theme-btn", has_text="心境").count() == 0,
+          and hp.locator(".homeRight .loginCard .theme-btn", has_text="心境").count() == 0
+          and hp.locator(".homeRight .loginCard .theme-btn", has_text="个人中心").count() == 0,
           " | ".join(hp.locator(".homeRight .loginCard .theme-btn").all_inner_texts()))
+    check("普通用户看不到「后台」入口（角色来自 JWT claims，前端只决定显不显示）",
+          hp.locator(".homeRight .homeAdminBtn").count() == 0)
     uc_btn.click()
     hp.wait_for_selector(".ant-modal-content", timeout=10000)
-    check("点「个人中心」打开的是个人中心（不再是跳 /dashboard）",
+    check("点「设置」打开的是个人中心窗口（不再是跳 /dashboard）",
           "个人中心" in hp.locator(".ant-modal-content").inner_text()
           and hp.evaluate("() => (window.__nav || []).length") == 0,
           str(hp.evaluate("() => window.__nav || []")))
@@ -804,6 +807,29 @@ with sync_playwright() as p:
           str(hp.locator(".ant-modal-content").count()))
     hp.screenshot(path="/tmp/head-user-center.png")
     hp.close()
+
+    # 管理员的独立「后台」入口（20260922 用户要求）：此前要去后台得先开「设置」窗口、
+    # 再点标题栏里的「后台管理」——白点两次。token 由 FAKE_AXIOS 按 window.__role 现造，
+    # 所以要在 go 之前用 add_init_script 把角色放好（它能先于页面脚本执行）。
+    print("⑫b 管理员头部多一个独立的「后台」直达按钮")
+    ap = br.new_page(viewport={"width": 1280, "height": 900})
+    aerrs = []
+    ap.on("pageerror", lambda e: aerrs.append(str(e)))
+    ap.add_init_script("window.__role = 'admin';")
+    ap.goto(URL.replace("index.html", "head.html"))
+    ap.wait_for_selector(".homeRight .avatarDotWrap", timeout=15000)
+    ap.wait_for_timeout(600)
+    check("管理员头部有常驻的「后台」按钮", ap.locator(".homeRight .homeAdminBtn").count() == 1)
+    check("抽屉里也有一枚（窄屏 .homeRight 整块 display:none）",
+          ap.locator(".phoneSide .theme-btn.admin-btn").count() == 1)
+    ap.click(".homeRight .homeAdminBtn")
+    ap.wait_for_timeout(400)
+    check("点它直接跳 /dashboard（不用先开一次「设置」窗口）",
+          ap.evaluate("() => (window.__nav || []).slice(-1)[0]") == "/dashboard"
+          and ap.locator(".ant-modal-content").count() == 0,
+          str(ap.evaluate("() => window.__nav || []")))
+    ap.close()
+    head_errs.extend(aerrs)
 
     print("⑬ 全程无 JS 报错")
     all_errs = body_errs + admin_errs + head_errs
