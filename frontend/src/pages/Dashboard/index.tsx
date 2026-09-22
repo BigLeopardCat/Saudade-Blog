@@ -18,6 +18,7 @@ import '@fontsource/roboto/400.css';
 import '@fontsource/roboto/500.css';
 import '@fontsource/roboto/700.css';
 import { readDarkMode, recordUserChoice } from "../../theme";
+import Live2dAgent from "../../components/Live2dAgent"; // 后台是顶层路由（不在 App 布局里），看板娘得自己挂
 
 
 const Dashboard = () => {
@@ -302,6 +303,15 @@ const Dashboard = () => {
                     </div>
                 </>
                 )}
+
+            {/* 看板娘（20260923 用户实测：在 dashboard 刷新后消失）。
+                `/dashboard` 与 `/` 在路由表里是兄弟顶层路由，命中它时 <App/> 根本不在渲染树里，
+                App.tsx 那颗 <Live2dAgent/> 不会挂载 ⇒ autoload.js 从不被注入。
+                SPA 跳转进来时看着还在，是因为看板娘的 DOM 由 autoload.js 直接挂在 body 下、
+                在 React 树之外，刷新才暴露。与 /guestbook（RiverBoard）同一套做法。
+                autoload.js 自带防重入（window.__agentChatLoaded / #waifu 存在即跳过），
+                来回跳不会叠出两只；waifu.css 也已按后台的 fixed 侧栏调过 z-index。 */}
+            <Live2dAgent />
         </div>
     );
 };
