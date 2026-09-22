@@ -20,6 +20,7 @@ import { recordUserChoice } from "../../theme";
 import UserCenter from "../../components/UserCenter";
 import { useUnread } from "../../components/UserCenter/unread";
 import getToken from "../../apis/getToken.tsx";
+import { isAdminToken } from "../../utils/auth.ts";
 
 /* 留言板（河灯）导航图标：古风信箱 */
 const GuestbookIcon = (
@@ -48,7 +49,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
     const [phoneBarShow, setPhoneBarShow] = useState(false);
     const [isHovered, setIsHovered] = useState(false);
     const [isLogin, setLogin] = useState(0)
-    // 个人中心（20260922）：点「个人中心」打开的大窗口 + 头像右上角的未读红点
+    // 个人中心（20260922）：点「设置」打开的大窗口 + 头像右上角的未读红点
     const [centerOpen, setCenterOpen] = useState(false)
     const { counts: unreadCounts } = useUnread(isLogin === 1)
     const [showMobileCategory, setShowMobileCategory] = useState(false);
@@ -81,7 +82,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
         const onAuthChange = () => {
             const loggedIn = !!getToken()
             setLogin(loggedIn ? 1 : 0)
-            // 退出时把个人中心一起关掉（窗口里全是需要登录的数据）
+            // 退出时把「设置」窗口一起关掉（窗口里全是需要登录的数据）
             if (!loggedIn) setCenterOpen(false)
         }
         window.addEventListener('auth-change', onAuthChange)
@@ -217,15 +218,24 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
         navigate(`article/${id}`);
     }
 
-    /** 头像菜单里的「个人中心」= 打开那个大窗口（20260922）——**所有登录用户同一入口**。
+    /** 头像菜单里的「设置」= 打开那个大窗口（20260922）——**所有登录用户同一入口**。
      *  此前这个钮叫「心境」且一律 navigate('dashboard')，而 /dashboard 被 AuthRouter
      *  收成管理员专属：普通用户点它只会被弹回首页 + 一句"无权限访问后台"。
-     *  20260922 用户反馈「名称看不懂」⇒ 按钮文案与窗口标题统一成「个人中心」。
-     *  管理员的后台入口改由个人中心窗口头部提供（见 UserCenter 的 title），路径没有丢。 */
+     *  20260922 第一轮改名「个人中心」（原名看不懂），第二轮用户要求改成**「设置」**
+     *  （原话「右上角头像按钮个人中心文本改成设置」）——窗口标题仍是「个人中心」，
+     *  因为它装的是收藏/留言/通知/信箱，不只是设置。 */
     const openUserCenter = () => {
         closePhoneBar();
         setCenterOpen(true);
     }
+
+    /** 管理员的独立「后台」入口（20260922 用户要求）。
+     *  此前去后台的唯一路径是：头像卡 →「设置」→ 窗口标题栏里的「后台管理」——白点两次。
+     *  用户原话「管理员一般不需要去个人中心而是后台，每次都要多点一次」⇒ 头部常驻一个直达钮
+     *  （窄屏在抽屉里，因为 .homeRight 在 1200px 以下整块 display:none）。
+     *  角色取自 JWT 自带的 role（`isAdminToken`，本地解码不请求后端）——它只决定"这个入口
+     *  显不显示"，真正的权限判定在 AuthRouter 与后端，前端藏一个按钮从来不是权限本身。 */
+    const admin = isAdminToken(getToken());
 
     /** 头像右上角的未读红点（未读通知 + 未读站内信；数据见 components/UserCenter/unread.ts） */
     const unreadTotal = unreadCounts.total;
@@ -249,7 +259,8 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                          <div style={{ marginTop: "5px", display: "flex", justifyContent: "center", gap: "10px" }}>
                             {isLogin ? (
                                 <>
-                                <div className="theme-btn" onClick={openUserCenter}>个人中心</div>
+                                <div className="theme-btn" onClick={openUserCenter}>设置</div>
+                                {admin && <div className="theme-btn admin-btn" onClick={() => { closePhoneBar(); navigate('/dashboard'); }}>后台</div>}
                                 <div className="theme-btn logout-btn" onClick={() => { closePhoneBar(); localStorage.removeItem('tokenKey'); setLogin(0); navigate('/'); window.dispatchEvent(new CustomEvent('auth-change')); }}>退出</div>
                                 </>
                             ) : (
@@ -343,6 +354,9 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                 <div className="homeRight">
                     <div onClick={showModal}><SearchButton2 /></div>
                     <div className={'homeSwitch'}><Switch handleModeSwitch={handleModeSwitch} isDarkMode={isDark}/></div>
+                    {admin && (
+                        <div className="theme-btn admin-btn homeAdminBtn" onClick={() => navigate('/dashboard')}>后台</div>
+                    )}
                     <div className={`homeLogo ${isHovered&&'BigAvatar'}`} onMouseEnter={handleMouseEnter} onMouseLeave={handleMouseLeave}>
                         {avatarWithDot(<Avatar src={avatar} size={40} />, 40)}
                         <div className="loginCard" style={{
@@ -352,7 +366,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                         }}>
                             {isLogin ? (
                                 <>
-                                <div className="theme-btn" onClick={openUserCenter}>个人中心</div>
+                                <div className="theme-btn" onClick={openUserCenter}>设置</div>
                                 <div className="theme-btn logout-btn" onClick={() => { localStorage.removeItem('tokenKey'); setLogin(0); navigate('/'); window.dispatchEvent(new CustomEvent('auth-change')); }}>退出</div>
                                 </>
                             ) : (
