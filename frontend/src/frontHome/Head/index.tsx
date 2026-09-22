@@ -217,10 +217,11 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
         navigate(`article/${id}`);
     }
 
-    /** 「心境」= 打开个人中心（20260922）——**所有登录用户同一入口**。
-     *  此前它一律 navigate('dashboard')，而 /dashboard 被 AuthRouter 收成管理员专属：
-     *  普通用户点它只会被弹回首页 + 一句"无权限访问后台"。管理员的后台入口改由
-     *  个人中心窗口头部提供（见 UserCenter 的 title），路径没有丢。 */
+    /** 头像菜单里的「个人中心」= 打开那个大窗口（20260922）——**所有登录用户同一入口**。
+     *  此前这个钮叫「心境」且一律 navigate('dashboard')，而 /dashboard 被 AuthRouter
+     *  收成管理员专属：普通用户点它只会被弹回首页 + 一句"无权限访问后台"。
+     *  20260922 用户反馈「名称看不懂」⇒ 按钮文案与窗口标题统一成「个人中心」。
+     *  管理员的后台入口改由个人中心窗口头部提供（见 UserCenter 的 title），路径没有丢。 */
     const openUserCenter = () => {
         closePhoneBar();
         setCenterOpen(true);
@@ -248,7 +249,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                          <div style={{ marginTop: "5px", display: "flex", justifyContent: "center", gap: "10px" }}>
                             {isLogin ? (
                                 <>
-                                <div className="theme-btn" onClick={openUserCenter}>心境</div>
+                                <div className="theme-btn" onClick={openUserCenter}>个人中心</div>
                                 <div className="theme-btn logout-btn" onClick={() => { closePhoneBar(); localStorage.removeItem('tokenKey'); setLogin(0); navigate('/'); window.dispatchEvent(new CustomEvent('auth-change')); }}>退出</div>
                                 </>
                             ) : (
@@ -351,7 +352,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                         }}>
                             {isLogin ? (
                                 <>
-                                <div className="theme-btn" onClick={openUserCenter}>心境</div>
+                                <div className="theme-btn" onClick={openUserCenter}>个人中心</div>
                                 <div className="theme-btn logout-btn" onClick={() => { localStorage.removeItem('tokenKey'); setLogin(0); navigate('/'); window.dispatchEvent(new CustomEvent('auth-change')); }}>退出</div>
                                 </>
                             ) : (
