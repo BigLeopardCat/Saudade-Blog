@@ -256,6 +256,82 @@ with sync_playwright() as p:
           geo_page.evaluate("() => window.__auth") == 0)
     check("全程无页面异常", not geo_page.errs, "; ".join(geo_page.errs[:3]))
     geo_page.close()
+
+    # ── 五、两枚填充型 SVG 图标（公告 / 用户管理）──────────────────────────────
+    # 换图标这件事的坑全在"看不到的那一半"：path 上留着原设计稿的 `fill="#77808F"` 时，
+    # 平时看着一切正常，只有夜间悬停**染色只变一半**——所以判据必须是 computedStyle 的
+    # svg.fill（继承自 .icon 的 color），外加"path 上没有写死 fill"。
+    print("\n【五】公告与用户管理的填充型 SVG")
+    svg_dk = fresh_page(dark=True)
+
+    def probe_svg(page, idx):
+        page.locator(".menu-links .nav-links").nth(idx).hover()
+        page.wait_for_timeout(420)
+        return page.evaluate("""(i) => {
+            const li = document.querySelectorAll('.menu-links .nav-links')[i];
+            const svg = li.querySelector('svg');
+            const paths = li.querySelectorAll('svg path');
+            const s = svg ? getComputedStyle(svg) : null;
+            const b = svg ? svg.getBoundingClientRect() : null;
+            return {
+                has: !!svg,
+                cls: svg ? svg.getAttribute('class') : '',
+                fill: s ? s.fill : '',
+                stroke: s ? s.stroke : '',
+                paths: paths.length,
+                pathFills: Array.from(paths).map((p) => p.getAttribute('fill')),
+                fontIcon: !!li.querySelector('.icon .iconfont, .icon .fa'),
+                w: b ? b.width : 0, h: b ? b.height : 0,
+            };
+        }""", idx)
+
+    for idx, label in ((4, '公告（喇叭）'), (5, '用户管理（人+列表）')):
+        g = probe_svg(svg_dk, idx)
+        check(f"{label}：是内联 SVG（不再是字体图标）", g["has"] and not g["fontIcon"], str(g))
+        check(f"{label}：由 .nav-svg 定尺寸、没撑成 300px",
+              g["cls"] == "nav-svg" and 15 < g["w"] <= 22.5, f'{g["w"]:.1f}×{g["h"]:.1f}')
+        check(f"{label}：填充型（stroke 为 none，不是线框）", g["stroke"] == "none", g["stroke"])
+        check(f"{label}：夜间悬停填色 = 河灯金", g["fill"] == "rgb(232, 184, 102)", g["fill"])
+        check(f"{label}：path 上没写死 fill（否则 currentColor 只染一半）",
+              all(f is None for f in g["pathFills"]), str(g["pathFills"]))
+    svg_dk.close()
+
+    # ── 六、底部「站点设置」也进高亮圈 ─────────────────────────────────────────
+    print("\n【六】侧栏「站点设置」选中态（含带 hash 刷新）")
+    sc = br.new_page(viewport={"width": 1280, "height": 900})
+    sc_errs = []
+    sc.on("pageerror", lambda e: sc_errs.append(str(e)))
+    sc.add_init_script("window.__nav = []; localStorage.setItem('tokenKey', 'x.y.z');")
+    sc.goto(URL + "#/dashboard/usercontrol")
+    sc.wait_for_selector(".menu-links .nav-links", timeout=10000)
+    sc.wait_for_timeout(400)
+    check("带 #/dashboard/usercontrol 重载：站点设置拿到 nav_select",
+          sc.evaluate("""() => [...document.querySelectorAll('.bottom-content .nav-links')]
+              .some((el) => el.textContent.includes('站点设置') && el.classList.contains('nav_select'))"""))
+    # 反面：HASH_INDEX 没这一项时会 `?? 1` 回落，把高亮错点给「主页」
+    check("重载后没有回落点亮「主页」",
+          sc.evaluate("() => document.querySelectorAll('.menu-links .nav_select').length") == 0)
+
+    sc.locator(".menu-links .nav-links").first.click()   # 对照：先让高亮回到「主页」
+    sc.wait_for_timeout(200)
+    check("对照：点「主页」后高亮在主页上",
+          sc.evaluate("() => document.querySelectorAll('.menu-links .nav_select').length") == 1)
+    sc.locator(".bottom-content .nav-links").filter(has_text="站点设置").first.click()
+    sc.wait_for_timeout(200)
+    check("点站点设置：蓝容器跟着过来，且全场只有它一个高亮",
+          sc.evaluate("""() => {
+              const li = [...document.querySelectorAll('.bottom-content .nav-links')]
+                  .find((el) => el.textContent.includes('站点设置'));
+              return li.classList.contains('nav_select')
+                  && document.querySelectorAll('.nav-links.nav_select').length === 1
+                  && document.querySelectorAll('.menu-links .nav_select').length === 0;
+          }"""))
+    # 只认最后一条：上面那记对照点击已经往 __nav 里放过一条 /dashboard（探针自己的足迹）
+    check("点站点设置：导航到 /dashboard/usercontrol",
+          sc.evaluate("() => window.__nav[window.__nav.length - 1].to") == "/dashboard/usercontrol",
+          str(sc.evaluate("() => window.__nav.map((n) => n.to)")))
+    check("第六节全程无页面异常", not sc_errs, "; ".join(sc_errs[:3]))
+    sc.close()
     br.close()
 
 print()
