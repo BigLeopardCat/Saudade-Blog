@@ -987,7 +987,9 @@ mod tests {
     }
 
     #[test]
-    fn id_策略的条件B() {
+    // 名字里那个大写 B 会撞 non_snake_case ⇒ CI 里是 -D warnings 硬门（cargo test 编译
+    // 测试目标时才暴露——此前 CI 只 cargo build，测试代码从没被编译过）
+    fn id_策略的条件_b() {
         // 同层恒可沿用
         assert!(keep_id_allowed(true, true, 10_005));
         assert!(keep_id_allowed(false, false, 11));
