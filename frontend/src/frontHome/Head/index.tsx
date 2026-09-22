@@ -1,4 +1,4 @@
-import {Avatar, Button, Card, ConfigProvider, Modal, message} from 'antd'
+import {Avatar, Card, ConfigProvider, Modal} from 'antd'
 import './index.sass'
 import {Key, ReactElement, ReactNode, ReactPortal, useEffect, useRef, useState} from "react";
 import {useNavigate} from "react-router-dom";
@@ -14,7 +14,6 @@ import {fetchNoteList} from "../../store/components/note.tsx";
 import { searchNotes } from "../../apis/NoteMethods.tsx";
 import '../main.css'
 import MoonToSun from "../MoonToSun";
-import deleteToken from "../../apis/deleteToken.tsx";
 import { recordUserChoice } from "../../theme";
 import UserCenter from "../../components/UserCenter";
 import { useUnread } from "../../components/UserCenter/unread";
