@@ -12,13 +12,13 @@ import {fetchTags} from "../../store/components/tags.tsx";
 import {fetchSocial, fetchUserInfo} from "../../store/components/user.tsx";
 import {fetchNoteList} from "../../store/components/note.tsx";
 import { searchNotes } from "../../apis/NoteMethods.tsx";
-import UserState from "../../interface/UserState";
 import '../main.css'
 import MoonToSun from "../MoonToSun";
 import deleteToken from "../../apis/deleteToken.tsx";
 import { recordUserChoice } from "../../theme";
 import UserCenter from "../../components/UserCenter";
 import { useUnread } from "../../components/UserCenter/unread";
+import { useViewerAvatar } from "../../components/UserCenter/identity";
 import getToken from "../../apis/getToken.tsx";
 import { isAdminToken } from "../../utils/auth.ts";
 
@@ -57,7 +57,10 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
     const navigate = useNavigate();
     const [animation,setAnimation] = useState('');
     const categoryList = useSelector((state: any) => state.categories.categories)
-    const avatar = useSelector((state:{user:UserState}) => state.user.avatar)
+    // 头部头像 = **当前访客**的头像（20260922 用户要求的三态：正常登录 / 退出登录但本机挂着
+    // 账号 / 从没有过账号记录），不再是站点主人那张 `state.user.avatar`——那张图现在只用在
+    // 文章页的作者署名处。三态的选择与缓存见 components/UserCenter/identity.ts。
+    const viewerAvatar = useViewerAvatar()
     const blogTitle = useSelector((state:{user:{blogTitle: string}}) => state.user.blogTitle)
 
     // Search Logic
@@ -255,7 +258,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
             <div className={`${phoneBarShow ? 'openBar' : ''} phoneSide`} onClick={(e) => e.stopPropagation()}>
                 <div className="phoneBarContainer">
                     <div className="barLogo">
-                        {avatarWithDot(<Avatar src={avatar} size={100} />, 100)}
+                        {avatarWithDot(<Avatar src={viewerAvatar} size={100} />, 100)}
                          <div style={{ marginTop: "5px", display: "flex", justifyContent: "center", gap: "10px" }}>
                             {isLogin ? (
                                 <>
@@ -358,7 +361,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                         <div className="theme-btn admin-btn homeAdminBtn" onClick={() => navigate('/dashboard')}>后台</div>
                     )}
                     <div className={`homeLogo ${isHovered&&'BigAvatar'}`} onMouseEnter={handleMouseEnter} onMouseLeave={handleMouseLeave}>
-                        {avatarWithDot(<Avatar src={avatar} size={40} />, 40)}
+                        {avatarWithDot(<Avatar src={viewerAvatar} size={40} />, 40)}
                         <div className="loginCard" style={{
                             display: (showStatus && isHovered) ? 'flex' : 'none',
                             flexDirection: 'column',
@@ -491,7 +494,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
             {animation !== '' && <MoonToSun status={animation} />}
             {/* 个人中心（20260922）：点「个人中心」打开的大窗口。挂在 header 里但门是 Modal
                 portal 到 body 的，不受 header 的 sticky/transform 影响 */}
-            <UserCenter open={centerOpen} onClose={() => setCenterOpen(false)} fallbackAvatar={avatar} />
+            <UserCenter open={centerOpen} onClose={() => setCenterOpen(false)} />
         </header>
         {/* 猫必须渲染在 header 之外(frontRoot 内、header 的兄弟节点):
             transform 动画在 sticky header 内时每帧迫使 header 图层子树重新栅格化(GPU 30%+);
