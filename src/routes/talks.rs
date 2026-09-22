@@ -359,8 +359,10 @@ async fn notify_review_result(
                 .map(|s| s.trim())
                 .filter(|s| !s.is_empty())
                 .unwrap_or(REJECT_FALLBACK_REASON);
-            // 单行拼（面板 `.ucBodyText` 没有 pre-line，`\n` 会塌成空格，
-            // 与其指望样式，不如把理由直接接在同一句里）
+            // 单行拼：理由接在同一句里，不另起一行。面板 `.ucBodyText` 其实是
+            // `white-space: pre-wrap`（换行留得住，20260923 复核更正——此前这里写的是
+            // "没有 pre-line"，写错了），但同一个块还压着 `-webkit-line-clamp: 4`：
+            // 留言一长，另起一行的理由恰好是最先被截掉的那段，而它正是收件人唯一要看的。
             (
                 "留言未通过审核",
                 format!("你的留言「{brief}」未通过审核，理由：{reason}"),
