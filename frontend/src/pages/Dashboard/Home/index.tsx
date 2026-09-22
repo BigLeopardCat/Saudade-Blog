@@ -1,5 +1,5 @@
 import { DeleteOutlined } from '@ant-design/icons';
-import {Calendar, Card, ConfigProvider, Progress, Space, theme, Checkbox, Input, Badge, Modal, Avatar, Select, Radio, Col, Row} from "antd";
+import {Calendar, Card, ConfigProvider, Progress, Space, theme, Checkbox, Input, Badge, Modal, Avatar, Select, Radio} from "antd";
 import dayjs from "dayjs";
 import localeData from "dayjs/plugin/localeData";
 dayjs.extend(localeData);

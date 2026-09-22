@@ -103,7 +103,10 @@ const Login: React.FC = () => {
                 const token = getToken();
                 setTimeout(() => navigate(isAdminToken(token) ? '/dashboard' : '/'), 500);
             } else {
-                messageApi.error(result.message || '登录失败，账号或密码错误！');
+                // result.message 的类型退化成 {}（store 的返回类型没写细），运行时是后端的中文串
+                messageApi.error(typeof result.message === 'string' && result.message
+                    ? result.message
+                    : '登录失败，账号或密码错误！');
             }
         } catch (error) {
             messageApi.error('登录失败，账号或密码错误！');

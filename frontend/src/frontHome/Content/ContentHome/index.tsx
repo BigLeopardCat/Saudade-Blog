@@ -56,7 +56,8 @@ const pageSizeFor = (cols: number): number =>
 
 const ContentHome = () => {
     const [currentTop,setCurrentTop] = useState(0);
-    const [slideDir, setSlideDir] = useState<'left' | 'right'>('right');
+    // slideDir 当前只被赋值、没人读（轮播方向动画没接上）：保留 setter 以免改动渲染时序
+    const [, setSlideDir] = useState<'left' | 'right'>('right');
     // 鼠标悬浮轮播图时暂停自动滚动（移开恢复）
     const [hoverPaused, setHoverPaused] = useState(false);
     // 轮播图滚出视口（如停在文章卡片区）时暂停自动滚动，避免离屏动画触发重绘
@@ -318,7 +319,7 @@ const ContentHome = () => {
             >
                 <div className="Top" style={{transform: 'translateY(-40%)', zIndex: 10}}><i className="iconfont icon-sticky1" style={{fontSize: 20,verticalAlign:'middle',marginRight:5}}></i>置顶</div>
                 <div style={{ width: '100%', height: '100%', borderRadius: '15px', overflow: 'hidden' }}><div style={{ display: 'flex', width: '100%', height: '100%', transition: 'transform 0.8s cubic-bezier(0.25, 1, 0.5, 1)', transform: `translateX(-${currentTop * 100}%)` }}>
-                    {topArticles.map((item, index) => (
+                    {topArticles.map((item) => (
                         <div className="TopArticleInner" key={item.key} onClick={() => navigate(`/article/${item.key}`)} style={{ width: '100%', flexShrink: 0, height: '100%' }}>
                             <div className="TopCover">
                                 <img

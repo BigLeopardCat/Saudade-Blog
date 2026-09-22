@@ -55,9 +55,10 @@ const AnnouncementModal = () => {
             width={520}
             centered
             maskClosable
+            // 只给 content：rc-dialog 的 ModalStyles 只认 header/body/footer/mask/wrapper/content，
+            // 写 styles.close 不会生效（关闭钮的定位在 index.sass 里）
             styles={{
                 content: { borderRadius: 12, overflow: 'hidden' },
-                close: { insetInlineEnd: 10, top: 10 },
             }}
         >
             <div style={{

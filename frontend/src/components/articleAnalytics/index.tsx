@@ -1,4 +1,4 @@
-import {Card, Col, Row, Statistic} from "antd";
+import {Card, Statistic} from "antd";
 import CountUp from "react-countup";
 import './index.sass'
 import {useSelector} from "react-redux";
@@ -14,7 +14,16 @@ const ArticleAnalytics = () => {
     const categoryCount = useSelector((state) => state.categories.categoryCount)
     const navigate = useNavigate();
     
-    const list = [
+    // isComponent 目前没有任何一项设为 true（WordCloud 那个分支因此不渲染），
+    // 但字段保留在类型里：分支是既有行为，收口类型不等于删功能
+    const list: {
+        index: number
+        name: React.ReactNode
+        value: number
+        bgColor: string
+        path: string
+        isComponent?: boolean
+    }[] = [
         {
             index: 1,
             name: <p><span className="logo2" style={{ backgroundColor: 'rgba(230,240,0,0.3)'}}>✨️</span>文章总数</p>,

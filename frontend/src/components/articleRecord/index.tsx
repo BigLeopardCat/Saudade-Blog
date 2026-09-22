@@ -10,7 +10,8 @@ import {parseNoteTags} from "../../utils/noteTags";
 import {useNavigate} from "react-router-dom";
 
 interface ArticleRecordProps {
-    isDark: string
+    // 明暗开关：调用方（Dashboard/Home）传的是布尔值，这里按实际类型收口
+    isDark: boolean
 }
 const ArticleRecord = ({isDark}: ArticleRecordProps) => {
     const navigate = useNavigate();

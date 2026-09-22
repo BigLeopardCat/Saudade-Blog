@@ -13,7 +13,7 @@ import React, {useEffect, useState} from "react";
 import {FolderOpenOutlined, QuestionCircleOutlined} from '@ant-design/icons';
 import {CategoriesType} from "../../../../interface/CategoriesType";
 import {fetchCategories} from "../../../../store/components/categories.tsx";
-import {useDispatch, useSelector} from "react-redux";
+import {useDispatch} from "react-redux";
 import {Fab} from "@mui/material";
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
@@ -35,7 +35,6 @@ const  AllCategorize = () => {
     const [isEdit,setEdit] = useState(0)
     const [form] = Form.useForm();
     const dispatch = useDispatch()
-    const noteList = useSelector((state: any) => state.notes.Notes)
     const [isModalOpen, setIsModalOpen] = useState(false);
 
     useEffect(() => {
