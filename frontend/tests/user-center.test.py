@@ -159,10 +159,14 @@ const http = async (cfg: any) => {
     return env({ inbox: state.messages, outbox: [], unread: 0 });
   }
   if (url === '/api/protected/my/talks') {
+    // **故意两类都回**：真实后端 20260922 起已加 src='board' 过滤，但这条缺陷的形态
+    // 正是"后端把两类一起回、前端照单全收"，所以要验的是"说说混进来也不显示"。
+    // cat 用**库里的真值**（愿/寄/忆/诉）——此前这里编了 '留言'/'说说' 两个不存在的取值，
+    // 于是断言在"印章里放的是类型还是来源标"这件事上结构性看不出差别。
     return env([
-      { id: 9, src: 'board', title: '', content: '河灯一盏', cat: '留言', v: 0, author: 'sora',
+      { id: 9, src: 'board', title: '', content: '河灯一盏', cat: '诉', v: 0, author: 'sora',
         approved: 1, createdAt: '2026-09-21 20:00:00' },
-      { id: 8, src: 'talk', title: '随笔', content: '今天写了点东西', cat: '说说', v: 0, author: 'sora',
+      { id: 8, src: 'talk', title: '随笔', content: '今天写了点东西', cat: '愿', v: 0, author: 'sora',
         approved: 0, createdAt: '2026-09-20 20:00:00' },
     ]);
   }
@@ -590,26 +594,34 @@ with sync_playwright() as p:
           pg.locator(PANE).inner_text().replace("\n", " ")[:160])
     pg.close()
 
-    print("⑧ 留言记录：两类来源与审核状态都如实显示")
+    print("⑧ 留言记录：只列河灯留言 / 印章放的是留言类型 / 审核状态如实显示")
     pg = fresh_page()
     pg.click(".ant-tabs-tab >> nth=2")
     pg.wait_for_selector(PANE + " .ant-list-item", timeout=10000)
     txt = pg.locator(PANE).inner_text()
-    check("两类来源都带标签（说说 / 河灯留言）", "河灯留言" in txt and "说说" in txt,
-          txt.replace("\n", " ")[:140])
-    check("审核状态如实显示（已通过 / 待审核）", "已通过" in txt and "待审核" in txt,
-          txt.replace("\n", " ")[:140])
-    # 来源印章必须是**留言板那个红**（.rz-seal = #a33f30 底 / #ffe8c8 暖金字 + 衬线 +
-    # 0.22em 字距）。此前这里是 antd 的蓝色 Tag，用户原话「留言的印章颜色不是留言板的红色」。
+    # 用户 20260922 原话「说说不是留言，为什么还出现在这里并且有审核状态」⇒ 本页只列 board。
+    # 后端已加 src='board' 过滤，前端显示层再兜一道（假后端故意两类都回，验的就是这一条）。
+    check("说说不出现在留言记录里（后端过滤 + 前端显示层兜底）",
+          pg.locator(PANE + " .ant-list-item").count() == 1
+          and "今天写了点东西" not in txt and "随笔" not in txt,
+          "行数=%d 文本=%s" % (pg.locator(PANE + " .ant-list-item").count(),
+                              txt.replace("\n", " ")[:140]))
+    check("河灯留言照常在，审核状态如实显示",
+          "河灯一盏" in txt and "已通过" in txt, txt.replace("\n", " ")[:140])
+    # 印章必须是**留言板那个红**（.rz-seal = #a33f30 底 / #ffe8c8 暖金字 + 衬线 + 0.22em 字距）。
+    # 此前这里是 antd 的蓝色 Tag，用户原话「留言的印章颜色不是留言板的红色」。
     # 两处色值是跨组件的视觉契约，改一处必须改另一处（留言板那份在 riverboard 样式里）。
+    # 且印章里放的必须是**留言类型**（cat：诉/寄/愿/忆）——用户第二轮纠正的就是这一点。
     seal = pg.evaluate("""() => {
         const s = document.querySelectorAll('.ucSeal');
         if (!s.length) return null;
         const cs = getComputedStyle(s[0]);
-        return {n: s.length, bg: cs.backgroundColor, color: cs.color,
+        return {n: s.length, text: s[0].textContent, bg: cs.backgroundColor, color: cs.color,
                 ls: cs.letterSpacing, ff: cs.fontFamily};
     }""")
-    check("来源印章用的是留言板那个红（#a33f30 底 / #ffe8c8 字），不是 antd 蓝 Tag",
+    check("印章里是留言类型（诉），不是「留言板/说说」这种来源标",
+          bool(seal) and seal["n"] == 1 and seal["text"] == "诉", str(seal))
+    check("印章用的是留言板那个红（#a33f30 底 / #ffe8c8 字），不是 antd 蓝 Tag",
           bool(seal) and seal["bg"] == "rgb(163, 63, 48)" and seal["color"] == "rgb(255, 232, 200)",
           str(seal))
     check("印章保留了 .rz-seal 的字形特征（衬线 + 0.22em 字距）",
