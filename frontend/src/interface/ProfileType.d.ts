@@ -87,5 +87,8 @@ export interface MyTalk {
     v: number;
     author: string;
     approved: number;
+    /** 驳回理由（20260923）：仅 approved=2 时可能有值（AI 判定说明或管理员手填），
+     *  其余状态恒 null；改判通过时后端会清空 */
+    rejectReason?: string | null;
     createdAt: string;
 }

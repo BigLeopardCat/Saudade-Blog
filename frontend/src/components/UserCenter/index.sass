@@ -277,6 +277,18 @@
       font-size: 12px
       opacity: 0.55
 
+    // 驳回理由（20260923）：与灯影集「我的河灯」的 `.rz-*` 理由块同语义——左侧一道
+    // 朱红竖线 + 淡底，和正文区分开。默认色是浅色窗里的朱红
+    .ucReject
+      padding: 2px 8px
+      border-left: 3px solid #c0392b
+      border-radius: 0 4px 4px 0
+      background: rgba(192, 57, 43, 0.06)
+      color: #a33f30
+      font-size: 12px
+      line-height: 1.6
+      word-break: break-word
+
   .ucCompose
     margin-bottom: 8px
 
@@ -300,6 +312,13 @@
 
 // 夜间少量补偿（antd darkAlgorithm 已处理大部分：这里只收拾自写的硬编码色）
 .ucRoot.ucDark
+  // 驳回理由走亮一档的朱红：`#a33f30` 压在墨蓝窗上只有 2 点几的对比度（20260922 那批
+  // 后台夜间的实测教训），夜间换成与灯影集 `.rz-minetag.rz-no` 同族的 `#ff9d8a`
+  .ucReject
+    border-left-color: #d2695c
+    background: rgba(210, 105, 92, 0.12)
+    color: #ff9d8a
+
   .ucSettings .ucAvatarRow .ucAvatarMeta .ucUploadBtn
     color: #69b1ff
 

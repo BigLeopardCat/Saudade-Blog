@@ -376,6 +376,23 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
         }
     }
 
+    /** 点通知里的站内链接（20260923）。
+     *
+     *  留言审核结果通知带 `/guestbook?lid=<id>`（跳过去定位到那盏灯），此前通知只有
+     *  纯文本、`link` 字段渲染都没渲染——用户要求"和对应链接"，这里把它接上。
+     *  跳转即视为看过：顺手标一条已读（与点「标记已读」同义），红点不必等下一轮轮询。
+     *
+     *  链接**只认站内路径**（`/` 开头且不是 `//`）：通知内容来自后端，但"拼接的内容不可信"
+     *  这条纪律不该有例外——不校验就等于给自己留一个把 `navigate` 当外链跳板的口子。
+     */
+    const openNotice = async (n: NotificationItem) => {
+        const link = (n.link || '').trim()
+        if (!link.startsWith('/') || link.startsWith('//')) return
+        if (!n.isRead) await markNoticesRead([n.id])
+        onClose()
+        navigate(link)
+    }
+
     // ── 信箱 ────────────────────────────────────────────────────────────────
 
     const doSend = async () => {
@@ -684,6 +701,14 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                                 description={
                                     <div className="ucBody">
                                         <div className="ucBodyText">{t.content}</div>
+                                        {/* 驳回理由（20260923）：与灯影集「我的河灯」同源
+                                            （都读 talk.reject_reason）。只有未通过才有，
+                                            没写理由时如实说「未填写」，不编一句替代 */}
+                                        {t.approved === 2 && (
+                                            <div className="ucReject">
+                                                驳回理由：{t.rejectReason || '未填写'}
+                                            </div>
+                                        )}
                                         <div className="ucBodyTime">{fmtMinute(t.createdAt)}</div>
                                     </div>
                                 }
@@ -699,7 +724,7 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
         <div className="ucPane">
             <div className="ucPaneBar">
                 <span className="ucHint">
-                    公告在发布时会给你留一条通知；站内通知（回复提醒等）后续开放，接口已就位。
+                    公告在发布时会给你留一条通知；留言审核出结果（通过/驳回）也会发一条，带「去看看」直达那盏灯。
                 </span>
                 <Button size="small" disabled={!noticeUnread} onClick={() => markNoticesRead()}>
                     全部已读{noticeUnread ? `（${noticeUnread}）` : ''}
@@ -711,15 +736,23 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                 locale={{ emptyText: <Empty description="暂无公告和通知" /> }}
                 renderItem={(n) => (
                     <List.Item
-                        actions={
-                            n.isRead
+                        actions={[
+                            // 有 link 的通知给一颗直达按钮（20260923 起：留言审核结果通知）
+                            ...(n.link
+                                ? [
+                                      <Button className="ucGoBtn" type="link" key="go" onClick={() => openNotice(n)}>
+                                          去看看
+                                      </Button>,
+                                  ]
+                                : []),
+                            ...(n.isRead
                                 ? []
                                 : [
                                       <Button type="link" key="read" onClick={() => markNoticesRead([n.id])}>
                                           标记已读
                                       </Button>,
-                                  ]
-                        }
+                                  ]),
+                        ]}
                     >
                         <List.Item.Meta
                             title={
