@@ -248,7 +248,7 @@ const AllTag = () => {
                         label="父标签"
                         shouldUpdate
                     >
-                        <Select options={staticDate.map(({ children, ...rest }) => rest).map(tag => ({
+                        <Select options={staticDate.map(tag => ({
                             value: Number(tag.key),
                             label: tag.title
                         }))} />

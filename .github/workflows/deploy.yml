@@ -110,11 +110,12 @@ jobs:
         run: npm test
         working-directory: ./frontend
 
-      - name: ESLint（暂只报不拦）
-        # 存量 144 条 error（97 条 no-explicit-any、29 条 ban-ts-comment 居多，散布在后台各页），
-        # 一次性清掉是另一件事 ⇒ 先让它出现在日志里（此前 CI 从未跑过 lint），
-        # 等清到 0 再把 continue-on-error 摘掉变成真闸。
-        continue-on-error: true
+      - name: ESLint
+        # 20260923 起是真闸（退出码非 0 就拦构建/部署）。判据 = **error 数为 0**：
+        # 11 条真错（空块/未用变量/prefer-const 之类）已逐条清掉；no-explicit-any 与
+        # ban-ts-comment 这两类大的（存量 96 + 29）在 .eslintrc.cjs 里降成 warning，
+        # 所以 `npm run lint` 里**不能加 `--max-warnings 0`**（加了就等于没降级）——
+        # 代价是新增的 warning 不拦，收益是这 143 条能一直看得见、清完删掉那两行即可收紧。
         run: npm run lint
         working-directory: ./frontend
 

@@ -45,22 +45,20 @@ const userReducer = userSlice.reducer;
 
 const fetchToken = (data: UserData) => {
     return async (dispatch: Dispatch<PayloadAction<{ token: string }>>) => {
-        try {
-            const res = await http({
-                url: '/api/login',
-                method: 'POST',
-                data: data
-            });
+        // 原来是 try/catch 里 `throw error`（纯转抛）：调用方照样收到 rejected promise，
+        // 包一层只是把同一个异常多搬一次手，去掉后行为不变。
+        const res = await http({
+            url: '/api/login',
+            method: 'POST',
+            data: data
+        });
 
-            if (res.data.code === 200) {
-                const token = res.data.data;
-                dispatch(setToken({ token: token}));
-                return { status: 200 };
-            } else {
-                return { status: res.data.code || 500, message: res.data.message || '登录失败' };
-            }
-        } catch (error) {
-            throw error;
+        if (res.data.code === 200) {
+            const token = res.data.data;
+            dispatch(setToken({ token: token}));
+            return { status: 200 };
+        } else {
+            return { status: res.data.code || 500, message: res.data.message || '登录失败' };
         }
     };
 };
