@@ -51,10 +51,13 @@ const calls: Call[] = (window as any).__calls = [];
 // 一张真形状的 JWT（payload 段是 base64url，role 可读）。前端只读 claims 判角色、不验签。
 const b64u = (o: any) => btoa(JSON.stringify(o)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const TOKEN = 'x.' + b64u({ sub: 7, role: (window as any).__role || 'user', exp: 9999999999 }) + '.y';
-localStorage.setItem('tokenKey', TOKEN);
+// `__noToken` = 模拟"这台机器从没有过账号记录"（头部头像三态那节用）
+if (!(window as any).__noToken) localStorage.setItem('tokenKey', TOKEN);
 
 const state: any = (window as any).__state = {
-  profile: { username: 'sora', nickname: '泠月喵', avatar: null },
+  // `__profileAvatar` 让头部那节能造出"本人已上传头像"的世界；不设则为 null（没上传过）
+  profile: { username: 'sora', nickname: '泠月喵',
+             avatar: (window as any).__profileAvatar ?? null },
   favorites: [
     { noteId: 12, title: '架构文档', status: 'published', createdAt: '2026-09-20 10:00:00' },
     { noteId: 22, title: 'ESP32 固件', status: 'published', createdAt: '2026-09-19 09:30:00' },
@@ -213,7 +216,7 @@ import UserCenter from './src/components/UserCenter/index.tsx';
 // 只挂个人中心本身：头部（点「个人中心」开窗、红点位置）由 Head 那套负责，这里测的是
 // 窗口里的五个页签与它们的请求契约。
 (window as any).__mount = (open: boolean) => createRoot(document.getElementById('root')!).render(
-  <UserCenter open={open} onClose={() => { (window as any).__closed = true; }} fallbackAvatar="/owner.png" />
+  <UserCenter open={open} onClose={() => { (window as any).__closed = true; }} />
 );
 """
 
@@ -298,6 +301,9 @@ make_png(PNG, 600, 400)
 # 必须让它们**真能加载**——antd 的 Avatar 在图片 onError 时会把 <img> 整个摘掉、
 # 退回文字兜底，于是"头像显示的是哪个地址"这条断言会变成"根本没有 <img>"。
 make_png(SANDBOX / "owner.png", 120, 120, (110, 150, 210))
+# 默认头像：**直接拷仓库里那张真图**（frontend/public/default-avatar.png）——
+# 不自己造一张，测的就是"线上那个文件真的能加载、地址真的写对了"。
+shutil.copyfile(FE / "public/default-avatar.png", SANDBOX / "default-avatar.png")
 make_png(SANDBOX / "api/protect/download/avatars/7_abc.jpg", 512, 512, (120, 200, 160))
 
 # 必须走 HTTP 而不是 file://：应用里图片是**根相对路径**（/owner.png、
@@ -314,6 +320,7 @@ threading.Thread(target=_server.serve_forever, daemon=True).start()
 from playwright.sync_api import sync_playwright  # noqa: E402
 
 URL = f"http://127.0.0.1:{_server.server_address[1]}/index.html"
+HEAD_URL = URL.replace("index.html", "head.html")
 
 
 # 当前页签的面板：antd 只把**激活过的**页签挂进 DOM（未激活的不挂），而「用户设置」
@@ -360,8 +367,9 @@ with sync_playwright() as p:
     check("账号只读展示（没有任何可改账号的输入框）",
           "sora" in pg.locator(".ucAvatarAccount").inner_text()
           and pg.locator(".ucAvatarAccount input").count() == 0)
-    check("没设头像时回退到站点主人头像",
-          pg.get_attribute(".ucAvatar img", "src") == "/owner.png",
+    # 20260922 用户要求：**没上传过头像就用默认头像**，不再退回站点主人那张。
+    check("没设头像时用默认头像（不再回退到站点主人头像）",
+          pg.get_attribute(".ucAvatar img", "src") == "/default-avatar.png",
           str(pg.get_attribute(".ucAvatar img", "src")))
     check("打开窗口只拉用户信息 + 未读汇总（其余页签懒加载，不白发请求）",
           sorted(c["url"] for c in calls(pg) if c["method"] == "GET")
@@ -745,7 +753,7 @@ with sync_playwright() as p:
     hp = br.new_page(viewport={"width": 1280, "height": 900})
     head_errs = []
     hp.on("pageerror", lambda e: head_errs.append(str(e)))
-    hp.goto(URL.replace("index.html", "head.html"))
+    hp.goto(HEAD_URL)
     hp.wait_for_selector(".homeRight .avatarDotWrap", timeout=15000)
     hp.wait_for_timeout(800)
     check("桌面头部头像上挂了红点（未读通知 1 + 未读私信 1）",
@@ -816,7 +824,7 @@ with sync_playwright() as p:
     aerrs = []
     ap.on("pageerror", lambda e: aerrs.append(str(e)))
     ap.add_init_script("window.__role = 'admin';")
-    ap.goto(URL.replace("index.html", "head.html"))
+    ap.goto(HEAD_URL)
     ap.wait_for_selector(".homeRight .avatarDotWrap", timeout=15000)
     ap.wait_for_timeout(600)
     check("管理员头部有常驻的「后台」按钮", ap.locator(".homeRight .homeAdminBtn").count() == 1)
@@ -830,6 +838,69 @@ with sync_playwright() as p:
           str(ap.evaluate("() => window.__nav || []")))
     ap.close()
     head_errs.extend(aerrs)
+
+    # 头部头像三态（20260922 用户原话：「右上角头像若过期登录，或者退出登录有账号挂着
+    # 等待输入密码，以及正常登录状态显示用户头像。没有账号登录记录，未上传头像使用默认
+    # 头像显示」）。四种情形都真挂 Head 组件跑一遍——这里判的是**地址**，不是"看着像"。
+    print("⑫c 头部头像三态：登录 / 退出但有账号记录 / 从没登录过 / 登录但没上传过头像")
+    HEAD_AVATAR = ".homeRight .avatarDotWrap img"
+
+    def head_page(init: str, w=1280):
+        p = br.new_page(viewport={"width": w, "height": 900})
+        errs = []
+        p.on("pageerror", lambda e: errs.append(str(e)))
+        p.add_init_script(init)
+        p.goto(HEAD_URL)
+        p.wait_for_selector(".homeRight .avatarDotWrap", timeout=15000)
+        p.wait_for_timeout(800)
+        return p, errs
+
+    # ③ 从没有过账号记录（无令牌、无缓存）→ 默认头像
+    v, ve = head_page("window.__noToken = true;")
+    check("没有账号登录记录 → 默认头像",
+          v.get_attribute(HEAD_AVATAR, "src") == "/default-avatar.png",
+          str(v.get_attribute(HEAD_AVATAR, "src")))
+    check("没登录就不去问后端要资料（访客的头部不为一张头像打请求）",
+          not any(c["url"] == "/api/protected/profile" for c in calls(v)),
+          " | ".join(c["url"] for c in calls(v)))
+    v.close()
+    head_errs.extend(ve)
+
+    # ④ 登录了但没上传过头像 → 默认头像
+    v, ve = head_page("window.__profileAvatar = null;")
+    check("登录了但没上传过头像 → 默认头像",
+          v.get_attribute(HEAD_AVATAR, "src") == "/default-avatar.png",
+          str(v.get_attribute(HEAD_AVATAR, "src")))
+    v.close()
+    head_errs.extend(ve)
+
+    # ① 正常登录且上传过头像 → 自己的头像；② 退出登录后**不跟着失忆**
+    v, ve = head_page("window.__profileAvatar = '/owner.png';")
+    check("正常登录 → 显示自己的头像（借 /owner.png 当作本人已上传的那张）",
+          v.get_attribute(HEAD_AVATAR, "src") == "/owner.png",
+          str(v.get_attribute(HEAD_AVATAR, "src")))
+    v.evaluate("""() => { localStorage.removeItem('tokenKey');
+                           window.dispatchEvent(new CustomEvent('auth-change')); }""")
+    v.wait_for_timeout(700)
+    check("退出登录、账号还挂在本机 → 头像不跟着失忆（用记住的那张）",
+          v.get_attribute(HEAD_AVATAR, "src") == "/owner.png",
+          str(v.get_attribute(HEAD_AVATAR, "src")))
+    check("记住的只有展示身份，令牌不在缓存里",
+          "tokenKey" not in (v.evaluate("() => localStorage.getItem('saudade.lastUser') || ''")),
+          v.evaluate("() => localStorage.getItem('saudade.lastUser') || '(空)'"))
+    v.close()
+    head_errs.extend(ve)
+
+    # ②' 冷启动：令牌已失效/被清掉，但缓存还在（= 重开页面时的"挂着账号"）
+    v, ve = head_page(
+        "window.__noToken = true;"
+        "localStorage.setItem('saudade.lastUser', JSON.stringify("
+        "{username: 'sora', nickname: '泠月喵', avatar: '/owner.png', at: '2026-09-22 20:00:00'}));")
+    check("冷启动且无令牌、但本机记得那个账号 → 仍显示那张头像",
+          v.get_attribute(HEAD_AVATAR, "src") == "/owner.png",
+          str(v.get_attribute(HEAD_AVATAR, "src")))
+    v.close()
+    head_errs.extend(ve)
 
     print("⑬ 全程无 JS 报错")
     all_errs = body_errs + admin_errs + head_errs

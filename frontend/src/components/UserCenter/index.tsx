@@ -47,6 +47,7 @@ import type {
     UnreadSummary,
 } from '../../interface/ProfileType'
 import AvatarCropModal from '../AvatarCropModal'
+import { DEFAULT_AVATAR_URL } from './identity'
 import { notifyUnreadChanged, useUnread } from './unread'
 import './index.sass'
 
@@ -63,11 +64,9 @@ const TALK_STATUS: Record<number, { text: string; color: string }> = {
 interface UserCenterProps {
     open: boolean
     onClose: () => void
-    /** 站点主人头像：自己没设头像时的展示回退（与头部/文章页一致） */
-    fallbackAvatar?: string
 }
 
-const UserCenter = ({ open, onClose, fallbackAvatar }: UserCenterProps) => {
+const UserCenter = ({ open, onClose }: UserCenterProps) => {
     const isDark = useIsDarkMode()
     const navigate = useNavigate()
     const loggedIn = !!getToken()
@@ -359,9 +358,11 @@ const UserCenter = ({ open, onClose, fallbackAvatar }: UserCenterProps) => {
      *  后端哪天再把说说混回来也不会重新长成用户看得见的样子（无头测试锁在这一层）。 */
     const boardTalks = useMemo(() => (talks || []).filter((t) => t.src !== 'talk'), [talks])
 
+    /** 本人头像：没上传过就用默认头像（20260922 用户要求）——**不再退回站点主人那张**
+     *  （`fallbackAvatar` 这个入参因此整体删掉了）。 */
     const myAvatar = useMemo(
-        () => resolveApiAssetUrl(profile?.avatar || '') || fallbackAvatar || '',
-        [profile?.avatar, fallbackAvatar],
+        () => resolveApiAssetUrl(profile?.avatar || '') || DEFAULT_AVATAR_URL,
+        [profile?.avatar],
     )
 
     const title = (
