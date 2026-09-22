@@ -1,7 +1,12 @@
 /**
  * 头像裁剪弹窗（20260922 个人中心一期）。
  *
- * 「按 GitHub 来」= 选图 → **方形裁剪**（拖动/滚轮缩放）→ 确认 → 上传**裁切后的成品**。
+ * 「按 GitHub 来」= 选图 → **圆形取景**（拖动/滚轮缩放）→ 确认 → 上传**裁切后的成品**。
+ * 20260922 二次返工：初版取景框是方的（四角标），而头像处处都是圆着显示的，用户的
+ * 原话是「方形框裁出来圆形算什么」⇒ 界面改成圆形遮罩（圆外压暗，见 .acCircle）。
+ * 注意**烘焙仍是方图**：后端下发一个 URL、各处用 `border-radius` 显示成圆，方图保留
+ * 四个角在裁剪时多留的一点余量；改成"烘成 PNG 圆图"反而会让非圆形展示位（如后端缩略、
+ * 未来可能的方头像位）出现透明缺口。
  * 所以这里与封面裁剪弹窗（CoverCropModal）的取向不同：封面存的是**参数**（同一组参数要在
  * 1:1 轮播 / 16:9 卡片 / 横幅三处自适应，见 utils/coverCrop.ts 头注），头像只有一个展示位、
  * 且要落到 `user.avatar` 一个 URL 上，所以这里**烘焙成方图**再上传。
@@ -226,11 +231,14 @@ const AvatarCropModal = ({ open, file, onPickFile, onConfirm, onCancel, uploadin
                             onError={() => setLoadErr('图片加载失败，请换一张')}
                         />
                     )}
-                    {/* 方框角标：提示"这是裁切边界"，也压住图片边缘（拖动时不至于看不出范围） */}
-                    <span className="acCorner acCornerTl" />
-                    <span className="acCorner acCornerTr" />
-                    <span className="acCorner acCornerBl" />
-                    <span className="acCorner acCornerBr" />
+                    {/* 圆形遮罩（20260922 用户要求「原汁原味 GitHub 风格」）：
+                        头像最终是**圆形**展示的，所以取景框也得是圆的——此前用方框 + 四角标，
+                        用户的原话是「方形框裁出来圆形算什么」。
+                        做法 = 一个内切圆元素 + 超大外扩 box-shadow 把圆外压暗（"聚光灯"），
+                        舞台的 overflow:hidden 会把外扩的阴影裁掉，只剩四个角被压暗。
+                        **几何一个字节没动**：裁剪窗仍是整个方舞台（cropWindowInImage 用的是
+                        整幅图里的方框），圆恰好是这个方框的内切圆 = 头像的展示形状 ⇒ 所见即所得。 */}
+                    <span className="acCircle" aria-hidden />
                 </div>
 
                 {loadErr ? (
@@ -248,7 +256,7 @@ const AvatarCropModal = ({ open, file, onPickFile, onConfirm, onCancel, uploadin
                                 onChange={(z) => setCrop((c) => ({ ...c, z: clampZoom(z) }))}
                             />
                         </div>
-                        <p className="acTip">拖动图片调整位置，滚轮或滑块缩放</p>
+                        <p className="acTip">圆内就是最终头像。拖动图片调整位置，滚轮或滑块缩放</p>
                     </>
                 )}
 

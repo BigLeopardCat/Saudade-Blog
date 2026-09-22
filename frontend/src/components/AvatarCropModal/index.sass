@@ -31,38 +31,20 @@
       // 拖拽原生图片会触发浏览器自带的 ghost 拖动，盖掉裁剪交互
       -webkit-user-drag: none
 
-    // 四角标：裁切边界提示（正方形窗就是整个舞台，所以角标贴在舞台四角）
-    .acCorner
+    // 圆形遮罩（20260922）：圆内 = 头像成品本身，圆外压暗。
+    // 用超大外扩的 box-shadow 当"反向挖空"——比 SVG mask / clip-path 简单，且不吃事件
+    // （pointer-events: none，拖动照旧落在舞台的 pointer 处理器上）。
+    // 圆是**内切**的（inset: 0 + border-radius: 50%）：头像展示时圆的直径就等于方形边长，
+    // 所以这个圆就是最终形状，不是"参考线"。
+    .acCircle
       position: absolute
-      width: 18px
-      height: 18px
-      border: 2px solid #fff
-      box-shadow: 0 0 2px rgba(0, 0, 0, 0.6)
+      inset: 0
+      border-radius: 50%
       pointer-events: none
-
-    .acCornerTl
-      top: 6px
-      left: 6px
-      border-right: 0
-      border-bottom: 0
-
-    .acCornerTr
-      top: 6px
-      right: 6px
-      border-left: 0
-      border-bottom: 0
-
-    .acCornerBl
-      bottom: 6px
-      left: 6px
-      border-right: 0
-      border-top: 0
-
-    .acCornerBr
-      bottom: 6px
-      right: 6px
-      border-left: 0
-      border-top: 0
+      // 舞台 overflow:hidden 会把外扩的阴影裁掉，于是只剩圆外那四个角变暗
+      box-shadow: 0 0 0 9999px rgba(10, 14, 20, 0.62)
+      // 细描边：浅色照片上光靠压暗，圆的边界会糊掉
+      outline: 1px solid rgba(255, 255, 255, 0.6)
 
   .acZoom
     display: flex
