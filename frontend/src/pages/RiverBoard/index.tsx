@@ -61,6 +61,7 @@ type AlbumItem = {
     time: string;
     mine: boolean;
     approved: number; // 1=通过 / 0=待审 / 2=未通过（仅"我的河灯"接口返回非 1）
+    reason?: string | null; // 驳回理由（20260923，仅 approved=2 可能有值）
 };
 
 type Wish = {
@@ -75,6 +76,7 @@ type Wish = {
     talkKey?: number;
     mine?: boolean;
     approved?: number;
+    reason?: string | null; // 驳回理由（20260923，仅 approved=2 可能有值）
 };
 
 /* ------------------------- 灯笼精灵预渲染 -------------------------
@@ -1869,6 +1871,19 @@ export default function RiverBoard() {
     }, []);
 
     /* 留言获取 + 点灯 */
+    /* `?lid=<id>` 定位（20260923）：审核结果通知里的「去看看」跳到 `/guestbook?lid=<id>`，
+       要把那盏灯找出来给用户看。lid 在挂载时从地址栏读一次（不跟 URL 变化走：这个页面
+       自身不产生 lid，只有外部链接带进来）。
+       `locateFromLidRef` 是"给上面的挂载 effect 用的句柄"——真正的实现定义在下面
+       （要用 openWish / fetchMyAlbum），而 effect 的依赖数组是空的，只认第一次渲染的闭包；
+       用 ref 传一份最新的，公开池加载完调一次。 */
+    const [lid] = useState(() => {
+        const n = Number(new URLSearchParams(window.location.search).get("lid"));
+        return Number.isFinite(n) && n > 0 ? n : 0;
+    });
+    const locatedRef = useRef(false); // 一次会话只定位一次（重试无意义，且会反复抢弹窗）
+    const locateFromLidRef = useRef<(() => void) | null>(null);
+
     useEffect(() => {
         let cancelled = false;
         const initLights = (msgs: string[]) => {
@@ -1958,6 +1973,8 @@ export default function RiverBoard() {
                         })
                     );
                 }
+                // 公开池就绪后再试一次 `?lid=` 定位（通知链接进来的场景）
+                locateFromLidRef.current?.();
             })
             .catch(() => {})
             .finally(() => clearTimeout(timer));
@@ -2156,16 +2173,16 @@ export default function RiverBoard() {
 
     /* 我的河灯（20260905 issue8）：本人全部河灯（含待审 0/未通过 2）。
        公开列表只放行通过态——被审核拦下的灯只有这里能看到状态并收回 */
-    const fetchMyAlbum = async () => {
+    const fetchMyAlbum = async (): Promise<AlbumItem[] | null> => {
         const token = localStorage.getItem("tokenKey");
-        if (!token) return;
+        if (!token) return null;
         try {
             const res = await fetch(`${runtimeBaseURL}/api/protect/board/mine`, {
                 headers: { Authorization: `Bearer ${token}` },
             });
             const j = (await res.json()) as { data?: unknown };
             const arr = Array.isArray(j?.data)
-                ? (j.data as Array<{ talkKey?: unknown; v?: unknown; cat?: unknown; author?: unknown; content?: unknown; createTime?: unknown; approved?: unknown }>)
+                ? (j.data as Array<{ talkKey?: unknown; v?: unknown; cat?: unknown; author?: unknown; content?: unknown; createTime?: unknown; approved?: unknown; rejectReason?: unknown }>)
                 : [];
             const mine = arr.map((x) => ({
                 id: Number(x?.talkKey ?? 0),
@@ -2176,12 +2193,82 @@ export default function RiverBoard() {
                 time: String(x?.createTime ?? "").slice(0, 16),
                 mine: true,
                 approved: [0, 1, 2].includes(Number(x?.approved)) ? Number(x.approved) : 1,
+                // 驳回理由（20260923）：空串/缺失都归 null（后端也是这个口径）
+                reason: String(x?.rejectReason ?? "").trim() || null,
             }));
             setAlbumMine(mine);
+            return mine;
         } catch {
             /* 拉取失败则保持旧数据（公开列表仍可用） */
+            return null;
         }
     };
+
+    /* `?lid=` 定位的实现（20260923，句柄注册在文件上方的挂载 effect 里）。
+       两级查找：① **我的河灯**——审核结果通知只有登录用户收得到，而待审/未通过的灯
+       在公开池里根本不存在（驳回通知点进来必然走这一支）；顺带把 mine 标记带上，
+       弹窗里才有「收回河灯」。② 公开池兜底（别人的灯、或未登录点进来）。
+       都找不到就**安静兜底**：页面本身已经打开，不再弹提示（用户拍板"定不到就安静
+       兜底回页面"）。 */
+    const locateFromLid = useCallback(async () => {
+        if (!lid || locatedRef.current) return;
+        let hit: AlbumItem | null = null;
+        let owned = false;
+        const mine = await fetchMyAlbum();
+        if (mine) {
+            hit = mine.find((x) => x.id === lid) ?? null;
+            owned = !!hit;
+        }
+        if (!hit) {
+            const pub = allTalksRef.current.find((t) => t.id === lid);
+            if (pub) {
+                hit = {
+                    id: pub.id,
+                    v: pub.v,
+                    cat: pub.cat,
+                    // author/time 在 Wish 上是可选（老灯没有），AlbumItem 上必填 ⇒ 兜空串
+                    author: pub.author ?? "",
+                    msg: pub.msg,
+                    time: pub.time ?? "",
+                    mine: false,
+                    approved: 1, // 公开池里的灯必然是放行态
+                    reason: null,
+                };
+            }
+        }
+        if (!hit) return; // 定不到：安静兜底
+        locatedRef.current = true;
+        // 这盏灯此刻正漂在河面上就连气泡一起展开：按留言原文找灯位（灯位与留言的绑定
+        // 会随批次轮播变化，只有 DOM 上的当前渲染是可信的）
+        const node = Array.from(document.querySelectorAll<HTMLElement>("[data-lid]")).find(
+            (el) => (el.querySelector(".rz-msg")?.textContent || "").trim() === hit!.msg
+        );
+        const lanternId = node ? Number(node.dataset.lid) : -1; // -1 找不到节点时弹窗照开、只没气泡
+        openWish({
+            id: lanternId,
+            v: hit.v,
+            msg: hit.msg,
+            cat: hit.cat,
+            author: hit.author,
+            time: hit.time,
+            talkKey: hit.id,
+            mine: owned,
+            approved: hit.approved,
+            reason: hit.reason ?? null,
+        });
+        // openWish/fetchMyAlbum 只读写 ref 与 setState（见 lanternNodes 那段"安全前提"），
+        // **不能**把它们写进依赖：它们每次渲染都换身份，而下面那个 effect 以本回调为依赖
+        // ⇒ 会变成每渲染一次就重跑一遍定位（定不到时每次都多发一次 /board/mine 请求）
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [lid]);
+
+    useEffect(() => {
+        locateFromLidRef.current = () => void locateFromLid();
+    });
+    // 挂载即试一次（我的河灯那支不依赖公开池）；公开池加载完会再试一次（见上方 fetch 的 then）
+    useEffect(() => {
+        void locateFromLid();
+    }, [locateFromLid]);
 
     /* 收回河灯（20260905 issue8）：删除自己放的河灯。
        两步确认防误删：第一击武装（按钮变「确认收回？」），第二击执行 DELETE。
@@ -2325,6 +2412,7 @@ export default function RiverBoard() {
             talkKey: it.id,
             mine: it.mine,
             approved: it.approved,
+            reason: it.reason ?? null, // 驳回理由（20260923）随行带到弹窗
         };
         setLanterns((prev) => [...prev, wish]);
         // 详情弹窗打开期间隐藏灯影集（避免两个浮层重叠），关闭后恢复到原浏览位置
@@ -2774,6 +2862,13 @@ export default function RiverBoard() {
                                             <i className="rz-minetag rz-no" title="审核未通过，仅在「我的河灯」可见">未通过</i>
                                         )}
                                     </span>
+                                    {/* 驳回理由（20260923）：跨满整行（grid 三列之外的
+                                        第四个子项自动落到第二行），逐条能看到"为什么没通过" */}
+                                    {albumTabs === "mine" && it.approved === 2 && (
+                                        <span className="rz-album-reason">
+                                            驳回理由：{it.reason || "未填写"}
+                                        </span>
+                                    )}
                                 </button>
                             ))}
                             {albumSorted.length === 0 && (
@@ -2796,6 +2891,15 @@ export default function RiverBoard() {
                             {(modal.author || modal.time) && (
                                 <div className="rz-who">
                                     {modal.author || "无名"} · {modal.time || ""}
+                                </div>
+                            )}
+                            {/* 驳回理由（20260923）：只有未通过才有。与「我的河灯」列表、
+                                个人中心「留言记录」同源（都读 talk.reject_reason）——
+                                没写理由时如实说「未填写」，不编一句替代 */}
+                            {modal.approved === 2 && (
+                                <div className="rz-reject">
+                                    <span className="rz-reject-label">驳回理由</span>
+                                    {modal.reason || "未填写"}
                                 </div>
                             )}
                             {/* 自己的河灯（灯影集点开，20260905 issue8）：
