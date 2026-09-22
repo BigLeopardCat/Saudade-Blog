@@ -22,6 +22,7 @@ import pathlib
 import shutil
 import subprocess
 import sys
+import re
 import tempfile
 import threading
 
@@ -35,6 +36,16 @@ def check(desc, cond, detail=""):
     print(("  ✅ " if cond else "  ❌ ") + desc + (f"  [{detail}]" if detail else ""))
     if not cond:
         FAILS.append(desc)
+
+
+def rgb_mean(css_color):
+    """取 `rgb()/rgba()` 的三个通道均值（忽略 alpha）——只回答"白基还是黑基"。
+
+    比"亮度大小"更适合这个判据：antd 的半透明占位色在浅色下是 `rgba(0,0,0,.25)`、
+    夜间是 `rgba(255,255,255,.25)`，**极性翻转**而不是同一个色变深变浅。
+    """
+    nums = [float(x) for x in re.findall(r"[\d.]+", css_color or "")][:3]
+    return sum(nums) / 3 if len(nums) == 3 else -1.0
 
 
 DEFINE = ('import.meta.env={"VITE_HTTP_BASEURL":"","VITE_CDN_BASEURL":"",'
@@ -332,6 +343,37 @@ with sync_playwright() as p:
           str(sc.evaluate("() => window.__nav.map((n) => n.to)")))
     check("第六节全程无页面异常", not sc_errs, "; ".join(sc_errs[:3]))
     sc.close()
+
+    # ── 七、后台夜间最小闭环：壳上那层 ConfigProvider(darkAlgorithm) 真的落地了 ─────
+    #
+    # 锁的是 20260923 那条根因：`/dashboard` 与 `/` 是**兄弟顶层路由**，命中后台时 <App/>
+    # 不在树上 ⇒ App.tsx 的 frontDark 永远落不到后台，而 isDarkMode 只长在这个壳里。
+    # 不在壳上挂 ConfigProvider，antd 就恒为 defaultAlgorithm —— 面板、表格、日历全是浅色，
+    # 用户看到的就是"后台夜间一点不夜间"。判据只能问浏览器要 computedStyle：这个文件之外
+    # 还有一批 `html[data-theme='dark']` 死规则和几条互相打架的 !important，读代码看不出谁赢。
+    print("\n【七】后台夜间：antd 组件在深色壳里真的变深")
+    PROBE_ANTD = ("() => { const el = document.querySelector('.image .ant-avatar');"
+                  " if (!el) return null; const cs = getComputedStyle(el);"
+                  " return {bg: cs.backgroundColor, color: cs.color}; }")
+    lt = fresh_page(dark=False)
+    lt_av = lt.evaluate(PROBE_ANTD)
+    lt.close()
+    dk7 = fresh_page(dark=True)
+    dk_av = dk7.evaluate(PROBE_ANTD)
+    check("壳内的 antd 组件（头像）两种主题下底色不同 —— 说明 token 真被换过",
+          bool(lt_av) and bool(dk_av) and lt_av["bg"] != dk_av["bg"],
+          f'浅 {lt_av and lt_av["bg"]} / 深 {dk_av and dk_av["bg"]}')
+    check("极性真翻转了：浅色是黑基、夜间是白基（darkAlgorithm 生效，没被写死的浅色压住）",
+          bool(lt_av) and bool(dk_av)
+          and rgb_mean(lt_av["bg"]) < 32 and rgb_mean(dk_av["bg"]) > 223,
+          f'通道均值 {rgb_mean(lt_av["bg"]) if lt_av else "-":.0f} → '
+          f'{rgb_mean(dk_av["bg"]) if dk_av else "-":.0f}')
+    check("夜间：壳与外层容器都带 dark 类（.dark 才是被 CSS 认的那一支）",
+          dk7.evaluate("() => !!document.querySelector('.contain.dark')"
+                       " && !!document.querySelector('nav.shell.dark')"))
+    check("第七节全程无页面异常", not dk7.errs, "; ".join(dk7.errs[:3]))
+    dk7.close()
+
     br.close()
 
 print()

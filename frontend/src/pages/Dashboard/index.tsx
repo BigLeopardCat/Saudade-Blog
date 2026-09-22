@@ -3,7 +3,7 @@ import './index.css';
 // import '../../assets/font/iconfont.js';
 // import '../../assets/font/iconfont.css';
 import {Outlet, useNavigate} from "react-router-dom";
-import {Card, Spin, Avatar} from "antd";
+import {Card, Spin, Avatar, ConfigProvider, theme as antdTheme} from "antd";
 import MainContext from "../../components/conText.tsx";
 import Switch from "../../components/Switch";
 import SettingButton from "../../components/Buttons/SettingButton";
@@ -88,6 +88,12 @@ const Dashboard = () => {
         setSelectCurrent(currentHashCode)
         setLoading(true);
         setDarkMode(readDarkMode());
+        // 反向同步：看板娘面板 / agent 的 DARKMODE 命令在这个页面上切主题时，壳里的
+        // isDarkMode 要跟着走（否则只有 localStorage 变了、侧栏与 antd 主题原地不动）。
+        // 不会循环：那个处理器只 setState + 写 localStorage，**从不回派发**（App.tsx 同理）。
+        const onDarkModeChange = (e: Event) => setDarkMode(!!(e as CustomEvent).detail);
+        window.addEventListener('darkmode-change', onDarkModeChange);
+        return () => window.removeEventListener('darkmode-change', onDarkModeChange);
     },[])
 
     //回调函数区域
@@ -105,6 +111,9 @@ const Dashboard = () => {
         localStorage.setItem("isDarkMode", JSON.stringify(!isDarkMode));
         // 同 Head：手动切换记入 darkModeUserChoice（含主题日，跨日自动恢复）
         recordUserChoice(!isDarkMode ? 'dark' : 'light');
+        // 同 Head 的协议：派发 darkmode-change。少了这一句，后台切完主题后看板娘的
+        // `window.__darkMode`（agent 请求体 current_darkmode 的来源）仍是旧值。
+        try { window.dispatchEvent(new CustomEvent('darkmode-change', { detail: !isDarkMode })); } catch (e) { /* ignore */ }
     };
 
     // 导航栏数据
@@ -230,6 +239,12 @@ const Dashboard = () => {
     };
 
     return (
+        /* 后台的 antd 主题**必须在这层壳上定**：`/dashboard` 与 `/` 是兄弟顶层路由，命中后台时
+           `<App/>` 根本不在树上 ⇒ App.tsx 的 frontDark 永远落不到后台；而 isDarkMode 只长在这
+           个壳里，它已经是 `<Outlet/>` 的父节点，所以这里是唯一能罩住全部子页的位置。
+           页内那几处 ConfigProvider（Home 的 locale / Notes / Talks / AllNotes）在 antd v5 里
+           与父层**合并**，不用动它们。 */
+        <ConfigProvider theme={{algorithm: isDarkMode ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm}}>
         <div className={`contain ${isDarkMode ? 'dark' : ''}`}>
             {!loading ? (
                 <div className="loading-overlay">
@@ -352,6 +367,7 @@ const Dashboard = () => {
                 来回跳不会叠出两只；waifu.css 也已按后台的 fixed 侧栏调过 z-index。 */}
             <Live2dAgent />
         </div>
+        </ConfigProvider>
     );
 };
 
