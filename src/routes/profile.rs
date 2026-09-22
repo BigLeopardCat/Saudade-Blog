@@ -772,7 +772,8 @@ pub async fn read_messages(
 #[derive(Serialize, Default)]
 pub struct MyTalkDto {
     pub id: i32,
-    /// `talk` = 说说 / `board` = 河灯留言（个人中心把两类放一页，所以要带类型）
+    /// 来源。**20260922 起本接口只回河灯留言（`board`）**，所以恒等于 "board"；
+    /// 字段保留不删是为了 JSON 契约稳定（前端按它做显示侧兜底，见 UserCenter 的 boardTalks）。
     pub src: String,
     pub title: String,
     pub content: String,
@@ -785,10 +786,15 @@ pub struct MyTalkDto {
     pub created_at: String,
 }
 
-/// GET /api/protected/my/talks：我的留言记录（河灯留言 + 说说，按时间倒序）。
-/// 与灯影集「我的河灯」（`/api/protect/board/mine`，只含 board）并行存在：
-/// 那个接口是灯影集页签的数据源、含收回操作，语义是"我的河灯"；
-/// 这里是个人中心的一览（两类合看），只读。
+/// GET /api/protected/my/talks：我的留言记录（**只含河灯留言**，按时间倒序）。
+///
+/// 20260922 用户反馈「说说不是留言，为什么还出现在这里并且有审核状态」——
+/// 说说（`src='talk'`）是站内随笔，发布时恒 `approved=1`、**不进审核**（见 talks.rs
+/// `insert_talk`），混进这张名为"留言记录"的表里既名不副实、又让人读成"说说也要审核"。
+/// ⇒ 本接口加 `src='board'` 过滤；说说本人内容仍可在「说说」页看到，入口没有丢。
+///
+/// 与灯影集「我的河灯」（`/api/protect/board/mine`）并行存在：那个接口含收回操作、
+/// 是灯影集页签的数据源；这里是个人中心的一览，只读。
 pub async fn list_my_talks(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -798,6 +804,7 @@ pub async fn list_my_talks(
     };
     let rows = match talk::Entity::find()
         .filter(talk::Column::UserId.eq(uid))
+        .filter(talk::Column::Src.eq("board"))
         .order_by_desc(talk::Column::CreatedAt)
         .order_by_desc(talk::Column::Id)
         .limit(200)

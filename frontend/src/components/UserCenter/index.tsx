@@ -53,7 +53,6 @@ import './index.sass'
 /** 后端时间是 "YYYY-MM-DD HH:MM:SS"（已是 +08:00 钟面）——截到分钟，不做任何换算 */
 const fmtMinute = (s?: string): string => (s ? s.slice(0, 16) : '')
 
-const TALK_SRC_LABEL: Record<string, string> = { talk: '说说', board: '河灯留言' }
 /** talk.approved：1=通过 / 0=待审 / 2=未通过（后端如实回传，这里也如实显示） */
 const TALK_STATUS: Record<number, { text: string; color: string }> = {
     1: { text: '已通过', color: 'green' },
@@ -354,6 +353,12 @@ const UserCenter = ({ open, onClose, fallbackAvatar }: UserCenterProps) => {
         }
     }
 
+    /** 「留言记录」只列河灯留言（`src='board'`）。
+     *  权威过滤在后端（`list_my_talks` 的 `src='board'`）——**这里是显示侧的兜底**：
+     *  这条缺陷的形态是"后端把两类一起回、前端照单全收"，只要前端永远只认 board，
+     *  后端哪天再把说说混回来也不会重新长成用户看得见的样子（无头测试锁在这一层）。 */
+    const boardTalks = useMemo(() => (talks || []).filter((t) => t.src !== 'talk'), [talks])
+
     const myAvatar = useMemo(
         () => resolveApiAssetUrl(profile?.avatar || '') || fallbackAvatar || '',
         [profile?.avatar, fallbackAvatar],
@@ -481,9 +486,12 @@ const UserCenter = ({ open, onClose, fallbackAvatar }: UserCenterProps) => {
 
     const talksPane = (
         <div className="ucPane">
+            <div className="ucPaneBar">
+                <span className="ucHint">这里只列河灯留言（说说在「说说」页）</span>
+            </div>
             <List
                 loading={loadingTab && talks === null}
-                dataSource={talks || []}
+                dataSource={boardTalks}
                 locale={{ emptyText: <Empty description="还没有留言记录" /> }}
                 renderItem={(t) => {
                     const st = TALK_STATUS[t.approved] || { text: '未知', color: 'default' }
@@ -492,12 +500,13 @@ const UserCenter = ({ open, onClose, fallbackAvatar }: UserCenterProps) => {
                             <List.Item.Meta
                                 title={
                                     <span className="ucItemTitle">
-                                        {/* 来源标 = 留言板那枚**印章**的样子（红底暖金字 + 衬线体），
-                                            不再用 antd 的蓝色 Tag——用户 20260922 反馈「印章颜色
-                                            不是留言板的红色」（`.rz-seal` 是 #a33f30）。
-                                            审核状态仍是独立的彩色 Tag（通过/待审/未通过是状态、
-                                            不是分类，混进印章里就分不出来了）。 */}
-                                        <span className="ucSeal">{TALK_SRC_LABEL[t.src] || t.src}</span>
+                                        {/* 印章 = **留言的类型**（诉/寄/愿/忆），与灯影集 `.rz-seal`
+                                            同款同色（红底暖金字 + 衬线体，见 index.sass `.ucSeal`）。
+                                            20260922 用户两轮纠正：① 印章不是留言板的红 → 改成这个红；
+                                            ② 印章里该放**类型**、不是"留言板/说说"这种来源标。
+                                            审核状态仍是独立的彩色 Tag——通过/待审/未通过是**状态**，
+                                            塞进印章里就和类型分不出来了。 */}
+                                        {t.cat && <span className="ucSeal" title="河灯留言的类型">{t.cat}</span>}
                                         {t.title || (t.content ? t.content.slice(0, 24) : '（无标题）')}
                                         <Tag color={st.color}>{st.text}</Tag>
                                     </span>
