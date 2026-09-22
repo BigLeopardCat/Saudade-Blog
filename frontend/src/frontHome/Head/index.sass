@@ -484,13 +484,5 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
     box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.85)
     pointer-events: none
 
-// 管理员的「后台」直达入口（20260922 用户要求：别为了去后台先开一次「设置」）。
-// 用墨蓝底 + 暖金字与「退出」的红区分开——它是导航，不是破坏性动作。
-.theme-btn.admin-btn
-  background: #3b4a6b !important
-  color: #ffdca8 !important
-
-// 头部常驻那枚（`.homeRight` 里、头像左边）：只补右侧间距——`.homeLogo` 自己的
-// margin-left:20px 已经给了左边，抽屉按钮行里那枚则用不着这个。
-.homeRight .homeAdminBtn
-  margin-right: 12px
+// 20260923：管理员的「后台」直达钮（`.theme-btn.admin-btn` + `.homeRight .homeAdminBtn`）
+// 已随"改成双击头像"一并删除——两枚按钮都没了，这两条选择器不会再命中任何元素。
