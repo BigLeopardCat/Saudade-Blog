@@ -419,7 +419,7 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                     placeholder="展示用昵称（留言、说说、信箱里显示这个）"
                     onChange={(e) => setNickname(e.target.value)}
                 />
-                <Button type="primary" loading={savingNick} onClick={saveNickname}>
+                <Button className="ucGoldBtn" type="primary" loading={savingNick} onClick={saveNickname}>
                     保存
                 </Button>
             </div>
@@ -446,7 +446,7 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                 />
                 <div className="ucFieldFoot">
                     <span className="ucHint">改密码不会让其他设备立刻掉线（令牌到期前仍有效）</span>
-                    <Button type="primary" loading={savingPwd} onClick={savePassword}>
+                    <Button className="ucGoldBtn" type="primary" loading={savingPwd} onClick={savePassword}>
                         修改密码
                     </Button>
                 </div>
@@ -606,7 +606,7 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                 </div>
                 <div className="ucFieldFoot">
                     <span className="ucHint">本站不提供用户名录，收件人请直接填对方账号</span>
-                    <Button className="ucSendBtn" type="primary" loading={sending} onClick={doSend}>
+                    <Button className="ucSendBtn ucGoldBtn" type="primary" loading={sending} onClick={doSend}>
                         发送
                     </Button>
                 </div>

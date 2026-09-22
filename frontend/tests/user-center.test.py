@@ -747,6 +747,20 @@ with sync_playwright() as p:
           "247, 220, 174" in btn["bgImage"] and "232, 184, 102" in btn["bgImage"], str(btn))
     check("按钮文字是墨色、无边框（金底上可读，与 .login-submit 同配方）",
           btn["color"] == "rgb(42, 33, 19)" and btn["border"] == "0px", str(btn))
+    # 20260922 第二轮：用户要求「昵称保存」与「修改密码」两个按钮也对齐发送按钮的风格。
+    # 三个主行动按钮共用 `.ucGoldBtn` —— 断言"是同一套配方"而不是各写一遍色值。
+    gold = dk.evaluate("""() => {
+        const btns = [...document.querySelectorAll('.ucSettings .ucGoldBtn')];
+        return btns.map((b) => {
+            const cs = getComputedStyle(b);
+            return {text: b.textContent.trim(), bg: cs.backgroundImage, color: cs.color,
+                    border: cs.borderTopWidth};
+        });
+    }""")
+    check("用户设置里的两个主按钮（保存 / 修改密码）都拿到了同一套金色渐变",
+          len(gold) == 2 and all("247, 220, 174" in b["bg"] and b["color"] == "rgb(42, 33, 19)"
+                                 and b["border"] == "0px" for b in gold),
+          str(gold))
     dk.close()
 
     print("⑫ 头部：头像右上角红点 + 点「设置」打开个人中心窗口（挂真 Head 组件跑）")
