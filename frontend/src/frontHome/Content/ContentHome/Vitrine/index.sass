@@ -256,6 +256,7 @@ $bar-line: 16px
 .wg-tools
   display: flex
   justify-content: flex-end
+  gap: 6px
 
 .wg-home
   display: flex
@@ -278,6 +279,71 @@ $bar-line: 16px
     color: #ffe9a8
     background: rgba(255, 233, 168, 0.14)
     border-color: rgba(255, 233, 168, 0.32)
+
+// ---------------------------------------------------------------- 锁定层
+// 展示柜默认锁定（见 wordgraph/engine.ts 的 setLocked）：窗口占首页一大块版面，用户报过
+// "鼠标下滚总落在窗口上、页面不翻"。锁定时**滚轮穿透靠引擎侧早退**（onWheel 在
+// preventDefault 之前 return），这一层管的是**指针**——`.wg-lock` 铺满整块 body 且
+// pointer-events 默认 auto ⇒ 指针到不了画布，拖拽/双击/悬停读数一起关掉；键盘侧由组件
+// 给 .wg-foot 挂 `inert` 兜住。
+// 视觉上平时隐身、**悬停（或键盘焦点进来）才亮**（用户原话："悬浮于展示柜区域会在正中心
+// 出现一把锁的图标"）；触屏没有 hover ⇒ 常亮，否则永远解不开锁。
+// ⚠️ 别把它改成"只在悬停时渲染"：隐身与"挡住"是两件事，DOM 必须在才能挡。
+.wg-lock
+  position: absolute
+  inset: 0
+  z-index: 2
+  display: flex
+  flex-direction: column
+  align-items: center
+  justify-content: center
+  gap: 10px
+  opacity: 0
+  transition: opacity 0.18s ease
+  background: radial-gradient(circle at 50% 44%, rgba(24, 37, 62, 0.34) 0%, rgba(9, 14, 24, 0.58) 72%)
+
+.wg-lock-ico
+  color: rgba(255, 233, 168, 0.9)
+  filter: drop-shadow(0 0 10px rgba(255, 233, 168, 0.28))
+  svg
+    width: 38px
+    height: 38px
+    display: block
+
+.wg-lock-btn
+  font: inherit
+  font-size: 12.5px
+  line-height: 1
+  padding: 7px 16px
+  border-radius: 999px
+  cursor: pointer
+  color: #0d1320
+  background: rgba(255, 233, 168, 0.88)
+  border: 1px solid rgba(255, 233, 168, 0.6)
+  transition: background 0.15s ease
+  &:hover
+    background: #ffe9a8
+
+.wg-lock-tip
+  font-size: 11px
+  color: rgba(200, 214, 238, 0.62)
+
+// 锁定态：悬停/焦点进来才亮出遮罩，画布同时毛玻璃。
+// **毛玻璃用真模糊（filter）**，不用 backdrop-filter：站点有两次同因事故（见文件头），
+// 而这里的模糊对象是一张**静止**画布（锁定态指针到不了它 ⇒ 零重绘）、且只在悬停期间生效
+// ⇒ 不在那条纪律的射程内。
+// ⚠️ filter 刻意**不加 transition**：模糊插值要逐帧重算，白烧合成预算；遮罩的 opacity
+// 过渡已经提供了"浮现"的观感。
+.wg-root.is-locked
+  &:hover, &:focus-within
+    .wg-lock
+      opacity: 1
+    .wg-canvas
+      filter: blur(3px)
+
+@media (hover: none)
+  .wg-lock
+    opacity: 1
 
 .wg-input
   flex: 1
