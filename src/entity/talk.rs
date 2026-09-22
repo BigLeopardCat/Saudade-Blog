@@ -15,7 +15,8 @@ pub struct Model {
     pub user_id: i32, // 发布者用户 id（匿名河灯也留存，供溯源/维护）
     pub src: String,  // 内容来源：talk=后台说说（前台"说说"页） / board=河灯留言（留言板），二者各自独立
     pub approved: i8, // 审核状态：1=通过（公开列表可见）/ 0=待审 / 2=未通过（驳回），20260905 审核生效
-    pub ai_result: Option<String>, // AI 审核判定落库（20260905 issue9）：pass=AI通过 / flag=AI拦截转人工 / NULL=未审（AI关、人工全审或降级放行）
+    pub ai_result: Option<String>, // AI 审核判定落库（20260905 issue9）：pass=AI通过 / flag=AI拦截转人工 / NULL=未审（AI关、人工全审或审核服务不可用转人工）
+    pub reject_reason: Option<String>, // 驳回理由（20260923）：AI 驳回时落它给的 reason，或管理员在后台驳回时手填；**改判回通过时清空**（不留"已通过却带驳回理由"的矛盾行）
     pub created_at: DateTime,
     pub updated_at: DateTime,
 }

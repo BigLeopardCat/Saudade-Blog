@@ -790,6 +790,10 @@ pub struct MyTalkDto {
     pub author: String,
     /// 1=通过（公开可见）/ 0=待审 / 2=未通过（驳回）——**如实回传**，本人的记录自己看得到状态
     pub approved: i32,
+    /// 驳回理由（20260923）：仅 approved=2 时可能有值，其余恒 null。与灯影集「我的河灯」
+    /// 同源（都读 `talk.reject_reason`），个人中心这张表在未通过行里显示它。
+    #[serde(rename = "rejectReason")]
+    pub reject_reason: Option<String>,
     #[serde(rename = "createdAt")]
     pub created_at: String,
 }
@@ -836,6 +840,7 @@ pub async fn list_my_talks(
             v: t.v as i32,
             author: t.author,
             approved: t.approved as i32,
+            reject_reason: t.reject_reason,
             created_at: t.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
         })
         .collect();
