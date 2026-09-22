@@ -536,6 +536,9 @@ pub struct MessageDto {
     pub peer_name: String,
     #[serde(rename = "peerAvatar")]
     pub peer_avatar: Option<String>,
+    /// 信件标题（20260922 起）。null = 对方没填标题（含所有历史信件）——
+    /// 前端据此显示「（无标题）」，不拿正文首行顶替。
+    pub title: Option<String>,
     pub content: String,
     #[serde(rename = "isRead")]
     pub is_read: bool,
@@ -551,6 +554,9 @@ pub struct MailboxDto {
 }
 
 const MESSAGE_MAX_CHARS: usize = 500;
+/// 信件标题上限（20260922 起）。比正文短得多——标题是列表里一行扫过去的东西，
+/// 前端输入框 maxLength 也是 60，两处同值。
+const MESSAGE_TITLE_MAX_CHARS: usize = 60;
 
 /// 两个人的展示信息：`(展示名, 头像)`，查不到就退化成「用户#id」——
 /// 宁可显示得笨，也不编一个名字出来。
@@ -591,6 +597,7 @@ fn to_message_dto(
         to_user_id: m.to_user_id,
         peer_name: name,
         peer_avatar: avatar,
+        title: m.title,
         content: m.content,
         is_read: m.is_read,
         created_at: m.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
@@ -644,6 +651,10 @@ pub async fn list_messages(
 pub struct SendMessageRequest {
     #[serde(rename = "toUsername")]
     pub to_username: String,
+    /// 信件标题（20260922 起，**选填**）：`default` 是刻意的——旧版前端不带这个字段，
+    /// 缺字段要按"没填标题"处理，不能整个请求反序列化失败。
+    #[serde(default)]
+    pub title: Option<String>,
     pub content: String,
 }
 
@@ -664,6 +675,19 @@ pub async fn send_message(
     }
     if content.chars().count() > MESSAGE_MAX_CHARS {
         return Json(ApiResponse::error("内容过长（最多 500 字）"));
+    }
+    // 标题选填：trim 之后空串一律存 NULL——"没填"只有一种表示，前端不必区分
+    // 空串与 null（历史行全是 NULL）。先取出成 owned String，再去碰 payload 的其它字段。
+    let title: Option<String> = payload
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(str::to_string);
+    if let Some(t) = title.as_deref() {
+        if t.chars().count() > MESSAGE_TITLE_MAX_CHARS {
+            return Json(ApiResponse::error("标题过长（最多 60 字）"));
+        }
     }
     let who = payload.to_username.trim();
     if who.is_empty() {
@@ -696,6 +720,7 @@ pub async fn send_message(
     let am = user_message::ActiveModel {
         from_user_id: Set(uid),
         to_user_id: Set(t.id),
+        title: Set(title),
         content: Set(content.to_string()),
         ..Default::default()
     };
