@@ -7,6 +7,12 @@
   height: 75%
 
   .akCard
+    // 身份浅色（米黄/粉/蓝）由 TSX 以 --ak-bg 传入，落地在这里
+    background: var(--ak-bg)
+    // 深色模式：不换成灰块，而是留色相、退成深底上的一层薄色（--ak-bg-dark = 同色 16% 透明），
+    // 这样三张卡的身份色在夜间仍分得出来，白字也压得住（合成后约 8:1）
+    .dark &
+      background: var(--ak-bg-dark)
     border: 0px
     box-shadow: 0 1px 22px -8px rgba(26, 26, 26, .6)
     width: 75%
