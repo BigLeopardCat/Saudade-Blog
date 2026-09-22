@@ -33,6 +33,10 @@ jobs:
         with:
           base: ${{ github.event.before }}
           ref: ${{ github.sha }}
+          # 过滤器只认"**会改变产物**"的路径。`tests/**`（Rust 集成测试）**故意不在 backend 里**
+          # ——它由 check job 编译执行、不进 release 二进制，所以只改测试的 push 合法地不部署
+          # 任何东西。代价要知道：这种 push 的 run 也是**全绿**（build-and-deploy 的每一步都被
+          # `if: deploy == 'true'` 跳过，job 仍 success），看绿灯时要意识到它可能什么都没做。
           filters: |
             backend:
               - 'src/**'
@@ -43,6 +47,14 @@ jobs:
               - 'frontend/public/**'
               - 'frontend/package.json'
               - 'frontend/package-lock.json'
+              # 构建输入不止 src/public（20260923 补）：`npm run build` 还吃 index.html
+              # （Vite 的入口，标题/挂载点在这里）与 vite/tsconfig 三件（base、define、alias、
+              # 路径解析）。它们此前不在过滤器里 ⇒ 那种 push 被判成"前端没变"，CI 绿灯、
+              # 线上照旧——与 base 曾经来回改过的那段历史正好撞在同一处。
+              - 'frontend/index.html'
+              - 'frontend/vite.config.ts'
+              - 'frontend/tsconfig.json'
+              - 'frontend/tsconfig.node.json'
             # 部署管线本身：改了它就跑一次完整部署，顺带把新管线真跑一遍（别让改动只躺在仓库里）
             infra:
               - '.github/workflows/**'
