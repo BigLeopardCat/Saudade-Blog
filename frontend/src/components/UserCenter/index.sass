@@ -15,9 +15,26 @@
       font-size: 16px
       font-weight: 600
 
+  // 标题栏下的分割线（20260922 用户要求）：把「个人中心 + 后台管理」那一行与底下的
+  // 五页签分开。antd v5 的 Modal header 默认**没有**下边框（v4 有），要自己补。
+  .ant-modal-header
+    margin-bottom: 0
+    padding-bottom: 12px
+    border-bottom: 1px solid rgba(128, 128, 128, 0.22)
+
+  // 关闭钮往右上角再挪一点（用户要求）。antd 默认 top / inset-inline-end 各约 17px，
+  // 收到 9px —— 仍在内容框内，不会被 .ant-modal-content 的圆角或内边距裁掉。
+  .ant-modal-close
+    top: 9px
+    inset-inline-end: 9px
+
+  // **固定高度**（20260922 用户要求「不要换个页就变形」）：此前是 min-height/max-height，
+  // 五个页签内容长短不一 ⇒ 切一次页窗户就跟着长高/缩矮。写死之后窗口纹丝不动，
+  // 内容多的页签在自己这一格内滚动。
   .ucPane
+    height: 58vh
     min-height: 320px
-    max-height: 62vh
+    max-height: 580px
     overflow-y: auto
     padding-right: 4px
 
@@ -124,6 +141,31 @@
       &:hover
         color: #1677ff
 
+    // 信件标题（20260922 起）：跟在「来自/发给 X」后面。待读的信（前面带 Badge）标题
+    // 正常字重，未填标题的老信压淡——一眼能分出"有主题"和"没主题"。
+    .ucMailSubject
+      font-weight: 600
+
+      &.isNone
+        font-weight: 400
+        opacity: 0.5
+
+  // 留言来源印章（20260922 用户要求）：与留言板 `.rz-seal` **同色**（#a33f30 底 /
+  // #ffe8c8 暖金字 + 衬线体 + 0.22em 字距），此前这里用的是 antd 的蓝色 Tag ——
+  // 用户原话「留言的印章颜色不是留言板的红色」。
+  // 与 rz-seal 的唯一差别：那边是灯罩右上角的**绝对定位角标**，这边是列表行内的元素。
+  .ucSeal
+    flex: none
+    padding: 0 5px
+    font-size: 11px
+    line-height: 1.7
+    color: #ffe8c8
+    background: #a33f30
+    border-radius: 3px
+    letter-spacing: 0.22em
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45)
+    font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "SimSun", serif
+
   .ucBody
     display: flex
     flex-direction: column
@@ -147,6 +189,12 @@
   .ucCompose
     margin-bottom: 8px
 
+    // 给 antd 的 showCount 计数腾地方：它绝对定位在输入框下方约 22px 处，而 .ucField
+    // 的行距只有 12px ⇒ 不腾就是"计数被下面那行压住"（20260922 用户截图）。见 index.tsx 里
+    // ucMsgBody 那层壳的注释。
+    .ucMsgBody
+      margin-bottom: 22px
+
 // 夜间少量补偿（antd darkAlgorithm 已处理大部分：这里只收拾自写的硬编码色）
 .ucRoot.ucDark
   .ucSettings .ucAvatarRow .ucAvatarMeta .ucUploadBtn
@@ -157,3 +205,34 @@
 
   .ucItemTitle a:hover
     color: #69b1ff
+
+  // 金色"漏光"描边（20260922 用户要求）：夜间的墨蓝窗与页面深底几乎糊成一片、边缘看不清。
+  // 1px 金环 + 一圈很淡的外发光 = 河灯的光从窗缝里漏出来。色值取登录页那团月晕的
+  // rgba(240,196,110,·) 家族，与站点既有的"夜/河灯"词汇同源。
+  // ⚠️ 这条**必须写在一行**：缩进式 sass 的值不能靠换行+逗号续行（编译直接报
+  //    `Expected identifier.`，整包构建失败——20260922 实测）。
+  .ant-modal-content
+    box-shadow: 0 0 0 1px rgba(240, 196, 110, 0.45), 0 0 26px rgba(240, 196, 110, 0.18), 0 18px 48px rgba(0, 0, 0, 0.6)
+
+  // 发送按钮换登录页那套配色（河灯金渐变 + 墨字，同 .login-submit）。
+  // 原因是 antd 的 darkAlgorithm 主色被我们设成了 #aec8c8（为浅色主题挑的灰绿），
+  // 当**主行动按钮**用既不显眼也不好看（用户原话"配色很诡异"）。
+  .ucSendBtn.ant-btn-primary
+    background: linear-gradient(135deg, #f7dcae 0%, #e8b866 100%)
+    border: none
+    color: #2a2113
+    font-weight: 600
+    box-shadow: 0 6px 18px rgba(232, 184, 102, 0.22)
+    transition: transform 0.2s, box-shadow 0.2s, filter 0.2s
+
+    &:hover:not(:disabled)
+      background: linear-gradient(135deg, #f7dcae 0%, #e8b866 100%)
+      color: #2a2113
+      filter: brightness(1.06)
+      box-shadow: 0 10px 24px rgba(232, 184, 102, 0.3)
+
+    &:active:not(:disabled)
+      color: #2a2113
+
+    &:disabled
+      opacity: 0.62

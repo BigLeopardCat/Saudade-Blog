@@ -102,6 +102,9 @@ const UserCenter = ({ open, onClose, fallbackAvatar }: UserCenterProps) => {
 
     // 写信表单
     const [to, setTo] = useState('')
+    /** 信件标题（20260922 用户要求补）：**选填**——历史上发出的信都没有标题，
+     *  强制必填会让"就回一句"变得啰嗦。空标题在收件箱里按"（无标题）"显示。 */
+    const [mailTitle, setMailTitle] = useState('')
     const [body, setBody] = useState('')
     const [sending, setSending] = useState(false)
 
@@ -129,6 +132,7 @@ const UserCenter = ({ open, onClose, fallbackAvatar }: UserCenterProps) => {
         setPwdNew('')
         setPwdNew2('')
         setTo('')
+        setMailTitle('')
         setBody('')
         setCropFile(null)
         setCropOpen(false)
@@ -318,9 +322,10 @@ const UserCenter = ({ open, onClose, fallbackAvatar }: UserCenterProps) => {
         }
         setSending(true)
         try {
-            const res = await sendMessage(to.trim(), body.trim())
+            const res = await sendMessage(to.trim(), mailTitle.trim(), body.trim())
             if (ok(res)) {
                 message.success('已发送')
+                setMailTitle('')
                 setBody('')
                 // 发件箱立刻追一条（回包就是那条消息，不必重拉整个信箱）
                 const sent = res.data.data
@@ -487,7 +492,12 @@ const UserCenter = ({ open, onClose, fallbackAvatar }: UserCenterProps) => {
                             <List.Item.Meta
                                 title={
                                     <span className="ucItemTitle">
-                                        <Tag color="blue">{TALK_SRC_LABEL[t.src] || t.src}</Tag>
+                                        {/* 来源标 = 留言板那枚**印章**的样子（红底暖金字 + 衬线体），
+                                            不再用 antd 的蓝色 Tag——用户 20260922 反馈「印章颜色
+                                            不是留言板的红色」（`.rz-seal` 是 #a33f30）。
+                                            审核状态仍是独立的彩色 Tag（通过/待审/未通过是状态、
+                                            不是分类，混进印章里就分不出来了）。 */}
+                                        <span className="ucSeal">{TALK_SRC_LABEL[t.src] || t.src}</span>
                                         {t.title || (t.content ? t.content.slice(0, 24) : '（无标题）')}
                                         <Tag color={st.color}>{st.text}</Tag>
                                     </span>
@@ -564,17 +574,29 @@ const UserCenter = ({ open, onClose, fallbackAvatar }: UserCenterProps) => {
                     placeholder="收件人账号（或唯一昵称）"
                     onChange={(e) => setTo(e.target.value)}
                 />
-                <Input.TextArea
-                    value={body}
-                    rows={3}
-                    maxLength={500}
-                    showCount
-                    placeholder="最多 500 字"
-                    onChange={(e) => setBody(e.target.value)}
+                <Input
+                    value={mailTitle}
+                    maxLength={60}
+                    placeholder="信件标题（选填，例如：关于那篇架构文档）"
+                    onChange={(e) => setMailTitle(e.target.value)}
                 />
+                {/* ucMsgBody 这层壳只为给计数让位：antd 的 showCount 把「0 / 500」绝对定位在
+                    输入框**下方约 22px** 处，而 .ucField 的行距只有 12px ⇒ 计数整条被下一行
+                    （.ucFieldFoot）压住，用户 20260922 反馈的"字数限制文本被遮挡"就是这个。
+                    壳本身不加任何视觉，只吃一个 margin-bottom（见 index.sass 同名规则）。 */}
+                <div className="ucMsgBody">
+                    <Input.TextArea
+                        value={body}
+                        rows={3}
+                        maxLength={500}
+                        showCount
+                        placeholder="正文（最多 500 字）"
+                        onChange={(e) => setBody(e.target.value)}
+                    />
+                </div>
                 <div className="ucFieldFoot">
                     <span className="ucHint">本站不提供用户名录，收件人请直接填对方账号</span>
-                    <Button type="primary" loading={sending} onClick={doSend}>
+                    <Button className="ucSendBtn" type="primary" loading={sending} onClick={doSend}>
                         发送
                     </Button>
                 </div>
@@ -629,7 +651,10 @@ const UserCenter = ({ open, onClose, fallbackAvatar }: UserCenterProps) => {
                 title={title}
                 // 弹窗挂在 body 下，拿不到 .frontDark 祖先 ⇒ 由 rootClassName 自带主题类
                 rootClassName={`ucRoot${isDark ? ' ucDark' : ''}`}
-                styles={{ body: { paddingTop: 4 } }}
+                // 标题栏底下现在有一条分割线（见 index.sass），正文别再贴着它
+                styles={{ body: { paddingTop: 12 } }}
+                // 关窗后**保留**挂载状态：五个页签的数据缓存还在，再打开不必重拉
+                // （数据陈旧由"每次打开重拉 profile"+ 各页签的显式刷新兜底）
                 destroyOnClose={false}
             >
                 {!loggedIn ? (
@@ -711,6 +736,11 @@ const MailList = ({
                         <span className="ucItemTitle">
                             {!outgoing && !m.isRead && <Badge status="processing" />}
                             {outgoing ? `发给 ${m.peerName}` : `来自 ${m.peerName}`}
+                            {/* 信件标题（20260922 起）：老信没有这一列 ⇒ 值为 null，
+                                如实标"（无标题）"，不拿正文首行冒充标题 */}
+                            <span className={`ucMailSubject${m.title ? '' : ' isNone'}`}>
+                                {m.title || '（无标题）'}
+                            </span>
                         </span>
                     }
                     description={
