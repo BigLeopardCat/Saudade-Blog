@@ -21,7 +21,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Avatar, Badge, Button, ConfigProvider, Empty, Input, List, Modal, Tabs, Tag, message, theme as antdTheme } from 'antd'
 import { useNavigate } from 'react-router-dom'
 import getToken from '../../apis/getToken.tsx'
-import { isAdminToken } from '../../utils/auth.ts'
+import { getTokenClaims, isAdminToken } from '../../utils/auth.ts'
 import { resolveApiAssetUrl } from '../../utils/runtimeApi'
 import { useIsDarkMode } from '../../theme'
 import {
@@ -96,6 +96,9 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
     const navigate = useNavigate()
     const loggedIn = !!getToken()
     const admin = isAdminToken(getToken())
+    // 自己的 UID：个人资料接口不回 id，而令牌的 sub 就是后端 auth_uid / 站内信
+    // 「UID 通道」认的那个 id ⇒ 为一行显示去改后端 DTO 不划算（20260923 用户要求显示）
+    const uid = getTokenClaims(getToken())?.sub
     const { counts } = useUnread(open && loggedIn)
 
     const [tab, setTab] = useState('settings')
@@ -548,6 +551,9 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                 <Avatar size={96} src={myAvatar} className="ucAvatar" />
                 <div className="ucAvatarMeta">
                     <div className="ucAvatarName">{profile?.nickname || profile?.username || ''}</div>
+                    {/* UID 行（20260923 用户要求：加在账号栏上方）。与「账号」同一套样式，
+                        令牌解析不出时给「—」，不猜、不编 */}
+                    <div className="ucAvatarAccount">UID：{uid ?? '—'}</div>
                     <div className="ucAvatarAccount">账号：{profile?.username || ''}（账号不可修改）</div>
                     <label className="ucUploadBtn">
                         更换头像
@@ -667,7 +673,11 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                                             审核状态仍是独立的彩色 Tag——通过/待审/未通过是**状态**，
                                             塞进印章里就和类型分不出来了。 */}
                                         {t.cat && <span className="ucSeal" title="河灯留言的类型">{t.cat}</span>}
-                                        {t.title || (t.content ? t.content.slice(0, 24) : '（无标题）')}
+                                        {/* 20260923：这里原来还渲染 `t.title`，但河灯留言的 title 列
+                                            被后端写成了 cat（talks.rs 建行时 title = cat、前端发布传空串）
+                                            ⇒ 与印章重复显示了一遍「诉/寄/愿/忆」。印章已是类型，
+                                            这行只留正文节选 */}
+                                        {t.content ? t.content.slice(0, 24) : '（无标题）'}
                                         <Tag color={st.color}>{st.text}</Tag>
                                     </span>
                                 }
