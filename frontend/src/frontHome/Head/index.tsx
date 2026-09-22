@@ -231,13 +231,18 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
         setCenterOpen(true);
     }
 
-    /** 管理员的独立「后台」入口（20260922 用户要求）。
-     *  此前去后台的唯一路径是：头像卡 →「设置」→ 窗口标题栏里的「后台管理」——白点两次。
-     *  用户原话「管理员一般不需要去个人中心而是后台，每次都要多点一次」⇒ 头部常驻一个直达钮
-     *  （窄屏在抽屉里，因为 .homeRight 在 1200px 以下整块 display:none）。
-     *  角色取自 JWT 自带的 role（`isAdminToken`，本地解码不请求后端）——它只决定"这个入口
-     *  显不显示"，真正的权限判定在 AuthRouter 与后端，前端藏一个按钮从来不是权限本身。 */
+    /** 管理员的「后台」入口 = **双击头像**（20260923 用户要求：不要显式按钮）。
+     *  上一版是头部一枚常驻「后台」钮 + 窄屏抽屉里一枚（20260922），用户改口要双击头像，
+     *  两枚都撤了。入口藏起来不影响可达性：头像卡里的「设置」→ 窗口标题栏的「后台管理」还在。
+     *  角色取自 JWT 自带的 role（`isAdminToken`，本地解码不请求后端）——它只决定"双击有没有反应"，
+     *  真正的权限判定在 AuthRouter 与后端，前端不挂这个 handler 从来不是权限本身。 */
     const admin = isAdminToken(getToken());
+
+    /** 双击头像进后台（非管理员不挂这个 handler，前台看不出任何差别） */
+    const openDashboard = () => {
+        closePhoneBar();
+        navigate('/dashboard');
+    }
 
     /** 头像右上角的未读红点（未读通知 + 未读站内信；数据见 components/UserCenter/unread.ts） */
     const unreadTotal = unreadCounts.total;
@@ -256,13 +261,12 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
         <header style={{display: 'flex', flexDirection: 'row', position: 'sticky', width: '100%', top: 0, zIndex: '999'}} className={isDark ? 'frontDark' : ''} onClick={() => { if (phoneBarShow) setPhoneBarShow(false); }}>
             <div className={`${phoneBarShow ? 'openBar' : ''} phoneSide`} onClick={(e) => e.stopPropagation()}>
                 <div className="phoneBarContainer">
-                    <div className="barLogo">
+                    <div className="barLogo" onDoubleClick={admin ? openDashboard : undefined}>
                         {avatarWithDot(<Avatar src={viewerAvatar} size={100} />, 100)}
                          <div style={{ marginTop: "5px", display: "flex", justifyContent: "center", gap: "10px" }}>
                             {isLogin ? (
                                 <>
                                 <div className="theme-btn" onClick={openUserCenter}>设置</div>
-                                {admin && <div className="theme-btn admin-btn" onClick={() => { closePhoneBar(); navigate('/dashboard'); }}>后台</div>}
                                 <div className="theme-btn logout-btn" onClick={() => { closePhoneBar(); localStorage.removeItem('tokenKey'); setLogin(0); navigate('/'); window.dispatchEvent(new CustomEvent('auth-change')); }}>退出</div>
                                 </>
                             ) : (
@@ -356,10 +360,8 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                 <div className="homeRight">
                     <div onClick={showModal}><SearchButton2 /></div>
                     <div className={'homeSwitch'}><Switch handleModeSwitch={handleModeSwitch} isDarkMode={isDark}/></div>
-                    {admin && (
-                        <div className="theme-btn admin-btn homeAdminBtn" onClick={() => navigate('/dashboard')}>后台</div>
-                    )}
-                    <div className={`homeLogo ${isHovered&&'BigAvatar'}`} onMouseEnter={handleMouseEnter} onMouseLeave={handleMouseLeave}>
+                    <div className={`homeLogo ${isHovered&&'BigAvatar'}`} onMouseEnter={handleMouseEnter} onMouseLeave={handleMouseLeave}
+                        onDoubleClick={admin ? openDashboard : undefined}>
                         {avatarWithDot(<Avatar src={viewerAvatar} size={40} />, 40)}
                         <div className="loginCard" style={{
                             display: (showStatus && isHovered) ? 'flex' : 'none',
