@@ -7,7 +7,7 @@ function LoadingCat() {
         const s = (selector: string) => `#${ID} ${selector}`;
         const notes = document.querySelectorAll(".note");
 
-        for (let note of notes) {
+        for (const note of notes) {
             note?.parentElement?.appendChild(note.cloneNode(true));
             note?.parentElement?.appendChild(note.cloneNode(true));
         }

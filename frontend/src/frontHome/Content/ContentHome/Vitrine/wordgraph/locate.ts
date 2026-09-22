@@ -101,6 +101,8 @@ export function locateLocal(q: string, g: GraphData): LocateHit[] {
         vocab.set(k, { w: node.w, n: node.n });
         // 上界写死 4 会漏掉更长的词：产物里已有的「兼容性问题」是 5 字，
         // 写死 4 时连它自己当查询都匹配不到。
+        // 这里的 \x00 是**故意的**：判据是"整串都是 ASCII 可打印区"（见上），不是转义失误。
+        // eslint-disable-next-line no-control-regex
         if (!/^[\x00-\x7f]*$/.test(k)) maxCjk = Math.max(maxCjk, k.length);
     }
 

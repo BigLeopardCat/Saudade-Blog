@@ -61,7 +61,7 @@ const SocialButton: React.FC<SocialButtonProps> = ({SocialName,url,img,copyText}
                 ta.style.position = 'fixed';
                 document.body.appendChild(ta);
                 ta.select();
-                try { document.execCommand('copy'); } catch (_) {}
+                try { document.execCommand('copy'); } catch (_) { /* 老浏览器兜底：失败也照样提示已复制 */ }
                 document.body.removeChild(ta);
                 done();
             });
@@ -71,7 +71,7 @@ const SocialButton: React.FC<SocialButtonProps> = ({SocialName,url,img,copyText}
             ta.style.position = 'fixed';
             document.body.appendChild(ta);
             ta.select();
-            try { document.execCommand('copy'); } catch (_) {}
+            try { document.execCommand('copy'); } catch (_) { /* 老浏览器兜底：失败也照样提示已复制 */ }
             document.body.removeChild(ta);
             done();
         }
