@@ -15,11 +15,13 @@ pub mod monitor;
 pub mod sitemap;
 pub mod graph;
 pub mod stats;
+pub mod profile;  // 个人中心一期（20260922）
 
 use axum::{
     routing::{get, post, delete, put},
     Router,
     middleware,
+    extract::DefaultBodyLimit,
 };
 use sea_orm::DatabaseConnection;
 use tower_http::{cors::{Any, CorsLayer, AllowOrigin}, services::ServeDir};
@@ -56,7 +58,32 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/login", post(auth::login))
         .route("/api/password/reset", post(auth::reset_password))
         // 当前登录用户信息（自身鉴权，不经过 admin 守卫）：留言留名预填
-        .route("/api/protected/profile", get(auth::profile))
+        // 个人中心一期（20260922）：用户设置 / 收藏 / 通知（红点）/ 站内信箱 / 我的留言记录。
+        // **与 profile 同一条纪律**：挂在 admin 守卫之外、handler 内部自身鉴权——
+        // 这些能力面向任意登录用户，而 protected_routes 域内全部接口仅管理员可用。
+        // 头像上传单独放开 body 上限：axum 默认 2MiB 会在 extractor 层直接 413（英文），
+        // 放开到 4MiB 由 handler 自己按 2MiB 判，好给出中文原因（见 profile.rs 头注）。
+        .route(
+            "/api/protected/profile",
+            get(auth::profile).put(profile::update_profile),
+        )
+        .route("/api/protected/profile/password", put(profile::change_password))
+        .route(
+            "/api/protected/profile/avatar",
+            post(profile::upload_avatar)
+                .layer(DefaultBodyLimit::max(profile::AVATAR_MAX_BYTES * 2)),
+        )
+        .route(
+            "/api/protected/favorites",
+            get(profile::list_favorites).post(profile::add_favorite),
+        )
+        .route("/api/protected/favorites/:note_id", delete(profile::remove_favorite))
+        .route("/api/protected/notifications", get(profile::list_notifications))
+        .route("/api/protected/notifications/summary", get(profile::notification_summary))
+        .route("/api/protected/notifications/read", post(profile::read_notifications))
+        .route("/api/protected/messages", get(profile::list_messages).post(profile::send_message))
+        .route("/api/protected/messages/read", post(profile::read_messages))
+        .route("/api/protected/my/talks", get(profile::list_my_talks))
         // 我的河灯（20260905 issue8）：本人河灯列表/收回——普通登录用户专用，
         // 必须挂在 admin 守卫之外（守卫域内全部接口仅管理员可用，见 protected_routes
         // 末尾 route_layer；handler 内部 current_uid 自身鉴权，同 profile 先例）
