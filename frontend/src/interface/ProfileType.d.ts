@@ -52,6 +52,9 @@ export interface MessageItem {
     toUserId: number;
     peerName: string;
     peerAvatar?: string | null;
+    /** 信件标题（20260922 起）。**可空**：这一列是后加的，此前发出的信没有标题，
+     *  界面上按「（无标题）」显示，不拿正文首行冒充。 */
+    title?: string | null;
     content: string;
     isRead: boolean;
     createdAt: string;

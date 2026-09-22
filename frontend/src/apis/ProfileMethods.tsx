@@ -133,11 +133,12 @@ function getMailbox() {
     });
 }
 
-function sendMessage(toUsername: string, content: string) {
+/** 发站内信。title 选填（20260922 起）——空串按"没填"处理，后端存 NULL。 */
+function sendMessage(toUsername: string, title: string, content: string) {
     return http<Envelope<MessageItem>>({
         url: "/api/protected/messages",
         method: "POST",
-        data: { toUsername, content },
+        data: { toUsername, title, content },
     });
 }
 

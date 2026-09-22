@@ -64,6 +64,8 @@ const state: any = (window as any).__state = {
     { id: 100, type: 'announcement', title: '新功能上线', content: '个人中心来啦', link: null, isRead: true, createdAt: '2026-09-21 08:00:00' },
   ],
   messages: [
+    // 这封**刻意不带 title**：title 是 20260922 之后加的列，历史行全是 NULL
+    // ⇒ 界面必须如实显示「（无标题）」，不许拿正文首行冒充标题。
     { id: 5, fromUserId: 3, toUserId: 7, peerName: '小猫咪', peerAvatar: null, content: '你好呀', isRead: false, createdAt: '2026-09-22 09:00:00' },
   ],
   /** 上传头像后返回的 URL（用来断言"回传的地址真被写进了界面"） */
@@ -144,8 +146,11 @@ const http = async (cfg: any) => {
     const body = json(cfg.data);
     if (!body.toUsername) return fail('请填写收件人');
     if (body.toUsername === 'nobody') return fail('找不到这个用户（请填对方账号）');
+    // 标题选填：trim 后空串一律折成 NULL（与后端同一口径，见 src/routes/profile.rs）
+    const title = (body.title || '').trim() || null;
+    if (title && title.length > 60) return fail('标题过长（最多 60 字）');
     const msg = { id: 99, fromUserId: 7, toUserId: 42, peerName: body.toUsername, peerAvatar: null,
-                  content: body.content, isRead: false, createdAt: '2026-09-22 12:00:00' };
+                  title, content: body.content, isRead: false, createdAt: '2026-09-22 12:00:00' };
     state.messages.push(msg);
     return env(msg);
   }
@@ -201,7 +206,7 @@ ENTRY = """\
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
 import UserCenter from './src/components/UserCenter/index.tsx';
-// 只挂个人中心本身：头部（点「心境」开窗、红点位置）由 Head 那套负责，这里测的是
+// 只挂个人中心本身：头部（点「个人中心」开窗、红点位置）由 Head 那套负责，这里测的是
 // 窗口里的五个页签与它们的请求契约。
 (window as any).__mount = (open: boolean) => createRoot(document.getElementById('root')!).render(
   <UserCenter open={open} onClose={() => { (window as any).__closed = true; }} fallbackAvatar="/owner.png" />
@@ -232,12 +237,19 @@ def build_sandbox() -> pathlib.Path:
         css.append(out.read_text())
 
     def bundle(entry: str, outfile: str):
-        subprocess.run([str(FE / "node_modules/.bin/esbuild"), entry,
-                        "--bundle", "--format=iife", f"--outfile={outfile}",
-                        "--loader:.sass=text", "--jsx=automatic",
-                        f"--define:{DEFINE}",
-                        f"--alias:react-router-dom={sb}/stub-router.tsx"],
-                       cwd=str(sb), check=True, capture_output=True)
+        # capture_output + check=True 会把 esbuild 的报错吞掉（只留一句 exit status 1，
+        # 排查时等于没有信息）⇒ 失败时把 stderr 原样打出来再抛。
+        r = subprocess.run([str(FE / "node_modules/.bin/esbuild"), entry,
+                            "--bundle", "--format=iife", f"--outfile={outfile}",
+                            "--loader:.sass=text", "--jsx=automatic",
+                            f"--define:{DEFINE}",
+                            f"--alias:react-router-dom={sb}/stub-router.tsx"],
+                           cwd=str(sb), capture_output=True)
+        if r.returncode != 0:
+            # 按字节收、宽容解码：esbuild 会在中文那行按字节截断，严格 utf-8 解会先炸在
+            # 解码上、把真正的报错盖掉（20260922 实测）。
+            raise SystemExit("esbuild 打包 %s 失败：\n%s"
+                             % (entry, r.stderr.decode("utf-8", "replace")))
 
     bundle("entry.tsx", "bundle.js")
     # 头部那一包多桩一个 react-redux（它是全站 store 的连接点）
@@ -316,11 +328,14 @@ def find_call(page, url, method=None):
 with sync_playwright() as p:
     br = p.chromium.launch()
 
-    def fresh_page(role="user"):
+    def fresh_page(role="user", dark=False):
         page = br.new_page(viewport={"width": 1280, "height": 900})
         errs = []
         page.on("pageerror", lambda e: errs.append(str(e)))
-        page.add_init_script(f"window.__role = '{role}';")
+        # 主题源就是 localStorage.isDarkMode（theme.ts readDarkMode：裸 'true' 与
+        # JSON 的 '"true"' 两种历史格式都认），挂载时 useIsDarkMode 会补读一次。
+        page.add_init_script(f"window.__role = '{role}';"
+                             + ("localStorage.setItem('isDarkMode','true');" if dark else ""))
         page.goto(URL)
         page.wait_for_selector(".ant-modal-content", timeout=10000)
         page.wait_for_timeout(600)
@@ -359,6 +374,23 @@ with sync_playwright() as p:
                       "return {x:r.left, y:r.top, w:r.width, h:r.height};}")
     check("舞台是正方形（1:1 裁剪窗）", abs(box["w"] - box["h"]) <= 1,
           f'{box["w"]:.0f}×{box["h"]:.0f}')
+    # ★ 20260922 用户反馈「方形框裁出来圆形算什么」⇒ 改成 GitHub 那套：方舞台不动，
+    #   叠一个内切圆遮罩、圆外压暗。几何一个字节没改（内切圆 = 方框的边 = 头像展示形状）。
+    check("裁剪窗改成圆形遮罩（方舞台 + 内切圆 + 圆外压暗）",
+          pg.locator(".acCircle").count() == 1 and pg.locator(".acCorner").count() == 0,
+          f'acCircle={pg.locator(".acCircle").count()} acCorner={pg.locator(".acCorner").count()}')
+    mask = pg.evaluate("""() => {
+        const c = document.querySelector('.acCircle');
+        const s = document.querySelector('.acStage').getBoundingClientRect();
+        const r = c.getBoundingClientRect();
+        const cs = getComputedStyle(c);
+        return {sameAsStage: Math.abs(r.width - s.width) <= 1 && Math.abs(r.height - s.height) <= 1,
+                radius: cs.borderRadius, shadow: cs.boxShadow};
+    }""")
+    check("遮罩与舞台同尺寸（内切圆 = 方框的边，所见即所得）", mask["sameAsStage"], str(mask))
+    check("遮罩是正圆（border-radius 50%）", mask["radius"].startswith("50%"), mask["radius"])
+    check("圆外用超大外扩 box-shadow 压暗（舞台 overflow:hidden 会把外扩部分裁掉）",
+          "9999px" in mask["shadow"], mask["shadow"])
     check("图片已按 cover 摆进舞台（尺寸不为 0）", pg.evaluate(
         "() => {const i=document.querySelector('.acImg');const r=i.getBoundingClientRect();"
         "return r.width > 100 && r.height > 100;}"))
@@ -511,10 +543,21 @@ with sync_playwright() as p:
     pg.wait_for_selector(PANE + " .ant-list-item", timeout=10000)
     check("收件箱里有一封「来自 小猫咪」", "来自 小猫咪" in pg.locator(PANE).inner_text(),
           pg.locator(PANE).inner_text().replace("\n", " ")[:100])
-    to_in = ".ucCompose input.ant-input"
+    # 写信区现在有三个输入（收件人 / 信件标题 / 正文）⇒ 收件人必须用 nth 定位，
+    # 裸 `.ucCompose input.ant-input` 会命中两个（Playwright 严格模式下直接报错）。
+    to_in = ".ucCompose input.ant-input >> nth=0"
+    title_in = ".ucCompose input.ant-input >> nth=1"
     body_in = ".ucCompose textarea"
     send_btn = ".ucCompose button.ant-btn-primary"
+    check("历史信件没有标题列 ⇒ 如实显示「（无标题）」，不拿正文首行冒充",
+          "（无标题）" in pg.locator(PANE).inner_text(),
+          pg.locator(PANE).inner_text().replace("\n", " ")[:120])
+    check("写信区有「信件标题」这一项（选填，上限 60 字）",
+          pg.get_attribute(title_in, "maxlength") == "60"
+          and "选填" in pg.get_attribute(title_in, "placeholder"),
+          str(pg.get_attribute(title_in, "placeholder")))
     pg.fill(to_in, "nobody")
+    pg.fill(title_in, "关于那篇架构文档")
     pg.fill(body_in, "在吗")
     pg.click(send_btn)
     pg.wait_for_timeout(700)
@@ -525,10 +568,22 @@ with sync_playwright() as p:
     pg.click(send_btn)
     pg.wait_for_timeout(700)
     sm = find_call(pg, "/api/protected/messages", "POST")
-    check("发信体是 {toUsername, content}（后端认的键名）",
-          bool(sm) and set(sm[-1]["data"].keys()) == {"toUsername", "content"},
+    check("发信体是 {toUsername, title, content}（后端认的键名）",
+          bool(sm) and set(sm[-1]["data"].keys()) == {"toUsername", "title", "content"},
+          str(sm and sm[-1]["data"]))
+    check("标题按填写的原样发出", bool(sm) and sm[-1]["data"]["title"] == "关于那篇架构文档",
           str(sm and sm[-1]["data"]))
     check("发完清空正文输入框（防手抖重发）", pg.input_value(body_in) == "")
+    # 不填标题也必须发得出去（选填），且发出去的是空串——后端把它折成 NULL
+    pg.fill(to_in, "xiaoji")
+    pg.fill(body_in, "没有标题的一封")
+    pg.click(send_btn)
+    pg.wait_for_timeout(700)
+    sm2 = find_call(pg, "/api/protected/messages", "POST")
+    check("标题留空照样能发（选填，发空串由后端折成 NULL）",
+          len(sm2) == len(sm) + 1 and sm2[-1]["data"]["title"] == "",
+          str(sm2 and sm2[-1]["data"]))
+    check("发完清空标题输入框", pg.input_value(title_in) == "")
     pg.locator(PANE + " .ant-tabs-tab").nth(1).click()
     pg.wait_for_timeout(400)
     check("发件箱里出现刚发的那封", "发给 xiaoji" in pg.locator(PANE).inner_text(),
@@ -544,6 +599,21 @@ with sync_playwright() as p:
           txt.replace("\n", " ")[:140])
     check("审核状态如实显示（已通过 / 待审核）", "已通过" in txt and "待审核" in txt,
           txt.replace("\n", " ")[:140])
+    # 来源印章必须是**留言板那个红**（.rz-seal = #a33f30 底 / #ffe8c8 暖金字 + 衬线 +
+    # 0.22em 字距）。此前这里是 antd 的蓝色 Tag，用户原话「留言的印章颜色不是留言板的红色」。
+    # 两处色值是跨组件的视觉契约，改一处必须改另一处（留言板那份在 riverboard 样式里）。
+    seal = pg.evaluate("""() => {
+        const s = document.querySelectorAll('.ucSeal');
+        if (!s.length) return null;
+        const cs = getComputedStyle(s[0]);
+        return {n: s.length, bg: cs.backgroundColor, color: cs.color,
+                ls: cs.letterSpacing, ff: cs.fontFamily};
+    }""")
+    check("来源印章用的是留言板那个红（#a33f30 底 / #ffe8c8 字），不是 antd 蓝 Tag",
+          bool(seal) and seal["bg"] == "rgb(163, 63, 48)" and seal["color"] == "rgb(255, 232, 200)",
+          str(seal))
+    check("印章保留了 .rz-seal 的字形特征（衬线 + 0.22em 字距）",
+          bool(seal) and seal["ls"] == "2.42px" and "serif" in seal["ff"].lower(), str(seal))
     pg.close()
 
     print("⑨ 管理员多一个「后台管理」入口（普通用户没有）")
@@ -564,7 +634,102 @@ with sync_playwright() as p:
     body_errs = list(pg_user.errs)
     pg_user.close()
 
-    print("⑩ 头部：头像右上角红点 + 点「心境」打开个人中心（挂真 Head 组件跑）")
+    print("⑩ 窗口观感：五页签尺寸一致 / 标题栏分割线 / 关闭钮贴右上 / 字数计数不被遮挡")
+    pg = fresh_page()
+    geo = []
+    for i in range(5):
+        pg.click(f".ant-tabs-tab >> nth={i}")
+        pg.wait_for_timeout(450)
+        geo.append(pg.evaluate("""() => {
+            const c = document.querySelector('.ant-modal-content').getBoundingClientRect();
+            const p = document.querySelector('.ant-tabs-tabpane-active .ucPane').getBoundingClientRect();
+            return {w: Math.round(c.width), h: Math.round(c.height), ph: Math.round(p.height)};
+        }"""))
+    check("五个页签下窗口尺寸一模一样（不再换个页就变形）",
+          len({(g["w"], g["h"]) for g in geo}) == 1, str(geo))
+    check("五个页签的内容格高度也一致（固定高度 + 内容多的自己滚）",
+          len({g["ph"] for g in geo}) == 1, str(geo))
+    hdr = pg.evaluate("""() => {
+        const h = document.querySelector('.ant-modal-header');
+        const cs = getComputedStyle(h);
+        const r = h.getBoundingClientRect();
+        const t = document.querySelector('.ant-tabs-nav').getBoundingClientRect();
+        return {bw: cs.borderBottomWidth, bs: cs.borderBottomStyle, mb: cs.marginBottom,
+                hBottom: r.bottom, tabsTop: t.top};
+    }""")
+    # antd v5 的 Modal header **默认没有下边框**（v4 才有），这条是自己补的 ⇒ 断言要量
+    # computed style，不能只看"有没有写过这句 CSS"。
+    check("标题栏底下有分割线（antd v5 默认无，是补的）",
+          hdr["bs"] == "solid" and float(hdr["bw"].replace("px", "")) >= 1, str(hdr))
+    check("分割线正好夹在标题栏与五页签之间",
+          hdr["mb"] == "0px" and hdr["hBottom"] <= hdr["tabsTop"] + 1, str(hdr))
+    close = pg.evaluate("""() => {
+        const b = document.querySelector('.ant-modal-close').getBoundingClientRect();
+        const c = document.querySelector('.ant-modal-content').getBoundingClientRect();
+        return {gapTop: Math.round(b.top - c.top), gapRight: Math.round(c.right - b.right),
+                w: Math.round(b.width)};
+    }""")
+    check("关闭钮往右上角挪了（离内容框上/右各约 9px，antd 默认各约 17px）",
+          4 <= close["gapTop"] <= 14 and 4 <= close["gapRight"] <= 14 and close["w"] > 0, str(close))
+    # ★「字数限制文本被遮挡」（20260922 用户反馈）：antd 的 showCount 把计数绝对定位在
+    #   输入框下方约 22px 处，而 .ucField 的行距只有 12px ⇒ 计数整条被下一行压住。
+    #   修法是给 TextArea 套一层 .ucMsgBody 吃 margin-bottom（见 index.tsx 同名注释）。
+    #   这里量**几何重叠**，因为"CSS 写对了"和"真的没被压住"是两件事。
+    pg.click(".ant-tabs-tab >> nth=4")
+    pg.wait_for_selector(".ucCompose", timeout=10000)
+    pg.wait_for_timeout(400)
+    pg.fill(".ucCompose textarea", "遮挡检查")
+    pg.wait_for_timeout(300)
+    cnt = pg.evaluate("""() => {
+        const c = document.querySelector('.ucCompose .ant-input-data-count');
+        if (!c) return null;
+        const r = c.getBoundingClientRect();
+        const f = document.querySelector('.ucCompose .ucFieldFoot').getBoundingClientRect();
+        const ta = document.querySelector('.ucCompose textarea').getBoundingClientRect();
+        const cs = getComputedStyle(c);
+        return {text: c.textContent, countTop: Math.round(r.top), countBottom: Math.round(r.bottom),
+                taBottom: Math.round(ta.bottom), footTop: Math.round(f.top),
+                visible: r.width > 0 && r.height > 0 && cs.visibility !== 'hidden'};
+    }""")
+    check("字数计数（N / 500）真的渲染出来了", bool(cnt) and cnt["visible"], str(cnt))
+    check("计数在正文输入框下方", bool(cnt) and cnt["countTop"] >= cnt["taBottom"] - 1, str(cnt))
+    check("计数不再被下面那行（.ucFieldFoot）压住",
+          bool(cnt) and cnt["countBottom"] <= cnt["footTop"], str(cnt))
+    check("计数内容如实反映输入长度", bool(cnt) and cnt["text"].startswith("4 / 500"),
+          str(cnt and cnt["text"]))
+    pg.close()
+
+    print("⑪ 夜间：窗口金色漏光描边 + 发送按钮换成登录页那套配色")
+    dk = fresh_page(dark=True)
+    # state="attached"：`.ucRoot` 落在外层 .ant-modal-root 上，那个 div 自身没有尺寸
+    # （子元素都是 fixed/absolute），Playwright 默认的 visible 判据会一直等不到。
+    dk.wait_for_selector(".ucRoot.ucDark", state="attached", timeout=10000)
+    dk.wait_for_selector(".ant-modal-content", timeout=10000)
+    dk.wait_for_timeout(600)
+    glow = dk.evaluate("""() => {
+        const c = document.querySelector('.ant-modal-content');
+        const cs = getComputedStyle(c);
+        return {shadow: cs.boxShadow, border: cs.borderTopWidth};
+    }""")
+    check("夜间窗口有金色漏光描边（河灯金 1px 环 + 外发光，取登录页月晕同族色）",
+          "240, 196, 110" in glow["shadow"], glow["shadow"])
+    check("描边走 box-shadow（不动 border，不挤动窗内布局）",
+          glow["border"] in ("0px", "0"), glow["border"])
+    dk.click(".ant-tabs-tab >> nth=4")
+    dk.wait_for_selector(".ucSendBtn", timeout=10000)
+    dk.wait_for_timeout(400)
+    btn = dk.evaluate("""() => {
+        const b = document.querySelector('.ucSendBtn');
+        const cs = getComputedStyle(b);
+        return {bgImage: cs.backgroundImage, color: cs.color, border: cs.borderTopWidth};
+    }""")
+    check("夜间发送按钮是登录页那套河灯金渐变（不是 darkAlgorithm 的灰绿主色）",
+          "247, 220, 174" in btn["bgImage"] and "232, 184, 102" in btn["bgImage"], str(btn))
+    check("按钮文字是墨色、无边框（金底上可读，与 .login-submit 同配方）",
+          btn["color"] == "rgb(42, 33, 19)" and btn["border"] == "0px", str(btn))
+    dk.close()
+
+    print("⑫ 头部：头像右上角红点 + 点「个人中心」打开个人中心（挂真 Head 组件跑）")
     hp = br.new_page(viewport={"width": 1280, "height": 900})
     head_errs = []
     hp.on("pageerror", lambda e: head_errs.append(str(e)))
@@ -580,12 +745,37 @@ with sync_playwright() as p:
     check("红点不抢走头像的 hover（pointer-events: none）",
           hp.evaluate("() => getComputedStyle(document.querySelector('.homeRight .avatarDot'))"
                       ".pointerEvents") == "none")
-    # 心境按钮在 hover 出来的登录卡里（showStatus 有 300ms 防抖）
+    # 「个人中心」按钮在 hover 出来的登录卡里（showStatus 有 300ms 防抖）。
+    # ⚠️ 几何断言必须放在 hover **之后**：登录卡平时是 display:none，getBoundingClientRect
+    # 全 0，量出来只会是"没歪也判失败"（20260922 实测踩过）。
     hp.hover(".homeRight .homeLogo")
     hp.wait_for_timeout(900)
-    hp.locator(".homeRight .loginCard .theme-btn", has_text="心境").click()
+    # ★ 回归锁（20260922 事故）：`.loginCard` 丢掉 position:absolute 就掉回文档流，
+    #   把头像与登录/退出按钮整片挤歪。根因是 sass 的**缩进嵌套**——有人在 .loginCard
+    #   上面插了个顶格规则块，编译器就把 .loginCard 挂到那个选择器下面去了（DOM 里两者
+    #   是兄弟，选择器一旦变成 `.X .loginCard` 就一条都不命中）。这条断言直接量几何，
+    #   比"看着没歪"可靠：登录卡必须贴着头部右缘浮在上面。
+    pg_geo = hp.evaluate("""() => {
+        const c = document.querySelector('.homeRight .loginCard');
+        const r = c.getBoundingClientRect();
+        const h = document.querySelector('.homeRight').getBoundingClientRect();
+        return {pos: getComputedStyle(c).position, top: Math.round(r.top),
+                right: Math.round(r.right), hRight: Math.round(h.right),
+                hTop: Math.round(h.top), w: Math.round(r.width)};
+    }""")
+    check("登录卡是浮层（position:absolute）——sass 嵌套错位会让它掉回文档流",
+          pg_geo["pos"] == "absolute" and pg_geo["w"] > 0, str(pg_geo))
+    check("登录卡贴在头部右缘（没有被挤走的位移）",
+          abs(pg_geo["right"] - pg_geo["hRight"]) <= 40 and pg_geo["top"] >= pg_geo["hTop"] - 40,
+          str(pg_geo))
+    uc_btn = hp.locator(".homeRight .loginCard .theme-btn", has_text="个人中心")
+    check("普通用户的按钮文案已从「心境」改成「个人中心」",
+          uc_btn.count() == 1
+          and hp.locator(".homeRight .loginCard .theme-btn", has_text="心境").count() == 0,
+          " | ".join(hp.locator(".homeRight .loginCard .theme-btn").all_inner_texts()))
+    uc_btn.click()
     hp.wait_for_selector(".ant-modal-content", timeout=10000)
-    check("点「心境」打开的是个人中心（不再是跳 /dashboard）",
+    check("点「个人中心」打开的是个人中心（不再是跳 /dashboard）",
           "个人中心" in hp.locator(".ant-modal-content").inner_text()
           and hp.evaluate("() => (window.__nav || []).length") == 0,
           str(hp.evaluate("() => window.__nav || []")))
@@ -603,7 +793,7 @@ with sync_playwright() as p:
     hp.screenshot(path="/tmp/head-user-center.png")
     hp.close()
 
-    print("⑪ 全程无 JS 报错")
+    print("⑬ 全程无 JS 报错")
     all_errs = body_errs + admin_errs + head_errs
     check("无 pageerror", not all_errs, "; ".join(all_errs[:3]))
     br.close()
