@@ -41,7 +41,25 @@
 .note-row-off-tab
   opacity: 0.55
 
+// 深底上 0.55 更接近"看不见"，抬到 0.7（只调不透明度，"改配置后行跳页"那套语义不动）
+.dark .note-row-off-tab,
+.contentDark .note-row-off-tab
+  opacity: 0.7
+
 // Dark Mode
+//
+// 20260923：后台壳上挂了 ConfigProvider + darkAlgorithm（见 Dashboard/index.tsx），分页各项
+// 的颜色从此由 token 自动给对。下面那批 `.dark` 覆盖**这一轮先留着**（白字压深底，方向
+// 与 darkAlgorithm 一致，留着不会打架），等目视确认无冲突后再单独一批删。
+// 这里只补 token 管不到的两处：字号，与"共 N 篇"这行次要文字的分量。
+.dark .AllCard .ant-pagination,
+.contentDark .AllCard .ant-pagination
+  font-size: 13px
+
+.dark .AllCard .ant-pagination-total-text,
+.contentDark .AllCard .ant-pagination-total-text
+  color: rgba(255, 255, 255, 0.62)
+
 .dark .AllCard .ant-pagination-item-link,
 .contentDark .AllCard .ant-pagination-item-link
   background-color: transparent !important
