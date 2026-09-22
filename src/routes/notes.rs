@@ -247,6 +247,11 @@ fn note_hits_keyword(n: &note::Model, kw: &str, tag_names: &[String]) -> bool {
 /// 丢弃长度 1 且非 ASCII 字母数字的 term：中文单字/标点（"的/了/是"）无语义判别力，
 /// 留着会把整库拉进候选。单词查询（无空白）走同一路径，行为与切词前一致。
 ///
+/// 另有一条与之同源的规则：**整段一个字母数字都没有的 term 也丢**（`。。。` / `...` / emoji）
+/// ——长度规则只管住单字符，`。。。` 是三个字符、长度规则放它过去，"纯标点切完一个 term 都不剩"
+/// 这条保证因此在 3 字符以上落空（20260923 CI 质量闸抓出：`split_terms_tests` 里那条断言
+/// 从写下起就没真跑过——此前 CI 只 `cargo build`，`#[cfg(test)]` 从不编译）。
+///
 /// **二次切分（20260921）**：空白切完还要在同一段内按**脚本类别**再切一次（见 `script_runs`）
 /// ——中文和 ASCII 混排是用户口语的常态，`search_notes("ESP32固件")` 这种整串在标题里
 /// 并不连续出现（标题是《ESP32-S3-OBC固件接入参考》），不切就是**假否定**（agent 如实回答
@@ -265,6 +270,13 @@ fn split_terms(kw: &str) -> Vec<String> {
         let piece = piece.to_lowercase();
         let whole_piece = piece.chars().count() == 1;
         for t in script_runs(&piece) {
+            // 纯符号段（`。。。` / `...` / `!!!` / emoji）一律丢：这类 term 没有任何判别力，
+            // 留着就是把"搜所有含这三个点的文章"当成一次真检索。判据是**整段一个字母数字都没有**，
+            // 而不是"含标点就丢"——`C++` / `ESP32-S3` / `node.js` / `3.5` 里的标点是词的一部分
+            // （见 script_runs），它们各有字母数字，照常保留。
+            if !t.chars().any(|c| c.is_alphanumeric()) {
+                continue;
+            }
             if t.chars().count() < 2 && !(whole_piece && t.chars().all(|c| c.is_ascii_alphanumeric())) {
                 continue;
             }
