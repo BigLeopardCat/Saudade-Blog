@@ -66,6 +66,17 @@ export interface Mailbox {
     unread: number;
 }
 
+/** 站内信草稿箱的一行（20260923）。`toUsername` 是**用户当时敲的原文**（账号或 UID），
+ *  后端不校验、也不解析——只在真正发送时才认这个收件人是否存在。 */
+export interface MessageDraft {
+    id: number;
+    toUsername?: string | null;
+    title?: string | null;
+    content: string;
+    createdAt: string;
+    updatedAt: string;
+}
+
 /** GET /api/protected/my/talks（我的留言记录） */
 export interface MyTalk {
     id: number;

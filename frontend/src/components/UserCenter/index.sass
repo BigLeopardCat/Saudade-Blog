@@ -141,14 +141,105 @@
       &:hover
         color: #1677ff
 
-    // 信件标题（20260922 起）：跟在「来自/发给 X」后面。待读的信（前面带 Badge）标题
-    // 正常字重，未填标题的老信压淡——一眼能分出"有主题"和"没主题"。
-    .ucMailSubject
+  // ── 站内信箱（20260923 改版：四个二级签页 + 占满窗口的详情）─────────────────
+  //
+  // 列表行是三行式（用户要求）：①「来自 xxx」+ 最右侧对方发件时间；② 标题；③ 一行正文。
+  // 时间靠 `space-between` 顶到最右，**不给固定宽度**——字宽随内容变，写死宽度会让
+  // 长昵称那行先换行（"最右侧"就守不住了）。
+
+  .ucMailRow
+    cursor: pointer
+
+    &:hover
+      background: rgba(128, 128, 128, 0.08)
+
+  .ucMailRowBox
+    display: flex
+    flex-direction: column
+    gap: 4px
+    min-width: 0
+    flex: 1
+
+  .ucMailHead
+    display: flex
+    align-items: baseline
+    justify-content: space-between
+    gap: 12px
+
+    .ucMailPeer
+      display: inline-flex
+      align-items: center
+      gap: 6px
+      font-size: 13px
+      opacity: 0.85
+
+    .ucMailWhen
+      flex: none
+      font-size: 12px
+      opacity: 0.55
+
+  // 信件标题（20260922 起）：老信没有标题这一列 ⇒ `isNone` 压淡，
+  // 一眼能分出"有主题"和"没主题"（不拿正文首行冒充标题）。
+  .ucMailSubject
+    font-size: 14px
+    font-weight: 600
+
+    &.isNone
+      font-weight: 400
+      opacity: 0.5
+
+  // 第三行：一行正文，**以「…」结尾**（截断在 JS 里做，见 index.tsx 的 snippet——
+  // CSS 的 text-overflow 做不到"短正文也带省略号"且位置随窗口宽度漂）。这里兜底防溢出。
+  .ucMailSnippet
+    font-size: 13px
+    opacity: 0.75
+    white-space: nowrap
+    overflow: hidden
+    text-overflow: ellipsis
+
+  .ucMailDetail
+    display: flex
+    flex-direction: column
+    gap: 14px
+    // 「占满整个窗口」：`.ucPane` 是 58vh 的固定高，而它是里面的普通块级子元素——
+    // 不给 min-height 就只按内容长（一封信三行，详情就缩成三行）。撑满之后
+    // `.ucMailDetailBody` 的 flex:1 才有意义，长信在自己的区域里滚。
+    min-height: 100%
+
+    .ucMailDetailBar
+      display: flex
+      align-items: center
+
+    .ucMailDetailHead
+      display: flex
+      align-items: center
+      gap: 12px
+
+      .ucMailPeer
+        font-size: 14px
+
+      .ucMailWhen
+        font-size: 12px
+        opacity: 0.55
+
+    .ucMailDetailTitle
+      font-size: 16px
       font-weight: 600
 
       &.isNone
         font-weight: 400
         opacity: 0.5
+
+    // 正文占满剩下的高度，长信自己滚（外面 .ucPane 也能滚，两处都留得住）
+    .ucMailDetailBody
+      flex: 1
+      min-height: 0
+      overflow-y: auto
+      font-size: 14px
+      line-height: 1.8
+      white-space: pre-wrap
+      word-break: break-word
+      padding-right: 4px
 
   // 留言来源印章（20260922 用户要求）：与留言板 `.rz-seal` **同色**（#a33f30 底 /
   // #ffe8c8 暖金字 + 衬线体 + 0.22em 字距），此前这里用的是 antd 的蓝色 Tag ——
@@ -194,6 +285,18 @@
     // ucMsgBody 那层壳的注释。
     .ucMsgBody
       margin-bottom: 22px
+
+  // 「存草稿 / 发送」两颗并排（20260923）：`.ucFieldFoot` 是 space-between，右边这一组
+  // 自己再 flex 一次——不包一层的话两颗按钮会被拆到两端，"发送"就不再贴着右边那颗草稿。
+  .ucComposeBtns
+    display: flex
+    align-items: center
+    gap: 8px
+    flex: none
+
+  // 二级签页的导航行与内容之间留一点气口（antd 默认 16px，在 58vh 的窗口里偏松）
+  .ucMailPane .ant-tabs-nav
+    margin-bottom: 10px
 
 // 夜间少量补偿（antd darkAlgorithm 已处理大部分：这里只收拾自写的硬编码色）
 .ucRoot.ucDark

@@ -15,6 +15,7 @@ import http from "./axios.tsx";
 import type {
     FavoriteItem,
     Mailbox,
+    MessageDraft,
     MessageItem,
     MyTalk,
     NotificationList,
@@ -133,7 +134,8 @@ function getMailbox() {
     });
 }
 
-/** 发站内信。title 选填（20260922 起）——空串按"没填"处理，后端存 NULL。 */
+/** 发站内信。title 选填（20260922 起）——空串按"没填"处理，后端存 NULL。
+ *  `toUsername` 里填**对方账号或 UID**（20260923 起；昵称通道已撤，昵称不保证唯一）。 */
 function sendMessage(toUsername: string, title: string, content: string) {
     return http<Envelope<MessageItem>>({
         url: "/api/protected/messages",
@@ -147,6 +149,38 @@ function readMessages(payload: { ids?: number[]; all?: boolean }) {
         url: "/api/protected/messages/read",
         method: "POST",
         data: { ids: payload.ids ?? [], all: payload.all ?? false },
+    });
+}
+
+// ── 草稿箱（20260923）───────────────────────────────────────────────────────
+
+function getDrafts() {
+    return http<Envelope<MessageDraft[]>>({
+        url: "/api/protected/messages/drafts",
+        method: "GET",
+    });
+}
+
+/** 存草稿。**带 id 是改、不带是新建**——调用方必须把返回值的 id 接住，
+ *  否则一次写信里点两次「存草稿」会攒出两条内容相同的草稿（后端只认 id）。 */
+function saveDraft(payload: { id?: number; toUsername?: string; title?: string; content: string }) {
+    return http<Envelope<MessageDraft>>({
+        url: "/api/protected/messages/drafts",
+        method: "POST",
+        data: {
+            id: payload.id,
+            toUsername: payload.toUsername ?? "",
+            title: payload.title ?? "",
+            content: payload.content,
+        },
+    });
+}
+
+/** 删草稿（幂等：没这条也回成功） */
+function deleteDraft(id: number) {
+    return http<Envelope<string>>({
+        url: `/api/protected/messages/drafts/${id}`,
+        method: "DELETE",
     });
 }
 
@@ -173,5 +207,8 @@ export {
     getMailbox,
     sendMessage,
     readMessages,
+    getDrafts,
+    saveDraft,
+    deleteDraft,
     getMyTalks,
 };

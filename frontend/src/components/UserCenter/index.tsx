@@ -2,6 +2,8 @@
  * 个人中心（20260922 一期）：点头部登录卡里的「设置」打开的大窗口（按钮 20260922 晚改名）。
  *
  * 五个页签（用户原话的顺序）：用户设置 / 收藏的文章 / 留言记录 / 公告和通知 / 站内信箱。
+ * 「站内信箱」自己还有四个二级签页（20260923 用户要求）：收件箱 / 发件箱 / 草稿箱 / 写站内信——
+ * 写信表单不再是常驻在信箱顶部的一块，而是其中一个签页；点开某封信则**占满整个窗口**显示详情。
  *
  * 几个刻意的设计决定（改动前先读这几条）：
  *   · **数据按页签懒加载**：打开窗口只拉"用户设置"，其余页签首次点开才请求。个人中心是
@@ -24,7 +26,9 @@ import { resolveApiAssetUrl } from '../../utils/runtimeApi'
 import { useIsDarkMode } from '../../theme'
 import {
     changePassword,
+    deleteDraft,
     errMsg,
+    getDrafts,
     getFavorites,
     getMailbox,
     getMyTalks,
@@ -34,6 +38,7 @@ import {
     readMessages,
     readNotifications,
     removeFavorite,
+    saveDraft,
     sendMessage,
     updateNickname,
     uploadAvatar,
@@ -41,6 +46,8 @@ import {
 import type {
     FavoriteItem,
     Mailbox,
+    MessageDraft,
+    MessageItem,
     MyTalk,
     NotificationItem,
     ProfileInfo,
@@ -59,6 +66,24 @@ const TALK_STATUS: Record<number, { text: string; color: string }> = {
     1: { text: '已通过', color: 'green' },
     0: { text: '待审核', color: 'gold' },
     2: { text: '未通过', color: 'red' },
+}
+
+/** 信件列表第三行（正文预览）的截断长度。 */
+const MAIL_SNIPPET_CHARS = 40
+
+/**
+ * 列表里那"一行正文"（20260923 用户要求：「再换行显示一行正文并以...结尾」）。
+ *
+ * **确定性地**截断并补省略号，不靠 CSS 的 `text-overflow`——那样短正文没有省略号、
+ * 长正文的省略号位置又随窗口宽度漂移。这里固定字数 + 固定结尾，长度与形态都稳定。
+ * 换行/连续空格先压成单个空格：预览行是"一行"，正文里的换行不能把它撑成两行。
+ */
+const snippet = (s?: string): string => {
+    const t = (s || '').replace(/\s+/g, ' ').trim()
+    if (!t) return '（无正文）'
+    const cut = t.length > MAIL_SNIPPET_CHARS ? `${t.slice(0, MAIL_SNIPPET_CHARS)}…` : t
+    // 正文自己就以「…」收尾时（很多人写信就这么断句）不再补第二个，免得出现「………」
+    return cut.endsWith('…') ? cut : `${cut}…`
 }
 
 interface UserCenterProps {
@@ -106,6 +131,19 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
     const [body, setBody] = useState('')
     const [sending, setSending] = useState(false)
 
+    // 站内信箱的二级签页（20260923 用户要求）：收件箱 / 发件箱 / 草稿箱 / 写站内信，
+    // 四个排在原来「写站内信」表单那一行的位置（表单自己降级成其中一个签页）。
+    const [mailTab, setMailTab] = useState<'in' | 'out' | 'drafts' | 'compose'>('in')
+    /** 点开的那封信（null = 在列表上）。详情**占满整个窗口**，连二级签页一起顶掉。 */
+    const [opened, setOpened] = useState<{ msg: MessageItem; outgoing: boolean } | null>(null)
+    /** 草稿箱（null = 还没拉过） */
+    const [drafts, setDrafts] = useState<MessageDraft[] | null>(null)
+    const [savingDraft, setSavingDraft] = useState(false)
+    /** 当前在编辑哪条草稿；null = 这是一封新信。
+     *  ⚠️ 存草稿成功后**必须回填这个 id**：后端按"有无 id"决定新建还是更新，
+     *     不回填就会在写信过程中点两次「存草稿」攒出两条一模一样的草稿。 */
+    const [editingDraftId, setEditingDraftId] = useState<number | null>(null)
+
     const unreadOf = (s: UnreadSummary | undefined, k: 'notifications' | 'messages') => s?.[k] ?? 0
 
     // 打开窗口：拉一次用户信息（每次打开都刷新——别处改过昵称/头像时这里要跟上）
@@ -132,6 +170,11 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
         setTo('')
         setMailTitle('')
         setBody('')
+        // 关窗也退出"正在写的那封"：留着 editingDraftId 而正文被清空，下次一按存草稿
+        // 就拿空内容覆盖掉原来那条草稿（后端只拦"三个字段全空"，拦不住只留标题的）。
+        setEditingDraftId(null)
+        setOpened(null)
+        setMailTab('in')
         setCropFile(null)
         setCropOpen(false)
     }, [open])
@@ -175,6 +218,29 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
     const onTabChange = (key: string) => {
         setTab(key)
         loadTab(key)
+    }
+
+    /** 草稿箱的数据源（与其它页签同一条懒加载纪律：首次点开才请求）。 */
+    const loadDrafts = useCallback(async () => {
+        if (!loggedIn) return
+        setLoadingTab(true)
+        try {
+            const res = await getDrafts()
+            if (ok(res)) setDrafts(res.data.data || [])
+            else message.error(errMsg(res))
+        } catch (e) {
+            message.error('网络异常，请稍后再试')
+        } finally {
+            setLoadingTab(false)
+        }
+    }, [loggedIn])
+
+    const onMailTabChange = (k: string) => {
+        const key = k as 'in' | 'out' | 'drafts' | 'compose'
+        setMailTab(key)
+        // 换签页 = 离开详情（详情是盖在签页之上的那一层）
+        setOpened(null)
+        if (key === 'drafts' && drafts === null) loadDrafts()
     }
 
     // ── 用户设置 ────────────────────────────────────────────────────────────
@@ -311,7 +377,7 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
 
     const doSend = async () => {
         if (!to.trim()) {
-            message.error('请填写收件人账号')
+            message.error('请填写收件人账号或 UID')
             return
         }
         if (!body.trim()) {
@@ -328,6 +394,18 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                 // 发件箱立刻追一条（回包就是那条消息，不必重拉整个信箱）
                 const sent = res.data.data
                 if (sent) setMailbox((m) => (m ? { ...m, outbox: [sent, ...(m.outbox || [])] } : m))
+                // 这封信是从草稿发出去的 ⇒ 草稿立刻删掉：留着就成了"明明发出去了、
+                // 却还躺在草稿箱里"的幽灵。删失败只影响草稿箱列表，不否定"已发送"这个事实。
+                if (editingDraftId != null) {
+                    const id = editingDraftId
+                    setEditingDraftId(null)
+                    try {
+                        const del = await deleteDraft(id)
+                        if (ok(del)) setDrafts((list) => (list || []).filter((d) => d.id !== id))
+                    } catch (e) {
+                        /* 保留草稿，用户可在草稿箱里手动删 */
+                    }
+                }
             } else {
                 message.error(errMsg(res, '发送失败'))
             }
@@ -335,6 +413,87 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
             message.error('网络异常，请稍后再试')
         } finally {
             setSending(false)
+        }
+    }
+
+    /** 点开一封信 = 看**占满整个窗口的详情**（20260923 用户要求）。
+     *  收件箱里未读的顺手标已读——点开了就是读了，不该逼人回去再点一次「全部已读」。 */
+    const openMail = async (m: MessageItem, outgoing: boolean) => {
+        setOpened({ msg: m, outgoing })
+        if (outgoing || m.isRead) return
+        try {
+            const res = await readMessages({ ids: [m.id] })
+            if (ok(res)) {
+                setMailbox(res.data.data)
+                notifyUnreadChanged()
+            }
+        } catch (e) {
+            /* 标记已读失败不妨碍看信：详情已经打开了 */
+        }
+    }
+
+    // ── 草稿箱 ──────────────────────────────────────────────────────────────
+
+    const doSaveDraft = async () => {
+        if (!to.trim() && !mailTitle.trim() && !body.trim()) {
+            message.error('草稿是空的，先写点什么再存')
+            return
+        }
+        setSavingDraft(true)
+        try {
+            // 正文不 trim：草稿是"接着写"的东西，用户敲的换行原样留着（发送时才 trim）
+            const res = await saveDraft({
+                id: editingDraftId ?? undefined,
+                toUsername: to.trim(),
+                title: mailTitle.trim(),
+                content: body,
+            })
+            if (ok(res)) {
+                setEditingDraftId(res.data.data?.id ?? null)
+                message.success('草稿已保存')
+                // 草稿箱可能与写信页同时开着，存完立刻对齐（也把新草稿拉进列表）
+                loadDrafts()
+            } else {
+                message.error(errMsg(res, '保存失败'))
+            }
+        } catch (e) {
+            message.error('网络异常，请稍后再试')
+        } finally {
+            setSavingDraft(false)
+        }
+    }
+
+    /** 「继续写」：把草稿灌回写信表单，并记下 id —— 之后每次存都更新**这一条**。 */
+    const continueDraft = (d: MessageDraft) => {
+        setTo(d.toUsername || '')
+        setMailTitle(d.title || '')
+        setBody(d.content || '')
+        setEditingDraftId(d.id)
+        setOpened(null)
+        setMailTab('compose')
+    }
+
+    const newMail = () => {
+        setTo('')
+        setMailTitle('')
+        setBody('')
+        setEditingDraftId(null)
+        setOpened(null)
+        setMailTab('compose')
+    }
+
+    const dropDraft = async (id: number) => {
+        try {
+            const res = await deleteDraft(id)
+            if (ok(res)) {
+                setDrafts((list) => (list || []).filter((d) => d.id !== id))
+                if (editingDraftId === id) setEditingDraftId(null)
+                message.success('草稿已删除')
+            } else {
+                message.error(errMsg(res))
+            }
+        } catch (e) {
+            message.error('网络异常，请稍后再试')
         }
     }
 
@@ -575,57 +734,124 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
         </div>
     )
 
-    const mailboxPane = (
-        <div className="ucPane">
-            <div className="ucField ucFieldStack ucCompose">
-                <span className="ucLabel">写站内信</span>
-                <Input
-                    value={to}
-                    placeholder="收件人账号（或唯一昵称）"
-                    onChange={(e) => setTo(e.target.value)}
-                />
-                <Input
-                    value={mailTitle}
-                    maxLength={60}
-                    placeholder="信件标题（选填，例如：关于那篇架构文档）"
-                    onChange={(e) => setMailTitle(e.target.value)}
-                />
-                {/* ucMsgBody 这层壳只为给计数让位：antd 的 showCount 把「0 / 500」绝对定位在
-                    输入框**下方约 22px** 处，而 .ucField 的行距只有 12px ⇒ 计数整条被下一行
-                    （.ucFieldFoot）压住，用户 20260922 反馈的"字数限制文本被遮挡"就是这个。
-                    壳本身不加任何视觉，只吃一个 margin-bottom（见 index.sass 同名规则）。 */}
-                <div className="ucMsgBody">
-                    <Input.TextArea
-                        value={body}
-                        rows={3}
-                        maxLength={500}
-                        showCount
-                        placeholder="正文（最多 500 字）"
-                        onChange={(e) => setBody(e.target.value)}
-                    />
+    /** 列表行（20260923 用户要求的三行式）：① 「来自 xxx」+ **最右侧是对方发件时间**；
+     *  ② 标题；③ 一行正文（以「…」结尾）。整行可点 → 打开占满窗口的详情。 */
+    const mailRow = (m: MessageItem, outgoing: boolean) => (
+        <List.Item className="ucMailRow" onClick={() => openMail(m, outgoing)}>
+            <div className="ucMailRowBox">
+                <div className="ucMailHead">
+                    <span className="ucMailPeer">
+                        {!outgoing && !m.isRead && <Badge status="processing" />}
+                        {outgoing ? `发给 ${m.peerName}` : `来自 ${m.peerName}`}
+                    </span>
+                    <span className="ucMailWhen">{fmtMinute(m.createdAt)}</span>
                 </div>
-                <div className="ucFieldFoot">
-                    <span className="ucHint">本站不提供用户名录，收件人请直接填对方账号</span>
+                {/* 老信没有标题这一列（值为 null）⇒ 如实标"（无标题）"，不拿正文首行冒充 */}
+                <div className={`ucMailSubject${m.title ? '' : ' isNone'}`}>{m.title || '（无标题）'}</div>
+                <div className="ucMailSnippet">{snippet(m.content)}</div>
+            </div>
+        </List.Item>
+    )
+
+    /** 点开的那封信：**占满整个窗口**（用户要求「点开后显示在整个窗口详情」）。
+     *  它顶掉整个 .ucPane 的内容（连二级签页一起），所以上方必须留一个返回条。 */
+    const mailDetail = (m: MessageItem, outgoing: boolean) => (
+        <div className="ucMailDetail">
+            <div className="ucMailDetailBar">
+                <Button size="small" onClick={() => setOpened(null)}>
+                    ← 返回{outgoing ? '发件箱' : '收件箱'}
+                </Button>
+            </div>
+            <div className="ucMailDetailHead">
+                <Avatar size={40} src={resolveApiAssetUrl(m.peerAvatar || '')} />
+                <div>
+                    <div className="ucMailPeer">{outgoing ? `发给 ${m.peerName}` : `来自 ${m.peerName}`}</div>
+                    <div className="ucMailWhen">{fmtMinute(m.createdAt)}</div>
+                </div>
+            </div>
+            <div className={`ucMailDetailTitle${m.title ? '' : ' isNone'}`}>{m.title || '（无标题）'}</div>
+            <div className="ucMailDetailBody">{m.content}</div>
+        </div>
+    )
+
+    const composePane = (
+        <div className="ucField ucFieldStack ucCompose">
+            <span className="ucLabel">写站内信</span>
+            <Input
+                value={to}
+                placeholder="收件人账号或 UID"
+                onChange={(e) => setTo(e.target.value)}
+            />
+            <Input
+                value={mailTitle}
+                maxLength={60}
+                placeholder="信件标题（选填，例如：关于那篇架构文档）"
+                onChange={(e) => setMailTitle(e.target.value)}
+            />
+            {/* ucMsgBody 这层壳只为给计数让位：antd 的 showCount 把「0 / 500」绝对定位在
+                输入框**下方约 22px** 处，而 .ucField 的行距只有 12px ⇒ 计数整条被下一行
+                （.ucFieldFoot）压住，用户 20260922 反馈的"字数限制文本被遮挡"就是这个。
+                壳本身不加任何视觉，只吃一个 margin-bottom（见 index.sass 同名规则）。 */}
+            <div className="ucMsgBody">
+                <Input.TextArea
+                    value={body}
+                    rows={3}
+                    maxLength={500}
+                    showCount
+                    placeholder="正文（最多 500 字）"
+                    onChange={(e) => setBody(e.target.value)}
+                />
+            </div>
+            <div className="ucFieldFoot">
+                <span className="ucHint">
+                    {editingDraftId != null
+                        ? '正在编辑草稿：发送后这条草稿会自动删除'
+                        : '本站不提供用户名录，收件人请填对方的账号或 UID'}
+                </span>
+                <span className="ucComposeBtns">
+                    <Button loading={savingDraft} disabled={sending} onClick={doSaveDraft}>
+                        存草稿
+                    </Button>
                     <Button className="ucSendBtn ucGoldBtn" type="primary" loading={sending} onClick={doSend}>
                         发送
                     </Button>
-                </div>
+                </span>
             </div>
+        </div>
+    )
+
+    /** 收件箱未读：信箱数据到货就用它，否则先用轮询来的那个数（红点同源） */
+    const inboxUnread = mailbox ? mailbox.unread : unreadOf(counts, 'messages')
+
+    const mailboxPane = opened ? (
+        <div className="ucPane">{mailDetail(opened.msg, opened.outgoing)}</div>
+    ) : (
+        <div className="ucPane ucMailPane">
+            {/* 四个二级签页（用户要求的顺序）：收件箱 / 发件箱 / 草稿箱 / 写站内信 */}
             <Tabs
                 size="small"
+                activeKey={mailTab}
+                onChange={onMailTabChange}
                 items={[
                     {
                         key: 'in',
-                        label: `收件箱${unreadOf(counts, 'messages') ? `（未读 ${counts.messages}）` : ''}`,
+                        label: `收件箱${inboxUnread ? `（未读 ${inboxUnread}）` : ''}`,
                         children: (
                             <>
                                 <div className="ucPaneBar">
-                                    <span className="ucHint">{mailbox?.unread ? `未读 ${mailbox.unread} 封` : '没有未读'}</span>
+                                    <span className="ucHint">
+                                        {mailbox?.unread ? `未读 ${mailbox.unread} 封` : '没有未读'}
+                                    </span>
                                     <Button size="small" disabled={!mailbox?.unread} onClick={markMailRead}>
                                         全部已读
                                     </Button>
                                 </div>
-                                <MailList items={mailbox?.inbox || []} loading={loadingTab && mailbox === null} />
+                                <List
+                                    loading={loadingTab && mailbox === null}
+                                    dataSource={mailbox?.inbox || []}
+                                    locale={{ emptyText: <Empty description="收件箱是空的" /> }}
+                                    renderItem={(m) => mailRow(m, false)}
+                                />
                             </>
                         ),
                     },
@@ -633,13 +859,62 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                         key: 'out',
                         label: '发件箱',
                         children: (
-                            <MailList
-                                items={mailbox?.outbox || []}
+                            <List
                                 loading={loadingTab && mailbox === null}
-                                outgoing
+                                dataSource={mailbox?.outbox || []}
+                                locale={{ emptyText: <Empty description="还没发过站内信" /> }}
+                                renderItem={(m) => mailRow(m, true)}
                             />
                         ),
                     },
+                    {
+                        key: 'drafts',
+                        label: `草稿箱${drafts?.length ? `（${drafts.length}）` : ''}`,
+                        children: (
+                            <>
+                                <div className="ucPaneBar">
+                                    <span className="ucHint">草稿只有你自己看得到；发送后会自动删除</span>
+                                    <Button size="small" onClick={newMail}>
+                                        写新信
+                                    </Button>
+                                </div>
+                                <List
+                                    loading={loadingTab && drafts === null}
+                                    dataSource={drafts || []}
+                                    locale={{ emptyText: <Empty description="没有草稿" /> }}
+                                    renderItem={(d) => (
+                                        <List.Item
+                                            // 草稿行**不是**可点开的信（没有详情），单独一个类名
+                                            // 既是排版钩子也是测试钩子（别复用 .ucMailRow 的 pointer）
+                                            className="ucDraftRow"
+                                            actions={[
+                                                <Button type="link" key="edit" onClick={() => continueDraft(d)}>
+                                                    继续写
+                                                </Button>,
+                                                <Button type="link" danger key="del" onClick={() => dropDraft(d.id)}>
+                                                    删除
+                                                </Button>,
+                                            ]}
+                                        >
+                                            <div className="ucMailRowBox">
+                                                <div className="ucMailHead">
+                                                    <span className="ucMailPeer">
+                                                        {d.toUsername ? `发给 ${d.toUsername}` : '（还没填收件人）'}
+                                                    </span>
+                                                    <span className="ucMailWhen">{fmtMinute(d.updatedAt)}</span>
+                                                </div>
+                                                <div className={`ucMailSubject${d.title ? '' : ' isNone'}`}>
+                                                    {d.title || '（无标题）'}
+                                                </div>
+                                                <div className="ucMailSnippet">{snippet(d.content)}</div>
+                                            </div>
+                                        </List.Item>
+                                    )}
+                                />
+                            </>
+                        ),
+                    },
+                    { key: 'compose', label: '写站内信', children: composePane },
                 ]}
             />
         </div>
@@ -723,46 +998,5 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
         </ConfigProvider>
     )
 }
-
-/** 信箱列表（收/发件箱共用；outgoing 只影响"未读"是否展示） */
-const MailList = ({
-    items,
-    loading,
-    outgoing,
-}: {
-    items: Mailbox['inbox']
-    loading?: boolean
-    outgoing?: boolean
-}) => (
-    <List
-        loading={loading}
-        dataSource={items}
-        locale={{ emptyText: <Empty description={outgoing ? '还没发过站内信' : '收件箱是空的'} /> }}
-        renderItem={(m) => (
-            <List.Item>
-                <List.Item.Meta
-                    avatar={<Avatar src={resolveApiAssetUrl(m.peerAvatar || '')} />}
-                    title={
-                        <span className="ucItemTitle">
-                            {!outgoing && !m.isRead && <Badge status="processing" />}
-                            {outgoing ? `发给 ${m.peerName}` : `来自 ${m.peerName}`}
-                            {/* 信件标题（20260922 起）：老信没有这一列 ⇒ 值为 null，
-                                如实标"（无标题）"，不拿正文首行冒充标题 */}
-                            <span className={`ucMailSubject${m.title ? '' : ' isNone'}`}>
-                                {m.title || '（无标题）'}
-                            </span>
-                        </span>
-                    }
-                    description={
-                        <div className="ucBody">
-                            <div className="ucBodyText">{m.content}</div>
-                            <div className="ucBodyTime">{fmtMinute(m.createdAt)}</div>
-                        </div>
-                    }
-                />
-            </List.Item>
-        )}
-    />
-)
 
 export default UserCenter
