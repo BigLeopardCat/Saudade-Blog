@@ -1387,4 +1387,54 @@ mod tests {
                        "board_id": "12", "board_author": "路人甲", "change": "已删除"});
         assert_eq!(render_exec_row(&d), "删除留言 #12（路人甲 的留言）");
     }
+
+    /// 用户自己的收藏与通知（20260923，agent 批 6/7 的父仓那一半）。回执 args 一律是
+    /// **字符串**（agent 侧 `str(v)`）：列表到 Rust 是 Python 的 repr `"[7, 8]"`、布尔
+    /// 是 `"True"`——这正是跨语言最容易错的地方（认不出就会静默渲染成空）。本测试锁
+    /// 两件事：① 三个读臂 + 三个写臂都不落默认分支（落了就把 `操作记录(add_favorite)`
+    /// 这种内部工具名写进 execution_log，narrator 跨轮读到会照抄给用户）；② 编号认不出
+    /// 时宁可少说一条，也**绝不**猜一个 id 进去。
+    #[test]
+    fn exec_row_userdata_reads_and_writes() {
+        for (tool, want) in [
+            ("list_my_favorites", "查看我的收藏"),
+            ("get_unread_summary", "查看未读汇总"),
+            ("list_notifications", "查看站内通知"),
+        ] {
+            let row = json!({"tool": tool, "args": {}});
+            assert_eq!(render_exec_row(&row), want);
+        }
+        // 写三件（scope=write.own，回执不带 meta，只能从 args 渲染）；收藏行刻意
+        // 不带《标题》——带了会被下一轮读成"我读过这篇"的跨轮指代证据。
+        let add = json!({"tool": "add_favorite", "args": {"article_id": "12"}});
+        assert_eq!(render_exec_row(&add), "收藏文章 12");
+        let del = json!({"tool": "remove_favorite", "args": {"article_id": "12"}});
+        assert_eq!(render_exec_row(&del), "取消收藏文章 12");
+        // 全标记：Python repr 的 "True"、JSON 的 true、字符串 "1" 都认
+        for raw in ["True", "true", "1"] {
+            let all = json!({"tool": "read_notifications", "args": {"all": raw}});
+            assert_eq!(render_exec_row(&all), "标记站内通知已读（全部未读）");
+        }
+        // 按 id：>3 条折叠成「前 3 等 N 条」；认不出的串不猜编号
+        let three = json!({"tool": "read_notifications",
+                           "args": {"all": "False", "ids": "[7, 8, 9]"}});
+        assert_eq!(render_exec_row(&three), "标记站内通知已读（7、8、9）");
+        let many = json!({"tool": "read_notifications",
+                          "args": {"all": "False", "ids": "[7, 8, 9, 10, 11]"}});
+        assert_eq!(render_exec_row(&many), "标记站内通知已读（7、8、9 等 5 条）");
+        let junk = json!({"tool": "read_notifications",
+                          "args": {"all": "False", "ids": "['a', -3, '']"}});
+        assert_eq!(render_exec_row(&junk), "标记站内通知已读");
+    }
+
+    #[test]
+    fn py_int_list_parses_python_repr_only() {
+        assert_eq!(py_int_list("[7, 8]"), vec!["7", "8"]);
+        assert_eq!(py_int_list("[ 7 ,8 ]"), vec!["7", "8"]);
+        assert_eq!(py_int_list("['7', \"8\"]"), vec!["7", "8"]);
+        // 空 / 非数字 / 负数一律丢掉（`-3` 里的 3 也不能混进来）
+        assert_eq!(py_int_list("[]"), Vec::<String>::new());
+        assert_eq!(py_int_list("['a', -3]"), Vec::<String>::new());
+        assert_eq!(py_int_list(""), Vec::<String>::new());
+    }
 }
