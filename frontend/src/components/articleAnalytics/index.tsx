@@ -21,6 +21,7 @@ const ArticleAnalytics = () => {
         name: React.ReactNode
         value: number
         bgColor: string
+        bgColorDark: string
         path: string
         isComponent?: boolean
     }[] = [
@@ -29,6 +30,7 @@ const ArticleAnalytics = () => {
             name: <p><span className="logo2" style={{ backgroundColor: 'rgba(230,240,0,0.3)'}}>✨️</span>文章总数</p>,
             value: noteCount,
             bgColor: '#f1dfba',
+            bgColorDark: 'rgba(241, 223, 186, 0.16)',
             path: '/dashboard/notes'
         },
         {
@@ -36,6 +38,7 @@ const ArticleAnalytics = () => {
             name: <p><span className="logo2" style={{ backgroundColor: 'rgba(255,0,0,0.3)'}}>❤️️</span>分类总数</p>,
             value: categoryCount,
             bgColor: '#fbcbd5',
+            bgColorDark: 'rgba(251, 203, 213, 0.16)',
             path: '/dashboard/notes/allcategorize'
         },
         {
@@ -43,9 +46,19 @@ const ArticleAnalytics = () => {
             name: <p><span className="logo2" style={{ backgroundColor: 'rgb(147,154,216,0.3)'}}>🎯</span>标签总数</p>,
             value: tagCount,
             bgColor: '#91ccef',
+            bgColorDark: 'rgba(145, 204, 239, 0.16)',
             path: '/dashboard/notes/alltags'
         }
     ]
+    // 卡面颜色改用 CSS 变量传递、由 .akCard 的类规则落地，**不再写进内联 style**：
+    // 内联样式特异性最高，颜色一旦写死在那里，`.dark &` 变体就永远赢不了它。
+    // 这正是 20260923 后台接上 antd 深色 token 时踩的坑——卡里 Statistic 的文字
+    // 转成了白色，白字压在写死的浅色卡面上只有 1.26:1（见
+    // frontend/tests/dark-mode-contrast.test.py 的实测），浅底浅字等同看不见。
+    const akVars = (item: {bgColor: string, bgColorDark: string}) => ({
+        "--ak-bg": item.bgColor,
+        "--ak-bg-dark": item.bgColorDark,
+    } as React.CSSProperties);
     const formatter = (value: React.ReactText): React.ReactNode => (
         <CountUp end={Number(value)} separator="," />
     );
@@ -56,7 +69,7 @@ const ArticleAnalytics = () => {
                 <Card 
                     className='akCard' 
                     key={item.index} 
-                    style={{backgroundColor:item.bgColor, cursor: item.path ? 'pointer' : 'default'}}
+                    style={{...akVars(item), cursor: item.path ? 'pointer' : 'default'}}
                     onClick={() => item.path && navigate(item.path)}
                     bodyStyle={{padding: 10, height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%'}}
                 >
