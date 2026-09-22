@@ -69,8 +69,20 @@ const state: any = (window as any).__state = {
   messages: [
     // 这封**刻意不带 title**：title 是 20260922 之后加的列，历史行全是 NULL
     // ⇒ 界面必须如实显示「（无标题）」，不许拿正文首行冒充标题。
-    { id: 5, fromUserId: 3, toUserId: 7, peerName: '小猫咪', peerAvatar: null, content: '你好呀', isRead: false, createdAt: '2026-09-22 09:00:00' },
+    { id: 5, fromUserId: 3, toUserId: 7, peerName: '小猫咪', peerAvatar: null,
+      title: null, content: '你好呀', isRead: false, createdAt: '2026-09-22 09:00:00' },
+    // 第二封带标题、正文**刻意超过列表预览的 40 字**，尾巴是一个只能出现在详情里的标记
+    // ⇒ "列表第三行截断成一行以…结尾" 与 "点开能看到全文" 两件事才验得出来。
+    { id: 6, fromUserId: 4, toUserId: 7, peerName: '阿岚', peerAvatar: null,
+      title: '关于那篇架构文档', isRead: true, createdAt: '2026-09-23 10:20:00',
+      content: '这是一封比较长的信，正文用来验证列表第三行会截断成一行并以省略号结尾，'
+             + '而点开详情能看到完整内容，尾巴在这里。' },
   ],
+  drafts: [
+    { id: 31, toUsername: 'xiaoji', title: '写了一半的信', content: '上次说到哪儿了……',
+      createdAt: '2026-09-22 21:00:00', updatedAt: '2026-09-22 21:30:00' },
+  ],
+  nextDraftId: 40,
   /** 上传头像后返回的 URL（用来断言"回传的地址真被写进了界面"） */
   uploadedAvatar: '/api/protect/download/avatars/7_abc.jpg',
 };
@@ -86,10 +98,15 @@ const summary = () => {
 const json = (d: any) => (typeof d === 'string' ? JSON.parse(d) : d);
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** 记下来的请求体要等于**真正上线缆的那一份**：axios 会把对象 JSON 序列化，
+ *  于是值为 undefined 的键会被丢掉（写草稿第一次保存时 `id` 就是这种）。
+ *  不模拟这一步，断言就会看见一个线上根本不存在的键。FormData 不能走 JSON（会变 {}），原样留。 */
+const wire = (d: any) => (d == null || d instanceof FormData ? d : JSON.parse(JSON.stringify(d)));
+
 const http = async (cfg: any) => {
   const url = cfg.url as string;
   const method = (cfg.method || 'GET').toUpperCase();
-  calls.push({ url, method, data: cfg.data });
+  calls.push({ url, method, data: wire(cfg.data) });
   await delay(20);   // 让 loading 态真的出现过
 
   if (url === '/api/protected/profile') {
@@ -158,8 +175,39 @@ const http = async (cfg: any) => {
     return env(msg);
   }
   if (url === '/api/protected/messages/read') {
-    state.messages = state.messages.map((m: any) => ({ ...m, isRead: true }));
-    return env({ inbox: state.messages, outbox: [], unread: 0 });
+    const body = json(cfg.data);
+    state.messages = state.messages.map((m: any) =>
+      (body.all || (body.ids || []).includes(m.id)) ? { ...m, isRead: true } : m);
+    return env({
+      inbox: state.messages.filter((m: any) => m.toUserId === 7),
+      outbox: state.messages.filter((m: any) => m.fromUserId === 7),
+      unread: summary().messages,
+    });
+  }
+  // 草稿箱（20260923）。**精确路径必须排在 :id 之前**，否则 `/drafts` 会被当成 id 解析。
+  if (url === '/api/protected/messages/drafts') {
+    if (method === 'GET') return env(state.drafts);
+    const body = json(cfg.data);
+    const title = (body.title || '').trim() || null;
+    const content = (body.content || '').trim();
+    const to = (body.toUsername || '').trim() || null;
+    // 三个字段全空 ⇒ 后端拒（照抄后端那句中文，验的是"前端也拦不住的空草稿"）
+    if (!to && !title && !content) return fail('草稿是空的，先写点什么再存');
+    if (body.id == null) {
+      const d = { id: state.nextDraftId++, toUsername: to, title, content,
+                  createdAt: '2026-09-23 12:00:00', updatedAt: '2026-09-23 12:00:00' };
+      state.drafts.unshift(d);
+      return env(d);
+    }
+    const row = state.drafts.find((d: any) => d.id === body.id);
+    if (!row) return fail('草稿不存在（可能已被删除）');
+    Object.assign(row, { toUsername: to, title, content, updatedAt: '2026-09-23 12:05:00' });
+    return env(row);
+  }
+  if (url.startsWith('/api/protected/messages/drafts/')) {
+    const id = Number(url.split('/').pop());
+    state.drafts = state.drafts.filter((d: any) => d.id !== id);
+    return env('已删除草稿');
   }
   if (url === '/api/protected/my/talks') {
     // **故意两类都回**：真实后端 20260922 起已加 src='board' 过滤，但这条缺陷的形态
@@ -548,58 +596,220 @@ with sync_playwright() as p:
           pg.locator(".ant-tabs-tab >> nth=3").inner_text().replace("\n", " "))
     pg.close()
 
-    print("⑦ 站内信箱：收件箱/发件箱、发信成功进发件箱、收件人不存在弹后端中文")
+    print("⑦ 站内信箱：四个二级签页 / 三行式条目（时间在最右）/ 点开占满窗口的详情")
     pg = fresh_page()
     pg.click(".ant-tabs-tab >> nth=4")
-    pg.wait_for_selector(".ucCompose", timeout=10000)
-    pg.wait_for_selector(PANE + " .ant-list-item", timeout=10000)
-    check("收件箱里有一封「来自 小猫咪」", "来自 小猫咪" in pg.locator(PANE).inner_text(),
-          pg.locator(PANE).inner_text().replace("\n", " ")[:100])
-    # 写信区现在有三个输入（收件人 / 信件标题 / 正文）⇒ 收件人必须用 nth 定位，
+    pg.wait_for_selector(".ucMailPane", timeout=10000)
+    pg.wait_for_selector(PANE + " .ucMailRow", timeout=10000)
+    sub = pg.locator(PANE + " .ant-tabs-tab")
+    labels = [sub.nth(i).inner_text().strip() for i in range(sub.count())]
+    # 用户原话：「收件箱，发件箱和写站内信在一个层级，再加上草稿箱，这四个作为站内信箱的
+    # 二级签页排在当前的写站内信那一行」⇒ 四个签页按他说的顺序，写信表单降级成其中一个。
+    check("信箱里是四个二级签页，顺序 = 收件箱/发件箱/草稿箱/写站内信",
+          len(labels) == 4 and labels[0].startswith("收件箱") and labels[1] == "发件箱"
+          and labels[2].startswith("草稿箱") and labels[3] == "写站内信", str(labels))
+    check("写信表单不再是常驻的那一行（它现在是「写站内信」签页里的内容）",
+          pg.locator(".ucCompose").count() == 0, str(pg.locator(".ucCompose").count()))
+
+    # `:visible`：antd 的页签切走之后**不卸载**，收件箱那些行还挂在 DOM 里
+    # （display:none）⇒ 不加这个伪类，切到发件箱/草稿箱时会数到它们的行。
+    rows = pg.locator(PANE + " .ucMailRow:visible")
+    check("收件箱两封都在（整行可点）", rows.count() == 2, str(rows.count()))
+    # 三行式几何：①「来自 X」与时间**同一行**、时间顶到最右；② 标题在下一行；③ 正文再下一行。
+    # 行数用 Range 量（block 元素的 getClientRects 恒返回一个盒子，量不出折行）。
+    geo = pg.evaluate("""() => {
+      const rect = (e) => { const b = e.getBoundingClientRect();
+        return { top: b.top, bottom: b.bottom, left: b.left, right: b.right,
+                 text: (e.textContent || '').trim() }; };
+      const row = [...document.querySelectorAll('.ucPane .ucMailRow')]
+        .find((el) => el.textContent.includes('小猫咪'));
+      const snip = row.querySelector('.ucMailSnippet');
+      const rng = document.createRange();
+      rng.selectNodeContents(snip);
+      const lines = new Set([...rng.getClientRects()].map((b) => Math.round(b.top)));
+      return { row: rect(row.querySelector('.ucMailRowBox')),
+               peer: rect(row.querySelector('.ucMailPeer')),
+               when: rect(row.querySelector('.ucMailWhen')),
+               subj: rect(row.querySelector('.ucMailSubject')),
+               snip: rect(snip), snipLines: lines.size };
+    }""")
+    check("第一行是「来自 小猫咪」",
+          geo["peer"]["text"].replace(" ", "") == "来自小猫咪", str(geo["peer"]["text"]))
+    check("发件时间在第一行**最右侧**（右缘与行右缘齐、且在名字右边）",
+          abs(geo["when"]["right"] - geo["row"]["right"]) <= 2
+          and geo["when"]["left"] > geo["peer"]["right"],
+          f"when.right={geo['when']['right']:.1f} row.right={geo['row']['right']:.1f} peer.right={geo['peer']['right']:.1f}")
+    check("时间与「来自」在同一行",
+          abs(geo["when"]["top"] - geo["peer"]["top"]) <= 8,
+          f"{geo['when']['top']:.1f} vs {geo['peer']['top']:.1f}")
+    check("第二行是标题（在名字那一行下面）",
+          geo["subj"]["top"] >= geo["peer"]["bottom"] - 1,
+          f"subj.top={geo['subj']['top']:.1f} peer.bottom={geo['peer']['bottom']:.1f}")
+    check("第三行是正文预览（在标题下面，且只有一行）",
+          geo["snip"]["top"] >= geo["subj"]["bottom"] - 1 and geo["snipLines"] == 1,
+          f"snip.top={geo['snip']['top']:.1f} subj.bottom={geo['subj']['bottom']:.1f} 行数={geo['snipLines']}")
+    check("正文预览以省略号结尾", geo["snip"]["text"].endswith("…"), repr(geo["snip"]["text"]))
+    check("预览是截断的（全文的尾巴不在预览行里）",
+          "尾巴在这里" not in geo["snip"]["text"], repr(geo["snip"]["text"]))
+    check("历史信件没有标题列 ⇒ 如实显示「（无标题）」，不拿正文首行冒充",
+          "（无标题）" in pg.locator(PANE).inner_text(),
+          pg.locator(PANE).inner_text().replace("\n", " ")[:120])
+
+    # 点开一封**已读**的信：看详情，同时验"已读的信不会白发一次标已读请求"
+    n_read = len(find_call(pg, "/api/protected/messages/read", "POST"))
+    pg.locator(PANE + " .ucMailRow").filter(has_text="阿岚").click()
+    pg.wait_for_selector(PANE + " .ucMailDetail", timeout=5000)
+    check("点开后是占满窗口的详情：二级签页被整个顶掉（不是塞在列表里）",
+          pg.locator(PANE + " .ant-tabs-nav").count() == 0
+          and pg.locator(PANE + " .ucMailDetail").count() == 1,
+          "tabs=%d" % pg.locator(PANE + " .ant-tabs-nav").count())
+    dgeo = pg.evaluate("""() => {
+      const d = document.querySelector('.ucMailDetail');
+      const body = d.querySelector('.ucMailDetailBody');
+      return { detail: d.getBoundingClientRect().height,
+               pane: d.closest('.ucPane').clientHeight,
+               body: body.getBoundingClientRect().height,
+               text: body.textContent };
+    }""")
+    check("详情占满整个窗口高度（不是缩在列表那一小块里）",
+          dgeo["detail"] >= dgeo["pane"] - 2 and dgeo["body"] > 0,
+          f"detail={dgeo['detail']:.0f} pane={dgeo['pane']} body={dgeo['body']:.0f}")
+    check("详情里是**完整正文**（列表预览里被截掉的那截尾巴也在）",
+          "尾巴在这里" in dgeo["text"], dgeo["text"][-26:])
+    check("详情上方有返回列表的按钮", pg.locator(PANE + " .ucMailDetailBar button").count() == 1)
+    check("打开一封已读的信不会白发一次标已读请求",
+          len(find_call(pg, "/api/protected/messages/read", "POST")) == n_read,
+          str(len(find_call(pg, "/api/protected/messages/read", "POST"))))
+    pg.click(PANE + " .ucMailDetailBar button")
+    pg.wait_for_selector(PANE + " .ucMailRow", timeout=5000)
+    check("返回后回到收件箱列表", pg.locator(PANE + " .ucMailRow:visible").count() == 2,
+          str(pg.locator(PANE + " .ucMailRow:visible").count()))
+    # 未读那封（id=5）：点开 = 读过了，顺手标已读——只标这一封
+    n_read = len(find_call(pg, "/api/protected/messages/read", "POST"))
+    pg.locator(PANE + " .ucMailRow").filter(has_text="小猫咪").click()
+    pg.wait_for_timeout(600)
+    rm = find_call(pg, "/api/protected/messages/read", "POST")
+    check("点开未读的那封会顺手标已读（只标这一封：ids=[5]）",
+          len(rm) == n_read + 1 and rm[-1]["data"] == {"ids": [5], "all": False},
+          str(rm and rm[-1]["data"]))
+    pg.click(PANE + " .ucMailDetailBar button")
+    pg.wait_for_timeout(300)
+
+    pg.locator(PANE + " .ant-tabs-tab").nth(1).click()
+    pg.wait_for_timeout(400)
+    check("发件箱空的时候如实显示（不是把收件箱那两封搬过来）",
+          pg.locator(PANE + " .ucMailRow:visible").count() == 0
+          and "还没发过站内信" in pg.locator(PANE).inner_text(),
+          pg.locator(PANE).inner_text().replace("\n", " ")[:80])
+
+    print("⑦b 草稿箱与写信：存草稿回填 id（不攒重复）/ 继续写 / 发送后草稿自动删除")
+    pg.locator(PANE + " .ant-tabs-tab").nth(2).click()
+    pg.wait_for_selector(PANE + " .ucDraftRow", timeout=5000)
+    dtxt = pg.locator(PANE).inner_text()
+    check("草稿箱列出预置的那条草稿（发给 xiaoji / 标题 / 一行正文）",
+          "发给 xiaoji" in dtxt and "写了一半的信" in dtxt and "上次说到哪儿了…" in dtxt,
+          dtxt.replace("\n", " ")[:120])
+
+    pg.locator(PANE + " .ant-tabs-tab").nth(3).click()
+    pg.wait_for_selector(".ucCompose", timeout=5000)
+    # 写信页有三个输入（收件人 / 信件标题 / 正文）⇒ 收件人必须用 nth 定位，
     # 裸 `.ucCompose input.ant-input` 会命中两个（Playwright 严格模式下直接报错）。
     to_in = ".ucCompose input.ant-input >> nth=0"
     title_in = ".ucCompose input.ant-input >> nth=1"
     body_in = ".ucCompose textarea"
-    send_btn = ".ucCompose button.ant-btn-primary"
-    check("历史信件没有标题列 ⇒ 如实显示「（无标题）」，不拿正文首行冒充",
-          "（无标题）" in pg.locator(PANE).inner_text(),
-          pg.locator(PANE).inner_text().replace("\n", " ")[:120])
+    save_btn = ".ucComposeBtns button >> nth=0"
+    send_btn = ".ucComposeBtns button.ant-btn-primary"
+    check("收件人提示改成「账号或 UID」（20260923 昵称通道已撤）",
+          "UID" in (pg.get_attribute(to_in, "placeholder") or "")
+          and "昵称" not in (pg.get_attribute(to_in, "placeholder") or ""),
+          str(pg.get_attribute(to_in, "placeholder")))
     check("写信区有「信件标题」这一项（选填，上限 60 字）",
           pg.get_attribute(title_in, "maxlength") == "60"
           and "选填" in pg.get_attribute(title_in, "placeholder"),
           str(pg.get_attribute(title_in, "placeholder")))
-    pg.fill(to_in, "nobody")
+    check("写信页有「存草稿」与「发送」两颗按钮",
+          pg.locator(".ucComposeBtns button").count() == 2
+          and "存草稿" in pg.locator(".ucComposeBtns").inner_text(),
+          pg.locator(".ucComposeBtns").inner_text().replace("\n", " "))
+
+    # 存两次草稿：第一次新建（不带 id），第二次必须带上后端回的 id（否则攒出重复草稿）
+    pg.fill(to_in, "xiaoji")
     pg.fill(title_in, "关于那篇架构文档")
     pg.fill(body_in, "在吗")
+    pg.click(save_btn)
+    pg.wait_for_timeout(600)
+    sd = find_call(pg, "/api/protected/messages/drafts", "POST")
+    check("第一次存草稿是**新建**（请求体里没有 id 键）",
+          len(sd) == 1 and set(sd[-1]["data"].keys()) == {"toUsername", "title", "content"},
+          str(sd and sd[-1]["data"]))
+    check("收件人/标题/正文一起带上（正文原样，不在前端 trim）",
+          bool(sd) and sd[-1]["data"]["toUsername"] == "xiaoji"
+          and sd[-1]["data"]["title"] == "关于那篇架构文档"
+          and sd[-1]["data"]["content"] == "在吗",
+          str(sd and sd[-1]["data"]))
+    check("存完提示改成「正在编辑草稿」",
+          "正在编辑草稿" in pg.locator(".ucCompose").inner_text(),
+          pg.locator(".ucCompose").inner_text().replace("\n", " ")[-40:])
+    pg.click(save_btn)
+    pg.wait_for_timeout(600)
+    sd2 = find_call(pg, "/api/protected/messages/drafts", "POST")
+    check("再存一次带上了后端回的 id（走更新，不会攒出两条一样的草稿）",
+          len(sd2) == 2 and sd2[-1]["data"].get("id") == 40, str(sd2 and sd2[-1]["data"]))
+
+    pg.locator(PANE + " .ant-tabs-tab").nth(2).click()
+    pg.wait_for_timeout(400)
+    drow = pg.locator(PANE + " .ucDraftRow:visible").filter(has_text="关于那篇架构文档")
+    check("刚存的草稿立刻出现在草稿箱（标题/对象/一行正文都对）",
+          drow.count() == 1 and "发给 xiaoji" in drow.inner_text() and "在吗" in drow.inner_text(),
+          drow.inner_text().replace("\n", " ") if drow.count() else "没找到")
+    drow.locator("button:has-text('继续写')").click()
+    pg.wait_for_selector(".ucCompose", timeout=5000)
+    check("「继续写」把草稿灌回表单，并继续更新同一条",
+          pg.input_value(to_in) == "xiaoji" and pg.input_value(title_in) == "关于那篇架构文档"
+          and pg.input_value(body_in) == "在吗"
+          and "正在编辑草稿" in pg.locator(".ucCompose").inner_text(),
+          f"{pg.input_value(to_in)!r}/{pg.input_value(title_in)!r}/{pg.input_value(body_in)!r}")
+
+    pg.fill(to_in, "nobody")
     pg.click(send_btn)
     pg.wait_for_timeout(700)
     check("收件人不存在：弹出后端那句中文（不假装发成功）",
           "找不到这个用户" in pg.locator(".ant-message").inner_text(),
           pg.locator(".ant-message").inner_text().replace("\n", " "))
+    check("发失败时草稿**不会**被删掉",
+          len(find_call(pg, "/api/protected/messages/drafts/40", "DELETE")) == 0,
+          str(len(find_call(pg, "/api/protected/messages/drafts/40", "DELETE"))))
     pg.fill(to_in, "xiaoji")
     pg.click(send_btn)
-    pg.wait_for_timeout(700)
+    pg.wait_for_timeout(800)
     sm = find_call(pg, "/api/protected/messages", "POST")
     check("发信体是 {toUsername, title, content}（后端认的键名）",
-          bool(sm) and set(sm[-1]["data"].keys()) == {"toUsername", "title", "content"},
-          str(sm and sm[-1]["data"]))
-    check("标题按填写的原样发出", bool(sm) and sm[-1]["data"]["title"] == "关于那篇架构文档",
+          bool(sm) and set(sm[-1]["data"].keys()) == {"toUsername", "title", "content"}
+          and sm[-1]["data"]["toUsername"] == "xiaoji" and sm[-1]["data"]["content"] == "在吗",
           str(sm and sm[-1]["data"]))
     check("发完清空正文输入框（防手抖重发）", pg.input_value(body_in) == "")
-    # 不填标题也必须发得出去（选填），且发出去的是空串——后端把它折成 NULL
-    pg.fill(to_in, "xiaoji")
-    pg.fill(body_in, "没有标题的一封")
-    pg.click(send_btn)
-    pg.wait_for_timeout(700)
-    sm2 = find_call(pg, "/api/protected/messages", "POST")
-    check("标题留空照样能发（选填，发空串由后端折成 NULL）",
-          len(sm2) == len(sm) + 1 and sm2[-1]["data"]["title"] == "",
-          str(sm2 and sm2[-1]["data"]))
-    check("发完清空标题输入框", pg.input_value(title_in) == "")
+    check("从草稿发出的那封发完就把草稿删了（不留「已发出却还在草稿箱」的幽灵）",
+          bool(find_call(pg, "/api/protected/messages/drafts/40", "DELETE")),
+          str([c["url"] for c in calls(pg) if "drafts" in c["url"]]))
+
     pg.locator(PANE + " .ant-tabs-tab").nth(1).click()
     pg.wait_for_timeout(400)
-    check("发件箱里出现刚发的那封", "发给 xiaoji" in pg.locator(PANE).inner_text(),
-          pg.locator(PANE).inner_text().replace("\n", " ")[:160])
+    check("发件箱里出现刚发的那封",
+          "发给 xiaoji" in pg.locator(PANE).inner_text(),
+          pg.locator(PANE).inner_text().replace("\n", " ")[:120])
+    pg.locator(PANE + " .ant-tabs-tab").nth(2).click()
+    pg.wait_for_timeout(400)
+    check("草稿箱里那条已经没了（发送即删），预置的那条还在",
+          pg.locator(PANE + " .ucDraftRow:visible").filter(has_text="关于那篇架构文档").count() == 0
+          and "写了一半的信" in pg.locator(PANE).inner_text(),
+          pg.locator(PANE).inner_text().replace("\n", " ")[:120])
+    pg.locator(PANE + " .ucDraftRow:visible").filter(has_text="写了一半的信") \
+        .locator("button:has-text('删除')").click()
+    pg.wait_for_timeout(600)
+    check("删草稿发 DELETE /api/protected/messages/drafts/31，行当场消失",
+          bool(find_call(pg, "/api/protected/messages/drafts/31", "DELETE"))
+          and pg.locator(PANE + " .ucDraftRow:visible").count() == 0,
+          "行数=%d" % pg.locator(PANE + " .ucDraftRow:visible").count())
     pg.close()
 
     print("⑧ 留言记录：只列河灯留言 / 印章放的是留言类型 / 审核状态如实显示")
@@ -696,6 +906,9 @@ with sync_playwright() as p:
     #   修法是给 TextArea 套一层 .ucMsgBody 吃 margin-bottom（见 index.tsx 同名注释）。
     #   这里量**几何重叠**，因为"CSS 写对了"和"真的没被压住"是两件事。
     pg.click(".ant-tabs-tab >> nth=4")
+    # 写信表单 20260923 起是信箱里的第四个二级签页（不再是常驻那一行）⇒ 先点进去
+    pg.wait_for_selector(".ucMailPane", timeout=10000)
+    pg.locator(PANE + " .ant-tabs-tab").nth(3).click()
     pg.wait_for_selector(".ucCompose", timeout=10000)
     pg.wait_for_timeout(400)
     pg.fill(".ucCompose textarea", "遮挡检查")
@@ -736,6 +949,9 @@ with sync_playwright() as p:
     check("描边走 box-shadow（不动 border，不挤动窗内布局）",
           glow["border"] in ("0px", "0"), glow["border"])
     dk.click(".ant-tabs-tab >> nth=4")
+    # 同上：发送按钮在「写站内信」二级签页里
+    dk.wait_for_selector(".ucMailPane", timeout=10000)
+    dk.locator(PANE + " .ant-tabs-tab").nth(3).click()
     dk.wait_for_selector(".ucSendBtn", timeout=10000)
     dk.wait_for_timeout(400)
     btn = dk.evaluate("""() => {

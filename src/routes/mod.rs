@@ -83,6 +83,12 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/protected/notifications/read", post(profile::read_notifications))
         .route("/api/protected/messages", get(profile::list_messages).post(profile::send_message))
         .route("/api/protected/messages/read", post(profile::read_messages))
+        // 草稿箱（20260923）：同一个 handler 按有无 id 决定新建/更新，所以 GET 与 POST 同路径
+        .route(
+            "/api/protected/messages/drafts",
+            get(profile::list_drafts).post(profile::save_draft),
+        )
+        .route("/api/protected/messages/drafts/:id", delete(profile::delete_draft))
         .route("/api/protected/my/talks", get(profile::list_my_talks))
         // 我的河灯（20260905 issue8）：本人河灯列表/收回——普通登录用户专用，
         // 必须挂在 admin 守卫之外（守卫域内全部接口仅管理员可用，见 protected_routes

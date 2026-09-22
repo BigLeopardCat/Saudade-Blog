@@ -18,3 +18,5 @@ pub mod password_reset_token;
 pub mod user_favorite;
 pub mod user_notification;
 pub mod user_message;
+// 站内信草稿（20260923）
+pub mod user_message_draft;

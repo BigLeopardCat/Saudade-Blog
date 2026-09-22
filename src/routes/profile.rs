@@ -25,7 +25,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 
-use crate::entity::{note, talk, user, user_favorite, user_message, user_notification};
+use crate::entity::{
+    note, talk, user, user_favorite, user_message, user_message_draft, user_notification,
+};
 use crate::routes::AppState;
 use crate::utils::{upload_dir, ApiResponse, hash_password, verify_password};
 
@@ -659,8 +661,15 @@ pub struct SendMessageRequest {
 }
 
 /// POST /api/protected/messages：发一条站内信。
-/// 收件人**按账号精确匹配**（昵称只在唯一命中时才认）：本站不提供用户名录接口，
-/// 由发信人自己填对方的账号——避免把全站用户列表暴露成可枚举的资源。
+///
+/// 收件人**按账号或 UID 精确匹配**（20260923 用户要求：「收件逻辑按收件人账号或者 UID，
+/// 昵称不能保证唯一性」——原昵称通道整条撤掉，它最多只能做到"唯一命中才认"，
+/// 而唯一性本身不该由发信人赌）。
+///
+/// 顺序 = 先账号、后 UID：账号是这个站唯一且不可改的标识，先认它不会认错；
+/// **只在账号没命中且输入是纯数字时才退回 UID 通道**（账号允许含数字，反过来先认 UID
+/// 就会让一个叫 "7" 的账号永远收不到信）。
+/// 本站不提供用户名录接口——收件人要自己填，避免把全站用户暴露成可枚举的资源。
 pub async fn send_message(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -699,20 +708,19 @@ pub async fn send_message(
         .await
         .unwrap_or(None);
     if target.is_none() {
-        // 昵称通道：命中多个 = 谁都不发（歧义不许赌）
-        let hits = user::Entity::find()
-            .filter(user::Column::Nickname.eq(who))
-            .all(&state.db)
-            .await
-            .unwrap_or_default();
-        match hits.len() {
-            1 => target = hits.into_iter().next(),
-            0 => return Json(ApiResponse::error("找不到这个用户（请填对方账号）")),
-            _ => return Json(ApiResponse::error("这个昵称对应多个用户，请填对方的账号")),
+        // UID 通道：只在账号没命中、且这串字确实是正整数时才走（见函数头注的顺序理由）
+        if let Ok(id) = who.parse::<i32>() {
+            if id > 0 {
+                target = user::Entity::find()
+                    .filter(user::Column::Id.eq(id))
+                    .one(&state.db)
+                    .await
+                    .unwrap_or(None);
+            }
         }
     }
     let Some(t) = target else {
-        return Json(ApiResponse::error("找不到这个用户"));
+        return Json(ApiResponse::error("找不到这个用户（请填对方账号或 UID）"));
     };
     if t.id == uid {
         return Json(ApiResponse::error("不能给自己发站内信"));
@@ -832,4 +840,205 @@ pub async fn list_my_talks(
         })
         .collect();
     Json(ApiResponse::success(dtos))
+}
+
+// ── 站内信草稿箱（20260923）─────────────────────────────────────────────────
+//
+// 用户原话：「收件箱，发件箱和写站内信在一个层级，再加上草稿箱，这四个作为站内信箱的
+// 二级签页」。草稿要有地方存 ⇒ 新表 `user_message_draft`（**迁移没跑之前这三个端点会
+// 报「查询失败」**——表不存在。flag `user_message_draft_20260923`）。
+//
+// 三条纪律与站内信本身一致：uid 取自 handler 首行（无缺省值）、每个查询都带
+// `user_id = uid`、时间列是 +08:00 本地钟面。
+
+/// 每人草稿上限。够用即可——这个数只为挡住"把草稿箱当网盘"的写法，
+/// 不是产品限制（真正想存东西的人 100 条以内也该发出去了）。
+const DRAFT_MAX_PER_USER: u64 = 100;
+
+#[derive(Serialize, Default)]
+pub struct DraftDto {
+    pub id: i32,
+    /// 收件人**原文**（账号或 UID）——草稿允许是个还没核实的名字，所以这里不回解析结果，
+    /// 也不做存在性校验：真正的校验在发送那一刻（见 `send_message`）。
+    #[serde(rename = "toUsername")]
+    pub to_username: Option<String>,
+    pub title: Option<String>,
+    pub content: String,
+    #[serde(rename = "createdAt")]
+    pub created_at: String,
+    #[serde(rename = "updatedAt")]
+    pub updated_at: String,
+}
+
+fn to_draft_dto(d: user_message_draft::Model) -> DraftDto {
+    DraftDto {
+        id: d.id,
+        to_username: d.to_username,
+        title: d.title,
+        content: d.content,
+        created_at: d.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+        updated_at: d.updated_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct SaveDraftRequest {
+    /// 带 id = 改这条草稿（**必须是自己的**，否则按"不存在"处理）；不带 = 新建一条。
+    ///
+    /// ⚠️ 前端必须把返回值里的 id 接住：一次写信会话里第一次"存草稿"是新建，
+    /// 之后每次都用返回的 id 再 POST ⇒ 走 UPDATE，**否则会攒出一堆内容相同的草稿**。
+    #[serde(default)]
+    pub id: Option<i32>,
+    #[serde(rename = "toUsername", default)]
+    pub to_username: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+    /// 草稿正文允许为空（可能只想先把收件人记下来）——但三个字段全空没意义，见下。
+    #[serde(default)]
+    pub content: String,
+}
+
+/// GET /api/protected/messages/drafts：我的草稿（按最近改过的在前，最多 100 条）。
+pub async fn list_drafts(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Json<ApiResponse<Vec<DraftDto>>> {
+    let Some(uid) = crate::auth_jwt::auth_uid(&headers) else {
+        return Json(ApiResponse::error("未登录"));
+    };
+    let rows = match user_message_draft::Entity::find()
+        .filter(user_message_draft::Column::UserId.eq(uid))
+        .order_by_desc(user_message_draft::Column::UpdatedAt)
+        .order_by_desc(user_message_draft::Column::Id)
+        .limit(100)
+        .all(&state.db)
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!("[profile] 草稿查询失败 uid={}: {}", uid, e);
+            return Json(ApiResponse::error("查询失败，请稍后再试"));
+        }
+    };
+    Json(ApiResponse::success(rows.into_iter().map(to_draft_dto).collect()))
+}
+
+/// POST /api/protected/messages/drafts：存草稿（带 id 改、不带 id 新建）。
+///
+/// 长度上限与站内信**同一组常量**：草稿能存进去却发不出去是最糟的形态。
+pub async fn save_draft(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(payload): Json<SaveDraftRequest>,
+) -> Json<ApiResponse<DraftDto>> {
+    let Some(uid) = crate::auth_jwt::auth_uid(&headers) else {
+        return Json(ApiResponse::error("未登录"));
+    };
+    if payload.content.chars().count() > MESSAGE_MAX_CHARS {
+        return Json(ApiResponse::error("内容过长（最多 500 字）"));
+    }
+    // trim 后空串一律存 NULL——"没填"只有一种表示（与 send_message 同一口径）
+    let to_username: Option<String> = payload
+        .to_username
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    let title: Option<String> = payload
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    if let Some(t) = title.as_deref() {
+        if t.chars().count() > MESSAGE_TITLE_MAX_CHARS {
+            return Json(ApiResponse::error("标题过长（最多 60 字）"));
+        }
+    }
+    let content = payload.content.trim();
+    // 三个字段全空 ⇒ 没有东西可存。空手点「存草稿」不该在草稿箱里多出一行空壳。
+    if to_username.is_none() && title.is_none() && content.is_empty() {
+        return Json(ApiResponse::error("草稿是空的，先写点什么再存"));
+    }
+    match payload.id {
+        // ── 改：必须是自己那条（越权在这里被 SQL 挡住，不是靠前端"不传别人的 id"）──
+        Some(id) => {
+            let owned = user_message_draft::Entity::find()
+                .filter(user_message_draft::Column::Id.eq(id))
+                .filter(user_message_draft::Column::UserId.eq(uid))
+                .one(&state.db)
+                .await
+                .unwrap_or(None);
+            let Some(row) = owned else {
+                return Json(ApiResponse::error("草稿不存在（可能已被删除）"));
+            };
+            let am = user_message_draft::ActiveModel {
+                id: Set(row.id),
+                to_username: Set(to_username),
+                title: Set(title),
+                content: Set(content.to_string()),
+                // 时间显式写一次本地钟面：`ON UPDATE CURRENT_TIMESTAMP` 走的是连接时区，
+                // 显式 Set 让它与全库那套（`chrono::Local::now().naive_local()`）必然一致。
+                updated_at: Set(chrono::Local::now().naive_local()),
+                ..Default::default()
+            };
+            match am.update(&state.db).await {
+                Ok(m) => Json(ApiResponse::success(to_draft_dto(m))),
+                Err(e) => {
+                    tracing::error!("[profile] 存草稿(改)失败 uid={} id={}: {}", uid, id, e);
+                    Json(ApiResponse::error("保存失败，请稍后再试"))
+                }
+            }
+        }
+        // ── 新建 ──
+        None => {
+            let count = user_message_draft::Entity::find()
+                .filter(user_message_draft::Column::UserId.eq(uid))
+                .count(&state.db)
+                .await
+                .unwrap_or(0);
+            if count >= DRAFT_MAX_PER_USER {
+                return Json(ApiResponse::error("草稿太多了（最多 100 条），先清理一些再存"));
+            }
+            let am = user_message_draft::ActiveModel {
+                user_id: Set(uid),
+                to_username: Set(to_username),
+                title: Set(title),
+                content: Set(content.to_string()),
+                ..Default::default()
+            };
+            match am.insert(&state.db).await {
+                Ok(m) => Json(ApiResponse::success(to_draft_dto(m))),
+                Err(e) => {
+                    tracing::error!("[profile] 存草稿(新)失败 uid={}: {}", uid, e);
+                    Json(ApiResponse::error("保存失败，请稍后再试"))
+                }
+            }
+        }
+    }
+}
+
+/// DELETE /api/protected/messages/drafts/:id：删草稿。
+/// 没这条 / 不是自己的 / 已经删过了，一律返回成功——同一个按钮点两次不该出错
+/// （与 `remove_favorite` 同一取向：删除是幂等的，"删不到"不构成错误）。
+pub async fn delete_draft(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<i32>,
+) -> Json<ApiResponse<String>> {
+    let Some(uid) = crate::auth_jwt::auth_uid(&headers) else {
+        return Json(ApiResponse::error("未登录"));
+    };
+    match user_message_draft::Entity::delete_many()
+        .filter(user_message_draft::Column::Id.eq(id))
+        .filter(user_message_draft::Column::UserId.eq(uid))
+        .exec(&state.db)
+        .await
+    {
+        Ok(_) => Json(ApiResponse::success("已删除草稿".to_string())),
+        Err(e) => {
+            tracing::error!("[profile] 删草稿失败 uid={} id={}: {}", uid, id, e);
+            Json(ApiResponse::error("删除失败，请稍后再试"))
+        }
+    }
 }
