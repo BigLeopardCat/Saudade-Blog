@@ -400,41 +400,15 @@ li.search-box input {
 
 
 
-/* Dark Mode Calendar Fixes */
-.dark .ant-picker-calendar {
-    background: transparent !important;
-    color: white !important;
-}
-.dark .ant-picker-calendar .ant-picker-content th,
-.dark .ant-picker-calendar .ant-picker-cell-inner {
-    color: rgba(255, 255, 255, 0.85) !important;
-}
-.dark .ant-picker-calendar .ant-picker-cell:hover .ant-picker-cell-inner {
-    background: #444 !important;
-}
+/* Dark Mode Calendar Fixes —— **两整块都删（20260923）**。
+   这两块同名、互相同向却互相矛盾（前一块 `background: transparent`、后一块 `#1f1f1f`），
+   再叠上文件后面那批把日历钉成白底的规则，谁赢只能靠数 `!important` —— 日历的夜间形态
+   就是这么变成一块白砖的。全部交给壳上的 darkAlgorithm（Calendar 走 colorBgContainer）。
+   ⚠️ 只删其中一块 = "两半都留"，是这次要修掉的那个形状本身。 */
 
 /* Fix Avatar Shape */
 .image .ant-avatar, .image .ant-avatar img {
     border-radius: 50% !important;
-}
-
-/* Dark Mode Calendar Fixes */
-.dark .ant-picker-calendar {
-    background: #1f1f1f !important; 
-    color: rgba(255, 255, 255, 0.85) !important;
-    border-radius: 8px;
-}
-.dark .ant-picker-calendar .ant-picker-panel {
-    background: transparent !important;
-}
-.dark .ant-picker-calendar .ant-picker-content th {
-    color: rgba(255, 255, 255, 0.65) !important;
-}
-.dark .ant-picker-calendar .ant-picker-cell-inner {
-    color: rgba(255, 255, 255, 0.85) !important;
-}
-.dark .ant-picker-calendar .ant-picker-cell-in-view.ant-picker-cell-today .ant-picker-cell-inner::before {
-    border: 1px solid #1677ff !important;
 }
 
 /* Fixes V5 */
@@ -583,16 +557,11 @@ body.dark .SelfDescription .SayWords h2 {
 
 /* V9 Fixes */
 
-/* 1. Calendar Dark Mode Text Visibility */
-html[data-theme='dark'] .ant-picker-calendar .ant-picker-content th,
-html[data-theme='dark'] .ant-picker-calendar .ant-picker-cell-inner,
-body[data-theme='dark'] .ant-picker-calendar .ant-picker-content th,
-body[data-theme='dark'] .ant-picker-calendar .ant-picker-cell-inner,
-.dark .ant-picker-calendar .ant-picker-content th,
-.dark .ant-picker-calendar .ant-picker-cell-inner {
-    color: #000000 !important; 
-}
-
+/* 1. Calendar Dark Mode Text Visibility —— **20260923 整块删**（这条规则在文件里重复了两遍）。
+   它标题写着"Dark Mode Text Visibility"，干的却是把**黑字**钉死在日历上
+   （`color: #000000 !important`）；配合后面那条 `.ant-picker-calendar{background:#ffffff
+   !important}`，删之前的效果 = 夜间一块纯白日历砖 —— 正是用户说的"后台的夜间模式一点不
+   夜间模式"，一条既有活 bug。现在交给壳上的 darkAlgorithm 接管。 */
 /* 2. Sidebar Hover State */
 .menu-bar .menu-links .nav-link:hover {
     background-color: #b7dcfa !important;
@@ -609,16 +578,11 @@ body[data-theme='dark'] .ant-picker-calendar .ant-picker-cell-inner,
 
 /* V9 Fixes */
 
-/* 1. Calendar Dark Mode Text Visibility */
-html[data-theme='dark'] .ant-picker-calendar .ant-picker-content th,
-html[data-theme='dark'] .ant-picker-calendar .ant-picker-cell-inner,
-body[data-theme='dark'] .ant-picker-calendar .ant-picker-content th,
-body[data-theme='dark'] .ant-picker-calendar .ant-picker-cell-inner,
-.dark .ant-picker-calendar .ant-picker-content th,
-.dark .ant-picker-calendar .ant-picker-cell-inner {
-    color: #000000 !important; 
-}
-
+/* 1. Calendar Dark Mode Text Visibility —— **20260923 整块删**（这条规则在文件里重复了两遍）。
+   它标题写着"Dark Mode Text Visibility"，干的却是把**黑字**钉死在日历上
+   （`color: #000000 !important`）；配合后面那条 `.ant-picker-calendar{background:#ffffff
+   !important}`，删之前的效果 = 夜间一块纯白日历砖 —— 正是用户说的"后台的夜间模式一点不
+   夜间模式"，一条既有活 bug。现在交给壳上的 darkAlgorithm 接管。 */
 /* 2. Sidebar Hover State */
 .menu-bar .menu-links .nav-link:hover {
     background-color: #b7dcfa !important;
@@ -677,29 +641,12 @@ body[data-theme='dark'] #SayWordsID span,
     color: #ffffff !important;
 }
 
-/* 2. Calendar: Force Light Theme Styles ALWAYS */
-/* User said: "Style exactly like light mode, except 'keep going' text" */
-.ant-picker-calendar {
-    background: #ffffff !important;
-    color: rgba(0, 0, 0, 0.85) !important;
-}
-.ant-picker-calendar .ant-picker-content th,
-.ant-picker-calendar .ant-picker-cell-inner {
-    color: rgba(0, 0, 0, 0.85) !important;
-}
-/* Override any dark mode selector that tries to darken it */
-html[data-theme='dark'] .ant-picker-calendar,
-body[data-theme='dark'] .ant-picker-calendar,
-.dark .ant-picker-calendar {
-    background: #ffffff !important;
-    border: 1px solid #f0f0f0 !important;
-}
-html[data-theme='dark'] .ant-picker-calendar .ant-picker-content th,
-html[data-theme='dark'] .ant-picker-calendar .ant-picker-cell-inner,
-body[data-theme='dark'] .ant-picker-calendar .ant-picker-content th,
-body[data-theme='dark'] .ant-picker-calendar .ant-picker-cell-inner {
-    color: rgba(0, 0, 0, 0.85) !important;
-}
+/* 2. Calendar: Force Light Theme Styles ALWAYS —— **20260923 整块删**。
+   原注释："User said: Style exactly like light mode, except 'keep going' text" ——
+   那是一次**当时的**取舍（只把"今天也要加油呀"那行字留在深色里），代价是日历永远是白砖。
+   现在壳上有 darkAlgorithm 了，整块（含下面那条"覆盖任何试图把它变暗的选择器"）一起删，
+   深色交给 token —— 只删一半 = 今天这个 bug 的形状原样复现。 */
+
 
 /* 3. Sidebar Hover Fix —— **悬停配色已收口到文件末尾「20260923 收口」那一节**。
    这里原先那两条 `.shell li:hover .icon/.text { color:#000000 !important }` 已删：

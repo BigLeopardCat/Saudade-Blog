@@ -389,7 +389,12 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
       background-color: transparent
     .ant-picker-panel
       .ant-picker-body
+        // 浅色下那块暖白底保留（'#fff1eb' 是这个页面的既定配色）
         background-color: #fff1eb
+        .dark &
+          // 夜间不能再是暖白：壳上挂了 darkAlgorithm 之后，日历其余部分已经变深，
+          // 只有这一块还亮着（特异性 0,3,0，会一直压过 antd 的 token）。
+          background-color: rgba(255, 255, 255, 0.04)
 
   .ant-card
     margin: 30px

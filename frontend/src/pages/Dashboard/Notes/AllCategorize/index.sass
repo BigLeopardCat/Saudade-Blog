@@ -1,3 +1,10 @@
+// 分类列表外框（原来是 index.tsx 里的内联 `background:'white'`）
+.catListBox
+  background: white
+  .dark &
+    // 深底上一块纯白：夜间改成"比底色亮一点"的一档（与 articleRecord / tag_card 同配方）
+    background: rgba(255, 255, 255, 0.06)
+
 // Dark Mode - Pagination
 .dark .AllCard .ant-pagination-item-link,
 .contentDark .AllCard .ant-pagination-item-link

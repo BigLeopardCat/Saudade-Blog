@@ -76,7 +76,9 @@ const Notes = () => {
                     className="twoMenu"
                     onClick={ClickMenu}
                     defaultSelectedKeys={['1']}
-                    theme="light"
+                    // 原来是写死的 `theme="light"`：壳上挂了 darkAlgorithm 之后，这一块左侧
+                    // 子菜单仍会是一块浅色砖（Menu 的 theme 优先于 token）。
+                    theme={isDark ? 'dark' : 'light'}
                 />
                 <Breadcrumb style={{ marginLeft: 10 }}>
                     <Breadcrumb.Item>

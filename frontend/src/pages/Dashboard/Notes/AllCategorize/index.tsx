@@ -248,7 +248,8 @@ const  AllCategorize = () => {
     const listStyle: React.CSSProperties = {
         lineHeight: '200px',
         textAlign: 'center',
-        background: 'white',
+        // background 挪到 index.sass 的 `.catListBox`（20260923）：内联样式特异性最高，
+        // 写死 'white' 就意味着夜间永远是块白砖 —— 只有落到类选择器上才加得出 `.dark` 变体。
         borderRadius: '10px',
         marginTop: 10,
         maxWidth: '98%',
@@ -280,7 +281,7 @@ const  AllCategorize = () => {
         setIsModalOpen(false);
     };
     return <>
-        <div style={listStyle} className="searchRes">
+        <div style={listStyle} className="searchRes catListBox">
             <Table columns={columns} dataSource={staticDate} pagination={{pageSize: 8}}
                    title={() => <>
                            <div style={{float: 'left',display:'flex'}} >
