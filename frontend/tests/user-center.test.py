@@ -65,6 +65,15 @@ const state: any = (window as any).__state = {
   notifications: [
     { id: 101, type: 'announcement', title: '服务器维护', content: '今晚 23:00 维护', link: null, isRead: false, createdAt: '2026-09-22 08:00:00' },
     { id: 100, type: 'announcement', title: '新功能上线', content: '个人中心来啦', link: null, isRead: true, createdAt: '2026-09-21 08:00:00' },
+    // 审核结果通知（20260923）：`type='notice'` 的第一个真实生产者（留言审核终态）。
+    // **带 link** ⇒ 列表里应出现「去看看」，点了要标已读 + 关窗 + 跳转。
+    // 只在个人中心这一页注入（`__extraNotice` 由 index.html 在 bundle 之前置位），
+    // 免得改动头部那节"未读通知 1"的红点基数。
+    ...((window as any).__extraNotice ? [
+      { id: 102, type: 'notice', title: '留言未通过审核',
+        content: '你的留言「河灯一盏」未通过审核，理由：与文章主题无关的广告',
+        link: '/guestbook?lid=9', isRead: false, createdAt: '2026-09-23 11:00:00' },
+    ] : []),
   ],
   messages: [
     // 这封**刻意不带 title**：title 是 20260922 之后加的列，历史行全是 NULL
@@ -219,6 +228,12 @@ const http = async (cfg: any) => {
         approved: 1, createdAt: '2026-09-21 20:00:00' },
       { id: 8, src: 'talk', title: '随笔', content: '今天写了点东西', cat: '愿', v: 0, author: 'sora',
         approved: 0, createdAt: '2026-09-20 20:00:00' },
+      // 未通过的两条（20260923 加 rejectReason 列）：一条有理由、一条**刻意没有**
+      // ——"没写理由"要如实显示「未填写」，不许前端编一句替代
+      { id: 7, src: 'board', title: '', content: '无关广告', cat: '愿', v: 0, author: 'sora',
+        approved: 2, rejectReason: '与文章主题无关的广告', createdAt: '2026-09-19 20:00:00' },
+      { id: 6, src: 'board', title: '', content: '另一条被驳回的', cat: '寄', v: 0, author: 'sora',
+        approved: 2, rejectReason: null, createdAt: '2026-09-18 20:00:00' },
     ]);
   }
   return fail('未知端点 ' + url);
@@ -322,6 +337,9 @@ def build_sandbox() -> pathlib.Path:
     (sb / "index.html").write_text(
         '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
         f"<style>{''.join(css)}</style></head><body><div id=\"root\"></div>"
+        # 审核结果通知的那条 fixture 只在这一页注入（必须在 bundle 之前置位：
+        # 假 axios 的 state 是模块级、bundle 一加载就建好了）
+        '<script>window.__extraNotice = true;</script>'
         '<script src="bundle.js"></script>'
         '<script>window.__mount(true);</script>'
         '</body></html>', encoding="utf-8")
@@ -412,9 +430,12 @@ with sync_playwright() as p:
     check("昵称来自 /api/protected/profile 的回包",
           pg.locator(".ucAvatarName").inner_text() == "泠月喵",
           pg.locator(".ucAvatarName").inner_text())
+    # `.ucAvatarAccount` 现在有**两个**（UID 一行 + 账号一行，20260922 晚加的）⇒ 必须
+    # 指名要哪一个；此前这里直接 inner_text() 会撞 Playwright 的 strict mode 而中断整脚本
     check("账号只读展示（没有任何可改账号的输入框）",
-          "sora" in pg.locator(".ucAvatarAccount").inner_text()
-          and pg.locator(".ucAvatarAccount input").count() == 0)
+          "sora" in pg.locator(".ucAvatarAccount").nth(1).inner_text()
+          and pg.locator(".ucAvatarAccount input").count() == 0,
+          pg.locator(".ucAvatarAccount").nth(1).inner_text())
     # 20260922 用户要求：**没上传过头像就用默认头像**，不再退回站点主人那张。
     check("没设头像时用默认头像（不再回退到站点主人头像）",
           pg.get_attribute(".ucAvatar img", "src") == "/default-avatar.png",
@@ -573,8 +594,9 @@ with sync_playwright() as p:
     pg = fresh_page()
     notice_badge = ".ant-tabs-tab >> nth=3 >> .ant-badge-count"
     mail_badge = ".ant-tabs-tab >> nth=4 >> .ant-badge-count"
-    check("公告页签挂着未读角标（1 条）",
-          pg.locator(notice_badge).count() == 1 and pg.locator(notice_badge).inner_text() == "1",
+    # 未读 2 条 = 公告 1 + 审核结果通知 1（通知 fixture 见假后端头部 `__extraNotice`）
+    check("公告页签挂着未读角标（2 条）",
+          pg.locator(notice_badge).count() == 1 and pg.locator(notice_badge).inner_text() == "2",
           pg.locator(".ant-tabs-tab >> nth=3").inner_text().replace("\n", " "))
     check("信箱页签挂着未读角标（1 封）",
           pg.locator(mail_badge).count() == 1 and pg.locator(mail_badge).inner_text() == "1",
@@ -584,8 +606,10 @@ with sync_playwright() as p:
     pg.click(".ant-tabs-tab >> nth=3")
     pg.wait_for_selector(PANE + " .ant-list-item", timeout=10000)
     pane_txt = pg.locator(PANE).inner_text()
-    check("列表按 type 显示「公告」标签，且未读那条带标记",
-          "公告" in pane_txt and pg.locator(PANE + " .ant-badge-status-processing").count() == 1,
+    # type 分流（20260923 起既有公告也有站内通知）：两类标签都要出，未读 2 条都带标记
+    check("列表按 type 显示「公告」/「通知」两种标签，未读的两条都带标记",
+          "公告" in pane_txt and "通知" in pane_txt
+          and pg.locator(PANE + " .ant-badge-status-processing").count() == 2,
           pane_txt.replace("\n", " ")[:120])
     pg.click(PANE + " .ucPaneBar button.ant-btn")
     pg.wait_for_timeout(800)
@@ -594,6 +618,27 @@ with sync_playwright() as p:
           bool(rd) and rd[-1]["data"] == {"ids": [], "all": True}, str(rd and rd[-1]["data"]))
     check("红点当场归零（不等下一次轮询）", pg.locator(notice_badge).count() == 0,
           pg.locator(".ant-tabs-tab >> nth=3").inner_text().replace("\n", " "))
+    pg.close()
+
+    print("⑥b 审核结果通知：只有带 link 的才有「去看看」= 标已读 + 关窗 + 跳站内路径")
+    pg = fresh_page()
+    pg.click(".ant-tabs-tab >> nth=3")
+    pg.wait_for_selector(PANE + " .ant-list-item", timeout=10000)
+    go = pg.locator(PANE + " .ucGoBtn")
+    check("只有带 link 的那条通知渲染「去看看」（公告 link 为 null，没有这颗按钮）",
+          go.count() == 1, str(go.count()))
+    go.first.click()
+    pg.wait_for_timeout(900)
+    nav = pg.evaluate("() => (window.__nav || []).slice(-1)[0]")
+    check("点「去看看」跳到通知里的站内路径（/guestbook?lid=9 定位到那盏灯）",
+          nav == "/guestbook?lid=9", repr(nav))
+    rc = find_call(pg, "/api/protected/notifications/read", "POST")
+    # 跳转即视为看过：发一条只含该 id 的已读请求（不是 all:true——别把别的未读一起吞了）
+    check("点「去看看」顺手把这一条标记已读（ids=[102]）",
+          bool(rc) and rc[-1]["data"].get("ids") == [102] and rc[-1]["data"].get("all") is False,
+          str(rc and rc[-1]["data"]))
+    check("跳转前关掉个人中心窗口（不然新页面被窗口盖住）",
+          pg.evaluate("() => window.__closed === true"))
     pg.close()
 
     print("⑦ 站内信箱：四个二级签页 / 三行式条目（时间在最右）/ 点开占满窗口的详情")
@@ -819,8 +864,9 @@ with sync_playwright() as p:
     txt = pg.locator(PANE).inner_text()
     # 用户 20260922 原话「说说不是留言，为什么还出现在这里并且有审核状态」⇒ 本页只列 board。
     # 后端已加 src='board' 过滤，前端显示层再兜一道（假后端故意两类都回，验的就是这一条）。
+    # 3 行 = 已通过 1 + 未通过 2（20260923 为驳回理由加的 fixture）
     check("说说不出现在留言记录里（后端过滤 + 前端显示层兜底）",
-          pg.locator(PANE + " .ant-list-item").count() == 1
+          pg.locator(PANE + " .ant-list-item").count() == 3
           and "今天写了点东西" not in txt and "随笔" not in txt,
           "行数=%d 文本=%s" % (pg.locator(PANE + " .ant-list-item").count(),
                               txt.replace("\n", " ")[:140]))
@@ -838,12 +884,28 @@ with sync_playwright() as p:
                 ls: cs.letterSpacing, ff: cs.fontFamily};
     }""")
     check("印章里是留言类型（诉），不是「留言板/说说」这种来源标",
-          bool(seal) and seal["n"] == 1 and seal["text"] == "诉", str(seal))
+          bool(seal) and seal["n"] == 3 and seal["text"] == "诉", str(seal))
     check("印章用的是留言板那个红（#a33f30 底 / #ffe8c8 字），不是 antd 蓝 Tag",
           bool(seal) and seal["bg"] == "rgb(163, 63, 48)" and seal["color"] == "rgb(255, 232, 200)",
           str(seal))
     check("印章保留了 .rz-seal 的字形特征（衬线 + 0.22em 字距）",
           bool(seal) and seal["ls"] == "2.42px" and "serif" in seal["ff"].lower(), str(seal))
+    # 驳回理由（20260923）：未通过的行显示理由，**没写理由的如实显示「未填写」**
+    # ——理由可能来自 AI 判定、也可能来自管理员手填，前端只负责照抄（不许编替代文案）。
+    # 3 行里只有 2 行是未通过 ⇒ 理由块必须**只在未通过的行上出现**（已通过那行不带）。
+    rej = pg.locator(PANE + " .ucReject")
+    rej_txt = [rej.nth(i).inner_text() for i in range(rej.count())]
+    check("未通过的留言显示驳回理由，没写理由的如实显示「未填写」",
+          rej.count() == 2 and any("广告" in x for x in rej_txt) and any("未填写" in x for x in rej_txt),
+          str(rej_txt))
+    # 定位"已通过那一行"用文案 '已通过'（只有留言记录的通过态 Tag 是这个字；
+    # 通知那些行里没有它）——**不能**用留言正文找行：通知的正文里也引用了同一句留言原话
+    passed_row = pg.evaluate("""() => {
+        const row = [...document.querySelectorAll('.ucPane .ant-list-item')]
+            .find((el) => el.textContent.includes('已通过'));
+        return row ? row.querySelectorAll('.ucReject').length : -1;
+    }""")
+    check("已通过的那行不带理由块（理由只随未通过存在）", passed_row == 0, str(passed_row))
     pg.close()
 
     print("⑨ 管理员多一个「后台管理」入口（普通用户没有）")
@@ -1046,10 +1108,12 @@ with sync_playwright() as p:
     hp.screenshot(path="/tmp/head-user-center.png")
     hp.close()
 
-    # 管理员的独立「后台」入口（20260922 用户要求）：此前要去后台得先开「设置」窗口、
-    # 再点标题栏里的「后台管理」——白点两次。token 由 FAKE_AXIOS 按 window.__role 现造，
-    # 所以要在 go 之前用 add_init_script 把角色放好（它能先于页面脚本执行）。
-    print("⑫b 管理员头部多一个独立的「后台」直达按钮")
+    # 后台入口（`cd91879` 起的现行形态：**双击头像**直跳，两枚「后台」按钮已删）。
+    # 这条判据在 20260923 之前判的是那两枚已不存在的按钮（`.homeAdminBtn`）——旧断言
+    # 点空元素直接超时，会把整轮探针掐断在 ⑫b、后面的腿一条都跑不到。改成判现行契约，
+    # 并补一条「非管理员双击没反应」——否则"谁双击都能进后台"这种回归这条腿是看不见的。
+    # token 由 FAKE_AXIOS 按 window.__role 现造，要在 go 之前用 add_init_script 放好角色。
+    print("⑫b 后台入口＝双击头像（仅管理员有反应）")
     ap = br.new_page(viewport={"width": 1280, "height": 900})
     aerrs = []
     ap.on("pageerror", lambda e: aerrs.append(str(e)))
@@ -1057,17 +1121,29 @@ with sync_playwright() as p:
     ap.goto(HEAD_URL)
     ap.wait_for_selector(".homeRight .avatarDotWrap", timeout=15000)
     ap.wait_for_timeout(600)
-    check("管理员头部有常驻的「后台」按钮", ap.locator(".homeRight .homeAdminBtn").count() == 1)
-    check("抽屉里也有一枚（窄屏 .homeRight 整块 display:none）",
-          ap.locator(".phoneSide .theme-btn.admin-btn").count() == 1)
-    ap.click(".homeRight .homeAdminBtn")
+    check("旧的两枚「后台」按钮确实不再存在（先单击一次、卡片展开后也没有）",
+          ap.locator(".homeRight .homeAdminBtn").count() == 0)
+    ap.dblclick(".homeRight .homeLogo")
     ap.wait_for_timeout(400)
-    check("点它直接跳 /dashboard（不用先开一次「设置」窗口）",
+    check("管理员双击头像直跳 /dashboard（不用先开一次「设置」窗口）",
           ap.evaluate("() => (window.__nav || []).slice(-1)[0]") == "/dashboard"
           and ap.locator(".ant-modal-content").count() == 0,
           str(ap.evaluate("() => window.__nav || []")))
     ap.close()
-    head_errs.extend(aerrs)
+    aerrs2 = []
+    up = br.new_page(viewport={"width": 1280, "height": 900})
+    up.on("pageerror", lambda e: aerrs2.append(str(e)))
+    up.add_init_script("window.__role = 'user';")
+    up.goto(HEAD_URL)
+    up.wait_for_selector(".homeRight .avatarDotWrap", timeout=15000)
+    up.wait_for_timeout(600)
+    up.dblclick(".homeRight .homeLogo")
+    up.wait_for_timeout(400)
+    check("非管理员双击头像零导航（进后台的判据是角色，不是『点了两下』）",
+          up.evaluate("() => (window.__nav || []).length") == 0,
+          str(up.evaluate("() => window.__nav || []")))
+    up.close()
+    head_errs.extend(aerrs + aerrs2)
 
     # 头部头像三态（20260922 用户原话：「右上角头像若过期登录，或者退出登录有账号挂着
     # 等待输入密码，以及正常登录状态显示用户头像。没有账号登录记录，未上传头像使用默认
