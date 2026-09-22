@@ -3,7 +3,7 @@ import {useEffect, useState, useRef} from "react";
 import {useParams} from "react-router-dom";
 import {NoteType} from "../../../interface/NoteType";
 import { motion } from 'framer-motion';
-import {Avatar, Flex} from "antd";
+import {Avatar, Flex, message} from "antd";
 import {useSelector} from "react-redux";
 import UserState from "../../../interface/UserState";
 import dayjs from "dayjs";
@@ -18,6 +18,8 @@ import readDayVideo from '../../../assets/read_day.mp4';
 import readNightVideo from '../../../assets/read_night.mp4';
 import {getNoteById} from "../../../apis/NoteMethods.tsx";
 import SeoHelmet from "../../../components/SeoHelmet";
+import getToken from "../../../apis/getToken.tsx";
+import {addFavorite, errMsg, getFavorites, ok, removeFavorite} from "../../../apis/ProfileMethods.tsx";
 
 // ByteMD imports
 import { Viewer } from '@bytemd/react'
@@ -57,6 +59,11 @@ const ReadArticle = () => {
     // "文章不存在"提示，不再渲染空壳页（此前 fetch 失败只 console.error，
     // article=null → 空封面+空正文的假页面，用户误以为"能打开"）
     const [notFound, setNotFound] = useState(false)
+    // 收藏（20260922 个人中心一期）：本站此前没有任何收藏入口。
+    // 没有"这篇有没有被收藏"的单篇接口，所以登录用户进页面时拉一次自己的收藏列表做比对——
+    // 收藏是低频动作、这个列表也很短，不值得为它加一个端点。
+    const [faved, setFaved] = useState<boolean | null>(null)
+    const [favBusy, setFavBusy] = useState(false)
 
     // 顶部横幅的日夜背景视频（20260912）
     const isDarkMode = useIsDarkMode()
@@ -93,6 +100,46 @@ const ReadArticle = () => {
         scrollToTop();
     }, [id]);
     
+    // 收藏状态：登录用户拉一次自己的收藏列表，看这篇在不在里面（见上面 faved 的注释）
+    useEffect(() => {
+        if (!id || !getToken()) {
+            setFaved(null)
+            return
+        }
+        let alive = true
+        getFavorites()
+            .then((res) => {
+                if (!alive) return
+                if (ok(res)) {
+                    setFaved((res.data.data || []).some((f) => String(f.noteId) === String(id)))
+                }
+            })
+            .catch(() => { /* 拿不到状态就按"未收藏"显示，点一下会走真实的收藏请求 */ })
+        return () => { alive = false }
+    }, [id])
+
+    const toggleFavorite = async () => {
+        if (!id) return
+        if (!getToken()) {
+            message.warning('登录后才能收藏')
+            return
+        }
+        setFavBusy(true)
+        try {
+            const res = faved ? await removeFavorite(Number(id)) : await addFavorite(Number(id))
+            if (ok(res)) {
+                setFaved(!faved)
+                message.success(faved ? '已取消收藏' : '已收藏（可在「心境 → 收藏的文章」里查看）')
+            } else {
+                message.error(errMsg(res))
+            }
+        } catch (e) {
+            message.error('网络异常，请稍后再试')
+        } finally {
+            setFavBusy(false)
+        }
+    }
+
     const content = article?.noteContent || '';
 
     // 换源（切主题）→ 新 video 还在加载：先让 poster 层回来，等 onPlaying 再淡出
@@ -367,6 +414,19 @@ const ReadArticle = () => {
                                 </Flex>
                                 <h1>{article?.noteTitle}</h1>
                                 <h3>{dayjs(article?.updateTime).format("YYYY-MM-DD")}</h3>
+                                {/* 收藏按钮（20260922）：横幅信息卡里，与日期同排。
+                                    文案随状态变——收藏是布尔量，不该让用户自己猜现在是哪种状态 */}
+                                <div className="readFavWrap">
+                                    <button
+                                        type="button"
+                                        className={`readFavBtn${faved ? ' isFaved' : ''}`}
+                                        disabled={favBusy}
+                                        onClick={toggleFavorite}
+                                    >
+                                        <span aria-hidden="true">{faved ? '★' : '☆'}</span>
+                                        {faved ? '已收藏' : '收藏'}
+                                    </button>
+                                </div>
                                 <motion.div
                                     initial={{ scaleX: 0 }}
                                     animate={{ scaleX: 1 }}

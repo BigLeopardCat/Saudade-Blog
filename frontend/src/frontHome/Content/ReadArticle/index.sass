@@ -76,6 +76,38 @@ html
       padding: 16px 24px
       border-radius: 12px
 
+      // 收藏按钮（20260922）：横幅一直是深色遮罩上的浅字，所以按钮自带描边、
+      // 不跟主题变量走（浅色主题下这块背景也是深色，用主题色会看不见）
+      .readFavWrap
+        margin-top: 6px
+
+        .readFavBtn
+          display: inline-flex
+          align-items: center
+          gap: 4px
+          padding: 2px 12px
+          font-size: 13px
+          line-height: 22px
+          color: #fff1eb
+          background: transparent
+          border: 1px solid rgba(255, 241, 235, 0.55)
+          border-radius: 999px
+          cursor: pointer
+          transition: 0.25s
+
+          &:hover
+            background: rgba(255, 241, 235, 0.16)
+
+          &:disabled
+            opacity: 0.6
+            cursor: default
+
+          // 已收藏：河灯金实心（与站点主色一致）
+          &.isFaved
+            color: #1c2754
+            background: #ffcc7c
+            border-color: #ffcc7c
+
   .readDescription
     padding: 25px
     max-width: 880px

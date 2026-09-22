@@ -17,6 +17,9 @@ import '../main.css'
 import MoonToSun from "../MoonToSun";
 import deleteToken from "../../apis/deleteToken.tsx";
 import { recordUserChoice } from "../../theme";
+import UserCenter from "../../components/UserCenter";
+import { useUnread } from "../../components/UserCenter/unread";
+import getToken from "../../apis/getToken.tsx";
 
 /* 留言板（河灯）导航图标：古风信箱 */
 const GuestbookIcon = (
@@ -45,6 +48,9 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
     const [phoneBarShow, setPhoneBarShow] = useState(false);
     const [isHovered, setIsHovered] = useState(false);
     const [isLogin, setLogin] = useState(0)
+    // 个人中心（20260922）：点「心境」打开的大窗口 + 头像右上角的未读红点
+    const [centerOpen, setCenterOpen] = useState(false)
+    const { counts: unreadCounts } = useUnread(isLogin === 1)
     const [showMobileCategory, setShowMobileCategory] = useState(false);
     const dispatch = useDispatch()
     const navigate = useNavigate();
@@ -69,6 +75,17 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
             setLogin(1)
         }
 
+        // 登录/退出都会派发 auth-change（登录成功 → Login 页派发；退出 → 下面那个按钮派发）
+        // 20260922：头部是常驻组件、路由切换不重挂载，只靠挂载时读一次 localStorage 会出现
+        // "刚登录完，头像菜单里还是「登录」、红点不出现"，得刷新才正常。
+        const onAuthChange = () => {
+            const loggedIn = !!getToken()
+            setLogin(loggedIn ? 1 : 0)
+            // 退出时把个人中心一起关掉（窗口里全是需要登录的数据）
+            if (!loggedIn) setCenterOpen(false)
+        }
+        window.addEventListener('auth-change', onAuthChange)
+
         // 看板娘 agent 的 DARKMODE: 命令切换夜间模式时，触发与手动点击相同的日月过渡动画
         // （autoload.js applyDarkMode 在状态实际变化时派发 moon-sun-animation）
         const handleMoonSun = (e: Event) => {
@@ -76,7 +93,10 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
             if (s === 'sun' || s === 'moon') setAnimation(s);
         };
         window.addEventListener('moon-sun-animation', handleMoonSun);
-        return () => window.removeEventListener('moon-sun-animation', handleMoonSun);
+        return () => {
+            window.removeEventListener('moon-sun-animation', handleMoonSun);
+            window.removeEventListener('auth-change', onAuthChange);
+        };
     }, []);
 
     // 抽屉菜单打开时锁定页面滚动：背景不随手指滑动，仅抽屉内部可滚动
@@ -197,6 +217,26 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
         navigate(`article/${id}`);
     }
 
+    /** 「心境」= 打开个人中心（20260922）——**所有登录用户同一入口**。
+     *  此前它一律 navigate('dashboard')，而 /dashboard 被 AuthRouter 收成管理员专属：
+     *  普通用户点它只会被弹回首页 + 一句"无权限访问后台"。管理员的后台入口改由
+     *  个人中心窗口头部提供（见 UserCenter 的 title），路径没有丢。 */
+    const openUserCenter = () => {
+        closePhoneBar();
+        setCenterOpen(true);
+    }
+
+    /** 头像右上角的未读红点（未读通知 + 未读站内信；数据见 components/UserCenter/unread.ts） */
+    const unreadTotal = unreadCounts.total;
+    const avatarWithDot = (node: ReactNode, size: number) => (
+        <span className="avatarDotWrap" style={{width: size, height: size}}>
+            {node}
+            {isLogin === 1 && unreadTotal > 0 && (
+                <span className="avatarDot" aria-label={`有 ${unreadTotal} 条未读`} />
+            )}
+        </span>
+    )
+
     return (
         <>
             {phoneBarShow && <div className="phoneSideOverlay" onClick={() => setPhoneBarShow(false)} />}
@@ -204,13 +244,11 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
             <div className={`${phoneBarShow ? 'openBar' : ''} phoneSide`} onClick={(e) => e.stopPropagation()}>
                 <div className="phoneBarContainer">
                     <div className="barLogo">
-                        <Avatar
-                            src={avatar}
-                            size={100}/>
+                        {avatarWithDot(<Avatar src={avatar} size={100} />, 100)}
                          <div style={{ marginTop: "5px", display: "flex", justifyContent: "center", gap: "10px" }}>
                             {isLogin ? (
                                 <>
-                                <div className="theme-btn" onClick={() => { closePhoneBar(); navigate("dashboard"); }}>心境</div>
+                                <div className="theme-btn" onClick={openUserCenter}>心境</div>
                                 <div className="theme-btn logout-btn" onClick={() => { closePhoneBar(); localStorage.removeItem('tokenKey'); setLogin(0); navigate('/'); window.dispatchEvent(new CustomEvent('auth-change')); }}>退出</div>
                                 </>
                             ) : (
@@ -305,7 +343,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                     <div onClick={showModal}><SearchButton2 /></div>
                     <div className={'homeSwitch'}><Switch handleModeSwitch={handleModeSwitch} isDarkMode={isDark}/></div>
                     <div className={`homeLogo ${isHovered&&'BigAvatar'}`} onMouseEnter={handleMouseEnter} onMouseLeave={handleMouseLeave}>
-                        <Avatar src={avatar} size='large'/>
+                        {avatarWithDot(<Avatar src={avatar} size={40} />, 40)}
                         <div className="loginCard" style={{
                             display: (showStatus && isHovered) ? 'flex' : 'none',
                             flexDirection: 'column',
@@ -313,7 +351,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                         }}>
                             {isLogin ? (
                                 <>
-                                <div className="theme-btn" onClick={() => navigate("dashboard")}>心境</div>
+                                <div className="theme-btn" onClick={openUserCenter}>心境</div>
                                 <div className="theme-btn logout-btn" onClick={() => { localStorage.removeItem('tokenKey'); setLogin(0); navigate('/'); window.dispatchEvent(new CustomEvent('auth-change')); }}>退出</div>
                                 </>
                             ) : (
@@ -436,6 +474,9 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                 </Modal>
             </ConfigProvider>
             {animation !== '' && <MoonToSun status={animation} />}
+            {/* 个人中心（20260922）：点「心境」打开的大窗口。挂在 header 里但门是 Modal
+                portal 到 body 的，不受 header 的 sticky/transform 影响 */}
+            <UserCenter open={centerOpen} onClose={() => setCenterOpen(false)} fallbackAvatar={avatar} />
         </header>
         {/* 猫必须渲染在 header 之外(frontRoot 内、header 的兄弟节点):
             transform 动画在 sticky header 内时每帧迫使 header 图层子树重新栅格化(GPU 30%+);
