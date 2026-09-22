@@ -96,3 +96,65 @@ async fn test_chat_discard_requires_auth() {
     let app = mock_app();
     assert_eq!(req_status(app, "POST", "/api/chat/discard").await, StatusCode::UNAUTHORIZED);
 }
+
+// ---- 个人中心一期（20260922）自助接口的未登录行为 ----
+// 这一族与上面 chat 系**故意不同**：它们挂 `public_routes`（面向任意登录用户，不能进
+// admin 守卫域）+ handler 内自身鉴权，无 token 时返回的是**信封错误**
+// （HTTP 200 + code=500「未登录」），与同族的 `GET /api/protected/profile`、
+// `/api/protect/board/mine` 完全一致——**不是 401**。契约写死在这里，防后人"顺手改成 401"
+// 而把前端（按 code 判）打穿。
+// 断言本身仍在验证"鉴权发生在碰 DB 之前"：MockDatabase 没有任何查询预期，
+// handler 只要先查库再鉴权，这个测试就会以 panic 失败。
+async fn req_api_code(app: axum::Router, method: &str, uri: &str, body: &str) -> (StatusCode, i64) {
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method(method)
+                .uri(uri)
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = res.status();
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+    let code = serde_json::from_slice::<serde_json::Value>(&bytes)
+        .ok()
+        .and_then(|v| v.get("code").and_then(|c| c.as_i64()))
+        .unwrap_or(-1);
+    (status, code)
+}
+
+#[tokio::test]
+async fn test_profile_center_requires_login() {
+    // 请求体一律填**合法形状**：字段不合法会在 extractor 层先返回 422，
+    // 那样测到的就不是鉴权分支了。
+    let cases: Vec<(&str, &str, &str)> = vec![
+        ("PUT", "/api/protected/profile", r#"{"nickname":"n"}"#),
+        (
+            "PUT",
+            "/api/protected/profile/password",
+            r#"{"oldPassword":"a","newPassword":"bbbbbbbb"}"#,
+        ),
+        ("GET", "/api/protected/favorites", ""),
+        ("POST", "/api/protected/favorites", r#"{"noteId":1}"#),
+        ("DELETE", "/api/protected/favorites/1", ""),
+        ("GET", "/api/protected/notifications", ""),
+        ("GET", "/api/protected/notifications/summary", ""),
+        ("POST", "/api/protected/notifications/read", r#"{"ids":[1]}"#),
+        ("GET", "/api/protected/messages", ""),
+        (
+            "POST",
+            "/api/protected/messages",
+            r#"{"toUsername":"x","content":"y"}"#,
+        ),
+        ("POST", "/api/protected/messages/read", r#"{"ids":[1]}"#),
+        ("GET", "/api/protected/my/talks", ""),
+    ];
+    for (method, uri, body) in cases {
+        let (status, code) = req_api_code(mock_app(), method, uri, body).await;
+        assert_eq!(status, StatusCode::OK, "{} {} 应返回 HTTP 200 信封", method, uri);
+        assert_ne!(code, 200, "{} {} 未登录不该成功", method, uri);
+    }
+}

@@ -14,3 +14,7 @@ pub mod chat_summary;
 pub mod execution_log;
 pub mod conversation;
 pub mod password_reset_token;
+// 个人中心一期（20260922）：收藏 / 通知 / 信箱
+pub mod user_favorite;
+pub mod user_notification;
+pub mod user_message;

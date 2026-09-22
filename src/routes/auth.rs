@@ -21,7 +21,9 @@ pub struct LoginRequest {
 }
 
 /// 从请求头中提取客户端真实 IP（nginx 反代后取 X-Forwarded-For 第一个地址）
-fn get_client_ip(headers: &HeaderMap) -> String {
+/// 20260922：改 `pub(crate)` —— 个人中心改密码那条路也要按 IP+账号记账（同一份凭据，
+/// 不该因为是「已登录」就放宽爆破成本）。
+pub(crate) fn get_client_ip(headers: &HeaderMap) -> String {
     if let Some(val) = headers.get("x-forwarded-for") {
         if let Ok(val) = val.to_str() {
             if let Some(first) = val.split(',').next() {
@@ -152,6 +154,8 @@ pub async fn reset_password(
 pub struct ProfileDto {
     pub username: String,
     pub nickname: String,
+    /// 头像 URL（20260922 个人中心）：NULL/空 = 没设过，展示端回退到站点主人头像
+    pub avatar: Option<String>,
 }
 
 pub async fn profile(
@@ -172,6 +176,7 @@ pub async fn profile(
                 Json(ApiResponse::success(ProfileDto {
                     username: u.username,
                     nickname: nick,
+                    avatar: u.avatar,
                 }))
             }
             None => Json(ApiResponse::error("账号不存在")),
