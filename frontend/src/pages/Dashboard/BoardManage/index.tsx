@@ -1,6 +1,6 @@
 import './index.sass'
 import { useEffect, useMemo, useState } from "react";
-import { Button, Input, Popconfirm, Switch, Table, Tag, Tooltip, message } from "antd";
+import { Button, Input, Modal, Popconfirm, Switch, Table, Tag, Tooltip, message } from "antd";
 import type { ColumnsType } from 'antd/es/table';
 import http from "../../../apis/axios.tsx";
 
@@ -12,9 +12,12 @@ import http from "../../../apis/axios.tsx";
  *    · 两闸可叠加；待审留言在本页人工审核列/操作列裁决
  *  双段状态（每行独立两列，互不覆盖）：
  *    · AI 审核  = ai_result：拦截（flag，AI 初审判疑似转人工）/ 通过（pass）/
- *                 未审（null——AI 关、人工全审模式、降级放行或存量历史行）
+ *                 未审（null——AI 关、人工全审模式、审核服务不可用转人工或存量历史行）
  *    · 人工审核 = approved：通过(1) 放行展示 / 待审(0) / 未通过(2, 驳回，issue8 起)
  *      ——「AI 拦截 → 人工通过/驳回」的两段经过一目了然
+ *  驳回理由（20260923）：驳回弹窗里可手填（≤200 字，可留空），落 talk.reject_reason；
+ *  留空且 AI 判过 reject 时后端回落到 AI 给的 reason。终态（通过/驳回/改判）都会给
+ *  发布者发一条站内通知，驳回通知里带上理由。理由只随驳回存在——恢复通过即清空。
  */
 interface BoardItem {
     talkKey: number;
@@ -29,6 +32,8 @@ interface BoardItem {
     approved: number;
     /** AI 审核判定留痕：pass / reject / flag（存疑）/ null=未审 */
     ai_result?: string | null;
+    /** 驳回理由（20260923）：AI 判定说明或管理员驳回时手填；null = 未驳回或没写 */
+    rejectReason?: string | null;
 }
 
 const CATS = ['愿', '寄', '忆', '诉'];
@@ -43,6 +48,10 @@ const BoardManage = () => {
     // 审核开关（web_info key-value，缺省关）
     const [aiOn, setAiOn] = useState(false);
     const [manualOn, setManualOn] = useState(false);
+    // 驳回弹窗（20260923）：驳回要能说明理由，理由会随审核结果通知发给发布者
+    const [rejecting, setRejecting] = useState<BoardItem | null>(null);
+    const [rejectReason, setRejectReason] = useState('');
+    const [rejectBusy, setRejectBusy] = useState(false);
 
     const load = async () => {
         setLoading(true);
@@ -90,20 +99,44 @@ const BoardManage = () => {
     };
 
     /** 人工复核：通过(1)=放行展示 / 驳回(0)=写未通过(2)隐藏，驳回可「恢复通过」改判
-     *  （仅河灯留言，后端有 src 守卫；人工裁决不改写 ai_result，AI 判定留痕保留） */
-    const audit = async (id: number, approved: number) => {
+     *  （仅河灯留言，后端有 src 守卫；人工裁决不改写 ai_result，AI 判定留痕保留）
+     *  reason 只在驳回时有意义（通过时后端会清空理由，传了也不生效） */
+    const audit = async (id: number, approved: number, reason?: string) => {
         try {
-            const res = await http.put(`/api/protect/board/${id}/audit`, { approved });
+            const res = await http.put(`/api/protect/board/${id}/audit`, { approved, reason });
             if (res.data?.code === 200) {
                 message.success(approved === 1 ? '已通过，留言板展示' : '已驳回（未通过），不展示');
                 // 只改本地那一行（接口已确认成功）：原来每次都 load() 重拉全量列表，
                 // 连审 10 条就是 11 次全量请求、每次带全部content
-                setItems((prev) => prev.map((it) => (it.talkKey === id ? { ...it, approved } : it)));
+                // 驳回后的理由以后端为准：本次没填而后端回落到已有理由时，本地不能显示成空
+                setItems((prev) => prev.map((it) => (it.talkKey === id
+                    ? {
+                        ...it,
+                        approved,
+                        rejectReason: approved === 2
+                            ? (reason?.trim() || it.rejectReason || null)
+                            : null, // 通过（含改判）后端会清空理由
+                    }
+                    : it)));
             } else {
                 message.error(res.data?.message || '操作失败');
             }
+            return res.data?.code === 200;
         } catch {
             message.error('操作失败');
+            return false;
+        }
+    };
+
+    /** 弹窗确认驳回：理由可留空，后端在留空时回落到已有理由（AI 判定说明） */
+    const confirmReject = async () => {
+        if (!rejecting) return;
+        setRejectBusy(true);
+        const ok = await audit(rejecting.talkKey, 0, rejectReason);
+        setRejectBusy(false);
+        if (ok) {
+            setRejecting(null);
+            setRejectReason('');
         }
     };
 
@@ -145,7 +178,21 @@ const BoardManage = () => {
             title: '印章', dataIndex: 'cat', width: 70,
             render: (c: string) => <span className="bm-seal">{c}</span>,
         },
-        { title: '留言内容', dataIndex: 'content', ellipsis: true },
+        {
+            title: '留言内容', dataIndex: 'content', ellipsis: true,
+            // 驳回理由跟在正文下面（20260923）：审批人翻列表时要一眼看到
+            // "这条为什么被驳回"，而不是逐行去悬停猜
+            render: (c: string, r) => (
+                <>
+                    <div className="bm-content">{c}</div>
+                    {r.approved === 2 && (
+                        <div className="bm-reason">
+                            驳回理由：{r.rejectReason || <i className="bm-reason-none">未填写</i>}
+                        </div>
+                    )}
+                </>
+            ),
+        },
         {
             title: '留名', dataIndex: 'author', width: 120,
             render: (a: string) => (a ? a : <span className="bm-anon">无名</span>),
@@ -181,7 +228,7 @@ const BoardManage = () => {
                         <Tag color="green">通过</Tag>
                     </Tooltip>
                 ) : (
-                    <Tooltip title={manualOn ? '人工全审模式：新留言不经 AI 初判' : 'AI 审核关闭 / 降级放行 / 存量历史行，未留 AI 判定'}>
+                    <Tooltip title={manualOn ? '人工全审模式：新留言不经 AI 初判' : 'AI 审核关闭 / 审核服务不可用转人工 / 存量历史行，未留 AI 判定'}>
                         <Tag>未审</Tag>
                     </Tooltip>
                 ),
@@ -199,7 +246,7 @@ const BoardManage = () => {
                         <Tag color="gold">待审</Tag>
                     </Tooltip>
                 ) : (
-                    <Tooltip title="已驳回（未通过）：不公开展示，仅发布者在灯影集「我的河灯」可见；可恢复通过">
+                    <Tooltip title="已驳回（未通过）：不公开展示，仅发布者在灯影集「我的河灯」可见；可恢复通过（恢复即清空驳回理由）">
                         <Tag color="red">未通过</Tag>
                     </Tooltip>
                 ),
@@ -211,7 +258,17 @@ const BoardManage = () => {
                     {r.approved === 0 && (
                         <>
                             <Button type="link" size="small" onClick={() => audit(r.talkKey, 1)}>通过</Button>
-                            <Button danger type="link" size="small" onClick={() => audit(r.talkKey, 0)}>驳回</Button>
+                            <Button
+                                danger
+                                type="link"
+                                size="small"
+                                onClick={() => {
+                                    setRejecting(r);
+                                    setRejectReason('');
+                                }}
+                            >
+                                驳回
+                            </Button>
                         </>
                     )}
                     {r.approved === 2 && (
@@ -278,8 +335,40 @@ const BoardManage = () => {
                 留言板与说说各自独立：本页仅管理留言板所放河灯。审核分两段展示——AI 审核（初审判定
                 留痕：拦截/通过/未审）+ 人工审核（裁决结果：通过/待审/未通过）。待审与未通过的留言不进
                 公开列表；可「通过」放行、「驳回」隐藏（驳回后可「恢复通过」改判）或删除。存量留言
-                不受开关影响。
+                不受开关影响。审核出结果时会自动给发布者发一条站内通知（通过/驳回各一条，驳回会带上
+                理由），改判会再发一条。
             </p>
+            {/* 驳回理由弹窗：理由随审核结果通知发给发布者，可留空 */}
+            <Modal
+                title="驳回这条留言？"
+                open={!!rejecting}
+                onOk={confirmReject}
+                onCancel={() => {
+                    setRejecting(null);
+                    setRejectReason('');
+                }}
+                okText="确认驳回"
+                cancelText="取消"
+                okButtonProps={{ danger: true, loading: rejectBusy }}
+                rootClassName="bm-reject-modal"
+            >
+                <p className="bm-reject-tip">
+                    驳回后不在留言板展示（仅发布者本人在灯影集可见），同时会给发布者发一条站内通知，
+                    理由会一并带上。理由可留空。
+                </p>
+                <Input.TextArea
+                    value={rejectReason}
+                    onChange={(e) => setRejectReason(e.target.value)}
+                    maxLength={200}
+                    showCount
+                    autoSize={{ minRows: 3, maxRows: 5 }}
+                    placeholder={
+                        rejecting?.rejectReason
+                            ? `可留空；留空沿用已有理由：${rejecting.rejectReason}`
+                            : '可留空，例如：与文章主题无关的广告'
+                    }
+                />
+            </Modal>
         </div>
     );
 };

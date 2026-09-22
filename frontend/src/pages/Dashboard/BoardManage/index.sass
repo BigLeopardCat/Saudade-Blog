@@ -77,6 +77,27 @@
     color: #999
     font-style: italic
 
+  // 留言正文 + 驳回理由（20260923）。正文自己一行，理由缩在下面用暖红区分，
+  // 两行都在「留言内容」列里 —— ellipsis 由 antd 打在单元格上，这里只管折行
+  .bm-content
+    white-space: pre-wrap
+    word-break: break-word
+
+  .bm-reason
+    margin-top: 4px
+    padding: 2px 8px
+    border-left: 3px solid #c0392b
+    border-radius: 0 4px 4px 0
+    background: rgba(192, 57, 43, 0.06)
+    color: #a33f30
+    font-size: 12px
+    line-height: 1.6
+    white-space: pre-wrap
+    word-break: break-word
+    .bm-reason-none
+      color: #999
+      font-style: italic
+
   .bm-user
     display: flex
     flex-direction: column
@@ -92,6 +113,16 @@
     font-size: 12px
     border-top: 1px dashed #ddd
     padding-top: 10px
+
+// 驳回弹窗（20260923）：antd 弹窗是 portal 到 body 下的，**不在 .BoardManage 里**，
+// 所以这条必须写成顶层块（写进上面那个嵌套里就永远匹配不上，样式静默失效）。
+// 弹窗底色由壳上的 ConfigProvider(darkAlgorithm) 负责，这里只管那句说明文字。
+.bm-reject-modal
+  .bm-reject-tip
+    margin: 0 0 10px
+    color: #888
+    font-size: 12px
+    line-height: 1.7
 
 // 暗色模式适配（后台 .contentDark 容器内）
 .contentDark
@@ -117,4 +148,10 @@
       .bm-review-item
         color: #ccc
       .bm-review-hint
+        color: #888
+    .bm-reason
+      border-left-color: #d2695c
+      background: rgba(210, 105, 92, 0.12)
+      color: #e8a89c
+      .bm-reason-none
         color: #888
