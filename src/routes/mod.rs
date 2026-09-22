@@ -16,6 +16,7 @@ pub mod sitemap;
 pub mod graph;
 pub mod stats;
 pub mod profile;  // 个人中心一期（20260922）
+pub mod notice;   // 单用户站内通知（20260923；留言审核结果的首个生产者）
 
 use axum::{
     routing::{get, post, delete, put},

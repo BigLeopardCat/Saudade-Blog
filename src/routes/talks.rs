@@ -231,6 +231,9 @@ async fn insert_talk(
     } else {
         (1, None, None)
     };
+    // 通知要用，先各留一份（下面 Set(...) 会把它们 move 走）
+    let ai_judged = ai_result.is_some();
+    let reason_for_notice = reject_reason.clone();
     let t = talk::ActiveModel {
         title: Set(Some(cat.clone())),
         content: Set(content.to_string()),
@@ -246,7 +249,21 @@ async fn insert_talk(
         updated_at: Set(chrono::Local::now().naive_local()),
         ..Default::default()
     };
-    talk::Entity::insert(t).exec(&state.db).await.unwrap();
+    let inserted = talk::Entity::insert(t).exec(&state.db).await.unwrap();
+    // 审核结果通知（20260923）：**只有审核真的跑过才算数**（ai_judged）——
+    // 两个开关都关时 approved=1 只是"默认放行"，那不是审核通过，发通知就是假消息；
+    // 人工复核开（此时 approved=0 待审）、AI 存疑 flag、审核服务不可用转人工，都不发。
+    if ai_judged && (approved == 1 || approved == 2) {
+        notify_review_result(
+            state,
+            uid,
+            inserted.last_insert_id as i32,
+            content,
+            approved,
+            reason_for_notice.as_deref(),
+        )
+        .await;
+    }
     // 审核拦下（approved=0）时 data="Pending"，供前台区分提示（灯已入河 → 待审核）
     if approved == 0 {
         Json(ApiResponse::success("Pending".to_string()))
@@ -291,6 +308,75 @@ fn clip_reject_reason(raw: &str) -> Option<String> {
         return None;
     }
     Some(t.chars().take(200).collect::<String>())
+}
+
+/// 驳回时库里的理由列也可能是 NULL（AI 判驳回但没给 reason、管理员手填留空）——
+/// 通知总得说点什么，就用这句固定文案（**只写进通知正文，不落库**：库里 NULL 代表
+/// "没人写过理由"，是事实，不编）。
+const REJECT_FALLBACK_REASON: &str = "不符合留言板的留言规范";
+
+/// 留言摘要（通知里引用访客原话的片段）：换行折成空格 + 截 30 字。
+/// 访客留言可以是多行，原样拼进通知正文会把面板行高撑开。
+fn talk_brief(content: &str) -> String {
+    let flat: String = content
+        .chars()
+        .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
+        .collect();
+    let t = flat.trim();
+    if t.chars().count() <= 30 {
+        t.to_string()
+    } else {
+        t.chars().take(30).collect::<String>() + "…"
+    }
+}
+
+/// 审核**终态**发一条站内通知（20260923，用户要求）。
+///
+/// **只在终态发**（用户拍板）：通过一条、驳回一条；进待审不打扰——待审不是结果，
+/// 双闸全开时每条都会先进待审，若那时就发一次，人工改判又要再发一次，用户会收到
+/// 两条自相矛盾的通知。人工改判（audit_board）每次裁决都发，那是真终态。
+///
+/// `link` 定位到那盏灯（`/guestbook?lid=<id>`，20260923 用户拍板）；灯若是驳回态、
+/// 公开池里没有，河灯页会去「我的河灯」里找（见前端 RiverBoard 的定位逻辑）。
+///
+/// 通知失败**绝不影响留言落库**：push_notice 内部吞错只记日志。
+async fn notify_review_result(
+    state: &Arc<AppState>,
+    uid: i32,
+    talk_id: i32,
+    content: &str,
+    approved: i8,
+    reject_reason: Option<&str>,
+) {
+    let brief = talk_brief(content);
+    let (title, body) = match approved {
+        1 => (
+            "留言已通过审核",
+            format!("你的留言「{brief}」已通过审核，现在可以在留言板看到了。"),
+        ),
+        2 => {
+            let reason = reject_reason
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .unwrap_or(REJECT_FALLBACK_REASON);
+            // 单行拼（面板 `.ucBodyText` 没有 pre-line，`\n` 会塌成空格，
+            // 与其指望样式，不如把理由直接接在同一句里）
+            (
+                "留言未通过审核",
+                format!("你的留言「{brief}」未通过审核，理由：{reason}"),
+            )
+        }
+        // 0 = 待审，不是终态，不发（调用方本已过滤，这里是第二道）
+        _ => return,
+    };
+    super::notice::push_notice(
+        &state.db,
+        uid,
+        title,
+        Some(body),
+        Some(format!("/guestbook?lid={talk_id}")),
+    )
+    .await;
 }
 
 async fn board_approved(state: &Arc<AppState>, content: &str) -> (i8, Option<String>, Option<String>) {
@@ -553,17 +639,32 @@ pub async fn audit_board(
         return Json(ApiResponse::error("仅河灯留言支持人工复核"));
     }
     let reject = payload.approved == 0;
-    // 转成 ActiveModel 之前先取出已存的 AI 理由（人工没填时回落到它）
+    // 通知要用，转 ActiveModel 之前先取出（t 随后被 move）
+    let owner = t.user_id;
+    let was_approved = t.approved;
+    let brief_src = t.content.clone();
+    // 已存的 AI 理由（人工没填时回落到它）
     let saved_reason = t.reject_reason.clone();
     let mut active_model: talk::ActiveModel = t.into();
     active_model.approved = Set(if reject { 2 } else { 1 });
-    active_model.reject_reason = Set(if reject {
+    let final_reason = if reject {
         payload.reason.as_deref().and_then(clip_reject_reason).or(saved_reason)
     } else {
         // 改判回通过 ⇒ 清掉理由，不留"已通过却带驳回理由"的矛盾行
         None
-    });
+    };
+    active_model.reject_reason = Set(final_reason.clone());
     active_model.updated_at = Set(chrono::Local::now().naive_local());
     talk::Entity::update(active_model).exec(&state.db).await.unwrap();
+    // 人工裁决的每一步都是终态（通过 / 驳回 / 改判），发通知——用户拍板「改判再发」。
+    // 这与 insert_talk 的"只在 AI 终态发"不冲突：那时双闸全开的留言还在待审，
+    // 打扰一次、改判再打扰一次，用户会看到两条自相矛盾的通知。
+    //
+    // 但**状态真变了才发**：后台重复点同一个按钮（双击/刷新后手滑）不该又收一条
+    // 一模一样的通知——"改判"的语义是 1↔2 的翻转，同态重复不叫改判。
+    let new_approved = if reject { 2 } else { 1 };
+    if was_approved != new_approved {
+        notify_review_result(&state, owner, id, &brief_src, new_approved, final_reason.as_deref()).await;
+    }
     Json(ApiResponse::success("Audited".to_string()))
 }
