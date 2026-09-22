@@ -7,6 +7,7 @@ import { useDispatch } from 'react-redux';
 import { fetchToken } from "../../store/components/user.tsx";
 import { useNavigate } from 'react-router-dom';
 import getToken from '../../apis/getToken';
+import { isAdminToken } from '../../utils/auth.ts';
 import UserData from "../../interface/UserData";
 import SeoHelmet from "../../components/SeoHelmet";
 
@@ -45,7 +46,10 @@ const Login: React.FC = () => {
     useEffect(() => {
         const token = getToken();
         if (token) {
-            navigate('/dashboard');
+            // 20260922：普通用户登录后不再往 /dashboard 送——那条路由被 AuthRouter 收成
+            // 管理员专属，普通用户只会看到"无权限访问后台"再被弹回首页（个人中心一期之前
+            // 没有别的地方可去）。管理员仍然直达后台。
+            navigate(isAdminToken(token) ? '/dashboard' : '/');
         }
     }, [navigate]);
 
@@ -94,7 +98,10 @@ const Login: React.FC = () => {
             const result = await dispatch(fetchToken(data));
             if (result.status === 200) {
                 messageApi.success('登录成功');
-                setTimeout(() => navigate('/dashboard'), 500);
+                // 令牌此刻已写入 localStorage（store 的 setToken 顺便派发 auth-change，
+                // 头部据此把登录态从 0 翻到 1——头部是常驻组件，不重挂载，不靠刷新）
+                const token = getToken();
+                setTimeout(() => navigate(isAdminToken(token) ? '/dashboard' : '/'), 500);
             } else {
                 messageApi.error(result.message || '登录失败，账号或密码错误！');
             }

@@ -1,0 +1,159 @@
+// 个人中心（20260922 一期）
+//
+// 样式作用域挂 `.ucRoot`（antd Modal 的 rootClassName）——弹窗挂在 body 下，
+// 拿不到 `.frontRoot/.frontDark` 祖先，所以主题色由组件按 isDark 在 rootClassName 上
+// 加 `.ucDark`（同时给 ConfigProvider 换 darkAlgorithm，antd 自己的组件就跟着变）。
+// 这里只写本窗口自己的布局与少数 antd 变量覆盖不到的颜色。
+
+.ucRoot
+  .ucTitle
+    display: flex
+    align-items: center
+    gap: 10px
+
+    .ucTitleText
+      font-size: 16px
+      font-weight: 600
+
+  .ucPane
+    min-height: 320px
+    max-height: 62vh
+    overflow-y: auto
+    padding-right: 4px
+
+  // ── 用户设置 ──────────────────────────────────────────────────────────────
+
+  .ucSettings
+    display: flex
+    flex-direction: column
+    gap: 22px
+
+    .ucAvatarRow
+      display: flex
+      align-items: center
+      gap: 20px
+
+      .ucAvatar
+        flex: none
+        border: 1px solid rgba(128, 128, 128, 0.25)
+
+      .ucAvatarMeta
+        display: flex
+        flex-direction: column
+        gap: 6px
+
+        .ucAvatarName
+          font-size: 16px
+          font-weight: 600
+
+        .ucAvatarAccount
+          font-size: 12px
+          opacity: 0.65
+
+        // 选图入口：<label> 包隐藏 input（原生 file 控件外观不可控，这里只要它的行为）
+        .ucUploadBtn
+          display: inline-block
+          width: fit-content
+          margin-top: 4px
+          padding: 4px 14px
+          border-radius: 6px
+          border: 1px solid currentColor
+          cursor: pointer
+          font-size: 13px
+          color: #1677ff
+
+          &:hover
+            background: rgba(22, 119, 255, 0.08)
+
+          input
+            display: none
+
+  .ucField
+    display: flex
+    align-items: center
+    gap: 12px
+
+    > .ucLabel
+      flex: none
+      width: 72px
+      font-size: 13px
+      opacity: 0.8
+
+    // 成组竖排（改密码、写信）：标签在左上，控件占满宽度
+    &.ucFieldStack
+      flex-direction: column
+      align-items: stretch
+
+      > .ucLabel
+        width: auto
+
+    .ucFieldFoot
+      display: flex
+      align-items: center
+      justify-content: space-between
+      gap: 12px
+
+      .ucHint
+        font-size: 12px
+        opacity: 0.6
+        line-height: 1.6
+
+  // ── 列表（收藏 / 留言 / 通知 / 信箱 共用）────────────────────────────────
+
+  .ucPaneBar
+    display: flex
+    align-items: center
+    justify-content: space-between
+    gap: 12px
+    margin-bottom: 6px
+
+    .ucHint
+      font-size: 12px
+      opacity: 0.6
+      line-height: 1.6
+
+  .ucItemTitle
+    display: inline-flex
+    align-items: center
+    gap: 6px
+    font-size: 14px
+
+    a
+      color: inherit
+
+      &:hover
+        color: #1677ff
+
+  .ucBody
+    display: flex
+    flex-direction: column
+    gap: 4px
+
+    .ucBodyText
+      font-size: 13px
+      line-height: 1.7
+      // 留言/站内信可能很长：最多 4 行，超出省略（详情在各自的原页面里看）
+      display: -webkit-box
+      -webkit-line-clamp: 4
+      -webkit-box-orient: vertical
+      overflow: hidden
+      white-space: pre-wrap
+      word-break: break-word
+
+    .ucBodyTime
+      font-size: 12px
+      opacity: 0.55
+
+  .ucCompose
+    margin-bottom: 8px
+
+// 夜间少量补偿（antd darkAlgorithm 已处理大部分：这里只收拾自写的硬编码色）
+.ucRoot.ucDark
+  .ucSettings .ucAvatarRow .ucAvatarMeta .ucUploadBtn
+    color: #69b1ff
+
+    &:hover
+      background: rgba(105, 177, 255, 0.12)
+
+  .ucItemTitle a:hover
+    color: #69b1ff

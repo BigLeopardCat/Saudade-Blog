@@ -179,6 +179,30 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
       &.BigAvatar
         transform: scale(2) translateY(15px) translateX(-10px)
 
+// 头像 + 未读红点（20260922 个人中心）：红点在头像**右上角**，桌面头部的 40px 与
+// 移动抽屉的 100px 共用同一套（包一层 inline-flex，尺寸由 JS 传进来对齐头像本身）。
+// pointer-events: none —— 红点是提示，不该抢走头像的 hover（桌面端靠 hover 出登录卡）。
+.avatarDotWrap
+  position: relative
+  display: inline-flex
+  align-items: center
+  justify-content: center
+  flex: none
+
+  .avatarDot
+    position: absolute
+    top: 0
+    right: 0
+    // 尺寸随头像缩放：小头像 8px、大头像按 8% 走（最少 8px）
+    width: max(8px, 8%)
+    height: max(8px, 8%)
+    min-width: 8px
+    min-height: 8px
+    border-radius: 50%
+    background: #ff4d4f
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.85)
+    pointer-events: none
+
   .loginCard
     position: absolute
     /* 父级 .BigAvatar 为 scale(2) translateY(15px) translateX(-10px)，

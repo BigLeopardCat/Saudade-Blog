@@ -2,21 +2,12 @@ import {useEffect, ReactNode} from 'react';
 import {message} from 'antd';
 import {useNavigate} from 'react-router-dom';
 import getToken from "../apis/getToken.tsx";
+import {getRoleFromToken} from "../utils/auth.ts";
 
 interface AuthRouterProps {
     children: ReactNode;
 }
 
-// 解析 JWT payload 获取 role
-function getRoleFromToken(token: string): string | null {
-    try {
-        const payload = token.split('.')[1];
-        const decoded = JSON.parse(atob(payload));
-        return decoded.role || null;
-    } catch {
-        return null;
-    }
-}
 
 export function AuthRouter({children}: AuthRouterProps) {
     const navigate = useNavigate();
