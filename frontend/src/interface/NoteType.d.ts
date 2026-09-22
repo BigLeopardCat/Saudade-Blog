@@ -16,6 +16,9 @@ export interface NoteType {
     createTime: Date;
     status: string;
     content: string;
+    // 正文的另一个副本：详情/列表接口两个键都回（Rust 侧 DTO 里 content 与 noteContent 并存），
+    // 文章页读的是这一个
+    noteContent?: string;
     noteKey: string
     // 编辑修改稿链接：有值 = 本行是那篇文章（id）的自动保存修改稿
     draftOf?: number | null;

@@ -20,7 +20,7 @@ const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.m
 const isSvgEl = (el: Element): boolean => el instanceof SVGSVGElement || el.tagName.toLowerCase() === "svg"
 
 /** 源元素自然尺寸(px):img 用 naturalWidth,svg 用 viewBox,mermaid 容器取其内部 svg;兜底 getBoundingClientRect */
-const naturalSize = (el: HTMLElement): [number, number] => {
+const naturalSize = (el: Element): [number, number] => {
   if (el.tagName.toLowerCase() === "img") {
     const img = el as HTMLImageElement
     if (img.naturalWidth > 0) return [img.naturalWidth, img.naturalHeight]
@@ -36,7 +36,7 @@ const naturalSize = (el: HTMLElement): [number, number] => {
     }
   } else if (el.classList.contains("bytemd-mermaid")) {
     const svg = el.querySelector("svg")
-    if (svg) return naturalSize(svg as HTMLElement)
+    if (svg) return naturalSize(svg)
   }
   const r = el.getBoundingClientRect()
   if (r.width > 0 && r.height > 0) return [r.width, r.height]

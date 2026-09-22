@@ -43,7 +43,11 @@ processor = processor
   .use(rehypeSanitize, schema)
   .use(rehypeStringify)
 
-const mermaidViewerEffect = mermaid().viewerEffect
+// 插件声明的入参是完整 BytemdViewerContext（含 file），但实现只解构 markdownBody
+//（@bytemd/plugin-mermaid dist 里 viewerEffect({ markdownBody })）⇒ 按实际使用面收窄签名，
+// 不伪造一个 file 去迎合类型
+const mermaidViewerEffect = mermaid().viewerEffect as
+  ((ctx: { markdownBody: HTMLElement }) => void) | undefined
 
 export const renderBlogMarkdown = (text: string): string => {
   try {
