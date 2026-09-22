@@ -4,6 +4,15 @@ on:
   push:
     branches: [cn_sora_blog]
 
+# 并发闸（20260923）：同一分支连着推两次会起两个 run，此前两者**并行**，而部署的先后
+# 由"谁构建得快 / 谁上传得晚"决定——实测较新那个（只改前端、包更小）先跑完，较旧那个后
+# 触发部署时拉到的已是前者覆盖过的产物，于是它自己的后端那一半从未落地。
+# 这里只串行化、不打断正在跑的（cancel-in-progress: false）：后来的 run 排队等前一个
+# 跑完，最终落地的必然是较新那次的产物。
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -13,6 +22,8 @@ jobs:
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
+      # 要不要跑这次部署：任一半变了、或改到了部署管线本身（infra）就跑。
+      deploy: "${{ steps.filter.outputs.backend == 'true' || steps.filter.outputs.frontend == 'true' || steps.filter.outputs.infra == 'true' }}"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -32,6 +43,10 @@ jobs:
               - 'frontend/public/**'
               - 'frontend/package.json'
               - 'frontend/package-lock.json'
+            # 部署管线本身：改了它就跑一次完整部署，顺带把新管线真跑一遍（别让改动只躺在仓库里）
+            infra:
+              - '.github/workflows/**'
+              - 'scripts/deploy/**'
 
   build-and-deploy:
     needs: check-changes
@@ -40,24 +55,28 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # 20260923：只要跑这次部署，就**两半都构建**（不再按 paths-filter 只构建变化的那一半）。
+      # 只装一半的包会让"部署某个提交"不再等于"线上就是那个提交的状态"——实测过一次：
+      # 只构建前端的包把含二进制的包覆盖掉，后端那一半永远没落地。整包构建换来的是
+      # 「部署 sha X ⇒ 线上 = 状态 X」这条可核对的性质。
       - name: Setup Rust
-        if: needs.check-changes.outputs.backend == 'true'
+        if: needs.check-changes.outputs.deploy == 'true'
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: 1.92.0
 
       - name: Build Backend
-        if: needs.check-changes.outputs.backend == 'true'
+        if: needs.check-changes.outputs.deploy == 'true'
         run: cargo build --release
 
       - name: Setup Node.js
-        if: needs.check-changes.outputs.frontend == 'true'
+        if: needs.check-changes.outputs.deploy == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
       - name: Build Frontend
-        if: needs.check-changes.outputs.frontend == 'true'
+        if: needs.check-changes.outputs.deploy == 'true'
         env:
           NODE_OPTIONS: "--max-old-space-size=4096"
           # CDN 域名走仓库 **Variable**（不是 Secret——VITE_ 变量会打进前端包，本来就是公开的）。
@@ -69,21 +88,23 @@ jobs:
         working-directory: ./frontend
 
       - name: Package & Upload to R2
+        # 必须带 if：无变更的 run 里工作区既没有 dist 也没有二进制，打包脚本会"没有文件可打包"退 1，
+        # 把本来该跳过的 run 变成红的（原来这个判断在 step 内部的 shell if 里）
+        if: needs.check-changes.outputs.deploy == 'true'
+        # DEPLOY_SHA 决定产物落在哪个键：deploy/<sha>/deploy.tar.gz（此前是所有人共用一个
+        # deploy/deploy.tar.gz，部署哪一版由上传时序决定）
         env:
+          DEPLOY_SHA: ${{ github.sha }}
           R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
           R2_ACCESS_KEY: ${{ secrets.R2_ACCESS_KEY }}
           R2_SECRET_KEY: ${{ secrets.R2_SECRET_KEY }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
         run: |
           pip3 install boto3 -q
-          if [ "${{ needs.check-changes.outputs.backend }}" == "true" ] || [ "${{ needs.check-changes.outputs.frontend }}" == "true" ]; then
-            python3 scripts/deploy/upload_to_r2.py
-          else
-            echo "没有代码变更，跳过部署"
-          fi
+          python3 scripts/deploy/upload_to_r2.py
 
       - name: Upload frontend dist to R2 (for CDN)
-        if: needs.check-changes.outputs.frontend == 'true'
+        if: needs.check-changes.outputs.deploy == 'true'
         env:
           R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
           R2_ACCESS_KEY: ${{ secrets.R2_ACCESS_KEY }}
@@ -134,8 +155,9 @@ jobs:
           PYEOF
 
       - name: Trigger server deploy
-        if: needs.check-changes.outputs.backend == 'true' || needs.check-changes.outputs.frontend == 'true'
+        if: needs.check-changes.outputs.deploy == 'true'
         env:
+          DEPLOY_SHA: ${{ github.sha }}
           SSH_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
           SSH_HOST: ${{ secrets.SERVER_HOST }}
           SSH_USER: ${{ secrets.SERVER_USER }}
@@ -151,6 +173,7 @@ jobs:
               -o ServerAliveCountMax=3 \
               -o ConnectTimeout=10 \
               -p "${SSH_PORT:-22}" \
-              -i /tmp/deploy_key "${SSH_USER}@${SSH_HOST}" "nohup bash /home/ubuntu/memory_blog_rust/scripts/deploy/deploy_from_r2.sh > /home/ubuntu/memory_blog_rust/logs/deploy.log 2>&1 &"
-          echo "✅ 部署已触发"
+              -i /tmp/deploy_key "${SSH_USER}@${SSH_HOST}" \
+              "bash /home/ubuntu/memory_blog_rust/scripts/deploy/trigger_deploy.sh ${DEPLOY_SHA}"
+          echo "✅ 部署成功（本次部署的提交号见上）"
           rm -f /tmp/deploy_key
