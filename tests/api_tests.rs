@@ -61,6 +61,24 @@ async fn req_status(app: axum::Router, method: &str, uri: &str) -> StatusCode {
     .status()
 }
 
+/// 带 JSON body 的请求。**带 `Json<T>` 提取器的路由必须走这个**：axum 的提取器在
+/// handler 之前执行，空 body + 无 content-type 会先被拒成 415，handler 里那行鉴权根本
+/// 轮不到（20260923 质量闸首次跑就撞上：`PATCH /api/chat/conversations/1` 断言 401 实得 415
+/// ——此前 CI 只 `cargo build`，这个目标从没被编译运行过）。
+async fn req_status_json(app: axum::Router, method: &str, uri: &str, body: &str) -> StatusCode {
+    app.oneshot(
+        Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap(),
+    )
+    .await
+    .unwrap()
+    .status()
+}
+
 #[tokio::test]
 async fn test_conversations_require_auth() {
     let app = mock_app();
@@ -70,8 +88,9 @@ async fn test_conversations_require_auth() {
     assert_eq!(req_status(app.clone(), "POST", "/api/chat/conversations").await, StatusCode::UNAUTHORIZED);
     // DELETE /api/chat/conversations/:id 删除
     assert_eq!(req_status(app.clone(), "DELETE", "/api/chat/conversations/1").await, StatusCode::UNAUTHORIZED);
-    // PATCH /api/chat/conversations/:id 重命名/置顶
-    assert_eq!(req_status(app, "PATCH", "/api/chat/conversations/1").await, StatusCode::UNAUTHORIZED);
+    // PATCH /api/chat/conversations/:id 重命名/置顶（体是 `Json<UpdateConversationReq>`：
+    // `{}` 合法且可反序列化——只是缺 token，所以判据仍是"鉴权发生在碰 DB 之前"）
+    assert_eq!(req_status_json(app, "PATCH", "/api/chat/conversations/1", "{}").await, StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
