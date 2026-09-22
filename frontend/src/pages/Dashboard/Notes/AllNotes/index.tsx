@@ -1,9 +1,6 @@
 import './index.sass'
 import {
     Button,
-    Col,
-    ConfigProvider,
-    DatePicker,
     Form,
     Image,
     Input,
@@ -11,7 +8,6 @@ import {
     Modal,
     Popconfirm,
     Radio,
-    Row,
     Select,
     Space,
     Table,
@@ -20,16 +16,14 @@ import {
     theme,
 } from 'antd';
 import type { TableProps, TabsProps } from 'antd';
-import React, {useCallback, useEffect, useMemo, useState} from "react";
-import zhCN from "antd/lib/locale/zh_CN";
+import React, {useCallback, useEffect, useMemo, useRef, useState} from "react";
 import {useLocation, useNavigate, useSearchParams} from "react-router-dom";
 import {NoteType} from "../../../../interface/NoteType";
 import {useDispatch, useSelector} from "react-redux";
 import {fetchNoteList} from "../../../../store/components/note.tsx";
-import {QuestionCircleOutlined} from '@ant-design/icons';
+import {PlusOutlined, QuestionCircleOutlined} from '@ant-design/icons';
 import dayjs from "dayjs";
 import {Fab} from "@mui/material";
-import AddIcon from "@mui/icons-material/Add";
 import DeleteIcon from "@mui/icons-material/Delete";
 import DeleteForeverIcon from "@mui/icons-material/DeleteForever";
 import EditIcon from "@mui/icons-material/Edit";
@@ -81,21 +75,17 @@ interface AdvancedSearchFormProps {
  * 抢同一份 state，切 tab / 翻页时两边互相覆盖。
  */
 const AdvancedSearchForm = ({search, query, onSearch, onReset}: AdvancedSearchFormProps) => {
-    const { RangePicker } = DatePicker;
     const { token } = theme.useToken();
     const [form] = Form.useForm();
     const categories = useSelector((state: {categories: any}) => state.categories.categories);
 
     // URL → 表单（单向回填）。从 `?keyword=` / `?title=` 深链进来时，输入框里要看得见这些词。
-    // ⚠️ RangePicker 必须喂 **dayjs 对象**：喂字符串会警告、而且值会被丢掉。
+    // `time`（发布时间）20260923 起不再回填 —— 那个控件已删，见 onFinish 的说明。
     useEffect(() => {
         form.setFieldsValue({
             title: query.title || undefined,
             categories: query.cat || undefined,
             top: query.top === '' ? undefined : Number(query.top),
-            time: (query.from || query.to)
-                ? [query.from ? dayjs(query.from) : null, query.to ? dayjs(query.to) : null]
-                : undefined,
             tagsLab: query.tags.length > 0 ? query.tags : undefined,
         });
         // query 由 search 派生，依赖 search 这一个字符串就够（见文件头铁律 2）
@@ -107,96 +97,71 @@ const AdvancedSearchForm = ({search, query, onSearch, onReset}: AdvancedSearchFo
             title: typeof values.title === 'string' ? values.title.trim() : '',
             cat: values.categories ?? '',
             top: (values.top === undefined || values.top === null) ? '' : String(values.top),
-            from: values.time?.[0] ? dayjs(values.time[0]).format('YYYY-MM-DD') : '',
-            to: values.time?.[1] ? dayjs(values.time[1]).format('YYYY-MM-DD') : '',
+            // 「发布时间」RangePicker 已按用户要求撤掉，但 `?from=&to=` **仍留在 URL 契约里**
+            //（老深链要能进来、listState 的测试也锁着它）。所以这里显式清空：
+            // setParam 是合并语义，不清的话从带日期的深链进来再点搜索，旧日期条件会
+            // **隐形地继续生效**，而页面上已经没有任何控件能看见或清掉它。
+            from: '',
+            to: '',
             tags: parseNoteTags(values.tagsLab),
             page: 1,
         });
     };
 
+    // 一行放下：`layout="inline"` 自带换行（窄屏自动折行），不再靠定高 140px 硬撑 ——
+    // 原来那条约死的行高一旦少一个控件就在表单底部留一块空白。
     const formStyle: React.CSSProperties = {
         maxWidth: '98%',
         borderRadius: token.borderRadiusLG,
-        padding: 24,
+        padding: '18px 24px 0',
         margin: 'auto',
         background: 'transparent',
-        height: '140px'
     };
 
     return (
-        <Form form={form} name="advanced_search" style={formStyle} onFinish={onFinish}>
-            <Row gutter={24}>
-                <Col span={8}>
-                    <Form.Item
-                        name='title'
-                        label='文章标题'
+        <Form form={form} name="advanced_search" layout="inline" style={formStyle} onFinish={onFinish}>
+            <Form.Item name='title' label='文章标题'>
+                <Input placeholder="请输入文章标题" allowClear style={{width: 180}} />
+            </Form.Item>
+            <Form.Item name='categories' label='文章分类'>
+                {/* inline 布局下控件没有默认宽度（会缩成内容宽），所以逐个给固定宽 */}
+                <Select allowClear placeholder="请选择文章分类" style={{width: 160}}>
+                    {/* key 用 categoryKey：分类 DTO 里没有 `key` 字段，原来 key={category.key}
+                        恒为 undefined，React 每次渲染都报 unique key 警告 */}
+                    {categories.map((category: { categoryKey?: React.Key; key?: React.Key; categoryTitle: string }) => (
+                        <Select.Option key={category.categoryKey ?? category.key} value={category.categoryTitle}>
+                            {category.categoryTitle}
+                        </Select.Option>
+                    ))}
+                </Select>
+            </Form.Item>
+            <Form.Item name='tagsLab' label='文章标签'>
+                {/* 扁平多选（原来这里是两级 TreeSelect，选择器只认字典、不能就地新建）。
+                    标签筛选在**前端**做：列表数据本来就全量在内存，不必为它改后端查询。 */}
+                <NoteTagSelect allowCreate={false} placeholder="请选择文章标签" style={{width: 220}} />
+            </Form.Item>
+            <Form.Item name='top' label='是否置顶'>
+                <Select allowClear placeholder="请选择是否置顶" style={{width: 110}} options={[
+                    { value: 1, label: '是' },
+                    { value: 0, label: '否' },
+                ]}>
+                </Select>
+            </Form.Item>
+            <Form.Item>
+                <Space size="small">
+                    <Button type="primary" htmlType="submit">
+                        搜索
+                    </Button>
+                    <Button
+                        onClick={() => {
+                            form.resetFields();
+                            onReset();
+                        }}
                     >
-                        <Input placeholder="请输入文章标题" allowClear />
-                    </Form.Item>
-                    <Form.Item
-                        name='top'
-                        label='是否置顶'
-                    >
-                        <Select allowClear placeholder="请选择是否置顶" options={[
-                            { value: 1, label: '是' },
-                            { value: 0, label: '否' },
-                        ]}>
-                        </Select>
-                    </Form.Item>
-                </Col>
-                <Col span={8}>
-                    <Form.Item
-                        name='categories'
-                        label='文章分类'
-                    >
-                        <Select allowClear placeholder="请选择文章分类">
-                            {/* key 用 categoryKey：分类 DTO 里没有 `key` 字段，原来 key={category.key}
-                                恒为 undefined，React 每次渲染都报 unique key 警告 */}
-                            {categories.map((category: { categoryKey?: React.Key; key?: React.Key; categoryTitle: string }) => (
-                                <Select.Option key={category.categoryKey ?? category.key} value={category.categoryTitle}>
-                                    {category.categoryTitle}
-                                </Select.Option>
-                            ))}
-                        </Select>
-                    </Form.Item>
-                    <Form.Item
-                        name='time'
-                        label='发布时间'
-                    >
-
-                        <ConfigProvider locale={zhCN}>
-                            <RangePicker />
-                        </ConfigProvider>
-                    </Form.Item>
-                </Col>
-                <Col span={8}>
-                    <Form.Item
-                        name='tagsLab'
-                        label='文章标签'
-                    >
-                        {/* 扁平多选（原来这里是两级 TreeSelect，选择器只认字典、不能就地新建）。
-                            标签筛选在**前端**做：列表数据本来就全量在内存，不必为它改后端查询。 */}
-                        <NoteTagSelect allowCreate={false} placeholder="请选择文章标签" />
-                    </Form.Item>
-                    <div style={{ textAlign: 'right' }}>
-                        <Space size="small">
-                            <Button type="primary" htmlType="submit">
-                                搜索
-                            </Button>
-                            <Button
-                                onClick={() => {
-                                    form.resetFields();
-                                    onReset();
-                                }}
-                            >
-                                重置
-                            </Button>
-                        </Space>
-                    </div>
-                </Col>
-            </Row>
-
-
+                        重置
+                    </Button>
+                </Space>
+            </Form.Item>
         </Form>
     );
 };
@@ -226,13 +191,23 @@ const AllNotes = () => {
         setSearchParams(buildListQuery(next), {replace: options?.replace});
     }, [location.search, setSearchParams]);
 
+    // ── 票据与取数**分成两个 effect**（20260923：翻页不再重新请求）────────────────
+    // ① 票据必须跟**整个** location.search（含页码）：从第 3 页进编辑器再返回，得回第 3 页；
+    //    挪进取数 effect 会让翻页不再更新票据，"返回列表还在第 3 页"会静默退化成第 1 页。
+    useEffect(() => {
+        saveListReturn(location.search);
+    }, [location.search]);
+
+    // ② 取数只认「筛选条件 + tab」—— `page: 1` 把页码**排除在 key 之外**（buildListQuery 的
+    //    默认值不落串，所以第 1 页与第 5 页算出的 key 一模一样），翻页就是纯前端 pageSlice。
+    //    行为变化要知道：翻页不再顺带刷新数据，改为切 tab / 改条件 / 重挂载才刷。
+    //    ⚠️ 必须是**字符串**（文件头铁律 2）：deps 里放对象会无限重渲染 + 无限请求。
+    const fetchKey = useMemo(() => buildListQuery({...query, page: 1}), [query]);
+
     // ── 取数：**只读** URL，绝不回写（回写就是 URL→effect→URL 死循环）──────────────
-    // deps 只有 `location.search` 这个**原始字符串**：绝不能用 searchParams 对象或派生对象，
-    // `useSearchParams` 每次 set 都返回新实例，对象做 deps 会无限重渲染 + 无限请求。
     useEffect(() => {
         let alive = true;              // 竞态守卫：切 tab 时慢响应不能盖掉快响应
-        saveListReturn(location.search);   // 顺手记下"返回票据"，供编辑器返回时还原
-        const request = listRequest(parseListQuery(location.search));
+        const request = listRequest(parseListQuery(fetchKey));
         setLoading(true);
         const pending = request.mode === 'list'
             ? getAdminNotes()
@@ -250,7 +225,7 @@ const AllNotes = () => {
             })
             .finally(() => { if (alive) setLoading(false); });
         return () => { alive = false; };
-    }, [location.search]);
+    }, [fetchKey]);
 
     // 勾选行跟着数据收敛（删掉的行不该继续被勾着）。
     // 只在数据变化时求交：**翻页不清空**（保留跨页勾选），也不放进 effect cleanup
@@ -275,6 +250,14 @@ const AllNotes = () => {
         () => pageSlice(tagFiltered, current, LIST_PAGE_SIZE),
         [tagFiltered, current],
     );
+
+    // 翻页回顶：滚动容器是 rc-table 的 `.ant-table-body`（Table 的 `scroll.y`），**不是 window**
+    // —— 这个页面的 `window.scrollY` 恒为 0，用 window.scrollTo 等于什么都没做。
+    const tableBoxRef = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+        const box = tableBoxRef.current?.querySelector('.ant-table-body');
+        if (box) box.scrollTop = 0;
+    }, [current]);
 
     const DeleteNote = async (key: React.Key) => {
         try {
@@ -546,9 +529,6 @@ const AllNotes = () => {
                     tab: query.tab,   // 「重置」只清搜索条件，不动 tab —— tab 是另一个控件
                 })}
             />
-            <Fab color="primary" aria-label="add" size='small' onClick={() => navigate('/dashboard/notes/newnote')} style={{marginLeft:15,marginTop:15}}>
-                <AddIcon />
-            </Fab>
             {hasSelected&&<Fab variant="extended" color='error' size='medium' style={{marginLeft:15,marginTop:15}} onClick={showdelModal}>
                 <DeleteForeverIcon sx={{ mr: 1 }} className='allin'/>
                 批量删除
@@ -559,11 +539,24 @@ const AllNotes = () => {
                     activeKey={query.tab}
                     items={items}
                     style={{marginLeft: 10}}
+                    // 「新增文章」从原来的 40px 圆形悬浮按钮收成一颗 small 主色钮，挂在
+                    // tab 条左侧（用户要求"缩小放到全部文章标签按钮前"）。不选"保留 Fab +
+                    // 覆盖样式"：40px 地板是 Dashboard/index.css 的 `!important`，内联样式
+                    // 打不过它，只能再写一条 `!important` 去和 MUI emotion 对撞。
+                    tabBarExtraContent={{
+                        left: (
+                            <Button type="primary" size="small" icon={<PlusOutlined />}
+                                    style={{marginRight: 12}}
+                                    onClick={() => navigate('/dashboard/notes/newnote')}>
+                                新增文章
+                            </Button>
+                        ),
+                    }}
                     // onChange 里原来那一大坨分支（各自发请求、还顺手 filter 一遍本地数据）
                     // 全部删掉：切 tab 只是改 URL，取数由 effect 统一做。
                     onChange={(value) => setParam({tab: value as ListTab, page: 1})}
                 />
-                <div className='custom-scroll-container'>
+                <div className='custom-scroll-container' ref={tableBoxRef}>
                     {/* scroll 只留 y：**不要**再给 x。
                         `x:'max-content'` 会把表宽写死成内容宽（实测 1314px，与视口无关）——
                         1280 宽溢出 164px、1440 溢出 20px、1920 反而右侧空 412px，这就是
