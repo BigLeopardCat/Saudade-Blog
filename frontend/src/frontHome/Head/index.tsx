@@ -48,7 +48,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
     const [phoneBarShow, setPhoneBarShow] = useState(false);
     const [isHovered, setIsHovered] = useState(false);
     const [isLogin, setLogin] = useState(0)
-    // 个人中心（20260922）：点「心境」打开的大窗口 + 头像右上角的未读红点
+    // 个人中心（20260922）：点「个人中心」打开的大窗口 + 头像右上角的未读红点
     const [centerOpen, setCenterOpen] = useState(false)
     const { counts: unreadCounts } = useUnread(isLogin === 1)
     const [showMobileCategory, setShowMobileCategory] = useState(false);
@@ -475,7 +475,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                 </Modal>
             </ConfigProvider>
             {animation !== '' && <MoonToSun status={animation} />}
-            {/* 个人中心（20260922）：点「心境」打开的大窗口。挂在 header 里但门是 Modal
+            {/* 个人中心（20260922）：点「个人中心」打开的大窗口。挂在 header 里但门是 Modal
                 portal 到 body 的，不受 header 的 sticky/transform 影响 */}
             <UserCenter open={centerOpen} onClose={() => setCenterOpen(false)} fallbackAvatar={avatar} />
         </header>
