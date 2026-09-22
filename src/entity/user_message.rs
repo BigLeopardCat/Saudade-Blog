@@ -11,6 +11,10 @@ pub struct Model {
     pub id: i32,
     pub from_user_id: i32,
     pub to_user_id: i32,
+    /// 信件标题（20260922 补，用户要求）。
+    /// **可空且历史行全是 NULL**：这一列是在已有数据之后加的，早期的信没有标题。
+    /// 落库前统一 trim，空串一律存 NULL（"没填"只有一种表示，前端不必区分 '' 与 None）。
+    pub title: Option<String>,
     #[sea_orm(column_type = "Text")]
     pub content: String,
     pub is_read: bool,
