@@ -214,10 +214,13 @@
   .ant-modal-content
     box-shadow: 0 0 0 1px rgba(240, 196, 110, 0.45), 0 0 26px rgba(240, 196, 110, 0.18), 0 18px 48px rgba(0, 0, 0, 0.6)
 
-  // 发送按钮换登录页那套配色（河灯金渐变 + 墨字，同 .login-submit）。
+  // 主要行动按钮统一换登录页那套配色（河灯金渐变 + 墨字，同 .login-submit）。
   // 原因是 antd 的 darkAlgorithm 主色被我们设成了 #aec8c8（为浅色主题挑的灰绿），
   // 当**主行动按钮**用既不显眼也不好看（用户原话"配色很诡异"）。
-  .ucSendBtn.ant-btn-primary
+  // 20260922 第二轮：范围从「发送」扩到**窗口里所有主行动按钮**（用户要求"昵称保存和
+  // 修改密码按钮对齐站内信箱发送按钮风格"）——三个按钮现在共用 `.ucGoldBtn` 这一个类，
+  // 将来再加主按钮挂上它即可，别再各写一份。
+  .ucGoldBtn.ant-btn-primary
     background: linear-gradient(135deg, #f7dcae 0%, #e8b866 100%)
     border: none
     color: #2a2113
