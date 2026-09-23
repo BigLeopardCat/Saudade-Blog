@@ -21,7 +21,7 @@ import {useLocation, useNavigate, useSearchParams} from "react-router-dom";
 import {NoteType} from "../../../../interface/NoteType";
 import {useDispatch, useSelector} from "react-redux";
 import {fetchNoteList} from "../../../../store/components/note.tsx";
-import {PlusOutlined, QuestionCircleOutlined} from '@ant-design/icons';
+import {QuestionCircleOutlined} from '@ant-design/icons';
 import dayjs from "dayjs";
 import {Fab} from "@mui/material";
 import DeleteIcon from "@mui/icons-material/Delete";
@@ -545,7 +545,9 @@ const AllNotes = () => {
                     // 打不过它，只能再写一条 `!important` 去和 MUI emotion 对撞。
                     tabBarExtraContent={{
                         left: (
-                            <Button type="primary" size="small" icon={<PlusOutlined />}
+                            /* 20260924：去掉按钮上的「+」图标（用户要求）——文案本身就写着
+                               "新增文章"，前面再顶一个加号是同一件事说两遍。 */
+                            <Button type="primary" size="small"
                                     style={{marginRight: 12}}
                                     onClick={() => navigate('/dashboard/notes/newnote')}>
                                 新增文章
