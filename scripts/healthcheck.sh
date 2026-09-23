@@ -97,4 +97,21 @@ for p in $(pgrep -f 'ms-playwright/chromium-[0-9]' 2>/dev/null); do
   fail "WARN 无头浏览器残留 pid=$p 已跑 $((et / 3600))h（验收脚本被掐断留下的孤儿）→ 清理 $killed 个进程"
   break
 done
+# 6. 夜间任务失败哨兵（20260924）
+#    夜间两班（04:00 的 agent 回归 saudade-blog-agent/scripts/nightly_regression.sh、
+#    04:40 的前端渲染层沙箱 scripts/nightly_sandboxes.sh）失败时会在 ~ 下留一个
+#    *.failed 哨兵文件，**存在 = 上次运行失败**；全绿则自己删掉。
+#    这里把两个哨兵的 mtime 拼成签名，只在**签名变化**时报一条 WARN——边沿触发，不会
+#    每分钟刷屏。哨兵每晚失败都被 touch（mtime 前进），所以"一直失败"是每晚一条、
+#    "修好了"则签名变空、静默（干净夜里 health.log 一行都不多）。
+#    判 WARN 不判 FAIL：服务都还活着，是测试套件红，不是线上挂了。
+SENTINELS="$HOME/agent_regression.failed $HOME/sandbox_regression.failed"
+sent_sig=""
+for s in $SENTINELS; do
+  [ -f "$s" ] && sent_sig="$sent_sig $(basename "$s"):$(stat -c %Y "$s" 2>/dev/null || echo 0)"
+done
+if [ -n "$sent_sig" ] && [ "$sent_sig" != "${LAST_SENTINEL:-}" ]; then
+  fail "WARN 夜间任务留下失败哨兵:$sent_sig（看 ~/agent_regression.log、~/sandbox_regression.log）"
+fi
+echo "LAST_SENTINEL='$sent_sig'" >> "$STAMP"
 exit 0
