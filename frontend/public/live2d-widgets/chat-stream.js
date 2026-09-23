@@ -89,10 +89,19 @@
     // 逐跳：frame（确认帧到）→ card（卡片就位）→ click（点了哪个）→ sent（请求真发出）
     //       → settle（结论：ok/unknown/expired/cancel/rollback）。
     // **绝不带令牌**（它是一次同意的唯一凭据，与 confirm_card 同纪律）。
+    // 每一跳都带一个**同一枚待办内单调的序号 n**（1,2,3…）。两个用途：
+    // ① 真上报链（autoload.js 的 report）按 `type|message 前 80 字符|url` 在页面
+    //    生命周期内去重、整条丢掉——同一枚待办被挂第二次（回滚放回 / reconcile 自愈
+    //    接回）时消息一模一样，没有序号就会在**真链上被吃掉**，而沙箱里看得见
+    //    ⇒ 那正是"沙箱绿、线上没有"的假绿；
+    // ② 对账读日志时，同一秒内的多跳只能靠序号定序（日志行只有整秒）。
+    const askSeq = {};
     const reportAskStage = (stage, extra) => {
       try {
         if (typeof window.__reportError !== 'function') return;
-        const parts = ['stage=' + stage];
+        const id = String((extra || {}).id || '');
+        askSeq[id] = (askSeq[id] || 0) + 1;
+        const parts = ['stage=' + stage, 'n=' + askSeq[id]];
         Object.keys(extra || {}).forEach((k) => {
           const v = extra[k];
           if (v === undefined || v === null || v === '') return;
