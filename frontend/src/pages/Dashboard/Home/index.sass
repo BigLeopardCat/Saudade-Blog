@@ -274,38 +274,6 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
 .ant-picker-calendar .ant-picker-cell::before
   display: none
 
-.oneSay
-  width: 95%
-  height: 70%
-  background-color: #fffbe8
-  position: absolute
-  left: 50%
-  top: 50%
-  margin-top: 10px
-  transform: translate(-50%,-50%)
-  border-radius: 10px
-  box-shadow: 2px 12px 12px 2px #d7d6d6
-  font-family: "Arial Black"
-  font-weight: 600
-
-  .onesay_content
-    margin-top: 0
-    margin-left: 30px
-    margin-right: 30px
-    overflow: hidden
-    white-space: normal
-    max-height: 6.5em
-    line-height: 1.3em /* 行高 */
-    //font-weight: 500
-    text-overflow: 'ellipsis'
-
-  .stick
-    margin-left: -1px
-    margin-top: -15px
-    font-size: 20px
-    display: inline-block
-    transform: rotate(270deg)
-
 .home
   width: 100%
   height: 100%
@@ -322,13 +290,45 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
 
   .right
     display: flex
-    justify-content: space-between
+    // 20260924：原来是 space-between —— 三段（每日箴言 / 日历 / 待办）靠它撑满整栏。
+    // 箴言卡撤掉后只剩两段，space-between 会把日历顶到最上、待办压到最下、中间空出
+    // 近 300px（实测）。改成顶对齐 + 固定间距，日历就自然上移；纵向余量交给待办卡。
+    justify-content: flex-start
     flex-direction: column
+    gap: 20px
     height: 100%
     width: 30%
     padding: 30px 30px 30px 0
     @media only screen and (max-width: 1530px)
       display: none
+
+  // 日历（含年度进度条）的外壳。原先是 tsx 里的 wrapperStyle 内联对象——
+  // 内联样式夜间模式覆盖不到（`.dark &` 永远赢不了），静态样式一律落到这里。
+  .calWrap
+    flex: 0 0 auto
+    width: 100%
+    display: flex
+    flex-direction: column
+    align-items: center
+    justify-content: center
+
+    .ant-picker-calendar
+      box-shadow: 0 1px 22px -8px rgba(26, 26, 26, .6)
+
+    // 日历头部：年月选择在左、"今天也要加油"在右
+    .calHead
+      padding: 8px
+      display: flex
+      justify-content: space-between
+      align-items: center
+      .calHead-left
+        display: flex
+        gap: 8px
+      .calHead-tip
+        font-weight: bold
+        color: #000
+        .dark &
+          color: #fff
 
   .center
     @media only screen and (max-width: 768px)
@@ -402,43 +402,17 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
     .ant-card-head
       border-bottom: none
       position: relative
-
-      .dot:nth-child(3)
-        width: 8px
-        height: 8px
-        background-color: #fc625d
-        border-radius: 50%
-        margin-right: 5px
-        display: flex
-        float: right
-        margin-top: 6px
-
-      .dot:nth-child(2)
-        width: 8px
-        height: 8px
-        background-color: #fc625d
-        border-radius: 50%
-        margin-right: 5px
-        display: flex
-        float: right
-        margin-top: 6px
-
-      .dot:nth-child(1)
-        width: 8px
-        height: 8px
-        background-color: #35cd4b
-        border-radius: 50%
-        margin-right: 5px
-        display: flex
-        float: right
-        margin-top: 6px
   .cardInfo
     box-shadow: 0 1px 22px -8px rgba(26, 26, 26, .6)
+    // 待办卡吃掉日历之外的全部竖向余量（原为 height:25% 的定值）：
+    // flex-basis 0 + min-height 0 才能让它在内容变多时内部滚动，而不是把整栏撑破。
+    flex: 1 1 auto
+    min-height: 0
+    margin: 0
     width: 100%
-    height: 25%
     padding: 10px
     font-weight: 600
-    overflow-y: scroll
+    overflow-y: auto
 
     &::-webkit-scrollbar
       width: 5px

@@ -1,11 +1,10 @@
 import { DeleteOutlined } from '@ant-design/icons';
-import {Calendar, Card, ConfigProvider, theme, Checkbox, Input, Badge, Modal, Avatar, Select, Radio} from "antd";
+import {Calendar, Card, ConfigProvider, Checkbox, Input, Badge, Modal, Avatar, Select, Radio} from "antd";
 import dayjs from "dayjs";
 import localeData from "dayjs/plugin/localeData";
 dayjs.extend(localeData);
 import './index.sass';
-import React, {useContext, useEffect, useRef, useState} from "react";
-import axios from "axios";
+import {useContext, useEffect, useRef, useState} from "react";
 import {Dayjs} from "dayjs";
 import 'dayjs/locale/zh-cn';
 import zhCN from "antd/lib/locale/zh_CN";
@@ -22,9 +21,7 @@ import {fetchTags} from "../../../store/components/tags.tsx";
 
 const Home = () => {
     //hooks区域
-    const [oneSay, setOneSay] = useState('');
     const typedRef = useRef(null);
-    const { token } = theme.useToken();
     const avatar = useSelector((state: { user: UserState }) => state.user.avatar);
     const dispatch = useDispatch();
 
@@ -93,25 +90,8 @@ const Home = () => {
     };
 
 
-    const wrapperStyle: React.CSSProperties = {
-        width: '100%',
-        border: "none",
-        borderRadius: token.borderRadiusLG,
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginBottom: 20
-    };
-
     //初次渲染
     useEffect(() => {
-        const getSay = async () => {
-            const res = await axios.get('https://api.xygeng.cn/one');
-            setOneSay(res.data.data.content);
-        };
-        getSay();
-
         const options = {
             strings: ['"遇事不决,<br>&nbsp;可问春风“','"春风不语,<br>&nbsp;即随本心“'],
             typeSpeed: 50,
@@ -150,26 +130,15 @@ const Home = () => {
 
 
             <div className='right'>
-               <Card size="small" title={
-                   <div className="custom-card-header">
-                       <span className="dot"></span>
-                       <span className="dot"></span>
-                       <span className="dot"></span>
-                       每日箴言
-                   </div>
-               } style={{minWidth: 350, height: '30%',margin: 0,boxShadow:'0 1px 22px -8px rgba(26, 26, 26, .6)'}}>
-                   <div className="oneSay">
-                       <span className="stick">🎯</span>
-                       <p className="onesay_content">{oneSay}</p>
-                   </div>
-               </Card>
-
+               {/* 每日箴言卡已撤（20260924）：文案取自第三方接口 api.xygeng.cn，
+                   既不可控也不属于本站，且它占着右栏最高的那一段（30%）——
+                   撤掉正好把日历顶上来。随之删掉的还有 .oneSay 与 .dot 两组
+                   只服务这张卡的样式。 */}
                <ConfigProvider locale={zhCN}>
-                   <div style={wrapperStyle}>
+                   <div className="calWrap">
                        <TheYearPass/>
-                       <Calendar 
-                            fullscreen={false} 
-                            style={{boxShadow:'0 1px 22px -8px rgba(26, 26, 26, .6)'}}
+                       <Calendar
+                            fullscreen={false}
                             onSelect={onSelectDate}
                             cellRender={dateCellRender}
                             headerRender={({ value, type, onChange, onTypeChange }) => {
@@ -202,8 +171,8 @@ const Home = () => {
                                     );
                                 }
                                 return (
-                                    <div style={{ padding: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                        <div style={{display: 'flex', gap: 8}}>
+                                    <div className="calHead">
+                                        <div className="calHead-left">
                                             <Select
                                                 size="small"
                                                 popupMatchSelectWidth={false}
@@ -229,7 +198,7 @@ const Home = () => {
                                             </Select>
                                         </div>
                                         
-                                        <div style={{ fontWeight: 'bold', color: isDark ? '#fff' : '#000' }}>
+                                        <div className="calHead-tip">
                                            今天也要加油呀😀
                                         </div>
 
@@ -248,7 +217,7 @@ const Home = () => {
                    </div>
                </ConfigProvider>
 
-               <Card className="cardInfo" style={{margin: 0}}>
+               <Card className="cardInfo">
                    <Input 
                         value={listTitle} 
                         onChange={(e) => setListTitle(e.target.value)} 
