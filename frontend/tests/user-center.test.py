@@ -624,6 +624,53 @@ with sync_playwright() as p:
     check("没有任何页面错误", not pg.errs, " | ".join(pg.errs))
     pg.close()
 
+    print("⑤c 未读红点与已加载的页签跟着看板娘收尾一起刷新（20260924）")
+    pg = fresh_page()
+    badge = ".ant-tabs-tab >> nth=3 >> .ant-badge-count"
+    sum_gets = lambda: len(find_call(pg, "/api/protected/notifications/summary", "GET"))
+    notif_gets = lambda: len(find_call(pg, "/api/protected/notifications", "GET"))
+    mail_gets = lambda: len(find_call(pg, "/api/protected/messages", "GET"))
+    pg.click(".ant-tabs-tab >> nth=3")
+    pg.wait_for_selector(PANE + " .ant-list-item", timeout=10000)
+    n_notif, n_sum = notif_gets(), sum_gets()
+    check("进通知页签拉了一次列表", n_notif == 1, str(n_notif))
+    check("进来时页签挂着 2 条未读角标",
+          pg.locator(badge).count() == 1 and pg.locator(badge).inner_text() == "2",
+          pg.locator(".ant-tabs-tab >> nth=3").inner_text().replace("\n", " "))
+    # 看板娘那边刚把两条通知全标成已读（真调后台、改的是服务端状态），收尾派发 agent-turn-done
+    # （派发点由 tests/favorites-sync.test.mjs 锁在 chat-stream.js 里，这里模拟信号本身）
+    pg.evaluate("""() => {
+        window.__state.notifications = window.__state.notifications.map(
+            (n) => ({ ...n, isRead: true }));
+        window.dispatchEvent(new CustomEvent('agent-turn-done'));
+    }""")
+    pg.wait_for_timeout(700)
+    check("agent 标完已读：通知列表当场重拉（旧写法一次生命周期只拉一次）",
+          notif_gets() == n_notif + 1, str(notif_gets()))
+    check("红点的数据源 /notifications/summary 也当场重算（不是等 60 秒轮询）",
+          sum_gets() == n_sum + 1, str(sum_gets()))
+    check("未读角标当场归零（用户实测的旧症状：要刷新网页才掉）",
+          pg.locator(badge).count() == 0,
+          pg.locator(".ant-tabs-tab >> nth=3").inner_text().replace("\n", " "))
+    check("列表里的未读标记也一起没了",
+          pg.locator(PANE + " .ant-badge-status-processing").count() == 0,
+          str(pg.locator(PANE + " .ant-badge-status-processing").count()))
+    check("还没点开过的页签不会被顺手拉一次（懒加载纪律不破）",
+          mail_gets() == 0, str(mail_gets()))
+    # 信箱是同一条腿的另一半（agent 的 read_messages）：已加载过 ⇒ 一样当场重拉
+    pg.click(".ant-tabs-tab >> nth=4")
+    pg.wait_for_timeout(700)
+    m1 = mail_gets()
+    check("点开信箱拉了一次", m1 == 1, str(m1))
+    pg.evaluate("""() => {
+        window.__state.messages = window.__state.messages.map((m) => ({ ...m, isRead: true }));
+        window.dispatchEvent(new CustomEvent('agent-turn-done'));
+    }""")
+    pg.wait_for_timeout(700)
+    check("agent 标完站内信已读：信箱页签也当场重拉", mail_gets() == m1 + 1, str(mail_gets()))
+    check("没有任何页面错误", not pg.errs, " | ".join(pg.errs))
+    pg.close()
+
     print("⑥ 公告和通知：页签未读角标 = 后端汇总；全部已读后当场归零")
     pg = fresh_page()
     notice_badge = ".ant-tabs-tab >> nth=3 >> .ant-badge-count"
