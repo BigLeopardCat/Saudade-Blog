@@ -120,8 +120,53 @@
         return (ctx.state.pendingAsk || {}).id || '';
       } catch (e) { return ''; }
     };
+    // ── 卡片跨刷新存活（20260924）────────────────────────────────────────
+    // 这张卡片此前只活在**当轮的 SSE 帧**里：刷新页面、切走再回来、或者那条流中途
+    // 断了，卡片就结构上不可能再出现——而令牌其实还在有效期内（10 分钟）。用户看到
+    // 的是"agent 说要确认，可我没地方点"（报的就是这个）。
+    // 现在卡片随帧落一份到 localStorage（按会话分桶，与会话缓存同一套键纪律），页面
+    // 拉完历史/DOM 重建后自动接回。存的是帧里那一份的**原样拷贝**（问句/按钮/令牌/
+    // 到期时刻），不是重造的——重建出来的卡片必须与主人当时看到的那张逐字一致，
+    // 否则他等于在确认一件自己没看过的事。
+    // 把令牌放进 localStorage 不放宽任何一条既有纪律：它本来就交到这位主人手里
+    // （帧是发给他一个人的），而这个 localStorage 里早就躺着同一主人的登录 JWT
+    // （`tokenKey`）；"令牌不进 trace/日志/回执/prompt"一天没松，这里也没破——访客
+    // （无 tokenKey）连键都建不出来。服务端依旧零状态。
+    //
+    // 三处作废（缺一处卡片就会阴魂不散地回来，且回来时又是可点的）：
+    //   · 点击那一刻（handleAskChoice 走 askSettle）——一次点击只兑现一次；
+    //   · 任何结算（askSettle：已过期/已取消/已用过/知道了）；
+    //   · 改口作废（hideAsk 也走 askSettle）。
+    // **没发出去**的回滚（askRollback）刻意不删：那次卡片还是活的，刷新该接回来。
+    let askConvId = null;        // 当前这张卡属于哪个会话——存档/清档都按它分桶
+    let askPruned = false;       // 这次页面生命周期里清过一次过期存档没有
+    let askRestored = false;     // 这一次挂载是"刷新接回来"的（埋点据此带 restored=1）
+    const askKey = (conv) => {
+      let tk = null;
+      try { tk = localStorage.getItem('tokenKey'); } catch (e) {}
+      if (!tk || conv === null || conv === undefined) return null;
+      return 'chat_ask_' + tk + '_' + conv;
+    };
+    const saveAsk = (ask) => {
+      const k = askKey((ask || {}).convId);
+      if (!k) return;
+      try {
+        localStorage.setItem(k, JSON.stringify({
+          id: ask.id || '', q: ask.q || '', opts: ask.opts || [],
+          token: ask.token || '', exp: ask.exp || 0,
+        }));
+      } catch (e) {/* 存不下（隐私模式/配额满）：这一轮照常弹，只是刷新后不回来 */}
+    };
+    const dropAsk = (conv) => {
+      const k = askKey(conv);
+      if (!k) return;
+      try { localStorage.removeItem(k); } catch (e) {}
+    };
     const askSettle = (note, state, result) => {   // 按钮换成一行灰字（卡片留在流里当记录）
       if (askTimer) { clearTimeout(askTimer); askTimer = null; }   // 有结论了就不再倒计时
+      // 有结论 = 这张卡到此为止 ⇒ 存档一并作废（见 dropAsk）。少了这一句，刷新之后
+      // 一张已经"已过期/已取消/已用过"的卡片会原样回来，而且又是可点的。
+      dropAsk(askConvId);
       askBtns.innerHTML = '';
       const el = document.createElement('div');
       el.className = 'chat-ask-note';
@@ -250,9 +295,66 @@
       // 帧里的 exp 已经是过去时刻时 askArmTimer 会当场结算并埋一条 settle，先埋
       // card 才与真实顺序一致——反过来会记成"先结算、后挂卡"这种不存在的序列，
       // 而跨源对账正是按序列读的（假顺序=假警报）。
-      reportAskStage('card', { id: String(ask.id || '') });
+      // restored=1：这一次挂载是刷新接回来的（不是帧弹的）。挂载埋点只有这一处，
+      // 所以"接回"这件事**不能**在 restoreAsk 里另报一条——那会把一次挂载报成两跳
+      // （card + card），跨源对账按跳数读，多出来的那一条就是一条假记录。
+      reportAskStage('card', askRestored ? { id: String(ask.id || ''), restored: 1 }
+                                         : { id: String(ask.id || '') });
       askArmTimer(ask);                   // 到期自动结算（帧里有 exp 才起，见 askArmTimer）
       scrollToBottom(messages, true);
+    };
+
+    // 把存档里的卡片接回来（见上面"卡片跨刷新存活"一节）。**幂等**，且内存里已经有
+    // 同一枚待办时直接返回——帧刚弹的那张永远比存档新。
+    // 调用点 = reconcileDOM 收尾（onAskResync）：页面加载时历史拉完会走一次，切会话
+    // 回来也会走一次，两条真路径都覆盖，不另设启动钩子。
+    const restoreAsk = () => {
+      const conv = ctx.state.conv;
+      pruneAskStore();
+      if (ctx.state.pendingAsk) return;
+      const k = askKey(conv);
+      if (!k) return;
+      let saved = null;
+      try { saved = JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { saved = null; }
+      if (!saved || typeof saved !== 'object') return;
+      const exp = Number(saved.exp) || 0;
+      // 缺件（没有令牌/问句/按钮就是一张点不动的卡）或已过期 ⇒ 清掉、不接回。
+      // 过期判定与 askArmTimer 同口径（exp 是 UTC 秒，帧里取自令牌自身）。
+      if (!saved.q || !saved.token || !(saved.opts || []).length
+          || (exp && Date.now() >= exp * 1000)) {
+        dropAsk(conv);
+        return;
+      }
+      askConvId = conv;
+      ctx.state.pendingAsk = Object.assign({}, saved, { convId: conv });
+      // 埋点仍用 stage=card（"卡片就位"这个事实与帧带来的那次一模一样），只是多带
+      // 一个 restored=1 让对账分得出"这张是刷新接回来的"。**刻意不新造阶段名**：
+      // trace_reconcile.py 的 FLOW_STAGES 是封闭表，多一个名字就会计进 unknown_stage
+      // 并报"埋点与对账要同步"。这一跳由 syncAsk 真正挂上卡片时发出（那里是唯一的
+      // 挂载埋点），这里只把"来源"告诉它。
+      askRestored = true;
+      syncAsk();
+      askRestored = false;   // 兜底清除：syncAsk 幂等提前返回时这一轮没人消费它
+    };
+    // 顺手清过期存档（同一个会话删掉/换了设备之后，旧键没有任何读取路径，只会堆在
+    // localStorage 里）。一次页面生命周期清一次；没有 token 就不动手。
+    const pruneAskStore = () => {
+      if (askPruned) return;
+      let tk = null;
+      try { tk = localStorage.getItem('tokenKey'); } catch (e) { return; }
+      if (!tk) return;
+      askPruned = true;
+      const prefix = 'chat_ask_' + tk + '_';
+      try {
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+          const k = localStorage.key(i);
+          if (!k || k.indexOf(prefix) !== 0) continue;
+          let s = null;
+          try { s = JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { s = null; }
+          const exp = Number((s || {}).exp) || 0;
+          if (!s || (exp && Date.now() >= exp * 1000)) localStorage.removeItem(k);
+        }
+      } catch (e) {/* 清不动就算了：读取端每次都自己判过期，不靠这里 */}
     };
 
     // 主题日 = 以 06:00 为界（23:00-6:00 自动夜间的恢复边界）：手动/对话调节的
@@ -777,6 +879,19 @@
               goneErr.skipFailedPersist = true;
               throw goneErr;
             }
+            // 令牌已被用掉（20260924）：同一张确认卡片只兑现一次。第一个点的人真
+            // 执行了，第二个（另一个标签页、或重放）**什么都没做**——这不是网络
+            // 错误，卡片要如实收场，且**不许再放行重试**（再点只会再被拒；"重新
+            // 发起这件事"是另一件事，主人重新说一句即可）。
+            // 就地结算 + 置空 confirmRound：收尾那一支（finally）据此不再覆盖它。
+            if (resp.status === 409 && d && d.error === 'confirm_already_used') {
+              ctx.state.confirmRound = null;
+              askSettle('这张卡片已经用过一次了（同一张只兑现一次），这次没有重复执行',
+                        undefined, 'used');
+              const usedErr = new Error('这张确认卡片已经用过一次了，这次没有重复执行');
+              usedErr.userText = '这张确认卡片已经用过一次了（同一张只兑现一次），这次没有重复执行。';
+              throw usedErr;
+            }
             if (resp.status >= 500) throw new Error('服务暂时繁忙（' + resp.status + '），请稍后再试');
             throw new Error((d && d.error) || ('服务响应异常（' + resp.status + '），请稍后再试'));
           }
@@ -922,6 +1037,11 @@
                 try { ask = JSON.parse(text.slice('__CONFIRM__:'.length)); } catch (e) {}
                 if (ask && ask.q && ask.token) {
                   ctx.state.pendingAsk = Object.assign({}, ask, { convId: roundConvId });
+                  // 落一份存档（20260924）：刷新/断流之后，这张卡片靠它回来
+                  // （见"卡片跨刷新存活"一节）。存在"帧可用"这一支里——缺字段的帧
+                  // 连卡片都挂不上，存档只会让刷新后冒出一张点不动的卡。
+                  askConvId = roundConvId;
+                  saveAsk(ctx.state.pendingAsk);
                   // 链路第一跳（20260924）：确认帧到手且可用。后面还有没有 card/click/
                   // settle 是**另一回事**——此前只有"帧不可用"才留痕，于是"帧到了、
                   // 卡片却没挂上/挂了却没结算"在日志里长得跟"压根没弹过窗"一样。
@@ -1095,7 +1215,11 @@
               }
             }
           } else {
-            const errMsg = '网络错误: ' + (e && e.message ? e.message : '未知错误');
+            // userText（20260924）：服务端**如实拒绝**时（如 409 令牌已用过）的文案
+            // 原样展示，不套"网络错误: "——它不是网络问题，加了前缀就把一句准确的
+            // 说明读成一次连接故障。认不出来的异常照旧走网络错误那条。
+            const errMsg = (e && e.userText)
+              || ('网络错误: ' + (e && e.message ? e.message : '未知错误'));
             // 确认轮结算（20260924）：同 AbortError 分支——请求发出去过，结果不可知
             if (ctx.state.confirmRound) {
               ctx.state.confirmRound.failed = '本轮以网络错误收尾';
@@ -1848,8 +1972,13 @@
       // 重建（拉历史/切会话回来/未来的新清理逻辑）之后，只要待办还在，卡片就在
       // 下一次 reconcile 自动回到消息流末位。注册走引擎既有的 setConvUI（多处注册
       // 是合并语义，与 chat-session.js 的四个钩子互不覆盖）。
+      // 自愈钩子（20260923）：每次 reconcileDOM 收尾调一次——DOM 被整段
+      // 重建（拉历史/切会话回来/未来的新清理逻辑）之后，只要待办还在，卡片就在
+      // 下一次 reconcile 自动回到消息流末位。
+      // 20260924 先接存档再挂卡（restoreAsk 内部幂等）：页面加载时历史拉完会走一次
+      // 这里 ⇒ 刷新后卡片自己回来；切会话回到有卡的那个会话也会走一次，同样成立。
       if (typeof engine.setConvUI === 'function') {
-        engine.setConvUI({ onAskResync: syncAsk });
+        engine.setConvUI({ onAskResync: () => { restoreAsk(); syncAsk(); } });
       }
 
       // 右上角关闭按钮：收起聊天面板

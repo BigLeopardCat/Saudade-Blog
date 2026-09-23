@@ -27,7 +27,11 @@
   ⑦ 帧带 exp 时令牌到期自动结算成「已过期」，卡片不会永远停在乐观态；
   ⑧ **正常分支的逐跳埋点**（20260924）：frame→card→click→sent→settle 五跳同 id，
      取消/忙挡/竞态回滚/到期/改口打字（hideAsk）各自该缺哪一跳就缺哪一跳，
-     且**任何上报都不含令牌**。
+     且**任何上报都不含令牌**；
+  ⑨ **卡片跨刷新**（20260924）：刷新后从存档接回（stage=card + restored=1）、
+     已经结算过的卡片刷新后**不许**再回来（存档随结算作废）、过期的存档刷新后
+     既不接回也不留在 localStorage 里；接回来的那张点下去撞上服务端的"令牌已用过"
+     时，卡片如实写着「已经用过一次了」而不是「网络错误」也不是「已确认」。
 
 ★ 两类上报必须分开看（本文件的断言一律按类型过滤，不许写 `reports == []`）：
   `confirm_card` = **失败**（帧坏掉/点了没反应/轮次失败收尾），跨源对账按它数异常
@@ -123,9 +127,11 @@ HARNESS = """<!DOCTYPE html>
   // 弹卡之后——没有它们，那条腿可能因为时序不对而退化成永真）。
   // lastBody / streamCalls：点确定之后**请求到底发出去没有**的唯一证人（⑥ 腿）。
   // 光看卡片上的字是旧版本的病根——那句"已确认"从来不需要请求真的发出去。
+  // streamStatus/streamBody：让 /api/chat/stream 回一个**非 200**（⑨ 腿要用 409
+  // 「这张令牌已经被用掉了」——服务端如实拒绝时前端该怎么收场）。0 = 照旧回放帧。
   window.__stub = { historyDelay: 0, historyCalls: 0, frameDelay: 0,
                     cardShownAt: null, historyResolvedAt: null, pendingAtTrigger: false,
-                    lastBody: null, streamCalls: 0 };
+                    lastBody: null, streamCalls: 0, streamStatus: 0, streamBody: null };
   (function () {
     var enc = new TextEncoder();
     var j = function (obj) {
@@ -139,6 +145,10 @@ HARNESS = """<!DOCTYPE html>
         window.__stub.streamCalls++;
         // body 原样留一份：⑥ 腿据此断言"隐藏确认请求真的发出去了，且带着令牌"
         try { window.__stub.lastBody = init && init.body ? String(init.body) : null; } catch (e) {}
+        if (window.__stub.streamStatus) {   // 非 200：真链在这里是 Rust 的 JSON 错误体
+          return Promise.resolve(new Response(JSON.stringify(window.__stub.streamBody || {}),
+            { status: window.__stub.streamStatus, headers: { 'Content-Type': 'application/json' } }));
+        }
         var raw = window.__frames || [];
         // 用 start + 顺序泵出（而不是 pull）：pull 会在上一个 enqueue 还挂着的
         // setTimeout 里被再次调用，流关闭后那些迟到的 enqueue 会抛
@@ -258,6 +268,9 @@ ASK_STATE = """() => {
     pendingAtTrigger: window.__stub.pendingAtTrigger,
     agentText: [...document.querySelectorAll('#chat-messages .chat-msg.agent .msg-text')]
                  .map(e => e.textContent).join('||'),
+    // 整个消息流的文本（失败气泡是 renderFailed 就地改写 live 气泡的内容，未必带
+    // .chat-msg.agent 那层结构；要断言"用户到底读到什么"，只有这一份是全的）
+    allText: msgs ? msgs.textContent : '',
   };
 }"""
 
@@ -385,6 +398,37 @@ def open_page(b, url):
     pg.wait_for_function("() => !!window.__ctx && !!window.__ctx.dom.messages", timeout=5000)
     pg.wait_for_timeout(600)      # 让 boot 期间的会话决议/首拉跑完
     return pg, errs
+
+
+def reboot(pg):
+    """刷新同一个页面（⑨ 腿的"刷新"就是这个动作）。
+
+    不新开一页：新页拿不到同一份 localStorage 之外的东西——而跨刷新正是靠 localStorage
+    活的，新页反而绕开了被测路径（真刷新会清掉内存态与 DOM，只剩存储里的东西）。
+    """
+    pg.reload(wait_until="load")
+    pg.wait_for_function("() => !!window.__ctx && !!window.__ctx.dom.messages", timeout=5000)
+    pg.wait_for_timeout(800)      # 让 boot 期间的会话决议/首拉/reconcile 跑完
+
+
+ASK_STORE = """() => {
+  const tk = localStorage.getItem('tokenKey');
+  const conv = window.__ctx.state.conv;
+  const key = 'chat_ask_' + tk + '_' + conv;
+  let raw = null;
+  try { raw = localStorage.getItem(key); } catch (e) {}
+  let parsed = null;
+  try { parsed = JSON.parse(raw || 'null'); } catch (e) {}
+  // 前缀下还剩几个键（清理过期存档的判据）
+  let n = 0;
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.indexOf('chat_ask_' + tk + '_') === 0) n++;
+    }
+  } catch (e) {}
+  return { key: key, conv: conv, raw: raw, parsed: parsed, count: n };
+}"""
 
 
 def main():
@@ -804,6 +848,117 @@ def main():
                   pg8.evaluate("() => window.__reportsDropped") == 0,
                   str(pg8.evaluate("() => window.__reportsDropped")))
             check("⑧腿页面无未捕获异常", errs8 == [], " | ".join(errs8[:4]))
+
+            # ── ⑨ 卡片跨刷新：接回来 / 结算过的不回来 / 过期的清掉 ──────────
+            # 这张卡此前只活在**当轮的那条 SSE 流**里：刷新、断流、切会话回来，
+            # 卡片就永远消失了——而令牌其实还在有效期内（600 秒），主人手里那张
+            # "同意问句"被浏览器吃掉了。存档放在主人自己的 localStorage（与登录
+            # JWT 同一处，访客连键都建不出来），服务端依旧零状态。
+            print("\n⑨ 卡片跨刷新")
+            pg9, errs9 = open_page(b, url)
+            run_round(pg9, ROUND)
+            st = pg9.evaluate(ASK_STATE)
+            check("⑨a 前置：卡片可点", st["askState"] == "live" and st["btns"] == ["确定", "取消"],
+                  str(st))
+            store = pg9.evaluate(ASK_STORE)
+            check("⑨a 弹卡那一刻就把卡片存进了 localStorage（按 tokenKey + 会话分桶）",
+                  bool(store["conv"]) and bool(store["parsed"]) and store["count"] == 1
+                  and store["parsed"].get("token") == "FAKE_TOKEN_FOR_TEST_ONLY"
+                  and store["parsed"].get("q") == "要把《Python asyncio 异步并发》加进收藏吗？"
+                  and len(store["parsed"].get("opts") or []) == 2
+                  and store["key"].endswith("_" + str(store["conv"])),
+                  json.dumps(store, ensure_ascii=False)[:400])
+            reboot(pg9)
+            st = pg9.evaluate(ASK_STATE)
+            check("⑨a 刷新后卡片自己回来了（问句/按钮与刷新前逐字一致）",
+                  st["inMessages"] and st["active"] and st["askState"] == "live"
+                  and st["q"] == "要把《Python asyncio 异步并发》加进收藏吗？"
+                  and st["btns"] == ["确定", "取消"] and st["isLast"], str(st))
+            check("⑨a 接回来的待办是**活的**（能再点一次，不是一张看着像的静态卡）",
+                  st["pending"] == "SET", str(st))
+            seq = flow_stages(st["reports"], ASK_ID)
+            check("⑨a 接回在埋点里标成 restored=1（对账分得出「刷新接回来」与「帧弹的」，"
+                  "且不新造阶段名——FLOW_STAGES 是封闭表）",
+                  [s for s, _ in seq] == ["card"] and seq[0][1].get("restored") == "1",
+                  flow_message(st["reports"]))
+            check("⑨a 接回全程无失败上报（这不是异常路径）", by_fail(st["reports"]) == [],
+                  flow_message(st["reports"]))
+
+            # ⑨b 接回来的那张点下去，服务端说"这张令牌已经用过了"（另一个标签页先点了、
+            # 或者有人在重放）——第一个点的人真执行了，第二个什么都没做。这不是网络
+            # 故障，卡片必须如实收场：不写「已确认」（那是假的），也不许放行重试。
+            reset_evidence(pg9)
+            pg9.evaluate("""() => {
+              window.__stub.streamStatus = 409;
+              window.__stub.streamBody = { reply: '', success: false, error: 'confirm_already_used' };
+            }""")
+            st = pg9.evaluate(CLICK, "yes")
+            check("⑨b 点下去那一刻写的是「确认中…」（请求还在路上，结论未知）",
+                  st["note"] == "确认中…", repr(st["note"]))
+            pg9.wait_for_function("() => !window.__ctx.state.isSending", timeout=10000)
+            pg9.wait_for_timeout(400)
+            st = pg9.evaluate(ASK_STATE)
+            check("⑨b 卡片如实写成「已经用过一次了」（既不是已确认，也不是网络错误）",
+                  st["note"] == "这张卡片已经用过一次了（同一张只兑现一次），这次没有重复执行",
+                  repr(st["note"]))
+            check("⑨b 按钮落地、待办清空（这张卡到此为止，不给再点一次的错觉）",
+                  st["btns"] == [] and st["pending"] is None and st["askState"] == "settled", str(st))
+            check("⑨b 提示文案不套「网络错误: 」前缀（它不是连接故障，加了前缀就把一句准话读成故障）",
+                  "网络错误" not in st["allText"] and "已经用过一次" in st["allText"],
+                  repr(st["allText"][-200:]))
+            seq = flow_stages(st["reports"], ASK_ID)
+            check("⑨b 埋点 = click→sent→settle(used)：确实发出去了、被如实拒绝"
+                  "（有 sent 才叫发出去过；used 与 unknown/rollback 是三件不同的事）",
+                  [s for s, _ in seq] == ["click", "sent", "settle"]
+                  and seq[2][1].get("result") == "used", str(seq))
+            check("⑨b 请求体里带着令牌（这一跳是确认请求，不是一句普通发言）",
+                  "confirm_token" in (st["lastBody"] or ""), str(st["lastBody"])[:200])
+            store = pg9.evaluate(ASK_STORE)
+            check("⑨b 结算过就作废存档（少了这一句，刷新后一张已用过的卡会原样回来、又是可点的）",
+                  store["raw"] is None and store["count"] == 0,
+                  json.dumps(store, ensure_ascii=False)[:300])
+            reboot(pg9)
+            st = pg9.evaluate(ASK_STATE)
+            check("⑨b 刷新之后它没有回来（存档没了 ⇒ 没有可接的卡，也不该编一张出来）",
+                  not st["active"] and st["pending"] is None and not st["btns"], str(st))
+            check("⑨b 腿页面无未捕获异常", errs9 == [], " | ".join(errs9[:4]))
+
+            # ⑨c/⑨d 不值得接回来的两种存档：过期的、缺件的。这两条都要求会话已决议
+            # （未决议时 askKey 直接返回 null——代码刻意不碰存储，而不是去猜一个桶），
+            # 所以接着同一个页面跑：此时 conv 已由上面那轮决议成 1。
+            store = pg9.evaluate(ASK_STORE)
+            check("⑨c 前置：会话已决议（未决议的页面连键都不该建，不是本腿要测的形态）",
+                  bool(store["conv"]), json.dumps(store, ensure_ascii=False)[:200])
+            pg9.evaluate("""() => {
+              const tk = localStorage.getItem('tokenKey');
+              localStorage.setItem('chat_ask_' + tk + '_' + window.__ctx.state.conv,
+                JSON.stringify({ id: 'c1', q: '过期的问句',
+                  opts: [{label: '确定', value: 'yes'}], token: 'FAKE_TOKEN_FOR_TEST_ONLY',
+                  exp: Math.floor(Date.now() / 1000) - 60 }));
+            }""")
+            reboot(pg9)
+            st = pg9.evaluate(ASK_STATE)
+            store = pg9.evaluate(ASK_STORE)
+            check("⑨c 过期的存档：不接回（接回来就是一张点了必被服务端拒的卡）",
+                  not st["active"] and st["pending"] is None, str(st))
+            check("⑨c 过期存档顺手被清掉（没有读取路径的键不该一直堆在 localStorage 里）",
+                  store["raw"] is None and store["count"] == 0,
+                  json.dumps(store, ensure_ascii=False)[:300])
+            check("⑨c 不接回这件事不算失败（设计好的失效，不是把卡悄悄丢了）",
+                  by_fail(st["reports"]) == [], flow_message(st["reports"]))
+            pg9.evaluate("""() => {
+              const tk = localStorage.getItem('tokenKey');
+              localStorage.setItem('chat_ask_' + tk + '_' + window.__ctx.state.conv,
+                JSON.stringify({ id: 'c1', q: '问句在但没有令牌', opts: [], token: '', exp: 0 }));
+            }""")
+            pg9.evaluate("() => window.__engine.pullHistory()")
+            pg9.wait_for_timeout(700)
+            st = pg9.evaluate(ASK_STATE)
+            store = pg9.evaluate(ASK_STORE)
+            check("⑨d 缺令牌/缺按钮的存档：不接回（接回来也是一张点不动的卡）",
+                  not st["active"] and st["pending"] is None, str(st))
+            check("⑨d 缺件存档同样被清掉", store["raw"] is None,
+                  json.dumps(store, ensure_ascii=False)[:300])
 
             check("①③腿页面无未捕获异常", errs == [], " | ".join(errs[:4]))
             b.close()
