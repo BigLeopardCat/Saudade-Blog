@@ -78,12 +78,69 @@
         }
       } catch (e) { /* 上报自身失败静默 */ }
     };
-    const askSettle = (note) => {          // 按钮换成一行灰字（卡片留在流里当记录）
+    const askSettle = (note, state) => {   // 按钮换成一行灰字（卡片留在流里当记录）
+      if (askTimer) { clearTimeout(askTimer); askTimer = null; }   // 有结论了就不再倒计时
       askBtns.innerHTML = '';
       const el = document.createElement('div');
       el.className = 'chat-ask-note';
       el.textContent = note;
       askBtns.appendChild(el);
+      if (askBox) askBox.dataset.askState = state || 'settled';
+    };
+    // ── 卡片的结算态（20260924）──────────────────────────────────────────
+    // 此前这张卡只有两种命：可点，或者"已确认"。而"已确认"是**点击那一刻**写下的
+    // 乐观文本，没有任何回滚——令牌过期了、那条隐藏请求被忙守卫丢掉了、轮次以网络
+    // 错误收尾了，卡片照样写着"已确认"（20260924 生产事故 00:21：卡片说已确认，
+    // 系统里零执行，agent 事后又答"系统里也没有生成待确认的指令"）。
+    // 现在：点下去是「确认中…」，真实结论由**轮次收尾**给出（成功→已确认 / 没发出去
+    // →可重试 / 收尾失败→不确定），另有到期定时器兜底把卡片收成「已过期」。
+    // 展示用的到期时刻来自帧里的 exp（agent 侧取自令牌自身，不是重算）。
+    let askTimer = null;
+    const askExpire = () => {
+      askTimer = null;
+      // 本轮还在跑 ⇒ 结算权归它（它会给出真结果），此刻收卡片等于用一个猜的结论
+      // 覆盖即将到来的事实
+      if (ctx.state.confirmRound) return;
+      const pending = !!(askBox && askBox.dataset.askState === 'pending');
+      ctx.state.pendingAsk = null;
+      // 卡片已被摘走（切会话清了消息流）就不结算也不上报——那是"用户在别处"，
+      // 不是"点了没反应"，报上去全是假警报
+      if (!askBox || !askBox.classList.contains('active')
+          || askBox.parentNode !== messages) return;
+      if (pending) {
+        // 点了确定、等到令牌过期都没回音：正是最难查的那种静默失败，必须留痕
+        reportConfirm('点了确定之后等到令牌过期仍没有回复（卡片：确认中 → 已过期）');
+      }
+      askSettle('已过期，没有执行任何操作；要办的话再跟我说一次');
+    };
+    const askArmTimer = (ask) => {
+      if (askTimer) { clearTimeout(askTimer); askTimer = null; }
+      const exp = Number(ask && ask.exp) || 0;
+      // 没有 exp（旧服务端/签发失败）就按改动前处理：不显示倒计时、不自动结算。
+      // 服务端仍以验签为唯一凭据，缺这个数不影响安全，只少一层"卡片不会永远乐观"。
+      if (!exp) return;
+      const left = exp * 1000 - Date.now();
+      if (left <= 0) { askExpire(); return; }
+      askTimer = setTimeout(askExpire, left);
+    };
+    // 回滚（20260924）：这一跳**根本没出去**（忙守卫/建会话失败）。卡片退回可点，
+    // 原因写在问句下面——不是写进 .chat-ask-note，那一行的语义是"这件事有结论了"。
+    // `retry=true` 只给"确知什么都没发生"的场合；请求已经发出去过的失败一律走
+    // askUnknown（见轮次收尾）：那种时刻真话是"不知道有没有生效"，此时把按钮
+    // 放回去等于请用户再签一次字，而第一次可能已经执行了。
+    const askRollback = (ask, why) => {
+      if (!ask || !askBox || !askBox.classList.contains('active')) return;
+      ctx.state.pendingAsk = ask;
+      askBox.dataset.askState = '';   // 抹掉状态 ⇒ syncAsk 的就位判据不成立，强制重建按钮
+      syncAsk();
+      askQuestion.textContent = String(ask.q || '')
+        + '\n（上一次没发出去：' + why + '，可以再点一次）';
+    };
+    const askUnknown = (why) => {
+      if (!askBox || !askBox.classList.contains('active')) return;
+      ctx.state.pendingAsk = null;    // 不重新放行：请求发出去过，不能再签一次字
+      reportConfirm('点了确定之后本轮以失败收尾（' + why + '）——卡片按"不确定"结算，不再放行重试');
+      askSettle('没收到回复，不确定有没有生效；可以问我"刚才那件事办成了吗"');
     };
     const hideAsk = () => {                // 未点击的收场（用户改口打字说了别的）
       const shown = askBox && askBox.classList.contains('active');
@@ -112,7 +169,10 @@
       // active 且令牌相同，此时若再来同一枚令牌的确认帧（反射重跑/重发），只看前三
       // 条的判据会把它当成"已就位"而跳过重建 ⇒ 屏幕上是"已取消"的灰字，内存里却有
       // 一个可点的待办（点了没反应）。已结算的卡片必然没有 data-ask-value 按钮。
+      // 20260924 补 askState：显式区分"可点/在途/已结算"，也让回滚能强制重建按钮
+      // （askRollback 把 askState 抹掉一格，下面的判据随即不成立）。
       if (askBox.dataset.askToken === token
+          && askBox.dataset.askState === 'live'
           && askBox.classList.contains('active')
           && askBox.parentNode === messages
           && !!askBtns.querySelector('button[data-ask-value]')) return;
@@ -136,6 +196,8 @@
       // 会在弹卡后的第一次 reconcile 里被当成孤儿删掉（20260923 事故本体）。
       messages.appendChild(askBox);
       askBox.classList.add('active');
+      askBox.dataset.askState = 'live';   // 可点（见 askSettle/askRollback 的状态语义）
+      askArmTimer(ask);                   // 到期自动结算（帧里有 exp 才起，见 askArmTimer）
       scrollToBottom(messages, true);
     };
 
@@ -310,8 +372,16 @@
         const imgs = silent ? [] : (ctx.state.pendingImages || []);
         // 20260901：远端窗口回复中（remoteRounds 非空）同样拦截——跨窗发送状态
         // 同步的本地兜底（按钮禁用 + 守卫双保险，Enter 键/双击防穿透）
+        // 忙守卫（20260924 起对 silent 轮**不再静默 return**）：隐藏确认请求被它
+        // 丢掉时，屏幕上一切正常——卡片已经写了"已确认"，请求却一步都没走。这是
+        // 最难查的一类（20260924 事故：跨窗远端轮期间点确定，必现）。silent 轮把
+        // 这个事实交回给卡片（onDropped → 回滚成可重试），普通发言维持原样（输入框
+        // 还在、用户看得见没发出去）。
         if ((!msg && !imgs.length) || ctx.state.isSending
-            || Object.keys(ctx.state.remoteRounds || {}).length) return;
+            || Object.keys(ctx.state.remoteRounds || {}).length) {
+          if (silent && typeof opts.onDropped === 'function') opts.onDropped('此刻有轮次在跑');
+          return;
+        }
         // 用户选择"直接说话"而不是点按钮：挂起的确认作废（否则它日后突然生效）
         if (!silent && ctx.state.pendingAsk) hideAsk();
 
@@ -320,14 +390,27 @@
         // engine.adoptConversation(null)）；auto 态无需建（无参请求服务端自动决议
         // 最新非空会话）。建会话失败 → 本地错误气泡，输入保留可重试
         if (!(await engine.ensureConversation())) {
+          // 同上：silent 轮在这里也必须把失败交回卡片（气泡留着——它是给所有人看的
+          // 事实；卡片那句"没发出去，可以再点一次"是给点按钮的人看的下文）
+          if (silent && typeof opts.onDropped === 'function') opts.onDropped('新会话没建成');
           const it = __chatCore.migrateItem({ type: 'agent', text: '创建新会话失败，请稍后重试', time: Date.now() });
           ctx.state.items.push(it);
           appendMsg(it);
           scrollToBottom(messages, true);
           return; // 输入未清空，可重试
         }
-        if (ctx.state.isSending || Object.keys(ctx.state.remoteRounds || {}).length) return; // ensure 网络窗口期被并发点击发送，放弃本轮
+        // ensure 网络窗口期被并发点击发送，放弃本轮（同上：silent 轮交回卡片）
+        if (ctx.state.isSending || Object.keys(ctx.state.remoteRounds || {}).length) {
+          if (silent && typeof opts.onDropped === 'function') opts.onDropped('建会话期间被别的轮次抢占');
+          return;
+        }
         const roundConvId = ctx.state.conv; // 本轮会话锚点：请求体/停止 discard/busy 共用
+        // 确认请求**真的开始了**才登记在途标记（结算权归本轮，见 finally 与
+        // handleAskChoice）。放在忙守卫之后是刻意的：被守卫挡下的一律走 onDropped
+        // 立即回滚，不留一个永远不会被结算的在途标记。
+        if (silent && opts.confirmToken) {
+          ctx.state.confirmRound = { ask: opts.confirmAsk || null, failed: '' };
+        }
 
         // 新对话开始：自动关闭上一条遗留的"建议跳转"面板——用户没点击/没取消时
         // 不应让它残留到下一轮（已确认的目标由用户点击触发，不受影响）
@@ -878,6 +961,9 @@
             if (typingEl) typingEl.remove();
             clearTimeout(idleTimer);
             clearTimeout(totalTimer);
+            // 确认轮的结算（20260924）：会话已删 ⇒ 这一跳没落地。不标这一笔的话
+            // finally 会把它当成功、把卡片结算成"已确认"（比不结算更坏）
+            if (ctx.state.confirmRound) ctx.state.confirmRound.failed = '会话已删除';
             return; // finally 仍执行（复位 isSending/按钮/busy + pendingPull 补拉）
           }
           // 异常路径兜底：移除打字指示器（AbortError/网络错误/__ERROR__ 帧）
@@ -899,6 +985,13 @@
             } catch(e2) { /* 极端情况下气泡创建失败也继续走复位逻辑 */ }
           }
           if (e && e.name === 'AbortError') {
+            // 确认轮结算（20260924）：中止/空闲超时——请求**已经发出去过**，
+            // 服务端可能已经执行了（agent 的取消检查点保证写工具不在取消后开跑，
+            // 但轮次已走到哪一步从客户端不可知）⇒ 按"不确定"结算，绝不放行重试
+            if (ctx.state.confirmRound) {
+              ctx.state.confirmRound.failed =
+                ctx.state.stoppedByUser ? '你停止了本轮' : '本轮超时/连接中断';
+            }
             if (ctx.state.stoppedByUser) {
               // 用户主动停止生成：标记丢弃本轮，复位后 discardTurn() 统一清理
               // （内存/缓存/DOM 删除 + discard 广播 + DB 由 Rust DiscardAbortedExchange 删）
@@ -938,6 +1031,10 @@
             }
           } else {
             const errMsg = '网络错误: ' + (e && e.message ? e.message : '未知错误');
+            // 确认轮结算（20260924）：同 AbortError 分支——请求发出去过，结果不可知
+            if (ctx.state.confirmRound) {
+              ctx.state.confirmRound.failed = '本轮以网络错误收尾';
+            }
             // 断流时**别丢已经收到的半截回复**（20260916 事故：worker 崩溃把 3460 字
             // 的回复截断，旧写法整段替换成错误文案，用户以为前半段没生成出来）
             renderFailed(contentSpan, errMsg, displayText);
@@ -981,6 +1078,18 @@
           // 其他窗口恢复发送按钮（正常收尾/异常中断/停止生成统一走 finally）
           broadcast({ t: 'idle', roundId, from: engine.windowId });
           try { localStorage.removeItem('saudade-chat-busy'); } catch (e) {}
+          // 确认请求的结算（20260924）：卡片那句「确认中…」必须由**本轮的真实结果**
+          // 落地——成功 → 「已确认，结果见下方回复」；失败 → 「不确定」（见 askUnknown：
+          // 请求发出去过就不再放行重试，重签一次字可能造成第二次执行）。
+          // 放在 finally 是刻意的：正常收尾、异常、停止生成、会话已删四条路都汇聚
+          // 在此，且 isSending/按钮复位已在上面跑完。被忙守卫挡下的那一类不走这里
+          // （它们在 sendMessage 里就 onDropped 回滚了，压根没登记在途标记）。
+          if (ctx.state.confirmRound) {
+            const cr = ctx.state.confirmRound;
+            ctx.state.confirmRound = null;
+            if (cr.failed) askUnknown(cr.failed);
+            else askSettle('已确认，结果见下方回复');
+          }
           // 流式中被推迟的 DB 拉取在此补拉（storage 事件可能在流中到达）
           if (ctx.state.pendingPull) { ctx.state.pendingPull = false; setTimeout(pullHistory, 0); }
           // 20260903：本轮收尾——标题派生/updated_at touch 都发生在服务端该轮
@@ -1629,10 +1738,12 @@
       const handleAskChoice = (value) => {
         const ask = ctx.state.pendingAsk;
         if (!ask) return;
-        if (ctx.state.isSending) {         // 流还没收尾（极短窗口）：不叠发，卡片留着
-          // 20260923：留痕而不是静默 return——"点了确定像没反应"正是这条链路最难
-          // 查的症状（收尾后会由 syncAsk 补弹，用户通常感觉不到这一次点击没生效）
-          reportConfirm('点了确定，但本轮流尚未收尾（卡片保留，待收尾后再弹）');
+        // 忙判据与 sendMessage 的两条守卫**同源**（20260924）：此前这里只挡
+        // isSending，跨窗远端轮（remoteRounds 非空）漏在外面——那种时刻点确定，
+        // sendMessage 会把它静默丢掉，而卡片已经写上了"已确认"。宁可在这里挡住
+        // 并留痕（卡片保持可点，收尾后用户自己再点一次），也不要一次假确认。
+        if (ctx.state.isSending || Object.keys(ctx.state.remoteRounds || {}).length) {
+          reportConfirm('点了确定，但此刻有轮次在跑（本窗发送中/别的窗口回复中）——卡片保留，待收尾后再点');
           return;
         }
         ctx.state.pendingAsk = null;       // 一次点击只兑现一次
@@ -1640,10 +1751,16 @@
           askSettle('已取消');
           return;
         }
-        askSettle('已确认');               // 立即反馈：按钮先落地，结果由下一条气泡给出
+        // 点下去写的是「确认中…」——**不再是「已确认」**。请求还没出去，而"已确认"
+        // 是点击那一刻的乐观文本、没有任何回滚（20260924 事故：卡片说已确认，系统里
+        // 零执行）。真实结论由轮次收尾给出，另有到期定时器兜底。
+        askSettle('确认中…', 'pending');
         // 隐藏确认请求：不进历史、不起气泡。令牌是唯一凭据（agent 侧验签），
-        // 合成 message 只作为"当前这条用户输入"喂给叙述层（服务端不落库）
+        // 合成 message 只作为"当前这条用户输入"喂给叙述层（服务端不落库）。
+        // onDropped = 这一跳根本没发出去（忙守卫/建会话失败）⇒ 回滚成可重试。
         sendMessage({ silent: true, confirmToken: ask.token, convId: ask.convId,
+                      confirmAsk: ask,
+                      onDropped: (why) => askRollback(ask, why),
                       message: ask.msg || ('确认执行：' + (ask.summary || ask.q || '')) });
       };
       askBtns.addEventListener('click', (e) => {
