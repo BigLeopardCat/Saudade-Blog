@@ -938,6 +938,16 @@
             if (ctx.state.pendingAsk && !ctx.state.isSending) showAsk();
             else if (ctx.state.pendingAsk) hideAsk();
           }, 0);
+          // 20260923：一轮对话收尾 → 广播给"看板娘可能改过的那些状态"。
+          // agent 有写自己数据的工具（收藏/通知已读/站内信），它改的是**服务端**，
+          // 页面上的★、收藏列表、红点都没有理由知道——此前只能等下一次轮询（或永远不变）。
+          // 这里不判断"这轮到底写没写"：过程帧里只有中文人话、没有可判的机器标记，
+          // 而为此让 Rust 多转发一种帧要动三端协议。改成一个无条件的信号 + 订阅方自己
+          // 决定拉不拉（收藏那一份只在"这一刻真的在看收藏"时才会发请求，见
+          // src/components/UserCenter/favorites.ts 的 useFavorites/enabled）。
+          try {
+            window.dispatchEvent(new CustomEvent('agent-turn-done'));
+          } catch (e) { /* ignore */ }
         }
         if (ctx.state.discardTurn) {
           // 丢弃本轮用户输入与部分回复（不加入记忆）：

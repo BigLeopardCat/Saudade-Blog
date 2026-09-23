@@ -29,7 +29,6 @@ import {
     deleteDraft,
     errMsg,
     getDrafts,
-    getFavorites,
     getMailbox,
     getMyTalks,
     getNotifications,
@@ -44,7 +43,6 @@ import {
     uploadAvatar,
 } from '../../apis/ProfileMethods.tsx'
 import type {
-    FavoriteItem,
     Mailbox,
     MessageDraft,
     MessageItem,
@@ -56,6 +54,7 @@ import type {
 import AvatarCropModal from '../AvatarCropModal'
 import { DEFAULT_AVATAR_URL } from './identity'
 import { notifyUnreadChanged, useUnread } from './unread'
+import { applyLocalFavorite, useFavorites } from './favorites'
 import './index.sass'
 
 /** 后端时间是 "YYYY-MM-DD HH:MM:SS"（已是 +08:00 钟面）——截到分钟，不做任何换算 */
@@ -104,8 +103,12 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
     const [tab, setTab] = useState('settings')
     const [profile, setProfile] = useState<ProfileInfo | null>(null)
 
-    // 各页签数据（null = 还没加载过）
-    const [favorites, setFavorites] = useState<FavoriteItem[] | null>(null)
+    // 各页签数据（null = 还没加载过）。收藏**不在本组件里存**——它是共享状态（详情页那颗
+    // ★ 看的是同一份），见 favorites.ts。enabled = 「这一页这一刻真的在看收藏」：窗没开、
+    // 没登录、没点开收藏页签都不拉（其余三个页签同理，都是点了才拉）。
+    const { list: favorites, failed: favFailed } = useFavorites(
+        open && loggedIn && tab === 'favorites',
+    )
     const [talks, setTalks] = useState<MyTalk[] | null>(null)
     const [notices, setNotices] = useState<NotificationItem[] | null>(null)
     const [noticeUnread, setNoticeUnread] = useState(0)
@@ -186,13 +189,13 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
     const loadTab = useCallback(
         async (key: string) => {
             if (!loggedIn) return
+            // 收藏**不在这里拉**：它是共享状态（详情页那颗★看的是同一份），由 useFavorites
+            // 按「这一刻真的在看收藏」自己拉并订阅变化。这里再拉一次就是两份状态——
+            // 正是 20260923 这轮修掉的洞（favorites.ts 头注）。
+            if (key === 'favorites') return
             setLoadingTab(true)
             try {
-                if (key === 'favorites' && favorites === null) {
-                    const res = await getFavorites()
-                    if (ok(res)) setFavorites(res.data.data || [])
-                    else message.error(errMsg(res))
-                } else if (key === 'talks' && talks === null) {
+                if (key === 'talks' && talks === null) {
                     const res = await getMyTalks()
                     if (ok(res)) setTalks(res.data.data || [])
                     else message.error(errMsg(res))
@@ -215,7 +218,7 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                 setLoadingTab(false)
             }
         },
-        [loggedIn, favorites, talks, notices, mailbox],
+        [loggedIn, talks, notices, mailbox],
     )
 
     const onTabChange = (key: string) => {
@@ -341,7 +344,8 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
         try {
             const res = await removeFavorite(noteId)
             if (ok(res)) {
-                setFavorites((list) => (list || []).filter((f) => f.noteId !== noteId))
+                // 写入成功 ⇒ 交给共享状态（列表当场摘掉那一行 + 详情页那颗★同时变）
+                applyLocalFavorite(noteId, false)
                 message.success('已取消收藏')
             } else {
                 message.error(errMsg(res))
@@ -639,9 +643,14 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
     const favoritesPane = (
         <div className="ucPane">
             <List
-                loading={loadingTab && favorites === null}
+                loading={favorites === null && !favFailed}
                 dataSource={favorites || []}
-                locale={{ emptyText: <Empty description="还没有收藏的文章（文章页点「收藏」）" /> }}
+                locale={{
+                    emptyText: favFailed && favorites === null
+                        // 读不到 ≠ 没有收藏（同一族谎，见 favorites.ts 的 failed）
+                        ? <Empty description="收藏列表没读到（网络或登录状态问题），过一会儿再打开看看" />
+                        : <Empty description="还没有收藏的文章（文章页点「收藏」）" />,
+                }}
                 renderItem={(item) => (
                     <List.Item
                         actions={[

@@ -19,7 +19,8 @@ import readNightVideo from '../../../assets/read_night.mp4';
 import {getNoteById} from "../../../apis/NoteMethods.tsx";
 import SeoHelmet from "../../../components/SeoHelmet";
 import getToken from "../../../apis/getToken.tsx";
-import {addFavorite, errMsg, getFavorites, ok, removeFavorite} from "../../../apis/ProfileMethods.tsx";
+import {addFavorite, errMsg, ok, removeFavorite} from "../../../apis/ProfileMethods.tsx";
+import { applyLocalFavorite, useFavorites } from "../../../components/UserCenter/favorites.ts";
 
 // ByteMD imports
 import { Viewer } from '@bytemd/react'
@@ -59,11 +60,14 @@ const ReadArticle = () => {
     // "文章不存在"提示，不再渲染空壳页（此前 fetch 失败只 console.error，
     // article=null → 空封面+空正文的假页面，用户误以为"能打开"）
     const [notFound, setNotFound] = useState(false)
-    // 收藏（20260922 个人中心一期）：本站此前没有任何收藏入口。
-    // 没有"这篇有没有被收藏"的单篇接口，所以登录用户进页面时拉一次自己的收藏列表做比对——
-    // 收藏是低频动作、这个列表也很短，不值得为它加一个端点。
-    const [faved, setFaved] = useState<boolean | null>(null)
+    // 收藏（20260922 个人中心一期；20260923 三轮改成共享状态）：本站此前没有任何收藏入口。
+    // 没有"这篇有没有被收藏"的单篇接口 ⇒ 拿整个收藏列表来比对（收藏是低频动作、列表很短，
+    // 不值得为它加端点）。**列表不再存在本组件的 state 里**：个人中心的收藏页签看的是同一份
+    // store，谁改了另一处都会跟着变（此前各存一份，两边互不同步，见 favorites.ts 头注）。
     const [favBusy, setFavBusy] = useState(false)
+    const loggedIn = !!getToken()
+    const { has: hasFaved } = useFavorites(loggedIn)
+    const faved = loggedIn && hasFaved(id)
 
     // 顶部横幅的日夜背景视频（20260912）
     const isDarkMode = useIsDarkMode()
@@ -100,24 +104,6 @@ const ReadArticle = () => {
         scrollToTop();
     }, [id]);
     
-    // 收藏状态：登录用户拉一次自己的收藏列表，看这篇在不在里面（见上面 faved 的注释）
-    useEffect(() => {
-        if (!id || !getToken()) {
-            setFaved(null)
-            return
-        }
-        let alive = true
-        getFavorites()
-            .then((res) => {
-                if (!alive) return
-                if (ok(res)) {
-                    setFaved((res.data.data || []).some((f) => String(f.noteId) === String(id)))
-                }
-            })
-            .catch(() => { /* 拿不到状态就按"未收藏"显示，点一下会走真实的收藏请求 */ })
-        return () => { alive = false }
-    }, [id])
-
     const toggleFavorite = async () => {
         if (!id) return
         if (!getToken()) {
@@ -128,7 +114,10 @@ const ReadArticle = () => {
         try {
             const res = faved ? await removeFavorite(Number(id)) : await addFavorite(Number(id))
             if (ok(res)) {
-                setFaved(!faved)
+                // 写入成功 ⇒ 把结果交给共享状态（它顺手拉一次全量对齐：个人中心那份列表
+                // 与这里的★立刻是同一个事实）。**不在这里改本地 boolean**——两份状态正是
+                // 这轮要修的洞（见 favorites.ts 头注）。
+                applyLocalFavorite(Number(id), !faved)
                 message.success(faved ? '已取消收藏' : '已收藏（可在「设置 → 收藏的文章」里查看）')
             } else {
                 message.error(errMsg(res))
