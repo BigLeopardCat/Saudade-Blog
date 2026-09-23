@@ -83,6 +83,30 @@ export function selectAvatar(myAvatar: string | null, rememberedAvatar: string |
 }
 
 /**
+ * **登录页**那一格头像（20260924 用户拍板）。与头部不同的唯一一点：它还要看**账号输入框**。
+ *
+ * 规则（纯本地比较，零请求）：输入框空着、或填的就是本机记住的那个账号 ⇒ 显示上面那句算出来的
+ * 头像；填了**别的**账号 ⇒ 立刻退回默认头像。
+ *
+ * 为什么不能"按输入的用户名去问后端要头像"：那等于给所有人一个**账号枚举 oracle**——输 `sora`
+ * 出猫头像、输 `soraa` 出默认头像，一次请求就把"这个账号存不存在"吐出来。企业侧的通行做法是
+ * 认证前不回显任何按用户名查到的资料：要么走"先输账号、下一页才显示欢迎语"的两步流，要么
+ * **只认本机登录过的账号**（Windows/macOS 的账号选择器），要么登录页干脆不放个人头像。这里取
+ * 第二条：头像只来自 localStorage 里那份 `saudade.lastUser`，输入框一偏离它就回默认。
+ *
+ * 比较做 trim + 忽略大小写：这只是**展示层**的宽容匹配，真正的账号大小写语义在后端。
+ */
+export function selectLoginAvatar(
+    viewerAvatar: string,
+    rememberedUsername: string,
+    typedAccount: string,
+): string {
+    const typed = typedAccount.trim().toLowerCase()
+    const known = rememberedUsername.trim().toLowerCase()
+    return typed && typed !== known ? DEFAULT_AVATAR_URL : viewerAvatar
+}
+
+/**
  * 头部（以及任何要知道"当前访客是谁"的地方）用的头像地址。
  *
  * 拉取时机：挂载时 + `auth-change`（登录/退出）+ `profile-change`（改完昵称/头像）。
