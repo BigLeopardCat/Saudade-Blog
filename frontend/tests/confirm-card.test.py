@@ -536,6 +536,36 @@ def main():
             st = pg7.evaluate(ASK_STATE)
             check("帧里的 exp 已经是过去时刻 ⇒ 当场上账为「已过期」",
                   bool(st["note"]) and "已过期" in st["note"] and st["btns"] == [], repr(st["note"]))
+            # 定时器被节流（后台标签页真实会发生）⇒ 按钮还在、令牌却已经过期。
+            # 真场景复现法：把长 timeout 吞掉，卡片就一直停在"可点"，然后在过期
+            # 之后点它——不挡这一下，服务端必拒、回一句失效文案，而卡片写着"已确认"。
+            # 吞定时器必须在**卡片渲染之前**装上：卡片是渲染那一刻起倒计时的，
+            # 装晚了（渲染完再吞）真定时器已经登记在案，照样会按时把卡片结算掉。
+            pg7.evaluate("""() => {
+              window.__origST = window.setTimeout;
+              window.setTimeout = (fn, ms) => (ms > 500 ? 0 : window.__origST(fn, ms));
+            }""")
+            run_round(pg7, [text_frame("好的。"),
+                            confirm_frame(exp=int(time.time()) + 600), "__END__"])
+            st = pg7.evaluate(ASK_STATE)
+            check("前置：长定时器被吞掉后卡片停在可点（节流后它就是不会自己结算）",
+                  st["askState"] == "live" and st["btns"] == ["确定", "取消"], str(st))
+            # 合成节流的后果：这段时间里令牌真的过期了（把待办里的 exp 拨到过去——
+            # 服务端验签比较的正是这个数，前端这里读的也是同一个字段）
+            pg7.evaluate("""() => {
+              window.__ctx.state.pendingAsk.exp = Math.floor(Date.now() / 1000) - 5;
+            }""")
+            reset_evidence(pg7)
+            set_frames(pg7, [text_frame("（这一轮不该被请求）"), "__END__"])
+            st = pg7.evaluate(CLICK, "yes")
+            check("过期后点击：本地就上账为「已过期」（不写乐观的已确认）",
+                  bool(st["note"]) and "已过期" in st["note"], repr(st["note"]))
+            check("过期后点击：**不发那一跳**（服务端必拒，发了只会得到一句自相矛盾的回复）",
+                  pg7.evaluate("() => window.__stub.streamCalls") == 0,
+                  str(pg7.evaluate("() => window.__stub.lastBody")))
+            check("过期后点击：待办清空、按钮落地",
+                  pg7.evaluate(ASK_STATE)["pending"] is None and st["btns"] == [], str(st))
+            pg7.evaluate("() => { window.setTimeout = window.__origST; }")
             check("⑦腿页面无未捕获异常", errs7 == [], " | ".join(errs7[:4]))
 
             check("①③腿页面无未捕获异常", errs == [], " | ".join(errs[:4]))
