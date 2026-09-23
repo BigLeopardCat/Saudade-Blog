@@ -835,6 +835,10 @@ fn render_exec_row(row: &serde_json::Value) -> String {
         "list_my_favorites" => "查看我的收藏".to_string(),
         "get_unread_summary" => "查看未读汇总".to_string(),
         "list_notifications" => "查看站内通知".to_string(),
+        // 站内信（私信，20260923 批 8）：与「站内通知」是两回事（通知是系统推的、
+        // 信是一对一写的），措辞必须分开——回执行会经 recent_executions 注入下一轮，
+        // 把两者写成同一个词，planner 就会拿通知的 id 去标记信（反之亦然）。
+        "list_my_messages" => "查看站内信".to_string(),
         // 写三件（scope=write.own）：**回执不带 meta**——AUDIT_SCOPES 只含 write.console
         // （test_authz 精确锁着），所以这里只能从 args 渲染。args 一律是字符串
         // （见 py_int_list 的头注：`all` 的 bool 过来是 Python repr 的 "True"）。
@@ -855,6 +859,20 @@ fn render_exec_row(row: &serde_json::Value) -> String {
                     n if n > 3 => format!("标记站内通知已读（{} 等 {} 条）",
                                           ids[..3].join("、"), n),
                     _ => format!("标记站内通知已读（{}）", ids.join("、")),
+                }
+            }
+        }
+        "read_messages" => {
+            let want_all = matches!(arg("all").as_str(), "True" | "true" | "1");
+            if want_all {
+                "标记站内信已读（全部未读）".to_string()
+            } else {
+                let ids = py_int_list(&arg("ids"));
+                match ids.len() {
+                    0 => "标记站内信已读".to_string(),
+                    n if n > 3 => format!("标记站内信已读（{} 等 {} 条）",
+                                          ids[..3].join("、"), n),
+                    _ => format!("标记站内信已读（{}）", ids.join("、")),
                 }
             }
         }
@@ -1400,6 +1418,8 @@ mod tests {
             ("list_my_favorites", "查看我的收藏"),
             ("get_unread_summary", "查看未读汇总"),
             ("list_notifications", "查看站内通知"),
+            // 站内信（20260923 批 8 补）：与「站内通知」是两种物件，措辞刻意不同字
+            ("list_my_messages", "查看站内信"),
         ] {
             let row = json!({"tool": tool, "args": {}});
             assert_eq!(render_exec_row(&row), want);
@@ -1425,6 +1445,23 @@ mod tests {
         let junk = json!({"tool": "read_notifications",
                           "args": {"all": "False", "ids": "['a', -3, '']"}});
         assert_eq!(render_exec_row(&junk), "标记站内通知已读");
+
+        // 站内信（20260923 批 8）：同一套渲染，但名词换成「站内信」——两个词的
+        // 渲染臂互为镜像，谁被删了/写错了都可从这一对断言看出来（跨轮记忆里
+        // "标记了通知"与"标记了信"是两件事，混了 planner 就会拿错 id）。
+        let m_all = json!({"tool": "read_messages", "args": {"all": "True"}});
+        assert_eq!(render_exec_row(&m_all), "标记站内信已读（全部未读）");
+        let m_ids = json!({"tool": "read_messages", "args": {"all": "False", "ids": "[3]"}});
+        assert_eq!(render_exec_row(&m_ids), "标记站内信已读（3）");
+        let m_many = json!({"tool": "read_messages",
+                            "args": {"all": "False", "ids": "[3, 4, 5, 6]"}});
+        assert_eq!(render_exec_row(&m_many), "标记站内信已读（3、4、5 等 4 条）");
+        let m_empty = json!({"tool": "read_messages", "args": {"all": "False", "ids": "[]"}});
+        assert_eq!(render_exec_row(&m_empty), "标记站内信已读");
+        // 与通知那三行不同字（防"复制粘贴改一半"：两臂逐字相同=有一臂漏改）
+        let n_all = render_exec_row(&json!({"tool": "read_notifications",
+                                            "args": {"all": "True"}}));
+        assert_ne!(render_exec_row(&m_all), n_all);
     }
 
     #[test]
