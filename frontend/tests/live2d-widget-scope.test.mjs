@@ -92,13 +92,16 @@ for (const f of ['chat-stream.js', 'chat-engine.js', 'chat-render.js', 'chat-ses
   const iPending = seg.indexOf("askSettle('确认中…'");
   ok(iReturn >= 0 && iPending >= 0 && iReturn < iPending,
      'handleAskChoice 的早退全在 settle 之前（确立反馈=发请求，不会静默吞掉）');
-  ok(iPending >= 0 && /askSettle\('已取消'\)/.test(seg),
+  // 括号里**不锚定参数个数**：askSettle 现在带第三个参数（结算结论，逐跳埋点用），
+  // 锚死 `'已取消')` 会在每次加参数时假红一次——要锁的是"这一跳写了可见反馈"，
+  // 不是那条调用的参数表（判据锚在文案上，不锚在形状上）。
+  ok(iPending >= 0 && /askSettle\('已取消'[^)]*\)/.test(seg),
      '点确定/取消都有可见反馈（按钮换灰字）');
   // 20260924：点下去写的是「确认中…」而**不是**「已确认」——"已确认"是点击那一刻
   // 写下的乐观文本、没有任何回滚（生产事故：卡片说已确认、系统里零执行）。真实
   // 结算只允许出现在轮次收尾，故这里连同"点击那一段里不许出现它"一起锁住。
   ok(!/askSettle\('已确认/.test(seg), '点确定不写「已确认」（乐观态不许再回到点击那一跳）');
-  ok(/askSettle\('已确认，结果见下方回复'\)/.test(body),
+  ok(/askSettle\('已确认，结果见下方回复'[^)]*\)/.test(body),
      '成功结算写在轮次收尾（而非点击处）');
 }
 
