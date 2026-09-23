@@ -7,7 +7,7 @@ import { useDispatch } from 'react-redux';
 import { fetchToken } from "../../store/components/user.tsx";
 import { useNavigate } from 'react-router-dom';
 import getToken from '../../apis/getToken';
-import { readRememberedUser, selectLoginAvatar, useViewerAvatar } from '../../components/UserCenter/identity';
+import { readKnownUsers, selectLoginAvatar, useViewerAvatar } from '../../components/UserCenter/identity';
 import { isAdminToken } from '../../utils/auth.ts';
 import UserData from "../../interface/UserData";
 import SeoHelmet from "../../components/SeoHelmet";
@@ -48,10 +48,10 @@ const Login: React.FC = () => {
     // =上次那个账号的头像；从没登录过=默认头像。登录页正是"退出后落回"的地方——令牌没了，
     // 展示身份不该跟着失忆（三态的选择与缓存见 components/UserCenter/identity.ts）。
     const viewerAvatar = useViewerAvatar();
-    // 本机记住的那个账号名只读一次：它是 localStorage 里的东西，用户在这页打字时不会变
+    // 本机登录过的账号清单只读一次：它是 localStorage 里的东西，用户在这页打字时不会变
     // （登录成功会整页跳走）。判据与"为什么不能按输入的名字去查头像"见 selectLoginAvatar。
-    const [rememberedUsername] = useState(() => readRememberedUser()?.username || '');
-    const avatar = selectLoginAvatar(viewerAvatar, rememberedUsername, account);
+    const [knownUsers] = useState(() => readKnownUsers());
+    const avatar = selectLoginAvatar(viewerAvatar, knownUsers, account);
 
     useEffect(() => {
         const token = getToken();
@@ -178,8 +178,8 @@ const Login: React.FC = () => {
                         {/* 这一格原来是小字「登录后体验完整服务」，20260924 起换成访客自己的
                             三态头像（同一个 useViewerAvatar，尺寸比头部那个大一号）。
                             再叠一层"跟着输入框走"：换账号输入时立刻退回默认头像——头像只认
-                            本机记住的那个账号，绝不按输入的名字去问后端（那是账号枚举 oracle，
-                            见 identity.ts 的 selectLoginAvatar）。 */}
+                            **本机登录过的那些账号**各自缓存在本地的头像，绝不按输入的名字去问
+                            后端（那是账号枚举 oracle，见 identity.ts 的 selectLoginAvatar）。 */}
                         <Avatar className="login-avatar" src={avatar} size={64} alt="访客头像" />
                     </header>
 
