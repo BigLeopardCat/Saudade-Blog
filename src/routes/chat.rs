@@ -321,6 +321,28 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
     // 隐藏确认轮（20260921）：**不落用户消息**——它代表的是一次点击而非一条发言，
     // 落一条空消息会占掉注入窗口、干扰标题派生，前端也不该出现这条气泡（前端同样不发）
     let is_confirm = payload.confirm_token.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false);
+    // 一次性核销（20260924）：**转发之前**认领这张令牌，认领不到就直接如实拒绝。
+    // 位置是刻意的——核销必须发生在写操作可能发生**之前**，否则两个并发请求会双双
+    // 通过（"先查、再执行、最后标记"之间的窗口就是第二次写）。这也是全链路唯一
+    // 能拿到令牌原文的地方（agent 侧验签、Rust 侧核销，各管一段）。
+    // 拒绝走 409 + 错误码：前端按它把卡片如实结算成"已经用过一次"，不当网络错误。
+    if is_confirm {
+        if let Some(tok) = payload.confirm_token.as_deref() {
+            if let Some(reason) = claim_confirm_token(&state.db, uid, tok).await {
+                // 留痕（不含令牌）：重放/双标签页同点这件事此前在链路上完全无声，
+                // 而它是"点了一次确定，什么都没发生"的三种成因之一。
+                info!(user_id = uid, conversation_id, "chat: 确认令牌已被用掉，零转发：{}", reason);
+                return Err((
+                    StatusCode::CONFLICT,
+                    Json(ChatResponse {
+                        reply: String::new(),
+                        success: false,
+                        error: Some("confirm_already_used".into()),
+                    }),
+                ));
+            }
+        }
+    }
     let stored_content = match payload.image.as_deref() {
         // 20260829b：空数组不拼标记（防御旧客户端发 image:[]）——否则无图消息
         // 也带 [图片] 落库，pull 后前端全部 user 气泡出现图片图标
@@ -955,6 +977,11 @@ const PENDING_INLINE_MAX: usize = 600;
 /// `args` 列上限：它是**审计线索**不是执行依据（真正的执行参数在签名的确认令牌
 /// 里），超限只存前缀，绝不为了"看起来是合法 JSON"去改写内容。
 const PENDING_ARGS_COL_MAX: usize = 4000;
+/// 卡片问句列上限（= 迁移里 `question` varchar(500)）。超限只存前缀：问句是给人读的，
+/// 截断顶多少看几个字，而**丢掉整张卡片**（下面那条"空串=不可重建"的规则）更坏。
+const PENDING_QUESTION_COL_MAX: usize = 500;
+/// 选项 JSON 列上限（= 迁移里 `options` varchar(600)）。当前固定两项，余量很大。
+const PENDING_OPTIONS_COL_MAX: usize = 600;
 
 /// 待办落库（20260923）：agent 在弹确认框那一轮随 `__CONFIRM__` 发来的结构化提议。
 /// 先删本会话仍 pending 的旧行——**新的顶掉旧的**（"最新那次提议"才是主人心里那
@@ -976,6 +1003,20 @@ async fn save_pending_action(
         })
         .unwrap_or_default();
     let args = v["specs"].to_string();
+    // 卡片素材（20260924）：问句是字符串、按钮是 JSON **数组**（`json_capped` 只认
+    // 字符串，数组走 to_string——类型不对一律空串，宁可卡片重建不出来，也不编一个
+    // 按钮出来）。两件都写时定稿：重建出来的卡片必须与主人当时看到的那张逐字一致。
+    let options = if v["options"].is_array() {
+        v["options"].to_string()
+    } else {
+        String::new()
+    };
+    // 到期时刻：agent 给的是令牌自身的 `exp`（UTC 秒）→ 库里的 +08:00 本地钟面
+    // （CLAUDE.md 时区约定：显式时间一律本地钟面，读侧不再二次偏移）。缺字段/非数字
+    // → NULL（"未知"，读侧如实不留卡片）。
+    let expires_at: Option<chrono::NaiveDateTime> = v["expires_at"].as_i64().and_then(|s| {
+        chrono::DateTime::from_timestamp(s, 0).map(|t| t.with_timezone(&chrono::Local).naive_local())
+    });
     let _ = pending_action::Entity::delete_many()
         .filter(pending_action::Column::ConversationId.eq(conversation_id))
         .filter(pending_action::Column::Status.eq("pending"))
@@ -989,6 +1030,11 @@ async fn save_pending_action(
         tool: Set(tools.join(",").chars().take(255).collect()),
         args: Set(Some(args.chars().take(PENDING_ARGS_COL_MAX).collect())),
         target: Set(json_capped(v, "target", 300)),
+        // 卡片四件（20260924）：问句/按钮供重建，jti/到期时刻供一次性核销与时效过滤
+        question: Set(json_capped(v, "question", PENDING_QUESTION_COL_MAX)),
+        options: Set(options.chars().take(PENDING_OPTIONS_COL_MAX).collect()),
+        jti: Set(json_capped(v, "jti", 64)),
+        expires_at: Set(expires_at),
         requested_by: Set(match json_capped(v, "requested_by", 32) {
             s if s.is_empty() => "user".to_string(),
             s => s,
@@ -1001,6 +1047,108 @@ async fn save_pending_action(
     }
     .save(db)
     .await;
+}
+
+/// 令牌的一次性核销（20260924）：把 `jti` 对应的那一行置为"已被用掉"。
+///
+/// 返回 `Some(理由)` = **这张令牌已经兑现过一次**，调用方零转发（如实拒绝）；
+/// `None` = 放行。判据只有一条 SQL 的 `rows_affected`：只有第一个把
+/// `claimed_at` 从 NULL 改成值的人拿到 1，重放/两个标签页同点都拿到 0。
+///
+/// **为什么是"尽力而为"**：认领表里没有这张令牌（老客户端、落库失败、签发那一轮
+/// DB 抖动、20260924 之前签发的 v1 令牌根本没有 jti）时一律放行——**验签始终是
+/// 唯一凭据**，本函数只负责"同一张令牌不兑现两次"。反过来把"查不到"当成拒绝，
+/// 会打死所有无状态确认（那正是 20260921 上线时唯一的通道）。同理，DB 出错也放行：
+/// 可用性优先，且失去的只是"重复提交的护栏"，不是授权判据。
+///
+/// **认领键取自令牌原文**（Rust 侧只解 payload，不验签）：认领是**自伤型**的——
+/// `WHERE jti=? AND user_id=?` 只动本人那一行，伪造者最多烧掉自己的一次机会；
+/// 真凭据仍在 agent 侧的验签（Rust 没有那把密钥，也不该有）。
+async fn claim_confirm_token(
+    db: &sea_orm::DatabaseConnection,
+    uid: i32,
+    token: &str,
+) -> Option<String> {
+    let jti = token_jti(token);
+    if jti.is_empty() {
+        return None;
+    }
+    let claimed = pending_action::Entity::update_many()
+        .col_expr(
+            pending_action::Column::ClaimedAt,
+            Expr::value(Some(chrono::Local::now().naive_local())),
+        )
+        .filter(pending_action::Column::Jti.eq(jti.as_str()))
+        .filter(pending_action::Column::UserId.eq(uid))
+        .filter(pending_action::Column::ClaimedAt.is_null())
+        .exec(db)
+        .await;
+    match claimed {
+        Ok(r) if r.rows_affected == 1 => None,
+        Ok(_) => {
+            // 没抢到：**必须区分**"已经被用掉"与"表里根本没有这一行"——前者如实
+            // 拒绝，后者照常放行（无状态路径）。少了这一步，所有查不到的令牌都会
+            // 被当成重放而拒绝。
+            let exists = pending_action::Entity::find()
+                .filter(pending_action::Column::Jti.eq(jti.as_str()))
+                .filter(pending_action::Column::UserId.eq(uid))
+                .one(db)
+                .await
+                .ok()
+                .flatten()
+                .is_some();
+            if exists {
+                Some("这次确认已经用过了（同一张确认卡片只兑现一次），没有重复执行。".to_string())
+            } else {
+                None
+            }
+        }
+        Err(_) => None,
+    }
+}
+
+/// 解出确认令牌 payload 里的 `jti`（**不验签**，理由见 `claim_confirm_token`）。
+/// 解不出（格式坏 / 没有点号 / 早期无 jti 的令牌）→ 空串，调用方据此不核销。
+fn token_jti(token: &str) -> String {
+    let parts: Vec<&str> = token.split('.').collect();
+    if parts.len() != 2 {
+        return String::new();
+    }
+    let Some(raw) = b64url_decode(parts[0]) else {
+        return String::new();
+    };
+    let Ok(v) = serde_json::from_slice::<serde_json::Value>(&raw) else {
+        return String::new();
+    };
+    v["jti"].as_str().unwrap_or("").chars().take(64).collect()
+}
+
+/// base64url（无填充）解码——只为解令牌 payload 的 `jti`（见 `token_jti`）。
+/// 不引新依赖：本仓库没有 base64 crate，而这段是二十行以内、可单测的纯函数，
+/// 为了一个字段拉一个依赖（连带 Cargo.lock 与 CI 全量重编）不划算。
+fn b64url_decode(s: &str) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(s.len() * 3 / 4 + 3);
+    let mut acc: u32 = 0;
+    let mut bits: u32 = 0;
+    for c in s.bytes() {
+        let v = match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'-' => 62,
+            b'_' => 63,
+            // agent 侧签发的令牌不带填充；容忍带 '=' 的变体（不改变结果）
+            b'=' => continue,
+            _ => return None,
+        } as u32;
+        acc = ((acc << 6) | v) & 0x3FFF;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push(((acc >> bits) & 0xFF) as u8);
+        }
+    }
+    Some(out)
 }
 
 /// 关闭已执行的待办：回执里出现的工具名 ∈ 待办行 `tool`（逗号分隔）⇒ done/confirmed。
@@ -1659,6 +1807,11 @@ mod tests {
             tool: tool.to_string(),
             args: args.map(|a| a.to_string()),
             target: target.to_string(),
+            question: "".to_string(),
+            options: "".to_string(),
+            jti: "".to_string(),
+            expires_at: None,
+            claimed_at: None,
             requested_by: "user".to_string(),
             source_event: "confirm_popup".to_string(),
             confirmation_required: true,
@@ -1673,6 +1826,42 @@ mod tests {
                 .and_hms_opt(13, 19, 0)
                 .unwrap(),
         }
+    }
+
+    /// 令牌 `jti` 的解析（20260924）：核销的键必须来自**令牌原文**——客户端另传一个
+    /// 字段当认领键，就等于让调用方自己指定"我要兑现哪张令牌"。
+    ///
+    /// 下面那条长令牌是**真的**：由 agent 侧 `confirm.sign` 现签（`jti=fb7899a7…`），
+    /// 拷进来的。这条断言因此同时锁住跨语言那一层——Python 的 base64url 无填充编码
+    /// 与这里的解码器必须对上，哪天 agent 换了编码（或加了填充）这里会红。
+    #[test]
+    fn token_jti_reads_payload_without_verifying() {
+        const REAL: &str = "eyJ2IjoyLCJ1aWQiOjcsImNvbnYiOjQyLCJleHAiOjE3OTAxOTQ2MzcsImp0aSI6ImZiNzg5OWE3\
+OTE2MTQ1OGYwM2E4YjEyMDg5ZjhjNTdmIiwic2tpbGwiOiJmYXZvcml0ZV9hZGQiLCJzcGVjcyI6W3sidG9v\
+bCI6ImFkZF9mYXZvcml0ZSIsImFyZ3MiOnsiYXJ0aWNsZV9pZCI6MTJ9fV19.ec1JP-MBgyu3LitO422E7F9gVgotMQQXsiQDb2ZsEDw";
+        assert_eq!(token_jti(REAL), "fb7899a79161458f03a8b12089f8c57f");
+        // 形状不对一律空串（空串 = 不核销 = 放行，见 claim_confirm_token）：
+        // 没有点号 / 多一段 / 非 base64url 字符 / payload 不是 JSON / 没有 jti 字段
+        assert_eq!(token_jti(""), "");
+        assert_eq!(token_jti("只有一段没有点号"), "");
+        assert_eq!(token_jti("a.b.c"), "");
+        assert_eq!(token_jti("!!**.sig"), "");
+        assert_eq!(token_jti("bm90LWpzb24.sig"), "");      // "not-json"
+        assert_eq!(token_jti("eyJ2IjoxfQ.sig"), "");        // {"v":1} 旧令牌没有 jti
+        // 不验签是**故意**的（认领是自伤型的，真凭据在 agent 侧）：签名段随便换一个
+        // 都照样解得出 jti——这条断言把"这是解码不是验证"写死，免得将来有人误以为
+        // 这里已经有了一层校验
+        let tampered = format!("{}.AAAA", REAL.split('.').next().unwrap());
+        assert_eq!(token_jti(&tampered), "fb7899a79161458f03a8b12089f8c57f");
+    }
+
+    #[test]
+    fn b64url_decode_handles_agent_encoding() {
+        // 无填充、url-safe 字母表（`-`/`_`）；带 '=' 的变体也认（容忍，不改变结果）
+        assert_eq!(b64url_decode("eyJ2IjoxfQ").unwrap(), br#"{"v":1}"#.to_vec());
+        assert_eq!(b64url_decode("eyJ2IjoxfQ==").unwrap(), br#"{"v":1}"#.to_vec());
+        assert_eq!(b64url_decode("").unwrap(), Vec::<u8>::new());
+        assert!(b64url_decode("中文").is_none());
     }
 
     /// 待办注入行的**定性**：这一行是"已提出、还没办"，读它的 planner 是拿它去
