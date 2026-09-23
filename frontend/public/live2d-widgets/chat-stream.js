@@ -78,7 +78,40 @@
         }
       } catch (e) { /* 上报自身失败静默 */ }
     };
-    const askSettle = (note, state) => {   // 按钮换成一行灰字（卡片留在流里当记录）
+    // ── 确认链路的**正常分支**埋点（20260924）──────────────────────────────
+    // 上面那个 reportConfirm 是**失败**类型：对账脚本按 `type=confirm_card` 数异常
+    // （eval/trace_reconcile.py 的 MONITOR_ANOMALY），所以正常链路的每一跳必须另起
+    // 一个类型 `confirm_flow`——两者混用会把"用户点了一次确定"数成"一次异常"，
+    // 判据当天就得失准。为什么正常分支也要埋：这类失败全是"屏幕上看不出来"的形态
+    // （帧到了卡片没挂上、点了没发出去、发出去了没有任何结论），只报失败分支等于
+    // **只在事后取证**——用户不截图就无据可查。有了逐跳记录，跨源对账能直接看出
+    // "点了几次、发出去几次、结算几次"这三者该相等而不等的那一次。
+    // 逐跳：frame（确认帧到）→ card（卡片就位）→ click（点了哪个）→ sent（请求真发出）
+    //       → settle（结论：ok/unknown/expired/cancel/rollback）。
+    // **绝不带令牌**（它是一次同意的唯一凭据，与 confirm_card 同纪律）。
+    const reportAskStage = (stage, extra) => {
+      try {
+        if (typeof window.__reportError !== 'function') return;
+        const parts = ['stage=' + stage];
+        Object.keys(extra || {}).forEach((k) => {
+          const v = extra[k];
+          if (v === undefined || v === null || v === '') return;
+          parts.push(k + '=' + String(v).replace(/\s+/g, ' ').slice(0, 60));
+        });
+        window.__reportError({ type: 'confirm_flow', message: parts.join(' '),
+                               url: location.href });
+      } catch (e) { /* 上报自身失败静默 */ }
+    };
+    // 卡片挂着的**待办标识**（帧里的 id，服务端每次弹窗签发一个 8 位随机串）：逐跳埋点
+    // 全带它，对账才能把 frame/card/click/sent/settle 串成**同一件事**的序列。
+    // 它**不是**凭据（token 才是），所以能进上报；token 永远不进（见 reportAskStage）。
+    const askIdOf = () => {
+      try {
+        if (askBox && askBox.dataset.askId) return askBox.dataset.askId;
+        return (ctx.state.pendingAsk || {}).id || '';
+      } catch (e) { return ''; }
+    };
+    const askSettle = (note, state, result) => {   // 按钮换成一行灰字（卡片留在流里当记录）
       if (askTimer) { clearTimeout(askTimer); askTimer = null; }   // 有结论了就不再倒计时
       askBtns.innerHTML = '';
       const el = document.createElement('div');
@@ -86,6 +119,10 @@
       el.textContent = note;
       askBtns.appendChild(el);
       if (askBox) askBox.dataset.askState = state || 'settled';
+      // 结算这一跳是整条链的**落点**：它与 click/sent 是同一次点击的收尾。result 由
+      // 调用点给（ok/unknown/expired/cancel），调用点没说就不报——宁可少报一条，
+      // 也不推断一个结论出来（推断出来的"正常"正是这一族最难查的假象）。
+      if (result) reportAskStage('settle', { id: askIdOf(), result });
     };
     // ── 卡片的结算态（20260924）──────────────────────────────────────────
     // 此前这张卡只有两种命：可点，或者"已确认"。而"已确认"是**点击那一刻**写下的
@@ -111,7 +148,7 @@
         // 点了确定、等到令牌过期都没回音：正是最难查的那种静默失败，必须留痕
         reportConfirm('点了确定之后等到令牌过期仍没有回复（卡片：确认中 → 已过期）');
       }
-      askSettle('已过期，没有执行任何操作；要办的话再跟我说一次');
+      askSettle('已过期，没有执行任何操作；要办的话再跟我说一次', undefined, 'expired');
     };
     const askArmTimer = (ask) => {
       if (askTimer) { clearTimeout(askTimer); askTimer = null; }
@@ -131,6 +168,7 @@
     const askRollback = (ask, why) => {
       if (!ask || !askBox || !askBox.classList.contains('active')) return;
       ctx.state.pendingAsk = ask;
+      reportAskStage('settle', { id: askIdOf(), result: 'rollback', why });
       askBox.dataset.askState = '';   // 抹掉状态 ⇒ syncAsk 的就位判据不成立，强制重建按钮
       syncAsk();
       askQuestion.textContent = String(ask.q || '')
@@ -140,12 +178,12 @@
       if (!askBox || !askBox.classList.contains('active')) return;
       ctx.state.pendingAsk = null;    // 不重新放行：请求发出去过，不能再签一次字
       reportConfirm('点了确定之后本轮以失败收尾（' + why + '）——卡片按"不确定"结算，不再放行重试');
-      askSettle('没收到回复，不确定有没有生效；可以问我"刚才那件事办成了吗"');
+      askSettle('没收到回复，不确定有没有生效；可以问我"刚才那件事办成了吗"', undefined, 'unknown');
     };
     const hideAsk = () => {                // 未点击的收场（用户改口打字说了别的）
       const shown = askBox && askBox.classList.contains('active');
       ctx.state.pendingAsk = null;
-      if (shown) askSettle('已取消');
+      if (shown) askSettle('已取消', undefined, 'cancel');
       else if (askBtns) askBtns.innerHTML = '';
     };
     // 把待办渲染成可点卡片。**幂等**（20260923）：同一个待办重复调用是零副作用。
@@ -177,6 +215,7 @@
           && askBox.parentNode === messages
           && !!askBtns.querySelector('button[data-ask-value]')) return;
       askBox.dataset.askToken = token;
+      askBox.dataset.askId = String(ask.id || '');   // 埋点用（非凭据，见 askIdOf）
       askQuestion.textContent = ask.q;
       askBtns.innerHTML = '';
       (ask.opts || []).forEach((op) => {
@@ -197,6 +236,12 @@
       messages.appendChild(askBox);
       askBox.classList.add('active');
       askBox.dataset.askState = 'live';   // 可点（见 askSettle/askRollback 的状态语义）
+      // 卡片**真的挂上去了**才埋点（上面那条幂等提前返回不报，否则每次 DOM 重建
+      // 都刷一条，"卡片就位"这个事实会被刷成噪声）。**必须排在 askArmTimer 前面**：
+      // 帧里的 exp 已经是过去时刻时 askArmTimer 会当场结算并埋一条 settle，先埋
+      // card 才与真实顺序一致——反过来会记成"先结算、后挂卡"这种不存在的序列，
+      // 而跨源对账正是按序列读的（假顺序=假警报）。
+      reportAskStage('card', { id: String(ask.id || '') });
       askArmTimer(ask);                   // 到期自动结算（帧里有 exp 才起，见 askArmTimer）
       scrollToBottom(messages, true);
     };
@@ -410,6 +455,10 @@
         // 立即回滚，不留一个永远不会被结算的在途标记。
         if (silent && opts.confirmToken) {
           ctx.state.confirmRound = { ask: opts.confirmAsk || null, failed: '' };
+          // 链路第四跳（20260924）：这一跳**真的出去了**（忙守卫/建会话失败都在上面
+          // 回滚掉了，不走这里）。它与 click 成对出现才是"点了并且发出去了"。
+          reportAskStage('sent', { id: String((opts.confirmAsk || {}).id || ''),
+                                   conv: roundConvId });
         }
 
         // 新对话开始：自动关闭上一条遗留的"建议跳转"面板——用户没点击/没取消时
@@ -864,6 +913,13 @@
                 try { ask = JSON.parse(text.slice('__CONFIRM__:'.length)); } catch (e) {}
                 if (ask && ask.q && ask.token) {
                   ctx.state.pendingAsk = Object.assign({}, ask, { convId: roundConvId });
+                  // 链路第一跳（20260924）：确认帧到手且可用。后面还有没有 card/click/
+                  // settle 是**另一回事**——此前只有"帧不可用"才留痕，于是"帧到了、
+                  // 卡片却没挂上/挂了却没结算"在日志里长得跟"压根没弹过窗"一样。
+                  reportAskStage('frame', { id: String(ask.id || ''),
+                                            opts: (ask.opts || []).length,
+                                            exp: ask.exp ? 'yes' : 'no',
+                                            q: String(ask.q || '').slice(0, 40) });
                 } else {
                   // 20260923：这一支此前静默丢弃——agent 那边确认帧已经签发（待办
                   // 在内存/库里），前端只是不再提，用户看到的是"agent 说要确认，
@@ -1088,7 +1144,7 @@
             const cr = ctx.state.confirmRound;
             ctx.state.confirmRound = null;
             if (cr.failed) askUnknown(cr.failed);
-            else askSettle('已确认，结果见下方回复');
+            else askSettle('已确认，结果见下方回复', undefined, 'ok');
           }
           // 流式中被推迟的 DB 拉取在此补拉（storage 事件可能在流中到达）
           if (ctx.state.pendingPull) { ctx.state.pendingPull = false; setTimeout(pullHistory, 0); }
@@ -1738,6 +1794,9 @@
       const handleAskChoice = (value) => {
         const ask = ctx.state.pendingAsk;
         if (!ask) return;
+        // 链路第三跳：用户**真的点了**（此前只有被忙守卫挡下才留痕，"点了但什么都没
+        // 发生"与"压根没点"在日志里分不开）。放在最前面：这一次点击本身就是事实。
+        reportAskStage('click', { id: String(ask.id || ''), value });
         // 忙判据与 sendMessage 的两条守卫**同源**（20260924）：此前这里只挡
         // isSending，跨窗远端轮（remoteRounds 非空）漏在外面——那种时刻点确定，
         // sendMessage 会把它静默丢掉，而卡片已经写上了"已确认"。宁可在这里挡住
@@ -1748,7 +1807,7 @@
         }
         ctx.state.pendingAsk = null;       // 一次点击只兑现一次
         if (value !== 'yes') {             // 取消：零请求零副作用
-          askSettle('已取消');
+          askSettle('已取消', undefined, 'cancel');
           return;
         }
         // 令牌已经过期（帧里带了 exp）⇒ 本地上账、**不发这一跳**。到期定时器在
