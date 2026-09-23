@@ -53,7 +53,7 @@ pub struct ChatResponse {
 
 use sea_orm::{EntityTrait, Set, QueryOrder, QueryFilter, ColumnTrait, QuerySelect, ActiveModelTrait, PaginatorTrait};
 use sea_orm::sea_query::Expr; // Expr 不在 sea-orm 根（0.12.15 仅 pub use sea_query 全名）
-use crate::entity::{chat_history, chat_summary, conversation, execution_log};
+use crate::entity::{chat_history, chat_summary, conversation, execution_log, pending_action};
 use crate::routes::conversation::resolve_conversation_id;
 use futures::StreamExt;
 use async_stream::stream;
@@ -469,6 +469,25 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
             .join("\n· ")
     };
 
+    // 跨轮待办（20260923）：本会话最新一条**仍 pending 且未超时效**的待办，渲染成
+    // 一行给 agent（planner 见它才知道"上一轮我提过一件事、还没办"）。读失败
+    // （表未建/DB 抖动）→ 空串，agent 按"没有待办"如实处理，绝不阻断对话。
+    let pending_text: String = {
+        let cutoff = chrono::Local::now().naive_local()
+            - chrono::Duration::minutes(PENDING_READ_TTL_MINUTES);
+        pending_action::Entity::find()
+            .filter(pending_action::Column::ConversationId.eq(conversation_id))
+            .filter(pending_action::Column::Status.eq("pending"))
+            .filter(pending_action::Column::CreatedAt.gte(cutoff))
+            .order_by_desc(pending_action::Column::Id)
+            .one(&state.db)
+            .await
+            .ok()
+            .flatten()
+            .map(|r| render_pending_action(&r))
+            .unwrap_or_default()
+    };
+
     // 统计本会话消息数，决定是否触发压缩。needs_summary 补懒生成条款：会话 >20 条
     // 且尚无摘要行（存量旧会话回访）也触发一次——摘要落库后条件自然关闭；
     // %10∈{0,1} 为历史双触发节奏（summary 与回复并行生成，不阻塞对话）
@@ -519,6 +538,9 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
         "summary": summary_text,
         "needs_summary": needs_summary,
         "executions": executions_text,  // 20260904 C5：跨轮执行记忆（最近 8 条回执，"· " 拼串）
+        // 20260923 跨轮待办：上一轮提出、等主人点头的那件事（已执行的已由回执关闭）。
+        // 空串 = 没有待办；agent 侧注入 system 上下文，短应答/授权式轮次据此定目标
+        "pending_action": pending_text,
         // 20260921 确认弹窗：透传待办令牌（空串 = 普通轮）。agent 侧验签失败 →
         // 零执行 + 如实告知"确认已过期"；验签通过 → 跳过 planner 直接执行签名里的动作
         "confirm_token": payload.confirm_token.as_deref().unwrap_or(""),
@@ -915,6 +937,129 @@ async fn save_execution_log(
             ..Default::default()
         }.save(db).await;
     }
+    // 跨轮待办收口（20260923）：回执命中待办的工具体 ⇒ 那件事真被执行了 ⇒ 关闭它。
+    // "系统事实优先于结构化状态"落在这一行里：不靠模型回报、不靠叙述。确认轮的
+    // 隐藏请求也走同一条路（写成功 → checker PASS → 回执 ⇒ 待办关闭）。
+    close_pending_actions(db, conversation_id, rows).await;
+}
+
+// ── 跨轮待办（20260923；表与语义见 entity/pending_action.rs 与迁移文件头注）────
+/// 读侧时效：超过这个时长的 pending 行不再注入 planner（确认令牌自身 10 分钟
+/// 即失效，更旧的行只会让下一轮把一件早凉的事重新规划一遍）。
+const PENDING_READ_TTL_MINUTES: i64 = 60;
+/// 注入行里工具参数最多带多少字符：planner 要靠它原样重建动作，但一行不该被
+/// 一个长参数撑爆。
+const PENDING_ARGS_INLINE_MAX: usize = 200;
+/// 注入行整体上限（与 recent_executions 同一量级）。
+const PENDING_INLINE_MAX: usize = 600;
+/// `args` 列上限：它是**审计线索**不是执行依据（真正的执行参数在签名的确认令牌
+/// 里），超限只存前缀，绝不为了"看起来是合法 JSON"去改写内容。
+const PENDING_ARGS_COL_MAX: usize = 4000;
+
+/// 待办落库（20260923）：agent 在弹确认框那一轮随 `__CONFIRM__` 发来的结构化提议。
+/// 先删本会话仍 pending 的旧行——**新的顶掉旧的**（"最新那次提议"才是主人心里那
+/// 件事），顺带让同一条待办的重发天然幂等。`let _ =` 吞错，与 execution_log 同
+/// 口径：辅助事实，落库失败不阻断对话主链路（确认本身走无状态令牌，不依赖本表）。
+async fn save_pending_action(
+    db: &sea_orm::DatabaseConnection,
+    uid: i32,
+    conversation_id: i32,
+    v: &serde_json::Value,
+) {
+    let tools: Vec<String> = v["specs"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|s| s["tool"].as_str())
+                .map(|t| t.to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    let args = v["specs"].to_string();
+    let _ = pending_action::Entity::delete_many()
+        .filter(pending_action::Column::ConversationId.eq(conversation_id))
+        .filter(pending_action::Column::Status.eq("pending"))
+        .exec(db)
+        .await;
+    let _ = pending_action::ActiveModel {
+        task_id: Set(json_capped(v, "task_id", 64)),
+        conversation_id: Set(conversation_id),
+        user_id: Set(uid),
+        skill: Set(json_capped(v, "skill", 32)),
+        tool: Set(tools.join(",").chars().take(255).collect()),
+        args: Set(Some(args.chars().take(PENDING_ARGS_COL_MAX).collect())),
+        target: Set(json_capped(v, "target", 300)),
+        requested_by: Set(match json_capped(v, "requested_by", 32) {
+            s if s.is_empty() => "user".to_string(),
+            s => s,
+        }),
+        source_event: Set(json_capped(v, "source_event", 64)),
+        confirmation_required: Set(true),
+        confirmation_status: Set("awaiting".to_string()),
+        status: Set("pending".to_string()),
+        ..Default::default()
+    }
+    .save(db)
+    .await;
+}
+
+/// 关闭已执行的待办：回执里出现的工具名 ∈ 待办行 `tool`（逗号分隔）⇒ done/confirmed。
+async fn close_pending_actions(
+    db: &sea_orm::DatabaseConnection,
+    conversation_id: i32,
+    receipts: &[serde_json::Value],
+) {
+    let done: Vec<&str> = receipts.iter().filter_map(|r| r["tool"].as_str()).collect();
+    if done.is_empty() {
+        return;
+    }
+    let pending = pending_action::Entity::find()
+        .filter(pending_action::Column::ConversationId.eq(conversation_id))
+        .filter(pending_action::Column::Status.eq("pending"))
+        .all(db)
+        .await
+        .unwrap_or_default();
+    for row in pending {
+        if row.tool.split(',').any(|t| !t.is_empty() && done.contains(&t)) {
+            let mut am: pending_action::ActiveModel = row.into();
+            am.status = Set("done".to_string());
+            am.confirmation_status = Set("confirmed".to_string());
+            am.updated_at = Set(chrono::Local::now().naive_local());
+            let _ = am.update(db).await;
+        }
+    }
+}
+
+/// 待办行 → 注入 planner 的那一行：主人看得懂的目标（写时定稿的 target）＋
+/// 重建动作需要的工具与参数＋时间与状态。**参数在这里给出是刻意的**——短应答/
+/// 授权式轮次要原样重建同一件事，而不是回历史里挑一句自然语言当目标
+/// （20260923 13:19 事故：模型上一轮的提议指向早已通过的留言，系统账上真正
+/// 待审的是另一条）。前缀的定性同 recent_executions：这是泠月自己提出的事，
+/// 不是访客的浏览痕迹。
+fn render_pending_action(r: &pending_action::Model) -> String {
+    let mut s = r.target.clone();
+    if !r.tool.is_empty() {
+        s.push_str(&format!("；动作 {}", r.tool));
+    }
+    if !r.skill.is_empty() {
+        s.push_str(&format!("（技能 {}）", r.skill));
+    }
+    if let Some(a) = r.args.as_deref().filter(|a| !a.is_empty()) {
+        s.push_str(&format!(
+            "；参数 {}",
+            a.chars().take(PENDING_ARGS_INLINE_MAX).collect::<String>()
+        ));
+    }
+    s.push_str(&format!(
+        "；提出于 {}；状态 awaiting（等主人点头，尚未执行）",
+        r.created_at.format("%m-%d %H:%M")
+    ));
+    s.chars().take(PENDING_INLINE_MAX).collect()
+}
+
+/// 取 JSON 字段并限长（缺字段/类型不对一律空串——待办是辅助事实，宁可少说）。
+fn json_capped(v: &serde_json::Value, key: &str, cap: usize) -> String {
+    v[key].as_str().unwrap_or("").chars().take(cap).collect()
 }
 
 fn agent_chat_url() -> String {
@@ -1185,6 +1330,23 @@ pub async fn chat_stream_handler(
                                     save_execution_log(&state.db, uid, conversation_id, &rows).await;
                                 });
                             }
+                        }
+                    }
+                    continue;
+                }
+                // 跨轮待办（20260923）：确认弹窗那一轮的结构化提议。与 __EXEC__ 同族
+                // ——必须在下方 JSON 文本解析之前拦（payload 不是合法 JSON 字符串，
+                // 会走 1193 那行静默丢弃）；只收进落库、**绝不 yield 转发**（前端无
+                // 此帧协议，透传会被当正文渲染）。收到即写：弹窗那一轮主人可能立刻
+                // 切走，晚写就等于没写。
+                if let Some(body) = payload.strip_prefix("__PENDING__:") {
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(body) {
+                        if uid > 0 && v.is_object() {
+                            let state = state.clone();
+                            let v = v.clone();
+                            tokio::spawn(async move {
+                                save_pending_action(&state.db, uid, conversation_id, &v).await;
+                            });
                         }
                     }
                     continue;
@@ -1473,5 +1635,90 @@ mod tests {
         assert_eq!(py_int_list("[]"), Vec::<String>::new());
         assert_eq!(py_int_list("['a', -3]"), Vec::<String>::new());
         assert_eq!(py_int_list(""), Vec::<String>::new());
+    }
+
+    /// 待办行的构造器（测试用：只填被测字段，其余给"空档"）。
+    fn pa_model(target: &str, tool: &str, skill: &str, args: Option<&str>) -> pending_action::Model {
+        pending_action::Model {
+            id: 1,
+            task_id: "pa_20260923_000000001".to_string(),
+            conversation_id: 42,
+            user_id: 7,
+            skill: skill.to_string(),
+            tool: tool.to_string(),
+            args: args.map(|a| a.to_string()),
+            target: target.to_string(),
+            requested_by: "user".to_string(),
+            source_event: "confirm_popup".to_string(),
+            confirmation_required: true,
+            confirmation_status: "awaiting".to_string(),
+            status: "pending".to_string(),
+            created_at: chrono::NaiveDate::from_ymd_opt(2026, 9, 23)
+                .unwrap()
+                .and_hms_opt(13, 19, 0)
+                .unwrap(),
+            updated_at: chrono::NaiveDate::from_ymd_opt(2026, 9, 23)
+                .unwrap()
+                .and_hms_opt(13, 19, 0)
+                .unwrap(),
+        }
+    }
+
+    /// 待办注入行的**定性**：这一行是"已提出、还没办"，读它的 planner 是拿它去
+    /// 重发、不是拿它当执行事实。一旦渲染里丢了 `awaiting`/`尚未执行` 这两句，
+    /// 模型就能把"等主人点头"读成"已经办过"（20260923 13:19 事故的反面形态）。
+    #[test]
+    fn pending_action_render_marks_awaiting_not_done() {
+        let row = pa_model("复核留言 #94（double9）为 驳回", "board_audit_talk",
+                           "board_audit", Some("[{\"tool\": \"board_audit_talk\"}]"));
+        let s = render_pending_action(&row);
+        assert!(s.starts_with("复核留言 #94（double9）为 驳回"), "{s}");
+        assert!(s.contains("；动作 board_audit_talk"), "{s}");
+        assert!(s.contains("（技能 board_audit）"), "{s}");
+        assert!(s.contains("；参数 [{\"tool\": \"board_audit_talk\"}]"), "{s}");
+        assert!(s.contains("；提出于 09-23 13:19"), "{s}");
+        assert!(s.contains("状态 awaiting（等主人点头，尚未执行）"), "{s}");
+    }
+
+    /// 缺字段不编：工具/技能/参数为空就没有那一段（待办是辅助事实，宁可少说），
+    /// 而**时效与状态**是判据本身、任何情况下都在。
+    #[test]
+    fn pending_action_render_omits_empty_segments() {
+        let s = render_pending_action(&pa_model("把文章 12 设为私密", "", "", None));
+        assert_eq!(s, "把文章 12 设为私密；提出于 09-23 13:19；状态 awaiting（等主人点头，尚未执行）");
+        // 空串的 args 与 None 同待遇（DEFAULT '' 落库的行不该多出一截「；参数 」）
+        let e = render_pending_action(&pa_model("x", "", "", Some("")));
+        assert!(!e.contains("；参数"), "{e}");
+    }
+
+    /// 两级截断：参数在行内只留 PENDING_ARGS_INLINE_MAX 个字符（审计线索在库里是全的），
+    /// 整行再夹到 PENDING_INLINE_MAX（注入进 planner 的上下文，不能撑爆）。
+    #[test]
+    fn pending_action_render_caps_args_and_total() {
+        let long = "参".repeat(500);
+        let s = render_pending_action(&pa_model(&"标".repeat(900), "t", "s", Some(&long)));
+        assert!(s.chars().count() <= PENDING_INLINE_MAX, "{}", s.chars().count());
+        let row = pa_model("短", "t", "s", Some(&long));
+        let s2 = render_pending_action(&row);
+        assert!(s2.contains(&"参".repeat(PENDING_ARGS_INLINE_MAX)), "{}", s2.chars().count());
+        assert!(!s2.contains(&"参".repeat(PENDING_ARGS_INLINE_MAX + 1)));
+        // 截断按**字符**不按字节（中文参数名截成半个字会落进 planner 的上下文）
+        assert!(s2.contains(&format!("；参数 {}", "参".repeat(PENDING_ARGS_INLINE_MAX))));
+    }
+
+    /// `__PENDING__:` 帧的字段读取：缺字段/类型不对一律空串，绝不 panic
+    /// （帧由 agent 拼、字段名是跨语言契约——认不出就少说，不能整轮报错）。
+    #[test]
+    fn pending_frame_json_capped_is_str_only() {
+        let v = json!({"task_id": "pa_20260923_000000001", "skill": "board_audit",
+                       "n": 7, "nil": null, "arr": [1, 2]});
+        assert_eq!(json_capped(&v, "task_id", 64), "pa_20260923_000000001");
+        assert_eq!(json_capped(&v, "skill", 4), "boar");
+        assert_eq!(json_capped(&v, "missing", 64), "");
+        assert_eq!(json_capped(&v, "n", 64), "");
+        assert_eq!(json_capped(&v, "nil", 64), "");
+        assert_eq!(json_capped(&v, "arr", 64), "");
+        // 截断按字符（`chars().take()`），不是字节切片
+        assert_eq!(json_capped(&json!({"t": "标签名"}), "t", 2), "标签");
     }
 }
