@@ -278,9 +278,20 @@ import { createRoot } from 'react-dom/client';
 import UserCenter from './src/components/UserCenter/index.tsx';
 // 只挂个人中心本身：头部（点「个人中心」开窗、红点位置）由 Head 那套负责，这里测的是
 // 窗口里的五个页签与它们的请求契约。
-(window as any).__mount = (open: boolean) => createRoot(document.getElementById('root')!).render(
-  <UserCenter open={open} onClose={() => { (window as any).__closed = true; }} />
-);
+//
+// 20260924：`open` 从"页面上的一个全局布尔"改成组件内 state，并把它经 `__setOpen`
+// 暴露出来。动机：此前沙箱里 **onClose 只置了个标记位、窗口并不会真的关**（`open` 是
+// 全局常量），于是"关窗之后 DOM 里还剩什么"这类断言在沙箱里根本写不出来——而首页
+// DOM 里残留的密码框正是 Chrome 把整页当登录页回填的触发器（见 UserCenter 里那段
+// 注释）。**onClose 仍只置标记位**（那几个"先关窗再跳"的用例依赖窗口开着继续操作），
+// 需要"关窗态"的用例自己调 window.__setOpen(false)。
+const Root = (props: { initialOpen: boolean }) => {
+  const [open, setOpen] = React.useState(props.initialOpen);
+  (window as any).__setOpen = setOpen;
+  return <UserCenter open={open} onClose={() => { (window as any).__closed = true; }} />;
+};
+(window as any).__mount = (open: boolean) =>
+  createRoot(document.getElementById('root')!).render(<Root initialOpen={open} />);
 """
 
 
@@ -565,6 +576,24 @@ with sync_playwright() as p:
     pg.wait_for_timeout(700)
     check("改成功后输入框清空（密码不留在表单里）",
           pg.input_value(f"{pwd_in} >> nth=0") == "" and pg.input_value(f"{pwd_in} >> nth=1") == "")
+
+    # 关窗即摘框（20260924 修复）。判据刻意是**结构性**的、与浏览器启发式无关：
+    # 只要首页 DOM 里还留着一个密码框，Chrome 的密码管理器就会把这页认成登录页
+    # （它对判为凭据的字段忽略 autocomplete="off"，且**没有 <form> 的页面会被当成
+    # 一个"合成表单"**），然后去回填页面上最"裸"的文本框——实测受害者是看板娘
+    # 对话框的会话检索框与展示柜的向量检索框，给那两处补 name/厂商 data-*-ignore
+    # 全都无效。本弹窗 destroyOnClose={false}（保住五个页签的缓存），所以只能由
+    # `open &&` 摘挂；这条断言就是那行代码的锁。
+    check("开窗时三个密码框都在（原密码/新密码/再输一次）",
+          pg.locator("input[type=password]").count() == 3,
+          f"{pg.locator('input[type=password]').count()} 个 type=password")
+    # 用 __setOpen 走关窗态（沙箱里 onClose 不真关，见 entry 的注释）：判据只认 `open`
+    # 这一个输入，而"关窗动作本身"由 Head 那一侧负责（⑫ 节已锁「退出登录自动关窗」）。
+    pg.evaluate("() => window.__setOpen(false)")
+    pg.wait_for_timeout(500)
+    check("关窗后页面上一个密码框都不剩（否则整页会被 Chrome 当登录页回填）",
+          pg.locator("input[type=password]").count() == 0,
+          f"{pg.locator('input[type=password]').count()} 个 type=password")
     pg.close()
 
     print("⑤ 收藏的文章：懒加载、阅读先关窗再跳、取消收藏发 DELETE 且行当场消失")
@@ -1206,10 +1235,14 @@ with sync_playwright() as p:
           ap.locator(".homeRight .homeAdminBtn").count() == 0)
     ap.dblclick(".homeRight .homeLogo")
     ap.wait_for_timeout(400)
+    # 「没先开一次设置窗口」判**可见性**、不判存在性：个人中心 Modal 带 forceRender
+    # （那是"关窗摘密码框"能生效的前提，见 UserCenter/index.tsx 上的注释），
+    # 于是 .ant-modal-content 从页面加载起就挂在 DOM 里、只是外层 wrap 挂着 display:none。
     check("管理员双击头像直跳 /dashboard（不用先开一次「设置」窗口）",
           ap.evaluate("() => (window.__nav || []).slice(-1)[0]") == "/dashboard"
-          and ap.locator(".ant-modal-content").count() == 0,
-          str(ap.evaluate("() => window.__nav || []")))
+          and not ap.locator(".ant-modal-content").is_visible(),
+          f"{ap.evaluate('() => window.__nav || []')} | modal 可见="
+          f"{ap.locator('.ant-modal-content').is_visible()}")
     ap.close()
     aerrs2 = []
     up = br.new_page(viewport={"width": 1280, "height": 900})

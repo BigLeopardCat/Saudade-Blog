@@ -631,33 +631,45 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                 </Button>
             </div>
 
-            <div className="ucField ucFieldStack">
-                <span className="ucLabel">修改密码</span>
-                <Input.Password
-                    value={pwdOld}
-                    placeholder="原密码"
-                    autoComplete="current-password"
-                    onChange={(e) => setPwdOld(e.target.value)}
-                />
-                <Input.Password
-                    value={pwdNew}
-                    placeholder="新密码（至少 8 位）"
-                    autoComplete="new-password"
-                    onChange={(e) => setPwdNew(e.target.value)}
-                />
-                <Input.Password
-                    value={pwdNew2}
-                    placeholder="再输一次新密码"
-                    autoComplete="new-password"
-                    onChange={(e) => setPwdNew2(e.target.value)}
-                />
-                <div className="ucFieldFoot">
-                    <span className="ucHint">改密码不会让其他设备立刻掉线（令牌到期前仍有效）</span>
-                    <Button className="ucGoldBtn" type="primary" loading={savingPwd} onClick={savePassword}>
-                        修改密码
-                    </Button>
+            {/* 关窗即从 DOM 摘掉这三个密码框（20260924）。
+                为什么非摘不可：Chrome 的密码管理器对**判定为凭据**的字段忽略
+                `autocomplete="off"`，而**页面里没有任何 `<form>` 时，它会把整页散落的
+                输入框当成一个合成表单**——于是"页面上还有个密码框"就等于"本页是登录页"，
+                它便去回填页面上最"裸"的文本框。实测（20260924）：看板娘对话框的会话
+                检索框、展示柜的向量检索框都被填上了账号；给那些框补 `name` 和四个厂商
+                `data-*-ignore` 标记一律无效（20260923 已在 `wg-input` 上试过，照样被填）。
+                本弹窗刻意 `destroyOnClose={false}`（保住五个页签的数据缓存），所以设置
+                页签一旦打开过，这三个框就永久留在首页 DOM 里 ⇒ 摘挂只能由这里按开合状态做。
+                只影响这三个框：关窗时它们的输入值（pwd*）本来就该作废，页签缓存不受影响。 */}
+            {open && (
+                <div className="ucField ucFieldStack">
+                    <span className="ucLabel">修改密码</span>
+                    <Input.Password
+                        value={pwdOld}
+                        placeholder="原密码"
+                        autoComplete="current-password"
+                        onChange={(e) => setPwdOld(e.target.value)}
+                    />
+                    <Input.Password
+                        value={pwdNew}
+                        placeholder="新密码（至少 8 位）"
+                        autoComplete="new-password"
+                        onChange={(e) => setPwdNew(e.target.value)}
+                    />
+                    <Input.Password
+                        value={pwdNew2}
+                        placeholder="再输一次新密码"
+                        autoComplete="new-password"
+                        onChange={(e) => setPwdNew2(e.target.value)}
+                    />
+                    <div className="ucFieldFoot">
+                        <span className="ucHint">改密码不会让其他设备立刻掉线（令牌到期前仍有效）</span>
+                        <Button className="ucGoldBtn" type="primary" loading={savingPwd} onClick={savePassword}>
+                            修改密码
+                        </Button>
+                    </div>
                 </div>
-            </div>
+            )}
         </div>
     )
 
@@ -1014,6 +1026,15 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                 // 关窗后**保留**挂载状态：五个页签的数据缓存还在，再打开不必重拉
                 // （数据陈旧由"每次打开重拉 profile"+ 各页签的显式刷新兜底）
                 destroyOnClose={false}
+                // forceRender 是上面那条"关窗摘密码框"能生效的**前提**，不是性能选项：
+                // rc-dialog 的 children 被 MemoChildren 包着，判据是
+                // `shouldUpdate = visible || forceRender` —— 关窗时 shouldUpdate=false，
+                // **整棵 children 会冻结成"最后一次可见时"的快照**，于是任何 `{open && …}`
+                // 在关窗那一刻都不会被应用。实测（20260924 user-center 沙箱）：wrap 已经
+                // display:none、三个密码框却照样留在 DOM 里。加它之后 children 在关窗态
+                // 也保持可更新；代价只是弹窗内容在页面加载时先渲染一次（隐藏态，各页签的
+                // 请求仍由 open 门控，不发请求）。
+                forceRender
             >
                 {!loggedIn ? (
                     <Empty description="请先登录" />
