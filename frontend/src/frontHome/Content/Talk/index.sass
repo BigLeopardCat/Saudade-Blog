@@ -6,12 +6,26 @@
   flex-direction: column
   align-items: center
   padding-top: 100px
+  // 日期链条上的日期（20260924 起两行：年份小字在上、月.日大字在下）。
+  // 由单行改两行后，垂直定位从 `top: 48%` 换成"中线对齐 + 自身上移一半"——
+  // 竖线上的圆点（.talk:after）就在 50% 处，这样日期块与圆点、卡片中线三者对齐。
   .talkTime
     position: absolute
     left: -120px
-    top: 48%
-    font-size: 20px
+    top: 50%
+    transform: translateY(-50%)
+    display: flex
+    flex-direction: column
+    align-items: flex-end
+    line-height: 1.15
     color: var(--font-p-color)
+    .talkTime-year
+      font-size: 12px
+      letter-spacing: .06em
+      // 年份是"哪一年"的量级信息，压淡一档，不跟月.日抢视线
+      opacity: .65
+    .talkTime-day
+      font-size: 20px
   h2
     color:  var(--font-title-color)
     font-size: 30px
@@ -51,6 +65,23 @@
       color: var(--font-title-color)
       color: var(--font-title-color)
       padding: 10px
+
+    // 卡片左下角的精确时刻（20260924 新增）。用一条与日期链条同色的虚线把它和正文分开，
+    // 颜色走 CSS 变量（`--font-p-color`）而不是写死——本页要同时活过浅色与夜间两套主题。
+    .talk-foot
+      display: flex
+      justify-content: flex-start
+      margin-top: 8px
+      padding-top: 6px
+      border-top: 1px dashed rgba(177, 206, 227, .5)
+
+      .talk-clock
+        font-size: 12px
+        letter-spacing: .08em
+        // 等宽数字：列表里每条的时刻上下对齐，扫起来不用重新找位
+        font-variant-numeric: tabular-nums
+        color: var(--font-p-color)
+        opacity: .75
 .timeLine
   @media only screen and (max-width: 800px)
     width: 80%
