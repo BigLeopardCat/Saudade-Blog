@@ -207,7 +207,7 @@ with sync_playwright() as p:
     AVATAR_2 = "/api/protect/download/avatar-sora-20260922.png"
     pg_b = br.new_page(viewport={"width": 1280, "height": 900})
     reqs_b = []
-    pg_b.on("request", lambda r: reqs_b.append(r.url))
+    pg_b.on("request", lambda r: reqs_b.append(f"{r.resource_type} {r.url}"))
     pg_b.add_init_script(
         "localStorage.setItem('saudade.lastUser', JSON.stringify({"
         "username:'sora', nickname:'', "
@@ -220,6 +220,34 @@ with sync_playwright() as p:
     check("未登录不发资料请求",
           not [u for u in reqs_b if "protected/profile" in u],
           json.dumps(reqs_b, ensure_ascii=False)[:200])
+
+    # ①c 头像跟着输入框走（20260924 拍板：**只认本机记住的账号**）。用户报的是"换账号输入时，
+    # 头像还是显示上次账号的头像"。治本不能是"按输入的名字去后端查头像"——那等于给所有人一个
+    # 账号枚举 oracle（输 sora 出猫头像、输 soraa 出默认 ⇒ 一次请求就知道账号存不存在）。
+    # 所以判据全是**本地**的：等于本机那份 `saudade.lastUser` 才显示它的头像，一偏离就回默认。
+    def avatar_src(page):
+        return page.get_attribute(".login-avatar img", "src")
+
+    pg_b.fill("input#account", "sora")
+    pg_b.wait_for_timeout(200)
+    check("输入的就是本机记住的账号 → 仍是那张头像", avatar_src(pg_b) == AVATAR_2, str(avatar_src(pg_b)))
+    pg_b.fill("input#account", "  SORA ")
+    pg_b.wait_for_timeout(200)
+    check("两侧空白 + 大小写在展示层宽容匹配（真正的账号语义在后端）",
+          avatar_src(pg_b) == AVATAR_2, str(avatar_src(pg_b)))
+    pg_b.fill("input#account", "other-user")
+    pg_b.wait_for_timeout(200)
+    check("输入的是**别的**账号 → 立刻退回默认头像",
+          avatar_src(pg_b) == "/default-avatar.png", str(avatar_src(pg_b)))
+    # 判据只看 xhr/fetch：**"查名字"这条路上只可能是 XHR**，而页面自己加载头像图片
+    # （`<img>` → image 请求）不算查询——那正是"头像只来自本地缓存"的表现。
+    check("整段打字过程零 XHR（不存在「按输入的名字去查」这种请求）",
+          not [u for u in reqs_b if u.startswith(("xhr", "fetch"))],
+          json.dumps(reqs_b, ensure_ascii=False)[:300])
+    pg_b.fill("input#account", "")
+    pg_b.wait_for_timeout(200)
+    check("清空输入 → 回到「本机挂着的那个账号」（与头部第②态同语义）",
+          avatar_src(pg_b) == AVATAR_2, str(avatar_src(pg_b)))
     pg_b.close()
 
     print("② 几何（居中 + 不溢出）")
