@@ -160,8 +160,12 @@ for (const f of ['chat-stream.js', 'chat-engine.js', 'chat-render.js', 'chat-ses
   const s = W('chat-stream.js');
   ok(/const syncAsk = \(\) => \{/.test(s) && !/const showAsk = /.test(s),
      'chat-stream.js：showAsk 已改成幂等 syncAsk（重复调用零副作用）');
-  ok(/engine\.setConvUI\(\{ onAskResync: syncAsk \}\)/.test(s),
-     'chat-stream.js：把 syncAsk 注册成引擎的 onAskResync 钩子');
+  // 20260924 起钩子是"先接存档再挂卡"：只 syncAsk 的话，刷新后内存里那份待办
+  // 本来就是空的（卡片活在 localStorage 里），自愈钩子会对着空气同步——这条断言
+  // 因此两半都锁，少一半就红
+  const resync = s.match(/engine\.setConvUI\(\{ onAskResync: \(\) => \{([^}]*)\} \}\)/);
+  ok(!!resync && /restoreAsk\(\)/.test(resync[1]) && /syncAsk\(\)/.test(resync[1]),
+     'chat-stream.js：onAskResync 钩子 = 接回存档 + 挂卡（两半缺一不可）');
   // 收尾那段：唯一允许出现的 hideAsk 是"用户改口打字"那条（sendMessage 里），
   // 收尾的 setTimeout 里不许再有 hideAsk（它会把待办当成"用户改口"销毁掉）
   const fin = s.slice(s.indexOf("if (ctx.state.pendingPull) { ctx.state.pendingPull = false;"));
