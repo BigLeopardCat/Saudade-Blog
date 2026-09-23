@@ -46,7 +46,9 @@ body
   box-shadow: 0 24px 64px rgba(0,0,0,.55)
 
 .login-brand
-  margin-bottom: 26px
+  // 30px（原 26px）：头像是这一块的下缘，它到下面「账号」的距离就是这一条 —— 20260924 把
+  // 头像调大后，与上方标题 16px 对下方 30px 形成近 1:2 的呼吸感，块内不显贴。
+  margin-bottom: 30px
   text-align: center
 
   h2
@@ -61,7 +63,9 @@ body
   // inline-block，display:block + margin auto 才在 .login-brand 的 text-align:center 里居中）。
   .login-avatar
     display: block
-    margin: 14px auto 0
+    // 16px（原 14px）：标题 23px 那行与头像之间的呼吸；尺寸由 antd 的 size=84 给
+    // （20260924 用户反馈"有点小"，64 → 84；比头部那个 64 明显大一号）。
+    margin: 16px auto 0
     border: 1px solid rgba(240,201,135,.35)
     box-shadow: 0 6px 18px rgba(0,0,0,.35)
 

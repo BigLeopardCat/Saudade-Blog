@@ -260,6 +260,35 @@ with sync_playwright() as p:
         "return r.width > 8 && r.height > 8;}"))
     pg.screenshot(path="/tmp/login-page-full.png")
     pg.close()
+
+    # ④ 品牌区头像的尺寸与上下间距（20260924 用户反馈"有点小、与上方文本和下方输入框距离不协调"）。
+    # 这一节必须在本套件量（**不桩 antd**）：边长来自 antd Avatar 的 size prop，打成 inline
+    # width/height 落在 .ant-avatar 上——桩会把它吃掉，量出来永远是 0。
+    print("④ 品牌区头像（尺寸 84 + 与标题/输入框的间距）")
+    pg = fresh_page()
+    # className 是直接传给 antd Avatar 的 ⇒ 根 span 自己就同时带 `.login-avatar` 与 `.ant-avatar`
+    # （不是嵌套关系）。size prop 化成的 inline width/height 就在这个根元素上。
+    pg.wait_for_selector(".ant-avatar.login-avatar", timeout=10000)
+    geo = pg.evaluate(
+        "() => {const a=document.querySelector('.login-avatar').getBoundingClientRect();"
+        "const h=document.querySelector('.login-brand h2').getBoundingClientRect();"
+        "const f=document.querySelector('.field').getBoundingClientRect();"
+        "return {aw:a.width, ah:a.height, above:a.top-h.bottom, below:f.top-a.bottom,"
+        " cx:a.left+a.width/2, bx:document.querySelector('.login-box').getBoundingClientRect()};}")
+    check("头像边长 84（20260924 由 64 调大）",
+          abs(geo["aw"] - 84) <= 1 and abs(geo["ah"] - 84) <= 1,
+          f'{geo["aw"]:.1f}×{geo["ah"]:.1f}')
+    check("与上方标题的间距 = 16",
+          abs(geo["above"] - 16) <= 2, f'{geo["above"]:.1f}')
+    check("与下方第一个输入框的间距 = 30（比上方大一档，块内不贴）",
+          abs(geo["below"] - 30) <= 2, f'{geo["below"]:.1f}')
+    check("头像在卡片里水平居中（与卡片中心偏差 ≤2px）",
+          abs(geo["cx"] - (geo["bx"]["left"] + geo["bx"]["width"] / 2)) <= 2,
+          f'头像中心 {geo["cx"]:.1f} / 卡片中心 {geo["bx"]["left"] + geo["bx"]["width"] / 2:.1f}')
+    check("卡片仍是 400 宽、不溢出视口", abs(geo["bx"]["width"] - 400) <= 1
+          and geo["bx"]["top"] >= 0 and geo["bx"]["bottom"] <= 900,
+          f'{geo["bx"]["width"]:.0f} 高 {geo["bx"]["top"]:.0f}..{geo["bx"]["bottom"]:.0f}')
+    pg.close()
     br.close()
 
 shutil.rmtree(SANDBOX, ignore_errors=True)
