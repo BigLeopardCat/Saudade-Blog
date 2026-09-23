@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use crate::routes::AppState;
 use crate::auth_jwt;
-use crate::entity::{chat_history, chat_summary, conversation, execution_log};
+use crate::entity::{chat_history, chat_summary, conversation, execution_log, pending_action};
 
 /// 会话 API（20260903 会话化）：新建/列表/删除 + 会话解析（chat 系端点共用）。
 /// 全部照 chat 系惯例：public_routes 组 + handler 内 auth_jwt::auth_uid 手写鉴权。
@@ -275,6 +275,12 @@ pub async fn delete_conversation(
     // 不清理会永久占表
     let _ = execution_log::Entity::delete_many()
         .filter(execution_log::Column::ConversationId.eq(id))
+        .exec(&txn)
+        .await;
+    // 跨轮待办（20260923）：同上——待办按会话读取，会话没了就无读取路径，
+    // 留着只会永久占表（待办不跨会话生效：确认令牌也绑会话）
+    let _ = pending_action::Entity::delete_many()
+        .filter(pending_action::Column::ConversationId.eq(id))
         .exec(&txn)
         .await;
     let _ = conversation::Entity::delete_by_id(id).exec(&txn).await;
