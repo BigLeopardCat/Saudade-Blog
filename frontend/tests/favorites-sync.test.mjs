@@ -252,9 +252,21 @@ const logout = () => { delete store.tokenKey };
     const js = readFileSync(path.join(root, 'public/live2d-widgets/chat-stream.js'), 'utf8');
     ok(js.includes("new CustomEvent('agent-turn-done')"),
         "chat-stream.js 在流收尾派发 'agent-turn-done'");
+    // 20260924：订阅方从一个变成三个（收藏 / 未读红点 / 个人中心各页签）⇒ 常量搬到
+    // agentTurn.ts 单一定义处，三处 import 同一个名字（改名字要三处一起改）
+    const turn = readFileSync(path.join(root, 'src/components/UserCenter/agentTurn.ts'), 'utf8');
+    ok(turn.includes("AGENT_TURN_DONE_EVENT = 'agent-turn-done'"),
+        'agentTurn.ts 是与 chat-stream.js 同名的单一定义处');
     const src = readFileSync(path.join(root, 'src/components/UserCenter/favorites.ts'), 'utf8');
-    ok(src.includes("AGENT_TURN_DONE_EVENT = 'agent-turn-done'"),
-        'favorites.ts 订阅的是同一个名字');
+    ok(src.includes('AGENT_TURN_DONE_EVENT') && src.includes('window.addEventListener(AGENT_TURN_DONE_EVENT'),
+        '收藏那份仍订阅它（走共用的常量，不再自己定义）');
+    const unreadSrc = readFileSync(path.join(root, 'src/components/UserCenter/unread.ts'), 'utf8');
+    ok(unreadSrc.includes('window.addEventListener(AGENT_TURN_DONE_EVENT'),
+        '未读红点也订阅了（只靠 60 秒轮询 = 用户盯着看一分钟不变，等于没生效）');
+    const ucSrc = readFileSync(path.join(root, 'src/components/UserCenter/index.tsx'), 'utf8');
+    ok(ucSrc.includes('window.addEventListener(AGENT_TURN_DONE_EVENT')
+        && ucSrc.includes("loadTab('notices', true)"),
+        '个人中心各页签在收尾后重拉（force 走 loadTab，不是另写一条拉取路径）');
     ok(src.includes("FAVORITES_CHANGED_EVENT = 'favorites-change'"),
         '本地写入的广播名（unread-change 的同族）也锁一下');
     const read = readFileSync(path.join(root, 'src/frontHome/Content/ReadArticle/index.tsx'), 'utf8');

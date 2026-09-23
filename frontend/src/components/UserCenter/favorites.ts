@@ -28,11 +28,10 @@ import { useCallback, useEffect, useState } from 'react'
 import getToken from '../../apis/getToken.tsx'
 import { getFavorites, ok } from '../../apis/ProfileMethods.tsx'
 import type { FavoriteItem } from '../../interface/ProfileType'
+import { AGENT_TURN_DONE_EVENT } from './agentTurn.ts'
 
 /** 收藏变了 → 让所有显示收藏的地方立刻重算（调用方不用知道谁在看收藏） */
 export const FAVORITES_CHANGED_EVENT = 'favorites-change'
-/** 看板娘一轮对话收尾（chat-stream.js 在流 finally 里派发）——agent 可能刚写过收藏 */
-export const AGENT_TURN_DONE_EVENT = 'agent-turn-done'
 
 /** 收藏列表（null = 还没成功读到过）。**同一个引用**只在拉到新数据时被替换。 */
 let list: FavoriteItem[] | null = null

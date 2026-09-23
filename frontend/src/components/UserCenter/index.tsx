@@ -55,6 +55,7 @@ import AvatarCropModal from '../AvatarCropModal'
 import { DEFAULT_AVATAR_URL } from './identity'
 import { notifyUnreadChanged, useUnread } from './unread'
 import { applyLocalFavorite, useFavorites } from './favorites'
+import { AGENT_TURN_DONE_EVENT } from './agentTurn'
 import './index.sass'
 
 /** 后端时间是 "YYYY-MM-DD HH:MM:SS"（已是 +08:00 钟面）——截到分钟，不做任何换算 */
@@ -185,9 +186,10 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
         setCropOpen(false)
     }, [open])
 
-    /** 页签首次激活时加载数据 */
+    /** 页签首次激活时加载数据。`force` = 已经加载过也重拉一次（agent 一轮收尾后用，
+     *  见下面那个订阅 `agent-turn-done` 的 effect）。 */
     const loadTab = useCallback(
-        async (key: string) => {
+        async (key: string, force = false) => {
             if (!loggedIn) return
             // 收藏**不在这里拉**：它是共享状态（详情页那颗★看的是同一份），由 useFavorites
             // 按「这一刻真的在看收藏」自己拉并订阅变化。这里再拉一次就是两份状态——
@@ -195,11 +197,11 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
             if (key === 'favorites') return
             setLoadingTab(true)
             try {
-                if (key === 'talks' && talks === null) {
+                if (key === 'talks' && (force || talks === null)) {
                     const res = await getMyTalks()
                     if (ok(res)) setTalks(res.data.data || [])
                     else message.error(errMsg(res))
-                } else if (key === 'notices' && notices === null) {
+                } else if (key === 'notices' && (force || notices === null)) {
                     const res = await getNotifications()
                     if (ok(res)) {
                         setNotices(res.data.data?.items || [])
@@ -207,7 +209,7 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                     } else {
                         message.error(errMsg(res))
                     }
-                } else if (key === 'mailbox' && mailbox === null) {
+                } else if (key === 'mailbox' && (force || mailbox === null)) {
                     const res = await getMailbox()
                     if (ok(res)) setMailbox(res.data.data)
                     else message.error(errMsg(res))
@@ -248,6 +250,25 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
         setOpened(null)
         if (key === 'drafts' && drafts === null) loadDrafts()
     }
+
+    /* 看板娘一轮对话收尾（chat-stream.js 派发，见 agentTurn.ts）：agent 可能刚把通知/站内信
+       标成已读、或改过别的账 ⇒ **已经加载过的**页签当场重拉一次。
+       只重拉加载过的（`null` = 用户还没点开过，别替他拉——同懒加载纪律）；没加载过的下次
+       点开时自然拿到最新的。收藏页签不在这里管（共享状态自己订阅了同一个事件）。
+       20260924：此前**只有收藏**订阅了这个事件 ⇒ 通知/信箱/说说/草稿都得刷新网页才更新
+       （用户实测反馈：让 agent 标已读，列表与红点都纹丝不动）。
+       ⚠️ 打开着的那封信（`opened`）是快照，不跟着重拉——它不在"列表该不该新"这个问题里。 */
+    useEffect(() => {
+        if (!open || !loggedIn) return
+        const onTurnDone = () => {
+            if (talks !== null) void loadTab('talks', true)
+            if (notices !== null) void loadTab('notices', true)
+            if (mailbox !== null) void loadTab('mailbox', true)
+            if (drafts !== null) void loadDrafts()
+        }
+        window.addEventListener(AGENT_TURN_DONE_EVENT, onTurnDone)
+        return () => window.removeEventListener(AGENT_TURN_DONE_EVENT, onTurnDone)
+    }, [open, loggedIn, talks, notices, mailbox, drafts, loadTab, loadDrafts])
 
     // ── 用户设置 ────────────────────────────────────────────────────────────
 
