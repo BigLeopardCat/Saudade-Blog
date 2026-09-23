@@ -1,14 +1,15 @@
 /**
  * 跑 tests/ 下所有 *.test.mjs 套件（20260923）。
  *
- * 本仓库没有 jest：这 10 个套件都是 `node tests/xxx.test.mjs` 直接执行 + `node:assert`。
+ * 本仓库没有 jest：这 11 个套件都是 `node tests/xxx.test.mjs` 直接执行 + `node:assert`。
  * 此前 package.json 里那句 `"test": "jest"` 是个死脚本——既没有 jest 配置也没有这个依赖，
  * 于是"跑测试"这件事对人和 CI 都不可执行（CI 里干脆一项检查都没有）。
  *
  * 用法：`npm test`（= node tests/run-suites.mjs），CI 的 check job 走同一条路。
  *
- * 不进这里的：`*.test.py`（要 Playwright，CI 上不跑）与 `repro-*.mjs` / `smoke-harness.mjs`
- * （手工排查工具，不是断言套件）。
+ * 不进这里的：`*.test.py`（要 Playwright + 无头 Chrome，CI 的秒级 job 上跑不了；由
+ * `scripts/nightly_sandboxes.sh` 每天 04:40 串行跑，结果在 ~/sandbox_regression.log）
+ * 与 `repro-*.mjs` / `smoke-harness.mjs`（手工排查工具，不是断言套件）。
  */
 import { readdirSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
