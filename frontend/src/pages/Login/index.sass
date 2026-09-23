@@ -56,10 +56,14 @@ body
     font-weight: 600
     letter-spacing: .04em
 
-  .login-sub
-    margin: 8px 0 0
-    color: rgba(255,255,255,.42)
-    font-size: 13px
+  // 20260924：原来是 `.login-sub` 那行「登录后体验完整服务」小字，换成访客自己的三态头像。
+  // 一圈暖金细边 + 投影，把默认头像那张浅底方图与深色卡片分开（antd Avatar 默认是
+  // inline-block，display:block + margin auto 才在 .login-brand 的 text-align:center 里居中）。
+  .login-avatar
+    display: block
+    margin: 14px auto 0
+    border: 1px solid rgba(240,201,135,.35)
+    box-shadow: 0 6px 18px rgba(0,0,0,.35)
 
 .field
   position: relative

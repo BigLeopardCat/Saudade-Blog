@@ -26,6 +26,13 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]          # 仓库根
 FE = ROOT / "frontend"
 LOGIN_SASS = "src/pages/Login/index.sass"
 
+# `import.meta.env` 的替身（与 dark-mode-contrast / dashboard-sidebar / notes-list-ui 同一个串）。
+# 必须显式给：esbuild 的 iife 输出里 `import.meta` 是空对象，`import.meta.env.X` 会当场
+# **抛 TypeError**——20260924 品牌区接上 useViewerAvatar（它经 utils/runtimeApi.ts 读 env）
+# 那一刻起，这一页整页白屏、所有断言连"元素在不在"都问不出来。
+DEFINE = ('import.meta.env={"VITE_HTTP_BASEURL":"","VITE_CDN_BASEURL":"",'
+          '"MODE":"production","DEV":false,"PROD":true,"BASE_URL":"/"}')
+
 FAILS = []
 
 
@@ -70,6 +77,15 @@ export const message = {
     ],
 };
 export const theme = { darkAlgorithm: '__DARK_ALGORITHM__' };
+// 品牌区那个头像（20260924 起占位）用。桩按**真 antd v5 的形状**渲染：有 src 时是
+// <span class="ant-avatar ...className"><img src alt></span>——className 落在 span、src 落在
+// 内层 img。桩若图省事把 src 直接放 span 上，断言就会锁在一个真页面不存在的形状上。
+export const Avatar = (props: any) =>
+    React.createElement(
+        'span',
+        { className: ['ant-avatar', 'ant-avatar-circle', props.className].filter(Boolean).join(' ') },
+        props.src ? React.createElement('img', { src: props.src, alt: props.alt }) : null,
+    );
 export const __cpThemes: any[] = [];
 (window as any).__cpThemes = __cpThemes;
 export const ConfigProvider = (props: any) => {
@@ -131,7 +147,7 @@ import Login from './src/pages/Login/index.tsx';
     # ③ esbuild 打包（.sass 的裸 import 会被 text loader 吞掉，CSS 由页面单独引入）
     subprocess.run([str(FE / "node_modules/.bin/esbuild"), "entry.tsx",
                     "--bundle", "--format=iife", "--outfile=bundle.js",
-                    "--loader:.sass=text", "--jsx=automatic",
+                    "--loader:.sass=text", "--jsx=automatic", f"--define:{DEFINE}",
                     f"--alias:antd={stubs}/antd.tsx",
                     f"--alias:react-router-dom={stubs}/router.tsx",
                     f"--alias:react-redux={stubs}/redux.tsx"],
@@ -162,7 +178,14 @@ with sync_playwright() as p:
     check("无 JS 运行时报错", not errs, "; ".join(errs[:2]))
     check(".login-box 存在", pg.locator(".login-box").count() == 1)
     check("标题 Saudade Blog", "Saudade Blog" in pg.locator(".login-brand h2").inner_text())
-    check("副标题存在（登录后体验完整服务）", "登录后体验完整服务" in pg.locator(".login-sub").inner_text())
+    # 20260924：品牌区那行小字「登录后体验完整服务」换成访客自己的三态头像（同一个
+    # useViewerAvatar）。旧断言锁的是已被删掉的那行字 ⇒ 当轮改判据，不是删断言：
+    # 这一页从没登录过（无 token、localStorage 空）⇒ 三态里的第③态 = 默认头像。
+    check("品牌区小字已撤（不再有 .login-sub）", pg.locator(".login-sub").count() == 0)
+    check("品牌区是头像（.login-avatar 一个）", pg.locator(".login-avatar").count() == 1)
+    check("新访客 → 默认头像 /default-avatar.png",
+          pg.get_attribute(".login-avatar img", "src") == "/default-avatar.png",
+          str(pg.get_attribute(".login-avatar img", "src")))
     check("可见 label：账号 / 密码",
           [t.strip() for t in pg.locator(".field label").all_inner_texts()] == ["账号", "密码"])
     check("两个输入框 id 正确", pg.locator("input#account").count() == 1 and pg.locator("input#password").count() == 1)
@@ -174,6 +197,30 @@ with sync_playwright() as p:
     check("返回首页入口存在且不带箭头",
           pg.locator(".login-foot a").inner_text().strip() == "返回首页",
           pg.locator(".login-foot a").inner_text().strip())
+
+    print("①b 头像第②态：退出登录但本机挂过账号 → 仍是那个账号的头像")
+    # 登录页正是"退出后落回"的地方——令牌是自包含的，过期和退出在浏览器侧长得一样，
+    # 展示身份不该跟着失忆（三态判据与缓存见 components/UserCenter/identity.ts）。
+    # 新开一个 page 而不是改上面那个：这份缓存必须在挂载前就位（useViewerAvatar 的初始
+    # state 在挂载时读一次 localStorage），已跑起来的 page 改了也不会重读。
+    # 顺带锁"未登录不为一张头像打后端"——见 identity.ts 的 pull()。
+    AVATAR_2 = "/api/protect/download/avatar-sora-20260922.png"
+    pg_b = br.new_page(viewport={"width": 1280, "height": 900})
+    reqs_b = []
+    pg_b.on("request", lambda r: reqs_b.append(r.url))
+    pg_b.add_init_script(
+        "localStorage.setItem('saudade.lastUser', JSON.stringify({"
+        "username:'sora', nickname:'', "
+        f"avatar:{json.dumps(AVATAR_2)}, at:'2026-09-24 00:00:00'}}));")
+    pg_b.goto(URL)
+    pg_b.wait_for_timeout(400)
+    check("上次那个账号的头像（不是默认头像）",
+          pg_b.get_attribute(".login-avatar img", "src") == AVATAR_2,
+          str(pg_b.get_attribute(".login-avatar img", "src")))
+    check("未登录不发资料请求",
+          not [u for u in reqs_b if "protected/profile" in u],
+          json.dumps(reqs_b, ensure_ascii=False)[:200])
+    pg_b.close()
 
     print("② 几何（居中 + 不溢出）")
     box = pg.locator(".login-box").bounding_box()

@@ -1,5 +1,5 @@
 import './index.sass';
-import { ConfigProvider, message, Modal, theme as antdTheme } from 'antd';
+import { Avatar, ConfigProvider, message, Modal, theme as antdTheme } from 'antd';
 import { EyeInvisibleOutlined, EyeOutlined } from '@ant-design/icons';
 import { useEffect, useState } from 'react';
 import * as React from 'react';
@@ -7,6 +7,7 @@ import { useDispatch } from 'react-redux';
 import { fetchToken } from "../../store/components/user.tsx";
 import { useNavigate } from 'react-router-dom';
 import getToken from '../../apis/getToken';
+import { useViewerAvatar } from '../../components/UserCenter/identity';
 import { isAdminToken } from '../../utils/auth.ts';
 import UserData from "../../interface/UserData";
 import SeoHelmet from "../../components/SeoHelmet";
@@ -42,6 +43,11 @@ const Login: React.FC = () => {
     const [messageApi, contextHolder] = message.useMessage();
     const dispatch = useDispatch();
     const navigate = useNavigate();
+    // 20260924：品牌区那行小字「登录后体验完整服务」换成**访客自己的三态头像**（与头部
+    // 同一个 hook，不是另写一套）：正常登录=自己的头像；退出登录/令牌过期但本机挂过账号
+    // =上次那个账号的头像；从没登录过=默认头像。登录页正是"退出后落回"的地方——令牌没了，
+    // 展示身份不该跟着失忆（三态的选择与缓存见 components/UserCenter/identity.ts）。
+    const viewerAvatar = useViewerAvatar();
 
     useEffect(() => {
         const token = getToken();
@@ -165,7 +171,9 @@ const Login: React.FC = () => {
                 <div className="login-box">
                     <header className="login-brand">
                         <h2>Saudade Blog</h2>
-                        <p className="login-sub">登录后体验完整服务</p>
+                        {/* 这一格原来是小字「登录后体验完整服务」，20260924 起换成访客自己的
+                            三态头像（同一个 useViewerAvatar，尺寸比头部那个大一号）。 */}
+                        <Avatar className="login-avatar" src={viewerAvatar} size={64} alt="访客头像" />
                     </header>
 
                     <form onSubmit={handleSubmit}>
