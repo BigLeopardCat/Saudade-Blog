@@ -21,6 +21,10 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 FE = ROOT / "frontend"
 LOGIN_SASS = "src/pages/Login/index.sass"
 
+# `import.meta.env` 的替身（与 login-page / dark-mode-contrast / dashboard-sidebar 同一个串）
+DEFINE = ('import.meta.env={"VITE_HTTP_BASEURL":"","VITE_CDN_BASEURL":"",'
+          '"MODE":"production","DEV":false,"PROD":true,"BASE_URL":"/"}')
+
 FAILS = []
 
 
@@ -69,6 +73,11 @@ import Login from './src/pages/Login/index.tsx';
     subprocess.run([str(FE / "node_modules/.bin/esbuild"), "entry.tsx",
                     "--bundle", "--format=iife", "--outfile=bundle.js",
                     "--loader:.sass=text", "--jsx=automatic",
+                    # 20260924 起品牌区挂了 useViewerAvatar（经 utils/runtimeApi.ts 读
+                    # import.meta.env）；iife 输出里 import.meta 是空对象 ⇒ 不给这个替身
+                    # 就 `undefined.VITE_HTTP_BASEURL` 当场抛错、整页白屏。串与
+                    # login-page / dark-mode-contrast 那几个沙箱保持一致。
+                    f"--define:{DEFINE}",
                     f"--alias:react-router-dom={sb}/stub-router.tsx",
                     f"--alias:react-redux={sb}/stub-redux.tsx"],
                    cwd=str(sb), check=True, capture_output=True)
