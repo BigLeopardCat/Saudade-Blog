@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 """登录页无头验收（20260921 改版）：结构 / 几何 / 聚焦样式 / 弹窗交互 / 提交契约。
 
+跳转契约（20260922）也在这里锁：管理员 token → /dashboard，普通用户/无 token → /。
+两岔都要在，只锁一岔就会漏掉"普通用户被送进后台吃一次无权限再弹回来"那类问题。
+
 本机不能 vite build（3.7GB 内存会 OOM，见 CLAUDE.md §2），沿用既定替代手段：
   · sass 用 programmatic API 编译（`node_modules/.bin/sass` 在 Node 18 上会因
     chokidar 的 ERR_REQUIRE_ESM 直接崩，别用 CLI）；
@@ -11,6 +14,7 @@
 用法（仓库任意位置）：python3 frontend/tests/login-page.test.py
 依赖：frontend/node_modules（esbuild + react + react-dom）、playwright（python）。
 """
+import base64
 import json
 import pathlib
 import shutil
@@ -29,6 +33,15 @@ def check(desc, cond, detail=""):
     print(("  ✅ " if cond else "  ❌ ") + desc + (f"  [{detail}]" if detail else ""))
     if not cond:
         FAILS.append(desc)
+
+
+def jwt_with_role(role: str) -> str:
+    """造一个 payload 段合法的 JWT。前端 `isAdminToken`（src/utils/auth.ts）只解码 payload
+    的 role 来做界面分流、**不验签**（真正的授权在 Rust），所以签名段可以是假的。
+    用途：登录页自 20260922 起跳转分两岔——管理员 token → /dashboard，其余 → /，两条都要锁。"""
+    payload = base64.urlsafe_b64encode(
+        json.dumps({"sub": 721, "role": role}).encode()).decode().rstrip("=")
+    return "x." + payload + ".y"
 
 
 # ── ① 搭沙箱：拷贝 src、就地替换四个边界模块、软链 node_modules ──────────
@@ -79,9 +92,13 @@ export const Modal = (props: any) => {
 ''', encoding="utf-8")
 
     (stubs / "router.tsx").write_text('''\
-export const useNavigate = () => (to: string) => {
+// navigate 必须是**稳定引用**——真 react-router 的 useNavigate 就是稳定的（内部 useCallback）。
+// Login 里 useEffect(..., [navigate]) 依赖它：桩若每次渲染返回新函数，那个 effect 会跟着
+// 每次 re-render 重跑（每跳一次都多记一笔），"跳了几次/跳去哪"就再也量不准。
+const nav = (to: string) => {
     (window as any).__nav = ((window as any).__nav || []).concat(to);
 };
+export const useNavigate = () => nav;
 ''', encoding="utf-8")
 
     (stubs / "redux.tsx").write_text('''\
@@ -256,7 +273,7 @@ with sync_playwright() as p:
         "() => (window.__cpThemes || []).some(t => t && t.algorithm === '__DARK_ALGORITHM__'"
         " && t.token && t.token.colorBgElevated)"))
 
-    print("⑥ 提交契约（空值 → 原生校验；成功 → 派发 fetchToken + 跳后台）")
+    print("⑥ 提交契约（空值 → 原生校验；成功 → 派发 fetchToken + 按 token 分流跳转）")
     pg.evaluate("() => { window.__msgLog.length = 0; window.__nav = []; }")
     pg.click("button.login-submit")
     pg.wait_for_timeout(300)
@@ -277,7 +294,22 @@ with sync_playwright() as p:
     check("登录中按钮文案/状态合法", pg.locator("button.login-submit").inner_text().strip() in ("登 录", "登录中…"))
     pg.wait_for_timeout(600)
     check("成功后提示「登录成功」", any("success:登录成功" in m for m in pg.evaluate("() => window.__msgLog")))
-    check("成功后跳 /dashboard", pg.evaluate("() => (window.__nav || []).includes('/dashboard')"))
+    # 20260922 起跳转分两岔（此前一律送 /dashboard，普通用户到了只会吃一次"无权限访问后台"
+    # 再被弹回首页）：管理员 token → /dashboard，其余（含拿不到 token）→ /。
+    # 本段登录前没设 token ⇒ getToken() 得 null ⇒ 走首页那一岔。
+    check("成功后无 token/普通用户 → 首页 /",
+          pg.evaluate("() => (window.__nav || []).join(',')") == '/',
+          json.dumps(pg.evaluate("() => window.__nav"), ensure_ascii=False))
+
+    print("⑥b 管理员登录后直达后台（20260922 分流契约的另一岔）")
+    pg.evaluate(f"() => {{ window.__nav = []; window.__token = {json.dumps(jwt_with_role('admin'))};"
+                " window.__msgLog.length = 0; }")
+    pg.click("button.login-submit")
+    pg.wait_for_timeout(1200)          # 成功分支的跳转带 500ms setTimeout
+    check("管理员 token → /dashboard",
+          pg.evaluate("() => (window.__nav || []).join(',')") == '/dashboard',
+          json.dumps(pg.evaluate("() => window.__nav"), ensure_ascii=False))
+    pg.evaluate("() => { window.__token = undefined; }")
 
     print("⑦ 失败分支（服务端 500 → 报错且不跳转）")
     pg.evaluate("() => { window.__nav = []; window.__msgLog.length = 0; window.__loginStatus = 500; }")
@@ -285,7 +317,10 @@ with sync_playwright() as p:
     pg.wait_for_timeout(1200)
     check("失败提示走 error 通道", any(m.startswith("error:") for m in pg.evaluate("() => window.__msgLog")),
           json.dumps(pg.evaluate("() => window.__msgLog"), ensure_ascii=False))
-    check("失败不跳转", not pg.evaluate("() => (window.__nav || []).includes('/dashboard')"))
+    # 判据从"不含 /dashboard"改成"一次都没跳"：20260922 起成功分支普通用户也不去 /dashboard，
+    # 旧写法在新契约下恒真（纯空转），锁不住任何东西。
+    check("失败不跳转（一次都没跳）", pg.evaluate("() => (window.__nav || []).length") == 0,
+          json.dumps(pg.evaluate("() => window.__nav"), ensure_ascii=False))
 
     print("⑧ 密码显隐 + 会话重定向")
     pg.evaluate("() => { window.__loginStatus = 200; }")
@@ -308,7 +343,19 @@ with sync_playwright() as p:
     pg2.add_init_script("window.__token = 'fake-token';")
     pg2.goto(URL)
     pg2.wait_for_timeout(400)
-    check("已有 token 时自动跳 /dashboard", pg2.evaluate("() => (window.__nav || []).includes('/dashboard')"))
+    check("已有普通用户 token 时自动回首页 /",
+          pg2.evaluate("() => (window.__nav || []).join(',')") == '/',
+          json.dumps(pg2.evaluate("() => window.__nav"), ensure_ascii=False))
+
+    # 另一岔：管理员 token 才是"一进来就直达后台"。分开两个 page 是因为 token 得在
+    # 挂载前就位（add_init_script），改一个 page 的 localStorage 影响不到已跑的 effect。
+    pg4 = br.new_page(viewport={"width": 1280, "height": 900})
+    pg4.add_init_script(f"window.__token = {json.dumps(jwt_with_role('admin'))};")
+    pg4.goto(URL)
+    pg4.wait_for_timeout(400)
+    check("已有管理员 token 时自动直达 /dashboard",
+          pg4.evaluate("() => (window.__nav || []).join(',')") == '/dashboard',
+          json.dumps(pg4.evaluate("() => window.__nav"), ensure_ascii=False))
 
     print("⑨ 移动端（380px 宽）")
     pg3 = br.new_page(viewport={"width": 380, "height": 780})
