@@ -117,3 +117,19 @@ fi
 printf '{"sha":"%s","deployed_at":"%s"}\n' "$SHA" "$(date '+%Y-%m-%d %H:%M:%S%z')" \
   > frontend/dist/build-info.json
 echo "✅ $(date '+%H:%M:%S') 部署完成（sha=${SHA:0:12}）"
+
+# ── R2 产物清理（20260924，用户报"R2 会被写爆产生账单"）────────────────────
+# 放到**落地成功之后**：这一步跑到了就说明这次的包已经不需要留在云上了，R2 回到
+# 「latest.txt + 最近 3 个提交包」这个不变量（保留 3 = 留一条约 3 次部署的手动回滚
+# 窗口；被删的包只能重跑 CI 用那个提交号重建）。--keep-sha 是双保险：本次部署的包
+# 无论如何不删（正常情况下它本来就是最新的那个）。
+# **清理失败不影响部署结果**——账单卫生不该把一次成功的部署标红，只记一行警告。
+if [ -f scripts/deploy/prune_r2.py ]; then
+  if python3 scripts/deploy/prune_r2.py --keep 3 --keep-sha "$SHA" --apply; then
+    echo "✅ $(date '+%H:%M:%S') R2 产物已清理（保留 latest.txt + 最近 3 个包）"
+  else
+    echo "⚠️ $(date '+%H:%M:%S') R2 产物清理失败（不影响本次部署，可手动跑 scripts/deploy/prune_r2.py）"
+  fi
+else
+  echo "⚠️ 找不到 scripts/deploy/prune_r2.py，跳过 R2 产物清理"
+fi
