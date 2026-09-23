@@ -100,8 +100,21 @@ HARNESS = """<!DOCTYPE html>
 <script>
   // 上报链替身：真链是 autoload.js 里的 window.__reportError → POST /api/monitor/log
   // （看板娘面板持有上报入口）。这里只收不发，供单测断言"静默失败有没有变响亮"。
+  //
+  // ⚠️ 去重那一条**必须照抄**：autoload.js 的 report() 按 `type|message 前 80 字符|url`
+  // 在页面生命周期内去重、重复的整条丢掉（且 seen 不随任何东西清空）。替身若不去重，
+  // "同一枚待办被挂第二次"这类事件在沙箱里数得到、在真链上却早被吃掉——断言会在
+  // 一个线上不存在的世界里变绿。dropped 计数暴露给断言，用来锁"埋点没被去重吃掉"。
   window.__reports = [];
-  window.__reportError = function (o) { window.__reports.push(o); };
+  window.__reportsDropped = 0;
+  window.__seenReports = {};
+  window.__reportError = function (o) {
+    var key = String(o.type || '') + '|' + String(o.message || '').slice(0, 80)
+              + '|' + String(o.url || '');
+    if (window.__seenReports[key]) { window.__reportsDropped++; return; }
+    window.__seenReports[key] = 1;
+    window.__reports.push(o);
+  };
   // ── fetch 桩：/api/chat/stream 回放真帧；history 的延迟由 __stub 控制 ──
   window.__frames = [];
   // frameDelay：帧与帧之间的间隔（默认 0 = 一次读完，轮次瞬间收尾）。② 腿要靠它
@@ -238,6 +251,7 @@ ASK_STATE = """() => {
     pending: window.__ctx.state.pendingAsk ? 'SET' : null,
     isSending: window.__ctx.state.isSending,
     reports: window.__reports.slice(),
+    reportsDropped: window.__reportsDropped,
     historyCalls: window.__stub.historyCalls,
     cardShownAt: window.__stub.cardShownAt,
     historyResolvedAt: window.__stub.historyResolvedAt,
@@ -312,6 +326,17 @@ def flow_stages(reports, ask_id=None):
 
 def flow_message(reports):
     return json.dumps([r.get("message") for r in (reports or [])], ensure_ascii=False)
+
+
+def flow_monotone(seq):
+    """这一串的序号是不是严格递增且步长 1。
+
+    这就是"没被去重吃掉"的判据：序号只增不改 ⇒ 同一条消息不会出现两次（真链按
+    `type|message|url` 去重，重复即整条丢失）。**不是"从 1 开始"**——沙箱的确认帧
+    里 id 恒为 c1，所以序号是跨腿连续增长的（线上 id 每次弹窗新签，才会各自从 1 起）。
+    """
+    ns = [int(kv.get("n") or 0) for _, kv in seq]
+    return bool(ns) and all(b - a == 1 for a, b in zip(ns, ns[1:]))
 
 
 def settle_leftover(pg):
@@ -444,9 +469,12 @@ def main():
                   flow_message(st["reports"]))
             # 接回这件事本身要留痕（①那轮的 frame→card，加上这一跳接回的 card）：
             # 20260923 的形态是"卡片悄悄不见了"，只记首次挂载则事后只能看到"挂过"。
-            check("自愈接回也进埋点（第二次 card，同一 id）",
-                  [s for s, _ in flow_stages(st["reports"], ASK_ID)] == ["frame", "card", "card"],
-                  flow_message(st["reports"]))
+            # 第二次 card 的**序号必须与第一次不同**——真上报链按 `type|message|url`
+            # 去重，序号相同就会被整条吃掉（沙箱绿、线上没有的那种假绿）。
+            _seq3 = flow_stages(st["reports"], ASK_ID)
+            check("自愈接回也进埋点（第二次 card，同一 id、序号递增没被去重吃掉）",
+                  [s for s, _ in _seq3] == ["frame", "card", "card"]
+                  and _seq3[1][1].get("n") != _seq3[2][1].get("n"), flow_message(st["reports"]))
 
             # ── ④ 缺 token 的确认帧：上报而不是静默丢弃 ────────────────
             print("\n④ 缺 token 的确认帧 → 上报（此前静默丢弃）")
@@ -634,6 +662,18 @@ def main():
             print("\n⑧ 正常分支埋点：五跳同 id，不该有的跳不出现（且全程不带令牌）")
             pg8, errs8 = open_page(b, url)
 
+            # 前置自检：替身照抄的那条去重规则**是活的**。少了这一条，"⑧整节零丢报"
+            # 在替身被改回"来者不拒"之后会退化成永真（假绿——正是本节要防的东西）。
+            probe = pg8.evaluate("""() => {
+              const o = { type: 'confirm_flow', message: 'stage=probe n=0', url: location.href };
+              window.__reportError(o); window.__reportError(o);
+              return { dropped: window.__reportsDropped, kept: window.__reports.length };
+            }""")
+            check("⑧前置：同一条上报两次只留一条（替身的去重与真链同规则）",
+                  probe["dropped"] == 1 and probe["kept"] == 1, json.dumps(probe))
+            reset_evidence(pg8)
+            pg8.evaluate("() => { window.__reportsDropped = 0; }")
+
             # ⑧a 完整链路：点「确定」成功 = frame→card→click→sent→settle(ok)
             run_round(pg8, ROUND)
             st = pg8.evaluate(ASK_STATE)
@@ -652,6 +692,8 @@ def main():
             check("⑧a 跳上的取值对得上（点的 yes、结论 ok）",
                   len(seq) == 5 and seq[2][1].get("value") == "yes"
                   and seq[4][1].get("result") == "ok", str(seq))
+            check("⑧a 序号严格递增（同一秒内的多跳靠它定序，也对账时判少了哪一跳）",
+                  flow_monotone(seq), str(seq))
             check("⑧a 正常链路不混用失败类型（confirm_card 只由失败分支发）",
                   by_fail(st["reports"]) == [], flow_message(st["reports"]))
             check("⑧a 上报里**不含令牌**（它是一次同意的唯一凭据，任何一跳都不许带）",
@@ -708,6 +750,8 @@ def main():
             check("⑧d 竞态丢包 = frame→card→click→settle(rollback)→card（放回可点），中间**没有 sent**",
                   [s for s, _ in seq] == ["frame", "card", "click", "settle", "card"]
                   and seq[3][1].get("result") == "rollback", str(seq))
+            check("⑧d 那一跳没被去重吃掉（序号连续，缺一条这里就会红）",
+                  flow_monotone(seq), str(seq))
             pg8.evaluate("""() => {
               window.__engine.ensureConversation = window.__origEnsure8;
               window.__ctx.state.isSending = false;
@@ -754,6 +798,11 @@ def main():
                   st["note"] == "已取消" and st["pending"] is None, repr(st["note"]))
             check("⑧g 那一跳是用户新打的那句话，不是确认请求（请求体里没有令牌）",
                   "confirm_token" not in (st["lastBody"] or ""), str(st["lastBody"])[:200])
+            # 整节下来**一条都不许被真链的去重规则吃掉**（替身照抄了 autoload.js 的
+            # `type|message 前 80 字符|url`）——被吃掉就是线上少了这条记录，沙箱却还在自说自话
+            check("⑧整节零丢报（埋点带的序号让重复跳在真链上也活得下来）",
+                  pg8.evaluate("() => window.__reportsDropped") == 0,
+                  str(pg8.evaluate("() => window.__reportsDropped")))
             check("⑧腿页面无未捕获异常", errs8 == [], " | ".join(errs8[:4]))
 
             check("①③腿页面无未捕获异常", errs == [], " | ".join(errs[:4]))
