@@ -20,3 +20,5 @@ pub mod user_notification;
 pub mod user_message;
 // 站内信草稿（20260923）
 pub mod user_message_draft;
+// 跨轮待办（20260923）：确认弹窗那一轮的结构化提议落库，下轮注入 planner
+pub mod pending_action;
