@@ -588,6 +588,40 @@ with sync_playwright() as p:
           bool(dels) and dels[-1]["url"].endswith("/22"), str(dels))
     check("取消后那一行当场消失", pg.locator(PANE + " .ant-list-item").count() == 1,
           str(pg.locator(PANE + " .ant-list-item").count()))
+    check("页签上的条数也跟着变（不是只有列表少了一行）",
+          "1" in pg.locator(".ant-tabs-tab >> nth=1").inner_text(),
+          pg.locator(".ant-tabs-tab >> nth=1").inner_text().replace("\n", " "))
+    pg.close()
+
+    print("⑤b 收藏同步：agent 改完（agent-turn-done）自己对账；再进页签会重拉")
+    pg = fresh_page()
+    fav_gets = lambda: len(find_call(pg, "/api/protected/favorites", "GET"))
+    pg.click(".ant-tabs-tab >> nth=1")
+    pg.wait_for_selector(PANE + " .ant-list-item", timeout=10000)
+    n1 = fav_gets()
+    check("进收藏页签拉了一次", n1 == 1, str(n1))
+    # 看板娘那边刚给第 46 篇点上收藏（改的是服务端），收尾派发 agent-turn-done
+    # （派发点由 tests/favorites-sync.test.mjs 锁在 chat-stream.js 里，这里模拟信号本身）
+    pg.evaluate("""() => {
+        // **换一份新数组**，不就地 push：真后端一次往返回来的是刚 JSON 解析出的新对象，
+        // 就地改会让"接口返回同一个实例"这个沙箱独有的现象掩盖真实的同步问题。
+        window.__state.favorites = [...window.__state.favorites,
+            { noteId: 46, title: '向量图谱', status: 'published', createdAt: '2026-09-23 08:00:00' }];
+        window.dispatchEvent(new CustomEvent('agent-turn-done'));
+    }""")
+    pg.wait_for_timeout(700)
+    check("agent 一轮收尾 → 收藏列表自己对齐（多出它刚收藏的那篇）",
+          pg.locator(PANE + " .ant-list-item").count() == 3, str(pg.locator(PANE + " .ant-list-item").count()))
+    check("真发了一次 GET /favorites（不是界面自己编的）", fav_gets() == n1 + 1, str(fav_gets()))
+    check("页签条数也跟着变（3）", "3" in pg.locator(".ant-tabs-tab >> nth=1").inner_text(),
+          pg.locator(".ant-tabs-tab >> nth=1").inner_text().replace("\n", " "))
+    # 旧写法（`favorites === null` 门控 + 组件常挂载）⇒ 这一次页面生命周期里再也不会重拉
+    pg.click(".ant-tabs-tab >> nth=0")
+    pg.wait_for_timeout(200)
+    pg.click(".ant-tabs-tab >> nth=1")
+    pg.wait_for_timeout(700)
+    check("切走再切回来会重拉（旧写法一次生命周期只拉一次）", fav_gets() == n1 + 2, str(fav_gets()))
+    check("没有任何页面错误", not pg.errs, " | ".join(pg.errs))
     pg.close()
 
     print("⑥ 公告和通知：页签未读角标 = 后端汇总；全部已读后当场归零")
