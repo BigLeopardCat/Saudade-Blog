@@ -29,6 +29,11 @@ export const DEFAULT_AVATAR_URL = '/default-avatar.png'
 
 /** localStorage 键。`saudade.` 前缀与 isDarkMode/announcement_seen_id 那几个自建键同族。 */
 const LAST_USER_KEY = 'saudade.lastUser'
+/** 本机登录过的**账号清单**（20260924 补）。`lastUser` 只留了最近一个，而"换账号输入"
+ *  要认的是**这台机器上用过的每一个**——只留最近一个时，输上一个用过的账号会掉回默认头像。 */
+const KNOWN_USERS_KEY = 'saudade.knownUsers'
+/** 清单上限。这台机器上登录过的账号本来就是个位数；封顶是防脏数据把它们堆成无限列表。 */
+const KNOWN_USERS_MAX = 8
 
 export interface RememberedUser {
     username: string
@@ -38,25 +43,60 @@ export interface RememberedUser {
     at: string
 }
 
-/** 读取本机记住的账号（从没用过 / 数据坏了都返回 null，调用方按"没有记录"处理）。 */
+/** 从任意来源（localStorage 解析结果）抠出规范形状；坏值一律按空字符串处理。 */
+function toRememberedUser(v: any): RememberedUser | null {
+    if (!v || typeof v !== 'object') return null
+    return {
+        username: typeof v.username === 'string' ? v.username : '',
+        nickname: typeof v.nickname === 'string' ? v.nickname : '',
+        avatar: typeof v.avatar === 'string' ? v.avatar : '',
+        at: typeof v.at === 'string' ? v.at : '',
+    }
+}
+
+/** 读取本机记住的**最近那个**账号（从没用过 / 数据坏了都返回 null，调用方按"没有记录"处理）。 */
 export function readRememberedUser(): RememberedUser | null {
     try {
         const raw = localStorage.getItem(LAST_USER_KEY)
-        if (!raw) return null
-        const v = JSON.parse(raw)
-        if (!v || typeof v !== 'object') return null
-        return {
-            username: typeof v.username === 'string' ? v.username : '',
-            nickname: typeof v.nickname === 'string' ? v.nickname : '',
-            avatar: typeof v.avatar === 'string' ? v.avatar : '',
-            at: typeof v.at === 'string' ? v.at : '',
-        }
+        return raw ? toRememberedUser(JSON.parse(raw)) : null
     } catch (e) {
         return null
     }
 }
 
-/** 记下"这个浏览器上登录过谁"。每次拿到 profile 都写一遍（昵称/头像可能刚改过）。 */
+/**
+ * 读取本机登录过的**账号清单**（最近的在前）。
+ *
+ * **兼容旧数据**：`knownUsers` 是 20260924 才有的键，此前只写过 `lastUser`。清单缺失/坏掉时
+ * 用 `lastUser` 合成一条——否则升级那一刻，所有老访客会连"最近那个账号"都认不出来。
+ * **这里只读不写**（读取方不该有副作用），迁移靠读时兜底，不需要改历史数据。
+ */
+export function readKnownUsers(): RememberedUser[] {
+    try {
+        const raw = localStorage.getItem(KNOWN_USERS_KEY)
+        if (raw) {
+            const arr = JSON.parse(raw)
+            if (Array.isArray(arr)) {
+                return arr.map(toRememberedUser)
+                    .filter((u): u is RememberedUser => !!u && !!u.username)
+            }
+        }
+    } catch (e) {
+        /* 坏数据 → 落回 lastUser 那条 */
+    }
+    const last = readRememberedUser()
+    return last && last.username ? [last] : []
+}
+
+/** 清单里按用户名找（trim + 忽略大小写）。展柜/登录页都用它做"这是本机认得的账号吗"。 */
+export function findKnownUser(users: RememberedUser[], username: string): RememberedUser | null {
+    const want = username.trim().toLowerCase()
+    if (!want) return null
+    return users.find((u) => u.username.trim().toLowerCase() === want) || null
+}
+
+/** 记下"这个浏览器上登录过谁"。每次拿到 profile 都写一遍（昵称/头像可能刚改过）。
+ *  写两处：`lastUser`（最近那个，头部第②态用）与 `knownUsers` 清单（登录页按输入认人用）。 */
 export function rememberUser(u: { username?: string; nickname?: string; avatar?: string | null }) {
     try {
         const d = new Date()
@@ -70,6 +110,12 @@ export function rememberUser(u: { username?: string; nickname?: string; avatar?:
                 + `${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}`,
         }
         localStorage.setItem(LAST_USER_KEY, JSON.stringify(row))
+        if (!row.username) return
+        // 清单：同一个人只留一条（忽略大小写去重），最近的排最前 —— 昵称/头像改了就是"新的那条"
+        const rest = readKnownUsers()
+            .filter((x) => x.username.trim().toLowerCase() !== row.username.trim().toLowerCase())
+        localStorage.setItem(KNOWN_USERS_KEY,
+            JSON.stringify([row, ...rest].slice(0, KNOWN_USERS_MAX)))
     } catch (e) {
         /* 隐私模式下 localStorage 可能不可写——头像退回默认，不影响任何请求 */
     }
@@ -85,25 +131,32 @@ export function selectAvatar(myAvatar: string | null, rememberedAvatar: string |
 /**
  * **登录页**那一格头像（20260924 用户拍板）。与头部不同的唯一一点：它还要看**账号输入框**。
  *
- * 规则（纯本地比较，零请求）：输入框空着、或填的就是本机记住的那个账号 ⇒ 显示上面那句算出来的
- * 头像；填了**别的**账号 ⇒ 立刻退回默认头像。
+ * 规则（纯本地比较，零请求）：
+ *   · 输入框空着 ⇒ 上面那句算出来的头像（= 头部第②态那个"本机挂着的账号"，语义保持一致）
+ *   · 填的账号在**本机登录过的清单**里 ⇒ 那个账号自己缓存的头像（**不是**最近那个人的）
+ *   · 其余 ⇒ 默认头像
  *
  * 为什么不能"按输入的用户名去问后端要头像"：那等于给所有人一个**账号枚举 oracle**——输 `sora`
  * 出猫头像、输 `soraa` 出默认头像，一次请求就把"这个账号存不存在"吐出来。企业侧的通行做法是
  * 认证前不回显任何按用户名查到的资料：要么走"先输账号、下一页才显示欢迎语"的两步流，要么
  * **只认本机登录过的账号**（Windows/macOS 的账号选择器），要么登录页干脆不放个人头像。这里取
- * 第二条：头像只来自 localStorage 里那份 `saudade.lastUser`，输入框一偏离它就回默认。
+ * 第二条：头像只来自 localStorage（`saudade.knownUsers` 清单 + `saudade.lastUser`），
+ * 输入框一偏离这份清单就回默认。
+ *
+ * **认不出来的那些账号**：清单只收"在这台机器上登录过、且当时拿到过资料"的账号——从没在本机
+ * 登录过的、或本机登录它时还没这个清单的（20260924 之前的记录），都只能回默认头像。这是这条
+ * 方案的固有代价，不是 bug：想认全，只能问后端，而那条路正是上面那个 oracle。
  *
  * 比较做 trim + 忽略大小写：这只是**展示层**的宽容匹配，真正的账号大小写语义在后端。
  */
 export function selectLoginAvatar(
     viewerAvatar: string,
-    rememberedUsername: string,
+    knownUsers: RememberedUser[],
     typedAccount: string,
 ): string {
-    const typed = typedAccount.trim().toLowerCase()
-    const known = rememberedUsername.trim().toLowerCase()
-    return typed && typed !== known ? DEFAULT_AVATAR_URL : viewerAvatar
+    if (!typedAccount.trim()) return viewerAvatar
+    const hit = findKnownUser(knownUsers, typedAccount)
+    return hit ? (resolveApiAssetUrl(hit.avatar || '') || DEFAULT_AVATAR_URL) : DEFAULT_AVATAR_URL
 }
 
 /**

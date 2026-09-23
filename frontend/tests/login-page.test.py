@@ -221,10 +221,12 @@ with sync_playwright() as p:
           not [u for u in reqs_b if "protected/profile" in u],
           json.dumps(reqs_b, ensure_ascii=False)[:200])
 
-    # ①c 头像跟着输入框走（20260924 拍板：**只认本机记住的账号**）。用户报的是"换账号输入时，
+    # ①c 头像跟着输入框走（20260924 拍板：**只认本机登录过的账号**）。用户报的是"换账号输入时，
     # 头像还是显示上次账号的头像"。治本不能是"按输入的名字去后端查头像"——那等于给所有人一个
     # 账号枚举 oracle（输 sora 出猫头像、输 soraa 出默认 ⇒ 一次请求就知道账号存不存在）。
-    # 所以判据全是**本地**的：等于本机那份 `saudade.lastUser` 才显示它的头像，一偏离就回默认。
+    # 所以判据全是**本地**的：命中本机那份清单才显示它的头像，一偏离就回默认。
+    # 这一节同时还锁**旧数据兼容**：上面只写了 `saudade.lastUser`、没有清单（= 20260924 之前的
+    # 老访客的浏览器），读侧要能用它合成清单——不然升级那一刻所有人都认不出来。
     def avatar_src(page):
         return page.get_attribute(".login-avatar img", "src")
 
@@ -249,6 +251,42 @@ with sync_playwright() as p:
     check("清空输入 → 回到「本机挂着的那个账号」（与头部第②态同语义）",
           avatar_src(pg_b) == AVATAR_2, str(avatar_src(pg_b)))
     pg_b.close()
+
+    # ①d 清单（20260924 用户实测报回来的洞）：这台机器上登录过**不止一个**账号时，输上一个用过的
+    # 账号也该认出它自己那张头像——先前只记了最近一个（`saudade.lastUser`），于是"换账号输入"
+    # 永远只能得到默认头像。这里预置**两条**（较新的 kohaku、较旧的 sora），三条断言分别锁：
+    # 认得较旧的那个 / 认得较新的那个 / 认不得的仍回默认。
+    print("①d 本机登录过的多个账号：输哪个认哪个（清单，不是只记最近一个）")
+    AVATAR_3 = "/api/protect/download/avatar-kohaku-20260924.png"
+    pg_c = br.new_page(viewport={"width": 1280, "height": 900})
+    reqs_c = []
+    pg_c.on("request", lambda r: reqs_c.append(f"{r.resource_type} {r.url}"))
+    pg_c.add_init_script(
+        "localStorage.setItem('saudade.knownUsers', JSON.stringify(["
+        f"{{username:'kohaku', nickname:'', avatar:{json.dumps(AVATAR_3)}, at:'2026-09-24 01:00:00'}},"
+        f"{{username:'sora', nickname:'', avatar:{json.dumps(AVATAR_2)}, at:'2026-09-20 01:00:00'}}"
+        "]));"
+        "localStorage.setItem('saudade.lastUser', JSON.stringify({"
+        f"username:'kohaku', nickname:'', avatar:{json.dumps(AVATAR_3)},"
+        " at:'2026-09-24 01:00:00'}));")
+    pg_c.goto(URL)
+    pg_c.wait_for_timeout(400)
+    check("空输入 → 清单里最近那个（kohaku）", avatar_src(pg_c) == AVATAR_3, str(avatar_src(pg_c)))
+    pg_c.fill("input#account", "sora")
+    pg_c.wait_for_timeout(200)
+    check("输较**旧**的那个账号 → 认出来的是它自己那张头像（别再拿最近那个顶上）",
+          avatar_src(pg_c) == AVATAR_2, str(avatar_src(pg_c)))
+    pg_c.fill("input#account", "kohaku")
+    pg_c.wait_for_timeout(200)
+    check("输较新的那个账号 → 它自己的头像", avatar_src(pg_c) == AVATAR_3, str(avatar_src(pg_c)))
+    pg_c.fill("input#account", "nobody-here")
+    pg_c.wait_for_timeout(200)
+    check("清单里没有的账号 → 默认头像（绝不按名字去后端查）",
+          avatar_src(pg_c) == "/default-avatar.png", str(avatar_src(pg_c)))
+    check("清单比对全程零 XHR",
+          not [u for u in reqs_c if u.startswith(("xhr", "fetch"))],
+          json.dumps(reqs_c, ensure_ascii=False)[:300])
+    pg_c.close()
 
     print("② 几何（居中 + 不溢出）")
     box = pg.locator(".login-box").bounding_box()
