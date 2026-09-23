@@ -180,7 +180,7 @@ const Login: React.FC = () => {
                             再叠一层"跟着输入框走"：换账号输入时立刻退回默认头像——头像只认
                             **本机登录过的那些账号**各自缓存在本地的头像，绝不按输入的名字去问
                             后端（那是账号枚举 oracle，见 identity.ts 的 selectLoginAvatar）。 */}
-                        <Avatar className="login-avatar" src={avatar} size={64} alt="访客头像" />
+                        <Avatar className="login-avatar" src={avatar} size={84} alt="访客头像" />
                     </header>
 
                     <form onSubmit={handleSubmit}>
