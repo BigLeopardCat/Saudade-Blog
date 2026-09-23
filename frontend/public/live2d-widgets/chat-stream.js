@@ -65,6 +65,19 @@
     //    `ReferenceError: sendMessage is not defined`（前端错误上报 20260921 18:37 抓到），
     //    点击回调里抛错 ⇒ 请求没发出、界面也没任何提示，用户看到的就是"点了确定，
     //    轮次像被截断"。这类作用域错误只有真点一次才暴露，离线测试与探针都碰不到。
+    // 确认卡片链路的静默失败上报（20260923）：这一族的失败形态全都是"屏幕上看不
+    // 出来"——帧到了但卡片没了、点了没反应、待办被时序吞掉。它们此前一律静默
+    // return，只能靠用户截图 + 逐跳取证（20260923 那次查了四跳：agent 帧齐 → Rust
+    // 真转发 → 真前端模块能把真帧渲染成卡片 → 被 reconcileDOM 的孤儿清理删掉）。
+    // 走看板娘既有的上报链（window.__reportError → POST /api/monitor/log）。
+    // **绝不把令牌写进上报**（它是一次同意的唯一凭据）。
+    const reportConfirm = (why) => {
+      try {
+        if (typeof window.__reportError === 'function') {
+          window.__reportError({ type: 'confirm_card', message: why, url: location.href });
+        }
+      } catch (e) { /* 上报自身失败静默 */ }
+    };
     const askSettle = (note) => {          // 按钮换成一行灰字（卡片留在流里当记录）
       askBtns.innerHTML = '';
       const el = document.createElement('div');
@@ -78,9 +91,32 @@
       if (shown) askSettle('已取消');
       else if (askBtns) askBtns.innerHTML = '';
     };
-    const showAsk = () => {
+    // 把待办渲染成可点卡片。**幂等**（20260923）：同一个待办重复调用是零副作用。
+    // 它现在有两个调用点——流收尾（正常时机）与 reconcileDOM 收尾的钩子
+    // onAskResync（每次 DOM 重建后的自愈），后者可能一轮里被调到多次。旧版每次都
+    // 重建按钮并 appendChild：重复调用会把"已确认/已取消"的记录态覆盖回可点按钮
+    // （再点一次什么都不发生），还会把卡片反复挪位置。
+    const syncAsk = () => {
       const ask = ctx.state.pendingAsk;
-      if (!ask || !askBox) return;
+      if (!ask) return;
+      if (!askBox) {
+        // 待办在、模板节点不在（模板被改坏/被外部摘走）⇒ 不能静默：用户看到的是
+        // "agent 说完就没了"，而库里一切正常
+        reportConfirm('模板里没有 #chat-ask 节点，待办无处可挂（q=' + String(ask.q || '').slice(0, 40) + '）');
+        return;
+      }
+      const token = String(ask.token || '');
+      // 已就位（同一枚令牌 + 在场 + 已激活 + **按钮还在**）⇒ 不动它。位置也一并校验：
+      // 卡片被别的路径挪走（清空后没接回）时要重新挂到末位。
+      // "按钮还在"这一条不能省：卡片被 hideAsk（用户改口打字）结算成"已取消"后仍是
+      // active 且令牌相同，此时若再来同一枚令牌的确认帧（反射重跑/重发），只看前三
+      // 条的判据会把它当成"已就位"而跳过重建 ⇒ 屏幕上是"已取消"的灰字，内存里却有
+      // 一个可点的待办（点了没反应）。已结算的卡片必然没有 data-ask-value 按钮。
+      if (askBox.dataset.askToken === token
+          && askBox.classList.contains('active')
+          && askBox.parentNode === messages
+          && !!askBtns.querySelector('button[data-ask-value]')) return;
+      askBox.dataset.askToken = token;
       askQuestion.textContent = ask.q;
       askBtns.innerHTML = '';
       (ask.opts || []).forEach((op) => {
@@ -95,6 +131,9 @@
       // 挂到消息流末位。切会话/拉历史会把 .chat-messages 清空（children 被整段
       // 重建），而 #chat-ask 的节点引用还在 ctx.dom 里——appendChild 顺手把它接
       // 回去（节点已脱离文档时 appendChild 就是"重新挂载"），这是它唯一的复活点。
+      // 另外它在消息流里必须带 chat-keep 类（chat-render.js 模板已带）：reconcileDOM
+      // 的孤儿清理会删掉一切"无 data-mid 且非在途气泡"的节点，没这个标记的卡片
+      // 会在弹卡后的第一次 reconcile 里被当成孤儿删掉（20260923 事故本体）。
       messages.appendChild(askBox);
       askBox.classList.add('active');
       scrollToBottom(messages, true);
@@ -685,6 +724,11 @@
           const reader = resp.body.getReader();
           const decoder = new TextDecoder();
           let buf = '';
+          // 终止帧到过没有（20260923）：终止帧**必须是最后一帧**，到过之后又收到帧
+          // 就要上报（三端里 Rust 收 __END__ 即 break 停止转发，前端这里是 continue
+          // 继续读到连接关闭——同一帧两种语义，真出现"END 之后还有帧"时其中一端
+          // 必然看不见，而它此前完全无声）
+          let sawEnd = false;
           let mouthOpen = false;
           let lastMouthFlip = 0;
           const tickMouth = () => {
@@ -716,7 +760,12 @@
                 try { detail = JSON.parse(detail); } catch(e) {}
                 throw new Error(detail);
               }
-              if (payload === '__END__' || payload === '__NAV_END__') continue;
+              if (payload === '__END__' || payload === '__NAV_END__') { sawEnd = true; continue; }
+              // 终止帧之后还有帧：行为不变（照常处理，不吞），但要响亮——这正是
+              // "一端以为结束了、另一端还在写"的那类协议漂移，静默下去就是丢内容
+              if (sawEnd) {
+                reportConfirm('终止帧之后又收到一帧：' + String(payload).slice(0, 24));
+              }
               let text = payload;
               try { text = JSON.parse(payload); } catch(e) {}
               if (!text) continue;
@@ -732,6 +781,14 @@
                 try { ask = JSON.parse(text.slice('__CONFIRM__:'.length)); } catch (e) {}
                 if (ask && ask.q && ask.token) {
                   ctx.state.pendingAsk = Object.assign({}, ask, { convId: roundConvId });
+                } else {
+                  // 20260923：这一支此前静默丢弃——agent 那边确认帧已经签发（待办
+                  // 在内存/库里），前端只是不再提，用户看到的是"agent 说要确认，
+                  // 然后什么都没有"。缺 q 或 token 的帧一律上报（只记缺哪个字段，
+                  // **不记令牌内容**）
+                  reportConfirm('__CONFIRM__ 帧不可用（'
+                    + (ask ? '缺字段：' + ['q', 'token'].filter((k) => !ask[k]).join('/') : 'JSON 解析失败')
+                    + '）');
                 }
                 continue;
               }
@@ -935,8 +992,13 @@
           // isSending/按钮态先生效（按钮回调据此判忙）。非 pendingAsk 轮顺手清
           // 残留（上一轮的弹窗若在流中被 dismiss 过就不该再冒出来）
           setTimeout(() => {
-            if (ctx.state.pendingAsk && !ctx.state.isSending) showAsk();
-            else if (ctx.state.pendingAsk) hideAsk();
+            if (!ctx.state.pendingAsk) return;
+            // 仍在发（跨窗远端轮等）⇒ **保留待办**，等下一次收尾再弹。20260923 前
+            // 这里是 hideAsk()：把待办销毁并写"已取消"——一个纯时序的"此刻忙"被
+            // 当成"用户改口了"，卡片连同令牌一起丢，而 agent 那边确认帧早已签发，
+            // 用户唯一的一次同意机会就这么静默消失了（屏幕上连痕迹都没有）。
+            // 真正的销毁只有一处合法：用户改口打字（见 sendMessage 里的 hideAsk）。
+            if (!ctx.state.isSending) syncAsk();
           }, 0);
           // 20260923：一轮对话收尾 → 广播给"看板娘可能改过的那些状态"。
           // agent 有写自己数据的工具（收藏/通知已读/站内信），它改的是**服务端**，
@@ -1567,7 +1629,12 @@
       const handleAskChoice = (value) => {
         const ask = ctx.state.pendingAsk;
         if (!ask) return;
-        if (ctx.state.isSending) return;   // 流还没收尾（极短窗口）：不叠发，卡片留着
+        if (ctx.state.isSending) {         // 流还没收尾（极短窗口）：不叠发，卡片留着
+          // 20260923：留痕而不是静默 return——"点了确定像没反应"正是这条链路最难
+          // 查的症状（收尾后会由 syncAsk 补弹，用户通常感觉不到这一次点击没生效）
+          reportConfirm('点了确定，但本轮流尚未收尾（卡片保留，待收尾后再弹）');
+          return;
+        }
         ctx.state.pendingAsk = null;       // 一次点击只兑现一次
         if (value !== 'yes') {             // 取消：零请求零副作用
           askSettle('已取消');
@@ -1584,6 +1651,13 @@
         if (!btn) return;
         handleAskChoice(btn.getAttribute('data-ask-value'));
       });
+      // 自愈钩子（20260923）：每次 reconcileDOM 收尾调一次 syncAsk——DOM 被整段
+      // 重建（拉历史/切会话回来/未来的新清理逻辑）之后，只要待办还在，卡片就在
+      // 下一次 reconcile 自动回到消息流末位。注册走引擎既有的 setConvUI（多处注册
+      // 是合并语义，与 chat-session.js 的四个钩子互不覆盖）。
+      if (typeof engine.setConvUI === 'function') {
+        engine.setConvUI({ onAskResync: syncAsk });
+      }
 
       // 右上角关闭按钮：收起聊天面板
       document.getElementById('chat-close').addEventListener('click', () => {

@@ -127,6 +127,44 @@ for (const f of ['chat-stream.js', 'chat-engine.js', 'chat-render.js', 'chat-ses
     ok(/ctx\.state\.pendingAsk = null/.test(tail(i)), `清空消息区（第 ${i + 1} 行）同时丢掉挂起的确认`);
   }
 }
+// ── ③ 确认卡片存活（20260923：帧到了、卡片却被当孤儿删掉）────────────────────
+// 真实事故（静态版判据）：agent 帧齐、Rust 真转发、前端也真渲染出了卡片，但弹卡后
+// 几十毫秒另一次 reconcileDOM（别的窗口写了会话缓存 ⇒ 本轮收尾补拉历史）把它当
+// "无 data-mid 的孤儿"删了——屏幕上什么都没有，而 pendingAsk 还活着。两段代码各自
+// 看都对，只有"真模块 + 真时序"看得见（行为层回归见 tests/confirm-card.test.py）。
+// 这里锁住三样"少了任何一样都会静默复发"的东西：
+//   ① 模板节点带 chat-keep（孤儿清理的豁免标记）；
+//   ② 孤儿清理认这个标记（消息流里其他带 id 的常驻节点也靠它）；
+//   ③ 收尾只 syncAsk 不 hideAsk + reconcile 收尾调自愈钩子（双保险）。
+{
+  const r = W('chat-render.js');
+  ok(/<div class="chat-nav-confirm chat-ask chat-keep" id="chat-ask">/.test(r),
+     'chat-render.js：模板卡片带 chat-keep（孤儿清理豁免标记，就写在卡片那一个 div 上）');
+  const e = W('chat-engine.js');
+  ok(/classList\.contains\('chat-keep'\)\) continue;/.test(e),
+     'chat-engine.js：孤儿清理豁免 chat-keep 节点');
+  ok(/__reportError\(\{ type: 'orphan_dom_drop'/.test(e),
+     'chat-engine.js：删掉带 id 的常驻节点要上报（漏加 chat-keep 的探照灯）');
+  ok(/onAskResync/.test(e) && /ui\.onAskResync\(\)/.test(e),
+     'chat-engine.js：reconcileDOM 收尾调用 onAskResync（DOM 重建后卡片自愈）');
+  const s = W('chat-stream.js');
+  ok(/const syncAsk = \(\) => \{/.test(s) && !/const showAsk = /.test(s),
+     'chat-stream.js：showAsk 已改成幂等 syncAsk（重复调用零副作用）');
+  ok(/engine\.setConvUI\(\{ onAskResync: syncAsk \}\)/.test(s),
+     'chat-stream.js：把 syncAsk 注册成引擎的 onAskResync 钩子');
+  // 收尾那段：唯一允许出现的 hideAsk 是"用户改口打字"那条（sendMessage 里），
+  // 收尾的 setTimeout 里不许再有 hideAsk（它会把待办当成"用户改口"销毁掉）
+  const fin = s.slice(s.indexOf("if (ctx.state.pendingPull) { ctx.state.pendingPull = false;"));
+  const finSeg = fin.slice(0, fin.indexOf('agent-turn-done'));
+  ok(/if \(!ctx\.state\.isSending\) syncAsk\(\);/.test(finSeg),
+     'chat-stream.js：收尾忙时保留待办（不再 hideAsk 销毁）+ 到点 syncAsk');
+  ok(!/hideAsk\(\)/.test(finSeg.split('\n').map(stripComment).join('\n')),
+     'chat-stream.js：收尾段没有 hideAsk 暗门（注释里提到不算）');
+  // 上报替换掉的静默 return（缺字段的确认帧 / 终止帧之后的帧）
+  ok(/__CONFIRM__ 帧不可用/.test(s) && /终止帧之后又收到一帧/.test(s),
+     'chat-stream.js：确认帧与终止帧两处静默失败改为上报');
+}
+
 {
   // 帧协议与版本：__CONFIRM__ 解析仍在，autoload/index.tsx 的 ?v= 与 VER 一致
   const s = W('chat-stream.js');

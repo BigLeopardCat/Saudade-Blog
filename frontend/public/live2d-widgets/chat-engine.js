@@ -192,7 +192,8 @@
         conv: null,
         convNeedCreate: false,
         // chat-session.js（UI 层）注册的会话钩子——引擎做决策、UI 只负责渲染
-        ui: { onConvChange: null, onConvGone: null, onAuthChange: null, onListDirty: null },
+        // onAskResync：reconcileDOM 收尾时的"常驻节点自愈"钩子（20260923，确认卡片用）
+        ui: { onConvChange: null, onConvGone: null, onAuthChange: null, onListDirty: null, onAskResync: null },
       };
       const live = ctx.state.live;
 
@@ -1037,6 +1038,15 @@
               // 20260828n：时间标签豁免——标签无 mid 且非 live，但它是消息气泡的
               // 前导附属（由 patchDivider 幂等维护），不能当孤儿删
               if (child.classList && child.classList.contains('chat-time-divider')) continue;
+              // 20260923：常驻节点豁免（chat-keep）——消息流里还挂着模板生成、无
+              // data-mid 的常驻交互节点（确认卡片 #chat-ask），它们同样不是孤儿。
+              // 做成通用类名标记而不是再加一条 id 判断：以后往流里放这类节点，只要
+              // 在模板上带 chat-keep，就不必回来改这段清理逻辑。
+              // 教训（20260923 22:38 那一轮）：#chat-ask 当年搬进消息流时没带标记，
+              // 于是弹卡后第一次 reconcile 就把它当孤儿删了——帧到了、令牌在、库里
+              // 回复也正常，只有屏幕上看不见卡片；这类"静默删掉用户看得见的 UI"
+              // 靠读代码查不出来，只能靠这个标记 + 下面那条上报。
+              if (child.classList && child.classList.contains('chat-keep')) continue;
               const mid = child.dataset && child.dataset.mid;
               let doomed = false;
               if (mid) {
@@ -1046,6 +1056,20 @@
               }
               else if (!liveEls.has(child)) doomed = true;
               if (doomed) {
+                // 20260923：删掉带 id 的节点 = 上游漏了 chat-keep ⇒ 必须响亮。
+                // 消息流里的气泡都是匿名生成的（appendMsg 只给 class/dataset），
+                // 带 id 的只可能是模板节点（#chat-ask）——所以这条判据零误报，
+                // 而且正好覆盖 #chat-ask 那次事故的形态（用户看得见的 UI 被静默删）。
+                // 删还是照删（保持清理的确定性，不给失败留残骸），只是不再无声。
+                if (child.id) {
+                  try {
+                    if (typeof window.__reportError === 'function') {
+                      window.__reportError({ type: 'orphan_dom_drop',
+                        message: '消息流孤儿清理删掉了带 id 的节点（漏加 chat-keep?）：#' + child.id,
+                        url: location.href });
+                    }
+                  } catch (e) { /* 上报自身失败静默 */ }
+                }
                 // 20260828o 修复：气泡删除时连带删除其前导时间标签——标签是气泡的
                 // 锚定附属（patchDivider 只维护"紧邻前驱"，el 没了标签就悬空，
                 // 会被后续 reconcile 的位置对齐当成下一个元素的标签捡走并覆盖文本
@@ -1096,6 +1120,14 @@
             failedNoteEl.parentNode.removeChild(failedNoteEl);
           }
         } catch(e) { /* 失败提示渲染失败不影响对话渲染 */ }
+        // 20260923：DOM 重建收尾 → 让消息流里的常驻交互节点自愈（确认卡片）。
+        // 上面的孤儿清理已经用 chat-keep 豁免了它，这里是第二道：卡片被任何路径
+        // 摘掉（模板漏标记/清空后没接回/以后新加的清理逻辑）都会在下一次 reconcile
+        // 自动回到消息流末位。静默丢卡片的代价是"agent 已经把同意问句签发给用户，
+        // 用户却无从点"——20260923 那次查了四跳才落到这行代码上。
+        if (ctx.state.ui && typeof ctx.state.ui.onAskResync === 'function') {
+          try { ctx.state.ui.onAskResync(); } catch (e) {}
+        }
         scrollToBottom(messages);
       };
       // 消息气泡工厂：DOM 创建 + dataset（mid/mtype/mtext 供 reconcile 索引与收养）

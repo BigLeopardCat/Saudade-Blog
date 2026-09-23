@@ -175,8 +175,13 @@
              用户的动线是"读问句 → 点按钮 → 看结果"，卡片夹在问句气泡与结果气泡
              之间才是同一轮对话该有的样子（旧位置在输入框上方，与回复不在一个
              视线上，点完还得自己去找结果）。问题文本与按钮由 chat-stream.js 填，
-             这里只出壳；容器被清空（切会话/拉历史）后 showAsk 会把它接回末位。 -->
-        <div class="chat-nav-confirm chat-ask" id="chat-ask">
+             这里只出壳；容器被清空（切会话/拉历史）后 syncAsk 会把它接回末位。
+             ⚠️ chat-keep 是必需类（20260923），不是装饰：chat-engine 的 reconcileDOM
+             会清掉消息流里所有"无 data-mid 且非在途气泡"的节点，而本卡片恰恰没有
+             mid——少了这个类，弹卡之后**任何一次** reconcile（例如别的窗口写了会话
+             缓存 ⇒ 本轮收尾补拉历史）都会在几十毫秒内把它删掉，用户看到的是
+             "agent 说要确认、然后什么都没有"（库里回复正常、待办令牌也在内存里）。 -->
+        <div class="chat-nav-confirm chat-ask chat-keep" id="chat-ask">
           <div class="nav-question" id="chat-ask-text"></div>
           <div class="chat-nav-btns" id="chat-ask-btns"></div>
         </div>
