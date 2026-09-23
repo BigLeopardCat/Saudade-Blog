@@ -174,57 +174,13 @@ jobs:
           pip3 install boto3 -q
           python3 scripts/deploy/upload_to_r2.py
 
-      - name: Upload frontend dist to R2 (for CDN)
-        if: needs.check-changes.outputs.deploy == 'true'
-        env:
-          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
-          R2_ACCESS_KEY: ${{ secrets.R2_ACCESS_KEY }}
-          R2_SECRET_KEY: ${{ secrets.R2_SECRET_KEY }}
-          R2_BUCKET: ${{ secrets.R2_BUCKET }}
-        run: |
-          pip3 install boto3 -q
-          python3 << 'PYEOF'
-          import boto3, os, mimetypes
-          from botocore.config import Config
-
-          mimetypes.add_type('text/css', '.css')
-          mimetypes.add_type('application/javascript', '.js')
-          mimetypes.add_type('application/javascript', '.mjs')
-          mimetypes.add_type('image/svg+xml', '.svg')
-          mimetypes.add_type('font/woff', '.woff')
-          mimetypes.add_type('font/woff2', '.woff2')
-          mimetypes.add_type('font/ttf', '.ttf')
-          mimetypes.add_type('application/vnd.ms-fontobject', '.eot')
-
-          s3 = boto3.client('s3',
-              endpoint_url=os.environ['R2_ENDPOINT'],
-              aws_access_key_id=os.environ['R2_ACCESS_KEY'],
-              aws_secret_access_key=os.environ['R2_SECRET_KEY'],
-              config=Config(signature_version='s3v4'),
-              region_name='auto')
-
-          bucket = os.environ['R2_BUCKET']
-          dist = 'frontend/dist'
-
-          for root, dirs, files in os.walk(dist):
-              for f in files:
-                  local_path = os.path.join(root, f)
-                  rel_path = os.path.relpath(local_path, '.')
-                  r2_key = f'deploy/{rel_path.replace(os.sep, chr(47))}'
-
-                  content_type, _ = mimetypes.guess_type(f)
-                  if not content_type:
-                      content_type = 'application/octet-stream'
-
-                  extra_args = {'ContentType': content_type}
-                  if f.endswith('.html'):
-                      extra_args['CacheControl'] = 'no-store, no-cache, must-revalidate'
-
-                  s3.upload_file(local_path, bucket, r2_key, ExtraArgs=extra_args)
-                  print(f'✅ {r2_key}')
-          print('✅ 前端dist已上传到R2 (CDN)')
-          PYEOF
-
+      # 20260924 删掉「Upload frontend dist to R2 (for CDN)」那一节：它把 dist **逐文件**
+      # 上传（每次部署约 4986 次 PUT ⇒ 一天 8 次部署就超过 R2 免费档的 100 万次 Class A
+      # 写入），而它没有任何消费方——nginx 服务的是本机 frontend/dist，
+      # VITE_CDN_BASEURL 重写的是 /api/protect/download/ 图片接口、与这些静态对象无关；
+      # 内容与 deploy/<sha>/deploy.tar.gz 里的 frontend/dist 完全重复。
+      # 存量已用 scripts/deploy/prune_r2.py 清掉（11319 个对象 / 2694MB），此后每次部署
+      # 只写 1 个包 + latest.txt；保留最近 3 个包的清理在 deploy_from_r2.sh 落地成功后做。
       - name: Trigger server deploy
         if: needs.check-changes.outputs.deploy == 'true'
         env:
