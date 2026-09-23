@@ -49,13 +49,17 @@ const Albums = () => {
         const keysToDelete = Object.keys(checkStatus).filter(key => checkStatus[key]);
 
         delImages(keysToDelete).then((res) => {
-            if(res.status === 200){
+            // 20260924：后端现在会**整体拒绝**还在被文章使用的图（本仓契约是 HTTP 200 + code 500），
+            // 只看 res.status 会把"一张都没删"显示成"删除成功" ⇒ 改判业务码并如实报出原因
+            if (res.data?.code === 200) {
                 initImageList()
                 message.success("删除成功");
-                // 删除完毕后清空 checkStatus
-                setCheckStatus({});
-                setSelectDelete(0);
+            } else {
+                message.error(res.data?.message || "删除失败：这些图片还有文章在用");
             }
+            // 两种情况都清空勾选（留着勾选会让人以为"点了没生效"）
+            setCheckStatus({});
+            setSelectDelete(0);
         }).catch((error) => {
             message.error("删除失败：" + error)
             // 删除完毕后清空 checkStatus

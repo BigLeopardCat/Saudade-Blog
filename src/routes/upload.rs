@@ -8,8 +8,9 @@ use crate::utils::{ApiResponse, upload_dir};
 use std::path::Path;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
-use sea_orm::{ActiveModelTrait, EntityTrait, Set, QueryOrder, ColumnTrait, QueryFilter};
+use sea_orm::{ActiveModelTrait, EntityTrait, Set, QueryOrder, ColumnTrait, QueryFilter, Condition};
 use crate::entity::image;
+use crate::entity::note;
 use sha2::{Digest, Sha256};
 
 // ── 同一份字节重复上传 ⇒ 复用已有文件（20260924，用户拍板的 A 方案）─────────────
@@ -90,6 +91,40 @@ async fn ensure_image_row(state: &Arc<AppState>, url: &str) {
     }
 }
 
+/// LIKE 的通配符转义：图库 URL 里几乎每张图都带 `_`（`20260912013218_EMQX.png`），
+/// 而 `_` 在 LIKE 里是"任意单字符"——不转义的话 `a_b.png` 会命中 `axb.png`。
+/// 与 `routes/conversation.rs` 的同名函数同款；没合并到一处是为了不动那条链路。
+fn like_escape(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
+}
+
+/// 这张图还有哪些文章在用（封面字段 / 正文文本）。返回 (文章 id, 标题)。
+async fn notes_using(state: &Arc<AppState>, url: &str) -> Vec<(i32, String)> {
+    note::Entity::find()
+        .filter(
+            Condition::any()
+                .add(note::Column::Cover.eq(url))
+                .add(note::Column::Content.like(format!("%{}%", like_escape(url)))),
+        )
+        .all(&state.db)
+        .await
+        .map(|rows| {
+            rows.into_iter()
+                .map(|n| {
+                    let title: String = n.title.chars().take(20).collect();
+                    (n.id, title)
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// `/api/protect/download/20260912013218_EMQX.png` → `20260912013218_EMQX.png`
+/// （报错信息里给人看的短名）。
+fn image_short_name(url: &str) -> String {
+    url.rsplit('/').next().unwrap_or(url).to_string()
+}
+
 // POST /api/protect/upload
 pub async fn upload_image(
     State(state): State<Arc<AppState>>,
@@ -158,6 +193,32 @@ pub async fn delete_images(
     State(state): State<Arc<AppState>>,
     Json(urls): Json<Vec<String>>,
 ) -> Json<ApiResponse<String>> {
+    // ── 引用检查（20260924）────────────────────────────────────────────────
+    // 上传去重之后，"同一张图被多篇文章共用"会成为常态，而删除一直是**裸删**：
+    // 直接 remove_file + delete_by_id，不看还有谁在用它 —— 那意味着在图库里删一次，
+    // 可能同时把好几篇文章的正文/封面删成裂图，且不可逆（文件是真删）。
+    // 判据：note.cover 等于该 URL，或 note.content 里出现该 URL（封面与正文都是字符串）。
+    //
+    // 有任一被引用就**整体不删**：批量勾选时"删一半留一半"既难解释也难回滚，
+    // 宁可让博主先去文章里换掉那张图，再回来删。message 里报清是哪几张、被谁用。
+    let mut blockers: Vec<String> = Vec::new();
+    for url in &urls {
+        let users = notes_using(&state, url).await;
+        if !users.is_empty() {
+            let shown: Vec<String> = users.iter().take(3)
+                .map(|(id, title)| format!("#{} {}", id, title))
+                .collect();
+            let more = if users.len() > 3 { format!(" 等 {} 篇", users.len()) } else { String::new() };
+            blockers.push(format!("{} ← {}{}", image_short_name(url), shown.join("、"), more));
+        }
+    }
+    if !blockers.is_empty() {
+        return Json(ApiResponse::error(&format!(
+            "这些图片还有文章在用，已全部跳过（未删除任何图片）：{}",
+            blockers.join("；")
+        )));
+    }
+
     let upload_dir = upload_dir();
     for url in urls {
         // Find in DB
