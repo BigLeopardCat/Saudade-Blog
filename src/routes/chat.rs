@@ -1254,6 +1254,8 @@ pub async fn chat_stream_handler(
     let conversation_id = ctx.conversation_id;
     let total_count = ctx.total_count;
     let boundary_id = ctx.boundary_id;
+    // 帧循环里的告警要用（stream! 生成器闭包不能借用 ctx——它后面还要用 ctx 写响应头）
+    let trace_id = ctx.trace_id.clone();
 
     let body_stream = stream! {
         let mut upstream_stream = upstream.bytes_stream();
@@ -1390,6 +1392,15 @@ pub async fn chat_stream_handler(
                     }
                     reply.push_str(&text);
                     yield Ok(Bytes::from(format!("data: {}\n\n", payload)));
+                } else {
+                    // 20260923：帧体既不是已知前缀帧、也不是 JSON 编码的文本 ⇒ 解码不了。
+                    // 旧行为是静默丢弃：前端只是"少了一段回复"，Python/Rust/前端三端都
+                    // 不留痕（三端语义漂移时最难查的那类）。**只记前 24 字符**——
+                    // __CONFIRM__/__PENDING__ 族的帧体带确认令牌，整帧入日志等于把令牌
+                    // 写进日志文件。
+                    let head: String = payload.chars().take(24).collect();
+                    warn!(trace_id = %trace_id, user_id = uid, len = payload.len(), head = %head,
+                          "chat: 收到无法解析的 SSE 帧，已丢弃（既非已知前缀帧也不是 JSON 文本）");
                 }
             }
             if terminal { break; }
