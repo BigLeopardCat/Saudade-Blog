@@ -24,7 +24,17 @@
   ⑥ **点下「确定」之后**（20260924 补）：请求真的发出去（看请求体、不看卡片上的字）、
      点下去写的是「确认中…」而非乐观的「已确认」、成功→已确认 / 失败→不确定（不放行
      重试）/ 忙时挡下→回滚成可重试；
-  ⑦ 帧带 exp 时令牌到期自动结算成「已过期」，卡片不会永远停在乐观态。
+  ⑦ 帧带 exp 时令牌到期自动结算成「已过期」，卡片不会永远停在乐观态；
+  ⑧ **正常分支的逐跳埋点**（20260924）：frame→card→click→sent→settle 五跳同 id，
+     取消/忙挡/竞态回滚/到期/改口打字（hideAsk）各自该缺哪一跳就缺哪一跳，
+     且**任何上报都不含令牌**。
+
+★ 两类上报必须分开看（本文件的断言一律按类型过滤，不许写 `reports == []`）：
+  `confirm_card` = **失败**（帧坏掉/点了没反应/轮次失败收尾），跨源对账按它数异常
+  （eval/trace_reconcile.py 的 MON_FAILURE_TYPES）；`confirm_flow` = **正常链路的逐跳
+  记录**。混用会把"用户点了一次确定"数成"一次异常"，判据当天就失准。所以"这条正常
+  路径没有静默失败"的断言现在写成 `by_fail(reports) == []`，而"这条路径该有哪几跳"
+  写成 `flow_stages(...)`。
 
 用法：python3 frontend/tests/confirm-card.test.py
 依赖：playwright(python)。不需要 node_modules（widget 是 ES5 风格的 IIFE）。
@@ -274,6 +284,46 @@ def reset_evidence(pg):
     }""")
 
 
+ASK_ID = "c1"        # confirm_frame 里签发的待办标识（逐跳埋点靠它串成同一件事）
+
+
+def by_fail(reports):
+    """只看**失败**上报（confirm_card）。理由见文件头「两类上报必须分开看」。"""
+    return [r for r in reports if r.get("type") == "confirm_card"]
+
+
+def flow_stages(reports, ask_id=None):
+    """正常链路埋点 → [(stage, 字段字典), ...]，按上报先后。
+
+    ask_id 给了就只留同一次待办（同一件事的五跳才该串成一条链）；id 对不上/缺 id 的
+    被滤掉 ⇒ 断言会以"少了一跳"的形式红，而不是悄悄放过（埋点里 id 若丢了，这里
+    必然看得出）。
+    """
+    out = []
+    for r in reports or []:
+        if r.get("type") != "confirm_flow":
+            continue
+        kv = dict(p.split("=", 1) for p in (r.get("message") or "").split(" ") if "=" in p)
+        if ask_id is not None and kv.get("id") != ask_id:
+            continue
+        out.append((kv.get("stage"), kv))
+    return out
+
+
+def flow_message(reports):
+    return json.dumps([r.get("message") for r in (reports or [])], ensure_ascii=False)
+
+
+def settle_leftover(pg):
+    """把上一条腿留下的**可点**卡片就地取消掉。
+
+    不这么做，下一腿的 run_round 一按发送就会先撞上 sendMessage 的 hideAsk（用户改口
+    打字 ⇒ 未点过的卡片作废），那条 settle(cancel) 会混进下一腿的序列里。清在
+    run_round 之前，而 run_round 开头的清零会把这条记录一并抹掉。
+    """
+    pg.evaluate(CLICK, "no")
+
+
 def set_frames(pg, frames):
     """只换帧、清上报与证人（不点发送）——给"点确定"那几条腿用。"""
     reset_evidence(pg)
@@ -332,7 +382,8 @@ def main():
             check("按钮 = 帧里的 opts（确定/取消）", st["btns"] == ["确定", "取消"], str(st["btns"]))
             check("待办仍在（未点击不该被清）", st["pending"] == "SET", str(st["pending"]))
             check("卡片是消息流末位子节点", st["isLast"], f"last={st['isLast']}")
-            check("渲染路径无上报", st["reports"] == [], json.dumps(st["reports"], ensure_ascii=False))
+            check("渲染路径无**失败**上报（正常分支的 frame/card 两跳另算，见 ⑧）",
+                  by_fail(st["reports"]) == [], flow_message(st["reports"]))
             check("本轮回复文本渲染进了气泡", "好的，我来帮你收藏这篇。" in st["agentText"],
                   repr(st["agentText"]))
 
@@ -370,7 +421,8 @@ def main():
             check("补拉之后卡片仍可见（active + 高度 > 0）",
                   st2["active"] and st2["height"] > 0, str(st2))
             check("补拉之后待办未被清", st2["pending"] == "SET", str(st2["pending"]))
-            check("全程无静默失败上报", st2["reports"] == [], json.dumps(st2["reports"], ensure_ascii=False))
+            check("全程无静默**失败**上报", by_fail(st2["reports"]) == [],
+                  flow_message(st2["reports"]))
             check("②腿页面无未捕获异常", errs2 == [], " | ".join(errs2[:4]))
 
             # ── ③ 卡片被摘掉 ⇒ 下一次 reconcile 自动接回（自愈钩子）────
@@ -388,8 +440,13 @@ def main():
             st = pg.evaluate(ASK_STATE)
             check("reconcile 后卡片自己回来了", st["inMessages"] and st["active"], str(st))
             check("回来时仍在末位", st["isLast"], str(st["isLast"]))
-            check("自愈过程无上报（这是修复后的正常路径）", st["reports"] == [],
-                  json.dumps(st["reports"], ensure_ascii=False))
+            check("自愈过程无**失败**上报（这是修复后的正常路径）", by_fail(st["reports"]) == [],
+                  flow_message(st["reports"]))
+            # 接回这件事本身要留痕（①那轮的 frame→card，加上这一跳接回的 card）：
+            # 20260923 的形态是"卡片悄悄不见了"，只记首次挂载则事后只能看到"挂过"。
+            check("自愈接回也进埋点（第二次 card，同一 id）",
+                  [s for s, _ in flow_stages(st["reports"], ASK_ID)] == ["frame", "card", "card"],
+                  flow_message(st["reports"]))
 
             # ── ④ 缺 token 的确认帧：上报而不是静默丢弃 ────────────────
             print("\n④ 缺 token 的确认帧 → 上报（此前静默丢弃）")
@@ -463,8 +520,8 @@ def main():
                   st["note"] == "已确认，结果见下方回复", repr(st["note"]))
             check("结算后按钮不再放行（askState=settled，无按钮）",
                   st["askState"] == "settled" and st["btns"] == [], str(st))
-            check("成功路径不上报（这不是失败）", st["reports"] == [],
-                  json.dumps(st["reports"], ensure_ascii=False))
+            check("成功路径无**失败**上报（这不是失败）", by_fail(st["reports"]) == [],
+                  flow_message(st["reports"]))
 
             # ⑥c 轮次失败：请求发出去过 ⇒ 按"不确定"结算，**不放行重试**
             run_round(pg6, ROUND)          # 重新弹一张卡
@@ -526,8 +583,8 @@ def main():
                   bool(st["note"]) and "已过期" in st["note"], repr(st["note"]))
             check("到期后按钮落地、待办清空（点了也不会再发请求）",
                   st["btns"] == [] and st["pending"] is None, str(st))
-            check("没点过的卡片到期**不上报**（这不是失败，是设计好的失效）",
-                  st["reports"] == [], json.dumps(st["reports"], ensure_ascii=False))
+            check("没点过的卡片到期不上报**失败**（这不是失败，是设计好的失效）",
+                  by_fail(st["reports"]) == [], flow_message(st["reports"]))
             # 已经过期的 exp（时钟漂移/长睡）要当场上账，不能等到下一次 tick
             st = pg7.evaluate(CLICK, "yes")   # 此时按钮已没了 ⇒ 点不动，确认前置
             check("到期后按钮点不动（前置确认：按钮真没了）", st["ok"] is False, str(st))
@@ -567,6 +624,137 @@ def main():
                   pg7.evaluate(ASK_STATE)["pending"] is None and st["btns"] == [], str(st))
             pg7.evaluate("() => { window.setTimeout = window.__origST; }")
             check("⑦腿页面无未捕获异常", errs7 == [], " | ".join(errs7[:4]))
+
+            # ── ⑧ 正常分支的逐跳埋点（20260924）：这条链的失败形态全在屏幕上 ——
+            # 帧到了卡片没挂上、点了没发出去、发出去了没有任何结论。只报失败分支
+            # 等于**只在事后取证**（用户不截图就无据可查）；有了逐跳记录，跨源对账
+            # 能直接看出"点了几次 / 发出去几次 / 结算几次"该相等而不等的那一次。
+            # 这一节锁的就是"该有哪几跳、该缺哪几跳"——埋点漂了（少报一跳、id 丢了、
+            # 把正常链路混进 confirm_card）在这里全会红。
+            print("\n⑧ 正常分支埋点：五跳同 id，不该有的跳不出现（且全程不带令牌）")
+            pg8, errs8 = open_page(b, url)
+
+            # ⑧a 完整链路：点「确定」成功 = frame→card→click→sent→settle(ok)
+            run_round(pg8, ROUND)
+            st = pg8.evaluate(ASK_STATE)
+            check("⑧a 弹卡两跳 frame→card（同一 id：帧到的时刻 / 卡片就位的时刻）",
+                  [s for s, _ in flow_stages(st["reports"], ASK_ID)] == ["frame", "card"],
+                  flow_message(st["reports"]))
+            pg8.evaluate("(f) => { window.__frames = f; }",
+                         [text_frame("已经把《Python asyncio 异步并发》加进收藏了。"), "__END__"])
+            pg8.evaluate(CLICK, "yes")
+            pg8.wait_for_function("() => !window.__ctx.state.isSending", timeout=10000)
+            pg8.wait_for_timeout(400)
+            st = pg8.evaluate(ASK_STATE)
+            seq = flow_stages(st["reports"], ASK_ID)
+            check("⑧a 点确定一轮 = frame→card→click→sent→settle 五跳同一 id",
+                  [s for s, _ in seq] == ["frame", "card", "click", "sent", "settle"], str(seq))
+            check("⑧a 跳上的取值对得上（点的 yes、结论 ok）",
+                  len(seq) == 5 and seq[2][1].get("value") == "yes"
+                  and seq[4][1].get("result") == "ok", str(seq))
+            check("⑧a 正常链路不混用失败类型（confirm_card 只由失败分支发）",
+                  by_fail(st["reports"]) == [], flow_message(st["reports"]))
+            check("⑧a 上报里**不含令牌**（它是一次同意的唯一凭据，任何一跳都不许带）",
+                  all("FAKE_TOKEN" not in json.dumps(r, ensure_ascii=False)
+                      for r in st["reports"]),
+                  flow_message(st["reports"]))
+
+            # ⑧b 取消 = 有 click、无 sent、settle(cancel)（零请求零副作用）
+            run_round(pg8, ROUND)          # 弹卡那一轮自己发过一次请求 ⇒ 基准取此刻
+            calls_before = pg8.evaluate("() => window.__stub.streamCalls")
+            pg8.evaluate(CLICK, "no")
+            pg8.wait_for_timeout(250)
+            st = pg8.evaluate(ASK_STATE)
+            seq = flow_stages(st["reports"], ASK_ID)
+            check("⑧b 取消 = frame→card→click→settle(cancel)，**没有 sent**",
+                  [s for s, _ in seq] == ["frame", "card", "click", "settle"]
+                  and seq[3][1].get("result") == "cancel", str(seq))
+            check("⑧b 取消之后请求数没变（零请求）",
+                  st["streamCalls"] == calls_before,
+                  f"{calls_before} → {st['streamCalls']}")
+
+            # ⑧c 忙守卫挡下：click 在案、**没有 sent**——对账正是按这个不配对找现场
+            run_round(pg8, ROUND)
+            pg8.evaluate("() => { window.__ctx.state.remoteRounds = { other: 1 }; }")
+            pg8.evaluate(CLICK, "yes")
+            pg8.wait_for_timeout(250)
+            st = pg8.evaluate(ASK_STATE)
+            check("⑧c 忙时点击：只有 click，没有 sent（这一跳确实没出去）",
+                  [s for s, _ in flow_stages(st["reports"], ASK_ID)]
+                  == ["frame", "card", "click"], flow_message(st["reports"]))
+            check("⑧c 忙时点击另有一条**失败**上报（与正常链路分开计数）",
+                  len(by_fail(st["reports"])) == 1, flow_message(st["reports"]))
+            pg8.evaluate("() => { window.__ctx.state.remoteRounds = {}; }")
+            settle_leftover(pg8)           # 这一腿留了一张还活着的卡片（见函数注释）
+
+            # ⑧d 竞态丢包（请求起飞前才变忙）⇒ 回滚：click 有、sent 无、settle(rollback)
+            # 这一支是"点了且**确知没发出去**"的唯一出口（另一种失败是"发出去了、
+            # 结论未知"，走 settle(unknown)）——两者在卡片上长得像，在埋点里必须分开。
+            run_round(pg8, ROUND)
+            pg8.evaluate("""() => {
+              window.__origEnsure8 = window.__engine.ensureConversation;
+              window.__engine.ensureConversation = () => Promise.resolve(true).then(() => {
+                window.__ctx.state.isSending = true;   // 请求起飞前那一刻变忙
+                return true;
+              });
+            }""")
+            pg8.evaluate(CLICK, "yes")
+            pg8.wait_for_timeout(350)
+            st = pg8.evaluate(ASK_STATE)
+            seq = flow_stages(st["reports"], ASK_ID)
+            # 末尾那条 card 是回滚自己重挂的（askRollback ⇒ syncAsk 重建按钮并放回末位）：
+            # "回滚"与其他终点在埋点里的分野正在这里——卡片被放回可点，与 unknown/expired
+            # 那种"结算完就落地"长得完全不同（少写这条就等于把回滚记成了普通结算）。
+            check("⑧d 竞态丢包 = frame→card→click→settle(rollback)→card（放回可点），中间**没有 sent**",
+                  [s for s, _ in seq] == ["frame", "card", "click", "settle", "card"]
+                  and seq[3][1].get("result") == "rollback", str(seq))
+            pg8.evaluate("""() => {
+              window.__engine.ensureConversation = window.__origEnsure8;
+              window.__ctx.state.isSending = false;
+            }""")
+            settle_leftover(pg8)           # 回滚把卡片放回了可点态（同上）
+
+            # ⑧e 帧里 exp 已是过去时刻 ⇒ 当场上账：出现一个**没有 click** 的 settle
+            # （用户没点、系统自己失效——对账时它与"点了没结论"是完全不同的两件事）
+            run_round(pg8, [text_frame("好的。"),
+                            confirm_frame(exp=int(time.time()) - 30), "__END__"])
+            st = pg8.evaluate(ASK_STATE)
+            seq = flow_stages(st["reports"], ASK_ID)
+            check("⑧e 过期卡片 = frame→card→settle(expired)，没有 click",
+                  [s for s, _ in seq] == ["frame", "card", "settle"]
+                  and seq[2][1].get("result") == "expired", str(seq))
+
+            # ⑧f 幂等不刷屏：卡片已在位时重复 reconcile 不再报一条 card
+            # （否则每次 DOM 重建都刷一条，"卡片就位"会被刷成噪声，对账数不清跳数）
+            run_round(pg8, ROUND)
+            check("⑧f 前置：卡片就位时是 frame→card 两条",
+                  [s for s, _ in flow_stages(pg8.evaluate(ASK_STATE)["reports"], ASK_ID)]
+                  == ["frame", "card"])
+            pg8.evaluate("""() => { for (let i = 0; i < 3; i++) window.__engine.pullHistory(); }""")
+            pg8.wait_for_timeout(700)
+            st = pg8.evaluate(ASK_STATE)
+            check("⑧f 三次 reconcile 之后仍是 frame→card（在位不重报）",
+                  [s for s, _ in flow_stages(st["reports"], ASK_ID)] == ["frame", "card"],
+                  flow_message(st["reports"]))
+            check("⑧f 期间无失败上报", by_fail(st["reports"]) == [], flow_message(st["reports"]))
+
+            # ⑧g 未点击的收场：用户改口打字（没说"确定"，说了别的）⇒ 卡片作废
+            # 这是五个 chain 终点里唯一既不来自点击、也不来自到期的一条，此前**零覆盖**
+            # （本轮补埋点时才撞见它：上一腿留下的卡片被下一轮的输入事件取消了）
+            set_frames(pg8, [text_frame("好，那我换个说法。"), "__END__"])
+            pg8.evaluate(SEND, MSG)
+            pg8.wait_for_function("() => !window.__ctx.state.isSending", timeout=10000)
+            pg8.wait_for_timeout(300)
+            st = pg8.evaluate(ASK_STATE)
+            seq = flow_stages(st["reports"], ASK_ID)
+            check("⑧g 改口打字：卡片按 settle(cancel) 作废、**没有 click**（用户没点它）",
+                  bool(seq) and seq[0][0] == "settle" and seq[0][1].get("result") == "cancel"
+                  and "click" not in [s for s, _ in seq], str(seq))
+            check("⑧g 卡片上写着「已取消」、待办已清",
+                  st["note"] == "已取消" and st["pending"] is None, repr(st["note"]))
+            check("⑧g 那一跳是用户新打的那句话，不是确认请求（请求体里没有令牌）",
+                  "confirm_token" not in (st["lastBody"] or ""), str(st["lastBody"])[:200])
+            check("⑧腿页面无未捕获异常", errs8 == [], " | ".join(errs8[:4]))
 
             check("①③腿页面无未捕获异常", errs == [], " | ".join(errs[:4]))
             b.close()
