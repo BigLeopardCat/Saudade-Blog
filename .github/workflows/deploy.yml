@@ -66,8 +66,9 @@ jobs:
   #   ① `cargo test` —— tests/api_tests.rs 用 MockDatabase（不连库）+ 6 个文件里的内嵌单测，
   #      CI 上跑得起来（此前 CI 只 `cargo build --release`，等于只验编译）；
   #   ② `tsc --noEmit` —— 前端真类型检查（存量 14 条已于同日清零，故可直接设闸）；
-  #   ③ `npm test` —— tests/ 下 11 个 node 套件（此前 package.json 里那句 "test": "jest"
-  #      是死脚本：没配置也没依赖，谁都跑不了）。
+  #   ③ `npm test` —— tests/ 下全部 node 套件（条数以 tests/run-suites.mjs 的 glob 为准，
+  #      这里不写死数字：20260924 加一个套件就让"11 个"这句注释过期了一次）。
+  #      此前 package.json 里那句 "test": "jest" 是死脚本：没配置也没依赖，谁都跑不了。
   # 它与"要不要部署"无关：**任何 push 都跑**（改了测试/tsconfig 也算），而部署被它 needs 住
   # ——检查不过就不构建、不上传、不部署。`*.test.py` 那几套要 Playwright，故意不进 CI。
   check:

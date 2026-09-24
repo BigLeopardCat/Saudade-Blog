@@ -1,7 +1,9 @@
 /**
  * 跑 tests/ 下所有 *.test.mjs 套件（20260923）。
  *
- * 本仓库没有 jest：这 11 个套件都是 `node tests/xxx.test.mjs` 直接执行 + `node:assert`。
+ * 本仓库没有 jest：tests/ 下的套件都是 `node tests/xxx.test.mjs` 直接执行 + `node:assert`。
+ * **数量不写死在这里**（此前写死过一次，加一个套件就变成新的陈旧注释）：实际条数以
+ * 下面的 glob 为准，末尾那行汇总会报 N/N。
  * 此前 package.json 里那句 `"test": "jest"` 是个死脚本——既没有 jest 配置也没有这个依赖，
  * 于是"跑测试"这件事对人和 CI 都不可执行（CI 里干脆一项检查都没有）。
  *
