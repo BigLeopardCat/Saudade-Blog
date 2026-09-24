@@ -315,20 +315,32 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
     .ant-picker-calendar
       box-shadow: 0 1px 22px -8px rgba(26, 26, 26, .6)
 
-    // 日历头部：年月选择在左、"今天也要加油"在右
+    // 日历头部（20260924 二轮）：‹ 年 月 › 在左、「今天」在右。
+    // 竖向内边距从 8px 收到 4px —— 这行本身不装信息，省下来的都给待办。
     .calHead
-      padding: 8px
+      padding: 4px 6px 6px
       display: flex
       justify-content: space-between
       align-items: center
       .calHead-left
         display: flex
-        gap: 8px
-      .calHead-tip
-        font-weight: bold
-        color: #000
+        align-items: center
+        gap: 2px
+      // 翻月箭头：默认的 Button 左右各留 15px，两个箭头就吃掉 60px，挤掉下拉
+      .calNav
+        min-width: 22px
+        height: 22px
+        padding: 0
+        color: rgba(0, 0, 0, .55)
         .dark &
-          color: #fff
+          color: rgba(255, 255, 255, .65)
+      .calToday
+        height: 22px
+        padding: 0 6px
+        font-size: 12px
+        color: #a05c9a
+        .dark &
+          color: #d9a9d4
 
     // 点某个日期后贴在日历下沿的"给这一天加一条"输入条
     .calQuick
@@ -399,59 +411,95 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
       // display: none
       padding: 0 10px 10px 10px
 
-    // 格子里的待办文字（20260924）：antd 的迷你日历把日期画成 24px 的圆点、
-    // 格子固定 40px 高，`cellRender` 给的那块 `.ant-picker-calendar-date-content`
-    // 被收成 0 高 —— 只够放一个小圆点。这里把格子和它内部的块放开（auto 高、
-    // 左对齐、圆角方块），才装得下待办文字。
+    // 紧凑格子（20260924 二轮）。
+    //
+    // 上一轮把待办文字塞进格子，于是格子被撑到 min-height:46px（整块日历 383px、
+    // 一屏六行全是空格子）；更要命的是 antd 的「今天」标记是挂在**格子**上的
+    // 1px 描边环（`.ant-picker-cell-inner::before`，inset:0）——格子一大，那圈环
+    // 就跟着放大成 57×58 的方框，日期数字反而缩在左上角，看着就像"标记跑了"。
+    //
+    // 现在格子回到 26px：数字居中在一枚小圆里（环贴着它 = 又是个圆），
+    // 待办改成圆点画在格子下沿（下面 `.calDots`）。一天最多三个点。
     .ant-picker-cell
+      height: 32px
+      padding: 0
+
+    // 表格自己被 antd 定死成 256px 高（六行摊开填满），光改 td 的高度是没用的
+    // ——实测把 td 压到 20px 行高仍是 39.7。松开这一条，行高才等于上面给的 32px
+    //（实测整块日历 307 → 261，腾出来的 46px 直接归待办卡）。
+    .ant-picker-content
       height: auto
-      padding: 2px 1px
 
     .ant-picker-cell-inner
-      width: 100%
-      height: auto
-      min-height: 46px
-      line-height: 1.25
-      border-radius: 6px
-      text-align: left
-      padding: 3px 4px
+      // position: relative 是**环的锚**：antd 的 ::before 是 inset:0 的绝对定位，
+      // 格子这层若没有定位上下文，环就会去贴着外层 td 画（那才是"偏移"的根源）。
+      position: relative
+      width: 26px
+      height: 26px
+      min-height: 0
+      margin: 2px auto 0
+      padding: 0
+      line-height: 26px
+      border: 0
+      border-radius: 50%
+      text-align: center
+
+    // 环也改成圆的、换成这套配色的紫（原为 antd 的蓝 + 4px 圆角方框）
+    .ant-picker-cell-in-view.ant-picker-cell-today .ant-picker-cell-inner::before
+      border-color: #c587bc
+      border-radius: 50%
+
+    // 「今天」还要认得出来是**几号**：antd 只给那圈环、数字与平常完全一样
+    //（同色同字重）——环在深底上又淡，"今天是几号"就得凑近看。数字加粗上色，
+    // 选中态那条规则更具体、会照旧盖成白字。
+    .ant-picker-cell-in-view.ant-picker-cell-today .ant-picker-calendar-date-value
+      color: #b070a8
+      font-weight: 600
+      .dark &
+        color: #d9a9d4
 
     .ant-picker-calendar-date-value
+      height: 26px
       font-size: 12px
-      line-height: 1.5
+      line-height: 26px
 
+    // cellRender 给的这层：从"撑开格子"改成"贴在格子下沿的点带"
     .ant-picker-calendar-date-content
+      position: absolute
+      left: 50%
+      bottom: -6px
+      transform: translateX(-50%)
+      width: auto
       height: auto
+      margin: 0
       overflow: visible
 
-    // 一格里的待办文字：一条一行、超出省略号，最多两条（多的折成「+N 条」）
-    .events
-      list-style: none
-      margin: 2px 0 0
-      padding: 0
+    // 那天的待办：最多 3 个 5px 小圆点，未完成紫 / 逾期红 / 已完成灰
+    .calDots
       display: flex
-      flex-direction: column
-      gap: 1px
-      li
-        font-size: 10px
-        line-height: 1.35
-        white-space: nowrap
-        overflow: hidden
-        text-overflow: ellipsis
-      .todo-done
-        opacity: .55
-        text-decoration: line-through
-      .todo-overdue
-        color: #d4380d
-      .events-more
-        opacity: .6
+      gap: 2px
+      height: 5px
+
+    .calDot
+      width: 5px
+      height: 5px
+      border-radius: 50%
+      background-color: #c587bc
+      &.is-overdue
+        background-color: #d4380d
+      &.is-done
+        background-color: rgba(0, 0, 0, .25)
+        .dark &
+          background-color: rgba(255, 255, 255, .35)
 
   .ant-picker-calendar .ant-picker-cell-in-view.ant-picker-cell-selected .ant-picker-cell-inner
     background: rgb(197, 135, 188)
-    // 方角（原来是 50% 的圆）——格子已经是一个装着文字的方块了
-    border-radius: 6px
+    border-radius: 50%
     &::before
       border: none
+    // 紫底上要白字（antd 默认把选中数字染成 token 的蓝，压在这块紫上读不清）
+    .ant-picker-calendar-date-value
+      color: #fff
 
   .ant-picker-calendar
     .ant-picker-cell-disabled
