@@ -83,7 +83,9 @@ let timers = [];
 const tickTimer = () => timers.forEach((t) => t.fn());
 
 const TOKEN = 'x.y.z';
-const ROWS = { notifications: 2, messages: 1, total: 3 };
+const ROWS = { notifications: 2, messages: 1, total: 3, pendingReview: 0 };
+const ROWS2 = { notifications: 0, messages: 0, total: 0, pendingReview: 3 };
+const EMPTY_COUNTS = { notifications: 0, messages: 0, total: 0, pendingReview: 0 };
 
 let passed = 0, failed = 0;
 const ok = (cond, name, detail) => {
@@ -183,10 +185,13 @@ const logout = () => { delete store.tokenKey };
     mod.retainUnread();
     await tick();
     eq(gets(ctl), 0, '未登录（无 token）→ 一个请求都不发');
-    eq(mod.unreadDebug().counts, { notifications: 0, messages: 0, total: 0 }, '未登录时读数是 0');
+    eq(mod.unreadDebug().counts, EMPTY_COUNTS, '未登录时读数是 0');
 }
 
-// ── ④ 读不到 ≠ 编一个数字（红点是提示不是状态）────────────────────────────
+// ── ④ 读不到 ≠ 没有（失败保留上一次的读数）────────────────────────────────
+// 与 favorites.ts「拉取失败不清空已有的 list」同一条：失败本身没有改变任何事实。
+// 对红点：通知没被读掉，红点凭什么灭。对后台那行待审提示：一次抖动就让"3 条待审"
+// 变成"没有待审"，是把读失败演成了审完了。
 {
     const { mod, ctl } = await fresh();
     login();
@@ -198,18 +203,23 @@ const logout = () => { delete store.tokenKey };
     ctl.responder = () => ({ status: 200, data: { code: 500, message: '未登录', data: null } });
     winEvents['unread-change'].forEach((f) => f({ type: 'unread-change' }));
     await tick();
-    eq(mod.unreadDebug().counts, { notifications: 0, messages: 0, total: 0 },
-       'code=500 → 归零（不把上一次的数字继续挂在红点上）');
+    eq(mod.unreadDebug().counts, ROWS, 'code=500 → 读数不动（不拿"读不到"冒充"没有"）');
 
     ctl.responder = () => { throw new Error('network down') };
     winEvents['unread-change'].forEach((f) => f({ type: 'unread-change' }));
     await tick();
-    eq(mod.unreadDebug().counts, { notifications: 0, messages: 0, total: 0 }, '抛异常也是 0，不是"卡住"');
+    eq(mod.unreadDebug().counts, ROWS, '抛异常也一样：读数不动，界面不是"卡住"');
 
-    ctl.responder = () => ({ status: 200, data: { code: 200, message: 'ok', data: ROWS } });
+    ctl.responder = () => ({ status: 200, data: { code: 200, message: 'ok', data: ROWS2 } });
     winEvents['unread-change'].forEach((f) => f({ type: 'unread-change' }));
     await tick();
-    eq(mod.unreadDebug().counts, ROWS, '下一次轮询还能自己恢复（不是一次失败就再也不显示）');
+    eq(mod.unreadDebug().counts, ROWS2, '下一次轮询读到新值就照常更新（不是一次失败就再也不动）');
+
+    // 未登录**是事实不是失败** ⇒ 清空（红点不该在退登之后还亮着）
+    logout();
+    winEvents['unread-change'].forEach((f) => f({ type: 'unread-change' }));
+    await tick();
+    eq(mod.unreadDebug().counts, EMPTY_COUNTS, '退登（无 token）→ 清空');
 }
 
 // ── ⑤ 没有新事实就不换引用（否则订阅者白渲染一轮）──────────────────────────

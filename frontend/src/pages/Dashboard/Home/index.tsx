@@ -18,11 +18,12 @@ import MainContext from "../../../components/conText.tsx";
 import {useDispatch, useSelector} from "react-redux";
 import UserState from "../../../interface/UserState";
 import {fetchNoteList} from "../../../store/components/note.tsx";
-import {getTodos, saveTodos, listBoardRows, ok, errMsg} from "../../../apis/DashboardMethods.tsx";
+import {getTodos, saveTodos, ok, errMsg} from "../../../apis/DashboardMethods.tsx";
 import {useNavigate} from "react-router-dom";
 import type {DashboardTodo} from "../../../interface/DashboardType";
 import {fetchCategories} from "../../../store/components/categories.tsx";
 import {fetchTags} from "../../../store/components/tags.tsx";
+import {useUnread} from "../../../components/UserCenter/unread";
 
 type Todo = {id: number, text: string, done: boolean, date?: string};
 
@@ -73,7 +74,14 @@ const Home = () => {
     const [dragId, setDragId] = useState<number | null>(null);
     // 还有几条留言等着人工裁决（20260924 三轮）。它不是待办：不进 todos、不落库、
     // 不能拖也不能删，只在列表顶上当一个"去处理"的入口。
-    const [pendingReview, setPendingReview] = useState(0);
+    // 20260924 四轮：数字改从**未读汇总**（GET /api/protected/notifications/summary）拿。
+    // 原来这里自己每 60 秒拉一次整张留言表再数 `approved===0`——为了界面上一行提示
+    // 把整张表拉进内存、还多起一条轮询，而那条汇总接口本来就在以同样的节奏被头部
+    // 头像的红点读着。现在这一页只是那个 store 的**消费者之一**（`useUnread`），
+    // 与红点共用一份读数、一个定时器；切回标签页与 agent 收尾那两条立即刷新的通道
+    // 也一并继承（原来这里各写了一遍）。没登录时 store 不发请求、这一行也不画。
+    const { counts: unread } = useUnread(true);
+    const pendingReview = unread.pendingReview;
     const navigate = useNavigate();
 
     const today = dayjs().format('YYYY-MM-DD');
@@ -100,28 +108,9 @@ const Home = () => {
 
     useEffect(() => { void loadTodos(); }, [loadTodos]);
 
-    // 待审评论数。数据源就是评论管理那一页在用的同一个接口（GET /api/protect/board），
-    // 只数 approved === 0 的那几条——人工复核开着的时候新留言全落在这一档。
-    // 读失败**保持上一次的数**（一个提示不该因为一次网络抖动就自己消失），
-    // 真审完了读回来是 0，这一行自然就不画了。
-    const refreshPending = useCallback(async () => {
-        const res = await listBoardRows();
-        if (!ok(res)) return;
-        setPendingReview((res.data?.data ?? []).filter(r => r.approved === 0).length);
-    }, []);
-
-    useEffect(() => {
-        void refreshPending();
-        const timer = setInterval(() => void refreshPending(), 60000);
-        // 切回这个标签页时立刻刷一次：主人多半就是去把评论审完了才回来的，
-        // 不该还要等下一个 60 秒（"完成后自动从列表清除"的体感全靠这一下）
-        const onVisible = () => { if (!document.hidden) void refreshPending(); };
-        document.addEventListener('visibilitychange', onVisible);
-        return () => {
-            clearInterval(timer);
-            document.removeEventListener('visibilitychange', onVisible);
-        };
-    }, [refreshPending]);
+    // 待审评论数的刷新时机、失败语义、去重都在 unread.ts 那个 store 里（别在这儿再写一遍）：
+    // 读失败保持上一次的数（一个提示不该因为一次网络抖动就自己消失），真审完了读回来是 0，
+    // 这一行自然就不画了。
 
     // 每次改动 → 整份发上去（600ms 防抖；不做行级 diff，服务端也不认行 id）。
     // 失败不回滚本地编辑（主人刚敲的字不该被悄悄撤掉），提示一句即可：

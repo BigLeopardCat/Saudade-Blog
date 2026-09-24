@@ -411,6 +411,33 @@ pub struct UnreadDto {
     pub notifications: i64,
     pub messages: i64,
     pub total: i64,
+    /// 等人工裁决的留言条数（后台首页那行"N 条评论待人工审核"；非管理员恒 0）。
+    /// **不计进 `total`**：红点是"你有事没看"，待审是"后台有事等你处理"，
+    /// 两件不同的事——`total` 只服务红点（前端拿它决定亮不亮）。
+    #[serde(rename = "pendingReview")]
+    pub pending_review: i64,
+}
+
+/// uid 能不能进后台（角色**从库查**、不信 token 里那个可能是旧的 role——
+/// 与 `middleware::auth_guard` 同一条纪律，判据收敛在 `authz::can_access_console`）。
+/// 查不到这个人（token 有效但用户已删）按不能处理。
+async fn is_console_user(db: &sea_orm::DatabaseConnection, uid: i32) -> bool {
+    matches!(
+        user::Entity::find_by_id(uid).one(db).await,
+        Ok(Some(u)) if crate::authz::can_access_console(&u.role)
+    )
+}
+
+/// 等人工裁决的河灯留言条数（`src='board'` 且 `approved=0`）。
+/// 后台留言管理页看的是同一批数据（`talks::list_board_admin` 不过滤 approved、那页自己分档），
+/// 这里只要一个数——**不为一行提示把整张表拉进内存**（原来后台首页就是这么干的）。
+async fn board_pending_count(db: &sea_orm::DatabaseConnection) -> i64 {
+    talk::Entity::find()
+        .filter(talk::Column::Src.eq("board"))
+        .filter(talk::Column::Approved.eq(0))
+        .count(db)
+        .await
+        .unwrap_or(0) as i64
 }
 
 async fn unread_counts(db: &sea_orm::DatabaseConnection, uid: i32) -> UnreadDto {
@@ -426,7 +453,14 @@ async fn unread_counts(db: &sea_orm::DatabaseConnection, uid: i32) -> UnreadDto 
         .count(db)
         .await
         .unwrap_or(0) as i64;
-    UnreadDto { notifications: n, messages: m, total: n + m }
+    // 待审数只在"能进后台的人"这里算：它是后台的待办，不该出现在普通用户的红点数据里
+    // （角色的判据在 is_console_user，这里只是决定要不要发这一条 COUNT）
+    let pending_review = if is_console_user(db, uid).await {
+        board_pending_count(db).await
+    } else {
+        0
+    };
+    UnreadDto { notifications: n, messages: m, total: n + m, pending_review }
 }
 
 /// GET /api/protected/notifications/summary：红点（未读数）。
