@@ -181,7 +181,15 @@ with sync_playwright() as p:
         const dotL = card.l + parseFloat(csDot.left);
         const dotR = dotL + parseFloat(csDot.width);
         return {time, year, day, card, body, meta, clock, dotL, dotR,
-                footBorders: [fs.borderTopWidth, fs.borderTopStyle]};
+                footBorders: [fs.borderTopWidth, fs.borderTopStyle],
+                // 字号取 computed style（不是量高度）：高度会被 line-height 与
+                // 字体自身的上下留白带偏，量出来不是字号本身。
+                yearFs: getComputedStyle(a.querySelector('.talkTime-year')).fontSize,
+                dayFs: getComputedStyle(a.querySelector('.talkTime-day')).fontSize,
+                // 不透明度取的是元素自身的 `opacity`（不是颜色的 alpha 通道）：
+                // 这里是 `.talkTime-year { opacity }` 压淡的，颜色本身仍是实色，
+                // 读 color 的 alpha 会恒等于 1、断言变成永远通过。
+                yearOpacity: getComputedStyle(a.querySelector('.talkTime-year')).opacity};
       });
       return rows;
     }""")
@@ -205,9 +213,16 @@ with sync_playwright() as p:
           - (g0["card"]["t"] + g0["card"]["b"]) / 2 <= 12,
           f"日期中心 {(g0['time']['t'] + g0['time']['b']) / 2:.0f} / "
           f"卡片中线 {(g0['card']['t'] + g0['card']['b']) / 2:.0f}")
-    check("年份字号比月日小（12 < 20）",
-          g0["year"]["b"] - g0["year"]["t"] < g0["day"]["b"] - g0["day"]["t"],
-          f"{g0['year']['b'] - g0['year']['t']:.0f} vs {g0['day']['b'] - g0['day']['t']:.0f}")
+    # 20260924 四轮：年份 12px → 16px（主人嫌小），不透明度 .65 → .8。仍必须**严格小于**
+    # 月日的 20px：两个数字一样大的话，"2026 09.24" 会被读成一串平铺的数字，看不出主次。
+    check("年份字号 = 16px（四轮从 12px 提上来）", g0["yearFs"] == "16px", g0["yearFs"])
+    check("月日字号 = 20px（主次关系没被这轮改掉）", g0["dayFs"] == "20px", g0["dayFs"])
+    check("年份仍比月日小（16 < 20：年份是量级信息，不抢月日）",
+          float(g0["yearFs"].rstrip("px")) < float(g0["dayFs"].rstrip("px")),
+          f"{g0['yearFs']} vs {g0['dayFs']}")
+    # 不透明度一起提上来之后别又倒回去（.65 → .8）：字号大了再压那么淡就只是发灰。
+    check("年份不透明度 = 0.8（四轮从 .65 提上来，字号变大后不再压那么淡）",
+          g0["yearOpacity"] == "0.8", g0["yearOpacity"])
     check("时刻在卡片内、且在正文（Meta）下方",
           g0["clock"]["t"] >= g0["meta"]["b"] - 1
           and g0["clock"]["l"] >= g0["card"]["l"]
