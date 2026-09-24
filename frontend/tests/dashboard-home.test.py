@@ -112,6 +112,22 @@ export const Provider = ({ children }: any) => children;
         "const ArticleRecord = (_p: {isDark?: boolean}) => <div className='stub-record'/>;\n"
         "export default ArticleRecord;\n", encoding="utf-8")
 
+    # 边界③b：react-router-dom 的 import 兜底。本沙箱只渲染 Home，用不到路由，
+    # 但 Home 现在要 useNavigate（待审评论那行的跳转），缺了 esbuild 直接打包失败。
+    (stubs / "router.tsx").write_text('''\
+export const useNavigate = () => (to: string, opts?: any) => {
+  const w = window as any;
+  w.__nav = (w.__nav || []).concat([{to, opts}]);
+};
+export const Link = ({children}: any) => children;
+export const NavLink = ({children}: any) => children;
+export const Outlet = () => null;
+export const Navigate = () => null;
+export const useSearchParams = () => [new URLSearchParams(location.search), () => {}] as any;
+export const useLocation = () => ({pathname: location.pathname, search: location.search});
+export const useParams = () => ({});
+''', encoding="utf-8")
+
     # 边界④：待办接口层。桩的是"服务端那份列表"+ 每次 PUT 的载荷记录；
     # 判成功/取失败文案那两行**照抄真实现**（改口径时这里要跟着改，别让它俩分叉）。
     (sb / "src/apis/DashboardMethods.tsx").write_text('''\
@@ -136,6 +152,21 @@ export function saveTodos(todos: any) {
   server = todos;
   return Promise.resolve(env(server));
 }
+// 待审评论：桩一份留言列表，几条 approved=0（等人工裁决）由页面上现改
+export function listBoardRows() {
+  (window as any).__boardCalls = ((window as any).__boardCalls || 0) + 1;
+  if (localStorage.getItem('__failBoard') === '1') {
+    localStorage.removeItem('__failBoard');
+    return Promise.resolve({status: 200, data: {code: 500, message: '假装读失败', data: null}});
+  }
+  const n = Number(localStorage.getItem('__pending') || 0);
+  const rows = [];
+  for (let i = 0; i < 4; i++) {
+    rows.push({talkKey: i + 1, content: '留言' + (i + 1), author: 'a',
+               approved: i < n ? 0 : 1});
+  }
+  return Promise.resolve(env(rows));
+}
 ''' % json.dumps(SEED, ensure_ascii=False), encoding="utf-8")
 
     (sb / "entry.tsx").write_text('''\
@@ -157,7 +188,8 @@ import Home from './src/pages/Dashboard/Home/index.tsx';
                     "--loader:.sass=text", "--jsx=automatic", f"--define:{DEFINE}",
                     "--loader:.png=dataurl", "--loader:.svg=dataurl",
                     "--loader:.css=text",
-                    f"--alias:react-redux={stubs}/redux.tsx"],
+                    f"--alias:react-redux={stubs}/redux.tsx",
+                    f"--alias:react-router-dom={stubs}/router.tsx"],
                    cwd=str(sb), check=True, capture_output=True)
 
     # 主题变量 + 高度链：#root 必须有确定高度，`.right` 的 100% 才有参照物
@@ -231,7 +263,16 @@ with sync_playwright() as p:
     pg.on("pageerror", lambda e: errs.append(str(e)))
     # 待办由上面的接口桩给（不再走 localStorage）；这里只清掉卡片标题，
     # 好验它的默认值。日期样本全部相对"今天"生成，见文件头。
-    pg.add_init_script("localStorage.removeItem('dashboard_list_title');")
+    # 顺手把 setInterval 登记一下：这一页有一条 60 秒的轮询，脚本里等不起 60 秒，
+    # 但"那条轮询到底接上了没有"必须能断言（能力有测试 ≠ 接线有测试）
+    pg.add_init_script("""
+      localStorage.removeItem('dashboard_list_title');
+      (() => { const orig = window.setInterval;
+        window.__intervals = [];
+        window.setInterval = (fn, ms, ...rest) => {
+          window.__intervals.push(ms); return orig(fn, ms, ...rest); };
+      })();
+    """)
     pg.goto(URL)
     pg.wait_for_timeout(800)   # Typed.js 打字机 + antd 日历挂载
 
@@ -724,6 +765,72 @@ with sync_playwright() as p:
     check("撤掉也发给了服务端（date 收回 null，不是留个空串）",
           bool(sent5) and [r for r in sent5 if r["text"] == "新增的一条"][0]["date"] is None,
           str([r for r in sent5 if r["text"] == "新增的一条"]))
+
+    print("⑮ 待审评论：顶上提示一行、点得进去、审完自己消失")
+    # 桩里 3 条 approved=0（= 等人工裁决的那一档）
+    pg.evaluate("""() => {
+      localStorage.setItem('__pending', '3');
+      localStorage.setItem('__puts', '0');
+      delete window.__nav;
+    }""")
+    pg.reload()
+    pg.wait_for_timeout(900)
+    # inner_text 在 flex 容器的子项之间会插换行（"3\n条评论待人工审核"），抹平了再看
+    def review_text():
+        return "".join(pg.locator(".todo-review").inner_text().split()) \
+            if pg.locator(".todo-review").count() else ""
+
+    check("挂着待审评论时，列表顶上多一行提示",
+          review_text() == "3条评论待人工审核", review_text() or "（没有这一行）")
+    check("它排在全部待办分组**之前**",
+          pg.evaluate("""() => {
+            const r = document.querySelector('.todo-review');
+            const g = document.querySelector('.todo-group');
+            return !!r && !!g && r.getBoundingClientRect().top < g.getBoundingClientRect().top;
+          }"""))
+    check("它**不是**一条待办（不能拖、不能删、不进那份 8 条里）",
+          pg.locator(".todo-review .todo-text, .todo-review .todo-del, .todo-review .todo-grip")
+            .count() == 0
+          and len(row_texts(pg)) == 8, str(row_texts(pg)))
+    # 它也不该混进发往服务端的那份（那是待办表，服务端不认这种行）
+    pg.locator(".todo-row").first.locator("input[type='checkbox']").click()
+    pg.wait_for_timeout(900)
+    sent6 = pg.evaluate("() => window.__lastPut")
+    check("它不会被写进待办（那份还是 8 条、字段还是 text/done/date）",
+          bool(sent6) and len(sent6) == 8
+          and all(sorted(r.keys()) == ["date", "done", "text"] for r in sent6),
+          str(len(sent6) if sent6 else 0) + " 条")
+    pg.click(".todo-review")
+    pg.wait_for_timeout(200)
+    check("点它就跳到评论管理那一页（落到评论管理 Tab 上）",
+          (pg.evaluate("() => (window.__nav || []).slice(-1)[0]") or {}).get("to")
+          == "/dashboard/users?tab=review",
+          str(pg.evaluate("() => (window.__nav || []).slice(-1)[0]")))
+    check("60 秒轮询接上了（切回标签页另有一条立即刷的通道）",
+          60000 in (pg.evaluate("() => window.__intervals") or []),
+          str(pg.evaluate("() => window.__intervals")))
+
+    # 读失败保持上一次的数：一个提示不该因为一次网络抖动就自己消失
+    pg.evaluate("""() => {
+      localStorage.setItem('__failBoard', '1');
+      document.dispatchEvent(new Event('visibilitychange'));
+    }""")
+    pg.wait_for_timeout(400)
+    check("这一下读失败时，那行还在（不把「读不到」演成「审完了」）",
+          pg.locator(".todo-review").count() == 1
+          and "3" in pg.locator(".todo-review").inner_text(),
+          pg.locator(".todo-review").inner_text().strip()
+          if pg.locator(".todo-review").count() else "（没了）")
+
+    # 主人去评论管理把三条审完 → 切回来这一下就该自己消失
+    pg.evaluate("""() => {
+      localStorage.setItem('__pending', '0');
+      document.dispatchEvent(new Event('visibilitychange'));
+    }""")
+    pg.wait_for_timeout(500)
+    check("审完之后切回来，这一行自己就没了（不用手动关）",
+          pg.locator(".todo-review").count() == 0)
+    check("待办本身一条没少", len(row_texts(pg)) == 8, str(len(row_texts(pg))))
 
     br.close()
 

@@ -18,7 +18,8 @@ import MainContext from "../../../components/conText.tsx";
 import {useDispatch, useSelector} from "react-redux";
 import UserState from "../../../interface/UserState";
 import {fetchNoteList} from "../../../store/components/note.tsx";
-import {getTodos, saveTodos, ok, errMsg} from "../../../apis/DashboardMethods.tsx";
+import {getTodos, saveTodos, listBoardRows, ok, errMsg} from "../../../apis/DashboardMethods.tsx";
+import {useNavigate} from "react-router-dom";
 import type {DashboardTodo} from "../../../interface/DashboardType";
 import {fetchCategories} from "../../../store/components/categories.tsx";
 import {fetchTags} from "../../../store/components/tags.tsx";
@@ -70,6 +71,10 @@ const Home = () => {
     const [draft, setDraft] = useState('');
     const [focusId, setFocusId] = useState<number | null>(null);   // 刚新增的空行，挂载后自动聚焦
     const [dragId, setDragId] = useState<number | null>(null);
+    // 还有几条留言等着人工裁决（20260924 三轮）。它不是待办：不进 todos、不落库、
+    // 不能拖也不能删，只在列表顶上当一个"去处理"的入口。
+    const [pendingReview, setPendingReview] = useState(0);
+    const navigate = useNavigate();
 
     const today = dayjs().format('YYYY-MM-DD');
     const nextId = (list: Todo[]) => (list.length ? Math.max(...list.map(t => t.id)) : 0) + 1;
@@ -94,6 +99,29 @@ const Home = () => {
     }, []);
 
     useEffect(() => { void loadTodos(); }, [loadTodos]);
+
+    // 待审评论数。数据源就是评论管理那一页在用的同一个接口（GET /api/protect/board），
+    // 只数 approved === 0 的那几条——人工复核开着的时候新留言全落在这一档。
+    // 读失败**保持上一次的数**（一个提示不该因为一次网络抖动就自己消失），
+    // 真审完了读回来是 0，这一行自然就不画了。
+    const refreshPending = useCallback(async () => {
+        const res = await listBoardRows();
+        if (!ok(res)) return;
+        setPendingReview((res.data?.data ?? []).filter(r => r.approved === 0).length);
+    }, []);
+
+    useEffect(() => {
+        void refreshPending();
+        const timer = setInterval(() => void refreshPending(), 60000);
+        // 切回这个标签页时立刻刷一次：主人多半就是去把评论审完了才回来的，
+        // 不该还要等下一个 60 秒（"完成后自动从列表清除"的体感全靠这一下）
+        const onVisible = () => { if (!document.hidden) void refreshPending(); };
+        document.addEventListener('visibilitychange', onVisible);
+        return () => {
+            clearInterval(timer);
+            document.removeEventListener('visibilitychange', onVisible);
+        };
+    }, [refreshPending]);
 
     // 每次改动 → 整份发上去（600ms 防抖；不做行级 diff，服务端也不认行 id）。
     // 失败不回滚本地编辑（主人刚敲的字不该被悄悄撤掉），提示一句即可：
@@ -399,6 +427,15 @@ const Home = () => {
                         bordered={false}
                    />
                    <div className="todoBody">
+                        {/* 顶上这一行不是待办（不进 todos、不落库、不能拖不能删）：
+                            它是"评论管理那边还有几条等我裁决"的入口，审完自然消失 */}
+                        {pendingReview > 0 &&
+                            <div className="todo-review"
+                                 onClick={() => navigate('/dashboard/users?tab=review')}>
+                                <span className="todo-review-n">{pendingReview}</span>
+                                <span>条评论待人工审核</span>
+                                <RightOutlined className="todo-review-go" />
+                            </div>}
                         {/* 没读出来之前不显示"还没有待办"——那会把"读失败"说成"你没有待办" */}
                         {!loaded && !loadErr &&
                             <div className="todo-empty">正在读待办…</div>}

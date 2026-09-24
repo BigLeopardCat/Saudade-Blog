@@ -2,13 +2,23 @@ import './index.sass'
 import { Button, Input, message, Modal, Tabs } from 'antd';
 import type { TabsProps } from 'antd';
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import BoardManage from '../BoardManage';
 
 /** 用户管理 = 账号管理（临时访客账号）+ 评论管理（河灯留言审核）
  *  20260905 拍板：原 Announcement 内嵌临时用户段迁入「账号管理」；
  *  原独立「留言管理」页并入「评论管理」。设置类（站点信息等）拆独立侧栏入口 UserControl。
+ *
+ *  `?tab=review` 直接落在评论管理（20260924 三轮）：后台首页待办卡上那行
+ *  "N 条评论待人工审核"点过来就该看见那几条，而不是先看见账号列表再自己找 Tab。
+ *  只在**进页那一下**当初始值——之后切 Tab 不再回写 URL（这一页没有"当前 Tab 是
+ *  哪一页"的可分享语义，URL 也不是它的真源）。
  */
 const Users = () => {
+    const [searchParams] = useSearchParams()
+    const [tab, setTab] = useState(() =>
+        searchParams.get('tab') === 'review' ? 'review' : 'accounts')
+
     // ── 临时用户（账号管理）──
     const token = localStorage.getItem('tokenKey')
     const [tempUsers, setTempUsers] = useState<any[]>([])
@@ -181,7 +191,7 @@ const Users = () => {
 
     return (
         <div className="users-page">
-            <Tabs defaultActiveKey="accounts" items={items} />
+            <Tabs activeKey={tab} onChange={setTab} items={items} />
         </div>
     );
 };
