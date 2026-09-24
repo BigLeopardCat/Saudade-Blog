@@ -73,6 +73,13 @@ console.log('== 非法值回落 ==');
     eq(S.parseListQuery('?page=abc').page, 1, 'page 非数字 → 1');
     eq(S.parseListQuery('?page=2.5').page, 1, 'page 小数 → 1（不做四舍五入）');
     eq(S.parseListQuery('?top=7').top, '', 'top 非 0/1 → 空');
+    // 每页条数（20260924 新增）：只认白名单里的值，别的一律回落到默认
+    eq(S.parseListQuery('?size=20').size, 20, 'size=20 保留');
+    eq(S.parseListQuery('?size=7').size, S.LIST_PAGE_SIZE, 'size 不在可选项里 → 回落到默认值');
+    eq(S.parseListQuery('?size=0').size, S.LIST_PAGE_SIZE, 'size=0 → 默认（不能让它切出空页）');
+    eq(S.parseListQuery('?size=-5').size, S.LIST_PAGE_SIZE, 'size 负数 → 默认');
+    eq(S.buildListQuery({ ...D, size: 20 }), 'size=20', '非默认的 size 写进 URL');
+    eq(S.parseListQuery(S.buildListQuery({ ...D, size: 50 })).size, 50, 'size build → parse 往返一致');
     eq(S.parseListQuery('?from=2026-1-1').from, '', '不合法日期 → 丢掉');
     eq(S.parseListQuery('?from=2026-01-01').from, '2026-01-01', '合法日期保留');
 
@@ -94,7 +101,7 @@ console.log('== clampPage：渲染期钳制，绝不回写 URL ==');
     eq(S.clampPage(9, 17, 8), 3, '17 条 = 3 页，第 9 页 → 3');
     eq(S.clampPage(0, 17, 8), 1, '0 → 1');
     eq(S.clampPage(NaN, 17, 8), 1, 'NaN → 1');
-    eq(S.clampPage(2, 17, 0), 2, 'pageSize=0 不炸（回落到默认 8）');
+    eq(S.clampPage(2, 17, 0), 2, 'pageSize=0 不炸（回落到默认值）');
 }
 
 console.log('== pageSlice：显示第几页与切出哪几行永不脱节 ==');

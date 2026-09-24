@@ -30,6 +30,8 @@ export interface ListQuery {
     tab: ListTab;
     /** 页码，从 1 开始 */
     page: number;
+    /** 每页条数（20260924 起可调，见 `PAGE_SIZE_OPTIONS`） */
+    size: number;
     /** 关键词（命中标题/正文/标签名），对应后端 `keyword` */
     kw: string;
     /** 仅标题筛选，对应后端 `title` */
@@ -45,7 +47,16 @@ export interface ListQuery {
     tags: number[];
 }
 
-export const LIST_PAGE_SIZE = 8;
+/**
+ * 默认每页条数（20260924：8 → 10）。
+ * 原来是 8，而列表区被 `scroll={{y:'56vh'}}` 固定在 504px 高（900 高的窗口）——
+ * 一行 73px，**第 8 行恰好被藏进滚动区**，屏幕下方却空着 150px。现在列表区铺满卡片、
+ * 分页条钉在卡片底部，条数改由用户自己选（见 `PAGE_SIZE_OPTIONS`）。
+ */
+export const LIST_PAGE_SIZE = 10;
+
+/** 每页条数的可选项（URL 里 `size=` 只认这几个值，别的一律回落到默认） */
+export const PAGE_SIZE_OPTIONS = [10, 20, 50];
 
 /** 从编辑器返回列表时放的"返回票据"（sessionStorage），键名全局唯一 */
 export const LIST_RETURN_KEY = 'notes:listReturn';
@@ -53,6 +64,7 @@ export const LIST_RETURN_KEY = 'notes:listReturn';
 export const DEFAULT_LIST_QUERY: ListQuery = {
     tab: '1',
     page: 1,
+    size: LIST_PAGE_SIZE,
     kw: '',
     title: '',
     cat: '',
@@ -86,6 +98,11 @@ export function parseListQuery(search: string | URLSearchParams): ListQuery {
     const rawPage = Number(params.get('page'));
     const page = Number.isInteger(rawPage) && rawPage > 0 ? rawPage : 1;
 
+    // 每页条数只认白名单：它要直接喂给 slice/clampPage，放任何数字进来都可能让列表
+    // 一页都装不满（size=0 已被 clampPage 兜住，但没有理由让它走到那里）
+    const rawSize = Number(params.get('size'));
+    const size = PAGE_SIZE_OPTIONS.includes(rawSize) ? rawSize : LIST_PAGE_SIZE;
+
     const kw = params.get('kw') ?? params.get('keyword') ?? '';
     const rawTop = params.get('top');
     const from = params.get('from') ?? '';
@@ -94,6 +111,7 @@ export function parseListQuery(search: string | URLSearchParams): ListQuery {
     return {
         tab,
         page,
+        size,
         kw,
         title: asString(params.get('title')),
         cat: asString(params.get('cat')),
@@ -112,6 +130,7 @@ export function buildListQuery(query: ListQuery): string {
     const params = new URLSearchParams();
     if (query.tab !== '1') params.set('tab', query.tab);
     if (query.page > 1) params.set('page', String(query.page));
+    if (query.size !== LIST_PAGE_SIZE) params.set('size', String(query.size));
     if (query.kw) params.set('kw', query.kw);
     if (query.title) params.set('title', query.title);
     if (query.cat) params.set('cat', query.cat);

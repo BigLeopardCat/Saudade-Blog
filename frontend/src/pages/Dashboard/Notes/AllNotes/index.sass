@@ -9,6 +9,22 @@
 // 激活就是一次视觉改版，不在本次范围里（列表页布局归列表页自己的改动管）。
 
 .AllCard
+  // 20260924：整页改成**竖向 flex**，把列表区撑满卡片（原来高度全是内容撑的，
+  // 表格底部到卡片底部空着 150px）。三层各司其职：
+  //   .AllCard          高 100%（卡片 body 是 95% 视口高）→ 撑满
+  //   .searchRes        flex:1 → 吃掉筛选栏/tab 之外的全部高度，自己分成
+  //                     「表体（可滚）+ 分页条（钉底）」两段，所以它自己**不滚**
+  //   .custom-scroll-   唯一的滚动容器（表头 sticky 就锚在它上面）
+  height: 100%
+  display: flex
+  flex-direction: column
+  min-height: 0
+
+  // 除列表区以外的块（筛选表单、批量删除按钮）都是固定高度：不许被 flex 压扁
+  // （不给这条的话，窄屏或窗口变矮时它们会先被压成一条线，列表反而不缩）
+  > :not(.searchRes)
+    flex: 0 0 auto
+
   // 兜住任何残余的横向溢出。
   //
   // 横向滚动条的真正根因不是"文本太长"，是表格的 `scroll={{x:'max-content'}}`：rc-table
@@ -16,7 +32,54 @@
   // 1280 宽溢出 164px、1440 溢出 20px、1920 反而右侧空 412px。那个 prop 已经删掉（表回到
   // CSS `width:100%`），这里再兜一道。
   .searchRes
+    overflow: hidden
+    flex: 1 1 auto
+    min-height: 0
+    display: flex
+    flex-direction: column
+    // 浅色下这块是白面板、夜间是 antd 的容器底色（见下），tab 条 / 表格 / 分页条
+    // 从此是**同一块面板**里的三段，而不是三块浮在页面渐变上的碎片
+    background-color: #fff
+    border-radius: 10px
+    .dark &,
+    .contentDark &
+      background-color: #141414
+
+  .custom-scroll-container
+    flex: 1 1 auto
+    min-height: 0
+    overflow-y: auto
     overflow-x: hidden
+    // 表头吸顶。锚是**这个滚动容器**（`.ant-table-body` 那层已经不存在了 —— 撤了
+    // `scroll.y` 之后 rc-table 只渲染一张表）。antd 的 `sticky` prop 走 getContainer
+    // 那套，这里一行 CSS 更直接：单表结构下 `position: sticky` 天然生效。
+    .ant-table-thead > tr > th
+      position: sticky
+      top: 0
+      z-index: 2
+
+  // 行内那三颗 MUI Fab 自带 `z-index: 1050`（来自 MUI 的 MuiFab-root），滚动时
+  // **会盖住吸顶的表头**（实测截图：滚到底后第一行的操作按钮浮在表头上面）。
+  // 它们本来就是行内小按钮、不需要压在任何人上面，就地归零 ——
+  // 否则只能把表头的 z-index 抬到 1051 去跟 MUI 对冲。
+  .ant-table-row .MuiFab-root
+    z-index: 0
+
+  // 分页条：钉在面板底部（在滚动区之外，滚多远都看得见）
+  .listFooter
+    flex: 0 0 auto
+    display: flex
+    justify-content: flex-end
+    align-items: center
+    padding: 8px 14px
+    // 与表体之间一道发丝线代替原来的空白（面板是一整块，不能再靠背景色差分区）
+    border-top: 1px solid rgba(0, 0, 0, .06)
+    .dark &,
+    .contentDark &
+      border-top-color: rgba(255, 255, 255, .08)
+    // 分页条自己不需要下边距（面板给的是圆角，多出来的 margin 会把面板撑破相）
+    .ant-pagination
+      margin: 0
 
 // 标题列的省略号必须自己写：antd 的 `ellipsis` 对 flex 子项无效（复合 render 里的 Space
 // 是 inline-flex），实测 computed `textOverflow` 仍是 `clip`，长标题只会被硬裁。
