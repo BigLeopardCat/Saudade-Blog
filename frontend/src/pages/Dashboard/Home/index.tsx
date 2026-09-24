@@ -12,7 +12,6 @@ import 'dayjs/locale/zh-cn';
 dayjs.locale('zh-cn');
 import zhCN from "antd/lib/locale/zh_CN";
 import ArticleRecord from "../../../components/articleRecord";
-import TheYearPass from "../../../components/theYearPass";
 import ArticleAnalytics from "../../../components/articleAnalytics";
 import Typed from 'typed.js';
 import MainContext from "../../../components/conText.tsx";
@@ -274,7 +273,6 @@ const Home = () => {
                    只服务这张卡的样式。 */}
                <ConfigProvider locale={zhCN}>
                    <div className="calWrap">
-                       <TheYearPass/>
                        <Calendar
                             fullscreen={false}
                             onSelect={onSelectDate}
