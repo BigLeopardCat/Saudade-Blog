@@ -1,11 +1,13 @@
 import './index.sass'
 import {
     Button,
+    ConfigProvider,
     Form,
     Image,
     Input,
     message,
     Modal,
+    Pagination,
     Popconfirm,
     Radio,
     Select,
@@ -16,6 +18,9 @@ import {
     theme,
 } from 'antd';
 import type { TableProps, TabsProps } from 'antd';
+// 分页条自己带 locale：`showSizeChanger` 的「10 条/页」「跳至」是 antd 的**内置文案**，
+// 不套 locale 会在这里冒出英文（后台壳的 ConfigProvider 只设了 theme，没设 locale）
+import zhCN from "antd/lib/locale/zh_CN";
 import React, {useCallback, useEffect, useMemo, useRef, useState} from "react";
 import {useLocation, useNavigate, useSearchParams} from "react-router-dom";
 import {NoteType} from "../../../../interface/NoteType";
@@ -36,6 +41,7 @@ import {joinNoteTags, parseNoteTags} from "../../../../utils/noteTags";
 import {
     DEFAULT_LIST_QUERY,
     LIST_PAGE_SIZE,
+    PAGE_SIZE_OPTIONS,
     ListQuery,
     ListTab,
     buildListQuery,
@@ -198,11 +204,15 @@ const AllNotes = () => {
         saveListReturn(location.search);
     }, [location.search]);
 
-    // ② 取数只认「筛选条件 + tab」—— `page: 1` 把页码**排除在 key 之外**（buildListQuery 的
-    //    默认值不落串，所以第 1 页与第 5 页算出的 key 一模一样），翻页就是纯前端 pageSlice。
+    // ② 取数只认「筛选条件 + tab」—— `page: 1` 与 `size: 默认值` 把**分页**排除在 key 之外
+    //    （buildListQuery 的默认值不落串，所以第 1 页与第 5 页、每页 10 条与 50 条算出的
+    //    key 一模一样），翻页/改每页条数都是纯前端 pageSlice。
     //    行为变化要知道：翻页不再顺带刷新数据，改为切 tab / 改条件 / 重挂载才刷。
     //    ⚠️ 必须是**字符串**（文件头铁律 2）：deps 里放对象会无限重渲染 + 无限请求。
-    const fetchKey = useMemo(() => buildListQuery({...query, page: 1}), [query]);
+    const fetchKey = useMemo(
+        () => buildListQuery({...query, page: 1, size: LIST_PAGE_SIZE}),
+        [query],
+    );
 
     // ── 取数：**只读** URL，绝不回写（回写就是 URL→effect→URL 死循环）──────────────
     useEffect(() => {
@@ -245,19 +255,21 @@ const AllNotes = () => {
     // 当前页越界时只影响"显示哪一页/切哪几行"，URL 里那个 page 原样不动 ——
     // 一旦在这里回写 URL，就变成死循环；而"改完配置页码跳回第一页"正是钳制结果被
     // 当成真实页码造成的。
-    const current = clampPage(query.page, total, LIST_PAGE_SIZE);
+    const current = clampPage(query.page, total, query.size);
     const pageRows = useMemo(
-        () => pageSlice(tagFiltered, current, LIST_PAGE_SIZE),
-        [tagFiltered, current],
+        () => pageSlice(tagFiltered, current, query.size),
+        [tagFiltered, current, query.size],
     );
 
-    // 翻页回顶：滚动容器是 rc-table 的 `.ant-table-body`（Table 的 `scroll.y`），**不是 window**
+    // 翻页回顶：滚动容器就是 `.custom-scroll-container` 本身，**不是 window**
     // —— 这个页面的 `window.scrollY` 恒为 0，用 window.scrollTo 等于什么都没做。
+    //（20260924 之前 Table 带 `scroll={{y:'56vh'}}`，真正的滚动者是它内部生成的
+    // `.ant-table-body`；现在列表区改为铺满卡片、由外层容器滚，这里跟着改）
     const tableBoxRef = useRef<HTMLDivElement>(null);
     useEffect(() => {
-        const box = tableBoxRef.current?.querySelector('.ant-table-body');
+        const box = tableBoxRef.current;
         if (box) box.scrollTop = 0;
-    }, [current]);
+    }, [current, query.size]);
 
     const DeleteNote = async (key: React.Key) => {
         try {
@@ -559,17 +571,25 @@ const AllNotes = () => {
                     onChange={(value) => setParam({tab: value as ListTab, page: 1})}
                 />
                 <div className='custom-scroll-container' ref={tableBoxRef}>
-                    {/* scroll 只留 y：**不要**再给 x。
-                        `x:'max-content'` 会把表宽写死成内容宽（实测 1314px，与视口无关）——
-                        1280 宽溢出 164px、1440 溢出 20px、1920 反而右侧空 412px，这就是
-                        "文本太长必须左右拖"的真凶（不是文本长度）。不给 x 时表回到 CSS
-                        width:100%，而 `y` 已经让 rc-table 保持 tableLayout:fixed，列宽照旧生效。 */}
+                    {/* 20260924 重排：`scroll={{y:'56vh'}}` 撤掉，改成**外层容器滚**。
+                        原来那个定高滚动区在 900 高的窗口上只有 504px，一行 73px ⇒
+                        只放得下 6 行多一点，**每页最后一条整条藏在滚动区里**，而卡片
+                        下方还空着 150px —— 用户说的"换页和显示逻辑不舒服"就是这个。
+                        现在：表体高度由 flex 撑满卡片，表头用 CSS `position: sticky` 吸顶
+                        （见 index.sass），分页条**移出滚动区**钉在卡片底部（永远不会被滚走）。
+                        三个配套改动，少一个都会破相：
+                          · `tableLayout="fixed"` —— 列宽是百分比，此前靠 `scroll.y` 顺带
+                            拿到的 `table-layout:fixed`，撤了 y 就必须显式声明，否则百分比列宽失效；
+                          · `pagination={false}` —— 分页改由下方独立的 `<Pagination>` 承担；
+                          · **不要**再给 `scroll={{x}}`：`x:'max-content'` 会把表宽写死成
+                            内容宽（实测 1314px，与视口无关），那才是"文本长就得左右拖"的真凶。 */}
                     <Table
                         columns={columns}
                         dataSource={pageRows}
                         loading={loading}
                         rowSelection={rowSelection}
-                        scroll={{y: '56vh'}}
+                        tableLayout="fixed"
+                        pagination={false}
                         // 改完配置的行**留在原地**（不 filter 掉，见 onOk 的说明）；如果它
                         // 因此不再属于当前 tab，就把它压暗提示一下，而不是让它凭空消失。
                         rowClassName={(record) => {
@@ -577,16 +597,31 @@ const AllNotes = () => {
                             if (query.tab === '3' && record.status !== 'draft') return 'note-row-off-tab';
                             return '';
                         }}
-                        pagination={{
-                            // 受控 + 渲染期钳制：current 用 clampPage 的结果，但**不写回 URL**
-                            current,
-                            pageSize: LIST_PAGE_SIZE,
-                            total,
-                            showSizeChanger: false,
-                            showTotal: (t) => `共 ${t} 篇`,
-                            onChange: (p) => setParam({page: p}),
-                        }}
                     />
+                </div>
+                {/* 分页条：**在滚动区之外**，钉在卡片底部（滚到第 50 行也不用回头找它）。
+                    总数、每页条数、跳页都收在这一条里，取代原来挂在表格下方那条。 */}
+                <div className="listFooter">
+                    <ConfigProvider locale={zhCN}>
+                        <Pagination
+                            size="small"
+                            current={current}
+                            pageSize={query.size}
+                            total={total}
+                            showSizeChanger
+                            pageSizeOptions={PAGE_SIZE_OPTIONS}
+                            // 页数少的时候"跳至"是噪声，多于 5 页才给
+                            showQuickJumper={total > query.size * 5}
+                            showTotal={(t, [a, b]) => `第 ${a}-${b} 条 / 共 ${t} 篇`}
+                            onChange={(p, s) => {
+                                // 改每页条数 = 换一套分页：页码回第 1 页（否则会停在
+                                // "新分页里其实只有 1 页"的越界位置，靠 clampPage 兜也行，
+                                // 但那样 URL 里的 page 与实际显示的不一致）
+                                if (s !== query.size) setParam({size: s, page: 1});
+                                else setParam({page: p});
+                            }}
+                        />
+                    </ConfigProvider>
                 </div>
             </div>
         </div>

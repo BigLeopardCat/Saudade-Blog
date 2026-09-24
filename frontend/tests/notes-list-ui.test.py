@@ -1,7 +1,12 @@
 # -*- coding: utf-8 -*-
-"""后台「全部文章」列表页那一轮改版（20260923）的无头验收：真组件 + 真 antd + 假后端。
+"""后台「全部文章」列表页改版的无头验收：真组件 + 真 antd + 假后端。
 
-为什么值得单起一个脚本：这一轮的四处改动**都只有真跑一遍才看得见**——
+20260924 追加【五】：列表区铺满卡片、分页条移出滚动区钉在底部、`scroll.y` 撤掉后
+表头改靠 `position: sticky` 吸顶、每页条数可调（写进 URL）。四条都只有真跑一遍才
+看得见（几何、层级、以及"改每页条数会不会又去拉一次数据"），且它们**互相牵连**
+——少写 `tableLayout="fixed"` 列宽就失效、分页条留在滚动区里就会被滚走。
+
+20260923 那轮的四处改动**也都只有真跑一遍才看得见**——
   · 「筛选栏收成一行」是布局结果：`layout="inline"` 下四个控件的 rect.top 是不是同一个值，
     读代码看不出来（`Col span={8}` 换掉之后，谁也不敢保证 antd 的 inline 一定不折行）；
   · 「新增文章按钮挪到标签按钮前」是个**顺序**判据：得拿两者的 getBoundingClientRect 比左右；
@@ -155,8 +160,13 @@ def build_sandbox() -> pathlib.Path:
         # 宽容解码：esbuild 会在中文那行按字节截断，严格 utf-8 解会先炸在解码上、盖住真报错
         raise SystemExit("esbuild 打包失败：\n%s" % r.stderr.decode("utf-8", "replace"))
 
+    # 20260924：给页面一个**真实的高度上下文**。这页的列表区是 flex 撑满的
+    # （`.AllCard{height:100%}`，真实环境里那一 100% 是后台壳的 `.Card` 给的 95vh），
+    # 沙箱只挂了一个裸组件，没有父高度可继承 ⇒ 列表区退化成内容高、"铺满卡片"
+    # 这类断言全是空转。这里用 `#root{height:100%}` 补上那一层。
     (sb / "index.html").write_text(
         '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
+        '<style>html,body,#root{height:100%;margin:0}</style>'
         '<style>' + "\n".join(css) + '</style></head><body><div id="root"></div>'
         '<script src="bundle.js"></script></body></html>', encoding="utf-8")
     return sb
@@ -263,28 +273,28 @@ with sync_playwright() as p:
     pg.close()
 
     # ── 三、切页不再重新请求（本轮唯一的**行为**变化）───────────────────────────
-    # 视口压到 700 高：`.ant-table-body` 是 `scroll.y: 56vh`，行高 ~70px × 8 行必须真的
-    # 溢出，否则"回顶"这条断言是空转（scrollTop 本来就没得滚）。前置条件单独断言。
+    # 视口压到 700 高：列表区是 flex 撑满的，20 行 × 70px 必然溢出，否则"回顶"这条
+    # 断言是空转（scrollTop 本来就没得滚）。前置条件单独断言。
     print("\n【三】切页不再重新请求 + 回顶")
     pg = mount(br, size=(1440, 700))
     box = pg.evaluate("""() => {
-        const b = document.querySelector('.AllCard .ant-table-body');
+        const b = document.querySelector('.AllCard .custom-scroll-container');
         return { sh: b.scrollHeight, ch: b.clientHeight };
     }""")
-    check("前置：表格内容真的溢出了（否则回顶断言是空转）", box["sh"] > box["ch"] + 40,
+    check("前置：列表内容真的溢出了（否则回顶断言是空转）", box["sh"] > box["ch"] + 40,
           f'{box["sh"]} vs {box["ch"]}')
     n0 = pg.evaluate("() => window.__calls.length")
     check("首屏拉了一次数据", n0 == 1, f"calls={n0}")
-    pg.evaluate("() => { document.querySelector('.AllCard .ant-table-body').scrollTop = 120; }")
+    pg.evaluate("() => { document.querySelector('.AllCard .custom-scroll-container').scrollTop = 120; }")
     pg.wait_for_timeout(60)
     pg.locator(".AllCard .ant-pagination-item-2").first.click()
     pg.wait_for_timeout(700)
     n1 = pg.evaluate("() => window.__calls.length")
     check("切到第 2 页：**没有**再发请求（前端切片）", n1 == n0, f"{n0} → {n1}")
-    check("切页后表格滚回顶部（scrollTop === 0）",
-          pg.evaluate("() => document.querySelector('.AllCard .ant-table-body').scrollTop") == 0)
+    check("切页后列表滚回顶部（scrollTop === 0）",
+          pg.evaluate("() => document.querySelector('.AllCard .custom-scroll-container').scrollTop") == 0)
     first_title = pg.evaluate("() => document.querySelector('.AllCard .note-title-txt').textContent")
-    check("第 2 页显示的是第 9 篇（切片真的换了）", '第 9 篇' in first_title, first_title)
+    check("第 2 页显示的是第 11 篇（每页 10 条，切片真的换了）", '第 11 篇' in first_title, first_title)
     # 对照：切 tab 是**该**重新拉的（否则上面那条"没发请求"可能只是计数器不灵）
     pg.locator(".AllCard .ant-tabs-tab", has_text="私密文章").first.click()
     pg.wait_for_timeout(700)
@@ -316,6 +326,82 @@ with sync_playwright() as p:
     check("点搜索后 URL 里的 from/to 也消失了",
           pg.evaluate("() => document.querySelectorAll('.AllCard .ant-picker').length") == 0)
     check("第四节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
+    pg.close()
+
+    # ── 五、列表区铺满卡片、分页条钉底、表头吸顶（20260924 重排）────────────────
+    # 这一轮撤掉了 `scroll={{y:'56vh'}}`：那个定高滚动区在 900 高的窗口上只有 504px、
+    # 刚好把每页最后一条藏进滚动区，而卡片下方还空着 150px。下面每条都只有真跑一遍
+    # 才看得见（几何、层级、以及"改每页条数会不会又去拉一次数据"）。
+    print("\n【五】列表区铺满卡片 + 分页条钉底 + 表头吸顶")
+    pg = mount(br, size=(1440, 900))
+    geo = pg.evaluate("""() => {
+        const R = (el) => { const b = el.getBoundingClientRect();
+            return {t: +b.top.toFixed(1), b: +b.bottom.toFixed(1), h: +b.height.toFixed(1)}; };
+        const card = document.getElementById('root');   // 沙箱里它就是"页面高度"（见 index.html）
+        const sr = document.querySelector('.AllCard .searchRes');
+        const cont = document.querySelector('.AllCard .custom-scroll-container');
+        const foot = document.querySelector('.AllCard .listFooter');
+        return {
+            card: R(card), sr: R(sr), cont: R(cont), foot: R(foot),
+            legacyBody: document.querySelectorAll('.AllCard .ant-table-body').length,
+            tableLayout: getComputedStyle(document.querySelector('.AllCard .ant-table table')).tableLayout,
+            panelBg: getComputedStyle(sr).backgroundColor,
+            rows: document.querySelectorAll('.AllCard .ant-table-row').length,
+            sizeChanger: document.querySelectorAll('.AllCard .ant-pagination-options').length,
+            total: (document.querySelector('.AllCard .listFooter') || {}).textContent || '',
+        };
+    }""")
+    check("每页 10 条（不再是 8）", geo["rows"] == 10, f'rows={geo["rows"]}')
+    check("列表区一直铺到卡片底部（原来的空白没有了）",
+          abs(geo["sr"]["b"] - geo["card"]["b"]) < 3 and abs(geo["foot"]["b"] - geo["card"]["b"]) < 3,
+          f'面板底 {geo["sr"]["b"]} / 分页底 {geo["foot"]["b"]} / 卡片底 {geo["card"]["b"]}')
+    check("分页条紧贴滚动区下沿（在滚动区**之外**，滚多远都看得见）",
+          abs(geo["foot"]["t"] - geo["cont"]["b"]) < 3,
+          f'分页顶 {geo["foot"]["t"]} / 滚动区底 {geo["cont"]["b"]}')
+    # 撤掉 scroll.y 之后 rc-table 只渲染一张表（没有独立的表头/表体两张表），
+    # 表头吸顶才能靠一行 position:sticky 做到
+    check("单表结构（没有 .ant-table-body 这层了）", geo["legacyBody"] == 0,
+          f'legacyBody={geo["legacyBody"]}')
+    check("列宽仍是 fixed 布局（百分比列宽全靠它）", geo["tableLayout"] == "fixed",
+          str(geo["tableLayout"]))
+    check("分页条带每页条数选择器", geo["sizeChanger"] == 1)
+    check("总数文案在位（第 x-y 条 / 共 N 篇）", "第 1-10 条" in geo["total"] and "共 20 篇" in geo["total"],
+          geo["total"][:40])
+    stuck = pg.evaluate("""() => {
+        const cont = document.querySelector('.AllCard .custom-scroll-container');
+        const th = document.querySelector('.AllCard .ant-table-thead th');
+        cont.scrollTop = cont.scrollHeight;
+        const ct = cont.getBoundingClientRect().top, tt = th.getBoundingClientRect().top;
+        return {scrolled: cont.scrollTop > 20, gap: Math.abs(ct - tt)};
+    }""")
+    check("列表滚到底时表头仍吸在滚动区顶部",
+          stuck["scrolled"] and stuck["gap"] < 2, str(stuck))
+    # 表头吸顶了还不够：行内那三颗 MUI Fab 自带 z-index:1050，会**画在表头上面**
+    # （实测截图里第一行的操作按钮浮在表头上）。断言的是叠放次序本身，不是某张截图。
+    zs = pg.evaluate("""() => {
+        const th = document.querySelector('.AllCard .ant-table-thead th');
+        const fab = document.querySelector('.AllCard .ant-table-row .MuiFab-root');
+        return {th: +getComputedStyle(th).zIndex, fab: +getComputedStyle(fab).zIndex};
+    }""")
+    check("行内 Fab 不再压在吸顶表头之上（z-index 已归零）",
+          zs["fab"] < zs["th"], f'fab={zs["fab"]} th={zs["th"]}')
+
+    # 改每页条数：要写进 URL（返回列表/刷新后还在），且**不该**重新拉数据
+    n_before = pg.evaluate("() => window.__calls.length")
+    pg.locator(".AllCard .ant-pagination-options .ant-select").first.click()
+    pg.wait_for_timeout(300)
+    pg.locator(".ant-select-item-option", has_text="20 条/页").first.click()
+    pg.wait_for_timeout(700)
+    n_after = pg.evaluate("() => window.__calls.length")
+    check("改每页条数：**没有**重新拉数据（数据与分页无关，只是切片变了）",
+          n_after == n_before, f"{n_before} → {n_after}")
+    check("改每页条数：URL 里写上了 size=20",
+          "size=20" in (pg.evaluate("() => window.__loc[window.__loc.length - 1]") or ""),
+          str(pg.evaluate("() => window.__loc")))
+    check("改每页条数：一屏 20 条、页数变 1",
+          pg.evaluate("() => document.querySelectorAll('.AllCard .ant-table-row').length") == 20
+          and pg.evaluate("() => document.querySelectorAll('.AllCard .ant-pagination-item').length") == 1)
+    check("第五节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
     br.close()
