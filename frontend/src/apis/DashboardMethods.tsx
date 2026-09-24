@@ -34,3 +34,24 @@ export function saveTodos(todos: DashboardTodo[]) {
         data: {todos},
     });
 }
+
+/** 留言管理列表里的一条（GET /api/protect/board，与 backend BoardAdminDto 同源） */
+export interface BoardRow {
+    talkKey: number;
+    content: string;
+    author: string;
+    /** 人工审核：1=通过 / 0=待审 / 2=未通过 */
+    approved: number;
+    aiResult?: string | null;
+    [k: string]: unknown;
+}
+
+/** GET /api/protect/board：全部河灯留言（倒序）。
+ *  后台首页只用它数 `approved === 0` 的那几条（等人工裁决的），**没有**单独的计数接口；
+ *  数据量是"留言总数"级别，一次拉全再数比加一个只为提醒用的后端接口划算。 */
+export function listBoardRows() {
+    return http<Envelope<BoardRow[]>>({
+        url: "/api/protect/board",
+        method: "GET",
+    });
+}

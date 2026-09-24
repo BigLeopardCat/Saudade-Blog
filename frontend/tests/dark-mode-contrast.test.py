@@ -346,6 +346,24 @@ with sync_playwright() as p:
                   % (t, b["r"], b["g"], b["b"], b["a"])
                   for t, b in zip(r[1]["tags"], r[1]["chain"])))
             print("         DOM：" + r[1]["html"].replace("\n", " "))
+    # ── 附加（20260924 三轮）：Users 页认 ?tab=review ──
+    # 后台首页待办卡上那行"3 条评论待人工审核"点过来就落到这里；这个沙箱是**唯一**
+    # 会渲染真 Users 页的地方，所以这条接线断言寄在这里（它不关心配色，关心落点）。
+    def active_tab():
+        return page.evaluate("""() => {
+          const t = document.querySelector('.ant-tabs-tab-active');
+          return t ? t.textContent.trim() : null;
+        }""")
+
+    page.goto(f"{URL}?page=Users&tab=review")
+    page.wait_for_timeout(1800)
+    check("Users 页认 ?tab=review（待审评论那行跳过来直接落在「评论管理」上）",
+          active_tab() == "评论管理", str(active_tab()))
+    page.goto(f"{URL}?page=Users")
+    page.wait_for_timeout(1800)
+    check("不带参数时仍落在「账号管理」（原来的默认没被动过）",
+          active_tab() == "账号管理", str(active_tab()))
+
     br.close()
 
 print()

@@ -560,6 +560,35 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
       overflow-y: auto
       padding: 0 6px 0 0
 
+      // 顶上那一行"有几条评论等你人工审核"（20260924 三轮）。它不是待办：不进 todos、
+      // 不落库、不能拖不能删，点它就是跳去评论管理（那一页的评论管理 Tab）。
+      // 用日历头部那颗"今天"按钮的同一个紫，右栏里两处强调色是同一个人。
+      .todo-review
+        display: flex
+        align-items: center
+        gap: 5px
+        min-height: 30px
+        padding: 0 8px
+        border-radius: 6px
+        cursor: pointer
+        font-size: 12px
+        color: #a05c9a
+        background: rgba(160, 92, 154, .1)
+        transition: .2s
+        .dark &
+          color: #d9a9d4
+          background: rgba(217, 169, 212, .12)
+        &:hover
+          background: rgba(160, 92, 154, .18)
+          .dark &
+            background: rgba(217, 169, 212, .2)
+        .todo-review-n
+          font-weight: 700
+          font-variant-numeric: tabular-nums
+        .todo-review-go
+          margin-left: auto
+          opacity: .55
+
       .todo-empty
         font-size: 12px
         font-weight: 400
