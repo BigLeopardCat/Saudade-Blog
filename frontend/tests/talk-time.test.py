@@ -142,8 +142,14 @@ with sync_playwright() as p:
     check("第一条 = 2026 / 09.24", years[0] == "2026" and days[0] == "09.24", f"{years[0]} {days[0]}")
     check("跨年那条 = 2025 / 12.31（不是当前年）", years[1] == "2025" and days[1] == "12.31",
           f"{years[1]} {days[1]}")
-    check("日期不再是单行纯文本（旧形态整个 h3 只有 MM.DD）",
-          pg.locator(".talkTime").first.inner_text().strip().replace("\n", " ") != "09.24")
+    check("年份在月日**前面**、同一行（20260924 三轮：原来是年份一行压在月日上面）",
+          pg.evaluate("""() => {
+            const t = document.querySelector('.talkTime');
+            const y = t.querySelector('.talkTime-year').getBoundingClientRect();
+            const d = t.querySelector('.talkTime-day').getBoundingClientRect();
+            // 前面 = 年份右缘在月日左缘之前；同一行 = 两者的竖直区间有重叠
+            return y.right <= d.left + 1 && y.top < d.bottom && d.top < y.bottom;
+          }"""))
 
     print("③ 卡片左下角的精确时刻")
     clocks = pg.eval_on_selector_all(".talk-clock", "els => els.map(e => e.textContent.trim())")
@@ -156,7 +162,7 @@ with sync_playwright() as p:
               "() => { const c = getComputedStyle(document.querySelector('.talk-clock')).color;"
               " const m = c.match(/[\\d.]+/g); return m.length < 4 || +m[3] > 0.9; }"))
 
-    print("④ 几何（日期在卡片左侧、时刻在卡片内左下角）")
+    print("④ 几何（日期在卡片左侧、时刻在卡片右下角）")
     geo = pg.evaluate("""() => {
       const r = (el) => { const b = el.getBoundingClientRect();
         return {l: b.left, r: b.right, t: b.top, b: b.bottom, w: b.width}; };
@@ -165,9 +171,17 @@ with sync_playwright() as p:
         const year = r(a.querySelector('.talkTime-year'));
         const day  = r(a.querySelector('.talkTime-day'));
         const card = r(a.querySelector('.talk'));
+        const body = r(a.querySelector('.ant-card-body'));
         const meta = r(a.querySelector('.ant-card-meta'));
         const clock = r(a.querySelector('.talk-clock'));
-        return {time, year, day, card, meta, clock};
+        const foot = a.querySelector('.talk-foot');
+        const fs = getComputedStyle(foot);
+        // 竖线上的圆点 = `.talk:after`（伪元素，只能用 computed style 反推几何）
+        const csDot = getComputedStyle(a.querySelector('.talk'), ':after');
+        const dotL = card.l + parseFloat(csDot.left);
+        const dotR = dotL + parseFloat(csDot.width);
+        return {time, year, day, card, body, meta, clock, dotL, dotR,
+                footBorders: [fs.borderTopWidth, fs.borderTopStyle]};
       });
       return rows;
     }""")
@@ -178,9 +192,19 @@ with sync_playwright() as p:
     check("日期块与卡片之间留了缝（≥ 20px），不是贴着",
           g0["card"]["l"] - g0["time"]["r"] >= 20,
           f"{g0['card']['l'] - g0['time']['r']:.0f}px")
-    check("年份在上面、月日在下面（两行竖直排列）",
-          g0["year"]["b"] <= g0["day"]["t"] + 1,
-          f"年份底 {g0['year']['b']:.0f} / 月日顶 {g0['day']['t']:.0f}")
+    # 一轮修完当时的实测缺陷：日期块原来钉左缘（left:-120px），内容变宽后向右长、
+    # 月日压到了竖线和圆点上（右缘 423 vs 竖线 391）。改成钉右缘后必须留在这条线**左边**。
+    check("日期块没压到竖线与圆点上（右缘 ≤ 圆点左缘）",
+          g0["time"]["r"] <= g0["dotL"] + 1,
+          f"日期右缘 {g0['time']['r']:.0f} / 圆点左缘 {g0['dotL']:.0f}")
+    # 竖直对齐是**已知旧偏差**（日期块比圆点低 ~8px：它的包含块是 .article 而不是卡片，
+    # `top:50%` 落在卡片中线上方，h3 自带的 1em 默认外边距又压回来一部分）。本轮不动它，
+    # 但要锁住"没变得更糟"：偏差仍在 12px 以内、且是往下偏（不是翻到上面去）。
+    check("日期块与圆点的竖直偏差沿用旧值（≤12px、偏下，本轮未改动这一项）",
+          0 <= (g0["time"]["t"] + g0["time"]["b"]) / 2
+          - (g0["card"]["t"] + g0["card"]["b"]) / 2 <= 12,
+          f"日期中心 {(g0['time']['t'] + g0['time']['b']) / 2:.0f} / "
+          f"卡片中线 {(g0['card']['t'] + g0['card']['b']) / 2:.0f}")
     check("年份字号比月日小（12 < 20）",
           g0["year"]["b"] - g0["year"]["t"] < g0["day"]["b"] - g0["day"]["t"],
           f"{g0['year']['b'] - g0['year']['t']:.0f} vs {g0['day']['b'] - g0['day']['t']:.0f}")
@@ -189,9 +213,16 @@ with sync_playwright() as p:
           and g0["clock"]["l"] >= g0["card"]["l"]
           and g0["clock"]["r"] <= g0["card"]["r"],
           f"时刻顶 {g0['clock']['t']:.0f} / 正文底 {g0['meta']['b']:.0f}")
-    check("时刻靠左（距卡片左缘 < 半宽，即左下角而非居中/右下）",
-          0 <= g0["clock"]["l"] - g0["card"]["l"] < g0["card"]["w"] / 2,
-          f"偏移 {g0['clock']['l'] - g0['card']['l']:.0f}px / 半宽 {g0['card']['w'] / 2:.0f}px")
+    # 20260924 三轮：时刻从左下角挪到右下角，它上面那条虚线也撤了
+    check("时刻靠右（距卡片右缘 < 半宽，即右下角而非居中/左下）",
+          0 <= g0["card"]["r"] - g0["clock"]["r"] < g0["card"]["w"] / 2,
+          f"距右缘 {g0['card']['r'] - g0['clock']['r']:.0f}px / 半宽 {g0['card']['w'] / 2:.0f}px")
+    check("时刻贴着卡片的右下角（右缘与卡片内边距对齐，不是浮在中间）",
+          abs((g0["body"]["r"] - g0["clock"]["r"]) - (g0["body"]["r"] - g0["meta"]["r"])) <= 1,
+          f"时刻右缘 {g0['clock']['r']:.0f} / 正文右缘 {g0['meta']['r']:.0f}")
+    check("那条虚线分割线撤了（不再占高度、也不再横贯整张卡）",
+          g0["footBorders"][1] == "none" and g0["footBorders"][0] == "0px",
+          str(g0["footBorders"]))
     check("两条说说的日期块水平位置一致（链条是直的）",
           abs(g0["time"]["r"] - g1["time"]["r"]) <= 1,
           f"{g0['time']['r']:.0f} vs {g1['time']['r']:.0f}")
