@@ -330,6 +330,28 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
         .dark &
           color: #fff
 
+    // 点某个日期后贴在日历下沿的"给这一天加一条"输入条
+    .calQuick
+      display: flex
+      align-items: center
+      gap: 8px
+      width: 100%
+      margin-top: 6px
+      padding: 8px 10px
+      border-radius: 10px
+      background-color: #fff1eb
+      .dark &
+        background-color: rgba(255, 255, 255, 0.04)
+      .calQuick-label
+        font-size: 12px
+        white-space: nowrap
+        color: rgba(0, 0, 0, 0.65)
+        .dark &
+          color: rgba(255, 255, 255, 0.65)
+      .ant-input
+        flex: 1
+        min-width: 0
+
   .center
     @media only screen and (max-width: 768px)
       display: none
@@ -377,9 +399,57 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
       // display: none
       padding: 0 10px 10px 10px
 
+    // 格子里的待办文字（20260924）：antd 的迷你日历把日期画成 24px 的圆点、
+    // 格子固定 40px 高，`cellRender` 给的那块 `.ant-picker-calendar-date-content`
+    // 被收成 0 高 —— 只够放一个小圆点。这里把格子和它内部的块放开（auto 高、
+    // 左对齐、圆角方块），才装得下待办文字。
+    .ant-picker-cell
+      height: auto
+      padding: 2px 1px
+
+    .ant-picker-cell-inner
+      width: 100%
+      height: auto
+      min-height: 46px
+      line-height: 1.25
+      border-radius: 6px
+      text-align: left
+      padding: 3px 4px
+
+    .ant-picker-calendar-date-value
+      font-size: 12px
+      line-height: 1.5
+
+    .ant-picker-calendar-date-content
+      height: auto
+      overflow: visible
+
+    // 一格里的待办文字：一条一行、超出省略号，最多两条（多的折成「+N 条」）
+    .events
+      list-style: none
+      margin: 2px 0 0
+      padding: 0
+      display: flex
+      flex-direction: column
+      gap: 1px
+      li
+        font-size: 10px
+        line-height: 1.35
+        white-space: nowrap
+        overflow: hidden
+        text-overflow: ellipsis
+      .todo-done
+        opacity: .55
+        text-decoration: line-through
+      .todo-overdue
+        color: #d4380d
+      .events-more
+        opacity: .6
+
   .ant-picker-calendar .ant-picker-cell-in-view.ant-picker-cell-selected .ant-picker-cell-inner
     background: rgb(197, 135, 188)
-    border-radius: 50%
+    // 方角（原来是 50% 的圆）——格子已经是一个装着文字的方块了
+    border-radius: 6px
     &::before
       border: none
 
@@ -412,7 +482,103 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
     width: 100%
     padding: 10px
     font-weight: 600
-    overflow-y: auto
+    // 卡片自己不再滚——滚动交给下面的 .todoBody，这样「新增一行」能钉在卡片底部
+    overflow: hidden
+
+    .ant-card-body
+      display: flex
+      flex-direction: column
+      height: 100%
+      padding: 12px 14px
+
+    .todoTitle
+      font-size: 1.17em
+      font-weight: bold
+      margin: 5px 0 10px 0
+      padding-left: 10px
+      background: transparent
+
+    .todoBody
+      display: flex
+      flex-direction: column
+      gap: 8px
+      // 撑满卡片剩余高度并自己滚：待办再长，下面的新增按钮也不会被顶出视野
+      flex: 1
+      min-height: 0
+      overflow-y: auto
+      padding: 0 6px 0 0
+
+      .todo-empty
+        font-size: 12px
+        font-weight: 400
+        opacity: .6
+
+      .todo-group
+        display: flex
+        flex-direction: column
+        gap: 4px
+
+        // 分组头（今天 / 已逾期 / 9月26日 星期六 / 未排期）+ 右侧条数
+        .todo-group-head
+          display: flex
+          align-items: center
+          justify-content: space-between
+          margin-top: 2px
+          font-size: 12px
+          letter-spacing: .04em
+          opacity: .7
+          &.is-overdue
+            opacity: 1
+            color: #d4380d
+          .todo-group-n
+            font-variant-numeric: tabular-nums
+
+        .todo-row
+          display: flex
+          align-items: center
+          gap: 4px
+          border-radius: 6px
+          transition: .2s
+          &.dragging
+            opacity: .4
+          &:hover
+            background: rgba(0, 0, 0, .04)
+            .dark &
+              background: rgba(255, 255, 255, .06)
+
+          .todo-grip
+            cursor: grab
+            font-size: 13px
+            opacity: .35
+            &:hover
+              opacity: 1
+
+          .todo-text
+            flex: 1
+            min-width: 0
+            padding: 0
+            background: transparent
+            font-weight: 600
+            &.done
+              text-decoration: line-through
+              color: gray
+
+          // 逾期组里每条自己的日期（那一组混了好几天，光看组名不知道欠的是哪天）
+          .todo-date
+            font-size: 11px
+            color: #d4380d
+            font-variant-numeric: tabular-nums
+
+          .todo-del
+            cursor: pointer
+            color: #d4380d
+            opacity: .55
+            &:hover
+              opacity: 1
+
+      // 钉在卡片底部（margin-top:auto 吃掉列表下方的余量）；列表长到要滚时它就在末尾
+      .todo-add
+        margin-top: auto
 
     &::-webkit-scrollbar
       width: 5px
@@ -425,13 +591,14 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
         background: linear-gradient(to bottom right, #4d7fff 0%, #1a56ff 100%) !important
 
 /* Scrollbar Fix Overrides */
-.home .cardInfo::-webkit-scrollbar
+/* 20260924：滚动容器由卡片本身换成 .todoBody（新增按钮改为钉在卡片底部） */
+.home .cardInfo .todoBody::-webkit-scrollbar
   width: 5px
   height: 10px
   scrollbar-width: thin
   scrollbar-color: #c1c1c1 transparent
 
-.home .cardInfo::-webkit-scrollbar-thumb
+.home .cardInfo .todoBody::-webkit-scrollbar-thumb
   background: #c1c1c1 !important
   border-radius: 5px
   &:hover
