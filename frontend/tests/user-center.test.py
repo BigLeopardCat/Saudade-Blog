@@ -700,6 +700,43 @@ with sync_playwright() as p:
     check("没有任何页面错误", not pg.errs, " | ".join(pg.errs))
     pg.close()
 
+    print("⑤d 窗关着时到的新公告：重开个人中心，当前页签重拉一次（20260925 用户实测）")
+    pg = fresh_page()
+    notif_gets = lambda: len(find_call(pg, "/api/protected/notifications", "GET"))
+    mail_gets = lambda: len(find_call(pg, "/api/protected/messages", "GET"))
+    pg.click(".ant-tabs-tab >> nth=3")
+    pg.wait_for_selector(PANE + " .ant-list-item", timeout=10000)
+    n1 = notif_gets()
+    check("关窗前：通知列表只拉了一次", n1 == 1, str(n1))
+    # agent 在**窗关着**的时候发了一条公告（真调后台、改的是服务端状态）。agent-turn-done
+    # 派发时订阅没挂上（上面那条订阅只在 open 时才挂），这次更新谁也接不住——这正是
+    # 用户实测的现象：红点（60 秒轮询 + 共享 store）会亮，列表却停在旧数据上。
+    pg.evaluate("() => window.__setOpen(false)")
+    pg.wait_for_timeout(300)
+    # 关窗要真等到 React 重渲染完（订阅的卸载在 effect 里）：同一次 evaluate 里"先关窗再派发"
+    # 拿到的是**还没卸载**的旧订阅，那是沙箱的同步假象，不是被测系统的行为。
+    check("窗口已关上（Modal 不可见）", not pg.locator(".ant-modal-content").is_visible())
+    pg.evaluate("""() => {
+        window.__state.notifications = [
+            { id: 103, type: 'announcement', title: '夜间维护通知', content: '今晚 23:00 停服维护',
+              link: null, isRead: false, createdAt: '2026-09-25 09:00:00' },
+            ...window.__state.notifications,
+        ];
+        window.dispatchEvent(new CustomEvent('agent-turn-done'));
+    }""")
+    pg.wait_for_timeout(400)
+    check("窗关着时那条事件确实接不住（列表没被偷偷重拉）", notif_gets() == n1, str(notif_gets()))
+    pg.evaluate("() => window.__setOpen(true)")
+    pg.wait_for_timeout(700)
+    check("重开窗口 ⇒ 当前页签（通知）重拉一次（旧写法只能整页刷新才看得到）",
+          notif_gets() == n1 + 1, str(notif_gets()))
+    check("窗外新到的那条公告当场出现在窗口里",
+          pg.locator(".ant-modal-content:has-text('夜间维护通知')").count() == 1,
+          pg.locator(".ant-modal-content").inner_text().replace("\n", " ")[:80])
+    check("还没点开过的页签仍不替主人拉（懒加载纪律不破）", mail_gets() == 0, str(mail_gets()))
+    check("没有任何页面错误", not pg.errs, " | ".join(pg.errs))
+    pg.close()
+
     print("⑥ 公告和通知：页签未读角标 = 后端汇总；全部已读后当场归零")
     pg = fresh_page()
     notice_badge = ".ant-tabs-tab >> nth=3 >> .ant-badge-count"

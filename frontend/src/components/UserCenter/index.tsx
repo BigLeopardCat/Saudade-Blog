@@ -17,7 +17,7 @@
  *   · **管理员多一个「后台管理」入口**：个人中心对所有人开（普通用户过去点那个旧钮会被
  *     AuthRouter 弹回首页），后台入口改由窗口头部提供，管理员的路径没有丢。
  */
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Avatar, Badge, Button, ConfigProvider, Empty, Input, List, Modal, Tabs, Tag, message, theme as antdTheme } from 'antd'
 import { useNavigate } from 'react-router-dom'
 import getToken from '../../apis/getToken.tsx'
@@ -223,10 +223,14 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
         [loggedIn, talks, notices, mailbox],
     )
 
-    const onTabChange = (key: string) => {
-        setTab(key)
-        loadTab(key)
-    }
+    /** 最新一版 `loadTab`（它的身份随页签数据变，直接进 effect 依赖会自己触发自己）。 */
+    const loadTabRef = useRef(loadTab)
+    useEffect(() => {
+        loadTabRef.current = loadTab
+    }, [loadTab])
+
+    /** 换页签只切状态：拉数据统一由下面那条 effect 负责（点开 = 重拉一次，加载过也重拉）。 */
+    const onTabChange = (key: string) => setTab(key)
 
     /** 草稿箱的数据源（与其它页签同一条懒加载纪律：首次点开才请求）。 */
     const loadDrafts = useCallback(async () => {
@@ -269,6 +273,19 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
         window.addEventListener(AGENT_TURN_DONE_EVENT, onTurnDone)
         return () => window.removeEventListener(AGENT_TURN_DONE_EVENT, onTurnDone)
     }, [open, loggedIn, talks, notices, mailbox, drafts, loadTab, loadDrafts])
+
+    /* 开窗与换页签：**当前页签重拉一次**（20260925 用户实测反馈——agent 发了公告，个人中心与
+       头像都提示有新消息，但公告列表不刷新，要整页刷新才看得到）。根因是列表数据只在两个时刻
+       拉：首次点开（`x === null` 那道门）与**窗开着时**收到 agent-turn-done —— agent 多半是在
+       窗关着的时候发的公告，那时上面那个订阅根本没挂上；而本组件是常驻挂载的（`open` 只控
+       显示），重开窗口也不会重新加载 ⇒ 事件与懒加载两道门一起把这次更新漏掉。
+       只重拉当前页签：其余页签保持懒加载纪律（没点开过的不替主人拉，点开它们时仍走这里）。
+       ⚠️ 依赖里**不能放 `loadTab`**：它随 talks/notices/mailbox 换身份，放进去就是
+       「重拉 → 数据变 → 身份变 → 再重拉」的自激环，故经 `loadTabRef` 取最新一版。 */
+    useEffect(() => {
+        if (!open || !loggedIn) return
+        void loadTabRef.current(tab, true)
+    }, [open, loggedIn, tab])
 
     // ── 用户设置 ────────────────────────────────────────────────────────────
 
