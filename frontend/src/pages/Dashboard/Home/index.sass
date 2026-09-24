@@ -631,11 +631,38 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
               text-decoration: line-through
               color: gray
 
-          // 逾期组里每条自己的日期（那一组混了好几天，光看组名不知道欠的是哪天）
-          .todo-date
-            font-size: 11px
-            color: #d4380d
-            font-variant-numeric: tabular-nums
+          // 每行自己的排期按钮（20260924 三轮）。替掉了原来那个只在逾期组里
+          // 出现的只读红字 .todo-date —— 日期从此是可改的：没排期时这里只露一枚
+          // 很淡的日历图标，有日期时写 M/D，点开是小月历。
+          .todo-due
+            flex: 0 0 auto
+            width: 48px
+            padding: 0
+            .ant-picker-input
+              padding: 0
+              > input
+                height: 22px
+                // 右边留出 14px 给悬停时冒出来的清除叉（antd 把它绝对定位在
+                // 右缘），不然那个叉会正好压在 M/D 的末位数字上
+                padding-right: 14px
+                font-size: 11px
+                line-height: 22px
+                text-align: right
+                font-variant-numeric: tabular-nums
+                cursor: pointer
+            .ant-picker-suffix
+              margin-inline-start: 1px
+              font-size: 11px
+              opacity: .4
+            // 逾期那几天混在同一组里，红字是唯一能看出欠的是哪天的东西
+            &.is-overdue
+              .ant-picker-input > input
+                color: #d4380d
+                font-weight: 600
+            // 聚焦时 antd 会给整枚 picker 描一圈蓝边，在这行里太重（要的是"能点"，
+            // 不是"被选中了"）
+            &.ant-picker-focused
+              box-shadow: none
 
           .todo-del
             cursor: pointer

@@ -1,5 +1,5 @@
-import { DeleteOutlined, HolderOutlined, LeftOutlined, RightOutlined } from '@ant-design/icons';
-import {Calendar, Card, ConfigProvider, Checkbox, Input, Modal, Avatar, Select, Button, message} from "antd";
+import { CalendarOutlined, DeleteOutlined, HolderOutlined, LeftOutlined, RightOutlined } from '@ant-design/icons';
+import {Calendar, Card, ConfigProvider, Checkbox, DatePicker, Input, Modal, Avatar, Select, Button, message} from "antd";
 import dayjs from "dayjs";
 import localeData from "dayjs/plugin/localeData";
 dayjs.extend(localeData);
@@ -122,6 +122,12 @@ const Home = () => {
     const deleteTodo = (id: number) => { setTodos(prev => prev.filter(t => t.id !== id)); };
     const updateTodo = (id: number, text: string) => {
         setTodos(prev => prev.map(t => t.id === id ? {...t, text} : t));
+    };
+    // 给某一行排期（或撤掉它的日期）。原先一条待办的日期只有两个来路：日历上点那天
+    // 再在快添栏里写、或者一开始就没日期——已经在列表里的那行**改不了**，"新增的任务
+    // 不能绑定期限"就是这么来的。现在每行自带一个排期按钮，新建的与已有的都能改。
+    const setTodoDate = (id: number, date?: string) => {
+        setTodos(prev => prev.map(t => t.id === id ? {...t, date} : t));
     };
     // 删除不可逆，先问一句（原先点一下红垃圾桶就没了）
     const confirmDelete = (todo: Todo) => {
@@ -382,8 +388,9 @@ const Home = () => {
                            </div>
                        }
                    </div>
-               </ConfigProvider>
 
+               {/* 这个 locale 现在罩住整个右栏（20260924 三轮）：原来是只包日历，
+                   待办行里的排期小月历在它外面 ⇒ 面板会是英文的。 */}
                <Card className="cardInfo">
                    <Input
                         className="todoTitle"
@@ -449,8 +456,23 @@ const Home = () => {
                                             bordered={false}
                                             placeholder="写点什么…"
                                         />
-                                        {g.overdue && todo.date &&
-                                            <span className="todo-date">{dayjs(todo.date).format('M/D')}</span>}
+                                        {/* 每行自己的排期按钮：没排期只露一枚淡日历图标，
+                                            有日期就直接写 M/D；点开是小月历，想改就改、
+                                            想撤就按清除。逾期行的日期标红（原来那个只读的
+                                            红字 span 就是被它替掉的）。 */}
+                                        <DatePicker
+                                            className={'todo-due' + (g.overdue ? ' is-overdue' : '')}
+                                            value={todo.date ? dayjs(todo.date) : null}
+                                            onChange={(d) => setTodoDate(todo.id, d ? d.format('YYYY-MM-DD') : undefined)}
+                                            format="M/D"
+                                            size="small"
+                                            variant="borderless"
+                                            inputReadOnly
+                                            placeholder=""
+                                            allowClear
+                                            suffixIcon={todo.date ? null : <CalendarOutlined className="todo-due-add" />}
+                                        />
+
                                         <DeleteOutlined className="todo-del"
                                                         onClick={() => confirmDelete(todo)} />
                                     </div>
@@ -464,6 +486,7 @@ const Home = () => {
                                 onClick={addBlankRow}>新增一行</Button>
                    </div>
                </Card>
+               </ConfigProvider>
            </div>
         </div>
     );
