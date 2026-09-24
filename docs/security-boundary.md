@@ -1,8 +1,8 @@
-# 服务信任边界与加固（20260916）
+# 服务信任边界与加固（20260916，20260925 审计后同步）
 
 这份文档回答一个被反复问到的问题：**这套系统里，谁信谁？边界画在哪？**
 
-写给两类读者：接手的人（知道哪一层能改什么），以及面试/评审时被追问"你的服务间鉴权呢"的时候
+写给两类读者：接手的人（知道哪一层能改什么），以及做安全评审时被追问「你的服务间鉴权呢」的时候
 ——本文里的每一条都是**在这台机器上实测**的，不是设计意图。
 
 ## 1. 拓扑：谁能碰到谁
@@ -30,7 +30,9 @@
 | `/api/chat`、`/api/chat/stream` | Rust | JWT（HS256 / `JWT_SECRET`） | 401 |
 | `/api/public/graph/query` | Rust | **要求登录**（防匿名刷 embedding 调用） | 401 `{"ok":false,"reason":"login_required"}` ← 匿名 curl 实测 |
 | `/api/public/notes*` 等公开读 | 无（有意公开） | — | 200 |
-| agent `/chat`、`/chat/stream`、`/review`、`/graph/query` | **无**（回环）＋ 身份断言 | 信任前提 = "来自本机"；Rust 另签一条 60s 断言声明"这个 uid 是认证过的" | 任何本机进程都能调 |
+| agent `/chat`、`/chat/stream` | **无**（回环）＋ 身份断言 | 信任前提 = "来自本机"；Rust 另签一条 60s 断言声明"这个 uid 是认证过的" | 缺头 401（开关已开，实测） |
+| agent `/review`（20260925 起同款） | **无**（回环）＋ 身份断言 ＋ 并发闸 4 | 同上；调用方是 Rust 的 `talks.rs`。**Rust 必须先发头**——开关在生产 .env 里已是 1 | 缺头 401（实测）；闸满 503 |
+| agent `/graph/query` | **无**（回环） | 信任前提 = "来自本机"；**没有**断言（它不涉及身份，失败一律降级 200 + ok=false） | 任何本机进程都能调 |
 
 **agent 侧为什么可以没有鉴权**：它只听回环，公网到不了；能调它的只有同机的 Rust 与
 （理论上）本机的其他进程。这是**单机部署下的有意取舍**，不是漏做——但必须写下来，
@@ -43,8 +45,10 @@
 后**用断言里的 uid 覆盖请求体里的 `user_id`**——直连 agent 的人伪造不出别人的身份。
 
 - 判据在 agent `server.py::_verify_assertion_claims`（手写 HS256 校验，只依赖标准库）；
-- **默认仍是"缺头只记 WARNING、行为不变"**（`AGENT_REQUIRE_ASSERTION=0`）：打开它会让
-  不带断言的调用方直接 401，所以按滚动上线处理——Rust 先部署，再开开关；
+- **开关 `AGENT_REQUIRE_ASSERTION` 在本机 .env 里已经是 1**：缺头/验签失败一律 401
+  （20260925 实测：不带头的 `POST 127.0.0.1:8010/review` → `401 缺少有效的服务间身份断言`）。
+  **代码默认值仍是 False**（`config/settings.py`），所以"滚动上线"的老口径只在
+  "新增一个接断言的端点"时适用，且方向是**先让 Rust 发头、再让 agent 核**；
 - **20260920 起断言里多一个 `role`**（取自 DB 的 `user.role`，不信登录 token 里可能是
   7 天前的角色）：agent 侧据此做**能力判据**（见 `saudade-blog-agent/docs/secretary.md`）。
   角色缺失/未知 = **零权限**，由 agent 的 shadow 模式先观测不拦截。
@@ -170,6 +174,17 @@
 - **IoT 链路**：设备侧 `mqtts://saudade.site:8883`（TLS），`device-api` 复用的就是博客 JWT。
 - **Rust → agent**：回环 HTTP（不加密）。与本条边界假设一致：回环不设防。
 
+### 3.1 本机文件权限（20260925 收紧，`chmod` 是命令、不改代码）
+
+| 对象 | 权限 | 依据 |
+|---|---|---|
+| `logs/`、`logs/agent/`、`logs/agent/traces/`、`logs/frontend/` | **0700** | 里面是访客对话正文：`agent.log` 每轮生命周期行带 `user=` 与 40 字 `msg=`，`traces/*.json` 是完整一轮（输入摘要 + 全部节点事件 + 回复正文）。**用 0700 而不是 0750/0755，是因为 `getent group ubuntu` → `ubuntu:x:1001:www-data`：www-data 在 `ubuntu` 组里，组可读等于 nginx 那一侧可读** |
+| `logs/*.log`、`logs/agent/*.log`、`logs/frontend/*.log` | **0600** | 同上；`copytruncate` 原地截断不改模式，所以现有文件必须显式 `chmod`（logrotate 的 `create 0640` 在 copytruncate 下是惰性的，见 `logrotate(8)`——它在配置里只是为了"哪天改成 rename 模式"时默认值是对的）|
+| `/tmp/db_cred`、`/tmp/probe_cred_shape.py` | **0600** | `/tmp` 全局可穿越，而家目录是 `drwxr-x---`（家目录里那些 0664 文件其实够不着，`/tmp` 的不行）。`db_cred` 已**零引用**（`/tmp/db_run.sh` 不读它），留 0600 备用 |
+
+属主仍是 `ubuntu`、三个服务都 `User=ubuntu` ⇒ **不重启、不换属主**；实测重启后 `agent.log`
+照常追加（systemd 以 root 打开 append 目标，服务通过继承的 fd 写）。
+
 ## 4. 输入限额（20260916 新增，`server.py`）
 
 输入全部经 Rust 转发（回环 + 已鉴权），所以限额防的**不是陌生人**，而是：前端出 bug 塞了畸形请求、
@@ -184,11 +199,19 @@
 | `summary` / `executions` | 8000 字符 | 注入文本，防越灌越长 |
 | `current_url` / `page_title` / `effects` / `darkmode` | 500 字符 | 都是短标量 |
 | `/graph/query` 的 `q` | 128 字符 | 前端本就截到 64（`locate.ts QUERY_MAX`） |
+| `/review` 的 `content` | 4000 字符 | 留言本身 2000 上限，留一倍余量；模型只取前 500 |
 | 并发流（每 worker） | 8 → **503**（排队 3s 仍拿不到） | LLM 流是最贵资源（单次最长 180s）；无闸时并发只会一起排队到超时 |
+| `/review` 并发 | 4 → **503**（排队 3s） | 20260925 新增的**独立**小闸：此前它不占任何闸，谁连得上 8010 就能免费烧模型额度。刻意不共用对话那 8 个槽位（留言审核是同步短任务，抢槽位会让留言高峰把对话打成 503）；`threading.BoundedSemaphore` 版，因为它是 `sync def`（跑线程池、不占事件循环） |
 
 落点：字段级是 Pydantic `Field`/`field_validator`（`ChatRequest`、`GraphQueryRequest`），
 体积是 `body_limit_middleware`，并发是 `_try_acquire_slot`（槽位由 `/chat/stream` 的生成器
 `finally` 归还，所有退出路径都经过那里）。
+
+**另一类是"形状"而不是"长度"**（20260925）：`current_url`/`page_title`/`current_effects`/
+`current_darkmode` 由浏览器给、Rust 原样转发，却拼进 `[System: …]` 那一段 ⇒ 拼之前先剥掉
+换行、方括号、分号、等号（`server._ctx_field`），否则访客能在自己的字段里长出第二段
+（伪造 `current_darkmode=on`）。`get_weather` 的城市名同理（只接受中英文、空格与 `, . ' -`，
+其余返回 `unavailable` 且**一次网络都不发**）。
 
 ## 5. 协作取消（stop_event）的能力边界
 
@@ -220,7 +243,7 @@
 |---|---|---|
 | 没有**按用户/IP 的限流** | 单个已登录用户可以连续发起对话占满并发槽 | Rust 侧也没有；只有总并发闸 |
 | **分块传输**（无 Content-Length）不过体积闸 | 构造性的大 body 能绕过 §4 的第一行 | 只靠字段级限额兜，已写在代码注释里 |
-| agent 端点**无服务间凭据** | 本机任意进程可调（含 `/chat/stream`） | 依赖回环边界；跨机部署前必须补。**"我代表谁"已由 §2.1 的断言解决，这条说的是"谁在调我"** |
+| agent 端点**无服务间凭据** | 本机任意进程可调（含 `/chat/stream`） | 依赖回环边界；跨机部署前必须补。**"我代表谁"已由 §2.1 的断言解决，这条说的是"谁在调我"**——20260925 起 `/chat`、`/review` 的**身份**都核了（缺头 401），`/graph/query` 连身份都不核（它不涉及身份，失败一律降级 200 + ok=false）；"谁在调我"这一维三者照旧 |
 | **写操作的事前授权只覆盖了一半** | 设备屏显等"用户眼前"的写仍然只有"调用前查断连"这道防护；**代用户写站点内容**这一类已有人在回路闸（20260921 第三轮起还多了一个可选出口：非命令措辞的意图 → 确认弹窗，一次点击代替一轮对话），但**还没有这样的工具**，所以闸今天空转 | 20260920 起 agent 侧落地：需确认的 scope（`CONSENT_SCOPES`）未获用户**本轮消息**明确确认 → 产 `__ERROR__: 待确认[consent_required]` 帧、**不调用工具**，且 gate 5a 让叙述侧无法把它说成"已完成"（`agent/authz.py` + `test_authz.py` ⑨，见 `saudade-blog-agent/docs/secretary.md` §3.4）。**20260921 第二轮**：后台写（标签创建/文章状态/文章标签）落在 `write.console`，闸**第一次真正承重**；"以谁的名义"的审计同步落地（写回执带 `principal_role`，零迁移渲染进 `execution_log.detail`）。**第三轮**：判据入口剥系统消息壳（此前锚定判据在真实输入形态下从未命中过）+ 确认弹窗（`__CONFIRM__:` 帧 + HMAC 无状态令牌 + 隐藏确认请求，见 §2.2）。**20260922 第四轮**：写面扩到九件（标签改/删、分类增改删 + 层级移动端点），闸与目标校验照旧生效、"目标"这一轮起可以是**名字**（工具对着实时字典解析，解不出即零写）。**第五/六轮**：公告三件（快道结构性关闭）与留言复核/删除两件（靶子是访客内容；删留言进 `_ALWAYS_CONFIRM_TOOLS`）+ 身份地基（见 §2.2）。**剩下的**：① `uid=0`（无身份）时写命令约每 6 次有 1 次被 narrator 讲成"本轮没有执行任何工具"而撞上洞③判据 → 走 gate 打回（兜底文案已按原因码分）；② 前一轮记为"目标解不出来时仍会弹确认框"的那条**已落地**：目标预检（`_write_target_refusal`）在弹窗之前就零工具收尾，绝不弹一个"点了也只会被拒"的框 |
 | 工具错误只分了**两类**（empty / unavailable），没有统一错误码枚举 | 想按错误类型做重试策略（超时 vs 鉴权失败）时还得读文案 | 20260916 已落地两类 + checker 的 `unavailable` 受阻码；更细的分类按需再加 |
 
@@ -242,8 +265,8 @@ grep -c 8010 "$NGINX_SITE"    # $NGINX_SITE = nginx 站点配置文件（路径�
 curl -s -X POST https://saudade.site/api/public/graph/query \
      -H 'Content-Type: application/json' -d '{"q":"物联网"}'
 
-# ③ 加固单测（TLS 校验 / 输入限额 / 请求体积 / 并发闸）
-cd saudade-blog-agent && .venv/bin/python test_hardening.py
+# ③ 加固单测（TLS 校验 / 输入限额 / 请求体积 / 并发闸 / 两处输入边界清洗 / /review 身份与并发闸）
+cd saudade-blog-agent && .venv/bin/python tests/test_hardening.py
 
 # ④ agent 端点的鉴权事实：本机直连成功（回环 = 边界）
 curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:8010/graph/query \
@@ -263,15 +286,22 @@ cd saudade-blog-agent && .venv/bin/python eval/probe_admin_report.py --uid <管�
 cd saudade-blog-agent && .venv/bin/python eval/probe_admin_write.py --uid <管理员的 uid>
 
 # ⑧ 写侧不变量（秒级、零网络；与 §4 那组单测同源）
-cd saudade-blog-agent && .venv/bin/python test_admin_write.py
+cd saudade-blog-agent && .venv/bin/python tests/test_admin_write.py
 
 # ⑨ 确认弹窗链路不变量（令牌签发/验签 · fail-closed 矩阵 · 弹窗触发矩阵 · 点确定后的执行轮 · 颜色）
-cd saudade-blog-agent && .venv/bin/python test_confirm.py
+cd saudade-blog-agent && .venv/bin/python tests/test_confirm.py
 
 # ⑩ 弹窗真链路活体探针（⑧⑨⑩ 腿，需管理员 uid + --allow-write）：
 #    非命令措辞 → __CONFIRM__ 帧（零执行）→ 篡改/过期令牌必拒 → 真令牌改动库真值 → 明确命令复原；
 #    探针自己读帧流（令牌只在帧里），断言读后端真值，不看工具回执
 cd saudade-blog-agent && .venv/bin/python eval/probe_admin_write.py --uid <uid> --allow-write
+
+# ⑪ /review 的身份链路，两个方向（20260925 实测；密钥从父仓 .env 现读，不落盘、不打印）
+#    手签一条 HS256 断言（aud=agent、sub=<uid>、exp=now+60，密钥取 memory_blog_rust/.env
+#    的 JWT_SECRET），分别不带/带 `X-Agent-Assertion` POST 127.0.0.1:8010/review：
+#      → 无头：401 {"detail":"缺少有效的服务间身份断言"}
+#      → 带头：200 {"verdict":"pass"|"flag", ...}
+#    带头的 200 同时证明两仓 JWT_SECRET 一致（用父仓的密钥签的断言被 agent 认了）。
 ```
 
 **写通道不变量（写进代码、不在文档里承诺）**：`uid <= 0` → **不发请求**；非 admin →
