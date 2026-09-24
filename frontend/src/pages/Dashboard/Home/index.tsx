@@ -1,10 +1,10 @@
 import { DeleteOutlined, HolderOutlined, PlusOutlined } from '@ant-design/icons';
-import {Calendar, Card, ConfigProvider, Checkbox, Input, Modal, Avatar, Select, Radio, Button} from "antd";
+import {Calendar, Card, ConfigProvider, Checkbox, Input, Modal, Avatar, Select, Radio, Button, message} from "antd";
 import dayjs from "dayjs";
 import localeData from "dayjs/plugin/localeData";
 dayjs.extend(localeData);
 import './index.sass';
-import {useContext, useEffect, useMemo, useRef, useState} from "react";
+import {useCallback, useContext, useEffect, useMemo, useRef, useState} from "react";
 import {Dayjs} from "dayjs";
 import 'dayjs/locale/zh-cn';
 // 只 import 不会把中文设为默认语言：日历头那个月份下拉读的是 dayjs 的全局语言，
@@ -19,6 +19,8 @@ import MainContext from "../../../components/conText.tsx";
 import {useDispatch, useSelector} from "react-redux";
 import UserState from "../../../interface/UserState";
 import {fetchNoteList} from "../../../store/components/note.tsx";
+import {getTodos, saveTodos, ok, errMsg} from "../../../apis/DashboardMethods.tsx";
+import type {DashboardTodo} from "../../../interface/DashboardType";
 import {fetchCategories} from "../../../store/components/categories.tsx";
 import {fetchTags} from "../../../store/components/tags.tsx";
 
@@ -28,6 +30,13 @@ type Todo = {id: number, text: string, done: boolean, date?: string};
 const isOverdue = (t: Todo, today: string) => !!t.date && !t.done && t.date < today;
 const todoClass = (t: Todo, today: string) =>
     'todo-item' + (t.done ? ' todo-done' : isOverdue(t, today) ? ' todo-overdue' : '');
+
+// 本地列表 → 发往服务端的那份（线上口径 {text, done, date}）：
+// 空行是前端的临时态（"新增一行"里还没写字），**不发也不存**——服务端同样会跳过。
+// 放在模块作用域（不是组件里）：它没有状态，也就没有闭包过期的问题。
+const toPayload = (list: Todo[]): DashboardTodo[] =>
+    list.filter(t => t.text.trim())
+        .map(t => ({text: t.text.trim(), done: t.done, date: t.date ?? null}));
 
 const Home = () => {
     //hooks区域
@@ -43,15 +52,18 @@ const Home = () => {
     }, [dispatch]);
 
     // Toggle List State
+    // 卡片标题仍存在本机（`dashboard_list_title`）——它是这块面板的显示名，
+    // 不跟着账号走；待办本身已落库（见下）。
     const [listTitle, setListTitle] = useState(() => localStorage.getItem('dashboard_list_title') || '开发进度');
-    const [todos, setTodos] = useState<Todo[]>(() => {
-        const saved = localStorage.getItem('dashboard_todos');
-        return saved ? JSON.parse(saved) : [
-             {id: 1, text: '登录逻辑和后台页面UI', done: true},
-             {id: 2, text: '静态数据完成后台功能逻辑', done: true},
-             {id: 3, text: '后端接口开发', done: false},
-        ];
-    });
+    // 待办落库（20260924）：整份列表存服务端（GET/PUT /api/protected/todos），
+    // 不再存 localStorage——之前换浏览器/换设备就看不见了。
+    // `loaded` 是**安全闸**：列表没读出来之前绝不出网（PUT 发的是整份列表，
+    // 空数组的含义就是"清空"，一读失败就写回去等于把主人的待办抹了）。
+    const [todos, setTodos] = useState<Todo[]>([]);
+    const [loaded, setLoaded] = useState(false);
+    const [loadErr, setLoadErr] = useState('');
+    // 库里"此刻的样子"的指纹：与它一致的本地状态不触发写（读一次不会立刻写回去）
+    const lastSaved = useRef('');
     // 日历下方那条"给某一天加一条"的快添栏。原来点日期弹的是英文 Modal.confirm
     // （「Select Date: 2026-09-24」「添加日程到便签?」），且加出来的是一条
     // 文案被写死成「[日期] 新日程」的待办——20260924 改成直接在日历里输入。
@@ -63,9 +75,42 @@ const Home = () => {
     const today = dayjs().format('YYYY-MM-DD');
     const nextId = (list: Todo[]) => (list.length ? Math.max(...list.map(t => t.id)) : 0) + 1;
 
+    // 读一次：库里的整份列表（按位次）。读失败就如实说、给个重试，不假装"没有待办"。
+    const loadTodos = useCallback(async () => {
+        setLoadErr('');
+        const res = await getTodos();
+        if (!ok(res)) {
+            setLoadErr(errMsg(res, '待办没能读出来'));
+            return;
+        }
+        const rows: Todo[] = (res.data?.data ?? []).map((r, i) => ({
+            id: i + 1,                       // 本地行号只是 React 的 key，不发给服务端
+            text: r.text,
+            done: !!r.done,
+            date: r.date || undefined,
+        }));
+        lastSaved.current = JSON.stringify(toPayload(rows));
+        setTodos(rows);
+        setLoaded(true);
+    }, []);
+
+    useEffect(() => { void loadTodos(); }, [loadTodos]);
+
+    // 每次改动 → 整份发上去（600ms 防抖；不做行级 diff，服务端也不认行 id）。
+    // 失败不回滚本地编辑（主人刚敲的字不该被悄悄撤掉），提示一句即可：
+    // 下一次改动会把整份重新发上去。
     useEffect(() => {
-        localStorage.setItem('dashboard_todos', JSON.stringify(todos));
-    }, [todos]);
+        if (!loaded) return;
+        const rows = toPayload(todos);
+        const payload = JSON.stringify(rows);
+        if (payload === lastSaved.current) return;
+        const timer = setTimeout(async () => {
+            const res = await saveTodos(rows);
+            if (ok(res)) lastSaved.current = payload;
+            else message.error(errMsg(res, '待办没保存上'));
+        }, 600);
+        return () => clearTimeout(timer);
+    }, [todos, loaded]);
 
     useEffect(() => {
         localStorage.setItem('dashboard_list_title', listTitle);
@@ -337,7 +382,16 @@ const Home = () => {
                         bordered={false}
                    />
                    <div className="todoBody">
-                        {groups.length === 0 &&
+                        {/* 没读出来之前不显示"还没有待办"——那会把"读失败"说成"你没有待办" */}
+                        {!loaded && !loadErr &&
+                            <div className="todo-empty">正在读待办…</div>}
+                        {loadErr &&
+                            <div className="todo-empty todo-loaderr">
+                                {loadErr}
+                                <Button type="link" size="small"
+                                        onClick={() => void loadTodos()}>重试</Button>
+                            </div>}
+                        {loaded && groups.length === 0 &&
                             <div className="todo-empty">还没有待办，点下面的「新增一行」</div>}
                         {groups.map(g => (
                             <div className="todo-group" key={g.key}>
@@ -393,7 +447,10 @@ const Home = () => {
                                 ))}
                             </div>
                         ))}
+                        {/* 列表没读出来时不让新增：那一刻加的行不在服务端那份里，
+                            之后重试读回来就把它冲掉了（比"按钮点了没反应"更让人困惑） */}
                         <Button className="todo-add" type="dashed" block size="small"
+                                disabled={!loaded}
                                 icon={<PlusOutlined />} onClick={addBlankRow}>新增一行</Button>
                    </div>
                </Card>

@@ -17,6 +17,7 @@ pub mod graph;
 pub mod stats;
 pub mod profile;  // 个人中心一期（20260922）
 pub mod notice;   // 单用户站内通知（20260923；留言审核结果的首个生产者）
+pub mod todos;    // 后台首页待办（20260924；整份列表按用户落库）
 
 use axum::{
     routing::{get, post, delete, put},
@@ -176,6 +177,13 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route("/api/protected/notes/:id",
             post(notes::update_note)
+        )
+
+        // 后台首页待办（20260924）：待办卡此前只存浏览器 localStorage，现按用户落库。
+        // 两个接口一张表 = 整份列表覆盖（GET 读 / PUT 写），取舍见 routes/todos.rs 头注。
+        .route(
+            "/api/protected/todos",
+            get(todos::list_todos).put(todos::save_todos),
         )
 
         // 编辑草稿（20260912c）：自动保存 + 编辑器专用读入口

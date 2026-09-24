@@ -22,3 +22,5 @@ pub mod user_message;
 pub mod user_message_draft;
 // 跨轮待办（20260923）：确认弹窗那一轮的结构化提议落库，下轮注入 planner
 pub mod pending_action;
+// 后台首页待办（20260924）：整份列表按用户落库（此前只在浏览器 localStorage 里）
+pub mod dashboard_todo;

@@ -513,6 +513,17 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
         font-weight: 400
         opacity: .6
 
+      // 读失败那条（"没读出来"与"你还没有待办"必须是两句话）
+      .todo-loaderr
+        display: flex
+        align-items: center
+        gap: 6px
+        color: #d4380d
+        opacity: .9
+        .ant-btn
+          font-size: 12px
+          padding: 0
+
       .todo-group
         display: flex
         flex-direction: column
