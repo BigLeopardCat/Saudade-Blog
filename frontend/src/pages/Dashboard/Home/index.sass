@@ -528,7 +528,11 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
     min-height: 0
     margin: 0
     width: 100%
-    padding: 10px
+    // 20260924 三轮：左右内边距收到 0 —— 待办行与上面的日历网格共用同一条左右边。
+    // 原先「卡片 10px + 卡体 14px」让待办从比日历窄 25px 的地方起笔（实测：日历网格
+    // 1168.3，待办行 1193.3），两块内容看着各写各的。纵向那 10px 留着，卡片阴影才
+    // 有呼吸的余地；只有左右要跟日历对齐。
+    padding: 10px 0
     font-weight: 600
     // 卡片自己不再滚——滚动交给下面的 .todoBody，这样「新增一行」能钉在卡片底部
     overflow: hidden
@@ -537,7 +541,7 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
       display: flex
       flex-direction: column
       height: 100%
-      padding: 12px 14px
+      padding: 12px 0
 
     .todoTitle
       font-size: 1.17em
@@ -598,6 +602,11 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
           gap: 4px
           border-radius: 6px
           transition: .2s
+          // 20260924 三轮：行高从 22px（跟着里面的勾选框走）放到 30px。
+          // 待办是这一栏真正要读的东西，密到 22px 一行时几行挤在一起分不清谁是谁；
+          // 高度给够之后每行有独立的落点，勾选框/文字/删除按钮也不再贴在一起。
+          // 用 min-height 而不是 height：里面是输入框，行高得跟着内容涨。
+          min-height: 30px
           &.dragging
             opacity: .4
           &:hover
