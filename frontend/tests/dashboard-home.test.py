@@ -244,11 +244,30 @@ with sync_playwright() as p:
     check("不再有箴言卡的 .oneSay / .custom-card-header",
           pg.locator(".oneSay, .custom-card-header").count() == 0)
 
-    print("③ 日历与待办都在右栏里")
+    print("③ 日历与待办都在右栏里，且左右同边")
     check("右栏里有一个日历", pg.locator(".right .ant-picker-calendar").count() == 1)
     check("右栏里有待办卡", pg.locator(".right .cardInfo").count() == 1)
     check("待办卡标题仍是本地存的那份（默认「开发进度」）",
           pg.input_value(".right .cardInfo input") == "开发进度")
+
+    # 20260924 三轮：两块内容共用同一条左右边。原先「卡片 10px + 卡体 14px」让待办
+    # 从比日历窄 25px 的地方起笔（实测 1168.3 vs 1193.3），右栏看着像两个人各写各的。
+    # 留 2px 容差：卡片自己有 1px 边框，那 1px 不值得为对齐去动卡片本身的观感。
+    align = pg.evaluate("""() => {
+      const b = (sel) => { const el = document.querySelector(sel);
+        if (!el) return null; const r = el.getBoundingClientRect();
+        return {l: r.left, r: r.right, h: r.height}; };
+      return { grid: b('.calWrap .ant-picker-content'), row: b('.todo-row'),
+               scroll: b('.todoBody') };
+    }""")
+    check("待办行与日历网格左边对齐",
+          abs(align["row"]["l"] - align["grid"]["l"]) <= 2,
+          f"待办 {align['row']['l']:.1f} / 日历 {align['grid']['l']:.1f}")
+    check("待办滚动区右边与日历网格同边（滚动条 6px 留在这条边的内侧）",
+          abs(align["scroll"]["r"] - align["grid"]["r"]) <= 2,
+          f"滚动区 {align['scroll']['r']:.1f} / 日历 {align['grid']['r']:.1f}")
+    check("待办行加高了（原来 22px，现在 ≥28px）", align["row"]["h"] >= 28,
+          f"{align['row']['h']:.1f}px")
 
     print("④ 日历上移、待办吃掉余量（不再是 space-between 撑开）")
     geo = pg.evaluate("""() => {
