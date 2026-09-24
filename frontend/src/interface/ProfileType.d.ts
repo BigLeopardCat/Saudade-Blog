@@ -38,11 +38,14 @@ export interface NotificationList {
     items: NotificationItem[];
 }
 
-/** GET /api/protected/notifications/summary（红点数据源） */
+/** GET /api/protected/notifications/summary（红点数据源，20260924 四轮起兼给后台待审数） */
 export interface UnreadSummary {
     notifications: number;
     messages: number;
+    /** 红点用的合计 = 通知 + 私信（**不含** pendingReview，见后端 UnreadDto） */
     total: number;
+    /** 等人工裁决的留言条数（后台首页那行提示用；非管理员恒 0） */
+    pendingReview: number;
 }
 
 /** 信箱里的一封（收发共用一个形状，peer* = 对方） */

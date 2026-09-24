@@ -161,22 +161,24 @@ export function saveTodos(todos: any) {
   server = todos;
   return Promise.resolve(env(server));
 }
-// 待审评论：桩一份留言列表，几条 approved=0（等人工裁决）由页面上现改
-export function listBoardRows() {
-  (window as any).__boardCalls = ((window as any).__boardCalls || 0) + 1;
+''' % json.dumps(SEED, ensure_ascii=False), encoding="utf-8")
+
+    # 边界④b：未读汇总接口层（20260924 四轮起，待审数从这条接口拿）。
+    # 桩的是"服务端那份计数"，`__pending` 由页面上现改——与另外两处同一种手法。
+    (sb / "src/apis/ProfileMethods.tsx").write_text('''\
+const env = (data: any) => ({status: 200, data: {code: 200, message: 'ok', data}});
+export const ok = (res: any) => res.status === 200 && !!res.data && res.data.code === 200;
+/** 这一页唯一用到的那个：未读汇总（红点 + 后台待审数同一条接口） */
+export function getUnreadSummary() {
+  (window as any).__sumCalls = ((window as any).__sumCalls || 0) + 1;
   if (localStorage.getItem('__failBoard') === '1') {
     localStorage.removeItem('__failBoard');
     return Promise.resolve({status: 200, data: {code: 500, message: '假装读失败', data: null}});
   }
   const n = Number(localStorage.getItem('__pending') || 0);
-  const rows = [];
-  for (let i = 0; i < 4; i++) {
-    rows.push({talkKey: i + 1, content: '留言' + (i + 1), author: 'a',
-               approved: i < n ? 0 : 1});
-  }
-  return Promise.resolve(env(rows));
+  return Promise.resolve(env({notifications: 0, messages: 0, total: 0, pendingReview: n}));
 }
-''' % json.dumps(SEED, ensure_ascii=False), encoding="utf-8")
+''' , encoding="utf-8")
 
     (sb / "entry.tsx").write_text('''\
 import * as React from 'react';
@@ -276,6 +278,9 @@ with sync_playwright() as p:
     # 但"那条轮询到底接上了没有"必须能断言（能力有测试 ≠ 接线有测试）
     pg.add_init_script("""
       localStorage.removeItem('dashboard_list_title');
+      // 后台页只对登录的人开，而未读汇总那个 store 的判据是"有没有 token"
+      // （`getToken()` 读的就是这个键）——没有它，待审那行永远不画。
+      localStorage.setItem('tokenKey', 'x.y.z');
       (() => { const orig = window.setInterval;
         window.__intervals = [];
         window.setInterval = (fn, ms, ...rest) => {
@@ -835,6 +840,22 @@ with sync_playwright() as p:
     check("60 秒轮询接上了（切回标签页另有一条立即刷的通道）",
           60000 in (pg.evaluate("() => window.__intervals") or []),
           str(pg.evaluate("() => window.__intervals")))
+    # 20260924 四轮：数字的来源换成了未读汇总接口（原来这一页自己每 60 秒拉一次
+    # **整张留言表**再数 approved=0）。判据 = 汇总接口真的被调过，且这条读数
+    # 是**活**的：改服务端的数、派发看板娘那个收尾信号，界面跟着变。
+    check("待审数来自未读汇总接口（不是自己拉整张留言表再数）",
+          (pg.evaluate("() => window.__sumCalls") or 0) >= 1,
+          str(pg.evaluate("() => window.__sumCalls")))
+    pg.evaluate("""() => {
+      localStorage.setItem('__pending', '5');
+      window.dispatchEvent(new CustomEvent('agent-turn-done'));
+    }""")
+    pg.wait_for_timeout(500)
+    check("收到 agent-turn-done 时这个数也跟着刷新（同一份读数，不再各写一遍时机）",
+          review_text() == "5条评论待人工审核", review_text() or "（没有这一行）")
+    pg.evaluate("() => { localStorage.setItem('__pending', '3'); }")
+    pg.reload()
+    pg.wait_for_timeout(900)
 
     # 读失败保持上一次的数：一个提示不该因为一次网络抖动就自己消失
     pg.evaluate("""() => {

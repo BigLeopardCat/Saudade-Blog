@@ -3,6 +3,9 @@
  *
  * 红点 = **未读通知（含公告）+ 未读站内信**，唯一数据源是
  * `GET /api/protected/notifications/summary`（后端一次算全，前端不并发几次）。
+ * 20260924 四轮起这条接口还带 `pendingReview`（等人工裁决的留言条数，非管理员恒 0），
+ * 供后台首页那行提示用——它**不计进 `total`**（红点是"你有事没看"，待审是"后台有事等你
+ * 处理"，两件事），只是同一个消费者的另一项读数：后台那一页也登记成这个 store 的消费者。
  *
  * 刷新时机（四个都要有，少一个就会"点了已读红点还在"或"别人发来消息十分钟不亮"）：
  *   1. 有人开始看时挂上定时轮询（60 秒——本站是个人博客，没必要做长连接）；
@@ -12,9 +15,9 @@
  *      **只靠 60 秒轮询是不够的**：用户让 agent 标已读之后盯着红点看，一分钟不变就等于
  *      "没生效"（实测反馈：要刷新网页才掉）——红点是提示，提示晚一分钟没有意义。
  *
- * 未登录 / 请求失败一律**按 0 处理**：红点是提示不是状态，拿不到数据时宁可不显示，
- * 也不编一个数字（后端那族接口在无 token 时返回 HTTP 200 + code=500，所以这里既看
- * HTTP 状态也看 code）。
+ * 未登录**按 0 处理**（红点是提示不是状态，拿不到账号时宁可不显示，也不编一个数字）；
+ * 但**读失败保留上一次的读数**——"读不到"与"确实没有"是两件事，见 `refreshUnread`。
+ * 后端那族接口在没做成时返回 HTTP 200 + code=500，所以这里既看 HTTP 状态也看 code。
  *
  * ── 为什么是**单例 store**（20260924 四轮，与 favorites.ts 同一套形态）──
  * 此前 `useUnread` 是普通 hook：每个调用点各持一份 `useState` + 各挂一个 `setInterval`。
@@ -50,11 +53,12 @@ const POLL_MS = 60 * 1000
  * 依赖或 `setState` 时，新实例会被 React 判为"变了"而多渲染一轮（favorites.ts 里
  * 那条"每次成功读数都换新数组"的教训反过来用——这里没有新事实就不该换引用）。
  */
-const EMPTY: UnreadSummary = { notifications: 0, messages: 0, total: 0 }
+const EMPTY: UnreadSummary = { notifications: 0, messages: 0, total: 0, pendingReview: 0 }
 
-/** 值相等？只比参数（就是这三个数），不引深比较库 */
+/** 值相等？就比这几个数，不引深比较库 */
 function same(a: UnreadSummary, b: UnreadSummary): boolean {
-    return a.notifications === b.notifications && a.messages === b.messages && a.total === b.total
+    return a.notifications === b.notifications && a.messages === b.messages
+        && a.total === b.total && a.pendingReview === b.pendingReview
 }
 
 /** 当前未读数（NULL 语义的替代品是 EMPTY：红点是提示，读不到就不显示）。 */
@@ -91,12 +95,14 @@ function setSnap(next: UnreadSummary): void {
     emit()
 }
 
-/** 从回包取出三个计数（缺字段按 0——不编数字，也不把缺字段当失败） */
+/** 从回包取出各个计数（缺字段按 0——不编数字，也不把缺字段当失败） */
 function pick(d: UnreadSummary | null | undefined): UnreadSummary {
     return {
         notifications: d?.notifications ?? 0,
         messages: d?.messages ?? 0,
         total: d?.total ?? 0,
+        // 旧后端（20260924 四轮之前的回包）没有这个字段 ⇒ 0，界面那一行不画
+        pendingReview: d?.pendingReview ?? 0,
     }
 }
 
@@ -130,23 +136,24 @@ export function retainUnread(): () => void {
 
 /**
  * 拉一次未读汇总（并发去重 + 未登录即清空）。
- * 失败按 0 处理（见头注）：不清成"读到了 0 条"，也不留一个过期数字在红点上，
- * 下一次轮询还会再试。
+ *
+ * **读失败不改动读数**（保留上一次的），理由与 favorites.ts 那条"拉取失败不清空已有的
+ * list"是同一条：失败本身并没有改变任何事实，清成 0 是拿"读不到"冒充"没有"。
+ * 对红点：通知没被读掉，红点凭什么灭。对后台那行待审提示更要紧——一次网络抖动就让
+ * "3 条待审"变成"没有待审"，是把读失败演成了审完了。
+ * （这与 `tools/base.py` 的 `unavailable` 纪律同源：服务不可用不是事实。）
+ * 未登录是**事实**不是失败 ⇒ 清空（红点不该在退登之后还亮着）。
  */
 export function refreshUnread(): Promise<void> {
     if (typeof window === 'undefined' || !active) return Promise.resolve()
     if (!getToken()) {
-        // 不是失败，是"这台机器上没有账号可言" ⇒ 清空（红点不该在未登录时亮着）
         setSnap(EMPTY)
         return Promise.resolve()
     }
     if (inflight) return inflight
     const p: Promise<void> = getUnreadSummary()
-        .then((res) => {
-            if (ok(res)) setSnap(pick(res.data.data))
-            else setSnap(EMPTY)
-        })
-        .catch(() => setSnap(EMPTY))
+        .then((res) => { if (ok(res)) setSnap(pick(res.data.data)) })
+        .catch(() => { /* 见上：失败不动读数 */ })
         .finally(() => { if (inflight === p) inflight = null })
     inflight = p
     return p
