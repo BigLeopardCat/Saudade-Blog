@@ -227,7 +227,7 @@ async fn insert_talk(
     // 判定是 pass/flag 即时生效后不回溯，留痕供管理端溯源。
     // 20260923：同时接住 AI 给的驳回理由（reject_reason），供审核结果通知与后台展示
     let (approved, ai_result, reject_reason) = if src == "board" {
-        board_approved(state, content).await
+        board_approved(state, uid, content).await
     } else {
         (1, None, None)
     };
@@ -381,7 +381,17 @@ async fn notify_review_result(
     .await;
 }
 
-async fn board_approved(state: &Arc<AppState>, content: &str) -> (i8, Option<String>, Option<String>) {
+/// AI 审核（20260925 审计 A5）：调 agent 时**带上服务间身份断言**。
+///
+/// 此前这一发只有 `{content}`，agent 侧 `/review` 因此没有任何身份可核——它是不是
+/// "匿名可调用"完全押在"8010 只听回环"这一个部署事实上。现在与 `/chat` 同款签一条
+/// 短时效断言（aud=agent，60s）。
+///
+/// **部署顺序是硬要求**：agent 的 .env 里 `AGENT_REQUIRE_ASSERTION` **已经是 1**
+/// （不是"以后再打开"）⇒ 这一半必须先上线，agent 侧才允许把 `/review` 接上
+/// `_resolve_principal`；顺序反了留言审核会成片 401，每一条都转人工待审。
+/// `uid` 同时进 body：agent 用它核对断言、并在审核日志里留痕。
+async fn board_approved(state: &Arc<AppState>, uid: i32, content: &str) -> (i8, Option<String>, Option<String>) {
     let (ai_on, manual_on) = super::web_info::review_switches(&state.db).await;
     if !ai_on {
         if manual_on {
@@ -395,7 +405,11 @@ async fn board_approved(state: &Arc<AppState>, content: &str) -> (i8, Option<Str
         .unwrap_or_else(|_| "http://127.0.0.1:8010/review".to_string());
     let result = review_http()
         .post(&url)
-        .json(&serde_json::json!({ "content": content }))
+        .header(
+            "X-Agent-Assertion",
+            crate::auth_jwt::create_agent_assertion(uid, None),
+        )
+        .json(&serde_json::json!({ "content": content, "uid": uid }))
         .timeout(std::time::Duration::from_secs(20))
         .send()
         .await;
