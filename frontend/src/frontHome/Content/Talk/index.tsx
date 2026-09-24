@@ -39,7 +39,8 @@ const TalkList = () => {
             style={{position:'relative'}}
         >
                 {/* 日期链条：20260924 起带上年份（原来是只有 MM.DD 的单行）——跨年的说说
-                    在列表里长得一模一样，得看年份才知道是去年的还是今年的。 */}
+                    在列表里长得一模一样，得看年份才知道是去年的还是今年的。
+                    年份在月日**前面**、同一行（原来是年份一行压在月日上面）。 */}
                 <h3 className='talkTime'>
                     <span className='talkTime-year'>{at.format('YYYY')}</span>
                     <span className='talkTime-day'>{at.format('MM.DD')}</span>
@@ -55,8 +56,9 @@ const TalkList = () => {
                         title={talk.talkTitle}
                         description={talk.content}
                     />
-                    {/* 卡片左下角：精确时刻（20260924 用户要求）。放秒是有意的——说说常连发，
-                        同一天里几条的时间差就是"这条在回哪条"的线索。 */}
+                    {/* 卡片右下角：精确时刻（20260924 用户要求；三轮起从左下角挪到右下角，
+                        它上面那条虚线也撤了——主人原话"不要占用这么高的分割线"）。
+                        放秒是有意的：说说常连发，同一天里几条的时间差就是"这条在回哪条"的线索。 */}
                     <div className='talk-foot'>
                         <span className='talk-clock'>{at.format('HH:mm:ss')}</span>
                     </div>
