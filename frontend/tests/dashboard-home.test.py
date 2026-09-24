@@ -12,6 +12,11 @@
 
 两个兄弟组件（左栏统计卡、中栏文章记录）用空 div 顶替：它们各自要拉接口、开图，
 而本沙箱只关心**右栏**——被断言的就是右栏自己。
+
+待办自 20260924 起**落库**（GET/PUT /api/protected/todos，整份列表覆盖），所以这里桩掉
+`src/apis/DashboardMethods.tsx` 这一层（内存里那份"服务端"），Home 里的读写路径
+——600ms 防抖、加载闸、失败提示——都还是真的。桩同时记下每次 PUT 的载荷，
+用来验"改动真的发出去了"，以及最要命的那条：**列表没读出来时绝不出网**。
 注意视口必须 > 1530px：`.right` 在 1530px 以下整块 `display:none`（媒体查询）。
 
 **样本日期全部相对"今天"生成**：逾期/今天/未来三档要验"按日期分组 + 逾期高亮"，
@@ -107,6 +112,32 @@ export const Provider = ({ children }: any) => children;
         "const ArticleRecord = (_p: {isDark?: boolean}) => <div className='stub-record'/>;\n"
         "export default ArticleRecord;\n", encoding="utf-8")
 
+    # 边界④：待办接口层。桩的是"服务端那份列表"+ 每次 PUT 的载荷记录；
+    # 判成功/取失败文案那两行**照抄真实现**（改口径时这里要跟着改，别让它俩分叉）。
+    (sb / "src/apis/DashboardMethods.tsx").write_text('''\
+const KEY_PUTS = '__puts', KEY_FAIL = '__failGet';
+let server: any[] = %s;
+// 每次页面加载都从种子起（= 库里的初始那份）；同一页面会话内 PUT 会改它。
+// **刻意**不跨 reload 保留：沙箱要的是可复现的起点（reload 后回到初始 8 条）。
+const env = (data: any) => ({status: 200, data: {code: 200, message: 'ok', data}});
+export const ok = (res: any) => res.status === 200 && !!res.data && res.data.code === 200;
+export const errMsg = (res: any, fallback = '操作失败，请稍后再试') =>
+  String(res?.data?.message || '').trim() || fallback;
+export function getTodos() {
+  if (localStorage.getItem(KEY_FAIL) === '1') {
+    localStorage.removeItem(KEY_FAIL);
+    return Promise.resolve({status: 200, data: {code: 500, message: '假装读失败', data: null}});
+  }
+  return Promise.resolve(env(server));
+}
+export function saveTodos(todos: any) {
+  (window as any).__lastPut = todos;
+  localStorage.setItem(KEY_PUTS, String(Number(localStorage.getItem(KEY_PUTS) || 0) + 1));
+  server = todos;
+  return Promise.resolve(env(server));
+}
+''' % json.dumps(SEED, ensure_ascii=False), encoding="utf-8")
+
     (sb / "entry.tsx").write_text('''\
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
@@ -184,14 +215,9 @@ with sync_playwright() as p:
     pg = br.new_page(viewport={"width": 1600, "height": 1000})
     errs = []
     pg.on("pageerror", lambda e: errs.append(str(e)))
-    # 预置待办（不预置 dashboard_list_title，好验标题的默认值）。
-    # 注意是**双重** json.dumps：要落进 localStorage 的是一个 JSON 文本，
-    # 所以注入的 JS 里那一段必须是字符串字面量（单层 dumps 得到的是数组字面量，
-    # setItem 会把它按 Array.prototype.toString 拼成 "[object Object],…"）。
-    pg.add_init_script(
-        "localStorage.setItem('dashboard_todos', %s);"
-        "localStorage.removeItem('dashboard_list_title');"
-        % json.dumps(json.dumps(SEED, ensure_ascii=False)))
+    # 待办由上面的接口桩给（不再走 localStorage）；这里只清掉卡片标题，
+    # 好验它的默认值。日期样本全部相对"今天"生成，见文件头。
+    pg.add_init_script("localStorage.removeItem('dashboard_list_title');")
     pg.goto(URL)
     pg.wait_for_timeout(800)   # Typed.js 打字机 + antd 日历挂载
 
@@ -290,13 +316,22 @@ with sync_playwright() as p:
     pg.click(".calQuick button:has-text('取消')")
     pg.wait_for_timeout(200)
     check("取消后快添栏收起", pg.locator(".calQuick").count() == 0)
-    # 收尾：把快添的那条删掉，别影响后面的行数断言
-    pg.evaluate("""() => {
-      const raw = JSON.parse(localStorage.getItem('dashboard_todos'));
-      localStorage.setItem('dashboard_todos', JSON.stringify(raw.filter(t => t.text !== '快添的一条')));
-    }""")
+    print("⑦ 落库：每次改动把整份列表发上去（600ms 防抖之后）")
+    # 防抖 600ms：上一次改动（回车添加）到现在要等够
+    pg.wait_for_timeout(900)
+    sent = pg.evaluate("() => window.__lastPut")
+    check("快添那条已经发给服务端（整份列表，9 条）",
+          len(sent) == 9 and sent[-1]["text"] == "快添的一条",
+          f"{len(sent)} 条，末条 {sent[-1]['text'] if sent else '—'}")
+    check("发出的字段就是线上口径 text/done/date（跨语言契约）",
+          set(sent[-1].keys()) == {"text", "done", "date"}, str(sorted(sent[-1].keys())))
+    check("新加那条带着它那天的排期", sent[-1]["date"] == LATER and sent[-1]["done"] is False,
+          str(sent[-1]))
+    check("未排期那条发的是 null 而不是空串",
+          [r for r in sent if r["text"] == "没排期的一条"][0]["date"] is None)
+    check("发出的那份不含空行", all(r["text"].strip() for r in sent))
 
-    print("⑦ 待办按日期分组、逾期组标红")
+    print("⑧ 待办按日期分组、逾期组标红")
     pg.reload()
     pg.wait_for_timeout(700)
     heads = pg.eval_on_selector_all(".todo-group-head", "els => els.map(e => e.textContent)")
@@ -312,7 +347,7 @@ with sync_playwright() as p:
                                   "els => els.map(e => e.textContent)") ==
           [f"{int(OVERDUE[5:7])}/{int(OVERDUE[8:10])}"])
 
-    print("⑧ 新增一行 / 空行自动回收")
+    print("⑨ 新增一行 / 空行自动回收")
     before = len(row_texts(pg))
     pg.click(".todo-add")
     pg.wait_for_timeout(300)
@@ -320,12 +355,24 @@ with sync_playwright() as p:
           f"{before} → {len(row_texts(pg))}")
     check("新行自动聚焦", pg.evaluate(
         "() => document.activeElement && document.activeElement.closest('.todo-row') !== null"))
-    pg.click(".todoTitle")           # 空行失焦
-    pg.wait_for_timeout(300)
+    # 空行是前端的临时态。注意：**只多一个空行本身不产生任何出网请求**（它被
+    # 过滤掉后与库里那份一致）——所以这里顺手打勾另一条，制造一次真改动，
+    # 再看发出去的那份里有没有这个空行。
+    pg.locator(".todo-row").first.locator("input[type='checkbox']").click()
+    pg.wait_for_timeout(900)
+    sent2 = pg.evaluate("() => window.__lastPut")
+    check("打勾也会把整份发上去", bool(sent2) and len(sent2) == before,
+          f"{len(sent2) if sent2 else 0} 条 / 期望 {before}")
+    check("空行不落库（发出的那份里没有空文字）",
+          bool(sent2) and all(r["text"].strip() for r in sent2))
+    check("打勾这个改动本身在发出的那份里（不是发了份旧的）",
+          bool(sent2) and [r for r in sent2 if r["text"] == "逾期的一条"][0]["done"] is True)
+    # 焦点已经被那次点击带走 ⇒ 空行在这一刻就已回收
+    pg.wait_for_timeout(200)
     check("空行失焦后自动收掉，不留空壳", len(row_texts(pg)) == before,
           f"{len(row_texts(pg))}")
 
-    print("⑨ 删除要二次确认")
+    print("⑩ 删除要二次确认")
     target = row_texts(pg)[0]
     pg.locator(".todo-row").first.locator(".todo-del").click()
     pg.wait_for_timeout(300)
@@ -336,8 +383,13 @@ with sync_playwright() as p:
     pg.click(".ant-modal-confirm-btns .ant-btn-primary")
     pg.wait_for_timeout(400)
     check("确定后才真的删掉", target not in row_texts(pg), str(row_texts(pg)))
+    pg.wait_for_timeout(900)
+    sent3 = pg.evaluate("() => window.__lastPut")
+    check("删除也发给了服务端（整份重发，那份里没有它）",
+          sent3 is not None and target not in [r["text"] for r in sent3],
+          f"{len(sent3) if sent3 else 0} 条")
 
-    print("⑩ 拖拽排序（同组内换位、跨组不动）")
+    print("⑪ 拖拽排序（同组内换位、跨组不动）")
     # 拖拽要**分步、跨帧**发：dragstart 里 setDragId 是 React 状态更新，
     # 四个事件挤在同一个同步任务里时（连续事件优先级不进同步 flush），
     # drop 处理器闭包里读到的 dragId 还是 null，整段拖拽会静默失效——
@@ -402,6 +454,28 @@ with sync_playwright() as p:
           row_texts(pg) == order1, str(row_texts(pg)))
     check("跨组的那格不接（dragover 里不 preventDefault）", cross_ok is True)
     check("拖完不留 dragging 残影", pg.locator(".todo-row.dragging").count() == 0)
+
+    print("⑫ 读失败时不出网（否则空列表会把库里的待办抹掉）")
+    # 让下一次 getTodos 失败一次，然后整页重来：这是"库读不到"的真实现场
+    pg.evaluate("""() => {
+      localStorage.setItem('__failGet', '1');
+      localStorage.setItem('__puts', '0');   // 计数清零，专看这一轮有没有写回去
+    }""")
+    pg.reload()
+    pg.wait_for_timeout(900)
+    check("如实说读失败，而不是说「还没有待办」（两者不能混为一谈）",
+          pg.locator(".todo-loaderr").count() == 1
+          and "假装读失败" in pg.locator(".todo-loaderr").inner_text(),
+          pg.locator(".todo-loaderr").inner_text().strip()
+          if pg.locator(".todo-loaderr").count() else "（没有失败提示）")
+    check("数据没到手时一行都不画", row_texts(pg) == [], str(row_texts(pg)))
+    check("**没有**把空列表写回库里（这条错了就是静默清空）",
+          pg.evaluate("() => Number(localStorage.getItem('__puts') || 0)") == 0)
+    pg.click(".todo-loaderr button")     # 重试
+    pg.wait_for_timeout(900)
+    check("重试后把列表读回来（8 条）", len(row_texts(pg)) == 8, str(len(row_texts(pg))))
+    check("读回来那一刻不写回去（本地与库里那份一致时不出网）",
+          pg.evaluate("() => Number(localStorage.getItem('__puts') || 0)") == 0)
 
     br.close()
 
