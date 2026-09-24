@@ -1,11 +1,11 @@
 /**
- * 头像红点的未读数（20260922 个人中心一期）。
+ * 头像红点的未读数（20260922 个人中心一期；20260924 四轮改成模块级单例）。
  *
  * 红点 = **未读通知（含公告）+ 未读站内信**，唯一数据源是
  * `GET /api/protected/notifications/summary`（后端一次算全，前端不并发几次）。
  *
  * 刷新时机（四个都要有，少一个就会"点了已读红点还在"或"别人发来消息十分钟不亮"）：
- *   1. 挂载 + 定时轮询（60 秒——本站是个人博客，没必要做长连接）；
+ *   1. 有人开始看时挂上定时轮询（60 秒——本站是个人博客，没必要做长连接）；
  *   2. `unread-change` 自定义事件（个人中心里点"全部已读"当场归零，不等下一次轮询）；
  *   3. `visibilitychange`（标签页切回来时补一次——后台标签页里定时器会被浏览器降频）；
  *   4. `agent-turn-done`（20260924 补）：看板娘那边刚把通知/站内信标成已读 ⇒ 当场重算。
@@ -15,6 +15,18 @@
  * 未登录 / 请求失败一律**按 0 处理**：红点是提示不是状态，拿不到数据时宁可不显示，
  * 也不编一个数字（后端那族接口在无 token 时返回 HTTP 200 + code=500，所以这里既看
  * HTTP 状态也看 code）。
+ *
+ * ── 为什么是**单例 store**（20260924 四轮，与 favorites.ts 同一套形态）──
+ * 此前 `useUnread` 是普通 hook：每个调用点各持一份 `useState` + 各挂一个 `setInterval`。
+ * 而红点有**两处**显示位置——头部头像（常驻）与个人中心页签角标（开窗时）——
+ * 于是开着个人中心时，同一张表每分钟被同一个浏览器打两次（实测：站内真轮询只有两条
+ * 接口，一天约 1300 次请求，99.4% 来自主人自己那一个 IP）。这不是"多花点流量"的问题，
+ * 而是同一份事实有两个各自计时的副本：一处先拿到新值、另一处还停在旧值，红点自己跟
+ * 自己不一致。
+ * 现在：**未读数只有一份**（本模块的 `snap`），谁要显示就来订阅；`setInterval` 只在
+ * **第一个消费者**出现时挂、**最后一个**离开时撤（`active` 计数）；事件驱动的刷新也只在
+ * 真的有人在看时才发（`refreshUnread` 里的 active 判据），在途请求去重（`inflight`）。
+ * 想知道此刻有几个消费者：`unreadDebug()`（测试与排障用）。
  */
 import { useCallback, useEffect, useState } from 'react'
 import getToken from '../../apis/getToken.tsx'
@@ -33,49 +45,137 @@ export function notifyUnreadChanged(): void {
 
 const POLL_MS = 60 * 1000
 
-export function useUnread(enabled: boolean): { counts: UnreadSummary; refresh: () => void } {
-    const [counts, setCounts] = useState<UnreadSummary>({ notifications: 0, messages: 0, total: 0 })
+/**
+ * 空读数。**同一个实例复用**（不是每次新造一个字面量）：订阅者拿它进 `useEffect`
+ * 依赖或 `setState` 时，新实例会被 React 判为"变了"而多渲染一轮（favorites.ts 里
+ * 那条"每次成功读数都换新数组"的教训反过来用——这里没有新事实就不该换引用）。
+ */
+const EMPTY: UnreadSummary = { notifications: 0, messages: 0, total: 0 }
 
-    const refresh = useCallback(() => {
-        if (!enabled || !getToken()) {
-            setCounts({ notifications: 0, messages: 0, total: 0 })
-            return
+/** 值相等？只比参数（就是这三个数），不引深比较库 */
+function same(a: UnreadSummary, b: UnreadSummary): boolean {
+    return a.notifications === b.notifications && a.messages === b.messages && a.total === b.total
+}
+
+/** 当前未读数（NULL 语义的替代品是 EMPTY：红点是提示，读不到就不显示）。 */
+let snap: UnreadSummary = EMPTY
+/** 活着的消费者数：0 时既不轮询也不发请求（没人在看红点，拉它干嘛） */
+let active = 0
+/** 全站**唯一**那个轮询定时器（active 从 0 起时挂、回到 0 时撤） */
+let timer: ReturnType<typeof setInterval> | null = null
+/** 去重：同一时刻只发一次 GET（头部与个人中心可能同时要） */
+let inflight: Promise<void> | null = null
+const subs = new Set<() => void>()
+
+function emit(): void {
+    subs.forEach((fn) => { try { fn() } catch (e) { /* 一个订阅者抛错不该拖垮其余 */ } })
+}
+
+/** 订阅本 store（组件不要直接调，走 useUnread） */
+function subscribe(fn: () => void): () => void {
+    subs.add(fn)
+    return () => { subs.delete(fn) }
+}
+
+/**
+ * 换快照：**值没变就不换引用、不发通知**。
+ * 轮询每 60 秒醒一次，绝大多数时候读到的还是同样的三个数——照单换一个新对象会让每个
+ * 订阅者白渲染一轮（`useUnread` 的订阅者把快照写进 state，新引用 = React 判"变了"）。
+ * 值相等却当作"新事实"是假的新事实，与 favorites.ts 那条"每次成功读数都换新数组"看似
+ * 矛盾、其实相反：那边的隐患是**同一个引用**被当成没变（缓存/桩把同一个数组交回来），
+ * 这边的隐患是**内容相同的新引用**被当成变了——两边防的都是"React 的引用相等判据"这一个东西。
+ */
+function setSnap(next: UnreadSummary): void {
+    if (same(next, snap)) return
+    snap = next
+    emit()
+}
+
+/** 从回包取出三个计数（缺字段按 0——不编数字，也不把缺字段当失败） */
+function pick(d: UnreadSummary | null | undefined): UnreadSummary {
+    return {
+        notifications: d?.notifications ?? 0,
+        messages: d?.messages ?? 0,
+        total: d?.total ?? 0,
+    }
+}
+
+// 全局监听在**模块加载时**挂一次（头部/个人中心任一引用本模块即生效）：事件可能在任何
+// 时刻到达（用户在看公告页时看板娘把通知标成已读），挂载点不该由"这一刻谁在显示红点"
+// 决定——要不要真去拉，由 refreshUnread 里的 active 判据决定。
+if (typeof window !== 'undefined') {
+    window.addEventListener(UNREAD_CHANGED_EVENT, () => { refreshUnread() })
+    window.addEventListener(AGENT_TURN_DONE_EVENT, () => { refreshUnread() })
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) refreshUnread()
+    })
+}
+
+/**
+ * 登记一个"此刻真的在看红点"的消费者（`useUnread(enabled)` 生效时调用），返回取消登记
+ * 的函数。**第一个**登记时挂上全站唯一的轮询定时器，**最后一个**离开时撤掉。
+ */
+export function retainUnread(): () => void {
+    active += 1
+    if (timer === null) timer = setInterval(() => { refreshUnread() }, POLL_MS)
+    refreshUnread()
+    return () => {
+        active = Math.max(0, active - 1)
+        if (active === 0 && timer !== null) {
+            clearInterval(timer)
+            timer = null
         }
-        getUnreadSummary()
-            .then((res) => {
-                if (ok(res)) {
-                    const d = res.data.data
-                    setCounts({
-                        notifications: d?.notifications ?? 0,
-                        messages: d?.messages ?? 0,
-                        total: d?.total ?? 0,
-                    })
-                } else {
-                    // 未登录/失败：不显示红点，也不清空成 0 后再也不刷新（下次轮询还会再试）
-                    setCounts({ notifications: 0, messages: 0, total: 0 })
-                }
-            })
-            .catch(() => setCounts({ notifications: 0, messages: 0, total: 0 }))
-    }, [enabled])
+    }
+}
+
+/**
+ * 拉一次未读汇总（并发去重 + 未登录即清空）。
+ * 失败按 0 处理（见头注）：不清成"读到了 0 条"，也不留一个过期数字在红点上，
+ * 下一次轮询还会再试。
+ */
+export function refreshUnread(): Promise<void> {
+    if (typeof window === 'undefined' || !active) return Promise.resolve()
+    if (!getToken()) {
+        // 不是失败，是"这台机器上没有账号可言" ⇒ 清空（红点不该在未登录时亮着）
+        setSnap(EMPTY)
+        return Promise.resolve()
+    }
+    if (inflight) return inflight
+    const p: Promise<void> = getUnreadSummary()
+        .then((res) => {
+            if (ok(res)) setSnap(pick(res.data.data))
+            else setSnap(EMPTY)
+        })
+        .catch(() => setSnap(EMPTY))
+        .finally(() => { if (inflight === p) inflight = null })
+    inflight = p
+    return p
+}
+
+/**
+ * 订阅未读数。
+ * @param enabled 该显示位置现在是否真的要看红点（未登录 / 窗没开 / 这一页不显示红点 → false）。
+ *                `false` 时**不登记**（一次请求都不发）且返回 0，与旧的"未登录红点不亮"一致。
+ */
+export function useUnread(enabled: boolean): { counts: UnreadSummary; refresh: () => void } {
+    const [seen, setSeen] = useState<UnreadSummary>(() => snap)
+
+    useEffect(() => subscribe(() => { setSeen(snap) }), [])
 
     useEffect(() => {
-        if (!enabled) {
-            setCounts({ notifications: 0, messages: 0, total: 0 })
-            return
-        }
-        refresh()
-        const timer = setInterval(refresh, POLL_MS)
-        const onVis = () => { if (!document.hidden) refresh() }
-        window.addEventListener(UNREAD_CHANGED_EVENT, refresh)
-        window.addEventListener(AGENT_TURN_DONE_EVENT, refresh)
-        document.addEventListener('visibilitychange', onVis)
-        return () => {
-            clearInterval(timer)
-            window.removeEventListener(UNREAD_CHANGED_EVENT, refresh)
-            window.removeEventListener(AGENT_TURN_DONE_EVENT, refresh)
-            document.removeEventListener('visibilitychange', onVis)
-        }
-    }, [enabled, refresh])
+        if (!enabled) return
+        return retainUnread()
+    }, [enabled])
 
-    return { counts, refresh }
+    return {
+        counts: enabled ? seen : EMPTY,
+        refresh: useCallback(() => { refreshUnread() }, []),
+    }
+}
+
+/** 供测试与排障：当前 store 的快照（`active` = 几个消费者在看；`polling` = 定时器在不在） */
+export function unreadDebug(): {
+    counts: UnreadSummary; active: number; polling: boolean; subscribers: number
+} {
+    return { counts: snap, active, polling: timer !== null, subscribers: subs.size }
 }
