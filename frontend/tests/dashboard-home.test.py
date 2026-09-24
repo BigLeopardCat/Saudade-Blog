@@ -492,6 +492,11 @@ with sync_playwright() as p:
 
     print("⑩ 新增一行 / 空行自动回收")
     before = len(row_texts(pg))
+    # 按钮上只有字（20260924 二轮：撤掉那个 + 号图标）
+    check("「新增一行」按钮上没有图标",
+          pg.locator(".todo-add .anticon").count() == 0
+          and pg.locator(".todo-add").inner_text().strip() == "新增一行",
+          pg.locator(".todo-add").inner_text().strip())
     pg.click(".todo-add")
     pg.wait_for_timeout(300)
     check("点「新增一行」多出一行", len(row_texts(pg)) == before + 1,
