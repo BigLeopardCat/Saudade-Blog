@@ -14,8 +14,13 @@
 而本沙箱只关心**右栏**——被断言的就是右栏自己。
 注意视口必须 > 1530px：`.right` 在 1530px 以下整块 `display:none`（媒体查询）。
 
+**样本日期全部相对"今天"生成**：逾期/今天/未来三档要验"按日期分组 + 逾期高亮"，
+写死日期的话这份用例过一天就会自己变红。
+
 用法：python3 frontend/tests/dashboard-home.test.py
 """
+import datetime
+import json
 import pathlib
 import shutil
 import subprocess
@@ -35,6 +40,35 @@ def check(desc, cond, detail=""):
     print(("  ✅ " if cond else "  ❌ ") + desc + (f"  [{detail}]" if detail else ""))
     if not cond:
         FAILS.append(desc)
+
+
+# ── 样本：日期全部相对"今天" ────────────────────────────────────────────────
+TODAY = datetime.date.today()
+CN_WEEK = "一二三四五六日"
+
+
+def day(offset: int) -> str:
+    return (TODAY + datetime.timedelta(days=offset)).isoformat()
+
+
+def cn_label(offset: int) -> str:
+    """和组件里 dayjs(d).locale('zh-cn').format('M月D日 dddd') 对齐"""
+    d = TODAY + datetime.timedelta(days=offset)
+    return f"{d.month}月{d.day}日 星期{CN_WEEK[d.isoweekday() - 1]}"
+
+
+OVERDUE, TOMORROW, LATER = day(-4), day(1), day(2)
+SEED = [
+    {"id": 1, "text": "逾期的一条", "done": False, "date": OVERDUE},
+    {"id": 2, "text": "今天要做的", "done": False, "date": day(0)},
+    {"id": 3, "text": "今天这条已经做完了", "done": True, "date": day(0)},
+    {"id": 4, "text": "明天开会记得带电脑和充电器", "done": False, "date": TOMORROW},
+    {"id": 5, "text": "没排期的一条", "done": False},
+    {"id": 6, "text": "后天一堆事1", "done": False, "date": LATER},
+    {"id": 7, "text": "后天一堆事2", "done": False, "date": LATER},
+    {"id": 8, "text": "后天一堆事3", "done": False, "date": LATER},
+]
+EMPTY_DAY = day(-1)          # 没有任何待办的一天（验"空格子不画列表"）
 
 
 def build_sandbox() -> pathlib.Path:
@@ -121,14 +155,45 @@ URL = SANDBOX.as_uri() + "/index.html"
 
 from playwright.sync_api import sync_playwright  # noqa: E402
 
+
+def row_texts(pg):
+    """按渲染顺序取出所有待办行里的文字"""
+    return pg.eval_on_selector_all(".todo-row .todo-text", "els => els.map(e => e.value)")
+
+
+def cell(pg, iso):
+    return pg.evaluate("""(title) => {
+      const c = document.querySelector(`.ant-picker-cell[title="${title}"]`);
+      if (!c) return null;
+      const r = c.getBoundingClientRect();
+      const lis = [...c.querySelectorAll('.events li')];
+      return {
+        texts: lis.map(li => li.textContent),
+        classes: lis.map(li => li.className),
+        hasEvents: !!c.querySelector('.events'),
+        cellRight: r.right,
+        maxLiRight: lis.length ? Math.max(...lis.map(li => li.getBoundingClientRect().right)) : 0,
+        height: r.height,
+      };
+    }""", iso)
+
+
 with sync_playwright() as p:
     br = p.chromium.launch()
     # 必须 > 1530px：`.right` 在更窄的视口下整块 display:none
     pg = br.new_page(viewport={"width": 1600, "height": 1000})
     errs = []
     pg.on("pageerror", lambda e: errs.append(str(e)))
+    # 预置待办（不预置 dashboard_list_title，好验标题的默认值）。
+    # 注意是**双重** json.dumps：要落进 localStorage 的是一个 JSON 文本，
+    # 所以注入的 JS 里那一段必须是字符串字面量（单层 dumps 得到的是数组字面量，
+    # setItem 会把它按 Array.prototype.toString 拼成 "[object Object],…"）。
+    pg.add_init_script(
+        "localStorage.setItem('dashboard_todos', %s);"
+        "localStorage.removeItem('dashboard_list_title');"
+        % json.dumps(json.dumps(SEED, ensure_ascii=False)))
     pg.goto(URL)
-    pg.wait_for_timeout(600)   # Typed.js 打字机 + antd 日历挂载
+    pg.wait_for_timeout(800)   # Typed.js 打字机 + antd 日历挂载
 
     print("① 页面活着")
     check("无 JS 运行时报错", not errs, "; ".join(errs[:2]))
@@ -177,6 +242,166 @@ with sync_playwright() as p:
           and geo["todo"]["r"] <= geo["right"]["r"] + 1)
     check("日历有实际高度（不是被压成 0）", geo["cal"]["h"] > 200,
           f"{geo['cal']['h']:.0f}px")
+
+    print("⑤ 日历格子里直接写待办文字")
+    today_cell = cell(pg, day(0))
+    late_cell = cell(pg, OVERDUE)
+    later_cell = cell(pg, LATER)
+    empty_cell = cell(pg, EMPTY_DAY)
+    check("今天那格列出两条待办文字",
+          today_cell["texts"] == ["今天要做的", "今天这条已经做完了"], str(today_cell["texts"]))
+    check("· 已完成的那条带 todo-done",
+          any("todo-done" in c for c in today_cell["classes"]), str(today_cell["classes"]))
+    check("逾期那格带 todo-overdue（红）",
+          any("todo-overdue" in c for c in late_cell["classes"]), str(late_cell["classes"]))
+    check("一天超过两条时折成「+N 条」",
+          later_cell["texts"] == ["后天一堆事1", "后天一堆事2", "+1 条"],
+          str(later_cell["texts"]))
+    check("没有待办的那格不画列表（返回 null，不是空 ul）",
+          empty_cell["hasEvents"] is False)
+    over = {k: round(c["maxLiRight"] - c["cellRight"], 1)
+            for k, c in (("今天", today_cell), ("逾期", late_cell), ("后天", later_cell))}
+    check("格子里的文字不撑出格子（截断在格内）",
+          all(v <= 1 for v in over.values()), str(over))
+    check("格子高度够放两行（> 40px，旧样式是死高 40px）",
+          later_cell["height"] > 46, f"{later_cell['height']:.0f}px")
+
+    print("⑥ 点日期 = 中文行内快添（不再是英文弹窗）")
+    pg.locator(f'.ant-picker-cell[title="{LATER}"]').click()
+    pg.wait_for_timeout(300)
+    check("出现快添栏", pg.locator(".calQuick").count() == 1)
+    check("文案是中文的「M月D日 · 加一条」",
+          pg.locator(".calQuick-label").inner_text().strip().endswith("加一条")
+          and f"{int(LATER[5:7])}月{int(LATER[8:10])}日" in pg.locator(".calQuick-label").inner_text(),
+          pg.locator(".calQuick-label").inner_text())
+    check("输入框自动聚焦", pg.evaluate(
+        "() => document.activeElement && document.activeElement.closest('.calQuick') !== null"))
+    check("不再弹英文的 Select Date 确认框",
+          pg.locator(".ant-modal-confirm-title").count() == 0)
+    pg.fill(".calQuick input", "快添的一条")
+    pg.keyboard.press("Enter")
+    pg.wait_for_timeout(300)
+    check("回车即添加（落进这一天）", "快添的一条" in row_texts(pg))
+    check("添加后快添栏留着、输入框已清空（方便连着加）",
+          pg.locator(".calQuick").count() == 1
+          and pg.input_value(".calQuick input") == "")
+    check("格子里的计数跟着涨（+1 条 → +2 条）",
+          cell(pg, LATER)["texts"][-1] == "+2 条", str(cell(pg, LATER)["texts"]))
+    pg.click(".calQuick button:has-text('取消')")
+    pg.wait_for_timeout(200)
+    check("取消后快添栏收起", pg.locator(".calQuick").count() == 0)
+    # 收尾：把快添的那条删掉，别影响后面的行数断言
+    pg.evaluate("""() => {
+      const raw = JSON.parse(localStorage.getItem('dashboard_todos'));
+      localStorage.setItem('dashboard_todos', JSON.stringify(raw.filter(t => t.text !== '快添的一条')));
+    }""")
+
+    print("⑦ 待办按日期分组、逾期组标红")
+    pg.reload()
+    pg.wait_for_timeout(700)
+    heads = pg.eval_on_selector_all(".todo-group-head", "els => els.map(e => e.textContent)")
+    check("分组顺序 = 已逾期 / 今天 / 明天 / 后天 / 未排期",
+          heads == ["已逾期1", "今天2", cn_label(1) + "1", cn_label(2) + "3", "未排期1"],
+          str(heads))
+    check("逾期组头带 is-overdue 且是红字",
+          pg.eval_on_selector(".todo-group-head.is-overdue",
+                              "el => getComputedStyle(el).color") == "rgb(212, 56, 13)",
+          pg.eval_on_selector(".todo-group-head.is-overdue", "el => getComputedStyle(el).color"))
+    check("逾期组里每条都标了自己是哪天（M/D）",
+          pg.eval_on_selector_all(".todo-group-head.is-overdue ~ .todo-row .todo-date",
+                                  "els => els.map(e => e.textContent)") ==
+          [f"{int(OVERDUE[5:7])}/{int(OVERDUE[8:10])}"])
+
+    print("⑧ 新增一行 / 空行自动回收")
+    before = len(row_texts(pg))
+    pg.click(".todo-add")
+    pg.wait_for_timeout(300)
+    check("点「新增一行」多出一行", len(row_texts(pg)) == before + 1,
+          f"{before} → {len(row_texts(pg))}")
+    check("新行自动聚焦", pg.evaluate(
+        "() => document.activeElement && document.activeElement.closest('.todo-row') !== null"))
+    pg.click(".todoTitle")           # 空行失焦
+    pg.wait_for_timeout(300)
+    check("空行失焦后自动收掉，不留空壳", len(row_texts(pg)) == before,
+          f"{len(row_texts(pg))}")
+
+    print("⑨ 删除要二次确认")
+    target = row_texts(pg)[0]
+    pg.locator(".todo-row").first.locator(".todo-del").click()
+    pg.wait_for_timeout(300)
+    check("弹出确认框（中文）", "删掉这条待办？" in pg.locator("body").inner_text())
+    check("还没点确定时那行还在（删除不是点一下就没）",
+          target in row_texts(pg), str(row_texts(pg)))
+    # antd 会在两个汉字之间插一个空格（"删 除"），按 :has-text 匹配不上，按类名点
+    pg.click(".ant-modal-confirm-btns .ant-btn-primary")
+    pg.wait_for_timeout(400)
+    check("确定后才真的删掉", target not in row_texts(pg), str(row_texts(pg)))
+
+    print("⑩ 拖拽排序（同组内换位、跨组不动）")
+    # 拖拽要**分步、跨帧**发：dragstart 里 setDragId 是 React 状态更新，
+    # 四个事件挤在同一个同步任务里时（连续事件优先级不进同步 flush），
+    # drop 处理器闭包里读到的 dragId 还是 null，整段拖拽会静默失效——
+    # 那是我第一版用例的假失败（组件本身没问题）。步与步之间留一帧。
+    def drag_start(src_text):
+        pg.evaluate("""(srcText) => {
+          const src = [...document.querySelectorAll('.todo-row')]
+            .find(r => r.querySelector('.todo-text')?.value === srcText);
+          window.__src = src;
+          window.__dt = window.__dt || new DataTransfer();
+          src.querySelector('.todo-grip').dispatchEvent(
+            new DragEvent('dragstart', {bubbles: true, cancelable: true, dataTransfer: window.__dt}));
+        }""", src_text)
+        pg.wait_for_timeout(150)
+
+    def drag_over(dst_text):
+        """返回 dispatchEvent 的结果：preventDefault 被调用过才是 false（=这一格接这一拖）"""
+        accepted = pg.evaluate("""(dstText) => {
+          const dst = [...document.querySelectorAll('.todo-row')]
+            .find(r => r.querySelector('.todo-text')?.value === dstText);
+          return dst.dispatchEvent(
+            new DragEvent('dragover', {bubbles: true, cancelable: true, dataTransfer: window.__dt}));
+        }""", dst_text)
+        pg.wait_for_timeout(60)
+        return accepted
+
+    def drop_on(dst_text):
+        pg.evaluate("""(dstText) => {
+          const dst = [...document.querySelectorAll('.todo-row')]
+            .find(r => r.querySelector('.todo-text')?.value === dstText);
+          dst.dispatchEvent(
+            new DragEvent('drop', {bubbles: true, cancelable: true, dataTransfer: window.__dt}));
+        }""", dst_text)
+        pg.wait_for_timeout(300)
+
+    def drag_end():
+        pg.evaluate("""() => window.__src.querySelector('.todo-grip').dispatchEvent(
+          new DragEvent('dragend', {bubbles: true, cancelable: true, dataTransfer: window.__dt}))""")
+        pg.wait_for_timeout(150)
+
+    order0 = row_texts(pg)
+    drag_start("后天一堆事3")
+    check("拖起来的那行标了 dragging（看得出在拖谁）",
+          pg.locator(".todo-row.dragging").count() == 1)
+    same_ok = drag_over("后天一堆事1")
+    drop_on("后天一堆事1")
+    drag_end()
+    order1 = row_texts(pg)
+    check("同一组内拖到前面 = 换位",
+          order1.index("后天一堆事3") < order1.index("后天一堆事1"),
+          f"{order0} → {order1}")
+    check("同组的那格接住了这一拖（dragover 里 preventDefault）", same_ok is False)
+    check("其余各条的相对顺序没被打乱",
+          [t for t in order1 if "后天一堆事" not in t]
+          == [t for t in order0 if "后天一堆事" not in t])
+
+    drag_start("后天一堆事3")
+    cross_ok = drag_over("今天要做的")
+    drop_on("今天要做的")
+    drag_end()
+    check("跨组拖不生效（拖等于顺带改日期，那是另一个动作）",
+          row_texts(pg) == order1, str(row_texts(pg)))
+    check("跨组的那格不接（dragover 里不 preventDefault）", cross_ok is True)
+    check("拖完不留 dragging 残影", pg.locator(".todo-row.dragging").count() == 0)
 
     br.close()
 
