@@ -145,15 +145,11 @@ import Home from './src/pages/Dashboard/Home/index.tsx';
 (window as any).__mount = () => createRoot(document.getElementById('root')!).render(<Home />);
 ''', encoding="utf-8")
 
-    # 年度条是**真**组件，它的样式就必须一起编译进来——漏掉它会得到一个和线上
-    # 不一样的右栏（`.process_container` 的 15% 高度解析不出来时，那一条会撑成
-    # 四行文字的高度，量出来的"日历顶"也就不是线上那个数）。
     subprocess.run(["node", "-e",
                     "const s=require('sass'),fs=require('fs');"
                     "const out=process.argv.slice(1,-1).map(p => s.compile(p,{style:'expanded'}).css).join('\\n');"
                     "fs.writeFileSync(process.argv[process.argv.length-1], out);",
-                    str(FE / HOME_SASS), str(FE / "src/components/theYearPass/index.sass"),
-                    str(sb / "home.css")],
+                    str(FE / HOME_SASS), str(sb / "home.css")],
                    cwd=str(FE), check=True)
 
     subprocess.run([str(FE / "node_modules/.bin/esbuild"), "entry.tsx",
@@ -242,20 +238,19 @@ with sync_playwright() as p:
         if (!el) return null; const r = el.getBoundingClientRect();
         return {t: r.top, b: r.bottom, l: r.left, r: r.right, w: r.width, h: r.height}; };
       return { cal: b('.right .ant-picker-calendar'), todo: b('.right .cardInfo'),
-               year: b('.right .process_container'), right: b('.right') };
+               right: b('.right') };
     }""")
     gap = geo["todo"]["t"] - geo["cal"]["b"]
     check("日历在待办卡上方", gap >= 0,
           f"日历底 {geo['cal']['b']:.0f} / 待办顶 {geo['todo']['t']:.0f}")
     # 旧布局（space-between）下这个缝实测近 300px：日历被顶到最上、待办被压到最下。
     check("两段之间只隔一个 gap（≤ 40px），不再是撑出来的空档", gap <= 40, f"{gap:.0f}px")
-    # 注意：年度条（.process_container）眼下量出来是 **0 高度**——它的 `height: 15%`
-    # 挂在一个由内容决定高度的 `.calWrap` 上，百分比解析不出参照物就退化成 auto，
-    # 里面唯一的孩子又是绝对定位 ⇒ 整条被 overflow:hidden 裁没。这是**既有**形态
-    # （撤箴言之前就是这样），不是本批引入的；此处只锁"日历紧接其后"。
-    check("日历紧接年度条下方（中间没有空档）",
-          geo["cal"]["t"] - geo["year"]["b"] <= 20,
-          f"年度条底 {geo['year']['b']:.0f} / 日历顶 {geo['cal']['t']:.0f}")
+    # 年度进度条已删（20260924）：它一直量出 0 高度、在生产里根本不可见
+    # （height:15% 挂在由内容决定高度的父块上 ⇒ 解析成 auto，孩子又全是绝对定位），
+    # 主人拍板撤掉。这里锁"日历紧贴右栏顶部"，别再让它上面凭空多出一段。
+    check("日历紧贴右栏顶部（上面没有多余的一段）",
+          geo["cal"]["t"] - geo["right"]["t"] <= 40,
+          f"日历顶 {geo['cal']['t']:.0f} / 右栏顶 {geo['right']['t']:.0f}")
     check("日历落在右栏上半段（撤掉箴言后确实上移了）",
           geo["cal"]["t"] < geo["right"]["t"] + geo["right"]["h"] / 2,
           f"日历顶 {geo['cal']['t']:.0f} / 右栏半高 "
