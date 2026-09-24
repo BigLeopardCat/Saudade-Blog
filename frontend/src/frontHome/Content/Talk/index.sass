@@ -31,10 +31,13 @@
     line-height: 1.15
     color: var(--font-p-color)
     .talkTime-year
-      font-size: 12px
-      letter-spacing: .06em
-      // 年份是"哪一年"的量级信息，压淡一档，不跟月.日抢视线
-      opacity: .65
+      // 20260924 四轮：12px 主人嫌小（同屏渲染 12/14/16/18 四档对比后定的 16px）。
+      // 16 与月日 20 仍是主次关系（比 18 那种"两个数字一样大、读成平铺的一串"清楚），
+      // 同时是这一档里最省眼力的；不透明度一起从 .65 提到 .8——12px 时压那么淡还有
+      // "退到后面"的作用，字号上来之后再压就只是发灰了。
+      font-size: 16px
+      letter-spacing: .04em
+      opacity: .8
     .talkTime-day
       font-size: 20px
   h2
