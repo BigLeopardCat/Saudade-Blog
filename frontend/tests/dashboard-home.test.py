@@ -35,6 +35,15 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 FE = ROOT / "frontend"
 HOME_SASS = "src/pages/Dashboard/Home/index.sass"
 
+# 20260924 四轮：**必须连博客头那份 sass 一起编译**。原因是实测出来的一个真事故——
+# `frontHome/Head/index.sass` 里留着一整块**过期的** `.home {...}`（日历 + 右栏 + 待办卡
+# 的老版本，140 行），它选择器与 Home/index.sass 逐字相同、特异性也相同，而在生产
+# bundle 里**排在后面**（证据：线上 CSS 里 `.home .cardInfo` 出现在字节 100983 与 203888
+# 两处，后者的 padding/height/overflow 把新的那份盖掉了）。只编译 Home 一份 =
+# 复现不了这条级联，于是"待办卡右移 30px、内边距 10px"这种线上真缺陷在沙箱里全绿。
+# 顺序按生产实证：Home 在前、Head 在后。
+SASS_FILES = [HOME_SASS, "src/frontHome/Head/index.sass"]
+
 DEFINE = ('import.meta.env={"VITE_HTTP_BASEURL":"","VITE_CDN_BASEURL":"",'
           '"MODE":"production","DEV":false,"PROD":true,"BASE_URL":"/"}')
 
@@ -180,7 +189,7 @@ import Home from './src/pages/Dashboard/Home/index.tsx';
                     "const s=require('sass'),fs=require('fs');"
                     "const out=process.argv.slice(1,-1).map(p => s.compile(p,{style:'expanded'}).css).join('\\n');"
                     "fs.writeFileSync(process.argv[process.argv.length-1], out);",
-                    str(FE / HOME_SASS), str(sb / "home.css")],
+                    *[str(FE / f) for f in SASS_FILES], str(sb / "home.css")],
                    cwd=str(FE), check=True)
 
     subprocess.run([str(FE / "node_modules/.bin/esbuild"), "entry.tsx",
@@ -298,12 +307,29 @@ with sync_playwright() as p:
       const b = (sel) => { const el = document.querySelector(sel);
         if (!el) return null; const r = el.getBoundingClientRect();
         return {l: r.left, r: r.right, h: r.height}; };
+      const card = document.querySelector('.right .cardInfo');
+      const cs = getComputedStyle(card);
       return { grid: b('.calWrap .ant-picker-content'), row: b('.todo-row'),
-               scroll: b('.todoBody') };
+               scroll: b('.todoBody'), card: b('.right .cardInfo'),
+               cal: b('.right .ant-picker-calendar'),
+               margin: cs.margin, padding: cs.padding, overflowY: cs.overflowY };
     }""")
     check("待办行与日历网格左边对齐",
           abs(align["row"]["l"] - align["grid"]["l"]) <= 2,
           f"待办 {align['row']['l']:.1f} / 日历 {align['grid']['l']:.1f}")
+    # 20260924 四轮：上面那条断言曾经**假绿**过。真事故是 .cardInfo 被 Head 那份过期
+    # 拷贝盖住：`margin:30px` 把卡片整体右移 30px（左边比日历多 30、右边还探出右栏），
+    # `padding:10px` 再让内容多缩 10px。只量"行 vs 网格"在有 1px 边框的那一版恰好够用，
+    # 量不到"卡片盒本身跑了"。这两条直接钉卡片自己的盒：左右都要与日历严格同边。
+    check("待办卡与日历同左边（卡片自己没有把盒推开的外边距）",
+          abs(align["card"]["l"] - align["cal"]["l"]) <= 1,
+          f"卡片 {align['card']['l']:.1f} / 日历 {align['cal']['l']:.1f}")
+    check("待办卡与日历同右边（没有探出右栏）",
+          abs(align["card"]["r"] - align["cal"]["r"]) <= 1,
+          f"卡片 {align['card']['r']:.1f} / 日历 {align['cal']['r']:.1f}")
+    check("待办卡左右内边距为 0、外边距为 0（对齐靠盒子本身，不靠负边距找补）",
+          align["margin"] == "0px" and align["padding"].startswith("10px 0px"),
+          f"margin={align['margin']} padding={align['padding']}")
     check("待办滚动区右边与日历网格同边（滚动条 6px 留在这条边的内侧）",
           abs(align["scroll"]["r"] - align["grid"]["r"]) <= 2,
           f"滚动区 {align['scroll']['r']:.1f} / 日历 {align['grid']['r']:.1f}")
