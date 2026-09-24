@@ -1,4 +1,4 @@
-import { DeleteOutlined, HolderOutlined, LeftOutlined, PlusOutlined, RightOutlined } from '@ant-design/icons';
+import { DeleteOutlined, HolderOutlined, LeftOutlined, RightOutlined } from '@ant-design/icons';
 import {Calendar, Card, ConfigProvider, Checkbox, Input, Modal, Avatar, Select, Button, message} from "antd";
 import dayjs from "dayjs";
 import localeData from "dayjs/plugin/localeData";
@@ -461,7 +461,7 @@ const Home = () => {
                             之后重试读回来就把它冲掉了（比"按钮点了没反应"更让人困惑） */}
                         <Button className="todo-add" type="dashed" block size="small"
                                 disabled={!loaded}
-                                icon={<PlusOutlined />} onClick={addBlankRow}>新增一行</Button>
+                                onClick={addBlankRow}>新增一行</Button>
                    </div>
                </Card>
            </div>
