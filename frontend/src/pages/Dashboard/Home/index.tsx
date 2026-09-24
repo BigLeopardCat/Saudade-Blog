@@ -1,5 +1,5 @@
-import { DeleteOutlined, HolderOutlined, PlusOutlined } from '@ant-design/icons';
-import {Calendar, Card, ConfigProvider, Checkbox, Input, Modal, Avatar, Select, Radio, Button, message} from "antd";
+import { DeleteOutlined, HolderOutlined, LeftOutlined, PlusOutlined, RightOutlined } from '@ant-design/icons';
+import {Calendar, Card, ConfigProvider, Checkbox, Input, Modal, Avatar, Select, Button, message} from "antd";
 import dayjs from "dayjs";
 import localeData from "dayjs/plugin/localeData";
 dayjs.extend(localeData);
@@ -27,8 +27,8 @@ type Todo = {id: number, text: string, done: boolean, date?: string};
 
 // 逾期 = 有日期、还没做完、且日期在今天之前
 const isOverdue = (t: Todo, today: string) => !!t.date && !t.done && t.date < today;
-const todoClass = (t: Todo, today: string) =>
-    'todo-item' + (t.done ? ' todo-done' : isOverdue(t, today) ? ' todo-overdue' : '');
+// （原先还有个 todoClass：给日历格子里那两行待办文字拼 class 用的。格子改成小圆点
+// 之后没有消费方了，随「格子里写文字」那条路一起删掉——留着就是死代码。）
 
 // 本地列表 → 发往服务端的那份（线上口径 {text, done, date}）：
 // 空行是前端的临时态（"新增一行"里还没写字），**不发也不存**——服务端同样会跳过。
@@ -206,23 +206,42 @@ const Home = () => {
         setDraft('');   // 快添栏留着不关，方便连着加第二条
     };
 
-    // 日历格子：直接把待办文字写进格子里（最多两条，多的折成「+N 条」）。
-    // 已完成划掉变灰、逾期标红——扫一眼就知道哪天有事、哪天欠着。
-    const dateCellRender = (value: Dayjs) => {
+    // 点了日历上某一天 → 待办卡里若有那天的分组，就把它带到视野里。
+    // 只滚不改数据：点日期的主语义仍是"给这天加一条"（下面那条快添栏），
+    // 这里只是让"那天都有什么"不用自己翻。
+    //
+    // 锚点用的是分组自己的 key，而**已经逾期的那几天在卡里是并成一组的**（key='overdue'，
+    // 见上面的 groups）——所以过去的日期要落到 'overdue' 上；直接拿 ISO 日期去找
+    // 会一个也匹配不上（点红点那天什么都不会发生）。
+    useEffect(() => {
+        if (!pendingDate) return;
+        const key = pendingDate < today ? 'overdue' : pendingDate;
+        const el = document.querySelector(`.cardInfo .todo-group[data-date="${key}"]`);
+        el?.scrollIntoView({ block: 'nearest' });
+    }, [pendingDate, today]);
+
+    // 日历格子：只画小圆点，不写待办文字（20260924 二轮）。
+    //
+    // 上一轮把待办文字塞进格子，代价是格子必须撑到 46px 以上（整块日历 383px），
+    // 而 antd 的「今天」标记是挂在格子上的 1px 描边环（`.ant-picker-cell-inner::before`）——
+    // 格子一变成大方块，那圈环就跟着放大成 57×58 的方框、日期数字缩到左上角，
+    // 于是"今天"既看不出是几号、标记看着也偏了。现在格子回到 26px 的小圆、
+    // 数字居中，标记重新贴着数字；待办改成格子下沿的点：最多 3 个，
+    // 未完成紫 / 逾期红 / 已完成灰，鼠标停上去给出那天的待办清单。
+    const dateDotRender = (value: Dayjs) => {
         const dateStr = value.format('YYYY-MM-DD');
         const list = todos.filter(t => t.date === dateStr);
         if (!list.length) return null;
-        const shown = list.slice(0, 2);
+        // 点最多三个：先显示要紧的（逾期 → 未完成 → 已完成）
+        const rank = (t: Todo) => (isOverdue(t, today) ? 0 : t.done ? 2 : 1);
+        const dots = [...list].sort((a, b) => rank(a) - rank(b)).slice(0, 3);
         return (
-            <ul className="events">
-                {shown.map(item => (
-                    <li key={item.id} className={todoClass(item, today)} title={item.text}>
-                        {item.text}
-                    </li>
+            <span className="calDots" title={list.map(t => t.text).join('、')}>
+                {dots.map(t => (
+                    <i key={t.id}
+                       className={'calDot' + (isOverdue(t, today) ? ' is-overdue' : t.done ? ' is-done' : '')} />
                 ))}
-                {list.length > shown.length &&
-                    <li className="events-more">+{list.length - shown.length} 条</li>}
-            </ul>
+            </span>
         );
     };
 
@@ -276,76 +295,69 @@ const Home = () => {
                        <Calendar
                             fullscreen={false}
                             onSelect={onSelectDate}
-                            cellRender={dateCellRender}
-                            headerRender={({ value, type, onChange, onTypeChange }) => {
-                                const start = 0;
-                                const end = 12;
-                                const monthOptions = [];
-
+                            cellRender={dateDotRender}
+                            headerRender={({ value, onChange }) => {
+                                const months: string[] = [];
                                 const localeData = value.localeData();
-                                const months = [];
                                 for (let i = 0; i < 12; i++) {
-                                    months.push(localeData.monthsShort(value.month(i)));
+                                    // monthsShort 的返回类型是 dayjs 的 MonthNames 联合（单月时是
+                                    // 字符串，但类型没这么窄），String() 一下省去一处 as
+                                    months.push(String(localeData.monthsShort(value.month(i))));
                                 }
-
-                                for (let i = start; i < end; i++) {
-                                    monthOptions.push(
-                                        <Select.Option key={i} value={i} className="month-item">
-                                            {months[i]}
-                                        </Select.Option>,
-                                    );
-                                }
-
                                 const year = value.year();
                                 const month = value.month();
-                                const options = [];
+                                const years = [];
                                 for (let i = year - 10; i < year + 10; i += 1) {
-                                    options.push(
+                                    years.push(
                                         <Select.Option key={i} value={i} className="year-item">
                                             {i}
                                         </Select.Option>,
                                     );
                                 }
+                                // 头部改成一行装得下的紧凑版（20260924 二轮）：‹ 年月 › 今天。
+                                // 原先是「年下拉 + 月下拉 + 今天也要加油呀😀 + 月/年切换」四项挤一行、
+                                // 且**没有翻月按钮**（自定义 headerRender 会把 antd 自带的 ‹ › 顶掉，
+                                // 只能靠下拉跳月）。现在补上 ‹ ›、加一个「今天」，腾出的位置去掉
+                                // 那句鸡汤与 月/年 切换——年视图是另一套 12 格面板，与这套紧凑样式不搭。
                                 return (
                                     <div className="calHead">
                                         <div className="calHead-left">
+                                            <Button className="calNav" size="small" type="text"
+                                                    aria-label="上个月"
+                                                    icon={<LeftOutlined />}
+                                                    onClick={() => onChange(value.clone().add(-1, 'month'))} />
                                             <Select
                                                 size="small"
                                                 popupMatchSelectWidth={false}
                                                 className="my-year-select"
                                                 value={year}
                                                 onChange={(newYear) => {
-                                                    const now = value.clone().year(newYear);
-                                                    onChange(now);
+                                                    onChange(value.clone().year(newYear));
                                                 }}
                                             >
-                                                {options}
+                                                {years}
                                             </Select>
                                             <Select
                                                 size="small"
                                                 popupMatchSelectWidth={false}
                                                 value={month}
                                                 onChange={(newMonth) => {
-                                                    const now = value.clone().month(newMonth);
-                                                    onChange(now);
+                                                    onChange(value.clone().month(newMonth));
                                                 }}
                                             >
-                                                {monthOptions}
+                                                {months.map((m, i) => (
+                                                    <Select.Option key={i} value={i} className="month-item">
+                                                        {m}
+                                                    </Select.Option>
+                                                ))}
                                             </Select>
+                                            <Button className="calNav" size="small" type="text"
+                                                    aria-label="下个月"
+                                                    icon={<RightOutlined />}
+                                                    onClick={() => onChange(value.clone().add(1, 'month'))} />
                                         </div>
-                                        
-                                        <div className="calHead-tip">
-                                           今天也要加油呀😀
-                                        </div>
-
-                                        <Radio.Group
-                                            size="small"
-                                            onChange={(e) => onTypeChange(e.target.value)}
-                                            value={type}
-                                        >
-                                            <Radio.Button value="month">月</Radio.Button>
-                                            <Radio.Button value="year">年</Radio.Button>
-                                        </Radio.Group>
+                                        <Button className="calToday" size="small" type="text"
+                                                onClick={() => onChange(dayjs())}>今天</Button>
                                     </div>
                                 );
                             }}
@@ -392,7 +404,7 @@ const Home = () => {
                         {loaded && groups.length === 0 &&
                             <div className="todo-empty">还没有待办，点下面的「新增一行」</div>}
                         {groups.map(g => (
-                            <div className="todo-group" key={g.key}>
+                            <div className="todo-group" key={g.key} data-date={g.key}>
                                 <div className={'todo-group-head' + (g.overdue ? ' is-overdue' : '')}>
                                     <span>{g.label}</span>
                                     <span className="todo-group-n">{g.items.length}</span>

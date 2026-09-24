@@ -189,18 +189,36 @@ def row_texts(pg):
 
 
 def cell(pg, iso):
+    """一格日历：盒子的几何、日期数字的位置、小圆点、以及「今天」那圈环的真实落点。"""
     return pg.evaluate("""(title) => {
       const c = document.querySelector(`.ant-picker-cell[title="${title}"]`);
       if (!c) return null;
-      const r = c.getBoundingClientRect();
-      const lis = [...c.querySelectorAll('.events li')];
+      const bx = (el) => { if (!el) return null; const r = el.getBoundingClientRect();
+        return {t: r.top, l: r.left, r: r.right, b: r.bottom, w: r.width, h: r.height,
+                cx: r.left + r.width / 2, cy: r.top + r.height / 2}; };
+      const inner = c.querySelector('.ant-picker-cell-inner');
+      const val = c.querySelector('.ant-picker-calendar-date-value');
+      const dots = [...c.querySelectorAll('.calDot')];
+      const dotsWrap = c.querySelector('.calDots');
+      const ring = inner ? getComputedStyle(inner, '::before') : null;
+      const si = inner ? getComputedStyle(inner) : null;
+      const sv = val ? getComputedStyle(val) : null;
       return {
-        texts: lis.map(li => li.textContent),
-        classes: lis.map(li => li.className),
-        hasEvents: !!c.querySelector('.events'),
-        cellRight: r.right,
-        maxLiRight: lis.length ? Math.max(...lis.map(li => li.getBoundingClientRect().right)) : 0,
-        height: r.height,
+        selected: c.className.includes('ant-picker-cell-selected'),
+        dots: dots.map(d => d.className),
+        dotColors: dots.map(d => getComputedStyle(d).backgroundColor),
+        dotTitle: dotsWrap ? dotsWrap.getAttribute('title') : null,
+        hasText: !!c.querySelector('.events'),
+        text: c.textContent.trim(),
+        cell: bx(c), inner: bx(inner), val: bx(val),
+        dotsBox: dots.length ? bx(dots[0]) : null,
+        innerRadius: inner ? getComputedStyle(inner).borderRadius : null,
+        innerBg: si ? si.backgroundColor : null,
+        valColor: sv ? sv.color : null,
+        valWeight: sv ? sv.fontWeight : null,
+        ring: ring ? {border: ring.border, radius: ring.borderRadius, pos: ring.position,
+                      top: ring.top, left: ring.insetInlineStart,
+                      right: ring.insetInlineEnd, bottom: ring.bottom} : null,
       };
     }""", iso)
 
@@ -263,33 +281,82 @@ with sync_playwright() as p:
           and geo["todo"]["r"] <= geo["right"]["r"] + 1)
     check("日历有实际高度（不是被压成 0）", geo["cal"]["h"] > 200,
           f"{geo['cal']['h']:.0f}px")
+    # 20260924 二轮：格子从 46px 收到 26px、表体高度也不再被 antd 的 256px 定死，
+    # 整块日历 383px → 261px。省下来的高度归待办卡（它是 flex:1，自动吃掉）。
+    check("日历收小了（< 300px，上一轮 383px）", geo["cal"]["h"] < 300,
+          f"{geo['cal']['h']:.0f}px")
+    check("待办卡明显比日历高（省下来的空间确实给了待办）",
+          geo["todo"]["h"] > geo["cal"]["h"] * 2,
+          f"日历 {geo['cal']['h']:.0f} / 待办 {geo['todo']['h']:.0f}")
 
-    print("⑤ 日历格子里直接写待办文字")
+    print("⑤ 日历格子：编号居中在小圆里、待办画成小圆点（20260924 二轮）")
     today_cell = cell(pg, day(0))
     late_cell = cell(pg, OVERDUE)
     later_cell = cell(pg, LATER)
     empty_cell = cell(pg, EMPTY_DAY)
-    check("今天那格列出两条待办文字",
-          today_cell["texts"] == ["今天要做的", "今天这条已经做完了"], str(today_cell["texts"]))
-    check("· 已完成的那条带 todo-done",
-          any("todo-done" in c for c in today_cell["classes"]), str(today_cell["classes"]))
-    check("逾期那格带 todo-overdue（红）",
-          any("todo-overdue" in c for c in late_cell["classes"]), str(late_cell["classes"]))
-    check("一天超过两条时折成「+N 条」",
-          later_cell["texts"] == ["后天一堆事1", "后天一堆事2", "+1 条"],
-          str(later_cell["texts"]))
-    check("没有待办的那格不画列表（返回 null，不是空 ul）",
-          empty_cell["hasEvents"] is False)
-    over = {k: round(c["maxLiRight"] - c["cellRight"], 1)
-            for k, c in (("今天", today_cell), ("逾期", late_cell), ("后天", later_cell))}
-    check("格子里的文字不撑出格子（截断在格内）",
-          all(v <= 1 for v in over.values()), str(over))
-    check("格子高度够放两行（> 40px，旧样式是死高 40px）",
-          later_cell["height"] > 46, f"{later_cell['height']:.0f}px")
+
+    # 上一轮是"把待办文字塞进格子"（.events 里一行一条）。那条路的代价是格子得撑到
+    # 46px 以上，而 antd 的「今天」环是挂在格子上的 —— 格子一大环就跟着放大成方框。
+    check("格子里不再有待办文字（.events 那条路已撤）",
+          not any(c["hasText"] for c in (today_cell, late_cell, later_cell)),
+          str([c["text"] for c in (today_cell, late_cell, later_cell)]))
+
+    check("今天两个待办 → 两个点，其中一个是已完成（is-done）",
+          today_cell["dots"] == ["calDot", "calDot is-done"], str(today_cell["dots"]))
+    check("逾期那格是红点",
+          late_cell["dots"] == ["calDot is-overdue"]
+          and late_cell["dotColors"] == ["rgb(212, 56, 13)"],
+          f"{late_cell['dots']} {late_cell['dotColors']}")
+    check("一天三条 → 正好三个点（上限就是 3）",
+          len(later_cell["dots"]) == 3, str(later_cell["dots"]))
+    check("没有待办的那格不画点", empty_cell["dots"] == [], str(empty_cell["dots"]))
+    check("点的 title 列出那一天的全部待办（点了上限也看得全）",
+          later_cell["dotTitle"] == "后天一堆事1、后天一堆事2、后天一堆事3",
+          str(later_cell["dotTitle"]))
+
+    # 编号居中：格子 → 小圆 → 数字，三层中心必须对得上（"圆形在数字上偏移"就是这么来的）
+    off = {k: round(abs(c["inner"]["cx"] - c["cell"]["cx"]), 1)
+           for k, c in (("今天", today_cell), ("逾期", late_cell), ("后天", later_cell))}
+    check("日期数字在格子里横向居中（偏差 < 1px）",
+          all(v < 1 for v in off.values()), str(off))
+    check("数字被画在一枚 26px 的小圆里（不是整格方块）",
+          round(today_cell["inner"]["w"]) == 26 and round(today_cell["inner"]["h"]) == 26
+          and today_cell["innerRadius"] == "50%",
+          f"{today_cell['inner']['w']:.0f}×{today_cell['inner']['h']:.0f} {today_cell['innerRadius']}")
+    check("点画在格子的下沿（在数字下方，不与数字重叠）",
+          later_cell["dotsBox"]["t"] >= later_cell["inner"]["b"] - 1,
+          f"点顶 {later_cell['dotsBox']['t']:.1f} / 数字底 {later_cell['inner']['b']:.1f}")
+
+    # 「今天」默认是**选中态**（rc-picker 的面板值默认就是今天，实测今天那格同时带
+    # -selected 与 -today）⇒ 它是一枚实心紫圆 + 白字，不是 antd 默认那圈蓝框。
+    # 这不是"环丢了"：环（`.ant-picker-cell-inner::before`）本来就只在今天**不是**
+    # 选中项时才露出来，那一段放到 ⑥ 点了别的日期之后再验。
+    check("今天那格是实心紫圆 + 白字（默认选中，一眼看得出是几号）",
+          today_cell["selected"] and today_cell["innerBg"] == "rgb(197, 135, 188)"
+          and today_cell["valColor"] == "rgb(255, 255, 255)",
+          f"selected={today_cell['selected']} {today_cell['innerBg']} {today_cell['valColor']}")
+    check("格子高度回到紧凑档（≤ 36px，上一轮是 58px）",
+          later_cell["cell"]["h"] <= 36, f"{later_cell['cell']['h']:.0f}px")
 
     print("⑥ 点日期 = 中文行内快添（不再是英文弹窗）")
     pg.locator(f'.ant-picker-cell[title="{LATER}"]').click()
     pg.wait_for_timeout(300)
+
+    # 选了别的一天之后，「今天」失去选中态 —— 这时才轮到 antd 那圈环出场。
+    # 环挂在 `.ant-picker-cell-inner::before`、inset:0：锚点就是那枚 26px 小圆，
+    # 锚错了（格子这层没有定位上下文）它会去贴外层 td 画，那就成了"环跑偏"。
+    unsel = cell(pg, day(0))
+    ring = unsel["ring"]
+    check("今天不再是选中项后，环是紫色圆形、正好贴住数字那枚小圆",
+          (not unsel["selected"]) and ring["border"] == "1px solid rgb(197, 135, 188)"
+          and ring["radius"] == "50%" and ring["pos"] == "absolute"
+          and ring["top"] == "0px" and ring["left"] == "0px"
+          and ring["right"] == "0px" and ring["bottom"] == "0px",
+          str(ring))
+    check("今天那格的数字仍然是加粗的紫色（环之外另给一层强调）",
+          unsel["valColor"] == "rgb(176, 112, 168)" and unsel["valWeight"] == "600",
+          f"{unsel['valColor']} / {unsel['valWeight']}")
+
     check("出现快添栏", pg.locator(".calQuick").count() == 1)
     check("文案是中文的「M月D日 · 加一条」",
           pg.locator(".calQuick-label").inner_text().strip().endswith("加一条")
@@ -306,12 +373,93 @@ with sync_playwright() as p:
     check("添加后快添栏留着、输入框已清空（方便连着加）",
           pg.locator(".calQuick").count() == 1
           and pg.input_value(".calQuick input") == "")
-    check("格子里的计数跟着涨（+1 条 → +2 条）",
-          cell(pg, LATER)["texts"][-1] == "+2 条", str(cell(pg, LATER)["texts"]))
+    check("那天的点仍封顶 3 个，但 title 里已经多了新加这条",
+          len(cell(pg, LATER)["dots"]) == 3
+          and "快添的一条" in (cell(pg, LATER)["dotTitle"] or ""),
+          str(cell(pg, LATER)["dotTitle"]))
     pg.click(".calQuick button:has-text('取消')")
     pg.wait_for_timeout(200)
     check("取消后快添栏收起", pg.locator(".calQuick").count() == 0)
-    print("⑦ 落库：每次改动把整份列表发上去（600ms 防抖之后）")
+
+    print("⑦ 日历头部：翻月 / 回「今天」/ 点日期把那天带进待办卡")
+    # 自定义 headerRender 会把 antd 自带的 ‹ › 顶掉（所以自己长了一套）。三样按契约钉住。
+    check("头部有「‹ › + 年/月下拉 + 今天」",
+          pg.locator(".calHead .calNav").count() == 2
+          and pg.locator(".calHead .ant-select").count() == 2
+          and pg.locator(".calHead .calToday").count() == 1)
+
+    def head_ym(pgx):
+        """头部两个下拉当前显示的年、月（zh-cn 的月份短名就是「9月」这种）"""
+        return pgx.eval_on_selector_all(".calHead .ant-select-selection-item",
+                                        "els => els.map(e => e.textContent.trim())")
+
+    ym = head_ym(pg)
+    check("两栏显示的就是今天的年月", ym == [str(TODAY.year), f"{TODAY.month}月"], str(ym))
+
+    # 上个月：按真实日历算（1 月退一步是去年 12 月），别拿月份数字硬减
+    prev_d = TODAY.replace(day=1) - datetime.timedelta(days=1)
+    pg.click('.calHead .calNav[aria-label="上个月"]')
+    pg.wait_for_timeout(200)
+    check("点 ‹ 退回上个月（跨年也对）",
+          head_ym(pg) == [str(prev_d.year), f"{prev_d.month}月"], str(head_ym(pg)))
+    pg.click('.calHead .calNav[aria-label="下个月"]')
+    pg.wait_for_timeout(200)
+    check("点 › 又回到本月", head_ym(pg) == ym, str(head_ym(pg)))
+
+    # 走远一点，再验「今天」是一步回到今天（而不是"回一格"）
+    pg.click('.calHead .calNav[aria-label="上个月"]')
+    pg.click('.calHead .calNav[aria-label="上个月"]')
+    pg.wait_for_timeout(250)
+    check("连翻两下确实走远了", head_ym(pg) != ym, str(head_ym(pg)))
+    pg.click(".calHead .calToday")
+    pg.wait_for_timeout(250)
+    check("点「今天」一步回到本月", head_ym(pg) == ym, str(head_ym(pg)))
+    check("回来之后今天那格仍是「今天」态（环在）",
+          (cell(pg, day(0))["ring"] or {}).get("radius") == "50%")
+
+    # 下拉换月也得接线（onChange 里是 value.clone().month()，写错就静默不动）
+    pg.locator(".calHead .ant-select").nth(1).click()
+    pg.wait_for_timeout(250)
+    pg.locator('.ant-select-dropdown .ant-select-item-option[title="1月"]').click()
+    pg.wait_for_timeout(250)
+    check("从下拉里挑 1 月能换过去",
+          head_ym(pg) == [str(TODAY.year), "1月"], str(head_ym(pg)))
+    pg.click(".calHead .calToday")
+    pg.wait_for_timeout(250)
+
+    # 点日期 ↔ 待办卡的锚点契约。分组行的 data-date 就是那一组的 key：逾期那几天
+    # 在卡里并成了一组（key='overdue'），所以**过去的日期要落到 'overdue' 上**。
+    keys = pg.eval_on_selector_all(".cardInfo .todo-group",
+                                   "els => els.map(e => e.dataset.date)")
+    check("每个待办分组都带 data-date（就是它在卡里的 key）",
+          keys == ["overdue", day(0), TOMORROW, LATER, "none"], str(keys))
+
+    # 联动＝"只滚不改数据"，所以要**滚得动**才看得见。矮窗口下 `.todoBody` 会真的溢出
+    # （flex:1 + overflow-y:auto）——窗口矮是真实场景，不是为用例造的特例。
+    pg2 = br.new_page(viewport={"width": 1600, "height": 620})
+    pg2.goto(URL)
+    pg2.wait_for_timeout(800)
+    ov = pg2.evaluate("() => { const b = document.querySelector('.cardInfo .todoBody');"
+                      " return b.scrollHeight - b.clientHeight; }")
+    check("矮窗口下待办区确实能滚（否则下面那条是空转）", ov > 20, f"{ov}px")
+    pg2.evaluate("() => { document.querySelector('.cardInfo .todoBody').scrollTop = 1e5; }")
+    pg2.locator(f'.ant-picker-cell[title="{OVERDUE}"]').click()
+    pg2.wait_for_timeout(300)
+    res = pg2.evaluate("""() => {
+      const b = document.querySelector('.cardInfo .todoBody');
+      const g = document.querySelector('.cardInfo .todo-group[data-date="overdue"]');
+      if (!g) return null;
+      const rb = b.getBoundingClientRect(), rg = g.getBoundingClientRect();
+      return {inView: rg.top >= rb.top - 1 && rg.bottom <= rb.bottom + 1,
+              top: b.scrollTop,
+              // 行文字在 <input value> 里，textContent 取不到 —— 按 value 找
+              todo: [...g.querySelectorAll('.todo-row .todo-text')]
+                      .some(i => i.value === '逾期的一条')};
+    }""")
+    check("点一个已逾期的日期 → 滚回卡片顶上的「已逾期」那一组",
+          bool(res) and res["inView"] and res["todo"] and res["top"] < ov, str(res))
+    pg2.close()
+    print("⑧ 落库：每次改动把整份列表发上去（600ms 防抖之后）")
     # 防抖 600ms：上一次改动（回车添加）到现在要等够
     pg.wait_for_timeout(900)
     sent = pg.evaluate("() => window.__lastPut")
@@ -326,7 +474,7 @@ with sync_playwright() as p:
           [r for r in sent if r["text"] == "没排期的一条"][0]["date"] is None)
     check("发出的那份不含空行", all(r["text"].strip() for r in sent))
 
-    print("⑧ 待办按日期分组、逾期组标红")
+    print("⑨ 待办按日期分组、逾期组标红")
     pg.reload()
     pg.wait_for_timeout(700)
     heads = pg.eval_on_selector_all(".todo-group-head", "els => els.map(e => e.textContent)")
@@ -342,7 +490,7 @@ with sync_playwright() as p:
                                   "els => els.map(e => e.textContent)") ==
           [f"{int(OVERDUE[5:7])}/{int(OVERDUE[8:10])}"])
 
-    print("⑨ 新增一行 / 空行自动回收")
+    print("⑩ 新增一行 / 空行自动回收")
     before = len(row_texts(pg))
     pg.click(".todo-add")
     pg.wait_for_timeout(300)
@@ -367,7 +515,7 @@ with sync_playwright() as p:
     check("空行失焦后自动收掉，不留空壳", len(row_texts(pg)) == before,
           f"{len(row_texts(pg))}")
 
-    print("⑩ 删除要二次确认")
+    print("⑪ 删除要二次确认")
     target = row_texts(pg)[0]
     pg.locator(".todo-row").first.locator(".todo-del").click()
     pg.wait_for_timeout(300)
@@ -384,7 +532,7 @@ with sync_playwright() as p:
           sent3 is not None and target not in [r["text"] for r in sent3],
           f"{len(sent3) if sent3 else 0} 条")
 
-    print("⑪ 拖拽排序（同组内换位、跨组不动）")
+    print("⑫ 拖拽排序（同组内换位、跨组不动）")
     # 拖拽要**分步、跨帧**发：dragstart 里 setDragId 是 React 状态更新，
     # 四个事件挤在同一个同步任务里时（连续事件优先级不进同步 flush），
     # drop 处理器闭包里读到的 dragId 还是 null，整段拖拽会静默失效——
@@ -450,7 +598,7 @@ with sync_playwright() as p:
     check("跨组的那格不接（dragover 里不 preventDefault）", cross_ok is True)
     check("拖完不留 dragging 残影", pg.locator(".todo-row.dragging").count() == 0)
 
-    print("⑫ 读失败时不出网（否则空列表会把库里的待办抹掉）")
+    print("⑬ 读失败时不出网（否则空列表会把库里的待办抹掉）")
     # 让下一次 getTodos 失败一次，然后整页重来：这是"库读不到"的真实现场
     pg.evaluate("""() => {
       localStorage.setItem('__failGet', '1');
