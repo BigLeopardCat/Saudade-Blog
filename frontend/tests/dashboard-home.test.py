@@ -504,9 +504,11 @@ with sync_playwright() as p:
           pg.eval_on_selector(".todo-group-head.is-overdue",
                               "el => getComputedStyle(el).color") == "rgb(212, 56, 13)",
           pg.eval_on_selector(".todo-group-head.is-overdue", "el => getComputedStyle(el).color"))
-    check("逾期组里每条都标了自己是哪天（M/D）",
-          pg.eval_on_selector_all(".todo-group-head.is-overdue ~ .todo-row .todo-date",
-                                  "els => els.map(e => e.textContent)") ==
+    # 20260924 三轮：那个只读的红字 .todo-date 换成了每行自己的排期按钮，
+    # 日期从此写在按钮里（值读 input.value，不是 textContent）
+    check("逾期组里每条都标了自己是哪天（M/D，写在它自己的排期按钮上）",
+          pg.eval_on_selector_all(".todo-group-head.is-overdue ~ .todo-row .todo-due input",
+                                  "els => els.map(e => e.value)") ==
           [f"{int(OVERDUE[5:7])}/{int(OVERDUE[8:10])}"])
 
     print("⑩ 新增一行 / 空行自动回收")
@@ -643,6 +645,85 @@ with sync_playwright() as p:
     check("重试后把列表读回来（8 条）", len(row_texts(pg)) == 8, str(len(row_texts(pg))))
     check("读回来那一刻不写回去（本地与库里那份一致时不出网）",
           pg.evaluate("() => Number(localStorage.getItem('__puts') || 0)") == 0)
+
+    print("⑭ 每行一个排期按钮（新建的与已有的都能绑期限）")
+    # 上一节的 reload 把接口桩重置回种子那份（8 条），这一节从那里起
+
+    def group_of(name):
+        """这条待办此刻落在哪个分组里（分组头的文字，含条数）"""
+        return pg.evaluate("""(name) => {
+          for (const g of document.querySelectorAll('.todo-group')) {
+            const hit = [...g.querySelectorAll('.todo-text')].some(i => i.value === name);
+            if (hit) { const h = g.querySelector('.todo-group-head'); return h ? h.textContent : null; }
+          }
+          return null;
+        }""", name)
+
+    def due_index(name):
+        return pg.evaluate("""(name) => [...document.querySelectorAll('.todo-row')]
+            .findIndex(r => r.querySelector('.todo-text').value === name)""", name)
+
+    def md(iso):
+        return f"{int(iso[5:7])}/{int(iso[8:10])}"
+
+    n_rows = pg.locator(".todo-row").count()
+    check("每一行都有自己的排期按钮",
+          pg.locator(".todo-due").count() == n_rows == 8,
+          f"按钮 {pg.locator('.todo-due').count()} / 行 {n_rows}")
+    dues = pg.eval_on_selector_all(".todo-row", """els => els.map(r => {
+      const w = r.querySelector('.todo-due');
+      const i = w ? w.querySelector('input') : null;
+      return {text: r.querySelector('.todo-text').value, due: i ? i.value : null,
+              overdue: w ? w.className.includes('is-overdue') : false,
+              icon: !!r.querySelector('.todo-due-add')};
+    })""")
+    check("有日期的那几行，按钮上写的就是那个日期（M/D）",
+          [d["due"] for d in dues if d["text"] == "今天要做的"] == [md(day(0))]
+          and [d["due"] for d in dues if d["text"] == "明天开会记得带电脑和充电器"] == [md(TOMORROW)],
+          str([(d["text"], d["due"]) for d in dues if d["due"]]))
+    check("没排期那条只露一枚淡淡的日历图标（不是空着让人猜）",
+          [d["due"] for d in dues if d["text"] == "没排期的一条"] == [""]
+          and [d["icon"] for d in dues if d["text"] == "没排期的一条"] == [True])
+    check("已经有日期的那几行不再露日历图标", all(not d["icon"] for d in dues if d["due"]))
+    check("逾期行的日期是红字（那一组混了好几天，看组名不知道欠的是哪天）",
+          pg.eval_on_selector(".todo-due.is-overdue input", "el => getComputedStyle(el).color")
+          == "rgb(212, 56, 13)",
+          pg.eval_on_selector(".todo-due.is-overdue input", "el => getComputedStyle(el).color"))
+
+    # 主人原话是"新增的任务并不能绑定期限"——那就按那条路走一遍
+    check("（前置）点之前主日历下面没有快添栏", pg.locator(".calQuick").count() == 0)
+    pg.click(".todo-add")
+    pg.wait_for_timeout(250)
+    pg.keyboard.type("新增的一条")
+    pg.wait_for_timeout(150)
+    pg.locator(".todo-due").nth(due_index("新增的一条")).click()
+    pg.wait_for_timeout(400)
+    check("点开的是它自己的小月历，没惊动上面那枚主日历（不弹快添栏）",
+          pg.locator(".ant-picker-dropdown .ant-picker-panel").count() >= 1
+          and pg.locator(".calQuick").count() == 0)
+    check("这枚小月历是中文的（年/月，不是 Sep 那种缩写）",
+          "年" in pg.locator(".ant-picker-dropdown .ant-picker-header").inner_text(),
+          pg.locator(".ant-picker-dropdown .ant-picker-header").inner_text().strip())
+    pg.locator(f'.ant-picker-dropdown .ant-picker-cell[title="{TOMORROW}"]').click()
+    pg.wait_for_timeout(900)
+    check("新增的那条当场排上了明天（这是原来做不到的那件事）",
+          (group_of("新增的一条") or "").startswith(cn_label(1)),
+          str(group_of("新增的一条")))
+    sent4 = pg.evaluate("() => window.__lastPut")
+    check("这个期限也发给了服务端",
+          bool(sent4) and [r for r in sent4 if r["text"] == "新增的一条"][0]["date"] == TOMORROW)
+
+    # 再撤掉它：悬停那一行的排期按钮，点冒出来的清除叉
+    pg.locator(".todo-due").nth(due_index("新增的一条")).hover()
+    pg.wait_for_timeout(200)
+    pg.locator(".todo-due").nth(due_index("新增的一条")).locator(".ant-picker-clear").click()
+    pg.wait_for_timeout(900)
+    check("撤掉日期后回到「未排期」组", group_of("新增的一条") == "未排期2",
+          str(group_of("新增的一条")))
+    sent5 = pg.evaluate("() => window.__lastPut")
+    check("撤掉也发给了服务端（date 收回 null，不是留个空串）",
+          bool(sent5) and [r for r in sent5 if r["text"] == "新增的一条"][0]["date"] is None,
+          str([r for r in sent5 if r["text"] == "新增的一条"]))
 
     br.close()
 
