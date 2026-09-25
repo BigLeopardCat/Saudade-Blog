@@ -77,13 +77,21 @@ const Users = () => {
     const [accFilter, setAccFilter] = useState('all')
     const [accQuery, setAccQuery] = useState('')
 
-    /** 筛选后的账号列表：先按角色分流，再按用户名包含匹配（大小写不敏感）。
-     *  与评论管理同一条纪律——筛的是**已经有了的那份数据**，不发新请求。 */
+    /** 筛选后的账号列表：先按角色分流，再按**用户名或 ID**包含匹配（用户名大小写不敏感）。
+     *  与评论管理同一条纪律——筛的是**已经有了的那份数据**，不发新请求。
+     *
+     *  ID 检索（20260926 用户点名）：行上一直显示着 `ID: N`，但检索框只认用户名 ——
+     *  拿着一个 ID 来查（工单/日志里通常只有 ID）就永远查不到。判据是**子串**，
+     *  与用户名的匹配方式一致：输入 `2` 会同时命中 `ID 2`、`ID 12`、用户名含 2 的行，
+     *  与"按用户名子串查"的现有手感一样（不搞"纯数字就精确匹配 ID"那套两套语义：
+     *  用户名本身也可能全是数字）。 */
     const filteredUsers = useMemo(() => {
         const f = ACC_FILTERS.find((x) => x.key === accFilter) ?? ACC_FILTERS[0]
         const q = accQuery.trim().toLowerCase()
         return tempUsers.filter((u) => f.match(u)
-            && (q === '' || String(u.username ?? '').toLowerCase().includes(q)))
+            && (q === ''
+                || String(u.username ?? '').toLowerCase().includes(q)
+                || String(u.id ?? '').includes(q)))
     }, [tempUsers, accFilter, accQuery])
 
     const loadTempUsers = async () => {
@@ -257,7 +265,7 @@ const Users = () => {
                                     ))}
                                 </div>
                                 <Input.Search
-                                    placeholder="检索用户名…"
+                                    placeholder="检索用户名 / ID…"
                                     allowClear
                                     onChange={e => setAccQuery(e.target.value)}
                                     style={{ width: 240 }}

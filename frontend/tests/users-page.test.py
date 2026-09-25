@@ -497,6 +497,18 @@ with sync_playwright() as p:
     check("检索/筛选**不发新请求**（只筛本地已有的那份）",
           pg.evaluate("() => window.__calls.filter(c => c.method === 'GET').length") == 1,
           str(pg.evaluate("() => window.__calls")))
+    # ID 检索（20260926 用户点名）：行上一直显示着 `ID: N`，但检索框只认用户名——
+    # 拿着一个 ID 来查（工单/日志里通常只有 ID）永远查不到。判据与用户名同一套（子串），
+    # 所以 `10` 会同时命中 ID 100..109 与 ID 210 之外的用户名含 10 的行。
+    pg.locator(".tu-filter .ant-input").first.fill("126")
+    pg.wait_for_timeout(300)
+    g = pg.evaluate(GEO)
+    check("检索 126（ID）命中的是 id=126 那一行（guest27）",
+          any(r["u"] == "guest27" for r in g["delBtns"]), str([r["u"] for r in g["delBtns"]]))
+    check("而且只剩那一行（126 是个子串判据，正好只此一行匹配）",
+          [r["u"] for r in g["delBtns"]] == ["guest27"], str([r["u"] for r in g["delBtns"]]))
+    pg.locator(".tu-filter .ant-input").first.fill("")
+    pg.wait_for_timeout(200)
     # 迁移锁（20260926）：这一页从"六处裸 fetch + 手拼 Bearer"改成走共享 axios 客户端，
     # 判据不是"代码里没有 fetch 这个词"，而是**运行时一条都没发出去**。
     check("账号管理不再走裸 fetch（一条都没有）", zero_bare_fetch(pg) == [],
