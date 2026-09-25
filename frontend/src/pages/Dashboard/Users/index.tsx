@@ -1,5 +1,5 @@
 import './index.sass'
-import { Button, Input, message, Modal, Tabs, Tag } from 'antd';
+import { Button, Dropdown, Input, message, Modal, Tabs, Tag, Tooltip } from 'antd';
 import type { TabsProps } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -11,7 +11,8 @@ import BoardManage from '../BoardManage';
 // 报错而不是登录页；②请求头里 token 的 `Bearer ` 前缀归一（后端 strip_prefix）。
 // 同页的评论管理（BoardManage）本来就走共享客户端，两半行为不一致本身就是坑。
 import http from "../../../apis/axios.tsx";
-import { ROLE_LABEL, roleTagColor } from "../../../utils/auth.ts";
+import getToken from "../../../apis/getToken.tsx";
+import { ROLE_LABEL, roleLabel, roleTagColor, getRoleFromToken, getUidFromToken } from "../../../utils/auth.ts";
 
 /** 用户管理 = 账号管理（临时访客账号）+ 评论管理（河灯留言审核）
  *  20260905 拍板：原 Announcement 内嵌临时用户段迁入「账号管理」；
@@ -48,6 +49,21 @@ const ACC_FILTERS: { key: string; label: string; match: (u: any) => boolean }[] 
     { key: 'user', label: '普通用户账号', match: (u) => u.role !== 'admin' },
     { key: 'frozen', label: '冻结账号', match: (u) => isFrozen(u) },
 ]
+
+/** 可指派的三个身份（20260926）。`superadmin` **不在这一列**，而且不是"忘了加"：
+ *  后端的取值域判据是 `authz::is_assignable_role`（已知 且 != superadmin），
+ *  多一个超级管理员是一条数据库迁移的决定，不该是界面上点一下的事。
+ *
+ *  `rank` 只服务于**按钮极性**：变更身份往哪个方向都伴随"对方全部会话失效"，
+ *  分不出轻重的一律染红等于没信息——照冻结/解冻那一套（收紧=danger、放开=普通）
+ *  取"权限收窄"那一侧。 */
+const ASSIGNABLE_ROLES: { role: string; rank: number }[] = [
+    { role: 'user', rank: 0 },
+    { role: 'secretary', rank: 1 },
+    { role: 'admin', rank: 2 },
+]
+const roleRank = (role?: string | null) =>
+    ASSIGNABLE_ROLES.find((r) => r.role === role)?.rank ?? -1
 
 const Users = () => {
     const [searchParams] = useSearchParams()
@@ -174,6 +190,41 @@ const Users = () => {
         if (t) await handleSetStatus(t, frozen)
     }
 
+    /** 我自己的角色（20260926）。**只用于界面分流**——这一页此前刻意不读令牌
+     *  （权限判据全在后端），这次为了"哪个按钮该不该亮"破例：管理员之间不能互相
+     *  冻结、只有超管能改身份，这两个判据后端都有一份，这里的副本只是别让人白点
+     *  一下再吃一句拒绝。
+     *
+     *  读的是**本地令牌里的快照**，所以它可能是旧的（刚被降级/刚被提权，令牌还没
+     *  换）——按钮亮着但后端拒绝，是这一处的正常失败模式，界面不会因此做出任何
+     *  "假装成功"的事（那要等接口回话）。 */
+    const myRole = useMemo(() => getRoleFromToken(getToken()), [])
+    /** 我自己的 uid：判"这一行是我自己"（后端不许冻自己），同一次解析里一起取。 */
+    const myUid = useMemo(() => getUidFromToken(getToken()), [])
+
+    /** 变更身份（20260926）：受控 Modal 二次确认，同页其它确认框一套纪律。 */
+    const [roleTarget, setRoleTarget] = useState<any>(null)
+    const [roleNext, setRoleNext] = useState('')
+    const askSetRole = (user: any, role: string) => {
+        setRoleTarget(user)
+        setRoleNext(role)
+    }
+    const confirmSetRole = async () => {
+        const t = roleTarget
+        const r = roleNext
+        setRoleTarget(null)     // 先关窗再发请求（同 confirmSetStatus）
+        if (!t || !r) return
+        try {
+            const res = await http.post('/api/temp-users/' + t.id + '/role', { role: r })
+            if (res.data?.code === 200) {
+                // 人话在 `data` 里不在 `message` 里（`success` 的 message 恒为 "ok"，
+                // 见 src/utils.rs）——同一个坑这一页已经踩过一次，别再踩第二次
+                message.success(res.data.data || '操作完成')
+                loadTempUsers()
+            } else { message.error(res.data?.message) }
+        } catch { message.error('请求失败') }
+    }
+
     const openPwModal = (user: any) => {
         setPwTarget(user)
         setPwNewPassword('')
@@ -274,7 +325,37 @@ const Users = () => {
                                 </div>
                             ) : (
                                 <div className="tu-list">
-                                    {filteredUsers.map((u: any) => (
+                                    {filteredUsers.map((u: any) => {
+                                      /** 这一行的冻结按钮该不该亮。两种情况下后端会拒，
+                                       *  这里说到做到（**只决定按钮亮不亮**，真正的闸在
+                                       *  服务端 `authz::check_freeze`）：
+                                       *  · 目标就是我自己（uid 从令牌的 `sub` 里读，不用
+                                       *    再拉一次 /profile）——冻了自己就再也解不开了；
+                                       *  · 我是管理员、对方也是管理员（同级）——但**超管
+                                       *    不受这条限制**（超管冻管理员是放行的），所以
+                                       *    判据必须是"我是 admin"而不是"对方是 admin"。
+                                       *  文案与后端那两句是同一句话（见
+                                       *  `routes/temp_user.rs::freeze_denial_message`）：
+                                       *  同一件事不该在界面上和在接口里说成两句。 */
+                                      const freezeBlocked =
+                                          (myUid !== null && u.id === myUid) ? '不能冻结自己的账号'
+                                              : (myRole === 'admin' && u.role === 'admin')
+                                                  ? '管理员之间不可互相冻结' : ''
+                                      // 冻结/解冻：一个按钮、两种含义，按当前状态取反。
+                                      // danger 只给"冻结"那一侧——红按钮按下去会让对方下线，
+                                      // "解冻"是恢复性操作，用红的不合适。
+                                      const freezeBtn = (
+                                          <Button
+                                              size="small"
+                                              className="tu-freeze-btn"
+                                              danger={!isFrozen(u)}
+                                              disabled={!!freezeBlocked}
+                                              onClick={() => askSetStatus(u, !isFrozen(u))}
+                                          >
+                                              {isFrozen(u) ? '解冻' : '冻结'}
+                                          </Button>
+                                      )
+                                      return (
                                         <div key={u.id} className="tu-row">
                                             <div>
                                                 <strong className={isFrozen(u) ? 'tu-frozen-name' : ''}>{u.username}</strong>
@@ -293,19 +374,27 @@ const Users = () => {
                                             <div style={{ display: 'flex', gap: 8 }}>
                                                 <Button size="small" onClick={() => openPwModal(u)}>修改密码</Button>
                                                 <Button size="small" onClick={() => handleCreateRecoveryCode(u)}>生成恢复码</Button>
-                                                {/* 冻结/解冻：一个按钮、两种含义，按当前状态取反。
-                                                    danger 只给"冻结"那一侧——红按钮按下去会让对方下线，
-                                                    "解冻"是恢复性操作，用红的不合适。
-                                                    自己的账号后端会拒（见 set_user_status），这里不预先藏，
-                                                    因为要判断"哪个是我"就得多拉一次 /profile。 */}
-                                                <Button
-                                                    size="small"
-                                                    className="tu-freeze-btn"
-                                                    danger={!isFrozen(u)}
-                                                    onClick={() => askSetStatus(u, !isFrozen(u))}
-                                                >
-                                                    {isFrozen(u) ? '解冻' : '冻结'}
-                                                </Button>
+                                                {freezeBlocked
+                                                    ? <Tooltip title={freezeBlocked}>{freezeBtn}</Tooltip>
+                                                    : freezeBtn}
+                                                {/* 变更身份（20260926）：只有超管看得见这个入口。
+                                                    不多给一个"把它禁掉"的中间态——普通管理员从来没有
+                                                    过这个能力，禁用按钮会让人以为"本可以有"。
+                                                    菜单里**不列当前身份**：一个"改成我现在这个"的
+                                                    选项只会带来一次什么都没发生的往返。 */}
+                                                {myRole === 'superadmin' && (
+                                                    <Dropdown
+                                                        trigger={['click']}
+                                                        menu={{
+                                                            items: ASSIGNABLE_ROLES
+                                                                .filter((r) => r.role !== u.role)
+                                                                .map((r) => ({ key: r.role, label: ROLE_LABEL[r.role] })),
+                                                            onClick: ({ key }) => askSetRole(u, key),
+                                                        }}
+                                                    >
+                                                        <Button size="small" className="tu-role-btn">变更身份</Button>
+                                                    </Dropdown>
+                                                )}
                                                 {/* 非普通账号不给删除按钮：后端也会拒（见 delete_temp_user），
                                                     但让按钮干脆不出现，比点了才被告知不行更清楚 */}
                                                 {u.role === 'user' && (
@@ -313,7 +402,8 @@ const Users = () => {
                                                 )}
                                             </div>
                                         </div>
-                                    ))}
+                                      )
+                                    })}
                                 </div>
                             )}
                         </div>
@@ -346,6 +436,40 @@ const Users = () => {
                                 {statusNext
                                     ? '冻结后：该账号无法再登录，已登录的网页会话立即失效；解冻后需要重新登录，冻结前的登录状态不会恢复。'
                                     : '解冻后：该账号可以重新登录；它冻结前的登录状态不会恢复。'}
+                            </div>
+                        </div>
+                    </Modal>
+
+                    {/* 变更身份确认（20260926）。与冻结那个弹窗同三条纪律：
+                        按钮写动作词（「改成秘书」而不是「确定」）、danger 跟着方向走、
+                        受控 Modal（命令式弹窗沙箱测不到）。正文写**两件事**：改完之后
+                        他还能干什么（新身份），以及**他会被踢下线**——后者是这次变更
+                        唯一不可逆的那半边（旧令牌代次已作废，换不回旧会话）。 */}
+                    <Modal
+                        title={'变更身份 - ' + (roleTarget?.username || '')}
+                        open={!!roleTarget}
+                        onOk={confirmSetRole}
+                        onCancel={() => setRoleTarget(null)}
+                        okText={'改成' + (ROLE_LABEL[roleNext] || roleNext)}
+                        cancelText="取消"
+                        okButtonProps={{
+                            danger: roleRank(roleNext) < roleRank(roleTarget?.role),
+                            className: 'tu-role-ok',
+                        }}
+                        cancelButtonProps={{ className: 'tu-role-cancel' }}
+                        width={420}
+                    >
+                        <div style={{ marginTop: 12, lineHeight: 1.7 }}>
+                            <div>
+                                把 <strong>{roleTarget?.username}</strong> 的身份从
+                                「{roleLabel(roleTarget?.role)}」改为
+                                「{ROLE_LABEL[roleNext] || roleNext}」
+                            </div>
+                            <div style={{ marginTop: 8, color: '#8c8c8c' }}>
+                                {roleRank(roleNext) < roleRank(roleTarget?.role)
+                                    ? '这是收窄权限：改完他就没有现在这些能力了。'
+                                    : '这是放宽权限：改完他能做的事比现在多。'}
+                                该账号的登录状态会立即失效，需要重新登录。
                             </div>
                         </div>
                     </Modal>

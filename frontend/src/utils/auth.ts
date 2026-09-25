@@ -13,7 +13,7 @@
 export interface TokenClaims {
     /** 用户 id（后端 auth_uid 用的就是它） */
     sub?: number
-    /** 角色：admin 为管理员，其余为普通用户 */
+    /** 角色：admin 管理员 / superadmin 超级管理员 / secretary 秘书 / user 普通用户 */
     role?: string
     /** 过期时间（秒级 unix） */
     exp?: number
@@ -45,9 +45,24 @@ export function getRoleFromToken(token?: string | null): string | null {
     return getTokenClaims(token)?.role ?? null
 }
 
-/** 是否管理员（前端界面分流用，非权限判据，见文件头） */
+/** 当前登录用户的 uid（未登录/解析失败 = null）。
+ *
+ *  账号管理页用它判"这一行是不是我自己"（后端不许冻结自己的账号）。**不为了这件事去
+ *  拉 /profile**：uid 就在令牌的 `sub` 里，多一次请求换来的还可能是过期的答案。 */
+export function getUidFromToken(token?: string | null): number | null {
+    const sub = getTokenClaims(token)?.sub
+    return typeof sub === 'number' ? sub : null
+}
+
+/** 是否**能进后台**（前端界面分流用，非权限判据，见文件头）。
+ *
+ *  超级管理员也算：`superadmin` 比管理员权限更高而不是另一个物种，后台准入判据
+ *  在 Rust 侧就是一处 `can_access_console`（admin 或 superadmin）。这里要是只认
+ *  'admin'，博主提权当天就会**进不去自己的后台**——而且守卫是本地解码令牌判的，
+ *  后端一点错都报不出来。 */
 export function isAdminToken(token?: string | null): boolean {
-    return getRoleFromToken(token) === 'admin'
+    const role = getRoleFromToken(token)
+    return role === 'admin' || role === 'superadmin'
 }
 
 /** 角色显示名（取值域见 Rust 侧 `src/authz.rs::KNOWN_ROLES`）。
@@ -56,6 +71,7 @@ export function isAdminToken(token?: string | null): boolean {
  *  未知角色**不在这里编名字**：调用方回退显示原值（`roleLabel` 就是干这个的）。 */
 export const ROLE_LABEL: Record<string, string> = {
     admin: '管理员',
+    superadmin: '超级管理员',
     secretary: '秘书',
     user: '普通用户',
 }
@@ -70,6 +86,7 @@ export function roleLabel(role?: string | null): string {
 /** 角色标签的颜色（与 ROLE_LABEL 同一张表的展示面，放在一起免得两处漂移）。
  *  未知角色给中性色——不为认不出的角色编一个"看起来很严重"的颜色。 */
 export function roleTagColor(role?: string | null): string {
+    if (role === 'superadmin') return 'purple'
     if (role === 'admin') return 'gold'
     if (role === 'secretary') return 'blue'
     return 'default'

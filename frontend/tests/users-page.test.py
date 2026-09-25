@@ -29,6 +29,12 @@
     （拿到的是「解 冻」——**弹窗确认按钮上同样会**，所以认定文案前一律抹空白），
     以及假响应每次 GET 必须返回**深拷贝**——返回同一个数组
     引用会让 React 的 `Object.is` 直接跳过重渲染，症状是"POST 成功了但行没动"。
+  · **超级管理员视角**（第六节）—— 页面上有两个按钮的亮灭取决于"我是谁"：同级
+    管理员不可互冻（后端 `check_freeze` 的 PeerAdmin）、不能冻自己（SelfTarget）、
+    只有超管看得见「变更身份」。**三条判据各验一次**——混成一条实现（例如"对方是
+    管理员就挡"）会在"自己那一行"和"超管看管理员"这两处同时出错，只看一条是看不出来的。
+    顺带锁住令牌的两种边界：`sub` 解析出来才知道"哪一行是我"（不再为这件事去拉
+    /profile），而令牌解析不出时页面照常渲染、按钮按最保守的界面给（不白屏、不崩）。
   · **账号管理改走共享 axios 客户端**（同日晚些的第 6 件）——六处 `fetch` + 手拼
     `'Bearer ' + token` 全部撤掉。判据是运行时的：`window.__fetchCalls` 恒空
     （`zero_bare_fetch`），而账号请求出现在 `__calls` 里且**请求头**由客户端的
@@ -134,6 +140,23 @@ const req = async (cfg: any) => {
     return env0({ code: 200, message: 'ok',
                   data: frozen ? '账号已冻结，其登录状态已全部失效' : '账号已解冻，请让对方重新登录' });
   }
+  // ── 变更身份（20260926）────────────────────────────────────────────────────
+  // 与上面 status 那条同一条纪律：**真改内存里那一行**（于是"改完角色标签跟着变"
+  // 是端到端成立的），且人类可读的那句在 `data` 里（`message` 恒为字面量 'ok'）。
+  // 拒绝那一侧正好相反：`ApiResponse::error` 把原因放在 **message** 里、没有 data
+  // ——两个字段的方位在成败两侧是反的，读错任一侧都会弹一个空条或一个 "ok" 条。
+  // 用 `__roleDeny` 让桩按需拒绝（验的就是"拒绝时弹的是后端那句原因"）。
+  if (/^\/api\/temp-users\/\d+\/role$/.test(url) && method === 'POST') {
+    const id = Number(url.split('/')[3]);
+    const r = (cfg.data || {}).role;
+    const deny = (window as any).__roleDeny;
+    if (deny) return env0({ code: 500, message: deny });
+    const u = ((window as any).__users as any[]).find((x) => x.id === id);
+    if (u) u.role = r;
+    const label = ({ admin: '管理员', secretary: '秘书', user: '普通用户' } as any)[r] || r;
+    return env0({ code: 200, message: 'ok',
+                  data: '身份已改为' + label + '，该账号的登录状态已失效，请让对方重新登录' });
+  }
   return env0({ code: 200, message: 'ok', data: null });
 };
 
@@ -152,7 +175,23 @@ import { createRoot } from 'react-dom/client';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import Users from './src/pages/Dashboard/Users/index.tsx';
 
-localStorage.setItem('tokenKey', 'x.y.z');
+// ── 令牌（20260926）────────────────────────────────────────────────────────
+// 这一页此前只有一枚假令牌 `'x.y.z'`（解析不出任何 claims）。现在页面上有**两个
+// 按钮的亮灭取决于"我是谁"**（同级管理员不可互冻、只有超管看得见变更身份），
+// 再用一枚解析不出的令牌，那两条判据就永远是"没亮"——断言写出来是绿的，
+// 却一条都没验到（新功能恒不出现的假绿）。所以改成真形状的 JWT：
+// 三段、payload 是 base64url 的 `{sub, role}`，`getRoleFromToken` 认得它。
+// 想要"解析不出的令牌"那条路径时用 `__setToken(null)`（仍回旧那枚 'x.y.z'）。
+const b64u = (o: any) => btoa(JSON.stringify(o))
+  .replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');
+// uid 也要能指定：页面上"不能冻结自己"那条判据读的正是令牌的 `sub`
+// （`getUidFromToken`）。默认 sub=1 正好是夹具里那个管理员 root_admin，于是
+// "管理员视角下自己那一行"是默认情形；要验**同级**那个分支就把 uid 换成不在
+// 名单里的 721（真站点的 admin uid 形状）。
+(window as any).__setToken = (role: string | null, uid: number = 1) => {
+  localStorage.setItem('tokenKey', role ? 'x.' + b64u({ sub: uid, role }) + '.sig' : 'x.y.z');
+};
+(window as any).__setToken('admin');   // 默认管理员视角；其它视角在第六节里切
 
 // 账号列表 20260926 起走共享 axios 客户端（桩在 FAKE_AXIOS 里，GET 回裸数组）。
 // 下面这个 fetch 桩是**残留的哨兵**：这一页现在一条 fetch 都不该发，桩留着只为
@@ -267,11 +306,17 @@ from playwright.sync_api import sync_playwright  # noqa: E402
 URL = f"http://127.0.0.1:{_server.server_address[1]}/index.html"
 
 
-def mount(br, path="/dashboard/users", size=(1440, 700), wait=".tu-row"):
+def mount(br, path="/dashboard/users", size=(1440, 700), wait=".tu-row",
+          role="admin", uid=1):
+    """挂载页面。`role`/`uid` 写进令牌（页面据它决定按钮亮不亮），默认 = 管理员本人
+    （uid 1 就是夹具里那个 root_admin）。⚠️ localStorage 是按源的、同一个浏览器上下文
+    里跨页面共享 ⇒ **每次 goto 后必须显式重设**，否则上一节切过的超管视角会漏到下一节
+    （宿主的假绿：一节验超管、剩下的全在超管视角下跑而没人发现）。"""
     page = br.new_page(viewport={"width": size[0], "height": size[1]})
     errs = []
     page.on("pageerror", lambda e: errs.append(str(e)))
     page.goto(URL)
+    page.evaluate("([r, u]) => window.__setToken(r, u)", [role, uid])
     page.evaluate("(p) => window.__mount(p)", path)
     try:
         page.wait_for_selector(wait, timeout=10000)
@@ -335,8 +380,19 @@ GEO = """() => {
             return { u: r.querySelector('strong').textContent,
                      label: b ? b.textContent.replace(/\s+/g, '') : '',
                      danger: b ? b.classList.contains('ant-btn-dangerous') : false,
+                     // 按钮**亮不亮**：同级管理员不可互冻、以及不能冻自己，都由它体现
+                     disabled: b ? b.disabled : null,
                      tag: r.textContent.includes('已冻结') };
         }),
+        // 「变更身份」入口只在超管视角下存在（不是禁用——普通管理员从来没有过这个能力）
+        roleBtns: [...document.querySelectorAll('.tu-row')].map(
+            (r) => ({ u: r.querySelector('strong').textContent,
+                      has: !!r.querySelector('.tu-role-btn') })),
+        // 行上的角色标签（改身份之后要能看见它跟着变）
+        roleTags: [...document.querySelectorAll('.tu-row')].map(
+            (r) => ({ u: r.querySelector('strong').textContent,
+                      tag: [...r.querySelectorAll('.ant-tag')]
+                          .map((t) => t.textContent.replace(/\s+/g, '')).join('|') })),
     };
 }"""
 
@@ -359,6 +415,56 @@ STATUS_DIALOG = """() => {
         body: q('.ant-modal-body'),
     };
 }"""
+
+
+# 变更身份的确认框：与 STATUS_DIALOG 同形，按类名认（`.tu-role-ok`）。
+ROLE_DIALOG = """() => {
+    const m = [...document.querySelectorAll('.ant-modal-wrap')].find(
+        (w) => getComputedStyle(w).display !== 'none' && w.querySelector('.tu-role-ok'));
+    if (!m) return null;
+    const q = (s) => (m.querySelector(s) ? m.querySelector(s).textContent.replace(/\\s+/g, '') : '');
+    const ok = m.querySelector('.tu-role-ok');
+    return {
+        title: q('.ant-modal-title'),
+        ok: ok.textContent.replace(/\\s+/g, ''),
+        okDanger: ok.classList.contains('ant-btn-dangerous'),
+        body: q('.ant-modal-body'),
+    };
+}"""
+
+
+def role_posts(pg):
+    """本页发出的改身份请求（POST …/role）——与 status_posts 同一条纪律：
+    "确认之前一条都不许发"「请求体是目标身份而不是让后端取反」都靠它。"""
+    return pg.evaluate("""() => window.__calls.filter((c) =>
+        c.method === 'POST' && /\\/role$/.test(c.url))
+        .map((c) => ({ url: c.url, body: c.data }))""")
+
+
+def menu_items(pg):
+    """当前**打开着**的那个下拉菜单的选项文案。
+    `:visible` 不是可选的美化：antd 关菜单时只是把它藏起来（DOM 留着），这一页开过
+    几次就有几份菜单——不限定可见的那个，取到的是历次菜单的并集，
+    `pg.locator(...).click()` 还会因为"匹配到 2 个元素"直接 strict-mode 报错。"""
+    return pg.evaluate("""() => [...document.querySelectorAll('.ant-dropdown-menu-item')]
+        .filter((e) => e.offsetParent !== null)
+        .map((e) => e.textContent.replace(/\\s+/g, ''))""")
+
+
+def click_menu_item(pg, label):
+    """点当前打开着的菜单里的一项（同上，必须限定可见的那一份）。"""
+    pg.locator(".ant-dropdown-menu-item:visible", has_text=label).first.click()
+
+
+def tooltips(pg, selector):
+    """悬停某个元素之后屏上的 tooltip 文案（antd 渲染到 body 上的 portal 里，
+    只有悬停过才会挂出来）。**每个页面只该调用一次**：调第二次会因为前一个
+    tooltip 仍留在 DOM 里而拿到两条，断言就分不清是哪一条的文案了。
+    用 `force=True`：目标是个 disabled 按钮，playwright 的可操作性检查会拦。"""
+    pg.locator(selector).hover(force=True)
+    pg.wait_for_timeout(400)
+    return pg.evaluate("""() => [...document.querySelectorAll('.ant-tooltip-inner')]
+        .map((e) => e.textContent.replace(/\\s+/g, ''))""")
 
 
 def status_posts(pg):
@@ -787,6 +893,145 @@ with sync_playwright() as p:
     check("未登记的状态值（2）也按冻结处理（与后端 is_frozen 同口径）",
           "guest2" in names and "guest1" not in names, str(names))
     check("第五节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
+    pg.close()
+
+    # ── 六、超级管理员视角（20260926）──────────────────────────────────────────
+    # 这一节验的是**按钮亮不亮**这条界面分流，而它有**三个**分支、三条判据各不相同：
+    #   ① 我是管理员、这一行是我自己        → 挡（后端 `check_freeze` 的 SelfTarget）
+    #   ② 我是管理员、这一行是另一个管理员  → 挡（PeerAdmin）
+    #   ③ 我是超管、这一行是管理员          → **放行**（超管冻管理员是允许的）
+    # 三条混成一条实现（例如"对方是管理员就挡"）会在①③上同时出错：①的说明会说成
+    # "管理员之间"（答非所问），③会把超管的能力一起挡掉。所以三条各验一次。
+    #
+    # ⚠️ 夹具里**没有超管那一行**，而且这不是漏了：超管不进后台列表是**后端**的过滤
+    # （`authz::is_listable_role`，见 src/routes/temp_user.rs），接口根本不返回它。
+    # 在这里塞一行再断言"它没显示"，测的是前端有没有自己再滤一遍——前端**不该**有
+    # 那一层：真漏出来时，看得见比悄悄吞掉好得多（那正是后端那道闸坏了的证据）。
+    print("\n【六】超级管理员视角：谁该挡、谁该放行、变更身份")
+    # ① 管理员看自己那一行（夹具里的 root_admin 就是 uid 1 = 默认令牌的 sub）
+    pg = mount(br)
+    g = pg.evaluate(GEO)
+    me = [r for r in g["freezeBtns"] if r["u"] == "root_admin"][0]
+    check("管理员看**自己**那一行：冻结按钮禁用（后端也拒：冻了自己就再也解不开）",
+          me["disabled"] is True, str(me))
+    tips = tooltips(pg, '.tu-row:has(strong:text-is("root_admin")) .tu-freeze-btn')
+    check("自己那一行的说明是「不能冻结自己的账号」（与后端同一句话，不是「管理员之间」）",
+          any("不能冻结自己的账号" in t for t in tips), str(tips))
+    check("管理员视角下**一个「变更身份」入口都没有**（这不是「禁用」，是从来不属于他）",
+          not any(r["has"] for r in g["roleBtns"])
+          and pg.evaluate("() => document.querySelectorAll('.tu-role-btn').length") == 0,
+          str(g["roleBtns"]))
+    check("第六节①无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
+    pg.close()
+
+    # ② 管理员看**另一个**管理员那一行（uid 换成不在名单里的 721）
+    pg = mount(br, uid=721)
+    g = pg.evaluate(GEO)
+    peer = [r for r in g["freezeBtns"] if r["u"] == "root_admin"][0]
+    check("管理员看**同级**那一行：冻结按钮禁用", peer["disabled"] is True, str(peer))
+    tips = tooltips(pg, '.tu-row:has(strong:text-is("root_admin")) .tu-freeze-btn')
+    check("说明是「管理员之间不可互相冻结」",
+          any("管理员之间不可互相冻结" in t for t in tips), str(tips))
+    guest = [r for r in g["freezeBtns"] if r["u"] == "guest1"][0]
+    check("同一页上普通账号那一行照常可用（禁的是那一行，不是整列）",
+          guest["disabled"] is False, str(guest))
+    check("第六节②无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
+    pg.close()
+
+    # ③ 超管视角：管理员那一行**可用**，且每行都有变更身份
+    # uid 用 721 而不是默认的 1：夹具里 id 1 恰好是 root_admin 那一行（①验的就是"自己
+    # 那一行"，判据读的是令牌 sub）——不换 uid 的话，这一行会被"不能冻自己"先挡上，
+    # 于是这条断言测的是另一件事。生产里超管账号根本不在列表里，不存在这个碰撞。
+    pg = mount(br, role="superadmin", uid=721)
+    g = pg.evaluate(GEO)
+    adm = [r for r in g["freezeBtns"] if r["u"] == "root_admin"][0]
+    check("超管看管理员那一行：冻结按钮**可用**（超管不受「管理员之间」那条限制）",
+          adm["disabled"] is False, str(adm))
+    check("超管视角下每一行都有「变更身份」", all(r["has"] for r in g["roleBtns"]),
+          str([r for r in g["roleBtns"] if not r["has"]]))
+
+    # ③b 走一遍变更身份：秘书 → 普通用户（降级）看弹窗，再改成管理员（升级）看真的发出去
+    pg.locator('.tu-row:has(strong:text-is("sec_zhang")) .tu-role-btn').click()
+    pg.wait_for_timeout(300)
+    menu = menu_items(pg)
+    check("点「变更身份」：菜单是**另两档**（不列当前身份，也没有超级管理员这一档）",
+          menu == ["普通用户", "管理员"], str(menu))
+    click_menu_item(pg, "普通用户")
+    pg.wait_for_timeout(300)
+    d = pg.evaluate(ROLE_DIALOG)
+    check("选一档之后是**先弹确认框**，不是直接下手", d is not None, str(d))
+    check("确认框标题带目标账号名", d and "sec_zhang" in d["title"], str(d and d["title"]))
+    check("确认按钮上是这一下的动作词「改成普通用户」，不是「确定/OK」",
+          d and d["ok"] == "改成普通用户", str(d and d["ok"]))
+    check("正文写清改前改后两个身份", d and "秘书" in d["body"] and "普通用户" in d["body"],
+          str(d and d["body"]))
+    check("正文写清该账号会被踢下线（这是这次变更唯一不可逆的那半边）",
+          d and "立即失效" in d["body"], str(d and d["body"]))
+    check("降级那一侧套 danger（与「冻结」同一套极性：收窄权限 = 红）",
+          d and d["okDanger"], str(d and d["okDanger"]))
+    check("**弹窗开着时一个改身份请求都没发**", role_posts(pg) == [], str(role_posts(pg)))
+    pg.locator(".tu-role-cancel").click()
+    pg.wait_for_timeout(300)
+    check("点取消：关窗且零请求",
+          pg.evaluate(ROLE_DIALOG) is None and role_posts(pg) == [],
+          f'dlg={pg.evaluate(ROLE_DIALOG)} posts={role_posts(pg)}')
+
+    before = pg.evaluate("() => window.__calls.length")
+    pg.locator('.tu-row:has(strong:text-is("sec_zhang")) .tu-role-btn').click()
+    pg.wait_for_timeout(300)
+    click_menu_item(pg, "管理员")
+    pg.wait_for_timeout(300)
+    d2 = pg.evaluate(ROLE_DIALOG)
+    check("升级那一侧**不**套 danger（给权限不是「危险动作」，与「解冻」同一套极性）",
+          d2 and not d2["okDanger"] and d2["ok"] == "改成管理员", str(d2))
+    pg.locator(".ant-modal-wrap .tu-role-ok").click()
+    pg.wait_for_timeout(700)
+    posts = role_posts(pg)
+    check("确认后发出 POST /api/temp-users/200/role",
+          len(posts) == 1 and posts[0]["url"] == "/api/temp-users/200/role", str(posts))
+    check("请求体是 {role:'admin'}（传目标身份，不让后端猜方向）",
+          posts and posts[0]["body"] == {"role": "admin"},
+          str(posts[0]["body"] if posts else None))
+    check("改完重新拉了一次列表（不是只在本地翻转 state）",
+          pg.evaluate("() => window.__calls.length") > before + 1,
+          f'before={before} after={pg.evaluate("() => window.__calls.length")}')
+    tags = {r["u"]: r["tag"] for r in pg.evaluate(GEO)["roleTags"]}
+    check("行上的角色标签跟着变了（秘书 → 管理员；桩真按请求体改了那一行）",
+          tags.get("sec_zhang") == "管理员", str(tags.get("sec_zhang")))
+    _n = notices(pg)
+    check("成功提示是后端那句中文（身份已改为管理员…）",
+          any("身份已改为管理员" in x for x in _n), str(_n))
+    check("提示里**没有**只有「ok」的条（读错字段的写法）",
+          not any(x.strip().lower() == "ok" for x in _n), str(_n))
+
+    # ③c 被拒那一侧：原因在 **message** 里（`ApiResponse::error` 没有 data），
+    # 与成功那两个字段的方位**正好相反** —— 读错任一侧都会弹一个空条。
+    pg.evaluate("() => { window.__roleDeny = '只有超级管理员可以变更账号身份' }")
+    pg.locator('.tu-row:has(strong:text-is("root_admin")) .tu-role-btn').click()
+    pg.wait_for_timeout(300)
+    click_menu_item(pg, "普通用户")
+    pg.wait_for_timeout(300)
+    pg.locator(".ant-modal-wrap .tu-role-ok").click()
+    pg.wait_for_timeout(700)
+    _n = notices(pg)
+    check("被拒时弹的是后端那句原因（它在 message 里，读 data 会弹个空条）",
+          any("只有超级管理员可以变更账号身份" in x for x in _n), str(_n))
+    tags = {r["u"]: r["tag"] for r in pg.evaluate(GEO)["roleTags"]}
+    check("被拒那一行的身份没变（桩没改，页面也不许假装改过）",
+          tags.get("root_admin") == "管理员", str(tags.get("root_admin")))
+    check("第六节③无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
+    pg.close()
+
+    # ④ 令牌解析不出来时页面照常（`getRoleFromToken` 的契约是"返回 null，不抛"）：
+    # 老令牌/被改坏的令牌不该让整个后台账号页白屏——那时连"哪个按钮亮着"都无从谈起。
+    pg = mount(br, role=None)
+    g = pg.evaluate(GEO)
+    check("令牌解析不出时页面仍然渲染（30 行都在）", g["rows"] == 30, f'rows={g["rows"]}')
+    check("解析不出 ⇒ 冻结按钮全部可用、没有任何改身份入口（按最保守的界面给）",
+          all(r["disabled"] is False for r in g["freezeBtns"])
+          and not any(r["has"] for r in g["roleBtns"]),
+          str([r for r in g["freezeBtns"] if r["disabled"]]))
+    check("第六节④无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
     br.close()
