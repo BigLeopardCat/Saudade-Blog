@@ -950,6 +950,57 @@
         for (const child of messages.children) {
           if (child.dataset && child.dataset.mid) byMid.set(child.dataset.mid, child);
         }
+        // ── 位置对齐的"空气"集合（20260925）──
+        // 下面 items 循环按 `lastEl.nextSibling` 找插入点，默认那个兄弟就是"下一条
+        // 该在的位置"。可是消息流里还站着**不属于 items 序列**的节点：常驻交互卡片
+        // （chat-keep）与本趟马上要被孤儿清理删掉的节点。插入点落在它们身上就会把
+        // 内容插错位置——实测形态（用户 20260925 报）：确认卡片夹在问句气泡与结果
+        // 气泡之间，结果气泡是 appendChild 上来的（天然在卡片**下方**），reconcile
+        // 却把插入点算成卡片 ⇒ 结果气泡被移到卡片**上方**，而卡片上写着"已确认，
+        // 结果见下方回复"——屏幕上的顺序与卡片自己的话相反。
+        // 判据与下方孤儿清理**同一套**（预先算一遍，两处不能各写一份）：mid 不在
+        // items 里 / 同 mid 的重复副本（保留最后一个）/ 无 mid 且不是在途气泡。
+        // 跳过它们不改变 items 的相对顺序：待删节点删掉后，"插在它前面"与"插在它
+        // 后面"落点是同一处；而 chat-keep 是常驻 UI，新内容本就该排在它后面。
+        // 三条边界（都是实测出来的，别顺手改）：
+        // ① 非元素节点（模板里的空白文本节点）同样是"空气"——`nextSibling` 会撞上它们，
+        //    而插入点落在空白上就等于没跳过后面那些节点（首版漏了这条，卡片照样被压在
+        //    结果气泡下面）；
+        // ② 只跳**在场**的常驻节点（.active）：模板里那张没弹出来的 #chat-ask（display:
+        //    none）是"消息流末尾的一个占位"，历史条目本就该排在它前面——跳了它，开机
+        //    首拉的历史会整段落到卡片下面；
+        // ③ 时间标签**不跳**：它是相邻气泡的前导附属，插在它前面是对的，跳过去会让
+        //    下一个气泡的 patchDivider 认为自己缺标签而再造一个（双标签）。
+        const validMids = new Set();
+        for (const it of ctx.state.items) validMids.add(it.id || '');
+        const liveEls = new Set();
+        for (const k in live) liveEls.add(live[k].el);
+        const midLeft = new Map();
+        for (const child of messages.children) {
+          const m = child.dataset && child.dataset.mid;
+          if (m) midLeft.set(m, (midLeft.get(m) || 0) + 1);
+        }
+        const doomed = new Set();
+        for (const child of messages.children) {
+          if (child.classList && (child.classList.contains('chat-time-divider')
+              || child.classList.contains('chat-keep'))) continue;
+          const m = child.dataset && child.dataset.mid;
+          if (m) {
+            const left = (midLeft.get(m) || 1) - 1;
+            midLeft.set(m, left);
+            if (!validMids.has(m) || left > 0) doomed.add(child);
+          } else if (!liveEls.has(child)) doomed.add(child);
+        }
+        // 插入点：从给定的兄弟节点往后找第一个"真内容"节点（见上方三条边界）
+        const contentRef = (node) => {
+          let n = node;
+          while (n && (n.nodeType !== 1
+              || doomed.has(n)
+              || (n.classList.contains('chat-keep') && n.classList.contains('active')))) {
+            n = n.nextSibling;
+          }
+          return n;
+        };
         let lastEl = null;
         for (const item of ctx.state.items) {
           try {
@@ -978,6 +1029,7 @@
               if (adopted) {
                 adopted.dataset.mid = mid;
                 adopted.dataset.finished = '1';
+                doomed.delete(adopted);   // 收养 = 这条不是孤儿了（见上方 doomed）
                 // 在途轮被 pull 先收敛：live 句柄置 finished（拦截乱序迟到帧），
                 // 保留句柄供 done 帧幂等收尾（delete 会造成 remoteLive 重建空气泡）
                 for (const k in live) if (live[k].el === adopted) { live[k].finished = true; break; }
@@ -1000,7 +1052,7 @@
             const td = el.previousSibling && el.previousSibling.classList
                      && el.previousSibling.classList.contains('chat-time-divider')
                      ? el.previousSibling : null;
-            const ref = lastEl ? lastEl.nextSibling : messages.firstChild;
+            const ref = contentRef(lastEl ? lastEl.nextSibling : messages.firstChild);
             if (!(td ? (td === ref && el === td.nextSibling) : (el === ref))) {
               if (td) messages.insertBefore(td, ref);
               messages.insertBefore(el, td ? td.nextSibling : ref);
@@ -1020,67 +1072,44 @@
         // （mid 换成 'd'）→ 转正成功的保留，真孤儿才被删。聊天软件式滑动窗口：
         // 新对话拉取后最早期记录自动覆盖。
         {
-          const validMids = new Set();
-          for (const it of ctx.state.items) validMids.add(it.id || '');
-          // 20260905 同 mid 双节点防御：items 每 id 唯一，DOM 同 mid 出现 >1 =
-          // 重建空气泡/收养漏网的残留副本（'l' 判据失配期的双气泡根因之一）。
-          // 先统计各 mid 出现次数，孤儿循环逐个递减——保留最后一个（与上方
-          // items 循环 byMid.get 后写覆盖取最后节点的语义一致），其余当孤儿删
-          const midCount = new Map();
-          for (const child of Array.from(messages.children)) {
-            const m = child.dataset && child.dataset.mid;
-            if (m) midCount.set(m, (midCount.get(m) || 0) + 1);
-          }
-          const liveEls = new Set();
-          for (const k in live) liveEls.add(live[k].el);
+          // 判据已在上方预先算好（`doomed`：mid 不在 items / 同 mid 的重复副本 /
+          // 无 mid 且非在途气泡；时间标签与 chat-keep 常驻节点都不在其内）。
+          // 集合在 items 循环里会被收养收窄（收养成功的节点移出）——所以"先收养
+          // （mid 换成 'd'）→ 转正成功的保留，真孤儿才被删"的语义不变。
+          // 同 mid 双节点防御（20260905）：items 每 id 唯一，DOM 同 mid 出现 >1 =
+          // 重建空气泡/收养漏网的残留副本——预计算时按出现次数递减保留**最后**一个
+          // （与上方 items 循环 byMid.get 后写覆盖取最后节点的语义一致）。
+          // 20260828n/20260923 两条豁免（时间标签、chat-keep 常驻节点）也在预计算里，
+          // 见那段注释：标签是气泡的前导附属，#chat-ask 是模板生成的常驻交互节点，
+          // 两者都不是孤儿（少了 chat-keep 那次事故 = 弹卡后第一次 reconcile 把卡片
+          // 静默删掉，用户看到"agent 说要确认、然后什么都没有"）。
           for (const child of Array.from(messages.children)) {
             try {
-              // 20260828n：时间标签豁免——标签无 mid 且非 live，但它是消息气泡的
-              // 前导附属（由 patchDivider 幂等维护），不能当孤儿删
-              if (child.classList && child.classList.contains('chat-time-divider')) continue;
-              // 20260923：常驻节点豁免（chat-keep）——消息流里还挂着模板生成、无
-              // data-mid 的常驻交互节点（确认卡片 #chat-ask），它们同样不是孤儿。
-              // 做成通用类名标记而不是再加一条 id 判断：以后往流里放这类节点，只要
-              // 在模板上带 chat-keep，就不必回来改这段清理逻辑。
-              // 教训（20260923 22:38 那一轮）：#chat-ask 当年搬进消息流时没带标记，
-              // 于是弹卡后第一次 reconcile 就把它当孤儿删了——帧到了、令牌在、库里
-              // 回复也正常，只有屏幕上看不见卡片；这类"静默删掉用户看得见的 UI"
-              // 靠读代码查不出来，只能靠这个标记 + 下面那条上报。
-              if (child.classList && child.classList.contains('chat-keep')) continue;
-              const mid = child.dataset && child.dataset.mid;
-              let doomed = false;
-              if (mid) {
-                const left = (midCount.get(mid) || 1) - 1;
-                midCount.set(mid, left);
-                doomed = !validMids.has(mid) || left > 0;
+              if (!doomed.has(child)) continue;
+              // 20260923：删掉带 id 的节点 = 上游漏了 chat-keep ⇒ 必须响亮。
+              // 消息流里的气泡都是匿名生成的（appendMsg 只给 class/dataset），
+              // 带 id 的只可能是模板节点（#chat-ask）——所以这条判据零误报，
+              // 而且正好覆盖 #chat-ask 那次事故的形态（用户看得见的 UI 被静默删）。
+              // 删还是照删（保持清理的确定性，不给失败留残骸），只是不再无声。
+              if (child.id) {
+                try {
+                  if (typeof window.__reportError === 'function') {
+                    window.__reportError({ type: 'orphan_dom_drop',
+                      message: '消息流孤儿清理删掉了带 id 的节点（漏加 chat-keep?）：#' + child.id,
+                      url: location.href });
+                  }
+                } catch (e) { /* 上报自身失败静默 */ }
               }
-              else if (!liveEls.has(child)) doomed = true;
-              if (doomed) {
-                // 20260923：删掉带 id 的节点 = 上游漏了 chat-keep ⇒ 必须响亮。
-                // 消息流里的气泡都是匿名生成的（appendMsg 只给 class/dataset），
-                // 带 id 的只可能是模板节点（#chat-ask）——所以这条判据零误报，
-                // 而且正好覆盖 #chat-ask 那次事故的形态（用户看得见的 UI 被静默删）。
-                // 删还是照删（保持清理的确定性，不给失败留残骸），只是不再无声。
-                if (child.id) {
-                  try {
-                    if (typeof window.__reportError === 'function') {
-                      window.__reportError({ type: 'orphan_dom_drop',
-                        message: '消息流孤儿清理删掉了带 id 的节点（漏加 chat-keep?）：#' + child.id,
-                        url: location.href });
-                    }
-                  } catch (e) { /* 上报自身失败静默 */ }
-                }
-                // 20260828o 修复：气泡删除时连带删除其前导时间标签——标签是气泡的
-                // 锚定附属（patchDivider 只维护"紧邻前驱"，el 没了标签就悬空，
-                // 会被后续 reconcile 的位置对齐当成下一个元素的标签捡走并覆盖文本
-                // → 时间标签错位（实测：孤儿清理删断流转正轮后 TD 悬在错误位置）
-                const td = child.previousSibling && child.previousSibling.classList
-                        && child.previousSibling.classList.contains('chat-time-divider')
-                        && child.previousSibling.nextSibling === child
-                        ? child.previousSibling : null;
-                if (td) messages.removeChild(td);
-                messages.removeChild(child);
-              }
+              // 20260828o 修复：气泡删除时连带删除其前导时间标签——标签是气泡的
+              // 锚定附属（patchDivider 只维护"紧邻前驱"，el 没了标签就悬空，
+              // 会被后续 reconcile 的位置对齐当成下一个元素的标签捡走并覆盖文本
+              // → 时间标签错位（实测：孤儿清理删断流转正轮后 TD 悬在错误位置）
+              const td = child.previousSibling && child.previousSibling.classList
+                      && child.previousSibling.classList.contains('chat-time-divider')
+                      && child.previousSibling.nextSibling === child
+                      ? child.previousSibling : null;
+              if (td) messages.removeChild(td);
+              messages.removeChild(child);
             } catch(e) { /* 单元素删除失败不影响其余 */ }
           }
         }

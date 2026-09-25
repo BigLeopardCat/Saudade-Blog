@@ -225,8 +225,7 @@
       reportAskStage('settle', { id: askIdOf(), result: 'rollback', why });
       askBox.dataset.askState = '';   // 抹掉状态 ⇒ syncAsk 的就位判据不成立，强制重建按钮
       syncAsk();
-      askQuestion.textContent = String(ask.q || '')
-        + '\n（上一次没发出去：' + why + '，可以再点一次）';
+      setAskQuestion(ask.q, '（上一次没发出去：' + why + '，可以再点一次）');
     };
     const askUnknown = (why) => {
       if (!askBox || !askBox.classList.contains('active')) return;
@@ -239,6 +238,23 @@
       ctx.state.pendingAsk = null;
       if (shown) askSettle('已取消', undefined, 'cancel');
       else if (askBtns) askBtns.innerHTML = '';
+    };
+    // 问句渲染（20260925）：与气泡走同一套 markdown 管线（applyMsg → renderMarkdown
+    // + 渲染后增强）。此前是 `textContent`，问句里的 `**全部**`、列表、行内代码会被
+    // 原样显示成一串星号/反引号（用户报"卡片没有渲染 markdown 文本"）。问句是 agent
+    // 写的正文，不是系统文案，渲染口径本该与气泡一致。
+    // 注记（"上一次没发出去…"）另起一个纯文本节点、**不进 markdown**：它是系统文案，
+    // 里面带 `*`/`_` 的话会被渲染成强调，把一句准话渲染歪。
+    const setAskQuestion = (q, note) => {
+      if (!askQuestion) return;
+      try { applyMsg(askQuestion, String(q || '')); }
+      catch (e) { askQuestion.textContent = String(q || ''); }  // 渲染失败退回纯文本，绝不空着
+      if (note) {
+        const el = document.createElement('div');
+        el.className = 'chat-ask-retry-note';
+        el.textContent = note;
+        askQuestion.appendChild(el);
+      }
     };
     // 把待办渲染成可点卡片。**幂等**（20260923）：同一个待办重复调用是零副作用。
     // 它现在有两个调用点——流收尾（正常时机）与 reconcileDOM 收尾的钩子
@@ -270,7 +286,7 @@
           && !!askBtns.querySelector('button[data-ask-value]')) return;
       askBox.dataset.askToken = token;
       askBox.dataset.askId = String(ask.id || '');   // 埋点用（非凭据，见 askIdOf）
-      askQuestion.textContent = ask.q;
+      setAskQuestion(ask.q);
       askBtns.innerHTML = '';
       (ask.opts || []).forEach((op) => {
         const b = document.createElement('button');
