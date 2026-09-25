@@ -180,11 +180,14 @@ pub fn create_router(state: AppState) -> Router {
         )
 
         // 后台首页待办（20260924）：待办卡此前只存浏览器 localStorage，现按用户落库。
-        // 两个接口一张表 = 整份列表覆盖（GET 读 / PUT 写），取舍见 routes/todos.rs 头注。
+        // 前端那张卡 = 整份列表覆盖（GET 读 / PUT 写），取舍见 routes/todos.rs 头注。
         .route(
             "/api/protected/todos",
             get(todos::list_todos).put(todos::save_todos),
         )
+        // 追加一条（20260926）：agent 安排日程用的通道——它手里没有那份列表，
+        // 整份覆盖会抹掉主人的改动，所以单独给一条"只加不覆盖"的接口。
+        .route("/api/protected/todos/item", post(todos::add_todo))
 
         // 编辑草稿（20260912c）：自动保存 + 编辑器专用读入口
         // 读入口单独开是因为公开的 GET /api/public/notes/:id 会挡掉草稿/私密文章（A4 修复），
