@@ -1,7 +1,13 @@
 .BoardManage
   padding: 20px
   height: 100%
-  overflow-y: auto
+  // 20260926：整页自己不再滚（原来是 overflow-y: auto）——那样工具栏与审核开关
+  // 会跟着表格一起滚走，翻到下面想换个关键词得先滚回顶上。现在这一块是**固定壳**：
+  // 上面两行 + 表格区 + 页脚三段，只有中间那段（.bm-scroll）滚。
+  // 高度链是通的：Dashboard 的 .Card 95% → .ant-card-body 100% → .users-page 100%
+  // → Tabs 内容区 100% → 这里 100%（少一环就退化成内容高度、内滚动失效）。
+  overflow: hidden
+  min-height: 0
   display: flex
   flex-direction: column
   gap: 14px
@@ -11,6 +17,8 @@
     align-items: center
     gap: 12px
     flex-wrap: wrap
+    // 固定段：窄屏/矮窗时不许被 flex 压扁（列表才该缩）
+    flex: 0 0 auto
 
     .bm-tabs
       display: flex
@@ -47,6 +55,8 @@
     border: 1px solid #f0e3de
     border-radius: 8px
     background: rgba(163, 63, 48, 0.05)
+    // 固定段（同上）
+    flex: 0 0 auto
 
     .bm-review-item
       display: flex
@@ -107,12 +117,35 @@
       font-size: 12px
       color: #999
 
+  // 只有这一块滚（20260926）：上面两段与下面的页脚都是 flex: 0 0 auto 的固定壳。
+  // `min-height: 0` 在这里冗余（滚动容器的自动最小尺寸本就是 0，见 Users/index.sass
+  // 同一处的说明）——留住只是为了把"允许缩到比内容矮"写明；**内滚动能生效靠的是
+  // 下面那行 `overflow: auto`**，不是它。
+  .bm-scroll
+    flex: 1 1 auto
+    min-height: 0
+    overflow: auto
+    // 表头吸在这一块的顶沿：滚动时列名不跟着走（与文章列表同一套做法）。
+    // z-index 抬到 2 是因为 antd 的 loading 蒙层是绝对定位盖在表体上的，
+    // 不抬的话刷新时会盖住表头。th 自带背景色（antd token），行不会透过来。
+    .ant-table-thead > tr > th
+      position: sticky
+      top: 0
+      z-index: 2
+
   .bm-note
     margin: 0
     color: #999
     font-size: 12px
     border-top: 1px dashed #ddd
     padding-top: 10px
+
+  // 分页条：固定段，钉在卡片底部。Table 自己的 pagination 已关（见 index.tsx），
+  // 否则翻页按钮会跟着表体一起滚走——滚到第 30 条想翻页还得先滚回底下。
+  .bm-foot
+    flex: 0 0 auto
+    display: flex
+    justify-content: flex-end
 
 // 驳回弹窗（20260923）：antd 弹窗是 portal 到 body 下的，**不在 .BoardManage 里**，
 // 所以这条必须写成顶层块（写进上面那个嵌套里就永远匹配不上，样式静默失效）。
