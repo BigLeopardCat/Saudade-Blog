@@ -64,7 +64,9 @@ if (!(window as any).__noToken) localStorage.setItem('tokenKey', TOKEN);
 
 const state: any = (window as any).__state = {
   // `__profileAvatar` 让头部那节能造出"本人已上传头像"的世界；不设则为 null（没上传过）
-  profile: { username: 'sora', nickname: '泠月喵',
+  // `role` 是后端**现读库**给的那一份（ProfileDto.role）；下面那些用例拿它和令牌里的
+  // role 对照，证明身份标签认的是 profile 而不是令牌快照。
+  profile: { username: 'sora', nickname: '泠月喵', role: (window as any).__profileRole || 'user',
              avatar: (window as any).__profileAvatar ?? null },
   favorites: [
     { noteId: 12, title: '架构文档', status: 'published', createdAt: '2026-09-20 10:00:00' },
@@ -436,14 +438,19 @@ def find_call(page, url, method=None):
 with sync_playwright() as p:
     br = p.chromium.launch()
 
-    def fresh_page(role="user", dark=False):
+    def fresh_page(role="user", dark=False, profile_role=None):
+        """`role` = 令牌 claims 里的角色（快照）；`profile_role` = 后端现读库那一份
+        （默认与令牌一致——两者不一致是**被人改过角色之后的旧令牌**那个场景，
+        由 §① 最后那条断言专门造）。"""
         page = br.new_page(viewport={"width": 1280, "height": 900})
         errs = []
         page.on("pageerror", lambda e: errs.append(str(e)))
         # 主题源就是 localStorage.isDarkMode（theme.ts readDarkMode：裸 'true' 与
         # JSON 的 '"true"' 两种历史格式都认），挂载时 useIsDarkMode 会补读一次。
-        page.add_init_script(f"window.__role = '{role}';"
-                             + ("localStorage.setItem('isDarkMode','true');" if dark else ""))
+        page.add_init_script(
+            f"window.__role = '{role}';"
+            f"window.__profileRole = '{profile_role or role}';"
+            + ("localStorage.setItem('isDarkMode','true');" if dark else ""))
         page.goto(URL)
         page.wait_for_selector(".ant-modal-content", timeout=10000)
         page.wait_for_timeout(600)
@@ -459,8 +466,23 @@ with sync_playwright() as p:
           and "留言记录" in tabs[2] and "公告和通知" in tabs[3] and "站内信箱" in tabs[4],
           " | ".join(tabs))
     check("昵称来自 /api/protected/profile 的回包",
-          pg.locator(".ucAvatarName").inner_text() == "泠月喵",
-          pg.locator(".ucAvatarName").inner_text())
+          pg.locator(".ucNickName").inner_text() == "泠月喵",
+          pg.locator(".ucNickName").inner_text())
+    # 权限身份标签（20260926 用户要求「个人中心里面，用户昵称后面显示权限身份标签」）。
+    # 判据三条：标签**在昵称后面**（不是另起一行/跑到头像那边）、文案是中文身份、
+    # 且取的是 profile 那份角色而不是令牌快照。
+    # 量的是**昵称那一层**（`.ucNickName`）不是外层容器：容器是行盒，宽度恒撑满
+    # 可用宽度，拿它当"昵称右缘"的话标签永远落在它里面（这个断言就是这么写错一次的）。
+    name_box = pg.locator(".ucNickName").bounding_box()
+    tag_box = pg.locator(".ucRoleTag").bounding_box()
+    check("昵称后面挂着权限身份标签（同一行、在昵称右缘之后）",
+          bool(name_box) and bool(tag_box)
+          and abs(tag_box["y"] - name_box["y"]) < name_box["height"]
+          and tag_box["x"] >= name_box["x"] + name_box["width"],
+          f'name={name_box} tag={tag_box}')
+    check("普通用户显示「普通用户」",
+          pg.locator(".ucRoleTag").inner_text().strip() == "普通用户",
+          pg.locator(".ucRoleTag").inner_text())
     # `.ucAvatarAccount` 现在有**两个**（UID 一行 + 账号一行，20260922 晚加的）⇒ 必须
     # 指名要哪一个；此前这里直接 inner_text() 会撞 Playwright 的 strict mode 而中断整脚本
     check("账号只读展示（没有任何可改账号的输入框）",
@@ -475,6 +497,18 @@ with sync_playwright() as p:
           sorted(c["url"] for c in calls(pg) if c["method"] == "GET")
           == ["/api/protected/notifications/summary", "/api/protected/profile"],
           " | ".join(f'{c["method"]} {c["url"]}' for c in calls(pg)))
+
+    # 标签认的是**后端现读库**的角色，不是令牌里那份快照——这是这条改动最容易写反的地方
+    # （令牌是无状态的，被人改过角色之后旧令牌会一直自称旧角色；标签跟着令牌就会骗人）。
+    print("①b 角色标签认 profile 而不是令牌快照（两个方向各造一个世界）")
+    for tok_role, prof_role, want in (("admin", "user", "普通用户"),
+                                      ("user", "admin", "管理员")):
+        pg2 = fresh_page(role=tok_role, profile_role=prof_role)
+        pg2.wait_for_selector(".ucRoleTag", timeout=10000)
+        got = pg2.locator(".ucRoleTag").inner_text().strip()
+        check(f"令牌说 {tok_role}、库里是 {prof_role} ⇒ 标签显示「{want}」（以库为准）",
+              got == want, f"got={got}")
+        pg2.close()
 
     print("② 头像：选图 → 裁剪弹窗（拖动/缩放）→ 确定 → 发 multipart、界面换新地址")
     pg.set_input_files(".ucUploadBtn input[type=file]", str(PNG))
@@ -546,8 +580,8 @@ with sync_playwright() as p:
     check("PUT /api/protected/profile 发了且带新昵称",
           bool(body) and body[-1]["data"] == {"nickname": "新的昵称"},
           str(body and body[-1]["data"]))
-    check("保存后界面上的昵称跟着变", pg.locator(".ucAvatarName").inner_text() == "新的昵称",
-          pg.locator(".ucAvatarName").inner_text())
+    check("保存后界面上的昵称跟着变", pg.locator(".ucNickName").inner_text() == "新的昵称",
+          pg.locator(".ucNickName").inner_text())
     # 只有后端拦得住的取值 → 必须原样弹出后端那句中文
     pg.fill(nick_input, "重名")
     pg.click(nick_btn)
@@ -556,8 +590,8 @@ with sync_playwright() as p:
           "这个昵称已经有人在用了" in pg.locator(".ant-message").inner_text(),
           pg.locator(".ant-message").inner_text().replace("\n", " "))
     check("被拒后界面上的昵称没有被改掉（没有乐观更新）",
-          pg.locator(".ucAvatarName").inner_text() == "新的昵称",
-          pg.locator(".ucAvatarName").inner_text())
+          pg.locator(".ucNickName").inner_text() == "新的昵称",
+          pg.locator(".ucNickName").inner_text())
     n_before = len(find_call(pg, "/api/protected/profile", "PUT"))
     pg.fill(nick_input, "   ")
     pg.click(nick_btn)

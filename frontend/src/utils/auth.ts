@@ -49,3 +49,28 @@ export function getRoleFromToken(token?: string | null): string | null {
 export function isAdminToken(token?: string | null): boolean {
     return getRoleFromToken(token) === 'admin'
 }
+
+/** 角色显示名（取值域见 Rust 侧 `src/authz.rs::KNOWN_ROLES`）。
+ *  放这儿而不是各页面自己写一份：账号管理页与个人中心都要显示这个标签，
+ *  两份表迟早会漂移成"同一角色两个名字"。
+ *  未知角色**不在这里编名字**：调用方回退显示原值（`roleLabel` 就是干这个的）。 */
+export const ROLE_LABEL: Record<string, string> = {
+    admin: '管理员',
+    secretary: '秘书',
+    user: '普通用户',
+}
+
+/** 角色 → 显示名。未知/空角色原样返回（空串时给「—」，与个人中心其它"读不到"的
+ *  展示同一套：**不猜、不编**）。 */
+export function roleLabel(role?: string | null): string {
+    if (!role) return '—'
+    return ROLE_LABEL[role] || role
+}
+
+/** 角色标签的颜色（与 ROLE_LABEL 同一张表的展示面，放在一起免得两处漂移）。
+ *  未知角色给中性色——不为认不出的角色编一个"看起来很严重"的颜色。 */
+export function roleTagColor(role?: string | null): string {
+    if (role === 'admin') return 'gold'
+    if (role === 'secretary') return 'blue'
+    return 'default'
+}

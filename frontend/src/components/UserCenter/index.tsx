@@ -21,7 +21,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Avatar, Badge, Button, ConfigProvider, Empty, Input, List, Modal, Tabs, Tag, message, theme as antdTheme } from 'antd'
 import { useNavigate } from 'react-router-dom'
 import getToken from '../../apis/getToken.tsx'
-import { getTokenClaims, isAdminToken } from '../../utils/auth.ts'
+import { getRoleFromToken, getTokenClaims, isAdminToken, roleLabel, roleTagColor } from '../../utils/auth.ts'
 import { resolveApiAssetUrl } from '../../utils/runtimeApi'
 import { useIsDarkMode } from '../../theme'
 import {
@@ -103,6 +103,11 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
 
     const [tab, setTab] = useState('settings')
     const [profile, setProfile] = useState<ProfileInfo | null>(null)
+
+    // 权限身份标签用的角色：优先 `profile.role`（后端**现读库**，见 ProfileDto），
+    // profile 还没拉回来时回退令牌 claims。两者都不参与权限判断（真正的授权在 Rust 侧），
+    // 只决定这一个标签写什么。
+    const effectiveRole = profile?.role ?? getRoleFromToken(getToken())
 
     // 各页签数据（null = 还没加载过）。收藏**不在本组件里存**——它是共享状态（详情页那颗
     // ★ 看的是同一份），见 favorites.ts。enabled = 「这一页这一刻真的在看收藏」：窗没开、
@@ -614,7 +619,25 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
             <div className="ucAvatarRow">
                 <Avatar size={96} src={myAvatar} className="ucAvatar" />
                 <div className="ucAvatarMeta">
-                    <div className="ucAvatarName">{profile?.nickname || profile?.username || ''}</div>
+                    <div className="ucAvatarName">
+                        {/* 昵称自己一层 `.ucNickName`（20260926 加身份标签时顺手包的）：
+                            标签进来之后 `.ucAvatarName` 的 inner_text 变成「昵称 标签」两段，
+                            按这个容器取昵称的断言（前端沙箱里那几条"保存后昵称跟着变"）
+                            会一起把标签读进去。容器仍是行盒，样式不变。 */}
+                        <span className="ucNickName">{profile?.nickname || profile?.username || ''}</span>
+                        {/* 权限身份标签（20260926 用户点名：「用户昵称后面显示权限身份标签」）。
+                            角色取 **profile** 而不是令牌 claims：令牌里的 role 是签发那一刻的
+                            快照，被人改过角色之后旧令牌会一直自称旧角色（前端标签会骗人）。
+                            profile 拉不到时（老后端/请求失败）回退令牌——比不显示强，
+                            且它只影响这一个标签，不参与任何权限判断。 */}
+                        <Tag
+                            className="ucRoleTag"
+                            color={roleTagColor(effectiveRole)}
+                            style={{ marginLeft: 8 }}
+                        >
+                            {roleLabel(effectiveRole)}
+                        </Tag>
+                    </div>
                     {/* UID 行（20260923 用户要求：加在账号栏上方）。与「账号」同一套样式，
                         令牌解析不出时给「—」，不猜、不编 */}
                     <div className="ucAvatarAccount">UID：{uid ?? '—'}</div>

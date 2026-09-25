@@ -11,6 +11,7 @@ import BoardManage from '../BoardManage';
 // 报错而不是登录页；②请求头里 token 的 `Bearer ` 前缀归一（后端 strip_prefix）。
 // 同页的评论管理（BoardManage）本来就走共享客户端，两半行为不一致本身就是坑。
 import http from "../../../apis/axios.tsx";
+import { ROLE_LABEL, roleTagColor } from "../../../utils/auth.ts";
 
 /** 用户管理 = 账号管理（临时访客账号）+ 评论管理（河灯留言审核）
  *  20260905 拍板：原 Announcement 内嵌临时用户段迁入「账号管理」；
@@ -25,13 +26,6 @@ import http from "../../../apis/axios.tsx";
  *  角色筛、按用户名检索；这一块与评论管理同款——**筛选与检索的头固定，只有
  *  下面的账号列表在窗口内滚**（原来整页滚，翻到后面想换个关键词得先滚回顶上）。
  */
-
-/** 角色显示名（取值域见 src/authz.rs；未知角色走后端过滤，这里只做兜底展示） */
-const ROLE_LABEL: Record<string, string> = {
-    admin: '管理员',
-    secretary: '秘书',
-    user: '普通用户',
-}
 
 /** 账号是否已冻结。判据与后端 `crate::authz::is_frozen` **同一条**：
  *  `user.status` 里不是 0 的一律算冻结（未登记的取值也按冻结处理，不默认放行）。
@@ -285,7 +279,7 @@ const Users = () => {
                                             <div>
                                                 <strong className={isFrozen(u) ? 'tu-frozen-name' : ''}>{u.username}</strong>
                                                 {u.role !== 'user' && (
-                                                    <Tag color={u.role === 'admin' ? 'gold' : 'blue'} style={{ marginLeft: 8 }}>
+                                                    <Tag color={roleTagColor(u.role)} style={{ marginLeft: 8 }}>
                                                         {ROLE_LABEL[u.role] || u.role}
                                                     </Tag>
                                                 )}

@@ -176,6 +176,11 @@ pub struct ProfileDto {
     pub nickname: String,
     /// 头像 URL（20260922 个人中心）：NULL/空 = 没设过，展示端回退到站点主人头像
     pub avatar: Option<String>,
+    /// 角色（20260926 用户点名：个人中心的昵称后面要显示权限身份标签）。
+    /// **从库里现读**，不从令牌 claims 里取——令牌里的 role 是签发那一刻的快照，
+    /// 而"管理员被降成普通用户"之后，那枚旧令牌会一直自称管理员（前端判据看的是
+    /// 这里，所以标签必须跟着库走）。取值域见 `crate::authz`。
+    pub role: String,
 }
 
 pub async fn profile(
@@ -193,6 +198,7 @@ pub async fn profile(
                     username: u.username,
                     nickname: nick,
                     avatar: u.avatar,
+                    role: u.role,
                 }))
             }
             None => Json(ApiResponse::error("账号不存在")),

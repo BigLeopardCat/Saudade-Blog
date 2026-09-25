@@ -69,6 +69,7 @@ pub async fn update_profile(
             username: u.username,
             nickname: u.nickname,
             avatar: u.avatar,
+            role: u.role,
         })),
         Err(e) => {
             tracing::error!("[profile] 改昵称失败 uid={}: {}", uid, e);

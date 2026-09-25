@@ -10,6 +10,9 @@ export interface ProfileInfo {
     nickname: string;
     /** 头像 URL；null/空 = 没设过，展示端回退到站点主人头像 */
     avatar?: string | null;
+    /** 角色（20260926）：个人中心昵称后面的权限身份标签用它。
+     *  **后端从库里现读**（不是令牌快照，见 src/routes/auth.rs::ProfileDto）。 */
+    role?: string;
 }
 
 /** GET /api/protected/favorites 的单行 */
