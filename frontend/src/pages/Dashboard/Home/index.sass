@@ -534,19 +534,26 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
     // 有呼吸的余地；只有左右要跟日历对齐。
     padding: 10px 0
     font-weight: 600
-    // 卡片自己不再滚——滚动交给下面的 .todoBody，这样「新增一行」能钉在卡片底部
+    // 卡片自己不再滚——滚动交给下面的 .todoBody，这样「新建日程」能钉在卡片底部
     overflow: hidden
 
     .ant-card-body
       display: flex
       flex-direction: column
       height: 100%
-      padding: 12px 0
+      // 20260926：上边距 12px → 0。卡片的 10px 纵向内边距（给阴影留的那点呼吸）之上
+      // 原本还叠着这一层 12px 和标题自己的 5px ⇒ 标题输入框离卡片顶沿 28px（文字 ~37px），
+      // 而上面那张日历卡的内容离它自己的顶沿只有 4px（文字 ~12px），两张卡的内容看着
+      // 各写各的。现在标题框落在 11px（文字 ~20px）、整份待办列表跟着上提 ~19px
+      // （实测第一条待办 96.6px → 77.6px；这组数字由沙箱锁着，别只靠眼睛）。
+      padding: 0 0 12px
 
     .todoTitle
       font-size: 1.17em
       font-weight: bold
-      margin: 5px 0 10px 0
+      // 上 5 → 0、下 10 → 8（与上面那条同一次上提；下边距留 8 是因为列表里第一段
+      // 分组头自己还有 2px 上边距，凑一起才不至于贴住标题）
+      margin: 0 0 8px 0
       padding-left: 10px
       background: transparent
 

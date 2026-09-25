@@ -36,7 +36,7 @@ const isOverdue = (t: Todo, today: string) => !!t.date && !t.done && t.date < to
 // 之后没有消费方了，随「格子里写文字」那条路一起删掉——留着就是死代码。）
 
 // 本地列表 → 发往服务端的那份（线上口径 {text, done, date}）：
-// 空行是前端的临时态（"新增一行"里还没写字），**不发也不存**——服务端同样会跳过。
+// 空行是前端的临时态（「新建日程」里还没写字），**不发也不存**——服务端同样会跳过。
 // 放在模块作用域（不是组件里）：它没有状态，也就没有闭包过期的问题。
 const toPayload = (list: Todo[]): DashboardTodo[] =>
     list.filter(t => t.text.trim())
@@ -253,7 +253,7 @@ const Home = () => {
         if (!text2) return;
         setTodos(prev => [...prev, {id: nextId(prev), text: text2, done: false, date}]);
     };
-    // 「新增一行」：先落一条空行并让它自动聚焦；失焦时仍为空就自动收掉，不留空壳
+    // 「新建日程」：先落一条空行并让它自动聚焦；失焦时仍为空就自动收掉，不留空壳
     const addBlankRow = () => {
         setTodos(prev => {
             const id = nextId(prev);
@@ -525,8 +525,10 @@ const Home = () => {
                                 <Button type="link" size="small"
                                         onClick={() => void loadTodos()}>重试</Button>
                             </div>}
+                        {/* 这一句里点名的按钮名要和下面那颗按钮一字不差（沙箱锁着：
+                            空列表那一节断言这句里的名字就是按钮上那个） */}
                         {loaded && groups.length === 0 &&
-                            <div className="todo-empty">还没有待办，点下面的「新增一行」</div>}
+                            <div className="todo-empty">还没有待办，点下面的「新建日程」</div>}
                         {groups.map(g => (
                             <div className="todo-group" key={g.key} data-date={g.key}>
                                 <div className={'todo-group-head' + (g.overdue ? ' is-overdue' : '')}>
@@ -600,7 +602,7 @@ const Home = () => {
                             之后重试读回来就把它冲掉了（比"按钮点了没反应"更让人困惑） */}
                         <Button className="todo-add" type="dashed" block size="small"
                                 disabled={!loaded}
-                                onClick={addBlankRow}>新增一行</Button>
+                                onClick={addBlankRow}>新建日程</Button>
                    </div>
                </Card>
                </ConfigProvider>

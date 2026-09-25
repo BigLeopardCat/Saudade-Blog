@@ -166,6 +166,9 @@ export function saveTodos(todos: any) {
 // 直接往"服务端那份"末尾加一行，其余一个字节不动（`__serverDump` 供断言读回来对账）。
 (window as any).__agentAppend = (row: any) => { server = [...server, row]; };
 (window as any).__serverDump = () => server;
+// 末节要验"一条待办都没有"的空态（只有新账号才见得到）：直接把服务端那份清空，
+// 再走 agent 收尾那条通道让页面重读一次。
+(window as any).__setServer = (rows: any[]) => { server = rows; };
 ''' % json.dumps(SEED, ensure_ascii=False), encoding="utf-8")
 
     # 边界④b：未读汇总接口层（20260924 四轮起，待审数从这条接口拿）。
@@ -385,6 +388,30 @@ with sync_playwright() as p:
           geo["todo"]["h"] > geo["cal"]["h"] * 2,
           f"日历 {geo['cal']['h']:.0f} / 待办 {geo['todo']['h']:.0f}")
 
+    # 20260926：卡片顶上那两层叠出来的死白（卡片体上内边距 12px + 标题上边距 5px）
+    # 收掉了 —— 那个**可编辑的标题**与它下面整份待办列表一起上提。旧值实测：标题
+    # 输入框离卡片顶沿 28px（文字 ~37px）、第一条待办 96.6px；现在 11px / 77.6px
+    # （上面那张日历卡的内容离它自己的顶沿是 4px，两者从此是同一个尺度）。
+    top = pg.evaluate("""() => {
+      const card = document.querySelector('.right .cardInfo');
+      const c = card.getBoundingClientRect();
+      const rel = (sel) => { const el = document.querySelector(sel);
+        const r = el.getBoundingClientRect(); return {t: +(r.top - c.top).toFixed(1),
+                                                     h: +r.height.toFixed(1)}; };
+      return {title: rel('.right .cardInfo .todoTitle'),
+              firstRow: rel('.right .cardInfo .todo-row'),
+              padding: getComputedStyle(card).padding,
+              bodyPad: getComputedStyle(document.querySelector('.right .cardInfo .ant-card-body')).paddingTop};
+    }""")
+    check("可编辑标题贴近卡片顶沿（输入框 ≤ 14px；旧值 28px ⇒ 文字离顶沿 38px）",
+          top["title"]["t"] <= 14, f"{top['title']['t']}px")
+    check("第一条待办跟着上提（≤ 82px；旧值 96.6px）",
+          top["firstRow"]["t"] <= 82, f"{top['firstRow']['t']}px")
+    check("卡片自己的纵向内边距没动（那 10px 是给卡片阴影留的）",
+          top["padding"].startswith("10px 0px"), top["padding"])
+    check("卡片体不再有上内边距（上提是靠收掉它，不是靠负边距找补）",
+          top["bodyPad"] == "0px", top["bodyPad"])
+
     print("⑤ 日历格子：编号居中在小圆里、待办画成小圆点（20260924 二轮）")
     today_cell = cell(pg, day(0))
     late_cell = cell(pg, OVERDUE)
@@ -588,16 +615,17 @@ with sync_playwright() as p:
                                   "els => els.map(e => e.value)") ==
           [f"{int(OVERDUE[5:7])}/{int(OVERDUE[8:10])}"])
 
-    print("⑩ 新增一行 / 空行自动回收")
+    print("⑩ 新建日程 / 空行自动回收")
     before = len(row_texts(pg))
-    # 按钮上只有字（20260924 二轮：撤掉那个 + 号图标）
-    check("「新增一行」按钮上没有图标",
+    # 按钮上只有字（20260924 二轮：撤掉那个 + 号图标；20260926 文案从「新增一行」
+    # 改成「新建日程」——那句空列表提示里点名的就是它，两处必须同名）
+    check("「新建日程」按钮上没有图标",
           pg.locator(".todo-add .anticon").count() == 0
-          and pg.locator(".todo-add").inner_text().strip() == "新增一行",
+          and pg.locator(".todo-add").inner_text().strip() == "新建日程",
           pg.locator(".todo-add").inner_text().strip())
     pg.click(".todo-add")
     pg.wait_for_timeout(300)
-    check("点「新增一行」多出一行", len(row_texts(pg)) == before + 1,
+    check("点「新建日程」多出一行", len(row_texts(pg)) == before + 1,
           f"{before} → {len(row_texts(pg))}")
     check("新行自动聚焦", pg.evaluate(
         "() => document.activeElement && document.activeElement.closest('.todo-row') !== null"))
@@ -1021,6 +1049,33 @@ with sync_playwright() as p:
           str([(r["text"], r["done"]) for r in sent2[:3]]))
     check("读失败那次没有留下的半截（服务端那份 = 发出去的那份）",
           server_texts() == [r["text"] for r in sent2], str(server_texts()))
+
+    # ── ⑰ 一条待办都没有时的空态（20260926）────────────────────────────────
+    # 空列表只有新账号才见得到，所以那句提示平时没人看；而它偏偏是界面上**唯一**会
+    # 念出按钮名字的地方——按钮改了名、这句话没跟着改，新账号读到的就是"点下面的
+    # 「新增一行」"，而他眼前那颗按钮叫别的（找不到）。这里把服务端那份清空、
+    # 走 agent 收尾那条通道重读一次，拿真实空态把两处对起来。
+    pg.reload()
+    pg.wait_for_timeout(900)
+    pg.evaluate("() => window.__setServer([])")
+    pg.evaluate("() => window.dispatchEvent(new CustomEvent('agent-turn-done'))")
+    pg.wait_for_timeout(700)
+    print("⑰ 空列表那句提示：点名的按钮就是眼前这颗")
+    check("（前置）真读回来是空的、渲染出了空态",
+          pg.locator(".todo-group").count() == 0
+          and pg.locator(".todo-empty").count() == 1,
+          f"{pg.locator('.todo-group').count()} 组 / "
+          f"{pg.locator('.todo-empty').count()} 条空态")
+    empty_txt = pg.locator(".todo-empty").first.inner_text().strip()
+    btn_txt = pg.locator(".todo-add").inner_text().strip()
+    check("空态文案里点的那个名字＝按钮上的名字",
+          btn_txt and btn_txt in empty_txt, f"提示「{empty_txt}」/ 按钮「{btn_txt}」")
+    check("空态下按钮可点（列表读出来了才让新建）",
+          pg.locator(".todo-add").is_enabled())
+    check("空态也贴着卡片顶沿（不是被列表挤上去的）",
+          pg.evaluate("""() => { const c = document.querySelector('.cardInfo').getBoundingClientRect();
+              const e = document.querySelector('.todo-empty').getBoundingClientRect();
+              return e.top - c.top; }""") <= 90)
 
     br.close()
 
