@@ -21,8 +21,13 @@
     POST 到 `/api/temp-users/<id>/status`、body 传的是**目标状态**而非"切换一下"、
     成功后会重新拉一次列表。另有两条刻意锁住的语义：`status` 缺失按 0 算（部署顺序
     兜底），而 `status = 2` 这种**未登记取值按冻结处理**（与后端 `is_frozen` 同一条）。
+    同日晚些再加一层（用户点名「把 OK 换成对应具体事务」）：**冻结/解冻要先弹确认框，
+    且确认按钮上的字是这一下的动作词**（「冻结」/「解冻」，不是「确定/OK」；标题、正文
+    里的后果说明、danger 极性都跟着方向走）。三条不变量跟着一起锁：弹窗开着时**零请求**、
+    点取消**零请求**、只有点确认才发出那一条 POST。
     两个坑写在下面的探针里：antd 的 `autoInsertSpace` 会在两个汉字之间插空格
-    （拿到的是「解 冻」），以及假 `fetch` 每次 GET 必须返回**深拷贝**——返回同一个数组
+    （拿到的是「解 冻」——**弹窗确认按钮上同样会**，所以认定文案前一律抹空白），
+    以及假 `fetch` 每次 GET 必须返回**深拷贝**——返回同一个数组
     引用会让 React 的 `Object.is` 直接跳过重渲染，症状是"POST 成功了但行没动"。
 
 沿用既定手段（本机不能 vite build，见 CLAUDE.md §2）：esbuild 把真组件打成 bundle，
@@ -288,9 +293,34 @@ GEO = """() => {
 }"""
 
 
+# 冻结/解冻的确认框（20260926 用户点名：「把 OK 换成对应具体事务」）。
+# 取的是**弹窗页脚**那个按钮，不是行上那个同名的——两者文案一样（冻结/解冻），
+# 只有作用域能区分（行上 `.tu-freeze-btn` / 弹窗 `.tu-status-ok`）。
+# 按类名认弹窗而不是按 `title` 认：这一页同时挂着三个 `.ant-modal-wrap`
+# （改密码、恢复码、本框），关着的那些是 display:none 但仍在 DOM 里。
+STATUS_DIALOG = """() => {
+    const m = [...document.querySelectorAll('.ant-modal-wrap')].find(
+        (w) => getComputedStyle(w).display !== 'none' && w.querySelector('.tu-status-ok'));
+    if (!m) return null;
+    const q = (s) => (m.querySelector(s) ? m.querySelector(s).textContent.replace(/\\s+/g, '') : '');
+    const ok = m.querySelector('.tu-status-ok');
+    return {
+        title: q('.ant-modal-title'),
+        ok: ok.textContent.replace(/\\s+/g, ''),
+        okDanger: ok.classList.contains('ant-btn-dangerous'),
+        body: q('.ant-modal-body'),
+    };
+}"""
+
+
+def status_posts(pg):
+    """本页发出的状态请求条数（POST …/status）。断言"确认之前一个都不许发"用它。"""
+    return pg.evaluate("""() => window.__fetchCalls.filter((c) =>
+        c.method === 'POST' && /\\/status$/.test(c.url))""")
+
+
 with sync_playwright() as p:
     br = p.chromium.launch()
-
     # ── 一、账号管理：固定壳 + 只有列表滚 ─────────────────────────────────────
     # 用户报的原始症状就在这里（"文章列表的逻辑"）。判据取"头不动、行动"这一对：
     # 只看"列表能滚"是假绿——整页滚的时候列表**也**能滚。
@@ -575,14 +605,40 @@ with sync_playwright() as p:
     check("未冻结行上的按钮是「冻结」且套 danger 色",
           normal["label"] == "冻结" and normal["danger"], str(normal))
 
-    # ④ 点一下 —— 请求体必须是 {frozen:true}（传目标状态，不传"切换"）
+    # ④ 点一下 ⇒ **先弹确认框**；取消不许下手，确认之后请求体是 {frozen:false}
     pg.locator(".tu-tabs button", has_text="冻结账号").first.click()
     pg.wait_for_timeout(250)
     before = pg.evaluate("() => window.__fetchCalls.length")
     pg.locator(".tu-row", has_text="guest27").locator(".tu-freeze-btn").click()
+    pg.wait_for_timeout(300)
+    dlg = pg.evaluate(STATUS_DIALOG)
+    check("点「解冻」是先弹确认框，不是直接下手", dlg is not None, str(dlg))
+    check("确认框标题是「解冻账号」（按这一下的方向取，不是一句笼统标题）",
+          dlg and dlg["title"] == "解冻账号", str(dlg and dlg["title"]))
+    check("确认按钮上的字是动作词「解冻」，不是「确定/OK」",
+          dlg and dlg["ok"] == "解冻", str(dlg and dlg["ok"]))
+    check("确认框里点了名（写清是哪个账号）", dlg and "guest27" in dlg["body"],
+          str(dlg and dlg["body"]))
+    check("解冻那一侧的确认按钮不套 danger（与行上按钮同一套极性）",
+          dlg and not dlg["okDanger"], str(dlg and dlg["okDanger"]))
+    check("**弹窗开着的时候一个状态请求都没发**（动作必须等那一下确认）",
+          status_posts(pg) == [], str(status_posts(pg)))
+
+    # ④b 取消 ⇒ 什么都不该发生（"取消也要真的取消"是最容易写成样子货的一条）
+    # 按类名取取消按钮，不按 `.ant-btn-default` 取：改密码那个弹窗是 forceRender 的，
+    # 它的取消按钮此刻也在 DOM 里（display:none），按类名取会命中两个。
+    pg.locator(".tu-status-cancel").click()
+    pg.wait_for_timeout(300)
+    check("点取消：弹窗关掉且**零请求**（没有偷偷把动作做掉）",
+          pg.evaluate(STATUS_DIALOG) is None and status_posts(pg) == [],
+          f'dlg={pg.evaluate(STATUS_DIALOG)} posts={status_posts(pg)}')
+
+    # ④c 再来一次并确认 ⇒ 这才是唯一会发请求的路径
+    pg.locator(".tu-row", has_text="guest27").locator(".tu-freeze-btn").click()
+    pg.wait_for_timeout(300)
+    pg.locator(".ant-modal-wrap .tu-status-ok").click()
     pg.wait_for_timeout(600)
-    posts = pg.evaluate("""() => window.__fetchCalls.filter((c) =>
-        c.method === 'POST' && /\\/status$/.test(c.url))""")
+    posts = status_posts(pg)
     check("点「解冻」发出 POST /api/temp-users/126/status", len(posts) == 1
           and posts[0]["url"] == "/api/temp-users/126/status", str(posts))
     check("请求体是 {frozen:false}（传目标状态，不是让后端自己取反）",
@@ -600,9 +656,17 @@ with sync_playwright() as p:
     pg.locator(".tu-tabs button", has_text="全部").first.click()
     pg.wait_for_timeout(250)
     pg.locator('.tu-row:has(strong:text-is("guest1")) .tu-freeze-btn').click()
+    pg.wait_for_timeout(300)
+    dlg2 = pg.evaluate(STATUS_DIALOG)
+    check("冻结这一侧：标题「冻结账号」、按钮上是「冻结」",
+          dlg2 and dlg2["title"] == "冻结账号" and dlg2["ok"] == "冻结", str(dlg2))
+    check("冻结那一侧的确认按钮套 danger（红按钮 = 会让对方下线的那一下）",
+          dlg2 and dlg2["okDanger"], str(dlg2 and dlg2["okDanger"]))
+    check("冻结的后果写在弹窗里（含「登录状态立即失效」这层意思）",
+          dlg2 and "立即失效" in dlg2["body"], str(dlg2 and dlg2["body"]))
+    pg.locator(".ant-modal-wrap .tu-status-ok").click()
     pg.wait_for_timeout(600)
-    last = pg.evaluate("""() => window.__fetchCalls.filter((c) =>
-        c.method === 'POST' && /\\/status$/.test(c.url)).slice(-1)[0]""")
+    last = status_posts(pg)[-1] if status_posts(pg) else None
     check("点「冻结」发出 {frozen:true}（与解冻走同一个接口、只换请求体）",
           last and last["body"] == {"frozen": True}, str(last))
     pg.locator(".tu-tabs button", has_text="冻结账号").first.click()
@@ -617,6 +681,8 @@ with sync_playwright() as p:
     pg.evaluate("() => { window.__users.find((u) => u.id === 101).status = 2 }")
     # 顺手点一下解冻（会把 guest1 解掉）：这一下必然重新拉列表，正好把上面改的值带进来
     pg.locator('.tu-row:has(strong:text-is("guest1")) .tu-freeze-btn').click()
+    pg.wait_for_timeout(300)
+    pg.locator(".ant-modal-wrap .tu-status-ok").click()
     pg.wait_for_timeout(600)
     pg.locator(".tu-tabs button", has_text="冻结账号").first.click()
     pg.wait_for_timeout(250)
