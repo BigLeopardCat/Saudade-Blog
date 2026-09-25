@@ -916,6 +916,26 @@ fn render_exec_row(row: &serde_json::Value) -> String {
                 format!("{}账号「{}」：{}", verb, name, change)
             }
         }
+        // 后台首页待办 / 日程（20260926 补臂）：读一件 + 写一件。**从 args 渲染**——
+        // 回执顶层 meta 里没有 text/date（那是 agent 侧 `_RCPT_META_KEYS` 的白名单，
+        // 不必为这两条给所有回执多开两个口子），而 args 由 agent 侧 str() 落盘、上限
+        // 200 字，本行下游还有 300 字的列宽截断。
+        // 写的那件带正文：它是这条待办**唯一的指认方式**（没有标题也没有 id），与标签/
+        // 公告那种"能靠名字指认、正文只是内容"的情况不同——所以这里不按"不带正文"处理。
+        // 措辞与 agent 侧 server.py _tool_action_text 的同名臂一致（那边按 24 字截断，
+        // 分工同 device_oled_display）。
+        "list_dashboard_todos" => "查看待办列表".to_string(),
+        "create_dashboard_todo" => {
+            let text = arg("text");
+            let date = arg("date");
+            if text.is_empty() {
+                "添加待办".to_string()
+            } else if date.is_empty() {
+                format!("添加待办「{}」", text)
+            } else {
+                format!("添加待办「{}」（{}）", text, date)
+            }
+        }
         // 用户自己的数据（20260923）：**读三个 + 写三个**。读的措辞与 agent 侧
         // server.py _NOARG_VERB 同源——漏了会落默认分支，把 `操作记录(list_my_favorites)`
         // 这种带下划线的内部工具名写进 execution_log 被下一轮 narrator 照抄。

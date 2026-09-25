@@ -709,12 +709,28 @@
           return payload.sub || '';
         } catch { return ''; }
       };
+      // 本机记住的账号昵称（20260926 用户要求：标识从「用户1（你）」改成
+      // 「昵称（UID:1）」）。读的是 React 侧 identity.ts 维护的那份**展示身份缓存**
+      // （`saudade.lastUser`，头部头像三态用的同一个键，登录/改昵称时刷新）——
+      // 只取 nickname/username 两个展示字段，**绝不读令牌**（令牌只有 tokenKey
+      // 一处，这是那份缓存自己的头注纪律）。取不到就退回「用户<uid>」，不猜。
+      const rememberedName = () => {
+        try {
+          const v = JSON.parse(localStorage.getItem('saudade.lastUser') || 'null');
+          if (!v || typeof v !== 'object') return '';
+          const n = typeof v.nickname === 'string' ? v.nickname.trim() : '';
+          const u = typeof v.username === 'string' ? v.username.trim() : '';
+          return n || u;
+        } catch { return ''; }
+      };
       // 20260830：userLabel 从"初始化快照"改为"渲染时实时读"——登录/退出切换
       // 账号（React 派发 auth-change）后新渲染的气泡必须用新账号标签；IIFE 快照
       // 会永远显示切换前的用户名（getUserId 每次 atob 解 JWT，开销可忽略）
       const userLabel = () => {
         const uid = getUserId();
-        return uid ? '用户' + uid + '（你）: ' : '你: ';
+        if (!uid) return '你: ';
+        // 昵称与 UID 都给出：昵称是给人认的，UID 是给人核对的（同名账号靠它分得开）
+        return (rememberedName() || '用户' + uid) + '（UID:' + uid + '）: ';
       };
       // ── 历史存取：DB 权威（pullHistory），localStorage 仅离线/游客缓存 ──
       // historyKey/convPrefKey 定义已上移到会话原语块（20260903：键随会话分桶）
