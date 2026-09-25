@@ -200,6 +200,20 @@ pub async fn user_stats(State(state): State<Arc<AppState>>) -> Json<ApiResponse<
             return Json(ApiResponse::error("统计查询失败，请稍后再试"));
         }
     };
+    // **超级管理员不进报表**（20260926，与后台账号列表同一条要求：超管账号不露脸）。
+    // 在这里过滤是**一处生效**的：下面 `build_rows` 之后的逐人活动表、`role_counts`、
+    // `total_users`、7/30 天活跃、`listed_users` 全都从 `rows` 派生。
+    // 刻意**不动** `total_conversations` / `total_messages`：那是全站总量（按 user_id
+    // 聚合后再求和），不是"某个人那一行"——超管自己跟看板娘的对话当然是站内活动的一部分，
+    // 把它从总量里扣掉才是错的。
+    //
+    // 也刻意**不用** `authz::is_listable_role`（它多一条"已知角色"）：那张表是给
+    // 账号列表按角色分档用的，而这里是**普查**——角色是历史脏值的账号照样有会话，
+    // 把它从报表里抹掉会让逐人表对不上总量。两处的判据不一样是各自的要求不同。
+    let users: Vec<(i32, String, String)> = users
+        .into_iter()
+        .filter(|(_, _, role)| !crate::authz::is_superadmin(role))
+        .collect();
 
     // 2. 按 user_id 聚合（会话数+最后更新；消息数+最后一条）
     let conv = match grouped_counts(

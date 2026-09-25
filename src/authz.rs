@@ -51,6 +51,18 @@ pub fn can_access_console(role: &str) -> bool {
     role == ROLE_ADMIN || role == ROLE_SUPERADMIN
 }
 
+/// 这个角色的账号能不能出现在**后台账号列表/报表**里。
+///
+/// 这就是需求原话「超级管理员账号密码不显示在后台」的落点，抽成函数是为了让它
+/// 可测：两个条件（已知角色 + 不是超管）中**少写一个都不会报错**——只写
+/// `is_known_role` 就是超管在后台露脸，只写 `!is_superadmin` 就是历史脏值账号
+/// 混进列表。它是三道防线里的第一道（见 `routes::temp_user::list_temp_users`），
+/// 而 agent 的账号名录读的是同一个接口 ⇒ 账号不出现在这里 = 那个账号在 agent 侧
+/// 结构上就按名字找不到。
+pub fn is_listable_role(role: &str) -> bool {
+    is_known_role(role) && !is_superadmin(role)
+}
+
 // ── 账号管理策略（20260926）────────────────────────────────────────────────
 //
 // **这两个函数是"谁能冻谁、谁能改谁的身份"的唯一实现**——agent 侧不复制判据，
@@ -250,6 +262,20 @@ mod tests {
         assert!(!is_superadmin(ROLE_SECRETARY));
         assert!(!is_superadmin(ROLE_USER));
         assert!(!is_superadmin(""));
+    }
+
+    /// "超级管理员账号不显示在后台"这条需求的可测形态：两半都要在，
+    /// 少一半都不会报错、只会静默放行（见 `is_listable_role` 的注释）。
+    #[test]
+    fn 列表可见的角色里没有超管() {
+        assert!(!is_listable_role(ROLE_SUPERADMIN));
+        assert!(is_listable_role(ROLE_ADMIN));
+        assert!(is_listable_role(ROLE_SECRETARY));
+        assert!(is_listable_role(ROLE_USER));
+        // 未知角色也不列（前端判不出它该归到哪一档筛选项下）
+        assert!(!is_listable_role(""));
+        assert!(!is_listable_role("SuperAdmin"));
+        assert!(!is_listable_role("root"));
     }
 
     /// 冻结策略表逐格。第二列是"发起人"，第三列是目标，第四列是期望结果。
