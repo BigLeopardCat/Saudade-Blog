@@ -293,6 +293,24 @@ console.log('\n── 接线与机制锁（源码层）──');
     const home = read('src/frontHome/Content/ContentHome/index.tsx');
     ok(!/AnnouncementModal/.test(home), '首页 ContentHome 那个旧挂载点已摘（挂着它就只能刷新才查一次）');
 
+    // 两个出口的分工（20260926 用户拍板）：点「我知道了」才记已读；从弹窗外关掉
+    // **不**记已读（那行照旧未读 ⇒ 红点与个人中心照旧未读、下次刷新照旧会弹）。
+    // 源码层锁：这两个函数体里各只该出现一次 markAnnouncementRead，且在 handleRead 里。
+    const modal = read('src/components/AnnouncementModal/index.tsx');
+    const body = (startMarker, endMarker) => modal.slice(modal.indexOf(startMarker), modal.indexOf(endMarker));
+    const closeFn = body('const handleClose = () => {', 'return (');
+    const readFn = body('const handleRead = () => {', 'const handleClose');
+    ok(/markAnnouncementRead\(p\)/.test(readFn),
+        '点「我知道了」⇒ 记已读（唯一会记已读的出口）');
+    ok(!/markAnnouncementRead/.test(closeFn),
+        '从弹窗外关掉（遮罩/Esc/×）⇒ **不记已读**！仍是未读：红点照旧亮、个人中心照旧未读');
+    ok((modal.match(/markAnnouncementRead\(/g) || []).length === 1,
+        'markAnnouncementRead 在组件里只被调用一处（两个出口不许各写一遍）',
+        { calls: (modal.match(/markAnnouncementRead\(/g) || []).length });
+    ok(/onCancel=\{handleClose\}/.test(modal) && /onClick=\{handleRead\}/.test(modal)
+       && /我知道了/.test(modal),
+        '遮罩/Esc/× 走 handleClose、「我知道了」按钮走 handleRead（接线别接反）');
+
     // 编辑不重弹的机制保证在 Rust 那半：只同步标题/正文，不插行、不碰 is_read
     const rs = readFileSync(path.join(repo, 'src/routes/announcements.rs'), 'utf8');
     const upd = rs.slice(rs.indexOf('pub async fn update_announcement'), rs.indexOf('pub async fn delete_announcement'));

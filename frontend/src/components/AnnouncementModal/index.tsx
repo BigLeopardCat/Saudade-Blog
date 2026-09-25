@@ -1,4 +1,4 @@
-import { Modal, theme } from 'antd'
+import { Button, Modal, theme } from 'antd'
 import { useEffect, useRef, useState } from 'react'
 import {
     fetchPendingAnnouncement,
@@ -27,7 +27,14 @@ const fmtCnTime = (s: string) => {
  * 搬到服务端""为什么只弹最新那条""读不到为什么不弹"讲完了）。这里只管三件事：
  *   ① 登记复查（挂载即查 + 四类事件 + 可见时 60 秒一拍）；
  *   ② 重入与"刚关掉的这条"的抑制；
- *   ③ 只负责显示，关窗时才记已读。
+ *   ③ 只负责显示，**点「我知道了」时才记已读**。
+ *
+ * 两个出口的分工（20260926 用户拍板，别再合并回去）：
+ *   · 「我知道了」按钮 ⇒ `handleRead`：记已读（服务端那行标掉 ⇒ 红点与个人中心
+ *     当场跟着掉 / 游客写本机水位）；
+ *   · 点弹窗外、Esc、右上角 × ⇒ `handleClose`：**只收起卡片**。没点按钮就当没读过
+ *     ⇒ 红点照旧亮、个人中心照旧未读、下次刷新照旧会弹。同一个标签页内不再反复弹
+ *     同一张（会话级抑制），但那是"别打扰"，不是"算你读过"。
  *
  * 两处挂载（公共页壳 App.tsx / 后台 Dashboard 自己的壳）——**不是**挂在某个页面上，
  * 那正是"只有刷新才弹"的旧毛病：公告是站点级事件，弹窗得跟着壳走。 */
@@ -40,11 +47,14 @@ const AnnouncementModal = () => {
     /** 已经弹着（查到了也不换正文，免得读到一半被替换） */
     const openRef = useRef(false)
     /**
-     * 本次页面会话里**已经关掉过**的公告 id。存在的唯一理由是"服务端已读写失败"：
-     * 那种情况下服务端仍判它未读，下一拍复查会再弹一次同一张卡，用户就成了"关不掉的弹窗"。
-     * 这里是**内存里的会话级抑制**、不落盘、也不冒充已读——服务端那行照旧未读、红点照旧亮着，
-     * 别的设备也照旧会弹（那正是"按账号记"的意思），只是不在同一个标签页里反复打扰。
-     */
+     * 本次页面会话里**已经关掉过**的公告 id。它服务两种"关掉了但仍是未读"的情形：
+     *   · 用户点弹窗外（遮罩/Esc/右上角 ×）收起卡片——按产品口径这**不算读过**，
+     *     服务端那行照旧未读、红点照旧亮着（见 handleClose）；
+     *   · 点了「我知道了」但服务端那次已读写失败。
+     * 两种情形下服务端都仍判它未读，下一拍复查会再弹一次同一张卡 ⇒ 用户会遇上
+     * "关不掉的弹窗"。这里是**内存里的会话级抑制**、不落盘、也不冒充已读：
+     * 服务端那行照旧未读、红点照旧亮着、刷新/别的设备照旧会弹（那正是"仍是未读"
+     * 的意思），只是不在同一个标签页里反复打扰。 */
     const closedIdsRef = useRef<Set<number>>(new Set())
 
     useEffect(() => {
@@ -73,14 +83,31 @@ const AnnouncementModal = () => {
         }
     }, [])
 
+    /**
+     * 点「我知道了」= 用户明确表态读过了 ⇒ 记已读（服务端那行标掉 / 游客写本机水位）。
+     * 这是**唯一**会记已读的出入口（弹窗出现时不记——出现即标记等于替用户读了）。
+     */
+    const handleRead = () => {
+        const p = pending
+        openRef.current = false
+        setOpen(false)
+        if (!p) return
+        closedIdsRef.current.add(p.id)
+        void markAnnouncementRead(p)
+    }
+
+    /**
+     * 从弹窗外关掉（点遮罩 / Esc / 右上角 ×）：**只是收起卡片，不记已读**。
+     * 这是产品口径（20260926 用户拍板）：没点「我知道了」就当没读过——红点照旧亮、
+     * 个人中心那份通知照旧是未读、下次刷新照旧会弹。
+     * 只做一件事：把它压进本页会话的抑制集，免得 60 秒那一拍立刻把同一张卡又弹出来
+     * （"关不掉的弹窗"）。抑制不落盘、不冒充已读，见 closedIdsRef。
+     */
     const handleClose = () => {
         const p = pending
         openRef.current = false
         setOpen(false)
-        // 关闭（含读完）时才记已读——弹窗出现即标记等于替用户读了
-        if (!p) return
-        closedIdsRef.current.add(p.id)
-        void markAnnouncementRead(p)
+        if (p) closedIdsRef.current.add(p.id)
     }
 
     return (
@@ -123,6 +150,14 @@ const AnnouncementModal = () => {
                 <div style={{ whiteSpace: 'pre-wrap', textAlign: 'justify' }}>{pending?.content}</div>
                 <div style={{ marginTop: 16, fontSize: 12, color: token.colorTextTertiary, textAlign: 'right' }}>
                     {fmtCnTime(pending?.time || '')}
+                </div>
+                {/* 「我知道了」= 记已读的唯一入口（见 handleRead/handleClose 的分工）。
+                    点弹窗外关掉这条**不**走这里 ⇒ 仍是未读。按钮配色取 antd token，
+                    浅色（公共页）与深色（后台 ConfigProvider）下都读得清。 */}
+                <div style={{ marginTop: 20, textAlign: 'center' }}>
+                    <Button type="primary" onClick={handleRead} style={{ minWidth: 120 }}>
+                        我知道了
+                    </Button>
                 </div>
             </div>
         </Modal>
