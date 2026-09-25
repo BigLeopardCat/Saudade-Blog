@@ -50,8 +50,9 @@ pub async fn update_profile(
     headers: HeaderMap,
     Json(payload): Json<UpdateProfileRequest>,
 ) -> Json<ApiResponse<super::auth::ProfileDto>> {
-    let Some(uid) = crate::auth_jwt::auth_uid(&headers) else {
-        return Json(ApiResponse::error("未登录"));
+    let uid = match crate::auth_jwt::auth_uid(&state.db, &headers).await {
+        Ok(uid) => uid,
+        Err(e) => return Json(ApiResponse::error(e.message())),
     };
     let nick = payload.nickname.trim();
     // 按**字符**数而不是字节数限制（中文昵称按字节算会被莫名砍短）
@@ -86,18 +87,34 @@ pub struct ChangePasswordRequest {
     pub new_password: String,
 }
 
+/// 改密码的返回：**新令牌**。
+///
+/// 为什么要把令牌回给前端（20260926）：改密码会把 `token_version` +1 ⇒ 此前签发的
+/// **全部**令牌当场失效，包括发起这次请求的这台设备手里的那枚。这是"其他设备下线"
+/// 的必然代价，但让本人也跟着被踢出去是没必要的——服务端在这一刻顺手签发一枚
+/// 带新代次的令牌还给本机，语义正好是「本机保持登录，其他设备全部下线」。
+#[derive(Serialize, Default)]
+pub struct PasswordChangedDto {
+    /// 新令牌（与登录返回值同形：裸 JWT，不带 Bearer 前缀）
+    pub token: String,
+}
+
 /// PUT /api/protected/profile/password：改密码（必须验旧的）。
 ///
 /// 新密码下限 8 位与「忘记密码」那条路（auth.rs `reset_password`）保持一致。
-/// **不吊销已发出的 JWT**：令牌是无状态的（HMAC 自包含、无服务端会话表），改密码后
-/// 旧令牌在过期前仍可用——这是本系统的既有边界，如实写在这里，不假装做到了。
+///
+/// **改密码会让其他设备立刻下线**（20260926 起；此前这里是如实写着的"做不到"——
+/// 令牌无状态、无服务端会话表，改密码收不回旧令牌。现在 `user.token_version` 就是
+/// 那份服务端状态，判据在 `authz::check_token`，不再是无状态的）。
+/// 顺序是：密码与代次在**同一次 UPDATE** 里落库 ⇒ 不存在"密码换了但令牌没收回"的窗口。
 pub async fn change_password(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(payload): Json<ChangePasswordRequest>,
-) -> Json<ApiResponse<String>> {
-    let Some(uid) = crate::auth_jwt::auth_uid(&headers) else {
-        return Json(ApiResponse::error("未登录"));
+) -> Json<ApiResponse<PasswordChangedDto>> {
+    let uid = match crate::auth_jwt::auth_uid(&state.db, &headers).await {
+        Ok(uid) => uid,
+        Err(e) => return Json(ApiResponse::error(e.message())),
     };
     if payload.new_password.chars().count() < 8 {
         return Json(ApiResponse::error("新密码至少 8 位"));
@@ -116,12 +133,17 @@ pub async fn change_password(
         state.rate_limiter.record_failure(&ip, &uname);
         return Json(ApiResponse::error("原密码不正确"));
     }
+    let new_ver = u.token_version + 1;
+    let role = u.role.clone();
     let mut am: user::ActiveModel = u.into();
     am.password = Set(hash_password(&payload.new_password));
+    am.token_version = Set(new_ver);
     match am.update(&state.db).await {
         Ok(_) => {
             state.rate_limiter.record_success(&ip, &uname);
-            Json(ApiResponse::success("密码已修改".to_string()))
+            // 令牌用**刚落库的那个代次**签发；用旧值签会立刻被自己收回。
+            let token = crate::auth_jwt::create_token(uid, &role, new_ver);
+            Json(ApiResponse::success(PasswordChangedDto { token }))
         }
         Err(e) => {
             tracing::error!("[profile] 改密码失败 uid={}: {}", uid, e);
@@ -166,8 +188,9 @@ pub async fn upload_avatar(
     headers: HeaderMap,
     mut multipart: axum::extract::Multipart,
 ) -> Json<ApiResponse<AvatarDto>> {
-    let Some(uid) = crate::auth_jwt::auth_uid(&headers) else {
-        return Json(ApiResponse::error("未登录"));
+    let uid = match crate::auth_jwt::auth_uid(&state.db, &headers).await {
+        Ok(uid) => uid,
+        Err(e) => return Json(ApiResponse::error(e.message())),
     };
     let Ok(Some(field)) = multipart.next_field().await else {
         return Json(ApiResponse::error("没有收到文件"));
@@ -259,8 +282,9 @@ pub async fn list_favorites(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Json<ApiResponse<Vec<FavoriteDto>>> {
-    let Some(uid) = crate::auth_jwt::auth_uid(&headers) else {
-        return Json(ApiResponse::error("未登录"));
+    let uid = match crate::auth_jwt::auth_uid(&state.db, &headers).await {
+        Ok(uid) => uid,
+        Err(e) => return Json(ApiResponse::error(e.message())),
     };
     let favs = match user_favorite::Entity::find()
         .filter(user_favorite::Column::UserId.eq(uid))
@@ -317,8 +341,9 @@ pub async fn add_favorite(
     headers: HeaderMap,
     Json(payload): Json<FavoriteRequest>,
 ) -> Json<ApiResponse<String>> {
-    let Some(uid) = crate::auth_jwt::auth_uid(&headers) else {
-        return Json(ApiResponse::error("未登录"));
+    let uid = match crate::auth_jwt::auth_uid(&state.db, &headers).await {
+        Ok(uid) => uid,
+        Err(e) => return Json(ApiResponse::error(e.message())),
     };
     let Some(n) = note::Entity::find_by_id(payload.note_id).one(&state.db).await.unwrap_or(None) else {
         return Json(ApiResponse::error("这篇文章不存在"));
@@ -366,8 +391,9 @@ pub async fn remove_favorite(
     headers: HeaderMap,
     axum::extract::Path(note_id): axum::extract::Path<i32>,
 ) -> Json<ApiResponse<String>> {
-    let Some(uid) = crate::auth_jwt::auth_uid(&headers) else {
-        return Json(ApiResponse::error("未登录"));
+    let uid = match crate::auth_jwt::auth_uid(&state.db, &headers).await {
+        Ok(uid) => uid,
+        Err(e) => return Json(ApiResponse::error(e.message())),
     };
     match user_favorite::Entity::delete_many()
         .filter(user_favorite::Column::UserId.eq(uid))
@@ -470,8 +496,9 @@ pub async fn notification_summary(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Json<ApiResponse<UnreadDto>> {
-    let Some(uid) = crate::auth_jwt::auth_uid(&headers) else {
-        return Json(ApiResponse::error("未登录"));
+    let uid = match crate::auth_jwt::auth_uid(&state.db, &headers).await {
+        Ok(uid) => uid,
+        Err(e) => return Json(ApiResponse::error(e.message())),
     };
     Json(ApiResponse::success(unread_counts(&state.db, uid).await))
 }
@@ -481,8 +508,9 @@ pub async fn list_notifications(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Json<ApiResponse<NotificationListDto>> {
-    let Some(uid) = crate::auth_jwt::auth_uid(&headers) else {
-        return Json(ApiResponse::error("未登录"));
+    let uid = match crate::auth_jwt::auth_uid(&state.db, &headers).await {
+        Ok(uid) => uid,
+        Err(e) => return Json(ApiResponse::error(e.message())),
     };
     let rows = match user_notification::Entity::find()
         .filter(user_notification::Column::UserId.eq(uid))
@@ -530,8 +558,9 @@ pub async fn read_notifications(
     headers: HeaderMap,
     Json(payload): Json<ReadRequest>,
 ) -> Json<ApiResponse<UnreadDto>> {
-    let Some(uid) = crate::auth_jwt::auth_uid(&headers) else {
-        return Json(ApiResponse::error("未登录"));
+    let uid = match crate::auth_jwt::auth_uid(&state.db, &headers).await {
+        Ok(uid) => uid,
+        Err(e) => return Json(ApiResponse::error(e.message())),
     };
     let now = chrono::Local::now().naive_local();
     let mut q = user_notification::Entity::update_many()
@@ -645,8 +674,9 @@ pub async fn list_messages(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Json<ApiResponse<MailboxDto>> {
-    let Some(uid) = crate::auth_jwt::auth_uid(&headers) else {
-        return Json(ApiResponse::error("未登录"));
+    let uid = match crate::auth_jwt::auth_uid(&state.db, &headers).await {
+        Ok(uid) => uid,
+        Err(e) => return Json(ApiResponse::error(e.message())),
     };
     let inbox = match user_message::Entity::find()
         .filter(user_message::Column::ToUserId.eq(uid))
@@ -709,8 +739,9 @@ pub async fn send_message(
     headers: HeaderMap,
     Json(payload): Json<SendMessageRequest>,
 ) -> Json<ApiResponse<MessageDto>> {
-    let Some(uid) = crate::auth_jwt::auth_uid(&headers) else {
-        return Json(ApiResponse::error("未登录"));
+    let uid = match crate::auth_jwt::auth_uid(&state.db, &headers).await {
+        Ok(uid) => uid,
+        Err(e) => return Json(ApiResponse::error(e.message())),
     };
     let content = payload.content.trim();
     if content.is_empty() {
@@ -784,8 +815,9 @@ pub async fn read_messages(
     headers: HeaderMap,
     Json(payload): Json<ReadRequest>,
 ) -> Json<ApiResponse<MailboxDto>> {
-    let Some(uid) = crate::auth_jwt::auth_uid(&headers) else {
-        return Json(ApiResponse::error("未登录"));
+    let uid = match crate::auth_jwt::auth_uid(&state.db, &headers).await {
+        Ok(uid) => uid,
+        Err(e) => return Json(ApiResponse::error(e.message())),
     };
     let now = chrono::Local::now().naive_local();
     let mut q = user_message::Entity::update_many()
@@ -845,8 +877,9 @@ pub async fn list_my_talks(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Json<ApiResponse<Vec<MyTalkDto>>> {
-    let Some(uid) = crate::auth_jwt::auth_uid(&headers) else {
-        return Json(ApiResponse::error("未登录"));
+    let uid = match crate::auth_jwt::auth_uid(&state.db, &headers).await {
+        Ok(uid) => uid,
+        Err(e) => return Json(ApiResponse::error(e.message())),
     };
     let rows = match talk::Entity::find()
         .filter(talk::Column::UserId.eq(uid))
@@ -942,8 +975,9 @@ pub async fn list_drafts(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Json<ApiResponse<Vec<DraftDto>>> {
-    let Some(uid) = crate::auth_jwt::auth_uid(&headers) else {
-        return Json(ApiResponse::error("未登录"));
+    let uid = match crate::auth_jwt::auth_uid(&state.db, &headers).await {
+        Ok(uid) => uid,
+        Err(e) => return Json(ApiResponse::error(e.message())),
     };
     let rows = match user_message_draft::Entity::find()
         .filter(user_message_draft::Column::UserId.eq(uid))
@@ -970,8 +1004,9 @@ pub async fn save_draft(
     headers: HeaderMap,
     Json(payload): Json<SaveDraftRequest>,
 ) -> Json<ApiResponse<DraftDto>> {
-    let Some(uid) = crate::auth_jwt::auth_uid(&headers) else {
-        return Json(ApiResponse::error("未登录"));
+    let uid = match crate::auth_jwt::auth_uid(&state.db, &headers).await {
+        Ok(uid) => uid,
+        Err(e) => return Json(ApiResponse::error(e.message())),
     };
     if payload.content.chars().count() > MESSAGE_MAX_CHARS {
         return Json(ApiResponse::error("内容过长（最多 500 字）"));
@@ -1065,8 +1100,9 @@ pub async fn delete_draft(
     headers: HeaderMap,
     axum::extract::Path(id): axum::extract::Path<i32>,
 ) -> Json<ApiResponse<String>> {
-    let Some(uid) = crate::auth_jwt::auth_uid(&headers) else {
-        return Json(ApiResponse::error("未登录"));
+    let uid = match crate::auth_jwt::auth_uid(&state.db, &headers).await {
+        Ok(uid) => uid,
+        Err(e) => return Json(ApiResponse::error(e.message())),
     };
     match user_message_draft::Entity::delete_many()
         .filter(user_message_draft::Column::Id.eq(id))

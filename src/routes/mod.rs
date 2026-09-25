@@ -252,6 +252,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/temp-users/:id", delete(temp_user::delete_temp_user))
                 .route("/api/temp-users/:id/password", post(temp_user::change_password))
                 .route("/api/temp-users/:id/password-reset-token", post(temp_user::create_password_reset_token))
+                // 冻结 / 解冻（20260926）：挂在同一族下——它就是账号管理页第二个按钮，
+                // 与改密码/恢复码同一批操作、同一份权限（auth_guard 只放管理员）
+                .route("/api/temp-users/:id/status", post(temp_user::set_user_status))
         
         // 只读统计（20260921）：agent「管理助手」的用户数据报表供数。
         // 挂在守卫域内 ⇒ 自动只有 admin 拿得到（agent 以发起人身份代调，见 routes/stats.rs 头注）。

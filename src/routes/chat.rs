@@ -121,12 +121,19 @@ pub async fn chat_history_handler(
     Query(query): Query<HistoryQuery>,
     headers: HeaderMap,
 ) -> Response {
-    let Some(uid) = auth_jwt::auth_uid(&headers) else {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({"items": [], "count": 0, "error": "unauthorized"})),
-        )
-            .into_response();
+    let uid = match auth_jwt::auth_uid(&state.db, &headers).await {
+        Ok(uid) => uid,
+        // 401 保持原样（前端按 status 401 走登录态恢复），只多带一句 message
+        // 说明是"冻结"还是"令牌被收回"（20260926）
+        Err(e) => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({
+                    "items": [], "count": 0, "error": "unauthorized", "message": e.message()
+                })),
+            )
+                .into_response();
+        }
     };
     // 会话解析（GET 不自动建会话，保持无副作用）：无会话 → 200 空列表
     let conv_id = match resolve_conversation_id(&state.db, uid, query.conversation_id, false).await {
@@ -205,12 +212,18 @@ pub async fn discard_handler(
     headers: HeaderMap,
     payload: Option<Json<DiscardReq>>,
 ) -> Response {
-    let Some(uid) = auth_jwt::auth_uid(&headers) else {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({"success": false, "error": "unauthorized"})),
-        )
-            .into_response();
+    let uid = match auth_jwt::auth_uid(&state.db, &headers).await {
+        Ok(uid) => uid,
+        // 401 保持原样，多带一句 message（同上）
+        Err(e) => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({
+                    "success": false, "error": "unauthorized", "message": e.message()
+                })),
+            )
+                .into_response();
+        }
     };
     let conv_opt = payload.as_ref().and_then(|p| p.conversation_id);
     // 会话解析：显式 id 已删 / 无任何会话 → 空操作 success（幂等设计，见上注释）
@@ -265,8 +278,9 @@ pub async fn discard_handler(
 async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (StatusCode, Json<ChatResponse>)> {
     // 先取链路追踪 id（headers 在 into_body 前可读）
     let trace_id = trace_id_of(&req);
-    // 从 Authorization header 提取 token（auth_jwt::auth_uid，20260830 上移共享）
-    let user_id = auth_jwt::auth_uid(req.headers());
+    // 从 Authorization header 提取 token（auth_jwt::auth_uid，20260830 上移共享；
+    // 20260926 起它还负责判"账号是否冻结 / 令牌是否已被收回"，所以要多传一个 db）
+    let auth = auth_jwt::auth_uid(&state.db, req.headers()).await;
 
     // 解析请求体（8MB：多模态多图 base64 数据（最多 6 张 × 每张 ≤1MB dataURL），
     // 原 2MB 会拒掉多图）
@@ -279,9 +293,19 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
         Err(e) => return Err((StatusCode::OK, Json(ChatResponse { reply: String::new(), success: false, error: Some(format!("JSON解析失败: {}", e)) }))),
     };
 
-    let uid = match user_id {
-        Some(id) => id,
-        None => return Err((StatusCode::OK, Json(ChatResponse {
+    let uid = match auth {
+        Ok(id) => id,
+        // 冻结 / 令牌已被收回（20260926）：**不能**落进下面那条访客分支——那会回一段
+        // "请申请临时体验账号"的合规文案，把"你被冻结了"说成"你没登录"，
+        // 当事人照着文案去申请账号只会白跑一趟。如实说是哪一件事。
+        Err(e @ (auth_jwt::AuthError::Frozen | auth_jwt::AuthError::Revoked)) => {
+            return Err((StatusCode::OK, Json(ChatResponse {
+                reply: e.message().into(),
+                success: false,
+                error: Some(e.message().into()),
+            })))
+        }
+        Err(_) => return Err((StatusCode::OK, Json(ChatResponse {
             reply: "尊敬的访客：\n\n本站部署的AI虚拟形象Agent（导航/解读助手）仅供技术学习交流与功能展示使用，不视为面向公众开放的经营性AI服务。\n\n为严格遵守《生成式人工智能服务管理暂行办法》等相关法律法规，履行合规义务，本项目已采取访问限制措施，当前未向不特定公众开放。\n\n如您确因学习、交流或前端技术测试需要体验该功能，请通过博客顶部或关于页面的联系方式，联系管理员申请临时体验账号。管理员将在确认您的需求后，为您开通限时访问权限。\n\n感谢您的理解与支持！\n我们始终坚持合规先导，也期待与各位爱好者共同交流学习。\n\nSaudade Blog\n2026年7月29日".into(),
             success: true,
             error: None,

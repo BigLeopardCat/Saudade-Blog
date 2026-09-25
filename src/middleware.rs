@@ -51,8 +51,24 @@ pub async fn auth_guard(
                     .await
                     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
                 match user_db {
-                    Some(u) if crate::authz::can_access_console(&u.role) => Ok(next.run(req).await),
-                    Some(_) => Err(StatusCode::FORBIDDEN),
+                    Some(u) => {
+                        // 令牌有效性（20260926）：账号被冻结或令牌已被收回（改密码 /
+                        // 管理员重置 / 冻结时 +1 了 token_version）一律按**未登录**处理。
+                        //
+                        // 这里回 401 而不是 403 是刻意的：403 的既有语义是"人还在、
+                        // 只是不该进后台"（前端对它的处置是提示一句、留在原页），
+                        // 而冻结/收回是"人已经不在线了"——401 才会让前端清掉本地令牌
+                        // 并跳登录页。两种情况用一个判据点（authz::check_token），
+                        // 但走的是各自该走的状态码。
+                        if crate::authz::check_token(u.status, u.token_version, claims.ver).is_err() {
+                            return Err(StatusCode::UNAUTHORIZED);
+                        }
+                        if crate::authz::can_access_console(&u.role) {
+                            Ok(next.run(req).await)
+                        } else {
+                            Err(StatusCode::FORBIDDEN)
+                        }
+                    }
                     None => Err(StatusCode::UNAUTHORIZED),
                 }
             } else {

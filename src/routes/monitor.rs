@@ -13,14 +13,16 @@
 use axum::{
     Json,
     body::Body,
-    extract::Request,
+    extract::{Request, State},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
 use serde::Deserialize;
 use std::io::Write;
+use std::sync::Arc;
 
 use crate::auth_jwt;
+use crate::routes::AppState;
 
 /// 上报载荷（前端 autoload.js 全局捕获打包；message 截 500 / stack 截 1500）
 #[derive(Deserialize)]
@@ -63,11 +65,15 @@ fn normalize_kind(raw: Option<&str>) -> String {
     }
 }
 
-pub async fn report_log(req: Request<Body>) -> Response {
-    // 带 token 时解析 uid，无则 guest（访客错误同样值得记录）——headers 须在 into_body 前读
-    let uid = auth_jwt::auth_uid(&req.headers())
-        .map(|u| u.to_string())
-        .unwrap_or_else(|| "guest".to_string());
+pub async fn report_log(State(state): State<Arc<AppState>>, req: Request<Body>) -> Response {
+    // 带 token 时解析 uid，无则 guest（访客错误同样值得记录）——headers 须在 into_body 前读。
+    // 20260926：身份走同一个出口 ⇒ 冻结/令牌被收回的账号在这里也归 guest（它确实已经
+    // 不是"登录中的用户"了）。这条端点本就匿名可写，**uid 只是日志归属**、不授予任何能力；
+    // 之所以仍然走查库那一版，是不给"绕过身份出口"留第二个先例（见 auth_jwt::auth_uid 头注）。
+    let uid = match auth_jwt::auth_uid(&state.db, req.headers()).await {
+        Ok(u) => u.to_string(),
+        Err(_) => "guest".to_string(),
+    };
 
     // 照抄 chat.rs 模式：手动限体 + serde_json::from_slice
     let body_bytes = match axum::body::to_bytes(req.into_body(), 8 * 1024).await {

@@ -6,14 +6,14 @@ use crate::entity::{talk, user};
 use crate::routes::AppState;
 use crate::utils::ApiResponse;
 
-/// 从请求头提取 Bearer 中的用户 id（无 token / 无效则 None；公开接口可选鉴权）
-fn current_uid(headers: &HeaderMap) -> Option<i32> {
-    headers
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .and_then(|token| crate::auth_jwt::verify_token(token))
-        .map(|claims| claims.sub)
+/// 从请求头提取用户 id（无 token / 令牌无效 / **账号被冻结或令牌已收回** → None）。
+///
+/// 20260926 起**改走 `auth_jwt::auth_uid`（签名 + 查库）**，不再只验签：这里此前是
+/// 一处"自己解 token"的旁路——冻结一个账号之后，它照旧能放河灯、能看"我的河灯"。
+/// 河灯是访客内容，正是冻结该停掉的东西。判据回到唯一出口上，这个函数只剩"取个
+/// `Option` 方便 let-else"的形。
+async fn current_uid(db: &sea_orm::DatabaseConnection, headers: &HeaderMap) -> Option<i32> {
+    crate::auth_jwt::auth_uid(db, headers).await.ok()
 }
 
 #[derive(Serialize)]
@@ -47,7 +47,7 @@ async fn list_by_src(
     headers: &HeaderMap,
     src: &str,
 ) -> Json<ApiResponse<Vec<TalkDto>>> {
-    let uid = current_uid(headers);
+    let uid = current_uid(&state.db, &headers).await;
     let mut query = talk::Entity::find();
     if src != "all" {
         query = query.filter(talk::Column::Src.eq(src));
@@ -95,7 +95,7 @@ pub async fn list_my_boards(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Json<ApiResponse<Vec<TalkDto>>> {
-    let Some(uid) = current_uid(&headers) else {
+    let Some(uid) = current_uid(&state.db, &headers).await else {
         return Json(ApiResponse::error("请先登录"));
     };
     let talks = match talk::Entity::find()
@@ -136,7 +136,7 @@ pub async fn delete_my_board(
     headers: HeaderMap,
     Path(id): Path<i32>,
 ) -> Json<ApiResponse<String>> {
-    let Some(uid) = current_uid(&headers) else {
+    let Some(uid) = current_uid(&state.db, &headers).await else {
         return Json(ApiResponse::error("请先登录"));
     };
     let Some(t) = talk::Entity::find_by_id(id).one(&state.db).await.unwrap() else {
@@ -196,7 +196,7 @@ async fn insert_talk(
     src: &str,
 ) -> Json<ApiResponse<String>> {
     // 发布必须登录（昵称/匿名都会在 user_id 留存，供溯源与维护）
-    let Some(uid) = current_uid(headers) else {
+    let Some(uid) = current_uid(&state.db, &headers).await else {
         return Json(ApiResponse::error("请先登录后再发布"));
     };
     // 基础校验防滥用（长度封顶 + 印章/灯型白名单）
@@ -477,7 +477,7 @@ pub async fn delete_talk(
     Path(id): Path<i32>,
 ) -> Json<ApiResponse<String>> {
     // 删除说说：须登录（后台说说管理入口）
-    let Some(_uid) = current_uid(&headers) else {
+    let Some(_uid) = current_uid(&state.db, &headers).await else {
         return Json(ApiResponse::error("请先登录"));
     };
     talk::Entity::delete_by_id(id).exec(&state.db).await.unwrap();
@@ -491,7 +491,7 @@ pub async fn update_talk(
     Json(payload): Json<UpsertTalk>,
 ) -> Json<ApiResponse<String>> {
     // 编辑说说：须登录
-    let Some(_uid) = current_uid(&headers) else {
+    let Some(_uid) = current_uid(&state.db, &headers).await else {
         return Json(ApiResponse::error("请先登录"));
     };
     let talk_model = talk::Entity::find_by_id(id)
@@ -543,7 +543,7 @@ pub async fn list_board_admin(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Json<ApiResponse<Vec<BoardAdminDto>>> {
-    let Some(_uid) = current_uid(&headers) else {
+    let Some(_uid) = current_uid(&state.db, &headers).await else {
         return Json(ApiResponse::error("请先登录"));
     };
     let talks = match talk::Entity::find()
@@ -611,7 +611,7 @@ pub async fn delete_board(
     headers: HeaderMap,
     Path(id): Path<i32>,
 ) -> Json<ApiResponse<String>> {
-    let Some(_uid) = current_uid(&headers) else {
+    let Some(_uid) = current_uid(&state.db, &headers).await else {
         return Json(ApiResponse::error("请先登录"));
     };
     talk::Entity::delete_by_id(id).exec(&state.db).await.unwrap();
@@ -644,7 +644,7 @@ pub async fn audit_board(
     Path(id): Path<i32>,
     Json(payload): Json<AuditBody>,
 ) -> Json<ApiResponse<String>> {
-    let Some(_uid) = current_uid(&headers) else {
+    let Some(_uid) = current_uid(&state.db, &headers).await else {
         return Json(ApiResponse::error("请先登录"));
     };
     let Some(t) = talk::Entity::find_by_id(id).one(&state.db).await.unwrap() else {

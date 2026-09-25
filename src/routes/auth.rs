@@ -73,6 +73,12 @@ pub async fn login(
         if !verify_password(&payload.password, &u.password) {
             continue;
         }
+        // 冻结账号（20260926）：口令对也进不来。判据放**口令校验之后**是有意的——
+        // 口令错的人仍然只看到那句统一的「账号或密码错误」，冻结这件事只告诉
+        // **已经证明自己拿着凭据**的人（否则它就成了一个账号存在性的探针）。
+        if crate::authz::is_frozen(u.status) {
+            return Json(ApiResponse::error("账号已被冻结，请联系管理员"));
+        }
         // 惰性迁移：旧格式（SHA-256）哈希在**登录成功的这一刻**换成 Argon2id——
         // 用户无感、不需要改密码，也不需要一次性刷全表（刷表会让所有人登不进来）。
         // 失败只记日志不影响登录（下次登录再试）。
@@ -86,7 +92,9 @@ pub async fn login(
             }
         }
         state.rate_limiter.record_success(&ip, &payload.username);
-        let token = crate::auth_jwt::create_token(u.id, &u.role);
+        // 令牌里带上当前的 `token_version`（20260926）：此后只要库里的值变大
+        // （改密码 / 管理员重置 / 冻结），这枚令牌当场失效——收回能力就在这一行。
+        let token = crate::auth_jwt::create_token(u.id, &u.role, u.token_version);
         return Json(ApiResponse::success(token));
     }
 
@@ -133,9 +141,21 @@ pub async fn reset_password(
     if token.expires_at <= now {
         return Json(ApiResponse::error("恢复码已过期，请联系管理员重新生成"));
     }
+    // 冻结账号不能靠恢复码把口令换掉再进来（20260926）：冻结是管理员按下的一刀，
+    // 被冻的人手里有旧的恢复码也不该能自己解开。放在**口令写入之前**，
+    // 于是这条路上不会留下任何"改了一半"的痕迹。
+    if crate::authz::is_frozen(account.status) {
+        return Json(ApiResponse::error("账号已被冻结，请联系管理员"));
+    }
 
+    // 走这条路等于"凭据已经换了"（20260926）：令牌代次 +1，
+    // 此前在**任何设备**上签发的令牌当场全部失效。找回密码本来就意味着
+    // "我怀疑旧凭据不安全了"，那就必须连旧会话一起收掉。
+    // 代次必须在 `into()` 之前抄下来——ActiveModel 里读不到"当前值"。
+    let ver = account.token_version;
     let mut user_active: user::ActiveModel = account.into();
     user_active.password = Set(hash_password(&payload.new_password));
+    user_active.token_version = Set(ver + 1);
     if user_active.update(&state.db).await.is_err() {
         return Json(ApiResponse::error("密码修改失败，请稍后再试"));
     }
@@ -162,15 +182,11 @@ pub async fn profile(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Json<ApiResponse<ProfileDto>> {
-    let uid = headers
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .and_then(|token| crate::auth_jwt::verify_token(token))
-        .map(|claims| claims.sub);
-
-    match uid {
-        Some(id) => match user::Entity::find_by_id(id).one(&state.db).await.unwrap_or(None) {
+    // 20260926：这里原本自己手写了一遍"取头 → 验签 → 取 sub"，是全仓**第二份**
+    // 身份解析。身份只有一个出口（`auth_jwt::auth_uid`），否则冻结/令牌收回这类
+    // 加在出口上的判据会在这条路上被架空——而这条正是前端每次开面板都要走的路。
+    match crate::auth_jwt::auth_uid(&state.db, &headers).await {
+        Ok(id) => match user::Entity::find_by_id(id).one(&state.db).await.unwrap_or(None) {
             Some(u) => {
                 let nick = if u.nickname.is_empty() { u.username.clone() } else { u.nickname };
                 Json(ApiResponse::success(ProfileDto {
@@ -181,6 +197,6 @@ pub async fn profile(
             }
             None => Json(ApiResponse::error("账号不存在")),
         },
-        None => Json(ApiResponse::error("未登录")),
+        Err(e) => Json(ApiResponse::error(e.message())),
     }
 }
