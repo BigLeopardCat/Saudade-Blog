@@ -9,6 +9,9 @@
 #   · 后端**按源码是否变化**决定要不要重启（`git diff src/ Cargo.*` 比较上一版与本次的提交），
 #     没变就不动服务——"每个 run 都重启一次"会白掐在途对话。
 #   · 落地后做存活探测，并写 frontend/dist/build-info.json（线上 curl 即知跑的是哪个提交）。
+#   · 落地后清掉上一代的前端死哈希块（20260925 补，见下方"清上一代死块"一节）：
+#     解包是直接覆盖、从不清理 ⇒ 实测一天涨约 100MB、累积到 1.15G（手工清出 737MB）。
+#     判据 = 解压时记下的本代清单（logs/.deploy_manifest.txt）做集合差，精确、不猜。
 #
 # ⚠️ 改这个文件之前先确认没有部署在跑（pgrep -af deploy_from_r2）：
 #    bash 是按字节偏移增量读脚本的，执行中被覆盖会读到半截。
@@ -57,11 +60,17 @@ except Exception as exc:
     sys.exit(f'❌ 取不到部署包 {key}：{exc}（该提交没有产物？或上传还没完成）')
 with tarfile.open('/tmp/deploy.tar.gz') as tar:
     # A10 修复：filter='data' 拒绝 ../ 等路径穿越条目（Python 3.12 默认值，显式声明防回归）
+    # 顺手记下包里的前端文件清单——它就是"本代"的权威定义（CI 每次全新构建，包里
+    # 的 frontend/dist 全部来自这一次构建），下一步清死块直接拿它做集合差，不猜
+    members = [n for n in tar.getnames()
+               if n.startswith(('frontend/dist/js/', 'frontend/dist/vendor/')) and not n.endswith('/')]
     tar.extractall(filter='data')
 os.remove('/tmp/deploy.tar.gz')
+with open('logs/.deploy_manifest.txt', 'w', encoding='utf-8') as fh:
+    fh.write('\n'.join(members) + '\n')
 with open('logs/.last_deploy_sha', 'w', encoding='utf-8') as fh:
     fh.write(sha)
-print(f'✅ 部署文件下载解压完成（{key}）')
+print(f'✅ 部署文件下载解压完成（{key}；前端 js/vendor 本代 {len(members)} 个）')
 PYEOF2
 
 SHA="$(cat logs/.last_deploy_sha)"
@@ -69,6 +78,51 @@ SHA="$(cat logs/.last_deploy_sha)"
 # ── 前端：至少得有一个 index.html 才算落地 ───────────────────────────────
 [ -f frontend/dist/index.html ] || { echo "❌ 部署包里没有 frontend/dist/index.html"; exit 1; }
 echo "✅ $(date '+%H:%M:%S') 前端已更新"
+
+# ── 清上一代的前端死块（20260925 补）─────────────────────────────────────
+# 为什么必须有这一节：解包是 `tar.extractall` 直接覆盖，**从不清理上一代**，于是每次
+# 部署都把自己那一代内容寻址的哈希块留在 js/ 与 vendor/ 里，而 index.html 只指向最新
+# 一代 ⇒ 只增不减。实测 20260925：5362 个文件里当前页面只够得到 44 个，累积 1.15G、
+# 一天涨约 100MB（同族坑第五次的形态：前四次是"策略写了没人执行"，这次是**连清理
+# 这一环都不存在**）。
+#
+# 判据 = **上一节记下的本代清单**（包里有什么就是本代），JS/ 与 vendor/ 下不在清单里的
+# 就是上一代的残留。CI 每次全新构建 ⇒ 包里那份 frontend/dist 就是本代全集，所以这是
+# 精确的集合差，不依赖"文件名看着旧"这种猜测（20260925 实测：最近那个包的 44 个
+# js/vendor 成员与盘上集合逐条一致）。三道闸：
+#   ① 清单读不到、或条数 < 5 ⇒ 直接放弃（判据可疑时宁可留旧块）；
+#   ② 只在这个目录下、只删**普通文件**（`os.path.islink` 的先跳过，不碰符号链接）；
+#   ③ 读不到 size 或 unlink 失败只跳过那一个（`OSError`）。
+# 清不掉**不影响部署结果**（只记一行警告退出码 0）：线上正确性不依赖这一步。
+python3 - <<'PYEOF3' || echo "⚠️ $(date '+%H:%M:%S') 前端死块清理失败（不影响本次部署，下次部署再清）"
+import os
+DIRS = ['frontend/dist/js', 'frontend/dist/vendor']
+try:
+    with open('logs/.deploy_manifest.txt', encoding='utf-8') as fh:
+        current = {ln.strip() for ln in fh if ln.strip()}
+except OSError as exc:
+    raise SystemExit(f'⚠️ 读不到本代清单 logs/.deploy_manifest.txt（{exc}）⇒ 不清（宁可留旧块也不冒险）')
+if len(current) < 5:
+    raise SystemExit(f'⚠️ 本代清单只有 {len(current)} 条，太小 ⇒ 不清（判据可疑时宁可留旧块）')
+dead = []
+for d in DIRS:
+    if not os.path.isdir(d):
+        continue
+    for name in sorted(os.listdir(d)):
+        p = f'{d}/{name}'
+        if p not in current and os.path.isfile(p) and not os.path.islink(p):
+            dead.append(p)
+freed = 0
+for p in dead:
+    try:
+        freed += os.stat(p).st_size
+        os.unlink(p)
+    except OSError:
+        pass
+print(f'🧹 前端死块：清掉上一代 {len(dead)} 个 / {freed / 1048576:.1f}MB（本代 {len(current)} 个全部保留）')
+if dead:
+    print('   ' + '、'.join(os.path.basename(p) for p in dead[:5]) + ('…' if len(dead) > 5 else ''))
+PYEOF3
 
 # ── 后端：ELF 校验 → 按源码变化决定要不要重启 ────────────────────────────
 RESTART=0
