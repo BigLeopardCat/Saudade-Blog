@@ -20,10 +20,16 @@
 `DATABASE_URL` 从来没被读过——它自己的每个结论都是通过 HTTP 打出来的）。
 
 20260926 起由 agent 仓 `scripts/nightly_regression.sh` **每日跑一次（门禁）**，用
-`--admin-uid "$GOLDEN_ADMIN_UID"`、排在 golden 之前：`GOLDEN_ADMIN_UID` 就是本探针要验的
-那个身份，探针验**语义**（冻结/改密码真的收回令牌、两处旁路真的收口），golden 侧的
+`--admin-uid "$GOLDEN_ADMIN_UID" --no-self-probe`、排在 golden 之前：`GOLDEN_ADMIN_UID` 就是本
+探针要验的那个身份，探针验**语义**（冻结/改密码真的收回令牌、两处旁路真的收口），golden 侧的
 `eval/identity_preflight.py` 验**可用性**（这个 uid 今天还活着、角色还对）。它写生产库，
 但只写自己建的一次性靶子账号 `probe_revoke_<时间戳>`（`finally` 里删掉）。
+
+**`--no-self-probe` 是夜间的默认姿势**（20260926 用户拍板）：【六】【七】是负向断言——
+真去冻结/删**管理员自己的 uid**并期望后端拒绝。手动跑（有人看着）要跑，无人值守的 cron
+不该每晚对着一个真实账号发这两个写请求：它通过与否取决于"后端的闸还在不在"，而这件事
+不靠每晚真发一次来维持（`cargo test` 里的闸门单测管着它）。摘掉之后夜间验的仍然是它的
+本分：**冻结/改密码真的收回令牌、两处旁路真的收口**。
 """
 import argparse
 import hashlib
@@ -118,6 +124,9 @@ def main():
     ap.add_argument("--admin-uid", type=int, default=0,
                     help="用一个管理员账号的 uid 发起冻结/解冻（它自己必须是 admin）")
     ap.add_argument("--keep", action="store_true", help="跑完不删靶子账号（默认删）")
+    ap.add_argument("--no-self-probe", action="store_true",
+                    help="跳过【六】【七】（对管理员自己的 uid 发冻结/删除请求，期望被拒）"
+                         "——夜间无人值守跑法用它，别让 cron 每晚真发这两个写请求")
     args = ap.parse_args()
     if not args.admin_uid:
         sys.exit("请用 --admin-uid 指定一个管理员 uid（探针不会替你猜哪个是管理员）")
@@ -217,19 +226,27 @@ def main():
         check("改密码返回的新令牌可用（本机不掉线）", st == 200 and r.get("code") == 200,
               f"http={st} code={r.get('code')}")
 
-        print("\n【六】不能冻结自己")
-        st, r = call("POST", f"/api/temp-users/{admin_uid}/status", admin, {"frozen": True})
-        check("管理员冻结自己 → 后端拒绝",
-              st == 200 and r.get("code") != 200 and "自己" in (r.get("message") or ""),
-              f"http={st} msg={r.get('message') if isinstance(r, dict) else r}")
-        st, r = call("GET", "/api/protected/stats/users", admin)
-        check("拒绝之后自己**仍然可用**（半截状态没留下）", st == 200, f"http={st}")
+        if args.no_self_probe:
+            # 【六】【七】是**负向**断言：真去冻结/删管理员自己的 uid，期望后端拒绝。
+            # 无人值守的夜间跑法（cron）用 --no-self-probe 摘掉它们——那两节每晚都会
+            # 对着一个真实存在的账号发写请求，通过与否取决于"后端有没有把闸守住"，
+            # 而这件事不该靠每晚真发一次来维持。手动跑（有人看着）时仍然要跑这两节。
+            print(f"\n【六】【七】--no-self-probe：跳过对 uid={admin_uid} 的冻结/删除尝试"
+                  "（负向断言，夜间不做真请求；手动跑请不带此开关）")
+        else:
+            print("\n【六】不能冻结自己")
+            st, r = call("POST", f"/api/temp-users/{admin_uid}/status", admin, {"frozen": True})
+            check("管理员冻结自己 → 后端拒绝",
+                  st == 200 and r.get("code") != 200 and "自己" in (r.get("message") or ""),
+                  f"http={st} msg={r.get('message') if isinstance(r, dict) else r}")
+            st, r = call("GET", "/api/protected/stats/users", admin)
+            check("拒绝之后自己**仍然可用**（半截状态没留下）", st == 200, f"http={st}")
 
-        print("\n【七】非普通账号不能被这个入口删掉")
-        st, r = call("DELETE", f"/api/temp-users/{admin_uid}", admin)
-        check("删管理员 uid → 后端拒绝",
-              st == 200 and r.get("code") != 200 and "普通用户" in (r.get("message") or ""),
-              f"http={st} msg={r.get('message') if isinstance(r, dict) else r}")
+            print("\n【七】非普通账号不能被这个入口删掉")
+            st, r = call("DELETE", f"/api/temp-users/{admin_uid}", admin)
+            check("删管理员 uid → 后端拒绝",
+                  st == 200 and r.get("code") != 200 and "普通用户" in (r.get("message") or ""),
+                  f"http={st} msg={r.get('message') if isinstance(r, dict) else r}")
     finally:
         if target_id and not args.keep:
             st, r = call("DELETE", f"/api/temp-users/{target_id}", admin)
