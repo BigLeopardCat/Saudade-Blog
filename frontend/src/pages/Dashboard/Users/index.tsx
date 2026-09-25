@@ -143,7 +143,14 @@ const Users = () => {
         try {
             // 传**目标状态**而不是"切换一下"：服务端不猜意图，重试/双击都安全
             const res = await http.post('/api/temp-users/' + user.id + '/status', { frozen })
-            if (res.data?.code === 200) { message.success(res.data.message); loadTempUsers() }
+            if (res.data?.code === 200) {
+                // 人类可读的那句在 **`data`** 里，不在 `message` 里：`ApiResponse::success`
+                // 的 `message` 恒为字面量 `"ok"`（见 src/utils.rs），后端把「账号已冻结，
+                // 其登录状态已全部失效」放在 `data`。照 `message` 显示出来的就是那个
+                // 只有一个「ok」的弹窗条（用户 20260926 报的现场）。
+                message.success(res.data.data || '操作完成')
+                loadTempUsers()
+            }
             else { message.error(res.data?.message) }
         } catch { message.error('请求失败') }
     }
