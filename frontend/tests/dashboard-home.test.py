@@ -161,6 +161,11 @@ export function saveTodos(todos: any) {
   server = todos;
   return Promise.resolve(env(server));
 }
+// 20260926：agent 用的是**另一条**通道（POST /api/protected/todos/item，只追加一条）——
+// 它手里没有这份列表，整份覆盖会抹掉主人的改动。桩里这两个钩子就是它做的全部事情：
+// 直接往"服务端那份"末尾加一行，其余一个字节不动（`__serverDump` 供断言读回来对账）。
+(window as any).__agentAppend = (row: any) => { server = [...server, row]; };
+(window as any).__serverDump = () => server;
 ''' % json.dumps(SEED, ensure_ascii=False), encoding="utf-8")
 
     # 边界④b：未读汇总接口层（20260924 四轮起，待审数从这条接口拿）。
@@ -878,6 +883,144 @@ with sync_playwright() as p:
     check("审完之后切回来，这一行自己就没了（不用手动关）",
           pg.locator(".todo-review").count() == 0)
     check("待办本身一条没少", len(row_texts(pg)) == 8, str(len(row_texts(pg))))
+
+    # ────────────────────────────────────────────────────────────────────────
+    # ⑯ agent 也能往这份列表里加东西（20260926）
+    #
+    # 它是**只追加**的：服务端给它开的是 `POST /api/protected/todos/item`（一次一条），
+    # 而这份界面是**整份**读写（PUT 的 payload 就是库里的全部，见 apis/DashboardMethods
+    # 头注）——所以危险在于「库里多了一条而本地不知道」：下一次自动保存会把它抹掉。
+    # 组件对着 agent 收尾那一下重读一次（`agent-turn-done`）；本地有没落库的改动时
+    # 只挂记号，等那份改动真要发之前先 GET 一次、把库里新多出来的行并进来再发。
+    # 下面两段就是这两条路：一段走"重读"，一段走"先并再发"。
+    print("⑯ agent 往这份列表里加东西（追加通道）：界面要认，且不许反过来把它覆盖掉")
+
+    def puts():
+        return int(pg.evaluate("() => localStorage.getItem('__puts') || 0"))
+
+    def server_texts():
+        return [r["text"] for r in pg.evaluate("() => window.__serverDump()")]
+
+    # ── 甲：本地干净 → 收到 agent 收尾信号 → 重读一遍就够了
+    pg.reload()
+    pg.wait_for_timeout(900)
+    pg.evaluate("() => localStorage.setItem('__puts', '0')")
+    dots_before = len(cell(pg, TOMORROW)["dots"])
+    pg.evaluate("""(iso) => {
+      window.__agentAppend({text: 'agent 记的：交电费', done: false, date: iso});
+      window.dispatchEvent(new CustomEvent('agent-turn-done'));
+    }""", TOMORROW)
+    pg.wait_for_timeout(900)
+    got = row_texts(pg)
+    check("agent 加的那条出现在列表里", "agent 记的：交电费" in got, str(got))
+    check("条数对得上（8 + 1 = 9）", len(got) == 9, f"{len(got)} 条")
+    check("它接在同一组的最后一条后面（追加不动已有顺序）",
+          got.index("agent 记的：交电费") == got.index("明天开会记得带电脑和充电器") + 1,
+          str(got))
+    check("它落在它自己那一天：明天那格的小圆点跟着多一个",
+          len(cell(pg, TOMORROW)["dots"]) == dots_before + 1,
+          f"{dots_before} → {len(cell(pg, TOMORROW)['dots'])}")
+    check("本地干净时这一下**只是重读**（没有多发一次 PUT：那会把 agent 那条当成多余的删掉）",
+          puts() == 0, f"{puts()} 次")
+    check("那一条确实只在服务端那份里（界面是靠重读拿到的，不是本地凭空长的）",
+          "agent 记的：交电费" in server_texts(), str(server_texts()))
+    check("重读没动服务端那份（读不是写：还是 9 条）", len(server_texts()) == 9,
+          f"{len(server_texts())} 条")
+
+    # ── 乙：本地脏（主人刚删掉一条，正处在 600ms 防抖窗口里）→ agent 也加了一条
+    # 这一刻直接发手上的那份 = 整份覆盖语义下的删除，agent 那条会被抹掉；
+    # 而先 GET 再并，又绝不能把主人**自己删掉**的那条当"新出现的"复活回来。
+    pg.reload()
+    pg.wait_for_timeout(900)
+    pg.evaluate("() => localStorage.setItem('__puts', '0')")
+    before = row_texts(pg)
+    pg.locator(".todo-row").nth(before.index("没排期的一条")).locator(".todo-del").click()
+    pg.wait_for_timeout(300)
+    pg.click(".ant-modal-confirm-btns .ant-btn-primary")   # 确定删掉 → 本地脏，防抖计时开始
+    pg.wait_for_timeout(100)                               # 还在 600ms 窗口里
+    pg.evaluate("""() => {
+      window.__agentAppend({text: 'agent 趁乱加的一条', done: false});
+      window.dispatchEvent(new CustomEvent('agent-turn-done'));
+    }""")
+    pg.wait_for_timeout(2500)                              # 防抖触发 → 先读再并 → 再发
+    sent = pg.evaluate("() => window.__lastPut") or []
+    sent_texts = [r["text"] for r in sent]
+    check("防抖窗口里 agent 加的那条**没被覆盖掉**（合并后发出去了）",
+          "agent 趁乱加的一条" in sent_texts, str(sent_texts))
+    check("主人自己删掉的那条**没有**被这次合并复活（判据是「库里新多出来的」）",
+          "没排期的一条" not in sent_texts, str(sent_texts))
+    check("那份条数对得上（8 − 1 + 1 = 8）", len(sent) == 8, f"{len(sent)} 条")
+    check("发出去的字段还是线上口径 text/done/date（没把本地行号捎上去）",
+          all(sorted(r.keys()) == ["date", "done", "text"] for r in sent),
+          str(sorted(sent[0].keys()) if sent else []))
+    check("界面与发出去的那份是同一条（状态是唯一真源，不是各存一份）",
+          row_texts(pg) == sent_texts, str(row_texts(pg)))
+    check("agent 那条落在「未排期」组的尾巴上（没排期就垫底）",
+          row_texts(pg)[-1] == "agent 趁乱加的一条", str(row_texts(pg)[-1:]))
+    check("服务端那份 = 发出去的那份（合并结果真的落库了，不是只在手里绕了一圈）",
+          server_texts() == sent_texts, str(server_texts()))
+
+    # ── 丙：记号挂着的时候主人自己把改动撤回去了 → 那一刻是安全读时机，立刻补读
+    pg.reload()
+    pg.wait_for_timeout(900)
+    pg.evaluate("""() => {
+      localStorage.setItem('__puts', '0');
+      window.__agentAppend({text: 'agent 补记的一条', done: false});
+    }""")
+    pg.locator(".todo-row").first.locator("input[type='checkbox']").click()   # 打个勾（脏）
+    pg.wait_for_timeout(120)
+    pg.evaluate("() => window.dispatchEvent(new CustomEvent('agent-turn-done'))")
+    pg.wait_for_timeout(120)
+    pg.locator(".todo-row").first.locator("input[type='checkbox']").click()   # 又撤回去（干净了）
+    pg.wait_for_timeout(900)
+    check("撤回去之后立刻补读：agent 那条这时才出现（记号不会一直挂着）",
+          "agent 补记的一条" in row_texts(pg), str(row_texts(pg)))
+    check("这一下不写库（本地与库一致，没东西要保存）", puts() == 0, f"{puts()} 次")
+    check("撤回去的那一勾也没被谁改写（打勾 → 撤销 = 回到原样）",
+          row_texts(pg)[0] == "逾期的一条" and len(row_texts(pg)) == 9,
+          str(row_texts(pg)))
+
+    # ── 丁：那次「先读」自己读失败 → 绝不发（发出去就是确定的删除）
+    # 手上这份没有 agent 那条，发上去就是把它删掉；而本地改动只是"晚一点保存"。
+    # 记号还挂着 ⇒ 主人下一次改动会把整件事重做一遍（先读、再并、再发）。
+    pg.reload()
+    pg.wait_for_timeout(900)
+    pg.evaluate("""() => {
+      localStorage.setItem('__puts', '0');
+      window.__agentAppend({text: 'agent 等着被并的一条', done: false});
+      localStorage.setItem('__failGet', '1');        // 下一次 GET 会失败（一次性）
+    }""")
+    first_box = pg.locator(".todo-row").first.locator("input[type='checkbox']")
+    first_box.click()                                  # 主人打个勾 → 本地脏
+    pg.wait_for_timeout(120)
+    pg.evaluate("() => window.dispatchEvent(new CustomEvent('agent-turn-done'))")
+    pg.wait_for_timeout(900)                           # 防抖到点 → 先 GET（这一次读失败）
+    check("那次核对读失败时**不发**（手上这份没有 agent 那条，发出去就是删掉它）",
+          puts() == 0, f"{puts()} 次")
+    # 文案取服务端那句（errMsg 优先用它）、没有才用兜底那句 ⇒ 判"是个失败提示"而不是
+    # 逐字比对：这条钉的是**有提示**，不是提示长什么样。
+    toast = pg.locator(".ant-message").inner_text().strip() \
+        if pg.locator(".ant-message").count() else ""
+    check("读失败要让人看见（不是悄悄咽下去，也不许演成「保存好了」）",
+          ("失败" in toast or "没保存上" in toast), toast or "（没有提示）")
+    check("主人那一勾还在手上（不因为一次网络抖动就把刚敲的改动撤掉）",
+          first_box.is_checked())
+    check("agent 那条也还在服务端（谁都没抹掉它，只是还没并进来）",
+          "agent 等着被并的一条" in server_texts(), str(server_texts()))
+    pg.wait_for_timeout(3300)                          # 等那条提示自己过期（别挡住后面的点击）
+    check("（前置）提示已经不在了", pg.locator(".ant-message").count() == 0)
+    pg.locator(".todo-row").nth(1).locator("input[type='checkbox']").click()   # 再改一次
+    pg.wait_for_timeout(2500)                          # 记号还在 → 这次读成功 → 并进来再发
+    sent2 = pg.evaluate("() => window.__lastPut") or []
+    by_text = {r["text"]: r for r in sent2}
+    check("下一次改动时它自己重试了：先读再并，agent 那条进了那份",
+          "agent 等着被并的一条" in by_text, str(list(by_text)))
+    check("主人这两次的勾也都在那份里（重试丢的不是他的改动）",
+          by_text.get("逾期的一条", {}).get("done") is True
+          and by_text.get("今天要做的", {}).get("done") is True,
+          str([(r["text"], r["done"]) for r in sent2[:3]]))
+    check("读失败那次没有留下的半截（服务端那份 = 发出去的那份）",
+          server_texts() == [r["text"] for r in sent2], str(server_texts()))
 
     br.close()
 

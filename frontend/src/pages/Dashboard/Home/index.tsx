@@ -24,6 +24,9 @@ import type {DashboardTodo} from "../../../interface/DashboardType";
 import {fetchCategories} from "../../../store/components/categories.tsx";
 import {fetchTags} from "../../../store/components/tags.tsx";
 import {useUnread} from "../../../components/UserCenter/unread";
+// 「看板娘一轮对话收尾」信号（20260926 起也用在这张卡上）：agent 可能刚往这份列表里
+// 追加过一条——常量的定义与派发点见 components/UserCenter/agentTurn.ts。
+import {AGENT_TURN_DONE_EVENT} from "../../../components/UserCenter/agentTurn";
 
 type Todo = {id: number, text: string, done: boolean, date?: string};
 
@@ -38,6 +41,36 @@ const isOverdue = (t: Todo, today: string) => !!t.date && !t.done && t.date < to
 const toPayload = (list: Todo[]): DashboardTodo[] =>
     list.filter(t => t.text.trim())
         .map(t => ({text: t.text.trim(), done: t.done, date: t.date ?? null}));
+
+// 本地行号（React 的 key）——服务端不认行 id，这只是"新加的行排在哪"。
+const nextId = (list: Todo[]) => (list.length ? Math.max(...list.map(t => t.id)) : 0) + 1;
+
+// 一行的判等键（正文 + 排期）。分隔符用 `\u0000`：它是文本里不会出现的字符，
+// 拼接不会把两条不同的行拼成同一个键（"ab" + "c" 与 "a" + "bc" 那种撞键）。
+const rowKey = (r: {text: string; date?: string | null}) =>
+    r.text.trim() + '\u0000' + (r.date ?? '');
+
+/** 把**库里新多出来的行**（agent 用追加通道写进去的）并进本地列表。
+ *
+ * 判据 = 「库里现在有」而「上一次与库里同步时有的那份」里没有（`snapshot` = 那次
+ * 同步的 payload），**不是**「库里现在有、本地没有」：主人删掉的行是只在本地没了的，
+ * 拿本地当判据会把它当成"别人新加的"复活回来——主人删掉的东西自己冒回列表，比一时
+ * 看不到 agent 新加的那条糟糕得多。差集只朝"新出现的"这一个方向取，这一点就成立。
+ *
+ * 没有任何新行时**原样返回 `local`**（同一个引用）：调用方靠这个引用判"要不要多绕
+ * 一圈 setState"，见下面保存 effect 里的用法。
+ */
+const mergeServerRows = (server: DashboardTodo[], local: Todo[],
+                         snapshot: DashboardTodo[]): Todo[] => {
+    const had = new Set(snapshot.map(rowKey));
+    const mine = new Set(local.filter(t => t.text.trim()).map(rowKey));
+    const fresh = server.filter(r => !had.has(rowKey(r)) && !mine.has(rowKey(r)));
+    if (!fresh.length) return local;
+    let id = nextId(local);
+    return [...local, ...fresh.map(r => ({
+        id: id++, text: r.text, done: !!r.done, date: r.date || undefined,
+    }))];
+};
 
 const Home = () => {
     //hooks区域
@@ -85,7 +118,18 @@ const Home = () => {
     const navigate = useNavigate();
 
     const today = dayjs().format('YYYY-MM-DD');
-    const nextId = (list: Todo[]) => (list.length ? Math.max(...list.map(t => t.id)) : 0) + 1;
+    // agent 也能往这份列表里加一条（20260926）：服务端给它开了一条**只追加**的通道
+    // （POST /api/protected/todos/item，见 apis/DashboardMethods.tsx 头注）。麻烦在于
+    // 这份界面是**整份**读写：库里多了一条而本地不知道时，下一次自动保存（PUT）就会
+    // 把它抹掉。所以 agent 收尾那一刻要重读一次——两个 ref 就是为此：
+    //   · `todosRef` 让事件回调读到**此刻**的列表（回调是异步的，闭包里的 todos 是旧值）；
+    //   · `pendingReload` 是"本地还有没落库的改动、先别读"的记号（见下面两处消费点）。
+    // 在**渲染期**给 ref 赋值而不是放进 effect：effect 要等提交+绘制之后才跑，那个空档
+    // 里收到 agent-turn-done 会读到上一版列表——那一版若恰好"干净"，它会当场重读，把主人
+    // 刚敲进去的字丢掉（判断错最坏的那一侧）。
+    const todosRef = useRef<Todo[]>(todos);
+    todosRef.current = todos;
+    const pendingReload = useRef(false);
 
     // 读一次：库里的整份列表（按位次）。读失败就如实说、给个重试，不假装"没有待办"。
     const loadTodos = useCallback(async () => {
@@ -108,6 +152,23 @@ const Home = () => {
 
     useEffect(() => { void loadTodos(); }, [loadTodos]);
 
+    // agent 收尾 → 重读一次（它可能刚用追加通道记了一条日程）。
+    // **本地干净才读**：本地还有没落库的改动（600ms 防抖窗口内）时直接重读会把主人
+    // 刚敲的字丢掉，所以那一刻只留记号——等那份改动真要发上去之前，先 GET 一次把
+    // agent 加的行并进来再发（见下面的保存 effect）。记号不会一直挂着：本地改动一旦
+    // 与库一致（保存成功、或主人自己撤回去了），保存 effect 里那条分支会把它销掉并重读。
+    useEffect(() => {
+        const onTurnDone = () => {
+            if (JSON.stringify(toPayload(todosRef.current)) !== lastSaved.current) {
+                pendingReload.current = true;
+                return;
+            }
+            void loadTodos();
+        };
+        window.addEventListener(AGENT_TURN_DONE_EVENT, onTurnDone);
+        return () => window.removeEventListener(AGENT_TURN_DONE_EVENT, onTurnDone);
+    }, [loadTodos]);
+
     // 待审评论数的刷新时机、失败语义、去重都在 unread.ts 那个 store 里（别在这儿再写一遍）：
     // 读失败保持上一次的数（一个提示不该因为一次网络抖动就自己消失），真审完了读回来是 0，
     // 这一行自然就不画了。
@@ -119,14 +180,44 @@ const Home = () => {
         if (!loaded) return;
         const rows = toPayload(todos);
         const payload = JSON.stringify(rows);
-        if (payload === lastSaved.current) return;
+        if (payload === lastSaved.current) {
+            // 本地与库一致（主人的改动被撤回去了/刚保存完），而 agent 在这中间加过一条：
+            // 此刻是**安全**的读时机，把它读出来显示，记号销掉。
+            if (pendingReload.current) {
+                pendingReload.current = false;
+                void loadTodos();
+            }
+            return;
+        }
         const timer = setTimeout(async () => {
+            if (pendingReload.current) {
+                // agent 加过一条、而本地还有没发上去的改动：**先读、再并、再发**。
+                // 直接发手上这份就是整份覆盖语义下的删除——agent 那条会被抹掉。
+                const res0 = await getTodos();
+                if (!ok(res0)) {
+                    // 读不到就**不发**：这一次发出去有确定的删除风险（抹掉 agent 那条），
+                    // 而本地改动留在手里只是"晚一点保存"（同既有的失败语义：下一次改动
+                    // 会把整份重新发上去，记号也还在，下次会再试一遍）。
+                    message.error(errMsg(res0, '待办没保存上（没能先跟服务端核对一次）'));
+                    return;
+                }
+                const snapshot = JSON.parse(lastSaved.current || '[]') as DashboardTodo[];
+                const merged = mergeServerRows(res0.data?.data ?? [], todos, snapshot);
+                pendingReload.current = false;
+                if (merged !== todos) {
+                    // 真并进来了新行：把并完的列表放回状态，让这个 effect 再跑一遍去保存
+                    // （状态是唯一真源——在这里顺手自己发一次请求，会让"界面上的列表"与
+                    // "已发出去的那份"变成两个来源，下次保存又得对账一遍）。
+                    setTodos(merged);
+                    return;
+                }
+            }
             const res = await saveTodos(rows);
             if (ok(res)) lastSaved.current = payload;
             else message.error(errMsg(res, '待办没保存上'));
         }, 600);
         return () => clearTimeout(timer);
-    }, [todos, loaded]);
+    }, [todos, loaded, loadTodos]);
 
     useEffect(() => {
         localStorage.setItem('dashboard_list_title', listTitle);
