@@ -691,6 +691,9 @@ async fn save_assistant_reply(
 fn actor_prefix(row: &serde_json::Value) -> String {
     match row["principal_role"].as_str().unwrap_or("") {
         "admin" => "以管理员身份 · ".to_string(),
+        // 超级管理员（20260926）：不加这一臂的后果是"超管动的那一下，回执上什么都没写"，
+        // 而前缀缺失与"旧回执没这个字段"长得一模一样 ⇒ 审计链上凭空少一截。
+        "superadmin" => "以超级管理员身份 · ".to_string(),
         "secretary" => "以秘书身份 · ".to_string(),
         _ => String::new(),
     }
@@ -895,6 +898,22 @@ fn render_exec_row(row: &serde_json::Value) -> String {
                 format!("删除留言 #{}", id)
             } else {
                 format!("删除留言 #{}（{} 的留言）", id, who)
+            }
+        }
+        // 账号冻结/解冻（20260926）：读回执顶层 meta 的 account_name（与 op/change 同族）。
+        // **不落 uid**：uid 是内部编号（审计里要的是人能核对的账号名，与 board_author 同族），
+        // 而这一行会经 recent_executions 注入下一轮上下文。
+        // 带上 `change`（"状态本来就是冻结，本次未发生变更"这类）：幂等/未变更的那一次
+        // 若只渲染成「冻结账号「X」」，跨轮记忆里就成了一次真动作。
+        // 措辞与 agent 侧 server.py _tool_action_text 的同名臂逐字一致。
+        "freeze_account" | "unfreeze_account" => {
+            let verb = if tool == "freeze_account" { "冻结" } else { "解冻" };
+            let name = row["account_name"].as_str().unwrap_or("");
+            let change = row["change"].as_str().unwrap_or("");
+            if change.is_empty() {
+                format!("{}账号「{}」", verb, name)
+            } else {
+                format!("{}账号「{}」：{}", verb, name, change)
             }
         }
         // 用户自己的数据（20260923）：**读三个 + 写三个**。读的措辞与 agent 侧

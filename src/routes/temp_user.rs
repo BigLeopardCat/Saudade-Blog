@@ -37,8 +37,18 @@ pub struct TempUserInfo {
 /// 账号列表（20260926）：原来只回 `role="user"` 的临时账号，博主因此**在后台
 /// 看不见管理员账号**，也就无从按角色筛。现在回全部**已知角色**的账号。
 ///
-/// 只列已知角色（`authz::is_known_role`）：历史脏值或将来新增但未登记的角色，
-/// 前端判不出该归到哪一类筛选项下——宁可不显示，也不给一行"哪一类都不是"的账号。
+/// 列表判据是 `authz::is_listable_role`：**已知角色 且 不是超管**。两半各有理由：
+/// 历史脏值或将来新增但未登记的角色，前端判不出该归到哪一类筛选项下——宁可不显示，
+/// 也不给一行"哪一类都不是"的账号；超管见下。
+///
+/// **超级管理员不出现**（20260926，需求原文"超级管理员账号密码不显示在后台"）：
+/// 超管是博主自己的账号，它既不需要在"后台有谁"里被点名，也不是这个页面的操作对象
+/// （谁都不能冻它/改它的身份）。⚠️ 这条过滤**不只是界面上的隐藏**，它是三道防线里
+/// 的第一道，改它之前先读完这三条：
+///   · 界面：超管行不进列表 ⇒ 前端不渲染它 ⇒ 也不会有那一行的按钮；
+///   · 路由：`check_freeze` / `check_role_change` 里 "目标是超管 ⇒ 拒"；
+///   · **agent**：账号名录走的就是这个接口（`tools/base.py::_user_directory`）⇒
+///     名录里根本没有超管 ⇒ 按名字解析必然零写——超管在结构上就冻不了，不是靠判据拦。
 pub async fn list_temp_users(
     State(state): State<Arc<AppState>>,
 ) -> Json<Vec<TempUserInfo>> {
@@ -47,7 +57,9 @@ pub async fn list_temp_users(
         .await
         .unwrap_or_default();
     Json(users.into_iter()
-        .filter(|u| crate::authz::is_known_role(&u.role))
+        // 判据在 `authz::is_listable_role`（= 已知角色 且 不是超管），抽出去是为了
+        // 让"超管不露脸"这条需求可测：两个条件写在两行里时，删掉任何一行都不报错
+        .filter(|u| crate::authz::is_listable_role(&u.role))
         .map(|u| TempUserInfo {
             id: u.id,
             username: u.username,
@@ -75,26 +87,37 @@ pub struct SetStatusReq {
 ///     冻结是"踢下线"，不是"暂停一下"；这条要是不做，解冻就等于把被收回的
 ///     令牌原样复活——而冻结的常见动机恰恰是"这台设备/这个人不能再进来了"。
 ///
-/// 三条拒绝（每条都对应一个真会出事的操作）：
+/// 拒绝的话术（20260926 起由 `crate::authz::check_freeze` 给原因，这里只翻译）：
 ///   ① **不许冻结自己**：冻了自己就再也解不开了（冻结账号正是改不动自己状态的那种
 ///      账号），唯一的管理员这么做等于把后台锁死，只能进库手改。
-///   ② 目标账号必须存在。
-///   ③ 目标角色必须是已知角色：与 `list_temp_users` 同一个取值域判据，
+///   ② **不许冻结超级管理员**：谁都不行，含另一个超管。
+///   ③ **管理员之间不可互相冻结**（解冻同理）：两个同级的人互相封，最后只能靠超管
+///      或进库解，而"谁先动手谁赢"不该是后台的规则。
+///   ④ 目标账号必须存在。
+///   ⑤ 目标角色必须是已知角色：与 `list_temp_users` 同一个取值域判据，
 ///      不让一个"列表里根本看不见"的账号从这里被改状态。
+///
+/// **冻结方向恒 `token_version + 1`**（20260926 收口）：连"已经是冻结状态"时也 +1。
+/// 原来的幂等分支在这里返回、不动代次，留下一个静默的鉴权洞——若 `status` 是被
+/// 迁移/手工改成 1 的（没有走过这个接口），那个账号手里已经签发的令牌**还活着**，
+/// 而"再点一下冻结"本该是最自然的补救动作。对被冻账号也没有额外代价：它本来就
+/// 登不进来，+1 只是让旧令牌彻底作废。解冻方向照旧只在真变化时动（解冻是放宽，
+/// 没有对应的洞，无谓地 +1 会让"这一下做了什么"变得不可解释）。
 pub async fn set_user_status(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
     Path(user_id): Path<i32>,
     Json(payload): Json<SetStatusReq>,
 ) -> Json<crate::utils::ApiResponse<String>> {
-    // 谁在操作（不是"有没有权限"——本路由族整体挂在 auth_guard 后面，能进来的
-    // 一定是管理员，见 routes/mod.rs）。这里取发起人 uid 只为挡住"冻自己"。
+    // 谁在操作 + 他是什么角色。**角色从库里现查**（不信任何令牌里的快照）：
+    // 冻结判据要用到"我是不是管理员/超管"，而 `auth_uid` 只给 uid。
     let Some(operator) = crate::auth_jwt::auth_uid(&state.db, &headers).await.ok() else {
         return Json(crate::utils::ApiResponse::error("未登录"));
     };
-    if operator == user_id {
-        return Json(crate::utils::ApiResponse::error("不能冻结自己的账号"));
-    }
+    let Some(operator_row) = user::Entity::find_by_id(operator).one(&state.db).await.unwrap_or(None)
+    else {
+        return Json(crate::utils::ApiResponse::error("未登录"));
+    };
     let Some(target) = user::Entity::find_by_id(user_id).one(&state.db).await.unwrap_or(None) else {
         return Json(crate::utils::ApiResponse::error("用户不存在"));
     };
@@ -102,12 +125,22 @@ pub async fn set_user_status(
         return Json(crate::utils::ApiResponse::error("该账号角色未登记，不能改状态"));
     }
     let frozen = payload.frozen;
+    if let Err(denial) = crate::authz::check_freeze(
+        operator,
+        &operator_row.role,
+        user_id,
+        &target.role,
+    ) {
+        return Json(crate::utils::ApiResponse::error(&freeze_denial_message(
+            denial, frozen,
+        )));
+    }
     let new_status = if frozen { crate::authz::STATUS_FROZEN } else { crate::authz::STATUS_ACTIVE };
-    // 已经就是这个状态 ⇒ 幂等成功，**但不动代次**：否则同一个人连点两下"冻结"，
-    // 第二下会再签发一轮代次（无害，但会让"这一下到底做了什么"变得不可解释）。
-    if target.status == new_status {
-        let word = if frozen { "该账号已经是冻结状态" } else { "该账号已经是正常状态" };
-        return Json(crate::utils::ApiResponse::success(word.to_string()));
+    // 解冻方向的真 no-op（状态已经是正常）：不写库、不动代次
+    if !frozen && target.status == new_status {
+        return Json(crate::utils::ApiResponse::success(
+            "该账号已经是正常状态".to_string(),
+        ));
     }
     let new_ver = if frozen { target.token_version + 1 } else { target.token_version };
     let mut am: user::ActiveModel = target.into();
@@ -116,10 +149,11 @@ pub async fn set_user_status(
     match am.update(&state.db).await {
         Ok(_) => {
             tracing::info!(
-                "[账号管理] {} 账号 uid={}（发起人 uid={}）",
+                "[账号管理] {} 账号 uid={}（发起人 uid={} role={}）",
                 if frozen { "冻结" } else { "解冻" },
                 user_id,
-                operator
+                operator,
+                operator_row.role
             );
             Json(crate::utils::ApiResponse::success(
                 if frozen { "账号已冻结，其登录状态已全部失效" } else { "账号已解冻，请让对方重新登录" }
@@ -130,6 +164,187 @@ pub async fn set_user_status(
             tracing::error!("[账号管理] 改状态失败 uid={}: {}", user_id, e);
             Json(crate::utils::ApiResponse::error("操作失败，请稍后再试"))
         }
+    }
+}
+
+/// 冻结/解冻被拒的中文话术。**按方向分叉**（"不能解冻自己的账号"与"不能冻结自己
+/// 的账号"是两句不同的事），四个变体各一句、不共用兜底句。
+///
+/// ⚠️ 这四句是**跨语言契约**：agent 的冻结/解冻技能要求模型**逐字转述**这里给的原话
+/// （见 `docs/security-boundary.md` §7⑫），所以措辞不是随手可改的文案。
+fn freeze_denial_message(denial: crate::authz::FreezeDenial, frozen: bool) -> String {
+    use crate::authz::FreezeDenial as D;
+    let verb = if frozen { "冻结" } else { "解冻" };
+    match denial {
+        D::NotPermitted => "只有管理员可以冻结或解冻账号".to_string(),
+        D::SelfTarget => format!("不能{verb}自己的账号"),
+        D::TargetSuperadmin => format!("不能{verb}超级管理员账号"),
+        D::PeerAdmin => format!("管理员之间不可互相{verb}"),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct SetRoleReq {
+    /// 目标身份。取值域 = `authz::KNOWN_ROLES` 里**除 superadmin 之外**的三个
+    /// （`authz::is_assignable_role`）——界面上加不出第二个超管。
+    pub role: String,
+}
+
+/// POST /api/temp-users/:id/role：变更一个账号的权限身份（20260926）。
+///
+/// **只有超级管理员能发起**（`authz::check_role_change` 的第一条判据）：管理员之间
+/// 能互改身份，就等于"谁先把自己提成超管谁赢"，而超管恰恰是那个不能被任何人动的角色。
+///
+/// 成功时 `token_version + 1`：令牌里带 `role` 快照（`auth_jwt::Claims.role`，前端
+/// `AuthRouter` 就认它），不 +1 的话被降级的人手里的旧令牌还能进后台直到过期——
+/// "降级"这个动作必须当场生效，否则它只是给人看的一行字。
+pub async fn set_user_role(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Path(user_id): Path<i32>,
+    Json(payload): Json<SetRoleReq>,
+) -> Json<crate::utils::ApiResponse<String>> {
+    let Some(operator) = crate::auth_jwt::auth_uid(&state.db, &headers).await.ok() else {
+        return Json(crate::utils::ApiResponse::error("未登录"));
+    };
+    let Some(operator_row) = user::Entity::find_by_id(operator).one(&state.db).await.unwrap_or(None)
+    else {
+        return Json(crate::utils::ApiResponse::error("未登录"));
+    };
+    let Some(target) = user::Entity::find_by_id(user_id).one(&state.db).await.unwrap_or(None) else {
+        return Json(crate::utils::ApiResponse::error("用户不存在"));
+    };
+    let new_role = payload.role.trim().to_string();
+    if let Err(denial) = crate::authz::check_role_change(
+        operator,
+        &operator_row.role,
+        user_id,
+        &target.role,
+        &new_role,
+    ) {
+        return Json(crate::utils::ApiResponse::error(&role_change_denial_message(
+            denial,
+        )));
+    }
+    // 已经是这个身份 ⇒ 幂等成功，且**不动代次**（同 `/status` 的解冻那一支：
+    // 没有真变化就没有理由把人踢下线）
+    if target.role == new_role {
+        return Json(crate::utils::ApiResponse::success(format!(
+            "该账号的身份已经是{}，无需变更",
+            crate::authz::role_label(&new_role)
+        )));
+    }
+    let new_ver = target.token_version + 1;
+    let mut am: user::ActiveModel = target.into();
+    am.role = Set(new_role.clone());
+    am.token_version = Set(new_ver);
+    match am.update(&state.db).await {
+        Ok(_) => {
+            tracing::info!(
+                "[账号管理] 变更身份 uid={} → {}（发起人 uid={} role={}）",
+                user_id,
+                new_role,
+                operator,
+                operator_row.role
+            );
+            Json(crate::utils::ApiResponse::success(format!(
+                "身份已改为{}，该账号的登录状态已失效，请让对方重新登录",
+                crate::authz::role_label(&new_role)
+            )))
+        }
+        Err(e) => {
+            tracing::error!("[账号管理] 变更身份失败 uid={}: {}", user_id, e);
+            Json(crate::utils::ApiResponse::error("操作失败，请稍后再试"))
+        }
+    }
+}
+
+/// 变更身份被拒的中文话术。同样是**跨语言契约**（若将来 agent 接上这个动作，
+/// 它要照抄这里的原话），所以四句分开写、不共用兜底。
+fn role_change_denial_message(denial: crate::authz::RoleChangeDenial) -> String {
+    use crate::authz::RoleChangeDenial as D;
+    match denial {
+        D::NotPermitted => "只有超级管理员可以变更账号身份".to_string(),
+        D::SelfTarget => "不能变更自己的身份".to_string(),
+        D::TargetSuperadmin => "不能变更超级管理员的身份".to_string(),
+        D::UnknownRole => "站内没有这个身份".to_string(),
+        D::NotAssignable => "超级管理员身份不能在这里指派，要增加请走数据库迁移".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::authz::{FreezeDenial, RoleChangeDenial};
+
+    /// 拒绝话术是**跨语言契约**（agent 的冻结/解冻技能要求模型逐字转述后端原话，
+    /// 见 `docs/security-boundary.md` §7⑫）：所以这里逐句锁死字面量。
+    /// 改这些句子之前先读那段文档——它在 agent 侧还有一份引用。
+    /// 这里锁的是**话术**；"什么情况该拒"由 `authz.rs` 的策略表锁着，两件事分开测。
+    #[test]
+    fn 冻结话术按方向分叉且逐句锁死() {
+        use FreezeDenial as D;
+        assert_eq!(
+            super::freeze_denial_message(D::NotPermitted, true),
+            "只有管理员可以冻结或解冻账号"
+        );
+        assert_eq!(
+            super::freeze_denial_message(D::SelfTarget, true),
+            "不能冻结自己的账号"
+        );
+        assert_eq!(
+            super::freeze_denial_message(D::TargetSuperadmin, true),
+            "不能冻结超级管理员账号"
+        );
+        assert_eq!(
+            super::freeze_denial_message(D::PeerAdmin, true),
+            "管理员之间不可互相冻结"
+        );
+        // 解冻方向：同一族、介词换动词，**不是**共用兜底句
+        assert_eq!(
+            super::freeze_denial_message(D::SelfTarget, false),
+            "不能解冻自己的账号"
+        );
+        assert_eq!(
+            super::freeze_denial_message(D::TargetSuperadmin, false),
+            "不能解冻超级管理员账号"
+        );
+        assert_eq!(
+            super::freeze_denial_message(D::PeerAdmin, false),
+            "管理员之间不可互相解冻"
+        );
+        // 越权那句与方向无关（说"只有管理员可以冻结或解冻"，两个方向同一句）
+        assert_eq!(
+            super::freeze_denial_message(D::NotPermitted, false),
+            "只有管理员可以冻结或解冻账号"
+        );
+    }
+
+    /// 变更身份的五句：四句拒绝 + 一句"超管只能走迁移"。
+    /// `NotAssignable` 的措辞必须点出**替代路径**（数据库迁移），否则主人被拒之后
+    /// 不知道该去哪儿加第二个超管。
+    #[test]
+    fn 变更身份话术逐句锁死() {
+        use RoleChangeDenial as D;
+        assert_eq!(
+            super::role_change_denial_message(D::NotPermitted),
+            "只有超级管理员可以变更账号身份"
+        );
+        assert_eq!(
+            super::role_change_denial_message(D::SelfTarget),
+            "不能变更自己的身份"
+        );
+        assert_eq!(
+            super::role_change_denial_message(D::TargetSuperadmin),
+            "不能变更超级管理员的身份"
+        );
+        assert_eq!(
+            super::role_change_denial_message(D::UnknownRole),
+            "站内没有这个身份"
+        );
+        assert_eq!(
+            super::role_change_denial_message(D::NotAssignable),
+            "超级管理员身份不能在这里指派，要增加请走数据库迁移"
+        );
     }
 }
 

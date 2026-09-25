@@ -255,6 +255,10 @@ pub fn create_router(state: AppState) -> Router {
                 // 冻结 / 解冻（20260926）：挂在同一族下——它就是账号管理页第二个按钮，
                 // 与改密码/恢复码同一批操作、同一份权限（auth_guard 只放管理员）
                 .route("/api/temp-users/:id/status", post(temp_user::set_user_status))
+                // 变更身份（20260926）：同一族，但判据更严——只有超级管理员能发起
+                // （`authz::check_role_change` 第一条）。挂在这里是为了共用 auth_guard，
+                // **不是**因为权限等同：能进这一族 ≠ 能改身份。
+                .route("/api/temp-users/:id/role", post(temp_user::set_user_role))
         
         // 只读统计（20260921）：agent「管理助手」的用户数据报表供数。
         // 挂在守卫域内 ⇒ 自动只有 admin 拿得到（agent 以发起人身份代调，见 routes/stats.rs 头注）。
