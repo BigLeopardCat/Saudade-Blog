@@ -51,6 +51,14 @@ const calls: Call[] = (window as any).__calls = [];
 // 一张真形状的 JWT（payload 段是 base64url，role 可读）。前端只读 claims 判角色、不验签。
 const b64u = (o: any) => btoa(JSON.stringify(o)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const TOKEN = 'x.' + b64u({ sub: 7, role: (window as any).__role || 'user', exp: 9999999999 }) + '.y';
+// 改密码后后端**还给本机**的那一枚（20260926：改密码把该账号所有旧令牌都作废了，
+// 包括本机手里这枚；不写回的话本机下一个请求就会带着刚被自己作废的令牌出去）。
+// 形状与真身一致：payload 多一个 `ver`，且与旧的那枚**字符串不同**——否则
+// "写回了没有"这件事在断言里区分不出来。
+const TOKEN_FRESH = 'x.' + b64u({ sub: 7, role: (window as any).__role || 'user',
+                                   exp: 9999999999, ver: 1 }) + '.z';
+// 两枚令牌都在 JS 里，Python 侧读不到它们 ⇒ 挂出来给断言比对（下面那些 check 用的就是它）。
+(window as any).__tokens = { stale: TOKEN, fresh: TOKEN_FRESH };
 // `__noToken` = 模拟"这台机器从没有过账号记录"（头部头像三态那节用）
 if (!(window as any).__noToken) localStorage.setItem('tokenKey', TOKEN);
 
@@ -132,7 +140,11 @@ const http = async (cfg: any) => {
     const body = json(cfg.data);
     if ((window as any).__pwdFail) return fail('原密码不正确');
     if (!body.newPassword || body.newPassword.length < 8) return fail('新密码至少 8 位');
-    return env('密码已修改');
+    // 真身是 `ApiResponse<PasswordChangedDto>` = `{code,message,data:{token}}`（20260926）。
+    // `__pwdNoToken` 造出"后端没给新令牌"的世界——那是**唯一**能让旧令牌被误抹掉的形态，
+    // 所以它必须有一条断言盯着（写回那句是 `if (fresh)`，不是无条件 setItem）。
+    if ((window as any).__pwdNoToken) return env('密码已修改');
+    return env({ token: TOKEN_FRESH });
   }
   if (url === '/api/protected/profile/avatar') {
     // multipart：真发出去的 FormData 里应有 avatar 字段，且是画布烘焙的 JPEG
@@ -576,6 +588,24 @@ with sync_playwright() as p:
     pg.wait_for_timeout(700)
     check("改成功后输入框清空（密码不留在表单里）",
           pg.input_value(f"{pwd_in} >> nth=0") == "" and pg.input_value(f"{pwd_in} >> nth=1") == "")
+    # 写回新令牌（20260926）。这条断言是**端到端**的：改密码让该账号所有旧令牌当场作废
+    # （包括本机这枚），不写回 ⇒ 本机下一个请求带着刚被自己作废的令牌出去 ⇒ 立刻被登出。
+    # 断言读的是 localStorage 那个键本身，不是"组件里某个 state 变了"。
+    check("改密码后把后端返回的新令牌写回了 localStorage",
+          pg.evaluate("() => localStorage.getItem('tokenKey') === window.__tokens.fresh"),
+          str(pg.evaluate("() => (localStorage.getItem('tokenKey') || '').slice(0, 12)")) + "…")
+    # 反向：后端**没**给新令牌时不许把旧的那枚抹掉——那会把人凭空登出。
+    # 写回那句是 `if (fresh) setItem(...)`，条件写反/写成无条件在这里各红一次。
+    pg.evaluate("() => { window.__pwdNoToken = true; }")
+    pg.fill(f"{pwd_in} >> nth=0", "old-pass-123")
+    pg.fill(f"{pwd_in} >> nth=1", "new-pass-456")
+    pg.fill(f"{pwd_in} >> nth=2", "new-pass-456")
+    pg.click(pwd_btn)
+    pg.wait_for_timeout(700)
+    check("后端没返回新令牌时：旧令牌**原样留着**（不是被 setItem(undefined) 抹掉）",
+          pg.evaluate("() => localStorage.getItem('tokenKey') === window.__tokens.fresh"),
+          str(pg.evaluate("() => localStorage.getItem('tokenKey')")))
+    pg.evaluate("() => { window.__pwdNoToken = false; }")
 
     # 关窗即摘框（20260924 修复）。判据刻意是**结构性**的、与浏览器启发式无关：
     # 只要首页 DOM 里还留着一个密码框，Chrome 的密码管理器就会把这页认成登录页
