@@ -1,6 +1,7 @@
 import { Button, Form, Input, Modal, Table, message } from 'antd'
 import { useEffect, useRef, useState } from 'react'
 import { getAnnouncements, createAnnouncement, updateAnnouncement, deleteAnnouncement } from '../../../apis/AnnouncementMethods.tsx'
+import { notifyAnnouncementPublished } from '../../../components/AnnouncementModal/pending.ts'
 
 const { TextArea } = Input
 
@@ -24,9 +25,10 @@ const AnnouncementPage = () => {
     /* 挂载时拉一次；**这个标签页重新可见 / 窗口重新获得焦点时再拉一次**（20260925）。
        —— 路由切进本页 = 重新挂载，所以"从别的页进来"这条已经由上面那句覆盖；漏掉的是
        **本页一直开着、agent 在别处发了公告**：名单就停在旧的那一版上。
-       —— 为什么不订阅 `agent-turn-done`：后台是 `/` 的兄弟顶层路由，看板娘与对话面板只挂在
-       前台那个壳里（见 `pages/Dashboard/index.tsx` 里那段注释）⇒ 这个页面**收不到**那个事件，
-       能收到的是"用户切回来看"这个信号本身，那也正是想要最新列表的时刻。
+       —— 为什么不订阅 `agent-turn-done`：**不是**收不到（20260926 更正——后台自己挂了一份
+       看板娘，见 `pages/Dashboard/index.tsx` 末尾那段注释，"收不到"是当时对它的误读），
+       而是这个页面要的是"**最新名单**"：用户在别处（agent 对话/另一个标签页）发过公告后回到本页，
+       该重拉的时刻就是"回来看"这一刻；事件在别处到不了这一页的意图上。
        —— 两个信号切回来时会一起到（visibilitychange + focus），所以带去抖。 */
     useEffect(() => {
         void load()
@@ -48,13 +50,14 @@ const AnnouncementPage = () => {
 
     const handleOk = async () => {
         const values = await form.validateFields()
-        if (editItem) {
-            await updateAnnouncement(editItem.id, values)
-        } else {
-            await createAnnouncement(values)
-        }
+        const res = editItem
+            ? await updateAnnouncement(editItem.id, values)
+            : await createAnnouncement(values)
         setModalOpen(false)
         message.success(editItem ? '已更新' : '已创建')
+        // 通知弹窗当场复查（20260926）：本页是"发出来"唯一的人工入口，弹窗住在别的壳里，
+        // 靠事件而不是靠页面引用。只在服务端确认成功时发——失败时发只是白跑一次查询。
+        if (res?.data?.code === 200) notifyAnnouncementPublished()
         load()
     }
 
@@ -63,6 +66,8 @@ const AnnouncementPage = () => {
         await deleteAnnouncement(selectedRowKeys as number[])
         setSelectedRowKeys([])
         message.success('已删除')
+        // 这里**不发**发布事件：删掉的是行本身，"没有可弹的"不会让弹窗有任何新动作
+        // （正开着的那张卡也不会被抽走——关窗由用户点）。别为对称而加一句空转。
         load()
     }
 

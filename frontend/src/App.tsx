@@ -11,6 +11,7 @@ import './App.sass';
 import { readDarkMode, autoThemeDecision } from './theme';
 import BottomMenu from "./components/BottomMenu";
 import Live2dAgent from "./components/Live2dAgent";
+import AnnouncementModal from "./components/AnnouncementModal";
 
 function App() {
     const [isDark, setDark] = useState(false);
@@ -69,6 +70,11 @@ function App() {
             <Footer />
             <BottomMenu scrollHeight={scrollHeight} isDark={isDark} setDark={setDark}/>
             <Live2dAgent />
+            {/* 公告弹窗挂在**壳**上而不是某个页面上（20260926）：它原来挂在首页 ContentHome 里，
+                于是"发出来当场收到"这件事从结构上做不到——只有刷新/回到首页才查一次。
+                挂在壳上后它在所有公共页都活着，复查由 AnnouncementModal/pending.ts 收口
+                （事件 + 可见时轮询）。后台是另一颗壳，单独挂（见 pages/Dashboard/index.tsx）。 */}
+            <AnnouncementModal />
         </div>
     );
 }

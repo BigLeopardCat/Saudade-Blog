@@ -1,6 +1,11 @@
-import { Modal } from 'antd'
-import { useEffect, useState } from 'react'
-import { getAnnouncements } from '../../apis/AnnouncementMethods.tsx'
+import { Modal, theme } from 'antd'
+import { useEffect, useRef, useState } from 'react'
+import {
+    fetchPendingAnnouncement,
+    markAnnouncementRead,
+    watchAnnouncements,
+    type PendingAnnouncement,
+} from './pending.ts'
 
 /** 后端公告时间**已经是 +08:00 中国钟面**（DB 会话 time_zone=+08:00，见 CLAUDE.md 时区约定），
  * 原样展示即可，这里只做"去掉秒"的规范化——**不做任何时区换算**。
@@ -17,34 +22,65 @@ const fmtCnTime = (s: string) => {
 /**
  * 公告弹窗：antd Modal 默认白底卡片形态（20260905 去背景图回归——曾用 公告栏.png
  * 整卡背景图，图标文件已删除）。
- * 已读记忆按公告 id 对比（announcement_seen_id）：仅当存在比已看更新的公告时才弹出，
- * 避免旧实现（永久标记 announcement_seen）导致新公告永远无法触达老访客。
- */
+ *
+ * 判据 / 已读落点 / 复查时机全在 `pending.ts`（文件头把"为什么从 localStorage 水位
+ * 搬到服务端""为什么只弹最新那条""读不到为什么不弹"讲完了）。这里只管三件事：
+ *   ① 登记复查（挂载即查 + 四类事件 + 可见时 60 秒一拍）；
+ *   ② 重入与"刚关掉的这条"的抑制；
+ *   ③ 只负责显示，关窗时才记已读。
+ *
+ * 两处挂载（公共页壳 App.tsx / 后台 Dashboard 自己的壳）——**不是**挂在某个页面上，
+ * 那正是"只有刷新才弹"的旧毛病：公告是站点级事件，弹窗得跟着壳走。 */
 const AnnouncementModal = () => {
+    const { token } = theme.useToken()
+    const [pending, setPending] = useState<PendingAnnouncement | null>(null)
     const [open, setOpen] = useState(false)
-    const [announcement, setAnnouncement] = useState<any>(null)
+    /** 正在查（防同一拍里几个触发源并发查同一件事） */
+    const checkingRef = useRef(false)
+    /** 已经弹着（查到了也不换正文，免得读到一半被替换） */
+    const openRef = useRef(false)
+    /**
+     * 本次页面会话里**已经关掉过**的公告 id。存在的唯一理由是"服务端已读写失败"：
+     * 那种情况下服务端仍判它未读，下一拍复查会再弹一次同一张卡，用户就成了"关不掉的弹窗"。
+     * 这里是**内存里的会话级抑制**、不落盘、也不冒充已读——服务端那行照旧未读、红点照旧亮着，
+     * 别的设备也照旧会弹（那正是"按账号记"的意思），只是不在同一个标签页里反复打扰。
+     */
+    const closedIdsRef = useRef<Set<number>>(new Set())
 
     useEffect(() => {
-        getAnnouncements().then(res => {
-            if (res.status === 200 && res.data.data.length > 0) {
-                const latest = res.data.data[0]
-                // 已读记忆：按公告 id 对比，新公告（id 更大）才弹
-                let seenId = 0
-                try { seenId = parseInt(localStorage.getItem('announcement_seen_id') || '0', 10) || 0 } catch (e) { /* ignore */ }
-                if (latest.id > seenId) {
-                    setAnnouncement(latest)
-                    setOpen(true)
-                }
+        let alive = true
+        const check = async () => {
+            if (checkingRef.current || openRef.current) return
+            checkingRef.current = true
+            try {
+                const p = await fetchPendingAnnouncement()
+                // 读不到 ⇒ null ⇒ 什么都不做（不弹、也不清空当前状态，见 pending.ts 文件头）
+                if (!alive || !p || openRef.current || closedIdsRef.current.has(p.id)) return
+                openRef.current = true
+                setPending(p)
+                setOpen(true)
+            } catch (e) {
+                /* 查询本身抛了（网络/解析）：按"读不到"处理，等下一次复查 */
+            } finally {
+                checkingRef.current = false
             }
-        })
+        }
+        void check()
+        const stop = watchAnnouncements(() => { void check() })
+        return () => {
+            alive = false
+            stop()
+        }
     }, [])
 
     const handleClose = () => {
-        // 关闭（含读完）时才记录已读 id，避免弹窗出现即标记
-        if (announcement) {
-            try { localStorage.setItem('announcement_seen_id', String(announcement.id)) } catch (e) { /* ignore */ }
-        }
+        const p = pending
+        openRef.current = false
         setOpen(false)
+        // 关闭（含读完）时才记已读——弹窗出现即标记等于替用户读了
+        if (!p) return
+        closedIdsRef.current.add(p.id)
+        void markAnnouncementRead(p)
     }
 
     return (
@@ -61,29 +97,32 @@ const AnnouncementModal = () => {
                 content: { borderRadius: 12, overflow: 'hidden' },
             }}
         >
+            {/* 配色一律取 antd token，不写死：同一张卡在公共页（无 ConfigProvider ⇒ 浅色）
+                与后台（Dashboard 的 ConfigProvider(darkAlgorithm) ⇒ 深色）下都要能读
+                ——后台那套是内联 style 的死对头（见 docs 里"内联 style 是夜间头号敌人"）。 */}
             <div style={{
                 padding: '28px 32px 24px',
                 maxHeight: '60vh',
                 overflowY: 'auto',
                 lineHeight: 1.9,
                 fontSize: 15,
-                color: '#333',
+                color: token.colorText,
             }}>
-                {announcement?.title && (
+                {pending?.title && (
                     <div style={{
                         fontWeight: 700,
                         fontSize: 20,
                         marginBottom: 14,
-                        color: '#222',
+                        color: token.colorTextHeading,
                         letterSpacing: 1,
                         textAlign: 'center',
                     }}>
-                        {announcement.title}
+                        {pending.title}
                     </div>
                 )}
-                <div style={{ whiteSpace: 'pre-wrap', textAlign: 'justify' }}>{announcement?.content}</div>
-                <div style={{ marginTop: 16, fontSize: 12, color: '#999', textAlign: 'right' }}>
-                    {fmtCnTime(announcement?.updatedAt || announcement?.createdAt)}
+                <div style={{ whiteSpace: 'pre-wrap', textAlign: 'justify' }}>{pending?.content}</div>
+                <div style={{ marginTop: 16, fontSize: 12, color: token.colorTextTertiary, textAlign: 'right' }}>
+                    {fmtCnTime(pending?.time || '')}
                 </div>
             </div>
         </Modal>
