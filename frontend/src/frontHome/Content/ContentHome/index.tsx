@@ -1,5 +1,4 @@
 import SeoHelmet from "../../../components/SeoHelmet";
-import AnnouncementModal from "../../../components/AnnouncementModal";
 import './index.sass'
 import {Avatar, Tag} from "antd";
 import SocialButton from "../../../components/Buttons/SocialButton";
@@ -284,7 +283,6 @@ const ContentHome = () => {
                 aria-hidden="true"
             />
             <div className="heroOverlay" />
-            <AnnouncementModal />
 
             <div className="SayWords">
                <div>

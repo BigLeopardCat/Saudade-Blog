@@ -19,6 +19,7 @@ import '@fontsource/roboto/500.css';
 import '@fontsource/roboto/700.css';
 import { readDarkMode, recordUserChoice } from "../../theme";
 import Live2dAgent from "../../components/Live2dAgent"; // 后台是顶层路由（不在 App 布局里），看板娘得自己挂
+import AnnouncementModal from "../../components/AnnouncementModal"; // 同上：公告弹窗也跟壳走，不跟页面走
 
 /** 用户提供的填充型图标（20260923 换掉 公告的 fa-bullhorn 与 用户管理的 gear+person）。
  *  这些是"设计稿直接给的一段 svg"，不是图标库 —— 落库约定：
@@ -366,6 +367,9 @@ const Dashboard = () => {
                 autoload.js 自带防重入（window.__agentChatLoaded / #waifu 存在即跳过），
                 来回跳不会叠出两只；waifu.css 也已按后台的 fixed 侧栏调过 z-index。 */}
             <Live2dAgent />
+            {/* 挂在 ConfigProvider **里面**：后台这套 ConfigProvider 带 darkAlgorithm，
+                公告卡片的配色取 antd token ⇒ 在这里才是深色可读的（见组件里的注释）。 */}
+            <AnnouncementModal />
         </div>
         </ConfigProvider>
     );
