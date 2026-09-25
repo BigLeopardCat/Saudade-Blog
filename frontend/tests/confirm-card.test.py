@@ -258,6 +258,12 @@ ASK_STATE = """() => {
     lastBody: window.__stub.lastBody,
     streamCalls: window.__stub.streamCalls,
     isLast: !!(box && last === box),
+    // 卡片与气泡的**先后关系**（⑩腿）：卡片是"夹在问句气泡与结果气泡之间"的常驻节点，
+    // 只判 isLast 在结果气泡到达后必然为假，判不出它到底在上面还是下面。
+    idx: box && msgs ? [...msgs.children].indexOf(box) : -1,
+    agentIdxs: msgs ? [...msgs.children].map((c, i) =>
+                 (c.classList && c.classList.contains('agent')) ? i : -1).filter(i => i >= 0) : [],
+    userIdx: msgs ? [...msgs.children].findIndex(c => c.classList.contains('user')) : -1,
     pending: window.__ctx.state.pendingAsk ? 'SET' : null,
     isSending: window.__ctx.state.isSending,
     reports: window.__reports.slice(),
@@ -959,6 +965,76 @@ def main():
                   not st["active"] and st["pending"] is None, str(st))
             check("⑨d 缺件存档同样被清掉", store["raw"] is None,
                   json.dumps(store, ensure_ascii=False)[:300])
+
+            # ── ⑩ 卡片的位置：夹在问句气泡与**结果气泡**之间 ──────────────
+            # 用户报的形态（20260925）：点完确定，结果回复渲染在卡片**上面**，而卡片
+            # 自己写着"已确认，结果见下方回复"——屏幕上的事实与卡片上的话正好相反。
+            # 真路径：结果气泡是 appendChild 上来的（此时卡片在末位 ⇒ 结果天然在它
+            # 下面），随后任何一次 reconcile（收尾补拉/别的窗口写缓存/切会话回来）的
+            # "位置对齐"按 items 顺序挪气泡，而卡片不参与 items 循环——插入点算在卡片
+            # 身上，结果气泡就被插到了卡片**之前**。
+            # 这一腿先按真实路径点一次确定，再走一次真 reconcile，两步都判先后。
+            # 判据用 idx 而不是 isLast：结果气泡到达后卡片必然不是末位，isLast 表达
+            # 不了"在上面还是下面"。
+            print("\n⑩ 卡片位置：在问句气泡之后、结果气泡之前")
+            pg10, errs10 = open_page(b, url)
+            run_round(pg10, ROUND)
+            st = pg10.evaluate(ASK_STATE)
+            check("⑩a 前置：卡片已弹、结果气泡还没来（卡片在所有气泡之后）",
+                  st["active"] and st["isLast"] and st["agentIdxs"]
+                  and st["agentIdxs"][-1] < st["idx"],
+                  f"card={st['idx']} agents={st['agentIdxs']}")
+            n_before = len(st["agentIdxs"])
+            set_frames(pg10, [text_frame("已经把《Python asyncio 异步并发》加进收藏了。"),
+                              "__END__"])
+            pg10.evaluate(CLICK, "yes")
+            pg10.wait_for_function("() => !window.__ctx.state.isSending", timeout=10000)
+            pg10.wait_for_timeout(500)
+            st = pg10.evaluate(ASK_STATE)
+            check("⑩b 结算文案是「已确认，结果见下方回复」", st["note"] == "已确认，结果见下方回复",
+                  repr(st["note"]))
+            check("⑩b 结果气泡真的来了（前置；没有它这一腿是永真）",
+                  len(st["agentIdxs"]) == n_before + 1, str(st["agentIdxs"]))
+            check("⑩b 点完确定的那一刻：卡片在结果气泡**之前**（屏幕上的事实与卡片上的话一致）",
+                  st["idx"] < st["agentIdxs"][-1],
+                  f"card={st['idx']} agents={st['agentIdxs']}")
+            # 真 reconcile（收尾补拉/别的窗口写缓存/切会话回来走的都是这条路）
+            pg10.evaluate("() => window.__engine.pullHistory()")
+            pg10.wait_for_timeout(700)
+            st = pg10.evaluate(ASK_STATE)
+            check("⑩c reconcile 之后卡片仍在结果气泡之前（旧行为会把它挤到下面）",
+                  st["idx"] < st["agentIdxs"][-1],
+                  f"card={st['idx']} agents={st['agentIdxs']} all={st['allText'][:80]!r}")
+            check("⑩c reconcile 之后卡片仍在流里且可点/已结算态正常",
+                  st["inMessages"] and st["height"] > 0, str(st))
+            check("⑩c 期间无失败上报", by_fail(st["reports"]) == [], flow_message(st["reports"]))
+            check("⑩腿页面无未捕获异常", errs10 == [], " | ".join(errs10[:4]))
+
+            # ── ⑪ 问句渲染走 markdown（用户报"卡片没有渲染 markdown 文本"）──
+            # 问句是 agent 写的正文（写工具的确认文案里就有 `**全部**`、`「」`、列表），
+            # 纯 textContent 会把星号原样显示。判据两条：渲染器真的产出了强调标签，
+            # 且屏幕上**看不到**井号星号（只判前者会被"渲染了但没生效"骗过）。
+            print("\n⑪ 问句渲染 markdown（不再显示 ** 原样）")
+            pg11, errs11 = open_page(b, url)
+            # 问句逐字取自生产（adminops.render_confirm_question 的 read_notifications
+            # ·全部那一支）——夹具与线上文案同字，改文案时这里跟着红，不会悄悄漂走。
+            md_round = [text_frame("好的，我来帮你标记。"), "__PROCESS__:正在准备操作…",
+                        confirm_frame(q="要把**全部**未读通知标记为已读（不可撤销：标的就"
+                                        "不再是未读，头顶的红点会消失）吗？点「确定」"
+                                        "我就去办。"),
+                        "__END__"]
+            run_round(pg11, md_round)
+            st = pg11.evaluate(ASK_STATE)
+            html = pg11.evaluate("() => document.getElementById('chat-ask-text').innerHTML")
+            check("⑪a 前置：这一轮的卡片真的弹出来了", st["active"] and st["q"], str(st["q"]))
+            check("⑪a 渲染器产出了强调标签（<strong>全部</strong>）",
+                  "<strong>全部</strong>" in html, repr(html[:200]))
+            check("⑪a 屏幕上不再出现 ** 原文（渲染了但没生效的那种形态）",
+                  "**" not in st["q"], repr(st["q"]))
+            check("⑪a 问句其余文字逐字保留（渲染不许吃掉内容）",
+                  st["q"].startswith("要把全部未读通知标记为已读")
+                  and st["q"].endswith("点「确定」我就去办。"), repr(st["q"]))
+            check("⑪腿页面无未捕获异常", errs11 == [], " | ".join(errs11[:4]))
 
             check("①③腿页面无未捕获异常", errs == [], " | ".join(errs[:4]))
             b.close()
