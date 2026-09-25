@@ -88,8 +88,16 @@ def build_sandbox() -> pathlib.Path:
 
 
 SANDBOX = build_sandbox()
-_handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(SANDBOX))
-_handler.log_message = lambda *a, **k: None
+class _Quiet(http.server.SimpleHTTPRequestHandler):
+    """静音：访问日志会落进 ~/sandbox_regression.log（那是给人看断言的地方）。
+    必须子类覆写——`partial` 的实例属性不影响它转发的那个类，写成
+    `_handler.log_message = lambda …` 等于没写。"""
+
+    def log_message(self, *a, **k):
+        return None
+
+
+_handler = functools.partial(_Quiet, directory=str(SANDBOX))
 _server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _handler)
 threading.Thread(target=_server.serve_forever, daemon=True).start()
 
