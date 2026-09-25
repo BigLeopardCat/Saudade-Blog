@@ -501,8 +501,12 @@ with sync_playwright() as p:
     # 标签认的是**后端现读库**的角色，不是令牌里那份快照——这是这条改动最容易写反的地方
     # （令牌是无状态的，被人改过角色之后旧令牌会一直自称旧角色；标签跟着令牌就会骗人）。
     print("①b 角色标签认 profile 而不是令牌快照（两个方向各造一个世界）")
+    # 第三个用例是**超级管理员**（20260926）：它的标签走的是同一张表
+    # （`utils/auth.ts::ROLE_LABEL`），但取值域加了一个人的时候，漏改的正是这类
+    # "角色 → 文案"的映射——漏了它会原样显示 `superadmin` 这串英文。
     for tok_role, prof_role, want in (("admin", "user", "普通用户"),
-                                      ("user", "admin", "管理员")):
+                                      ("user", "admin", "管理员"),
+                                      ("admin", "superadmin", "超级管理员")):
         pg2 = fresh_page(role=tok_role, profile_role=prof_role)
         pg2.wait_for_selector(".ucRoleTag", timeout=10000)
         got = pg2.locator(".ucRoleTag").inner_text().strip()
