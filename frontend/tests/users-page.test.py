@@ -127,8 +127,12 @@ const req = async (cfg: any) => {
     const u = ((window as any).__users as any[]).find((x) => x.id === id);
     const frozen = (cfg.data || {}).frozen === true;
     if (u) u.status = frozen ? 1 : 0;
-    return env0({ code: 200, message: frozen ? '账号已冻结，其登录状态已全部失效'
-                                           : '账号已解冻，请让对方重新登录', data: null });
+    // ⚠️ 人类可读的那句在 **data** 里、`message` 恒为字面量 'ok' —— 这是
+    // `utils::ApiResponse::success(data)` 的形状（message 写死 "ok"，见 src/utils.rs）。
+    // 桩要是把中文句放进 message，组件里 `message.success(res.data.message)` 那种
+    // 读错字段的写法就照样绿（用户 20260926 报的"只有一个 ok 的弹窗条"正是这么来的）。
+    return env0({ code: 200, message: 'ok',
+                  data: frozen ? '账号已冻结，其登录状态已全部失效' : '账号已解冻，请让对方重新登录' });
   }
   return env0({ code: 200, message: 'ok', data: null });
 };
@@ -185,8 +189,8 @@ window.fetch = (async (input: any, init: any) => {
     const u = USERS.find((x) => x.id === id);
     const frozen = (init && init.body) ? JSON.parse(init.body).frozen === true : false;
     if (u) u.status = frozen ? 1 : 0;
-    body = { code: 200, message: frozen ? '账号已冻结，其登录状态已全部失效'
-                                      : '账号已解冻，请让对方重新登录', data: null };
+    body = { code: 200, message: 'ok',
+             data: frozen ? '账号已冻结，其登录状态已全部失效' : '账号已解冻，请让对方重新登录' };
   }
   return { ok: true, status: 200, json: async () => body } as any;
 }) as any;
@@ -375,6 +379,16 @@ def zero_bare_fetch(pg):
     自己 fetch + 手拼 `'Bearer ' + token`，于是绕过了共享客户端的 401 处理。
     谁把某一处改回 fetch，这条立刻红——而不是等到"令牌过期时后台不跳登录"那天。"""
     return pg.evaluate("() => window.__fetchCalls.map((c) => c.method + ' ' + c.url)")
+
+
+def notices(pg):
+    """当前屏上的 antd message 文案（抹空白——antd 会在两个汉字间插空格）。
+
+    冻结/解冻那一侧的判据：后端把人类可读的那句放在 **`data`**、`message` 恒为
+    `"ok"`，所以"弹的是不是那句中文"这件事只有真看 DOM 才知道（用户 20260926
+    报的就是这里弹了一个只有「ok」的条）。"""
+    return pg.evaluate("""() => [...document.querySelectorAll('.ant-message-notice-content')]
+        .map((e) => e.textContent.replace(/\\s+/g, ''))""")
 
 
 with sync_playwright() as p:
@@ -731,6 +745,15 @@ with sync_playwright() as p:
     last = status_posts(pg)[-1] if status_posts(pg) else None
     check("点「冻结」发出 {frozen:true}（与解冻走同一个接口、只换请求体）",
           last and last["body"] == {"frozen": True}, str(last))
+    # ④d 成功提示弹的必须是**后端那句中文**，不是字面量 "ok"（20260926 用户报的现场）。
+    # 后端 `ApiResponse::success(data)` 的 `message` 恒为 "ok"、人类可读的那句在 `data`
+    # —— 读错字段的写法（`message.success(res.data.message)`）弹出来就是一个只有
+    # 「ok」的条，而且它**不会报错、不会红**，只有真看 DOM 才发现。
+    _n = notices(pg)
+    check("成功提示是后端那句中文（账号已冻结…）",
+          any("账号已冻结" in x for x in _n), str(_n))
+    check("提示里**没有**那个只有「ok」的条（读错字段的写法）",
+          not any(x.strip().lower() == "ok" for x in _n), str(_n))
     pg.locator(".tu-tabs button", has_text="冻结账号").first.click()
     pg.wait_for_timeout(250)
     check("冻结后 guest1 出现在冻结档（预置只剩 guest28，加它就是两行）",
