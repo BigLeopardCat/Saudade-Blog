@@ -23,11 +23,23 @@
       .ant-tabs-tabpane
         height: 100%
 
-// ── 账号管理：临时用户 ──
+// ── 账号管理：账号列表 ──
 .tu-section
   height: 100%
-  overflow-y: auto
+  // 20260926：整块自己不再滚（原来是 overflow-y: auto）——那样"新建 + 说明 + 筛选检索"
+  // 这一截会跟着账号列表一起滚走，翻到下面想换个关键词得先滚回顶上。现在这一块是
+  // **固定壳**：.tu-head（新建/说明/筛选）+ .tu-list-wrap（列表）两段，只有后者滚。
+  // height 链是通的：Dashboard 的 .Card 95% → .ant-card-body 100% → .users-page 100%
+  // → .ant-tabs-content-holder/.tabpane 100% → 这里 100%（少一环就退化成内容高度、内滚动失效）。
+  overflow: hidden
+  min-height: 0
+  display: flex
+  flex-direction: column
   padding: 12px 4px
+
+  .tu-head
+    // 固定段：矮窗时不许被 flex 压扁（列表才该缩）
+    flex: 0 0 auto
 
   .tu-create
     display: flex
@@ -38,6 +50,52 @@
     margin: 0 0 14px
     color: #999
     font-size: 12px
+
+  // 筛选 + 检索 + 计数（20260926）：与评论管理那条工具栏同构
+  .tu-filter
+    display: flex
+    align-items: center
+    gap: 12px
+    flex-wrap: wrap
+    margin-bottom: 10px
+
+    // 与 BoardManage 的 .bm-tabs 同一套观感（两处各自成块是既有状态，先不为它抽公共类）
+    .tu-tabs
+      display: flex
+      gap: 8px
+      button
+        min-width: 52px
+        padding: 5px 14px
+        border: 1px solid #d9d9d9
+        border-radius: 6px
+        background: #fff
+        color: #444
+        cursor: pointer
+        transition: 0.25s
+        &:hover
+          border-color: #a33f30
+          color: #a33f30
+        &.sel
+          background: #a33f30
+          border-color: #a33f30
+          color: #ffe8c8
+          font-weight: 600
+
+    .tu-count
+      margin-left: auto
+      color: #888
+      font-size: 13px
+
+  // 只有这一块滚。
+  // `min-height: 0` 在这里其实是**冗余**的：CSS Sizing 规定，某个抽向上是滚动容器的
+  // 盒子（`overflow: auto|hidden|scroll`），它的自动最小尺寸就是 0——`overflow: auto`
+  // 已经把它办掉了（20260926 用变异探针验过：单独删掉这一行，几何一条都不变）。
+  // 留着是因为"flex 子项要能缩到比内容矮"这件事写出来比靠这条规范隐式生效好读，
+  // 但**别把它当成内滚动生效的原因**：真正的原因就是下面那行 overflow。
+  .tu-list-wrap
+    flex: 1 1 auto
+    min-height: 0
+    overflow: auto
 
   .tu-empty
     color: #999
@@ -69,3 +127,19 @@
       border-bottom-color: rgba(255, 255, 255, 0.12)
   .tu-hint
     color: #888
+  .tu-section
+    .tu-tabs button
+      background: rgba(255, 255, 255, 0.08)
+      border-color: rgba(255, 255, 255, 0.18)
+      color: #ccc
+      &:hover
+        border-color: #c87a63
+        color: #e8b8a0
+      &.sel
+        background: #a33f30
+        border-color: #a33f30
+        color: #ffe8c8
+    .tu-count
+      color: #888
+    .tu-empty
+      color: #888

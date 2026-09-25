@@ -1,6 +1,6 @@
 import './index.sass'
 import { useEffect, useMemo, useState } from "react";
-import { Button, Input, Modal, Popconfirm, Switch, Table, Tag, Tooltip, message } from "antd";
+import { Button, Input, Modal, Pagination, Popconfirm, Switch, Table, Tag, Tooltip, message } from "antd";
 import type { ColumnsType } from 'antd/es/table';
 import http from "../../../apis/axios.tsx";
 
@@ -38,6 +38,8 @@ interface BoardItem {
 
 const CATS = ['愿', '寄', '忆', '诉'];
 const LAMP_NAMES = ['莲花灯', '八角灯', '圆笼灯'];
+/** 每页条数：分页从 Table 搬到外面那一条，这里的数就是唯一真源（两处都得用它） */
+const PAGE_SIZE = 10;
 
 const BoardManage = () => {
     const [items, setItems] = useState<BoardItem[]>([]);
@@ -158,6 +160,15 @@ const BoardManage = () => {
             });
     }, [items, catFilter, query, asc]);
 
+    /** 分页（20260926 从 Table 搬到这条页脚上，见下面 .bm-scroll 的说明）。
+     *  当前页只切**已经筛过**的那份，所以筛选条件一变就得回到第一页——否则会停在
+     *  「第 3 页」而结果只有 1 页，表格空着、看着像"筛出来什么都没有"。 */
+    const [page, setPage] = useState(1);
+    useEffect(() => { setPage(1); }, [catFilter, query, asc]);
+    const pageRows = useMemo(
+        () => filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
+        [filtered, page],
+    );
     /* 删除留言：管理员确认后删除，留言板不再展示 */
     const del = async (id: number) => {
         try {
@@ -323,21 +334,41 @@ const BoardManage = () => {
                             : '均关闭：新留言直接展示（开关即存即生效）'}
                 </span>
             </div>
-            <Table
-                rowKey="talkKey"
-                columns={columns}
-                dataSource={filtered}
-                loading={loading}
-                size="middle"
-                pagination={{ pageSize: 10, showTotal: (t) => `共 ${t} 条` }}
-            />
-            <p className="bm-note">
-                留言板与说说各自独立：本页仅管理留言板所放河灯。审核分两段展示——AI 审核（初审判定
-                留痕：拦截/通过/未审）+ 人工审核（裁决结果：通过/待审/未通过）。待审与未通过的留言不进
-                公开列表；可「通过」放行、「驳回」隐藏（驳回后可「恢复通过」改判）或删除。存量留言
-                不受开关影响。审核出结果时会自动给发布者发一条站内通知（通过/驳回各一条，驳回会带上
-                理由），改判会再发一条。
-            </p>
+            {/* 滚动从整页挪进这一块（20260926 用户报"向下滚动会丢掉筛选检索的头"）。
+                以前 `.BoardManage` 自己 `overflow-y: auto`，于是工具栏、审核开关、说明
+                都跟着表格一起滚走——翻到第 30 条时想换个关键词得先滚回顶上。现在：
+                上面两行（筛选 + 审核开关）是固定的，**只有这张表在窗口内滚**，表头
+                用 CSS sticky 吸在这一块的顶沿（见 index.sass）；分页条也移出滚动区、
+                钉在底部（照文章列表那套：Table 的 pagination 关掉，改由外面的
+                Pagination 承担，否则翻页按钮会跟着表体一起滚走）。 */}
+            <div className="bm-scroll">
+                <Table
+                    rowKey="talkKey"
+                    columns={columns}
+                    dataSource={pageRows}
+                    loading={loading}
+                    size="middle"
+                    pagination={false}
+                />
+                <p className="bm-note">
+                    留言板与说说各自独立：本页仅管理留言板所放河灯。审核分两段展示——AI 审核（初审判定
+                    留痕：拦截/通过/未审）+ 人工审核（裁决结果：通过/待审/未通过）。待审与未通过的留言不进
+                    公开列表；可「通过」放行、「驳回」隐藏（驳回后可「恢复通过」改判）或删除。存量留言
+                    不受开关影响。审核出结果时会自动给发布者发一条站内通知（通过/驳回各一条，驳回会带上
+                    理由），改判会再发一条。
+                </p>
+            </div>
+            <div className="bm-foot">
+                <Pagination
+                    size="small"
+                    current={page}
+                    pageSize={PAGE_SIZE}
+                    total={filtered.length}
+                    showSizeChanger={false}
+                    onChange={setPage}
+                    showTotal={(t) => `共 ${t} 条留言`}
+                />
+            </div>
             {/* 驳回理由弹窗：理由随审核结果通知发给发布者，可留空 */}
             <Modal
                 title="驳回这条留言？"
