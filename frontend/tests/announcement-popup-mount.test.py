@@ -145,6 +145,23 @@ def set_token(page, token):
                   "        else localStorage.removeItem('tokenKey'); }", token)
 
 
+def close_outside(page):
+    """从弹窗外关掉：点遮罩（div.ant-modal-wrap 的空白区）。**不记已读**。"""
+    page.click(".ant-modal-wrap", position={"x": 6, "y": 6})
+
+
+def close_by_x(page):
+    """右上角 ×（同样只是"收起卡片"，不记已读）。"""
+    page.click(".ant-modal-close")
+
+
+def click_ok(page):
+    """点「我知道了」——唯一会记已读的出口。"""
+    page.click(".ant-modal-content:visible button:has-text('我知道了')")
+
+
+
+
 def make_page(br):
     page = br.new_page(viewport={"width": 1280, "height": 900})
     errs = []
@@ -159,8 +176,8 @@ def make_page(br):
 with sync_playwright() as p:
     br = p.chromium.launch()
 
-    # ── 一、游客：本机水位还是老规矩（键名沿用，老访客不重弹） ──────────────────
-    print("\n【一】游客（未登录）：按本机水位 announcement_seen_id")
+    # ── 一、游客：两个出口分工（点弹窗外 = 仍是未读；点「我知道了」= 记已读） ──────
+    print("\n【一】游客（未登录）：点弹窗外只是收起卡片，仍是未读")
     pg = make_page(br)
     route(pg, {PUBLIC: ann_body([{"id": 7, "title": "新公告：今晚维护", "content": "正文七",
                                   "createdAt": "2026-09-26 09:00:00",
@@ -171,22 +188,48 @@ with sync_playwright() as p:
     pg.wait_for_timeout(500)
     check("游客：有新公告 ⇒ 弹窗弹出来了", popped(pg, "新公告：今晚维护"), str(popped(pg)))
     check("游客：弹的是公开接口那份正文", popped(pg, "正文七"))
-    pg.click(".ant-modal-close")
+    check("卡片上有「我知道了」按钮（唯一的已读出口）",
+          pg.locator(".ant-modal-content:visible button:has-text('我知道了')").count() == 1)
+    close_outside(pg)                       # 点遮罩
     pg.wait_for_timeout(300)
-    check("关窗后不在了", not popped(pg))
+    check("点弹窗外 ⇒ 卡片收起了", not popped(pg))
     seen = pg.evaluate("() => localStorage.getItem('announcement_seen_id')")
-    check("游客关窗：已读落在本机水位上", seen == "7", repr(seen))
+    check("**没点「我知道了」⇒ 不写本机水位**（这就是「仍是未读」）", seen is None, repr(seen))
     check("游客：一次写请求都没发（服务端没有他的身份）",
           len(calls(pg, method="POST")) == 0, json.dumps(calls(pg, method="POST")))
+    check("同一页不立刻重弹（会话级抑制，不是「算你读过」）", not popped(pg))
 
-    # 重新挂载（= 刷新）也不该再弹
+    # 重新挂载（= 刷新）⇒ 仍是未读 ⇒ 照旧弹
     pg.evaluate("() => window.__clear()")
     pg.wait_for_timeout(150)
     pg.evaluate("() => window.__mount()")
     pg.wait_for_timeout(500)
-    check("游客：刷新之后不再弹（水位生效）", not popped(pg))
+    check("游客：刷新之后**照旧弹**（没点我知道了就是没读过）", popped(pg, "新公告：今晚维护"))
+    close_by_x(pg)                          # 这次用右上角 ×，同样只是收起
+    pg.wait_for_timeout(300)
+    check("右上角 × 同款：收起卡片、不写水位",
+          pg.evaluate("() => localStorage.getItem('announcement_seen_id')") is None)
 
-    # ── 二、登录用户：读服务端通知行，关窗即 POST 已读 ─────────────────────────
+    # 点「我知道了」⇒ 这才算读过
+    pg.evaluate("() => window.__clear()")
+    pg.wait_for_timeout(150)
+    pg.evaluate("() => window.__mount()")
+    pg.wait_for_timeout(500)
+    check("刷新后第三次仍会弹（前两次都没表态）", popped(pg, "新公告：今晚维护"))
+    click_ok(pg)
+    pg.wait_for_timeout(300)
+    check("点「我知道了」⇒ 卡片收起", not popped(pg))
+    seen = pg.evaluate("() => localStorage.getItem('announcement_seen_id')")
+    check("游客点「我知道了」：已读落在本机水位上", seen == "7", repr(seen))
+    check("游客：全程依然一次写请求都没发",
+          len(calls(pg, method="POST")) == 0, json.dumps(calls(pg, method="POST")))
+    pg.evaluate("() => window.__clear()")
+    pg.wait_for_timeout(150)
+    pg.evaluate("() => window.__mount()")
+    pg.wait_for_timeout(500)
+    check("游客：点过「我知道了」之后刷新不再弹（水位生效）", not popped(pg))
+
+    # ── 二、登录用户：点弹窗外 ⇒ 服务端那行照旧未读；点「我知道了」⇒ POST 已读 ─────
     print("\n【二】登录用户：判据在服务端（个人中心那份已读与弹窗是同一批行）")
     row = ann_row(9, "公告：本周更新", "正文九")
     route(pg, {NOTIF: notif_body([row]), READ: SUMMARY})
@@ -201,15 +244,30 @@ with sync_playwright() as p:
     check("登录：有未读公告行 ⇒ 弹", popped(pg, "公告：本周更新"))
     check("登录：走通知接口，不打公开公告接口",
           len(calls(pg, PUBLIC)) == 0 and len(calls(pg, NOTIF, "GET")) >= 1, json.dumps(calls(pg)))
-    pg.click(".ant-modal-close")
+    close_outside(pg)                        # 点遮罩：不算读过
+    pg.wait_for_timeout(400)
+    check("点弹窗外 ⇒ **一次已读请求都不发**（服务端那行照旧未读 ⇒ 红点照旧亮、"
+          "个人中心照旧未读）",
+          len(calls(pg, READ, "POST")) == 0, json.dumps(calls(pg, READ, "POST")))
+    check("登录用户不写本机水位（免得留下第二本账）",
+          pg.evaluate("() => localStorage.getItem('announcement_seen_id')") == watermark_before,
+          repr(watermark_before) + " → "
+          + repr(pg.evaluate("() => localStorage.getItem('announcement_seen_id')")))
+    # 刷新（= 重新挂载）：服务端那行还挂着未读 ⇒ 照旧弹
+    pg.evaluate("() => window.__clear()")
+    pg.wait_for_timeout(150)
+    pg.evaluate("() => window.__mount()")
+    pg.wait_for_timeout(500)
+    check("点弹窗外的下一次刷新照旧弹（服务端判它未读，弹窗没替他表态）",
+          popped(pg, "公告：本周更新"))
+    click_ok(pg)                             # 这次点「我知道了」
     pg.wait_for_timeout(400)
     posts = calls(pg, READ, "POST")
-    check("关窗：POST 了一次已读", len(posts) == 1, json.dumps(posts))
-    check("关窗：标的是弹过的那一行（ids=[9]，不是 all）",
+    check("点「我知道了」⇒ POST 了一次已读", len(posts) == 1, json.dumps(posts))
+    check("  标的是弹过的那一行（ids=[9]，不是 all）",
           bool(posts) and posts[0]["data"] == {"ids": [9], "all": False}, json.dumps(posts))
-    watermark_after = pg.evaluate("() => localStorage.getItem('announcement_seen_id')")
-    check("登录用户不写本机水位（免得留下第二本账）", watermark_after == watermark_before,
-          repr(watermark_before) + " → " + repr(watermark_after))
+    check("  本机水位依旧不动", pg.evaluate(
+        "() => localStorage.getItem('announcement_seen_id')") == watermark_before)
 
     # 服务端已读之后再挂载（= 刷新）也不弹
     route(pg, {NOTIF: notif_body([ann_row(9, "公告：本周更新", "正文九", is_read=True)]), READ: SUMMARY})
@@ -217,8 +275,8 @@ with sync_playwright() as p:
     pg.wait_for_timeout(150)
     pg.evaluate("() => window.__mount()")
     pg.wait_for_timeout(500)
-    check("登录：改过（编辑公告不产生新行）之后刷新不重弹",
-          not popped(pg), "id/createdAt 没变、isRead 已是 true")
+    check("登录：点过「我知道了」之后刷新不重弹（服务端那份已读生效）",
+          not popped(pg), "isRead 已是 true")
 
     # ── 三、本轮改动的本体：不刷新，发出来当场收到 ────────────────────────────
     print("\n【三】后台发布 ⇒ 不刷新、不重新挂载，弹窗自己弹出来")
@@ -237,7 +295,7 @@ with sync_playwright() as p:
           popped(pg, "公告：新上线的图库"))
     check("弹的是新的那条，不是旧的那条",
           not popped(pg, "公告：本周更新 正文九"), "旧卡没被拿来顶替")
-    pg.click(".ant-modal-close")
+    click_ok(pg)
     pg.wait_for_timeout(400)
 
     print("\n【四】没有信号时不查（不是「每次渲染都查一遍」）")
@@ -251,18 +309,18 @@ with sync_playwright() as p:
     pg.wait_for_timeout(600)
     check("切回标签页 ⇒ 查一次并弹出来（切回来的那一刻就是想要的时刻）",
           popped(pg, "公告：静默期"))
-    pg.click(".ant-modal-close")
+    click_ok(pg)
     pg.wait_for_timeout(400)
 
-    # ── 五、关掉之后同一页不反复弹（服务端那次已读写失败时也不打扰） ───────────
-    print("\n【五】关窗后同一页面不再反复弹同一张卡")
+    # ── 五、收起之后同一页不反复弹（没点「我知道了」，服务端仍判未读） ──────────
+    print("\n【五】收起后同一页面不再反复弹同一张卡（那仍是未读，只是别每分钟打扰）")
     route(pg, {NOTIF: notif_body([ann_row(41, "公告：静默期", "正文四十一")]), READ: SUMMARY})
     before = len(calls(pg, NOTIF, "GET"))
     pg.evaluate("() => window.dispatchEvent(new CustomEvent('announcement-published'))")
     pg.wait_for_timeout(600)
     check("复查确实发生了（不是「没查所以没弹」）", len(calls(pg, NOTIF, "GET")) > before)
-    check("但刚关掉的那条不再弹回来（服务端若写失败，也不该每分钟打扰一次）",
-          not popped(pg))
+    check("但刚收起的那条不再弹回来（同一页会话级抑制；它照旧是未读、照旧会出现在"
+          "个人中心与红点里）", not popped(pg))
 
     # ── 六、读不到 ≠ 没有 ────────────────────────────────────────────────────
     print("\n【六】读不到就不弹（不把「读不到」演成「你没读过」）")
@@ -301,6 +359,10 @@ with sync_playwright() as p:
     pg.evaluate("() => window.dispatchEvent(new CustomEvent('announcement-published'))")
     pg.wait_for_timeout(600)
     check("派发发布事件 ⇒ 游客也当场弹出来（不刷新、不重新挂载）", popped(pg, "刚发的公告"))
+    click_ok(pg)                      # 收尾：点「我知道了」把这张读掉（水位写到 8）
+    pg.wait_for_timeout(300)
+    check("游客点「我知道了」⇒ 水位推到 8",
+          pg.evaluate("() => localStorage.getItem('announcement_seen_id')") == "8")
 
     check("全程没有页面错误", not pg.errs, " | ".join(pg.errs))
     pg.close()
