@@ -151,8 +151,13 @@ for (const f of ['chat-stream.js', 'chat-engine.js', 'chat-render.js', 'chat-ses
   ok(/<div class="chat-nav-confirm chat-ask chat-keep" id="chat-ask">/.test(r),
      'chat-render.js：模板卡片带 chat-keep（孤儿清理豁免标记，就写在卡片那一个 div 上）');
   const e = W('chat-engine.js');
-  ok(/classList\.contains\('chat-keep'\)\) continue;/.test(e),
-     'chat-engine.js：孤儿清理豁免 chat-keep 节点');
+  // 20260925：豁免判据从删除循环里挪到了 items 循环**之前**预计算的 `doomed`
+  // 集合（位置对齐的插入点也要跳过同一批节点，两处不能各判一份）。所以这里锁两半：
+  // ① 预计算里豁免常驻节点；② 真删除只认那个集合——少一半就是判据又分了家。
+  ok(/classList\.contains\('chat-keep'\)[^;]*continue;/.test(e),
+     'chat-engine.js：孤儿判定豁免 chat-keep 节点');
+  ok(/if \(!doomed\.has\(child\)\) continue;/.test(e),
+     'chat-engine.js：真删除只认预先算好的 doomed 集合（判据只有一处）');
   ok(/__reportError\(\{ type: 'orphan_dom_drop'/.test(e),
      'chat-engine.js：删掉带 id 的常驻节点要上报（漏加 chat-keep 的探照灯）');
   ok(/onAskResync/.test(e) && /ui\.onAskResync\(\)/.test(e),
