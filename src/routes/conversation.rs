@@ -105,12 +105,18 @@ pub async fn list_conversations(
     Query(query): Query<ListQuery>,
     headers: HeaderMap,
 ) -> Response {
-    let Some(uid) = auth_jwt::auth_uid(&headers) else {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({"error": "unauthorized"})),
-        )
-            .into_response();
+    let uid = match auth_jwt::auth_uid(&state.db, &headers).await {
+        Ok(uid) => uid,
+        // 401 是这里**本就正确**的状态码（前端按 unauthorized 走登录态恢复），
+        // 20260926 起多带一句 message：冻结与"令牌被收回"要能说清是哪种，
+        // 否则当事人重登一次仍然进不来，却只看到一句"未登录"。
+        Err(e) => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({"error": "unauthorized", "message": e.message()})),
+            )
+                .into_response();
+        }
     };
     let q = query.q.as_deref().map(str::trim).filter(|s| !s.is_empty());
     // 内容命中（搜索时）：用户全历史消息内容 LIKE 扫描（带 % _ \ 转义），
@@ -202,12 +208,18 @@ pub async fn create_conversation(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Response {
-    let Some(uid) = auth_jwt::auth_uid(&headers) else {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({"error": "unauthorized"})),
-        )
-            .into_response();
+    let uid = match auth_jwt::auth_uid(&state.db, &headers).await {
+        Ok(uid) => uid,
+        // 401 是这里**本就正确**的状态码（前端按 unauthorized 走登录态恢复），
+        // 20260926 起多带一句 message：冻结与"令牌被收回"要能说清是哪种，
+        // 否则当事人重登一次仍然进不来，却只看到一句"未登录"。
+        Err(e) => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({"error": "unauthorized", "message": e.message()})),
+            )
+                .into_response();
+        }
     };
     let model = conversation::ActiveModel {
         user_id: Set(uid),
@@ -230,12 +242,18 @@ pub async fn delete_conversation(
     Path(id): Path<i32>,
     headers: HeaderMap,
 ) -> Response {
-    let Some(uid) = auth_jwt::auth_uid(&headers) else {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({"error": "unauthorized"})),
-        )
-            .into_response();
+    let uid = match auth_jwt::auth_uid(&state.db, &headers).await {
+        Ok(uid) => uid,
+        // 401 是这里**本就正确**的状态码（前端按 unauthorized 走登录态恢复），
+        // 20260926 起多带一句 message：冻结与"令牌被收回"要能说清是哪种，
+        // 否则当事人重登一次仍然进不来，却只看到一句"未登录"。
+        Err(e) => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({"error": "unauthorized", "message": e.message()})),
+            )
+                .into_response();
+        }
     };
     let owned = conversation::Entity::find_by_id(id)
         .filter(conversation::Column::UserId.eq(uid))
@@ -310,12 +328,18 @@ pub async fn update_conversation(
     headers: HeaderMap,
     Json(req): Json<UpdateConversationReq>,
 ) -> Response {
-    let Some(uid) = auth_jwt::auth_uid(&headers) else {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({"error": "unauthorized"})),
-        )
-            .into_response();
+    let uid = match auth_jwt::auth_uid(&state.db, &headers).await {
+        Ok(uid) => uid,
+        // 401 是这里**本就正确**的状态码（前端按 unauthorized 走登录态恢复），
+        // 20260926 起多带一句 message：冻结与"令牌被收回"要能说清是哪种，
+        // 否则当事人重登一次仍然进不来，却只看到一句"未登录"。
+        Err(e) => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({"error": "unauthorized", "message": e.message()})),
+            )
+                .into_response();
+        }
     };
     if req.title.is_none() && req.pinned.is_none() {
         return (
@@ -387,12 +411,18 @@ pub async fn search_chat_messages(
     Query(query): Query<SearchQuery>,
     headers: HeaderMap,
 ) -> Response {
-    let Some(uid) = auth_jwt::auth_uid(&headers) else {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({"error": "unauthorized"})),
-        )
-            .into_response();
+    let uid = match auth_jwt::auth_uid(&state.db, &headers).await {
+        Ok(uid) => uid,
+        // 401 是这里**本就正确**的状态码（前端按 unauthorized 走登录态恢复），
+        // 20260926 起多带一句 message：冻结与"令牌被收回"要能说清是哪种，
+        // 否则当事人重登一次仍然进不来，却只看到一句"未登录"。
+        Err(e) => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(json!({"error": "unauthorized", "message": e.message()})),
+            )
+                .into_response();
+        }
     };
     let q = query.q.as_deref().map(str::trim).filter(|s| !s.is_empty());
     let Some(q) = q else {

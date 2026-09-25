@@ -117,8 +117,9 @@ pub async fn list_todos(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Json<ApiResponse<Vec<TodoDto>>> {
-    let Some(uid) = crate::auth_jwt::auth_uid(&headers) else {
-        return Json(ApiResponse::error("未登录"));
+    let uid = match crate::auth_jwt::auth_uid(&state.db, &headers).await {
+        Ok(uid) => uid,
+        Err(e) => return Json(ApiResponse::error(e.message())),
     };
     let rows = match dashboard_todo::Entity::find()
         .filter(dashboard_todo::Column::UserId.eq(uid))
@@ -154,8 +155,9 @@ pub async fn save_todos(
     headers: HeaderMap,
     Json(payload): Json<SaveTodosRequest>,
 ) -> Json<ApiResponse<Vec<TodoDto>>> {
-    let Some(uid) = crate::auth_jwt::auth_uid(&headers) else {
-        return Json(ApiResponse::error("未登录"));
+    let uid = match crate::auth_jwt::auth_uid(&state.db, &headers).await {
+        Ok(uid) => uid,
+        Err(e) => return Json(ApiResponse::error(e.message())),
     };
     if payload.todos.len() > MAX_TODOS {
         return err(format!("待办太多了（最多 {MAX_TODOS} 条）"));
@@ -234,8 +236,9 @@ pub async fn add_todo(
     headers: HeaderMap,
     Json(payload): Json<AddTodoRequest>,
 ) -> Json<ApiResponse<TodoDto>> {
-    let Some(uid) = crate::auth_jwt::auth_uid(&headers) else {
-        return Json(ApiResponse::error("未登录"));
+    let uid = match crate::auth_jwt::auth_uid(&state.db, &headers).await {
+        Ok(uid) => uid,
+        Err(e) => return Json(ApiResponse::error(e.message())),
     };
     let text = payload.text.trim();
     if text.is_empty() {

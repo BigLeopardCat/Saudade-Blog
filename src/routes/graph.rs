@@ -61,15 +61,11 @@ impl GraphQueryResp {
     }
 }
 
-/// 从请求头取用户 id。与 talks.rs 的 current_uid 同款；这里 None 不是"游客"而是
+/// 从请求头取用户 id。与 talks.rs 的 current_uid 同款（同样是 `auth_jwt::auth_uid`
+/// 的薄壳，20260926 起含**查库判冻结与令牌代次**）；这里 None 不是"游客"而是
 /// **拒绝**——查询只对登录用户开放。
-fn current_uid(headers: &HeaderMap) -> Option<i32> {
-    headers
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .and_then(|token| crate::auth_jwt::verify_token(token))
-        .map(|claims| claims.sub)
+async fn current_uid(db: &sea_orm::DatabaseConnection, headers: &HeaderMap) -> Option<i32> {
+    crate::auth_jwt::auth_uid(db, headers).await.ok()
 }
 
 /// agent 基址：AGENT_URL 的语义是「非流式对话端点」（chat.rs 直接 post 它），
@@ -118,11 +114,11 @@ fn cache_put(key: String, resp: GraphQueryResp) {
 /// `POST /api/public/graph/query` — 查询串 → 图谱里最近的词。
 /// 未登录 401（这是唯一一处会返回非 200 的情况）；其余一律 200 + ok=false。
 pub async fn graph_query(
-    State(_state): State<Arc<AppState>>,
+    State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(req): Json<GraphQueryReq>,
 ) -> impl IntoResponse {
-    if current_uid(&headers).is_none() {
+    if current_uid(&state.db, &headers).await.is_none() {
         // 401 的响应体也保持 { ok:false, reason } 的形状，前端一个分支就能处理掉
         return (StatusCode::UNAUTHORIZED, Json(GraphQueryResp::fail("login_required")));
     }
