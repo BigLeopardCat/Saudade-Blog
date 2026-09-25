@@ -27,13 +27,23 @@
     点取消**零请求**、只有点确认才发出那一条 POST。
     两个坑写在下面的探针里：antd 的 `autoInsertSpace` 会在两个汉字之间插空格
     （拿到的是「解 冻」——**弹窗确认按钮上同样会**，所以认定文案前一律抹空白），
-    以及假 `fetch` 每次 GET 必须返回**深拷贝**——返回同一个数组
+    以及假响应每次 GET 必须返回**深拷贝**——返回同一个数组
     引用会让 React 的 `Object.is` 直接跳过重渲染，症状是"POST 成功了但行没动"。
+  · **账号管理改走共享 axios 客户端**（同日晚些的第 6 件）——六处 `fetch` + 手拼
+    `'Bearer ' + token` 全部撤掉。判据是运行时的：`window.__fetchCalls` 恒空
+    （`zero_bare_fetch`），而账号请求出现在 `__calls` 里且**请求头**由客户端的
+    请求拦截器补（桩只记 url/method/body，头不在记录里——本页锁的是"走没走那条
+    通道"，头的事归 `src/apis/axios.tsx` 自己的测试管）。桩的形状也照真后端改：
+    GET 回**裸数组**、写接口回 `{code,message,data}`——两半不一致时"把 `res.data`
+    写成 `res.data.data`"这类缺陷会被桩掩盖成"没有账号"。
 
 沿用既定手段（本机不能 vite build，见 CLAUDE.md §2）：esbuild 把真组件打成 bundle，
-只桩两个边界（`src/apis/axios.tsx` 与 `window.fetch`——这一页的账号列表走的是
-`fetch`、评论管理走的是 axios，两个都得给）；sass 用 programmatic API 单独编译后
-用 `--loader:.sass=text` 收下。本机无中文字体（汉字渲染成豆腐块），断言全走数值与条数。
+只桩两个边界（`src/apis/axios.tsx` 与 `window.fetch`——20260926 起这一页**整页都走
+axios**：账号管理原来六处自拼 `fetch` + `'Bearer ' + token`，已迁到共享客户端，于是
+令牌失效时才有那条"清 token + 跳登录"的全局处理）；`window.fetch` 那个桩留着当**哨兵**：
+它一旦非空就说明有人把某处改回了裸 fetch（判据见 zero_bare_fetch）。
+sass 用 programmatic API 单独编译后用 `--loader:.sass=text` 收下。
+本机无中文字体（汉字渲染成豆腐块），断言全走数值与条数。
 
 用法：python3 frontend/tests/users-page.test.py
 依赖：frontend/node_modules（esbuild/react/react-dom/antd/react-router-dom）、playwright(python)。
@@ -84,6 +94,9 @@ const BOARD = Array.from({ length: 40 }, (_, i) => ({
 }));
 
 const env = (data: any) => ({ status: 200, data: { code: 200, message: 'ok', data } });
+// 裸响应：响应的 body 本身就是 `{code,message,data}` 那一层（账号管理的写接口是
+// `utils::ApiResponse`，读接口是裸数组——两种形状都在这一页上，别混）
+const env0 = (body: any) => ({ status: 200, data: body });
 const wire = (d: any) => (d == null ? d : JSON.parse(JSON.stringify(d)));
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -94,11 +107,30 @@ const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // 症状是"表格空着、零异常"——20260926 就在这个坑上耗了一轮。
 const req = async (cfg: any) => {
   const url = cfg.url as string;
-  calls.push({ url, method: (cfg.method || 'GET').toUpperCase(), data: wire(cfg.data) });
+  const method = (cfg.method || 'GET').toUpperCase();
+  calls.push({ url, method, data: wire(cfg.data) });
   await delay(20);
   if (url === '/api/protect/board') return env(BOARD);
   if (url === '/api/protected/websetting') return env({ aiReviewEnabled: false, manualReviewEnabled: false });
-  return env(null);
+  // ── 账号管理（20260926 起也走这个客户端；此前它走 window.fetch）────────────
+  // ⚠️ GET 回的是**裸数组**，不是 env() 那层 {code,message,data} 壳：真后端
+  // `src/routes/temp_user.rs::list_temp_users` 返回的就是 `Json<Vec<TempUserInfo>>`。
+  // 桩在这里必须跟真后端一致——否则组件里把 `res.data` 误写成 `res.data.data`
+  // 这种缺陷会被桩掩盖成"没有账号"（axios 不报错、页面不红）。
+  if (url === '/api/temp-users' && method === 'GET') {
+    return { status: 200, data: wire((window as any).__users) };
+  }
+  // status 这一条要**真改内存里那一行**（同 fetch 桩）：于是"点冻结 ⇒ 它出现在
+  // 冻结筛选里"是端到端成立的，而不是靠断言自己骗自己。
+  if (/^\/api\/temp-users\/\d+\/status$/.test(url) && method === 'POST') {
+    const id = Number(url.split('/')[3]);
+    const u = ((window as any).__users as any[]).find((x) => x.id === id);
+    const frozen = (cfg.data || {}).frozen === true;
+    if (u) u.status = frozen ? 1 : 0;
+    return env0({ code: 200, message: frozen ? '账号已冻结，其登录状态已全部失效'
+                                           : '账号已解冻，请让对方重新登录', data: null });
+  }
+  return env0({ code: 200, message: 'ok', data: null });
 };
 
 const http = {
@@ -118,7 +150,9 @@ import Users from './src/pages/Dashboard/Users/index.tsx';
 
 localStorage.setItem('tokenKey', 'x.y.z');
 
-// 账号列表走 fetch（不是 axios），且**返回的是裸数组**（见 loadTempUsers）。
+// 账号列表 20260926 起走共享 axios 客户端（桩在 FAKE_AXIOS 里，GET 回裸数组）。
+// 下面这个 fetch 桩是**残留的哨兵**：这一页现在一条 fetch 都不该发，桩留着只为
+// 「谁把某一处改回裸 fetch」时留下证据（见 zero_bare_fetch）。
 // 30 行 ⇒ 账号列表在 700 高的窗口里必然溢出，"只有列表滚"那条断言才不是空转。
 // status 与后端 `user.status` 同口径：0=正常 / 1=冻结（取值域见 src/authz.rs）。
 // 预置两行冻结（guest27/guest28 = id 126/127）——两行**一个是普通用户**，
@@ -244,6 +278,8 @@ def mount(br, path="/dashboard/users", size=(1440, 700), wait=".tu-row"):
                 activePane: (document.querySelector('.ant-tabs-tabpane-active') || {}).className || '',
                 axios: (window.__calls || []).map((c) => c.url),
                 axiosStub: window.__axiosStub === true,
+                // 20260926 起账号管理也走 axios ⇒ 这一栏正常是空的（唯一用途是
+                // "谁又偷偷用回裸 fetch 了"）——留着正是为了等不到元素时能一眼看出
                 fetch: (window.__fetchCalls || []).map((c) => c.url + '/' + c.method),
             }); }"""))
         print("    页面异常：" + ("; ".join(errs[:3]) or "（无）"))
@@ -314,9 +350,23 @@ STATUS_DIALOG = """() => {
 
 
 def status_posts(pg):
-    """本页发出的状态请求条数（POST …/status）。断言"确认之前一个都不许发"用它。"""
-    return pg.evaluate("""() => window.__fetchCalls.filter((c) =>
-        c.method === 'POST' && /\\/status$/.test(c.url))""")
+    """本页发出的状态请求条数（POST …/status）。断言"确认之前一个都不许发"用它。
+
+    20260926 起账号管理走共享 axios 客户端 ⇒ 记录在 `__calls`（原来在 `__fetchCalls`）。
+    记录里请求体那一栏两个桩叫法不同（fetch 桩叫 `body`、axios 桩叫 `data`），这里
+    统一成 `body`——断言只该关心"发了什么"，不该关心它走的是哪个桩。"""
+    return pg.evaluate("""() => window.__calls.filter((c) =>
+        c.method === 'POST' && /\\/status$/.test(c.url))
+        .map((c) => ({ url: c.url, body: c.data }))""")
+
+
+def zero_bare_fetch(pg):
+    """这一页**一条裸 `fetch` 都不该有**（20260926 迁移的回归锁）。
+
+    `window.fetch` 的桩还在（见 ENTRY），但它现在只该是空的：账号管理原来六处都
+    自己 fetch + 手拼 `'Bearer ' + token`，于是绕过了共享客户端的 401 处理。
+    谁把某一处改回 fetch，这条立刻红——而不是等到"令牌过期时后台不跳登录"那天。"""
+    return pg.evaluate("() => window.__fetchCalls.map((c) => c.method + ' ' + c.url)")
 
 
 with sync_playwright() as p:
@@ -423,8 +473,12 @@ with sync_playwright() as p:
                         return document.querySelector('.tu-empty') ? document.querySelector('.tu-empty').textContent : ''; }""")
           .find("没有匹配") >= 0)
     check("检索/筛选**不发新请求**（只筛本地已有的那份）",
-          pg.evaluate("() => window.__fetchCalls.filter(c => c.method === 'GET').length") == 1,
-          str(pg.evaluate("() => window.__fetchCalls")))
+          pg.evaluate("() => window.__calls.filter(c => c.method === 'GET').length") == 1,
+          str(pg.evaluate("() => window.__calls")))
+    # 迁移锁（20260926）：这一页从"六处裸 fetch + 手拼 Bearer"改成走共享 axios 客户端，
+    # 判据不是"代码里没有 fetch 这个词"，而是**运行时一条都没发出去**。
+    check("账号管理不再走裸 fetch（一条都没有）", zero_bare_fetch(pg) == [],
+          str(zero_bare_fetch(pg)))
     check("第二节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
@@ -608,7 +662,7 @@ with sync_playwright() as p:
     # ④ 点一下 ⇒ **先弹确认框**；取消不许下手，确认之后请求体是 {frozen:false}
     pg.locator(".tu-tabs button", has_text="冻结账号").first.click()
     pg.wait_for_timeout(250)
-    before = pg.evaluate("() => window.__fetchCalls.length")
+    before = pg.evaluate("() => window.__calls.length")
     pg.locator(".tu-row", has_text="guest27").locator(".tu-freeze-btn").click()
     pg.wait_for_timeout(300)
     dlg = pg.evaluate(STATUS_DIALOG)
@@ -644,8 +698,8 @@ with sync_playwright() as p:
     check("请求体是 {frozen:false}（传目标状态，不是让后端自己取反）",
           posts and posts[0]["body"] == {"frozen": False}, str(posts[0]["body"] if posts else None))
     check("改完重新拉了一次列表（不是只在本地翻转 state）",
-          pg.evaluate("() => window.__fetchCalls.length") > before + 1,
-          f'before={before} after={pg.evaluate("() => window.__fetchCalls.length")}')
+          pg.evaluate("() => window.__calls.length") > before + 1,
+          f'before={before} after={pg.evaluate("() => window.__calls.length")}')
     check("解冻后它离开「冻结账号」这一档（桩真按请求体改了那一行）",
           [r["u"] for r in pg.evaluate(GEO)["freezeBtns"]] == ["guest28"],
           str([r["u"] for r in pg.evaluate(GEO)["freezeBtns"]]))

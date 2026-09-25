@@ -4,6 +4,13 @@ import type { TabsProps } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import BoardManage from '../BoardManage';
+// 共享 axios 客户端（20260926）。这一页原来六处都自己 `fetch` + 手拼
+// `'Bearer ' + token`，于是**绕过了全局那两件事**：①令牌过期时的 401 处理
+// （清 tokenKey + 提示 + 跳 /login，见 src/apis/axios.tsx 的响应拦截器）——
+// 手拼的那份只会弹一句"请求失败"，管理员被冻结/令牌失效时看到的是一句无信息的
+// 报错而不是登录页；②请求头里 token 的 `Bearer ` 前缀归一（后端 strip_prefix）。
+// 同页的评论管理（BoardManage）本来就走共享客户端，两半行为不一致本身就是坑。
+import http from "../../../apis/axios.tsx";
 
 /** 用户管理 = 账号管理（临时访客账号）+ 评论管理（河灯留言审核）
  *  20260905 拍板：原 Announcement 内嵌临时用户段迁入「账号管理」；
@@ -54,7 +61,9 @@ const Users = () => {
         searchParams.get('tab') === 'review' ? 'review' : 'accounts')
 
     // ── 临时用户（账号管理）──
-    const token = localStorage.getItem('tokenKey')
+    // 这里原来有一行 `const token = localStorage.getItem('tokenKey')`，六处 fetch
+    // 各拼一次 `'Bearer ' + token`。改走共享客户端之后它没有用武之地——令牌由
+    // `src/apis/axios.tsx` 的请求拦截器统一加（且顺手归一了 `Bearer ` 前缀）。
     const [tempUsers, setTempUsers] = useState<any[]>([])
     const [tempUsername, setTempUsername] = useState('')
     const [tempPassword, setTempPassword] = useState('')
@@ -79,9 +88,12 @@ const Users = () => {
 
     const loadTempUsers = async () => {
         try {
-            const res = await fetch('/api/temp-users', { headers: { 'Authorization': 'Bearer ' + token } })
-            const data = await res.json()
-            if (Array.isArray(data)) setTempUsers(data)
+            // 这个接口回的是**裸数组**（不是 {code,message,data} 那层壳，见
+            // src/routes/temp_user.rs::list_temp_users）——所以判据是 res.data 本身，
+            // 别顺手写成 `res.data.data`（那会永远拿到 undefined、列表恒空，
+            // 而 axios 不报错、页面不红，看起来只是"没有账号"）。
+            const res = await http.get('/api/temp-users')
+            if (Array.isArray(res?.data)) setTempUsers(res.data)
         } catch { /* ignore */ }
     }
 
@@ -92,29 +104,24 @@ const Users = () => {
     const handleCreateTempUser = async () => {
         if (!tempUsername || !tempPassword) { message.warning('请输入用户名和密码'); return }
         try {
-            const res = await fetch('/api/temp-users', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-                body: JSON.stringify({ username: tempUsername, password: tempPassword }),
-            })
-            const data = await res.json()
-            if (data.code === 200) {
+            const res = await http.post('/api/temp-users',
+                { username: tempUsername, password: tempPassword })
+            if (res.data?.code === 200) {
                 message.success('创建成功')
                 setTempUsername('')
                 setTempPassword('')
                 loadTempUsers()
             } else {
-                message.error(data.message)
+                message.error(res.data?.message)
             }
         } catch { message.error('请求失败') }
     }
 
     const handleDeleteTempUser = async (id: number) => {
         try {
-            const res = await fetch('/api/temp-users/' + id, { method: 'DELETE', headers: { 'Authorization': 'Bearer ' + token } })
-            const data = await res.json()
-            if (data.code === 200) { message.success('已删除'); loadTempUsers() }
-            else { message.error(data.message) }
+            const res = await http.delete('/api/temp-users/' + id)
+            if (res.data?.code === 200) { message.success('已删除'); loadTempUsers() }
+            else { message.error(res.data?.message) }
         } catch { message.error('请求失败') }
     }
 
@@ -134,15 +141,10 @@ const Users = () => {
      *  服务端不猜意图，重试/双击都安全。 */
     const handleSetStatus = async (user: any, frozen: boolean) => {
         try {
-            const res = await fetch('/api/temp-users/' + user.id + '/status', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-                // 传**目标状态**而不是"切换一下"：服务端不猜意图，重试/双击都安全
-                body: JSON.stringify({ frozen }),
-            })
-            const data = await res.json()
-            if (data.code === 200) { message.success(data.message); loadTempUsers() }
-            else { message.error(data.message) }
+            // 传**目标状态**而不是"切换一下"：服务端不猜意图，重试/双击都安全
+            const res = await http.post('/api/temp-users/' + user.id + '/status', { frozen })
+            if (res.data?.code === 200) { message.success(res.data.message); loadTempUsers() }
+            else { message.error(res.data?.message) }
         } catch { message.error('请求失败') }
     }
 
@@ -172,30 +174,24 @@ const Users = () => {
     const handleChangePassword = async () => {
         if (!pwNewPassword || pwNewPassword.length < 3) { message.warning('密码至少3位'); return }
         try {
-            const res = await fetch('/api/temp-users/' + pwTarget.id + '/password', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
-                body: JSON.stringify({ password: pwNewPassword }),
-            })
-            const data = await res.json()
-            if (data.code === 200) { message.success('密码已修改'); setPwModalOpen(false) }
-            else { message.error(data.message) }
+            const res = await http.post('/api/temp-users/' + pwTarget.id + '/password',
+                { password: pwNewPassword })
+            if (res.data?.code === 200) { message.success('密码已修改'); setPwModalOpen(false) }
+            else { message.error(res.data?.message) }
         } catch { message.error('请求失败') }
     }
 
     const handleCreateRecoveryCode = async (user: any) => {
         try {
-            const res = await fetch('/api/temp-users/' + user.id + '/password-reset-token', {
-                method: 'POST',
-                headers: { 'Authorization': 'Bearer ' + token },
-            })
-            const data = await res.json()
-            if (data.code === 200) {
+            // 这个接口**没有请求体**（恢复码由后端生成，handler 只有 State + Path
+            // 两个提取器，没有 Json）——所以 post 的第二参省略，别顺手补个 `{}`。
+            const res = await http.post('/api/temp-users/' + user.id + '/password-reset-token')
+            if (res.data?.code === 200) {
                 setRecoveryTarget(user)
-                setRecoveryCode(data.data)
+                setRecoveryCode(res.data.data)
                 setRecoveryModalOpen(true)
             } else {
-                message.error(data.message || '恢复码生成失败')
+                message.error(res.data?.message || '恢复码生成失败')
             }
         } catch { message.error('请求失败') }
     }
