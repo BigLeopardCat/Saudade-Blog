@@ -163,6 +163,17 @@ def main():
         check("冻结账号连登录都进不来（口令正确也一样）",
               st == 200 and r.get("code") == 500 and "冻结" in (r.get("message") or ""),
               f"http={st} msg={r.get('message') if isinstance(r, dict) else r}")
+        # 下面两条锁的是当天同时收口的两处旁路：graph.rs（向量图谱）与 talks.rs（河灯）
+        # 此前各自手写「只验签不查库」的 current_uid ⇒ 冻结账号照旧能刷 embedding、放河灯。
+        # 它们现在走 auth_uid，冻结即解析不出身份 ⇒ 在这两条路径上表现为"像没登录"。
+        st, r = call("POST", "/api/public/graph/query", tok, {"q": "冻结旁路"})
+        check("冻结令牌打向量图谱查询 → 401（旁路一已收口）",
+              st == 401 and isinstance(r, dict) and r.get("reason") == "login_required",
+              f"http={st} reason={r.get('reason') if isinstance(r, dict) else r}")
+        st, r = call("GET", "/api/protect/board/mine", tok)
+        check("冻结令牌打河灯（自家留言）→ 拒绝登录（旁路二已收口）",
+              st == 200 and r.get("code") != 200 and "登录" in (r.get("message") or ""),
+              f"http={st} code={r.get('code')} msg={r.get('message') if isinstance(r, dict) else r}")
 
         print("\n【三】解冻 ⇒ 不复活冻结前的登录态（代次只增不减）")
         st, r = call("POST", f"/api/temp-users/{target_id}/status", admin, {"frozen": False})
