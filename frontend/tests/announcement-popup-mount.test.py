@@ -59,8 +59,13 @@ ENTRY = """\
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
 import AnnouncementModal from './src/components/AnnouncementModal/index.tsx';
+import { ConfigProvider, theme as antdTheme } from 'antd';
 const root = createRoot(document.getElementById('root')!);
 (window as any).__mount = () => root.render(<AnnouncementModal />);
+// 后台那一套（Dashboard 的壳）：同一个组件挂在 ConfigProvider(darkAlgorithm) 里。
+// 配色是否真的取 token，只有把两种主题都挂一遍才量得出来（写死的色值在两边一样）。
+(window as any).__mountDark = () => root.render(
+  <ConfigProvider theme={{ algorithm: antdTheme.darkAlgorithm }}><AnnouncementModal /></ConfigProvider>);
 (window as any).__clear = () => root.render(null);
 """
 
@@ -364,6 +369,89 @@ with sync_playwright() as p:
     check("游客点「我知道了」⇒ 水位推到 8",
           pg.evaluate("() => localStorage.getItem('announcement_seen_id')") == "8")
 
+    # ── 八、几何：标题的高度 + 「我知道了」按钮的样式（20260926 用户报"标题太靠下
+    #        不协调美观，我知道了按钮样式颜色也优化"）────────────────────────────
+    # 为什么放在这个套件里：这两条都是**看得见的**几何/配色，源码层断言（标题写在
+    # header 槽里、按钮有 borderRadius）挡不住"改回 body 里再叠 28px 上边距"这类
+    # 回退——只有量出来的数值能挡。旧写法实测：卡片顶→标题 48px（= 卡片 20px 内边距
+    # + 自己叠的 28px），而左右各 56px、右上角的 × 贴在 12px 处。
+    print("\n【八】几何：标题靠上且与左右内边距对齐、按钮是按 token 上色的胶囊")
+    set_token(pg, None)
+    route(pg, {PUBLIC: ann_body([{"id": 11, "title": "几何测量用公告", "content": "正文十一",
+                                  "createdAt": "2026-09-26 09:00:00"}])})
+    pg.evaluate("() => localStorage.removeItem('announcement_seen_id')")
+    pg.evaluate("() => window.__clear()")
+    pg.wait_for_timeout(150)
+    pg.evaluate("() => window.__mount()")
+    pg.wait_for_timeout(500)
+    check("几何测量：卡片弹出来了", popped(pg, "几何测量用公告"))
+    g = pg.evaluate("""() => {
+        const box = (e) => { if (!e) return null; const r = e.getBoundingClientRect();
+            return {top: r.top, left: r.left, right: r.right, bottom: r.bottom,
+                    h: r.height, w: r.width}; };
+        const q = (s) => box(document.querySelector(s));
+        // **按文字挑**：卡片里第一颗 button 是右上角那颗 ×（radius 4 / h 32）——
+        // 用 querySelector 直接取第一颗会量到它，四条断言就全在量关闭钮。
+        const btn = [...document.querySelectorAll('.ant-modal-content button')]
+            .find((b) => b.textContent.includes('我知道了'));
+        const bs = getComputedStyle(btn);
+        const bd = document.querySelector('.ant-modal-body');
+        return {card: q('.ant-modal-content'), head: q('.ant-modal-header'),
+                title: q('.ant-modal-title'), text: q('.ant-modal-body div'), btn: box(btn),
+                titleInBody: !!bd && bd.textContent.includes('几何测量用公告'),
+                btnStyle: {bgImage: bs.backgroundImage, radius: bs.borderRadius,
+                           height: bs.height, minWidth: bs.minWidth, fontSize: bs.fontSize}};
+    }""")
+    _card, _title, _btn = g["card"], g["title"], g["btn"]
+    _top = round(_title["top"] - _card["top"])
+    _l = round(_title["left"] - _card["left"])
+    _r = round(_card["right"] - _title["right"])
+    check("标题归 antd 顶栏（.ant-modal-header 在场、标题不在正文滚动区里）",
+          g["head"] is not None and not g["titleInBody"],
+          f"head={g['head'] is not None} titleInBody={g['titleInBody']}")
+    check("卡片顶→标题 落在 24–32px（旧写法是 48px，这次上提）",
+          24 <= _top <= 32, f"{_top}px")
+    check("标题左右留白对称（居中不被右上角的 × 挤偏）", abs(_l - _r) <= 2, f"左 {_l}px / 右 {_r}px")
+    check("标题在正文之上、且正文没被标题压住",
+          _title["bottom"] <= g["text"]["top"] + 1,
+          f"标题底 {round(_title['bottom'] - _card['top'])}px / 正文顶 {round(g['text']['top'] - _card['top'])}px")
+    check("标题行高与字号协调（19px 字号 ⇒ 行盒 27–34px）",
+          27 <= round(_title["h"]) <= 34, f"{round(_title['h'])}px")
+    _bs = g["btnStyle"]
+    check("「我知道了」是胶囊（borderRadius ≥ 20px）", float(_bs["radius"].rstrip("px")) >= 20,
+          _bs["radius"])
+    check("按钮加高到 40px、最小宽 ≥ 140px（旧版是默认 32px/120px）",
+          round(_btn["h"]) >= 40 and float(_bs["minWidth"].rstrip("px")) >= 140,
+          f"h={round(_btn['h'])} minWidth={_bs['minWidth']}")
+    check("按钮底色**来自 antd token 的渐变**（不是写死的色值：浅色/深色两套各自成立）",
+          "gradient" in _bs["bgImage"], _bs["bgImage"][:60])
+    check("按钮文字比正文更醒目（15px ≥ 正文 15px 且是主色底白字）",
+          float(_bs["fontSize"].rstrip("px")) >= 15, _bs["fontSize"])
+
+    # ── 九、同一张卡在深色主题下（后台那套）：配色必须跟着主题变（写死的色值做不到）──
+    print("\n【九】深色主题（后台 ConfigProvider(darkAlgorithm)）：配色跟着主题走")
+    pg.evaluate("() => localStorage.removeItem('announcement_seen_id')")
+    pg.evaluate("() => window.__clear()")
+    pg.wait_for_timeout(150)
+    pg.evaluate("() => window.__mountDark()")
+    pg.wait_for_timeout(500)
+    check("深色下卡片照样弹出来", popped(pg, "几何测量用公告"))
+    _dark = pg.evaluate("""() => {
+        const card = document.querySelector('.ant-modal-content');
+        const btn = [...card.querySelectorAll('button')].find((b) => b.textContent.includes('我知道了'));
+        const title = document.querySelector('.ant-modal-title');
+        const lum = (c) => { const m = c.match(/\\d+/g).map(Number);
+            return (0.2126 * m[0] + 0.7152 * m[1] + 0.0722 * m[2]) / 255; };
+        const cs = getComputedStyle(card);
+        return {cardBg: cs.backgroundColor, cardLum: lum(cs.backgroundColor),
+                btnImage: getComputedStyle(btn).backgroundImage,
+                titleColor: getComputedStyle(title.firstElementChild || title).color, titleLum: lum(getComputedStyle(title.firstElementChild || title).color)};
+    }""")
+    check("后台这套真的是深色（卡片底色亮度 < 0.35）", _dark["cardLum"] < 0.35, _dark["cardBg"])
+    check("标题在深色底上是亮字（亮度 > 0.5 ⇒ 读得清）", _dark["titleLum"] > 0.5, _dark["titleColor"])
+    check("按钮渐变跟着主题换了一套（与浅色那次不同 ⇒ 不是写死的色值）",
+          _dark["btnImage"] != _bs["bgImage"] and "gradient" in _dark["btnImage"],
+          _dark["btnImage"][:70])
     check("全程没有页面错误", not pg.errs, " | ".join(pg.errs))
     pg.close()
     br.close()

@@ -118,44 +118,77 @@ const AnnouncementModal = () => {
             width={520}
             centered
             maskClosable
-            // 只给 content：rc-dialog 的 ModalStyles 只认 header/body/footer/mask/wrapper/content，
-            // 写 styles.close 不会生效（关闭钮的定位在 index.sass 里）
+            // 标题走 antd 自己的 header 槽位（20260926 用户报"标题太靠下、不协调"）：
+            // 原先把标题画在 body 里，而 body 之上还有 .ant-modal-content 的 20px 内边距
+            // 加我们自己那 28px 上边距 ⇒ 标题离卡片顶 48px，右上角的 × 却贴在 12px 处，
+            // 两块顶边对不齐（无头实测：标题 top=352 / 卡片 top=304 / × top=316）。
+            // 进 header 之后标题归 antd 的顶栏管，不再是我们自己叠边距。
+            title={pending?.title ? (
+                <div style={{
+                    fontWeight: 700,
+                    fontSize: 19,
+                    lineHeight: 1.5,
+                    letterSpacing: 1,
+                    textAlign: 'center',
+                    color: token.colorTextHeading,
+                    // 左右对称留白：居中的标题不会爬到右上角那颗 × 底下（对称 ⇒ 仍居中）
+                    padding: '0 32px',
+                }}>
+                    {pending.title}
+                </div>
+            ) : null}
+            // 只给 content/header/body：rc-dialog 的 ModalStyles 只认这几槽
+            // （header/body/footer/mask/wrapper/content），写 styles.close 不会生效
+            // （关闭钮的定位在 antd 自己那份 CSS 里）。
             styles={{
                 content: { borderRadius: 12, overflow: 'hidden' },
+                // 顶边留白全交给 header（标题在 body 之上，旧写法那两层叠加没了）：
+                // 卡片自身内边距 20px + header 上 8px ⇒ 卡片顶→标题 28px，与左右各
+                // 28px 对齐；header 下 6px + 正文上 12px ⇒ 标题→正文 18px。整块比旧写法
+                // （卡片顶→标题 48px）上提 20px。数值由无头套件锁着（见
+                // tests/announcement-popup-mount.test.py 的几何段）。
+                header: {
+                    padding: '8px 28px 6px',
+                    marginBottom: 0,
+                    borderBottom: 'none',
+                    background: 'transparent',
+                },
+                body: { padding: '12px 28px 22px' },
             }}
         >
             {/* 配色一律取 antd token，不写死：同一张卡在公共页（无 ConfigProvider ⇒ 浅色）
                 与后台（Dashboard 的 ConfigProvider(darkAlgorithm) ⇒ 深色）下都要能读
                 ——后台那套是内联 style 的死对头（见 docs 里"内联 style 是夜间头号敌人"）。 */}
             <div style={{
-                padding: '28px 32px 24px',
-                maxHeight: '60vh',
+                maxHeight: '58vh',
                 overflowY: 'auto',
                 lineHeight: 1.9,
                 fontSize: 15,
                 color: token.colorText,
             }}>
-                {pending?.title && (
-                    <div style={{
-                        fontWeight: 700,
-                        fontSize: 20,
-                        marginBottom: 14,
-                        color: token.colorTextHeading,
-                        letterSpacing: 1,
-                        textAlign: 'center',
-                    }}>
-                        {pending.title}
-                    </div>
-                )}
                 <div style={{ whiteSpace: 'pre-wrap', textAlign: 'justify' }}>{pending?.content}</div>
-                <div style={{ marginTop: 16, fontSize: 12, color: token.colorTextTertiary, textAlign: 'right' }}>
+                <div style={{ marginTop: 14, fontSize: 12, color: token.colorTextTertiary, textAlign: 'right' }}>
                     {fmtCnTime(pending?.time || '')}
                 </div>
                 {/* 「我知道了」= 记已读的唯一入口（见 handleRead/handleClose 的分工）。
-                    点弹窗外关掉这条**不**走这里 ⇒ 仍是未读。按钮配色取 antd token，
-                    浅色（公共页）与深色（后台 ConfigProvider）下都读得清。 */}
-                <div style={{ marginTop: 20, textAlign: 'center' }}>
-                    <Button type="primary" onClick={handleRead} style={{ minWidth: 120 }}>
+                    点弹窗外关掉这条**不**走这里 ⇒ 仍是未读。配色仍然只取 antd token
+                    （品牌的渐变两色 = colorPrimary/colorPrimaryActive，深色下自动换成
+                    暗色那一套），不写死任何一个色值。 */}
+                <div style={{ marginTop: 22, textAlign: 'center' }}>
+                    <Button
+                        type="primary"
+                        onClick={handleRead}
+                        style={{
+                            minWidth: 148,
+                            height: 40,
+                            padding: '0 26px',
+                            fontSize: 15,
+                            borderRadius: 999,
+                            border: 'none',
+                            background: `linear-gradient(135deg, ${token.colorPrimary}, ${token.colorPrimaryActive})`,
+                            boxShadow: `0 6px 16px ${token.colorPrimary}40`,
+                        }}
+                    >
                         我知道了
                     </Button>
                 </div>
