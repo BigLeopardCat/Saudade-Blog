@@ -55,8 +55,12 @@ function updateNickname(nickname: string) {
     });
 }
 
+/** 改密码。20260926 起后端返回 `{ token }` —— **必须接住并写回 tokenKey**：
+ *  改密码会把令牌代次 +1，于是此前签发的全部令牌失效（这就是"其他设备下线"），
+ *  本机手里那枚也包含在内；后端顺手签发了一枚带新代次的还给本机，
+ *  语义正是「本机保持登录、其他设备全部下线」。忘了写回 ⇒ 本机下一个请求就掉线。 */
 function changePassword(oldPassword: string, newPassword: string) {
-    return http<Envelope<string>>({
+    return http<Envelope<{ token: string }>>({
         url: "/api/protected/profile/password",
         method: "PUT",
         data: { oldPassword, newPassword },
