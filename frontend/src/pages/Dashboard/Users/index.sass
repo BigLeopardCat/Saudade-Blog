@@ -119,6 +119,12 @@
         color: #999
         margin-left: 12px
 
+      // 冻结账号的账号名（20260926）：只做"这个人现在不能用"的弱提示，
+      // 真正的状态说明是行上那枚「已冻结」标签——名字本身不删除线，
+      // 划掉会读成"这个账号已经没了"，而它是**还在、只是被冻住**。
+      .tu-frozen-name
+        color: #b0b0b0
+
 // 暗色适配（后台 .contentDark 容器内）
 .contentDark
   .tu-list
@@ -143,3 +149,5 @@
       color: #888
     .tu-empty
       color: #888
+  .tu-frozen-name
+    color: #777

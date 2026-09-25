@@ -15,6 +15,15 @@
     所以判据是**页面上密码框的条数**：常态 1 个（新建表单那个）、打开改密弹窗 2 个、
     关掉回到 1 个。这条同时锁住了 `forceRender`（关窗时 children 不更新那个坑）。
   · **评论管理同款内滚动 + 分页条钉底 + 表头吸顶** —— 与文章列表同一套做法。
+  · **冻结 / 解冻账号**（同日晚些，第 5 件）—— 判据分三层：行上的「已冻结」标签、
+    按钮的**极性**（冻结行上写着"解冻"、未冻结行上写着"冻结"）与**配色**（danger 只给
+    "冻结"那一侧）、以及筛"冻结账号"这一档时行的归属会**跟着状态走**。请求侧锁三件事：
+    POST 到 `/api/temp-users/<id>/status`、body 传的是**目标状态**而非"切换一下"、
+    成功后会重新拉一次列表。另有两条刻意锁住的语义：`status` 缺失按 0 算（部署顺序
+    兜底），而 `status = 2` 这种**未登记取值按冻结处理**（与后端 `is_frozen` 同一条）。
+    两个坑写在下面的探针里：antd 的 `autoInsertSpace` 会在两个汉字之间插空格
+    （拿到的是「解 冻」），以及假 `fetch` 每次 GET 必须返回**深拷贝**——返回同一个数组
+    引用会让 React 的 `Object.is` 直接跳过重渲染，症状是"POST 成功了但行没动"。
 
 沿用既定手段（本机不能 vite build，见 CLAUDE.md §2）：esbuild 把真组件打成 bundle，
 只桩两个边界（`src/apis/axios.tsx` 与 `window.fetch`——这一页的账号列表走的是
@@ -106,10 +115,14 @@ localStorage.setItem('tokenKey', 'x.y.z');
 
 // 账号列表走 fetch（不是 axios），且**返回的是裸数组**（见 loadTempUsers）。
 // 30 行 ⇒ 账号列表在 700 高的窗口里必然溢出，"只有列表滚"那条断言才不是空转。
+// status 与后端 `user.status` 同口径：0=正常 / 1=冻结（取值域见 src/authz.rs）。
+// 预置两行冻结（guest27/guest28 = id 126/127）——两行**一个是普通用户**，
+// 于是"角色筛选不排除冻结账号"与"冻结筛选只按状态"这两条才验得出来。
 const USERS = [
-  { id: 1, username: 'root_admin', role: 'admin' },
-  ...Array.from({ length: 28 }, (_, i) => ({ id: 100 + i, username: 'guest' + (i + 1), role: 'user' })),
-  { id: 200, username: 'sec_zhang', role: 'secretary' },
+  { id: 1, username: 'root_admin', role: 'admin', status: 0 },
+  ...Array.from({ length: 28 }, (_, i) => ({
+    id: 100 + i, username: 'guest' + (i + 1), role: 'user', status: i >= 26 ? 1 : 0 })),
+  { id: 200, username: 'sec_zhang', role: 'secretary', status: 0 },
 ];
 (window as any).__users = USERS;
 (window as any).__fetchCalls = [];
@@ -117,10 +130,25 @@ const USERS = [
 window.fetch = (async (input: any, init: any) => {
   const url = typeof input === 'string' ? input : String(input && input.url);
   const method = String((init && init.method) || 'GET').toUpperCase();
-  (window as any).__fetchCalls.push({ url, method });
+  (window as any).__fetchCalls.push({
+    url, method, body: (init && init.body) ? JSON.parse(init.body) : null });
   await new Promise((r) => setTimeout(r, 20));
   let body: any = { code: 200, message: 'ok', data: null };
-  if (url === '/api/temp-users' && method === 'GET') body = USERS;
+  // ⚠️ 必须回**深拷贝**，不能把 USERS 本体丢回去：真 HTTP 每次都反序列化出一个新对象，
+  // 而这里的 USERS 是同一个数组引用 ⇒ `setTempUsers(data)` 会被 React 的 Object.is
+  // 判等拦下、**不触发重渲染**，症状是"改了状态但界面纹丝不动"——20260926 就在这个
+  // 坑上误判过一次（同族的坑见上面 axios 桩那条注释）。
+  if (url === '/api/temp-users' && method === 'GET') body = JSON.parse(JSON.stringify(USERS));
+  else if (/^\/api\/temp-users\/\d+\/status$/.test(url) && method === 'POST') {
+    // 真按请求体改内存里那一行 —— 于是"点冻结 ⇒ 它出现在冻结筛选里"是
+    // 端到端成立的，而不是靠断言自己骗自己
+    const id = Number(url.split('/')[3]);
+    const u = USERS.find((x) => x.id === id);
+    const frozen = (init && init.body) ? JSON.parse(init.body).frozen === true : false;
+    if (u) u.status = frozen ? 1 : 0;
+    body = { code: 200, message: frozen ? '账号已冻结，其登录状态已全部失效'
+                                      : '账号已解冻，请让对方重新登录', data: null };
+  }
   return { ok: true, status: 200, json: async () => body } as any;
 }) as any;
 
@@ -243,8 +271,19 @@ GEO = """() => {
         pwElsewhere: pw.filter((i) => !i.closest('.tu-create')).length,
         modalWrap: document.querySelectorAll('.ant-modal-wrap').length,
         count: q('.tu-count') ? q('.tu-count').textContent : '',
+        // 每行的按钮按**类名**取，不按 .ant-btn-dangerous 取（20260926）：
+        // 「冻结」在未冻结行上也是 danger，按危险色取会把它当成删除按钮。
         delBtns: [...document.querySelectorAll('.tu-row')].map(
-            (r) => ({ u: r.querySelector('strong').textContent, del: !!r.querySelector('.ant-btn-dangerous') })),
+            (r) => ({ u: r.querySelector('strong').textContent, del: !!r.querySelector('.tu-del-btn') })),
+        freezeBtns: [...document.querySelectorAll('.tu-row')].map((r) => {
+            const b = r.querySelector('.tu-freeze-btn');
+            // antd 会在两个汉字之间插一个空格（autoInsertSpace）⇒ "解 冻"。
+            // 断言前把空白抹掉，否则判的是 antd 的排版而不是我们的文案。
+            return { u: r.querySelector('strong').textContent,
+                     label: b ? b.textContent.replace(/\s+/g, '') : '',
+                     danger: b ? b.classList.contains('ant-btn-dangerous') : false,
+                     tag: r.textContent.includes('已冻结') };
+        }),
     };
 }"""
 
@@ -501,6 +540,90 @@ with sync_playwright() as p:
           and pg.evaluate("() => document.querySelectorAll('.bm-scroll .ant-table-row').length") == 10,
           pg.evaluate("() => document.querySelector('.bm-count').textContent"))
     check("第四节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
+    pg.close()
+
+    # ── 五、冻结账号（20260926）────────────────────────────────────────────────
+    # 这一节要证明的是一条**端到端**的事：点「冻结」真的会让那一行从"正常"变成
+    # "冻结"，而这件事在页面上看得见、在库里（这里是桩）也真的改了。
+    # 只断言"按钮文案变成解冻"是不够的——文案可以由本地 state 翻转出来，
+    # 而后端一个字节都没收到。
+    print("\n【五】账号管理的冻结账号筛选与冻结/解冻")
+    pg = mount(br)
+
+    # ① 冻结筛选只按状态（不看角色）
+    pg.locator(".tu-tabs button", has_text="冻结账号").first.click()
+    pg.wait_for_timeout(250)
+    g = pg.evaluate(GEO)
+    frozen_names = sorted(r["u"] for r in g["freezeBtns"])
+    check("筛「冻结账号」：恰好是预置冻结的那两行（guest27/guest28）",
+          frozen_names == ["guest27", "guest28"], str(frozen_names))
+    check("冻结行上都带「已冻结」标签", all(r["tag"] for r in g["freezeBtns"]), str(g["freezeBtns"]))
+    check("冻结行上的按钮是「解冻」且不套 danger 色",
+          all(r["label"] == "解冻" and not r["danger"] for r in g["freezeBtns"]), str(g["freezeBtns"]))
+    check("计数跟着筛（共 2 个账号）", "共 2 个账号" in g["count"], g["count"])
+
+    # ② 角色筛选**不**排除冻结账号（"他是普通用户"与"他现在不能用"同时为真）
+    pg.locator(".tu-tabs button", has_text="普通用户账号").first.click()
+    pg.wait_for_timeout(250)
+    g = pg.evaluate(GEO)
+    names = [r["u"] for r in g["delBtns"]]
+    check("筛「普通用户账号」时冻结行**仍在**（角色筛选不吞掉状态信息）",
+          "guest27" in names and "guest28" in names and len(names) == 29, f'{len(names)} 行')
+
+    # ③ 未冻结行上是「冻结」、套 danger
+    normal = [r for r in g["freezeBtns"] if r["u"] == "guest1"][0]
+    check("未冻结行上的按钮是「冻结」且套 danger 色",
+          normal["label"] == "冻结" and normal["danger"], str(normal))
+
+    # ④ 点一下 —— 请求体必须是 {frozen:true}（传目标状态，不传"切换"）
+    pg.locator(".tu-tabs button", has_text="冻结账号").first.click()
+    pg.wait_for_timeout(250)
+    before = pg.evaluate("() => window.__fetchCalls.length")
+    pg.locator(".tu-row", has_text="guest27").locator(".tu-freeze-btn").click()
+    pg.wait_for_timeout(600)
+    posts = pg.evaluate("""() => window.__fetchCalls.filter((c) =>
+        c.method === 'POST' && /\\/status$/.test(c.url))""")
+    check("点「解冻」发出 POST /api/temp-users/126/status", len(posts) == 1
+          and posts[0]["url"] == "/api/temp-users/126/status", str(posts))
+    check("请求体是 {frozen:false}（传目标状态，不是让后端自己取反）",
+          posts and posts[0]["body"] == {"frozen": False}, str(posts[0]["body"] if posts else None))
+    check("改完重新拉了一次列表（不是只在本地翻转 state）",
+          pg.evaluate("() => window.__fetchCalls.length") > before + 1,
+          f'before={before} after={pg.evaluate("() => window.__fetchCalls.length")}')
+    check("解冻后它离开「冻结账号」这一档（桩真按请求体改了那一行）",
+          [r["u"] for r in pg.evaluate(GEO)["freezeBtns"]] == ["guest28"],
+          str([r["u"] for r in pg.evaluate(GEO)["freezeBtns"]]))
+
+    # ⑤ 反向再来一次：冻结一个正常账号 ⇒ 它进冻结档。
+    # 行定位用 `:text-is("guest1")` 精确匹配——`has_text` 是包含匹配，
+    # 会同时命中 guest1/guest10../guest19（本文件第二节也踩过同一个坑）。
+    pg.locator(".tu-tabs button", has_text="全部").first.click()
+    pg.wait_for_timeout(250)
+    pg.locator('.tu-row:has(strong:text-is("guest1")) .tu-freeze-btn').click()
+    pg.wait_for_timeout(600)
+    last = pg.evaluate("""() => window.__fetchCalls.filter((c) =>
+        c.method === 'POST' && /\\/status$/.test(c.url)).slice(-1)[0]""")
+    check("点「冻结」发出 {frozen:true}（与解冻走同一个接口、只换请求体）",
+          last and last["body"] == {"frozen": True}, str(last))
+    pg.locator(".tu-tabs button", has_text="冻结账号").first.click()
+    pg.wait_for_timeout(250)
+    check("冻结后 guest1 出现在冻结档（预置只剩 guest28，加它就是两行）",
+          sorted(r["u"] for r in pg.evaluate(GEO)["freezeBtns"]) == ["guest1", "guest28"],
+          str(sorted(r["u"] for r in pg.evaluate(GEO)["freezeBtns"])))
+
+    # ⑥ 未登记的状态值也按冻结处理 —— 前端那句"与后端 is_frozen 同口径"是要**验**的。
+    # 后端判的是 `status != 0`（不是 `== 1`），库里出现第三种值时两边必须一起往
+    # "不能用"倒。判据差一个字符（`!== 0` 写成 `=== 1`）时，这条正好变红。
+    pg.evaluate("() => { window.__users.find((u) => u.id === 101).status = 2 }")
+    # 顺手点一下解冻（会把 guest1 解掉）：这一下必然重新拉列表，正好把上面改的值带进来
+    pg.locator('.tu-row:has(strong:text-is("guest1")) .tu-freeze-btn').click()
+    pg.wait_for_timeout(600)
+    pg.locator(".tu-tabs button", has_text="冻结账号").first.click()
+    pg.wait_for_timeout(250)
+    names = [r["u"] for r in pg.evaluate(GEO)["freezeBtns"]]
+    check("未登记的状态值（2）也按冻结处理（与后端 is_frozen 同口径）",
+          "guest2" in names and "guest1" not in names, str(names))
+    check("第五节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
     br.close()

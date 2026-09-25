@@ -362,7 +362,12 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
         try {
             const res = await changePassword(pwdOld, pwdNew)
             if (ok(res)) {
-                message.success('密码已修改（其他设备上的登录状态仍有效，直到令牌过期）')
+                // 换掉本机的令牌（20260926）：改密码已经让**所有**旧令牌失效了，
+                // 包括本机手里这枚。不写回的话，本机的下一个请求就会带着一枚
+                // 刚被自己作废的令牌出去 ⇒ 立刻被登出。
+                const fresh = res.data.data?.token
+                if (fresh) localStorage.setItem('tokenKey', fresh)
+                message.success('密码已修改，其他设备上的登录状态已全部失效')
                 setPwdOld('')
                 setPwdNew('')
                 setPwdNew2('')
@@ -680,7 +685,7 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                         onChange={(e) => setPwdNew2(e.target.value)}
                     />
                     <div className="ucFieldFoot">
-                        <span className="ucHint">改密码不会让其他设备立刻掉线（令牌到期前仍有效）</span>
+                        <span className="ucHint">改密码会让其他设备立刻下线（本机保持登录）</span>
                         <Button className="ucGoldBtn" type="primary" loading={savingPwd} onClick={savePassword}>
                             修改密码
                         </Button>

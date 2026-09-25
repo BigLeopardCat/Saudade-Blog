@@ -26,13 +26,26 @@ const ROLE_LABEL: Record<string, string> = {
     user: '普通用户',
 }
 
-/** 筛选项：value 与 user.role 对应，null = 全部。
- *  写成一个数组而不是三个按钮硬编码——加"冻结账号"这类与角色正交的状态筛选时，
- *  只在这里补一项（判据随之改成 `(u) => …` 的形式）。 */
+/** 账号是否已冻结。判据与后端 `crate::authz::is_frozen` **同一条**：
+ *  `user.status` 里不是 0 的一律算冻结（未登记的取值也按冻结处理，不默认放行）。
+ *  `undefined`（字段缺失）按 0 算——缺失只可能出现在"前端已上线、后端还没"这种
+ *  部署顺序里，而这两半是同一次部署、迁移先跑，所以它不该发生；
+ *  真发生了也宁可少标一个"冻结"（后端照样会拒它），而不是把整页账号标成冻结。
+ *  这里刻意不做「=== 1 才算冻结」：那会与后端对不上，后端认的是 != 0。 */
+const isFrozen = (u: any) => Number(u.status ?? 0) !== 0
+
+/** 筛选项：前三个按**角色**分流，最后一个是与角色正交的**状态**筛选
+ *  （20260926 用户点名要的三个：管理员账号 / 普通用户账号 / 冻结账号）。
+ *  「全部」是额外给的一个复位项。
+ *
+ *  刻意**不做**「角色筛选自动排除冻结账号」：一个被冻结的管理员在两个筛选项下
+ *  都出现是对的——"他是管理员"和"他现在不能用"是两件同时为真的事，
+ *  行上有「已冻结」标签，两处都能看见。把它从角色视图里藏起来反而是丢信息。 */
 const ACC_FILTERS: { key: string; label: string; match: (u: any) => boolean }[] = [
     { key: 'all', label: '全部', match: () => true },
     { key: 'admin', label: '管理员账号', match: (u) => u.role === 'admin' },
     { key: 'user', label: '普通用户账号', match: (u) => u.role !== 'admin' },
+    { key: 'frozen', label: '冻结账号', match: (u) => isFrozen(u) },
 ]
 
 const Users = () => {
@@ -101,6 +114,25 @@ const Users = () => {
             const res = await fetch('/api/temp-users/' + id, { method: 'DELETE', headers: { 'Authorization': 'Bearer ' + token } })
             const data = await res.json()
             if (data.code === 200) { message.success('已删除'); loadTempUsers() }
+            else { message.error(data.message) }
+        } catch { message.error('请求失败') }
+    }
+
+    /** 冻结 / 解冻（20260926）。**不做二次确认弹窗**：这个操作是可逆的
+     *  （再点一下就是解冻），而后台其它按钮（删除）才是不可逆的那个——
+     *  给可逆操作加一道确认，只会让人养成"闭眼点确定"的习惯。
+     *  但它**不是无提示的**：服务端返回的文案会说明"其登录状态已全部失效"，
+     *  行上的状态标签与筛选计数也会立刻跟着变。 */
+    const handleSetStatus = async (user: any, frozen: boolean) => {
+        try {
+            const res = await fetch('/api/temp-users/' + user.id + '/status', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+                // 传**目标状态**而不是"切换一下"：服务端不猜意图，重试/双击都安全
+                body: JSON.stringify({ frozen }),
+            })
+            const data = await res.json()
+            if (data.code === 200) { message.success(data.message); loadTempUsers() }
             else { message.error(data.message) }
         } catch { message.error('请求失败') }
     }
@@ -214,21 +246,39 @@ const Users = () => {
                                     {filteredUsers.map((u: any) => (
                                         <div key={u.id} className="tu-row">
                                             <div>
-                                                <strong>{u.username}</strong>
+                                                <strong className={isFrozen(u) ? 'tu-frozen-name' : ''}>{u.username}</strong>
                                                 {u.role !== 'user' && (
                                                     <Tag color={u.role === 'admin' ? 'gold' : 'blue'} style={{ marginLeft: 8 }}>
                                                         {ROLE_LABEL[u.role] || u.role}
                                                     </Tag>
+                                                )}
+                                                {/* 冻结状态**显示成标签**而不是只靠按钮文案：
+                                                    冻结账号筛选视图里也是这一行，得一眼看出为什么它在这儿 */}
+                                                {isFrozen(u) && (
+                                                    <Tag color="red" style={{ marginLeft: 8 }}>已冻结</Tag>
                                                 )}
                                                 <span className="tu-id">ID: {u.id}</span>
                                             </div>
                                             <div style={{ display: 'flex', gap: 8 }}>
                                                 <Button size="small" onClick={() => openPwModal(u)}>修改密码</Button>
                                                 <Button size="small" onClick={() => handleCreateRecoveryCode(u)}>生成恢复码</Button>
+                                                {/* 冻结/解冻：一个按钮、两种含义，按当前状态取反。
+                                                    danger 只给"冻结"那一侧——红按钮按下去会让对方下线，
+                                                    "解冻"是恢复性操作，用红的不合适。
+                                                    自己的账号后端会拒（见 set_user_status），这里不预先藏，
+                                                    因为要判断"哪个是我"就得多拉一次 /profile。 */}
+                                                <Button
+                                                    size="small"
+                                                    className="tu-freeze-btn"
+                                                    danger={!isFrozen(u)}
+                                                    onClick={() => handleSetStatus(u, !isFrozen(u))}
+                                                >
+                                                    {isFrozen(u) ? '解冻' : '冻结'}
+                                                </Button>
                                                 {/* 非普通账号不给删除按钮：后端也会拒（见 delete_temp_user），
                                                     但让按钮干脆不出现，比点了才被告知不行更清楚 */}
                                                 {u.role === 'user' && (
-                                                    <Button size="small" danger onClick={() => handleDeleteTempUser(u.id)}>删除</Button>
+                                                    <Button size="small" className="tu-del-btn" danger onClick={() => handleDeleteTempUser(u.id)}>删除</Button>
                                                 )}
                                             </div>
                                         </div>
