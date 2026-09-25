@@ -63,6 +63,14 @@
           font-size: 16px
           font-weight: 600
 
+          // 权限身份标签（20260926）：昵称是 16px，antd 的 Tag 会照这个字号继承下去
+          // （看起来比昵称还抢眼）。收成 12px 并与昵称基线对齐——它是给昵称做注脚的。
+          .ucRoleTag
+            font-size: 12px
+            font-weight: 400
+            vertical-align: middle
+            margin-left: 8px
+
         .ucAvatarAccount
           font-size: 12px
           opacity: 0.65
