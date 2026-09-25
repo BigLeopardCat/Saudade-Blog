@@ -118,11 +118,20 @@ const Users = () => {
         } catch { message.error('请求失败') }
     }
 
-    /** 冻结 / 解冻（20260926）。**不做二次确认弹窗**：这个操作是可逆的
-     *  （再点一下就是解冻），而后台其它按钮（删除）才是不可逆的那个——
-     *  给可逆操作加一道确认，只会让人养成"闭眼点确定"的习惯。
-     *  但它**不是无提示的**：服务端返回的文案会说明"其登录状态已全部失效"，
-     *  行上的状态标签与筛选计数也会立刻跟着变。 */
+    /** 冻结 / 解冻（20260926）。**要点确认，且确认按钮上写的是这一下的动作词**
+     *  （用户点名：「冻结解冻弹窗，把 OK 换成对应具体事务」）。
+     *
+     *  两件事分开看：
+     *  ① *要不要*确认——它虽然可逆，但**代价不对称**：冻结会让对方正在进行的
+     *     会话当场断掉（不只是"下次登不进来"），而"解冻"并不能把那一刻还回去。
+     *     所以真正的代价发生在**点下去的那一下**，而不是它可不可逆。
+     *  ② *按钮上写什么*——`确定`/`OK` 在这个弹窗里是零信息量的：同一排按钮里
+     *     既有冻结又有解冻，用户看的是自己那一行的按钮，弹窗上再出现一个"确定"，
+     *     他就得回头读一遍标题才知道自己刚才点的是哪个方向。按钮上直接写
+     *     「冻结」/「解冻」，弹窗自己就把动作说清楚了。
+     *
+     *  传**目标状态**而不是"切换一下"（下面 body 里那行 `{frozen}` 也是这个理由）：
+     *  服务端不猜意图，重试/双击都安全。 */
     const handleSetStatus = async (user: any, frozen: boolean) => {
         try {
             const res = await fetch('/api/temp-users/' + user.id + '/status', {
@@ -135,6 +144,23 @@ const Users = () => {
             if (data.code === 200) { message.success(data.message); loadTempUsers() }
             else { message.error(data.message) }
         } catch { message.error('请求失败') }
+    }
+
+    /** 冻结/解冻的确认弹窗。`statusNext` = 点确定之后那一行的目标状态：
+     *  true 冻结 / false 解冻。用**目标状态**而不是 `isFrozen(statusTarget)` 现算——
+     *  弹窗开着的这段时间里列表可能被重新拉过（60 秒轮询/别处改过），
+     *  现算会让"我点的是冻结、确定下去却解冻了"。 */
+    const [statusTarget, setStatusTarget] = useState<any>(null)
+    const [statusNext, setStatusNext] = useState(false)
+    const askSetStatus = (user: any, frozen: boolean) => {
+        setStatusTarget(user)
+        setStatusNext(frozen)
+    }
+    const confirmSetStatus = async () => {
+        const t = statusTarget
+        const frozen = statusNext
+        setStatusTarget(null)   // 先关窗再发请求：失败走 message 提示，不留一个"卡住的确认框"
+        if (t) await handleSetStatus(t, frozen)
     }
 
     const openPwModal = (user: any) => {
@@ -271,7 +297,7 @@ const Users = () => {
                                                     size="small"
                                                     className="tu-freeze-btn"
                                                     danger={!isFrozen(u)}
-                                                    onClick={() => handleSetStatus(u, !isFrozen(u))}
+                                                    onClick={() => askSetStatus(u, !isFrozen(u))}
                                                 >
                                                     {isFrozen(u) ? '解冻' : '冻结'}
                                                 </Button>
@@ -287,6 +313,37 @@ const Users = () => {
                             )}
                         </div>
                     </div>
+
+                    {/* 冻结/解冻确认（20260926）。三个细节是刻意的：
+                        · `okText` 写动作词（「冻结」/「解冻」）而不是「确定」——
+                          同屏既有冻结又有解冻，写"确定"等于让人回头再读一遍标题；
+                        · `okButtonProps.danger` 只给冻结那一侧，与行上按钮同一套极性；
+                        · 不用 `Modal.confirm`（命令式）：它渲染到另一个容器里，
+                          这个仓库的无头沙箱是按 DOM 结构断言的，受控 Modal 才测得到
+                          （同页其它确认框也都用受控式）。 */}
+                    <Modal
+                        title={statusNext ? '冻结账号' : '解冻账号'}
+                        open={!!statusTarget}
+                        onOk={confirmSetStatus}
+                        onCancel={() => setStatusTarget(null)}
+                        okText={statusNext ? '冻结' : '解冻'}
+                        cancelText="取消"
+                        okButtonProps={{ danger: statusNext, className: 'tu-status-ok' }}
+                        cancelButtonProps={{ className: 'tu-status-cancel' }}
+                        width={420}
+                    >
+                        <div style={{ marginTop: 12, lineHeight: 1.7 }}>
+                            <div>
+                                确定要{statusNext ? '冻结' : '解冻'}
+                                <strong>{statusTarget?.username}</strong> 吗？
+                            </div>
+                            <div style={{ marginTop: 8, color: '#8c8c8c' }}>
+                                {statusNext
+                                    ? '冻结后：该账号无法再登录，已登录的网页会话立即失效；解冻后需要重新登录，冻结前的登录状态不会恢复。'
+                                    : '解冻后：该账号可以重新登录；它冻结前的登录状态不会恢复。'}
+                            </div>
+                        </div>
+                    </Modal>
 
                     <Modal
                         title={'修改密码 - ' + (pwTarget?.username || '')}
