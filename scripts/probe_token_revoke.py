@@ -15,7 +15,15 @@
     # 或者让它自己从库里挑一个（只挑用户名带 agent_test_ / probe_ 前缀的测试账号）
     .venv/bin/python scripts/probe_token_revoke.py
 
-凭据从 `memory_blog_rust/.env` 的 `DATABASE_URL` / `JWT_SECRET` 现读，**不回显、不落盘**。
+凭据只从 `memory_blog_rust/.env` 的 `JWT_SECRET` 现读（自签令牌用），**不回显、不落盘**；
+本探针**不连数据库**（20260926 更正：此处原写「`DATABASE_URL` / `JWT_SECRET`」，而
+`DATABASE_URL` 从来没被读过——它自己的每个结论都是通过 HTTP 打出来的）。
+
+20260926 起由 agent 仓 `scripts/nightly_regression.sh` **每日跑一次（门禁）**，用
+`--admin-uid "$GOLDEN_ADMIN_UID"`、排在 golden 之前：`GOLDEN_ADMIN_UID` 就是本探针要验的
+那个身份，探针验**语义**（冻结/改密码真的收回令牌、两处旁路真的收口），golden 侧的
+`eval/identity_preflight.py` 验**可用性**（这个 uid 今天还活着、角色还对）。它写生产库，
+但只写自己建的一次性靶子账号 `probe_revoke_<时间戳>`（`finally` 里删掉）。
 """
 import argparse
 import hashlib
