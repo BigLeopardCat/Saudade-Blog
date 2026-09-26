@@ -226,10 +226,12 @@ async fn insert_talk(
     // issue9：AI 判定同步落库 ai_result——后台按「AI 审核 + 人工审核」两段展示，
     // 判定是 pass/flag 即时生效后不回溯，留痕供管理端溯源。
     // 20260923：同时接住 AI 给的驳回理由（reject_reason），供审核结果通知与后台展示
-    let (approved, ai_result, reject_reason) = if src == "board" {
+    // 20260926：AI 的说明对所有裁决都留痕（ai_reason）——存疑那一支此前把说明丢掉了，
+    // 而后台「评论管理」显示的"驳回理由：未填写"绝大多数就是这一支来的（13/18 实测）。
+    let (approved, ai_result, ai_reason, reject_reason) = if src == "board" {
         board_approved(state, uid, content).await
     } else {
-        (1, None, None)
+        (1, None, None, None)
     };
     // 通知要用，先各留一份（下面 Set(...) 会把它们 move 走）
     let ai_judged = ai_result.is_some();
@@ -244,6 +246,7 @@ async fn insert_talk(
         src: Set(src.to_string()),
         approved: Set(approved),
         ai_result: Set(ai_result),
+        ai_reason: Set(ai_reason),
         reject_reason: Set(reject_reason),
         created_at: Set(chrono::Local::now().naive_local()),
         updated_at: Set(chrono::Local::now().naive_local()),
@@ -272,12 +275,17 @@ async fn insert_talk(
     }
 }
 
-/// 河灯留言入库审核判定（20260905 上线，issue9 起带 AI 留痕，20260923 起带驳回理由）：
-/// 返回 (approved, ai_result, reject_reason)——approved：1 直接展示 / 0 进待审 / 2 直接驳回；
+/// 河灯留言入库审核判定（20260905 上线，issue9 起带 AI 留痕，20260923 起带驳回理由，
+/// 20260926 起带 AI 说明）：
+/// 返回 (approved, ai_result, ai_reason, reject_reason)——approved：1 直接展示 / 0 进待审 /
+/// 2 直接驳回；
 /// ai_result：Some("pass")=AI 通过 / Some("reject")=AI 驳回 / Some("flag")=AI 存疑转人工 /
 ///            None=未走 AI（AI 关、人工全审模式、或审核服务不可用转人工——**不可用不等于 AI
 ///            判过**，不留 pass 假证）；
-/// reject_reason：**只有 AI 判 reject 时才有值**（就是它给出的说明，截 200 字），其余一律 None。
+/// ai_reason：**AI 那一次给的说明**，与裁决无关（pass/flag/reject 都带出来，截 200 字）；
+///            None = 没走 AI 或 AI 没给说明。**它是留痕，不是驳回理由**。
+/// reject_reason：**只有 AI 判 reject 时才有值**（就是同一段说明），其余一律 None——
+///            它是"驳回理由"这一语义的落点，与 ai_reason 是两个出口、同一个来源。
 /// 开关组合（两闸可叠加、可单独作用，用户拍板）：
 ///   · 人工复核开 → 一律 0 待审（人工同意才放行；AI 若同开仅作入队前过滤）
 ///   · 仅 AI 开    → 同步调 agent /review：flag → (0,"flag")；pass → (1,"pass")；reject → (2,"reject")
@@ -310,10 +318,17 @@ fn clip_reject_reason(raw: &str) -> Option<String> {
     Some(t.chars().take(200).collect::<String>())
 }
 
-/// 驳回时库里的理由列也可能是 NULL（AI 判驳回但没给 reason、管理员手填留空）——
+/// 驳回时**两列都没有理由**（存量行 / AI 判驳回但没给 reason 且管理员手填留空）——
 /// 通知总得说点什么，就用这句固定文案（**只写进通知正文，不落库**：库里 NULL 代表
 /// "没人写过理由"，是事实，不编）。
-const REJECT_FALLBACK_REASON: &str = "不符合留言板的留言规范";
+///
+/// 20260926 改文案（用户原话：「『不符合留言板的留言规范』不足以让用户知道问题具体
+/// 是什么」）：旧句是循环定义的——它既没说清问题，也没给出路，读起来像一句套话。
+/// 新句只做两件**真的做得到**的事：① 如实说"没有人写下具体理由"（不糊弄成"你违规了
+/// 但我不告诉你"）② 告诉他去哪儿能看自己的原文（「我的河灯」，`link` 也指向那里）。
+/// **不许**在这里编造违规类型——库里没有的东西，通知里不能有。
+const REJECT_FALLBACK_REASON: &str = "管理员复核后未通过，但没有留下具体理由；\
+你可以在「我的河灯」看到这条留言的原文";
 
 /// 留言摘要（通知里引用访客原话的片段）：换行折成空格 + 截 30 字。
 /// 访客留言可以是多行，原样拼进通知正文会把面板行高撑开。
@@ -391,13 +406,14 @@ async fn notify_review_result(
 /// （不是"以后再打开"）⇒ 这一半必须先上线，agent 侧才允许把 `/review` 接上
 /// `_resolve_principal`；顺序反了留言审核会成片 401，每一条都转人工待审。
 /// `uid` 同时进 body：agent 用它核对断言、并在审核日志里留痕。
-async fn board_approved(state: &Arc<AppState>, uid: i32, content: &str) -> (i8, Option<String>, Option<String>) {
+async fn board_approved(state: &Arc<AppState>, uid: i32, content: &str)
+    -> (i8, Option<String>, Option<String>, Option<String>) {
     let (ai_on, manual_on) = super::web_info::review_switches(&state.db).await;
     if !ai_on {
         if manual_on {
-            return (0, None, None);
+            return (0, None, None, None);
         }
-        return (1, None, None);
+        return (1, None, None, None);
     }
     // 仅 AI 闸：同步调 agent（模型裁决上限 25s，这里网络超时 20s 先兜住）
     let url = std::env::var("AGENT_URL")
@@ -418,37 +434,40 @@ async fn board_approved(state: &Arc<AppState>, uid: i32, content: &str) -> (i8, 
             match r.json::<serde_json::Value>().await {
                 Ok(v) => {
                     let verdict = v.get("verdict").and_then(|x| x.as_str()).unwrap_or("");
-                    // 理由只有"驳回"这一支有意义：pass 不需要理由，flag 的说明是给管理员的
-                    // 存疑注记、不是驳回理由（后台另有 ai_result 段展示它）。
-                    let reason = clip_reject_reason(v.get("reason").and_then(|x| x.as_str()).unwrap_or(""));
+                    // 20260926 更正一处**自相矛盾的注释**（它让后来人以为"AI 说明已经有人展示了"）：
+                    // 此前这里写着"flag 的说明是给管理员的存疑注记、后台另有 ai_result 段展示它"
+                    // ——后半句是假的：`ai_result` 那一列存的是**裁决词**（pass/flag/reject 三个
+                    // 字面量），从来没有一列展示过说明；说明全文只活在这一个 HTTP 响应里，
+                    // 响应一关就没了。现在它落 `ai_reason`，后台「评论管理」页展示它。
+                    let ai_reason = clip_reject_reason(v.get("reason").and_then(|x| x.as_str()).unwrap_or(""));
                     match verdict {
-                        "pass" if manual_on => (0, Some("pass".to_string()), None),
-                        "pass" => (1, Some("pass".to_string()), None),
+                        "pass" if manual_on => (0, Some("pass".to_string()), ai_reason, None),
+                        "pass" => (1, Some("pass".to_string()), ai_reason, None),
                         // 两个都开时 AI 驳回也只入队待人工——但**理由先留着**：人工若也驳回，
                         // 手填为空就回落到它（见 audit_board）
                         "reject" => {
                             let approved = if manual_on { 0 } else { 2 };
-                            (approved, Some("reject".to_string()), reason)
+                            (approved, Some("reject".to_string()), ai_reason.clone(), ai_reason)
                         }
                         _ => {
                             tracing::info!("[board] AI 审核判定存疑，进人工复核");
-                            (0, Some("flag".to_string()), None)
+                            (0, Some("flag".to_string()), ai_reason, None)
                         }
                     }
                 }
                 Err(e) => {
                     tracing::warn!("[board] AI 审核响应解析失败，进入人工复核: {e}");
-                    (0, None, None)
+                    (0, None, None, None)
                 }
             }
         }
         Ok(r) => {
             tracing::warn!("[board] AI 审核端点异常(HTTP {}），进入人工复核", r.status());
-            (0, None, None)
+            (0, None, None, None)
         }
         Err(e) => {
             tracing::warn!("[board] AI 审核不可用，进入人工复核: {e}");
-            (0, None, None)
+            (0, None, None, None)
         }
     }
 }
@@ -536,6 +555,13 @@ pub struct BoardAdminDto {
     /// （把「没人写」和「写了空」都归一成 null，后台列表据此显示「未填写」）
     #[serde(rename = "rejectReason")]
     pub reject_reason: Option<String>,
+    /// AI 审核说明（20260926）：**与裁决无关**（pass/flag/reject 都可能有），null =
+    /// 没走 AI、AI 没给说明、或本次上线前的存量行。后台「评论管理」展示它、驳回弹窗
+    /// 可一键采用它——管理员先看得到 AI 的判断，才写得出具体理由。
+    /// **只给后台**：公开河灯列表与「我的河灯」共用的 `TalkDto` 不带这个字段
+    /// （AI 的内部注记不该发给全体访客）。
+    #[serde(rename = "aiReason")]
+    pub ai_reason: Option<String>,
 }
 
 /// GET /api/protect/board：留言管理列表（全部河灯留言 + 发布用户信息，倒序）
@@ -600,6 +626,7 @@ pub async fn list_board_admin(
             approved: t.approved,
             ai_result: t.ai_result,
             reject_reason: t.reject_reason,
+            ai_reason: t.ai_reason,
         }
     }).collect();
     Json(ApiResponse::success(dtos))
@@ -635,9 +662,11 @@ pub struct AuditBody {
 /// 放行 / 驳回(2) 隐藏；AI 拦截进待审的留言同样走这里人工裁决）。
 /// issue9：人工裁决只写 approved，不改写 ai_result——AI 判定作为历史留痕保留，
 /// 后台「AI 拦截 → 人工放行/驳回」双段状态由此完整呈现；驳回(2) 可改判回通过(1)。
-/// 20260923 起驳回可带 reason：手填的 > 已存的 AI 理由（AI 判 reject 时 insert_talk
-/// 落的那个）；都没写就保持 NULL，**不往库里塞编好的话**——通知层的固定文案在通知
-/// 那一层兜（那里是"怎么说"，这里只管"记什么"）。通过时清空该列。
+/// 20260923 起驳回可带 reason：手填的 > 已存的 AI 理由（insert_talk 落的 reject_reason）
+/// > AI 存疑说明（ai_reason，20260926 补的第三级）；三级都没有就保持 NULL，**不往库里
+/// 塞编好的话**——通知层的固定文案在通知那一层兜（那里是"怎么说"，这里只管"记什么"）。
+/// 通过时清空 `reject_reason`（不留"已通过却带驳回理由"的矛盾行），**`ai_reason` 不动**
+/// ——它是 AI 判定那一侧的留痕，与 `ai_result` 同一纪律（AI 的判定不回溯）。
 pub async fn audit_board(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -659,12 +688,20 @@ pub async fn audit_board(
     let owner = t.user_id;
     let was_approved = t.approved;
     let brief_src = t.content.clone();
-    // 已存的 AI 理由（人工没填时回落到它）
+    // 已存的两份 AI 材料（人工没填理由时**按优先级回落**，见下方 final_reason）
     let saved_reason = t.reject_reason.clone();
+    let saved_ai_reason = t.ai_reason.clone();
     let mut active_model: talk::ActiveModel = t.into();
     active_model.approved = Set(if reject { 2 } else { 1 });
+    // 理由的回落链（20260926 补齐第三级）：**人工手填 > reject_reason（AI 判 reject 的
+    // 说明）> ai_reason（AI 存疑说明）**。第三级是这次补的——存疑占实测的 13/18，此前
+    // 这一支的说明在 board_approved 就被丢了 ⇒ 人工直接点「驳回」时理由落 NULL ⇒
+    // 后台显示"未填写"、通知只能说那句套话。**优先级仍是人工第一**：管理员写下的字
+    // 永远盖过 AI 的推断。
     let final_reason = if reject {
-        payload.reason.as_deref().and_then(clip_reject_reason).or(saved_reason)
+        payload.reason.as_deref().and_then(clip_reject_reason)
+            .or(saved_reason)
+            .or(saved_ai_reason)
     } else {
         // 改判回通过 ⇒ 清掉理由，不留"已通过却带驳回理由"的矛盾行
         None
