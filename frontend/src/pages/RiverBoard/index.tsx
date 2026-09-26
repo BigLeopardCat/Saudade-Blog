@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./index.scss";
 import { runtimeBaseURL } from "../../utils/runtimeApi";
-import { MOON_TEX } from "./moon_tex";
+import { moonAlbedo, moonSpriteGeometry } from "./moon_surface.ts";
 import { useLiveRefresh } from "../../utils/liveRefresh";
+import { useNavigate } from "react-router-dom";
 import Live2dAgent from "../../components/Live2dAgent"; // 沉浸页也保留看板娘（顶层路由无 App 布局）
 
 /* 河灯留言板 ── 一条只存在于路由之下的河。
@@ -340,50 +341,6 @@ const moonPhase = () => {
     return { age, k: 1 - dark, e: 2 * Math.cos(th) };
 };
 
-// 月海暗斑（近地面真实分布，正弦投影近似），月盘归一化 [-1,1]：[cx, cy, rx, ry]
-// nx 右=月面东（λ+），ny 上=月面北（φ+）。第 33 轮：替代原随机假暗斑，
-// 风暴洋（西部大片）· 雨海（西北）· 静海（东中）· 澄海（东北）· 丰富海（东）
-// · 危海（东北缘）· 汽海（中北）· 云海（南中）· 湿海（西南）
-const MARIA: [number, number, number, number][] = [
-    [-0.4, 0.05, 0.3, 0.26], // 风暴洋
-    [-0.2, 0.38, 0.17, 0.13], // 雨海
-    [0.24, 0.12, 0.18, 0.14], // 静海
-    [0.14, 0.27, 0.13, 0.1], // 澄海
-    [0.45, -0.02, 0.14, 0.1], // 丰富海
-    [0.55, 0.16, 0.1, 0.07], // 危海
-    [0.06, 0.2, 0.1, 0.07], // 汽海
-    [-0.13, -0.24, 0.14, 0.1], // 云海
-    [-0.33, -0.21, 0.1, 0.07], // 湿海
-];
-// 环形山：真实月面（近地面，地球裸眼视角）知名环形山，[cx, cy, r] 归一化。
-// 坐标 = 正弦投影 (sinλ·cosφ, sinφ)，r 由真实直径换算（D km → sin(D/3474·90°)）
-// 后按视觉 ×1.4 艺术放大——月亮在场景中偏小，真实比例在画面里不可见。
-// 第 33 轮：替代原随机假分布——第谷 Tycho（南，辐射纹最醒目）· 哥白尼 Copernicus
-// · 开普勒 Kepler · 阿里斯塔克斯 Aristarchus（月面最亮）· 柏拉图 Plato（暗底）
-// · 克拉维乌斯 Clavius（南极大环）· 阿基米德 Archimedes · 亚里士多德 Aristoteles
-// · 喜帕恰斯 Hipparchus · 托勒密 Ptolemaeus · 阿尔芬苏斯 Alphonsus
-// · 泰奥菲勒斯 Theophilus · 朗格伦 Langrenus（东缘）· 佩塔维乌斯 Petavius（东缘）
-// · 恩迪米翁 Endymion · 阿特拉斯 Atlas · 皮科洛米尼 Piccolomini
-const CRATERS: [number, number, number][] = [
-    [-0.141, -0.686, 0.053], // 第谷
-    [-0.339, 0.167, 0.059], // 哥白尼
-    [-0.61, 0.141, 0.02], // 开普勒
-    [-0.674, 0.402, 0.025], // 阿里斯塔克斯
-    [-0.1, 0.784, 0.064], // 柏拉图
-    [-0.126, -0.855, 0.098], // 克拉维乌斯
-    [-0.061, 0.495, 0.052], // 阿基米德
-    [0.191, 0.768, 0.055], // 亚里士多德
-    [0.083, -0.096, 0.07], // 喜帕恰斯
-    [-0.031, -0.16, 0.07], // 托勒密
-    [-0.049, -0.232, 0.056], // 阿尔芬苏斯
-    [0.436, -0.198, 0.063], // 泰奥菲勒斯
-    [0.864, -0.155, 0.07], // 朗格伦
-    [0.788, -0.424, 0.084], // 佩塔维乌斯
-    [0.495, 0.805, 0.07], // 恩迪米翁
-    [0.48, 0.728, 0.053], // 阿特拉斯
-    [0.463, -0.495, 0.056], // 皮科洛米尼
-];
-
 interface LanternMeta {
     id: number;
     v: number;
@@ -419,57 +376,148 @@ let amb: Amb | null = null;
 /* 月亮几何（组件内多处共享：绘制与星光避让用同一份常量） */
 const MOON = { x: 0.7, y: 0.16, r: 0.073 } as const; // r 0.093 → 0.073：月亮缩小
 
-/* 第 34 轮：真实月球照片反照率纹理（sample_moon_tex.py 生成，192×192，
-   月盘外透明）。纹理就绪后替代手写 MARIA/CRATERS 分布——月海、环形山、
-   辐射纹等全部来自真实照片；异步加载，未就绪帧回退到手写分布 */
-const moonTexN = 192;
-let moonTexA: Float32Array | null = null;
-let moonTexLoading = false;
-/* 反照率标定（加载时按盘内 p5/p95/中位数算出，见 loadMoonTex） */
-let moonTexLo = 0;
-let moonTexHi = 1;
-let moonTexMed = 0.5;
-const moonTexWaiters: Array<() => void> = [];
-/* 第 37 轮：支持就绪回调——月亮在静态层渲染，纹理异步就绪后必须重绘一次
-   静态层才能真正上月亮（此前仅 drawScene 每帧调用，静态层永不重画，
-   月亮一直用 fallback 手写分布+颗粒噪声渲染，照片纹理从未生效）。
-   加载中挂起的回调统一在 onload 后触发 */
-const loadMoonTex = (onReady?: () => void) => {
-    if (moonTexA) {
-        onReady?.();
-        return;
-    }
-    if (moonTexLoading) {
-        if (onReady) moonTexWaiters.push(onReady);
-        return;
-    }
-    moonTexLoading = true;
-    const im = new Image();
-    im.onload = () => {
-        const c = document.createElement("canvas");
-        c.width = c.height = moonTexN;
-        const g = c.getContext("2d")!;
-        g.drawImage(im, 0, 0, moonTexN, moonTexN);
-        const d = g.getImageData(0, 0, moonTexN, moonTexN).data;
-        const a = new Float32Array(moonTexN * moonTexN);
-        for (let i = 0; i < a.length; i++) a[i] = d[i * 4 + 3] > 128 ? d[i * 4] / 255 : -1;
-        // 反照率区间自适应标定（20260912 写实化）：拿盘内值的 p5/p95 当 0..1 的锚，
-        // 渲染时映射到 0.70..1.30 的亮度区间（月海:高地 ≈ 1.6:1）。硬编码中位数不可靠——
-        // 纹理是离线脚本「围绕中位 ×1.8 + BoxBlur」做的，中位不一定落在 0.5
-        const vals = Array.from(a).filter((v) => v >= 0).sort((x, y) => x - y);
-        if (vals.length > 16) {
-            moonTexLo = vals[Math.floor(vals.length * 0.05)];
-            moonTexHi = vals[Math.floor(vals.length * 0.95)];
-            moonTexMed = vals[vals.length >> 1];
-            if (moonTexHi - moonTexLo < 0.05) { moonTexLo = 0; moonTexHi = 1; } // 极端平纹理兜底
-        }
-        moonTexA = a;
-        moonTexLoading = false;
-        for (const w of moonTexWaiters) w();
-        moonTexWaiters.length = 0;
-        onReady?.();
+/* 月面反照率（20260926）。此前那张真实照片采样表（`moon_tex.ts`，固定 192×192）
+   已删除：源照片丢了、192 又是死天花板（月盘的设备像素数随屏幕走，1080p ≈ 130、
+   retina ≈ 260，192 被放大本身就是糊的）。现在由 `moon_surface.ts` **程序化现画**，
+   细节上限随需要走。同步生成（不再有"异步就绪后重画一次静态层"那一套）。 */
+let moonAlbA: Float32Array | null = null;
+/* 反照率标定（首次生成时按盘内 p5/p95 算出）——渲染时把反照率区间映射到
+   `0.80..1.28` 的亮度区间，月海:高地 ≈ 1.6:1。自适应而不硬编码：生成器的
+   基准值以后调整（对比度/压暗比例）不该连带改渲染侧的映射 */
+let moonAlbLo = 0;
+let moonAlbHi = 1;
+/** 反照率（幂等，首次调用时生成） */
+const ensureMoonAlbedo = () => {
+    if (moonAlbA) return moonAlbA;
+    const a = moonAlbedo();
+    // 盘外四角不参与采样（渲染只落在内切圆里），一并算进分位数也不会跑偏——
+    // 它们保持高地基准值，且占比只有 1 - π/4 ≈ 21%
+    const vals = Array.from(a).sort((x, y) => x - y);
+    moonAlbLo = vals[Math.floor(vals.length * 0.05)];
+    moonAlbHi = vals[Math.floor(vals.length * 0.95)];
+    if (moonAlbHi - moonAlbLo < 0.05) { moonAlbLo = 0; moonAlbHi = 1; } // 极端平纹理兜底
+    moonAlbA = a;
+    return a;
+};
+
+/* 月盘 sprite（20260926）：月亮从"烘进静态层的整屏画布"里摘出来单独成 canvas，
+   每帧**一次 drawImage** 画在设备整像素上。两个原因：
+     ① 静态层每帧按非整数视差偏移合成（`px * 0.2 - MARGIN`），月缘这种高频边缘
+        被反复双线性重采样——这是"月亮糊"的直接成因；
+     ② 静态层 dpr 有上限（DPR_CAP 1.5，性能取舍），月盘跟着一起被压。
+   层次：sprite 画在 baseFront **之后** ⇒ 它是屏幕上唯一的月亮。已知代价：月盘会压在
+   垂柳细枝之上（暗面完全透明，只有受光面遮挡）。实测月盘在 x 0.7、垂柳在 x 0.985，
+   常见宽高比下不相交；若真机上发现碍眼，把 drawImage 挪到 baseFront 之前并让
+   baseFront 不再拷贝月亮区域即可（那样月盘只压 baseBack）。 */
+let moonSprite: { cv: HTMLCanvasElement; size: number } | null = null;
+
+/** 月相 → 光照参数（8 档量化，见下方渲染侧的量化说明）。渲染侧的月晕与月盘
+    sprite 共用这一份：两处各算一遍迟早会算出两个相位（月晕飘在错误的一侧）。 */
+const moonPhaseParams = () => {
+    const ph = moonPhase();
+    // 8 档月相量化，但**夹住两端半档**（20260912 用户反馈"现在是峨眉月吧，结果月全食了"）：
+    // 月龄 0.5 天（真实是一弯细峨眉）在 round(0.017×8)/8 = 0 处被归成"新月"→ 亮面占比 0，
+    // 配合不透明月盘就成了夜空里一个黑盘（月全食观感）。夹到 1/16 后该相位是一弯细牙，
+    // 新月当天也始终有月牙可看（真实新月物理上确实几乎不可见，但观感上"没有月亮"更糟）
+    const qAge = Math.min(15 / 16, Math.max(1 / 16, Math.round(ph.age * 8) / 8));
+    // 光方向绕盘面左右旋转：β=0 满月（正面照），β=±π/2 上下弦（侧照），
+    // 盈月亮面在右、亏月亮面在左（北半球可见月相），β=±π 新月（背照）
+    const beta = Math.PI * (1 - 2 * Math.max(0, Math.min(1, qAge)));
+    const lInv = 1 / Math.hypot(Math.sin(beta), Math.cos(beta));
+    return {
+        qAge,
+        lx: Math.sin(beta) * lInv,
+        lz: Math.cos(beta) * lInv,
+        // 亮面占比 k 与 β 同步按 qAge 量化（新月几乎无光晕、满月最强）
+        haloK: 0.35 + 0.65 * (1 - (1 + Math.cos(2 * Math.PI * qAge)) / 2),
     };
-    im.src = MOON_TEX;
+};
+
+/** 画月盘 sprite（内部 2× 超采样后缩到目标设备尺寸）。光照与旧版逐字一致——
+   只换了反照率来源（程序化）与落位方式（设备整像素）。 */
+const buildMoonSprite = (geo: { size: number; ss: number }) => {
+    const P = geo.size * geo.ss;
+    const R = P / 2;
+    const { lx: lxNow, lz: lzNow } = moonPhaseParams();
+    const mc = document.createElement("canvas");
+    mc.width = mc.height = P;
+    const mg = mc.getContext("2d")!;
+    const img = mg.createImageData(P, P);
+    const data = img.data;
+    /* 月面渲染（20260912 两轮返工后的定稿）：
+       ① alpha 与亮度解耦、且**只有受光面遮挡背景**（occlude = min(1, lum*6)）——
+          暗面完全透出背景。曾试过两种"让暗面可见"的做法（不透明深灰盘 / lighter 加光层），
+          用户两次都判为"假的圆形底盘"：夜空不是纯黑而是带光晕的蓝，任何整圆轮廓都会露馅；
+       ② 反照率进亮度域并拉开对比；
+       ③ 亮面亮度按相位归一（摄影语义：八种月相最亮点亮度一致）。 */
+    const EXPOSURE = 0.70;     // 亮面峰值 ≈ 0.70×1.28 = 0.90（229/255）：明亮但不满溢
+    // 相位亮度归一（摄影语义：相机按月亮曝光，八种月相的最亮点亮度应一致）：
+    // 不归一的话上下弦最亮点只有满月的约一半，叠加 8 档月相量化会看着"忽明忽暗"
+    // 额外的周边限暗压得很轻（0.12）：程序化反照率自身不带月缘暗化，不会 double 成"黑圈"
+    const limbKp = 0.12 + 0.24 * (1 - Math.abs(lzNow));
+    const limbPeak = lzNow >= 0
+        ? 1 - limbKp * Math.pow(Math.abs(lxNow), 2.6)
+        : (1 - limbKp) * Math.pow(Math.abs(lxNow), 0.9);
+    const sunGain = Math.min(2.2, 1 / Math.max(0.05, limbPeak));
+    const rOut = R + 0.5 * geo.ss;   // 外沿 1 设备像素的线性覆盖率（抗锯齿）
+    const albA = ensureMoonAlbedo();
+    const N = Math.round(Math.sqrt(albA.length));
+    for (let py = 0; py < P; py++) {
+        const Y = py + 0.5 - R;
+        for (let px = 0; px < P; px++) {
+            const X = px + 0.5 - R;
+            const i4 = (py * P + px) * 4;
+            const rho2 = X * X + Y * Y;
+            if (rho2 > rOut * rOut) continue;      // 盘外（含过渡带外侧）
+            const rho = Math.sqrt(rho2);
+            const cov = Math.min(1, rOut - rho);   // 覆盖率：外沿线性升到 1
+            if (cov <= 0) continue;
+            const nx = X / R, ny = Y / R;
+            const radial = rho / R;                // 0=月心 1=月缘
+            const nz = Math.sqrt(Math.max(0, 1 - radial * radial));
+            // 终止线回到几何位置（旧写法 dot<=0.02 直接跳过 → 暗面整片消失）
+            const dot = nx * lxNow + nz * lzNow;
+            const sun = Math.pow(Math.max(0, dot), 0.9);
+            // 周边限暗：满月最平（真实满月本就没什么立体感），上下弦最陡
+            const limb = 1 - limbKp * Math.pow(radial, 2.6);
+            // 双线性采样反照率 + 区间自适应标定到 0.80..1.28（月海:高地 ≈ 1.6:1）。
+            // 对比拉开后最近邻会露出块状，双线性只在静态层跑一次、成本可忽略
+            const fx = ((nx + 1) / 2) * N - 0.5;
+            const fy = ((1 - ny) / 2) * N - 0.5;
+            const ix0 = Math.floor(fx), iy0 = Math.floor(fy);
+            const tx = fx - ix0, ty = fy - iy0;
+            const cx0 = Math.min(N - 1, Math.max(0, ix0));
+            const cx1 = Math.min(N - 1, Math.max(0, ix0 + 1));
+            const cy0 = Math.min(N - 1, Math.max(0, iy0));
+            const cy1 = Math.min(N - 1, Math.max(0, iy0 + 1));
+            const s00 = albA[cy0 * N + cx0], s10 = albA[cy0 * N + cx1];
+            const s01 = albA[cy1 * N + cx0], s11 = albA[cy1 * N + cx1];
+            const t = (s00 * (1 - tx) + s10 * tx) * (1 - ty) + (s01 * (1 - tx) + s11 * tx) * ty;
+            const n01 = (t - moonAlbLo) / (moonAlbHi - moonAlbLo);
+            const alb = 0.80 + 0.48 * (n01 < 0 ? 0 : n01 > 1 ? 1 : n01);
+            // 受光面：只有太阳直射那一项
+            const lum = Math.min(1, EXPOSURE * sunGain * sun * alb * limb);
+            const warm = 1 + 0.05 * Math.max(0, dot); // 受光处偏暖
+            // 颜色只表达色温/亮度，alpha 只表达几何覆盖（两者解耦是本轮的核心）。
+            // occlude：只有**真的亮起来**的岩面才遮挡背景。暗面不遮挡——月盘周围那圈光晕
+            // 是大气散射，物理上就在月亮前面，会照亮整个盘面；旧写法暗面也不透明，盖住
+            // 光晕后成了夜空里一块比背景还暗的黑板（20260912 用户："黑底盘太假"）。
+            // 用 lum 而不是 sun 做判据：明暗交界带本来就该是"从透明渐显"（柔和的终止线），
+            // 而亮起来的部分（新月牙、满月盘）完全遮挡 → 月缘清晰
+            const occlude = Math.min(1, lum * 6);
+            data[i4] = Math.round(255 * lum * warm);
+            data[i4 + 1] = Math.round(255 * lum * 0.975 * warm);
+            data[i4 + 2] = Math.round(255 * lum * 0.92);
+            data[i4 + 3] = Math.round(cov * occlude * 255);
+        }
+    }
+    // 地球反照叠加层已下线（20260912 用户第二次反馈："我不希望看到他的底盘和边缘形状…
+    // 现在就能看到灰蒙蒙的月亮圆形轮廓"）。物理上地球反照是对的，但在这幅画里它表现为
+    // 一个边缘可辨的灰盘：夜空背景不是纯黑而是带光晕的蓝，任何"整圆"都会读成虚假的底盘。
+    // 结论：暗面完全不画（透出背景），只留受光的那部分。恢复时要重写一架 dataE/imgE
+    // 逐像素循环（旧实现随照片纹理一起删掉了）。
+    mg.putImageData(img, 0, 0);
+    moonSprite = { cv: mc, size: geo.size };
 };
 
 /* 性能（P2-2）：canvas 场景 dpr 上限。dpr 2 → 1.5 时全屏像素量 -44%
@@ -509,11 +557,12 @@ let slowTick = 0;
 /* ------------------------- 组件 ------------------------- */
 
 export default function RiverBoard() {
+    const navigate = useNavigate();
     const canvasRef = useRef<HTMLCanvasElement | null>(null);
     const layerRef = useRef<HTMLDivElement | null>(null);
     const metaRef = useRef<LanternMeta[]>([]);
     const nodesRef = useRef<Map<number, HTMLDivElement | null>>(new Map());
-    const viewRef = useRef({ w: 0, h: 0, yH: 0, dpr: 1, reduced: false, texApplied: false });
+    const viewRef = useRef({ w: 0, h: 0, yH: 0, dpr: 1, reduced: false });
     const mouseRef = useRef({ x: 0.5, y: 0.5, tx: 0.5, ty: 0.5 });
     const touchRef = useRef(false);
 
@@ -817,158 +866,30 @@ export default function RiverBoard() {
                 ctx.fill();
             }
 
-            // 月亮：真实月相（球面光照，无圆盘轮廓——暗面完全透明不画出）
-            // 光方向绕盘面左右旋转：β=0 满月（正面照），β=±π/2 上下弦（侧照），
-            // 盈月亮面在右、亏月亮面在左（北半球可见月相），β=±π 新月（背照）
-            const ph = moonPhase();
-            // 第 33 轮：月相细粒度 8 档离散（新月/蛾眉/上弦/盈凸/满月/亏凸/下弦/残月
-            // 各占 1/8 月龄）。此前光照方向 β 虽量化 8 档，但亮面占比 k 仍按连续
-            // age 渐变——相邻档的差异被连续渐变稀释，视觉上只感知到 4 种形态；
-            // 现 k 与 β 同步按 qAge 量化，8 种月相各自稳定清晰、档间跳变分明
-            // 8 档月相量化，但**夹住两端半档**（20260912 用户反馈"现在是峨眉月吧，结果月全食了"）：
-            // 月龄 0.5 天（真实是一弯细峨眉）在 round(0.017×8)/8 = 0 处被归成"新月"→ 亮面占比 0，
-            // 配合不透明月盘就成了夜空里一个黑盘（月全食观感）。夹到 1/16 后该相位是一弯细牙，
-            // 新月当天也始终有月牙可看（真实新月物理上确实几乎不可见，但观感上"没有月亮"更糟）
-            const qAge = Math.min(15 / 16, Math.max(1 / 16, Math.round(ph.age * 8) / 8));
-            const beta = Math.PI * (1 - 2 * Math.max(0, Math.min(1, qAge))); // 相位→光照角
-            const lInv = 1 / Math.hypot(Math.sin(beta), Math.cos(beta));
-            const lx = Math.sin(beta) * lInv, lz = Math.cos(beta) * lInv;
+            // 月亮：真实月相（球面光照，无圆盘轮廓——暗面完全透明不画出）。
+            // 月盘本体**不在这里**烘进静态层了（20260926）：它已经独立成 sprite，
+            // 每帧按设备整像素画在 baseFront 之后（见 buildMoonSprite 头注）——
+            // 静态层每帧按非整数视差偏移合成，月缘这种高频边缘会被反复重采样磨糊。
+            // 这里只留**月晕**：它是极低频的软渐变，烘进静态层看不出重采样，
+            // 也没必要每帧重建渐变。
+            const { lx: lxHalo, haloK } = moonPhaseParams();
             // 光晕以发光区域（亮月牙）中心为圆心向四周完整扩散（不再裁剪半圆）：
             // 圆心随月相偏到亮面侧，暗面侧自然远离光心渐弱，不再有生硬的半圆边界。
-            // 亮面占比 k 与 β 同步按 qAge 量化（新月几乎无光晕、满月最强）
-            const haloK = 0.35 + 0.65 * (1 - (1 + Math.cos(2 * Math.PI * qAge)) / 2);
-            const hx = mxMoon + lx * rMoon * 0.5, hy = myMoon;
+            // 注意：月晕的相位在**烘培时**定下（与改动前一致），页面开着跨过月相档
+            // 不会自己变——月盘 sprite 同此（两者同源同档，不会各飘一边）。
+            const hx = mxMoon + lxHalo * rMoon * 0.5, hy = myMoon;
             const halo = ctx.createRadialGradient(hx, hy, 0, hx, hy, w * 0.22);
             halo.addColorStop(0, `rgba(255,238,200,${0.26 * haloK})`);
             halo.addColorStop(0.3, `rgba(255,226,170,${0.09 * haloK})`);
             halo.addColorStop(1, "rgba(255,226,170,0)");
             ctx.fillStyle = halo;
             ctx.fillRect(hx - w * 0.32, hy - w * 0.32, w * 0.64, w * 0.64);
-            const rD = rMoon * 0.82;
-            const P = Math.max(8, Math.ceil(rD * 2 * v.dpr * 2));
-            const R = P / 2;
-            const mc = document.createElement("canvas");
-            mc.width = mc.height = P;
-            const mg = mc.getContext("2d")!;
-            const img = mg.createImageData(P, P);
-            const data = img.data;
-            /* 月面渲染（20260912 两轮返工后的定稿）：
-               ① alpha 与亮度解耦、且**只有受光面遮挡背景**（occlude = min(1, lum*6)）——
-                  暗面完全透出背景。曾试过两种"让暗面可见"的做法（不透明深灰盘 / lighter 加光层），
-                  用户两次都判为"假的圆形底盘"：夜空不是纯黑而是带光晕的蓝，任何整圆轮廓都会露馅；
-               ② 反照率进亮度域并拉开对比（旧的 0.5+1.2t 把照片纹理压成一片白，满月看不出月海）；
-               ③ 亮面亮度按相位归一（摄影语义：八种月相最亮点亮度一致）。 */
-            const EXPOSURE = 0.70;     // 亮面峰值 ≈ 0.70×1.28 = 0.90（229/255）：明亮但不满溢
-            // 相位亮度归一（摄影语义：相机按月亮曝光，八种月相的最亮点亮度应一致）：
-            // 不归一的话上下弦最亮点只有满月的约一半，叠加 8 档月相量化会看着"忽明忽暗"
-            // 额外的周边限暗压得很轻（0.12）：照片纹理自身已带月缘暗化，叠加会double成"黑圈"
-            const limbKp = 0.12 + 0.24 * (1 - Math.abs(lz));
-            const limbPeak = lz >= 0
-                ? 1 - limbKp * Math.pow(Math.abs(lx), 2.6)
-                : (1 - limbKp) * Math.pow(Math.abs(lx), 0.9);
-            const sunGain = Math.min(2.2, 1 / Math.max(0.05, limbPeak));
-            const rOut = R + 0.75;
-            for (let py = 0; py < P; py++) {
-                const Y = py + 0.5 - R;
-                for (let px = 0; px < P; px++) {
-                    const X = px + 0.5 - R;
-                    const i4 = (py * P + px) * 4;
-                    const rho2 = X * X + Y * Y;
-                    if (rho2 > rOut * rOut) continue;      // 盘外（含 1px 过渡带外侧）
-                    const rho = Math.sqrt(rho2);
-                    const cov = Math.min(1, rOut - rho);   // 覆盖率：外沿 0.75px 线性升到 1（抗锯齿）
-                    if (cov <= 0) continue;
-                    const nx = X / R, ny = Y / R;
-                    const radial = rho / R;                // 0=月心 1=月缘
-                    const nz = Math.sqrt(Math.max(0, 1 - radial * radial));
-                    // 终止线回到几何位置（旧写法 dot<=0.02 直接跳过 → 暗面整片消失）
-                    const dot = nx * lx + nz * lz;
-                    const sun = Math.pow(Math.max(0, dot), 0.9);
-                    // 周边限暗：满月最平（真实满月本就没什么立体感），上下弦最陡
-                    const limb = 1 - limbKp * Math.pow(radial, 2.6);
-                    let alb = 1;
-                    if (moonTexA) {
-                        // 双线性采样 + 区间自适应标定到 0.70..1.30（月海:高地 ≈ 1.6:1）。
-                        // 对比拉开后最近邻会露出 2× 块状，双线性只在静态层跑一次、成本可忽略；
-                        // 盘外(-1)按中位数顶替，避免月缘被 -1 拉出一圈黑边
-                        const fx = ((nx + 1) / 2) * moonTexN - 0.5;
-                        const fy = ((1 - ny) / 2) * moonTexN - 0.5;
-                        const ix0 = Math.floor(fx), iy0 = Math.floor(fy);
-                        const tx = fx - ix0, ty = fy - iy0;
-                        const cx0 = Math.min(moonTexN - 1, Math.max(0, ix0));
-                        const cx1 = Math.min(moonTexN - 1, Math.max(0, ix0 + 1));
-                        const cy0 = Math.min(moonTexN - 1, Math.max(0, iy0));
-                        const cy1 = Math.min(moonTexN - 1, Math.max(0, iy0 + 1));
-                        const s00 = moonTexA[cy0 * moonTexN + cx0];
-                        const s10 = moonTexA[cy0 * moonTexN + cx1];
-                        const s01 = moonTexA[cy1 * moonTexN + cx0];
-                        const s11 = moonTexA[cy1 * moonTexN + cx1];
-                        const t =
-                            ((s00 < 0 ? moonTexMed : s00) * (1 - tx) + (s10 < 0 ? moonTexMed : s10) * tx) * (1 - ty) +
-                            ((s01 < 0 ? moonTexMed : s01) * (1 - tx) + (s11 < 0 ? moonTexMed : s11) * tx) * ty;
-                        const n01 = (t - moonTexLo) / (moonTexHi - moonTexLo);
-                        // 0.80..1.28（月海:高地 ≈ 1.6:1）——下沿不再压到 0.70：纹理的月缘本来就暗，
-                        // 下沿过低会与周边限暗叠成"黑圈"（满月看着像镶了边）
-                        alb = 0.80 + 0.48 * (n01 < 0 ? 0 : n01 > 1 ? 1 : n01);
-                    } else {
-                        // 月海（静海/澄海/湿海等大块暗斑，柔边，暗区更明显）
-                        for (const [cx, cy, rx, ry] of MARIA) {
-                            const dx = nx - cx, dy = ny - cy;
-                            const d2 = (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry);
-                            if (d2 < 1) alb *= 1 - 0.6 * (1 - d2) * 0.55;
-                        }
-                        // 环形山：暗坑加深 + 受光侧亮缘
-                        for (const [cxc, cyc, rc] of CRATERS) {
-                            const dx = nx - cxc, dy = ny - cyc;
-                            const d2 = (dx * dx + dy * dy) / (rc * rc);
-                            if (d2 < 1) {
-                                const inner = 1 - d2;
-                                alb *= 1 - 0.5 * inner; // 坑底变暗（第 33 轮 0.44→0.5：小月亮上环形山更可辨）
-                                if (d2 > 0.55 && dx * lx > 0) alb *= 1 + 0.2 * inner; // 迎光壁更亮
-                            }
-                        }
-                        // 表面颗粒噪声（沿光方向的高地纹理，确定性哈希）——仅手写 fallback 用；
-                        // 照片纹理自带高频细节，叠加确定性哈希会在小月亮上形成"老人脸"麻点
-                        const hsh = Math.abs(Math.sin(nx * 21.7 + ny * 9.3) * 43758.53);
-                        alb *= 0.965 + 0.035 * (hsh - Math.floor(hsh));
-                    }
-                    // 受光面：只有太阳直射那一项（地球反照走下面单独的叠加层）
-                    const lum = Math.min(1, EXPOSURE * sunGain * sun * alb * limb);
-                    const warm = 1 + 0.05 * Math.max(0, dot); // 受光处偏暖
-                    // 颜色只表达色温/亮度，alpha 只表达几何覆盖（两者解耦是本轮的核心）。
-                    // occlude：只有**真的亮起来**的岩面才遮挡背景。暗面不遮挡——月盘周围那圈光晕
-                    // 是大气散射，物理上就在月亮前面，会照亮整个盘面；旧写法暗面也不透明，盖住
-                    // 光晕后成了夜空里一块比背景还暗的黑板（20260912 用户："黑底盘太假"）。
-                    // 用 lum 而不是 sun 做判据：明暗交界带本来就该是"从透明渐显"（柔和的终止线），
-                    // 而亮起来的部分（新月牙、满月盘）完全遮挡 → 月缘清晰
-                    const occlude = Math.min(1, lum * 6);
-                    data[i4] = Math.round(255 * lum * warm);
-                    data[i4 + 1] = Math.round(255 * lum * 0.975 * warm);
-                    data[i4 + 2] = Math.round(255 * lum * 0.92);
-                    data[i4 + 3] = Math.round(cov * occlude * 255);
-                    // 地球反照层（已下线，见下方合成处注释）。恢复时把下面三行放回去即可：
-                    //   const shade = Math.max(0, 1 - Math.max(0, dot) * 4);
-                    //   const earthL = earthBase * shade * alb * (0.55 + 0.45 * nz) * (1 - 0.22 * radial);
-                    //   dataE[i4] = 255*earthL*0.72; dataE[i4+1] = 255*earthL*0.82; dataE[i4+2] = 255*earthL;
-                    //   dataE[i4 + 3] = Math.round(cov * 255);   // 冷蓝灰，配合 lighter 只加光不压暗
-                }
-            }
-            mg.putImageData(img, 0, 0);
-            back.drawImage(mc, mxMoon - rD, myMoon - rD, rD * 2, rD * 2);
-            // 地球反照叠加层已下线（20260912 用户第二次反馈："我不希望看到他的底盘和边缘形状…
-            // 现在就能看到灰蒙蒙的月亮圆形轮廓"）。物理上地球反照是对的，但在这幅画里它表现为
-            // 一个边缘可辨的灰盘：夜空背景不是纯黑而是带光晕的蓝，任何"整圆"都会读成虚假的底盘。
-            // 结论：暗面完全不画（透出背景），只留受光的那部分 —— imgE/dataE 保留但不再合成，
-            // 想恢复只需把下面这三行放回来。
-            // mg.putImageData(imgE, 0, 0);
-            // back.save();
-            // back.globalCompositeOperation = "lighter";
-            // back.drawImage(mc, mxMoon - rD, myMoon - rD, rD * 2, rD * 2);
-            // back.restore();
-            /* 月缘近场辉光（写实化第 2 项的补偿）已下线（20260912 同上）：它是一圈内半径
-               1.0·rMoon 的环形渐变，暗面侧会露出一段圆弧内边界 —— 那正是"月亮的圆形轮廓"。
-               光晕统一由上面那道以亮面为圆心、半径 0.22w 的软光晕承担（无内边界、不成环） */
-
+            /* 地球反照叠加层已下线（20260912 用户第二次反馈："我不希望看到他的底盘和边缘形状…
+               现在就能看到灰蒙蒙的月亮圆形轮廓"）。物理上地球反照是对的，但在这幅画里它表现为
+               一个边缘可辨的灰盘：夜空背景不是纯黑而是带光晕的蓝，任何"整圆"都会读成虚假的底盘。
+               结论：暗面完全不画（透出背景），只留受光的那部分。
+               月缘近场辉光同理（内半径 1.0·rMoon 的环形渐变，暗面侧会露出一段圆弧内边界——
+               那正是"月亮的圆形轮廓"）；光晕统一由上面那道以亮面为圆心、半径 0.22w 的软光晕承担。 */
 
             // 云影（静态，随视差层缓慢移动）
             ctx.fillStyle = "rgba(24,32,60,0.10)";
@@ -1060,6 +981,16 @@ export default function RiverBoard() {
 
         prep(back);
         draw(back);
+
+        // 月盘 sprite（**只在这里建一次**：draw() 会被 back/front 各调一次，
+        // 逐像素的月面循环放进去等于白算一遍）——几何用未加视差的位置，
+        // 视差在每帧落位时加（不然视差一动 sprite 就得重建）
+        buildMoonSprite(moonSpriteGeometry(
+            w * MOON.x,
+            h * MOON.y,
+            Math.min(w, h) * MOON.r * 0.82 * 2,
+            v.dpr,
+        ));
 
         prep(front);
         front.drawImage(backCv, -MARGIN, -MARGIN, w + MARGIN * 2, h + MARGIN * 2);
@@ -1357,16 +1288,6 @@ export default function RiverBoard() {
     // 不再剥夺它们）
     const drawScene = (ctx: CanvasRenderingContext2D, t: number, reduce: boolean, sysReduce: boolean, baseBack: HTMLCanvasElement, baseFront: HTMLCanvasElement) => {
         if (!amb) return;
-        // 第 34 轮：真实月面纹理（幂等，onload 后 moonTexA 就绪）
-        // 第 37 轮：月亮画在静态层（renderBase 仅初始化/resize 时渲染），
-        // 纹理异步就绪时静态层早已用 fallback 画完且永不重画——照片纹理从未
-        // 真正上月亮（用户看到的麻点=fallback 颗粒噪声）。就绪后重绘一次：
-        loadMoonTex(() => {
-            if (baseBack && !viewRef.current.texApplied) {
-                viewRef.current.texApplied = true;
-                renderBase(baseBack, baseFront);
-            }
-        });
         const v = viewRef.current;
         const { w, h } = v;
         const px = (mouseRef.current.x - 0.5) * 40; // 第 23 轮：左右视角加大（26 → 40）
@@ -1380,6 +1301,20 @@ export default function RiverBoard() {
         // 静态层合成（带视差）
         ctx.drawImage(baseBack, px * 0.2 - MARGIN, py * 0.1 - MARGIN, w + MARGIN * 2, h + MARGIN * 2);
         ctx.drawImage(baseFront, px * 0.42 - MARGIN, py * 0.2 - MARGIN, w + MARGIN * 2, h + MARGIN * 2);
+
+        /* 月盘（20260926）：**设备整像素**落位 + 恒等变换 1:1 落屏 —— 这一笔是
+           "月亮糊"的根治。静态层那两笔用非整数 CSS 偏移 + dpr 变换合成，月缘这种
+           高频边缘每帧被双线性重采样磨一次；月盘单独拿出来按设备像素画，零重采样。
+           视差与静态层走同一层（0.2/0.1，与星辰一致——月亮本就在星空间一平面）。 */
+        if (moonSprite) {
+            const rD = Math.min(w, h) * MOON.r * 0.82;
+            const geo = moonSpriteGeometry(w * MOON.x + px * 0.2, h * MOON.y + py * 0.1, rD * 2, v.dpr);
+            ctx.save();
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.imageSmoothingQuality = "high";   // sprite 是 2× 超采样，缩下来要缩得干净
+            ctx.drawImage(moonSprite.cv, geo.x, geo.y, geo.size, geo.size);
+            ctx.restore();
+        }
 
         // 水面动态（河流裁剪区内）
         ctx.save();
@@ -1757,11 +1692,6 @@ export default function RiverBoard() {
             };
             baseBack = makeBase();
             baseFront = makeBase();
-            loadMoonTex(); // 第 37 轮：提前开始加载（renderBase 前），缩短 fallback 暴露时间
-            // 纹理已就绪就标 true：drawScene 里那个「纹理到达后补画一次」的回调是同步执行的
-            // （loadMoonTex 已加载时立即回调），标 false 会让每次 resize 白跑两遍 renderBase
-            //（含月面 10-15 万像素循环）
-            viewRef.current.texApplied = !!moonTexA;
             renderBase(baseBack, baseFront);
         };
 
@@ -2658,6 +2588,11 @@ export default function RiverBoard() {
                 <button className="rz-wish-btn" type="button" onClick={openWishFlow}>
                     <i />
                     此心为灯
+                </button>
+                {/* 回主页（20260926 用户反馈：沉浸页进来了就出不去，只能改地址栏）。
+                    走 router 跳转而不是整页刷新——/guestbook 与首页在同一棵树里 */}
+                <button className="rz-home-btn" type="button" onClick={() => navigate("/")}>
+                    回主页
                 </button>
             </div>
             {/* 此心为灯 · 留言流程：选灯型 → 选印章 → 书写放下 */}
