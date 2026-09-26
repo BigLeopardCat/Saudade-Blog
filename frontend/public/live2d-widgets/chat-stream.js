@@ -686,80 +686,41 @@
         // 能访问已收到的命令帧——实测反射质检挂起 → 流中断 → catch 分支不解析导航，
         // AUTO_NAVIGATE 命令白发、用户"卡死"且不跳转（20260827g 修复）
         let cmdText = '', displayText = '';
+        // 程序命令缓冲（20260926 批 2）：`__CMD__:<json>` 帧是**唯一**的执行来源——
+        // 命令从"工具返回的字符串"搬到了执行回执的 `cmd`（见 agent/graph.py 的
+        // _cmd_wire 与 execute_node），agent 侧单独发这一族帧。
+        // 与 cmdText 分开是刻意的：cmdText 装的是**模型正文里写的**命令行（幻觉/元讨论
+        // 的产物，只用来解析导航意图、绝不无条件执行），programCmds 装的是**系统程序帧**。
+        // 混在一起就退回"正文里打的命令也会执行"的老路（20260926 用户已拍板废除）。
+        let programCmds = [];
         // 过程行累积也提升到 try 外：catch 异常路径保存回复时要带过程行（20260827g）
         let steps = [];
-        // 命令解析执行（导航/特效/夜间模式）：正常收尾与异常中断共用（20260827g）。
-        // 历史教训见原内联注释：模型幻觉"去X板块"时手写命令文本（多为相对路径
-        // AUTO_NAVIGATE:/talk），旧实现只认完整 URL → 幻觉命令静默失效 → "没转跳"。
-        // 因此：① fullText 命令行锚定解析（AUTO_NAVIGATE→直接跳 / NAVIGATE→确认，
-        // 支持相对路径与格式漂移）；② 无命令行时回退正文链接（确认式）。
+        // 命令执行（导航/特效/夜间模式）：正常收尾与异常中断共用（20260827g）。
+        //
+        // **20260926 批 2 重写：只吃程序帧（`__CMD__`），不再扫正文。**
+        // 旧版有两个来源：① 正文里的行首命令帧（cmdText）；② 一段很长的"正文兜底"扫描
+        // ——markdown 链接、中文动词（"转跳/打开/前往"）、伪工具调用签名。② 已整体删除
+        // （用户拍板「废除，只认程序帧」）：模型打在正文里的命令**执行不执行**取决于
+        // 它自己的措辞，一条幻觉出来的相对路径就能把页面带走，而"它到底想干什么"在
+        // 正文里根本无法与"它在举例讲机制"区分开。现在命令只有一个来源：系统执行过
+        // 什么，就有 `cmd` 回执（checker PASS 才算），前端照单执行。
+        // 正文里的命令文本仍然**照旧隐藏不显示**（COMMAND_RE 分流进 cmdText），
+        // 只是不再被执行——这是"看得见但不生效"，比"看起来没发生其实发生了"安全。
+        // BLOG_ROUTES 白名单 + 同源校验保留（纵深防御：帧里也可能带出一个幻觉 URL，
+        // 而 agent 侧的 navigate 技能模板只解析 NAV_MAP，理论上到不了这里）。
         // contentSpan 为 null 时（catch 异常路径，错误气泡已提示）跳过注记插入。
-        const execAgentCommands = (fullText, contentSpan) => {
-            // 20260920：正文兜底解析一律在**剥掉引号/内联代码区**的文本上做（scan）——
-            // 那些区里的命令前缀是模型在举例讲机制，不是要执行的动作（agent 侧 gate
-            // 同步豁免这类提及，见 chat-core.js stripMentionSpans 注释）。真实命令走
-            // fullText 里的行首命令帧（cmdText），无引号无反差，剥离不影响它们。
-            const scan = ctx.core.stripMentionSpans(fullText);
-            const cmdNav = (() => {
-              let last = null;
-              for (const line of scan.split('\n')) {
-                const m = line.match(/^\s*(AUTO_NAVIGATE|NAVIGATE)\s*:\s*((?:https?:)?\/\/[^\s一-鿿　-〿＀-￯]+|\/[\w\-._~/]*)/i);
-                if (!m) continue;
-                // 去掉行尾中文/ASCII 标点（URL 内合法的 . 必须保留——域名全靠它）
-                let url = m[2].replace(/[，。,.?!；;]+$/, '');
-                if (url.startsWith('//')) url = 'https:' + url;       // 协议相对 → 补全 scheme
-                else if (!/^https?:/i.test(url)) url = 'https://saudade.site' + url; // 相对路径 /talk → 站点根
-                if (!/^https?:\/\//i.test(url)) continue;
-                last = { url, direct: m[1].toUpperCase() === 'AUTO_NAVIGATE' };
-              }
-              return last;  // 取最后命中：REVISE 轮次的旧命令已作废，最终轮的才算数
-            })();
-            // 正文兜底解析：模型可能把命令写进回复正文（token 分帧后进不了 cmdText）。
-            // 旧实现只认 https:// 完整 URL——幻觉命令多为相对路径（AUTO_NAVIGATE:/talk）
-            // 或与下文粘连无换行（AUTO_NAVIGATE:/device-console主人，...），解析失败
-            // 则静默无跳转。现在：① 命令前缀后支持完整 URL/协议相对/站内相对路径，
-            // URL 字符集天然截断粘连中文；② AUTO_NAVIGATE 前缀即使出现在正文也按
-            // "直接跳"处理——BLOG_ROUTES 白名单 + 同源 host 校验兜底，不会放行非法目标。
-            const fallbackNav = (() => {
-              // 取最后一处命令命中：多轮 REVISE 文本拼接时，靠前的命令属于被作废的
-              // 旧轮次（曾出现旧轮次 AUTO_NAVIGATE:/ 根路径顶掉最终正确命令的案例）
-              const m1s = [...scan.matchAll(/(AUTO_NAVIGATE|NAVIGATE):\s*((?:https?:)?\/\/[^\s一-鿿　-〿＀-￯]+|\/[\w\-._~/]*)/gi)];
-              const m1 = m1s.length ? m1s[m1s.length - 1] : null;
-              if (m1) {
-                // 去掉行尾中文/ASCII 标点（URL 内合法的 . 必须保留——域名全靠它）
-                let url = m1[2].replace(/[，。,.?!；;]+$/, '');
-                if (url.startsWith('//')) url = 'https:' + url;            // 协议相对 → 补全 scheme
-                else if (!/^https?:/i.test(url)) url = 'https://saudade.site' + url; // 相对路径 → 站点根
-                if (/^https?:\/\//i.test(url)) {
-                  return { url, direct: m1[1].toUpperCase() === 'AUTO_NAVIGATE' };
-                }
-              }
-              // 站内相对路径 markdown 链接（确认式）
-              // （排除 // 开头，避免误吞协议相对地址）
-              const m2b = scan.match(/\[([^\]]+)\]\((\/(?!\/)[^)]+)\)/);
-              if (m2b) return { url: 'https://saudade.site' + m2b[2], direct: false };
-              // 完整 URL markdown 链接（确认式）：scheme 必须存在（http(s):// 或 // 开头），
-              // 否则 [文字](/article/16) 会被拼成 https:///article/16 这种坏链接
-              const m2 = scan.match(/\[([^\]]+)\]\(((?:https?:)?\/\/[^)]+)\)/);
-              if (m2) {
-                let url = m2[2];
-                if (url.startsWith('//')) url = 'https:' + url;
-                return { url, direct: false };
-              }
-              // 中文命令 + 裸 URL（确认式）：排除空白/中日韩字符（URL 内合法的 . 和 , 保留），
-              // 仅去掉结尾的 ASCII 标点（避免 https://example.com 被截成 https://example）
-              const m3 = scan.match(/(?:转跳|跳转|打开|前往|导航到)\s*(https?:\/\/[^\s一-鿿　-〿＀-￯]+)/i);
-              if (m3) return { url: m3[1].replace(/[,.;!?]+$/, ''), direct: false };
-              // 中文命令 + 裸站内相对路径（确认式）：无命令前缀的相对路径无法区分
-              // "转跳 /guestbook" 与正文里的 "/article/16" 引用，故不直接跳，弹确认框
-              const m3b = scan.match(/(?:转跳|跳转|打开|前往|导航到)\s*(\/[\w\-._~/]+)/i);
-              if (m3b) return { url: 'https://saudade.site' + m3b[1], direct: false };
-              return null;
-            })();
-            const navUrl = cmdNav ? cmdNav.url : (fallbackNav && fallbackNav.url);
-            if (navUrl) {
-              // 直接跳转 = 命令行锚定命中 AUTO_NAVIGATE，或正文兜底解析到 AUTO_NAVIGATE 前缀
-              const isDirect = (cmdNav ? cmdNav.direct : false) || (fallbackNav ? fallbackNav.direct : false);
+        const execAgentCommands = (cmds, contentSpan) => {
+            // 取**最后一条**导航命令：多轮里靠前的命令可能属于被作废的轮次
+            // （`__RESET__` 已清缓冲，这里再取最后一条是双保险）。
+            let navCmd = null;
+            for (const c of (cmds || [])) {
+              if (c && c.kind === 'navigate' && c.url) navCmd = c;
+            }
+            if (navCmd) {
+              let navUrl = String(navCmd.url).replace(/[，。,.?!；;]+$/, '');
+              if (navUrl.startsWith('//')) navUrl = 'https:' + navUrl;       // 协议相对 → 补全 scheme
+              else if (!/^https?:/i.test(navUrl)) navUrl = 'https://saudade.site' + navUrl; // 相对路径 /talk → 站点根
+              const isDirect = navCmd.mode !== 'confirm';
               // 防呆：自动整页跳转前校验目标是博客真实路由。agent 可能幻觉出不存在的
               // 页面（如 /iot），跳过去会丢失整站布局与聊天面板（曾导致"文本框卡死"）。
               // 不在白名单内的目标取消跳转，并在对话框追加系统提示。
@@ -803,35 +764,22 @@
                 console.warn('[nav] 确认式跳转已停用（不弹卡、不跳转）');
               }
             }
-            // 处理特效切换命令（支持 EFFECT:name 按钮式切换 / EFFECT:name:on|off 显式开关）
-            // 容忍格式漂移：模型可能在正文里输出 "EFFECT: sakura on"（带空格/无冒号分隔）等变形，
-            // 一律按显式意图执行；中文/无命令参数（EFFECT: 后跟正文）不会被 \w+ 匹配，安全
-            const effectMatch = scan.match(/EFFECT:\s*(\w+)\s*:?\s*(\w+)?/);
-            if (effectMatch) {
-              const eff = effectMatch[1];
-              const action = effectMatch[2];
-              toggleEffect(eff, action);
-            }
-            // 兜底：模型未真正调用工具、仅把工具调用写进正文时（如 toggle_effect(effect="sakura", action="on")），
-            // 按工具调用签名解析并执行，保证特效/夜间模式必定生效
-            const toolCall = scan.match(/toggle_effect\s*\(\s*effect\s*=\s*["'](\w+)["']\s*,?\s*action\s*=\s*["'](on|off)["']\s*\)/i)
-              || scan.match(/toggle_dark_mode\s*\(\s*mode\s*=\s*["'](on|off)["']\s*\)/i);
-            if (toolCall) {
-              if (toolCall[0].startsWith('toggle_effect')) {
-                toggleEffect(toolCall[1], toolCall[2]);
-              } else if (toolCall[0].startsWith('toggle_dark_mode')) {
-                markVisitorChoice(toolCall[1] === 'on');
-                applyDarkMode(toolCall[1] === 'on', true);
+            // 特效/夜间模式：同样只认程序帧（批 2）。旧版这里有一条 `EFFECT:\s*(\w+)`
+            // 的正则和一条"伪工具调用签名"兜底（`toggle_effect(effect="sakura", …)`）——
+            // 后者是**模型在正文里表演调用工具时照样执行**，正是批 2 要废除的那条通道。
+            for (const c of (cmds || [])) {
+              if (!c) continue;
+              if (c.kind === 'effect') {
+                // effect: sakura/rain/snow，action: on/off（agent 侧已按枚举校验过）
+                toggleEffect(String(c.effect || ''), c.action === 'off' ? 'off' : 'on');
+              } else if (c.kind === 'darkmode') {
+                // 通过对话让 agent 调节同样代表访客意愿：开夜间任何时段都记，关夜间只在夜间
+                // 窗口内记（见 markVisitorChoice），自动切换据此让位；
+                // animate=true 触发与手动点击切换按钮相同的日月过渡动画
+                const on = c.mode !== 'off';
+                markVisitorChoice(on);
+                applyDarkMode(on, true);
               }
-            }
-            // 处理夜间模式命令（DARKMODE:on|off）
-            // 通过对话让 agent 调节同样代表访客意愿：开夜间任何时段都记，关夜间只在夜间
-            // 窗口内记（见 markVisitorChoice），自动切换据此让位；
-            // animate=true 触发与手动点击切换按钮相同的日月过渡动画
-            const darkMatch = scan.match(/DARKMODE:\s*(on|off)/);
-            if (darkMatch) {
-              markVisitorChoice(darkMatch[1] === 'on');
-              applyDarkMode(darkMatch[1] === 'on', true);
             }
         };
         // 20260828a：agent 回复保存统一走 saveHistory（唯一写者，含变更检测），
@@ -1103,8 +1051,23 @@
                 }
                 cmdText = '';
                 displayText = '';
+                // programCmds 必须一起清（20260926 批 2）：被打回那一轮的命令帧
+                // 已经进了这个缓冲，不清的话 gate 明明否定了整轮、收尾照旧执行它——
+                // 用户看到的是"它道歉了但还是跳了"。与 Rust 清 reply、golden 清
+                // commands 是同一个动作的三端版本。
+                programCmds = [];
                 contentSpan.textContent = '';
                 broadcast({t: 'reset', reason, roundId});  // 多标签同步：清空废轮次文本
+                continue;
+              }
+              // 程序命令帧（20260926 批 2）：命令的**唯一**合法来源。分支必须放在
+              // 下面 COMMAND_RE 分流**之前**——`__CMD__:{…}` 落进 displayText 会被
+              // 当正文渲染出一坨 JSON；落进 cmdText 则等于"正文里的命令也执行"。
+              // 只进 programCmds，不进任何展示文本。
+              if (text.startsWith('__CMD__:')) {
+                let cmd = null;
+                try { cmd = JSON.parse(text.slice('__CMD__:'.length)); } catch (e) {}
+                if (cmd && typeof cmd === 'object') programCmds.push(cmd);
                 continue;
               }
               // 命令行与展示文本分流：命令行不渲染（含模型幻觉输出的变形命令如 SNOW_EFFECT:）
@@ -1164,9 +1127,10 @@
             if (div.parentNode) div.parentNode.removeChild(div);
             broadcast({t: 'done', id: roundId, fullText: '', time: Date.now(), process: [], roundId});
           }
-          // 命令解析执行（导航/特效/夜间模式）——正常收尾路径：
-          // 完整文本含命令行（fullText = cmdText + displayText），已收到的命令帧在此执行
-          execAgentCommands(fullText, contentSpan);
+          // 命令执行（导航/特效/夜间模式）——正常收尾路径。
+          // 传的是**程序帧缓冲**而不是 fullText（批 2）：正文里写的命令行只用于
+          // 解析意图、不再执行（见 execAgentCommands 的长注）。
+          execAgentCommands(programCmds, contentSpan);
         } catch(e) {
           // 20260903 会话已删（skipFailedPersist 标记）：输入已还原、乐观条目已移除、
           // handleConvGone 已触发恢复流程——这里只静默收尾（finally 复位 UI/busy/
@@ -1234,8 +1198,8 @@
                 delete ctx.state.live[roundId];
               }
               // 异常中断也执行已收到的命令帧（20260827g）：流中断不代表命令无效——
-              // 反射质检挂起导致的断流里 AUTO_NAVIGATE/EFFECT/DARKMODE 帧可能已到达
-              try { execAgentCommands(cmdText + displayText, null); } catch(e2) {/* ignore */}
+              // 反射质检挂起导致的断流里 `__CMD__` 帧可能已到达（批 2 起命令只走程序帧）
+              try { execAgentCommands(programCmds, null); } catch(e2) {/* ignore */}
               // 失败气泡重发/编辑按钮（20260829h）：非主动停止的失败轮。
               // silent 轮不给（重发一条确认请求没有意义：它会变成一个真发言）
               if (!silent) {
@@ -1274,7 +1238,7 @@
             } else {
               delete ctx.state.live[roundId];
             }
-            try { execAgentCommands(cmdText + displayText, null); } catch(e2) {/* ignore */}
+            try { execAgentCommands(programCmds, null); } catch(e2) {/* ignore */}
             // 20260902：网络错误同样记持久化失败标记（与 AbortError 分支一致——
             // 用户刷新后要能看到"这条没收到回复"而不是只有一条孤立 user 消息）
             // silent 轮无用户消息可标记（同上）

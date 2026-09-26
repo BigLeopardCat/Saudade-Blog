@@ -189,7 +189,7 @@ console.log('\n⑥ 版本号：改了 widget 脚本必须 bump（nginx 对 live2
     const widget = readFileSync(path.join(root, 'public/live2d-widgets/autoload.js'), 'utf8');
     const ver = (widget.match(/const VER = '([^']+)'/) || [])[1];
     ok(!!ver, '能读到 autoload.js 的 VER');
-    ok(ver === '20260926c', 'VER 已 bump 到本轮（20260926c）', { ver });
+    ok(ver === '20260926d', 'VER 已 bump 到本轮（20260926d）', { ver });
     const tsx = readFileSync(path.join(root, 'src/components/Live2dAgent/index.tsx'), 'utf8');
     ok(tsx.includes('autoload.js?v=' + ver), 'Live2dAgent 的 ?v= 与 VER 一致');
 }
