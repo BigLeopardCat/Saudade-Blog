@@ -421,7 +421,9 @@ const ReadArticle = () => {
                                 <h1>{article?.noteTitle}</h1>
                                 <h3>{dayjs(article?.updateTime).format("YYYY-MM-DD")}</h3>
                                 {/* 收藏按钮（20260922）：横幅信息卡里，与日期同排。
-                                    文案随状态变——收藏是布尔量，不该让用户自己猜现在是哪种状态 */}
+                                    文案随状态变——收藏是布尔量，不该让用户自己猜现在是哪种状态。
+                                    20260926：文案包一层 span 是为了竖排（标题一长会把「已收藏」
+                                    挤成两行）——写法定在 .readFavLabel 里，见 index.sass */}
                                 <div className="readFavWrap">
                                     <button
                                         type="button"
@@ -430,7 +432,7 @@ const ReadArticle = () => {
                                         onClick={toggleFavorite}
                                     >
                                         <span aria-hidden="true">{faved ? '★' : '☆'}</span>
-                                        {faved ? '已收藏' : '收藏'}
+                                        <span className="readFavLabel">{faved ? '已收藏' : '收藏'}</span>
                                     </button>
                                 </div>
                                 <motion.div

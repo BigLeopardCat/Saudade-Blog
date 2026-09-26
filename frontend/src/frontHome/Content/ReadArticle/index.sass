@@ -78,14 +78,19 @@ html
 
       // 收藏按钮（20260922）：横幅一直是深色遮罩上的浅字，所以按钮自带描边、
       // 不跟主题变量走（浅色主题下这块背景也是深色，用主题色会看不见）
+      // 20260926：文案改竖排——`.readInfo` 是 flex 行，标题一长就把这块挤窄，
+      // 「已收藏」被折成两行（用户报的是「已收」「藏」）。竖排后不论被挤多窄都是
+      // 一列，`flex: 0 0 auto` 同时保证被挤的是标题那一块而不是它。
       .readFavWrap
         margin-top: 6px
+        flex: 0 0 auto
 
         .readFavBtn
           display: inline-flex
+          flex-direction: column
           align-items: center
-          gap: 4px
-          padding: 2px 12px
+          gap: 2px
+          padding: 6px 8px
           font-size: 13px
           line-height: 22px
           color: #fff1eb
@@ -94,6 +99,14 @@ html
           border-radius: 999px
           cursor: pointer
           transition: 0.25s
+
+          // 竖排文案：CJK 天然直立，`upright` 让 ★ 也直立（默认 mixed 会把它转向）
+          .readFavLabel
+            writing-mode: vertical-rl
+            text-orientation: upright
+            white-space: nowrap
+            line-height: 1.1
+            letter-spacing: 1px
 
           &:hover
             background: rgba(255, 241, 235, 0.16)
