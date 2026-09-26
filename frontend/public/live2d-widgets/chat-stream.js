@@ -1286,6 +1286,9 @@
           // 确认请求的结算（20260924）：卡片那句「确认中…」必须由**本轮的真实结果**
           // 落地——成功 → 「已确认，结果见下方回复」；失败 → 「不确定」（见 askUnknown：
           // 请求发出去过就不再放行重试，重签一次字可能造成第二次执行）。
+          // 方向词与屏幕顺序是**绑死**的：卡在上、结果气泡在下（dd81fca 的定位 + 位置
+          // 对齐的"空气"集合，浏览器级判据见 confirm-card 沙箱 ⑩b/⑩c）。只改这个词而
+          // 不搬卡片，就是让卡片说一句与屏幕相反的话——20260926 被人单独改过一次，已回退。
           // 放在 finally 是刻意的：正常收尾、异常、停止生成、会话已删四条路都汇聚
           // 在此，且 isSending/按钮复位已在上面跑完。被忙守卫挡下的那一类不走这里
           // （它们在 sendMessage 里就 onDropped 回滚了，压根没登记在途标记）。
@@ -1293,7 +1296,7 @@
             const cr = ctx.state.confirmRound;
             ctx.state.confirmRound = null;
             if (cr.failed) askUnknown(cr.failed);
-            else askSettle('已确认，结果见上方回复', undefined, 'ok');
+            else askSettle('已确认，结果见下方回复', undefined, 'ok');
           }
           // 流式中被推迟的 DB 拉取在此补拉（storage 事件可能在流中到达）
           if (ctx.state.pendingPull) { ctx.state.pendingPull = false; setTimeout(pullHistory, 0); }
