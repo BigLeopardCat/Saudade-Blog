@@ -992,7 +992,17 @@
               if (payload.startsWith('__ERROR__:')) {
                 let detail = payload.slice(10);
                 try { detail = JSON.parse(detail); } catch(e) {}
-                throw new Error(detail);
+                // userText（20260927）：这个帧是**服务端自己写的那句话**（三种终止帧
+                // 之一），不是网络故障 ⇒ 原样展示，不套「网络错误: 」前缀——同 409
+                // 令牌那条的先例（见下方 resp.status===409 分支的 usedErr）。
+                // 事故依据：20260927 07:29 服务端发的是 `'pending_confirm'`（一个内部
+                // KeyError 的名字），前端照旧套前缀，主人读到的是「网络错误: 'pending_confirm'」
+                // ——名字错（不是网络问题）、内容也看不懂。服务端那一半已改成中文话术
+                // （server.PRODUCER_ERROR_TEXT）；这一半保证即使将来载荷再变回难懂的
+                // 字符串，也至少不会被**错误地**读成一次连接故障。
+                const errFrame = new Error(detail);
+                errFrame.userText = String(detail);
+                throw errFrame;
               }
               if (payload === '__END__' || payload === '__NAV_END__') { sawEnd = true; continue; }
               // 终止帧之后还有帧：行为不变（照常处理，不吞），但要响亮——这正是
