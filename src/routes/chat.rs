@@ -973,40 +973,73 @@ fn render_exec_row(row: &serde_json::Value) -> String {
         // 信是一对一写的），措辞必须分开——回执行会经 recent_executions 注入下一轮，
         // 把两者写成同一个词，planner 就会拿通知的 id 去标记信（反之亦然）。
         "list_my_messages" => "查看站内信".to_string(),
-        // 写三件（scope=write.own）：**回执不带 meta**——AUDIT_SCOPES 只含 write.console
-        // （test_authz 精确锁着），所以这里只能从 args 渲染。args 一律是字符串
-        // （见 py_int_list 的头注：`all` 的 bool 过来是 Python repr 的 "True"）。
+        // 写三件（scope=write.own）：走真写路径时**回执不带 meta**——AUDIT_SCOPES 只含
+        // write.console（test_authz 精确锁着），所以那种行只能从 args 渲染。args 一律是
+        // 字符串（见 py_int_list 的头注：`all` 的 bool 过来是 Python repr 的 "True"）。
         // 收藏行**刻意不带《标题》**：同上面那句纪律（会经 recent_executions 注入
         // 下一轮，被读成"我读过这篇"的跨轮指代证据）。
         // 措辞与 agent 侧 server.py _tool_action_text 的同名臂**逐字一致**：预告帧
         // 与落库回执行是同一件事的两处渲染，不一致会让主人以为发生了两件事。
-        "add_favorite" => format!("收藏文章 {}", arg("article_id")),
-        "remove_favorite" => format!("取消收藏文章 {}", arg("article_id")),
-        "read_notifications" => {
-            let want_all = matches!(arg("all").as_str(), "True" | "true" | "1");
-            if want_all {
-                "标记站内通知已读（全部未读）".to_string()
+        //
+        // **工具短路那次改读 `change`（20260926）**：这四件在工具层有幂等短路——目标
+        // 状态本来就已经是它要的样子时**不发写请求**（agent 侧 `tools/base.py`），回执带
+        // `noop: True` + `change`；`graph.py` 的 meta 闸**只在这种短路回执上**放行
+        // `change` 这一个键（真写路径一个字都不放，所以这里的 `change.is_empty()`
+        // 分支在走真写时**必然**成立）。短路那种行的动作词必须整个不出现：它会经
+        // recent_executions 注回下一轮上下文，写「收藏文章 12」就是在说"我动过你的
+        // 收藏"——主人问"你刚才动过我收藏吗"，planner 看到的正是这一行。
+        // 对象（哪一篇/哪几条）要留着，动作词丢掉。
+        "add_favorite" | "remove_favorite" => {
+            let id = arg("article_id");
+            let change = row["change"].as_str().unwrap_or("");
+            if change.is_empty() {
+                if tool == "add_favorite" {
+                    format!("收藏文章 {}", id)
+                } else {
+                    format!("取消收藏文章 {}", id)
+                }
             } else {
-                let ids = py_int_list(&arg("ids"));
-                match ids.len() {
-                    0 => "标记站内通知已读".to_string(),
-                    n if n > 3 => format!("标记站内通知已读（{} 等 {} 条）",
-                                          ids[..3].join("、"), n),
-                    _ => format!("标记站内通知已读（{}）", ids.join("、")),
+                // 「文章 12 本来已收藏（未改动）」
+                format!("文章 {} {}（未改动）", id, change)
+            }
+        }
+        "read_notifications" => {
+            let change = row["change"].as_str().unwrap_or("");
+            if !change.is_empty() {
+                // 「站内通知本来就没有未读的（未改动）」——同上面那条：动作词不出现。
+                format!("站内通知{}（未改动）", change)
+            } else {
+                let want_all = matches!(arg("all").as_str(), "True" | "true" | "1");
+                if want_all {
+                    "标记站内通知已读（全部未读）".to_string()
+                } else {
+                    let ids = py_int_list(&arg("ids"));
+                    match ids.len() {
+                        0 => "标记站内通知已读".to_string(),
+                        n if n > 3 => format!("标记站内通知已读（{} 等 {} 条）",
+                                              ids[..3].join("、"), n),
+                        _ => format!("标记站内通知已读（{}）", ids.join("、")),
+                    }
                 }
             }
         }
         "read_messages" => {
-            let want_all = matches!(arg("all").as_str(), "True" | "true" | "1");
-            if want_all {
-                "标记站内信已读（全部未读）".to_string()
+            let change = row["change"].as_str().unwrap_or("");
+            if !change.is_empty() {
+                // 「站内信本来就读过（未改动）」
+                format!("站内信{}（未改动）", change)
             } else {
-                let ids = py_int_list(&arg("ids"));
-                match ids.len() {
-                    0 => "标记站内信已读".to_string(),
-                    n if n > 3 => format!("标记站内信已读（{} 等 {} 条）",
-                                          ids[..3].join("、"), n),
-                    _ => format!("标记站内信已读（{}）", ids.join("、")),
+                let want_all = matches!(arg("all").as_str(), "True" | "true" | "1");
+                if want_all {
+                    "标记站内信已读（全部未读）".to_string()
+                } else {
+                    let ids = py_int_list(&arg("ids"));
+                    match ids.len() {
+                        0 => "标记站内信已读".to_string(),
+                        n if n > 3 => format!("标记站内信已读（{} 等 {} 条）",
+                                              ids[..3].join("、"), n),
+                        _ => format!("标记站内信已读（{}）", ids.join("、")),
+                    }
                 }
             }
         }
@@ -1823,6 +1856,8 @@ mod tests {
     /// 两件事：① 三个读臂 + 三个写臂都不落默认分支（落了就把 `操作记录(add_favorite)`
     /// 这种内部工具名写进 execution_log，narrator 跨轮读到会照抄给用户）；② 编号认不出
     /// 时宁可少说一条，也**绝不**猜一个 id 进去。
+    /// 20260926 补第三件：这四个写臂在**工具短路**（目标状态本来就已经是它要的样子）
+    /// 时带上 `change` ⇒ 动作词整个不出现、只留对象与现状——见本函数末尾那一组断言。
     #[test]
     fn exec_row_userdata_reads_and_writes() {
         for (tool, want) in [
@@ -1873,6 +1908,30 @@ mod tests {
         let n_all = render_exec_row(&json!({"tool": "read_notifications",
                                             "args": {"all": "True"}}));
         assert_ne!(render_exec_row(&m_all), n_all);
+
+        // 工具短路那次（20260926）：回执带 `noop: True` + `change` ⇒ **动作词整个不
+        // 出现**（这一行会经 recent_executions 注回下一轮，「收藏文章 12」在那里就是
+        // "我动过你的收藏"），但**对象要留着**——否则主人问"哪一篇"时对不上号。
+        let add_noop = json!({"tool": "add_favorite", "args": {"article_id": "12"},
+                              "change": "本来已收藏"});
+        assert_eq!(render_exec_row(&add_noop), "文章 12 本来已收藏（未改动）");
+        let del_noop = json!({"tool": "remove_favorite", "args": {"article_id": "12"},
+                              "change": "本来就没收藏"});
+        assert_eq!(render_exec_row(&del_noop), "文章 12 本来就没收藏（未改动）");
+        let n_read = json!({"tool": "read_notifications",
+                            "args": {"all": "False", "ids": "[7]"}, "change": "本来就读过"});
+        assert_eq!(render_exec_row(&n_read), "站内通知本来就读过（未改动）");
+        let m_read = json!({"tool": "read_messages", "args": {"all": "True"},
+                            "change": "本来就没有未读的"});
+        assert_eq!(render_exec_row(&m_read), "站内信本来就没有未读的（未改动）");
+        // 镜像的另一半：`change` 缺席或空串（旧回执、真写路径）⇒ 照旧从 args 渲染
+        // 动作词——那一行的写**真的发生了**，动作词是对的。两条分支互为镜像，谁被
+        // 写反了（比如把判据写成 `contains`）都能从这一对断言看出来。
+        for blank in [json!({"tool": "add_favorite", "args": {"article_id": "12"},
+                             "change": ""}),
+                      json!({"tool": "add_favorite", "args": {"article_id": "12"}})] {
+            assert_eq!(render_exec_row(&blank), "收藏文章 12");
+        }
     }
 
     #[test]
