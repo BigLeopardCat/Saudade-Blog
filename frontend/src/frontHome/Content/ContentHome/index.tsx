@@ -226,7 +226,6 @@ const ContentHome = () => {
     useEffect(() => {
         if (cachedTopArticles.length > 0) return;
         fetchTop();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     /* 跨端同步（20260926，**不轮询**）：看板娘刚改了站内文章（新建/删除/改状态/改置顶）
