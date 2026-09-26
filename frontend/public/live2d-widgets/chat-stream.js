@@ -777,16 +777,30 @@
                   console.warn('[agent] 已取消跳转到非博客页面: ' + navUrl);
                   if (contentSpan) contentSpan.insertAdjacentHTML('beforeend', '<div class="nav-skip-note">（系统：该地址不是博客页面，已取消自动跳转）</div>');
                 } else {
-                  sessionStorage.setItem('chat_open', '1');  // 跳转后默认打开对话框并滚动到底部
-                  sessionStorage.setItem('chat_nav_slide', '1');  // 站内转跳：跳过滑入动画（forceSlideInFromBottom）
-                  // 20260828a：备份块已删除——本轮由 finishRound 的 saveHistory 落缓存，
-                  // 新页面 DB 权威拉取（/api/chat/history），localStorage 仅游客/离线兜底
-                  window.location.href = navUrl;
+                  // 20260926：站内跳转优先交给 SPA 桥（src/router/spaNavigate.ts）——路由换页，
+                  // 对话面板/看板娘/输入框里没发出去的半句话都留在原地（面板挂在 #root 之外，
+                  // 整页重载会把它整个重建）。桥只接管「同源 + 白名单 + 不是 /api、不是
+                  // /device-console/」；其余（跨域、nginx 直服的 /device-console/）它返回 false
+                  // ⇒ 照旧整页跳转，下面那两行 sessionStorage 标记也只在这种时候才需要。
+                  if (!(window.__spaNavigate && window.__spaNavigate(navUrl))) {
+                    sessionStorage.setItem('chat_open', '1');  // 跳转后默认打开对话框并滚动到底部
+                    sessionStorage.setItem('chat_nav_slide', '1');  // 站内转跳：跳过滑入动画（forceSlideInFromBottom）
+                    // 20260828a：备份块已删除——本轮由 finishRound 的 saveHistory 落缓存，
+                    // 新页面 DB 权威拉取（/api/chat/history），localStorage 仅游客/离线兜底
+                    window.location.href = navUrl;
+                  }
                 }
               } else {
-                ctx.state.pendingNavUrl = navUrl;
-                navQuestion.textContent = '泠月喵建议跳转到: ' + navUrl;
-                navConfirm.classList.add('active');
+                // 20260926 暂时停用导航确认卡（用户：「不要弹出泠月喵建议转跳XXX，暂时注释掉」；
+                // 「agent 回复文本就有超链接根本用不着弹窗，而且有些询问意图被默认转跳会有
+                // 很强割裂感」）。正文兜底解析出来的那几类（markdown 链接 / "转跳 X"）都是
+                // 确认式（direct:false）⇒ 卡停用后它们也不再跳，只把超链接留在回复正文里。
+                // 恢复 = 把下面三行的注释去掉（卡面标记 #chat-nav-confirm 与 waifu.css 里的
+                // 样式都还在，底下的 nav-yes/nav-no 监听也留着——恢复只需去掉这三行的注释）。
+                // ctx.state.pendingNavUrl = navUrl;
+                // navQuestion.textContent = '泠月喵建议跳转到: ' + navUrl;
+                // navConfirm.classList.add('active');
+                console.warn('[nav] 确认式跳转已停用（不弹卡、不跳转）');
               }
             }
             // 处理特效切换命令（支持 EFFECT:name 按钮式切换 / EFFECT:name:on|off 显式开关）
@@ -1925,19 +1939,41 @@
         input.focus();
       });
 
+      // 导航确认卡的「确定」（20260926：卡片已停用 ⇒ 这是休眠代码，恢复卡片即可用；
+      // 跳转同样先走 SPA 桥，理由见 execAgentCommands 里那段注释）
       document.getElementById('nav-yes').addEventListener('click', () => {
         if (ctx.state.pendingNavUrl) {
           navConfirm.classList.remove('active');
-          sessionStorage.setItem('chat_open', '1');  // 跳转后默认打开对话框并滚动到底部
-          sessionStorage.setItem('chat_nav_slide', '1');  // 站内转跳：跳过滑入动画（forceSlideInFromBottom）
-          window.location.href = ctx.state.pendingNavUrl;
+          const url = ctx.state.pendingNavUrl;
           ctx.state.pendingNavUrl = '';
+          if (!(window.__spaNavigate && window.__spaNavigate(url))) {
+            sessionStorage.setItem('chat_open', '1');  // 跳转后默认打开对话框并滚动到底部
+            sessionStorage.setItem('chat_nav_slide', '1');  // 站内转跳：跳过滑入动画（forceSlideInFromBottom）
+            window.location.href = url;
+          }
         }
       });
       document.getElementById('nav-no').addEventListener('click', () => {
         navConfirm.classList.remove('active');
         ctx.state.pendingNavUrl = '';
       });
+
+      // ── 气泡里的站内链接也走 SPA 桥（20260926，用户：「agent 回复文本就有超链接根本用不着弹窗」）──
+      // 这是"用超链接跳转"那条路的最后一米：回复正文里的 `<a>` 由 markdown 渲染器给出，
+      // 只有 href、没有 target（chatMarkdown 走 rehype-sanitize 默认 schema）⇒ 点它是**整页装载**，
+      // 对话面板连同输入框里没发出去的半句话一起重建。委托在消息容器上（不用逐条挂，气泡是
+      // 动态建的），同源 + 白名单内才拦（判据全在桥里，这里不重复一份）；跨域/非白名单一律放行，
+      // 由浏览器照旧处理。带修饰键（Ctrl/Cmd/Shift/中键）的点击**不拦**——那是用户明确要开新标签页。
+      if (messages && !messages.dataset.spaNavBound) {
+        messages.dataset.spaNavBound = '1';
+        messages.addEventListener('click', (e) => {
+          if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+          const a = e.target && e.target.closest && e.target.closest('a[href]');
+          if (!a || !messages.contains(a)) return;
+          if (!window.__spaNavigate) return;               // 桥没挂上（登录页等非路由页）⇒ 保持原行为
+          if (window.__spaNavigate(a.href)) e.preventDefault();
+        });
+      }
 
       // ── 通用询问卡片（20260921）：agent 需要用户输入（写操作授权/二次确认）时弹 ──
       // 按钮按帧里的 opts 动态生成（本轮固定 确定/取消；将来接别的用途不用改协议）。

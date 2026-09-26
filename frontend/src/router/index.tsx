@@ -23,6 +23,7 @@ import Talk from "../frontHome/Content/Talk";
 import Times from "../frontHome/Content/Times";
 import NotFound from "../components/NotFound";
 import ReadArticle from "../frontHome/Content/ReadArticle";
+import { registerSpaNavigate } from "./spaNavigate.ts";
 
 /**
  * 编辑器路由包装：`newnote/:id?` 换 id（编辑 30 → 点侧栏「编辑文章」变新建）时 React 不会重挂载，
@@ -153,5 +154,9 @@ const router = createBrowserRouter([
         ]
     }
 ])
+
+// 站内跳转桥：把 `window.__spaNavigate(url)` 挂上，让对话面板里的站内跳转走路由换页而不是整页重载
+// （面板在 #root 之外，整页重载会把它整个重建）。判据/白名单见 src/router/spaNavigate.ts。
+registerSpaNavigate(router)
 
 export default router
