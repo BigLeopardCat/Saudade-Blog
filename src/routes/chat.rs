@@ -936,6 +936,19 @@ fn render_exec_row(row: &serde_json::Value) -> String {
                 format!("添加待办「{}」（{}）", text, date)
             }
         }
+        // 勾完成（20260926 第十轮）：正文是这一行**唯一的指认方式**（待办没有标题也
+        // 没有 id），所以必须带上——同 create_dashboard_todo 那条注。**不写「已完成」**：
+        // 这一行会经 recent_executions 注入下一轮，而后端在"本来就是完成"那次是真 no-op
+        // （agent 侧回执用 meta 的 before/after 区分，不在这一行的措辞里）。
+        // 措辞与 agent 侧 server.py _tool_action_text 的同名臂逐字一致。
+        "complete_dashboard_todo" => {
+            let text = arg("text");
+            if text.is_empty() {
+                "勾完成待办".to_string()
+            } else {
+                format!("把待办「{}」勾成完成", text)
+            }
+        }
         // 用户自己的数据（20260923）：**读三个 + 写三个**。读的措辞与 agent 侧
         // server.py _NOARG_VERB 同源——漏了会落默认分支，把 `操作记录(list_my_favorites)`
         // 这种带下划线的内部工具名写进 execution_log 被下一轮 narrator 照抄。
