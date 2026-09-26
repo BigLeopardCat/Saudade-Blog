@@ -53,7 +53,9 @@ pub struct ChatResponse {
 
 use sea_orm::{EntityTrait, Set, QueryOrder, QueryFilter, ColumnTrait, QuerySelect, ActiveModelTrait, PaginatorTrait};
 use sea_orm::sea_query::Expr; // Expr 不在 sea-orm 根（0.12.15 仅 pub use sea_query 全名）
-use crate::entity::{chat_history, chat_summary, conversation, execution_log, pending_action};
+use crate::entity::{
+    agent_task, chat_history, chat_summary, conversation, execution_log, pending_action,
+};
 use crate::routes::conversation::resolve_conversation_id;
 use futures::StreamExt;
 use async_stream::stream;
@@ -534,6 +536,11 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
             .unwrap_or_default()
     };
 
+    // 会话级任务状态（20260927）：本会话未完结的任务。与上面那条的分工写在迁移文件
+    // 头注里——`pending_action` 是"等你点头的一件事"（分钟级），这里是"还没做完的
+    // 几件事"（跨多轮）。读失败 → `[]`（agent 按"没有任务"如实处理）。
+    let agent_tasks = load_agent_tasks(&state.db, conversation_id).await;
+
     // 统计本会话消息数，决定是否触发压缩。needs_summary 补懒生成条款：会话 >20 条
     // 且尚无摘要行（存量旧会话回访）也触发一次——摘要落库后条件自然关闭；
     // %10∈{0,1} 为历史双触发节奏（summary 与回复并行生成，不阻塞对话）
@@ -587,6 +594,10 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
         // 20260923 跨轮待办：上一轮提出、等主人点头的那件事（已执行的已由回执关闭）。
         // 空串 = 没有待办；agent 侧注入 system 上下文，短应答/授权式轮次据此定目标
         "pending_action": pending_text,
+        // 20260927 会话级任务状态：本会话未完结的任务（**JSON 数组串**，`[]` = 没有；
+        // 不是渲染好的文本行，理由见 load_agent_tasks 的注）。agent 侧渲染进 system
+        // 上下文——planner 见它才知道"主人要的这件事还剩哪几步/我上次问了他什么"
+        "agent_tasks": agent_tasks,
         // 20260921 确认弹窗：透传待办令牌（空串 = 普通轮）。agent 侧验签失败 →
         // 零执行 + 如实告知"确认已过期"；验签通过 → 跳过 planner 直接执行签名里的动作
         "confirm_token": payload.confirm_token.as_deref().unwrap_or(""),
@@ -1333,6 +1344,154 @@ fn json_capped(v: &serde_json::Value, key: &str, cap: usize) -> String {
     v[key].as_str().unwrap_or("").chars().take(cap).collect()
 }
 
+// ── 会话级任务状态（20260927；表与语义见 entity/agent_task.rs 与迁移文件头注）────
+/// **未完结状态**（六态里的三态）——读侧查询过滤的唯一来源。写侧不判状态（状态由
+/// agent 声明，Rust 只存）；这里只有一个消费者，所以不另造 `is_open(state)` 包装。
+const TASK_OPEN_STATES: [&str; 3] = ["submitted", "running", "input_required"];
+/// 同一会话最多注入几条未完结任务（最新优先）。与 execution_log 的读侧去重同一条
+/// 纪律：**限额与裁剪都在读侧**——存量行无需迁移，改上限不动数据。
+const TASK_INLINE_MAX: usize = 3;
+/// 读侧时效：超过这个时长的未完结任务不再注入（72 小时）。
+/// 与 `pending_action` 的 60 分钟刻意不同：那件事的凭据（确认令牌）10 分钟就失效，
+/// 而任务存在的理由正是"别把主人要的事忘了"——它必须比一轮对话活得久。但无限期挂着
+/// 同样有害（三天前没做完的事突然被翻出来重问，比忘掉更糟），所以给一个宽但有限的口子。
+const TASK_READ_TTL_HOURS: i64 = 72;
+/// `goal` / `pending_question` 列上限（= 迁移里的 varchar(300)）
+const TASK_TEXT_COL_MAX: usize = 300;
+/// `steps` 列上限（审计线索，非执行依据；超出只存前缀，绝不为了"看起来是合法 JSON"
+/// 去改写内容——解不出来时读侧会如实给 Null）
+const TASK_STEPS_COL_MAX: usize = 4000;
+/// 幂等键列上限（= 迁移里的 varchar(80)）
+const TASK_IDEM_COL_MAX: usize = 80;
+
+/// 任务落库（20260927）：agent 在 planner 认定"这一轮做不完"时随 `__TASK__` 发来的
+/// 结构化声明。**按 `task_id` upsert，不做"新的顶掉旧的"**——这是与 `pending_action`
+/// 最大的行为差异，也是分表的理由：那张表装"最新那次提议"（主人心里只有一件事），
+/// 这张表装**可以同时存在的多件事**（跨技能排队正是靠这一点）。
+/// `let _ =` 吞错，与 execution_log / pending_action 同口径：辅助事实，落库失败不阻断
+/// 对话主链路（下一轮少一条线索，而不是这一轮报错）。
+async fn save_agent_task(
+    db: &sea_orm::DatabaseConnection,
+    uid: i32,
+    conversation_id: i32,
+    v: &serde_json::Value,
+) {
+    // 没有 task_id 就没有可对齐的键（重发会变成新行、幂等键也就无从谈起）⇒ 宁可不落库
+    let task_id = json_capped(v, "task_id", 64);
+    if task_id.is_empty() {
+        return;
+    }
+    let steps: String = if v["steps"].is_array() {
+        v["steps"].to_string().chars().take(TASK_STEPS_COL_MAX).collect()
+    } else {
+        String::new()
+    };
+    let state = match json_capped(v, "state", 24) {
+        s if s.is_empty() => "submitted".to_string(),
+        s => s,
+    };
+    // 幂等键：空 ⇒ NULL。MySQL 唯一索引允许多个 NULL，而空串只能存在一行——
+    // 列上那条 UNIQUE 靠这一点同时做到"挡得住重复"与"不把没有键的行互相顶掉"。
+    let idem: Option<String> = match json_capped(v, "idempotency_key", TASK_IDEM_COL_MAX) {
+        k if k.is_empty() => None,
+        k => Some(k),
+    };
+    // 找行同时按**会话**过滤（不只是 uid）：`task_id` 是 agent 按"会话 + 目标指纹"
+    // 派生的（见 agent/tasks.py），正常不会跨会话重复；万一重复，只按 uid 找会把
+    // 另一个会话的行改掉（任务状态串到别的会话里——最坏的一种静默串台）。
+    // 加了这道，跨会话撞 id 时是**插入撞唯一键**（`uk_at_task`）⇒ 记一行 WARNING，
+    // 而不是悄悄改走别人的行。
+    let existing = agent_task::Entity::find()
+        .filter(agent_task::Column::TaskId.eq(task_id.as_str()))
+        .filter(agent_task::Column::UserId.eq(uid))
+        .filter(agent_task::Column::ConversationId.eq(conversation_id))
+        .one(db)
+        .await
+        .ok()
+        .flatten();
+    match existing {
+        // 已有行 = 同一件事的后续回合：只更新 agent 有权改的那几格。
+        // `goal` 与 `total_steps` **写时定稿、后续回合不许改写**——否则进度会变成
+        // "分母也在动"，1/2 与 3/5 说的是两件不同的事，事后对不上账。
+        Some(row) => {
+            let attempts = row.attempts + 1;
+            let mut am: agent_task::ActiveModel = row.into();
+            am.steps = Set(Some(steps));
+            am.cursor = Set(v["cursor"].as_i64().unwrap_or(0) as i32);
+            am.state = Set(state);
+            am.pending_question = Set(json_capped(v, "pending_question", TASK_TEXT_COL_MAX));
+            am.attempts = Set(attempts);
+            am.updated_at = Set(chrono::Local::now().naive_local());
+            let _ = am.update(db).await;
+        }
+        None => {
+            let _ = agent_task::ActiveModel {
+                task_id: Set(task_id),
+                conversation_id: Set(conversation_id),
+                user_id: Set(uid),
+                goal: Set(json_capped(v, "goal", TASK_TEXT_COL_MAX)),
+                steps: Set(Some(steps)),
+                total_steps: Set(v["total_steps"].as_i64().unwrap_or(0) as i32),
+                cursor: Set(v["cursor"].as_i64().unwrap_or(0) as i32),
+                state: Set(state),
+                pending_question: Set(json_capped(v, "pending_question", TASK_TEXT_COL_MAX)),
+                idempotency_key: Set(idem),
+                attempts: Set(1),
+                ..Default::default()
+            }
+            .save(db)
+            .await;
+        }
+    }
+}
+
+/// 读侧：本会话未完结任务 → 交给 agent 的 JSON 数组串（`[]` = 没有）。
+///
+/// **为什么交 JSON 而不是像 `pending_action` / `executions` 那样交一行渲染好的文本**
+/// （刻意偏离既往两处先例）：`steps` 是 Python 产的结构（每步带 label/tool），
+/// 要渲染成提示词就得看它内部，而它的形状正是本批次会继续演进的东西。让 Rust 只做
+/// "取出来、限长、拼成合法 JSON"，形状演化就只动 Python 一侧——与 `execution_log.digest`
+/// 的同一条纪律（键名与语义见 agent/tasks.py 头注，**改一侧必须同步另一侧** + 两侧各一条测试）。
+///
+/// 读失败（表未建 / DB 抖动）→ `[]`，agent 按"没有任务"如实处理，绝不阻断对话。
+async fn load_agent_tasks(db: &sea_orm::DatabaseConnection, conversation_id: i32) -> String {
+    let cutoff =
+        chrono::Local::now().naive_local() - chrono::Duration::hours(TASK_READ_TTL_HOURS);
+    let rows = agent_task::Entity::find()
+        .filter(agent_task::Column::ConversationId.eq(conversation_id))
+        .filter(agent_task::Column::CreatedAt.gte(cutoff))
+        // 终态过滤**在查询里**（不是取回来再筛）：限额是"最新 3 条"，先取再筛会让
+        // 几条已完结的任务把窗口占掉，注入的行数少于 3 且没人看得出来为什么
+        .filter(agent_task::Column::State.is_in(TASK_OPEN_STATES))
+        .order_by_desc(agent_task::Column::Id)
+        .limit(TASK_INLINE_MAX as u64)
+        .all(db)
+        .await
+        .unwrap_or_default();
+    let out: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "task_id": r.task_id,
+                "goal": r.goal,
+                "state": r.state,
+                "total_steps": r.total_steps,
+                "cursor": r.cursor,
+                "pending_question": r.pending_question,
+                // 解不出来给 Null（"这份计划读不出来了"），**不编一个空数组**——
+                // 空数组的意思是"没有剩余步骤"，那是另一件事（做完了 vs 读不出来）
+                "steps": r
+                    .steps
+                    .as_deref()
+                    .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+                    .unwrap_or(serde_json::Value::Null),
+                "created_at": r.created_at.format("%m-%d %H:%M").to_string(),
+            })
+        })
+        .collect();
+    serde_json::Value::Array(out).to_string()
+}
+
 fn agent_chat_url() -> String {
     std::env::var("AGENT_URL").unwrap_or_else(|_| "http://127.0.0.1:8010/chat".to_string())
 }
@@ -1619,6 +1778,25 @@ pub async fn chat_stream_handler(
                             let v = v.clone();
                             tokio::spawn(async move {
                                 save_pending_action(&state.db, uid, conversation_id, &v).await;
+                            });
+                        }
+                    }
+                    continue;
+                }
+                // 会话级任务状态（20260927）：planner 认定"这一轮做不完"时的结构化声明
+                // （还剩哪几步 / 缺哪个参数要问主人）。与 `__PENDING__` 同一族的三个
+                // 理由逐条相同：必须在下面 JSON 文本解析之前拦（帧体不是合法 JSON
+                // 字符串，晚拦会被静默丢弃）；只收进落库、**绝不 yield 转发**（前端无此
+                // 帧协议，透传会被当正文渲染）；收到即写（这一轮说完话主人可能立刻切走）。
+                // 与待办的差别只有一条：**同一 task_id 重复发是更新而非替换**
+                // （`save_agent_task` 里的 upsert），并发任务因此能共存。
+                if let Some(body) = payload.strip_prefix("__TASK__:") {
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(body) {
+                        if uid > 0 && v.is_object() {
+                            let state = state.clone();
+                            let v = v.clone();
+                            tokio::spawn(async move {
+                                save_agent_task(&state.db, uid, conversation_id, &v).await;
                             });
                         }
                     }

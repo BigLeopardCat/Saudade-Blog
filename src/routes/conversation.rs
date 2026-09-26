@@ -11,7 +11,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use crate::routes::AppState;
 use crate::auth_jwt;
-use crate::entity::{chat_history, chat_summary, conversation, execution_log, pending_action};
+use crate::entity::{
+    agent_task, chat_history, chat_summary, conversation, execution_log, pending_action,
+};
 
 /// 会话 API（20260903 会话化）：新建/列表/删除 + 会话解析（chat 系端点共用）。
 /// 全部照 chat 系惯例：public_routes 组 + handler 内 auth_jwt::auth_uid 手写鉴权。
@@ -299,6 +301,13 @@ pub async fn delete_conversation(
     // 留着只会永久占表（待办不跨会话生效：确认令牌也绑会话）
     let _ = pending_action::Entity::delete_many()
         .filter(pending_action::Column::ConversationId.eq(id))
+        .exec(&txn)
+        .await;
+    // 会话级任务状态（20260927）：同上——任务按会话读写（prepare_chat 注入 + agent
+    // 只发本会话的 task_id），会话没了就没有任何读取路径；与待办的区别只是它活得更久
+    // （分钟级 vs 最长 72 小时），**不清理会永久占表**这一条完全一样
+    let _ = agent_task::Entity::delete_many()
+        .filter(agent_task::Column::ConversationId.eq(id))
         .exec(&txn)
         .await;
     let _ = conversation::Entity::delete_by_id(id).exec(&txn).await;

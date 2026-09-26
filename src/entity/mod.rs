@@ -24,3 +24,5 @@ pub mod user_message_draft;
 pub mod pending_action;
 // 后台首页待办（20260924）：整份列表按用户落库（此前只在浏览器 localStorage 里）
 pub mod dashboard_todo;
+// 会话级任务状态（20260927）：未完成的意图跨轮不丢，与 execution_log 对偶
+pub mod agent_task;
