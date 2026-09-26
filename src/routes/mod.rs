@@ -262,6 +262,10 @@ pub fn create_router(state: AppState) -> Router {
                 // （`authz::check_role_change` 第一条）。挂在这里是为了共用 auth_guard，
                 // **不是**因为权限等同：能进这一族 ≠ 能改身份。
                 .route("/api/temp-users/:id/role", post(temp_user::set_user_role))
+                // 发通知（20260926）：挂同一族——它就是账号管理页第三个按钮，与
+                // 冻结/改密码同一份权限（auth_guard 只放管理员）。目标是"列表里可见的
+                // 账号"（`authz::is_listable_role`），所以**超管收不到**这条通道的东西。
+                .route("/api/temp-users/:id/notice", post(temp_user::send_user_notice))
         
         // 只读统计（20260921）：agent「管理助手」的用户数据报表供数。
         // 挂在守卫域内 ⇒ 自动只有 admin 拿得到（agent 以发起人身份代调，见 routes/stats.rs 头注）。
