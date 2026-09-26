@@ -253,10 +253,15 @@ async fn insert_talk(
         ..Default::default()
     };
     let inserted = talk::Entity::insert(t).exec(&state.db).await.unwrap();
-    // 审核结果通知（20260923）：**只有审核真的跑过才算数**（ai_judged）——
-    // 两个开关都关时 approved=1 只是"默认放行"，那不是审核通过，发通知就是假消息；
-    // 人工复核开（此时 approved=0 待审）、AI 存疑 flag、审核服务不可用转人工，都不发。
-    if ai_judged && (approved == 1 || approved == 2) {
+    // 审核结果通知（20260923，20260926 补待审那条）。
+    //
+    // 发的判据分两半，**合起来 = "这行留言的审核状态值得告诉作者"**：
+    // ① `approved == 0`（待审）**无条件发**——待审不是"没有结果"，它就是这条留言当下的
+    //    状态；一进待审就静默，作者那一侧与"没提交成功"完全同形（20260926 用户报的困惑
+    //    正是这个：分不清哪条在等人工、哪条已经放行）。src=talk 的说说恒为 1，走不到这儿。
+    // ② 终态（1 通过 / 2 未通过）仍然**只有审核真的跑过才算数**（ai_judged）——两个开关
+    //    都关时 approved=1 只是"默认放行"，那不是审核通过，发通知就是假消息。
+    if approved == 0 || (ai_judged && (approved == 1 || approved == 2)) {
         notify_review_result(
             state,
             uid,
@@ -333,11 +338,11 @@ const REJECT_FALLBACK_REASON: &str = "管理员复核后未通过，但没有留
 /// 留言摘要（通知里引用访客原话的片段）：换行折成空格 + 截 30 字。
 /// 访客留言可以是多行，原样拼进通知正文会把面板行高撑开。
 fn talk_brief(content: &str) -> String {
-    let flat: String = content
-        .chars()
-        .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
-        .collect();
-    let t = flat.trim();
+    // 折行与**连续空白**一律拍成一个空格（20260926 改）：留言里 `\r\n` 与空行都很常见，
+    // 逐字符换行符会让正文冒出双空格——通知只有一行、面板又压着 `line-clamp: 4`，
+    // 看上去像排版坏了。`split_whitespace` 顺带把制表符与全角空格也收掉。
+    let flat = content.split_whitespace().collect::<Vec<_>>().join(" ");
+    let t = flat.as_str();
     if t.chars().count() <= 30 {
         t.to_string()
     } else {
@@ -345,30 +350,26 @@ fn talk_brief(content: &str) -> String {
     }
 }
 
-/// 审核**终态**发一条站内通知（20260923，用户要求）。
+/// 审核结果通知的**文案映射**（纯函数，无 IO——20260926 抽出来加回归锁）。
 ///
-/// **只在终态发**（用户拍板）：通过一条、驳回一条；进待审不打扰——待审不是结果，
-/// 双闸全开时每条都会先进待审，若那时就发一次，人工改判又要再发一次，用户会收到
-/// 两条自相矛盾的通知。人工改判（audit_board）每次裁决都发，那是真终态。
-///
-/// `link` 定位到那盏灯（`/guestbook?lid=<id>`，20260923 用户拍板）；灯若是驳回态、
-/// 公开池里没有，河灯页会去「我的河灯」里找（见前端 RiverBoard 的定位逻辑）。
-///
-/// 通知失败**绝不影响留言落库**：push_notice 内部吞错只记日志。
-async fn notify_review_result(
-    state: &Arc<AppState>,
-    uid: i32,
-    talk_id: i32,
-    content: &str,
+/// 三个结局各一句，返回 `None` 表示"这个值不该发通知"（调用方据此跳过）。
+/// 抽出来的理由：这段文案此前埋在 `push_notice` 调用的前一屏，**没有任何测试**，
+/// 而它恰好是作者唯一能看到的那句话（20260926 用户报「通知说的是不是假的」那一轮，
+/// 三句话逐字对账全靠人工读库）。
+pub fn review_notice_text(
     approved: i8,
+    brief: &str,
     reject_reason: Option<&str>,
-) {
-    let brief = talk_brief(content);
-    let (title, body) = match approved {
-        1 => (
+) -> Option<(&'static str, String)> {
+    match approved {
+        0 => Some((
+            "留言已收到，等待人工复核",
+            format!("你的留言「{brief}」已提交，正在等待人工复核；结果出来我再通知你。"),
+        )),
+        1 => Some((
             "留言已通过审核",
             format!("你的留言「{brief}」已通过审核，现在可以在留言板看到了。"),
-        ),
+        )),
         2 => {
             let reason = reject_reason
                 .map(|s| s.trim())
@@ -378,14 +379,40 @@ async fn notify_review_result(
             // `white-space: pre-wrap`（换行留得住，20260923 复核更正——此前这里写的是
             // "没有 pre-line"，写错了），但同一个块还压着 `-webkit-line-clamp: 4`：
             // 留言一长，另起一行的理由恰好是最先被截掉的那段，而它正是收件人唯一要看的。
-            (
+            Some((
                 "留言未通过审核",
                 format!("你的留言「{brief}」未通过审核，理由：{reason}"),
-            )
+            ))
         }
-        // 0 = 待审，不是终态，不发（调用方本已过滤，这里是第二道）
-        _ => return,
+        _ => None,
+    }
+}
+
+/// 审核**结果**发一条站内通知（20260923，用户要求；20260926 补待审那一条）。
+///
+/// 发哪三条：**待审（0）、通过（1）、未通过（2）各一条**；不认识的 approved 值不发。
+///
+/// 20260926 推翻 20260923「进待审不打扰」那条取舍（用户报「存疑待审的河灯，通知却说
+/// 已通过审核」那一轮）：当时的顾虑是"双闸全开时每条都先进待审，改了再发一次，用户会
+/// 收到两条自相矛盾的通知"。**那个顾虑在今天这一版里不成立**——待审 →（未通过|已通过）
+/// 是**同一方向**的两条（"在等人工"→"人工裁完了"），互相不打脸；而"一条通知都不发"
+/// 与"留言没提交成功"在作者那一侧**同形**，这正是那次困惑的机械成因：他分不清自己哪条
+/// 留言在等人工、哪条已经放行。人工改判（audit_board）仍然每次裁决都发。
+async fn notify_review_result(
+    state: &Arc<AppState>,
+    uid: i32,
+    talk_id: i32,
+    content: &str,
+    approved: i8,
+    reject_reason: Option<&str>,
+) {
+    let brief = talk_brief(content);
+    let Some((title, body)) = review_notice_text(approved, &brief, reject_reason) else {
+        return;
     };
+    // `link` 定位到那盏灯（`/guestbook?lid=<id>`，20260923 用户拍板）；灯若是待审/驳回态、
+    // 公开池里没有，河灯页会去「我的河灯」里找（见前端 RiverBoard 的定位逻辑）。
+    // 通知失败**绝不影响留言落库**：push_notice 内部吞错只记日志。
     super::notice::push_notice(
         &state.db,
         uid,
@@ -710,8 +737,10 @@ pub async fn audit_board(
     active_model.updated_at = Set(chrono::Local::now().naive_local());
     talk::Entity::update(active_model).exec(&state.db).await.unwrap();
     // 人工裁决的每一步都是终态（通过 / 驳回 / 改判），发通知——用户拍板「改判再发」。
-    // 这与 insert_talk 的"只在 AI 终态发"不冲突：那时双闸全开的留言还在待审，
-    // 打扰一次、改判再打扰一次，用户会看到两条自相矛盾的通知。
+    // 20260926 注释更正：此前这里写着"与 insert_talk 的『只在 AI 终态发』不冲突"，那句话
+    // 已经不成立——insert_talk 现在入库时就发一条「等待人工复核」，人工裁完**必然**再发一条。
+    // 两条同向（"在等人工" → "人工裁完了"），不是自相矛盾；真要避免的只是"人工手滑点两下
+    // 收两条一样的"，那条由下面的 `was_approved != new_approved` 挡着。
     //
     // 但**状态真变了才发**：后台重复点同一个按钮（双击/刷新后手滑）不该又收一条
     // 一模一样的通知——"改判"的语义是 1↔2 的翻转，同态重复不叫改判。
@@ -720,4 +749,68 @@ pub async fn audit_board(
         notify_review_result(&state, owner, id, &brief_src, new_approved, final_reason.as_deref()).await;
     }
     Json(ApiResponse::success("Audited".to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 长留言压成一行 30 字（通知正文里的 `{brief}`）——通知与留言板的截断口径不同，
+    /// 通知那边只有一行、且会被面板的 `-webkit-line-clamp: 4` 继续裁，所以更短。
+    #[test]
+    fn 留言摘要压成一行且不超三十字() {
+        assert_eq!(talk_brief("  河灯很好看  "), "河灯很好看");
+        // 换行/回车是留言里最常见的"排版"，正文里必须拍平成空格，否则面板只显示第一行；
+        // `\r\n` 与空行**只能留一个空格**（连续空白收成一个，不然正文里出现双空格）
+        assert_eq!(talk_brief("第一行\n第二行\r\n第三行"), "第一行 第二行 第三行");
+        assert_eq!(talk_brief("上一段\n\n\n下一段"), "上一段 下一段");
+        assert_eq!(talk_brief("制表\t分隔"), "制表 分隔");
+        let long = "啊".repeat(50);
+        let brief = talk_brief(&long);
+        assert_eq!(brief.chars().count(), 31); // 30 字 + 省略号
+        assert!(brief.ends_with('…'));
+    }
+
+    /// 三个结局各一句；**待审这条是 20260926 新加的**（此前 approved=0 直接 return，
+    /// 作者的留言进了待审却什么都收不到、与"没提交成功"同形）。
+    #[test]
+    fn 待审也有一条通知且不替人下结论() {
+        let (title, body) = review_notice_text(0, "河灯很好看", None).unwrap();
+        assert_eq!(title, "留言已收到，等待人工复核");
+        assert!(body.contains("河灯很好看"));
+        assert!(body.contains("等待人工复核"));
+        // 理由还没经人裁过 ⇒ 待审那条**不许**把 AI 的初判说法印进去（否则等于替人下结论）
+        let (_, body_with_reason) =
+            review_notice_text(0, "河灯很好看", Some("带有负面情绪")).unwrap();
+        assert!(!body_with_reason.contains("带有负面情绪"));
+    }
+
+    #[test]
+    fn 通过与未通过的文案各一句() {
+        let (title, body) = review_notice_text(1, "河灯很好看", None).unwrap();
+        assert_eq!(title, "留言已通过审核");
+        assert!(body.contains("已通过审核"));
+
+        let (title, body) = review_notice_text(2, "河灯很好看", Some("  带有负面情绪 ")).unwrap();
+        assert_eq!(title, "留言未通过审核");
+        assert!(body.contains("理由：带有负面情绪")); // 两侧空白先 trim
+    }
+
+    /// 驳回而没人填理由时，正文必须给一句**可行动**的兜底（作者至少知道去哪儿找原文），
+    /// 不能落到空字符串或裸的「理由：」。
+    #[test]
+    fn 驳回无理由时回落到兜底文案() {
+        for reason in [None, Some(""), Some("   ")] {
+            let (_, body) = review_notice_text(2, "河灯很好看", reason).unwrap();
+            assert!(body.contains(REJECT_FALLBACK_REASON), "reason={reason:?}");
+            assert!(!body.ends_with("理由："));
+        }
+    }
+
+    /// 不认识的 approved 值不发（旧行/脏值的防线：宁可静默，也不给作者发一条编出来的结果）。
+    #[test]
+    fn 未知裁决值不发通知() {
+        assert!(review_notice_text(3, "河灯很好看", None).is_none());
+        assert!(review_notice_text(-1, "河灯很好看", None).is_none());
+    }
 }
