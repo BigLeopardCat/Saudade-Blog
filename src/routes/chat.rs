@@ -1624,6 +1624,26 @@ pub async fn chat_stream_handler(
                     }
                     continue;
                 }
+                // 连线命令帧（20260926 批 2）：命令从"工具返回的字符串"搬到了执行回执的
+                // `cmd` 字段（见 agent/graph.py 的 _cmd_wire 与 execute_node），Python 侧
+                // 用这一族帧单独发给浏览器。三件事缺一不可：
+                //   ① **必须在下面 `serde_json::from_str::<String>` 之前拦**——帧体
+                //      `__CMD__:{"kind":…}` 不是合法 JSON 字符串，晚拦了会落进 1193 那行
+                //      **静默丢弃**（前端收不到命令，症状是"点了没反应"、三端都不留痕）；
+                //   ② **绝不累积进 `reply`**（与 __PROCESS__/__CONFIRM__ 同族）：漏了这条，
+                //      帧体会被拼进 assistant 回复并持久化（用户看到一坨 JSON，还会注入
+                //      下一轮上下文）；
+                //   ③ **原样转发**给前端执行。帧体只有 kind/url/effect/action/mode 这类
+                //      **公开的执行动作**，不含任何确认凭据——这正是它与
+                //      __CONFIRM__/__PENDING__（带令牌、只落库不转发）的区别所在，
+                //      所以这里可以安全地原样 yield。
+                // 旧的文本前缀分支（下方 AUTO_NAVIGATE:/… 那一支）**保留**：兼容期里
+                // 老版 agent 仍在发它们，且删了会回归 20260903 那个 strip_command_lines
+                // 整行剥空导致"转跳后回复丢失"的 bug。
+                if payload.starts_with("__CMD__:") {
+                    yield Ok::<_, axum::Error>(Bytes::from(format!("data: {}\n\n", payload)));
+                    continue;
+                }
                 // 文本块：JSON 编码，解码后累积（用于历史保存），原样转发
                 if let Ok(text) = serde_json::from_str::<String>(&payload) {
                     if text.starts_with("__RESET__") {
