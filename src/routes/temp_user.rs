@@ -184,6 +184,85 @@ fn freeze_denial_message(denial: crate::authz::FreezeDenial, frozen: bool) -> St
 }
 
 #[derive(Deserialize)]
+pub struct SendNoticeReq {
+    /// 标题可省略（省略或空 ⇒ `notice::DEFAULT_TITLE`）。
+    /// `Option` 而不是 `String` + 空串语义：**没填**与"填了一个空串"在界面上是同一件事，
+    /// 但只有 `Option` 能让"字段压根没传"也被接住（老调用方/脚本）。
+    #[serde(default)]
+    pub title: Option<String>,
+    /// 正文。**必填**：一条没有内容的通知发出去只是给对方添一个红点。
+    pub content: String,
+}
+
+/// POST /api/temp-users/:id/notice：给**单个**账号发一条站内通知（20260926）。
+///
+/// 这是后台账号管理页「发通知」按钮与 agent 侧 `send_user_notice` 工具共用的唯一入口。
+/// 三条边界（都写在这里，调用方不重复实现一遍）：
+///   · **不给超管发**：目标判据与 `list_temp_users` 逐字同一条（`authz::is_listable_role`
+///     = 已知角色 且 不是超管）。与冻结族同源的理由——列表是唯一入口，agent 的账号名录
+///     走的就是这个接口，判据统一比多开一扇门好；超管不在列表里，也就不该从这里收到东西。
+///   · **不群发**：全站可见是公告（announcements.rs 的 fan_out），这里是"发给某一个人"。
+///   · **`link` 恒 NULL**：这条通道今天没有对应的详情页，不编一个跳过去会 404 的地址。
+///
+/// **成功/失败都要有话说**（agent 工具会逐字转述）：成功回「已把通知发给「{name}」」，
+/// 写库失败回「通知发送失败，请稍后再试」。⚠️ 这几句是**跨语言契约**（同冻结族，
+/// 见 `docs/security-boundary.md` §7⑫），改措辞前先看 agent 侧是否有引用。
+///
+/// **长度在这里挡，不截断**：`notice::push_notice_checked` 不截 title，超长必须在
+/// 校验层就拒——静默截断会让主人在确认卡上核对的句子与库里存的不是同一句。
+pub async fn send_user_notice(
+    State(state): State<Arc<AppState>>,
+    Path(user_id): Path<i32>,
+    Json(payload): Json<SendNoticeReq>,
+) -> Json<crate::utils::ApiResponse<String>> {
+    let Some(target) = user::Entity::find_by_id(user_id).one(&state.db).await.unwrap_or(None) else {
+        return Json(crate::utils::ApiResponse::error("用户不存在"));
+    };
+    if !crate::authz::is_listable_role(&target.role) {
+        return Json(crate::utils::ApiResponse::error("该账号不能接收通知"));
+    }
+    let content = payload.content.trim().to_string();
+    if content.is_empty() {
+        return Json(crate::utils::ApiResponse::error("通知内容不能为空"));
+    }
+    if content.chars().count() > crate::routes::notice::CONTENT_MAX {
+        return Json(crate::utils::ApiResponse::error(&format!(
+            "通知内容太长了（最多 {} 字）",
+            crate::routes::notice::CONTENT_MAX
+        )));
+    }
+    let title = payload.title.unwrap_or_default().trim().to_string();
+    let title = if title.is_empty() { crate::routes::notice::DEFAULT_TITLE.to_string() } else { title };
+    if title.chars().count() > crate::routes::notice::TITLE_MAX {
+        return Json(crate::utils::ApiResponse::error(&format!(
+            "通知标题太长了（最多 {} 字）",
+            crate::routes::notice::TITLE_MAX
+        )));
+    }
+    match crate::routes::notice::push_notice_checked(
+        &state.db,
+        user_id,
+        &title,
+        Some(content),
+        None,
+    )
+    .await
+    {
+        Ok(id) => {
+            tracing::info!("[账号管理] 发通知 uid={} notice_id={} title={}", user_id, id, title);
+            Json(crate::utils::ApiResponse::success(format!(
+                "已把通知发给「{}」",
+                target.username
+            )))
+        }
+        Err(e) => {
+            tracing::error!("[账号管理] 发通知失败 uid={}: {}", user_id, e);
+            Json(crate::utils::ApiResponse::error("通知发送失败，请稍后再试"))
+        }
+    }
+}
+
+#[derive(Deserialize)]
 pub struct SetRoleReq {
     /// 目标身份。取值域 = `authz::KNOWN_ROLES` 里**除 superadmin 之外**的三个
     /// （`authz::is_assignable_role`）——界面上加不出第二个超管。
