@@ -1293,7 +1293,7 @@
             const cr = ctx.state.confirmRound;
             ctx.state.confirmRound = null;
             if (cr.failed) askUnknown(cr.failed);
-            else askSettle('已确认，结果见下方回复', undefined, 'ok');
+            else askSettle('已确认，结果见上方回复', undefined, 'ok');
           }
           // 流式中被推迟的 DB 拉取在此补拉（storage 事件可能在流中到达）
           if (ctx.state.pendingPull) { ctx.state.pendingPull = false; setTimeout(pullHistory, 0); }
