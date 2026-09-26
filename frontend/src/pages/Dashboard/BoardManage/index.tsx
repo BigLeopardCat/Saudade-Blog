@@ -15,9 +15,18 @@ import http from "../../../apis/axios.tsx";
  *                 未审（null——AI 关、人工全审模式、审核服务不可用转人工或存量历史行）
  *    · 人工审核 = approved：通过(1) 放行展示 / 待审(0) / 未通过(2, 驳回，issue8 起)
  *      ——「AI 拦截 → 人工通过/驳回」的两段经过一目了然
- *  驳回理由（20260923）：驳回弹窗里可手填（≤200 字，可留空），落 talk.reject_reason；
- *  留空且 AI 判过 reject 时后端回落到 AI 给的 reason。终态（通过/驳回/改判）都会给
- *  发布者发一条站内通知，驳回通知里带上理由。理由只随驳回存在——恢复通过即清空。
+ *  驳回理由（20260923）：驳回弹窗里手填（≤200 字），落 talk.reject_reason；终态（通过/
+ *  驳回/改判）都会给发布者发一条站内通知，驳回通知里带上理由。理由只随驳回存在——
+ *  恢复通过即清空。
+ *  20260926 三处改动（用户报「AI 的驳回理由为什么是未填写、通知里的违规理由太模糊」）：
+ *    · 弹窗里**理由必填**（空理由时「确认驳回」禁用）——留空的结果是发布者收到一句
+ *      "不符合留言板的留言规范"，既不知道问题在哪、也不知道去哪儿看，等于白发一条通知；
+ *    · **常见违规类型预设**（点一下填进可编辑的文本框）＋**一键采用 AI 说明**
+ *      （aiReason 非空时才显示）——AI 的判断管理员先看得到，才写得出具体理由；
+ *    · 「AI 审核」列的 tooltip 里补上 `aiReason` 全文（此前那一列只显示裁决词，
+ *      AI 的说明在整个系统里只存在于 AI 服务那一次的 HTTP 响应里）。
+ *  后端**不加**理由必填的硬闸（审核接口是脚本/老前端也在用的兼容面），必填是这一层的
+ *  保证；后端做的是"没写理由时按 人工 > reject_reason > aiReason 回落"（见 talks.rs）。
  */
 interface BoardItem {
     talkKey: number;
@@ -34,7 +43,31 @@ interface BoardItem {
     ai_result?: string | null;
     /** 驳回理由（20260923）：AI 判定说明或管理员驳回时手填；null = 未驳回或没写 */
     rejectReason?: string | null;
+    /** AI 审核说明（20260926）：**与裁决无关**（pass/flag/reject 都可能有），null = 没走
+     *  AI / AI 没给说明 / 存量行。它是"AI 当时怎么看这条留言"的留痕，只给后台看 */
+    aiReason?: string | null;
 }
+
+/** 常见驳回理由预设（20260926）：点一下填进**可编辑**的文本框，管理员按需改。
+ *  只放"一眼能判、与站规对得上"的类型，不放需要展开说明的（那种请他用文本框自己写）；
+ *  也不放"其他"这种等于没填的项——理由必填的意义就在于说清是哪一类。 */
+const REJECT_PRESETS = [
+    '广告引流', '色情低俗', '辱骂攻击', '违法敏感', '恶意外链', '与留言板无关', '内容难以辨认',
+];
+
+/** AI 审核列的 tooltip：裁决语义 + **AI 的说明全文**（20260926 补）。
+ *  说明 ≤200 字，刻意不截断——管理员正是要照它写出具体理由；它此前只存在于 AI 服务
+ *  那一次的 HTTP 响应里（`ai_result` 那一列存的是裁决词，从来没有展示过说明）。 */
+const aiTip = (base: string, r: BoardItem) => (
+    r.aiReason
+        ? (
+            <div className="bm-ai-tip">
+                {base}
+                <div className="bm-ai-reason">AI 说明：{r.aiReason}</div>
+            </div>
+        )
+        : base
+);
 
 const CATS = ['愿', '寄', '忆', '诉'];
 const LAMP_NAMES = ['莲花灯', '八角灯', '圆笼灯'];
@@ -108,16 +141,25 @@ const BoardManage = () => {
             const res = await http.put(`/api/protect/board/${id}/audit`, { approved, reason });
             if (res.data?.code === 200) {
                 message.success(approved === 1 ? '已通过，留言板展示' : '已驳回（未通过），不展示');
+                // ⚠️ **入参值 ≠ 落库值**（20260926 修）：入参 0 = 「驳回」这个动作，后端落库
+                // 的是 2（未通过，见 talks.rs::audit_board 的 `Set(if reject { 2 } else { 1 })`）。
+                // 这里原样把入参写回本地行 ⇒ 驳回后那一行仍停在 `approved: 0`（待审）：
+                // 「人工审核」列还是金色「待审」、操作列还挂着「通过/驳回」两颗按钮（能再点一次
+                // 驳回）、正文下面的驳回理由一个字都不显示（那一段的渲染条件是 `approved === 2`）
+                // —— 后端明明已经改完了，界面要等下次 load() 才追上；而"只改本地那一行"这个
+                // 优化的全部意义就是不去 load()。
+                const stored = approved === 1 ? 1 : 2;
                 // 只改本地那一行（接口已确认成功）：原来每次都 load() 重拉全量列表，
                 // 连审 10 条就是 11 次全量请求、每次带全部content
-                // 驳回后的理由以后端为准：本次没填而后端回落到已有理由时，本地不能显示成空
+                // 驳回后的理由以后端为准：本次没填而后端回落到已有理由/AI 说明时，
+                // 本地不能显示成空（回落链与后端一致：人工 > reject_reason > aiReason）
                 setItems((prev) => prev.map((it) => (it.talkKey === id
                     ? {
                         ...it,
-                        approved,
-                        rejectReason: approved === 2
-                            ? (reason?.trim() || it.rejectReason || null)
-                            : null, // 通过（含改判）后端会清空理由
+                        approved: stored,
+                        rejectReason: stored === 2
+                            ? (reason?.trim() || it.rejectReason || it.aiReason || null)
+                            : null, // 通过（含改判）后端会清空理由（aiReason 留痕不动）
                     }
                     : it)));
             } else {
@@ -227,19 +269,19 @@ const BoardManage = () => {
             title: 'AI 审核', key: 'ai', width: 110,
             render: (_, r) =>
                 r.ai_result === 'flag' ? (
-                    <Tooltip title="AI 初审判定疑似，拦下转人工裁决">
+                    <Tooltip title={aiTip('AI 初审判定疑似，拦下转人工裁决', r)}>
                         <Tag color="gold">存疑</Tag>
                     </Tooltip>
                 ) : r.ai_result === 'reject' ? (
-                    <Tooltip title={manualOn ? 'AI 判定拒绝，但人工复核已开启，仍需人工裁决' : 'AI 判定拒绝，已直接拒绝展示'}>
+                    <Tooltip title={aiTip(manualOn ? 'AI 判定拒绝，但人工复核已开启，仍需人工裁决' : 'AI 判定拒绝，已直接拒绝展示', r)}>
                         <Tag color="red">拒绝</Tag>
                     </Tooltip>
                 ) : r.ai_result === 'pass' ? (
-                    <Tooltip title={manualOn ? 'AI 判定通过，但人工复核已开启，仍需人工裁决' : 'AI 判定通过，已直接放行展示'}>
+                    <Tooltip title={aiTip(manualOn ? 'AI 判定通过，但人工复核已开启，仍需人工裁决' : 'AI 判定通过，已直接放行展示', r)}>
                         <Tag color="green">通过</Tag>
                     </Tooltip>
                 ) : (
-                    <Tooltip title={manualOn ? '人工全审模式：新留言不经 AI 初判' : 'AI 审核关闭 / 审核服务不可用转人工 / 存量历史行，未留 AI 判定'}>
+                    <Tooltip title={aiTip(manualOn ? '人工全审模式：新留言不经 AI 初判' : 'AI 审核关闭 / 审核服务不可用转人工 / 存量历史行，未留 AI 判定', r)}>
                         <Tag>未审</Tag>
                     </Tooltip>
                 ),
@@ -369,7 +411,7 @@ const BoardManage = () => {
                     showTotal={(t) => `共 ${t} 条留言`}
                 />
             </div>
-            {/* 驳回理由弹窗：理由随审核结果通知发给发布者，可留空 */}
+            {/* 驳回理由弹窗：理由随审核结果通知发给发布者，**必填**（20260926） */}
             <Modal
                 title="驳回这条留言？"
                 open={!!rejecting}
@@ -380,24 +422,51 @@ const BoardManage = () => {
                 }}
                 okText="确认驳回"
                 cancelText="取消"
-                okButtonProps={{ danger: true, loading: rejectBusy }}
+                okButtonProps={{
+                    danger: true,
+                    loading: rejectBusy,
+                    className: 'bm-reject-ok',
+                    // 理由必填（20260926）：空理由时按钮不可点——留空的结果是发布者收到
+                    // 一句"不符合留言板的留言规范"，既不知道问题在哪、也不知道去哪儿看。
+                    // 后端不加硬闸（那是脚本/老前端的兼容面），必填在这**入口**这一层保证。
+                    disabled: !rejectReason.trim(),
+                }}
                 rootClassName="bm-reject-modal"
             >
                 <p className="bm-reject-tip">
                     驳回后不在留言板展示（仅发布者本人在灯影集可见），同时会给发布者发一条站内通知，
-                    理由会一并带上。理由可留空。
+                    理由会一并带上。<b>理由必填</b>——写清是哪一类问题，他才知道该怎么改。
                 </p>
+                {rejecting?.rejectReason && (
+                    <p className="bm-reject-existing">
+                        这条留言已有理由：{rejecting.rejectReason}
+                        <Button
+                            type="link" size="small" className="bm-reject-reuse"
+                            onClick={() => setRejectReason(rejecting.rejectReason || '')}
+                        >沿用</Button>
+                    </p>
+                )}
+                <div className="bm-reject-presets">
+                    {REJECT_PRESETS.map((p) => (
+                        <Button
+                            key={p} size="small" className="bm-reject-preset"
+                            onClick={() => setRejectReason(p)}
+                        >{p}</Button>
+                    ))}
+                    {rejecting?.aiReason && (
+                        <Button
+                            size="small" type="primary" ghost className="bm-reject-use-ai"
+                            onClick={() => setRejectReason(rejecting.aiReason || '')}
+                        >采用 AI 说明</Button>
+                    )}
+                </div>
                 <Input.TextArea
                     value={rejectReason}
                     onChange={(e) => setRejectReason(e.target.value)}
                     maxLength={200}
                     showCount
                     autoSize={{ minRows: 3, maxRows: 5 }}
-                    placeholder={
-                        rejecting?.rejectReason
-                            ? `可留空；留空沿用已有理由：${rejecting.rejectReason}`
-                            : '可留空，例如：与文章主题无关的广告'
-                    }
+                    placeholder="例如：与文章主题无关的广告（也可以点上面的常见类型，再改成更贴这条的说法）"
                 />
             </Modal>
         </div>
