@@ -188,6 +188,9 @@ pub fn create_router(state: AppState) -> Router {
         // 追加一条（20260926）：agent 安排日程用的通道——它手里没有那份列表，
         // 整份覆盖会抹掉主人的改动，所以单独给一条"只加不覆盖"的接口。
         .route("/api/protected/todos/item", post(todos::add_todo))
+        // 翻完成标记（20260926）：同一族的第二条最小通道——按**正文**认出唯一那一行、
+        // 只翻它的 done（查无此条/有多条一律零写，判据见 todos.rs 的 pick_todo）。
+        .route("/api/protected/todos/done", post(todos::set_todo_done))
 
         // 编辑草稿（20260912c）：自动保存 + 编辑器专用读入口
         // 读入口单独开是因为公开的 GET /api/public/notes/:id 会挡掉草稿/私密文章（A4 修复），

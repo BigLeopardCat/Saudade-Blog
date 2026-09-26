@@ -6,16 +6,19 @@
 //!   GET  /api/protected/todos      → 该用户按 sort_order 排好的整份列表
 //!   PUT  /api/protected/todos      → 整份覆盖（事务内先删该用户全部行、再逐条插入）
 //!   POST /api/protected/todos/item → **追加一条**（20260926：给 agent 用，见下）
+//!   POST /api/protected/todos/done → **按正文翻某一条的完成标记**（20260926：同上）
 //!
 //! 为什么不按行做 CRUD、为什么前端不接服务端 id：见
 //! `scripts/migration/dashboard_todo_20260924.sql` 头注（那里写了取舍与代价）。
 //!
-//! 第三条通道（20260926）的来由：agent 要能"替主人安排一条日程"，而它**手里没有**
-//! 那份列表。让它复用 PUT 只有两种写法，两种都坏——先读再写（读到写之间主人可能刚
-//! 改过，写完就把主人的改动抹了），或者干脆发一份自己拼的（整份覆盖的语义下等于
-//! 清空主人的待办）。追加是它唯一安全的形状：**只加自己那一行，既有行一个字节都不动**。
-//! 前端不消费这条接口（页面上那两件事始终是整份读写），但前端**必须**在 agent 收尾后
-//! 重读一次列表——否则它手里的旧那份会在下一次自动保存时把 agent 加的那条覆盖掉
+//! 后两条通道（20260926）的来由：agent 要能"替主人安排一条日程"、"把某件事勾成做完了"，
+//! 而它**手里没有**那份列表。让它复用 PUT 只有两种写法，两种都坏——先读再写（读到写之间
+//! 主人可能刚改过，写完就把主人的改动抹了），或者干脆发一份自己拼的（整份覆盖的语义下
+//! 等于清空主人的待办）。所以给它的是两条**只动自己那一行、既有行一个字节都不动**的最小
+//! 通道：一条只插入、一条只翻 `done` 列。两条共用同一个代价——**只能按正文定位**（线上
+//! 从不回行 id），所以"正文是唯一身份"这件事在 [pick_todo] 里被写成三条判据。
+//! 前端不消费这两条接口（页面上那几件事始终是整份读写），但前端**必须**在 agent 收尾后
+//! 重读一次列表——否则它手里的旧那份会在下一次自动保存时把 agent 改的覆盖掉
 //! （见 frontend/src/pages/Dashboard/Home/index.tsx 里 agent-turn-done 那一段）。
 //!
 //! 三条边界（写在这里，避免以后被"顺手放宽"）：
@@ -82,6 +85,20 @@ pub struct AddTodoRequest {
     pub date: Option<String>,
 }
 
+/// 线上口径（勾完成那条通道的请求体）：`{text, done}`。
+///
+/// **没有 id 字段**：线上从不回行 id（见文件头），能拿到的身份就是那一行**现在的正文**。
+///
+/// `done` **刻意不加 `#[serde(default)]`**：这个字段是**方向**，缺了它 serde 会拒绝
+/// 整个请求体（400）。给它一个默认值等于"漏传方向 = 取消完成"——那是一个会静默把主人
+/// 勾好的事重新变回没做的默认值，宁可让调用方把方向说清楚。
+#[derive(Deserialize)]
+pub struct SetTodoDoneRequest {
+    #[serde(default)]
+    pub text: String,
+    pub done: bool,
+}
+
 /// 排期串 → `NaiveDate`；`None`/空串 = 未排期，认不出的格式 → Err（中文文案）。
 ///
 /// 两条通道共用（PUT 的每一行、追加的那一条）——"什么算合法的排期"只在这里定义
@@ -110,6 +127,36 @@ fn is_iso_shape(s: &str) -> bool {
         && b.iter().enumerate().all(|(i, c)| {
             i == 4 || i == 7 || c.is_ascii_digit()
         })
+}
+
+/// 按**正文**在这份列表里认出唯一那一行；认不出 / 认多了都给中文原因（Err）。
+///
+/// 这个函数是 `POST …/done` 的**全部安全性**所在，所以单独抽成纯函数（无库无网，
+/// 单测直接喂三行数据就能覆盖三条判据）。线上没有行 id、正文就是身份，于是"正文对不上
+/// 的时候怎么办"必须是一条**拒绝**而不是"就近挑一条"——挑错的代价是把主人另一件事
+/// 勾成做完了，而他只能靠自己发现。
+///
+/// 判据（口径与 PUT / 追加两条通道同源：库里存的正文都是**写入时 trim 过**的，
+/// 调用方传进来的那一份也要先 trim，比较就在同一处口径上）：
+///   · 一条都没匹配 → Err（"查无此条"绝不是"那就随便改一条"）；
+///   · 匹配上多条   → Err（数据上不可区分，挑任意一条都是替主人猜）；
+///   · 恰好一条     → Ok（那一行）。
+fn pick_todo<'a>(
+    rows: &'a [dashboard_todo::Model],
+    text: &str,
+) -> Result<&'a dashboard_todo::Model, String> {
+    let mut hits = rows.iter().filter(|r| r.text == text);
+    let Some(row) = hits.next() else {
+        return Err(format!("你后台首页的待办里没有「{text}」这一条"));
+    };
+    let extra = hits.count();
+    if extra > 0 {
+        return Err(format!(
+            "有 {} 条待办都叫「{text}」，分不清是哪一条（先到后台首页把其中一条改个说法）",
+            extra + 1
+        ));
+    }
+    Ok(row)
 }
 
 /// GET /api/protected/todos：我的整份待办（按位次）。
@@ -291,6 +338,76 @@ pub async fn add_todo(
     }))
 }
 
+/// POST /api/protected/todos/done：按**正文**把某一条勾成完成 / 取消完成（agent 用的通道）。
+///
+/// 第四条通道（20260926）的来由见文件头：主人说"这件事办完了"，要落成那份列表里的一个勾，
+/// 而 agent 手里没有列表。这条通道只做最小的一件事——**认出唯一那一行、只翻它的 `done`**：
+/// 正文、排期、位次、别的行，一个字节都不动（复用 PUT 的那对坏选项在文件头写着）。
+///
+/// 定位判据全在 [pick_todo]（查无此条 / 有多条一律拒绝，零写）。
+/// **幂等**：`done` 已经是目标态时成功返回、**不写库**（连 `updated_at` 都不动——"没发生
+/// 的事"不该在库里留时间戳）。回话里刻意**不区分**"刚改的"与"本来就如此"：调用方（agent）
+/// 手里有写前那份快照、它自己分得出，后端重复表达同一件事只是多一处会分叉的说法。
+pub async fn set_todo_done(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(payload): Json<SetTodoDoneRequest>,
+) -> Json<ApiResponse<TodoDto>> {
+    let uid = match crate::auth_jwt::auth_uid(&state.db, &headers).await {
+        Ok(uid) => uid,
+        Err(e) => return Json(ApiResponse::error(e.message())),
+    };
+    let text = payload.text.trim();
+    if text.is_empty() {
+        return Json(ApiResponse::error("这条待办没写内容"));
+    }
+    if text.chars().count() > MAX_TEXT_CHARS {
+        return err(format!("这条太长了（最多 {MAX_TEXT_CHARS} 字）"));
+    }
+    let rows = match dashboard_todo::Entity::find()
+        .filter(dashboard_todo::Column::UserId.eq(uid))
+        .all(&state.db)
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!("[todos] 翻完成标记前读取失败 uid={}: {}", uid, e);
+            return Json(ApiResponse::error("保存失败，请稍后再试"));
+        }
+    };
+    let row = match pick_todo(&rows, text) {
+        Ok(r) => r,
+        Err(msg) => return err(msg),
+    };
+    if row.done != payload.done {
+        let now = chrono::Local::now().naive_local();
+        let am = dashboard_todo::ActiveModel {
+            done: Set(payload.done),
+            updated_at: Set(now),
+            ..Default::default()
+        };
+        // 按主键更新（不是按正文再匹配一次）：上面那一步之后、这一句之前，主人可能正好
+        // 在页面上把这一行的正文改了——按 id 落刀依然只动**我们认出来的那一行**，
+        // 而按正文再匹配一次会在这时变成"零行受影响"（静默不生效）或改到别的行。
+        if let Err(e) = dashboard_todo::Entity::update_many()
+            .set(am)
+            .filter(dashboard_todo::Column::Id.eq(row.id))
+            .exec(&state.db)
+            .await
+        {
+            tracing::error!("[todos] 翻完成标记失败 uid={} id={}: {}", uid, row.id, e);
+            return Json(ApiResponse::error("保存失败，请稍后再试"));
+        }
+        // 审计只记 uid/id/目标态，**不记正文**：这是他私人清单里的内容，诊断不需要它
+        tracing::info!("[todos] 翻完成标记 uid={} id={} done={}", uid, row.id, payload.done);
+    }
+    Json(ApiResponse::success(TodoDto {
+        text: row.text.clone(),
+        done: payload.done,
+        date: row.due_date.map(|d| d.format("%Y-%m-%d").to_string()),
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -320,5 +437,51 @@ mod tests {
                     "2026-02-30", "2026-13-01"] {
             assert!(parse_due_date(Some(bad)).is_err(), "{bad} 不该被接受");
         }
+    }
+
+    /// 造一行待办（单测用；时间列给个固定值，判据不看它）
+    fn row(id: i32, text: &str, done: bool) -> dashboard_todo::Model {
+        let t = NaiveDate::from_ymd_opt(2026, 9, 26)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+        dashboard_todo::Model {
+            id,
+            user_id: 1,
+            sort_order: id,
+            text: text.to_string(),
+            done,
+            due_date: None,
+            created_at: t,
+            updated_at: t,
+        }
+    }
+
+    #[test]
+    fn 按正文定位三条判据() {
+        let rows = vec![row(1, "买菜", false), row(2, "交房租", true), row(3, "遛狗", false)];
+        // 唯一命中 → 就是那一行。**完成态照样要能定位**：取消完成也要先找得到那一行
+        assert_eq!(pick_todo(&rows, "交房租").map(|r| r.id), Ok(2));
+        assert!(pick_todo(&rows, "交房租").unwrap().done);
+        // 查无此条 → 拒绝（而不是"就近挑一条"：挑错等于把主人另一件事勾成了做完了）
+        let e = pick_todo(&rows, "接孩子").unwrap_err();
+        assert!(e.contains("没有「接孩子」这一条"), "{e}");
+        // 两条同名 → 拒绝，且如实报出**条数**（主人据此知道要去页面上改哪个字）
+        let same = vec![row(1, "买菜", false), row(2, "买菜", true)];
+        let e = pick_todo(&same, "买菜").unwrap_err();
+        assert!(e.contains("2 条") && e.contains("分不清"), "{e}");
+        // 空列表走的是同一条"没有这一条"，不是 panic、也不是"没有就跳过"
+        assert!(pick_todo(&[], "买菜").is_err());
+    }
+
+    #[test]
+    fn 定位是逐字相等() {
+        // 口径说明：库里存的正文都是**写入时 trim 过**的，所以"要匹配的那一份"由 handler
+        // trim 后再传进来（trim 在 handler 一处做）。这个用例锁的是**这个函数只认逐字相等**
+        // ——任何"模糊匹配/包含匹配"的放宽都会在这里红，而那正是会勾错行的改法。
+        let rows = vec![row(1, "买菜", false)];
+        assert!(pick_todo(&rows, "买 菜").is_err(), "多一个空格是另一条待办");
+        assert!(pick_todo(&rows, "买菜。").is_err(), "标点不同也是另一条");
+        assert!(pick_todo(&rows, "买").is_err(), "前缀不算命中");
     }
 }
