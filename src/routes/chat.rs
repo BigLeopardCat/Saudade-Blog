@@ -916,6 +916,20 @@ fn render_exec_row(row: &serde_json::Value) -> String {
                 format!("{}账号「{}」：{}", verb, name, change)
             }
         }
+        // 给单个账号发通知（20260926）：与冻结族同一条纪律——读回执顶层 meta 的
+        // account_name，**不落 uid**（那一行会经 recent_executions 注入下一轮上下文，
+        // 要的是人能核对的账号名），也**不落正文**（正文是主人刚在确认卡上核对过的那段话，
+        // 回执里再抄一遍会让卡片上面的字和下面的字看起来是两件事；正文要复述时，
+        // agent 回执文本本身已经带了节选）。
+        // 措辞与 agent 侧 server.py _tool_action_text 的同名臂逐字一致。
+        "send_user_notice" => {
+            let name = row["account_name"].as_str().unwrap_or("");
+            if name.is_empty() {
+                "给账号发通知".to_string()
+            } else {
+                format!("给账号「{}」发通知", name)
+            }
+        }
         // 后台首页待办 / 日程（20260926 补臂）：读一件 + 写一件。**从 args 渲染**——
         // 回执顶层 meta 里没有 text/date（那是 agent 侧 `_RCPT_META_KEYS` 的白名单，
         // 不必为这两条给所有回执多开两个口子），而 args 由 agent 侧 str() 落盘、上限
