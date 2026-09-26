@@ -366,6 +366,38 @@
       }
     }
 
+    /* 左下角返回首页：与「此心为灯」同一套样式，只是位置在灯影集之上 */
+    .rz-home-btn {
+      position: absolute;
+      left: 34px;
+      bottom: 200px;
+      display: inline-flex;
+      align-items: center;
+      padding: 10px 20px;
+      background: rgba(14, 12, 26, 0.6);
+      border: 1px solid rgba(255, 205, 140, 0.28);
+      border-radius: 999px;
+      cursor: pointer;
+      pointer-events: auto;
+      color: rgba(244, 228, 200, 0.85);
+      font-family: inherit;
+      font-size: 14px;
+      letter-spacing: 0.3em;
+      text-indent: 0.3em;
+      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+      transition: color 0.25s ease, border-color 0.25s ease, background 0.25s ease;
+
+      &:hover,
+      &:focus-visible {
+        color: #ffe9c4;
+        border-color: rgba(255, 205, 140, 0.5);
+        background: rgba(24, 20, 40, 0.72);
+        outline: none;
+      }
+    }
+
     /* 左下角灯影集入口：灯架图标 + 竖排文字 */
     .rz-album-btn {
       position: absolute;
