@@ -225,6 +225,47 @@ const Users = () => {
         } catch { message.error('请求失败') }
     }
 
+    /** 发通知（20260926）：给**单个**账号发一条站内通知。
+     *
+     *  这是账号管理页第三个写入口（前两个是改密码、冻结）。三处与前两个不同的地方：
+     *  · **发出去收不回**——`user_notification` 今天没有删除语义，对方在个人中心
+     *    看得到、抹不掉。所以正文用 `<Input.TextArea>`（多行、看得全）而不是单行框，
+     *    并且**空正文时不让点发送**（发一条没有内容的通知只是给对方添个红点）；
+     *  · 标题可留空（后端有默认标题），正文必填——必填这条同时写在这里与后端，
+     *    前端拦是"别让人白填一次"，后端拦才是判据；
+     *  · 成功文案同样在 **`data`** 里（`ApiResponse::success` 的 `message` 恒为
+     *    字面量 `"ok"`，见 src/utils.rs）——本页已经踩过一次这个坑（冻结那批）。
+     *
+     *  收件人**只能是列表里的账号**：后端用与 `list_temp_users` 逐字同一条判据
+     *  （`authz::is_listable_role`）挡超管，所以这一页不需要再分一次流。 */
+    const [notifyTarget, setNotifyTarget] = useState<any>(null)
+    const [notifyTitle, setNotifyTitle] = useState('')
+    const [notifyContent, setNotifyContent] = useState('')
+
+    const openNotifyModal = (user: any) => {
+        setNotifyTarget(user)
+        setNotifyTitle('')
+        setNotifyContent('')
+    }
+
+    const handleSendNotice = async () => {
+        const t = notifyTarget
+        const content = notifyContent.trim()
+        if (!t) return
+        if (!content) { message.warning('请输入通知内容'); return }
+        // 先关窗再发请求（同 confirmSetStatus / confirmSetRole）：失败走 message
+        // 提示，不留一个"卡住的确认框"
+        setNotifyTarget(null)
+        try {
+            // 标题留空时**原样传空串**，由后端取默认标题——不在前端另写一份默认值
+            // （"系统自己写的字"该只有一处来源，否则两边迟早不一样）
+            const res = await http.post('/api/temp-users/' + t.id + '/notice',
+                { title: notifyTitle.trim(), content })
+            if (res.data?.code === 200) message.success(res.data.data || '已发送')
+            else message.error(res.data?.message)
+        } catch { message.error('请求失败') }
+    }
+
     const openPwModal = (user: any) => {
         setPwTarget(user)
         setPwNewPassword('')
@@ -374,6 +415,11 @@ const Users = () => {
                                             <div style={{ display: 'flex', gap: 8 }}>
                                                 <Button size="small" onClick={() => openPwModal(u)}>修改密码</Button>
                                                 <Button size="small" onClick={() => handleCreateRecoveryCode(u)}>生成恢复码</Button>
+                                                {/* 发通知（20260926）：对**单个**账号发一条站内通知，
+                                                    与"公告"（粉丝/全体可见）是两件事——所以它在这一行上，
+                                                    而不是页面顶部一个"发公告"按钮。 */}
+                                                <Button size="small" className="tu-notify-btn"
+                                                        onClick={() => openNotifyModal(u)}>发通知</Button>
                                                 {freezeBlocked
                                                     ? <Tooltip title={freezeBlocked}>{freezeBtn}</Tooltip>
                                                     : freezeBtn}
@@ -507,6 +553,62 @@ const Users = () => {
                                 />
                             )}
                         </div>
+                    </Modal>
+
+                    {/* 发通知（20260926）。四个细节是刻意的：
+                        · 主按钮写「发送」而不是「确定」——同页其它确认框一个纪律
+                          （「冻结」/「解冻」/「改成管理员」），按钮上是这一下的动作，
+                          不必让人回头读标题；
+                        · **正文为空时主按钮禁用**（`okButtonProps.disabled`）：后端也会拒
+                          （`send_notice` 里那句"通知内容不能为空"），但那要往返一趟；
+                          这里是"别让人白填一次"，判据仍在后端；
+                        · `forceRender` + `{notifyTarget && …}` 与上面的改密码框同一条纪律：
+                          关窗即把这两个输入框从 DOM 摘掉（Chrome 会在**没有 `<form>`**
+                          时把整页散落的输入框当成一个合成表单去回填，本页 20260926 已中过一次）；
+                        · 正文用 TextArea：发出去收不回，得让人看清自己写了什么。 */}
+                    <Modal
+                        title={'发通知 - ' + (notifyTarget?.username || '')}
+                        open={!!notifyTarget}
+                        onOk={handleSendNotice}
+                        onCancel={() => setNotifyTarget(null)}
+                        okText="发送"
+                        cancelText="取消"
+                        okButtonProps={{
+                            disabled: !notifyContent.trim(),
+                            className: 'tu-notify-ok',
+                        }}
+                        cancelButtonProps={{ className: 'tu-notify-cancel' }}
+                        width={520}
+                        forceRender
+                    >
+                        {notifyTarget && (
+                            <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                <div style={{ color: '#8c8c8c' }}>
+                                    这条通知会出现在 <strong>{notifyTarget.username}</strong> 的个人中心，
+                                    发出后无法撤回。标题留空则显示为「站内通知」。
+                                </div>
+                                <Input
+                                    className="tu-notify-title"
+                                    name="notice-title"
+                                    autoComplete="off"
+                                    placeholder="标题（可留空）"
+                                    maxLength={128}
+                                    value={notifyTitle}
+                                    onChange={e => setNotifyTitle(e.target.value)}
+                                />
+                                <Input.TextArea
+                                    className="tu-notify-body"
+                                    name="notice-content"
+                                    autoComplete="off"
+                                    placeholder="通知内容（必填）"
+                                    rows={5}
+                                    maxLength={1000}
+                                    showCount
+                                    value={notifyContent}
+                                    onChange={e => setNotifyContent(e.target.value)}
+                                />
+                            </div>
+                        )}
                     </Modal>
 
                     <Modal

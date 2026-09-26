@@ -42,6 +42,12 @@
     通道"，头的事归 `src/apis/axios.tsx` 自己的测试管）。桩的形状也照真后端改：
     GET 回**裸数组**、写接口回 `{code,message,data}`——两半不一致时"把 `res.data`
     写成 `res.data.data`"这类缺陷会被桩掩盖成"没有账号"。
+  · **发通知**（第七节，同日晚些的第 7 件）—— 每行一个入口 + 受控弹窗（标题可空、
+    正文必填）。四层判据：每行都有入口、**弹窗开着时零请求**、**正文为空时主按钮
+    禁用**（且点它真不发请求）、请求体是 `{title, content}` 的**真填值**（标题留空
+    原样传空串，默认标题由后端给）。顺带锁两条：关窗后两个输入框从 DOM 摘掉
+    （`forceRender` + 条件渲染——本页 20260926 已被 Chrome 的合成表单回填坑过一次），
+    以及成功/被拒两侧信息**方位相反**（`data` vs `message`）。
 
 沿用既定手段（本机不能 vite build，见 CLAUDE.md §2）：esbuild 把真组件打成 bundle，
 只桩两个边界（`src/apis/axios.tsx` 与 `window.fetch`——20260926 起这一页**整页都走
@@ -156,6 +162,17 @@ const req = async (cfg: any) => {
     const label = ({ admin: '管理员', secretary: '秘书', user: '普通用户' } as any)[r] || r;
     return env0({ code: 200, message: 'ok',
                   data: '身份已改为' + label + '，该账号的登录状态已失效，请让对方重新登录' });
+  }
+  // ── 发通知（20260926）──────────────────────────────────────────────────────
+  // 与 status/role 同两条纪律：**成功那句中文在 `data` 里**（`message` 恒为 'ok'），
+  // 而**拒绝那句在 `message` 里**（`ApiResponse::error` 没有 data）——方位在成败
+  // 两侧正好相反。用 `__noticeDeny` 让桩按需拒绝（验"被拒时弹的是后端那句原因"）。
+  if (/^\/api\/temp-users\/\d+\/notice$/.test(url) && method === 'POST') {
+    const deny = (window as any).__noticeDeny;
+    if (deny) return env0({ code: 500, message: deny });
+    const id = Number(url.split('/')[3]);
+    const u = ((window as any).__users as any[]).find((x) => x.id === id);
+    return env0({ code: 200, message: 'ok', data: '已把通知发给「' + ((u && u.username) || '') + '」' });
   }
   return env0({ code: 200, message: 'ok', data: null });
 };
@@ -384,6 +401,11 @@ GEO = """() => {
                      disabled: b ? b.disabled : null,
                      tag: r.textContent.includes('已冻结') };
         }),
+        // 发通知（20260926）：每一行都该有一个（收件人是不是可发由后端判，
+        // 这一页不按角色分流）
+        notifyBtns: [...document.querySelectorAll('.tu-row')].map(
+            (r) => ({ u: r.querySelector('strong').textContent,
+                      has: !!r.querySelector('.tu-notify-btn') })),
         // 「变更身份」入口只在超管视角下存在（不是禁用——普通管理员从来没有过这个能力）
         roleBtns: [...document.querySelectorAll('.tu-row')].map(
             (r) => ({ u: r.querySelector('strong').textContent,
@@ -431,6 +453,44 @@ ROLE_DIALOG = """() => {
         body: q('.ant-modal-body'),
     };
 }"""
+
+
+# 发通知的弹窗（20260926）：与 STATUS_DIALOG/ROLE_DIALOG 同形，按类名认
+# （`.tu-notify-ok`）。额外取**两个输入框里现有的值**——"预设/校验"这类行为
+# 只有真读 DOM 才知道，光看请求体分不清"填对了"和"凑巧传对了"。
+NOTIFY_DIALOG = """() => {
+    const m = [...document.querySelectorAll('.ant-modal-wrap')].find(
+        (w) => getComputedStyle(w).display !== 'none' && w.querySelector('.tu-notify-ok'));
+    if (!m) return null;
+    const q = (s) => (m.querySelector(s) ? m.querySelector(s).textContent.replace(/\\s+/g, '') : '');
+    const ok = m.querySelector('.tu-notify-ok');
+    const val = (s) => { const e = m.querySelector(s); return e ? e.value : null; };
+    return {
+        title: q('.ant-modal-title'),
+        ok: ok.textContent.replace(/\\s+/g, ''),
+        okDisabled: ok.disabled,
+        body: q('.ant-modal-body'),
+        // 标题框是裸 `<input>`（`.tu-notify-title` 就落在它身上）；
+        // 正文**不能**按 `.tu-notify-body` 找输入框——`showCount` 会把它包进一个
+        // `<span class="ant-input-textarea-affix-wrapper … tu-notify-body">`，
+        // 类名落在那个 span 上（`fill('.tu-notify-body')` 会报
+        // "Element is not an <input>, <textarea>…"）。所以正文一律按
+        // `.tu-notify-body textarea` 取。两个断言分开写，免得一个选择器写宽了
+        // 把另一个的失败一起盖住。
+        fieldsPresent: !!m.querySelector('.tu-notify-title')
+            && !!m.querySelector('.tu-notify-body textarea'),
+        titleVal: val('.tu-notify-title'),
+        contentVal: val('.tu-notify-body textarea'),
+    };
+}"""
+
+
+def notice_posts(pg):
+    """本页发出的发通知请求（POST …/notice）。与 status_posts 同一条纪律：
+    "确认之前一条都不许发""请求体里是真填的那些字"都靠它。"""
+    return pg.evaluate("""() => window.__calls.filter((c) =>
+        c.method === 'POST' && /\\/notice$/.test(c.url))
+        .map((c) => ({ url: c.url, body: c.data }))""")
 
 
 def role_posts(pg):
@@ -1032,6 +1092,109 @@ with sync_playwright() as p:
           and not any(r["has"] for r in g["roleBtns"]),
           str([r for r in g["freezeBtns"] if r["disabled"]]))
     check("第六节④无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
+    pg.close()
+
+    # ── 七、发通知（20260926）──────────────────────────────────────────────────
+    # 这一节锁的是"给单个账号发一条站内通知"这条新通道在界面上的形状。判据分四层：
+    #   ① **每一行都有入口**（收件人合不合法由后端判，这一页不按角色分流）；
+    #   ② **先弹窗、弹窗开着时零请求**（与冻结/改身份同一个"点下去才发"的纪律）；
+    #   ③ **正文为空时主按钮禁用**——这是"必填"在界面上的形态。后端也会拒，但那要
+    #      往返一趟；前端这道只是"别让人白填一次"；
+    #   ④ 请求体是 `{title, content}` 的**真填值**（标题留空就原样传空串，默认标题
+    #      由后端给——"系统自己写的字"只有那一处来源）。
+    # 另锁两条本页已经踩过的坑：成功那句中文在 `data` 里（弹的不能是一个只有「ok」
+    # 的条）、被拒那句在 `message` 里（方位正好相反）。
+    print("\n【七】发通知：每行一个入口 + 先弹窗 + 正文必填 + 请求体形状")
+    pg = mount(br)
+    g = pg.evaluate(GEO)
+    check("每一行都有「发通知」按钮（收件人合不合法由后端判，前端不分流）",
+          all(r["has"] for r in g["notifyBtns"]) and len(g["notifyBtns"]) == 30,
+          str([r for r in g["notifyBtns"] if not r["has"]]))
+    check("关着的发通知弹窗**不在 DOM 里**（`forceRender` + 条件渲染：输入框不常驻，"
+          "否则又会喂给 Chrome 那个「整页是一个合成表单」的判定）",
+          pg.evaluate("() => document.querySelector('.tu-notify-title')") is None
+          and pg.evaluate("() => document.querySelector('.tu-notify-body textarea')") is None)
+
+    pg.locator('.tu-row:has(strong:text-is("guest1")) .tu-notify-btn').click()
+    pg.wait_for_timeout(300)
+    d = pg.evaluate(NOTIFY_DIALOG)
+    check("点「发通知」先弹窗（不是直接下手）", d is not None, str(d))
+    check("弹窗标题带目标账号名", d and "guest1" in d["title"], str(d and d["title"]))
+    check("两个输入框都挂出来了（标题 input + 正文 textarea）",
+          d and d["fieldsPresent"], str(d))
+    check("正文为空 ⇒ 主按钮**禁用**（界面上的「必填」）",
+          d and d["okDisabled"] is True, str(d))
+    check("主按钮上写的是这一下的动作词「发送」，不是「确定/OK」",
+          d and d["ok"] == "发送", str(d and d["ok"]))
+    check("弹窗正文写明这条通知会进对方个人中心且发出去收不回",
+          d and "个人中心" in d["body"] and "无法撤回" in d["body"], str(d and d["body"]))
+    # 禁用按钮点不动（playwright 的可操作性检查会拦，用 force）——重点是**零请求**
+    pg.locator(".ant-modal-wrap .tu-notify-ok").click(force=True)
+    pg.wait_for_timeout(400)
+    check("正文为空时点主按钮：**一个请求都没发**（禁用不只是个样式）",
+          notice_posts(pg) == [], str(notice_posts(pg)))
+
+    pg.locator(".tu-notify-body textarea").fill("请在下周三之前把资料补齐")
+    pg.wait_for_timeout(200)
+    d = pg.evaluate(NOTIFY_DIALOG)
+    check("填了正文 ⇒ 主按钮可用", d and d["okDisabled"] is False, str(d))
+    check("**弹窗开着、正文也填好了，仍是一个请求都没发**（点下去才发）",
+          notice_posts(pg) == [], str(notice_posts(pg)))
+    pg.locator(".tu-notify-cancel").click()
+    pg.wait_for_timeout(300)
+    check("点取消：关窗、零请求、两个输入框从 DOM 里摘掉",
+          pg.evaluate(NOTIFY_DIALOG) is None and notice_posts(pg) == []
+          and pg.evaluate("() => document.querySelector('.tu-notify-body textarea')") is None,
+          f'dlg={pg.evaluate(NOTIFY_DIALOG)} posts={notice_posts(pg)}')
+
+    # 标题留空走一遍：请求体里 title 是**空串**（默认标题由后端取，前端不另写一份）
+    pg.locator('.tu-row:has(strong:text-is("guest1")) .tu-notify-btn').click()
+    pg.wait_for_timeout(300)
+    pg.locator(".tu-notify-body textarea").fill("  请在下周三之前把资料补齐  ")
+    pg.wait_for_timeout(200)
+    pg.locator(".ant-modal-wrap .tu-notify-ok").click()
+    pg.wait_for_timeout(700)
+    posts = notice_posts(pg)
+    check("确认后发出 POST /api/temp-users/100/notice",
+          len(posts) == 1 and posts[0]["url"] == "/api/temp-users/100/notice", str(posts))
+    check("请求体是 {title:'', content:去空白的正文}",
+          posts and posts[0]["body"] == {"title": "", "content": "请在下周三之前把资料补齐"},
+          str(posts[0]["body"] if posts else None))
+    _n = notices(pg)
+    check("成功提示是后端那句中文（已把通知发给「guest1」）",
+          any("已把通知发给" in x and "guest1" in x for x in _n), str(_n))
+    check("提示里**没有**只有「ok」的条（读错字段的写法）",
+          not any(x.strip().lower() == "ok" for x in _n), str(_n))
+    check("发通知**不重拉账号列表**（通知不改这一页的任何一行）",
+          pg.evaluate("() => window.__calls.filter((c) => c.method === 'GET').length") == 1,
+          str(pg.evaluate("() => window.__calls.filter((c) => c.method==='GET').map((c)=>c.url)")))
+
+    # 填全两项走一遍：标题也要真的进请求体
+    pg.locator('.tu-row:has(strong:text-is("sec_zhang")) .tu-notify-btn').click()
+    pg.wait_for_timeout(300)
+    pg.locator(".tu-notify-title").fill("资料补齐提醒")
+    pg.locator(".tu-notify-body textarea").fill("请补齐资料")
+    pg.wait_for_timeout(200)
+    pg.locator(".ant-modal-wrap .tu-notify-ok").click()
+    pg.wait_for_timeout(700)
+    posts = notice_posts(pg)
+    check("填了标题 ⇒ 请求体里带上它（收件人是另一行：sec_zhang = id 200）",
+          len(posts) == 2 and posts[-1]["url"] == "/api/temp-users/200/notice"
+          and posts[-1]["body"] == {"title": "资料补齐提醒", "content": "请补齐资料"},
+          str(posts[-1] if posts else None))
+
+    # 被拒那一侧：原因在 **message** 里（`ApiResponse::error` 没有 data）
+    pg.evaluate("() => { window.__noticeDeny = '该账号不能接收通知' }")
+    pg.locator('.tu-row:has(strong:text-is("guest1")) .tu-notify-btn').click()
+    pg.wait_for_timeout(300)
+    pg.locator(".tu-notify-body textarea").fill("再试一次")
+    pg.wait_for_timeout(200)
+    pg.locator(".ant-modal-wrap .tu-notify-ok").click()
+    pg.wait_for_timeout(700)
+    _n = notices(pg)
+    check("被拒时弹的是后端那句原因（它在 message 里，读 data 会弹个空条）",
+          any("该账号不能接收通知" in x for x in _n), str(_n))
+    check("第七节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
     br.close()
