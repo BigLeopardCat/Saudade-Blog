@@ -1,8 +1,10 @@
 import './index.sass'
 import { useEffect, useMemo, useState } from "react";
 import { Button, Input, Modal, Pagination, Popconfirm, Switch, Table, Tag, Tooltip, message } from "antd";
+import { ReloadOutlined } from "@ant-design/icons";
 import type { ColumnsType } from 'antd/es/table';
 import http from "../../../apis/axios.tsx";
+import { useLiveRefresh } from "../../../utils/liveRefresh.ts";
 
 /** 评论管理：河灯留言的查询/筛选/删除 + 两段审核（20260905 issue9 双状态显示）
  *  数据来自 /api/protect/board（仅 src=board 的留言，与说说完全独立）。
@@ -27,6 +29,10 @@ import http from "../../../apis/axios.tsx";
  *      AI 的说明在整个系统里只存在于 AI 服务那一次的 HTTP 响应里）。
  *  后端**不加**理由必填的硬闸（审核接口是脚本/老前端也在用的兼容面），必填是这一层的
  *  保证；后端做的是"没写理由时按 人工 > reject_reason > aiReason 回落"（见 talks.rs）。
+ *  20260926 第二处改动（用户报「评论状态变更前端跟不上 agent」）：这一页此前**只在挂载时**
+ *  拉一次、也没有刷新入口 ⇒ 主人开着这一页、让看板娘替她驳回一条，界面纹丝不动。现在接
+ *  `utils/liveRefresh.ts`（看板娘收尾事件 / 切回可见 / 20 秒轮询）＋工具栏一个「刷新」按钮；
+ *  弹窗开着时那几轮一律不拉（见下面 `useLiveRefresh` 那段的理由）。
  */
 interface BoardItem {
     talkKey: number;
@@ -88,15 +94,20 @@ const BoardManage = () => {
     const [rejectReason, setRejectReason] = useState('');
     const [rejectBusy, setRejectBusy] = useState(false);
 
-    const load = async () => {
-        setLoading(true);
+    /** 拉列表。`silent` = 这一次是**背景重拉**（看板娘收尾事件 / 20 秒轮询）：
+     *  · 不闪表格的 loading——后台每 20 秒抖一下 spinner，会让人以为页面自己在动；
+     *  · 失败也不弹提示——服务端真挂了的话，主人手动点一次「刷新」会弹；每 20 秒叠一条
+     *    「获取留言失败」只会把页面刷满，反而盖住别的东西。
+     *  手动那一次（挂载 / 工具栏「刷新」）照旧给反馈。 */
+    const load = async (opts?: { silent?: boolean }) => {
+        if (!opts?.silent) setLoading(true);
         try {
             const res = await http.get('/api/protect/board');
             setItems(Array.isArray(res?.data?.data) ? res.data.data : []);
         } catch {
-            message.error('获取留言失败');
+            if (!opts?.silent) message.error('获取留言失败');
         } finally {
-            setLoading(false);
+            if (!opts?.silent) setLoading(false);
         }
     };
 
@@ -111,10 +122,26 @@ const BoardManage = () => {
         } catch { /* 读取失败保持默认关，入库判定与服务端一致 */ }
     };
 
+    /** 这一页的「重拉一次」= 列表 + 两个审核开关（开关也可能在别处被改，是同一份服务端状态）。
+     *  挂载、工具栏「刷新」、事件与轮询全走这一条，少一条路径就少一处会漂的判据。 */
+    const refresh = async (opts?: { silent?: boolean }) => {
+        await Promise.all([load(opts), loadSwitches()]);
+    };
+
     useEffect(() => {
-        load();
-        loadSwitches();
+        refresh();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+    /* 跨端同步（20260926，用户报「评论状态变更前端跟不上 agent，要刷新网页」）：
+     * 看板娘从服务端驳回/通过一条留言时，本页此前只在挂载时拉过一次 ⇒ 界面一直停在旧状态，
+     * 而这是最典型的用法（主人让 agent 替她审，自己开着这一页看结果）。
+     *
+     * `skip`（弹窗开着就不拉）不是保险起见：驳回弹窗里那个文本框是**主人正在写**的东西，
+     * 一次背景重拉虽然不会清掉它的值，但会让列表在弹窗底下换掉/行序变化，而弹窗认的是
+     * 那一行对象 ⇒ 主人按下「确认驳回」时，落到的可能是已经变样的列表。本地有未提交的
+     * 输入时一律不覆盖（同后台首页待办卡的 `pendingReload` 纪律）。 */
+    useLiveRefresh(() => refresh({ silent: true }), { skip: () => !!rejecting });
 
     /** 开关切换：乐观更新，POST websetting 落 web_info；失败回滚 */
     const toggleReview = async (key: 'aiReviewEnabled' | 'manualReviewEnabled', on: boolean) => {
@@ -357,6 +384,9 @@ const BoardManage = () => {
                     style={{ width: 300 }}
                 />
                 <Button onClick={() => setAsc((a) => !a)}>{asc ? '时序 ↑' : '时序 ↓'}</Button>
+                <Button icon={<ReloadOutlined />} onClick={() => refresh()} loading={loading}>
+                    刷新
+                </Button>
                 <span className="bm-count">共 {filtered.length} 条留言</span>
             </div>
             <div className="bm-review">

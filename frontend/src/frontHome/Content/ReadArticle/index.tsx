@@ -21,6 +21,7 @@ import SeoHelmet from "../../../components/SeoHelmet";
 import getToken from "../../../apis/getToken.tsx";
 import {addFavorite, errMsg, ok, removeFavorite} from "../../../apis/ProfileMethods.tsx";
 import { applyLocalFavorite, useFavorites } from "../../../components/UserCenter/favorites.ts";
+import {useLiveRefresh} from "../../../utils/liveRefresh.ts";
 
 // ByteMD imports
 import { Viewer } from '@bytemd/react'
@@ -85,24 +86,40 @@ const ReadArticle = () => {
     // Lock ref to prevent TOC auto-scroll during manual click
     const isClickingTocRef = useRef(false);
 
+    /** 拉这篇正文。`silent` = 背景重拉（跨端同步）：**不切加载屏**——详情页的
+     *  `isLoading` 会把整篇文章换成一个加载页，读者正读着的时候为了一次后台核对闪一下
+     *  是最坏的观感（同后台那几页"背景重拉不亮 loading"的纪律）。
+     *  404 照常走 `notFound`（两种模式都一样）：文章真被删了就该说它没了——
+     *  静默留着旧正文才是撒谎。 */
+    const loadArticle = (opts?: { silent?: boolean }) => {
+        if (!id) return;
+        // 非背景那一次：整篇换成加载页，并抹掉上一次的 404（不抹的话从死链跳到活文章
+        // 会先闪一下"文章不存在"——渲染顺序是 notFound 优先于 isLoading）
+        if (!opts?.silent) { setLoading(true); setNotFound(false); }
+        return getNoteById(id).then((res) => {
+            setArticle({ ...res.data.data });
+            setNotFound(false);
+        }).catch((err) => {
+            console.error('获取失败', err)
+            if (err?.response?.status === 404) {
+                setNotFound(true)
+                setArticle(null)
+            }
+        }).finally(() => {
+            if (!opts?.silent) setLoading(false)
+        });
+    };
+
     useEffect(() => {
-        if (id) {
-            setLoading(true)
-            setNotFound(false)
-            getNoteById(id).then((res) => {
-                setArticle({ ...res.data.data });
-            }).catch((err) => {
-                console.error('获取失败', err)
-                if (err?.response?.status === 404) {
-                    setNotFound(true)
-                    setArticle(null)
-                }
-            }).finally(() => {
-                setLoading(false)
-            });
-        }
+        loadArticle();
         scrollToTop();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [id]);
+
+    /* 跨端同步（20260926，**不轮询**）：看板娘改了这篇（标题/正文/状态）或把它删了，
+       读者手上这一页也该跟上——但访客页面不为我自己的编辑加流量，所以只吃"看板娘一轮
+       收尾"与"切回可见/重新聚焦"，不挂定时器（同首页/分类页）。 */
+    useLiveRefresh(() => loadArticle({ silent: true }), { poll: false });
     
     const toggleFavorite = async () => {
         if (!id) return

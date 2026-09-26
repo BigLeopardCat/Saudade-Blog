@@ -11,11 +11,12 @@ import {
     Alert, message,
 } from "antd";
 import React, {useEffect, useMemo, useState} from "react";
-import {TagsOutlined} from '@ant-design/icons'
+import {ReloadOutlined, TagsOutlined} from '@ant-design/icons'
 import {TagLevelOne} from "../../../../interface/TagType";
 import {fetchTags} from "../../../../store/components/tags.tsx";
 import {useDispatch} from "react-redux";
 import {addTagOne, addTagTwo, delTag, initTree, updateTagOne, updateTagTwo} from "../../../../apis/TagMethods.tsx";
+import {useLiveRefresh} from "../../../../utils/liveRefresh.ts";
 
 /**
  * 标签管理页。
@@ -60,6 +61,13 @@ const AllTag = () => {
         refresh()
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+    /* 跨端同步（20260926）：标签树此前只在挂载时拉一次——看板娘在别处改了标签
+       （改名/删除/挪父级），开着这一页的主人要手动刷新才看得见。
+       现在接 `utils/liveRefresh.ts`（看板娘收尾事件 / 切回可见 / 20 秒轮询）。
+       `skip`（编辑弹窗开着就不重拉）：弹窗里是主人正在改的那份字段，底下这棵树在它
+       开着的时候换掉，等于让"我看着的那一行"在按确定之前被换成了别人（同评论管理的纪律）。 */
+    useLiveRefresh(refresh, { skip: () => editModalOpen });
 
     // 节点 key 带层级前缀（见文件头第 1 条）。Tree 上挂的是这棵，`staticDate` 保留原始数据。
     const treeData: any[] = useMemo(() => staticDate.map((one: any) => ({
@@ -266,6 +274,12 @@ const AllTag = () => {
                     <Form.Item>
                         <Button type="primary" htmlType="submit">添加</Button>
                         <Button type="primary" style={{marginLeft: 20}} onClick={openEdit}>编辑</Button>
+                        {/* 手动重拉（20260926 与跨端同步一起加的）：自动重拉可能被"弹窗开着"
+                            挡下，也可能就在那 20 秒窗口里没到——主人想现在看一眼就给这一下。 */}
+                        <Button style={{marginLeft: 12}} icon={<ReloadOutlined />}
+                                onClick={() => refresh()}>
+                            刷新
+                        </Button>
                         <Button type="primary" style={{marginLeft: 20, backgroundColor: '#f5222d'}} onClick={Delete}>删除</Button>
                     </Form.Item>
                     <Alert

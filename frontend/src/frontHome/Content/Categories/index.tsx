@@ -8,6 +8,7 @@ import { motion } from "framer-motion";
 import dayjs from "dayjs";
 import scrollToTop from "../../../utils/scrollToTop.tsx";
 import {searchNotes} from "../../../apis/NoteMethods.tsx";
+import {useLiveRefresh} from "../../../utils/liveRefresh.ts";
 import {message} from "antd";
 import LazyImage from "../../../components/LazyImage";
 import SeoHelmet from "../../../components/SeoHelmet";
@@ -18,21 +19,33 @@ const Categories = () => {
     const categories = useSelector((state: { categories: categoryList }) => state.categories.categories);
     const navigate = useNavigate()
 
+    /** 拉这一分类下的公开文章。抽成函数是为了让"跨端同步"能复用同一条路径
+     *  （条件、错误提示都只有一份，不再长一条只在事件里走、换个分类就拉错的旁路）。 */
+    const loadArticles = () => {
+        const title = categories.find(item => item.pathName === id);
+        if (!title) return;
+        setCategoryTitle(title.categoryTitle);
+        return searchNotes({
+            categories: title.categoryTitle,
+            status: 'public'
+        }).then((res) => {
+            setArticleList(res.data.data)
+        }).catch(() => {
+            message.error("获取失败")
+        });
+    };
+
     useEffect(() => {
         scrollToTop();
-        const title = categories.find(item => item.pathName === id);
-        if (title) {
-            setCategoryTitle(title.categoryTitle);
-            searchNotes({
-                categories: title.categoryTitle,
-                status: 'public'
-            }).then((res) => {
-                setArticleList(res.data.data)
-            }).catch(() => {
-                message.error("获取失败")
-            });
-        }
+        loadArticles();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [id, categories]);
+
+    /* 跨端同步（20260926，**不轮询**）：看板娘刚改了站内数据（新建/删除文章、改状态）
+       时，访客正看着的这份列表也该跟着变——但访客页面**不为我自己的编辑加流量**：
+       只吃"看板娘一轮收尾"这个事件与"切回可见/重新聚焦"，不挂定时器（同首页/详情页）。
+       这就是本轮选择"事件 + 可见性 + 轻轮询"而不是 SSE/WS 的那条边界：成本只在后台。 */
+    useLiveRefresh(loadArticles, { poll: false });
 
     return (
         <div className="CategoriesContainer">

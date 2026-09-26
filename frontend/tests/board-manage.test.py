@@ -14,6 +14,10 @@
     说明」只在**这一行**有 aiReason 时出现。"可编辑"不能只看 readOnly 属性：填一个自定义
     值、看主按钮跟着变可用，才证明它真接回了 state（只读回显也能把值显示出来）。
   · **已有理由的回显 + 沿用** —— 弹窗里多一行回显（含那条已有理由原文）与一个「沿用」按钮。
+  · **跨端同步**（第八节，用户报「评论状态变更前端跟不上 agent，也要刷新网页」）—— 看板娘
+    一轮收尾的事件到达 ⇒ 这一页自己多拉一次列表；驳回弹窗开着时那一次不许拉；手动「刷新」
+    按钮照旧给 loading 反馈，背景那一次不给。`utils/liveRefresh.ts` 的四条纪律由模块级
+    `live-refresh.test.mjs` 锁，本节锁的是**这一页真的接了它、而且接对了**。
 
 驳回请求的契约是 `PUT /api/protect/board/<id>/audit`、body **严格等于**
 `{approved: 0, reason: "<填的值>"}`——键集合也要对（多传/少传都算红）。注意 approved 传的是
@@ -94,7 +98,13 @@ const req = async (cfg: any) => {
   calls.push({ url, method, data: wire(cfg.data) });
   await delay(20);
   // 列表：回**假后端那一份**（页数/条数/各行字段都从它派生，断言才是数据驱动的）
-  if (url === '/api/protect/board') return env(wire((window as any).__board));
+  if (url === '/api/protect/board') {
+    // 第八节用：把**这一次**响应扣在手里，好让"请求在途"那一段足够长、断言落得进去
+    // （`delay(20)` 那 20ms 靠 evaluate 的往返去撞，是在赌时序）。扣一次就自动清掉。
+    const h = (window as any).__holdNext;
+    if (h) { (window as any).__holdNext = null; await h; }
+    return env(wire((window as any).__board));
+  }
   if (url === '/api/protected/websetting') {
     // 人工复核开着：这不是随手挑的取值——"待审行带 AI 判定/AI 说明"这种状态**只在它开着时
     // 才产生**（src/routes/talks.rs:444 的 `let approved = if manual_on { 0 } else { 2 }`），
@@ -335,6 +345,47 @@ def audit_puts(pg):
 
 def get_urls(pg):
     return pg.evaluate("() => window.__calls.filter((c) => c.method === 'GET').map((c) => c.url)")
+
+
+def board_gets(pg):
+    """本页发出的 `GET /api/protect/board` 次数（第八节的唯一判据）。"""
+    return get_urls(pg).count("/api/protect/board")
+
+
+def fire_agent_done(pg):
+    """派发看板娘一轮收尾事件（`components/UserCenter/agentTurn.ts` 的
+    `AGENT_TURN_DONE_EVENT = 'agent-turn-done'`，由 chat-stream.js 在流收尾时派发）。
+    名字在这里是**字面量**：它一改，本节的断言就该跟着红——`live-refresh.test.mjs`
+    第八节锁的是"三处同名"，那边锁常量与派发方，这边锁**这一页真的接了它**。"""
+    pg.evaluate("() => window.dispatchEvent(new Event('agent-turn-done'))")
+
+
+def hold_next_board(pg):
+    """把下一次 `GET /api/protect/board` 的响应扣住，返回放行函数（见桩里 `__holdNext`）。"""
+    pg.evaluate("""() => { window.__holdNext = new Promise((res) => { window.__releaseBoard = res; }); }""")
+
+    def release():
+        pg.evaluate("() => { const r = window.__releaseBoard; window.__releaseBoard = null; if (r) r(); }")
+
+    return release
+
+
+def spinning(pg):
+    """表格的 loading 圈（antd Table 的 `loading` 落到 `.ant-spin-spinning`）。"""
+    return pg.evaluate("() => document.querySelectorAll('.ant-spin-spinning').length")
+
+
+def click_refresh(pg):
+    """点工具栏的「刷新」按钮。按**整串文案**找（抹空白后相等）——与行内按钮同一条理由：
+    antd 会把两个汉字渲染成「刷 新」，`has_text='刷新'` 恒不命中。找的是 `.bm-toolbar`
+    里那一个，不会误撞弹窗/行内的按钮。"""
+    pg.evaluate("""() => {
+        const nz = (s) => String(s == null ? '' : s).replace(/\\s+/g, '');
+        const b = [...document.querySelectorAll('.bm-toolbar button')]
+            .find((x) => nz(x.textContent) === '刷新');
+        if (!b) throw new Error('工具栏里没有「刷新」按钮');
+        b.click();
+    }""")
 
 
 def _row_index(pg, content):
@@ -658,6 +709,68 @@ with sync_playwright() as p:
     check("  通过的行不显示驳回理由那一块（后端会清空理由）",
           g2 and g2["reason"] is None, str(g2 and g2["reason"]))
     check("第七节②无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
+    pg.close()
+
+    # ── 八、跨端同步：看板娘改的那一笔，页面自己跟上 ────────────────────────────
+    # 现场（用户报的）：后台开着这一页，让看板娘驳回一条留言 —— 页面不动，得刷新网页。
+    # 这一页此前只在挂载时拉一次，agent 是从服务端改的账，浏览器没有任何理由知道。
+    # 现在接 `utils/liveRefresh.ts`（`live-refresh.test.mjs` 在模块级锁它的四条纪律），
+    # 这一节锁的是**这一页真的接了它、而且接对了**：
+    #   · 看板娘收尾事件 ⇒ 多发一次 `GET /api/protect/board`；
+    #   · 那一次是**背景式**的（在途时不亮表格 loading）——后台每 20 秒抖一下 spinner，
+    #     会让人以为页面自己在动；而主人**手动**点「刷新」时必须照旧有反馈。两侧都要验：
+    #     只验一侧的话，"永远 loading" 与 "永远不 loading" 都能蒙过一条。
+    #   · 驳回弹窗开着 ⇒ 一次都不拉（弹窗认的是那一行对象，底下列表在它下面换掉很危险）。
+    #     ⚠️ 这一条的判据必须是 `skip`，不能是节流窗口：所以派发前**先等过** MIN_GAP_MS
+    #     （2000ms），否则它"通过"只是因为上一次刚拉完。反过来，弹窗关掉之后**不等**就
+    #     派发 —— 那一次若被节流吃掉，说明 `skip` 把窗口也吃掉了（实现里刻意把 skip 判在
+    #     节流之前，见 liveRefresh.ts 的注释），那时这一条会真红。
+    print("\n【八】跨端同步：看板娘收尾事件 ⇒ 重拉；驳回弹窗开着 ⇒ 一次都不拉")
+    pg = mount(br)
+    base = board_gets(pg)
+    check("前置：挂载时只拉了一次列表（否则下面的增量断言无从分辨）", base == 1, str(base))
+
+    # ① 事件触发的重拉是背景式的：把响应扣住，看那一段在途时间里表格亮不亮 loading
+    release = hold_next_board(pg)
+    fire_agent_done(pg)
+    pg.wait_for_timeout(300)
+    check("收到看板娘收尾事件后确实发了请求（在途，响应被扣住）", board_gets(pg) == base + 1,
+          str(board_gets(pg)))
+    check("  且那一次是**背景式**的：请求在途时表格不亮 loading（不打断主人正在看的东西）",
+          spinning(pg) == 0, str(spinning(pg)))
+    release()
+    pg.wait_for_timeout(400)
+    check("  放行后列表照常刷新（没有卡在在途状态）", board_gets(pg) == base + 1,
+          str(board_gets(pg)))
+
+    # ② 弹窗开着：事件一次都不许拉。先等过节流窗口，确保"没拉"只能归因于 skip
+    pg.wait_for_timeout(2100)
+    d = open_reject(pg, "驳回靶子B")
+    check("前置：驳回弹窗开着", d is not None, str(d))
+    fire_agent_done(pg)
+    pg.wait_for_timeout(500)
+    check("弹窗开着（主人在写理由）收到事件 ⇒ **一次都不拉**，列表停在原地",
+          board_gets(pg) == base + 1, str(board_gets(pg)))
+
+    # ③ 关窗后**不等**就派发：`skip` 不该把节流窗口一起吃掉（否则关窗后还得干等 2 秒）
+    cancel_modal(pg)
+    fire_agent_done(pg)
+    pg.wait_for_timeout(500)
+    check("关掉弹窗后紧接着的事件立刻生效（skip 判在节流之前，没吃掉窗口）",
+          board_gets(pg) == base + 2, str(board_gets(pg)))
+
+    # ④ 手动「刷新」按钮：照旧有 loading 反馈（与背景式相对的那一侧）
+    release2 = hold_next_board(pg)
+    click_refresh(pg)
+    pg.wait_for_timeout(300)
+    check("工具栏「刷新」按钮真的发了请求", board_gets(pg) == base + 3, str(board_gets(pg)))
+    check("  手动那一次**有** loading 反馈（表格清楚地在转，不是静默换数据）",
+          spinning(pg) >= 1, str(spinning(pg)))
+    release2()
+    pg.wait_for_timeout(400)
+    check("  放行后 loading 收掉、列表是新的一份", spinning(pg) == 0 and board_gets(pg) == base + 3,
+          f'spin={spinning(pg)} gets={board_gets(pg)}')
+    check("第八节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
     br.close()
