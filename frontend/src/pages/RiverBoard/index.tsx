@@ -507,7 +507,9 @@ const buildMoonSprite = (geo: { size: number; ss: number }) => {
             const occlude = Math.min(1, lum * 6);
             data[i4] = Math.round(255 * lum * warm);
             data[i4 + 1] = Math.round(255 * lum * 0.975 * warm);
-            data[i4 + 2] = Math.round(255 * lum * 0.92);
+            // 蓝系数 0.92 → 0.86（20260926 乳酪月面那一批）：整体偏暖一点才像奶酪。
+            // 与光照/月相/遮挡无关，要回冷月色把 0.92 改回来即可（就这一行）
+            data[i4 + 2] = Math.round(255 * lum * 0.86);
             data[i4 + 3] = Math.round(cov * occlude * 255);
         }
     }
