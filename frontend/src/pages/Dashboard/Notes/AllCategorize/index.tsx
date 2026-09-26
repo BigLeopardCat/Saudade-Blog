@@ -10,7 +10,7 @@ import {
     Tag,
 } from "antd";
 import React, {useEffect, useState} from "react";
-import {FolderOpenOutlined, QuestionCircleOutlined} from '@ant-design/icons';
+import {FolderOpenOutlined, QuestionCircleOutlined, ReloadOutlined} from '@ant-design/icons';
 import {CategoriesType} from "../../../../interface/CategoriesType";
 import {fetchCategories} from "../../../../store/components/categories.tsx";
 import {useDispatch} from "react-redux";
@@ -26,6 +26,7 @@ import {
     getCategories,
     updateCategory
 } from "../../../../apis/CategoryMethods.tsx";
+import {useLiveRefresh} from "../../../../utils/liveRefresh.ts";
 const  AllCategorize = () => {
     //hooks区域
     const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
@@ -40,6 +41,13 @@ const  AllCategorize = () => {
     useEffect(() => {
        initCategoryList()
     },[])
+
+    /* 跨端同步（20260926）：分类列表此前只在挂载时拉一次（增删改之后各自重拉一次本地的），
+       看板娘在别处改了分类这一页就停在旧的。现在接 `utils/liveRefresh.ts`
+       （看板娘收尾事件 / 切回可见 / 20 秒轮询）。
+       `skip`：新增/编辑/删除确认弹出着就不重拉——那几个弹窗认的是一份快照
+       （`isEdit`/被选中的行），底下的表在它开着的时候换掉，按确定时落的就不是主人看到的那一行。 */
+    useLiveRefresh(initCategoryList, { skip: () => isModalOpen || open });
 
     async function initCategoryList(){
         const res = await getCategories()
@@ -287,6 +295,11 @@ const  AllCategorize = () => {
                            <div style={{float: 'left',display:'flex'}} >
                                <Fab color="primary" aria-label="add" size='small' onClick={showModal}>
                                    <AddIcon />
+                               </Fab>
+                               {/* 手动重拉（20260926 与跨端同步一起加的） */}
+                               <Fab color="default" aria-label="reload" size='small'
+                                    style={{marginLeft: 10}} onClick={() => initCategoryList()}>
+                                   <ReloadOutlined />
                                </Fab>
                                <div style={{position:'absolute',width:220}}>
                                    {hasSelected&&<Fab variant="extended" color='error' size='medium' style={{ marginLeft: 10}} onClick={showdelModal}>

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./index.scss";
 import { runtimeBaseURL } from "../../utils/runtimeApi";
 import { MOON_TEX } from "./moon_tex";
+import { useLiveRefresh } from "../../utils/liveRefresh";
 import Live2dAgent from "../../components/Live2dAgent"; // 沉浸页也保留看板娘（顶层路由无 App 布局）
 
 /* 河灯留言板 ── 一条只存在于路由之下的河。
@@ -45,6 +46,12 @@ const CAT_INFO: Record<string, { name: string; desc: string }> = {
 };
 /* 三种灯型名称（与精灵 v 对应） */
 const LAMP_NAMES = ["莲花灯", "八角灯", "圆笼灯"];
+/* 河灯 id 的分界（20260926 起在代码里具名，此前只在三处写成字面量 `10000 +`）：
+  判据是**灯的来历**，不是大小——`id < USER_LANTERN_BASE` 是开场铺在河面上的那批（id = 0..n-1，
+   内容来自公开留言池）；`id ≥ USER_LANTERN_BASE` 是**用户自己弄起来的**（刚放下的灯、灯影集里
+   点亮的灯）。两者数据源不同：后者的内容可能是待审的、根本不在公开池里 ⇒ 任何"跟着公开池
+   调整河面"的逻辑都必须放过它们（见 syncPublicBoard）。 */
+const USER_LANTERN_BASE = 10000;
 /* 河灯上的简短时刻（月-日 时:分），与灯影集完整时间区分 */
 const shortTime = (d: Date) => {
     const p = (n: number) => String(n).padStart(2, "0");
@@ -2099,7 +2106,7 @@ export default function RiverBoard() {
             const pending = jj?.data === "Pending";
             setWishPending(pending);
             const metas = metaRef.current;
-            const id = 10000 + wishSeq.current++;
+            const id = USER_LANTERN_BASE + wishSeq.current++;
             metas.push({
                 id,
                 v: wishV,
@@ -2381,10 +2388,82 @@ export default function RiverBoard() {
         }
     };
 
+    /* 跨端同步（20260926，用户报「评论状态变更前端跟不上 agent，也要刷新网页」）：
+       留言板上的可见性是**服务端**说了算——看板娘驳回一条、或主人自己在后台通过一条，
+       河面此前只在挂载时拉过那一次，于是"被驳回的灯还在河上漂、新通过的灯一直不出现"。
+
+       这份重拉**只做合并**（不重建灯、不动镜头、不重挂 canvas、不重置轮播指针）：
+         · 池子换新 + 指针夹回新长度内（**不重置**：重置会让整条河的留言成片跳一次）；
+         · 只动"当前漂着的那句话已经不在池子里"的灯（刚被驳回/删除）——还在池子里的
+           一个字都不改：正漂在眼前的那句话无故换掉，比旧一点更让人困惑；
+         · `id ≥ USER_LANTERN_BASE` 的灯（主人自己放的、灯影集里点亮的）**一个都不碰**：
+           它们的出处不是这个公开池（待审的灯压根不在里面），按池子去"纠正"会把主人
+           刚放下的灯当场换成别人的留言；
+         · 灯影集那份（`albumItems`：还带 mine/approved 两个公开池没有的字段）不在这里拼，
+           只把 TTL 缓存作废——下次打开灯影集自然重拉，也省得在主人翻卷册时把列表换掉。 */
+    const syncPublicBoard = async () => {
+        const token = localStorage.getItem("tokenKey");
+        const res = await fetch(`${runtimeBaseURL}/api/public/board`, {
+            headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        });
+        const j = (await res.json()) as { data?: unknown };
+        const arr = Array.isArray(j?.data)
+            ? (j.data as Array<{ talkKey?: unknown; v?: unknown; cat?: unknown; author?: unknown; content?: unknown; createTime?: unknown }>)
+            : [];
+        const items: Wish[] = arr
+            .map((x) => ({
+                id: Number(x?.talkKey ?? 0),
+                v: [0, 1, 2].includes(Number(x?.v)) ? Number(x.v) : -1,
+                cat: CATS.includes(String(x?.cat ?? "")) ? String(x.cat) : catOf(String(x?.content ?? "")),
+                author: String(x?.author ?? ""),
+                msg: String(x?.content ?? "").trim(),
+                time: String(x?.createTime ?? "").slice(5, 16),
+                talkKey: Number(x?.talkKey ?? 0),
+            }))
+            .filter((t) => t.msg);
+        // 空池子**什么都不动**：留言板真的清空是极端情况，而"拉回来一份空"更可能是上游
+        // 抽风——那时把河面写空（或把灯全换掉）比留一河旧灯坏得多。挂载那次另有演示灯兜底。
+        if (items.length === 0) return;
+        if (allTalksRef.current.length === 0) batchPtr.current = lanternCountRef.current;
+        allTalksRef.current = items;
+        if (batchPtr.current > items.length) batchPtr.current = items.length;
+        boardCacheRef.current = null;
+        const live = new Set(items.map((t) => t.msg));
+        setLanterns((prev) => {
+            // 绝大多数刷新是"一条都没被撤"：先判一次，没有要改的就**把原数组原样还回去**
+            // ——否则每 20 秒白造一个新数组、整组件重渲染一次（河灯的 DOM 虽被 memo 挡住，
+            // 但没理由每分钟三次做无用功）
+            if (prev.every((p) => p.id >= USER_LANTERN_BASE || live.has(p.msg))) return prev;
+            return prev.map((p, i) => {
+                if (p.id >= USER_LANTERN_BASE || live.has(p.msg)) return p;
+                const it = items[i % items.length];
+                const meta = metaRef.current.find((m) => m.id === p.id);
+                if (meta && it.v >= 0) meta.v = it.v;
+                return {
+                    ...p,
+                    msg: it.msg,
+                    cat: it.cat || catOf(it.msg),
+                    v: it.v >= 0 ? it.v : p.v,
+                    author: it.author,
+                    time: it.time,
+                };
+            });
+        });
+    };
+
+    /* 河面跟着服务端走（20 秒兜"别的地方改的"，看板娘收尾事件兜"我刚让它办的"）。
+       `skip` 判据是**主人手上有没有没落地的东西**：
+         · `wishOpen` —— 放灯流程开着（正在书写/正在放下），这时河面不该在它背后换；
+         · `reclaimBusy`/`reclaimArm` —— 收回河灯的两步确认进行中，本地已经按结果改过列表，
+           这时重拉会拿一份"还没删掉"的服务端数据把它盖回去。 */
+    useLiveRefresh(syncPublicBoard, {
+        skip: () => wishOpen || reclaimArm || reclaimBusy,
+    });
+
     /* 灯影集：选中一条留言 → 河灯排到近景列队起始位置 + 亮起气泡 + 打开弹窗详情 */
     const lightFromAlbum = (it: AlbumItem) => {
         const metas = metaRef.current;
-        const id = 10000 + wishSeq.current++;
+        const id = USER_LANTERN_BASE + wishSeq.current++;
         metas.push({
             id,
             v: it.v,
@@ -2714,7 +2793,7 @@ export default function RiverBoard() {
                                             if (!w) return;
                                             // 与灯影集选中同款：灯排到近景列队起始 + 亮起气泡 + 打开弹窗详情
                                             const metas = metaRef.current;
-                                            const id = 10000 + wishSeq.current++;
+                                            const id = USER_LANTERN_BASE + wishSeq.current++;
                                             metas.push({
                                                 id,
                                                 v: w.v,

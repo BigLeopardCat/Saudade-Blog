@@ -26,7 +26,7 @@ import {useLocation, useNavigate, useSearchParams} from "react-router-dom";
 import {NoteType} from "../../../../interface/NoteType";
 import {useDispatch, useSelector} from "react-redux";
 import {fetchNoteList} from "../../../../store/components/note.tsx";
-import {QuestionCircleOutlined} from '@ant-design/icons';
+import {QuestionCircleOutlined, ReloadOutlined} from '@ant-design/icons';
 import dayjs from "dayjs";
 import {Fab} from "@mui/material";
 import DeleteIcon from "@mui/icons-material/Delete";
@@ -38,6 +38,7 @@ import {delAllNotes, delNote, getAdminNotes, searchAdminNotes, updateNoteStatus}
 import {resolveApiAssetUrl} from "../../../../utils/runtimeApi";
 import NoteTagSelect from "../../../../components/NoteTagSelect/index.tsx";
 import {joinNoteTags, parseNoteTags} from "../../../../utils/noteTags";
+import {useLiveRefresh} from "../../../../utils/liveRefresh.ts";
 import {
     DEFAULT_LIST_QUERY,
     LIST_PAGE_SIZE,
@@ -215,10 +216,19 @@ const AllNotes = () => {
     );
 
     // ── 取数：**只读** URL，绝不回写（回写就是 URL→effect→URL 死循环）──────────────
+    // `reloadSeq` 是"再来一遍"的序号（跨端同步用，见下面 `useLiveRefresh`）：它进 deps，
+    // 于是背景重拉走的就是**这一条**取数路径——条件、竞态守卫、失败提示全都同一份，
+    // 不会再长出一条"只把这一页拉对、换个 tab 就拉错"的旁路。
+    const [reloadSeq, setReloadSeq] = useState(0);
+    const bgReloadRef = useRef(false);   // 这一次重拉是不是背景发起的（决定亮不亮 loading）
     useEffect(() => {
         let alive = true;              // 竞态守卫：切 tab 时慢响应不能盖掉快响应
         const request = listRequest(parseListQuery(fetchKey));
-        setLoading(true);
+        // 背景重拉（看板娘收尾事件 / 切回可见 / 轮询）**不亮表格的 loading**：后台每 20 秒
+        // 抖一下 spinner，会让人以为页面自己在动（同评论管理那一页的理由）。
+        const bg = bgReloadRef.current;
+        bgReloadRef.current = false;
+        setLoading(!bg);
         const pending = request.mode === 'list'
             ? getAdminNotes()
             : searchAdminNotes(request.body);
@@ -235,7 +245,7 @@ const AllNotes = () => {
             })
             .finally(() => { if (alive) setLoading(false); });
         return () => { alive = false; };
-    }, [fetchKey]);
+    }, [fetchKey, reloadSeq]);
 
     // 勾选行跟着数据收敛（删掉的行不该继续被勾着）。
     // 只在数据变化时求交：**翻页不清空**（保留跨页勾选），也不放进 effect cleanup
@@ -248,6 +258,22 @@ const AllNotes = () => {
             return next.length === prev.length ? prev : next;
         });
     }, [rows]);
+
+    /* 跨端同步（20260926）：这一页此前只在「筛选条件/tab 变了」或重挂载时取数——看板娘
+       在别处改了文章（新建/删除/改状态）它一概不知道，得手动刷新才看得见。
+       现在接 `utils/liveRefresh.ts`（看板娘收尾事件 / 切回可见 / 20 秒轮询）。
+       `skip`（文章配置弹窗开着就不重拉）：那个弹窗里是**主人正在编辑**的一份配置，
+       而它回的是一份服务端快照 + 本地表单——底下的列表在它开着的时候换掉，主人按「确定」
+       时心里那一行和自己填的值就不是同一份了（同评论管理那一页的纪律）。
+       背景重拉**不亮 loading**、也不改当前页：它走的是同一条取数 effect（见 `reloadSeq`），
+       拉回来的是**当前筛选条件下的当前页**，翻页/勾选/滚动位置都不动。 */
+    /** 重拉一次。`bg` = 背景式（不亮表格 loading，见取数 effect 里的 `bgReloadRef`）：
+     *  自动重拉传 true，主人手动点「刷新」传 false——那一下要有"在转"的反馈。 */
+    const reloadList = (bg: boolean) => {
+        bgReloadRef.current = bg;
+        setReloadSeq((n) => n + 1);
+    };
+    useLiveRefresh(() => reloadList(true), { skip: () => isModalOpen || !!editRow });
 
     // 标签筛选（前端侧）、分页切片、**渲染期**钳制
     const tagFiltered = useMemo(() => filterRowsByTags(rows, query.tags), [rows, query.tags]);
@@ -559,11 +585,20 @@ const AllNotes = () => {
                         left: (
                             /* 20260924：去掉按钮上的「+」图标（用户要求）——文案本身就写着
                                "新增文章"，前面再顶一个加号是同一件事说两遍。 */
-                            <Button type="primary" size="small"
-                                    style={{marginRight: 12}}
-                                    onClick={() => navigate('/dashboard/notes/newnote')}>
-                                新增文章
-                            </Button>
+                            <>
+                                <Button type="primary" size="small"
+                                        style={{marginRight: 12}}
+                                        onClick={() => navigate('/dashboard/notes/newnote')}>
+                                    新增文章
+                                </Button>
+                                {/* 手动重拉这一份列表（20260926 与跨端同步一起加的）：自动重拉
+                                    有 20 秒的窗口，也可能被"弹窗开着"挡下——那时主人要的是
+                                    **现在就看一眼**，而不是去琢磨为什么没动。 */}
+                                <Button size="small" icon={<ReloadOutlined />}
+                                        onClick={() => reloadList(false)}>
+                                    刷新
+                                </Button>
+                            </>
                         ),
                     }}
                     // onChange 里原来那一大坨分支（各自发请求、还顺手 filter 一遍本地数据）

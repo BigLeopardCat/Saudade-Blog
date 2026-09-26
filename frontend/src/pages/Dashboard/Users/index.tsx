@@ -1,5 +1,6 @@
 import './index.sass'
 import { Button, Dropdown, Input, message, Modal, Tabs, Tag, Tooltip } from 'antd';
+import { ReloadOutlined } from '@ant-design/icons';
 import type { TabsProps } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -12,6 +13,7 @@ import BoardManage from '../BoardManage';
 // 同页的评论管理（BoardManage）本来就走共享客户端，两半行为不一致本身就是坑。
 import http from "../../../apis/axios.tsx";
 import getToken from "../../../apis/getToken.tsx";
+import { useLiveRefresh } from "../../../utils/liveRefresh.ts";
 import { ROLE_LABEL, roleLabel, roleTagColor, getRoleFromToken, getUidFromToken } from "../../../utils/auth.ts";
 
 /** 用户管理 = 账号管理（临时访客账号）+ 评论管理（河灯留言审核）
@@ -175,8 +177,8 @@ const Users = () => {
 
     /** 冻结/解冻的确认弹窗。`statusNext` = 点确定之后那一行的目标状态：
      *  true 冻结 / false 解冻。用**目标状态**而不是 `isFrozen(statusTarget)` 现算——
-     *  弹窗开着的这段时间里列表可能被重新拉过（60 秒轮询/别处改过），
-     *  现算会让"我点的是冻结、确定下去却解冻了"。 */
+     *  弹窗开着的这段时间里列表可能被重新拉过（看板娘刚改过 / 切回可见 / 20 秒轮询，
+     *  见下面 `useLiveRefresh` 那段），现算会让"我点的是冻结、确定下去却解冻了"。 */
     const [statusTarget, setStatusTarget] = useState<any>(null)
     const [statusNext, setStatusNext] = useState(false)
     const askSetStatus = (user: any, frozen: boolean) => {
@@ -297,6 +299,19 @@ const Users = () => {
         } catch { message.error('请求失败') }
     }
 
+    /* 跨端同步（20260926）：账号列表此前只在挂载时拉一次（还刻意延迟 500ms 让首屏先出来）。
+       现在接 `utils/liveRefresh.ts`——看板娘收尾事件 / 切回可见 / 20 秒轮询，任一发生就重拉。
+       五个写入口的弹窗开着时**一律不拉**（`skip`）：冻结/解冻、变更身份、发通知、改密码、
+       恢复码。理由都是同一句——**绝不覆盖主人正在编辑或正在确认的东西**：冻结那个弹窗存的
+       是一份**目标状态快照**（见 `statusTarget` 的注释），底下列表在它开着的时候换掉，主人
+       点下去的那一下就跟自己看到的那一行对不上了。
+       `tab !== 'accounts'`（评论管理页签）也跳过：那一半的同步由它自己的页面负责，
+       在别人的页签上偷偷轮询这份账号列表是白花流量。 */
+    useLiveRefresh(loadTempUsers, {
+        skip: () => tab !== 'accounts'
+            || !!statusTarget || !!roleTarget || !!notifyTarget || pwModalOpen || recoveryModalOpen,
+    });
+
     const items: TabsProps['items'] = [
         {
             key: 'accounts',
@@ -356,6 +371,12 @@ const Users = () => {
                                     onChange={e => setAccQuery(e.target.value)}
                                     style={{ width: 240 }}
                                 />
+                                <Button
+                                    icon={<ReloadOutlined />}
+                                    onClick={() => loadTempUsers()}
+                                >
+                                    刷新
+                                </Button>
                                 <span className="tu-count">共 {filteredUsers.length} 个账号</span>
                             </div>
                         </div>

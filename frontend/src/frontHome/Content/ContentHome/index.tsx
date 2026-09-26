@@ -3,6 +3,7 @@ import './index.sass'
 import {Avatar, Tag} from "antd";
 import SocialButton from "../../../components/Buttons/SocialButton";
 import {useEffect, useRef, useState} from "react";
+import {useLiveRefresh} from "../../../utils/liveRefresh.ts";
 import {useSelector} from "react-redux";
 import UserState from "../../../interface/UserState";
 import { motion } from 'framer-motion';
@@ -146,12 +147,14 @@ const ContentHome = () => {
      * 拉第一页并整表替换（首屏 / 列数变化时）。ps 必须是「整页尺寸」：
      * 页偏移 = (page-1)*per_page，之后 More 续翻必须沿用同一个 ps，否则会重复/漏项。
      */
-    const fetchFirst = (ps: number) => {
+    const fetchFirst = (ps: number, opts?: { silent?: boolean }) => {
         // 立刻同步登记 ps：ResizeObserver 的首次回调（防抖 200ms 后）会拿它比对，
         // 若等响应回来再写，慢网络下会被误判成「列数变了」而多发一次请求
         pageSizeRef.current = ps;
         const g = ++genRef.current;
-        setLoading(true);
+        // `silent` = 背景重拉（跨端同步）：**不把 More 那颗按钮换成转圈**——首屏那一大片
+        // 转圈是"页还没好"的信号，后台核对一次不该借用它（同后台几页"背景重拉不亮 loading"）。
+        if (!opts?.silent) setLoading(true);
         getNotePage({
             page: 1,
             pageSize: ps
@@ -176,7 +179,7 @@ const ContentHome = () => {
             setHasMoreArticles(more);
             cachedHasMoreArticles = more;
         }).finally(() => {
-            if (g === genRef.current) setLoading(false);
+            if (g === genRef.current && !opts?.silent) setLoading(false);
         })
     };
 
@@ -206,21 +209,37 @@ const ContentHome = () => {
         };
     }, []);
 
+    /** 顶部轮播那几条（置顶推荐）。抽成函数是为了让背景重拉复用同一条路径。 */
+    const fetchTop = () => getTopNotes().then(res => {
+         const topNotes = Array.isArray(res?.data?.data) ? res.data.data : [];
+         const mapped = topNotes.map((item: formatNote) => {
+            return {
+                ...item,
+                key: item.noteKey,
+                noteTags: parseNoteTags(item.noteTags),
+            }
+        });
+        setTopArticles(mapped);
+        cachedTopArticles = mapped;
+    });
+
     useEffect(() => {
         if (cachedTopArticles.length > 0) return;
-        getTopNotes().then(res => {
-             const topNotes = Array.isArray(res?.data?.data) ? res.data.data : [];
-             const mapped = topNotes.map((item: formatNote) => {
-                return {
-                    ...item,
-                    key: item.noteKey,
-                    noteTags: parseNoteTags(item.noteTags),
-                }
-            });
-            setTopArticles(mapped);
-            cachedTopArticles = mapped;
-        })
+        fetchTop();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+    /* 跨端同步（20260926，**不轮询**）：看板娘刚改了站内文章（新建/删除/改状态/改置顶）
+       时访客手上这一页也该跟上——但访客页面**不为我自己的编辑加流量**：只吃"看板娘一轮
+       收尾"与"切回可见/重新聚焦"，不挂定时器（同分类页/详情页；成本关在后台那几页）。
+       `skip`（已经点过 More 就不动）：`fetchFirst` 是**整表替换**且把页号打回第 1 页——
+       主人翻了五页正看着，后台核对一次就把卷轴收回到开头，那是比"旧一点"坏得多的体验。
+       还在第一页时没有任何可丢的东西，那时才换；翻过页之后要让内容变新，走的是既有的
+       「从后台返回即清缓存」（见上面 `location.state.fromDashboard` 那一段）。 */
+    useLiveRefresh(() => {
+        fetchTop();
+        fetchFirst(pageSizeRef.current, { silent: true });
+    }, { poll: false, skip: () => currentPage > 1 });
     const handleScrollDown = () => {
         window.scrollTo({
             top: window.innerHeight,
