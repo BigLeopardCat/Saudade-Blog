@@ -1,5 +1,5 @@
-// ═ 看板娘集成冒烟 harness（20260828o 结构拆分回归）══
-// node tests/smoke-harness.mjs：最小 DOM stub + 完整 autoload 加载链 +
+// ═ 看板娘集成冒烟：CI 断言套件（20260828o 结构拆分回归）══
+// node tests/chat-autoload-smoke.test.mjs：最小 DOM stub + 完整 autoload 加载链 +
 // 一次真实 SSE 对话往返（发送 → 流式帧 → 转正 → 命令解析）。验证：
 // ① 6 个文件按依赖序加载不抛错、工厂依赖校验通过；
 // ② engine.init/stream.init 时序（#waifu 由 initWidget 创建后执行）无引用错误；
@@ -10,109 +10,15 @@ import { readFileSync, existsSync } from 'fs';
 import vm from 'vm';
 import { fileURLToPath } from 'url';
 import path from 'path';
+import { installDom, installScriptLoader } from './stubs/dom.mjs';
 
 const W = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../public/live2d-widgets');
 
-// ── 最小 DOM stub ──
-class ClassList {
-  constructor() { this.set = new Set(); }
-  add(...c) { c.forEach(x => this.set.add(x)); }
-  remove(...c) { c.forEach(x => this.set.delete(x)); }
-  contains(c) { return this.set.has(c); }
-  toggle(c) { this.contains(c) ? this.remove(c) : this.add(c); }
-}
-class Element {
-  constructor(tag, id) {
-    this.tagName = String(tag).toUpperCase();
-    this.id = id || '';
-    this.children = [];
-    this.dataset = {};
-    this.style = {};
-    this.classList = new ClassList();
-    this.parentNode = null;
-    this._listeners = {};
-    this._attrs = {};
-    this.scrollTop = 0; this.scrollHeight = 0; this.clientHeight = 0;
-    this.textContent = '';
-    this._html = '';
-    this.disabled = false;
-    this.title = '';
-    this.value = '';
-    this.src = '';
-    this.type = '';
-    this.open = false;
-  }
-  get className() { return this._className || ''; }
-  set className(v) { this._className = v; this.classList = new ClassList(); String(v).split(/\s+/).filter(Boolean).forEach(c => this.classList.add(c)); }
-  get firstChild() { return this.children[0] || null; }
-  get previousSibling() { return this.parentNode ? this.parentNode.children[this.parentNode.children.indexOf(this) - 1] || null : null; }
-  get nextSibling() { return this.parentNode ? this.parentNode.children[this.parentNode.children.indexOf(this) + 1] || null : null; }
-  appendChild(c) { c.parentNode = this; this.children.push(c); return c; }
-  insertBefore(c, ref) { if (!ref) return this.appendChild(c); const i = this.children.indexOf(ref); if (i < 0) return this.appendChild(c); c.parentNode = this; this.children.splice(i, 0, c); return c; }
-  removeChild(c) { const i = this.children.indexOf(c); if (i >= 0) { this.children.splice(i, 1); c.parentNode = null; } return c; }
-  remove() { if (this.parentNode) this.parentNode.removeChild(this); }
-  setAttribute(k, v) { this._attrs[k] = v; }
-  getAttribute(k) { return this._attrs[k] ?? null; }
-  addEventListener(t, fn) { (this._listeners[t] = this._listeners[t] || []).push(fn); }
-  removeEventListener(t, fn) { const a = this._listeners[t]; if (a) this._listeners[t] = a.filter(f => f !== fn); }
-  focus() {}
-  contains() { return false; }
-  animate() {}
-  matches() { return false; }
-  querySelectorAll(sel) {
-    const out = [];
-    const walk = (n) => { for (const c of n.children) { if (matchesSel(c, sel)) out.push(c); walk(c); } };
-    walk(this); return out;
-  }
-  querySelector(sel) { return this.querySelectorAll(sel)[0] || null; }
-  set innerHTML(v) { this._html = v; this.textContent = String(v).replace(/<[^>]*>/g, ''); }
-  get innerHTML() { return this._html; }
-  insertAdjacentHTML(pos, html) {
-    const ids = [...html.matchAll(/id="([^"]+)"/g)].map(m => m[1]);
-    for (const id of ids) {
-      const el = new Element('div', id);
-      document._byId[id] = el;
-      this.appendChild(el);
-    }
-  }
-  click() { (this._listeners.click || []).forEach(fn => fn({ target: this, stopPropagation() {}, preventDefault() {} })); }
-}
-function matchesSel(el, sel) {
-  if (sel.startsWith('.')) return el.classList.contains(sel.slice(1));
-  if (sel.startsWith('#')) return el.id === sel.slice(1);
-  if (sel.startsWith('[')) return true;
-  return el.tagName === sel.toUpperCase();
-}
-const document = {
-  _byId: {},
-  _listeners: {},
-  head: new Element('head'),
-  createElement(tag) { return new Element(tag); },
-  getElementById(id) { return this._byId[id] || null; },
-  addEventListener(t, fn) { (this._listeners[t] = this._listeners[t] || []).push(fn); },
-  removeEventListener() {},
-  dispatchEvent() {},
-};
-globalThis.document = document; // vm 作用域内裸 document 解析到它
-globalThis.Element = Element;   // live2d-widget.js 的 animate 检测引用全局 Element
-// window === globalThis，engine.init 的 window.addEventListener('storage') 落到这里
-globalThis.addEventListener = (t, fn) => { (document._listeners[t] = document._listeners[t] || []).push(fn); };
-globalThis.removeEventListener = (t, fn) => { const a = document._listeners[t]; if (a) document._listeners[t] = a.filter(f => f !== fn); };
-document.head.appendChild = (el) => {
-  // script/link 加载：异步执行内容 + 触发 onload（模拟真实资源加载）
-  setTimeout(() => {
-    if (el.tagName === 'SCRIPT' && el.src && el.src.includes('/live2d-widgets/') && el.type !== 'module') {
-      // autoload 动态加载的子模块：按 src 从磁盘读文件执行（真实加载路径）。
-      // waifu-tips.js 是 ES module（type=module）跳过执行——其 initWidget 已被
-      // harness 桩接管，只需触发 onload 走完加载链
-      const name = el.src.split('/').pop().split('?')[0];
-      const p = path.join(W, name);
-      if (existsSync(p)) vm.runInThisContext(readFileSync(p, 'utf8'), { filename: name });
-    }
-    if (el.onload) el.onload(); else if (el.onerror) el.onerror();
-  }, 0);
-  return el;
-};
+// ── 最小 DOM stub（20260927 起与时间标签那支共用 tests/stubs/dom.mjs）──
+// 抽出去的理由与三处真机语义见该文件头注；此前两份各复制一份、"同构"靠人记，
+// 结果两支都没有 document.querySelector，一起死在 chat-stream.js:1896。
+installDom();
+installScriptLoader(W);   // head.appendChild → 真读 live2d-widgets/ 下的子模块执行
 
 // ── 浏览器全局 stub ──
 const store = new Map();
@@ -179,6 +85,18 @@ globalThis.fetch = async (url, opts) => {
   if (String(url).includes('/api/chat/history')) {
     return { ok: true, json: async () => ({ items: [] }) };
   }
+  if (String(url).includes('/api/chat/conversations')) {
+    // 会话化（20260903）：空白新对话态发送前先建会话（`ensureConversation`）。
+    // 此前这个 URL 没有桩 ⇒ fetch 抛"unexpected fetch" ⇒ 被 ensureConversation 的
+    // catch 吞成 false ⇒ **每一轮都停在"创建新会话失败"气泡上**：harness 自称在测
+    // SSE 往返，其实一次都没发出去（20260927 修）。
+    return { ok: true, json: async () => ({ id: 1 }) };
+  }
+  if (String(url).includes('/api/monitor/log')) {
+    // 前端错误上报（匿名可写）：harness 里出现它说明上游有报错，**不该让 fetch 炸**——
+    // 那会把"某个模块初始化失败"变成一句与真因无关的 unexpected fetch
+    return { ok: true, json: async () => ({}) };
+  }
   if (String(url).includes('/api/chat/discard')) {
     return { ok: true, json: async () => ({}) };
   }
@@ -214,18 +132,30 @@ const messages = document.getElementById('chat-messages');
 const sendBtn = document.getElementById('chat-send');
 const input = document.getElementById('chat-input');
 
+// 轮询等待（替代固定 sleep）：固定 200ms 在慢机器/CI 上是**偶发红**的来源，
+// 偶发红比没有测试更坏（会训练人忽略红）。等不到就照旧交给断言判红。
+const waitFor = async (cond, ms = 3000) => {
+  const t0 = Date.now();
+  while (!cond() && Date.now() - t0 < ms) await new Promise(r => setTimeout(r, 10));
+  return cond();
+};
+const msgsOf = () => messages.children.filter(c => c.classList.contains('chat-msg'));
+const tdsOf = () => messages.children.filter(c => c.classList.contains('chat-time-divider'));
+
 assert(!!messages, '聊天面板已注入（#chat-messages 存在）');
 assert(!!sendBtn && !!input, '发送按钮/输入框存在');
-assert(messages.children.length === 0, '初始无消息');
+// 「初始无消息」按 .chat-msg 数：真机上 `#chat-ask`（常驻确认卡片）就住在
+// `#chat-messages` 里，所以 children 一开始就不空——**空的是消息**。旧断言数的是
+// children.length，那是扁平 stub（把 html 里的 id 一律挂成直接子节点）才成立的形状。
+assert(msgsOf().length === 0, '初始无消息', msgsOf().length);
 
 // ── 第一轮对话（时间标签应出现：首条恒显示）──
 input.value = '你好喵';
 sendBtn.click();
-await new Promise(r => setTimeout(r, 200));
-
-let msgs = messages.children.filter(c => c.classList.contains('chat-msg'));
-let tds = messages.children.filter(c => c.classList.contains('chat-time-divider'));
-assert(msgs.length === 2, '乐观插入 + 转正后共 2 条消息', msgs.length);
+const round1 = await waitFor(() => msgsOf().length === 2);
+let msgs = msgsOf();
+let tds = tdsOf();
+assert(round1, '乐观插入 + 转正后共 2 条消息', msgs.map(c => c.dataset.mtext));
 assert(msgs[0].classList.contains('user') && msgs[1].classList.contains('agent'), 'user 在前 agent 在后');
 assert(tds.length === 1, '首条消息上方有时间标签', tds.length);
 assert(msgs[1].dataset.mid && msgs[1].dataset.finished === '1', 'agent 气泡已转正（mid + finished）');
@@ -234,21 +164,26 @@ assert(msgs[1].querySelector('.msg-text').textContent.includes('喵呜～测试�
 assert(!!msgs[1].querySelector('.agent-process-body'), '过程行已渲染（🧭 计划帧）');
 assert(sendBtn.title === '发送' && !sendBtn.classList.contains('stop-mode'), '发送按钮已复位');
 assert(input.disabled === false, '输入框已恢复');
-const hist = JSON.parse(localStorage.getItem('chat_history_' + store.get('tokenKey')) || '[]');
-assert(hist.length === 2, 'localStorage 历史含 2 条', hist.length);
-assert(hist[0].type === 'user' && hist[1].type === 'agent', '历史条目类型正确');
-assert(!hist[0].text.includes('__PROCESS__'), '过程帧未入库');
-assert(streamCount === 1, 'SSE 请求发起 1 次');
+// 缓存键自 20260903 起按会话分桶（`chat_history_<token>_(auto|<convId>)`）：写死
+// `chat_history_<token>` 是那份键存在时的形状，现在只会读到空数组——那不是"没存"。
+const histKeys = [...store.keys()].filter((k) => k.startsWith('chat_history_'));
+assert(histKeys.length > 0, '本地缓存已写入（键按会话分桶）', [...store.keys()]);
+const hist = histKeys.map((k) => JSON.parse(store.get(k) || '[]'))
+  .reduce((a, b) => (b.length > a.length ? b : a), []);
+assert(hist.length === 2, 'localStorage 历史含 2 条', { keys: histKeys, len: hist.length });
+assert(hist.length === 2 && hist[0].type === 'user' && hist[1].type === 'agent', '历史条目类型正确');
+assert(hist.length === 2 && !hist[0].text.includes('__PROCESS__'), '过程帧未入库');
+assert(streamCount === 1, 'SSE 请求发起 1 次', streamCount);
 
 // ── 第二轮对话（间隔 <5 分钟 → 不新增时间标签）──
 input.value = '再发一条';
 sendBtn.click();
-await new Promise(r => setTimeout(r, 200));
-msgs = messages.children.filter(c => c.classList.contains('chat-msg'));
-tds = messages.children.filter(c => c.classList.contains('chat-time-divider'));
-assert(msgs.length === 4, '第二轮共 4 条消息');
+const round2 = await waitFor(() => msgsOf().length === 4);
+msgs = msgsOf();
+tds = tdsOf();
+assert(round2, '第二轮共 4 条消息', msgs.length);
 assert(tds.length === 1, '间隔小 → 时间标签不重复', tds.length);
-assert(streamCount === 2, 'SSE 请求发起 2 次');
+assert(streamCount === 2, 'SSE 请求发起 2 次', streamCount);
 
 console.log('\n' + (failed === 0 ? '✅ 冒烟通过' : '❌ 冒烟失败') + `：${failed} 失败`);
 process.exit(failed === 0 ? 0 : 1);
