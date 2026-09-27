@@ -216,6 +216,12 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
   padding: 50px
   .searchModalInput
     background: rgba(255, 255, 255, 0.7)
+    // 必须显式给边框：这个文件此前只写了 border-radius/outline，没写 border ⇒ 吃到
+    // 浏览器对 <input> 的默认值 `2px inset rgb(118,118,118)`（实测 computed style），
+    // 而 inset 的斜角让**上边缘/左边缘更暗** —— 访客看到的就是"搜索框上边缘一圈黑线"。
+    // 换成一条细的实心边：去掉斜角发黑，同时保住药丸在模糊背景上的轮廓
+    //（.ant-modal-content 底色是透明的，这个输入框直接压在模态遮罩的模糊图上）。
+    border: 1px solid rgba(0, 0, 0, 0.12)
     width: 80%
     padding: 12px 24px
     margin-bottom: 20px

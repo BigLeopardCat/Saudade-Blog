@@ -147,6 +147,17 @@ body
   input
     padding-right: 42px
 
+  // Edge 会在密码框上**再渲染一只**原生的显隐眼睛（`::-ms-reveal` 是 IE/Edge 的遗留
+  // 伪元素，Edge Chromium 至今仍支持），于是与本框自绘的 .pwd-toggle 并排成两只——
+  // 这就是访客看到的"填写密码时多出来一个眼睛的图标"（nginx access log 的 UA 实测是
+  // `Edg/152`，不是 Chromium 本身的行为，所以本机 Chromium 渲染不出来）。
+  // 只藏原生那只：重置密码弹窗的两个密码框不在 .field-pwd 下（也没有自绘眼睛），
+  // 那两只原生的留着有用。
+  input[type="password"]::-ms-reveal
+    display: none
+  input[type="password"]::-ms-clear
+    display: none
+
 .login-submit
   width: 100%
   margin-top: 8px

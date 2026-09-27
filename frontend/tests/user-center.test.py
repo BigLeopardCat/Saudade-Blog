@@ -883,6 +883,47 @@ with sync_playwright() as p:
     # （display:none）⇒ 不加这个伪类，切到发件箱/草稿箱时会数到它们的行。
     rows = pg.locator(PANE + " .ucMailRow:visible")
     check("收件箱两封都在（整行可点）", rows.count() == 2, str(rows.count()))
+
+    # ── 条目栏带对方头像（20260927 用户要求）────────────────────────────────────
+    # 假后端里两封信的 `peerAvatar` 都是 **null**（照抄 Rust 侧 `u.avatar` 的真形状），
+    # 所以这一格同时验两件事：每一行都有头像、且没有头像的人落到**站点默认头像**上。
+    # 判据取 src 的**文件名末段**：页面里写的是根相对路径 `/default-avatar.png`，
+    # 浏览器会把 attribute 原样留着（所以这里读 attribute 而不是 el.src）。
+    # 反面形态是空的 `<img src="">`——antd 的 Avatar 拿到空串会照渲染一个 <img>，
+    # 既不显示默认头像、也不触发 children 兜底（用户看到的就是"不是默认头像"）。
+    avs = pg.evaluate("""() => [...document.querySelectorAll('.ucPane .ucMailRow')]
+        .map((r) => { const img = r.querySelector('.ucMailAvatar img');
+                     return img ? img.getAttribute('src') : null; })""")
+    check("收件箱每一行都带对方头像", len(avs) == 2 and all(avs), str(avs))
+    check("对方没上传过头像 ⇒ 用站点默认头像（不是空 img）",
+          all((a or '').endswith('/default-avatar.png') for a in avs), str(avs))
+    ageo = pg.evaluate("""() => {
+      const row = [...document.querySelectorAll('.ucPane .ucMailRow')]
+        .find((el) => el.textContent.includes('小猫咪'));
+      const av = row && row.querySelector('.ucMailAvatar');
+      // 元素不存在时**返回 null，不要抛**——抛出去会把整个套件带走，红的那几条
+      // 后面的断言就再也跑不到（红要红成一条失败，不是红成一次崩溃）。
+      if (!av) return null;
+      const r = (e) => e.getBoundingClientRect();
+      // 圆角量的是**头像根节点**（.ucMailAvatar 就是 antd 的 .ant-avatar）：antd v5 把
+      // `border-radius:50%` 加在根上、靠 `overflow:hidden` 裁里面那张 <img>，所以 img 自身
+      // 的 computed borderRadius 是 0px —— 量它等于量错了节点（不是"被挤成方图"）。
+      return { av: r(av), box: r(row.querySelector('.ucMailRowBox')),
+               round: getComputedStyle(av).borderRadius,
+               clip: getComputedStyle(av).overflow };
+    }""")
+    check("头像在文字块的左边（不压字）",
+          ageo is not None and ageo["av"]["right"] <= ageo["box"]["left"] + 0.5,
+          f"av.right={ageo['av']['right']:.1f} box.left={ageo['box']['left']:.1f}" if ageo else "无头像")
+    check("头像与文字块垂直居中",
+          ageo is not None
+          and abs((ageo["av"]["top"] + ageo["av"]["bottom"]) / 2
+                  - (ageo["box"]["top"] + ageo["box"]["bottom"]) / 2) <= 2,
+          f"av.center={(ageo['av']['top'] + ageo['av']['bottom']) / 2:.1f} "
+          f"box.center={(ageo['box']['top'] + ageo['box']['bottom']) / 2:.1f}" if ageo else "无头像")
+    check("头像是圆的（antd Avatar 的默认形状，没有被挤成方图）",
+          ageo is not None and ageo["round"].startswith("50%") and ageo["clip"] == "hidden",
+          f'{ageo["round"]} / overflow={ageo["clip"]}' if ageo else "无头像")
     # 三行式几何：①「来自 X」与时间**同一行**、时间顶到最右；② 标题在下一行；③ 正文再下一行。
     # 行数用 Range 量（block 元素的 getClientRects 恒返回一个盒子，量不出折行）。
     geo = pg.evaluate("""() => {
@@ -945,6 +986,16 @@ with sync_playwright() as p:
     check("详情里是**完整正文**（列表预览里被截掉的那截尾巴也在）",
           "尾巴在这里" in dgeo["text"], dgeo["text"][-26:])
     check("详情上方有返回列表的按钮", pg.locator(PANE + " .ucMailDetailBar button").count() == 1)
+    # 20260927 用户要求：按钮文案去掉向左的箭头（原来写的是「← 返回收件箱」）。
+    # 断言前抹掉空白：antd Button 对**两字**中文会插一个空格（autoInsertSpace），
+    # 这里虽然四字不触发，但判据不该依赖这个细节。
+    back_text = pg.locator(PANE + " .ucMailDetailBar button").inner_text()
+    check("返回按钮的文案是「返回收件箱」，没有左箭头",
+          back_text.replace(" ", "").replace("\n", "") == "返回收件箱", repr(back_text))
+    d_av = pg.evaluate("""() => { const img = document.querySelector('.ucMailDetail .ucMailAvatar img');
+                                 return img ? img.getAttribute('src') : null; }""")
+    check("详情里的对方头像同样是站点默认头像（对方没上传过）",
+          (d_av or '').endswith('/default-avatar.png'), str(d_av))
     check("打开一封已读的信不会白发一次标已读请求",
           len(find_call(pg, "/api/protected/messages/read", "POST")) == n_read,
           str(len(find_call(pg, "/api/protected/messages/read", "POST"))))
@@ -1434,6 +1485,45 @@ with sync_playwright() as p:
           str(v.get_attribute(HEAD_AVATAR, "src")))
     v.close()
     head_errs.extend(ve)
+
+    # 主页搜索框的上边缘黑线（20260927 用户报「搜索框上边缘有一圈黑线」）。
+    # `.searchModalInput` 此前只写了 border-radius / outline、**没写 border** ⇒ 吃到浏览器对
+    # `<input>` 的默认 `2px inset rgb(118,118,118)`（实测 computed style）；inset 是**斜角**
+    # 渲染：上/左缘取边框色的暗调、下/右缘取亮调 —— 药丸顶上那条"黑线"就是这么来的。
+    # 这条与上面那只 `::-ms-reveal` 不同：本机 Chromium 与访客的 Edge 用的是同一个 UA 默认值，
+    # 所以**能真渲染验证**，判据也就直接量像素。
+    # 判据取"左右对称"而不是"有没有边框"：修完仍要留一条刻意画的细边——它直接压在模态遮罩的
+    # 模糊图上，把边框删成 `border: 0` 会让药丸在浅色背景上整个消失（那是另一种退货）。
+    # 挂的是**真 Head 组件**（搜索入口 = .homeRight 的第一个 div，见 index.tsx `onClick={showModal}`）。
+    print("⑫d 主页搜索框：上边缘那条黑线来自 UA 默认边框（inset 斜角）")
+    sp = br.new_page(viewport={"width": 1280, "height": 900})
+    serrs = []
+    sp.on("pageerror", lambda e: serrs.append(str(e)))
+    sp.goto(HEAD_URL)
+    sp.wait_for_selector(".homeRight > div", timeout=15000)
+    sp.wait_for_timeout(600)
+    sp.locator(".homeRight > div").first.click()
+    sp.wait_for_selector(".searchModalInput", timeout=10000)
+    sp.wait_for_timeout(400)
+    sborder = sp.evaluate("""() => { const c = getComputedStyle(document.querySelector('.searchModalInput'));
+        return [c.borderTopWidth, c.borderTopStyle, c.borderTopColor]; }""")
+    check("边框是显式声明的（不是 UA 默认的 2px inset）",
+          sborder[0] == "1px" and sborder[1] == "solid", str(sborder))
+    from PIL import Image  # noqa: E402  （与 make_png 同一处依赖，按需 import）
+    shot = pathlib.Path("/tmp/searchbox-edge.png")
+    sp.locator(".searchModalInput").screenshot(path=str(shot))
+    bim = Image.open(shot).convert("L")
+    bw, bh = bim.size
+    bpx = bim.load()
+    rows = range(bh // 2 - 3, bh // 2 + 3)
+    left = sum(bpx[x, y] for x in range(0, 4) for y in rows) / (4 * len(rows))
+    right = sum(bpx[x, y] for x in range(bw - 4, bw) for y in rows) / (4 * len(rows))
+    check("左缘与右缘一样亮（inset 斜角没了 ⇒ 上/左不再发黑）",
+          abs(right - left) <= 8,
+          f"left={left:.1f} right={right:.1f} delta={right - left:+.1f}"
+          f"（修前实测：本套件内 +42.5、独立亮底探针 +83.1；截图 {shot}）")
+    sp.close()
+    head_errs.extend(serrs)
 
     print("⑬ 全程无 JS 报错")
     all_errs = body_errs + admin_errs + head_errs

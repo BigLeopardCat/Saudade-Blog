@@ -594,7 +594,11 @@ const AllNotes = () => {
                                 {/* 手动重拉这一份列表（20260926 与跨端同步一起加的）：自动重拉
                                     有 20 秒的窗口，也可能被"弹窗开着"挡下——那时主人要的是
                                     **现在就看一眼**，而不是去琢磨为什么没动。 */}
+                                {/* 这个 marginRight 不是装饰：tabBarExtraContent 挨着 tab 列表
+                                    渲染（antd 的 Tabs 把它当作左侧额外内容），少这一格时实测
+                                    刷新按钮右缘与第一个页签左缘的距离是 **0px** —— 就是"太挤了"。 */}
                                 <Button size="small" icon={<ReloadOutlined />}
+                                        style={{marginRight: 12}}
                                         onClick={() => reloadList(false)}>
                                     刷新
                                 </Button>

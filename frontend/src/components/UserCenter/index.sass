@@ -156,10 +156,20 @@
   // 长昵称那行先换行（"最右侧"就守不住了）。
 
   .ucMailRow
+    // 行首是对方头像、其后是文字块（.ucMailRowBox 自带 flex:1 吃掉余宽）。
+    // antd 的 List.Item 默认 `justify-content: space-between`，这里补 align/gap，
+    // 让头像与文字块垂直居中、间距与本页既有节奏一致（.ucMailDetailHead 也是 12px）。
+    display: flex
+    align-items: center
+    gap: 12px
     cursor: pointer
 
     &:hover
       background: rgba(128, 128, 128, 0.08)
+
+  // 头像不许被文字挤扁（对方昵称很长时宽度压力全在 .ucMailRowBox 上）
+  .ucMailAvatar
+    flex: 0 0 auto
 
   .ucMailRowBox
     display: flex

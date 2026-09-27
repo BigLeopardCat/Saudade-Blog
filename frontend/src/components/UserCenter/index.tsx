@@ -864,10 +864,22 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
         </div>
     )
 
+    /** 对方的头像：**没上传过就落到站点默认头像**。两个要点：
+     *  ① 用 `|| DEFAULT_AVATAR_URL` 而不是 `??`——Rust 侧 `peer_avatar` 的真形状是
+     *     `Option<String>`，没设过头像时给的是**空串**；`resolveApiAssetUrl('')` 也返回 ''
+     *     （falsy 直通），于是 antd 的 Avatar 拿到 `src=""` 会渲染一个坏 `<img>`：
+     *     既不显示默认头像、也不会退回文字兜底 —— 用户看到的就是"显示的不是默认头像"。
+     *  ② 传的是**根相对路径**（/default-avatar.png），线上/沙箱都由 HTTP 取到该文件。 */
+    const peerAvatar = (m: MessageItem) =>
+        <Avatar className="ucMailAvatar" size={40}
+                src={resolveApiAssetUrl(m.peerAvatar || '') || DEFAULT_AVATAR_URL} />
+
     /** 列表行（20260923 用户要求的三行式）：① 「来自 xxx」+ **最右侧是对方发件时间**；
-     *  ② 标题；③ 一行正文（以「…」结尾）。整行可点 → 打开占满窗口的详情。 */
+     *  ② 标题；③ 一行正文（以「…」结尾）。整行可点 → 打开占满窗口的详情。
+     *  20260927 起行首补对方头像（发件箱是收件人的头像）——一列信扫下来先认脸。 */
     const mailRow = (m: MessageItem, outgoing: boolean) => (
         <List.Item className="ucMailRow" onClick={() => openMail(m, outgoing)}>
+            {peerAvatar(m)}
             <div className="ucMailRowBox">
                 <div className="ucMailHead">
                     <span className="ucMailPeer">
@@ -888,12 +900,14 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
     const mailDetail = (m: MessageItem, outgoing: boolean) => (
         <div className="ucMailDetail">
             <div className="ucMailDetailBar">
+                {/* 文案里不带「←」：按钮本身就是那个形状，前面再顶一个箭头是同一件事
+                    说两遍（与后台按钮去「+」同一条约定，20260927 用户要求）。 */}
                 <Button size="small" onClick={() => setOpened(null)}>
-                    ← 返回{outgoing ? '发件箱' : '收件箱'}
+                    返回{outgoing ? '发件箱' : '收件箱'}
                 </Button>
             </div>
             <div className="ucMailDetailHead">
-                <Avatar size={40} src={resolveApiAssetUrl(m.peerAvatar || '')} />
+                {peerAvatar(m)}
                 <div>
                     <div className="ucMailPeer">{outgoing ? `发给 ${m.peerName}` : `来自 ${m.peerName}`}</div>
                     <div className="ucMailWhen">{fmtMinute(m.createdAt)}</div>
