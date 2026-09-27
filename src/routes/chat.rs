@@ -1537,20 +1537,42 @@ pub async fn chat_handler(
         Some(r) => {
             if r.status().is_success() {
                 let data: serde_json::Value = r.json().await.unwrap_or_default();
-                let reply = data["reply"].as_str().unwrap_or("").to_string();
-                // 非流式：agent 独立生成摘要并返回 new_summary（needs_summary 轮才有值）
-                let agent_summary = data["new_summary"].as_str().map(|s| s.to_string());
-                if ctx.uid > 0 {
-                    save_assistant_reply(&state.db, ctx.uid, ctx.conversation_id, reply.clone(), agent_summary, ctx.total_count).await;
-                    // 跨轮执行记忆（20260904 C5）：同步路径的回执在响应体 executions
-                    // （agent ChatResponse 新字段；agent 无回执时为 Null → 空数组跳过）
-                    let exec_rows: Vec<serde_json::Value> = data["executions"].as_array()
-                        .cloned().unwrap_or_default();
-                    if !exec_rows.is_empty() {
-                        save_execution_log(&state.db, ctx.uid, ctx.conversation_id, &exec_rows).await;
+                match agent_reply_of(&data) {
+                    Ok(reply) => {
+                        // 非流式：agent 独立生成摘要并返回 new_summary（needs_summary 轮才有值）
+                        let agent_summary = data["new_summary"].as_str().map(|s| s.to_string());
+                        if ctx.uid > 0 {
+                            save_assistant_reply(&state.db, ctx.uid, ctx.conversation_id, reply.clone(), agent_summary, ctx.total_count).await;
+                            // 跨轮执行记忆（20260904 C5）：同步路径的回执在响应体 executions
+                            // （agent ChatResponse 新字段；agent 无回执时为 Null → 空数组跳过）
+                            let exec_rows: Vec<serde_json::Value> = data["executions"].as_array()
+                                .cloned().unwrap_or_default();
+                            if !exec_rows.is_empty() {
+                                save_execution_log(&state.db, ctx.uid, ctx.conversation_id, &exec_rows).await;
+                            }
+                        }
+                        Json(ChatResponse { reply, success: true, error: None }).into_response()
+                    }
+                    Err(msg) => {
+                        // agent 自报这一轮没生成出回复（或回了空串）：**不落库、不装作成功**
+                        // —— 空 assistant 行会被下一轮的 20 条窗口原样注入，模型读到的是
+                        // 自己"说过一句话但一个字都没有"。执行回执照落（它是已发生的事实，
+                        // 与回复生成失败无关，同流式路径的 `__EXEC__` 语义）。
+                        warn!(trace_id = %ctx.trace_id, "chat: agent 回 HTTP 200 但没生成出回复：{}", msg);
+                        if ctx.uid > 0 {
+                            let exec_rows: Vec<serde_json::Value> = data["executions"].as_array()
+                                .cloned().unwrap_or_default();
+                            if !exec_rows.is_empty() {
+                                save_execution_log(&state.db, ctx.uid, ctx.conversation_id, &exec_rows).await;
+                            }
+                        }
+                        Json(ChatResponse {
+                            reply: String::new(),
+                            success: false,
+                            error: Some(format!("Agent error: {}", msg)),
+                        }).into_response()
                     }
                 }
-                Json(ChatResponse { reply, success: true, error: None }).into_response()
             } else {
                 Json(ChatResponse { reply: String::new(), success: false, error: Some(format!("Agent error: {}", r.status())) }).into_response()
             }
@@ -1558,6 +1580,34 @@ pub async fn chat_handler(
         None => {
             Json(ChatResponse { reply: String::new(), success: false, error: Some(format!("Agent unavailable: {}", last_err)) }).into_response()
         }
+    }
+}
+
+/// agent 非流式响应体 → 这一轮的回复文本；**没生成出回复**时给 Err(原因)。
+///
+/// 曾经这里是 `data["reply"].as_str().unwrap_or("")` —— 只看 HTTP 状态码，HTTP 200
+/// 就当作成功并把 reply 落库。于是 agent 内部异常（它自己回的是
+/// `{"reply": "", "success": false, "error": "..."}`，HTTP 仍是 200）在这条路上变成
+/// **一条空的 assistant 消息**：主人看到的是一片空白，历史里多了一行空回复，而
+/// `error` 字段没有任何人读过。这与 20260927 那条 SSE 事故同族（异常被吞成"正常但空"），
+/// 只是走的是另一条通道 —— 判据因此也放在这里：**这一轮到底有没有生成出回复**，
+/// 由三个事实按序回答（agent 自报的 `success` / 回复是否为空 / 字段在不在），
+/// 而不是由 HTTP 状态码代答。
+///
+/// 三态（`success` 字段**在不在**是有信息的一态）：
+///   · `success: false` → Err（用它自报的 `error`，agent 侧已不再下发内部异常原文）；
+///   · `success` 缺失 → 按回复非空判（兼容不带这个字段的旧版 agent）；
+///   · 回复只有空白 → Err（**空回复不算成功**，见上）。
+fn agent_reply_of(data: &serde_json::Value) -> Result<String, String> {
+    let reply = data["reply"].as_str().unwrap_or("").trim().to_string();
+    match data.get("success").and_then(|v| v.as_bool()) {
+        Some(false) => Err(data["error"]
+            .as_str()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or("agent 报告这一轮没能生成回复（未给出原因）")
+            .to_string()),
+        _ if reply.is_empty() => Err("agent 返回了空回复".to_string()),
+        _ => Ok(reply),
     }
 }
 
@@ -1913,6 +1963,41 @@ pub async fn chat_stream_handler(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// agent 自报 `success: false`（HTTP 仍是 200）⇒ 必须**判失败**，且把它的原话当原因。
+    /// 事故形状：这条路上曾经只看 HTTP 状态码，于是内部异常被吞成"一次成功但空回复"，
+    /// 那种轮次会往 chat_history 落一行空的 assistant 消息。
+    #[test]
+    fn agent_reply_rejects_reported_failure() {
+        let body = json!({"reply": "", "success": false,
+                          "error": "服务这边出了点问题，这一轮没能生成回复，请再说一次。"});
+        let err = agent_reply_of(&body).unwrap_err();
+        assert_eq!(err, "服务这边出了点问题，这一轮没能生成回复，请再说一次。");
+    }
+
+    /// `success: false` 但没给原因（旧版 agent / 字段为空串）⇒ 也要判失败，
+    /// 用一句兜底说明，而不是回落成"成功"。
+    #[test]
+    fn agent_reply_reported_failure_without_reason() {
+        assert!(agent_reply_of(&json!({"reply": "x", "success": false})).is_err());
+        assert!(agent_reply_of(&json!({"reply": "x", "success": false, "error": "  "})).is_err());
+    }
+
+    /// **空回复不算成功**（哪怕 agent 说 success:true）：落库那一格前面必须有这道闸。
+    #[test]
+    fn agent_reply_rejects_empty_reply() {
+        assert!(agent_reply_of(&json!({"reply": "", "success": true})).is_err());
+        assert!(agent_reply_of(&json!({"reply": "   \n", "success": true})).is_err());
+        assert!(agent_reply_of(&json!({"success": true})).is_err());
+    }
+
+    /// `success` 字段**缺失**时按"回复非空"判（兼容不带这个字段的旧版 agent）；
+    /// 正常回复原样返回，并去掉首尾空白。
+    #[test]
+    fn agent_reply_accepts_plain_reply() {
+        assert_eq!(agent_reply_of(&json!({"reply": "喵呜～"})).unwrap(), "喵呜～");
+        assert_eq!(agent_reply_of(&json!({"reply": " 喵呜～ ", "success": true})).unwrap(), "喵呜～");
+    }
 
     /// create_tag 回执的 `tag_name`/`op`/`level` 全在**顶层**（agent 侧 `_RCPT_META_KEYS`），
     /// args 里只有 title/parent_id/color。曾误读 `args["tag_name"]`（该键不存在）
