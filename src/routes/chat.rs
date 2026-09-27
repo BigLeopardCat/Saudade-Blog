@@ -776,10 +776,26 @@ fn render_exec_row(row: &serde_json::Value) -> String {
         // 带标题（20260912）：回执顶层的 title（agent 侧从详情返回提取的 noteTitle，与
         // args 平级——它是派生事实不是工具实参）非空时展示《标题》：下轮「那篇讲架构的」
         // 要对得上号，只有 id 无从核对（跨轮指代锚点）。缺失（提取失败/旧回执）回落纯 id。
-        "get_article_detail" => match row["title"].as_str().unwrap_or("") {
-            "" => format!("读取文章 {}", arg("article_id")),
-            t => format!("读取文章 {}《{}》", arg("article_id"), t),
-        },
+        //
+        // 动作词按 **doc_type** 取（20260928）：get_article_detail 是**四个数据源共用的
+        // 一件工具**（note/talk/board/announcement），此前这里恒渲染「读取文章」⇒ 读一条
+        // 留言，跨轮执行记忆里写的是「读取文章 100」，下一轮 narrator 照抄，主人看到的
+        // 就是"把留言编号当成文章"（trace `20260928T032411` 实证：那两条 100/97 全是
+        // `doc_type=board` 的留言读取）。title 只有 note 分支会派生（agent 侧 `_doc_title`
+        // 只认 `noteTitle`），所以这里按 doc_type 分名词、标题仍只在非空时附上。
+        // 中文名词与 Python 侧同源：`tools/base.py::DOC_TYPE_CN`（改一处必须同步另一处）。
+        "get_article_detail" => {
+            let what = match arg("doc_type").as_str() {
+                "board" => "留言",
+                "talk" => "说说",
+                "announcement" => "公告",
+                _ => "文章",
+            };
+            match row["title"].as_str().unwrap_or("") {
+                "" => format!("读取{} {}", what, arg("article_id")),
+                t => format!("读取{} {}《{}》", what, arg("article_id"), t),
+            }
+        }
         "list_devices" => "查看设备列表".to_string(),
         "get_current_time" => "查看当前时间".to_string(),
         "list_guestbook" => "查看留言板".to_string(),
