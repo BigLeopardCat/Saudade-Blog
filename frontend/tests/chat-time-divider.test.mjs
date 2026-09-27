@@ -1,12 +1,23 @@
-// ═ 时间标签错位复现 harness（20260828o 浏览器回归发现的 bug）══
-// 用户现场：主窗口"天气消息下方显示昨天20:42"、后台窗口"网络错误消息上方显示昨天20:42"。
-// 复现链条：50 条历史（首条昨天20:42）→ 发消息 → SSE 断流 → catch 转正（l 轮, 今天）
-// → saveHistory → storage 触发 pullHistory（60s 窗口内外两种）→ reconcileDOM 检查 TD 位置。
-// 运行：node tests/repro-timegap.mjs
+// ═ 时间标签（TD）位置与相对时间：CI 断言套件（20260927 由 `repro-timegap.mjs` 升格）══
+//   node tests/chat-time-divider.test.mjs
+//
+// 缘起（20260828o 浏览器回归）——用户现场：主窗口"天气消息下方显示昨天20:42"、
+// 后台窗口"网络错误消息上方显示昨天20:42"。链条：50 条真实历史（首条昨天 20:42）
+// → 发消息 → SSE 断流 → catch 转正（l 轮，今天）→ saveHistory → storage 触发 pullHistory
+// （60s 窗口内外两种）→ reconcileDOM 孤儿清理 → **标签必须仍钉在各自消息正上方**。
+//
+// 升格理由：它此前长期是"手工排查工具"，20260927 修好两处陈旧（时钟没钉死 ⇒
+// 「首 TD 文本」随跑测日期漂移；storage 触发用了 20260903 之前的单桶键 ⇒ 整条拉取
+// 链路静默空转，看着像渲染错了）之后**每条都确定可判**，于是进 CI（`npm test` 的
+// glob 收录）——这类"渲染物位置"的回归恰恰是手工跑才会漏掉的。
+//
+// 时钟：整支 `Date` 被钉在 2026-08-28 14:52:30（见下方假时钟块），与 fixture 的
+// 末条 DB 记录 1895@14:51:56 配套 ⇒ TD 文本（`昨天 20:42`）与 60s 窗口全部确定。
 import { readFileSync, existsSync } from 'fs';
 import vm from 'vm';
 import { fileURLToPath } from 'url';
 import path from 'path';
+import { installDom, installScriptLoader } from './stubs/dom.mjs';
 
 const W = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../public/live2d-widgets');
 const dump = (label) => {
@@ -21,110 +32,11 @@ const dump = (label) => {
   console.log('  ' + label + ':\n    ' + line);
 };
 
-// ── 最小 DOM stub（与 smoke-harness 同构）──
-class ClassList {
-  constructor() { this.set = new Set(); }
-  add(...c) { c.forEach(x => this.set.add(x)); }
-  remove(...c) { c.forEach(x => this.set.delete(x)); }
-  contains(c) { return this.set.has(c); }
-  toggle(c) { this.contains(c) ? this.remove(c) : this.add(c); }
-}
-class Element {
-  constructor(tag, id) {
-    this.tagName = String(tag).toUpperCase();
-    this.id = id || '';
-    this.children = [];
-    this.dataset = {};
-    this.style = {};
-    this.classList = new ClassList();
-    this.parentNode = null;
-    this._listeners = {};
-    this._attrs = {};
-    this.scrollTop = 0; this.scrollHeight = 0; this.clientHeight = 0;
-    this.textContent = '';
-    this._html = '';
-    this.disabled = false;
-    this.title = '';
-    this.value = '';
-    this.src = '';
-    this.type = '';
-  }
-  get className() { return this._className || ''; }
-  set className(v) { this._className = v; this.classList = new ClassList(); String(v).split(/\s+/).filter(Boolean).forEach(c => this.classList.add(c)); }
-  get firstChild() { return this.children[0] || null; }
-  get previousSibling() { return this.parentNode ? this.parentNode.children[this.parentNode.children.indexOf(this) - 1] || null : null; }
-  get nextSibling() { return this.parentNode ? this.parentNode.children[this.parentNode.children.indexOf(this) + 1] || null : null; }
-  appendChild(c) { if (c.parentNode && c.parentNode !== this) { const i = c.parentNode.children.indexOf(c); if (i >= 0) c.parentNode.children.splice(i, 1); } c.parentNode = this; this.children.push(c); return c; }
-  insertBefore(c, ref) {
-    // 真实 DOM 移动语义：已挂载的元素先移除再插入
-    if (c.parentNode && c.parentNode !== this) { const i = c.parentNode.children.indexOf(c); if (i >= 0) c.parentNode.children.splice(i, 1); }
-    if (c.parentNode === this) { const i = this.children.indexOf(c); if (i >= 0) this.children.splice(i, 1); }
-    if (!ref) { c.parentNode = this; this.children.push(c); return c; }
-    const i = this.children.indexOf(ref);
-    if (i < 0) { c.parentNode = this; this.children.push(c); return c; }
-    c.parentNode = this;
-    this.children.splice(i, 0, c);
-    return c;
-  }
-  removeChild(c) { const i = this.children.indexOf(c); if (i >= 0) { this.children.splice(i, 1); c.parentNode = null; } return c; }
-  remove() { if (this.parentNode) this.parentNode.removeChild(this); }
-  setAttribute(k, v) { this._attrs[k] = v; }
-  getAttribute(k) { return this._attrs[k] ?? null; }
-  addEventListener(t, fn) { (this._listeners[t] = this._listeners[t] || []).push(fn); }
-  removeEventListener(t, fn) { const a = this._listeners[t]; if (a) this._listeners[t] = a.filter(f => f !== fn); }
-  focus() {}
-  contains() { return false; }
-  animate() {}
-  matches() { return false; }
-  querySelectorAll(sel) {
-    const out = [];
-    const walk = (n) => { for (const c of n.children) { if (matchesSel(c, sel)) out.push(c); walk(c); } };
-    walk(this); return out;
-  }
-  querySelector(sel) { return this.querySelectorAll(sel)[0] || null; }
-  set innerHTML(v) { this._html = v; this.textContent = String(v).replace(/<[^>]*>/g, ''); this._htmlSets = (this._htmlSets || 0) + 1; }
-  get innerHTML() { return this._html; }
-  insertAdjacentHTML(pos, html) {
-    const ids = [...html.matchAll(/id="([^"]+)"/g)].map(m => m[1]);
-    for (const id of ids) {
-      const el = new Element('div', id);
-      document._byId[id] = el;
-      this.appendChild(el);
-    }
-  }
-  click() { (this._listeners.click || []).forEach(fn => fn({ target: this, stopPropagation() {}, preventDefault() {} })); }
-}
-function matchesSel(el, sel) {
-  if (sel.startsWith('.')) return el.classList.contains(sel.slice(1));
-  if (sel.startsWith('#')) return el.id === sel.slice(1);
-  if (sel.startsWith('[')) return true;
-  return el.tagName === sel.toUpperCase();
-}
-const document = {
-  _byId: {},
-  _listeners: {},
-  head: new Element('head'),
-  createElement(tag) { return new Element(tag); },
-  getElementById(id) { return this._byId[id] || null; },
-  addEventListener(t, fn) { (this._listeners[t] = this._listeners[t] || []).push(fn); },
-  removeEventListener() {},
-  dispatchEvent() {},
-};
-globalThis.document = document;
-globalThis.Element = Element;
-globalThis.addEventListener = (t, fn) => { (document._listeners[t] = document._listeners[t] || []).push(fn); };
-globalThis.removeEventListener = (t, fn) => { const a = document._listeners[t]; if (a) document._listeners[t] = a.filter(f => f !== fn); };
-document.head.appendChild = (el) => {
-  setTimeout(() => {
-    if (el.tagName === 'SCRIPT' && el.src && el.src.includes('/live2d-widgets/') && el.type !== 'module') {
-      const name = el.src.split('/').pop().split('?')[0];
-      const p = path.join(W, name);
-      if (existsSync(p)) vm.runInThisContext(readFileSync(p, 'utf8'), { filename: name });
-    }
-    if (el.onload) el.onload(); else if (el.onerror) el.onerror();
-  }, 0);
-  return el;
-};
+// ── 最小 DOM stub：20260927 起与 smoke 那支共用 tests/stubs/dom.mjs ──
+// （两份各复制一份时，两份都没有 document.querySelector —— 谁也没跑到自己声称的
+//   地方；抽出去的完整理由与三处真机语义见 stubs/dom.mjs 头注）
+installDom();
+installScriptLoader(W);
 
 const store = new Map();
 const store2 = new Map();
@@ -239,10 +151,25 @@ const EXPECT_TD_ABOVE = [1846, 1847, 1853, 1857, 1865, 1867, 1869, 1871, 1875, 1
 let pullCount = 0;
 let streamMode = 'ok'; // 'ok' | 'error-frame' | 'fetch-fail'
 let itemsCb = null;
-// 假时钟：Date.now 偏移（replaceWithIncoming 60s 判定用 Date.now()）
-const realNow = Date.now.bind(Date);
-let nowOffset = 0;
-Date.now = () => realNow() + nowOffset;
+// ── 假时钟（20260927 重做）──
+// **必须换掉 `Date` 本身，不是只盖 `Date.now`**：两处取"现在"的写法不同——
+//   · `replaceWithIncoming` 的 60s 窗口用 `Date.now()`；
+//   · `__chatCore.formatTimeLabel` 用 **`new Date()`**（chat-core.js:207，算本地日界差，
+//     决定 TD 是 `HH:mm` / `昨天 HH:mm` / `M月D日 HH:mm`）。
+// 旧版只盖了 `Date.now` ⇒ TD 文本始终按**真实跑测日期**渲染：2026-08-28 那天跑是
+// "昨天 20:42"，今天（09-27）跑变成"8月27日 20:42"——「首 TD 文本」这条断言于是
+// 依赖跑测日期（而且它当年能过，只是因为写它的那天正好是 8-28）。
+// 现在整支 `Date` 都是偏移过的：带参构造照旧（`T(y,m,d,…)` 造的是绝对时刻），
+// 无参构造 = 现在。**先钉死再加载**，全部场景一律从 2026-08-28 14:52:30 起算——
+// 它同时满足场景 2 的口径（与末条 DB 记录 1895@14:51:56 间隔 <5min ⇒ user 消息上方
+// 不新增 TD，TD 总数恒为 14）。
+const RealDate = Date;
+const realNow = RealDate.now.bind(RealDate);
+let nowOffset = T(2026, 8, 28, 14, 52, 30) - realNow();
+globalThis.Date = class extends RealDate {
+  constructor(...args) { if (args.length === 0) super(realNow() + nowOffset); else super(...args); }
+  static now() { return realNow() + nowOffset; }
+};
 // 场景 2b 的 catch 内 applyMsg(null) crash 是异步未捕获异常：node 默认退出，兜住计数
 let unhandled = [];
 process.on('unhandledRejection', (e) => { unhandled.push(String((e && e.message) || e)); });
@@ -252,6 +179,13 @@ globalThis.fetch = async (url, opts) => {
     return { ok: true, json: async () => ({ items: HISTORY }) };
   }
   if (String(url).includes('/api/chat/discard')) return { ok: true, json: async () => ({}) };
+  if (String(url).includes('/api/chat/conversations')) {
+    // 会话化（20260903）新增：空白新对话态发送前先建会话（`ensureConversation`）。
+    // 缺这个桩 ⇒ fetch 抛"unexpected fetch" ⇒ 被它的 catch 吞成 false ⇒ 每轮都停在
+    // 「创建新会话失败」气泡上：期望的 50/51/52 条一律 +2，全场景判红（20260927 修）。
+    return { ok: true, json: async () => ({ id: 1 }) };
+  }
+  if (String(url).includes('/api/monitor/log')) return { ok: true, json: async () => ({}) };
   if (String(url).includes('/api/chat/stream')) {
     if (streamMode === 'fetch-fail') throw new TypeError('Failed to fetch'); // 连接层失败（contentSpan 未建）
     if (streamMode === 'error-frame') {
@@ -268,27 +202,53 @@ globalThis.fetch = async (url, opts) => {
   }
   throw new Error('unexpected fetch: ' + url);
 };
-const fireStorage = async (label) => {
-  const fns = document._listeners['storage'] || [];
-  fns.forEach(fn => fn({ key: 'chat_history_' + store.get('tokenKey') }));
-  await new Promise(r => setTimeout(r, 500)); // 400ms 防抖 + fetch
+// ── 等待工具（20260927）：固定 sleep 在慢机器/CI 上就是**偶发红**的来源，
+// 偶发红比没有测试更坏（会训练人忽略红）。等不到就照旧交给断言判红。
+const msgsOf = () => {
+  const m = document.getElementById('chat-messages');
+  return m ? [...m.children].filter(c => c.classList.contains('chat-msg')) : [];
 };
-
-vm.runInThisContext(readFileSync(path.join(W, 'autoload.js'), 'utf8'), { filename: 'autoload.js' });
-await new Promise(r => setTimeout(r, 100));
-await new Promise(r => setTimeout(r, 800));
-const core = globalThis.__waifuChatCore;
-if (!core) { console.error('chat-core 未注册'); process.exit(1); }
-
+const tdsOf = () => {
+  const m = document.getElementById('chat-messages');
+  return m ? [...m.children].filter(c => c.classList.contains('chat-time-divider')) : [];
+};
+const waitFor = async (cond, ms = 4000) => {
+  const t0 = Date.now();
+  while (!cond() && Date.now() - t0 < ms) await new Promise(r => setTimeout(r, 10));
+  return cond();
+};
+// 拉取完成（fetch 已发生）后 reconcile 还要走几个微任务：给一拍再断言
+const settle = () => new Promise(r => setTimeout(r, 20));
 let failed = 0;
 const assert = (cond, name, detail) => {
   if (cond) console.log('  ✓ ' + name);
   else { failed++; console.log('  ✗ FAIL: ' + name + (detail !== undefined ? '  → ' + JSON.stringify(detail) : '')); }
 };
-const tdsOf = () => [...document.getElementById('chat-messages').children]
-  .filter(c => c.classList.contains('chat-time-divider'));
-const msgsOf = () => [...document.getElementById('chat-messages').children]
-  .filter(c => c.classList.contains('chat-msg'));
+
+const fireStorage = async (label) => {
+  // 键自 20260903 起按会话分桶（`chat_history_<token>_(auto|<convId>)`），而监听器是
+  // **全键相等**比较（JWT 自带 '_'，前缀判断会误收别的会话的写入）⇒ 写死旧单桶键
+  // `chat_history_<token>` 等于**什么都没触发**：pullHistory 不跑、reconcile 不做孤儿
+  // 清理，于是"无 mid 的错误气泡被收敛"这组期望全部落空（20260927 修）。
+  // 取当前真实键 = 最近一次写入的那个（本文件不用精确指定会话，视图只有一个）。
+  const keys = [...store.keys()].filter(k => k.startsWith('chat_history_') && !k.includes('backup'));
+  const key = keys[keys.length - 1] || ('chat_history_' + store.get('tokenKey'));
+  const before = pullCount;
+  const fns = document._listeners['storage'] || [];
+  fns.forEach(fn => fn({ key }));
+  // 等**拉取真的发生**（而非"睡够 500ms 希望它发生"）：这是监听器认没认这个键的
+  // 直接证据——此前正是这条链路静默空转，导致后面所有断言看着像"渲染错了"。
+  await waitFor(() => pullCount > before);
+  await settle();
+};
+
+vm.runInThisContext(readFileSync(path.join(W, 'autoload.js'), 'utf8'), { filename: 'autoload.js' });
+// 加载链是 setTimeout(0) 驱动的（stubs/dom.mjs 的 installScriptLoader）⇒ 轮询等它走完
+if (!await waitFor(() => !!globalThis.__waifuChatCore)) {
+  console.error('chat-core 未注册（子模块加载失败）'); process.exit(1);
+}
+// 等首拉落地：轮询消息数而不是睡 800ms（原固定值在 CI 慢机器上是偶发红来源）
+await waitFor(() => msgsOf().length === 50);
 
 console.log('== 场景 1：加载 50 条真实历史 ==');
 dump('加载后');
@@ -313,21 +273,28 @@ dump('加载后');
 console.log('\n== 场景 2：发消息 → __ERROR__ 帧（agent 重启断流）→ 网络错误气泡（无 mid，不转正）==');
 streamMode = 'error-frame';
 {
-  // 固定当前时间 14:52:30：与末条 DB 记录 1895@14:51:56 间隔 <5min → user 消息上方无 TD
-  // （TD 总数恒为 14），且后续场景的 60s 窗口判定（replaceWithIncoming 用 Date.now()）全部确定
-  nowOffset = T(2026, 8, 28, 14, 52, 30) - realNow();
+  // 时钟已在文件头钉死为 2026-08-28 14:52:30（此处原有的那行赋值是场景 1 之后才生效的，
+  // 正是「首 TD 文本」随跑测日期漂移的成因，20260927 上移）。
   const input = document.getElementById('chat-input');
   input.value = '可以呀帮我看看杭州钱塘区天气';
   document.getElementById('chat-send').click();
-  await new Promise(r => setTimeout(r, 300));
+  await waitFor(() => msgsOf().length === 52);   // 等气泡真的落地（而非睡 300ms 希望它落地）
   dump('断流后');
   const msgs = msgsOf();
   const tds = tdsOf();
   const last = msgs[msgs.length - 1];
   assert(msgs.length === 52, '50 历史 + user + 网络错误气泡 = 52 条', msgs.length);
   assert(!last.dataset.mid, '网络错误气泡无 mid（__ERROR__ 帧无回复内容不转正——设计行为，与真实 DB 一致）', last.dataset.mid);
+  // 错误文案住**子节点** `div.chat-msg-err-note`（renderFailed：正文照常渲染，提示作为独立节点追加），
+  // 不在 `.msg-text` 自己的 textContent 里；且 20260927 起服务端自写的那句话**不套**
+  // 「网络错误: 」前缀（这个帧是终止帧的一种、不是连接故障）⇒ 这里断的是**帧里的原文**。
+  // 注：本 stub 的 textContent 是普通字段、不聚合子节点（真机是聚合的），所以直接读提示节点。
+  const note = last.querySelector('.chat-msg-err-note');
   const t = last.querySelector('.msg-text');
-  assert(!!t && t.textContent.includes('网络错误: 与 Agent 的连接中断'), '末条显示网络错误文案', t && t.textContent.slice(0, 40));
+  assert(!!note && note.textContent === '与 Agent 的连接中断，回复可能不完整',
+         '__ERROR__ 帧的服务端原文原样进错误提示（不加「网络错误: 」前缀）', note && note.textContent);
+  assert(!!note && !!t && note.parentNode === t,
+         '错误提示挂在正文节点内（真机 textContent 因此会把它算进这条气泡）', note && !!t);
   assert(!(last.previousSibling && last.previousSibling.classList.contains('chat-time-divider')), '网络错误上方无 TD');
   assert(tds.length === EXPECT_TD_ABOVE.length, 'TD 数量 = 14（user 与 1895 间隔 <5min 不新增）', tds.length);
   let tdBad = 0;
@@ -345,14 +312,17 @@ streamMode = 'fetch-fail';
   const input = document.getElementById('chat-input');
   input.value = '测试连接失败';
   document.getElementById('chat-send').click();
-  await new Promise(r => setTimeout(r, 200));
+  await waitFor(() => msgsOf().length === before + 2);
   const msgs = msgsOf();
   assert(msgs.length === before + 2, '用户消息 + 自建错误气泡（修复前气泡缺失只有 user 消息）', msgs.length);
   assert(unhandled.length === 0, '无 crash（contentSpan=null 时 catch 自建气泡再 applyMsg）', unhandled.slice(0, 2));
   const last = msgs[msgs.length - 1];
   assert(!last.dataset.mid, '错误气泡无 mid（不转正不保存）', last.dataset.mid);
-  const t = last.querySelector('.msg-text');
-  assert(!!t && t.textContent.includes('网络错误: Failed to fetch'), '错误文案已渲染', t && t.textContent.slice(0, 40));
+  // 连接级失败（fetch 抛）走的是**认不出来的异常**那条 ⇒ 才带「网络错误: 」前缀
+  // （与上面那条 __ERROR__ 帧形成对照：同一条提示节点、两种来源）。
+  const note = last.querySelector('.chat-msg-err-note');
+  assert(!!note && note.textContent === '网络错误: Failed to fetch',
+         '错误文案已渲染（认不出的异常套「网络错误: 」前缀）', note && note.textContent);
   assert(tdsOf().length === EXPECT_TD_ABOVE.length, 'TD 数量不变', tdsOf().length);
 }
 
@@ -395,7 +365,7 @@ console.log('\n== 场景 5：后台窗口 done 帧（远端转正, 不调 patchD
 {
   const ch = BroadcastChannelStub.instances[0];
   ch.onmessage({ data: { t: 'done', roundId: 'l-remote1', id: 'l-remote1', fullText: '网络错误: 远端断流', time: Date.now(), process: [] } });
-  await new Promise(r => setTimeout(r, 50));
+  await waitFor(() => msgsOf().length === 51);
   dump('done 帧后');
   const msgs = msgsOf();
   const tds = tdsOf();
@@ -425,7 +395,7 @@ streamMode = 'ok'; // 场景 8 改过 fetch-fail，这里恢复正常流（收�
   const input = document.getElementById('chat-input');
   input.value = '交错测试';
   document.getElementById('chat-send').click();
-  await new Promise(r => setTimeout(r, 200));
+  await waitFor(() => msgsOf().length === 52);
   await fireStorage('pull#4'); // 60s 内：l 保留
   let msgs = msgsOf();
   let last = msgs[msgs.length - 1];
@@ -446,5 +416,5 @@ streamMode = 'ok'; // 场景 8 改过 fetch-fail，这里恢复正常流（收�
   assert(tdBad === 0, '交错后 12 个 TD 位置未被破坏', tdBad);
 }
 
-console.log('\n' + (failed === 0 ? '✅ 复现 harness 全过——未复现错位（bug 需真实 DOM 证据）' : '❌ 复现成功——bug 锁定') + `：${failed} 失败`);
+console.log('\n' + (failed === 0 ? '✅ 时间标签套件通过' : '❌ 时间标签套件失败') + `：${failed} 失败`);
 process.exit(failed === 0 ? 0 : 1);
