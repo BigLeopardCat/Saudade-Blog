@@ -17,6 +17,7 @@
 import base64
 import json
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -451,6 +452,25 @@ with sync_playwright() as p:
           and pg.get_attribute(".pwd-toggle", "aria-label") == "隐藏密码")
     check("图标按钮横向不吃掉输入框（右内边距 ≥ 40）", pg.evaluate(
         "() => parseFloat(getComputedStyle(document.querySelector('input#password')).paddingRight) >= 40"))
+
+    # 20260927 用户报「填写密码时会**多出来**一个眼睛的图标」：本框已经有一只自绘的
+    # `.pwd-toggle`，多出来的那只来自 **Edge** 对 type=password 渲染的原生显隐按钮
+    # （`::-ms-reveal`，IE/Edge 的遗留伪元素，Edge Chromium 至今仍支持；access log 的
+    # UA 实测是 `Edg/152`）。修法 = 用 CSS 藏掉原生那只，只留自绘的。
+    #
+    # **这条判据只能是源码锁**：本机没有 msedge channel（`playwright install msedge`
+    # 未装），Chromium 根本不渲染 `::-ms-reveal` ⇒ 无从渲染验证。取编译产物而不是
+    # 源文件，至少要保证那条规则真的穿过了 sass 编译（`::-ms-*` 是历史上有过解析
+    # 事故的写法）。作用域也必须一起锁：只藏主登录框那一个——重置密码弹窗的两个密码
+    # 框没有自绘眼睛，原生那只对它们是有用的。
+    css = (SANDBOX / "login.css").read_text(encoding="utf-8")
+    flat = "".join(css.split())
+    sels = re.findall(r"([^{}]+?)::\-ms\-reveal\s*\{([^}]*)\}", flat)
+    check("藏掉 Edge 原生的密码显隐按钮（::-ms-reveal；Chrome 渲染不出来，只能锁编译产物）",
+          len(sels) == 1 and sels[0][1] == "display:none;", json.dumps(sels))
+    check("作用域只在主登录框（重置密码弹窗那两个密码框不在 .field-pwd 下，原生眼睛留着）",
+          bool(sels) and sels[0][0] == ".field-pwdinput[type=password]",
+          sels[0][0] if sels else "没有这条规则")
 
     pg2 = br.new_page(viewport={"width": 1280, "height": 900})
     pg2.add_init_script("window.__token = 'fake-token';")

@@ -272,6 +272,36 @@ with sync_playwright() as p:
           f'btn.right={geo["btn"]["right"]:.1f} tab.left={geo["tab"]["left"]:.1f}')
     check("按钮与标签条同一行（垂直重叠）",
           geo["btn"]["bottom"] > geo["tab"]["top"] and geo["btn"]["top"] < geo["tab"]["bottom"])
+    # 20260927 用户报「刷新按钮和后面的页标签太挤了」：tab 条左侧的附加内容里有两颗按钮
+    # （新增文章 / 刷新），新增文章自带 margin-right、刷新没有 ⇒ 刷新与第一个标签之间
+    # 只剩 antd 的默认值。判据取**刷新按钮右缘到第一个标签左缘的距离**，与页内既有的
+    # 12px 节奏对齐（新增文章 → 刷新 就是 12px）。改成量距离而不是"某处有个 margin"：
+    # margin 写在谁身上、被谁吃掉，读代码看不出来。
+    rgeo = pg.evaluate("""() => {
+        const btn = [...document.querySelectorAll('.AllCard .ant-btn')]
+            .find((b) => b.textContent.includes('刷新'));
+        const tab = document.querySelector('.AllCard .ant-tabs-tab');
+        if (!btn || !tab) return null;
+        const b = btn.getBoundingClientRect(), t = tab.getBoundingClientRect();
+        return { right: b.right, left: t.left, gap: t.left - b.right, text: btn.textContent.trim() };
+    }""")
+    check("有一颗「刷新」按钮，且在标签条左侧", rgeo is not None and rgeo["gap"] > -0.5,
+          str(rgeo))
+    check("刷新按钮与后面的页标签不挤（间距 ≥ 12px）",
+          rgeo is not None and rgeo["gap"] >= 12,
+          f'gap={rgeo["gap"]:.1f}px' if rgeo else 'null')
+    if rgeo:
+        # 与「新增文章 → 刷新」的间距一致（同一行的两颗按钮不该用两套节奏）
+        gap2 = pg.evaluate("""() => {
+            const bs = [...document.querySelectorAll('.AllCard .ant-btn')];
+            const add = bs.find((b) => b.textContent.includes('新增文章'));
+            const rf = bs.find((b) => b.textContent.includes('刷新'));
+            if (!add || !rf) return null;
+            return rf.getBoundingClientRect().left - add.getBoundingClientRect().right;
+        }""")
+        check("与「新增文章 → 刷新」的间距同量级（同一套节奏）",
+              gap2 is not None and abs(rgeo["gap"] - gap2) <= 8,
+              f'refresh→tab={rgeo["gap"]:.1f} add→refresh={gap2}')
     pg.locator(".AllCard .ant-btn", has_text="新增文章").first.click()
     pg.wait_for_timeout(250)
     # MemoryRouter 不动浏览器地址栏，导航去向由 entry 里那个 Spy 记进 window.__loc
