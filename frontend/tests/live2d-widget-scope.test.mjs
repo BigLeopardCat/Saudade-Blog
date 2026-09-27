@@ -173,9 +173,18 @@ for (const f of ['chat-stream.js', 'chat-engine.js', 'chat-render.js', 'chat-ses
   // 20260924 起钩子是"先接存档再挂卡"：只 syncAsk 的话，刷新后内存里那份待办
   // 本来就是空的（卡片活在 localStorage 里），自愈钩子会对着空气同步——这条断言
   // 因此两半都锁，少一半就红
-  const resync = s.match(/engine\.setConvUI\(\{ onAskResync: \(\) => \{([^}]*)\} \}\)/);
+  // 20260927：这个正则原先把钩子对象整个锁死（`} })` 紧跟 onAskResync 之后），
+  // 于是**多注册一个兄弟钩子就假红**——那次加的是 onFailedResync，一字未动
+  // onAskResync 却判它"两半缺一"。锁的是这一半的两句，就别把"后面还有什么"钉进去。
+  const resync = s.match(/engine\.setConvUI\(\{ onAskResync: \(\) => \{([^}]*)\}/);
   ok(!!resync && /restoreAsk\(\)/.test(resync[1]) && /syncAsk\(\)/.test(resync[1]),
      'chat-stream.js：onAskResync 钩子 = 接回存档 + 挂卡（两半缺一不可）');
+  // 失败轮按钮与确认卡同构：引擎负责"节点在不在"、交互层负责"点了做什么"，
+  // 两半缺一就是"刷新后按钮没了"（20260927 用户报的那个缺口）。
+  ok(/onFailedResync/.test(e) && /ui\.onFailedResync\(\)/.test(e),
+     'chat-engine.js：reconcileDOM 收尾调用 onFailedResync（提示条重建后按钮自愈）');
+  ok(/onFailedResync: \(\) => \{ attachHistoryFailedRetry\(\); \}/.test(s),
+     'chat-stream.js：onFailedResync 钩子 = 重挂失败轮重发/编辑按钮');
   // 收尾那段：唯一允许出现的 hideAsk 是"用户改口打字"那条（sendMessage 里），
   // 收尾的 setTimeout 里不许再有 hideAsk（它会把待办当成"用户改口"销毁掉）
   const fin = s.slice(s.indexOf("if (ctx.state.pendingPull) { ctx.state.pendingPull = false;"));
