@@ -303,6 +303,19 @@ streamMode = 'error-frame';
     if (!el || !(el.previousSibling && el.previousSibling.classList.contains('chat-time-divider'))) { tdBad++; }
   }
   assert(tdBad === 0, '原有 14 个 TD 位置未被破坏', tdBad);
+  // 20260927：错误气泡现在也挂重发/编辑 + 失败原因落 localStorage（此前只有超时那
+  // 两支有按钮，而 __ERROR__ 帧与真网络错误恰是线上最常见的失败形态）。判据的完整
+  // 版本在 tests/chat-failed-round.test.mjs（刷新存活 + 三种 discard 失败各自回话），
+  // 这里只钉"这一支接上了"——它是**同一份代码的另一条分支**。
+  const retry = last.querySelector('.chat-msg-retry');
+  assert(!!retry && retry.querySelectorAll('.chat-retry-btn').length === 2,
+         '__ERROR__ 帧的错误气泡挂出重发/编辑',
+         retry && retry.querySelectorAll('.chat-retry-btn').map(b => b.textContent));
+  const marker = JSON.parse(store.get('saudade-chat-failed') || 'null');
+  assert(!!marker && marker[0] && marker[0].text === '可以呀帮我看看杭州钱塘区天气',
+         '失败轮原文进持久化标记（刷新后仍能看到这条）', marker && marker[0]);
+  assert(!!marker && marker[0] && marker[0].reason === '与 Agent 的连接中断，回复可能不完整',
+         '原因也存下来（服务端自写的那句话原样，不加「网络错误: 」前缀）', marker && marker[0] && marker[0].reason);
 }
 
 console.log('\n== 场景 8：fetch 层失败（连接级）→ 自建错误气泡（20260828o 修复验证）==');
@@ -324,6 +337,14 @@ streamMode = 'fetch-fail';
   assert(!!note && note.textContent === '网络错误: Failed to fetch',
          '错误文案已渲染（认不出的异常套「网络错误: 」前缀）', note && note.textContent);
   assert(tdsOf().length === EXPECT_TD_ABOVE.length, 'TD 数量不变', tdsOf().length);
+  // 连接级失败（自建气泡那条路）同样要有按钮 + 原因（20260927；与场景 2 是姊妹分支）
+  const retry8 = last.querySelector('.chat-msg-retry');
+  assert(!!retry8 && retry8.querySelectorAll('.chat-retry-btn').length === 2,
+         '连接层失败的自建错误气泡同样挂出重发/编辑',
+         retry8 && retry8.querySelectorAll('.chat-retry-btn').map(b => b.textContent));
+  const marker8 = JSON.parse(store.get('saudade-chat-failed') || 'null');
+  assert(!!marker8 && marker8[0] && marker8[0].reason === '网络错误: Failed to fetch',
+         '原因 = 展示口径那句话（认不出的异常套「网络错误: 」前缀）', marker8 && marker8[0] && marker8[0].reason);
 }
 
 console.log('\n== 场景 3：storage 触发 pullHistory（60s 窗口内 → l 轮保留；网络错误气泡被孤儿清理收敛）==');
