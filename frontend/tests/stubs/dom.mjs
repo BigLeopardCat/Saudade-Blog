@@ -17,6 +17,8 @@
  *      （"初始无消息"数 `children.length` 正是那个形状才成立）。
  *   ③ `style` 是 CSSStyleDeclaration（要 `setProperty`），不是裸 `{}`
  *      （chat-session.js:607 用它覆写面板几何，裸对象上会抛）。
+ *   ④ 选择器（含属性选择器与 `closest`）按**值**匹配，见 `matchesSel` 头注——
+ *      "属性选择器恒真"曾让两条断言各自假绿（20260927）。
  *
  * 顺带一提：真机 `element.style.width = '10px'` 这类直接赋值在本 stub 上照常可用
  * （Style 就是个普通对象 + 三个方法）；只有"读回来"这件事是近似的。
@@ -100,7 +102,12 @@ class Element {
   focus() {}
   contains() { return false; }
   animate() {}
-  matches() { return false; }
+  matches(sel) { return matchesSel(this, sel); }
+  closest(sel) {
+    let n = this;
+    while (n) { if (n.matches && n.matches(sel)) return n; n = n.parentNode; }
+    return null;
+  }
   querySelectorAll(sel) {
     const out = [];
     const walk = (n) => { for (const c of n.children) { if (matchesSel(c, sel)) out.push(c); walk(c); } };
@@ -133,11 +140,60 @@ class Element {
   click() { (this._listeners.click || []).forEach(fn => fn({ target: this, stopPropagation() {}, preventDefault() {} })); }
 }
 
+/**
+ * 选择器判定：`,` 列表 + 标签名 + `.class` + `#id` + `[attr]` / `[attr="值"]`
+ * （含 `data-*` ↔ `dataset` 的映射）。**认不出来的写法一律 false。**
+ *
+ * 20260927 修：属性选择器此前是 `return true`（"只当存在性用"），于是
+ * `querySelector('[data-mtype="user"][data-mid="…"]')` **返回注册表里第一个元素**，
+ * 与条件毫无关系——`restoreAndCleanup` 拿它去 `removeChild`，"删掉那条用户气泡"
+ * 这条链路要么删错人、要么（父节点为空时）静默不删，两种都让判据假绿。
+ * 属性选择器在本仓只用于三类真实取值（`[data-mid=…]` 定位消息、`[data-mtype=…]`
+ * 与 `[data-ask-value]`），值匹配比"存在性"更接近真机，不存在"故意恒真"的用法。
+ */
 function matchesSel(el, sel) {
-  if (sel.startsWith('.')) return el.classList.contains(sel.slice(1));
-  if (sel.startsWith('#')) return el.id === sel.slice(1);
-  if (sel.startsWith('[')) return true;   // 属性选择器：只当"存在性"用，不解析条件
-  return el.tagName === sel.toUpperCase();
+  return String(sel).split(',').some(one => matchesSimple(el, one.trim()));
+}
+
+function matchesSimple(el, sel) {
+  if (!sel) return false;
+  let s = sel;
+  const tag = /^([a-zA-Z][\w-]*|\*)/.exec(s);
+  if (tag) {
+    s = s.slice(tag[0].length);
+    if (tag[0] !== '*' && el.tagName !== tag[0].toUpperCase()) return false;
+  }
+  while (s) {
+    let m;
+    if (s[0] === '.' && (m = /^\.([\w-]+)/.exec(s))) {
+      s = s.slice(m[0].length);
+      if (!el.classList.contains(m[1])) return false;
+    } else if (s[0] === '#' && (m = /^#([\w-]+)/.exec(s))) {
+      s = s.slice(m[0].length);
+      if (el.id !== m[1]) return false;
+    } else if (s[0] === '[' && (m = /^\[\s*([\w-]+)\s*(?:=\s*(?:"([^"]*)"|'([^']*)'|([^\]\s]+)))?\s*\]/.exec(s))) {
+      s = s.slice(m[0].length);
+      const v = m[2] !== undefined ? m[2] : (m[3] !== undefined ? m[3] : m[4]);
+      if (!attrMatches(el, m[1], v)) return false;
+    } else {
+      return false;   // 认不出来的写法（后代/子代/伪类…）：本 stub 不支持，别假装匹配
+    }
+  }
+  return true;
+}
+
+function attrMatches(el, name, v) {
+  let cur;
+  if (name.startsWith('data-')) {
+    const key = name.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+    cur = el.dataset ? el.dataset[key] : undefined;
+  } else if (el._attrs && name in el._attrs) {
+    cur = el._attrs[name];
+  } else if (name in el && typeof el[name] !== 'object') {
+    cur = el[name];
+  }
+  if (v === undefined) return cur !== undefined && cur !== null && cur !== '' && cur !== false;
+  return String(cur) === v;
 }
 
 const document = {
