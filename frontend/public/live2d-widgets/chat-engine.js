@@ -1154,7 +1154,24 @@
               if (!failedNoteEl) {
                 failedNoteEl = document.createElement('div');
                 failedNoteEl.className = 'chat-msg-failed-note';
-                failedNoteEl.textContent = '⏳ 该条消息未收到回复（可能已超时或网络中断）';
+                // 原因（20260927）：新记录带 `reason`（chat-stream 写入时存的是
+                // **展示口径**的那句话——服务端自己说的原样，否则「网络错误: …」），
+                // 旧记录没有这个字段 ⇒ 回退到原来那句笼统说法，历史记录不必迁移。
+                // 为什么值得存：刷新后主人唯一想知道的就是"为什么这条没回复"，
+                // 而超时/服务端出错/连不上三种原因能做的事完全不同。
+                const line = document.createElement('div');
+                line.className = 'chat-msg-failed-text';
+                line.textContent = '⏳ 该条消息未收到回复'
+                  + (entry.reason ? '：' + entry.reason : '（可能已超时或网络中断）');
+                failedNoteEl.appendChild(line);
+                // 重发/编辑按钮的**挂载点**：按钮的逻辑在 chat-stream.js（它才够得着
+                // sendMessage / 输入框 / 图片预览区），渲染在这边 ⇒ 这里只留一个空槽 +
+                // 原文（dataset，钩子要拿它去走带原文校验的 discard）。分工与确认卡片
+                // 的 onAskResync 一致：引擎负责"节点在不在"，交互层负责"点了做什么"。
+                const slot = document.createElement('div');
+                slot.className = 'chat-msg-retry-slot';
+                slot.dataset.failedText = entry.text;
+                failedNoteEl.appendChild(slot);
                 messages.appendChild(failedNoteEl);
               }
             } else if (failedNoteEl) {
@@ -1172,6 +1189,13 @@
         // 用户却无从点"——20260923 那次查了四跳才落到这行代码上。
         if (ctx.state.ui && typeof ctx.state.ui.onAskResync === 'function') {
           try { ctx.state.ui.onAskResync(); } catch (e) {}
+        }
+        // 失败轮提示条的重发/编辑按钮（20260927）：钩子必须在**上面那段失败提示
+        // 渲染之后**调——那一趟可能刚把提示条重建出来（它没有 mid、不进 items，
+        // 每次 reconcile 都会被孤儿清理删掉再重建），槽位是新的空节点。
+        // 钩子自己幂等（槽里已有按钮就跳过），所以"节点被留下"的那一趟也不会挂两遍。
+        if (ctx.state.ui && typeof ctx.state.ui.onFailedResync === 'function') {
+          try { ctx.state.ui.onFailedResync(); } catch (e) {}
         }
         scrollToBottom(messages);
       };
