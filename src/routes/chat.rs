@@ -1085,11 +1085,21 @@ async fn save_execution_log(
     rows: &[serde_json::Value],
 ) {
     for row in rows {
+        // 双写（20260927，D2 第一批）：渲染行照旧进 `detail`（**读侧今天仍只认它**，
+        // 向后兼容），结构列同步落库——目的是让"切读侧"那一天，历史数据已经在库里
+        // 攒好了（迁移文件头注讲了为什么必须先写后读）。结构列全是机械搬运，
+        // 不新增键名、不改跨语言契约（键名是 Python 写 / Rust 读的既有约定）。
+        //  `tool`：与 `skill` 同样 [:64] 截断（列宽，形态上够用）；
+        //  `payload`：整行原样序列化。**序列化失败只能写 NULL**——回执行来自
+        //   serde_json 解析过的帧，理论上不会失败，但这里不 unwrap：落库是辅助事实，
+        //   `let _ =` 吞错是既有纪律，panic 会把整轮 SSE 带走。
         let _ = execution_log::ActiveModel {
             user_id: Set(uid),
             conversation_id: Set(conversation_id),
             skill: Set(row["skill"].as_str().unwrap_or("").chars().take(32).collect()),
+            tool: Set(row["tool"].as_str().map(|s| s.chars().take(64).collect())),
             detail: Set(render_exec_row(row)),
+            payload: Set(serde_json::to_string(row).ok()),
             ..Default::default()
         }.save(db).await;
     }
