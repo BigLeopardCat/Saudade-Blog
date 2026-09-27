@@ -438,17 +438,33 @@
         wrap.appendChild(retryBtn);
         wrap.appendChild(editBtn);
         contentSpan.appendChild(wrap);
+        // 操作没办成时的**可见回答**（20260927）：点一下什么都不发生是本仓明令禁止的
+        // 收尾形态（"点了没反应"与"点了报错"差着一次排查）。此前 discard 失败 =
+        // 按钮闪一下复原，主人只能猜。文案来自后端那句回答的**分类**，不是自创状态。
+        let hintEl = null;
+        const showHint = (text) => {
+          if (!hintEl) {
+            hintEl = document.createElement('div');
+            hintEl.className = 'chat-retry-hint';
+            wrap.appendChild(hintEl);
+          }
+          hintEl.textContent = text;
+        };
         // 双保险①：失败轮必须是当前最后一条 user 消息才允许操作
         // （期间发了新消息 → 该轮已非最新，本地直接放弃）
         const lastUserText = () => {
           const last = [...ctx.state.items].reverse().find(i => i.type === 'user');
           return last ? last.text : null;
         };
+        const STALE_HINT = '这一轮已经不是你最后一条消息了（期间发过新的），不再提供重发';
         // 双保险②：后端 discard 带原文校验（Rust chat.rs DiscardReq.text），
-        // mismatch（最后一条 user 不是原文）→ 不删任何记录，操作放弃
+        // mismatch（最后一条 user 不是原文）→ 不删任何记录，操作放弃。
+        // 20260927：返回**后端那句回答**而不只是 true/false —— 三种失败（原文对不上 /
+        // 登录失效 / 连不上）能做的事完全不同，混成一个 false 就只能回一句废话。
+        // 形状：{ok:true} | {ok:false, why:'给主人看的那句话'}
         const discardFailedRound = async () => {
           const tk = localStorage.getItem('tokenKey');
-          if (!tk) return false;
+          if (!tk) return { ok: false, why: '登录状态已失效，刷新页面后再试' };
           try {
             const r = await fetch('/api/chat/discard', {
               method: 'POST',
@@ -459,8 +475,18 @@
                 ...(ctx.state.conv !== null ? { conversation_id: ctx.state.conv } : {}) }),
             });
             const j = await r.json();
-            return !!(j && j.success);
-          } catch(e) { return false; }  // 网络异常放弃（残留重发会在历史里重复）
+            if (j && j.success) return { ok: true };
+            if (j && j.error === 'unauthorized') {
+              return { ok: false, why: '登录状态已失效，刷新页面后再试' };
+            }
+            // 走到这里就是 `reason: "mismatch"`（后端说最后一条 user 不是这条）：
+            // 这一轮**不在服务端记录里**（请求压根没送到，或已被新消息顶掉）⇒
+            // 不删任何东西，原文还在气泡里可复制。
+            return { ok: false, why: '这一轮已经不在服务端记录里，没有可删除的旧轮' };
+          } catch(e) {
+            // 网络异常放弃（残留重发会在历史里重复）——决定不变，但要说出来
+            return { ok: false, why: '连不上服务端，稍后再试' };
+          }
         };
         const restoreAndCleanup = () => {
           // 恢复原文（含图片）到输入区——图片从 items 里的 user 条目取
@@ -482,21 +508,24 @@
           if (div && div.parentNode) div.parentNode.removeChild(div);
         };
         retryBtn.addEventListener('click', async () => {
-          if (lastUserText() !== msg) return;
+          if (lastUserText() !== msg) { showHint(STALE_HINT); return; }
           retryBtn.disabled = true;
           retryBtn.textContent = '重发中…';
-          if (!(await discardFailedRound())) {
+          const res = await discardFailedRound();
+          if (!res.ok) {
             retryBtn.disabled = false;
             retryBtn.textContent = '↻ 重发';
+            showHint(res.why);
             return;
           }
           restoreAndCleanup();
           sendMessage();  // 走主流程（新 roundId/广播/thumbs）
         });
         editBtn.addEventListener('click', async () => {
-          if (lastUserText() !== msg) return;
+          if (lastUserText() !== msg) { showHint(STALE_HINT); return; }
           editBtn.disabled = true;
-          if (!(await discardFailedRound())) { editBtn.disabled = false; return; }
+          const res = await discardFailedRound();
+          if (!res.ok) { editBtn.disabled = false; showHint(res.why); return; }
           restoreAndCleanup();
           input.focus();
         });
@@ -509,11 +538,17 @@
       // 最后一条 user 消息匹配标记且其后无 agent 回复，追加"（未收到回复）"提示条。
       // 不落 DB：chat_history 无标记字段、prepare_chat 全 role 注入上下文，落库会
       // 污染模型 few-shot（上一轮"回复"是失败标记）。
+      // 20260927：**连原因一起记**（`reason`，用户拍板"不入库，但要能刷新后存活"）。
+      // 旧形态只存原文 ⇒ 刷新后那条提示条只会说"未收到回复"，而失败原因恰恰是主人
+      // 唯一想知道的东西（超时？服务端出错？连不上？三种原因能做的事完全不同）。
+      // 原因文本来自**展示口径**（`errMsg`：服务端自己那句话原样、否则「网络错误: …」），
+      // 所以它天然是给主人看的措辞，不需要第二套文案；旧记录没有这个字段 ⇒ 回退到
+      // 原来的笼统说法（历史记录不必迁移）。
       const FAILED_KEY = 'saudade-chat-failed';
-      const persistFailedRound = (text) => {
+      const persistFailedRound = (text, reason) => {
         try {
           const cur = JSON.parse(localStorage.getItem(FAILED_KEY) || 'null');
-          const entry = { text, ts: Date.now() };
+          const entry = { text, ts: Date.now(), reason: reason || '' };
           if (cur && Array.isArray(cur) && cur.length) {
             localStorage.setItem(FAILED_KEY, JSON.stringify([entry, ...cur].slice(0, 3)));
           } else {
@@ -529,6 +564,22 @@
           if (rest.length) localStorage.setItem(FAILED_KEY, JSON.stringify(rest));
           else localStorage.removeItem(FAILED_KEY);
         } catch (e) {/* ignore */}
+      };
+      // 刷新后的失败轮同样能重发/编辑（20260927，用户报的覆盖缺口：此前刷新一次
+      // 按钮就没了，只剩一句话）。历史渲染那一趟只画提示条 + 留一个空槽
+      // （chat-engine 的 `onFailedResync` 注释写了分工），按钮由这里挂——重发/编辑
+      // 的全部逻辑（忙锁、discard 双保险、图片还原、输入框回填）都在这层闭包里。
+      // 幂等：槽里已经有按钮就跳过（钩子每趟 reconcile 都调，重复挂会叠出两组按钮）。
+      const attachHistoryFailedRetry = () => {
+        messages.querySelectorAll('.chat-msg-retry-slot').forEach((slot) => {
+          if (slot.querySelector('.chat-msg-retry')) return;
+          const text = slot.dataset.failedText || '';
+          if (!text) return;   // 没有原文就没有可重发的东西（attachRetryActions 要它去 discard）
+          // 提示条本身当 `div` 传进去：重发成功后它连带被摘掉（那一轮的失败标记也
+          // 清掉了，下一次 reconcile 不会再渲染出来）。
+          const note = slot.closest('.chat-msg-failed-note') || slot;
+          attachRetryActions(slot, note, text);
+        });
       };
 
       // opts.silent + opts.confirmToken（20260921）= **隐藏确认请求**：
@@ -1215,7 +1266,8 @@
               if (!silent) {
                 attachRetryActions(contentSpan, div, msg);
                 // 20260902：失败轮持久化标记（刷新后仍显示"未收到回复"，见定义处注释）
-                persistFailedRound(msg);
+                // 20260927：带原因（刷新后主人要知道是超时、服务端出错还是连不上）
+                persistFailedRound(msg, errMsg);
               }
             }
           } else {
@@ -1252,7 +1304,16 @@
             // 20260902：网络错误同样记持久化失败标记（与 AbortError 分支一致——
             // 用户刷新后要能看到"这条没收到回复"而不是只有一条孤立 user 消息）
             // silent 轮无用户消息可标记（同上）
-            if (!silent) persistFailedRound(msg);
+            // 20260927 补齐重发/编辑按钮（用户报的覆盖缺口）：这一支覆盖 `__ERROR__`
+            // 终止帧与真正的网络错误，**恰恰是线上最常见的失败形态**（超时那两支
+            // 早就有按钮，最常发生的反而没有）。判据与另外两支逐字相同：非 silent
+            // （隐藏确认轮重发会变成一次真发言）+ 双保险（本地最后一条 user 消息、
+            // 服务端 discard 带原文校验）。消息已入库这条前提在这一支成立——Rust 收到
+            // user 消息即落库，`__ERROR__` 是**之后**才由 producer 发出来的。
+            if (!silent) {
+              attachRetryActions(contentSpan, div, msg);
+              persistFailedRound(msg, errMsg);
+            }
           }
         } finally {
           // 复位必须在 finally：catch 内 applyMsg/broadcast 万一抛错，
@@ -1743,7 +1804,7 @@
                 broadcast({t: 'error', msg: errMsg, roundId: r.roundId});
                 if (!r.silent) { // 隐藏确认轮不给重发/失败标记（同 sendMessage 收尾）
                   attachRetryActions(victim.contentSpan, victim.el, r.msg);
-                  persistFailedRound(r.msg);
+                  persistFailedRound(r.msg, errMsg);
                 }
                 delete ctx.state.live[r.roundId];
                 broadcast({ t: 'idle', roundId: r.roundId, from: engine.windowId });
@@ -2007,7 +2068,10 @@
       // 20260924 先接存档再挂卡（restoreAsk 内部幂等）：页面加载时历史拉完会走一次
       // 这里 ⇒ 刷新后卡片自己回来；切会话回到有卡的那个会话也会走一次，同样成立。
       if (typeof engine.setConvUI === 'function') {
-        engine.setConvUI({ onAskResync: () => { restoreAsk(); syncAsk(); } });
+        engine.setConvUI({ onAskResync: () => { restoreAsk(); syncAsk(); },
+                           // 失败轮提示条上的重发/编辑按钮（20260927）：每次 DOM 重建
+                           // 后重挂——刷新/切会话回来那次历史渲染就是它存在的理由。
+                           onFailedResync: () => { attachHistoryFailedRetry(); } });
       }
 
       // 右上角关闭按钮：收起聊天面板
