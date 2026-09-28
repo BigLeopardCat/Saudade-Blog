@@ -452,6 +452,16 @@ cd saudade-blog-agent && SAUDADE_REQUIRE_PARENT=1 .venv/bin/python tests/test_ch
 #       ⇒ `rows_affected` 是唯一判据：1=扣到 / 0=用尽 / Err=降级 fail-open），审核先**原子认领**
 #       （`WHERE id=? AND status=0`，认领不到 ⇒ **零副作用**：不清零、不发通知）⇒ 并发下
 #       计数器绝不越过上限，同一个人的额度绝不会被清两次。
+#    f) **读数的口径 = 余额**（20260929b，用户要求"500 开始减少而不是 0 开始计数"）。
+#       **存的是累计**（`chat_quota_used`，那条 `WHERE … < ?` 的并发不变量靠它），**显示的是
+#       余额**——减法在每一侧各做一次、各只有一处：前端 `frontend/src/utils/quota.ts`
+#       （四处显示共用，含档位色阈值）、agent 侧 `adminops.py` 的 `_quota_pair` /
+#       `render_quota_status` / `render_quota_requests`、系统上下文那一行
+#       （`server.py::_build_messages`）。
+#       改口径**不动契约**（`chat_quota` 仍是那四个键，判据仍是 `used`），只动给人看的字。
+#       ⚠️ 失效形态是"两个口径混着印"：卡面说"已用轮数清零"、括号里却印余额，读起来像
+#       "清掉的是一部分余额"。锁在 `frontend/tests/quota-balance.test.mjs`（含四个显示点的
+#       **源码锁**——数值断言抓不住"抄了第二份"）与 `tests/test_chat_quota.py`。
 ```
 
 **写通道不变量（写进代码、不在文档里承诺）**：`uid <= 0` → **不发请求**；非 admin →

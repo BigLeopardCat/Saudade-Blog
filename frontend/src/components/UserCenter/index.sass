@@ -363,7 +363,17 @@
     .ucQuotaBarIn
       height: 100%
       border-radius: 3px
+      // 充足档＝品牌金（20260929 用户要求"余额条颜色随余额变"）。
+      // **条画的是余额**（剩多少占上限多少），所以条越短＝越该着急，颜色跟着条一起
+      // 从金→琥珀→朱红。档位由 `utils/quota.ts::quotaLevel` 给（四处在用，一处改处处改），
+      // 这里只负责把档位翻成颜色；浅色/夜间各一套（夜间那套见 .ucRoot.ucDark 段）。
       background: #b8860b
+
+      &.is-low
+        background: #d08a1e
+
+      &.is-critical, &.is-empty
+        background: #c0392b
 
   .ucQuotaReq
     display: flex
@@ -406,9 +416,17 @@
     color: #69b1ff
 
   // 额度进度条的填充（20260929）：浅色窗里那个 `#b8860b` 是压白底的暗金，
-  // 压在墨蓝窗上几乎看不出进度——夜间换亮一档的同族金（`.ucGoldBtn` 那套色值家族）
+  // 压在墨蓝窗上几乎看不出进度——夜间换亮一档的同族金（`.ucGoldBtn` 那套色值家族）。
+  // 告急/偏低两档同样各亮一档（朱红取 `.ucReject` 那一族的 `#ff9d8a`，与站内
+  // `.rz-no` / 驳回理由条同色——"这一块是告警"的词汇在夜间全站只有这一套）。
   .ucQuotaBarIn
     background: #e8b866
+
+    &.is-low
+      background: #e3a94f
+
+    &.is-critical, &.is-empty
+      background: #ff9d8a
 
   // 金色"漏光"描边（20260922 用户要求）：夜间的墨蓝窗与页面深底几乎糊成一片、边缘看不清。
   // 1px 金环 + 一圈很淡的外发光 = 河灯的光从窗缝里漏出来。色值取登录页那团月晕的

@@ -71,6 +71,15 @@
   .qm-usage
     font-variant-numeric: tabular-nums
 
+    // 三档与个人中心/账号行同源（阈值只有 `utils/quota.ts` 一个来源）。
+    // 这一列**染色的意义比别处更直接**：它就是这个页面的裁决依据。
+    &.is-low
+      color: #b8791a
+
+    &.is-critical, &.is-empty
+      color: #c0392b
+      font-weight: 600
+
   .qm-reason
     white-space: pre-wrap
     word-break: break-word
@@ -166,3 +175,11 @@
       border-left-color: #d2695c
       background: rgba(210, 105, 92, 0.12)
       color: #e8a89c
+    // 用量列的三档各亮一档（20260929b）：浅色那几个暗金/朱红压在后台夜间的墨蓝底上
+    // 只有 2 点几的对比度（20260922 那批后台夜间的实测教训）。朱红取上面 `.qm-note`
+    // 同族的 `#ff9d8a`——"这一块是告警"在夜间全站只有这一套色。
+    .qm-usage
+      &.is-low
+        color: #e3a94f
+      &.is-critical, &.is-empty
+        color: #ff9d8a

@@ -7,6 +7,7 @@ import type { ColumnsType } from 'antd/es/table';
 // 接口**，端点字符串只该有一份；`ok`/`errMsg` 也是那一层收口的 `code === 200` 口径）
 import { errMsg, getQuotaRequests, ok, reviewQuotaRequest } from "../../../apis/ProfileMethods.tsx";
 import { useLiveRefresh } from "../../../utils/liveRefresh.ts";
+import { quotaBalanceText, quotaLevel } from "../../../utils/quota.ts";
 
 /** 额度管理（20260929）：普通用户「对话额度用完了、申请重置」的**裁决队列**。
  *
@@ -62,11 +63,19 @@ const NOTE_MAX = 255;
 /** 每页条数（分页由外面那一条承担，见下面 `.qm-scroll` 的说明） */
 const PAGE_SIZE = 10;
 
-/** 用量那一列：`limit === 0` ⇒ 不限额（与后端 `quota::limit_of` 的口径一致）。
- *  不限额的人**不会**出现在这个队列里（他的计数器从来不增长），所以这一支只是防御——
- *  真出现时也不能显示成 `0/0`（那会被读成"用完了"）。 */
-const usageText = (r: QuotaRow): string =>
-    r.limit === 0 ? '不限额' : `${r.used} / ${r.limit}`
+/** 用量那一列：**余额口径**（20260929b 与个人中心/账号行统一）。
+ *
+ *  `limit === 0` ⇒ 不限额（与后端 `quota::limit_of` 的口径一致）。不限额的人**不会**
+ *  出现在这个队列里（他的计数器从来不增长），所以这一支只是防御——真出现时也不能
+ *  显示成 `0/0`（那会被读成"用完了"）。
+ *
+ *  **裁决看的就是余额**：这个页面唯一的问题"该不该再给他 500 轮"，答案取决于他此刻
+ *  还剩多少——`已用 363/500` 要心算一步，`剩 137/500` 直接就是结论。减法与档位色都
+ *  来自 `utils/quota.ts`（同一套在四处显示共用），这里不许自己再算一遍。 */
+const usageText = (r: QuotaRow): string => quotaBalanceText(r.limit - r.used, r.limit)
+
+/** 用量那一列的档位（决定染不染色）。与文案同一个减法——两处都走 util，不各算一遍。 */
+const usageLevel = (r: QuotaRow) => quotaLevel(r.limit - r.used, r.limit)
 
 /** 状态标签（三值三色，与评论管理那两段状态同一套配色语义） */
 const STATUS_TAG: Record<number, { text: string; color: string; tip: string }> = {
@@ -179,10 +188,16 @@ const QuotaManage = () => {
             ),
         },
         {
-            title: '已用 / 上限', key: 'usage', width: 130,
+            // 标题也跟着改口径（20260929b）：这一列现在给的是**余额**，标题写「已用 / 上限」
+            // 就与格子里的字对不上了。
+            title: '剩余 / 上限', key: 'usage', width: 130,
             // **数字来自服务端**（`limit` 由 env 决定、`used` 是他此刻的真实值），
             // 前端不把 500 写死——上限是可以调的，写死的那一刻这一列就在说谎。
-            render: (_, r) => <span className="qm-usage">{usageText(r)}</span>,
+            render: (_, r) => (
+                <span className={`qm-usage${usageLevel(r) ? ` is-${usageLevel(r)}` : ''}`}>
+                    {usageText(r)}
+                </span>
+            ),
         },
         {
             title: '申请理由', dataIndex: 'reason', ellipsis: true,
@@ -301,9 +316,12 @@ const QuotaManage = () => {
                 width={460}
             >
                 <div className="qm-confirm">
+                    {/* 这一句说的是**已用**（清零的对象就是它），所以括号里也印已用——
+                        沿用列表那列写的余额会读成"清掉的是余额"，正好说反。
+                        余额口径的单一来源仍是 `utils/quota.ts`（列表列用它）。 */}
                     <div>
-                        批准后：该账号已用轮数<b>清零</b>（当前
-                        {approving ? usageText(approving) : ''}），他立刻可以继续对话，
+                        批准后：该账号已用轮数<b>清零</b>（当前已用
+                        {approving ? approving.used : ''} 轮），他立刻可以继续对话，
                         并会收到一条站内通知。
                     </div>
                     <div className="qm-confirm-warn">

@@ -15,6 +15,7 @@ import QuotaManage from '../QuotaManage';
 import http from "../../../apis/axios.tsx";
 import getToken from "../../../apis/getToken.tsx";
 import { useLiveRefresh } from "../../../utils/liveRefresh.ts";
+import { quotaChipText, quotaLevel, type QuotaLevel } from "../../../utils/quota.ts";
 import { ROLE_LABEL, roleLabel, roleTagColor, getRoleFromToken, getUidFromToken } from "../../../utils/auth.ts";
 
 /** 用户管理 = 账号管理（临时访客账号）+ 评论管理（河灯留言审核）
@@ -69,17 +70,30 @@ const ASSIGNABLE_ROLES: { role: string; rank: number }[] = [
 const roleRank = (role?: string | null) =>
     ASSIGNABLE_ROLES.find((r) => r.role === role)?.rank ?? -1
 
-/** 行上那一截额度文案（20260929）。三种形态都是**不同的事实**，不许合并成一个：
+/** 行上那一截额度：**文案 + 档位**（20260929，20260929b 改口径）。
+ *
+ * 文案与档位都从 `utils/quota.ts` 来——同一套减法与阈值在四处显示共用（个人中心额度
+ * 页签 / 这一行 / 额度管理那一列 / agent 的系统上下文行），这里**不许**自己再算一遍
+ * `limit - used`。
+ *
+ * 三种"不是数字"的形态都是**不同的事实**，不许合并成一个：
  *  · `chatQuotaLimit === 0` ⇒ 「不限额」（管理员档；后端 `quota::limit_of` 的口径——
  *    0 是"不限"而不是"上限为零"，这与"用完了"正好相反）；
- *  · 两个字段都在 ⇒ 「额度：已用/上限」；
- *  · 字段缺失（前端已上线、后端还没到）⇒ 「额度 —」，**不是** 0/0：那会被读成
- *    "这个人的额度用完了"，而同一页的行上没有别的线索能纠正它。 */
-const quotaLabel = (u: any): string => {
+ *  · 两个字段都在 ⇒ 「额度：剩 N/上限」（**余额口径**：用户要求"500 开始减少而不是
+ *    0 开始计数"——`已用/上限` 读起来要从零往上攒，而额度是**越用越少**的东西）；
+ *  · 字段缺失（前端已上线、后端还没到）⇒ 「额度 —」，**不是** 剩 0/0：那会被读成
+ *    "这个人的额度用完了"，而同一页的行上没有别的线索能纠正它。
+ *
+ * 档位（`is-low` / `is-critical` / `is-empty`）**是这一批新加的**：此前那一小截刻意
+ * 不上色（"不拿颜色暗示多少，用完了在个人中心才有结论"）。改成余额口径之后那句话
+ * 不成立了——`剩 3/500` 本身就是结论，账号一列扫下来该看得出谁快没了。 */
+const quotaChip = (u: any): { text: string; level: QuotaLevel | null } => {
     const lim = u?.chatQuotaLimit
     const used = u?.chatQuotaUsed
-    if (typeof lim !== 'number' || typeof used !== 'number') return '额度 —'
-    return lim === 0 ? '额度：不限额' : `额度：${used}/${lim}`
+    if (typeof lim !== 'number' || typeof used !== 'number') {
+        return { text: '额度 —', level: null }
+    }
+    return { text: quotaChipText(used, lim), level: quotaLevel(lim - used, lim) }
 }
 
 const Users = () => {
@@ -447,6 +461,8 @@ const Users = () => {
                                           (myUid !== null && u.id === myUid) ? '不能冻结自己的账号'
                                               : (myRole === 'admin' && u.role === 'admin')
                                                   ? '管理员之间不可互相冻结' : ''
+                                      // 额度那一截（文案 + 档位）。与另外三处同源，见 `quotaChip`。
+                                      const qc = quotaChip(u)
                                       // 冻结/解冻：一个按钮、两种含义，按当前状态取反。
                                       // danger 只给"冻结"那一侧——红按钮按下去会让对方下线，
                                       // "解冻"是恢复性操作，用红的不合适。
@@ -478,8 +494,11 @@ const Users = () => {
                                                 <span className="tu-id">ID: {u.id}</span>
                                                 {/* 额度（20260929）：正常用户终身 500 轮、管理员不限额。
                                                     数字**从行上读**（后端 quota::limit_of 已算好），
-                                                    前端不许把 500 写死——上限由 env 决定。 */}
-                                                <span className="tu-quota">{quotaLabel(u)}</span>
+                                                    前端不许把 500 写死——上限由 env 决定。
+                                                    20260929b：余额口径 + 档位色（见 `quotaChip` 那段注）。 */}
+                                                <span className={`tu-quota${qc.level ? ` is-${qc.level}` : ''}`}>
+                                                    {qc.text}
+                                                </span>
                                             </div>
                                             <div style={{ display: 'flex', gap: 8 }}>
                                                 <Button size="small" onClick={() => openPwModal(u)}>修改密码</Button>
