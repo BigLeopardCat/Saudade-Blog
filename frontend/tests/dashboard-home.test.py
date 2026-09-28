@@ -184,7 +184,10 @@ export function getUnreadSummary() {
     return Promise.resolve({status: 200, data: {code: 500, message: '假装读失败', data: null}});
   }
   const n = Number(localStorage.getItem('__pending') || 0);
-  return Promise.resolve(env({notifications: 0, messages: 0, total: 0, pendingReview: n}));
+  // 20260929：额度重置申请数（`__quota`）——它**不进 total**，与 pendingReview 同族，
+  // 但两行提示各自独立（一行为 0 不该压掉另一行）
+  const q = Number(localStorage.getItem('__quota') || 0);
+  return Promise.resolve(env({notifications: 0, messages: 0, total: 0, pendingReview: n, pendingQuota: q}));
 }
 ''' , encoding="utf-8")
 
@@ -913,7 +916,75 @@ with sync_playwright() as p:
     check("待办本身一条没少", len(row_texts(pg)) == 8, str(len(row_texts(pg))))
 
     # ────────────────────────────────────────────────────────────────────────
-    # ⑯ agent 也能往这份列表里加东西（20260926）
+    # ⑯ 额度重置申请：顶上**第二行**提示（20260929）
+    #
+    # 与待审评论同构（不进 todos、不落库、不能拖不能删），但**是两件事**：一个进评论管理
+    # 裁决、一个进额度管理裁决。本段最要紧的断言是「`.todo-review` 仍然恰好一条」——
+    # 复用类名会把两种提示数成同一件事（既有断言锁着那个数），所以新行另起 `.todo-quota`。
+    print("⑯ 额度重置申请：顶上第二行提示（与待审评论同形、不同色、去另一个页签）")
+    pg.evaluate("""() => {
+      localStorage.setItem('__pending', '1');
+      localStorage.setItem('__quota', '2');
+    }""")
+    pg.reload()
+    pg.wait_for_timeout(900)
+
+    def quota_text():
+        return "".join(pg.locator(".todo-quota").inner_text().split()) \
+            if pg.locator(".todo-quota").count() else ""
+
+    check("挂着额度申请时，列表顶上多一行提示",
+          quota_text() == "2条额度重置申请待处理", quota_text() or "（没有这一行）")
+    check("两行同时在，且待审评论那行仍是**恰好一条**（新行没跟它并成一体）",
+          pg.locator(".todo-review").count() == 1 and pg.locator(".todo-quota").count() == 1
+          and review_text() == "1条评论待人工审核", review_text() or "（评论那行没了）")
+    check("额度那一行排在待审评论**之后**（两件事各占一行、顺序固定）",
+          pg.evaluate("""() => {
+            const q = document.querySelector('.todo-quota');
+            const r = document.querySelector('.todo-review');
+            return !!q && !!r && r.getBoundingClientRect().top < q.getBoundingClientRect().top;
+          }"""))
+    check("它**不是**一条待办（不能拖、不能删、不进那份 8 条里）",
+          pg.locator(".todo-quota .todo-text, .todo-quota .todo-del, .todo-quota .todo-grip")
+            .count() == 0
+          and len(row_texts(pg)) == 8, str(row_texts(pg)))
+    check("两行的强调色不同（看着像一件事就会被当成一件事办）",
+          pg.evaluate("""() => {
+            const cs = (s) => { const e = document.querySelector(s);
+                                return e ? getComputedStyle(e).color : ''; };
+            const q = cs('.todo-quota'), r = cs('.todo-review');
+            return !!q && !!r && q !== r;
+          }"""))
+    pg.click(".todo-quota")
+    pg.wait_for_timeout(200)
+    check("点它跳到**额度管理**那个页签（不是评论那一个）",
+          (pg.evaluate("() => (window.__nav || []).slice(-1)[0]") or {}).get("to")
+          == "/dashboard/users?tab=quota",
+          str(pg.evaluate("() => (window.__nav || []).slice(-1)[0]")))
+    # 这条读数是**活**的：与待审评论共用同一个 store 与同一个 agent 收尾信号。
+    # 能不能变，靠的正是 `same()` 里那条 `&&`（漏了它，这里读回来的数是对的、
+    # 界面却永远不动）——所以这一下必须真变。
+    pg.evaluate("""() => {
+      localStorage.setItem('__quota', '0');
+      window.dispatchEvent(new CustomEvent('agent-turn-done'));
+    }""")
+    pg.wait_for_timeout(500)
+    check("批完之后（agent 代批也算）这一行自己就没了，评论那行不受影响",
+          pg.locator(".todo-quota").count() == 0
+          and pg.locator(".todo-review").count() == 1)
+    check("待办本身一条没少", len(row_texts(pg)) == 8, str(len(row_texts(pg))))
+    # 复位：下面几段都不该再看到这两行
+    pg.evaluate("""() => {
+      localStorage.setItem('__quota', '0');
+      localStorage.setItem('__pending', '0');
+    }""")
+    pg.reload()
+    pg.wait_for_timeout(900)
+    check("两个数都是 0 时，两行提示都不画（不是画一行空壳）",
+          pg.locator(".todo-quota").count() == 0 and pg.locator(".todo-review").count() == 0)
+
+    # ────────────────────────────────────────────────────────────────────────
+    # ⑰ agent 也能往这份列表里加东西（20260926）
     #
     # 它是**只追加**的：服务端给它开的是 `POST /api/protected/todos/item`（一次一条），
     # 而这份界面是**整份**读写（PUT 的 payload 就是库里的全部，见 apis/DashboardMethods
@@ -921,7 +992,7 @@ with sync_playwright() as p:
     # 组件对着 agent 收尾那一下重读一次（`agent-turn-done`）；本地有没落库的改动时
     # 只挂记号，等那份改动真要发之前先 GET 一次、把库里新多出来的行并进来再发。
     # 下面两段就是这两条路：一段走"重读"，一段走"先并再发"。
-    print("⑯ agent 往这份列表里加东西（追加通道）：界面要认，且不许反过来把它覆盖掉")
+    print("⑰ agent 往这份列表里加东西（追加通道）：界面要认，且不许反过来把它覆盖掉")
 
     def puts():
         return int(pg.evaluate("() => localStorage.getItem('__puts') || 0"))
@@ -1050,7 +1121,7 @@ with sync_playwright() as p:
     check("读失败那次没有留下的半截（服务端那份 = 发出去的那份）",
           server_texts() == [r["text"] for r in sent2], str(server_texts()))
 
-    # ── ⑰ 一条待办都没有时的空态（20260926）────────────────────────────────
+    # ── ⑱ 一条待办都没有时的空态（20260926）────────────────────────────────
     # 空列表只有新账号才见得到，所以那句提示平时没人看；而它偏偏是界面上**唯一**会
     # 念出按钮名字的地方——按钮改了名、这句话没跟着改，新账号读到的就是"点下面的
     # 「新增一行」"，而他眼前那颗按钮叫别的（找不到）。这里把服务端那份清空、
@@ -1060,7 +1131,7 @@ with sync_playwright() as p:
     pg.evaluate("() => window.__setServer([])")
     pg.evaluate("() => window.dispatchEvent(new CustomEvent('agent-turn-done'))")
     pg.wait_for_timeout(700)
-    print("⑰ 空列表那句提示：点名的按钮就是眼前这颗")
+    print("⑱ 空列表那句提示：点名的按钮就是眼前这颗")
     check("（前置）真读回来是空的、渲染出了空态",
           pg.locator(".todo-group").count() == 0
           and pg.locator(".todo-empty").count() == 1,

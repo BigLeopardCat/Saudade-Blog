@@ -45,10 +45,55 @@ export interface NotificationList {
 export interface UnreadSummary {
     notifications: number;
     messages: number;
-    /** 红点用的合计 = 通知 + 私信（**不含** pendingReview，见后端 UnreadDto） */
+    /** 红点用的合计 = 通知 + 私信（**不含** pendingReview / pendingQuota，见后端 UnreadDto） */
     total: number;
     /** 等人工裁决的留言条数（后台首页那行提示用；非管理员恒 0） */
     pendingReview: number;
+    /** 等处理的额度重置申请条数（20260929；同 pendingReview：只有能进后台的人算，恒不计进 total） */
+    pendingQuota: number;
+}
+
+/** GET /api/protected/quota（个人中心「对话额度」页签）。
+ *  四个数与 `/chat` body 里的 `chat_quota` **同源同形**（后端同一个 `quota::forward_json`），
+ *  所以别在别处另写一份取数字段。 */
+export interface QuotaInfo {
+    /** 已用轮数。**不限额账号恒 0**（它的计数器从来不增长） */
+    used: number;
+    /** 上限。**0 = 不限额**（管理员档），不是"上限为零" */
+    limit: number;
+    /** 剩余 = max(0, limit - used)，**后端算好**，前端不重算 */
+    remaining: number;
+    /** true = 不限额（limit/remaining 无意义，界面显示「不限额」而不是 0/0） */
+    unlimited: boolean;
+    /** 我最新一份**待处理**的申请；null = 没有申请过、或上一份已处理完 */
+    pendingRequest?: PendingQuotaRequest | null;
+}
+
+/** QuotaInfo.pendingRequest（只回申请人自己需要知道的三个字段） */
+export interface PendingQuotaRequest {
+    id: number;
+    /** 我当时写的理由（可空——空理由后端存 NULL） */
+    reason?: string | null;
+    createdAt: string;
+}
+
+/** GET /api/protected/quota/requests 的单行（后台额度管理页签与 agent 共用同一个接口） */
+export interface QuotaRequestRow {
+    id: number;
+    userId: number;
+    username: string;
+    nickname: string;
+    /** 申请人**当前**已用轮数（不是提交那一刻的快照） */
+    used: number;
+    /** 上限；0 = 不限额（见后端 quota::limit_of） */
+    limit: number;
+    reason?: string | null;
+    /** **三值不是布尔**：0 = 待处理 / 1 = 已批准 / 2 = 已驳回（只有 0 能处理） */
+    status: number;
+    /** 管理员的驳回理由（批准时为 null） */
+    note?: string | null;
+    createdAt: string;
+    handledAt?: string | null;
 }
 
 /** 信箱里的一封（收发共用一个形状，peer* = 对方） */

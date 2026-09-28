@@ -18,6 +18,7 @@ pub mod stats;
 pub mod profile;  // 个人中心一期（20260922）
 pub mod notice;   // 单用户站内通知（20260923；留言审核结果的首个生产者）
 pub mod todos;    // 后台首页待办（20260924；整份列表按用户落库）
+pub mod quota;    // 用户对话额度（20260929；上限与算术在 crate::quota，本模块只管读写）
 
 use axum::{
     routing::{get, post, delete, put},
@@ -92,6 +93,11 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route("/api/protected/messages/drafts/:id", delete(profile::delete_draft))
         .route("/api/protected/my/talks", get(profile::list_my_talks))
+        // 对话额度（20260929）：个人中心「对话额度」页签——看现状 + 提交重置申请。
+        // 与 profile 同一条纪律：挂公开路由、handler 内部自身鉴权（查的/写的都是
+        // 本人自己的那一行，没有 uid 参数可传 ⇒ 越权在结构上不可能）。
+        .route("/api/protected/quota", get(quota::get_my_quota))
+        .route("/api/protected/quota/apply", post(quota::apply_quota_reset))
         // 我的河灯（20260905 issue8）：本人河灯列表/收回——普通登录用户专用，
         // 必须挂在 admin 守卫之外（守卫域内全部接口仅管理员可用，见 protected_routes
         // 末尾 route_layer；handler 内部 current_uid 自身鉴权，同 profile 先例）
@@ -266,6 +272,22 @@ pub fn create_router(state: AppState) -> Router {
                 // 冻结/改密码同一份权限（auth_guard 只放管理员）。目标是"列表里可见的
                 // 账号"（`authz::is_listable_role`），所以**超管收不到**这条通道的东西。
                 .route("/api/temp-users/:id/notice", post(temp_user::send_user_notice))
+                // 重置额度（20260929）：同一族的第四个动作——账号管理页那一行的
+                // 「重置额度」按钮与 agent 的 `reset_user_quota` 工具共用它。
+                // **不需要对方申请过**（与"批准申请"的分工见 routes/quota.rs 头注）。
+                // handler 住在 routes/quota.rs 而不是 temp_user.rs：额度那件事
+                // （上限怎么算、通知怎么写、不限额怎么办）只有那一处实现。
+                .route("/api/temp-users/:id/quota-reset", post(quota::reset_user_quota))
+
+        // 对话额度审核（20260929）：后台「额度管理」页签与 agent 的
+        // `list_quota_requests` / `approve_quota_request` 等工具共用的两条。
+        // 挂守卫域内 ⇒ 自动只有 admin 拿得到（agent 以发起人身份代调，
+        // 见 routes/stats.rs 头注的同一形态）。
+        .route("/api/protected/quota/requests", get(quota::list_quota_requests))
+        .route(
+            "/api/protected/quota/requests/:id/review",
+            post(quota::review_quota_request),
+        )
         
         // 只读统计（20260921）：agent「管理助手」的用户数据报表供数。
         // 挂在守卫域内 ⇒ 自动只有 admin 拿得到（agent 以发起人身份代调，见 routes/stats.rs 头注）。

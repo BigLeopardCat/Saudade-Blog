@@ -83,9 +83,14 @@ let timers = [];
 const tickTimer = () => timers.forEach((t) => t.fn());
 
 const TOKEN = 'x.y.z';
-const ROWS = { notifications: 2, messages: 1, total: 3, pendingReview: 0 };
-const ROWS2 = { notifications: 0, messages: 0, total: 0, pendingReview: 3 };
-const EMPTY_COUNTS = { notifications: 0, messages: 0, total: 0, pendingReview: 0 };
+// ⚠️ 键序必须与 unread.ts `pick()` 的书写顺序一致（下面 `eq` 用 JSON.stringify 比字面量）。
+// `pendingQuota`（20260929 额度申请数）**必须跟着一起写**：pick() 现在恒产出它，
+// 而 `same()` 也拿它判等——漏在期望值里只会得到一串"读数对不上"的假红。
+const ROWS = { notifications: 2, messages: 1, total: 3, pendingReview: 0, pendingQuota: 0 };
+const ROWS2 = { notifications: 0, messages: 0, total: 0, pendingReview: 3, pendingQuota: 0 };
+const EMPTY_COUNTS = { notifications: 0, messages: 0, total: 0, pendingReview: 0, pendingQuota: 0 };
+/** **只有**额度申请数与 ROWS 不同的一份读数（第 ⑥ 节专门用它） */
+const ROWS_Q = { ...ROWS, pendingQuota: 2 };
 
 let passed = 0, failed = 0;
 const ok = (cond, name, detail) => {
@@ -222,7 +227,38 @@ const logout = () => { delete store.tokenKey };
     eq(mod.unreadDebug().counts, EMPTY_COUNTS, '退登（无 token）→ 清空');
 }
 
-// ── ⑤ 没有新事实就不换引用（否则订阅者白渲染一轮）──────────────────────────
+// ── ⑤ 只有额度申请数变了，也必须算新事实（20260929）────────────────────────
+// 日程面板那行「N 条额度重置申请待处理」读的就是这个 store 的 pendingQuota，而它能不能
+// 冒出来只靠一件事：`same()` 判出"变了" ⇒ setSnap 换引用 ⇒ useUnread 的订阅者重渲染。
+// 漏掉 `same()` 里那一条 `&&` 的后果**不是报错**——读回来的数一直是对的，界面一直不动，
+// 于是那一行永远不出现。所以这里**正面**断言它换了引用（反向那条在第 ⑥ 节）。
+{
+    const { mod, ctl } = await fresh();
+    login();
+    mod.retainUnread();
+    await tick();
+    const before = mod.unreadDebug().counts;
+    eq(before.pendingQuota, 0, '先是 0 条待处理申请');
+
+    ctl.responder = () => ({ status: 200, data: { code: 200, message: 'ok', data: ROWS_Q } });
+    winEvents['unread-change'].forEach((f) => f({ type: 'unread-change' }));
+    await tick();
+    const after = mod.unreadDebug().counts;
+    eq(after.pendingQuota, 2, '额度申请数被读进来');
+    ok(after !== before,
+       '只有 pendingQuota 变了 ⇒ **换引用**（否则日程面板那一行永远不冒出来）');
+    ok(after.pendingReview === before.pendingReview && after.total === before.total
+        && after.notifications === before.notifications && after.messages === before.messages,
+       '其余字段一个没动（换引用只因为额度那一项，不是顺手多换了）');
+
+    // 再读一次同样的数（**含额度那一项**）⇒ 引用不动：新加的那条判等在"值没变"这一侧
+    // 也要成立，否则每次轮询都白渲染一轮
+    winEvents['unread-change'].forEach((f) => f({ type: 'unread-change' }));
+    await tick();
+    ok(mod.unreadDebug().counts === after, '读数没变（含额度）⇒ 同一个引用');
+}
+
+// ── ⑥ 没有新事实就不换引用（否则订阅者白渲染一轮）──────────────────────────
 {
     const { mod, ctl } = await fresh();
     login();

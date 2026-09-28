@@ -5,6 +5,7 @@ import type { TabsProps } from 'antd';
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import BoardManage from '../BoardManage';
+import QuotaManage from '../QuotaManage';
 // 共享 axios 客户端（20260926）。这一页原来六处都自己 `fetch` + 手拼
 // `'Bearer ' + token`，于是**绕过了全局那两件事**：①令牌过期时的 401 处理
 // （清 tokenKey + 提示 + 跳 /login，见 src/apis/axios.tsx 的响应拦截器）——
@@ -20,10 +21,11 @@ import { ROLE_LABEL, roleLabel, roleTagColor, getRoleFromToken, getUidFromToken 
  *  20260905 拍板：原 Announcement 内嵌临时用户段迁入「账号管理」；
  *  原独立「留言管理」页并入「评论管理」。设置类（站点信息等）拆独立侧栏入口 UserControl。
  *
- *  `?tab=review` 直接落在评论管理（20260924 三轮）：后台首页待办卡上那行
- *  "N 条评论待人工审核"点过来就该看见那几条，而不是先看见账号列表再自己找 Tab。
- *  只在**进页那一下**当初始值——之后切 Tab 不再回写 URL（这一页没有"当前 Tab 是
- *  哪一页"的可分享语义，URL 也不是它的真源）。
+ *  `?tab=` 是**深链**（20260924 三轮起一个、20260929 起两个）：后台首页待办卡上那两行
+ *  提示（"N 条评论待人工审核" / "N 条额度重置申请待处理"）点过来就该直接看见那几条，
+ *  而不是先看见账号列表再自己找 Tab。取值走**白名单** `review | quota`，认不出的落回
+ *  账号管理。只在**进页那一下**当初始值——之后切 Tab 不再回写 URL（这一页没有
+ *  "当前 Tab 是哪一页"的可分享语义，URL 也不是它的真源）。
  *
  *  账号筛选（20260926）：列表从"只列普通账号"扩到全部已知角色，于是要能按
  *  角色筛、按用户名检索；这一块与评论管理同款——**筛选与检索的头固定，只有
@@ -67,10 +69,28 @@ const ASSIGNABLE_ROLES: { role: string; rank: number }[] = [
 const roleRank = (role?: string | null) =>
     ASSIGNABLE_ROLES.find((r) => r.role === role)?.rank ?? -1
 
+/** 行上那一截额度文案（20260929）。三种形态都是**不同的事实**，不许合并成一个：
+ *  · `chatQuotaLimit === 0` ⇒ 「不限额」（管理员档；后端 `quota::limit_of` 的口径——
+ *    0 是"不限"而不是"上限为零"，这与"用完了"正好相反）；
+ *  · 两个字段都在 ⇒ 「额度：已用/上限」；
+ *  · 字段缺失（前端已上线、后端还没到）⇒ 「额度 —」，**不是** 0/0：那会被读成
+ *    "这个人的额度用完了"，而同一页的行上没有别的线索能纠正它。 */
+const quotaLabel = (u: any): string => {
+    const lim = u?.chatQuotaLimit
+    const used = u?.chatQuotaUsed
+    if (typeof lim !== 'number' || typeof used !== 'number') return '额度 —'
+    return lim === 0 ? '额度：不限额' : `额度：${used}/${lim}`
+}
+
 const Users = () => {
     const [searchParams] = useSearchParams()
-    const [tab, setTab] = useState(() =>
-        searchParams.get('tab') === 'review' ? 'review' : 'accounts')
+    // 初始 Tab 走**白名单**（20260929 起两个）：`?tab=` 是给别处点进来的深链用的
+    // （后台首页那两行提示分别指向 `?tab=review` 与 `?tab=quota`），不是真源——
+    // 认不出的值一律落回账号管理，而不是把 URL 里的任意串当成 Tab key。
+    const [tab, setTab] = useState(() => {
+        const t = searchParams.get('tab')
+        return t === 'review' || t === 'quota' ? t : 'accounts'
+    })
 
     // ── 临时用户（账号管理）──
     // 这里原来有一行 `const token = localStorage.getItem('tokenKey')`，六处 fetch
@@ -268,6 +288,29 @@ const Users = () => {
         } catch { message.error('请求失败') }
     }
 
+    /** 主动重置某个账号的对话额度（20260929）。与"批准申请"是两件事：**这里不需要对方
+     *  申请过**（见 routes/quota.rs 头注那一节），所以它是账号行上的第四个动作，
+     *  而不是额度管理页签里的一个按钮。
+     *
+     *  三条纪律与冻结/发通知逐条同形：受控 Modal（命令式弹窗沙箱测不到）、成功文案读
+     *  **`data`** 而不是 `message`（`ApiResponse::success` 的 message 恒为字面量 "ok"，
+     *  见 src/utils.rs——本页踩过一次）、先关窗再发请求。
+     *  这一处的请求**没有请求体**（handler 只有 State + Path 两个提取器，同
+     *  `/password-reset-token`）——别顺手补个 `{}`。 */
+    const [quotaTarget, setQuotaTarget] = useState<any>(null)
+    const confirmResetQuota = async () => {
+        const t = quotaTarget
+        setQuotaTarget(null)
+        if (!t) return
+        try {
+            const res = await http.post('/api/temp-users/' + t.id + '/quota-reset')
+            if (res.data?.code === 200) {
+                message.success(res.data.data || '操作完成')
+                loadTempUsers()
+            } else { message.error(res.data?.message) }
+        } catch { message.error('请求失败') }
+    }
+
     const openPwModal = (user: any) => {
         setPwTarget(user)
         setPwNewPassword('')
@@ -309,7 +352,8 @@ const Users = () => {
        在别人的页签上偷偷轮询这份账号列表是白花流量。 */
     useLiveRefresh(loadTempUsers, {
         skip: () => tab !== 'accounts'
-            || !!statusTarget || !!roleTarget || !!notifyTarget || pwModalOpen || recoveryModalOpen,
+            || !!statusTarget || !!roleTarget || !!notifyTarget || !!quotaTarget
+            || pwModalOpen || recoveryModalOpen,
     });
 
     const items: TabsProps['items'] = [
@@ -432,6 +476,10 @@ const Users = () => {
                                                     <Tag color="red" style={{ marginLeft: 8 }}>已冻结</Tag>
                                                 )}
                                                 <span className="tu-id">ID: {u.id}</span>
+                                                {/* 额度（20260929）：正常用户终身 500 轮、管理员不限额。
+                                                    数字**从行上读**（后端 quota::limit_of 已算好），
+                                                    前端不许把 500 写死——上限由 env 决定。 */}
+                                                <span className="tu-quota">{quotaLabel(u)}</span>
                                             </div>
                                             <div style={{ display: 'flex', gap: 8 }}>
                                                 <Button size="small" onClick={() => openPwModal(u)}>修改密码</Button>
@@ -441,6 +489,14 @@ const Users = () => {
                                                     而不是页面顶部一个"发公告"按钮。 */}
                                                 <Button size="small" className="tu-notify-btn"
                                                         onClick={() => openNotifyModal(u)}>发通知</Button>
+                                                {/* 重置额度（20260929）：账号族第四个动作。
+                                                    **不限额的行禁用**（`chatQuotaLimit === 0`，
+                                                    管理员档）：后端会拒（「该账号不限额，无需重置额度」），
+                                                    但让按钮干脆不亮，比点了才被告知更清楚——与
+                                                    「非普通账号不给删除按钮」同一条纪律。 */}
+                                                <Button size="small" className="tu-quota-btn"
+                                                        disabled={u.chatQuotaLimit === 0}
+                                                        onClick={() => setQuotaTarget(u)}>重置额度</Button>
                                                 {freezeBlocked
                                                     ? <Tooltip title={freezeBlocked}>{freezeBtn}</Tooltip>
                                                     : freezeBtn}
@@ -475,6 +531,34 @@ const Users = () => {
                             )}
                         </div>
                     </div>
+
+                    {/* 重置额度确认（20260929）。三条纪律与冻结那个弹窗逐条同形：
+                        · `okText` 写动作词（「重置额度」）而不是「确定」；
+                        · 受控 Modal（命令式弹窗沙箱测不到）；
+                        · **不给 danger** —— 清零是把额度还给对方，属于恢复性动作
+                          （与"解冻"同一侧），红按钮会是错的信息。
+                        正文写清两件事：他立刻能继续问；以及**界面上撤不回来**
+                        （没有"改回原值"这个入口，下一次重置只会再清零一次）。 */}
+                    <Modal
+                        title={'重置额度 - ' + (quotaTarget?.username || '')}
+                        open={!!quotaTarget}
+                        onOk={confirmResetQuota}
+                        onCancel={() => setQuotaTarget(null)}
+                        okText="重置额度"
+                        cancelText="取消"
+                        okButtonProps={{ className: 'tu-quota-ok' }}
+                        width={420}
+                    >
+                        <div style={{ marginTop: 12, lineHeight: 1.7 }}>
+                            <div>
+                                确定要把<strong>{quotaTarget?.username}</strong> 的对话额度清零吗？
+                            </div>
+                            <div style={{ marginTop: 8, color: '#8c8c8c' }}>
+                                清零后：他立刻可以继续对话，并会收到一条站内通知。
+                                这一下在界面上撤不回来——原值不会被记下来，唯一能再变的是下一次重置。
+                            </div>
+                        </div>
+                    </Modal>
 
                     {/* 冻结/解冻确认（20260926）。三个细节是刻意的：
                         · `okText` 写动作词（「冻结」/「解冻」）而不是「确定」——
@@ -650,6 +734,14 @@ const Users = () => {
             key: 'review',
             label: <h3>评论管理</h3>,
             children: <BoardManage />,
+        },
+        {
+            // 额度管理（20260929）：放的是**申请队列**（谁申请了、批不批），
+            // 与账号管理行上那枚「重置额度」按钮分工明确——按账号的动作住在行上，
+            // 按申请的裁决住在这里（与评论管理只管裁决队列同构）。
+            key: 'quota',
+            label: <h3>额度管理</h3>,
+            children: <QuotaManage />,
         },
     ];
 

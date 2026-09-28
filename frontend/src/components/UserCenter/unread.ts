@@ -6,6 +6,8 @@
  * 20260924 四轮起这条接口还带 `pendingReview`（等人工裁决的留言条数，非管理员恒 0），
  * 供后台首页那行提示用——它**不计进 `total`**（红点是"你有事没看"，待审是"后台有事等你
  * 处理"，两件事），只是同一个消费者的另一项读数：后台那一页也登记成这个 store 的消费者。
+ * 20260929 起再加 `pendingQuota`（等处理的额度重置申请条数），与 pendingReview 逐条同构：
+ * 同一个 `is_console_user` 才算、不计进 `total`、后台首页另起一行提示。
  *
  * 刷新时机（四个都要有，少一个就会"点了已读红点还在"或"别人发来消息十分钟不亮"）：
  *   1. 有人开始看时挂上定时轮询（60 秒——本站是个人博客，没必要做长连接）；
@@ -53,12 +55,26 @@ const POLL_MS = 60 * 1000
  * 依赖或 `setState` 时，新实例会被 React 判为"变了"而多渲染一轮（favorites.ts 里
  * 那条"每次成功读数都换新数组"的教训反过来用——这里没有新事实就不该换引用）。
  */
-const EMPTY: UnreadSummary = { notifications: 0, messages: 0, total: 0, pendingReview: 0 }
+const EMPTY: UnreadSummary = {
+    notifications: 0,
+    messages: 0,
+    total: 0,
+    pendingReview: 0,
+    // 20260929 加额度申请数。**EMPTY 漏一个键不会报错、只会让 `same()` 拿 undefined
+    // 比 undefined**（恒等）⇒ 那一项的变化永远看不见。三个地方必须同进同出：
+    // EMPTY / same / pick。
+    pendingQuota: 0,
+}
 
-/** 值相等？就比这几个数，不引深比较库 */
+/** 值相等？就比这几个数，不引深比较库。
+ *  **每加一个读数都必须在这里加一项**：漏了不会红，症状是"那个数变了但界面不动"——
+ *  额度申请正是这样：`pendingQuota` 从 0 变 1 时若被判"没变"，后台首页那行提示与红点
+ *  永远不会冒出来，而且没有任何报错。前端 `unread-sync.test.mjs` 有一条专门断言
+ *  "两份只有 pendingQuota 不同的 summary 必须判不同并 emit"。 */
 function same(a: UnreadSummary, b: UnreadSummary): boolean {
     return a.notifications === b.notifications && a.messages === b.messages
         && a.total === b.total && a.pendingReview === b.pendingReview
+        && a.pendingQuota === b.pendingQuota
 }
 
 /** 当前未读数（NULL 语义的替代品是 EMPTY：红点是提示，读不到就不显示）。 */
@@ -103,6 +119,8 @@ function pick(d: UnreadSummary | null | undefined): UnreadSummary {
         total: d?.total ?? 0,
         // 旧后端（20260924 四轮之前的回包）没有这个字段 ⇒ 0，界面那一行不画
         pendingReview: d?.pendingReview ?? 0,
+        // 同 pendingReview 的旧后端容忍（20260929）
+        pendingQuota: d?.pendingQuota ?? 0,
     }
 }
 

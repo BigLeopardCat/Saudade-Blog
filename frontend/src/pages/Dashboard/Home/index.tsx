@@ -115,6 +115,9 @@ const Home = () => {
     // 也一并继承（原来这里各写了一遍）。没登录时 store 不发请求、这一行也不画。
     const { counts: unread } = useUnread(true);
     const pendingReview = unread.pendingReview;
+    // 等处理的额度重置申请（20260929）：与 pendingReview 完全同族——同一个汇总接口、
+    // 同一份读数、同样**不进 total**，只是指向后台另一个页签（`?tab=quota`）。
+    const pendingQuota = unread.pendingQuota;
     const navigate = useNavigate();
 
     const today = dayjs().format('YYYY-MM-DD');
@@ -515,6 +518,17 @@ const Home = () => {
                                 <span className="todo-review-n">{pendingReview}</span>
                                 <span>条评论待人工审核</span>
                                 <RightOutlined className="todo-review-go" />
+                            </div>}
+                        {/* 第二行非待办提示（20260929）：等处理的额度重置申请。与上一行同构
+                            （不进 todos、不落库、不能拖不能删），但**类名另起**（`.todo-quota`）
+                            ——`.todo-review` 在同一页里必须恒为一条，沙箱那条断言锁着它
+                            （dashboard-home.test.py），复用类名会把两种提示数成同一件事。 */}
+                        {pendingQuota > 0 &&
+                            <div className="todo-quota"
+                                 onClick={() => navigate('/dashboard/users?tab=quota')}>
+                                <span className="todo-quota-n">{pendingQuota}</span>
+                                <span>条额度重置申请待处理</span>
+                                <RightOutlined className="todo-quota-go" />
                             </div>}
                         {/* 没读出来之前不显示"还没有待办"——那会把"读失败"说成"你没有待办" */}
                         {!loaded && !loadErr &&

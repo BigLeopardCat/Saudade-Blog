@@ -20,6 +20,8 @@ import type {
     MyTalk,
     NotificationList,
     ProfileInfo,
+    QuotaInfo,
+    QuotaRequestRow,
     UnreadSummary,
 } from "../interface/ProfileType";
 
@@ -197,6 +199,47 @@ function getMyTalks() {
     });
 }
 
+// ── 对话额度（20260929）─────────────────────────────────────────────────────
+
+/** 我的额度现状（个人中心「对话额度」页签）。`used/limit/remaining` 与 `/chat` body 里的
+ *  `chat_quota` 同源；`pendingRequest` 是我最新一份待处理申请（null = 没有）。 */
+function getMyQuota() {
+    return http<Envelope<QuotaInfo>>({
+        url: "/api/protected/quota",
+        method: "GET",
+    });
+}
+
+/** 提交一份额度重置申请。`reason` 可空（空串按"没填"处理，后端存 NULL）；
+ *  已有待处理申请时后端回 `你已经有一份待处理的申请了`（code=500，走 errMsg）。 */
+function applyQuotaReset(reason: string) {
+    return http<Envelope<string>>({
+        url: "/api/protected/quota/apply",
+        method: "POST",
+        data: { reason },
+    });
+}
+
+/** 申请队列（后台「额度管理」页签 + agent 的 list_quota_requests 工具共用这一条接口）。
+ *  `status` 传 `'pending'` 只看待处理，其余（含不传）看全部。 */
+function getQuotaRequests(status?: 'pending' | 'all') {
+    return http<Envelope<QuotaRequestRow[]>>({
+        url: "/api/protected/quota/requests",
+        method: "GET",
+        params: status ? { status } : undefined,
+    });
+}
+
+/** 批准 / 驳回一份申请。`reason` 只在驳回时有意义（批准时后端恒把 note 落 NULL）。
+ *  **批准会清零对方的计数器**，且界面上撤不回来。 */
+function reviewQuotaRequest(id: number, approved: boolean, reason?: string) {
+    return http<Envelope<string>>({
+        url: `/api/protected/quota/requests/${id}/review`,
+        method: "POST",
+        data: { approved, reason: reason ?? "" },
+    });
+}
+
 export {
     getProfile,
     updateNickname,
@@ -215,4 +258,8 @@ export {
     saveDraft,
     deleteDraft,
     getMyTalks,
+    getMyQuota,
+    applyQuotaReset,
+    getQuotaRequests,
+    reviewQuotaRequest,
 };

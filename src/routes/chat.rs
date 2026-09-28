@@ -318,14 +318,18 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
     // 7 天有效，改过角色的用户会带着旧角色跑（与 middleware::auth_guard 同一条纪律）。
     // 查不到/查失败一律 None：身份断言里就带 null，agent 按"身份不明 = 零权限"处理。
     // **绝不因为读不到角色就默认授予任何一档**。DB 故障只降级（不阻断对话）。
-    let role: Option<String> = match user::Entity::find_by_id(uid).one(&state.db).await {
-        Ok(Some(u)) => Some(u.role),
+    // 20260929 起连**整行**一起留着：角色的两个消费点（身份断言 + 额度闸门的
+    // 不限量判据）与额度闸门要用的 `chat_quota_used` 都在这一行里 ⇒ 额度那一段
+    // **不加查询**（多查一次就多一个窗口、多一处失败面）。
+    let user_row: Option<user::Model> = match user::Entity::find_by_id(uid).one(&state.db).await {
+        Ok(Some(u)) => Some(u),
         Ok(None) => None,
         Err(e) => {
             warn!(uid = uid, error = %e, "角色查询失败，按身份不明下发（agent 侧零权限）");
             None
         }
     };
+    let role: Option<String> = user_row.as_ref().map(|u| u.role.clone());
 
     // 会话解析（20260903 会话化）——必须在用户消息入库前完成：显式 id 非法 → 404
     // 拦截不留脏行；None → 最新非空会话（无则自动新建 = 历史单桶行为，旧前端降级）。
@@ -347,6 +351,53 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
     // 隐藏确认轮（20260921）：**不落用户消息**——它代表的是一次点击而非一条发言，
     // 落一条空消息会占掉注入窗口、干扰标题派生，前端也不该出现这条气泡（前端同样不发）
     let is_confirm = payload.confirm_token.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false);
+
+    // ── 额度闸门（20260929）────────────────────────────────────────────────────
+    // **位置是判据**：落在 `is_confirm` 之后、确认令牌认领之前。
+    //   · 确认轮**整段跳过**（不读、不写，这一轮免费）：主人点一次确认卡不是新的一轮
+    //     对话。早几行落的话每次点确认都会烧掉一轮，而现成的离线判据**一条都抓不到**
+    //     （前端 `.test.py` 沙箱用的是假 axios，跑不到这一段）——真机核对第 2 条是它
+    //     唯一的判据。
+    //   · 复用的是上面那次已经取回来的 user 行 ⇒ **零额外查询**。
+    //   · 不限量的角色（`quota::is_unlimited` ⇒ admin/superadmin）**不发 UPDATE**：
+    //     既不增长，也不为"扣了再撤销"制造一条假记录。
+    //   · DB 故障（`Degraded`）⇒ `quota` 保持 None ⇒ body 里 `chat_quota` **整个键缺席**。
+    //     **绝不发零值**：那会让 agent 对着正在说话的访客说一句"剩 0 轮"，而他自己
+    //     刷新一次就能证伪。fail-open 与上方那次角色查询同一取向——DB 抖动不阻断对话。
+    //   · 用尽 ⇒ 只置 `quota_blocked`，**其余一切照旧**（用户消息入库、标题派生、
+    //     updated_at bump、边界快照都不动）：额度管"能不能用"，记录管"发生过什么"。
+    //     拒答那句话由 agent 侧写（见 C7）——那里已有确定性拒答帧协议，
+    //     在这里合成 SSE 要复制一份帧协议，且早期出口是 HTTP 200 + JSON body，
+    //     流式前端根本解析不出帧（既有隐患，另开一票）。
+    let (quota, quota_blocked) = if is_confirm {
+        (None, false)
+    } else {
+        let role_ref = user_row.as_ref().map(|u| u.role.as_str());
+        if crate::quota::is_unlimited(role_ref) {
+            (Some(crate::quota::view(0, 0, true)), false)
+        } else {
+            let limit = crate::quota::limit();
+            // 这一行的用量：只用于**注入一行事实**，不是判据——判据是那条带
+            // `WHERE chat_quota_used < ?` 的 UPDATE。并发下它可能比真实值小一两轮
+            // （读到之后、扣之前另一轮先扣了），代价是 agent 报的剩余轮数略偏高；
+            // 为此多查一次库不值得（多一次查询 = 多一处失败面）。
+            let seen_used = user_row.as_ref().map(|u| u.chat_quota_used).unwrap_or(0);
+            match crate::quota::try_consume(&state.db, uid, limit).await {
+                crate::quota::ConsumeOutcome::Consumed => {
+                    (Some(crate::quota::view(seen_used + 1, limit, false)), false)
+                }
+                crate::quota::ConsumeOutcome::Exhausted => {
+                    info!(
+                        user_id = uid, trace_id = %trace_id, used = seen_used, limit = limit,
+                        "chat: 额度用尽，本轮零 LLM 拒答（仍然入对话记录）"
+                    );
+                    (Some(crate::quota::view(seen_used, limit, false)), true)
+                }
+                crate::quota::ConsumeOutcome::Degraded => (None, false),
+            }
+        }
+    };
+
     // 一次性核销（20260924）：**转发之前**认领这张令牌，认领不到就直接如实拒绝。
     // 位置是刻意的——核销必须发生在写操作可能发生**之前**，否则两个并发请求会双双
     // 通过（"先查、再执行、最后标记"之间的窗口就是第二次写）。这也是全链路唯一
@@ -576,7 +627,7 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
         }
     }
 
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "message": payload.message,
         // 20260921：会话 id 下发 agent——确认令牌里签了 conv_id，验签要拿它对账
         // （令牌只对发起它的那个会话有效，避免用户切了会话后确认写到别处）
@@ -602,6 +653,19 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
         // 零执行 + 如实告知"确认已过期"；验签通过 → 跳过 planner 直接执行签名里的动作
         "confirm_token": payload.confirm_token.as_deref().unwrap_or(""),
     });
+
+    // 额度两个键（20260929）**必须条件插入**——`json!` 对 `Option` 会写成 `null`，
+    // 而 C1/C3 的契约是"读不到就没有这个键"：agent 侧 `null` 与缺席都会走到
+    // "什么都不注入"，但 `null` 会让 `quota_blocked: null` 这种形状透到下游，
+    // 且掩盖了"键缺席"这条明确语义。**缺席 ≠ 零值**，这是本批反复强调的一条。
+    if let Some(obj) = body.as_object_mut() {
+        if let Some(q) = &quota {
+            obj.insert("chat_quota".into(), crate::quota::forward_json(q));
+        }
+        if quota_blocked {
+            obj.insert("quota_blocked".into(), serde_json::Value::Bool(true));
+        }
+    }
 
     if std::env::var("CHAT_DEBUG_BODY").is_ok() {
         eprintln!("[chat-debug] body={}", body);

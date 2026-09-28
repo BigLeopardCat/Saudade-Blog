@@ -328,6 +328,65 @@
   .ucMailPane .ant-tabs-nav
     margin-bottom: 10px
 
+  // ── 对话额度（20260929，第六个页签）─────────────────────────────────────
+  //
+  // 一个数（已用/上限）+ 一条细进度条 + 待处理申请那一块。进度条**只作视觉**：
+  // 真正的两个数写在旁边，读屏/测试都认那几个字（条宽是百分比，四舍五入后可能
+  // 与文字对不上——1/500 显示 0% 那种，所以别拿条宽当判据）。
+  .ucQuota
+    display: flex
+    flex-direction: column
+    gap: 10px
+    padding: 4px 0
+
+  .ucQuotaHead
+    display: flex
+    align-items: baseline
+    gap: 10px
+
+    .ucQuotaNums
+      font-size: 20px
+      font-weight: 600
+      letter-spacing: 0.5px
+      font-variant-numeric: tabular-nums
+
+    .ucQuotaHint
+      font-size: 12px
+      opacity: 0.6
+
+  .ucQuotaBar
+    height: 6px
+    border-radius: 3px
+    background: rgba(128, 128, 128, 0.18)
+    overflow: hidden
+
+    .ucQuotaBarIn
+      height: 100%
+      border-radius: 3px
+      background: #b8860b
+
+  .ucQuotaReq
+    display: flex
+    flex-direction: column
+    gap: 4px
+    padding: 8px 10px
+    border-radius: 6px
+    background: rgba(128, 128, 128, 0.08)
+
+    .ucQuotaReqTitle
+      font-size: 13px
+      font-weight: 600
+
+    .ucBodyText
+      font-size: 13px
+      line-height: 1.7
+      white-space: pre-wrap
+      word-break: break-word
+
+    .ucBodyTime
+      font-size: 12px
+      opacity: 0.55
+
 // 夜间少量补偿（antd darkAlgorithm 已处理大部分：这里只收拾自写的硬编码色）
 .ucRoot.ucDark
   // 驳回理由走亮一档的朱红：`#a33f30` 压在墨蓝窗上只有 2 点几的对比度（20260922 那批
@@ -345,6 +404,11 @@
 
   .ucItemTitle a:hover
     color: #69b1ff
+
+  // 额度进度条的填充（20260929）：浅色窗里那个 `#b8860b` 是压白底的暗金，
+  // 压在墨蓝窗上几乎看不出进度——夜间换亮一档的同族金（`.ucGoldBtn` 那套色值家族）
+  .ucQuotaBarIn
+    background: #e8b866
 
   // 金色"漏光"描边（20260922 用户要求）：夜间的墨蓝窗与页面深底几乎糊成一片、边缘看不清。
   // 1px 金环 + 一圈很淡的外发光 = 河灯的光从窗缝里漏出来。色值取登录页那团月晕的

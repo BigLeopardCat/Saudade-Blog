@@ -23,6 +23,13 @@ pub struct Model {
     /// 改密码 / 管理员重置 / 冻结账号都会 +1（见各自的 handler）。
     /// **只增不减**：解冻不把它减回去，所以解冻不会复活冻结前的登录态。
     pub token_version: i32,
+    /// 终身对话额度已用轮数（20260929）：每轮 +1、**检索轮不豁免**、**确认轮不计**
+    /// （主人点一次确认卡不是新的一轮对话）、管理员恒不增长。唯一归零途径 =
+    /// 管理员批准重置申请或主动重置（`UPDATE user SET chat_quota_used = 0`）。
+    /// 上限不在这里——走环境变量 `CHAT_QUOTA_LIMIT`（默认 500），
+    /// 判据与算术全在 `crate::quota`，**别在本文件或任何 handler 里内联第二份**。
+    /// 迁移：`scripts/migration/user_chat_quota_20260929.sql`（列序 `AFTER token_version`）
+    pub chat_quota_used: i32,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
