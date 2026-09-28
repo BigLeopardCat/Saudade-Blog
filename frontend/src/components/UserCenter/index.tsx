@@ -22,6 +22,7 @@ import { Avatar, Badge, Button, ConfigProvider, Empty, Input, List, Modal, Tabs,
 import { useNavigate } from 'react-router-dom'
 import getToken from '../../apis/getToken.tsx'
 import { getRoleFromToken, getTokenClaims, isAdminToken, roleLabel, roleTagColor } from '../../utils/auth.ts'
+import { quotaBalanceText, quotaLevel, quotaPct, quotaUsedHint } from '../../utils/quota.ts'
 import { resolveApiAssetUrl } from '../../utils/runtimeApi'
 import { useIsDarkMode } from '../../theme'
 import {
@@ -916,10 +917,15 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
     }
 
     /** 额度进度：**只作视觉**（真正的两个数是旁边那几个字）。不限档不画条——
-     *  `limit` 是 0，画出来是一条"进度 0%"的空条，看着像额度用光了。 */
-    const quotaPct = quota && !quota.unlimited && quota.limit > 0
-        ? Math.min(100, Math.max(0, Math.round((quota.used / quota.limit) * 100)))
-        : 0
+     *  `limit` 是 0，画出来是一条"0% 的空条"，看着像额度用光了。
+     *
+     *  20260929 第二批改口径：**画的是余额**（剩多少占上限多少），不是"用掉多少占上限
+     *  多少"。此前画的是 `used/limit`，于是新账号开局就是一条空条、用到一半是半条
+     *  ——读起来像"进度条卡住了"，而它其实是**反着的**（条越长=用得越多=越该着急）。
+     *  减法与阈值都在 `utils/quota.ts` 一处（四处显示共用），这里只取宽度与档位。 */
+    const quotaBarPct = quotaPct(quota?.remaining, quota?.limit)
+    /** 档位 → 类名后缀。`null`（读不到）与 `unlimited` 都不上色（条本身也不画）。 */
+    const quotaLv = quotaLevel(quota?.remaining, quota?.limit)
 
     const quotaPane = (
         <div className="ucPane">
@@ -943,17 +949,22 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
             ) : (
                 <div className="ucQuota">
                     <div className="ucQuotaHead">
-                        {/* 不限档显示「不限额」而不是「0/0」：那是内部表示，不是给人看的话 */}
+                        {/* **主角是余额**（20260929 用户要求："500 开始减少，而不是 0 开始计数"）。
+                            不限档显示「不限额」而不是「0/0」：那是内部表示，不是给人看的话。
+                            三个数各自说各自的事实：余额（大数）/ 已用（副提示）/ 上限（明写在余额里）。 */}
                         <span className="ucQuotaNums">
-                            {quota.unlimited ? '不限额' : `${quota.used} / ${quota.limit}`}
+                            {quotaBalanceText(quota.remaining, quota.limit)}
                         </span>
                         <span className="ucQuotaHint">
-                            {quota.unlimited ? '管理员账号不限额' : `还剩 ${quota.remaining} 轮`}
+                            {quota.unlimited ? '管理员账号不限额' : quotaUsedHint(quota.used, quota.limit)}
                         </span>
                     </div>
                     {!quota.unlimited && (
                         <div className="ucQuotaBar">
-                            <div className="ucQuotaBarIn" style={{ width: `${quotaPct}%` }} />
+                            <div
+                                className={`ucQuotaBarIn${quotaLv ? ` is-${quotaLv}` : ''}`}
+                                style={{ width: `${quotaBarPct}%` }}
+                            />
                         </div>
                     )}
                     <div className="ucQuotaReq">

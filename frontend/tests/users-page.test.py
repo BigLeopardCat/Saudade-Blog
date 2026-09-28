@@ -1398,12 +1398,14 @@ with sync_playwright() as p:
     pg = mount(br)
     pg.wait_for_timeout(800)   # 账号列表是挂载后 500ms 拉的，chip 跟着那一份数据出来
     chips = quota_chips(pg)
-    check("普通账号行上是「额度：已用/上限」（数字从行上读，前端不写死 500）",
-          chips.get("guest1") == "额度：137/500", str(chips.get("guest1")))
+    # 口径是**余额**（20260929b 用户拍板：从 500 往下减才符合直觉）。数字从行上读，
+    # 前端不写死 500——137 用掉 ⇒ 印「剩 363」，减法只做一次（`utils/quota.ts`）。
+    check("普通账号行上是「额度：剩 N / 上限」（是余额不是已用；数字从行上读，前端不写死 500）",
+          chips.get("guest1") == "额度：剩363/500", str(chips.get("guest1")))
     check("不限额的账号显示「不限额」而不是 0/0（0 是「不限」，不是「上限为零」）",
           chips.get("root_admin") == "额度：不限额", str(chips.get("root_admin")))
     check("秘书照 500 算（免额角色只有 can_access_console，不按「非普通用户」一刀切）",
-          chips.get("sec_zhang") == "额度：12/500", str(chips.get("sec_zhang")))
+          chips.get("sec_zhang") == "额度：剩488/500", str(chips.get("sec_zhang")))
     check("两个字段缺席（前端已上线、后端还没到）显示「额度 —」，不是会被读成「用完了」的 0/0",
           chips.get("guest27") == "额度—", str(chips.get("guest27")))
     btns = quota_btns(pg)
@@ -1440,8 +1442,8 @@ with sync_playwright() as p:
     check("重置之后重拉账号列表（那一行的 chip 得跟着变）",
           pg.evaluate("() => window.__calls.length") > before + 1,
           f'before={before} after={pg.evaluate("() => window.__calls.length")}')
-    check("重拉回来那一行真的变成 0/500（桩按真后端把计数器清零了）",
-          quota_chips(pg).get("guest1") == "额度：0/500", str(quota_chips(pg).get("guest1")))
+    check("重拉回来那一行真的变成满额（桩按真后端把计数器清零了）——余额口径下是「剩 500」",
+          quota_chips(pg).get("guest1") == "额度：剩500/500", str(quota_chips(pg).get("guest1")))
     check("第八节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
@@ -1466,8 +1468,8 @@ with sync_playwright() as p:
           f'sel={_sel} params={quota_requests(pg)}')
     rows = quota_rows(pg)
     check("待处理两条（已驳回那条不在这一档）", len(rows) == 2, str(rows))
-    check("行上是申请人的用量 137/500 与「待处理」",
-          "137/500" in rows[0] and "待处理" in rows[0], rows[0])
+    check("行上写的是申请人的**余额**（137 用掉 ⇒ 剩 363）与「待处理」——列名也叫「剩余 / 上限」",
+          "剩363/500" in rows[0] and "待处理" in rows[0], rows[0])
     check("计数跟着筛选走（共 2 条申请）",
           "共2条申请" in pg.evaluate(
               "() => document.querySelector('.qm-count').textContent.replace(/\\s+/g, '')"),
@@ -1547,6 +1549,11 @@ with sync_playwright() as p:
           d and d["ok"] == "批准并清零", str(d and d["ok"]))
     check("正文写明清零、他立刻能问、且撤不回来",
           d and "清零" in d["body"] and "撤不回来" in d["body"], str(d and d["body"]))
+    # 这一句说的是**已用**（被清掉的那样东西），所以括号里也印已用：沿用列表那列的余额
+    # 会读成"清掉的是一部分余额"（申请人已经被拦住了，两句话正好互相打脸）。
+    check("括号里印的是**已用**轮数（与「清零」这句同口径），不是列表那列的余额",
+          d and "已用500轮" in d["body"].replace(" ", "") and "剩0/500" not in d["body"],
+          str(d and d["body"]))
     check("批准弹窗开着时**没有新增请求**（点下去才发）",
           len(quota_review_posts(pg)) == _n0,
           f'{_n0} → {len(quota_review_posts(pg))}: {quota_review_posts(pg)}')
