@@ -740,6 +740,44 @@ fn py_int_list(raw: &str) -> Vec<String> {
         .collect()
 }
 
+/// 动作措辞的**唯一实现**在 Python（`agent/action_text.py::receipt_action`，落回执顶层
+/// `action`）——20260928 收敛：此前这里与 `server.py::_tool_action_text` 是两份互不
+/// 相干的实现（同一件事两处措辞），逐行对照实测 54 条取样只有 31 条逐字相同。
+///
+/// **这里从此只排版**，四件都不搬去 Python（它们要么依赖本地渲染语境、要么是列宽问题）：
+///   ① `actor_prefix`——写操作的执行身份前缀（回执行里的"谁做的"，呈现层的事）；
+///   ② 方括号归一为「」——只对渲染产物做，args 里的原始内容仍是 `[` `]`；
+///   ③ `digest` 拼接——实体摘要（`agent/entities.py` 产）拼在动作行后面；
+///   ④ 列宽截断——无摘要 120、有摘要 300（detail 列宽 varchar(300)）。
+///
+/// `action` 缺失或为空串时回落 `legacy_exec_row`：存量回执（20260928 之前落库的行）
+/// 与**无臂工具**（Python 侧没收敛的那几件）都走它——于是这次改动的**存量行为逐字节
+/// 不变**，只有新回执带 `action` 的那些行换成新措辞。
+fn render_exec_row(row: &serde_json::Value) -> String {
+    let detail = match row["action"].as_str() {
+        Some(a) if !a.is_empty() => a.to_string(),
+        _ => legacy_exec_row(row),
+    };
+    // 写操作带执行身份前缀（20260921 第二轮）：非写回执没有 principal_role，
+    // actor_prefix 返回空串，行为与改动前逐字节一致。
+    let detail = format!("{}{}", actor_prefix(row), detail);
+    let detail = detail.replace('[', "「").replace(']', "」");
+    // 实体摘要（20260920，agent/entities.py 产）：数据工具取回的条目/计数/候选标题，
+    // 随回执落库——工具帧只活当轮，不落这一行则下轮「第二条写了什么」只能把工具再跑
+    // 一遍（探针实测）。agent 只搬事实、Rust 只做拼接（语义渲染仍在数据所在的一侧）。
+    // 有摘要时上限放宽到列宽（varchar(300)），无摘要保持 120 不变。
+    let digest = row["digest"].as_str().unwrap_or("");
+    if digest.is_empty() {
+        detail.chars().take(120).collect()
+    } else {
+        format!("{} — {}", detail, digest).chars().take(300).collect()
+    }
+}
+
+/// 老表（20260904 起、逐轮补臂的那一张）：**只在 `render_exec_row` 认不出 `action` 时
+/// 走**——存量回执行（20260928 之前落库的）与 Python 侧尚未收敛的工具（`action_text.py`
+/// 对它们返回空串）。新工具的动作词加在 Python 那侧，**别再加到这里**。
+///
 /// 跨轮执行记忆渲染（20260904）：checker 验收回执行 → 中文动作行，写时一次定稿、
 /// 读时零映射（execution_log.detail 落的就是这里的产物，prepare_chat 直取拼串）。
 /// 输入 = Python agent __EXEC__ 帧里的 {skill,tool,args,result,ts}。动作词映射
@@ -752,7 +790,7 @@ fn py_int_list(raw: &str) -> Vec<String> {
 /// 全部按字符串取——agent 侧落库前统一 str()，不留 int/str 混装。
 /// 20260921 第三轮补 `category_name` 与 `change`：标签改/删与分类增删改的渲染
 /// 需要一句人话描述（改名/改色/换层级/影响了几篇文章），它由 agent 侧生成。
-fn render_exec_row(row: &serde_json::Value) -> String {
+fn legacy_exec_row(row: &serde_json::Value) -> String {
     let tool = row["tool"].as_str().unwrap_or("");
     let args = row["args"].as_object().cloned().unwrap_or_default();
     let arg = |k: &str| -> String {
@@ -2023,6 +2061,46 @@ mod tests {
     fn agent_reply_accepts_plain_reply() {
         assert_eq!(agent_reply_of(&json!({"reply": "喵呜～"})).unwrap(), "喵呜～");
         assert_eq!(agent_reply_of(&json!({"reply": " 喵呜～ ", "success": true})).unwrap(), "喵呜～");
+    }
+
+    /// 措辞的**唯一实现** 20260928 搬到了 Python（回执顶层 `action`）⇒ 这一层的接线
+    /// 判据只有一条：**认得 `action` 就用它**，并把它交给下面那四件排版（身份前缀 /
+    /// 方括号归一 / 摘要拼接 / 列宽截断）。不接线的后果是"两边测试都绿、线上一个字
+    /// 都没变"——Python 那半把措辞定稿了、这一半还在照老表渲染。
+    #[test]
+    fn exec_row_prefers_python_action() {
+        let row = json!({
+            "tool": "create_tag",
+            "args": {"title": "大笨狗"},
+            // 老表会把这条渲染成「新建一级标签「」」（level 缺失时按一级、tag_name 空）
+            "op": "tag_create", "level": "1", "tag_name": "",
+            "action": "新建一级标签「大笨狗」",
+        });
+        assert_eq!(render_exec_row(&row), "新建一级标签「大笨狗」");
+
+        // 空串 = Python 侧"这一件我没收敛"（无臂工具）⇒ 回落老表，**不许**拿空串去顶。
+        let row = json!({
+            "tool": "create_tag",
+            "args": {"title": "大笨狗"},
+            "op": "tag_create", "level": "1", "tag_name": "大笨狗", "action": "",
+        });
+        assert_eq!(render_exec_row(&row), "新建一级标签「大笨狗」");
+    }
+
+    /// `action` 是**动作句**，排版四件仍在这一侧：身份前缀贴在它前面、方括号归一、
+    /// 摘要拼接、列宽截断。若有人把这四件也搬去 Python，这条会红——那是刻意的：
+    /// 前缀依赖回执行里的 `principal_role`（审计语义），列宽依赖 detail 列定义。
+    #[test]
+    fn exec_row_still_paginates_python_action() {
+        let row = json!({
+            "tool": "set_article_status",
+            "args": {"article_id": "12"},
+            "principal_role": "admin",
+            "action": "修改文章 [12]：私密 → 公开",
+            "digest": "共 3 篇",
+        });
+        assert_eq!(render_exec_row(&row),
+                   "以管理员身份 · 修改文章 「12」：私密 → 公开 — 共 3 篇");
     }
 
     /// create_tag 回执的 `tag_name`/`op`/`level` 全在**顶层**（agent 侧 `_RCPT_META_KEYS`），
