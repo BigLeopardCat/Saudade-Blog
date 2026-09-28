@@ -26,3 +26,6 @@ pub mod pending_action;
 pub mod dashboard_todo;
 // 会话级任务状态（20260927）：未完成的意图跨轮不丢，与 execution_log 对偶
 pub mod agent_task;
+// 额度重置申请（20260929）：与 user.chat_quota_used 是一对——这张表装「请求」，
+// 那个列装「事实」，批准是唯一把两者连起来的动作
+pub mod quota_request;

@@ -443,6 +443,12 @@ pub struct UnreadDto {
     /// 两件不同的事——`total` 只服务红点（前端拿它决定亮不亮）。
     #[serde(rename = "pendingReview")]
     pub pending_review: i64,
+    /// 待处理的**额度重置申请**条数（20260929，后台首页那一行 + 红点数据；
+    /// 非管理员恒 0）。与 `pending_review` 逐条同族：它是后台的待办，
+    /// **同样不计进 `total`**——`total` 只服务红点（前端拿它决定亮不亮），
+    /// 而后台那一行靠这个字段自己决定冒不冒出来。
+    #[serde(rename = "pendingQuota")]
+    pub pending_quota: i64,
 }
 
 /// uid 能不能进后台（角色**从库查**、不信 token 里那个可能是旧的 role——
@@ -481,13 +487,17 @@ async fn unread_counts(db: &sea_orm::DatabaseConnection, uid: i32) -> UnreadDto 
         .await
         .unwrap_or(0) as i64;
     // 待审数只在"能进后台的人"这里算：它是后台的待办，不该出现在普通用户的红点数据里
-    // （角色的判据在 is_console_user，这里只是决定要不要发这一条 COUNT）
-    let pending_review = if is_console_user(db, uid).await {
-        board_pending_count(db).await
+    // （角色的判据在 is_console_user，这里只是决定要不要发这一条 COUNT）。
+    // 20260929 起这一句**只查一次角色**给两个计数共用（额度申请那一行也要它）——
+    // 两个 `if is_console_user(...)` 就是两次 `find_by_id`，而它是同一个问题。
+    let console_user = is_console_user(db, uid).await;
+    let pending_review = if console_user { board_pending_count(db).await } else { 0 };
+    let pending_quota = if console_user {
+        crate::routes::quota::quota_pending_count(db).await
     } else {
         0
     };
-    UnreadDto { notifications: n, messages: m, total: n + m, pending_review }
+    UnreadDto { notifications: n, messages: m, total: n + m, pending_review, pending_quota }
 }
 
 /// GET /api/protected/notifications/summary：红点（未读数）。

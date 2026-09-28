@@ -25,11 +25,13 @@ import { getRoleFromToken, getTokenClaims, isAdminToken, roleLabel, roleTagColor
 import { resolveApiAssetUrl } from '../../utils/runtimeApi'
 import { useIsDarkMode } from '../../theme'
 import {
+    applyQuotaReset,
     changePassword,
     deleteDraft,
     errMsg,
     getDrafts,
     getMailbox,
+    getMyQuota,
     getMyTalks,
     getNotifications,
     getProfile,
@@ -49,6 +51,7 @@ import type {
     MyTalk,
     NotificationItem,
     ProfileInfo,
+    QuotaInfo,
     UnreadSummary,
 } from '../../interface/ProfileType'
 import AvatarCropModal from '../AvatarCropModal'
@@ -119,6 +122,13 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
     const [notices, setNotices] = useState<NotificationItem[] | null>(null)
     const [noticeUnread, setNoticeUnread] = useState(0)
     const [mailbox, setMailbox] = useState<Mailbox | null>(null)
+    /** 对话额度（20260929）：null = 还没拉过。**这个数每一轮对话都在变**，所以
+     *  `agent-turn-done` 那条 effect 必须带上它（见下面那段注释）。 */
+    const [quota, setQuota] = useState<QuotaInfo | null>(null)
+    /** 申请弹窗（受控）。理由可空——后端把空串落 NULL，不编一句占位话。 */
+    const [applyOpen, setApplyOpen] = useState(false)
+    const [applyReason, setApplyReason] = useState('')
+    const [applying, setApplying] = useState(false)
 
     const [loadingTab, setLoadingTab] = useState(false)
 
@@ -189,6 +199,10 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
         setMailTab('in')
         setCropFile(null)
         setCropOpen(false)
+        // 申请弹窗连同理由一起关掉：下次打开是这个弹窗的"全新一次申请"，
+        // 留着上一轮没提交的那段字会让人以为已经提交过了。
+        setApplyOpen(false)
+        setApplyReason('')
     }, [open])
 
     /** 页签首次激活时加载数据。`force` = 已经加载过也重拉一次（agent 一轮收尾后用，
@@ -218,6 +232,12 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                     const res = await getMailbox()
                     if (ok(res)) setMailbox(res.data.data)
                     else message.error(errMsg(res))
+                } else if (key === 'quota' && (force || quota === null)) {
+                    const res = await getMyQuota()
+                    // 读不到就**保留上一次的读数**（与 unread.ts 同一条纪律：清成 0 是拿
+                    // "读不到"冒充"没有额度了"——对额度这个数，那句话正好反着说）
+                    if (ok(res)) setQuota(res.data.data)
+                    else message.error(errMsg(res))
                 }
             } catch (e) {
                 message.error('网络异常，请稍后再试')
@@ -225,7 +245,7 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                 setLoadingTab(false)
             }
         },
-        [loggedIn, talks, notices, mailbox],
+        [loggedIn, talks, notices, mailbox, quota],
     )
 
     /** 最新一版 `loadTab`（它的身份随页签数据变，直接进 effect 依赖会自己触发自己）。 */
@@ -266,6 +286,9 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
        点开时自然拿到最新的。收藏页签不在这里管（共享状态自己订阅了同一个事件）。
        20260924：此前**只有收藏**订阅了这个事件 ⇒ 通知/信箱/说说/草稿都得刷新网页才更新
        （用户实测反馈：让 agent 标已读，列表与红点都纹丝不动）。
+       20260929 额度页签也要进来：**额度是这里唯一每轮都在动的数据**（每问一句 used+1），
+       不重拉就会出现"刚问完一句，额度页还写着用完之前的数"——而且它正是决定"还能不能问"
+       的那个数，显示陈旧比显示齐全更要紧。
        ⚠️ 打开着的那封信（`opened`）是快照，不跟着重拉——它不在"列表该不该新"这个问题里。 */
     useEffect(() => {
         if (!open || !loggedIn) return
@@ -274,10 +297,11 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
             if (notices !== null) void loadTab('notices', true)
             if (mailbox !== null) void loadTab('mailbox', true)
             if (drafts !== null) void loadDrafts()
+            if (quota !== null) void loadTab('quota', true)
         }
         window.addEventListener(AGENT_TURN_DONE_EVENT, onTurnDone)
         return () => window.removeEventListener(AGENT_TURN_DONE_EVENT, onTurnDone)
-    }, [open, loggedIn, talks, notices, mailbox, drafts, loadTab, loadDrafts])
+    }, [open, loggedIn, talks, notices, mailbox, drafts, quota, loadTab, loadDrafts])
 
     /* 开窗与换页签：**当前页签重拉一次**（20260925 用户实测反馈——agent 发了公告，个人中心与
        头像都提示有新消息，但公告列表不刷新，要整页刷新才看得到）。根因是列表数据只在两个时刻
@@ -864,6 +888,92 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
         </div>
     )
 
+    // ── 对话额度（20260929）─────────────────────────────────────────────────
+
+    /** 提交重置申请。**回包只有一句中文**（新申请的行 id 不在响应里，也不该在前端
+     *  自己编一条 pending 状态出来）：成功后**重读一次额度**，界面上的"待处理"那一块
+     *  是从后端读来的事实，不是本地推断。 */
+    const doApplyQuota = async () => {
+        if (applying) return
+        setApplying(true)
+        try {
+            const res = await applyQuotaReset(applyReason.trim())
+            if (!ok(res)) {
+                message.error(errMsg(res))
+                return
+            }
+            message.success(res.data.message || '已提交额度重置申请')
+            setApplyOpen(false)
+            setApplyReason('')
+            // 写后重读：拿不到就保留旧读数（不本地拼一条"已提交"）
+            const after = await getMyQuota()
+            if (ok(after)) setQuota(after.data.data)
+        } catch (e) {
+            message.error('网络异常，请稍后再试')
+        } finally {
+            setApplying(false)
+        }
+    }
+
+    /** 额度进度：**只作视觉**（真正的两个数是旁边那几个字）。不限档不画条——
+     *  `limit` 是 0，画出来是一条"进度 0%"的空条，看着像额度用光了。 */
+    const quotaPct = quota && !quota.unlimited && quota.limit > 0
+        ? Math.min(100, Math.max(0, Math.round((quota.used / quota.limit) * 100)))
+        : 0
+
+    const quotaPane = (
+        <div className="ucPane">
+            <div className="ucPaneBar">
+                <span className="ucHint">
+                    每轮对话算 1 轮（含检索）；用完就答不了了。这里提交的重置申请要管理员批准，
+                    批准后会通过站内通知告诉你。
+                </span>
+                {/* 与其余页签 `.ucPaneBar` 里那颗同级（`size="small"` 默认按钮）——
+                    `.ucGoldBtn` 只对 `type="primary"` 生效（见 index.sass），挂上去是个空类 */}
+                <Button
+                    size="small"
+                    disabled={quota === null || !!quota?.pendingRequest}
+                    onClick={() => setApplyOpen(true)}
+                >
+                    {quota?.pendingRequest ? '已提交申请' : '申请重置'}
+                </Button>
+            </div>
+            {quota === null ? (
+                <Empty description={loadingTab ? '读取中…' : '额度读不出来'} />
+            ) : (
+                <div className="ucQuota">
+                    <div className="ucQuotaHead">
+                        {/* 不限档显示「不限额」而不是「0/0」：那是内部表示，不是给人看的话 */}
+                        <span className="ucQuotaNums">
+                            {quota.unlimited ? '不限额' : `${quota.used} / ${quota.limit}`}
+                        </span>
+                        <span className="ucQuotaHint">
+                            {quota.unlimited ? '管理员账号不限额' : `还剩 ${quota.remaining} 轮`}
+                        </span>
+                    </div>
+                    {!quota.unlimited && (
+                        <div className="ucQuotaBar">
+                            <div className="ucQuotaBarIn" style={{ width: `${quotaPct}%` }} />
+                        </div>
+                    )}
+                    <div className="ucQuotaReq">
+                        {quota.pendingRequest ? (
+                            <>
+                                <div className="ucQuotaReqTitle">已提交重置申请，等管理员处理</div>
+                                <div className="ucBodyText">
+                                    理由：{quota.pendingRequest.reason || '（没填）'}
+                                </div>
+                                <div className="ucBodyTime">{fmtMinute(quota.pendingRequest.createdAt)}</div>
+                            </>
+                        ) : (
+                            <div className="ucQuotaHint">没有待处理的申请</div>
+                        )}
+                    </div>
+                </div>
+            )}
+        </div>
+    )
+
     /** 对方的头像：**没上传过就落到站点默认头像**。两个要点：
      *  ① 用 `|| DEFAULT_AVATAR_URL` 而不是 `??`——Rust 侧 `peer_avatar` 的真形状是
      *     `Option<String>`，没设过头像时给的是**空串**；`resolveApiAssetUrl('')` 也返回 ''
@@ -1131,9 +1241,50 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                                 ),
                                 children: mailboxPane,
                             },
+                            // 第六个页签（20260929）。**不带角标**：额度不是"有事没看"
+                            // （红点只属于通知与私信，见 unread.ts），页签里那个数每分钟都在动，
+                            // 拿它当角标等于把一个恒亮的灯挂在页签上。
+                            { key: 'quota', label: '对话额度', children: quotaPane },
                         ]}
                     />
                 )}
+            </Modal>
+
+            {/* 申请重置的弹窗。**受控 `open`、不用 `{applyOpen && …}` 条件渲染**——
+                上面那个 Modal 的 `forceRender` 是为了让关窗态下 children 仍可更新
+                （见那段注释），而条件渲染出来的是一个"只能在可见时存在"的子树，
+                两者放一起会让关窗那一刻的状态与所见不一致。理由可空：后端把空串落 NULL，
+                这里不替主人编一句理由（与站内信"标题（选填）"同一条）。 */}
+            <Modal
+                open={applyOpen}
+                title="申请重置对话额度"
+                okText="提交申请"
+                cancelText="再想想"
+                confirmLoading={applying}
+                onOk={doApplyQuota}
+                onCancel={() => setApplyOpen(false)}
+                rootClassName={`ucRoot${isDark ? ' ucDark' : ''}`}
+                width={520}
+            >
+                <div className="ucField ucFieldStack">
+                    <span className="ucLabel">申请理由（选填）</span>
+                    <div className="ucMsgBody">
+                        <Input.TextArea
+                            value={applyReason}
+                            rows={3}
+                            // 上限与后端 REASON_MAX 一致。后端超限是**拒绝**而不是截断
+                            // （截断会让主人核对的是这一句、库里存的是另一句），
+                            // 这里的 maxLength 只是不让主人撞上那句拒绝。
+                            maxLength={500}
+                            showCount
+                            placeholder="例如：想接着问那篇架构文档的问题"
+                            onChange={(e) => setApplyReason(e.target.value)}
+                        />
+                    </div>
+                    <span className="ucHint">
+                        管理员批准后额度清零，你立刻可以继续问；驳回的话额度不变，还能再申请。
+                    </span>
+                </div>
             </Modal>
 
             <AvatarCropModal

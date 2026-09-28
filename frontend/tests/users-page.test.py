@@ -105,6 +105,21 @@ const BOARD = Array.from({ length: 40 }, (_, i) => ({
   rejectReason: null,
 }));
 
+// 额度重置申请队列（20260929）：三行覆盖**三种状态**（0 待处理 / 1 已批准 / 2 已驳回），
+// 于是"只有 status===0 的行给动作"「驳回理由跟在申请理由下面」这两条都验得出来。
+// 9001 刻意是 137/500：`额度管理`页签里那一列与账号行上那枚 chip 的判据都是它。
+const QUOTA_REQS = [
+  { id: 9001, userId: 100, username: 'guest1', nickname: '昵称1', used: 137, limit: 500,
+    reason: '想继续问问题', status: 0, note: null,
+    createdAt: '2026-09-28 10:00:00', handledAt: null },
+  { id: 9002, userId: 101, username: 'guest2', nickname: '昵称2', used: 500, limit: 500,
+    reason: '', status: 0, note: null,
+    createdAt: '2026-09-28 11:00:00', handledAt: null },
+  { id: 9003, userId: 102, username: 'guest3', nickname: '昵称3', used: 90, limit: 500,
+    reason: '之前被驳回过', status: 2, note: '短时间内重复申请',
+    createdAt: '2026-09-27 09:00:00', handledAt: '2026-09-27 12:00:00' },
+];
+
 const env = (data: any) => ({ status: 200, data: { code: 200, message: 'ok', data } });
 // 裸响应：响应的 body 本身就是 `{code,message,data}` 那一层（账号管理的写接口是
 // `utils::ApiResponse`，读接口是裸数组——两种形状都在这一页上，别混）
@@ -112,15 +127,22 @@ const env0 = (body: any) => ({ status: 200, data: body });
 const wire = (d: any) => (d == null ? d : JSON.parse(JSON.stringify(d)));
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// ⚠️ 一定要是**带方法的对象**，不能是裸函数：真实 `src/apis/axios.tsx` 导出的是
-// `axios.create()` 出来的实例，调用方写的是 `http.get(...)`/`http.put(...)`。
-// 做成裸函数时 `http.get` 是 undefined ⇒ 组件里 `try{ await http.get() }catch{}`
-// 把 TypeError 静静吃掉（只弹一条 message.error），**桩里一条记录都没有**，
-// 症状是"表格空着、零异常"——20260926 就在这个坑上耗了一轮。
+// ⚠️ 桩必须**同时**是"可调用的函数"和"带方法的对象"——`axios.create()` 出来的实例
+// 本来就是这两者的合体，而这一页上的调用方两种写法都有：
+//   · 账号管理写的是 `http.get('/api/temp-users')`（方法形态）；
+//   · `apis/ProfileMethods.tsx`（个人中心那一族 + 额度管理页签）写的是
+//     `http({url, method})`（**直接调用**形态）。
+// 只做对象 ⇒ 后者是 TypeError，而组件里 `try{ await http(...) }catch{}` 会把它静静
+// 吃掉（只弹一条 message.error、桩里一条记录都没有），症状是"表格空着、零异常"——
+// 20260926 在"只做裸函数"那一侧踩过一次，20260929 额度管理页签在**另一侧**又踩了一次
+// （挂载超时现场：`.QuotaManage` 在、`.ant-table` 在、行 0、`__calls` 里只有
+// `/api/temp-users`）。两侧一起钉住，别只留一边。
 const req = async (cfg: any) => {
   const url = cfg.url as string;
   const method = (cfg.method || 'GET').toUpperCase();
-  calls.push({ url, method, data: wire(cfg.data) });
+  // `params` 也记下来：额度申请队列那条接口用 `?status=pending|all` 区分只看待处理
+  // 还是看全部（判据在**服务端**，不是本地过滤）——不记这一栏就分不清桩到底收到没有。
+  calls.push({ url, method, data: wire(cfg.data), params: wire(cfg.params) });
   await delay(20);
   if (url === '/api/protect/board') return env(BOARD);
   if (url === '/api/protected/websetting') return env({ aiReviewEnabled: false, manualReviewEnabled: false });
@@ -174,15 +196,57 @@ const req = async (cfg: any) => {
     const u = ((window as any).__users as any[]).find((x) => x.id === id);
     return env0({ code: 200, message: 'ok', data: '已把通知发给「' + ((u && u.username) || '') + '」' });
   }
+  // ── 主动重置某个账号的额度（20260929）──────────────────────────────────────
+  // 与 status/role/notice 同两条纪律（**真改内存里那一行**、成功那句中文在 `data` 里），
+  // 外加这一条特有的：**请求没有 body**（后端 handler 只有 State + Path 两个提取器，
+  // 同 `/password-reset-token`；前端顺手补个 `{}` 会 422）。所以这里**不去读 `cfg.data`**，
+  // 把"到底发了什么 body"整个留给断言去看。
+  if (/^\/api\/temp-users\/\d+\/quota-reset$/.test(url) && method === 'POST') {
+    const id = Number(url.split('/')[3]);
+    const u = ((window as any).__users as any[]).find((x) => x.id === id);
+    if (u) u.chatQuotaUsed = 0;
+    return env0({ code: 200, message: 'ok',
+                  data: '已把账号「' + ((u && u.username) || '') + '」的对话额度清零（500 轮）' });
+  }
+  // ── 额度申请队列（20260929）────────────────────────────────────────────────
+  // `?status=pending` 只看待处理、其余看全部——**过滤在服务端**（这一页是全局队列，
+  // 本地过滤会先被后端的 limit 截一次）。桩照做，于是"切筛选 ⇒ 真的少了一行"是
+  // 端到端成立的，而不是断言自己骗自己。
+  if (url === '/api/protected/quota/requests' && method === 'GET') {
+    const want = (cfg.params || {}).status;
+    const rows = want === 'pending' ? QUOTA_REQS.filter((r) => r.status === 0) : QUOTA_REQS;
+    return env(wire(rows));
+  }
+  // 裁决。这一条要**真改内存里那一行**，且改的**不止一行**：批准同时把那个账号的
+  // `chatQuotaUsed` 清零了——而回包只带得回一句中文（`data`），一个值都没有。
+  // 前端那页的承重取舍正是为此：成功之后**重拉列表**，不做就地更新（见 QuotaManage
+  // 文件头注①）。桩按真后端改这两处，`status` 的三值语义也照做（只有 `0 → 1/2`）。
+  if (/^\/api\/protected\/quota\/requests\/\d+\/review$/.test(url) && method === 'POST') {
+    const id = Number(url.split('/')[5]);
+    const row = QUOTA_REQS.find((r) => r.id === id);
+    const approved = (cfg.data || {}).approved === true;
+    // 原子认领失败那一侧：后端回「这条申请已经处理过了」且**零副作用**
+    if (!row || row.status !== 0) return env0({ code: 500, message: '这条申请已经处理过了' });
+    row.status = approved ? 1 : 2;
+    row.note = approved ? null : ((cfg.data || {}).reason || null);
+    row.handledAt = '2026-09-29 12:00:00';
+    if (approved) {
+      const u = ((window as any).__users as any[]).find((x) => x.id === row.userId);
+      if (u) u.chatQuotaUsed = 0;
+    }
+    return env0({ code: 200, message: 'ok',
+                  data: approved
+                    ? '已批准「' + row.username + '」的额度重置申请，额度已清零（' + row.limit + ' 轮）'
+                    : '已驳回「' + row.username + '」的额度重置申请，额度没有变化' });
+  }
   return env0({ code: 200, message: 'ok', data: null });
 };
 
-const http = {
-  get: (url: string, cfg?: any) => req({ ...(cfg || {}), url, method: 'GET' }),
-  post: (url: string, data?: any, cfg?: any) => req({ ...(cfg || {}), url, data, method: 'POST' }),
-  put: (url: string, data?: any, cfg?: any) => req({ ...(cfg || {}), url, data, method: 'PUT' }),
-  delete: (url: string, cfg?: any) => req({ ...(cfg || {}), url, method: 'DELETE' }),
-};
+const http: any = (cfg: any) => req(cfg);
+http.get = (url: string, cfg?: any) => req({ ...(cfg || {}), url, method: 'GET' });
+http.post = (url: string, data?: any, cfg?: any) => req({ ...(cfg || {}), url, data, method: 'POST' });
+http.put = (url: string, data?: any, cfg?: any) => req({ ...(cfg || {}), url, data, method: 'PUT' });
+http.delete = (url: string, cfg?: any) => req({ ...(cfg || {}), url, method: 'DELETE' });
 export default http;
 """
 
@@ -217,11 +281,23 @@ const b64u = (o: any) => btoa(JSON.stringify(o))
 // status 与后端 `user.status` 同口径：0=正常 / 1=冻结（取值域见 src/authz.rs）。
 // 预置两行冻结（guest27/guest28 = id 126/127）——两行**一个是普通用户**，
 // 于是"角色筛选不排除冻结账号"与"冻结筛选只按状态"这两条才验得出来。
+// 额度字段（20260929）与后端 `TempUserInfo` 的两个 camelCase 字段同名（`chatQuotaUsed`
+// / `chatQuotaLimit`）。三行刻意各不相同，因为它们是**三种不同的事实**，前端那三个
+// 分支各对应一个：
+//   · root_admin：`chatQuotaLimit === 0` ⇒ **不限额**（管理员档；0 是"不限"而不是
+//     "上限为零"）。「重置额度」按钮在这一行必须是**禁用的**（后端也拒）。
+//   · guest1（i=0）：137/500 —— 行上那枚 chip 与额度管理页那两列的判据都是它。
+//   · guest27（i=26）：**刻意不带这两个字段** —— 那是"前端已上线、后端还没到"的形状，
+//     行上要显示「额度 —」而不是 0/0（0/0 会被读成"这个人用完了"）。
 const USERS = [
-  { id: 1, username: 'root_admin', role: 'admin', status: 0 },
+  { id: 1, username: 'root_admin', role: 'admin', status: 0,
+    chatQuotaUsed: 0, chatQuotaLimit: 0 },
   ...Array.from({ length: 28 }, (_, i) => ({
-    id: 100 + i, username: 'guest' + (i + 1), role: 'user', status: i >= 26 ? 1 : 0 })),
-  { id: 200, username: 'sec_zhang', role: 'secretary', status: 0 },
+    id: 100 + i, username: 'guest' + (i + 1), role: 'user', status: i >= 26 ? 1 : 0,
+    ...(i === 26 ? {} : { chatQuotaUsed: i === 0 ? 137 : (i * 13) % 500,
+                          chatQuotaLimit: 500 }) })),
+  { id: 200, username: 'sec_zhang', role: 'secretary', status: 0,
+    chatQuotaUsed: 12, chatQuotaLimit: 500 },
 ];
 (window as any).__users = USERS;
 (window as any).__fetchCalls = [];
@@ -270,7 +346,11 @@ def build_sandbox() -> pathlib.Path:
     (sb / "entry.tsx").write_text(ENTRY, encoding="utf-8")
 
     sass_files = ["src/pages/Dashboard/Users/index.sass",
-                  "src/pages/Dashboard/BoardManage/index.sass"]
+                  "src/pages/Dashboard/BoardManage/index.sass",
+                  # 额度管理页签（20260929）：它自己那份 .sass 也要编译进来——不编译
+                  # 就是"样式静默失效"（页面上那三段固定壳/内滚动全部塌成内容高度），
+                  # 而几何断言会把它读成"页面缺陷"。同 BoardManage 那条。
+                  "src/pages/Dashboard/QuotaManage/index.sass"]
     css = []
     for rel in sass_files:
         out = sb / (pathlib.Path(rel).stem + ".css")
@@ -499,6 +579,118 @@ def role_posts(pg):
     return pg.evaluate("""() => window.__calls.filter((c) =>
         c.method === 'POST' && /\\/role$/.test(c.url))
         .map((c) => ({ url: c.url, body: c.data }))""")
+
+
+# ── 额度（20260929）──────────────────────────────────────────────────────────
+# 主动重置的确认框：与 STATUS_DIALOG/ROLE_DIALOG/NOTIFY_DIALOG 同形，按类名认
+# （`.tu-quota-ok`）。这一处的正文要把两件事说清（清零后他立刻能问；界面上撤不回来），
+# 所以连正文一起取出来——文案是这一族里唯一没有别的判据的东西。
+QUOTA_RESET_DIALOG = """() => {
+    const m = [...document.querySelectorAll('.ant-modal-wrap')].find(
+        (w) => getComputedStyle(w).display !== 'none' && w.querySelector('.tu-quota-ok'));
+    if (!m) return null;
+    const q = (s) => (m.querySelector(s) ? m.querySelector(s).textContent.replace(/\\s+/g, '') : '');
+    const ok = m.querySelector('.tu-quota-ok');
+    return {
+        title: q('.ant-modal-title'),
+        ok: ok.textContent.replace(/\\s+/g, ''),
+        okDanger: ok.classList.contains('ant-btn-dangerous'),
+        body: q('.ant-modal-body'),
+    };
+}"""
+
+# 裁决确认框（额度管理页签）。两个弹窗**各按自己主按钮上的类名认**（`.qm-approve-ok`
+# / `.qm-reject-ok`），不按标题、也不按 `.ant-modal-wrap` 的序：
+# 同页同时挂着两个 `.ant-modal-wrap`，关着的那些 display:none 但仍在 DOM 里——不按
+# 可见性过滤就会取到上一个弹窗（这一页开过几次就有几份），断言从此分不清是谁的。
+QUOTA_APPROVE_DIALOG = """() => {
+    const m = [...document.querySelectorAll('.ant-modal-wrap')].find(
+        (w) => getComputedStyle(w).display !== 'none' && w.querySelector('.qm-approve-ok'));
+    if (!m) return null;
+    const q = (s) => (m.querySelector(s) ? m.querySelector(s).textContent.replace(/\\s+/g, '') : '');
+    const ok = m.querySelector('.qm-approve-ok');
+    return {
+        title: q('.ant-modal-title'),
+        body: q('.ant-modal-body'),
+        ok: ok.textContent.replace(/\\s+/g, ''),
+        okDisabled: ok.disabled,
+    };
+}"""
+
+QUOTA_REJECT_DIALOG = """() => {
+    const m = [...document.querySelectorAll('.ant-modal-wrap')].find(
+        (w) => getComputedStyle(w).display !== 'none' && w.querySelector('.qm-reject-ok'));
+    if (!m) return null;
+    const q = (s) => (m.querySelector(s) ? m.querySelector(s).textContent.replace(/\\s+/g, '') : '');
+    const ok = m.querySelector('.qm-reject-ok');
+    const ta = m.querySelector('textarea');
+    return {
+        title: q('.ant-modal-title'),
+        tip: q('.qm-reject-tip'),
+        presets: [...m.querySelectorAll('.qm-reject-preset')]
+            .map((b) => b.textContent.replace(/\\s+/g, '')),
+        ok: ok.textContent.replace(/\\s+/g, ''),
+        okDisabled: ok.disabled,
+        okDanger: ok.classList.contains('ant-btn-dangerous'),
+        value: ta ? ta.value : null,
+        // `rootClassName` 必须落在**正文的祖先**上，否则 index.sass 里那两条嵌套规则
+        // （`.qm-reject-modal .qm-reject-tip` / `.qm-reject-presets`）一条都匹配不上，
+        // 样式静默失效而断言全绿——那正是"人工同步"那一族里最难发现的一种。
+        rootOk: !!m.closest('.qm-reject-modal'),
+    };
+}"""
+
+
+def quota_posts(pg):
+    """本页发出的**主动**重置请求（POST …/quota-reset）。与 status_posts 同形，
+    外加这一条特有的：把 `body` 原样带出来，判据是**它必须是空的**——后端那个
+    handler 只有 State + Path 两个提取器（同 `/password-reset-token`），前端顺手
+    补一个 `{}` 会 422。"""
+    return pg.evaluate("""() => window.__calls.filter((c) =>
+        c.method === 'POST' && /\\/quota-reset$/.test(c.url))
+        .map((c) => ({ url: c.url, body: c.data }))""")
+
+
+def quota_review_posts(pg):
+    """额度管理页签发出的裁决请求（POST …/requests/:id/review）。
+    `body.approved` 与 `body.reason` 是断言的全部：批准恒不带理由、驳回必带。"""
+    return pg.evaluate("""() => window.__calls.filter((c) =>
+        c.method === 'POST' && /\\/quota\\/requests\\/\\d+\\/review$/.test(c.url))
+        .map((c) => ({ url: c.url, body: c.data }))""")
+
+
+def quota_requests(pg):
+    """额度申请队列那几条 GET 的 `params`（判"只看待处理"是不是真交给服务端：
+    桩按 `status=pending` 过滤，所以切筛选之后行数真的会变）。"""
+    return pg.evaluate("""() => window.__calls.filter((c) =>
+        c.method === 'GET' && c.url === '/api/protected/quota/requests')
+        .map((c) => c.params || {})""")
+
+
+def quota_chips(pg):
+    """账号行上那枚额度 chip：`{账号: 文案}`（空白抹掉——antd 的排版不该进断言）。"""
+    return pg.evaluate("""() => Object.fromEntries(
+        [...document.querySelectorAll('.tu-row')].map((r) => {
+            const u = r.querySelector('strong');
+            const q = r.querySelector('.tu-quota');
+            return [u ? u.textContent : '?', q ? q.textContent.replace(/\\s+/g, '') : '']; }))""")
+
+
+def quota_btns(pg):
+    """每行「重置额度」按钮的亮灭：`{账号: 是否禁用}`。不限额那一行（管理员档）必须
+    是禁用的——后端也拒，但让按钮干脆不亮比"点了才被告知"更清楚（与"非普通账号不给
+    删除按钮"同一条纪律）。"""
+    return pg.evaluate("""() => Object.fromEntries(
+        [...document.querySelectorAll('.tu-row')].map((r) => {
+            const u = r.querySelector('strong');
+            const b = r.querySelector('.tu-quota-btn');
+            return [u ? u.textContent : '?', b ? b.disabled : null]; }))""")
+
+
+def quota_rows(pg):
+    """额度管理页签里每一行的文案（空白抹掉，按行取整块文本）。"""
+    return pg.evaluate("""() => [...document.querySelectorAll('.qm-scroll .ant-table-row')]
+        .map((r) => r.textContent.replace(/\\s+/g, ''))""")
 
 
 def menu_items(pg):
@@ -1197,6 +1389,181 @@ with sync_playwright() as p:
     check("第七节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
+    # ── 八、账号行上的额度 + 主动重置（20260929）───────────────────────────────
+    # 「重置额度」是账号族第四个动作（前三个：修改密码 / 生成恢复码 / 发通知），同一条
+    # 纪律：**不需要对方申请过**——按申请的裁决住在额度管理页签里（第九节）。这一节验
+    # 三件事：行上那枚 chip 的**三种形态**（普通 / 不限额 / 字段缺席）、按钮的亮灭、
+    # 以及受控弹窗那三条（先弹窗、确认前零请求、请求没有 body）。
+    print("\n【八】账号行上的额度 chip 与「重置额度」")
+    pg = mount(br)
+    pg.wait_for_timeout(800)   # 账号列表是挂载后 500ms 拉的，chip 跟着那一份数据出来
+    chips = quota_chips(pg)
+    check("普通账号行上是「额度：已用/上限」（数字从行上读，前端不写死 500）",
+          chips.get("guest1") == "额度：137/500", str(chips.get("guest1")))
+    check("不限额的账号显示「不限额」而不是 0/0（0 是「不限」，不是「上限为零」）",
+          chips.get("root_admin") == "额度：不限额", str(chips.get("root_admin")))
+    check("秘书照 500 算（免额角色只有 can_access_console，不按「非普通用户」一刀切）",
+          chips.get("sec_zhang") == "额度：12/500", str(chips.get("sec_zhang")))
+    check("两个字段缺席（前端已上线、后端还没到）显示「额度 —」，不是会被读成「用完了」的 0/0",
+          chips.get("guest27") == "额度—", str(chips.get("guest27")))
+    btns = quota_btns(pg)
+    check("不限额那一行的「重置额度」是禁用的（后端也拒；让按钮不亮比点了才被告知更清楚）",
+          btns.get("root_admin") is True, str(btns.get("root_admin")))
+    check("普通账号那一行可点", btns.get("guest1") is False, str(btns.get("guest1")))
+
+    pg.locator('.tu-row:has(strong:text-is("guest1")) .tu-quota-btn').click()
+    pg.wait_for_timeout(300)
+    d = pg.evaluate(QUOTA_RESET_DIALOG)
+    check("点「重置额度」先弹窗（不是直接下手）", d is not None, str(d))
+    check("弹窗标题带目标账号名", d and "guest1" in d["title"], str(d and d["title"]))
+    check("主按钮上写的是这一下的动作词「重置额度」，不是「确定/OK」",
+          d and d["ok"] == "重置额度", str(d and d["ok"]))
+    check("**不给 danger**：清零是把额度还给对方（恢复性动作，与「解冻」同一侧）",
+          d and d["okDanger"] is False, str(d and d["okDanger"]))
+    check("正文写明他立刻能继续对话、且界面上撤不回来",
+          d and "立刻可以继续对话" in d["body"] and "撤不回来" in d["body"],
+          str(d and d["body"]))
+    check("弹窗开着时**一个重置请求都没发**", quota_posts(pg) == [], str(quota_posts(pg)))
+    before = pg.evaluate("() => window.__calls.length")
+    pg.locator(".ant-modal-wrap .tu-quota-ok").click()
+    pg.wait_for_timeout(900)
+    posts = quota_posts(pg)
+    check("确认后发出 POST /api/temp-users/100/quota-reset",
+          len(posts) == 1 and posts[0]["url"] == "/api/temp-users/100/quota-reset", str(posts))
+    check("请求**没有 body**（后端 handler 只有 State + Path；顺手补个 {} 会 422）",
+          posts and posts[0]["body"] is None, str(posts[0]["body"] if posts else None))
+    _n = notices(pg)
+    check("成功提示是后端那句中文（在 data 里，读 message 只会弹一个「ok」）",
+          any("对话额度清零" in x and "guest1" in x for x in _n), str(_n))
+    check("提示里没有只有「ok」的条",
+          not any(x.strip().lower() == "ok" for x in _n), str(_n))
+    check("重置之后重拉账号列表（那一行的 chip 得跟着变）",
+          pg.evaluate("() => window.__calls.length") > before + 1,
+          f'before={before} after={pg.evaluate("() => window.__calls.length")}')
+    check("重拉回来那一行真的变成 0/500（桩按真后端把计数器清零了）",
+          quota_chips(pg).get("guest1") == "额度：0/500", str(quota_chips(pg).get("guest1")))
+    check("第八节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
+    pg.close()
+
+    # ── 九、额度管理页签：申请队列 + 驳回理由必填（20260929）────────────────────
+    # 这一页只管**裁决队列**（与评论管理只管审核队列同构）；按账号的动作住在账号行上
+    # （第八节）。两条最要紧的判据：① 筛选是**服务端**的事（桩按 status 过滤，所以
+    # "切到待处理真的少一行"是端到端成立的）；② 驳回**理由必填**是这一层保证的
+    # （后端只做回落，不做硬闸）。
+    print("\n【九】额度管理：申请队列、三种状态、驳回理由必填")
+    pg = mount(br, path="/dashboard/users?tab=quota", wait=".QuotaManage .ant-table-row")
+    pg.wait_for_timeout(400)
+    tabs = pg.evaluate("""() => [...document.querySelectorAll('.ant-tabs-tab')]
+        .map((t) => t.textContent.replace(/\\s+/g, ''))""")
+    check("三个页签都在（账号管理 / 评论管理 / 额度管理）",
+          tabs == ["账号管理", "评论管理", "额度管理"], str(tabs))
+    check("`?tab=quota` 深链落在额度管理上",
+          pg.evaluate("() => !!document.querySelector('.QuotaManage')"), str(tabs))
+    _sel = pg.evaluate("() => document.querySelector('.qm-tabs .sel').textContent")
+    check("默认筛选是「待处理」（不是本地过滤——`status` 交给服务端）",
+          _sel == "待处理"
+          and (quota_requests(pg) and quota_requests(pg)[-1].get("status") == "pending"),
+          f'sel={_sel} params={quota_requests(pg)}')
+    rows = quota_rows(pg)
+    check("待处理两条（已驳回那条不在这一档）", len(rows) == 2, str(rows))
+    check("行上是申请人的用量 137/500 与「待处理」",
+          "137/500" in rows[0] and "待处理" in rows[0], rows[0])
+    check("计数跟着筛选走（共 2 条申请）",
+          "共2条申请" in pg.evaluate(
+              "() => document.querySelector('.qm-count').textContent.replace(/\\s+/g, '')"),
+          pg.evaluate("() => document.querySelector('.qm-count').textContent"))
+
+    # 驳回：先弹窗 → 空理由禁用 → 点预设 → 确认后发请求
+    pg.locator(".qm-scroll .ant-table-row").first.locator(".ant-btn-dangerous").click()
+    pg.wait_for_timeout(300)
+    d = pg.evaluate(QUOTA_REJECT_DIALOG)
+    check("点「驳回」先弹窗", d is not None, str(d))
+    check("弹窗标题带**账号名**（唯一键；昵称可空可重名，而这一下不可逆）",
+          d and "guest1" in d["title"], str(d and d["title"]))
+    check("正文写明驳回后额度一个字节都不动、且理由必填",
+          d and "额度一个字节都不动" in d["tip"] and "理由必填" in d["tip"],
+          str(d and d["tip"]))
+    check("主按钮写动作词「确认驳回」并染红（驳回是收紧侧）",
+          d and d["ok"] == "确认驳回" and d["okDanger"] is True, str(d))
+    check("理由为空 ⇒ 主按钮**禁用**（「必填」落在界面上，不只是后端回落）",
+          d and d["okDisabled"] is True, str(d))
+    check("四个常见类型预设都在（点一下填进**可编辑**的文本框）",
+          d and len(d["presets"]) == 4, str(d and d["presets"]))
+    check("`rootClassName` 真的落在正文的祖先上（否则那两条嵌套样式静默失效）",
+          d and d["rootOk"] is True, str(d and d["rootOk"]))
+    pg.locator(".ant-modal-wrap:visible .qm-reject-ok").click(force=True)
+    pg.wait_for_timeout(400)
+    check("理由为空时点主按钮：**一个请求都没发**（禁用不只是个样式）",
+          quota_review_posts(pg) == [], str(quota_review_posts(pg)))
+
+    pg.locator(".ant-modal-wrap:visible .qm-reject-preset").first.click()
+    pg.wait_for_timeout(200)
+    d = pg.evaluate(QUOTA_REJECT_DIALOG)
+    check("点预设 ⇒ 文本框里真的有那几个字、按钮随之可用",
+          d and d["value"] == d["presets"][0] and d["okDisabled"] is False, str(d))
+    check("**弹窗开着、理由也填好了，仍是一个请求都没发**（点下去才发）",
+          quota_review_posts(pg) == [], str(quota_review_posts(pg)))
+    pg.locator(".ant-modal-wrap:visible .qm-reject-ok").click()
+    pg.wait_for_timeout(900)
+    posts = quota_review_posts(pg)
+    check("确认后发出 POST /api/protected/quota/requests/9001/review",
+          len(posts) == 1 and posts[0]["url"] == "/api/protected/quota/requests/9001/review",
+          str(posts))
+    check("请求体是 {approved:false, reason:填的那些字}（驳回必带理由）",
+          posts and posts[0]["body"] == {"approved": False, "reason": "理由不充分"},
+          str(posts[0]["body"] if posts else None))
+    _n = notices(pg)
+    check("成功提示是后端那句中文", any("已驳回" in x and "guest1" in x for x in _n), str(_n))
+    check("裁决成功后**重拉列表**（回包只有一句中文，一个值都没带回来 ⇒ 不许就地更新）",
+          len(quota_requests(pg)) >= 2, str(quota_requests(pg)))
+    check("这一行从「待处理」里消失了（共 1 条申请）",
+          len(quota_rows(pg)) == 1 and "共1条申请" in pg.evaluate(
+              "() => document.querySelector('.qm-count').textContent.replace(/\\s+/g, '')"),
+          str(quota_rows(pg)))
+
+    # 切到「全部」：三种状态同屏，且已处理的行一条动作都不给
+    pg.locator(".qm-tabs button", has_text="全部").first.click()
+    pg.wait_for_timeout(500)
+    check("切「全部」⇒ 三条都在（这一档的 `status` 也交给服务端）",
+          len(quota_rows(pg)) == 3 and quota_requests(pg)[-1].get("status") == "all",
+          f'{quota_rows(pg)} {quota_requests(pg)}')
+    allrows = quota_rows(pg)
+    check("刚驳回那一条现在是「已驳回」并带着驳回理由",
+          "已驳回" in allrows[0] and "理由不充分" in allrows[0], allrows[0])
+    check("已处理的行不再有动作（status 是三值不是布尔）",
+          pg.locator(".qm-scroll .ant-table-row").nth(0).locator(".ant-btn-dangerous").count() == 0,
+          str(pg.locator(".qm-scroll .ant-table-row").nth(0).locator(".ant-btn").count()))
+
+    # 批准：清零 + 不可逆，所以要二次确认；确认后 body 是 approved=true 且不带理由
+    # ⚠️ "零请求"要比**增量**：这一页此前已经成功发过一条驳回（同一条断言在驳回那
+    # 一步能写 `== []`，因为那时还是 0）。写成 `== []` 会恒红——而它红的那句读起来
+    # 像"批准弹窗发了请求"，其实是断言自己写错了（分辨成本极高）。
+    _n0 = len(quota_review_posts(pg))
+    pg.locator(".qm-scroll .ant-table-row").nth(1).locator(".ant-btn-link").first.click()
+    pg.wait_for_timeout(300)
+    d = pg.evaluate(QUOTA_APPROVE_DIALOG)
+    check("点「批准」先弹窗", d is not None, str(d))
+    check("主按钮写「批准并清零」（这一下唯一不可逆的那半边）",
+          d and d["ok"] == "批准并清零", str(d and d["ok"]))
+    check("正文写明清零、他立刻能问、且撤不回来",
+          d and "清零" in d["body"] and "撤不回来" in d["body"], str(d and d["body"]))
+    check("批准弹窗开着时**没有新增请求**（点下去才发）",
+          len(quota_review_posts(pg)) == _n0,
+          f'{_n0} → {len(quota_review_posts(pg))}: {quota_review_posts(pg)}')
+    pg.locator(".ant-modal-wrap:visible .qm-approve-ok").click()
+    pg.wait_for_timeout(900)
+    posts = quota_review_posts(pg)
+    check("批准发到的是**另一行**（9002）",
+          len(posts) == 2 and posts[-1]["url"] == "/api/protected/quota/requests/9002/review",
+          str(posts))
+    check("批准的请求体是 {approved:true, reason:''}（批准恒不带理由）",
+          posts and posts[-1]["body"] == {"approved": True, "reason": ""},
+          str(posts[-1]["body"] if posts else None))
+    _n = notices(pg)
+    check("提示里带上申请人（后端那句中文）", any("已批准" in x and "guest2" in x for x in _n), str(_n))
+    check("第九节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
+    pg.close()
+
     br.close()
 
 print()
@@ -1205,4 +1572,4 @@ if FAILS:
     for f in FAILS:
         print("   - " + f)
     sys.exit(1)
-print("✅ 用户管理页（账号管理 + 评论管理）：全部通过")
+print("✅ 用户管理页（账号管理 + 评论管理 + 额度管理）：全部通过")

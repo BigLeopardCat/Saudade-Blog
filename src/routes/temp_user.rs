@@ -32,6 +32,15 @@ pub struct TempUserInfo {
     /// （冻结账号筛选项就是 `status !== 0`）。两边都对同一个数字做判断，
     /// 而不是一边翻译、另一边再反解。
     pub status: i8,
+    /// 终身对话额度已用轮数（20260929）。**这是跨语言契约**：agent 的额度工具
+    /// （`tools/base.py` 的额度节）靠这个字段做写前预检与写后复核，
+    /// 字段名与语义改一处要同步另一侧（见该文件头注与 `docs/security-boundary.md`）。
+    #[serde(rename = "chatQuotaUsed")]
+    pub chat_quota_used: i32,
+    /// 额度上限（20260929）；**`0` = 不限额**（管理员档，判据在 `crate::quota`）。
+    /// 两侧都不许把 500 写死——它是 `CHAT_QUOTA_LIMIT`，改上限不该需要一次迁移。
+    #[serde(rename = "chatQuotaLimit")]
+    pub chat_quota_limit: i32,
 }
 
 /// 账号列表（20260926）：原来只回 `role="user"` 的临时账号，博主因此**在后台
@@ -65,6 +74,13 @@ pub async fn list_temp_users(
             username: u.username,
             role: u.role.clone(),
             status: u.status,
+            // 额度两列（20260929）：已用照抄库里那个数；上限**不查库**（走
+            // `crate::quota::limit()`），不限量的角色回 0（见 `routes::quota::limit_of`）。
+            // **信封一个字节不动**：这是裸数组而不是 `ApiResponse`，三个消费方
+            // （前端账号页、`scripts/probe_token_revoke.py`、agent 的 `_user_directory`）
+            // 都认这个形状——agent 那边甚至写明了"不要包信封"。**只加字段。**
+            chat_quota_used: u.chat_quota_used,
+            chat_quota_limit: crate::routes::quota::limit_of(&u.role),
         })
         .collect())
 }

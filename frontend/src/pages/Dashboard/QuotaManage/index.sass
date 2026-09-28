@@ -1,0 +1,168 @@
+// 额度管理 Tab（20260929）：额度重置申请的裁决队列。
+// 结构与评论管理同构（.BoardManage）——上面工具栏 + 表格区 + 页脚三段，**只有中间那段滚**，
+// 高度链靠 Users/index.sass 里那套 100% 传递（少一环就退化成内容高度、内滚动失效）。
+.QuotaManage
+  padding: 20px
+  height: 100%
+  overflow: hidden
+  min-height: 0
+  display: flex
+  flex-direction: column
+  gap: 14px
+
+  .qm-toolbar
+    display: flex
+    align-items: center
+    gap: 12px
+    flex-wrap: wrap
+    // 固定段：矮窗时不许被 flex 压扁（列表才该缩）
+    flex: 0 0 auto
+
+    // 与 BoardManage 的 .bm-tabs / Users 的 .tu-tabs 同一套观感（三处各自成块是既有状态）
+    .qm-tabs
+      display: flex
+      gap: 8px
+      button
+        min-width: 52px
+        padding: 5px 14px
+        border: 1px solid #d9d9d9
+        border-radius: 6px
+        background: #fff
+        color: #444
+        cursor: pointer
+        transition: 0.25s
+        &:hover
+          border-color: #a33f30
+          color: #a33f30
+        &.sel
+          background: #a33f30
+          border-color: #a33f30
+          color: #ffe8c8
+          font-weight: 600
+
+    .qm-count
+      margin-left: auto
+      color: #888
+      font-size: 13px
+
+  // 只有这一块滚（`overflow: auto` 是内滚动能生效的原因；`min-height: 0` 在这里冗余，
+  // 留住只是把"允许缩到比内容矮"写明，见 Users/index.sass 同一处的说明）。
+  .qm-scroll
+    flex: 1 1 auto
+    min-height: 0
+    overflow: auto
+    // 表头吸在顶沿；z-index 抬到 2 是因为 antd 的 loading 蒙层绝对定位盖在表体上
+    .ant-table-thead > tr > th
+      position: sticky
+      top: 0
+      z-index: 2
+
+  .qm-user
+    display: flex
+    flex-direction: column
+    line-height: 1.4
+    i
+      font-style: normal
+      font-size: 12px
+      color: #999
+
+  // 用量是**读数**不是状态标签（与账号页那枚 chip 同一量级）。
+  // 等宽数字：一列扫下来 137/500 与 42/500 的位数对齐，才看得出谁快用完了。
+  .qm-usage
+    font-variant-numeric: tabular-nums
+
+  .qm-reason
+    white-space: pre-wrap
+    word-break: break-word
+
+  // 驳回理由缩在申请理由下面（同 BoardManage 的 .bm-reason：翻列表时要一眼看到"为什么被驳回"）
+  .qm-note
+    margin-top: 4px
+    padding: 2px 8px
+    border-left: 3px solid #c0392b
+    border-radius: 0 4px 4px 0
+    background: rgba(192, 57, 43, 0.06)
+    color: #a33f30
+    font-size: 12px
+    line-height: 1.6
+    white-space: pre-wrap
+    word-break: break-word
+
+  .qm-none
+    color: #999
+
+  .qm-handled
+    margin-top: 2px
+    color: #999
+    font-size: 12px
+
+  .qm-note-text
+    margin: 10px 0 0
+    color: #999
+    font-size: 12px
+    line-height: 1.8
+    border-top: 1px dashed #ddd
+    padding-top: 10px
+    b
+      color: #a33f30
+
+  // 分页条：固定段，钉在卡片底部（Table 自己的 pagination 已关，见 index.tsx）
+  .qm-foot
+    flex: 0 0 auto
+    display: flex
+    justify-content: flex-end
+
+// 两个确认弹窗（antd 弹窗 portal 到 body 下，**不在 .QuotaManage 里** ⇒ 必须写成顶层块，
+// 写进上面那个嵌套里就永远匹配不上、样式静默失效。底色由壳上的 ConfigProvider(darkAlgorithm) 负责）
+.qm-confirm
+  line-height: 1.8
+  b
+    color: #a33f30
+  .qm-confirm-warn
+    margin-top: 8px
+    padding: 6px 8px
+    border-radius: 4px
+    background: rgba(192, 57, 43, 0.06)
+    color: #a33f30
+    font-size: 12px
+
+.qm-reject-modal
+  .qm-reject-tip
+    margin: 0 0 10px
+    color: #888
+    font-size: 12px
+    line-height: 1.7
+    b
+      color: #a33f30
+  // 常见类型预设：点一下填进下面那个**可编辑**的文本框
+  .qm-reject-presets
+    display: flex
+    flex-wrap: wrap
+    gap: 6px
+    margin-bottom: 10px
+
+// 暗色模式适配（后台 .contentDark 容器内）
+.contentDark
+  .QuotaManage
+    .qm-tabs button
+      background: rgba(255, 255, 255, 0.08)
+      border-color: rgba(255, 255, 255, 0.18)
+      color: #ccc
+      &:hover
+        border-color: #c87a63
+        color: #e8b8a0
+      &.sel
+        background: #a33f30
+        border-color: #a33f30
+        color: #ffe8c8
+    .qm-count, .qm-user i, .qm-none, .qm-handled
+      color: #888
+    .qm-note-text
+      color: #888
+      border-top-color: rgba(255, 255, 255, 0.12)
+      b
+        color: #e8a89c
+    .qm-note
+      border-left-color: #d2695c
+      background: rgba(210, 105, 92, 0.12)
+      color: #e8a89c
