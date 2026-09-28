@@ -1,4 +1,4 @@
-# 服务信任边界与加固（20260916，20260925 审计与 20260926 令牌收回后同步）
+# 服务信任边界与加固（20260916，20260925 审计、20260926 令牌收回、20260929 对话额度后同步）
 
 这份文档回答一个被反复问到的问题：**这套系统里，谁信谁？边界画在哪？**
 
@@ -406,6 +406,52 @@ cd /home/ubuntu/memory_blog_rust && saudade-blog-agent/.venv/bin/python \
 #    d) 超管的三道防线（20260926）：账号列表/报表不列 superadmin 行（界面 + agent 的
 #       名录来源）→ `check_freeze`/`check_role_change` 的 `TargetSuperadmin` → 只见于
 #       数据库迁移。`cargo test --lib authz::` 逐格锁着策略表。
+
+# ⑬ 用户对话额度（20260929；普通用户终身 500 轮，`CHAT_QUOTA_LIMIT` 可调，管理员不限额）
+#    a) 判据（全部离线、秒级）：
+cd /home/ubuntu/memory_blog_rust && cargo test --lib quota    # 9 条：算术/饱和/角色表/转发键集
+cd /home/ubuntu/memory_blog_rust && cargo test --test api_tests   # 含额度路由守卫与 rows_affected 判据
+cd saudade-blog-agent && SAUDADE_REQUIRE_PARENT=1 .venv/bin/python tests/test_chat_quota.py
+#       ⚠️ agent 那套的末节是**跨语言守卫**（Rust 源码里真有那两个键 / 闸门在 `is_confirm`
+#       之后 / 认领带 `status=0` / 名录仍回裸 `Vec`）。不设 `SAUDADE_REQUIRE_PARENT=1` 而父仓
+#       又不在时，它只打一行 ⏭ 跳过——那正是"看着在跑、其实没跑"。
+#    b) **`chat_quota` / `quota_blocked` 是跨语言契约**（Rust 写 `src/routes/chat.rs`，
+#       agent 读 `server.py` 的 `ChatRequest`）：
+#         · `chat_quota` = `{used,limit,remaining,unlimited}`，**JSON 对象**（刻意与
+#           `agent_tasks` 那个 JSON 串不一致：形状由 Rust 拥有且极简，pydantic 的 int/bool
+#           让注入结构性不可能）；
+#         · `quota_blocked: true` **只在拦截轮出现**，其余时候整个键缺席。**绝不许由
+#           `remaining == 0` 反推**——管理员在他说话中途清零，那个值当场变成假话；
+#         · **额度读不到时 `chat_quota` 整个键缺席**（DB 故障 fail-open）。**缺席 ≠ 剩 0 轮**：
+#           agent 那时什么都不注入，绝不编一句"你剩 0 轮"给正在说话的人。
+#       ⚠️ agent 的 `ChatRequest` 是 pydantic v2 默认 `extra="ignore"` ⇒ **旧 agent 会静默
+#       丢掉这两个键**（"被拦的人拿到一次真回答、却不计数也不拒答"）。这正是上线顺序
+#       必须是 agent 先行的理由。
+#       ⚠️ 扣减闸门的位置**就是判据**：它落在 `let is_confirm = …` **之后** ⇒ 点确认卡
+#       不烧额度。这条没有廉价离线判据（前端沙箱用的是假 axios，跑不到 Rust 这一段），
+#       只有 agent 侧末节那两条**源码位置锁**（闸门在 `is_confirm` 之后 + 确认那一支里
+#       一次 `quota::` 都不出现）＋上线后的真机核对。
+#    c) **三句通知文案**（Rust 写 `src/routes/quota.rs`，agent 侧要求**逐字转述** ⇒ 改字
+#       等于改契约；三者 `link` 一律 `None`——个人中心是弹窗，不许编一个跳过去 404 的链接）：
+#         · 批准   `额度重置申请已通过` / `管理员已批准你的对话额度重置申请，额度已清零（{limit} 轮）。`
+#         · 驳回   `额度重置申请未通过` / `管理员驳回了你的对话额度重置申请。理由：{reason}`
+#                  （管理员没填理由时这句尾是 `管理员没有填写理由`——与 `talks.rs` 的通知
+#                  同形：**永不**落到一个裸的「理由：」）
+#         · 主动重置 `对话额度已重置` / `管理员已把你的对话额度清零（{limit} 轮）。`
+#    d) **拒绝话术的分族**（agent `tools/base.py::_admin_quota_post` 按串分流，方向刻意
+#       与冻结族不同：那一族的非 200 没有一族是"服务不可用"，这一族有真·存储故障）：
+#         · 目标类 `用户不存在` ⇒ `not_found`（换账号 / 问主人）；
+#         · 政策类 `这条申请已经处理过了` / `你已经有一份待处理的申请了` ⇒ `policy_frame`
+#           （再试一次还是它 ⇒ 如实转述，不许改参重试）；
+#         · **其余一律 `unavailable`（"没确认"）**。绝不一律按政策/目标出口——那会把
+#           "库写失败"说成"没这个账号"，而后果是**额度没清零而主人以为清了**。
+#         ⚠️ `该账号没有待处理的额度申请` **不是后端措辞**：它是 agent 在"这个 uid 没有
+#           pending 行"时**自己合成的**（Rust 从不发它）。别把它写成"三句都来自后端"。
+#    e) 并发不变量（**单测够不着**，只有真机探针能验）：扣减是**一条**语句
+#       （`UPDATE … SET chat_quota_used = chat_quota_used + 1 WHERE id=? AND chat_quota_used < ?`
+#       ⇒ `rows_affected` 是唯一判据：1=扣到 / 0=用尽 / Err=降级 fail-open），审核先**原子认领**
+#       （`WHERE id=? AND status=0`，认领不到 ⇒ **零副作用**：不清零、不发通知）⇒ 并发下
+#       计数器绝不越过上限，同一个人的额度绝不会被清两次。
 ```
 
 **写通道不变量（写进代码、不在文档里承诺）**：`uid <= 0` → **不发请求**；非 admin →
