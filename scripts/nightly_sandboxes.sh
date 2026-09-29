@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 前端渲染层沙箱夜间批跑（20260924）
 #
-# 为什么要有这个脚本：`frontend/tests/` 下的 9 个 Playwright 沙箱（真组件 + 无头 Chrome 的
+# 为什么要有这个脚本：`frontend/tests/` 下的那批 Playwright 沙箱（真组件 + 无头 Chrome 的
 # 数值断言）此前**没有任何东西跑它们**——CI 明确不收（要 Playwright，见 deploy.yml 的
 # check job 注释），也没进任何 shell 脚本。结果是这一类缺陷只能靠人点：
 # 20260923 那起「确认卡片弹出来几十毫秒后被消息流孤儿清理删掉」正是它——静态断言
@@ -17,7 +17,7 @@
 #   ② 每个套件加外部超时（几条沙箱内部的 subprocess.run 没有超时，Playwright 的 30s
 #      也盖不住 browser.close() / httpd.shutdown()）；
 #   ③ 与夜间 golden 撞车就跳过——golden 正常 04:12-04:16 结束，但它没有全局时长上限
-#      （单条 STREAM_TOTAL_TIMEOUT=300s × 109 条），坏情况下能跑到早上。
+#      （单条 STREAM_TOTAL_TIMEOUT=300s × golden 全量），坏情况下能跑到早上。
 #
 # 跳过（SKIP）不是通过也不是失败：不写哨兵、不清哨兵，只在日志里留痕。
 #
@@ -54,15 +54,21 @@ if pgrep -f 'ms-playwright/chromium-[0-9]' >/dev/null; then
   exit 0
 fi
 
-# ── 预检：python3 / playwright 不可用就别让 9 条各报一次错 ──────────────────────
+# ── 预检：python3 / playwright 不可用就别让每一条各报一次错 ─────────────────────
 if ! python3 -c 'import playwright' >/dev/null 2>&1; then
-  say "[$TS] FAIL python3 里没有 playwright（9 个沙箱全跑不了）——检查 ~/.local 安装"
+  say "[$TS] FAIL python3 里没有 playwright（全部沙箱都跑不了）——检查 ~/.local 安装"
   touch "$MARK"
   exit 1
 fi
 
-# 套件 = frontend/tests/ 下所有 *.py（8 个 *.test.py + wordgraph_render.py，后者同样是
+# 套件 = frontend/tests/ 下所有 *.py（`*.test.py` 那批 + wordgraph_render.py，后者同样是
 # 带数值断言与性能闸的套件）。按目录 glob 而不是写死名单：加了新沙箱不用改这里。
+#
+# **这里的条数刻意不写**（20260929）：原注释写着「9 个沙箱」「8 个 *.test.py」，而实测
+# 已有 16 个 `*.test.py`（+ wordgraph_render.py = 17 条）——哨兵自己在报一个过期的分母，
+# 与 R2 `--keep 3`、logrotate `rotate 14`、golden `--min-pass-rate` 那几处同族：
+# **一个必须靠人手同步的数字，迟早不同步**。脚本里下面那个 glob 才是唯一事实源，
+# 汇总行的条数是跑出来的（`n`），不是写出来的。父仓 CLAUDE.md 目录树里那条也已改成同口径。
 SUITES=(frontend/tests/*.py)
 if [ ! -e "${SUITES[0]}" ]; then
   say "[$TS] FAIL frontend/tests/ 下没有 *.py 沙箱（glob 没命中，脚本要修）"
