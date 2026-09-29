@@ -878,6 +878,11 @@
               // 20260921 隐藏确认请求：带上弹窗令牌，Rust 见它就不把这条 message
               // 当用户发言入库（agent 侧验签，失败即零执行）。非确认轮不带字段
               ...(silent && opts.confirmToken ? { confirm_token: opts.confirmToken } : {}),
+              // 20260929 批 F：确认卡「只办第 i 件」的下标（`pick:<i>`，0 基）。纯透传
+              // ——不验签、不落库，服务端在验签之后按它把已签名的清单**收窄**（只可能
+              // 变小，见 agent/confirm.py::narrow）。非确认轮/点「全部办」不带这个字段。
+              ...(silent && opts.confirmToken && opts.confirmPick
+                  ? { confirm_pick: opts.confirmPick } : {}),
             }),
             signal: ctrl.signal,
           });
@@ -2029,7 +2034,13 @@
           return;
         }
         ctx.state.pendingAsk = null;       // 一次点击只兑现一次
-        if (value !== 'yes') {             // 取消：零请求零副作用
+        // **只有「取消」是取消**（20260929 批 F）：旧判据是「不等于 yes 就算取消」。一次点头
+        // 办 N 件之后卡上多了「只办第 i 件」，那些按钮的值是 `pick:<i>`——沿用旧判据会把
+        // 每一次挑选都当成取消（点「只办 1」⇒ 卡片写「已取消」、系统一件都不办，而主人
+        // 以为自己办了一件）。判据因此改到"认得出是取消"这一侧：取消值只有 `'no'`，
+        // 其余值（yes / pick:<i>）一律进隐藏请求；认不出的值由服务端 `confirm.narrow`
+        // fail-closed 拒掉（越界/读不懂 ⇒ 零执行 + 如实告知），前端不替它做半套解释。
+        if (value === 'no') {              // 取消：零请求零副作用
           askSettle('已取消', undefined, 'cancel');
           return;
         }
@@ -2049,6 +2060,9 @@
         // 合成 message 只作为"当前这条用户输入"喂给叙述层（服务端不落库）。
         // onDropped = 这一跳根本没发出去（忙守卫/建会话失败）⇒ 回滚成可重试。
         sendMessage({ silent: true, confirmToken: ask.token, convId: ask.convId,
+                      // 「只办第 i 件」带的就是这里（`pick:<i>`）；点「全部办」传空串
+                      // = 既有语义（不传字段也等价，旧卡片逐字兼容）
+                      confirmPick: (value === 'yes' ? '' : String(value)),
                       confirmAsk: ask,
                       onDropped: (why) => askRollback(ask, why),
                       message: ask.msg || ('确认执行：' + (ask.summary || ask.q || '')) });
