@@ -206,7 +206,7 @@ const req = async (cfg: any) => {
     const u = ((window as any).__users as any[]).find((x) => x.id === id);
     if (u) u.chatQuotaUsed = 0;
     return env0({ code: 200, message: 'ok',
-                  data: '已把账号「' + ((u && u.username) || '') + '」的对话额度清零（500 轮）' });
+                  data: '已把账号「' + ((u && u.username) || '') + '」的对话额度恢复到 500 轮' });
   }
   // ── 额度申请队列（20260929）────────────────────────────────────────────────
   // `?status=pending` 只看待处理、其余看全部——**过滤在服务端**（这一页是全局队列，
@@ -234,10 +234,13 @@ const req = async (cfg: any) => {
       const u = ((window as any).__users as any[]).find((x) => x.id === row.userId);
       if (u) u.chatQuotaUsed = 0;
     }
+    // 两句**逐字抄** `src/routes/quota.rs::review_quota_request` 的 `ApiResponse::success`
+    // 那一行（人话在 `data` 里，`message` 恒为字面量 "ok"）。这里一度写着带
+    // 「额度已清零（N 轮）」的旧文案——那是 20260929 被用户否掉的说法（主人看到的是递减的
+    // 余额），而且与真后端不同 ⇒ 沙箱喊的就不是后端那句话。
     return env0({ code: 200, message: 'ok',
-                  data: approved
-                    ? '已批准「' + row.username + '」的额度重置申请，额度已清零（' + row.limit + ' 轮）'
-                    : '已驳回「' + row.username + '」的额度重置申请，额度没有变化' });
+                  data: (approved ? '已批准账号「' : '已驳回账号「')
+                        + row.username + '」的额度重置申请' });
   }
   return env0({ code: 200, message: 'ok', data: null });
 };
@@ -359,6 +362,11 @@ def build_sandbox() -> pathlib.Path:
                         "require('fs').writeFileSync(process.argv[2],r.css);",
                         str(FE / rel), str(out)], cwd=str(FE), check=True)
         css.append(out.read_text())
+
+    # 全站样式表：`src/main.tsx` 第一行就 import 它，所有页面都吃得到（`.counter-room` 那条
+    # 给 showCount 计数腾地方的规则就住在里面）。沙箱此前只编译上面那几份 .sass ⇒ 全局规则
+    # 在沙箱里根本不存在，几何断言会把"规则没生效"读成"页面缺陷"。真站有它，沙箱就得有它。
+    css.append((sb / "src/index.css").read_text())
 
     r = subprocess.run([str(FE / "node_modules/.bin/esbuild"), "entry.tsx",
                         "--bundle", "--format=iife", "--outfile=bundle.js",
@@ -1330,6 +1338,33 @@ with sync_playwright() as p:
     pg.wait_for_timeout(200)
     d = pg.evaluate(NOTIFY_DIALOG)
     check("填了正文 ⇒ 主按钮可用", d and d["okDisabled"] is False, str(d))
+
+    # ★「字数计数遮挡发送按钮」（20260929 用户反馈）：antd 的 showCount 把计数
+    #   **绝对定位**在输入框下方约 22px 处（不占布局空间），而 Modal footer 的
+    #   `margin-top` 只有 12px ⇒ 计数整条压在下面那颗按钮上。修法是给 TextArea 挂
+    #   `.counter-room`（值在 src/index.css 一处）。这里量**几何重叠**——
+    #   "CSS 写对了"和"真的没被压住"是两件事（同个人中心那条断言的理由）。
+    cnt = pg.evaluate("""() => {
+        const m = [...document.querySelectorAll('.ant-modal-wrap')].find(
+            (w) => getComputedStyle(w).display !== 'none' && w.querySelector('.tu-notify-ok'));
+        if (!m) return null;
+        const c = m.querySelector('.ant-input-data-count');
+        if (!c) return null;
+        const r = c.getBoundingClientRect();
+        const ta = m.querySelector('.tu-notify-body textarea').getBoundingClientRect();
+        const btn = m.querySelector('.tu-notify-ok').getBoundingClientRect();
+        const cs = getComputedStyle(c);
+        return {text: c.textContent, countTop: Math.round(r.top),
+                countBottom: Math.round(r.bottom), taBottom: Math.round(ta.bottom),
+                btnTop: Math.round(btn.top),
+                visible: r.width > 0 && r.height > 0 && cs.visibility !== 'hidden'};
+    }""")
+    check("字数计数（N / 1000）真的渲染出来了", bool(cnt) and cnt["visible"], str(cnt))
+    check("计数在正文输入框下方", bool(cnt) and cnt["countTop"] >= cnt["taBottom"] - 1, str(cnt))
+    check("计数**不再压在「发送」按钮上**（计数底 ≤ 按钮顶）",
+          bool(cnt) and cnt["countBottom"] <= cnt["btnTop"], str(cnt))
+    check("计数内容如实反映输入长度", bool(cnt) and cnt["text"].startswith("12 / 1000"),
+          str(cnt and cnt["text"]))
     check("**弹窗开着、正文也填好了，仍是一个请求都没发**（点下去才发）",
           notice_posts(pg) == [], str(notice_posts(pg)))
     pg.locator(".tu-notify-cancel").click()
@@ -1422,9 +1457,13 @@ with sync_playwright() as p:
           d and d["ok"] == "重置额度", str(d and d["ok"]))
     check("**不给 danger**：清零是把额度还给对方（恢复性动作，与「解冻」同一侧）",
           d and d["okDanger"] is False, str(d and d["okDanger"]))
-    check("正文写明他立刻能继续对话、且界面上撤不回来",
-          d and "立刻可以继续对话" in d["body"] and "撤不回来" in d["body"],
-          str(d and d["body"]))
+    check("正文写明额度回到满额、他立刻能继续对话、且界面上撤不回来",
+          d and "回到满额" in d["body"] and "可以继续对话" in d["body"]
+          and "撤不回来" in d["body"], str(d and d["body"]))
+    # 措辞是「恢复到上限」不是「清零」（20260929 用户指出）：主人看到的是递减的余额。
+    check("正文与标题里**不出现**「清零」（那是库里的实现，不是他看到的那个数）",
+          d and "清零" not in d["body"] and "清零" not in d["title"],
+          str(d and (d["title"], d["body"])))
     check("弹窗开着时**一个重置请求都没发**", quota_posts(pg) == [], str(quota_posts(pg)))
     before = pg.evaluate("() => window.__calls.length")
     pg.locator(".ant-modal-wrap .tu-quota-ok").click()
@@ -1436,7 +1475,7 @@ with sync_playwright() as p:
           posts and posts[0]["body"] is None, str(posts[0]["body"] if posts else None))
     _n = notices(pg)
     check("成功提示是后端那句中文（在 data 里，读 message 只会弹一个「ok」）",
-          any("对话额度清零" in x and "guest1" in x for x in _n), str(_n))
+          any("对话额度恢复到" in x and "guest1" in x for x in _n), str(_n))
     check("提示里没有只有「ok」的条",
           not any(x.strip().lower() == "ok" for x in _n), str(_n))
     check("重置之后重拉账号列表（那一行的 chip 得跟着变）",
@@ -1503,6 +1542,21 @@ with sync_playwright() as p:
     d = pg.evaluate(QUOTA_REJECT_DIALOG)
     check("点预设 ⇒ 文本框里真的有那几个字、按钮随之可用",
           d and d["value"] == d["presets"][0] and d["okDisabled"] is False, str(d))
+    # 同一族的计数遮挡（见 §七 那条）：驳回框的正文也是带 showCount 的 TextArea，
+    # 底下就是 footer ⇒ 一样要那 22px（`.counter-room`）。
+    rj = pg.evaluate("""() => {
+        const m = [...document.querySelectorAll('.ant-modal-wrap')].find(
+            (w) => getComputedStyle(w).display !== 'none' && w.querySelector('.qm-reject-ok'));
+        if (!m) return null;
+        const c = m.querySelector('.ant-input-data-count');
+        if (!c) return null;
+        const r = c.getBoundingClientRect();
+        const btn = m.querySelector('.qm-reject-ok').getBoundingClientRect();
+        return {text: c.textContent, countBottom: Math.round(r.bottom),
+                btnTop: Math.round(btn.top)};
+    }""")
+    check("驳回框的计数也渲染出来了、且没压在「确认驳回」上",
+          bool(rj) and rj["countBottom"] <= rj["btnTop"], str(rj))
     check("**弹窗开着、理由也填好了，仍是一个请求都没发**（点下去才发）",
           quota_review_posts(pg) == [], str(quota_review_posts(pg)))
     pg.locator(".ant-modal-wrap:visible .qm-reject-ok").click()
@@ -1545,13 +1599,18 @@ with sync_playwright() as p:
     pg.wait_for_timeout(300)
     d = pg.evaluate(QUOTA_APPROVE_DIALOG)
     check("点「批准」先弹窗", d is not None, str(d))
-    check("主按钮写「批准并清零」（这一下唯一不可逆的那半边）",
-          d and d["ok"] == "批准并清零", str(d and d["ok"]))
-    check("正文写明清零、他立刻能问、且撤不回来",
-          d and "清零" in d["body"] and "撤不回来" in d["body"], str(d and d["body"]))
-    # 这一句说的是**已用**（被清掉的那样东西），所以括号里也印已用：沿用列表那列的余额
-    # 会读成"清掉的是一部分余额"（申请人已经被拦住了，两句话正好互相打脸）。
-    check("括号里印的是**已用**轮数（与「清零」这句同口径），不是列表那列的余额",
+    check("主按钮写「批准并恢复满额」（这一下唯一不可逆的那半边）",
+          d and d["ok"] == "批准并恢复满额", str(d and d["ok"]))
+    check("正文写明恢复到上限、他立刻能问、且撤不回来",
+          d and "恢复到上限" in d["body"] and "撤不回来" in d["body"], str(d and d["body"]))
+    # 「清零」是**库里的实现**（`chat_quota_used = 0`），不是主人看到的那个东西——
+    # 他看到的是递减的余额（20260929 用户指出）。这一条把措辞钉在这里，免得下次
+    # 又有谁"顺手"改回计数器口径。
+    check("正文里**不出现**「清零」（主人看到的是递减的余额，不是计数器）",
+          d and "清零" not in d["body"], str(d and d["body"]))
+    # 这一句说的是**已用**（被退掉的那样东西），所以括号里也印已用：沿用列表那列的余额
+    # 会读成"退掉的是一部分余额"（申请人已经被拦住了，两句话正好互相打脸）。
+    check("括号里印的是**已用**轮数（与「恢复到上限」这句同口径），不是列表那列的余额",
           d and "已用500轮" in d["body"].replace(" ", "") and "剩0/500" not in d["body"],
           str(d and d["body"]))
     check("批准弹窗开着时**没有新增请求**（点下去才发）",

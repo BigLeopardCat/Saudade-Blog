@@ -310,12 +310,6 @@
   .ucCompose
     margin-bottom: 8px
 
-    // 给 antd 的 showCount 计数腾地方：它绝对定位在输入框下方约 22px 处，而 .ucField
-    // 的行距只有 12px ⇒ 不腾就是"计数被下面那行压住"（20260922 用户截图）。见 index.tsx 里
-    // ucMsgBody 那层壳的注释。
-    .ucMsgBody
-      margin-bottom: 22px
-
   // 「存草稿 / 发送」两颗并排（20260923）：`.ucFieldFoot` 是 space-between，右边这一组
   // 自己再 flex 一次——不包一层的话两颗按钮会被拆到两端，"发送"就不再贴着右边那颗草稿。
   .ucComposeBtns
@@ -363,11 +357,13 @@
     .ucQuotaBarIn
       height: 100%
       border-radius: 3px
-      // 充足档＝品牌金（20260929 用户要求"余额条颜色随余额变"）。
+      // 充足档＝绿（20260929 用户拍板"绿 / 琥珀 / 红"三档；此前是品牌金，与
+      // "告急"两档放在一起读不出紧迫感——金和琥珀本来就近色）。
       // **条画的是余额**（剩多少占上限多少），所以条越短＝越该着急，颜色跟着条一起
-      // 从金→琥珀→朱红。档位由 `utils/quota.ts::quotaLevel` 给（四处在用，一处改处处改），
+      // 从绿→琥珀→朱红。档位由 `utils/quota.ts::quotaLevel` 给（四处在用，一处改处处改），
       // 这里只负责把档位翻成颜色；浅色/夜间各一套（夜间那套见 .ucRoot.ucDark 段）。
-      background: #b8860b
+      // 绿是**新引入的词汇**（站内此前没有绿）：取偏冷的植物绿，压在暖白窗上不发荧光。
+      background: #3f9d63
 
       &.is-low
         background: #d08a1e
@@ -415,12 +411,12 @@
   .ucItemTitle a:hover
     color: #69b1ff
 
-  // 额度进度条的填充（20260929）：浅色窗里那个 `#b8860b` 是压白底的暗金，
-  // 压在墨蓝窗上几乎看不出进度——夜间换亮一档的同族金（`.ucGoldBtn` 那套色值家族）。
+  // 额度进度条的填充（20260929）：浅色窗里那三个值压在墨蓝窗上都太暗、几乎看不出
+  // 进度——夜间各亮一档（绿取偏亮的薄荷绿，与"河灯夜"的亮色档同族）。
   // 告急/偏低两档同样各亮一档（朱红取 `.ucReject` 那一族的 `#ff9d8a`，与站内
   // `.rz-no` / 驳回理由条同色——"这一块是告警"的词汇在夜间全站只有这一套）。
   .ucQuotaBarIn
-    background: #e8b866
+    background: #6cc98a
 
     &.is-low
       background: #e3a94f

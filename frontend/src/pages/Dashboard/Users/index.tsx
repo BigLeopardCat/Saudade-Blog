@@ -552,12 +552,17 @@ const Users = () => {
                     </div>
 
                     {/* 重置额度确认（20260929）。三条纪律与冻结那个弹窗逐条同形：
-                        · `okText` 写动作词（「重置额度」）而不是「确定」；
+                        · `okText` 写动作词（「重置额度」）而不是「确定」——**与行上那颗
+                          按钮同名**（同一件事两个名字比"确定"更难读）；
                         · 受控 Modal（命令式弹窗沙箱测不到）；
-                        · **不给 danger** —— 清零是把额度还给对方，属于恢复性动作
+                        · **不给 danger** —— 把额度还给他属于恢复性动作
                           （与"解冻"同一侧），红按钮会是错的信息。
                         正文写清两件事：他立刻能继续问；以及**界面上撤不回来**
-                        （没有"改回原值"这个入口，下一次重置只会再清零一次）。 */}
+                        （没有"改回原值"这个入口，下一次重置只会再恢复一次）。
+                        **正文说的是「恢复到上限」而不是「清零」**（20260929 用户指出）：
+                        主人看到的那个数是**递减的余额**，"计数器清零"是库里的实现、不是
+                        他看到的东西。同一说法在个人中心、通知、agent 侧一并统一
+                        （跨语言契约）。 */}
                     <Modal
                         title={'重置额度 - ' + (quotaTarget?.username || '')}
                         open={!!quotaTarget}
@@ -570,10 +575,10 @@ const Users = () => {
                     >
                         <div style={{ marginTop: 12, lineHeight: 1.7 }}>
                             <div>
-                                确定要把<strong>{quotaTarget?.username}</strong> 的对话额度清零吗？
+                                确定要把<strong>{quotaTarget?.username}</strong> 的对话额度恢复到上限吗？
                             </div>
                             <div style={{ marginTop: 8, color: '#8c8c8c' }}>
-                                清零后：他立刻可以继续对话，并会收到一条站内通知。
+                                恢复后：他的额度立刻回到满额、可以继续对话，并会收到一条站内通知。
                                 这一下在界面上撤不回来——原值不会被记下来，唯一能再变的是下一次重置。
                             </div>
                         </div>
@@ -720,8 +725,13 @@ const Users = () => {
                                     value={notifyTitle}
                                     onChange={e => setNotifyTitle(e.target.value)}
                                 />
+                                {/* `counter-room`：给 antd 的 showCount 计数腾 22px。
+                                    计数是绝对定位的、**不占布局空间**，而 Modal footer 的
+                                    `margin-top` 只有 12px ⇒ 不腾就压在「发送」那颗按钮上
+                                    （20260929 用户反馈"字数计数遮挡发送按钮"）。
+                                    见 src/index.css 那条规则与它引的 antd 源码事实。 */}
                                 <Input.TextArea
-                                    className="tu-notify-body"
+                                    className="tu-notify-body counter-room"
                                     name="notice-content"
                                     autoComplete="off"
                                     placeholder="通知内容（必填）"

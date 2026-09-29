@@ -903,7 +903,9 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                 message.error(errMsg(res))
                 return
             }
-            message.success(res.data.message || '已提交额度重置申请')
+            // **`data` 而不是 `message`**：`ApiResponse::success` 的 `message` 恒为字面量
+            // "ok"（见 src/utils.rs），照抄它弹出来的就是那个 "ok"（后台账号页踩过同一坑）。
+            message.success(res.data.data || '已提交对话额度重置申请')
             setApplyOpen(false)
             setApplyReason('')
             // 写后重读：拿不到就保留旧读数（不本地拼一条"已提交"）
@@ -1053,11 +1055,14 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                 placeholder="信件标题（选填，例如：关于那篇架构文档）"
                 onChange={(e) => setMailTitle(e.target.value)}
             />
-            {/* ucMsgBody 这层壳只为给计数让位：antd 的 showCount 把「0 / 500」绝对定位在
-                输入框**下方约 22px** 处，而 .ucField 的行距只有 12px ⇒ 计数整条被下一行
-                （.ucFieldFoot）压住，用户 20260922 反馈的"字数限制文本被遮挡"就是这个。
-                壳本身不加任何视觉，只吃一个 margin-bottom（见 index.sass 同名规则）。 */}
-            <div className="ucMsgBody">
+            {/* 这层壳只为给计数让位：antd 的 showCount 把「0 / 500」绝对定位在
+                输入框**下方约 22px** 处（不占布局空间），而 .ucField 的行距只有 12px
+                ⇒ 计数整条被下一行（.ucFieldFoot）压住，用户 20260922 反馈的"字数限制
+                文本被遮挡"就是这个。壳本身不加任何视觉。
+                20260929 起这 22px 收到全局的 `.counter-room` 一处（src/index.css），
+                额度申请那个 Modal 与 compose 共用它——各写一份就是"改一处必须同步
+                另一处"的形状。 */}
+            <div className="counter-room">
                 <Input.TextArea
                     value={body}
                     rows={3}
@@ -1279,7 +1284,7 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
             >
                 <div className="ucField ucFieldStack">
                     <span className="ucLabel">申请理由（选填）</span>
-                    <div className="ucMsgBody">
+                    <div className="counter-room">
                         <Input.TextArea
                             value={applyReason}
                             rows={3}
@@ -1292,8 +1297,12 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                             onChange={(e) => setApplyReason(e.target.value)}
                         />
                     </div>
+                    {/* 措辞是「额度恢复到上限」而不是「额度清零」（20260929 用户指出）：
+                        主人看到的是**递减的余额**，他的心智模型是"额度用光了"；"计数器清零"
+                        描述的是库里的实现（`chat_quota_used = 0`），不是他看到的那个东西。
+                        同一说法在通知、后台确认卡、agent 侧一并统一（跨语言契约）。 */}
                     <span className="ucHint">
-                        管理员批准后额度清零，你立刻可以继续问；驳回的话额度不变，还能再申请。
+                        管理员批准后额度恢复到上限，你立刻可以继续问；驳回的话额度不变，还能再申请。
                     </span>
                 </div>
             </Modal>

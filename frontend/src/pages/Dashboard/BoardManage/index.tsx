@@ -490,7 +490,10 @@ const BoardManage = () => {
                         >采用 AI 说明</Button>
                     )}
                 </div>
+                {/* `counter-room`：给 showCount 的计数腾 22px（它不占布局空间，
+                    Modal footer 只留了 12px）。见 src/index.css 那条规则。 */}
                 <Input.TextArea
+                    className="counter-room"
                     value={rejectReason}
                     onChange={(e) => setRejectReason(e.target.value)}
                     maxLength={200}
