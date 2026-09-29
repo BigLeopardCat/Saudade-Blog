@@ -197,6 +197,9 @@ pub fn create_router(state: AppState) -> Router {
         // 翻完成标记（20260926）：同一族的第二条最小通道——按**正文**认出唯一那一行、
         // 只翻它的 done（查无此条/有多条一律零写，判据见 todos.rs 的 pick_todo）。
         .route("/api/protected/todos/done", post(todos::set_todo_done))
+        // 改排期（20260929）：同一族的第三条最小通道——按**正文**认出唯一那一行、
+        // 只改它的 due_date（传 null/空串 = 清空排期；判据同 pick_todo）。
+        .route("/api/protected/todos/date", post(todos::set_todo_date))
 
         // 编辑草稿（20260912c）：自动保存 + 编辑器专用读入口
         // 读入口单独开是因为公开的 GET /api/public/notes/:id 会挡掉草稿/私密文章（A4 修复），

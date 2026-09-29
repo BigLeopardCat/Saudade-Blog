@@ -7,17 +7,19 @@
 //!   PUT  /api/protected/todos      → 整份覆盖（事务内先删该用户全部行、再逐条插入）
 //!   POST /api/protected/todos/item → **追加一条**（20260926：给 agent 用，见下）
 //!   POST /api/protected/todos/done → **按正文翻某一条的完成标记**（20260926：同上）
+//!   POST /api/protected/todos/date → **按正文改某一条的排期日**（20260929：同上）
 //!
 //! 为什么不按行做 CRUD、为什么前端不接服务端 id：见
 //! `scripts/migration/dashboard_todo_20260924.sql` 头注（那里写了取舍与代价）。
 //!
-//! 后两条通道（20260926）的来由：agent 要能"替主人安排一条日程"、"把某件事勾成做完了"，
-//! 而它**手里没有**那份列表。让它复用 PUT 只有两种写法，两种都坏——先读再写（读到写之间
-//! 主人可能刚改过，写完就把主人的改动抹了），或者干脆发一份自己拼的（整份覆盖的语义下
-//! 等于清空主人的待办）。所以给它的是两条**只动自己那一行、既有行一个字节都不动**的最小
-//! 通道：一条只插入、一条只翻 `done` 列。两条共用同一个代价——**只能按正文定位**（线上
-//! 从不回行 id），所以"正文是唯一身份"这件事在 [pick_todo] 里被写成三条判据。
-//! 前端不消费这两条接口（页面上那几件事始终是整份读写），但前端**必须**在 agent 收尾后
+//! 后三条通道（20260926 两条 / 20260929 一条）的来由：agent 要能"替主人安排一条日程"、
+//! "把某件事勾成做完了"、"把某件事挪到别的日子"，而它**手里没有**那份列表。让它复用 PUT
+//! 只有两种写法，两种都坏——先读再写（读到写之间主人可能刚改过，写完就把主人的改动抹了），
+//! 或者干脆发一份自己拼的（整份覆盖的语义下等于清空主人的待办）。所以给它的是三条
+//! **只动自己那一行、既有行一个字节都不动**的最小通道：一条只插入、一条只翻 `done` 列、
+//! 一条只改 `due_date` 列。三条共用同一个代价——**只能按正文定位**（线上从不回行 id），
+//! 所以"正文是唯一身份"这件事在 [pick_todo] 里被写成三条判据。
+//! 前端不消费这三条接口（页面上那几件事始终是整份读写），但前端**必须**在 agent 收尾后
 //! 重读一次列表——否则它手里的旧那份会在下一次自动保存时把 agent 改的覆盖掉
 //! （见 frontend/src/pages/Dashboard/Home/index.tsx 里 agent-turn-done 那一段）。
 //!
@@ -25,10 +27,13 @@
 //!   · **空文本的行不落库**：空行是前端"新增一行"的临时态（失焦就回收），
 //!     落库只会攒出一堆空壳；追加那条通道连空文本都不收（没有"临时态"这回事）；
 //!   · 条数上限 `MAX_TODOS`、正文上限 `MAX_TEXT_CHARS`（与列宽一致）——超了**拒绝**
-//!     而不是悄悄截断（截断会静默改主人的字）。拒绝的**粒度**两条通道不同：
-//!     PUT 是整单拒绝（改完再发一次整份），追加只拒绝这一条（没道理让主人重发整份）；
+//!     而不是悄悄截断（截断会静默改主人的字）。拒绝的**粒度**两种通道不同：
+//!     PUT 是整单拒绝（改完再发一次整份），三条最小通道只拒绝这一条（没道理让主人重发整份）；
 //!   · 排期只收 `YYYY-MM-DD`（`due_date` 是 date 列，带时间的串在这里就挡掉，
-//!     不让它变成"存进去了但读出来少了一截"）。
+//!     不让它变成"存进去了但读出来少了一截"）；**清空排期必须是说出口的那一下**
+//!     （`null` / 空串 = 未排期，与前端 `DatePicker` 的 `allowClear` 同语义）——改排期那条
+//!     通道的 `date` 字段与 `done` 同一条纪律（不给默认值），漏传字段整单拒绝，
+//!     免得"漏传"被当成"清空"。
 //!
 //! 鉴权：本模块挂在 `protected_routes`（admin 守卫）之下，每个 handler 仍按 uid 过滤
 //! ——守卫管"能不能进后台"，uid 管"是谁的那份列表"，两者不互相替代。
@@ -99,10 +104,25 @@ pub struct SetTodoDoneRequest {
     pub done: bool,
 }
 
+/// 线上口径（改排期那条通道的请求体）：`{text, date}`。
+///
+/// **没有 id 字段**：同 [SetTodoDoneRequest]，线上从不回行 id。
+///
+/// `date` **刻意不加 `#[serde(default)]`**（与 `done` 同一条纪律，虽然方向不同）：缺了它
+/// serde 会拒绝整个请求体（400）。给它默认值等于"漏传日期 = 清空排期"——那是一个会静默
+/// 抹掉主人排期的默认值。**要清空**这条通道也有路：显式传 `null` 或空串（`parse_due_date`
+/// 把两种"没填"归一成同一个 None）——"清空"和"漏传"必须分开。
+#[derive(Deserialize)]
+pub struct SetTodoDateRequest {
+    #[serde(default)]
+    pub text: String,
+    pub date: Option<String>,
+}
+
 /// 排期串 → `NaiveDate`；`None`/空串 = 未排期，认不出的格式 → Err（中文文案）。
 ///
-/// 两条通道共用（PUT 的每一行、追加的那一条）——"什么算合法的排期"只在这里定义
-/// 一处，免得两边慢慢分叉（同族的纪律：日期格式放宽一次就要两处一起放宽，而漏改
+/// 三条通道共用（PUT 的每一行、追加的那一条、改排期的那一条）——"什么算合法的排期"只在
+/// 这里定义一处，免得两边慢慢分叉（同族的纪律：日期格式放宽一次就要三处一起放宽，而漏改
 /// 的那一处会静默接受一个存进去就少一截的串）。
 fn parse_due_date(raw: Option<&str>) -> Result<Option<chrono::NaiveDate>, &'static str> {
     match raw.map(str::trim).filter(|s| !s.is_empty()) {
@@ -408,6 +428,84 @@ pub async fn set_todo_done(
     }))
 }
 
+/// POST /api/protected/todos/date：按**正文**改某一条的排期日（agent 用的通道）。
+///
+/// 第五条通道（20260929）的来由见文件头：主人说"把简历那条挪到 10 月 8 号"，要落成那份列表
+/// 里**那一行**的日期，而 agent 手里没有列表。与 `/done` 同形状的最小通道——**认出唯一那一
+/// 行、只改它的 `due_date`**：正文、完成态、位次、别的行，一个字节都不动（复用 PUT 的那对
+/// 坏选项在文件头写着）。**排期可清空**：传 `null`/空串 = 未排期（见 [SetTodoDateRequest]）。
+///
+/// 定位判据全在 [pick_todo]（查无此条 / 有多条一律拒绝，零写）。
+/// **幂等**：目标日期与现状相同时成功返回、**不写库**（连 `updated_at` 都不动——"没发生的
+/// 事"不该在库里留时间戳）。回话里刻意**不区分**"刚改的"与"本来就是这一天"：调用方（agent）
+/// 手里有写前那份快照、它自己分得出（卡面上要印"现在是几号"），后端重复表达同一件事只是多
+/// 一处会分叉的说法。
+pub async fn set_todo_date(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(payload): Json<SetTodoDateRequest>,
+) -> Json<ApiResponse<TodoDto>> {
+    let uid = match crate::auth_jwt::auth_uid(&state.db, &headers).await {
+        Ok(uid) => uid,
+        Err(e) => return Json(ApiResponse::error(e.message())),
+    };
+    let text = payload.text.trim();
+    if text.is_empty() {
+        return Json(ApiResponse::error("这条待办没写内容"));
+    }
+    if text.chars().count() > MAX_TEXT_CHARS {
+        return err(format!("这条太长了（最多 {MAX_TEXT_CHARS} 字）"));
+    }
+    // 日期先归一（认不出就整单拒绝，**绝不替主人挑一天顶上**）：这一步在读写之前，
+    // 于是"日期打错了"这件事不会先落一次库再报错。
+    let due_date = match parse_due_date(payload.date.as_deref()) {
+        Ok(d) => d,
+        Err(msg) => return Json(ApiResponse::error(msg)),
+    };
+    let rows = match dashboard_todo::Entity::find()
+        .filter(dashboard_todo::Column::UserId.eq(uid))
+        .all(&state.db)
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!("[todos] 改排期前读取失败 uid={}: {}", uid, e);
+            return Json(ApiResponse::error("保存失败，请稍后再试"));
+        }
+    };
+    let row = match pick_todo(&rows, text) {
+        Ok(r) => r,
+        Err(msg) => return err(msg),
+    };
+    if row.due_date != due_date {
+        let now = chrono::Local::now().naive_local();
+        let am = dashboard_todo::ActiveModel {
+            due_date: Set(due_date),
+            updated_at: Set(now),
+            ..Default::default()
+        };
+        // 按主键更新（不是按正文再匹配一次）：理由与 [set_todo_done] 那一步逐字相同
+        // ——按 id 落刀只动**我们认出来的那一行**，而按正文再匹配一次会在主人刚好改了
+        // 这一行正文时变成"零行受影响"（静默不生效）或改到别的行。
+        if let Err(e) = dashboard_todo::Entity::update_many()
+            .set(am)
+            .filter(dashboard_todo::Column::Id.eq(row.id))
+            .exec(&state.db)
+            .await
+        {
+            tracing::error!("[todos] 改排期失败 uid={} id={}: {}", uid, row.id, e);
+            return Json(ApiResponse::error("保存失败，请稍后再试"));
+        }
+        // 审计只记 uid/id/目标日期，**不记正文**：这是他私人清单里的内容，诊断不需要它
+        tracing::info!("[todos] 改排期 uid={} id={} date={:?}", uid, row.id, due_date);
+    }
+    Json(ApiResponse::success(TodoDto {
+        text: row.text.clone(),
+        done: row.done,
+        date: due_date.map(|d| d.format("%Y-%m-%d").to_string()),
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -428,6 +526,38 @@ mod tests {
         assert_eq!(parse_due_date(None), Ok(None));
         assert_eq!(parse_due_date(Some("")), Ok(None));
         assert_eq!(parse_due_date(Some("   ")), Ok(None));
+    }
+
+    #[test]
+    fn 改排期请求体必须把日期说清楚() {
+        // 与 `SetTodoDoneRequest.done` 同一条纪律的镜像：**漏传字段 ≠ 显式清空**。
+        // 漏传由 serde 拒掉整个请求体（400，agent 侧会收到一个明确的失败而不是一次静默
+        // 抹除）；要清空必须说出口（`null` 或空串），两者在这里分得开。
+        assert!(
+            serde_json::from_str::<SetTodoDateRequest>(r#"{"text":"买菜"}"#).is_err(),
+            "漏传 date 不该被当成清空"
+        );
+        for clear in [r#"{"text":"买菜","date":null}"#, r#"{"text":"买菜","date":""}"#,
+                      r#"{"text":"买菜","date":"  "}"#] {
+            let d = serde_json::from_str::<SetTodoDateRequest>(clear).unwrap();
+            assert_eq!(parse_due_date(d.date.as_deref()), Ok(None), "{clear}");
+        }
+        let d = serde_json::from_str::<SetTodoDateRequest>(
+            r#"{"text":"更新简历","date":"2026-10-08"}"#,
+        )
+        .unwrap();
+        assert_eq!(d.text, "更新简历");
+        assert_eq!(
+            parse_due_date(d.date.as_deref()),
+            Ok(Some(NaiveDate::from_ymd_opt(2026, 10, 8).unwrap()))
+        );
+        // 认不出的日期在**读写之前**就被挡下（handler 里那一步的位置），这条锁的是
+        // "日期归一只有 [parse_due_date] 一处"——多一条解析路径就会在这里分叉。
+        let d = serde_json::from_str::<SetTodoDateRequest>(
+            r#"{"text":"更新简历","date":"10月8日"}"#,
+        )
+        .unwrap();
+        assert!(parse_due_date(d.date.as_deref()).is_err());
     }
 
     #[test]
