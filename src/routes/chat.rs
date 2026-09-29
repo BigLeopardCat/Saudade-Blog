@@ -41,6 +41,12 @@ pub struct ChatRequest {
     //   ③ 回复与执行回执照常落库（那就是真发生过的执行）。
     #[serde(default)]
     pub confirm_token: Option<String>,
+    // 确认卡上"只办其中一件"的选择记号（20260929 批 F）：形态 `pick:<下标>`（0 基，
+    // 对应签名清单里的位置），空 = 全部办。**纯透传**——与 confirm_token 的写法逐字
+    // 同源：不验签、不解析、不落库（Rust 侧不知道卡片上有几件，也不该知道）。
+    // 语义收窄只发生在 agent 侧（`confirm.narrow`）：越界/读不懂一律零执行。
+    #[serde(default)]
+    pub confirm_pick: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -683,6 +689,7 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
         // "读不到就缺席"恰好相反，见那条注）；旧 agent 端不认这个键 ⇒ 忽略，
         // 快道退回散文判据（fail-open，零行为变更）。
         "recent_tools": recent_tools,
+        "confirm_pick": payload.confirm_pick.as_deref().unwrap_or(""),
     });
 
     // 额度两个键（20260929）**必须条件插入**——`json!` 对 `Option` 会写成 `null`，
@@ -1272,8 +1279,14 @@ const PENDING_INLINE_MAX: usize = 600;
 const PENDING_ARGS_COL_MAX: usize = 4000;
 /// 卡片问句列上限（= 迁移里 `question` varchar(500)）。超限只存前缀：问句是给人读的，
 /// 截断顶多少看几个字，而**丢掉整张卡片**（下面那条"空串=不可重建"的规则）更坏。
+/// ⚠️ 20260929 批 F 起问句可能是**多件编号列表**（一次点头办 N 件，N ≤ 5，每件一行
+/// 且逐条印系统事实）⇒ 4–5 件时整句可能超过这一列。影响面**只在将来那条"跨刷新重建
+/// 卡片"的读链上**（`question`/`options` 至今没有读方）：真接上前必须在这里做二选一
+/// ——放宽列宽（要迁移）或者**问句超限时存空串**（读侧如实不留卡片），**绝不能让重建
+/// 出来的卡少印几件而按钮仍然签着 5 件**（那正是"盲签"本身）。
 const PENDING_QUESTION_COL_MAX: usize = 500;
-/// 选项 JSON 列上限（= 迁移里 `options` varchar(600)）。当前固定两项，余量很大。
+/// 选项 JSON 列上限（= 迁移里 `options` varchar(600)）。20260929 批 F 起最多七枚
+/// （全部办 + 逐条只办第 i 件 + 取消），标签都很短，余量仍足。
 const PENDING_OPTIONS_COL_MAX: usize = 600;
 
 /// 待办落库（20260923）：agent 在弹确认框那一轮随 `__CONFIRM__` 发来的结构化提议。
