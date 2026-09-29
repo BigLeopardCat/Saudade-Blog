@@ -1,0 +1,23 @@
+/* 全局样式（main.tsx 第一行 import，所有页面都吃得到）。
+   本文件此前是空占位；第一条规则放在这里，是因为**它不属于任何一个页面**。 */
+
+/* 给 antd 的 `showCount` 计数腾地方。
+ *
+ * 事实（读 antd 源码得来，不是猜的）：TextArea 带 `showCount` 时，计数是
+ * `span.ant-input-data-count`，绝对定位在**输入框下方**
+ * `fontSize × lineHeight ≈ 22px` 处（`antd/es/input/style/textarea.js` 的
+ * `bottom: token.calc(token.fontSize).mul(token.lineHeight).mul(-1)`）。
+ * 它**不占任何布局空间** ⇒ 输入框下面只要还有东西（下一行、Modal 的 footer），
+ * 计数就压在它身上。Modal footer 的 `margin-top` 只有 12px（`marginSM`），
+ * 不够这 22px。
+ *
+ * 一个类、一处值：凡是「输入框下面还有东西」的 TextArea 都挂它，**不许各写一份
+ * margin-bottom: 22px**（那是"改一处必须同步另一处"的形状）。改这个数之前先量
+ * `frontend/tests/user-center.test.py` ⑩ 与 `frontend/tests/users-page.test.py`
+ * 里那几条**几何重叠**断言——它们量的是"真的没被压住"，不是"CSS 写对了"。
+ *
+ * 提交人眼复核点：`.ant-input-data-count` 的 bottom 必须是负值（antd 的契约），
+ * 哪天 antd 改成占位布局，这条规则就该删。 */
+.counter-room {
+    margin-bottom: 22px;
+}

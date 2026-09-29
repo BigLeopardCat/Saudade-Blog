@@ -79,8 +79,8 @@ const usageLevel = (r: QuotaRow) => quotaLevel(r.limit - r.used, r.limit)
 
 /** 状态标签（三值三色，与评论管理那两段状态同一套配色语义） */
 const STATUS_TAG: Record<number, { text: string; color: string; tip: string }> = {
-    0: { text: '待处理', color: 'gold', tip: '可以「批准」（清零对方额度）或「驳回」（额度不变）' },
-    1: { text: '已批准', color: 'green', tip: '已批准并清零额度，申请人收到了一条站内通知' },
+    0: { text: '待处理', color: 'gold', tip: '可以「批准」（对方的额度恢复到上限）或「驳回」（额度不变）' },
+    1: { text: '已批准', color: 'green', tip: '已批准、额度恢复到上限，申请人收到了一条站内通知' },
     2: { text: '已驳回', color: 'red', tip: '已驳回，额度一个字节都没动；申请人收到理由，还可以再申请' },
 }
 
@@ -277,9 +277,9 @@ const QuotaManage = () => {
                 />
                 <p className="qm-note-text">
                     普通用户终身 500 轮对话额度（每轮 1 轮，含检索；管理员不限额）。
-                    「批准」会把对方的额度清零、他立刻可以继续问，并收到一条站内通知；
+                    「批准」会把对方的额度恢复到上限、他立刻可以继续问，并收到一条站内通知；
                     「驳回」只发通知、额度一个字节都不动，他还可以再申请。
-                    想<b>主动</b>给某个账号清零（不必他先申请）请到「账号管理」那一行用「重置额度」。
+                    想<b>主动</b>把某个账号的额度恢复到上限（不必他先申请）请到「账号管理」那一行用「重置额度」。
                 </p>
             </div>
             <div className="qm-foot">
@@ -295,17 +295,19 @@ const QuotaManage = () => {
             </div>
 
             {/* 批准确认（受控 Modal：命令式弹窗沙箱测不到）。按钮写**动作词**而不是
-                「确定」、「批准」是这一下唯一不可逆的那半边——清零之后没有"改回原值"
+                「确定」、「批准」是这一下唯一不可逆的那半边——恢复满额之后没有"改回原值"
                 这个入口（同意闸与风险说明同后台冻结那套）。
                 标题里的身份用**账号名**而不是昵称：昵称可空、可重名、可随时自己改，
                 而这一下是不可逆的（同页「发通知」那个弹窗也只用账号名）。申请人是谁
-                在列表里已经写全了（`@账号名 · 用户 #id` + 昵称）。 */}
+                在列表里已经写全了（`@账号名 · 用户 #id` + 昵称）。
+                **按钮与正文都写「恢复到上限」而不是「清零」**（20260929 用户指出）：
+                主人看到的那个数是递减的余额，"计数器清零"是库里的实现。 */}
             <Modal
                 title={`批准 ${approving?.username || ''} 的额度重置申请？`}
                 open={!!approving}
                 onOk={confirmApprove}
                 onCancel={() => setApproving(null)}
-                okText="批准并清零"
+                okText="批准并恢复满额"
                 cancelText="取消"
                 confirmLoading={busy}
                 // 类名给沙箱断言用（`tests/users-page.test.py` 按它认这个弹窗）——
@@ -316,13 +318,13 @@ const QuotaManage = () => {
                 width={460}
             >
                 <div className="qm-confirm">
-                    {/* 这一句说的是**已用**（清零的对象就是它），所以括号里也印已用——
-                        沿用列表那列写的余额会读成"清掉的是余额"，正好说反。
-                        余额口径的单一来源仍是 `utils/quota.ts`（列表列用它）。 */}
+                    {/* 括号里为什么印**已用**而不是列表那列的余额：这一句要回答"他要被
+                        退掉多少"，那个数就是已用的这一截（余额是"还剩多少"，读了会以为
+                        恢复的是余额）。余额口径的单一来源仍是 `utils/quota.ts`（列表列用它）。 */}
                     <div>
-                        批准后：该账号已用轮数<b>清零</b>（当前已用
-                        {approving ? approving.used : ''} 轮），他立刻可以继续对话，
-                        并会收到一条站内通知。
+                        批准后：该账号的额度<b>恢复到上限</b>（当前已用
+                        {approving ? approving.used : ''} 轮，这一截不再计入），
+                        他立刻可以继续对话，并会收到一条站内通知。
                     </div>
                     <div className="qm-confirm-warn">
                         这一下撤不回来——原值不会被记下来，唯一能再变的是下一次重置。
@@ -361,7 +363,10 @@ const QuotaManage = () => {
                                 onClick={() => setRejectReason(p)}>{p}</Button>
                     ))}
                 </div>
+                {/* `counter-room`：给 showCount 的计数腾 22px（它不占布局空间，
+                    Modal footer 只留了 12px）。见 src/index.css 那条规则。 */}
                 <Input.TextArea
+                    className="counter-room"
                     value={rejectReason}
                     onChange={(e) => setRejectReason(e.target.value)}
                     maxLength={NOTE_MAX}

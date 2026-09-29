@@ -213,7 +213,7 @@ pub async fn apply_quota_reset(
         Ok(r) => {
             tracing::info!("[额度] 收到重置申请 uid={} request_id={}", uid, r.id);
             Json(ApiResponse::success(
-                "已提交额度重置申请，管理员处理后会通过站内通知告诉你".to_string(),
+                "已提交对话额度重置申请，管理员处理后会通过站内通知告诉你".to_string(),
             ))
         }
         Err(e) => {
@@ -340,7 +340,7 @@ pub async fn list_quota_requests(
 
 #[derive(Deserialize)]
 pub struct ReviewQuotaReq {
-    /// `true` = 批准（**会清零**）/ `false` = 驳回（额度一个字节都不动）
+    /// `true` = 批准（**把他的额度恢复到上限**）/ `false` = 驳回（额度一个字节都不动）
     pub approved: bool,
     /// 驳回理由（可空）。批准时请求里带什么都不生效（那一列恒为 NULL）。
     #[serde(default)]
@@ -447,7 +447,7 @@ pub async fn review_quota_request(
                 ));
             }
         }
-        let content = format!("管理员已批准你的对话额度重置申请，额度已清零（{} 轮）。", limit);
+        let content = format!("管理员已批准你的对话额度重置申请，额度已恢复到 {} 轮。", limit);
         notify(&state.db, target.id, NOTICE_APPROVED_TITLE, content).await;
         tracing::info!("[额度] 批准申请 id={} uid={}（发起人 uid={}）", id, target.id, operator);
         Json(ApiResponse::success(format!("已批准账号「{}」的额度重置申请", target.username)))
@@ -515,12 +515,15 @@ pub async fn reset_user_quota(
     {
         Ok(_) => {
             tracing::info!("[额度] 主动重置 uid={}", target.id);
-            let content = format!("管理员已把你的对话额度清零（{} 轮）。", limit);
+            let content = format!("管理员已把你的对话额度恢复到 {} 轮。", limit);
             notify(&state.db, target.id, NOTICE_RESET_TITLE, content).await;
             // 文案与账号族其余动作同形（「已把账号「X」的…」）。**不是**给 agent 读的
-            // 那一句——agent 侧自己读回复核（`_quota_readback`），比转述这里可靠
+            // 那一句——agent 侧自己读回复核（`_quota_readback`），比转述这里可靠。
+            // 措辞是「恢复到 N 轮」而**不是**「清零」：主人看到的是递减的余额，
+            // 他的心智模型是"额度用光了"，"计数器清零"描述的是库里的实现（`used = 0`），
+            // 不是他看到的那个东西（20260929 主人指出）。
             Json(ApiResponse::success(format!(
-                "已把账号「{}」的对话额度清零（{} 轮）",
+                "已把账号「{}」的对话额度恢复到 {} 轮",
                 target.username, limit
             )))
         }

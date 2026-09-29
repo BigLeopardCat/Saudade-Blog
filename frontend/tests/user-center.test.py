@@ -2,7 +2,7 @@
 """个人中心一期（20260922）无头验收：真 antd + 假后端，走**真组件**的接线与交互。
 
 为什么值得单起一个脚本：
-  个人中心是这轮新增的最大一块前端（五个页签 + 头像裁剪 + 红点），而它的风险几乎全在
+  个人中心是这轮新增的最大一块前端（六个页签 + 头像裁剪 + 红点），而它的风险几乎全在
   **接线**上而不是观感上——「点确定到底发没发那个 multipart」「点了全部已读红点掉不掉」
   「后端那句中文有没有弹出来」都是只有真跑一遍才知道的事。本机不能 vite build（3.7GB 内存
   会 OOM，见 CLAUDE.md §2），沿用既定替代手段（frontend/tests/* 的既有做法）：
@@ -232,6 +232,17 @@ const http = async (cfg: any) => {
     state.drafts = state.drafts.filter((d: any) => d.id !== id);
     return env('已删除草稿');
   }
+  // 对话额度（20260929）：`__quota` 让用例自己造档位——条的颜色是按档位染的，三档
+  // （绿/琥珀/红）只有换了数才复现得出来；不设则给一份"还剩 363/500"（档位 ok，绿条）。
+  if (url === '/api/protected/quota') {
+    return env((window as any).__quota || { used: 137, limit: 500, remaining: 363,
+                                           unlimited: false, pendingRequest: null });
+  }
+  // 文案逐字抄 `src/routes/quota.rs`（成功回的那句人话在 `data` 里）——断言弹出来的
+  // 是**后端那句**，不是前端兜底的那句。
+  if (url === '/api/protected/quota/apply') {
+    return env('已提交对话额度重置申请，管理员处理后会通过站内通知告诉你');
+  }
   if (url === '/api/protected/my/talks') {
     // **故意两类都回**：真实后端 20260922 起已加 src='board' 过滤，但这条缺陷的形态
     // 正是"后端把两类一起回、前端照单全收"，所以要验的是"说说混进来也不显示"。
@@ -291,7 +302,7 @@ import * as React from 'react';
 import { createRoot } from 'react-dom/client';
 import UserCenter from './src/components/UserCenter/index.tsx';
 // 只挂个人中心本身：头部（点「个人中心」开窗、红点位置）由 Head 那套负责，这里测的是
-// 窗口里的五个页签与它们的请求契约。
+// 窗口里的六个页签与它们的请求契约。
 //
 // 20260924：`open` 从"页面上的一个全局布尔"改成组件内 state，并把它经 `__setOpen`
 // 暴露出来。动机：此前沙箱里 **onClose 只置了个标记位、窗口并不会真的关**（`open` 是
@@ -330,6 +341,12 @@ def build_sandbox() -> pathlib.Path:
                         "require('fs').writeFileSync(process.argv[2],r.css);",
                         str(FE / rel), str(out)], cwd=str(FE), check=True)
         css.append(out.read_text())
+
+    # 全站样式表：`src/main.tsx` 第一行就 import 它，所有页面都吃得到。沙箱此前只编译
+    # 组件那三份 .sass ⇒ **写在 index.css 里的全局规则在沙箱里根本不存在**，几何断言
+    # 于是把"规则没生效"读成"页面缺陷"（20260929 的 `.counter-room` 就是被这条抓出来的：
+    # 两个"计数被遮挡"断言在沙箱里假红，而真站上它是好的）。真站有它，沙箱就得有它。
+    css.append((sb / "src/index.css").read_text())
 
     def bundle(entry: str, outfile: str):
         # capture_output + check=True 会把 esbuild 的报错吞掉（只留一句 exit status 1，
@@ -457,13 +474,14 @@ with sync_playwright() as p:
         page.errs = errs
         return page
 
-    print("① 打开窗口：五个页签 + 用户设置（头像/昵称/账号）")
+    print("① 打开窗口：六个页签 + 用户设置（头像/昵称/账号）")
     pg = fresh_page()
     pg.wait_for_selector(".ucAvatarName", timeout=10000)
     tabs = pg.locator(".ant-tabs-tab").all_inner_texts()
-    check("五个页签齐全（用户设置/收藏的文章/留言记录/公告和通知/站内信箱）",
-          len(tabs) == 5 and "用户设置" in tabs[0] and "收藏的文章" in tabs[1]
-          and "留言记录" in tabs[2] and "公告和通知" in tabs[3] and "站内信箱" in tabs[4],
+    check("六个页签齐全（用户设置/收藏的文章/留言记录/公告和通知/站内信箱/对话额度）",
+          len(tabs) == 6 and "用户设置" in tabs[0] and "收藏的文章" in tabs[1]
+          and "留言记录" in tabs[2] and "公告和通知" in tabs[3] and "站内信箱" in tabs[4]
+          and "对话额度" in tabs[5],
           " | ".join(tabs))
     check("昵称来自 /api/protected/profile 的回包",
           pg.locator(".ucNickName").inner_text() == "泠月喵",
@@ -1200,10 +1218,12 @@ with sync_playwright() as p:
     body_errs = list(pg_user.errs)
     pg_user.close()
 
-    print("⑩ 窗口观感：五页签尺寸一致 / 标题栏分割线 / 关闭钮贴右上 / 字数计数不被遮挡")
+    print("⑩ 窗口观感：六个页签尺寸一致 / 标题栏分割线 / 关闭钮贴右上 / 字数计数不被遮挡")
     pg = fresh_page()
     geo = []
-    for i in range(5):
+    # 20260929 起是**六**个页签（新的「对话额度」）。这一圈一起量：额度页若把窗口撑高，
+    # 这条会红——它是"换个页签就变形"的回归锁，新页签没有豁免。
+    for i in range(6):
         pg.click(f".ant-tabs-tab >> nth={i}")
         pg.wait_for_timeout(450)
         geo.append(pg.evaluate("""() => {
@@ -1211,9 +1231,9 @@ with sync_playwright() as p:
             const p = document.querySelector('.ant-tabs-tabpane-active .ucPane').getBoundingClientRect();
             return {w: Math.round(c.width), h: Math.round(c.height), ph: Math.round(p.height)};
         }"""))
-    check("五个页签下窗口尺寸一模一样（不再换个页就变形）",
+    check("六个页签下窗口尺寸一模一样（不再换个页就变形）",
           len({(g["w"], g["h"]) for g in geo}) == 1, str(geo))
-    check("五个页签的内容格高度也一致（固定高度 + 内容多的自己滚）",
+    check("六个页签的内容格高度也一致（固定高度 + 内容多的自己滚）",
           len({g["ph"] for g in geo}) == 1, str(geo))
     hdr = pg.evaluate("""() => {
         const h = document.querySelector('.ant-modal-header');
@@ -1227,7 +1247,7 @@ with sync_playwright() as p:
     # computed style，不能只看"有没有写过这句 CSS"。
     check("标题栏底下有分割线（antd v5 默认无，是补的）",
           hdr["bs"] == "solid" and float(hdr["bw"].replace("px", "")) >= 1, str(hdr))
-    check("分割线正好夹在标题栏与五页签之间",
+    check("分割线正好夹在标题栏与页签条之间",
           hdr["mb"] == "0px" and hdr["hBottom"] <= hdr["tabsTop"] + 1, str(hdr))
     close = pg.evaluate("""() => {
         const b = document.querySelector('.ant-modal-close').getBoundingClientRect();
@@ -1239,7 +1259,8 @@ with sync_playwright() as p:
           4 <= close["gapTop"] <= 14 and 4 <= close["gapRight"] <= 14 and close["w"] > 0, str(close))
     # ★「字数限制文本被遮挡」（20260922 用户反馈）：antd 的 showCount 把计数绝对定位在
     #   输入框下方约 22px 处，而 .ucField 的行距只有 12px ⇒ 计数整条被下一行压住。
-    #   修法是给 TextArea 套一层 .ucMsgBody 吃 margin-bottom（见 index.tsx 同名注释）。
+    #   修法是给 TextArea 套一层 `counter-room` 吃 margin-bottom（那个 22px 20260929 起
+    #   收到 src/index.css 一处，见那里的长注释；此前是这一处的 .ucMsgBody 私有类）。
     #   这里量**几何重叠**，因为"CSS 写对了"和"真的没被压住"是两件事。
     pg.click(".ant-tabs-tab >> nth=4")
     # 写信表单 20260923 起是信箱里的第四个二级签页（不再是常驻那一行）⇒ 先点进去
@@ -1267,6 +1288,99 @@ with sync_playwright() as p:
     check("计数内容如实反映输入长度", bool(cnt) and cnt["text"].startswith("4 / 500"),
           str(cnt and cnt["text"]))
     pg.close()
+
+    print("⑩b 对话额度页签：三档配色 / 申请弹窗的字数计数 / 提交后弹的是后端那句话")
+    qp = fresh_page()
+    qp.click(".ant-tabs-tab >> nth=5")
+    qp.wait_for_selector(".ucQuotaBarIn", timeout=10000)
+    qp.wait_for_timeout(300)
+
+    def quota_view(q):
+        """把 `window.__quota` 换成这一档，再假装"看板娘刚说完一轮"。
+
+        额度是唯一**每轮都在动**的数字，所以重拉的判据是 agent-turn-done 那个事件
+        （index.tsx 那一处注释写着为什么它必须进来）——用它顺带把三档都量一遍，
+        等于同时验了"换档位真的会重画"和"三档颜色不一样"两件事。"""
+        qp.evaluate("(v) => { window.__quota = v }", q)
+        qp.evaluate("() => window.dispatchEvent(new Event('agent-turn-done'))")
+        qp.wait_for_timeout(600)
+        return qp.evaluate("""() => {
+            const el = document.querySelector('.ucQuotaBarIn');
+            if (!el) return null;
+            const cs = getComputedStyle(el);
+            const nums = document.querySelector('.ucQuotaNums');
+            return {bg: cs.backgroundColor, cls: el.className,
+                    w: Math.round(el.getBoundingClientRect().width),
+                    nums: nums ? nums.textContent : ''};
+        }""")
+
+    def qv(used, remaining, limit=500, unlimited=False, pending=None):
+        return {"used": used, "limit": limit, "remaining": remaining,
+                "unlimited": unlimited, "pendingRequest": pending}
+
+    lv_ok = quota_view(qv(137, 363))
+    lv_low = quota_view(qv(400, 100))
+    lv_crit = quota_view(qv(490, 10))
+    # 色值住在 index.sass（浅色那套），这里量的是**浏览器算出来的**背景色——"CSS 写对了"
+    # 与"真的染上了"是两件事（行内样式/更高特异性的规则都能把它盖掉）。
+    check("充足档染的是绿（#3f9d63）", bool(lv_ok) and lv_ok["bg"] == "rgb(63, 157, 99)", str(lv_ok))
+    check("偏低档染的是琥珀（#d08a1e）", bool(lv_low) and lv_low["bg"] == "rgb(208, 138, 30)", str(lv_low))
+    check("告急档染的是朱红（#c0392b）", bool(lv_crit) and lv_crit["bg"] == "rgb(192, 57, 43)", str(lv_crit))
+    check("三档类名各自到位（ok / is-low / is-critical）",
+          "is-low" in lv_low["cls"] and "is-critical" in lv_crit["cls"]
+          and "is-low" not in lv_ok["cls"] and "is-critical" not in lv_ok["cls"],
+          f'{lv_ok["cls"]} | {lv_low["cls"]} | {lv_crit["cls"]}')
+    # 条画的是**余额**（剩多少占上限多少）：剩得少 ⇒ 条短 ⇒ 看着就着急。
+    check("条长跟着余额走（剩 363/500 比剩 10/500 长得多）", lv_ok["w"] > lv_crit["w"] * 3,
+          str([lv_ok["w"], lv_crit["w"]]))
+    check("主角那个数是余额（「剩 363 / 500」，不是「已用 137」）",
+          lv_ok["nums"] == "剩 363 / 500", str(lv_ok["nums"]))
+
+    # 申请弹窗（20260929 用户反馈「字数计数也有一点遮挡」）：同一个 showCount 绝对定位，
+    # 这里下面跟的是那句说明文字（.ucHint）⇒ 量的是计数与它的**几何重叠**。
+    reason = "额度用完了，想接着问架构那篇"
+    # 弹窗有**两层**（个人中心本身也是一个 .ant-modal-wrap，申请弹窗是它的兄弟节点）⇒
+    # 一律按"里面那个有内容的 textarea 属于谁"来认窗，不靠"第一个可见的"。这句挂到 window
+    # 上给下面三处共用（点按钮、量几何），免得三处各写一遍认窗逻辑、改一处漏两处。
+    qp.evaluate("""() => {
+        window.__applyWrap = () => [...document.querySelectorAll('.ant-modal-wrap')].find((x) =>
+            [...x.querySelectorAll('textarea')].some((t) => t.offsetParent !== null && t.value.length > 0));
+    }""")
+    qp.click(".ant-tabs-tabpane-active .ucPaneBar button")
+    qp.wait_for_selector(".ant-modal-wrap:visible textarea", timeout=10000)
+    qp.wait_for_timeout(400)
+    qp.locator(".ant-modal-wrap:visible textarea").first.fill(reason)
+    qp.wait_for_timeout(300)
+    acnt = qp.evaluate("""() => {
+        const w = window.__applyWrap();
+        if (!w) return null;
+        const c = w.querySelector('.ant-input-data-count');
+        const hint = w.querySelector('.ucHint');
+        if (!c || !hint) return null;
+        const r = c.getBoundingClientRect();
+        const h = hint.getBoundingClientRect();
+        const ta = w.querySelector('textarea').getBoundingClientRect();
+        const cs = getComputedStyle(c);
+        return {text: c.textContent, countTop: Math.round(r.top), countBottom: Math.round(r.bottom),
+                taBottom: Math.round(ta.bottom), hintTop: Math.round(h.top),
+                visible: r.width > 0 && r.height > 0 && cs.visibility !== 'hidden'};
+    }""")
+    check("申请弹窗的字数计数真的渲染出来了", bool(acnt) and acnt["visible"], str(acnt))
+    check("计数在理由输入框下方", bool(acnt) and acnt["countTop"] >= acnt["taBottom"] - 1, str(acnt))
+    check("计数不再被下面那句说明（.ucHint）压住",
+          bool(acnt) and acnt["countBottom"] <= acnt["hintTop"], str(acnt))
+    check("计数内容如实反映输入长度",
+          bool(acnt) and acnt["text"].startswith(f"{len(reason)} / 500"), str(acnt and acnt["text"]))
+    # ★「申请重置弹出的是 ok」（20260929 用户反馈）：`ApiResponse::success` 的 message 恒为
+    #   字面量 "ok"，人话在 `data` 里——照抄 message 弹出来就是那个 "ok"。
+    #   断言**弹的是后端那句中文**，不许是 "ok" 也不许是前端兜底的那句。
+    qp.evaluate("() => window.__applyWrap().querySelector('.ant-btn-primary').click()")
+    qp.wait_for_timeout(800)
+    toast = qp.evaluate("() => [...document.querySelectorAll('.ant-message-notice-content')]"
+                        ".map(x => x.textContent).join('|')")
+    check("提交申请后弹的是后端那句人话（不是字面量 ok）",
+          "已提交对话额度重置申请" in toast and "ok" not in toast, str(toast))
+    qp.close()
 
     print("⑪ 夜间：窗口金色漏光描边 + 发送按钮换成登录页那套配色")
     dk = fresh_page(dark=True)
