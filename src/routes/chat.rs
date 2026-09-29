@@ -529,7 +529,7 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
     //    叙及"刚刚/刚才那次"才有依据——无时序的 8 行分不清哪次是刚发生的。
     //  - 两处都在读侧 ⇒ DB 里的存量回执无需迁移/回填，旧会话回看即带时间。
     // 读取失败（表未建/DB 抖动）→ 空串，agent 端按"无记录"如实处理，不阻断对话。
-    let executions_text: String = {
+    let (executions_text, recent_tools): (String, Vec<String>) = {
         let recent = execution_log::Entity::find()
             .filter(execution_log::Column::UserId.eq(uid))
             .filter(execution_log::Column::ConversationId.eq(conversation_id))
@@ -555,7 +555,8 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
             }
         }
         rows.truncate(8);
-        rows.iter()
+        let text = rows
+            .iter()
             .rev() // 新→旧取回 → 旧→新拼串
             .map(|(at, detail, n)| {
                 if *n > 1 {
@@ -565,7 +566,27 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
                 }
             })
             .collect::<Vec<_>>()
-            .join("\n· ")
+            .join("\n· ");
+        // 上一轮执行过的**工具名**（20260929 批 F1'）：**同一次查询、同一批行**取
+        // `tool` 列而不是渲染好的 detail——detail 是给人看的动作行，工具名是给判据
+        // 用的机器事实。去重后截 8 条，与上面 `rows.truncate(8)` 同口径（"最近 8 条
+        // 不同的动作"），于是"上一轮读过审核队列吗"有了一个**类型化**的说法，不再
+        // 只靠对 narrator 散文做正则。
+        // `tool` 是 20260927 才加的列：NULL（存量行）与空串一律跳过，**不当成一个
+        // 工具名**（把"不知道"塞进"已知"那一栏，正是这一族最贵的错法）。
+        let mut seen_tool: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        let mut tools: Vec<String> = Vec::new();
+        for r in &recent {
+            let Some(t) = r.tool.as_deref() else { continue };
+            if t.is_empty() || !seen_tool.insert(t) {
+                continue;
+            }
+            tools.push(t.to_string());
+            if tools.len() >= 8 {
+                break;
+            }
+        }
+        (text, tools)
     };
 
     // 跨轮待办（20260923）：本会话最新一条**仍 pending 且未超时效**的待办，渲染成
@@ -652,6 +673,16 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
         // 20260921 确认弹窗：透传待办令牌（空串 = 普通轮）。agent 侧验签失败 →
         // 零执行 + 如实告知"确认已过期"；验签通过 → 跳过 planner 直接执行签名里的动作
         "confirm_token": payload.confirm_token.as_deref().unwrap_or(""),
+        // 上一轮执行过的**工具名**（20260929 批 F1'）：授权式审核快道（"按你的方案办"）
+        // 的**结构化准入判据**——此前那条判据只能对 narrator 散文做正则（`_REVIEW_
+        // INTENT_RE`），而"上一轮到底调没调过读队列的工具"本来是系统自己记得到的事实。
+        // 取法与 `executions_text` **同一批行**（同一次查询、同一个 40→去重→8 的窗口
+        // 口径），只是这里取 `tool` 列而不是渲染好的 detail：detail 是给人看的动作行，
+        // 工具名是给判据用的机器事实。
+        // 空数组 = "上一轮什么工具都没调过"这一**确定的**事实（与额度那两个键的
+        // "读不到就缺席"恰好相反，见那条注）；旧 agent 端不认这个键 ⇒ 忽略，
+        // 快道退回散文判据（fail-open，零行为变更）。
+        "recent_tools": recent_tools,
     });
 
     // 额度两个键（20260929）**必须条件插入**——`json!` 对 `Option` 会写成 `null`，
