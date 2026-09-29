@@ -30,6 +30,15 @@
 不该每晚对着一个真实账号发这两个写请求：它通过与否取决于"后端的闸还在不在"，而这件事
 不靠每晚真发一次来维持（`cargo test` 里的闸门单测管着它）。摘掉之后夜间验的仍然是它的
 本分：**冻结/改密码真的收回令牌、两处旁路真的收口**。
+
+**退出码**（20260929 写清；夜间脚本按它分开措辞）：
+  0 = 全部通过；
+  1 = 有断言失败 = **语义回归**（冻结/改密码没收回、两处旁路没收口）；
+  3 = **前置不可用**（管理员 uid 自己就不通）⇒ 这一夜**没验**，**不是**"有回归"。
+退出码 3 与 golden 侧 `eval/identity_preflight.py` 的 `UNUSABLE` 同源（那里也是 3），
+理由是同一句：**"没评"不是"通过"，但"没评"也不是"有回归"**——两者要的应对完全相反
+（前者换 uid，后者查安全闸）。建号 / 登录失败仍按 1 报：那几步是探针自己的步骤坏了，
+多半是真故障，不该被折进"没评"里。
 """
 import argparse
 import hashlib
@@ -132,7 +141,16 @@ def main():
         sys.exit("请用 --admin-uid 指定一个管理员 uid（探针不会替你猜哪个是管理员）")
 
     admin_uid = args.admin_uid
-    admin = sign(admin_uid, ver=0)
+    # **不带 `ver` 声明**（20260929 修）：这里的令牌是**仪器**不是被测对象，它不该对
+    # "这个账号今天的代次是几"做任何假设——原写法写死 `ver=0`，而 20260924 那轮测试账号
+    # 轮换把 721 的代次 +1 了 ⇒ 【零】恒 401 ⇒ 连续三夜红，而夜间把它读成「冻结/改密码/
+    # 旁路收口有回归」（一句会把人带去查安全闸的假警报）。
+    # 不带 `ver` 正是**代调/旧令牌的形状**（`authz::check_token`：`claims_ver` 缺席 ⇒
+    # 跳过代次比对、**冻结检查照旧**），golden 侧的 `eval/identity_preflight.py` 用的就是
+    # 这条形状（它的头注写着"连不带 ver 这条都一致"）——两个仪器从今天起同形。
+    # 代次比对本身**没有因此少验**：它验在**靶子账号**身上（那边是真登录令牌、带 ver，
+    # 冻结 / 改密码之后必须被拒），本探针【二】【三】就是那两节。
+    admin = sign(admin_uid, ver=None)
     stamp = time.strftime("%Y%m%d%H%M%S")
     name = f"probe_revoke_{stamp}"
     pw = secrets.token_urlsafe(18)
@@ -142,7 +160,14 @@ def main():
     st, r = call("GET", "/api/protected/stats/users", admin)
     check("管理员令牌打得开后端（不是 401/403）", st == 200, f"http={st}")
     if st != 200:
-        sys.exit("管理员身份就不通，后面的结论都没有意义——先查 --admin-uid 对不对")
+        # **退出码 3 = 前置不可用 = 这一夜"没验"**，不是"验出来有回归"（20260929）。
+        # 与 golden 的 `identity_preflight` 三态同义（那里 UNUSABLE ⇒ 退出码 3）：管理员
+        # 身份不通时，下面每一条结论都没有意义，读日志的人不该看到一句"有回归"。
+        # 夜间脚本按退出码分开措辞（见 `scripts/nightly_regression.sh` 那一节）。
+        print(f"\n⚠ 前置不可用：管理员 uid={admin_uid} 的令牌打不开后台（http={st}）"
+              "——这一夜**没有评估**收回语义，不是「有回归」。"
+              "换一个角色相符、未被冻结的 uid 后重跑（先看 eval/identity_preflight.py 的判据）。")
+        return 3
 
     print("\n【一】冻结前：靶子账号能正常用")
     st, r = call("POST", "/api/temp-users",
