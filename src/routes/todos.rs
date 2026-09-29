@@ -108,15 +108,54 @@ pub struct SetTodoDoneRequest {
 ///
 /// **没有 id 字段**：同 [SetTodoDoneRequest]，线上从不回行 id。
 ///
-/// `date` **刻意不加 `#[serde(default)]`**（与 `done` 同一条纪律，虽然方向不同）：缺了它
-/// serde 会拒绝整个请求体（400）。给它默认值等于"漏传日期 = 清空排期"——那是一个会静默
-/// 抹掉主人排期的默认值。**要清空**这条通道也有路：显式传 `null` 或空串（`parse_due_date`
-/// 把两种"没填"归一成同一个 None）——"清空"和"漏传"必须分开。
+/// `date` 用的是 [TodoDate] 而不是裸 `Option<String>`（与 `done` 同一条纪律，虽然方向
+/// 不同）：缺了它 serde 拒绝整个请求体，调用方收到一个明确的失败而不是一次静默抹除。
+/// **要清空**这条通道也有路：显式传 `null` 或空串（`parse_due_date` 把两种"没填"归一成
+/// 同一个 None）——"清空"和"漏传"必须分开。
 #[derive(Deserialize)]
 pub struct SetTodoDateRequest {
     #[serde(default)]
     pub text: String,
-    pub date: Option<String>,
+    pub date: TodoDate,
+}
+
+/// 改排期请求里的 `date`：**三态**（漏传 / 显式 `null` / 字符串），只有后两态进得来。
+///
+/// **为什么不是裸 `Option<String>`**（20260929 的 CI 抓出来的）：serde 对 `Option` 字段有
+/// 一条特例——**字段缺席时直接给 `None`**，与显式传 `null` 得到同一个值；这条特例不受
+/// `#[serde(default)]` 控制（写不写那一行都一样）。`SetTodoDoneRequest.done` 之所以能靠
+/// "缺了就 400"守门，是因为它的类型是 `bool`、压根不是 `Option`。于是裸 `Option<String>`
+/// 会把"漏传 date"静默落成"清空排期"——正是本端点要防的那个默认值（单测
+/// `改排期请求体必须把日期说清楚` 就是为此写的，它先在 CI 上红了）。
+///
+/// 这个新类型**不走 `deserialize_option`**（那条路正是"缺席即 None"的来源），而是自己认
+/// `null` 与字符串 ⇒ 漏传在 serde 那里就是 `missing_field` 硬错误。数字/布尔之类的类型错
+/// 也在这里被拒（visitor 没实现它们，serde 报 invalid type）。
+///
+/// 用的是 `deserialize_any`，所以只对**自描述格式**成立（本仓只吃 JSON；换成 bincode 之类
+/// 会在这里无声失效——那时这条纪律要改成显式 `deserialize_option` + 外层再判一次）。
+pub struct TodoDate(pub Option<String>);
+
+impl<'de> Deserialize<'de> for TodoDate {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct V;
+        impl<'de> serde::de::Visitor<'de> for V {
+            type Value = TodoDate;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("排期日（`null` 或 年-月-日 的字符串）")
+            }
+            fn visit_unit<E: serde::de::Error>(self) -> Result<TodoDate, E> {
+                Ok(TodoDate(None))
+            }
+            fn visit_str<E: serde::de::Error>(self, s: &str) -> Result<TodoDate, E> {
+                Ok(TodoDate(Some(s.to_string())))
+            }
+            fn visit_string<E: serde::de::Error>(self, s: String) -> Result<TodoDate, E> {
+                Ok(TodoDate(Some(s)))
+            }
+        }
+        d.deserialize_any(V)
+    }
 }
 
 /// 排期串 → `NaiveDate`；`None`/空串 = 未排期，认不出的格式 → Err（中文文案）。
@@ -458,7 +497,9 @@ pub async fn set_todo_date(
     }
     // 日期先归一（认不出就整单拒绝，**绝不替主人挑一天顶上**）：这一步在读写之前，
     // 于是"日期打错了"这件事不会先落一次库再报错。
-    let due_date = match parse_due_date(payload.date.as_deref()) {
+    // `payload.date` 是 [TodoDate]：走到这里就说明字段**在**（漏传在 serde 那层已经
+    // 整单拒掉了），所以下面这个 `None` 只可能来自"显式清空"。
+    let due_date = match parse_due_date(payload.date.0.as_deref()) {
         Ok(d) => d,
         Err(msg) => return Json(ApiResponse::error(msg)),
     };
@@ -533,14 +574,22 @@ mod tests {
         // 与 `SetTodoDoneRequest.done` 同一条纪律的镜像：**漏传字段 ≠ 显式清空**。
         // 漏传由 serde 拒掉整个请求体（400，agent 侧会收到一个明确的失败而不是一次静默
         // 抹除）；要清空必须说出口（`null` 或空串），两者在这里分得开。
+        //
+        // ⚠️ 这个断言在 20260929 的 CI 上**真红过一次**：那一版的字段是裸
+        // `Option<String>`，而 serde 对 `Option` 有"缺席即 None"的特例（不受
+        // `#[serde(default)]` 控制）⇒ 漏传 date 会被静默当成清空。改成 [TodoDate] 才好。
+        // 所以下面这三态是**三件事**，逐态断言，不要合并成一句 `is_err()`。
         assert!(
             serde_json::from_str::<SetTodoDateRequest>(r#"{"text":"买菜"}"#).is_err(),
             "漏传 date 不该被当成清空"
         );
+        // 类型错也是硬错误：`date` 只认 null 与字符串，数字/布尔不该被悄悄接受
+        assert!(serde_json::from_str::<SetTodoDateRequest>(
+            r#"{"text":"买菜","date":20261008}"#).is_err());
         for clear in [r#"{"text":"买菜","date":null}"#, r#"{"text":"买菜","date":""}"#,
                       r#"{"text":"买菜","date":"  "}"#] {
             let d = serde_json::from_str::<SetTodoDateRequest>(clear).unwrap();
-            assert_eq!(parse_due_date(d.date.as_deref()), Ok(None), "{clear}");
+            assert_eq!(parse_due_date(d.date.0.as_deref()), Ok(None), "{clear}");
         }
         let d = serde_json::from_str::<SetTodoDateRequest>(
             r#"{"text":"更新简历","date":"2026-10-08"}"#,
@@ -548,7 +597,7 @@ mod tests {
         .unwrap();
         assert_eq!(d.text, "更新简历");
         assert_eq!(
-            parse_due_date(d.date.as_deref()),
+            parse_due_date(d.date.0.as_deref()),
             Ok(Some(NaiveDate::from_ymd_opt(2026, 10, 8).unwrap()))
         );
         // 认不出的日期在**读写之前**就被挡下（handler 里那一步的位置），这条锁的是
@@ -557,7 +606,7 @@ mod tests {
             r#"{"text":"更新简历","date":"10月8日"}"#,
         )
         .unwrap();
-        assert!(parse_due_date(d.date.as_deref()).is_err());
+        assert!(parse_due_date(d.date.0.as_deref()).is_err());
     }
 
     #[test]
