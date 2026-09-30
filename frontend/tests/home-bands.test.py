@@ -8,6 +8,12 @@
 （页脚）三段的 `background` **都是 `var(--container-background-color)`**（半透明白铺在
 页面底图上）⇒ 从上到下没有一处换色。这正是"一个颜色配到底"，也是本套件要钉死的那条回归。
 
+20261001 第二轮（用户第 3 条）在同一片区域改了两件事，判据也一并更新：
+  · **页脚不再有接缝胶带**（「页脚不需要加胶带」）——原「页脚胶带骑缝（top < 0）」那条
+    断言反了过来，现在是「`::before` 的 content 是 none」；
+  · **赞助方 logo 换成不透明的浅色贴片**（「链接和图标字体是黑色，深色页脚看不清」）——
+    旧值 `rgba(255,255,255,0.07)` 压在深底上仍是深色，新增"贴片浅且不透明 + 贴合 logo"两条。
+
 为什么必须真跑浏览器：这条改造的正确性全在**渲染结果**里 —— 源码写着
 `background-image: …, var(--band-content)` 不代表那条渐变真的画出来了（先写
 `background: var(--band-content)` 再补 `background-image` 就会把它整条顶掉，
@@ -104,6 +110,17 @@ for tok in ["--band-content:", "--band-foot:", "--band-foot-ink:", "--band-foot-
     check(f"令牌 {tok[:-1]} 深浅各一档", n == 2, f"{n} 次")
 
 check("页脚 logo 排能换行（窄屏不探出容器）", "flex-wrap: wrap" in foot_sass)
+
+# 页脚的接缝胶带 20261001 已删（用户：「页脚不需要加胶带」）——胶带是"两张内页相接"
+# 的道具，封底不贴。这条**反断言**防的是"哪天看着空又贴回去"。
+check("页脚 sass 里没有胶带规则（`&::before` 整块删除）", "&::before" not in foot_sass)
+
+# 赞助方贴片：封底深浅两档都是深色，而这四张图里阿里云百炼是深藏青字、Live2D 是黑字，
+# 压在深底上等于没有字（用户：「赞助方链接和图标字体是黑色，深色页脚看不清字体了」）。
+# 旧值 `rgba(255, 255, 255, 0.07)` 是**压在深底上的半透明白**，算出来仍是深色 ——
+# 注释写着"极淡的浅色贴片"、值却是深色，这就是那一次的缺陷本体。
+check("logo 贴片是实体浅色（旧的 `rgba(255, 255, 255, 0.07)` 不许回来）",
+      "rgba(255, 255, 255, 0.07)" not in foot_sass and "#f7f3fb" in foot_sass)
 
 
 # ═══ 二、沙箱 ═════════════════════════════════════════════════════════════════
@@ -358,8 +375,8 @@ with sync_playwright() as p:
         pg.close()
         check(f"{theme}：无 JS 报错", not errs, str(errs[:1]))
 
-    # ── 三、几何：胶带的位置与窄屏 logo 排 ────────────────────────────────────
-    print("\n【三】几何：接缝胶带 / 窄屏 logo 排")
+    # ── 三、几何：胶带的位置、logo 贴片、窄屏 logo 排 ──────────────────────────
+    print("\n【三】几何：接缝胶带 / logo 贴片 / 窄屏 logo 排")
     pg = br.new_page(viewport={"width": 1280, "height": 900})
     pg.goto(f"http://127.0.0.1:{PORT}/light.html")
     pg.wait_for_timeout(300)
@@ -375,9 +392,28 @@ with sync_playwright() as p:
           float(content["before"]["top"].replace("px", "")) >= 0
           and content["before"]["h"] == "15px",
           f"top={content['before']['top']} h={content['before']['h']}")
-    # 页脚没有 overflow ⇒ 那半片可以骑到接缝外面去，两处胶带才是"把两张纸粘起来"。
-    check("页脚胶带骑缝（top < 0）",
-          float(foot["before"]["top"].replace("px", "")) < 0, foot["before"]["top"])
+    # 页脚的胶带已删。判据取伪元素的计算 `content`：删掉整条规则后它是默认的 `none`
+    # （**不是空串**）—— 「`top` 读不出来」那种写法分不清"压根没有伪元素"与"伪元素没写 top"。
+    check("页脚没有接缝胶带（::before 的 content 是 none）",
+          foot["before"]["content"] in ("none", ""), foot["before"]["content"])
+
+    # 赞助方贴片：**不透明的浅色**，且**贴合**——不是盖在 logo 外面的大白块。
+    plate = pg.evaluate("""(sel) => {
+        const a = document.querySelector(sel), img = a.querySelector('img');
+        const ra = a.getBoundingClientRect(), ri = img.getBoundingClientRect();
+        return {bg: getComputedStyle(a).backgroundColor,
+                w: ra.width, h: ra.height, iw: ri.width, ih: ri.height};
+    }""", "#lg1")
+    pc = P(plate["bg"])
+    check("logo 贴片是不透明色（半透明会与深底混成深色）",
+          len(pc) == 3 or (len(pc) == 4 and pc[3] >= 0.95), plate["bg"])
+    check("logo 贴片是浅色（相对亮度 > 0.6）——深底上这几张深色 logo 才看得见",
+          lin(pc) > 0.6, f"L={lin(pc):.3f}")
+    # 贴片宽 = 图宽 + 左右各 8px。宽出太多就是"一排大白块"（旧注释怕的那种），
+    # 贴不住就是 logo 压在贴片边上。
+    check("贴片贴合 logo（左右各只留 8px 呼吸边）",
+          abs((plate["w"] - plate["iw"]) - 16) < 1.5,
+          f"贴片{plate['w']:.0f}px 图{plate['iw']:.0f}px")
 
     for w in (320, 375):
         pg.set_viewport_size({"width": w, "height": 800})

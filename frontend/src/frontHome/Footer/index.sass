@@ -4,9 +4,13 @@
 // 搭配撞色感，不要一股脑一个首页顶部颜色配到底」。
 //
 // 改版前它与正文带**共用同一个 `--container-background-color`**（半透明白铺在页面底图上），
-// 于是三段一路同色。现在它自成一档：**深墨紫封底** + 顶上一道胶带接缝 + 粉白字，
-// 与前两段（粉紫首屏 / 薄荷青正文带）撞色。色值在 `src/index.css` 的 `--band-foot*`
-// 那一组里（深浅两档成对），这里只消费。
+// 于是三段一路同色。现在它自成一档：**深墨紫封底** + 粉白字，与前两段（粉紫首屏 /
+// 薄荷青正文带）撞色。色值在 `src/index.css` 的 `--band-foot*` 那一组里（深浅两档成对），
+// 这里只消费。
+//
+// ⚠️ 顶上那道「接缝胶带」20261001 已删（用户原话「页脚不需要加胶带」）：两片和纸胶带
+// 粘两张纸是**内页**的语法，封底上贴胶带读起来像还有一页压在它下面。正文带自己的那片
+// （`.ContentContainer::before`）保留，所以"胶带"这个道具仍只属于正文那一段。
 //
 // ⚠️ 两件事决定了这里**只能**用"自带一套造型"的做法：
 //   ① 页脚挂在 App 壳上（App.tsx），**所有前台页面共用**——不能出现"只有当它上面是
@@ -19,9 +23,6 @@
 // 搬进类里：`.footLine` / `.footNote` / `.footTech` / `.footPoem` / `.footBeian` / `.footLogos`。
 // **别再往 TSX 里写行内颜色**。
 .footerContainer
-  // 顶上的胶带要探到盒子外面（`top: -8px`），没有这条它会按"内容盒之外"被算进滚动溢出
-  // 之外的东西——`position: relative` 同时也是那道接缝的定位基准。
-  position: relative
   padding: 36px 20px
   background: var(--band-foot)
   display: flex
@@ -30,22 +31,6 @@
   align-items: center
   color: var(--band-foot-ink, #ece4f4)
   box-sizing: border-box
-
-  // 顶上那道**接缝胶带**：正文带与封底是两张纸，用两片和纸胶带粘起来。
-  // 与首页正文带 `.ContentContainer::before` 同一配方（那里在接缝的另一侧）。
-  &::before
-    content: ''
-    position: absolute
-    top: -8px
-    left: 0
-    right: 0
-    height: 16px
-    pointer-events: none
-    background-image: linear-gradient(var(--washi-tape-2, rgba(214, 226, 255, 0.8)), var(--washi-tape-2, rgba(214, 226, 255, 0.8))), linear-gradient(var(--washi-tape, rgba(255, 222, 238, 0.86)), var(--washi-tape, rgba(255, 222, 238, 0.86)))
-    background-size: clamp(110px, 15vw, 200px) 15px, clamp(90px, 12vw, 165px) 15px
-    background-position: 16% 0, 80% 1px
-    background-repeat: no-repeat
-    filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.35))
 
   // 版权行：封底上最重的一行，给足对比度（深底上的浅字，实测 ≥ 10:1）
   .footLine
@@ -110,9 +95,16 @@
       color: var(--washi-pink, #ff9ec9)
       text-decoration-line: underline
 
-  // 合作方 logo 那一排。封底是深色，而这几张图有深蓝、深橙的笔画——直接放上去
-  // 会"糊进底里"。给每张一个**极淡的浅色贴片**（不是白框：白框在小尺寸上会变成
-  // 一排刺眼的亮块），logo 的对比度就回到它们出厂时的样子。
+  // 合作方 logo 那一排。
+  // 用户 20261001：「脚页的赞助方链接和图标字体是黑色，深色页脚看不清字体了」。
+  // 封底**深浅两档都是深色**（见 index.css），这四张图里阿里云百炼是深藏青字、
+  // Live2D Cubism 是黑字、腾讯云与 Cloudflare 各带一段黑/深灰字 —— 直接放上去
+  // 等于那几段字不存在。所以给每张一个**真正不透明的浅色贴片**。
+  //
+  // ⚠️ 上一版写的是 `rgba(255, 255, 255, 0.07)`：那是压在深底上的**深色**，注释里
+  // 说的"极淡的浅色贴片"根本没实现出来 —— 这一次的缺陷本体就是这个值。
+  // 贴片色写成常量而不是令牌：封底两档都是深色，这个浅片在两边都成立
+  // （与下面 `.footTechRust` / `.footTechAxum` 同一处置）。
   .footLogos
     display: flex
     // ⚠️ 必须能换行：`.footerContainer` 是 `align-items: center` 的列 flex，
@@ -130,32 +122,38 @@
       display: inline-flex
       align-items: center
       justify-content: center
-      padding: 4px
-      border-radius: 10px
-      background: rgba(255, 255, 255, 0.07)
-      border: 1px solid rgba(255, 255, 255, 0.08)
-      transition: background 0.25s ease
+      // 贴片只留呼吸边：图本身按自己的比例铺满框，贴片跟着框走，不会出现"大白方块"
+      padding: 5px 8px
+      border-radius: 8px
+      background: #f7f3fb
+      transition: background 0.25s ease, box-shadow 0.25s ease
       &:hover
-        background: rgba(255, 255, 255, 0.14)
+        background: #fff
+        box-shadow: 0 6px 14px -8px rgba(0, 0, 0, 0.6)
 
     img
       display: block
-      // 几张图的固有比例各不相同（Ali 是 357×76 的长条、Live2D 是 60×15），
-      // 而这里给的是正方形/近正方形的框 —— `contain` 让它们在框里完整显示，
-      // 不被拉伸（原来没有这条，长条图是被压扁的）。
+      // 几张图的固有比例各不相同（Ali 是 357×76 的长条、Live2D 是 60×15）。
+      // 框已按各自比例给足，`contain` 只是兜住"远端图被换掉/比例变了"这种情况下
+      // 不被拉伸（与 dashboard 头像同一处置）。
       object-fit: contain
 
-    // 每张 logo 的显示框。**从 TSX 的行内 style 搬过来的**（那里也是写死的像素），
-    // 顺手补上 object-fit 需要的确定盒子。改尺寸只改这里一处。
+    // 每张 logo 的显示框：**统一高度 24px，宽度按各自出厂比例推出**，
+    // 这样四张字重看起来一样大、贴片也宽窄相称。
+    // 框写死而不交 `width: auto` 是有意的：阿里云百炼与 Live2D 两张是**远端图**，
+    // 加载失败时 `auto` 会让 `<img>` 塌成 0×0、贴片缩成一个小点；
+    // 写死尺寸至少还留着一个空框（同 `.footBeianIcon` 的取舍）。
+    // 改尺寸只改这里一处 —— 比例 = 各自的 viewBox（Ali 357×76 / 腾讯云 329.5×92.6 /
+    // Cloudflare 101.4×33.5 / Live2D 60×15）。
     .footLogoAli
-      width: 70px
-      height: 70px
+      width: 112px
+      height: 24px
     .footLogoTx
-      width: 50px
-      height: 50px
+      width: 85px
+      height: 24px
     .footLogoCf
-      width: 50px
-      height: 50px
+      width: 73px
+      height: 24px
     .footLogoLive2d
-      width: 60px
-      height: 15px
+      width: 96px
+      height: 24px
