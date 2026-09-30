@@ -58,7 +58,8 @@ const Footer = () => {
                     </>)}
                 </p>
             )}
-            <p>Powered by <span>Memory</span></p>
+            {/* 20260930 删掉「Powered by Memory」那行（用户点名）：它是上游脚手架自带的署名行，
+                与上面两条版权声明重复，读起来像"本站是某个叫 Memory 的工具生成的"。 */}
             <p style={{marginTop:8,fontSize:'0.8em',opacity:0.6,textAlign:'center',display:'flex',justifyContent:'center',gap:12,alignItems:'center'}}>
                 <a href="https://www.aliyun.com/product/bailian" target="_blank" rel="noreferrer" title="阿里云百炼">
                     <img src="https://img.alicdn.com/imgextra/i1/O1CN01IU2US71Ciicsi3Br3_!!6000000000115-55-tps-357-76.svg" style={{width:70,height:70}} />
