@@ -1,6 +1,10 @@
-// 首页展示柜：**视频下方的一张胶带贴图**（20260930 五轮）。
+// 首页展示柜：**视频下方那一沓贴着胶带的手账纸**（20260930 五轮立起来，20261001 六轮改版）。
 //
 // 形态见 index.tsx 的头注。这里只记几何契约与两条禁令。
+//
+// 六轮改了哪三处（对应用户第 2/3 条）：① 翻页从"整块正反面反转"改成"封面绕顶边掀走"
+// （`transform-origin: 50% 0`，见 `.vit-cover`）；② 翻页钮撤掉，改左下角的纸角 + 弧形箭头
+// （见 `.vit-corner`）；③ 底下那沓垫纸（见 `.vit-under`）。
 //
 // ⛔ ① 不要用 backdrop-filter：本站有两次同因事故记录（App.sass:10-11、
 //    ContentHome/index.sass:81-82），半透明观感一律靠 rgba 底色 + 静态渐变。
@@ -54,13 +58,33 @@
   transform: rotate(4deg)
   background: var(--washi-tape-2, rgba(214, 226, 255, 0.8))
 
-// 翻页的 3D 容器：正反两面都住在这里
+// 翻页的 3D 容器：**两页纸**都住在这里（20261001 六轮改版）。
+// 五轮是"整块 `.vit-3d` 绕自己中线转 180°"（正反面反转，用户点名要换掉）；
+// 现在这一层**从头到尾不动**，动的是里面那张封面（见 `.vit-cover`）。
 .vit-3d
   position: relative
+  z-index: 1
   width: 100%
   aspect-ratio: 16 / 7
   transform-style: preserve-3d
-  transition: transform 0.78s cubic-bezier(0.22, 0.68, 0.24, 1)
+
+// 垫在下面的纸（用户第 2 条：「手账是可以多层叠层的，要能看出来胶带下面贴了多张」）。
+// 一层一件展品、**今天只有一件 ⇒ 一张都不渲染**（与那句括注"如果后期确实增加了多张"一致；
+// 加第二件展品时 TSX 会自动多一层，这里不必改）。
+// 每层相对主卡往下错 `--d * 7px`、歪 `--d * 0.5deg`、缩 `--d * 1.2%`（`--d` 由 TSX 内联，
+// 1 = 最贴主卡的那张）—— 于是卡片下缘露出一沓错开的纸边，而不是一张。
+.vit-under
+  position: absolute
+  left: 0
+  right: 0
+  top: 0
+  z-index: 0
+  aspect-ratio: 16 / 7
+  border-radius: 15px
+  border: 1px solid var(--washi-line, rgba(198, 152, 192, 0.42))
+  background: var(--washi-paper-2, #fff6fa)
+  pointer-events: none
+  transform: translateY(calc(var(--d) * 7px)) rotate(calc(var(--d) * 0.5deg)) scale(calc(1 - var(--d) * 0.012))
 
 .vit-face
   position: absolute
@@ -73,15 +97,36 @@
   -webkit-backface-visibility: hidden
   border: 1px solid var(--washi-line, rgba(198, 152, 192, 0.42))
 
-// 封面面：手账纸 + 描边渐变字
+// 封面（这一页）：手账纸 + 描边渐变字。翻页时**绕顶边**向上掀走。
+//
+// `transform-origin: 50% 0` 是"像翻日历"的全部秘密：少了它，`rotateX(180deg)` 就是
+// "绕自己的中线翻面"——那正是五轮被用户点名换掉的正反面反转。有了它，下缘朝观者掀起、
+// 越过头顶落向卡片**上方**，跟翻记事本一个动作。
+//
+// `visibility` 那条**延迟**不是装饰，是两件事：
+//   ① 掀过 90° 后背面朝前、已被 `backface-visibility` 隐去，此刻把元素真正设成 hidden，
+//      它就不再参与滚动溢出计算——否则掀过去的那半会停在卡片上方一个卡高的位置，
+//      页面顶部多出一块**能滚的空白**；
+//   ② 图层可以整个丢掉。
+//   缓动 `cubic-bezier(0.5, 0.05, 0.3, 1)` 让前半程**看得见**：这条曲线在时间轴 30% 处只
+//   转到 43°、42% 处才到 90°（0.8s ⇒ 336ms）。原样沿用五轮那条 `cubic-bezier(0.22,0.68,…)`
+//   的话，94ms 就转过 90° 了 —— 观感是"闪一下"，用户要看的是**翻**这个动作。
+//   反向（翻回封面）走的是**基础规则**里那条 `visibility 0s 0s` ⇒ 立刻恢复可见。
 .vit-cover
   align-items: center
   justify-content: center
   gap: 10px
   padding: 18px
   text-align: center
+  transform-origin: 50% 0
   background: linear-gradient(135deg, #fffdfa 0%, #fff3f9 54%, #f4f0ff 100%)
   color: var(--washi-ink, #4a3550)
+  // 左下角那道**缺口**：那一角已经掀起来了，露出的正是下面那页。
+  // `clip-path` 与 `border-radius` 取**交集**，所以其余三个圆角照旧；缺口两端刻意落在
+  // 圆角半径之外（底边 x=30px、左边 y=calc(100% - 30px)），免得把圆弧切成尖角。
+  // ⚠️ 这两个数与下面 `.vit-corner::before` 的折线端点是**同一组**，改一处要改两处。
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 30px 100%, 0 calc(100% - 30px))
+  transition: transform 0.8s cubic-bezier(0.5, 0.05, 0.3, 1), visibility 0s 0s
 
 .vit-coverStar
   font-size: 22px
@@ -107,15 +152,22 @@
   line-height: 1.7
   color: var(--washi-ink-2, #7c6584)
 
-// 图谱面：深色玻璃（图上的 `wg-*` 全是深色系，纸底会让它们全糊掉）
+// 图谱面（**下一页**）：深色玻璃底，图上那套 `wg-*` 全是深色系，纸底会让它们全糊掉。
+// 它**躺平不动**——五轮那条 `transform: rotateX(180deg)` 已随翻页改版删除（当时靠它
+// 与 `.vit-3d` 的 180° 对消；现在两边都不转了）。它比封面早写进 DOM ⇒ 封面压在它上面。
+// 底色 0.55 → 0.82（20261001 六轮）：0.55 是给"夜间深底"配的，而展示柜自五轮起
+// **常驻白天这一列**——0.55 的黑压在白纸页底上算出的是 #726F76 那种灰，
+// 图谱那套浅色标签/辉光全糊在灰上。0.82 在两种页底上都读作"深玻璃"。
+// （`wordgraph/engine.ts` 每帧只 `clearRect`，画布自己不铺底色，所以这层就是全部。）
 .vit-panel
-  transform: rotateX(180deg)
-  background: rgba(13, 19, 32, 0.55)
+  background: rgba(13, 19, 32, 0.82)
   background-image: radial-gradient(120% 80% at 12% 0%, rgba(120, 160, 255, 0.10), rgba(120, 160, 255, 0) 62%)
   border-color: rgba(255, 255, 255, 0.14)
 
-.vitrine.is-flipped .vit-3d
+.vitrine.is-flipped .vit-cover
   transform: rotateX(180deg)
+  visibility: hidden
+  transition: transform 0.8s cubic-bezier(0.5, 0.05, 0.3, 1), visibility 0s 0.34s
 
 // 内联态的图谱**一律不吃指针事件**：点卡片 = 放大，放大后才把交互交还给引擎。
 // 顺带治了老毛病——它出厂就吃滚轮（所以自带 `is-locked` 预览态），访客往下滚页面
@@ -123,36 +175,75 @@
 .vitrine:not(.is-zoomed) .vit-body
   pointer-events: none
 
-// 图谱底栏第一行（快捷检索 chip）给翻页钮让出左上角
+// 图谱底栏那一行（快捷检索 chip）给左下角的纸角让位。
+// 纸角在卡片内的横向占位到 x=74px（按钮 left:-10px + 84px 宽），而 foot 有 10px 内边距
+// ⇒ 68px 起步正好压在它右边。**这个数跟着 `.vit-corner` 的尺寸走**，不是随手取的。
 .vit-panel .wg-chips
-  padding-left: 44px
+  padding-left: 68px
 
-// 左下角的翻页钮：卷角 + 上翻箭头
-.vit-flip
+// ─────────────────────────────────────────────── 左下角：掀起的那一角 + 翻页箭头
+// 用户第 3 条：「按钮撤掉，把左下角做成略微向外侧翻折的样式，然后给一个日式动漫风格的
+// 弧形粗箭头示意从那里翻页」。所以它不再是一颗圆角方块，而是**纸角本身**：
+//   · 封面在左下角被 `clip-path` 切掉一块三角（见上面 `.vit-cover`）；
+//   · `::before` 补上**翻起来的那片**——折线端点与缺口完全重合，只把外尖从
+//     卡片角 (0,H) 向外撇到 (-4, H+8)，"略微向外侧翻折"就是这一点点；
+//   · 箭头是 `.vit-cornerArrow` 里那支 SVG（形状见 index.tsx 的 FlipArrow）。
+// 它**仍然是 `<button>`**：Tab 可达、有 aria-label，只是长得不像按钮。
+//
+// 几何（容器 84×84，左下角相对卡片外移 10px ⇒ 卡片底边落在容器 local y=74）：
+//   缺口折线两端 = 卡片 (30px, H) → local (40px, 74px)、卡片 (0, H-30px) → local (10px, 44px)
+//   外尖 = 卡片 (-4px, H+8px) → local (4px, 82px)
+.vit-corner
   position: absolute
-  left: 10px
-  bottom: 10px
+  left: -10px
+  bottom: -10px
   z-index: 4
-  width: 30px
-  height: 30px
+  width: 84px
+  height: 84px
   padding: 0
-  display: flex
-  align-items: center
-  justify-content: center
-  border-radius: 9px
-  border: 1px solid var(--washi-line, rgba(198, 152, 192, 0.42))
-  background: var(--washi-paper-2, #fff6fa)
-  color: var(--washi-pink-deep, #d94f9a)
+  border: 0
+  background: transparent
   cursor: pointer
-  box-shadow: 0 7px 15px -8px rgba(120, 90, 140, 0.75)
-  transition: transform 0.25s ease, background 0.25s ease
+  color: var(--washi-pink-deep, #d94f9a)
 
-  &:hover
-    transform: translateY(-2px)
-    background: var(--washi-tape, rgba(255, 222, 238, 0.86))
+  &::before
+    content: ''
+    position: absolute
+    inset: 0
+    clip-path: polygon(40px 74px, 10px 44px, 4px 82px)
+    // 纸背的暖色：折线那头深（背光）、外尖那头浅（迎光），读起来才像"翻过来的一面"。
+    // 202deg 的方向是"从折线指向外尖"⇒ 0% 落在折线上。
+    // 起始色刻意比卡片纸深一档：这一抹就是"折痕"，两色太近的话整片纸角糊在卡上
+    background: linear-gradient(202deg, #e9ab92 0%, #ffd6c0 44%, #fff4ee 100%)
+    // 这点阴影是纸角与卡片的分界（`.wg-lock-ico` 在本文件里也有同样用法：
+    // 小面积 drop-shadow 不属于"大面积模糊"那条禁令）
+    filter: drop-shadow(0 2px 4px rgba(120, 90, 140, 0.3))
+    transition: clip-path 0.3s ease
+
+  // 悬停：外尖再撇出去一点（90px 仍在容器内，84 的盒子不会裁到它）
+  &:hover::before
+    clip-path: polygon(40px 74px, 10px 44px, 0px 90px)
+
+.vit-cornerArrow
+  position: absolute
+  inset: 0
+  display: block
+  pointer-events: none
+  color: inherit
+  // 极轻的"往那边去"：只动 transform、不碰布局与颜色。
+  // 动画挂在**它自己**身上而不是 button 上——button 上还有 `::before` 的 clip-path 过渡。
+  animation: vit-nudge 2.4s ease-in-out infinite
 
   svg
-    transition: transform 0.45s ease
+    display: block
+    width: 100%
+    height: 100%
+
+@keyframes vit-nudge
+  0%, 100%
+    transform: translate(0, 0)
+  50%
+    transform: translate(3px, -3px)
 
 // ───────────────────────────────────────────────────────────── 放大（单击后）
 // 「居中变大 + 压暗背景 + 正常交互」。⚠️ 这里**不能**用 transform 居中
@@ -186,7 +277,11 @@
   .vit-body
     pointer-events: auto
 
-  .vit-flip
+  // 放大态只看这一页：纸角（翻回封面的入口）与垫在下面的那沓纸都收掉
+  .vit-corner
+    display: none
+
+  .vit-under
     display: none
 
 .vit-close
@@ -552,9 +647,11 @@ $bar-line: 16px
 @media (prefers-reduced-motion: reduce)
   .vitrine
     animation: none
-  .vit-3d
+  // 翻页瞬间完成。`visibility` 那条延迟是随 transform 一起过渡的——
+  // 这里 `transition: none` 把它一并关掉，正是想要的效果（隐藏态立刻生效）。
+  .vit-cover
     transition: none
-  .vit-flip
+  .vit-corner::before
     transition: none
-    svg
-      transition: none
+  .vit-cornerArrow
+    animation: none

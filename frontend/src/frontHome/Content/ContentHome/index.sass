@@ -115,8 +115,8 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
 //     而展示柜现在住到视频下面去了（见 Vitrine/index.sass 头注）。标题字号因此可以
 //     自由放大（用户这次就要"文本放大"）——但**别再往回改小**：`clamp()` 的下限 2.5rem
 //     是"窄桌面不挤爆右列"的那条线，右列宽度与 gap 都跟着它配平（见下面 `.heroRight`）。
-//   · 夜里 `.frontDark` 仍然隐藏 `.heroPanel`（视频本来就仅白天显示，20260902 用户要求）
-//     ——于是夜里右列只剩展示柜那张卡，位置正好还是原来那个视觉落点。
+//   · **夜里不再隐藏 `.heroPanel`**（20261001 六轮，用户第 1 条）——两档主题同一张手账纸，
+//     右列永远是"内页 + 展示柜"两张卡上下叠着。
 .SelfDescription
   position: relative
   // 色块的负偏移（`left: -12vw` 那类）会溢出到视口外，而页根没有 overflow-x 兜底
@@ -1178,13 +1178,12 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
   .topFooter
     color: var(--font-title-color)
 
-// Dark Mode Text Fix
-// 暗色模式：视频仅白天显示（20260902 用户要求）——原来只藏 video（遮罩 `heroOverlay`
-// 已随四轮改版从 JSX 删除），可是视频现在住在 `.heroPanel` 这张白卡里，只藏 video 会
-// 留一张**空白的白卡片**。改成整块隐藏：夜里右半屏归展示柜窗口（Vitrine 只在场于夜间），
-// 两者同屏就会叠在一起。
-.frontDark .SelfDescription .heroPanel
-  display: none
+// 20261001 六轮（用户第 1 条：「夜间模式和白天模式展示的手账纸一样，不要夜间隐藏视频的
+// 手账」）：这里原来有一条 `.frontDark .SelfDescription .heroPanel { display: none }`
+// ——20260902 的"视频仅白天显示"以及五轮"夜里右半屏归展示柜"（当时展示柜只在场于夜间）
+// 都已作废：展示柜现在常驻这一列的**下面**（见 Vitrine/index.sass 头注），两者不再抢位。
+// 手账纸在两档主题下**是同一张**（`.heroPanel` 的底色本来就是字面量 `#fffdfa`，不吃
+// `--washi-*` 令牌）——这正是用户这次要的，别顺手把它换成令牌：夜里那边是深色档。
 
 // 夜间档的拼贴底：靛紫天色 + 三块压暗的色块 + 更淡的方格纸（粉白那套只用于白天）
 .frontDark .SelfDescription .collageBg
