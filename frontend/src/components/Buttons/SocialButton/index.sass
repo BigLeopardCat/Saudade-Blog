@@ -43,31 +43,3 @@
       border: 1px solid rgba(216, 216, 216, 0.466)
       background-color: rgba(190, 190, 190, 0.466)
       backdrop-filter: blur(4px)
-  // 悬浮图片弹层（QQ 二维码 / 邮箱卡片）
-.SocialBtnImg
-  .SocialPop
-    position: absolute
-    bottom: calc(100% + 12px)
-    left: 50%
-    transform: translateX(-50%) scale(0.85)
-    opacity: 0
-    visibility: hidden
-    pointer-events: none
-    z-index: 200
-    background: #fff
-    border-radius: 8px
-    padding: 6px
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.18)
-    transition: all 0.25s ease
-
-    img
-      display: block
-      max-height: 320px
-      max-width: 220px
-      width: auto
-      height: auto
-
-  &:hover .SocialPop
-    opacity: 1
-    visibility: visible
-    transform: translateX(-50%) scale(1)

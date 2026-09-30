@@ -3,9 +3,8 @@ use sea_orm::{EntityTrait, ColumnTrait, QueryFilter, ActiveModelTrait, Set};
 use std::sync::Arc;
 use crate::entity::{web_info, user};
 use crate::routes::AppState;
-use crate::utils::{ApiResponse, encrypt_password, hash_password};
+use crate::utils::ApiResponse;
 use serde::{Deserialize, Serialize};
-use tracing::info;
 
 #[derive(Serialize)]
 pub struct UserInfoResponse {
@@ -19,6 +18,14 @@ pub struct UserInfoResponse {
     title: String,
     #[serde(rename = "blogIcp")]
     icp: String,
+    /// 公安网安备案号（20260930）。**为空是合法状态**——不是每个站都有，也不该由
+    /// 仓库凭空带一个。前端为空则整块不渲染，链接里的数字 code 从这串里正则抽。
+    #[serde(rename = "blogPublicIcp")]
+    public_icp: String,
+    /// 版权署名（20260930）。为空时前端回退到 `blogAuthor`——署名总得有，但**具体是谁**
+    /// 属于部署者自己的信息，不进仓库。
+    #[serde(rename = "blogCopyright")]
+    copyright: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -33,35 +40,36 @@ pub struct SocialInfo {
     bilibili: String,
     #[serde(rename = "socialEmail")]
     email: String,
-    #[serde(rename = "socialNeteaseCloud")]
-    netease: String,
 }
 
+/// 站点设置面板的读写载荷（20260930 瘦身）。
+///
+/// 删掉的字段与理由（**别再捡回来**）：
+///   · `blogDomain` / `blogDescription` —— 全仓只有"写"没有"读"，从没有任何消费方；
+///   · `openAiToken` / `neteaseCookies` / `githubToken` —— 同样是死配置，且本质是
+///     **凭据**。它们的活已被 agent 的 `.env` 取代（`web_info` 里那几行如果曾填过，
+///     等于把第三方 token 明文存在业务库里、还经由面板接口明文回传）；
+///   · `userAccount` / `userPassword` / `userNickname` —— 账号密码的修改入口
+///     是登录页与个人中心，不在这里（见 `update_web_info` 的头注）。
 #[derive(Serialize, Deserialize, Default)]
 pub struct WebSettingPayload {
     #[serde(rename = "blogTitle")]
     pub blog_title: Option<String>,
     #[serde(rename = "blogAuthor")]
     pub blog_author: Option<String>,
-    #[serde(rename = "blogDomain")]
-    pub blog_domain: Option<String>,
-    #[serde(rename = "blogDescription")]
-    pub blog_description: Option<String>,
     #[serde(rename = "blogIcp")]
     pub blog_icp: Option<String>,
-    
-    #[serde(rename = "userAccount")]
-    pub user_account: Option<String>,
-    #[serde(rename = "userPassword")]
-    pub user_password: Option<String>,
-    // 用户昵称：存在 user 表（博客主账号 id=1），面板读写经此字段
-    #[serde(rename = "userNickname")]
-    pub user_nickname: Option<String>,
-    #[serde(rename = "userAvatar")]
-    pub user_avatar: Option<String>,
+    /// 公安网安备案号（20260930，见 `UserInfoResponse::public_icp`）
+    #[serde(rename = "blogPublicIcp")]
+    pub blog_public_icp: Option<String>,
+    /// 版权署名（20260930）
+    #[serde(rename = "blogCopyright")]
+    pub blog_copyright: Option<String>,
+    /// 个性签名（20260930 从"用户信息"页签迁到"站点信息"）。
+    /// 存的是 `web_info` 的 `talk` 键——字段没搬家，只是入口换了地方。
     #[serde(rename = "userTalk")]
     pub user_talk: Option<String>,
-    
+
     #[serde(rename = "socialGithub")]
     pub social_github: Option<String>,
     #[serde(rename = "socialEmail")]
@@ -70,15 +78,6 @@ pub struct WebSettingPayload {
     pub social_bilibili: Option<String>,
     #[serde(rename = "socialQQ")]
     pub social_qq: Option<String>,
-    #[serde(rename = "socialNeteaseCloud")]
-    pub social_netease_cloud: Option<String>,
-    
-    #[serde(rename = "openAiToken")]
-    pub openai_token: Option<String>,
-    #[serde(rename = "neteaseCookies")]
-    pub netease_cookies: Option<String>,
-    #[serde(rename = "githubToken")]
-    pub github_token: Option<String>,
 
     // 留言审核开关（20260905：AI 审核 + 人工复核，web_info key-value 零迁移存储，
     // 值存 "true"/"false"；缺省 None = 关。读取方 = talks.rs 入库判定 + 面板开关）
@@ -101,37 +100,18 @@ pub async fn get_web_settings(
         infos.iter().find(|i| i.key_name == key).map(|i| i.value.clone())
     };
 
-    let (u_acc, u_pass) = (Some("".to_string()), Some("".to_string()));
-    // 昵称以 user 表为准（已有账户默认昵称=账号）
-    let u_nickname = user::Entity::find_by_id(1)
-        .one(&state.db)
-        .await
-        .unwrap_or(None)
-        .map(|u| u.nickname)
-        .filter(|n| !n.is_empty());
-
     let payload = WebSettingPayload {
         blog_title: get_val("blog_title"),
         blog_author: get_val("author"),
-        blog_domain: get_direct("blogDomain"),
-        blog_description: get_direct("blogDescription"),
         blog_icp: get_val("icp"),
-
-        user_account: u_acc,
-        user_password: u_pass,
-        user_nickname: u_nickname,
-        user_avatar: get_val("avatar"),
+        blog_public_icp: get_val("publicIcp"),
+        blog_copyright: get_val("copyright"),
         user_talk: get_val("talk"),
-        
+
         social_github: get_direct("socialGithub"),
         social_email: get_direct("socialEmail"),
         social_bilibili: get_direct("socialBilibili"),
         social_qq: get_direct("socialQQ"),
-        social_netease_cloud: get_direct("socialNeteaseCloud"),
-        
-        openai_token: get_direct("openAiToken"),
-        netease_cookies: get_direct("neteaseCookies"),
-        github_token: get_direct("githubToken"),
 
         ai_review_enabled: get_direct("aiReviewEnabled").map(|v| v == "true"),
         manual_review_enabled: get_direct("manualReviewEnabled").map(|v| v == "true"),
@@ -140,23 +120,42 @@ pub async fn get_web_settings(
     Json(ApiResponse::success(payload))
 }
 
+/// GET /api/public/user —— 站点公开展示信息（首页头部、文章卡片/详情页的署名、
+/// 页脚备案号）。**跨仓契约**：agent 的 `get_blog_info` 工具读它（`tools/base.py`），
+/// 所以既有键名与含义不许改，只许加。
+///
+/// **头像只有一个入口**（20260930）：`user.avatar`（个人中心上传的那张），
+/// `web_info.avatar` 只作回退——站点设置里的头像输入框已随"用户信息"页签一起删除，
+/// 再留一个"改这里"的入口就是两处改同一份数据。回退是给**老数据**留的路：
+/// 在个人中心上传过头像之前，`user.avatar` 是 NULL，此时照旧显示 `web_info.avatar`
+/// （改造前存的那张），不会突然变空白。
 pub async fn get_user_info(
     State(state): State<Arc<AppState>>,
 ) -> Json<ApiResponse<UserInfoResponse>> {
     let infos = web_info::Entity::find().all(&state.db).await.unwrap_or(vec![]);
-    
+
     let get_val = |k: &str| -> String {
          infos.iter().find(|i| i.key_name == k).map(|i| i.value.clone()).unwrap_or("".to_string())
     };
 
+    let avatar = user::Entity::find_by_id(1)
+        .one(&state.db)
+        .await
+        .unwrap_or(None)
+        .and_then(|u| u.avatar)
+        .filter(|a| !a.trim().is_empty())
+        .unwrap_or_else(|| get_val("avatar"));
+
     let data = UserInfoResponse {
-        avatar: get_val("avatar"),
-        talk: get_val("talk"), 
+        avatar,
+        talk: get_val("talk"),
         author: get_val("author"),
         title: get_val("blog_title"),
         icp: get_val("icp"),
+        public_icp: get_val("publicIcp"),
+        copyright: get_val("copyright"),
     };
-    
+
     Json(ApiResponse::success(data))
 }
 
@@ -175,57 +174,33 @@ pub async fn get_social_info(
          wechat: get_val("wechat"),
          bilibili: get_val("bilibili"),
          email: get_val("email"),
-         netease: get_val("socialNeteaseCloud"),
      };
      Json(ApiResponse::success(data))
 }
 
+/// POST /api/protected/websetting —— 站点设置面板的保存。
+///
+/// **本函数不再碰 `user` 表，这是刻意的**（20260930）：改造前它会顺手把
+/// `userAccount`/`userPassword` 写成 uid=1 的账号与密码，也就是**一条绕过登录页的
+/// 改凭据后门**——而"账号不可改"本来就是设计（个人中心界面直接这么写）。
+/// 现在账号密码只走登录页/个人中心那两条路（`profile.rs::change_password` 会记
+/// 令牌代次、会校验旧密码、会有频率限制；这里那条全都没有）。
+/// 昵称同理：`PUT /api/protected/profile` 是唯一入口。
 pub async fn update_web_info(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<WebSettingPayload>,
 ) -> Json<ApiResponse<String>> {
-    if let (Some(acc), Some(pass)) = (&payload.user_account, &payload.user_password) {
-        if !acc.is_empty() && !pass.is_empty() {
-             let user = user::Entity::find_by_id(1).one(&state.db).await.unwrap_or(None);
-             if let Some(u) = user {
-                 // 用户名仍用 sha256（登录的 legacy 兼容分支按哈希后的用户名查，
-                 // 换掉会让这批账号登不进来）；**密码换成 Argon2id**（20260917）。
-                 let enc_acc = encrypt_password(acc);
-                 let enc_pass = hash_password(pass);
-
-                 let mut active: user::ActiveModel = u.into();
-                 active.username = Set(enc_acc);
-                 active.password = Set(enc_pass);
-                 let _ = active.update(&state.db).await;
-                 info!("User credentials updated with encryption.");
-             }
-        }
-    }
-    // 昵称独立于账号密码更新（面板"用户信息"页可单独配置）
-    if let Some(nick) = payload.user_nickname {
-        let nick = nick.trim();
-        if !nick.is_empty() {
-            if let Some(u) = user::Entity::find_by_id(1).one(&state.db).await.unwrap_or(None) {
-                let mut active: user::ActiveModel = u.into();
-                active.nickname = Set(nick.chars().take(32).collect::<String>());
-                let _ = active.update(&state.db).await;
-                info!("User nickname updated.");
-            }
-        }
-    }
-
     let mut map = std::collections::HashMap::new();
-    
+
     if let Some(v) = payload.blog_title { map.insert("blog_title", v); }
     if let Some(v) = payload.blog_author { map.insert("author", v); }
     if let Some(v) = payload.blog_icp { map.insert("icp", v); }
-    if let Some(v) = payload.user_avatar { map.insert("avatar", v); }
+    if let Some(v) = payload.blog_public_icp { map.insert("publicIcp", v); }
+    if let Some(v) = payload.blog_copyright { map.insert("copyright", v); }
     if let Some(v) = payload.user_talk { map.insert("talk", v); }
-    
-    if let Some(v) = payload.blog_domain { map.insert("blogDomain", v); }
-    if let Some(v) = payload.blog_description { map.insert("blogDescription", v); }
-    if let Some(v) = payload.social_github { 
-        map.insert("socialGithub", v.clone()); 
+
+    if let Some(v) = payload.social_github {
+        map.insert("socialGithub", v.clone());
         map.insert("github", v);
     }
     if let Some(v) = payload.social_email { 
@@ -236,15 +211,10 @@ pub async fn update_web_info(
         map.insert("socialBilibili", v.clone());
         map.insert("bilibili", v);
     }
-    if let Some(v) = payload.social_qq { 
+    if let Some(v) = payload.social_qq {
         map.insert("socialQQ", v.clone());
         map.insert("qq", v);
     }
-    if let Some(v) = payload.social_netease_cloud { map.insert("socialNeteaseCloud", v); }
-    
-    if let Some(v) = payload.openai_token { map.insert("openAiToken", v); }
-    if let Some(v) = payload.netease_cookies { map.insert("neteaseCookies", v); }
-    if let Some(v) = payload.github_token { map.insert("githubToken", v); }
 
     if let Some(v) = payload.ai_review_enabled { map.insert("aiReviewEnabled", v.to_string()); }
     if let Some(v) = payload.manual_review_enabled { map.insert("manualReviewEnabled", v.to_string()); }
@@ -276,17 +246,29 @@ pub async fn update_web_info(
     Json(ApiResponse::success("Settings updated".to_string()))
 }
 
+/// PUT /api/protected/social —— 社交媒体信息的**整份替换**（与 `update_web_info` 的
+/// 部分更新不同：这里没有 Option，五个键一律照写，空串就是"清空"）。
+///
+/// 与 `/api/protected/websetting` 的取舍差异（20260930 对齐）：两条路写的是同一份数据，
+/// 而**存两份键**是历史遗留——`socialGithub`… 供后台设置页读、`github`… 供前台
+/// `/api/public/social` 读。此前这里只写短键，于是经这条路改完，后台设置页仍显示旧值。
+/// 现在两条路都写两份，键名不再分叉。（这个端点在全仓没有调用方，属"修好它，别拆掉它"
+/// ——拆路由要同步改前端的 API 约定，收益与风险不成比例。）
 pub async fn update_social_info(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<SocialInfo>,
 ) -> Json<ApiResponse<String>> {
     let mut params = std::collections::HashMap::new();
-    params.insert("github", payload.github);
-    params.insert("qq", payload.qq);
-    params.insert("wechat", payload.wechat);
-    params.insert("bilibili", payload.bilibili);
-    params.insert("email", payload.email);
-    params.insert("socialNeteaseCloud", payload.netease);
+    for (long_key, short_key, v) in [
+        ("socialGithub", "github", payload.github),
+        ("socialQQ", "qq", payload.qq),
+        ("socialWechat", "wechat", payload.wechat),
+        ("socialBilibili", "bilibili", payload.bilibili),
+        ("socialEmail", "email", payload.email),
+    ] {
+        params.insert(long_key, v.clone());
+        params.insert(short_key, v);
+    }
 
     for (k, v) in params {
         let entry = web_info::Entity::find()
