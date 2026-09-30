@@ -43,6 +43,16 @@ import './index.sass';
  * ④ **说到底还是翻页**。扯掉之后 `flipped` 照旧取反 ⇒ 循环没变，只是"翻"这个动作
  *    从"掀过去"换成了"撕下来"。两页谁在上面谁就有折角，所以**永远有地方下手**。
  *
+ * 八轮（用户第 5 条原话：「手账页的效果基本满意，但是**单击**没有掀起左下角动画直接掉下去了，
+ * 而且我感觉动画扯起来的**角的终点**可以更大一些」）只动了两处：
+ *
+ * ① **点一下 = 一次完整的扯**。原来 `onCornerClick` 直接 `tear(260, -430)` —— 折角从静止档
+ *    （0.2）一步跨到"纸已经没了"，中间那段**被掀起来**的过程一帧都看不到（拖拽那条路没这个
+ *    毛病：它是跟手一帧帧长起来的）。现在先把 `--k` 推到 1（**不挂** `is-peeling`⇒ `.vit-ear`
+ *    那条 0.3s 过渡照常跑，折角肉眼可见地长到头），等它跑完再脱落。拖拽与"减少动效"两条
+ *    路都不变（后者不掀，直接扯 —— 页照翻）。
+ * ② **终点抬到 160px**（`EAR_MAX` 与 sass 的 `--ear` 两处同改，见常量注释）。
+ *
  * 另外两条是五轮就定下、这轮没动的：
  *
  * ① **图谱面在被翻到之前不挂载**（`mounted`）。`exhibits.ts` 那条是 `lazy(...)`，
@@ -57,6 +67,9 @@ export default function Vitrine() {
     const fallRef = useRef<HTMLSpanElement | null>(null);
     const dragRef = useRef<Drag | null>(null);
     const suppressClick = useRef(false);
+    /** 「点一下」那条路正在掀折角时的定时器（非 null = 掀的动作进行中）。
+     *  它同时是**重入闸**：掀的这 340ms 里再来一次点按/按下，一律当没看见。 */
+    const liftTimer = useRef<number | null>(null);
 
     const [flipped, setFlipped] = useState(false);
     const [mounted, setMounted] = useState(false);
@@ -120,6 +133,12 @@ export default function Vitrine() {
         });
     }, [flipped, ex, setEar]);
 
+    // 掀折角的定时器要能随组件一起消失：掀到一半被卸载（切路由/放大态关掉）时，
+    // 那个 setTimeout 还攥着一个已卸载组件的 `tear`，到点照跑。
+    useEffect(() => () => {
+        if (liftTimer.current !== null) window.clearTimeout(liftTimer.current);
+    }, []);
+
     // 放大态：Esc 关闭 + 锁住文档滚动（不然滚轮会推着底下的页面走）
     useEffect(() => {
         if (!zoomed) return;
@@ -177,6 +196,10 @@ export default function Vitrine() {
         if (zoomed) return;
         // 折角住在卡片里：不拦冒泡的话这一下会同时命中卡片的"放大"
         e.stopPropagation();
+        // 掀的动作正演着 —— 这一下不接。接了就糟：`readEar()` 会在过渡中途读到 1
+        // （`--k` 是自定义属性、不插值，写下去就是新的计算值），于是"刚按下就已经扯到头"，
+        // 拖拽那条路会在一个完全假的起点上开跑。掀只有 340ms，等它演完这一页就翻过去了。
+        if (liftTimer.current !== null) return;
         const root = rootRef.current;
         if (!root) return;
         e.currentTarget.setPointerCapture(e.pointerId);
@@ -246,8 +269,18 @@ export default function Vitrine() {
     const onCornerClick = (e: ReactMouseEvent<HTMLButtonElement>) => {
         e.stopPropagation();
         if (suppressClick.current) { suppressClick.current = false; return; }
-        // 键盘（Tab + Enter）与"点一下不拖"：等价的扯一下，给一组固定的初速。
-        tear(260, -430);
+        // 键盘（Tab + Enter）与"点一下不拖"：等价的**一次完整的扯**。
+        // 八轮之前这里是直接 `tear(...)`——折角一步跨到消失，用户说的"没有掀起左下角动画
+        // 直接掉下去了"就是这一段缺席。现在补上：先把折角掀到头（`setEar(1)`），等过渡
+        // 演完再脱落。不挂 `is-peeling`（那是拖拽专用的去过渡开关）⇒ 0.3s 的过渡照跑。
+        if (liftTimer.current !== null) return;   // 已经在掀了，重复触发一律忽略
+        // 减少动效档：不掀，直接扯 —— 用户要的是"别晃"，不是"别翻"（与掉落那条路同一取向）。
+        if (prefersReducedMotion()) { tear(CLICK_VX, CLICK_VY); return; }
+        setEar(1);
+        liftTimer.current = window.setTimeout(() => {
+            liftTimer.current = null;
+            tear(CLICK_VX, CLICK_VY);
+        }, LIFT_MS);
     };
 
     const handleCardClick = () => {
@@ -385,8 +418,19 @@ function Badge({ of }: { of: (typeof EXHIBITS)[number] }) {
     return <em className="vit-badge" title="向量数据库更新时间">{text}</em>;
 }
 
-/** 折角的最大边长（px）。`--k = 1` 就长到这个数，也正是"该断了"的地方。 */
-const EAR_MAX = 120;
+/** 折角的最大边长（px）。`--k = 1` 就长到这个数，也正是"该断了"的地方。
+ *  120 → 160 是八轮的第二处（用户："扯起来的角的终点可以更大一些"）。
+ *  ⚠️ 这个数在 sass 里还有**两份**：`.vitrine` 的 `--ear: calc(var(--k) * 160px)`
+ *  （缺口的深度）与 `.vit-ear` 的 `width/height: 160px`（那片纸的大小）。三处同一个数。 */
+const EAR_MAX = 160;
+/** 「点一下」掀折角用的时长（ms）。它必须**不小于** sass 里 `.vit-ear` 那条
+ *  `transition: transform 0.3s`：掀的动作整个是 CSS 过渡在演，这里只是等它演完。
+ *  多给的这 40ms 是让折角在最大档上停一帧再断（不然"到顶"和"没了"挤在同一帧上）。 */
+const LIFT_MS = 340;
+/** 「点一下 / 回车」那一次扯的固定初速。横向必须往右、纵向先上扬（"往右上扯"），
+ *  与拖拽那条路一样要落在 `tear` 的 clamp 区间里。 */
+const CLICK_VX = 260;
+const CLICK_VY = -430;
 /** 折角的**静止值**。真源是 sass 的 `.vitrine { --k: 0.2 }`，这里只作 `readEar()`
  *  读不出来时的兜底（样式没加载等退化场景）；两处同一个数，改一处要改两处。 */
 const REST_EAR = 0.2;
