@@ -1,10 +1,10 @@
 import InfiniteScroll from 'react-infinite-scroll-component';
 import './index.sass'
-import { Card, Modal, UploadFile} from "antd";
+import { Card, Modal, Segmented, UploadFile} from "antd";
 import DeleteButton from "../../../components/Buttons/DeleteButton";
 import UpLoadButton from "../../../components/Buttons/UpLoadButton";
 import {useCallback, useEffect, useState} from "react";
-import { InboxOutlined } from '@ant-design/icons';
+import { AppstoreOutlined, InboxOutlined, UnorderedListOutlined } from '@ant-design/icons';
 import type { UploadProps } from 'antd';
 import { message, Upload } from 'antd';
 import CheckButton from "../../../components/Buttons/CheckButton";
@@ -12,7 +12,15 @@ import {ImgUrl} from "../../../interface/ImgTypes";
 import {delImages, getImageList, uploadImages} from "../../../apis/ImageMethods.tsx";
 import ImageCompression from "../../../apis/ImageCompression.tsx";
 import { resolveApiAssetUrl } from '../../../utils/runtimeApi';
+import { assetDisplayName } from '../../../utils/assetName';
 
+
+/** 图库的两种展示方式（用户要求：一种当前的直接展开，一种列表——行首缩略图 + 图片名）。 */
+type AlbumView = 'grid' | 'list';
+
+/** 上次选的那一种。读了就记住（与站内其它 localStorage 键一样整体包 try：
+ *  Safari 无痕下 `localStorage` 本身就可能抛）。 */
+const ALBUM_VIEW_KEY = 'albumViewMode';
 
 const Albums = () => {
     //状态变量区
@@ -22,6 +30,22 @@ const Albums = () => {
     const [staticDate, setStaticDate] = useState<ImgUrl[]>([]);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isModaldelOpen, setIsDelModalOpen] = useState(false);
+    const [view, setView] = useState<AlbumView>(() => {
+        try {
+            return localStorage.getItem(ALBUM_VIEW_KEY) === 'list' ? 'list' : 'grid';
+        } catch {
+            return 'grid';
+        }
+    });
+
+    const changeView = (v: AlbumView) => {
+        setView(v);
+        try {
+            localStorage.setItem(ALBUM_VIEW_KEY, v);
+        } catch {
+            // 存不下就只当次生效——切展示方式这种偏好不值得弹窗打扰
+        }
+    };
 
 
     useEffect(() => {
@@ -168,30 +192,74 @@ const Albums = () => {
                 <div style={{ display: "flex", flexDirection: 'row', alignItems: 'center' }}>
                     <h2 style={{display: "flex", flexDirection: 'row', alignItems: 'center'}}> <i className="iconfont icon-xiangce icon" style={{ fontWeight: '80', fontSize: 50, color: 'var(--washi-lav, #b9a7f5)' }} /> 图库  </h2>
                 </div>
-                <div style={{display: "flex",alignItems:'center'}}>
-                    <h2 style={{position: "absolute", right: 180, opacity: SelectDelete !== 0 ? 1 : 0, transition: '0.3s'}}>已选中{SelectDelete}张图片</h2>
+                <div className={"albumActions"} style={{display: "flex",alignItems:'center'}}>
+                    {/* 「已选中 N 张」原来绝对定位在 right:180 —— 现在它是流内的一员
+                        （`opacity` 到 0 时**照旧占位**，切换器与删除钮不会因为选没选中而左右跳） */}
+                    <h2 className={"albumSelCount"} style={{opacity: SelectDelete !== 0 ? 1 : 0, transition: '0.3s'}}>已选中{SelectDelete}张图片</h2>
+                    <Segmented
+                        value={view}
+                        onChange={(v) => changeView(v as AlbumView)}
+                        options={[
+                            { value: 'grid', label: '平铺', icon: <AppstoreOutlined /> },
+                            { value: 'list', label: '列表', icon: <UnorderedListOutlined /> },
+                        ]}
+                    />
                     <div onClick={showdelModal}>
                         <DeleteButton />
                     </div>
                 </div>
             </div>
             <Card style={{ width: '100%', height: '86vh', marginLeft: '0%', marginTop: '0%', overflowY: 'scroll', backgroundColor: 'transparent', border: "none" }}>
-                {staticDate.map(item => (
-                    <div key={item.imageKey} style={{ position: 'relative', display: 'inline-block' }}>
-                        <div style={{ position: 'absolute', top: 30, right: 40, transform: 'scale(0.8)',zIndex: 3 }}>
-                            <CheckButton
-                                checked={checkStatus[item.imageUrl] || false}
-                                handleCheckBoxChange={() => handleItemClick(item)}
+                {view === 'list' ? (
+                    <div className={"albumList"}>
+                        {staticDate.map(item => {
+                            const checked = checkStatus[item.imageUrl] || false;
+                            // 展示名走 `utils/assetName.ts`（去掉上传时压的那串时间戳前缀，
+                            // 与 Rust `strip_timestamp_prefix` 同一条规则）
+                            const name = assetDisplayName(item.imageUrl);
+                            return (
+                                <div
+                                    key={item.imageKey}
+                                    className={`albumRow${checked ? ' is-checked' : ''}`}
+                                    onClick={() => handleItemClick(item)}
+                                >
+                                    <img
+                                        className={"albumThumb"}
+                                        src={resolveApiAssetUrl(item.imageUrl)}
+                                        alt={name}
+                                        loading={"lazy"}
+                                    />
+                                    <span className={"albumName"} title={name}>{name}</span>
+                                    {/* 勾选框自己也要能点：不拦冒泡的话这一下会被行接走再翻一次，
+                                        净效果是"点勾选框没反应" */}
+                                    <span className={"albumCheck"} onClick={(e) => e.stopPropagation()}>
+                                        <CheckButton
+                                            checked={checked}
+                                            handleCheckBoxChange={() => handleItemClick(item)}
+                                        />
+                                    </span>
+                                </div>
+                            );
+                        })}
+                    </div>
+                ) : (
+                    staticDate.map(item => (
+                        <div key={item.imageKey} style={{ position: 'relative', display: 'inline-block' }}>
+                            <div style={{ position: 'absolute', top: 30, right: 40, transform: 'scale(0.8)',zIndex: 3 }}>
+                                <CheckButton
+                                    checked={checkStatus[item.imageUrl] || false}
+                                    handleCheckBoxChange={() => handleItemClick(item)}
+                                />
+                            </div>
+                            <img
+                                src={resolveApiAssetUrl(item.imageUrl)}
+                                onClick={() => handleItemClick(item)}
+                                style={{ maxWidth: 250, maxHeight: 250, margin: 40, marginLeft: 45, marginTop: 30, borderRadius: 10 }}
+                                className='imgShade'
                             />
                         </div>
-                        <img
-                            src={resolveApiAssetUrl(item.imageUrl)}
-                            onClick={() => handleItemClick(item)}
-                            style={{ maxWidth: 250, maxHeight: 250, margin: 40, marginLeft: 45, marginTop: 30, borderRadius: 10 }}
-                            className='imgShade'
-                        />
-                    </div>
-                ))}
+                    ))
+                )}
             </Card>
 
             <Modal

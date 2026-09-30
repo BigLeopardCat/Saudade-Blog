@@ -33,3 +33,59 @@
     left: 50%
     transform: translateX(-50%)
 
+
+// ── 列表展示（20261001，用户第 2 条）──────────────────────────────────────
+// 两档主题共用一份：颜色一律走 `--washi-*` 令牌（内联 style 特异性最高、`.dark &` 赢不了，
+// 见 CLAUDE.md 记的那条）。几何只有一条要求——**缩略图不许被名字挤小**
+// （`flex: 0 0 auto`；名字那一格才是被截断的那个）。
+.albumList
+  display: flex
+  flex-direction: column
+  gap: 6px
+  padding: 0 4px 20px
+
+.albumRow
+  display: flex
+  align-items: center
+  gap: 12px
+  padding: 6px 12px
+  border: 1px solid var(--washi-line-2, rgba(198, 152, 192, 0.22))
+  border-radius: 10px
+  cursor: pointer
+  transition: background 0.2s, border-color 0.2s
+
+  &:hover
+    background: var(--washi-paper-3, #f6f0ff)
+
+  &.is-checked
+    border-color: var(--washi-lav, #b9a7f5)
+    background: var(--washi-paper-2, #fff6fa)
+
+.albumThumb
+  flex: 0 0 auto
+  width: 56px
+  height: 56px
+  object-fit: cover
+  border-radius: 8px
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12)
+
+.albumName
+  flex: 1 1 auto
+  // 不给 `min-width: 0` 的话，长文件名会把这一行顶宽（flex 项的自动最小尺寸是内容宽）
+  min-width: 0
+  overflow: hidden
+  white-space: nowrap
+  text-overflow: ellipsis
+  color: var(--washi-ink, #4a3550)
+
+.albumCheck
+  flex: 0 0 auto
+  display: inline-flex
+
+  // ⚠️ 字号必须写在**组件自己那一层**：`.Check_container` 自带 `font-size: 1.5rem`
+  // （勾标 ≈31px，在 56px 的行里太大），写在 `.albumCheck` 上只是继承值、会被它盖掉。
+  .Check_container
+    font-size: 1.1rem
+
+.albumActions
+  gap: 14px
