@@ -1,19 +1,161 @@
-$light-mode-color: linear-gradient(to left, rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0.6))
-$darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7, 0.33))
-
+// 页脚 = 首页三段的**末段**（封底）。
+//
+// 用户 20261001 第 4 条：「不止第一页主页，下面包括脚页也做风格适配，主页段落感和配色
+// 搭配撞色感，不要一股脑一个首页顶部颜色配到底」。
+//
+// 改版前它与正文带**共用同一个 `--container-background-color`**（半透明白铺在页面底图上），
+// 于是三段一路同色。现在它自成一档：**深墨紫封底** + 顶上一道胶带接缝 + 粉白字，
+// 与前两段（粉紫首屏 / 薄荷青正文带）撞色。色值在 `src/index.css` 的 `--band-foot*`
+// 那一组里（深浅两档成对），这里只消费。
+//
+// ⚠️ 两件事决定了这里**只能**用"自带一套造型"的做法：
+//   ① 页脚挂在 App 壳上（App.tsx），**所有前台页面共用**——不能出现"只有当它上面是
+//      首页正文带时才成立"的假设（比如把上面那段的颜色画成花边，换一页就错色）；
+//   ② ⛔ 不要用 `backdrop-filter`：本站两次同因事故（App.sass:10、ContentHome/index.sass
+//      的 Vitrine 头注）。要半透明就用 rgba 底色。
+//
+// ⚠️ 改版前这里的字色、字号、间距**全是行内 `style={{…}}`**（TSX 里七处）。内联特异性最高，
+// 令牌压不动它，换主题只能 `!important` 硬压——这正是本站夜间模式的头号敌人。这次一并
+// 搬进类里：`.footLine` / `.footNote` / `.footTech` / `.footPoem` / `.footBeian` / `.footLogos`。
+// **别再往 TSX 里写行内颜色**。
 .footerContainer
-  padding: 40px
-  background: var(--container-background-color)
+  // 顶上的胶带要探到盒子外面（`top: -8px`），没有这条它会按"内容盒之外"被算进滚动溢出
+  // 之外的东西——`position: relative` 同时也是那道接缝的定位基准。
+  position: relative
+  padding: 36px 20px
+  background: var(--band-foot)
   display: flex
   flex-direction: column
   justify-content: center
   align-items: center
-  color: #959595
+  color: var(--band-foot-ink, #ece4f4)
   box-sizing: border-box
+
+  // 顶上那道**接缝胶带**：正文带与封底是两张纸，用两片和纸胶带粘起来。
+  // 与首页正文带 `.ContentContainer::before` 同一配方（那里在接缝的另一侧）。
+  &::before
+    content: ''
+    position: absolute
+    top: -8px
+    left: 0
+    right: 0
+    height: 16px
+    pointer-events: none
+    background-image: linear-gradient(var(--washi-tape-2, rgba(214, 226, 255, 0.8)), var(--washi-tape-2, rgba(214, 226, 255, 0.8))), linear-gradient(var(--washi-tape, rgba(255, 222, 238, 0.86)), var(--washi-tape, rgba(255, 222, 238, 0.86)))
+    background-size: clamp(110px, 15vw, 200px) 15px, clamp(90px, 12vw, 165px) 15px
+    background-position: 16% 0, 80% 1px
+    background-repeat: no-repeat
+    filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.35))
+
+  // 版权行：封底上最重的一行，给足对比度（深底上的浅字，实测 ≥ 10:1）
+  .footLine
+    width: 100%
+    text-align: center
+    color: var(--band-foot-ink, #ece4f4)
+
+  // 次级说明行：小一号、淡一档。原来靠行内 `opacity: 0.8` 压暗——`opacity` 会把
+  // 整行连**子元素**一起调透明（那两处技术名的高亮色也被一起打了八折），
+  // 现在改成调**字色**，两个技术名保持全亮。
+  .footNote
+    width: 100%
+    margin-top: 5px
+    text-align: center
+    font-size: 0.9em
+    color: var(--band-foot-ink-2, rgba(236, 228, 244, 0.66))
+
+    // 「Rust」「Axum」两个字名在封底上要亮得起来：封底**深浅两档都是深色**（见 index.css），
+    // 所以这两个色是常量、不需要令牌 —— 原来的 `#dea584` / `#667ea5` 是按白底挑的，
+    // 后者压在 `#2c2542` 上只有 2.3:1，等于看不见。
+    .footTech
+      font-weight: bold
+    .footTechRust
+      color: #f0a98a
+    .footTechAxum
+      color: #9fc0f5
+
+  // 页脚那句诗（今日诗词接口）。手账封底上的一行题词：粉字 + 缩进引号感。
+  // ⚠️ 外层 `<em>` 是语义斜体，**别把字色写在 em 上**：里面的 p 有自己的 margin，
+  // 字色挂在 em 上会让"斜体范围"和"着色范围"两件事混在一起，将来想只调 p 就得 `!important`。
+  .footPoem
+    display: block
+    width: 100%
+    margin-top: 10px
+    text-align: center
+    p
+      margin: 0
+      font-size: 0.95em
+      color: var(--washi-pink, #ff9ec9)
+
+  // 备案号那块。两个备案号**各自独立渲染**，中间那根竖线由 TSX 按"两个都有"决定
+  // （只填一个时不留悬空竖线）——这里只管排版。
+  .footBeian
+    margin: 10px 0
+    text-align: center
+    color: var(--band-foot-ink-2, rgba(236, 228, 244, 0.66))
+
+  .footBeianIcon
+    width: 16px
+    height: 16px
+    vertical-align: middle
+    margin-right: 4px
+
+  // 链接：封底上的字要亮一档，悬停换成粉（与全站那套"悬停变粉"一致）。
+  // 原来那条 `transition: text-decoration 0.6s` 是空转——`text-decoration` 在
+  // Chromium 里不参与过渡，写它等于没写；改成过渡颜色（真正会变的那一项）。
   .link
+    color: var(--band-foot-ink-2, rgba(236, 228, 244, 0.66))
     text-decoration-line: none
-    color: #959595
-    transition: text-decoration 0.6s ease
+    transition: color 0.25s ease
     &:hover
+      color: var(--washi-pink, #ff9ec9)
       text-decoration-line: underline
-      transition: text-decoration 0.6s ease
+
+  // 合作方 logo 那一排。封底是深色，而这几张图有深蓝、深橙的笔画——直接放上去
+  // 会"糊进底里"。给每张一个**极淡的浅色贴片**（不是白框：白框在小尺寸上会变成
+  // 一排刺眼的亮块），logo 的对比度就回到它们出厂时的样子。
+  .footLogos
+    display: flex
+    // ⚠️ 必须能换行：`.footerContainer` 是 `align-items: center` 的列 flex，
+    // 子元素宽度按**内容**算（不是撑满）⇒ 窄屏上这一排会宽过容器而后**两边同时溢出**
+    // （实测 306px 的一排，320px 屏上去掉内边距只剩 280px）。它与 `overflow: hidden`
+    // 不同：不会切掉，是直接探到视口外多出一条横向滚动条。
+    flex-wrap: wrap
+    justify-content: center
+    align-items: center
+    gap: 12px
+    margin-top: 12px
+    max-width: 100%
+
+    a
+      display: inline-flex
+      align-items: center
+      justify-content: center
+      padding: 4px
+      border-radius: 10px
+      background: rgba(255, 255, 255, 0.07)
+      border: 1px solid rgba(255, 255, 255, 0.08)
+      transition: background 0.25s ease
+      &:hover
+        background: rgba(255, 255, 255, 0.14)
+
+    img
+      display: block
+      // 几张图的固有比例各不相同（Ali 是 357×76 的长条、Live2D 是 60×15），
+      // 而这里给的是正方形/近正方形的框 —— `contain` 让它们在框里完整显示，
+      // 不被拉伸（原来没有这条，长条图是被压扁的）。
+      object-fit: contain
+
+    // 每张 logo 的显示框。**从 TSX 的行内 style 搬过来的**（那里也是写死的像素），
+    // 顺手补上 object-fit 需要的确定盒子。改尺寸只改这里一处。
+    .footLogoAli
+      width: 70px
+      height: 70px
+    .footLogoTx
+      width: 50px
+      height: 50px
+    .footLogoCf
+      width: 50px
+      height: 50px
+    .footLogoLive2d
+      width: 60px
+      height: 15px

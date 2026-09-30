@@ -1,5 +1,8 @@
 import SeoHelmet from "../../../components/SeoHelmet";
 import './index.sass'
+// 段落带（首页被切成几段、每段什么色）单独一份，见 sections.sass 头注。
+// ⚠️ **必须排在 `./index.sass` 之后**：同特异度下后写者赢，挪到前面就等于整份没写。
+import './sections.sass'
 import SocialButton from "../../../components/Buttons/SocialButton";
 import {useEffect, useRef, useState} from "react";
 import type {CSSProperties} from "react";
