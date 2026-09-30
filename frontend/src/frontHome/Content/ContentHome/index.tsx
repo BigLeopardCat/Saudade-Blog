@@ -1,8 +1,9 @@
 import SeoHelmet from "../../../components/SeoHelmet";
 import './index.sass'
-import {Avatar, Tag} from "antd";
+import {Avatar} from "antd";
 import SocialButton from "../../../components/Buttons/SocialButton";
 import {useEffect, useRef, useState} from "react";
+import type {CSSProperties} from "react";
 import {useLiveRefresh} from "../../../utils/liveRefresh.ts";
 import {useSelector} from "react-redux";
 import UserState from "../../../interface/UserState";
@@ -330,31 +331,35 @@ const ContentHome = () => {
                 </div>
             </div>
 
-            {/* 背景视频（20260902 起，20260930 四轮搬家）：从满屏底变成拼贴里的一张"手账内页"
-                ——白边 + 两角胶带 + 歪 1.2 度。muted+playsInline 是自动播放的前提；poster 兜
-                加载期；离屏暂停由上面的 IO 处理（它取的是 hero 里第一个 video，选择器照旧命中）。
-                ⚠️ 夜间档 `.frontDark` 把**整块 `.heroPanel`** 都 `display: none`（视频仅白天显示
-                是 20260902 的用户要求；只藏 video 会留一张空白的白卡片）——夜里右半屏归展示柜
-                窗口 Vitrine，那东西只在夜间出现，两者不许同屏。 */}
-            <figure className="heroPanel">
-                <video
-                    className="heroVideo"
-                    src={heroBg}
-                    poster={heroPoster}
-                    muted
-                    loop
-                    autoPlay
-                    playsInline
-                    preload="auto"
-                    disablePictureInPicture
-                    aria-hidden="true"
-                />
-                <span className="heroPanelTape tapeL"/>
-                <span className="heroPanelTape tapeR"/>
-            </figure>
+            {/* 右列 = 手账内页（视频）+ 它下面的展示柜（20260930 五轮）。
+                两个原来各自绝对定位/各自占位的东西，现在是一列里的两张胶带贴图。
+                ⚠️ 夜间档 `.frontDark` 仍然把 `.heroPanel` 整块 `display: none`（视频仅白天
+                显示是 20260902 的用户要求；只藏 video 会留一张空白的白卡片）——于是夜里这
+                一列只剩展示柜那张卡，位置正好还是原来那个视觉落点。 */}
+            <div className="heroRight">
+                {/* 背景视频（20260902 起，20260930 四轮搬家）：从满屏底变成拼贴里的一张
+                    "手账内页"——白边 + 两角胶带 + 歪 1.2 度。muted+playsInline 是自动播放的
+                    前提；poster 兜加载期；离屏暂停由上面的 IO 处理（它取的是 hero 里第一个
+                    video，选择器照旧命中）。 */}
+                <figure className="heroPanel">
+                    <video
+                        className="heroVideo"
+                        src={heroBg}
+                        poster={heroPoster}
+                        muted
+                        loop
+                        autoPlay
+                        playsInline
+                        preload="auto"
+                        disablePictureInPicture
+                        aria-hidden="true"
+                    />
+                    <span className="heroPanelTape tapeL"/>
+                    <span className="heroPanelTape tapeR"/>
+                </figure>
 
-            {/* 展示柜窗口：仅夜间出现，占用右半屏空白区 */}
-            <Vitrine/>
+                <Vitrine/>
+            </div>
             {/* 20260902 暂时注释掉大圆头像窗口 */}
             {/* <Avatar src={avatar} size={320} className='frontAvatar'/> */}
             <motion.div
@@ -411,10 +416,25 @@ const ContentHome = () => {
                                             }
                                         });
 
+                                        // 标签 id 查不到名字就整条不渲染。旧版是 `<Tag>{undefined}</Tag>`
+                                        // ——antd 会老老实实吐一个**空药丸**；手账 chip 带一个色点，
+                                        // 空 chip 看着像个坏掉的控件（同 apis/TagMethods.tsx:162 的处置）。
+                                        if (!name) return null;
+
+                                        // 不用 antd `<Tag color=…>`：那个 `color` 会落成**内联**的
+                                        // background/border/color，而内联特异性最高 —— 想换成手账 chip
+                                        // 就只能 `!important` 硬压。改成一个纯 span，把标签自己的色相
+                                        // 从 CSS 变量 `--tg` 递进去（`style` 里只有变量，没有颜色），
+                                        // 配色一律由 sass 说了算。
                                         return (
-                                            <Tag color={color} key={noteTag} style={{ margin: 5 }}>
+                                            <span
+                                                className="tagChip"
+                                                key={noteTag}
+                                                style={{ '--tg': color || 'var(--washi-lav, #b9a7f5)' } as CSSProperties}
+                                            >
+                                                <i className="tagChipDot" aria-hidden="true" />
                                                 {name}
-                                            </Tag>
+                                            </span>
                                         );
                                     })}
                                 </div>

@@ -173,9 +173,19 @@ function renderNoteTags(noteTags: number[],tagList: any){
         const opt = labels.get(noteTag);
         if (!opt) return;   // 悬空 id：不渲染空白块
         nodes.push(
-            <Tag color={opt.color} key={noteTag} style={{margin: 5}}>
+            // 手账 chip（20260930 五轮）：不用 antd `<Tag color=…>`——它的 `color` 会落成
+            // **内联**的 background/border/color，内联特异性最高，想换皮只能 `!important`
+            // 硬压。改成纯 span，标签自己的色相从 CSS 变量 `--tg` 递进去（`style` 里只有
+            // 变量、没有颜色），配色一律由 `.tagChip` 说了算（frontHome/Content/ContentHome/
+            // index.sass 文件尾）。样式与首页置顶卡那排 chip 是同一份。
+            <span
+                className="tagChip"
+                key={noteTag}
+                style={{'--tg': opt.color || 'var(--washi-lav, #b9a7f5)'} as React.CSSProperties}
+            >
+                <i className="tagChipDot" aria-hidden="true" />
                 {opt.label}
-            </Tag>
+            </span>
         );
     });
     return nodes;

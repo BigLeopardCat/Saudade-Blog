@@ -42,6 +42,16 @@ const TM = await import(file);
 // ⚠️ 不能拿 stub 模块对象做身份比较：它已被 esbuild 打进 bundle，bundle 里是**另一份副本**；
 // 也不能靠函数名（重名时 esbuild 会把内部函数改名 Tag → Tag2），所以认 stub 上的标记属性。
 const isTag = (n) => n?.type?.__isTag === true;
+// 20260930 五轮：**公开面**的标签（首页卡片 + articleRecord，走 `renderNoteTags`）从
+// antd `<Tag color=…>` 换成了手账 chip `<span className="tagChip">`（那个 `color` 会落成
+// 内联样式，换皮只能 `!important` 硬压；现在色相走 CSS 变量 `--tg`）。**后台的折叠渲染
+// `renderNoteTagsCollapsed` 没动**，仍是 antd Tag。两种载体都要认——这些断言锁的是
+// "该渲染哪几个标签"，不是"用哪个组件渲染"。
+const isChip = (n) => n?.type === 'span' && n?.props?.className === 'tagChip';
+// chip 的 children 是 [<i className="tagChipDot"/>, label]，取其中的字符串（= 真文字）
+const labelOf = (n) => isChip(n)
+    ? String([].concat(n.props.children).filter(c => typeof c === 'string').pop())
+    : String(n.props.children);
 
 let passed = 0, failed = 0;
 const ok = (cond, name, detail) => {
@@ -50,11 +60,11 @@ const ok = (cond, name, detail) => {
 };
 const eq = (got, want, name) => ok(JSON.stringify(got) === JSON.stringify(want), name, { got, want });
 
-// 在 React 元素树里收集所有 <Tag> 的 label（stub Tag 是普通函数，可当哨兵比较）
+// 在 React 元素树里收集所有标签的 label（stub Tag 是普通函数，可当哨兵比较；chip 认 className）
 function tagsOf(node, acc = []) {
     if (Array.isArray(node)) { node.forEach(n => tagsOf(n, acc)); return acc; }
     if (!node || typeof node !== 'object') return acc;
-    if (isTag(node)) acc.push(String(node.props.children));
+    if (isTag(node) || isChip(node)) acc.push(labelOf(node));
     if (node.props) Object.values(node.props).forEach(v => tagsOf(v, acc));
     return acc;
 }

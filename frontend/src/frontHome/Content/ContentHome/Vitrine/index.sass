@@ -1,55 +1,216 @@
-// 首页展示柜窗口。只在夜间出现（白天 hero 是整幅视频且中心有人像，不该抢主视觉），
-// 挂在 .SelfDescription 的右半屏空白区——那里自 20260902 起没有任何 DOM。
+// 首页展示柜：**视频下方的一张胶带贴图**（20260930 五轮）。
 //
-// ⛔ 不要用 backdrop-filter：本站有两次同因事故记录（App.sass:10-11、
+// 形态见 index.tsx 的头注。这里只记几何契约与两条禁令。
+//
+// ⛔ ① 不要用 backdrop-filter：本站有两次同因事故记录（App.sass:10-11、
 //    ContentHome/index.sass:81-82），半透明观感一律靠 rgba 底色 + 静态渐变。
 //    合成器逐帧重算模糊会把首页帧率压垮，而这正是首页最重的区域。
-
-// 尺寸（20260915b 第二轮放大 + 20260916 左移 12px）：**左缘贴「Sereno da Saudade」
-// 右侧，底边钉住，只往左+往上长**——用户在原来那版上继续要的两条："左侧延伸到近乎签名
-// 右侧""上方再抬两个检索框的高度"，第三轮又要求"左移一点点"（缝 24 → 12）。
-//   ⚠️ 20260923 凌晨试过一版"左缘右移 + 宽度砍 30%"（`max(8vw+510px, 35.6vw+286.2px)`，
-//      连 `.SayWords` 的 margin-left:60px 一起），当天即**整体撤回**——用户看到实际效果
-//      判定不美观。真正要解决的是"鼠标下滚落在窗口上、页面不翻"，改由**锁定交互**承担：
-//      窗口默认锁定 ⇒ 滚轮穿透到页面（引擎侧 `setLocked`，见 wordgraph/engine.ts），
-//      悬停浮现解锁按钮。别再把这条几何改动重做一遍。
-//   左：.SayWords 的左缘是 .SelfDescription 的 padding-left:8%，它的宽度就是那行 h3
-//       文字的宽度（2.5rem，实测 437.9px@Linux sans-serif）⇒ 左缘 = 8vw + 438 + 12 缝。
-//       别改成百分比：h3 是**定宽文本**，8vw+438 在 1366/1920/2560 上实测都是同一缝隙，
-//       换成 vw 系数在窄屏会直接压到字上。12px 仍是**明确的缝**而不是贴上去：h3 的
-//       实测宽度依赖字体（Linux sans-serif 437.9，换成霞鹜文楷等中文字体可能更宽），
-//       缝留 12 是给字体差异的余量，别再往下压。
-//   上：高 = 老式高度 + 72px（两个检索框高 33×2 + 一行间隙 6）。底边必须钉住——继续用
-//       top:50% + translateY(-46%) 的话增量会一半往下长，1366×768 那档（间距只剩 34px）
-//       立刻压到签名上。18.7vh 就是老式定位折算出的底边留白（三档实测一致）。
-//   右：右缘固定让开右侧固定栏 .TopMao（≤1300px 收窄到 84px，≤1200px 时它 display:none）。
-// 七视口实测（左移后重测，见 docs/word-graph.md §8.1）：
-//   1366×768  711×517  左缝 12  上缝 107  下缝 34.6 ← 最紧的一档，别再往下压
-//   1440×900  779×594  12       137.7    59.3
-//   1920×1080 1220×698 12       179.7    93
-//   2560×1440 1809×712 12       458.7    160.3
+// ⛔ ② `overflow: hidden` **不许**写在 `.vit-3d` 上：它是 `transform-style: preserve-3d`
+//    的容器，而 overflow 是分组属性 —— 会把它强制拍平成 flat，翻页动效直接消失
+//    （症状是"翻过去了但两张面同时可见/糊在一起"）。圆角与裁剪一律下沉到 `.vit-face`。
+//
+// 旧几何（`left: calc(8vw + 450px)` / `bottom: 18.7vh` / 高度公式）**已随搬家作废**：
+// 那套数是按"签名右侧的缝"算的（8% 左内边距 + 标题盒宽 437.9px + 12px 缝），
+// 而展示柜现在按用户要求住到视频下面，缝的前提不存在了。docs/word-graph.md §8.1
+// 那七组视口实测记录的是旧形态，别再照着它校新布局。
 .vitrine
-  position: absolute
-  left: calc(8vw + 450px)
-  right: 96px
-  bottom: 18.7vh
-  height: calc(min(58vh, 640px) + 72px)
-  z-index: 3
-  display: flex
-  flex-direction: column
-  border-radius: 18px
-  // 玻璃质感：纯 rgba + 一层静态径向高光，零合成开销
-  background: rgba(13, 19, 32, 0.55)
-  background-image: radial-gradient(120% 80% at 12% 0%, rgba(120, 160, 255, 0.10), rgba(120, 160, 255, 0) 62%)
-  border: 1px solid rgba(255, 255, 255, 0.14)
-  box-shadow: 0 18px 50px -18px rgba(0, 0, 0, 0.75), inset 0 1px 0 rgba(255, 255, 255, 0.06)
-  overflow: hidden
+  position: relative
+  width: 100%
+  // 24px = 上面那张内页 `rotate(1.2deg)` 探出来的角（520px 宽 × sin1.2° ≈ 5.4px）
+  // + 卡片自己 `top: -9px` 的胶带 + 一点余量。内页的歪角与胶带在这个数以下会打架。
+  margin-top: 24px
+  z-index: 1
+  border-radius: 16px
+  // 3D 透视挂在**卡片自己**身上（不是祖先）：`perspective` 会给 `position: fixed`
+  // 后代造包含块，挂到 .heroRight/.SelfDescription 上去，放大态就飞不出原位了。
+  perspective: 1400px
+  cursor: pointer
   animation: vit-in 0.7s ease both
 
+// 只做透明度：原来的 `translateY(10px)` 会让 `.vitrine` 在整个入场动画期间带上
+// transform，而"带 transform 的元素"同样会给 `position: fixed` 后代造包含块 ——
+// 放大态要 fixed 到视口正中，开场动画那 0.7 秒里点开会飞错位置。
 @keyframes vit-in
   from
     opacity: 0
-    transform: translateY(10px)
+
+// 两张贴纸胶带（跟 `.heroPanelTape` 同配方：半透明和纸 + 一点点歪）
+.vit-tape
+  position: absolute
+  top: -9px
+  width: 62px
+  height: 20px
+  z-index: 3
+  pointer-events: none
+  background: var(--washi-tape, rgba(255, 222, 238, 0.86))
+  box-shadow: 0 2px 7px rgba(120, 90, 140, 0.2)
+
+.vit-tapeL
+  left: 22px
+  transform: rotate(-5deg)
+
+.vit-tapeR
+  right: 22px
+  transform: rotate(4deg)
+  background: var(--washi-tape-2, rgba(214, 226, 255, 0.8))
+
+// 翻页的 3D 容器：正反两面都住在这里
+.vit-3d
+  position: relative
+  width: 100%
+  aspect-ratio: 16 / 7
+  transform-style: preserve-3d
+  transition: transform 0.78s cubic-bezier(0.22, 0.68, 0.24, 1)
+
+.vit-face
+  position: absolute
+  inset: 0
+  display: flex
+  flex-direction: column
+  border-radius: 15px
+  overflow: hidden
+  backface-visibility: hidden
+  -webkit-backface-visibility: hidden
+  border: 1px solid var(--washi-line, rgba(198, 152, 192, 0.42))
+
+// 封面面：手账纸 + 描边渐变字
+.vit-cover
+  align-items: center
+  justify-content: center
+  gap: 10px
+  padding: 18px
+  text-align: center
+  background: linear-gradient(135deg, #fffdfa 0%, #fff3f9 54%, #f4f0ff 100%)
+  color: var(--washi-ink, #4a3550)
+
+.vit-coverStar
+  font-size: 22px
+  line-height: 1
+  color: var(--washi-pink, #ff9ec9)
+
+.vit-coverTitle
+  font-size: clamp(20px, 2.1vw, 28px)
+  font-weight: 700
+  letter-spacing: 3px
+  // 兜底实体色在前，渐变在 @supports 里替换 —— 与 `.home-title-h3` 同一套写法：
+  // 不吃 background-clip 的环境必须有可读的实体色，否则标题整条消失
+  color: var(--washi-pink-deep, #d94f9a)
+  @supports (-webkit-background-clip: text) or (background-clip: text)
+    background-image: var(--washi-grad, linear-gradient(100deg, #ff7fc0, #b06ee8))
+    -webkit-background-clip: text
+    background-clip: text
+    -webkit-text-fill-color: transparent
+
+.vit-coverHint
+  max-width: 90%
+  font-size: 12px
+  line-height: 1.7
+  color: var(--washi-ink-2, #7c6584)
+
+// 图谱面：深色玻璃（图上的 `wg-*` 全是深色系，纸底会让它们全糊掉）
+.vit-panel
+  transform: rotateX(180deg)
+  background: rgba(13, 19, 32, 0.55)
+  background-image: radial-gradient(120% 80% at 12% 0%, rgba(120, 160, 255, 0.10), rgba(120, 160, 255, 0) 62%)
+  border-color: rgba(255, 255, 255, 0.14)
+
+.vitrine.is-flipped .vit-3d
+  transform: rotateX(180deg)
+
+// 内联态的图谱**一律不吃指针事件**：点卡片 = 放大，放大后才把交互交还给引擎。
+// 顺带治了老毛病——它出厂就吃滚轮（所以自带 `is-locked` 预览态），访客往下滚页面
+// 时鼠标一旦落在这张卡上，页面就不动了。
+.vitrine:not(.is-zoomed) .vit-body
+  pointer-events: none
+
+// 图谱底栏第一行（快捷检索 chip）给翻页钮让出左上角
+.vit-panel .wg-chips
+  padding-left: 44px
+
+// 左下角的翻页钮：卷角 + 上翻箭头
+.vit-flip
+  position: absolute
+  left: 10px
+  bottom: 10px
+  z-index: 4
+  width: 30px
+  height: 30px
+  padding: 0
+  display: flex
+  align-items: center
+  justify-content: center
+  border-radius: 9px
+  border: 1px solid var(--washi-line, rgba(198, 152, 192, 0.42))
+  background: var(--washi-paper-2, #fff6fa)
+  color: var(--washi-pink-deep, #d94f9a)
+  cursor: pointer
+  box-shadow: 0 7px 15px -8px rgba(120, 90, 140, 0.75)
+  transition: transform 0.25s ease, background 0.25s ease
+
+  &:hover
+    transform: translateY(-2px)
+    background: var(--washi-tape, rgba(255, 222, 238, 0.86))
+
+  svg
+    transition: transform 0.45s ease
+
+// ───────────────────────────────────────────────────────────── 放大（单击后）
+// 「居中变大 + 压暗背景 + 正常交互」。⚠️ 这里**不能**用 transform 居中
+// （`translate(-50%,-50%)` 那套）：transform 会给自己的 `position: fixed` 后代
+// 造包含块，`::before` 那块压暗层就只盖住卡片、盖不住整屏。改用 flex 居中。
+.vitrine.is-zoomed
+  position: fixed
+  inset: 0
+  width: auto
+  margin: 0
+  z-index: 1200
+  display: flex
+  align-items: center
+  justify-content: center
+  border-radius: 0
+  cursor: default
+  animation: none
+
+  &::before
+    content: ''
+    position: fixed
+    inset: 0
+    z-index: -1
+    background: radial-gradient(120% 90% at 50% 44%, rgba(24, 16, 34, 0.66), rgba(11, 7, 18, 0.9))
+
+  .vit-3d
+    width: min(90vw, 1180px)
+    height: min(78vh, 760px)
+    aspect-ratio: auto
+
+  .vit-body
+    pointer-events: auto
+
+  .vit-flip
+    display: none
+
+.vit-close
+  position: absolute
+  top: 18px
+  right: 22px
+  z-index: 5
+  width: 36px
+  height: 36px
+  padding: 0
+  display: flex
+  align-items: center
+  justify-content: center
+  font-size: 22px
+  line-height: 1
+  border-radius: 50%
+  border: 1px solid var(--washi-line, rgba(198, 152, 192, 0.42))
+  background: var(--washi-paper-2, #fff6fa)
+  color: var(--washi-pink-deep, #d94f9a)
+  cursor: pointer
+  box-shadow: 0 10px 24px -12px rgba(0, 0, 0, 0.8)
+
+  &:hover
+    background: var(--washi-tape, rgba(255, 222, 238, 0.86))
 
 .vit-bar
   flex: none
@@ -384,19 +545,16 @@ $bar-line: 16px
     border-color: rgba(255, 255, 255, 0.12)
 
 // ---------------------------------------------------------------- 自适应
-// ≤1300px 让开右侧固定的 .TopMao（70px 宽）：宽度不再单列公式——左缘已经被签名钉死，
-// 只收右缘，宽度自然跟着缩。高度这一档也要 +72（同上）。
-// （20260923 那版收窄曾让这一档的左缘改由 `8vw+510` 那条腿管，已随收窄一起撤回。）
-@media screen and (max-width: 1300px)
-  .vitrine
-    right: 84px
-    height: calc(min(52vh, 520px) + 72px)
-
-// ≤1100px 直接不显示：这时左半屏的文字组已经压过来，硬塞会打架
-@media screen and (max-width: 1100px)
-  .vitrine
-    display: none
-
+// 旧的两档（≤1300px 收右缘让开 .TopMao、≤1100px 直接 display: none）**已删**：
+// 那两条都是为"绝对定位占右半屏"写的——`right` 与 `height` 对它现在是空属性
+// （卡片在 `.heroRight` 里顺排，宽度由列宽给），而"窄屏不显示"更没有理由：
+// 它现在住在视频下面，跟左侧文字组不在一条水平线上，不存在"硬塞会打架"。
 @media (prefers-reduced-motion: reduce)
   .vitrine
     animation: none
+  .vit-3d
+    transition: none
+  .vit-flip
+    transition: none
+    svg
+      transition: none
