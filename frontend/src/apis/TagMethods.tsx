@@ -17,7 +17,10 @@ interface addNewTagTwo{
 /** 标签 id 可能在两级里重号（两张表各自自增），所以"按 id 找名字"以一级优先 —— 与旧行为一致 */
 export interface TagOption {
     value: number;
+    /** **显示用的名字 = 标签自己的名字**，两级一视同仁（见 `flattenTagOptions` 头注） */
     label: string;
+    /** **搜索用的词**（二级额外带上父名，所以搜父名也能命中它）。`NoteTagSelect` 靠它过滤 */
+    keywords: string;
     color?: string;
     level: 1 | 2;
 }
@@ -118,8 +121,15 @@ function delTag(level: 'one' | 'two', ids: React.Key[]) {
 /**
  * 标签树（redux 里那一棵）→ 扁平选项表。
  *
- * 两级拍平成一层：一级 `编程`、二级 `编程 / Python`。用户不必理解层级就能搜到
- * （搜「编程」或「Python」都命中），这也是编辑器/列表共用控件的数据源。
+ * 两级拍平成一层，**名字就是标签自己的名字**：一级 `编程`、二级 `Python`。
+ * 20261001 改版前二级显示成 `编程 / Python`（父名 / 子名），用户原话「二级标签和一级
+ * 标签一样显示，不需要一级标签/二级标签这样显示二级标签」—— 标签挂在文章卡片上时，
+ * 读者看到的是标签本身，层级是**管理页**的事，不该跟着上卡片。
+ *
+ * ⚠️ 但"搜父名也能搜到子标签"这条能力要留着（原来靠 `编程 / Python` 这个拼接串白捡）。
+ * 所以显示名与搜索词**分成两个字段**：`label` = 自己的名字，`keywords` = 自己的名字
+ * + 父名。`NoteTagSelect` 的 `optionFilterProp` 因此指到 `keywords` 上，
+ * 而不是像以前那样指 `label`（指错了等于"搜父名搜不到任何子标签"）。
  *
  * id 重号时**后面的条目会被丢掉**（antd Select 不允许两个 option 同 value——
  * 点一个会同时选中两个），并打一条 warn 留痕。现有数据两级无交集，迁移
@@ -129,18 +139,19 @@ function flattenTagOptions(tagList: any): TagOption[] {
     const out: TagOption[] = [];
     const seen = new Set<number>();
     const dup: number[] = [];
-    const push = (id: number, label: string, color: string | undefined, level: 1 | 2) => {
+    const push = (id: number, label: string, color: string | undefined, level: 1 | 2,
+                  keywords: string = label) => {
         if (!Number.isInteger(id) || id <= 0) return;
         if (seen.has(id)) { dup.push(id); return; }
         seen.add(id);
-        out.push({ value: id, label, color, level });
+        out.push({ value: id, label, keywords, color, level });
     };
     (Array.isArray(tagList) ? tagList : []).forEach((one: any) => {
         const oneId = Number(one?.tagKey ?? one?.key);
         push(oneId, String(one?.title ?? ''), one?.color, 1);
         (Array.isArray(one?.children) ? one.children : []).forEach((two: any) => {
             const twoId = Number(two?.tagKey ?? two?.key);
-            push(twoId, `${one?.title} / ${two?.title}`, two?.color, 2);
+            push(twoId, String(two?.title ?? ''), two?.color, 2, `${one?.title} ${two?.title}`);
         });
     });
     if (dup.length > 0) {
@@ -162,6 +173,14 @@ function tagLabelMap(tagList: any): Map<number, TagOption> {
  * 20260919 加固：**查不到的 id 直接不渲染**（旧版渲染 `<Tag>{undefined}</Tag>`，
  * 在列表上就是一个个空白标签小块 —— 线上 18 篇有标签的文章里 12 篇有这种悬空 id），
  * 并按 id 去重。签名保持不变（ContentHome/Article.tsx、articleRecord 都在用）。
+ *
+ * 20261001：**样式回到标签管理页那一套**（用户原话「标签在文章卡片的样式回到标签管理页的
+ * 样式」）—— 就是 antd `<Tag color={标签自己的色}>`。20260930 那轮曾换成手账 chip
+ * （纯 span + `--tg` 变量 + `.tagChip` 皮），理由是 `Tag` 的 `color` 会落成内联样式、
+ * 换皮得 `!important`；现在既然要的就是管理页那副样子，那层皮整个撤掉：
+ * 管理页树上的 `titleRender` 渲染的就是 `<Tag color={node.color}>{node.title}</Tag>`，
+ * 与其把 chip 调到"像"它，不如直接用同一个组件 —— 这也是**同一份样式只有一处定义**。
+ * `.tagChip` / `.tagChipDot` 两条 sass 规则随之删除（ContentHome/index.sass 文件尾）。
  */
 function renderNoteTags(noteTags: number[],tagList: any){
     const labels = tagLabelMap(tagList);
@@ -173,19 +192,10 @@ function renderNoteTags(noteTags: number[],tagList: any){
         const opt = labels.get(noteTag);
         if (!opt) return;   // 悬空 id：不渲染空白块
         nodes.push(
-            // 手账 chip（20260930 五轮）：不用 antd `<Tag color=…>`——它的 `color` 会落成
-            // **内联**的 background/border/color，内联特异性最高，想换皮只能 `!important`
-            // 硬压。改成纯 span，标签自己的色相从 CSS 变量 `--tg` 递进去（`style` 里只有
-            // 变量、没有颜色），配色一律由 `.tagChip` 说了算（frontHome/Content/ContentHome/
-            // index.sass 文件尾）。样式与首页置顶卡那排 chip 是同一份。
-            <span
-                className="tagChip"
-                key={noteTag}
-                style={{'--tg': opt.color || 'var(--washi-lav, #b9a7f5)'} as React.CSSProperties}
-            >
-                <i className="tagChipDot" aria-hidden="true" />
+            // 与标签管理页树上那颗一模一样（没有 color 时不传，落回 antd 的默认灰）
+            <Tag color={opt.color} key={noteTag}>
                 {opt.label}
-            </span>
+            </Tag>
         );
     });
     return nodes;
