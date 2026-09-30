@@ -21,3 +21,76 @@
 .counter-room {
     margin-bottom: 22px;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   日系手账（washi / 拼贴）设计令牌 —— 20260930 五轮
+
+   首页首屏那套配色（粉紫淡彩纸 + 胶带 + 描边渐变字）不再是首页专有：公告卡、
+   个人中心、看板娘对话面板、后台管理都改成同一套。**值只写在这里一份**，
+   各处只写 `var(--washi-*)`——同色值散在七八个文件里就是"改一处必须同步另一处"。
+
+   两条纪律：
+   · 令牌是**颜色/圆角/阴影/渐变**，不含尺寸与布局（那些随组件走）。
+   · 深浅两档必须成对：加一个令牌就同时给 `.frontDark, .dark` 那档补一行，
+     否则夜间会拿到浅色值（白纸上一片白字）。
+
+   深浅两档的类名各有出处、都不是这里定的：前台 `.frontDark` 挂在 App 根
+   （App.tsx:67），后台 `.dark` 挂在 dashboard 的壳上；两边都要认。 */
+:root {
+    /* 纸 */
+    --washi-paper: #fffdfa;
+    --washi-paper-2: #fff6fa;
+    --washi-paper-3: #f6f0ff;
+    /* 墨（正文色阶）。浅色档不用纯黑：参考图里的字是紫褐色的，纯黑会显脏 */
+    --washi-ink: #4a3550;
+    --washi-ink-2: #7c6584;
+    --washi-ink-3: #a08ba8;
+    /* 线：纸的描边、格线、分隔线 */
+    --washi-line: rgba(198, 152, 192, 0.42);
+    --washi-line-2: rgba(198, 152, 192, 0.22);
+    /* 粉紫天青：主色阶 */
+    --washi-pink: #ff9ec9;
+    --washi-pink-deep: #d94f9a;
+    --washi-lav: #b9a7f5;
+    --washi-sky: #8fd3ea;
+    /* 胶带（半透明和纸色）。两种色相，贴多张时轮着用 */
+    --washi-tape: rgba(255, 222, 238, 0.86);
+    --washi-tape-2: rgba(214, 226, 255, 0.8);
+    /* 描边渐变字（标题/签名/强调数）。夜间档换粉白，见下 */
+    --washi-grad: linear-gradient(100deg, #ff7fc0 0%, #b06ee8 52%, #63b8e8 100%);
+    --washi-grad-soft: linear-gradient(100deg, #ff9ec9 0%, #b06ee8 100%);
+    --washi-shadow: 0 14px 34px rgba(120, 90, 140, 0.16);
+    --washi-shadow-lg: 0 22px 54px rgba(120, 90, 140, 0.22);
+    --washi-radius: 14px;
+}
+
+/* 夜间档。⚠️ 浅色档做不到"粉白字"：白字压在浅纸上对比度约 1.2:1，等于看不见，
+   所以浅色走"亮粉→深粉"、粉白只留给夜间（同 dashboard 那两处动漫渐变字的处置）。
+
+   第三个类名 `.washiDark` 是给**挂在 document.body 上的浮层**用的（antd 的 Modal /
+   Drawer / Tooltip 都走 Portal，渲染到 body 下 ⇒ 上面那两个类在它们身上够不着，
+   `var(--washi-*)` 会一路落回 `:root` 的浅色档 —— 白纸上一片白字）。
+   组件用 `useIsDarkMode()`（src/theme.ts）判断深浅，深色时给浮层根节点加这个类。
+   值仍然只有上面那一份，这里只是把它多挂一个类名。 */
+.frontDark,
+.dark,
+.washiDark {
+    --washi-paper: rgba(38, 32, 48, 0.92);
+    --washi-paper-2: #2a2338;
+    --washi-paper-3: #241d31;
+    --washi-ink: #f3e8f6;
+    --washi-ink-2: #c9b8d3;
+    --washi-ink-3: #9a8aa5;
+    --washi-line: rgba(255, 255, 255, 0.16);
+    --washi-line-2: rgba(255, 255, 255, 0.08);
+    --washi-pink: #ffb3d9;
+    --washi-pink-deep: #ff8ec7;
+    --washi-lav: #cbb6ff;
+    --washi-sky: #9fe0f5;
+    --washi-tape: rgba(255, 214, 236, 0.24);
+    --washi-tape-2: rgba(198, 210, 255, 0.22);
+    --washi-grad: linear-gradient(100deg, #ffb3d9 0%, #ffe3f1 58%, #cbb6ff 100%);
+    --washi-grad-soft: linear-gradient(100deg, #ffb3d9 0%, #cbb6ff 100%);
+    --washi-shadow: 0 14px 34px rgba(0, 0, 0, 0.4);
+    --washi-shadow-lg: 0 22px 54px rgba(0, 0, 0, 0.55);
+}

@@ -39,8 +39,43 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
   font-size: 18px
   font-weight: 600
   transition: 0.6s
+  // ★ 常驻手账底（20260930 五轮，用户「整条顶栏的底色」）
+  //
+  // 此前这里**没有任何常驻背景**：底色只在 `:hover` 与"页面已滚动"（TSX 内联
+  // `rgba(0,0,0,0.66)`）时才出现 ⇒ 首屏未滚动时，`.headBar li` 的 `#eeeeee` 与
+  // `.webTitle` 的 `white` 直接压在首屏淡彩拼贴纸上，白字压浅底约 1.2:1，等于看不见。
+  // 现在底色常驻，字色改吃 `--washi-ink`（见下面 `.webTitle` / `li`）。
+  //
+  // 底边那条渐变不是装饰：它是"和纸胶带"母题的锚点，也让这条 60px 的条形在
+  // 淡彩首屏上有个可辨认的下沿（只靠 box-shadow 在浅底上几乎看不出来）。
+  //
+  // `backdrop-filter` 从 TSX 内联里摘掉了（见 index.tsx:307）——这里刻意用
+  // 高不透明度的纸色而非"半透明+模糊"：模糊是 GPU 成本，而首屏正是看板娘
+  // 所在的那一屏（见 memory「后台 GPU 高于首页」），没理由再添一处常驻模糊。
+  background: var(--washi-paper, rgba(255, 253, 250, 0.94))
+  border: 1px solid var(--washi-line, rgba(198, 152, 192, 0.42))
+  box-shadow: 0 12px 28px -22px rgba(120, 90, 140, 0.6)
+  &::after
+    content: ''
+    position: absolute
+    left: 8%
+    right: 8%
+    bottom: 2px
+    height: 3px
+    border-radius: 2px
+    background: var(--washi-grad, linear-gradient(100deg, #ff7fc0, #b06ee8))
+    opacity: 0.5
+    pointer-events: none
+  // 滚动态：贴满整幅、去圆角，与页顶齐平（原内联 background/backdropFilter 的活）
+  &.is-stuck
+    width: 100%
+    margin: 0
+    border-radius: 0
+    border-left: none
+    border-right: none
+    box-shadow: var(--washi-shadow, 0 14px 34px rgba(120, 90, 140, 0.16))
   &:hover
-    background: rgba(0,0,0,0.66)
+    background: var(--washi-paper, rgba(255, 253, 250, 0.94))
   @media only screen and (max-width: 1200px)
     border-radius: 0
     border-radius: 10px
@@ -64,7 +99,8 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
     cursor: pointer
     margin-left: 20px
     margin-right: 30px
-    color: white
+    // 原为 `white`：只在悬停/滚动的黑底上成立，首屏未滚动时压淡彩纸 = 看不见
+    color: var(--washi-ink, #4a3550)
     @media only screen and (max-width: 1200px)
       margin-right: 10px
       height: 100%
@@ -73,7 +109,10 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
       float: right
 
     .firstTitle
-      background: #ace0f9
+      // 原为 `#ace0f9` 浅蓝 chip 托白字（同样是悬停黑底才成立的一组）
+      background: var(--washi-tape, rgba(255, 222, 238, 0.86))
+      color: var(--washi-pink-deep, #d94f9a)
+      border: 1px solid var(--washi-line, rgba(198, 152, 192, 0.42))
       padding: 2px 6px
       border-radius: 10px
       margin-right: 5px
@@ -143,7 +182,8 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
       gap: 40px
 
     li
-      color: #eeeeee
+      // 原为 `#eeeeee`：白字只在悬停黑底上读得清，常驻浅纸上是 1.2:1
+      color: var(--washi-ink, #4a3550)
       display: flex
       justify-content: center
       align-items: center
@@ -156,8 +196,10 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
       i
         margin-right: 5px
 
+      // 悬停 = 贴一张和纸胶带（原 `#517498` 深蓝块）
       &:hover
-        background: #517498
+        background: var(--washi-tape, rgba(255, 222, 238, 0.86))
+        color: var(--washi-pink-deep, #d94f9a)
 
   .homeRight
     display: flex
@@ -297,9 +339,13 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
   width: 50px
   height: 20px
   line-height: 20px
-  background: #ace0f9
-  color: #fff
-  border-radius: 5px
+  // 原 `#ace0f9` + 白字（浅蓝托白 ≈ 1.9:1，本来就是勉强）。改手账 chip：
+  // 半透明和纸底 + 玫红字，两种明暗档都过 4.5:1。hover 只换纸/描边、不换墨色
+  // ——白字压在亮粉上（夜间档 `--washi-pink-deep` 是 #ff8ec7）只有 1.9:1。
+  background: var(--washi-tape, rgba(255, 222, 238, 0.86))
+  color: var(--washi-pink-deep, #d94f9a)
+  border: 1px solid var(--washi-line, rgba(198, 152, 192, 0.42))
+  border-radius: 999px
   font-size: 12px
   cursor: pointer
   text-align: center
@@ -311,7 +357,8 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
   justify-content: center
   align-items: center
   &:hover
-    background: #517498
+    background: var(--washi-paper-2, #fff6fa)
+    border-color: var(--washi-pink-deep, #d94f9a)
 
 // 退出按钮红底白字
 .theme-btn.logout-btn

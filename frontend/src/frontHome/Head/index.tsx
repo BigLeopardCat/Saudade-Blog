@@ -304,13 +304,15 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                     </div>
                 </div>
             </div>
-            <div className="headContainer" style={{
-                margin: scrollHeight ? 0 : '',
-                borderRadius: scrollHeight ? 0 : '',
-                background: scrollHeight ? 'rgba(0,0,0,0.66)' : '',
-                width: scrollHeight ? '100%' : '',
-                backdropFilter: scrollHeight ? 'blur(10px)' : ''
-            }}>
+            {/* 滚动态从**内联 style** 搬进了 sass 的 `.is-stuck`（20260930 五轮）。
+                原来只有"悬停"和"已滚动"两种状态有底色，首屏未滚动时顶栏是透明的
+                ⇒ 导航文字压在淡彩首屏上读不出来。现在底色常驻（`.headContainer`
+                的 `background`），`.is-stuck` 只负责"贴满整幅、去圆角"。
+
+                顺带摘掉 `backdropFilter: blur(10px)`：那是为"半透明深色条"配的，
+                底色改成高不透明度的纸色后不再需要——而模糊是 GPU 成本，首屏正是
+                看板娘所在的那一屏。 */}
+            <div className={`headContainer${scrollHeight ? ' is-stuck' : ''}`}>
                 <div className="phoneBar">
                     {phoneBarShow ? <i className="iconfont icon-guanbi2" style={{
                             fontSize: 35,
