@@ -287,28 +287,38 @@ const ContentHome = () => {
     return <>
         <SeoHelmet title="Saudade Blog" description="个人技术博客 · Rust、React、IoT 开发经验与项目实践" url="/" suffix={false} />
         <div className="SelfDescription" ref={heroRef}>
-            {/* 顶部背景视频：muted+playsInline 是自动播放的前提；poster 为加载期兜底；
-                离屏暂停由上面的 IntersectionObserver 处理。heroOverlay 保证文字可读性 */}
-            <video
-                className="heroVideo"
-                src={heroBg}
-                poster={heroPoster}
-                muted
-                loop
-                autoPlay
-                playsInline
-                preload="auto"
-                disablePictureInPicture
-                aria-hidden="true"
-            />
-            <div className="heroOverlay" />
+            {/* 拼贴底（20260930 四轮，用户：「主页也想要这种图片的风格」——参考图是
+                粉紫淡彩的日系手账封面）。三层柔和色块 + 一层方格纸 + 撒几片樱花，
+                **全部是静态渐变与 transform 动画**：不用 `filter: blur()` 做柔化
+                （大面积模糊 + 视频解码会把 GPU 压住，后台那次事故的放大器就是它）。
+                纯装饰，`aria-hidden`。 */}
+            <div className="collageBg" aria-hidden="true">
+                <span className="blob blobA"/>
+                <span className="blob blobB"/>
+                <span className="blob blobC"/>
+            </div>
+            <div className="petals" aria-hidden="true">
+                {[0, 1, 2, 3, 4, 5, 6].map((i) => <span key={i} className={`petal p${i + 1}`}/>)}
+            </div>
 
             <div className="SayWords">
-               <div>
-                   <h2>Hi!👋</h2>
-                   <h2>I'm <span style={{color: '#7880d1'}}>{author}</span></h2>
-               </div>
-                <h3 className="home-title-h3">Sereno da Saudade</h3>
+                {/* 窗贴式小标签：参考图上那张手账的封面标签 */}
+                <div className="heroTag">
+                    <span className="heroTagStar">✦</span>
+                    <span>{author} の 记录室</span>
+                </div>
+                <h1 className="home-title-h3">Sereno da Saudade</h1>
+                {/* 命令条：纯装饰（`aria-hidden`，别让读屏软件念一句假的 shell 提示）。
+                    文字是死的、只有光标在闪——不做打字机：那要动宽度，小盒子的布局动画
+                    一样会引发布局回流，收益只有一个"动"。 */}
+                <div className="heroTerminal" aria-hidden="true">
+                    <span className="termUser">saudade@blog</span>
+                    <span className="termSep">:</span>
+                    <span className="termPath">~</span>
+                    <span className="termSep">$</span>
+                    <span className="termCmd">cat ./about.md</span>
+                    <span className="termCaret"/>
+                </div>
                 {/* 四个按钮**全部**读站点设置（20260930）。此前只有 Github 读了，
                     B 站 UID 与邮箱写死、QQ 用仓库里带的加好友二维码 —— 那几张图含真名与真号，
                     仓库一公开就是泄漏。**没填的按钮整个不渲染**（传 undefined 会渲染一个点不动的死按钮）。 */}
@@ -319,6 +329,30 @@ const ContentHome = () => {
                     {social?.socialEmail && <SocialButton SocialName='Email' copyText={social.socialEmail}/>}
                 </div>
             </div>
+
+            {/* 背景视频（20260902 起，20260930 四轮搬家）：从满屏底变成拼贴里的一张"手账内页"
+                ——白边 + 两角胶带 + 歪 1.2 度。muted+playsInline 是自动播放的前提；poster 兜
+                加载期；离屏暂停由上面的 IO 处理（它取的是 hero 里第一个 video，选择器照旧命中）。
+                ⚠️ 夜间档 `.frontDark` 把**整块 `.heroPanel`** 都 `display: none`（视频仅白天显示
+                是 20260902 的用户要求；只藏 video 会留一张空白的白卡片）——夜里右半屏归展示柜
+                窗口 Vitrine，那东西只在夜间出现，两者不许同屏。 */}
+            <figure className="heroPanel">
+                <video
+                    className="heroVideo"
+                    src={heroBg}
+                    poster={heroPoster}
+                    muted
+                    loop
+                    autoPlay
+                    playsInline
+                    preload="auto"
+                    disablePictureInPicture
+                    aria-hidden="true"
+                />
+                <span className="heroPanelTape tapeL"/>
+                <span className="heroPanelTape tapeR"/>
+            </figure>
+
             {/* 展示柜窗口：仅夜间出现，占用右半屏空白区 */}
             <Vitrine/>
             {/* 20260902 暂时注释掉大圆头像窗口 */}
@@ -327,10 +361,12 @@ const ContentHome = () => {
                 initial={{ opacity: 0, y: 30 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 1 }}
-                style={{position:'absolute',left:0,right:0,bottom:0,display:'flex',justifyContent:'center'}}
+                className="heroBottom"
             >
-            <p className="home-one-say">{oneSay}</p>
-                <i className="iconfont icon-rcd-angle-double-down upAndDown" style={{fontSize: 50,position:"absolute",bottom: 20,color:'skyblue'}} onClick={handleScrollDown}/></motion.div>
+                <p className="home-one-say">{oneSay}</p>
+                <i className="iconfont icon-rcd-angle-double-down upAndDown heroScroll"
+                   onClick={handleScrollDown}/>
+            </motion.div>
         </div>
         <div className="ContentContainer dark-pic">
             {topArticles.length>0&&<div className="TopArticle" style={{ display: 'flex', position: 'relative' }} ref={topRef}

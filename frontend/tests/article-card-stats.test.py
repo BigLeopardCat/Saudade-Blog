@@ -14,9 +14,9 @@
 node 桩里算不出来。
 
 20260930 补：那张定高卡在"标签换到第二/第三行"时会把「更新于」那行推出卡外（用户现场报的）。
-改法 = 卡片 `min-height: 600px`（600 是**下限**）+ 网格项 `display: flex` 让同排等高，
-所以第 ⑦ 组量两件事：标签换行时**卡片真的长高**且页脚/「更新于」都在卡内、标签不换行时
-**仍停在下限 600**。桩里也必须补上那条「更新于」——它是 `position: absolute` 挂在页脚盒子
+改法 = 卡片 `min-height`（**下限**，二轮由 600 降到 520）+ 网格项 `display: flex` 让同排等高，
+所以第 ⑦ 组量两件事：标签换行时**卡片真的长高**且页脚/「更新于」都在卡内、最空的卡
+**仍停在下限 520**。桩里也必须补上那条「更新于」——它是 `position: absolute` 挂在页脚盒子
 外面的，旧桩只写了「发布于」⇒ 这条缺陷在本套件里根本量不到（判据两边一样坏 ⇒ 照样全绿）。
 
 所以读数**挂在分类那一行上**（不另开一行），本套件就是这条决定的回归锁：
@@ -26,9 +26,30 @@ node 桩里算不出来。
      **一个像素都不许变**——这条一旦红，说明读数被挪成了独立一行；
   ③ 预算没被撑破：3 行标题 + 3 行摘要（最坏情况）下内容区不溢出（scrollHeight ≤ clientHeight）；
   ④ 夜间：颜色取的是主题变量（不是写死的灰），与卡片底色对比度 ≥ 3:1；
-  ⑤ 窄屏 327px：容不下时**整块读数换行**，而不是把分类名截断（内容是内容、读数是装饰）；
+  ⑤ 桌面档：读数与分类标题**永远同一行**——容不下时截断的是分类名（省略号），读数一个
+     像素都不压缩；卡片宽度、高度都不许随分类名长短变。**同一宽度下两张卡（短名/长名）
+     必须表现一致**，这正是 20260930 二轮那个现场（见下）；
+  ⑤b 手机档（≤768px 两列）：读数整块落到分类**下面那一行**——按档位一刀切。手机卡片只有
+     144px、读数块自己就占 105px，同一行里分类名只剩个位数像素；
   ⑥ 顺序恒为 阅读 → 点赞 → 收藏（与判据里的 STAT_CELL_ORDER 一致）；
-  ⑦ 标签换行时卡片按内容长高（600 是下限），页脚与「更新于」整行都在卡内。
+  ⑦ 标签换行时卡片按内容长高（**下限 520**），页脚与「更新于」整行都在卡内。
+
+20260930 二轮（用户第二报）："浏览点赞收藏数据在卡片上位置怎么不统一，有的在分类行下，
+有的在分类行同一行"。上一版这里是 `flex-wrap: wrap`——**按卡片各自判定**，于是同一屏里
+分类名长的卡把读数挤到第二行、短名的卡留在同一行，卡片高度也跟着参差（线上实测：490px
+视口下 `# 编程`(33px) 留在同一行、`# 本项目介绍`(59px) 掉到第二行，卡高 317 / 313）。
+
+改法分两档（**两档都是"一刀切"，不是"逐卡判定"** —— 位置统一靠的是这个）：
+  · 桌面（卡片 ≥300px）：`flex-wrap: nowrap`，分类名是唯一可压缩的那一个
+    （读数 `flex-shrink: 0`），放不下就省略号。另外 `.allArticles > .article` 与
+    `.ArticleCard` 补 `min-width: 0`：不给它，长分类名会把网格轨道的 `auto` 下限顶上去、
+    让那张卡比邻居宽（实测容器 341px 时变成 396px）；
+  · 手机（≤768px，卡片 144~190px）：`.ArticleHead` 直接 `flex-direction: column`，
+    读数整块到分类下面那一行。**同一行在手机上无解**——读数块恒 105px，375px 视口下
+    头只有 120px，留给分类名 5px（430px 下 27px、490px 下 51px），硬挤等于把分类名
+    删成一个省略号点。
+
+第 ⑤/⑤b 组都拿两张卡**对账**——只测一张卡是抓不住这个缺陷的（单卡看不出"跟邻居不一致"）。
 """
 import pathlib
 import shutil
@@ -90,6 +111,14 @@ LONG_TITLE = "从零把站内对话助手接进个人博客：规划器、执行
 LONG_DESC = "这一段是摘要，按最坏情况写满三行：讲的是为什么把执行器做成确定性的、为什么叙述者不绑工具、" \
             "以及验收为什么必须由回执驱动而不是由模型自述，最后附带一串踩坑清单与回归锁的清单与取舍。"
 
+# 分类名三档（第 ⑤/⑤b 组用）：这一行是**唯一可压缩**的，长短不同正是"混排"的来源。
+# 前两档是**线上真实存在的**（20260930 真站实测：`# 编程` 手机档 33px / `# 本项目介绍` 59px，
+# 后者正是被挤到第二行的那一个）；第三档是**真实长度之外的压力档**，
+# 用来证明"太长的名字是截断、不是把卡片撑宽"（真站目前没有这么长的分类名）。
+CAT_SHORT = "# 编程"
+CAT_LONG = "# 本项目介绍"
+CAT_HUGE = "# 物联网与嵌入式设备调试记录"   # 压力档：桌面 20px 字体下约 180px
+
 # 卡片宽度按桌面三列（1280 视口 · 80% 容器 / 3 列 ≈ 341px）复现；
 # `stats=""` 的那份就是"没有读数"的对照卡，两份除读数外**逐字节相同**。
 # `.ContentContainer` 这层不能省：整套卡片规则都挂在
@@ -97,13 +126,13 @@ LONG_DESC = "这一段是摘要，按最坏情况写满三行：讲的是为什�
 # 量出来全是 0 —— 那不是"布局坏了"，是沙箱没接上）。所以下面第 ⓪ 组先自检"规则真的生效了"。
 MARKUP = """
 <div class="ContentContainer" id="cc">
-<div class="allArticles" style="width:341px;grid-template-columns:repeat(1,1fr)">
+<div class="allArticles" style="width:{w}px;grid-template-columns:repeat(1,1fr)">
   <div class="article">
     <div class="ArticleCard" id="card">
       <div class="ArticleCover" id="cover"></div>
       <div class="ArticleContent" id="content">
         <div class="ArticleHead" id="head">
-          <h4 id="cat" style="color:#5a8fbf"># 编程随笔</h4>
+          <h4 id="cat" style="color:#5a8fbf">{cat}</h4>
           {stats}
         </div>
         <h3 class="ArticleTitle" id="title">{title}</h3>
@@ -203,8 +232,10 @@ with sync_playwright() as p:
     pg.goto(URL)
     pg.wait_for_timeout(150)
 
-    def mk(stats: str = STATS, tags_n: int = 0, title: str = LONG_TITLE, desc: str = LONG_DESC) -> str:
-        return MARKUP.format(stats=stats, title=title, desc=desc, tags=TAGS(tags_n))
+    def mk(stats: str = STATS, tags_n: int = 0, title: str = LONG_TITLE,
+           desc: str = LONG_DESC, cat: str = CAT_SHORT, w: int = 341) -> str:
+        return MARKUP.format(stats=stats, title=title, desc=desc, tags=TAGS(tags_n),
+                             cat=cat, w=w)
 
     long_mk = mk()
     bare_mk = mk(stats="")
@@ -217,8 +248,10 @@ with sync_playwright() as p:
     check("读数块有宽度（不是塌成 0 的空盒子）", on["stats"]["w"] > 0, f"stats w={on['stats']['w']}")
     check("读数块取了 flex（sass 里的 display 生效）", on["statsDisplay"] == "flex",
           str(on["statsDisplay"]))
-    check("卡片高 600px（600 是**下限**，无标签时正好停在下限）",
-          abs(on["card"]["h"] - 600) < 1, f"card h={on['card']['h']}")
+    # 564 = 240（封面，20260930 二轮由 200 加高）+ 324（内容自然高：3 行标题、无标签）。
+    # 下限 520 在这组内容下不参与（自然高 564 > 520）；"停在下限"那一档见第 ⑦ 组。
+    check("卡片高 564px = 内容自然高（下限 520 不参与；封面 240 是二轮新值）",
+          abs(on["card"]["h"] - 564) < 1, f"card h={on['card']['h']}")
 
     print("① 位置：在封面图下方那一行，且在分类标题右侧")
     check("读数确实在封面图下方（top ≥ 图底）",
@@ -263,16 +296,92 @@ with sync_playwright() as p:
           f"{dark['statsContrast']}:1（底 {dark['card'] and 'dark card'}）")
     pg.evaluate("() => document.documentElement.classList.remove('frontDark')")
 
-    print("⑤ 窄屏 327px：容不下时读数整块换行，分类名不被截断")
-    pg.set_viewport_size({"width": 327, "height": 800})
-    narrow = pg.evaluate(PAINT, {"markup": long_mk})
-    check("分类名完整（没被 ellipsis 截掉）",
-          not narrow["catClipped"] and narrow["catFullText"] == "# 编程随笔",
-          f"clipped={narrow['catClipped']} text={narrow['catFullText']!r}")
-    check("三个数都还在（换行不是隐藏）", narrow["cellCount"] == 3, str(narrow["cellCount"]))
-    check("读数仍在封面图下方", narrow["stats"]["top"] >= narrow["cover"]["bottom"],
-          f"stats.top {narrow['stats']['top']} / cover.bottom {narrow['cover']['bottom']}")
-    check("页面不出现横向滚动", not narrow["pageOverflow"])
+    print("⑤ ★ 桌面档：读数与分类**同一行**，容不下时截分类名（20260930 二轮·混排现场）")
+    # 判据必须**两张卡对账**（短名 / 长名）：这个缺陷的形状就是"同一屏里有的换行有的没换"，
+    # 只画一张卡永远看不出"跟邻居不一致"。
+    #
+    # 线上现场（20260930 真站实测，真 CSS）：490px 视口下 `# 编程`(33px) 的读数留在分类行、
+    # `# 本项目介绍`(59px) 的被挤到第二行，卡高 317 / 313 参差。
+    #
+    # 这里量的是**桌面档**（卡片 ≥300px）：容器 341 = 真站三列档；容器 300 = 桌面基准规则
+    # `minmax(300px, 1fr)` 的地板，也就是桌面最窄的卡。
+    for w in (341, 300):
+        s = pg.evaluate(PAINT, {"markup": mk(w=w)})
+        l = pg.evaluate(PAINT, {"markup": mk(cat=CAT_LONG, w=w)})
+        tag = f"容器 {w}px"
+        check(f"{tag} · 短名卡：读数与分类名同一行",
+              abs(s["stats"]["top"] - s["cat"]["top"]) < 12,
+              f"stats.top {s['stats']['top']} / cat.top {s['cat']['top']}")
+        check(f"{tag} · 长名卡：读数也在同一行（**这就是上一版会混排的那一档**）",
+              abs(l["stats"]["top"] - l["cat"]["top"]) < 12,
+              f"stats.top {l['stats']['top']} / cat.top {l['cat']['top']}")
+        check(f"{tag} · 两张卡等高（分类名长短不再改变卡片高度）",
+              abs(s["card"]["h"] - l["card"]["h"]) < 1,
+              f"卡高 {s['card']['h']} vs {l['card']['h']}")
+        # 卡片宽度必须由列数决定、与分类名长短无关。这条是 `.allArticles > .article`
+        # / `.ArticleCard` 那两条 `min-width: 0` 的锁：不给它，长分类名会把网格轨道的
+        # `auto` 下限顶上去（沙箱实测容器 341px 时长名卡曾变成 **396px**）。
+        check(f"{tag} · 两张卡同宽且等于容器宽（分类名长短不改卡片宽度）",
+              abs(s["card"]["w"] - w) < 1 and abs(l["card"]["w"] - w) < 1,
+              f"短名 {s['card']['w']} / 长名 {l['card']['w']} / 容器 {w}")
+        check(f"{tag} · 读数块没被压缩（flex-shrink: 0 生效：三格宽度不变）",
+              abs(s["stats"]["w"] - on["stats"]["w"]) < 1,
+              f"{w}px {s['stats']['w']} vs 1280px {on['stats']['w']}")
+        check(f"{tag} · 三个数都还在（截断不是隐藏）", s["cellCount"] == 3, str(s["cellCount"]))
+        check(f"{tag} · 页面不出现横向滚动", not s["pageOverflow"] and not l["pageOverflow"])
+    # 截断的方向：**分类名**牺牲，读数不牺牲。三档各司其职：
+    #   341 + 真实长名（`# 本项目介绍` 84px）：245−110−10 = 125px 放得下 ⇒ **不许截**；
+    #   341 / 300 + 压力名（约 180px）：放不下 ⇒ **必须真的出现省略号**（而不是把卡撑宽）；
+    #   300 + 短名：放得下 ⇒ 不许截（证明不是无差别加省略号）。
+    wide = pg.evaluate(PAINT, {"markup": mk(cat=CAT_LONG, w=341)})
+    check("容器 341px + 真实长名：不被截（三列档放得下，不该无差别加省略号）",
+          not wide["catClipped"], f"clipped={wide['catClipped']} / cat w={wide['cat']['w']}")
+    tight = pg.evaluate(PAINT, {"markup": mk(cat=CAT_HUGE, w=300)})
+    check("容器 300px + 压力长名：真的被截断（省略号生效：scrollWidth > clientWidth）",
+          tight["catClipped"], f"clipped={tight['catClipped']}")
+    check("  但文字没丢（截断是 CSS 的，DOM 里仍是全名）",
+          tight["catFullText"] == CAT_HUGE, repr(tight["catFullText"]))
+    check("  被截断的那一档卡片宽度也不变（截断替代撑宽）",
+          abs(tight["card"]["w"] - 300) < 1, f"card w={tight['card']['w']}")
+    short_tight = pg.evaluate(PAINT, {"markup": mk(w=300)})
+    check("短名卡在同样 300px 下**不**被截断（不是无差别加省略号）",
+          not short_tight["catClipped"], f"clipped={short_tight['catClipped']}")
+    check("读数仍在封面图下方", tight["stats"]["top"] >= tight["cover"]["bottom"],
+          f"stats.top {tight['stats']['top']} / cover.bottom {tight['cover']['bottom']}")
+
+    print("⑤b ★ 手机档（≤768px 两列）：读数整块落到分类**下面那一行**，同屏一刀切")
+    # 手机不适用"同一行"：真机实测 375px 视口下卡片只有 144px、头 120px，而**读数块自己
+    # 就要 105px** ⇒ 同一行留给分类名 5px（430px 下 27px、490px 下 51px），分类名会退化成一个
+    # 省略号点、等于把分类信息删掉。所以手机档改成上下两行——**按档位一刀切，不是按卡片
+    # 各自判定**（后者正是老 `flex-wrap: wrap` 的错：同屏混排）。
+    # 容器 300px = 真站 375px 视口下的 80% 宽 ⇒ 两列各 144px，与线上实测逐像素吻合。
+    pg.set_viewport_size({"width": 375, "height": 800})
+    ms = pg.evaluate(PAINT, {"markup": mk(w=300)})
+    ml = pg.evaluate(PAINT, {"markup": mk(cat=CAT_LONG, w=300)})
+    check("手机档卡片宽 144px（与线上真机实测一致 ⇒ 沙箱复现的是真机几何）",
+          abs(ms["card"]["w"] - 144) < 1, f"card w={ms['card']['w']}")
+    for label, m in (("短名", ms), ("长名", ml)):
+        check(f"  手机 {label}卡：读数在分类**下方**（不再是同一行）",
+              m["stats"]["top"] - m["cat"]["top"] > 12,
+              f"stats.top {m['stats']['top']} / cat.top {m['cat']['top']}")
+    check("  两张卡的相对位置完全一致（同屏不再混排）",
+          abs((ms["stats"]["top"] - ms["cat"]["top"]) - (ml["stats"]["top"] - ml["cat"]["top"])) < 1,
+          f"间距 {ms['stats']['top'] - ms['cat']['top']} vs {ml['stats']['top'] - ml['cat']['top']}")
+    check("  两张卡等高且同宽（用户报的'参差'就是这个）",
+          abs(ms["card"]["h"] - ml["card"]["h"]) < 1 and abs(ms["card"]["w"] - ml["card"]["w"]) < 1,
+          f"高 {ms['card']['h']} vs {ml['card']['h']}／宽 {ms['card']['w']} vs {ml['card']['w']}")
+    check("  手机档的读数块仍是 110px（没被压扁）",
+          abs(ml["stats"]["w"] - on["stats"]["w"]) < 1,
+          f"{ml['stats']['w']} vs 桌面 {on['stats']['w']}")
+    check("  手机档分类名拿满**整行宽**（stretch 生效，且真实长名放得下不被截）",
+          not ml["catClipped"] and abs(ml["cat"]["w"] - ml["head"]["w"]) < 1,
+          f"clipped={ml['catClipped']} / cat w={ml['cat']['w']} / head w={ml['head']['w']}")
+    check("  读数左对齐于分类名（同一列基准，不是居中的）",
+          abs(ms["stats"]["left"] - ms["cat"]["left"]) < 1,
+          f"stats.left {ms['stats']['left']} / cat.left {ms['cat']['left']}")
+    check("  三个数都在、且页面不出现横向滚动",
+          ml["cellCount"] == 3 and not ms["pageOverflow"] and not ml["pageOverflow"],
+          f"{ml['cellCount']} / {ml['pageOverflow']}")
     pg.set_viewport_size({"width": 1280, "height": 900})
 
     print("⑥ 三个数：顺序、数值、图标尺寸")
@@ -289,16 +398,18 @@ with sync_playwright() as p:
     # 用户原话："在文章标签变成两行时，作者信息时间信息在卡片的位置还是没锁死，跑出卡片了"。
     # 定高 600px 时 3 行标题 + 标签第三行就把「更新于」顶到卡底下方 19px（只剩 11px 可见），
     # 标签两行时余量也只剩 1px ⇒ 判据是"这行整个在卡内"，不是"大概看得见"。
-    # `expect_grow` 得逐档写死：标签两行时内容**恰好还塞得进 600**（改前余量只剩 1px），
-    # 三行时才真的超出去 ⇒ 那一档才是"长高机制真的在长"的证据，其余两档只验"停在下限"。
-    for n, expect_grow in ((6, False), (8, False), (12, True)):
-        r = pg.evaluate(PAINT, {"markup": mk(tags_n=n)})
+    # `expect_grow` 逐档写死（20260930 二轮实测）：下限降到 520 之后，**只有最空的卡**
+    # （短标题 + 无标签，自然高 495）停在下限，3 行标题起就都自然长高了
+    # （564 无标签 / 628 两行标签 / 660 三行标签）⇒ "长高机制真的在长"由后两档证明。
+    for title, n, expect_grow in (("面试复盘", 0, False), (LONG_TITLE, 8, True),
+                                  (LONG_TITLE, 12, True)):
+        r = pg.evaluate(PAINT, {"markup": mk(tags_n=n, title=title)})
         if expect_grow:
-            check(f"{n} 个标签（{r['tagRows']} 行）：内容超出下限 ⇒ 卡片长高到 600 以上",
-                  r["card"]["h"] > 600, f"card h={r['card']['h']} / 标签行数 {r['tagRows']}")
+            check(f"{n} 个标签（{r['tagRows']} 行）：内容超出下限 ⇒ 卡片长高到 520 以上",
+                  r["card"]["h"] > 520, f"card h={r['card']['h']} / 标签行数 {r['tagRows']}")
         else:
-            check(f"{n} 个标签（{r['tagRows']} 行）：内容仍塞得下 ⇒ 停在下限 600",
-                  abs(r["card"]["h"] - 600) < 1,
+            check(f"最空的卡（短标题 + {n} 个标签）：内容塞得下 ⇒ 停在下限 520",
+                  abs(r["card"]["h"] - 520) < 1,
                   f"card h={r['card']['h']} / 标签行数 {r['tagRows']}")
         check(f"  卡片不溢出（overflow: hidden 没在裁东西）",
               r["cardOverflow"] <= 1, f"溢出 {r['cardOverflow']}px")
@@ -308,10 +419,11 @@ with sync_playwright() as p:
         check(f"  页脚整行在卡内（作者署名没跑出去）",
               r["footer"]["bottom"] <= r["card"]["bottom"],
               f"footer.bottom {r['footer']['bottom']} / card.bottom {r['card']['bottom']}")
-    # 反面对照：标签不换行（≤3 个）时**必须**仍停在下限 600 —— 长高不能变成"每张卡都松垮"
+    # 反面对照：标签只有一行时**也不许**停在 520 —— 长高不能变成"每张卡都松垮"，但下限
+    # 降了之后这一档本来就该按内容高（3 行标题 + 1 行标签 = 596）。
     flat = pg.evaluate(PAINT, {"markup": mk(tags_n=3)})
-    check("3 个标签（1 行）时仍是 600px（下限没被长高逻辑顶掉）",
-          abs(flat["card"]["h"] - 600) < 1, f"card h={flat['card']['h']}")
+    check("3 个标签（1 行）+ 3 行标题：按内容高 596px（不是被下限硬撑出来的数）",
+          abs(flat["card"]["h"] - 596) < 1, f"card h={flat['card']['h']}")
     check("  该档「更新于」也在卡内",
           flat["upd"] and flat["upd"]["bottom"] <= flat["card"]["bottom"],
           f"upd.bottom {flat['upd'] and flat['upd']['bottom']} / card.bottom {flat['card']['bottom']}")

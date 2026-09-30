@@ -47,14 +47,20 @@
 它会一直重试到超时（实测卡死 60+ 次）。本套件自己移坐标 + 轮询到布局稳定（见 `hover_stable`）。
 
 20260930 增补（用户第四报："在文章标签变成两行时，作者信息时间信息在卡片的位置还是没锁死，
-跑出卡片了"）：普通卡从 `height: 600px` 改成 `min-height: 600px`（600 是**下限**）+ 网格项
-`display: flex`（同排拉伸等高），内容多就长高。两条相关纪律：
+跑出卡片了"）：普通卡从 `height: 600px` 改成 `min-height`（**下限**，20260930 二轮由 600 降
+到 520）+ 网格项 `display: flex`（同排拉伸等高），内容多就长高。两条相关纪律：
   · 桩里必须补上「更新于」那行——它 `position: absolute` 挂在页脚盒子**外面**，是溢出时
     第一个被切的东西；旧桩只写「发布于」⇒ 这条缺陷在本套件里量不到（判据两边一样坏）。
   · 移动档撤下限要写 `min-height: 0 !important`：`height: auto !important` 管不到 `min-height`
-    （两个是不同的属性，同族的坑）。判据写"矮于 600"而不是"≠ 600"。
+    （两个是不同的属性，同族的坑）。判据写"矮于 520"而不是"≠ 520"。
 置顶卡**仍是定高 640**（轮播：按内容长高会让各 slide 参差），它的余量够大（10 个标签两行
 时仍余 111px，探针实测），不需要长高。
+
+20260930 二轮（用户第五报："卡片比例有点不好看，重新调整卡片样式"）：封面 200 → 240、
+下限 600 → 520、普通卡简介展开上限 200 → **140**。三个数是**联动的**——简介浮层是绝对定位、
+向下长，卡片不跟着长高 ⇒ 它的可用高度 = 卡底 − 浮层顶，封面每加高 1px 就直接吃掉 1px。
+第 ⑫ 组把这条锁死：逐个内容形状量「卡底 − 浮层顶」，最小的那个（3 行标题 + 无标签 = 150px）
+决定展开上限。别只改其中一个数就交。
 
 判据分两半（诚实备注）：
   · 这里量几何（真 sass + 真 Chromium + 真事件）；
@@ -93,10 +99,10 @@ LONG_TITLE = "从零把站内对话助手接进个人博客：规划器、执行
 LONG_DESC = "这一段是摘要，按最坏情况写满：讲的是为什么把执行器做成确定性的、为什么叙述者不绑工具、" \
             "以及验收为什么必须由回执驱动而不是由模型自述；再补上跨轮执行记忆为什么必须落库、" \
             "而不是留在叙述文本里，最后是踩坑清单与取舍说明。"
-# 要验"滚过之后回顶部"就必须让全文**真的比展开态高**：普通卡展开上限 200px（10 行），
+# 要验"滚过之后回顶部"就必须让全文**真的比展开态高**：普通卡展开上限 140px（7 行），
 # 所以这里给十几行往上。
 HUGE_DESC = LONG_DESC * 5
-# ⚠️ `LONG_DESC` 本身刻意**够不到展开上限**（实测展开 100px = 5 行，上限 200px）——第 ③ 组
+# ⚠️ `LONG_DESC` 本身刻意**够不到展开上限**（实测展开 100px = 5 行，上限 140px）——第 ③ 组
 # 就是拿它当"中等长度"用的：上限那一档由 HUGE_DESC 覆盖（第 ④ 组）。两档都要有，
 # 因为"负 margin"那套方案只在**刚好长到上限**时才成立（负 margin 定值 vs 高度取 min）：
 # 拿 LONG_DESC 去试就会看到页脚被抽上去 100px。别把这两个常量合并。
@@ -242,6 +248,13 @@ PAINT = """(o) => {
            paddingBottom: cs.paddingBottom, position: cs.position,
            bg: cs.backgroundColor, zIndex: cs.zIndex},
     slot: off('slot'),
+    // 简介浮层的可用高度 = 卡底 − 浮层顶。**两级 offsetParent 相加**：`#slot` 的
+    // offsetParent 是 `.ArticleContent`（它自己 position: relative），而 `.ArticleContent`
+    // 的 offsetParent 才是卡片 ⇒ 混着减会得出"浮层悬在 300px 高处"这种假数
+    // （同第 ⑪ 组页脚那条注释踩过的坑）。
+    contentTop: content.offsetTop,
+    descAbs: content.offsetTop + el('slot').offsetTop,
+    avail: card.offsetHeight - (content.offsetTop + el('slot').offsetTop),
     cover: rect('cover'), head: off('head'), footer: off('footer'), footerRect: rect('footer'),
     upd: rect('upd'),
     title: off('title'), cat: off('cat'), tags: off('tags'), content: off('content'),
@@ -333,10 +346,13 @@ with sync_playwright() as p:
 
     print("⓪ 沙箱自检：卡片规则真的生效了（否则下面全是 0 与 0 比，怎么比都过）")
     on = pg.evaluate(PAINT, {"markup": card_mk})
-    check("封面图 200px（.ArticleCover 的规则生效）", abs(on["cover"]["h"] - 200) < 1,
-          f"cover h={on['cover']['h']}")
-    check("卡片 600px（600 是**下限**；内容塞得下时正好停在这里）",
-          abs(on["card"]["h"] - 600) < 1, f"card h={on['card']['h']}")
+    check("封面图 240px（.ArticleCover 的规则生效；20260930 二轮由 200 加高）",
+          abs(on["cover"]["h"] - 240) < 1, f"cover h={on['cover']['h']}")
+    # 596 = 240（封面）+ 356（内容自然高：3 行标题 + 1 行标签的 LONG_TITLE/tags(3) 这一组）。
+    # ⚠️ 这个数是**量出来的**、不是算出来的：卡片按内容长高，下限 520 在这组内容下根本
+    # 不参与（内容自然高 596 > 520）。真要验"停在下限"看第 ⑪ 组。
+    check("卡片 596px = 内容自然高（下限 520 不参与；内容多就长高）",
+          abs(on["card"]["h"] - 596) < 1, f"card h={on['card']['h']}")
     check("简介行高 20px（展开高度按它取整）", abs(on["desc"]["lineHeight"] - 20) < 0.5,
           str(on["desc"]["lineHeight"]))
     check("简介在内容区里（选择器链没断）", on["desc"]["h"] > 0, f"desc h={on['desc']['h']}")
@@ -369,18 +385,18 @@ with sync_playwright() as p:
           on["upd"] and on["upd"]["bottom"] <= on["card"]["rect"]["bottom"] + 1,
           f"更新于底 {on['upd'] and on['upd']['bottom']} / 卡底 {on['card']['rect']['bottom']}")
 
-    # ⚠️ 这一组用的是**够不到上限**的 LONG_DESC（展开 5 行 = 100px，上限 200px）。
-    # 这正是"负 margin"方案唯一露馅的档位：负 margin 是定值 −140px、而高度是
-    # min(全文, 上限)，于是占位 = 100 − 140 = −40 ⇒ 页脚被抽上去 100px。
-    # 探针实测过这个数，所以这一组不是"随便挑一段文字"，别换成 HUGE_DESC。
-    print("③ 悬浮展开（普通卡·中等长度简介 100px < 上限 200px）：页脚仍一个像素不动")
+    # ⚠️ 这一组用的是**够不到上限**的 LONG_DESC（展开 5 行 = 100px，上限 140px）。
+    # 这正是"负 margin"方案唯一露馅的档位：负 margin 是定值、而高度是 min(全文, 上限)，
+    # 两者不等时占位就变了（当年那个定值取 −140px ⇒ 占位 = 100 − 140 = −40 ⇒ 页脚被
+    # 抽上去 100px）。探针实测过这个数，所以这一组不是"随便挑一段文字"，别换成 HUGE_DESC。
+    print("③ 悬浮展开（普通卡·中等长度简介 100px < 上限 140px）：页脚仍一个像素不动")
     pg.evaluate(PAINT, {"markup": card_mk})
     hv = hover_stable(pg, "#desc")
     check("展开后简介高于静置态（真的展开了，不是只换个 padding）", hv["descH"] > on["desc"]["h"],
           f"悬浮 {hv['descH']} / 静置 {on['desc']['h']}")
-    check("★ 展开高度严格落在 静置 60px 与上限 200px 之间，且是行高整数倍"
+    check("★ 展开高度严格落在 静置 60px 与上限 140px 之间，且是行高整数倍"
           "（实测 100px = 5 行；正文没被 padding 吃掉）",
-          60 < hv["descH"] < 200 and hv["descH"] % int(hv["lineHeight"]) == 0
+          60 < hv["descH"] < 140 and hv["descH"] % int(hv["lineHeight"]) == 0
           and hv["paddingBottom"] in ("0px", ""),
           f"h={hv['descH']} padding-bottom={hv['paddingBottom']} 行高={hv['lineHeight']}")
     check("这一档够不到上限 ⇒ 不该出现内部滚动（真被切了才会滚）",
@@ -405,14 +421,14 @@ with sync_playwright() as p:
           f"background={hv['bg']} z-index={hv['zIndex']}")
     unhover(pg)
 
-    print("④ 长简介：展开到上限（10 行）、可滚动、滚过之后离开能回到顶部")
+    print("④ 长简介：展开到上限（7 行）、可滚动、滚过之后离开能回到顶部")
     big = pg.evaluate(PAINT, {"markup": huge_mk})
     bh = hover_stable(pg, "#desc")
-    check("展开到底就是 200px = 10 行（不是「能塞多少塞多少」）",
-          bh["descH"] == 200 and bh["maxHeight"] == "200px",
+    check("展开到底就是 140px = 7 行（不是「能塞多少塞多少」）",
+          bh["descH"] == 140 and bh["maxHeight"] == "140px",
           f"h={bh['descH']} max-height={bh['maxHeight']}")
-    check("★ 上限那 200px **全是正文**：padding-bottom=0（旧裸规则的 10px 混进来时，"
-          "正文只剩 190px ⇒ 第 10 行被切一半，就是用户报的现象）",
+    check("★ 上限那 140px **全是正文**：padding-bottom=0（旧裸规则的 10px 混进来时，"
+          "正文只剩 130px ⇒ 第 7 行被切一半，就是用户报的现象）",
           bh["paddingBottom"] in ("0px", ""), f"padding-bottom={bh['paddingBottom']}")
     check("全文比展开态高 ⇒ 给出滚动（而不是裁掉）",
           bh["descScrollH"] > bh["descClientH"] + 1 and bh["overflowY"] in ("auto", "scroll"),
@@ -539,11 +555,11 @@ with sync_playwright() as p:
     print("⑩ 窄屏 375px：移动档不被这套改动碰到")
     pg.set_viewport_size({"width": 375, "height": 800})
     mob = pg.evaluate(PAINT, {"markup": card_mk})
-    # ⚠️ 判据是"**矮于** 600"，不是"≠ 600"：桌面那条下限是 `min-height`，而移动档只写了
+    # ⚠️ 判据是"**矮于** 520"，不是"≠ 520"：桌面那条下限是 `min-height`，而移动档只写了
     # `height: auto !important` 是**管不到它**的（两个是不同的属性——"属性有没有第二处声明"
-    # 那个家族坑）⇒ 漏了 `min-height: 0 !important` 时卡片会被撑到恰好 600，`!= 600` 那种
+    # 那个家族坑）⇒ 漏了 `min-height: 0 !important` 时卡片会被撑到恰好 520，`!= 520` 那种
     # 写法照样绿。顺带把计算值也读出来，红的时候一眼知道是哪条没生效。
-    check("移动档卡片矮于 600（桌面那条下限被撤掉了）", mob["card"]["h"] < 600,
+    check("移动档卡片矮于 520（桌面那条下限被撤掉了）", mob["card"]["h"] < 520,
           f"card h={mob['card']['h']}")
     check("  `min-height` 计算值是 0（撤的是下限本身，不是被 height 覆盖）",
           mob["card"]["minHeight"] in ("0px", ""), str(mob["card"]["minHeight"]))
@@ -558,17 +574,19 @@ with sync_playwright() as p:
     print("⑪ ★ 标签换行：卡片按内容长高，页脚与「更新于」都留在卡内（20260930 现场）")
     # 用户原话："在文章标签变成两行时，作者信息时间信息在卡片的位置还是没锁死，跑出卡片了"。
     # 定高那版实测：3 行标题 + 标签第三行 ⇒ 「更新于」底 = 卡底 + 19（30px 的行只剩 11px 露在外面）。
-    # 现在卡片是 `min-height` + 网格项 flex ⇒ 内容多就长高。逐档写死"该不该长"：
-    # 标签两行时恰好还塞得进 600（改前余量只剩 1px），三行才真的超出去。
-    for n, expect_grow in ((6, False), (12, True)):
+    # 现在卡片是 `min-height`（下限 520，20260930 二轮由 600 再降）+ 网格项 flex ⇒ 内容多就长高。
+    # 逐档写死"该不该长"：**短标题 + 无标签**那种最空的卡（自然高 495）才停在下限 520；
+    # 3 行标题 + 无标签就已经自然高 564、不用下限兜了（20260930 二轮实测）。
+    for title, n, expect_grow in (("面试复盘", 0, False), (LONG_TITLE, 6, True),
+                                  (LONG_TITLE, 12, True)):
         r = pg.evaluate(PAINT, {"markup": CARD_MARKUP.format(
-            stats=STATS, title=LONG_TITLE, desc=LONG_DESC, tags=tags(n))})
+            stats=STATS, title=title, desc=LONG_DESC, tags=tags(n))})
         if expect_grow:
-            check(f"{n} 个标签：内容超出下限 ⇒ 卡片长高到 600 以上", r["card"]["h"] > 600,
+            check(f"{n} 个标签：内容超出下限 ⇒ 卡片长高到 520 以上", r["card"]["h"] > 520,
                   f"card h={r['card']['h']}")
         else:
-            check(f"{n} 个标签：内容仍塞得下 ⇒ 停在下限 600", abs(r["card"]["h"] - 600) < 1,
-                  f"card h={r['card']['h']}")
+            check(f"最空的卡（短标题 + {n} 个标签）：内容塞得下 ⇒ 停在下限 520",
+                  abs(r["card"]["h"] - 520) < 1, f"card h={r['card']['h']}")
         check("  卡片不溢出（overflow: hidden 没在裁东西）", r["card"]["overflow"] <= 1,
               f"溢出 {r['card']['overflow']}px")
         check("  页脚底 ≤ 卡底（作者署名没跑出去）",
@@ -583,6 +601,46 @@ with sync_playwright() as p:
         check("  页脚仍被 margin-top:auto 钉在卡底（长高不是把页脚留在半空）",
               r["card"]["rect"]["bottom"] - r["footerRect"]["bottom"] < 40,
               f"卡底 {r['card']['rect']['bottom']} / 页脚底 {r['footerRect']['bottom']}")
+
+    print("⑫ ★ 简介浮层的可用高度（封面 240 / 下限 520 / 上限 140 三个数联动，20260930 二轮）")
+    # 浮层绝对定位、向下长，卡片不跟着长高 ⇒ 可用高度 = **卡底 − 浮层顶**，它**不是**恒定的：
+    # 只取决于浮层底下那一段（简介槽 60 + 间距 + 标签 + 页脚 + 内容下内边距）。
+    # 这张表就是"上限为什么是 140 而不是 200"的判据；改封面 / 改下限 / 改标签那一段，都要重看。
+    shapes = [
+        ("3 行标题 + 无标签", LONG_TITLE, 0, 150),          # ← 最挤：没有标签那一行撑着
+        ("1 行标题 + 无标签", "面试复盘", 0, 175),           # 被下限 520 兜住 ⇒ 多 25px 余量
+        ("3 行标题 + 1 行标签", LONG_TITLE, 3, 182),
+        ("3 行标题 + 2 行标签", LONG_TITLE, 6, 214),
+        ("3 行标题 + 3 行标签", LONG_TITLE, 12, 246),
+    ]
+    avails = {}
+    for label, title, n, expect in shapes:
+        m = pg.evaluate(PAINT, {"markup": CARD_MARKUP.format(
+            stats=STATS, title=title, desc=LONG_DESC, tags=tags(n))})
+        avails[label] = m["avail"]
+        check(f"{label}：可用 {expect}px（卡 {m['card']['h']} − 浮层顶 {m['descAbs']}）",
+              abs(m["avail"] - expect) <= 1, f"实测 {m['avail']}px")
+    worst = min(avails.values())
+    check("★ 每一档都装得下展开上限 140px（最挤的那档也要够）", worst >= 140, f"最挤 {worst}px")
+    check("★ 判据有牙：最挤那档 **< 200px** ⇒ 上一版的上限 200 就是会切行的"
+          "（本组能把它抓红，不是套空断言）", worst < 200, f"最挤 {worst}px")
+    check("  结构关系：标签每多一行 ⇒ 可用 +32px（标签就长在浮层底下）",
+          abs((avails["3 行标题 + 1 行标签"] - avails["3 行标题 + 无标签"]) - 32) <= 1,
+          f"{avails['3 行标题 + 无标签']} → {avails['3 行标题 + 1 行标签']}")
+    check("  结构关系：被下限兜住的卡反而**更宽裕**（兜出来的余量也落在浮层底下）",
+          avails["1 行标题 + 无标签"] > avails["3 行标题 + 无标签"],
+          f"{avails['1 行标题 + 无标签']} vs {avails['3 行标题 + 无标签']}")
+
+    # 算术之外再走一遍真事件：把最挤那档展开到底，验它**真的**没被卡底切掉。
+    tight_mk = CARD_MARKUP.format(stats=STATS, title=LONG_TITLE, desc=HUGE_DESC, tags=tags(0))
+    pg.evaluate(PAINT, {"markup": tight_mk})
+    tight_hv = hover_stable(pg, "#desc")
+    check("★ 最挤那档展开到底：浮层底仍在卡内（算术是 150 − 140 = 10px 余量）",
+          tight_hv["descRectBottom"] <= tight_hv["cardRectBottom"] + 1,
+          f"浮层底 {tight_hv['descRectBottom']} / 卡底 {tight_hv['cardRectBottom']}")
+    check("  展开高度仍是上限 140px（没有被「装不下」改成别的值）",
+          tight_hv["descH"] == 140, f"h={tight_hv['descH']}")
+    unhover(pg)
 
     check("无 JS 运行时报错", not errs, "; ".join(errs[:2]))
     br.close()
