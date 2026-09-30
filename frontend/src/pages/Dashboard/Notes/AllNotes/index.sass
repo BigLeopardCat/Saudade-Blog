@@ -39,11 +39,10 @@
     flex-direction: column
     // 浅色下这块是白面板、夜间是 antd 的容器底色（见下），tab 条 / 表格 / 分页条
     // 从此是**同一块面板**里的三段，而不是三块浮在页面渐变上的碎片
-    background-color: #fff
+    // 20261001 批 E：写死的白 / #141414 两档收成一张和纸 —— 令牌自己分档，
+    // 原来那个 `.dark &, .contentDark &` 覆盖随之删掉（留着会盖过令牌）
+    background-color: var(--washi-paper, #fffdfa)
     border-radius: 10px
-    .dark &,
-    .contentDark &
-      background-color: #141414
 
   .custom-scroll-container
     flex: 1 1 auto
@@ -123,47 +122,10 @@
 .contentDark .AllCard .ant-pagination-total-text
   color: rgba(255, 255, 255, 0.62)
 
-.dark .AllCard .ant-pagination-item-link,
-.contentDark .AllCard .ant-pagination-item-link
-  background-color: transparent !important
-  border-color: #424242 !important
-  color: #ffffff !important
 
-.dark .AllCard .ant-pagination-item-link span,
-.contentDark .AllCard .ant-pagination-item-link span
-  color: #ffffff !important
-
-.dark .AllCard .ant-pagination-item-link .anticon,
-.contentDark .AllCard .ant-pagination-item-link .anticon
-  color: #ffffff !important
-
-.dark .AllCard .ant-pagination-disabled .ant-pagination-item-link,
-.contentDark .AllCard .ant-pagination-disabled .ant-pagination-item-link
-  border-color: #424242 !important
-  color: rgba(255, 255, 255, 0.3) !important
-
-.dark .AllCard .ant-pagination-disabled .ant-pagination-item-link span,
-.contentDark .AllCard .ant-pagination-disabled .ant-pagination-item-link span
-  color: rgba(255, 255, 255, 0.3) !important
-
-.dark .AllCard .ant-pagination-disabled .ant-pagination-item-link .anticon,
-.contentDark .AllCard .ant-pagination-disabled .ant-pagination-item-link .anticon
-  color: rgba(255, 255, 255, 0.3) !important
-
-.dark .AllCard .ant-pagination-item,
-.contentDark .AllCard .ant-pagination-item
-  background-color: transparent !important
-  border-color: #424242 !important
-
-.dark .AllCard .ant-pagination-item a,
-.contentDark .AllCard .ant-pagination-item a
-  color: rgba(255, 255, 255, 0.85) !important
-
-.dark .AllCard .ant-pagination-item-active,
-.contentDark .AllCard .ant-pagination-item-active
-  background-color: #1677ff !important
-  border-color: #1677ff !important
-
-.dark .AllCard .ant-pagination-item-active a,
-.contentDark .AllCard .ant-pagination-item-active a
-  color: #ffffff !important
+// 20261001 批 E：`ant-pagination-item-link` / `ant-pagination-item` 那一批 `.dark`
+// 覆盖**已删**（原文从第 126 行到文件末）。当时留着是因为它们与 darkAlgorithm 同向
+// （白字压深底），只有"等目视确认"。现在确认了：里面的选中页底色写死 `#1677ff`，
+// 而本轮主色换成了手账粉 —— 蓝块压在粉紫纸上是唯一的冲突源。删掉后分页回到
+// antd 的 token 通道（主色 / 纸底 / 描边都已由 ConfigProvider 给对），
+// 上面那两条（字号、"共 N 篇"的分量）token 管不到，原样保留。

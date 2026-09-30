@@ -162,7 +162,7 @@ const Comments = () => {
             <div className="action">
                 <NewButton onClick={showModal}/>
                 <div style={{ display: "flex", flexDirection: 'row', alignItems: 'center' }}>
-                    <h2> <i className="iconfont icon-pinglun4" style={{ fontWeight: '100', fontSize: 50, color: '#13a8a8' }} /> 说说  </h2>
+                    <h2> <i className="iconfont icon-pinglun4" style={{ fontWeight: '100', fontSize: 50, color: 'var(--washi-sky, #8fd3ea)' }} /> 说说  </h2>
                 </div>
                 <SearchButton style={{marginLeft: '50px'}}/>
             </div>

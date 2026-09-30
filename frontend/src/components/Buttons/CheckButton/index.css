@@ -1,3 +1,6 @@
+/* 20261001 批 E：勾选色原来写死出厂蓝 #7f9ef3（含选中后的脉冲光晕），
+   换成手账的薰衣草紫。消费方只有后台（图库 / 友链）。 */
+
 /* Hide the default checkbox */
 .Check_container input {
     position: absolute;
@@ -17,7 +20,7 @@
 
 /* Create a custom checkbox */
 .checkmark {
-    --clr: #7f9ef3;
+    --clr: var(--washi-lav, #b9a7f5);
     position: relative;
     top: 0;
     left: 0;
@@ -61,7 +64,7 @@
 
 @keyframes pulse {
     0% {
-        box-shadow: 0 0 0 #7f9ef3;
+        box-shadow: 0 0 0 var(--washi-lav, #b9a7f5);
         rotate: 20deg;
     }
 
@@ -70,11 +73,11 @@
     }
 
     75% {
-        box-shadow: 0 0 0 10px #5273e0;
+        box-shadow: 0 0 0 10px #a08be0;
     }
 
     100% {
-        box-shadow: 0 0 0 13px #2b4acb;
+        box-shadow: 0 0 0 13px #8a70c9;
         rotate: 0;
     }
 }

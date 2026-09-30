@@ -280,7 +280,7 @@ const AllTag = () => {
                                 onClick={() => refresh()}>
                             刷新
                         </Button>
-                        <Button type="primary" style={{marginLeft: 20, backgroundColor: '#f5222d'}} onClick={Delete}>删除</Button>
+                        <Button type="primary" danger style={{marginLeft: 20}} onClick={Delete}>删除</Button>
                     </Form.Item>
                     <Alert
                         message={`选中标签：${selectedKeys.length} 个`}

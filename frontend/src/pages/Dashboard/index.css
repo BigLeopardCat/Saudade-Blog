@@ -396,14 +396,18 @@ li.search-box input {
 /*    opacity: 0;*/
 
 /*}*/
-.dark .ant-form-item-label > label { color: rgba(255, 255, 255, 0.85) !important; }
+/* 20261001 批 E：值从「0.85 白」换成手账墨色（夜间档 #c9b8d3，压在 #2a2338 上约 8:1）。
+   浅色档那一半由文件末尾的手账块补（原来这里只管夜间）。 */
+.dark .ant-form-item-label > label { color: var(--washi-ink-2, #c9b8d3) !important; }
 /* RangePicker 已从全仓撤掉（笔记页「发布时间」那轮），随它一起死的那条分隔符
    颜色规则 20260923 删。上面 `.ant-form-item-label > label` 那条仍是活的，保留。 */
 
-/* Dark Mode Tabs Fix */
-.dark .ant-tabs-tab-btn { color: rgba(255, 255, 255, 0.65) !important; }
-.dark .ant-tabs-tab.ant-tabs-tab-active .ant-tabs-tab-btn { color: #1677ff !important; text-shadow: none !important; }
-.dark .ant-tabs-ink-bar { background: #1677ff !important; }
+/* Dark Mode Tabs Fix —— 20261001 批 E 换色：三处写死的 `#1677ff` 是改造前那支出厂蓝，
+   在粉紫纸上是一块异物。改成手账令牌（夜间档的粉），`!important` 保留——它们要压的是
+   antd 那套 `:where()` 之外还有内联 token 的写法，抬特异度不如直接沿用原来的写法。 */
+.dark .ant-tabs-tab-btn { color: var(--washi-ink-2, #c9b8d3) !important; }
+.dark .ant-tabs-tab.ant-tabs-tab-active .ant-tabs-tab-btn { color: var(--washi-pink-deep, #ff8ec7) !important; text-shadow: none !important; }
+.dark .ant-tabs-ink-bar { background: var(--washi-grad-soft, linear-gradient(100deg, #ffb3d9 0%, #cbb6ff 100%)) !important; }
 
 /* Protect FABs from shrinking */
 .MuiFab-root { flex-shrink: 0 !important; min-width: 40px !important; min-height: 40px !important; }
@@ -898,4 +902,233 @@ li.search-box input::placeholder {
     background-color: var(--washi-pink, #ff9ec9);
     color: #40263f;
     box-shadow: 0 4px 12px -4px rgba(217, 79, 154, 0.55);
+}
+
+/* ══════════════════ 20261001 手账皮（后台**内部页**）══════════════════════════
+   用户第 5 条：「dashboard 内部页也做同样风格化设计」。
+
+   上面那块（「手账皮（后台控制面板）」）做的是**壳** —— 侧栏、页面底、外壳大卡、
+   导航选中态。壳里那些页面本身当时一个字没动，还是出厂 antd：蓝主色、灰表头、
+   白输入框，压在粉紫纸上像贴了一张别人的截图。
+
+   本块 = 壳里那一层的皮。分两半，缺一不可：
+   · **色**（主色 / 纸底 / 墨色 / 描边）走 antd token，写在 `index.tsx` 的 `WASHI_THEME`
+     —— 一句 `colorPrimary` 波及按钮、开关、勾选框、分页选中、Select、链接、Spin、
+     Upload……，而且能跟上 hover / active / disabled 那套**派生色**（CSS 逐条追是长尾，
+     漏掉的那处就还是出厂蓝）；
+   · **形**（表头那条淡带、游标渐变、行悬停的胶带色）走本文件 —— 这些 token 表达不了。
+
+   范围根 = `body.dash-skin`，配 `body.washiDark` 管夜间档，两个类名都由
+   `index.tsx` 在挂载/切档时挂上、卸载时摘掉。**为什么是 body 而不是 `.Card`**：
+   antd 的 Modal / Select / Dropdown / Tooltip / Popconfirm 全部走 Portal 挂到
+   `document.body` 下，`.Card` 在它们身上够不着（写成 `.Card …` 等于这些浮层一条
+   样式都吃不到）。**为什么不是裸 `.ant-*`**：本文件**也进首页 bundle**（见上方注记 ②），
+   挂上 `dash-skin` 之前下面每一条都是死规则。
+
+   ⚠️ 动之前先读三条：
+   ① 本块必须在文件**最末**：同选择器同特异度后写者赢。
+   ② 要跟 antd 抢的那些，前缀写全 `body.dash-skin .ant-table-wrapper …`。antd 的
+      `.ant-table-wrapper .ant-table-thead >tr >th` 是 (0,3,1)，省成 `.ant-table-thead
+      > tr > th` 是 (0,2,1) —— **输**，改了看不出变化就是栽在这里。
+   ③ 深浅两档**只写一条**：值全走 `var(--washi-*)`，令牌自己分档（半透明的
+      `--washi-line-2` 当填充色是最省事的一例：压在白纸上是一层淡粉、压在深纸上
+      是一层淡白，两档都不用另写）。
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/* ① 页里那些 antd 小卡（友链 / 说说 / 新建文章 / 主页）＝ 叠在外壳大卡上的一张内页。
+      `body.dash-skin .ant-card` 会把**外壳大卡自己**也套进来（它就是 `<Card className="Card">`），
+      所以必须带 `.Card` 当父级 —— 只匹配"大卡里面的卡"。 */
+body.dash-skin .Card .ant-card {
+    background-color: var(--washi-paper-2, #fff6fa);
+    border-color: var(--washi-line-2, rgba(198, 152, 192, 0.22));
+}
+body.dash-skin .Card .ant-card-head {
+    border-bottom-color: var(--washi-line-2, rgba(198, 152, 192, 0.22));
+    color: var(--washi-ink, #4a3550);
+}
+
+/* ② 表格 —— 后台最重的一块面（文章 / 分类 / 标签 / 留言 / 额度 / 公告都用它）。
+
+      原先表头是 `#fafafa`（出厂灰），在粉紫纸上是一块"灰补丁"；行悬停是 `#fafafa`
+      的加深版，同样与纸无关。这里两处都换成和纸自己的颜色：
+      · 表头 = `--washi-line-2` 当**填充**（半透明纸线色，压在白纸上是一层淡粉、
+        压在深纸上是一层淡白 —— 一条规则管两档）；
+      · 行悬停 = `--washi-tape-2`（第二种胶带色），与侧栏悬停同一支。 */
+body.dash-skin .ant-table-wrapper .ant-table-thead > tr > th {
+    background-color: var(--washi-line-2, rgba(198, 152, 192, 0.22));
+    color: var(--washi-ink-2, #7c6584);
+    border-bottom: 1px solid var(--washi-line, rgba(198, 152, 192, 0.42));
+    font-weight: 600;
+}
+/* 表头里列与列之间那根竖线：手账的表头是**一整条**和纸，不切碎 */
+body.dash-skin .ant-table-wrapper .ant-table-thead > tr > th::before {
+    display: none;
+}
+body.dash-skin .ant-table-wrapper .ant-table-tbody > tr > td {
+    border-bottom: 1px solid var(--washi-line-2, rgba(198, 152, 192, 0.22));
+}
+/* 行悬停。⚠️ antd v5 是把 `.ant-table-cell-row-hover` **加在 td 上**的（不是靠
+      `tr:hover > td`），只写后者会在某些版本上被它压掉 —— 两条都写上。 */
+body.dash-skin .ant-table-wrapper .ant-table-tbody > tr > td.ant-table-cell-row-hover,
+body.dash-skin .ant-table-wrapper .ant-table-tbody > tr:hover > td {
+    background-color: var(--washi-tape-2, rgba(214, 226, 255, 0.8));
+}
+/* 「暂无数据」那格：跟着行悬停整片变色很怪，让它保持纸底 */
+body.dash-skin .ant-table-wrapper .ant-table-placeholder > td,
+body.dash-skin .ant-table-wrapper .ant-table-placeholder:hover > td {
+    background-color: transparent;
+}
+body.dash-skin .ant-table-wrapper .ant-table-column-sorter {
+    color: var(--washi-ink-3, #a08ba8);
+}
+
+/* ③ 分页：未选中的页是"一张小纸片"，选中的那页交给主色（token 已经是手账粉）。
+      两根 `!important` 也不需要 —— 原来 `.dark .AllCard` 那两批（AllNotes /
+      AllCategorize 各一份逐字副本，选中页底色写死 `#1677ff`）本轮已整块删，
+      见那两个 .sass 文件末尾的注记。 */
+body.dash-skin .ant-pagination .ant-pagination-item:not(.ant-pagination-item-active) {
+    background-color: var(--washi-paper-2, #fff6fa);
+    border-color: var(--washi-line-2, rgba(198, 152, 192, 0.22));
+}
+body.dash-skin .ant-pagination .ant-pagination-prev .ant-pagination-item-link,
+body.dash-skin .ant-pagination .ant-pagination-next .ant-pagination-item-link {
+    background-color: var(--washi-paper-2, #fff6fa);
+    border-color: var(--washi-line-2, rgba(198, 152, 192, 0.22));
+}
+
+/* ④ 标签页：只补 token 给不出的两处 —— 游标改成站里那支粉紫天青渐变（与首页首屏、
+      对话面板标题签同一支），底下的分隔线换成纸线。行上的字色（浅色墨 / 夜间墨）
+      本来就是 token 通道，不重复写。 */
+body.dash-skin .ant-tabs .ant-tabs-ink-bar {
+    background: var(--washi-grad, linear-gradient(100deg, #ff7fc0 0%, #b06ee8 52%, #63b8e8 100%));
+}
+body.dash-skin .ant-tabs-top > .ant-tabs-nav::before,
+body.dash-skin .ant-tabs-bottom > .ant-tabs-nav::before {
+    border-bottom-color: var(--washi-line-2, rgba(198, 152, 192, 0.22));
+}
+
+/* ⑤ 浮层（Modal / Drawer）：纸底与字色由 token 给（`colorBgElevated`），这里只补
+      形状 —— 圆角与投影跟外壳大卡、公告卡同源，夜里那支投影由令牌自己换。 */
+body.dash-skin .ant-modal .ant-modal-content {
+    border-radius: var(--washi-radius, 14px);
+    border: 1px solid var(--washi-line-2, rgba(198, 152, 192, 0.22));
+    box-shadow: var(--washi-shadow-lg, 0 22px 54px rgba(120, 90, 140, 0.22));
+}
+body.dash-skin .ant-drawer .ant-drawer-content {
+    background-color: var(--washi-paper-2, #fff6fa);
+}
+
+/* ⑥ 状态标签：只收圆角，**色相一律不动** —— 红=冻结、绿=通过这类是语义色，
+      改成粉紫会把"这行到底什么状态"读没。 */
+body.dash-skin .Card .ant-tag {
+    border-radius: 6px;
+}
+
+/* ⑦ 上传拖拽区（新建文章那张封面上传）：纸底 ＋ 纸线虚线框 */
+body.dash-skin .Card .ant-upload-drag {
+    background-color: var(--washi-paper-2, #fff6fa);
+    border-color: var(--washi-line, rgba(198, 152, 192, 0.42));
+}
+
+/* ⑧ MUI 那几枚圆钮（新增 / 编辑 / 配置 / 删除 / 刷新）与站点设置的「保存」按钮。
+      MUI 是**第二套设计系统**：自带一套默认调色板（primary #1976d2、info #0288d1、
+      secondary #9c27b0），完全不吃 antd 的 token —— 上面的 `WASHI_THEME` 对它一个字节
+      都不生效。全站引用 `@mui/material` 的地方只在 `pages/Dashboard` 下，所以这一小片
+      写在后台皮里最合适。
+
+      为什么不用 `ThemeProvider` 包一层：那得给 MUI 配一整套 palette，等于把同一份手账色
+      再抄进第二个体系（第三份副本）。这里只有五枚圆钮 + 一个按钮，CSS 几句话就够。
+
+      特异度：MUI 用 emotion 在**运行时**插样式，选择器是一个生成的类
+      （`.css-qize55-MuiButtonBase-root-MuiFab-root` = (0,1,0)），比 antd 那套好压。
+      但**必须带上语义类**（`.MuiFab-root.MuiFab-primary`）—— 生成的那串哈希每次构建
+      都变，钉不住。
+
+      色相取舍同 ⑥：删除钮（`.MuiFab-error`，MUI 红）**不动**，红=删除是语义色。
+      「编辑」原先跟着 MUI 的 info 是蓝的，一并收进手账的紫与天青。两枚浅底钮上的字用
+      深墨 `#241f2e`（与 `.tu-tabs button.sel` 同一支）：浅色档的 `--washi-ink` 到夜间
+      会翻成浅色，压在浅紫上就糊了。 */
+body.dash-skin .MuiFab-root.MuiFab-primary {
+    background-color: var(--washi-pink-deep, #d94f9a);
+    color: var(--washi-paper-3, #f6f0ff);
+}
+body.dash-skin .MuiFab-root.MuiFab-primary:hover {
+    background-color: var(--washi-pink, #ff9ec9);
+}
+body.dash-skin .MuiFab-root.MuiFab-info {
+    background-color: var(--washi-lav, #b9a7f5);
+    color: #241f2e;
+}
+body.dash-skin .MuiFab-root.MuiFab-info:hover {
+    background-color: var(--washi-pink, #ff9ec9);
+}
+body.dash-skin .MuiFab-root.MuiFab-secondary {
+    background-color: var(--washi-sky, #8fd3ea);
+    color: #241f2e;
+}
+body.dash-skin .MuiFab-root.MuiFab-secondary:hover {
+    background-color: var(--washi-pink, #ff9ec9);
+}
+/* 「刷新 / 返回」这枚无色圆钮：底色用**当填充的纸线色**（与表头那条淡带同源）而不是
+   `--washi-paper-2` —— 它落在卡面上，而卡面自己就是 paper-2，同色等于把钮抹掉。 */
+body.dash-skin .MuiFab-root.MuiFab-default {
+    background-color: var(--washi-line-2, rgba(198, 152, 192, 0.22));
+    color: var(--washi-ink-2, #7c6584);
+}
+body.dash-skin .MuiFab-root.MuiFab-default:hover {
+    background-color: var(--washi-tape, rgba(255, 222, 238, 0.86));
+}
+body.dash-skin .MuiButton-root.MuiButton-contained.MuiButton-colorPrimary {
+    background-color: var(--washi-pink-deep, #d94f9a);
+    color: var(--washi-paper-3, #f6f0ff);
+}
+body.dash-skin .MuiButton-root.MuiButton-contained.MuiButton-colorPrimary:hover {
+    background-color: var(--washi-pink, #ff9ec9);
+}
+
+/* ⑨ MUI 输入框（站点设置那一列）。这一处原先在夜间是**真缺陷**：MUI 的字色写死
+      `rgba(0, 0, 0, .87)`，压在手账深纸上实测 1.6:1 —— 黑字压在 #2a2338 上，
+      `dark-mode-contrast.test.py` 的 KNOWN 里记的就是这七处。outlined 输入框是
+      **三件套**，缺一条就还是出厂样：
+        · `.MuiInputLabel-root` —— 浮起来的那行标签（原先蓝 #1976d2）
+        · `.MuiInputBase-input` —— 真正输入的字（原先写死黑）
+        · `.MuiOutlinedInput-notchedOutline` —— 那圈 `<fieldset>` 描边（原先蓝）
+      hover / focus 两态 MUI 各有一条自带规则在后面顶，一并写掉（带 `body.dash-skin`
+      前缀后是 (0,4,0)，压得住）。 */
+body.dash-skin .MuiInputLabel-root {
+    color: var(--washi-ink-2, #7c6584);
+}
+body.dash-skin .MuiInputLabel-root.Mui-focused {
+    color: var(--washi-pink-deep, #d94f9a);
+}
+body.dash-skin .MuiInputBase-input {
+    color: var(--washi-ink, #4a3550);
+}
+body.dash-skin .MuiOutlinedInput-notchedOutline {
+    border-color: var(--washi-line, rgba(198, 152, 192, 0.42));
+}
+body.dash-skin .MuiOutlinedInput-root:hover .MuiOutlinedInput-notchedOutline {
+    border-color: var(--washi-line, rgba(198, 152, 192, 0.42));
+}
+body.dash-skin .MuiOutlinedInput-root.Mui-focused .MuiOutlinedInput-notchedOutline {
+    border-color: var(--washi-pink-deep, #d94f9a);
+}
+body.dash-skin .MuiFormHelperText-root {
+    color: var(--washi-ink-3, #a08ba8);
+}
+
+/* ⑩ 说说页右上那枚搜索胶囊（`components/Buttons/SearchButton`）。它的底色写死
+      `rgb(19, 168, 168)` 一支青绿 —— 组件本身**首页顶栏也在用**，所以不能改它的
+      `index.css`（那会连首页一起动，而首页是上一批已经定稿的）。这里靠范围根
+      只收后台这一份：`.mainbox` 是那个组件的根类，`body.dash-skin` 一挡，
+      首页顶栏那枚仍是原来的青绿。 */
+body.dash-skin .mainbox {
+    background-color: var(--washi-pink-deep, #d94f9a);
+}
+body.dash-skin .mainbox .search_input,
+body.dash-skin .mainbox .search_input::placeholder {
+    color: var(--washi-paper-3, #f6f0ff);
+}
+body.dash-skin .mainbox .search_icon {
+    fill: var(--washi-paper-3, #f6f0ff);
 }

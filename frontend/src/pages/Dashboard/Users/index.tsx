@@ -577,7 +577,7 @@ const Users = () => {
                             <div>
                                 确定要把<strong>{quotaTarget?.username}</strong> 的对话额度恢复到上限吗？
                             </div>
-                            <div style={{ marginTop: 8, color: '#8c8c8c' }}>
+                            <div style={{ marginTop: 8, color: 'var(--washi-ink-2, #7c6584)' }}>
                                 恢复后：他的额度立刻回到满额、可以继续对话，并会收到一条站内通知。
                                 这一下在界面上撤不回来——原值不会被记下来，唯一能再变的是下一次重置。
                             </div>
@@ -607,7 +607,7 @@ const Users = () => {
                                 确定要{statusNext ? '冻结' : '解冻'}
                                 <strong>{statusTarget?.username}</strong> 吗？
                             </div>
-                            <div style={{ marginTop: 8, color: '#8c8c8c' }}>
+                            <div style={{ marginTop: 8, color: 'var(--washi-ink-2, #7c6584)' }}>
                                 {statusNext
                                     ? '冻结后：该账号无法再登录，已登录的网页会话立即失效；解冻后需要重新登录，冻结前的登录状态不会恢复。'
                                     : '解冻后：该账号可以重新登录；它冻结前的登录状态不会恢复。'}
@@ -640,7 +640,7 @@ const Users = () => {
                                 「{roleLabel(roleTarget?.role)}」改为
                                 「{ROLE_LABEL[roleNext] || roleNext}」
                             </div>
-                            <div style={{ marginTop: 8, color: '#8c8c8c' }}>
+                            <div style={{ marginTop: 8, color: 'var(--washi-ink-2, #7c6584)' }}>
                                 {roleRank(roleNext) < roleRank(roleTarget?.role)
                                     ? '这是收窄权限：改完他就没有现在这些能力了。'
                                     : '这是放宽权限：改完他能做的事比现在多。'}
@@ -712,7 +712,7 @@ const Users = () => {
                     >
                         {notifyTarget && (
                             <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
-                                <div style={{ color: '#8c8c8c' }}>
+                                <div style={{ color: 'var(--washi-ink-2, #7c6584)' }}>
                                     这条通知会出现在 <strong>{notifyTarget.username}</strong> 的个人中心，
                                     发出后无法撤回。标题留空则显示为「站内通知」。
                                 </div>

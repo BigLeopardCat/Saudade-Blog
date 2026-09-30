@@ -2,10 +2,9 @@
   line-height: 200px
   text-allign: center
   border-radius: 10px
-  background-color: white
-  .dark &
-    // 写死的白底在夜间是一整块白砖（这个文件同样服务于普通用户可见的标签页）
-    background-color: rgba(255, 255, 255, 0.06)
+  // 20261001 批 E：白 / rgba(255,255,255,.06) 两档收成一张和纸内页（令牌自己分档，
+  // 原来那个 `.dark &` 覆盖随之删掉）
+  background-color: var(--washi-paper-2, #fff6fa)
   margin-top: 10px
   max-width: 98%
   height: 90%
@@ -14,7 +13,8 @@
   .newTagForm
     position: relative
     height: 100%
-    border-right: 3px solid #484f58
+    // 20261001 批 E：3px 深灰竖线 → 一道纸线（原色压在粉紫纸上是一根黑杠）
+    border-right: 2px solid var(--washi-line, rgba(198, 152, 192, 0.42))
     width: 50%
     float: left
     text-align: center
