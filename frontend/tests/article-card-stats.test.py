@@ -8,10 +8,16 @@
 就在卡片的图片下方那一行"。
 
 判据那半边在 `article-card-stats.test.mjs`（读不到 ≠ 0），这里只量**位置与预算**。
-为什么非要用真浏览器：`.ArticleCard` 是 `height: 600px` 的定高卡（移动端才 `height: auto`），
+为什么非要用真浏览器：`.ArticleCard` 曾是 `height: 600px` 的定高卡（移动端才 `height: auto`），
 内容区的收支在 20260912 调到只剩约 7px 余量（见 index.sass 里那段注释）——多出来的高度
 会把 `margin-top: auto` 顶掉，同一排卡片的页脚就高低不齐。加不加一行、加在哪儿，
 node 桩里算不出来。
+
+20260930 补：那张定高卡在"标签换到第二/第三行"时会把「更新于」那行推出卡外（用户现场报的）。
+改法 = 卡片 `min-height: 600px`（600 是**下限**）+ 网格项 `display: flex` 让同排等高，
+所以第 ⑦ 组量两件事：标签换行时**卡片真的长高**且页脚/「更新于」都在卡内、标签不换行时
+**仍停在下限 600**。桩里也必须补上那条「更新于」——它是 `position: absolute` 挂在页脚盒子
+外面的，旧桩只写了「发布于」⇒ 这条缺陷在本套件里根本量不到（判据两边一样坏 ⇒ 照样全绿）。
 
 所以读数**挂在分类那一行上**（不另开一行），本套件就是这条决定的回归锁：
 
@@ -21,7 +27,8 @@ node 桩里算不出来。
   ③ 预算没被撑破：3 行标题 + 3 行摘要（最坏情况）下内容区不溢出（scrollHeight ≤ clientHeight）；
   ④ 夜间：颜色取的是主题变量（不是写死的灰），与卡片底色对比度 ≥ 3:1；
   ⑤ 窄屏 327px：容不下时**整块读数换行**，而不是把分类名截断（内容是内容、读数是装饰）；
-  ⑥ 顺序恒为 阅读 → 点赞 → 收藏（与判据里的 STAT_CELL_ORDER 一致）。
+  ⑥ 顺序恒为 阅读 → 点赞 → 收藏（与判据里的 STAT_CELL_ORDER 一致）；
+  ⑦ 标签换行时卡片按内容长高（600 是下限），页脚与「更新于」整行都在卡内。
 """
 import pathlib
 import shutil
@@ -69,6 +76,16 @@ STATS = ('<div class="ArticleStats" id="stats">'
                                        ("favorites", "收藏数", 1)))
          + "</div>")
 
+def TAGS(n: int) -> str:
+    """标签行：antd Tag 的实测几何（height 22 / margin 5 / padding 0 7）。沙箱里没有 antd 的
+    CSS，所以按它的尺寸手写。`n` 是"换行压力"的来源——20260930 那条缺陷就是标签换到第二/第三行
+    时才发生的，桩里不给标签就永远量不到。"""
+    return ('<div class="tags" id="tags" style="width:100%;margin-top:10px">'
+            + "".join(f'<span style="display:inline-block;height:22px;line-height:22px;margin:5px;'
+                      f'padding:0 7px;border:1px solid #d9d9d9;border-radius:4px;font-size:12px">'
+                      f'标签{i}</span>' for i in range(n)) + "</div>")
+
+
 LONG_TITLE = "从零把站内对话助手接进个人博客：规划器、执行器与质检闸的完整记录（下篇）"
 LONG_DESC = "这一段是摘要，按最坏情况写满三行：讲的是为什么把执行器做成确定性的、为什么叙述者不绑工具、" \
             "以及验收为什么必须由回执驱动而不是由模型自述，最后附带一串踩坑清单与回归锁的清单与取舍。"
@@ -95,10 +112,19 @@ MARKUP = """
              判据全是"页脚/内容区"，两边一样坏 ⇒ 照样全绿。桩必须与 Article.tsx 同形。 -->
         <div class="descSlot" id="slot"><p class="ArticleDescription" id="desc">{desc}</p></div>
         <div style="width:100%;margin-top:auto;flex-shrink:0">
-          <div class="tags" style="width:100%;margin-top:10px"></div>
+          {tags}
           <div class="ArticleFooter" id="footer" style="display:flex;align-items:center;paddingBottom:20px;marginTop:10px">
-            <span style="font-weight:bold">Sora</span>
-            <span class="post-date" style="margin-left:10px">发布于 2026-09-30</span>
+            <span style="display:inline-block;width:40px;height:40px;border-radius:50%;background:#ccc;margin-right:10px"></span>
+            <span style="font-weight:bold;margin-right:10px;line-height:22px;font-size:14px">林陌青川</span>
+            <!-- ⚠️「更新于」那行**不能省**（20260930）：它 `position: absolute; top: 100%` 挂在
+                 这个列盒子**外面**，页脚盒子只有一行高、那行全靠内容区 32px 下内边距兜着
+                 ⇒ 卡片收支一旦为负，第一个被 `overflow: hidden` 切掉的就是它。
+                 旧桩只写了「发布于」，正是"标签换到第二行、时间信息跑出卡片"那个现场
+                 在本套件里**量不到**的原因（判据两边一样坏 ⇒ 照样全绿）。 -->
+            <div style="position:relative;display:flex;flex-direction:column">
+              <span class="post-date" id="pub" style="font-size:12px;color:#7f7e7e;line-height:22px">发布于 2026-09-30</span>
+              <span class="post-date" id="upd" style="position:absolute;top:100%;margin-top:6px;left:0;font-size:12px;color:#7f7e7e;line-height:22px;white-space:nowrap">更新于 2026-09-30</span>
+            </div>
           </div>
         </div>
       </div>
@@ -152,7 +178,9 @@ PAINT = """(o) => {
     const [hi, lo] = a > b ? [a, b] : [b, a]; return Math.round(((hi+0.05)/(lo+0.05))*100)/100; })() : 0;
   return {
     cover: r('cover'), head: r('head'), cat: r('cat'), stats: r('stats'), footer: r('footer'),
-    title: r('title'), content: r('content'), card: r('card'),
+    title: r('title'), content: r('content'), card: r('card'), upd: r('upd'), tags: r('tags'),
+    tagRows: (() => { const t = document.getElementById('tags');
+      return t ? new Set([...t.children].map((e) => Math.round(e.getBoundingClientRect().top))).size : 0; })(),
     cellCount: cells.length,
     cellTexts: cells.map((c) => c.querySelector('.ArticleStatNum').textContent),
     svgSize: svg0 ? {w: svg0.getBoundingClientRect().width, h: svg0.getBoundingClientRect().height} : null,
@@ -175,8 +203,11 @@ with sync_playwright() as p:
     pg.goto(URL)
     pg.wait_for_timeout(150)
 
-    long_mk = MARKUP.format(stats=STATS, title=LONG_TITLE, desc=LONG_DESC)
-    bare_mk = MARKUP.format(stats="", title=LONG_TITLE, desc=LONG_DESC)
+    def mk(stats: str = STATS, tags_n: int = 0, title: str = LONG_TITLE, desc: str = LONG_DESC) -> str:
+        return MARKUP.format(stats=stats, title=title, desc=desc, tags=TAGS(tags_n))
+
+    long_mk = mk()
+    bare_mk = mk(stats="")
 
     print("⓪ 沙箱自检：卡片规则真的生效了（否则下面全是 0 与 0 比，怎么比都过）")
     on = pg.evaluate(PAINT, {"markup": long_mk})
@@ -186,7 +217,8 @@ with sync_playwright() as p:
     check("读数块有宽度（不是塌成 0 的空盒子）", on["stats"]["w"] > 0, f"stats w={on['stats']['w']}")
     check("读数块取了 flex（sass 里的 display 生效）", on["statsDisplay"] == "flex",
           str(on["statsDisplay"]))
-    check("卡片定高 600px（桌面档）", abs(on["card"]["h"] - 600) < 1, f"card h={on['card']['h']}")
+    check("卡片高 600px（600 是**下限**，无标签时正好停在下限）",
+          abs(on["card"]["h"] - 600) < 1, f"card h={on['card']['h']}")
 
     print("① 位置：在封面图下方那一行，且在分类标题右侧")
     check("读数确实在封面图下方（top ≥ 图底）",
@@ -216,7 +248,7 @@ with sync_playwright() as p:
     print("③ 预算没被撑破（3 行标题 + 3 行摘要的最坏情况）")
     check("内容区不溢出（scrollHeight ≤ clientHeight + 1）",
           on["contentOverflow"] <= 1, f"溢出 {on['contentOverflow']}px")
-    check("卡片整体不溢出（定高 600 的卡没被撑破）",
+    check("卡片整体不溢出（长高后的卡没被撑破）",
           on["cardOverflow"] <= 1, f"溢出 {on['cardOverflow']}px（卡高 {on['card']['h']}）")
     check("页脚贴着内容区底（margin-top:auto 仍生效）",
           on["content"]["bottom"] - on["footer"]["bottom"] < 40,
@@ -252,6 +284,37 @@ with sync_playwright() as p:
           pg.evaluate("() => [...document.querySelectorAll('.ArticleStat')].map(e => e.title)")
           == ["阅读量", "点赞数", "收藏数"],
           str(pg.evaluate("() => [...document.querySelectorAll('.ArticleStat')].map(e => e.title)")))
+
+    print("⑦ ★ 标签换行：卡片按内容长高，页脚与「更新于」都不许被切掉（20260930 现场）")
+    # 用户原话："在文章标签变成两行时，作者信息时间信息在卡片的位置还是没锁死，跑出卡片了"。
+    # 定高 600px 时 3 行标题 + 标签第三行就把「更新于」顶到卡底下方 19px（只剩 11px 可见），
+    # 标签两行时余量也只剩 1px ⇒ 判据是"这行整个在卡内"，不是"大概看得见"。
+    # `expect_grow` 得逐档写死：标签两行时内容**恰好还塞得进 600**（改前余量只剩 1px），
+    # 三行时才真的超出去 ⇒ 那一档才是"长高机制真的在长"的证据，其余两档只验"停在下限"。
+    for n, expect_grow in ((6, False), (8, False), (12, True)):
+        r = pg.evaluate(PAINT, {"markup": mk(tags_n=n)})
+        if expect_grow:
+            check(f"{n} 个标签（{r['tagRows']} 行）：内容超出下限 ⇒ 卡片长高到 600 以上",
+                  r["card"]["h"] > 600, f"card h={r['card']['h']} / 标签行数 {r['tagRows']}")
+        else:
+            check(f"{n} 个标签（{r['tagRows']} 行）：内容仍塞得下 ⇒ 停在下限 600",
+                  abs(r["card"]["h"] - 600) < 1,
+                  f"card h={r['card']['h']} / 标签行数 {r['tagRows']}")
+        check(f"  卡片不溢出（overflow: hidden 没在裁东西）",
+              r["cardOverflow"] <= 1, f"溢出 {r['cardOverflow']}px")
+        check(f"  「更新于」整行在卡内（底 ≤ 卡底）",
+              r["upd"] and r["upd"]["bottom"] <= r["card"]["bottom"],
+              f"upd.bottom {r['upd'] and r['upd']['bottom']} / card.bottom {r['card']['bottom']}")
+        check(f"  页脚整行在卡内（作者署名没跑出去）",
+              r["footer"]["bottom"] <= r["card"]["bottom"],
+              f"footer.bottom {r['footer']['bottom']} / card.bottom {r['card']['bottom']}")
+    # 反面对照：标签不换行（≤3 个）时**必须**仍停在下限 600 —— 长高不能变成"每张卡都松垮"
+    flat = pg.evaluate(PAINT, {"markup": mk(tags_n=3)})
+    check("3 个标签（1 行）时仍是 600px（下限没被长高逻辑顶掉）",
+          abs(flat["card"]["h"] - 600) < 1, f"card h={flat['card']['h']}")
+    check("  该档「更新于」也在卡内",
+          flat["upd"] and flat["upd"]["bottom"] <= flat["card"]["bottom"],
+          f"upd.bottom {flat['upd'] and flat['upd']['bottom']} / card.bottom {flat['card']['bottom']}")
 
     check("无 JS 运行时报错", not errs, "; ".join(errs[:2]))
     br.close()

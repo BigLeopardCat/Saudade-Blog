@@ -304,8 +304,20 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
     grid-template-columns: repeat(auto-fit, minmax(300px, 1fr))
     grid-gap: 30px
     justify-content: space-between
+    // 网格项（framer-motion 那个 `.article`）自己得是 flex：卡片才能被拉伸到**整行高**。
+    // 网格只拉网格项、不拉它的子元素 —— 少了这一层，同一排里内容少的卡片会停在 600px、
+    // 与邻居底部参差（页脚定死在卡底就名存实亡）。
+    > .article
+      display: flex
     .ArticleCard
-      height: 600px
+      // 600px 是**下限**，不是定高（20260930 用户拍板）。旧写法 `height: 600px` 下，
+      // 内容一旦超出 400px 的内容区就被 `overflow: hidden` 裁掉，而页脚的「更新于」那行
+      // 是**绝对定位挂在页脚盒子外面**的（页脚盒子只有 40px 高，那行靠内容区 32px 下内边距
+      // 兜着）⇒ 最先被切掉的就是它。实测（桌面三列 341px 宽）：3 行标题 + 标签换到第三行时
+      // 它跑到卡底下方 19px、只剩 11px 露在外面；标签两行时余量也只剩 1px。
+      // 改成下限后内容多就长高，什么都不用牺牲（简介 3 行、标题字号、标签数量全部照旧），
+      // 同排由网格拉伸保持等高、页脚照旧被 `margin-top: auto` 钉在卡底。
+      min-height: 600px
       background: var(--pic-background-cover)
       --tw-shadow: 0 10px 15px -3px rgba(0, 0, 0, .1), 0 4px 6px -2px rgba(0, 0, 0, .05)
       border-radius: 15px
@@ -343,15 +355,10 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
         flex-direction: column
         justify-content: flex-start
         align-items: flex-start
-        // 20260912：定高 600 + 标题 3 行的收支平衡。封面 200 后内容区只有 400px，
-        // 3 行标题（103.5）+ 3 行摘要（60）+ h4/标签/页脚 + 上下 padding 会超出约 36px；
-        // 超出的部分虽只是 padding（页脚文字不会被裁），但 `margin-top: auto` 会因此失效，
-        // 长标题卡片的标签行/页脚会比同排其他卡片低 36px（CDP 实测对照）。
-        // gap 12→8、padding 48→40/32 共收回 36px，三种标题行数下都装得下（余量约 7px）。
-        // 20260930：上内边距再 40→20px——用户点名"把分类行和封面的空隙缩小"，
-        // 那 40px 就是这个空隙（这一行是内容区第一行），顺带把上面那点余量放宽到约 27px。
-        // 余量只影响**静置态**是否宽松：简介住在定高槽 `.descSlot` 里（槽内绝对定位），
-        // 展开态占位也不变、不再吃这点余量（见 .descSlot 的注释）。
+        // 20260912 的那套"收支平衡"（gap 12→8、padding 48→40/32 共收回 36px）现在只是
+        // **下限档**的排版取值：卡片已改成"600px 起、按内容长高"（见 .ArticleCard 的注释），
+        // 收支不再需要卡在 7px 余量上。20260930 保留的那条仍是刻意取值：上内边距 20px
+        // 是用户点名要缩的"分类行与封面之间的空隙"（这一行是内容区第一行）。
         gap: 8px
         position: relative
         z-index: 40
@@ -360,13 +367,19 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
         border: none
         z-index: 99
         border-radius: 0 15px 15px 0
-        height: 100%
+        // 内容区**长高填满卡片**（原来是 `height: 100%`，趁 card 定高 600 时靠 flex 收缩
+        // 恰好收到 400）。改成 600 下限后卡片高度可能大于内容、多出来的那段必须有人接住，
+        // 否则它落在卡片底部、`margin-top: auto` 就钉不住页脚了。
+        // `flex: 1 1 auto`：basis 取自身高度、可长；min-height 仍是 auto ⇒ 内容更多时
+        // 它撑开卡片（卡片是 min-height，长高无障碍），永远不会把内容压出去。
+        flex: 1 1 auto
         h4
           font-size: 20px
 
         // 分类 + 卡片读数（20260930）。**这一行就是封面图正下方那一行**，读数不另开一行：
-        // `.ArticleCard` 定高 600px，内容区收支 20260912 调到只剩约 7px 余量，再加一行
-        // 20px 会顶掉 `margin-top: auto`（同排卡片页脚高低不齐）。挂在这一行上零高度成本。
+        // 当时是为了省那 20px（定高卡的收支只剩 7px 余量），现在卡片已能按内容长高、
+        // 高度不再紧张，但**这一行仍然保留** —— 分类与三个数本来就该并排一行
+        // （读数换行会白占一行高度、且与分类行对不齐）。
         // 注意 h4 仍是 `.ArticleContent h4` 的后代 ⇒ 上面那条 font-size: 20px 照常生效。
         .ArticleHead
           display: flex
@@ -406,9 +419,10 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
         .ArticleTitle
           font-weight: 900
           font-size: 30px
-          // 显式行高：3 行标题的高度必须确定（103.5px），
-          // 否则 `line-height: normal` 会随访客浏览器默认中文字体的度量漂移，
-          // 600px 定高的收支平衡就会失守
+          // 显式行高：3 行标题的高度必须确定（103.5px），否则 `line-height: normal` 会随
+          // 访客浏览器默认中文字体的度量漂移——2 行与 3 行标题的卡片会差出十几像素，
+          // 同一排卡片的高矮就不再只由"内容多少"决定（简介浮层那 200px 上限也是按这个
+          // 高度算出来的，见下面 .ArticleDescription 的注释）
           line-height: 1.15
           margin-bottom: 10px
           overflow: hidden
@@ -434,8 +448,9 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
           width: 100%
           height: 60px
           // 槽自己绝不许被 flex 压缩：槽位一变压的就是简介的顶（它会跟着槽顶走）。
-          // 余量不够时宁可让标签/页脚那一段溢出——那是 600px 定高卡标签多时的既有事实，
-          // 与本轮无关；而"简介被压成半行"是用户报上来的缺陷。
+          // 曾经的理由是"余量不够时宁可让标签/页脚溢出"（那时卡片定高 600、溢出的代价是
+          // 页脚被裁）；现在卡片按内容长高、溢出这条路径已经不存在，但这条仍然要留着——
+          // 谁把槽改成可压缩的，简介立刻回到"被压成 250px/85px 这种半行"的老路上。
           flex-shrink: 0
         .ArticleDescription
           color: var(--font-p-color)
@@ -454,9 +469,11 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
           max-height: 60px
           // 贴住槽顶向下长。展开时它会盖住标签与页脚，所以展开态必须给底色与投影
           // （底色取的就是卡自己的 `--pic-background-cover` ⇒ 夜间跟着变，不写死颜色）。
-          // 展开上限 10 行 = 200px 而不是更长：浮层是向下长的，卡片 `overflow: hidden`，
-          // 简介顶最高在「3 行标题 + 换行的分类行」之后 ≈ 194px，卡片可视底在 400px
-          // ⇒ 只有约 206px 可用。取 200 留 6px，再多就会像旧版一样把最后一行切掉。
+          // 展开上限 10 行 = 200px 而不是更长：浮层是**绝对定位**、向下长，它不参与布局
+          // 所以卡片不会跟着长高——简介顶最高在「3 行标题 + 换行的分类行」之后 ≈ 194px，
+          // 而封面上沿起算的可视底在 400px ⇒ 只有约 206px 可用，取 200 留 6px。
+          // （卡片改成"按内容长高"后这条**不跟着放宽**：它管的是浮层自己的下沿，
+          //  再长就会像旧版一样把最后一行切掉。）
           position: absolute
           top: 0
           left: 0
@@ -687,6 +704,11 @@ html[data-theme='dark'] .SayWords h2
 @media screen and (max-width: 768px)
   .allArticles .ArticleCard
     height: auto !important
+    // 手机档卡片本来就是"按内容自适应"的紧凑版（封面 90px、约 240px 高）：
+    // 桌面那条 `min-height: 600px` 下限必须在这里撤掉，否则每张卡都被撑到 600px。
+    // （同特异性下 `height: auto !important` 管不到 min-height —— 两个是不同的属性，
+    // 这正是"属性有没有第二处声明"那个家族坑，得单独写一条。）
+    min-height: 0 !important
     display: flex !important
     flex-direction: column !important
     

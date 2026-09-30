@@ -46,6 +46,16 @@
 悬浮一律不用 `pg.hover()`：Playwright 要求元素"位置/尺寸稳定"才敢下手，而展开动画有 0.8s，
 它会一直重试到超时（实测卡死 60+ 次）。本套件自己移坐标 + 轮询到布局稳定（见 `hover_stable`）。
 
+20260930 增补（用户第四报："在文章标签变成两行时，作者信息时间信息在卡片的位置还是没锁死，
+跑出卡片了"）：普通卡从 `height: 600px` 改成 `min-height: 600px`（600 是**下限**）+ 网格项
+`display: flex`（同排拉伸等高），内容多就长高。两条相关纪律：
+  · 桩里必须补上「更新于」那行——它 `position: absolute` 挂在页脚盒子**外面**，是溢出时
+    第一个被切的东西；旧桩只写「发布于」⇒ 这条缺陷在本套件里量不到（判据两边一样坏）。
+  · 移动档撤下限要写 `min-height: 0 !important`：`height: auto !important` 管不到 `min-height`
+    （两个是不同的属性，同族的坑）。判据写"矮于 600"而不是"≠ 600"。
+置顶卡**仍是定高 640**（轮播：按内容长高会让各 slide 参差），它的余量够大（10 个标签两行
+时仍余 111px，探针实测），不需要长高。
+
 判据分两半（诚实备注）：
   · 这里量几何（真 sass + 真 Chromium + 真事件）；
   · `article-card-hover.test.mjs` 锁源码接线——**React 的 `onMouseLeave` 挂在哪个元素上、
@@ -127,8 +137,16 @@ CARD_MARKUP = """
         <div style="width:100%;margin-top:auto;flex-shrink:0">
           {tags}
           <div class="ArticleFooter" id="footer" style="display:flex;align-items:center;paddingBottom:20px;marginTop:10px">
-            <span style="font-weight:bold">林陌青川</span>
-            <span class="post-date" style="margin-left:10px">发布于 2026-09-30</span>
+            <span style="display:inline-block;width:40px;height:40px;border-radius:50%;background:#ccc;margin-right:10px"></span>
+            <span style="font-weight:bold;margin-right:10px;line-height:22px;font-size:14px">林陌青川</span>
+            <!-- ⚠️「更新于」那行**不能省**（20260930）：`position: absolute; top: 100%` 把它挂在
+                 这个列盒子**外面**，页脚盒子只有一行高 ⇒ 卡片一旦收支为负，被 `overflow: hidden`
+                 切掉的第一个就是它。旧桩只写「发布于」，于是"标签换到第二行、时间信息跑出卡片"
+                 这个现场在本套件里量不到（判据两边一样坏 ⇒ 照样全绿）。 -->
+            <div style="position:relative;display:flex;flex-direction:column">
+              <span class="post-date" id="pub" style="font-size:12px;color:#7f7e7e;line-height:22px">发布于 2026-09-30</span>
+              <span class="post-date" id="upd" style="position:absolute;top:100%;margin-top:6px;left:0;font-size:12px;color:#7f7e7e;line-height:22px;white-space:nowrap">更新于 2026-09-30</span>
+            </div>
           </div>
         </div>
       </div>
@@ -154,8 +172,14 @@ TOP_MARKUP = """
             <div class="descSlot" id="slot"><div class="ArticleDescription" id="desc">{desc}</div></div>
             {tags}
             <div class="topFooter" id="footer" style="display:flex;align-items:center;paddingBottom:20px">
-              <span style="font-weight:bold">林陌青川</span>
-              <span class="post-date" style="margin-left:10px">发布于 2026-09-30</span>
+              <span style="display:inline-block;width:40px;height:40px;border-radius:50%;background:#ccc;margin-right:10px"></span>
+              <span style="font-weight:bold;margin-right:10px;line-height:22px;font-size:14px">林陌青川</span>
+              <!-- 同普通卡：顶卡页脚里也挂着「更新于」那行（JSX 里两份是同形的，含那个钟表图标——
+                   图标只影响行宽不影响行高，沙箱里没有 iconfont 就不放它）。 -->
+              <div style="position:relative;display:flex;flex-direction:column">
+                <span class="post-date" id="pub" style="font-size:12px;color:#7f7e7e;line-height:22px">发布于 2026-09-30</span>
+                <span class="post-date" id="upd" style="position:absolute;top:100%;margin-top:6px;left:0;font-size:12px;color:#7f7e7e;line-height:22px;white-space:nowrap">更新于 2026-09-30</span>
+              </div>
             </div>
           </div>
         </div>
@@ -219,9 +243,11 @@ PAINT = """(o) => {
            bg: cs.backgroundColor, zIndex: cs.zIndex},
     slot: off('slot'),
     cover: rect('cover'), head: off('head'), footer: off('footer'), footerRect: rect('footer'),
+    upd: rect('upd'),
     title: off('title'), cat: off('cat'), tags: off('tags'), content: off('content'),
     card: {...off('card'), rect: rect('card'),
-           overflow: card.scrollHeight - card.clientHeight, clientH: card.clientHeight},
+           overflow: card.scrollHeight - card.clientHeight, clientH: card.clientHeight,
+           minHeight: getComputedStyle(card).minHeight},
     contentOverflow: content.scrollHeight - content.clientHeight,
     // ① 的判据：分类行上沿到封面图下沿的距离（普通卡）。置顶卡没有 .ArticleHead ⇒ null
     headGap: head && el('cover') ? rect('head').top - rect('cover').bottom : null,
@@ -309,7 +335,8 @@ with sync_playwright() as p:
     on = pg.evaluate(PAINT, {"markup": card_mk})
     check("封面图 200px（.ArticleCover 的规则生效）", abs(on["cover"]["h"] - 200) < 1,
           f"cover h={on['cover']['h']}")
-    check("卡片定高 600px（桌面档）", abs(on["card"]["h"] - 600) < 1, f"card h={on['card']['h']}")
+    check("卡片 600px（600 是**下限**；内容塞得下时正好停在这里）",
+          abs(on["card"]["h"] - 600) < 1, f"card h={on['card']['h']}")
     check("简介行高 20px（展开高度按它取整）", abs(on["desc"]["lineHeight"] - 20) < 0.5,
           str(on["desc"]["lineHeight"]))
     check("简介在内容区里（选择器链没断）", on["desc"]["h"] > 0, f"desc h={on['desc']['h']}")
@@ -336,8 +363,11 @@ with sync_playwright() as p:
     check("★ 页脚完整在卡内（改前它会被 overflow:hidden 裁出卡外）",
           on["footerRect"]["bottom"] <= on["card"]["rect"]["bottom"] + 1,
           f"页脚底 {on['footerRect']['bottom']} / 卡底 {on['card']['rect']['bottom']}")
-    check("卡片整体不溢出（定高 600 的卡没被撑破）", on["card"]["overflow"] <= 1,
+    check("卡片整体不溢出（长高后的卡没被撑破）", on["card"]["overflow"] <= 1,
           f"溢出 {on['card']['overflow']}px（卡高 {on['card']['h']}，可视 {on['card']['clientH']}）")
+    check("★ 页脚里「更新于」那行也在卡内（绝对定位挂在页脚盒子**外面**，最先被切的就是它）",
+          on["upd"] and on["upd"]["bottom"] <= on["card"]["rect"]["bottom"] + 1,
+          f"更新于底 {on['upd'] and on['upd']['bottom']} / 卡底 {on['card']['rect']['bottom']}")
 
     # ⚠️ 这一组用的是**够不到上限**的 LONG_DESC（展开 5 行 = 100px，上限 200px）。
     # 这正是"负 margin"方案唯一露馅的档位：负 margin 是定值 −140px、而高度是
@@ -408,7 +438,13 @@ with sync_playwright() as p:
 
     print("⑤ 置顶卡静置：简介 3 行，页脚在卡内")
     top = pg.evaluate(PAINT, {"markup": top_mk})
+    # 顶卡**仍是定高 640**（与普通卡的"下限"不同，这是刻意的）：它是轮播，按内容长高会让
+    # 各 slide 高度参差、切换时整块跳。它的余量够大（实测 10 个标签两行时仍余 111px），
+    # 所以不需要普通卡那套"长高"。
     check("置顶卡 640px 定高", abs(top["card"]["h"] - 640) < 1, f"card h={top['card']['h']}")
+    check("  顶卡页脚的「更新于」也在卡内",
+          top["upd"] and top["upd"]["bottom"] <= top["card"]["rect"]["bottom"] + 1,
+          f"更新于底 {top['upd'] and top['upd']['bottom']} / 卡底 {top['card']['rect']['bottom']}")
     check("简介 60px = 3 × 20px", abs(top["desc"]["h"] - 60) <= 1, f"desc h={top['desc']['h']}")
     check("简介行高 20px（与普通卡同一套，展开高度才能取整）",
           abs(top["desc"]["lineHeight"] - 20) < 0.5, str(top["desc"]["lineHeight"]))
@@ -503,8 +539,14 @@ with sync_playwright() as p:
     print("⑩ 窄屏 375px：移动档不被这套改动碰到")
     pg.set_viewport_size({"width": 375, "height": 800})
     mob = pg.evaluate(PAINT, {"markup": card_mk})
-    check("移动档卡片高度自适应（不再是 600px 定高）", abs(mob["card"]["h"] - 600) > 1,
+    # ⚠️ 判据是"**矮于** 600"，不是"≠ 600"：桌面那条下限是 `min-height`，而移动档只写了
+    # `height: auto !important` 是**管不到它**的（两个是不同的属性——"属性有没有第二处声明"
+    # 那个家族坑）⇒ 漏了 `min-height: 0 !important` 时卡片会被撑到恰好 600，`!= 600` 那种
+    # 写法照样绿。顺带把计算值也读出来，红的时候一眼知道是哪条没生效。
+    check("移动档卡片矮于 600（桌面那条下限被撤掉了）", mob["card"]["h"] < 600,
           f"card h={mob['card']['h']}")
+    check("  `min-height` 计算值是 0（撤的是下限本身，不是被 height 覆盖）",
+          mob["card"]["minHeight"] in ("0px", ""), str(mob["card"]["minHeight"]))
     check("移动档简介仍是钳制态（没被展开规则顶开）", mob["desc"]["h"] < 60,
           f"desc h={mob['desc']['h']}（移动档 clamp 2 行）")
     check("移动档槽高也跟着缩小（≈2 行；桌面那 60px 会让卡片白多一截空档）",
@@ -512,6 +554,35 @@ with sync_playwright() as p:
           f"slot={mob['slot']['h']} / desc={mob['desc']['h']}")
     check("页面不出现横向滚动", not mob["pageOverflow"])
     pg.set_viewport_size({"width": 1280, "height": 900})
+
+    print("⑪ ★ 标签换行：卡片按内容长高，页脚与「更新于」都留在卡内（20260930 现场）")
+    # 用户原话："在文章标签变成两行时，作者信息时间信息在卡片的位置还是没锁死，跑出卡片了"。
+    # 定高那版实测：3 行标题 + 标签第三行 ⇒ 「更新于」底 = 卡底 + 19（30px 的行只剩 11px 露在外面）。
+    # 现在卡片是 `min-height` + 网格项 flex ⇒ 内容多就长高。逐档写死"该不该长"：
+    # 标签两行时恰好还塞得进 600（改前余量只剩 1px），三行才真的超出去。
+    for n, expect_grow in ((6, False), (12, True)):
+        r = pg.evaluate(PAINT, {"markup": CARD_MARKUP.format(
+            stats=STATS, title=LONG_TITLE, desc=LONG_DESC, tags=tags(n))})
+        if expect_grow:
+            check(f"{n} 个标签：内容超出下限 ⇒ 卡片长高到 600 以上", r["card"]["h"] > 600,
+                  f"card h={r['card']['h']}")
+        else:
+            check(f"{n} 个标签：内容仍塞得下 ⇒ 停在下限 600", abs(r["card"]["h"] - 600) < 1,
+                  f"card h={r['card']['h']}")
+        check("  卡片不溢出（overflow: hidden 没在裁东西）", r["card"]["overflow"] <= 1,
+              f"溢出 {r['card']['overflow']}px")
+        check("  页脚底 ≤ 卡底（作者署名没跑出去）",
+              r["footerRect"]["bottom"] <= r["card"]["rect"]["bottom"] + 1,
+              f"页脚底 {r['footerRect']['bottom']} / 卡底 {r['card']['rect']['bottom']}")
+        check("  「更新于」底 ≤ 卡底（时间信息也没跑出去）",
+              r["upd"] and r["upd"]["bottom"] <= r["card"]["rect"]["bottom"] + 1,
+              f"更新于底 {r['upd'] and r['upd']['bottom']} / 卡底 {r['card']['rect']['bottom']}")
+        # ⚠️ 这条只能用 rect 比：`.ArticleContent` 自己也是 `position: relative`，于是页脚的
+        # offsetParent 是**内容区**（不是卡片）⇒ `footer.offsetTop` 与 `content.offsetTop`
+        # 不在同一个坐标系里，混着减会得出"页脚悬在 232px 高处"这种假红。
+        check("  页脚仍被 margin-top:auto 钉在卡底（长高不是把页脚留在半空）",
+              r["card"]["rect"]["bottom"] - r["footerRect"]["bottom"] < 40,
+              f"卡底 {r['card']['rect']['bottom']} / 页脚底 {r['footerRect']['bottom']}")
 
     check("无 JS 运行时报错", not errs, "; ".join(errs[:2]))
     br.close()
