@@ -671,7 +671,8 @@ li.search-box input {
 
 .dark .shell li:not(.nav_select):hover .icon,
 .dark .shell li:not(.nav_select):hover .text {
-    color: #e8b866 !important;   /* 与 .ucGoldBtn / .login-submit 同族的河灯金 */
+    color: #e8b866 !important;   /* 与 .ucPrimaryBtn / .login-submit 同族的河灯金
+                                    （.ucPrimaryBtn 在 20261001 那轮从 ucGoldBtn 改名） */
     text-shadow: 0 0 10px rgba(240, 196, 110, 0.55), 0 0 22px rgba(240, 196, 110, 0.25);
 }
 
@@ -774,4 +775,127 @@ li.search-box input {
    这里的规则压不过它，分开写才不会出现"写了没生效"。 */
 @media (prefers-reduced-motion: reduce) {
     .image-text .image .ant-avatar::before { animation: none; }
+}
+
+
+/* ══════════════════ 20261001 手账皮（后台控制面板）═══════════════════════════
+   用户第 2 条：「公告卡片，个人中心卡片，看板娘对话框卡片换成同风格的，控制面板也是」，
+   澄清「控制面板」= 后台管理面板 /dashboard。前三处已各自落地，这里是最后一块。
+
+   做法与前几处同源：色值一律取自 `src/index.css` 的 `--washi-*` 令牌（那一份是唯一真相
+   源），本块只写"哪块用哪个令牌"。**后台壳上的 `.dark` 本来就在令牌的深色档选择器列表
+   里**（`.frontDark, .dark, .washiDark`）⇒ 深浅两档自动分，不需要另挂类名。
+
+   ⚠️ 三条纪律，动之前先读：
+   ① 本块必须在文件**最末**：同选择器同特异度后写者赢。文件里 `.nav_select`（第 374 与
+      513 行两份）、`.shell li:hover .icon/.text`（第 218 与 667 行两份）都有历史补丁层层
+      叠着，不压在最后不算数。（sass 那边 `@media` 被后写规则掀翻是同一个坑。）
+   ② 本文件**也进首页 bundle**（`router/index.tsx` 是静态 import，不是懒加载）⇒ 只写类
+      选择器，绝不新增裸标签选择器（第 100 行 `header{}` 把展示柜标题顶下去 20px 那次的教训）。
+   ③ 令牌**间接引用要在深浅两档各写一份**：`--shell-color: var(--washi-paper)` 若只写在
+      `:root` 上，`var()` 在 html 那一层就替换成定值了，后代继承到的是**浅色档的实色**
+      ——`.dark` 之后再怎么改 `--washi-paper` 也追不回来。所以下面 `:root{}` / `.dark{}` 成对。
+   ─────────────────────────────────────────────────────────────────────────── */
+
+/* ① 壳上的两个令牌改由手账接管。
+      `--shell-color`（侧栏底 ＋ 头像圈缝 ＋ 开关钮）与 `--text-color`（侧栏文字与搜索框
+      文字）全仓只有本文件用（grep 过），改在这里不外溢。
+      ⚠️ `--body-color` 刻意**不动**：它挂在裸 `body` 上、是全站底色，而后台这边
+      `.content` 100% 盖满视口、它根本露不出来 —— 改它只会波及前台。 */
+:root {
+    --shell-color: var(--washi-paper, #fffdfa);
+    --text-color: var(--washi-ink-2, #7c6584);
+}
+.dark {
+    --shell-color: var(--washi-paper, rgba(38, 32, 48, 0.92));
+    --text-color: var(--washi-ink-2, #c9b8d3);
+}
+
+/* ② 侧栏：和纸底 ＋ 角上两团淡彩 ＋ 右缘一道纸缝。
+      `.shell.slider` 专指外层那个 div —— 里面的 `nav.shell` 不带 `slider`，不限定的
+      话两层各画一遍、左上角会叠成双倍浓度。 */
+.shell.slider {
+    background-image:
+        radial-gradient(120% 62% at 0% 0%, rgba(255, 158, 201, 0.16), rgba(255, 158, 201, 0) 62%),
+        radial-gradient(110% 58% at 100% 100%, rgba(143, 211, 234, 0.13), rgba(143, 211, 234, 0) 58%);
+    box-shadow: 1px 0 0 var(--washi-line-2, rgba(198, 152, 192, 0.22)),
+                6px 0 26px -14px rgba(120, 90, 140, 0.30);
+}
+
+/* ③ 页面底：原先浅色 #F5F5F5、夜间 #373434→#321e5d 的径向渐变，换成纸底 ＋ 淡彩。
+      `.contentDark` 与 `.content` 是两个类同时挂着（index.tsx），同特异度后写者赢
+      ⇒ 夜间那条写在后面即可，不需要抬特异度。 */
+.content {
+    background-color: var(--washi-paper-3, #f6f0ff);
+    background-image:
+        radial-gradient(58% 44% at 6% 0%, rgba(255, 158, 201, 0.18), rgba(255, 158, 201, 0) 70%),
+        radial-gradient(54% 42% at 100% 100%, rgba(143, 211, 234, 0.16), rgba(143, 211, 234, 0) 68%);
+}
+.contentDark {
+    background-color: var(--washi-paper-3, #241d31);
+    background-image:
+        radial-gradient(58% 44% at 6% 0%, rgba(203, 182, 255, 0.15), rgba(203, 182, 255, 0) 70%),
+        radial-gradient(54% 42% at 100% 100%, rgba(255, 179, 217, 0.11), rgba(255, 179, 217, 0) 68%);
+}
+
+/* ④ 内容卡：`.Card` 全仓只有后台这一处用（index.tsx:350），原先是**透明**的 ——
+      桌面就是页面底本身。现在把它变成桌上的一张纸：外框 / 圆角 / 投影与公告卡、
+      对话面板同一套配方。`.CardDark` 那条 `background-color: transparent` 在文件靠前
+      的位置，被这里按"后写者赢"盖掉，不必再改它。 */
+.Card {
+    background-color: var(--washi-paper, #fffdfa);
+    border: 1px solid var(--washi-line-2, rgba(198, 152, 192, 0.22));
+    border-radius: var(--washi-radius, 14px);
+    box-shadow: var(--washi-shadow, 0 14px 34px rgba(120, 90, 140, 0.16));
+}
+
+/* ⑤ 选中项：原先 #b7dcfa 浅蓝，换成和纸紫。底下那行 `color:#000000 !important`（V8）
+      保持不动 —— 黑字压 #b9a7f5（浅）/ #cbb6ff（夜）是 6.7:1 与 11:1，两档都过线，
+      所以只换底、不碰字。
+      ⚠️ 必须是**实色 background-color**：夜间哨兵按 getComputedStyle 的底色链算对比度，
+      渐变（background-image）它看不见 —— 写成渐变会一路落到深色纸底上，黑字当场 1.1:1。 */
+.nav_select {
+    background-color: var(--washi-lav, #b9a7f5) !important;
+    box-shadow: 0 4px 12px -6px rgba(124, 58, 237, 0.55);
+}
+
+/* ⑥ 悬停底色：V13 那两条 `.shell li a:hover` 从未命中过（`li` 里根本没有 `<a>`，见第
+      622 行的注记），这里不翻旧账，只给**真能命中**的那一族补一块浅胶带底。
+      行上的字色规则（浅色黑 / 夜间河灯金＋光晕）原样保留，一个字不碰 —— 两档的底都够浅，
+      金与黑压上去分别是 5.6:1 与 15:1。
+      限定 `.nav-links` 而不是 `.shell li`：`.mode` 那行自带 `background: transparent
+      !important`、`.search-box` 自带纸底，一起套进来只会打架。 */
+.shell .nav-links:hover {
+    background-color: var(--washi-tape-2, rgba(214, 226, 255, 0.8));
+    border-radius: 6px;
+}
+
+/* ⑦ 搜索框：和纸内页 ＋ 一道纸线 */
+li.search-box,
+li.search-box input {
+    background-color: var(--washi-paper-2, #fff6fa);
+}
+li.search-box {
+    box-shadow: inset 0 0 0 1px var(--washi-line-2, rgba(198, 152, 192, 0.22));
+}
+li.search-box input::placeholder {
+    color: var(--washi-ink-3, #a08ba8);
+}
+
+/* ⑧ 主题开关：原先轨道 #DDD、钮跟侧栏同色（#eeeeee）—— 钮压在轨道上几乎看不出边界。
+      换成纸线轨道 ＋ 粉钮，深浅两档都读得出"这是可以拨的"。 */
+.switch {
+    background-color: var(--washi-line, rgba(198, 152, 192, 0.42));
+}
+.switch::before {
+    background-color: var(--washi-pink-deep, #d94f9a);
+}
+
+/* ⑨ 收起/展开侧栏的圆钮：原先 `--primary-color`（#695CFE / #3a3b3c）配 `#ccc` 字。
+      改成手账粉圆钮配深墨箭头 —— 一条规则管两档（粉在浅色是 #ff9ec9、夜间是 #ffb3d9，
+      两档都压得住 #40263f，约 8.6:1 与 10:1）。 */
+.toggle {
+    background-color: var(--washi-pink, #ff9ec9);
+    color: #40263f;
+    box-shadow: 0 4px 12px -4px rgba(217, 79, 154, 0.55);
 }
