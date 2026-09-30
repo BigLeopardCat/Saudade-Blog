@@ -1,39 +1,104 @@
 .analyticsCard
+  // 20260930 重做（用户：三张统计卡布局优化）。
+  //
+  // 之前是 height:75% + 每张 height:22% + width:75%（≤1530px 干脆钉成 210px）+ 徽章
+  // `float:left`：**三处百分比高度**串成一条链，任何一环换成"内容撑高"就溢出去，
+  // 而同一个盒子的 padding/height/flex 又同时写在 TSX 的 bodyStyle 内联里——
+  // 最终高度是谁定的，读代码看不出来。
+  //
+  // 现在只有一条规则：**这一列是竖向 flex，三张卡 flex:1 1 0 等分**。
+  // 宽度也不再有第二个值（100% 跟着列走，媒体查询里不再出现 px 宽度）。
   display: flex
   flex-direction: column
-  justify-content: space-evenly
-  align-items: center
+  // 居中而不是撑满：卡片有 max-height，空间富余时整组居中，不会"上面三张卡、
+  // 下面一大块空"
+  justify-content: center
+  align-items: stretch
+  gap: 12px
   width: 100%
-  height: 75%
+  // 自己是 .left 的 flex 子项：吃掉头像块剩下的高度；min-height:0 是给下面的
+  // overflow-y 留出可收缩的余地（flex 子项默认不会被压到内容以下）
+  flex: 1 1 auto
+  min-height: 0
+  // 兜底：列被压得比三张卡的下限还矮时，**在这一列内滚动**，而不是把卡片挤出去
+  overflow-y: auto
+  overflow-x: hidden
+  padding: 2px 0
 
   .akCard
-    // 身份浅色（米黄/粉/蓝）由 TSX 以 --ak-bg 传入，落地在这里
+    // 卡面身份色（米黄/粉/蓝）由 TSX 以 --ak-bg 传入，落地在这里
     background: var(--ak-bg)
     // 深色模式：不换成灰块，而是留色相、退成深底上的一层薄色（--ak-bg-dark = 同色 16% 透明），
     // 这样三张卡的身份色在夜间仍分得出来，白字也压得住（合成后约 8:1）
     .dark &
       background: var(--ak-bg-dark)
-    border: 0px
+    border: 0
     box-shadow: 0 1px 22px -8px rgba(26, 26, 26, .6)
-    width: 75%
-    height: 22%
-    margin-bottom: 0
-    font-weight: 600
-    margin-top: 0
-    justify-content: space-around
-    @media only screen and (max-width: 1530px)
-      width: 210px
+    // 宽度只有一个来源：跟着列宽走
+    width: 100%
+    // 三等分：basis 0 ⇒ 与内容多少无关（内容多也不会把某一张顶高）；
+    // min-height 是"再挤也得放得下这一行"的下限，max-height 防大屏上拉成三根柱子
+    flex: 1 1 0
+    min-height: 76px
+    max-height: 132px
+    margin: 0
+    border-radius: 14px
+    overflow: hidden
+    display: flex
+    flex-direction: column
+    transition: transform .18s ease, box-shadow .18s ease
+    &:hover
+      transform: translateY(-2px)
+      box-shadow: 0 10px 26px -14px rgba(26, 26, 26, .75)
 
+    // 卡片身子：徽章 + 文案（原来这套 flex/padding 写在 TSX 的 bodyStyle 内联里）
+    .ant-card-body
+      flex: 1 1 auto
+      display: flex
+      flex-direction: row
+      align-items: center
+      gap: 12px
+      width: 100%
+      padding: 12px 14px
+
+  .akBadge
+    // 底色同理由 TSX 以 --ak-badge 传入（颜色不许进内联 style，见 index.tsx 注释）
+    background: var(--ak-badge)
+    flex: 0 0 auto
+    width: 34px
+    height: 34px
+    border-radius: 10px
+    display: flex
+    align-items: center
+    justify-content: center
+    font-size: 17px
+    line-height: 1
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .06)
+
+  .akText
+    display: flex
+    flex-direction: column
+    justify-content: center
+    gap: 2px
+    // 数字位数一变（0 → 128 → 1,024）不许把标签挤出去
+    min-width: 0
+
+  .akLabel
+    font-size: 13px
+    font-weight: 600
+    line-height: 1.25
+    // 兜底实色：`dark-mode-contrast.test.py` 读的就是 computed color（后台页在它的
+    // PAGES 里），半透明实测过线（浅色侧约 6.3:1、夜间约 5:1），别改成更淡的灰
+    color: rgba(0, 0, 0, .65)
+    .dark &
+      color: rgba(255, 255, 255, .72)
+    white-space: nowrap
+    overflow: hidden
+    text-overflow: ellipsis
 
   .ant-statistic .ant-statistic-content .ant-statistic-content-value
-    font-size: 30px
-
-
-  .logo2
-    width: 24px
-    height: 24px
-    display: block
-    font-size: 15px
-    text-align: center
-    border-radius: 5px
-    float: left
+    font-size: 26px
+    font-weight: 700
+    line-height: 1.1
+    // 等宽数字：CountUp 从 0 涨到真实值的过程中数字宽度不变
+    font-variant-numeric: tabular-nums
