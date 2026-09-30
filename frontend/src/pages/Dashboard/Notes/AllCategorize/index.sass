@@ -1,52 +1,10 @@
 // 分类列表外框（原来是 index.tsx 里的内联 `background:'white'`）
 .catListBox
-  background: white
-  .dark &
-    // 深底上一块纯白：夜间改成"比底色亮一点"的一档（与 articleRecord / tag_card 同配方）
-    background: rgba(255, 255, 255, 0.06)
+  // 20261001 批 E：白 / rgba(255,255,255,.06) 两档收成一张和纸内页（令牌自己分档）
+  background: var(--washi-paper-2, #fff6fa)
 
-// Dark Mode - Pagination
-.dark .AllCard .ant-pagination-item-link,
-.contentDark .AllCard .ant-pagination-item-link
-  background-color: transparent !important
-  border-color: #424242 !important
-  color: #ffffff !important
 
-.dark .AllCard .ant-pagination-item-link span,
-.contentDark .AllCard .ant-pagination-item-link span
-  color: #ffffff !important
-
-.dark .AllCard .ant-pagination-item-link .anticon,
-.contentDark .AllCard .ant-pagination-item-link .anticon
-  color: #ffffff !important
-
-.dark .AllCard .ant-pagination-disabled .ant-pagination-item-link,
-.contentDark .AllCard .ant-pagination-disabled .ant-pagination-item-link
-  border-color: #424242 !important
-  color: rgba(255, 255, 255, 0.3) !important
-
-.dark .AllCard .ant-pagination-disabled .ant-pagination-item-link span,
-.contentDark .AllCard .ant-pagination-disabled .ant-pagination-item-link span
-  color: rgba(255, 255, 255, 0.3) !important
-
-.dark .AllCard .ant-pagination-disabled .ant-pagination-item-link .anticon,
-.contentDark .AllCard .ant-pagination-disabled .ant-pagination-item-link .anticon
-  color: rgba(255, 255, 255, 0.3) !important
-
-.dark .AllCard .ant-pagination-item,
-.contentDark .AllCard .ant-pagination-item
-  background-color: transparent !important
-  border-color: #424242 !important
-
-.dark .AllCard .ant-pagination-item a,
-.contentDark .AllCard .ant-pagination-item a
-  color: rgba(255, 255, 255, 0.85) !important
-
-.dark .AllCard .ant-pagination-item-active,
-.contentDark .AllCard .ant-pagination-item-active
-  background-color: #1677ff !important
-  border-color: #1677ff !important
-
-.dark .AllCard .ant-pagination-item-active a,
-.contentDark .AllCard .ant-pagination-item-active a
-  color: #ffffff !important
+// 20261001 批 E：这里原有一整块 `// Dark Mode - Pagination`（第 8 行到文件末），
+// 与 AllNotes 那份是同一份逐字副本（"改一处必须同步另一处"的老毛病），内容是分页各项
+// 的深色覆盖、选中页底色写死 `#1677ff`。本轮主色换成手账粉后它成了唯一的蓝块 ⇒ 整块删。
+// 分页在夜间回到 antd token 通道（纸底/描边/主色都由 ConfigProvider 给对）。

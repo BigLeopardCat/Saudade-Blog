@@ -60,25 +60,29 @@
     margin-bottom: 10px
 
     // 与 BoardManage 的 .bm-tabs 同一套观感（两处各自成块是既有状态，先不为它抽公共类）
+    // 20261001 批 E：改为手账的三态 —— 未选=纸片、悬停=粉、选中=和纸紫（与侧栏
+    // `.nav_select` 同一支 lav）。原来那支砖红 #a33f30 是改造前的旧主色。
+    // 深浅两档由令牌自己分，所以下面 `.contentDark` 里那份**逐条覆盖已删**（见文件末）。
     .tu-tabs
       display: flex
       gap: 8px
       button
         min-width: 52px
         padding: 5px 14px
-        border: 1px solid #d9d9d9
+        border: 1px solid var(--washi-line, rgba(198, 152, 192, 0.42))
         border-radius: 6px
-        background: #fff
-        color: #444
+        background: var(--washi-paper-2, #fff6fa)
+        color: var(--washi-ink-2, #7c6584)
         cursor: pointer
         transition: 0.25s
         &:hover
-          border-color: #a33f30
-          color: #a33f30
+          border-color: var(--washi-pink, #ff9ec9)
+          color: var(--washi-pink-deep, #d94f9a)
         &.sel
-          background: #a33f30
-          border-color: #a33f30
-          color: #ffe8c8
+          background: var(--washi-lav, #b9a7f5)
+          border-color: transparent
+          // 深墨压在浅紫上：浅色档 #b9a7f5 与夜间档 #cbb6ff 分别是 6.7:1 与 11:1
+          color: #241f2e
           font-weight: 600
 
     .tu-count
@@ -154,17 +158,9 @@
   .tu-hint
     color: #888
   .tu-section
-    .tu-tabs button
-      background: rgba(255, 255, 255, 0.08)
-      border-color: rgba(255, 255, 255, 0.18)
-      color: #ccc
-      &:hover
-        border-color: #c87a63
-        color: #e8b8a0
-      &.sel
-        background: #a33f30
-        border-color: #a33f30
-        color: #ffe8c8
+    // 20261001 批 E：`.tu-tabs button` 那一整段深色覆盖已删 —— 上面那份现在走
+    // `var(--washi-*)` 令牌，深浅两档自动分（旧覆盖里的砖红 #a33f30 是改造前的主色，
+    // 留着会把选中态按回砖红）
     .tu-count
       color: #888
     .tu-empty

@@ -14,9 +14,11 @@
 判据 = 每个文本元素与它**合成后**的底色对比度 ≥ 3:1（低于 3:1 谁都读不清）。
 排除两类 antd 刻意的低对比：占位符（`ant-select-selection-placeholder`）与禁用态。
 
-已知且**本探针不负责**的一项（会打出来，但不判失败，见 KNOWN）：
-  · UserControl（站点设置）—— MUI 组件不吃 antd 深色 token。
-（Analytics 曾是第二项，20260930 报表重写时清掉了，见 KNOWN 上方的说明。）
+已知项（会打出来但不判失败，见 KNOWN）**20261001 批 E 起为空**：
+  · UserControl（站点设置）—— MUI 组件不吃 antd 深色 token。20261001 批 E 在
+    `Dashboard/index.css` 里按 MUI 的语义类补了一层手账皮，已转绿、从 KNOWN 摘掉。
+  · Analytics —— 20260930 报表重写时清掉（G2 主题那一项）。
+两页现在**都在判失败之列**：再变红就是真回归，别再往 KNOWN 里塞回去。
 
 沿用 dashboard-sidebar.test.py 那套既定手段（本机不能 vite build，见 CLAUDE.md §2）：
 esbuild 把**真组件**打成一个 bundle、只桩边界（axios / react-redux / react-router-dom），
@@ -77,11 +79,12 @@ PAGES = {
 # ⚠️ 本探针扫的是 DOM 文本，**G2 画在 canvas 上的字它看不见**（坐标轴、图例、tooltip）。
 #    也就是说"图表内部在深色底上读不读得清"仍然没有判据，那部分只能人眼看——
 #    不要因为这一行是绿的，就以为整页的配色都被守住了。
-KNOWN = {
-    "UserControl": "站点设置页是 MUI 写的（TextField/Button/Fab），MUI 不吃 antd 的 "
-                   "darkAlgorithm ⇒ 深色页上 label 是纯黑 1.64:1。修它得给 MUI 挂 "
-                   "ThemeProvider(palette.mode='dark')，是独立一批。",
-}
+# 20261001 批 E 起**空**：原本唯一的一条是 UserControl（站点设置页是 MUI 写的，
+# MUI 不吃 antd 的 darkAlgorithm ⇒ 深色页上 label 是纯黑 1.29:1）。那一批把
+# `Dashboard/index.css` 的 ⑧⑨ 两节按 MUI 的语义类重写了一层（Fab / Button /
+# InputLabel / OutlinedInput 描边），对比度回到 3:1 以上，这条已知项随之摘掉。
+# ⚠️ 摘得掉是因为它真绿了，不是因为"看腻了"——下次要再往里塞，先确认那一页本地跑不绿。
+KNOWN = {}
 
 # 边界①：假后端。返回的列表必须是**空数组**而不是 null —— 后台好几个组件拿到列表直接
 # `.map()`，null 会让那棵子树整个抛异常 ⇒ 少渲染一块 ⇒ 普查"没扫全"，读数不可信。
@@ -258,7 +261,14 @@ CENSUS_JS = """() => {
     const cs = getComputedStyle(el);
     if (cs.visibility === 'hidden') continue;
     const chain = [], tags = [];
+    let invisible = false;
     for (let n = el; n; n = n.parentElement) {
+      // `opacity: 0` 的字**渲染不出来**，量它的对比度是纯噪声。
+      // 只认 opacity 一条，不看 visibility —— 前者是"叠上去的不透明度"，
+      // 祖先里任何一层归零都等于这行字没画（MUI 的 notched-outline 就是
+      // `<legend><span>标签</span></legend>` 配 `opacity: 0`：那行字是给
+      // 外框留缺口用的量尺，用户一个像素也看不到，却在普查里冒出来当"深底深字"）。
+      if (parseFloat(getComputedStyle(n).opacity) === 0) invisible = true;
       const b = P(getComputedStyle(n).backgroundColor);
       if (b && b.a > 0.01) {
         chain.push(b);
@@ -271,6 +281,7 @@ CENSUS_JS = """() => {
       if (n.classList && n.classList.contains('content')) break;
       if (n.tagName === 'HTML') break;
     }
+    if (invisible) continue;
     chain.reverse(); tags.reverse();
     out.push({tag: el.tagName, cls: (el.className||'').toString().slice(0,40), txt: t.slice(0,24),
               fg: P(cs.color), chain: chain, tags: tags, size: parseFloat(cs.fontSize),
@@ -409,7 +420,7 @@ with sync_playwright() as p:
 
 print()
 print(f"  合计 {len(WANT)} 个页面 / {total_rows} 个文本元素，低于 3:1 的 {total_bad} 处")
-check("除已知的 UserControl（MUI 不吃 antd 深色 token）外，没有页面出现不可读文字",
+check("没有页面出现不可读文字（KNOWN 已空，11 页全在判失败之列）",
       not bad_pages, "; ".join(bad_pages))
 if FAILS:
     print(f"\n❌ {len(FAILS)} 项未通过")

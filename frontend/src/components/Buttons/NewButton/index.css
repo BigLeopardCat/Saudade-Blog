@@ -1,14 +1,18 @@
+/* 20261001 批 E：这块皮原来写死了出厂蓝（#3c89e8 / #1554ad）与纯白字，
+   压在后台的手账纸上是一块异物。改成手账主色 —— 令牌自己分深浅两档。
+   `.text` 用 `--washi-paper-3` 而不是 `white`：夜间档的主色是**亮粉**（#ff8ec7），
+   白字压上去只有 1.6:1，与 antd 那边 `colorTextLightSolid` 是同一条理由。
+   消费方只有后台（图库页 /Albums），首页不引用它。 */
 .select {
     width: 150px;
     height: 50px;
     cursor: pointer;
     display: flex;
     align-items: center;
-    background: #1554ad;
     border: none;
     border-radius: 5px;
     box-shadow: 1px 1px 3px rgba(0,0,0,0.15);
-    background: #3c89e8;
+    background: var(--washi-pink-deep, #d94f9a);
 }
 
 .select, .select span {
@@ -17,13 +21,13 @@
 
 .select .text {
     transform: translateX(35px);
-    color: white;
+    color: var(--washi-paper-3, #f6f0ff);
     font-weight: bold;
 }
 
 .select .iconNew {
     position: relative;
-    border-left: 1px solid #2277ed;
+    border-left: 1px solid rgba(0, 0, 0, 0.18);
     padding-left: 20px;
     padding-top: 5px;
     transform: translateX(70px);
@@ -40,7 +44,8 @@
 }
 
 .select:hover {
-    background: #3c89e8;
+    /* 悬停走浅一档的粉（antd 的主色悬停也是往亮走），与底座拉出差别 */
+    background: var(--washi-pink, #ff9ec9);
 }
 
 .select:hover .text {

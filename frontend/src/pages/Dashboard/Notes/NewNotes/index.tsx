@@ -9,8 +9,7 @@ import {
     Upload, Switch, Radio, UploadProps, UploadFile, GetProp, message, Row, Col, Card
 } from "antd";
 import {PlusOutlined, PictureOutlined, EditOutlined} from "@ant-design/icons";
-import React, {useEffect,  useState, useContext, useRef} from "react";
-import MainContext from "../../../../components/conText.tsx";
+import React, {useEffect,  useState, useRef} from "react";
 import dayjs from "dayjs";
 import {useDispatch, useSelector} from "react-redux";
 import {useNavigate, useParams} from "react-router-dom";
@@ -51,7 +50,6 @@ const NewNotes = () => {
     const dispatch = useDispatch()
     const navigate = useNavigate()
     const { id } = useParams();
-    const isDarkMode = useContext(MainContext) === 'true';
     const [form] = Form.useForm();
 
     // ── 编辑草稿自动保存（服务端，落到草稿箱）─────────────────────
@@ -599,7 +597,7 @@ const NewNotes = () => {
         <div className="notes-container">
             <div className="article_title">
                 <label style={{width:115,fontSize:18,fontWeight:600}}>文章标题</label>
-                <Input style={{background: 'transparent',border: '1px solid #4096ff',width: '95%',marginRight: 10, color: isDarkMode ? 'white' : 'black'}} onChange={handleInputChange} value={noteTitle}/>
+                <Input style={{background: 'transparent', width: '95%', marginRight: 10}} onChange={handleInputChange} value={noteTitle}/>
                 <Button type="primary" onClick={showModal} style={{float: "right"}}>
                     提交
                 </Button>

@@ -53,6 +53,43 @@ const NAV_FILL_SVG: Record<string, { viewBox: string; body: ReactNode }> = {
     },
 };
 
+/* 手账配色进 antd token（20261001 批 E「dashboard 内部页也做同样风格化设计」）。
+   色值仍然只有 `src/index.css` 的 `--washi-*` 一份 —— 这里是它的**逐字副本**，
+   每行后面注了令牌名。必须写字面量而不是 `var(--washi-*)`：antd 要用这些种子色在
+   运行时**推导**一整套派生色（hover / active / 浅底 / 描边 / 禁用），推导器认不了
+   CSS 变量，喂进去会当场算出一片黑。改令牌时这两处同改（两侧的注释互为索引）。
+
+   为什么不用 CSS 一条条覆盖：`colorPrimary` 一句话波及按钮、开关、勾选框、单选、
+   分页选中、Select 选中项、Tabs 游标、链接、Spin、Upload……CSS 逐条追是长尾，
+   而且很容易漏掉某一处，漏掉的那处就还是出厂蓝。 */
+const WASHI_THEME = {
+    light: {
+        colorPrimary: '#d94f9a',                            // --washi-pink-deep
+        colorBgContainer: '#fffdfa',                        // --washi-paper
+        colorBgElevated: '#fffdfa',                         // --washi-paper（浮层：Modal/下拉/气泡）
+        colorText: '#4a3550',                               // --washi-ink
+        colorTextSecondary: '#7c6584',                      // --washi-ink-2
+        colorTextTertiary: '#a08ba8',                       // --washi-ink-3
+        colorBorder: 'rgba(198, 152, 192, 0.42)',           // --washi-line
+        colorBorderSecondary: 'rgba(198, 152, 192, 0.22)',  // --washi-line-2
+    },
+    dark: {
+        colorPrimary: '#ff8ec7',                            // --washi-pink-deep（夜间档）
+        colorBgContainer: '#2a2338',                        // --washi-paper-2（夜间档）
+        colorBgElevated: '#2a2338',
+        colorText: '#f3e8f6',                               // --washi-ink（夜间档）
+        colorTextSecondary: '#c9b8d3',                      // --washi-ink-2（夜间档）
+        colorTextTertiary: '#9a8aa5',                       // --washi-ink-3（夜间档）
+        colorBorder: 'rgba(255, 255, 255, 0.16)',           // --washi-line（夜间档）
+        colorBorderSecondary: 'rgba(255, 255, 255, 0.08)',  // --washi-line-2（夜间档）
+        /* ⚠️ 这一条不是可选的美化：夜间的主色是**亮粉**，而 antd 给实心底色的默认字色
+           `colorTextLightSolid` 是**白**——白压 #ff8ec7 只有 1.6:1，等于看不见按钮上的字。
+           改成深墨后是 6.4:1。（浅色档的 #d94f9a 压白字是 3.8:1，与出厂蓝同档，不动。） */
+        colorTextLightSolid: '#3a2340',
+    },
+    common: { borderRadius: 8 },
+};
+
 
 const Dashboard = () => {
     //hooks区域
@@ -99,6 +136,26 @@ const Dashboard = () => {
         window.addEventListener('darkmode-change', onDarkModeChange);
         return () => window.removeEventListener('darkmode-change', onDarkModeChange);
     },[])
+
+    /* 手账皮的**范围根**（20261001 批 E）：内部页那层样式全部写在 `body.dash-skin`
+       下（见 index.css 末尾那块）。必须挂 body 而不是 `.Card` —— antd 的 Modal /
+       Select / Dropdown / Tooltip / Popconfirm 全部走 Portal 挂到 `document.body`
+       下，`.Card` 在它们身上够不着，挂在 `.Card` 上等于这些浮层一条样式都吃不到。
+
+       `washiDark` 是同一个根的第二半：浮层的祖先链只有 `body`，`.contain.dark` 不在
+       链上 ⇒ 不挂这个类，浮层里的 `var(--washi-*)` 会一路落回 `:root` 的浅色档
+       （夜间弹窗上一片深字）。两个类名都由本组件负责挂与摘，卸载时清干净
+       ——SPA 跳回首页后不留死类名（`.washiDark` 会波及 body 下所有 `--washi-*` 使用者）。 */
+    useEffect(() => {
+        document.body.classList.add('dash-skin');
+        return () => {
+            document.body.classList.remove('dash-skin', 'washiDark');
+        };
+    }, []);
+
+    useEffect(() => {
+        document.body.classList.toggle('washiDark', isDarkMode);
+    }, [isDarkMode]);
 
     //回调函数区域
 
@@ -248,7 +305,17 @@ const Dashboard = () => {
            个壳里，它已经是 `<Outlet/>` 的父节点，所以这里是唯一能罩住全部子页的位置。
            页内那几处 ConfigProvider（Home 的 locale / Notes / Talks / AllNotes）在 antd v5 里
            与父层**合并**，不用动它们。 */
-        <ConfigProvider theme={{algorithm: isDarkMode ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm}}>
+        /* ⚠️ 颜色必须进 `token`，**不能摊在 theme 的根上**：antd v5 的 `theme` 只认
+           `{algorithm, token, components, inherit}` 四个键，摊在根上的 `colorPrimary`
+           会被**静默忽略**（不报错、不警告，页面照旧一片出厂蓝——实测踩过）。
+           `token` 里前面的主色/纸底/墨色是分档的那份，后面的 `common` 补圆角。 */
+        <ConfigProvider theme={{
+            algorithm: isDarkMode ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
+            token: {
+                ...(isDarkMode ? WASHI_THEME.dark : WASHI_THEME.light),
+                ...WASHI_THEME.common,
+            },
+        }}>
         <div className={`contain ${isDarkMode ? 'dark' : ''}`}>
             {!loading ? (
                 <div className="loading-overlay">
