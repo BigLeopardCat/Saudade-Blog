@@ -57,8 +57,32 @@ def check(desc, cond, detail=""):
 
 
 # ── 样本：日期全部相对"今天" ────────────────────────────────────────────────
-TODAY = datetime.date.today()
+# 「今天」**钉死**在这一天（页面的钟也一起钉，见 CLOCK_JS），不再取真实日期。
+# 为什么：日历只画**当月**格子，而这套样本的跨度是 TODAY-4 … TODAY+2 —— 用真实日期跑，
+# 每月 1-4 号 day(-4) 滑进上个月、每月最后两天 day(+2) 滑进下个月，`cell()` 取不到格子
+# 返回 None，⑤ 组当场 TypeError 崩掉（20261001 实测，那天正好是 1 号）；末月那半此前
+# 只治了症状（`show_today_month` 把面板翻回来，见它的说明），月初这半没治。
+# 钉死之后样本与「今天」恒在同一个月里，全年跑的是同一套数据，也不再是"每月有几天假红"。
+# ⚠️ 改这个常量必须同步改 CLOCK_JS 里的时间串，否则页面里的今天与样本错位。
+TODAY = datetime.date(2026, 10, 15)
 CN_WEEK = "一二三四五六日"
+
+# 页面里 `new Date()` / `Date.now()` 的替身。写法上用 `class extends Date` 而不是
+# "换掉全局 Date 对象"：后者会让 `x instanceof Date` 对**同一个 realm 里 new 出来的
+# 日期**也返回 false（原型链对不上），dayjs / rc-picker 里到处是这类判断。
+CLOCK_JS = """
+  (() => {
+    const RealDate = Date;
+    const FIXED = new RealDate('2026-10-15T10:00:00+08:00').getTime();
+    class FakeDate extends RealDate {
+      constructor(...args) {
+        if (args.length === 0) { super(FIXED); } else { super(...args); }
+      }
+      static now() { return FIXED; }
+    }
+    window.Date = FakeDate;
+  })();
+"""
 
 
 def day(offset: int) -> str:
@@ -338,6 +362,7 @@ with sync_playwright() as p:
     # 好验它的默认值。日期样本全部相对"今天"生成，见文件头。
     # 顺手把 setInterval 登记一下：这一页有一条 60 秒的轮询，脚本里等不起 60 秒，
     # 但"那条轮询到底接上了没有"必须能断言（能力有测试 ≠ 接线有测试）
+    pg.add_init_script(CLOCK_JS)
     pg.add_init_script("""
       localStorage.removeItem('dashboard_list_title');
       // 后台页只对登录的人开，而未读汇总那个 store 的判据是"有没有 token"
@@ -615,6 +640,7 @@ with sync_playwright() as p:
     # 联动＝"只滚不改数据"，所以要**滚得动**才看得见。矮窗口下 `.todoBody` 会真的溢出
     # （flex:1 + overflow-y:auto）——窗口矮是真实场景，不是为用例造的特例。
     pg2 = br.new_page(viewport={"width": 1600, "height": 620})
+    pg2.add_init_script(CLOCK_JS)
     pg2.goto(URL)
     pg2.wait_for_timeout(800)
     ov = pg2.evaluate("() => { const b = document.querySelector('.cardInfo .todoBody');"
