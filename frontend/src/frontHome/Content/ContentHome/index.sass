@@ -1716,49 +1716,12 @@ html[data-theme='dark'] .SayWords h2
   .frontDark .home-one-say
     text-shadow: none
 
-// ── 文章标签 chip（20260930 五轮）──────────────────────────────────────────────
-// 首页置顶卡与普通文章卡上的分类标签。**不用 antd `<Tag color=…>`**：那个 `color` 会落成
-// **内联**的 background/border/color（内联特异性最高），想换成手账皮就只能 `!important`
-// 硬压。现在是纯 span，标签自己的色相由 JSX 从 CSS 变量 `--tg` 递进来（`style` 里只有
-// 变量、没有颜色），配色一律在这里说了算。
-//
-// 两处渲染端共用这一份样式：`ContentHome/index.tsx`（置顶卡，带子标签回查）与
-// `apis/TagMethods.tsx::renderNoteTags`（普通卡 + articleRecord）。后台的
-// `renderNoteTagsCollapsed` **没改**，那边仍是 antd Tag（列宽只有 22%，皮换不动）。
-//
-// 定位方式刻意用 `inline-flex + margin` 而不是容器 `display: flex + gap`：
-// `.tags` 是个跨页面复用的通用类名，改它等于改所有用它的地方；chip 自己是 inline 级，
-// 在块容器里天然换行，一个类名就能自洽。
-.tagChip
-  display: inline-flex
-  align-items: center
-  gap: 5px
-  margin: 5px 6px 5px 0
-  padding: 3px 10px
-  border-radius: 999px
-  font-size: 12px
-  line-height: 1.6
-  letter-spacing: 0.02em
-  white-space: nowrap
-  color: var(--washi-ink-2, #7c6584)
-  background: var(--washi-paper-2, #fff6fa)
-  border: 1px solid var(--washi-line, rgba(198, 152, 192, 0.42))
-  box-shadow: 0 5px 12px -8px rgba(120, 90, 140, 0.7)
-  transition: transform 0.25s ease, background 0.25s ease, box-shadow 0.25s ease
-  &:hover
-    transform: translateY(-2px) rotate(-1deg)
-    background: var(--washi-tape, rgba(255, 222, 238, 0.86))
-    box-shadow: 0 9px 18px -9px rgba(120, 90, 140, 0.9)
-
-// 色点 = **整条 chip 上唯一的彩色来源**（`--tg` 是标签自己的色相）。
-// 白圈是"贴纸压在纸上"的那道边：少了它，色点在深色底上会糊成一团。
-.tagChipDot
-  flex: none
-  width: 7px
-  height: 7px
-  border-radius: 50%
-  background: var(--tg, #b9a7f5)
-  box-shadow: 0 0 0 2px var(--washi-paper-2, #fff6fa)
+// ── 文章标签：**不再在这里定皮**（20261001）──────────────────────────────────
+// 20260930 那一轮把公开面的标签换成了手账 chip（`.tagChip` 纯 span + `--tg` 变量 +
+// `.tagChipDot` 色点），理由是 antd `<Tag color=…>` 的 `color` 会落成内联样式、换皮得
+// `!important`。这一轮用户的要求正好相反：「标签在文章卡片的样式**回到标签管理页的样式**」
+// —— 那就直接用管理页树上那颗组件 `<Tag color={标签自己的色}>`，chip 这层皮连同两条规则
+// 一起删掉。**"一样"的最省事实现就是同一个组件**，不要再"把 chip 调到像它"。
 
 // 减少动效（顶层一条，与 `.SelfDescription` 里那条分开写——`.TopArticle` 不在它的作用域里，
 // 而且这里的选择器本来就够长，不需要像那边一样补全链）
@@ -1791,9 +1754,5 @@ html[data-theme='dark'] .SayWords h2
     &::after
       animation: none
       transform: rotate(-45deg)
-    &:hover
-      transform: none
-  .tagChip
-    transition: none
     &:hover
       transform: none

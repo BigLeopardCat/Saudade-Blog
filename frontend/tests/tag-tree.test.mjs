@@ -2,8 +2,8 @@
 //   node tests/tag-tree.test.mjs
 // 覆盖 20260919「标签设置交互难用而且有错误」背后的纯逻辑：
 //   · 建树按 fatherKey（一级改名后二级标签不许消失、同名一级标签不许共享子标签）
-//   · 扁平选项（「父 / 子」写法、两级 id 重号丢弃后者）
-//   · 渲染加固（悬空 id 不渲染空白块、去重、折叠 +N）
+//   · 扁平选项（二级显示自己的名字、`keywords` 里带父名、两级 id 重号丢弃后者）
+//   · 渲染加固（悬空 id 不渲染空白块、去重、折叠 +N、载体是管理页那套 antd Tag）
 // 载体是 src/apis/TagMethods.tsx —— 它 import 了 antd 与 axios 单例，本机不能在 node 里
 // 真加载 antd（cssinjs/DOM），所以用 esbuild JS API + onResolve 把它们换成极简 stub，
 // 只断言数据结构（React 元素是普通对象，直接走 props 即可）。
@@ -42,16 +42,10 @@ const TM = await import(file);
 // ⚠️ 不能拿 stub 模块对象做身份比较：它已被 esbuild 打进 bundle，bundle 里是**另一份副本**；
 // 也不能靠函数名（重名时 esbuild 会把内部函数改名 Tag → Tag2），所以认 stub 上的标记属性。
 const isTag = (n) => n?.type?.__isTag === true;
-// 20260930 五轮：**公开面**的标签（首页卡片 + articleRecord，走 `renderNoteTags`）从
-// antd `<Tag color=…>` 换成了手账 chip `<span className="tagChip">`（那个 `color` 会落成
-// 内联样式，换皮只能 `!important` 硬压；现在色相走 CSS 变量 `--tg`）。**后台的折叠渲染
-// `renderNoteTagsCollapsed` 没动**，仍是 antd Tag。两种载体都要认——这些断言锁的是
-// "该渲染哪几个标签"，不是"用哪个组件渲染"。
-const isChip = (n) => n?.type === 'span' && n?.props?.className === 'tagChip';
-// chip 的 children 是 [<i className="tagChipDot"/>, label]，取其中的字符串（= 真文字）
-const labelOf = (n) => isChip(n)
-    ? String([].concat(n.props.children).filter(c => typeof c === 'string').pop())
-    : String(n.props.children);
+// 20260930 五轮曾把**公开面**的标签（首页卡片 + articleRecord，走 `renderNoteTags`）换成
+// 手账 chip `<span className="tagChip">`；20261001 用户要求「回到标签管理页的样式」，
+// 于是全仓（公开面 + 后台折叠渲染）统一回 antd `<Tag color=…>` —— 只剩一种载体。
+const labelOf = (n) => String(n.props.children);
 
 let passed = 0, failed = 0;
 const ok = (cond, name, detail) => {
@@ -64,7 +58,7 @@ const eq = (got, want, name) => ok(JSON.stringify(got) === JSON.stringify(want),
 function tagsOf(node, acc = []) {
     if (Array.isArray(node)) { node.forEach(n => tagsOf(n, acc)); return acc; }
     if (!node || typeof node !== 'object') return acc;
-    if (isTag(node) || isChip(node)) acc.push(labelOf(node));
+    if (isTag(node)) acc.push(labelOf(node));
     if (node.props) Object.values(node.props).forEach(v => tagsOf(v, acc));
     return acc;
 }
@@ -115,14 +109,22 @@ console.log('== 建树：fatherKey 权威（一级标签改名后二级标签不
     eq(tree[0].children.map(c => c.title), ['Python', 'Rust'], 'fatherKey 缺失时按 fatherTag 名字回退');
 }
 
-console.log('== 扁平选项：二级标签显示成「父 / 子」、重号丢弃后者 ==');
+console.log('== 扁平选项：二级标签显示自己的名字、重号丢弃后者 ==');
 {
     const tree = TM.buildTagTree(ONE.map(t => ({ ...t })), TWO.map(t => ({ ...t })));
     const opts = TM.flattenTagOptions(tree);
     eq(opts.map(o => [o.value, o.label]),
-       [[10, '编程'], [5, '编程 / Python'], [6, '编程 / Rust'], [11, '生活']],
-       '顺序与标签文案（搜「编程」或「Python」都能命中）');
+       [[10, '编程'], [5, 'Python'], [6, 'Rust'], [11, '生活']],
+       '顺序与标签文案（二级不再拼成「父 / 子」）');
     eq(opts.map(o => o.level), [1, 2, 2, 1], '层级标注正确');
+    // ⚠️ 显示名与搜索词是**两个字段**：显示名去掉了父名，但"搜父名也能列出子标签"
+    // 这条能力必须留着（原来靠 `编程 / Python` 那个拼接串白捡的）。
+    // `NoteTagSelect` 的 `optionFilterProp` 指的就是 `keywords`。
+    eq(opts.map(o => o.keywords), ['编程', '编程 Python', '编程 Rust', '生活'],
+       '搜索词仍带父名（二级标签搜得到父名）');
+    ok(opts.every(o => !o.label.includes(' / ')),
+       '不变量：两级标签的 label 都不带「父 / 子」那种拼接',
+       opts.map(o => o.label));
 }
 {
     // tag_two 的 id 5 与某个 tag_one 的 id 5 重号（两张表各自自增，迁移前的真实风险）
@@ -144,22 +146,28 @@ console.log('== 扁平选项：二级标签显示成「父 / 子」、重号丢�
 console.log('== 渲染加固：悬空 id 不渲染空白块 ==');
 {
     const tree = TM.buildTagTree(ONE.map(t => ({ ...t })), TWO.map(t => ({ ...t })));
-    eq(tagsOf(TM.renderNoteTags([10, 5], tree)), ['编程', '编程 / Python'], '正常渲染');
-    eq(tagsOf(TM.renderNoteTags([10, 10, 5], tree)), ['编程', '编程 / Python'], '按 id 去重');
+    eq(tagsOf(TM.renderNoteTags([10, 5], tree)), ['编程', 'Python'], '正常渲染');
+    eq(tagsOf(TM.renderNoteTags([10, 10, 5], tree)), ['编程', 'Python'], '按 id 去重');
     eq(tagsOf(TM.renderNoteTags([99, 1, 12], tree)), [], '全是悬空 id → 一个空白块都不渲染（线上 12 篇的老毛病）');
     eq(tagsOf(TM.renderNoteTags([99, 11], tree)), ['生活'], '悬空 id 夹在中间也不影响其余标签');
+    // 「样式回到标签管理页的样式」这条要求的**结构性**那一半：载体回到 antd Tag、
+    // 颜色取标签自己的。管理页树上渲染的是 `<Tag color={node.color}>{node.title}</Tag>`，
+    // 这里断言的是同一个形状 —— 至于"看起来像不像"，那是 sass/组件本身的事。
+    const rendered = TM.renderNoteTags([5], tree);
+    ok(rendered.length === 1 && isTag(rendered[0]), '公开面标签的载体是 antd Tag（不再是手账 chip）', rendered.map(n => n?.type));
+    eq(rendered[0]?.props?.color, '#1677ff', '用的是标签自己的颜色（二级不再借用父色）');
 }
 
 console.log('== 折叠渲染（后台列表列）==');
 {
     const tree = TM.buildTagTree(ONE.map(t => ({ ...t })), TWO.map(t => ({ ...t })));
-    eq(topLevelTags(TM.renderNoteTagsCollapsed([10, 5, 6, 11], tree, 3)), ['编程', '编程 / Python', '编程 / Rust'], '只显示前 3 个');
+    eq(topLevelTags(TM.renderNoteTagsCollapsed([10, 5, 6, 11], tree, 3)), ['编程', 'Python', 'Rust'], '只显示前 3 个');
     const po = popoverOf(TM.renderNoteTagsCollapsed([10, 5, 6, 11], tree, 3));
     eq(triggerTag(po), '+1', '第 4 个收进 Popover，触发器显示 +1');
-    eq(tagsOf(po.props.content), ['编程', '编程 / Python', '编程 / Rust', '生活'], 'Popover 里能展开看到全部（含被折叠的那个）');
+    eq(tagsOf(po.props.content), ['编程', 'Python', 'Rust', '生活'], 'Popover 里能展开看到全部（含被折叠的那个）');
     eq(String(TM.renderNoteTagsCollapsed([], tree).props.children), '—', '没标签 → 占位符');
     eq(String(TM.renderNoteTagsCollapsed([99, 1, 12], tree).props.children), '—', '全是悬空 id → 也是占位符（不是空白小块）');
-    eq(topLevelTags(TM.renderNoteTagsCollapsed([99, 10, 5, 6, 11], tree, 3)), ['编程', '编程 / Python', '编程 / Rust'],
+    eq(topLevelTags(TM.renderNoteTagsCollapsed([99, 10, 5, 6, 11], tree, 3)), ['编程', 'Python', 'Rust'],
        '悬空 id 不占名额（否则真实标签会被挤进 Popover）');
 }
 

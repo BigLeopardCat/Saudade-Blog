@@ -5,7 +5,6 @@ import './index.sass'
 import './sections.sass'
 import SocialButton from "../../../components/Buttons/SocialButton";
 import {useEffect, useRef, useState} from "react";
-import type {CSSProperties} from "react";
 import {useLiveRefresh} from "../../../utils/liveRefresh.ts";
 import {useSelector} from "react-redux";
 import UserState from "../../../interface/UserState";
@@ -20,6 +19,7 @@ import {getNotePage, getTopNotes} from "../../../apis/NoteMethods.tsx";
 import { resolveApiAssetUrl } from '../../../utils/runtimeApi';
 import { carouselCropOf, coverCropStyle } from '../../../utils/coverCrop';
 import { parseNoteTags } from '../../../utils/noteTags';
+import { renderNoteTags } from '../../../apis/TagMethods.tsx';
 import { resetDescScroll } from '../../../utils/descHover';
 import heroBg from '../../../assets/hero_bg.mp4';
 import heroPoster from '../../../assets/hero_poster.jpg';
@@ -409,41 +409,14 @@ const ContentHome = () => {
                                 <div className="descSlot">
                                     <div className="ArticleDescription" onMouseLeave={resetDescScroll}> {item.description}</div>
                                 </div>
+                                {/* 20261001：这一排原来自己手搓了一遍"按 id 找标签名"（一级/二级两分支
+                                    各查一次），与 `apis/TagMethods.tsx::renderNoteTags` 是同一件事的
+                                    第二份实现 —— 两份实现必然分叉（这轮的由头正是"普通卡改了样式、
+                                    置顶卡没跟上"）。现在统一走那一份。
+                                    ⚠️ 子标签**找父色**那条旧行为一并消失：标签自己的颜色由
+                                    `flattenTagOptions` 给（二级标签早就有自己的色了，管理页也是这么显示的）。 */}
                                 <div className='tags' style={{ width: '100%', marginTop: '10px' }}>
-                                    {(Array.isArray(item.noteTags) ? item.noteTags : []).map(noteTag => {
-                                        let color;
-                                        let name;
-                                        tagList.forEach((tag: { tagKey: number; color: string; title: string; children: any[]; }) => {
-                                            if (tag.tagKey === noteTag) {
-                                                color = tag.color;
-                                                name = tag.title;
-                                            } else if (tag.children && tag.children.some(child => child.tagKey === noteTag)) {
-                                                color = tag.color;
-                                                name = tag.children.find(child => child.tagKey === noteTag).title;
-                                            }
-                                        });
-
-                                        // 标签 id 查不到名字就整条不渲染。旧版是 `<Tag>{undefined}</Tag>`
-                                        // ——antd 会老老实实吐一个**空药丸**；手账 chip 带一个色点，
-                                        // 空 chip 看着像个坏掉的控件（同 apis/TagMethods.tsx:162 的处置）。
-                                        if (!name) return null;
-
-                                        // 不用 antd `<Tag color=…>`：那个 `color` 会落成**内联**的
-                                        // background/border/color，而内联特异性最高 —— 想换成手账 chip
-                                        // 就只能 `!important` 硬压。改成一个纯 span，把标签自己的色相
-                                        // 从 CSS 变量 `--tg` 递进去（`style` 里只有变量，没有颜色），
-                                        // 配色一律由 sass 说了算。
-                                        return (
-                                            <span
-                                                className="tagChip"
-                                                key={noteTag}
-                                                style={{ '--tg': color || 'var(--washi-lav, #b9a7f5)' } as CSSProperties}
-                                            >
-                                                <i className="tagChipDot" aria-hidden="true" />
-                                                {name}
-                                            </span>
-                                        );
-                                    })}
+                                    {renderNoteTags(item.noteTags, tagList)}
                                 </div>
                                 <div className="topFooter" style={{ display: 'flex', alignItems: 'center', paddingBottom: '20px' }}>
                                     {/* 头像 + 署名 + 两个日期（20261001）：与文章卡片那份逐字相同，

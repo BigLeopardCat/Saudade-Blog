@@ -11,8 +11,13 @@ import {fetchTags} from "../../store/components/tags.tsx";
  * **不能就地新建**（要新建得先跑一趟标签管理页，回来文章还没存）、还带 `required`
  * 强制必填。用户的原话是「非常难用而且有错误」。
  *
- * 现在是一层扁平多选（一级 `编程`、二级 `编程 / Python` 都直接可搜），下拉底部可以
+ * 现在是一层扁平多选（一级 `编程`、二级 `Python` 都直接可搜），下拉底部可以
  * 就地新建一级标签并**自动选中刚建的那个**（需要后端返回新 id，20260919 起支持）。
+ *
+ * ⚠️ 过滤走 option 的 `keywords` 而不是 `label`（20261001）：二级标签的**显示名**已经从
+ * `编程 / Python` 改回它自己的名字（见 `flattenTagOptions` 头注），而"搜父名也能搜到子标签"
+ * 这条能力要留着 —— 于是搜索词单列一个字段。谁把 `optionFilterProp` 改回 `"label"`，
+ * 谁就把"搜「编程」列不出它下面的子标签"这个退化带回来。
  *
  * 与 `Form.Item` 兼容：受控 `value` + `onChange`，直接 `name="noteTags"` 用即可。
  */
@@ -103,7 +108,7 @@ const NoteTagSelect: React.FC<NoteTagSelectProps> = ({
             value={safeValue}
             onChange={(v) => onChange?.(v as number[])}
             options={options}
-            optionFilterProp="label"
+            optionFilterProp="keywords"
             placeholder={placeholder}
             style={{width: '100%', ...style}}
             disabled={disabled}
