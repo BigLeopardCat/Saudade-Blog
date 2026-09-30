@@ -11,12 +11,13 @@
 // 这套件锁三件（几何那半边不在这里：DOM 与改造前逐字相同，由
 // `article-card-hover.test.py` / `home-hero.test.py` 那几支继续量）：
 //   ① ★ 判据本身：有作者记录时**不许**再印站点级那份（这就是本轮报的那个 bug）；
-//      两个字段各判各的；空串/纯空白算"没记录"（不许印一片空白）；
-//   ② 接线：四处消费方走同一条判据，且**没有第二份 `|| 站点级`**——改造前正是
+//   ② 判据的判据是**键在不在场**（不是值空不空）：键在场=后端定过稿，空头像就画默认
+//      头像，**绝不顶站长的脸**——这是用户第二个报障（"作者头像不对，还是硬编码的？"：
+//      jingbao 没上传过头像 ⇒ 后端老回退链把 Sora Saudade 的头像顶了上来）；
+//   ③ 接线：四处消费方走同一条判据，且**没有第二份 `|| 站点级`**——改造前正是
 //      "两处各拿 redux 的 name/avatar 直接渲染"才让这个 bug 要修两遍；
-//   ③ 跨语言契约：Rust 侧真的在回这两个键（`conv-row-since.test.mjs` 同款手法，
-//      直接读 `../../src/`），且**每一条列表/详情路径都挂了作者**——漏挂一条就是
-//      同一个症状在另一个页面上复发。
+//   ④ 跨语言契约：Rust 侧真的在回这两个键（`conv-row-since.test.mjs` 同款手法，
+//      直接读 `../../src/`），**每一条列表/详情路径都挂了作者**，且**两个键成对写**。
 import * as esbuild from 'esbuild';
 import { mkdtempSync, readFileSync, readdirSync, statSync } from 'fs';
 import { tmpdir } from 'os';
@@ -61,7 +62,7 @@ console.log('\n① 有作者记录 ⇒ 用文章那份（本轮报的 bug 就是
     ok(who.name !== SITE.name && who.avatar !== SITE.avatar, '两个字段一个都没落到站点级');
 }
 
-console.log('\n② 没有记录 ⇒ 回退站点级（老文章 / 发布者已销号 / 这条路没回这个键）');
+console.log('\n② 键整个缺席 ⇒ 回退站点级（老文章 / 发布者已销号 / 这条路没挂作者）');
 {
     ok(M.noteAuthor({}, SITE).name === '站长', '键缺席（老文章）⇒ 回退站点署名');
     ok(M.noteAuthor({}, SITE).avatar === '/site.png', '键缺席 ⇒ 回退站点头像');
@@ -70,15 +71,21 @@ console.log('\n② 没有记录 ⇒ 回退站点级（老文章 / 发布者已�
     ok(M.noteAuthor({}, SITE).name !== undefined, '回退值给的是空串也可能，但绝不是 undefined（调用方直接渲染）');
 }
 
-console.log('\n③ 两个字段各判各的；空白一律算"没记录"');
+console.log('\n③ 键在场 = 后端定过稿：空头像不许借站长的脸');
 {
-    const half = M.noteAuthor({ authorName: '管理员甲' }, SITE);
-    ok(half.name === '管理员甲' && half.avatar === '/site.png',
-        '只记了名字没头像（发布者没上传过）⇒ 名字用作者的、头像回退站点，互不连累', half);
-    const blank = M.noteAuthor({ authorName: '   ', authorAvatar: '' }, SITE);
-    ok(blank.name === '站长' && blank.avatar === '/site.png',
-        '空串 / 纯空白 ⇒ 当"没记录"（不许印一片空白出来）', blank);
-    ok(M.noteAuthor({ authorName: ' 甲 ' }, SITE).name === '甲', '两端空白抹掉再用');
+    // ★ 本轮用户报的第二个 bug。现场（线上库实测）：note 54「我，管理员！」的作者是
+    // jingbao（user_id=6），而 `user.avatar` 是 NULL ⇒ 老判据 `given(头像) || 站点头像`
+    // 把站长 Sora Saudade 那张照片顶了上来，卡片上就成了「jingbao 的名字 + 站长的脸」。
+    const noAvatar = M.noteAuthor({ authorName: '管理员甲', authorAvatar: '' }, SITE);
+    ok(noAvatar.name === '管理员甲' && noAvatar.avatar === '',
+        '★ 有名字没头像（发布者没上传过）⇒ 头像**留空**（antd 画默认头像），不顶站长的脸',
+        noAvatar);
+    const noName = M.noteAuthor({ authorName: '', authorAvatar: '/jia.png' }, SITE);
+    ok(noName.name === '' && noName.avatar === '/jia.png',
+        '只有头像没有名字 ⇒ 名字留空，不印站长的名（挨着别人的头像印站长名是同一类错）',
+        noName);
+    ok(M.noteAuthor({ authorName: ' 甲 ', authorAvatar: ' /jia.png ' }, SITE).name === '甲',
+        '两端空白抹掉再用');
     const none = M.noteAuthor({}, {});
     ok(none.name === '' && none.avatar === '',
         '站点级也没有（redux 未加载完）⇒ 空串，与改造前行为一致（antd 画默认头像）', none);
@@ -144,6 +151,19 @@ console.log('\n⑤ 跨语言契约：Rust 真的在回这两个键，且每条�
         const body = bodyOf(fn);
         ok(body !== null && /attach_authors\(/.test(body), `${fn} 挂了作者`);
     }
+
+    // ★ 两个键**成对写**：前端按"键在不在场"判（见 ③），后端只写一个就会让另一个字段
+    // 被读成"这一路没挂作者" ⇒ 前端拿站点级去补。这条锁住契约的后端那一半。
+    const authBody = bodyOf('attach_authors');
+    const nName = (authBody.match(/author_name = Some\(/g) || []).length;
+    const nAvatar = (authBody.match(/author_avatar = Some\(/g) || []).length;
+    ok(nName === 2 && nAvatar === 2,
+        '★ 两个键成对写（有作者 / 没作者两个分支各写一对，不多不少）', { nName, nAvatar });
+    ok(/u\.username\.trim\(\)/.test(authBody), '昵称空时退到账号名（不是站长名）');
+    ok(/as_deref\(\)\.unwrap_or\(""\)/.test(authBody),
+        '头像空时发的是**空串**（键在场 = 这个人没设过头像），不是站点级');
+    ok(!/unwrap_or_else\(\|\| site_avatar/.test(authBody),
+        '★ 已无"这个字段空就退站点级"的老回退链（用户报的 bug 的根因）');
 
     const entity = readFileSync(path.join(repo, 'src/entity/note.rs'), 'utf8');
     ok(/pub user_id: Option<i32>/.test(entity), '实体里有 user_id 列（Option = 老文章那批没有记录）');

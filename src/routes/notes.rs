@@ -906,9 +906,22 @@ pub async fn get_note_detail(
 /// 给这一批文章挂上「谁发的」（`note.user_id` → 那个账号的 `nickname`/`avatar`）。
 ///
 /// **回退链**（与 `web_info::site_author` 共用站点级那一份，口径只有一处）：
-///   行里的 uid 有 → 取那个账号的昵称/头像（空则继续往下退）；
+///   行里的 uid 有、且那个账号还在 → **署名就是这个账号**：昵称空则用账号名，
+///   头像空则**留空**（前端画 antd 默认头像）；
 ///   uid 为 NULL（本列之前发布的老文章 / 发布者账号已销）→ **站点级署名**，
 ///   也就是改造前卡片上显示的那一份 ⇒ 存量文章的外观一个像素都不变。
+///
+/// **有作者记录时，一个字段都不借站长的身份**（20261001 实测修）。此前那两个
+/// `.unwrap_or_else(站点级)` 是"这个字段空就退到站点级"，退到的是**站长自己**——
+/// 于是 jingbao 发的文章（昵称有、头像没上传过）在卡片上是「jingbao 的名字 + Sora
+/// Saudade 的脸」。用户报的正是这个（"作者头像不对，还是硬编码的？"：不是硬编码，
+/// 是回退链把别人的文章安到了站长头上）。脸指向另一个人比没有脸更糟：名字留空还能看出
+/// "这里没记录"，顶着别人的照片则是**看起来有据的错信息**。名字那条同理退到账号名
+/// （这个人另一个真名），不是站长名。
+///
+/// 两个键**成对写**：都在（= 这一路的作者信息定过稿）或都不在（= 这一路没挂作者）——
+/// 前端 `utils/noteAuthor.ts` 按"键在不在场"判，就是靠这条。只写一个会让前端把
+/// "另一个字段留空"读成"没有作者信息"。
 ///
 /// **失败时一个键都不写**（`return` 而不是回退）：查库失败意味着"没查着"，
 /// 与"这个人没有昵称"是两件事。键缺席 ⇒ 前端照旧用站点级署名渲染，屏幕上没有假的
@@ -937,17 +950,25 @@ async fn attach_authors(db: &sea_orm::DatabaseConnection, dtos: &mut [NoteDto]) 
     let (site_name, site_avatar) = crate::routes::web_info::site_author(db).await;
 
     for dto in dtos.iter_mut() {
-        let owner = dto.author_id.and_then(|id| by_id.get(&id));
-        let name = owner
-            .map(|u| u.nickname.trim().to_string())
-            .filter(|n| !n.is_empty())
-            .unwrap_or_else(|| site_name.clone());
-        let avatar = owner
-            .and_then(|u| u.avatar.clone())
-            .filter(|a| !a.trim().is_empty())
-            .unwrap_or_else(|| site_avatar.clone());
-        dto.author_name = Some(name);
-        dto.author_avatar = Some(avatar);
+        match dto.author_id.and_then(|id| by_id.get(&id)) {
+            // 有作者记录：两个字段都只出自这个账号，谁也不退到站长（见函数头注）
+            Some(u) => {
+                let nick = u.nickname.trim();
+                dto.author_name = Some(if nick.is_empty() {
+                    u.username.trim().to_string()
+                } else {
+                    nick.to_string()
+                });
+                // 空串**要发出去**（`skip_serializing_if` 只跳过 `None`）：键在场 =
+                // "这个人没设过头像" ⇒ 前端画默认头像；键缺席 = "这一路没挂作者" ⇒
+                // 前端回退站点级。两件事在连线上必须是两个样子。
+                dto.author_avatar = Some(u.avatar.as_deref().unwrap_or("").trim().to_string());
+            }
+            None => {
+                dto.author_name = Some(site_name.clone());
+                dto.author_avatar = Some(site_avatar.clone());
+            }
+        }
     }
 }
 
