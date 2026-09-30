@@ -189,11 +189,11 @@ console.log('\n⑥ 版本号：改了 widget 脚本必须 bump（nginx 对 live2
     const widget = readFileSync(path.join(root, 'public/live2d-widgets/autoload.js'), 'utf8');
     const ver = (widget.match(/const VER = '([^']+)'/) || [])[1];
     ok(!!ver, '能读到 autoload.js 的 VER');
-    // 这个字面量**就是刻意钉死的**：改了 widget 脚本却没 bump 时，这里会红（20261001a
-    // 是对话面板换手账皮那一轮——waifu.css 整块换配色、chat-stream.js 加了一句
-    // 深色类名同步，两个文件都改了就必须换版本号才能越过 nginx 那 1 年 immutable
-    // 缓存）。bump 时同步改这一行。
-    ok(ver === '20261001a', 'VER 已 bump 到本轮（20261001a）', { ver });
+    // 这个字面量**就是刻意钉死的**：改了 widget 脚本却没 bump 时，这里会红（20261001b
+    // 是对话面板去胶带 + 标题进签 + 四条边框收成一个那一轮——waifu.css 与
+    // chat-render.js / chat-session.js 都改了，必须换版本号才能越过 nginx 那
+    // 1 年 immutable 缓存）。bump 时同步改这一行。
+    ok(ver === '20261001b', 'VER 已 bump 到本轮（20261001b）', { ver });
     const tsx = readFileSync(path.join(root, 'src/components/Live2dAgent/index.tsx'), 'utf8');
     ok(tsx.includes('autoload.js?v=' + ver), 'Live2dAgent 的 ?v= 与 VER 一致');
 }

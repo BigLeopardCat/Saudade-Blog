@@ -168,8 +168,12 @@
       <div class="chat-inner-border"></div>
       <div class="chat-close" id="chat-close">×</div>
       <!-- 20260903 会话化：当前会话标题（20260903b 起覆在顶部拖拽条内居中显示，
-          不占消息区空间；文本由 chat-session.js renderHeader 写入，非空才可见） -->
-      <div id="chat-conv-title" class="chat-conv-title"></div>
+          不占消息区空间；文本由 chat-session.js renderHeader 写入，非空才可见）。
+          20261001 批 D：真容器是里面那张和纸小签（.chat-conv-title-tag）——外壳
+          只管定位/居中（几何一字未动），签负责长相；:empty 隐藏随之落到签上
+          （外壳永不为空 ⇒ 恒 display:flex，但它透明且 pointer-events:none，无副作用）。
+          文本写入目标因此从 #chat-conv-title 改成 #chat-conv-title-tag。 -->
+      <div id="chat-conv-title" class="chat-conv-title"><span class="chat-conv-title-tag" id="chat-conv-title-tag"></span></div>
       <div class="chat-messages" id="chat-messages">
         <!-- 写操作确认卡片（20260921d）：从输入区上方的常驻条搬进**对话流**里。
              用户的动线是"读问句 → 点按钮 → 看结果"，卡片夹在问句气泡与结果气泡

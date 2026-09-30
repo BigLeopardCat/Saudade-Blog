@@ -599,7 +599,9 @@
       if (!p || !list) { setTimeout(init, 500); return; } // engine 注入 chatHTML 在前
       chatPanel = p;
       convList = list;
-      titleEl = document.getElementById('chat-conv-title');
+      // 20261001 批 D：写进签里（#chat-conv-title 只是定位外壳，长相在
+      // .chat-conv-title-tag；renderHeader 的 :empty 隐藏也随之内移）
+      titleEl = document.getElementById('chat-conv-title-tag');
       rail = document.getElementById('chat-rail');
       searchEl = document.getElementById('conv-search');
       // 恢复记忆的抽屉宽：--conv-w 驱动抽屉宽 + 消息区 margin（conv-out 下再
