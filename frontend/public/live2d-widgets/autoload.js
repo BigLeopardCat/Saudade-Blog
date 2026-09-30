@@ -95,7 +95,7 @@
   // ★ 版本号：nginx 对 live2d-widgets 目录 immutable 缓存 1 年，子模块变更只 bump
   // 这里一处（所有子模块 URL 统一拼 ?v=VER；Live2dAgent/index.tsx 的 autoload 引用
   // 也需同步 bump——否则浏览器不会重新请求本入口）
-  const VER = '20260929a';
+  const VER = '20260930a';
 
   function loadExternalResource(url, type) {
     return new Promise((resolve, reject) => {
@@ -209,7 +209,10 @@
     modelId: 0,
     // A7 修复：移除 'hitokoto' 工具——其回调 fetch v1.hitokoto.cn 后 innerHTML 直插未转义（投稿制内容可带 <svg onload>），
     // 聊天开关按钮由下方 repurposeHitokoto 自建（复用原按钮位 id）
-    tools: ['asteroids', 'switch-model', 'switch-texture', 'photo', 'info', 'quit'],
+    // 20260930：删掉 'asteroids'（飞机图标 + 飞机大战，用户点名）。它不在这个数组里 ⇒
+    // `registerTools()` 根本不会建出 `#waifu-tool-asteroids` 那个 span ⇒ 图标没了，点击回调
+    // （从 jsdelivr 拉 asteroids.js 开游戏）也**结构性不可达**，不是"藏起来"。
+    tools: ['switch-model', 'switch-texture', 'photo', 'info', 'quit'],
     logLevel: 'trace',
     drag: true,
   }, [{
