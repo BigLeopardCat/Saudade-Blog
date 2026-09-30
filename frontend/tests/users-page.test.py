@@ -242,6 +242,18 @@ const req = async (cfg: any) => {
                   data: (approved ? '已批准账号「' : '已驳回账号「')
                         + row.username + '」的额度重置申请' });
   }
+  // ── 删除账号（20261001）────────────────────────────────────────────────────
+  // 这一条要**真把内存里那一行摘掉**：于是"删完那一行从列表里消失、计数从 29 变 28"
+  // 是端到端成立的，而不是断言自己骗自己（同 status/role 那两条的纪律）。
+  // 回包形状照 `delete_temp_user`：成功那句中文在 **`data`** 里，`message` 恒为 'ok'。
+  if (/^\/api\/temp-users\/\d+$/.test(url) && method === 'DELETE') {
+    const id = Number(url.split('/')[3]);
+    const arr = (window as any).__users as any[];
+    const i = arr.findIndex((x) => x.id === id);
+    if (i < 0) return env0({ code: 500, message: '用户不存在' });
+    arr.splice(i, 1);
+    return env0({ code: 200, message: 'ok', data: '用户已删除' });
+  }
   return env0({ code: 200, message: 'ok', data: null });
 };
 
@@ -518,6 +530,22 @@ STATUS_DIALOG = """() => {
     if (!m) return null;
     const q = (s) => (m.querySelector(s) ? m.querySelector(s).textContent.replace(/\\s+/g, '') : '');
     const ok = m.querySelector('.tu-status-ok');
+    return {
+        title: q('.ant-modal-title'),
+        ok: ok.textContent.replace(/\\s+/g, ''),
+        okDanger: ok.classList.contains('ant-btn-dangerous'),
+        body: q('.ant-modal-body'),
+    };
+}"""
+
+
+# 删除账号的确认框（20261001）：与上面两支同形，按类名认（`.tu-del-ok`）。
+DEL_DIALOG = """() => {
+    const m = [...document.querySelectorAll('.ant-modal-wrap')].find(
+        (w) => getComputedStyle(w).display !== 'none' && w.querySelector('.tu-del-ok'));
+    if (!m) return null;
+    const q = (s) => (m.querySelector(s) ? m.querySelector(s).textContent.replace(/\\s+/g, '') : '');
+    const ok = m.querySelector('.tu-del-ok');
     return {
         title: q('.ant-modal-title'),
         ok: ok.textContent.replace(/\\s+/g, ''),
@@ -1628,6 +1656,75 @@ with sync_playwright() as p:
     _n = notices(pg)
     check("提示里带上申请人（后端那句中文）", any("已批准" in x and "guest2" in x for x in _n), str(_n))
     check("第九节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
+    pg.close()
+
+    # ── 十、删除账号的二次确认（20261001）──────────────────────────────────────
+    # 现场（用户原话）：「账号删除竟然没有二次确认功能导致我误删几个账号，增加二次确认」。
+    # 这一下是全页**唯一一个点一下就下手的写操作**（其它五个都有受控 Modal），而它偏偏
+    # 最不可逆——后端是硬删：`user` 行连同 chat_history/chat_summary/conversation 三张
+    # 会话表一起清，没有软删、没有回收站、没有回滚入口。所以判据与第五节的冻结同款三层：
+    #   ① 点一下 ⇒ **先弹框**，且框里的字是这一下的动作词（「删除」）＋ danger 极性；
+    #   ② **弹窗开着、点取消 ⇒ 零请求**（"取消也要真的取消"是最容易写成样子货的一条）；
+    #   ③ 只有点确认才发那一条 DELETE，且发完那一行真的从列表里消失。
+    # 第四条是这一节比冻结多出来的：**正文必须写明不可恢复与连带清掉什么**——只说
+    # "确定要删除吗"是把一个不可逆操作说成了可逆操作，而这正是用户误删时的处境。
+    def del_calls(pg):
+        """本页发出的删除请求（DELETE /api/temp-users/<id>）。"""
+        return pg.evaluate("""() => window.__calls.filter((c) =>
+            c.method === 'DELETE' && /^\\/api\\/temp-users\\/\\d+$/.test(c.url))
+            .map((c) => ({ url: c.url, body: c.data }))""")
+
+    pg = mount(br)
+    pg.locator(".tu-tabs button", has_text="全部").first.click()
+    pg.wait_for_timeout(250)
+    n0 = pg.evaluate("() => document.querySelectorAll('.tu-row').length")
+
+    pg.locator('.tu-row:has(strong:text-is("guest1")) .tu-del-btn').click()
+    pg.wait_for_timeout(300)
+    dlg = pg.evaluate(DEL_DIALOG)
+    check("点「删除」是先弹确认框，不是直接下手", dlg is not None, str(dlg))
+    check("确认框标题点名是哪个账号（删错了回收不了，标题得写清对象）",
+          dlg and "guest1" in dlg["title"], str(dlg and dlg["title"]))
+    check("确认按钮上的字是动作词「删除」，不是「确定/OK」",
+          dlg and dlg["ok"] == "删除", str(dlg and dlg["ok"]))
+    check("确认按钮套 danger（红色 = 不可逆的那一下）",
+          dlg and dlg["okDanger"], str(dlg and dlg["okDanger"]))
+    check("正文写明了**不可恢复**（只说「确定要删除吗」= 把不可逆说成了可逆）",
+          dlg and ("不可恢复" in dlg["body"]), str(dlg and dlg["body"]))
+    check("正文写明了连带清掉什么（站内对话记录一起没）",
+          dlg and ("对话记录" in dlg["body"] or "会话" in dlg["body"]), str(dlg and dlg["body"]))
+    check("正文给了可逆的替代动作（想让他登不进来请改用「冻结」）",
+          dlg and "冻结" in dlg["body"], str(dlg and dlg["body"]))
+    check("**弹窗开着的时候一条删除请求都没发**（动作必须等那一下确认）",
+          del_calls(pg) == [], str(del_calls(pg)))
+
+    pg.locator(".ant-modal-wrap:visible .tu-del-cancel").click()
+    pg.wait_for_timeout(300)
+    check("点取消：弹窗关掉且**零请求**（没有偷偷把人删掉）",
+          pg.evaluate(DEL_DIALOG) is None and del_calls(pg) == [],
+          f'dlg={pg.evaluate(DEL_DIALOG)} calls={del_calls(pg)}')
+
+    pg.locator('.tu-row:has(strong:text-is("guest1")) .tu-del-btn').click()
+    pg.wait_for_timeout(300)
+    pg.locator(".ant-modal-wrap:visible .tu-del-ok").click()
+    pg.wait_for_timeout(700)
+    calls = del_calls(pg)
+    check("确认后发出 DELETE /api/temp-users/100（只这一条）",
+          len(calls) == 1 and calls[0]["url"] == "/api/temp-users/100", str(calls))
+    check("删除请求没有 body（目标在路径里，别在别处再传一份）",
+          calls and calls[0]["body"] is None, str(calls[0]["body"] if calls else None))
+    check("删完重新拉了一次列表（不是只在本地把行抹掉）",
+          pg.evaluate("() => window.__calls.filter((c) => c.method === 'GET').length") >= 1,
+          str(pg.evaluate("() => window.__calls.map((c) => c.method + ' ' + c.url)")))
+    g = pg.evaluate(GEO)
+    check("删掉的那一行真的从列表里消失了（行数少一）",
+          g["rows"] == n0 - 1 and "guest1" not in [r["u"] for r in g["delBtns"]],
+          f'{n0} → {g["rows"]}：{[r["u"] for r in g["delBtns"]][:5]}')
+    _n = notices(pg)
+    check("成功提示是后端那句中文（用户已删除），不是字面量 ok",
+          any("用户已删除" in x for x in _n)
+          and not any(x.strip().lower() == "ok" for x in _n), str(_n))
+    check("第十节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
     br.close()

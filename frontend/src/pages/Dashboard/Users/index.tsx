@@ -171,10 +171,36 @@ const Users = () => {
         } catch { message.error('请求失败') }
     }
 
+    /** 删除账号（20261001 加二次确认）。
+     *
+     *  背景：这是全页**唯一一个点一下就下手的危险操作**（其它五个写入口都有受控
+     *  Modal），而它偏偏是最不可逆的那个——后端是硬删：`user` 行连同
+     *  `chat_history`/`chat_summary`/`conversation` 三张会话表一起清，没有软删、
+     *  没有回收站、没有回滚入口（用户正是在这里误删了几个账号）。
+     *
+     *  所以确认框的正文必须把**不可恢复**和**连带清掉什么**写在明处——只说
+     *  "确定要删除吗"是把一个不可逆操作说成了可逆操作。按钮写动作词「删除」、
+     *  极性 danger，与同页冻结那一侧同一套纪律（受控 Modal：命令式弹窗沙箱测不到）。
+     */
+    const [delTarget, setDelTarget] = useState<any>(null)
+    const askDeleteTempUser = (user: any) => setDelTarget(user)
+    const confirmDeleteTempUser = async () => {
+        const t = delTarget
+        setDelTarget(null)      // 先关窗再发请求（同 confirmSetStatus）
+        if (t) await handleDeleteTempUser(t.id)
+    }
+
     const handleDeleteTempUser = async (id: number) => {
         try {
             const res = await http.delete('/api/temp-users/' + id)
-            if (res.data?.code === 200) { message.success('已删除'); loadTempUsers() }
+            if (res.data?.code === 200) {
+                // 人话在 `data` 里不在 `message` 里（`ApiResponse::success` 的 `message`
+                // 恒为 "ok"）——同页其它四个写入口都读这个字段，这一处此前是唯一一个
+                // 写死字面量「已删除」的。读错字段不会报错、不会红，只会弹一个空条，
+                // 所以这里跟着同一条纪律走，别让第六个入口再各写各的。
+                message.success(res.data.data || '已删除')
+                loadTempUsers()
+            }
             else { message.error(res.data?.message) }
         } catch { message.error('请求失败') }
     }
@@ -540,7 +566,7 @@ const Users = () => {
                                                 {/* 非普通账号不给删除按钮：后端也会拒（见 delete_temp_user），
                                                     但让按钮干脆不出现，比点了才被告知不行更清楚 */}
                                                 {u.role === 'user' && (
-                                                    <Button size="small" className="tu-del-btn" danger onClick={() => handleDeleteTempUser(u.id)}>删除</Button>
+                                                    <Button size="small" className="tu-del-btn" danger onClick={() => askDeleteTempUser(u)}>删除</Button>
                                                 )}
                                             </div>
                                         </div>
@@ -580,6 +606,38 @@ const Users = () => {
                             <div style={{ marginTop: 8, color: 'var(--washi-ink-2, #7c6584)' }}>
                                 恢复后：他的额度立刻回到满额、可以继续对话，并会收到一条站内通知。
                                 这一下在界面上撤不回来——原值不会被记下来，唯一能再变的是下一次重置。
+                            </div>
+                        </div>
+                    </Modal>
+
+                    {/* 删除账号确认（20261001）。与冻结那个弹窗同三条纪律：按钮写动作词
+                        （「删除」而不是「确定」）、danger 极性、受控 Modal。
+
+                        正文不能只说"确定要删除吗"——那样读起来像件可逆的小事。这一下
+                        真正的后果有两半，都要写出来：① 账号本身没了；② 它在站内的全部
+                        会话记录（历史消息、摘要、会话列表）跟着一起清掉。而且**没有
+                        回滚入口**：后端是硬删，删完就查不到这个人了（连一条通知都发不
+                        到他那儿——收件箱随账号一起没）。 */}
+                    <Modal
+                        title={'删除账号 - ' + (delTarget?.username || '')}
+                        open={!!delTarget}
+                        onOk={confirmDeleteTempUser}
+                        onCancel={() => setDelTarget(null)}
+                        okText="删除"
+                        cancelText="取消"
+                        okButtonProps={{ danger: true, className: 'tu-del-ok' }}
+                        cancelButtonProps={{ className: 'tu-del-cancel' }}
+                        width={420}
+                    >
+                        <div style={{ marginTop: 12, lineHeight: 1.7 }}>
+                            <div>
+                                确定要删除账号<strong>{delTarget?.username}</strong> 吗？
+                            </div>
+                            <div style={{ marginTop: 8, color: 'var(--washi-ink-2, #7c6584)' }}>
+                                删除后：该账号无法再登录，它在站内的全部对话记录
+                                （历史消息、会话摘要、会话列表）会一并清除。
+                                <strong>这一步不可恢复</strong>，站内没有回收站，也查不回这个人。
+                                只是想让他暂时登不进来，请改用「冻结」。
                             </div>
                         </div>
                     </Modal>
