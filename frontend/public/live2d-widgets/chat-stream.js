@@ -1633,6 +1633,17 @@
       window.addEventListener('darkmode-change', (e) => {
         try { window.__darkMode = !!(e && e.detail); } catch(err) {/* ignore */}
       });
+      // 20261001：面板那层手账皮的深色档（waifu.css 末尾的 washi 覆盖块）认
+      // `.washiDark` —— 那是 index.css 深色令牌选择器列表里多出来的一个类名，
+      // 值只有一份。面板挂在 body 下，App 的 `.frontDark` 不是它的祖先，所以
+      // 自己挂。三条切换路径（头部按钮 / agent 的 DARKMODE 命令 / 23:00 自动）
+      // 都走 darkmode-change，这一个监听就够；上面那句读 localStorage **不发事件**，
+      // 所以再补一次初始同步（此刻面板已在 DOM 里，见上面的 chatPanel 空值重试）。
+      const syncPanelDark = () => {
+        try { chatPanel.classList.toggle('washiDark', !!window.__darkMode); } catch(err) {/* ignore */}
+      };
+      window.addEventListener('darkmode-change', syncPanelDark);
+      syncPanelDark();
       addStarButton();
 
       // ── 夜间模式控制（agent DARKMODE: 命令 + 夜间自动切换）──
