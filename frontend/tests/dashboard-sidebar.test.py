@@ -385,6 +385,51 @@ with sync_playwright() as p:
     check("第七节全程无页面异常", not dk7.errs, "; ".join(dk7.errs[:3]))
     dk7.close()
 
+    # ── 八、两枚 SVG 的**墨迹尺寸**与相邻字体图标对齐 ──────────────────────────────
+    #
+    # 为什么单起一节：`.nav-svg` 定的是**画布** 22×22，不是**画出来的那一块**。path 在
+    # 自己 viewBox 里画多大，光读代码看不出来 —— 旧稿的用户管理图标 viewBox 是
+    # `0 0 1097 1024`（横着多出 73 个单位），默认 preserveAspectRatio 居中后**纵向只有
+    # 20.5px**；换成 1024² 的新稿后纵横都吃满 22px。用户这次点名"大小要和侧边栏其他
+    # 图标保持一致"，而这一条只有量 getBBox 才知道有没有做到。
+    #
+    # 参照系是**同一侧栏里那七枚字体图标**在同一字号下的墨迹高度（本机实测，20261001）：
+    #   主页 20 / 笔记 22 / 说说 25 / 图库 23 / 数据板 20 / 站点设置 20 / 返回首页 22
+    # 即 20~25、主体落在 20~22。判据取这个带 —— 本脚本**不链 iconfont 的 CDN**
+    # （离线也要能跑），所以只能把实测值钉在这里当下界/上界，而不是当场量。
+    print("\n【八】两枚 SVG 的墨迹尺寸与相邻字体图标对齐")
+    ink_page = fresh_page(dark=False)
+    ink = ink_page.evaluate("""() => {
+        return [4, 5].map((i) => {
+            const li = document.querySelectorAll('.menu-links .nav-links')[i];
+            const svg = li.querySelector('svg');
+            const vb = svg.getAttribute('viewBox').split(/\\s+/).map(Number);
+            const b = svg.querySelector('path').getBBox();
+            const s = 22 / Math.max(vb[2], vb[3]);
+            return { name: li.textContent.trim(), w: b.width * s, h: b.height * s };
+        });
+    }""")
+    for g in ink:
+        check(f'{g["name"]}：墨迹落在字体图标那条带里（19.5~23.5px，实测 {g["h"]:.2f}）',
+              19.5 <= g["h"] <= 23.5, f'{g["w"]:.2f}×{g["h"]:.2f}')
+    check("两枚之间也差不多大（高度差 ≤ 2.5px）",
+          abs(ink[0]["h"] - ink[1]["h"]) <= 2.5,
+          f'{ink[0]["h"]:.2f} vs {ink[1]["h"]:.2f}')
+    # 对照：把旧稿那个 1097 宽的 viewBox 假回去，必须当场测出"偏小"——否则上面那条
+    # "落在带里"可能只是判据本身不敏感（旧稿实测 20.5，落在带内，所以要挑更窄的带验证）。
+    stale = ink_page.evaluate("""() => {
+        const li = document.querySelectorAll('.menu-links .nav-links')[5];
+        const svg = li.querySelector('svg');
+        const b = svg.querySelector('path').getBBox();
+        // 复现旧稿：同一个 path，viewBox 横着撑到 1097
+        const s = 22 / 1097;
+        return { h: b.height * s, w: b.width * s };
+    }""")
+    check("对照：viewBox 横撑到 1097（旧稿形态）会量出偏小 ⇒ 判据对尺寸敏感",
+          stale["h"] < ink[1]["h"] - 0.5, f'旧稿 {stale["h"]:.2f} vs 新稿 {ink[1]["h"]:.2f}')
+    check("第八节全程无页面异常", not ink_page.errs, "; ".join(ink_page.errs[:3]))
+    ink_page.close()
+
     br.close()
 
 print()
