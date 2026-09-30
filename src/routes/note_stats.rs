@@ -42,7 +42,7 @@ use axum::{
     Json,
 };
 use sea_orm::{
-    sea_query::{Expr, OnConflict},
+    sea_query::{Alias, Expr, OnConflict, SimpleExpr},
     ColumnTrait, DatabaseConnection, DbErr, EntityTrait, PaginatorTrait, QueryFilter, QuerySelect,
     Set,
 };
@@ -56,6 +56,19 @@ use crate::utils::ApiResponse;
 
 /// 排行榜长度（阅读榜、点赞榜各取前 N）。
 const TOP_N: usize = 10;
+
+/// 阅读总量的求和表达式——**所有 `SUM(cnt)` 都必须从这里出去**。
+///
+/// 为什么需要 `CAST(... AS SIGNED)`：**MySQL 的 `SUM(<整数列>)` 返回的是 `DECIMAL`
+/// 而不是 `BIGINT`**，于是 sea-orm 按 `Option<i64>` 解码时当场报
+/// `mismatched types; Rust type Option<i64> (as SQL type BIGINT) is not compatible
+/// with SQL type DECIMAL`。这不是编译期能发现的（`cargo check`/`cargo test` 全绿，
+/// 仓里的 api_tests 走 MockDatabase 不经过真解码），20260930 一部署就现形：
+/// 列表卡片三个数一个都不显示、`GET .../stats` 直接 500。
+/// 丢给 `COUNT(*)` 没有这个问题（它本来就是 BIGINT）——**只有求和要过这一手**。
+fn sum_views() -> SimpleExpr {
+    Expr::col(note_view::Column::Cnt).sum().cast_as(Alias::new("SIGNED"))
+}
 
 /// 日趋势窗口（含今天，向前共 30 天）。
 const TREND_DAYS: i64 = 30;
@@ -105,7 +118,7 @@ async fn visible_note_id(db: &DatabaseConnection, id: i32) -> bool {
 async fn views_of(db: &DatabaseConnection, note_id: i32) -> Result<i64, DbErr> {
     note_view::Entity::find()
         .select_only()
-        .column_as(Expr::col(note_view::Column::Cnt).sum(), "total")
+        .column_as(sum_views(), "total")
         .filter(note_view::Column::NoteId.eq(note_id))
         .into_tuple::<Option<i64>>()
         .one(db)
@@ -359,7 +372,7 @@ pub async fn counts_for(
         note_view::Entity::find()
             .select_only()
             .column(note_view::Column::NoteId)
-            .column_as(Expr::col(note_view::Column::Cnt).sum(), "total")
+            .column_as(sum_views(), "total")
             .filter(note_view::Column::NoteId.is_in(ids.clone()))
             .group_by(note_view::Column::NoteId)
             .into_tuple::<(i32, Option<i64>)>()
@@ -506,7 +519,7 @@ pub async fn note_report(
         note_view::Entity::find()
             .select_only()
             .column(note_view::Column::NoteId)
-            .column_as(Expr::col(note_view::Column::Cnt).sum(), "total")
+            .column_as(sum_views(), "total")
             .group_by(note_view::Column::NoteId)
             .into_tuple::<(i32, Option<i64>)>()
             .all(db)
@@ -567,7 +580,7 @@ pub async fn note_report(
         match note_view::Entity::find()
             .select_only()
             .column(note_view::Column::ViewDate)
-            .column_as(Expr::col(note_view::Column::Cnt).sum(), "total")
+            .column_as(sum_views(), "total")
             .filter(note_view::Column::NoteId.is_in(ids.clone()))
             .filter(note_view::Column::ViewDate.gte(start))
             .group_by(note_view::Column::ViewDate)
