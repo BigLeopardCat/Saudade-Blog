@@ -1,11 +1,21 @@
 import warnings
 warnings.filterwarnings("ignore")
 
+import os
 import requests
 import unittest
 import json
 
 BASE_URL = "http://localhost:3000"
+
+# 账号口令**不进仓库**（20260930）。此前这里是写死的真实账号（本站在用的那一个），
+# 仓库一公开就等于把凭据一起发了。要跑这套手动契约测试，自己把凭据给进来：
+#     BLOG_TEST_USER=... BLOG_TEST_PASSWORD=... python3 tests/frontend_contract/test_api.py
+# 不给也照跑：需要登录的用例自动跳过，公开路由那部分不受影响（**本文件不在 CI 里**，
+# 是手动跑的契约测试——正因如此，写死一个口令在这里没人会发现）。
+TEST_USER = os.environ.get("BLOG_TEST_USER", "")
+TEST_PASSWORD = os.environ.get("BLOG_TEST_PASSWORD", "")
+HAVE_CREDS = bool(TEST_USER and TEST_PASSWORD)
 
 class TestFrontendContract(unittest.TestCase):
 
@@ -14,8 +24,8 @@ class TestFrontendContract(unittest.TestCase):
         # Login to get token for protected routes
         try:
             res = self.session.post(f"{BASE_URL}/api/login", json={
-                "username": "sora",
-                "password": "123456"
+                "username": TEST_USER,
+                "password": TEST_PASSWORD
             })
             if res.status_code == 200:
                 self.token = res.json().get("data")
@@ -29,11 +39,12 @@ class TestFrontendContract(unittest.TestCase):
 
     # --- Public Routes ---
 
+    @unittest.skipUnless(HAVE_CREDS, "未提供 BLOG_TEST_USER / BLOG_TEST_PASSWORD")
     def test_login(self):
         """Test POST /api/login"""
         res = requests.post(f"{BASE_URL}/api/login", json={
-            "username": "sora",
-            "password": "123456"
+            "username": TEST_USER,
+            "password": TEST_PASSWORD
         })
         self.assertEqual(res.status_code, 200, "Login should succeed")
         self.assertIn("data", res.json(), "Response should contain data (token)")

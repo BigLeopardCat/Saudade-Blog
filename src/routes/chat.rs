@@ -2487,15 +2487,19 @@ mod tests {
     /// 令牌 `jti` 的解析（20260924）：核销的键必须来自**令牌原文**——客户端另传一个
     /// 字段当认领键，就等于让调用方自己指定"我要兑现哪张令牌"。
     ///
-    /// 下面那条长令牌是**真的**：由 agent 侧 `confirm.sign` 现签（`jti=fb7899a7…`），
-    /// 拷进来的。这条断言因此同时锁住跨语言那一层——Python 的 base64url 无填充编码
-    /// 与这里的解码器必须对上，哪天 agent 换了编码（或加了填充）这里会红。
+    /// 下面那条长令牌是**合成的**（20260930）：载荷按 agent 侧 `confirm.sign` 的形状
+    /// 现造（`v/uid/conv/exp/jti/skill/specs`，base64url 无填充），**签名段是假的**
+    /// （`FAKE-SIG`）——它不参与解码，而这条断言要锁的只是跨语言那一层：Python 的
+    /// base64url 无填充编码与这里的解码器必须对上，哪天 agent 换了编码（或加了填充）
+    /// 这里会红。
+    ///
+    /// 原先这里贴的是**一枚真令牌**（现签的，带真实 uid/conv/jti）。它当时就已过期，
+    /// 但仓库要公开 ⇒ 不该留真实签名的产物：真凭据一个字节都不进版本库。
+    /// 换掉它不影响这条断言要证的事——**值与锁无关，形状才有关**。
     #[test]
     fn token_jti_reads_payload_without_verifying() {
-        const REAL: &str = "eyJ2IjoyLCJ1aWQiOjcsImNvbnYiOjQyLCJleHAiOjE3OTAxOTQ2MzcsImp0aSI6ImZiNzg5OWE3\
-OTE2MTQ1OGYwM2E4YjEyMDg5ZjhjNTdmIiwic2tpbGwiOiJmYXZvcml0ZV9hZGQiLCJzcGVjcyI6W3sidG9v\
-bCI6ImFkZF9mYXZvcml0ZSIsImFyZ3MiOnsiYXJ0aWNsZV9pZCI6MTJ9fV19.ec1JP-MBgyu3LitO422E7F9gVgotMQQXsiQDb2ZsEDw";
-        assert_eq!(token_jti(REAL), "fb7899a79161458f03a8b12089f8c57f");
+        const SYNTHETIC: &str = "eyJ2IjoyLCJ1aWQiOjEsImNvbnYiOjEsImV4cCI6MTkwMDAwMDAwMCwianRpIjoiMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDEiLCJza2lsbCI6ImZhdm9yaXRlX2FkZCIsInNwZWNzIjpbeyJ0b29sIjoiYWRkX2Zhdm9yaXRlIiwiYXJncyI6eyJhcnRpY2xlX2lkIjoxMn19XX0.FAKE-SIG";
+        assert_eq!(token_jti(SYNTHETIC), "00000000000000000000000000000001");
         // 形状不对一律空串（空串 = 不核销 = 放行，见 claim_confirm_token）：
         // 没有点号 / 多一段 / 非 base64url 字符 / payload 不是 JSON / 没有 jti 字段
         assert_eq!(token_jti(""), "");
@@ -2507,8 +2511,8 @@ bCI6ImFkZF9mYXZvcml0ZSIsImFyZ3MiOnsiYXJ0aWNsZV9pZCI6MTJ9fV19.ec1JP-MBgyu3LitO422
         // 不验签是**故意**的（认领是自伤型的，真凭据在 agent 侧）：签名段随便换一个
         // 都照样解得出 jti——这条断言把"这是解码不是验证"写死，免得将来有人误以为
         // 这里已经有了一层校验
-        let tampered = format!("{}.AAAA", REAL.split('.').next().unwrap());
-        assert_eq!(token_jti(&tampered), "fb7899a79161458f03a8b12089f8c57f");
+        let tampered = format!("{}.AAAA", SYNTHETIC.split('.').next().unwrap());
+        assert_eq!(token_jti(&tampered), "00000000000000000000000000000001");
     }
 
     #[test]
