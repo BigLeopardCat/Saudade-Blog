@@ -1,6 +1,5 @@
 import SeoHelmet from "../../../components/SeoHelmet";
 import './index.sass'
-import {Avatar} from "antd";
 import SocialButton from "../../../components/Buttons/SocialButton";
 import {useEffect, useRef, useState} from "react";
 import type {CSSProperties} from "react";
@@ -11,10 +10,10 @@ import { motion } from 'framer-motion';
 import {formatNote, NoteType} from "../../../interface/NoteType";
 import {categoryList} from "../../../store/components/categories.tsx";
 import Article from "./Article.tsx";
+import NoteByline from "../../../components/NoteByline";
 import {useNavigate, useLocation} from "react-router-dom";
 import {SocialType} from "../../../interface/SocialType";
 import {getNotePage, getTopNotes} from "../../../apis/NoteMethods.tsx";
-import dayjs from "dayjs";
 import { resolveApiAssetUrl } from '../../../utils/runtimeApi';
 import { carouselCropOf, coverCropStyle } from '../../../utils/coverCrop';
 import { parseNoteTags } from '../../../utils/noteTags';
@@ -444,18 +443,10 @@ const ContentHome = () => {
                                     })}
                                 </div>
                                 <div className="topFooter" style={{ display: 'flex', alignItems: 'center', paddingBottom: '20px' }}>
-                                    <Avatar src={avatar} size={40} style={{ marginRight: 10 }} />
-                                    <span style={{ fontWeight: 'bold', marginRight: 10, lineHeight: '22px', fontSize: '14px' }}>{name}</span>
-                                    <div style={{ position: 'relative', display: 'flex', flexDirection: 'column' }}>
-                                         <span style={{ fontSize: 12, color: '#7f7e7e', lineHeight: '22px' }} className='post-date'>
-                                            <i className="iconfont icon-naozhong icon" style={{ fontSize: 14, display: 'inline', marginRight: '4px' }}></i>
-                                            发布于 {dayjs(item.createTime).format('YYYY-MM-DD')}
-                                         </span>
-                                         <span style={{ position: 'absolute', top: '100%', marginTop: '6px', left: 0, fontSize: 12, color: '#7f7e7e', lineHeight: '22px', whiteSpace: 'nowrap' }} className='post-date'>
-                                            <i className="iconfont icon-naozhong icon" style={{ fontSize: 14, display: 'inline', marginRight: '4px' }}></i>
-                                            更新于 {dayjs(item.updateTime).format('YYYY-MM-DD')}
-                                         </span>
-                                    </div>
+                                    {/* 头像 + 署名 + 两个日期（20261001）：与文章卡片那份逐字相同，
+                                        已抽到 `components/NoteByline`。传进去的 `avatar`/`name`
+                                        是**站点级兜底**，文章自己有作者记录时用文章那份。 */}
+                                    <NoteByline item={item} siteAvatar={avatar} siteName={name} />
                                 </div>
                             </div>
                         </div>

@@ -11,6 +11,7 @@ import MarkdownNavbar from 'markdown-navbar'
 import 'markdown-navbar/dist/navbar.css'
 import Loading from "../../Loading";
 import scrollToTop from "../../../utils/scrollToTop.tsx";
+import { noteAuthor } from "../../../utils/noteAuthor";
 import { coverCropMotionStyle, cropFromRow } from "../../../utils/coverCrop";
 import { resolveApiAssetUrl } from "../../../utils/runtimeApi";
 import { useIsDarkMode } from "../../../theme";
@@ -123,6 +124,12 @@ const ReadArticle = () => {
     const loggedIn = !!getToken()
     const { has: hasFaved } = useFavorites(loggedIn)
     const faved = loggedIn && hasFaved(id)
+
+    // 横幅信息卡里的那个头像与名字**属于这篇文章**，不是站点主人的（20261001）。
+    // 改造前这里直接渲染 redux 的 `avatar`/`name`（站点级那一份），于是"管理员发的文章
+    // 顶着超级管理员的头像"——判据只有一份，见 `utils/noteAuthor.ts`。传进去的
+    // `avatar`/`name` 是**兜底**：文章没有作者记录（老文章）时才用它们。
+    const who = noteAuthor(article, { name, avatar })
 
     // 阅读量 / 点赞量（20260930）。三个状态**各自可为空**、互不牵连：
     //   · `views === null` = 还没读到（或读失败）⇒ **整块不显示**，绝不显示 0
@@ -543,8 +550,8 @@ const ReadArticle = () => {
                         >
                             <div className="readInfo">
                                 <Flex gap={"small"} justify={"center"} align={"center"}>
-                                    <Avatar src={avatar} size={40} className="frontAvatar" />
-                                    {name}
+                                    <Avatar src={who.avatar} size={40} className="frontAvatar" />
+                                    {who.name}
                                 </Flex>
                                 <h1>{article?.noteTitle}</h1>
                                 <h3>{dayjs(article?.updateTime).format("YYYY-MM-DD")}</h3>

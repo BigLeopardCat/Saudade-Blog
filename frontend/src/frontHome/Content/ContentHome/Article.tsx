@@ -1,11 +1,10 @@
 import LazyImage from "../../../components/LazyImage";
-import {Avatar} from "antd";
+import NoteByline from "../../../components/NoteByline";
 import {motion} from "framer-motion";
 import React, {useEffect, useRef, useState} from "react";
 import {NoteType} from "../../../interface/NoteType";
 import {CategoriesType} from "../../../interface/CategoriesType";
 import {renderNoteTags} from "../../../apis/TagMethods.tsx";
-import dayjs from "dayjs";
 import { coverCropStyle, cropFromRow } from "../../../utils/coverCrop";
 import { EyeIcon, HeartIcon, StarIcon } from "../../../components/NoteStatIcons/index.tsx";
 import { statCells } from "../../../utils/noteStats";
@@ -122,18 +121,10 @@ const Article:React.FC<ArticleOption> = ({ item, index, Categories, avatar, name
                             {renderNoteTags(item.noteTags,tagList)}
                         </div>
                         <div className="ArticleFooter" style={{ display: 'flex', alignItems: 'center', paddingBottom: '20px', marginTop: '10px' }}>
-                        <Avatar src={avatar} size={40} style={{ marginRight: 10 }} />
-                        <span style={{ fontWeight: 'bold', marginRight: 10, lineHeight: '22px', fontSize: '14px' }}>{name}</span>
-                        <div style={{ position: 'relative', display: 'flex', flexDirection: 'column' }}>
-                             <span style={{ fontSize: 12, color: '#7f7e7e', lineHeight: '22px' }} className='post-date'>
-                                <i className="iconfont icon-naozhong icon" style={{ fontSize: 14, display: 'inline', marginRight: '4px' }}></i>
-                                发布于 {dayjs(item.createTime).format('YYYY-MM-DD')}
-                             </span>
-                             <span style={{ position: 'absolute', top: '100%', marginTop: '6px', left: 0, fontSize: 12, color: '#7f7e7e', lineHeight: '22px', whiteSpace: 'nowrap' }} className='post-date'>
-                                <i className="iconfont icon-naozhong icon" style={{ fontSize: 14, display: 'inline', marginRight: '4px' }}></i>
-                                更新于 {dayjs(item.updateTime).format('YYYY-MM-DD')}
-                             </span>
-                        </div>
+                        {/* 头像 + 署名 + 两个日期（20261001）：这段标记与置顶轮播那份逐字相同，
+                            已抽到 `components/NoteByline`。这里传进去的 `avatar`/`name` 是
+                            **站点级兜底**（redux `state.user`），文章自己有作者记录时用文章那份。 */}
+                        <NoteByline item={item} siteAvatar={avatar} siteName={name} />
                     </div>
                     </div>
                 </div>

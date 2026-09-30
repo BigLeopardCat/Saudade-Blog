@@ -136,17 +136,21 @@ pub async fn get_web_settings(
 /// 首页头部与文章卡片却还显示站点设置里那个旧值。**刻意不回退到 `username`**：
 /// 那是登录账号，公开接口没有理由把它印在全站每一张卡片上（`user.nickname` 为空时
 /// 站点设置那个值更合适）。
-pub async fn get_user_info(
-    State(state): State<Arc<AppState>>,
-) -> Json<ApiResponse<UserInfoResponse>> {
-    let infos = web_info::Entity::find().all(&state.db).await.unwrap_or(vec![]);
+/// 站点级署名（`(author, avatar)`）：**站点主人**是谁——uid=1 的 `nickname`/`avatar`，
+/// 为空才回退站点设置（`web_info.author` / `web_info.avatar`，老数据那条路）。
+///
+/// **两个调用方共用这一份实现**（20261001）：`GET /api/public/user`（头部/页脚/首页大
+/// 标题）与文章卡片的**作者回退**（`routes/notes.rs::attach_authors`——文章没有作者记录时
+/// 回退到它）。两处口径必须逐字相同，否则同一篇文章在卡片上与页脚上会是两个人名。
+pub(crate) async fn site_author(db: &sea_orm::DatabaseConnection) -> (String, String) {
+    let infos = web_info::Entity::find().all(db).await.unwrap_or(vec![]);
 
     let get_val = |k: &str| -> String {
-         infos.iter().find(|i| i.key_name == k).map(|i| i.value.clone()).unwrap_or("".to_string())
+        infos.iter().find(|i| i.key_name == k).map(|i| i.value.clone()).unwrap_or_default()
     };
 
     // 头像与署名同源（uid=1 那一行），一次查询取两样
-    let owner = user::Entity::find_by_id(1).one(&state.db).await.unwrap_or(None);
+    let owner = user::Entity::find_by_id(1).one(db).await.unwrap_or(None);
 
     let avatar = owner
         .as_ref()
@@ -159,6 +163,20 @@ pub async fn get_user_info(
         .map(|u| u.nickname.trim().to_string())
         .filter(|n| !n.is_empty())
         .unwrap_or_else(|| get_val("author"));
+
+    (author, avatar)
+}
+
+pub async fn get_user_info(
+    State(state): State<Arc<AppState>>,
+) -> Json<ApiResponse<UserInfoResponse>> {
+    let infos = web_info::Entity::find().all(&state.db).await.unwrap_or(vec![]);
+
+    let get_val = |k: &str| -> String {
+         infos.iter().find(|i| i.key_name == k).map(|i| i.value.clone()).unwrap_or("".to_string())
+    };
+
+    let (author, avatar) = site_author(&state.db).await;
 
     let data = UserInfoResponse {
         avatar,

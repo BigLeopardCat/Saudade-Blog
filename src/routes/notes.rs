@@ -1,9 +1,9 @@
-use axum::{Json, extract::{State, Query, Path}, http::StatusCode, response::{IntoResponse, Response}};
+use axum::{Json, extract::{State, Query, Path}, http::{HeaderMap, StatusCode}, response::{IntoResponse, Response}};
 use sea_orm::{EntityTrait, ColumnTrait, QueryFilter, QueryOrder, Condition, ActiveModelTrait, Set, PaginatorTrait, ActiveValue::NotSet};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use crate::entity::{note, category, tag_one, tag_two};
+use crate::entity::{note, category, tag_one, tag_two, user};
 use crate::routes::AppState;
 use crate::utils::ApiResponse;
 
@@ -82,6 +82,19 @@ pub struct NoteDto {
     // `None` = 这一路没有（或取不到）计数 ⇒ 卡片不渲染那一排；`Some(0)` = 挂了数且真的是
     // 0 ⇒ 显示 0。**"读不到"与"真的是 0"必须分得开**，否则统计接口一挂，站上每篇文章
     // 都会谎报"0 阅读"。
+    // ── 谁发的（20261001，见 `attach_authors`）──────────────────────────────
+    // **不留 id**（`skip`）：uid 是内部编号，公开接口没有理由印出去；它只在本模块内
+    // 走一趟（`map_note` 填 ⇒ `attach_authors` 读），用来把 user 行批量取回来。
+    #[serde(skip)]
+    pub author_id: Option<i32>,
+    // `None` = 这一路没解析（或解析失败）⇒ **键不出现**，前端回退站点级署名
+    // （与改造前逐字相同）。`Some` = 已经判定了是谁 ⇒ 卡片按它渲染。
+    // 「取不到」与「真的是站点主人发的」必须分得开：后者是事实，前者是没查着。
+    #[serde(rename = "authorName", skip_serializing_if = "Option::is_none")]
+    pub author_name: Option<String>,
+    #[serde(rename = "authorAvatar", skip_serializing_if = "Option::is_none")]
+    pub author_avatar: Option<String>,
+
     #[serde(rename = "views", skip_serializing_if = "Option::is_none")]
     pub views: Option<i64>,
     #[serde(rename = "likes", skip_serializing_if = "Option::is_none")]
@@ -126,6 +139,11 @@ fn map_note(n: note::Model, cat: Option<category::Model>) -> NoteDto {
         category_title: cat_name,
         is_public: n.is_public,
         tags: n.tags.unwrap_or_default(),
+        // 作者只搬 id 过来，名字/头像由 `attach_authors` 批量解析（`map_note` 是纯函数，
+        // 不查库——与 `attach_stats` 同一个分工）。
+        author_id: n.user_id,
+        author_name: None,
+        author_avatar: None,
         // 三个数一律留空：挂数是**列表接口**的事（`attach_stats`），详情接口不挂。
         // 想给详情接口也带数请先读 `note_stats` 模块头注——那条路被看板娘频繁读取。
         views: None,
@@ -171,6 +189,7 @@ pub async fn list_public_notes(
         map_note_summary(n, cat)
     }).collect();
     attach_stats(&state.db, &mut dtos).await;
+    attach_authors(&state.db, &mut dtos).await;
 
     Json(ApiResponse::success(dtos))
 }
@@ -191,9 +210,10 @@ pub async fn list_all_notes(
         .await
         .unwrap_or(vec![]);
 
-    let dtos = notes.into_iter().map(|(n, cats)| {
+    let mut dtos: Vec<NoteDto> = notes.into_iter().map(|(n, cats)| {
         map_note_summary(n, cats.into_iter().next())
     }).collect();
+    attach_authors(&state.db, &mut dtos).await;
 
     Json(ApiResponse::success(dtos))
 }
@@ -500,6 +520,7 @@ pub async fn search_notes(
         map_note_summary(n, cats.into_iter().next())
     }).collect();
     attach_stats(&state.db, &mut dtos).await;
+    attach_authors(&state.db, &mut dtos).await;
 
     Json(ApiResponse::success(dtos))
 }
@@ -596,9 +617,14 @@ pub async fn search_all_notes(
             .collect()
     };
 
-    let dtos = notes.into_iter().map(|(n, cats)| {
+    let mut dtos: Vec<NoteDto> = notes.into_iter().map(|(n, cats)| {
         map_note_summary(n, cats.into_iter().next())
     }).collect();
+    // 署名照挂（20261001）：本函数是后台列表的搜索入口，**与 `list_all_notes` 同一族**。
+    // 这里不挂的话，同一篇文章在后台列表里署名是站点级、在公开首页上却是作者本人——
+    // 而"某条路径忘了挂"正是这个 bug 的复发形状（见 `attach_authors` 头注）。
+    // 统计（`attach_stats`）**刻意不挂**：后台列表不显示三个数，见 `NoteDto` 里那段。
+    attach_authors(&state.db, &mut dtos).await;
 
     Json(ApiResponse::success(dtos))
 }
@@ -659,16 +685,21 @@ pub async fn get_top_notes(
         map_note_summary(n, cats.into_iter().next())
     }).collect();
     attach_stats(&state.db, &mut dtos).await;
+    attach_authors(&state.db, &mut dtos).await;
 
     Json(ApiResponse::success(dtos))
 }
 
 pub async fn create_note(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(payload): Json<UpsertNoteRequest>,
 ) -> Json<ApiResponse<String>> {
     let title = payload.title.unwrap_or_else(|| "Untitled".to_string());
     let content = payload.content.unwrap_or_default();
+    // 发布者 = 这一刻的操作者（auth_uid = 验签 + 查库 + 冻结/收回判据，与河灯同一处出口）。
+    // 解不出来就留 NULL（= 未记录）⇒ 展示端回退站点级署名，不编一个人名上去。
+    let author = crate::auth_jwt::auth_uid(&state.db, &headers).await.ok();
     
     // Determine is_public logic
     let mut is_public = payload.is_public.unwrap_or(true);
@@ -693,6 +724,7 @@ pub async fn create_note(
         carousel_zoom: Set(payload.carousel_zoom.map(clamp_zoom)),
         is_top: Set(payload.is_top),
         status: Set(Some(status_str)),
+        user_id: Set(author),
         created_at: Set(chrono::Local::now().naive_local()),
         updated_at: Set(chrono::Local::now().naive_local()),
         tags: Set(payload.tags),
@@ -708,6 +740,7 @@ pub async fn create_note(
 pub async fn update_note(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i32>,
+    headers: HeaderMap,
     Json(payload): Json<UpsertNoteRequest>,
 ) -> Json<ApiResponse<String>> {
     // 是不是「从编辑器提交的完整发布」：编辑器一定同时带 noteTitle + noteContent。
@@ -733,7 +766,17 @@ pub async fn update_note(
 
     if let Some(n) = target {
         let target_id = n.id;
+        // 作者只在**为空**时补写：「谁发的」是发布那一刻的事实，别人后来编辑这篇文章
+        // （改标题/改状态/换个管理员接手）都不该把署名改成最后保存的那个人。
+        // 为空的两条路：老文章第一次被编辑时补上、以及失败的写入重试。
+        let author_missing = n.user_id.is_none();
         let mut active_model: note::ActiveModel = n.into();
+
+        if author_missing {
+            if let Ok(uid) = crate::auth_jwt::auth_uid(&state.db, &headers).await {
+                active_model.user_id = Set(Some(uid));
+            }
+        }
 
         if let Some(v) = payload.title { active_model.title = Set(v); }
         if let Some(v) = payload.content { active_model.content = Set(v); }
@@ -826,9 +869,12 @@ pub async fn get_note_detail(
         .await
         .unwrap_or(vec![]);
 
-    let dto = res.into_iter().next().map(|(n, cats)| {
+    // 详情页头部同样按**文章作者**渲染（与卡片同一份判据，不是站点主人）
+    let mut dtos: Vec<NoteDto> = res.into_iter().next().map(|(n, cats)| {
         map_note(n, cats.into_iter().next())
-    });
+    }).into_iter().collect();
+    attach_authors(&state.db, &mut dtos).await;
+    let dto = dtos.into_iter().next();
 
     // 20260902：文章不存在/不可见时返回 HTTP 404（此前 200+data:null）——前端
     // ReadArticle 的 notFound 判定依赖 err.response.status===404，200+null 会让
@@ -857,6 +903,54 @@ pub async fn get_note_detail(
 ///
 /// 只挂在**公开列表**（首页/分类页的卡片、搜索、置顶）上；后台那两个列表不挂——那里一次
 /// 可能拉上千行（Times 归档页 `page_size=999`），而这三个数的消费者只有卡片。
+/// 给这一批文章挂上「谁发的」（`note.user_id` → 那个账号的 `nickname`/`avatar`）。
+///
+/// **回退链**（与 `web_info::site_author` 共用站点级那一份，口径只有一处）：
+///   行里的 uid 有 → 取那个账号的昵称/头像（空则继续往下退）；
+///   uid 为 NULL（本列之前发布的老文章 / 发布者账号已销）→ **站点级署名**，
+///   也就是改造前卡片上显示的那一份 ⇒ 存量文章的外观一个像素都不变。
+///
+/// **失败时一个键都不写**（`return` 而不是回退）：查库失败意味着"没查着"，
+/// 与"这个人没有昵称"是两件事。键缺席 ⇒ 前端照旧用站点级署名渲染，屏幕上没有假的
+/// 人名；写一个站点级署名冒充"查着了"才是错的。
+///
+/// 一次查询取回整批（同一页最多几十个不同作者，实际上通常只有一个）。
+async fn attach_authors(db: &sea_orm::DatabaseConnection, dtos: &mut [NoteDto]) {
+    let ids: Vec<i32> = dtos.iter().filter_map(|d| d.author_id)
+        .collect::<std::collections::HashSet<i32>>().into_iter().collect();
+    if ids.is_empty() {
+        return;
+    }
+
+    let users = match user::Entity::find()
+        .filter(user::Column::Id.is_in(ids))
+        .all(db)
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!("[notes] 作者查询失败，本页不挂署名（前端回退站点级）: {e}");
+            return;
+        }
+    };
+    let by_id: HashMap<i32, user::Model> = users.into_iter().map(|u| (u.id, u)).collect();
+    let (site_name, site_avatar) = crate::routes::web_info::site_author(db).await;
+
+    for dto in dtos.iter_mut() {
+        let owner = dto.author_id.and_then(|id| by_id.get(&id));
+        let name = owner
+            .map(|u| u.nickname.trim().to_string())
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| site_name.clone());
+        let avatar = owner
+            .and_then(|u| u.avatar.clone())
+            .filter(|a| !a.trim().is_empty())
+            .unwrap_or_else(|| site_avatar.clone());
+        dto.author_name = Some(name);
+        dto.author_avatar = Some(avatar);
+    }
+}
+
 async fn attach_stats(db: &sea_orm::DatabaseConnection, dtos: &mut [NoteDto]) {
     let ids: Vec<i32> = dtos.iter().map(|d| d.id).collect();
     match crate::routes::note_stats::counts_for(db, &ids).await {
@@ -984,6 +1078,7 @@ async fn resolve_autosave_target(
 
 pub async fn autosave_note(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(payload): Json<AutosaveDraftRequest>,
 ) -> Json<ApiResponse<AutosaveDraftResult>> {
     let client_id = payload.id;
@@ -994,7 +1089,17 @@ pub async fn autosave_note(
     };
 
     let is_revision = target.draft_of.is_some();
+    // 草稿也要记作者：它是"这篇文章是谁开写的"的第一现场，比发布更早。
+    // 与 update_note 同规矩——只在为空时写（新建的那行草稿在建行的第一次自动保存
+    // 就补上；修改稿是从原行克隆的，user_id 已经带过来了）。
+    let author_missing = target.user_id.is_none();
     let mut am: note::ActiveModel = target.into();
+
+    if author_missing {
+        if let Ok(uid) = crate::auth_jwt::auth_uid(&state.db, &headers).await {
+            am.user_id = Set(Some(uid));
+        }
+    }
 
     if let Some(v) = payload.title { am.title = Set(v); }
     if let Some(v) = payload.content { am.content = Set(v); }
