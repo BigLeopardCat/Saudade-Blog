@@ -1,4 +1,4 @@
-//! 文章阅读量 / 点赞量（20260930）。
+//! 文章阅读量 / 点赞量 / 收藏量（20260930）。
 //!
 //! ## ★ 阅读量**绝不能**记在 `get_note_detail` 里（新模块头一条纪律）
 //!
@@ -54,7 +54,8 @@ use crate::entity::{note, note_like, note_view, user_favorite};
 use crate::routes::AppState;
 use crate::utils::ApiResponse;
 
-/// 排行榜长度（阅读榜、点赞榜各取前 N）。
+/// 排行榜长度（阅读榜、点赞榜、收藏榜各取前 N；**Python 侧 `reports._RANK_TOP` 是同一个
+/// 数**，报表里那句"下列前 N 名"按它写，改一侧必须同步另一侧）。
 const TOP_N: usize = 10;
 
 /// 阅读总量的求和表达式——**所有 `SUM(cnt)` 都必须从这里出去**。
@@ -77,11 +78,20 @@ const TREND_DAYS: i64 = 30;
 // 出参
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// 单篇文章的读数。`views` 与 `likes` 是**计数**，`liked` 是**"当前这位访客点过没有"**。
+/// 单篇文章的读数。`views`/`likes`/`favorites` 是**计数**，`liked` 是**"当前这位访客
+/// 点过没有"**。
+///
+/// `favorites`（20260930 补）与卡片上那一排是同一个数（`counts_for` 的第三张表）：
+/// 卡片（列表）早就有它了，单篇读数此前只有两个数——**看板娘读文章详情时因此答不出
+/// "这篇有多少人收藏"**，而列表帧里同一个数又是有的（自相矛盾的两份事实）。
+/// 它是**计数**、不是"我收藏了没有"（那个状态在 `user_favorite` 里按 uid 存，
+/// 此处刻意不做成 `favorited: bool`：读接口拿不到身份时按 `liked` 的成例会恒 false，
+/// 那是个假事实）。
 #[derive(Serialize, Default)]
 pub struct NoteStatsDto {
     pub views: i64,
     pub likes: i64,
+    pub favorites: i64,
     /// 未登录 / 令牌已收回 / 账号被冻结 ⇒ false。**这不表示"请求失败"**（见模块头注 1）。
     pub liked: bool,
 }
@@ -134,6 +144,16 @@ async fn likes_of(db: &DatabaseConnection, note_id: i32) -> Result<i64, DbErr> {
         .map(|n| n as i64)
 }
 
+/// 收藏数。`COUNT(*)`（BIGINT）而非 `SUM`——**没有 `sum_views` 那个 DECIMAL 陷阱**
+/// （见 `sum_views` 的注释：只有求和要过 `CAST`）。
+async fn favorites_of(db: &DatabaseConnection, note_id: i32) -> Result<i64, DbErr> {
+    user_favorite::Entity::find()
+        .filter(user_favorite::Column::NoteId.eq(note_id))
+        .count(db)
+        .await
+        .map(|n| n as i64)
+}
+
 /// 这个人点过没有。`None`（未登录/令牌作废）= 没点过。
 async fn liked_by(db: &DatabaseConnection, note_id: i32, uid: Option<i32>) -> bool {
     let Some(uid) = uid else { return false };
@@ -164,6 +184,7 @@ async fn read_stats(
     Ok(NoteStatsDto {
         views: views_of(db, note_id).await?,
         likes: likes_of(db, note_id).await?,
+        favorites: favorites_of(db, note_id).await?,
         liked: liked_by(db, note_id, uid).await,
     })
 }
@@ -429,8 +450,12 @@ pub struct NoteRankRow {
     #[serde(rename = "noteId")]
     pub note_id: i32,
     pub title: String,
+    /// 三个数**每一行都带**（哪怕这一行只出现在另一个榜上）：榜是按其中一个数排的，
+    /// 但看榜的人（后台与看板娘）下一个问题必然是"那篇的赞/收藏呢"。
+    /// `rank()` 只按 `metric` 排序，**不改这三个数**。
     pub views: i64,
     pub likes: i64,
+    pub favorites: i64,
 }
 
 #[derive(Serialize, Default)]
@@ -450,10 +475,18 @@ pub struct NoteStatsReportDto {
     pub total_views: i64,
     #[serde(rename = "totalLikes")]
     pub total_likes: i64,
+    /// 当前可见文章的收藏量合计（同 `total_views`/`total_likes` 的口径）
+    #[serde(rename = "totalFavorites")]
+    pub total_favorites: i64,
+    /// 三个榜：**数组顺序即名次**（第 0 项 = 第 1 名），没有单独的 rank 字段。
+    /// 同一个名次在不同榜上可以不是同一篇——消费方（后台面板 / 看板娘报表）
+    /// 必须把"哪个榜的第几名"说清楚，别把两个榜的序号串起来用。
     #[serde(rename = "topViewed")]
     pub top_viewed: Vec<NoteRankRow>,
     #[serde(rename = "topLiked")]
     pub top_liked: Vec<NoteRankRow>,
+    #[serde(rename = "topFavorited")]
+    pub top_favorited: Vec<NoteRankRow>,
     /// 最近 30 天，**定长 30 行、缺日补零**（见下）
     pub daily: Vec<DailyRow>,
 }
@@ -548,6 +581,23 @@ pub async fn note_report(
         Err(e) => return Json(ApiResponse::error(&e)),
     };
 
+    let favorites = match sum_by_note(
+        user_favorite::Entity::find()
+            .select_only()
+            .column(user_favorite::Column::NoteId)
+            .column_as(Expr::col(user_favorite::Column::Id).count(), "total")
+            .group_by(user_favorite::Column::NoteId)
+            .into_tuple::<(i32, Option<i64>)>()
+            .all(db)
+            .await,
+        "user_favorite",
+    )
+    .await
+    {
+        Ok(m) => m,
+        Err(e) => return Json(ApiResponse::error(&e)),
+    };
+
     let all_rows = |m: &HashMap<i32, i64>| -> Vec<NoteRankRow> {
         titles
             .iter()
@@ -556,12 +606,14 @@ pub async fn note_report(
                 title: title.clone(),
                 views: views.get(id).copied().unwrap_or(0),
                 likes: likes.get(id).copied().unwrap_or(0),
+                favorites: favorites.get(id).copied().unwrap_or(0),
             })
             .filter(|r| m.get(&r.note_id).copied().unwrap_or(0) > 0)
             .collect()
     };
     let top_viewed = rank(all_rows(&views), &views);
     let top_liked = rank(all_rows(&likes), &likes);
+    let top_favorited = rank(all_rows(&favorites), &favorites);
 
     // 趋势：最近 30 天。**必须补零**——SQL 不会为没流量的日子造行，直接返回会给出
     // 一根根断掉的横轴（周五有数、周六周日整个消失，看起来像数据丢了）。
@@ -640,6 +692,11 @@ pub async fn note_report(
         .filter(|(id, _)| visible_ids.contains(id))
         .map(|(_, v)| *v)
         .sum();
+    let total_favorites: i64 = favorites
+        .iter()
+        .filter(|(id, _)| visible_ids.contains(id))
+        .map(|(_, v)| *v)
+        .sum();
 
     let mut daily: Vec<DailyRow> = daily.into_values().collect();
     daily.sort_by(|a, b| a.date.cmp(&b.date));
@@ -648,8 +705,10 @@ pub async fn note_report(
         generated_at: crate::routes::stats::format_ts(chrono::Local::now().naive_local()),
         total_views,
         total_likes,
+        total_favorites,
         top_viewed,
         top_liked,
+        top_favorited,
         daily,
     }))
 }
