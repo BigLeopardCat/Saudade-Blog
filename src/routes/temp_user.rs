@@ -15,6 +15,34 @@ pub struct CreateTempUser {
     pub password: String,
 }
 
+// ── 账号变更通知（20261001，用户要求「账号权限身份变更系统也发通知」）────────────
+//
+// 冻结 / 解冻 / 变更身份三件事**都会让当事人手里的登录状态当场失效**（代次 +1），
+// 而此前它们只写 `tracing` 日志——服务端有记录，当事人那边一片安静。人忽然被踢下线
+// 却不知道为什么，只能来问博主；通知就是给当事人的那句解释。
+//
+// 三条纪律与留言审核通知同源（见 `notice.rs` 头注）：
+//   · **best-effort**：走 `push_notice`，它永不放回错误。账号已经冻结了，这时候为了
+//     "通知没发出去"回一句"操作失败"是假话（库里明明已经改完了）。
+//   · **正文由系统写死模板**，不采集任何用户输入，因此不受注入影响。
+//   · **时间戳同库钟面**（`chrono::Local`，+08:00，见 CLAUDE.md §时区约定），
+//     与后台列表、执行台账对得上，不做二次偏移。
+//
+// 注意冻结方向的通知**当事人当时看不到**：`authz::is_frozen` 会挡住他登录，
+// 这条要等他被解冻后才读得到。它仍要发——那正是"回来之后知道发生过什么"的唯一来源。
+
+/// 账号变更通知的正文模板。**写在这里一处**，三个调用点各自只给"变了什么"。
+///
+/// 落款固定是「博主」而不是发起人的昵称：后台能发起这三件事的只有管理员/超管
+/// （`authz::can_access_console`），而收到通知的多半不认识某个管理员的昵称——
+/// 说「博主」是他认得的那个身份。发起人 uid 在 `tracing` 日志里另有留痕。
+fn account_change_body(action: &str, when: &str) -> String {
+    format!(
+        "{when}，{action}。你此前登录的全部设备已失效，需要重新登录才能继续访问。\
+如有疑问请联系博主。",
+    )
+}
+
 #[derive(Deserialize)]
 pub struct ChangePasswordReq {
     pub password: String,
@@ -171,6 +199,20 @@ pub async fn set_user_status(
                 operator,
                 operator_row.role
             );
+            // 通知当事人（20261001）：必须**在 update 成功之后**发——先发后写会让
+            // 写失败时留下一条"你已被冻结"的假通知。best-effort，失败只记一行日志。
+            let when = chrono::Local::now().format("%Y年%m月%d日 %H:%M").to_string();
+            crate::routes::notice::push_notice(
+                &state.db,
+                user_id,
+                if frozen { "账号已被冻结" } else { "账号已解冻" },
+                Some(account_change_body(
+                    if frozen { "博主冻结了你的账号" } else { "博主解冻了你的账号" },
+                    &when,
+                )),
+                None,
+            )
+            .await;
             Json(crate::utils::ApiResponse::success(
                 if frozen { "账号已冻结，其登录状态已全部失效" } else { "账号已解冻，请让对方重新登录" }
                     .to_string(),
@@ -330,6 +372,9 @@ pub async fn set_user_role(
         )));
     }
     let new_ver = target.token_version + 1;
+    // 旧身份要先取出来：`target` 下面立刻被 `into()` move 走，而通知正文里
+    // "从什么变成什么"两个都得有（只说结果的通知读起来像是本来就该如此）。
+    let old_role = target.role.clone();
     let mut am: user::ActiveModel = target.into();
     am.role = Set(new_role.clone());
     am.token_version = Set(new_ver);
@@ -342,6 +387,22 @@ pub async fn set_user_role(
                 operator,
                 operator_row.role
             );
+            let when = chrono::Local::now().format("%Y年%m月%d日 %H:%M").to_string();
+            crate::routes::notice::push_notice(
+                &state.db,
+                user_id,
+                "账号身份已变更",
+                Some(account_change_body(
+                    &format!(
+                        "博主把你的身份从「{}」改为「{}」",
+                        crate::authz::role_label(&old_role),
+                        crate::authz::role_label(&new_role),
+                    ),
+                    &when,
+                )),
+                None,
+            )
+            .await;
             Json(crate::utils::ApiResponse::success(format!(
                 "身份已改为{}，该账号的登录状态已失效，请让对方重新登录",
                 crate::authz::role_label(&new_role)
@@ -471,8 +532,13 @@ pub async fn create_temp_user(
 
 pub async fn delete_temp_user(
     State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
     Path(user_id): Path<i32>,
 ) -> Json<crate::utils::ApiResponse<String>> {
+    // 谁在操作（20261001）：这一支此前是**全页唯一的黑箱**——没有 tracing、没有通知，
+    // 删完只剩一行不含操作人与账号名的 access log。误删之后查不出是谁、什么时候删的。
+    // 取不到发起人只是少一行日志，**不阻断删除**（与 `let _ =` 的辅助事实同口径）。
+    let operator = crate::auth_jwt::auth_uid(&state.db, &headers).await.ok();
     // 只允许删普通账号（20260926）：列表现在把管理员也列出来了，那是为了让博主
     // 看得见"后台有谁"，**不是**给这个入口一条删管理员的通道——删号会连带清空
     // 那个人的全部会话数据（见下面三行级联），误点一次不可逆。管理员账号要在
@@ -483,6 +549,13 @@ pub async fn delete_temp_user(
     if target.role != crate::authz::ROLE_USER {
         return Json(crate::utils::ApiResponse::error("该账号不是普通用户，不能在这里删除"));
     }
+    // 被删账号的称呼先拼好：`user` 行删掉之后 `target` 还在作用域里，但"删之前
+    // 先把它叫什么记下来"是这类审计行的常规写法，不依赖 move 时机。
+    let who = if target.nickname.trim().is_empty() {
+        target.username.clone()
+    } else {
+        format!("{}（{}）", target.nickname.trim(), target.username)
+    };
     // 删除临时用户时级联清理其全部会话数据（20260903 会话化补全：原实现漏删
     // chat_summary，属存量 bug；conversation 随会话化新增）
     let _ = crate::entity::chat_history::Entity::delete_many()
@@ -494,8 +567,36 @@ pub async fn delete_temp_user(
     let _ = crate::entity::conversation::Entity::delete_many()
         .filter(crate::entity::conversation::Column::UserId.eq(user_id))
         .exec(&state.db).await;
-    let _ = user::Entity::delete_by_id(user_id)
-        .exec(&state.db).await;
+    // 删主行**这一次不再吞错**（20261001）：这三个 `let _ =` 的级联删是辅助清理，
+    // 吞掉无所谓；但 `user` 行本身删失败时必须如实报——否则下面那条"账号已删除"
+    // 的审计通知就是假的，而误删恰恰是这次要防的事。
+    if let Err(e) = user::Entity::delete_by_id(user_id).exec(&state.db).await {
+        tracing::error!("[账号管理] 删除账号失败 uid={user_id}: {e}");
+        return Json(crate::utils::ApiResponse::error("删除失败，请稍后再试"));
+    }
+    // 审计留痕（20261001）：此前这一支**全函数没有一行 tracing**，误删之后再想查
+    // "谁在什么时候删了谁"只剩一条不含操作人的 access log。与冻结/改身份对齐。
+    tracing::info!(
+        "[账号管理] 删除账号 uid={}（{who}）（发起人 uid={:?}）",
+        user_id,
+        operator
+    );
+    // 给**博主本人**（uid=1）留一条通知（20261001）：被删的人已经没有收件箱了
+    // （通知行也随外键 CASCADE 一起没），所以这条不是"告知当事人"，而是给误删
+    // 留一个看得见的痕迹——用户这次正是误删了几个账号、事后才发现。
+    // 放在删除**成功之后**：删失败就没有这条，不留"已删除"的假记录。
+    // uid<=0（起始账号不在库）时 `push_notice` 自己会跳过，不必在这里分支。
+    crate::routes::notice::push_notice(
+        &state.db,
+        1,
+        "账号已删除",
+        Some(format!(
+            "{}，账号 {who}（uid={user_id}）已被删除，其会话与通知记录一并清除。此操作不可恢复。",
+            chrono::Local::now().format("%Y年%m月%d日 %H:%M"),
+        )),
+        None,
+    )
+    .await;
     Json(crate::utils::ApiResponse::success("用户已删除".to_string()))
 }
 
