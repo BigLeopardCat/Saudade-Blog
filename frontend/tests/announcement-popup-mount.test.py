@@ -61,11 +61,18 @@ import { createRoot } from 'react-dom/client';
 import AnnouncementModal from './src/components/AnnouncementModal/index.tsx';
 import { ConfigProvider, theme as antdTheme } from 'antd';
 const root = createRoot(document.getElementById('root')!);
-(window as any).__mount = () => root.render(<AnnouncementModal />);
-// 后台那一套（Dashboard 的壳）：同一个组件挂在 ConfigProvider(darkAlgorithm) 里。
-// 配色是否真的取 token，只有把两种主题都挂一遍才量得出来（写死的色值在两边一样）。
-(window as any).__mountDark = () => root.render(
-  <ConfigProvider theme={{ algorithm: antdTheme.darkAlgorithm }}><AnnouncementModal /></ConfigProvider>);
+(window as any).__mount = () => { localStorage.removeItem('isDarkMode'); root.render(<AnnouncementModal />); };
+// 后台那一套（Dashboard 的壳）：ConfigProvider(darkAlgorithm) + isDarkMode。
+// ⚠️ 20261001 起卡片穿的是 washi 手账皮，深浅**不由 antd token 决定**了：Modal 是
+// Portal 到 document.body 的，App 的 .frontDark / 后台的 .dark 都不是它的祖先，
+// 令牌取不到 ⇒ 组件改用 useIsDarkMode()（= localStorage.isDarkMode + darkmode-change
+// 事件，与后台壳里的 isDarkMode 同源）决定要不要加 `.washiDark`。
+// 所以这里两个都得给：darkAlgorithm 管 antd 自己那部分（遮罩、滚动条），
+// isDarkMode 管我们的纸底/胶带/渐变字。系统认的仍然是"同一个 isDarkMode"。
+(window as any).__mountDark = () => {
+  localStorage.setItem('isDarkMode', '"true"');
+  root.render(<ConfigProvider theme={{ algorithm: antdTheme.darkAlgorithm }}><AnnouncementModal /></ConfigProvider>);
+};
 (window as any).__clear = () => root.render(null);
 """
 
@@ -80,15 +87,31 @@ def build_sandbox() -> pathlib.Path:
 
     r = subprocess.run([str(FE / "node_modules/.bin/esbuild"), "entry.tsx",
                         "--bundle", "--format=iife", "--outfile=bundle.js",
-                        "--loader:.css=text", "--jsx=automatic",
+                        "--loader:.sass=text", "--jsx=automatic",
                         f"--define:{DEFINE}"],
                        cwd=str(sb), capture_output=True)
     if r.returncode != 0:
         # 宽容解码：esbuild 报错行可能落在中文上，严格 utf-8 解会先炸在解码、把真错盖掉。
         raise SystemExit("esbuild 打包失败：\n%s" % r.stderr.decode("utf-8", "replace"))
 
+    # ── 样式：卡片皮 + 全站令牌表 ──────────────────────────────────────────
+    # `node_modules/.bin/sass` 在 Node 18 上崩（chokidar 的 ESM 报错），走 programmatic API。
+    # ⚠️ 这两份**都必须在场**：组件自己的 .sass 管纸底/胶带/圆钮，index.css 管
+    # `--washi-*` 令牌（深色那一档只有它有）。少了 index.css，第 ⑨ 组量的就是
+    # var() 兜底字面量 —— 那会把"令牌没生效"读成"夜间没实现"。
+    css = []
+    out_css = sb / "announcement.css"
+    subprocess.run(["node", "-e",
+                    "const s=require('sass');const r=s.compile(process.argv[1],{style:'expanded'});"
+                    "require('fs').writeFileSync(process.argv[2],r.css);",
+                    str(FE / "src/components/AnnouncementModal/index.sass"), str(out_css)],
+                   cwd=str(FE), check=True)
+    css.append(out_css.read_text())
+    css.append((sb / "src/index.css").read_text())
+
     (sb / "index.html").write_text(
-        '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"></head>'
+        '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
+        f"<style>{''.join(css)}</style></head>"
         '<body><div id="root"></div><script src="bundle.js"></script>'
         '<script>window.__mount();</script></body></html>', encoding="utf-8")
     return sb
@@ -383,7 +406,7 @@ with sync_playwright() as p:
     # header 槽里、按钮有 borderRadius）挡不住"改回 body 里再叠 28px 上边距"这类
     # 回退——只有量出来的数值能挡。旧写法实测：卡片顶→标题 48px（= 卡片 20px 内边距
     # + 自己叠的 28px），而左右各 56px、右上角的 × 贴在 12px 处。
-    print("\n【八】几何：标题靠上且与左右内边距对齐、按钮是按 token 上色的胶囊")
+    print("\n【八】几何：标题靠上且与左右内边距对齐、按钮是渐变胶囊")
     set_token(pg, None)
     route(pg, {PUBLIC: ann_body([{"id": 11, "title": "几何测量用公告", "content": "正文十一",
                                   "createdAt": "2026-09-26 09:00:00"}])})
@@ -431,13 +454,17 @@ with sync_playwright() as p:
     check("按钮加高到 40px、最小宽 ≥ 140px（旧版是默认 32px/120px）",
           round(_btn["h"]) >= 40 and float(_bs["minWidth"].rstrip("px")) >= 140,
           f"h={round(_btn['h'])} minWidth={_bs['minWidth']}")
-    check("按钮底色**来自 antd token 的渐变**（不是写死的色值：浅色/深色两套各自成立）",
+    check("按钮底色是 `--washi-grad` 那支渐变（浅色/深色两档在 index.css 里各一份 ⇒ 不是写死的单一色值）",
           "gradient" in _bs["bgImage"], _bs["bgImage"][:60])
-    check("按钮文字比正文更醒目（15px ≥ 正文 15px 且是主色底白字）",
+    check("按钮文字比正文更醒目（15px ≥ 正文 15px）：浅色档是白字压深粉紫渐变",
           float(_bs["fontSize"].rstrip("px")) >= 15, _bs["fontSize"])
 
     # ── 九、同一张卡在深色主题下（后台那套）：配色必须跟着主题变（写死的色值做不到）──
-    print("\n【九】深色主题（后台 ConfigProvider(darkAlgorithm)）：配色跟着主题走")
+    # 20261001 起"深色"的判据从 antd token 换成 isDarkMode（见 ENTRY 里的注释）：
+    # 卡片是手账皮，纸底/胶带/渐变字全走 `--washi-*`，而 Modal Portal 到 body 上、
+    # 够不着 `.frontDark`/`.dark`，深色档只能由组件自己加的 `.washiDark` 兜住。
+    # __mountDark 同时给 darkAlgorithm 与 isDarkMode —— 两个来源仍是同一个 isDarkMode。
+    print("\n【九】深色主题（isDarkMode + ConfigProvider(darkAlgorithm)）：配色跟着主题走")
     pg.evaluate("() => localStorage.removeItem('announcement_seen_id')")
     pg.evaluate("() => window.__clear()")
     pg.wait_for_timeout(150)
