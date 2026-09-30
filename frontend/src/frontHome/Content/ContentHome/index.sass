@@ -84,19 +84,39 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
   55%, 100%
     opacity: 0
 
+// 标签条上那颗小星（`.heroTagStar` 引用它）。只有 opacity：合成器就能跑完，
+// 不碰布局、不碰前景重绘——这一屏和看板娘同屏，任何会重绘前景的动效都在抢同一份预算。
+@keyframes tag-twinkle
+  0%, 100%
+    opacity: 1
+  50%
+    opacity: 0.4
+
+// 置顶贴纸上斜掠而过的高光（`.Top::after` 引用它）。同样是 transform-only。
+// 0~62% 原地不动：常驻的扫光如果一直在跑，视线会被它反复勾住；留出大段静止，
+// 只在末尾"唰"地过一下。150px 的行程对 80px 宽的 pill 是够穿过去的（起点在 -40%）。
+@keyframes top-shine
+  0%, 62%
+    transform: translateX(0) skewX(-18deg)
+  88%, 100%
+    transform: translateX(150px) skewX(-18deg)
+
 // ── 首屏 hero（20260930 四轮重做：用户「主页也想要这种图片的风格」）────────────────
 // 参考图 = 粉紫淡彩的日系手账封面。落地成四层，**全部是静态渐变 + 位移/透明度动画**：
 //   ① `.collageBg` 柔和色块 + 方格纸    ② `.petals` 七片樱花
 //   ③ `.SayWords`  窗贴标签 / 描边渐变标题 / 命令条 / 社交按钮（文字列）
-//   ④ `.heroPanel` 视频从满屏底改成拼贴里的一张"手账内页"（白边 + 两角胶带）
-// ⚠️ 两条不许动的耦合，改这块前先读：
-//   · `padding-left: 8%` 与 `.home-title-h3` 的 **2.5rem**：Vitrine 的
-//     `left: calc(8vw + 450px)` 就是按"8% 左内边距 + 标题宽 437.9px + 12px 缝"算出来的
-//     （见 Vitrine/index.sass 头注）。字号/字距/字重**都**会改标题盒宽 ⇒ 夜里的展示柜
-//     窗口要么压住标题、要么隔出一条河。所以这次标题**只加了绘制层**（白描边、渐变填充、
-//     投影），一个影响度量的属性都没动，缝还是那道缝。
-//   · 夜里 `.frontDark` 把 `.heroPanel` 整块隐藏（视频本来就仅白天显示，20260902 用户要求）
-//     ——右半屏的晚上归展示柜窗口，两者不许同时在场。
+//   ④ `.heroRight` 右列 = `.heroPanel`（视频，手账内页）+ 它下面的 Vitrine（展示柜贴图）
+// ⚠️ 布局契约（20260930 五轮改写，读之前先忘掉旧版）：
+//   · **文字列与右列现在是"居中的一对"**（`justify-content: center`），不再
+//     `space-between` 顶到两端——用户要的是"左侧那一堆文本和组件往中间移动"。
+//     左内边距同时从 8% 提到 10%：居中只把**组**摆正，不改变"文字列贴左"这个观感，
+//     两条一起给才是"往中间去"。
+//   · **旧的"12px 缝"约束已作废**：那是给 `left: calc(8vw + 450px)` 的展示柜窗口算的，
+//     而展示柜现在住到视频下面去了（见 Vitrine/index.sass 头注）。标题字号因此可以
+//     自由放大（用户这次就要"文本放大"）——但**别再往回改小**：`clamp()` 的下限 2.5rem
+//     是"窄桌面不挤爆右列"的那条线，右列宽度与 gap 都跟着它配平（见下面 `.heroRight`）。
+//   · 夜里 `.frontDark` 仍然隐藏 `.heroPanel`（视频本来就仅白天显示，20260902 用户要求）
+//     ——于是夜里右列只剩展示柜那张卡，位置正好还是原来那个视觉落点。
 .SelfDescription
   position: relative
   // 色块的负偏移（`left: -12vw` 那类）会溢出到视口外，而页根没有 overflow-x 兜底
@@ -105,11 +125,12 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
   min-height: 100vh
   display: flex
   align-items: center
-  // 文字列在左、手账内页在右；夜里内页隐藏，右半屏空出来给展示柜窗口
-  justify-content: space-between
-  gap: 48px
-  // ⚠️ 8% 是 Vitrine 的左锚点，见上方头注
-  padding: 112px 6% 148px 8%
+  // 文字列在左、右列（视频 + 展示柜）在右。**居中而不是 space-between**（20260930 五轮，
+  // 用户「左侧那一堆文本和组件往中间移动」）——两组内容当成一对摆到内容区正中。
+  justify-content: center
+  gap: clamp(32px, 4vw, 80px)
+  // 左内边距 8% → 10%：居中只管"组"的位置，文字列相对左缘仍需再让一截
+  padding: 112px 6% 148px 10%
   background: var(--container-background-color)
 
   // ⚠️ 手机档这一段**必须写在上面那批声明之后**——sass 按源码位置原样吐进编译产物，
@@ -117,8 +138,11 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
   // 写在前面时 `padding` / `gap` / `justify-content` 全被父规则静默压掉，只剩
   // `flex-direction`（父规则没声明过）真的生效——20260930 出图核对时抓到的：375px 下
   // padding 实测仍是桌面的 `112px 6% 148px 8%`、文字与内页的间距是 48px 不是 28px。
-  // 同族坑在本文件出现过两次（另一处是 `.petal` 的 reduced-motion 档），
-  // `home-hero.test.py` 第 ⑨ 组现在拿编译产物做全量扫描，专门拦这一类。
+  // 同族坑在本文件出现过三次（另两处是 `.petal` 与 `.heroTagStar` 的 reduced-motion 档
+  // ——后者 20260930 被 `home-hero.test.py` 第 ⑧ 组抓出：基规则住在 `.heroTag` 块里，
+  // 覆写少写一层就少一档特异度）。**形状扫描**（全仓 52 个样式文件找"同选择器被后写者
+  // 静默压掉"）住在 `tests/sass-media-shadow.test.mjs`，进 CI 的秒级 job；
+  // `home-hero.test.py` 第 ⑤ 组那两条数值断言是同一件事的几何侧（这一档到底有没有生效）。
   @media screen and (max-width: 768px)
     // 手机上一列到底：文字在上、内页在下。原来是 `column-reverse`，那时内页要么是
     // 绝对定位的满屏视频、要么是注释掉的头像（都不占流），反向等于没写；现在内页真占位了，
@@ -240,23 +264,38 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
       animation-duration: 22s
       animation-delay: -11s
 
-  // ④ 手账内页：视频住进来（白边 + 两角胶带 + 一点点歪）
+  // ④ 右列 = 手账内页（视频）+ 它下面的展示柜贴图（20260930 五轮）。
+  // 列宽收在这一层，两张卡都吃 `100%`（原来宽度写在 `.heroPanel` 上，现在它只是
+  // 列里的第一张卡）。38vw / 520px 是配平出来的：左列标题在 `clamp()` 上限时约 534px，
+  // 加上 gap 与这一列，在 1366 那档刚好落在内容区（1440 × 0.84）之内 —— 不会再挤标题。
+  .heroRight
+    position: relative
+    z-index: 1
+    flex: 0 0 auto
+    width: min(38vw, 520px)
+    display: flex
+    flex-direction: column
+    @media screen and (max-width: 768px)
+      width: 100%
+
+  // 手账内页：视频住进来（白边 + 两角胶带 + 一点点歪）
   .heroPanel
     position: relative
     z-index: 1
     flex: 0 0 auto
     // 不用 overflow: hidden（会把探出去的胶带一起剪掉），圆角直接给 video
-    width: min(44vw, 560px)
+    width: 100%
     aspect-ratio: 4 / 3
     margin: 0
     padding: 12px 12px 14px
     background: #fffdfa
     border-radius: 14px
     box-shadow: 0 18px 44px rgba(120, 90, 140, 0.18)
-    // transform 不参与布局：歪一点点不会改盒宽，也就不会扰动右侧展示柜窗口的缝
+    // 歪一点点。⚠️ 现在下面接的是展示柜那张卡，`rotate` 会让四角纵向探出 ±5.4px
+    //（520px 宽 × sin1.2°）——`Vitrine` 的 `margin-top: 24px` 就是给它留的余量，
+    // 别把那个数往下压。
     transform: rotate(1.2deg)
     @media screen and (max-width: 768px)
-      width: 100%
       transform: none
     // 视频（20260902 起是静态合成层，无滤镜/无 backdrop）：帧变化在图层内部完成，
     // 不触发页面重栅格；离屏暂停见组件里的 IntersectionObserver（它找的就是 hero 里
@@ -310,18 +349,27 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
       display: inline-flex
       align-items: center
       gap: 7px
-      padding: 6px 14px
+      padding: 7px 16px
       border-radius: 999px
       background: rgba(255, 255, 255, 0.72)
       border: 1px solid rgba(214, 160, 200, 0.55)
       box-shadow: 0 6px 16px rgba(186, 120, 170, 0.16)
-      font-size: 14px
+      font-size: 15px
       letter-spacing: 0.06em
       color: #a4508b
       transform: rotate(-1.5deg)
       .heroTagStar
         color: #e58ec4
-        font-size: 13px
+        font-size: 14px
+        // 只有透明度动画：合成器就能跑完，不碰布局也不碰前景重绘
+        //（这块地皮紧挨着看板娘，任何会重绘前景的动效都在同一屏上抢 GPU）
+        animation: tag-twinkle 3.4s ease-in-out infinite
+      // 常驻动画**故意不挂在这条标签上**：它已经歪了 -1.5°，再让它持续摆动就是
+      // "一直在抖的控件"。要动只在鼠标上来时动一下。
+      transition: transform 0.35s ease, box-shadow 0.35s ease
+      &:hover
+        transform: rotate(-1.5deg) translateY(-3px)
+        box-shadow: 0 12px 24px rgba(186, 120, 170, 0.26)
 
     // 标题：**只加绘制层**（描边/渐变/投影），字号字距字重一个没动 —— 动一个都会改盒宽，
     // 夜里就会撞上展示柜窗口的那道 12px 缝（见本块头注）。`-webkit-text-stroke` 是纯绘制，
@@ -331,7 +379,10 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
     .home-title-h3
       margin: 0
       margin-top: 16px
-      font-size: 2.5rem
+      // 放大（20260930 五轮，用户「文本放大」）。旧值 2.5rem 是"缝"约束下的产物，
+      // 那条约束已随展示柜搬家作废（见本块头注）。上限 3.2rem 定在"两行标题不会
+      // 比右列高出一个头"的位置；下限仍留 2.5rem，窄桌面靠它不挤爆右列。
+      font-size: clamp(2.5rem, 3.6vw, 3.2rem)
       line-height: 1.18
       color: #b3175e
       -webkit-text-stroke: 3px #ffffff
@@ -356,7 +407,7 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
       background: rgba(40, 32, 54, 0.88)
       box-shadow: 0 10px 24px rgba(90, 60, 110, 0.18)
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace
-      font-size: 13.5px
+      font-size: 14.5px
       line-height: 1.2
       white-space: nowrap
       .termUser
@@ -374,11 +425,11 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
         animation: caret-blink 1.1s steps(1, end) infinite
 
     .Social
-      width: 300px
+      width: 336px
       display: flex
       flex-direction: row
       justify-content: space-between
-      margin-top: 20px
+      margin-top: 22px
   .frontAvatar
     width: min(320px, 70vw) !important
     height: min(320px, 70vw) !important
@@ -402,11 +453,27 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
     display: flex
     justify-content: center
 
+  // 下翻按钮（20260930 五轮）：从一枚裸的浅蓝大箭头改成手账贴纸钮。
+  // ⚠️ `transform` 归 `.upAndDown` 那条无限 `up-down` 动画所有 —— 动画声明压过
+  // 普通声明，所以这里**不要再写 hover transform**（写了也不生效，且会让人以为生效了）。
   .heroScroll
     position: absolute
     bottom: 20px
-    font-size: 50px
-    color: #87ceeb
+    width: 48px
+    height: 48px
+    display: flex
+    align-items: center
+    justify-content: center
+    font-size: 30px
+    border-radius: 50%
+    color: var(--washi-pink-deep, #d94f9a)
+    background: var(--washi-paper-2, #fff6fa)
+    border: 1px solid var(--washi-line, rgba(198, 152, 192, 0.42))
+    box-shadow: 0 12px 26px -14px rgba(120, 90, 140, 0.7)
+    transition: box-shadow 0.3s ease, background 0.3s ease
+    &:hover
+      background: var(--washi-tape, rgba(255, 222, 238, 0.86))
+      box-shadow: 0 16px 32px -14px rgba(120, 90, 140, 0.9)
 
   // 手机档：`.SayWords` 已被上面那条 media 拉满整行，标题就可以按行宽排。
   // 2.5rem 在 375px 上要折两行还贴着边，降到 2rem；描边同时收细（3px 描边在 32px 的字上
@@ -436,6 +503,20 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
     .SayWords .heroTerminal .termCaret
       animation: none
       opacity: 1
+    // 20260930 五轮新增的两处：标签条上那颗星、签名底下那道"手写画线"。
+    // ⚠️ 星那条必须补到 `.heroTag`（全链 4 类）：基规则住在 `.heroTag` 块里，
+    // 少写一层就少一档特异度，`animation: none` 会被基规则静默压掉 —— 与上面
+    // `.petal` / `.termCaret` 那两条是同一个坑的第三次（20260930 由新套件抓出）。
+    .SayWords .heroTag .heroTagStar
+      animation: none
+      opacity: 1
+    .SayWords .home-one-say::after
+      animation: none
+      // 手写动画是 `both` 填充，`animation: none` 后会退回"未动画"状态 —— 那条线宽 62%
+      // 却停在 transform 的初始值上（`translateX(-50%) scaleX(?)` 由 keyframe 给，
+      // 取消动画后没有 transform ⇒ 变成从 left:50% 起画 62% 宽、右偏出容器）。
+      // 直接给它终态。
+      transform: translateX(-50%)
 
 .upAndDown
   animation-name: up-down
@@ -481,23 +562,56 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
       .Top
         top: -40px
 
+    // 置顶贴纸（20260930 五轮）：原来是「紫粉橙三段渐变 + 白字」的胶囊，落在这套手账皮里
+    // 像一枚从别的站点飘过来的旧控件。现在是**纸底 + 渐变胶带边 + 斜掠高光**。
+    // 几何（80×30 / top: -20px / left: 10px）一个数没动：`top: -20 → -40` 这段悬停位移
+    // 是它与卡片咬合的关系，动了就等于换了一张皮底下换了骨。
     .Top
       position: absolute
       top: -20px
       left: 10px
       margin-bottom: 20px
-      background: linear-gradient(to left, #6E35FF, #EE64C2,#FFCB8E)
-      border-radius: 10px
-      width: 80px
-      height: 30px
       display: flex
       align-items: center
-      color: white
+      justify-content: center
+      width: 80px
+      height: 30px
+      border-radius: 999px
+      // 裁掉伪元素：高光与胶带边都在边界外起手，不裁会糊到卡片上
+      overflow: hidden
+      font-size: 13px
       font-weight: 700
-      transition: 0.3s
+      letter-spacing: 0.08em
+      color: var(--washi-pink-deep, #d94f9a)
+      background: var(--washi-paper, #fffdfa)
+      border: 1px solid var(--washi-line, rgba(198, 152, 192, 0.42))
+      box-shadow: 0 10px 22px -12px rgba(120, 90, 140, 0.85)
+      transition: top 0.3s ease, box-shadow 0.3s ease
+      // 顶上那道渐变胶带边（与头部 `.headContainer::after` 同一套语言）
+      &::before
+        content: ''
+        position: absolute
+        left: 0
+        right: 0
+        top: 0
+        height: 3px
+        background: var(--washi-grad, linear-gradient(100deg, #ff7fc0, #b06ee8))
+      // 斜掠而过的高光，**只动 transform**（合成器就能跑完）。
+      // ⚠️ 常驻动效绝不能写在这条 pill 自己的 `transform` 上：JSX 内联了
+      // `transform: translateY(-40%)`（index.tsx 那行），内联特异性最高，CSS 里的
+      // transform 一律不生效 —— 写了会"看起来生效了"却什么都不动。位移只能交给伪元素。
+      &::after
+        content: ''
+        position: absolute
+        top: -30%
+        bottom: -30%
+        left: -40%
+        width: 22px
+        background: linear-gradient(100deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0))
+        transform: skewX(-18deg)
+        animation: top-shine 4.2s ease-in-out infinite
       &:hover
-        top: -40px
-        top: -40px
+        box-shadow: 0 16px 30px -12px rgba(120, 90, 140, 1)
 
     .TopCover
       border-radius: 15px 0 0 15px
@@ -1394,13 +1508,108 @@ html[data-theme='dark'] .SayWords h2
   margin: 0
   white-space: nowrap
   font-family: 'LXGW WenKai TC', 'Kaiti SC', 'STKaiti', 'KaiTi', serif
-  font-size: 17px
+  font-size: 20px
   font-weight: 400
-  letter-spacing: 2px
-  color: rgba(30, 30, 44, 0.92)
+  letter-spacing: 3px
+  // 兜底实体色（不吃 background-clip 的环境走它），渐变在 @supports 里替换
+  color: #b3175e
   text-shadow: 0 1px 3px rgba(255, 255, 255, 0.7)
   cursor: default
-
-// 暗色模式：白字（上方 V13 .frontDark 规则已 !important 覆盖颜色），补暗色投影
+  // 底下一道"手写画线"：一次性从左画到右，之后不再动（不做常驻动画——
+  // 这条签名紧挨着看板娘，没理由让一层像素永远在重绘）
+  &::after
+    content: ''
+    position: absolute
+    left: 50%
+    bottom: -8px
+    width: 62%
+    height: 6px
+    border-radius: 3px
+    background: var(--washi-grad, linear-gradient(100deg, #ff7fc0, #b06ee8))
+    opacity: 0.55
+    transform-origin: center
+    animation: sig-draw 1.1s 0.45s cubic-bezier(0.22, 0.68, 0.24, 1) both
+// 暗色模式：白字（上方 V13 .frontDark 规则已 !important 覆盖颜色），补暗色投影。
+// ⚠️ 这条必须**写在下面那个 `@supports` 之前**：渐变档里要用同选择器把投影关掉，
+// 同特异性下靠源序取胜（`@supports` 是条件组规则，不改变特异性，只按位置算先后）。
 .frontDark .home-one-say
   text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6)
+
+@keyframes sig-draw
+  from
+    transform: translateX(-50%) scaleX(0)
+  to
+    transform: translateX(-50%) scaleX(1)
+
+@supports (-webkit-background-clip: text) or (background-clip: text)
+  .home-one-say
+    background-image: var(--washi-grad, linear-gradient(100deg, #ff7fc0 0%, #b06ee8 52%, #63b8e8 100%))
+    -webkit-background-clip: text
+    background-clip: text
+    // ⚠️ 夜间档那条 V13 规则是 `color: #ffffff !important`，它压不掉这里的渐变——
+    // `-webkit-text-fill-color` 是**另一个属性**，渲染时盖过 `color`。删掉这一行
+    // 就会变成"夜里一整条白字"，别删。
+    -webkit-text-fill-color: transparent
+    // ⚠️ 上面那两条 text-shadow 在渐变档里**必须关掉**：`background-clip: text` 的背景下，
+    // 投影画在字形**里面**（填充透明 ⇒ 投影从笔画里透出来），3px 的白晕会把渐变洗淡、
+    // 夜里那道黑晕会把亮渐变压脏。投影本来只是"糊在背景上时的可读性垫片"，
+    // 而渐变本身就是对比度，两者不该同时存在。
+    text-shadow: none
+
+  .frontDark .home-one-say
+    text-shadow: none
+
+// ── 文章标签 chip（20260930 五轮）──────────────────────────────────────────────
+// 首页置顶卡与普通文章卡上的分类标签。**不用 antd `<Tag color=…>`**：那个 `color` 会落成
+// **内联**的 background/border/color（内联特异性最高），想换成手账皮就只能 `!important`
+// 硬压。现在是纯 span，标签自己的色相由 JSX 从 CSS 变量 `--tg` 递进来（`style` 里只有
+// 变量、没有颜色），配色一律在这里说了算。
+//
+// 两处渲染端共用这一份样式：`ContentHome/index.tsx`（置顶卡，带子标签回查）与
+// `apis/TagMethods.tsx::renderNoteTags`（普通卡 + articleRecord）。后台的
+// `renderNoteTagsCollapsed` **没改**，那边仍是 antd Tag（列宽只有 22%，皮换不动）。
+//
+// 定位方式刻意用 `inline-flex + margin` 而不是容器 `display: flex + gap`：
+// `.tags` 是个跨页面复用的通用类名，改它等于改所有用它的地方；chip 自己是 inline 级，
+// 在块容器里天然换行，一个类名就能自洽。
+.tagChip
+  display: inline-flex
+  align-items: center
+  gap: 5px
+  margin: 5px 6px 5px 0
+  padding: 3px 10px
+  border-radius: 999px
+  font-size: 12px
+  line-height: 1.6
+  letter-spacing: 0.02em
+  white-space: nowrap
+  color: var(--washi-ink-2, #7c6584)
+  background: var(--washi-paper-2, #fff6fa)
+  border: 1px solid var(--washi-line, rgba(198, 152, 192, 0.42))
+  box-shadow: 0 5px 12px -8px rgba(120, 90, 140, 0.7)
+  transition: transform 0.25s ease, background 0.25s ease, box-shadow 0.25s ease
+  &:hover
+    transform: translateY(-2px) rotate(-1deg)
+    background: var(--washi-tape, rgba(255, 222, 238, 0.86))
+    box-shadow: 0 9px 18px -9px rgba(120, 90, 140, 0.9)
+
+// 色点 = **整条 chip 上唯一的彩色来源**（`--tg` 是标签自己的色相）。
+// 白圈是"贴纸压在纸上"的那道边：少了它，色点在深色底上会糊成一团。
+.tagChipDot
+  flex: none
+  width: 7px
+  height: 7px
+  border-radius: 50%
+  background: var(--tg, #b9a7f5)
+  box-shadow: 0 0 0 2px var(--washi-paper-2, #fff6fa)
+
+// 减少动效（顶层一条，与 `.SelfDescription` 里那条分开写——`.TopArticle` 不在它的作用域里，
+// 而且这里的选择器本来就够长，不需要像那边一样补全链）
+@media (prefers-reduced-motion: reduce)
+  .Top::after
+    animation: none
+    opacity: 0
+  .tagChip
+    transition: none
+    &:hover
+      transform: none
