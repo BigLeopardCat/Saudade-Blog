@@ -7,7 +7,7 @@
 现场（用户要求）："主页也想要这种图片的风格"（参考图 = 粉紫淡彩的日系手账封面），
 五轮又追加了四条：顶栏要能看清、卡片换同风格、"文本往中间移动 + 文本放大"、
 **展示柜搬到视频下面**。六轮（20261001）再改两处：夜里**不再隐藏**那张手账内页、
-展示柜的翻页改成"像翻日历"（详见第 ⑥b 组）。改法是**只重做首屏**：
+展示柜的翻页从"像翻日历"改成"**撕下来**"（详见第 ⑥b 组）。改法是**只重做首屏**：
 
   ① `.collageBg` 柔和色块 + 方格纸     ② `.petals` 七片樱花
   ③ `.SayWords` 窗贴标签 / 描边渐变标题 / 命令条 / 社交按钮 / 签名 / 下翻钮
@@ -33,9 +33,13 @@
   ⑥ 展示柜卡片的结构契约（翻页 / 放大）：`perspective` 必须挂在卡片自己身上、
      `overflow: hidden` 不许写在 `.vit-3d` 上、放大态靠 flex 居中而不是 transform —— 三条
      各有一次踩坑史，都在 `Vitrine/index.sass` 头注里。这组一半量几何、一半读源码。
-     ⑥b 是六轮新增的**翻页形态**那组（用户第 2/3 条）：绕顶边掀走（`transform-origin:
-     50% 0`）、老的正反面反转必须消失、掀过去要真隐藏、左下角的纸角 + 弧形箭头、
-     底下那沓垫纸。判据里的"老形态已消失"是**反断言**——比"新形态在"更能挡住回退。
+     ⑥b 是七轮重写的**翻页形态**那组（用户第 2 条）：左下角一枚**规矩的折角**（缺口 +
+     翻过来的那一片，两个都由 `--k` 驱动，且**一点都不探出卡片边缘**——六轮那枚撇到纸外的
+     小三角正是用户说的"突兀"）、原地不再翻转（`.vit-cover` 的 `transform-origin` 与全文件的
+     `rotateX` 都必须不在）、扯走后那一页真隐藏且**折角搬到新台面上**（循环不会断）、
+     掉落的那张纸是 portal 到 body 的 `position: fixed` 克隆。判据里"老形态已消失"是
+     **反断言**——比"新形态在"更能挡住回退（六轮的 `vit-flip` / `vit-cornerArrow` /
+     `vit-nudge` 三件道具一并钉死不许回潮）。
   ⑦ 纪律：不许 `filter: blur()` / `backdrop-filter`（后台 GPU 事故的放大器），樱花只动
      transform/opacity（读编译产物的 `@keyframes` 原文），`prefers-reduced-motion` 下樱花
      不出现、光标常亮 —— 且**带牙**：正常档下这些动画必须是活的（否则"两边都 none"也能绿）。
@@ -116,7 +120,9 @@ HERO = """
           <span class="vit-coverStar">✦</span><span class="vit-coverTitle">词图关系图谱</span>
         </div>
       </div>
-      <button class="vit-corner" id="vitcorner" type="button"></button>
+      <button class="vit-corner" id="vitcorner" type="button">
+        <span class="vit-ear" id="vitear"></span>
+      </button>
     </section>
   </div>
   <div class="heroBottom" id="bottom">
@@ -200,7 +206,10 @@ PAINT = """(o) => {
     term: R('#term'), caret: R('#caret'), social: R('#social'), panel: R('#panel'),
     video: R('#video'), tapeL: R('#tapeL'), tapeR: R('#tapeR'), right: R('#right'),
     vit: R('#vit'), vit3d: R('#vit3d'), vitface: R('#vitface'), vitcorner: R('#vitcorner'),
-    vitpanel: R('#vitpanel'), vitunder: R('#vitunder'),
+    vitpanel: R('#vitpanel'), vitunder: R('#vitunder'), vitear: R('#vitear'),
+    // 第 ⑥b 组：折角进度 `--k` 住在 `.vitrine` 上（自定义属性，不是声明 —— 只有读计算值
+    // 才能证明"静止档真的折着"，读源码只能证明有人写了个数）。
+    vitK: getComputedStyle(document.getElementById('vit')).getPropertyValue('--k').trim(),
     bottom: R('#bottom'), onesay: R('#onesay'), scroll: R('#scroll'), collage: R('#collage'),
     viewport: { w: window.innerWidth, h: window.innerHeight },
     docOverflow: { scrollW: doc.scrollWidth, clientW: doc.clientWidth,
@@ -469,48 +478,97 @@ with sync_playwright() as p:
           "留着会让人以为还有那条缝）",
           "8vw + 450px" not in VITRINE_CSS and "calc(8vw + 450px)" not in VITRINE_CSS)
 
-    print("\n== ⑥b 翻页改成「像翻日历」：绕顶边掀走 + 左下角纸角（20261001 六轮，用户第 2/3 条）==")
-    check("★ 封面绕**顶边**掀走：`.vit-cover` 的 `transform-origin` 竖直分量必须是 0"
-          "（即 `50% 0`）。这就是「翻日历」与「正反面反转」的分界线——"
-          "绕元素自己的中线转，观感就是同一张卡翻面（五轮那版）",
-          m["vitface"]["transformOrigin"].endswith(" 0px"),
-          f"实测 {m['vitface']['transformOrigin']}")
-    check("  · `.vit-panel` 块里不再有 `rotateX(180deg)`（下一页躺平不动，"
-          "当年靠它与 `.vit-3d` 的 180° 对消）",
-          "rotateX(180deg)" not in css_rule(VITRINE_CSS, ".vit-panel"),
-          css_rule(VITRINE_CSS, ".vit-panel")[:80].replace("\n", " "))
-    check("  · `.vitrine.is-flipped` 只作用在 `.vit-cover` 上（不再有 `.vit-3d` 那条）",
+    print("\n== ⑥b 翻页改成「撕下来」：左下角一枚规矩的折角 + 掉出屏幕（20261001 七轮）==")
+    # 用户第 2 条原话：「手账左下角不是要一个**突兀的折角**，而是当前页面的左下角视觉上被折到
+    # 前面了，然后翻页效果是左下角向右上角扯过去，然后当前页从胶带下面脱落掉到博客底部消失，
+    # 掉落的纸张形状和物理动作也要逼真，虽然视觉上被扯下来，但是实际上翻页依然是页面循环」。
+    # 六轮那套「绕顶边掀走 + 撇出纸外的小三角 + 弧形粗箭头」整体作废。**反断言优先**：
+    # 旧形态「已不在」比新形态「在」更能挡住回退（本套件的老规矩）。
+    tsx = VITRINE_TSX.read_text(encoding="utf-8")
+    check("★ 折角**常驻**：`.vitrine` 的 `--k` 静止值是 0.2 而不是 0"
+          "（0 = 纸面完好无损、哪都下不了手；用户要的是「左下角视觉上被折到前面」，"
+          "那枚折角就是把手）",
+          re.search(r"--k:\s*0\.2\s*;", css_rule(VITRINE_CSS, ".vitrine")) is not None
+          and m["vitK"] == "0.2",
+          f"源码 .vitrine 块 {css_rule(VITRINE_CSS, '.vitrine')[:60]!r} / 计算值 {m['vitK']!r}")
+    check("★ 缺口深度与那片折角由**同一个** `--k` 驱动（`--ear = calc(var(--k) * 120px)`）"
+          "—— 拖拽时两者一起长，这是「扯」唯一看得见的地方",
+          "calc(var(--k) * 120px)" in VITRINE_CSS
+          and "calc(var(--k) * 120px)" in (VITRINE_CSS.split("--ear:")[1][:40] if "--ear:" in VITRINE_CSS else ""),
+          "见 .vitrine 的 --ear")
+    check("  · `EAR_MAX`（TSX 的 120）与 sass 那个 120px 是同一个数",
+          "const EAR_MAX = 120" in tsx and "calc(var(--k) * 120px)" in VITRINE_CSS)
+    # ── 折角的形状：这是用户那句「突兀」的正题 ────────────────────────────────
+    check("★ 折角**完全落在纸里侧**、一点都不探出卡片边缘"
+          "（六轮那枚三角撇到卡片外，正是「突兀」的来源 —— 纸角不可能长到纸外面去）",
+          m["vitcorner"]["left"] >= m["vit"]["left"] - 1
+          and m["vitcorner"]["bottom"] <= m["vit"]["bottom"] + 1
+          and m["vitear"]["left"] >= m["vit"]["left"] - 1
+          and m["vitear"]["bottom"] <= m["vit"]["bottom"] + 1,
+          f"corner.l {m['vitcorner']['left']} / ear.l {m['vitear']['left']}"
+          f" vs vit.l {m['vit']['left']}；corner.b {m['vitcorner']['bottom']}"
+          f" / ear.b {m['vitear']['bottom']} vs vit.b {m['vit']['bottom']}")
+    check("★ 那片纸是**右上三角**、缩放原点是盒子的左下角"
+          "（= 卡片底左角 ⇒ `scale(--k)` 得到的正是「折了 k×120px 那么大」的一片）",
+          m["vitear"]["clipPath"].replace(" ", "").count(",") == 2
+          and m["vitear"]["transformOrigin"] == "0px 120px",
+          f'{m["vitear"]["clipPath"][:60]} / {m["vitear"]["transformOrigin"]}')
+    check("★ 静止档量出来是 `scale(0.2)`（不是 1、也不是 none）",
+          m["vitear"]["transform"].startswith("matrix(0.2,"),
+          m["vitear"]["transform"])
+    check("★ 封面左下角那道**缺口**在（`clip-path` 是 5 顶点：左下角被切掉一角）",
+          m["vitface"]["clipPath"] not in ("none", "")
+          and m["vitface"]["clipPath"].replace(" ", "").count(",") == 4,
+          f"实测 {m['vitface']['clipPath'][:70]}")
+    # ── 「翻」这个动作换人了：原地不留翻转 ──────────────────────────────────
+    check("★ 六轮那套「绕顶边掀走」已撤：`.vit-cover` 不再定 `transform-origin`、"
+          "全文件没有一处 `rotateX`（这一页是被**抽走**的，原地不动）",
+          not m["vitface"]["transformOrigin"].endswith(" 0px")
+          and "rotateX" not in VITRINE_CSS
+          and "rotateX" not in tsx,
+          f'origin {m["vitface"]["transformOrigin"]} / rotateX {"在" if "rotateX" in VITRINE_CSS else "已撤"}')
+    check("  · `.vitrine.is-flipped` 那次翻转也不再作用于 `.vit-3d`"
+          "（五轮的正反面反转同样不许回潮）",
           ".vitrine.is-flipped .vit-cover" in VITRINE_CSS
           and ".vitrine.is-flipped .vit-3d" not in VITRINE_CSS)
-    flip_rule = css_rule(VITRINE_CSS, ".vitrine.is-flipped .vit-cover")
-    check("★ 掀过去的封面要**真的隐藏**（`visibility: hidden` + 延迟到转过 90° 才生效）："
-          "只靠 `backface-visibility` 它仍在滚动溢出计算里——那半张纸停在卡片上方"
-          "一个卡高的位置，页面顶部会多出一块能滚的空白",
-          "visibility: hidden" in flip_rule and "0.34s" in flip_rule,
-          flip_rule.replace("\n", " ")[:110])
-    check("★ 翻页要**看得见**：缓动不许沿用五轮那条起步就冲的曲线"
-          "（`0.22, 0.68, 0.24, 1` 在 94ms 就转过 90°，观感是闪一下、不是翻）",
-          "cubic-bezier(0.22, 0.68, 0.24, 1)" not in flip_rule,
-          "见 .vit-cover 的 transition")
-    check("★ 封面左下角有**缺口**（`clip-path` 切掉一角，露出下面那页）",
-          m["vitface"]["clipPath"] not in ("none", "") and "polygon" in m["vitface"]["clipPath"],
-          f"实测 {m['vitface']['clipPath'][:60]}")
-    check("★ 翻页钮已撤，改左下角的 `.vit-corner`（仍是个 `<button>` ⇒ Tab 可达）",
-          "vit-flip" not in VITRINE_CSS
-          and "vit-flip" not in VITRINE_TSX.read_text(encoding="utf-8")
-          and ".vit-corner" in VITRINE_CSS and m["vitcorner"] is not None,
-          f"corner {'在场' if m['vitcorner'] else '缺失'}")
-    check("★ 纸角**向外撇出**卡片边缘（用户原话「略微向外侧翻折」）："
-          "它的左缘必须探到卡片左缘之外、下缘探到卡片下缘之外",
-          m["vitcorner"]["left"] < m["vit"]["left"]
-          and m["vitcorner"]["bottom"] > m["vit"]["bottom"],
-          f"corner.left {m['vitcorner']['left']} vs vit.left {m['vit']['left']}；"
-          f"corner.bottom {m['vitcorner']['bottom']} vs vit.bottom {m['vit']['bottom']}")
-    check("  对照组：normal 档下箭头**在动**（否则下面那条 reduced-motion 是空的）",
-          "vit-nudge" in VITRINE_CSS
-          and "vit-nudge" in "".join(
-              k for k in re.findall(r"@keyframes\s+([a-z-]+)", VITRINE_CSS)),
-          "见 sass 里的 @keyframes vit-nudge")
+    # 翻过去之后的状态：封面真隐藏、折角跟着搬到还在台面上的那一页
+    flip = pg.evaluate("""() => {
+      document.getElementById('vit').classList.add('is-flipped');
+      const R = (sel) => { const el = document.querySelector(sel);
+        const cs = getComputedStyle(el); const b = el.getBoundingClientRect();
+        return { vis: cs.visibility, clip: cs.clipPath,
+                 l: Math.round(b.left), b: Math.round(b.bottom), w: Math.round(b.width) }; };
+      return { cover: R('#vitface'), panel: R('#vitpanel'), vit: R('#vit') };
+    }""")
+    check("★ 扯走的那一页要**真的隐藏**：只靠 `backface-visibility` 它仍在滚动溢出计算里，"
+          "同一页也会同时存在两张（克隆纸在 body 上掉）",
+          flip["cover"]["vis"] == "hidden", flip["cover"]["vis"])
+    check("★ 折角**跟着搬到台面上那一页**（谁在上面谁才有缺口）——"
+          "于是扯完永远还有地方下手，`-k` 循环不会断",
+          flip["panel"]["clip"] not in ("none", "")
+          and flip["panel"]["clip"].replace(" ", "").count(",") == 4
+          and flip["panel"]["w"] == flip["vit"]["w"],
+          f'ref {flip["panel"]["clip"][:60]}')
+    # ── 掉下去的那张纸 ─────────────────────────────────────────────────────
+    fall_rule = css_rule(VITRINE_CSS, ".vit-fall")
+    check("★ 掉落的那张纸是 `position: fixed` + `pointer-events: none`"
+          "（fixed 不参与滚动溢出 —— 留在 `.vitrine` 里绝对定位掉，"
+          "纸一边掉、文档高度一边长，滚动条会当众跳一下）",
+          "position: fixed" in fall_rule and "pointer-events: none" in fall_rule,
+          fall_rule.replace("\n", " ")[:100])
+    check("  · 克隆纸**不带缺口**（`clip-path: none` —— 被扯下来的是一整张纸，不缺角）",
+          "clip-path: none" in css_rule(VITRINE_CSS, ".vit-fall .vit-face"))
+    check("★ TSX 里真把它 portal 到 `document.body`（不 portal 的话上面那条 fixed 白写）",
+          "createPortal" in tsx and "document.body" in tsx)
+    check("★ 折角回位是**交还静止档**（`removeProperty('--k')`），不是写 0"
+          "（`setEar(0)` 会把纸角摊平 —— 与上面「常驻折角」那条直接矛盾）",
+          "removeProperty('--k')" in tsx and "setEar(0)" not in tsx)
+    check("★ 旧道具已撤：翻页钮 `vit-flip`、弧形箭头 `vit-cornerArrow` 与 `vit-nudge` "
+          "在 CSS 与 TSX 里都不该再出现",
+          all(k not in VITRINE_CSS and k not in tsx
+              for k in ("vit-flip", "vit-cornerArrow", "vit-nudge")),
+          "、".join(k for k in ("vit-flip", "vit-cornerArrow", "vit-nudge")
+                    if k in VITRINE_CSS or k in tsx) or "全部已撤")
     check("★ 多层叠纸：`.vit-under` 按 `--d` 往下错开、且压在主卡**之下**"
           "（今天 `EXHIBITS` 只有一件 ⇒ 真页面渲染 0 层，这里放两层验 CSS 是活的）",
           m["vitunder"] is not None
@@ -518,18 +576,22 @@ with sync_playwright() as p:
           and m["vitunder"]["zIndex"] == "0",
           f"under.bottom {m['vitunder']['bottom']} / vit.bottom {m['vit']['bottom']}"
           f" / z {m['vitunder']['zIndex']}")
+    check("★ 松手弹回有过渡（`.vit-ear` 的 `transition`），拖拽期间关掉它"
+          "（`.vitrine.is-peeling` —— 有滞后的话折角追不上指针）",
+          "transition: transform" in css_rule(VITRINE_CSS, ".vit-ear")
+          and "transition: none" in css_rule(VITRINE_CSS, ".vitrine.is-peeling .vit-ear"),
+          css_rule(VITRINE_CSS, ".vit-ear").replace("\n", " ")[-90:])
     # reduced-motion 块在文件**末尾**（sass 按源码位置吐规则，同特异性后写者赢）。
     # 切出这一段来判，别在全文件里找 —— 那份里到处都有 `animation: none`。
     rm_v = VITRINE_CSS[VITRINE_CSS.index("@media (prefers-reduced-motion"):]
-    rm_arrow = re.search(r"\.vit-cornerArrow\s*\{([^}]*)\}", rm_v)
-    rm_cover = re.search(r"\.vit-cover\s*\{([^}]*)\}", rm_v)
-    check("★ reduced-motion 档关掉弧形箭头的动效",
-          bool(rm_arrow) and "animation: none" in rm_arrow.group(1),
-          (rm_arrow.group(1).strip() if rm_arrow else "未找到 .vit-cornerArrow 的档"))
-    check("★ reduced-motion 档关掉翻页过渡（`transition: none` —— 顺带把那条 0.39s 的"
-          "visibility 延迟一并关掉，这正是想要的：隐藏态立刻生效）",
-          bool(rm_cover) and "transition: none" in rm_cover.group(1),
-          (rm_cover.group(1).strip() if rm_cover else "未找到 .vit-cover 的档"))
+    rm_vit = re.search(r"\.vitrine\s*\{([^}]*)\}", rm_v)
+    check("★ reduced-motion 档只留「关掉入场淡入」：纸**根本不掉**"
+          "（TSX 的 `prefersReducedMotion()` 直接跳过抛体），"
+          "所以那一档里不该再有描述折角/箭头的规则残留",
+          bool(rm_vit) and "animation: none" in rm_vit.group(1)
+          and "vit-cornerArrow" not in rm_v and "vit-flip" not in rm_v,
+          (rm_vit.group(1).strip() if rm_vit else "未找到 .vitrine 的档"))
+    # 上面那条改过 DOM（加了 `is-flipped`），后面的组都要重新 PAINT 才干净。
 
     print("\n== ⑦ 夜间档：内页与白天同一张纸（不再隐藏）、拼贴换深色、标题披粉白渐变 ==")
     pg.set_viewport_size({"width": 1440, "height": 900})
@@ -613,8 +675,14 @@ with sync_playwright() as p:
     check("★ 图谱面**翻到之前不挂载**（`exhibits` 那条是 `lazy(...)`，早退没了以后"
           "这是唯一的性能闸：没人翻页就一份图数据都不下载）",
           "{mounted && (" in vtsx and "setMounted(true)" in vtsx)
-    check("★ 翻页钮拦冒泡（它住在卡片里，不拦的话这一下会同时命中卡片的「放大」）",
-          "e.stopPropagation()" in vtsx and "handleFlip" in vtsx)
+    check("★ 折角拦冒泡（它住在卡片里，不拦的话这一下会同时命中卡片的「放大」）——"
+          "拖拽那三个指针事件**每一个**都要拦，漏一个就在放大态里把卡片点开了",
+          vtsx.count("e.stopPropagation()") >= 4
+          and "onPointerDown={onPointerDown}" in vtsx
+          and "onPointerMove={onPointerMove}" in vtsx
+          and "onPointerUp={onPointerUp}" in vtsx
+          and "onPointerCancel={onPointerUp}" in vtsx,
+          f"stopPropagation ×{vtsx.count('e.stopPropagation()')}")
     check("★ 放大态锁文档滚动 + Esc 关闭（不然滚轮推着底下页面走）",
           "document.body.style.overflow" in vtsx and "Escape" in vtsx)
 

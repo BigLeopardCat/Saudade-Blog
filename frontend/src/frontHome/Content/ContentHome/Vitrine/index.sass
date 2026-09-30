@@ -2,9 +2,12 @@
 //
 // 形态见 index.tsx 的头注。这里只记几何契约与两条禁令。
 //
-// 六轮改了哪三处（对应用户第 2/3 条）：① 翻页从"整块正反面反转"改成"封面绕顶边掀走"
-// （`transform-origin: 50% 0`，见 `.vit-cover`）；② 翻页钮撤掉，改左下角的纸角 + 弧形箭头
-// （见 `.vit-corner`）；③ 底下那沓垫纸（见 `.vit-under`）。
+// 七轮改了哪两处（对应用户第 2 条）：① 翻页从"封面绕顶边掀走"改成"**撕下来**"——
+// 左下角那枚折角（`.vit-ear`）被往右上扯，扯到头这一页就从胶带底下抽走、掉出屏幕
+// （抛体在 TSX 里，掉的是 body 上的克隆纸 `.vit-fall`）；② 左下角那枚"缺口 + 撇出纸外的
+// 小三角 + 弧形粗箭头"整体撤掉（用户原话：突兀），换成规矩的翻折角。
+//
+// 六轮留下的（仍然现行）：底下那沓垫纸（见 `.vit-under`）。
 //
 // ⛔ ① 不要用 backdrop-filter：本站有两次同因事故记录（App.sass:10-11、
 //    ContentHome/index.sass:81-82），半透明观感一律靠 rgba 底色 + 静态渐变。
@@ -18,6 +21,14 @@
 // 而展示柜现在按用户要求住到视频下面，缝的前提不存在了。docs/word-graph.md §8.1
 // 那七组视口实测记录的是旧形态，别再照着它校新布局。
 .vitrine
+  // 折角进度（0..1），由拖拽直接写在 DOM 上（`style.setProperty('--k', …)`，见 TSX 的
+  // `setEar`——走 React state 会把图谱组件一起重渲染 60 次/秒）。
+  //   · `--ear` 是它换算出来的**缺口深度**：右下角那一刀切多深，也是那片折角多大；
+  //   · 静止时不是 0 而是 0.2 —— 用户要的是"**左下角视觉上被折到前面了**"，
+  //     折角本身就是那个可下手的把手。0 的话纸上什么都看不见，又回到"得猜从哪翻"。
+  // ⚠️ 120px 与 TSX 的 `EAR_MAX` 是**同一个数**，改一处要改两处。
+  --k: 0.2
+  --ear: calc(var(--k) * 120px)
   position: relative
   width: 100%
   // 24px = 上面那张内页 `rotate(1.2deg)` 探出来的角（520px 宽 × sin1.2° ≈ 5.4px）
@@ -97,36 +108,27 @@
   -webkit-backface-visibility: hidden
   border: 1px solid var(--washi-line, rgba(198, 152, 192, 0.42))
 
-// 封面（这一页）：手账纸 + 描边渐变字。翻页时**绕顶边**向上掀走。
+// 封面（这一页）：手账纸 + 描边渐变字。
 //
-// `transform-origin: 50% 0` 是"像翻日历"的全部秘密：少了它，`rotateX(180deg)` 就是
-// "绕自己的中线翻面"——那正是五轮被用户点名换掉的正反面反转。有了它，下缘朝观者掀起、
-// 越过头顶落向卡片**上方**，跟翻记事本一个动作。
-//
-// `visibility` 那条**延迟**不是装饰，是两件事：
-//   ① 掀过 90° 后背面朝前、已被 `backface-visibility` 隐去，此刻把元素真正设成 hidden，
-//      它就不再参与滚动溢出计算——否则掀过去的那半会停在卡片上方一个卡高的位置，
-//      页面顶部多出一块**能滚的空白**；
-//   ② 图层可以整个丢掉。
-//   缓动 `cubic-bezier(0.5, 0.05, 0.3, 1)` 让前半程**看得见**：这条曲线在时间轴 30% 处只
-//   转到 43°、42% 处才到 90°（0.8s ⇒ 336ms）。原样沿用五轮那条 `cubic-bezier(0.22,0.68,…)`
-//   的话，94ms 就转过 90° 了 —— 观感是"闪一下"，用户要看的是**翻**这个动作。
-//   反向（翻回封面）走的是**基础规则**里那条 `visibility 0s 0s` ⇒ 立刻恢复可见。
+// 六轮那套"绕顶边掀走"（`transform-origin: 50% 0` + `rotateX(180deg)`，见 `git show
+// 8a11e1e`）**已随七轮删除**：这一页现在是被**抽走**的（TSX 里那张掉出屏幕的克隆纸），
+// 原地不留任何翻转动作，于是六轮为那条过渡写的两条理由（延迟 `visibility` 免得掀过去的
+// 半张纸撑出可滚空白、缓动要让前半程看得见）一并作废。
+// ⚠️ 但那条纪律本身仍然成立：**任何"转到纸外去"的元素都必须及时从滚动溢出里摘掉**。
+// 七轮的做法更省事 —— 纸一离场就 `visibility: hidden`（见 `.vitrine.is-flipped`）。
 .vit-cover
   align-items: center
   justify-content: center
   gap: 10px
   padding: 18px
   text-align: center
-  transform-origin: 50% 0
   background: linear-gradient(135deg, #fffdfa 0%, #fff3f9 54%, #f4f0ff 100%)
   color: var(--washi-ink, #4a3550)
-  // 左下角那道**缺口**：那一角已经掀起来了，露出的正是下面那页。
-  // `clip-path` 与 `border-radius` 取**交集**，所以其余三个圆角照旧；缺口两端刻意落在
-  // 圆角半径之外（底边 x=30px、左边 y=calc(100% - 30px)），免得把圆弧切成尖角。
-  // ⚠️ 这两个数与下面 `.vit-corner::before` 的折线端点是**同一组**，改一处要改两处。
-  clip-path: polygon(0 0, 100% 0, 100% 100%, 30px 100%, 0 calc(100% - 30px))
-  transition: transform 0.8s cubic-bezier(0.5, 0.05, 0.3, 1), visibility 0s 0s
+  // 左下角那道**缺口**：那一角被翻到前面去了，露出的正是下面那页（`.vit-panel`）。
+  // 深度由 `--ear` 给 —— 拖拽时缺口跟着折角一起长，这是"折"这个动作唯一看得见的地方。
+  // `clip-path` 与 `border-radius` 取**交集**，其余三个圆角照旧；静止档 `--ear` 是 24px，
+  // 仍在圆角半径（15px）之外，不会把圆弧切成尖角。
+  clip-path: polygon(0 0, 100% 0, 100% 100%, var(--ear) 100%, 0 calc(100% - var(--ear)))
 
 .vit-coverStar
   font-size: 22px
@@ -164,10 +166,16 @@
   background-image: radial-gradient(120% 80% at 12% 0%, rgba(120, 160, 255, 0.10), rgba(120, 160, 255, 0) 62%)
   border-color: rgba(255, 255, 255, 0.14)
 
+// 这一页被扯走了（**没有翻转动效**，见上面 `.vit-cover` 的头注）。
+// `visibility: hidden` 是必须的，不是保险：克隆纸在 body 上掉，真身要是还在场，
+// 同一页就有两张了。顺带把这一层从滚动溢出里摘掉。
 .vitrine.is-flipped .vit-cover
-  transform: rotateX(180deg)
   visibility: hidden
-  transition: transform 0.8s cubic-bezier(0.5, 0.05, 0.3, 1), visibility 0s 0.34s
+
+// 谁在上面谁才有折角 —— 缺口跟着走。翻过去之后纸张变成深玻璃，露在缺口里的是
+// 底下那一页（封面），所以那块缺口在深色页上是"透出一角浅纸"，两页都读得出来。
+.vitrine.is-flipped .vit-panel
+  clip-path: polygon(0 0, 100% 0, 100% 100%, var(--ear) 100%, 0 calc(100% - var(--ear)))
 
 // 内联态的图谱**一律不吃指针事件**：点卡片 = 放大，放大后才把交互交还给引擎。
 // 顺带治了老毛病——它出厂就吃滚轮（所以自带 `is-locked` 预览态），访客往下滚页面
@@ -175,75 +183,68 @@
 .vitrine:not(.is-zoomed) .vit-body
   pointer-events: none
 
-// 图谱底栏那一行（快捷检索 chip）给左下角的纸角让位。
-// 纸角在卡片内的横向占位到 x=74px（按钮 left:-10px + 84px 宽），而 foot 有 10px 内边距
-// ⇒ 68px 起步正好压在它右边。**这个数跟着 `.vit-corner` 的尺寸走**，不是随手取的。
+// 图谱底栏那一行（快捷检索 chip）给左下角那枚折角让位：静止档折角是 24px（`--k: 0.2`），
+// 68px 起步留足了呼吸；拖到最大（120px）时确实会压到 chip 上，但那只在拖拽那一瞬间。
 .vit-panel .wg-chips
   padding-left: 68px
 
-// ─────────────────────────────────────────────── 左下角：掀起的那一角 + 翻页箭头
-// 用户第 3 条：「按钮撤掉，把左下角做成略微向外侧翻折的样式，然后给一个日式动漫风格的
-// 弧形粗箭头示意从那里翻页」。所以它不再是一颗圆角方块，而是**纸角本身**：
-//   · 封面在左下角被 `clip-path` 切掉一块三角（见上面 `.vit-cover`）；
-//   · `::before` 补上**翻起来的那片**——折线端点与缺口完全重合，只把外尖从
-//     卡片角 (0,H) 向外撇到 (-4, H+8)，"略微向外侧翻折"就是这一点点；
-//   · 箭头是 `.vit-cornerArrow` 里那支 SVG（形状见 index.tsx 的 FlipArrow）。
-// 它**仍然是 `<button>`**：Tab 可达、有 aria-label，只是长得不像按钮。
+// ─────────────────────────────────────────────────────────── 左下角：那一枚折角
+// 用户第 2 条：撤掉"突兀的折角"，改成**当前页面的左下角视觉上被折到前面**。
+// 六轮那版是"封面切掉一块 + 一枚撇到**卡片外**的小三角 + 弧形粗箭头"——撇出纸外正是
+// 那句"突兀"的来源（纸角不可能长到纸外面去）。七轮换成规矩的翻折角：
 //
-// 几何（容器 84×84，左下角相对卡片外移 10px ⇒ 卡片底边落在容器 local y=74）：
-//   缺口折线两端 = 卡片 (30px, H) → local (40px, 74px)、卡片 (0, H-30px) → local (10px, 44px)
-//   外尖 = 卡片 (-4px, H+8px) → local (4px, 82px)
+//   · 纸在左下角被切掉一块三角（`--ear` 决定切多深，见上面 `.vit-cover`）；
+//   · `.vit-ear` 补上**翻过来的那一片**——顶点朝右上、**完全落在纸里侧**，
+//     一点都不探出卡片边缘（回归判据钉的就是这条，见 tests/home-hero.test.py ⑥b）。
+//
+// 几何（`.vit-ear` 是 120×120 的盒子，左/下边贴着卡片左/下边）：
+//   折线 = 盒子的**反对角线**（从盒子左上角到右下角，也就是卡片底左角那条 45° 线）；
+//   那片纸 = `polygon(0 0, 100% 0, 100% 100%)`，也就是盒子的右上那一半；
+//   缩放原点 = 盒子的**左下角**（= 卡片的底左角）⇒ `scale(--k)` 得到的正是
+//   "折了 `k × 120px` 那么大"的那一片。
+// ⚠️ 120px 与 TSX 的 `EAR_MAX` 是同一个数；`--k` 的静止值 0.2 写在 `.vitrine` 上。
+// 它**仍然是 `<button>`**：Tab 可达、有 aria-label、Enter 能扯，只是长得不像按钮。
 .vit-corner
   position: absolute
-  left: -10px
-  bottom: -10px
+  left: 0
+  bottom: 0
   z-index: 4
-  width: 84px
-  height: 84px
+  width: 120px
+  height: 120px
   padding: 0
   border: 0
   background: transparent
-  cursor: pointer
-  color: var(--washi-pink-deep, #d94f9a)
+  cursor: grab
+  // 触屏上从这个角开始拖是"扯纸"，不是"滚页面"——少这一条，手机上永远扯不动
+  touch-action: none
+  // 抓起来之后别再显示"抓手"
+  &:active
+    cursor: grabbing
 
-  &::before
-    content: ''
-    position: absolute
-    inset: 0
-    clip-path: polygon(40px 74px, 10px 44px, 4px 82px)
-    // 纸背的暖色：折线那头深（背光）、外尖那头浅（迎光），读起来才像"翻过来的一面"。
-    // 202deg 的方向是"从折线指向外尖"⇒ 0% 落在折线上。
-    // 起始色刻意比卡片纸深一档：这一抹就是"折痕"，两色太近的话整片纸角糊在卡上
-    background: linear-gradient(202deg, #e9ab92 0%, #ffd6c0 44%, #fff4ee 100%)
-    // 这点阴影是纸角与卡片的分界（`.wg-lock-ico` 在本文件里也有同样用法：
-    // 小面积 drop-shadow 不属于"大面积模糊"那条禁令）
-    filter: drop-shadow(0 2px 4px rgba(120, 90, 140, 0.3))
-    transition: clip-path 0.3s ease
-
-  // 悬停：外尖再撇出去一点（90px 仍在容器内，84 的盒子不会裁到它）
-  &:hover::before
-    clip-path: polygon(40px 74px, 10px 44px, 0px 90px)
-
-.vit-cornerArrow
+.vit-ear
   position: absolute
   inset: 0
   display: block
   pointer-events: none
-  color: inherit
-  // 极轻的"往那边去"：只动 transform、不碰布局与颜色。
-  // 动画挂在**它自己**身上而不是 button 上——button 上还有 `::before` 的 clip-path 过渡。
-  animation: vit-nudge 2.4s ease-in-out infinite
+  clip-path: polygon(0 0, 100% 0, 100% 100%)
+  transform-origin: 0 100%
+  transform: scale(var(--k))
+  // 纸背的暖色：折线那头深（背光）、外尖那头浅（迎光），读起来才像"翻过来的一面"。
+  // `45deg` 的方向是"从折线指向外尖"（折线在方盒里正好落在 45deg 的 50% 处），
+  // 所以 46% 那个色就是**折痕**——刻意比纸深一档，两色太近的话整片纸角糊在卡上。
+  background: linear-gradient(45deg, #cf8f74 46%, #f7c8b1 70%, #fff6f0 100%)
+  // 这点阴影是折角与纸面的分界，也是"翘起来"的全部证据（飘向折角的反侧 = 右上）。
+  // `.wg-lock-ico` 在本文件里也有同样用法：小面积 drop-shadow 不属于"大面积模糊"那条禁令。
+  filter: drop-shadow(2px -2px 3px rgba(120, 90, 140, 0.35))
+  // 松手弹回静止档。`--k` 是**未注册**的自定义属性，它自己不参与插值，但**用到它的属性**
+  // （这里的 `transform: scale(var(--k))`）计算值确实在变 ⇒ 过渡照常触发，这是 CSS 变量
+  // 配 transition 的常规用法。回弹曲线带一点过冲（y > 1），纸角有弹性、不是弹簧门。
+  transition: transform 0.3s cubic-bezier(0.34, 1.4, 0.5, 1)
 
-  svg
-    display: block
-    width: 100%
-    height: 100%
-
-@keyframes vit-nudge
-  0%, 100%
-    transform: translate(0, 0)
-  50%
-    transform: translate(3px, -3px)
+// 拖拽期间**去掉**上面那条过渡：折角要跟手，0.3 秒的滞后会让它追不上指针。
+// 由 TSX 在 pointerdown 挂上、pointerup/tear 摘掉（`.vitrine.is-peeling`）。
+.vitrine.is-peeling .vit-ear
+  transition: none
 
 // ───────────────────────────────────────────────────────────── 放大（单击后）
 // 「居中变大 + 压暗背景 + 正常交互」。⚠️ 这里**不能**用 transform 居中
@@ -639,6 +640,25 @@ $bar-line: 16px
     background: rgba(255, 255, 255, 0.07)
     border-color: rgba(255, 255, 255, 0.12)
 
+// ───────────────────────────────────────────────────────── 被扯下来的那一页（克隆）
+// 这一层**住在 `document.body` 上**（`createPortal`，见 TSX）：`position: fixed` 不参与
+// 文档滚动溢出计算，纸一边掉、页面一边长的那种事才不会发生。
+// ⚠️ 也正是因为它在 body 上，`.vitrine` 那条 `--k` 够不着它 —— 缺口（`clip-path`）会自动
+// 失效。这是对的（被扯下来的是一整张纸，不缺角），但**别指望它**：下面明写一条 `none`，
+// 免得哪天有人把 `--k` 挪到 `:root` 上去，克隆纸就默默带了个缺口。
+//
+// z-index 900：高过正文（最高 100）、低过头部（998）与放大态（1200）——纸从页面上掉过去，
+// 但不会盖住顶栏。
+.vit-fall
+  position: fixed
+  z-index: 900
+  pointer-events: none
+  // 掉的过程里只动 `transform`（合成器就能跑完），这一条让浏览器提前分层
+  will-change: transform
+
+  .vit-face
+    clip-path: none
+
 // ---------------------------------------------------------------- 自适应
 // 旧的两档（≤1300px 收右缘让开 .TopMao、≤1100px 直接 display: none）**已删**：
 // 那两条都是为"绝对定位占右半屏"写的——`right` 与 `height` 对它现在是空属性
@@ -647,11 +667,7 @@ $bar-line: 16px
 @media (prefers-reduced-motion: reduce)
   .vitrine
     animation: none
-  // 翻页瞬间完成。`visibility` 那条延迟是随 transform 一起过渡的——
-  // 这里 `transition: none` 把它一并关掉，正是想要的效果（隐藏态立刻生效）。
-  .vit-cover
-    transition: none
-  .vit-corner::before
-    transition: none
-  .vit-cornerArrow
-    animation: none
+  // 七轮把这一档削到只剩"关掉入场淡入"：纸**根本不掉**（TSX 的 `prefersReducedMotion()`
+  // 直接跳过抛体），所以这里没有 transition / 常驻动画要关。
+  // 六轮那三条（`.vit-cover` 的过渡、`.vit-corner::before` 的 clip-path、`.vit-cornerArrow`
+  // 的 `vit-nudge`）随它们描述的东西一起删了 —— 留着会让人以为还有那套东西。
