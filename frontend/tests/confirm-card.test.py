@@ -129,9 +129,12 @@ HARNESS = """<!DOCTYPE html>
   // 光看卡片上的字是旧版本的病根——那句"已确认"从来不需要请求真的发出去。
   // streamStatus/streamBody：让 /api/chat/stream 回一个**非 200**（⑨ 腿要用 409
   // 「这张令牌已经被用掉了」——服务端如实拒绝时前端该怎么收场）。0 = 照旧回放帧。
+  // historyItems：DB 那一趟回什么（null = 那一条固定行）。⑫ 腿要用它造"卡片已就位
+  // 之后历史才补齐"的形态——生产里那是常态（本地缓存桶与 DB 拉取先后差）。
   window.__stub = { historyDelay: 0, historyCalls: 0, frameDelay: 0,
                     cardShownAt: null, historyResolvedAt: null, pendingAtTrigger: false,
-                    lastBody: null, streamCalls: 0, streamStatus: 0, streamBody: null };
+                    lastBody: null, streamCalls: 0, streamStatus: 0, streamBody: null,
+                    historyItems: null };
   (function () {
     var enc = new TextEncoder();
     var j = function (obj) {
@@ -169,8 +172,10 @@ HARNESS = """<!DOCTYPE html>
         return (d ? wait(d) : Promise.resolve()).then(function () {
           window.__stub.historyResolvedAt = performance.now();
           // DB 行形状（chat-engine 的 mapDbItems 认 role/content/time）
-          return j({ items: [{ id: 1, role: 'assistant', time: Date.now(),
-                               content: '好的，我来帮你收藏这篇。' }] });
+          var rows = window.__stub.historyItems
+            || [{ id: 1, role: 'assistant', time: Date.now(),
+                  content: '好的，我来帮你收藏这篇。' }];
+          return j({ items: rows });
         });
       }
       if (u.indexOf('/api/chat/conversations') >= 0) return Promise.resolve(j({ items: [], id: 1 }));
@@ -1035,6 +1040,66 @@ def main():
                   st["q"].startswith("要把全部未读通知标记为已读")
                   and st["q"].endswith("点「确定」我就去办。"), repr(st["q"]))
             check("⑪腿页面无未捕获异常", errs11 == [], " | ".join(errs11[:4]))
+
+            # ── ⑫ 待决定的卡片永远在末位（迟到的气泡不许压在它上面）────────────
+            # 用户报的形态（20261001，"卡片怎么飞上面去了"）：屏幕上的顺序成了
+            # "用户消息 → 卡片 → 回复"。生产实证（monitor.log 同日）：
+            #   02:40:45.922 stage=card id=d451cad4（挂在 / 的对话流末位）
+            #   02:40:46.937 stage=card id=d451cad4 restored=1（整页重开在 /dashboard/users）
+            # 卡片由存档接回（restoreAsk）那一刻，消息流里只有**已渲染的那部分**历史
+            # （本地缓存桶与 DB 那一趟拉取的先后差）；接回之后 DB 那趟补齐的气泡经
+            # appendMsg 挂在末尾 = 卡片下面，而 reconcileDOM 的"位置对齐"按 items 顺序
+            # 挪气泡、chat-keep 的卡片在它眼里是空气（contentRef 跳过它）⇒ 这个错序
+            # 永远不会自愈。旧行为下本腿必红。
+            print("\n⑫ 待决定的卡片永远在末位（接回之后历史才补齐）")
+            pg12, errs12 = open_page(b, url)
+            run_round(pg12, ROUND)
+            st = pg12.evaluate(ASK_STATE)
+            check("⑫a 前置：卡片已弹且在末位", st["active"] and st["isLast"] and st["btns"],
+                  f"card={st['idx']} isLast={st['isLast']} btns={st['btns']}")
+            # ① 刷新。这一刻 DB 里还没有本轮的助理回复（它在 / 那一页刚落库、或还没落），
+            # 于是消息流里只有**从存档接回来的卡片**自己——生产实证里正是这一秒。
+            pg12.evaluate("() => { window.__stub.historyItems = []; }")
+            reboot(pg12)
+            st = pg12.evaluate(ASK_STATE)
+            check("⑫b 前置：刷新后卡片独占消息流（走存档接回，不是新弹的）",
+                  st["active"] and st["isLast"] and st["askState"] == "live"
+                  and st["btns"] == ["确定", "取消"], str(st)[:200])
+            # ② DB 那一趟随后补齐：先是主人的问句，再是助理的回复（两趟到达——
+            # 生产里就是"本地缓存桶先渲染 / DB 后到"的先后差，不是假设的时序）。
+            pg12.evaluate("""() => { window.__stub.historyItems = [
+              { id: 11, role: 'user', time: Date.now() - 6000,
+                content: '小猫咪把我当前在读的文章收藏了' }]; }""")
+            pg12.evaluate("() => window.__engine.pullHistory()")
+            pg12.wait_for_timeout(700)
+            pg12.evaluate("""() => { window.__stub.historyItems.push(
+              { id: 12, role: 'assistant', time: Date.now(),
+                content: '结果气泡：已经把《Python asyncio 异步并发》加进收藏了。' }); }""")
+            pg12.evaluate("() => window.__engine.pullHistory()")
+            pg12.wait_for_timeout(700)
+            st = pg12.evaluate(ASK_STATE)
+            check("⑫c 迟到的气泡真的渲染出来了（前置；没有它这一腿是永真）",
+                  len(st["agentIdxs"]) >= 1 and st["userIdx"] >= 0, str(st))
+            check("⑫c 卡片仍在末位（旧行为：它被压在迟到的气泡上面）",
+                  st["isLast"], f"card={st['idx']} agents={st['agentIdxs']} isLast={st['isLast']}")
+            check("⑫c 主人那句话仍在卡片之前（重挂只挪卡片，不许把历史顺序打乱）",
+                  0 <= st["userIdx"] < st["idx"], f"user={st['userIdx']} card={st['idx']}")
+            check("⑫c 卡片仍是可点的待办（重挂不许把它结算掉）",
+                  st["active"] and st["btns"] and st["pending"] == "SET"
+                  and st["askState"] == "live", f"{st['btns']} state={st['askState']}")
+            # 卡片后面不许留任何东西——与 isLast 不同源：isLast 只看"最后一个子节点是不是
+            # 卡片"，这条把"卡片后面还挂着元素"也一并拦下（重挂是 appendChild，新的位置
+            # 必须是流末位）。
+            check("⑫c 卡片之后没有别的元素",
+                  pg12.evaluate("""() => {
+                    const box = document.getElementById('chat-ask');
+                    const kids = [...box.parentNode.children];
+                    return kids.slice([...kids].indexOf(box) + 1).length;
+                  }""") == 0,
+                  f"card={st['idx']} all={st['allText'][:80]!r}")
+            check("⑫c 期间无失败上报", by_fail(st["reports"]) == [], flow_message(st["reports"]))
+            check("⑫腿页面无未捕获异常", errs12 == [], " | ".join(errs12[:4]))
+            pg12.close()
 
             check("①③腿页面无未捕获异常", errs == [], " | ".join(errs[:4]))
             b.close()
