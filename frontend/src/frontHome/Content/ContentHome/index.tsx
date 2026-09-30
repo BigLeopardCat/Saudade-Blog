@@ -378,7 +378,12 @@ const ContentHome = () => {
                 onMouseEnter={() => setHoverPaused(true)}
                 onMouseLeave={() => setHoverPaused(false)}
             >
-                <div className="Top" style={{transform: 'translateY(-40%)', zIndex: 10}}><i className="iconfont icon-sticky1" style={{fontSize: 20,verticalAlign:'middle',marginRight:5}}></i>置顶</div>
+                {/* 置顶贴纸（20261001 六轮）：`.Top` 只管定位、`.TopTape` 才是那张胶带。
+                    原来这里内联了 `transform: translateY(-40%)` 与 `zIndex: 10` —— 前者是
+                    **常驻动效写不进去**的根因（内联特异性最高），已删；位置改由 sass 的
+                    `top` 说了算（顺带从"悬在卡片上方"挪到"骑在卡片顶边上"），
+                    `zIndex` 也挪进了 `.Top` 规则。字与图标的大小/颜色一并交给 sass。 */}
+                <div className="Top"><span className="TopTape"><i className="iconfont icon-sticky1" aria-hidden="true"></i>置顶</span></div>
                 <div style={{ width: '100%', height: '100%', borderRadius: '15px', overflow: 'hidden' }}><div style={{ display: 'flex', width: '100%', height: '100%', transition: 'transform 0.8s cubic-bezier(0.25, 1, 0.5, 1)', transform: `translateX(-${currentTop * 100}%)` }}>
                     {topArticles.map((item) => (
                         <div className="TopArticleInner" key={item.key} onClick={() => navigate(`/article/${item.key}`)} style={{ width: '100%', flexShrink: 0, height: '100%' }}>
@@ -470,7 +475,9 @@ const ContentHome = () => {
 
         {/*  其他文章  */}
             <div style={{width:'80%', display: 'flex', marginBottom: '20px'}}>
-                <div className='allContent'><i className="iconfont icon-wenzhang2" style={{fontSize: 25,verticalAlign:'sub',marginRight:5,color:'#7f7e7e'}}></i>文章</div>
+                {/* 「文章」段落签：图标的大小/颜色原本内联写死（25px 灰 `#7f7e7e`），
+                    现在归 `ContentHome/index.sass` 的 `.allContent .iconfont` 管。 */}
+                <div className='allContent'><i className="iconfont icon-wenzhang2" aria-hidden="true"></i>文章</div>
             </div>
 
             {/* 列数探针：量容器的真实轨道数决定「满两行」的每页条数。
@@ -494,8 +501,12 @@ const ContentHome = () => {
                 </div>
             ) : (
                 <div>
+                    {/* 「More」按钮：尺寸原本是行内样式（`padding: 20px 50px` + `borderRadius: 20`
+                        + `fontSize: 20`），与 `.allContent` 的 `width: 80px` 一起把内容盒挤成 0
+                        （全站 `* { box-sizing: border-box }`，实测元素被内边距撑成 100×40）。
+                        现在身材与手感都归 sass 的 `.more`。 */}
                     {hasMoreArticles ? (
-                        <div className='allContent more' style={{ padding: '20px 50px 20px 50px', borderRadius: 20, fontSize: 20 }} onClick={getMore}>More</div>
+                        <div className='allContent more' onClick={getMore}>More</div>
                     ) : null}
                 </div>
             )}
