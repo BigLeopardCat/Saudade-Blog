@@ -261,11 +261,9 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
         -webkit-line-clamp: 2
         -webkit-box-orient: vertical
         transition: all 0.3s ease
-        &:hover
-          -webkit-line-clamp: unset
-          overflow: auto
-          font-size: 35px
-          margin-bottom: 40px
+        // 20260930：这里的 :hover（解除行数限制 + 字号 40→35 + margin 60→40）已删——
+        // 悬浮标题时整块内容的高度与字号都会变，而内容是垂直居中的 ⇒ 全列上下窜。
+        // 顶卡标题固定两行（另一处同族规则见文件后段 `.TopArticle .topContent h3`）。
       p
         //color: #cccccc
         color: var(--font-p-color)
@@ -350,10 +348,14 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
         // 超出的部分虽只是 padding（页脚文字不会被裁），但 `margin-top: auto` 会因此失效，
         // 长标题卡片的标签行/页脚会比同排其他卡片低 36px（CDP 实测对照）。
         // gap 12→8、padding 48→40/32 共收回 36px，三种标题行数下都装得下（余量约 7px）。
+        // 20260930：上内边距再 40→20px——用户点名"把分类行和封面的空隙缩小"，
+        // 那 40px 就是这个空隙（这一行是内容区第一行），顺带把上面那点余量放宽到约 27px。
+        // 余量只影响**静置态**是否宽松：简介住在定高槽 `.descSlot` 里（槽内绝对定位），
+        // 展开态占位也不变、不再吃这点余量（见 .descSlot 的注释）。
         gap: 8px
         position: relative
         z-index: 40
-        padding: 2.5rem 3rem 2rem
+        padding: 1.25rem 3rem 2rem
         position: relative
         border: none
         z-index: 99
@@ -418,6 +420,23 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
           // 20260912：原来的 :hover 解除行数限制已删——定高卡片里它是溢出源
           // （标题内滚动条 + 顶掉页脚），3 行足以覆盖绝大多数标题
 
+        // 简介槽（20260930）。**它是"页脚定死在卡底"的全部机关**，别拆：
+        // 简介本体在槽内是**绝对定位**的，所以它长高/缩回**完全不参与布局**——flex 列
+        // 从头到尾看到的都只是这个恒高 60px 的槽。此前试过"就地长高 + 等量负 margin 抵掉"，
+        // 那个做法只在简介刚好长到上限时才成立：负 margin 是定值，而高度是
+        // `min(全文, 上限)`，两者不等时占位就变了（实测简介 6 行时页脚会往上跳 80px，
+        // 悬浮还把整块高度变化传到 flex 列、被压出过 250px/85px 这种半行值）。
+        // 槽的做法把"变高的部分"整个移出布局，两条保证就都成了结构性的：
+        //   · 标签/页脚那一段（`margin-top: auto` 钉在卡底）一个像素都不会动；
+        //   · 简介高度只会是 `max-height`（行高整数倍）或全文自身高度 ⇒ 下沿不可能落在半行上。
+        .descSlot
+          position: relative
+          width: 100%
+          height: 60px
+          // 槽自己绝不许被 flex 压缩：槽位一变压的就是简介的顶（它会跟着槽顶走）。
+          // 余量不够时宁可让标签/页脚那一段溢出——那是 600px 定高卡标签多时的既有事实，
+          // 与本轮无关；而"简介被压成半行"是用户报上来的缺陷。
+          flex-shrink: 0
         .ArticleDescription
           color: var(--font-p-color)
           text-indent: 1em
@@ -427,20 +446,29 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
           overflow: hidden
           white-space: pre-wrap
           word-break: break-all
-                  width: 100%
-          white-space: pre-wrap
-          word-break: break-all
+          width: 100%
           transition: max-height 0.8s ease
           // 行高与上限都写死：3 行 = 60px（clamp 3 与实际高度严格一致），
           // 不再依赖默认字体度量（原 4.5em=72px 在部分字体下会多留一行的高度出来）
           line-height: 20px
           max-height: 60px
+          // 贴住槽顶向下长。展开时它会盖住标签与页脚，所以展开态必须给底色与投影
+          // （底色取的就是卡自己的 `--pic-background-cover` ⇒ 夜间跟着变，不写死颜色）。
+          // 展开上限 10 行 = 200px 而不是更长：浮层是向下长的，卡片 `overflow: hidden`，
+          // 简介顶最高在「3 行标题 + 换行的分类行」之后 ≈ 194px，卡片可视底在 400px
+          // ⇒ 只有约 206px 可用。取 200 留 6px，再多就会像旧版一样把最后一行切掉。
+          position: absolute
+          top: 0
+          left: 0
           &:hover
             -webkit-line-clamp: unset
-            max-height: 300px
-            padding-bottom: 10px
-            overflow: auto
-            
+            max-height: 200px
+            overflow-y: auto
+            overflow-x: hidden
+            z-index: 6
+            background: var(--pic-background-cover)
+            border-radius: 6px
+            box-shadow: 0 12px 28px rgba(0, 0, 0, .18)
         .tags
           flex-shrink: 0
 
@@ -593,16 +621,47 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
     -webkit-line-clamp: 2
     -webkit-box-orient: vertical
     transition: all 0.3s ease
-    &:hover
-      -webkit-line-clamp: unset
-      overflow: auto
+    // 20260930：标题的 :hover 解除行数限制**已删**（这一处与上面 `.contentTitle` 里
+    // 那一处都要删）。顶卡 640px 里它是纯溢出源：解除后标题自己变高（另一处还顺手把
+    // font-size 40→35、margin 60→40），而内容列是 `justify-content: center` ⇒
+    // 整块重新居中，标题/简介/页脚一起上下窜——用户报的"悬浮置顶卡片标题会抖动布局"。
   h4
     color: var(--font-title-color) !important
+  // 与普通卡同一套槽位机制（见 `.ArticleContent .descSlot` 那段注释，这里是它的顶卡版）。
+  // 顶卡对它的依赖**更硬**：内容列是 `justify-content: center`，任何占位变化都会让整列
+  // 重新居中 ⇒ 悬浮简介时标题/分类/页脚一起上下窜。槽位把简介的伸缩整个移出布局，
+  // 是"这一列在悬浮期间一个像素都不许动"的唯一结构性保证。
+  // 槽高 60px 直接写死（不写 flex-shrink——顶卡这一列没有余量压力）。
+  .descSlot
+    position: relative
+    width: 100%
+    height: 60px
+    // 20px 是这一列原来给简介留的间距（曾被写在 index.tsx 的 inline style 里）。
+    // 挪进槽位：间距必须由**槽**占，简介本体是绝对定位的、它的 margin 不再参与布局。
+    margin-bottom: 20px
   .ArticleDescription
     display: -webkit-box
     -webkit-line-clamp: 3
     -webkit-box-orient: vertical
     overflow: hidden
+    // 与普通卡同一套行高：展开高度必须能被行高整除，否则最后一行被切半个
+    line-height: 20px
+    transition: max-height 0.8s ease
+    max-height: 60px
+    // 绝对定位：贴在槽顶向下长，占位恒为槽的 60px。展开时它压住标签/页脚，
+    // 所以展开态给底色与投影（底色取卡自己的变量，夜间跟着变，不写死颜色）。
+    // 顶卡上限取 12 行 = 240px：这一列是居中的、上下都有余量，比普通卡的 10 行可以更长。
+    position: absolute
+    top: 0
+    left: 0
+    &:hover
+      -webkit-line-clamp: unset
+      max-height: 240px
+      overflow-y: auto
+      z-index: 6
+      background: var(--pic-background-cover)
+      border-radius: 6px
+      box-shadow: 0 12px 28px rgba(0, 0, 0, .18)
   .topFooter
     color: var(--font-title-color)
 
@@ -655,6 +714,19 @@ html[data-theme='dark'] .SayWords h2
 .frontDark .SayWords p
   color: #ffffff !important
 
+// 简介的**共用底座**（两张卡都有的那部分排版）。
+// 这里**只放两卡一致的声明**：展开/收回的行为两卡不同（上限 200 vs 240、槽高不同），
+// 一律留在各自嵌套的那条规则里。改这一块前先想清楚"另一张卡是不是也这么想"。
+//
+// 20260930 删掉了这里原来的 `&:hover { max-height: 300px; padding-bottom: 10px;
+// overflow: auto }`。它不是"没用的老规则"——**它的 padding-bottom: 10px 一直在生效**，
+// 而且正是用户报的"展开后最后一行只显示上半"的第二个来源：那条 hover 规则的
+// specificity 比两条嵌套 hover 低，所以 max-height/overflow 被压掉了，可
+// **padding 谁也没声明过** ⇒ 只有它生效。于是展开盒高 = 内容 + 10，而
+// `box-sizing: border-box`（main.css 的全局 reset）让 max-height 把 padding 也算进去：
+// 上限 200px 的盒子里只剩 190px 给正文 = 9.5 行 ⇒ 第 10 行被切一半。
+// 底座的 `max-height: 4.5em` 一并改成 60px：4.5em 是字体度量（16px 下 = 72px），
+// 与"3 行 × 行高 20px"不等，留着就是第二个"上限从哪来"的答案。
 .ArticleDescription
   color: var(--font-p-color)
   text-indent: 1em
@@ -666,12 +738,7 @@ html[data-theme='dark'] .SayWords h2
   white-space: pre-wrap
   word-break: break-all
   transition: max-height 0.8s ease
-  max-height: 4.5em
-  &:hover
-    -webkit-line-clamp: unset
-    max-height: 300px
-    padding-bottom: 10px
-    overflow: auto
+  max-height: 60px
 
 .TopArticleInner
   display: grid
@@ -739,6 +806,13 @@ html[data-theme='dark'] .SayWords h2
         .ArticleTitle
           font-size: 22px !important
           margin-bottom: 6px
+        // 简介槽在手机档必须跟着缩小：桌面那 60px 是给 3 行（行高 20px）留的，
+        // 这一档把简介 clamp 到 2 行 ⇒ 槽只该占 2 行，否则卡片白白多 20px 空档
+        // （移动端卡片是 `height: auto`，会真的体现在高度上）。下面 V15 那一档还会
+        // 再把行高改成 1.5 并覆盖成 42px，两条按源序后者生效——每一档的数值就是
+        // 「该档的行高 × 2 行」，别改成同一个数。
+        .descSlot
+          height: 40px !important
         .ArticleDescription
           -webkit-line-clamp: 2 !important
           max-height: 3em !important
@@ -758,6 +832,9 @@ html[data-theme='dark'] .SayWords h2
       .contentTitle
         font-size: 22px !important
         margin-bottom: 8px !important
+      // 顶卡手机档同普通卡：简介 clamp 2 行、行高仍是 20px ⇒ 槽 40px
+      .descSlot
+        height: 40px !important
       .ArticleDescription
         -webkit-line-clamp: 2 !important
       .topFooter
@@ -790,6 +867,10 @@ html[data-theme='dark'] .SayWords h2
           font-size: 16px !important
           margin-bottom: 4px !important
           line-height: 1.3 !important
+        // 这一档把简介行高改成了 1.5（14px × 1.5 = 21px）⇒ 槽 = 2 行 = 42px，
+        // 覆盖上一条手机档的 40px（同特异性、源序在后）。
+        .descSlot
+          height: 42px !important
         .ArticleDescription
           font-size: 14px !important
           line-height: 1.5 !important

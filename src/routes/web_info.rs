@@ -129,6 +129,13 @@ pub async fn get_web_settings(
 /// 再留一个"改这里"的入口就是两处改同一份数据。回退是给**老数据**留的路：
 /// 在个人中心上传过头像之前，`user.avatar` 是 NULL，此时照旧显示 `web_info.avatar`
 /// （改造前存的那张），不会突然变空白。
+///
+/// **署名同一条规矩**（20260930 用户点名"卡片上的 Sora 换成真正发布作者的昵称"）：
+/// `blogAuthor` 优先取 **uid=1 的 `nickname`**（个人中心改的那一个），只有它为空时才
+/// 回退到站点设置的 `author` 键。改之前署名有两个真相源——个人中心改了昵称，
+/// 首页头部与文章卡片却还显示站点设置里那个旧值。**刻意不回退到 `username`**：
+/// 那是登录账号，公开接口没有理由把它印在全站每一张卡片上（`user.nickname` 为空时
+/// 站点设置那个值更合适）。
 pub async fn get_user_info(
     State(state): State<Arc<AppState>>,
 ) -> Json<ApiResponse<UserInfoResponse>> {
@@ -138,18 +145,25 @@ pub async fn get_user_info(
          infos.iter().find(|i| i.key_name == k).map(|i| i.value.clone()).unwrap_or("".to_string())
     };
 
-    let avatar = user::Entity::find_by_id(1)
-        .one(&state.db)
-        .await
-        .unwrap_or(None)
-        .and_then(|u| u.avatar)
+    // 头像与署名同源（uid=1 那一行），一次查询取两样
+    let owner = user::Entity::find_by_id(1).one(&state.db).await.unwrap_or(None);
+
+    let avatar = owner
+        .as_ref()
+        .and_then(|u| u.avatar.clone())
         .filter(|a| !a.trim().is_empty())
         .unwrap_or_else(|| get_val("avatar"));
+
+    let author = owner
+        .as_ref()
+        .map(|u| u.nickname.trim().to_string())
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| get_val("author"));
 
     let data = UserInfoResponse {
         avatar,
         talk: get_val("talk"),
-        author: get_val("author"),
+        author,
         title: get_val("blog_title"),
         icp: get_val("icp"),
         public_icp: get_val("publicIcp"),

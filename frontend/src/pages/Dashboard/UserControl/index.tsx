@@ -102,8 +102,11 @@ const UserControl = () => {
         })
     }
 
-    /** 每个输入框的属性基本一样，抽一处——两页签十几个字段，各写一遍必然漂移 */
-    const field = (id: keyof webInfo, label: string, extra?: { multiline?: boolean }) => (
+    /** 每个输入框的属性基本一样，抽一处——两页签十几个字段，各写一遍必然漂移。
+     *  `hint` 给"这一项在链路上不是唯一来源"的字段用（目前只有博客作者）：把优先级
+     *  写在字段下面，免得改完没生效时以为是 bug——**字段还在、只是被更靠前的来源盖住**，
+     *  这正是本仓最恨的那种"看起来是死配置"的坑。 */
+    const field = (id: keyof webInfo, label: string, extra?: { multiline?: boolean; hint?: string }) => (
         <TextField
             key={id}
             id={id}
@@ -117,6 +120,7 @@ const UserControl = () => {
             style={{ width: '70%', marginBottom: 20 }}
             onChange={handleChange}
             value={webInfo[id]}
+            helperText={extra?.hint}
         />
     )
 
@@ -127,7 +131,9 @@ const UserControl = () => {
             children: <>
                 <form className='web_setting' onSubmit={handleSubmit}>
                     {field('blogTitle', '博客标题')}
-                    {field('blogAuthor', '博客作者')}
+                    {/* 署名优先用个人中心的昵称（20260930）：这一项是**回退值**，
+                        昵称非空时它不参与显示。不写在这会让"改完没反应"看起来像 bug。 */}
+                    {field('blogAuthor', '博客作者', { hint: '署名优先取个人中心的昵称；昵称为空时才用这里' })}
                     {field('userTalk', '个性签名')}
                     {field('blogIcp', 'ICP 备案号')}
                     {field('blogPublicIcp', '公安网安备案号')}

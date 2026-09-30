@@ -9,6 +9,7 @@ import dayjs from "dayjs";
 import { coverCropStyle, cropFromRow } from "../../../utils/coverCrop";
 import { EyeIcon, HeartIcon, StarIcon } from "../../../components/NoteStatIcons/index.tsx";
 import { statCells } from "../../../utils/noteStats";
+import { resetDescScroll } from "../../../utils/descHover";
 
 interface tag
 {
@@ -106,7 +107,16 @@ const Article:React.FC<ArticleOption> = ({ item, index, Categories, avatar, name
                         <NoteStats item={item} />
                     </div>
                     <h3 className='ArticleTitle'>{item.noteTitle}</h3>
-                    <p className="ArticleDescription">{item.description}</p>
+                    {/* `.descSlot` 是定高槽（桌面 60px = 3 行），简介在槽内绝对定位 ⇒
+                        展开/收回整个不参与布局，标签与页脚（`margin-top: auto` 钉在卡底）
+                        悬浮期间一个像素都不动。槽本身不能省——去掉它简介就会回到 flex 流里，
+                        又会被压出半行（见 index.sass 里 `.descSlot` 那段注释）。
+                        展开/收回全靠 CSS（`.ArticleDescription:hover`），只有"离开时把滚位抹回
+                        顶部"这一件事 CSS 做不到——`overflow: hidden` 的盒子也是滚动容器，滚过之后
+                        静置态会停在全文中段。判据与理由见 `utils/descHover.ts`。 */}
+                    <div className="descSlot">
+                        <p className="ArticleDescription" onMouseLeave={resetDescScroll}>{item.description}</p>
+                    </div>
                     <div style={{ width: '100%', marginTop: 'auto', flexShrink: 0 }}>
                         <div className='tags' style={{ width: '100%', marginTop: '10px' }}>
                             {renderNoteTags(item.noteTags,tagList)}

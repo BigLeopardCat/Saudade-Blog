@@ -17,6 +17,7 @@ import dayjs from "dayjs";
 import { resolveApiAssetUrl } from '../../../utils/runtimeApi';
 import { carouselCropOf, coverCropStyle } from '../../../utils/coverCrop';
 import { parseNoteTags } from '../../../utils/noteTags';
+import { resetDescScroll } from '../../../utils/descHover';
 import heroBg from '../../../assets/hero_bg.mp4';
 import heroPoster from '../../../assets/hero_poster.jpg';
 import Vitrine from './Vitrine';
@@ -349,7 +350,17 @@ const ContentHome = () => {
                             <div className="topContent">
                                 <h4># {Categories.find(c => c.categoryKey === item.noteCategory)?.categoryTitle}</h4>
                                 <h3 className="contentTitle">{item.noteTitle}</h3>
-                                <div className="ArticleDescription" style={{marginBottom: 20}}> {item.description}</div>
+                                {/* 简介的展开/收回在 `.TopArticle .topContent .ArticleDescription`
+                                    里（定高槽 + 槽内绝对定位 ⇒ 它长高不参与布局）。
+                                    这一列是 `justify-content: center`，任何占位变化都会让
+                                    整列重新居中 ⇒ 槽是"悬浮期间这一列一个像素都不动"的唯一
+                                    保证。这里只负责离开时把滚位抹回顶部。
+                                    ⚠️ 间距（原来写成行内 `marginBottom: 20`）现在归**槽**管，
+                                    所以**不要**再往简介上写行内 margin——内联样式特异性最高，
+                                    会跟槽的定位打架。 */}
+                                <div className="descSlot">
+                                    <div className="ArticleDescription" onMouseLeave={resetDescScroll}> {item.description}</div>
+                                </div>
                                 <div className='tags' style={{ width: '100%', marginTop: '10px' }}>
                                     {(Array.isArray(item.noteTags) ? item.noteTags : []).map(noteTag => {
                                         let color;
