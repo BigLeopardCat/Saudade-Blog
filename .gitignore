@@ -15,6 +15,13 @@ saudade_blog_bin
 __pycache__/
 *.pyc
 
+# 备份/临时产物（20260930）。此前只有 /saudade-blog-agent.bak.*/ 这一条（只盖住 agent
+# 目录），于是 frontend/ 下两个 `.bak` 一路被跟踪着——它们是编辑中途的手工备份，
+# 既不是源码也没人读，留在公开仓库里只会让人以为那是"另一份实现"。
+*.bak
+*.bak.*
+*.orig
+
 # 死文件（20260830 清理，git rm --cached 后不再跟踪；磁盘文件保留）
 frontend/screenshots/
 frontend/stats.html

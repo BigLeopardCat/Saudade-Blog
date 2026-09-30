@@ -15,7 +15,6 @@ import dayjs from "dayjs";
 import {useDispatch, useSelector} from "react-redux";
 import {useNavigate, useParams} from "react-router-dom";
 import {fetchNoteList} from "../../../../store/components/note.tsx";
-import generateResponse from "../../../../apis/chatgpt.tsx";
 import {createNote, updateNote, delNote, autosaveDraft, getNoteForEdit, type AutosaveDraftPayload} from "../../../../apis/NoteMethods.tsx";
 import getToken from "../../../../apis/getToken.tsx";
 import ImageCompression from "../../../../apis/ImageCompression.tsx";
@@ -349,11 +348,6 @@ const NewNotes = () => {
 
 
     //回调函数区域
-    const getAiContent = async () => {
-        const openai = await generateResponse(noteContent)
-        setAiContent(openai)
-        form.setFieldValue('description', openai);
-    }
 
     /**
      * 打开封面裁剪窗。fresh = 换了新图（从默认居中开始，父组件已重置过参数），
@@ -682,7 +676,6 @@ const NewNotes = () => {
                             setAiContent(v.target.value);
                             form.setFieldValue('description', v.target.value);
                         }}/>
-                        <i className="iconfont icon-openai" style={{fontSize: 16,color:'#939ad8',position:'absolute',bottom: 5,right: 5,cursor:'pointer'}} onClick={getAiContent}></i>
                     </Form.Item>
 
 
