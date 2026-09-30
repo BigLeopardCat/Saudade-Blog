@@ -243,6 +243,42 @@ async fn test_文章报表需要管理员() {
     );
 }
 
+/// 阅读求和（`SUM(cnt)`）**必须**走 `note_stats::sum_views()`——它是唯一一处
+/// `CAST(... AS SIGNED)`。理由是**真解码出来的**教训，不是风格洁癖：
+/// MySQL 的 `SUM(<整数列>)` 返回 `DECIMAL`，sea-orm 按 `i64` 解会当场报
+/// "not compatible with SQL type DECIMAL"。这条错**编译期发现不了**（本套件的
+/// MockDatabase 根本不经过 MySQL 的类型回传），20260930 实测症状是"卡片上三个数
+/// 一个都不显示、`GET .../stats` 直接 500"，而日志里只有一行 WARN ⇒ 得有人盯着才看得见。
+/// 所以这里锁的是**"别再写第二处裸 `.sum()`"**：全文件只允许出现一次，
+/// 且那一次必须在 `sum_views()` 里（`.count()` 不受影响，COUNT 本来就是 BIGINT）。
+#[test]
+fn test_阅读求和不许绕开_sum_views_那一手_cast() {
+    let src = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/routes/note_stats.rs"),
+    )
+    .expect("读不到 src/routes/note_stats.rs");
+
+    // 只看**走 SQL 构造器的**那些行：`.sum()` 在 Rust 迭代器上（`map(..).sum()`）
+    // 也合法，那是本文件里另外两处，与 MySQL 类型无关。
+    let sql_sums: Vec<(usize, &str)> = src
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| l.contains(".sum()") && l.contains("Expr::"))
+        .map(|(i, l)| (i + 1, l.trim()))
+        .collect();
+
+    assert!(!sql_sums.is_empty(), "没找到任何 SQL 求和——判据空了，改成实际写法再锁");
+    for (line, text) in &sql_sums {
+        assert!(
+            text.contains("cast_as"),
+            "note_stats.rs:{} 的求和没带 CAST（{}）——MySQL 的 SUM(<整数列>) 是 DECIMAL，\
+             i64 解不出来。把它挪进 sum_views()",
+            line,
+            text
+        );
+    }
+}
+
 /// 扣一轮的判据**就是 `rows_affected`**——三态各一条，外加两条 SQL 断言。
 ///
 /// 那两条 SQL 断言不是"源码文本锁"的软判据，是**语义前提**：`rows_affected` 之所以
