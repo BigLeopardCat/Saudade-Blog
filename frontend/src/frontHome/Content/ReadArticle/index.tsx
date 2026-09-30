@@ -17,6 +17,9 @@ import { useIsDarkMode } from "../../../theme";
 import readDayVideo from '../../../assets/read_day.mp4';
 import readNightVideo from '../../../assets/read_night.mp4';
 import {getNoteById} from "../../../apis/NoteMethods.tsx";
+import {getNoteStats, likeNote, reportNoteView, unlikeNote} from "../../../apis/NoteStatsMethods.tsx";
+import {EyeIcon} from "../../../components/NoteStatIcons/index.tsx";
+import type {NoteStats} from "../../../interface/NoteStatsType";
 import SeoHelmet from "../../../components/SeoHelmet";
 import getToken from "../../../apis/getToken.tsx";
 import {addFavorite, errMsg, ok, removeFavorite} from "../../../apis/ProfileMethods.tsx";
@@ -39,6 +42,57 @@ import 'bytemd/dist/index.css'
 import 'github-markdown-css/github-markdown-light.css'
 import 'highlight.js/styles/atom-one-dark.css' // Import Highlight.js styles
 import 'katex/dist/katex.css' // KaTeX 公式样式（与编辑器一致，公式在外部展示页正常渲染）
+
+/**
+ * 阅读上报去重（20260930）：同一访客同一篇**一天只上报一次**。
+ *
+ * 为什么去重在前端：访客没有 uid，服务端没有身份可辨（因此 `POST .../view` 是
+ * 无脑 +1，谁都能刷——它统计的是"页面被打开的次数"，不是"多少个人读过"）。
+ *
+ * 三处写法都是有意的：
+ * · 日期用 `dayjs().format('YYYY-MM-DD')`，**不是 `toISOString().slice(0,10)`**——
+ *   后者是 UTC，北京 00:00–08:00 会与后端的 `Local::now().date_naive()` 差一天，
+ *   于是同一天被记两次、或跨零点那次被误判成"今天已记"而不记。
+ * · 标记**在请求之前同步写**（乐观写，失败由 `releaseTodayRead` 抹回）：StrictMode
+ *   双跑 effect / 快速重挂会在"检查—await"这个窗口里发出两次请求。
+ * · **一个键装一张 map**，不是 `read_<id>_<date>`——后者每天每篇堆一个键、永久累积。
+ *   命名空间前缀与既有的 `tokenKey` / `isDarkMode` 对齐。
+ */
+const READ_LOG_KEY = 'saudaReadLog';
+
+const readLog = (): Record<string, string> => {
+    try {
+        const o = JSON.parse(localStorage.getItem(READ_LOG_KEY) || 'null');
+        return o && typeof o === 'object' ? o : {};
+    } catch {
+        // 脏值（手工改过、别的版本写的）当"没记过"处理，不炸页面
+        return {};
+    }
+};
+
+const todayStr = () => dayjs().format('YYYY-MM-DD');
+
+/** 今天是不是第一次读这篇。**是则当场记账**，调用方负责在请求失败时还回来 */
+const claimTodayRead = (noteId: string): boolean => {
+    const today = todayStr();
+    const log = readLog();
+    if (log[noteId] === today) return false;
+    log[noteId] = today;
+    try {
+        localStorage.setItem(READ_LOG_KEY, JSON.stringify(log));
+    } catch { /* 隐私模式 / 配额满：退化成"每次都上报"，不影响正文 */ }
+    return true;
+};
+
+/** 上报失败 ⇒ 把今天的记账还回去（只还今天这一条，别的日期不动），下次还有机会记上 */
+const releaseTodayRead = (noteId: string) => {
+    const log = readLog();
+    if (log[noteId] !== todayStr()) return;
+    delete log[noteId];
+    try {
+        localStorage.setItem(READ_LOG_KEY, JSON.stringify(log));
+    } catch { /* 同上：存不进去也无所谓，最坏是这一天不再上报 */ }
+};
 
 const plugins = [
     gfm({ singleTilde: false }),
@@ -70,6 +124,28 @@ const ReadArticle = () => {
     const { has: hasFaved } = useFavorites(loggedIn)
     const faved = loggedIn && hasFaved(id)
 
+    // 阅读量 / 点赞量（20260930）。三个状态**各自可为空**、互不牵连：
+    //   · `views === null` = 还没读到（或读失败）⇒ **整块不显示**，绝不显示 0
+    //     （仓内纪律：读不到 ≠ 空，见 components/UserCenter/favorites.ts 头注）；
+    //   · `likes === null` 同理，但**点赞按钮照常渲染**——没读到计数不该妨碍点赞，
+    //     点下去后端会回一份权威的 {likes, liked}。
+    const [views, setViews] = useState<number | null>(null)
+    const [likes, setLikes] = useState<number | null>(null)
+    const [liked, setLiked] = useState(false)
+    const [likeBusy, setLikeBusy] = useState(false)
+    // 本 id 的统计是否已经拿到过。用于区分"今天第一次读"（要上报 +1）与
+    // "今天已经记过"（只读回当前值）——后者在 useLiveRefresh 每次聚焦时都会走，
+    // 没有这道闸就会变成每次聚焦都发一次 GET。
+    const statsLoadedRef = useRef(false)
+
+    /** 一次性吃下统计三件套（stats 与 view 上报返回的是同一个形状） */
+    const applyStats = (s: NoteStats) => {
+        statsLoadedRef.current = true
+        setViews(s.views)
+        setLikes(s.likes)
+        setLiked(!!s.liked)
+    }
+
     // 顶部横幅的日夜背景视频（20260912）
     const isDarkMode = useIsDarkMode()
     // 视频开始播放后 poster 层淡出；换源先复位（见下面的 effect）
@@ -99,6 +175,10 @@ const ReadArticle = () => {
         return getNoteById(id).then((res) => {
             setArticle({ ...res.data.data });
             setNotFound(false);
+            // 上报阅读量**只挂在这个成功分支里**：那正是"这篇文章真的存在且可见"的
+            // 唯一位置。放在别处（例如进页面就发）会让 `/article/17` 这类幻觉/死链
+            // 也在库里留下幽灵行。404 分支因此结构上不可能上报。
+            reportReadOnce(id);
         }).catch((err) => {
             console.error('获取失败', err)
             if (err?.response?.status === 404) {
@@ -110,7 +190,55 @@ const ReadArticle = () => {
         });
     };
 
+    /** 今天第一次读这篇 ⇒ 上报 +1；已经记过 ⇒ 只读回当前值（不发 +1）。
+     *  上报失败**静默**：它是个副作用，把读者的正文页面换成一句"上报失败"是本末倒置。
+     *  `statsLoadedRef` 只挡住同一个 id 上的重复 GET；换 id 时由下面的 effect 复位。 */
+    const reportReadOnce = (noteId: string) => {
+        if (!claimTodayRead(noteId)) {
+            if (statsLoadedRef.current) return;
+            getNoteStats(noteId).then((res) => {
+                if (ok(res)) applyStats(res.data.data);
+            }).catch(() => { /* 读不到就不显示，见上面 views 的注释 */ });
+            return;
+        }
+        reportNoteView(noteId).then((res) => {
+            if (ok(res)) applyStats(res.data.data);
+            else releaseTodayRead(noteId);
+        }).catch(() => releaseTodayRead(noteId));
+    };
+
+    const toggleLike = async () => {
+        if (!id) return
+        if (!getToken()) {
+            message.warning('登录后才能点赞')
+            return
+        }
+        setLikeBusy(true)
+        try {
+            const res = liked ? await unlikeNote(id) : await likeNote(id)
+            if (ok(res)) {
+                // 后端回的是权威值（计数与状态一起回来）⇒ 照抄，不在前端 ±1
+                // （前端自增在"另一处刚点过/被取消"时会算错，且重复请求会漂）
+                setLikes(res.data.data.likes)
+                setLiked(!!res.data.data.liked)
+                statsLoadedRef.current = true
+            } else {
+                message.error(errMsg(res))
+            }
+        } catch (e) {
+            message.error('网络异常，请稍后再试')
+        } finally {
+            setLikeBusy(false)
+        }
+    }
+
     useEffect(() => {
+        // 换文章（/article/A → /article/B）时本组件不重挂，统计必须跟着归零：
+        // 不归零的话 B 会先顶着 A 的阅读量渲染一帧，点赞态也是错的。
+        setViews(null)
+        setLikes(null)
+        setLiked(false)
+        statsLoadedRef.current = false
         loadArticle();
         scrollToTop();
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -433,6 +561,34 @@ const ReadArticle = () => {
                                     >
                                         <span aria-hidden="true">{faved ? '★' : '☆'}</span>
                                         <span className="readFavLabel">{faved ? '已收藏' : '收藏'}</span>
+                                    </button>
+                                </div>
+                                {/* 阅读量 + 点赞（20260930）：**与收藏并列的另一个 wrapper**，
+                                    不嵌进 .readFavWrap —— `read-fav-sass.test.mjs` 钉死了
+                                    `.readContainer .readCover .readInfo .readFavWrap` 的完整
+                                    选择器链与三态色，动它即红。
+                                    布局要点与收藏同源：wrapper 不许被 flex 挤小（`.readInfo`
+                                    是 flex 行，标题一长就把右边这几块挤窄）；数字定宽，免得
+                                    三位数跳到四位数时整条胶囊跟着抖。 */}
+                                <div className="readLikeWrap">
+                                    {views !== null && (
+                                        <span className="readViews" title="累计阅读量">
+                                            {/* 图标在 `components/NoteStatIcons` 里（卡片那一排同源，
+                                                别在这里再写一份路径——字形对不齐是两处各写一遍的老毛病） */}
+                                            <EyeIcon size={14} />
+                                            <span className="readViewsNum">{views}</span>
+                                        </span>
+                                    )}
+                                    <button
+                                        type="button"
+                                        className={`readLikeBtn${liked ? ' isLiked' : ''}`}
+                                        disabled={likeBusy}
+                                        aria-pressed={liked}
+                                        title={liked ? '取消点赞' : '点赞'}
+                                        onClick={toggleLike}
+                                    >
+                                        <span aria-hidden="true">{liked ? '♥' : '♡'}</span>
+                                        {likes !== null && <span className="readLikeNum">{likes}</span>}
                                     </button>
                                 </div>
                                 <motion.div

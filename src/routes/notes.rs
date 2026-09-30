@@ -72,7 +72,22 @@ pub struct NoteDto {
     
     pub is_public: bool,
     #[serde(rename = "noteTags")]
-    pub tags: String, 
+    pub tags: String,
+
+    // ── 卡片上的三个数（20260930，见 `note_stats::counts_for`）────────────────────
+    // **`None` 时整个键不出现在 JSON 里**（不是 `null`）：这是刻意的，因为只有列表接口
+    // 会挂数，详情接口不挂——`get_article_detail`（看板娘读文章详情）那条路因此**一个
+    // 字节都没变**，跨仓契约不受影响。
+    //
+    // `None` = 这一路没有（或取不到）计数 ⇒ 卡片不渲染那一排；`Some(0)` = 挂了数且真的是
+    // 0 ⇒ 显示 0。**"读不到"与"真的是 0"必须分得开**，否则统计接口一挂，站上每篇文章
+    // 都会谎报"0 阅读"。
+    #[serde(rename = "views", skip_serializing_if = "Option::is_none")]
+    pub views: Option<i64>,
+    #[serde(rename = "likes", skip_serializing_if = "Option::is_none")]
+    pub likes: Option<i64>,
+    #[serde(rename = "favorites", skip_serializing_if = "Option::is_none")]
+    pub favorites: Option<i64>,
 }
 
 /// 封面裁剪参数兜底：焦点归一化到 0..1，缩放夹在 1..4；NaN/inf 等脏值退回默认。
@@ -111,6 +126,11 @@ fn map_note(n: note::Model, cat: Option<category::Model>) -> NoteDto {
         category_title: cat_name,
         is_public: n.is_public,
         tags: n.tags.unwrap_or_default(),
+        // 三个数一律留空：挂数是**列表接口**的事（`attach_stats`），详情接口不挂。
+        // 想给详情接口也带数请先读 `note_stats` 模块头注——那条路被看板娘频繁读取。
+        views: None,
+        likes: None,
+        favorites: None,
     }
 }
 
@@ -147,9 +167,10 @@ pub async fn list_public_notes(
         .await
         .unwrap_or(vec![]);
 
-    let dtos = notes.into_iter().map(|(n, cat)| {
+    let mut dtos: Vec<NoteDto> = notes.into_iter().map(|(n, cat)| {
         map_note_summary(n, cat)
     }).collect();
+    attach_stats(&state.db, &mut dtos).await;
 
     Json(ApiResponse::success(dtos))
 }
@@ -475,9 +496,10 @@ pub async fn search_notes(
         scored.into_iter().map(|(_, _, r)| r).collect()
     };
 
-    let dtos = notes.into_iter().map(|(n, cats)| {
+    let mut dtos: Vec<NoteDto> = notes.into_iter().map(|(n, cats)| {
         map_note_summary(n, cats.into_iter().next())
     }).collect();
+    attach_stats(&state.db, &mut dtos).await;
 
     Json(ApiResponse::success(dtos))
 }
@@ -633,9 +655,10 @@ pub async fn get_top_notes(
         .await
         .unwrap_or(vec![]);
 
-     let dtos = notes.into_iter().map(|(n, cats)| {
+     let mut dtos: Vec<NoteDto> = notes.into_iter().map(|(n, cats)| {
         map_note_summary(n, cats.into_iter().next())
     }).collect();
+    attach_stats(&state.db, &mut dtos).await;
 
     Json(ApiResponse::success(dtos))
 }
@@ -824,6 +847,30 @@ pub async fn get_note_detail(
     dto.content = String::new();
     dto.content_raw = String::new();
     dto
+}
+
+/// 给一批列表行挂上卡片要的三个数（阅读 / 点赞 / 收藏，查询在 `note_stats::counts_for`）。
+///
+/// **失败只降级、不报错**：统计查询挂了就三列留 `None`（卡片那一排不渲染），列表本身照常
+/// 返回——三个数是装饰，不是"列表能不能看"的前提。这也正是 `Option` 而非 `i64` 的理由：
+/// 一次查询失败绝不能变成"站上每篇文章都 0 阅读"。
+///
+/// 只挂在**公开列表**（首页/分类页的卡片、搜索、置顶）上；后台那两个列表不挂——那里一次
+/// 可能拉上千行（Times 归档页 `page_size=999`），而这三个数的消费者只有卡片。
+async fn attach_stats(db: &sea_orm::DatabaseConnection, dtos: &mut [NoteDto]) {
+    let ids: Vec<i32> = dtos.iter().map(|d| d.id).collect();
+    match crate::routes::note_stats::counts_for(db, &ids).await {
+        Ok(counts) => {
+            for dto in dtos.iter_mut() {
+                if let Some(c) = counts.get(&dto.id) {
+                    dto.views = Some(c.views);
+                    dto.likes = Some(c.likes);
+                    dto.favorites = Some(c.favorites);
+                }
+            }
+        }
+        Err(e) => tracing::warn!("[notes] 列表附带统计失败，本页三个数不显示: {e}"),
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -361,7 +361,46 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
         height: 100%
         h4
           font-size: 20px
-        
+
+        // 分类 + 卡片读数（20260930）。**这一行就是封面图正下方那一行**，读数不另开一行：
+        // `.ArticleCard` 定高 600px，内容区收支 20260912 调到只剩约 7px 余量，再加一行
+        // 20px 会顶掉 `margin-top: auto`（同排卡片页脚高低不齐）。挂在这一行上零高度成本。
+        // 注意 h4 仍是 `.ArticleContent h4` 的后代 ⇒ 上面那条 font-size: 20px 照常生效。
+        .ArticleHead
+          display: flex
+          align-items: center
+          justify-content: space-between
+          // 窄卡片（移动端 300px 上下）容不下"分类 + 三个数"时**整块读数换行**，
+          // 而不是把分类名截断——分类是内容，读数是装饰，要让内容先体面
+          flex-wrap: wrap
+          gap: 4px 10px
+          width: 100%
+
+          .ArticleStats
+            display: flex
+            align-items: center
+            gap: 10px
+            flex-shrink: 0
+            font-size: 12px
+            line-height: 1
+            // 主题变量：`#898989` / 夜间 `#cccccc`（frontHome/main.css）。**不写死灰色**——
+            // 站内既有那两处 `#7f7e7e` 是行内 style，在深色卡片上偏暗，不跟着抄
+            color: var(--font-p-color)
+
+            // 三个数是"有多少"，不是按钮：**不加 hover 高亮、不设 cursor: pointer**。
+            // 整张卡片可点是"打开文章"，这里给交互暗示会被读成"点这个能点赞"
+            .ArticleStat
+              display: inline-flex
+              align-items: center
+              gap: 3px
+              white-space: nowrap
+
+              // 数字定宽：一位数变两位数时右边那个数不跟着左右抖
+              // （同详情页 `.readViewsNum` 的取舍）
+              .ArticleStatNum
+                min-width: 1.6ch
+                text-align: center
+
         .ArticleTitle
           font-weight: 900
           font-size: 30px

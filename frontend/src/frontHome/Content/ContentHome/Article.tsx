@@ -7,6 +7,8 @@ import {CategoriesType} from "../../../interface/CategoriesType";
 import {renderNoteTags} from "../../../apis/TagMethods.tsx";
 import dayjs from "dayjs";
 import { coverCropStyle, cropFromRow } from "../../../utils/coverCrop";
+import { EyeIcon, HeartIcon, StarIcon } from "../../../components/NoteStatIcons/index.tsx";
+import { statCells } from "../../../utils/noteStats";
 
 interface tag
 {
@@ -22,6 +24,36 @@ interface ArticleOption {
     avatar: string
     name: string
     tagList: tag[]
+}
+
+/** 三个数各自的图标。**图标在这里、判据在 `utils/noteStats`**——那边是可断言的纯函数
+ *  （"读不到 ≠ 0"那条规则），这边只管画。 */
+const STAT_ICON: Record<string, React.ReactNode> = {
+    views: <EyeIcon size={13} />,
+    likes: <HeartIcon size={13} />,
+    favorites: <StarIcon size={13} />,
+}
+
+/**
+ * 卡片上的三个数：阅读 / 点赞 / 收藏（20260930）。
+ *
+ * 显示哪几个由 `statCells()` 定（后端三条聚合查询可能只挂了一条，"读不到"绝不显示成 0，
+ * 见 `utils/noteStats.ts`）；一个数都没有时**整个容器不渲染**，不留一条空白行
+ * （父级是 flex，空 div 也会吃掉 gap）。
+ */
+const NoteStats: React.FC<{ item: NoteType }> = ({ item }) => {
+    const cells = statCells(item)
+    if (cells.length === 0) return null
+    return (
+        <div className="ArticleStats">
+            {cells.map(cell => (
+                <span className="ArticleStat" key={cell.key} title={cell.label}>
+                    {STAT_ICON[cell.key]}
+                    <span className="ArticleStatNum">{cell.value}</span>
+                </span>
+            ))}
+        </div>
+    )
 }
 
 const Article:React.FC<ArticleOption> = ({ item, index, Categories, avatar, name, tagList }) => {
@@ -62,9 +94,17 @@ const Article:React.FC<ArticleOption> = ({ item, index, Categories, avatar, name
                 </div>
 
                 <div className="ArticleContent">
-                    <h4 style={{ color: Categories.find(category => category.categoryTitle === item.noteCategory)?.color }}>
-                        # {Categories.find(category => category.categoryKey === item.noteCategory)?.categoryTitle ?? ''}
-                    </h4>
+                    {/* 分类与读数**同一行**：这一行就是封面图正下方那一行。
+                        刻意不给读数单开一行——`.ArticleCard` 是定高 600px，内容区的高度
+                        收支在 20260912 已经调到只剩约 7px 余量（见 index.sass 里那段注释），
+                        再加一行 20px 会把 `margin-top: auto` 顶掉，同一排卡片的页脚就会
+                        高低不齐。挂在这一行上则零高度成本，桌面/移动两套布局都不用改。 */}
+                    <div className="ArticleHead">
+                        <h4 style={{ color: Categories.find(category => category.categoryTitle === item.noteCategory)?.color }}>
+                            # {Categories.find(category => category.categoryKey === item.noteCategory)?.categoryTitle ?? ''}
+                        </h4>
+                        <NoteStats item={item} />
+                    </div>
                     <h3 className='ArticleTitle'>{item.noteTitle}</h3>
                     <p className="ArticleDescription">{item.description}</p>
                     <div style={{ width: '100%', marginTop: 'auto', flexShrink: 0 }}>
