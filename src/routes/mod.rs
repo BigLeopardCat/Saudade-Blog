@@ -315,6 +315,10 @@ pub fn create_router(state: AppState) -> Router {
         // 文章报表（20260930）：后台 /dashboard/analytics 的供数端点。同一前缀同一纪律
         // ——挂守卫域内 ⇒ 只有 admin 拿得到。**不是**给 agent 的工具供数（那份是 users）。
         .route("/api/protected/stats/notes", get(note_stats::note_report))
+        // 周报/月报/年报（20261001）：同一份数据的**分期**视图（?kind=week|month|year）。
+        // 与上面那条同前缀不同路径，不是它的子资源——上面是"当下快照"，
+        // 这条是"每期一行的历史"，两条的缓存/刷新语义都不一样。
+        .route("/api/protected/stats/notes/periods", get(note_stats::note_period_report))
 
         // WebSettings
         .route("/api/protected/websetting",
