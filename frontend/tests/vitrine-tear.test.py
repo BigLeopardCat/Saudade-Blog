@@ -209,11 +209,15 @@ with sync_playwright() as p:
     print("\n【二】拖拽：折角跟手长、缺口跟着深")
     s = press(pg, 48, -48, steps=4, release=False)
     mid = state(pg)
-    # 48+48 = 96px 的对角位移 ÷ 2 = 48 ⇒ k = 0.2 + 48/160 = 0.5（`EAR_MAX` 见下面的第七组）
-    check("★ 拖到一半：`--k` 从 0.2 长到约 0.5（指针沿对角线走的距离 / 2 / `EAR_MAX`）",
-          abs(float(mid["k"]) - 0.5) < 0.02, mid["k"])
+    # 48+48 = 96px 的对角位移 ÷ 2 = 48 ⇒ k = 0.2 + 48 / 卡片高（九轮起分母是卡片高本身，
+    # 不再是写死的 160px —— 用户第 1 条「至少要撕到左侧胶带位置才能掉落」）。
+    # 沙箱里 `#root{width:900px}`、卡片 16:7 ⇒ 高 = 900 × 7/16 = 393.75 ⇒ k ≈ 0.322。
+    H = 900 * 7 / 16
+    check("★ 拖到一半：`--k` 从 0.2 长到约 0.32（指针沿对角线走的距离 / 卡片高 ——"
+          "手指走满一个卡高才折到头，缺口那时正好够到左上角那张胶带）",
+          abs(float(mid["k"]) - (0.2 + 48 / H)) < 0.02, mid["k"])
     check("  · 那片纸跟着长（不是只有变量在变）",
-          float(mid["earTf"].split(",")[0][7:]) > 0.45, mid["earTf"])
+          float(mid["earTf"].split(",")[0][7:]) > 0.30, mid["earTf"])
     check("  · 封面左下角的缺口**跟着深**（同一个 `--k` 驱动两处）",
           mid["coverClip"] != s["coverClip"], mid["coverClip"][:60])
     check("  · 拖拽期间挂着 `is-peeling`（过渡被关掉，折角才跟得上指针）",
@@ -237,7 +241,9 @@ with sync_playwright() as p:
     # ── 四、扯到头：这一页掉下去 ─────────────────────────────────────────────
     print("\n【四】扯到头：这一页从胶带底下抽走、掉出屏幕")
     before = state(pg)
-    press(pg, 200, -200, steps=6)            # Δp = 200 ⇒ k 到顶 ⇒ 断
+    # Δp = 340 > 0.8 × 卡片高（393.75 × 0.8 = 315）⇒ k 到顶 ⇒ 断。
+    # ⚠️ 九轮起行程变长了（分母从 160 换成卡片高）：以前 200 就够，现在得走满一个卡高。
+    press(pg, 340, -340, steps=6)
     pg.wait_for_timeout(40)
     torn = state(pg)
     check("★ 扯断了：body 上出现一张 `.vit-fall`（portal 到 document.body）",
@@ -252,9 +258,10 @@ with sync_playwright() as p:
           (torn["panelClip"] or "")[:60])
     check("  · 折角自己回到静止档 0.2（新露出来的那页也有它的把手）",
           torn["k"] == "0.2", torn["k"])
-    check("  · 克隆纸与卡片同宽、起点比卡片顶低 11px（= 从胶带下缘之下抽出来）",
+    check("  · 克隆纸与卡片同宽、起点比卡片顶低 8px（= 从胶带下缘之下抽出来；"
+          "九轮把胶带抬高了 5px，压进卡片的那段由 11px 变 8px）",
           abs(torn["fallInline"]["width"] - before["vitRect"]["width"]) <= 1
-          and abs(torn["fallInline"]["top"] - (before["vitRect"]["top"] + 11)) <= 1,
+          and abs(torn["fallInline"]["top"] - (before["vitRect"]["top"] + 8)) <= 1,
           f'fall {torn["fallInline"]} / vit top {before["vitRect"]["top"]}')
     check("  · 克隆纸**不带缺口**（被扯下来的是一整张纸）",
           torn["fallFaceClip"] == "none", torn["fallFaceClip"])
@@ -335,13 +342,103 @@ with sync_playwright() as p:
           f'fall {done["fallCount"]} / flipped {done["flipped"]}')
     pg.wait_for_timeout(2600)
 
+    # ── 九、放大态：小件跟着**卡片**走，不是跟着视口 ─────────────────────────
+    # 用户第 1 条原话「文章向量空间，个性签名，下翻按钮，键合胶带盖在上面了，关闭按钮太靠
+    # 右上角了」。九轮前胶带/折角/关闭按钮挂在 `.vitrine` 上，而放大态 `.vitrine` 变成
+    # `position: fixed; inset: 0` ⇒ 那三件的 `top/left` 全按**视口**算：两张胶带飞到视口
+    # 左右上角（正好压在标题/签名/下翻按钮那一片）、关闭按钮落在站点头部的右上角
+    # （实测 (1382, 18)）。判据：放大之后它们必须仍然贴着**卡片**的四条边。
+    print("\n【九】放大态：胶带 / 关闭按钮仍长在**卡片**上（用户第 1 条）")
+    ZOOMED = """() => {
+      const q = (sel) => document.querySelector(sel);
+      const box = (el) => { const b = el.getBoundingClientRect();
+        return { l: +b.left.toFixed(1), t: +b.top.toFixed(1),
+                 r: +b.right.toFixed(1), b: +b.bottom.toFixed(1),
+                 w: +b.width.toFixed(1), h: +b.height.toFixed(1) }; };
+      const vit = q('.vitrine');
+      const close = q('.vit-close');
+      return {
+        zoomed: vit.classList.contains('is-zoomed'),
+        k: getComputedStyle(vit).getPropertyValue('--k').trim(),
+        card: box(q('.vit-3d')),
+        tapeL: box(q('.vit-tapeL')),
+        tapeR: box(q('.vit-tapeR')),
+        close: close ? box(close) : null,
+        earOff: getComputedStyle(q('.vit-ear')).display,
+        cornerOff: getComputedStyle(q('.vit-corner')).display,
+      };
+    }"""
+    # 胶带骑在卡片上沿：盒顶 -14px、盒高 22px ⇒ 盒底落在卡片顶下方 8px（`TAPE_COVER`）。
+    # ⚠️ 量到的是**旋转后的外接框**：-5°/+4° 让框上下各胖出 2.5px 上下 ⇒ 判据给一条带，
+    # 不是钉死一个数（胶带盒本身量不到，`getBoundingClientRect` 只有 bbox）。
+    def on_card(z):
+        c = z["card"]
+        return (all(c["t"] + 2 <= t["b"] <= c["t"] + 18 and c["t"] - 20 <= t["t"] <= c["t"]
+                    for t in (z["tapeL"], z["tapeR"]))
+                and z["tapeL"]["l"] >= c["l"] - 1 and z["tapeL"]["l"] <= c["l"] + 80
+                and z["tapeR"]["r"] <= c["r"] + 1 and z["tapeR"]["r"] >= c["r"] - 80)
+
+    def close_in_card(z):
+        c = z["card"]
+        return (z["close"] is not None and z["close"]["r"] <= c["r"] - 4
+                and z["close"]["l"] >= c["r"] - 60
+                and z["close"]["t"] >= c["t"] and z["close"]["t"] <= c["t"] + 40)
+
+    pg.mouse.click(640, 300)                 # 翻过页之后单击卡片 ⇒ 放大
+    pg.wait_for_timeout(150)
+    z = pg.evaluate(ZOOMED)
+    check("★ 单击卡片进放大态（`is-zoomed` 挂上、关闭按钮出现）",
+          z["zoomed"] and z["close"] is not None, f'zoomed {z["zoomed"]}')
+    check("★ 两张胶带仍骑着卡片上沿（挂 `.vitrine` 上的话会按视口算 ⇒ 飞到视口左右上角）",
+          on_card(z), f'卡片 {z["card"]} / 左 {z["tapeL"]} / 右 {z["tapeR"]}')
+    check("★ 关闭按钮落在**卡片**右上角（旧位置实测 (1382, 18) = 站点头部那排图标里）",
+          close_in_card(z), f'关闭 {z["close"]} / 卡片 {z["card"]}')
+    check("  · 放大态收起折角与抓手（只读：这一页没有得撕的地方）",
+          z["earOff"] == "none" and z["cornerOff"] == "none",
+          f'{z["earOff"]} / {z["cornerOff"]}')
+
+    pg.mouse.click(z["close"]["l"] + 18, z["close"]["t"] + 18)
+    pg.wait_for_timeout(150)
+    z3 = pg.evaluate(ZOOMED)
+    check("★ 点关闭退回内联卡片：小件仍在卡片上（放大与内联是同一个包含块）",
+          not z3["zoomed"] and z3["close"] is None and on_card(z3),
+          f'卡片 {z3["card"]} / 左 {z3["tapeL"]}')
+
+    # 反向对照：**把 DOM 搬回九轮前的位置**（三件挂到 `.vitrine` 上，而不是 `.vit-3d`）。
+    # 只改 CSS 复现不出来 —— `.vit-3d` 自带 `transform`（`perspective` 那一层），
+    # `position: fixed` 在它里面会退化成"相对这个祖先"，量到的仍是卡片角落。
+    # 新开一局，做完就 `goto` 走人（被搬过的 DOM 不再交给 React 渲染）。
+    pg.goto(URL + "?t=9")
+    pg.wait_for_timeout(400)
+    cc = state(pg)["cornerCenter"]
+    pg.mouse.click(cc["x"], cc["y"])         # 单击 = 掀 + 扯
+    pg.wait_for_timeout(900)
+    pg.mouse.click(640, 300)                 # 翻过页之后放大
+    pg.wait_for_timeout(150)
+    zb = pg.evaluate("""() => {
+      const vit = document.querySelector('.vitrine');
+      const q = (sel) => document.querySelector(sel);
+      const box = (el) => { const b = el.getBoundingClientRect();
+        return { l: +b.left.toFixed(1), t: +b.top.toFixed(1),
+                 r: +b.right.toFixed(1), b: +b.bottom.toFixed(1) }; };
+      // 九轮前就是这个父子关系：胶带与关闭按钮都住在 `.vitrine` 里
+      [q('.vit-tapeL'), q('.vit-tapeR'), q('.vit-close')].forEach((el) => vit.appendChild(el));
+      const card = box(q('.vit-3d'));
+      return { zoomed: vit.classList.contains('is-zoomed'), card: card,
+               tapeL: box(q('.vit-tapeL')), tapeR: box(q('.vit-tapeR')),
+               close: box(q('.vit-close')) };
+    }""")
+    check("★ 反向对照：把三件搬回 `.vitrine`（九轮前的父子关系）后两条判据当场失效",
+          zb["zoomed"] and not on_card(zb) and not close_in_card(zb),
+          f'坏档 卡片 {zb["card"]} / 左 {zb["tapeL"]} / 关闭 {zb["close"]}')
+
     # ── 八、减少动效：纸不掉，但**页照翻** ───────────────────────────────────
     print("\n【八】减少动效档：不做抛体，但翻页照常发生")
     pg.emulate_media(reduced_motion="reduce")
     pg.goto(URL + "?t=2")
     pg.wait_for_timeout(400)
     r0 = state(pg)
-    press(pg, 200, -200, steps=6)
+    press(pg, 340, -340, steps=6)            # 与第四组同一个行程（分母是卡片高）
     pg.wait_for_timeout(120)
     r1 = state(pg)
     check("★ 减少动效档下**不生成**克隆纸（TSX 的 `prefersReducedMotion()` 直接跳过抛体）",

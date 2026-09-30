@@ -113,16 +113,21 @@ HERO = """
     <section class="vitrine" id="vit">
       <span class="vit-under" id="vitunder" style="--d:2"></span>
       <span class="vit-under" style="--d:1"></span>
-      <span class="vit-tape vit-tapeL"></span><span class="vit-tape vit-tapeR"></span>
+      <!-- 胶带 / 那片折角 / 关闭按钮都住在 .vit-3d **里面**（九轮搬的：挂 .vitrine 上
+           的话放大态会跟着 inset:0 飞到视口四角去，见 sass 头注） -->
       <div class="vit-3d" id="vit3d">
-        <div class="vit-face vit-panel" id="vitpanel"></div>
+        <span class="vit-tape vit-tapeL" id="vitTapeL"></span>
+        <span class="vit-tape vit-tapeR" id="vitTapeR"></span>
+        <div class="vit-face vit-panel" id="vitpanel">
+          <div class="vit-bar"><span class="vit-title" id="vitTitle">词图关系图谱</span></div>
+        </div>
         <div class="vit-face vit-cover" id="vitface">
           <span class="vit-coverStar">✦</span><span class="vit-coverTitle">词图关系图谱</span>
         </div>
-      </div>
-      <button class="vit-corner" id="vitcorner" type="button">
         <span class="vit-ear" id="vitear"></span>
-      </button>
+        <button class="vit-close" id="vitclose" type="button">×</button>
+      </div>
+      <button class="vit-corner" id="vitcorner" type="button"></button>
     </section>
   </div>
   <div class="heroBottom" id="bottom">
@@ -207,6 +212,9 @@ PAINT = """(o) => {
     video: R('#video'), tapeL: R('#tapeL'), tapeR: R('#tapeR'), right: R('#right'),
     vit: R('#vit'), vit3d: R('#vit3d'), vitface: R('#vitface'), vitcorner: R('#vitcorner'),
     vitpanel: R('#vitpanel'), vitunder: R('#vitunder'), vitear: R('#vitear'),
+    // 九轮：这三件从 `.vitrine`（会撑成 inset:0 的固定层）搬进 `.vit-3d`，
+    // 位置因此都相对**卡片**算 —— 量出来才看得见。
+    vitclose: R('#vitclose'), vitTapeL: R('#vitTapeL'), vitTitle: R('#vitTitle'),
     // 第 ⑥b 组：折角进度 `--k` 住在 `.vitrine` 上（自定义属性，不是声明 —— 只有读计算值
     // 才能证明"静止档真的折着"，读源码只能证明有人写了个数）。
     vitK: getComputedStyle(document.getElementById('vit')).getPropertyValue('--k').trim(),
@@ -451,6 +459,16 @@ with sync_playwright() as p:
           vit["display"] != "none" and vit["top"] >= panel["bottom"]
           and abs(vit["w"] - panel["w"]) <= 1,
           f"display {vit['display']} top {vit['top']} vs panel.bottom {panel['bottom']}")
+    # 九轮（用户第 1 条「个性签名，下翻按钮……盖在上面了」的另一半）：手机档下留白原先是
+    # 56px，装不下 `.heroBottom` 那一行 —— 签名是 `bottom: 86px` + 行高 27px ⇒ 它顶边在
+    # **离 hero 下缘 113px** 处，而下翻按钮还要更低一档。56px 的留白下右列（内页 + 展示柜）
+    # 的下缘直接压在它们身上（实测 375 宽那档：展示柜底 798 vs 签名 741..768）。
+    check("★ 手机档：右列下缘落在签名**上面**（下留白 128px ≥ 那行要的 113px）",
+          right["bottom"] <= m["onesay"]["top"],
+          f'右列底 {right["bottom"]} vs 签名顶 {m["onesay"]["top"]}')
+    check("  · 下翻按钮同理（它在签名下面一档，是最容易被压的那个）",
+          right["bottom"] <= m["scroll"]["top"],
+          f'右列底 {right["bottom"]} vs 下翻钮顶 {m["scroll"]["top"]}')
 
     print("\n== ⑥ 展示柜卡片：翻页 / 放大 的两条硬契约（挂 perspective、量 overflow）==")
     m = seam_at(pg, 1440)
@@ -491,24 +509,36 @@ with sync_playwright() as p:
     # 六轮那套「绕顶边掀走 + 撇出纸外的小三角 + 弧形粗箭头」整体作废。**反断言优先**：
     # 旧形态「已不在」比新形态「在」更能挡住回退（本套件的老规矩）。
     tsx = VITRINE_TSX.read_text(encoding="utf-8")
+    VITRINE_SASS_TEXT = VITRINE_SASS.read_text(encoding="utf-8")
     check("★ 折角**常驻**：`.vitrine` 的 `--k` 静止值是 0.2 而不是 0"
           "（0 = 纸面完好无损、哪都下不了手；用户要的是「左下角视觉上被折到前面」，"
           "那枚折角就是把手）",
           re.search(r"--k:\s*0\.2\s*;", css_rule(VITRINE_CSS, ".vitrine")) is not None
           and m["vitK"] == "0.2",
           f"源码 .vitrine 块 {css_rule(VITRINE_CSS, '.vitrine')[:60]!r} / 计算值 {m['vitK']!r}")
-    check("★ 缺口深度与那片折角由**同一个** `--k` 驱动（`--ear = calc(var(--k) * 160px)`）"
-          "—— 拖拽/掀起时两者一起长，这是「扯」唯一看得见的地方",
-          "calc(var(--k) * 160px)" in VITRINE_CSS
-          and "calc(var(--k) * 160px)" in (VITRINE_CSS.split("--ear:")[1][:40] if "--ear:" in VITRINE_CSS else ""),
-          "见 .vitrine 的 --ear")
-    # 八轮把这个数从 120 抬到 160（用户第 5 条：「扯起来的角的**终点**可以更大一些」）。
-    # 这条断言钉的是"两处同一个数"这个契约 —— 只改一处的话，缺口与那片纸就对不上了。
-    check("  · `EAR_MAX`（TSX 的 160）与 sass 那个 160px 是同一个数",
-          "const EAR_MAX = 160" in tsx and "calc(var(--k) * 160px)" in VITRINE_CSS
-          and "width: 160px" in css_rule(VITRINE_CSS, ".vit-ear"),
-          f'TSX {"160" if "const EAR_MAX = 160" in tsx else "对不上"} / '
-          f'--ear {"160" if "calc(var(--k) * 160px)" in VITRINE_CSS else "对不上"}')
+    # 九轮（用户第 1 条「手账撕下来动画过渡不自然，**至少要撕到左侧胶带位置才能掉落吧**」）：
+    # 这个数不再是写死的 160px，而是**卡片自己的高度** —— `--k = 1` 时折线扫过整张卡、
+    # 顶端落在左上角（左侧那张胶带住的地方）。三处同一个量、且都不是魔法数：
+    #   竖腿 = `calc(100% - var(--k) * 100%)`（卡片高）、横腿 = 同一个 k × 卡片宽高比、
+    #   那片纸 = `height: 100%` + `aspect-ratio: 1`，TSX 的分母 = `rect.height`。
+    check("★ 缺口与那片折角由**同一个** `--k` 驱动，且 `--k = 1` 时竖腿 = 整张卡的高度"
+          "（`calc(100% - var(--k) * 100%)`）—— 折线因此够得到左上角那张胶带，"
+          "而不是像九轮之前（竖腿封顶 160px、卡片高 227px）折到七成就掉",
+          "calc(100% - var(--k) * 100%)" in VITRINE_CSS
+          and "calc(var(--k) * 100% * 0.4375)" in VITRINE_CSS
+          and "calc(var(--k) * 160px)" not in VITRINE_CSS
+          and "--ear" not in VITRINE_CSS,
+          "见 .vit-cover 的 clip-path")
+    check("  · 横腿那个 `0.4375` 是 `math.div(7, 16)` 算出来的（= 卡片宽高比 16:7 的倒数）"
+          "—— 折的是**纸面内的 45°**，横竖两腿像素必须相等",
+          "math.div($vit-ar-h, $vit-ar-w)" in VITRINE_SASS_TEXT
+          and "aspect-ratio: 16/7" in VITRINE_CSS,
+          f'源码 {"有 math.div" if "math.div($vit-ar-h, $vit-ar-w)" in VITRINE_SASS_TEXT else "没找到"}')
+    check("  · TSX 那边的分母也换成了卡片高（`/ d.rect.height`），"
+          "写死的 `EAR_MAX` 已撤 —— 只改一边的话手指走满一个卡高就撕不动/早撕了",
+          "/ d.rect.height" in tsx and "const EAR_MAX" not in tsx,
+          f'TSX {"对" if "/ d.rect.height" in tsx else "没换分母"} / '
+          f'常量 {"还在" if "const EAR_MAX" in tsx else "已撤"}')
     # ── 折角的形状：这是用户那句「突兀」的正题 ────────────────────────────────
     check("★ 折角**完全落在纸里侧**、一点都不探出卡片边缘"
           "（六轮那枚三角撇到卡片外，正是「突兀」的来源 —— 纸角不可能长到纸外面去）",
@@ -519,22 +549,25 @@ with sync_playwright() as p:
           f"corner.l {m['vitcorner']['left']} / ear.l {m['vitear']['left']}"
           f" vs vit.l {m['vit']['left']}；corner.b {m['vitcorner']['bottom']}"
           f" / ear.b {m['vitear']['bottom']} vs vit.b {m['vit']['bottom']}")
-    # 八轮把**那片纸**（`.vit-ear`，160）与**抓手**（`.vit-corner`，120）拆开了，两只不再等大：
-    # 抓的是**角**——静止档那片纸只有 32px，120px 的框早够；而纸要长到最大那一档。
-    # 跟着纸一起放到 160 的话，手机上（列宽即屏宽、卡片才 150 来 px 高）这枚透明按钮会把
-    # 整个下半张卡吃掉，"点卡片放大"就点不动了。这条同时钉住"别顺手把两只写成一个数"。
-    check("★ 纸比抓手大一圈、抓手**没有**跟着长（扶手尺寸 = 手机上还点得到卡片去放大）",
-          m["vitear"]["offW"] == 160 and m["vitear"]["offH"] == 160
-          and m["vitcorner"]["offW"] == 120 and m["vitcorner"]["offH"] == 120,
-          f'ear {m["vitear"]["offW"]}×{m["vitear"]["offH"]} / '
+    # 八轮把**那片纸**与**抓手**（`.vit-corner`，120 的透明按钮）拆开了，两只不是一个东西；
+    # 九轮把纸从写死的 160×160 换成"**卡片高的正方形**"（`height: 100%` + `aspect-ratio: 1`）
+    # —— 折线要够到左上角，盒子就得有卡那么高：写死一个数在窄卡（手机）上够不着、
+    # 在放大态又太小。抓手不跟着长：手机上（列宽即屏宽、卡片才 150 来 px 高）那枚透明按钮
+    # 长到整列高会把下半张卡吃掉，"点卡片放大"就点不动了。
+    check("★ 那片纸 = **卡片高的正方形**（量的是布局盒，`getBoundingClientRect` 不受 scale 影响）",
+          m["vitear"]["offW"] == m["vit"]["h"] and m["vitear"]["offH"] == m["vit"]["h"],
+          f'ear {m["vitear"]["offW"]}×{m["vitear"]["offH"]} / 卡片高 {m["vit"]["h"]}')
+    check("★ 抓手**没有**跟着长（120×120 的命中区 = 手机上还点得到卡片去放大）",
+          m["vitcorner"]["offW"] == 120 and m["vitcorner"]["offH"] == 120,
           f'corner {m["vitcorner"]["offW"]}×{m["vitcorner"]["offH"]}')
     check("★ 抓手不许剪掉探出去的那 40px（`overflow: visible`）——"
           "剪了折角就成了一个缺斜边的方角（按钮 UA 默认值各家不一，不赌）",
           m["vitcorner"]["overflow"] == "visible", m["vitcorner"]["overflow"])
     check("★ 那片纸是**右上三角**、缩放原点是盒子的左下角"
-          "（= 卡片底左角 ⇒ `scale(--k)` 得到的正是「折了 k×160px 那么大」的一片）",
+          "（= 卡片底左角 ⇒ `scale(--k)` 得到的正是「折了 k×卡片高那么大」的一片，"
+          "与缺口那条竖腿 `--k × 100%` 同一个数）",
           m["vitear"]["clipPath"].replace(" ", "").count(",") == 2
-          and m["vitear"]["transformOrigin"] == "0px 160px",
+          and abs(float(m["vitear"]["transformOrigin"].split()[1][:-2]) - m["vit"]["h"]) <= 1,
           f'{m["vitear"]["clipPath"][:60]} / {m["vitear"]["transformOrigin"]}')
     check("★ 静止档量出来是 `scale(0.2)`（不是 1、也不是 none）",
           m["vitear"]["transform"].startswith("matrix(0.2,"),
@@ -543,6 +576,46 @@ with sync_playwright() as p:
           m["vitface"]["clipPath"] not in ("none", "")
           and m["vitface"]["clipPath"].replace(" ", "").count(",") == 4,
           f"实测 {m['vitface']['clipPath'][:70]}")
+    # ── 「撕到左侧胶带才掉」：把 `--k` 推到 1（= TSX 判"该断了"的那一档）再量一次 ──
+    # 静态读源码只能证明写了 `100%`；**折线顶端到底落在哪**只有让浏览器算一遍才知道
+    # （`.vit-ear` 的盒子缩放后就是那一刀扫过的范围，`getBoundingClientRect` 给全盒）。
+    # ⚠️ `.vit-ear` 挂着 `transition: transform 0.3s`：`--k` 写下去是立即的，但**那片纸
+    # 的缩放是插值过去的** ⇒ 写完立刻量到的还是静止档（第一次跑就是这么假红的）。
+    pg.evaluate("() => document.getElementById('vit').style.setProperty('--k', '1')")
+    pg.wait_for_timeout(450)
+    lift = pg.evaluate("""() => {
+      const vit = document.getElementById('vit');
+      const box = (el) => { const b = el.getBoundingClientRect();
+        return { l: Math.round(b.left), t: Math.round(b.top),
+                 r: Math.round(b.right), b: Math.round(b.bottom) }; };
+      return { ear: box(document.getElementById('vitear')),
+               tape: box(document.getElementById('vitTapeL')),
+               vit: box(vit) };
+    }""")
+    vit, ear, tape = lift["vit"], lift["ear"], lift["tape"]
+    check("★ 掀到头（`--k = 1`）那一刻：折角盒子长满整张卡高、底左角贴着卡片底左角"
+          "⇒ **折线顶端落在卡片的左上角**（用户第 1 条：「至少要撕到左侧胶带位置才能掉落吧」）",
+          ear["t"] == vit["t"] and ear["l"] == vit["l"] and ear["b"] == vit["b"],
+          f'ear {ear} / vit {vit}')
+    check("  · 左侧那张胶带正压在这条边的 22px 处（左缘离卡片左缘 22px）"
+          "⇒ 折线扫到左上角就是**扫过胶带所在的那一段**，不是九轮之前「折到七成」的位置",
+          tape["l"] > vit["l"] and tape["t"] < vit["t"],
+          f'胶带左缘 {tape["l"]} vs 卡片左缘 {vit["l"]}；胶带顶 {tape["t"]} vs 卡片顶 {vit["t"]}')
+    pg.evaluate("() => document.getElementById('vit').style.removeProperty('--k')")
+    # ── 胶带不许再啃标题（用户第 1 条「键合胶带盖在上面了」）────────────────
+    # 量的是**字盒**：静态稿里 `.vit-title` 在 `.vit-panel` 上，胶带横跨同一个 y 区间。
+    check("★ 胶带底边在标题**字盒之上**（原来是 top:-9px + 高 20px ⇒ 底边啃进 2.65px，"
+          "实测胶带底 113.65 / 字盒顶 111）",
+          m["vitTapeL"]["bottom"] < m["vitTitle"]["top"],
+          f'胶带底 {m["vitTapeL"]["bottom"]} vs 字盒顶 {m["vitTitle"]["top"]}')
+    # 胶带 / 那片纸 / 关闭按钮**住进 `.vit-3d`** 这件事，只有放大态量得出来
+    # （内联态 `.vitrine` 与 `.vit-3d` 两个盒子重合，挂哪边都一样）——那一条在
+    # `vitrine-tear.test.py` 第九组用真组件点开放大再量。
+    check("  · 关闭按钮在内联态就贴着卡片右上角（`top/right: 8px` 相对 `.vit-3d`）；"
+          "放大是同一个包含块 ⇒ 它不会跑到视口/头部那个角上去",
+          m["vitclose"]["right"] <= m["vit"]["right"] - 5
+          and m["vitclose"]["top"] <= m["vit"]["top"] + 50,
+          f'关闭钮 {m["vitclose"]} / 卡片 {m["vit"]}')
     # ── 「翻」这个动作换人了：原地不留翻转 ──────────────────────────────────
     check("★ 六轮那套「绕顶边掀走」已撤：`.vit-cover` 不再定 `transform-origin`、"
           "全文件没有一处 `rotateX`（这一页是被**抽走**的，原地不动）",
