@@ -22,9 +22,16 @@
  *   `.readViews`、卡片 `.ArticleStat`），图标作为 flex item 由交叉轴对齐，写行内
  *   `vertical-align` 在 flex 容器里根本不生效——留着只会让后来人以为它在起作用。
  *
- * 三个字形里**眼睛是描边、心与星是实心**：卡片上这三个数是"有多少"，实心更清楚；
- * 而眼睛实心会糊成一团（瞳孔与眼白在 12px 下分不开）。这与详情页的观感一致
- * （那里也是描边眼 + 实心 ♥/★）。
+ * ## 描边件与实心件（五件套）
+ *
+ * · **描边**：眼睛（`EyeIcon`）、空心（`HeartOutlineIcon`）、空星（`StarOutlineIcon`）
+ *   —— 同一套 `strokeWidth`（1.8）与圆角端点，摆在一起是一条线语言。
+ * · **实心**：心（`HeartIcon`）、星（`StarIcon`）—— 同一条路径的 `fill` 版。
+ * · 卡片上那三个数是"有多少"，一律实心更清楚（眼睛例外：实心会糊成一团，瞳孔与眼白
+ *   在 12px 下分不开）。
+ * · 详情页的收藏/点赞是**开关**（未选中描边、选中实心），20261001 之前用的是文本字形
+ *   `★/☆` 与 `♥/♡` —— 同一排里两个字体字形 + 一个 svg，字重与基线各不相同，正是
+ *   用户第 4 条说的「风格不一致」。现在三件同源同尺寸（14px）。
  */
 interface IconProps {
     /** 边长（px）。默认 14 = 详情页沿用的尺寸 */
@@ -70,5 +77,37 @@ export const StarIcon: React.FC<IconProps> = ({ size = 14 }) => (
         fill="currentColor"
     >
         <path d="M12 2.6l2.9 5.9 6.5.9-4.7 4.6 1.1 6.5-5.8-3.1-5.8 3.1 1.1-6.5L2.6 9.4l6.5-.9z" />
+    </svg>
+)
+
+/** 收藏·未选中：空星（与 `StarIcon` 同一条路径，只换成描边） */
+export const StarOutlineIcon: React.FC<IconProps> = ({ size = 14 }) => (
+    <svg
+        aria-hidden="true"
+        viewBox="0 0 24 24"
+        width={size}
+        height={size}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+    >
+        <path d="M12 2.6l2.9 5.9 6.5.9-4.7 4.6 1.1 6.5-5.8-3.1-5.8 3.1 1.1-6.5L2.6 9.4l6.5-.9z" />
+    </svg>
+)
+
+/** 点赞·未选中：空心（与 `HeartIcon` 同一条路径，只换成描边） */
+export const HeartOutlineIcon: React.FC<IconProps> = ({ size = 14 }) => (
+    <svg
+        aria-hidden="true"
+        viewBox="0 0 24 24"
+        width={size}
+        height={size}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+    >
+        <path d="M12 20.8 4.1 12.9a5.2 5.2 0 0 1 0-7.3 5.2 5.2 0 0 1 7.3 0l.6.6.6-.6a5.2 5.2 0 0 1 7.3 0 5.2 5.2 0 0 1 0 7.3z" />
     </svg>
 )

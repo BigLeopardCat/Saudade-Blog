@@ -19,7 +19,7 @@ import readDayVideo from '../../../assets/read_day.mp4';
 import readNightVideo from '../../../assets/read_night.mp4';
 import {getNoteById} from "../../../apis/NoteMethods.tsx";
 import {getNoteStats, likeNote, reportNoteView, unlikeNote} from "../../../apis/NoteStatsMethods.tsx";
-import {EyeIcon} from "../../../components/NoteStatIcons/index.tsx";
+import {EyeIcon, HeartIcon, HeartOutlineIcon, StarIcon, StarOutlineIcon} from "../../../components/NoteStatIcons/index.tsx";
 import type {NoteStats} from "../../../interface/NoteStatsType";
 import SeoHelmet from "../../../components/SeoHelmet";
 import getToken from "../../../apis/getToken.tsx";
@@ -549,12 +549,21 @@ const ReadArticle = () => {
                             transition={{ duration: 1 }}
                         >
                             <div className="readInfo">
-                                <Flex gap={"small"} justify={"center"} align={"center"}>
+                                {/* 三区锁死的左区（头像 + 名字）。`flex: 0 0 auto` —— 见
+                                    `.readMain` 上头那段：中区吃满余量，左边这一簇与右边
+                                    那两簇的宽度都不随标题长短变。 */}
+                                <Flex gap={"small"} justify={"center"} align={"center"} className="readAuthor">
                                     <Avatar src={who.avatar} size={40} className="frontAvatar" />
                                     {who.name}
                                 </Flex>
-                                <h1>{article?.noteTitle}</h1>
-                                <h3>{dayjs(article?.updateTime).format("YYYY-MM-DD")}</h3>
+                                {/* 中区：标题 + 日期一列。20261001 之前这两件是**行内平级**的
+                                    三个 flex 项（`space-between` 把五个项均分），标题一长
+                                    日期就往左漂 —— 用户第 4 条「布局没有锁死，会被标题长度
+                                    影响」。现在中区自己吃满余量，日期钉在中区左缘。 */}
+                                <div className="readMain">
+                                    <h1>{article?.noteTitle}</h1>
+                                    <h3>{dayjs(article?.updateTime).format("YYYY-MM-DD")}</h3>
+                                </div>
                                 {/* 收藏按钮（20260922）：横幅信息卡里，与日期同排。
                                     文案随状态变——收藏是布尔量，不该让用户自己猜现在是哪种状态。
                                     20260926：文案包一层 span 是为了竖排（标题一长会把「已收藏」
@@ -566,7 +575,13 @@ const ReadArticle = () => {
                                         disabled={favBusy}
                                         onClick={toggleFavorite}
                                     >
-                                        <span aria-hidden="true">{faved ? '★' : '☆'}</span>
+                                        {/* 图标与「浏览」那只眼睛同源同尺寸（`NoteStatIcons`）：
+                                            20261001 之前这里是文本字形 `★/☆`，与同一排的
+                                            svg 眼睛字重、基线都对不齐（用户第 4 条）。
+                                            开关语义不变——未选中描边、选中实心。 */}
+                                        {faved
+                                            ? <StarIcon size={14} />
+                                            : <StarOutlineIcon size={14} />}
                                         <span className="readFavLabel">{faved ? '已收藏' : '收藏'}</span>
                                     </button>
                                 </div>
@@ -594,7 +609,7 @@ const ReadArticle = () => {
                                         title={liked ? '取消点赞' : '点赞'}
                                         onClick={toggleLike}
                                     >
-                                        <span aria-hidden="true">{liked ? '♥' : '♡'}</span>
+                                        {liked ? <HeartIcon size={14} /> : <HeartOutlineIcon size={14} />}
                                         {likes !== null && <span className="readLikeNum">{likes}</span>}
                                     </button>
                                 </div>

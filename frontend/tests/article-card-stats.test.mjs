@@ -82,10 +82,15 @@ console.log('\n③ 接线：Article.tsx 用这条判据，图标与颜色都不�
     ok(!/ArticleStat[^>]*style=\{\{/.test(src), '读数格子不写行内 style（配色交给 .ArticleStats 的主题变量）');
 
     const icons = read('src/components/NoteStatIcons/index.tsx');
-    ok((icons.match(/<svg/g) || []).length === 3, '三个图标都是 svg（不是 emoji / 字体图标）',
+    // 数目不写死：20261001 详情页的收藏/点赞也改用这套（用户第 4 条「风格不一致」），
+    // 三件变五件。判据改成"导出了几个就画了几个"——再增减时这里不必跟着改。
+    const iconCount = (icons.match(/export const \w+Icon/g) || []).length;
+    ok(iconCount >= 3 && (icons.match(/<svg/g) || []).length === iconCount,
+        `每个导出的图标都是一个 svg（当前 ${iconCount} 个）`,
         (icons.match(/<svg/g) || []).length);
     ok(!/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(icons), '图标文件里没有 emoji / 符号字形');
-    ok((icons.match(/currentColor/g) || []).length === 3, '三个图标都吃 currentColor（颜色由调用方定）',
+    ok((icons.match(/currentColor/g) || []).length === iconCount,
+        '每个图标都吃 currentColor（颜色由调用方定）',
         (icons.match(/currentColor/g) || []).length);
     ok(!/#[0-9a-fA-F]{3,6}/.test(icons), '图标文件里没有写死颜色');
 

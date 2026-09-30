@@ -108,18 +108,58 @@ console.log('\n⑤ 三态色与描边一字未改（这批只动布局）');
     ok(!!rules.get(BTN + ':disabled') !== undefined, 'disabled 规则还在（提交中会有）');
 }
 
-console.log('\n⑥ 源码契约：文案包在 span.readFavLabel 里，★ 仍是独立的 aria-hidden span');
+console.log('\n⑥ 源码契约：文案包在 span.readFavLabel 里，图标与文案是两个子元素');
 {
     const tsx = readFileSync(TSX_FILE, 'utf8');
     ok(/<span className="readFavLabel">\{(faved|fav)[^}]*\}<\/span>/.test(tsx),
         'index.tsx 里文案包在 <span className="readFavLabel"> 内（类名与 sass 对齐）');
-    ok(/<span aria-hidden="true">\{faved \? '★' : '☆'\}<\/span>/.test(tsx),
-        '★ 仍是单独的 span 且 aria-hidden（读屏只念"已收藏"）');
+    // 20261001（用户第 4 条「收藏按钮，点赞按钮，浏览数图标风格不一致」）：原来的图标是
+    // 文本字形 `★/☆`（与点赞的 `♥/♡` 一起，跟旁边那只 svg 眼睛字重/基线都对不齐），
+    // 现在三件同源 `NoteStatIcons`、同尺寸 14。
+    ok(/\{faved\s*\?\s*<StarIcon size=\{14\} \/>\s*:\s*<StarOutlineIcon size=\{14\} \/>\}/.test(tsx),
+        '收藏图标走 NoteStatIcons（选中实心星 / 未选中描边星，14px）');
+    // 只查**字符串字面量**里的字形：注释里会提到旧写法（那是刻意留的考古锚点）
+    ok(!/(['"`])[★☆♥♡]\1/.test(tsx), '  详情页里不再有 ★☆♥♡ 这类文本字形（注释里的考古引用不算）');
+    for (const name of ['StarIcon', 'StarOutlineIcon', 'HeartIcon', 'HeartOutlineIcon', 'EyeIcon']) {
+        ok(tsx.includes(name), `  tsx 引了 ${name}`);
+    }
+    const iconsSrc = readFileSync(path.join(root, 'src/components/NoteStatIcons/index.tsx'), 'utf8');
+    ok(/export const StarOutlineIcon/.test(iconsSrc) && /export const HeartOutlineIcon/.test(iconsSrc),
+        'NoteStatIcons 里那两个描边件真的导出着（只有实心件的话上面那条正则也没得挂）');
     ok(!/aria-hidden[^>]*readFavLabel/.test(tsx), '  两者没有合并成一个 span');
     // 类名对不上是这类改动最哑的失败：sass 写了、tsx 没挂，页面上不动声色
     const sassSrc = readFileSync(SASS_FILE, 'utf8');
     ok(sassSrc.includes('.readFavLabel') && tsx.includes('readFavLabel'),
         '两份文件里的类名一致（sass 写了、tsx 挂上了）');
+}
+
+console.log('\n⑦ 三区锁死：中区吃满余量、左右两区不收缩（用户第 4 条「布局没有锁死」）');
+{
+    const INFO = '.readContainer .readCover .readInfo';
+    const jc = decl(INFO, 'justify-content', 'flex-start');
+    ok(jc.found && jc.match,
+        '`.readInfo` 不再是 `space-between`（五个子项平分余量 ⇒ 日期的位置全看标题多长）', jc);
+    const gap = decl(INFO, 'gap', '24px');
+    ok(gap.found && gap.match, '  三区之间是固定间距 24px', gap);
+    ok(decl(INFO + ' .readAuthor', 'flex', '0 0 auto').found, '左区（作者）不收缩');
+    ok(decl(INFO + ' .readMain', 'flex', '1 1 auto').found, '中区吃满余量');
+    ok(decl(INFO + ' .readMain', 'min-width', '0').found,
+        '  中区 `min-width: 0`（不给它的话长标题会把这一区顶出去，折行反而失效）');
+    const clamp = decl(INFO + ' .readMain h1', '-webkit-line-clamp', '2');
+    ok(clamp.found && clamp.match, '标题两行封顶（三行会把整张卡拉高 ⇒ 底边跟着挪）', clamp);
+    const mh = decl(INFO + ' .readMain h1', 'min-height', '2.4em');
+    ok(mh.found && mh.match, '  两行**预留**：一行标题也占两行的高度', mh);
+    // ⚠️ 一写 font-size 就会把手机档那条 `.readCover .readInfo h1`（0,3,1）永久盖掉
+    // ——媒体查询不改特异性，本块是 (0,4,0)。判据：本块里不许出现 font-size。
+    const mainH1 = rules.get(INFO + ' .readMain h1') || '';
+    ok(!/(?:^|;)\s*font-size\s*:/.test(mainH1),
+        '  桌面这条**不写 font-size**（否则手机档的 1.4rem 被静默盖掉）', mainH1.slice(0, 80));
+    ok(decl(INFO + ' .readMain h3', 'margin', '0').found, '日期去掉默认外边距（否则位置随字号浮动）');
+    // TSX 侧：结构真的分了三区，否则上面那些规则一条也挂不上
+    const tsx = readFileSync(TSX_FILE, 'utf8');
+    ok(/className="readAuthor"/.test(tsx) && /className="readMain"/.test(tsx),
+        'index.tsx 里挂上了 readAuthor / readMain 两个类名');
+    ok(/<div className="readMain">\s*<h1>/.test(tsx), '  标题与日期真的**包在同一个中区**里');
 }
 
 console.log(`\n${fail === 0 ? '全部通过' : `失败 ${fail} 项`}（通过 ${pass}）`);
