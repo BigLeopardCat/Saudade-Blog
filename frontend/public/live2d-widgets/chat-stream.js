@@ -256,6 +256,23 @@
         askQuestion.appendChild(el);
       }
     };
+    // 卡片后面还有没有"真内容"（判定它是否仍在消息流末位）。20261001 与 syncAsk 的
+    // "在末位"判据同批加。
+    // **空气**两类，与 reconcileDOM 的孤儿清理同源（少了这层区分，卡片会被一次次
+    // 重新挂载——屏幕上什么都没变，埋点却刷成噪声，而"卡片就位"这条记录的用法正是
+    // "没刷过 = 一直好着"）：
+    //   · 非元素节点（模板/换行留下的文本节点）；
+    //   · 时间标签（.chat-time-divider）——它是相邻气泡的**前导**附属，永远长在
+    //     气泡前面，出现在卡片后面只可能是"下一个气泡还没插进来"。
+    const askAtEnd = () => {
+      if (!askBox || askBox.parentNode !== messages) return false;
+      let n = askBox.nextSibling;
+      while (n) {
+        if (n.nodeType === 1 && !n.classList.contains('chat-time-divider')) return false;
+        n = n.nextSibling;
+      }
+      return true;
+    };
     // 把待办渲染成可点卡片。**幂等**（20260923）：同一个待办重复调用是零副作用。
     // 它现在有两个调用点——流收尾（正常时机）与 reconcileDOM 收尾的钩子
     // onAskResync（每次 DOM 重建后的自愈），后者可能一轮里被调到多次。旧版每次都
@@ -271,19 +288,31 @@
         return;
       }
       const token = String(ask.token || '');
-      // 已就位（同一枚令牌 + 在场 + 已激活 + **按钮还在**）⇒ 不动它。位置也一并校验：
-      // 卡片被别的路径挪走（清空后没接回）时要重新挂到末位。
+      // 已就位（同一枚令牌 + 在场 + 已激活 + **按钮还在** + **在末位**）⇒ 不动它。
       // "按钮还在"这一条不能省：卡片被 hideAsk（用户改口打字）结算成"已取消"后仍是
       // active 且令牌相同，此时若再来同一枚令牌的确认帧（反射重跑/重发），只看前三
       // 条的判据会把它当成"已就位"而跳过重建 ⇒ 屏幕上是"已取消"的灰字，内存里却有
       // 一个可点的待办（点了没反应）。已结算的卡片必然没有 data-ask-value 按钮。
       // 20260924 补 askState：显式区分"可点/在途/已结算"，也让回滚能强制重建按钮
       // （askRollback 把 askState 抹掉一格，下面的判据随即不成立）。
+      // ── 20261001 补"在末位"（用户报"卡片怎么飞上面去了"）────────────────────
+      // **待主人拍板期间，卡片必须是消息流的末位**：等主人决定这件事本身就意味着
+      // "最新的东西就是这张卡"。此前只校验 parentNode，卡片被挂上之后再渲染进来的
+      // 内容就落在它**下面**，屏幕上的顺序成了"用户消息 → 卡片 → 回复"。
+      // 生产实证（logs/frontend/monitor.log，20261001）：
+      //   02:40:45.922 stage=card id=d451cad4（挂在 / 的对话流末位）
+      //   02:40:46.937 stage=card id=d451cad4 restored=1（用户在 /dashboard/users 整页重开）
+      // 卡片由存档接回（restoreAsk）的那一刻，消息流里只有**已渲染的那部分**历史
+      // （本地缓存桶与 DB 那一趟拉取的先后差）；接回之后 DB 那一趟补齐的气泡经
+      // appendMsg 挂在末尾 = 卡片下面 —— 而 reconcileDOM 的"位置对齐"按 items 顺序
+      // 挪气泡，chat-keep 的卡片在它眼里是"空气"（contentRef 跳过它），于是这个错序
+      // 永远不会被自愈。判据只看"卡片后面还有没有真内容"，不猜是哪一路渲染迟到了。
       if (askBox.dataset.askToken === token
           && askBox.dataset.askState === 'live'
           && askBox.classList.contains('active')
           && askBox.parentNode === messages
-          && !!askBtns.querySelector('button[data-ask-value]')) return;
+          && !!askBtns.querySelector('button[data-ask-value]')
+          && askAtEnd()) return;
       askBox.dataset.askToken = token;
       askBox.dataset.askId = String(ask.id || '');   // 埋点用（非凭据，见 askIdOf）
       setAskQuestion(ask.q);
