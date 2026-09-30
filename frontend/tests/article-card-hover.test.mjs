@@ -20,9 +20,14 @@
 // 是 `.test.py` 里读出 `padding-bottom` 非 0 才回头找到它的。
 //
 // 20260930 二轮（用户："卡片比例有点不好看，重新调整卡片样式"）：封面 200→240、
-// 卡片下限 600→**520**、普通卡展开上限 200→**140**（7 行）——三个数联动，本套件底部
+// 卡片下限 600→520、普通卡展开上限 200→**140**（7 行）——三个数联动，本套件底部
 // 两条断言跟着改。**判据别只改数字**：`140` 必须仍是 `line-height: 20px` 的整数倍
 // （半行 = 用户报过的"最后一行只露上半"，见第 ③ 组）。
+//
+// 20261001（用户："卡片太细高了"）：封面 240→**200**、卡片下限 520→**470**、
+// 标题 30→26px、左右内边距 48→28px、容器 80%→90%、网格最小列 300→340px。
+// **展开上限 140 没动**——几何那半（`.test.py` 第 ⑫ 组）实测过了：卡底与浮层顶一起
+// 上移同样的量、相减抵消，最挤那档仍是 150px 可用。所以这里只有"下限"那一条跟着改。
 import { readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -191,7 +196,7 @@ console.log('\n⑦ 署名取昵称（用户点名"卡片上的 Sora 换成真正
         '头像同一条链：user.avatar 优先、web_info.avatar 回退', avatarSeg);
 }
 
-console.log('\n⑧ 标签换行：卡片按内容长高（520 是**下限**），页脚那条「更新于」是被裁的第一个');
+console.log('\n⑧ 标签换行：卡片按内容长高（470 是**下限**），页脚那条「更新于」是被裁的第一个');
 {
     // 现场：标签换到第二/第三行时，"作者信息时间信息跑出卡片"（用户第四报）。
     // 根因是**定高**：`.ArticleCard{height:600px}` + `overflow:hidden`，而「更新于」那行是
@@ -205,8 +210,8 @@ console.log('\n⑧ 标签换行：卡片按内容长高（520 是**下限**）�
         '.allArticles > .article 是 display: flex（网格只拉网格项 ⇒ 少了这层同排卡片不等高）', item);
 
     const card = '.ContentContainer .allArticles .ArticleCard';
-    const mh = declNum(card, 'min-height', 520);
-    ok(mh.found && mh.match, '卡片 520px 写在 min-height 上（下限，内容多就长高）', mh);
+    const mh = declNum(card, 'min-height', 470);
+    ok(mh.found && mh.match, '卡片 470px 写在 min-height 上（下限，内容多就长高）', mh);
     const cardH = decl(card, 'height');
     ok(!cardH.found, '卡片**没有** height（写回去就是定高：内容一多「更新于」立刻被裁出去）', cardH);
 
