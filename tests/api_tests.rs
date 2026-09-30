@@ -215,6 +215,34 @@ async fn test_quota_admin_routes_require_console() {
     );
 }
 
+// ---- 文章阅读量 / 点赞量（20260930）：两个族故意不同 ----
+//
+// **读**（stats/view）不需要登录，因此"无 token"这件事在这里根本不是错误分支：
+// 访客照样拿得到 `{views,likes,liked:false}`。所以这两条**没有**"未登录"用例可写
+// ——它们的形状由 MockDatabase 的零查询预期顶着（handler 在查到文章之前不会成功，
+// 这里只断言路由存在且没被守卫误伤）。
+//
+// **写**（like/unlike）需要登录，但**不是 401**：它挂 `public_routes` + handler 内
+// 自身鉴权，走的是上面 profile 那一族的信封错误契约。判据写死在这里，防后人"顺手
+// 挪进 protected_routes"——那会把普通用户全部 403 掉（auth_guard 判的是管理员）。
+#[tokio::test]
+async fn test_点赞取消点赞走信封错误而不是401() {
+    for (method, uri) in [("POST", "/api/public/notes/1/like"), ("DELETE", "/api/public/notes/1/like")] {
+        let (status, code) = req_api_code(mock_app(), method, uri, "").await;
+        assert_eq!(status, StatusCode::OK, "{} {} 应返回 HTTP 200 信封", method, uri);
+        assert_ne!(code, 200, "{} {} 未登录不该成功", method, uri);
+    }
+}
+
+/// 后台文章报表挂守卫域 ⇒ 无 token 是 **401**（与 `/api/protected/stats/users` 同族）。
+#[tokio::test]
+async fn test_文章报表需要管理员() {
+    assert_eq!(
+        req_status(mock_app(), "GET", "/api/protected/stats/notes").await,
+        StatusCode::UNAUTHORIZED
+    );
+}
+
 /// 扣一轮的判据**就是 `rows_affected`**——三态各一条，外加两条 SQL 断言。
 ///
 /// 那两条 SQL 断言不是"源码文本锁"的软判据，是**语义前提**：`rows_affected` 之所以

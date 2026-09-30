@@ -29,3 +29,6 @@ pub mod agent_task;
 // 额度重置申请（20260929）：与 user.chat_quota_used 是一对——这张表装「请求」，
 // 那个列装「事实」，批准是唯一把两者连起来的动作
 pub mod quota_request;
+// 文章阅读量 / 点赞量（20260930）：按天聚合的阅读数 + 一人一行不可重复的点赞
+pub mod note_view;
+pub mod note_like;

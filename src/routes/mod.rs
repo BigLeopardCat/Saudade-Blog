@@ -19,6 +19,7 @@ pub mod profile;  // 个人中心一期（20260922）
 pub mod notice;   // 单用户站内通知（20260923；留言审核结果的首个生产者）
 pub mod todos;    // 后台首页待办（20260924；整份列表按用户落库）
 pub mod quota;    // 用户对话额度（20260929；上限与算术在 crate::quota，本模块只管读写）
+pub mod note_stats; // 文章阅读量/点赞量（20260930；**绝不能记进 get_note_detail**，见模块头注）
 
 use axum::{
     routing::{get, post, delete, put},
@@ -110,6 +111,20 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/public/notes/search", post(notes::search_notes))
         .route("/api/public/notes/:id", get(notes::get_note_detail))
         .route("/api/public/topnotes", get(notes::get_top_notes))
+
+        // 文章阅读量/点赞量（20260930）：**与详情端点分开**是硬要求——详情端点被 agent
+        // 的 get_article_detail 工具频繁读取，把计数挂在那儿等于给看板娘自己刷阅读量
+        // （见 routes/note_stats.rs 头注第一条）。
+        // `view` 是匿名可写（同 `/api/monitor/log` 的先例）：读者不需要登录就能被计数，
+        // 前端按天去重、这里只收数。`like` 需要登录，但**必须挂公开路由**——
+        // 挂进守卫域会被 auth_guard 按管理员判据把普通用户全部 403。
+        // 三条都不返回 401（前端 axios 拦截器见 401 就清 token 跳登录页）。
+        .route("/api/public/notes/:id/stats", get(note_stats::note_stats))
+        .route("/api/public/notes/:id/view", post(note_stats::report_view))
+        .route(
+            "/api/public/notes/:id/like",
+            post(note_stats::like_note).delete(note_stats::unlike_note),
+        )
         
         // Categories
         .route("/api/category", get(categories::list_categories)) 
@@ -297,6 +312,9 @@ pub fn create_router(state: AppState) -> Router {
         // 独立前缀 /api/protected/stats/ 而不塞进某个既有资源下：它是聚合视图，
         // 不属于 notes/tags/users 任何一族的 CRUD。
         .route("/api/protected/stats/users", get(stats::user_stats))
+        // 文章报表（20260930）：后台 /dashboard/analytics 的供数端点。同一前缀同一纪律
+        // ——挂守卫域内 ⇒ 只有 admin 拿得到。**不是**给 agent 的工具供数（那份是 users）。
+        .route("/api/protected/stats/notes", get(note_stats::note_report))
 
         // WebSettings
         .route("/api/protected/websetting",
