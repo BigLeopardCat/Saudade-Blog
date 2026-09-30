@@ -108,9 +108,12 @@ def build_sandbox() -> pathlib.Path:
                      ("src/components/Switch/index.css", "switch.css")):
         shutil.copyfile(FE / rel, sb / out)
 
+    # 20261001：公告卡那轮起，后台壳的依赖图里出现了 `import './index.sass'`
+    # （components/AnnouncementModal）——本套件只验侧栏 DOM，不看那份样式，
+    # 所以照全仓惯例收成 text 即可；缺这个 loader 是**打包直接失败**，不是样式缺失。
     r = subprocess.run([str(FE / "node_modules/.bin/esbuild"), "entry.tsx",
                         "--bundle", "--format=iife", "--outfile=bundle.js",
-                        "--loader:.css=text", "--jsx=automatic",
+                        "--loader:.css=text", "--loader:.sass=text", "--jsx=automatic",
                         f"--define:{DEFINE}",
                         f"--alias:react-router-dom={sb}/stub-router.tsx",
                         f"--alias:react-redux={sb}/stub-redux.tsx"],
