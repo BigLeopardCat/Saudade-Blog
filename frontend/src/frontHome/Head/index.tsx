@@ -304,14 +304,18 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                     </div>
                 </div>
             </div>
-            {/* 滚动态从**内联 style** 搬进了 sass 的 `.is-stuck`（20260930 五轮）。
-                原来只有"悬停"和"已滚动"两种状态有底色，首屏未滚动时顶栏是透明的
-                ⇒ 导航文字压在淡彩首屏上读不出来。现在底色常驻（`.headContainer`
-                的 `background`），`.is-stuck` 只负责"贴满整幅、去圆角"。
+            {/* 滚动态从**内联 style** 搬进了 sass 的 `.is-stuck`（20260930 五轮，
+                `d85311e`）——20261001 六轮按主人第 6 条**做回原来的显示逻辑**：
+                默认完全透明，悬停 / 已滚动两态才落 `rgba(0,0,0,0.66)` 深底
+                （见 index.sass 里 `.headContainer` 之上那段说明）。
 
-                顺带摘掉 `backdropFilter: blur(10px)`：那是为"半透明深色条"配的，
-                底色改成高不透明度的纸色后不再需要——而模糊是 GPU 成本，首屏正是
-                看板娘所在的那一屏。 */}
+                「首屏未滚动时导航字压在淡彩纸上读不出来」这个老问题改从**字色**
+                解决（透明态吃 `--washi-ink`，白天深墨紫、夜间浅色；落深底再统一
+                换回浅色），不再靠一层常驻底色遮。
+
+                原来的内联 `backdropFilter: blur(10px)` 不恢复：大面积模糊是
+                GPU 成本，而首屏正是看板娘所在的那一屏（见 memory「后台 GPU 高于
+                首页」）。深底用 0.66 的实色，观感等价、代价为零。 */}
             <div className={`headContainer${scrollHeight ? ' is-stuck' : ''}`}>
                 <div className="phoneBar">
                     {phoneBarShow ? <i className="iconfont icon-guanbi2" style={{
