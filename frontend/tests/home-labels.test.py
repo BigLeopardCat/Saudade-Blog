@@ -1,14 +1,18 @@
 # -*- coding: utf-8 -*-
 """首页三块标签（置顶 / 文章 / More）的解剖学验收：真 sass + 真类名 + 量计算的样式。
 
-20261001 七轮（用户第 3 条：「三个文本标签"置顶，文章，more"继续优化形态符合当前主题的
-日式动漫风格组件，不必拘泥于现在的形态的动效」）把这三块重排了一遍。它们**全是纯 CSS
-的形状与动效**，没有一处能用"源码里有没有这段字符串"证明对了：
+20261001 八轮（用户第 4 条：「那三个标签丑死了，大改，其中置顶的标签还可以，但是动效
+上下晃动给人不稳定失去掌控的心理感觉」）把这三块又重排了一次。它们**全是纯 CSS 的形状
+与动效**，没有一处能用"源码里有没有这段字符串"证明对了：
 
   · 置顶的尾尖是 `clip-path` 切出来的 —— 源码写着 `polygon(...)` 不代表浏览器算出来的
     就是一枚箭头尾尖（写成四角手撕边也是合法的 `polygon`）；
-  · 「文章」左缘那道竖脊、图标那枚圆形徽章，都是**伪元素/子元素的实测盒子**；
+  · 「文章」左缘那道装订边（`border-left`）与右端的圆角，是**实测盒子**；
   · More 那枚 chevron 是"两条边 + 转 -45°"，靠 `::after` 的宽高与 border 判定；
+  · **三块牌子静置时一律不许动**（八轮的总纲，也是用户这句话的落点）：常驻循环
+    （`ribbon-float` / `tag-twinkle` / `more-nudge`）撤得只剩置顶尾尖那枚 ✦ 的呼吸，
+    且它只动 opacity、不产生位移。这条判据是 `animationName` + `transform` 一起读的
+    —— "不动"不是一个能在源码里 grep 到的事实，得问浏览器要计算后的值；
   · **减少动效档下 ✦ 必须还在**（六轮那里是 `opacity: 0`——当时 `::after` 是高光，
     藏着对；七轮换成了 ✦，藏掉就等于把记号删了）。这一条只有真跑 reduce 档才看得见。
 
@@ -85,6 +89,15 @@ PROBE = """() => {
         h: el.getBoundingClientRect().height,
         clip: getComputedStyle(el).clipPath,
         anim: getComputedStyle(el).animationName,
+        // 八轮的判据要读它：撤掉常驻动画之后，斜贴的角度**改由基规则的 transform 给**
+        // ——"有没有角度"只有计算值知道（源码里写了 `rotate(-3.6deg)` 也可能是被
+        // 另一条同特异度的规则压掉的）。
+        transform: getComputedStyle(el).transform,
+        radius: getComputedStyle(el).borderRadius,
+        // 「文章」牌子的装订边（第八轮由 `::before` 渐变竖脊改成 `border-left` 平涂）
+        borderLeftW: getComputedStyle(el).borderLeftWidth,
+        borderLeftColor: getComputedStyle(el).borderLeftColor,
+        borderTopColor: getComputedStyle(el).borderTopColor,
         before: (() => { const s = getComputedStyle(el, '::before');
                          return { content: s.content, w: s.width, h: s.height,
                                   bg: s.backgroundImage, pos: s.position }; })(),
@@ -123,8 +136,24 @@ with sync_playwright() as p:
     check("纸上那枚 ✦ 在尾尖后（`::after` 的 content 是 ✦、有呼吸动画）",
           "✦" in tape["after"]["content"] and tape["after"]["anim"] == "tag-twinkle",
           f'{tape["after"]["content"]} / {tape["after"]["anim"]}')
-    check("缎带自己是慢浮（`ribbon-float`），不是六轮那条 `tape-sway`",
-          tape["anim"] == "ribbon-float", tape["anim"])
+    # ── 八轮的第 4 条：**缎带自己不许再动** ──────────────────────────────────
+    # 原话「动效上下晃动给人不稳定失去掌控的心理感觉」。判据分两半，缺一不可：
+    #   ① `animationName` 没有常驻动画（`ribbon-float` 已撤）；
+    #   ② 斜贴的角度仍在 —— 它现在由基规则的 `transform` 给。只撤动画不补角度的话
+    #      缎带会变成正着贴的，那是另一个形状了（这条正是"撤得对不对"的关键）。
+    check("★ 缎带自己不再有常驻动画（`ribbon-float` 的慢浮已撤）",
+          tape["anim"] == "none", tape["anim"])
+    # ⚠️ 浏览器把 `rotate(-3.6deg)` 算成 matrix，从计算值里读不出"是不是 -3.6°"，
+    # 所以这条只判"有没有角度"，并紧跟着用**负空间**证明它确实测得到东西。
+    check("★ 斜贴的角度改由基规则的 transform 给（撤了动画也不是正着贴的）",
+          tape["transform"] != "none", tape["transform"])
+    pg.add_style_tag(content=".ContentContainer .TopArticle .Top .TopTape{transform:none!important}")
+    pg.wait_for_timeout(120)
+    check("（对照）抹掉角度后 transform 真的是 none ⇒ 上一条判据有牙",
+          probe("#tape")["transform"] == "none", probe("#tape")["transform"])
+    pg.evaluate("() => { const s=[...document.querySelectorAll('style')].pop(); s.remove(); }")
+    pg.wait_for_timeout(120)
+    check("（对照）样式表摘掉后角度回来了", probe("#tape")["transform"] != "none")
     # 六轮的"斜掠高光"必须真的没了：它是 `::after` 上一条 22px 宽的白色渐变
     check("六轮那条斜掠高光已撤（`::after` 不再是 22px 的白色渐变块）",
           tape["after"]["w"] != "22px" or "gradient" not in tape["after"]["pos"],
@@ -132,58 +161,74 @@ with sync_playwright() as p:
     check("高度仍由内容撑开（缎带不该被钉死成一张固定尺寸的片）",
           20 <= tape["h"] <= 34, f'{tape["w"]:.1f}×{tape["h"]:.1f}')
 
-    # ── 二、「文章」段落签 ────────────────────────────────────────────────────
-    print("\n【二】文章：見出しプレート（左边竖脊 + 圆形徽章 + 右端 ✦）")
+    # ── 二、「文章」段落签（八轮大改：一张和纸条）──────────────────────────────
+    print("\n【二】文章：和纸条（左直边 + 平涂装订边 + 墨色线性图标 + 右端圆角）")
     plate = probe("#plate")
-    check("左缘那道竖脊在（`::before` 宽 5px、贴左、是渐变）",
-          plate["before"]["w"] == "5px" and plate["before"]["pos"] == "absolute"
-          and "gradient" in plate["before"]["bg"],
-          f'{plate["before"]["w"]} / {plate["before"]["bg"][:40]}')
-    check("顶上那道胶带边已撤（`::before` 不再横在顶部）",
-          plate["before"]["h"] != "3px", plate["before"]["h"])
-    check("右端那枚 ✦ 在（`::after` 是 ✦、会闪）",
-          "✦" in plate["after"]["content"] and plate["after"]["anim"] == "tag-twinkle",
-          plate["after"]["content"])
+    # 装订边：八轮从 `::before`（5px 渐变竖脊）改成 `border-left`（4px 平涂）。
+    # 判据同时看**宽度**与**颜色**：只看宽度的话，四边都是 1px 也可能碰巧是 4px；
+    # 看颜色才能证明"左缘那一道与其余三边不是同一条线"。
+    check("左缘那道装订边在（`border-left` 4px、颜色与其余三边不同）",
+          plate["borderLeftW"] == "4px" and plate["borderLeftColor"] != plate["borderTopColor"],
+          f'{plate["borderLeftW"]} {plate["borderLeftColor"]} vs {plate["borderTopColor"]}')
+    check("旧的 `::before` 渐变竖脊已撤（不再有那条伪元素）",
+          plate["before"]["content"] in ("none", ""), plate["before"]["content"])
+    # 左直右圆 = 贴纸那头 / 翘起那头（与置顶缎带的直边同款语言）
+    check("左端直角、右端圆角（`0 10px 10px 0`）",
+          plate["radius"].replace(" ", "") in ("0px10px10px0px", "0px10px10px0"),
+          plate["radius"])
+    # ★ 母题归置顶独占：这块牌子上**不许**再出现 ✦（原来的撞车正是"丑"的一部分）
+    check("★ 这块牌子上没有 ✦（右端那枚记号归置顶独占，不再两处撞车）",
+          "✦" not in plate["after"]["content"], plate["after"]["content"])
     icon = pg.evaluate("""() => {
         const s = getComputedStyle(document.querySelector('#plateIcon'));
         const r = document.querySelector('#plateIcon').getBoundingClientRect();
         return { w: r.width, h: r.height, radius: s.borderRadius, color: s.color,
-                 bg: s.backgroundImage, anim: s.animationName };
+                 bg: s.backgroundImage, anim: s.animationName, fs: s.fontSize };
     }""")
-    check("图标是 20×20 的圆徽章（不是一枚裸字）",
-          round(icon["w"]) == 20 and round(icon["h"]) == 20 and icon["radius"] in ("50%", "10px"),
-          f'{icon["w"]:.1f}×{icon["h"]:.1f} r={icon["radius"]}')
-    check("徽章是实底渐变 + 白字",
-          "gradient" in icon["bg"] and icon["color"] in ("rgb(255, 255, 255)", "white"),
-          f'{icon["color"]} / {icon["bg"][:40]}')
-    check("牌子本身静止（常驻动画只许挂在徽章与 ✦ 上）",
-          plate["anim"] == "none", plate["anim"])
+    # 七轮那个 20×20 的渐变圆盘是"丑"的第二块：徽章比字还重。八轮回到墨色线性。
+    check("图标不再装盘（没有圆角背景、没有渐变底）",
+          icon["bg"] == "none" and icon["radius"] in ("0px", "0%"),
+          f'bg={icon["bg"]} r={icon["radius"]}')
+    check("图标是承色的一枚线性字（不是 11px 的白字压在盘上）",
+          float(icon["fs"].rstrip("px")) >= 14 and icon["color"] not in ("rgb(255, 255, 255)", "white"),
+          f'{icon["fs"]} {icon["color"]}')
+    check("★ 牌子静置不动（图标那条 twinkle 也撤了 —— 三块牌子里只剩置顶的 ✦ 会呼吸）",
+          plate["anim"] == "none" and plate["after"]["anim"] == "none"
+          and icon["anim"] == "none",
+          f'{plate["anim"]} / {plate["after"]["anim"]} / {icon["anim"]}')
 
     # ── 三、More ─────────────────────────────────────────────────────────────
-    print("\n【三】More：右端一枚会动的 chevron")
+    print("\n【三】More：右端一枚 chevron（静置不动，悬停才走）")
     more = probe("#more")
-    # chevron = 一个 7×7 的盒子 + 只画右边和下边 + 转 -45°。
+    # chevron = 一个 8×8 的盒子 + 只画右边和下边 + 转 -45°。
     # 判 border 的**宽度**而不是有没有 border：`.allContent` 的基础规则给整块牌子
     # 留了 1px 的四边边框（`border: 1px solid var(--washi-line)`），
     # 只判"有边框"的话，箭头那两条边和牌子自己的四条边分不开。
     check("箭头是两条边（右 2px + 下 2px，比牌子自己那 1px 粗）",
           more["after"]["borderRight"] == "2px" and more["after"]["borderBottom"] == "2px",
           f'{more["after"]["borderRight"]}/{more["after"]["borderBottom"]}')
-    check("箭头被转成斜的（`more-nudge` 的 transform 里有 rotate）",
-          more["after"]["anim"] == "more-nudge", more["after"]["anim"])
+    # ⚠️ 这一条是八轮最容易做错的地方：原来那个 -45° 是 **keyframe 给的**，动画一撤、
+    # 基规则里不补 `transform` 的话，箭头就摊平成一个直角（`border-right` +
+    # `border-bottom` 就是个 L，不是箭头）。所以这里判的是**撤掉动画之后它还是斜的**。
+    check("★ 箭头静置时不动、但**仍是斜的**（角度已从 keyframe 搬进基规则）",
+          more["after"]["anim"] == "none" and more["after"]["transform"] != "none",
+          f'{more["after"]["anim"]} / {more["after"]["transform"]}')
     check("More 不再挂 `.allContent` 那枚 ✦（同一族里两枚记号不许撞车）",
           "✦" not in more["after"]["content"], more["after"]["content"])
-    check("左缘竖脊仍在（同一块牌子，只是尺寸与手感不同）",
-          more["before"]["w"] == "5px" and "gradient" in more["before"]["bg"],
-          more["before"]["w"])
+    check("左缘装订边仍在（同一块牌子，只是尺寸与手感不同）",
+          more["borderLeftW"] == "4px" and more["borderLeftColor"] != more["borderTopColor"],
+          f'{more["borderLeftW"]} {more["borderLeftColor"]}')
+    check("牌子本身也没有常驻动画", more["anim"] == "none", more["anim"])
 
-    # 悬停：箭头停住并多走一点（动画恒压声明，不停住那条不生效——这正是要钉的坑）
+    # 悬停：箭头往前送一点。八轮撤掉 `more-nudge` 之后没有"动画恒压声明"那层了，
+    # 这条 `transform` 直接生效 —— 但仍要实测，因为 `:hover` 的链一旦写错就静默失效。
     pg.hover("#more")
     pg.wait_for_timeout(400)
     hov = probe("#more")
-    check("悬停后箭头停住并右移（动画已让位给声明）",
-          hov["after"]["anim"] == "none" and hov["after"]["transform"] != "none",
-          f'{hov["after"]["anim"]} / {hov["after"]["transform"]}')
+    check("悬停后箭头右移（动效改为只在指针接触时发生）",
+          hov["after"]["transform"] != more["after"]["transform"]
+          and hov["after"]["transform"] != "none",
+          f'{more["after"]["transform"]} → {hov["after"]["transform"]}')
 
     # ── 四、减少动效 ─────────────────────────────────────────────────────────
     print("\n【四】减少动效档")
@@ -195,16 +240,18 @@ with sync_playwright() as p:
     pg.emulate_media(reduced_motion="reduce")
     pg.wait_for_timeout(300)
     red_tape, red_plate, red_more = probe("#tape"), probe("#plate"), probe("#more")
-    check("置顶：慢浮停",
+    # 八轮起三块牌子静置本来就不动，这一档要守的只剩"那条唯一的常驻动效（✦ 的呼吸）
+    # 真的被关掉"，以及"关的是动画、不是把记号藏掉"。
+    check("置顶：✦ 的呼吸停",
           red_tape["anim"] == "none" and red_tape["after"]["anim"] == "none",
           f'{red_tape["anim"]}/{red_tape["after"]["anim"]}')
     # 这条是七轮**专门改对**的：六轮这里给 `::after` 写了 `opacity: 0`（那会儿它是高光），
     # 七轮 `::after` 换成了 ✦ —— 藏掉就等于把缎带的尾尖记号删了。
     check("★ 减少动效下尾尖那枚 ✦ **还在**（只停动画，不隐藏）",
           float(red_tape["after"]["opacity"]) >= 0.99, red_tape["after"]["opacity"])
-    check("文章：徽章与 ✦ 停、✦ 仍亮",
-          red_plate["after"]["anim"] == "none" and float(red_plate["after"]["opacity"]) >= 0.99,
-          f'{red_plate["after"]["anim"]}/{red_plate["after"]["opacity"]}')
+    check("文章：整块静止（这一档与常速档应当完全一致）",
+          red_plate["anim"] == "none" and red_plate["after"]["anim"] == "none",
+          f'{red_plate["anim"]}/{red_plate["after"]["anim"]}')
     check("More：箭头停住且**仍是斜的**（摊平就是两条正交的边，不是箭头）",
           red_more["after"]["anim"] == "none" and red_more["after"]["transform"] != "none",
           red_more["after"]["transform"])
