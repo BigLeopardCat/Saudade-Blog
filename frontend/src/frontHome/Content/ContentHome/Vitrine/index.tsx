@@ -29,6 +29,8 @@ import './index.sass';
  *    现在是一枚**规规矩矩的翻折角**——折线是卡片底左角上那条 45° 对角线，翻过来的那片
  *    落在纸**里侧**（顶点指向右上），**一点都不探出纸外**。探出去正是用户说的"突兀"。
  *    尺寸由一个 `--k`（0..1）驱动：`--k` 既是缺口的深度、也是那片纸的缩放。
+ *    **`--k = 1` = 折线扫过整张卡的高度 = 折到左上角**（九轮：终点的量就是卡片自身的高，
+ *    `rect.height` / `100%` / `height: 100%` 三处写的是同一个量，见 `onPointerMove`）。
  * ② **翻页靠扯**。捏住折角往右上拖 ⇒ `--k` 跟着长（缺口变深、那片纸变大）。拖到头
  *    （`--k = 1`）这一页就脱落。拖过却没到头 ⇒ 松手，折角弹回静止档。
  *    ⚠️ 「**拖过**」与「点一下」必须分开（`moved`）：指针起落都落在同一个按钮上时，
@@ -51,7 +53,21 @@ import './index.sass';
  *    毛病：它是跟手一帧帧长起来的）。现在先把 `--k` 推到 1（**不挂** `is-peeling`⇒ `.vit-ear`
  *    那条 0.3s 过渡照常跑，折角肉眼可见地长到头），等它跑完再脱落。拖拽与"减少动效"两条
  *    路都不变（后者不掀，直接扯 —— 页照翻）。
- * ② **终点抬到 160px**（`EAR_MAX` 与 sass 的 `--ear` 两处同改，见常量注释）。
+ * ② **终点抬到 160px**（当时 `EAR_MAX` 与 sass 的 `--ear` 两处同改）。
+ *
+ * 九轮（用户第 1 条原话：「手账撕下来动画过渡不自然，**至少要撕到左侧胶带位置才能掉落吧**。
+ * 文章向量空间，个性签名，下翻按钮，键合胶带盖在上面了，关闭按钮太靠右上角了」）三处：
+ *
+ * ① **折角长到卡片那么高**（八轮那个 160px 是写死的，卡片高 227px ⇒ 折到七成就掉）。
+ *    分母换成 `rect.height`、sass 那边竖腿换成 `100%`、那片纸换成 `height: 100%`
+ *    ⇒ 折到头正好够到**左上角**，也就是左侧那张胶带住的地方。
+ * ② **胶带 / 折角 / 关闭按钮从 `.vitrine` 搬进 `.vit-3d`**：放大态 `.vitrine` 是
+ *    `position: fixed; inset: 0`，挂它身上的绝对定位小件全按**视口**算位置 —— 两张胶带
+ *    飞到视口左右上角（正好压在标题/签名/下翻按钮上）、关闭按钮落在站点头部右上角。
+ *    顺带把那两张胶带往上抬了 5px：它原先啃到内页标题那行字。
+ * ③ **手机档 hero 底部留白 56 → 128px**：`.heroBottom`（签名 + 下翻按钮）要 113px，
+ *    56px 的留白让卡片下缘压在签名上（那两条 `.heroRight`/`.heroBottom` 的 z-index
+ *    也顺势调了个个儿，见 `ContentHome/index.sass`）。
  *
  * 另外两条是五轮就定下、这轮没动的：
  *
@@ -117,8 +133,8 @@ export default function Vitrine() {
         root.classList.remove('is-peeling');
         setFalling({
             key: Date.now(),
-            // 克隆纸起步就落在**胶带下缘之下**（`.vit-tape` 由 top:-9px + 高 20px 压进
-            // 卡片 11px）⇒ 观感是"从胶带底下抽走"，而不是"从胶带上浮出来"。
+            // 克隆纸起步就落在**胶带下缘之下**（`TAPE_COVER` = 胶带压进卡片的那 8px）
+            // ⇒ 观感是"从胶带底下抽走"，而不是"从胶带上浮出来"。
             left: rect.left,
             top: rect.top + TAPE_COVER,
             width: rect.width,
@@ -238,8 +254,10 @@ export default function Vitrine() {
         d.lastX = e.clientX; d.lastY = e.clientY; d.lastT = now;
         // 折角长多少 = 指针沿**卡片底左角那条 45° 对角线**往前走了多远（往右上 1px 横向
         // + 1px 纵向 = 1px），起点接在按下那一刻的折角上（`k0`/`p0`，见 onPointerDown）。
+        // 分母 = **卡片高度**：`--k` 是与缺口的竖腿（`100%` 卡片高）共用的那个比例，
+        // 于是手指走满一个卡高 = 折线扫到左上角 = 扯断。
         const p = ((e.clientX - d.rect.left) + (d.rect.bottom - e.clientY)) / 2;
-        const k = clamp(d.k0 + (p - d.p0) / EAR_MAX, 0, 1);
+        const k = clamp(d.k0 + (p - d.p0) / d.rect.height, 0, 1);
         if (k >= 1) {
             // 拖到头 = 该断了。**不再写 `--k`**：tear 会把它交还静止档。
             d.torn = true;
@@ -308,12 +326,16 @@ export default function Vitrine() {
                 />
             ))}
 
-            <span className="vit-tape vit-tapeL" aria-hidden="true" />
-            <span className="vit-tape vit-tapeR" aria-hidden="true" />
-
             {/* perspective 只挂在这一层，**不是** `.vitrine` 的祖先链上——`perspective`
                 会给 `position: fixed` 后代造包含块，挂到外面去放大态就会被框在卡片原位。 */}
             <div className="vit-3d">
+                {/* 两张胶带 + 那片折角 + 关闭按钮都住在**卡片**里（不是 `.vitrine` 上）：
+                    放大态 `.vitrine` 会撑成 `position: fixed; inset: 0`，挂它身上这些
+                    绝对定位的小件（`top/right` 按视口算）就全飞到视口四角去了 ——
+                    用户第 1 条「键合胶带盖在上面了 / 关闭按钮太靠右上角了」都是它。 */}
+                <span className="vit-tape vit-tapeL" aria-hidden="true" />
+                <span className="vit-tape vit-tapeR" aria-hidden="true" />
+
                 {/* 下一页：躺平在下面等上面那张被扯走 */}
                 <div className="vit-face vit-panel">
                     {/* 语义化 header 回来了（20260916）：`pages/Dashboard/index.css` 那条裸标签
@@ -337,11 +359,26 @@ export default function Vitrine() {
                 <div className="vit-face vit-cover">
                     <CoverFace title={ex.title} hint={ex.hint} />
                 </div>
+
+                {/* 折过来的那一片纸。它得跟**卡片**同尺寸（`height: 100%` + 正方形盒），
+                    所以住在这一层而不是那枚按钮里 —— 放大态卡片会变宽变高，纸要跟着长；
+                    留在按钮（120×120，左下角原位）里的话，放大态它就不动了。 */}
+                <span className="vit-ear" aria-hidden="true" />
+
+                {zoomed && (
+                    <button
+                        className="vit-close"
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); setZoomed(false); }}
+                        aria-label="关闭"
+                    >×</button>
+                )}
             </div>
 
-            {/* 左下角那个折角。它**仍然是 `<button>`**——Tab 可达、有 aria-label、Enter
-                能扯（`onClick` 走 tear），只是长得就是纸的一角，不是一颗按钮。
-                尺寸即抓手大小；`--k` 由拖拽驱动（见 onPointerMove）。 */}
+            {/* 左下角那个抓手。它**仍然是 `<button>`**——Tab 可达、有 aria-label、Enter
+                能扯（`onClick` 走 tear），只是长得不像按钮：那片折角已经搬进 `.vit-3d`
+                了（见上），这里只剩命中区。尺寸 = 静止档折角（≈45px）够抓的框，
+                不跟着卡片长高 —— 见 sass `.vit-corner` 的头注。 */}
             <button
                 className="vit-corner"
                 type="button"
@@ -352,18 +389,7 @@ export default function Vitrine() {
                 onClick={onCornerClick}
                 aria-label={flipped ? '扯下这一页（回到封面）' : '扯下这一页（翻页）'}
                 title={flipped ? '扯下这一页（回到封面）' : '扯下这一页（翻页）'}
-            >
-                <span className="vit-ear" aria-hidden="true" />
-            </button>
-
-            {zoomed && (
-                <button
-                    className="vit-close"
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); setZoomed(false); }}
-                    aria-label="关闭"
-                >×</button>
-            )}
+            />
 
             {/* 被扯下来的那一页：**克隆到 body 上**才算得出"掉出视口"这件事。
                 ⚠️ 不能留在 `.vitrine` 里就地往下掉 —— `.vitrine` 是 `position: relative`，
@@ -418,11 +444,12 @@ function Badge({ of }: { of: (typeof EXHIBITS)[number] }) {
     return <em className="vit-badge" title="向量数据库更新时间">{text}</em>;
 }
 
-/** 折角的最大边长（px）。`--k = 1` 就长到这个数，也正是"该断了"的地方。
- *  120 → 160 是八轮的第二处（用户："扯起来的角的终点可以更大一些"）。
- *  ⚠️ 这个数在 sass 里还有**两份**：`.vitrine` 的 `--ear: calc(var(--k) * 160px)`
- *  （缺口的深度）与 `.vit-ear` 的 `width/height: 160px`（那片纸的大小）。三处同一个数。 */
-const EAR_MAX = 160;
+/** 折角的最大边长 —— **就是卡片自己的高度**（不在这边立常量）。
+ *  九轮（用户第 1 条：「至少要撕到左侧胶带位置才能掉落吧」）之前它是写死的 160px，
+ *  而卡片高 227px ⇒ 折到七成就掉、缺口离左上角还差一大截，读起来就是"没撕到头"。
+ *  现在 `--k` 的分母是 `rect.height`，sass 那边缺口的竖腿是 `100%`、那片纸是
+ *  `height: 100%` —— **三处同一个量**，而且都不是魔法数。
+ *  ⚠️ 别改成"按宽度"：折的是纸角、纵向那一刀扫过的是卡片的**高度**。 */
 /** 「点一下」掀折角用的时长（ms）。它必须**不小于** sass 里 `.vit-ear` 那条
  *  `transition: transform 0.3s`：掀的动作整个是 CSS 过渡在演，这里只是等它演完。
  *  多给的这 40ms 是让折角在最大档上停一帧再断（不然"到顶"和"没了"挤在同一帧上）。 */
@@ -434,8 +461,9 @@ const CLICK_VY = -430;
 /** 折角的**静止值**。真源是 sass 的 `.vitrine { --k: 0.2 }`，这里只作 `readEar()`
  *  读不出来时的兜底（样式没加载等退化场景）；两处同一个数，改一处要改两处。 */
 const REST_EAR = 0.2;
-/** 胶带压进卡片的那一段：`.vit-tape` 是 `top: -9px` + 高 20px ⇒ 盖到卡片内 11px。 */
-const TAPE_COVER = 11;
+/** 胶带压进卡片的那一段：`.vit-tape` 是 `top: -14px` + 高 22px ⇒ 盖到卡片内 8px。
+ *  （九轮把胶带往上抬了 5px —— 它原先啃到 `.vit-bar` 里标题那行字，见 sass 的头注。） */
+const TAPE_COVER = 8;
 /** 脱落那一页的重力（px/s²）。比真实 9.8 大得多是刻意的——屏幕尺度上按真值掉，
  *  一秒钟还没出画，"掉到博客底部"就成了等。 */
 const GRAVITY = 2600;
