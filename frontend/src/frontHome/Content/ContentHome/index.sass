@@ -1502,8 +1502,8 @@ html[data-theme='dark'] .SayWords h2
   // 起就没生效过（手机档一直用的是桌面那个百分比）。**别改成加父类选择器**：那会把这一块
   // 里所有嵌套规则的特异性一起抬到 0,5,0，反而压死后面 V15 那一档同名的 `.descSlot`/行高
   // 覆盖（实测：槽会从 42px 掉回 40px）。`!important` 只动这一条、不牵连任何后代——本文件
-  // 手机档其余声明用的也都是这个写法。（`sass-media-shadow.test.mjs` 只查"同特异度 + 源序"，
-  // 查不到"特异性被压"这种形状，所以这里靠注释钉住。）
+  // 手机档其余声明用的也都是这个写法。（这个形状自 20261001 起由 `sass-media-shadow.test.mjs`
+  // 的**特异性档**全仓盯着——它会把"被谁压的、两边取值"一起报出来；这条注释留作就地说明。）
   .allArticles
     width: 95% !important
     gap: 20px
@@ -1512,10 +1512,13 @@ html[data-theme='dark'] .SayWords h2
         height: 150px !important
       .ArticleContent
         padding: 1rem !important
-        gap: 8px
+        // 同上：这两条也在 `.ContentContainer .allArticles .ArticleCard .ArticleContent[.ArticleTitle]`
+        // （0,5,0／0,6,0）底下，不写 `!important` 就是同特异度的哑弹——`margin-bottom` 尤其：
+        // 桌面那条是 10px，这一档想收成 6px，实际拿到的一直是 10px（正文实测卡片比设计高 4px）
+        gap: 8px !important
         .ArticleTitle
           font-size: 22px !important
-          margin-bottom: 6px
+          margin-bottom: 6px !important
         // 简介槽在手机档必须跟着缩小：桌面那 60px 是给 3 行（行高 20px）留的，
         // 这一档把简介 clamp 到 2 行 ⇒ 槽只该占 2 行，否则卡片白白多 20px 空档
         // （移动端卡片是 `height: auto`，会真的体现在高度上）。下面 V15 那一档还会
