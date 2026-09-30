@@ -14,7 +14,14 @@
  */
 import http from "./axios.tsx";
 import type { Envelope } from "./ProfileMethods";
-import type { LikeState, NoteStats, NoteStatsReport } from "../interface/NoteStatsType";
+import type {
+    LikeState,
+    NoteStats,
+    NoteStatsReport,
+    PeriodKind,
+    PeriodReport,
+    UserStatsReport,
+} from "../interface/NoteStatsType";
 
 /** 单篇统计（公开，不需要登录） */
 function getNoteStats(id: number | string) {
@@ -58,4 +65,33 @@ function getNoteStatsReport() {
     });
 }
 
-export { getNoteStats, reportNoteView, likeNote, unlikeNote, getNoteStatsReport };
+/** 周报/月报/年报（管理员）。同一守卫域，同上。
+ *
+ *  `kind` 与 `limit` 都**由调用方显式给**：后端有默认值，但把默认值复制到前端
+ *  就成了第二份真相源（两处不一致时页面会"少一期"且看不出来）。 */
+function getNotePeriodReport(kind: PeriodKind, limit: number) {
+    return http<Envelope<PeriodReport>>({
+        url: "/api/protected/stats/notes/periods",
+        method: "GET",
+        params: { kind, limit },
+    });
+}
+
+/** 用户侧活跃度（管理员）。`stats.rs::user_stats`，**看板娘的用户报表读的是同一条**
+ *  ——本页只是它的第一个后台消费方，别在这里加"页面专用"的加工。 */
+function getUserStatsReport() {
+    return http<Envelope<UserStatsReport>>({
+        url: "/api/protected/stats/users",
+        method: "GET",
+    });
+}
+
+export {
+    getNoteStats,
+    reportNoteView,
+    likeNote,
+    unlikeNote,
+    getNoteStatsReport,
+    getNotePeriodReport,
+    getUserStatsReport,
+};

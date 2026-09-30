@@ -1,8 +1,11 @@
-// 文章数据报表（20260930 整页重写）。两条纪律写在文件头，改的时候别丢：
+// 数据统计（20260930 整页重写；20261001 加页签与收藏量）。三条纪律写在文件头，改的时候别丢：
 //   ① **卡面/面板的底色一律走 CSS 变量**（`--ak-bg` / `--ak-bg-dark`，由 TSX 传入），
 //      颜色落在类规则里 —— 内联 style 特异性最高，写死在那里 `.dark &` 永远赢不了
 //      （20260923 后台接深色 token 时实测白字压浅底 1.26:1）；
-//   ② **文字色不写死**，让它继承 antd 的 token（深色档自动翻白）。
+//   ② **文字色不写死**，让它继承 antd 的 token（深色档自动翻白）；
+//   ③ **页标题不装饰**。这里原来挂着 `text-decoration: underline wavy #ce7397`
+//      ——用户 20261001 的原话是「文章数据报表下面怎么有波浪线」，一并把标题改成
+//      「数据统计」。**不要再给 h2 加装饰**：它是页面的名字，不是需要被强调的正文。
 .analyticsBody
   display: flex
   flex-direction: column
@@ -11,16 +14,29 @@
   height: 100%
   overflow: auto
 
+  // 页标题 + 页签。`.analyticsBody` 是 flex column ⇒ 两块自然竖排，
+  // `gap` 由上面那条统一给
+  .akTitle
+    margin: 0
+    font-size: 20px
+    font-weight: 600
+
+  // 每个页签内部自己竖排（汇总卡 / 面板 / 分期列表）。
+  // ⚠️ **不要**把这段挂到 `.ant-tabs-tabpane` 上：antd 藏非活动页签靠的是
+  // `.ant-tabs-tabpane-hidden { display: none }`，而 `.analyticsBody .ant-tabs-tabpane`
+  // 特异性比它高（0,2,0 > 0,1,0）——写上去会把两个页签的内容**同时显示出来**。
+  // 所以间距由页签内容自己那层 `.akPane` 给。
+  .akPane
+    display: flex
+    flex-direction: column
+    gap: 16px
+
   .akHead
     display: flex
     align-items: baseline
     justify-content: space-between
     flex-wrap: wrap
     gap: 8px
-
-    h2
-      margin: 0
-      text-decoration: underline wavy #ce7397
 
     .akHeadMeta
       display: flex
@@ -88,6 +104,73 @@
 
   .akPanelWide
     width: 100%
+
+  // ── 周报 / 月报 / 年报 ──────────────────────────────────────────────────────
+  .akPeriods
+    .akPeriodsHead
+      display: flex
+      align-items: center
+      justify-content: space-between
+      flex-wrap: wrap
+      gap: 10px
+      margin-bottom: 6px
+
+      h3
+        margin: 0
+
+  // 期列表用 antd 的 `Collapse ghost`：它的底色本来就是透明的，
+  // 文字落在 `.akPanel` 那层上（深色档也是）⇒ 对比度探针量到的就是这块的底色。
+  // ⚠️ 别给 `ghost` 换掉：非 ghost 的 Collapse 自带一层白底，
+  // 深色档会变成"白底白字"那一族事故（本页的历史坑之一）。
+  .akPeriodList
+    .ant-collapse-item
+      border-bottom: 1px solid rgba(140, 140, 140, 0.22)
+
+      &:last-child
+        border-bottom: 0
+
+    // 展开区的内边距收一点：期报的正文是一列标题 + 三个数，不需要 antd 默认那么厚
+    .ant-collapse-content-box
+      padding-block: 4px 10px !important
+
+    .akPeriodRow
+      display: flex
+      align-items: baseline
+      justify-content: space-between
+      flex-wrap: wrap
+      gap: 8px
+
+      .akPeriodLabel
+        font-weight: 600
+
+        .akPartial
+          margin-left: 8px
+          font-weight: 400
+
+      .akPeriodNums
+        display: flex
+        gap: 14px
+        font-size: 13px
+        font-variant-numeric: tabular-nums
+        opacity: 0.85
+
+    // 期报正文那三列数（阅读/点赞/收藏）在行尾横排
+    .akRankNums
+      flex: 0 0 auto
+      display: flex
+      gap: 12px
+      font-size: 12px
+      font-variant-numeric: tabular-nums
+      opacity: 0.85
+
+  .akRoles
+    display: flex
+    flex-wrap: wrap
+    gap: 8px
+
+  // 「无活动」那类占位文字：**不是**要显眼，是要让人看出这是刻意写的而不是渲染坏了
+  .akMuted
+    opacity: 0.55
 
   .akChart
     min-height: 360px

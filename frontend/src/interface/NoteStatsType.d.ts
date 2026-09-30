@@ -37,6 +37,9 @@ export interface DailyRow {
     date: string;
     views: number;
     likes: number;
+    /** 20261001 补：三个汇总数、三个榜都全了，趋势只画两条线读的人会问"收藏呢"。
+     *  与 `likes` 同源（`user_favorite.created_at` 的日期分桶）。 */
+    favorites?: number;
 }
 
 /** 后台文章报表（`GET /api/protected/stats/notes`） */
@@ -44,8 +47,8 @@ export interface NoteStatsReport {
     generatedAt: string;
     totalViews: number;
     totalLikes: number;
-    /** 收藏量合计与收藏榜（20260930 补）：**后端已回、本页暂不渲染**——文章数据页
-     *  按当时的拍板只做阅读量/点赞量两榜。消费方目前是看板娘的文章流量报表。 */
+    /** 收藏量合计与收藏榜（20260930 后端已回；20261001 起本页三榜齐上）。
+     *  可空只表示"老前端还没消费它"，后端一定会回这两个键。 */
     totalFavorites?: number;
     topFavorited?: NoteRankRow[];
     /** 三个榜**数组顺序即名次**（下标 0 = 第 1 名），没有单独的 rank 字段 */
@@ -53,4 +56,71 @@ export interface NoteStatsReport {
     topLiked: NoteRankRow[];
     /** 最近 30 天，**已补零**、日期连续（后端展开） */
     daily: DailyRow[];
+}
+
+/** 期报粒度（`?kind=`）。**白名单**，别处不要再写一份字符串字面量 */
+export type PeriodKind = 'week' | 'month' | 'year';
+
+/** 期报里的一期（`GET /api/protected/stats/notes/periods`）。 */
+export interface PeriodRow {
+    /** `2026-W40` / `2026-10` / `2026` */
+    key: string;
+    /** 人眼读的标题（`2026 年第 40 周` / `2026 年 10 月` / `2026 年`） */
+    label: string;
+    /** 期界，闭区间，`YYYY-MM-DD` */
+    start: string;
+    end: string;
+    /** **本期不是整期统计**：起始日早于 `since`（统计功能上线那天）。
+     *  界面必须把这类期的数字标出来——否则"上线那一周只有两天数据"会被读成
+     *  "那周流量掉了"。这是后端 `partial` 键的原样透传。 */
+    partial: boolean;
+    views: number;
+    likes: number;
+    favorites: number;
+    /** 本期阅读量前 5。三个数都带，按 `views` 排——名次是**期内**的，与全局榜无关 */
+    topNotes: NoteRankRow[];
+}
+
+/** 分期报表（`GET /api/protected/stats/notes/periods?kind=&limit=`） */
+export interface PeriodReport {
+    generatedAt: string;
+    /** 回显粒度（切档后要对得上，别拿本地 state 当真相） */
+    kind: PeriodKind;
+    /** 最早有统计记录的一天；`null` = 一行记录都还没有（**不是** "统计了但都是 0"） */
+    since: string | null;
+    /** 期列表，**倒序**（最新在前）。期界早于 `since` 的整期已被后端剔除，
+     *  所以这个数组可能比请求的 `limit` 短——**短不等于出错**。 */
+    periods: PeriodRow[];
+}
+
+/** 用户侧活跃度（`GET /api/protected/stats/users`） */
+export interface UserActivityRow {
+    id: number;
+    /** 展示名（后端 `display_name` 产出，**不是** username） */
+    name: string;
+    role: string;
+    conversations: number;
+    messages: number;
+    /** `YYYY-MM-DD HH:MM` 本地钟面；**null = 该用户既无会话也无消息**（不是"很久以前"） */
+    lastActiveAt: string | null;
+}
+
+export interface RoleCount {
+    role: string;
+    count: number;
+}
+
+export interface UserStatsReport {
+    generatedAt: string;
+    roleCounts: RoleCount[];
+    totalUsers: number;
+    totalConversations: number;
+    totalMessages: number;
+    totalExecutions: number;
+    /** 活跃 = 最近一条会话/消息落在窗口内 */
+    activeUsers7d: number;
+    activeUsers30d: number;
+    /** 有活动、进入 `users[]` 的人数（≤ 后端上限）——**不是**用户总数 */
+    listedUsers: number;
+    users: UserActivityRow[];
 }
