@@ -68,13 +68,58 @@ html
       transform: translate(-50%,-50%)
       color: #fff1eb
       display: flex
-      justify-content: space-between
+      // 20261001：原来是 `space-between` —— 五个子项平分余量，于是**日期的位置全看标题
+      // 多长**（短标题 572px、中标题 657px、长标题 869px、超长 902px，实测），整条卡片
+      // 每篇都长得不一样。用户第 4 条「布局没有锁死，会被标题长度影响」说的就是这个。
+      // 现在改成三区 + 固定间距：左（作者）、中（标题+日期，吃满余量）、右（读数三件）。
+      justify-content: flex-start
+      gap: 24px
       align-items: center
       background: rgba(0, 0, 0, 0.25)
       backdrop-filter: blur(8px)
       -webkit-backdrop-filter: blur(8px)
       padding: 16px 24px
       border-radius: 12px
+
+      // 左区：头像 + 名字。宽度只由名字决定 —— 右区那两簇、以及中区里日期的位置
+      // 都靠它定下来，所以这里必须是"不收缩也不长"的那一份。
+      .readAuthor
+        flex: 0 0 auto
+
+      // 中区：标题 + 日期**一列**（20261001 之前这两件在行内平级）。
+      // 它是唯一吃余量的区（`flex: 1 1 auto` + `min-width: 0`，后者是让里面的长标题
+      // 真的能折行、而不是把这一区的宽度顶出去）。
+      .readMain
+        flex: 1 1 auto
+        min-width: 0
+        display: flex
+        flex-direction: column
+        justify-content: center
+        gap: 2px
+
+        h1
+          // 两行封顶：再长就截断（`.readInfo` 的高度由右区那个竖排收藏胶囊决定，
+          // 标题一旦超过两行就把整张卡拉高 —— 实测三行时卡片 124 → 146px，
+          // 底边跟着往下挪，同一页的两篇文章点来点去会上下跳）。
+          display: -webkit-box
+          -webkit-line-clamp: 2
+          -webkit-box-orient: vertical
+          overflow: hidden
+          margin: 0
+          line-height: 1.2
+          // 两行**预留**：标题一行还是两行，日期与右区那两簇都停在原地
+          // （用户第 4 条的"锁死"就是这个意思，不是"标题别太长"）
+          min-height: 2.4em
+          word-break: break-word
+
+        // ⚠️ 这里**不许写 `font-size`**：手机档那条 `.readCover .readInfo h1`（0,3,1）
+        // 只会输给比它更具体的规则，而本块的选择器是 (0,4,0) —— 一写就把手机档的
+        // `font-size: 1.4rem` 永久盖掉（媒体查询不改特异性，见文件末尾那段头注）。
+        // `min-height` 是 em 的，跟着手机档的字号一起缩，正好。
+        h3
+          // 日期是一串定长文本，禁折行：折了会让中区变高、把上面那行字顶上去
+          margin: 0
+          white-space: nowrap
 
       // 收藏按钮（20260922）：横幅一直是深色遮罩上的浅字，所以按钮自带描边、
       // 不跟主题变量走（浅色主题下这块背景也是深色，用主题色会看不见）
