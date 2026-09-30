@@ -308,11 +308,14 @@ const ContentHome = () => {
                    <h2>I'm <span style={{color: '#7880d1'}}>{author}</span></h2>
                </div>
                 <h3 className="home-title-h3">Sereno da Saudade</h3>
+                {/* 四个按钮**全部**读站点设置（20260930）。此前只有 Github 读了，
+                    B 站 UID 与邮箱写死、QQ 用仓库里带的加好友二维码 —— 那几张图含真名与真号，
+                    仓库一公开就是泄漏。**没填的按钮整个不渲染**（传 undefined 会渲染一个点不动的死按钮）。 */}
                 <div className="Social">
-                    <SocialButton SocialName='QQ' img='/QQ.png'/>
-                    <SocialButton SocialName='Github' url={social?.socialGithub}/>
-                    <SocialButton SocialName='Bilibili' url='https://space.bilibili.com/442724375'/>
-                    <SocialButton SocialName='Email' img='/QQ-Email.png' copyText='sora.saudade@qq.com'/>
+                    {social?.socialQQ && <SocialButton SocialName='QQ' copyText={social.socialQQ}/>}
+                    {social?.socialGithub && <SocialButton SocialName='Github' url={social.socialGithub}/>}
+                    {social?.socialBilibili && <SocialButton SocialName='Bilibili' url={social.socialBilibili}/>}
+                    {social?.socialEmail && <SocialButton SocialName='Email' copyText={social.socialEmail}/>}
                 </div>
             </div>
             {/* 展示柜窗口：仅夜间出现，占用右半屏空白区 */}

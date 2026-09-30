@@ -5,10 +5,9 @@ import {message} from "antd";
 interface SocialButtonProps {
     SocialName: string;
     url?: string;
-    img?: string;       // 悬浮在图标上方展示的图片（QQ 二维码 / 邮箱卡片）
-    copyText?: string;  // 点击时复制到剪贴板的内容（如邮箱地址）
+    copyText?: string;  // 点击时复制到剪贴板的内容（QQ 号 / 邮箱地址）
 }
-const SocialButton: React.FC<SocialButtonProps> = ({SocialName,url,img,copyText}) => {
+const SocialButton: React.FC<SocialButtonProps> = ({SocialName,url,copyText}) => {
     const SocialList = [
         {
             socialName: 'QQ',
@@ -48,12 +47,13 @@ const SocialButton: React.FC<SocialButtonProps> = ({SocialName,url,img,copyText}
         return null; // Return null if the social name is not found
     }
 
-    // 点击复制到剪贴板（邮箱），navigator.clipboard 失败时降级 execCommand
+    // 点击复制到剪贴板（QQ 号 / 邮箱），navigator.clipboard 失败时降级 execCommand
     const handleCopy = (e: React.MouseEvent) => {
         e.preventDefault();
         e.stopPropagation();
         if (!copyText) return;
-        const done = () => message.success('邮箱已复制到剪贴板');
+        // 提示语带平台名：这条通道 QQ 与邮箱共用，写死"邮箱"会在 QQ 上提示错东西
+        const done = () => message.success(`${SocialName} 已复制到剪贴板`);
         if (navigator.clipboard?.writeText) {
             navigator.clipboard.writeText(copyText).then(done).catch(() => {
                 const ta = document.createElement('textarea');
@@ -77,14 +77,12 @@ const SocialButton: React.FC<SocialButtonProps> = ({SocialName,url,img,copyText}
         }
     };
 
-    // 悬浮展示图片模式（QQ 二维码 / 邮箱卡片）：不跳转 URL
-    if (img) {
+    // 复制模式（QQ 号 / 邮箱）：点一下进剪贴板、不跳转。
+    // 用 div 而不是无 href 的 a —— 无 href 的 a 不可聚焦、也不是链接语义。
+    if (copyText) {
         return <>
-            <div className="SocialBtn SocialBtnImg" title={SocialName}>
-                <div className="SocialPop">
-                    <img src={img} alt={SocialName} />
-                </div>
-                <span className="svgContainer" onClick={copyText ? handleCopy : undefined}>
+            <div className="SocialBtn" title={SocialName} role="button" tabIndex={0} onClick={handleCopy}>
+                <span className="svgContainer">
                     {social.svg}
                 </span>
                 <span className="BG" style={{background: `${social.color}`}}></span>

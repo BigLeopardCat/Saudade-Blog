@@ -13,7 +13,9 @@ const initialState: UserState = {
     name: '',
     social: null,
     blogTitle: '',
-    blogIcp: ''
+    blogIcp: '',
+    blogPublicIcp: '',
+    blogCopyright: ''
 };
 
 const userSlice = createSlice({
@@ -27,12 +29,14 @@ const userSlice = createSlice({
             // 清空旧账号会话重拉新历史，见 chat-engine.js auth-change 监听）
             window.dispatchEvent(new CustomEvent('auth-change'));
         },
-        setUserInfo: (state: UserState,action: PayloadAction<{avatar:string,talk:string,name:string,blogTitle: string,blogIcp: string}>) => {
+        setUserInfo: (state: UserState,action: PayloadAction<{avatar:string,talk:string,name:string,blogTitle: string,blogIcp: string,blogPublicIcp: string,blogCopyright: string}>) => {
             state.avatar = action.payload.avatar;
             state.talk = action.payload.talk;
             state.name = action.payload.name;
             state.blogIcp = action.payload.blogIcp;
             state.blogTitle = action.payload.blogTitle
+            state.blogPublicIcp = action.payload.blogPublicIcp;
+            state.blogCopyright = action.payload.blogCopyright;
         },
         setSocial: (state: UserState,action: PayloadAction<SocialType>) => {
             state.social = action.payload
@@ -70,12 +74,18 @@ const fetchUserInfo = () => {
                 url: '/api/public/user',
                 method: "GET"
             })
+            // 后端这些键是 `Option<String>`，没配过就是 **null**（不是空串）。
+            // 统一归一成空串：消费者（页脚/首页）判的是"空 ⇒ 不渲染"，
+            // 让 null 漏进去会让 `{v}` 渲染成空白但仍占位、`if (v)` 却又是假，两处判断打架。
+            const s = (v: unknown) => (typeof v === 'string' ? v : '')
             const res = {
-                avatar: userinfo.data.data.userAvatar,
-                talk: userinfo.data.data.userTalk,
-                name: userinfo.data.data.blogAuthor,
-                blogTitle: userinfo.data.data.blogTitle,
-                blogIcp: userinfo.data.data.blogIcp
+                avatar: s(userinfo.data.data.userAvatar),
+                talk: s(userinfo.data.data.userTalk),
+                name: s(userinfo.data.data.blogAuthor),
+                blogTitle: s(userinfo.data.data.blogTitle),
+                blogIcp: s(userinfo.data.data.blogIcp),
+                blogPublicIcp: s(userinfo.data.data.blogPublicIcp),
+                blogCopyright: s(userinfo.data.data.blogCopyright),
             }
             dispatch(setUserInfo(res))
         }catch (error){
