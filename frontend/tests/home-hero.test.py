@@ -386,11 +386,17 @@ with sync_playwright() as p:
     props2 = set(re.findall(r"^\s*([a-z-]+)\s*:", kf2, re.M))
     check("★ `@keyframes caret-blink` 同样只动 opacity（光标闪，盒子不许动）",
           props2 and props2 <= {"opacity"}, f"实际声明 {sorted(props2)}")
-    # 五轮新增的两条常驻动画：同样只许动合成器属性（它们在首屏、和看板娘抢 GPU）。
-    # 七轮把标签那两条换了名字与内容（`top-shine` 斜掠高光 → `ribbon-float` 缎带慢浮、
-    # `tape-sway` → `more-nudge` 箭头推），判据本身不变：**首屏常驻动画只许动合成器属性**。
-    # 三块标签的形状与手感归 `tests/home-labels.test.py` 管，这里只管"动得贵不贵"。
-    for name in ("tag-twinkle", "ribbon-float", "more-nudge"):
+    # 首屏的常驻动画：同样只许动合成器属性（它们在首屏、和看板娘抢 GPU）。
+    # 八轮（用户第 4 条）把标签那一族的常驻循环**整批撤掉**了（`ribbon-float` 缎带慢浮、
+    # `more-nudge` 箭头推、以及「文章」牌子上的 twinkle），三块牌子静置时一律不动；
+    # 只剩 `tag-twinkle`（置顶缎带尾尖那枚 ✦ 与 hero 标签星共用它）—— 它只动 opacity、
+    # 不产生位移，是"静置"的合法例外。
+    # 形状与手感归 `tests/home-labels.test.py` 管，这里只管"动得贵不贵"。
+    check("★ 八轮撤掉的那两条常驻动画**不许回潮**（三块牌子静置时一律不动）",
+          keyframes_block(HERO_CSS, "ribbon-float") == ""
+          and keyframes_block(HERO_CSS, "more-nudge") == "",
+          "ribbon-float/more-nudge 仍在编译产物里")
+    for name in ("tag-twinkle",):
         k = keyframes_block(HERO_CSS, name)
         ps = set(re.findall(r"^\s*([a-z-]+)\s*:", k, re.M))
         check(f"★ `@keyframes {name}` 只声明 transform / opacity",
@@ -491,13 +497,18 @@ with sync_playwright() as p:
           re.search(r"--k:\s*0\.2\s*;", css_rule(VITRINE_CSS, ".vitrine")) is not None
           and m["vitK"] == "0.2",
           f"源码 .vitrine 块 {css_rule(VITRINE_CSS, '.vitrine')[:60]!r} / 计算值 {m['vitK']!r}")
-    check("★ 缺口深度与那片折角由**同一个** `--k` 驱动（`--ear = calc(var(--k) * 120px)`）"
-          "—— 拖拽时两者一起长，这是「扯」唯一看得见的地方",
-          "calc(var(--k) * 120px)" in VITRINE_CSS
-          and "calc(var(--k) * 120px)" in (VITRINE_CSS.split("--ear:")[1][:40] if "--ear:" in VITRINE_CSS else ""),
+    check("★ 缺口深度与那片折角由**同一个** `--k` 驱动（`--ear = calc(var(--k) * 160px)`）"
+          "—— 拖拽/掀起时两者一起长，这是「扯」唯一看得见的地方",
+          "calc(var(--k) * 160px)" in VITRINE_CSS
+          and "calc(var(--k) * 160px)" in (VITRINE_CSS.split("--ear:")[1][:40] if "--ear:" in VITRINE_CSS else ""),
           "见 .vitrine 的 --ear")
-    check("  · `EAR_MAX`（TSX 的 120）与 sass 那个 120px 是同一个数",
-          "const EAR_MAX = 120" in tsx and "calc(var(--k) * 120px)" in VITRINE_CSS)
+    # 八轮把这个数从 120 抬到 160（用户第 5 条：「扯起来的角的**终点**可以更大一些」）。
+    # 这条断言钉的是"两处同一个数"这个契约 —— 只改一处的话，缺口与那片纸就对不上了。
+    check("  · `EAR_MAX`（TSX 的 160）与 sass 那个 160px 是同一个数",
+          "const EAR_MAX = 160" in tsx and "calc(var(--k) * 160px)" in VITRINE_CSS
+          and "width: 160px" in css_rule(VITRINE_CSS, ".vit-ear"),
+          f'TSX {"160" if "const EAR_MAX = 160" in tsx else "对不上"} / '
+          f'--ear {"160" if "calc(var(--k) * 160px)" in VITRINE_CSS else "对不上"}')
     # ── 折角的形状：这是用户那句「突兀」的正题 ────────────────────────────────
     check("★ 折角**完全落在纸里侧**、一点都不探出卡片边缘"
           "（六轮那枚三角撇到卡片外，正是「突兀」的来源 —— 纸角不可能长到纸外面去）",
@@ -508,10 +519,22 @@ with sync_playwright() as p:
           f"corner.l {m['vitcorner']['left']} / ear.l {m['vitear']['left']}"
           f" vs vit.l {m['vit']['left']}；corner.b {m['vitcorner']['bottom']}"
           f" / ear.b {m['vitear']['bottom']} vs vit.b {m['vit']['bottom']}")
+    # 八轮把**那片纸**（`.vit-ear`，160）与**抓手**（`.vit-corner`，120）拆开了，两只不再等大：
+    # 抓的是**角**——静止档那片纸只有 32px，120px 的框早够；而纸要长到最大那一档。
+    # 跟着纸一起放到 160 的话，手机上（列宽即屏宽、卡片才 150 来 px 高）这枚透明按钮会把
+    # 整个下半张卡吃掉，"点卡片放大"就点不动了。这条同时钉住"别顺手把两只写成一个数"。
+    check("★ 纸比抓手大一圈、抓手**没有**跟着长（扶手尺寸 = 手机上还点得到卡片去放大）",
+          m["vitear"]["offW"] == 160 and m["vitear"]["offH"] == 160
+          and m["vitcorner"]["offW"] == 120 and m["vitcorner"]["offH"] == 120,
+          f'ear {m["vitear"]["offW"]}×{m["vitear"]["offH"]} / '
+          f'corner {m["vitcorner"]["offW"]}×{m["vitcorner"]["offH"]}')
+    check("★ 抓手不许剪掉探出去的那 40px（`overflow: visible`）——"
+          "剪了折角就成了一个缺斜边的方角（按钮 UA 默认值各家不一，不赌）",
+          m["vitcorner"]["overflow"] == "visible", m["vitcorner"]["overflow"])
     check("★ 那片纸是**右上三角**、缩放原点是盒子的左下角"
-          "（= 卡片底左角 ⇒ `scale(--k)` 得到的正是「折了 k×120px 那么大」的一片）",
+          "（= 卡片底左角 ⇒ `scale(--k)` 得到的正是「折了 k×160px 那么大」的一片）",
           m["vitear"]["clipPath"].replace(" ", "").count(",") == 2
-          and m["vitear"]["transformOrigin"] == "0px 120px",
+          and m["vitear"]["transformOrigin"] == "0px 160px",
           f'{m["vitear"]["clipPath"][:60]} / {m["vitear"]["transformOrigin"]}')
     check("★ 静止档量出来是 `scale(0.2)`（不是 1、也不是 none）",
           m["vitear"]["transform"].startswith("matrix(0.2,"),

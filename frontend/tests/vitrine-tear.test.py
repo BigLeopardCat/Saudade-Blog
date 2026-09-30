@@ -209,11 +209,11 @@ with sync_playwright() as p:
     print("\n【二】拖拽：折角跟手长、缺口跟着深")
     s = press(pg, 48, -48, steps=4, release=False)
     mid = state(pg)
-    # 48+48 = 96px 的对角位移 ÷ 2 = 48 ⇒ k = 0.2 + 48/120 = 0.6
-    check("★ 拖到一半：`--k` 从 0.2 长到约 0.6（指针沿对角线走的距离 / 2 / 120）",
-          abs(float(mid["k"]) - 0.6) < 0.02, mid["k"])
+    # 48+48 = 96px 的对角位移 ÷ 2 = 48 ⇒ k = 0.2 + 48/160 = 0.5（`EAR_MAX` 见下面的第七组）
+    check("★ 拖到一半：`--k` 从 0.2 长到约 0.5（指针沿对角线走的距离 / 2 / `EAR_MAX`）",
+          abs(float(mid["k"]) - 0.5) < 0.02, mid["k"])
     check("  · 那片纸跟着长（不是只有变量在变）",
-          float(mid["earTf"].split(",")[0][7:]) > 0.55, mid["earTf"])
+          float(mid["earTf"].split(",")[0][7:]) > 0.45, mid["earTf"])
     check("  · 封面左下角的缺口**跟着深**（同一个 `--k` 驱动两处）",
           mid["coverClip"] != s["coverClip"], mid["coverClip"][:60])
     check("  · 拖拽期间挂着 `is-peeling`（过渡被关掉，折角才跟得上指针）",
@@ -288,18 +288,51 @@ with sync_playwright() as p:
     check("  · 卡片与折角都还在、仍是翻过去那一页（掉的只是那张纸）",
           gone["flipped"] is True and gone["cornerRect"] is not None)
 
-    # ── 七、点一下 = 扯一下（键盘同理）───────────────────────────────────────
-    print("\n【七】点一下 / 回车：等价的一次扯（`<button>` ⇒ Tab 可达）")
+    # ── 七、点一下 = **先掀起折角**、再扯（键盘同理）─────────────────────────
+    # 20261001 八轮（用户第 5 条：「单击没有掀起左下角动画直接掉下去了，而且我感觉动画
+    # 扯起来的角的**终点**可以更大一些」）：原来 `onCornerClick` 直接 `tear(...)`，
+    # 折角一步从静止档（0.2）跨到"纸已经没了"。现在先把它掀到 1、等过渡演完再脱落。
+    print("\n【七】点一下 / 回车：先把折角**掀到头**，再脱落（`<button>` ⇒ Tab 可达）")
     check("  折角仍是个有名字的按钮", (gone["gripLabel"] or "").startswith("扯下这一页"),
           gone["gripLabel"])
-    pg.keyboard.press("Tab")                 # 页面里唯一可聚焦元素就是这枚折角
     pg.evaluate("() => document.querySelector('.vit-corner').focus()")
     pg.keyboard.press("Enter")
-    pg.wait_for_timeout(60)
+    pg.wait_for_timeout(80)
+    lift = state(pg)
+    # ⚠️ 判据要连着读两条：`--k` 是**未注册**的自定义属性、不参与插值 ⇒ 写下去就是 1，
+    # 光看它证明不了"有动画"；而 `.vit-ear` 的 transform 走那条 0.3s 过渡 —— 80ms 时
+    # 它该停在静止档与 1 之间。只读 `--k` 的话，"退化成没有过渡的瞬间跳变"照样能骗过它。
+    check("★ 按下先**掀起折角**（`--k` 推到 1），这一页**还没掉**（原来这里直接就掉了 ——"
+          "`flipped` 仍是掀之前那一面、body 上没有克隆纸）",
+          lift["k"] == "1" and lift["fallCount"] == 0 and lift["flipped"] is gone["flipped"],
+          f'k {lift["k"]} / fall {lift["fallCount"]} / flipped {lift["flipped"]}')
+    check("★ 掀起是**看得见的过程**（80ms 时那片纸停在静止档与 1 之间 —— 有过渡，不是跳变）",
+          0.2 < float(lift["earTf"].split(",")[0][7:]) < 0.99, lift["earTf"])
+    pg.wait_for_timeout(600)                 # 掀 = 0.34s（`LIFT_MS`），再等它掉起来
     keyed = state(pg)
-    check("★ 回车也能扯（键盘用户不是二等公民）",
+    check("★ 掀到头之后才脱落（回车也能扯，键盘用户不是二等公民）",
           keyed["fallCount"] == 1 and keyed["flipped"] is False,
           f'fall {keyed["fallCount"]} / flipped {keyed["flipped"]}')
+    check("  · 折角交还静止档（掀的那一下不是把纸角永久改了）",
+          keyed["k"] == "0.2", keyed["k"])
+    pg.wait_for_timeout(2600)                # 等上一张纸掉完，两轮别混在一起
+    # 真·鼠标**单击**（用户第 5 条的原话就是「**单击**没有掀起左下角动画」）。与回车走的是
+    # 同一个 `onClick`，但它前面多了一对 pointerdown/pointerup —— 那一对会先按拖拽的起手/
+    # 收手跑一遍（挂上又摘掉 `is-peeling`、`setEar(null)` 交还静止档）。只测回车的话，
+    # "收手时把 `--k` 写死成 0.2、掀的动作再也起不来"这类断链会漏网。
+    c = state(pg)["cornerCenter"]
+    pg.mouse.click(c["x"], c["y"])
+    pg.wait_for_timeout(80)
+    clicked = state(pg)
+    check("★ 鼠标单击同样**先掀起**（`--k` 推到 1、纸还没掉）——"
+          "前面那对 pointerdown/up 没把掀的动作吃掉",
+          clicked["k"] == "1" and clicked["fallCount"] == 0,
+          f'k {clicked["k"]} / fall {clicked["fallCount"]}')
+    pg.wait_for_timeout(600)
+    done = state(pg)
+    check("★ 掀到头之后脱落（单击翻页闭环）",
+          done["fallCount"] == 1 and done["flipped"] is True,
+          f'fall {done["fallCount"]} / flipped {done["flipped"]}')
     pg.wait_for_timeout(2600)
 
     # ── 八、减少动效：纸不掉，但**页照翻** ───────────────────────────────────
@@ -316,6 +349,15 @@ with sync_playwright() as p:
           f'{r0["fallCount"]} → {r1["fallCount"]}')
     check("★ 但翻页照旧发生（用户要的是「别晃」，不是「别翻」）",
           r0["flipped"] is False and r1["flipped"] is True)
+    # 「点一下」那条路在这一档里也**不掀**：要是照常掀，60ms 时 `--k` 会是 1（定时器还没
+    # 到点），用户就白等 0.34 秒才看到纸掉 —— 减少动效档要的正是"别让我等"。
+    pg.evaluate("() => document.querySelector('.vit-corner').focus()")
+    pg.keyboard.press("Enter")
+    pg.wait_for_timeout(60)
+    r2 = state(pg)
+    check("★ 减少动效档下点一下**不掀**（`--k` 没被推到 1、页已经翻回去、纸不掉）",
+          r2["k"] == "0.2" and r2["flipped"] is False and r2["fallCount"] == 0,
+          f'k {r2["k"]} / flipped {r2["flipped"]} / fall {r2["fallCount"]}')
 
     check("全程无页面异常", not errs, "; ".join(errs[:3]))
     pg.close()
