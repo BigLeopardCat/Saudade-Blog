@@ -18,6 +18,13 @@
     一轮收尾的事件到达 ⇒ 这一页自己多拉一次列表；驳回弹窗开着时那一次不许拉；手动「刷新」
     按钮照旧给 loading 反馈，背景那一次不给。`utils/liveRefresh.ts` 的四条纪律由模块级
     `live-refresh.test.mjs` 锁，本节锁的是**这一页真的接了它、而且接对了**。
+  · **已通过的留言也能驳回**（20260930，第七③节）—— 此前 `approved === 1` 的行操作区只有
+    「删除」，改不了结论；现在挂上同一个驳回入口（同一档 `audit(id, 0, reason)`、同一个
+    「理由必填」弹窗），点完那一行当场翻成「未通过」。后端 `audit_board` 从来没有状态守卫
+    （只查登录/存在性/`src=="board"`），所以这一改的**全部风险面就在这排按钮的渲染条件 +
+    本地写回**上，两处都在本文件里被判。注意这与"通过与否决是一对互斥入口"是**两件事**：
+    互斥指的是"同一行不会同时给出两颗方向相反的立即动作按钮"，而改判入口在每一档恰好一个
+    （待审/已通过 → 驳回；已驳回 → 恢复通过）。
 
 驳回请求的契约是 `PUT /api/protect/board/<id>/audit`、body **严格等于**
 `{approved: 0, reason: "<填的值>"}`——键集合也要对（多传/少传都算红）。注意 approved 传的是
@@ -440,20 +447,26 @@ with sync_playwright() as p:
           str(get_urls(pg)))
     check("每行的操作区都有「删除」入口", all(r["del_"] == 1 for r in g["rowInfo"]),
           str([r["content"] for r in g["rowInfo"] if r["del_"] != 1]))
-    # 「驳回」入口按状态给：待审(0) 才有，通过(1)/未通过(2) 没有（后者给的是「恢复通过」）
+    # 「驳回」入口按状态给（20260930 起）：待审(0) 与**已通过(1)** 都有，未通过(2) 没有
+    #（那一档给的是「恢复通过」）。已通过那档是 20260930 新增的能力：**把已经放行的留言
+    # 收回来**——后端 handler 从来没有状态守卫（`audit_board` 只查登录/存在性/src=="board"），
+    # 卡点一直只在这排按钮的渲染条件上。
     check("待审的 4 行各有一个「驳回」入口",
           all(by_content(g, c)["reject"] == 1 for c in REJECT_ROWS),
           str({c: by_content(g, c)["reject"] for c in REJECT_ROWS}))
-    check("已裁决的 6 行**没有**「驳回」入口",
-          all(by_content(g, c)["reject"] == 0 for c in PASS_ROWS + BAD_ROWS),
-          str({c: by_content(g, c)["reject"] for c in PASS_ROWS + BAD_ROWS}))
+    check("已通过的 4 行**也各有一个「驳回」入口**（20260930：已通过的可再驳回）",
+          all(by_content(g, c)["reject"] == 1 for c in PASS_ROWS),
+          str({c: by_content(g, c)["reject"] for c in PASS_ROWS}))
+    check("未通过的 2 行没有「驳回」入口（那一档给的是「恢复通过」）",
+          all(by_content(g, c)["reject"] == 0 for c in BAD_ROWS),
+          str({c: by_content(g, c)["reject"] for c in BAD_ROWS}))
     check("待审的 4 行操作区是「通过」+「驳回」+「删除」",
           all(by_content(g, c)["pass"] == 1 and by_content(g, c)["restore"] == 0 for c in REJECT_ROWS),
           str({c: (by_content(g, c)["pass"], by_content(g, c)["restore"]) for c in REJECT_ROWS}))
-    # 已终态的两档都不给重复裁决的按钮：通过(1) 只剩「删除」；未通过(2) 给的是「恢复通过」
-    # （这条同时锁住"通过与否决是一对互斥入口"——两边的 通过/驳回 计数一个都不能漏出来）
-    check("通过的 4 行没有裁决入口（已终态，操作区只剩「删除」）",
-          all(by_content(g, c)["pass"] == 0 and by_content(g, c)["reject"] == 0
+    # 通过的 4 行：只留「驳回」（改判入口）——「通过」不能再点（那一下是空操作）、
+    # 「恢复通过」是给未通过那档的。这三个计数一起判，防的是"顺手把三颗按钮都挂上去"。
+    check("通过的 4 行操作区是「驳回」+「删除」（没有「通过」/「恢复通过」）",
+          all(by_content(g, c)["pass"] == 0 and by_content(g, c)["reject"] == 1
               and by_content(g, c)["restore"] == 0 for c in PASS_ROWS),
           str({c: (by_content(g, c)["pass"], by_content(g, c)["reject"],
                    by_content(g, c)["restore"]) for c in PASS_ROWS}))
@@ -702,13 +715,50 @@ with sync_playwright() as p:
     row_loc(pg, "驳回靶子D").locator("button", has_text=re.compile(r"^通\s*过$")).first.click()
     pg.wait_for_timeout(600)
     g2 = by_content(pg.evaluate(GEO_LIST), "驳回靶子D")
-    check("点「通过」后当场变「通过」、两个裁决入口都收走（只剩删除/恢复类的不会出现）",
-          g2 and g2["manualTag"] == "通过" and g2["reject"] == 0 and g2["pass"] == 0
+    check("点「通过」后当场变「通过」：「通过」与「恢复通过」都收走，"
+          "只剩「驳回」（已通过行仍可改判，20260930）",
+          g2 and g2["manualTag"] == "通过" and g2["reject"] == 1 and g2["pass"] == 0
           and g2["restore"] == 0,
           str(g2 and (g2["manualTag"], g2["reject"], g2["pass"], g2["restore"])))
     check("  通过的行不显示驳回理由那一块（后端会清空理由）",
           g2 and g2["reason"] is None, str(g2 and g2["reason"]))
     check("第七节②无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
+    pg.close()
+
+    # 第三个方向（20260930 新能力）：**已通过 → 驳回**（收回展示）。
+    # 走的是同一条 `audit(id, 0, reason)`、同一个弹窗，但入口此前不存在：已通过的行
+    # 操作区只有「删除」，点不到驳回 ⇒ 这一节存在的意义就是"入口真的挂上了、而且
+    # 点完那一行当场翻面"。选「通过乙」（approved=1 且 ai_result='reject'）——它是
+    # "AI 驳回被人改判放行"那一档，正是最可能被反悔的一条。
+    print("\n【七③】已通过的留言也能驳回（收回展示）：入口挂得上、写完当场翻面")
+    pg = mount(br)
+    g3 = by_content(pg.evaluate(GEO_LIST), "通过乙")
+    check("前置：这一行初始是「通过」且挂着「驳回」入口",
+          g3 and g3["manualTag"] == "通过" and g3["reject"] == 1, str(g3))
+    d = open_reject(pg, "通过乙")
+    check("前置：已通过行的驳回弹窗开得出来（理由照旧必填）",
+          d is not None and d.get("okDisabled") is True, str(d))
+    MY_REASON_3 = "第七③节：已通过但又觉得不合适"
+    pg.locator(VIS + " textarea").fill(MY_REASON_3)
+    pg.wait_for_timeout(250)
+    pg.locator(VIS + " .bm-reject-ok").click()
+    pg.wait_for_timeout(600)
+    g4 = by_content(pg.evaluate(GEO_LIST), "通过乙")
+    check("确认后那一行当场变成「未通过」（写回落库值 2），理由显示本次填的那句",
+          g4 and g4["manualTag"] == "未通过" and g4["reason"] is not None
+          and MY_REASON_3 in g4["reason"],
+          str(g4 and (g4["manualTag"], g4["reason"])))
+    check("  「驳回」入口当场换成「恢复通过」（同一条能再改回来）",
+          g4 and g4["reject"] == 0 and g4["restore"] == 1,
+          str(g4 and (g4["reject"], g4["restore"])))
+    _rev = audit_puts(pg)
+    check("  请求体是**驳回**那一份契约（approved=0 这个动作码 + 本次填的理由；"
+          "键集合也要对——多传少传都算红）",
+          bool(_rev) and _rev[-1]["body"] == {"approved": 0, "reason": MY_REASON_3},
+          str(_rev[-1:] if _rev else None))
+    check("  全程没有为了追上后端而重拉列表",
+          board_gets(pg) == 1, str(get_urls(pg)))
+    check("第七③节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
     # ── 八、跨端同步：看板娘改的那一笔，页面自己跟上 ────────────────────────────

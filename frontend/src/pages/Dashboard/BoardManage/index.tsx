@@ -160,7 +160,8 @@ const BoardManage = () => {
         }
     };
 
-    /** 人工复核：通过(1)=放行展示 / 驳回(0)=写未通过(2)隐藏，驳回可「恢复通过」改判
+    /** 人工复核：通过(1)=放行展示 / 驳回(0)=写未通过(2)隐藏。**两态都能改判**：
+     *  已通过的可以再驳回（收回展示，20260930）、已驳回的可以「恢复通过」。
      *  （仅河灯留言，后端有 src 守卫；人工裁决不改写 ai_result，AI 判定留痕保留）
      *  reason 只在驳回时有意义（通过时后端会清空理由，传了也不生效） */
     const audit = async (id: number, approved: number, reason?: string) => {
@@ -333,24 +334,33 @@ const BoardManage = () => {
         },
         {
             title: '操作', key: 'op', width: 190,
-            render: (_, r) => (
+            render: (_, r) => {
+                // 驳回按钮**一处实现、两态共用**（20260930）：待审(0) 与已通过(1) 都挂它。
+                // 已通过的也能驳回 = 把已经放行的留言收回来（后端 handler 从来没有状态守卫，
+                // 卡点只在这排按钮的渲染条件上）；理由弹窗、通知、本地写回三处都不用分叉——
+                // `audit(id, 0, reason)` 对两态是同一条路径。
+                const rejectBtn = (
+                    <Button
+                        danger
+                        type="link"
+                        size="small"
+                        onClick={() => {
+                            setRejecting(r);
+                            setRejectReason('');
+                        }}
+                    >
+                        驳回
+                    </Button>
+                );
+                return (
                 <>
                     {r.approved === 0 && (
                         <>
                             <Button type="link" size="small" onClick={() => audit(r.talkKey, 1)}>通过</Button>
-                            <Button
-                                danger
-                                type="link"
-                                size="small"
-                                onClick={() => {
-                                    setRejecting(r);
-                                    setRejectReason('');
-                                }}
-                            >
-                                驳回
-                            </Button>
+                            {rejectBtn}
                         </>
                     )}
+                    {r.approved === 1 && rejectBtn}
                     {r.approved === 2 && (
                         <Button type="link" size="small" onClick={() => audit(r.talkKey, 1)}>恢复通过</Button>
                     )}
@@ -364,7 +374,8 @@ const BoardManage = () => {
                         <Button danger size="small" type="text">删除</Button>
                     </Popconfirm>
                 </>
-            ),
+                );
+            },
         },
     ];
 
