@@ -697,8 +697,8 @@ li.search-box input {
       `-webkit-text-fill-color: transparent`，而 `getComputedStyle().color` 正是
       `tests/dark-mode-contrast.test.py` 的唯一判据（3:1 门槛，`.dark` 与浅色两侧都算）。
       只写透明填充不写实色 = 夜间哨兵把两处渐变字全判成缺陷。所以每个渐变块里都有一行
-      实色 `color`，取值就是渐变里**最暗那一段**（浅色 #d81b60 对 #eeeeee 4.3:1、
-      夜间 #ffb3d9 对 #171717 10.8:1，两侧都过线）——渐变可以花，回退色必须自己就能读。
+      实色 `color`，取值就是渐变里**最暗那一段**（浅色 #b3175e 对 #eeeeee 约 6:1、
+      夜间 #ffb3d9 对 #171717 约 11:1，两侧都过线）——渐变可以花，回退色必须自己就能读。
 
    ③ **两处 var() 都写了兜底字面量**（`var(--anime-grad-light, linear-gradient(…))`）。
       这不是冗余：无头沙箱（`tests/dashboard-*.test.py`）有的只链自己那份 CSS，
@@ -709,13 +709,17 @@ li.search-box input {
     --anime-font: '站酷快乐体', 'ZCOOL KuaiLe', '幼圆', 'YouYuan', '苹方圆体',
         'Hiragino Maru Gothic ProN', 'Yuanti SC', 'Quicksand', 'PingFang SC',
         'Microsoft YaHei', system-ui, sans-serif;
-    --anime-grad-light: linear-gradient(100deg, #d81b60 0%, #7c3aed 55%, #1d6fd0 100%);
-    --anime-ink-light: #d81b60;
-    --anime-aura: conic-gradient(from 0deg, #ff9ecd, #c9a6ff, #8fd4ff, #ffd6a5, #ff9ecd);
+    /* 20260930 二轮：用户点名「字体颜色换成粉白」。**浅色档不能真的是粉白**——
+       白字压后台那层 #eeeeee/#E4E9F7 是 1.2:1，等于看不见；所以浅色档取粉系
+       （亮粉 → 深粉，两端的对 #eeeeee 都在 3:1 以上），粉白只出现在夜间档
+       （#ffb3d9 → #ffe3f1 压 #171717，最暗那端也有 11:1）。 */
+    --anime-grad-light: linear-gradient(100deg, #e0409a 0%, #b3175e 100%);
+    --anime-ink-light: #b3175e;
+    --anime-aura: conic-gradient(from 0deg, #ffb3d9, #ffe3f1, #d9b8ff, #ffd6ea, #ffb3d9);
 }
 
 .dark {
-    --anime-grad-dark: linear-gradient(100deg, #ffb3d9 0%, #c9a6ff 55%, #8fd4ff 100%);
+    --anime-grad-dark: linear-gradient(100deg, #ffb3d9 0%, #ffe3f1 100%);
     --anime-ink-dark: #ffb3d9;
 }
 
@@ -726,17 +730,17 @@ li.search-box input {
     font-family: var(--anime-font);
     letter-spacing: 0.5px;
     background-image: var(--anime-grad-light,
-        linear-gradient(100deg, #d81b60 0%, #7c3aed 55%, #1d6fd0 100%));
+        linear-gradient(100deg, #e0409a 0%, #b3175e 100%));
     -webkit-background-clip: text;
     background-clip: text;
     -webkit-text-fill-color: transparent;
     /* 兜底实色（见上方 ②）：渐变没生效时读到的就是它 */
-    color: var(--anime-ink-light, #d81b60);
+    color: var(--anime-ink-light, #b3175e);
 }
 
 .dark .image-text .name {
     background-image: var(--anime-grad-dark,
-        linear-gradient(100deg, #ffb3d9 0%, #c9a6ff 55%, #8fd4ff 100%));
+        linear-gradient(100deg, #ffb3d9 0%, #ffe3f1 100%));
     color: var(--anime-ink-dark, #ffb3d9);
 }
 

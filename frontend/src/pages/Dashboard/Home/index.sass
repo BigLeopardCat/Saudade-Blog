@@ -388,17 +388,28 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
       display: flex
       flex-direction: row
       align-items: center
-      img
-        height: 8rem
-        width: 8rem
-        @media only screen and (max-width: 1500px)
-          height: 5rem
-          width: 5rem
-
-      // ── 20260930 日系动漫风（令牌与三条坑见 Dashboard/index.css 末尾那一节）──
-      // 头像那圈 `border: 2px solid #b7b7b7` 原来是**内联 style**，已摘到类上：
-      // 内联特异性最高，留着它下面这圈光环会被压掉一半。
+      // 20260930 二轮：**头像不许被签名挤扁**（用户报「dashboard 头像被挤压扁了」）。
+      //
+      // `.about_me` 是 flex 行，两侧默认 `flex-shrink: 1`；而 `.typed`（Typed.js 的打字机
+      // 容器）的 `flex-basis` 是 auto ⇒ **它的基准尺寸 = 签名不换行时的整行宽度**。个性签名
+      // 本来就是一句话，于是一超出容器，亏空就按基准尺寸加权分摊到两个子项上——头像跟着被
+      // 按比例压窄。沙箱实测（真 Dashboard 壳 + 真 CSS，签名 30 字）：
+      //   1600px 视口 → `.about_me .ant-avatar` 量到 **60×130**（`.ant-avatar` 是 130×130）
+      //   1280px 视口 → 57×130（外层 `.about_logo` 的 scale(1.4) 放大后显示成 80×182）
+      // 即盒子变成一个竖着的窄椭圆，头像被裁成一条竖缝——就是用户看到的那张"扁"脸。
+      //
+      // 修法两头各一句，缺一不可：
+      //   · 头像 `flex: 0 0 auto` —— 尺寸不再参与收缩（宽高都由 antd 的 size={130} 定）；
+      //   · 签名 `min-width: 0` —— 默认的 `min-width: auto` 让它拒绝缩到 min-content 以下，
+      //     这正是"压力被转嫁给头像"的机制；给了 0 它才会自己换行。
+      // 这一对**不是**保险起见多写的：只写头像那一句，签名仍会把容器撑宽（溢出 40px+）。
+      //
+      // 顺带删掉原来的 `img { height: 8rem; width: 8rem }`（含 ≤1500px 的 5rem 档）：
+      // 生产里它一条都不生效——`Dashboard/index.css` 的 `.ant-avatar > img` 带 !important，
+      // 宽高恒是 100%/100%；留着它只是"头像到底多大"的**第二个答案**（128 vs 130），
+      // 而沙箱不链 dash.css 时量到的就是那个 128。尺寸唯一来源 = JSX 上的 `size={130}`。
       .animeAvatar
+        flex: 0 0 auto
         position: relative
         z-index: 0
         // 一圈"底色缝"隔开头像与光晕：卡片底色取 antd 的容器色（浅色白 / 夜间近黑），
@@ -413,7 +424,7 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
           position: absolute
           inset: -9px
           border-radius: 50%
-          background: var(--anime-aura, conic-gradient(from 0deg, #ff9ecd, #c9a6ff, #8fd4ff, #ffd6a5, #ff9ecd))
+          background: var(--anime-aura, conic-gradient(from 0deg, #ffb3d9, #ffe3f1, #d9b8ff, #ffd6ea, #ffb3d9))
           filter: blur(11px)
           opacity: 0.6
           z-index: -1
@@ -430,17 +441,22 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
         line-height: 1.55
         margin-left: 14px
         letter-spacing: 0.5px
-        // 渐变字 + **兜底实色**：兜底色就是渐变最暗那一段（浅色侧 4.3:1，见 CSS 注释 ②）
-        background-image: var(--anime-grad-light, linear-gradient(100deg, #d81b60 0%, #7c3aed 55%, #1d6fd0 100%))
+        // 签名与头像抢宽度时**让签名先换行**（见上面 `.about_me` 那段注释：头像被挤扁的
+        // 另一半机制就在这里——默认 `min-width: auto` 让它拒绝缩到 min-content 以下）。
+        min-width: 0
+        // 渐变字 + **兜底实色**：兜底色就是渐变最暗那一段（浅色侧 #b3175e 对 #eeeeee ≈ 6:1，
+        // 见 CSS 注释 ②）。用户二轮点名要「粉白」——浅色档**不能真的粉白**：白字压 #eeeeee
+        // 是 1.2:1，读不出来；所以浅色档是粉系（亮粉→深粉），粉白留在夜间档。
+        background-image: var(--anime-grad-light, linear-gradient(100deg, #e0409a 0%, #b3175e 100%))
         -webkit-background-clip: text
         background-clip: text
         -webkit-text-fill-color: transparent
-        color: var(--anime-ink-light, #d81b60)
-        filter: drop-shadow(0 2px 6px rgba(124, 58, 237, 0.28))
+        color: var(--anime-ink-light, #b3175e)
+        filter: drop-shadow(0 2px 6px rgba(232, 90, 160, 0.28))
         .dark &
-          background-image: var(--anime-grad-dark, linear-gradient(100deg, #ffb3d9 0%, #c9a6ff 55%, #8fd4ff 100%))
+          background-image: var(--anime-grad-dark, linear-gradient(100deg, #ffb3d9 0%, #ffe3f1 100%))
           color: var(--anime-ink-dark, #ffb3d9)
-          filter: drop-shadow(0 0 8px rgba(201, 166, 255, 0.4))
+          filter: drop-shadow(0 0 8px rgba(255, 179, 217, 0.45))
         @media only screen and (max-width: 768px)
           display: none
 

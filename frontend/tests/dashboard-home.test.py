@@ -71,6 +71,11 @@ def cn_label(offset: int) -> str:
     return f"{d.month}月{d.day}日 星期{CN_WEEK[d.isoweekday() - 1]}"
 
 
+# 个性签名（`web_info.userTalk` → redux `user.talk`）。**桩里必须给**：空签名时组件
+# 整块不渲染 `.typed`，而"头像被签名挤扁"这件事只在 `.typed` 在场时才量得到
+# （20260930 二轮实测——这条正是本套件原来漏掉它的原因，见第 ⑲ 组）。
+TALK = "慢慢来比较快：把每一件小事做扎实，剩下的交给时间，别急。"
+
 OVERDUE, TOMORROW, LATER = day(-4), day(1), day(2)
 SEED = [
     {"id": 1, "text": "逾期的一条", "done": False, "date": OVERDUE},
@@ -96,7 +101,7 @@ def build_sandbox() -> pathlib.Path:
     # 判定"变了"而无限重渲染）。
     (stubs / "redux.tsx").write_text('''\
 const state: any = {
-  user: { avatar: '', name: 'Sora' },
+  user: { avatar: '', name: 'Sora', talk: '__TALK__' },
   notes: { noteCount: 0, noteList: [], loading: false },
   tags: { tagCount: 0, tagList: [] },
   categories: { categoryList: [] },
@@ -104,7 +109,7 @@ const state: any = {
 export const useSelector = (fn: any) => { try { return fn(state); } catch { return undefined; } };
 export const useDispatch = () => (_a: any) => undefined;
 export const Provider = ({ children }: any) => children;
-''', encoding="utf-8")
+'''.replace("__TALK__", TALK), encoding="utf-8")
 
     # 边界②：redux thunk 工厂（首页挂载时会 dispatch 三个拉取动作）
     for name in ("note", "categories", "tags"):
@@ -1194,6 +1199,80 @@ with sync_playwright() as p:
           pg.evaluate("""() => { const c = document.querySelector('.cardInfo').getBoundingClientRect();
               const e = document.querySelector('.todo-empty').getBoundingClientRect();
               return e.top - c.top; }""") <= 90)
+
+    # ── ⑲ 欢迎卡头像：必须是正方形（20260930 二轮）──────────────────────────
+    # 用户报「dashboard 头像被挤压扁了」。根因不在头像那几条样式里，而在 `.about_me`
+    # 这条 flex 行上：`.typed`（Typed.js 的打字机容器）的 `flex-basis` 是 auto ⇒
+    # **基准尺寸 = 签名不换行时的整行宽度**；签名一超，亏空按基准尺寸加权分摊到两个
+    # 子项上，头像跟着被按比例压窄（实测 1600px 视口下 130×130 的盒子量到 60×130，
+    # 1280px 下 57×130 ⇒ 裁成一条竖缝）。
+    #
+    # 判据是"盒子是正方形"（几何），不是"那两句 CSS 还在不在"——但那两句必须**能被
+    # 证明有用**，所以下面有牙齿那一验：把修复撤掉，这条几何断言必须立刻变红。
+    #
+    # ⚠️ 这一组的前提是**签名真的渲染出来**（`.typed` 在场）。空签名时组件整块不渲染
+    # `.typed`，头像也永远不会被挤——本套件的桩原来就没给 `talk`，所以"头像被压扁"
+    # 在这里**根本量不到**（判据两边一样坏 ⇒ 照旧全绿）。桩里已补 `talk`。
+    pg.reload()
+    pg.wait_for_timeout(400)
+    # 打字机是**逐字**打的（typeSpeed 60ms），`.typed` 的行数随字符增长 ⇒ 没打完就量
+    # 等于量了个最轻的态。等它打完（文本两次采样相同、且结尾那几个字已出现）。
+    typed_txt = ""
+    for _ in range(60):
+        typed_txt = pg.evaluate(
+            "() => ((document.querySelector('.about_me .typed') || {}).textContent || '')")
+        if typed_txt.rstrip().endswith(TALK[-4:]) and typed_txt.strip():
+            break
+        pg.wait_for_timeout(150)
+
+    print("⑲ 欢迎卡头像：签名在场时也不许被挤扁")
+    check("（前置）个性签名渲染出来了（不是空的、也不是别的话）",
+          typed_txt.strip() == TALK, f"「{typed_txt.strip()[:24]}…」")
+
+    def avatar_box():
+        return pg.evaluate("""() => {
+          const me = document.querySelector('.about_me');
+          const av = me && me.querySelector('.ant-avatar');
+          const ty = me && me.querySelector('.typed');
+          if (!av) return null;
+          const b = (e) => { const r = e.getBoundingClientRect();
+            return {w: Math.round(r.width * 10) / 10, h: Math.round(r.height * 10) / 10,
+                    top: Math.round(r.top), left: Math.round(r.left)}; };
+          return {avatar: b(av), typed: ty ? b(ty) : null, me: b(me),
+                  meOverflow: me.scrollWidth - me.clientWidth,
+                  flex: getComputedStyle(av).flex, typedMinW: ty ? getComputedStyle(ty).minWidth : null};
+        }""")
+
+    box = avatar_box()
+    check("头像盒子是正方形（宽 == 高，容差 1px）",
+          box and abs(box["avatar"]["w"] - box["avatar"]["h"]) <= 1,
+          f"{box and box['avatar']['w']}×{box and box['avatar']['h']}")
+    check("头像边长就是 antd 的 size=130（没被按比例压窄）",
+          box and abs(box["avatar"]["w"] - 130) <= 1 and abs(box["avatar"]["h"] - 130) <= 1,
+          f"{box and box['avatar']['w']}×{box and box['avatar']['h']}")
+    check("签名与头像**同一行**（头像没被挤到下一行、签名也没跑到上面去）",
+          box and abs(box["typed"]["top"] - box["avatar"]["top"]) < box["avatar"]["h"],
+          f"avatar.top {box and box['avatar']['top']} / typed.top {box and box['typed']['top']}")
+    check("签名自己换行，不把欢迎卡撑出横向溢出",
+          box and box["meOverflow"] <= 1, f"溢出 {box and box['meOverflow']}px")
+
+    # 牙齿：把修复的两句在 DOM 上撤掉（头像允许收缩 + 签名拒绝缩到 min-content 以下），
+    # 同一个签名、同一个视口 ⇒ 盒子必须立刻变扁。这条红了说明上面那条测的是空气。
+    squashed = pg.evaluate("""() => {
+      const me = document.querySelector('.about_me');
+      const av = me.querySelector('.ant-avatar');
+      const ty = me.querySelector('.typed');
+      av.style.flexShrink = '1';        // 撤销 `.animeAvatar { flex: 0 0 auto }`
+      ty.style.minWidth = 'auto';       // 撤销 `.typed { min-width: 0 }`
+      const r = av.getBoundingClientRect();
+      const out = {w: Math.round(r.width * 10) / 10, h: Math.round(r.height * 10) / 10};
+      return out;
+    }""")
+    check("★ 判据有牙：撤掉那两句修复 ⇒ 头像立刻被压扁（本组抓得住这个缺陷）",
+          abs(squashed["w"] - squashed["h"]) > 20,
+          f"撤掉后 {squashed['w']}×{squashed['h']}（正方形是 {box and box['avatar']['w']}）")
+    pg.reload()
+    pg.wait_for_timeout(600)
 
     br.close()
 

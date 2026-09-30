@@ -16,8 +16,13 @@
 //
 // 最后一条尤其要留着：那条裸规则**不是废弃代码**——它的 max-height/overflow 被嵌套规则
 // 压掉了，但 `padding-bottom` 谁也没声明过，于是一直生效：展开盒高 = 内容 + 10，
-// 而 `box-sizing: border-box` 让上限 200px 里只剩 190px 给正文 ⇒ 第 10 行切一半。
+// 而 `box-sizing: border-box` 让上限（当年 200px）里只剩 190px 给正文 ⇒ 第 10 行切一半。
 // 是 `.test.py` 里读出 `padding-bottom` 非 0 才回头找到它的。
+//
+// 20260930 二轮（用户："卡片比例有点不好看，重新调整卡片样式"）：封面 200→240、
+// 卡片下限 600→**520**、普通卡展开上限 200→**140**（7 行）——三个数联动，本套件底部
+// 两条断言跟着改。**判据别只改数字**：`140` 必须仍是 `line-height: 20px` 的整数倍
+// （半行 = 用户报过的"最后一行只露上半"，见第 ③ 组）。
 import { readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -106,8 +111,8 @@ console.log('\n② 简介在槽内绝对定位：长高不参与布局（展开/
 
 console.log('\n③ 展开态：上限是行高整数倍，且**不许**再用负 margin / padding 当支点');
 {
-    const hoverNormal = decl(DESC + ':hover', 'max-height', '200px');
-    ok(hoverNormal.found && hoverNormal.match, `普通卡：:hover 上限 200px（10 行）`, hoverNormal);
+    const hoverNormal = decl(DESC + ':hover', 'max-height', '140px');
+    ok(hoverNormal.found && hoverNormal.match, `普通卡：:hover 上限 140px（7 行）`, hoverNormal);
     const hoverTop = decl(TOP_DESC + ':hover', 'max-height', '240px');
     ok(hoverTop.found && hoverTop.match, `置顶卡：:hover 上限 240px（12 行）`, hoverTop);
     for (const [name, sel] of [['普通卡', DESC], ['置顶卡', TOP_DESC]]) {
@@ -184,7 +189,7 @@ console.log('\n⑦ 署名取昵称（用户点名"卡片上的 Sora 换成真正
         '头像同一条链：user.avatar 优先、web_info.avatar 回退', avatarSeg);
 }
 
-console.log('\n⑧ 标签换行：卡片按内容长高（600 是**下限**），页脚那条「更新于」是被裁的第一个');
+console.log('\n⑧ 标签换行：卡片按内容长高（520 是**下限**），页脚那条「更新于」是被裁的第一个');
 {
     // 现场：标签换到第二/第三行时，"作者信息时间信息跑出卡片"（用户第四报）。
     // 根因是**定高**：`.ArticleCard{height:600px}` + `overflow:hidden`，而「更新于」那行是
@@ -198,8 +203,8 @@ console.log('\n⑧ 标签换行：卡片按内容长高（600 是**下限**）�
         '.allArticles > .article 是 display: flex（网格只拉网格项 ⇒ 少了这层同排卡片不等高）', item);
 
     const card = '.ContentContainer .allArticles .ArticleCard';
-    const mh = declNum(card, 'min-height', 600);
-    ok(mh.found && mh.match, '卡片 600px 写在 min-height 上（下限，内容多就长高）', mh);
+    const mh = declNum(card, 'min-height', 520);
+    ok(mh.found && mh.match, '卡片 520px 写在 min-height 上（下限，内容多就长高）', mh);
     const cardH = decl(card, 'height');
     ok(!cardH.found, '卡片**没有** height（写回去就是定高：内容一多「更新于」立刻被裁出去）', cardH);
 
