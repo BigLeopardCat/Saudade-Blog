@@ -680,3 +680,94 @@ li.search-box input {
 .dark .shell li:not(.nav_select):hover .icon .nav-svg {
     filter: drop-shadow(0 0 5px rgba(240, 196, 110, 0.85));
 }
+
+/* ══════════════════ 20260930 日系动漫风（用户点名）══════════════════════════
+   范围**只有三处**：后台侧栏的身份块（本文件）＋ 后台首页欢迎卡的签名与头像
+   （`Home/index.sass` 的 `.about_me`）。别顺手铺到全站——前后台是两套气质。
+
+   令牌定义在这里，两处 var() 引用。三条踩过的坑写在下面，改之前先读：
+
+   ① **字体只用系统字体栈**，不下载 webfont：本机（=生产）只有几张极小的子集字体
+      （`lxgw-wenkai-tc-sig.woff2` 4.8KB 之类，只够首页签名那几个字），中文圆体整份
+      动辄 5-10MB，引进来是缺字不是好看。日文圆体 `Hiragino Maru Gothic ProN` 在
+      macOS/iOS 上自带（这就是"动漫感"的主要来源），Windows 退到幼圆/苹方圆体，
+      都没有才落到系统默认——**降级链上每一档都是"没有就下一个"，不是"没有就报错"**。
+
+   ② **渐变字必须自带实色 `color`**：渐变走的是 `background-clip: text` +
+      `-webkit-text-fill-color: transparent`，而 `getComputedStyle().color` 正是
+      `tests/dark-mode-contrast.test.py` 的唯一判据（3:1 门槛，`.dark` 与浅色两侧都算）。
+      只写透明填充不写实色 = 夜间哨兵把两处渐变字全判成缺陷。所以每个渐变块里都有一行
+      实色 `color`，取值就是渐变里**最暗那一段**（浅色 #d81b60 对 #eeeeee 4.3:1、
+      夜间 #ffb3d9 对 #171717 10.8:1，两侧都过线）——渐变可以花，回退色必须自己就能读。
+
+   ③ **两处 var() 都写了兜底字面量**（`var(--anime-grad-light, linear-gradient(…))`）。
+      这不是冗余：无头沙箱（`tests/dashboard-*.test.py`）有的只链自己那份 CSS，
+      缺了定义时 `background-image` 会退成 `none`，而 `-webkit-text-fill-color` 仍是
+      transparent ⇒ **字直接看不见**（不是变丑，是消失）。字面量就是那道保险。
+   ─────────────────────────────────────────────────────────────────────────── */
+:root {
+    --anime-font: '站酷快乐体', 'ZCOOL KuaiLe', '幼圆', 'YouYuan', '苹方圆体',
+        'Hiragino Maru Gothic ProN', 'Yuanti SC', 'Quicksand', 'PingFang SC',
+        'Microsoft YaHei', system-ui, sans-serif;
+    --anime-grad-light: linear-gradient(100deg, #d81b60 0%, #7c3aed 55%, #1d6fd0 100%);
+    --anime-ink-light: #d81b60;
+    --anime-aura: conic-gradient(from 0deg, #ff9ecd, #c9a6ff, #8fd4ff, #ffd6a5, #ff9ecd);
+}
+
+.dark {
+    --anime-grad-dark: linear-gradient(100deg, #ffb3d9 0%, #c9a6ff 55%, #8fd4ff 100%);
+    --anime-ink-dark: #ffb3d9;
+}
+
+/* ── 侧栏身份块：头像光环 + 昵称渐变字 ──────────────────────────────────────
+   `.image-text` / `.image` 这两个类名**全站只有后台侧栏用**（grep 过），所以不带
+   `.contain` 前缀也安全；带上前缀反而要担心"本文件也进首页 bundle"。 */
+.image-text .name {
+    font-family: var(--anime-font);
+    letter-spacing: 0.5px;
+    background-image: var(--anime-grad-light,
+        linear-gradient(100deg, #d81b60 0%, #7c3aed 55%, #1d6fd0 100%));
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    /* 兜底实色（见上方 ②）：渐变没生效时读到的就是它 */
+    color: var(--anime-ink-light, #d81b60);
+}
+
+.dark .image-text .name {
+    background-image: var(--anime-grad-dark,
+        linear-gradient(100deg, #ffb3d9 0%, #c9a6ff 55%, #8fd4ff 100%));
+    color: var(--anime-ink-dark, #ffb3d9);
+}
+
+/* 头像：一圈"底色缝" + 会转的光晕。光晕挂 `.ant-avatar`（它是正方形，inset 一圈才是圆）
+   ——挂到 `.image` 上会变成 60×45 的**椭圆**（那个盒子是 flex 的 min-width:60px）。 */
+.image-text .image .ant-avatar {
+    position: relative;
+    z-index: 0;
+    box-shadow: 0 0 0 2px var(--shell-color), 0 6px 16px -8px rgba(124, 58, 237, 0.85);
+}
+
+.image-text .image .ant-avatar::before {
+    content: '';
+    position: absolute;
+    inset: -6px;
+    border-radius: 50%;
+    background: var(--anime-aura);
+    filter: blur(7px);
+    opacity: 0.55;
+    z-index: -1;
+    animation: animeAura 10s linear infinite;
+}
+
+@keyframes animeAura {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+}
+
+/* 动效是**装饰**：系统里开了"减弱动态效果"就让位（这两处都不承载信息）。
+   欢迎卡那一份写在 `Home/index.sass` 里紧挨着 animation——那边的选择器多两级，
+   这里的规则压不过它，分开写才不会出现"写了没生效"。 */
+@media (prefers-reduced-motion: reduce) {
+    .image-text .image .ant-avatar::before { animation: none; }
+}

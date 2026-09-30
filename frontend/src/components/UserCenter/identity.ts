@@ -18,7 +18,7 @@
  *   · 缓存只用于**显示**，任何一次请求的身份都由 `tokenKey` 决定；先写进 localStorage
  *     再补一个 `useViewerAvatar` 的纯函数选择——没有账号记录时永远回默认头像，不猜。
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import getToken from '../../apis/getToken.tsx'
 import { getProfile, ok } from '../../apis/ProfileMethods.tsx'
 import { resolveApiAssetUrl } from '../../utils/runtimeApi'
@@ -159,17 +159,33 @@ export function selectLoginAvatar(
     return hit ? (resolveApiAssetUrl(hit.avatar || '') || DEFAULT_AVATAR_URL) : DEFAULT_AVATAR_URL
 }
 
+/** 三态 → 昵称（纯函数）。与 `selectAvatar` 同一条链，只是少了"默认值"这一档：
+ *  昵称**没有**合理的默认值——编不出来就如实给空串，由调用方决定回落到什么
+ *  （后台侧栏回落到站点作者名，签名则整块不渲染）。 */
+export function selectNickname(myNickname: string | null, rememberedNickname: string | null): string {
+    return (myNickname || rememberedNickname || '').trim()
+}
+
+/** "此刻看这个页面的人是谁"（展示用，绝不参与鉴权）。 */
+export interface ViewerProfile {
+    avatar: string
+    nickname: string
+}
+
 /**
- * 头部（以及任何要知道"当前访客是谁"的地方）用的头像地址。
+ * 头部 / 后台侧栏（以及任何要知道"当前访客是谁"的地方）用的展示身份。
  *
  * 拉取时机：挂载时 + `auth-change`（登录/退出）+ `profile-change`（改完昵称/头像）。
  * 未登录**不发请求**——访客的头部不该为了一张头像打后端。
+ *
+ * 返回的是 `useMemo` 过的对象：**同一个值不会每帧换引用**，调用方可以安心把它
+ * 放进依赖数组（别改成每次返回新对象——那会让 effect 每帧重跑）。
  */
-export function useViewerAvatar(): string {
+export function useViewerProfile(): ViewerProfile {
     // mine=null 表示"还没有本人的资料"（未登录 / 令牌失效 / 请求还没回来）
-    const [mine, setMine] = useState<string | null>(null)
-    const [remembered, setRemembered] = useState<string | null>(
-        () => readRememberedUser()?.avatar || null,
+    const [mine, setMine] = useState<{ avatar: string; nickname: string } | null>(null)
+    const [remembered, setRemembered] = useState<RememberedUser | null>(
+        () => readRememberedUser(),
     )
 
     useEffect(() => {
@@ -179,15 +195,21 @@ export function useViewerAvatar(): string {
                 // 退出登录：不请求，直接用本机记住的那个账号（缓存由上面的 rememberUser 维护）
                 if (!alive) return
                 setMine(null)
-                setRemembered(readRememberedUser()?.avatar || null)
+                setRemembered(readRememberedUser())
                 return
             }
             getProfile()
                 .then((res) => {
                     if (!alive || !ok(res) || !res.data.data) return
                     const p = res.data.data
-                    setMine(p.avatar || '')
-                    setRemembered(p.avatar || null)
+                    setMine({ avatar: p.avatar || '', nickname: p.nickname || '' })
+                    // 本机那份同步成刚拿到的最新值（昵称/头像可能刚改过），同 rememberUser
+                    setRemembered({
+                        username: p.username || '',
+                        nickname: p.nickname || '',
+                        avatar: p.avatar || '',
+                        at: '',
+                    })
                     rememberUser(p)
                 })
                 .catch(() => {
@@ -206,5 +228,12 @@ export function useViewerAvatar(): string {
         }
     }, [])
 
-    return selectAvatar(mine, remembered)
+    const avatar = selectAvatar(mine?.avatar ?? null, remembered?.avatar ?? null)
+    const nickname = selectNickname(mine?.nickname ?? null, remembered?.nickname ?? null)
+    return useMemo(() => ({ avatar, nickname }), [avatar, nickname])
+}
+
+/** 只要头像的那一支（头部用它；与 `useViewerProfile` 同一份实现，别各写一遍）。 */
+export function useViewerAvatar(): string {
+    return useViewerProfile().avatar
 }

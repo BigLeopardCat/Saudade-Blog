@@ -19,6 +19,7 @@ import '@fontsource/roboto/500.css';
 import '@fontsource/roboto/700.css';
 import { readDarkMode, recordUserChoice } from "../../theme";
 import Live2dAgent from "../../components/Live2dAgent"; // 后台是顶层路由（不在 App 布局里），看板娘得自己挂
+import { useViewerProfile } from "../../components/UserCenter/identity"; // 侧栏身份（登录用户头像/昵称）
 import AnnouncementModal from "../../components/AnnouncementModal"; // 同上：公告弹窗也跟壳走，不跟页面走
 
 /** 用户提供的填充型图标（20260923 换掉 公告的 fa-bullhorn 与 用户管理的 gear+person）。
@@ -62,8 +63,10 @@ const Dashboard = () => {
     const [loading, setLoading] = useState(false);
     const [searchVal, setSearchVal] = useState('');
     const dispatch = useDispatch();
-    const avatar = useSelector((state: { user: UserState }) => state.user.avatar);
-    const name = useSelector((state: { user: UserState }) => state.user.name);
+    // 侧栏那格身份 = **正在看后台的这个人**（20260930 用户点名：头像不许硬编码成站点那张）。
+    // 站点作者名（`state.user.name`）仍是兜底：本机没有账号记录时侧栏不至于空着。
+    const siteName = useSelector((state: { user: UserState }) => state.user.name);
+    const viewer = useViewerProfile();
 
     //初始渲染
     useEffect(() => {
@@ -261,11 +264,11 @@ const Dashboard = () => {
                                 <header>
                                     <div className="image-text">
                         <span className="image">
-                            <Avatar src={avatar} size={45} />
+                            <Avatar src={viewer.avatar} size={45} />
                         </span>
                                         <div className="text logo-text">
                                             <span className="name">
-                                                {name}
+                                                {viewer.nickname || siteName}
                                             </span>
                                         </div>
                                     </div>
