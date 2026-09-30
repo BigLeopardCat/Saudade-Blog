@@ -394,10 +394,53 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
         @media only screen and (max-width: 1500px)
           height: 5rem
           width: 5rem
+
+      // ── 20260930 日系动漫风（令牌与三条坑见 Dashboard/index.css 末尾那一节）──
+      // 头像那圈 `border: 2px solid #b7b7b7` 原来是**内联 style**，已摘到类上：
+      // 内联特异性最高，留着它下面这圈光环会被压掉一半。
+      .animeAvatar
+        position: relative
+        z-index: 0
+        // 一圈"底色缝"隔开头像与光晕：卡片底色取 antd 的容器色（浅色白 / 夜间近黑），
+        // 不能用 `--body-color`——那是**页面**底色，压在白卡上会显出一圈脏边。
+        box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.9), 0 10px 26px -12px rgba(124, 58, 237, 0.9)
+        .dark &
+          box-shadow: 0 0 0 3px rgba(20, 20, 20, 0.9), 0 10px 26px -12px rgba(201, 166, 255, 0.75)
+        // 轻微上下浮动（transform 不动布局）
+        animation: animeFloat 6s ease-in-out infinite
+        &::before
+          content: ''
+          position: absolute
+          inset: -9px
+          border-radius: 50%
+          background: var(--anime-aura, conic-gradient(from 0deg, #ff9ecd, #c9a6ff, #8fd4ff, #ffd6a5, #ff9ecd))
+          filter: blur(11px)
+          opacity: 0.6
+          z-index: -1
+          animation: animeAura 12s linear infinite
+          @media (prefers-reduced-motion: reduce)
+            animation: none
+        @media (prefers-reduced-motion: reduce)
+          animation: none
+
       .typed
-        font-weight: 600
-        font-size: 20px
-        margin-left: 10px
+        font-family: var(--anime-font, sans-serif)
+        font-weight: 700
+        font-size: 21px
+        line-height: 1.55
+        margin-left: 14px
+        letter-spacing: 0.5px
+        // 渐变字 + **兜底实色**：兜底色就是渐变最暗那一段（浅色侧 4.3:1，见 CSS 注释 ②）
+        background-image: var(--anime-grad-light, linear-gradient(100deg, #d81b60 0%, #7c3aed 55%, #1d6fd0 100%))
+        -webkit-background-clip: text
+        background-clip: text
+        -webkit-text-fill-color: transparent
+        color: var(--anime-ink-light, #d81b60)
+        filter: drop-shadow(0 2px 6px rgba(124, 58, 237, 0.28))
+        .dark &
+          background-image: var(--anime-grad-dark, linear-gradient(100deg, #ffb3d9 0%, #c9a6ff 55%, #8fd4ff 100%))
+          color: var(--anime-ink-dark, #ffb3d9)
+          filter: drop-shadow(0 0 8px rgba(201, 166, 255, 0.4))
         @media only screen and (max-width: 768px)
           display: none
 
@@ -765,3 +808,12 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
   border-radius: 5px
   &:hover
     background: linear-gradient(to bottom right, #4d7fff 0%, #1a56ff 100%) !important
+
+/* 欢迎卡头像的浮动关键帧（20260930）。`animeAura` 是侧栏与这里**共用**的，
+   定义在 `Dashboard/index.css` 末尾——同一份 CSS 一起进 dashboard bundle，
+   别在这儿再定义一遍（两份同名 keyframes：后定义的那份赢，改一处等于没改）。 */
+@keyframes animeFloat
+  0%, 100%
+    transform: translateY(0)
+  50%
+    transform: translateY(-5px)

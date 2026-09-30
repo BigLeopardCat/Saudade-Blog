@@ -14,6 +14,7 @@ import zhCN from "antd/lib/locale/zh_CN";
 import ArticleRecord from "../../../components/articleRecord";
 import ArticleAnalytics from "../../../components/articleAnalytics";
 import Typed from 'typed.js';
+import { useViewerProfile } from '../../../components/UserCenter/identity';
 import MainContext from "../../../components/conText.tsx";
 import {useDispatch, useSelector} from "react-redux";
 import UserState from "../../../interface/UserState";
@@ -72,10 +73,24 @@ const mergeServerRows = (server: DashboardTodo[], local: Todo[],
     }))];
 };
 
+/** HTML 转义。点名要它是因为签名走的是 typed 的 `contentType: 'html'`（innerHTML 通道），
+ *  而签名是站点设置里填的**自由文本** —— 直接把 `<` 递进去等于把它当标签解析。
+ *  （同一条教训：20260930 之前看板娘 hitokoto 因 innerHTML 直插未转义被移出 tools 数组。） */
+const escapeHtml = (s: string): string =>
+    s.replace(/[&<>"']/g, (c) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }[c] as string));
+
 const Home = () => {
     //hooks区域
     const typedRef = useRef(null);
-    const avatar = useSelector((state: { user: UserState }) => state.user.avatar);
+    // 欢迎卡那格头像 = **登录用户自己的**（20260930 用户点名"头像不硬编码"）。
+    // 原先读的 `state.user.avatar` 是站点设置里那张（谁看都一样）。
+    const avatar = useViewerProfile().avatar;
+    // 个性签名：站点设置 → `web_info.userTalk` → `GET /api/public/user` → redux `talk`。
+    // 以前这里写死「遇事不决可问春风 / 春风不语即随本心」——那是某一位部署者的口味，
+    // 不该长在仓库里（同 A3/A4 的处置）。**空签名就整块不渲染**，不拿别的话顶上。
+    const signature = useSelector((state: { user: UserState }) => state.user.talk || '').trim();
     const dispatch = useDispatch();
 
     // Init Data for Analytics
@@ -364,11 +379,15 @@ const Home = () => {
 
 
     //初次渲染
+    // **依赖签名本身**：`talk` 是 `/api/public/user` 异步取回来的，挂载那一帧还是空串；
+    // 写成 `[]` 会让 typed 拿着空签名初始化（等于这块永远是空的）。
     useEffect(() => {
+        if (!signature || !typedRef.current) return;
         const options = {
-            strings: ['"遇事不决,<br>&nbsp;可问春风“','"春风不语,<br>&nbsp;即随本心“'],
-            typeSpeed: 50,
-            backSpeed: 50,
+            // 换行当换行用（签名是主人自己填的一段文本，允许分行）
+            strings: [escapeHtml(signature).replace(/\n/g, '<br>')],
+            typeSpeed: 60,
+            backSpeed: 0,
             showCursor: false,
             cursorChar: '|',
             contentType: 'html',
@@ -378,7 +397,7 @@ const Home = () => {
         return () => {
             typedInstance.destroy();
         };
-    }, []);
+    }, [signature]);
 
     const isDark = useContext(MainContext) === 'true'
         return (
@@ -387,8 +406,10 @@ const Home = () => {
             <div className='left' style={{height: '100%',width:'25%',display:'flex',flexDirection:'column'}}>
                <div className="about_logo">
                    <div className="about_me">
-                       <Avatar src={avatar} size={130} style={{ border: "2px solid #b7b7b7" }} />
-                       <div ref={typedRef} className="typed"></div>
+                       {/* 头像外圈不再写内联 `border`（内联 style 特异性最高，会把 CSS 里
+                           那圈动漫风光环压掉）——环与光晕都归 index.sass 管。 */}
+                       <Avatar src={avatar} size={130} className="animeAvatar" />
+                       {signature && <div ref={typedRef} className="typed"></div>}
                    </div>
                    {/* 三个 CPU/内存/磁盘 表盘已删（20260923）：percent 是写死的常量，
                        不接任何真实指标 —— 假仪表比没有仪表更误导。 */}

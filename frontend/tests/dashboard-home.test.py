@@ -173,9 +173,19 @@ export function saveTodos(todos: any) {
 
     # 边界④b：未读汇总接口层（20260924 四轮起，待审数从这条接口拿）。
     # 桩的是"服务端那份计数"，`__pending` 由页面上现改——与另外两处同一种手法。
+    #
+    # 20260930：这一页的头像/昵称改走 `components/UserCenter/identity.ts`（用户要求"头像不要
+    # 硬编码"），而 identity.ts 在模块顶层 import 了 `getProfile` ⇒ 桩里没有这个导出，
+    # esbuild 直接报 "No matching export"。桩它只是为了**能被 import**：本沙箱的
+    # localStorage 里没有 `tokenKey`，`useViewerProfile` 的 effect 在发请求前就返回了，
+    # 这个函数一次都不会被调用（页面显示的是默认头像 + 空签名那条路）。
     (sb / "src/apis/ProfileMethods.tsx").write_text('''\
 const env = (data: any) => ({status: 200, data: {code: 200, message: 'ok', data}});
 export const ok = (res: any) => res.status === 200 && !!res.data && res.data.code === 200;
+/** 个人资料（identity.ts 需要这个导出；本沙箱无 token，走不到调用） */
+export function getProfile() {
+  return Promise.resolve(env(null));
+}
 /** 这一页唯一用到的那个：未读汇总（红点 + 后台待审数同一条接口） */
 export function getUnreadSummary() {
   (window as any).__sumCalls = ((window as any).__sumCalls || 0) + 1;
@@ -275,6 +285,42 @@ def cell(pg, iso):
                       right: ring.insetInlineEnd, bottom: ring.bottom} : null,
       };
     }""", iso)
+
+
+def panel_ym(pgx):
+    """头部两个下拉当前显示的年、月（zh-cn 的月份短名就是「9月」这种）"""
+    return pgx.eval_on_selector_all(".calHead .ant-select-selection-item",
+                                    "els => els.map(e => e.textContent.trim())")
+
+
+def _ym_num(pair):
+    """年 + 月 折成一个可比较的整数（跨年时直接比大小就行，别硬减月份数字）"""
+    return int(pair[0]) * 12 + int(str(pair[1]).rstrip("月"))
+
+
+def show_today_month(pgx):
+    """把面板翻回「今天」所在的月份（**不动已选中的那一天**）。
+
+    为什么需要它 —— **点一个属于邻月的格子会把面板整块翻过去**（rc-picker 的既有行为：
+    选中的日子不在当前面板月里就 onPanelChange），于是「今天」那格从"当月的格子"变成
+    一格**邻月填充格**：既没有 `ant-picker-cell-today`（那圈环跟它一起没了，读到的
+    border/border-radius/position 全是初始值），也没有当月格子的字色。种子数据里
+    「后天」那条是 TODAY+2 ⇒ **每月最后两天跑这个套件必然假红**（20260930 实测：面板被
+    翻到 10 月，环读成 `0px none / static`）。
+
+    这是**套件的日期依赖**，不是页面缺陷：真站点上今天 9/30、待办排在 10/2 时点它，
+    面板翻到 10 月也是对的行为（那格本来就在邻月填充区里）。所以修的是测量方式：
+    量环之前先把面板翻回今天那一月，今天那格重新是当月格、环才是真的那道环。
+    """
+    want = _ym_num([str(TODAY.year), f"{TODAY.month}月"])
+    for _ in range(24):          # 上限是防死循环；正常最多点两下
+        cur = panel_ym(pgx)
+        if _ym_num(cur) == want:
+            return True
+        pgx.click('.calHead .calNav[aria-label="%s"]'
+                  % ("上个月" if _ym_num(cur) > want else "下个月"))
+        pgx.wait_for_timeout(120)
+    return False
 
 
 with sync_playwright() as p:
@@ -468,20 +514,9 @@ with sync_playwright() as p:
     pg.locator(f'.ant-picker-cell[title="{LATER}"]').click()
     pg.wait_for_timeout(300)
 
-    # 选了别的一天之后，「今天」失去选中态 —— 这时才轮到 antd 那圈环出场。
-    # 环挂在 `.ant-picker-cell-inner::before`、inset:0：锚点就是那枚 26px 小圆，
-    # 锚错了（格子这层没有定位上下文）它会去贴外层 td 画，那就成了"环跑偏"。
-    unsel = cell(pg, day(0))
-    ring = unsel["ring"]
-    check("今天不再是选中项后，环是紫色圆形、正好贴住数字那枚小圆",
-          (not unsel["selected"]) and ring["border"] == "1px solid rgb(197, 135, 188)"
-          and ring["radius"] == "50%" and ring["pos"] == "absolute"
-          and ring["top"] == "0px" and ring["left"] == "0px"
-          and ring["right"] == "0px" and ring["bottom"] == "0px",
-          str(ring))
-    check("今天那格的数字仍然是加粗的紫色（环之外另给一层强调）",
-          unsel["valColor"] == "rgb(176, 112, 168)" and unsel["valWeight"] == "600",
-          f"{unsel['valColor']} / {unsel['valWeight']}")
+    # 选了别的一天之后「今天」失去选中态 —— 那圈环要等面板翻回今天这一月才量得到
+    # （点邻月的格子会把面板翻走，理由见 show_today_month 的注释）。放在这一段末尾量，
+    # 是因为下面那几条要读的正是 LATER 那格（它此刻在面板里）。
 
     check("出现快添栏", pg.locator(".calQuick").count() == 1)
     check("文案是中文的「M月D日 · 加一条」",
@@ -507,6 +542,23 @@ with sync_playwright() as p:
     pg.wait_for_timeout(200)
     check("取消后快添栏收起", pg.locator(".calQuick").count() == 0)
 
+    # 「今天」失去选中态之后，antd 那圈环才出场。环挂在
+    # `.ant-picker-cell-inner::before`、inset:0：锚点就是那枚 26px 小圆，
+    # 锚错了（格子这层没有定位上下文）它会去贴外层 td 画，那就成了"环跑偏"。
+    check("（前置）面板已翻回今天这一月（否则今天那格只是邻月填充格，量出来的是初始值）",
+          show_today_month(pg), str(panel_ym(pg)))
+    unsel = cell(pg, day(0))
+    ring = unsel["ring"]
+    check("今天不再是选中项后，环是紫色圆形、正好贴住数字那枚小圆",
+          (not unsel["selected"]) and ring["border"] == "1px solid rgb(197, 135, 188)"
+          and ring["radius"] == "50%" and ring["pos"] == "absolute"
+          and ring["top"] == "0px" and ring["left"] == "0px"
+          and ring["right"] == "0px" and ring["bottom"] == "0px",
+          str(ring))
+    check("今天那格的数字仍然是加粗的紫色（环之外另给一层强调）",
+          unsel["valColor"] == "rgb(176, 112, 168)" and unsel["valWeight"] == "600",
+          f"{unsel['valColor']} / {unsel['valWeight']}")
+
     print("⑦ 日历头部：翻月 / 回「今天」/ 点日期把那天带进待办卡")
     # 自定义 headerRender 会把 antd 自带的 ‹ › 顶掉（所以自己长了一套）。三样按契约钉住。
     check("头部有「‹ › + 年/月下拉 + 今天」",
@@ -514,12 +566,7 @@ with sync_playwright() as p:
           and pg.locator(".calHead .ant-select").count() == 2
           and pg.locator(".calHead .calToday").count() == 1)
 
-    def head_ym(pgx):
-        """头部两个下拉当前显示的年、月（zh-cn 的月份短名就是「9月」这种）"""
-        return pgx.eval_on_selector_all(".calHead .ant-select-selection-item",
-                                        "els => els.map(e => e.textContent.trim())")
-
-    ym = head_ym(pg)
+    ym = panel_ym(pg)
     check("两栏显示的就是今天的年月", ym == [str(TODAY.year), f"{TODAY.month}月"], str(ym))
 
     # 上个月：按真实日历算（1 月退一步是去年 12 月），别拿月份数字硬减
@@ -527,19 +574,19 @@ with sync_playwright() as p:
     pg.click('.calHead .calNav[aria-label="上个月"]')
     pg.wait_for_timeout(200)
     check("点 ‹ 退回上个月（跨年也对）",
-          head_ym(pg) == [str(prev_d.year), f"{prev_d.month}月"], str(head_ym(pg)))
+          panel_ym(pg) == [str(prev_d.year), f"{prev_d.month}月"], str(panel_ym(pg)))
     pg.click('.calHead .calNav[aria-label="下个月"]')
     pg.wait_for_timeout(200)
-    check("点 › 又回到本月", head_ym(pg) == ym, str(head_ym(pg)))
+    check("点 › 又回到本月", panel_ym(pg) == ym, str(panel_ym(pg)))
 
     # 走远一点，再验「今天」是一步回到今天（而不是"回一格"）
     pg.click('.calHead .calNav[aria-label="上个月"]')
     pg.click('.calHead .calNav[aria-label="上个月"]')
     pg.wait_for_timeout(250)
-    check("连翻两下确实走远了", head_ym(pg) != ym, str(head_ym(pg)))
+    check("连翻两下确实走远了", panel_ym(pg) != ym, str(panel_ym(pg)))
     pg.click(".calHead .calToday")
     pg.wait_for_timeout(250)
-    check("点「今天」一步回到本月", head_ym(pg) == ym, str(head_ym(pg)))
+    check("点「今天」一步回到本月", panel_ym(pg) == ym, str(panel_ym(pg)))
     check("回来之后今天那格仍是「今天」态（环在）",
           (cell(pg, day(0))["ring"] or {}).get("radius") == "50%")
 
@@ -549,7 +596,7 @@ with sync_playwright() as p:
     pg.locator('.ant-select-dropdown .ant-select-item-option[title="1月"]').click()
     pg.wait_for_timeout(250)
     check("从下拉里挑 1 月能换过去",
-          head_ym(pg) == [str(TODAY.year), "1月"], str(head_ym(pg)))
+          panel_ym(pg) == [str(TODAY.year), "1月"], str(panel_ym(pg)))
     pg.click(".calHead .calToday")
     pg.wait_for_timeout(250)
 
