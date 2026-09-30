@@ -69,6 +69,23 @@
     --washi-shadow: 0 14px 34px rgba(120, 90, 140, 0.16);
     --washi-shadow-lg: 0 22px 54px rgba(120, 90, 140, 0.22);
     --washi-radius: 14px;
+
+    /* ── 首页分段带（20261001 用户第 4 条：「不止第一页主页，下面包括脚页也做风格适配，
+       主页段落感和配色搭配撞色感，不要一股脑一个首页顶部颜色配到底」）───────────────
+       改版前 `.SelfDescription` / `.ContentContainer` / `.footerContainer` 三段**共用同一个**
+       `--container-background-color`（半透明白铺在页面底图上）—— 那正是"一个颜色配到底"。
+       现在三段各有一档色相，整页读起来是 粉紫 → 薄荷青 → 墨紫：
+         · 首屏沿用拼贴底（粉紫，见 ContentHome/index.sass）；
+         · `--band-content` 首页正文带（`.ContentContainer`）：薄荷 → 天青 → 淡紫；
+         · `--band-foot`    页脚（`.footerContainer`）：深墨紫封底。
+       ⚠️ 页脚**深浅两档都是深色**，这是刻意的：它是"封底"，与上面拉开才叫分段，夜里也
+       比页面底亮一档（夜里页面底是接近纯黑的 `rgba(0,0,0,.6)`）。
+       ⚠️ 页脚在**所有**前台页面都在（挂在 App 壳上），所以这套值里不能有"只有当它上面是
+       首页正文带时才成立"的假设。 */
+    --band-content: linear-gradient(180deg, #eaf7f1 0%, #e6f2fb 46%, #f1edff 100%);
+    --band-foot: linear-gradient(180deg, #3a3154 0%, #2c2542 54%, #241d31 100%);
+    --band-foot-ink: #ece4f4;
+    --band-foot-ink-2: rgba(236, 228, 244, 0.66);
 }
 
 /* 夜间档。⚠️ 浅色档做不到"粉白字"：白字压在浅纸上对比度约 1.2:1，等于看不见，
@@ -103,4 +120,15 @@
     --washi-grad-soft: linear-gradient(100deg, #ffb3d9 0%, #cbb6ff 100%);
     --washi-shadow: 0 14px 34px rgba(0, 0, 0, 0.4);
     --washi-shadow-lg: 0 22px 54px rgba(0, 0, 0, 0.55);
+
+    /* 分段带夜间档（浅色档那一组的对偶，见上）。夜里三段仍然是三个色相：
+       首屏靛紫近黑、正文带**偏青的**深墨、页脚偏紫的深墨。
+       ⚠️ 正文带的顶端刻意压成**青调**（`#13262a`，G 高于 B）。初版写的是 `#161f2a`
+       （偏蓝的深墨），而那正是首屏拼贴底**下端**的颜色 —— 两段在接缝处只差 3 个色阶，
+       出图核对时看不出分段（`tests/home-bands.test.py` 的像素判据当场判红）。
+       浅色档本来就是这个关系：薄荷（绿调）接在粉紫首屏下面，对偶到夜里也该是青接靛紫。 */
+    --band-content: linear-gradient(180deg, #13262a 0%, #17202e 46%, #201a31 100%);
+    --band-foot: linear-gradient(180deg, #2f2745 0%, #262033 54%, #201a2c 100%);
+    --band-foot-ink: #f3e8f6;
+    --band-foot-ink-2: rgba(243, 232, 246, 0.68);
 }

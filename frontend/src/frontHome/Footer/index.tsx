@@ -34,23 +34,27 @@ const Footer = () => {
             {/* 这一行是**上游开源项目**（github.com/LinMoQC/Memory-Blog，GPL-2.0）的作者署名，
                 不是本站部署者的身份信息 —— 它本来就公开在上游仓库与 README 里，照原样保留。
                 由本站部署者自己署名的是下面那一行（`copyright` 设置）。 */}
-            <p style={{ textAlign: "center", width: "100%" }}>Copyright © 2024 林陌青川 (LinMo). All rights reserved.</p>
-            <p style={{ marginTop: 5, fontSize: '0.9em', opacity: 0.8, textAlign: 'center', width: '100%' }}>Based on work refactored, extended and optimized with <span style={{ fontWeight: 'bold', color: '#dea584' }}>Rust</span> &amp; <span style={{ fontWeight: 'bold', color: '#667ea5' }}>Axum</span>.</p>
+            {/* ⚠️ 全页脚**零行内样式**（20261001 第 4 条这轮清掉的）：这一片的颜色、字号、
+                间距原来全写在 `style={{…}}` 里，而内联特异性最高 —— 主题令牌压不动它，
+                换夜间/换配色只能 `!important` 硬压。形状归 `Footer/index.sass`，
+                分段配色归 `src/index.css` 的 `--band-foot*`。**别再加回来。** */}
+            <p className="footLine">Copyright © 2024 林陌青川 (LinMo). All rights reserved.</p>
+            <p className="footNote">Based on work refactored, extended and optimized with <span className="footTech footTechRust">Rust</span> &amp; <span className="footTech footTechAxum">Axum</span>.</p>
             {copyright && (
-                <p style={{ marginTop: 5, fontSize: '0.9em', opacity: 0.8, textAlign: 'center', width: '100%' }}>Copyright &copy; 2026 {copyright}.</p>
+                <p className="footNote">Copyright &copy; 2026 {copyright}.</p>
             )}
-            <em><p style={{marginTop: 10}}>{onySay}</p></em>
+            <em className="footPoem"><p>{onySay}</p></em>
             {/* 两个备案号**各自独立渲染**：只有 ICP 的站很多，只有网安备案的几乎没有，
                 但它们中间那根 "|" 和图标是按"两个都有"排的 —— 只填一个时会出现悬空竖线。
                 两个都空 ⇒ 整块不渲染（取舍与首页社媒按钮一致：宁可没有，也不要假的）。 */}
             {(blogIcp || blogPublicIcp) && (
-                <p style={{marginTop:10,marginBottom:10,textAlign:"center"}}>
+                <p className="footBeian">
                     {blogIcp && (
                         <a className="link" target="_blank" rel="noreferrer" href="https://beian.miit.gov.cn/">{blogIcp}</a>
                     )}
                     {blogIcp && blogPublicIcp && ' | '}
                     {blogPublicIcp && (<>
-                        <img src={beianIcon} style={{width:16,height:16,verticalAlign:"middle",marginRight:4}} />
+                        <img className="footBeianIcon" src={beianIcon} alt="" />
                         {code
                             ? <a className="link" href={`https://beian.mps.gov.cn/#/query/webSearch?code=${code}`} rel="noreferrer" target="_blank">{blogPublicIcp}</a>
                             // 抽不出数字就别做成链接 —— 链到 `?code=` 空参的查询页比不链更糟
@@ -60,18 +64,18 @@ const Footer = () => {
             )}
             {/* 20260930 删掉「Powered by Memory」那行（用户点名）：它是上游脚手架自带的署名行，
                 与上面两条版权声明重复，读起来像"本站是某个叫 Memory 的工具生成的"。 */}
-            <p style={{marginTop:8,fontSize:'0.8em',opacity:0.6,textAlign:'center',display:'flex',justifyContent:'center',gap:12,alignItems:'center'}}>
+            <p className="footLogos">
                 <a href="https://www.aliyun.com/product/bailian" target="_blank" rel="noreferrer" title="阿里云百炼">
-                    <img src="https://img.alicdn.com/imgextra/i1/O1CN01IU2US71Ciicsi3Br3_!!6000000000115-55-tps-357-76.svg" style={{width:70,height:70}} />
+                    <img className="footLogoAli" src="https://img.alicdn.com/imgextra/i1/O1CN01IU2US71Ciicsi3Br3_!!6000000000115-55-tps-357-76.svg" alt="阿里云百炼" />
                 </a>
                 <a href="https://cloud.tencent.com" target="_blank" rel="noreferrer" title="Tencent Cloud">
-                    <img src={txLogo} style={{width:50,height:50}} />
+                    <img className="footLogoTx" src={txLogo} alt="Tencent Cloud" />
                 </a>
                 <a href="https://www.cloudflare.com" target="_blank" rel="noreferrer" title="Cloudflare">
-                    <img src={cfLogo} style={{width:50,height:50}} />
+                    <img className="footLogoCf" src={cfLogo} alt="Cloudflare" />
                 </a>
                 <a href="https://www.live2d.com/zh-CHS/" target="_blank" rel="noreferrer" title="Live2D Cubism">
-                    <img src="https://www.live2d.com/wp-content/themes/cubism_new/assets/img/cubism-logo.png" style={{width:60,height:15}} />
+                    <img className="footLogoLive2d" src="https://www.live2d.com/wp-content/themes/cubism_new/assets/img/cubism-logo.png" alt="Live2D Cubism" />
                 </a>
             </p>
         </footer>
