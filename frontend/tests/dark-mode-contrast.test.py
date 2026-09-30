@@ -14,9 +14,9 @@
 判据 = 每个文本元素与它**合成后**的底色对比度 ≥ 3:1（低于 3:1 谁都读不清）。
 排除两类 antd 刻意的低对比：占位符（`ant-select-selection-placeholder`）与禁用态。
 
-已知且**本探针不负责**的两项（都会打出来，但不判失败，见 KNOWN）：
-  · UserControl（站点设置）—— MUI 组件不吃 antd 深色 token；
-  · Analytics —— @ant-design/charts/plots 的 G2 主题，本来就要单独立项。
+已知且**本探针不负责**的一项（会打出来，但不判失败，见 KNOWN）：
+  · UserControl（站点设置）—— MUI 组件不吃 antd 深色 token。
+（Analytics 曾是第二项，20260930 报表重写时清掉了，见 KNOWN 上方的说明。）
 
 沿用 dashboard-sidebar.test.py 那套既定手段（本机不能 vite build，见 CLAUDE.md §2）：
 esbuild 把**真组件**打成一个 bundle、只桩边界（axios / react-redux / react-router-dom），
@@ -66,20 +66,53 @@ PAGES = {
     "Announcement": "src/pages/Dashboard/Announcement/index.tsx",
 }
 
-# 建这个探针时就已经存在、本轮不修的两项。列在这里是为了"探针别哑掉"——
-# 它们仍然会被打印出来，但不算失败；**任何别的页面**出现不可读文字一律判失败。
+# 建这个探针时就已经存在、本轮不修的一项。列在这里是为了"探针别哑掉"——
+# 它仍然会被打印出来，但不算失败；**任何别的页面**出现不可读文字一律判失败。
+#
+# Analytics（文章数据报表）**已于 20260930 摘掉**，两条原因都清了：
+#   · 图表主题 —— 重写时从 `useIsDarkMode()` 显式传 `theme: {type:'classicDark'}`；
+#   · ExpressionError —— 那个是**假后端喂空数组**喂出来的（这一页的读数全在一个对象里，
+#     空数组等于整页只剩标题），stub 现在按 URL 给一份真实形状的报表（见 FAKE_AXIOS）。
+#     **前提由此变了**：这一页能进普查，靠的是 stub 里有数据，改 stub 时别把它改回去。
+# ⚠️ 本探针扫的是 DOM 文本，**G2 画在 canvas 上的字它看不见**（坐标轴、图例、tooltip）。
+#    也就是说"图表内部在深色底上读不读得清"仍然没有判据，那部分只能人眼看——
+#    不要因为这一行是绿的，就以为整页的配色都被守住了。
 KNOWN = {
     "UserControl": "站点设置页是 MUI 写的（TextField/Button/Fab），MUI 不吃 antd 的 "
                    "darkAlgorithm ⇒ 深色页上 label 是纯黑 1.64:1。修它得给 MUI 挂 "
                    "ThemeProvider(palette.mode='dark')，是独立一批。",
-    "Analytics": "@ant-design/charts/plots（G2 自带主题）本就要单独立项；沙箱里还报 "
-                 "ExpressionError（桩数据为空所致，未定性）。",
 }
 
 # 边界①：假后端。返回的列表必须是**空数组**而不是 null —— 后台好几个组件拿到列表直接
 # `.map()`，null 会让那棵子树整个抛异常 ⇒ 少渲染一块 ⇒ 普查"没扫全"，读数不可信。
+#
+# 唯一的例外是文章数据报表（20260930）：它整页的读数都在一个**对象**里，喂空数组等于
+# 只渲染出标题栏 ⇒ 探针扫不到"卡片上的数字、图例在深色底上读不读得清"，那是假绿。
+# 给一份最小可信样本（两行排行 + 后端那样补过零的 30 天），图表也就真被渲染出来了。
 FAKE_AXIOS = """\
-const http: any = () => Promise.resolve({ status: 200, data: { code: 200, data: [] } });
+const REPORT = {
+  generatedAt: '2026-09-30 12:00:00',
+  totalViews: 192,
+  totalLikes: 12,
+  topViewed: [
+    { noteId: 1, title: '一篇标题长得足以触发截断的架构文章', views: 128, likes: 9 },
+    { noteId: 2, title: '短标题', views: 64, likes: 3 },
+  ],
+  topLiked: [
+    { noteId: 2, title: '短标题', views: 64, likes: 3 },
+    { noteId: 1, title: '一篇标题长得足以触发截断的架构文章', views: 128, likes: 9 },
+  ],
+  daily: Array.from({ length: 30 }, (_, i) => ({
+    date: '2026-09-' + String(i + 1).padStart(2, '0'), views: i * 3, likes: i,
+  })),
+};
+const http: any = (cfg: any = {}) => {
+  const url: string = (cfg && cfg.url) || '';
+  if (url.indexOf('/stats/notes') >= 0) {
+    return Promise.resolve({ status: 200, data: { code: 200, data: REPORT } });
+  }
+  return Promise.resolve({ status: 200, data: { code: 200, data: [] } });
+};
 export default http;
 """
 
@@ -376,7 +409,7 @@ with sync_playwright() as p:
 
 print()
 print(f"  合计 {len(WANT)} 个页面 / {total_rows} 个文本元素，低于 3:1 的 {total_bad} 处")
-check("除已知两项（UserControl 的 MUI / Analytics 的 G2）外，没有页面出现不可读文字",
+check("除已知的 UserControl（MUI 不吃 antd 深色 token）外，没有页面出现不可读文字",
       not bad_pages, "; ".join(bad_pages))
 if FAILS:
     print(f"\n❌ {len(FAILS)} 项未通过")

@@ -1,21 +1,174 @@
+// 文章数据报表（20260930 整页重写）。两条纪律写在文件头，改的时候别丢：
+//   ① **卡面/面板的底色一律走 CSS 变量**（`--ak-bg` / `--ak-bg-dark`，由 TSX 传入），
+//      颜色落在类规则里 —— 内联 style 特异性最高，写死在那里 `.dark &` 永远赢不了
+//      （20260923 后台接深色 token 时实测白字压浅底 1.26:1）；
+//   ② **文字色不写死**，让它继承 antd 的 token（深色档自动翻白）。
 .analyticsBody
   display: flex
-  flex-direction: row
-  justify-content: space-between
-  align-items: center
+  flex-direction: column
+  gap: 16px
+  padding: 16px 20px 24px
   height: 100%
-  @media only screen and (max-width: 1530px)
-    margin-top: 0
-    overflow: auto
-    flex-direction: column
-  .monthAnalytics
-    border-radius: 20px
-    background-color: rgba(255,255,255,0.33)
-    box-shadow: 0 1px 22px -8px rgba(26, 26, 26, .6)
-    color: black
+  overflow: auto
 
-  .categoriesAnalytics
+  .akHead
+    display: flex
+    align-items: baseline
+    justify-content: space-between
+    flex-wrap: wrap
+    gap: 8px
+
+    h2
+      margin: 0
+      text-decoration: underline wavy #ce7397
+
+    .akHeadMeta
+      display: flex
+      align-items: center
+      gap: 10px
+      font-size: 12px
+      opacity: 0.75
+
+  .akLoading
+    display: flex
+    justify-content: center
+    padding: 60px 0
+
+  .akErr
+    display: flex
+    flex-direction: column
+    align-items: center
+    gap: 12px
+    padding: 40px 0
+    opacity: 0.85
+
+  .akSummary
+    display: flex
+    gap: 16px
+    flex-wrap: wrap
+
+    .akCard
+      flex: 1 1 200px
+      min-width: 180px
+      // 身份色（浅色档）由 TSX 以 --ak-bg 传入，落地在这里
+      background: var(--ak-bg)
+      // 深色档不换成灰块，而是留色相、退成深底上的一层薄色（--ak-bg-dark = 同色 16% 透明）——
+      // 这样两三张卡在夜间仍分得出来，白字也压得住
+      .dark &
+        background: var(--ak-bg-dark)
+      border: 0
+      box-shadow: 0 1px 22px -8px rgba(26, 26, 26, .6)
+
+    .ant-statistic .ant-statistic-content .ant-statistic-content-value
+      font-size: 30px
+
+  .akPanels
+    display: flex
+    gap: 16px
+    flex-wrap: wrap
+
+    .akPanel
+      flex: 1 1 320px
+      min-width: 300px
+
+  .akPanel
     border-radius: 20px
-    background-color: rgba(255,255,255,0.33)
+    background: rgba(255, 255, 255, 0.33)
     box-shadow: 0 1px 22px -8px rgba(26, 26, 26, .6)
-    color: black
+    padding: 14px 18px
+
+    // 面板底同样要换档：深色页上留一块半透明白会是「白底白字」的那类事故
+    .dark &
+      background: rgba(255, 255, 255, 0.06)
+
+    h3
+      margin: 0 0 10px
+      font-size: 15px
+      font-weight: 600
+
+  .akPanelWide
+    width: 100%
+
+  .akChart
+    min-height: 360px
+    display: flex
+    align-items: center
+    justify-content: center
+
+  // 排行榜：HTML 列表而不是图表 —— 这一页要回答的是「哪几篇」，
+  // 图表里标题必然被截断，列表能给出完整标题
+  .akRank
+    list-style: none
+    margin: 0
+    padding: 0
+    display: flex
+    flex-direction: column
+    gap: 8px
+
+    li
+      display: flex
+      align-items: center
+      gap: 10px
+
+    .akRankNo
+      flex: 0 0 18px
+      text-align: center
+      font-size: 12px
+      opacity: 0.6
+
+    .akRankBody
+      flex: 1 1 auto
+      min-width: 0
+      display: flex
+      flex-direction: column
+      gap: 4px
+
+    // **不许让链接吃浏览器默认色**：`<a>` 的默认蓝（#1668dc）在深色面板上只有
+    // 1.97:1，探针当场判红。这里继承面板文字色（antd token 在深色档翻白），
+    // 悬停才变色——颜色不是唯一的"这是链接"信号，下划线 + 光标才是。
+    .akRankTitle
+      overflow: hidden
+      text-overflow: ellipsis
+      white-space: nowrap
+      font-size: 13px
+      color: inherit
+
+      &:hover
+        color: var(--ak-accent)
+        text-decoration: underline
+
+        .dark &
+          color: var(--ak-accent-dark)
+
+    // 条宽由 TSX 按本块最大值归一（两块各归各的尺子）
+    .akRankBar
+      display: block
+      height: 5px
+      border-radius: 999px
+      background: rgba(140, 140, 140, 0.25)
+      overflow: hidden
+
+      .akRankBarFill
+        display: block
+        height: 100%
+        border-radius: 999px
+        // 身份色由 TSX 以变量传入、两档各一份：写成内联色 `.dark &` 就赢不了
+        background: var(--ak-accent)
+        transition: width 0.4s ease
+
+        .dark &
+          background: var(--ak-accent-dark)
+
+    .akRankNum
+      flex: 0 0 auto
+      min-width: 4ch
+      text-align: right
+      font-size: 13px
+      font-weight: 600
+      font-variant-numeric: tabular-nums
+      // 同一条理由：数字是**文字**，深色档必须换成亮一档的色（原来那支 #7880d1
+      // 在深色面板上 2.83:1，探针抓到的第二处）
+      color: var(--ak-accent)
+
+      .dark &
+        color: var(--ak-accent-dark)
