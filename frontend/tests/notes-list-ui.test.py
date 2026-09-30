@@ -25,6 +25,7 @@
 import functools
 import http.server
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -41,6 +42,19 @@ def check(desc, cond, detail=""):
     print(("  ✅ " if cond else "  ❌ ") + desc + (f"  [{detail}]" if detail else ""))
     if not cond:
         FAILS.append(desc)
+
+
+def th_bg_alpha(css_color):
+    """从 computedStyle 的 `rgb()/rgba()` 里取 alpha（`transparent` 按 0 算）。
+
+    **不写"字符串里有没有 `rgba(`"**：`rgba(242,231,237,1)` 同样是实体色，
+    按字样判会假红。这个函数只回答"透不透光"。
+    """
+    s = (css_color or "").strip()
+    if s in ("", "transparent"):
+        return 0.0
+    nums = [float(x) for x in re.findall(r"[\d.]+", s)]
+    return nums[3] if len(nums) >= 4 else 1.0
 
 
 DEFINE = ('import.meta.env={"VITE_HTTP_BASEURL":"","VITE_CDN_BASEURL":"",'
@@ -191,11 +205,19 @@ from playwright.sync_api import sync_playwright  # noqa: E402
 URL = f"http://127.0.0.1:{_server.server_address[1]}/index.html"
 
 
-def mount(br, path="/dashboard/notes/allnotes", size=(1440, 900)):
+def mount(br, path="/dashboard/notes/allnotes", size=(1440, 900), dash_css=False):
     page = br.new_page(viewport={"width": size[0], "height": size[1]})
     errs = []
     page.on("pageerror", lambda e: errs.append(str(e)))
     page.goto(URL)
+    if dash_css:
+        # 20261001：**后台壳那份样式表**（`Dashboard/index.css`）平时不在这个沙箱里——
+        # 本脚本只编译被测组件自己的 sass。可"表头底透不透光"这条规则的**出处**正是
+        # 那份文件（`body.dash-skin .ant-table-wrapper … thead th`），不把它挂上就
+        # 只能在 antd 自带的浅灰底上问一句"透不透"，**问到的是别人**。
+        # 只挂在这一节自己的页面上（前面几节的页面不带），把全局选择器串味的面缩到最小。
+        page.evaluate("() => document.body.classList.add('dash-skin')")
+        page.add_style_tag(path=str(FE / "src/pages/Dashboard/index.css"))
     page.evaluate("(p) => window.__mount(p)", path)
     page.wait_for_selector(".AllCard .ant-table-row", timeout=10000)
     page.wait_for_timeout(300)
@@ -371,7 +393,7 @@ with sync_playwright() as p:
     # 刚好把每页最后一条藏进滚动区，而卡片下方还空着 150px。下面每条都只有真跑一遍
     # 才看得见（几何、层级、以及"改每页条数会不会又去拉一次数据"）。
     print("\n【五】列表区铺满卡片 + 分页条钉底 + 表头吸顶")
-    pg = mount(br, size=(1440, 900))
+    pg = mount(br, size=(1440, 900), dash_css=True)
     geo = pg.evaluate("""() => {
         const R = (el) => { const b = el.getBoundingClientRect();
             return {t: +b.top.toFixed(1), b: +b.bottom.toFixed(1), h: +b.height.toFixed(1)}; };
@@ -379,7 +401,9 @@ with sync_playwright() as p:
         const sr = document.querySelector('.AllCard .searchRes');
         const cont = document.querySelector('.AllCard .custom-scroll-container');
         const foot = document.querySelector('.AllCard .listFooter');
+        const th = document.querySelector('.AllCard .ant-table-thead th');
         return {
+            thBg: getComputedStyle(th).backgroundColor,
             card: R(card), sr: R(sr), cont: R(cont), foot: R(foot),
             legacyBody: document.querySelectorAll('.AllCard .ant-table-body').length,
             tableLayout: getComputedStyle(document.querySelector('.AllCard .ant-table table')).tableLayout,
@@ -414,6 +438,32 @@ with sync_playwright() as p:
     }""")
     check("列表滚到底时表头仍吸在滚动区顶部",
           stuck["scrolled"] and stuck["gap"] < 2, str(stuck))
+    # 吸顶表头的底色**必须不透明**。20260930 那轮把表头底改成了
+    # `var(--washi-line-2)`（22% 的粉线）——它压掉了 antd 自带的实体底，
+    # 于是滚上来的行**从表头里透出来**（用户实测："表头背景不要透明，会透过
+    # 下方列表干扰视觉"）。判据只能读计算值：把 alpha 抽出来看是不是 1
+    # （不写"有没有 rgba 字样"——`rgba(…, 1)` 同样是实体色，那样会假红）。
+    # 三张吸顶表（文章/额度/留言）共用这条规则，这里量的是文章页。
+    th_alpha = th_bg_alpha(geo["thBg"])
+    check("吸顶表头底色不透明（行不会从表头里透出来）", th_alpha >= 1.0,
+          f'th 底色 = {geo["thBg"]}（alpha={th_alpha}）')
+    # 对照：就地覆上当年那个 22% 的粉线，走完"浏览器算值 → 探针读回"整条路，
+    # 必须当场判成透明 —— 否则上面那条"不透明"可能只是判据自己不敏感（比如
+    # 读到的根本不是这条规则的底色）。
+    # ⚠️ 表头带 `transition: background .2s`（antd 给的）——**过渡优先级高于一切**，
+    # 包括行内 `!important`：赋值那一刻读 computedStyle 拿到的是过渡的起点（旧色），
+    # 会得出"怎么改都不动"的假象。所以先把 transition 摘掉再改、读完再还原。
+    back_to_old = pg.evaluate("""() => {
+        const th = document.querySelector('.AllCard .ant-table-thead th');
+        const keep = th.style.cssText;
+        th.style.transition = 'none';
+        th.style.backgroundColor = 'rgba(198, 152, 192, 0.22)';
+        const v = getComputedStyle(th).backgroundColor;
+        th.style.cssText = keep;
+        return v;
+    }""")
+    check("对照：把那层 22% 的粉线覆回去，探针当场判成透明 ⇒ 判据对透明度敏感",
+          th_bg_alpha(back_to_old) < 1.0, f'覆回后读到 {back_to_old}')
     # 表头吸顶了还不够：行内那三颗 MUI Fab 自带 z-index:1050，会**画在表头上面**
     # （实测截图里第一行的操作按钮浮在表头上）。断言的是叠放次序本身，不是某张截图。
     zs = pg.evaluate("""() => {
