@@ -184,5 +184,46 @@ console.log('\n⑦ 署名取昵称（用户点名"卡片上的 Sora 换成真正
         '头像同一条链：user.avatar 优先、web_info.avatar 回退', avatarSeg);
 }
 
+console.log('\n⑧ 标签换行：卡片按内容长高（600 是**下限**），页脚那条「更新于」是被裁的第一个');
+{
+    // 现场：标签换到第二/第三行时，"作者信息时间信息跑出卡片"（用户第四报）。
+    // 根因是**定高**：`.ArticleCard{height:600px}` + `overflow:hidden`，而「更新于」那行是
+    // `position:absolute; top:100%` 挂在页脚盒子**外面**的（页脚盒子只有一行高，那行靠内容区
+    // 32px 下内边距兜着）⇒ 收支一为负，它第一个被切。判据分三层：
+    //   ① 网格项是 flex（同排等高靠这层，否则长高会把同排弄参差）；
+    //   ② 卡片写 min-height 而**不是** height；内容区写 `flex: 1 1 auto` 而**不是** `height: 100%`；
+    //   ③ 移动档把下限撤干净——`height: auto !important` 管不到 `min-height`（两个是不同的属性）。
+    const item = decl('.ContentContainer .allArticles > .article', 'display', 'flex');
+    ok(item.found && item.match,
+        '.allArticles > .article 是 display: flex（网格只拉网格项 ⇒ 少了这层同排卡片不等高）', item);
+
+    const card = '.ContentContainer .allArticles .ArticleCard';
+    const mh = declNum(card, 'min-height', 600);
+    ok(mh.found && mh.match, '卡片 600px 写在 min-height 上（下限，内容多就长高）', mh);
+    const cardH = decl(card, 'height');
+    ok(!cardH.found, '卡片**没有** height（写回去就是定高：内容一多「更新于」立刻被裁出去）', cardH);
+
+    const flex = decl(CONTENT, 'flex', '1 1 auto');
+    ok(flex.found && flex.match, '内容区 flex: 1 1 auto（可以长：撑开卡片，而不是把内容压出去）', flex);
+    const contentH = decl(CONTENT, 'height');
+    ok(!contentH.found, '内容区**没有** height（`height: 100%` 会把卡片钉回定高）', contentH);
+
+    const mob = '.allArticles .ArticleCard';
+    const mobMin = decl(mob, 'min-height');
+    ok(mobMin.found && /!important/.test(mobMin.value) && parseFloat(mobMin.value) === 0,
+        '移动档 min-height: 0 !important（撤的是下限本身；`height:auto` 覆盖不到它）', mobMin);
+    const mobH = decl(mob, 'height');
+    ok(mobH.found && /auto\s*!important/.test(mobH.value), '移动档 height: auto !important', mobH);
+
+    // 源码接线：那条「更新于」是**几何套件唯一量得到**的东西（桩里也照着它写）。
+    // 两个卡各自的 JSX 里都得是"同一个日期列里的第二个 span、绝对定位挂在列外面"。
+    const dateColRe = /<div style=\{\{\s*position:\s*'relative',\s*display:\s*'flex',\s*flexDirection:\s*'column'\s*\}\}>\s*<span[^>]*className='post-date'>[\s\S]{0,300}?发布于[\s\S]{0,700}?position:\s*'absolute',\s*top:\s*'100%'[\s\S]{0,400}?更新于/;
+    const article = readFileSync(ARTICLE_TSX, 'utf8');
+    ok(dateColRe.test(article),
+        'Article.tsx：日期列里「发布于」+「更新于」两行，后者绝对定位挂在列外（溢出时第一个被裁）');
+    const home = readFileSync(HOME_TSX, 'utf8');
+    ok(dateColRe.test(home), 'index.tsx（置顶卡）：同形的两行日期');
+}
+
 console.log(`\n${fail ? '✗' : '✓'} article-card-hover(源码契约)：${pass} 通过 / ${fail} 失败`);
 process.exit(fail ? 1 : 0);
