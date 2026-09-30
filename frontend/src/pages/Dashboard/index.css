@@ -951,11 +951,18 @@ body.dash-skin .Card .ant-card-head {
 
       原先表头是 `#fafafa`（出厂灰），在粉紫纸上是一块"灰补丁"；行悬停是 `#fafafa`
       的加深版，同样与纸无关。这里两处都换成和纸自己的颜色：
-      · 表头 = `--washi-line-2` 当**填充**（半透明纸线色，压在白纸上是一层淡粉、
-        压在深纸上是一层淡白 —— 一条规则管两档）；
-      · 行悬停 = `--washi-tape-2`（第二种胶带色），与侧栏悬停同一支。 */
+      · 表头 = `--washi-head`（**不透明**纸粉色，见 index.css 里那一支的注）；
+      · 行悬停 = `--washi-tape-2`（第二种胶带色），与侧栏悬停同一支。
+
+      ⚠️ 表头这一格**曾经用的是半透明的 `--washi-line-2`**（批 E 那一轮），20261001
+      被用户抓出来：「后台笔记页面的封面图、文章标题等表头背景不要透明，会透过下方列表
+      干扰视觉」。成因是这一条**盖掉了 antd 自己那个不透明表头底**，而 AllNotes /
+      QuotaManage / BoardManage 三张表的表头都是 `position: sticky` 吸顶的 ——
+      行滚到表头底下就从表头里透出来。BoardManage 的 sass 里当时还写着"th 自带背景色
+      （antd token），行不会透过来"，那句话在这一轮之后就不成立了。
+      **改这一条之前先确认这三张表还在不在吸顶**（`position: sticky` 的 th 必须有实体底）。 */
 body.dash-skin .ant-table-wrapper .ant-table-thead > tr > th {
-    background-color: var(--washi-line-2, rgba(198, 152, 192, 0.22));
+    background-color: var(--washi-head, #f2e7ed);
     color: var(--washi-ink-2, #7c6584);
     border-bottom: 1px solid var(--washi-line, rgba(198, 152, 192, 0.42));
     font-weight: 600;
