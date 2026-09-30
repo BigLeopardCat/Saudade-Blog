@@ -6,6 +6,33 @@
 // 这里只写本窗口自己的布局与少数 antd 变量覆盖不到的颜色。
 
 .ucRoot
+  // ── 窗口本体：日系手账纸皮（20261001）────────────────────────────────────
+  // 与公告卡片同一套皮。深浅两档**不需要在这里分**：`.washiDark` 与本类挂在同一个
+  // 元素上（都是 antd Modal 的 rootClassName，见 index.tsx），`var(--washi-*)`
+  // 从那里继承下来，所以下面这一条规则自己就分了两档。
+  .ant-modal-content
+    background-color: var(--washi-paper, #fffdfa)
+    background-image: radial-gradient(120% 90% at 4% 0%, rgba(255, 158, 201, 0.2), rgba(255, 158, 201, 0) 62%), radial-gradient(110% 85% at 100% 100%, rgba(143, 211, 234, 0.16), rgba(143, 211, 234, 0) 58%)
+    border: 1px solid var(--washi-line, rgba(198, 152, 192, 0.42))
+    border-radius: 16px
+    // overflow 必须 visible：顶上那条胶带是**故意探出窗口**的
+    overflow: visible
+    box-shadow: var(--washi-shadow-lg, 0 22px 54px rgba(120, 90, 140, 0.22))
+
+  // 顶上那条和纸胶带。⚠️ 用伪元素、绝对定位：塞进文档流的元素会把标题往下顶。
+  .ant-modal-content::before
+    content: ''
+    position: absolute
+    top: -13px
+    left: 50%
+    width: 130px
+    height: 28px
+    margin-left: -65px
+    background: var(--washi-tape, rgba(255, 222, 238, 0.86))
+    box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.5), inset -1px 0 0 rgba(255, 255, 255, 0.5)
+    transform: rotate(-2.4deg)
+    pointer-events: none
+
   .ucTitle
     display: flex
     align-items: center
@@ -16,17 +43,40 @@
       font-weight: 600
 
   // 标题栏下的分割线（20260922 用户要求）：把「个人中心 + 后台管理」那一行与底下的
-  // 五页签分开。antd v5 的 Modal header 默认**没有**下边框（v4 有），要自己补。
+  // 页签分开。antd v5 的 Modal header 默认**没有**下边框（v4 有），要自己补。
+  // 色值改用和纸描边色——灰线压在淡彩纸上是一道突兀的铅笔道。
   .ant-modal-header
     margin-bottom: 0
     padding-bottom: 12px
-    border-bottom: 1px solid rgba(128, 128, 128, 0.22)
+    border-bottom: 1px solid var(--washi-line-2, rgba(198, 152, 192, 0.22))
+    background: transparent
+
+  .ant-modal-title
+    color: var(--washi-ink, #4a3550)
 
   // 关闭钮往右上角再挪一点（用户要求）。antd 默认 top / inset-inline-end 各约 17px，
   // 收到 9px —— 仍在内容框内，不会被 .ant-modal-content 的圆角或内边距裁掉。
+  // 同公告卡片：方角小灰块换成一颗和纸圆钮。
   .ant-modal-close
     top: 9px
     inset-inline-end: 9px
+    width: 30px
+    height: 30px
+    border-radius: 50%
+    color: var(--washi-ink-2, #7c6584)
+    background: var(--washi-tape-2, rgba(214, 226, 255, 0.8))
+    transition: transform 220ms ease, background-color 220ms ease
+
+    &:hover
+      background: var(--washi-tape, rgba(255, 222, 238, 0.86))
+      color: var(--washi-pink-deep, #d94f9a)
+      transform: rotate(90deg)
+
+    .ant-modal-close-x
+      background: transparent
+      width: 30px
+      height: 30px
+      line-height: 30px
 
   // **固定高度**（20260922 用户要求「不要换个页就变形」）：此前是 min-height/max-height，
   // 五个页签内容长短不一 ⇒ 切一次页窗户就跟着长高/缩矮。写死之后窗口纹丝不动，
@@ -85,10 +135,10 @@
           border: 1px solid currentColor
           cursor: pointer
           font-size: 13px
-          color: #1677ff
+          color: var(--washi-pink-deep, #d94f9a)
 
           &:hover
-            background: rgba(22, 119, 255, 0.08)
+            background: var(--washi-tape-2, rgba(214, 226, 255, 0.8))
 
           input
             display: none
@@ -147,7 +197,7 @@
       color: inherit
 
       &:hover
-        color: #1677ff
+        color: var(--washi-pink-deep, #d94f9a)
 
   // ── 站内信箱（20260923 改版：四个二级签页 + 占满窗口的详情）─────────────────
   //
@@ -371,6 +421,35 @@
       &.is-critical, &.is-empty
         background: #c0392b
 
+  // ── 主行动按钮（20260922 定范围，20261001 换配方）────────────────────────
+  // 昵称保存 / 修改密码 / 站内信发送三颗共用 `.ucPrimaryBtn` 一个类（见 index.tsx）。
+  //
+  // ⚠️ 选择器里那一串不是随手堆的：`.ant-modal-body` 与 `:not(:disabled)` 各算一个类，
+  // 合起来 (0,5,0)，才压得住 antd 的 `.ant-btn-primary:not(:disabled):not(.ant-btn-disabled)`
+  // ——那是 (0,3,0)。**不写 `:where()` 的反面**：antd v5 用 `:where()` 把哈希类名
+  // 归零，剩下的类全算数；而我们这份 sass 是构建期产物，永远排在运行时注入的
+  // cssinjs **之前**，打平就是输。
+  // `:not(:disabled)` 同时也是**要保留 disabled 的灰底**：不加它，被禁用的按钮
+  // 照样会被刷上渐变。
+  .ant-modal-body .ucPrimaryBtn.ant-btn-primary:not(:disabled)
+    background-image: var(--washi-grad, linear-gradient(100deg, #ff7fc0 0%, #b06ee8 52%, #63b8e8 100%))
+    background-color: transparent
+    border: none
+    color: #fff
+    font-weight: 600
+    box-shadow: 0 6px 18px rgba(176, 110, 232, 0.28)
+    transition: transform 0.2s, box-shadow 0.2s, filter 0.2s
+
+    &:hover
+      color: #fff
+      filter: brightness(1.06)
+      transform: translateY(-1px)
+      box-shadow: 0 10px 24px rgba(176, 110, 232, 0.38)
+
+    &:active
+      color: #fff
+      transform: translateY(0)
+
   .ucQuotaReq
     display: flex
     flex-direction: column
@@ -403,13 +482,13 @@
     color: #ff9d8a
 
   .ucSettings .ucAvatarRow .ucAvatarMeta .ucUploadBtn
-    color: #69b1ff
+    color: var(--washi-pink, #ffb3d9)
 
     &:hover
-      background: rgba(105, 177, 255, 0.12)
+      background: var(--washi-tape-2, rgba(198, 210, 255, 0.22))
 
   .ucItemTitle a:hover
-    color: #69b1ff
+    color: var(--washi-pink, #ffb3d9)
 
   // 额度进度条的填充（20260929）：浅色窗里那三个值压在墨蓝窗上都太暗、几乎看不出
   // 进度——夜间各亮一档（绿取偏亮的薄荷绿，与"河灯夜"的亮色档同族）。
@@ -424,36 +503,40 @@
     &.is-critical, &.is-empty
       background: #ff9d8a
 
-  // 金色"漏光"描边（20260922 用户要求）：夜间的墨蓝窗与页面深底几乎糊成一片、边缘看不清。
-  // 1px 金环 + 一圈很淡的外发光 = 河灯的光从窗缝里漏出来。色值取登录页那团月晕的
-  // rgba(240,196,110,·) 家族，与站点既有的"夜/河灯"词汇同源。
-  // ⚠️ 这条**必须写在一行**：缩进式 sass 的值不能靠换行+逗号续行（编译直接报
-  //    `Expected identifier.`，整包构建失败——20260922 实测）。
-  .ant-modal-content
-    box-shadow: 0 0 0 1px rgba(240, 196, 110, 0.45), 0 0 26px rgba(240, 196, 110, 0.18), 0 18px 48px rgba(0, 0, 0, 0.6)
+  // 20261001：原来这里有一条"金色漏光"描边（1px 河灯金环 + 外发光），那是上一套
+  // 词汇。窗口换成手账纸皮之后，描边与投影由上面那条**共用的** `.ant-modal-content`
+  // 规则给（它取 `var(--washi-*)`，而 `.washiDark` 就在同一个 root 上 ⇒ 自己就分了两档），
+  // 所以这条整块删掉，不再各写一份。
 
-  // 主要行动按钮统一换登录页那套配色（河灯金渐变 + 墨字，同 .login-submit）。
-  // 原因是 antd 的 darkAlgorithm 主色被我们设成了 #aec8c8（为浅色主题挑的灰绿），
-  // 当**主行动按钮**用既不显眼也不好看（用户原话"配色很诡异"）。
-  // 20260922 第二轮：范围从「发送」扩到**窗口里所有主行动按钮**（用户要求"昵称保存和
-  // 修改密码按钮对齐站内信箱发送按钮风格"）——三个按钮现在共用 `.ucGoldBtn` 这一个类，
-  // 将来再加主按钮挂上它即可，别再各写一份。
-  .ucGoldBtn.ant-btn-primary
-    background: linear-gradient(135deg, #f7dcae 0%, #e8b866 100%)
-    border: none
-    color: #2a2113
-    font-weight: 600
-    box-shadow: 0 6px 18px rgba(232, 184, 102, 0.22)
-    transition: transform 0.2s, box-shadow 0.2s, filter 0.2s
+  // 主要行动按钮：手账渐变（与公告卡片的「我知道了」同一支 --washi-grad）。
+  // 20260922 第二轮定下的范围仍然有效——三个按钮共用 `.ucPrimaryBtn` 这一个类
+  // （昵称保存 / 修改密码 / 站内信发送），将来再加主按钮挂上它即可，别再各写一份。
+  // ⚠️ 浅色那一档在 `.ucRoot`（不在这个 .ucDark 块里）——两条规则同选择器前缀，
+  //    深色这条只是把字色翻深，见下面。
+  .ant-modal-body .ucPrimaryBtn.ant-btn-primary:not(:disabled)
+    // 夜间 --washi-grad 是**粉白**那支（#ffb3d9→#ffe3f1→#cbb6ff），当底就得压深字：
+    // 白字在中段 #ffe3f1 上只有 1.2:1。翻成深紫褐之后约 9:1。
+    color: #40263f
+    box-shadow: 0 6px 18px rgba(255, 179, 217, 0.24)
 
-    &:hover:not(:disabled)
-      background: linear-gradient(135deg, #f7dcae 0%, #e8b866 100%)
-      color: #2a2113
-      filter: brightness(1.06)
-      box-shadow: 0 10px 24px rgba(232, 184, 102, 0.3)
+    &:hover
+      color: #40263f
+      box-shadow: 0 10px 24px rgba(255, 179, 217, 0.36)
 
-    &:active:not(:disabled)
-      color: #2a2113
+    &:active
+      color: #40263f
 
-    &:disabled
-      opacity: 0.62
+/* 减少动效档：胶带不转、关闭钮不旋、主按钮不抬。
+   **必须写在文件末尾**——同选择器同特异度时后写者赢，这条块若落在上面那些规则
+   之前会被整个静默压掉（本仓已踩过三次，门禁 frontend/tests/sass-media-shadow.test.mjs）。 */
+@media (prefers-reduced-motion: reduce)
+  .ucRoot .ant-modal-content::before
+    transform: none
+  .ucRoot .ant-modal-close
+    transition: none
+  .ucRoot .ant-modal-close:hover
+    transform: none
+  .ucRoot .ant-modal-body .ucPrimaryBtn.ant-btn-primary:not(:disabled)
+    transition: none
+  .ucRoot .ant-modal-body .ucPrimaryBtn.ant-btn-primary:not(:disabled):hover
+    transform: none

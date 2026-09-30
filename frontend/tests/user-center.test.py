@@ -1382,7 +1382,7 @@ with sync_playwright() as p:
           "已提交对话额度重置申请" in toast and "ok" not in toast, str(toast))
     qp.close()
 
-    print("⑪ 夜间：窗口金色漏光描边 + 发送按钮换成登录页那套配色")
+    print("⑪ 夜间：窗口穿手账纸皮 + 三颗主按钮共用同一套渐变")
     dk = fresh_page(dark=True)
     # state="attached"：`.ucRoot` 落在外层 .ant-modal-root 上，那个 div 自身没有尺寸
     # （子元素都是 fixed/absolute），Playwright 默认的 visible 判据会一直等不到。
@@ -1392,12 +1392,20 @@ with sync_playwright() as p:
     glow = dk.evaluate("""() => {
         const c = document.querySelector('.ant-modal-content');
         const cs = getComputedStyle(c);
-        return {shadow: cs.boxShadow, border: cs.borderTopWidth};
+        const lum = (s) => { const m = s.match(/\\d+/g).map(Number);
+            return (0.2126 * m[0] + 0.7152 * m[1] + 0.0722 * m[2]) / 255; };
+        return {shadow: cs.boxShadow, border: cs.borderTopWidth, bg: cs.backgroundColor,
+                lum: lum(cs.backgroundColor)};
     }""")
-    check("夜间窗口有金色漏光描边（河灯金 1px 环 + 外发光，取登录页月晕同族色）",
-          "240, 196, 110" in glow["shadow"], glow["shadow"])
-    check("描边走 box-shadow（不动 border，不挤动窗内布局）",
-          glow["border"] in ("0px", "0"), glow["border"])
+    # 20261001：上一套"河灯金漏光描边"（rgba(240,196,110,·)）整块删掉了——窗口换手账皮，
+    # 描边与投影由那条**共用**的 `.ant-modal-content` 规则给（它取 var(--washi-*)，而
+    # `.washiDark` 与 `.ucRoot` 挂在同一个 root 上 ⇒ 一条规则自己就分了两档）。
+    check("夜间窗口是手账深紫纸（底色亮度 < 0.35 ⇒ 不是浅色兜底值砸下来）",
+          glow["lum"] < 0.35, f'{glow["bg"]} lum={glow["lum"]:.3f}')
+    check("夜间投影取 --washi-shadow-lg 的深色档（不再有金色漏光）",
+          "0.55" in glow["shadow"] and "240, 196, 110" not in glow["shadow"], glow["shadow"])
+    check("描边是 1px 和纸线（不再靠外发光，也不再是 0 或好几像素）",
+          glow["border"] in ("1px",), glow["border"])
     dk.click(".ant-tabs-tab >> nth=4")
     # 同上：发送按钮在「写站内信」二级签页里
     dk.wait_for_selector(".ucMailPane", timeout=10000)
@@ -1409,24 +1417,31 @@ with sync_playwright() as p:
         const cs = getComputedStyle(b);
         return {bgImage: cs.backgroundImage, color: cs.color, border: cs.borderTopWidth};
     }""")
-    check("夜间发送按钮是登录页那套河灯金渐变（不是 darkAlgorithm 的灰绿主色）",
-          "247, 220, 174" in btn["bgImage"] and "232, 184, 102" in btn["bgImage"], str(btn))
-    check("按钮文字是墨色、无边框（金底上可读，与 .login-submit 同配方）",
-          btn["color"] == "rgb(42, 33, 19)" and btn["border"] == "0px", str(btn))
-    # 20260922 第二轮：用户要求「昵称保存」与「修改密码」两个按钮也对齐发送按钮的风格。
-    # 三个主行动按钮共用 `.ucGoldBtn` —— 断言"是同一套配方"而不是各写一遍色值。
-    gold = dk.evaluate("""() => {
-        const btns = [...document.querySelectorAll('.ucSettings .ucGoldBtn')];
+    # 夜间 --washi-grad 是**粉白**那支（#ffb3d9→#ffe3f1→#cbb6ff）——它是给"渐变字压在
+    # 深底上"用的，当按钮底就必须压深字：白字在中段 #ffe3f1 上只有 1.2:1。
+    check("夜间发送按钮是手账渐变（粉白那支，不是 darkAlgorithm 的灰绿主色）",
+          "255, 179, 217" in btn["bgImage"] and "203, 182, 255" in btn["bgImage"], str(btn))
+    check("按钮文字是深紫褐、无边框（粉白底上可读）",
+          btn["color"] == "rgb(64, 38, 63)" and btn["border"] == "0px", str(btn))
+    # 20260922 第二轮定下的范围仍然有效：三个主行动按钮共用 `.ucPrimaryBtn` 一个类
+    # ——断言"是同一套配方"而不是各写一遍色值（20261001 类名从 `.ucGoldBtn` 改过来：
+    # 配方已经不是金色了，叫 Gold 会误导）。
+    prim = dk.evaluate("""() => {
+        const btns = [...document.querySelectorAll('.ucSettings .ucPrimaryBtn')];
         return btns.map((b) => {
             const cs = getComputedStyle(b);
             return {text: b.textContent.trim(), bg: cs.backgroundImage, color: cs.color,
                     border: cs.borderTopWidth};
         });
     }""")
-    check("用户设置里的两个主按钮（保存 / 修改密码）都拿到了同一套金色渐变",
-          len(gold) == 2 and all("247, 220, 174" in b["bg"] and b["color"] == "rgb(42, 33, 19)"
-                                 and b["border"] == "0px" for b in gold),
-          str(gold))
+    check("用户设置里的两个主按钮（保存 / 修改密码）都拿到了同一套手账渐变",
+          len(prim) == 2 and all("255, 179, 217" in b["bg"] and b["color"] == "rgb(64, 38, 63)"
+                                 and b["border"] == "0px" for b in prim),
+          str(prim))
+    check("发送按钮与那两个按钮同款（同一个类 ⇒ 同一套配方）",
+          "255, 179, 217" in btn["bgImage"]
+          and all(b["bg"] == btn["bgImage"] and b["color"] == btn["color"] for b in prim),
+          str(prim) + " | " + btn["bgImage"])
     dk.close()
 
     print("⑫ 头部：头像右上角红点 + 点「设置」打开个人中心窗口（挂真 Head 组件跑）")

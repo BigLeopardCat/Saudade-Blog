@@ -696,7 +696,7 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                     placeholder="展示用昵称（留言、说说、信箱里显示这个）"
                     onChange={(e) => setNickname(e.target.value)}
                 />
-                <Button className="ucGoldBtn" type="primary" loading={savingNick} onClick={saveNickname}>
+                <Button className="ucPrimaryBtn" type="primary" loading={savingNick} onClick={saveNickname}>
                     保存
                 </Button>
             </div>
@@ -734,7 +734,7 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                     />
                     <div className="ucFieldFoot">
                         <span className="ucHint">改密码会让其他设备立刻下线（本机保持登录）</span>
-                        <Button className="ucGoldBtn" type="primary" loading={savingPwd} onClick={savePassword}>
+                        <Button className="ucPrimaryBtn" type="primary" loading={savingPwd} onClick={savePassword}>
                             修改密码
                         </Button>
                     </div>
@@ -937,7 +937,7 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                     批准后会通过站内通知告诉你。
                 </span>
                 {/* 与其余页签 `.ucPaneBar` 里那颗同级（`size="small"` 默认按钮）——
-                    `.ucGoldBtn` 只对 `type="primary"` 生效（见 index.sass），挂上去是个空类 */}
+                    `.ucPrimaryBtn` 只对 `type="primary"` 生效（见 index.sass），挂上去是个空类 */}
                 <Button
                     size="small"
                     disabled={quota === null || !!quota?.pendingRequest}
@@ -1082,7 +1082,7 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                     <Button loading={savingDraft} disabled={sending} onClick={doSaveDraft}>
                         存草稿
                     </Button>
-                    <Button className="ucSendBtn ucGoldBtn" type="primary" loading={sending} onClick={doSend}>
+                    <Button className="ucSendBtn ucPrimaryBtn" type="primary" loading={sending} onClick={doSend}>
                         发送
                     </Button>
                 </span>
@@ -1194,7 +1194,11 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
         <ConfigProvider
             theme={{
                 algorithm: isDark ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
-                token: { colorPrimary: isDark ? '#aec8c8' : '#1677ff' },
+                // 主色跟着手账皮走（= --washi-pink-deep 的深浅两档）。此前夜间那档是
+                // `#aec8c8` 灰绿——它本是给浅色主题挑的，当主色的结果是页签墨条、
+                // 输入框聚焦环、链接全都灰扑扑的。antd 的派生色（hover/active）是
+                // JS 算出来的，**不能**写成 var(--washi-*)，只能照抄这两个字面量。
+                token: { colorPrimary: isDark ? '#ff8ec7' : '#d94f9a' },
             }}
         >
             <Modal
@@ -1204,8 +1208,11 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                 width={860}
                 centered
                 title={title}
-                // 弹窗挂在 body 下，拿不到 .frontDark 祖先 ⇒ 由 rootClassName 自带主题类
-                rootClassName={`ucRoot${isDark ? ' ucDark' : ''}`}
+                // 弹窗挂在 body 下，拿不到 .frontDark 祖先 ⇒ 由 rootClassName 自带主题类。
+                // 两个深色类名分工不同、都要挂：`.ucDark` 是本组件自己的夜间补偿
+                // （见 index.sass 尾段），`.washiDark` 是那套手账令牌的名字
+                // （值在 src/index.css，只是深色档多认这一个类名）。
+                rootClassName={`ucRoot${isDark ? ' ucDark washiDark' : ''}`}
                 // 标题栏底下现在有一条分割线（见 index.sass），正文别再贴着它
                 styles={{ body: { paddingTop: 12 } }}
                 // 关窗后**保留**挂载状态：五个页签的数据缓存还在，再打开不必重拉
@@ -1279,7 +1286,8 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                 confirmLoading={applying}
                 onOk={doApplyQuota}
                 onCancel={() => setApplyOpen(false)}
-                rootClassName={`ucRoot${isDark ? ' ucDark' : ''}`}
+                // 同上：`ucDark` 管本组件的夜间补偿、`washiDark` 管手账令牌
+                rootClassName={`ucRoot${isDark ? ' ucDark washiDark' : ''}`}
                 width={520}
             >
                 <div className="ucField ucFieldStack">
