@@ -1,5 +1,5 @@
 import {Line} from '@ant-design/plots';
-import React, {useEffect, useState} from "react";
+import React, {useCallback, useEffect, useState} from "react";
 import {Button, Card, Empty, Spin, Statistic, Tag} from "antd";
 import CountUp from "react-countup";
 import './index.sass'
@@ -52,7 +52,10 @@ const Analytice = () => {
     const [loading, setLoading] = useState(true)
     const [err, setErr] = useState('')
 
-    const load = () => {
+    // `useCallback` 不是装饰：它让下面那个 effect 的依赖能**写实**
+    // （`[load]` 而不是空数组 + 一条压告警的注释）。它的依赖确实是空的——
+    // 里面只碰 setState（React 保证引用稳定）与模块级函数。
+    const load = useCallback(() => {
         setLoading(true)
         setErr('')
         getNoteStatsReport().then((res) => {
@@ -72,15 +75,17 @@ const Analytice = () => {
         }).catch(() => {
             setErr('网络异常，请稍后再试')
         }).finally(() => setLoading(false))
-    }
+    }, [])
 
     // 依赖数组是**必须的**：这个 effect 里会发起请求，写成上一版那样
     // `useEffect(() => { setData(notes) })`（无依赖数组）等于每轮渲染都跑一遍，
     // 在真数据下会变成"渲染 → 请求 → setState → 渲染"的循环。
+    // 依赖写 `[load]`（`load` 已被 useCallback 固定）——**不要再写成 `[]` + 一条
+    // eslint-disable**：那条注释在本仓会被 `--report-unused-disable-directives`
+    // 判成 error，整个 check job 变红 ⇒ 那次 push 一个字节都不会部署（吃过一次）。
     useEffect(() => {
         load()
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [])
+    }, [load])
 
     // G2 不吃 antd 的 darkAlgorithm（两套主题系统互不相干），要**显式**告诉图表
     // 现在是哪一档——这正是本页此前挂在 dark-mode-contrast 探针 KNOWN 里的那条。
