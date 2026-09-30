@@ -193,7 +193,12 @@ console.log('\n⑥ 版本号：改了 widget 脚本必须 bump（nginx 对 live2
     // 是对话面板去胶带 + 标题进签 + 四条边框收成一个那一轮——waifu.css 与
     // chat-render.js / chat-session.js 都改了，必须换版本号才能越过 nginx 那
     // 1 年 immutable 缓存）。bump 时同步改这一行。
-    ok(ver === '20261001b', 'VER 已 bump 到本轮（20261001b）', { ver });
+    //
+    // 20261001c = 「待决定的确认卡片被迟到的历史气泡压在下面」那一轮（chat-stream.js 改了
+    // 就位判据）。那次 bump 时漏了本行 ⇒ 套件一直红；注意**漏改本行不会让 bump 失效**
+    // （版本号照样换新、缓存照样越过），红的只是这道纪律本身——所以它红的时候先看
+    // autoload.js 的 VER 是不是已经走在前面了，别当成"bump 没做"再 bump 一次。
+    ok(ver === '20261001c', 'VER 已 bump 到本轮（20261001c）', { ver });
     const tsx = readFileSync(path.join(root, 'src/components/Live2dAgent/index.tsx'), 'utf8');
     ok(tsx.includes('autoload.js?v=' + ver), 'Live2dAgent 的 ?v= 与 VER 一致');
 }
