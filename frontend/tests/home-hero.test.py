@@ -378,7 +378,7 @@ with sync_playwright() as p:
     check("★ `@keyframes caret-blink` 同样只动 opacity（光标闪，盒子不许动）",
           props2 and props2 <= {"opacity"}, f"实际声明 {sorted(props2)}")
     # 五轮新增的两条常驻动画：同样只许动合成器属性（它们在首屏、和看板娘抢 GPU）
-    for name in ("tag-twinkle", "top-shine"):
+    for name in ("tag-twinkle", "top-shine", "tape-sway"):
         k = keyframes_block(HERO_CSS, name)
         ps = set(re.findall(r"^\s*([a-z-]+)\s*:", k, re.M))
         check(f"★ `@keyframes {name}` 只声明 transform / opacity",

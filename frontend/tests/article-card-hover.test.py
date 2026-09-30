@@ -167,7 +167,9 @@ CARD_MARKUP = """
 TOP_MARKUP = """
 <div class="ContentContainer" id="cc">
   <div class="TopArticle" id="card" style="display:flex;position:relative">
-    <div class="Top" style="transform:translateY(-40%);z-index:10">置顶</div>
+    <!-- 置顶贴纸（20261001 六轮）：`.Top` 只剩定位（`top` 写进 sass，内联的
+         `translateY(-40%)` 已删），长相全在 `.TopTape` 那张胶带上。 -->
+    <div class="Top"><span class="TopTape">置顶</span></div>
     <div style="width:100%;height:100%;border-radius:15px;overflow:hidden">
       <div style="display:flex;width:100%;height:100%">
         <div class="TopArticleInner" id="inner">
