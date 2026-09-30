@@ -92,25 +92,27 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
   50%
     opacity: 0.4
 
-// 置顶胶带上斜掠而过的高光（`.TopTape::after` 引用它）。同样是 transform-only。
-// 0~62% 原地不动：常驻的扫光如果一直在跑，视线会被它反复勾住；留出大段静止，
-// 只在末尾"唰"地过一下。150px 的行程对 80px 宽的胶带是够穿过去的（起点在 -40%）。
-@keyframes top-shine
-  0%, 62%
-    transform: translateX(0) skewX(-18deg)
-  88%, 100%
-    transform: translateX(150px) skewX(-18deg)
-
-// 置顶胶带的"飘"（`.TopTape` 引用它）。这条是 20261001 六轮替掉"斜掠高光"那个观感的：
-// 高光只在末尾闪一下，两次之间 2.6 秒什么都不动 ⇒ 用户读到的是一张贴死的纸。
-// 胶带该有的动静是**慢飘**：角度 3.2°→1.6°、上浮 2px，5.2 秒一个来回。
+// 置顶缎带的"浮"（`.TopTape` 引用它）。七轮把六轮的 `tape-sway` 换掉了：
+// 那条只有角度 3.2°→1.6°，看久了仍是一张**贴死**的纸。缎带该有的动静是
+// **末端受风**——尾尖那一侧先起来，所以角度摆得更大（-3.6°→-1.2°）、
+// 上浮也更多（3px），周期拉到 6.8 秒（比原来慢，常驻动效越快越吵）。
 // 只动 transform（合成器就能跑完），而且它是**唯一**一条挂在 `.TopTape` 自己
 // transform 上的动画 —— 悬停位移走的是 `.Top` 的 `top`，两条不打架。
-@keyframes tape-sway
+@keyframes ribbon-float
   0%, 100%
-    transform: rotate(-3.2deg) translateY(0)
+    transform: rotate(-3.6deg) translateY(0)
   50%
-    transform: rotate(-1.6deg) translateY(-2px)
+    transform: rotate(-1.2deg) translateY(-3px)
+
+// More 那枚箭头（`.more::after` 引用它）。**「继续」这个意思靠箭头指出来**，
+// 而箭头得动一下才读得成"往那边去"——静止的 chevron 只是个装饰图形。
+// 3px 的横移、2.2 秒一来回；同样是 transform-only。
+// 悬停时把它停住（`animation: none`）并让箭头多走一点，落成"按下去了"的确定感。
+@keyframes more-nudge
+  0%, 100%
+    transform: translateX(0) rotate(-45deg)
+  50%
+    transform: translateX(3px) rotate(-45deg)
 
 // ── 首屏 hero（20260930 四轮重做：用户「主页也想要这种图片的风格」）────────────────
 // 参考图 = 粉紫淡彩的日系手账封面。落地成四层，**全部是静态渐变 + 位移/透明度动画**：
@@ -574,23 +576,28 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
       .Top
         top: -38px
 
-    // 置顶贴纸（20261001 六轮重做：用户「风格和动效都有问题」）——
-    // 五轮那版是「白纸底 + 顶部一条渐变胶带边 + 斜掠高光」，而顶卡自己就是**白纸**
-    // （`.TopArticle` 的 `--pic-background-cover`）：纸压纸，远看只有一道渐变条悬在
-    // 卡片上缘，并不像"贴了张纸"；高光又只在末尾闪一下，两次之间 2.6 秒纹丝不动。
-    // 现在直接做成**一片和纸胶带**：半透明粉胶带、四角切掉一点（手撕边）、微微斜贴、
-    // 慢飘 —— 与展示柜 `.vit-tape`、内页 `.heroPanelTape` 是同一套语言。
+    // 置顶缎带（七轮：用户第 3 条「继续优化形态符合当前主题的日式动漫风格组件」）。
     //
-    // 结构拆成两层（`.Top` 管定位、`.TopTape` 管长相），这是必须的：
-    //   · 悬停位移走 `top`（transition）、常驻的飘走 transform（animation）——
-    //     同一条属性上两者会打架（animation 恒赢），分层才能各管各的；
+    // 六轮做成了**一片和纸胶带**（半透明粉、四角手撕边、慢飘）——材料对了，但**形状**
+    // 仍是"一张小纸片"，跟旁边那些真正的胶带（`.vit-tape` / `.heroPanelTape`）长得
+    // 一模一样 ⇒ 只有读出那两个字才知道这是"置顶"。七轮换成漫画里那块**見出しリボン**：
+    // 右端切成箭头尾尖（缎带的签名），左端留**直边**（那一头是贴在卡片上的），
+    // 纸面走粉→白的斜向渐变，尾尖后跟一枚跟着呼吸的 ✦。材料与配色仍归和纸令牌管，
+    // 只有**轮廓**换成了缎带——这是"形态"，不是"换皮"。
+    //
+    // 动效一并换掉：六轮的"斜掠高光"（`top-shine`）在 4.2 秒里只在末尾闪一下，
+    // 两次之间 2.6 秒纹丝不动 ⇒ 读到的是一张贴死的纸。现在高光撤掉，改由
+    // **尾尖那枚 ✦ 闪**（复用 `tag-twinkle`，只动 opacity）+ 缎带自己**慢浮**
+    // （`ribbon-float`，6.8 秒一来回）。两条都比原来慢、都比原来便宜。
+    //
+    // 结构拆成两层（`.Top` 管定位、`.TopTape` 管长相）**不要合并**：
+    //   · 悬停位移走 `.Top` 的 `top`（transition）、常驻的浮走 `.TopTape` 的
+    //     transform（animation）——同一条属性上两者会打架（animation 恒赢），分层才各管各的；
     //   · 五轮把 `translateY(-40%)` **内联**在 `.Top` 上（内联特异性最高、CSS 改不动），
-    //     那条内联本轮已删。位移不再折进 `top` 里"补回来"，而是**换了个位置**：
-    //     从"整片浮在卡片上方 32px 的空中"降到 **骑在卡片顶边上**（−14px，
-    //     即压在卡片上 13px、占它自身 27px 高的将近一半）—— 胶带要贴在什么东西上
-    //     才叫胶带，悬空的那是标签。
-    //     盒宽也一并从写死的 80px 改成由 `.TopTape` 的内容撑开（`.Top` 不再给尺寸，
-    //     绝对定位的壳缩到内容大小），于是胶带贴着自己的字，不再拖着一段空胶带。
+    //     那条内联已删。位移不折进 `top` 里"补回来"，而是骑在卡片顶边上（−14px，
+    //     压在卡片上 13px、占它自身 27px 高的将近一半）——缎带要贴在什么东西上才叫缎带。
+    //     盒宽由 `.TopTape` 的内容撑开（`.Top` 不给尺寸），缎带贴着自己的字，
+    //     不再拖着一段空缎带。
     .Top
       position: absolute
       top: -14px
@@ -603,39 +610,40 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
         display: inline-flex
         align-items: center
         gap: 4px
-        padding: 5px 12px 5px 11px
+        // 右边那 19px 是留给尾尖的（尾尖在 `calc(100% - 10px)` 处收成一个点，
+        // 文字离它太近会被箭头"咬"到）
+        padding: 5px 19px 5px 11px
         font-size: 13px
         font-weight: 700
         letter-spacing: 0.08em
         white-space: nowrap
         color: var(--washi-ink, #4a3550)
-        background: var(--washi-tape, rgba(255, 222, 238, 0.86))
-        // 四角各切掉一小块 = 手撕胶带的边。`clip-path` 会把 box-shadow 一并裁掉，
-        // 所以投影改用 `drop-shadow`（跟着切出来的形状走）——小面积 drop-shadow
-        // 不属于"大面积模糊"那条禁令（同文件 `.wg-lock-ico`、展示柜 `.vit-corner::before` 两处先例）
-        clip-path: polygon(0 16%, 4px 0, calc(100% - 4px) 0, 100% 16%, 100% 84%, calc(100% - 4px) 100%, 4px 100%, 0 84%)
+        // 斜向渐变而不是平涂：近粘贴处浓、往尾尖淡，缎带因此有"从卡片上长出去"的方向感
+        background: linear-gradient(100deg, var(--washi-tape, rgba(255, 222, 238, 0.86)) 0%, #ffe6f2 62%, #fff6fb 100%)
+        // 右端收成箭头尾尖 —— 缎带的签名；左端直边，那一头贴在卡片上。
+        // `clip-path` 会把 box-shadow 一并裁掉，所以投影改用 `drop-shadow`
+        // （跟着切出来的形状走）——小面积 drop-shadow 不属于"大面积模糊"那条禁令
+        // （同文件 `.wg-lock-ico`、展示柜 `.vit-corner::before` 两处先例）
+        clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 50%, calc(100% - 10px) 100%, 0 100%)
         filter: drop-shadow(0 6px 11px rgba(120, 90, 140, 0.45))
-        // 静态角度写在基规则里：reduced-motion 把动画关掉之后，胶带还得是斜贴的
-        transform: rotate(-3.2deg)
-        animation: tape-sway 5.2s ease-in-out infinite
+        // 静态角度写在基规则里：reduced-motion 把动画关掉之后，缎带还得是斜贴的
+        transform: rotate(-3.6deg)
+        animation: ribbon-float 6.8s ease-in-out infinite
 
         .iconfont
           font-size: 15px
           line-height: 1
           color: var(--washi-pink-deep, #d94f9a)
 
-        // 斜掠而过的高光，**只动 transform**（合成器就能跑完）。
-        // 不用 `overflow: hidden` 裁它：上面那圈 `clip-path` 已经把整棵子树裁好了。
+        // 尾尖那枚 ✦。它是 `.TopTape` 的**行内**末子（flex 项），所以不用定位、
+        // 天然落在文字右边；呼吸只动 opacity。
         &::after
-          content: ''
-          position: absolute
-          top: -30%
-          bottom: -30%
-          left: -40%
-          width: 22px
-          background: linear-gradient(100deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0))
-          transform: skewX(-18deg)
-          animation: top-shine 4.2s ease-in-out infinite
+          content: '✦'
+          margin-left: 1px
+          font-size: 9px
+          line-height: 1
+          color: var(--washi-pink-deep, #d94f9a)
+          animation: tag-twinkle 2.6s ease-in-out infinite
 
     .TopCover
       border-radius: 15px 0 0 15px
@@ -731,17 +739,26 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
           white-space: nowrap
           transition: all 0.8s ease!important
           line-height: 20px
-  // 「文章」段落签（20261001 六轮：用户点名"文章""More"文本标签，与置顶同一批）——
-  // 旧版是 `linear-gradient(to left, #6E35FF, #EE64C2, #FFCB8E)` + 白字的胶囊，
-  // 全站唯一一处还留着"外站控件"长相的地方。现在归到和纸皮：纸底 + 和纸线 +
-  // 顶上一道渐变胶带边，字用墨紫。
-  // `.more` 是它的**修饰类**（DOM 上同一个类名），只有尺寸与手感不同 —— 见文件后段。
+  // 「文章」段落签（七轮：用户第 3 条，与置顶、More 同一批）。
+  //
+  // 六轮已经把它从"外站控件"（`linear-gradient(to left, #6E35FF, #EE64C2, #FFCB8E)`
+  // + 白字胶囊）救回和纸皮了：纸底 + 和纸线 + 顶上一道渐变胶带边。问题在于那**顶边**——
+  // 它跟头部的 `.headContainer::after` 是同一条，于是这块标签读起来像"又一条分隔线"，
+  // 不像一枚**组件**。
+  //
+  // 七轮按漫画的 **見出しプレート** 重排三件事：① 渐变从"顶上那条边"挪到**左边那道
+  // 綴じ紐**（竖脊）——方向从"横着的分隔"变成"竖着的书脊"，一眼是个牌子而不是分隔线；
+  // ② 图标从一枚裸字装进**圆形徽章**（渐变实底 + 白字）；③ 右端添一枚呼吸的 ✦，
+  // 与置顶缎带尾尖那颗同一套语言（同一族组件共用母题是刻意的）。
+  //
+  // `.more` 是它的**修饰类**（DOM 上同一个类名），只有尺寸、手感与右端那枚记号不同
+  // —— 见文件后段 `.ContentContainer > .more`。
   .allContent
     position: relative
     display: inline-flex
     align-items: center
     justify-content: center
-    gap: 5px
+    gap: 7px
     // `width: max-content` 而不是旧版那个写死的 80px：中文两字 + 15px 图标刚好比 80 宽一点，
     // 钉死宽度会把它压得贴边（旧版还有一处 `text-overflow: ellipsis` 是从别处抄来的，
     // 这个标签根本没有超出会省略的场景，且 `overflow: hidden` 与它配着才是完整的省略号组合）
@@ -749,7 +766,8 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
     height: auto
     margin-top: 20px
     margin-bottom: 20px
-    padding: 5px 14px 5px 11px
+    // 左边那 19px 是给竖脊让位的（脊宽 5px + 与徽章之间 6px 呼吸）
+    padding: 5px 14px 5px 19px
     border-radius: 999px
     font-size: 13px
     font-weight: 700
@@ -758,26 +776,45 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
     background: var(--washi-paper-2, #fff6fa)
     border: 1px solid var(--washi-line, rgba(198, 152, 192, 0.42))
     box-shadow: 0 8px 18px -12px rgba(120, 90, 140, 0.85)
-    // 顶上那道胶带边在边界内，但圆角外仍可能露一角 ⇒ 照旧裁掉
+    // 竖脊贴着左缘，圆角外仍可能露一角 ⇒ 照旧裁掉（顺带把竖脊的两头修成圆弧，
+    // 那是"綴じ紐"该有的样子）
     overflow: hidden
 
-    // 顶上那道渐变胶带边（与头部 `.headContainer::after`、置顶胶带同一套语言）
+    // 左边那道渐变竖脊（綴じ紐）。**不是**装饰条：牌子的"钉在纸上"这一头靠它，
+    // 与置顶缎带的"左端直边"是同一件事的两个说法。
     &::before
       content: ''
       position: absolute
       left: 0
-      right: 0
       top: 0
-      height: 3px
-      background: var(--washi-grad, linear-gradient(100deg, #ff7fc0, #b06ee8))
+      bottom: 0
+      width: 5px
+      background: var(--washi-grad, linear-gradient(180deg, #ff7fc0, #b06ee8))
 
-    // 图标：旧版是**行内写死**的 25px 灰 `#7f7e7e` —— 比 13px 的字还大、还比字淡，
-    // 等于在标签上压了一枚大灰块。现在交给令牌，并跟着文字一起呼吸
-    // （复用标签条那颗小星的 `tag-twinkle`，只动 opacity，合成器就能跑完）。
-    .iconfont
-      font-size: 15px
+    // 右端那枚 ✦：行内末子，天然跟在文字右边；只动 opacity
+    &::after
+      content: '✦'
+      font-size: 10px
       line-height: 1
       color: var(--washi-pink-deep, #d94f9a)
+      animation: tag-twinkle 2.4s ease-in-out infinite
+
+    // 图标：六轮之前是**行内写死**的 25px 灰 `#7f7e7e` —— 比 13px 的字还大、还比字淡，
+    // 等于在标签上压了一枚大灰块。六轮交给了令牌，七轮再进一步装进**圆形徽章**：
+    // 实底渐变 + 白字，与页面里那套手账贴纸是同一个手势。
+    .iconfont
+      flex: none
+      display: inline-flex
+      align-items: center
+      justify-content: center
+      width: 20px
+      height: 20px
+      border-radius: 50%
+      font-size: 11px
+      line-height: 1
+      color: #fff
+      background: var(--washi-grad, linear-gradient(120deg, #ff7fc0, #b06ee8))
+      box-shadow: 0 3px 7px -3px rgba(217, 79, 154, 0.9)
       animation: tag-twinkle 3.4s ease-in-out infinite
 
   .allArticles
@@ -1069,24 +1106,45 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
     visibility: hidden
     pointer-events: none
 
-  // 「More」按钮（`.allContent` 的修饰类，只差尺寸与手感）
+  // 「More」按钮（`.allContent` 的修饰类：**同一块牌子**，只差尺寸、手感与右端那枚记号）
+  //
+  // 七轮（用户第 3 条）：六轮把它从行内样式里救了出来（尺寸、手感），但它右端还是
+  // `.allContent` 那枚 **✦** —— "更多"和"文章"挂着同一颗星，两枚牌子只有大小之分。
+  // 现在右端换成**一枚指向右下的 chevron**（`::after` 把 ✦ 覆盖掉），并且它会**动**：
+  // 静止的箭头只是个图形，动起来的箭头才读得成"往那边去"（`more-nudge`，2.2s 一来回）。
+  // 悬停时箭头停住并多走一点 ⇒ 那一下就是"按下去"的确定感。
+  //
   // ⚠️ 旧版把尺寸写成了**行内样式**（`padding: 20px 50px` + `borderRadius: 20` +
   // `fontSize: 20`），而 `frontHome/main.css` 有一条全站 `* { box-sizing: border-box }`
   // ⇒ 左右各 50px 的内边距落在 `width: 80px` 的盒子里，内容盒被挤成 0，元素的**实际
   // 尺寸是内边距撑出来的 100×40**（字在 0 宽的内容盒里居中溢出，靠 `overflow: hidden`
-  // 裁回来）。三条内联本轮已删，尺寸改由这里说了算。
-  // 手感也换掉了：旧版是 `scale(1.2)`（一颗"弹出来"的按钮，与这套纸品语言不搭），
-  // 现在与 `.tagChip` 同款 —— 抬起 2px、胶带色泛上来、影子加深。
+  // 裁回来）。三条内联已删，尺寸改由这里说了算 —— **不要再把尺寸写回行内**。
+  // 手感：旧版是 `scale(1.2)`（一颗"弹出来"的按钮，与这套纸品语言不搭），
+  // 六轮起与 `.tagChip` 同款（抬起 2px、胶带色泛上来、影子加深）。
   .more
-    padding: 11px 34px
+    padding: 11px 30px 11px 32px
     font-size: 15px
     letter-spacing: 0.16em
     cursor: pointer
     transition: transform 0.25s ease, box-shadow 0.25s ease, background 0.25s ease
+
+    // 右端那枚 chevron：两条边 + 转 -45° = 指向右下的箭头（纯 CSS，不引图标字体）
+    &::after
+      content: ''
+      width: 7px
+      height: 7px
+      border-right: 2px solid currentColor
+      border-bottom: 2px solid currentColor
+      animation: more-nudge 2.2s ease-in-out infinite
+
     &:hover
       transform: translateY(-2px)
       background: var(--washi-tape, rgba(255, 222, 238, 0.86))
       box-shadow: 0 14px 26px -14px rgba(120, 90, 140, 1)
+      // 停住动画再走远一点：动画的 transform 恒压声明，不停住的话下面这条不生效
+      &::after
+        animation: none
+        transform: translateX(4px) rotate(-45deg)
 
 
 // 加载动画
@@ -1673,19 +1731,34 @@ html[data-theme='dark'] .SayWords h2
 // 减少动效（顶层一条，与 `.SelfDescription` 里那条分开写——`.TopArticle` 不在它的作用域里，
 // 而且这里的选择器本来就够长，不需要像那边一样补全链）
 @media (prefers-reduced-motion: reduce)
-  // 高光与慢飘一起关掉：胶带仍旧是斜贴的（角度写在基规则的 `transform` 里），只是不动了
-  .TopTape
+  // ⚠️ **这里每一条都必须写全链**。七轮初版写的是裸 `.TopTape` / `.allContent::after`
+  // ——`@media` 不改特异性，而基规则住在 `.ContentContainer .TopArticle .Top .TopTape`
+  // 那四层里（0,4,0）：裸选择器（0,1,0）**一条都没生效**，减少动效档下三块标签照旧
+  // 又浮又闪。同族坑在本文件已记过一次（`SectionBar` 那条注释、`.heroTag` 那条），
+  // 这是第三次 —— 只有 headless 真跑 reduce 档才看得见（`tests/home-labels.test.py` 第四节）。
+  //
+  // 慢浮关掉：缎带仍旧是斜贴的（角度写在基规则的 `transform` 里），只是不动了。
+  // ⚠️ 尾尖那枚 ✦ **只关动画、不隐藏**（六轮这里是 `opacity: 0`——那会儿 `::after`
+  // 是高光，藏着才对；七轮它换成了 ✦，藏掉等于把缎带的尾尖记号删了）。
+  .ContentContainer .TopArticle .Top .TopTape
     animation: none
     &::after
       animation: none
-      opacity: 0
   // `.Top` 的悬停位移走的是 `top` 的 transition，不吃 transform ⇒ 这里要单独关
-  .Top
+  .ContentContainer .TopArticle .Top
     transition: none
-  .allContent .iconfont
+  // 徽章与右端那枚 ✦ 一起停（都只动 opacity，停下即常亮，不必额外置位）
+  .ContentContainer .allContent .iconfont
     animation: none
-  .more
+  .ContentContainer .allContent::after
+    animation: none
+  .ContentContainer .more
     transition: none
+    // 箭头停住并**保持**它平时的位置（不能只写 `animation: none` 就完事：
+    // `more-nudge` 是那条把它转到 -45° 的动画，一停箭头就摊成两条正交的边）
+    &::after
+      animation: none
+      transform: rotate(-45deg)
     &:hover
       transform: none
   .tagChip

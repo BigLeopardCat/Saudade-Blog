@@ -377,8 +377,11 @@ with sync_playwright() as p:
     props2 = set(re.findall(r"^\s*([a-z-]+)\s*:", kf2, re.M))
     check("★ `@keyframes caret-blink` 同样只动 opacity（光标闪，盒子不许动）",
           props2 and props2 <= {"opacity"}, f"实际声明 {sorted(props2)}")
-    # 五轮新增的两条常驻动画：同样只许动合成器属性（它们在首屏、和看板娘抢 GPU）
-    for name in ("tag-twinkle", "top-shine", "tape-sway"):
+    # 五轮新增的两条常驻动画：同样只许动合成器属性（它们在首屏、和看板娘抢 GPU）。
+    # 七轮把标签那两条换了名字与内容（`top-shine` 斜掠高光 → `ribbon-float` 缎带慢浮、
+    # `tape-sway` → `more-nudge` 箭头推），判据本身不变：**首屏常驻动画只许动合成器属性**。
+    # 三块标签的形状与手感归 `tests/home-labels.test.py` 管，这里只管"动得贵不贵"。
+    for name in ("tag-twinkle", "ribbon-float", "more-nudge"):
         k = keyframes_block(HERO_CSS, name)
         ps = set(re.findall(r"^\s*([a-z-]+)\s*:", k, re.M))
         check(f"★ `@keyframes {name}` 只声明 transform / opacity",
