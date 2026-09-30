@@ -1,11 +1,13 @@
-import { Button, Modal, theme } from 'antd'
+import { Modal } from 'antd'
 import { useEffect, useRef, useState } from 'react'
+import { useIsDarkMode } from '../../theme'
 import {
     fetchPendingAnnouncement,
     markAnnouncementRead,
     watchAnnouncements,
     type PendingAnnouncement,
 } from './pending.ts'
+import './index.sass'
 
 /** 后端公告时间**已经是 +08:00 中国钟面**（DB 会话 time_zone=+08:00，见 CLAUDE.md 时区约定），
  * 原样展示即可，这里只做"去掉秒"的规范化——**不做任何时区换算**。
@@ -39,7 +41,14 @@ const fmtCnTime = (s: string) => {
  * 两处挂载（公共页壳 App.tsx / 后台 Dashboard 自己的壳）——**不是**挂在某个页面上，
  * 那正是"只有刷新才弹"的旧毛病：公告是站点级事件，弹窗得跟着壳走。 */
 const AnnouncementModal = () => {
-    const { token } = theme.useToken()
+    /**
+     * 深浅档由**这一个**来源决定，别改回"看 antd token"：卡片现在穿的是 washi 手账皮
+     * （`index.sass`），配色走 `var(--washi-*)`，而 Modal 是 Portal 到 `document.body`
+     * 的 —— App 的 `.frontDark` / 后台的 `.dark` 都不是它的祖先，令牌取不到。
+     * `useIsDarkMode()` 与后台壳里的 `isDarkMode` 同源（都是 `readDarkMode()` + 同一个
+     * `darkmode-change` 事件），所以两处不会打架。
+     */
+    const isDark = useIsDarkMode()
     const [pending, setPending] = useState<PendingAnnouncement | null>(null)
     const [open, setOpen] = useState(false)
     /** 正在查（防同一拍里几个触发源并发查同一件事） */
@@ -118,6 +127,9 @@ const AnnouncementModal = () => {
             width={520}
             centered
             maskClosable
+            // 皮（纸底/胶带/圆钮/渐变按钮）全在 index.sass；这里只递类名。
+            // `.washiDark` 是 index.css 深色令牌选择器列表里的第三个名字，见那边的注释。
+            rootClassName={isDark ? 'washiModal washiDark' : 'washiModal'}
             // 标题走 antd 自己的 header 槽位（20260926 用户报"标题太靠下、不协调"）：
             // 原先把标题画在 body 里，而 body 之上还有 .ant-modal-content 的 20px 内边距
             // 加我们自己那 28px 上边距 ⇒ 标题离卡片顶 48px，右上角的 × 却贴在 12px 处，
@@ -130,18 +142,18 @@ const AnnouncementModal = () => {
                     lineHeight: 1.5,
                     letterSpacing: 1,
                     textAlign: 'center',
-                    color: token.colorTextHeading,
+                    // 颜色归 index.sass 的 `.washiModal .ant-modal-title > div`（要跟着深浅档换）
                     // 左右对称留白：居中的标题不会爬到右上角那颗 × 底下（对称 ⇒ 仍居中）
                     padding: '0 32px',
                 }}>
                     {pending.title}
                 </div>
             ) : null}
-            // 只给 content/header/body：rc-dialog 的 ModalStyles 只认这几槽
+            // 只给 header/body：rc-dialog 的 ModalStyles 只认这几槽
             // （header/body/footer/mask/wrapper/content），写 styles.close 不会生效
             // （关闭钮的定位在 antd 自己那份 CSS 里）。
+            // ⚠️ 这里**只留尺寸**：圆角/裁剪/纸底/胶带都在 index.sass（那边才有深浅两档）。
             styles={{
-                content: { borderRadius: 12, overflow: 'hidden' },
                 // 顶边留白全交给 header（标题在 body 之上，旧写法那两层叠加没了）：
                 // 卡片自身内边距 20px + header 上 8px ⇒ 卡片顶→标题 28px，与左右各
                 // 28px 对齐；header 下 6px + 正文上 12px ⇒ 标题→正文 18px。整块比旧写法
@@ -150,47 +162,43 @@ const AnnouncementModal = () => {
                 header: {
                     padding: '8px 28px 6px',
                     marginBottom: 0,
-                    borderBottom: 'none',
-                    background: 'transparent',
                 },
                 body: { padding: '12px 28px 22px' },
             }}
         >
-            {/* 配色一律取 antd token，不写死：同一张卡在公共页（无 ConfigProvider ⇒ 浅色）
-                与后台（Dashboard 的 ConfigProvider(darkAlgorithm) ⇒ 深色）下都要能读
-                ——后台那套是内联 style 的死对头（见 docs 里"内联 style 是夜间头号敌人"）。 */}
+            {/* 卡片穿 washi 手账皮（20261001）：颜色全部搬去 index.sass，这里只留尺寸与
+                结构。**内联 style 是夜间头号敌人**——配色一旦写成内联，`.washiDark`
+                那档就再也盖不动它（内联特异性最高），深浅两档只能靠 JS 分支硬拼。 */}
             <div style={{
                 maxHeight: '58vh',
                 overflowY: 'auto',
                 lineHeight: 1.9,
                 fontSize: 15,
-                color: token.colorText,
             }}>
-                <div style={{ whiteSpace: 'pre-wrap', textAlign: 'justify' }}>{pending?.content}</div>
-                <div style={{ marginTop: 14, fontSize: 12, color: token.colorTextTertiary, textAlign: 'right' }}>
+                <div className="washiText" style={{ whiteSpace: 'pre-wrap', textAlign: 'justify' }}>{pending?.content}</div>
+                <div className="washiTime" style={{ marginTop: 14, fontSize: 12, textAlign: 'right' }}>
                     {fmtCnTime(pending?.time || '')}
                 </div>
                 {/* 「我知道了」= 记已读的唯一入口（见 handleRead/handleClose 的分工）。
-                    点弹窗外关掉这条**不**走这里 ⇒ 仍是未读。配色仍然只取 antd token
-                    （品牌的渐变两色 = colorPrimary/colorPrimaryActive，深色下自动换成
-                    暗色那一套），不写死任何一个色值。 */}
+                    点弹窗外关掉这条**不**走这里 ⇒ 仍是未读。渐变底取的是 --washi-grad
+                    （与首页标题/签名同一支渐变），深浅两档在 index.css 里各一份。 */}
                 <div style={{ marginTop: 22, textAlign: 'center' }}>
-                    <Button
-                        type="primary"
+                    {/* 原生 button：antd `<Button>` 那份样式的特异度与我们的手账皮打平，
+                        打平就按源序裁决、cssinjs 永远后注入 ⇒ 渐变会被它的灰底盖掉。
+                        理由写在 index.sass 那颗按钮的注释里，别改回去。 */}
+                    <button
+                        type="button"
+                        className="washiOk"
                         onClick={handleRead}
                         style={{
                             minWidth: 148,
                             height: 40,
                             padding: '0 26px',
                             fontSize: 15,
-                            borderRadius: 999,
-                            border: 'none',
-                            background: `linear-gradient(135deg, ${token.colorPrimary}, ${token.colorPrimaryActive})`,
-                            boxShadow: `0 6px 16px ${token.colorPrimary}40`,
                         }}
                     >
                         我知道了
-                    </Button>
+                    </button>
                 </div>
             </div>
         </Modal>

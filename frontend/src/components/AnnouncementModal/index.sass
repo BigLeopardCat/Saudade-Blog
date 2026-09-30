@@ -1,0 +1,146 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   公告卡片 —— 日系手账（washi）皮
+
+   这次只换**皮**，不动里子：判据/已读落点/复查时机仍在 pending.ts，两个出口的分工
+   （点「我知道了」才记已读、点弹窗外只收起）一个字没改。
+
+   两条必须知道的：
+   · antd 的 Modal 走 Portal 渲染到 `document.body` 下 ⇒ App 的 `.frontDark` /
+     后台的 `.dark` **都不是它的祖先**，`var(--washi-*)` 会一路落回 `:root` 的浅色档
+     （白纸上一片白字）。所以深色档由组件传进来的 `.washiDark` 类名兜住
+     —— 那个类名只是 `src/index.css` 深色令牌选择器列表里多出来的一个名字，值没搬。
+   · 每个 var() 都带兜底字面量：本仓的无头沙箱只编译**组件自己的** .sass，
+     写在 index.css 里的全局令牌在沙箱里不存在（这条踩过，见 tests/user-center.test.py）。
+     真机上令牌在场、兜底不生效。
+
+   几何（header 8px/28px/6px、body 12px/28px/22px、按钮 40px/148px）留在 index.tsx 的
+   `styles` 里没搬过来 —— 那是**尺寸**不是配色，令牌纪律只管颜色/圆角/阴影/渐变。
+   ⚠️ 别往 `.ant-modal-content` 上写 border-radius/overflow：那两条现在归这里管。
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.washiModal .ant-modal-content
+    background-color: var(--washi-paper, #fffdfa)
+    /* 纸的淡彩：左上一点粉、右下一点天青。夜间档底是深紫，同样两层压上去只是"有光" */
+    background-image: radial-gradient(120% 90% at 6% 0%, rgba(255, 158, 201, 0.22), rgba(255, 158, 201, 0) 62%), radial-gradient(110% 85% at 100% 100%, rgba(143, 211, 234, 0.18), rgba(143, 211, 234, 0) 58%)
+    border: 1px solid var(--washi-line, rgba(198, 152, 192, 0.42))
+    border-radius: 16px
+    /* overflow 必须 visible：顶上那条胶带是**故意探出卡片**的，hidden 会把它齐根切掉 */
+    overflow: visible
+    box-shadow: var(--washi-shadow-lg, 0 22px 54px rgba(120, 90, 140, 0.22))
+    transition: box-shadow 260ms ease
+
+/* 一条和纸胶带横在卡片顶上，一半探出去 —— 手账拼贴的标志性那一下。
+   ⚠️ 用伪元素而不是塞一个 DOM：卡片顶→标题的距离被
+   tests/announcement-popup-mount.test.py 第 ⑧ 组钉死在 24–32px，
+   塞进文档流的东西会把这 28px 顶开。绝对定位后它与标题互不干涉。 */
+.washiModal .ant-modal-content::before
+    content: ''
+    position: absolute
+    top: -13px
+    left: 50%
+    width: 130px
+    height: 28px
+    margin-left: -65px
+    background: var(--washi-tape, rgba(255, 222, 238, 0.86))
+    /* 胶带两端的"撕口"：都是 1px 的 inset 阴影，不额外占盒子 */
+    box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.5), inset -1px 0 0 rgba(255, 255, 255, 0.5)
+    transform: rotate(-2.4deg)
+    pointer-events: none
+
+/* 顶栏与标题：配色归这里，边距仍归 index.tsx 的 header 槽 */
+.washiModal .ant-modal-header
+    background: transparent
+    border-bottom: none
+
+.washiModal .ant-modal-title > div
+    color: var(--washi-ink, #4a3550)
+
+/* 右上角的 ×：从"方角小灰块"换成一颗和纸圆钮 */
+.washiModal .ant-modal-close
+    top: 14px
+    right: 14px
+    width: 30px
+    height: 30px
+    border-radius: 50%
+    color: var(--washi-ink-2, #7c6584)
+    background: var(--washi-tape-2, rgba(214, 226, 255, 0.8))
+    transition: transform 220ms ease, background-color 220ms ease
+
+.washiModal .ant-modal-close:hover
+    background: var(--washi-tape, rgba(255, 222, 238, 0.86))
+    color: var(--washi-pink-deep, #d94f9a)
+    transform: rotate(90deg)
+
+.washiModal .ant-modal-close .ant-modal-close-x
+    /* × 自己那圈 hover 底色（antd 默认给的是灰底）别叠在我们的圆钮上 */
+    background: transparent
+    width: 30px
+    height: 30px
+    line-height: 30px
+
+/* ── 正文 ──────────────────────────────────────────────────────────────── */
+
+.washiModal .washiText
+    color: var(--washi-ink, #4a3550)
+
+.washiModal .washiTime
+    color: var(--washi-ink-3, #a08ba8)
+    letter-spacing: 0.5px
+
+/* ── 「我知道了」：整张卡唯一的主色块，取描边渐变字那套渐变 ──────────────
+   ⚠️ 这一颗是**原生 `<button>`，不是 antd `<Button>`**，别改回去。antd v5 的按钮样式
+   是 `:where(...).ant-btn-default:not(:disabled):not(.ant-btn-disabled)` —— `:where()`
+   自身 0 特异度，但后面那两个 `:not()` 各算一个类，合计 (0,3,0)，与"三层类名"的
+   `.washiModal .washiOk.ant-btn` **打平**；打平就按源序裁决，而 cssinjs 是运行时注入、
+   永远排在我们这份编译产物之后 ⇒ 渐变会被 antd 的灰底静默盖掉（hover 那档 (0,4,0)
+   更是直接赢）。原生按钮没有这个对手，配色一处说了算。 */
+.washiModal .washiOk
+    display: inline-flex
+    align-items: center
+    justify-content: center
+    font-family: inherit
+    line-height: 1
+    cursor: pointer
+    color: #fff
+    border: none
+    border-radius: 999px
+    background-color: transparent
+    background-image: var(--washi-grad, linear-gradient(100deg, #ff7fc0 0%, #b06ee8 52%, #63b8e8 100%))
+    box-shadow: 0 6px 18px rgba(176, 110, 232, 0.32)
+    transition: transform 200ms ease, box-shadow 200ms ease, filter 200ms ease
+
+.washiModal .washiOk:hover
+    filter: brightness(1.06)
+    transform: translateY(-1px)
+    box-shadow: 0 10px 24px rgba(176, 110, 232, 0.42)
+
+.washiModal .washiOk:active
+    transform: translateY(0)
+
+.washiModal .washiOk:focus-visible
+    outline: 2px solid var(--washi-pink-deep, #d94f9a)
+    outline-offset: 3px
+
+/* ⚠️ 夜间档的字色必须翻成深色：`--washi-grad` 在夜间是**粉白**那支
+   （#ffb3d9 → #ffe3f1 → #cbb6ff），它是给"描边渐变字"压在深底上用的；
+   照搬到按钮上当底、再压白字，中段 #ffe3f1 上的对比度只有 1.2:1 —— 等于没字。
+   翻成深紫褐之后对比度约 9:1，粉白渐变底反而更亮眼。 */
+.washiDark .washiOk
+    color: #40263f
+    box-shadow: 0 6px 18px rgba(255, 179, 217, 0.28)
+
+.washiDark .washiOk:hover
+    box-shadow: 0 10px 24px rgba(255, 179, 217, 0.4)
+
+/* 减少动效档：胶带不转、钮不抬、× 不旋。**必须写在文件末尾**——同选择器同特异度
+   时后写者赢，这条块若落在上面那些规则之前会被整个静默压掉（本仓已踩过三次，
+   门禁 frontend/tests/sass-media-shadow.test.mjs）。 */
+@media (prefers-reduced-motion: reduce)
+    .washiModal .ant-modal-content::before
+        transform: none
+    .washiModal .washiOk,
+    .washiModal .ant-modal-close
+        transition: none
+    .washiModal .washiOk:hover,
+    .washiModal .ant-modal-close:hover
+        transform: none
