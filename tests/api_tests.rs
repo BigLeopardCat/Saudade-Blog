@@ -243,6 +243,27 @@ async fn test_文章报表需要管理员() {
     );
 }
 
+/// 周报/月报/年报（`/stats/notes/periods`）也在守卫域内 ⇒ 无 token 同样是 401。
+///
+/// 这条判据不是"顺手复制上面那条"：它是**路由挂载位置**的回归锁。期报这条路径
+/// 与 `.../notes` 只差一个后缀，将来有人把它挪到 `public_routes`（比如想给
+/// 前端未登录预览）就会当场变红——而它整表是运营数据，不该有匿名读法。
+#[tokio::test]
+async fn test_分期报表需要管理员() {
+    for kind in ["week", "month", "year"] {
+        assert_eq!(
+            req_status(
+                mock_app(),
+                "GET",
+                &format!("/api/protected/stats/notes/periods?kind={kind}")
+            )
+            .await,
+            StatusCode::UNAUTHORIZED,
+            "kind={kind} 无 token 应返回 401"
+        );
+    }
+}
+
 /// 阅读求和（`SUM(cnt)`）**必须**走 `note_stats::sum_views()`——它是唯一一处
 /// `CAST(... AS SIGNED)`。理由是**真解码出来的**教训，不是风格洁癖：
 /// MySQL 的 `SUM(<整数列>)` 返回 `DECIMAL`，sea-orm 按 `i64` 解会当场报
