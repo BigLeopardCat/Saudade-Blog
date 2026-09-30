@@ -35,6 +35,8 @@ const repo = path.resolve(root, '..');            // 仓库根（Rust 在那儿�
 const SASS_FILE = path.join(root, 'src/frontHome/Content/ContentHome/index.sass');
 const ARTICLE_TSX = path.join(root, 'src/frontHome/Content/ContentHome/Article.tsx');
 const HOME_TSX = path.join(root, 'src/frontHome/Content/ContentHome/index.tsx');
+// 卡片与置顶卡共用的那条页脚（头像/署名/两个日期），20261001 从上面两个文件里抽出来的
+const BYLINE_TSX = path.join(root, 'src/components/NoteByline/index.tsx');
 const WEB_INFO_RS = path.join(repo, 'src/routes/web_info.rs');
 
 let pass = 0, fail = 0;
@@ -223,11 +225,18 @@ console.log('\n⑧ 标签换行：卡片按内容长高（520 是**下限**）�
     // 源码接线：那条「更新于」是**几何套件唯一量得到**的东西（桩里也照着它写）。
     // 两个卡各自的 JSX 里都得是"同一个日期列里的第二个 span、绝对定位挂在列外面"。
     const dateColRe = /<div style=\{\{\s*position:\s*'relative',\s*display:\s*'flex',\s*flexDirection:\s*'column'\s*\}\}>\s*<span[^>]*className='post-date'>[\s\S]{0,300}?发布于[\s\S]{0,700}?position:\s*'absolute',\s*top:\s*'100%'[\s\S]{0,400}?更新于/;
+    // 20261001：这段标记**不再是两份**。加文章作者时发现卡片与置顶卡的那 12 行逐字相同
+    // （连行内样式里的空格都一样），已抽成 `components/NoteByline`——所以断言从"两个文件
+    // 各有一份"改成"实现只有一份、两处卡片都吃它"，并把"谁都不许再内联一份"钉住。
+    const byline = readFileSync(BYLINE_TSX, 'utf8');
+    ok(dateColRe.test(byline),
+        'NoteByline：日期列里「发布于」+「更新于」两行，后者绝对定位挂在列外（溢出时第一个被裁）');
     const article = readFileSync(ARTICLE_TSX, 'utf8');
-    ok(dateColRe.test(article),
-        'Article.tsx：日期列里「发布于」+「更新于」两行，后者绝对定位挂在列外（溢出时第一个被裁）');
     const home = readFileSync(HOME_TSX, 'utf8');
-    ok(dateColRe.test(home), 'index.tsx（置顶卡）：同形的两行日期');
+    ok(/<NoteByline\b/.test(article), 'Article.tsx（普通卡）吃这份共用的页脚');
+    ok(/<NoteByline\b/.test(home), 'index.tsx（置顶卡）吃同一份（不是又抄了一遍）');
+    ok(!dateColRe.test(article) && !dateColRe.test(home),
+        '两个卡片文件里都没有第二份日期列副本（改一处忘一处正是抽出来要消灭的形状）');
 }
 
 console.log(`\n${fail ? '✗' : '✓'} article-card-hover(源码契约)：${pass} 通过 / ${fail} 失败`);

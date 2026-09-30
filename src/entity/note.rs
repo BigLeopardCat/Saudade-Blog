@@ -27,6 +27,10 @@ pub struct Model {
     // NULL = 普通文章/独立草稿；Some(原文章 id) = 编辑那篇文章时自动保存落下的独立行，
     // 原文章行在编辑期间完全不动（线上仍是旧内容），发布时用它覆盖原文章行并删掉本行。
     pub draft_of: Option<i32>,
+    // 发布者 user.id（20261001）。NULL = **未记录**（本列之前发布的老文章，或发布者账号
+    // 已销）——展示端回退站点级署名（见 `routes/notes.rs::attach_authors`），不是"无作者"。
+    // 只在为空时写入：第一个把文章落库的人即作者，之后谁来编辑都不改署名。
+    pub user_id: Option<i32>,
 
     pub created_at: DateTime,
     pub updated_at: DateTime,

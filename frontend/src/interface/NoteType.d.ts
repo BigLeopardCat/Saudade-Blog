@@ -28,6 +28,11 @@ export interface NoteType {
     views?: number;
     likes?: number;
     favorites?: number;
+    // 这篇文章的作者（20261001）。**判据是"谁发的"**：发布那一刻的操作者，不是站点主人。
+    // 可选的理由与上面三个数同源：文章没有作者记录（本列之前发布的老文章 / 发布者账号已销）
+    // 或这次没查着 ⇒ 键不出现，卡片回退站点级署名（`utils/noteAuthor.ts` 是唯一判据）。
+    authorName?: string;
+    authorAvatar?: string;
 }
 
 export interface formatNote {
@@ -48,4 +53,9 @@ export interface formatNote {
     views?: number;
     likes?: number;
     favorites?: number;
+    // 作者（20261001，见 `NoteType` 里那一段）。ContentHome 是 `{...item}` 透传的，
+    // 这里缺一行 TS 就认不出，卡片会拿到 undefined ⇒ 全部退回站点署名（"管理员发的
+    // 文章仍显示超级管理员"那副样子原样复发）。
+    authorName?: string;
+    authorAvatar?: string;
 }
