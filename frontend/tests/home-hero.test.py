@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""首页首屏 hero：拼贴底 + 描边标题 + 命令条 + 手账内页 + 展示柜贴图 + 樱花（20260930 五轮）。
+"""首页首屏 hero：拼贴底 + 描边标题 + 命令条 + 手账内页 + 展示柜贴图 + 樱花。
 
   python3 tests/home-hero.test.py
 
 现场（用户要求）："主页也想要这种图片的风格"（参考图 = 粉紫淡彩的日系手账封面），
 五轮又追加了四条：顶栏要能看清、卡片换同风格、"文本往中间移动 + 文本放大"、
-**展示柜搬到视频下面**。改法是**只重做首屏**：
+**展示柜搬到视频下面**。六轮（20261001）再改两处：夜里**不再隐藏**那张手账内页、
+展示柜的翻页改成"像翻日历"（详见第 ⑥b 组）。改法是**只重做首屏**：
 
   ① `.collageBg` 柔和色块 + 方格纸     ② `.petals` 七片樱花
   ③ `.SayWords` 窗贴标签 / 描边渐变标题 / 命令条 / 社交按钮 / 签名 / 下翻钮
@@ -26,12 +27,15 @@
      原来是 JSX 里的内联 style，20260930 收进 sass，最容易漏的就是居中。
   ④ 手机档（≤768px）：一列，内页在文字下面且整宽、标题降到 2rem；**页面不许出现横向滚动**
      —— 色块的负偏移（`left: -12vw` 那类）没有 `overflow: hidden` 就会造出滚动条。
-  ⑤ 夜间档：整个 `.heroPanel` 隐藏（视频仅白天显示是 20260902 的用户要求；只藏 video 会留
-     一张空白的白卡片）。⚠️ 四轮那句"右半屏归 Vitrine"**已作废**——展示柜不再只在夜里出现，
-     它常驻在列里；夜里这一列只是少了一张卡（断言随之改成"列顶就是展示柜"）。拼贴底换深色。
+  ⑤ 夜间档：**内页与白天是同一张手账纸**（20261001 六轮，用户第 1 条）——
+     20260902 那条"视频仅白天显示"与五轮那条"夜里右半屏归展示柜"都已作废。判据
+     **反过来**：两档都不许 `display: none`，且纸色逐字相同。拼贴底照旧换深色。
   ⑥ 展示柜卡片的结构契约（翻页 / 放大）：`perspective` 必须挂在卡片自己身上、
      `overflow: hidden` 不许写在 `.vit-3d` 上、放大态靠 flex 居中而不是 transform —— 三条
      各有一次踩坑史，都在 `Vitrine/index.sass` 头注里。这组一半量几何、一半读源码。
+     ⑥b 是六轮新增的**翻页形态**那组（用户第 2/3 条）：绕顶边掀走（`transform-origin:
+     50% 0`）、老的正反面反转必须消失、掀过去要真隐藏、左下角的纸角 + 弧形箭头、
+     底下那沓垫纸。判据里的"老形态已消失"是**反断言**——比"新形态在"更能挡住回退。
   ⑦ 纪律：不许 `filter: blur()` / `backdrop-filter`（后台 GPU 事故的放大器），樱花只动
      transform/opacity（读编译产物的 `@keyframes` 原文），`prefers-reduced-motion` 下樱花
      不出现、光标常亮 —— 且**带牙**：正常档下这些动画必须是活的（否则"两边都 none"也能绿）。
@@ -103,13 +107,16 @@ HERO = """
       <span class="heroPanelTape tapeR" id="tapeR"></span>
     </figure>
     <section class="vitrine" id="vit">
+      <span class="vit-under" id="vitunder" style="--d:2"></span>
+      <span class="vit-under" style="--d:1"></span>
       <span class="vit-tape vit-tapeL"></span><span class="vit-tape vit-tapeR"></span>
       <div class="vit-3d" id="vit3d">
+        <div class="vit-face vit-panel" id="vitpanel"></div>
         <div class="vit-face vit-cover" id="vitface">
           <span class="vit-coverStar">✦</span><span class="vit-coverTitle">词图关系图谱</span>
         </div>
       </div>
-      <button class="vit-flip" id="vitflip" type="button"></button>
+      <button class="vit-corner" id="vitcorner" type="button"></button>
     </section>
   </div>
   <div class="heroBottom" id="bottom">
@@ -181,6 +188,9 @@ PAINT = """(o) => {
       // 会把 3D 拍平。两条都是"只有量出来才算数"的属性。
       perspective: cs.perspective, transformStyle: cs.transformStyle,
       backface: cs.backfaceVisibility, overflow: cs.overflow, zIndex: cs.zIndex,
+      // 第 ⑥ 组（六轮新增）：翻页改成"绕顶边掀走"⇄ 全靠 `transform-origin`；
+      // 左下角那道缺口靠 `clip-path`。两条都不是"读源码能确认生效"的属性。
+      transformOrigin: cs.transformOrigin, clipPath: cs.clipPath,
     };
   };
   const doc = document.documentElement;
@@ -189,7 +199,8 @@ PAINT = """(o) => {
     hero: R('#hero'), say: R('#say'), title: R('#title'), tag: R('#tag'),
     term: R('#term'), caret: R('#caret'), social: R('#social'), panel: R('#panel'),
     video: R('#video'), tapeL: R('#tapeL'), tapeR: R('#tapeR'), right: R('#right'),
-    vit: R('#vit'), vit3d: R('#vit3d'), vitface: R('#vitface'), vitflip: R('#vitflip'),
+    vit: R('#vit'), vit3d: R('#vit3d'), vitface: R('#vitface'), vitcorner: R('#vitcorner'),
+    vitpanel: R('#vitpanel'), vitunder: R('#vitunder'),
     bottom: R('#bottom'), onesay: R('#onesay'), scroll: R('#scroll'), collage: R('#collage'),
     viewport: { w: window.innerWidth, h: window.innerHeight },
     docOverflow: { scrollW: doc.scrollWidth, clientW: doc.clientWidth,
@@ -455,20 +466,91 @@ with sync_playwright() as p:
           "留着会让人以为还有那条缝）",
           "8vw + 450px" not in VITRINE_CSS and "calc(8vw + 450px)" not in VITRINE_CSS)
 
-    print("\n== ⑦ 夜间档：内页整块隐藏、展示柜补位、拼贴换深色、标题披粉白渐变 ==")
+    print("\n== ⑥b 翻页改成「像翻日历」：绕顶边掀走 + 左下角纸角（20261001 六轮，用户第 2/3 条）==")
+    check("★ 封面绕**顶边**掀走：`.vit-cover` 的 `transform-origin` 竖直分量必须是 0"
+          "（即 `50% 0`）。这就是「翻日历」与「正反面反转」的分界线——"
+          "绕元素自己的中线转，观感就是同一张卡翻面（五轮那版）",
+          m["vitface"]["transformOrigin"].endswith(" 0px"),
+          f"实测 {m['vitface']['transformOrigin']}")
+    check("  · `.vit-panel` 块里不再有 `rotateX(180deg)`（下一页躺平不动，"
+          "当年靠它与 `.vit-3d` 的 180° 对消）",
+          "rotateX(180deg)" not in css_rule(VITRINE_CSS, ".vit-panel"),
+          css_rule(VITRINE_CSS, ".vit-panel")[:80].replace("\n", " "))
+    check("  · `.vitrine.is-flipped` 只作用在 `.vit-cover` 上（不再有 `.vit-3d` 那条）",
+          ".vitrine.is-flipped .vit-cover" in VITRINE_CSS
+          and ".vitrine.is-flipped .vit-3d" not in VITRINE_CSS)
+    flip_rule = css_rule(VITRINE_CSS, ".vitrine.is-flipped .vit-cover")
+    check("★ 掀过去的封面要**真的隐藏**（`visibility: hidden` + 延迟到转过 90° 才生效）："
+          "只靠 `backface-visibility` 它仍在滚动溢出计算里——那半张纸停在卡片上方"
+          "一个卡高的位置，页面顶部会多出一块能滚的空白",
+          "visibility: hidden" in flip_rule and "0.34s" in flip_rule,
+          flip_rule.replace("\n", " ")[:110])
+    check("★ 翻页要**看得见**：缓动不许沿用五轮那条起步就冲的曲线"
+          "（`0.22, 0.68, 0.24, 1` 在 94ms 就转过 90°，观感是闪一下、不是翻）",
+          "cubic-bezier(0.22, 0.68, 0.24, 1)" not in flip_rule,
+          "见 .vit-cover 的 transition")
+    check("★ 封面左下角有**缺口**（`clip-path` 切掉一角，露出下面那页）",
+          m["vitface"]["clipPath"] not in ("none", "") and "polygon" in m["vitface"]["clipPath"],
+          f"实测 {m['vitface']['clipPath'][:60]}")
+    check("★ 翻页钮已撤，改左下角的 `.vit-corner`（仍是个 `<button>` ⇒ Tab 可达）",
+          "vit-flip" not in VITRINE_CSS
+          and "vit-flip" not in VITRINE_TSX.read_text(encoding="utf-8")
+          and ".vit-corner" in VITRINE_CSS and m["vitcorner"] is not None,
+          f"corner {'在场' if m['vitcorner'] else '缺失'}")
+    check("★ 纸角**向外撇出**卡片边缘（用户原话「略微向外侧翻折」）："
+          "它的左缘必须探到卡片左缘之外、下缘探到卡片下缘之外",
+          m["vitcorner"]["left"] < m["vit"]["left"]
+          and m["vitcorner"]["bottom"] > m["vit"]["bottom"],
+          f"corner.left {m['vitcorner']['left']} vs vit.left {m['vit']['left']}；"
+          f"corner.bottom {m['vitcorner']['bottom']} vs vit.bottom {m['vit']['bottom']}")
+    check("  对照组：normal 档下箭头**在动**（否则下面那条 reduced-motion 是空的）",
+          "vit-nudge" in VITRINE_CSS
+          and "vit-nudge" in "".join(
+              k for k in re.findall(r"@keyframes\s+([a-z-]+)", VITRINE_CSS)),
+          "见 sass 里的 @keyframes vit-nudge")
+    check("★ 多层叠纸：`.vit-under` 按 `--d` 往下错开、且压在主卡**之下**"
+          "（今天 `EXHIBITS` 只有一件 ⇒ 真页面渲染 0 层，这里放两层验 CSS 是活的）",
+          m["vitunder"] is not None
+          and m["vitunder"]["bottom"] > m["vit"]["bottom"]
+          and m["vitunder"]["zIndex"] == "0",
+          f"under.bottom {m['vitunder']['bottom']} / vit.bottom {m['vit']['bottom']}"
+          f" / z {m['vitunder']['zIndex']}")
+    # reduced-motion 块在文件**末尾**（sass 按源码位置吐规则，同特异性后写者赢）。
+    # 切出这一段来判，别在全文件里找 —— 那份里到处都有 `animation: none`。
+    rm_v = VITRINE_CSS[VITRINE_CSS.index("@media (prefers-reduced-motion"):]
+    rm_arrow = re.search(r"\.vit-cornerArrow\s*\{([^}]*)\}", rm_v)
+    rm_cover = re.search(r"\.vit-cover\s*\{([^}]*)\}", rm_v)
+    check("★ reduced-motion 档关掉弧形箭头的动效",
+          bool(rm_arrow) and "animation: none" in rm_arrow.group(1),
+          (rm_arrow.group(1).strip() if rm_arrow else "未找到 .vit-cornerArrow 的档"))
+    check("★ reduced-motion 档关掉翻页过渡（`transition: none` —— 顺带把那条 0.39s 的"
+          "visibility 延迟一并关掉，这正是想要的：隐藏态立刻生效）",
+          bool(rm_cover) and "transition: none" in rm_cover.group(1),
+          (rm_cover.group(1).strip() if rm_cover else "未找到 .vit-cover 的档"))
+
+    print("\n== ⑦ 夜间档：内页与白天同一张纸（不再隐藏）、拼贴换深色、标题披粉白渐变 ==")
     pg.set_viewport_size({"width": 1440, "height": 900})
     light = pg.evaluate(PAINT, {"markup": HERO, "dark": False})
     dark = pg.evaluate(PAINT, {"markup": HERO, "dark": True})
-    check("★ 夜间 `.heroPanel` 整块 `display: none`（只藏 video 会留一张空白的白卡片）",
-          dark["panel"]["display"] == "none", f"实测 {dark['panel']['display']}")
-    check("  白天内页必须在（对照组：这条判据不是「两边都 none」）",
-          light["panel"]["display"] != "none" and light["video"]["display"] == "block",
-          f"panel {light['panel']['display']} / video {light['video']['display']}")
-    check("★ 夜间这一列只剩展示柜，且它就在列顶（含它自己那 24px 余量之内；"
-          "24px 是给白天内页的歪角+胶带留的，夜里内页不在流里、就只是一点余量）",
+    # 20261001 六轮，用户第 1 条：「夜间模式和白天模式展示的手账纸一样，不要夜间隐藏
+    # 视频的手账。」⇒ 判据从"夜里必须 none"**反过来**：两档都不许 none。
+    check("★ 夜间 `.heroPanel` **不再隐藏**（用户第 1 条：两档主题同一张手账纸）",
+          dark["panel"]["display"] != "none", f"实测 {dark['panel']['display']}")
+    check("  白天内页在（对照组），夜里那张视频也照常 `display: block`",
+          light["panel"]["display"] != "none"
+          and light["video"]["display"] == "block"
+          and dark["video"]["display"] == "block",
+          f"panel 昼 {light['panel']['display']} 夜 {dark['panel']['display']} / "
+          f"video 昼 {light['video']['display']} 夜 {dark['video']['display']}")
+    check("★ 两档主题下内页的**纸色逐字相同**（`.heroPanel` 的底色是字面量 `#fffdfa`、"
+          "不吃 `--washi-*` 令牌——夜里那档的纸是深色，换成令牌就不再「一样」了）",
+          dark["panel"]["background"] == light["panel"]["background"],
+          f"昼 {light['panel']['background']} / 夜 {dark['panel']['background']}")
+    check("★ 夜间这一列仍是「内页 + 展示柜」两张卡（展示柜在下面，间距与白天同值）",
           dark["vit"]["display"] != "none"
-          and 0 <= dark["vit"]["top"] - dark["right"]["top"] <= 24,
-          f"vit.top {dark['vit']['top']} / right.top {dark['right']['top']}")
+          and dark["vit"]["top"] - dark["panel"]["bottom"] == light["vit"]["top"] - light["panel"]["bottom"],
+          f"夜 {dark['vit']['top'] - dark['panel']['bottom']}px / "
+          f"昼 {light['vit']['top'] - light['panel']['bottom']}px")
     check("夜间拼贴底换成深色（与白天不是同一张 background-image）",
           dark["collage"]["bgImage"] != light["collage"]["bgImage"]
           and "rgb(22, 18, 31)" in dark["collage"]["bgImage"],
