@@ -189,7 +189,10 @@ console.log('\n⑥ 版本号：改了 widget 脚本必须 bump（nginx 对 live2
     const widget = readFileSync(path.join(root, 'public/live2d-widgets/autoload.js'), 'utf8');
     const ver = (widget.match(/const VER = '([^']+)'/) || [])[1];
     ok(!!ver, '能读到 autoload.js 的 VER');
-    ok(ver === '20260929a', 'VER 已 bump 到本轮（20260929a）', { ver });
+    // 这个字面量**就是刻意钉死的**：改了 widget 脚本却没 bump 时，这里会红（20260930a
+    // 是删掉看板娘飞机图标那一轮——工具数组变了、waifu-tips.json 也变了，必须换版本号
+    // 才能越过 nginx 那 1 年 immutable 缓存）。bump 时同步改这一行。
+    ok(ver === '20260930a', 'VER 已 bump 到本轮（20260930a）', { ver });
     const tsx = readFileSync(path.join(root, 'src/components/Live2dAgent/index.tsx'), 'utf8');
     ok(tsx.includes('autoload.js?v=' + ver), 'Live2dAgent 的 ?v= 与 VER 一致');
 }
