@@ -225,6 +225,11 @@ jobs:
           SSH_HOST: ${{ secrets.SERVER_HOST }}
           SSH_USER: ${{ secrets.SERVER_USER }}
           SSH_PORT: ${{ secrets.SSH_PORT }}
+          # 服务器上这份仓的落点。默认值就是本站那一个（下面 `${DEPLOY_REPO_DIR:-…}`
+          # 兜底），所以本站一行都不用配；fork 的人在自己的仓里加一个 Variable 就能指到
+          # 别处，不必改这个被跟踪的文件。Variable 没设时是**空串**（不是缺席），
+          # `:-` 正好把"空"和"未设"一并兜住。
+          DEPLOY_REPO_DIR: ${{ vars.DEPLOY_REPO_DIR }}
         run: |
           echo "$SSH_KEY" > /tmp/deploy_key
           chmod 600 /tmp/deploy_key
@@ -237,6 +242,6 @@ jobs:
               -o ConnectTimeout=10 \
               -p "${SSH_PORT:-22}" \
               -i /tmp/deploy_key "${SSH_USER}@${SSH_HOST}" \
-              "bash /home/ubuntu/memory_blog_rust/scripts/deploy/trigger_deploy.sh ${DEPLOY_SHA}"
+              "bash ${DEPLOY_REPO_DIR:-/home/ubuntu/memory_blog_rust}/scripts/deploy/trigger_deploy.sh ${DEPLOY_SHA}"
           echo "✅ 部署成功（本次部署的提交号见上）"
           rm -f /tmp/deploy_key
