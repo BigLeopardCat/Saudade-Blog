@@ -7,16 +7,27 @@ import react from '@vitejs/plugin-react';
  * 为什么不用 Vite 内置的 `%VITE_XXX%`：那套只认 `.env*` 与真实进程环境，而本仓的
  * `.env*` **整类都在 .gitignore 里**（`.gitignore:40`）——别人 clone 后一个 .env 都没有，
  * 占位符会原样留在 HTML 里（canonical / og:url 变成字面量 `%VITE_SITE_URL%`），
- * 比硬编码更难查。这里在**受版本控制**的配置里给默认值：缺环境变量时退化成本站地址
- * （线上行为零变化），部署者改成自己的域名只需设一个 `VITE_SITE_URL`。
+ * 比硬编码更难查。这里在**受版本控制**的配置里给默认值。
+ *
+ * **默认值是中性占位（本机开发地址），不是任何真实域名**：缺 `VITE_SITE_URL` 时宁可
+ * 产出一个明显没配好的地址（本地开发恰好就是它），也不要静默指向项目作者的站点——
+ * 那样 fork 出去部署时，搜索引擎会把别人的文章挂到作者域名下，且没有任何东西会报错。
+ * 线上部署通过 CI 的仓库 Variable `VITE_SITE_URL` 显式传入（见 `.github/workflows/deploy.yml`）。
  *
  * 两处消费：① 下面的 siteIdentity 插件替换 index.html 里的占位符；
  * ② 同名的 `define` 把值注入给 TS（读法见 `src/utils/siteUrl.ts`）。
  * 用 `define` 而不是 `import.meta.env` 就是为了**默认值只有这一份** ——
  * 否则 HTML 一个默认值、TS 一个默认值，改一处忘一处就会 canonical 与 og:url 打架。
  */
-const SITE_URL = (process.env.VITE_SITE_URL || 'https://saudade.site').replace(/\/+$/, '');
+const SITE_URL = (process.env.VITE_SITE_URL || 'http://localhost:5173').replace(/\/+$/, '');
 const SITE_AUTHOR = process.env.VITE_SITE_AUTHOR || 'Sora';
+
+if (!process.env.VITE_SITE_URL) {
+    console.warn(
+        '[site-identity] 未设 VITE_SITE_URL，canonical / og:url / robots.txt 将回落到 '
+        + `${SITE_URL} —— 线上构建必须设它（CI 见 deploy.yml 的 VITE_SITE_URL 环境变量）。`,
+    );
+}
 
 const siteIdentity = (): Plugin => ({
     name: 'saudade-site-identity',

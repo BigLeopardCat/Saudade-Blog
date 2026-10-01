@@ -63,8 +63,9 @@ push 到 `cn_sora_blog` 分支触发构建与部署：
 - **密钥全走 CI Secrets 与服务器环境文件**，无硬编码。
 
 **前端强缓存**：对少量重资源目录（Live2D 模型与运行时）设 1 年 `immutable`；该 location 必须排在
-`\.(js|css|json)$` 的 no-store 正则**之前**（否则被后者的规则吃掉）。这类目录换版靠 `?v=` bump——
-需手动同步 **2 处**：组件里的 `?v=` 与 `boot.js` 的 `VER`（样式表由 VER 自动拼接）。
+`\.(js|css|json)$` 的 no-store 正则**之前**（否则被后者的规则吃掉）。这类目录换版靠 `?v=` bump，
+同步点不止一处；完整清单见 [frontend/README.md](../frontend/README.md) 的《改这里的文件要 bump 版本号》
+一节（那是唯一事实源，本文不另列一份以免漂移）。
 
 ### 2.2 逃生通道（仅 CI 故障时）
 
@@ -106,7 +107,7 @@ push 到 `cn_sora_blog` 分支触发构建与部署：
 logs/
 ├── rust.log            # Rust：全局 access 行（method= path= status= ms=）+ 业务日志
 ├── agent/              # agent.log 生命周期（tid= trace_id 前缀）
-│   └── traces/         # 对话 trace JSON（节点事件 + 分段耗时 + 退出原因）
+│   └── traces/         # 对话 trace JSON，按天分目录 <YYYYMMDD>/（节点事件 + 分段耗时 + 退出原因）
 ├── frontend/           # monitor.log 前端错误上报（匿名可写，8KB body 上限）
 ├── device.log          # IoT device-service
 ├── deploy.log          # CI 触发记录
@@ -117,9 +118,10 @@ logs/
 - **轮转**：daily + rotate 14 + compress + copytruncate（追加写，免重启），glob 覆盖各组。
   ⚠️ **必须指定 `su ubuntu ubuntu`**：日志属主得是跑服务的那个用户，systemd 迁移后 root 属主
   会让轮转**静默失败**（20260830 踩过，chown 修正）。
-- **traces 单独一块**：对话 trace 是**一次性 JSON**，早期跟普通日志共用 `copytruncate` 会留下
-  349 个 0 字节空壳，而 `notifempty` 又让空壳永不再轮转——改成 rename + compress（源文件归档为
-  `.1.gz`），读取端兼容 gz。
+- **traces 不归 logrotate 管**：对话 trace 是**文件名唯一的一次性 JSON**，而 logrotate 的 `rotate N`
+  靠同名文件后缀 +1 计数，对这类文件完全无效（配置写了 `rotate 14`，实测最老文件 26 天、
+  `.2.gz` 为 0 个）。该块 20260925 已整块删除；保留期改由 `eval/trace_retention.py` 执行
+  （按 mtime：>24h 压缩、>30 天删除；默认只列不删，`--apply` 才动手）。
 - **时区**：Rust 与 agent 日志统一本地 +08:00 钟面，跨文件对账没有 8 小时差。
 - **心跳探针**（cron 每分钟，`scripts/healthcheck.sh`）：① Rust 存活 ② agent `/health` 的
   `agent_ready` ③ **uvicorn worker 崩溃检测**（pid 集合对比——worker 静默死亡不留任何日志，
