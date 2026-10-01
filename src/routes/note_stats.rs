@@ -15,8 +15,13 @@
 //!    所以：
 //!      · 读（`GET stats` / `POST view`）**不需要登录**：拿得到身份就填 `liked`，
 //!        拿不到就 `liked: false`——这是**正常成功**，不是降级、不是错误；
-//!      · 写（`POST/DELETE like`）需要登录，失败走**信封错误**（HTTP 200 + code=500 +
-//!        中文原因），与 `/api/protected/quota`、`profile.rs` 那一族完全一致。
+//!      · 写（`POST/DELETE like`）失败走**信封错误**（HTTP 200 + code=500 + 中文原因），
+//!        与 `/api/protected/quota`、`profile.rs` 那一族完全一致。20261001 起写也
+//!        **不再要求登录**（用户第 2 条「点赞改为非登录用户也可以点赞」）：身份 = 登录
+//!        账号，或浏览器自报的访客标识（`X-Visitor-Key`）；**两者都没有才回「未登录」**。
+//!        匿名点赞把"点赞数"拉到了与阅读量同一档可信度（key 是客户端自己生成、能刷）
+//!        ——代价与取舍写在 `scripts/migration/note_like_anon_20261001.sql` 头注
+//!        与 `docs/security-boundary.md`，改这一族之前先读那两处。
 //! 2. **写端点挂 `public_routes` + handler 内自己鉴权**（`crate::auth_jwt::auth_uid`）。
 //!    挂进 `protected_routes` 会被 `auth_guard` 按 `authz::can_access_console` 把
 //!    普通用户全部 403 掉——那是后台守卫，不是"登录守卫"。
@@ -42,7 +47,7 @@ use axum::{
     Json,
 };
 use sea_orm::{
-    sea_query::{Alias, Expr, OnConflict, SimpleExpr},
+    sea_query::{Alias, Condition, Expr, OnConflict, SimpleExpr},
     ColumnTrait, DatabaseConnection, DbErr, EntityTrait, PaginatorTrait, QueryFilter, QuerySelect,
     Set,
 };
@@ -158,12 +163,103 @@ async fn favorites_of(db: &DatabaseConnection, note_id: i32) -> Result<i64, DbEr
         .map(|n| n as i64)
 }
 
-/// 这个人点过没有。`None`（未登录/令牌作废）= 没点过。
-async fn liked_by(db: &DatabaseConnection, note_id: i32, uid: Option<i32>) -> bool {
-    let Some(uid) = uid else { return false };
+/// 匿名访客标识的请求头名。**读取端只此一处**（要改名就改这里 + 前端 `visitorKey.ts`）。
+const VISITOR_HEADER: &str = "x-visitor-key";
+/// 标识长度下限。太短的 key（两三个字符）会被不同的人/脚本轻易撞上，等于没有去重；
+/// 前端生成的是 UUID（36 字符），这个下限只是拦明显不认真的调用方。
+const VISITOR_MIN: usize = 8;
+/// 长度上限 = `note_like.visitor_key` 的列宽（超了会被 MySQL 截断/报错，不如提前拒）。
+const VISITOR_MAX: usize = 64;
+
+/// 从请求头取匿名访客标识（**尽力而为**：缺失/格式不对一律当"没有"）。
+///
+/// 为什么敢用一个客户端自报的值当去重键：**它不是身份凭据**。伪造它最多让同一个人
+/// 多点几个赞，换不来任何权限（能拿到的东西与"没登录的访客"完全一样）。
+/// 字符集只收 `[A-Za-z0-9_-]`——白名单比"转义黑名单"少一整类将来才会发现的洞。
+fn visitor_key(headers: &HeaderMap) -> Option<String> {
+    let k = headers.get(VISITOR_HEADER)?.to_str().ok()?.trim();
+    if k.len() < VISITOR_MIN || k.len() > VISITOR_MAX {
+        return None;
+    }
+    if !k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+        return None;
+    }
+    Some(k.to_string())
+}
+
+/// 这次请求**是谁**（20261001 起有两种身份）。
+enum Who {
+    /// 登录用户。`key` 是同一请求里带的访客标识——登录态下它**不参与"我是谁"**，
+    /// 只用于把"这台浏览器此前匿名投的那一票"一并认下来（见 `like_note` 的说明）。
+    User { uid: i32, key: Option<String> },
+    /// 匿名访客：只有浏览器自报的标识。
+    Visitor(String),
+}
+
+impl Who {
+    /// 日志里的身份标签。**不打印完整的 `visitor_key`**：它对排障没用（认不出人是谁），
+    /// 却会被抄进长期留存的日志文件——前 8 位足够把"同一台浏览器的几次请求"对上号。
+    /// （标识是纯 ASCII，切片不会切到多字节字符中间。）
+    fn tag(&self) -> String {
+        match self {
+            Who::User { uid, .. } => format!("uid={}", uid),
+            Who::Visitor(k) => format!("visitor={}…", &k[..k.len().min(8)]),
+        }
+    }
+
+    /// 这个身份在 `note_like` 里对应的过滤条件（读与删共用一份，免得两处写歪）。
+    fn cond(&self) -> Condition {
+        match self {
+            Who::User { uid, key } => {
+                let own = Condition::any().add(note_like::Column::UserId.eq(*uid));
+                // 登录后**同一台浏览器**此前匿名投的那一票也算"我点过"：
+                // 不认的话，先匿名点赞、再登录，心形会当场变空——而计数里明明有那一票。
+                match key {
+                    Some(k) => own.add(
+                        Condition::all()
+                            .add(note_like::Column::UserId.is_null())
+                            .add(note_like::Column::VisitorKey.eq(k.clone())),
+                    ),
+                    None => own,
+                }
+            }
+            Who::Visitor(k) => {
+                // `user_id IS NULL` 是白写的（登录行一律 visitor_key=NULL，见插入处），
+                // 但把它写上等于把这条不变量钉在查询里，不必让读者去别处求证。
+                Condition::all()
+                    .add(note_like::Column::UserId.is_null())
+                    .add(note_like::Column::VisitorKey.eq(k.clone()))
+            }
+        }
+    }
+}
+
+/// 解析这次请求的身份。三种结果**必须分开**，别用 `.ok()` 一把梭：
+///   · `Ok(Some(who))` —— 认出来了（登录优先，其次访客标识）；
+///   · `Ok(None)`      —— 既没登录也没带访客标识（读接口照常返回、`liked` 恒 false）；
+///   · `Err(e)`        —— **带着令牌来的，但令牌不能用**（过期/已收回/账号被冻结）。
+///     这一支**绝不降级成匿名**：账号被冻结的人不该因为"换个身份"就照常点赞。
+///     （他能清掉 localStorage 再来——那是匿名点赞固有的口子，见迁移头注语义 ①——
+///      但我们不主动替他换。）读接口按模块头注第 1 条把它当"没认出来"处理。
+async fn identify(
+    db: &DatabaseConnection,
+    headers: &HeaderMap,
+) -> Result<Option<Who>, crate::auth_jwt::AuthError> {
+    match crate::auth_jwt::auth_uid(db, headers).await {
+        Ok(uid) => Ok(Some(Who::User { uid, key: visitor_key(headers) })),
+        Err(crate::auth_jwt::AuthError::Missing) => {
+            Ok(visitor_key(headers).map(Who::Visitor))
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// 这个人点过没有。`None`（未登录且无访客标识）= 没点过。
+async fn liked_by(db: &DatabaseConnection, note_id: i32, who: Option<&Who>) -> bool {
+    let Some(who) = who else { return false };
     note_like::Entity::find()
         .filter(note_like::Column::NoteId.eq(note_id))
-        .filter(note_like::Column::UserId.eq(uid))
+        .filter(who.cond())
         .select_only()
         .column(note_like::Column::Id)
         .into_tuple::<i32>()
@@ -175,21 +271,21 @@ async fn liked_by(db: &DatabaseConnection, note_id: i32, uid: Option<i32>) -> bo
 
 /// 尽力而为的身份：**失败一律当未登录**，不向上传播错误。
 /// 这正是模块头注第 1 条的落地——读接口不能因为"令牌过期"就整条请求失败。
-async fn optional_uid(db: &DatabaseConnection, headers: &HeaderMap) -> Option<i32> {
-    crate::auth_jwt::auth_uid(db, headers).await.ok()
+async fn optional_who(db: &DatabaseConnection, headers: &HeaderMap) -> Option<Who> {
+    identify(db, headers).await.ok().flatten()
 }
 
 /// 组装单篇读数（`POST view` 与 `GET stats` 共用一份，保证两条路的形状一致）。
 async fn read_stats(
     db: &DatabaseConnection,
     note_id: i32,
-    uid: Option<i32>,
+    who: Option<&Who>,
 ) -> Result<NoteStatsDto, DbErr> {
     Ok(NoteStatsDto {
         views: views_of(db, note_id).await?,
         likes: likes_of(db, note_id).await?,
         favorites: favorites_of(db, note_id).await?,
-        liked: liked_by(db, note_id, uid).await,
+        liked: liked_by(db, note_id, who).await,
     })
 }
 
@@ -216,8 +312,8 @@ pub async fn note_stats(
     if !visible_note_id(&state.db, id).await {
         return note_gone();
     }
-    let uid = optional_uid(&state.db, &headers).await;
-    match read_stats(&state.db, id, uid).await {
+    let who = optional_who(&state.db, &headers).await;
+    match read_stats(&state.db, id, who.as_ref()).await {
         Ok(dto) => Json(ApiResponse::success(dto)).into_response(),
         Err(e) => {
             tracing::error!("[note_stats] 读取读数失败 note={}: {}", id, e);
@@ -263,8 +359,8 @@ pub async fn report_view(
         // （前端也只是把它当"这次没数"，不弹提示）。
         tracing::warn!("[note_stats] 阅读上报失败 note={}: {}", id, e);
     }
-    let uid = optional_uid(&state.db, &headers).await;
-    match read_stats(&state.db, id, uid).await {
+    let who = optional_who(&state.db, &headers).await;
+    match read_stats(&state.db, id, who.as_ref()).await {
         Ok(dto) => Json(ApiResponse::success(dto)).into_response(),
         Err(e) => {
             tracing::error!("[note_stats] 上报后回读失败 note={}: {}", id, e);
@@ -274,26 +370,71 @@ pub async fn report_view(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 点赞 / 取消点赞（需要登录；失败走信封错误，**不是 401**）
+// 点赞 / 取消点赞（20261001 起**匿名也可以**；失败走信封错误，**不是 401**）
+//
+// 身份按"登录优先、其次浏览器自报的访客标识"解析（`identify`）。两者都没有时
+// 回「未登录」的信封错误——**这是唯一还需要拦的一档**，而不是从前那种"必须登录"。
+// 匿名点赞为什么可以接受（以及它的代价），写在迁移文件头注的语义 ① 与
+// `docs/security-boundary.md` 的"可被匿名刷"一节里，改这里之前先读那两处。
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// 点赞与取消点赞共用的一段：先鉴权，再确认文章可见。
+/// 点赞与取消点赞共用的一段：先认身份，再确认文章可见。
 /// 返回 `Err(响应)` 表示已经可以原样返回给前端了。
 async fn like_prelude(
     state: &Arc<AppState>,
     headers: &HeaderMap,
     id: i32,
-) -> Result<i32, Response> {
-    let uid = match crate::auth_jwt::auth_uid(&state.db, headers).await {
-        Ok(uid) => uid,
-        Err(e) => {
-            return Err(Json(ApiResponse::<LikeDto>::error(e.message())).into_response())
+) -> Result<Who, Response> {
+    let who = match identify(&state.db, headers).await {
+        Ok(Some(who)) => who,
+        // 令牌在、但已经不能用（过期/收回/冻结）：如实回原因，**不降级成匿名**
+        Err(e) => return Err(Json(ApiResponse::<LikeDto>::error(e.message())).into_response()),
+        // 既没登录也没带访客标识（正常前端永远带）——只有直接 curl 的用户见得到
+        Ok(None) => {
+            return Err(Json(ApiResponse::<LikeDto>::error("未登录")).into_response())
         }
     };
     if !visible_note_id(&state.db, id).await {
         return Err(Json(ApiResponse::<LikeDto>::error("这篇文章不存在")).into_response());
     }
-    Ok(uid)
+    Ok(who)
+}
+
+/// 写入一行点赞。两种身份落到两种行（见 `entity/note_like.rs` 头注）。
+///
+/// **登录态会先清掉同一 `visitor_key` 的匿名行**：那行的主人就是这台浏览器，
+/// 不清的话"先匿名点一下、再登录点一下"= 同一台机器投出两票，而报表上分不出来。
+/// 这个动作对"从没匿名点过"的绝大多数请求就是一条零行的 DELETE（走
+/// `uq_like_note_visitor` 的最左列，代价可忽略）。
+async fn insert_like(db: &DatabaseConnection, note_id: i32, who: &Who) -> Result<(), DbErr> {
+    if let Who::User { key: Some(k), .. } = who {
+        note_like::Entity::delete_many()
+            .filter(note_like::Column::NoteId.eq(note_id))
+            .filter(note_like::Column::UserId.is_null())
+            .filter(note_like::Column::VisitorKey.eq(k.clone()))
+            .exec(db)
+            .await?;
+    }
+    let (user_id, visitor_key) = match who {
+        Who::User { uid, .. } => (Some(*uid), None),
+        Who::Visitor(k) => (None, Some(k.clone())),
+    };
+    let am = note_like::ActiveModel {
+        note_id: Set(note_id),
+        user_id: Set(user_id),
+        visitor_key: Set(visitor_key),
+        ..Default::default()
+    };
+    if let Err(e) = note_like::Entity::insert(am).exec_without_returning(db).await {
+        // 并发下两个请求同时走到这里 → 对应的那条唯一键拦下第二个
+        // （登录行撞 `uq_like_note_user`、匿名行撞 `uq_like_note_visitor`）。
+        // **不能只看错误类型断言"是撞唯一键"**（同 `profile.rs::add_favorite` 的取舍）：
+        // 回查一次，现在真有一行就算成功，否则才是真失败。
+        if !liked_by(db, note_id, Some(who)).await {
+            return Err(e);
+        }
+    }
+    Ok(())
 }
 
 /// 点赞后的回执（顺带回读一次总数，不在 Rust 侧自增）。
@@ -313,47 +454,39 @@ pub async fn like_note(
     Path(id): Path<i32>,
     headers: HeaderMap,
 ) -> Response {
-    let uid = match like_prelude(&state, &headers, id).await {
-        Ok(uid) => uid,
+    let who = match like_prelude(&state, &headers, id).await {
+        Ok(who) => who,
         Err(resp) => return resp,
     };
-    let existed = liked_by(&state.db, id, Some(uid)).await;
-    if !existed {
-        let am = note_like::ActiveModel {
-            note_id: Set(id),
-            user_id: Set(uid),
-            ..Default::default()
-        };
-        if let Err(e) = note_like::Entity::insert(am).exec_without_returning(&state.db).await {
-            // 并发下两个请求同时走到这里 → `uq_like_note_user` 拦下第二个。
-            // **不能只看错误类型断言"是撞唯一键"**（同 `profile.rs::add_favorite` 的取舍）：
-            // 回查一次，现在真有一行就算成功，否则才是真失败。
-            if !liked_by(&state.db, id, Some(uid)).await {
-                tracing::error!("[note_stats] 点赞失败 uid={} note={}: {}", uid, id, e);
-                return Json(ApiResponse::<LikeDto>::error("点赞失败，请稍后再试")).into_response();
-            }
+    if !liked_by(&state.db, id, Some(&who)).await {
+        if let Err(e) = insert_like(&state.db, id, &who).await {
+            tracing::error!("[note_stats] 点赞失败 note={} who={}: {}", id, who.tag(), e);
+            return Json(ApiResponse::<LikeDto>::error("点赞失败，请稍后再试")).into_response();
         }
     }
     like_dto(&state.db, id, true).await.into_response()
 }
 
 /// DELETE /api/public/notes/:id/like —— 取消点赞（幂等：没点过也回成功）。
+///
+/// 登录态下 `who.cond()` 会连"这台浏览器匿名投的那一票"一起匹配上（见 `Who::cond`），
+/// 于是登录后按同一颗心取消，两票一起走——与点赞时"登录会把匿名行升格掉"对称。
 pub async fn unlike_note(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i32>,
     headers: HeaderMap,
 ) -> Response {
-    let uid = match like_prelude(&state, &headers, id).await {
-        Ok(uid) => uid,
+    let who = match like_prelude(&state, &headers, id).await {
+        Ok(who) => who,
         Err(resp) => return resp,
     };
     if let Err(e) = note_like::Entity::delete_many()
         .filter(note_like::Column::NoteId.eq(id))
-        .filter(note_like::Column::UserId.eq(uid))
+        .filter(who.cond())
         .exec(&state.db)
         .await
     {
-        tracing::error!("[note_stats] 取消点赞失败 uid={} note={}: {}", uid, id, e);
+        tracing::error!("[note_stats] 取消点赞失败 note={} who={}: {}", id, who.tag(), e);
         return Json(ApiResponse::<LikeDto>::error("操作失败，请稍后再试")).into_response();
     }
     like_dto(&state.db, id, false).await.into_response()

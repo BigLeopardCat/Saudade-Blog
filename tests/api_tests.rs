@@ -145,6 +145,31 @@ async fn req_api_code(app: axum::Router, method: &str, uri: &str, body: &str) ->
     (status, code)
 }
 
+/// 同 `req_api_code`，但**把信封里那句话也带回来**（有些判据只能靠它区分——
+/// 例如点赞那族「未登录」与「这篇文章不存在」都是 HTTP 200 + code≠200，
+/// 状态码完全一样，只有文案分得出卡在哪一关），并且可以额外带一个请求头。
+async fn req_api_envelope(
+    app: axum::Router,
+    method: &str,
+    uri: &str,
+    header: Option<(&str, &str)>,
+) -> (StatusCode, i64, String) {
+    let mut builder = Request::builder().method(method).uri(uri);
+    if let Some((k, v)) = header {
+        builder = builder.header(k, v);
+    }
+    let res = app
+        .oneshot(builder.body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let status = res.status();
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+    let v = serde_json::from_slice::<serde_json::Value>(&bytes).unwrap_or(serde_json::Value::Null);
+    let code = v.get("code").and_then(|c| c.as_i64()).unwrap_or(-1);
+    let msg = v.get("message").and_then(|m| m.as_str()).unwrap_or("").to_string();
+    (status, code, msg)
+}
+
 #[tokio::test]
 async fn test_profile_center_requires_login() {
     // 请求体一律填**合法形状**：字段不合法会在 extractor 层先返回 422，
@@ -222,16 +247,83 @@ async fn test_quota_admin_routes_require_console() {
 // ——它们的形状由 MockDatabase 的零查询预期顶着（handler 在查到文章之前不会成功，
 // 这里只断言路由存在且没被守卫误伤）。
 //
-// **写**（like/unlike）需要登录，但**不是 401**：它挂 `public_routes` + handler 内
-// 自身鉴权，走的是上面 profile 那一族的信封错误契约。判据写死在这里，防后人"顺手
-// 挪进 protected_routes"——那会把普通用户全部 403 掉（auth_guard 判的是管理员）。
+// **写**（like/unlike）**20261001 起也不再要求登录**（用户第 2 条：点赞改为非登录
+// 用户也可以点赞）：身份 = 登录账号，或浏览器自报的 `X-Visitor-Key`（`identify`）。
+// 但**仍然不是 401**：它挂 `public_routes` + handler 内自身鉴权，走的是上面 profile
+// 那一族的信封错误契约。判据写死在这里，防后人"顺手挪进 protected_routes"——那会把
+// 普通用户全部 403 掉（auth_guard 判的是管理员）。
 #[tokio::test]
 async fn test_点赞取消点赞走信封错误而不是401() {
     for (method, uri) in [("POST", "/api/public/notes/1/like"), ("DELETE", "/api/public/notes/1/like")] {
-        let (status, code) = req_api_code(mock_app(), method, uri, "").await;
+        let (status, code, _) = req_api_envelope(mock_app(), method, uri, None).await;
         assert_eq!(status, StatusCode::OK, "{} {} 应返回 HTTP 200 信封", method, uri);
-        assert_ne!(code, 200, "{} {} 未登录不该成功", method, uri);
+        assert_ne!(code, 200, "{} {} 没有身份不该成功", method, uri);
     }
+}
+
+/// 匿名点赞（20261001）：这道门是**访客标识**开的，不是把鉴权放宽了。
+///
+/// 判据靠**信封里的那句话**区分走到了哪一关（两个分支都是 HTTP 200 + code≠200，
+/// 只看状态码分不出来）：
+///   · 「未登录」      = 身份这一关没过；
+///   · 「这篇文章不存在」= 身份过了，卡在"文章可见性"那一关（MockDatabase 没有任何
+///     查询预期 ⇒ `visible_note_id` 恒 false）。**这就是"门真的开了"的证据。**
+#[tokio::test]
+async fn test_匿名点赞靠访客标识开门而不是放宽鉴权() {
+    const OK_KEY: (&str, &str) = ("x-visitor-key", "0123456789abcdef");
+
+    // ① 两样都没有 ⇒ 「未登录」
+    let (status, code, msg) = req_api_envelope(mock_app(), "POST", "/api/public/notes/1/like", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_ne!(code, 200);
+    assert_eq!(msg, "未登录", "没身份时应当被拦在身份这一关");
+
+    // ② 合法标识 ⇒ 不再是「未登录」（门开了）
+    let (status, _, msg) = req_api_envelope(mock_app(), "POST", "/api/public/notes/1/like", Some(OK_KEY)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(msg, "这篇文章不存在", "有标识就该走到可见性判定，而不是被当成未登录");
+
+    // ③ 标识不合格（太短 / 字符集越界 / 超长）⇒ 一律当"没有标识"
+    for bad in ["short", "abc", "has space here", "0123456789abc!@#$%^&*()", &"a".repeat(65)] {
+        let (_, _, msg) = req_api_envelope(
+            mock_app(), "POST", "/api/public/notes/1/like", Some(("x-visitor-key", bad)),
+        ).await;
+        assert_eq!(msg, "未登录", "非法标识 {:?} 不该被当成身份", bad);
+    }
+
+    // ④ 带着令牌（哪怕是坏的）也**绝不能**变成 401：前端 axios 对任何 401 都清 token
+    //    并跳 /login——"浏览器里躺着一枚过期令牌"正是匿名访客最常见的形态，被一脚
+    //    踢去登录页就等于这个功能白做。
+    //
+    // `verify_token` 每次都从环境里读 `JWT_SECRET`、读不到直接 panic（不是返回 None）。
+    // 本套件里只有这一条用例会走到验签（其余用例连 Authorization 头都不带），
+    // 所以在用例内设一枚测试密钥即可：它不参与任何真实签名，只为让"坏令牌 ⇒
+    // 验签失败 ⇒ 退回访客身份"这条路径跑得通。
+    std::env::set_var("JWT_SECRET", "test-secret-not-used-for-anything-real");
+    let (status, _, msg) = {
+        let res = mock_app()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/public/notes/1/like")
+                    .header("authorization", "Bearer not-a-real-token")
+                    .header(OK_KEY.0, OK_KEY.1)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let st = res.status();
+        let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        (
+            st,
+            v.get("code").and_then(|c| c.as_i64()).unwrap_or(-1),
+            v.get("message").and_then(|m| m.as_str()).unwrap_or("").to_string(),
+        )
+    };
+    assert_eq!(status, StatusCode::OK, "坏令牌 + 好标识不该是 401");
+    assert_eq!(msg, "这篇文章不存在", "坏令牌应当**退回访客身份**，而不是当成未登录");
 }
 
 /// 后台文章报表挂守卫域 ⇒ 无 token 是 **401**（与 `/api/protected/stats/users` 同族）。
