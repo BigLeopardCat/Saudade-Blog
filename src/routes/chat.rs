@@ -2759,6 +2759,11 @@ mod tests {
     #[test]
     fn frame_prefixes_match_frontend() {
         // 路径相对于本文件；`include_str!` 是编译期读入 ⇒ 前端动了这个文件会重编本测试
+        //
+        // ⚠️ 这个文件**不在本仓的 git 里**（20261002 前端搬家：看板娘前端随 MIT 分发搬进了
+        // agent 仓）。构建/测试前先跑 `npm run fetch:widget` 把它按
+        // frontend/widget.lock.json 钉的 sha 取到这条路径下——否则 `cargo test` 会在这里
+        // 报一个"文件找不到"的编译错，看不出前因后果。见 CONTRIBUTING §3.1。
         const CHAT_STREAM_JS: &str =
             include_str!("../../frontend/public/live2d-widgets/chat-stream.js");
         for prefix in FORWARDED_FRAME_PREFIXES {

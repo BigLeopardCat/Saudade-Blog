@@ -20,12 +20,17 @@ Saudade Blog 的 SPA：博客页面（首页/文章/留言板/关于）、后台
 
 ```bash
 npm ci
+npm run fetch:widget    # ★ 不能省：看板娘前端的源码住在 agent 仓（见下）
 npm run vendor:live2d   # ★ 不能省：看板娘运行时的三份第三方产物不入库（见下）
 npm run dev             # Vite 开发服务器（默认为 http://localhost:5173）
 ```
 
-少了第二步的话，博客本身照常跑，但**看板娘一帧都不画**（浏览器控制台会报
-`/live2d-widgets/vendor/pixi.min.js` 加载失败）——三份产物的来历见下面
+两个 ★ **顺序不能换**：`fetch:widget` 整树替换 `public/live2d-widgets/`，而
+`vendor:live2d` 往它的 `vendor/` 子目录里写。
+
+少了 `fetch:widget` 的话，博客本身照常跑、聊天面板也在，但**看板娘一帧都不画**
+（控制台报 `chat-stream.js` 之类 404）；少了 `vendor:live2d` 是同一个症状、报
+`/live2d-widgets/vendor/pixi.min.js` 加载失败。两者的来历见下面
 [看板娘那一节](#看板娘与聊天面板publiclive2d-widgets)。
 
 开发模式**不用配代理**：`src/utils/runtimeApi.ts` 看到端口是 5173/4173 就会把 API
@@ -46,8 +51,8 @@ frontend/
 ├── vite.config.ts          构建配置 + 站点身份注入插件
 ├── public/                 原样拷贝进 dist 的静态资源
 │   ├── fonts/              ★ 自托管图标字体（两套 iconfont + Font Awesome）
-│   ├── live2d-widgets/     ★ 看板娘与聊天面板（见下；vendor/ 子目录不入库）
-│   ├── live2d_model/       Live2D 模型文件
+│   ├── live2d-widgets/     ★ 看板娘与聊天面板（**源码在 agent 仓**，npm run fetch:widget 就位）
+│   ├── live2d_model/       Live2D 模型文件（同上，也由 fetch:widget 就位）
 │   ├── cubism5/            Live2D Cubism Core（**不入库**，npm run vendor:live2d 就位）
 │   ├── loading.svg         图片懒加载占位
 │   └── effects.js          页面特效（樱花/雨/雪）
@@ -83,6 +88,25 @@ vendor/                  pixi.js / pixi-live2d-display 的 UMD 产物（**不入
 整个目录是**自研代码**。20261001 之前这里住着上游 `stevenjoezhang/live2d-widget`
 （GPL-3.0）的渲染层，与博客自身的 GPL-2.0 不兼容，已整体替换：现在是
 **pixi.js + pixi-live2d-display**（都是 MIT）直接驱动 Live2D 模型，约 350 行。
+
+### 这些文件的源码**不在本仓**（20261002 起）
+
+它住在 [saudade-blog-agent](https://github.com/BigLeopardCat/saudade-blog-agent) 的
+`frontend/` 下，以 **MIT** 分发（那个仓根部的 Python 部分是 Apache-2.0；只有 MIT 才与本站
+的 GPL-2.0 兼容，所以两边分得很清）。本仓不跟踪它，只在
+[widget.lock.json](widget.lock.json) 里钉一个提交号：
+
+```bash
+npm run fetch:widget          # 按 pin 稀疏检出，落到 public/ 下与从前**完全相同**的路径
+npm run fetch:widget:check    # 只校验不改盘（本地那份与 pin 逐字节相同吗）
+```
+
+路径一字不动是**有意的**：nginx 那两个 1 年 immutable 的 `location` 块、仓库外的设备控制台、
+一批按路径读文件的测试、`src/routes/chat.rs` 的 `include_str!` 全都因此零改动。
+
+> ⚠️ 要改看板娘的渲染/面板代码，**去 agent 仓改**，再回来把 `widget.lock.json` 的 `sha`
+> 与两棵 `trees` 一起换掉。**忘了换 = 改动永远不上线，而且没有任何东西会变红。**
+> 这条链是本仓最安静的一个失效点，所以那个文件头注里也写着同一句。
 
 渲染链路的三个第三方件（都不是本仓代码，两个是 MIT、一个是专有）：
 
@@ -142,6 +166,7 @@ nginx 对 `/live2d-widgets/` 目录设了 **1 年 immutable 缓存**，不换 UR
 ## 测试
 
 ```bash
+npm run fetch:widget:check                        # 看板娘前端那两棵树与 pin 逐字节相同吗
 npx --no-install tsc --noEmit -p tsconfig.json   # 类型检查
 npm test                                          # node tests/xxx.test.mjs 全套
 npm run lint                                      # ESLint
@@ -164,5 +189,9 @@ npm run lint                                      # ESLint
 
 ## 许可
 
-GPL-2.0（同[仓库根](../LICENSE)）。引入新依赖前确认许可兼容性 —— 见
+本目录以 **GPL-2.0** 分发（同[仓库根](../LICENSE)）。引入新依赖前确认许可兼容性 —— 见
 [CONTRIBUTING.md](../CONTRIBUTING.md) 的许可一节。
+
+两个例外，别搞混：`public/live2d-widgets/` 与 `public/live2d_model/` 的源码在 agent 仓、
+以 **MIT** 分发（本仓只是按 pin 取产物来打包，MIT 与 GPL-2.0 兼容）；`public/cubism5/` 是
+**专有**许可，两个仓都不跟踪它，构建前从官方地址取。

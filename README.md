@@ -104,4 +104,42 @@ nginx error.log 增量扫描，异常追加 health.log。
 
 ## 许可
 
-GPL-2.0
+本仓库以 **GPL-2.0** 分发（全文见 [LICENSE](LICENSE)）。
+
+看板娘前端（`live2d-widgets/` 与 `live2d_model/`：渲染层、聊天面板、模型与贴图）**不在本仓**，
+它住在 agent 仓、以 **MIT** 分发。本仓构建时按 `frontend/widget.lock.json` 里钉死的提交号
+把它取回来打进产物——路径与从前完全相同，所以服务端与测试零改动。
+
+### 第三方致谢
+
+| 组件 | 许可 | 在哪 |
+|---|---|---|
+| [pixi.js](https://github.com/pixijs/pixijs) | MIT | npm 依赖（渲染底座） |
+| [pixi-live2d-display](https://github.com/guansss/pixi-live2d-display) | MIT | npm 依赖（Live2D 绑定） |
+| Live2D Cubism Core | 专有（Live2D 公司） | **两个仓都不跟踪**：构建前由 `npm run vendor:live2d` 从官方地址取，见 [docs/security-boundary.md](docs/security-boundary.md) |
+
+看板娘前端（含模型文件）以 MIT 分发，版权声明照录如下——MIT 要求它随分发一起带上：
+
+```
+MIT License
+
+Copyright (c) 2026 BigLeopardCat
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```

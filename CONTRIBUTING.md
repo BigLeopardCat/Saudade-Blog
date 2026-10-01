@@ -13,13 +13,20 @@
 | 目录 | 是什么 | 语言/栈 |
 |---|---|---|
 | `src/` | 博客后端：文章/分类/标签/留言板 API、登录鉴权、聊天链路中枢 | Rust（Axum + SeaORM） |
-| `frontend/` | 博客前端 SPA | React 18 + Vite 5 + antd + sass |
+| `frontend/` | 博客前端 SPA（**不含**看板娘与对话面板，见下） | React 18 + Vite 5 + antd + sass |
 | `saudade-blog-agent/` | 看板娘的"大脑" | Python（FastAPI + 手写 LangGraph） |
 | `scripts/` | 部署、迁移、巡检脚本 | bash / python |
 | `docs/` | 设计文档（安全边界、评测分层、词图等） | Markdown |
 
 **`saudade-blog-agent/` 是一个独立的 git 仓库**，被本仓 `.gitignore` 忽略。它的改动
 不在本仓的 CI 里，也不随本仓部署。只有你要动"看板娘会怎么答话"时才需要它。
+
+**看板娘前端（`live2d-widgets/` + `live2d_model/`）也住在那个仓里**（20261002 起），
+以 MIT 分发。本仓不跟踪它们，只在 `frontend/widget.lock.json` 里钉一个提交号，构建前
+由 `npm run fetch:widget` 取回到 `frontend/public/` 下与从前**完全相同**的路径。
+要改看板娘的渲染/面板代码，去 `saudade-blog-agent` 仓改，再回来把那个 sha 换掉——
+**忘了换，改动就永远不会上线，而且没有任何东西会变红**（`frontend/widget.lock.json` 里
+有同一句提醒）。
 
 还有两个不在本仓库的东西（README 的架构图里有）：IoT 设备服务 `device-service`
 与设备控制台 `device-console/`。
@@ -115,13 +122,19 @@ RUSTFLAGS="-D warnings" cargo check   # 严格自检（CI 没开这个，属本�
 ```bash
 cd frontend
 npm ci
+npm run fetch:widget    # 看板娘前端的两棵树：源码在 agent 仓，按 pin 取回来
 npm run vendor:live2d   # 看板娘运行时的三份第三方产物不入库，必须单独就位（见 5. 许可）
 npm run dev             # Vite 开发服务器
 ```
 
-漏掉 `vendor:live2d` 的话博客一切正常、只有看板娘不画（控制台报
-`/live2d-widgets/vendor/pixi.min.js` 加载失败）——这是**故意**的：那三份是第三方产物，
-不适合进本仓的源码树，所以选择"要么显式取一次、要么不渲染"，而不是悄悄塞进 git。
+两个 `npm run` **顺序不能换**：`fetch:widget` 整树替换 `public/live2d-widgets/`，
+而 `vendor:live2d` 往它的 `vendor/` 子目录里写——反过来的话刚取到的 `vendor/` 会被抹掉。
+
+漏掉 `fetch:widget` 的话，`npm run dev` 打得开、聊天面板也在，只有看板娘**一帧不画**，
+控制台报 `chat-stream.js` 之类 404（`vendor:live2d` 还会因为找不到目录而失败，算是撞上了）。
+漏掉 `vendor:live2d` 则是同一个症状、报 `/live2d-widgets/vendor/pixi.min.js` 加载失败——
+这是**故意**的：那些是第三方产物，不适合进本仓的源码树，所以选择"要么显式取一次、
+要么不渲染"，而不是悄悄塞进 git。
 
 开发模式下**不需要配代理**：`src/utils/runtimeApi.ts` 检测到端口是 5173 时会自动把
 API 指到 `http://<当前主机>:3000`。但跨源了，所以后端的 CORS 白名单要放开：
@@ -145,11 +158,17 @@ agent 在独立仓库里，有自己的 README 与 `.env.example`。它默认跑
 ### 3.1 秒级套件（推 PR 时 CI 会跑，本地请先跑一遍）
 
 ```bash
+# 看板娘前端两棵树不在 git 里（源码在 agent 仓）⇒ cargo test **之前**必须先取
+# （src/routes/chat.rs 有一条 include_str! 是**编译期**读那个 chat-stream.js 的，
+#  没取到的话 cargo test 会在这里报一个看不出前因后果的编译错）
+cd frontend && npm run fetch:widget && cd ..
+
 # 后端：MockDatabase，**不连真库**
 cargo test
 
 # 前端
 cd frontend
+npm run fetch:widget:check                        # 本地那份与 pin 逐字节相同吗
 npx --no-install tsc --noEmit -p tsconfig.json   # 类型检查
 npm test                                          # node tests/xxx.test.mjs 全套
 npm run lint                                      # ESLint
@@ -252,6 +271,13 @@ pixi.js + pixi-live2d-display，见 [frontend/README.md](frontend/README.md)）�
 还有一类**可以进构建产物、但不能进源码树**的：Live2D 的 Cubism Core 运行时是专有许可，
 本仓不跟踪它，由 `npm run vendor:live2d` 在构建前从官方地址取（CI 会自动跑）。判据是
 **这段字节是不是从本仓发出去的**——从官方源直取没问题，放进 git 就等于本仓在分发它。
+
+**看板娘前端（`live2d-widgets/` + `live2d_model/`）按 MIT 分发**（20261002 起），源码住在
+`saudade-blog-agent` 仓（那边 `frontend/LICENSE` 是 MIT 全文；该仓其余部分是 Apache-2.0，
+**没有并进本仓的源码树**，只是构建时按 pin 取产物）。MIT 与 GPL-2.0 兼容，这条链是通的。
+代价要记住：**MIT 要求把版权与许可声明随分发一起带上**，所以本仓 README 的第三方致谢里
+抄了那段声明——动那里之前先想清楚这一条。这一仓的**模型与贴图**（`agent_2.*`、
+`lingyue-toggle.png`）也在这次搬家之列，同样是 MIT。
 
 ---
 
