@@ -20,8 +20,13 @@ Saudade Blog 的 SPA：博客页面（首页/文章/留言板/关于）、后台
 
 ```bash
 npm ci
-npm run dev      # Vite 开发服务器（默认为 http://localhost:5173）
+npm run vendor:live2d   # ★ 不能省：看板娘运行时的三份第三方产物不入库（见下）
+npm run dev             # Vite 开发服务器（默认为 http://localhost:5173）
 ```
+
+少了第二步的话，博客本身照常跑，但**看板娘一帧都不画**（浏览器控制台会报
+`/live2d-widgets/vendor/pixi.min.js` 加载失败）——三份产物的来历见下面
+[看板娘那一节](#看板娘与聊天面板publiclive2d-widgets)。
 
 开发模式**不用配代理**：`src/utils/runtimeApi.ts` 看到端口是 5173/4173 就会把 API
 指到 `http://<当前主机>:3000`。但这是跨源请求，所以后端的 `.env` 里要有：
