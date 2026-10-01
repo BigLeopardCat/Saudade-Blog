@@ -214,12 +214,12 @@ const ReadArticle = () => {
         }).catch(() => releaseTodayRead(noteId));
     };
 
+    // 点赞**不再要求登录**（20261001 用户第 2 条）。未登录时由 `utils/visitorKey.ts`
+    // 生成的本机标识充当身份，服务端按它去重与判 `liked`；两者都没有才回「未登录」
+    // （正常浏览器永远有标识，那条只对直接 curl 的人可见）。
+    // 所以这里**刻意没有 `if (!getToken())` 那一道**——加回去就等于把功能关掉了。
     const toggleLike = async () => {
         if (!id) return
-        if (!getToken()) {
-            message.warning('登录后才能点赞')
-            return
-        }
         setLikeBusy(true)
         try {
             const res = liked ? await unlikeNote(id) : await likeNote(id)
