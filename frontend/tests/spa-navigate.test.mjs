@@ -215,7 +215,10 @@ console.log('\n⑥ 版本号：改了 widget 脚本必须 bump（nginx 对 live2
     // chunk/* 整块剔除，换成 renderer.js）。子模块名单里 stage→renderer 直接体现在
     // boot.js 正文里，样式表与子模块 URL 都跟着 VER 走——不 bump 就吃 1 年缓存，
     // 浏览器会拿旧 renderer 配新 boot.js。
-    ok(ver === '20261001g', 'VER 已 bump 到本轮（20261001g）', { ver });
+    // 20261001h = 「命令到达即执行」那一轮（chat-stream.js 改了命令的处置时机：
+    // `__CMD__` 到达就跑一次能当场做的，流尾那一趟只捞整页目标）。改 chat-stream.js
+    // 必须 bump——nginx 对 live2d-widgets 是 1 年 immutable。
+    ok(ver === '20261001h', 'VER 已 bump 到本轮（20261001h）', { ver });
     const tsx = readFileSync(path.join(root, 'src/components/Live2dAgent/index.tsx'), 'utf8');
     ok(tsx.includes('boot.js?v=' + ver), 'Live2dAgent 的 ?v= 与 VER 一致');
 }

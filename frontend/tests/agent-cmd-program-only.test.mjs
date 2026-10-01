@@ -6,6 +6,11 @@
 //   连线命令、又当模型唯一看得见的凭据。批 2 把命令搬上执行回执（`__CMD__` 帧），
 //   正文从此不再是执行来源：**兜底扫描一条不留**。
 // 本测试锁两半（都是源码级，同 live2d-widget-scope 的扫法）：
+//   ⓪ **到达即执行**（20261002）：命令在 `__CMD__` 帧到达时就处置一次（能当场做的
+//      ——SPA 跳转/特效/夜间——立刻做掉），流尾那一趟只捞"只能等流尾"的整页目标。
+//      理由：系统在 t≈3.2s 就印"页面已跳转：…"，而跳转原本要等流结束（t≈9.4s）
+//      ——陈述与动作分家，主人读到"跳好了"还得再等几秒。整页目标（/device-console/）
+//      跳不了：它掐断 SSE ⇒ 本轮回复丢失，所以那一格必须留在流尾。
 //   ① 只认程序帧：`__CMD__` 进独立缓冲 programCmds，不进任何展示文本；缓冲在
 //      `__RESET__` 里**按 scope 决定清不清**——`all`（决策被推翻，gate 打回重规划）
 //      清、`text`（终局 fallback）不清。20261001 之前是无条件清，两个后果都实测过：
@@ -46,10 +51,14 @@ const ok = (cond, name, extra) => {
   // JSON）或落进 cmdText（等于正文命令照样执行）
   const iSplit = s.indexOf('ctx.core.COMMAND_RE.test(text)');
   ok(iCmd > 0 && iSplit > iCmd, '  `__CMD__` 分支在正文/命令行分流**之前**');
-  const seg = s.slice(iCmd, iPush + 120);
+  const seg = s.slice(iCmd, iPush + 340);
   ok(/continue;/.test(seg), '  处理完就 continue（不进正文/命令行两条路）');
   ok(!/displayText/.test(seg) && !/cmdText/.test(seg),
      '  这个分支碰都不碰 displayText/cmdText');
+  // 20261002：进缓冲之后**立刻处置一次**（到达即执行），且传 false = 不许走
+  // 整页跳转那一支——整页装载掐断 SSE，本轮回复随之丢失，它只能等流尾。
+  ok(/applyCmd\(cmd, contentSpan, false\)/.test(seg),
+     '  进缓冲后当场处置一次（applyCmd(..., false)：只做能当场做的）');
 }
 
 // ── ② 打回时按 scope 决定清不清命令缓冲 ──────────────────────────────────────
@@ -80,6 +89,17 @@ const ok = (cond, name, extra) => {
   const calls = s.match(/execAgentCommands\((?:.|\n)*?\)/g) || [];
   const withBuf = (s.match(/execAgentCommands\(programCmds/g) || []).length;
   ok(withBuf === 3, `三处调用点都传 programCmds（实得 ${withBuf}）`);
+  // 流尾那一趟必须**允许整页跳转**（allowDeferred=true）——它是整页目标唯一的
+  // 出场机会；传错成 false，`/device-console/` 就永远跳不了（命令静默作废）。
+  ok(/applyCmd\(c, contentSpan, true\)/.test(s),
+     '  流尾兜底那一趟允许整页跳转（applyCmd(..., true)）');
+  // 幂等：每条命令只执行一次（到达时已跑过的，流尾不许再跑）
+  ok(/c\.__done = true/.test(s), '  命令带 `__done` 标记（同一条不执行两次）');
+  ok(/if \(!c \|\| typeof c !== 'object' \|\| c\.__done\) return true;/.test(s),
+     '  applyCmd 入口就挡掉已处置的命令');
+  // 同一地址只跳一次：多轮里 round0/round1 可能选出同一个目标（旧版靠"取最后一条"
+  // 压住，改成按到达顺序执行之后必须显式去重，否则会跳两遍）
+  ok(/navUrl === jumpedUrl/.test(s), '  同一目标本轮不重复跳');
   ok(!/execAgentCommands\((fullText|cmdText|displayText|text)/.test(s),
      '  没有任何调用点还在吃展示文本（那就是"正文可执行"的旧形态）',
      calls.join(' | ').slice(0, 200));
