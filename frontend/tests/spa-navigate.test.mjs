@@ -218,7 +218,10 @@ console.log('\n⑥ 版本号：改了 widget 脚本必须 bump（nginx 对 live2
     // 20261001h = 「命令到达即执行」那一轮（chat-stream.js 改了命令的处置时机：
     // `__CMD__` 到达就跑一次能当场做的，流尾那一趟只捞整页目标）。改 chat-stream.js
     // 必须 bump——nginx 对 live2d-widgets 是 1 年 immutable。
-    ok(ver === '20261001h', 'VER 已 bump 到本轮（20261001h）', { ver });
+    // 20261001i = 「看板娘图标错位 / 拖动反向 / 代码芯片两档都读不出」那一轮
+    // （renderer.js 的 ICONS 与 setupDrag、widget.css 的代码芯片令牌）。三者都改了
+    // live2d-widgets 下的文件 ⇒ 必须 bump，否则访客吃 1 年缓存看到的是旧图标与旧拖动。
+    ok(ver === '20261001i', 'VER 已 bump 到本轮（20261001i）', { ver });
     const tsx = readFileSync(path.join(root, 'src/components/Live2dAgent/index.tsx'), 'utf8');
     ok(tsx.includes('boot.js?v=' + ver), 'Live2dAgent 的 ?v= 与 VER 一致');
 }

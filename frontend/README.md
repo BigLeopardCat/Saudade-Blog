@@ -92,8 +92,10 @@ vendor/                  pixi.js / pixi-live2d-display 的 UMD 产物（**不入
 ### 这些文件的源码**不在本仓**（20261002 起）
 
 它住在 [saudade-blog-agent](https://github.com/BigLeopardCat/saudade-blog-agent) 的
-`frontend/` 下，以 **MIT** 分发（那个仓根部的 Python 部分是 Apache-2.0；只有 MIT 才与本站
-的 GPL-2.0 兼容，所以两边分得很清）。本仓不跟踪它，只在
+`frontend/` 下：**代码以 MIT 分发**（那个仓根部的 Python 部分是 Apache-2.0；只有 MIT 才与本站
+的 GPL-2.0 兼容，所以两边分得很清），**美术资源（模型、贴图、面板图标、角色形象设计）以
+CC BY-NC-SA 4.0 分发**——可自用可改、不可商用、改作须同样协议，见那边的
+`frontend/ASSETS-LICENSE.md`（它**不是** OSI 开源许可）。本仓不跟踪这棵树，只在
 [widget.lock.json](widget.lock.json) 里钉一个提交号：
 
 ```bash
@@ -192,6 +194,7 @@ npm run lint                                      # ESLint
 本目录以 **GPL-2.0** 分发（同[仓库根](../LICENSE)）。引入新依赖前确认许可兼容性 —— 见
 [CONTRIBUTING.md](../CONTRIBUTING.md) 的许可一节。
 
-两个例外，别搞混：`public/live2d-widgets/` 与 `public/live2d_model/` 的源码在 agent 仓、
-以 **MIT** 分发（本仓只是按 pin 取产物来打包，MIT 与 GPL-2.0 兼容）；`public/cubism5/` 是
-**专有**许可，两个仓都不跟踪它，构建前从官方地址取。
+两个例外，别搞混：`public/live2d-widgets/` 与 `public/live2d_model/` 的源码在 agent 仓
+（本仓只是按 pin 取产物来打包）——那里的**代码是 MIT**（与 GPL-2.0 兼容）、**美术资源是
+CC BY-NC-SA 4.0**（不可商用，详见上文）；`public/cubism5/` 是**专有**许可，两个仓都不跟踪它，
+构建前从官方地址取。

@@ -22,7 +22,7 @@
 不在本仓的 CI 里，也不随本仓部署。只有你要动"看板娘会怎么答话"时才需要它。
 
 **看板娘前端（`live2d-widgets/` + `live2d_model/`）也住在那个仓里**（20261002 起），
-以 MIT 分发。本仓不跟踪它们，只在 `frontend/widget.lock.json` 里钉一个提交号，构建前
+**代码以 MIT 分发、美术资源以 CC BY-NC-SA 4.0 分发**（见 §5）。本仓不跟踪它们，只在 `frontend/widget.lock.json` 里钉一个提交号，构建前
 由 `npm run fetch:widget` 取回到 `frontend/public/` 下与从前**完全相同**的路径。
 要改看板娘的渲染/面板代码，去 `saudade-blog-agent` 仓改，再回来把那个 sha 换掉——
 **忘了换，改动就永远不会上线，而且没有任何东西会变红**（`frontend/widget.lock.json` 里
@@ -272,12 +272,19 @@ pixi.js + pixi-live2d-display，见 [frontend/README.md](frontend/README.md)）�
 本仓不跟踪它，由 `npm run vendor:live2d` 在构建前从官方地址取（CI 会自动跑）。判据是
 **这段字节是不是从本仓发出去的**——从官方源直取没问题，放进 git 就等于本仓在分发它。
 
-**看板娘前端（`live2d-widgets/` + `live2d_model/`）按 MIT 分发**（20261002 起），源码住在
-`saudade-blog-agent` 仓（那边 `frontend/LICENSE` 是 MIT 全文；该仓其余部分是 Apache-2.0，
-**没有并进本仓的源码树**，只是构建时按 pin 取产物）。MIT 与 GPL-2.0 兼容，这条链是通的。
-代价要记住：**MIT 要求把版权与许可声明随分发一起带上**，所以本仓 README 的第三方致谢里
-抄了那段声明——动那里之前先想清楚这一条。这一仓的**模型与贴图**（`agent_2.*`、
-`lingyue-toggle.png`）也在这次搬家之列，同样是 MIT。
+**看板娘前端（`live2d-widgets/` + `live2d_model/`）的源码住在 `saudade-blog-agent` 仓**
+（20261002 起；该仓其余部分是 Apache-2.0，**没有并进本仓的源码树**，只是构建时按 pin 取产物）。
+那边 `frontend/LICENSE` 是 MIT 全文，与本仓的 GPL-2.0 兼容，这条链是通的。代价要记住：
+**MIT 要求把版权与许可声明随分发一起带上**，所以本仓 README 的第三方致谢里抄了那段声明
+——动那里之前先想清楚这一条。
+
+⚠️ **但那一半许可只覆盖代码**。同目录里的**美术资源**（`live2d_model/agent_2.*` 模型与贴图、
+`lingyue-toggle.png` 面板图标，以及「泠月喵」形象设计本身）按 **CC BY-NC-SA 4.0** 分发
+（agent 仓 `frontend/ASSETS-LICENSE.md`）：可自用、可改，**不可商用**，改作须同样协议。
+**带 NC 的许可不是 OSI 开源许可**——那一部分属于"源码可用"。它与 GPL-2.0 的关系是
+"同一介质上的聚合"（构建时取来一起打包、不是并进本仓源码树），所以不冲突；
+但**上一行的兼容性结论只对代码那一半成立**，往本仓引进美术资源时别拿它当通行证。
+（这条链在 20261002 之前是"模型与贴图也按 MIT"——用户后来把美术单独拆出来改了协议。）
 
 ---
 

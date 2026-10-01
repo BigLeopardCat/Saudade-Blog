@@ -208,5 +208,74 @@ for (const f of ['chat-stream.js', 'chat-engine.js', 'chat-render.js', 'chat-ses
   ok(ver && idx.includes(`boot.js?v=${ver}`), `boot.js VER 与 index.tsx 的 ?v= 一致（${ver}）`);
 }
 
+// ── ④ 工具条：图标 ↔ 功能（20261002 修「图标对不上功能」）─────────────────────
+// 用户报「看板娘的操作图标功能紊乱，图标对不上功能」。实测：`switch-model` 穿的是
+// T 恤、`switch-texture` 举的是相机、`photo` 是一张加号相框——**三条各错一个位**。
+// 阴险之处在于 tooltip 与点击行为都是对的，错的只有**形状**，所以肉眼扫过去只
+// "觉得别扭"、说不清哪里错；而图标是纯 SVG 字面量，没有任何运行期判据能发现它。
+//
+// 判据 = Font Awesome Free 6.7.2 的 path **前 32 字符**当指纹（同一字形换 FA 版本
+// 才会变，那时这里该红一次、提醒把新指纹抄进来）。每一行都带"为什么是它"，因为
+// 这张表就是"名字应当长什么样"这份语义本身——抄错一行 = 抄错一份功能定义。
+// 注意字号对应的是**按钮语义**（tooltip / ACTIONS），不是按钮在工具条里的位置：
+// 位置不表达语义，别按顺序去凑。
+const FA = {
+  'switch-model':   ['street-view', 'M320 64A64 64 0 1 0 192 64a64 64',
+                     'title「更换看板娘」= 换一个人 ⇒ 人形'],
+  'switch-texture': ['shirt', 'M211.8 0c7.8 0 14.3 5.7 16.7 13.',
+                     'title「换装」= 换一件衣服 ⇒ T 恤'],
+  photo:            ['camera-retro', 'M220.6 121.2L271.1 96 448 96l0 9',
+                     'ACTIONS.photo 把 canvas 存成 PNG ⇒ 相机'],
+  info:             ['circle-info', 'M256 512A256 256 0 1 0 256 0a256',
+                     'ACTIONS.info 报的是实现来源 ⇒ 圈里一个 i'],
+  quit:             ['xmark', 'M342.6 150.6c12.5-12.5 12.5-32.8',
+                     'ACTIONS.quit 收起看板娘 ⇒ 叉'],
+};
+{
+  const r = W('renderer.js');
+  const at = r.indexOf('const ICONS = {');
+  ok(at > 0, 'renderer.js：ICONS 表在');
+  const src = r.slice(at, r.indexOf('\n  };', at));
+  const dOf = (s) => { const m = s.match(/<path\s+d="([^"]+)"/); return m ? m[1].slice(0, 32) : null; };
+  const got = {};
+  for (const line of src.split('\n')) {
+    const m = line.match(/^\s{4}'?([A-Za-z_$][\w$-]*)'?:\s*'([^']*)'/);
+    if (m) got[m[1]] = dOf(m[2]);
+  }
+  eq(Object.keys(got).sort().join(','), Object.keys(FA).sort().join(','),
+     'ICONS 的名字集合未变（多一个/少一个都意味着工具条动过）');
+  for (const [name, [slug, pre, why]] of Object.entries(FA)) {
+    eq(got[name], pre, `${name} 画的是 ${slug}（${why}）`);
+  }
+  eq(new Set(Object.values(got)).size, Object.keys(FA).length,
+     '六个图标两两不同（同一个字形贴两处 = 有一处一定对不上功能）');
+  // 第六个按钮（对话面板开关）的字形不在 ICONS 里——chat-stream.js 自建它
+  const s = W('chat-stream.js');
+  const hk = s.slice(s.indexOf("hitokotoBtn.id = 'waifu-tool-hitokoto'"));
+  eq(dOf(hk.slice(0, hk.indexOf('</svg>'))), 'M512 240c0 114.9-114.6 208-256 2',
+     '对话按钮画的是 comment（气泡 ⇒ 打开对话面板）');
+  // 功能一侧也要钉住：字形对了、tooltip 接到别的按钮上，照样是"对不上功能"
+  ok(/getElementById\('waifu-tool-switch-model'\)[\s\S]{0,160}?btn\.title = '更换看板娘'/.test(s),
+     'switch-model 的 title 是「更换看板娘」（人形图标对应的那条功能）');
+  ok(/getElementById\('waifu-tool-switch-texture'\)[\s\S]{0,160}?btn\.title = '换装'/.test(s),
+     'switch-texture 的 title 是「换装」（T 恤图标对应的那条功能）');
+  ok(/hitokotoBtn\.title = '对话'/.test(s), '对话按钮的 title 是「对话」');
+  // 同一文件里 ACTIONS 的语义也核一遍（改行为的改动不该悄悄换掉图标的含义）。
+  // 取各自的动作体再判——**不锚"从这里到那里多少字符"**：那种窗口在函数里
+  // 加一行注释就假红一次（本仓的既有教训），而这里要锁的是"这个动作体里有没有
+  // 那个动作"，与它离函数头多远无关。
+  const aAt = r.indexOf('const ACTIONS = {');
+  const aSrc = r.slice(aAt, r.indexOf('\n    };', aAt));
+  const body = (n) => {
+    const i = aSrc.search(new RegExp(`\\n      '?${n}'?:`));
+    const j = aSrc.slice(i + 1).search(/\n      '?[A-Za-z_$][\w$-]*'?:/);
+    return i < 0 ? '' : aSrc.slice(i, j < 0 ? undefined : i + 1 + j);
+  };
+  ok(/canvas\.toDataURL\('image\/png'\)/.test(body('photo')),
+     'ACTIONS.photo 仍是"把画布存成 PNG"（所以它的图标必须是相机）');
+  ok(/classList\.add\('waifu-hidden'\)/.test(body('quit')),
+     'ACTIONS.quit 仍是"收起看板娘"（所以它的图标必须是叉）');
+}
+
 console.log(`\n${fail ? '✗' : '✓'} live2d-widget-scope：${pass} 通过 / ${fail} 失败`);
 process.exit(fail ? 1 : 0);
