@@ -15,13 +15,16 @@
 //     从入库的 `moon_source.jpg` 生成），`atob` 同步解出 ⇒ 没有 PNG/canvas 的异步解码，
 //     第 37 轮那套 `loadMoonTex` + `texApplied` 就回不来了（本套件 ④ 锁着）。
 //
-// 本套件锁五件：
+// 本套件锁六件：
 //   ① 落位数学 —— moonSpriteGeometry 对 dpr 1 / 1.25 / 1.5 / 2 都给出设备整像素，圆心
 //      误差 ≤ 半个设备像素，size 随 dpr 线性增长（这是"不糊"的直接判据）；
 //   ② 载荷 —— base64 解出来正好是 N×N 个字节、值全落在声明的窗口内、重复取用逐字节相同；
 //   ③ 这是一张**真月面**，且方向没搞反 —— 亮度标准差、东西/南北不对称、最亮最暗那 1% 的
 //      方位（第谷辐射纹在南、风暴洋在西）、暗区成片。这几条合起来能挡住"换成一团噪声"
 //      "上下/左右镜像了""表被填平了"三类事故。
+//   ⑥ 真渲染 —— 把 `buildMoonSprite` 从 index.tsx 里**切出来真跑一遍**（不是手抄的数学镜像），
+//      按真实落屏尺寸量亮度/色温/过曝。这一节是"用户说丑、我却说验过了"那次的直接产物：
+//      整页截图里月盘只有 86 设备像素，肉眼判不出它是一颗发暗的棕球还是月亮。
 //
 // moon_surface.ts 是纯 TS（无 DOM、无 canvas），所以直接 esbuild 摊平后 import 即可，
 // 不需要像 live-refresh 那样装假浏览器。
@@ -273,6 +276,94 @@ console.log('\n⑤ 回主页：走 router 跳转，不整页刷新');
     ok(/import\s*\{\s*useNavigate\s*\}\s*from\s*["']react-router-dom["']/.test(tsx), '引了 useNavigate');
     ok(/const\s+navigate\s*=\s*useNavigate\(\)/.test(tsx), '组件里取了 navigate');
     ok(/className="rz-home-btn"[\s\S]{0,160}navigate\("\/"\)/.test(tsx), '按钮点了 navigate("/")（同树内跳转，不整页刷新）');
+}
+
+console.log('\n⑥ 真渲染：把 index.tsx 里的 buildMoonSprite 切出来跑（不是手抄的镜像）');
+{
+    // 为什么要有这一节：20261001 用户报"留言板月亮吓死人，你这是贴图月亮？"——
+    // 而当时我拿"一张 1280×720 的整页截图看着还行"当成了验证。整页截图里月盘只有
+    // 86 设备像素，肉眼根本判不出它是发暗的棕球还是月亮。所以判据必须落在**像素级**：
+    // 把真函数（不是重写一份数学）切出来，按真实落屏尺寸出图，量它的亮度与色温。
+    // 阈值取自实测定标（改前 / 改后）：
+    //           满月      凸月      上弦      ← 盘内受光像素平均 R
+    //   改前    103.3     89.6     96.4
+    //   改后    148.6    132.3    135.4
+    //   色温 B/R  改前 0.906–0.924（偏土黄） / 改后 0.950–0.960（中性）
+    const tsx = readFileSync(path.join(RB, 'index.tsx'), 'utf8');
+    const slice = (a, b) => {
+        const i = tsx.indexOf(a), j = tsx.indexOf(b, i);
+        if (i < 0 || j < 0) throw new Error(`切不出「${a}」（源码结构变了，改这一节的锚点）`);
+        return tsx.slice(i, j);
+    };
+    let cap = null;
+    globalThis.document = {
+        createElement: () => ({
+            width: 0, height: 0,
+            getContext: () => ({
+                createImageData: (w, h) => (cap = { width: w, height: h, data: new Uint8ClampedArray(w * h * 4) }),
+                putImageData: () => {},
+            }),
+        }),
+    };
+    // 相位靠把源码里的 Date.now() 换成字面量来钉死（每档 8 分之一圈 = 3.69 天）
+    const build = async (nowMs) => {
+        const src = [
+            `import { moonAlbedo } from ${JSON.stringify(path.join(RB, 'moon_surface.ts'))};`,
+            'let moonAlbA = null; let moonSprite = null;',
+            slice('const moonPhase = () => {', '\ninterface LanternMeta').replace('Date.now()', String(nowMs)),
+            slice('const ensureMoonAlbedo = () => {', '\n\n/* 月盘 sprite'),
+            slice('const moonPhaseParams = () => {', '\n\n/** 画月盘 sprite'),
+            slice('const buildMoonSprite = (geo: { size: number; ss: number }) => {', '\n/* 性能（P2-2）'),
+            'export { buildMoonSprite };',
+        ].join('\n');
+        const dir = mkdtempSync(path.join(tmpdir(), 'moonsprite-'));
+        const out = path.join(dir, 's.mjs');
+        await esbuild.build({
+            stdin: { contents: src, resolveDir: RB, loader: 'ts' },
+            bundle: true, format: 'esm', platform: 'node', outfile: out, logLevel: 'error',
+        });
+        const M = await import(pathToFileURL(out).href);
+        cap = null;
+        M.buildMoonSprite({ size: 86, ss: 2 });   // 1280×720 @dpr1 下月盘的真实设备像素数
+        return cap;
+    };
+    // 与上面 `moonPhase` 同源：以今天为基准，减到目标档
+    const K0 = Date.UTC(2000, 0, 6, 18, 14), LUN = 29.53058867;
+    const at = (want) => {
+        const base = Date.UTC(2026, 9, 1, 1, 25);
+        const age0 = (((base + 8 * 3600e3 - K0) / 86400000 / LUN) % 1 + 1) % 1;
+        return Math.round(base - (((age0 - want + 1) % 1) * LUN * 86400000));
+    };
+    const stats = (img) => {
+        const P = img.width;
+        let lit = 0, sR = 0, sB = 0, blown = 0;
+        for (let i = 0; i < P * P; i++) {
+            if (img.data[i * 4 + 3] === 0) continue;
+            lit++;
+            sR += img.data[i * 4]; sB += img.data[i * 4 + 2];
+            if (img.data[i * 4] >= 254) blown++;
+        }
+        return { litPct: (100 * lit) / ((Math.PI * P * P) / 4), meanR: sR / lit, br: sB / sR, blownPct: (100 * blown) / lit };
+    };
+    const CASES = [['满月', 0.5], ['凸月', 0.625], ['上弦', 0.25]];
+    const got = [];
+    for (const [name, q] of CASES) got.push([name, stats(await build(at(q)))]);
+    for (const [name, s] of got) {
+        ok(s.meanR >= 118, `${name}：盘内平均亮度落在"月亮"该有的亮带（≥118/255）`,
+            { meanR: +s.meanR.toFixed(1) });
+        ok(s.br >= 0.94, `${name}：色温中性（B/R ≥ 0.94，压住那层土黄）`, { br: +s.br.toFixed(3) });
+        ok(s.blownPct < 8, `${name}：过曝面积是零头（<8%）`, { pct: +s.blownPct.toFixed(2) });
+    }
+    // 满月整盘受光、上弦半盘 —— 遮挡范围由**几何**定，与反照率无关
+    ok(got[0][1].litPct > 97, '满月：整盘都受光（亮面覆盖率 ≈ 100%）', { litPct: +got[0][1].litPct.toFixed(1) });
+    ok(got[2][1].litPct > 45 && got[2][1].litPct < 57, '上弦：恰好半盘受光', { litPct: +got[2][1].litPct.toFixed(1) });
+
+    // 源契约：遮挡判据里不许出现反照率（出现就是"终止线跟着月海走"那个回归）
+    const occ = tsx.match(/const occlude = ([^;]+);/);
+    ok(!!occ && !/\balb\b|\blum\b/.test(occ[1]),
+        'occlude 只由几何受光决定，不含 alb/lum（含了的话明暗交界会被月海啃成锯齿）', occ && occ[1]);
+    ok(/const alb = t;/.test(tsx), '反照率原样使用（标度归配方脚本，渲染侧不再做分位拉伸）');
+    ok(!/ALB_FLOOR|ALB_SPAN|moonAlbLo/.test(tsx), 'p5/p95 自适应拉伸那套已删干净');
 }
 
 console.log(`\n${fail === 0 ? '全部通过' : `失败 ${fail} 项`}（通过 ${pass}）`);
