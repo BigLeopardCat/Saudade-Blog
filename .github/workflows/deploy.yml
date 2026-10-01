@@ -171,6 +171,10 @@ jobs:
           # CDN 域名走仓库 **Variable**（不是 Secret——VITE_ 变量会打进前端包，本来就是公开的）。
           # 未设置时为空串，行为与未接 CDN 完全一致。本地构建会读 frontend/.env.production（不入库）。
           VITE_CDN_BASEURL: ${{ vars.VITE_CDN_BASEURL }}
+          # 站点身份（canonical / og:url / robots.txt 的 Sitemap 行）也走 Variable。
+          # **不设不会报错，只会静默生成 http://localhost:5173 的地址** —— 所以线上必须设它；
+          # 代码侧的中性默认值是为了 fork 不要指向本项目的域名（见 frontend/vite.config.ts）。
+          VITE_SITE_URL: ${{ vars.VITE_SITE_URL }}
         run: |
           npm ci
           # 看板娘前端**两棵树**（live2d-widgets/、live2d_model/）的源码：20261002 前端搬家起

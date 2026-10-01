@@ -275,8 +275,9 @@ pixi.js + pixi-live2d-display，见 [frontend/README.md](frontend/README.md)）�
 **看板娘前端（`live2d-widgets/` + `live2d_model/`）的源码住在 `saudade-blog-agent` 仓**
 （20261002 起；该仓其余部分是 Apache-2.0，**没有并进本仓的源码树**，只是构建时按 pin 取产物）。
 那边 `frontend/LICENSE` 是 MIT 全文，与本仓的 GPL-2.0 兼容，这条链是通的。代价要记住：
-**MIT 要求把版权与许可声明随分发一起带上**，所以本仓 README 的第三方致谢里抄了那段声明
-——动那里之前先想清楚这一条。
+**MIT 要求把版权与许可声明随分发一起带上**，所以那段的全文抄在本仓
+[README.md](README.md) 的《许可》一节里——动那里之前先想清楚这一条。
+其余第三方组件、版本与许可以及兼容性判据，统一见 [THIRD-PARTY.md](THIRD-PARTY.md)。
 
 ⚠️ **但那一半许可只覆盖代码**。同目录里的**美术资源**（`live2d_model/agent_2.*` 模型与贴图、
 `lingyue-toggle.png` 面板图标，以及「泠月喵」形象设计本身）按 **CC BY-NC-SA 4.0** 分发

@@ -90,13 +90,17 @@ pub fn upload_dir() -> PathBuf {
 /// 20261001 开源前准备：此前两处各自写死 `https://saudade.site` ——
 /// sitemap 的 `<loc>` 前缀（[`crate::routes::sitemap`]）与 CORS 默认白名单
 /// （[`crate::routes::create_router`]）。别人部署时一个会把爬虫指向别人的站、
-/// 一个会让自己的前端跨域被拒。现在统一读 `SITE_URL`，缺省仍是本站（线上零变化）。
+/// 一个会让自己的前端跨域被拒。现在统一读 `SITE_URL`。
+///
+/// **缺省值是中性占位 `http://localhost:3000`，不是任何真实域名**：没配时宁可产出一个
+/// 明显没配好的地址（爬虫会忽略它），也不要静默指向项目作者的站点——那种错很难被发现，
+/// 而它会把别人的文章挂到作者域名下。线上在 `.env` 里显式设 `SITE_URL`。
 ///
 /// 不缓存：调用点只有"进程启动一次"和"每次抓 sitemap"两种，一次 getenv 的开销可忽略，
 /// 而缓存（`OnceLock`）会让测试里改环境变量失效。
 pub fn site_url() -> String {
     env::var("SITE_URL")
-        .unwrap_or_else(|_| "https://saudade.site".to_string())
+        .unwrap_or_else(|_| "http://localhost:3000".to_string())
         .trim_end_matches('/')
         .to_string()
 }
