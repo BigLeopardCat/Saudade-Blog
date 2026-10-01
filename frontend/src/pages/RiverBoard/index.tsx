@@ -380,38 +380,18 @@ const MOON = { x: 0.7, y: 0.16, r: 0.073 } as const; // r 0.093 → 0.073：月�
    载荷是编成 base64 的 8 位灰度字节，`atob` **同步**解出来——不再有"异步就绪后重画
    一次静态层"那一套（第 37 轮的事故），也不再有 192×192 那个死天花板。 */
 let moonAlbA: Float32Array | null = null;
-/* 反照率标定（首次生成时按**盘内** p5/p95 算出）——渲染时把反照率区间映射到
-   `ALB_LO..ALB_HI` 的亮度区间。自适应而不硬编码：换照片（重跑配方脚本）不该连带
-   改渲染侧的映射。
-   20261001：区间从 `0.80..1.28`（1.6:1）改到 `0.45..1.28`（2.8:1）——那一档是第 39 轮
-   按**手写**反照率定的（那时纹理本身就平），照片表的月海/高地本来就有 2.5:1 的差距，
-   再压到 1.6:1 就成了"发白的匀球"（实测对照源照片一眼可见）。改动只动下半段：
-   峰值仍是 `EXPOSURE × 1.28 = 0.896`（229/255），不会过曝。 */
-const ALB_FLOOR = 0.45;
-const ALB_SPAN = 0.83;
-let moonAlbLo = 0;
-let moonAlbHi = 1;
-/** 反照率（幂等，首次调用时解码） */
+/* 反照率的**标度由配方脚本负责**：`build_moon_albedo.py` 按盘内中位数归一，载荷里
+   "1.0 = 典型月面"（实测盘内中位 1.0000；极值夹在声明的 0.60/1.45 窗口上）。所以
+   渲染侧**不做任何再标定**——`t` 直接就是反照率。
+
+   20261001 第 43 轮删掉了原本这里的 p5/p95 自适应拉伸（把反照率映射到 0.45..1.28）。
+   那一档实测把照片本来就有的地物对比**又放大了一倍**（盘内 sd/mean 0.202 → 0.30）：
+   照片在盘内中位是 1.0、p95 只有 1.38，硬拉到 0.45..1.28 等于把月海再压暗一档。
+   上屏结果是一颗发暗、发棕、斑驳的球（用户："留言板月亮吓死人，你这是贴图月亮？"）。
+   反照率原样上台反而干净——它自己就带着正确的对比。 */
 const ensureMoonAlbedo = () => {
-    if (moonAlbA) return moonAlbA;
-    const a = moonAlbedo();
-    const n = Math.round(Math.sqrt(a.length));
-    // 只统计**盘内**：盘外四角是配方脚本按径向投影填的（渲染不采样，几何上不存在），
-    // 混进来会把 p5/p95 往中间拽、白白削掉一点对比（实测 p95 1.377 → 1.357）
-    const vals: number[] = [];
-    for (let py = 0; py < n; py++) {
-        const ny = 1 - ((py + 0.5) / n) * 2;
-        for (let px = 0; px < n; px++) {
-            const nx = ((px + 0.5) / n) * 2 - 1;
-            if (nx * nx + ny * ny <= 1) vals.push(a[py * n + px]);
-        }
-    }
-    vals.sort((x, y) => x - y);
-    moonAlbLo = vals[Math.floor(vals.length * 0.05)];
-    moonAlbHi = vals[Math.floor(vals.length * 0.95)];
-    if (moonAlbHi - moonAlbLo < 0.05) { moonAlbLo = 0; moonAlbHi = 1; } // 极端平纹理兜底
-    moonAlbA = a;
-    return a;
+    if (!moonAlbA) moonAlbA = moonAlbedo();
+    return moonAlbA;
 };
 
 /* 月盘 sprite（20260926）：月亮从"烘进静态层的整屏画布"里摘出来单独成 canvas，
@@ -447,8 +427,9 @@ const moonPhaseParams = () => {
     };
 };
 
-/** 画月盘 sprite（内部 2× 超采样后缩到目标设备尺寸）。光照与旧版逐字一致——
-   只换了反照率来源（程序化）与落位方式（设备整像素）。 */
+/** 画月盘 sprite（内部 2× 超采样后缩到目标设备尺寸）。光照几何与旧版一致——
+   反照率来源（真实照片表）与落位方式（设备整像素）换过，第 43 轮又调了
+   反照率的标度/色温/遮挡判据，见函数体内注释。 */
 const buildMoonSprite = (geo: { size: number; ss: number }) => {
     const P = geo.size * geo.ss;
     const R = P / 2;
@@ -459,12 +440,13 @@ const buildMoonSprite = (geo: { size: number; ss: number }) => {
     const img = mg.createImageData(P, P);
     const data = img.data;
     /* 月面渲染（20260912 两轮返工后的定稿）：
-       ① alpha 与亮度解耦、且**只有受光面遮挡背景**（occlude = min(1, lum*6)）——
-          暗面完全透出背景。曾试过两种"让暗面可见"的做法（不透明深灰盘 / lighter 加光层），
-          用户两次都判为"假的圆形底盘"：夜空不是纯黑而是带光晕的蓝，任何整圆轮廓都会露馅；
-       ② 反照率进亮度域并拉开对比；
+       ① alpha 与亮度解耦、且**只有受光面遮挡背景**——暗面完全透出背景。曾试过两种
+          "让暗面可见"的做法（不透明深灰盘 / lighter 加光层），用户两次都判为"假的圆形
+          底盘"：夜空不是纯黑而是带光晕的蓝，任何整圆轮廓都会露馅。
+          20261001 第 43 轮把遮挡判据从 `lum` 换成**几何受光**（见下方 occlude 处）；
+       ② 反照率**原样**进亮度域（标度由配方脚本归一，渲染侧不再拉伸）；
        ③ 亮面亮度按相位归一（摄影语义：八种月相最亮点亮度一致）。 */
-    const EXPOSURE = 0.70;     // 亮面峰值 ≈ 0.70×1.28 = 0.90（229/255）：明亮但不满溢
+    const EXPOSURE = 0.85;     // 亮面峰值 ≈ 0.85×1.45 = 1.23，最高的高地轻微夹顶（实测 0.5%）
     // 相位亮度归一（摄影语义：相机按月亮曝光，八种月相的最亮点亮度应一致）：
     // 不归一的话上下弦最亮点只有满月的约一半，叠加 8 档月相量化会看着"忽明忽暗"
     // 额外的周边限暗压得很轻（0.12）：程序化反照率自身不带月缘暗化，不会 double 成"黑圈"
@@ -494,8 +476,8 @@ const buildMoonSprite = (geo: { size: number; ss: number }) => {
             const sun = Math.pow(Math.max(0, dot), 0.9);
             // 周边限暗：满月最平（真实满月本就没什么立体感），上下弦最陡
             const limb = 1 - limbKp * Math.pow(radial, 2.6);
-            // 双线性采样反照率 + 区间自适应标定到 0.80..1.28（月海:高地 ≈ 1.6:1）。
-            // 对比拉开后最近邻会露出块状，双线性只在静态层跑一次、成本可忽略
+            // 双线性采样反照率（表已按盘内中位数归一，见 `ensureMoonAlbedo`）。
+            // 最近邻会露出块状，双线性只在静态层跑一次、成本可忽略
             const fx = ((nx + 1) / 2) * N - 0.5;
             const fy = ((1 - ny) / 2) * N - 0.5;
             const ix0 = Math.floor(fx), iy0 = Math.floor(fy);
@@ -507,25 +489,27 @@ const buildMoonSprite = (geo: { size: number; ss: number }) => {
             const s00 = albA[cy0 * N + cx0], s10 = albA[cy0 * N + cx1];
             const s01 = albA[cy1 * N + cx0], s11 = albA[cy1 * N + cx1];
             const t = (s00 * (1 - tx) + s10 * tx) * (1 - ty) + (s01 * (1 - tx) + s11 * tx) * ty;
-            const n01 = (t - moonAlbLo) / (moonAlbHi - moonAlbLo);
-            const alb = ALB_FLOOR + ALB_SPAN * (n01 < 0 ? 0 : n01 > 1 ? 1 : n01);
+            const alb = t;
             // 受光面：只有太阳直射那一项
             const lum = Math.min(1, EXPOSURE * sunGain * sun * alb * limb);
-            const warm = 1 + 0.05 * Math.max(0, dot); // 受光处偏暖
-            // 颜色只表达色温/亮度，alpha 只表达几何覆盖（两者解耦是本轮的核心）。
-            // occlude：只有**真的亮起来**的岩面才遮挡背景。暗面不遮挡——月盘周围那圈光晕
+            const warm = 1 + 0.03 * Math.max(0, dot); // 受光处偏暖
+            // 颜色只表达色温/亮度，alpha 只表达几何覆盖（两者解耦是这一族的核心）。
+            // occlude：只有**真的受光**的岩面才遮挡背景。暗面不遮挡——月盘周围那圈光晕
             // 是大气散射，物理上就在月亮前面，会照亮整个盘面；旧写法暗面也不透明，盖住
             // 光晕后成了夜空里一块比背景还暗的黑板（20260912 用户："黑底盘太假"）。
-            // 用 lum 而不是 sun 做判据：明暗交界带本来就该是"从透明渐显"（柔和的终止线），
-            // 而亮起来的部分（新月牙、满月盘）完全遮挡 → 月缘清晰
-            const occlude = Math.min(1, lum * 6);
+            // 判据用**几何受光**（sun×limb，不含反照率）而不是 lum：用 lum 的话明暗交界的
+            // 位置会跟着反照率走——月海（暗）比高地（亮）更早变透明，终止线于是被地物啃成
+            // 锯齿（20261001 第 43 轮实测，放大 6 倍一眼可见）。几何受光只跟光方向有关，
+            // 终止线因此是一条干净的曲线，暗面照样完全透出背景
+            const occlude = Math.min(1, EXPOSURE * sunGain * sun * limb * 6);
             data[i4] = Math.round(255 * lum * warm);
-            data[i4 + 1] = Math.round(255 * lum * 0.975 * warm);
-            // 蓝系数 0.86 → 0.94（20261001 照片纹理那一批）：0.86 是第 41 轮为"奶酪"调的
-            // 偏暖档，压在照片上是一层明显的土黄/橄榄色（源照片本身是中性灰）。
-            // 留一点点暖（配合上面 `warm` 的 1.05）当月光，但不再是奶酪黄。
+            data[i4 + 1] = Math.round(255 * lum * 0.99 * warm);
+            // 蓝系数 0.86 → 0.94 → 0.97（20260901 第 41 轮"奶酪" → 第 42 轮照片 → 第 43 轮）：
+            // 0.86 是给手写反照率调的偏暖档，压在**照片**上就是一层土黄/橄榄色（源照片本身
+            // 是中性灰），第 43 轮实测那层黄是"看着像贴图"的主因之一。
+            // 留一点点暖（配合上面 `warm` 的 1.03）当月光，但基本回到中性。
             // 与光照/月相/遮挡无关，要更冷把它往 1.0 提即可（就这一行）
-            data[i4 + 2] = Math.round(255 * lum * 0.94);
+            data[i4 + 2] = Math.round(255 * lum * 0.97);
             data[i4 + 3] = Math.round(cov * occlude * 255);
         }
     }
