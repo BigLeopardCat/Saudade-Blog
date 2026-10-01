@@ -25,7 +25,10 @@
 # LOG/MARK 可临时指到 /tmp 以便连汇总与哨兵那段一起验）。
 set -u
 
-REPO=/home/ubuntu/memory_blog_rust
+# PROJECT_DIR 可覆盖（20261001 开源前准备）：默认仍是原开发机的绝对路径（线上 cron 零变化）；
+# 别人克隆到别处时 `PROJECT_DIR=... bash scripts/nightly_sandboxes.sh`。
+# LOG/MARK 默认落在 $HOME 而不是仓库里，所以那个不用跟着改。
+REPO="${PROJECT_DIR:-/home/ubuntu/memory_blog_rust}"
 LOG=${LOG:-"$HOME/sandbox_regression.log"}
 MARK=${MARK:-"$HOME/sandbox_regression.failed"}
 TS=$(date '+%Y-%m-%d %H:%M:%S')

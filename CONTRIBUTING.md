@@ -1,0 +1,261 @@
+# 参与开发
+
+面向想在本机把它跑起来、或者想提 PR 的人。项目整体在 [README.md](README.md)，
+这里是"怎么动手"。
+
+> 遇到文档与代码不一致：**以代码为准**，然后顺手把文档改了 —— 这份文件以前就有过
+> 指向不存在目录的条目（`src-tauri/`、`migration/`），那种错比没有文档更费人时间。
+
+---
+
+## 1. 仓库里有什么
+
+| 目录 | 是什么 | 语言/栈 |
+|---|---|---|
+| `src/` | 博客后端：文章/分类/标签/留言板 API、登录鉴权、聊天链路中枢 | Rust（Axum + SeaORM） |
+| `frontend/` | 博客前端 SPA | React 18 + Vite 5 + antd + sass |
+| `saudade-blog-agent/` | 看板娘的"大脑" | Python（FastAPI + 手写 LangGraph） |
+| `scripts/` | 部署、迁移、巡检脚本 | bash / python |
+| `docs/` | 设计文档（安全边界、评测分层、词图等） | Markdown |
+
+**`saudade-blog-agent/` 是一个独立的 git 仓库**，被本仓 `.gitignore` 忽略。它的改动
+不在本仓的 CI 里，也不随本仓部署。只有你要动"看板娘会怎么答话"时才需要它。
+
+还有两个不在本仓库的东西（README 的架构图里有）：IoT 设备服务 `device-service`
+与设备控制台 `device-console/`。
+
+---
+
+## 2. 跑起来
+
+### 2.0 前置
+
+- **Rust** stable（`cargo --version` 能跑就行）
+- **Node.js** ≥ 18
+- **MySQL** 8
+- **Python** 3.10+（只有要跑 agent 时才需要）
+
+### 2.1 建库
+
+数据库名**必须叫 `memory_blog`** —— `scripts/migration/*.sql` 每条都以
+`USE memory_blog;` 开头，改名要逐条改。
+
+```bash
+mysql -uroot -p -e "CREATE DATABASE memory_blog CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+```
+
+然后把 `scripts/migration/` 下的迁移按**文件名顺序**跑一遍。
+注意**跳过夹具**（下面有解释）：
+
+```bash
+for f in $(ls scripts/migration/*.sql | sort); do
+    case "$f" in
+        # 评测夹具与原作者的一次性账号脚本：不是站点运行所需的结构，跳过
+        */golden_*.sql|*/test_accounts_*.sql|*/user_rename_sora_*.sql|*/user_remove_legacy_hash_account_*.sql|*/superadmin_role_*.sql|*/secretary_role_*.sql)
+            echo "== 跳过 $f"; continue ;;
+    esac
+    echo "== $f"
+    mysql -uroot -p memory_blog < "$f"
+done
+```
+
+**第一个文件是 [`scripts/migration/0000_base_schema.sql`](scripts/migration/0000_base_schema.sql)**，
+它就是建基架的那一份（26 张表的建表语句，从生产库 `mysqldump --no-data` 导出，只有结构、
+零数据）。名字以 `0000_` 开头不是装饰：`ls | sort` 是纯字典序，只有这样才能保证它排在
+所有 `ALTER TABLE` 之前 —— 后面每一个迁移都假定这些表已经存在，改名会让
+`agent_task_20260927.sql` 先跑并在 `ALTER TABLE agent_task` 上失败。
+
+其余脚本都写成幂等的（`IF NOT EXISTS` / `IF EXISTS` / 靠 `migration_flags` 表打标记），
+重复执行安全 —— 但**能只跑一次就跑一次**，个别脚本带数据回填，重跑会覆盖你改过的数据。
+
+> ⚠️ **`scripts/migration/` 里混着"夹具"和作者的一次性脚本，别把整个目录无脑跑一遍。**
+> 上面的循环跳过的就是它们：
+>
+> | 跳过 | 是什么 |
+> |---|---|
+> | `golden_*.sql` | 评测用例的夹具（测试分类、一条待审留言） |
+> | `test_accounts_*.sql` | 评测用的测试账号（`agent_test_user_*`） |
+> | `user_rename_sora_*.sql` | 把作者 uid=1 的用户名改回 `sora` |
+> | `user_remove_legacy_hash_account_*.sql` | 删作者库里那个遗留的哈希账号 |
+> | `superadmin_role_*.sql` / `secretary_role_*.sql` | 把 uid=1 提为 superadmin / 把某个账号提为 secretary |
+>
+> 前两类跑进你的库会凭空多出几个 `agent_fixture_*` / `agent_test_user_*` 账号；
+> 后三类在你的库上没有对象，跑也是空转。**判断依据是文件名里的主题，不是日期。**
+> 这个目录按用途混放是历史遗留（见「已知缺口」），加新文件时照着上表想想属于哪一类。
+
+### 2.2 环境变量
+
+```bash
+cp .env.example .env
+# 然后至少改 DATABASE_URL 和 JWT_SECRET
+```
+
+`.env.example` 里每一项都有注释说明用途与默认值。要点：
+
+- `DATABASE_URL` 和 `JWT_SECRET` **不配就起不来**（前者 `main.rs` 直接 panic，后者登录时 panic）
+- `SITE_URL` **别人部署必须改成自己的域名** —— 它决定 sitemap 里的链接、CORS
+  默认白名单、前端的 canonical/og:url。不设会回落到原作者的站
+- 前端那一半的站点地址走 `VITE_SITE_URL`（构建期用，同名不同前缀）
+
+### 2.3 起后端
+
+```bash
+cargo run          # 监听 127.0.0.1:3000（只回环，靠 nginx 反代对外）
+```
+
+第一次编译要几分钟。改完代码可以用更快的检查：
+
+```bash
+cargo check
+RUSTFLAGS="-D warnings" cargo check   # 严格自检（CI 没开这个，属本地纪律）
+```
+
+### 2.4 起前端
+
+```bash
+cd frontend
+npm ci
+npm run dev        # Vite 开发服务器
+```
+
+开发模式下**不需要配代理**：`src/utils/runtimeApi.ts` 检测到端口是 5173 时会自动把
+API 指到 `http://<当前主机>:3000`。但跨源了，所以后端的 CORS 白名单要放开：
+
+```bash
+# .env
+CORS_ALLOWED_ORIGINS=http://localhost:5173,https://你的域名
+```
+
+### 2.5 起 agent（可选）
+
+agent 在独立仓库里，有自己的 README 与 `.env.example`。它默认跑 `127.0.0.1:8010`，
+后端的 `AGENT_URL` 默认就指着那里，所以**不配也能对上**。
+
+不跑 agent 的话，博客本身（文章、留言板、后台）一切正常，只有看板娘不会答话。
+
+---
+
+## 3. 测试
+
+### 3.1 秒级套件（推 PR 时 CI 会跑，本地请先跑一遍）
+
+```bash
+# 后端：MockDatabase，**不连真库**
+cargo test
+
+# 前端
+cd frontend
+npx --no-install tsc --noEmit -p tsconfig.json   # 类型检查
+npm test                                          # node tests/xxx.test.mjs 全套
+npm run lint                                      # ESLint
+```
+
+> ⚠️ 本机复核 lint 时**必须**带 `--report-unused-disable-directives`（`npm run lint`
+> 脚本里已经带了）。原因：一条**多余的** `eslint-disable-next-line` 在这里判 error ——
+> 历史上有一次 push 因为这个红掉，结果是那次**什么都没部署**，而看 CI 只知道"失败了"。
+>
+> 另一条：`npm test` **不包含** ESLint，两者是分开的两道门。
+
+### 3.2 沙箱套件（要 Playwright + 无头 Chrome，**不进 CI**）
+
+`frontend/tests/*.test.py` 是一批"真组件 + 无头 Chrome + 数值断言"的渲染沙箱。它们要
+真浏览器，CI 的秒级 job 装不下，所以由 `scripts/nightly_sandboxes.sh` 夜间串行跑。
+
+手动跑单个：
+
+```bash
+python3 frontend/tests/某个.test.py
+```
+
+> ⚠️ 本机（3.7 GB 内存）**必须串行**，不要并发起第二个 chromium。
+>
+> ⚠️ 这类套件的判据经常依赖**本机独有的前提**（某个端口空着、某个目录存在）。跑不通时
+> 先看它自己的头注 —— 好几个套件在开头写清了它假设什么、以及为什么。
+
+### 3.3 其它
+
+| 套件 | 在哪 | 说明 |
+|---|---|---|
+| `tests/api_tests.rs` | 本仓 | 走 MockDatabase，跟着 `cargo test` 跑 |
+| `tests/frontend_contract/test_api.py` | 本仓 | **手动跑**（Python，`requests`）：要一个**活着的** `localhost:3000`，登录类用例还要你自己给凭据 —— `BLOG_TEST_USER=... BLOG_TEST_PASSWORD=... python3 tests/frontend_contract/test_api.py`。不给凭据也能跑，登录相关用例自动跳过。**它不在 `cargo test` 里**，也不进 CI |
+| `eval/`（agent 仓） | `saudade-blog-agent/eval/` | golden set 端到端，要真服务与真语料，按需跑 |
+| `eval/*.py`（本仓 `scripts/`） | — | 同理，不进 CI |
+
+**CI 到底跑哪几项**：见 [.github/workflows/deploy.yml](.github/workflows/deploy.yml)
+的 `check` job。别照抄本文档 —— 那里的 `paths-filter` 决定了某些改动会**整个跳过**
+（job 显示 success 但什么都没做）。
+
+---
+
+## 4. 提交约定
+
+- 分支：从 `cn_sora_blog` 切出来（默认工作分支）
+- 风格：`feat:` / `fix:` / `docs:` 前缀 + 中文摘要
+- **首行 ≤ 60 字符**，只写"改了什么"；**首行与正文之间空一行**；
+  多项改动写成正文 `- ` 列表，不塞进首行
+
+  ```
+  fix: 留言板驳回理由一直显示未填写
+
+  - AI 裁决的说明文案在 flag 分支里丢了
+  - 兜底文案改成按原因码取
+  - 驳回理由改为必填
+  ```
+
+  首行被 `git log --oneline`、GitHub 提交标题、`gh run list` 按截断显示 ——
+  首行写成整段话的提交，事后 `--grep` 根本捞不出来。
+
+- **不要加 `Co-Authored-By` / 共同作者署名**
+- 改动的"为什么"写在**代码注释里**，不要只写在提交信息里：提交信息会随历史沉底，
+  注释会跟着那行代码走
+
+### 改代码时的几条硬约束
+
+这些是踩过坑换来的，不是风格偏好：
+
+1. **本机不编译大产物**。这台机器 3.7 GB 内存，`vite build` 和 `cargo build --release`
+   会 OOM 甚至拖垮整机。本地只跑 `cargo check`、`tsc`、`npm test`，构建交给 CI。
+2. **永远不要 `cargo clean`**（`target/release/` 里是线上正在跑的那个二进制）。
+3. **动 git 前逐文件核对**，别用 `git add -A` / `git commit -a` —— 工作区里可能挂着
+   别的分支/会话的改动。
+4. **改协议/契约要三端同步**。SSE 帧协议（Python ↔ Rust ↔ 前端）、执行回执的字段名、
+   提示词里的工具清单，这几处都是"改一处必须同步另一处"的地方，改完在注释里写清
+   另一头在哪。
+5. **迁移脚本要幂等**，并且把"这条约束为什么存在"写进头注 —— 迁移是一次性的，
+   但它定下的语义（比如某个 CASCADE 行为）会跟项目一辈子。
+
+---
+
+## 5. 许可
+
+本仓库以 **GPL-2.0** 分发（见 [LICENSE](LICENSE) 全文）。
+
+**引入新依赖前先确认它的许可与本仓兼容**：
+
+| 依赖的许可 | 能不能进本仓 |
+|---|---|
+| MIT / BSD / ISC / Zlib | ✅ 可以 |
+| Apache-2.0 | ⚠️ 与 GPL-2.0 **不兼容**（专利条款）、与 GPL-3.0 兼容 —— 别直接并进本仓的源码树 |
+| GPL-3.0-only | ❌ 不行 |
+| 专有 / 未声明许可 | ❌ 不行 |
+
+这不是理论洁癖：看板娘的渲染层当初就是从 GPL-3.0 的上游项目一路带进来的，等要开源时
+才发现和博客自身的 GPL-2.0 冲突，只能整体重写。**图片、字体、模型文件同样适用** ——
+"从某个 CDN 引一张图"也可能是在分发别人的作品。
+
+---
+
+## 6. 已知缺口
+
+诚实列出，免得你按文档走到一半撞墙：
+
+- **`0000_base_schema.sql` 没在空库上真跑过**（见那个文件的头注）——它逐字复刻了线上
+  26 张表的 DDL（已比对核实），但"倒进一个空库、一把跑通"这一步没做（导出账号没有
+  `CREATE DATABASE` 权限）。第一次真跑会发生在你的空库上；若报错多半是外键顺序，
+  文件开头的 `FOREIGN_KEY_CHECKS=0` 就是为它准备的。
+- **`scripts/migration/` 目录混着夹具与作者一次性脚本**（见 2.1 的两条提示）——
+  没有按用途分目录，只能靠文件名前缀辨认。想改成分目录的话，先确认没人按路径引用它们。
+- `scripts/` 下几个脚本里的路径写死了开发机的位置（`PROJECT_DIR` 环境变量已能覆盖
+  `healthcheck.sh` / `nightly_sandboxes.sh` / `deploy/*.sh` 四个，CI 工作流里那处仍写死）。
+- 沙箱套件跑完后**不清理自己的临时目录**（`tempfile.mkdtemp` 建了就不删），跑多了会在
+  `/tmp` 里积出可观的空间。已知，未修。

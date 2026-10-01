@@ -923,7 +923,11 @@
             if (navCmd) {
               let navUrl = String(navCmd.url).replace(/[，。,.?!；;]+$/, '');
               if (navUrl.startsWith('//')) navUrl = 'https:' + navUrl;       // 协议相对 → 补全 scheme
-              else if (!/^https?:/i.test(navUrl)) navUrl = 'https://saudade.site' + navUrl; // 相对路径 /talk → 站点根
+              // 相对路径 /talk → 站点根。**必须用 `location.origin`，不能写死域名**：
+              // 下面 hostOk 校验的是"同源"，写死本站域名会让**任何其他部署**上 agent 的
+              // 跳转命令一律被判成跨域取消 —— 功能整个失效，且只在别人机器上复现
+              // （20261001 开源前准备发现）。
+              else if (!/^https?:/i.test(navUrl)) navUrl = window.location.origin + navUrl;
               const isDirect = navCmd.mode !== 'confirm';
               // 防呆：自动整页跳转前校验目标是博客真实路由。agent 可能幻觉出不存在的
               // 页面（如 /iot），跳过去会丢失整站布局与聊天面板（曾导致"文本框卡死"）。

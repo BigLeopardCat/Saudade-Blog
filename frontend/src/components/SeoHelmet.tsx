@@ -10,7 +10,13 @@ interface SeoHelmetProps {
   suffix?: boolean;
 }
 
-const SITE = 'https://saudade.site';
+// 站点地址（canonical / og:url 的绝对前缀）。**别人部署必须能改** —— 这一处与
+// `index.html` 的 `__SITE_URL__` 是同一个值，两处都读 `VITE_SITE_URL`（默认值写在
+// `vite.config.ts` 里，不读 `.env`：本仓 `.env*` 整类被 gitignore，别人 clone 后没有
+// 任何 .env，占位符会原样留在产物里）。改自己域名只需设 `VITE_SITE_URL`。
+import { SITE_URL } from '../utils/siteUrl';
+
+const SITE = SITE_URL;
 
 const SeoHelmet: React.FC<SeoHelmetProps> = ({
   title,

@@ -1,0 +1,17 @@
+# 前端渲染沙箱（`frontend/tests/*.test.py`）的 Python 依赖（20261001 补）。
+#
+# 为什么单独一份：这批套件**不进 CI**（要真浏览器，跑不进秒级 job，
+# 由 scripts/nightly_sandboxes.sh 夜间串行跑），所以它们的依赖此前**没有任何声明** ——
+# 新贡献者 `python3 某个.test.py` 会直接 ImportError，然后去翻源码才知道要装什么。
+#
+# 这批套件只用到两样第三方库，其余全是标准库（`http.server` / `socketserver` /
+# `threading` / `subprocess` 起本地静态服务与无头浏览器）。
+#
+# 用法：
+#   pip install -r frontend/tests/requirements.txt
+#   playwright install chromium        # ← 别漏这步，只有库没有浏览器照样跑不起来
+#
+# 版本按**开发机实测可用**的档钉：
+
+playwright==1.47.0
+Pillow==12.3.0

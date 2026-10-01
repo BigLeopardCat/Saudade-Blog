@@ -68,7 +68,10 @@
 }
 
 .lightBody{
-    background: var(--front-body-color),url("https://img.picgo.net/2024/05/04/homeBg3c0f28da1a596884.jpeg") center;
+    /* 20261001 开源前准备：去掉自己 picgo 图床那张早已 404 的背景图（同 App.sass 的
+       .frontRoot）。整个 .lightBody 块目前**没有任何组件使用**，这里只做最小改动 ——
+       不留别人/私人的外部 URL，也不顺手删这块（删它是另一件事）。 */
+    background: var(--front-body-color) center;
     background-size: cover;
     /* 整页毛玻璃注释（与 .frontRoot 一致，此选择器当前无组件使用） */
     /* backdrop-filter: blur(5px); */

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="80" height="80" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid" role="img" aria-label="加载中">
+  <!-- 图片懒加载占位（20261001 开源前准备）。
+       此前指向别人仓库（cdn.jsdelivr.net/gh/LinMoQC/LinmoBlogCDN）里一个 26 KB 的
+       loading.io 动画 —— 一是"别人部署要依赖上游作者的 CDN"，二是那个素材的许可
+       无从考证，放进要开源的仓里不合适。这里换成自绘的 300 字节同色系转圈。
+       暖色 #fac090 是照原素材取的：浅底（暖白）与夜间深底上都能看清。 -->
+  <circle cx="50" cy="50" r="34" fill="none" stroke="#fac090" stroke-opacity="0.25" stroke-width="8"/>
+  <circle cx="50" cy="50" r="34" fill="none" stroke="#fac090" stroke-width="8" stroke-linecap="round" stroke-dasharray="53 161">
+    <animateTransform attributeName="transform" type="rotate" values="0 50 50;360 50 50" dur="1.1s" repeatCount="indefinite"/>
+  </circle>
+</svg>

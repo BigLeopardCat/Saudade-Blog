@@ -12,8 +12,6 @@ use std::sync::Arc;
 use crate::entity::{category, note};
 use crate::routes::AppState;
 
-const SITE: &str = "https://saudade.site";
-
 fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
@@ -24,6 +22,10 @@ fn lastmod(dt: &chrono::NaiveDateTime) -> String {
 }
 
 pub async fn sitemap_xml(State(st): State<Arc<AppState>>) -> Response {
+    // 本站地址不再写死：别人部署时 `<loc>` 必须指向自己的域名，否则爬虫被引到别人的站
+    // （20261001 开源前准备）。默认值仍是本站，见 `utils::site_url`。
+    let site = crate::utils::site_url();
+
     // 固定页面（优先级高）
     let static_urls: &[(&str, &str)] = &[
         ("/", "1.0"),
@@ -53,7 +55,7 @@ pub async fn sitemap_xml(State(st): State<Arc<AppState>>) -> Response {
 
     for (path, prio) in static_urls {
         body.push_str(&format!(
-            "  <url><loc>{SITE}{}</loc><changefreq>daily</changefreq><priority>{}</priority></url>\n",
+            "  <url><loc>{site}{}</loc><changefreq>daily</changefreq><priority>{}</priority></url>\n",
             xml_escape(path),
             prio
         ));
@@ -61,14 +63,14 @@ pub async fn sitemap_xml(State(st): State<Arc<AppState>>) -> Response {
     for c in &cats {
         if !c.name.is_empty() {
             body.push_str(&format!(
-                "  <url><loc>{SITE}/category/{}</loc><changefreq>weekly</changefreq><priority>0.6</priority></url>\n",
+                "  <url><loc>{site}/category/{}</loc><changefreq>weekly</changefreq><priority>0.6</priority></url>\n",
                 xml_escape(&c.name)
             ));
         }
     }
     for n in &notes {
         body.push_str(&format!(
-            "  <url><loc>{SITE}/article/{}</loc><lastmod>{}</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>\n",
+            "  <url><loc>{site}/article/{}</loc><lastmod>{}</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>\n",
             n.id,
             lastmod(&n.updated_at)
         ));

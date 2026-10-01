@@ -2,6 +2,13 @@ import './index.sass'
 import beianIcon from '../../assets/备案图标.png'
 import cfLogo from '../../assets/Cloudflare_Logo.svg'
 import txLogo from '../../assets/Tencent_Cloud_logo.svg'
+// 20261001 开源前准备：这两个 logo 原先一个走 img.alicdn.com、一个走 live2d.com ——
+// 前者是**别人账号下**的图片（换了/删了这里就是个破图），后者是外站热链（对方改路径
+// 或加防盗链同样破图），两种都是"别人部署就异常"的来源。与上面 Tencent/Cloudflare
+// 两个一样收进 `src/assets/`，由 Vite 打包。尺寸由 `.footLogoAli` / `.footLogoLive2d`
+// 钉死（112×24 / 96×24），与两张图各自的原始宽高比一致，换源不动排版。
+import bailianLogo from '../../assets/Bailian_Logo.svg'
+import live2dLogo from '../../assets/Live2D_Cubism_Logo.png'
 import {useEffect, useState} from "react";
 import axios from "axios";
 import {useSelector} from "react-redux";
@@ -66,7 +73,7 @@ const Footer = () => {
                 与上面两条版权声明重复，读起来像"本站是某个叫 Memory 的工具生成的"。 */}
             <p className="footLogos">
                 <a href="https://www.aliyun.com/product/bailian" target="_blank" rel="noreferrer" title="阿里云百炼">
-                    <img className="footLogoAli" src="https://img.alicdn.com/imgextra/i1/O1CN01IU2US71Ciicsi3Br3_!!6000000000115-55-tps-357-76.svg" alt="阿里云百炼" />
+                    <img className="footLogoAli" src={bailianLogo} alt="阿里云百炼" />
                 </a>
                 <a href="https://cloud.tencent.com" target="_blank" rel="noreferrer" title="Tencent Cloud">
                     <img className="footLogoTx" src={txLogo} alt="Tencent Cloud" />
@@ -75,7 +82,7 @@ const Footer = () => {
                     <img className="footLogoCf" src={cfLogo} alt="Cloudflare" />
                 </a>
                 <a href="https://www.live2d.com/zh-CHS/" target="_blank" rel="noreferrer" title="Live2D Cubism">
-                    <img className="footLogoLive2d" src="https://www.live2d.com/wp-content/themes/cubism_new/assets/img/cubism-logo.png" alt="Live2D Cubism" />
+                    <img className="footLogoLive2d" src={live2dLogo} alt="Live2D Cubism" />
                 </a>
             </p>
         </footer>

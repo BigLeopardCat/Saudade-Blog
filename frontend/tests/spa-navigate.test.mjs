@@ -202,7 +202,11 @@ console.log('\n⑥ 版本号：改了 widget 脚本必须 bump（nginx 对 live2
     // 20261001d = 「主动打断的一轮不丢」那一轮（chat-stream.js / chat-engine.js 都改了：
     // 保留语义、补删时机与顺序、提示条措辞按 kind 分家）。改这两支必须 bump——nginx 对
     // live2d-widgets 是 1 年 immutable。
-    ok(ver === '20261001d', 'VER 已 bump 到本轮（20261001d）', { ver });
+    //
+    // 20261001e = 「开源前准备：私人域名外移」那一轮（chat-stream.js 的导航命令补全
+    // 从写死 `https://saudade.site` 改成 `location.origin` —— 写死会让**别人部署**上
+    // agent 的跳转命令一律被判跨域取消）。同样必须 bump。
+    ok(ver === '20261001e', 'VER 已 bump 到本轮（20261001e）', { ver });
     const tsx = readFileSync(path.join(root, 'src/components/Live2dAgent/index.tsx'), 'utf8');
     ok(tsx.includes('autoload.js?v=' + ver), 'Live2dAgent 的 ?v= 与 VER 一致');
 }
