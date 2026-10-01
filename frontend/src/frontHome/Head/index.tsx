@@ -102,7 +102,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
         window.addEventListener('auth-change', onAuthChange)
 
         // 看板娘 agent 的 DARKMODE: 命令切换夜间模式时，触发与手动点击相同的日月过渡动画
-        // （autoload.js applyDarkMode 在状态实际变化时派发 moon-sun-animation）
+        // （boot.js applyDarkMode 在状态实际变化时派发 moon-sun-animation）
         const handleMoonSun = (e: Event) => {
             const s = (e as CustomEvent).detail;
             if (s === 'sun' || s === 'moon') setAnimation(s);
@@ -182,7 +182,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
         // 20260914：只在夜间窗口内的切换才记意愿（见 theme.recordUserChoice）——白天切浅色
         // 不再否掉当晚自动夜间；白天切换会顺手清掉残留标记
         recordUserChoice(!isDark ? 'dark' : 'light');
-        // 同步看板娘 agent 的全局状态：autoload.js 监听 darkmode-change 更新 __darkMode，
+        // 同步看板娘 agent 的全局状态：boot.js 监听 darkmode-change 更新 __darkMode，
         // 否则页面内手动切换后 current_darkmode 上报陈旧值，agent 感知只能靠对话记忆
         try { window.dispatchEvent(new CustomEvent('darkmode-change', { detail: !isDark })); } catch (e) {/* ignore */}
     };

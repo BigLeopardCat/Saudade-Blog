@@ -242,7 +242,7 @@ const fireStorage = async (label) => {
   await settle();
 };
 
-vm.runInThisContext(readFileSync(path.join(W, 'autoload.js'), 'utf8'), { filename: 'autoload.js' });
+vm.runInThisContext(readFileSync(path.join(W, 'boot.js'), 'utf8'), { filename: 'boot.js' });
 // 加载链是 setTimeout(0) 驱动的（stubs/dom.mjs 的 installScriptLoader）⇒ 轮询等它走完
 if (!await waitFor(() => !!globalThis.__waifuChatCore)) {
   console.error('chat-core 未注册（子模块加载失败）'); process.exit(1);

@@ -38,7 +38,7 @@ export function isNightHour(d: Date = new Date()): boolean {
 // 都记"已非必需，但**保持原样**：语义无害（切夜间与自动夜间同向，不会否掉当晚的自动
 // 切夜），也让 chat-stream.js 的那份副本继续对得上（不需要 bump `?v=`）。
 // ⚠️ 改这里必须同步改 public/live2d-widgets/chat-stream.js 的 markVisitorChoice（agent
-//    的 DARKMODE 命令走那条路），并 bump autoload.js 的 VER（nginx 对 live2d-widgets
+//    的 DARKMODE 命令走那条路），并 bump boot.js 的 VER（nginx 对 live2d-widgets
 //    目录是 1 年 immutable，不 bump 老访客拿不到新脚本）。
 export function recordUserChoice(v: string): void {
     try {

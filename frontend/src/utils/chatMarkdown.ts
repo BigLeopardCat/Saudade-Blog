@@ -2,7 +2,7 @@
  * 博客同款 Markdown 渲染器（与文章页 bytemd <Viewer> 同一套 unified 管线）
  *
  * 看板娘对话框是 public/ 下的原生脚本，无法直接 import npm 包，
- * 因此由 React 应用在启动时注册两个全局供 public/live2d-widgets/autoload.js 复用：
+ * 因此由 React 应用在启动时注册两个全局供 public/live2d-widgets/boot.js 复用：
  *  - window.__chatRenderMarkdown(text) => HTML 字符串
  *  - window.__chatEnhance(root)        => 渲染后增强：代码高亮 + KaTeX 公式（懒加载）
  *

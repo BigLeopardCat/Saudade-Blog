@@ -5,7 +5,7 @@
 // chatHTML 骨架（#chat-rail / #waifu-conv-panel / #conv-list / #chat-conv-title）。
 //
 // 20260903d 几何（用户第三轮实测拍板）：
-// - 抽屉宽 convWidth=182（waifu.css --conv-w，收窄 30%）
+// - 抽屉宽 convWidth=182（widget.css --conv-w，收窄 30%）
 // - 左侧边栏形态 = 拖拽栏（rail 图标列）在复合窗口最外侧：rail 固定 x0..24
 //   原位不动；conv-out（右缘空间足够）面板右扩 182 → 列表列在 rail 右缘成为
 //   真列（x24..206，不覆盖消息区），消息区右移 182，形态 [拖拽栏|列表|消息]；

@@ -24,7 +24,7 @@ use std::sync::Arc;
 use crate::auth_jwt;
 use crate::routes::AppState;
 
-/// 上报载荷（前端 autoload.js 全局捕获打包；message 截 500 / stack 截 1500）
+/// 上报载荷（前端 boot.js 全局捕获打包；message 截 500 / stack 截 1500）
 #[derive(Deserialize)]
 pub struct ReportPayload {
     #[serde(rename = "type")]
@@ -41,7 +41,7 @@ fn clean(s: &str) -> String {
     s.replace(['\n', '\r'], " ")
 }
 
-/// 前端上报器实际会发的 type（`autoload.js` 全局捕获那五种）。
+/// 前端上报器实际会发的 type（`boot.js` 全局捕获那五种）。
 ///
 /// `type` 必须收敛成可枚举值（20260925 审计 A2）：这里原先把 `payload.kind` 原样拼进
 /// 落盘行，而它是**匿名可写**的字段 ⇒ 任何访客能整行伪造（自定时间戳/级别/`uid=`），

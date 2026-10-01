@@ -93,9 +93,9 @@
   const live2d_path = '/live2d-widgets/';
   const modelPath = '/live2d_model/agent_2.model3.json';
   // ★ 版本号：nginx 对 live2d-widgets 目录 immutable 缓存 1 年，子模块变更只 bump
-  // 这里一处（所有子模块 URL 统一拼 ?v=VER；Live2dAgent/index.tsx 的 autoload 引用
+  // 这里一处（所有子模块 URL 统一拼 ?v=VER；Live2dAgent/index.tsx 的 boot.js 引用
   // 也需同步 bump——否则浏览器不会重新请求本入口）
-  const VER = '20261001e';
+  const VER = '20261001f';
 
   function loadExternalResource(url, type) {
     return new Promise((resolve, reject) => {
@@ -142,7 +142,7 @@
     ['chat-engine', '__waifuEngine'],
     ['chat-stream', '__waifuStream'],
     ['chat-session', '__waifuSession'], // 20260903 会话化 UI 壳（会话管理列表/双栏）
-    ['live2d-widget', '__waifuWidget'],
+    ['stage', '__waifuWidget'],         // 看板娘画布/口型/入场动画（20261001 由 live2d-widget.js 改名）
   ];
   for (const [name, globalKey] of MODS) {
     try {
@@ -193,7 +193,7 @@
   // 20260830d：waifu-tips 模块图整体重命名（getHitAreasCount null 守卫需要换名
   // 才能越过 nginx 1 年 immutable 缓存）——新名即 cache-bust，无需 ?v=
   await Promise.all([
-    loadExternalResource(live2d_path + 'waifu.css?v=' + VER, 'css'),
+    loadExternalResource(live2d_path + 'widget.css?v=' + VER, 'css'),
     loadExternalResource(live2d_path + 'waifu-tips.20260905.js', 'js'),
   ]);
 
@@ -231,7 +231,7 @@
     }
 
   // 守卫必须在 initWidget 之后调用：画布由 initWidget 注入 waifu 模板时才创建，
-  // 之前调用会因 canvas 不存在而空转（20260828n 修复，见 live2d-widget.js 注释）
+  // 之前调用会因 canvas 不存在而空转（20260828n 修复，见 stage.js 注释）
   widget.guardLive2dHitTest();
 
   widget.forceSlideInFromBottom();

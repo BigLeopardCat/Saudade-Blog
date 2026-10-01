@@ -1,5 +1,5 @@
 // ═ 看板娘集成冒烟：CI 断言套件（20260828o 结构拆分回归）══
-// node tests/chat-autoload-smoke.test.mjs：最小 DOM stub + 完整 autoload 加载链 +
+// node tests/chat-boot-smoke.test.mjs：最小 DOM stub + 完整 loader（boot.js）加载链 +
 // 一次真实 SSE 对话往返（发送 → 流式帧 → 转正 → 命令解析）。验证：
 // ① 6 个文件按依赖序加载不抛错、工厂依赖校验通过；
 // ② engine.init/stream.init 时序（#waifu 由 initWidget 创建后执行）无引用错误；
@@ -24,7 +24,7 @@ installScriptLoader(W);   // head.appendChild → 真读 live2d-widgets/ 下的�
 const store = new Map();
 const store2 = new Map();
 globalThis.window = globalThis;
-// sendMessage 上报 window.location.href；autoload observeTips 判 location.pathname
+// sendMessage 上报 window.location.href；boot.js 的 observeTips 判 location.pathname
 globalThis.location = { href: 'https://saudade.site/', pathname: '/' };
 globalThis.localStorage = {
   getItem: (k) => store.has(k) ? store.get(k) : null,
@@ -112,14 +112,14 @@ globalThis.fetch = async (url, opts) => {
   throw new Error('unexpected fetch: ' + url);
 };
 
-// ── 加载 autoload（它内部按依赖序动态加载其余 5 个子模块——真实加载路径）──
-vm.runInThisContext(readFileSync(path.join(W, 'autoload.js'), 'utf8'), { filename: 'autoload.js' });
-// autoload 是 async IIFE：先等子模块 script onload 链完成再检查注册
+// ── 加载 boot.js（它内部按依赖序动态加载其余子模块——真实加载路径）──
+vm.runInThisContext(readFileSync(path.join(W, 'boot.js'), 'utf8'), { filename: 'boot.js' });
+// boot.js 是 async IIFE：先等子模块 script onload 链完成再检查注册
 await new Promise(r => setTimeout(r, 100));
 const core = globalThis.__waifuChatCore;
 if (!core) { console.error('✗ chat-core 未注册（子模块加载失败）'); process.exit(1); }
 
-// 等待 autoload 异步链路完成（子模块 script onload → cubism → effects → initWidget → engine.init → stream.init）
+// 等待 loader 异步链路完成（子模块 script onload → cubism → effects → initWidget → engine.init → stream.init）
 await new Promise(r => setTimeout(r, 800));
 
 let failed = 0;

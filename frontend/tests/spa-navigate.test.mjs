@@ -3,7 +3,7 @@
 //
 // 现场（用户报的）：「我希望 agent 带着转跳页面时对话窗口不变。还有不要弹出泠月喵建议转跳
 // XXX，暂时注释掉」。前半句的成因不是"跳转逻辑错"，而是**跳转方式**：前端两条导航出路都是
-// `window.location.href = …`（整页装载），而对话面板挂在 `#root` 之外（autoload.js 注入），
+// `window.location.href = …`（整页装载），而对话面板挂在 `#root` 之外（boot.js 注入），
 // 整页重载会把它连同输入框里没发出去的半句话整个重建。后半句是确认卡被停用（用户拍板
 // 「agent 回复文本就有超链接根本用不着弹窗」）。
 //
@@ -174,8 +174,8 @@ console.log('\n⑤ 源码契约：导航卡停用、直达走桥、气泡链接�
     const render = readFileSync(path.join(root, 'public/live2d-widgets/chat-render.js'), 'utf8');
     ok(render.includes('id="chat-nav-confirm"') && render.includes('id="nav-yes"') && render.includes('id="nav-no"'),
         '卡面 DOM（#chat-nav-confirm / #nav-yes / #nav-no）仍由 chat-render.js 注入');
-    ok(/chat-nav-confirm/.test(readFileSync(path.join(root, 'public/live2d-widgets/waifu.css'), 'utf8')),
-        'waifu.css 里的卡片样式保留');
+    ok(/chat-nav-confirm/.test(readFileSync(path.join(root, 'public/live2d-widgets/widget.css'), 'utf8')),
+        'widget.css 里的卡片样式保留');
 
     // 桥必须在路由模块里注册（不注册 = 所有跳转都退回整页）
     const router = readFileSync(path.join(root, 'src/router/index.tsx'), 'utf8');
@@ -186,18 +186,18 @@ console.log('\n⑤ 源码契约：导航卡停用、直达走桥、气泡链接�
 
 console.log('\n⑥ 版本号：改了 widget 脚本必须 bump（nginx 对 live2d-widgets 是 1 年 immutable 缓存）');
 {
-    const widget = readFileSync(path.join(root, 'public/live2d-widgets/autoload.js'), 'utf8');
+    const widget = readFileSync(path.join(root, 'public/live2d-widgets/boot.js'), 'utf8');
     const ver = (widget.match(/const VER = '([^']+)'/) || [])[1];
-    ok(!!ver, '能读到 autoload.js 的 VER');
+    ok(!!ver, '能读到 boot.js 的 VER');
     // 这个字面量**就是刻意钉死的**：改了 widget 脚本却没 bump 时，这里会红（20261001b
-    // 是对话面板去胶带 + 标题进签 + 四条边框收成一个那一轮——waifu.css 与
+    // 是对话面板去胶带 + 标题进签 + 四条边框收成一个那一轮——widget.css 与
     // chat-render.js / chat-session.js 都改了，必须换版本号才能越过 nginx 那
     // 1 年 immutable 缓存）。bump 时同步改这一行。
     //
     // 20261001c = 「待决定的确认卡片被迟到的历史气泡压在下面」那一轮（chat-stream.js 改了
     // 就位判据）。那次 bump 时漏了本行 ⇒ 套件一直红；注意**漏改本行不会让 bump 失效**
     // （版本号照样换新、缓存照样越过），红的只是这道纪律本身——所以它红的时候先看
-    // autoload.js 的 VER 是不是已经走在前面了，别当成"bump 没做"再 bump 一次。
+    // boot.js 的 VER 是不是已经走在前面了，别当成"bump 没做"再 bump 一次。
     //
     // 20261001d = 「主动打断的一轮不丢」那一轮（chat-stream.js / chat-engine.js 都改了：
     // 保留语义、补删时机与顺序、提示条措辞按 kind 分家）。改这两支必须 bump——nginx 对
@@ -206,9 +206,14 @@ console.log('\n⑥ 版本号：改了 widget 脚本必须 bump（nginx 对 live2
     // 20261001e = 「开源前准备：私人域名外移」那一轮（chat-stream.js 的导航命令补全
     // 从写死 `https://saudade.site` 改成 `location.origin` —— 写死会让**别人部署**上
     // agent 的跳转命令一律被判跨域取消）。同样必须 bump。
-    ok(ver === '20261001e', 'VER 已 bump 到本轮（20261001e）', { ver });
+    //
+    // 20261001f = 「开源前准备：上游文件名清场」那一轮（autoload.js→boot.js、
+    // live2d-widget.js→stage.js、waifu.css→widget.css）。改名本身就让入口与样式表
+    // 变成新 URL，bump 是为了让**子模块**（chat-*.js / stage.js）也一起换 URL——
+    // 它们内容也改了（loader 里那份子模块名单、CSS 路径），不 bump 就吃 1 年缓存。
+    ok(ver === '20261001f', 'VER 已 bump 到本轮（20261001f）', { ver });
     const tsx = readFileSync(path.join(root, 'src/components/Live2dAgent/index.tsx'), 'utf8');
-    ok(tsx.includes('autoload.js?v=' + ver), 'Live2dAgent 的 ?v= 与 VER 一致');
+    ok(tsx.includes('boot.js?v=' + ver), 'Live2dAgent 的 ?v= 与 VER 一致');
 }
 
 console.log(`\n${fail === 0 ? '全部通过' : `失败 ${fail} 项`}（通过 ${pass}）`);

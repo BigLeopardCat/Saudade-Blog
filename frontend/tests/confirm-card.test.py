@@ -94,7 +94,7 @@ def round_with(frames):
 HARNESS = """<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <title>确认卡片回归台</title>
-<link rel="stylesheet" href="/live2d-widgets/waifu.css">
+<link rel="stylesheet" href="/live2d-widgets/widget.css">
 <style>
   body { margin: 0; height: 100vh; background: #eef2f6; font-family: system-ui; }
   #waifu { position: fixed; right: 20px; bottom: 0; width: 420px; height: 620px; }
@@ -102,10 +102,10 @@ HARNESS = """<!DOCTYPE html>
 <body>
 <div id="waifu"></div>
 <script>
-  // 上报链替身：真链是 autoload.js 里的 window.__reportError → POST /api/monitor/log
+  // 上报链替身：真链是 boot.js 里的 window.__reportError → POST /api/monitor/log
   // （看板娘面板持有上报入口）。这里只收不发，供单测断言"静默失败有没有变响亮"。
   //
-  // ⚠️ 去重那一条**必须照抄**：autoload.js 的 report() 按 `type|message 前 80 字符|url`
+  // ⚠️ 去重那一条**必须照抄**：boot.js 的 report() 按 `type|message 前 80 字符|url`
   // 在页面生命周期内去重、重复的整条丢掉（且 seen 不随任何东西清空）。替身若不去重，
   // "同一枚待办被挂第二次"这类事件在沙箱里数得到、在真链上却早被吃掉——断言会在
   // 一个线上不存在的世界里变绿。dropped 计数暴露给断言，用来锁"埋点没被去重吃掉"。
@@ -195,7 +195,7 @@ HARNESS = """<!DOCTYPE html>
     window.__waifuRender(ctx);
     var engine = window.__waifuEngine(ctx);
     engine.init();
-    // 次序照 autoload.js：工厂必须在 engine.init() 之后调用（chat-stream 在工厂层
+    // 次序照 boot.js：工厂必须在 engine.init() 之后调用（chat-stream 在工厂层
     // 就把 ctx.dom 解构进闭包，早调 = 拿到空 dom，永不绑定）
     window.__waifuStream(ctx, engine).init();
     try { window.__waifuSession(ctx, engine).init(); } catch (e) {}
@@ -853,7 +853,7 @@ def main():
                   st["note"] == "已取消" and st["pending"] is None, repr(st["note"]))
             check("⑧g 那一跳是用户新打的那句话，不是确认请求（请求体里没有令牌）",
                   "confirm_token" not in (st["lastBody"] or ""), str(st["lastBody"])[:200])
-            # 整节下来**一条都不许被真链的去重规则吃掉**（替身照抄了 autoload.js 的
+            # 整节下来**一条都不许被真链的去重规则吃掉**（替身照抄了 boot.js 的
             # `type|message 前 80 字符|url`）——被吃掉就是线上少了这条记录，沙箱却还在自说自话
             check("⑧整节零丢报（埋点带的序号让重复跳在真链上也活得下来）",
                   pg8.evaluate("() => window.__reportsDropped") == 0,

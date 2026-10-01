@@ -219,7 +219,7 @@ const document = {
 /** 装上 DOM 全局。返回 `{ document, Element }`，调用方一般用不到返回值。 */
 export function installDom() {
   globalThis.document = document;
-  globalThis.Element = Element;   // live2d-widget.js 的 animate 检测引用全局 Element
+  globalThis.Element = Element;   // stage.js 的 animate 检测引用全局 Element
   globalThis.addEventListener = (t, fn) => { (document._listeners[t] = document._listeners[t] || []).push(fn); };
   globalThis.removeEventListener = (t, fn) => { const a = document._listeners[t]; if (a) document._listeners[t] = a.filter(f => f !== fn); };
   return { document, Element };
