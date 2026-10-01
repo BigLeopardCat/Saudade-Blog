@@ -84,3 +84,19 @@ pub fn upload_dir() -> PathBuf {
         Err(_) => PathBuf::from("uploads"),
     }
 }
+
+/// 本站地址，形如 `https://example.com`，**无尾斜杠**（调用方直接 `{site}/article/1` 拼）。
+///
+/// 20261001 开源前准备：此前两处各自写死 `https://saudade.site` ——
+/// sitemap 的 `<loc>` 前缀（[`crate::routes::sitemap`]）与 CORS 默认白名单
+/// （[`crate::routes::create_router`]）。别人部署时一个会把爬虫指向别人的站、
+/// 一个会让自己的前端跨域被拒。现在统一读 `SITE_URL`，缺省仍是本站（线上零变化）。
+///
+/// 不缓存：调用点只有"进程启动一次"和"每次抓 sitemap"两种，一次 getenv 的开销可忽略，
+/// 而缓存（`OnceLock`）会让测试里改环境变量失效。
+pub fn site_url() -> String {
+    env::var("SITE_URL")
+        .unwrap_or_else(|_| "https://saudade.site".to_string())
+        .trim_end_matches('/')
+        .to_string()
+}

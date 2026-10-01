@@ -5,9 +5,13 @@
   background: #cccccc
 
 .frontRoot
-  background: var(--front-body-color),url("https://img.picgo.net/2024/05/04/homeBg3c0f28da1a596884.jpeg") center
+  background: var(--front-body-color) center
   background-size: cover
-  // 整页 backdrop-filter 是性能杀手，且背景图已 404、背后无内容可模糊，暂时注释
+  // 20261001 开源前准备：这行原先还挂着第二个图层 —— 自己 picgo 图床上的一张背景图
+  // （`img.picgo.net/...`，早已 404）。它就是"别人部署主页没有背景"的来源；图 404 后
+  // 浏览器只丢弃该图层、渐变层照常渲染 ⇒ 删掉 `url()` 与留着它**视觉完全一致**。
+  // `--front-body-color` 是 linear-gradient（不是颜色值），所以这行仍是一层有效背景。
+  // 整页 backdrop-filter 是性能杀手，且背后已无图可模糊，暂时注释
   // backdrop-filter: blur(5px)
   // 原 backdrop-filter 会创建层叠上下文，把内部元素的 z-index 关在根容器内；
   // 注释后卡片 z-index(99) 会直接压过看板娘(z-index:1)，用 isolation 重建层叠上下文保持层级

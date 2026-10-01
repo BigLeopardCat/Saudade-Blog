@@ -39,9 +39,13 @@ pub struct AppState {
 
 pub fn create_router(state: AppState) -> Router {
     // H5 修复：CORS 白名单。默认仅允许博客域名，可通过 CORS_ALLOWED_ORIGINS 环境变量
-    // 追加多个来源（逗号分隔，如 "https://saudade.site,http://localhost:5173"）
+    // 追加多个来源（逗号分隔，如 "https://example.com,http://localhost:5173"）。
+    //
+    // 20261001 开源前准备：默认值不再写死本站域名，改用 `SITE_URL`（与 sitemap 的
+    // `<loc>` 前缀同源，见 `utils::site_url`）—— 别人部署只要设了 SITE_URL，
+    // 前端就不必再单独配一遍 CORS_ALLOWED_ORIGINS。
     let cors_origins = std::env::var("CORS_ALLOWED_ORIGINS")
-        .unwrap_or_else(|_| "https://saudade.site".to_string());
+        .unwrap_or_else(|_| crate::utils::site_url());
     let origins: Vec<axum::http::HeaderValue> = cors_origins
         .split(',')
         .filter_map(|s| {

@@ -9,7 +9,9 @@
 # 这里同样把部署放进 nohup（ssh 断线不会让部署半路夭折），但**在同一个 ssh 会话里等它结束**，
 # 于是 ssh 的退出码 = 部署结果，CI 的绿灯才真的代表"部署成功"。
 set -e
-cd /home/ubuntu/memory_blog_rust
+# PROJECT_DIR 可覆盖（20261001 开源前准备）：默认仍是原开发机的绝对路径，CI 那条 ssh 调用
+# 不带这个变量 ⇒ 线上行为零变化；别人把仓库克隆到别处时才需要 `PROJECT_DIR=... bash ...`。
+cd "${PROJECT_DIR:-/home/ubuntu/memory_blog_rust}"
 
 SHA="${1:-}"
 mkdir -p logs

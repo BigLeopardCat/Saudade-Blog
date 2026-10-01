@@ -5,7 +5,11 @@
 # （worker 集的正确取法与"主动重启 vs 崩溃自愈"的区分见第 3 节的 20260923 修正注释）
 # 20260830 增第 4 项：nginx error.log 增量扫描（监控补齐 C）。
 # 异常只追加 logs/health.log（轻量、不打扰），未来可接告警通道。
-LOG=/home/ubuntu/memory_blog_rust/logs/health.log
+#
+# PROJECT_DIR 可覆盖（20261001 开源前准备）：默认值仍是原开发机的绝对路径，
+# 所以线上 cron 行为零变化；别人克隆到别处跑时 `PROJECT_DIR=... bash scripts/healthcheck.sh`。
+PROJECT_DIR="${PROJECT_DIR:-/home/ubuntu/memory_blog_rust}"
+LOG="$PROJECT_DIR/logs/health.log"
 STAMP=/tmp/health_state
 TS=$(date "+%Y-%m-%d %H:%M:%S")
 fail() { echo "$TS $*" >> "$LOG"; }

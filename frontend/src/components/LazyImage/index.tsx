@@ -42,10 +42,13 @@ const LazyImage: React.FC<LazyImageProps> = ({ src, threshold = 0.5, style }) =>
 
     return (
         <>
+        {/* 占位图是**本站自己的** `public/loading.svg`（20261001 开源前准备）。
+            原来指向别人仓库里 pin 死 commit 的一个 26 KB 动画 —— 上游作者删库/改路径
+            就全站破图，且那份素材的许可无从考证。见 `public/loading.svg` 头注。 */}
         <img
             ref={imgRef}
             style={style}
-            src={isVisible ? resolveApiAssetUrl(src) : 'https://cdn.jsdelivr.net/gh/LinMoQC/LinmoBlogCDN@d4a74e1de7b957cca9a9e4ca261ad53b1affcc94/loading.svg'}
+            src={isVisible ? resolveApiAssetUrl(src) : '/loading.svg'}
         />
             </>
     );

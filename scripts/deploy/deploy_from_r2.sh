@@ -16,7 +16,10 @@
 # ⚠️ 改这个文件之前先确认没有部署在跑（pgrep -af deploy_from_r2）：
 #    bash 是按字节偏移增量读脚本的，执行中被覆盖会读到半截。
 set -e
-cd /home/ubuntu/memory_blog_rust
+# PROJECT_DIR 可覆盖（20261001 开源前准备）：默认仍是原开发机的绝对路径 ⇒ 线上（CI 调用
+# trigger_deploy.sh，两者都不带这个变量）行为零变化。**注意它是路径、不是仓库根配置**：
+# 下面的 `git diff` 判据、logs/ 与 frontend/dist/ 都相对于这个目录。
+cd "${PROJECT_DIR:-/home/ubuntu/memory_blog_rust}"
 
 mkdir -p logs
 exec 9>logs/.deploy.lock
