@@ -115,8 +115,13 @@ RUSTFLAGS="-D warnings" cargo check   # 严格自检（CI 没开这个，属本�
 ```bash
 cd frontend
 npm ci
-npm run dev        # Vite 开发服务器
+npm run vendor:live2d   # 看板娘运行时的三份第三方产物不入库，必须单独就位（见 5. 许可）
+npm run dev             # Vite 开发服务器
 ```
+
+漏掉 `vendor:live2d` 的话博客一切正常、只有看板娘不画（控制台报
+`/live2d-widgets/vendor/pixi.min.js` 加载失败）——这是**故意**的：那三份是第三方产物，
+不适合进本仓的源码树，所以选择"要么显式取一次、要么不渲染"，而不是悄悄塞进 git。
 
 开发模式下**不需要配代理**：`src/utils/runtimeApi.ts` 检测到端口是 5173 时会自动把
 API 指到 `http://<当前主机>:3000`。但跨源了，所以后端的 CORS 白名单要放开：
