@@ -29,7 +29,7 @@ nginx（静态资源 + 反代 + MQTT WSS；JWT 校验在 Rust 侧）
 | 组件 | 职责 | 位置 |
 |---|---|---|
 | **Rust 后端**（Axum + SeaORM + MySQL 8） | 博客主流量（文章/分类/标签/友链/留言板）、登录鉴权（JWT）、聊天链路中枢（鉴权 → 历史入库 → SSE 逐帧转发） | `src/` |
-| **前端**（React 18 + Vite + antd + bytemd） | SPA；看板娘与聊天面板由 `live2d-widgets/`（autoload.js 入口，纯 JS 子模块拆分）驱动 | `frontend/` |
+| **前端**（React 18 + Vite + antd + bytemd） | SPA；看板娘与聊天面板由 `live2d-widgets/`（boot.js 入口，纯 JS 子模块拆分）驱动 | `frontend/` |
 | **AI Agent**（FastAPI + 手写 LangGraph） | 看板娘大脑：对话生成、博客查询、导航/特效/夜间命令、IoT 设备显示。**独立 git 仓库** | `saudade-blog-agent/` |
 | **IoT**（EMQX 5 + Rust device-service） | ESP32 设备接入（MQTT over TLS）、OLED 显示、设备控制台（`/device-console/`） | 独立目录（不在本仓库） |
 
@@ -59,7 +59,7 @@ git push（主仓库 cn_sora_blog / agent 仓库）
   CI 未设 RUSTFLAGS，warning 不挂构建——此模式是本地纪律非 CI 门槛），push 即由 CI 编译部署。
 - **前端（本仓库 `frontend/`）**：本地不构建。改动 push 走 CI；**改了 live2d-widgets 子模块
   必须 bump 版本号**（nginx 对该目录 immutable 缓存 1 年：手动同步 **2 处**——`Live2dAgent/index.tsx`
-  的 `?v=` 与 `autoload.js` 的 `VER`；waifu.css 的 `?v=` 由 VER 自动拼接）。
+  的 `?v=` 与 `boot.js` 的 `VER`；widget.css 的 `?v=` 由 VER 自动拼接）。
 - **Agent（`saudade-blog-agent/`，独立仓库）**：改技能/工具/prompt 后需重启服务生效
   （改完要重启 agent 服务才生效）；push 走独立 CI。改技能注册表 / plan 契约 /
   摘要逻辑后必跑 `test_skills.py`（L0）与 `eval/run_golden.py`（L2 真实 LLM 端到端）。

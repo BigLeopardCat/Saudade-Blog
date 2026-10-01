@@ -91,7 +91,7 @@ eq('renderHits 的 meta 走 hitActTime', /relTime\(hitActTime\(h\)\)/.test(src),
 eq('命中轮次时间挂在引文前（.conv-hit-at）', /className = 'conv-hit-at'/.test(src), true);
 eq('引文不再被整段覆盖（appendChild 而非 textContent=）',
   /text\.appendChild\(document\.createTextNode\(h\.content \|\| ''\)\)/.test(src), true);
-eq('CSS 有 .conv-hit-at', /\.conv-hit-at\s*\{/.test(readFileSync(path.join(here, '../public/live2d-widgets/waifu.css'), 'utf8')), true);
+eq('CSS 有 .conv-hit-at', /\.conv-hit-at\s*\{/.test(readFileSync(path.join(here, '../public/live2d-widgets/widget.css'), 'utf8')), true);
 // 服务端必须同源回传（否则前端恒走兜底 = 白改）：字段 + 按会话活动重排
 const rust = readFileSync(path.join(here, '../../src/routes/conversation.rs'), 'utf8');
 eq('Rust 回传 conv_updated_at', /"conv_updated_at": act/.test(rust), true);

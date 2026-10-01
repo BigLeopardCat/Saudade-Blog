@@ -431,11 +431,11 @@ const Dashboard = () => {
 
             {/* 看板娘（20260923 用户实测：在 dashboard 刷新后消失）。
                 `/dashboard` 与 `/` 在路由表里是兄弟顶层路由，命中它时 <App/> 根本不在渲染树里，
-                App.tsx 那颗 <Live2dAgent/> 不会挂载 ⇒ autoload.js 从不被注入。
-                SPA 跳转进来时看着还在，是因为看板娘的 DOM 由 autoload.js 直接挂在 body 下、
+                App.tsx 那颗 <Live2dAgent/> 不会挂载 ⇒ boot.js 从不被注入。
+                SPA 跳转进来时看着还在，是因为看板娘的 DOM 由 boot.js 直接挂在 body 下、
                 在 React 树之外，刷新才暴露。与 /guestbook（RiverBoard）同一套做法。
-                autoload.js 自带防重入（window.__agentChatLoaded / #waifu 存在即跳过），
-                来回跳不会叠出两只；waifu.css 也已按后台的 fixed 侧栏调过 z-index。 */}
+                boot.js 自带防重入（window.__agentChatLoaded / #waifu 存在即跳过），
+                来回跳不会叠出两只；widget.css 也已按后台的 fixed 侧栏调过 z-index。 */}
             <Live2dAgent />
             {/* 挂在 ConfigProvider **里面**：后台这套 ConfigProvider 带 darkAlgorithm，
                 公告卡片的配色取 antd token ⇒ 在这里才是深色可读的（见组件里的注释）。 */}

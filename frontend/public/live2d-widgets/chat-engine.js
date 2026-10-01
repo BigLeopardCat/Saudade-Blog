@@ -1,5 +1,5 @@
 // ═ ChatEngine：对话数据层（状态机/增量渲染/历史存取/多标签同步）══
-// 20260828o 拆分自 autoload.js initChat 巨型闭包（原 583-1180 行）。逻辑零改动，
+// 20260828o 拆分自 boot.js initChat 巨型闭包（原 583-1180 行）。逻辑零改动，
 // 仅将共享符号显式化到 ctx（dom/state）与 engine API，供 chat-stream.js 交互层引用。
 // 工厂返回 engine API；init() 在 #waifu 存在后调用（= 原 initChat 主体）。
 (function (g) {
@@ -445,7 +445,7 @@
       let remotectlTimer = null; // storage 事件防抖句柄
       // 版本自检：确认浏览器加载的是当前部署脚本（nginx 对 live2d-widgets 缓存 1 年，
       // 未强刷时可能仍在跑旧版——DB 权威历史/roundId 同步只在 20260828a 之后才有）
-      console.log('[agent-chat] autoload ' + (ctx.ver || '?') + ', BroadcastChannel=' + !!chatChannel
+      console.log('[agent-chat] boot ' + (ctx.ver || '?') + ', BroadcastChannel=' + !!chatChannel
                   + ', storage=' + ('localStorage' in window));
       // ── 跨窗发送状态同步（20260901）──
       // 远端任一窗口在回复（remoteRounds 非空）→ 本窗发送按钮禁用，从源头杜绝
@@ -1344,7 +1344,7 @@
           try { ctx.state.ui.onListDirty(); } catch (e) {}
         }
       };
-      // 20260828o：闭包函数挂到 api（init 是唯一填充点；autoload 在 init() 返回后
+      // 20260828o：闭包函数挂到 api（init 是唯一填充点；boot.js 在 init() 返回后
       // 才调 stream 工厂，此时 API 已齐备；#waifu 缺失重试路径下 stream.init 有
       // 独立面板存在检查等待，不会拿到半成品）
       api.scrollToBottom = scrollToBottom;

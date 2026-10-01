@@ -1,5 +1,5 @@
 // ═ ChatStream：对话交互层（sendMessage 全流程/命令执行/面板 UI 控件）══
-// 20260828o 拆分自 autoload.js initChat 巨型闭包（原 1182-2091 行）。逻辑零改动，
+// 20260828o 拆分自 boot.js initChat 巨型闭包（原 1182-2091 行）。逻辑零改动，
 // 共享符号统一走 ctx.dom / ctx.state / engine API（数据层在 chat-engine.js）。
 (function (g) {
   'use strict';
@@ -90,7 +90,7 @@
     //       → settle（结论：ok/unknown/expired/cancel/rollback）。
     // **绝不带令牌**（它是一次同意的唯一凭据，与 confirm_card 同纪律）。
     // 每一跳都带一个**同一枚待办内单调的序号 n**（1,2,3…）。两个用途：
-    // ① 真上报链（autoload.js 的 report）按 `type|message 前 80 字符|url` 在页面
+    // ① 真上报链（boot.js 的 report）按 `type|message 前 80 字符|url` 在页面
     //    生命周期内去重、整条丢掉——同一枚待办被挂第二次（回滚放回 / reconcile 自愈
     //    接回）时消息一模一样，没有序号就会在**真链上被吃掉**，而沙箱里看得见
     //    ⇒ 那正是"沙箱绿、线上没有"的假绿；
@@ -964,7 +964,7 @@
                 // 「agent 回复文本就有超链接根本用不着弹窗，而且有些询问意图被默认转跳会有
                 // 很强割裂感」）。正文兜底解析出来的那几类（markdown 链接 / "转跳 X"）都是
                 // 确认式（direct:false）⇒ 卡停用后它们也不再跳，只把超链接留在回复正文里。
-                // 恢复 = 把下面三行的注释去掉（卡面标记 #chat-nav-confirm 与 waifu.css 里的
+                // 恢复 = 把下面三行的注释去掉（卡面标记 #chat-nav-confirm 与 widget.css 里的
                 // 样式都还在，底下的 nav-yes/nav-no 监听也留着——恢复只需去掉这三行的注释）。
                 // ctx.state.pendingNavUrl = navUrl;
                 // navQuestion.textContent = '泠月喵建议跳转到: ' + navUrl;
@@ -1800,7 +1800,7 @@
       window.addEventListener('darkmode-change', (e) => {
         try { window.__darkMode = !!(e && e.detail); } catch(err) {/* ignore */}
       });
-      // 20261001：面板那层手账皮的深色档（waifu.css 末尾的 washi 覆盖块）认
+      // 20261001：面板那层手账皮的深色档（widget.css 末尾的 washi 覆盖块）认
       // `.washiDark` —— 那是 index.css 深色令牌选择器列表里多出来的一个类名，
       // 值只有一份。面板挂在 body 下，App 的 `.frontDark` 不是它的祖先，所以
       // 自己挂。三条切换路径（头部按钮 / agent 的 DARKMODE 命令 / 23:00 自动）

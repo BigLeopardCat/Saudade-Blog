@@ -211,7 +211,7 @@ const assert = (cond, name, detail) => {
 store.set('saudade-chat-failed', JSON.stringify([
   { text: REFRESH_TEXT, ts: NOW, reason: '已停止生成', kind: 'stopped' }]));
 
-vm.runInThisContext(readFileSync(path.join(W, 'autoload.js'), 'utf8'), { filename: 'autoload.js' });
+vm.runInThisContext(readFileSync(path.join(W, 'boot.js'), 'utf8'), { filename: 'boot.js' });
 if (!await waitFor(() => !!globalThis.__waifuChatCore)) { console.error('chat-core 未注册（子模块加载失败）'); process.exit(1); }
 await waitFor(() => midEls().length === 2);
 

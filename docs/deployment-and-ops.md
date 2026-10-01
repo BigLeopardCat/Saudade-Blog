@@ -64,7 +64,7 @@ push 到 `cn_sora_blog` 分支触发构建与部署：
 
 **前端强缓存**：对少量重资源目录（Live2D 模型与运行时）设 1 年 `immutable`；该 location 必须排在
 `\.(js|css|json)$` 的 no-store 正则**之前**（否则被后者的规则吃掉）。这类目录换版靠 `?v=` bump——
-需手动同步 **2 处**：组件里的 `?v=` 与 `autoload.js` 的 `VER`（样式表由 VER 自动拼接）。
+需手动同步 **2 处**：组件里的 `?v=` 与 `boot.js` 的 `VER`（样式表由 VER 自动拼接）。
 
 ### 2.2 逃生通道（仅 CI 故障时）
 

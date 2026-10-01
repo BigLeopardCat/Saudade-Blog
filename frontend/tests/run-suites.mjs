@@ -13,7 +13,7 @@
  * `scripts/nightly_sandboxes.sh` 每天 04:40 串行跑，结果在 ~/sandbox_regression.log）
  * 与 `eval/*.py`（要真服务与真语料，本机按需跑）。
  * 20260927 变更：`repro-timegap.mjs` / `smoke-harness.mjs` 两支**已修好并升格进 CI**
- * （现名 `chat-time-divider.test.mjs` / `chat-autoload-smoke.test.mjs`）——它们当时
+ * （现名 `chat-time-divider.test.mjs` / `chat-boot-smoke.test.mjs`）——它们当时
  * 各自都跑不到自己声称在测的地方（缺 `document.querySelector`、缺会话桩、时钟没钉死，
  * 详见 `stubs/dom.mjs` 头注），修好后每条断言都确定可判。
  */

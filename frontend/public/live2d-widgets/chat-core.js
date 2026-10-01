@@ -4,7 +4,7 @@
 // （条目换成 incoming 的 id/time，position 不动——根治旧 type|time 去重误判）；
 // 都不匹配 → 按 time 排序插入。
 // ── 命令正则权威定义（20260828o 收敛）──
-// 原 autoload.js 三份拷贝（__chatCore.COMMAND_RE / initChat.COMMAND_LINE_RE /
+// 原 boot.js 三份拷贝（__chatCore.COMMAND_RE / initChat.COMMAND_LINE_RE /
 // stripCommandPrefix 内 RE）合并于此：COMMAND_LINE_RE 与 stripCommandPrefix RE
 // 文本等价，且 test 语义与 COMMAND_RE 完全等价（参数组可选 → 前缀匹配即整体匹配；
 // 所有 COMMAND_LINE_RE 调用处都先 trim，COMMAND_RE 的 ^\s* 是超集容忍，无用例可区分）。

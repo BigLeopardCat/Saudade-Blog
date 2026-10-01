@@ -117,16 +117,16 @@ for (const f of ['chat-stream.js', 'chat-engine.js', 'chat-render.js', 'chat-ses
   eq((between.match(/<div/g) || []).length, 2, '卡片是 messages 的直接子节点（中间不再套容器）');
   ok(!/chat-new-msg-note[\s\S]{0,400}id="chat-ask"/.test(r), '卡片不再挂在输入区上方那一族兄弟节点里');
   // 定位覆盖：conv-open/conv-out 给 .chat-nav-confirm 加的 margin-left 位移必须被压过
-  const css = W('waifu.css');
-  ok(/#waifu-chat #chat-ask \{/.test(css), 'waifu.css：卡片有自己的定位覆盖（两个 id 压过位移群）');
-  ok(/#waifu-chat #chat-ask \.chat-ask-note/.test(css), 'waifu.css：已确认/已取消灰字样式在');
+  const css = W('widget.css');
+  ok(/#waifu-chat #chat-ask \{/.test(css), 'widget.css：卡片有自己的定位覆盖（两个 id 压过位移群）');
+  ok(/#waifu-chat #chat-ask \.chat-ask-note/.test(css), 'widget.css：已确认/已取消灰字样式在');
   // 20260925：pre-line 撤掉（问句改走 markdown，换行由渲染管线自己出）——它会把
   // HTML 里标记之间的换行再渲染一次，两段问句多出一条空行（实测 60.6px → 42.4px）。
   // 断言反过来锁：这两条不能再回来。
   ok(/\.nav-question p \{ margin: 0; \}/.test(css),
-     'waifu.css：问句段落下边距归零（markdown 产出的 <p> 不该吃 UA 的 1em）');
+     'widget.css：问句段落下边距归零（markdown 产出的 <p> 不该吃 UA 的 1em）');
   ok(!/\.nav-question \{[^}]*white-space: pre-line/.test(css),
-     'waifu.css：问句不残留 white-space: pre-line（markdown 已管换行，再管一次是双倍行距）');
+     'widget.css：问句不残留 white-space: pre-line（markdown 已管换行，再管一次是双倍行距）');
 }
 
 {
@@ -203,9 +203,9 @@ for (const f of ['chat-stream.js', 'chat-engine.js', 'chat-render.js', 'chat-ses
   const s = W('chat-stream.js');
   ok(/text\.startsWith\('__CONFIRM__:'\)/.test(s), 'chat-stream.js 仍解析 __CONFIRM__ 帧');
   ok(/confirm_token: opts\.confirmToken/.test(s), '请求体带 confirm_token');
-  const ver = (W('autoload.js').match(/const VER = '([^']+)'/) || [])[1];
+  const ver = (W('boot.js').match(/const VER = '([^']+)'/) || [])[1];
   const idx = readFileSync(path.join(here, '../src/components/Live2dAgent/index.tsx'), 'utf8');
-  ok(ver && idx.includes(`autoload.js?v=${ver}`), `autoload.js VER 与 index.tsx 的 ?v= 一致（${ver}）`);
+  ok(ver && idx.includes(`boot.js?v=${ver}`), `boot.js VER 与 index.tsx 的 ?v= 一致（${ver}）`);
 }
 
 console.log(`\n${fail ? '✗' : '✓'} live2d-widget-scope：${pass} 通过 / ${fail} 失败`);
