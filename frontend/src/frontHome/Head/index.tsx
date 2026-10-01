@@ -1,7 +1,7 @@
 import {Avatar, Card, ConfigProvider, Modal} from 'antd'
 import './index.sass'
 import {Key, ReactElement, ReactNode, ReactPortal, useEffect, useRef, useState} from "react";
-import {useNavigate} from "react-router-dom";
+import {useLocation, useNavigate} from "react-router-dom";
 import {debounce} from 'lodash';
 import Switch from "../../components/Switch";
 import SearchButton2 from "../../components/Buttons/SearchButton2";
@@ -54,6 +54,18 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
     const [showMobileCategory, setShowMobileCategory] = useState(false);
     const dispatch = useDispatch()
     const navigate = useNavigate();
+    /* 头顶压着一块**深色**横幅的页面（20261001，用户第 3 条「文章详情页的顶部栏字体看不清」）。
+     *
+     * 透明态的导航字吃 `--washi-ink`：白天档是深墨紫 `#4a3550`，压在淡彩首屏上约 7:1 ——
+     * 那正是它当初被选成令牌值的原因。但文章详情页的首屏不是淡彩纸，是 `.readCover`
+     * 那张封面（视频/大图 + 顶缘那条 `rgba(0,0,0,.5)` 渐变）：实测背景 ≈ `#3e3e3f`，
+     * 深墨紫压上去是 **1.0:1**，字与底完全分不开。夜间档本来就吃浅色令牌，只有白天中招。
+     *
+     * 判据用**路由**而不是"测量底下是不是深色"：站点只有这一处横幅是深底，
+     * 它是既定的页面形态、不是运行期运气（同族教训见 memory「判据的前提住在别人手里」——
+     * 判据依赖运行期取值时，换一篇文章、换一帧视频就会换一个结果）。
+     * 与 `.is-stuck`（滚动）/`:hover` 共用同一套浅字 + 投影，见 index.sass。 */
+    const overDarkBanner = useLocation().pathname.startsWith('/article/');
     const [animation,setAnimation] = useState('');
     const categoryList = useSelector((state: any) => state.categories.categories)
     // 头部头像 = **当前访客**的头像（20260922 用户要求的三态：正常登录 / 退出登录但本机挂着
@@ -315,8 +327,12 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
 
                 原来的内联 `backdropFilter: blur(10px)` 不恢复：大面积模糊是
                 GPU 成本，而首屏正是看板娘所在的那一屏（见 memory「后台 GPU 高于
-                首页」）。深底用 0.66 的实色，观感等价、代价为零。 */}
-            <div className={`headContainer${scrollHeight ? ' is-stuck' : ''}`}>
+                首页」）。深底用 0.66 的实色，观感等价、代价为零。
+
+                第三条态 `.over-dark`（20261001，用户第 3 条）：文章详情页的横幅本身
+                就是深的，透明态也读不出字 ⇒ 由路由判定，**永远**用深底那套浅字
+                （只换字色，不加底色——底下的封面渐变已经把这一带压暗了）。 */}
+            <div className={`headContainer${scrollHeight ? ' is-stuck' : ''}${overDarkBanner ? ' over-dark' : ''}`}>
                 <div className="phoneBar">
                     {phoneBarShow ? <i className="iconfont icon-guanbi2" style={{
                             fontSize: 35,

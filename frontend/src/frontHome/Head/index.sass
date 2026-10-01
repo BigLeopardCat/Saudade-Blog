@@ -55,6 +55,11 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
   // GPU 成本，而首屏正是看板娘所在的那一屏（见 memory「后台 GPU 高于首页」）。
   // 深底用 0.66 的实色，观感等价、代价为零。
   background: transparent
+  // 「文章详情页的顶部栏」那一面深色横幅（20261001，用户第 3 条，详见下方字色那一段）。
+  // ⚠️ 这条**必须写在 `:hover` 之前**：两者同特异性（0,2,0），写在后面的话
+  // 悬停反而把深底从 0.66 冲淡成 0.30（字色没问题、底反而变浅了）。
+  &.over-dark
+    background: rgba(0, 0, 0, 0.30)
   // 悬停整条落深底（原逻辑）
   &:hover
     background: rgba(0, 0, 0, 0.66)
@@ -77,14 +82,32 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
       background: var(--washi-grad, linear-gradient(100deg, #ff7fc0, #b06ee8))
       opacity: 0.5
       pointer-events: none
-  // 深底态（悬停 / 已滚动）下的字一律换浅。这里必须是字面量而不是 `--washi-ink`：
-  // 后者在白天档是深墨紫，压在 0.66 的黑底上等于没有。
+  // 深底态（悬停 / 已滚动 / 文章详情页那面深色横幅）下的字一律换浅。这里必须是字面量
+  // 而不是 `--washi-ink`：后者在白天档是深墨紫，压在 0.66 的黑底上等于没有。
   // 位置在 `.headBar li:hover` 之前是**故意的**——两者同特异性（0,3,1），
   // 后写者赢，悬停某一项时该让 `li:hover` 的和纸胶带 chip 说了算。
-  &:hover, &.is-stuck
+  //
+  // `.over-dark`（20261001，用户第 3 条「文章详情页的顶部栏字体看不清」）：首屏那面
+  // 横幅（`.readCover` + 顶缘 `rgba(0,0,0,.5)` 渐变）本身就是深底，实测背景中位
+  // 亮度 ≈ 58/255，白天档的深墨紫 `#4a3550` 压上去只有 **1.0:1** —— 字与底完全分不开。
+  // 它与"悬停/滚动"的区别是**不随交互变**：由路由（`/article/*`）判定的常驻态。
+  //
+  // 光换字色还不够：横幅是**视频**，最亮那 1% 的像素亮到 119/255，浅字压上去只剩 3.8:1。
+  // 所以上面那条黑纱要与这里的字色配对出现：0.30 把最亮的一档压到 5.4:1
+  // （实测口径见 `tests/read-topbar-contrast.test.py`，那条测试就是按这两个数写的判据）。
+  //
+  // 三态共用同一组字色：悬停 / 已滚动本来就是深底，`.over-dark` 只是把这件事
+  // 提前钉死在路由上。合成一条选择器列表是为了**不让后来者以为它们是三套值**
+  // （改一处必须同步另一处的写法在这里根本不存在）。
+  &:hover, &.is-stuck, &.over-dark
     .webTitle, .headBar li
       color: #f3e8f6
       text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35)
+  // 窄屏（≤1200px）那一档显示的是汉堡钮 + 标题，不吃上面的 `.headBar li`：
+  // 汉堡钮的颜色来自 `--phoneBar-font-color`（白天 `#717171`），压在深色横幅上
+  // 同样读不出，一并换浅。
+  &.over-dark .phoneBar
+    color: #f3e8f6
   @media only screen and (max-width: 1200px)
     border-radius: 0
     border-radius: 10px
