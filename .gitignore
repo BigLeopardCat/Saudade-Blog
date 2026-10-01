@@ -31,15 +31,25 @@ frontend/.dockerignore
 frontend/nginx.conf
 frontend/.npmrc
 frontend/LICENSE
-frontend/public/live2d-widgets/chunk/*.map
 
-# 看板娘运行时的第三方产物（20261001 开源前准备）：**故意不进 git**
-#   vendor/pixi.min.js / vendor/cubism4.min.js —— MIT，但 576KB 且与 node_modules 重复
-#   cubism5/live2dcubismcore.min.js           —— Live2D 专有许可，**不属于本仓 GPL-2.0 的覆盖范围**
+# 看板娘前端的两棵树（20261002 前端搬家：前端随 MIT 分发搬进 agent 仓）——**本仓不再跟踪**。
+# 构建前由 `npm run fetch:widget`（frontend/scripts/fetch-widget.mjs）按
+# frontend/widget.lock.json 里钉死的 sha 从 agent 仓稀疏检出，落到**和以前完全一样的路径**。
+# 路径不变是**有意的**：nginx 那两个 1 年 immutable 的 location 块、仓库外的设备控制台、
+# 一批按路径读文件的测试、以及 src/routes/chat.rs 的 include_str! 全都因此零改动。
+#
+# 看板娘运行时的第三方产物（20261001 开源前准备）：也**故意不进 git**
+#   live2d-widgets/vendor/pixi.min.js / cubism4.min.js —— MIT，但 576KB 且与 node_modules 重复
+#   cubism5/live2dcubismcore.min.js                  —— Live2D 专有许可，**不属于本仓 GPL-2.0 的覆盖范围**
 # 三者由 `npm run vendor:live2d`（frontend/scripts/vendor-live2d.mjs）就位：
 # 前两份从 node_modules 拷，第三份从官方 CDN 取并按 sha256 校验（换版本会响亮地红）。
-# 别人克隆后跑一次 npm ci + npm run vendor:live2d 即可（构建前都得有这三份）。
-frontend/public/live2d-widgets/vendor/
+#
+# ⚠️ 顺序：fetch:widget **必须在 vendor:live2d 之前**——后者往 live2d-widgets/vendor/ 里写，
+# 而前者整树替换 live2d-widgets/，顺序反了刚取到的 vendor/ 就被抹掉（脚本会保留**已存在**的
+# vendor/ 并打印出来，但那是兜底，不是契约）。新克隆后依次跑：
+#   npm ci && npm run fetch:widget && npm run vendor:live2d
+frontend/public/live2d-widgets/
+frontend/public/live2d_model/
 frontend/public/cubism5/
 
 # 环境变量：**任何 .env* 变体都不进库**（20260917 修——原来只写了 /.env 与

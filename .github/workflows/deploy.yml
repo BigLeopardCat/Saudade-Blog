@@ -55,6 +55,12 @@ jobs:
               - 'frontend/vite.config.ts'
               - 'frontend/tsconfig.json'
               - 'frontend/tsconfig.node.json'
+              # 看板娘前端（20261002 前端搬家）：它的源码与那两棵树都在 agent 仓，本仓只留
+              # `frontend/widget.lock.json` 里的 sha 与取它的脚本。**这两条必须在**：
+              # 「只把 pin 挪一格」的 push 是最典型的"前端变了"——漏了它就会被判成前端没变，
+              # CI 全绿而线上照旧，正是上面 :50-53 那条注释记着的同一类事故。
+              - 'frontend/widget.lock.json'
+              - 'frontend/scripts/**'
             # 部署管线本身：改了它就跑一次完整部署，顺带把新管线真跑一遍（别让改动只躺在仓库里）
             infra:
               - '.github/workflows/**'
@@ -89,15 +95,26 @@ jobs:
           # 混用同一个 target 缓存会把两种产物搅在一起
           key: cargo-test
 
-      - name: Rust tests（MockDatabase，不连库）
-        run: cargo test
-
+      # ⚠️ 顺序要紧（20261002 前端搬家）：看板娘前端**不在本仓的 git 里**（随 MIT 分发搬进了 agent
+      # 仓），而 `cargo test` 里那条 `include_str!("../../frontend/public/live2d-widgets/
+      # chat-stream.js")` 是**编译期**读入 ⇒ 必须先把它取到那条路径下，Rust 这一半才编得过。
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+
+      - name: Fetch widget frontend（按 widget.lock.json 钉的 sha）
+        # 只用 Node 内建 + git，**不需要 node_modules** ⇒ 能排在 `npm ci` 之前。
+        # 任何一步失败即退 1、响亮变红：取不到就没有那两棵树，而 vite 只拷贝 public/ 下
+        # **真实存在**的文件 ⇒ 包里没有它们 ⇒ 部署按"本代清单"做集合差时会把线上正在用的
+        # 那棵树当**旧块删掉**。那是最难查的一种坏法：站点一切正常，只有看板娘一帧不画。
+        run: npm run fetch:widget
+        working-directory: ./frontend
+
+      - name: Rust tests（MockDatabase，不连库）
+        run: cargo test
 
       - name: Install frontend deps
         run: npm ci
@@ -156,6 +173,12 @@ jobs:
           VITE_CDN_BASEURL: ${{ vars.VITE_CDN_BASEURL }}
         run: |
           npm ci
+          # 看板娘前端**两棵树**（live2d-widgets/、live2d_model/）的源码：20261002 前端搬家起
+          # 住在 agent 仓（MIT），本仓按 frontend/widget.lock.json 钉的 sha 稀疏检出、
+          # 落到与从前**完全相同**的路径。⚠️ **必须在 vendor:live2d 之前**——后者往
+          # live2d-widgets/vendor/ 里写，而这一步整树替换 live2d-widgets/，顺序反了
+          # 刚取到的 vendor/ 就被抹掉（参考脚本会保留已存在的 vendor/ 兜底，但那不是契约）。
+          npm run fetch:widget
           # 看板娘运行时的三份第三方产物（vendor/pixi.min.js、vendor/cubism4.min.js、
           # cubism5/live2dcubismcore.min.js）**故意不进 git**（体积 + Live2D 专有许可），
           # 但 vite 只拷贝 public/ 下真实存在的文件 ⇒ 不在 build 之前就位，打出来的包里
@@ -164,6 +187,11 @@ jobs:
           # 第三份从官方 CDN 取并按 sha256 校验：官方换版本会红在构建这一步（预期的）。
           npm run vendor:live2d
           npm run build
+          # 最后一道兜底（20261002 前端搬家）：上面任何一步如果"静默地"什么都没做，
+          # vite 会若无其事地打出一个**没有看板娘**的包，而部署的集合差会把线上那棵树清掉。
+          # 这两条断言是"包真拿到了那两棵树"的**产物级**证据（不看中间步骤的自述）。
+          test -f dist/live2d-widgets/chat-stream.js
+          test -f dist/live2d_model/agent_2.model3.json
         working-directory: ./frontend
 
       - name: Package & Upload to R2

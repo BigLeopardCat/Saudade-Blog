@@ -10,6 +10,8 @@
     "build": "vite build",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives",
     "preview": "vite preview",
+    "fetch:widget": "node scripts/fetch-widget.mjs",
+    "fetch:widget:check": "node scripts/fetch-widget.mjs --check",
     "vendor:live2d": "node scripts/vendor-live2d.mjs",
     "vendor:live2d:check": "node scripts/vendor-live2d.mjs --check"
   },
