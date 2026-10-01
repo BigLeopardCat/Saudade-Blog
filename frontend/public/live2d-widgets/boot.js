@@ -84,18 +84,17 @@
   }
   window.__agentChatLoaded = true;
 
-  // 收起状态恢复：quit 工具会写 waifu-display 24h 标记，上游 initWidget 发现后只建
+  // 收起状态恢复：quit 工具会写 waifu-display 24h 标记，渲染层发现后只建
   // 左下角收回按钮、不初始化看板娘——刷新/返回后看板娘"消失"只剩按钮（曾报
   // "对话按钮跑到收回按钮底部"BUG）。刷新/返回=重新访问，一律清除该标记让看板娘
   // 恢复默认展示；SPA 内路由切换本文件不重跑（上方 skip），不受影响。
   try { localStorage.removeItem('waifu-display'); } catch(e) {}
 
   const live2d_path = '/live2d-widgets/';
-  const modelPath = '/live2d_model/agent_2.model3.json';
   // ★ 版本号：nginx 对 live2d-widgets 目录 immutable 缓存 1 年，子模块变更只 bump
   // 这里一处（所有子模块 URL 统一拼 ?v=VER；Live2dAgent/index.tsx 的 boot.js 引用
   // 也需同步 bump——否则浏览器不会重新请求本入口）
-  const VER = '20261001f';
+  const VER = '20261001g';
 
   function loadExternalResource(url, type) {
     return new Promise((resolve, reject) => {
@@ -142,7 +141,7 @@
     ['chat-engine', '__waifuEngine'],
     ['chat-stream', '__waifuStream'],
     ['chat-session', '__waifuSession'], // 20260903 会话化 UI 壳（会话管理列表/双栏）
-    ['stage', '__waifuWidget'],         // 看板娘画布/口型/入场动画（20261001 由 live2d-widget.js 改名）
+    ['renderer', '__waifuRenderer'],    // 看板娘渲染层（20261001 自研，替换上游 GPL-3.0 实现）
   ];
   for (const [name, globalKey] of MODS) {
     try {
@@ -166,9 +165,13 @@
   const engine = window.__waifuEngine(ctx);
   if (!engine) { console.error('[agent-chat] chat-engine 初始化失败'); return; }
   window.__waifuStream(ctx, engine);
-  const widget = window.__waifuWidget();
+  const renderer = window.__waifuRenderer();
 
-  // 提前加载 Cubism 运行时（必须用常规 script 标签，不能用 type=module）
+  // ── 渲染引擎三件套（顺序不能换）──────────────────────────────────────────
+  // ① cubism5 core（Live2D 专有，不入库；`npm run vendor:live2d` 就位）
+  // ② pixi.js（MIT，UMD → window.PIXI）
+  // ③ pixi-live2d-display 的 cubism4 构建（MIT，挂到 window.PIXI.live2d；它读全局 PIXI）
+  // 必须用常规 script 标签，不能用 type=module（UMD 要的是全局）。
   await new Promise((resolve, reject) => {
     const s = document.createElement('script');
     s.src = '/cubism5/live2dcubismcore.min.js';
@@ -180,6 +183,9 @@
   while (typeof window.Live2DCubismCore === 'undefined') {
     await new Promise(r => setTimeout(r, 50));
   }
+  for (const f of ['vendor/pixi.min.js', 'vendor/cubism4.min.js']) {
+    await loadScript(live2d_path + f + '?v=' + VER);
+  }
 
   // 加载特效脚本（用常规 script 标签，非 module 模式确保全局变量）
   await new Promise((resolve, reject) => {
@@ -190,54 +196,16 @@
     document.head.appendChild(s);
   });
 
-  // 20260830d：waifu-tips 模块图整体重命名（getHitAreasCount null 守卫需要换名
-  // 才能越过 nginx 1 年 immutable 缓存）——新名即 cache-bust，无需 ?v=
-  await Promise.all([
-    loadExternalResource(live2d_path + 'widget.css?v=' + VER, 'css'),
-    loadExternalResource(live2d_path + 'waifu-tips.20260905.js', 'js'),
-  ]);
+  await loadExternalResource(live2d_path + 'widget.css?v=' + VER, 'css');
 
-  // 看板娘初始化时序（与拆分前一致：canvas → initWidget → 命中守卫 → 滑入 → 动画）
-  widget.initCanvas();
+  // 看板娘初始化：建 DOM 骨架 + 起渲染（模型异步加载，不阻塞下面的聊天面板）
+  renderer.init();
+  // 等模型真能画出来再滑入；口型/循环参数从这个钩子挂上去（两处内部都是轮询/延迟起步，
+  // 所以要在 init 之后立刻调用，晚调会白等一帧）
+  renderer.slideIn();
+  renderer.startAnim();
 
-  if (document.getElementById('waifu')) {
-    console.warn('[Live2D] waifu already exists, skipping init');
-  } else {
-  initWidget({
-    waifuPath: live2d_path + 'waifu-tips.json',
-    cubism5Path: '/cubism5/live2dcubismcore.min.js',
-    modelId: 0,
-    // A7 修复：移除 'hitokoto' 工具——其回调 fetch v1.hitokoto.cn 后 innerHTML 直插未转义（投稿制内容可带 <svg onload>），
-    // 聊天开关按钮由下方 repurposeHitokoto 自建（复用原按钮位 id）
-    // 20260930：删掉 'asteroids'（飞机图标 + 飞机大战，用户点名）。它不在这个数组里 ⇒
-    // `registerTools()` 根本不会建出 `#waifu-tool-asteroids` 那个 span ⇒ 图标没了，点击回调
-    // （从 jsdelivr 拉 asteroids.js 开游戏）也**结构性不可达**，不是"藏起来"。
-    tools: ['switch-model', 'switch-texture', 'photo', 'info', 'quit'],
-    logLevel: 'trace',
-    drag: true,
-  }, [{
-    paths: [modelPath],
-    message: {
-      changeSuccess: '模型切换成功。',
-      changeFail: '当前只有这一套模型。',
-      photo: ['拍照完成啦。'],
-      goodbye: ['下次再见。'],
-      welcome: ['你好，我已经上线了。'],
-      referrer: ['来自 <span>{year}</span> 的问候。'],
-      hitokoto: ['今天也要认真摸鱼。'],
-    },
-  }]);
-
-    }
-
-  // 守卫必须在 initWidget 之后调用：画布由 initWidget 注入 waifu 模板时才创建，
-  // 之前调用会因 canvas 不存在而空转（20260828n 修复，见 stage.js 注释）
-  widget.guardLive2dHitTest();
-
-  widget.forceSlideInFromBottom();
-  widget.startCustomAnim();
-
-  // 聊天数据层 + 交互层（#waifu 已由 initWidget 创建，engine.init 内部有 500ms 重试兜底）
+  // 聊天数据层 + 交互层（#waifu 已由 renderer.init 建好，engine.init 内部有 500ms 重试兜底）
   engine.init();
   const stream = window.__waifuStream(ctx, engine);
   stream.init();

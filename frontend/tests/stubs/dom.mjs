@@ -200,6 +200,10 @@ const document = {
   _byId: {},
   _listeners: {},
   head: new Element('head'),
+  // 真机恒有 body（看板娘渲染层把 #waifu 骨架 insertAdjacentHTML 到 body 上）。
+  // 此前没有它是因为没有任何被测模块用过 document.body —— 不是"故意不提供"，
+  // 而是直到 20261001 渲染层换自研才第一次被用到。
+  body: new Element('body'),
   createElement(tag) { return new Element(tag); },
   createTextNode(t) {
     const n = new Element('text');

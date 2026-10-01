@@ -41,9 +41,9 @@ frontend/
 ├── vite.config.ts          构建配置 + 站点身份注入插件
 ├── public/                 原样拷贝进 dist 的静态资源
 │   ├── fonts/              ★ 自托管图标字体（两套 iconfont + Font Awesome）
-│   ├── live2d-widgets/     ★ 看板娘与聊天面板（见下）
+│   ├── live2d-widgets/     ★ 看板娘与聊天面板（见下；vendor/ 子目录不入库）
 │   ├── live2d_model/       Live2D 模型文件
-│   ├── cubism5/            Live2D Cubism Core 运行时
+│   ├── cubism5/            Live2D Cubism Core（**不入库**，npm run vendor:live2d 就位）
 │   ├── loading.svg         图片懒加载占位
 │   └── effects.js          页面特效（樱花/雨/雪）
 ├── src/
@@ -65,28 +65,47 @@ React 那边只有一个 38 行的注入器（`src/components/Live2dAgent/index.
 
 ```
 boot.js                  入口：防重入 / 资源链加载 / 子模块组装 / 初始化时序
+renderer.js              看板娘渲染层（自研：DOM 骨架 / 拖拽 / 工具条 / 口型 / 入场）
 chat-core.js             纯函数（无 DOM 依赖）
 chat-render.js           消息渲染（markdown、代码高亮、贴纸）
 chat-engine.js           数据层（拉历史、发消息、会话态）
 chat-stream.js           交互层（SSE 解析、命令执行、发送/停止）
 chat-session.js          会话列表 UI 壳
-stage.js                 看板娘画布、口型、入场动画（读 window.__cubism5model）
 widget.css               看板娘与聊天面板样式（自研，2012 行）
+vendor/                  pixi.js / pixi-live2d-display 的 UMD 产物（**不入库**，见下）
 ```
 
-下面四个是**上游 `stevenjoezhang/live2d-widget`（GPL-3.0）的代码**，本仓只是打补丁，
-**不要在这上面加功能**——它们与博客自身的 GPL-2.0 不兼容，正在整体替换：
+整个目录是**自研代码**。20261001 之前这里住着上游 `stevenjoezhang/live2d-widget`
+（GPL-3.0）的渲染层，与博客自身的 GPL-2.0 不兼容，已整体替换：现在是
+**pixi.js + pixi-live2d-display**（都是 MIT）直接驱动 Live2D 模型，约 350 行。
 
-```
-waifu-tips.20260905.js   上游入口（initWidget / 工具条 / 拖拽），约 99% 与上游相同
-chunk/index.20260905.js  上游构建产物 ┐ 三者是同一个 ES module 图
-chunk/index2.20260905.js 上游构建产物 ┘（改一个就得三个一起换名）
-waifu-tips.json          上游的鼠标悬停文案表（56 条选择器全是上游的）
+渲染链路的三个第三方件（都不是本仓代码，两个是 MIT、一个是专有）：
+
+| 文件 | 来源 | 许可 |
+|---|---|---|
+| `public/live2d-widgets/vendor/pixi.min.js` | `node_modules/pixi.js` | MIT |
+| `public/live2d-widgets/vendor/cubism4.min.js` | `node_modules/pixi-live2d-display` | MIT |
+| `public/cubism5/live2dcubismcore.min.js` | [Live2D 官方](https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js) | **Live2D 专有**，不适用本仓的 GPL-2.0 |
+
+**这三份都不进 git**（体积 + 许可），克隆后跑一次就位：
+
+```bash
+npm ci
+npm run vendor:live2d          # 从 node_modules 拷两份 + 从官方 CDN 取第三份（按 sha256 校验）
+npm run vendor:live2d:check    # 只校验不写盘
 ```
 
-> `stage.js` / `boot.js` 都是自研代码，名字取自上游仓库名而已（20261001 才改掉）。
-> 真正的上游痕迹还有 DOM/CSS 里的 `#waifu`、`waifu-active`、`__waifu*` 全局——那是
-> 渲染层替换时一起要清的最后一批。
+`vite build` 只拷贝 `public/` 下**真实存在**的文件 ⇒ 缺了这三份，dist 里就没有它们，
+看板娘整个不渲染（而且是静默的：聊天面板照常工作）。CI 在 `npm run build` 之前会自动跑
+`vendor:live2d`，官方哪天换核心版本会在构建这一步**响亮地红**（哈希对不上），
+免得新核心悄悄进生产——Cubism Core 换版本不报错，只是画得不一样。
+
+工具条那 5 个图标是 **Font Awesome Free 6.7.2**（Icons: CC BY 4.0），SVG 路径内联在
+`renderer.js` 的 `ICONS` 里，版权归 Font Awesome 项目所有。
+
+> 「复刻上游的观感」这件事是**逐帧比对过**的：替换前后各跑一次
+> `tests/live2d-render.test.py`，两侧全绿，且同一机位截图的差异 < 0.1%（只剩呼吸/尾巴
+> 动画的相位差）。改 `fitModel()` 的取景公式前请先跑那个套件。
 
 ### ⚠️ 改这里的文件要 bump 版本号
 
@@ -94,18 +113,19 @@ nginx 对 `/live2d-widgets/` 目录设了 **1 年 immutable 缓存**，不换 UR
 `boot.js` 里有个 `VER` 常量，所有子模块 URL 都拼 `?v=VER` —— **改任何子模块都要
 把 `VER` 加一档**。
 
-`VER` 有**三个同步点**（改漏一个就会出现"脚本是新的、入口是旧的"或反之）：
+`VER` 有**四个同步点**（改漏一个就会出现"脚本是新的、入口是旧的"或反之）：
 
 1. `frontend/public/live2d-widgets/boot.js` 的 `VER` 常量
 2. `frontend/src/components/Live2dAgent/index.tsx` 里 `boot.js?v=` 的查询串
-3. 仓库外还有一个消费方（IoT 设备控制台直接引 `boot.js`，没有 React 打包）
+3. **仓库外**还有一个消费方（IoT 设备控制台 `/home/ubuntu/mqtt-demo/device-console/index.html`
+   直接引 `boot.js`，没有 React 打包）
+4. `frontend/tests/spa-navigate.test.mjs` 里手抄的那份字面量（有断言钉着，漏了会红）
 
 > 版本号是部署细节，**不写进 commit message**。
 
-`widget.css` 的缓存靠 `?v=VER`（由 `boot.js` 自动拼接，不用手改）。但上游那三个模块
-（`waifu-tips.*` 与两个 `chunk/*`）是**裸名**加载的（没有 `?v=`，因为它们之间靠 ES module
-identity 互相 import，query 不同会分裂成两份模块实例）——换内容时必须**整体改文件名**，
-新名即 cache-bust。
+`widget.css` 与 `vendor/*` 的缓存也走 `?v=VER`（由 `boot.js` 自动拼接，不用手改）。
+但 `public/cubism5/` 与 `public/live2d_model/` 是**裸路径**加载的（没有 `?v=`）——换模型文件
+或换 Cubism Core 只能改文件名 / 改路径，`?v=` 帮不上忙，immutable 一年。
 
 ### SSE 帧协议
 

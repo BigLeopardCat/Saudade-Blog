@@ -2,7 +2,7 @@
 // node tests/chat-boot-smoke.test.mjs：最小 DOM stub + 完整 loader（boot.js）加载链 +
 // 一次真实 SSE 对话往返（发送 → 流式帧 → 转正 → 命令解析）。验证：
 // ① 6 个文件按依赖序加载不抛错、工厂依赖校验通过；
-// ② engine.init/stream.init 时序（#waifu 由 initWidget 创建后执行）无引用错误；
+// ② engine.init/stream.init 时序（#waifu 由 renderer.init 创建后执行）无引用错误；
 // ③ sendMessage 全流程：乐观插入 → live 气泡（msg-streaming）→ 收尾转正 →
 //    saveHistory（localStorage 含 2 条）→ 时间标签（首条出现、第二条不重复）；
 // ④ 停止按钮复位 / 输入框恢复 / broadcast 帧无异常。
@@ -57,23 +57,10 @@ globalThis.Image = class {};
 globalThis.Live2DCubismCore = {};
 globalThis.__chatRenderMarkdown = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 globalThis.__chatEnhance = () => {};
-// Cubism 模型桩：guard/forceSlide/startCustomAnim 需要的嵌套结构
-const coreModel = { setParameterValueById() {}, getParameterCount() { return 0; }, _parameterValues: [] };
-const liveModel = { _modelSetting: { getHitAreasCount() { return 0; } }, _state: 22, getModel() { return coreModel; }, update() {}, __customAnimHooked: false };
-const liveSub = { getLive2DManager() { return { _models: { getSize() { return 1; }, at() { return liveModel; } } }; } };
-globalThis.__cubism5model = { subdelegates: { getSize() { return 1; }, at() { return liveSub; } } };
-// initWidget 桩：创建 #waifu + canvas + tips + 工具按钮
-globalThis.initWidget = (opts, models) => {
-  const waifu = new Element('div', 'waifu');
-  waifu.classList.add('waifu-active');
-  document._byId.waifu = waifu;
-  const canvas = new Element('canvas', 'live2d'); waifu.appendChild(canvas); document._byId.live2d = canvas;
-  const tips = new Element('div', 'waifu-tips'); waifu.appendChild(tips); document._byId['waifu-tips'] = tips;
-  const tool = new Element('div', 'waifu-tool'); waifu.appendChild(tool); document._byId['waifu-tool'] = tool;
-  for (const id of ['hitokoto', 'switch-model', 'switch-texture']) {
-    const b = new Element('span', 'waifu-tool-' + id); tool.appendChild(b); document._byId['waifu-tool-' + id] = b;
-  }
-};
+// 看板娘在这里**不打桩**（20261001 渲染层换自研）：上游 initWidget 与 __cubism5model 那套
+// 嵌套结构已随 GPL 实现一起从仓库移除，现在由 renderer.js 自己建 #waifu 骨架。
+// 真 renderer 在 Node 下会死在 PIXI 未定义处、被它自己的 .catch 兜住（模型画不出来，但工具条
+// 照建、waifu-active 照加）——这正是本 harness 要覆盖的形状，别再加桩把它盖回假绿。
 // fetch 桩：history 空 + 一次 SSE 流（过程帧 + 正文帧 + 结束标记）
 const FRAMES = [
   'data: ' + JSON.stringify('__PROCESS__:🧭 计划') + '\n\n',
@@ -119,7 +106,7 @@ await new Promise(r => setTimeout(r, 100));
 const core = globalThis.__waifuChatCore;
 if (!core) { console.error('✗ chat-core 未注册（子模块加载失败）'); process.exit(1); }
 
-// 等待 loader 异步链路完成（子模块 script onload → cubism → effects → initWidget → engine.init → stream.init）
+// 等待 loader 异步链路完成（子模块 script onload → cubism → vendor → effects → renderer.init → engine.init → stream.init）
 await new Promise(r => setTimeout(r, 800));
 
 let failed = 0;

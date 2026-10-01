@@ -71,21 +71,10 @@ globalThis.Image = class {};
 globalThis.Live2DCubismCore = {};
 globalThis.__chatRenderMarkdown = (t) => String(t);
 globalThis.__chatEnhance = () => {};
-const coreModel = { setParameterValueById() {}, getParameterCount() { return 0; }, _parameterValues: [] };
-const liveModel = { _modelSetting: { getHitAreasCount() { return 0; } }, _state: 22, getModel() { return coreModel; }, update() {}, __customAnimHooked: false };
-const liveSub = { getLive2DManager() { return { _models: { getSize() { return 1; }, at() { return liveModel; } } }; } };
-globalThis.__cubism5model = { subdelegates: { getSize() { return 1; }, at() { return liveSub; } } };
-globalThis.initWidget = (opts, models) => {
-  const waifu = new Element('div', 'waifu');
-  waifu.classList.add('waifu-active');
-  document._byId.waifu = waifu;
-  const canvas = new Element('canvas', 'live2d'); waifu.appendChild(canvas); document._byId.live2d = canvas;
-  const tips = new Element('div', 'waifu-tips'); waifu.appendChild(tips); document._byId['waifu-tips'] = tips;
-  const tool = new Element('div', 'waifu-tool'); waifu.appendChild(tool); document._byId['waifu-tool'] = tool;
-  for (const id of ['hitokoto', 'switch-model', 'switch-texture']) {
-    const b = new Element('span', 'waifu-tool-' + id); tool.appendChild(b); document._byId['waifu-tool-' + id] = b;
-  }
-};
+// 看板娘在这里**不打桩**（20261001 渲染层换自研）：上游 initWidget 与 __cubism5model 那套
+// 嵌套结构已随 GPL 实现一起从仓库移除，现在由 renderer.js 自己建 #waifu 骨架。
+// 真 renderer 在 Node 下会死在 PIXI 未定义处、被它自己的 .catch 兜住（模型画不出来，但工具条
+// 照建、waifu-active 照加）——这正是本 harness 要覆盖的形状，别再加桩把它盖回假绿。
 
 // ── 夹具 ──
 const NOW = Date.now();
