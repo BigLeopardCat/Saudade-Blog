@@ -149,6 +149,66 @@ def ink(img, bg=(255, 255, 255), tol=12):
     return sum(1 for p in px if abs(p[0] - bg[0]) > tol or abs(p[1] - bg[1]) > tol or abs(p[2] - bg[2]) > tol)
 
 
+# ── ⑦ 用的探针：把一段行内代码塞进真气泡，量它的底与字 ────────────────────────
+# 底色是**半透明**的（`rgba(...)`）⇒ getComputedStyle 给的是字面量，直接拿它算对比度
+# 得到的是个假数。这里沿着祖先链把每一层的 background-color 从底往上复合，直到遇到
+# 不透明的一层为止——复合完的才是屏幕上那个像素。
+HL_PROBE = """() => {
+  const panel = document.getElementById('waifu-chat');
+  if (!panel) return null;
+  const box = panel.querySelector('.chat-messages');
+  if (!box) return null;
+  let d = document.getElementById('hl-probe');
+  if (!d) {
+    d = document.createElement('div');
+    d.id = 'hl-probe';
+    d.className = 'chat-msg agent';
+    d.innerHTML = '<div class="msg-text"><p>行内代码：<code>get_blog_info</code> 与 <code>widget.lock.json</code></p></div>';
+    box.appendChild(d);
+  }
+  const code = d.querySelector('code');
+  const rgba = (s) => {
+    const m = String(s).match(/rgba?\\(([^)]+)\\)/);
+    if (!m) return [0, 0, 0, 0];
+    const p = m[1].split(',').map((x) => parseFloat(x));
+    return [p[0], p[1], p[2], p.length > 3 ? p[3] : 1];
+  };
+  const over = (fg, bg) => [fg[0] * fg[3] + bg[0] * (1 - fg[3]),
+                            fg[1] * fg[3] + bg[1] * (1 - fg[3]),
+                            fg[2] * fg[3] + bg[2] * (1 - fg[3]), 1];
+  const flatten = (el) => {
+    const stack = [];
+    for (let n = el; n; n = n.parentElement) {
+      const c = rgba(getComputedStyle(n).backgroundColor);
+      stack.push(c);
+      if (c[3] >= 1) break;
+    }
+    let out = [255, 255, 255, 1];
+    for (let i = stack.length - 1; i >= 0; i--) out = over(stack[i], out);
+    return out.slice(0, 3).map((v) => Math.round(v));
+  };
+  return { chip: flatten(code), text: rgba(getComputedStyle(code).color).slice(0, 3).map((v) => Math.round(v)),
+           panel: flatten(panel) };
+}"""
+
+
+def _lum(c):
+    def f(v):
+        v /= 255
+        return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
+    return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2])
+
+
+def contrast(a, b):
+    la, lb = _lum(a), _lum(b)
+    hi, lo = max(la, lb), min(la, lb)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def fmt(c):
+    return "#" + "".join(f"{max(0, min(255, int(round(v)))):02x}" for v in c)
+
+
 
 
 DOM_STATE = """() => {
@@ -362,17 +422,61 @@ def main():
               bool(st["tipsText"]) and "欢迎阅读" in st["tipsText"] and TITLE in st["tipsText"],
               repr(st["tipsText"])[:90])
 
-        # 拖拽：mousedown 必须落在 canvas 上（#waifu 上的监听自己判 target）
+        # 拖拽（20261002 整改）。旧判据只问"left 变了没有"，而它对**两种真缺陷都是绿的**：
+        #   · 拖反方向 —— 位置照样变，只是往反的走；
+        #   · 点一下原地不动却"飞上去" —— 一次按下/抬起之间只要有 1px 抖动就会走到
+        #     旧的 `bottom = clientY - offsetY`（把绝对坐标当成了"从视口底量的偏移"），
+        #     算出来的值恰好被钳到上限 ⇒ 元素直接顶到视口顶。**位置也变了。**
+        # 所以判据必须量**方向**与**原地不动的 Δ**，不能只量"变了没有"。
+        # mousedown 必须落在 canvas 上（#waifu 上的监听自己判 target）。
         cx, cy = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+        wf = lambda: page.locator("#waifu").bounding_box()
+
+        # ① 原地"点一下"。真点击在按下/抬起之间几乎总带 1px 抖动——Playwright 的
+        #    down/up 自己不会造抖动，**必须显式补这一下**，否则这条判据对旧代码也是绿的。
+        r0 = wf()
         page.mouse.move(cx, cy)
         page.mouse.down()
-        page.mouse.move(cx - 60, cy - 40, steps=6)
+        page.mouse.move(cx + 1, cy + 1)
+        page.mouse.move(cx, cy)
         page.mouse.up()
+        page.wait_for_timeout(60)
+        r1 = wf()
+        check("⑤ 原地点击不移动看板娘（1px 抖动不算拖）",
+              abs(r1["x"] - r0["x"]) <= 1 and abs(r1["y"] - r0["y"]) <= 1,
+              f"Δx={r1['x'] - r0['x']:.0f} Δy={r1['y'] - r0['y']:.0f}")
+
+        # ② 往上拖 60px、往右拖 40px：位移必须**跟着鼠标同向**（旧代码整条反着走）。
+        #    往上拖而不是往下拖，是因为 #waifu 静止时 bottom:0 已经贴着视口底——
+        #    往下拖会被钳在 0，"没动"会被误读成"方向反了"。
+        page.mouse.move(cx, cy)
+        page.mouse.down()
+        page.mouse.move(cx + 40, cy - 60, steps=6)
+        page.mouse.up()
+        page.wait_for_timeout(60)
+        r2 = wf()
+        check("⑤ 往右拖 40px ⇒ 元素也往右 40px（方向不反）",
+              abs((r2["x"] - r1["x"]) - 40) <= 3, f"Δx={r2['x'] - r1['x']:.0f}")
+        check("⑤ 往上拖 60px ⇒ 元素也往上 60px（bottom 变大、不是变小）",
+              abs((r1["y"] - r2["y"]) - 60) <= 3, f"Δy={r2['y'] - r1['y']:.0f}")
+
         st2 = page.evaluate(DOM_STATE)
         check("⑤ 拖拽改了 #waifu 的 left", st2["waifuLeft"] is not None and "px" in (st2["waifuLeft"] or ""),
               st2["waifuLeft"])
         check("⑤ 拖拽记下 dataset.waifuBottom（收起/唤回要按它还原）",
               st2["waifuBottomData"] is not None, st2["waifuBottomData"])
+
+        # ③ 原路拖回来：往下 60、往左 40 —— 这一半量的是"另一个方向"，顺带把位置
+        #    还原（后面收起/唤回那几步按 dataset.waifuBottom 走，停在半空会多一层变量）。
+        page.mouse.move(cx + 40, cy - 60)
+        page.mouse.down()
+        page.mouse.move(cx, cy, steps=6)
+        page.mouse.up()
+        page.wait_for_timeout(60)
+        r3 = wf()
+        check("⑤ 原路拖回来（往下/往左同向）",
+              abs(r3["x"] - r1["x"]) <= 3 and abs(r3["y"] - r1["y"]) <= 3,
+              f"Δx={r3['x'] - r1['x']:.0f} Δy={r3['y'] - r1['y']:.0f}")
 
         # 收起（quit 工具是前五个里的最后一个）
         page.evaluate("() => document.getElementById('waifu-tool-quit').click()")
@@ -398,6 +502,32 @@ def main():
         page.wait_for_timeout(300)
         check("⑥ 点对话按钮能切到 active（跨模块的那条线没断）",
               page.evaluate("() => document.getElementById('waifu-chat').classList.contains('active')"))
+
+        # ── ⑦ 气泡里的行内代码：两档都要读得出来（20261002 主人报的第三条）──────
+        # 报的是「白日看不出高亮痕迹、夜间高亮直接糊住文本」。两者是同一个洞的两面：
+        # `.chat-msg.agent .msg-text code` 的底是**写死的 #f5f5f5**，没跟 .washiDark 翻
+        # ⇒ 白日 #f5f5f5 压在纸面 #fffdfa 上只有 1.07:1（看不出），夜里浅底压浅字
+        # #f3e8f6 只有 1.09:1（字没了）。判据因此要**两个对比度都量**，且两档都量。
+        # 底色是半透明的 ⇒ 必须把祖先逐层复合成屏幕上真正的那个颜色再算，直接读
+        # getComputedStyle 拿到的是 rgba 字面量，算出来的对比度是假的。
+        # ⚠️ 深色档的令牌**不住在本文件加载的那张表里**：`--washi-paper` 等定义在
+        # `frontend/src/index.css`（真页面由 main.tsx 引入）。不把它引进来，`.washiDark`
+        # 就只翻了一半——面板底色仍落回 widget.css 里的浅色兜底，量出来的"深色档"是
+        # 一个生产上不存在的状态。那正是本仓记过的那类假绿（"全局规则不在场 ⇒ 把没生效
+        # 读成页面缺陷"，反过来也一样能把缺陷读成正常）。所以按真页面把令牌表引进来。
+        page.add_style_tag(path=str(ROOT / "frontend" / "src" / "index.css"))
+        for mode in ("light", "dark"):
+            page.evaluate("(d) => document.getElementById('waifu-chat')"
+                          ".classList.toggle('washiDark', d)", mode == "dark")
+            page.wait_for_timeout(120)
+            m = page.evaluate(HL_PROBE)
+            tint = contrast(m["chip"], m["panel"])
+            legible = contrast(m["text"], m["chip"])
+            check(f"⑦ [{mode}] 代码芯片与纸面看得出差别（旧实现这里是 1.07:1）",
+                  tint >= 1.15, f"{tint:.2f}:1  chip={fmt(m['chip'])} panel={fmt(m['panel'])}")
+            check(f"⑦ [{mode}] 芯片上的字读得清（WCAG 正文 4.5:1；旧实现夜里 1.09:1）",
+                  legible >= 4.5, f"{legible:.2f}:1  text={fmt(m['text'])} chip={fmt(m['chip'])}")
+        page.evaluate("() => document.getElementById('waifu-chat').classList.remove('washiDark')")
 
         browser.close()
     httpd.shutdown()

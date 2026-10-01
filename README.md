@@ -107,8 +107,21 @@ nginx error.log 增量扫描，异常追加 health.log。
 本仓库以 **GPL-2.0** 分发（全文见 [LICENSE](LICENSE)）。
 
 看板娘前端（`live2d-widgets/` 与 `live2d_model/`：渲染层、聊天面板、模型与贴图）**不在本仓**，
-它住在 agent 仓、以 **MIT** 分发。本仓构建时按 `frontend/widget.lock.json` 里钉死的提交号
-把它取回来打进产物——路径与从前完全相同，所以服务端与测试零改动。
+它住在 agent 仓。本仓构建时按 `frontend/widget.lock.json` 里钉死的提交号把它取回来打进产物
+——路径与从前完全相同，所以服务端与测试零改动。
+
+**这棵树的许可分两半**（边界按"文件是代码还是美术"划，与目录结构无关）：
+
+- **代码**（`boot.js` / `renderer.js` / `chat-*.js` / `widget.css` …）→ **MIT**，可商用。
+  版权与许可声明照录如下——MIT 要求它随分发一起带上。
+- **美术资源**（`live2d_model/agent_2.*` 模型与贴图、`lingyue-toggle.png` 面板图标，
+  以及「泠月喵」这个**形象设计本身**）→ **CC BY-NC-SA 4.0**（署名 · 非商业性使用 · 相同方式共享）：
+  可以自用、可以改，**不可商用**，改作必须以同样协议分发。全文见 agent 仓的
+  [frontend/ASSETS-LICENSE.md](https://github.com/BigLeopardCat/saudade-blog-agent/blob/main/frontend/ASSETS-LICENSE.md)。
+  要意识到它**不是** OSI 意义上的开源许可，这一部分属于"源码可用"——fork 出去做**商业**站点时
+  不能带这套美术（把 `live2d_model/` 换掉即可，代码那一半仍是 MIT）。
+
+下面这段 MIT 声明覆盖的是**代码那一半**：
 
 ### 第三方致谢
 
@@ -118,7 +131,7 @@ nginx error.log 增量扫描，异常追加 health.log。
 | [pixi-live2d-display](https://github.com/guansss/pixi-live2d-display) | MIT | npm 依赖（Live2D 绑定） |
 | Live2D Cubism Core | 专有（Live2D 公司） | **两个仓都不跟踪**：构建前由 `npm run vendor:live2d` 从官方地址取，见 [docs/security-boundary.md](docs/security-boundary.md) |
 
-看板娘前端（含模型文件）以 MIT 分发，版权声明照录如下——MIT 要求它随分发一起带上：
+看板娘前端的**代码**以 MIT 分发，版权声明照录如下——MIT 要求它随分发一起带上：
 
 ```
 MIT License

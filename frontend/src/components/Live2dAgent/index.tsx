@@ -21,7 +21,7 @@ const Live2dAgent: React.FC = () => {
 
     // 注入 loader 脚本，让 live2d-widgets 自己管理一切
     const s = document.createElement('script');
-    s.src = '/live2d-widgets/boot.js?v=20261001h';
+    s.src = '/live2d-widgets/boot.js?v=20261001i';
     s.async = true;
     document.head.appendChild(s);
 
