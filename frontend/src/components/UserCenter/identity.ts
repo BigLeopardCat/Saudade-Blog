@@ -17,8 +17,12 @@
  *     多存一份就多一个泄露面。退出登录**不清**这份缓存（清了就等于状态 ② 不存在）。
  *   · 缓存只用于**显示**，任何一次请求的身份都由 `tokenKey` 决定；先写进 localStorage
  *     再补一个 `useViewerAvatar` 的纯函数选择——没有账号记录时永远回默认头像，不猜。
+ *
+ * 20261001 补：身份是**跨标签页**的事实（localStorage 同源共享），所以"换账号"的感知
+ * 通道必须包含 `storage` 事件——`auth-change` 只在本 document 里跑，光靠它会出现"另一个
+ * 标签页换了账号、这里还顶着旧头像，刷新才变"。实现见下面那段 store 说明。
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import getToken from '../../apis/getToken.tsx'
 import { getProfile, ok } from '../../apis/ProfileMethods.tsx'
 import { resolveApiAssetUrl } from '../../utils/runtimeApi'
@@ -172,65 +176,167 @@ export interface ViewerProfile {
     nickname: string
 }
 
+// ══ 展示身份的**单一真源**（20261001，与 favorites.ts / unread.ts 同一套 store 形态）══
+//
+// 此前 `useViewerProfile` 是普通 hook：四个调用点（首页头部 / 登录页 / 后台侧栏 /
+// 后台首页）各持一份 useState、各挂一组监听。两个后果：
+//
+//   ① **换账号只在"本标签页"里同步**（用户 20261001 报的那条）。`auth-change` 是挂在
+//      `window` 上的自定义事件，只在本 document 里跑。用户在**另一个标签页**登录/退出
+//      之后，本标签页唯一能知道这件事的通道是 `storage` 事件（同源 localStorage 是
+//      共享的；改动的那个 document 自己不收事件、其余同源 document 才收）——而全仓
+//      没有任何一处听过它（`grep -rn "'storage'" src/` 为空）。于是头像停在旧账号，
+//      **必须刷新网页**才换。用户原话：「切换登录帐号了还显示着上次账号的头像，
+//      必须刷新网页才同步」。
+//   ② 同一份事实有 N 个各自计时的副本：后台一页同时挂着侧栏与首页两个消费者，
+//      `/api/protected/profile` 被同一个浏览器打两次——unread.ts 记过同一条账。
+//
+// 现在身份只有一份（下面的 `mine` / `remembered` 与由它们派生的 `snap`），监听只在
+// **模块加载时**挂一次，谁要显示就来订阅；`useViewerProfile` 只是薄薄一层 React 绑定。
+// 顺带一个好处：快照是模块级的 ⇒ 换页（`/` → `/dashboard`）不再闪一下默认头像。
+
+/** 本人资料（`null` = 未登录 / 令牌失效 / 还没拉回来）——store 内部状态，组件别直接读 */
+let mine: { avatar: string; nickname: string } | null = null
+/** 本机记住的**最近那个**账号（三态里的第 ② 态）。与 `mine` 一并在 `refreshViewer` 里更新 */
+let remembered: RememberedUser | null = readRememberedUser()
+/** 派生态：三态 → 头像/昵称。**值没变就不换引用**（订阅者把它写进 state） */
+let snap: ViewerProfile = derive()
+/** 活着的消费者数：0 时一次请求都不发（没人在看头像，拉它干嘛） */
+let active = 0
+/** 去重：同一时刻只发一次 GET（换账号那一刻 storage 与 visibility 可能一起到） */
+let inflight: Promise<void> | null = null
+const subs = new Set<() => void>()
+
+/** 三态 → 快照（纯函数，两个 selector 的唯一出口） */
+function derive(): ViewerProfile {
+    return {
+        avatar: selectAvatar(mine?.avatar ?? null, remembered?.avatar ?? null),
+        nickname: selectNickname(mine?.nickname ?? null, remembered?.nickname ?? null),
+    }
+}
+
+function emit(): void {
+    subs.forEach((fn) => { try { fn() } catch (e) { /* 一个订阅者抛错不该拖垮其余 */ } })
+}
+
+/** 换快照：**值没变就不换引用、不发通知**（理由同 unread.ts 的 setSnap：内容相同的新
+ *  引用会被 React 判成"变了"而白渲染一轮）。 */
+function setSnap(next: ViewerProfile): void {
+    if (next.avatar === snap.avatar && next.nickname === snap.nickname) return
+    snap = next
+    emit()
+}
+
+/** 订阅本 store（组件不要直接调，走 `useViewerProfile`） */
+function subscribe(fn: () => void): () => void {
+    subs.add(fn)
+    return () => { subs.delete(fn) }
+}
+
 /**
- * 头部 / 后台侧栏（以及任何要知道"当前访客是谁"的地方）用的展示身份。
+ * 拉一次本人资料（并发去重 + 未登录即退回"本机记住的那个账号"）。
  *
- * 拉取时机：挂载时 + `auth-change`（登录/退出）+ `profile-change`（改完昵称/头像）。
+ * 失败**不改动已有身份**（保住上一次的，界面不闪）——与 unread/favorites 同一条纪律：
+ * 读不到不是"没有账号"。未登录是**事实**不是失败 ⇒ 退回三态的第 ② 态。
+ */
+export function refreshViewer(): Promise<void> {
+    if (typeof window === 'undefined' || !active) return Promise.resolve()
+    if (!getToken()) {
+        // 退出登录：不请求，直接用本机记住的那个账号（缓存由上面的 rememberUser 维护）。
+        // ⚠️ 顺手把**在途的那一次读取作废**：不摘掉的话，紧接着换账号登录会因为
+        // "有在途请求"直接复用它 ⇒ 头像永远停在退登前那个账号（这正是本条要修的病）。
+        inflight = null
+        mine = null
+        remembered = readRememberedUser()
+        setSnap(derive())
+        return Promise.resolve()
+    }
+    if (inflight) return inflight
+    // 这一份读数属于**哪一次登录**。期间换过账号（另一个标签页登录/退出、别处改了密码
+    // 使令牌换代）⇒ 结果作废——晚到的旧回包不许把旧账号写回 `mine`。
+    const tokenAtRequest = getToken()
+    const p: Promise<void> = getProfile()
+        .then((res) => {
+            if (getToken() !== tokenAtRequest) return
+            if (!ok(res) || !res.data.data) return
+            const d = res.data.data
+            mine = { avatar: d.avatar || '', nickname: d.nickname || '' }
+            // 本机那份同步成刚拿到的最新值（昵称/头像可能刚改过），同 rememberUser
+            remembered = {
+                username: d.username || '',
+                nickname: d.nickname || '',
+                avatar: d.avatar || '',
+                at: '',
+            }
+            setSnap(derive())
+            rememberUser(d)
+        })
+        .catch(() => {
+            /* 令牌过期/网络异常：保住本机记住的那份，界面不闪 */
+        })
+        .finally(() => { if (inflight === p) inflight = null })
+    inflight = p
+    return p
+}
+
+// 全局监听在**模块加载时**挂一次（任何一个调用点引用本模块即生效）。要不要真去拉，
+// 由 `refreshViewer` 里的 active 判据决定——挂载点不该由"这一刻谁在显示头像"决定。
+if (typeof window !== 'undefined') {
+    const onOwnChange = () => { refreshViewer() }   // 本标签页里登录/退出/改资料
+    window.addEventListener('auth-change', onOwnChange)
+    window.addEventListener('profile-change', onOwnChange)
+    // ★ 别的标签页换了账号 —— 本标签页唯一的感知通道（见上面那段 store 说明）。
+    // ⚠️ **必须把本模块自己会写的那两把键排除掉**：`refreshViewer` 里的 `rememberUser`
+    // 每次都回写 `lastUser`（`at` 是秒级钟面，隔一秒写两次就是"值变了"）⇒ 不排除的话
+    // 两个标签页会互相触发，ping-pong 永不停。
+    window.addEventListener('storage', (e) => {
+        if (e.key === LAST_USER_KEY || e.key === KNOWN_USERS_KEY) return
+        refreshViewer()
+    })
+    // 回到本标签页时补一次（后台标签页里事件可能被降频/迟到；也顺带补上
+    // "别人在另一个标签页改了昵称/头像"这种令牌没变的改动）。
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) refreshViewer()
+    })
+}
+
+/**
+ * 登记一个"此刻真的在看这个头像"的消费者（`useViewerProfile` 挂载时调用），返回取消登记
+ * 的函数。0 个消费者时事件照收、但一次请求都不发。
+ */
+export function retainViewer(): () => void {
+    active += 1
+    refreshViewer()
+    return () => { active = Math.max(0, active - 1) }
+}
+
+/**
+ * 头部 / 后台侧栏 / 登录页（以及任何要知道"当前访客是谁"的地方）用的展示身份。
+ *
+ * 拉取时机（五个，20261001 起）——都收敛到上面那一个 `refreshViewer`：
+ *   1. 有人开始看时（`retainViewer` 登记）；2. `auth-change`；3. `profile-change`；
+ *   4. **`storage`**（别的标签页动了 localStorage，**换账号**走这条）；
+ *   5. `visibilitychange`（切回本标签页补一次）。
  * 未登录**不发请求**——访客的头部不该为了一张头像打后端。
  *
- * 返回的是 `useMemo` 过的对象：**同一个值不会每帧换引用**，调用方可以安心把它
+ * 返回的是 store 里那个快照对象本身：**同一个值不会换引用**，调用方可以安心把它
  * 放进依赖数组（别改成每次返回新对象——那会让 effect 每帧重跑）。
  */
 export function useViewerProfile(): ViewerProfile {
-    // mine=null 表示"还没有本人的资料"（未登录 / 令牌失效 / 请求还没回来）
-    const [mine, setMine] = useState<{ avatar: string; nickname: string } | null>(null)
-    const [remembered, setRemembered] = useState<RememberedUser | null>(
-        () => readRememberedUser(),
-    )
+    const [seen, setSeen] = useState<ViewerProfile>(() => snap)
 
-    useEffect(() => {
-        let alive = true
-        const pull = () => {
-            if (!getToken()) {
-                // 退出登录：不请求，直接用本机记住的那个账号（缓存由上面的 rememberUser 维护）
-                if (!alive) return
-                setMine(null)
-                setRemembered(readRememberedUser())
-                return
-            }
-            getProfile()
-                .then((res) => {
-                    if (!alive || !ok(res) || !res.data.data) return
-                    const p = res.data.data
-                    setMine({ avatar: p.avatar || '', nickname: p.nickname || '' })
-                    // 本机那份同步成刚拿到的最新值（昵称/头像可能刚改过），同 rememberUser
-                    setRemembered({
-                        username: p.username || '',
-                        nickname: p.nickname || '',
-                        avatar: p.avatar || '',
-                        at: '',
-                    })
-                    rememberUser(p)
-                })
-                .catch(() => {
-                    /* 令牌过期/网络异常：保住本机记住的那份，界面不闪 */
-                })
-        }
-        pull()
-        const onAuthChange = () => pull()
-        const onProfileChange = () => pull()
-        window.addEventListener('auth-change', onAuthChange)
-        window.addEventListener('profile-change', onProfileChange)
-        return () => {
-            alive = false
-            window.removeEventListener('auth-change', onAuthChange)
-            window.removeEventListener('profile-change', onProfileChange)
-        }
-    }, [])
+    useEffect(() => subscribe(() => { setSeen(snap) }), [])
+    // 登记消费者（0 → 1 时拉一次；走光之后事件不再触发请求）
+    useEffect(() => retainViewer(), [])
 
-    const avatar = selectAvatar(mine?.avatar ?? null, remembered?.avatar ?? null)
-    const nickname = selectNickname(mine?.nickname ?? null, remembered?.nickname ?? null)
-    return useMemo(() => ({ avatar, nickname }), [avatar, nickname])
+    return seen
+}
+
+/** 供测试与排障：当前快照、几个消费者、几个订阅者 */
+export function viewerDebug(): {
+    profile: ViewerProfile; active: number; subscribers: number
+} {
+    return { profile: snap, active, subscribers: subs.size }
 }
 
 /** 只要头像的那一支（头部用它；与 `useViewerProfile` 同一份实现，别各写一遍）。 */
