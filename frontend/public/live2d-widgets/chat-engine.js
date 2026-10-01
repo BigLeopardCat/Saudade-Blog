@@ -170,10 +170,13 @@
       ctx.state = {
         pendingNavUrl: '',
         isSending: false,
-        // 停止生成：输出中点击发送按钮 → abort 当前流；用户停止后丢弃本轮对话（不加入记忆）
+        // 停止生成：输出中点击发送按钮 → abort 当前流。**这一轮不再当场丢弃**（20261001）：
+        // 用户消息留在气泡里可二次编辑/重发，直到主人直接说下一句才丢（`stoppedTurn`
+        // 只作"这一轮是被主人停的"的信号，真正的清理在 chat-stream 的收尾块与
+        // `releaseStoppedTurn`）
         streamCtrl: null,
         stoppedByUser: false,
-        discardTurn: false,
+        stoppedTurn: false,
         items: [],
         live: {},
         pendingPull: false,
@@ -829,26 +832,13 @@
           console.error('[agent-chat] applyLocal 异常（不影响已渲染内容）:', e);
         }
       };
-      // 主动停止时通知后端删除本轮（POST /api/chat/discard，20260828b）：用户点
-      // "停止生成"= 明确不想要这条，DB 侧 user+残缺回复全删；连接中断（页面转跳/
-      // 关标签）则由 Rust DiscardAbortedExchange 只删残缺、保留 user（消息已发出）。
-      // 尽力而为：失败忽略（中断清理兜底只删残缺，下次拉取时用户消息仍在）
-      const apiDiscard = (convId) => {
-        const tk = localStorage.getItem('tokenKey');
-        if (!tk) return;
-        // 20260903：停止生成精确到会话——显式会话带 conversation_id 定向删（防
-        // 双会话并发时误删"最新非空会话"的轮）；convId 空（auto 未决议）不发
-        // body = 服务端 None → 最新非空会话，与发送时的无参决议一致
-        const body = (convId === null || convId === undefined)
-          ? undefined
-          : JSON.stringify({ conversation_id: convId });
-        fetch('/api/chat/discard', {
-          method: 'POST',
-          headers: Object.assign({ 'Authorization': 'Bearer ' + tk },
-            body ? { 'Content-Type': 'application/json' } : {}),
-          ...(body ? { body } : {}),
-        }).catch(() => {});
-      };
+      // 注意：引擎这一层**没有** discard 原语了（20261001）。曾经有个 `apiDiscard`
+      // （无原文校验的"全删本轮"），只服务停止生成那一条路；现在停止生成不丢弃本轮
+      // ——真正的删除发生在"主人直接说下一句"那一刻，而且必须是**带原文校验**的那一发
+      // （`chat-stream.js` 的 `postDiscard`，它同时服务失败轮的重发/编辑）。
+      // 留着无校验版本就是留一个"看着更省事"的入口：discard 在 Rust 侧删的是
+      // `Id >= 那条 user 消息` 的全部行，不带原文校验意味着它按"当前最后一条 user"
+      // 定位，任何晚到的调用都会删掉一条主人刚发的、无关的消息。
       // DB 权威拉取：无 token/失败 → 本地兜底；成功 → 服务器权威整体替换
       // （内存乐观 'l' 条目经 replaceWithIncoming 保留 60s 窗口）+ 增量渲染 +
       // 缓存同步（值变更检测防循环）。
@@ -1143,12 +1133,21 @@
             const entry = Array.isArray(failed) && failed.length ? failed[0] : null;
             const expired = entry && (Date.now() - entry.ts > 24 * 3600 * 1000);
             const items = ctx.state.items;
-            const last = items.length ? items[items.length - 1] : null;
+            // 锚点 = **最后一条用户消息**，不是"数组末位"（20261001）。两者在中断轮里
+            // 会分家：半截回复是以 'l' 项（未入库）留在尾巴上的——它不是回复，是这一轮
+            // 被打断的证据（见 chat-stream 的 `retainStoppedTurn`），而 'l' 项 60s 内
+            // 不会被 DB 视图收走。按末位判的话，主人**刷新回来**的后 60 秒里既没有提示条
+            // 也没有重发/编辑（气泡上那份按钮是内存态，刷新即失）——恰好把"刷新后仍可
+            // 重发"这条规矩整个架空。'd' 项（已入库的回复）照旧算回复，不跳过。
+            let anchor = items.length - 1;
+            while (anchor >= 0 && items[anchor].type === 'agent'
+                   && String(items[anchor].id || '').startsWith('l')) anchor--;
+            const last = anchor >= 0 ? items[anchor] : null;
             const lastIsFailedUser = !!entry && !expired && last && last.type === 'user'
               && last.text === entry.text;
-            const hasAgentAfter = lastIsFailedUser && items.slice(0, -1)
-              .some((it, i) => it.id === last.id && items[i + 1]
-                && items[i + 1].type === 'agent' && items[i + 1].id !== last.id);
+            // 其后有**已入库的**回复 = 重发成功/补答 ⇒ 不提示（未入库的半截项不算）
+            const hasAgentAfter = lastIsFailedUser && items.slice(anchor + 1)
+              .some(it => it.type === 'agent' && !String(it.id || '').startsWith('l'));
             // 最后一条是 user 且匹配标记；其后不能有 agent 回复（已回复 = 重发成功/补答，不提示）
             if (lastIsFailedUser && !hasAgentAfter) {
               if (!failedNoteEl) {
@@ -1161,8 +1160,17 @@
                 // 而超时/服务端出错/连不上三种原因能做的事完全不同。
                 const line = document.createElement('div');
                 line.className = 'chat-msg-failed-text';
-                line.textContent = '⏳ 该条消息未收到回复'
-                  + (entry.reason ? '：' + entry.reason : '（可能已超时或网络中断）');
+                // kind='stopped'（20261001）：这条是**主人自己按的停止**，不是"没收到
+                // 回复"——两件事要做的事完全不同（前者是系统的问题，值得回头查；后者
+                // 是主人自己的决定，只是还没重发/编辑）。措辞必须分开：混成一句，刷新
+                // 一次就会被读成"agent 挂了"。停下来的那条**不会再被回答**（消息还在，
+                // 那一轮已经作废），这是主人此刻唯一需要知道的事实。
+                // ⚠️ 别写成"助手没有回答"：已经流出来的半截回复是**保留**下来的
+                // （就在提示条上面那个气泡里），这句会被读成"屏幕撒谎"。
+                line.textContent = entry.kind === 'stopped'
+                  ? '⏹ 这条消息被你停止了，这一轮不会再回答（可重发或编辑）'
+                  : '⏳ 该条消息未收到回复'
+                    + (entry.reason ? '：' + entry.reason : '（可能已超时或网络中断）');
                 failedNoteEl.appendChild(line);
                 // 重发/编辑按钮的**挂载点**：按钮的逻辑在 chat-stream.js（它才够得着
                 // sendMessage / 输入框 / 图片预览区），渲染在这边 ⇒ 这里只留一个空槽 +
@@ -1343,7 +1351,6 @@
       api.broadcast = broadcast;
       api.pullHistory = pullHistory;
       api.saveHistory = saveHistory;
-      api.apiDiscard = apiDiscard;
       // 20260903 会话化原语导出（chat-session/chat-stream 调用）
       api.setConvState = setConvState;
       api.adoptConversation = adoptConversation;

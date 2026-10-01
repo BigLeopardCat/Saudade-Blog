@@ -7,7 +7,10 @@
 //   正文从此不再是执行来源：**兜底扫描一条不留**。
 // 本测试锁两半（都是源码级，同 live2d-widget-scope 的扫法）：
 //   ① 只认程序帧：`__CMD__` 进独立缓冲 programCmds，不进任何展示文本；缓冲在
-//      `__RESET__`（gate 打回那一轮）必须一起清——不清 = 被打回的命令照旧执行；
+//      `__RESET__` 里**按 scope 决定清不清**——`all`（决策被推翻，gate 打回重规划）
+//      清、`text`（终局 fallback）不清。20261001 之前是无条件清，两个后果都实测过：
+//      清的那半边让系统在 fallback 后印着"页面已跳转：…"却说不出为什么没跳，
+//      而不清的那半边是"道歉了但还是跳了"——所以判据落在帧里的 scope 上，不是取舍；
 //   ② 兜底不复活：正文扫描（effectMatch / 伪工具调用 / 中文动词转跳 / DARKMODE 正则）
 //      一条都不许回来。它们**看着像无害的保险**，实际是"模型在正文里写命令就能执行"
 //      这条通道本身——CLAUDE.md §3 至今还写着"前端兜底解析仍在"，下一个读者会照它
@@ -49,13 +52,27 @@ const ok = (cond, name, extra) => {
      '  这个分支碰都不碰 displayText/cmdText');
 }
 
-// ── ② 打回时缓冲必须一起清 ───────────────────────────────────────────────────
+// ── ② 打回时按 scope 决定清不清命令缓冲 ──────────────────────────────────────
 {
   const i = s.indexOf("text === '__RESET__'");
   const seg = i >= 0 ? s.slice(i, s.indexOf('continue;', i)) : '';
-  ok(i >= 0 && /programCmds = \[\];/.test(seg),
-     '`__RESET__`（gate 打回）分支清空 programCmds',
-     '不清 = 被否定的那一轮的命令仍然会执行');
+  ok(i >= 0, '找到 `__RESET__` 分支');
+  ok(/const scope = mScope \? mScope\[1\] : 'all';/.test(seg),
+     '帧形 `__RESET__:<scope>:<理由>`，缺 scope 段按 all（= 旧行为，保守那一侧）');
+  ok(/if \(scope !== 'text'\) programCmds = \[\];/.test(seg),
+     '只有 scope=all（决策被推翻）才清 programCmds',
+     'scope=text 是终局 fallback：execute 跑过、checker PASS 过，命令是已发生的事实'
+     + '——清掉它，气泡最前面那块系统印的"页面已跳转：…"就成了系统说它没做的事');
+  // 反向锁：这一段里 `programCmds = []` 只许出现一次（就是上面那条带 scope 的）。
+  // 多出来的一处必然是"又写了个无条件清"——而它长得完全正常，只靠上面两条正则
+  // 抓不住（两条都在时，无条件那条会躲在 scoped 那条后面）。
+  const clears = (seg.match(/programCmds = \[\]/g) || []).length;
+  ok(clears === 1, `这个分支里清缓冲只出现一次（实得 ${clears}）`);
+
+  // 另一半：Rust / golden 读的是同一个 scope。跨语言对账放在 agent 仓
+  // （tests/test_reset_scope.py），这里只确认前端没有把它读成别的东西。
+  ok(!/__RESET__:replan|__RESET__:fallback/.test(s),
+     'scope 只有 all/text 两个取值（不另造同义词）');
 }
 
 // ── ③ 执行只吃这个缓冲，三处调用点都换过来了 ─────────────────────────────────

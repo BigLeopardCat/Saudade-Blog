@@ -433,7 +433,6 @@
     };
     const pullHistory = engine.pullHistory;
     const saveHistory = engine.saveHistory;
-    const apiDiscard = engine.apiDiscard;
     const appendMsg = engine.appendMsg;
     const makeProcessBox = engine.makeProcessBox;
     const getCollapsePref = engine.getCollapsePref;
@@ -453,9 +452,47 @@
       // 分支也要渲染失败气泡 + 重发/编辑按钮——sendMessage 内部闭包引用不到。
       // 运行时调用（点击/保险回调）发生在 init 完全执行后，renderPreviews/
       // resizeInput/sendMessage 均已初始化，无 TDZ 问题。
+      // 删一轮（POST /api/chat/discard，带原文校验）：**唯一实现**。两个调用方——
+      // 失败轮的重发/编辑按钮，与"被主人打断的那条在他直接说下一句时补删"
+      // （`releaseStoppedTurn`）——共用这一处：同一件事写两处，改一处必忘另一处。
+      // 双保险②：后端 discard 带原文校验（Rust chat.rs DiscardReq.text），
+      // mismatch（最后一条 user 不是原文）→ 不删任何记录，操作放弃。
+      // 20260927：返回**后端那句回答**而不只是 true/false —— 三种失败（原文对不上 /
+      // 登录失效 / 连不上）能做的事完全不同，混成一个 false 就只能回一句废话。
+      // 形状：{ok:true} | {ok:false, why:'给主人看的那句话'}
+      const postDiscard = async (text, convId) => {
+        const tk = localStorage.getItem('tokenKey');
+        if (!tk) return { ok: false, why: '登录状态已失效，刷新页面后再试' };
+        try {
+          const r = await fetch('/api/chat/discard', {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + tk, 'Content-Type': 'application/json' },
+            // 20260903：定向删当前会话的旧轮（原文校验双保险防误删新轮）；
+            // conv=null（auto 未决议）省略字段 = 服务端最新非空决议
+            body: JSON.stringify({ text,
+              ...(convId !== null && convId !== undefined ? { conversation_id: convId } : {}) }),
+          });
+          const j = await r.json();
+          if (j && j.success) return { ok: true };
+          if (j && j.error === 'unauthorized') {
+            return { ok: false, why: '登录状态已失效，刷新页面后再试' };
+          }
+          // 走到这里就是 `reason: "mismatch"`（后端说最后一条 user 不是这条）：
+          // 这一轮**不在服务端记录里**（请求压根没送到，或已被新消息顶掉）⇒
+          // 不删任何东西，原文还在气泡里可复制。
+          return { ok: false, why: '这一轮已经不在服务端记录里，没有可删除的旧轮' };
+        } catch(e) {
+          // 网络异常放弃（残留重发会在历史里重复）——决定不变，但要说出来
+          return { ok: false, why: '连不上服务端，稍后再试' };
+        }
+      };
+
       const attachRetryActions = (contentSpan, div, msg) => {
         const wrap = document.createElement('div');
         wrap.className = 'chat-msg-retry';
+        // 这组按钮属于哪一条消息（`attachHistoryFailedRetry` 靠它做"同一轮只能有一处
+        // 按钮"的去重；没有这个标记就只能按位置猜，而位置正是会分家的东西）
+        wrap.dataset.retryText = msg;
         const retryBtn = document.createElement('button');
         retryBtn.type = 'button';
         retryBtn.className = 'chat-retry-btn';
@@ -486,37 +523,8 @@
           return last ? last.text : null;
         };
         const STALE_HINT = '这一轮已经不是你最后一条消息了（期间发过新的），不再提供重发';
-        // 双保险②：后端 discard 带原文校验（Rust chat.rs DiscardReq.text），
-        // mismatch（最后一条 user 不是原文）→ 不删任何记录，操作放弃。
-        // 20260927：返回**后端那句回答**而不只是 true/false —— 三种失败（原文对不上 /
-        // 登录失效 / 连不上）能做的事完全不同，混成一个 false 就只能回一句废话。
-        // 形状：{ok:true} | {ok:false, why:'给主人看的那句话'}
-        const discardFailedRound = async () => {
-          const tk = localStorage.getItem('tokenKey');
-          if (!tk) return { ok: false, why: '登录状态已失效，刷新页面后再试' };
-          try {
-            const r = await fetch('/api/chat/discard', {
-              method: 'POST',
-              headers: { 'Authorization': 'Bearer ' + tk, 'Content-Type': 'application/json' },
-              // 20260903：定向删当前会话的旧轮（原文校验双保险防误删新轮）；
-              // conv=null（auto 未决议）省略字段 = 服务端最新非空决议
-              body: JSON.stringify({ text: msg,
-                ...(ctx.state.conv !== null ? { conversation_id: ctx.state.conv } : {}) }),
-            });
-            const j = await r.json();
-            if (j && j.success) return { ok: true };
-            if (j && j.error === 'unauthorized') {
-              return { ok: false, why: '登录状态已失效，刷新页面后再试' };
-            }
-            // 走到这里就是 `reason: "mismatch"`（后端说最后一条 user 不是这条）：
-            // 这一轮**不在服务端记录里**（请求压根没送到，或已被新消息顶掉）⇒
-            // 不删任何东西，原文还在气泡里可复制。
-            return { ok: false, why: '这一轮已经不在服务端记录里，没有可删除的旧轮' };
-          } catch(e) {
-            // 网络异常放弃（残留重发会在历史里重复）——决定不变，但要说出来
-            return { ok: false, why: '连不上服务端，稍后再试' };
-          }
-        };
+        // 双保险②：后端 discard 带原文校验（见 `postDiscard` 头注）
+        const discardFailedRound = () => postDiscard(msg, ctx.state.conv);
         const restoreAndCleanup = () => {
           // 恢复原文（含图片）到输入区——图片从 items 里的 user 条目取
           // （pendingImages 发送后已清空）
@@ -532,6 +540,7 @@
             if (oldUserEl && oldUserEl.parentNode) oldUserEl.parentNode.removeChild(oldUserEl);
             ctx.state.items = ctx.state.items.filter(x => !(x.type === 'user' && x.id === it.id));
           }
+          dropOrphanPartial();   // 这一轮的半截回复同样没有归属了（见其头注）
           input.value = msg;
           resizeInput();
           if (div && div.parentNode) div.parentNode.removeChild(div);
@@ -547,6 +556,10 @@
             showHint(res.why);
             return;
           }
+          // 这一轮已经从服务端删掉了 ⇒ 持久化标记也该走（否则它会在下一次渲染
+          // 里被当成"还没处理的失败轮"，而且 `releaseStoppedTurn` 会拿着一条
+          // 已经不存在的原文去找"最后一条 user 消息"——同文重发时可能认错人）
+          clearFailedRound(msg);
           restoreAndCleanup();
           sendMessage();  // 走主流程（新 roundId/广播/thumbs）
         });
@@ -555,6 +568,7 @@
           editBtn.disabled = true;
           const res = await discardFailedRound();
           if (!res.ok) { editBtn.disabled = false; showHint(res.why); return; }
+          clearFailedRound(msg);
           restoreAndCleanup();
           input.focus();
         });
@@ -573,11 +587,16 @@
       // 原因文本来自**展示口径**（`errMsg`：服务端自己那句话原样、否则「网络错误: …」），
       // 所以它天然是给主人看的措辞，不需要第二套文案；旧记录没有这个字段 ⇒ 回退到
       // 原来的笼统说法（历史记录不必迁移）。
+      // 20261001：再加一个 `kind`——`'failed'`（超时/出错，默认）与 `'stopped'`
+      // （**主人自己按的停止**）。两者在屏幕上要做的事完全不同：前者是"没收到回复"，
+      // 后者是"我不要这一轮"，而后者还有一条自己的规矩（见 `releaseStoppedTurn`：
+      // 主人不重发也不编辑、直接说下一句 ⇒ 到那一刻才丢）。缺字段按 `'failed'`
+      //（旧记录不必迁移，行为与加这个字段之前逐字相同）。
       const FAILED_KEY = 'saudade-chat-failed';
-      const persistFailedRound = (text, reason) => {
+      const persistFailedRound = (text, reason, kind) => {
         try {
           const cur = JSON.parse(localStorage.getItem(FAILED_KEY) || 'null');
-          const entry = { text, ts: Date.now(), reason: reason || '' };
+          const entry = { text, ts: Date.now(), reason: reason || '', kind: kind || 'failed' };
           if (cur && Array.isArray(cur) && cur.length) {
             localStorage.setItem(FAILED_KEY, JSON.stringify([entry, ...cur].slice(0, 3)));
           } else {
@@ -594,6 +613,96 @@
           else localStorage.removeItem(FAILED_KEY);
         } catch (e) {/* ignore */}
       };
+      // 「主人按了停止 ⇒ 保留这一轮」的**唯一实现**（20261001）。两个调用点：
+      //   · sendMessage 收尾块（`stoppedTurn`，正常的 abort 路径）；
+      //   · 发送按钮的 3s 保险（浏览器对已开始读取的流 abort 不触发 AbortError 时，
+      //     catch/finally 全程不执行，只能由那条定时器手动补上）。
+      // 两处必须是**同一件事**：半截回复转正（否则下一次 reconcile 把它当孤儿摘掉）、
+      // 挂重发/编辑、记 `'stopped'` 标记、非 silent 轮广播 error。此前两份拷贝已经
+      // 漂了——收尾那份转正了半截回复，保险那份没转正（同样的操作，刷新前后看到的
+      // 东西不一样）。各调用点只留自己的部分：收尾那份补拉历史，保险那份复位按钮态
+      // 与广播 idle（abort 不触发时 finally 不执行，别的窗口的按钮靠它解锁）。
+      const retainStoppedTurn = (victim, roundId, msg, silent) => {
+        delete ctx.state.live[roundId];
+        // 流式纯文本态才敢取 textContent（= 原文）；已 markdown 化的重渲染会二次解释记号
+        const partial = victim && victim.contentSpan
+          && victim.contentSpan.classList.contains('msg-streaming')
+          ? victim.contentSpan.textContent : '';
+        if (!silent) broadcast({t: 'error', msg: '已停止生成', roundId});
+        if (victim && partial.trim()) {
+          // 半截回复**转正**（与空闲超时同形）：错误注记按 renderFailed 的约定只进
+          // DOM，items/缓存里存的仍旧是模型说过的那段话；转正之后 reconcile 不会
+          // 把它当孤儿摘掉，重发/编辑按钮也就跟着活下来
+          renderFailed(victim.contentSpan, '已停止生成', partial);
+          const partialItem = __chatCore.migrateItem({
+            id: roundId, type: 'agent', text: partial, time: Date.now(),
+          });
+          ctx.state.items = __chatCore.mergeItems(ctx.state.items, [partialItem]);
+          victim.el.dataset.mid = roundId;
+          victim.el.dataset.finished = '1';
+          saveHistory();
+          attachRetryActions(victim.contentSpan, victim.el, msg);
+        } else if (victim && victim.el && victim.el.parentNode) {
+          // 一个 token 都还没收到：气泡里没有可留的东西，摘掉它——提示条与重发/编辑
+          // 由失败轮那一套（持久化标记 + chat-engine 的渲染）在下一次 reconcile 补上
+          victim.el.parentNode.removeChild(victim.el);
+        }
+        // silent 轮没有用户条目，也不给重发/编辑（隐藏确认请求重发会变成一次真发言）
+        if (!silent) persistFailedRound(msg, '已停止生成', 'stopped');
+      };
+      // 「上一次被主人打断的那条」补删（20261001，用户拍板）：停止生成**不再当场丢弃**
+      // ——用户消息留在原处、可二次编辑/重发；直到主人**直接说下一句**这一刻才丢。
+      // 判据只有一条：**它仍是当前最后一条用户消息**（与 `attachRetryActions` 的双保险①
+      // 同一把尺）。不是它就不动——宁可不删，也不误删一条主人还在看着的消息。
+      // 顺序是硬要求：discard 必须**先于**新消息落库。Rust 侧按"最后一条 user 消息 +
+      // 原文校验"定位、删掉 `Id >= 那条` 的全部行（chat.rs discard_handler）——反过来
+      // 的话最后一条 user 已经是新消息，只要它与被打断的那条**同文**（主人重发同一句话
+      // 是最自然的动作），校验就会通过、删掉的是**刚发出去的这一条**。所以这个顺序
+      // 没有任何别的东西兜得住，只能写死在调用点上。
+      // 一轮被**明确丢弃**（重发/编辑/补删）之后，那一轮的半截回复也跟着走：它已经没有
+      // 归属了——留在屏幕上就是"用户消息旁边悬着一段没有对应提问的残句"，重发那条更糟
+      // （新回复出现在它下面，旧残句成了**上一条**的回答）。判据 = 最后一条 user 之后的
+      // agent 项：这三条路都已经把服务端那一轮删净，它们不可能来自 DB（'d' 项），只可能
+      // 是这一轮的残留（'l' 项 + 它在 DOM 里的气泡）。
+      const dropOrphanPartial = () => {
+        const items = ctx.state.items;
+        let lastUser = -1;
+        for (let i = items.length - 1; i >= 0; i--) if (items[i].type === 'user') { lastUser = i; break; }
+        const orphans = items.slice(lastUser + 1).filter(x => x.type === 'agent');
+        if (!orphans.length) return;
+        const ids = new Set(orphans.map(o => o.id));
+        orphans.forEach((o) => {
+          const el = messages.querySelector('[data-mid="' + o.id + '"]');
+          if (el && el.parentNode) el.parentNode.removeChild(el);
+        });
+        ctx.state.items = items.filter(x => !ids.has(x.id));
+        saveHistory();
+      };
+      const releaseStoppedTurn = async () => {
+        let entry = null;
+        try {
+          const cur = JSON.parse(localStorage.getItem(FAILED_KEY) || 'null');
+          if (Array.isArray(cur) && cur.length && cur[0] && cur[0].kind === 'stopped') entry = cur[0];
+        } catch (e) { /* 标记读不出来 = 没有要补删的轮 */ }
+        if (!entry) return;
+        const last = [...ctx.state.items].reverse().find(i => i.type === 'user');
+        if (!last || last.text !== entry.text) return;
+        const res = await postDiscard(entry.text, ctx.state.conv);
+        // 删成功才收气泡：失败（连不上/后端说原文对不上）时服务端那行还在，
+        // 本地先抹掉就是让屏幕替服务端说谎——留着它，主人至少看得见这条还在。
+        if (!res.ok) return;
+        const el = messages.querySelector('[data-mtype="user"][data-mid="' + last.id + '"]');
+        if (el && el.parentNode) el.parentNode.removeChild(el);
+        // 提示条同去：它讲的是"这条被你停止了"，而这条已经不在了。留着它的后果是
+        // **下一条回复的整段时间里**屏幕上还挂着一句关于上一条的话（提示条是纯渲染物，
+        // 只在 reconcile 时按标记重算——而两次 reconcile 之间隔着新的一整轮）。
+        const note = messages.querySelector('.chat-msg-failed-note');
+        if (note && note.parentNode) note.parentNode.removeChild(note);
+        ctx.state.items = ctx.state.items.filter(x => x.id !== last.id);
+        dropOrphanPartial();   // 同上：被打断那一轮的半截回复此刻才真正没有归属
+        saveHistory();
+        clearFailedRound(entry.text);
+      };
       // 刷新后的失败轮同样能重发/编辑（20260927，用户报的覆盖缺口：此前刷新一次
       // 按钮就没了，只剩一句话）。历史渲染那一趟只画提示条 + 留一个空槽
       // （chat-engine 的 `onFailedResync` 注释写了分工），按钮由这里挂——重发/编辑
@@ -601,9 +710,18 @@
       // 幂等：槽里已经有按钮就跳过（钩子每趟 reconcile 都调，重复挂会叠出两组按钮）。
       const attachHistoryFailedRetry = () => {
         messages.querySelectorAll('.chat-msg-retry-slot').forEach((slot) => {
-          if (slot.querySelector('.chat-msg-retry')) return;
           const text = slot.dataset.failedText || '';
           if (!text) return;   // 没有原文就没有可重发的东西（attachRetryActions 要它去 discard）
+          // 同一轮只能有**一处**按钮：气泡里那份是停下那一刻的即时反馈（收尾块挂的），
+          // 提示条这份是重建路径（刷新/随后每一趟 reconcile）。两者会同时在场——半截
+          // 回复的 'l' 项 60s 内不被 DB 视图收走，而提示条判据看的正是"用户消息之后
+          // 有没有已入库的回复"（见 chat-engine 的锚点注释）⇒ 不去重就是屏幕上两组
+          // 一模一样的按钮。以提示条这份为准（它才是刷新后唯一活下来的那份）。
+          messages.querySelectorAll('.chat-msg-retry').forEach((w) => {
+            if (w.parentNode !== slot && w.dataset.retryText === text
+                && w.parentNode) w.parentNode.removeChild(w);
+          });
+          if (slot.querySelector('.chat-msg-retry')) return;
           // 提示条本身当 `div` 传进去：重发成功后它连带被摘掉（那一轮的失败标记也
           // 清掉了，下一次 reconcile 不会再渲染出来）。
           const note = slot.closest('.chat-msg-failed-note') || slot;
@@ -636,6 +754,12 @@
         }
         // 用户选择"直接说话"而不是点按钮：挂起的确认作废（否则它日后突然生效）
         if (!silent && ctx.state.pendingAsk) hideAsk();
+
+        // 上一次被主人打断的那条：他既没重发也没编辑，直接说了下一句 ⇒ **到这里才丢**
+        // （20261001，见 `releaseStoppedTurn`）。这里必须 **await**：discard 与"新消息
+        // 落库"的先后是有语义的（那张头注写了顺序反过来的后果），并发出去等于把顺序
+        // 交给运气。
+        if (!silent) await releaseStoppedTurn();
 
         // 20260903 会话化：空白新对话态（convNeedCreate）发送前先 POST 建会话——
         // 惰性创建（服务端空会话不落实体，"新对话"按钮只清视图置位，见
@@ -698,7 +822,7 @@
         // discard 广播按它双侧删除（Rust 侧已按用户消息删除 DB 记录）。
         const roundId = __chatCore.genId();
         // 隐藏确认请求（silent）没有用户气泡：userItemId 为 null，下游所有按它
-        // 删条目/广播 discard 的分支都必须先判空（见 discardTurn 分支与停止路径）
+        // 删条目/广播 discard 的分支都必须先判空（见失败轮的删除路径）
         const userItemId = silent ? null : __chatCore.genId();
         const sentAt = Date.now(); // 本轮用户消息时间（user 帧与条目共用同一值）
         // 20260903 补 convId：停止生成/3s 保险的 discard 定向删本轮所属会话
@@ -751,7 +875,7 @@
         }
         ctx.state.isSending = true;
         ctx.state.stoppedByUser = false;
-        ctx.state.discardTurn = false;
+        ctx.state.stoppedTurn = false;
         // 发送按钮切换为"停止生成"（主流对话 UI 形态），点击即中止输出
         sendBtn.disabled = false;
         sendBtn.title = '停止生成';
@@ -1137,7 +1261,18 @@
               // 清空累积重新渲染——最终用户只看到最后一轮的完整回复，
               // 也不会把废轮次的导航命令误当最终意图；被打回的内容归档进过程行
               if (text === '__RESET__' || text.startsWith('__RESET__:')) {
-                const reason = text.startsWith('__RESET__:') ? text.slice('__RESET__:'.length) : '质检未通过';
+                // 帧形 `__RESET__:<scope>:<理由>`（20261001）。scope 是**机器判据**：
+                //   · `text` —— 只作废叙述，命令照旧执行（终局 fallback：execute 跑过、
+                //     checker PASS 过，命令是已发生的事实，被否定的只有措辞）；
+                //   · `all`  —— 连本轮 `__CMD__` 缓冲一起作废（gate 打回重规划：
+                //     决策被推翻，重下的命令才算数）。
+                // 旧帧没有 scope 段 ⇒ 按 `all`（= 旧行为）。三端约定必须一致，
+                // 缺省取 `all` 是因为它更保守：版本错配时退化成"命令被吞"，
+                // 而不是"道歉了但还是跳了"。
+                const rest = text === '__RESET__' ? '' : text.slice('__RESET__:'.length);
+                const mScope = /^(all|text):/.exec(rest);
+                const scope = mScope ? mScope[1] : 'all';
+                const reason = (mScope ? rest.slice(mScope[0].length) : rest) || '质检未通过';
                 const rejected = (cmdText + displayText).trim();
                 if (rejected) {
                   archiveRejected(reason, rejected);
@@ -1146,11 +1281,12 @@
                 }
                 cmdText = '';
                 displayText = '';
-                // programCmds 必须一起清（20260926 批 2）：被打回那一轮的命令帧
-                // 已经进了这个缓冲，不清的话 gate 明明否定了整轮、收尾照旧执行它——
-                // 用户看到的是"它道歉了但还是跳了"。与 Rust 清 reply、golden 清
-                // commands 是同一个动作的三端版本。
-                programCmds = [];
+                // 只有决策被推翻时才清命令缓冲（20261001 改口，此前无条件清）。
+                // 旧写法把"gate 否定了整轮"与"这一轮没做过任何事"当成同一件事，
+                // 而终局 fallback 里 execute 已经跑过、checker 已 PASS —— 命令被吞掉
+                // 之后，气泡最前面那块系统印的事实（"页面已跳转：…"）就成了**系统
+                // 说它没做的事**（20261001 夜间 `nav_article_target` 实证）。
+                if (scope !== 'text') programCmds = [];
                 contentSpan.textContent = '';
                 broadcast({t: 'reset', reason, roundId});  // 多标签同步：清空废轮次文本
                 continue;
@@ -1267,9 +1403,9 @@
                 ctx.state.stoppedByUser ? '你停止了本轮' : '本轮超时/连接中断';
             }
             if (ctx.state.stoppedByUser) {
-              // 用户主动停止生成：标记丢弃本轮，复位后 discardTurn() 统一清理
-              // （内存/缓存/DOM 删除 + discard 广播 + DB 由 Rust DiscardAbortedExchange 删）
-              ctx.state.discardTurn = true;
+              // 用户主动停止生成：只**标记**，收尾块（`stoppedTurn`）统一处理——
+              // 20261001 起那里不再删任何东西，见那块的头注
+              ctx.state.stoppedTurn = true;
             } else {
               const errMsg = '长时间未收到回复，请稍后重试';
               // 已收到的部分照旧留在气泡里（displayText 就是屏幕上那段文本）
@@ -1411,25 +1547,23 @@
             window.dispatchEvent(new CustomEvent('agent-turn-done'));
           } catch (e) { /* ignore */ }
         }
-        if (ctx.state.discardTurn) {
-          // 丢弃本轮用户输入与部分回复（不加入记忆）：
-          // 1) 前端内存/缓存移除本轮用户消息与 live 气泡（部分回复从未写入缓存）
-          // 2) 后端 DB 记忆由 Rust /chat/stream 在流中断时自动清理（chat.rs DiscardAbortedExchange）
-          ctx.state.discardTurn = false;
-          const victim = ctx.state.live[roundId];
-          if (victim) {
-            if (victim.el && victim.el.parentNode) victim.el.parentNode.removeChild(victim.el);
-            delete ctx.state.live[roundId];
-          }
-          // silent 轮没有用户条目可删（userItemId=null），也**绝不能**广播 discard：
-          // 远端会照 userItemId 删一条不存在的消息；本轮的隐藏请求在 DB 侧由
-          // boundary 守卫清理（见 Rust prepare_chat/DiscardAbortedExchange）
-          if (!silent) {
-            ctx.state.items = ctx.state.items.filter(i => i.id !== userItemId);
-            saveHistory();
-            broadcast({t: 'discard', roundId, userItemId}); // 远端同删该轮（DB 侧自动清理）
-          }
-          setTimeout(pullHistory, 0); // DB 可能已删（DiscardAbortedExchange），收敛一致
+        if (ctx.state.stoppedTurn) {
+          // 主人按了停止（20261001 改）：**这一轮不丢**。
+          // 旧行为是当场三件一起做——删 items/缓存、摘掉 live 气泡、发 apiDiscard 让
+          // Rust 把 DB 里的 user 消息与残缺回复一起删。于是"我手滑按错了/我想改个措辞"
+          // 时消息已经没了，只能重新打一遍。现在：用户消息**留在原处**、半截回复与
+          // "已停止生成"一起留在气泡里、挂上重发/编辑（与失败轮同一套交互）；真正的
+          // 丢弃推迟到**主人下一次发言**那一刻（`releaseStoppedTurn`，写在 sendMessage
+          // 入口）——那时他既没重发也没编辑，才说明这条是真的不要了。
+          // 所以这里**不发** apiDiscard、**不删** items、**不广播** discard：
+          // 三条都是"现在就把这条抹掉"的旧语义，与新规矩冲突。
+          // （DB 侧此刻只剩那条 user 消息：残缺回复由 Rust DiscardAbortedExchange
+          // 在断连时清掉，本来也不该留。）
+          ctx.state.stoppedTurn = false;
+          // 保留这一轮的全部动作收在 `retainStoppedTurn` 里（与 3s 保险那条路径共用
+          // 一份实现——两处拷贝此前已经漂过，见那个函数的头注）
+          retainStoppedTurn(ctx.state.live[roundId], roundId, msg, silent);
+          setTimeout(pullHistory, 0); // DB 已是权威（残缺回复本就没落库），收敛一致
         }
       };
 
@@ -1791,15 +1925,13 @@
           // 输出中点击 = 停止生成
           ctx.state.stoppedByUser = true;
           if (ctx.state.streamCtrl) ctx.state.streamCtrl.abort();
-          // 显式告知后端全删本轮（DB 侧 user+残缺回复；与连接中断"保留 user"互补）
-          // 20260903：带本轮会话 id 定向删（activeRound 在发送入口已捕获 convId）
-          // **silent 轮（隐藏确认请求）不发**：它是"用户消息 + 其后全部"的全删语义，
-          // 而确认轮本身没有用户消息 —— 发出去删掉的是**上一轮那条真实请求**及其回复
-          const rStop = ctx.state.activeRound;
-          if (rStop && !rStop.silent) apiDiscard(rStop.convId);
+          // 20261001 起这里**不再**当场 apiDiscard：停止生成不丢弃这一轮（用户消息留在
+          // 原处可二次编辑/重发），真正的丢弃推迟到主人下一次发言那一刻
+          // （`releaseStoppedTurn`，见 sendMessage 入口）。旧行为是当场把 DB 里那条
+          // user 消息与残缺回复一起删——"按错了/想改个措辞"时消息已经没了。
           // 保险：极端情况下（浏览器对已开始读取的流 abort 不触发 AbortError）catch 不会执行，
-          // UI 会卡死在"停止生成"状态——3s 后强制恢复并丢弃本轮，保证界面必能继续使用。
-          // 与 sendMessage 收尾 discardTurn 分支相同的丢弃逻辑（abort 未触发时手动清理）
+          // UI 会卡死在"停止生成"状态——3s 后强制恢复，保证界面必能继续使用。
+          // 与 sendMessage 收尾 stoppedTurn 分支相同的保留逻辑（abort 未触发时手动补上）
           // 20260902：扩展条件 stoppedByUser || timedOut——空闲/总超时 abort 同样可能
           // 命中"abort 不触发 AbortError"边界（025943 事故实证：60s 超时后无任何提示、
           // 无重发按钮，UI 卡死）。timedOut 分支不走"丢弃本轮"（空闲超时≠用户不要
@@ -1818,19 +1950,12 @@
               const r = ctx.state.activeRound;
               const victim = ctx.state.live[r.roundId];
               if (ctx.state.stoppedByUser) {
-                // 主动停止：丢弃本轮（与 sendMessage discardTurn 分支一致）
-                if (victim) {
-                  if (victim.el && victim.el.parentNode) victim.el.parentNode.removeChild(victim.el);
-                  delete ctx.state.live[r.roundId];
-                }
-                if (r.userItemId) {
-                  ctx.state.items = ctx.state.items.filter(i => i.id !== r.userItemId);
-                  saveHistory();
-                  broadcast({t: 'discard', roundId: r.roundId, userItemId: r.userItemId});
-                }
-                // silent 轮（隐藏确认请求）没有用户条目，discard 全删语义会误删
-                // 上一轮真实请求 —— 跳过；DB 侧的残缺回复由 boundary 守卫清理
-                if (!r.silent) apiDiscard(r.convId); // 保险路径同样通知后端全删（r = activeRound，已含 convId）
+                // 主动停止：保留本轮——**与 sendMessage 收尾的 `stoppedTurn` 分支同一份
+                // 实现**（`retainStoppedTurn`：不删 items、不发 discard、不广播 discard；
+                // 理由写在那块头注里）。两边共用一个函数是刻意的：这段曾经是两份拷贝，
+                // 而它们已经漂了（一份转正半截回复、一份没转正 ⇒ 同样的操作刷新前后
+                // 看到的东西不一样）。
+                retainStoppedTurn(victim, r.roundId, r.msg, r.silent);
                 // 20260901：3s 保险路径同样广播 idle（abort 未触发时 finally 不执行，
                 // 其他窗口的发送按钮依赖 idle 解除禁用）——silent 轮同样要广播
                 // （sending 帧是发的，收尾必须成对）
