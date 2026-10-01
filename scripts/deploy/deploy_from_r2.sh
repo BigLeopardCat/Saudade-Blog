@@ -66,21 +66,23 @@ with tarfile.open('/tmp/deploy.tar.gz') as tar:
     # 顺手记下包里的前端文件清单——它就是"本代"的权威定义（CI 每次全新构建，包里
     # 的 frontend/dist 全部来自这一次构建），下一步清死块直接拿它做集合差，不猜
     #
-    # 20261001 起 live2d-widgets/ 也纳入清单（此前只记 js/ 与 vendor/）：那三个目录是
-    # 唯一会被清死块扫的目录，而 live2d-widgets 下的文件是**不经打包的静态资源**——
-    # 改名（autoload.js→boot.js 这类）或删除后，旧名字会永远留在 dist 里继续被 nginx
-    # 服务（实测 20261001 线上还有 5 个 public/ 早已不存在的 GPL 渲染层文件、合计 1067KB，
-    # 且吃 1 年 immutable 缓存）。清单不含它 = 那些文件永远不在"本代"里 = 永远清不掉。
+    # 20261002：清单从"三个目录"扩到 **frontend/dist/ 整棵**。此前只记
+    # js/、vendor/（20260925）与 live2d-widgets/（20261001），于是**别的目录从来没被扫过**：
+    # 实测线上积了 104 个 / 24.3MB 本代之外的残留，其中 92 个是 `css/index-<hash>.css`
+    # （约 250–300KB × 每次部署），另有 mp4/、graph/、woff2/、icons/ 与 **dist 顶层**。
+    # 顶层那两个的教训最硬：`8854cd4`（2026-09-30）为开源把 `public/QQ.png` /
+    # `QQ-Email.png`（含真名与真号的个人二维码）从源码里删了，源码删了、**线上仍在公网 200**，
+    # 因为顶层不在任何 DIRS 里。清单只记被扫的目录 = 那些文件永远不在"本代"里 = 永远清不掉。
+    # 同一条坑 20261001 已经以"live2d-widgets 改名后旧名字永不消失"的形态出现过一次。
     members = [n for n in tar.getnames()
-               if n.startswith(('frontend/dist/js/', 'frontend/dist/vendor/',
-                                'frontend/dist/live2d-widgets/')) and not n.endswith('/')]
+               if n.startswith('frontend/dist/') and not n.endswith('/')]
     tar.extractall(filter='data')
 os.remove('/tmp/deploy.tar.gz')
 with open('logs/.deploy_manifest.txt', 'w', encoding='utf-8') as fh:
     fh.write('\n'.join(members) + '\n')
 with open('logs/.last_deploy_sha', 'w', encoding='utf-8') as fh:
     fh.write(sha)
-print(f'✅ 部署文件下载解压完成（{key}；前端 js/vendor/live2d-widgets 本代 {len(members)} 个）')
+print(f'✅ 部署文件下载解压完成（{key}；前端 dist 本代 {len(members)} 个）')
 PYEOF2
 
 SHA="$(cat logs/.last_deploy_sha)"
@@ -96,39 +98,53 @@ echo "✅ $(date '+%H:%M:%S') 前端已更新"
 # 一天涨约 100MB（同族坑第五次的形态：前四次是"策略写了没人执行"，这次是**连清理
 # 这一环都不存在**）。
 #
-# 判据 = **上一节记下的本代清单**（包里有什么就是本代），JS/ 与 vendor/ 下不在清单里的
-# 就是上一代的残留。CI 每次全新构建 ⇒ 包里那份 frontend/dist 就是本代全集，所以这是
-# 精确的集合差，不依赖"文件名看着旧"这种猜测（20260925 实测：最近那个包的 44 个
-# js/vendor 成员与盘上集合逐条一致）。三道闸：
-#   ① 清单读不到、或条数 < 5 ⇒ 直接放弃（判据可疑时宁可留旧块）；
-#   ② 只在这三个目录下、只删**普通文件**（`os.path.islink` 的先跳过，不碰符号链接）；
-#   ③ 读不到 size 或 unlink 失败只跳过那一个（`OSError`）。
+# 判据 = **上一节记下的本代清单**（包里有什么就是本代），dist 下不在清单里的就是上一代的
+# 残留。CI 每次全新构建 ⇒ 包里那份 frontend/dist 就是本代全集，所以这是精确的集合差，
+# 不依赖"文件名看着旧"这种猜测（20260925 实测：最近那个包的 44 个 js/vendor 成员与盘上
+# 集合逐条一致）。四道闸：
+#   ① 清单读不到、或条数 < 50 ⇒ 直接放弃（判据可疑时宁可留旧块）；
+#   ② 清单里**必须有 frontend/dist/index.html** ⇒ 否则它就不是"整棵 dist"的清单，
+#      拿它扫整棵等于把站点删空（这是 20261002 把范围扩到全 dist 之后新增的闸）；
+#   ③ 只删**普通文件**（`os.path.islink` 的先跳过，不碰符号链接；os.walk 默认不跟软链目录）；
+#   ④ 读不到 size 或 unlink 失败只跳过那一个（`OSError`）。
 # 清不掉**不影响部署结果**（只记一行警告退出码 0）：线上正确性不依赖这一步。
 #
-# 20261001：DIRS 加 live2d-widgets（此前只有 js/ 与 vendor/，那一整棵子树的旧文件
-# 从来没有被清过）；同时改成**递归**遍历——`chunk/` 是子目录，`os.listdir` 只看得到
-# 一个目录项、`os.path.isfile` 判 false，所以旧版的平铺写法对 live2d-widgets 无效。
+# 20261001：改成**递归**遍历——`chunk/` 是子目录，`os.listdir` 只看得到目录项、
+# `os.path.isfile` 判 false，所以旧版的平铺写法对 live2d-widgets 无效。
 # 清完顺手删掉因此变空的目录（自底向上 `rmdir`，非空会抛 OSError 被跳过）。
+#
+# 20261002：范围从三个目录（js/ vendor/ live2d-widgets/）扩到 **frontend/dist/ 整棵**。
+# 此前只扫那三个 ⇒ css/（92 个残留）、mp4/、graph/、woff2/、icons/ 与顶层从来没被清过。
+# 顶层要单独留一个例外：**build-info.json 不在包里**（它是本脚本落地后自己写的，
+# 见文件末尾），一起扫会在写下一版之前先删掉上一版记录，而它是"只信 build-info 的 sha"
+# 这条判据的唯一来源 ⇒ 进 KEEP。
 python3 - <<'PYEOF3' || echo "⚠️ $(date '+%H:%M:%S') 前端死块清理失败（不影响本次部署，下次部署再清）"
 import os
-DIRS = ['frontend/dist/js', 'frontend/dist/vendor', 'frontend/dist/live2d-widgets']
+ROOT = 'frontend/dist'
+# 本代清单之外、但必须留的（见上面 20261002 那条）
+KEEP = {os.path.join(ROOT, 'build-info.json')}
 try:
     with open('logs/.deploy_manifest.txt', encoding='utf-8') as fh:
         current = {ln.strip() for ln in fh if ln.strip()}
 except OSError as exc:
     raise SystemExit(f'⚠️ 读不到本代清单 logs/.deploy_manifest.txt（{exc}）⇒ 不清（宁可留旧块也不冒险）')
-if len(current) < 5:
+# 真实整棵 dist 约 230 条（20261002 实测 337 个文件里 233 个属于本代）。门槛定 50 是
+# 让"被截断/半截的清单"够不到删除这一步——范围扩到全 dist 之后，一个太小的清单
+# 意味着把站点删空，而宁可留旧块。
+if len(current) < 50:
     raise SystemExit(f'⚠️ 本代清单只有 {len(current)} 条，太小 ⇒ 不清（判据可疑时宁可留旧块）')
+if os.path.join(ROOT, 'index.html') not in current:
+    raise SystemExit('⚠️ 本代清单里没有 frontend/dist/index.html ⇒ 它不像"整棵 dist"的清单，不清')
+if not os.path.isdir(ROOT) or os.path.islink(ROOT):
+    raise SystemExit(f'⚠️ {ROOT} 不是普通目录（软链或不存在）⇒ 不清')
 dead = []
-for d in DIRS:
-    # 顶层目录本身是符号链接就整棵跳过（不跟着走出 dist 之外）
-    if not os.path.isdir(d) or os.path.islink(d):
-        continue
-    for root, _subdirs, files in os.walk(d):
-        for name in files:
-            p = os.path.join(root, name)
-            if p not in current and os.path.isfile(p) and not os.path.islink(p):
-                dead.append(p)
+for root, _subdirs, files in os.walk(ROOT):
+    for name in files:
+        p = os.path.join(root, name)
+        if p in current or p in KEEP:
+            continue
+        if os.path.isfile(p) and not os.path.islink(p):
+            dead.append(p)
 freed = 0
 for p in dead:
     try:
@@ -137,17 +153,14 @@ for p in dead:
     except OSError:
         pass
 empty = 0
-for d in DIRS:
-    if not os.path.isdir(d) or os.path.islink(d):
+for root, _subdirs, _files in os.walk(ROOT, topdown=False):
+    if root == ROOT:
         continue
-    for root, _subdirs, _files in os.walk(d, topdown=False):
-        if root == d:
-            continue
-        try:
-            os.rmdir(root)
-            empty += 1
-        except OSError:
-            pass   # 非空（还有本代文件）或权限问题 ⇒ 留着
+    try:
+        os.rmdir(root)
+        empty += 1
+    except OSError:
+        pass   # 非空（还有本代文件）或权限问题 ⇒ 留着
 print(f'🧹 前端死块：清掉上一代 {len(dead)} 个 / {freed / 1048576:.1f}MB'
       f'（本代 {len(current)} 个全部保留；顺带删掉 {empty} 个空目录）')
 if dead:
