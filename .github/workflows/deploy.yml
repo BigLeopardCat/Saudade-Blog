@@ -156,6 +156,13 @@ jobs:
           VITE_CDN_BASEURL: ${{ vars.VITE_CDN_BASEURL }}
         run: |
           npm ci
+          # 看板娘运行时的三份第三方产物（vendor/pixi.min.js、vendor/cubism4.min.js、
+          # cubism5/live2dcubismcore.min.js）**故意不进 git**（体积 + Live2D 专有许可），
+          # 但 vite 只拷贝 public/ 下真实存在的文件 ⇒ 不在 build 之前就位，打出来的包里
+          # 就没有它们，而部署是覆盖式解压 + 按本代清单清理旧块 ⇒ 线上那三份会被**删掉**，
+          # 看板娘整个不渲染（静默：聊天面板照常工作）。三者都要，缺一不可。
+          # 第三份从官方 CDN 取并按 sha256 校验：官方换版本会红在构建这一步（预期的）。
+          npm run vendor:live2d
           npm run build
         working-directory: ./frontend
 

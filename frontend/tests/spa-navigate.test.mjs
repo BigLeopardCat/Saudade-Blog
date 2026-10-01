@@ -211,7 +211,11 @@ console.log('\n⑥ 版本号：改了 widget 脚本必须 bump（nginx 对 live2
     // live2d-widget.js→stage.js、waifu.css→widget.css）。改名本身就让入口与样式表
     // 变成新 URL，bump 是为了让**子模块**（chat-*.js / stage.js）也一起换 URL——
     // 它们内容也改了（loader 里那份子模块名单、CSS 路径），不 bump 就吃 1 年缓存。
-    ok(ver === '20261001f', 'VER 已 bump 到本轮（20261001f）', { ver });
+    // 20261001g = 「开源前准备：看板娘渲染层换自研」那一轮（waifu-tips.20260905.js +
+    // chunk/* 整块剔除，换成 renderer.js）。子模块名单里 stage→renderer 直接体现在
+    // boot.js 正文里，样式表与子模块 URL 都跟着 VER 走——不 bump 就吃 1 年缓存，
+    // 浏览器会拿旧 renderer 配新 boot.js。
+    ok(ver === '20261001g', 'VER 已 bump 到本轮（20261001g）', { ver });
     const tsx = readFileSync(path.join(root, 'src/components/Live2dAgent/index.tsx'), 'utf8');
     ok(tsx.includes('boot.js?v=' + ver), 'Live2dAgent 的 ?v= 与 VER 一致');
 }

@@ -1285,29 +1285,19 @@
         // 全部非 reconcile 追加路径；reconcile 循环内新建的重复调用无害（幂等）。
         patchDivider(div, item);
         scrollToBottom(messages);
-        // agent 消息触发嘴部动作（非流式/恢复场景）
+        // agent 消息触发嘴部动作（非流式/恢复场景）：把口型盖住一小会儿再放开。
+        // 20261001 渲染层换自研后改走公开接口 —— 原来那串
+        // `window.__cubism5model.subdelegates.at(0).getLive2DManager()._models.at(0)` 是
+        // cubism5 运行时的内部结构，pixi 侧不存在；**留着它是静默 no-op**（整块裹在
+        // try/catch 里，不报错也不动，看不太出来），所以必须一起改。
+        // 取值/时长与旧实现逐条对齐：0.7 ≈ 旧写的 ParamSpeak 70 + ParamMouthOpenY 0.7；
+        // 到点落 0（钉在闭口）而不是 -1 交还空闲 —— 旧实现也是把参数写成 0，不是放手。
         if (item.type === 'agent') {
           try {
-            const ad = window.__cubism5model;
-            const sub = ad && ad.subdelegates && ad.subdelegates.getSize() ? ad.subdelegates.at(0) : null;
-            const mgr = sub ? sub.getLive2DManager() : null;
-            const m = mgr && mgr._models && mgr._models.getSize() ? mgr._models.at(0) : null;
-            if (m) {
-              const c = m.getModel ? m.getModel() : m._model;
-              if (c && typeof c.setParameterValueById === 'function') {
-                c.setParameterValueById('ParamSpeak', 70, 1.0);
-                c.setParameterValueById('ParamMouthOpenY', 0.7, 1.0);
-                if (m.update && typeof m.update === 'function') m.update();
-                else if (c._csmUpdateModel) c._csmUpdateModel();
-                else if (c._model && c._model.update) c._model.update();
-                setTimeout(() => {
-                  c.setParameterValueById('ParamSpeak', 0, 1.0);
-                  c.setParameterValueById('ParamMouthOpenY', 0, 1.0);
-                  if (m.update && typeof m.update === 'function') m.update();
-                  else if (c._csmUpdateModel) c._csmUpdateModel();
-                  else if (c._model && c._model.update) c._model.update();
-                }, Math.min(1500, Math.max(300, item.text.length * 20)));
-              }
+            if (typeof window.__setMouthOpen === 'function') {
+              window.__setMouthOpen(0.7);
+              const hold = Math.min(1500, Math.max(300, String(item.text || '').length * 20));
+              setTimeout(() => { window.__mouthOverride = 0; }, hold);
             }
           } catch(e) {}
         }
