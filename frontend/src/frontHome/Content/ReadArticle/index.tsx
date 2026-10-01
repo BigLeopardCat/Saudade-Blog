@@ -564,15 +564,22 @@ const ReadArticle = () => {
                                     <h1>{article?.noteTitle}</h1>
                                     <h3>{dayjs(article?.updateTime).format("YYYY-MM-DD")}</h3>
                                 </div>
-                                {/* 收藏按钮（20260922）：横幅信息卡里，与日期同排。
-                                    文案随状态变——收藏是布尔量，不该让用户自己猜现在是哪种状态。
-                                    20260926：文案包一层 span 是为了竖排（标题一长会把「已收藏」
-                                    挤成两行）——写法定在 .readFavLabel 里，见 index.sass */}
-                                <div className="readFavWrap">
+                                {/* 右区：三件读数**同一个簇**（20261001，用户第 1 条「详情页三图标
+                                    样式和布局太丑了，大小不一，排列奇怪」）。
+
+                                    之前是三个 wrapper、三套几何：收藏一件竖排胶囊（32×62），
+                                    浏览与点赞各自一件，高度 24 / 30 不一 —— 排在一行里怎么摆
+                                    都对不齐。现在三件挂同一个 `.readStat` 拿共用几何（同高 30px、
+                                    同内边距、同字号、同描边、同一行），只有两个按钮多挂一层
+                                    `.readFavBtn` / `.readLikeBtn` 拿交互态。
+                                    几何全在 `.readStat` 里，别在这里的内联或新类上再写一份
+                                    （"三处各写一遍"正是这一条被报上来的由来）。 */}
+                                <div className="readStats">
                                     <button
                                         type="button"
-                                        className={`readFavBtn${faved ? ' isFaved' : ''}`}
+                                        className={`readStat readFavBtn${faved ? ' isFaved' : ''}`}
                                         disabled={favBusy}
+                                        title={faved ? '取消收藏' : '收藏'}
                                         onClick={toggleFavorite}
                                     >
                                         {/* 图标与「浏览」那只眼睛同源同尺寸（`NoteStatIcons`）：
@@ -582,19 +589,13 @@ const ReadArticle = () => {
                                         {faved
                                             ? <StarIcon size={14} />
                                             : <StarOutlineIcon size={14} />}
+                                        {/* 文案随状态变（收藏是布尔量，不该让用户自己猜现在是哪种），
+                                            定宽在 .readFavLabel 里 —— 「收藏」→「已收藏」多一个字，
+                                            三件同排时会把后面两件整排推移 */}
                                         <span className="readFavLabel">{faved ? '已收藏' : '收藏'}</span>
                                     </button>
-                                </div>
-                                {/* 阅读量 + 点赞（20260930）：**与收藏并列的另一个 wrapper**，
-                                    不嵌进 .readFavWrap —— `read-fav-sass.test.mjs` 钉死了
-                                    `.readContainer .readCover .readInfo .readFavWrap` 的完整
-                                    选择器链与三态色，动它即红。
-                                    布局要点与收藏同源：wrapper 不许被 flex 挤小（`.readInfo`
-                                    是 flex 行，标题一长就把右边这几块挤窄）；数字定宽，免得
-                                    三位数跳到四位数时整条胶囊跟着抖。 */}
-                                <div className="readLikeWrap">
                                     {views !== null && (
-                                        <span className="readViews" title="累计阅读量">
+                                        <span className="readStat readViews" title="累计阅读量">
                                             {/* 图标在 `components/NoteStatIcons` 里（卡片那一排同源，
                                                 别在这里再写一份路径——字形对不齐是两处各写一遍的老毛病） */}
                                             <EyeIcon size={14} />
@@ -603,7 +604,7 @@ const ReadArticle = () => {
                                     )}
                                     <button
                                         type="button"
-                                        className={`readLikeBtn${liked ? ' isLiked' : ''}`}
+                                        className={`readStat readLikeBtn${liked ? ' isLiked' : ''}`}
                                         disabled={likeBusy}
                                         aria-pressed={liked}
                                         title={liked ? '取消点赞' : '点赞'}

@@ -121,114 +121,93 @@ html
           margin: 0
           white-space: nowrap
 
-      // 收藏按钮（20260922）：横幅一直是深色遮罩上的浅字，所以按钮自带描边、
-      // 不跟主题变量走（浅色主题下这块背景也是深色，用主题色会看不见）
-      // 20260926：文案改竖排——`.readInfo` 是 flex 行，标题一长就把这块挤窄，
-      // 「已收藏」被折成两行（用户报的是「已收」「藏」）。竖排后不论被挤多窄都是
-      // 一列，`flex: 0 0 auto` 同时保证被挤的是标题那一块而不是它。
-      .readFavWrap
-        margin-top: 6px
-        flex: 0 0 auto
-
-        .readFavBtn
-          display: inline-flex
-          flex-direction: column
-          align-items: center
-          gap: 2px
-          padding: 6px 8px
-          font-size: 13px
-          line-height: 22px
-          color: #fff1eb
-          background: transparent
-          border: 1px solid rgba(255, 241, 235, 0.55)
-          border-radius: 999px
-          cursor: pointer
-          transition: 0.25s
-
-          // 竖排文案：CJK 天然直立，`upright` 让 ★ 也直立（默认 mixed 会把它转向）
-          .readFavLabel
-            writing-mode: vertical-rl
-            text-orientation: upright
-            white-space: nowrap
-            line-height: 1.1
-            letter-spacing: 1px
-
-          &:hover
-            background: rgba(255, 241, 235, 0.16)
-
-          &:disabled
-            opacity: 0.6
-            cursor: default
-
-          // 已收藏：河灯金实心（与站点主色一致）
-          &.isFaved
-            color: #1c2754
-            background: #ffcc7c
-            border-color: #ffcc7c
-
-      // 阅读量 + 点赞（20260930）：收藏的**兄弟块**，同样不跟主题变量走
-      // （这块底色是横幅的深色遮罩，浅色主题下用主题色会看不见）。
-      // `flex: 0 0 auto` 的理由与 .readFavWrap 完全相同：被挤窄的是标题那一块，
-      // 不是这几个按钮。点赞的粉与收藏的河灯金是两套色，免得看成一个控件。
-      .readLikeWrap
+      // 右区：三件读数（收藏 / 浏览 / 点赞）合成**一个簇**
+      // （20261001，用户第 1 条「详情页三图标样式和布局太丑了，大小不一，排列奇怪」）。
+      //
+      // 之前那三件是**三种尺寸**：收藏是竖排胶囊 32×62（★ 在上、文案竖着往下写），
+      // 浏览是 59×24、点赞是 64×30；内边距 6px 8px / 2px 8px / 4px 10px、
+      // 字号 13 / 12 / 13、描边透明度 .55 / .35 / .55 —— 一件竖的、两件横的，
+      // 高度差到 2.6 倍，怎么摆都对不齐，那就是"大小不一，排列奇怪"的来源。
+      //
+      // 现在三件共用一个 `.readStat`（同高、同内边距、同字号、同描边、同行），
+      // 排成**一行**；两个按钮再挂 `.readFavBtn` / `.readLikeBtn` 拿交互态。
+      // 竖排那套（`writing-mode: vertical-rl`）随之取消：它当初是治"标题一长把
+      // 「已收藏」挤成两行"的**症状**，而病根是簇可以被收缩 —— 那条已由下面的
+      // `flex: 0 0 auto` + `.readStat` 的 `white-space: nowrap` 从结构上治掉。
+      //
+      // ⚠️ 整簇必须 `flex: 0 0 auto`：`.readInfo` 是 flex 行，该被挤窄的只有中区
+      // 那个 `min-width: 0` 的标题，不是这里（理由与 `.readAuthor` 一字不差）。
+      .readStats
         margin-top: 6px
         flex: 0 0 auto
         display: flex
-        flex-direction: column
         align-items: center
+        gap: 8px
+
+      // 三件共用的那一份几何。**高度写死 30px**，不靠 padding + line-height 凑：
+      // "大小不一"的根子就是它们各自被内容撑出不同高度，定死高度是唯一的结构性修法
+      // （改字号/图标尺寸也不会再把三件带偏）。
+      .readStat
+        display: inline-flex
+        align-items: center
+        justify-content: center
         gap: 4px
+        height: 30px
+        padding: 0 10px
+        font-size: 13px
+        line-height: 1
+        color: #fff1eb
+        background: transparent
+        // 描边同一条：三件里有两件是按钮、一件是读数，边框粗细/深浅不一致正是
+        // 上一版看着散的原因之一
+        border: 1px solid rgba(255, 241, 235, 0.55)
+        border-radius: 999px
+        white-space: nowrap
 
-        .readViews
-          display: inline-flex
-          align-items: center
-          gap: 4px
-          padding: 2px 8px
-          font-size: 12px
-          line-height: 18px
-          color: rgba(255, 241, 235, 0.85)
-          background: transparent
-          border: 1px solid rgba(255, 241, 235, 0.35)
-          border-radius: 999px
-          white-space: nowrap
+      // 文案定宽：`收藏` 两字 / `已收藏` 三字。不定宽的话点一下整簇横移 13px
+      // （三件同排，前面那件一长，后面两件跟着挪）。数字那两件同理，见下面。
+      .readFavLabel
+        min-width: 3em
+        text-align: center
 
-          // 数字定宽：三位数跳到四位数时胶囊不跟着抖（`.readInfo` 是 flex 行，
-          // 这里一变宽，标题那一块的宽度就跟着变，整条卡片会左右跳一下）
-          .readViewsNum
-            min-width: 3ch
-            text-align: center
+      // 数字定宽 **4ch**（≠ 上一版的 3ch）：`.readInfo` 是 flex 行，整簇一宽，中区标题
+      // 就跟着重排、整簇左缘当场横移。无头实测（`read-stats-cluster.test.py`）：
+      // 3ch 时 `999 → 1000` 这一步就挪 16px —— 而那恰恰是读数最常跨过的那道坎。
+      // 4ch 覆盖到 9999（本博客的量级）；再往上就会长（`min-width` 只兜底不封顶），
+      // 那是刻意的：真到五位数，宁可让它长一点，也不为极少数情况把三个胶囊常年撑空。
+      .readViewsNum, .readLikeNum
+        min-width: 4ch
+        text-align: center
 
-        .readLikeBtn
-          display: inline-flex
-          align-items: center
-          gap: 4px
-          padding: 4px 10px
-          font-size: 13px
-          line-height: 20px
-          color: #fff1eb
-          background: transparent
-          border: 1px solid rgba(255, 241, 235, 0.55)
-          border-radius: 999px
-          cursor: pointer
-          transition: 0.25s
+      // 读数不是按钮：不跟着按钮一起变亮，也不给 hover/disabled
+      .readViews
+        color: rgba(255, 241, 235, 0.85)
 
-          .readLikeNum
-            min-width: 3ch
-            text-align: center
-            white-space: nowrap
+      // ── 两个按钮的交互态（几何全在上面 `.readStat` 里，这里只加"能点"这件事）──
+      // ⚠️ 这两组必须写在 `.readStat` **之后**：同特异性（0,3,0），靠源码顺序覆盖。
+      .readFavBtn, .readLikeBtn
+        cursor: pointer
+        transition: 0.25s
 
-          &:hover
-            background: rgba(255, 241, 235, 0.16)
+        &:hover
+          background: rgba(255, 241, 235, 0.16)
 
-          &:disabled
-            opacity: 0.6
-            cursor: default
+        &:disabled
+          opacity: 0.6
+          cursor: default
 
-          // 已点赞：暖粉实心（与收藏的河灯金区分开——两个都是"已…"态，
-          // 同色会让人以为它们是一个控件的两种状态）
-          &.isLiked
-            color: #4a1220
-            background: #ffb3c6
-            border-color: #ffb3c6
+      // 已收藏：河灯金实心（与站点主色一致）
+      .readFavBtn.isFaved
+        color: #1c2754
+        background: #ffcc7c
+        border-color: #ffcc7c
+
+      // 已点赞：暖粉实心（与收藏的河灯金区分开——两个都是"已…"态，
+      // 同色会让人以为它们是一个控件的两种状态）
+      .readLikeBtn.isLiked
+        color: #4a1220
+        background: #ffb3c6
+        border-color: #ffb3c6
 
   .readDescription
     padding: 25px
