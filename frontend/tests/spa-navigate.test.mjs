@@ -221,7 +221,10 @@ console.log('\n⑥ 版本号：改了 widget 脚本必须 bump（nginx 对 live2
     // 20261001i = 「看板娘图标错位 / 拖动反向 / 代码芯片两档都读不出」那一轮
     // （renderer.js 的 ICONS 与 setupDrag、widget.css 的代码芯片令牌）。三者都改了
     // live2d-widgets 下的文件 ⇒ 必须 bump，否则访客吃 1 年缓存看到的是旧图标与旧拖动。
-    ok(ver === '20261001i', 'VER 已 bump 到本轮（20261001i）', { ver });
+    // 20261002a = 「工具条 tooltip 补齐 + 挂载改有界重试」那一轮（renderer.js 的 TITLES、
+    // chat-stream.js 的 bindTool）。按钮 4.8–6.2s 才建出来，旧的一次性 1s 定时器在慢机上
+    // **必然踩空**（CPU 节流 ×6 实测两条 title 从未挂上），photo/info/quit 则一直没有提示。
+    ok(ver === '20261002a', 'VER 已 bump 到本轮（20261002a）', { ver });
     const tsx = readFileSync(path.join(root, 'src/components/Live2dAgent/index.tsx'), 'utf8');
     ok(tsx.includes('boot.js?v=' + ver), 'Live2dAgent 的 ?v= 与 VER 一致');
 }

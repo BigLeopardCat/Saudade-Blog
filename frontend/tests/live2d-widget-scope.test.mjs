@@ -254,12 +254,39 @@ const FA = {
   const hk = s.slice(s.indexOf("hitokotoBtn.id = 'waifu-tool-hitokoto'"));
   eq(dOf(hk.slice(0, hk.indexOf('</svg>'))), 'M512 240c0 114.9-114.6 208-256 2',
      '对话按钮画的是 comment（气泡 ⇒ 打开对话面板）');
-  // 功能一侧也要钉住：字形对了、tooltip 接到别的按钮上，照样是"对不上功能"
-  ok(/getElementById\('waifu-tool-switch-model'\)[\s\S]{0,160}?btn\.title = '更换看板娘'/.test(s),
-     'switch-model 的 title 是「更换看板娘」（人形图标对应的那条功能）');
-  ok(/getElementById\('waifu-tool-switch-texture'\)[\s\S]{0,160}?btn\.title = '换装'/.test(s),
-     'switch-texture 的 title 是「换装」（T 恤图标对应的那条功能）');
-  ok(/hitokotoBtn\.title = '对话'/.test(s), '对话按钮的 title 是「对话」');
+  // 功能一侧也要钉住：字形对了、tooltip 接到别的按钮上，照样是"对不上功能"。
+  // 20261002 起 tooltip 与 ICONS 同居 renderer.js 的 TITLES（同一把 key）：按钮由
+  // registerTools() 建出，title 随之写下，不存在时序问题。旧写法把其中两条挂在
+  // chat-stream 的一次性 `setTimeout(…, 1000)` 上，而按钮 4.8–6.2s 才建出来 ⇒
+  // 那两条 title 在慢机上**从未挂上**（无头 Chrome + CPU 节流 ×6 实测），photo/info/quit
+  // 更是一直没有提示。故这里两半都锁：文案对得上 + 不许再退回定时器抢跑。
+  const TITLES_WANT = {
+    'switch-model': '更换看板娘',   // 人形图标对应的那条功能
+    'switch-texture': '换装',       // T 恤图标对应的那条功能
+    photo: '拍照',
+    info: '关于',
+    quit: '收起看板娘',
+  };
+  const tAt = r.indexOf('const TITLES = {');
+  ok(tAt > 0, 'renderer.js：TITLES 表在（tooltip 跟按钮一起建出来，不是事后补）');
+  const tSrc = r.slice(tAt, r.indexOf('\n  };', tAt));
+  const gotTitles = {};
+  for (const line of tSrc.split('\n')) {
+    const m = line.match(/^\s{4}'?([A-Za-z_$][\w$-]*)'?:\s*'([^']*)'/);
+    if (m) gotTitles[m[1]] = m[2];
+  }
+  eq(Object.keys(gotTitles).sort().join(','), Object.keys(TITLES_WANT).sort().join(','),
+     'TITLES 与 ICONS 一一对应（五个按钮条条都有 tooltip，不多不少）');
+  for (const [n, t] of Object.entries(TITLES_WANT)) eq(gotTitles[n], t, `${n} 的 tooltip 是「${t}」`);
+  ok(/span\.title = label/.test(r) && /setAttribute\('aria-label', label\)/.test(r),
+     'renderer.js：title 与 aria-label 都在按钮建出时写（图标按钮没有可读文本，读屏靠它）');
+  // 反锁"丢提示"的那种写法：两条"点完弹一句"的监听不许再抢跑一次就放弃
+  ok(/bindTool\('waifu-tool-switch-model'/.test(s) && /bindTool\('waifu-tool-switch-texture'/.test(s),
+     'chat-stream.js：两条监听都走 bindTool 有界重试（不再是 setTimeout 抢跑一次）');
+  ok(/const bindTool = \(id, onReady, tries\) => \{/.test(s) && /widget_tool_bind_timeout/.test(s),
+     'chat-stream.js：重试到点仍没有就上报，不静默装死');
+  ok(/hitokotoBtn\.title = '对话'/.test(s),
+     '对话按钮的 title 是「对话」（该按钮由 chat-stream 自建，故仍留在那一侧）');
   // 同一文件里 ACTIONS 的语义也核一遍（改行为的改动不该悄悄换掉图标的含义）。
   // 取各自的动作体再判——**不锚"从这里到那里多少字符"**：那种窗口在函数里
   // 加一行注释就假红一次（本仓的既有教训），而这里要锁的是"这个动作体里有没有
