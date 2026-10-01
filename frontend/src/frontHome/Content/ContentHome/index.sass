@@ -623,7 +623,7 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
         // 右端收成箭头尾尖 —— 缎带的签名；左端直边，那一头贴在卡片上。
         // `clip-path` 会把 box-shadow 一并裁掉，所以投影改用 `drop-shadow`
         // （跟着切出来的形状走）——小面积 drop-shadow 不属于"大面积模糊"那条禁令
-        // （同文件 `.wg-lock-ico`、展示柜 `.vit-corner::before` 两处先例）
+        // （同 `Vitrine/index.sass` 里 `.vit-ear` 的折角阴影：同一类用法）
         clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 50%, calc(100% - 10px) 100%, 0 100%)
         filter: drop-shadow(0 6px 11px rgba(120, 90, 140, 0.45))
         // 斜贴的角度。八轮起这是**唯一的** transform（慢浮已撤，见文件头总纲）——

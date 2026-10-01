@@ -23,10 +23,6 @@ export default function WordGraphExhibit() {
     const [q, setQ] = useState('');
     const [busy, setBusy] = useState(false);
     const [note, setNote] = useState<string | null>(null);
-    /** 默认锁定（**每次挂载都是锁定态，刻意不做持久化**）：窗口占的是首页一大块版面，
-     *  鼠标下滚落在它上面时页面必须还能翻——这是这个开关存在的唯一理由，记住"上次解锁了"
-     *  等于把用户最初报的问题带回来。 */
-    const [locked, setLocked] = useState(true);
 
     const nav = useNavigate();
     const [sp, setSp] = useSearchParams();
@@ -84,11 +80,6 @@ export default function WordGraphExhibit() {
             bootDoneRef.current = null;   // 引擎没了：下次重建要能重新恢复一次
         };
     }, [data, nav]);
-
-    /** 锁定态同步。依赖里带 `data` 是必须的：`data` 变化会**重建引擎**，新实例默认是不锁的
-     *  （引擎自己不知道外壳的意图），这里补上。`locked` 不进上面那个 effect 的依赖——那会把
-     *  每次解锁都变成"重建引擎 + 重新恢复检索"。 */
-    useEffect(() => { engRef.current?.setLocked(locked); }, [locked, data]);
 
     const focus = useCallback((hits: LocateHit[]) => {
         const eng = engRef.current;
@@ -202,16 +193,13 @@ export default function WordGraphExhibit() {
         [shown, data]);
 
     return (
-        <div className={'wg-root' + (locked ? ' is-locked' : '')}>
+        <div className="wg-root">
             <canvas ref={canvasRef} className="wg-canvas" />
 
             {failed && <div className="wg-veil">图谱数据加载失败</div>}
             {!failed && !data && <div className="wg-veil">正在绘制向量空间…</div>}
 
-            {/* 锁定时整条 foot 一起 `inert`：遮罩只挡得住指针，挡不住键盘——不设的话 Tab 能进
-                检索框、输入并检索，画面在"已锁定"字样底下飞走。inert 是浏览器原生语义
-                （老浏览器忽略它，退化回只有指针被挡）。 */}
-            <div className="wg-foot" {...(locked ? { inert: '' } : {})}>
+            <div className="wg-foot">
                 {/* 读数卡片放在 .wg-foot **内部**（绝对定位，不参与流）：它的定位基准是
                     整条 foot（检索框 + 工具行 + chips），用 bottom: calc(100% + 8px) 恒坐在
                     foot 上方。放在 foot 外面按固定像素算过：chips 行占底边上方 81~102.5px，
@@ -244,12 +232,6 @@ export default function WordGraphExhibit() {
                     `gap: 6px` 一致；没有 chips 时这两行仍依次落在定位按钮正上方。
                     note 摆在自己的标签上方也读得通："这一批标签是降级匹配来的"。 */}
                 <div className="wg-tools">
-                    {/* 手动重新上锁。锁定时它跟整条 foot 一起 inert + 被遮罩盖住 ⇒ 那一态下
-                        只有遮罩中央的解锁按钮是有意义的入口（"重新上锁"本来就不需要）。 */}
-                    <button type="button" className="wg-home" onClick={() => setLocked(true)}
-                        title="锁定展示柜（滚轮恢复翻页）" aria-label="锁定展示柜">
-                        <LockIcon />
-                    </button>
                     <button type="button" className="wg-home" onClick={() => engRef.current?.home()}
                         title="回到默认视角位置" aria-label="回到默认视角位置">
                         <svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"
@@ -304,41 +286,6 @@ export default function WordGraphExhibit() {
                     </button>
                 </div>
             </div>
-
-            {/* 锁定层。**必须常驻（锁定时一直在 DOM 里），不是"悬停才渲染"**：它的
-                `pointer-events` 就是"锁定时指针到不了画布"的载体（拖拽/双击/悬停读数一起关掉），
-                只在视觉上隐身（`.wg-root.is-locked:hover` / `:focus-within` 才亮出来，触屏常亮，
-                见 index.sass）。DOM 上排在 `.wg-foot` 之后 ⇒ 盖住读数卡片与工具行。
-                滚轮不归它管：滚轮穿透靠引擎侧 `onWheel` 在 `preventDefault` 之前早退。
-                `data` 到位前不渲染它：那时既没有引擎可挡、也没有可解锁的东西，让位给
-                `.wg-veil` 的"正在绘制向量空间…"（它会被这层盖住）。 */}
-            {locked && data && (
-                <div className="wg-lock">
-                    <span className="wg-lock-ico"><LockIcon /></span>
-                    <button type="button" className="wg-lock-btn" onClick={() => setLocked(false)}>
-                        解锁
-                    </button>
-                    <span className="wg-lock-tip">已锁定 · 滚轮正常翻页</span>
-                </div>
-            )}
         </div>
-    );
-}
-
-/** 挂锁图标（闭锁形态，两处都用它：遮罩中央的"已锁定"与工具行的"点它重新上锁"）。
- *  内联 SVG 而不是 `@ant-design/icons`：`frontHome/**` 从来不引图标库，这一块的图标一律
- *  手写路径（同 `.wg-home` 那颗十字准星，1024 viewBox + currentColor），别为两颗图标
- *  把图标库拖进首页的包里。
- *  ⚠️ 填充型图标**不要在 path 上写死颜色**：`fill="currentColor"` 只挂在根 svg 上，
- *  否则悬停变金、选中变黑都只会变一半（同 Dashboard 里那两枚菜单图标）。 */
-function LockIcon() {
-    return (
-        <svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg"
-            aria-hidden="true" focusable="false" fill="currentColor">
-            {/* 锁体（含锁孔：evenodd 让锁孔那条子路径从锁体里挖出个洞） */}
-            <path fillRule="evenodd" d="M272 448h480a40 40 0 0 1 40 40v352a40 40 0 0 1-40 40H272a40 40 0 0 1-40-40V488a40 40 0 0 1 40-40zM512 584a56 56 0 1 0 0 112 56 56 0 1 0 0-112z" />
-            {/* 锁梁：内外两条边反向各描一圈 ⇒ nonzero 下中间是空的（环） */}
-            <path d="M384 512V320a128 128 0 0 1 256 0v192h-64V320a64 64 0 0 0-128 0v192z" />
-        </svg>
     );
 }

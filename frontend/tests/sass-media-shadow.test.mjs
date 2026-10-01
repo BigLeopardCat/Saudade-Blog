@@ -39,8 +39,8 @@
 // 恒被后者压死（匹配集是子集 ⇒ 特异性严格更高）。三条必要的收窄，都是为了不误报：
 //   · 带 `> + ~` 的选择器整条跳过（子组合器的匹配集不满足"子集"关系）；
 //   · 对面的选择器带**状态伪类**（`:hover` / `:focus-within` …）时跳过——它不恒真，媒体档
-//     在"没悬停"的那些状态下照常生效（`Vitrine` 的 `.wg-lock` 就是这一形状，是**对的**代码：
-//     触屏没有 hover ⇒ 靠媒体档常亮，别去"修"它）；
+//     在"没悬停"的那些状态下照常生效（本文件下面那条 `HOVER` 夹具就是这个形状，是**对的**
+//     代码：触屏没有 hover ⇒ 靠媒体档常亮，别去"修"它）；
 //   · 只判**两边取值不同**的：取值相同的只是冗余不是缺陷；而它变成缺陷的那天（对面改了值）
 //     取值就不同了，本判据当场报出来。
 //
@@ -243,13 +243,16 @@ console.log('\n② 判据②自带牙：特异性被压的样本（父类里那�
     ok(specShadowedDecls(SAME).length === 0,
         '  两边取值相同的**不算**（冗余不是缺陷；等对面改了值，它当场变成上面那条）');
 
+    // 夹具用中性类名：原来它抄的是 `Vitrine` 的锁定层，那套 20261002 已整块删除
+    // （用户"不需要锁定功能和按钮了"）—— 留下一份指向不存在的类的夹具，下一个人会去
+    // 源码里找一个已经没有了的东西。判据本身（形状）与它无关，照旧。
     const HOVER = `
-.wg-root.is-locked:hover .wg-lock, .wg-root.is-locked:focus-within .wg-lock { opacity: 1; }
-.wg-lock { opacity: 0; }
-@media (hover: none) { .wg-lock { opacity: 1; } }
+.panel.is-open:hover .panel-veil, .panel.is-open:focus-within .panel-veil { opacity: 1; }
+.panel-veil { opacity: 0; }
+@media (hover: none) { .panel-veil { opacity: 1; } }
 `;
     ok(specShadowedDecls(HOVER).length === 0,
-        '★ 状态伪类（`:hover` / `:focus-within`）不恒真 ⇒ 压不住整档，不报（`Vitrine` 的锁就是这个形状）');
+        '★ 状态伪类（`:hover` / `:focus-within`）不恒真 ⇒ 压不住整档，不报');
 
     const CHILD = `
 .ContentContainer .allArticles .ArticleCard .ArticleTitle { margin-bottom: 10px; }

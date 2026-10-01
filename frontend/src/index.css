@@ -23,6 +23,48 @@
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   z-index 阶梯 —— 20261002
+
+   这一份是**全站层级值的唯一出处**。TS 侧要在 `style`/`zIndex` prop 上用同一批数，
+   照抄在 `src/zIndex.ts`；两处必须逐值相等（`frontend/tests/z-index.test.py` 对着量）。
+
+   为什么要一份阶梯，而不是各自写数：
+   · 前台整站被 `.frontRoot { isolation: isolate }`（App.sass）封在 body 层级的一个
+     层叠上下文里 ⇒ 里面写的任何 z-index（顶栏 998、卡片 99）**只跟层内元素比大小**，
+     跟挂在 body 上的东西（看板娘 #waifu、antd 的 Modal 浮层）根本不在一个牌桌上。
+   · 看板娘曾经是 `z-index: 2147483000`（agent 仓 widget.css）。那么大的数不是"最高的
+     意思"，是"比谁都大"——个人中心与公告都是从 body 出去的正数，一律被它压死。
+   · 个人中心与公告又都是 antd Modal，默认都是 `zIndexPopupBase = 1000`，
+     两者谁在上**只由 portal 插入顺序决定**，是巧合不是设计。
+
+   目标次序（从下到上）：页面内容 < 看板娘/对话面板 < 向量空间放大态 <
+   图片查看器 < 个人中心 < 公告弹窗 < antd 的 message/notification。
+
+   ⚠️ 带 ★ 的那几个才是**跨层**的——它们挂在 body 层级上（或把整个 `.frontRoot` 抬起来），
+   真的会互相抢。其余几个是**层内**的说明性锚点：`.frontRoot` 里 998~1001 那一带
+   （`.phoneSideOverlay` 998、`.phoneBottomMenu` 999、`Head/index.sass` 的 1000/1001）
+   由 `isolation: isolate` 关在层内，与 `--z-agent` 的 1000 根本不在一个牌桌上，
+   值相同也不代表会撞。
+
+   ⚠️ `.frontRoot` 的 `isolation: isolate` **不许拆**：它还管着"把层内的 z-index 关住"
+   （卡片 99 / 抽屉 998 不该跑出来跟 agent 面板抢）。放大态把整个 `.frontRoot` 抬到
+   `--z-exhibit`，是**整体搬家**而不是拆门。 */
+:root {
+    --z-float: 100;      /* 层内：页内悬浮件（回到顶部、悬浮按钮…） */
+    --z-fall: 900;       /* ★被扯下来的那一页（.vit-fall，portal 到 body）——与原值一致 */
+    --z-header: 998;     /* 层内：手机抽屉那一带的下限（998~1001），见上面那条 ⚠️ */
+    --z-agent: 1000;     /* ★看板娘 + 对话面板（#waifu）。**agent 仓消费，见 widget.css** */
+    --z-exhibit: 1100;   /* ★向量空间放大态：body.exhibit-zoomed 时整个 .frontRoot 抬到这里 */
+    --z-lightbox: 1150;  /* ★站内图片放大查看器（.md-zoom-overlay） */
+    --z-panel: 1200;     /* ★个人中心 */
+    --z-modal: 1300;     /* ★公告弹窗 */
+    --z-toast: 1400;     /* 记账位：antd 的 message / notification。**本仓不设这个值**——antd
+                            自己给的是 2010 / 2050（`zIndexPopupBase + CONTAINER_MAX_OFFSET
+                            + 10 / 50`），本来就比这一档高。列在这里是为了说明"阶梯的上界在
+                            哪儿"：我们自己写的每一档都必须低于它，否则提示会被弹窗盖住 */
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
    日系手账（washi / 拼贴）设计令牌 —— 20260930 五轮
 
    首页首屏那套配色（粉紫淡彩纸 + 胶带 + 描边渐变字）不再是首页专有：公告卡、

@@ -75,8 +75,11 @@ import './index.sass';
  *    这是唯一的性能闸：没人翻页就一份图数据都不下载。
  *
  * ② **内联态不给指针事件**。图谱是"拖动旋转 / 滚轮穿云"的交互件，挂在首屏正中间
- *    按老样子吃滚轮，等于访客往下滚页面时被它截住（这正是它出厂自带 `is-locked` 的原因）。
+ *    按老样子吃滚轮，等于访客往下滚页面时被它截住。
  *    分工是：内联态一律 `pointer-events: none`（点卡片 = 放大），放大后才 `auto`。
+ *    20261002 之前展示柜还自带一套"锁定态"分担这件事（一个盖住画布的遮罩 + 解锁按钮），
+ *    用户说"不需要锁定功能和按钮了"之后整块删除 ⇒ **这条规则现在是唯一一道闸**，
+ *    `pointer-events: none` 同时也是滚轮穿透的载体（滚轮是指针事件），别删。
  */
 export default function Vitrine() {
     const rootRef = useRef<HTMLElement | null>(null);
@@ -155,16 +158,23 @@ export default function Vitrine() {
         if (liftTimer.current !== null) window.clearTimeout(liftTimer.current);
     }, []);
 
-    // 放大态：Esc 关闭 + 锁住文档滚动（不然滚轮会推着底下的页面走）
+    // 放大态：Esc 关闭 + 锁住文档滚动（不然滚轮会推着底下的页面走）+ 把整个前台抬到
+    // 看板娘面板之上（`body.exhibit-zoomed .frontRoot`，见 App.sass）。
+    // 三件事**必须同生共死**：`.frontRoot` 的 `isolation: isolate` 把层内 z-index 关住了，
+    // 放大态想压过 body 层的 `#waifu` 只能靠整体抬高；只加不摘，就会出现"已经退出放大态、
+    // 整站却还盖在对话面板上"——而那时页面恢复滚动，看起来完全不像层级问题。
+    // 同一个 effect、同一对 return，是这里唯一稳妥的写法。
     useEffect(() => {
         if (!zoomed) return;
         const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setZoomed(false); };
         window.addEventListener('keydown', onKey);
         const prev = document.body.style.overflow;
         document.body.style.overflow = 'hidden';
+        document.body.classList.add('exhibit-zoomed');
         return () => {
             window.removeEventListener('keydown', onKey);
             document.body.style.overflow = prev;
+            document.body.classList.remove('exhibit-zoomed');
         };
     }, [zoomed]);
 

@@ -1,6 +1,7 @@
 import { Modal } from 'antd'
 import { useEffect, useRef, useState } from 'react'
 import { useIsDarkMode } from '../../theme'
+import { Z } from '../../zIndex'
 import {
     fetchPendingAnnouncement,
     markAnnouncementRead,
@@ -127,6 +128,9 @@ const AnnouncementModal = () => {
             width={520}
             centered
             maskClosable
+            // 全站最高的常规浮层（阶梯见 src/index.css 的 :root）：公告要压在个人中心与
+            // 看板娘面板之上。以前靠"公告的 portal 恰好后插入"赢，那是顺序不是层级。
+            zIndex={Z.modal}
             // 皮（纸底/胶带/圆钮/渐变按钮）全在 index.sass；这里只递类名。
             // `.washiDark` 是 index.css 深色令牌选择器列表里的第三个名字，见那边的注释。
             rootClassName={isDark ? 'washiModal washiDark' : 'washiModal'}

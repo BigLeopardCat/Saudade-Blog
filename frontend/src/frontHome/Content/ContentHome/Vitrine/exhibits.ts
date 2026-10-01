@@ -26,9 +26,10 @@ export const EXHIBITS: Exhibit[] = [
             const m = await loadManifest();
             return m?.built ? fmtBuilt(m.built) : null;
         },
-        // 提示词跟着"默认锁定"改了：窗口锁定时滚轮是穿透给页面的（见 engine.setLocked），
-        // 原来那句"滚轮穿行"会让用户以为滚不动是坏了。重要的话放句首，窄窗口省略号截尾。
-        hint: '默认锁定（滚轮正常翻页）· 点解锁后：拖动旋转 / 滚轮穿云 / 双击跳文章',
+        // 20261002 锁定态删除后重写：原先这句声明"默认锁定（滚轮正常翻页）· 点解锁后…"，
+        // 现在没有锁定可解，交互在放大态直接就位（滚轮缩放由引擎 onWheel 接管）。
+        // 未放大时卡片整块 `pointer-events: none` ⇒ 页面照常滚动，不必在提示里交代。
+        hint: '点开放大后：拖动旋转 / 滚轮穿云 / 双击跳文章',
         Component: lazy(() => import('./wordgraph/WordGraphExhibit')),
     },
 ];

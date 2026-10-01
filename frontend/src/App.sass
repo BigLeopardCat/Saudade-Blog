@@ -21,13 +21,28 @@
   // 背景图已 404，剩一层水平渐变纵向恒定，去掉 fixed 视觉零差异。
   // 日后若恢复背景图并要视差效果，改用独立 position: fixed 图层（只栅格化一次，不随帧重绘）。
 
+// 向量空间放大态：把**整个前台**抬到看板娘面板之上（阶梯见 src/index.css 的 :root）。
+// 上面那条 `isolation: isolate` 让 `.frontRoot` 自成层叠上下文 ⇒ 层内写的 z-index
+// 再大也压不过在 body 上正数定位的 `#waifu`（1000），只能整体搬家。
+// `position: relative` 只在放大态加：平时保持 static ⇒ **零布局风险**——它一旦成为
+// 定位元素，所有"最近定位祖先是初始包含块"的 `position:absolute` 后代会集体改基准。
+// 放大态下页面已被 `body{overflow:hidden}` 冻结、又被展示柜自己的压暗层铺满，
+// 此时改包含块看不出差别。类名由展示柜那个 `zoomed` effect 挂（Vitrine/index.tsx），
+// 与 `overflow:hidden` 同生共死：一处忘摘，就会出现"页面能滚了但整站还被抬着"。
+body.exhibit-zoomed .frontRoot
+  position: relative
+  z-index: var(--z-exhibit)
+
 // ── 单击放大查看器浮层（20260901 从 ReadArticle/index.sass 移入全局）──
 // 文章页（mermaid 图/正文图片）与看板娘对话框（markdown 图片）共用同一套浮层样式；
 // 对话框是原生脚本只能复用 window.__openZoomOverlay，样式必须全局可达。
 .md-zoom-overlay
   position: fixed
   inset: 0
-  z-index: 100000
+  // 20261002 起走阶梯（src/index.css 的 :root）。原先写死 100000：那时它要压过
+  // 看板娘的 2147483000 是压不过的，只是"比站内别的东西都大"而已。现在看板娘降到
+  // 1000，查看器排在它之上、公告之下——用户点开文章的图时，头顶不该还浮着一个面板。
+  z-index: var(--z-lightbox)
   background: rgba(8, 10, 16, 0.85)
   backdrop-filter: blur(3px)
   -webkit-backdrop-filter: blur(3px)
