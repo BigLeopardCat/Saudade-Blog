@@ -267,7 +267,13 @@ const http = async (cfg: any) => {
 export default http;
 """
 
+# ⚠️ 桩是**真模块表面的手抄副本**：`src/` 里从 react-router-dom 多 import 一个名字，
+# 而这里没跟着补 —— esbuild 当场 `No matching export` 整包失败（不是静默失效，但同样要人记得）。
+# 20261001 就撞过一次：Head 加了 `useLocation`（文章页顶部栏挂 `.over-dark` 那批），
+# 这个桩没补 ⇒ 本套件在 52be3d9 之后整支打包失败。改 Head/侧栏的路由用法时一并看这里。
 STUB_ROUTER = (
+    # 恒返回首页路径：本套件渲染的是「用户中心」场景下的头部，不是文章页（`.over-dark` 不挂）
+    "export const useLocation = () => ({ pathname: '/', search: '', hash: '' });\n"
     "export const useNavigate = () => (to: string) => {"
     "(window as any).__nav = ((window as any).__nav || []).concat(to); };\n"
 )
