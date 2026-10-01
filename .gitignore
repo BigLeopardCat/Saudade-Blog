@@ -33,6 +33,15 @@ frontend/.npmrc
 frontend/LICENSE
 frontend/public/live2d-widgets/chunk/*.map
 
+# 看板娘运行时的第三方产物（20261001 开源前准备）：**故意不进 git**
+#   vendor/pixi.min.js / vendor/cubism4.min.js —— MIT，但 576KB 且与 node_modules 重复
+#   cubism5/live2dcubismcore.min.js           —— Live2D 专有许可，**不属于本仓 GPL-2.0 的覆盖范围**
+# 三者由 `npm run vendor:live2d`（frontend/scripts/vendor-live2d.mjs）就位：
+# 前两份从 node_modules 拷，第三份从官方 CDN 取并按 sha256 校验（换版本会响亮地红）。
+# 别人克隆后跑一次 npm ci + npm run vendor:live2d 即可（构建前都得有这三份）。
+frontend/public/live2d-widgets/vendor/
+frontend/public/cubism5/
+
 # 环境变量：**任何 .env* 变体都不进库**（20260917 修——原来只写了 /.env 与
 # /frontend/.env 两个精确名，于是 frontend/.env.production 被漏进来跟了好几个提交；
 # 它内容只是一个空的 VITE_CDN_BASEURL，不是密钥，但环境文件按约定不入库）。
