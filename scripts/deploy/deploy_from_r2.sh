@@ -74,8 +74,13 @@ with tarfile.open('/tmp/deploy.tar.gz') as tar:
     # `QQ-Email.png`（含真名与真号的个人二维码）从源码里删了，源码删了、**线上仍在公网 200**，
     # 因为顶层不在任何 DIRS 里。清单只记被扫的目录 = 那些文件永远不在"本代"里 = 永远清不掉。
     # 同一条坑 20261001 已经以"live2d-widgets 改名后旧名字永不消失"的形态出现过一次。
-    members = [n for n in tar.getnames()
-               if n.startswith('frontend/dist/') and not n.endswith('/')]
+    # 用 getmembers() 按**类型**排目录，不用 `endswith('/')`：包里那 18 个目录项的名字
+    # 并不带尾斜杠（`frontend/dist/css`），所以那个写法是死代码——20261002 把前缀放宽到
+    # `frontend/dist/` 之后，它们就混进"文件清单"里了（251 条里 18 条是目录）。集合差本身
+    # 不受影响（目录名永远不等于某个文件路径），但清单是排障时给人读的，多 18 行幽灵条目
+    # 只会让人以为自己数错了。
+    members = [m.name for m in tar.getmembers()
+               if m.name.startswith('frontend/dist/') and not m.isdir()]
     tar.extractall(filter='data')
 os.remove('/tmp/deploy.tar.gz')
 with open('logs/.deploy_manifest.txt', 'w', encoding='utf-8') as fh:
