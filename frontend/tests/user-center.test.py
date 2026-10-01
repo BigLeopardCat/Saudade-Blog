@@ -544,6 +544,30 @@ with sync_playwright() as p:
     pg.wait_for_timeout(600)
     check("裁剪弹窗弹出来了（1:1 舞台 + 缩放滑块）",
           pg.locator(".acStage").count() == 1 and pg.locator(".acZoom .ant-slider").count() == 1)
+    # ★ 它必须**压得住个人中心那个窗口**（20261002 全站层级阶梯那一批）。
+    #   antd 的 `useZIndex` 只在**同一个 React 子树**里继承父级（Modal 会 provide
+    #   `zIndexContext`），而 `AvatarCropModal` 是那个 Modal 的**兄弟节点** ⇒ 继承链断了：
+    #   不显式给 `zIndex` 它就落回默认的 1000，比有明确层级的父亲（`Z.panel` = 1200）低。
+    #   症状极具迷惑性——弹窗看着好好地出来了，可**什么都点不动**（父亲的 pane 拦在前面
+    #   吃掉了指针事件），本套件当时是以"拖动没反应/点击重试 62 次超时"的样子红的。
+    #   所以这里直接量两个 wrap 的层级，把那条不变量钉在它真正的名字上。
+    wraps = pg.evaluate("""() => {
+        const z = (sel) => {const el=document.querySelector(sel);
+            return el ? +getComputedStyle(el).zIndex : null;};
+        const all = [...document.querySelectorAll('.ant-modal-wrap')];
+        // 个人中心那个 wrap 里住着 ucRoot（页签），裁剪弹窗那个里住着 avatarCropRoot
+        const uc = all.find(w => w.querySelector('.ucPane')) || null;
+        const ac = all.find(w => w.querySelector('.acStage')) || null;
+        return {uc: uc ? +getComputedStyle(uc).zIndex : null,
+                ac: ac ? +getComputedStyle(ac).zIndex : null,
+                n: all.length};
+    }""")
+    check("★ 裁剪弹窗的层级**高于**个人中心窗口（兄弟节点的 zIndex 继承链是断的，必须显式给）",
+          wraps["uc"] is not None and wraps["ac"] is not None and wraps["ac"] > wraps["uc"],
+          f'个人中心 {wraps["uc"]} / 裁剪 {wraps["ac"]} / wrap 共 {wraps["n"]} 层')
+    check("  · 两者的差值正好是一档（不是随手 +1000）",
+          wraps["uc"] is not None and wraps["ac"] == wraps["uc"] + 1,
+          f'{wraps["uc"]} → {wraps["ac"]}')
     box = pg.evaluate("() => {const r=document.querySelector('.acStage').getBoundingClientRect();"
                       "return {x:r.left, y:r.top, w:r.width, h:r.height};}")
     check("舞台是正方形（1:1 裁剪窗）", abs(box["w"] - box["h"]) <= 1,

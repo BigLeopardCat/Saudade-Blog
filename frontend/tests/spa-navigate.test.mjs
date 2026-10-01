@@ -224,7 +224,10 @@ console.log('\n⑥ 版本号：改了 widget 脚本必须 bump（nginx 对 live2
     // 20261002a = 「工具条 tooltip 补齐 + 挂载改有界重试」那一轮（renderer.js 的 TITLES、
     // chat-stream.js 的 bindTool）。按钮 4.8–6.2s 才建出来，旧的一次性 1s 定时器在慢机上
     // **必然踩空**（CPU 节流 ×6 实测两条 title 从未挂上），photo/info/quit 则一直没有提示。
-    ok(ver === '20261002a', 'VER 已 bump 到本轮（20261002a）', { ver });
+    // 20261002b = 「看板娘层级交给宿主页面的阶梯」那一轮（widget.css 的 #waifu 与
+    // #waifu-toggle 从写死的 2147483000 / 9999 改成 var(--z-agent, 1000)）。改的是
+    // live2d-widgets 下的样式表 ⇒ 同样必须 bump。
+    ok(ver === '20261002b', 'VER 已 bump 到本轮（20261002b）', { ver });
     const tsx = readFileSync(path.join(root, 'src/components/Live2dAgent/index.tsx'), 'utf8');
     ok(tsx.includes('boot.js?v=' + ver), 'Live2dAgent 的 ?v= 与 VER 一致');
 }

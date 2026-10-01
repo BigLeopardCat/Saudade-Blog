@@ -52,9 +52,23 @@ interface AvatarCropModalProps {
     uploading?: boolean
     /** 夜间：弹窗挂在 body 下拿不到 .frontDark 祖先，主题类名要由 rootClassName 自带 */
     dark?: boolean
+    /**
+     * 本弹窗在**全站层级阶梯**里的档位（`src/zIndex.ts` 的 `Z`）。
+     *
+     * ⚠️ 必填，不是可选：**调用方必须自报层级**。它是从个人中心的窗口里开出来的，而那个
+     * 窗口现在有明确的层级（`Z.panel`）。不给值就落回 antd 的默认 `zIndexPopupBase=1000`
+     * —— **比它父亲还低**。表现极具迷惑性：弹窗好端端地出来了、什么都看得见，但**点不动**
+     * （父亲那层遮罩/pane 拦在前面把指针事件吃掉了）。20261002 实测：拖动、滚轮缩放、
+     * 「确定」全部失灵，`tests/user-center.test.py` 第 ② 节当场抓红。
+     *
+     * 为什么不是 antd 自己叠：`useZIndex` 只在**同一个 React 子树**里继承父级（Modal 会
+     * provide `zIndexContext`），而本组件是那个 Modal 的**兄弟节点**（见 UserCenter 的
+     * 渲染树）⇒ 继承链断了，只能由调用方写明。
+     */
+    zIndex: number
 }
 
-const AvatarCropModal = ({ open, file, onPickFile, onConfirm, onCancel, uploading, dark }: AvatarCropModalProps) => {
+const AvatarCropModal = ({ open, file, onPickFile, onConfirm, onCancel, uploading, dark, zIndex }: AvatarCropModalProps) => {
     const [crop, setCrop] = useState<CoverCrop>(DEFAULT_CROP)
     const [natural, setNatural] = useState<{ w: number; h: number } | null>(null)
     /** 图片本身读不出来（加载失败/尺寸为 0/画布烘焙失败）——此时舞台没有可用内容 */
@@ -198,6 +212,7 @@ const AvatarCropModal = ({ open, file, onPickFile, onConfirm, onCancel, uploadin
             title="裁剪头像"
             width={520}
             centered
+            zIndex={zIndex}
             maskClosable={!uploading}
             footer={null}
             rootClassName={dark ? 'avatarCropRoot ucDark' : 'avatarCropRoot'}

@@ -204,20 +204,34 @@ $vit-ar-h: 7
 
 // 谁在上面谁才有折角 —— 缺口跟着走。翻过去之后纸张变成深玻璃，露在缺口里的是
 // 底下那一页（封面），所以那块缺口在深色页上是"透出一角浅纸"，两页都读得出来。
-.vitrine.is-flipped .vit-panel
+// ⚠️ 这是**折角那片纸的配套**：缺口与纸同源于 `--k`，形状严丝合缝，纸一直填着它
+// （`getComputedStyle` 读不出"填没填"，只能靠 `vitrine-tear.test.py` 那对断言看住：
+// 缺口的顶点数 与 `.vit-ear` 的 `display` 必须同时成立）。
+// ⚠️ `:not(.is-zoomed)` 不是修辞：放大态把 `.vit-ear` 整块收掉了（见下），缺口留在那儿
+// 就是一个**真的洞** —— 20261002 用户报的"向量空间页面打开左下角缺角了"正是它。
+// 放大态另有 `.vit-face{clip-path:none}` 收尾，这里再加一道只为不依赖两条规则的先后顺序。
+.vitrine.is-flipped:not(.is-zoomed) .vit-panel
   clip-path: polygon(0 0, 100% 0, 100% 100%, calc(var(--k) * 100% * #{math.div($vit-ar-h, $vit-ar-w)}) 100%, 0 calc(100% - var(--k) * 100%))
 
 // 内联态的图谱**一律不吃指针事件**：点卡片 = 放大，放大后才把交互交还给引擎。
-// 顺带治了老毛病——它出厂就吃滚轮（所以自带 `is-locked` 预览态），访客往下滚页面
-// 时鼠标一旦落在这张卡上，页面就不动了。
+// ⚠️ 这一条现在还担着"未放大时页面照常滚动"：滚轮是指针事件，`pointer-events: none` 对
+// 它同样有效 ⇒ 鼠标停在卡片上往下滚，事件直接穿透到页面。20261002 之前这份差事由展示柜
+// 自己那套"锁定态"分担（见文件尾那段），锁定删掉之后这里是唯一的一道，别删。
 .vitrine:not(.is-zoomed) .vit-body
   pointer-events: none
 
 // 图谱底栏那一行（快捷检索 chip）给左下角那枚折角让位：静止档折角是卡片高度的 20%
 // （≈45px），68px 起步留足了呼吸；拖到最大（整张卡高）时确实会压到 chip 上，但那只在
 // 拖拽/掀起的最后一瞬。
+// ⚠️ 让位的前提是**折角在场**：放大态 `.vit-ear` 是 `display: none`（见 `.vitrine.is-zoomed`），
+// 左下角什么都没有，再留 68px 就是一截平白空出的内距 —— 而 chips 恰恰只在放大态才出得来
+// （内联态整块 `pointer-events: none`，检索框打不了字）。所以这条内距按"有没有折角"分档，
+// 不按"翻没翻页"分：翻页不改变折角在不在（它一直填着缺口）。
 .vit-panel .wg-chips
   padding-left: 68px
+
+.vitrine.is-zoomed .vit-panel .wg-chips
+  padding-left: 0
 
 // ─────────────────────────────────────────────────────────── 左下角：那一枚折角
 // 用户第 2 条：撤掉"突兀的折角"，改成**当前页面的左下角视觉上被折到前面**。
@@ -282,7 +296,8 @@ $vit-ar-h: 7
   // 所以 46% 那个色就是**折痕**——刻意比纸深一档，两色太近的话整片纸角糊在卡上。
   background: linear-gradient(45deg, #cf8f74 46%, #f7c8b1 70%, #fff6f0 100%)
   // 这点阴影是折角与纸面的分界，也是"翘起来"的全部证据（飘向折角的反侧 = 右上）。
-  // `.wg-lock-ico` 在本文件里也有同样用法：小面积 drop-shadow 不属于"大面积模糊"那条禁令。
+  // 同 `ContentHome/index.sass` 里缎带的 `.vit-tape::after`：小面积 drop-shadow
+  // 不属于"大面积模糊"那条禁令。
   filter: drop-shadow(2px -2px 3px rgba(120, 90, 140, 0.35))
   // 松手弹回静止档。`--k` 是**未注册**的自定义属性，它自己不参与插值，但**用到它的属性**
   // （这里的 `transform: scale(var(--k))`）计算值确实在变 ⇒ 过渡照常触发，这是 CSS 变量
@@ -323,11 +338,19 @@ $vit-ar-h: 7
     height: min(78vh, 760px)
     aspect-ratio: auto
 
-  // ⚠️ 放大态这张卡**不是 16:7**（上面显式宽高把 `aspect-ratio` 顶掉了）⇒ 那道缺口的
-  // 横腿百分比仍按 7/16 换算，两腿因此不再严格相等（1180×760 下 0.2 档是 103 / 152）。
-  // 放大态**只读不撕**（折角按钮收掉了），缺口纯装饰、又是深玻璃上的深色缺口，看不出来；
-  // 真正要紧的是别让它太大 —— `--k` 压到 0.06 ⇒ 竖腿 ≈46px，与内联态的 45px 同量级。
-  --k: 0.06
+  // 放大态**没有缺口**（20261002 用户报："向量空间页面打开左下角缺角了"）。
+  // 那道缺口原本靠 `.vit-ear` 那片纸填着——内联态它一直在场（缺口与纸同源于 `--k`，
+  // 形状严丝合缝），而放大态把折角整块收掉了（见下面 `.vit-ear`），缺口于是变成一个
+  // **真的洞**：翻过页时洞在深玻璃上、没翻页时洞在浅色封面上，两种都是"缺了一块"。
+  // 原来那条注释说"深玻璃上的深色缺口看不出来"，实测是看得出来的。
+  // 两张 face 一起收：`.vit-cover` 与 `.vit-panel` 谁在上面取决于翻没翻页，只收一张会
+  // 留下一半的洞。选择器写 `.vit-face`（0,3,0）压得住 `.vit-cover`（0,1,0）。
+  // ⚠️ 内联态的 `--k: 0.2`（`.vitrine` 上那条）这里**不用改**：它在本块里已经没有任何
+  // 消费者（唯一两处是 `.vit-cover`/`.vit-panel` 的缺口与 `.vit-ear` 的 transform，
+  // 前者被这条 `clip-path: none` 顶掉、后者被 `display: none` 收掉），改它只会让人
+  // 以为放大态还有个可调的折角深度。
+  .vit-face
+    clip-path: none
 
   .vit-body
     pointer-events: auto
@@ -605,70 +628,18 @@ $bar-line: 16px
     background: rgba(255, 233, 168, 0.14)
     border-color: rgba(255, 233, 168, 0.32)
 
-// ---------------------------------------------------------------- 锁定层
-// 展示柜默认锁定（见 wordgraph/engine.ts 的 setLocked）：窗口占首页一大块版面，用户报过
-// "鼠标下滚总落在窗口上、页面不翻"。锁定时**滚轮穿透靠引擎侧早退**（onWheel 在
-// preventDefault 之前 return），这一层管的是**指针**——`.wg-lock` 铺满整块 body 且
-// pointer-events 默认 auto ⇒ 指针到不了画布，拖拽/双击/悬停读数一起关掉；键盘侧由组件
-// 给 .wg-foot 挂 `inert` 兜住。
-// 视觉上平时隐身、**悬停（或键盘焦点进来）才亮**（用户原话："悬浮于展示柜区域会在正中心
-// 出现一把锁的图标"）；触屏没有 hover ⇒ 常亮，否则永远解不开锁。
-// ⚠️ 别把它改成"只在悬停时渲染"：隐身与"挡住"是两件事，DOM 必须在才能挡。
-.wg-lock
-  position: absolute
-  inset: 0
-  z-index: 2
-  display: flex
-  flex-direction: column
-  align-items: center
-  justify-content: center
-  gap: 10px
-  opacity: 0
-  transition: opacity 0.18s ease
-  background: radial-gradient(circle at 50% 44%, rgba(24, 37, 62, 0.34) 0%, rgba(9, 14, 24, 0.58) 72%)
-
-.wg-lock-ico
-  color: rgba(255, 233, 168, 0.9)
-  filter: drop-shadow(0 0 10px rgba(255, 233, 168, 0.28))
-  svg
-    width: 38px
-    height: 38px
-    display: block
-
-.wg-lock-btn
-  font: inherit
-  font-size: 12.5px
-  line-height: 1
-  padding: 7px 16px
-  border-radius: 999px
-  cursor: pointer
-  color: #0d1320
-  background: rgba(255, 233, 168, 0.88)
-  border: 1px solid rgba(255, 233, 168, 0.6)
-  transition: background 0.15s ease
-  &:hover
-    background: #ffe9a8
-
-.wg-lock-tip
-  font-size: 11px
-  color: rgba(200, 214, 238, 0.62)
-
-// 锁定态：悬停/焦点进来才亮出遮罩，画布同时毛玻璃。
-// **毛玻璃用真模糊（filter）**，不用 backdrop-filter：站点有两次同因事故（见文件头），
-// 而这里的模糊对象是一张**静止**画布（锁定态指针到不了它 ⇒ 零重绘）、且只在悬停期间生效
-// ⇒ 不在那条纪律的射程内。
-// ⚠️ filter 刻意**不加 transition**：模糊插值要逐帧重算，白烧合成预算；遮罩的 opacity
-// 过渡已经提供了"浮现"的观感。
-.wg-root.is-locked
-  &:hover, &:focus-within
-    .wg-lock
-      opacity: 1
-    .wg-canvas
-      filter: blur(3px)
-
-@media (hover: none)
-  .wg-lock
-    opacity: 1
+// 20261002 删掉「锁定层」（`.wg-lock` / `.wg-lock-ico` / `.wg-lock-btn` / `.wg-lock-tip` /
+// `.wg-root.is-locked` / `@media (hover:none)` 整块）。用户原话："不需要锁定功能和按钮了"。
+//
+// 那一层的全部职责是"让指针到不了画布"——**这一条现在由外壳承担**：
+// `.vitrine:not(.is-zoomed) .vit-body { pointer-events: none }`（见本文件上面那条）拦掉了
+// 未放大态的一切指针事件，连带滚轮一起穿透给页面（滚轮是指针事件，`pointer-events: none`
+// 对它同样有效）。放大态本来就 `body{overflow:hidden}`，滚轮拿去缩放图谱正是要的。
+// 所以删掉它**没有改变**"内联态页面照常滚动"，删掉的只是"预览态禁止交互"这套叠加机制，
+// 以及画布上那层 `filter: blur(3px)`（那是全站仅存的一处画布模糊，顺带省掉了）。
+//
+// 引擎侧对应的 `setLocked` 一并删除，见 wordgraph/engine.ts 的 `onWheel`；
+// 数值判据从"锁定时滚轮穿透"改成"滚轮缩放、页面不动"，见 tests/wordgraph_render.py 第 8 条。
 
 .wg-input
   flex: 1

@@ -145,6 +145,12 @@ STATE = """() => {
     coverVis: cs(cover).visibility,
     coverClip: cs(cover).clipPath,
     panelClip: cs(panel).clipPath,
+    // 那片折角纸（`.vit-ear`）在不在场。**flipped 态它必须在场**：缺口（`.vit-panel`
+    // 的 `clip-path`）与它是同一形状、同源于 `--k`，所以缺口被它填满、读作折角，它同时
+    // 是"这一页还能扯"的把手。`display: none` 只出现在放大态（那边两张 face 都收掉了
+    // 缺口，见本文件【九】）。`getComputedStyle` 对 `visibility: hidden` 照样返回原值
+    // ⇒ 这里判的是 `display`，两者别混用。
+    earDisplay: cs(ear).display,
     gripLabel: corner ? corner.getAttribute('aria-label') : null,
     fallCount: document.querySelectorAll('body > .vit-fall').length,
     fallParentIsBody: fall ? fall.parentElement === document.body : null,
@@ -256,6 +262,12 @@ with sync_playwright() as p:
     check("★ 折角跟着搬到台面上那一页（谁在上面谁才有缺口）⇒ 永远还有地方下手",
           (torn["panelClip"] or "").replace(" ", "").count(",") == 4,
           (torn["panelClip"] or "")[:60])
+    # 那片纸必须**留着**：缺口与纸是同一形状（两边同源于 `--k`），所以缺口被填满、读作折角。
+    # 它同时是"这一页还能扯"的把手，也是下一段"掀折角"动画的载体 —— 20261002 排缺口那个
+    # 缺陷时最先想到的就是"把 flipped 态的纸藏掉"，那条路会同时废掉这两件事（掀的动作变
+    # 不可见、缺角变成真的一个洞）。真正的病根在放大态，见本文件【九】。
+    check("★ 那片折角纸仍在场（它填着缺口，也是「还能扯」的把手）",
+          torn["earDisplay"] != "none", torn["earDisplay"])
     check("  · 折角自己回到静止档 0.2（新露出来的那页也有它的把手）",
           torn["k"] == "0.2", torn["k"])
     check("  · 克隆纸与卡片同宽、起点比卡片顶低 8px（= 从胶带下缘之下抽出来；"
@@ -366,6 +378,10 @@ with sync_playwright() as p:
         close: close ? box(close) : null,
         earOff: getComputedStyle(q('.vit-ear')).display,
         cornerOff: getComputedStyle(q('.vit-corner')).display,
+        // 20261002：放大态**两张 face 都不许有缺口**。翻没翻页决定了哪一张在上面，
+        // 所以两张都要量 —— 只量一张的话，另一个状态下的洞会漏网。
+        coverClip: getComputedStyle(q('.vit-cover')).clipPath,
+        panelClip: getComputedStyle(q('.vit-panel')).clipPath,
       };
     }"""
     # 胶带骑在卡片上沿：盒顶 -14px、盒高 22px ⇒ 盒底落在卡片顶下方 8px（`TAPE_COVER`）。
@@ -396,6 +412,14 @@ with sync_playwright() as p:
     check("  · 放大态收起折角与抓手（只读：这一页没有得撕的地方）",
           z["earOff"] == "none" and z["cornerOff"] == "none",
           f'{z["earOff"]} / {z["cornerOff"]}')
+    # ★ 20261002 用户报："向量空间页面打开左下角缺角了"。病根就在上面那一条与缺口的关系：
+    # 缺口由 `.vit-face` 的 `clip-path` 切出来、靠 `.vit-ear` 那片纸补上；放大态纸被收起
+    # ⇒ 缺口变成一个**真的洞**（翻过页时在深玻璃上、没翻页时在浅色封面上）。
+    # 修法是放大态把两张 face 的 `clip-path` 一起收掉，理由与修法都写在
+    # `Vitrine/index.sass` 的 `.vitrine.is-zoomed` 里。
+    check("★ 放大态两张 face **都没有缺口**（收起那片纸之后，缺口就成了一个洞）",
+          z["coverClip"] == "none" and z["panelClip"] == "none",
+          f'cover {z["coverClip"]} / panel {z["panelClip"]}')
 
     pg.mouse.click(z["close"]["l"] + 18, z["close"]["t"] + 18)
     pg.wait_for_timeout(150)

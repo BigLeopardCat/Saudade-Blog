@@ -13,10 +13,12 @@
   4. **空闲 3 秒 rAF 计数增量为 0**（定位动画与辉光结束后必须彻底停下来）
   5. prefers-reduced-motion 下不抛错且瞬移到位
 
-第 8 条（20260923 加）是**锁定态**的判据：引擎 `setLocked(true)` 后滚轮必须**穿透到页面**
-（`window.scrollY` 增加、相机 dist 不变），解锁后反回来。这是"锁定"这个功能的全部意义
-（用户报"鼠标下滚总落在展示柜上、页面不翻"），所以它是数值断言而不是肉眼验收。
-页面因此带一条 1600px 的占位块——没有可滚动的文档，这条腿量不到任何东西。
+第 8 条是**滚轮归属**的判据（20260923 加，20261002 随"锁定态删除"反转）：画布吃到滚轮
+必须缩放图谱并 `preventDefault`（相机 dist 变、`window.scrollY` 不变）。旧版验的是相反的
+行为——"锁定"那套机制已按用户要求整体删除，未放大时页面照常滚动改由外壳的
+`.vit-body{pointer-events:none}` 承担（滚轮也是指针事件），那一半只能在真页面里量，
+见 frontend/tests/vitrine-tear.test.py。页面仍带一条 1600px 的占位块：没有可滚动的文档，
+"scrollY 必须为 0"这条腿就是空转。
 """
 from __future__ import annotations
 
@@ -363,41 +365,37 @@ def run(browser, manifest, artifact, js):
            {"baseline_has": pick["wb"] in base, "texts": texts[:12]})
         ok(pick["wa"] in texts, "被悬浮那个词自己的名字也在", texts[:12])
 
-    print("== 8. 锁定：滚轮穿透到页面（该开关存在的全部理由）==")
-    # 这一节只用引擎，不走 React 遮罩：遮罩管的是指针，而"页面能不能滚"取决于引擎有没有在
-    # onWheel 里 preventDefault——两者是两套机制，这里验的是后者（前者只能靠浏览器里点）。
-    page.evaluate("() => { window.scrollTo(0, 0); window.__eng.setLocked(true); }")
+    print("== 8. 滚轮归画布：缩放图谱、页面不动 ==")
+    # ⚠️ 20261002 反转了：这里是"锁定态"的判据，而锁定整套已按用户要求删除
+    # （"不需要锁定功能和按钮了"）⇒ 断言从"锁定时滚轮穿透到页面"改成下面这两条。
+    # 页面为什么还能正常滚：靠外壳的 `.vitrine:not(.is-zoomed) .vit-body{pointer-events:none}`
+    # （见 Vitrine/index.sass），滚轮也是指针事件 ⇒ 未放大时根本到不了画布。
+    # 那个规则在真实页面里成立、在这里**不成立**（本页只有一张裸画布，没有 `.vit-body` 祖先），
+    # 所以这条腿只能验引擎这一半：画布吃到滚轮 ⇒ 缩放 + preventDefault。
+    page.evaluate("() => { window.scrollTo(0, 0); }")
     d0 = page.evaluate("() => window.__eng.getCamera().dist")
     page.mouse.move(310, 230)
     page.mouse.wheel(0, 300)
     page.wait_for_timeout(300)
     sc1 = page.evaluate("() => window.scrollY")
     d1 = page.evaluate("() => window.__eng.getCamera().dist")
-    ok(sc1 > 0, "锁定时滚轮把页面滚下去了（事件没被 preventDefault 吃掉）", {"scrollY": sc1})
-    ok(d1 == d0, "锁定时滚轮没有动相机（画布不吃滚轮）", {"before": d0, "after": d1})
+    ok(d1 != d0, "滚轮改的是相机 dist（缩放/穿云）", {"before": d0, "after": d1})
+    ok(sc1 == 0, "页面不被滚轮带走（onWheel 里 preventDefault 生效）", {"scrollY": sc1})
 
-    page.evaluate("() => { window.scrollTo(0, 0); window.__eng.setLocked(false); }")
-    page.mouse.move(310, 230)
-    page.mouse.wheel(0, 300)
-    page.wait_for_timeout(300)
-    sc2 = page.evaluate("() => window.scrollY")
-    d2 = page.evaluate("() => window.__eng.getCamera().dist")
-    ok(d2 != d1, "解锁后滚轮改的是相机 dist（缩放/穿云恢复）", {"before": d1, "after": d2})
-    ok(sc2 == 0, "解锁后页面不被滚轮带走（preventDefault 回来了）", {"scrollY": sc2})
-
-    print("== 8b. 锁定：拖动/双击也不生效（遮罩之外的第二道闸）==")
-    page.evaluate("() => { window.__eng.setLocked(true); }")
-    camL0 = page.evaluate("() => window.__eng.getCamera()")
+    print("== 8b. 拖拽改机位（没有锁定态挡着了）==")
+    # 同样反转自旧的"锁定时拖拽不改变机位"。现在引擎没有 `locked` 这道闸，
+    # 指针事件到达画布就一定生效——第三、四条的性能前提是"出帧只由交互驱动"，
+    # 这条坏掉的话图谱会变成一块不吃任何操作的静态图。
+    cam0 = page.evaluate("() => window.__eng.getCamera()")
     page.mouse.move(300, 220)
     page.mouse.down()
     for x in range(300, 420, 20):
         page.mouse.move(x, 230)
     page.mouse.up()
     page.wait_for_timeout(200)
-    camL1 = page.evaluate("() => window.__eng.getCamera()")
-    ok(camL1["yaw"] == camL0["yaw"] and camL1["pitch"] == camL0["pitch"],
-       "锁定时拖拽不改变机位（onDown/onMove 早退）", {"before": camL0["yaw"], "after": camL1["yaw"]})
-    page.evaluate("() => { window.__eng.setLocked(false); }")
+    cam1 = page.evaluate("() => window.__eng.getCamera()")
+    ok(cam1["yaw"] != cam0["yaw"], "拖拽改变机位（onDown/onMove 生效）",
+       {"before": cam0["yaw"], "after": cam1["yaw"]})
 
     ok(errors == [], "全程无 console error / pageerror", errors)
     ctx.close()

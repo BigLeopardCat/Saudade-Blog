@@ -25,6 +25,9 @@ import { getRoleFromToken, getTokenClaims, isAdminToken, roleLabel, roleTagColor
 import { quotaBalanceText, quotaLevel, quotaPct, quotaUsedHint } from '../../utils/quota.ts'
 import { resolveApiAssetUrl } from '../../utils/runtimeApi'
 import { useIsDarkMode } from '../../theme'
+// 层级走全站阶梯（src/index.css 的 :root 定义、src/zIndex.ts 是它的 TS 镜像）。
+// antd 只认 `zIndex` prop，CSS 变量递不进去，所以这里必须用 TS 那份。
+import { Z } from '../../zIndex'
 import {
     applyQuotaReset,
     changePassword,
@@ -1208,6 +1211,10 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                 width={860}
                 centered
                 title={title}
+                // 个人中心要盖住看板娘面板（agent 仓 widget.css 的 #waifu，同阶梯的
+                // `--z-agent`），但要在公告弹窗之下。antd 默认的 zIndexPopupBase 是 1000，
+                // 与看板娘同值、胜负由 DOM 顺序决定 —— 那是巧合不是设计。
+                zIndex={Z.panel}
                 // 弹窗挂在 body 下，拿不到 .frontDark 祖先 ⇒ 由 rootClassName 自带主题类。
                 // 两个深色类名分工不同、都要挂：`.ucDark` 是本组件自己的夜间补偿
                 // （见 index.sass 尾段），`.washiDark` 是那套手账令牌的名字
@@ -1286,6 +1293,11 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                 confirmLoading={applying}
                 onOk={doApplyQuota}
                 onCancel={() => setApplyOpen(false)}
+                // 叠在个人中心**之上**一档。理由与下面那个头像裁剪弹窗完全一样：本 Modal
+                // 是个人中心那个 Modal 的**兄弟节点**，antd 的 `useZIndex` 只在同一 React
+                // 子树里继承父级 ⇒ 不给值就落回默认的 1000、被 1200 的父亲压住。
+                // 顺带也解决了遮罩打架（同值的话后一块只是把前一块再压暗一层，像"页面变黑"）。
+                zIndex={Z.panel + 1}
                 // 同上：`ucDark` 管本组件的夜间补偿、`washiDark` 管手账令牌
                 rootClassName={`ucRoot${isDark ? ' ucDark washiDark' : ''}`}
                 width={520}
@@ -1320,6 +1332,11 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                 file={cropFile}
                 uploading={uploading}
                 dark={isDark}
+                // 与上面申请额度那个弹窗同一档：都是从个人中心窗口里开出来的第二层。
+                // **本组件是那个 Modal 的兄弟节点，不是它的子节点** ⇒ antd 的 zIndex
+                // 继承链够不着它（`useZIndex` 只认同一 React 子树里的 `zIndexContext`），
+                // 不写这一行它就落回默认的 1000、被 1200 的父亲压在下面（看着在、点不动）。
+                zIndex={Z.panel + 1}
                 onPickFile={handlePickFile}
                 onConfirm={handleCropConfirm}
                 onCancel={() => {

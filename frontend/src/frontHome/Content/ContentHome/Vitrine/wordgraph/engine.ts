@@ -170,8 +170,6 @@ export class WordGraphEngine {
     private lastX = 0; private lastY = 0;
     private moved = 0;
     private dragEndAt = 0;
-    /** 锁定：引擎不消费任何指针/滚轮事件（见 setLocked）。默认 false，由外壳按需打开。 */
-    private locked = false;
 
     private io: IntersectionObserver | null = null;
     private onVisibility: () => void;
@@ -312,23 +310,6 @@ export class WordGraphEngine {
     }
 
     getSelected(): number | null { return this.selected; }
-
-    /** 锁定/解锁（展示柜默认锁定）。
-     *  锁定 = 引擎完全不消费指针与滚轮：**`onWheel` 在 `preventDefault()` 之前就早退**，
-     *  事件于是穿透到页面，鼠标停在展示柜上照样能正常下滚——这才是这个开关存在的唯一理由
-     *  （窗口占一大块版面，用户报过"下滚总落在窗口上、页面不翻"），不是安全概念。
-     *  锁定态的清场必须有：解锁层挡在画布上时 `pointerleave` 到不了画布，不清 hover 的话
-     *  读数卡片会一直挂在那儿。 */
-    setLocked(v: boolean) {
-        if (this.locked === v) return;
-        this.locked = v;
-        if (!v) return;
-        this.hover = null;
-        this.dragging = false;
-        this.canvas.style.cursor = 'default';
-        this.opts.onHover?.(null);
-        this.invalidate();
-    }
 
     getCamera(): Camera { return { ...this.cam, target: [...this.cam.target] as [number, number, number] }; }
 
@@ -674,7 +655,7 @@ export class WordGraphEngine {
     }
 
     private onDown = (e: PointerEvent) => {
-        if (this.locked || e.button !== 0) return;
+        if (e.button !== 0) return;
         this.dragging = true;
         const [x, y] = this.local(e);
         this.lastX = x; this.lastY = y; this.moved = 0;
@@ -683,7 +664,6 @@ export class WordGraphEngine {
     };
 
     private onMove = (e: PointerEvent) => {
-        if (this.locked) return;                    // 遮罩已挡住指针，这是第二道保险
         const [x, y] = this.local(e);
         if (this.dragging) {
             const dx = x - this.lastX, dy = y - this.lastY;
@@ -723,7 +703,6 @@ export class WordGraphEngine {
     };
 
     private onDbl = (e: MouseEvent) => {
-        if (this.locked) return;
         // 拖动后的余韵不该触发跳转（"想转个视角"变成"跳走了"很恼人）
         if (Date.now() - this.dragEndAt < DRAG_DBL_GUARD) return;
         const [x, y] = this.local(e);
@@ -732,9 +711,10 @@ export class WordGraphEngine {
     };
 
     private onWheel = (e: WheelEvent) => {
-        // ⚠️ 必须在 preventDefault **之前**：这就是"锁定时滚轮穿透到页面"的本体。
-        // 挪到下面去（比如只跳过缩放）就等于把页面滚动一起吃掉，改动的意义全部消失。
-        if (this.locked) return;
+        // 20261002 起展示柜**没有锁定态**了（用户："不需要锁定功能和按钮了"）：画布吃到滚轮
+        // 就是缩放图谱，页面滚动交给外壳——内联态 `.vit-body` 挂着 `pointer-events: none`
+        // （见 Vitrine/index.sass），滚轮压根到不了这里；放大态页面本来就 `overflow: hidden`。
+        // 换句话说，"滚轮穿透到页面"当初设锁的唯一理由，现在由外壳那条规则承担了。
         e.preventDefault();
         this.anim = null;
         const r = wheelStep(this.cam.dist, this.flightLen(), e.deltaY);
