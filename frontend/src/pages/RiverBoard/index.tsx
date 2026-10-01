@@ -376,23 +376,37 @@ let amb: Amb | null = null;
 /* 月亮几何（组件内多处共享：绘制与星光避让用同一份常量） */
 const MOON = { x: 0.7, y: 0.16, r: 0.073 } as const; // r 0.093 → 0.073：月亮缩小
 
-/* 月面反照率（20260926）。此前那张真实照片采样表（`moon_tex.ts`，固定 192×192）
-   已删除：源照片丢了、192 又是死天花板（月盘的设备像素数随屏幕走，1080p ≈ 130、
-   retina ≈ 260，192 被放大本身就是糊的）。现在由 `moon_surface.ts` **程序化现画**，
-   细节上限随需要走。同步生成（不再有"异步就绪后重画一次静态层"那一套）。 */
+/* 月面反照率（20261001 第 42 轮：真实照片采样表，见 `moon_surface.ts` 头注）。
+   载荷是编成 base64 的 8 位灰度字节，`atob` **同步**解出来——不再有"异步就绪后重画
+   一次静态层"那一套（第 37 轮的事故），也不再有 192×192 那个死天花板。 */
 let moonAlbA: Float32Array | null = null;
-/* 反照率标定（首次生成时按盘内 p5/p95 算出）——渲染时把反照率区间映射到
-   `0.80..1.28` 的亮度区间，月海:高地 ≈ 1.6:1。自适应而不硬编码：生成器的
-   基准值以后调整（对比度/压暗比例）不该连带改渲染侧的映射 */
+/* 反照率标定（首次生成时按**盘内** p5/p95 算出）——渲染时把反照率区间映射到
+   `ALB_LO..ALB_HI` 的亮度区间。自适应而不硬编码：换照片（重跑配方脚本）不该连带
+   改渲染侧的映射。
+   20261001：区间从 `0.80..1.28`（1.6:1）改到 `0.45..1.28`（2.8:1）——那一档是第 39 轮
+   按**手写**反照率定的（那时纹理本身就平），照片表的月海/高地本来就有 2.5:1 的差距，
+   再压到 1.6:1 就成了"发白的匀球"（实测对照源照片一眼可见）。改动只动下半段：
+   峰值仍是 `EXPOSURE × 1.28 = 0.896`（229/255），不会过曝。 */
+const ALB_FLOOR = 0.45;
+const ALB_SPAN = 0.83;
 let moonAlbLo = 0;
 let moonAlbHi = 1;
-/** 反照率（幂等，首次调用时生成） */
+/** 反照率（幂等，首次调用时解码） */
 const ensureMoonAlbedo = () => {
     if (moonAlbA) return moonAlbA;
     const a = moonAlbedo();
-    // 盘外四角不参与采样（渲染只落在内切圆里），一并算进分位数也不会跑偏——
-    // 它们保持高地基准值，且占比只有 1 - π/4 ≈ 21%
-    const vals = Array.from(a).sort((x, y) => x - y);
+    const n = Math.round(Math.sqrt(a.length));
+    // 只统计**盘内**：盘外四角是配方脚本按径向投影填的（渲染不采样，几何上不存在），
+    // 混进来会把 p5/p95 往中间拽、白白削掉一点对比（实测 p95 1.377 → 1.357）
+    const vals: number[] = [];
+    for (let py = 0; py < n; py++) {
+        const ny = 1 - ((py + 0.5) / n) * 2;
+        for (let px = 0; px < n; px++) {
+            const nx = ((px + 0.5) / n) * 2 - 1;
+            if (nx * nx + ny * ny <= 1) vals.push(a[py * n + px]);
+        }
+    }
+    vals.sort((x, y) => x - y);
     moonAlbLo = vals[Math.floor(vals.length * 0.05)];
     moonAlbHi = vals[Math.floor(vals.length * 0.95)];
     if (moonAlbHi - moonAlbLo < 0.05) { moonAlbLo = 0; moonAlbHi = 1; } // 极端平纹理兜底
@@ -494,7 +508,7 @@ const buildMoonSprite = (geo: { size: number; ss: number }) => {
             const s01 = albA[cy1 * N + cx0], s11 = albA[cy1 * N + cx1];
             const t = (s00 * (1 - tx) + s10 * tx) * (1 - ty) + (s01 * (1 - tx) + s11 * tx) * ty;
             const n01 = (t - moonAlbLo) / (moonAlbHi - moonAlbLo);
-            const alb = 0.80 + 0.48 * (n01 < 0 ? 0 : n01 > 1 ? 1 : n01);
+            const alb = ALB_FLOOR + ALB_SPAN * (n01 < 0 ? 0 : n01 > 1 ? 1 : n01);
             // 受光面：只有太阳直射那一项
             const lum = Math.min(1, EXPOSURE * sunGain * sun * alb * limb);
             const warm = 1 + 0.05 * Math.max(0, dot); // 受光处偏暖
@@ -507,9 +521,11 @@ const buildMoonSprite = (geo: { size: number; ss: number }) => {
             const occlude = Math.min(1, lum * 6);
             data[i4] = Math.round(255 * lum * warm);
             data[i4 + 1] = Math.round(255 * lum * 0.975 * warm);
-            // 蓝系数 0.92 → 0.86（20260926 乳酪月面那一批）：整体偏暖一点才像奶酪。
-            // 与光照/月相/遮挡无关，要回冷月色把 0.92 改回来即可（就这一行）
-            data[i4 + 2] = Math.round(255 * lum * 0.86);
+            // 蓝系数 0.86 → 0.94（20261001 照片纹理那一批）：0.86 是第 41 轮为"奶酪"调的
+            // 偏暖档，压在照片上是一层明显的土黄/橄榄色（源照片本身是中性灰）。
+            // 留一点点暖（配合上面 `warm` 的 1.05）当月光，但不再是奶酪黄。
+            // 与光照/月相/遮挡无关，要更冷把它往 1.0 提即可（就这一行）
+            data[i4 + 2] = Math.round(255 * lum * 0.94);
             data[i4 + 3] = Math.round(cov * occlude * 255);
         }
     }
