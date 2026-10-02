@@ -83,10 +83,11 @@ push 到 `cn_sora_blog` 分支触发构建与部署：
 
 ## 3. 服务管理（systemd）
 
-五个 systemd 服务，均开机自启（后两个是**可选件**，见 [iot/README.md](../iot/README.md)）：
+六个 systemd 单元，均开机自启（后两个是**可选件**，见 [iot/README.md](../iot/README.md)）：
 
 | 服务 | 重启策略 | 说明 |
 |---|---|---|
+| nginx | 发行版默认 | 静态根 `frontend/dist` + 反代 3000/8010/3100；**配置改动只需 `reload`** |
 | Rust 后端 | `Restart=always` | 工作目录即仓库根，环境文件由 dotenv 从工作目录加载 |
 | Python Agent | `Restart=always` | uvicorn 4 workers 绑回环（20261002 起）；`TimeoutStopSec=120` 让在途对话优雅结束 |
 | MySQL | 发行版默认 | 业务库 + 对话历史 + IoT 数据（单实例，无主从） |
@@ -127,12 +128,15 @@ logs/
   会让轮转**静默失败**（20260830 踩过，chown 修正）。
 - **traces 不归 logrotate 管**：对话 trace 是**文件名唯一的一次性 JSON**，而 logrotate 的 `rotate N`
   靠同名文件后缀 +1 计数，对这类文件完全无效（配置写了 `rotate 14`，实测最老文件 26 天、
-  `.2.gz` 为 0 个）。该块 20260925 已整块删除；保留期改由 `eval/trace_retention.py` 执行
-  （按 mtime：>24h 压缩、>30 天删除；默认只列不删，`--apply` 才动手）。
+  `.2.gz` 为 0 个）。该块 20260925 已整块删除；保留期改由 **agent 仓的**
+  `saudade-blog-agent/eval/trace_retention.py` 执行
+  （按 mtime：>24h 压缩、>30 天删除；默认只列不删、`--apply` 才动手；已接进
+  `scripts/nightly_regression.sh` 末位）。
 - **时区**：Rust 与 agent 日志统一本地 +08:00 钟面，跨文件对账没有 8 小时差。
-- **心跳探针**（cron 每分钟，`scripts/healthcheck.sh`）：① Rust 存活 ② agent `/health` 的
-  `agent_ready` ③ **uvicorn worker 崩溃检测**（pid 集合对比——worker 静默死亡不留任何日志，
-  2026-08-29 事故根因）④ nginx error.log 增量扫描 ⑤ 残留无头浏览器清理。异常追加 `health.log`。
+- **心跳探针**（cron 每分钟，`scripts/healthcheck.sh`，共 **6 段**）：① Rust 存活
+  ② agent `/health` 的 `agent_ready` ③ **uvicorn worker 崩溃检测**（pid 集合对比——worker
+  静默死亡不留任何日志，2026-08-29 事故根因）④ nginx error.log 增量扫描 ⑤ 残留无头浏览器清理
+  ⑥ **夜间任务失败哨兵**（20260924 加：夜间套件非零退出/未跑 ⇒ WARN）。异常追加 `health.log`。
 - **排障首选 trace**：对话异常直接读 trace 的分段耗时（planner / execute / model / gate），
   比翻日志快得多。
 
@@ -252,7 +256,7 @@ for p in $(pgrep -P "$m"); do tr -d '\0' < /proc/$p/cmdline | grep -q multiproce
 
 40G 盘已用 74%：**4GB 的 `target/` 与 89MB 的 EMQX 是两块可辨认的大头，但都不能随手删**
 （前者是生产二进制，后者是可选件的本体）。清理口径见
-[disk layout 相关约定](../CLAUDE.md) 与 `docs/问题记录.md`。
+[disk layout 相关约定](../CLAUDE.md) 与 agent 仓的 `saudade-blog-agent/docs/问题记录.md`。
 
 ```bash
 du -sh target logs frontend/dist saudade-blog-agent /usr/lib/emqx /var/lib/emqx

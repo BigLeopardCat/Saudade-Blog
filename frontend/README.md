@@ -70,7 +70,7 @@ frontend/
 ## 看板娘与聊天面板（`public/live2d-widgets/`）
 
 这里**不是 React 代码**，是独立加载的纯 JS 模块，由 `boot.js` 作为唯一入口按依赖序加载。
-React 那边只有一个 38 行的注入器（`src/components/Live2dAgent/index.tsx`）负责插一个
+React 那边只有一个 37 行的注入器（`src/components/Live2dAgent/index.tsx`）负责插一个
 `<script>`。
 
 ```
@@ -81,13 +81,13 @@ chat-render.js           消息渲染（markdown、代码高亮、贴纸）
 chat-engine.js           数据层（拉历史、发消息、会话态）
 chat-stream.js           交互层（SSE 解析、命令执行、发送/停止）
 chat-session.js          会话列表 UI 壳
-widget.css               看板娘与聊天面板样式（自研，2012 行）
+widget.css               看板娘与聊天面板样式（自研，2048 行）
 vendor/                  pixi.js / pixi-live2d-display 的 UMD 产物（**不入库**，见下）
 ```
 
 整个目录是**自研代码**。20261001 之前这里住着上游 `stevenjoezhang/live2d-widget`
 （GPL-3.0）的渲染层，与博客自身的 GPL-2.0 不兼容，已整体替换：现在是
-**pixi.js + pixi-live2d-display**（都是 MIT）直接驱动 Live2D 模型，约 350 行。
+**pixi.js + pixi-live2d-display**（都是 MIT）直接驱动 Live2D 模型，约 511 行（`renderer.js`）。
 
 ### 这些文件的源码**不在本仓**（20261002 起）
 
@@ -178,7 +178,8 @@ npm test                                          # node tests/xxx.test.mjs 全�
 npm run lint                                      # ESLint
 ```
 
-三类套件，**只有前两类进 CI**：
+三类套件，**只有第一类进 CI**（`npm test` = `node tests/run-suites.mjs`；后两类都要真浏览器或
+活着的后端，CI 的秒级 job 装不下）：
 
 | 类型 | 位置 | 跑法 |
 |---|---|---|
