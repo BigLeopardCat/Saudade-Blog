@@ -68,17 +68,37 @@ jobs:
 
   # 质量闸（20260923）：此前 CI **零测试零类型检查**——`npm run build` 走 esbuild 只转译不查
   # 类型（存量 14 条类型错一路畅通到线上），`cargo build` 也只验"编译得过"，lint 从未跑过。
-  # 这个 job 把三样检查挡在部署前面：
+  # 这个 job 把四样检查挡在部署前面：
   #   ① `cargo test` —— tests/api_tests.rs 用 MockDatabase（不连库）+ 6 个文件里的内嵌单测，
   #      CI 上跑得起来（此前 CI 只 `cargo build --release`，等于只验编译）；
   #   ② `tsc --noEmit` —— 前端真类型检查（存量 14 条已于同日清零，故可直接设闸）；
   #   ③ `npm test` —— tests/ 下全部 node 套件（条数以 tests/run-suites.mjs 的 glob 为准，
   #      这里不写死数字：20260924 加一个套件就让"11 个"这句注释过期了一次）。
-  #      此前 package.json 里那句 "test": "jest" 是死脚本：没配置也没依赖，谁都跑不了。
+  #      此前 package.json 里那句 "test": "jest" 是死脚本：没配置也没依赖，谁都跑不了；
+  #   ④ 真 MySQL（20261003）—— 同一个 `cargo test` 里还跑着 tests/mysql_integration.rs，
+  #      由一个 mysql:8.0 服务容器供库。它验的是 mock 结构上验不了的那一类（`SUM` 的
+  #      DECIMAL、NULL 折零、`IN ()` 短路、外键约束），代价是每次 push 多十几秒容器启动。
   # 它与"要不要部署"无关：**任何 push 都跑**（改了测试/tsconfig 也算），而部署被它 needs 住
   # ——检查不过就不构建、不上传、不部署。`*.test.py` 那几套要 Playwright，故意不进 CI。
   check:
     runs-on: ubuntu-latest
+    # 真 MySQL（20261003）：`tests/mysql_integration.rs` 要一个**真的 8.0 库**才验得了
+    # 那几件 MockDatabase 结构上证明不了的事——最要紧的一条是 `SUM(<整数列>)` 返回
+    # DECIMAL（sea-orm 按 i64 解码当场报错，`cargo check` 与 mock 全绿，20260930 线上
+    # 就是这么 500 的）。**它门住部署**（build-and-deploy 的 needs 里有本 job）：真库这条
+    # 闸红掉，那一版就不上线。口令是**一次性的容器口令**，与生产库无关（容器随 runner 消亡）。
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ci-root-pw
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pci-root-pw --silent"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -113,7 +133,36 @@ jobs:
         run: npm run fetch:widget
         working-directory: ./frontend
 
-      - name: Rust tests（MockDatabase，不连库）
+      - name: Wait for MySQL（真库集成测的服务容器）
+        # runner 通常已经等到 health 通过才起 steps，这里再自己探一次：几十秒的东西，
+        # 换掉一整类"容器还没 ready 就把 `cargo test` 跑成红的"的假红。
+        run: |
+          for i in $(seq 1 30); do
+            if docker exec ${{ job.services.mysql.id }} \
+                 mysqladmin ping -h 127.0.0.1 -uroot -pci-root-pw --silent; then
+              echo "mysql 就绪（第 $i 次探测）"; exit 0
+            fi
+            sleep 2
+          done
+          echo "MySQL 服务容器 60 秒内没起来" >&2; exit 1
+
+      - name: Bootstrap MySQL schema（真库集成测的库）
+        # 建库走**仓库里那个脚本**，不在 CI 里另抄一份 recipe —— 顺带让"从零建库"
+        # 这条路每次 push 都真跑一遍（它 20261003 之前教的那一版是跑不通的，见脚本头注）。
+        # `docker exec -i <容器> mysql` 省掉在 runner 上装 mysql-client 的那一步。
+        # **`-i` 不能少**：脚本是把每个 SQL 文件从 stdin 喂进去的，而 `docker exec`
+        # 默认不接 stdin —— 少了它，mysql 拿到的是空输入、**每次都"成功"**，
+        # 建出来的库一张表都没有，然后集成测才在"库结构不全"上红。
+        env:
+          MYSQL_BIN: docker exec -i ${{ job.services.mysql.id }} mysql
+        run: bash scripts/migration/fresh_install.sh saudade_blog_it -h127.0.0.1 -P3306 -uroot -pci-root-pw
+
+      - name: Rust tests（MockDatabase + 真 MySQL 两层）
+        # TEST_MYSQL_URL 在场 ⇒ tests/mysql_integration.rs 真连库跑；缺席 ⇒ 它自己跳过
+        # （贡献者本机 `cargo test` 因此不受影响）。**在场但连不上是失败、不是跳过**，
+        # 见那个文件的头注。
+        env:
+          TEST_MYSQL_URL: mysql://root:ci-root-pw@127.0.0.1:3306/saudade_blog_it
         run: cargo test
 
       - name: Install frontend deps
