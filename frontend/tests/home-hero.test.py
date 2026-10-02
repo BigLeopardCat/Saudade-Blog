@@ -165,8 +165,9 @@ def build_sandbox(broken_width: bool = False) -> pathlib.Path:
         '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
         '<link rel="stylesheet" href="main.css"><link rel="stylesheet" href="vitrine.css">'
         '<link rel="stylesheet" href="home.css">'
-        # 社媒按钮的替身：固定 40px 方块，让 .Social 的 336px 宽度真的被占满
-        '<style>.sBtn{display:inline-block;width:40px;height:40px;background:#ddd;border-radius:50%}</style>'
+        # 社媒按钮的替身：固定 54px 方块（与 `.SocialBtn` 同尺寸），让 .Social 的 384px
+        # 宽度真的被占满 —— 替身尺寸跟不上时 `.Social` 就只是一只空盒子，量不到真东西
+        '<style>.sBtn{display:inline-block;width:54px;height:54px;background:#ddd;border-radius:50%}</style>'
         # ⚠️ 量的是**静置几何**，所以入场的 `left-in`（1s 的 translateX(-50%)）与手账内页/
         # 展示柜的静态 transform 一律先关掉——它们都是绘制层，留着会让每个 rect 读数偏半个
         # 盒宽（本套件第一版就栽在这里：`.SayWords` 的 rect.left 读成 -104，而 offsetLeft
@@ -407,15 +408,16 @@ with sync_playwright() as p:
           "（入场动画没关掉的话，下面每个 rect 都偏半个盒宽）",
           m["say"]["transform"] == "none" and m["panel"]["transform"] == "none",
           f"say {m['say']['transform']} / panel {m['panel']['transform']}")
-    # 标题字号五轮起是 `clamp(2.5rem, 3.6vw, 3.2rem)`（用户要"文本放大"）——四轮那条
-    # "字号必须是 2.5rem" 的锁随之作废，改成**按视口算期望值**，锁的仍是"这个 clamp 还在"。
+    # 标题字号五轮起走 `clamp()`（用户要"文本放大"）——四轮那条"字号必须是 2.5rem"的锁随之
+    # 作废，改成**按视口算期望值**，锁的仍是"这个 clamp 还在"。20261003 第 7 条再放大一档
+    # （2.5/3.6vw/3.2rem → 2.75/4vw/3.5rem）。
     for vw in (1366, 1440, 1920):
         pg.set_viewport_size({"width": vw, "height": 900})
         fs = float(pg.evaluate(
             "() => { const e = document.querySelector('#title');"
             " return e ? getComputedStyle(e).fontSize.replace('px','') : '0'; }"))
-        expect = min(max(40.0, 0.036 * vw), 51.2)
-        check(f"{vw}px：标题字号 = clamp(2.5rem, 3.6vw, 3.2rem) = {expect:.1f}px",
+        expect = min(max(44.0, 0.04 * vw), 56.0)
+        check(f"{vw}px：标题字号 = clamp(2.75rem, 4vw, 3.5rem) = {expect:.1f}px",
               abs(fs - expect) <= 0.6, f"实测 {fs}px")
     pg.set_viewport_size({"width": 1440, "height": 900})
     m = pg.evaluate(PAINT, {"markup": HERO, "dark": False})
@@ -428,6 +430,32 @@ with sync_playwright() as p:
           title["strokeW"] == "3px" and title["strokeC"] == "rgb(255, 255, 255)",
           f"{title['strokeW']} / {title['strokeC']}")
 
+    print("\n== ①d 第 7 条「社交组件和文本再放大一些」：那一列是**成组**放大的 ==")
+    # 只放大一件会让那一列看着散（标签大、命令条小、按钮还是旧尺寸）。四条一起量，
+    # 任何一条单独回退都会红。数值都是 20261003 的新值：标签 15→16.5、星 14→15.5、
+    # 命令条 14.5→16、社交 336→384（按钮 45→54）。
+    check("★ 窗贴标签 16.5px、其字号的函数（星 15.5px）跟着走",
+          m["tag"]["fs"] == "16.5px"
+          and pg.evaluate("() => getComputedStyle(document.querySelector('.heroTagStar')).fontSize")
+          == "15.5px",
+          f"tag {m['tag']['fs']}")
+    check("★ 命令条 16px（它是那一列里唯一的等宽字，字号不改会明显矮一档）",
+          m["term"]["fs"] == "16px", f"实测 {m['term']['fs']}")
+    check("★ 社交条宽 384px（= 四颗 54px 按钮 + 3×56px 缝，是按钮尺寸的函数）",
+          m["social"]["w"] == 384, f"实测 {m['social']['w']}")
+    soc_fill = pg.evaluate(
+        "() => { const s = document.querySelector('#social'); const kids = [...s.children];"
+        " if (!s || kids.length < 2) return null; const r = s.getBoundingClientRect();"
+        " const f = kids[0].getBoundingClientRect();"
+        " const l = kids[kids.length - 1].getBoundingClientRect();"
+        " return {n: kids.length, left: Math.round(f.left - r.left),"
+        " w: Math.round(f.width), right: Math.round(r.right - l.right)}; }")
+    check("★ 四颗按钮把 384px 真摊满（首颗贴左、末颗贴右）且替身与 `.SocialBtn` 同尺寸"
+          "（替身写小了，上面那条 384 就只是一只空盒子）",
+          bool(soc_fill) and soc_fill["n"] == 4 and soc_fill["w"] == 54
+          and abs(soc_fill["left"]) <= 1 and abs(soc_fill["right"]) <= 1,
+          f"{soc_fill}")
+
     print("\n== ② 底部那行：签名居中 + 渐变填充 + 箭头在它下方（内联 style 收进 sass 的回归锁）==")
     m = seam_at(pg, 1440)
     onesay, scroll, hero, panel, right = m["onesay"], m["scroll"], m["hero"], m["panel"], m["right"]
@@ -438,9 +466,9 @@ with sync_playwright() as p:
     check("签名离 hero 下缘 86px（`bottom: 86px` 是相对 `.heroBottom` 这行算的）",
           abs(hero["bottom"] - onesay["bottom"] - 86) <= 1,
           f"hero.bottom−onesay.bottom = {hero['bottom'] - onesay['bottom']}")
-    check("★ 签名是**渐变字**（粉紫渐变填充 + 透明字色），字号 20px",
+    check("★ 签名是**渐变字**（粉紫渐变填充 + 透明字色），字号 23px（第 7 条 20 → 23）",
           onesay["fill"] == "rgba(0, 0, 0, 0)" and "linear-gradient" in onesay["bgImage"]
-          and onesay["fs"] == "20px",
+          and onesay["fs"] == "23px",
           f"fill {onesay['fill']} / fs {onesay['fs']} / bg {onesay['bgImage'][:48]}")
     check("★ 渐变档**没有投影**（`background-clip: text` 下投影画在字形里，会把渐变洗淡）",
           onesay["textShadow"] == "none", f"实测 {onesay['textShadow']}")
@@ -531,8 +559,8 @@ with sync_playwright() as p:
           abs(right["top"] - say["bottom"] - 28) <= 1, f"文字与右列的间距 {right['top'] - say['bottom']}")
     check("  手机档仍占满首屏（`min-height: 100vh` 没被手机档撤掉）",
           hero["h"] >= 780, f"hero.h {hero['h']}")
-    check("标题降到 2rem=32px、描边收细到 2px（桌面的 clamp 下限 2.5rem 会折两行贴边）",
-          title["fs"] == "32px" and title["strokeW"] == "2px",
+    check("标题降到 2.2rem=35.2px、描边收细到 2px（桌面的 clamp 下限 2.75rem 会折两行贴边）",
+          title["fs"] == "35.2px" and title["strokeW"] == "2px",
           f"fs {title['fs']} stroke {title['strokeW']}")
     check("★ 无横向滚动（樱花/色块/胶带都不许造出滚动条）",
           m["docOverflow"]["scrollW"] <= m["docOverflow"]["clientW"] + 1,
