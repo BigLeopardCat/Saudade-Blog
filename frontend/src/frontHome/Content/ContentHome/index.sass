@@ -134,8 +134,17 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
   // 用户「左侧那一堆文本和组件往中间移动」）——两组内容当成一对摆到内容区正中。
   justify-content: center
   gap: clamp(32px, 4vw, 80px)
+  // 首屏高度预算（20261003 用户第 1 条「个性签名和下翻按钮必须下滚才能看见」）。
+  //
+  // hero 的高度是**内容撑出来的**，`min-height: 100vh` 只兜下限：112 + 右列 + 148。
+  // 而右列高度 = 1.1875 × 列宽 + 24px（推导线埋在 `.heroRight` 那一处）——**严格正比
+  // 于宽度**。于是"矮视口下整屏装不下"这件事只有一个结构性解法：按**剩下的高度**
+  // 反过来算列宽。两个留白值因此必须能被那条公式读到，写在这里当变量。
+  // ⚠️ 手机档会把它们改成 104 / 128（见下面那条 media），别在那里写死 padding。
+  --hero-pad-t: 112px
+  --hero-pad-b: 148px
   // 左内边距 8% → 10%：居中只管"组"的位置，文字列相对左缘仍需再让一截
-  padding: 112px 6% 148px 10%
+  padding: var(--hero-pad-t) 6% var(--hero-pad-b) 10%
   background: var(--container-background-color)
 
   // ⚠️ 手机档这一段**必须写在上面那批声明之后**——sass 按源码位置原样吐进编译产物，
@@ -163,7 +172,9 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
     // 签名上（实测 768×900：展示柜底 1177 vs 签名 1120..1147；414×800：798 vs 741..768，
     // 连下翻按钮一起被压）—— 用户第 1 条「个性签名，下翻按钮……盖在上面了」的另一半。
     // 128 在 113 之上再留 15px 呼吸。桌面档是 148px（本来就不冲突，见上面那条）。
-    padding: 104px 5% 128px
+    --hero-pad-t: 104px
+    --hero-pad-b: 128px
+    padding: var(--hero-pad-t) 5% var(--hero-pad-b)
 
   // ① 拼贴底：色块用 radial-gradient 自带羽化——**不用 `filter: blur()`** 做柔化，
   // 大面积模糊是后台那次 GPU 事故的放大器。色块本身**不动**（大图层做位移动画得不偿失，
@@ -287,9 +298,31 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
     // 一并解决；`z-index: 3` 仍在 `body` 上那张掉落克隆纸（900）与头部（998）之下。
     z-index: 3
     flex: 0 0 auto
-    width: min(38vw, 520px)
+    // 宽度同时受三条约束（20261003 用户第 1 条「签名和下翻按钮必须下滚才能看见」）：
+    //
+    //  ① `38vw` / `520px` —— 原来的"窄桌面不挤爆右列"那条线（见本块头注），不动；
+    //  ② **剩下的高度** —— 右列高度 = 0.75w（手账内页 4:3）+ 24px（展示柜的
+    //     `margin-top`）+ 0.4375w（`.vit-3d` 的 16:7）= **1.1875w + 24**，严格正比于
+    //     宽度。所以"让 hero 装进一屏"唯一的结构性办法就是按可用高度反算宽度：
+    //     `(100vh − 上留白 − 下留白 − 24 − 8) ÷ 1.1875`。末尾那 8px 是留给下翻
+    //     按钮的呼吸（实测 1440×900 的 hero 高 901.5px，正好差这一点）。
+    //     ⚠️ `1.1875` 是**推导线**，不是随手一填：改内页的 aspect-ratio 或展示柜的
+    //     高度比，必须回来重算它（`home-hero.test.py` 第 ① 组按同一条式子算期望值）。
+    //  ③ `300px` 地板 —— 视口极矮时宁可溢出，也不要一张挤成条的内页。
+    //
+    // 手机档那条 `width: 100%` 覆盖它：手机上**没有任何宽度能救**（375×667 要装下
+    // 一屏得把内页压到 ~180px），所以手机档不吃这条，右列照旧满宽。
+    width: min(38vw, 520px, max(300px, calc((100vh - var(--hero-pad-t) - var(--hero-pad-b) - 24px - 8px) / 1.1875)))
     display: flex
     flex-direction: column
+    // 展示柜放大态（`body.exhibit-zoomed`，见 Vitrine/index.tsx:181）：**整列必须抬起来**。
+    // 这不是"高一点更好看"——`.heroRight` 自己带 z-index ⇒ 它就是一个层叠上下文，
+    // 里面 `.vitrine.is-zoomed` 的 1200 只在**本列内**比大小；外面的 `.Top`（置顶缎带，
+    // 10）与 `sections.sass` 那条粉/薄荷交界胶带（3）跟它根本不在一个平面上，于是两条都
+    // 画在放大出来的窗口之上（用户第 6 条）。200 的取法：高于整页前台内容（最高 99）、
+    // 低于头部 998；这条只在放大那一下生效（平时 body 上没有这个类）。
+    body.exhibit-zoomed &
+      z-index: 200
     @media screen and (max-width: 768px)
       width: 100%
 

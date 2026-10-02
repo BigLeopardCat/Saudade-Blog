@@ -223,6 +223,181 @@ with sync_playwright() as p:
 
     browser.close()
 
+# ══ ④ 首页整列抬升：向量空间放大时不许被置顶缎带 / 接缝胶带盖住（20261003 用户第 6 条）═
+#
+# 用户原话：「打开文章向量空间，发现窗口被置顶的标签，粉色和薄荷色交接处胶带遮挡了，
+# 层级不对」。根因**不在** `.vitrine.is-zoomed` 的 1200 上：`.heroRight` 自己带
+# `z-index: 3` ⇒ 它**就是一个层叠上下文**，里面那个 1200 只在**本列之内**比大小；外面的
+# `.Top`（置顶缎带，10）与 `.ContentContainer::before`（粉/薄荷交界那道接缝胶带，3、
+# 且 DOM 更靠后）跟它根本不在一个牌桌上。修法 = `body.exhibit-zoomed .heroRight` 整列抬到
+# 200（高于整页前台内容、低于头部 998）。
+#
+# 这一组用**真的** `ContentHome/index.sass` + `sections.sass` + `Vitrine/index.sass`
+# （`.Top` 的 10、`.ContentContainer::before` 的 3、`.vitrine.is-zoomed` 的 1200 全是
+# 原样从产物里来的），夹具只把那两张纸**挪进视口** ——层级跟位置无关，而真页面里它们
+# 在小半屏之外，`elementFromPoint` 够不着。两个探针点也**在页面里按实测盒子现算**
+# （缎带取 `.TopTape` 的中心、胶带取 `.ContentContainer` 上沿往下 7px），
+# 并当场断言它们落在放大窗口 `.vit-3d` 的矩形之内 —— 否则量的是窗口外面，判据是空的。
+#
+# **红基线**：第二份沙箱把那两行抬升摘掉，同样两个点必须改判成 ribbon / seam。
+# 没有它，"放大态没被盖住"在元素根本不存在时也是绿的。
+
+ZOOM_RAISE = "    body.exhibit-zoomed &\n      z-index: 200\n"
+
+
+def build_home(raise_col: bool) -> pathlib.Path:
+    sb = pathlib.Path(tempfile.mkdtemp(prefix="z-zoom-"))
+    home_src = FE / "src/frontHome/Content/ContentHome/index.sass"
+    if not raise_col:
+        text = home_src.read_text(encoding="utf-8")
+        assert text.count(ZOOM_RAISE) == 1, "红基线补丁没找到 `.heroRight` 的抬升规则"
+        home_src = sb / "_home.flat.sass"
+        home_src.write_text(text.replace(ZOOM_RAISE, ""), encoding="utf-8")
+    for out, src in (("app.css", FE / "src/App.sass"),
+                     ("home.css", home_src),
+                     ("sections.css", FE / "src/frontHome/Content/ContentHome/sections.sass"),
+                     ("vitrine.css", FE / "src/frontHome/Content/ContentHome/Vitrine/index.sass")):
+        r = subprocess.run(
+            ["node", "-e",
+             "const s=require('sass');const r=s.compile(process.argv[1],{style:'expanded'});"
+             "require('fs').writeFileSync(process.argv[2],r.css);",
+             str(src), str(sb / out)],
+            cwd=str(FE), capture_output=True)
+        if r.returncode != 0:
+            raise SystemExit(f"sass 编译失败（{src.name}）：\n" + r.stderr.decode("utf-8", "replace"))
+    shutil.copyfile(FE / "src/index.css", sb / "index.css")
+
+    # 夹具只做一件事：把"接缝那一段"（`.ContentContainer`，粉/薄荷交界那道胶带是它的
+    # `::before`）与"置顶那张卡"（`.ContentContainer .TopArticle > .Top > .TopTape`）
+    # 挪进视口。`!important` 是刻意的：真规则是 `.ContentContainer .TopArticle` 这种两条
+    # 起步的选择器，夹具不抬特异度就压不动它。**只改位置/尺寸，一个层级属性都不碰。**
+    (sb / "index.html").write_text("""<!doctype html><html><head><meta charset="utf-8">
+<link rel="stylesheet" href="index.css">
+<link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="home.css">
+<link rel="stylesheet" href="sections.css">
+<link rel="stylesheet" href="vitrine.css">
+<style>
+ html,body{margin:0}
+ .ContentContainer{position:absolute !important;top:120px !important;left:0 !important;
+   right:0 !important;height:60px !important;min-height:0 !important}
+ .ContentContainer .TopArticle{position:absolute !important;top:150px !important;
+   left:40px !important;width:220px !important;height:40px !important}
+ /* 真页面上那道接缝胶带是 `pointer-events: none`（纯装饰，不挡滚动）。
+    `pointer-events` 只影响**命中测试**、与**绘制次序**无关 ⇒ 夹具把它打开，
+    好让 `elementFromPoint` 问得出"谁画在上面"这件事。层级属性一个没动。 */
+ .ContentContainer::before{pointer-events:auto !important}
+</style></head><body>
+<div class="frontRoot">
+  <section class="SelfDescription">
+    <div class="SayWords"></div>
+    <div class="heroRight" id="right">
+      <figure class="heroPanel"></figure>
+      <section class="vitrine" id="vit" data-layer="zoom">
+        <div class="vit-3d"><div class="vit-face vit-panel"></div></div>
+      </section>
+    </div>
+  </section>
+  <div class="ContentContainer" id="cc" data-layer="seam">
+    <div class="TopArticle" id="ta">
+      <span class="Top" id="top"><span class="TopTape" id="tape"
+        data-layer="ribbon">置顶</span></span>
+    </div>
+  </div>
+</div>
+<script>
+ // 放大态的那两个动作在真页面里是同生共死的（Vitrine/index.tsx 的同一个 effect）：
+ // `body.exhibit-zoomed` 抬整站、`is-zoomed` 把卡片换成满屏浮层。这里也一起切。
+ window.__zoom = (on) => {
+   document.body.classList.toggle('exhibit-zoomed', !!on);
+   document.getElementById('vit').classList.toggle('is-zoomed', !!on);
+ };
+ // 命中的是谁：往上找最近的带 `data-layer` 的祖先。放大窗口整个标着 `zoom`；
+ // 胶带在 pseudo 上 ⇒ `elementFromPoint` 回到它的宿主 `.ContentContainer`（`seam`）。
+ window.__hit = (x, y) => {
+   const el = document.elementFromPoint(x, y);
+   if (!el) return null;
+   const l = el.closest('[data-layer]');
+   return l ? l.dataset.layer : (el.className || el.tagName);
+ };
+ window.__colZ = () => getComputedStyle(document.getElementById('right')).zIndex;
+ // 两个探针点**现算**：缎带取 `.TopTape` 的中心，胶带取 `.ContentContainer` 上沿往下 7px
+ // （`::before` 是 top:0、高 15px）。同时报出它们是否落在放大窗口 `.vit-3d` 的矩形里
+ // —— 在窗口外面的话这一问是空的。
+ window.__probes = () => {
+   const c = (el) => { const r = el.getBoundingClientRect();
+     return [Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2)]; };
+   const t = document.querySelector('.TopTape');
+   const cc = document.querySelector('.ContentContainer');
+   if (!t || !cc) return null;
+   const v3 = document.querySelector('.vit-3d').getBoundingClientRect();
+   const inV3 = (p) => p[0] >= v3.left && p[0] <= v3.right && p[1] >= v3.top && p[1] <= v3.bottom;
+   const p1 = c(t), p2 = [Math.round(cc.getBoundingClientRect().left + cc.getBoundingClientRect().width / 2),
+                          Math.round(cc.getBoundingClientRect().top + 7)];
+   return {ribbon: {xy: p1, inV3: inV3(p1)}, seam: {xy: p2, inV3: inV3(p2)}};
+ };
+</script></body></html>""", encoding="utf-8")
+    return sb
+
+
+def probe_page(ok: bool, errs: list):
+    """开一个 900×400 的沙箱页（`pageerror` 收进 `errs`，**在 goto 之前就挂上**），
+    返回 (page, srv)。"""
+    sb = build_home(raise_col=ok)
+    srv = http.server.ThreadingHTTPServer(
+        ("127.0.0.1", 0), functools.partial(_Quiet, directory=str(sb)))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    page = BROWSER.new_page(viewport={"width": 900, "height": 400})
+    page.on("pageerror", lambda e: errs.append(str(e)))
+    page.goto(f"http://127.0.0.1:{srv.server_address[1]}/index.html")
+    page.wait_for_timeout(300)
+    return page, srv
+
+
+with sync_playwright() as p:
+    BROWSER = p.chromium.launch()
+
+    print("\n== ④ 向量空间放大态：首页那一列要盖得住缎带与接缝胶带 ==")
+    errs4: list[str] = []
+    pg4, srv4 = probe_page(ok=True, errs=errs4)
+    check("  夹具是好的（无 JS 报错、`.heroRight` / 放大窗口 / 缎带 / 接缝段都在）",
+          not errs4 and all(pg4.locator(s).count() == 1
+                            for s in ("#right", "#vit", ".TopTape", ".ContentContainer")),
+          "; ".join(errs4[:1]))
+    pg4.evaluate("() => window.__zoom(false)")
+    z_off = pg4.evaluate("() => window.__colZ()")
+    pg4.evaluate("() => window.__zoom(true)")
+    z_on = pg4.evaluate("() => window.__colZ()")
+    check("★ 抬升是**开关式**的：不放大时仍是 3（那时它不该插队），放大态才到 200",
+          z_off == "3" and z_on == "200", f"{z_off} → {z_on}")
+    pr = pg4.evaluate("() => window.__probes()")
+    check("★ 两个探针点都落在放大窗口 `.vit-3d` 的矩形之内（在外面的话下面的判据是空的）",
+          bool(pr) and pr["ribbon"]["inV3"] and pr["seam"]["inV3"],
+          f'{pr}')
+    for key, name in (("ribbon", "置顶缎带"), ("seam", "粉/薄荷接缝胶带")):
+        hit = pg4.evaluate("([x,y]) => window.__hit(x,y)", pr[key]["xy"])
+        check(f"★ 放大态下「{name}」那一点上最上面的是放大窗口（不是它自己）",
+              hit == "zoom", f"实测 {hit} @ {pr[key]['xy']}")
+    pg4.close()
+    srv4.shutdown()
+
+    print("\n== ④b 红基线：摘掉那两行抬升，上面那两条必须改判 ==")
+    errs5: list[str] = []
+    pg5, srv5 = probe_page(ok=False, errs=errs5)
+    check("  对照组页面本身是好的（无 JS 报错）", not errs5, "; ".join(errs5[:1]))
+    pg5.evaluate("() => window.__zoom(true)")
+    check("  对照组的 `.heroRight` 在放大态也停在 3（差别只在少了那两行）",
+          pg5.evaluate("() => window.__colZ()") == "3")
+    prb = pg5.evaluate("() => window.__probes()")
+    for key, name, want in (("ribbon", "置顶缎带", "ribbon"), ("seam", "粉/薄荷接缝胶带", "seam")):
+        hit = pg5.evaluate("([x,y]) => window.__hit(x,y)", prb[key]["xy"])
+        check(f"★ 对照组里「{name}」确实盖在放大窗口之上（⇒ 上面那两条有牙，"
+              f"不是「元素不存在也是绿的」）", hit == want, f"实测 {hit}")
+    pg5.close()
+    srv5.shutdown()
+
+    BROWSER.close()
+
 print()
 if FAILS:
     print(f"失败 {len(FAILS)} 项：")

@@ -138,9 +138,24 @@ HERO = """
 """.replace("__PETALS__", PETALS)
 
 
-def build_sandbox() -> pathlib.Path:
+# 红基线（第 ①c 组）用的补丁：把 `.heroRight` 宽度公式里那条"按剩余高度反算"的约束
+# 摘掉，退回 20261003 之前的两条线。**逐字匹配** —— 匹配不上就当场 assert，
+# 不让它悄悄退化成"对照组其实是另一个页面"（那样红基线会变成永真）。
+WIDTH_FULL = ("min(38vw, 520px, max(300px, calc((100vh - var(--hero-pad-t) "
+              "- var(--hero-pad-b) - 24px - 8px) / 1.1875)))")
+WIDTH_OLD = "min(38vw, 520px)"
+
+
+def build_sandbox(broken_width: bool = False) -> pathlib.Path:
     sb = pathlib.Path(tempfile.mkdtemp(prefix="homehero-"))
-    for name, src in (("home.css", SASS_FILE), ("vitrine.css", VITRINE_SASS)):
+    srcs = [("home.css", SASS_FILE), ("vitrine.css", VITRINE_SASS)]
+    if broken_width:
+        text = SASS_FILE.read_text(encoding="utf-8")
+        assert text.count(WIDTH_FULL) == 1, "红基线补丁没找到 `.heroRight` 的宽度公式"
+        patched = sb / "_home.broken.sass"
+        patched.write_text(text.replace(WIDTH_FULL, WIDTH_OLD), encoding="utf-8")
+        srcs[0] = ("home.css", patched)
+    for name, src in srcs:
         r = subprocess.run(["node", "-e", SASS_JS, str(src)], cwd=str(FE), capture_output=True)
         if r.returncode != 0:
             raise SystemExit(f"sass 编译失败（{src.name}）：\n" + r.stderr.decode("utf-8", "replace"))
@@ -168,7 +183,9 @@ def build_sandbox() -> pathlib.Path:
 
 
 SANDBOX = build_sandbox()
+BROKEN = build_sandbox(broken_width=True)
 URL = SANDBOX.as_uri() + "/index.html"
+BROKEN_URL = BROKEN.as_uri() + "/index.html"
 HERO_CSS = (SANDBOX / "home.css").read_text(encoding="utf-8")
 VITRINE_CSS = (SANDBOX / "vitrine.css").read_text(encoding="utf-8")
 
@@ -262,7 +279,31 @@ def css_rule(css: str, sel: str) -> str:
 
 # 舞台：`.SelfDescription` 的左内边距 10%、右内边距 6%（桌面档）——"组居中"的判据锚在
 # 内容盒中心 = 0.52 × 视口宽。写死常量会随 sass 改动静默失效，所以从编译产物里现场读。
-PAD_L = re.search(r"padding:\s*112px\s+6%\s+148px\s+10%", HERO_CSS) is not None
+#
+# 上下留白自 20261003 起走两个自定义属性（`--hero-pad-t/b`）而不是字面量：`.heroRight`
+# 的宽度公式要**读它们**来按"剩下的高度"反算列宽，两处写死就再也对不上。这里也从产物里
+# 现场读那一对（第一条声明在桌面档；手机档那条同名覆写排在后面，`re.search` 取的首条即桌面值）。
+def _px_var(css: str, name: str) -> float | None:
+    m = re.search(re.escape(name) + r":\s*([\d.]+)px", css)
+    return float(m.group(1)) if m else None
+
+
+PAD_T, PAD_B = _px_var(HERO_CSS, "--hero-pad-t"), _px_var(HERO_CSS, "--hero-pad-b")
+PAD_L = (PAD_T is not None and PAD_B is not None
+         and re.search(r"padding:\s*var\(--hero-pad-t\)\s+6%\s+var\(--hero-pad-b\)\s+10%",
+                       HERO_CSS) is not None)
+
+# 右列高度 = 0.75w（手账内页 4:3 的 border-box）+ 24px（`.vitrine` 的 margin-top）
+#           + 0.4375w（`.vit-3d` 的 16:7）= 1.1875w + 24  ⇒  `1.1875` 就是那条推导线。
+PANEL_RATIO, VIT_RATIO, VIT_GAP, ARROW_ROOM = 0.75, 0.4375, 24.0, 8.0
+HERO_RATIO = PANEL_RATIO + VIT_RATIO
+
+
+def expect_right_w(vw: float, vh: float) -> float:
+    """`.heroRight` 三条宽度约束（与 sass 那一处注释同源）：
+    `min(38vw, 520px, max(300px, (vh − 上留白 − 下留白 − 24 − 8) / 1.1875))`。"""
+    by_height = (vh - (PAD_T or 112.0) - (PAD_B or 148.0) - VIT_GAP - ARROW_ROOM) / HERO_RATIO
+    return min(0.38 * vw, 520.0, max(300.0, by_height))
 
 print("== ① 桌面档：文字列与右列**居中成对**、右列两张卡同宽相接 ==")
 with sync_playwright() as p:
@@ -272,15 +313,19 @@ with sync_playwright() as p:
     pg.on("pageerror", lambda e: errs.append(str(e)))
     pg.goto(URL)
 
-    check("桌面档的内边距仍是 `112px 6% 148px 10%`（左 10% 是五轮的新值，"
-          "下面的'组心'判据按它推）", PAD_L)
+    check(f"桌面档的内边距是 `{PAD_T:g}px 6% {PAD_B:g}px 10%`，且上下两值走 `--hero-pad-t/b`"
+          "（左 10% 是五轮的新值，下面的'组心'判据按它推；两个变量是第 ①b 组反算列宽的输入）",
+          PAD_L)
 
     for vw in (1366, 1440, 1920):
         m = seam_at(pg, vw)
         hero, say, right, panel, vit = m["hero"], m["say"], m["right"], m["panel"], m["vit"]
         gap = max(32, min(0.04 * vw, 80))
-        check(f"{vw}px：右列宽 = min(38vw, 520) = {round(min(0.38 * vw, 520))}",
-              abs(right["w"] - min(0.38 * vw, 520)) <= 1, f"实测 {right['w']}")
+        exp_w = expect_right_w(vw, 900)
+        by_h = (900 - PAD_T - PAD_B - VIT_GAP - ARROW_ROOM) / HERO_RATIO
+        check(f"{vw}px：右列宽 = min(38vw, 520, 按剩余高度反算 {by_h:.0f}) = {exp_w:.0f}"
+              "（第三条约束就是 20261003 第 1 条那个修法）",
+              abs(right["w"] - exp_w) <= 1, f"实测 {right['w']}")
         # 居中：两列的**组心**落在内容盒中心（0.10vw 起、0.94vw 止 ⇒ 中心 0.52vw）。
         # 这一条是五轮的核心要求，`space-between`/`flex-start` 都会给出别的数。
         pair_center = (say["left"] + right["right"]) / 2
@@ -310,6 +355,48 @@ with sync_playwright() as p:
         check(f"{vw}px：无横向溢出（色块负偏移被 hero 的 overflow 兜住）",
               m["docOverflow"]["scrollW"] <= m["docOverflow"]["clientW"] + 1,
               f"scrollW {m['docOverflow']['scrollW']} / clientW {m['docOverflow']['clientW']}")
+
+    print("\n== ①b ★ 矮视口：签名与下翻钮必须落在首屏折线之内（20261003 用户第 1 条）==")
+    # 用户报的正是这一条：「个性签名和下翻按钮必须下滚才能看见」。hero 的高度是**内容撑出来的**
+    # （112 + 右列 + 148），而右列高 = 1.1875 × 列宽 + 24 ⇒ 宽度不收窄时 1366×768 / 1440×800
+    # 两档的 hero 在 900 上下，`.heroBottom`（绝对定位贴 hero 底）连签名与箭头一起被顶到折线
+    # 以下。这里量的是"折线以下"这件事本身，不量任何中间量；`1920×1080` 那档是**对照组**：
+    # 它本来就不溢出（min-height 兜住了），任何一档发红都能区分"修法错了"和"量错了"。
+    for vw, vh in ((1366, 768), (1440, 800), (1440, 900), (1920, 1080)):
+        pg.set_viewport_size({"width": vw, "height": vh})
+        mm = pg.evaluate(PAINT, {"markup": HERO, "dark": False})
+        hh, sc, osx = mm["hero"], mm["scroll"], mm["onesay"]
+        check(f"{vw}×{vh}：hero 不长于视口（{hh['h']} ≤ {vh}）"
+              "—— 多出来的那几像素正好是被顶下去的那几像素",
+              hh["h"] <= vh + 0.5, f"hero.h {hh['h']} / vh {vh}")
+        check(f"{vw}×{vh}：★ 下翻钮整颗在首屏内（底缘 {sc['bottom']} ≤ {vh}）",
+              sc["bottom"] <= vh + 0.5, f"scroll.bottom {sc['bottom']}")
+        check(f"{vw}×{vh}：  签名也在首屏内（{osx['top']}..{osx['bottom']} 落在 0..{vh}）",
+              osx["top"] >= -0.5 and osx["bottom"] <= vh + 0.5,
+              f"onesay {osx['top']}..{osx['bottom']}")
+        check(f"{vw}×{vh}：  两件都还在 hero 之内（不是被 overflow: hidden 裁掉才算「看不见」）",
+              sc["bottom"] <= hh["bottom"] + 0.5 and osx["bottom"] <= hh["bottom"] + 0.5,
+              f"hero.bottom {hh['bottom']} / scroll {sc['bottom']} / onesay {osx['bottom']}")
+
+    print("\n== ①c 红基线：摘掉「按剩余高度反算」，①b 必须变红（否则那组是永真的）==")
+    pgb = br.new_page(viewport={"width": 1366, "height": 768})
+    errsb: list[str] = []
+    pgb.on("pageerror", lambda e: errsb.append(str(e)))
+    pgb.goto(BROKEN_URL)
+    mb = pgb.evaluate(PAINT, {"markup": HERO, "dark": False})
+    check("对照组页面本身是好的（sass 编译过、无 JS 报错、hero 在）",
+          not errsb and mb["hero"] is not None, "; ".join(errsb[:1]))
+    check("对照组的右列宽退回旧的两条线 `min(38vw, 520)`（差别只在少了第三条约束）",
+          abs(mb["right"]["w"] - min(0.38 * 1366, 520)) <= 1, f"实测 {mb['right']['w']}")
+    check("★ 对照组里 hero 撑过视口（这就是用户看见「要下滚」的那一幕）",
+          mb["hero"]["h"] > 768 + 0.5, f"hero.h {mb['hero']['h']}")
+    check("★ 对照组里下翻钮确实落在折线以下（⇒ ①b 那条有牙，不是「元素不存在也是绿的」）",
+          mb["scroll"]["bottom"] > 768, f"scroll.bottom {mb['scroll']['bottom']}")
+    check("★ 对照组里签名同样落在折线以下",
+          mb["onesay"]["bottom"] > 768, f"onesay.bottom {mb['onesay']['bottom']}")
+    check("同一视口下对照组文字列左缘仍是 10%（⇒ 两组是同一个页面，只在右列宽上分岔）",
+          abs(mb["say"]["left"] - 0.10 * 1366) <= 1, f"say.left {mb['say']['left']}")
+    pgb.close()
 
     m = seam_at(pg, 1440)
     title = m["title"]
@@ -786,4 +873,5 @@ with sync_playwright() as p:
     br.close()
 
 shutil.rmtree(SANDBOX, ignore_errors=True)
+shutil.rmtree(BROKEN, ignore_errors=True)
 print(f"\n{'✗' if FAIL else '✓'} home-hero：{PASS} 通过 / {FAIL} 失败")
