@@ -9,7 +9,9 @@
 > （**另一个仓**，实际在跑的固件在那儿）；本仓 [iot/firmware/](../iot/firmware/) 是抽出来的
 > 最小骨架与接口说明。
 >
-> ⚠️ 文中 `saudade.site` 是**示例站点**，换成你自己的域名（与站点证书一致）。
+> ⚠️ 文中 `<你的域名>` 是占位，换成你自己的域名（与站点证书一致）。作者的线上演示站是
+> `saudade.site`——凡是"照着填进你自己环境"的值都写成了占位，凡是能直接对着演示站跑的
+> 复现命令才留着真域名。
 
 ---
 
@@ -19,10 +21,10 @@
 网页控制台 (device-console/)                ESP32 设备
     │  localStorage.tokenKey (博客 JWT)        │  TLS 证书链校验
     ▼                                          ▼
-GET/PUT /device-api/api/*               mqtts://saudade.site:8883 (EMQX)
+GET/PUT /device-api/api/*               mqtts://<你的域名>:8883 (EMQX)
     │  Bearer JWT                             │  认证链：JWT 链(网页用户) → HTTP 链(设备)
     ▼                                          ▼
-device-service (:3100) ◄─────────── MQTT 1883 (本机内部) ────────────┘
+device-service (:3100) ◄─────────── MQTT 1883 (回环) ────────────┘
     │  SQLite：devices / config_history / telemetry / cmd_history
     └─► 设备事件经 console/<owner>/devices/<id>/<kind> 转发回控制台实时流
 ```
@@ -38,9 +40,9 @@ device-service (:3100) ◄─────────── MQTT 1883 (本机内
 
 | 通道 | 地址 | 设备用 | 网页用 |
 |---|---|---|---|
-| MQTT | `mqtts://saudade.site:8883`（TLS） | ✅ 指令/配置/遥测/状态 | 控制台实时流（WSS /mqtt） |
-| REST | `https://saudade.site/device-api/api/...` | OTA 轮询（Basic 认证） | ✅ 全部管理 API（JWT） |
-| 控制台 | `https://saudade.site/device-console/` | — | ✅ 人机交互 |
+| MQTT | `mqtts://<你的域名>:8883`（TLS） | ✅ 指令/配置/遥测/状态 | 控制台实时流（WSS /mqtt） |
+| REST | `https://<你的域名>/device-api/api/...` | OTA 轮询（Basic 认证） | ✅ 全部管理 API（JWT） |
+| 控制台 | `https://<你的域名>/device-console/` | — | ✅ 人机交互 |
 
 ---
 
@@ -52,7 +54,7 @@ device-service (:3100) ◄─────────── MQTT 1883 (本机内
    ```
    ⚠️ `device_key` 只返回这一次，丢失只能删除重建设备。
 2. **填入固件**：把 `device_id`/`device_key` 写入固件配置（参考实现：`main.c` 顶部宏）。
-3. **连上 MQTT**：`mqtts://saudade.site:8883`，用户名=`device_id`，密码=`device_key`，
+3. **连上 MQTT**：`mqtts://<你的域名>:8883`，用户名=`device_id`，密码=`device_key`，
    校验服务器证书链（正式证书）。
 4. **订阅/上报**：订阅 `devices/<id>/config`、`devices/<id>/cmd`；发布遥测、状态、回执。
 5. **验证**：控制台看到设备上线 → 下发一条显示指令 → 设备执行 + 回执 ✓。
@@ -66,8 +68,8 @@ device-service (:3100) ◄─────────── MQTT 1883 (本机内
 | 监听 | 地址 | 用途 |
 |---|---|---|
 | MQTTS **8883** | 公网 | **设备接入**（TLS，正式证书，与 HTTPS 同源） |
-| TCP 1883 | 仅本机 | device-service 内部连接 |
-| WSS 8083 | 仅本机（nginx /mqtt） | 控制台实时流 |
+| TCP 1883 | 仅回环 | device-service 内部连接 |
+| WSS 8083 | 仅回环（nginx /mqtt） | 控制台实时流 |
 
 认证链（顺序匹配）：
 1. **JWT 认证链**（网页用户）：password = 博客 JWT，HMAC 校验（secret = 博客 `JWT_SECRET`）
@@ -216,7 +218,7 @@ A/B 分区 → 重启 → 遥测上报新 `firmware` 确认。
 
 // 2. MQTT 配置：TLS 证书链 + 用户名/密码 + 遗嘱
 esp_mqtt_client_config_t cfg = {
-    .broker.address.uri = "mqtts://saudade.site:8883",
+    .broker.address.uri = "mqtts://<你的域名>:8883",
     .broker.verification.certificate = (const char *)saudade_site_ca_pem,  // 嵌入证书
     .credentials.username = DEVICE_ID,
     .credentials.password = DEVICE_KEY,
@@ -243,7 +245,7 @@ esp_mqtt_client_config_t cfg = {
 ## 6. 运维注意
 
 - **安全组**：公网需放行 8883（MQTTS）。REST 全走 443 无需额外放行。
-- **证书**：MQTTS 证书与 HTTPS 同源（saudade.site），到期需续期并同步
+- **证书**：MQTTS 证书与 HTTPS 同源（同一张证书覆盖你的域名），到期需续期并同步
   EMQX 的证书目录（20260831 已续期至 **2026-11-07**；nginx 侧另有一份同源副本，**续期要两处同步**）。
 - **设备服务部署**：device-service 不在本仓库、不经 CI（独立目录），改动需手动
   `cargo build --release` + 重启 device 服务（3.7GB 机器注意内存）。

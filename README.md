@@ -10,10 +10,15 @@
 Python Agent（手写 LangGraph 图：**planner ⇄ execute → model → gate**）。对话记忆全部外置
 MySQL，agent 进程本身无状态：每次请求都是新线程，连续性由后端注入历史与摘要维持。
 
-首页另有一件展品：**文章向量空间图谱**。它把 7 篇文章抽出的 400 个关键词按 embedding 投到
-三维空间，点是词、相关的词之间连线，可拖动视角、双击词跳转文章，也能在下方输入框里做
-**向量检索**定位。它与对话是两条独立的检索线：图谱查询走 1024 维精确余弦（纯 Python 点积），
-agent 问答走词法 BM25（语料小、机器内存受限）。细节见 [docs/word-graph.md](docs/word-graph.md)。
+首页另有一件展品：**文章向量空间图谱**。它把本站文章抽出的关键词按 embedding 投到三维空间，
+点是词、相关的词之间连线，可拖动视角、双击词跳转文章，也能在下方输入框里做**向量检索**定位。
+
+图谱是**按站点构建**的产物：agent 仓的建图脚本从你自己的文章库抽词、算 embedding、布局，
+并在产物里记下它属于哪个站点。构建时若这份标记与本站不符（例如直接克隆了别人的仓库、
+没重新建图），这件展品**不会被注册**——你既不会看到别人的语料，也不会看到一张坏掉的卡片。
+
+它与对话是两条独立的检索线：图谱查询走 1024 维精确余弦（纯 Python 点积），agent 问答走
+词法 BM25（语料量小，且要为低配部署留内存余量）。细节见 [docs/word-graph.md](docs/word-graph.md)。
 
 ## 架构一览
 
@@ -46,8 +51,9 @@ Agent 的核心理念是**把执行层的自由拿掉**（20260903 架构裁决�
 
 ## 开发流程（重要约定）
 
-> 本机既是开发机也是生产服务器，**部署一律走 CI，本机不编译、不手动构建**。机器仅 3.7GB
-> 内存，20260830 曾因本地 `vite build` 内存不足拖垮整机。本地验证只用轻量命令。
+> **部署一律走 CI：本地不编译、不手动构建。** `vite build` 与 `cargo build --release`
+> 的内存开销都很大，内存不足时会 OOM 甚至拖垮整台机器（本项目就这么翻过一次车）。
+> 本地验证只用轻量命令（`cargo check` / `tsc` / `npm test`）。
 
 ```text
 git push（主仓库 cn_sora_blog / agent 仓库）
@@ -79,13 +85,13 @@ git push（主仓库 cn_sora_blog / agent 仓库）
 | IoT device-service | :3100 | 设备服务（源码在独立目录，**不经 CI**，改后手动构建重启）。仅启用 IoT 时存在 |
 | nginx / EMQX | :443 / :8883 | 入口 / MQTT over TLS（8883 是唯一对公网开放的设备端口）。EMQX 同理 |
 
-日志统一在 `logs/`，按组分层（logrotate 按日轮转，14 天归档）：
+日志统一在 `logs/`，按组分层（logrotate 按日轮转、定期归档）：
 
 - `logs/agent/` —— **agent 组**：agent.log + `traces/`（每轮对话的节点耗时 trace JSON，排障首选）
 - `logs/frontend/` —— **前端组**：monitor.log（浏览器 JS 异常 / API 失败自动上报，全量仅去重）
 - `logs/` 根 —— 后端组：rust.log（含全局 access 行）、health.log（探针）、deploy.log（CI 触发）、device.log
 
-探针 `scripts/healthcheck.sh`（cron 每分钟）：服务存活检查 + uvicorn worker 崩溃检测 +
+探针 `scripts/healthcheck.sh`（建议由 cron 周期执行）：服务存活检查 + uvicorn worker 崩溃检测 +
 nginx error.log 增量扫描，异常追加 health.log。
 
 ## 给贡献者

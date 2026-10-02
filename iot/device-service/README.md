@@ -1,6 +1,6 @@
 # device-service（设备服务，Rust, :3100）
 
-设备注册表、`device_key` 校验、参数配置下发、遥测缓存。它连本机 EMQX（内部账号），
+设备注册表、`device_key` 校验、参数配置下发、遥测缓存。它连同机的 EMQX（内部账号），
 对外只经 nginx 的 `/device-api/`。，与博客共用同一套 JWT（`JWT_SECRET`）。
 
 ## ⚠️ 服务本体**不在本仓**
@@ -25,7 +25,7 @@
 
 | 变量 | 用途 |
 |---|---|
-| `DEVICE_SVC_USER` / `DEVICE_SVC_KEY` | 连本机 EMQX 的内部账号（EMQX 侧特判 `svc` 为 superuser） |
+| `DEVICE_SVC_USER` / `DEVICE_SVC_KEY` | 连同机 EMQX 的内部账号（EMQX 侧特判 `svc` 为 superuser） |
 | `DEVICE_LISTEN` | 监听地址，默认 `127.0.0.1:3100` |
 | `DEVICE_DB_PATH` | SQLite 落盘路径（设备表、配置历史、遥测） |
 | `DEVICE_LOG_FILE` | 额外追加写的日志文件（systemd 下 journald 另有一份） |
@@ -47,7 +47,7 @@ POST /api/devices/auth      # EMQX 的 HTTP 认证链回调（见 ../emqx/README
 ```bash
 DEVICE_DIR=/path/to/device-service python3 iot/device-service/gen_svc_env.py   # 生成 svc.env (0600)
 
-cargo build --release        # ⚠️ 在内存充足的机器上编；本机 3.7G 内存编译会拖垮整机
+cargo build --release        # ⚠️ 在内存充足的机器上编；小内存机器上编译会拖垮整机
 
 sudo cp iot/device-service/saudade-device.service.template /etc/systemd/system/saudade-device.service
 sudo vi /etc/systemd/system/saudade-device.service    # 改掉 <...> 四处占位

@@ -34,7 +34,7 @@ EMQX_ADMIN_PASS='<dashboard 管理员口令>' python3 iot/emqx/configure_emqx.py
    网页控制台与设备共用同一套令牌，`exp` 由 broker 自动校验。
 3. **认证链 2：`password_based` + `http` backend** —— 设备用 `device_id` + `device_key`
    连上来时，broker 回调 device-service 的 `/api/devices/auth` 问"这设备合法吗"。
-   ⇒ **device-service 没装的话，设备连不上**（这是两条链里唯一依赖本机服务的那条）。
+   ⇒ **device-service 没装的话，设备连不上**（这是两条链里唯一依赖同机服务的那条）。
 4. **授权：`no_match = deny`**（白名单式）+ built-in database 规则，按命名空间给：
    `users/${username}/#`、`devices/${username}/#`、`console/${username}/#`、`broadcast/#`。
    `${username}` 是 EMQX 的占位符，展开成连接时用的用户名 ⇒ 每个用户只能碰自己的主题。
@@ -51,7 +51,7 @@ EMQX 5.8 的 `/authorization/sources/built_in_database/rules/all` 那个 POST �
 
 | 端口 | 绑到 | 谁用 |
 |---|---|---|
-| 1883 | `127.0.0.1` | device-service 连本机 broker |
+| 1883 | `127.0.0.1` | device-service 连同机 broker |
 | 8083 | `127.0.0.1` | 网页控制台的 WSS —— **经 nginx 转**（`/mqtt`，见 `../nginx/`） |
 | 18083 | `127.0.0.1` | Dashboard（**别挂公网**） |
 | **8883** | `0.0.0.0` | **设备直连**（mqtts，唯一对外端口） |

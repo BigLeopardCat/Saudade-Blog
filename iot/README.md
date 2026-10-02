@@ -158,4 +158,4 @@ sudo systemctl restart saudade-agent && sleep 8
   它仍是一枚合法身份。这条是已知缺口，如实记在
   [docs/security-boundary.md](../docs/security-boundary.md)，别再默认"冻结 = 全站下线"。
 - `configure_emqx.py` 的 API Key、`svc.env` 的设备服务口令、`/etc/emqx/certs/` 下的证书
-  都是凭据：本目录的 `.gitignore` 挡住了本机生成的落盘文件，**别手工提交**。
+  都是凭据：本目录的 `.gitignore` 挡住了本地生成的落盘文件，**别手工提交**。
