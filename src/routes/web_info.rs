@@ -329,9 +329,30 @@ pub async fn update_social_info(
     Json(ApiResponse::success("Social info updated".to_string()))
 }
 
-/// 留言审核开关读取（20260905，talks.rs 入库前调用）：(AI 审核, 人工复核) 二元组，
+/// 留言板（`src=board`）那两个审核开关的键名。
+///
+/// **不要改名**：它们是存量数据的键，`web_info` 里已经躺着 "true"/"false"，
+/// 改名等于让已经打开的闸静默变成"关"（20260905 起的既有线上配置）。评论用的
+/// 是另外两个键（见 `COMMENT_REVIEW_KEYS`），两套开关互不影响。
+pub const BOARD_REVIEW_KEYS: (&str, &str) = ("aiReviewEnabled", "manualReviewEnabled");
+
+/// 文章评论那两个审核开关的键名（20261002 评论管理）。
+///
+/// **不复用留言板那两个**：留言板与评论是两种内容，管理员完全可能只想审其中一种；
+/// 共用一个开关之后，"我只想给评论开人工审核"就表达不出来了。
+/// 不需要迁移——`web_info` 是 KV 表，缺键的取值天然是"关"，与默认态一致。
+pub const COMMENT_REVIEW_KEYS: (&str, &str) =
+    ("commentAiReviewEnabled", "commentManualReviewEnabled");
+
+/// 审核开关读取的**通用形**（20260905，talks.rs 入库前调用）：(AI 审核, 人工复核) 二元组，
 /// 值存 "true"/"false"，缺 key/解析失败一律视为关（不影响既有默认全通过的现状）。
-pub async fn review_switches(db: &sea_orm::DatabaseConnection) -> (bool, bool) {
+///
+/// 键名由调用方给：留言板与评论各两个键，规则同一条（见两个 `_KEYS` 常量）。
+pub async fn review_switches_of(
+    db: &sea_orm::DatabaseConnection,
+    ai_key: &str,
+    manual_key: &str,
+) -> (bool, bool) {
     async fn get_bool(db: &sea_orm::DatabaseConnection, key: &str) -> bool {
         web_info::Entity::find()
             .filter(web_info::Column::KeyName.eq(key))
@@ -342,5 +363,11 @@ pub async fn review_switches(db: &sea_orm::DatabaseConnection) -> (bool, bool) {
             .map(|i| i.value == "true")
             .unwrap_or(false)
     }
-    (get_bool(db, "aiReviewEnabled").await, get_bool(db, "manualReviewEnabled").await)
+    (get_bool(db, ai_key).await, get_bool(db, manual_key).await)
+}
+
+/// 留言板的两个开关（`BOARD_REVIEW_KEYS` 的薄包装）。
+pub async fn review_switches(db: &sea_orm::DatabaseConnection) -> (bool, bool) {
+    let (ai_key, manual_key) = BOARD_REVIEW_KEYS;
+    review_switches_of(db, ai_key, manual_key).await
 }
