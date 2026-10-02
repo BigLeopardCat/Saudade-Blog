@@ -54,8 +54,11 @@ const boardApproved = bodyOf(talks, 'async fn board_approved');
 console.log('裁决本体 —— 只有一份：');
 ok(decide.length > 0, 'decide_review 存在');
 ok(talks.includes('pub(crate) async fn decide_review('), 'decide_review 是 pub(crate)（评论模块要调它）');
-ok(/pub\(crate\) async fn decide_review\(\s*uid: i32,\s*content: &str,\s*ai_on: bool,\s*manual_on: bool,/.test(talks),
+ok(/pub\(crate\) async fn decide_review\(\s*tag: &str,\s*uid: i32,\s*content: &str,\s*ai_on: bool,\s*manual_on: bool,/.test(talks),
     '开关**收成参数**（自己不去读库 ⇒ 评论可以用另一对键）');
+ok(talks.includes('\"{tag}\"') || /\[\{tag\}\]/.test(talks),
+    '日志标签也是参数（两类内容共用一个实现后，日志里分不出是谁在失败等于白记）');
+ok(talks.includes('decide_review("board", uid'), '留言板传 tag=\"board\"');
 ok(!decide.includes('state.db'), 'decide_review 不碰库（签名里也没有 state）');
 ok(!/fn decide_review[\s\S]{0,120}state: &Arc<AppState>/.test(talks), 'decide_review 不收 AppState');
 
@@ -123,6 +126,31 @@ const commentKeys = keysOf('COMMENT_REVIEW_KEYS');
 ok(boardKeys.length === 2 && commentKeys.length === 2, '两对键各是两个字面量', { boardKeys, commentKeys });
 ok(boardKeys.every((k) => !commentKeys.includes(k)),
     '两对键**没有重叠**（重叠 = 改一个开关会连带改另一个）', { boardKeys, commentKeys });
+
+console.log('\n评论 —— 复核的是同一份裁决，不是照抄的一份：');
+const comments = read('src/routes/comments.rs');
+ok(comments.includes('super::talks::decide_review("comment", uid'),
+    '评论调的是 talks::decide_review（tag=\"comment\"）');
+for (const [needle, why] of [
+    ['AGENT_URL', 'AI 端点地址'],
+    ['verdict', '裁决词'],
+    ['"pass"', 'pass 分支'],
+    ['AiReason', 'AI 说明的裁决映射'],
+    ['Some("flag"', '存疑分支'],
+]) {
+    ok(!comments.includes(needle), `评论模块里**没有**${why}的副本`);
+}
+const routes = read('src/routes/mod.rs');
+const pubBlock = routes.slice(routes.indexOf('let public_routes'), routes.indexOf('let protected_routes'));
+const protBlock = routes.slice(routes.indexOf('let protected_routes'));
+ok(pubBlock.includes('/api/public/notes/:id/comments'),
+    '评论的公开读写挂在 public_routes（挂进 protected 域就是普通用户 403）');
+ok(pubBlock.includes('/api/public/comments/:id'), '自删也挂在 public_routes');
+ok(!protBlock.includes('/api/public/notes/:id/comments'), 'protected 域里没有它');
+ok(protBlock.includes('/api/protect/comments'), '后台三条挂在 protected_routes（要 admin 守卫）');
+ok(!pubBlock.includes('/api/protect/comments'), '后台接口没漏进公开域');
+ok(/COMMENT_REVIEW_KEYS/.test(comments) && comments.includes('review_switches_of'),
+    '评论读的是自己那对开关键');
 
 console.log(`\nreview-gate-single-source: ${passed} 通过, ${failed} 失败`);
 process.exit(failed ? 1 : 0);

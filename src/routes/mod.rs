@@ -20,6 +20,7 @@ pub mod notice;   // 单用户站内通知（20260923；留言审核结果的首
 pub mod todos;    // 后台首页待办（20260924；整份列表按用户落库）
 pub mod quota;    // 用户对话额度（20260929；上限与算术在 crate::quota，本模块只管读写）
 pub mod note_stats; // 文章阅读量/点赞量（20260930；**绝不能记进 get_note_detail**，见模块头注）
+pub mod comments;   // 文章评论（20261002）：审核复用 talks::decide_review，存储走 note_comment 表
 
 use axum::{
     routing::{get, post, delete, put},
@@ -153,6 +154,16 @@ pub fn create_router(state: AppState) -> Router {
         // 河灯留言板（留言）：公开拉取，发布须登录，与说说各自独立（src=board）
         .route("/api/public/board", get(talks::list_boards).post(talks::create_board))
 
+        // 文章评论（20261002）：读取**不要求登录**（文章详情页本身是公开的，讨论区跟着它，
+        // 未登录时 mine 恒 false）；发布与自删要求登录（handler 内自己 auth）。
+        // ⚠️ 这三条必须留在 public_routes：protected_routes 域内由 auth_guard 全量要求
+        // 管理员，挂过去就是普通用户 403（评论区对全体访客关闭）。
+        .route(
+            "/api/public/notes/:id/comments",
+            get(comments::list_comments).post(comments::create_comment),
+        )
+        .route("/api/public/comments/:id", delete(comments::delete_my_comment))
+
         // Web/User Public
         .route("/api/public/user", get(web_info::get_user_info))
         .route("/api/public/social", get(web_info::get_social_info))
@@ -212,6 +223,11 @@ pub fn create_router(state: AppState) -> Router {
         )
         // 追加一条（20260926）：agent 安排日程用的通道——它手里没有那份列表，
         // 整份覆盖会抹掉主人的改动，所以单独给一条"只加不覆盖"的接口。
+        // 评论管理（20261002）：挂在 admin 守卫域内（后台页面用）
+        .route("/api/protect/comments", get(comments::list_comments_admin))
+        .route("/api/protect/comments/:id/audit", put(comments::audit_comment))
+        .route("/api/protect/comments/:id", delete(comments::delete_comment_admin))
+
         .route("/api/protected/todos/item", post(todos::add_todo))
         // 翻完成标记（20260926）：同一族的第二条最小通道——按**正文**认出唯一那一行、
         // 只翻它的 done（查无此条/有多条一律零写，判据见 todos.rs 的 pick_todo）。
