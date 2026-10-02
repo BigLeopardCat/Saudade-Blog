@@ -410,12 +410,26 @@ cd <仓库根> && saudade-blog-agent/.venv/bin/python \
 #       `check_freeze` / `check_role_change`，话术在 `src/routes/temp_user.rs`）：
 #         · 冻结/解冻：「不能{冻结|解冻}自己的账号」/「不能{冻结|解冻}超级管理员账号」/
 #           「管理员之间不可互相{冻结|解冻}」/「只有管理员可以冻结或解冻账号」
-#         · 变更身份：「只有超级管理员可以变更账号身份」/「不能变更自己的身份」/
+#         · 变更身份：「只有管理员可以变更账号身份」/「不能变更自己的身份」/
 #           「不能变更超级管理员的身份」/「站内没有这个身份」/「超级管理员身份不能在这里
-#           指派，要增加请走数据库迁移」
+#           指派，要增加请走数据库迁移」/「管理员只能变更普通用户或杂鱼的身份」/
+#           「管理员只能把账号改成普通用户或杂鱼」
 #       agent 的冻结/解冻技能要求模型**逐字转述**这里的原话（不复述、不翻译成"系统故障"），
-#       所以改措辞等于改契约：改完要同时看 agent 侧 `agent/skills.py` 的 `reply_contract`
-#       与 `docs/` 里的说明。**策略本身只在这里实现一份**，agent 侧不复制判据。
+#       20261002 批 J 后 `account_set_role` 同样逐字转述；所以改措辞等于改契约：改完要同时
+#       看 agent 侧 `agent/skills.py` 的 `reply_contract` 与 `docs/` 里的说明。
+#       **策略本身只在这里实现一份**，agent 侧不复制判据（`check_role_change` 是唯一一份，
+#       agent 连"能不能改/能改成什么"都不预检——见 `agent/authz.py` 里 `set_account_role`
+#       的注：冻结预检那次"更保守但说错政策"就是复制判据的代价）。
+#    e) **变更身份的授权矩阵（20261002 批 J）**：发起人判据从 `is_superadmin` 放宽为
+#       `can_access_console`（管理员**或**超管），但**只对非超管发起人**加"低两档"约束：
+#       `target_role` 与 `new_role` **都**必须 ∈ `{普通用户, 杂鱼}`，否则拒（分别是
+#       `AdminTargetTier` / `AdminAssignTier` 两句）。超管行为不变（除超管外四档都能改派）。
+#       逐格策略表在 `src/authz.rs` 的 `check_role_change` 单测里（含 admin↔超管两个方向
+#       的新案例），`cargo test --lib authz::` 是那张表的锁。
+#    f) **账号变更通知落名（20261002 批 J）**：`set_user_role` 与 `set_user_status`
+#       （冻结/解冻）的正文首段由 `actor_label(row)` 拼出 = `{身份中文}「{昵称}」（uid={id}）`
+#       （昵称为空回退账号名）。此前写死"博主…"，转发起人来做时当事人读到的是一句错话。
+#       agent 代理执行走的也是这两个端点，所以通知与审计**自动覆盖**，无需第二处实现。
 #    d) 超管的三道防线（20260926）：账号列表/报表不列 superadmin 行（界面 + agent 的
 #       名录来源）→ `check_freeze`/`check_role_change` 的 `TargetSuperadmin` → 只见于
 #       数据库迁移。`cargo test --lib authz::` 逐格锁着策略表。
