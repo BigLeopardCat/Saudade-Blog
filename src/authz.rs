@@ -124,7 +124,7 @@ pub fn check_freeze(
 /// 变更身份被拒的原因。
 #[derive(Debug, PartialEq, Eq)]
 pub enum RoleChangeDenial {
-    /// 发起人不是超级管理员 —— 这是唯一一条与发起人有关的判据
+    /// 发起人自己没有后台管理面权限（秘书/普通用户/杂鱼/未知角色）
     NotPermitted,
     /// 目标是发起人自己：改了就把自己锁在外面（降级自己 = 当场失去改回来的能力）
     SelfTarget,
@@ -134,9 +134,38 @@ pub enum RoleChangeDenial {
     UnknownRole,
     /// 目标身份是 superadmin：界面上**加不出第二个超管**，要加走迁移
     NotAssignable,
+    /// 发起人是管理员（非超管）而**目标不在低两档里**（20261002 下放时加）
+    AdminTargetTier,
+    /// 发起人是管理员（非超管）而要指派的新身份**不在低两档里**（20261002 下放时加）
+    AdminAssignTier,
 }
 
-/// 变更一个账号的身份的判据。只有超级管理员能发起。
+/// 管理员（非超管）能动的那两档：普通用户 与 杂鱼（20261002 主人拍板）。
+///
+/// **这是一条"两档之间搬"的规则，不是"能往低处改"的规则**：`{user, zako}` 两个
+/// 方向都放行（普通用户 ⇄ 杂鱼），而**目标是**这两档之外的任何人（管理员、秘书、
+/// 超管）一律拒。写成"目标与新身份**都**要在这一档里"是刻意的对称——
+/// 只判方向（`rank` 大小）会漏掉"管理员把秘书改成普通用户"（那是往下改，
+/// 但它动的是别人的权限档位，不在授权范围内）。
+///
+/// 超管不受这条约束（除超管外四档随便搬，与从前逐字相同）。
+const ADMIN_TIERS: [&str; 2] = [ROLE_USER, ROLE_ZAKO];
+
+/// 这个身份在不在管理员能动的那两档里。**判据只此一处**：
+/// 管理员能不能改、以及能改成什么，都问它。
+pub fn is_admin_tier(role: &str) -> bool {
+    ADMIN_TIERS.contains(&role)
+}
+
+/// 变更一个账号的身份的判据。20261002 起**下放给管理员**（此前只有超管能发起）。
+///
+/// 下放的边界（主人拍板）：管理员只能在 `{普通用户, 杂鱼}` 这两档之间搬，
+/// **不动权限更高的账号，也不往更高的档位指派**——加管理员/给秘书/提权仍然只有超管
+/// 能做。超管的行为一个字没变（除超管外四档）。
+///
+/// 判据顺序里 **`NotPermitted` 仍然是第一关**（自足，不依赖路由先过闸），
+/// 而两条"档位"判据排在**已知性与可指派性之后**：`new_role` 根本不存在的日子，
+/// "站内没有这个身份"比"管理员只能改成普通用户或杂鱼"更接近事实。
 pub fn check_role_change(
     op_uid: i32,
     op_role: &str,
@@ -144,7 +173,7 @@ pub fn check_role_change(
     target_role: &str,
     new_role: &str,
 ) -> Result<(), RoleChangeDenial> {
-    if !is_superadmin(op_role) {
+    if !can_access_console(op_role) {
         return Err(RoleChangeDenial::NotPermitted);
     }
     if op_uid == target_uid {
@@ -158,6 +187,16 @@ pub fn check_role_change(
     }
     if !is_assignable_role(new_role) {
         return Err(RoleChangeDenial::NotAssignable);
+    }
+    // 最后两道闸**只对管理员生效**（超管的两条判在 `is_superadmin` 上，与从前相同）。
+    // 目标那一侧先判：被拒的人先要知道"这个账号不归我管"，而不是"你要给的身份不对"。
+    if !is_superadmin(op_role) {
+        if !is_admin_tier(target_role) {
+            return Err(RoleChangeDenial::AdminTargetTier);
+        }
+        if !is_admin_tier(new_role) {
+            return Err(RoleChangeDenial::AdminAssignTier);
+        }
     }
     Ok(())
 }
@@ -348,7 +387,12 @@ mod tests {
         }
     }
 
-    /// 变更身份策略表逐格。**只有超管能发起**，且新身份不许是 superadmin。
+    /// 变更身份策略表逐格。**超管：除超管外四档随便搬；管理员：只在低两档之间搬。**
+    ///
+    /// 20261002 这一格发生了**语义反转**：`(7, admin, 9, sec, usr)` 原先拒的理由是
+    /// "发起人不是超管"，现在发起人这一关过了，拒的理由变成"秘书不归管理员管"
+    /// （`AdminTargetTier`）。表里留着它、并写明理由，正是为了让这次反转看得见——
+    /// 策略一旦松动，回归锁必须**在表里**说明白松动的是哪一格。
     #[test]
     fn 改角色策略表() {
         let admin = ROLE_ADMIN;
@@ -356,22 +400,30 @@ mod tests {
         let sec = ROLE_SECRETARY;
         let usr = ROLE_USER;
         let cases: &[(i32, &str, i32, &str, &str, Result<(), RoleChangeDenial>)] = &[
-            // 发起人不是超管 → 拒（管理员也不行）
-            (7, admin, 9, sec, usr, Err(RoleChangeDenial::NotPermitted)),
+            // ── 发起人没有后台管理面权限 → 拒（这是唯一一条与"发起人是谁"有关的判据；
+            //    20261002 起判据是 can_access_console，不再是"必须超管"）──
             (9, sec, 10, usr, admin, Err(RoleChangeDenial::NotPermitted)),
             (10, usr, 11, usr, sec, Err(RoleChangeDenial::NotPermitted)),
-            // 改自己 → 拒（降级自己就再也改不回来）
+            (12, ROLE_ZAKO, 10, usr, usr, Err(RoleChangeDenial::NotPermitted)),
+            (0, "", 10, usr, usr, Err(RoleChangeDenial::NotPermitted)),
+            (0, "root", 10, usr, usr, Err(RoleChangeDenial::NotPermitted)),
+            // 改自己 → 拒（降级自己就再也改不回来）——超管与管理员都各来一格
             (1, sup, 1, sup, admin, Err(RoleChangeDenial::SelfTarget)),
-            // 目标是超管 → 拒（含另一个超管的 uid）
+            (7, admin, 7, admin, ROLE_ZAKO, Err(RoleChangeDenial::SelfTarget)),
+            // 目标是超管 → 拒（含另一个超管的 uid；管理员与超管发起都拒）
             (2, sup, 1, sup, usr, Err(RoleChangeDenial::TargetSuperadmin)),
-            // 新身份不在取值域 → 拒
+            (7, admin, 1, sup, usr, Err(RoleChangeDenial::TargetSuperadmin)),
+            // 新身份不在取值域 → 拒（先于档位判据：说不存在的身份时，
+            // "站内没这个身份"比"管理员只能改成低两档"更接近事实）
             (1, sup, 9, sec, "root", Err(RoleChangeDenial::UnknownRole)),
             (1, sup, 9, sec, "", Err(RoleChangeDenial::UnknownRole)),
             (1, sup, 9, sec, "Admin", Err(RoleChangeDenial::UnknownRole)),
+            (7, admin, 10, usr, "root", Err(RoleChangeDenial::UnknownRole)),
             // 新身份是超管 → 拒（要加第二个超管走迁移，不是页面上点一下）
             (1, sup, 9, sec, sup, Err(RoleChangeDenial::NotAssignable)),
             (1, sup, 7, admin, sup, Err(RoleChangeDenial::NotAssignable)),
-            // 正常路径：超管把秘书/普通用户/管理员改成三档里的任一档
+            (7, admin, 10, usr, sup, Err(RoleChangeDenial::NotAssignable)),
+            // ── 超管正常路径：把秘书/普通用户/管理员改成四档里的任一档 ──
             (1, sup, 9, sec, usr, Ok(())),
             (1, sup, 9, sec, admin, Ok(())),
             (1, sup, 10, usr, sec, Ok(())),
@@ -382,6 +434,19 @@ mod tests {
             (1, sup, 10, usr, ROLE_ZAKO, Ok(())),
             (1, sup, 7, admin, ROLE_ZAKO, Ok(())),
             (1, sup, 12, ROLE_ZAKO, usr, Ok(())),
+            // ── 管理员（20261002 下放）：低两档之间**双向**放行 ──
+            (7, admin, 10, usr, ROLE_ZAKO, Ok(())),
+            (7, admin, 12, ROLE_ZAKO, usr, Ok(())),
+            (7, admin, 12, ROLE_ZAKO, ROLE_ZAKO, Ok(())), // 幂等（路由层会先短路，判据本身放行）
+            // 目标不在低两档 → 拒（**语义反转的那一格**：秘书不归管理员管）
+            (7, admin, 9, sec, usr, Err(RoleChangeDenial::AdminTargetTier)),
+            (7, admin, 8, admin, usr, Err(RoleChangeDenial::AdminTargetTier)),
+            (7, admin, 8, admin, ROLE_ZAKO, Err(RoleChangeDenial::AdminTargetTier)),
+            // 目标在低两档、但要指派到更高的档 → 拒（**只能搬，不能提权**）
+            (7, admin, 10, usr, admin, Err(RoleChangeDenial::AdminAssignTier)),
+            (7, admin, 10, usr, sec, Err(RoleChangeDenial::AdminAssignTier)),
+            (7, admin, 12, ROLE_ZAKO, admin, Err(RoleChangeDenial::AdminAssignTier)),
+            (7, admin, 12, ROLE_ZAKO, sec, Err(RoleChangeDenial::AdminAssignTier)),
         ];
         for (op_uid, op_role, t_uid, t_role, new_role, want) in cases {
             assert_eq!(
@@ -390,6 +455,21 @@ mod tests {
                 "发起人 uid={op_uid} role={op_role} → 目标 uid={t_uid} role={t_role} 改成 {new_role}"
             );
         }
+    }
+
+    /// 低两档的定义只有一处（`is_admin_tier`）：判据与话术都从它来。
+    /// 单独锁一条是为了让"加一档到管理员授权范围"这件事**必须改到这里**，
+    /// 而不是在某个 handler 里顺手 `|| role == "..."` 加一格。
+    #[test]
+    fn 管理员能动的是哪两档() {
+        assert!(is_admin_tier(ROLE_USER));
+        assert!(is_admin_tier(ROLE_ZAKO));
+        assert!(!is_admin_tier(ROLE_SECRETARY));
+        assert!(!is_admin_tier(ROLE_ADMIN));
+        assert!(!is_admin_tier(ROLE_SUPERADMIN));
+        assert!(!is_admin_tier("root"));
+        assert!(!is_admin_tier(""));
+        assert_eq!(ADMIN_TIERS.len(), 2);
     }
 
     #[test]

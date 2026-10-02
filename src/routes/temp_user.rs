@@ -31,11 +31,29 @@ pub struct CreateTempUser {
 // 注意冻结方向的通知**当事人当时看不到**：`authz::is_frozen` 会挡住他登录，
 // 这条要等他被解冻后才读得到。它仍要发——那正是"回来之后知道发生过什么"的唯一来源。
 
-/// 账号变更通知的正文模板。**写在这里一处**，三个调用点各自只给"变了什么"。
+/// 发起人在通知正文里的称呼：`{身份中文}「{昵称}」（uid=N）`。20261002 主人点名改的。
 ///
-/// 落款固定是「博主」而不是发起人的昵称：后台能发起这三件事的只有管理员/超管
-/// （`authz::can_access_console`），而收到通知的多半不认识某个管理员的昵称——
-/// 说「博主」是他认得的那个身份。发起人 uid 在 `tracing` 日志里另有留痕。
+/// **为什么从写死的「博主」改成落名**：原来三条通知一律写"博主把…"，是"后台只有
+/// 博主一个人会操作"那个年代的写法（`20260926` 起管理员与超管都能冻账号，
+/// `20261002` 起管理员还能改身份）。当事人被踢下线时读到一句"博主冻结了你的账号"，
+/// 而真正动手的是另一个管理员——他拿着这句话去问博主，博主一头雾水。落名之后
+/// 这句话本身就能对得上人。
+///
+/// 三样都要写：**身份**（他为什么有权做这件事）、**昵称**（人认得的是这个）、
+/// **uid**（昵称可改、可重名，uid 才是唯一标识）。昵称为空回退账号名
+/// （与 `delete_temp_user` 里那句 `who`、`profile.rs` 的展示口径同源：
+/// 库里的 `nickname` 允许是空串，不能因此拼出一个空引号）。
+fn actor_label(row: &user::Model) -> String {
+    let name = if row.nickname.trim().is_empty() {
+        row.username.clone()
+    } else {
+        row.nickname.trim().to_string()
+    };
+    format!("{}「{}」（uid={}）", crate::authz::role_label(&row.role), name, row.id)
+}
+
+/// 账号变更通知的正文模板。**写在这里一处**，三个调用点各自只给"变了什么"
+/// （"谁干的"由 `actor_label` 拼好，是 `action` 的开头一段）。
 fn account_change_body(action: &str, when: &str) -> String {
     format!(
         "{when}，{action}。你此前登录的全部设备已失效，需要重新登录才能继续访问。\
@@ -207,7 +225,12 @@ pub async fn set_user_status(
                 user_id,
                 if frozen { "账号已被冻结" } else { "账号已解冻" },
                 Some(account_change_body(
-                    if frozen { "博主冻结了你的账号" } else { "博主解冻了你的账号" },
+                    // 落名（20261002）：`operator_row` 就是发起人那一行，身份/昵称/uid 都从它来
+                    &format!(
+                        "{}{}",
+                        actor_label(&operator_row),
+                        if frozen { "冻结了你的账号" } else { "解冻了你的账号" },
+                    ),
                     &when,
                 )),
                 None,
@@ -322,15 +345,21 @@ pub async fn send_user_notice(
 
 #[derive(Deserialize)]
 pub struct SetRoleReq {
-    /// 目标身份。取值域 = `authz::KNOWN_ROLES` 里**除 superadmin 之外**的四个
-    /// （`authz::is_assignable_role`）——界面上加不出第二个超管。
+    /// 目标身份。**取值域分两档**（`authz::check_role_change` 才是判据，这里只是
+    /// 说明它长什么样）：超管发起时 = `KNOWN_ROLES` 里除 superadmin 外的四个
+    /// （`authz::is_assignable_role`——界面上加不出第二个超管）；管理员发起时再收窄到
+    /// `authz::is_admin_tier` 那两档（普通用户 / 杂鱼）。**这里不重复判**：
+    /// 多一份判据就会在"改政策"那天与 `authz.rs` 漂移。
     pub role: String,
 }
 
 /// POST /api/temp-users/:id/role：变更一个账号的权限身份（20260926）。
 ///
-/// **只有超级管理员能发起**（`authz::check_role_change` 的第一条判据）：管理员之间
-/// 能互改身份，就等于"谁先把自己提成超管谁赢"，而超管恰恰是那个不能被任何人动的角色。
+/// **谁能发起**（20261002 下放）：`authz::check_role_change` 的第一条判据是
+/// `can_access_console`（管理员或超管），再按发起人分档——超管除超管外四档随便搬；
+/// 管理员**只能在普通用户与杂鱼之间搬**（不动更高的账号，也不往更高档指派）。
+/// 下放的理由：把一个人设成杂鱼 / 解除杂鱼是日常运营动作，不该每次都去叫超管；
+/// 而"谁能当管理员"这类事仍然只有超管说了算（提权路径没有跟着下放）。
 ///
 /// 成功时 `token_version + 1`：令牌里带 `role` 快照（`auth_jwt::Claims.role`，前端
 /// `AuthRouter` 就认它），不 +1 的话被降级的人手里的旧令牌还能进后台直到过期——
@@ -394,7 +423,8 @@ pub async fn set_user_role(
                 "账号身份已变更",
                 Some(account_change_body(
                     &format!(
-                        "博主把你的身份从「{}」改为「{}」",
+                        "{}把你的身份从「{}」改为「{}」",
+                        actor_label(&operator_row),
                         crate::authz::role_label(&old_role),
                         crate::authz::role_label(&new_role),
                     ),
@@ -415,16 +445,28 @@ pub async fn set_user_role(
     }
 }
 
-/// 变更身份被拒的中文话术。同样是**跨语言契约**（若将来 agent 接上这个动作，
-/// 它要照抄这里的原话），所以四句分开写、不共用兜底。
+/// 变更身份被拒的中文话术。同样是**跨语言契约**（agent 的 `account_set_role` 技能
+/// 要求模型逐字转述这里的原话，见 `docs/security-boundary.md` §7），
+/// 所以七句分开写、不共用兜底。
+///
+/// 20261002 下放时的三处措辞改动：
+///   · `NotPermitted` 的口径从"只有超管"改成"**只有管理员**"——它现在的触发条件
+///     是发起人连后台都进不去（秘书/普通用户/杂鱼），而管理员已经能改了，
+///     照旧印"只有超级管理员可以变更"就是一句**过期的政策**（当事人会拿这句话
+///     去问超管，而超管会告诉他管理员本来就能改）。
+///   · 新增两句讲清管理员的**边界**：先讲目标（"这个账号不归你管"），
+///     再讲新身份（"你不能把人提到那个档"）。两句分开而不是共用一句：
+///     当事人下一步该做的事不同（换账号 vs 换目标身份）。
 fn role_change_denial_message(denial: crate::authz::RoleChangeDenial) -> String {
     use crate::authz::RoleChangeDenial as D;
     match denial {
-        D::NotPermitted => "只有超级管理员可以变更账号身份".to_string(),
+        D::NotPermitted => "只有管理员可以变更账号身份".to_string(),
         D::SelfTarget => "不能变更自己的身份".to_string(),
         D::TargetSuperadmin => "不能变更超级管理员的身份".to_string(),
         D::UnknownRole => "站内没有这个身份".to_string(),
         D::NotAssignable => "超级管理员身份不能在这里指派，要增加请走数据库迁移".to_string(),
+        D::AdminTargetTier => "管理员只能变更普通用户或杂鱼的身份".to_string(),
+        D::AdminAssignTier => "管理员只能把账号改成普通用户或杂鱼".to_string(),
     }
 }
 
@@ -475,15 +517,20 @@ mod tests {
         );
     }
 
-    /// 变更身份的五句：四句拒绝 + 一句"超管只能走迁移"。
+    /// 变更身份的七句：六句拒绝 + 一句"超管只能走迁移"。
     /// `NotAssignable` 的措辞必须点出**替代路径**（数据库迁移），否则主人被拒之后
     /// 不知道该去哪儿加第二个超管。
+    ///
+    /// `NotPermitted` 那句 20261002 改了口径（超管 → 管理员）：**它必须与
+    /// `authz::check_role_change` 的第一关同一天改**——发起人判据下放了而话术还写着
+    /// "只有超级管理员"，就是在把一句过期的政策逐字转述给当事人（agent 侧那份
+    /// 转述是逐字的）。
     #[test]
     fn 变更身份话术逐句锁死() {
         use RoleChangeDenial as D;
         assert_eq!(
             super::role_change_denial_message(D::NotPermitted),
-            "只有超级管理员可以变更账号身份"
+            "只有管理员可以变更账号身份"
         );
         assert_eq!(
             super::role_change_denial_message(D::SelfTarget),
@@ -500,6 +547,70 @@ mod tests {
         assert_eq!(
             super::role_change_denial_message(D::NotAssignable),
             "超级管理员身份不能在这里指派，要增加请走数据库迁移"
+        );
+        // 20261002 管理员边界那两句：一句讲目标、一句讲新身份，**不共用**——
+        // 当事人下一步该做的事不同（换个账号 vs 换个目标身份）
+        assert_eq!(
+            super::role_change_denial_message(D::AdminTargetTier),
+            "管理员只能变更普通用户或杂鱼的身份"
+        );
+        assert_eq!(
+            super::role_change_denial_message(D::AdminAssignTier),
+            "管理员只能把账号改成普通用户或杂鱼"
+        );
+    }
+
+    /// 发起人的称呼（20261002 主人点名：三条账号变更通知都要写明是谁干的）。
+    /// 三个面各锁一条：身份用中文、昵称带引号、uid 在场（昵称可改可重名，uid 才是标识）。
+    fn row(id: i32, username: &str, nickname: &str, role: &str) -> crate::entity::user::Model {
+        crate::entity::user::Model {
+            id,
+            username: username.to_string(),
+            nickname: nickname.to_string(),
+            avatar: None,
+            password: String::new(),
+            role: role.to_string(),
+            status: 0,
+            token_version: 0,
+            chat_quota_used: 0,
+        }
+    }
+
+    #[test]
+    fn 发起人称谓带身份昵称与uid() {
+        assert_eq!(
+            super::actor_label(&row(1, "sora", "Sora Saudade", "superadmin")),
+            "超级管理员「Sora Saudade」（uid=1）"
+        );
+        assert_eq!(
+            super::actor_label(&row(7, "xinguan", "心关", "admin")),
+            "管理员「心关」（uid=7）"
+        );
+        // 身份**取自那一行的 role**（库里现查的那份），不是任何令牌快照
+        assert_eq!(
+            super::actor_label(&row(9, "niuniu", "牛牛", "secretary")),
+            "秘书「牛牛」（uid=9）"
+        );
+    }
+
+    /// 昵称为空回退账号名——**不许拼出「管理员「」（uid=7）」这种空引号**。
+    /// `nickname` 列允许是空串（新账号默认取账号名，但改过昵称又清空的会留空），
+    /// 这条分支与 `delete_temp_user` 的 `who`、`profile.rs` 的展示口径同源。
+    #[test]
+    fn 昵称为空时回退账号名() {
+        assert_eq!(
+            super::actor_label(&row(7, "xinguan", "", "admin")),
+            "管理员「xinguan」（uid=7）"
+        );
+        // 只有空白也算空（trim 后判）——否则会拼出「管理员「  」（uid=7）」
+        assert_eq!(
+            super::actor_label(&row(7, "xinguan", "   ", "admin")),
+            "管理员「xinguan」（uid=7）"
+        );
+        // 昵称两端的空白不留进引号里
+        assert_eq!(
+            super::actor_label(&row(7, "xinguan", " 心关 ", "admin")),
+            "管理员「心关」（uid=7）"
         );
     }
 }
