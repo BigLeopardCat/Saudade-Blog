@@ -567,6 +567,8 @@ mod tests {
             id,
             username: username.to_string(),
             nickname: nickname.to_string(),
+            // 迁移自动改名标记（20261002 昵称唯一）。这个测试行不是迁移改出来的 ⇒ 0。
+            nickname_auto_renamed: 0,
             avatar: None,
             password: String::new(),
             role: role.to_string(),

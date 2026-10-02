@@ -174,6 +174,11 @@ pub async fn reset_password(
 pub struct ProfileDto {
     pub username: String,
     pub nickname: String,
+    /// 昵称是否由**迁移自动加过后缀**（20261002 昵称唯一）：true 时个人中心显示一条
+    /// 横幅提示本人改掉。本人改一次昵称就变 false（`nickname_auto_renamed` 清 0）。
+    /// 用**驼峰**（本仓 DTO 的既定口径），与 `oldPassword` 同形。
+    #[serde(rename = "nicknameAutoRenamed")]
+    pub nickname_auto_renamed: bool,
     /// 头像 URL（20260922 个人中心）：NULL/空 = 没设过，展示端回退到站点主人头像
     pub avatar: Option<String>,
     /// 角色（20260926 用户点名：个人中心的昵称后面要显示权限身份标签）。
@@ -197,6 +202,7 @@ pub async fn profile(
                 Json(ApiResponse::success(ProfileDto {
                     username: u.username,
                     nickname: nick,
+                    nickname_auto_renamed: u.nickname_auto_renamed != 0,
                     avatar: u.avatar,
                     role: u.role,
                 }))
