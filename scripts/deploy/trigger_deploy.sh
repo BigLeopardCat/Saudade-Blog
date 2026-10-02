@@ -11,7 +11,7 @@
 set -e
 # PROJECT_DIR 可覆盖（20261001 开源前准备）：默认仍是原开发机的绝对路径，CI 那条 ssh 调用
 # 不带这个变量 ⇒ 线上行为零变化；别人把仓库克隆到别处时才需要 `PROJECT_DIR=... bash ...`。
-cd "${PROJECT_DIR:-/home/ubuntu/memory_blog_rust}"
+cd "${PROJECT_DIR:-/home/ubuntu/Saudade-Blog}"
 
 SHA="${1:-}"
 mkdir -p logs
