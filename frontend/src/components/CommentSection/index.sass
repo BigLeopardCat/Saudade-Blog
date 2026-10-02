@@ -4,6 +4,38 @@
 // 日夜两态：颜色走站内既有令牌（`--font-title-color` / `--font-p-color` 在
 // frontHome/main.css 的 :root 与 .frontDark 里成对定义），**不另写一套深色值**——
 // 自己拍一个"看起来差不多的深灰"就是第二份真相源（改主题时它不会跟着变）。
+
+// 评论正文的排版（**一处实现，两个消费方**：已发布的评论行、输入框下方的预览）。
+//
+// 为什么是 mixin 而不是把两条选择器并排写平：两个消费方在 DOM 里的嵌套位置不同
+// （一个在 `.commentRow` 下、一个在 `.commentComposer` 下），mixin 各自展开后
+// **两边都保持同样的三段式优先级**；搬平成一串会有一边掉一档，哪天撞上
+// `.markdown-body` 那套全局规则，谁赢就变了。
+//
+// 预览那一边必须吃这一份：预览要是另有一套字号行距，它就只是在骗人——写的人看到的
+// 与读的人看到的必须是同一套（20261003 主人为"不认识 markdown 的人"加的那个预览）。
+@mixin comment-body-typography
+    margin-top: 4px
+    font-size: 0.92rem
+    line-height: 1.7
+    color: var(--font-title-color)
+    background: transparent
+    padding: 0
+    // markdown 元素在窄格子里要收着点
+    p
+        margin: 0.3em 0
+    h1, h2, h3, h4
+        font-size: 1rem
+        margin: 0.5em 0 0.3em
+    pre
+        white-space: pre-wrap
+        word-break: break-all
+        margin: 0.5em 0
+    blockquote
+        margin: 0.4em 0
+        padding-left: 10px
+        border-left: 3px solid var(--washi-line, rgba(198, 152, 192, 0.42))
+
 .commentSection
     width: 80%
     max-width: 880px
@@ -66,6 +98,49 @@
             justify-content: space-between
             gap: 10px
             margin-top: 8px
+            // 左边一组工具（表情 / 预览）。包这一层是必须的：foot 是 space-between，
+            // 三个直接子元素会把"预览"甩到正中间，与右边那颗按钮离得老远。
+            .commentComposerTools
+                display: flex
+                align-items: center
+                gap: 8px
+            .commentPreviewBtn
+                padding: 4px 12px
+                border: 1px solid var(--washi-line, rgba(198, 152, 192, 0.42))
+                border-radius: 14px
+                cursor: pointer
+                font-size: 0.84rem
+                color: var(--font-p-color)
+                background: transparent
+                &:hover,
+                &.isOpen
+                    color: var(--washi-pink-deep, #d94f9a)
+                    border-color: var(--washi-pink, #ff9ec9)
+
+        // 预览块：**只画这个框**，内容的排版整个交给 `.commentBody`（上面的 mixin）——
+        // 所以这里没有任何字号/行距/段落规则，那是刻意的。
+        .commentPreview
+            margin-top: 12px
+            padding: 10px 12px 4px
+            border-radius: 8px
+            border: 1px dashed var(--washi-line, rgba(198, 152, 192, 0.42))
+            background: rgba(255, 255, 255, 0.4)
+            .frontDark &
+                background: rgba(255, 255, 255, 0.04)
+            .commentBody
+                @include comment-body-typography
+            .commentPreviewLabel
+                margin-bottom: 8px
+                font-size: 0.76rem
+                letter-spacing: 0.06em
+                color: var(--font-p-color)
+                opacity: 0.75
+            .commentPreviewEmpty
+                margin: 0 0 8px
+                font-size: 0.86rem
+                line-height: 1.7
+                color: var(--font-p-color)
+                opacity: 0.8
         .commentSubmit
             padding: 5px 18px
             border: none
@@ -191,26 +266,7 @@
             opacity: 0.7
 
         .commentBody
-            margin-top: 4px
-            font-size: 0.92rem
-            line-height: 1.7
-            color: var(--font-title-color)
-            background: transparent
-            padding: 0
-            // markdown 元素在窄格子里要收着点
-            p
-                margin: 0.3em 0
-            h1, h2, h3, h4
-                font-size: 1rem
-                margin: 0.5em 0 0.3em
-            pre
-                white-space: pre-wrap
-                word-break: break-all
-                margin: 0.5em 0
-            blockquote
-                margin: 0.4em 0
-                padding-left: 10px
-                border-left: 3px solid var(--washi-line, rgba(198, 152, 192, 0.42))
+            @include comment-body-typography
 
         // 深链命中（`?cid=`）：环形辉光闪一下——同一套取意在聊天面板的 `.msg-hit`
         // （widget.css 的 chatMsgHit）与河灯定位上已经用过。用 box-shadow 而不是背景色，

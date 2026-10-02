@@ -262,7 +262,7 @@ with sync_playwright() as p:
     pg.wait_for_timeout(150)
     check("Esc 关面板", pg.locator(".commentStickerPanel").count() == 0)
 
-    print("\n④ 点表情插进输入框的是 `:名字:` 文本，不是标签")
+    print("\n④b 点表情插进输入框的是 `:名字:` 文本，不是标签")
     pg.click(".commentStickerBtn")
     pg.wait_for_timeout(200)
     first = pg.locator(".commentStickerItem").first
@@ -275,7 +275,52 @@ with sync_playwright() as p:
     check("插入后计数跟着走", pg.locator(COUNT).inner_text().strip().startswith(str(len(val))),
           pg.locator(COUNT).inner_text().strip())
 
-    print("\n⑤ 未登录：只给登录提示，不给输入区")
+    print("\n⑤ 预览（20261003 新加）：写的人当场看见读的人会看到什么")
+    pg.fill(".commentComposer textarea", "")
+    check("默认收起", pg.locator(".commentPreview").count() == 0)
+    pg.click(".commentPreviewBtn")
+    pg.wait_for_timeout(200)
+    check("点开出现 .commentPreview", pg.locator(".commentPreview").count() == 1)
+    check("空草稿给的是提示句、不是空白框",
+          pg.locator(".commentPreviewEmpty").count() == 1
+          and pg.locator(".commentPreview .commentBody").count() == 0,
+          pg.locator(".commentPreview").inner_text().strip()[:40])
+    # 主人担心的正是这件事：不认识 markdown 的人打了 `_x_` / `2*3*4`，自己看不见被吃掉了。
+    pg.fill(".commentComposer textarea", "_下划线_ 与 2*3*4 还有 :头疼:")
+    pg.wait_for_timeout(250)
+    ems = pg.locator(".commentPreview .commentBody em").all_inner_texts()
+    check("预览里 `_下划线_` 真的变成了 <em>（这就是「写的人看不见、读的人才看得见」那件事）",
+          "下划线" in ems, f"em={ems}")
+    check("预览里 `2*3*4` 中间那段也被吃成 <em>（同一类风险的第二个例子）",
+          "3" in ems and len(ems) == 2, f"em={ems}")
+    check("预览里表情已经是图（img.sticker），不是 `:头疼:` 四个字",
+          pg.locator(".commentPreview .commentBody img.sticker").count() == 1
+          and ":头疼:" not in pg.locator(".commentPreview .commentBody").inner_text(),
+          pg.locator(".commentPreview .commentBody img.sticker").count())
+
+    PROPS = ["font-size", "line-height", "margin-top", "color"]
+
+    def styles(sel):
+        return pg.evaluate(
+            "([s, ps]) => { const el = document.querySelector(s); if (!el) return null;"
+            " const c = getComputedStyle(el); const o = {};"
+            " ps.forEach(p => o[p] = c.getPropertyValue(p)); return o; }", [sel, PROPS])
+
+    pub, pre = styles(".commentRow .commentBody"), styles(".commentPreview .commentBody")
+    check("预览正文与已发布正文**同一套排版**（字号/行距/上边距/颜色逐项相同）",
+          bool(pub) and pub == pre, f"published={pub} preview={pre}")
+    pub_p, pre_p = styles(".commentRow .commentBody p"), styles(".commentPreview .commentBody p")
+    check("段落的边距也同款（预览若另有一套，它就只是在骗人）",
+          bool(pub_p) and pub_p == pre_p, f"published={pub_p} preview={pre_p}")
+    check("预览展开后计数仍不压按钮（预览在按钮行**下面**，不该动上面那一行）",
+          overlap(box(pg, COUNT), box(pg, SUBMIT)) <= 0
+          and overlap(box(pg, COUNT), box(pg, FOOT)) <= 0)
+
+    pg.click(".commentPreviewBtn")
+    pg.wait_for_timeout(200)
+    check("再点一次收起", pg.locator(".commentPreview").count() == 0)
+
+    print("\n⑥ 未登录：只给登录提示，不给输入区")
     pg.evaluate("window.__mount('/article/1', null)")
     pg.wait_for_timeout(400)
     check("登录提示在", pg.locator(".commentLoginTip").count() == 1)
@@ -283,7 +328,7 @@ with sync_playwright() as p:
     check("计数元素整个不在（没登录就没有输入框）", pg.locator(COUNT).count() == 0)
     check("讨论列表照常可读（读不要求登录）", pg.locator(".commentThread").count() == 30)
 
-    print("\n⑥ 通知深链 ?cid=42：定位到最后一行并高亮（回复的回复也定得到）")
+    print("\n⑦ 通知深链 ?cid=42：定位到最后一行并高亮（回复的回复也定得到）")
     pg.evaluate("window.__mount('/article/1?cid=42', 't')")
     pg.wait_for_selector(".comment-hit", timeout=8000)
     pg.wait_for_timeout(400)
@@ -302,7 +347,7 @@ with sync_playwright() as p:
     pg.close()
 
     # ══ 二、红基线：同一个组件、摘掉 counter-room ═══════════════════════════
-    print("\n⑦ 红基线（broken 变体）：没有那 22px 时，计数**必须**压住按钮")
+    print("\n⑧ 红基线（broken 变体）：没有那 22px 时，计数**必须**压住按钮")
     pg2 = br.new_page(viewport={"width": 1280, "height": 900})
     errs2 = []
     pg2.on("pageerror", lambda e: errs2.append(str(e)))

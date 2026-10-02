@@ -13,7 +13,8 @@
  *
  * 由此两条硬纪律：
  *   · `dangerouslySetInnerHTML` 的 `__html` **只允许**是 `renderBlogMarkdown()` 的产物
- *     （本文件里唯一一处，见 `CommentBody`）；
+ *     （本文件里唯一一处，见 `CommentBody`）。**输入框下方那个预览（`.commentPreview`）
+ *     复用的也正是 `CommentBody`**——预览必须与已发布逐字相同，另写一份就是第二份真相；
  *   · **任何地方都不许对评论原文直接 `innerHTML`**，也不许在这里另写一份 escapeHtml。
  *     自己拼一份"安全 HTML"就是把同一条链路的第二个实现引进来——两处必然会漂。
  *
@@ -71,6 +72,11 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
     const [content, setContent] = useState('')
     const [replyTo, setReplyTo] = useState<CommentItem | null>(null)
     const [busy, setBusy] = useState(false)
+    /** 「预览」开关（20261003）。**不是可选项**：评论区整段按 markdown 渲染，而站上多数人
+     *  并不认识 markdown——`_下划线_` 会被吃成斜体、`2*3*4` 会变成 `2<em>3</em>4`、行首
+     *  `#`/`>`/`- ` 会变成标题/引用/列表。写的人看不见这件事，读的人才看得见（那时已经发出去了）。
+     *  预览就是把"读的人看到的样子"提前搬到写的人眼前，**用的是同一条渲染路径**（`CommentBody`）。 */
+    const [preview, setPreview] = useState(false)
     const [pendingDelete, setPendingDelete] = useState<CommentItem | null>(null)
     const [deleting, setDeleting] = useState(false)
     const taRef = useRef<TextAreaRef>(null)
@@ -284,7 +290,21 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
                         showCount
                     />
                     <div className="commentComposerFoot">
-                        <StickerPicker onPick={pickSticker} disabled={busy} />
+                        <div className="commentComposerTools">
+                            <StickerPicker onPick={pickSticker} disabled={busy} />
+                            {/* 预览开关。**始终可点**（空草稿也点得开）——空着的时候那一栏
+                                会写明"这里就是发出去之后的样子"，这本身就是给不认识 markdown
+                                的人的一句提示，比把按钮置灰更有用。 */}
+                            <button
+                                type="button"
+                                className={`commentPreviewBtn${preview ? ' isOpen' : ''}`}
+                                aria-expanded={preview}
+                                aria-controls="comment-preview"
+                                onClick={() => setPreview((v) => !v)}
+                            >
+                                {preview ? '收起预览' : '预览'}
+                            </button>
+                        </div>
                         <button
                             type="button"
                             className="commentSubmit"
@@ -294,6 +314,23 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
                             {busy ? '发送中…' : replyTo ? '回复' : '发表评论'}
                         </button>
                     </div>
+                    {preview && (
+                        <div className="commentPreview" id="comment-preview">
+                            <div className="commentPreviewLabel">预览 · 发出去之后就是这个样子</div>
+                            {/* **复用 `CommentBody`**：预览与已发布评论走的是同一条
+                                `renderBlogMarkdown` 管线，不是第二份渲染器。所以表情在预览里
+                                就已经是图了（`:头疼:` → `img.sticker`），而且预览里看到的
+                                排版与发出去之后**逐字相同**——预览要是有自己的一套样式，
+                                它就只是在骗人。 */}
+                            {content.trim() ? (
+                                <CommentBody content={content} />
+                            ) : (
+                                <p className="commentPreviewEmpty">
+                                    还没有内容。上面写什么，这里就显示成什么样。
+                                </p>
+                            )}
+                        </div>
+                    )}
                 </div>
             )}
 
