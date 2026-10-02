@@ -5,8 +5,14 @@ import { ReloadOutlined } from "@ant-design/icons";
 import type { ColumnsType } from 'antd/es/table';
 import http from "../../../apis/axios.tsx";
 import { useLiveRefresh } from "../../../utils/liveRefresh.ts";
+// 违规类型预设 / 驳回理由上限 / AI 审核列的 tooltip 与评论管理页共用（20261002）。
+// 三样都是"同一件事"而不是"长得像"：审核标准、同一个字数上限、同一处 markup——
+// 判据与不共用的部分见 `../ContentManage/shared.tsx` 头注。
+import { BOARD_REJECT_PRESETS, REJECT_REASON_MAX, aiTip } from "../ContentManage/shared";
 
-/** 评论管理：河灯留言的查询/筛选/删除 + 两段审核（20260905 issue9 双状态显示）
+/** 留言管理（**20261002 之前它叫「评论管理」**——名字与内容对不上：这一页管的一直是
+ *  河灯留言。文章评论另有 `Dashboard/CommentManage`，两张表两条接口，别搞混）。
+ *  河灯留言的查询/筛选/删除 + 两段审核（20260905 issue9 双状态显示）
  *  数据来自 /api/protect/board（仅 src=board 的留言，与说说完全独立）。
  *  审核开关存 web_info（aiReviewEnabled/manualReviewEnabled），读写 /api/protected/websetting：
  *    · AI 审核开  → AI 通过/拒绝直接落地，存疑进入人工复核
@@ -54,26 +60,10 @@ interface BoardItem {
     aiReason?: string | null;
 }
 
-/** 常见驳回理由预设（20260926）：点一下填进**可编辑**的文本框，管理员按需改。
- *  只放"一眼能判、与站规对得上"的类型，不放需要展开说明的（那种请他用文本框自己写）；
- *  也不放"其他"这种等于没填的项——理由必填的意义就在于说清是哪一类。 */
-const REJECT_PRESETS = [
-    '广告引流', '色情低俗', '辱骂攻击', '违法敏感', '恶意外链', '与留言板无关', '内容难以辨认',
-];
-
-/** AI 审核列的 tooltip：裁决语义 + **AI 的说明全文**（20260926 补）。
- *  说明 ≤200 字，刻意不截断——管理员正是要照它写出具体理由；它此前只存在于 AI 服务
- *  那一次的 HTTP 响应里（`ai_result` 那一列存的是裁决词，从来没有展示过说明）。 */
-const aiTip = (base: string, r: BoardItem) => (
-    r.aiReason
-        ? (
-            <div className="bm-ai-tip">
-                {base}
-                <div className="bm-ai-reason">AI 说明：{r.aiReason}</div>
-            </div>
-        )
-        : base
-);
+// 驳回理由预设（`BOARD_REJECT_PRESETS`）、理由上限（`REJECT_REASON_MAX`）与 AI 审核列的
+// tooltip（`aiTip`）自 20261002 起都在 `../ContentManage/shared`——与评论管理页共用一份，
+// 见那里的头注。（本页原先那份本地副本已删；`aiTip` 的 className 随之从 `bm-ai-tip`
+// 换成共享的 `content-ai-tip`。）
 
 const CATS = ['愿', '寄', '忆', '诉'];
 const LAMP_NAMES = ['莲花灯', '八角灯', '圆笼灯'];
@@ -488,7 +478,7 @@ const BoardManage = () => {
                     </p>
                 )}
                 <div className="bm-reject-presets">
-                    {REJECT_PRESETS.map((p) => (
+                    {BOARD_REJECT_PRESETS.map((p) => (
                         <Button
                             key={p} size="small" className="bm-reject-preset"
                             onClick={() => setRejectReason(p)}
@@ -507,7 +497,7 @@ const BoardManage = () => {
                     className="counter-room"
                     value={rejectReason}
                     onChange={(e) => setRejectReason(e.target.value)}
-                    maxLength={200}
+                    maxLength={REJECT_REASON_MAX}
                     showCount
                     autoSize={{ minRows: 3, maxRows: 5 }}
                     placeholder="例如：与文章主题无关的广告（也可以点上面的常见类型，再改成更贴这条的说法）"

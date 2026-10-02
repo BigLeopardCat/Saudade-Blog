@@ -1,0 +1,15 @@
+// 内容管理两页共用样式（20261002）。跟着 `shared.tsx` 走——本文件由那个模块 import，
+// 于是任何用到 `aiTip` 的页面自动带着它，不靠"另一页的样式表恰好也被加载"。
+//
+// ⚠️ tooltip 是 antd 的 portal（挂在 body 下，不在 `.BoardManage` / `.CommentManage` 里），
+// 所以这里只能是**顶层块**，写进某一页的嵌套里就永远匹配不上（样式静默失效，
+// 与 `.bm-reject-modal` 当初同一条坑）。
+
+// AI 审核列的 tooltip 内容（20260926）：说明全文要能换行读完，别被 tooltip 撑成一行
+.content-ai-tip
+  .content-ai-reason
+    margin-top: 4px
+    max-width: 280px
+    white-space: normal
+    line-height: 1.6
+    opacity: 0.85

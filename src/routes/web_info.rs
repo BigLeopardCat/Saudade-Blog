@@ -85,6 +85,15 @@ pub struct WebSettingPayload {
     pub ai_review_enabled: Option<bool>,
     #[serde(rename = "manualReviewEnabled")]
     pub manual_review_enabled: Option<bool>,
+
+    // 文章评论的审核开关（20261002）。**与留言板那两个是两对键**——键名定义在
+    // `COMMENT_REVIEW_KEYS`（本文件下半段），这里是它的读写面。
+    // 缺省 None 与"键不存在"同义：`web_info` 是 KV 表，没配过就是关，与入库判定
+    // 的默认态一致 ⇒ **这个特性不需要迁移**。
+    #[serde(rename = "commentAiReviewEnabled")]
+    pub comment_ai_review_enabled: Option<bool>,
+    #[serde(rename = "commentManualReviewEnabled")]
+    pub comment_manual_review_enabled: Option<bool>,
 }
 
 pub async fn get_web_settings(
@@ -100,6 +109,12 @@ pub async fn get_web_settings(
         infos.iter().find(|i| i.key_name == key).map(|i| i.value.clone())
     };
 
+    // 四对审核键名从两个常量取，不在这里手抄字面量：键名是**跨语言契约**
+    // （前端按同一串读 JSON 字段、`review_switches_of` 按同一串查库），
+    // 散成三份字面量之后，改名会变成"改了这里、闸门还在看旧键"的静默失效。
+    let (board_ai, board_manual) = BOARD_REVIEW_KEYS;
+    let (comment_ai, comment_manual) = COMMENT_REVIEW_KEYS;
+
     let payload = WebSettingPayload {
         blog_title: get_val("blog_title"),
         blog_author: get_val("author"),
@@ -113,8 +128,11 @@ pub async fn get_web_settings(
         social_bilibili: get_direct("socialBilibili"),
         social_qq: get_direct("socialQQ"),
 
-        ai_review_enabled: get_direct("aiReviewEnabled").map(|v| v == "true"),
-        manual_review_enabled: get_direct("manualReviewEnabled").map(|v| v == "true"),
+        ai_review_enabled: get_direct(board_ai).map(|v| v == "true"),
+        manual_review_enabled: get_direct(board_manual).map(|v| v == "true"),
+
+        comment_ai_review_enabled: get_direct(comment_ai).map(|v| v == "true"),
+        comment_manual_review_enabled: get_direct(comment_manual).map(|v| v == "true"),
     };
 
     Json(ApiResponse::success(payload))
@@ -248,8 +266,15 @@ pub async fn update_web_info(
         map.insert("qq", v);
     }
 
-    if let Some(v) = payload.ai_review_enabled { map.insert("aiReviewEnabled", v.to_string()); }
-    if let Some(v) = payload.manual_review_enabled { map.insert("manualReviewEnabled", v.to_string()); }
+    // 四对审核开关：键名同样从常量取（见 `get_web_settings` 同一处的理由）。
+    // `Option<bool>` + `if let Some` = **只写请求里带了的那些**：站点设置面板（UserControl）
+    // 只提交自己在管的字段，它不会把评论开关顺手写成 false。
+    let (board_ai, board_manual) = BOARD_REVIEW_KEYS;
+    let (comment_ai, comment_manual) = COMMENT_REVIEW_KEYS;
+    if let Some(v) = payload.ai_review_enabled { map.insert(board_ai, v.to_string()); }
+    if let Some(v) = payload.manual_review_enabled { map.insert(board_manual, v.to_string()); }
+    if let Some(v) = payload.comment_ai_review_enabled { map.insert(comment_ai, v.to_string()); }
+    if let Some(v) = payload.comment_manual_review_enabled { map.insert(comment_manual, v.to_string()); }
 
     for (k, v) in map {
         let entry = web_info::Entity::find()
@@ -341,6 +366,11 @@ pub const BOARD_REVIEW_KEYS: (&str, &str) = ("aiReviewEnabled", "manualReviewEna
 /// **不复用留言板那两个**：留言板与评论是两种内容，管理员完全可能只想审其中一种；
 /// 共用一个开关之后，"我只想给评论开人工审核"就表达不出来了。
 /// 不需要迁移——`web_info` 是 KV 表，缺键的取值天然是"关"，与默认态一致。
+///
+/// **三个消费方都从这两个常量取，谁都不许手抄字面量**：入库判定
+/// （`review_switches_of`）、设置接口的读（`get_web_settings`）、设置接口的写
+/// （`update_web_info`）。前端那面按同名 JSON 字段读（`commentAiReviewEnabled` /
+/// `commentManualReviewEnabled`，见 `WebSettingPayload`）——改键名一共四处要一起改。
 pub const COMMENT_REVIEW_KEYS: (&str, &str) =
     ("commentAiReviewEnabled", "commentManualReviewEnabled");
 

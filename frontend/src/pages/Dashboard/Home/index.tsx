@@ -532,12 +532,22 @@ const Home = () => {
                    />
                    <div className="todoBody">
                         {/* 顶上这一行不是待办（不进 todos、不落库、不能拖不能删）：
-                            它是"评论管理那边还有几条等我裁决"的入口，审完自然消失 */}
+                            它是"留言管理那边还有几条等我裁决"的入口，审完自然消失。
+
+                            ⚠️ 文案 20260905–20261002 写的是「条**评论**待人工审核」，而后端这个
+                            `pendingReview` 数的一直是**河灯留言**（`profile.rs::board_pending_count`）
+                            ——那时后台把留言管理叫「评论管理」，所以读起来没错。20261002 拆开之后
+                            这个名字就变成了一句假话（点进去是留言管理，而页签叫评论管理的是另一页），
+                            故改为「留言」。
+                            **文章评论的待审数不在这条汇总里**：要加就得新开一个字段
+                            （`pendingComments` + `unread.ts` + 本页第三行，照 `.todo-quota` 那样
+                            **另起类名**），**别把它并进 `pendingReview`**——两个数合在一句话下面，
+                            点进去只能落在其中一页，另一个数就成了永远对不上的账。 */}
                         {pendingReview > 0 &&
                             <div className="todo-review"
                                  onClick={() => navigate('/dashboard/users?tab=review')}>
                                 <span className="todo-review-n">{pendingReview}</span>
-                                <span>条评论待人工审核</span>
+                                <span>条留言待人工审核</span>
                                 <RightOutlined className="todo-review-go" />
                             </div>}
                         {/* 第二行非待办提示（20260929）：等处理的额度重置申请。与上一行同构

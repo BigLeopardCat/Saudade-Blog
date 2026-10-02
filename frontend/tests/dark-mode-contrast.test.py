@@ -399,7 +399,7 @@ with sync_playwright() as p:
                   for t, b in zip(r[1]["tags"], r[1]["chain"])))
             print("         DOM：" + r[1]["html"].replace("\n", " "))
     # ── 附加（20260924 三轮）：Users 页认 ?tab=review ──
-    # 后台首页待办卡上那行"3 条评论待人工审核"点过来就落到这里；这个沙箱是**唯一**
+    # 后台首页待办卡上那行"3 条留言待人工审核"点过来就落到这里；这个沙箱是**唯一**
     # 会渲染真 Users 页的地方，所以这条接线断言寄在这里（它不关心配色，关心落点）。
     def active_tab():
         return page.evaluate("""() => {
@@ -409,7 +409,13 @@ with sync_playwright() as p:
 
     page.goto(f"{URL}?page=Users&tab=review")
     page.wait_for_timeout(1800)
-    check("Users 页认 ?tab=review（待审评论那行跳过来直接落在「评论管理」上）",
+    check("Users 页认 ?tab=review（待审留言那行跳过来直接落在「留言管理」上）",
+          active_tab() == "留言管理", str(active_tab()))
+    # 20261002：第四个页签（评论管理）同样认深链。**必须与上面那条分开跑**——两条都写成
+    # 看 active_tab 的话，一次 goto 只能验一个取值，而这里正是"白名单漏一项"最可能发生的地方。
+    page.goto(f"{URL}?page=Users&tab=comment")
+    page.wait_for_timeout(1800)
+    check("Users 页认 ?tab=comment（落在「评论管理」上，不是落回账号管理）",
           active_tab() == "评论管理", str(active_tab()))
     page.goto(f"{URL}?page=Users")
     page.wait_for_timeout(1800)

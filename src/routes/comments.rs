@@ -440,6 +440,15 @@ pub struct CommentAdminDto {
     /// 0=待审 / 1=通过 / 2=未通过（与留言板同口径，后台两个现成组件可直接复用）
     pub approved: i8,
     /// AI 判定留痕：pass / flag / reject；null = 没走 AI
+    ///
+    /// ⚠️ **键名是 `aiResult`，不是 `ai_result`**（20261002 与评论管理页一起定）：
+    /// 这个 DTO 其余字段全是 camelCase，而 `ai_result`/`is_deleted` 是顺着实体列名抄
+    /// 下来的（留言板那个 `BoardAdminDto` 也是这两处例外——它有已上线的消费者，
+    /// 不动它）。评论这个 DTO 只被评论管理页一个消费者读、还没上线，此时统一比
+    /// "两页在同一个概念上键名不同"更值——所以这里补上 rename。
+    /// **别对照留言板那个 DTO 抄字段名**：`ai_result` 与 `aiResult` 只差一个下划线，
+    /// 前端读错时拿到的是 `undefined`（不报错、只是那一列永远显示「未审」）。
+    #[serde(rename = "aiResult")]
     pub ai_result: Option<String>,
     /// 驳回理由；null = 未驳回或没人写过理由（后台显示「未填写」）
     #[serde(rename = "rejectReason")]
@@ -448,6 +457,10 @@ pub struct CommentAdminDto {
     /// 判断才写得出具体理由，所以后台带它、公开侧不带（内部注记不该发给全体访客）
     #[serde(rename = "aiReason")]
     pub ai_reason: Option<String>,
+    /// 是否已软删（作者自删或管理员删除）。**这个字段只有后台有**：公开侧按
+    /// `is_deleted = 0` 过滤，删掉的评论在那边**不存在**。后台保留这一行是为了溯源
+    /// （谁删了什么），并且明确标出来——已删的行**不可再审**（见 `audit_comment`）。
+    #[serde(rename = "isDeleted")]
     pub is_deleted: i8,
 }
 
@@ -548,7 +561,9 @@ pub struct AuditCommentBody {
 ///     `ai_reason`（AI 存疑说明）**，三级都没有就保持 NULL，不往库里塞编好的话
 ///     （通知层的固定文案在通知那一层兜）；
 ///   · **改判回通过时清空 `reject_reason`**（不留"已通过却带驳回理由"的矛盾行），
-///     `ai_reason` 不动（它是 AI 那一侧的留痕，不回溯）。
+///     `ai_reason` 不动（它是 AI 那一侧的留痕，不回溯）；
+///   · **已软删的行不可审**（20261002）：公开侧看不见它，改判只会在后台造出一行
+///     "看起来已通过"的假象（判据见下面那段）。
 ///
 /// 通知：这里发的是「你的回复被放行了」那条**回复通知**（发给被回复者），不是
 /// 「你的评论已通过审核」（发给作者）。后者**故意不做**——留言板那边发它是因为作者有
@@ -579,6 +594,14 @@ pub async fn audit_comment(
             data: String::default(),
         });
     };
+    // 已软删的评论**不可再审**（20261002 与评论管理页一起加）：公开侧按
+    // `is_deleted = 0` 过滤，所以给一条已删评论改判"通过"是**看不见效果**的，
+    // 而后台会弹一句「已通过」并把它标成绿色「通过」——界面因此说了一件没发生的事。
+    // 前端那一侧的操作列也不给按钮（**两处都要有**：那里是正常路径的界面判据，
+    // 这里是脚本 / 老前端 / 直接打接口也走得到的最终防线）。
+    if c.is_deleted != 0 {
+        return Json(ApiResponse::error("这条评论已删除，无法审核"));
+    }
     let reject = payload.approved == 0;
     let saved_reason = c.reject_reason.clone();
     let saved_ai_reason = c.ai_reason.clone();
