@@ -142,6 +142,25 @@ for (const f of ['chat-stream.js', 'chat-engine.js', 'chat-render.js', 'chat-ses
     ok(/ctx\.state\.pendingAsk = null/.test(tail(i)), `清空消息区（第 ${i + 1} 行）同时丢掉挂起的确认`);
   }
 }
+// ── ②b 初始位置：右移「看板娘板块」宽度的一半（20261003 用户第 2 条）──────────
+// 用户原话：「看板娘初始位置右移看板娘板块宽度一半」。板块 = `#live2d` 的 300px
+// ⇒ 半宽 150px，15 + 150 = 165。**锁值不锁推导**：`#live2d` 的宽度哪天变了，这条
+// 会红着让人回来重算半宽（这正是它该做的），而不是自己跟着漂。
+// 窄屏回落也得在：165 + 300 = 465 的右缘在 <480px 的视口里放不下。
+{
+  const css = W('widget.css');
+  ok(/#waifu \{[^}]*\bleft: 165px/.test(css),
+     'widget.css：#waifu 初始 left = 165px（= 板块 300px 的一半 + 原来的 15px）');
+  // 回落只收 #waifu 一条，且必须落在 #waifu 主规则**之后**（同特异度、后写者赢；
+  // 写在前面会被整条静默压掉——本文件里已有同族的坑）。
+  const iMain = css.search(/#waifu \{[^}]*\bleft: 165px/);
+  const iFallback = css.search(/@media \(max-width: 479px\) \{\s*#waifu \{ left: 15px; \}/);
+  ok(iFallback > iMain, 'widget.css：<480px 回落原位，且写在其后（写前面会被压掉）');
+  // 收起态那枚唤回贴纸**不跟着动**：它只在与本体互斥的收起态出现，恒贴左下角。
+  ok(/#waifu-toggle \{[^}]*\bleft: 15px/.test(css),
+     'widget.css：#waifu-toggle 仍恒在 15px（它不属于"看板娘本体"，不跟着右移）');
+}
+
 // ── ③ 确认卡片存活（20260923：帧到了、卡片却被当孤儿删掉）────────────────────
 // 真实事故（静态版判据）：agent 帧齐、Rust 真转发、前端也真渲染出了卡片，但弹卡后
 // 几十毫秒另一次 reconcileDOM（别的窗口写了会话缓存 ⇒ 本轮收尾补拉历史）把它当
