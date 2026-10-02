@@ -19,7 +19,7 @@ import readDayVideo from '../../../assets/read_day.mp4';
 import readNightVideo from '../../../assets/read_night.mp4';
 import {getNoteById} from "../../../apis/NoteMethods.tsx";
 import {getNoteStats, likeNote, reportNoteView, unlikeNote} from "../../../apis/NoteStatsMethods.tsx";
-import {EyeIcon, HeartIcon, HeartOutlineIcon, StarIcon, StarOutlineIcon} from "../../../components/NoteStatIcons/index.tsx";
+import {CommentIcon, EyeIcon, HeartIcon, HeartOutlineIcon, StarIcon, StarOutlineIcon} from "../../../components/NoteStatIcons/index.tsx";
 import type {NoteStats} from "../../../interface/NoteStatsType";
 import SeoHelmet from "../../../components/SeoHelmet";
 import getToken from "../../../apis/getToken.tsx";
@@ -139,6 +139,13 @@ const ReadArticle = () => {
     //     点下去后端会回一份权威的 {likes, liked}。
     const [views, setViews] = useState<number | null>(null)
     const [likes, setLikes] = useState<number | null>(null)
+    // 讨论数（20261003，用户第 5 条里的第四件）。与 `views` 同一档：`null` = 还没读到
+    // 或读失败 ⇒ **整格不渲染**，绝不显示 0（"读不到 ≠ 0"）。
+    // ⚠️ 它与下面讨论区列表里那个 `items.length` 是**两个来源**：这里走统计接口的
+    // `comments` 字段（服务端 `approved = 1 AND is_deleted = 0` 的口径），讨论区那个是
+    // 前端当前拉到的列表长度。两者口径刻意相同 ⇒ 正常情况下**数值必然相等**；不等时
+    // 是"统计还没回来"或"讨论区刚刷新"，以讨论区为准即可，不需要在这里做同步。
+    const [comments, setComments] = useState<number | null>(null)
     const [liked, setLiked] = useState(false)
     const [likeBusy, setLikeBusy] = useState(false)
     // 本 id 的统计是否已经拿到过。用于区分"今天第一次读"（要上报 +1）与
@@ -151,6 +158,7 @@ const ReadArticle = () => {
         statsLoadedRef.current = true
         setViews(s.views)
         setLikes(s.likes)
+        setComments(s.comments ?? null)
         setLiked(!!s.liked)
     }
 
@@ -245,6 +253,7 @@ const ReadArticle = () => {
         // 不归零的话 B 会先顶着 A 的阅读量渲染一帧，点赞态也是错的。
         setViews(null)
         setLikes(null)
+        setComments(null)
         setLiked(false)
         statsLoadedRef.current = false
         loadArticle();
@@ -565,16 +574,21 @@ const ReadArticle = () => {
                                     <h1>{article?.noteTitle}</h1>
                                     <h3>{dayjs(article?.updateTime).format("YYYY-MM-DD")}</h3>
                                 </div>
-                                {/* 右区：三件读数**同一个簇**（20261001，用户第 1 条「详情页三图标
+                                {/* 右区：四件读数**同一个簇**（20261001，用户第 1 条「详情页三图标
                                     样式和布局太丑了，大小不一，排列奇怪」）。
 
                                     之前是三个 wrapper、三套几何：收藏一件竖排胶囊（32×62），
                                     浏览与点赞各自一件，高度 24 / 30 不一 —— 排在一行里怎么摆
-                                    都对不齐。现在三件挂同一个 `.readStat` 拿共用几何（同高 30px、
-                                    同内边距、同字号、同描边、同一行），只有两个按钮多挂一层
+                                    都对不齐。现在四件挂同一个 `.readStat` 拿共用几何（同高 30px、
+                                    同内边距、同字号、同描边），只有两个按钮多挂一层
                                     `.readFavBtn` / `.readLikeBtn` 拿交互态。
                                     几何全在 `.readStat` 里，别在这里的内联或新类上再写一份
-                                    （"三处各写一遍"正是这一条被报上来的由来）。 */}
+                                    （"三处各写一遍"正是这一条被报上来的由来）。
+
+                                    **排列方向由 sass 定成竖排**（20261003 用户第 5 条：
+                                    「不要横向平铺会影响标题居中显示」）——簇的宽度决定中区标题
+                                    偏多少，横排 260px 时标题看着就是歪的，竖排 ~77px 即归位。
+                                    所以这里只管顺序，别在 JSX 上加任何 `flexDirection`/内联宽度。 */}
                                 <div className="readStats">
                                     <button
                                         type="button"
@@ -614,6 +628,18 @@ const ReadArticle = () => {
                                         {liked ? <HeartIcon size={14} /> : <HeartOutlineIcon size={14} />}
                                         {likes !== null && <span className="readLikeNum">{likes}</span>}
                                     </button>
+                                    {/* 第四件：讨论数（20261003 用户第 5 条）。**不是按钮**——
+                                        它没有任何可点的动作（讨论区就在本页下方），所以与
+                                        `.readViews` 一样只是个读数；想要"点它滚到讨论区"是另一个
+                                        需求，真要做时应当整簇统一（浏览也没有可点目标）。
+                                        口径与讨论区列表一致（服务端 `approved = 1 AND
+                                        is_deleted = 0`，见 `stats.comments` 的注释）。 */}
+                                    {comments !== null && (
+                                        <span className="readStat readComments" title="讨论数">
+                                            <CommentIcon size={14} />
+                                            <span className="readCommentNum">{comments}</span>
+                                        </span>
+                                    )}
                                 </div>
                                 <motion.div
                                     initial={{ scaleX: 0 }}

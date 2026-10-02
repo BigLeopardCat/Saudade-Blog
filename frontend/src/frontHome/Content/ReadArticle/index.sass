@@ -121,19 +121,23 @@ html
           margin: 0
           white-space: nowrap
 
-      // 右区：三件读数（收藏 / 浏览 / 点赞）合成**一个簇**
-      // （20261001，用户第 1 条「详情页三图标样式和布局太丑了，大小不一，排列奇怪」）。
+      // 右区：四件读数（收藏 / 浏览 / 点赞 / 评论）合成**一个簇**。
       //
-      // 之前那三件是**三种尺寸**：收藏是竖排胶囊 32×62（★ 在上、文案竖着往下写），
-      // 浏览是 59×24、点赞是 64×30；内边距 6px 8px / 2px 8px / 4px 10px、
-      // 字号 13 / 12 / 13、描边透明度 .55 / .35 / .55 —— 一件竖的、两件横的，
-      // 高度差到 2.6 倍，怎么摆都对不齐，那就是"大小不一，排列奇怪"的来源。
+      // 沿革：20261001 用户第 1 条「详情页三图标样式和布局太丑了，大小不一，排列奇怪」
+      // ⇒ 三件共用一份几何 `.readStat`（同高、同内边距、同字号、同描边），**排成一行**，
+      // 两个按钮再挂 `.readFavBtn` / `.readLikeBtn` 拿交互态。那一版治的是"大小不一"。
       //
-      // 现在三件共用一个 `.readStat`（同高、同内边距、同字号、同描边、同行），
-      // 排成**一行**；两个按钮再挂 `.readFavBtn` / `.readLikeBtn` 拿交互态。
-      // 竖排那套（`writing-mode: vertical-rl`）随之取消：它当初是治"标题一长把
-      // 「已收藏」挤成两行"的**症状**，而病根是簇可以被收缩 —— 那条已由下面的
-      // `flex: 0 0 auto` + `.readStat` 的 `white-space: nowrap` 从结构上治掉。
+      // 20261003 用户第 5 条：「点赞收藏观看评论图标不要横向平铺会影响标题居中显示，
+      // 改为纵向排列」⇒ 排列方向由**行**改成**列**（`flex-direction: column`），
+      // 20261003 同时补上第四件「评论」。**几何那一份原样不动**（同高/同内边距/同字号/
+      // 同描边仍然成立），改的只是它摆的方向。
+      //
+      // 为什么横排会把标题挤偏：`.readInfo` 是 [作者 | 中区标题+日期 | 本簇] 三列，
+      // 中区 `flex: 1 1 auto` 吃余量 ⇒ **中区的中线 = 卡片中线 + (作者宽 − 簇宽)/2**。
+      // 横排时簇宽 ≈260px、作者宽 ≈90px ⇒ 中区中线比卡片中线左偏 ~85px，标题那一栏
+      // 看着就是偏的。竖排后簇宽 = 最宽那一件（≈77px），与作者宽几乎相等 ⇒ 偏 ~6px。
+      // ⚠️ 所以"簇变窄"是这条修复的**因果**，不是副作用：簇里任何一件变宽都会把这条
+      //   重新推偏（`.readFavLabel` 的 `min-width: 3em` 与数字的 `4ch` 就是为此存在的）。
       //
       // ⚠️ 整簇必须 `flex: 0 0 auto`：`.readInfo` 是 flex 行，该被挤窄的只有中区
       // 那个 `min-width: 0` 的标题，不是这里（理由与 `.readAuthor` 一字不差）。
@@ -141,12 +145,15 @@ html
         margin-top: 6px
         flex: 0 0 auto
         display: flex
-        align-items: center
-        gap: 8px
+        flex-direction: column
+        // `stretch`（默认）不是"拉伸"而是"四件同宽"：列向 flex 的交叉轴宽度由最宽的
+        // 那一件定，四件各自被撑到同一个宽度 —— 一列等宽的胶囊，不会犬牙交错。
+        align-items: stretch
+        gap: 6px
 
-      // 三件共用的那一份几何。**高度写死 30px**，不靠 padding + line-height 凑：
+      // 四件共用的那一份几何。**高度写死 30px**，不靠 padding + line-height 凑：
       // "大小不一"的根子就是它们各自被内容撑出不同高度，定死高度是唯一的结构性修法
-      // （改字号/图标尺寸也不会再把三件带偏）。
+      // （改字号/图标尺寸也不会再把它们带偏）。
       .readStat
         display: inline-flex
         align-items: center
@@ -158,7 +165,7 @@ html
         line-height: 1
         color: #fff1eb
         background: transparent
-        // 描边同一条：三件里有两件是按钮、一件是读数，边框粗细/深浅不一致正是
+        // 描边同一条：四件里有三件是按钮、两件是读数，边框粗细/深浅不一致正是
         // 上一版看着散的原因之一
         border: 1px solid rgba(255, 241, 235, 0.55)
         border-radius: 999px
@@ -170,17 +177,18 @@ html
         min-width: 3em
         text-align: center
 
-      // 数字定宽 **4ch**（≠ 上一版的 3ch）：`.readInfo` 是 flex 行，整簇一宽，中区标题
-      // 就跟着重排、整簇左缘当场横移。无头实测（`read-stats-cluster.test.py`）：
+      // 数字定宽 **4ch**：整簇一宽，中区标题就跟着重排（竖排之后仍成立 —— 簇的**宽度**
+      // 决定中区中线偏多少，见上面那段）。无头实测（`read-stats-cluster.test.py`）：
       // 3ch 时 `999 → 1000` 这一步就挪 16px —— 而那恰恰是读数最常跨过的那道坎。
       // 4ch 覆盖到 9999（本博客的量级）；再往上就会长（`min-width` 只兜底不封顶），
-      // 那是刻意的：真到五位数，宁可让它长一点，也不为极少数情况把三个胶囊常年撑空。
-      .readViewsNum, .readLikeNum
+      // 那是刻意的：真到五位数，宁可让它长一点，也不为极少数情况把几个胶囊常年撑空。
+      .readViewsNum, .readLikeNum, .readCommentNum
         min-width: 4ch
         text-align: center
 
       // 读数不是按钮：不跟着按钮一起变亮，也不给 hover/disabled
-      .readViews
+      // （评论区那件同理 —— 讨论区就在本页下方，给它一个"能点"的外观是骗人的）
+      .readViews, .readComments
         color: rgba(255, 241, 235, 0.85)
 
       // ── 两个按钮的交互态（几何全在上面 `.readStat` 里，这里只加"能点"这件事）──
@@ -500,11 +508,40 @@ html
     width: 100% !important
     padding: 12px !important
   .readCover
-    height: 200px !important
+    // 20261003：200 → **240px**。竖排四件把 `.readInfo` 从 68px 撑到 138px 高，而
+    // `.readInfo` 是 `bottom: B` + `translateY(-50%)` 的绝对定位盒 ⇒ 上沿 =
+    // 封面高 − B − 1.5×盒高。实测（无头，327px 与 768px 两档）：240 档下
+    // 240 − 14 − 1.5×138 = 19 ✓；**留在 200 档则 200 − 25 − 1.5×146 = −44**
+    // ——`.readCover` 是 `overflow: hidden`，最上面那件「收藏」会被整整裁掉 44px
+    // 的一半。这不是"挤一点"，是缺一块。封面高与下面那两条是一组数，改一个要重算。
+    height: 240px !important
     .readInfo
-      bottom: 25px !important
+      // 14 而不是 25：同上式，四件竖排后必须把 B 收紧才有地方
+      bottom: 14px !important
+      // 上下内边距 16 → 12，也是那 1.5×盒高里的一份（`!important` 的理由与 `bottom`
+      // 逐字相同：本块选择器是 `.readCover .readInfo`（0,2,0），基础规则
+      // `.readContainer .readCover .readInfo` 是（0,3,0）——不用它就压不动）
+      padding: 12px 16px !important
       h1
         font-size: 1.4rem
+  // 竖排四件在手机档要收一档，否则上面那个 1.5×盒高算不平：4×30 + 3×6 = 138
+  //（+ 6 的 `margin-top` + 24 的内边距 = 168 ⇒ 240 − 14 − 252 = −26，仍然越界）。
+  // 收成 24px 高 / 4px 间距 = 4×24 + 3×4 = 108（+6+24 = 138 ⇒ 上沿 19 ✓），
+  // 与桌面档同样的"一行一件"关系，只是每一项小一号。
+  // ⚠️ 选择器必须写足四层：基础规则是 `.readContainer .readCover .readInfo .readStat`
+  // （0,4,0），只写 `.readCover .readStat` 是（0,2,0）—— **压不动**。写足之后两者
+  // 同特异性，靠"本块在文件更后面"取胜（sass 按源码顺序输出，见文件末尾那条头注）。
+  .readContainer
+    .readCover
+      .readInfo
+        .readStats
+          gap: 4px
+        .readStat
+          height: 24px
+          padding: 0 8px
+          font-size: 12px
+        // 两条定宽（`3em` / `4ch`）**不用在这里重写**：都是相对单位，跟着 12px 一起缩，
+        // 卡住的内容也一并缩到 12px——写第二份值只会成为"改一处必须同步另一处"。
   .markdown-body
     max-width: 100% !important
     h1
