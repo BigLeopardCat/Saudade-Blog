@@ -1,19 +1,21 @@
 # -*- coding: utf-8 -*-
-"""讨论区几何与深链沙箱（20261003）：计数不压按钮 / 表情面板不盖计数 / 未登录态 / ?cid= 定位。
+"""讨论区几何与深链沙箱（20261003）：计数搬进输入框 / 按钮贴着输入框 / 未登录态 / ?cid= 定位。
 
 ## 这个沙箱为什么必须有
 
 `antd` 的 `showCount` 计数是**挂在输入框下方、不占布局空间**的绝对定位元素——
 `rc-textarea` 渲染 `span.ant-input-data-count`，`antd/es/input/style/textarea.js` 给它
 `position: absolute; bottom: -(fontSize × lineHeight) = -22px; insetInlineEnd: 0`。
-下一行就是 `.commentComposerFoot`（表情按钮 + 发表评论），**不腾地方就正好压住右边那颗按钮**。
-20261003 用户报的"字数限制计数文本和其他组件重叠遮挡"就是这一条；修法是给输入框挂
-`counter-room`（`src/index.css` 里那 22px，全站六个消费方共用一份值）。
+原来为了不让它压住下一行，给输入框挂了全站那 22px 的 `counter-room`（`src/index.css`）
+——**那一整行空白正是「发表评论按钮离输入框太远」**（用户 20261003 第 3 条原话：
+「把字数统计文本移入输入框就能腾出空间，减小按钮到输入框的缝隙了」）。
 
-于是本文件判**两件事，缺一不可**：
-  ① fixed 变体：计数与 `.commentSubmit` / `.commentComposerFoot` **不相交**；
-  ② broken 变体（拷贝一份 src、把 `className="counter-room"` 删掉）：**必须相交**。
-没有 ②，① 就有可能是永真的——"某某没重叠"这类断言最容易在元素根本不存在时也是绿的。
+修法 = 把计数按进框内的右下角（`CommentSection/index.sass` 里那三条），
+输入框挂的 `counter-room` 随之摘掉。于是本文件判**两件事，缺一不可**：
+  ① fixed 变体：计数**整个落在输入框盒子里**，且输入框到按钮行的缝隙很小；
+  ② broken 变体（还原改之前的形态：挂回 `counter-room` + 摘掉按进框内那条 `bottom`）：
+     计数**必须落到框外**、**必须压住按钮行**、缝隙**必须变回 30px**。
+没有 ②，① 就有可能是永真的——"计数在框里"这类断言最容易在元素根本不存在时也是绿的。
 
 ## 沙箱三件事（与既有 .test.py 同recipe；本机不能 vite build，见 CLAUDE.md §2）
 
@@ -126,8 +128,22 @@ const boot = (window as any).__BOOT || {};
 ''' % COMMENTS_JSON
 
 
+SASS_SRC = FE / "src/components/CommentSection/index.sass"
+# 红基线只动两处，正是"改之前的样子"——两处都在沙箱那份拷贝上打，`FE` 里一字不动：
+#   ① tsx：输入框挂回全站那 22px 的 `.counter-room`（当年给吊在框下方的计数腾的地方）；
+#   ② sass：摘掉把计数按进框内右下角的那条 `bottom: 4px` ⇒ 落回 antd 的 `bottom: -22px`。
+TA_REF = "                        ref={taRef}\n"
+ROOM_ATTR = '                        className="counter-room"\n'
+COUNT_BOTTOM = "                bottom: 4px\n"
+
+
 def build(variant: str) -> pathlib.Path:
-    """variant: 'fixed'（src 原样）/ 'broken'（把 counter-room 摘掉，做红基线）。"""
+    """variant:
+    'fixed'  src 原样；
+    'broken' 改之前的样子（tsx 挂回 counter-room + sass 摘掉按进框内那条）——红基线 A；
+    'bare'   只摘掉按进框内那条（= 20261003 早上用户报重叠时的样子）——红基线 B。
+    两个红基线各自翻的是 ② 里不同的那几条，所以两个都要跑：
+    A 翻的是「缝隙」与「落在框内」，B 翻的是「计数与按钮不相交」（当年那 22px 就是为它加的）。"""
     sb = pathlib.Path(tempfile.mkdtemp(prefix=f"comment-layout-{variant}-"))
     shutil.copytree(FE / "src", sb / "src")
     (sb / "node_modules").symlink_to(FE / "node_modules")
@@ -136,13 +152,19 @@ def build(variant: str) -> pathlib.Path:
     (sb / "src/apis/CommentMethods.tsx").write_text(STUB_COMMENTS, encoding="utf-8")
     (sb / "src/apis/getToken.tsx").write_text(STUB_TOKEN, encoding="utf-8")
 
+    sass_src = SASS_SRC
+    if variant in ("broken", "bare"):
+        s = sb / "src/components/CommentSection/index.sass"
+        txt = s.read_text(encoding="utf-8")
+        assert txt.count(COUNT_BOTTOM) == 1, "红基线补丁没找到把计数按进框内的 `bottom: 4px`"
+        s.write_text(txt.replace(COUNT_BOTTOM, "", 1), encoding="utf-8")
+        sass_src = s  # 沙箱里那份（整棵 src 已拷过来，相对 import 照样解析）
+
     if variant == "broken":
         p = sb / "src/components/CommentSection/index.tsx"
         src = p.read_text(encoding="utf-8")
-        # 只摘掉那一行属性本身，注释留着（注释不影响渲染）
-        assert '                        className="counter-room"\n' in src, "broken 变体没找到 counter-room 属性"
-        p.write_text(src.replace('                        className="counter-room"\n', "", 1),
-                     encoding="utf-8")
+        assert src.count(TA_REF) == 1, "红基线补丁没找到 `ref={taRef}`"
+        p.write_text(src.replace(TA_REF, TA_REF + ROOM_ATTR, 1), encoding="utf-8")
 
     (sb / "entry.tsx").write_text(ENTRY, encoding="utf-8")
 
@@ -150,7 +172,7 @@ def build(variant: str) -> pathlib.Path:
     subprocess.run(["node", "-e",
                     "const s=require('sass');const r=s.compile(process.argv[1],{style:'expanded'});"
                     "require('fs').writeFileSync(process.argv[2],r.css);",
-                    str(FE / "src/components/CommentSection/index.sass"), str(sb / "comment.css")],
+                    str(sass_src), str(sb / "comment.css")],
                    cwd=str(FE), check=True)
     # ③ 全站样式表**逐字节**带进来（.counter-room 就住在这里）
     shutil.copyfile(FE / "src/index.css", sb / "global.css")
@@ -188,11 +210,21 @@ def overlap(a, b):
 
 
 COUNT = ".ant-input-data-count"
+TEXTAREA = ".commentComposer textarea"
 FOOT = ".commentComposerFoot"
 SUBMIT = ".commentSubmit"
 
+# 计数该有多大地方待着：它在框内右下角（`bottom:4px` + `line-height:16px`）⇒ 与框底
+# 只差几像素。**判"在框里"用 `inside()`，不是判"不相交"**——不相交在它被藏起来、
+# 或者跑到八百里外时同样是绿的。
+def inside(inner, outer, slack=0.5):
+    return bool(inner) and bool(outer) and (
+        inner["x"] >= outer["x"] - slack and inner["right"] <= outer["right"] + slack
+        and inner["y"] >= outer["y"] - slack and inner["bottom"] <= outer["bottom"] + slack)
+
 FIXED = build("fixed")
 BROKEN = build("broken")
+BARE = build("bare")
 
 print(f"沙箱：{FIXED}")
 
@@ -225,27 +257,50 @@ with sync_playwright() as p:
           pg.locator(COUNT).inner_text().strip())
     check("发表按钮在", pg.locator(SUBMIT).inner_text().strip() == "发表评论")
 
-    print("\n② 几何：计数不压着下面那一行（用户 20261003 报的正是这里）")
+    print("\n② 几何：计数在输入框**里**，且按钮贴着输入框（用户 20261003 第 3 条报的正是这里）")
     c = box(pg, COUNT)
+    t = box(pg, TEXTAREA)
     f = box(pg, FOOT)
     s = box(pg, SUBMIT)
     check("计数元素有实际尺寸（不是 display:none 这类「靠藏起来达标」）",
           bool(c) and c["w"] > 0 and c["h"] > 0, c)
+    check("★ 计数整个落在输入框盒子之内（`inset-inline-end:10px; bottom:4px`）",
+          inside(c, t),
+          f"count={c} textarea={t}")
+    check("计数贴着框底（不是「框恰好很大所以进去也算」）",
+          bool(c) and bool(t) and 0 < t["bottom"] - c["bottom"] <= 8,
+          f"离框底 {t and c and round(t['bottom'] - c['bottom'], 1)}px")
     check("计数与「发表评论」按钮不相交", overlap(c, s) <= 0,
           f"相交 {overlap(c, s):.1f}px  count={c} submit={s}")
     check("计数与整行 .commentComposerFoot 不相交", overlap(c, f) <= 0,
           f"相交 {overlap(c, f):.1f}px  count={c} foot={f}")
-    check("计数的下缘不越过按钮行的上缘", bool(c) and bool(f) and c["bottom"] <= f["y"] + 0.5,
-          f"count.bottom={c and round(c['bottom'], 1)} foot.top={f and round(f['y'], 1)}")
+    check("★ 输入框到按钮行的缝隙很小（≤12px；改之前是 22+8=30px，这正是「按钮太远」）",
+          bool(t) and bool(f) and 0 <= f["y"] - t["bottom"] <= 12,
+          f"缝隙 {t and f and round(f['y'] - t['bottom'], 1)}px")
 
-    print("\n②b 计数文本变长（0 → 300）后仍在同一位置：修的不是「初始那串短文本恰好塞得下」")
-    pg.fill(".commentComposer textarea", "字" * 300)
+    print("\n②b 计数文本变长（0 → 300）后仍在框内同一角：修的不是「初始那串短文本恰好塞得下」")
+    pg.fill(TEXTAREA, "字" * 300)
     pg.wait_for_timeout(200)
     c2 = box(pg, COUNT)
     check("计数已更新为「300 / 300」", pg.locator(COUNT).inner_text().strip() == "300 / 300",
           pg.locator(COUNT).inner_text().strip())
-    check("长计数仍不压按钮", overlap(c2, box(pg, SUBMIT)) <= 0 and overlap(c2, box(pg, FOOT)) <= 0,
+    check("长计数仍在框内、仍不压按钮",
+          inside(c2, box(pg, TEXTAREA)) and overlap(c2, box(pg, SUBMIT)) <= 0
+          and overlap(c2, box(pg, FOOT)) <= 0,
           f"相交 {overlap(c2, box(pg, SUBMIT)):.1f}px")
+    # 最后一行文字的下缘 = 框底 − padding-bottom；计数占掉的是「框底往上 4 + 16 = 20px」。
+    # 所以判据 = padding-bottom 必须比计数占的那一段还多出一点（`index.sass` 写的是 26）。
+    # 这一条量的是"文字与数字在同一块地方却撞不上"，**不是**"CSS 里写了 26px"。
+    room = pg.evaluate(
+        "() => { const ta = document.querySelector('.commentComposer textarea');"
+        " const c = document.querySelector('.ant-input-data-count');"
+        " if (!ta || !c) return null;"
+        " const t = ta.getBoundingClientRect(), k = c.getBoundingClientRect();"
+        " return {pad: parseFloat(getComputedStyle(ta).paddingBottom),"
+        "         need: Math.round(k.height + (t.bottom - k.bottom))}; }")
+    check("★ 计数占掉的那一段高度（下偏移 + 字高）被 padding-bottom 完整让开",
+          bool(room) and room["pad"] >= room["need"] + 2,
+          f"padding-bottom={room and room['pad']} 计数占 {room and room['need']}")
 
     print("\n③ 表情面板：往上弹，不盖住计数")
     pg.fill(".commentComposer textarea", "")
@@ -344,10 +399,11 @@ with sync_playwright() as p:
     check("命中的是最后一行（目标是回复的回复，排在讨论区末尾）",
           pg.evaluate("document.querySelector('.comment-hit').parentElement === "
                       "document.querySelector('.commentList').lastElementChild"), True)
+
     pg.close()
 
-    # ══ 二、红基线：同一个组件、摘掉 counter-room ═══════════════════════════
-    print("\n⑧ 红基线（broken 变体）：没有那 22px 时，计数**必须**压住按钮")
+    # ══ 二、红基线 A：还原改之前的形态（counter-room 挂回来 + 计数落回框外）══════════
+    print("\n⑧ 红基线 A（broken 变体）：计数落回框外、缝隙变回 30px")
     pg2 = br.new_page(viewport={"width": 1280, "height": 900})
     errs2 = []
     pg2.on("pageerror", lambda e: errs2.append(str(e)))
@@ -358,16 +414,43 @@ with sync_playwright() as p:
     check("对照组页面本身是好的（没有 JS 错误、计数在）",
           not errs2 and pg2.locator(COUNT).count() == 1, "; ".join(errs2[:1]))
     cb = box(pg2, COUNT)
-    sb_ = box(pg2, SUBMIT)
+    tb = box(pg2, TEXTAREA)
     fb = box(pg2, FOOT)
-    check("对照组里计数**确实**与按钮重叠（⇒ ② 那几条断言是有牙的，不是永真）",
-          overlap(cb, sb_) > 2, f"相交 {overlap(cb, sb_):.1f}px")
-    check("对照组里计数也确实压着整行按钮区", overlap(cb, fb) > 2, f"相交 {overlap(cb, fb):.1f}px")
-    # 两边的计数与按钮各自的位置都该是一样的——差别只在有没有那 22px（防"对照组其实是另一个页面"）
-    check("两组的计数上缘一致（对照组只是少了 22px，不是别的东西在动）",
-          bool(c) and bool(cb) and abs(c["y"] - cb["y"]) < 1.5,
-          f"fixed={c and round(c['y'], 1)} broken={cb and round(cb['y'], 1)}")
+    check("★ 对照组里计数**落到框外**（吊在下方 −22px ⇒ 下缘越过输入框底）"
+          "—— ⇒ ② 那条「落在输入框盒子之内」有牙",
+          bool(cb) and bool(tb) and cb["bottom"] > tb["bottom"] + 6,
+          f"count.bottom={cb and round(cb['bottom'], 1)} textarea.bottom={tb and round(tb['bottom'], 1)}")
+    check("★ 对照组里缝隙变回 31px（22 的 counter-room + 8 的 margin-top）"
+          "—— ⇒ ② 那条「缝隙 ≤12px」量的正是这一处修复",
+          bool(tb) and bool(fb) and fb["y"] - tb["bottom"] > 28,
+          f"缝隙 {tb and fb and round(fb['y'] - tb['bottom'], 1)}px")
+    # 防"对照组其实是另一个页面"：两组的输入框上缘该是同一条线（差别只在框内让位与那 22px）
+    check("两组的输入框上缘一致（差别只在计数与那 22px，不是别的东西在动）",
+          bool(t) and bool(tb) and abs(t["y"] - tb["y"]) < 1.5,
+          f"fixed={t and round(t['y'], 1)} broken={tb and round(tb['y'], 1)}")
     pg2.close()
+
+    # ══ 三、红基线 B：只摘掉「按进框内」那条（= 20261003 早上用户报重叠时的样子）══════
+    print("\n⑧b 红基线 B（bare 变体）：计数落到框外**并且**压住按钮行")
+    pg3 = br.new_page(viewport={"width": 1280, "height": 900})
+    errs3 = []
+    pg3.on("pageerror", lambda e: errs3.append(str(e)))
+    pg3.add_init_script("window.__BOOT = { path: '/article/1', token: 't' };")
+    pg3.goto(BARE.as_uri() + "/index.html")
+    pg3.wait_for_selector(".commentComposer", timeout=8000)
+    pg3.wait_for_timeout(300)
+    check("对照组页面本身是好的（没有 JS 错误、计数在）",
+          not errs3 and pg3.locator(COUNT).count() == 1, "; ".join(errs3[:1]))
+    c3 = box(pg3, COUNT)
+    check("★ 对照组里计数落到框外",
+          bool(c3) and bool(box(pg3, TEXTAREA)) and c3["bottom"] > box(pg3, TEXTAREA)["bottom"] + 6,
+          f"count.bottom={c3 and round(c3['bottom'], 1)}")
+    check("★ 对照组里计数**确实**盖住「发表评论」按钮"
+          "—— ⇒ ② 那两条「不相交」有牙（当年那 22px 的 counter-room 就是为它加的）",
+          overlap(c3, box(pg3, SUBMIT)) > 2, f"相交 {overlap(c3, box(pg3, SUBMIT)):.1f}px")
+    check("对照组里计数也确实压着整行按钮区", overlap(c3, box(pg3, FOOT)) > 2,
+          f"相交 {overlap(c3, box(pg3, FOOT)):.1f}px")
+    pg3.close()
     br.close()
 
 print(f"\ncomment-layout: {'全绿' if not FAILS else str(len(FAILS)) + ' 条红'}\n")
