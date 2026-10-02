@@ -26,6 +26,7 @@
  * 评论 id 与留言板 `talk.id` 是**两个命名空间**，所以显示带 `#C` 前缀。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Input, Modal, message } from 'antd'
 // 光标插入表情要拿到真正的 <textarea>：antd 的 TextArea 包了一层自动高度容器，
 // 引用类型自带 `resizableTextArea.textArea`（不要用 as 硬转，那层结构改名后会静默失效）
@@ -73,6 +74,11 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
     const [pendingDelete, setPendingDelete] = useState<CommentItem | null>(null)
     const [deleting, setDeleting] = useState(false)
     const taRef = useRef<TextAreaRef>(null)
+    /** 已经定位过的 cid（**记的是值不是布尔**：同页再点另一条通知时要能重新定位） */
+    const locatedRef = useRef<number | null>(null)
+    const [searchParams] = useSearchParams()
+    /** 通知深链 `/article/<id>?cid=<评论 id>` 里的那条评论 id。0 = 没有 */
+    const cid = Number(searchParams.get('cid')) || 0
 
     const loggedIn = !!getToken()
     const key = noteId === undefined || noteId === null || noteId === '' ? '' : String(noteId)
@@ -109,6 +115,34 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
         }
         return { tops: rootList, repliesByRoot: byRoot }
     }, [items])
+
+    /* 深链定位（`?cid=`）：评论列表到位后滚到那一条并加高亮类。
+     *
+     * · **必须等 `items` 到位**——那一行是渲染出来的，DOM 里还没有就 `getElementById` 不到。
+     *   指向的评论**必然已公开**（通知只在评论已放行时发，见后端 `notify_comment_reply`），
+     *   所以"列表里没有它"只可能是它已经被删/被驳回，此时**安静兜底**：页面本身已经打开在
+     *   这篇文章上，再弹一句"没找到这条评论"只会添乱（同 RiverBoard「定不到就安静兜底回页面」）。
+     * · **瞬时滚动 + double-rAF 重放**，不用 `behavior: 'smooth'`：本页挂载时会
+     *   `scrollToTop()`，而那是**平滑**滚动（`utils/scrollToTop.tsx`）——评论列表回来时它
+     *   可能还在动画里，随后的平滑定位会被顶掉或与之互相拉扯，症状就是"点通知进来停在
+     *   页面顶部"。瞬时滚动会取消在途的平滑动画，double-rAF 再补一次压过同帧的其它滚动
+     *   （同族取证见聊天记录命中定位那一轮）。
+     * · **不写 cleanup**：摘掉高亮由那个 1.8s 定时器负责，而 `items` 每次后台刷新都会让本
+     *   effect 重跑一次——若把"摘类"放进 cleanup，一次静默刷新就会把还没闪完的高亮掐掉。
+     */
+    useEffect(() => {
+        if (!cid || !items || locatedRef.current === cid) return
+        const el = document.getElementById(`c-${cid}`)
+        if (!el) return
+        locatedRef.current = cid
+        const jump = () => el.scrollIntoView({ block: 'center', behavior: 'auto' })
+        requestAnimationFrame(() => {
+            jump()
+            requestAnimationFrame(jump)
+        })
+        el.classList.add('comment-hit')
+        window.setTimeout(() => el.classList.remove('comment-hit'), 1800)
+    }, [cid, items])
 
     /** 把 `:名字:` 插到光标处（不是追加到末尾——插完把光标挪到表情之后继续打字） */
     const pickSticker = (name: string) => {
