@@ -240,3 +240,53 @@ esp_mqtt_client_config_t cfg = {
 - **数据**：SQLite WAL（devices/config_history/telemetry/cmd_history），量小无需外部依赖。
 - **日志**：`logs/device.log`（DEVICE_LOG_FILE 配置）；MQTT 三段式日志（已入队→发出→broker 确认）
   是排查"下发假成功"的第一入口（问题记录 2.2）。
+
+---
+
+## 7. 机器代价与保留结论（20261002 实测）
+
+**结论：本站的 IoT 是"在用/偶尔用"，建议保留**——代价可量化且都很小，而拆掉它并不会让
+主站变快（主站的瓶颈在 LLM API 延迟，不在这台机器）。下面是账，引用时连着日期一起引。
+
+### 7.1 边际代价
+
+| 项 | 实测 | 对比 |
+|---|---|---|
+| 常驻内存 | EMQX ~42 MiB + device-service ~1 MiB | agent 每加一个 worker 就是 ~130 MiB ⇒ **IoT 全量约等于 1/3 个 worker** |
+| 磁盘 | `/usr/lib/emqx` 89 MB + `/var/lib/emqx` 1.3 MB ≈ 90 MB | 40G 盘上占 0.2%；开发侧源码 `mqtt-demo` 14 MB、固件仓 70 MB 不算运行依赖 |
+| CPU | 空闲时 ~0（load 0.10/0.21/0.35 的机器上无可见贡献） | — |
+| 公网面 | 多开 **8883**（MQTTS） | 主站只开 80/443；这是**唯一为设备开的口子**，安全组与证书都要单独管 |
+| 运维面 | **两个不经 CI 的 unit**（emqx、saudade-device）；device-service 源码不在本仓，改动要手动 `cargo build --release` + 重启 | 主站两个服务都走 CI；这两件是"游离在流水线之外"的例外 |
+
+按生产合计 ~576 MiB 算，**IoT 占约 7%**；按生产 CPU 占用算约等于 0。
+
+### 7.2 两个必须记住的运维风险（不是代价，是坑）
+
+- **EMQX 的内存上限只写在 systemd drop-in 里**（`MemoryHigh=384M` / `MemoryMax=512M`），
+  仓库里原本看不见——已在 [deployment-and-ops.md](deployment-and-ops.md) §3 记一份。
+  重建机器时漏掉这个 drop-in ⇒ broker 在压力下无人刹车。
+- **MQTTS 证书与 HTTPS 同源，续期要两处同步**：只续 nginx 侧 ⇒ 网页正常、**设备全掉线**，
+  而且掉线的表现是"设备离线"不是"证书过期"，很容易查到错的方向。
+
+### 7.3 什么时候才该拆
+
+三条任一成立再动它，否则保留：① 长期（>3 个月）没有一台设备在线、也不打算再接；
+② 需要用 8883 这个公网端口去换别的服务；③ 服务器要缩容到 2GB 以下（那时 90MB 磁盘与
+42MB 内存才真正开始有意义）。
+
+### 7.4 怎么卸（分两档，别只做第一档）
+
+```bash
+# 第一档：主站侧关掉（控制台/API 入口消失，服务还活着）——三处开关见 iot/README.md
+./iot/toggle.sh off
+# 再把两份 .env 里的 IOT_ENABLED 删掉，重启 Rust 与 agent 两个服务
+./iot/status.sh                            # 判据是内容不是状态码（卸载后 /device-console/ 仍是 200）
+
+# 第二档：连 broker 与服务一起停
+sudo systemctl disable --now emqx saudade-device
+# 彻底清（可选）：删 iot/ 目录、/usr/lib/emqx、/var/lib/emqx、drop-in 与 8883 安全组规则
+```
+
+**两档的差别**：`toggle.sh off` 之后 agent 的工具面与前端入口都没了，但 EMQX 仍在监听
+8883 并占着内存；**只做第一档等于"看起来拆了，其实没省资源"**。[iot/README.md](../iot/README.md)
+的《代价》一节是给"要不要装/要不要留"做决策用的短版。

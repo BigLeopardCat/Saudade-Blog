@@ -75,7 +75,7 @@ git push（主仓库 cn_sora_blog / agent 仓库）
 | 服务 | 端口 | 说明 |
 |---|---|---|
 | Rust 后端 | :3000 | 博客 API + 对话编排 |
-| Python Agent | :8010 | AI 看板娘（2 workers；`TimeoutStopSec=120` 优雅停等在途对话） |
+| Python Agent | :8010 | AI 看板娘（4 workers；`TimeoutStopSec=120` 优雅停等在途对话） |
 | IoT device-service | :3100 | 设备服务（源码在独立目录，**不经 CI**，改后手动构建重启）。仅启用 IoT 时存在 |
 | nginx / EMQX | :443 / :8883 | 入口 / MQTT over TLS（8883 是唯一对公网开放的设备端口）。EMQX 同理 |
 

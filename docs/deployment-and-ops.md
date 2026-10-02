@@ -27,7 +27,7 @@ nginx（唯一公网入口）
 |---|---|---|
 | 80/443 | nginx | 静态 + 反代 + SSE 透传（`X-Accel-Buffering: no`，否则帧被缓冲成一次性返回） |
 | 3000 | Rust 后端 | axum + sea-orm + MySQL；博客主 API + 对话编排 |
-| 8010 | Python Agent | FastAPI，2 workers；对话生成 + 工具执行 + RAG |
+| 8010 | Python Agent | FastAPI，4 workers（20261002 起，见《资源画像与容量》）；对话生成 + 工具执行 + RAG |
 | 3100 | IoT 设备服务 | Rust；设备注册/遥测/cmd 下发（校验博客 JWT） |
 | 8883 | EMQX | MQTT over TLS；设备 ↔ device-service 消息总线 |
 | 3306 | MySQL | 博客业务库 + 对话历史 + IoT 数据 |
@@ -83,13 +83,20 @@ push 到 `cn_sora_blog` 分支触发构建与部署：
 
 ## 3. 服务管理（systemd）
 
-三个 systemd 服务，均开机自启：
+五个 systemd 服务，均开机自启（后两个是**可选件**，见 [iot/README.md](../iot/README.md)）：
 
 | 服务 | 重启策略 | 说明 |
 |---|---|---|
 | Rust 后端 | `Restart=always` | 工作目录即仓库根，环境文件由 dotenv 从工作目录加载 |
-| Python Agent | `Restart=always` | uvicorn 2 workers 绑回环；`TimeoutStopSec=120` 让在途对话优雅结束 |
+| Python Agent | `Restart=always` | uvicorn 4 workers 绑回环（20261002 起）；`TimeoutStopSec=120` 让在途对话优雅结束 |
+| MySQL | 发行版默认 | 业务库 + 对话历史 + IoT 数据（单实例，无主从） |
+| EMQX | `Restart` + `RestartSec=5s` | MQTT broker；**带内存上限**（drop-in 见下） |
 | IoT device-service | `Restart=on-failure` | 独立目录与独立仓库，不在博客仓库内 |
+
+- **EMQX 有 systemd drop-in 内存上限**（`/etc/systemd/system/emqx.service.d/memory-limit.conf`）：
+  `MemoryHigh=384M`、`MemoryMax=512M`。**这个值只存在于服务器上**——仓库里看不见它，改机器
+  或重装时容易漏掉 ⇒ 在这里记一份，实测常驻约 42–65MB（见 §8）。没有上限时 EMQX 在
+  broker 压力下会一路涨到把整机拖垮，而它自己只是本机的一个可选件。
 
 - **agent 无状态，重启安全**：改技能/工具/prompt 后**必须重启才生效**——push 不等于部署
   （CI 只做校验，运行时是另一件事）。
@@ -171,3 +178,146 @@ nginx 会把它们一起加载，导致 duplicate server；备份移出该目录
 - 前端错误上报端点匿名可写（访客错误上报最有价值），防刷靠 8KB body 上限 + logrotate 兜底磁盘。
 - IoT API 全部校验博客 JWT（控制台复用前端已有 token，无二次登录）。
 - 中转桶密钥与模型 API key 均从 CI Secrets / 环境文件注入，无硬编码；泄漏过的密钥已滚动。
+
+---
+
+## 8. 资源画像与容量（20261002 实测）
+
+> 这一节的数字全部来自**本机实测**（命令附在每张表后），不是估算；引用时请连着日期一起引，
+> 换机器后必须重测。**本机既是开发机也是生产服务器**，所以下面把"生产"与"开发工具"分开列——
+> 混在一起看会得出"内存不够"的错误结论。
+
+### 8.1 机器规格
+
+| 项 | 实测值 |
+|---|---|
+| CPU | 4 vCPU，Intel Xeon Platinum 8255C @ 2.50GHz（无 GPU） |
+| 内存 | 3723 MiB（3.7GB）+ 4035 MiB swap |
+| 磁盘 | `/dev/vda2` 40G，已用 28G（74%），余 11G |
+| 负载 | load average 0.10 / 0.21 / 0.35（4 核 ⇒ 约 3–9%）；开机 32 天 |
+
+```bash
+nproc; grep -m1 'model name' /proc/cpuinfo; free -m; df -h /; cat /proc/loadavg
+```
+
+### 8.2 常驻内存（生产服务）
+
+按 systemd cgroup 口径（`MemoryCurrent`，共享页只算一次）：
+
+| 服务 | 常驻 |
+|---|---|
+| Python Agent（master + 4 workers） | ~461 MiB |
+| MySQL | ~47 MiB |
+| EMQX | ~42 MiB |
+| Rust 后端 | ~15 MiB |
+| nginx | ~7 MiB |
+| device-service | ~1 MiB |
+| **生产合计** | **~576 MiB** |
+
+**Agent 是大头，而它的形状是"1 + 4"**：master ~23 MiB + 每个 worker ~129 MiB（RSS 逐进程相加
+~553 MiB，cgroup 口径略低因为 worker 间共享只读页）。这解释了 §3 里 worker 数的取舍：
+**每加一个 worker 约 +130 MiB**，2 → 4 是 +260 MiB 量级——在 3.7GB 机器上不算小数目，
+但对照下面 8.3 的开发工具占用，它并不是压力来源。
+
+```bash
+for s in saudade-agent saudade-rust nginx mysql saudade-device emqx; do
+  echo "$s $(systemctl show $s -p MemoryCurrent --value)"; done
+# worker 逐个看（worker 是 master 的 spawn_main 子进程，按 cmdline 匹配不到）：
+m=$(pgrep -f "[u]vicorn server:app" | sort -n | head -1)
+for p in $(pgrep -P "$m"); do tr -d '\0' < /proc/$p/cmdline | grep -q multiprocessing-fork \
+  && echo "worker $p $(awk '/VmRSS/{print $2, $3}' /proc/$p/status)"; done
+```
+
+### 8.3 真正的内存压力来自"同机开发"
+
+`free -m` 里 `used` 看起来有 2.8G，但其中 **VS Code server + 若干 Claude Code 会话合计约
+1.78 GB**（RSS 相加）、外加页缓存约 1.0 GB——**都不是生产服务**。也就是说：
+
+- **纯生产占用 ≈ 0.6 GB**，3.7GB 机器余量充足；
+- 紧的时刻只出现在"开发者登录、IDE + 对话会话常驻，同时跑测试/构建"时——这才是历史上那次
+  OOM（§2.1）的真正形状，也是"本机不 build"纪律的由来。**它约束的是构建，不是 worker 数。**
+
+### 8.4 磁盘画像
+
+| 目录 | 大小 | 说明 |
+|---|---|---|
+| `target/` | 4.0 GB | Rust 构建产物。**生产二进制就在这里 ⇒ 永不 `cargo clean`** |
+| `saudade-blog-agent/` | 234 MB | 含 `.venv` |
+| `/usr/lib/emqx` | 89 MB | EMQX 发行包（可选件） |
+| `logs/` | 69 MB | agent 日志 + trace |
+| `/home/ubuntu/ESP32-S3-OBC` | 70 MB | 固件源码仓库（开发产物，非运行依赖） |
+| `frontend/dist` | 18 MB | 前端产物 |
+| `/home/ubuntu/mqtt-demo` | 14 MB | device-service 源码 + `target/` |
+| `/var/lib/emqx` | 1.3 MB | EMQX 运行数据 |
+
+40G 盘已用 74%：**4GB 的 `target/` 与 89MB 的 EMQX 是两块可辨认的大头，但都不能随手删**
+（前者是生产二进制，后者是可选件的本体）。清理口径见
+[disk layout 相关约定](../CLAUDE.md) 与 `docs/问题记录.md`。
+
+```bash
+du -sh target logs frontend/dist saudade-blog-agent /usr/lib/emqx /var/lib/emqx
+```
+
+### 8.5 负载画像（对话侧）
+
+按天对话轮数（trace 按天目录计数）：`20260926:74 / 27:41 / 28:13 / 29:30 / 30:120 / 20261001:60 / 02:10`
+⇒ **常态 10–120 轮/天，峰值 120**。单轮耗时（近 45 轮，含工具调用）：
+
+| 指标 | 值 |
+|---|---|
+| 耗时 | mean 10.7s / p50 9.6s / p90 22.3s / max 28.5s |
+| 每轮 prompt tokens | mean 71.7k / p50 62.8k / p90 114k / max 195k（其中 37.6% 命中 cache read） |
+| 每轮输出 tokens | mean 345 / p90 833 |
+| planner / narrator 调用次数 | 1.60 次 / 0.89 次（单次 prompt 分别 ~37k / ~12k） |
+
+**口径注意**：token 字段是 20261001 起才写进 trace 的，所以 token 那一行只有 45 轮的样本
+（耗时那几行样本更大：n≈450，p50 6.8s / p90 17.0s / max 44.2s）。**这两组数别混着引用。**
+
+```bash
+python3 - <<'PY'
+import json,glob,statistics
+rows=[]
+for f in sorted(glob.glob('logs/agent/traces/202610*/[0-9]*.json')):
+    d=json.load(open(f)); tot=out=p=n=0
+    for e in d.get('events') or []:
+        if e.get('event')=='llm_done':
+            i=(e.get('input') or 0)+(e.get('cache_read') or 0); o=e.get('output') or 0
+            if e.get('node')=='planner': p+=1
+            else: n+=1
+            tot+=i; out+=o
+    if p+n: rows.append((d.get('duration_s') or 0,tot,out,p,n))
+q=lambda a,k: sorted(a)[min(len(a)-1,int(len(a)*k))]
+print('n=%d dur p50=%.1f p90=%.1f | prompt mean=%.0f p90=%.0f | out mean=%.0f'%(
+  len(rows),q([r[0] for r in rows],.5),q([r[0] for r in rows],.9),
+  statistics.mean([r[1] for r in rows]),q([r[1] for r in rows],.9),
+  statistics.mean([r[2] for r in rows])))
+PY
+```
+
+### 8.6 并发能力（`/health` 压测）
+
+`/health` 是纯内存响应，测的是 **worker 数带来的并发上限**（对话是流式 + 等 LLM，瓶颈在外部
+API 不在本机，不要用对话压这一项）：
+
+| 并发 | 2 workers（旧） | 4 workers（20261002 起） |
+|---|---|---|
+| 8 | 499 req/s（p50 7ms） | **795 req/s**（p50 4.5ms / p90 10.1ms） |
+| 32 | 784 req/s（p50 37ms） | **1174 req/s**（p50 16.9ms / p90 36.2ms） |
+
+⇒ 4 workers 在同等并发下 **+50%~59% 吞吐、延迟减半**，代价是 +260 MiB 常驻。
+对这个站点的流量（8.5 的 10–120 轮/天）而言，**4 workers 的余量极大**——加它是为了扛突发
+（多人同时开对话）与单 worker 假死时的降级，不是日常需要。
+
+### 8.7 规格建议
+
+- **现状够用**：CPU 几乎全闲（load < 0.5），生产内存 0.6GB / 3.7GB，服务端不是瓶颈。
+  真正的瓶颈是**外部 LLM API 的延迟**（单轮 p90 22s 里绝大部分是模型时间）——**换更大机器
+  不会让对话变快**。
+- **升级优先级：内存 > 磁盘 > CPU**。
+  - 内存（3.7GB → 8GB）：唯一的实际收益是"能在这台机器上跑构建/测试"与容纳更多开发工具；
+    如果开发环境另置，2GB 都够跑生产。
+  - 磁盘（40G，74% 已用）：留 11G，`target/` 占 4G 且不许删；再加一块盘或扩到 80G 更稳妥。
+  - CPU：**不需要**。4 vCPU 在 load 0.35 下长期空转。
+- **纪律不变**：本机不 build（`vite build` / `cargo build --release` 会 OOM）；worker 调到 4 之后
+  依然要盯 `free -m`——但压力来源是开发工具，不是服务本身。
+- **若要再提并发**：先加 worker（+130 MiB 一个）比升级机器便宜得多；本机 16 线程 executor 未跑满。
