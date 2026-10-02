@@ -389,7 +389,7 @@ with sync_playwright() as p:
     pg.wait_for_timeout(400)
     check("恰好一行带 .comment-hit", pg.locator(".comment-hit").count() == 1,
           pg.locator(".comment-hit").count())
-    check("命中的正是 #C42", pg.get_attribute(".comment-hit", "data-cid") == "42",
+    check("命中的正是评论 42", pg.get_attribute(".comment-hit", "data-cid") == "42",
           pg.get_attribute(".comment-hit", "data-cid"))
     hit = box(pg, ".comment-hit")
     check("页面确实滚下去了（不是本来就在视口里）", pg.evaluate("window.scrollY") > 0,
@@ -400,6 +400,29 @@ with sync_playwright() as p:
           pg.evaluate("document.querySelector('.comment-hit').parentElement === "
                       "document.querySelector('.commentList').lastElementChild"), True)
 
+    print("\n⑦b 身份行：昵称后面跟的是作者的 UID（20261003 主人第 4 条）")
+    idrow = pg.evaluate("""() => {
+        const row = document.querySelector('#c-42');
+        const uid = row.querySelector('.commentUid');
+        const name = row.querySelector('.commentName');
+        const idSpan = row.querySelector('.commentId');
+        return {
+            text: uid ? uid.textContent.trim() : null,
+            oldSpanGone: !idSpan,
+            cid: row.dataset.cid,
+            uidFont: uid ? parseFloat(getComputedStyle(uid).fontSize) : 0,
+            nameFont: parseFloat(getComputedStyle(name).fontSize),
+            hashC: /#C/.test(row.textContent),
+        };
+    }""")
+    # 夹具里 #42 这条的 `userId` 是 802、而它自己的评论 id 是 42 —— 两个数**故意不同**，
+    # 写错（把评论 id 当身份显示）当场就红，不用靠人去比对。
+    check("身份行写的是 UID:<作者 uid>（802），不是这条的评论 id 42",
+          idrow["text"] == "UID:802", idrow["text"])
+    check("整行里不再出现 #C（评论 id 不再露给人看）", not idrow["hashC"])
+    check("评论 id 仍在 data-cid 上（深链 ?cid= 与高亮靠它）", idrow["cid"] == "42", idrow["cid"])
+    check("★ 这行字比昵称明显小（主人：「可以非常小」）", idrow["uidFont"] < idrow["nameFont"] - 3,
+          f'uid {idrow["uidFont"]}px vs 昵称 {idrow["nameFont"]}px')
     pg.close()
 
     # ══ 二、红基线 A：还原改之前的形态（counter-room 挂回来 + 计数落回框外）══════════
