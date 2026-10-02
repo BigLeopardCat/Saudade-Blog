@@ -55,14 +55,19 @@ const ACC_FILTERS: { key: string; label: string; match: (u: any) => boolean }[] 
     { key: 'frozen', label: '冻结账号', match: (u) => isFrozen(u) },
 ]
 
-/** 可指派的三个身份（20260926）。`superadmin` **不在这一列**，而且不是"忘了加"：
- *  后端的取值域判据是 `authz::is_assignable_role`（已知 且 != superadmin），
- *  多一个超级管理员是一条数据库迁移的决定，不该是界面上点一下的事。
+/** 可指派的四个身份（20260926；20261002 加杂鱼）。`superadmin` **不在这一列**，
+ *  而且不是"忘了加"：后端的取值域判据是 `authz::is_assignable_role`（已知 且
+ *  != superadmin），多一个超级管理员是一条数据库迁移的决定，不该是界面上点一下的事。
  *
  *  `rank` 只服务于**按钮极性**：变更身份往哪个方向都伴随"对方全部会话失效"，
  *  分不出轻重的一律染红等于没信息——照冻结/解冻那一套（收紧=danger、放开=普通）
- *  取"权限收窄"那一侧。 */
+ *  取"权限收窄"那一侧。
+ *
+ *  杂鱼的 `rank` 是 **-2 而不是 -1**：`roleRank` 的兜底就是 -1（认不出的角色），
+ *  用 -1 会让"杂鱼"与"未知角色"同档，而下面对 `rank` 的比较正是决定按钮极性与
+ *  「收窄/放宽」文案的那一处。零工具角色比普通用户还窄一档，-2 是它该在的位置。 */
 const ASSIGNABLE_ROLES: { role: string; rank: number }[] = [
+    { role: 'zako', rank: -2 },
     { role: 'user', rank: 0 },
     { role: 'secretary', rank: 1 },
     { role: 'admin', rank: 2 },

@@ -322,7 +322,7 @@ pub async fn send_user_notice(
 
 #[derive(Deserialize)]
 pub struct SetRoleReq {
-    /// 目标身份。取值域 = `authz::KNOWN_ROLES` 里**除 superadmin 之外**的三个
+    /// 目标身份。取值域 = `authz::KNOWN_ROLES` 里**除 superadmin 之外**的四个
     /// （`authz::is_assignable_role`）——界面上加不出第二个超管。
     pub role: String,
 }

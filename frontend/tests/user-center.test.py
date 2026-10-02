@@ -530,7 +530,8 @@ with sync_playwright() as p:
     # "角色 → 文案"的映射——漏了它会原样显示 `superadmin` 这串英文。
     for tok_role, prof_role, want in (("admin", "user", "普通用户"),
                                       ("user", "admin", "管理员"),
-                                      ("admin", "superadmin", "超级管理员")):
+                                      ("admin", "superadmin", "超级管理员"),
+                                      ("user", "zako", "杂鱼")):
         pg2 = fresh_page(role=tok_role, profile_role=prof_role)
         pg2.wait_for_selector(".ucRoleTag", timeout=10000)
         got = pg2.locator(".ucRoleTag").inner_text().strip()

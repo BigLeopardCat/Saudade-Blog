@@ -1242,8 +1242,9 @@ with sync_playwright() as p:
     pg.locator('.tu-row:has(strong:text-is("sec_zhang")) .tu-role-btn').click()
     pg.wait_for_timeout(300)
     menu = menu_items(pg)
-    check("点「变更身份」：菜单是**另两档**（不列当前身份，也没有超级管理员这一档）",
-          menu == ["普通用户", "管理员"], str(menu))
+    # 20261002 加了杂鱼：可指派范围变成四档，菜单按 `ASSIGNABLE_ROLES` 的顺序排。
+    check("点「变更身份」：菜单是**另三档**（不列当前身份，也没有超级管理员这一档）",
+          menu == ["杂鱼", "普通用户", "管理员"], str(menu))
     click_menu_item(pg, "普通用户")
     pg.wait_for_timeout(300)
     d = pg.evaluate(ROLE_DIALOG)

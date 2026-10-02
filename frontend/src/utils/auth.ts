@@ -74,6 +74,7 @@ export const ROLE_LABEL: Record<string, string> = {
     superadmin: '超级管理员',
     secretary: '秘书',
     user: '普通用户',
+    zako: '杂鱼',
 }
 
 /** 角色 → 显示名。未知/空角色原样返回（空串时给「—」，与个人中心其它"读不到"的
@@ -89,5 +90,8 @@ export function roleTagColor(role?: string | null): string {
     if (role === 'superadmin') return 'purple'
     if (role === 'admin') return 'gold'
     if (role === 'secretary') return 'blue'
+    // 杂鱼用 orange：与秘书的 blue 区分开，又不给它"看起来很重要"的颜色
+    // （purple/gold 是管理员族的）。它是零工具角色，标签只需要"认得出"。
+    if (role === 'zako') return 'orange'
     return 'default'
 }
