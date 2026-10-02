@@ -237,6 +237,11 @@ jobs:
           # 兜底），所以本站一行都不用配；fork 的人在自己的仓里加一个 Variable 就能指到
           # 别处，不必改这个被跟踪的文件。Variable 没设时是**空串**（不是缺席），
           # `:-` 正好把"空"和"未设"一并兜住。
+          #
+          # 本仓**同时**设了这个 Variable（20261002 目录改名时设的）：服务器上的仓
+          # 从 `memory_blog_rust` 改成了 `Saudade-Blog`，改名期间靠一条过渡软链兜着，
+          # 软链删掉后 CI 必须走对路径 —— Variable 与下面的兜底值**都得是新路径**，
+          # Variables 与兜底的关系不是"哪个对"，而是"两个都要对"。
           DEPLOY_REPO_DIR: ${{ vars.DEPLOY_REPO_DIR }}
         run: |
           echo "$SSH_KEY" > /tmp/deploy_key
@@ -250,6 +255,6 @@ jobs:
               -o ConnectTimeout=10 \
               -p "${SSH_PORT:-22}" \
               -i /tmp/deploy_key "${SSH_USER}@${SSH_HOST}" \
-              "bash ${DEPLOY_REPO_DIR:-/home/ubuntu/memory_blog_rust}/scripts/deploy/trigger_deploy.sh ${DEPLOY_SHA}"
+              "bash ${DEPLOY_REPO_DIR:-/home/ubuntu/Saudade-Blog}/scripts/deploy/trigger_deploy.sh ${DEPLOY_SHA}"
           echo "✅ 部署成功（本次部署的提交号见上）"
           rm -f /tmp/deploy_key

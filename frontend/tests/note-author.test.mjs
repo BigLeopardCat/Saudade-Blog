@@ -26,7 +26,7 @@ import { pathToFileURL, fileURLToPath } from 'url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
-/** 父仓根（`memory_blog_rust/`）：Rust 与迁移脚本都在那里，不在 frontend/ 下 */
+/** 父仓根（仓库顶层）：Rust 与迁移脚本都在那里，不在 frontend/ 下 */
 const repo = path.resolve(root, '..');
 
 let pass = 0, fail = 0;

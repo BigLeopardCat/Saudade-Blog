@@ -15,7 +15,7 @@
     # 或者让它自己从库里挑一个（只挑用户名带 agent_test_ / probe_ 前缀的测试账号）
     .venv/bin/python scripts/probe_token_revoke.py
 
-凭据只从 `memory_blog_rust/.env` 的 `JWT_SECRET` 现读（自签令牌用），**不回显、不落盘**；
+凭据只从仓库根的 `.env` 的 `JWT_SECRET` 现读（自签令牌用），**不回显、不落盘**；
 本探针**不连数据库**（20260926 更正：此处原写「`DATABASE_URL` / `JWT_SECRET`」，而
 `DATABASE_URL` 从来没被读过——它自己的每个结论都是通过 HTTP 打出来的）。
 
