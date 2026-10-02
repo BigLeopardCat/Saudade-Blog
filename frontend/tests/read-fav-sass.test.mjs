@@ -1,11 +1,14 @@
-// ═ 文章横幅「读数三件」共用几何 · sass 编译契约（20260926 起；20261001 改为三件同形）══
+// ═ 文章横幅「读数四件」共用几何 · sass 编译契约（20260926 起；20261001 三件同形）══
 //   node tests/read-fav-sass.test.mjs
 //
 // 现场：用户第 1 条「详情页三图标样式和布局太丑了，大小不一，排列奇怪」。
 // 实测下来那三件确实是三套几何：收藏 32×62（竖排胶囊）、浏览 59×24、点赞 64×30；
 // 内边距 6px 8px / 2px 8px / 4px 10px、字号 13 / 12 / 13、描边 α .55 / .35 / .55。
 //
-// 修法：三件共用一个 `.readStat`（同高同距同字号同描边同一行），整簇住 `.readStats`。
+// 修法：各件共用一份 `.readStat`（同高同距同字号同描边），整簇住 `.readStats`。
+// 20261003 用户第 5 条把它由**行**改成**列**（`flex-direction: column`）并补上第四件
+// 「讨论数」——几何那一份原样不动，改的只是它摆的方向（横排为什么把标题挤偏，推导
+// 写在 sass 里 `.readStats` 那一段）。
 // 所以本套件现在锁的核心是一条**否定式**判据：几何属性只许出现在 `.readStat` 一处
 //（后面 ③ 组）——"大小不一"的回归方式就是有人又给某一个加了 height/padding/font-size。
 //
@@ -14,7 +17,7 @@
 // 语法完全合法、构建不报错、页面也不会崩，只是样式静默失效。这里用真 sass 编译真 `.sass`，
 // 断言每条规则落在**完整的选择器链**上：缩进错了链就变了，链对不上即红。
 //
-// 布局行为（三件真的等高、挤不挤）由 tests/read-stats-cluster.test.py 在无头 Chrome 里验，
+// 布局行为（四件真的等高同宽、挤不挤）由 tests/read-stats-cluster.test.py 在无头 Chrome 里验，
 // 那边能量 flex 收缩后的真实盒子；本套件只管"CSS 有没有写在该在的地方"。
 import { readFileSync } from 'fs';
 import path from 'path';
@@ -72,9 +75,10 @@ const STAT = INFO + ' .readStat';
 const FAV = INFO + ' .readFavBtn';
 const LIKE = INFO + ' .readLikeBtn';
 const VIEWS = INFO + ' .readViews';
+const COMMENTS = INFO + ' .readComments';
 const LABEL = INFO + ' .readFavLabel';
 /** 簇里的每一支（几何唯一性判据的作用域，见 ③） */
-const CLUSTER_MEMBERS = [STAT, FAV, LIKE, VIEWS];
+const CLUSTER_MEMBERS = [STAT, FAV, LIKE, VIEWS, COMMENTS];
 
 console.log('\n① 整簇：住一个 wrapper、不许被 flex 挤小');
 {
@@ -83,13 +87,16 @@ console.log('\n① 整簇：住一个 wrapper、不许被 flex 挤小');
     ok(f.match, '  值是 0 0 auto（被挤窄的只该是中区那个标题，不是读数）', f);
     const m = decl(CLUSTER, 'margin-top', '6px');
     ok(m.match, '  原有的 margin-top: 6px 还在', m);
-    ok(decl(CLUSTER, 'display', 'flex').found, '  三件横排（display: flex）');
-    ok(decl(CLUSTER, 'align-items', 'center').found, '  竖直居中对齐');
-    const g = decl(CLUSTER, 'gap', '8px');
-    ok(g.found && g.match, '  三件之间固定 8px（不再是"各簇自带 margin"那种间接间距）', g);
+    ok(decl(CLUSTER, 'display', 'flex').found, '  四件同簇（display: flex）');
+    // 20261003 第 5 条：由行改列。`stretch` 是"四件同宽"的来处——列向 flex 的交叉轴
+    // 宽度由最宽的那一件定，四件各自被撑到同一个宽度。
+    ok(decl(CLUSTER, 'flex-direction', 'column').found, '  竖排（flex-direction: column）');
+    ok(decl(CLUSTER, 'align-items', 'stretch').found, '  交叉轴 stretch（四件等宽，不犬牙交错）');
+    const g = decl(CLUSTER, 'gap', '6px');
+    ok(g.found && g.match, '  四件之间固定 6px（不再是"各簇自带 margin"那种间接间距）', g);
 }
 
-console.log('\n② 三件共用一份几何（.readStat）');
+console.log('\n② 四件共用一份几何（.readStat）');
 {
     const want = [
         ['height', '30px'],
@@ -125,7 +132,7 @@ console.log('\n③ 「大小不一」的回归锁：几何只许声明一次');
             return body !== undefined && new RegExp('(?:^|;)\\s*' + prop + '\\s*:', 'i').test(body);
         });
         ok(holders.length === 1 && holders[0] === STAT,
-            `${prop} 只在 ${STAT.split(' ').pop()} 上声明（别处再写一次就又是三套尺寸）`, holders);
+            `${prop} 只在 ${STAT.split(' ').pop()} 上声明（别处再写一次就又是几套尺寸）`, holders);
     }
     // 两个按钮只该多出"能点"这件事
     for (const [sel, name] of [[FAV, '收藏'], [LIKE, '点赞']]) {
@@ -135,11 +142,14 @@ console.log('\n③ 「大小不一」的回归锁：几何只许声明一次');
         ok(!/display|flex-direction|writing-mode/.test(body),
             `  ${name}按钮不再自带布局（display/方向都不该在这里）`, body.slice(0, 60));
     }
-    // 竖排那套是上一版的形态（治的是"被挤成两行"的症状，病根已由 flex: 0 0 auto 治掉）
+    // 竖排走的是**整簇的 flex-direction: column**，不是给每一件写 `writing-mode`：
+    // 后者是上一版的形态（治的是"被挤成两行"的症状，病根已由 flex: 0 0 auto 治掉），
+    // 它会把每个胶囊里的字一起竖过来 —— 20261003 要的竖排不是那个意思。
     const sassSrc = readFileSync(SASS_FILE, 'utf8');
     const clusterBlock = sassSrc.slice(sassSrc.indexOf('.readStats'), sassSrc.indexOf('.readDescription'));
     ok(!/writing-mode|text-orientation/.test(clusterBlock),
-        '  竖排（writing-mode: vertical-rl）已随本轮取消', clusterBlock.length);
+        '  不是 writing-mode 那套竖排（字仍是横的，竖的只是排列方向）', clusterBlock.length);
+    ok(/flex-direction:\s*column/.test(clusterBlock), '  竖排真的落在整簇上（flex-direction: column）');
     ok(!/readFavWrap|readLikeWrap/.test(sassSrc), '  旧的两个 wrapper（.readFavWrap / .readLikeWrap）已拆掉');
 }
 
@@ -149,7 +159,7 @@ console.log('\n④ 定宽：文案与数字都不许让整簇跟着挪');
     const l = decl(LABEL, 'min-width', '3em');
     ok(l.found && l.match, LABEL + ' 有 min-width: 3em（收藏 ⇄ 已收藏 同宽）', l);
     ok(decl(LABEL, 'text-align', 'center').found, '  居中');
-    for (const num of ['readViewsNum', 'readLikeNum']) {
+    for (const num of ['readViewsNum', 'readLikeNum', 'readCommentNum']) {
         // 4ch（不是 3ch）：999→1000 那一步在 3ch 下会横移 16px，详见 sass 里那段注释
         const n = decl(INFO + ' .' + num, 'min-width', '4ch');
         ok(n.found && n.match, `.${num} 有 min-width: 4ch（读数跨过 9999 才变宽）`, n);
@@ -168,7 +178,7 @@ console.log('\n⑤ 三态色与描边一字未改（这批只动几何）');
     ok(f.found && f.match, '已收藏：河灯金 #ffcc7c 实心', f);
     ok(decl(FAV + '.isFaved', 'color', '#1c2754').found, '  深蓝字（#1c2754）');
     const b = decl(STAT, 'border', '1px solid rgba(255, 241, 235, 0.55)');
-    ok(b.found, '未选中态：浅色描边在 .readStat 上（三件同一条）', b);
+    ok(b.found, '未选中态：浅色描边在 .readStat 上（四件同一条）', b);
     const k = decl(LIKE + '.isLiked', 'background', '#ffb3c6');
     ok(k.found && k.match, '已点赞：暖粉 #ffb3c6（与收藏的金区分开）', k);
     ok(decl(VIEWS, 'color', 'rgba(255, 241, 235, 0.85)').found, '浏览是读数不是按钮：字色更淡一档');
@@ -179,21 +189,22 @@ console.log('\n⑤ 三态色与描边一字未改（这批只动几何）');
     ok(rules.get(VIEWS + ':hover') === undefined, '浏览没有 hover（它不可点）');
 }
 
-console.log('\n⑥ 源码契约：三件是真的同一个簇的三个孩子');
+console.log('\n⑥ 源码契约：四件是真的同一个簇的四个孩子');
 {
     const tsx = readFileSync(TSX_FILE, 'utf8');
     ok(/className="readStats"/.test(tsx), 'index.tsx 里挂了 readStats（整簇的 wrapper）');
     // 每一件都必须同时带 readStat 与自己的那一支 —— 只写自己的类名 = 几何全丢
-    const three = [
+    const four = [
         /className=\{`readStat readFavBtn\$\{[^`]*\}`\}/,
         /className="readStat readViews"/,
         /className=\{`readStat readLikeBtn\$\{[^`]*\}`\}/,
+        /className="readStat readComments"/,
     ];
-    for (const re of three) ok(re.test(tsx), `  三件之一：${re.source.slice(11, 40)}…`);
-    // 反向：恰好三处。前置断言排除注释里的 `` `.readStat` `` 写法（带点的是引用不是挂载）；
+    for (const re of four) ok(re.test(tsx), `  四件之一：${re.source.slice(11, 40)}…`);
+    // 反向：恰好四处。前置断言排除注释里的 `` `.readStat` `` 写法（带点的是引用不是挂载）；
     // 模板串里的 `` className={`readStat …`} `` 前面是反引号，**不能**排除掉
     const hits = tsx.match(/(?<![.\w])readStat\b(?!s)/g) || [];
-    ok(hits.length === 3, '  恰好三处挂 readStat（多一处就是有第四件偷偷混进来）', hits);
+    ok(hits.length === 4, '  恰好四处挂 readStat（多一处就是有第五件偷偷混进来）', hits);
     ok(!/readFavWrap|readLikeWrap/.test(tsx), '  旧的 .readFavWrap / .readLikeWrap 已从 tsx 拆掉');
     // 20261001（用户第 4 条「三图标风格不一致」）：图标从文本字形换成 NoteStatIcons 同源 14px
     ok(/\{faved\s*\?\s*<StarIcon size=\{14\} \/>\s*:\s*<StarOutlineIcon size=\{14\} \/>\}/.test(tsx),
@@ -207,7 +218,8 @@ console.log('\n⑥ 源码契约：三件是真的同一个簇的三个孩子');
         'NoteStatIcons 里那两个描边件真的导出着');
     // 类名对不上是这类改动最哑的失败：sass 写了、tsx 没挂，页面上不动声色
     const sassSrc = readFileSync(SASS_FILE, 'utf8');
-    for (const cls of ['readStats', 'readStat', 'readFavLabel', 'readViews', 'readLikeNum']) {
+    for (const cls of ['readStats', 'readStat', 'readFavLabel', 'readViews', 'readComments',
+                       'readLikeNum', 'readCommentNum']) {
         ok(sassSrc.includes(cls) && tsx.includes(cls), `  类名 ${cls} 两份文件都有（sass 写了、tsx 挂上了）`);
     }
 }
@@ -245,11 +257,15 @@ console.log('\n⑦ 三区锁死：中区吃满余量、左右两区不收缩（�
 
 console.log('\n⑧ 源码顺序：`.readStat` 必须排在它的覆盖者之前');
 {
-    // `.readViews` 只改字色、两个按钮只加交互态，但**特异性与 `.readStat` 完全相同**
-    //（都是 0,4,0）⇒ 谁在后谁赢。顺序写反的话三件会退回默认字色/失去 hover 背景。
+    // `.readViews` / `.readComments` 只改字色、两个按钮只加交互态，但**特异性与
+    // `.readStat` 完全相同**（都是 0,4,0）⇒ 谁在后谁赢。顺序写反的话那几件会退回
+    // 默认字色/失去 hover 背景。
     const iStat = posOf(STAT);
     ok(iStat >= 0, `.readStat 在编译产物里（顺序判据的前提）`, iStat);
-    for (const [sel, why] of [[VIEWS, '读数那一件的字色要能覆盖 .readStat'], [FAV, '按钮的 cursor/hover 要能覆盖 .readStat'], [LIKE, '同上']]) {
+    for (const [sel, why] of [[VIEWS, '读数那一件的字色要能覆盖 .readStat'],
+                              [COMMENTS, '讨论数那一件同理，它也只是读数、不给"能点"的外观'],
+                              [FAV, '按钮的 cursor/hover 要能覆盖 .readStat'],
+                              [LIKE, '同上']]) {
         const i = posOf(sel);
         ok(i > iStat, `${sel.split(' ').pop()} 排在 .readStat 之后（${why}）`, { iStat, i });
     }
