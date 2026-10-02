@@ -356,19 +356,25 @@ fn talk_brief(content: &str) -> String {
 /// 抽出来的理由：这段文案此前埋在 `push_notice` 调用的前一屏，**没有任何测试**，
 /// 而它恰好是作者唯一能看到的那句话（20260926 用户报「通知说的是不是假的」那一轮，
 /// 三句话逐字对账全靠人工读库）。
-pub fn review_notice_text(
+///
+/// 20261002 参数化出 `_for`（评论也要发通知，见 `decide_review` 那一批改动）：
+/// 文案里的对象名词（留言/评论）与去处（留言板/文章评论区）各多一处，**留一个壳**
+/// 给留言板，`review_notice_text` 的老签名与三句话**一字不改**（既有单测零改动）。
+pub fn review_notice_text_for(
+    noun: &str,
+    venue: &str,
     approved: i8,
     brief: &str,
     reject_reason: Option<&str>,
-) -> Option<(&'static str, String)> {
+) -> Option<(String, String)> {
     match approved {
         0 => Some((
-            "留言已收到，等待人工复核",
-            format!("你的留言「{brief}」已提交，正在等待人工复核；结果出来我再通知你。"),
+            format!("{noun}已收到，等待人工复核"),
+            format!("你的{noun}「{brief}」已提交，正在等待人工复核；结果出来我再通知你。"),
         )),
         1 => Some((
-            "留言已通过审核",
-            format!("你的留言「{brief}」已通过审核，现在可以在留言板看到了。"),
+            format!("{noun}已通过审核"),
+            format!("你的{noun}「{brief}」已通过审核，现在可以在{venue}看到了。"),
         )),
         2 => {
             let reason = reject_reason
@@ -380,12 +386,21 @@ pub fn review_notice_text(
             // "没有 pre-line"，写错了），但同一个块还压着 `-webkit-line-clamp: 4`：
             // 留言一长，另起一行的理由恰好是最先被截掉的那段，而它正是收件人唯一要看的。
             Some((
-                "留言未通过审核",
-                format!("你的留言「{brief}」未通过审核，理由：{reason}"),
+                format!("{noun}未通过审核"),
+                format!("你的{noun}「{brief}」未通过审核，理由：{reason}"),
             ))
         }
         _ => None,
     }
+}
+
+/// 留言板的审核通知文案（`review_notice_text_for` 的薄包装）。
+pub fn review_notice_text(
+    approved: i8,
+    brief: &str,
+    reject_reason: Option<&str>,
+) -> Option<(String, String)> {
+    review_notice_text_for("留言", "留言板", approved, brief, reject_reason)
 }
 
 /// 审核**结果**发一条站内通知（20260923，用户要求；20260926 补待审那一条）。
@@ -416,7 +431,7 @@ async fn notify_review_result(
     super::notice::push_notice(
         &state.db,
         uid,
-        title,
+        &title,
         Some(body),
         Some(format!("/guestbook?lid={talk_id}")),
     )
@@ -433,9 +448,29 @@ async fn notify_review_result(
 /// （不是"以后再打开"）⇒ 这一半必须先上线，agent 侧才允许把 `/review` 接上
 /// `_resolve_principal`；顺序反了留言审核会成片 401，每一条都转人工待审。
 /// `uid` 同时进 body：agent 用它核对断言、并在审核日志里留痕。
-async fn board_approved(state: &Arc<AppState>, uid: i32, content: &str)
-    -> (i8, Option<String>, Option<String>, Option<String>) {
-    let (ai_on, manual_on) = super::web_info::review_switches(&state.db).await;
+/// **公共裁决**：给定两个开关，算出这条内容该以什么状态入库
+/// —— `(approved, ai_result, ai_reason, reject_reason)`。
+///
+/// 20261002 从 `board_approved` 里**逐字节搬**出来（评论要复用同一条闸，见
+/// `src/routes/comments.rs`），搬移时只做两件事：把 `review_switches` 那一行提到调用方、
+/// 把两个布尔收成参数。**判定逻辑、四路回落、话术一字未改**。
+///
+/// 为什么值得单独抽：这是全仓最敏感的一条链路——宁可多一次人工复核，
+/// 也绝不放行一条未经审核的公开内容。它的兜底有四路（AI 说 pass/reject/存疑、
+/// 超时、非 2xx、响应解析失败），**每一路都倒向"转人工"**；抽成可复用函数是为了让
+/// 评论**用同一份实现**，而不是照抄一份——照抄的那份将来必然只改一处。
+///
+/// 调用方负责先读开关（留言板用 `web_info::review_switches`，评论用
+/// `web_info::review_switches_of(COMMENT_REVIEW_KEYS)`）。
+///
+/// 不收 `state`：这条链路**不碰库也不碰 `AppState`**——agent 端点从 `AGENT_URL`
+/// 环境变量取（见下），断言现签。所以评论那条路复用它的成本是零依赖。
+pub(crate) async fn decide_review(
+    uid: i32,
+    content: &str,
+    ai_on: bool,
+    manual_on: bool,
+) -> (i8, Option<String>, Option<String>, Option<String>) {
     if !ai_on {
         if manual_on {
             return (0, None, None, None);
@@ -497,6 +532,14 @@ async fn board_approved(state: &Arc<AppState>, uid: i32, content: &str)
             (0, None, None, None)
         }
     }
+}
+
+/// 留言板的裁决入口（`decide_review` 的薄包装，20261002 抽出）：读留言板的两个审核开关
+/// —— `aiReviewEnabled` / `manualReviewEnabled`（见 `web_info::BOARD_REVIEW_KEYS`）。
+async fn board_approved(state: &Arc<AppState>, uid: i32, content: &str)
+    -> (i8, Option<String>, Option<String>, Option<String>) {
+    let (ai_on, manual_on) = super::web_info::review_switches(&state.db).await;
+    decide_review(uid, content, ai_on, manual_on).await
 }
 
 /// POST /api/public/board：河灯留言板放灯（强制登录）
