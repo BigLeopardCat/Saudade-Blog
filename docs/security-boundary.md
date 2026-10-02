@@ -266,7 +266,7 @@ QPS 量级在个位数，这个代价可以忽略；规模上去之后的下一�
 |---|---|---|
 | `logs/`、`logs/agent/`、`logs/agent/traces/`、`logs/frontend/` | **0700** | 里面是访客对话正文：`agent.log` 每轮生命周期行带 `user=` 与 40 字 `msg=`，`traces/*.json` 是完整一轮（输入摘要 + 全部节点事件 + 回复正文）。**用 0700 而不是 0750/0755，是因为 `getent group ubuntu` → `ubuntu:x:1001:www-data`：www-data 在 `ubuntu` 组里，组可读等于 nginx 那一侧可读** |
 | `logs/*.log`、`logs/agent/*.log`、`logs/frontend/*.log` | **0600** | 同上；`copytruncate` 原地截断不改模式，所以现有文件必须显式 `chmod`（logrotate 的 `create 0640` 在 copytruncate 下是惰性的，见 `logrotate(8)`——它在配置里只是为了"哪天改成 rename 模式"时默认值是对的）|
-| `/tmp/db_cred`、`/tmp/probe_cred_shape.py` | **0600** | `/tmp` 全局可穿越，而家目录是 `drwxr-x---`（家目录里那些 0664 文件其实够不着，`/tmp` 的不行）。`db_cred` 已**零引用**（`/tmp/db_run.sh` 不读它），留 0600 备用 |
+| `/tmp/probe_cred_shape.py`、`/tmp/db_run.sh` | **0600 / 0700** | `/tmp` 全局可穿越，而家目录是 `drwxr-x---`（家目录里那些 0664 文件其实够不着，`/tmp` 的不行）。探针脚本只回报字段名与判据对象、**不打印任何凭据值**（20261002 复核：`/tmp/db_cred` **已不存在**，此前用过的那份凭据文件已被清掉，本节原先记的"留 0600 备用"随之作废） |
 
 属主仍是 `ubuntu`、三个服务都 `User=ubuntu` ⇒ **不重启、不换属主**；实测重启后 `agent.log`
 照常追加（systemd 以 root 打开 append 目标，服务通过继承的 fd 写）。
@@ -319,9 +319,9 @@ QPS 量级在个位数，这个代价可以忽略；规模上去之后的下一�
 - 写操作安全：`execute` 在**调用工具之前**检查取消（节点入口 + **逐 spec**，20260916 补——此前
   只在入口检查一次，`[导航, 屏显]` 这类多写操作清单在中途断连时会把屏显也写掉）。中途取消用
   `break` 而不是 `raise`：已执行项的**回执必须留下**（那是真发生过的事实）。
-- 文档：`docs/问题记录.md` 有完整的事故与机制记录；针对性回归见
-  `saudade-blog-agent/test_cancel.py`（节点入口检查 / 写操作零调用 / 中途取消 / LLM 阻塞期间
-  取消的能力边界，共 14 条）。
+- 文档：`saudade-blog-agent/docs/问题记录.md`（**在 agent 仓里，不在本仓 `docs/` 下**）有完整的
+  事故与机制记录；针对性回归见 `saudade-blog-agent/tests/test_cancel.py`（节点入口检查 /
+  写操作零调用 / 中途取消 / LLM 阻塞期间取消的能力边界，共 14 条）。
 
 ## 6. 已知缺口（如实列，不假装覆盖）
 
@@ -329,7 +329,7 @@ QPS 量级在个位数，这个代价可以忽略；规模上去之后的下一�
 |---|---|---|
 | **令牌收回只到"账号"粒度，没有"设备"粒度** | 用户想问"我现在登录着哪些设备、把那一台踢掉"时答不了；能做的只有"改密码/被冻结 ⇒ 该账号全部令牌作废" | 20260926 起代次收回（见 §2.3）解决了"能不能收回"，**没解决"收回哪一枚"**——按下沉到单令牌就得上 `jti` + 黑名单（每枚一张表、随过期时间清理），而本系统的实际需求是"全家一起下线"，代次计数器用一行整数办完了同一件事。真要做设备管理，那条路是 `jti` 而不是把代次拆细 |
 | **没有短令牌 + refresh 轮换** | 令牌一旦泄漏，在 `exp` 之前一直可用（`ver` 只能让**服务端主动**作废，挡不住"服务端不知道"的持有者） | 7 天单令牌（见 §2.3）。企业做法是 access 短（5–15 分钟）+ refresh 长且**一次性轮换**（重放旧 refresh 即判定失窃并全族作废）；本系统是单人博客，改密码 + 冻结两条主动通道已覆盖真实需求，**没有为此加一张 refresh 表**。要加时注意：轮换的判据是"一个 refresh 用了两次"，需要服务端存已用过的序列 |
-| **冻结/收回管不到物联网那条链路**（device-service 与 EMQX broker） | 一个被冻结账号手里那枚 7 天令牌，在过期前**仍然是一枚合法身份**：`device-service` 收它、`/device-api/*` 照走（范围是它自己名下的设备）、`mqtts` 连接照建（`device-console` 复用的就是同一枚 `localStorage.tokenKey`）。即"冻结 = 全站立刻下线"这句话**对 IoT 那半边为假** | **今天没修，如实记**。结构性原因：那两个验证者**各自解一遍同一个 JWT、且都不查库**——device-service 的令牌校验函数用自己的 `Claims{sub,exp,role}` 只验签与 `exp`（**无 `deny_unknown_fields`，所以新增的 `ver` 声明不会打挂它**，这一点已核过是安全的：`Cargo.toml` 里只有 `rusqlite`、没有 MySQL 客户端，它今天也**没有能力**查 `user.status`），EMQX broker 侧同样只校验签名与 `exp`（`scripts/configure_emqx.py` 的 `mechanism=jwt` 块）。要收口得让 device-service 能读 `user.status`/`token_version`（先得给它一条 MySQL 通道），或改成回调博客后端做在线校验——是一次跨服务的改造。**本仓的冻结功能不受此影响**：站点自身的所有 `/api/*` 通道（含前台）都走 `auth_uid`/`auth_guard`，冻结即生效；受影响的只有 device-api 与 MQTT 两个入口。因此后台冻结弹窗的文案写的是"已登录的**网页会话**立即失效"，没有写"所有设备"——**文案不许越过判据** |
+| **冻结/收回管不到物联网那条链路**（device-service 与 EMQX broker） | 一个被冻结账号手里那枚 7 天令牌，在过期前**仍然是一枚合法身份**：`device-service` 收它、`/device-api/*` 照走（范围是它自己名下的设备）、`mqtts` 连接照建（`device-console` 复用的就是同一枚 `localStorage.tokenKey`）。即"冻结 = 全站立刻下线"这句话**对 IoT 那半边为假** | **今天没修，如实记**。结构性原因：那两个验证者**各自解一遍同一个 JWT、且都不查库**——device-service 的令牌校验函数用自己的 `Claims{sub,exp,role}` 只验签与 `exp`（**无 `deny_unknown_fields`，所以新增的 `ver` 声明不会打挂它**，这一点已核过是安全的：`Cargo.toml` 里只有 `rusqlite`、没有 MySQL 客户端，它今天也**没有能力**查 `user.status`），EMQX broker 侧同样只校验签名与 `exp`（`iot/emqx/configure_emqx.py` 的 `mechanism=jwt` 块）。要收口得让 device-service 能读 `user.status`/`token_version`（先得给它一条 MySQL 通道），或改成回调博客后端做在线校验——是一次跨服务的改造。**本仓的冻结功能不受此影响**：站点自身的所有 `/api/*` 通道（含前台）都走 `auth_uid`/`auth_guard`，冻结即生效；受影响的只有 device-api 与 MQTT 两个入口。因此后台冻结弹窗的文案写的是"已登录的**网页会话**立即失效"，没有写"所有设备"——**文案不许越过判据** |
 | **登录令牌在 `localStorage`**（不是 HttpOnly cookie） | XSS 能直接读走它；`HttpOnly` 能让脚本读不到（但仍能被"以你的身份发请求"） | 未改。改成 cookie 要同时动前端存取、CORS/CSRF（`SameSite` + 双提交令牌）、以及 device-console 那半边复用 `localStorage.tokenKey` 的链路（见 §1）——是一次跨三个前端的改造，今天没做，**如实记在这里** |
 | 没有**按用户/IP 的限流** | 单个已登录用户可以连续发起对话占满并发槽 | Rust 侧也没有；只有总并发闸 |
 | **分块传输**（无 Content-Length）不过体积闸 | 构造性的大 body 能绕过 §4 的第一行 | 只靠字段级限额兜，已写在代码注释里 |

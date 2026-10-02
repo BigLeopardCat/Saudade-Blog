@@ -121,6 +121,13 @@ GET /api/devices/<id>/cmd/<req_id>  →  {"acked": true, "ack": "<设备回执�
 
 - 设备回执**缺失 req_id** 时，服务端退化为匹配最近一条未回执记录（兼容旧固件）。
 - 回执也刷新在线心跳；`X-Request-Id` 头是 agent trace_id 透传链的一环（四端对账）。
+- ⚠️ **本仓的固件模板没实现这条回执**（20261002 核实）：`iot/firmware/template_ESP32_OBC.ino`
+  与 `template_ESP32_OBC_ESP_IDF.c` 只发布 `config/ack`（见各自的 `MQTT_TOPIC_ACK`），
+  `handle_command` 执行完 display/restart/ota_check/gpio/beep 后**不回包**——两个模板、
+  `iot/firmware/README.md` 的主题表、`固件开发指南.md` 都是如此。这是**模板的缺口、不是契约的错**：
+  服务端正是靠上面那条 req_id 兜底才不至于卡死（`GET .../cmd/<req_id>` 会一直 `acked:false`，
+  直到被环形 100 条挤掉）。ESP32 固件的**真相源在另一个仓**（`ESP32-S3-OBC`），
+  仓内这两个文件是让人照着接的骨架；抄它们时**要自己补 `cmd/ack`**，别以为已经通了。
 
 ### 3.4 在线状态判定（防"假在线"）
 
@@ -222,11 +229,14 @@ esp_mqtt_client_config_t cfg = {
 // 3. 连接成功：发 online(retain) + 订阅 config/cmd
 // 4. 每 5s：发布遥测（即心跳，非 retain）
 // 5. 收 config：应用 + NVS 持久化 + 回 config/ack（带 cfg_version）
-// 6. 收 cmd：执行 + 回 cmd/ack（req_id 原样带回）
+// 6. 收 cmd：执行 + 回 cmd/ack（req_id 原样带回）   ← ⚠️ 仓内两个模板**都没做这一步**，见 §3.3
 // 7. 每 6h：GET /api/ota/info（Basic 认证）→ 版本变化 → 拉 current.bin 升级
 ```
 
 要点：遥测即心跳；回执必须带 `req_id`；config 保留策略与 cmd 禁 retain 的差异是平台语义核心。
+**第 6 步是骨架里唯一一处"照着写还不够"的地方**——两个模板源码到此为止（只回 `config/ack`），
+补 `cmd/ack` 需要自己加一个 `MQTT_TOPIC_CMD_ACK "devices/" DEVICE_ID "/cmd/ack"` 并在
+`handle_command` 的各分支末尾 publish 带 `req_id` 的结果。
 
 ---
 

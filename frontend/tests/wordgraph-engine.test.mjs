@@ -165,11 +165,11 @@ console.log('== locateLocal ==');
 console.log('== zoomBy ==');
 {
     // 20260915 用户报「图谱放大范围太小，还没放大多数就到极限了」。点云半径实测
-    // max 1.11 / p90 0.86（333 词产物）：旧 DIST_MIN=1.7 连最外层点都够不到，
-    // 相机永远在球外——判据就是"放大到底必须能进到点云内部"。
+    // max 1.066 / p90 0.937（当前 400 词产物 1d1323374540）：旧 DIST_MIN=1.7 连最外层
+    // 点都够不到，相机永远在球外——判据就是"放大到底必须能进到点云内部"。
     const MIN = 0.4;
     near(engine.zoomBy(4.3, -1e6), MIN, 1e-9, '一直放大到底 = 0.4（旧值 1.7）');
-    ok(engine.zoomBy(4.3, -1e6) < 1.02, '放大到底能进到点云内部（< 实测 max 半径 1.02）');
+    ok(engine.zoomBy(4.3, -1e6) < 1.066, '放大到底能进到点云内部（< 实测 max 半径 1.066）');
     near(engine.zoomBy(4.3, 1e6), 9, 1e-9, '一直缩小到顶 = 9（上限没动）');
     ok(engine.zoomBy(4.3, -100) < 4.3, '滚轮上滚一格 = 拉近');
     ok(engine.zoomBy(4.3, 100) > 4.3, '滚轮下滚一格 = 拉远');
@@ -196,8 +196,8 @@ console.log('== dollyBy / wheelStep ==');
     near(engine.dollyBy(-100), -engine.dollyBy(100), 1e-12, '前进/后退一格等长（精确可逆）');
     const per = engine.dollyBy(-100);
     ok(per > 0.1 && per < 0.3, `一格位移 ${per.toFixed(3)} 落在手感区间 (0.1, 0.3)`, { per });
-    // 穿过整团（直径 ≈2×1.11）要几格：太多说明"进去了出不来"，太少会一步穿爆
-    const across = (2 * 1.11) / per;
+    // 穿过整团（直径 ≈2×1.066，当前产物）要几格：太多说明"进去了出不来"，太少会一步穿爆
+    const across = (2 * 1.066) / per;
     ok(across >= 8 && across <= 20, `穿过整团约 ${across.toFixed(1)} 格（8~20 格）`, { across });
 
     const r1 = engine.wheelStep(MIN, 0, -100);
@@ -281,7 +281,7 @@ console.log('== cameraFor ==');
 console.log('== 大小写：索引原形(小写) vs 节点显示形（20260916 修的 chip 不定位）==');
 {
     // 真因：agent 侧索引 index.json 的 words 是**小写原形**（build_word_graph.py:644），
-    // 前端产物节点是**显示形**（Python/JWT/MQTT…），实跑 341 词里 44 个只差大小写。
+    // 前端产物节点是**显示形**（Python/JWT/MQTT…），当前 400 词产物里 45 个只差大小写。
     // 修前 setHighlight / cameraFor / 组件 findIndex 三处都用精确匹配 → 向量路返回的小写词
     // 被静默丢弃：不飞（cameraFor 查不到 → 原样返回）、不亮（hits 空）、不选中（findIndex −1）
     // = 用户看到的"chip 点了没反应"；而本地兜底路 locate.ts 的 keyOf 本来就大小写不敏感，

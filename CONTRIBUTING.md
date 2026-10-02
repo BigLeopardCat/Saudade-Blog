@@ -45,8 +45,11 @@
 
 ### 2.1 建库
 
-数据库名**必须叫 `saudade_blog`** —— `scripts/migration/*.sql` 每条都以
-`USE saudade_blog;` 开头，改名要逐条改。
+数据库名**必须叫 `saudade_blog`** —— `scripts/migration/*.sql` 里凡是**带了** `USE` 语句的
+（绝大多数）都写死这个名字，改名要逐条改。有三份**没有** `USE`——
+`chat_conversation_20260903.sql`、`execution_log_20260904.sql`、`password_reset_token_20260921.sql`
+——所以下面第 2.1 步是显式把库名传给 `mysql`（`mysql ... saudade_blog < "$f"`），
+**不要靠脚本自带的 `USE`**：那三份在别人的库上会报 "No database selected"。
 
 ```bash
 mysql -uroot -p -e "CREATE DATABASE saudade_blog CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
@@ -59,7 +62,7 @@ mysql -uroot -p -e "CREATE DATABASE saudade_blog CHARACTER SET utf8mb4 COLLATE u
 for f in $(ls scripts/migration/*.sql | sort); do
     case "$f" in
         # 评测夹具与原作者的一次性账号脚本：不是站点运行所需的结构，跳过
-        */golden_*.sql|*/test_accounts_*.sql|*/user_rename_sora_*.sql|*/user_remove_legacy_hash_account_*.sql|*/superadmin_role_*.sql|*/secretary_role_*.sql)
+        */golden_*.sql|*/test_accounts_*.sql|*/user_rename_sora_*.sql|*/user_remove_legacy_hash_account_*.sql|*/superadmin_role_*.sql|*/secretary_role_*.sql|*/zako_role_*.sql)
             echo "== 跳过 $f"; continue ;;
     esac
     echo "== $f"
@@ -70,8 +73,9 @@ done
 **第一个文件是 [`scripts/migration/0000_base_schema.sql`](scripts/migration/0000_base_schema.sql)**，
 它就是建基架的那一份（26 张表的建表语句，从生产库 `mysqldump --no-data` 导出，只有结构、
 零数据）。名字以 `0000_` 开头不是装饰：`ls | sort` 是纯字典序，只有这样才能保证它排在
-所有 `ALTER TABLE` 之前 —— 后面每一个迁移都假定这些表已经存在，改名会让
-`agent_task_20260927.sql` 先跑并在 `ALTER TABLE agent_task` 上失败。
+所有 `ALTER TABLE` 之前 —— 后面每一个迁移都假定这些表已经存在，改名会让排在它前面的
+脚本先在"表不存在"上失败（例如 `agent_task_20260927.sql` 的
+`CREATE TABLE IF NOT EXISTS agent_task` 与紧随其后的 `INSERT INTO migration_flags`）。
 
 其余脚本都写成幂等的（`IF NOT EXISTS` / `IF EXISTS` / 靠 `migration_flags` 表打标记），
 重复执行安全 —— 但**能只跑一次就跑一次**，个别脚本带数据回填，重跑会覆盖你改过的数据。
@@ -85,7 +89,7 @@ done
 > | `test_accounts_*.sql` | 评测用的测试账号（`agent_test_user_*`） |
 > | `user_rename_sora_*.sql` | 把作者 uid=1 的用户名改回 `sora` |
 > | `user_remove_legacy_hash_account_*.sql` | 删作者库里那个遗留的哈希账号 |
-> | `superadmin_role_*.sql` / `secretary_role_*.sql` | 把 uid=1 提为 superadmin / 把某个账号提为 secretary |
+> | `superadmin_role_*.sql` / `secretary_role_*.sql` / `zako_role_*.sql` | 把 uid=1 提为 superadmin / 把某个账号提为 secretary / 给某个账号授角色（`@zako='REPLACE_ME'`，不填就空转） |
 >
 > 前两类跑进你的库会凭空多出几个 `agent_fixture_*` / `agent_test_user_*` 账号；
 > 后三类在你的库上没有对象，跑也是空转。**判断依据是文件名里的主题，不是日期。**
@@ -101,9 +105,12 @@ cp .env.example .env
 `.env.example` 里每一项都有注释说明用途与默认值。要点：
 
 - `DATABASE_URL` 和 `JWT_SECRET` **不配就起不来**（前者 `main.rs` 直接 panic，后者登录时 panic）
-- `SITE_URL` **别人部署必须改成自己的域名** —— 它决定 sitemap 里的链接、CORS
-  默认白名单、前端的 canonical/og:url。不设会回落到原作者的站
-- 前端那一半的站点地址走 `VITE_SITE_URL`（构建期用，同名不同前缀）
+- `SITE_URL` **别人部署必须改成自己的域名** —— 它在后端决定 sitemap 里的链接与 CORS 默认白名单。
+  不设**不会**回落到原作者的站：缺省值是中性占位 `http://localhost:3000`（`src/utils.rs::site_url`
+  的注释写明了这个取向），爬虫会忽略它 —— 也就是说**不设的后果是"不对外宣称"，不是"替别人宣传"**
+- 前端那一半的站点地址走 **`VITE_SITE_URL`**（构建期变量，同名不同前缀，`.env` 里那份 `SITE_URL`
+  管不着它）：`frontend/index.html` 的 canonical / og:url 占位符由 vite 在构建时替换。
+  两个都要设，别只设一个
 
 ### 2.3 起后端
 
@@ -137,8 +144,9 @@ npm run dev             # Vite 开发服务器
 这是**故意**的：那些是第三方产物，不适合进本仓的源码树，所以选择"要么显式取一次、
 要么不渲染"，而不是悄悄塞进 git。
 
-开发模式下**不需要配代理**：`src/utils/runtimeApi.ts` 检测到端口是 5173 时会自动把
-API 指到 `http://<当前主机>:3000`。但跨源了，所以后端的 CORS 白名单要放开：
+开发模式下**不需要配代理**：`src/utils/runtimeApi.ts` 检测到端口是 **5173（`npm run dev`）
+或 4173（`npm run preview`）**时会自动把 API 指到 `http://<当前主机>:3000`。但跨源了，
+所以后端的 CORS 白名单要放开（下面两种端口都列上，用哪个都不至于当场 404）：
 
 ```bash
 # .env
@@ -204,7 +212,7 @@ python3 frontend/tests/某个.test.py
 | `tests/api_tests.rs` | 本仓 | 走 MockDatabase，跟着 `cargo test` 跑 |
 | `tests/frontend_contract/test_api.py` | 本仓 | **手动跑**（Python，`requests`）：要一个**活着的** `localhost:3000`，登录类用例还要你自己给凭据 —— `BLOG_TEST_USER=... BLOG_TEST_PASSWORD=... python3 tests/frontend_contract/test_api.py`。不给凭据也能跑，登录相关用例自动跳过。**它不在 `cargo test` 里**，也不进 CI |
 | `eval/`（agent 仓） | `saudade-blog-agent/eval/` | golden set 端到端，要真服务与真语料，按需跑 |
-| `eval/*.py`（本仓 `scripts/`） | — | 同理，不进 CI |
+| `scripts/*.py` | 本仓 `scripts/` | 部署与巡检脚本（`deploy/` 下几个）**没有对应套件**，不进 CI。本仓 `scripts/` 下**没有 `eval/` 目录**——评测全在 agent 仓 |
 
 **CI 到底跑哪几项**：见 [.github/workflows/deploy.yml](.github/workflows/deploy.yml)
 的 `check` job。别照抄本文档 —— 那里的 `paths-filter` 决定了某些改动会**整个跳过**

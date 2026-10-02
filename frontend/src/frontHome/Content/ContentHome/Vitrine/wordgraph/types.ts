@@ -1,5 +1,5 @@
 /** 图谱产物的数据结构——由 saudade-blog-agent/scripts/build_word_graph.py 生成，
- *  契约见 docs/word-graph.md。字段名故意用单字母：节点 333 个、边 569 条，
+ *  契约见 docs/word-graph.md。字段名故意用单字母：节点 400 个、边 778 条，
  *  短键名让产物从 49KB 降到 36KB。 */
 
 export interface GraphNode {
