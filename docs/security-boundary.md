@@ -321,7 +321,7 @@ QPS 量级在个位数，这个代价可以忽略；规模上去之后的下一�
 |---|---|---|
 | **令牌收回只到"账号"粒度，没有"设备"粒度** | 用户想问"我现在登录着哪些设备、把那一台踢掉"时答不了；能做的只有"改密码/被冻结 ⇒ 该账号全部令牌作废" | 20260926 起代次收回（见 §2.3）解决了"能不能收回"，**没解决"收回哪一枚"**——按下沉到单令牌就得上 `jti` + 黑名单（每枚一张表、随过期时间清理），而本系统的实际需求是"全家一起下线"，代次计数器用一行整数办完了同一件事。真要做设备管理，那条路是 `jti` 而不是把代次拆细 |
 | **没有短令牌 + refresh 轮换** | 令牌一旦泄漏，在 `exp` 之前一直可用（`ver` 只能让**服务端主动**作废，挡不住"服务端不知道"的持有者） | 7 天单令牌（见 §2.3）。企业做法是 access 短（5–15 分钟）+ refresh 长且**一次性轮换**（重放旧 refresh 即判定失窃并全族作废）；本系统是单人博客，改密码 + 冻结两条主动通道已覆盖真实需求，**没有为此加一张 refresh 表**。要加时注意：轮换的判据是"一个 refresh 用了两次"，需要服务端存已用过的序列 |
-| **冻结/收回管不到物联网那条链路**（device-service 与 EMQX broker） | 一个被冻结账号手里那枚 7 天令牌，在过期前**仍然是一枚合法身份**：`device-service` 收它、`/device-api/*` 照走（范围是它自己名下的设备）、`mqtts` 连接照建（`device-console` 复用的就是同一枚 `localStorage.tokenKey`）。即"冻结 = 全站立刻下线"这句话**对 IoT 那半边为假** | **今天没修，如实记**。结构性原因：那两个验证者**各自解一遍同一个 JWT、且都不查库**——`mqtt-demo/device-service/src/jwt.rs::verify_bearer` 用自己的 `Claims{sub,exp,role}` 只验签与 `exp`（**无 `deny_unknown_fields`，所以新增的 `ver` 声明不会打挂它**，这一点已核过是安全的：`Cargo.toml` 里只有 `rusqlite`、没有 MySQL 客户端，它今天也**没有能力**查 `user.status`），EMQX broker 侧同样只校验签名与 `exp`（`scripts/configure_emqx.py` 的 `mechanism=jwt` 块）。要收口得让 device-service 能读 `user.status`/`token_version`（先得给它一条 MySQL 通道），或改成回调博客后端做在线校验——是一次跨服务的改造。**本仓的冻结功能不受此影响**：站点自身的所有 `/api/*` 通道（含前台）都走 `auth_uid`/`auth_guard`，冻结即生效；受影响的只有 device-api 与 MQTT 两个入口。因此后台冻结弹窗的文案写的是"已登录的**网页会话**立即失效"，没有写"所有设备"——**文案不许越过判据** |
+| **冻结/收回管不到物联网那条链路**（device-service 与 EMQX broker） | 一个被冻结账号手里那枚 7 天令牌，在过期前**仍然是一枚合法身份**：`device-service` 收它、`/device-api/*` 照走（范围是它自己名下的设备）、`mqtts` 连接照建（`device-console` 复用的就是同一枚 `localStorage.tokenKey`）。即"冻结 = 全站立刻下线"这句话**对 IoT 那半边为假** | **今天没修，如实记**。结构性原因：那两个验证者**各自解一遍同一个 JWT、且都不查库**——device-service 的令牌校验函数用自己的 `Claims{sub,exp,role}` 只验签与 `exp`（**无 `deny_unknown_fields`，所以新增的 `ver` 声明不会打挂它**，这一点已核过是安全的：`Cargo.toml` 里只有 `rusqlite`、没有 MySQL 客户端，它今天也**没有能力**查 `user.status`），EMQX broker 侧同样只校验签名与 `exp`（`scripts/configure_emqx.py` 的 `mechanism=jwt` 块）。要收口得让 device-service 能读 `user.status`/`token_version`（先得给它一条 MySQL 通道），或改成回调博客后端做在线校验——是一次跨服务的改造。**本仓的冻结功能不受此影响**：站点自身的所有 `/api/*` 通道（含前台）都走 `auth_uid`/`auth_guard`，冻结即生效；受影响的只有 device-api 与 MQTT 两个入口。因此后台冻结弹窗的文案写的是"已登录的**网页会话**立即失效"，没有写"所有设备"——**文案不许越过判据** |
 | **登录令牌在 `localStorage`**（不是 HttpOnly cookie） | XSS 能直接读走它；`HttpOnly` 能让脚本读不到（但仍能被"以你的身份发请求"） | 未改。改成 cookie 要同时动前端存取、CORS/CSRF（`SameSite` + 双提交令牌）、以及 device-console 那半边复用 `localStorage.tokenKey` 的链路（见 §1）——是一次跨三个前端的改造，今天没做，**如实记在这里** |
 | 没有**按用户/IP 的限流** | 单个已登录用户可以连续发起对话占满并发槽 | Rust 侧也没有；只有总并发闸 |
 | **分块传输**（无 Content-Length）不过体积闸 | 构造性的大 body 能绕过 §4 的第一行 | 只靠字段级限额兜，已写在代码注释里 |
@@ -381,7 +381,7 @@ cd saudade-blog-agent && .venv/bin/python tests/test_confirm.py
 cd saudade-blog-agent && .venv/bin/python eval/probe_admin_write.py --uid <uid> --allow-write
 
 # ⑪ /review 的身份链路，两个方向（20260925 实测；密钥从父仓 .env 现读，不落盘、不打印）
-#    手签一条 HS256 断言（aud=agent、sub=<uid>、exp=now+60，密钥取 memory_blog_rust/.env
+#    手签一条 HS256 断言（aud=agent、sub=<uid>、exp=now+60，密钥取博客仓根 .env
 #    的 JWT_SECRET），分别不带/带 `X-Agent-Assertion` POST 127.0.0.1:8010/review：
 #      → 无头：401 {"detail":"缺少有效的服务间身份断言"}
 #      → 带头：200 {"verdict":"pass"|"flag", ...}
@@ -390,8 +390,8 @@ cd saudade-blog-agent && .venv/bin/python eval/probe_admin_write.py --uid <uid> 
 # ⑫ 令牌收回与账号冻结（20260926，见 §2.3）
 #    a) 判据与结构锁（秒级、离线）：cargo test --lib authz::
 #    b) 真链路（打 127.0.0.1:3000，自己建一个一次性账号当靶子、跑完删掉）：
-cd /home/ubuntu/memory_blog_rust && saudade-blog-agent/.venv/bin/python \
-     scripts/probe_token_revoke.py --admin-uid 721
+cd <仓库根> && saudade-blog-agent/.venv/bin/python \
+     scripts/probe_token_revoke.py --admin-uid <uid>
 #    19 条断言，覆盖：冻结 ⇒ 旧令牌当场失效（后台 401 / 普通接口带原因拒绝）、
 #    连登录都进不来；解冻 ⇒ 旧令牌**仍然**失效（代次只增不减）、重新登录才可用；
 #    不带 ver 的令牌（agent 代调令牌的形状）照常放行；改密码 ⇒ 旧令牌失效而新令牌可用；
@@ -414,8 +414,8 @@ cd /home/ubuntu/memory_blog_rust && saudade-blog-agent/.venv/bin/python \
 
 # ⑬ 用户对话额度（20260929；普通用户终身 500 轮，`CHAT_QUOTA_LIMIT` 可调，管理员不限额）
 #    a) 判据（全部离线、秒级）：
-cd /home/ubuntu/memory_blog_rust && cargo test --lib quota    # 9 条：算术/饱和/角色表/转发键集
-cd /home/ubuntu/memory_blog_rust && cargo test --test api_tests   # 含额度路由守卫与 rows_affected 判据
+cd <仓库根> && cargo test --lib quota    # 9 条：算术/饱和/角色表/转发键集
+cd <仓库根> && cargo test --test api_tests   # 含额度路由守卫与 rows_affected 判据
 cd saudade-blog-agent && SAUDADE_REQUIRE_PARENT=1 .venv/bin/python tests/test_chat_quota.py
 #       ⚠️ agent 那套的末节是**跨语言守卫**（Rust 源码里真有那两个键 / 闸门在 `is_confirm`
 #       之后 / 认领带 `status=0` / 名录仍回裸 `Vec`）。不设 `SAUDADE_REQUIRE_PARENT=1` 而父仓
