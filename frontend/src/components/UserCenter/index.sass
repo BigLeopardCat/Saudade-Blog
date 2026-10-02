@@ -143,6 +143,17 @@
           input
             display: none
 
+    // 昵称重复横幅（20261002 昵称唯一）：只有**迁移真的改过本人名字**时才渲染。
+    // 只压字号，不碰颜色——antd 的 Alert 走 ConfigProvider 的主题（夜间是
+    // darkAlgorithm，见 index.tsx 的 ConfigProvider），自己写死底色会在夜间翻车。
+    // 字号必须落在 antd 自己的两个类上：`.ant-alert-message`/`-description` 各自带
+    // 显式 font-size，写在 `.ucNickBanner` 上继承不下去（本仓踩过"声明了没生效"）。
+    // 与上下元素的间距交给 `.ucSettings` 的 gap，不另加 margin（否则两处间距会叠加）。
+    .ucNickBanner
+      .ant-alert-message,
+      .ant-alert-description
+        font-size: 13px
+
   .ucField
     display: flex
     align-items: center

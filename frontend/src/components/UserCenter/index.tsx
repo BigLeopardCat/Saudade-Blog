@@ -18,7 +18,7 @@
  *     AuthRouter 弹回首页），后台入口改由窗口头部提供，管理员的路径没有丢。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Avatar, Badge, Button, ConfigProvider, Empty, Input, List, Modal, Tabs, Tag, message, theme as antdTheme } from 'antd'
+import { Alert, Avatar, Badge, Button, ConfigProvider, Empty, Input, List, Modal, Tabs, Tag, message, theme as antdTheme } from 'antd'
 import { useNavigate } from 'react-router-dom'
 import getToken from '../../apis/getToken.tsx'
 import { getRoleFromToken, getTokenClaims, isAdminToken } from '../../utils/auth.ts'
@@ -689,6 +689,27 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                     </label>
                 </div>
             </div>
+
+            {/* 昵称重复横幅（20261002 昵称唯一）。只在**迁移真的改过这个人的名字**时出现
+                （`nicknameAutoRenamed`），所以正常情况下全站没人看得到它。
+                位置刻意紧贴下面那个昵称输入框——横幅说的是"去把它改掉"，
+                而改它的地方就在下一行；放在页顶会让人读完之后还要找一遍。
+                字段**缺失**一律不显示（老后端）：反过来的默认值会在所有账号上
+                弹一条假的"你的昵称重复了"，那比不显示糟得多。
+                改完即消失：`saveNickname` 用 PUT 的回包 `setProfile`，
+                而回包里这一位已经是 false（后端在更新时清 0）。 */}
+            {profile?.nicknameAutoRenamed && (
+                <Alert
+                    className="ucNickBanner"
+                    type="warning"
+                    showIcon
+                    message="你的昵称和其他用户重复了"
+                    description={
+                        <>为避免重名，系统已把它临时改成「{profile?.nickname || ''}」。
+                            请在下面改成别的昵称，改完这条提示就消失。</>
+                    }
+                />
+            )}
 
             <div className="ucField">
                 <span className="ucLabel">昵称</span>

@@ -43,8 +43,46 @@ pub struct UpdateProfileRequest {
     pub nickname: String,
 }
 
+/// 昵称重复的**唯一**话术（20261002 昵称唯一）。
+///
+/// 两处都回这一句：① 写之前的预检（正常路径）；② 预检通过之后**仍被唯一索引拦下**
+/// （同一个昵称两个请求同时提交的竞态）。**不泄漏数据库报错**——索引名、
+/// `Duplicate entry 'x' for key 'uk_user_nickname'` 这些都不该到用户眼前。
+/// 「大小写/重音不敏感」是库里那个函数索引继承的排序规则（utf8mb4_0900_ai_ci）决定的，
+/// 提示语照这个口径写，别说成"完全相同"。
+const NICKNAME_TAKEN: &str = "这个昵称已经有人用了，换一个吧";
+
+/// 这个 sea-orm 错误是不是**唯一索引拦下的重复键**（MySQL 1062 ER_DUP_ENTRY）。
+///
+/// 逐层解包而不是 `to_string().contains("Duplicate entry")`：后者会把任何一句恰好含这
+/// 几个字的报错（上游代理、连接器）也算成重复键。代价是写法绑在 sea-orm/sqlx 的枚举
+/// 形状上——所以**兜底一律是"保存失败"**：判错只会少给一句友好提示，绝不会把库的
+/// 错误原文透出去（原文只进 tracing，见调用处）。
+fn is_duplicate_key(e: &sea_orm::DbErr) -> bool {
+    use sea_orm::error::RuntimeErr;
+    let rt = match e {
+        sea_orm::DbErr::Exec(rt) | sea_orm::DbErr::Query(rt) => rt,
+        _ => return false,
+    };
+    // 载荷类型在 sea-orm 0.12 的小版本间从 `sqlx::Error` 变成过 `Box<sqlx::Error>`，
+    // 不写死引用形状：方法调用会自动解引用，两种都能编过。
+    let RuntimeErr::SqlxError(err) = rt else { return false };
+    err.as_database_error()
+        .and_then(|d| d.code())
+        .map(|c| matches!(c.as_ref(), "1062" | "23000"))
+        .unwrap_or(false)
+}
+
 /// PUT /api/protected/profile：改昵称（个人中心「用户设置」）。
 /// 昵称是**展示名**（留言/说说/信箱里显示的那个），不是登录账号——账号不可改。
+///
+/// 昵称唯一（20261002）：库里那条函数索引 `uk_user_nickname ((NULLIF(TRIM(nickname),'')))`
+/// 是**最终防线**，这里的三件事顺序是刻意的：
+///   1. 预检（同昵称且 id 不是我）→ 友好提示（正常路径，绝大多数重复走这一支）；
+///   2. 预检通过 → 照常 UPDATE，**同时把 `nickname_auto_renamed` 清 0**
+///      （本人改过名字 ⇒ 迁移那条横幅撤掉，这是那个状态的唯一出口）；
+///   3. `Err` 里再认一次 1062 → 同一句话术（兜住两个请求同时提交的竞态）。
+/// 只有 1 的话，竞态下用户会拿到一句"保存失败，请稍后再试"，明明换个名字就能过。
 pub async fn update_profile(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -62,17 +100,41 @@ pub async fn update_profile(
     let Some(u) = user::Entity::find_by_id(uid).one(&state.db).await.unwrap_or(None) else {
         return Json(ApiResponse::error("账号不存在"));
     };
+
+    // 预检。`nickname = ?` 走列的 utf8mb4_0900_ai_ci ⇒ 与函数索引**同一口径**
+    // （大小写、重音不敏感），不会出现"索引说重复、预检说没事"的两份判据。
+    // 这里没有 NULLIF/TRIM：写进来的一律是上面 trim 过的非空串。
+    // Rust 侧的 `u.nickname != nick` 是**区分大小写**的，因此"只把 Alice 改成 alice"
+    // 会照常走预检——而 precheck 排除了自己那一行，所以能改成（这是想要的：
+    // 唯一性约束管的是"和别人撞"，不是"不能改大小写"）。
+    if u.nickname != nick {
+        let taken = user::Entity::find()
+            .filter(user::Column::Id.ne(uid))
+            .filter(user::Column::Nickname.eq(nick))
+            .one(&state.db)
+            .await
+            .unwrap_or(None);
+        if taken.is_some() {
+            return Json(ApiResponse::error(NICKNAME_TAKEN));
+        }
+    }
+
     let mut am: user::ActiveModel = u.into();
     am.nickname = Set(nick.to_string());
+    am.nickname_auto_renamed = Set(0);
     match am.update(&state.db).await {
         Ok(u) => Json(ApiResponse::success(super::auth::ProfileDto {
             username: u.username,
             nickname: u.nickname,
+            nickname_auto_renamed: u.nickname_auto_renamed != 0,
             avatar: u.avatar,
             role: u.role,
         })),
         Err(e) => {
             tracing::error!("[profile] 改昵称失败 uid={}: {}", uid, e);
+            if is_duplicate_key(&e) {
+                return Json(ApiResponse::error(NICKNAME_TAKEN));
+            }
             Json(ApiResponse::error("保存失败，请稍后再试"))
         }
     }

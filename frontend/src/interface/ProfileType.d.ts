@@ -13,6 +13,12 @@ export interface ProfileInfo {
     /** 角色（20260926）：个人中心昵称后面的权限身份标签用它。
      *  **后端从库里现读**（不是令牌快照，见 src/routes/auth.rs::ProfileDto）。 */
     role?: string;
+    /** 昵称是否被**迁移自动加过后缀**（20261002 昵称唯一）：true = 原来的昵称和别人
+     *  重复，系统改成了 `原名_<id>`，个人中心显示一条横幅提示本人改掉。
+     *  本人改一次昵称就变 false。字段**缺失**（前端已上线、后端还没到）按 false 处理
+     *  ——即"不显示横幅"：这是唯一一种安静的失败，而反过来的默认值会在所有老账号上
+     *  弹一条假的"你的昵称重复了"。 */
+    nicknameAutoRenamed?: boolean;
 }
 
 /** GET /api/protected/favorites 的单行 */

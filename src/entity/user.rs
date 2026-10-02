@@ -8,6 +8,13 @@ pub struct Model {
     pub id: i32,
     pub username: String,
     pub nickname: String, // 用户昵称：后台账户面板可配置，默认取账号
+    /// 昵称是否被**迁移自动改过**（20261002 昵称唯一）：`1` = 原本的昵称与别人重复，
+    /// 迁移给它加了 `_<id>` 后缀（最早注册者保留原名）。个人中心据此显示一条横幅提示
+    /// 本人改掉；本人改一次昵称就清 0（见 `routes/profile.rs::update_profile`）。
+    /// **不是"这个昵称需要唯一"的开关**——唯一性由库里的函数索引
+    /// `uk_user_nickname ((NULLIF(TRIM(nickname),'')))` 保证，与这一列无关。
+    /// 迁移：`scripts/migration/nickname_unique_20261002.sql`（列序 `AFTER nickname`）
+    pub nickname_auto_renamed: i8,
     /// 头像 URL（20260922 个人中心：上传裁切后落库的站内路径 `/api/protect/download/avatars/…`；
     /// NULL/空 = 没设过，展示端回退到站点主人头像（web_info 的 avatar，个人中心之前的行为）
     pub avatar: Option<String>,
