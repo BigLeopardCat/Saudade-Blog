@@ -211,11 +211,11 @@ pub async fn screen(
         }
     }
 
-    // ② 最小间隔（内存计数器：重启丢失不构成绕过，见模块头注）
-    if cfg.min_interval_secs > 0 {
-        if let Err(retry_after_secs) = state.post_limiter.check_and_mark(uid, cfg.min_interval_secs) {
-            return Err(RiskReject::TooSoon { retry_after_secs });
-        }
+    // ② 最小间隔（内存计数器：重启丢失不构成绕过，见模块头注）。
+    // `<= 0` = 该档显式关闭——这条规则住在 `PostRateLimiter::check_and_mark` 里，
+    // 这里不再自己判一遍（同一个规则写两处，就是等着两处哪天不一致）。
+    if let Err(retry_after_secs) = state.post_limiter.check_and_mark(uid, cfg.min_interval_secs) {
+        return Err(RiskReject::TooSoon { retry_after_secs });
     }
 
     // ③ 窗口计数（查库：跨重启、跨部署都在）
@@ -360,10 +360,18 @@ impl PostRateLimiter {
         Self { last: Arc::new(Mutex::new(HashMap::new())) }
     }
 
-    /// `Ok(())` = 可以发（并记下这一刻）；`Err(剩余秒数)` = 太近。
+    /// `Ok(())` = 可以发（并记下这一刻）；`Err(剩余秒数)` = 太近；
+    /// `gap_secs <= 0` = **这一档显式关闭**（同 [`parse_config`] 的取值规则）⇒ 恒放行。
+    ///
+    /// "关闭"这条规则**只在本函数里实现一次**，调用方不再自己判一遍（`screen` 直接调）。
+    /// 原来写的是 `gap_secs.max(1)`——那把 0 悄悄变成"1 秒"，即**一个关不掉的闸**：
+    /// 管理员把 `contentMinIntervalSecs` 设成 0 本意是关掉间隔限制，实际仍在拦人。
     pub fn check_and_mark(&self, uid: i32, gap_secs: i64) -> Result<(), i64> {
+        if gap_secs <= 0 {
+            return Ok(());
+        }
         let now = Instant::now();
-        let gap = std::time::Duration::from_secs(gap_secs.max(1) as u64);
+        let gap = std::time::Duration::from_secs(gap_secs as u64);
         let mut map = match self.last.lock() {
             Ok(m) => m,
             // 互斥锁中毒（别的线程 panic 过）：宁可放行，也不要因为一把锁让全站发不出内容
