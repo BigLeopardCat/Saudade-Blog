@@ -178,14 +178,9 @@
     gap: 6px
     margin-bottom: 10px
 
-// AI 审核列的 tooltip 内容（20260926）：说明全文要能换行读完，别被 tooltip 撑成一行
-.bm-ai-tip
-  .bm-ai-reason
-    margin-top: 4px
-    max-width: 280px
-    white-space: normal
-    line-height: 1.6
-    opacity: 0.85
+// AI 审核列的 tooltip 内容（20260926）自 20261002 起归 `../ContentManage/shared.sass`
+// （`.content-ai-tip`）——那段 markup 由共享模块的 `aiTip` 生成，评论管理页也在用，
+// 样式就该跟生成它的那一处住在一起。这里那份 `.bm-ai-tip` 已删。
 
 // 暗色模式适配（后台 .contentDark 容器内）
 .contentDark

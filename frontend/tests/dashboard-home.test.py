@@ -151,7 +151,7 @@ export const Provider = ({ children }: any) => children;
         "export default ArticleRecord;\n", encoding="utf-8")
 
     # 边界③b：react-router-dom 的 import 兜底。本沙箱只渲染 Home，用不到路由，
-    # 但 Home 现在要 useNavigate（待审评论那行的跳转），缺了 esbuild 直接打包失败。
+    # 但 Home 现在要 useNavigate（待审留言那行的跳转），缺了 esbuild 直接打包失败。
     (stubs / "router.tsx").write_text('''\
 export const useNavigate = () => (to: string, opts?: any) => {
   const w = window as any;
@@ -911,7 +911,7 @@ with sync_playwright() as p:
           bool(sent5) and [r for r in sent5 if r["text"] == "新增的一条"][0]["date"] is None,
           str([r for r in sent5 if r["text"] == "新增的一条"]))
 
-    print("⑮ 待审评论：顶上提示一行、点得进去、审完自己消失")
+    print("⑮ 待审留言：顶上提示一行、点得进去、审完自己消失")
     # 桩里 3 条 approved=0（= 等人工裁决的那一档）
     pg.evaluate("""() => {
       localStorage.setItem('__pending', '3');
@@ -920,13 +920,13 @@ with sync_playwright() as p:
     }""")
     pg.reload()
     pg.wait_for_timeout(900)
-    # inner_text 在 flex 容器的子项之间会插换行（"3\n条评论待人工审核"），抹平了再看
+    # inner_text 在 flex 容器的子项之间会插换行（"3\n条留言待人工审核"），抹平了再看
     def review_text():
         return "".join(pg.locator(".todo-review").inner_text().split()) \
             if pg.locator(".todo-review").count() else ""
 
-    check("挂着待审评论时，列表顶上多一行提示",
-          review_text() == "3条评论待人工审核", review_text() or "（没有这一行）")
+    check("挂着待审留言时，列表顶上多一行提示",
+          review_text() == "3条留言待人工审核", review_text() or "（没有这一行）")
     check("它排在全部待办分组**之前**",
           pg.evaluate("""() => {
             const r = document.querySelector('.todo-review');
@@ -947,7 +947,7 @@ with sync_playwright() as p:
           str(len(sent6) if sent6 else 0) + " 条")
     pg.click(".todo-review")
     pg.wait_for_timeout(200)
-    check("点它就跳到评论管理那一页（落到评论管理 Tab 上）",
+    check("点它就跳到留言管理那一页（落到留言管理 Tab 上）",
           (pg.evaluate("() => (window.__nav || []).slice(-1)[0]") or {}).get("to")
           == "/dashboard/users?tab=review",
           str(pg.evaluate("() => (window.__nav || []).slice(-1)[0]")))
@@ -966,7 +966,7 @@ with sync_playwright() as p:
     }""")
     pg.wait_for_timeout(500)
     check("收到 agent-turn-done 时这个数也跟着刷新（同一份读数，不再各写一遍时机）",
-          review_text() == "5条评论待人工审核", review_text() or "（没有这一行）")
+          review_text() == "5条留言待人工审核", review_text() or "（没有这一行）")
     pg.evaluate("() => { localStorage.setItem('__pending', '3'); }")
     pg.reload()
     pg.wait_for_timeout(900)
@@ -996,10 +996,10 @@ with sync_playwright() as p:
     # ────────────────────────────────────────────────────────────────────────
     # ⑯ 额度重置申请：顶上**第二行**提示（20260929）
     #
-    # 与待审评论同构（不进 todos、不落库、不能拖不能删），但**是两件事**：一个进评论管理
+    # 与待审留言同构（不进 todos、不落库、不能拖不能删），但**是两件事**：一个进留言管理
     # 裁决、一个进额度管理裁决。本段最要紧的断言是「`.todo-review` 仍然恰好一条」——
     # 复用类名会把两种提示数成同一件事（既有断言锁着那个数），所以新行另起 `.todo-quota`。
-    print("⑯ 额度重置申请：顶上第二行提示（与待审评论同形、不同色、去另一个页签）")
+    print("⑯ 额度重置申请：顶上第二行提示（与待审留言同形、不同色、去另一个页签）")
     pg.evaluate("""() => {
       localStorage.setItem('__pending', '1');
       localStorage.setItem('__quota', '2');
@@ -1013,10 +1013,10 @@ with sync_playwright() as p:
 
     check("挂着额度申请时，列表顶上多一行提示",
           quota_text() == "2条额度重置申请待处理", quota_text() or "（没有这一行）")
-    check("两行同时在，且待审评论那行仍是**恰好一条**（新行没跟它并成一体）",
+    check("两行同时在，且待审留言那行仍是**恰好一条**（新行没跟它并成一体）",
           pg.locator(".todo-review").count() == 1 and pg.locator(".todo-quota").count() == 1
-          and review_text() == "1条评论待人工审核", review_text() or "（评论那行没了）")
-    check("额度那一行排在待审评论**之后**（两件事各占一行、顺序固定）",
+          and review_text() == "1条留言待人工审核", review_text() or "（评论那行没了）")
+    check("额度那一行排在待审留言**之后**（两件事各占一行、顺序固定）",
           pg.evaluate("""() => {
             const q = document.querySelector('.todo-quota');
             const r = document.querySelector('.todo-review');

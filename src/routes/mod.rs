@@ -223,12 +223,14 @@ pub fn create_router(state: AppState) -> Router {
         )
         // 追加一条（20260926）：agent 安排日程用的通道——它手里没有那份列表，
         // 整份覆盖会抹掉主人的改动，所以单独给一条"只加不覆盖"的接口。
-        // 评论管理（20261002）：挂在 admin 守卫域内（后台页面用）
+        .route("/api/protected/todos/item", post(todos::add_todo))
+
+        // 评论管理（20261002）：文章详情页讨论区的裁决队列，挂在 admin 守卫域内（后台页面用）。
+        // 公开那三条在 public_routes（见上方注），**这里的三条与它们不是一回事**：
+        // 那三条是给访客读、给作者写/自删的，这三条只给管理员。
         .route("/api/protect/comments", get(comments::list_comments_admin))
         .route("/api/protect/comments/:id/audit", put(comments::audit_comment))
         .route("/api/protect/comments/:id", delete(comments::delete_comment_admin))
-
-        .route("/api/protected/todos/item", post(todos::add_todo))
         // 翻完成标记（20260926）：同一族的第二条最小通道——按**正文**认出唯一那一行、
         // 只翻它的 done（查无此条/有多条一律零写，判据见 todos.rs 的 pick_todo）。
         .route("/api/protected/todos/done", post(todos::set_todo_done))

@@ -1,0 +1,202 @@
+// 评论管理 Tab（20261002）：文章详情页讨论区的裁决队列。
+// 结构与留言管理（.BoardManage）/ 额度管理（.QuotaManage）同构 —— 工具栏 + 审核开关 +
+// 表格区 + 页脚四段，**只有中间那段滚**；高度链靠 Users/index.sass 那套 100% 传递
+// （Dashboard 的 .Card 95% → .ant-card-body 100% → .users-page 100% → Tabs 内容区
+// 100% → 这里 100%，少一环就退化成内容高度、内滚动失效）。
+//
+// 配色与前两页**故意不同**：这一页 20261002 新写，直接走 `var(--washi-*)` 令牌
+// （与 `.tu-tabs` 同一支），深浅两档由令牌自己分 ⇒ 下面**没有 `.contentDark` 覆盖块**
+// （Batch E 之后那是既有状态，见 Users/index.sass 文件末那条注记）。
+// `.BoardManage` / `.QuotaManage` 里那份砖红 #a33f30 是改造前的主色，本轮不动它们
+// ——两页自己的观感改造是另一件事，别在这一笔里顺手改（改了就没有"和改前一样"的证据）。
+.CommentManage
+  padding: 20px
+  height: 100%
+  overflow: hidden
+  min-height: 0
+  display: flex
+  flex-direction: column
+  gap: 14px
+
+  .cm-toolbar
+    display: flex
+    align-items: center
+    gap: 12px
+    flex-wrap: wrap
+    // 固定段：矮窗时不许被 flex 压扁（列表才该缩）
+    flex: 0 0 auto
+
+    .cm-tabs
+      display: flex
+      gap: 8px
+      button
+        min-width: 52px
+        padding: 5px 14px
+        border: 1px solid var(--washi-line, rgba(198, 152, 192, 0.42))
+        border-radius: 6px
+        background: var(--washi-paper-2, #fff6fa)
+        color: var(--washi-ink-2, #7c6584)
+        cursor: pointer
+        transition: 0.25s
+        &:hover
+          border-color: var(--washi-pink, #ff9ec9)
+          color: var(--washi-pink-deep, #d94f9a)
+        &.sel
+          // 深墨压在浅紫上（浅色档 #b9a7f5 与夜间档 #cbb6ff 分别是 6.7:1 与 11:1）
+          background: var(--washi-lav, #b9a7f5)
+          border-color: transparent
+          color: #241f2e
+          font-weight: 600
+
+    .cm-count
+      margin-left: auto
+      color: var(--washi-ink-3, #a08ba8)
+      font-size: 13px
+
+  .cm-review
+    display: flex
+    align-items: center
+    gap: 18px
+    flex-wrap: wrap
+    padding: 6px 12px
+    border: 1px solid var(--washi-line-2, rgba(198, 152, 192, 0.22))
+    border-radius: 8px
+    background: var(--washi-tape-2, rgba(214, 226, 255, 0.8))
+    // 固定段（同上）
+    flex: 0 0 auto
+
+    .cm-review-item
+      display: flex
+      align-items: center
+      gap: 6px
+      color: var(--washi-ink-2, #7c6584)
+      font-size: 13px
+
+    .cm-review-hint
+      color: var(--washi-ink-3, #a08ba8)
+      font-size: 12px
+
+    // 「这对开关只管评论」的界定语：与留言管理那对同屏出现（两个 Tab 挨着），
+    // 不说清会让人以为点重了或者担心点坏了另一边
+    .cm-review-scope
+      margin-left: auto
+      padding: 2px 8px
+      border-radius: 10px
+      font-size: 12px
+      color: var(--washi-ink-2, #7c6584)
+      background: var(--washi-paper-2, #fff6fa)
+
+  // 正文与理由：正文自己一行，理由/已删除缩在下面，三行都在「评论内容」列里
+  // （ellipsis 由 antd 打在单元格上，这里只管折行）
+  .cm-content
+    white-space: pre-wrap
+    word-break: break-word
+
+  .cm-reason
+    margin-top: 4px
+    padding: 2px 8px
+    border-left: 3px solid var(--washi-pink-deep, #d94f9a)
+    border-radius: 0 4px 4px 0
+    background: var(--washi-tape, rgba(255, 222, 238, 0.86))
+    color: var(--washi-ink-2, #7c6584)
+    font-size: 12px
+    line-height: 1.6
+    white-space: pre-wrap
+    word-break: break-word
+    .cm-reason-none
+      color: var(--washi-ink-3, #a08ba8)
+      font-style: italic
+
+  // 已删除那一行：**中性提示而不是告警**（它不是"出事了"，是"已经处理完了"），
+  // 所以走淡墨而不是红色——红色该留给"这条被驳回了"。
+  .cm-deleted
+    margin-top: 4px
+    padding: 2px 8px
+    border-left: 3px solid var(--washi-line, rgba(198, 152, 192, 0.42))
+    border-radius: 0 4px 4px 0
+    color: var(--washi-ink-3, #a08ba8)
+    font-size: 12px
+    line-height: 1.6
+
+  .cm-dim
+    color: var(--washi-ink-3, #a08ba8)
+    font-style: italic
+
+  .cm-user
+    display: flex
+    flex-direction: column
+    line-height: 1.4
+    i
+      font-style: normal
+      font-size: 12px
+      color: var(--washi-ink-3, #a08ba8)
+
+  .cm-replyto
+    color: var(--washi-pink-deep, #d94f9a)
+    font-size: 12px
+
+  // 只有这一块滚（同 .bm-scroll）：上面两段与下面的页脚都是 flex: 0 0 auto 的固定壳。
+  // 内滚动能生效靠的是下面那行 `overflow: auto`（`min-height: 0` 只是把"允许缩到比
+  // 内容矮"写出来，见 Users/index.sass 同一处的说明）。
+  .cm-scroll
+    flex: 1 1 auto
+    min-height: 0
+    overflow: auto
+    // 表头吸在这一块的顶沿。z-index 抬到 2 是因为 antd 的 loading 蒙层是绝对定位盖在
+    // 表体上的，不抬的话刷新时会盖住表头。表头底色由 `body.dash-skin` 那条统一给
+    // （**不透明**的 `--washi-head`——半透明底会让行从表头里透出来，见 Dashboard/index.css
+    // 里那条的注），所以这里不再自己写背景色。
+    .ant-table-thead > tr > th
+      position: sticky
+      top: 0
+      z-index: 2
+
+  .cm-note
+    margin: 0
+    color: var(--washi-ink-3, #a08ba8)
+    font-size: 12px
+    border-top: 1px dashed var(--washi-line-2, rgba(198, 152, 192, 0.22))
+    padding-top: 10px
+
+  // 分页条：固定段，钉在卡片底部。Table 自己的 pagination 已关（见 index.tsx），
+  // 否则翻页按钮会跟着表体一起滚走。
+  .cm-foot
+    flex: 0 0 auto
+    display: flex
+    justify-content: flex-end
+
+// ── 驳回弹窗 ────────────────────────────────────────────────────────────────
+// antd 弹窗 portal 到 body 下，**不在 .CommentManage 里**，所以必须是顶层块
+// （写进上面那个嵌套里就永远匹配不上，样式静默失效——同 `.bm-reject-modal` 那条）。
+//
+// 这里**刻意用字面色、不用 `var(--washi-*)`**：portal 挂在 body 上，够不着壳上的
+// `.dark`，令牌会一路落回 `:root` 的浅色档 ⇒ 夜间拿到浅色值（深底上一片糊）。
+// 弹窗底色由壳上的 ConfigProvider(darkAlgorithm) 负责，这几行只管文字色。
+// 取值与 `.bm-reject-modal` / `.qm-reject-modal` 同一族（三处各自成块是既有状态）。
+.cm-reject-modal
+  .cm-reject-tip
+    margin: 0 0 10px
+    color: #888
+    font-size: 12px
+    line-height: 1.7
+    b
+      color: #e0655a
+  // 已有理由的回显 + 「沿用」：理由改成必填之后，改判同一条不该让他重打一遍
+  .cm-reject-existing
+    margin: 0 0 8px
+    padding: 4px 8px
+    border-radius: 4px
+    background: rgba(224, 101, 90, 0.1)
+    color: #e0655a
+    font-size: 12px
+    line-height: 1.7
+    .cm-reject-reuse
+      padding: 0 2px
+      font-size: 12px
+      height: auto
+  // 常见类型预设 + 「采用 AI 说明」：点一下填进下面那个**可编辑**的文本框
+  .cm-reject-presets
+    display: flex
+    flex-wrap: wrap
+    gap: 6px
+    margin-bottom: 10px
