@@ -192,12 +192,16 @@ export default function WordGraphExhibit() {
         () => (shown !== null && data ? neighborsOf(data, shown) : []),
         [shown, data]);
 
+    // 读不到产物 ⇒ 整块不渲染，**不再**画一张「图谱数据加载失败」的面纱。
+    // 与角标那条一个取向：不可用就不显示，而不是给访客看一张坏卡片。展品本身已经过了
+    // 语料归属自校验（exhibits.ts）才会挂载到这里，所以走到这一步是真读不到产物。
+    if (failed) return null;
+
     return (
         <div className="wg-root">
             <canvas ref={canvasRef} className="wg-canvas" />
 
-            {failed && <div className="wg-veil">图谱数据加载失败</div>}
-            {!failed && !data && <div className="wg-veil">正在绘制向量空间…</div>}
+            {!data && <div className="wg-veil">正在绘制向量空间…</div>}
 
             <div className="wg-foot">
                 {/* 读数卡片放在 .wg-foot **内部**（绝对定位，不参与流）：它的定位基准是
