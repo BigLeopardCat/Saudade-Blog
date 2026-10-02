@@ -40,7 +40,7 @@ npm run dev             # Vite 开发服务器（默认为 http://localhost:5173
 CORS_ALLOWED_ORIGINS=http://localhost:5173
 ```
 
-**别在本机跑 `npm run build`。** 这台开发机只有 3.7 GB 内存，`vite build` 会 OOM 甚至
+**别在跑着服务的机器上跑 `npm run build`。** `vite build` 内存开销大，会 OOM 甚至
 拖垮整机（真发生过）。构建交给 CI，本地验证用 `tsc` + `npm test` 就够了。
 
 ## 目录结构

@@ -1,6 +1,6 @@
 # 参与开发
 
-面向想在本机把它跑起来、或者想提 PR 的人。项目整体在 [README.md](README.md)，
+面向想在本地把它跑起来、或者想提 PR 的人。项目整体在 [README.md](README.md)，
 这里是"怎么动手"。
 
 > 遇到文档与代码不一致：**以代码为准**，然后顺手把文档改了 —— 这份文件以前就有过
@@ -43,7 +43,7 @@
 - **MySQL** 8
 - **Python** 3.10+（只有要跑 agent 时才需要）
 
-### 2.1 建库
+### 2.1 建库与账号
 
 数据库名**必须叫 `saudade_blog`** —— `scripts/migration/*.sql` 里凡是**带了** `USE` 语句的
 （绝大多数）都写死这个名字，改名要逐条改。有三份**没有** `USE`——
@@ -54,6 +54,18 @@
 ```bash
 mysql -uroot -p -e "CREATE DATABASE saudade_blog CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 ```
+
+再建一个**应用账号**。后端进程用它连库，不该拿 `root` 跑（`root` 只用来建库、跑迁移和救急）：
+
+```bash
+mysql -uroot -p -e "CREATE USER 'saudade_blog'@'localhost' IDENTIFIED BY '换成你自己的密码'; \
+                    GRANT ALL PRIVILEGES ON saudade_blog.* TO 'saudade_blog'@'localhost';"
+```
+
+用户名要与 `.env` 里 `DATABASE_URL` 的那一段一致（`.env.example` 的样例就是这个）。
+**库里没有任何地方写死它** —— 库名在迁移脚本里写死了，用户名没有；你想换个用户名，
+建号之后改 `.env` 就行。（本仓的迁移脚本里**没有** `CREATE USER`/`GRANT` 语句，
+所以别指望跑迁移能顺带把账号建出来。）
 
 然后把 `scripts/migration/` 下的迁移按**文件名顺序**跑一遍。
 注意**跳过夹具**（下面有解释）：
@@ -183,7 +195,7 @@ npm test                                          # node tests/xxx.test.mjs 全�
 npm run lint                                      # ESLint
 ```
 
-> ⚠️ 本机复核 lint 时**必须**带 `--report-unused-disable-directives`（`npm run lint`
+> ⚠️ 本地复核 lint 时**必须**带 `--report-unused-disable-directives`（`npm run lint`
 > 脚本里已经带了）。原因：一条**多余的** `eslint-disable-next-line` 在这里判 error ——
 > 历史上有一次 push 因为这个红掉，结果是那次**什么都没部署**，而看 CI 只知道"失败了"。
 >
@@ -200,10 +212,10 @@ npm run lint                                      # ESLint
 python3 frontend/tests/某个.test.py
 ```
 
-> ⚠️ 本机（3.7 GB 内存）**必须串行**，不要并发起第二个 chromium。
+> ⚠️ 这套要点无头 Chrome，内存开销大：在低内存机器上**必须串行**，不要并发起第二个 chromium。
 >
-> ⚠️ 这类套件的判据经常依赖**本机独有的前提**（某个端口空着、某个目录存在）。跑不通时
-> 先看它自己的头注 —— 好几个套件在开头写清了它假设什么、以及为什么。
+> ⚠️ 判据经常依赖**环境特有的前提**（某个端口空着、某个目录存在）。跑不通时先看它自己的头注
+> —— 好几个套件在开头写清了它假设什么、以及为什么。
 
 ### 3.3 其它
 
@@ -246,7 +258,7 @@ python3 frontend/tests/某个.test.py
 
 这些是踩过坑换来的，不是风格偏好：
 
-1. **本机不编译大产物**。这台机器 3.7 GB 内存，`vite build` 和 `cargo build --release`
+1. **本地不编译大产物**。`vite build` 和 `cargo build --release` 内存开销很大，低内存机器上
    会 OOM 甚至拖垮整机。本地只跑 `cargo check`、`tsc`、`npm test`，构建交给 CI。
 2. **永远不要 `cargo clean`**（`target/release/` 里是线上正在跑的那个二进制）。
 3. **动 git 前逐文件核对**，别用 `git add -A` / `git commit -a` —— 工作区里可能挂着
