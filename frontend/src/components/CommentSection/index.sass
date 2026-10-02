@@ -1,0 +1,240 @@
+// 文章讨论区（20261002）。挂在 ReadArticle 的 .readContent 之后——
+// 宽度/居中对齐沿用文章正文那套（80% / max-width 880px），于是讨论区与正文左右对齐。
+//
+// 日夜两态：颜色走站内既有令牌（`--font-title-color` / `--font-p-color` 在
+// frontHome/main.css 的 :root 与 .frontDark 里成对定义），**不另写一套深色值**——
+// 自己拍一个"看起来差不多的深灰"就是第二份真相源（改主题时它不会跟着变）。
+.commentSection
+    width: 80%
+    max-width: 880px
+    margin: 28px auto 80px
+    padding: 20px 22px 26px
+    border-radius: 8px
+    word-wrap: break-word
+    color: var(--font-title-color)
+    border: 1px solid var(--washi-line, rgba(198, 152, 192, 0.32))
+    background: var(--washi-paper-2, rgba(255, 246, 250, 0.72))
+    @media only screen and (max-width: 1300px)
+        width: 92%
+    .frontDark &
+        // 夜里用一层极淡的白，透出 body 的深蓝渐变（同 .readContainer 的取向）
+        background: rgba(255, 255, 255, 0.04)
+
+    .commentTitle
+        margin: 0 0 14px
+        font-size: 1.15rem
+        font-weight: 700
+        display: flex
+        align-items: baseline
+        gap: 8px
+        .commentCount
+            font-size: 0.8rem
+            font-weight: 400
+            color: var(--font-p-color)
+            opacity: 0.8
+
+    .commentLoginTip
+        margin: 0 0 18px
+        font-size: 0.9rem
+        color: var(--font-p-color)
+        a
+            color: var(--washi-pink-deep, #d94f9a)
+
+    // ── 输入区 ──────────────────────────────────────────────
+    .commentComposer
+        margin-bottom: 22px
+        .commentReplyBar
+            display: flex
+            align-items: center
+            justify-content: space-between
+            gap: 8px
+            margin-bottom: 6px
+            padding: 4px 10px
+            font-size: 0.82rem
+            border-radius: 6px
+            color: var(--font-p-color)
+            background: rgba(174, 200, 200, 0.22)
+            button
+                border: none
+                background: transparent
+                cursor: pointer
+                font-size: 0.82rem
+                color: var(--washi-pink-deep, #d94f9a)
+        .commentComposerFoot
+            display: flex
+            align-items: center
+            justify-content: space-between
+            gap: 10px
+            margin-top: 8px
+        .commentSubmit
+            padding: 5px 18px
+            border: none
+            border-radius: 16px
+            cursor: pointer
+            font-size: 0.88rem
+            color: #fff
+            background: linear-gradient(100deg, #ff7fc0, #b06ee8)
+            transition: opacity 0.2s
+            &:disabled
+                cursor: not-allowed
+                opacity: 0.45
+
+    // ── 表情选择器 ──────────────────────────────────────────
+    .commentSticker
+        position: relative
+        .commentStickerBtn
+            padding: 4px 12px
+            border: 1px solid var(--washi-line, rgba(198, 152, 192, 0.42))
+            border-radius: 14px
+            cursor: pointer
+            font-size: 0.84rem
+            color: var(--font-p-color)
+            background: transparent
+            &:hover
+                color: var(--washi-pink-deep, #d94f9a)
+                border-color: var(--washi-pink, #ff9ec9)
+        .commentStickerPanel
+            position: absolute
+            left: 0
+            bottom: calc(100% + 8px)   // 往上弹：输入框常贴页面底部，往下会顶出视口
+            z-index: 20
+            display: grid
+            grid-template-columns: repeat(4, 64px)
+            gap: 6px
+            padding: 10px
+            border-radius: 10px
+            border: 1px solid var(--washi-line, rgba(198, 152, 192, 0.42))
+            background: var(--washi-paper-2, #fff6fa)
+            box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18)
+            .frontDark &
+                background: #2a2438
+            .commentStickerItem
+                display: flex
+                flex-direction: column
+                align-items: center
+                gap: 2px
+                padding: 4px 2px
+                border: none
+                border-radius: 8px
+                cursor: pointer
+                font-size: 0.7rem
+                color: var(--font-p-color)
+                background: transparent
+                &:hover
+                    background: rgba(174, 200, 200, 0.25)
+                img
+                    width: 40px
+                    height: 40px
+                    object-fit: contain
+
+    // ── 列表 ────────────────────────────────────────────────
+    .commentEmpty
+        margin: 8px 0 0
+        font-size: 0.88rem
+        color: var(--font-p-color)
+    .commentRetry
+        border: none
+        background: transparent
+        cursor: pointer
+        font-size: 0.88rem
+        padding: 0
+        color: var(--washi-pink-deep, #d94f9a)
+
+    .commentThread
+        border-top: 1px solid var(--washi-line, rgba(198, 152, 192, 0.22))
+        &:first-child
+            border-top: none
+
+    .commentRow
+        display: flex
+        gap: 10px
+        padding: 14px 0 10px
+        // 回复：缩进到与顶层评论的头像右缘对齐（一条竖线示意从属关系，不做更多层级——
+        // 对回复的回复在数据上仍挂同一个顶层，见组件头注 ②）
+        &.isReply
+            margin-left: 46px
+            padding: 10px 0 6px
+            border-left: 2px solid var(--washi-line, rgba(198, 152, 192, 0.28))
+            padding-left: 12px
+        .commentAvatar
+            flex: 0 0 36px
+            width: 36px
+            height: 36px
+            border-radius: 50%
+            object-fit: cover
+        .commentMain
+            flex: 1
+            min-width: 0
+        .commentMeta
+            display: flex
+            align-items: center
+            flex-wrap: wrap
+            gap: 6px
+            line-height: 1.4
+        .commentReplyTo
+            font-size: 0.8rem
+            color: var(--washi-pink-deep, #d94f9a)
+        .commentName
+            font-size: 0.9rem
+            font-weight: 600
+        // id 与时间都是**排障/定位用**的次要信息：小一号、淡一档，不抢昵称的视线
+        // （主人点名："ID 号可以小一点"）
+        .commentId
+            font-size: 0.7rem
+            letter-spacing: 0.3px
+            color: var(--font-p-color)
+            opacity: 0.7
+        .commentTime
+            margin-left: auto
+            font-size: 0.72rem
+            color: var(--font-p-color)
+            opacity: 0.7
+
+        .commentBody
+            margin-top: 4px
+            font-size: 0.92rem
+            line-height: 1.7
+            color: var(--font-title-color)
+            background: transparent
+            padding: 0
+            // markdown 元素在窄格子里要收着点
+            p
+                margin: 0.3em 0
+            h1, h2, h3, h4
+                font-size: 1rem
+                margin: 0.5em 0 0.3em
+            pre
+                white-space: pre-wrap
+                word-break: break-all
+                margin: 0.5em 0
+            blockquote
+                margin: 0.4em 0
+                padding-left: 10px
+                border-left: 3px solid var(--washi-line, rgba(198, 152, 192, 0.42))
+
+        .commentActions
+            display: flex
+            gap: 14px
+            margin-top: 6px
+            button
+                border: none
+                background: transparent
+                cursor: pointer
+                padding: 0
+                font-size: 0.78rem
+                color: var(--font-p-color)
+                &:hover
+                    color: var(--washi-pink-deep, #d94f9a)
+                &.isDanger:hover
+                    color: #e04b4b
+
+// 表情包行内尺寸：与 `.readContent .markdown-body img.sticker`（ReadArticle/index.sass
+// :576）**同四个属性**。那条选择器以 `.readContent` 打头，够不到讨论区；而
+// `components/Editor/index.css` 里那份是全站的、但那个 CSS 只在编辑器路由被加载时才进
+// 文档——**不能指望它**。所以这里必须各写一份（三处同源，改尺寸时一起改）。
+.commentSection .commentBody img.sticker,
+.commentSection .commentBody img[src^="/stickers/"]
+    height: 1.8em
+    vertical-align: middle
+    display: inline-block
+    margin: 0 2px

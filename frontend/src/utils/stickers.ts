@@ -46,7 +46,11 @@ export function remarkStickers(this: unknown) {
         const child = children[i]
         if (child && child.type === 'text' && typeof child.value === 'string' && child.value.includes(':')) {
           const pieces = splitStickerText(child.value)
-          if (pieces.length > 1) children.splice(i, 1, ...pieces)
+          // 判据是「拆出来的不是原来那一个文本节点」，**不能写成 `pieces.length > 1`**
+          // （20261002 修）：整段**只有一个**表情时（`:头疼:` 独占一行/整条评论只有表情），
+          // 拆出来恰好是长度 1 的 `[image]`，旧判据会跳过替换 ⇒ "只发表情"反而渲染成字面文本。
+          // 无命中时 splitStickerText 返回 `[value]`（同一个字符串），这里按值比对即可。
+          if (pieces.length !== 1 || pieces[0] !== child.value) children.splice(i, 1, ...pieces)
         }
         // 非文本节点继续下钻（inlineCode/code 是叶子，无 children 自动跳过）
         transform(child)

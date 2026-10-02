@@ -223,17 +223,30 @@ pub struct CreateComment {
     pub parent_id: Option<i32>,
 }
 
+/// 发评论的结果。**`approved` 必须回传**：只给 id 的话前端分不出"已公开"与
+/// "还在等人工复核"——两条路的提示语完全不同（一条可以说"发布了"，另一条说"发布了"
+/// 就是撒谎，说"没通过"又是替审核下结论），前端只能含糊其辞。
+/// 这不是把审核结论"提前告诉"谁：发的人本来就会看到自己的评论是否公开。
+/// `Default` 只是 `ApiResponse::error` 的 trait 约束（`utils.rs::ApiResponse`），
+/// **没有语义**：错误信封里 `code=500`，前端只看 `message`，`data` 一律不读。
+/// 别把 `approved: 0` 的默认值当成"默认待审"——从没有哪条路会用到它。
+#[derive(Serialize, Default)]
+pub struct CreateCommentResult {
+    pub id: i32,
+    /// 0=待人工复核（公开侧看不到）/ 1=已公开 / 2=未通过
+    pub approved: i8,
+}
+
 /// POST /api/public/notes/:id/comments —— 发一条评论/回复（强制登录）。
 ///
-/// 返回新评论 id（前端据此定位到刚发的那条）。**待审时不返回"已发布"的意思**：
-/// `approved` 由审核链路定，前端按接口返回的 id 去列表里找不到属正常现象
-/// （待审的评论公开侧不存在），提示语由前端按 `approved` 决定——本接口只回 id。
+/// 返回 `{id, approved}`：`id` 供前端定位到刚发的那条；`approved` 供前端**据实**
+/// 提示（见 `CreateCommentResult`）。待审的评论在公开列表里找不到属正常现象。
 pub async fn create_comment(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(note_id): Path<i32>,
     Json(payload): Json<CreateComment>,
-) -> Json<ApiResponse<i32>> {
+) -> Json<ApiResponse<CreateCommentResult>> {
     let Some(uid) = super::talks::current_uid(&state.db, &headers).await else {
         return Json(ApiResponse::error("请先登录后再评论"));
     };
@@ -301,7 +314,10 @@ pub async fn create_comment(
         ..Default::default()
     };
     match note_comment::Entity::insert(row).exec(&state.db).await {
-        Ok(r) => Json(ApiResponse::success(r.last_insert_id as i32)),
+        Ok(r) => Json(ApiResponse::success(CreateCommentResult {
+            id: r.last_insert_id as i32,
+            approved,
+        })),
         Err(e) => {
             tracing::error!("[comment] 落库失败 uid={uid} note={note_id}: {e}");
             Json(ApiResponse::error("评论失败，请稍后再试"))
