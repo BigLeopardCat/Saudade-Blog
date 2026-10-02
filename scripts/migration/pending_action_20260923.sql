@@ -1,4 +1,4 @@
-USE memory_blog;
+USE saudade_blog;
 -- =============================================================================
 -- 跨轮待办（20260923）：pending_action 表
 --
@@ -73,11 +73,11 @@ CREATE TABLE IF NOT EXISTS `pending_action` (
 -- 应用后自检：表在不在、列齐不齐、此刻有几行（预期 0）
 SELECT '表已存在' AS done, TABLE_NAME, ENGINE, TABLE_COLLATION
 FROM information_schema.TABLES
-WHERE TABLE_SCHEMA = 'memory_blog' AND TABLE_NAME = 'pending_action';
+WHERE TABLE_SCHEMA = 'saudade_blog' AND TABLE_NAME = 'pending_action';
 
 SELECT '列清单' AS done, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE
 FROM information_schema.COLUMNS
-WHERE TABLE_SCHEMA = 'memory_blog' AND TABLE_NAME = 'pending_action'
+WHERE TABLE_SCHEMA = 'saudade_blog' AND TABLE_NAME = 'pending_action'
 ORDER BY ORDINAL_POSITION;
 
 SELECT '当前行数（预期 0）' AS done, COUNT(*) AS 待办行数 FROM `pending_action`;

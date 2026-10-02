@@ -1,4 +1,4 @@
-USE memory_blog;
+USE saudade_blog;
 -- 20261002 杂鱼角色落库（"杂鱼"零工具身份的前置步骤）。
 -- 背景：agent 侧的身份/权限模型（Principal + scope 声明表 + 唯一判据）已落地，Rust 侧
 -- `src/authz.rs::KNOWN_ROLES` 与 agent 侧 `agent/principal.py::KNOWN_ROLES` 都加了

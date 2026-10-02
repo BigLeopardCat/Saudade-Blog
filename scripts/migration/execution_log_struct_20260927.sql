@@ -1,4 +1,4 @@
-USE memory_blog;
+USE saudade_blog;
 -- =============================================================================
 -- 执行事实类型化（20260927）：execution_log 从"中文一行"到"结构化 + 渲染"
 -- roadmap `toolcall-stability-roadmap.md` §D2 的第一步（**只剩这一步需要迁移**）。
@@ -97,7 +97,7 @@ ALTER TABLE `execution_log`
 -- 期望：恰好 2 行，is_nullable 全为 YES，ORDINAL_POSITION 依次为 skill 之后的两格。
 SELECT '列已存在' AS done, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, ORDINAL_POSITION
   FROM information_schema.COLUMNS
- WHERE TABLE_SCHEMA = 'memory_blog' AND TABLE_NAME = 'execution_log'
+ WHERE TABLE_SCHEMA = 'saudade_blog' AND TABLE_NAME = 'execution_log'
    AND COLUMN_NAME IN ('tool', 'payload')
  ORDER BY ORDINAL_POSITION;
 

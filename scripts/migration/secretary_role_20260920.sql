@@ -1,4 +1,4 @@
-USE memory_blog;
+USE saudade_blog;
 -- 20260920 秘书角色落库（agent 侧秘书框架的前置需求 ①）。
 -- 背景：agent 侧身份/权限模型（Principal + scope 声明表 + 唯一判据）已落地，Rust 侧
 -- `src/authz.rs` 声明了 `user.role` 的取值域 {admin, user, secretary}。库里今天只有

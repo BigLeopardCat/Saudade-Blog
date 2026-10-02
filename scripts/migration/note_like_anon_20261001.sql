@@ -1,4 +1,4 @@
-USE memory_blog;
+USE saudade_blog;
 -- =============================================================================
 -- 匿名点赞（20261001，用户第 2 条：「点赞改为非登录用户也可以点赞」）
 --
@@ -62,7 +62,7 @@ INSERT INTO migration_flags (flag_name) VALUES ('note_like_anon_20261001');
 --       `visitor_key` IS_NULLABLE=YES、varchar(64)、紧排在 user_id 之后。
 SELECT '列' AS done, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, ORDINAL_POSITION
   FROM information_schema.COLUMNS
- WHERE TABLE_SCHEMA = 'memory_blog' AND TABLE_NAME = 'note_like'
+ WHERE TABLE_SCHEMA = 'saudade_blog' AND TABLE_NAME = 'note_like'
    AND COLUMN_NAME IN ('user_id', 'visitor_key')
  ORDER BY ORDINAL_POSITION;
 
@@ -71,7 +71,7 @@ SELECT '列' AS done, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, ORDINAL_POSITION
 --       uq_like_note_visitor = (note_id, visitor_key) 两条分列。
 SELECT '唯一键' AS done, INDEX_NAME, SEQ_IN_INDEX, COLUMN_NAME
   FROM information_schema.STATISTICS
- WHERE TABLE_SCHEMA = 'memory_blog' AND TABLE_NAME = 'note_like'
+ WHERE TABLE_SCHEMA = 'saudade_blog' AND TABLE_NAME = 'note_like'
    AND INDEX_NAME IN ('uq_like_note_user', 'uq_like_note_visitor')
  ORDER BY INDEX_NAME, SEQ_IN_INDEX;
 

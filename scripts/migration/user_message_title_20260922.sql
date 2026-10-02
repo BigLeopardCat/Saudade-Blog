@@ -1,4 +1,4 @@
-USE memory_blog;
+USE saudade_blog;
 -- =============================================================================
 -- 站内信加「信件标题」（20260922，用户要求）
 --
@@ -30,7 +30,7 @@ ALTER TABLE `user_message`
 -- 2) 应用后自检：列在不在、类型对不对、历史行是不是全 NULL
 SELECT '列已存在' AS done, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT
 FROM information_schema.COLUMNS
-WHERE TABLE_SCHEMA = 'memory_blog'
+WHERE TABLE_SCHEMA = 'saudade_blog'
   AND TABLE_NAME = 'user_message'
   AND COLUMN_NAME = 'title';
 

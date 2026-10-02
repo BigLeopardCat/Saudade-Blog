@@ -1,9 +1,9 @@
-USE memory_blog;
+USE saudade_blog;
 -- =============================================================================
 -- 20260930 golden 夹具：**一条待审的河灯留言**（`agent_fixture_` 前缀族）
 --
 -- ⚠️ **本文件尚未应用**（写好了 ≠ 可以跑）。生产写一律要点名「库名 + 迁移文件」：
---     库名 = `memory_blog`，文件 = `golden_board_fixture_20260930.sql`。
+--     库名 = `saudade_blog`，文件 = `golden_board_fixture_20260930.sql`。
 --
 -- ## 它是给谁用的
 --

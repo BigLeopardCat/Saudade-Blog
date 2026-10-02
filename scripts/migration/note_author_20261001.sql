@@ -1,4 +1,4 @@
-USE memory_blog;
+USE saudade_blog;
 -- =============================================================================
 -- 文章作者（20261001）：note.user_id
 --
@@ -58,7 +58,7 @@ INSERT INTO migration_flags (flag_name) VALUES ('note_author_20261001');
 -- 校验：列在、类型对、存量行全是 NULL（期望 null_rows = total_rows）
 SELECT 'column' AS done, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_COMMENT
   FROM information_schema.COLUMNS
- WHERE TABLE_SCHEMA = 'memory_blog' AND TABLE_NAME = 'note' AND COLUMN_NAME = 'user_id';
+ WHERE TABLE_SCHEMA = 'saudade_blog' AND TABLE_NAME = 'note' AND COLUMN_NAME = 'user_id';
 
 SELECT 'rows' AS done,
        (SELECT COUNT(*) FROM note) AS total_rows,

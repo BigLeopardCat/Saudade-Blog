@@ -45,11 +45,11 @@
 
 ### 2.1 建库
 
-数据库名**必须叫 `memory_blog`** —— `scripts/migration/*.sql` 每条都以
-`USE memory_blog;` 开头，改名要逐条改。
+数据库名**必须叫 `saudade_blog`** —— `scripts/migration/*.sql` 每条都以
+`USE saudade_blog;` 开头，改名要逐条改。
 
 ```bash
-mysql -uroot -p -e "CREATE DATABASE memory_blog CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+mysql -uroot -p -e "CREATE DATABASE saudade_blog CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 ```
 
 然后把 `scripts/migration/` 下的迁移按**文件名顺序**跑一遍。
@@ -63,7 +63,7 @@ for f in $(ls scripts/migration/*.sql | sort); do
             echo "== 跳过 $f"; continue ;;
     esac
     echo "== $f"
-    mysql -uroot -p memory_blog < "$f"
+    mysql -uroot -p saudade_blog < "$f"
 done
 ```
 

@@ -1,4 +1,4 @@
-USE memory_blog;
+USE saudade_blog;
 -- =============================================================================
 -- 20260925 golden 真写用例夹具：分类 `agent_fixture_category_a`
 --
