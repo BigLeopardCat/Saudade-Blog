@@ -21,7 +21,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Avatar, Badge, Button, ConfigProvider, Empty, Input, List, Modal, Tabs, Tag, message, theme as antdTheme } from 'antd'
 import { useNavigate } from 'react-router-dom'
 import getToken from '../../apis/getToken.tsx'
-import { getRoleFromToken, getTokenClaims, isAdminToken, roleLabel, roleTagColor } from '../../utils/auth.ts'
+import { getRoleFromToken, getTokenClaims, isAdminToken } from '../../utils/auth.ts'
 import { quotaBalanceText, quotaLevel, quotaPct, quotaUsedHint } from '../../utils/quota.ts'
 import { resolveApiAssetUrl } from '../../utils/runtimeApi'
 import { useIsDarkMode } from '../../theme'
@@ -59,6 +59,7 @@ import type {
     UnreadSummary,
 } from '../../interface/ProfileType'
 import AvatarCropModal from '../AvatarCropModal'
+import { RoleBadge } from '../RoleBadge'
 import { DEFAULT_AVATAR_URL } from './identity'
 import { notifyUnreadChanged, useUnread } from './unread'
 import { applyLocalFavorite, useFavorites } from './favorites'
@@ -658,13 +659,12 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                             快照，被人改过角色之后旧令牌会一直自称旧角色（前端标签会骗人）。
                             profile 拉不到时（老后端/请求失败）回退令牌——比不显示强，
                             且它只影响这一个标签，不参与任何权限判断。 */}
-                        <Tag
+                        <RoleBadge
                             className="ucRoleTag"
-                            color={roleTagColor(effectiveRole)}
+                            role={effectiveRole}
+                            size={24}
                             style={{ marginLeft: 8 }}
-                        >
-                            {roleLabel(effectiveRole)}
-                        </Tag>
+                        />
                     </div>
                     {/* UID 行（20260923 用户要求：加在账号栏上方）。与「账号」同一套样式，
                         令牌解析不出时给「—」，不猜、不编 */}

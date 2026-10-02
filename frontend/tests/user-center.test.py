@@ -504,9 +504,18 @@ with sync_playwright() as p:
           and abs(tag_box["y"] - name_box["y"]) < name_box["height"]
           and tag_box["x"] >= name_box["x"] + name_box["width"],
           f'name={name_box} tag={tag_box}')
+    # 20261002 起身份标签是 `RoleBadge`（整枚内联 SVG）⇒ **文案一律读 `aria-label`**：
+    #   · `inner_text()` 现在返回「🍃 普 通 用 户」——Chromium 会把 SVG `<text>` 读进来，
+    #     且那是**逐字加空格**的字距风（实测「🐟 杂 鱼 🐟」）；
+    #   · 不改成"抹掉空白再比"：那条判据分不清"文案多了一个字"和"字距变化"。
     check("普通用户显示「普通用户」",
-          pg.locator(".ucRoleTag").inner_text().strip() == "普通用户",
-          pg.locator(".ucRoleTag").inner_text())
+          pg.get_attribute(".ucRoleTag", "aria-label") == "普通用户",
+          str(pg.get_attribute(".ucRoleTag", "aria-label")))
+    # 反向对照（同一枚徽章的另一个面）：可见文字去掉空白，仍要等于文案——
+    # 它证明 aria-label 不是随便挂的一个属性，画的确实是这四个字。
+    _visible = "".join(pg.locator(".ucRoleTag").inner_text().split())
+    check("可见文字（去掉字距空格）与 aria-label 一致",
+          _visible.endswith("普通用户") and "普通用户" in _visible, _visible)
     # `.ucAvatarAccount` 现在有**两个**（UID 一行 + 账号一行，20260922 晚加的）⇒ 必须
     # 指名要哪一个；此前这里直接 inner_text() 会撞 Playwright 的 strict mode 而中断整脚本
     check("账号只读展示（没有任何可改账号的输入框）",
@@ -534,7 +543,8 @@ with sync_playwright() as p:
                                       ("user", "zako", "杂鱼")):
         pg2 = fresh_page(role=tok_role, profile_role=prof_role)
         pg2.wait_for_selector(".ucRoleTag", timeout=10000)
-        got = pg2.locator(".ucRoleTag").inner_text().strip()
+        # 同上：读 aria-label（SVG `<text>` 的字距风会让 inner_text 带回一串空格）
+        got = (pg2.get_attribute(".ucRoleTag", "aria-label") or "").strip()
         check(f"令牌说 {tok_role}、库里是 {prof_role} ⇒ 标签显示「{want}」（以库为准）",
               got == want, f"got={got}")
         pg2.close()
