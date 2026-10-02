@@ -71,7 +71,11 @@ export function isAdminToken(token?: string | null): boolean {
  *  未知角色**不在这里编名字**：调用方回退显示原值（`roleLabel` 就是干这个的）。 */
 export const ROLE_LABEL: Record<string, string> = {
     admin: '管理员',
-    superadmin: '超级管理员',
+    // 键名仍是 `superadmin`（后端 `authz::KNOWN_ROLES` 的取值域，改它是一次迁移），
+    // 但**站上叫它「站长」**（20261003 主人点名）。这一档不是"超级管理员"这种权限描述，
+    // 就是站点主人本人，徽章上也就只印这两个字（`RoleBadge` 的头注：文案只从这张表取，
+    // 不许在组件里另抄一份——所以改文案只改这一行，徽章、个人中心、账号页一起变）。
+    superadmin: '站长',
     secretary: '秘书',
     user: '普通用户',
     zako: '杂鱼',

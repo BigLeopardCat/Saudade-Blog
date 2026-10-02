@@ -537,9 +537,13 @@ with sync_playwright() as p:
     # 第三个用例是**超级管理员**（20260926）：它的标签走的是同一张表
     # （`utils/auth.ts::ROLE_LABEL`），但取值域加了一个人的时候，漏改的正是这类
     # "角色 → 文案"的映射——漏了它会原样显示 `superadmin` 这串英文。
+    # 20261003 起这一档的站上名字是**「站长」**（键名仍是 superadmin）：主人点名"超管
+    # 徽章的文本内容只写站长"，而文案只有 `ROLE_LABEL` 一处实现 ⇒ 徽章也跟着变。
+    # 判据特意写全字符串而不是"包含站长"——漏改映射时这里读到的是英文 `superadmin`，
+    # 用包含式断言同样会红，但红得看不出是漏改还是写错了一个字。
     for tok_role, prof_role, want in (("admin", "user", "普通用户"),
                                       ("user", "admin", "管理员"),
-                                      ("admin", "superadmin", "超级管理员"),
+                                      ("admin", "superadmin", "站长"),
                                       ("user", "zako", "杂鱼")):
         pg2 = fresh_page(role=tok_role, profile_role=prof_role)
         pg2.wait_for_selector(".ucRoleTag", timeout=10000)
