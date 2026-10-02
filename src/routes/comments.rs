@@ -211,6 +211,47 @@ fn to_dto(
     }
 }
 
+// ── 通知 ───────────────────────────────────────────────────────────────────
+
+/// 「有人回复了你的评论」——发给**直接父评论的作者**。
+///
+/// 三条判据，每条都对应一类噪声或一次"点进去什么都没有"的体验：
+///   · **只通知被直接回复的那个人**（`reply_to_uid`），不通知顶层作者。一条热评被三十人
+///     回复就是三十条通知，对顶层作者全是噪声——他本来就会在讨论区看到。
+///   · **自我回复不发**：自己回自己没有信息量，只会让个人中心多一条。
+///   · **只在评论已经公开（`approved = 1`）时发**。待审的回复别人根本看不见，
+///     通知他"有人回复了你"、点进去却找不到那一条，比不发更糟。
+///     于是有两条路径到达这里——创建即通过（`create_comment`）与人工复核 0→1
+///     （`audit_comment`）——**两处调的是这一个函数**，重复通知由"本次是否发生 0→1"挡住。
+///
+/// 通知失败绝不影响评论落库（`notice::push_notice` 内部吞错只记日志）。
+async fn notify_comment_reply(
+    db: &sea_orm::DatabaseConnection,
+    target_uid: i32,
+    note_id: i32,
+    comment_id: i32,
+    replier_uid: i32,
+    content: &str,
+) {
+    let peers = super::profile::peer_map(db, &[replier_uid]).await;
+    // 展示名取不到（账号已销）就说「有人」——**不编一个昵称**（同 `peer_map` 的纪律）
+    let who = peers
+        .get(&replier_uid)
+        .map(|p| p.name.clone())
+        .unwrap_or_else(|| "有人".to_string());
+    let brief = super::talks::talk_brief(content);
+    super::notice::push_notice(
+        db,
+        target_uid,
+        "有人回复了你的评论",
+        Some(format!("{who} 回复了你：{brief}")),
+        // 深链到那一条。**只在已公开时发**（见上），所以这个锚点必然存在：
+        // `?cid=<id>` 由前端 CommentSection 读出来，滚到 `#c-<id>` 并高亮
+        Some(format!("/article/{note_id}?cid={comment_id}")),
+    )
+    .await;
+}
+
 // ── 公开写 ─────────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -296,6 +337,14 @@ pub async fn create_comment(
         super::web_info::review_switches_of(&state.db, ai_key, manual_key).await;
     let (approved, ai_result, ai_reason, reject_reason) =
         super::talks::decide_review("comment", uid, &content, ai_on, manual_on).await;
+    // 回复通知的两个入参要在 `content` 被 move 进 ActiveModel 之前留一手。
+    // **只有真要发的时候才克隆**：顶层评论占绝大多数，为它们克隆一份正文是白花。
+    // （发不发的判据与 `notify_comment_reply` 头注一一对应：已公开 + 是回复 + 不是回自己）
+    let reply_target = match (approved, reply_to_uid) {
+        (1, Some(t)) if t != uid => Some(t),
+        _ => None,
+    };
+    let notice_src = reply_target.map(|_| content.clone());
     let now = chrono::Local::now().naive_local();
     let row = note_comment::ActiveModel {
         note_id: Set(note_id),
@@ -314,10 +363,13 @@ pub async fn create_comment(
         ..Default::default()
     };
     match note_comment::Entity::insert(row).exec(&state.db).await {
-        Ok(r) => Json(ApiResponse::success(CreateCommentResult {
-            id: r.last_insert_id as i32,
-            approved,
-        })),
+        Ok(r) => {
+            let id = r.last_insert_id as i32;
+            if let (Some(target), Some(src)) = (reply_target, notice_src.as_deref()) {
+                notify_comment_reply(&state.db, target, note_id, id, uid, src).await;
+            }
+            Json(ApiResponse::success(CreateCommentResult { id, approved }))
+        }
         Err(e) => {
             tracing::error!("[comment] 落库失败 uid={uid} note={note_id}: {e}");
             Json(ApiResponse::error("评论失败，请稍后再试"))
@@ -498,8 +550,12 @@ pub struct AuditCommentBody {
 ///   · **改判回通过时清空 `reject_reason`**（不留"已通过却带驳回理由"的矛盾行），
 ///     `ai_reason` 不动（它是 AI 那一侧的留痕，不回溯）。
 ///
-/// 通知（0→1 那条"你的评论已通过审核"）在**回复通知**那一笔里接上，与创建即通过
-/// 那条路径共用同一个函数——两条路径各发一次会变成重复通知。
+/// 通知：这里发的是「你的回复被放行了」那条**回复通知**（发给被回复者），不是
+/// 「你的评论已通过审核」（发给作者）。后者**故意不做**——留言板那边发它是因为作者有
+/// 「我的河灯」可去，而评论没有对应的「我的评论」入口：待审/未通过的通知会把作者送到
+/// 一个**看不到自己那条**的页面上。作者那一侧的即时反馈已经由发评论接口的返回给了
+/// （`CreateCommentResult.approved`，前端当场说清三种结局）。
+/// 将来若加了「我的评论」，这条通知要在**这里**接上（不要另起一条链路）。
 pub async fn audit_comment(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -526,6 +582,13 @@ pub async fn audit_comment(
     let reject = payload.approved == 0;
     let saved_reason = c.reject_reason.clone();
     let saved_ai_reason = c.ai_reason.clone();
+    // 回复通知要用的四样，转 ActiveModel 之前先各留一份（`c` 随后被 move）。
+    // 这里是低频的管理动作，不做"要不要才克隆"那套（那是写入热路径的优化）
+    let owner = c.user_id;
+    let was_approved = c.approved;
+    let note_id = c.note_id;
+    let reply_target = c.reply_to_uid;
+    let brief_src = c.content.clone();
     let mut am: note_comment::ActiveModel = c.into();
     am.approved = Set(if reject { 2 } else { 1 });
     am.reject_reason = Set(if reject {
@@ -540,7 +603,21 @@ pub async fn audit_comment(
     });
     am.updated_at = Set(chrono::Local::now().naive_local());
     match note_comment::Entity::update(am).exec(&state.db).await {
-        Ok(_) => Json(ApiResponse::success("Audited".to_string())),
+        Ok(_) => {
+            // 回复通知的**第二条到达路径**：这条回复创建时进了待审，此刻被人工放行。
+            // 判据是"本次真的从'未公开'变成'公开'"（`was_approved != 1 && new == 1`）：
+            // 后台重复点同一个按钮不该又发一条（同 `audit_board` 那条 `was_approved != new_approved`）。
+            // 创建即通过那条路径在 `create_comment` 里已经发过，两条路**不会同时命中**。
+            let new_approved = if reject { 2 } else { 1 };
+            if was_approved != 1 && new_approved == 1 {
+                if let Some(t) = reply_target {
+                    if t != owner {
+                        notify_comment_reply(&state.db, t, note_id, id, owner, &brief_src).await;
+                    }
+                }
+            }
+            Json(ApiResponse::success("Audited".to_string()))
+        }
         Err(e) => {
             tracing::error!("[comment] 人工复核落库失败 id={id}: {e}");
             Json(ApiResponse::error("操作失败，请稍后再试"))

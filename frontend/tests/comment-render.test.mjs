@@ -32,6 +32,21 @@ const ok = (cond, name, detail) => {
 /** 剥注释后计数——本仓注释**刻意**引用反例（例如头注里那句「不许直接 innerHTML」） */
 const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 const count = (s, needle) => strip(s).split(needle).length - 1;
+/** 取一个顶层函数的函数体（从 marker 后第一个 `{` 起做花括号配对，配平处即函数尾）——
+ *  同 `review-gate-single-source.test.mjs` 的 `bodyOf`：判"哪个函数里调了它"必须按函数体切，
+ *  扫全文会把定义处与另一条路径的调用一起算进来 */
+function bodyOf(src, marker) {
+    const i = src.indexOf(marker);
+    if (i < 0) return '';
+    let j = src.indexOf('{', i);
+    if (j < 0) return '';
+    let depth = 0;
+    for (let k = j; k < src.length; k++) {
+        if (src[k] === '{') depth++;
+        else if (src[k] === '}') { depth--; if (depth === 0) return src.slice(j + 1, k); }
+    }
+    return '';
+}
 
 // ── ① 真跑管线 ─────────────────────────────────────────────────────────────
 // chatMarkdown.ts 顶层会往 window 上挂两个全局（:271-273），import 前先备好壳
@@ -152,6 +167,57 @@ ok(readArticle.includes('<CommentSection noteId={id} />'), '挂在文章详情�
     const contentDiv = readArticle.lastIndexOf("className='readContent markdown-body'", at);
     ok(contentDiv > 0 && contentDiv < at, '出现在正文容器之后');
 }
+
+// ── ③ 回复通知与深链定位（20261002 第二笔）────────────────────────────────
+// 通知这条链路最容易出的不是"发不出去"，而是**发重了**或**发早了**：
+// 创建即通过与人工复核 0→1 是两条到达路径，各写一遍必然变成两条通知；
+// 而"评论还没公开就通知"会把收件人送到一个找不到东西的页面上。
+console.log('\n回复通知 —— 两条路径一个函数，判据都在函数外：');
+const calls = count(rustComments, 'notify_comment_reply(');
+ok(calls === 3, 'notify_comment_reply 共 3 次出现：1 处定义 + 2 处调用（创建 / 复核）', calls);
+ok(/async fn notify_comment_reply\(/.test(rustComments), '函数定义在 comments.rs');
+ok(/super::notice::push_notice\(/.test(rustComments), '走现成的 push_notice，不另写一套通知落库');
+ok(rustComments.includes('Some(format!("/article/{note_id}?cid={comment_id}"))'),
+    '深链格式 = /article/<文章 id>?cid=<评论 id>');
+ok(rustComments.includes('super::talks::talk_brief('),
+    '摘要复用留言板那条（截断长度只有一份实现）');
+{
+    const create = bodyOf(rustComments, 'pub async fn create_comment');
+    const audit = bodyOf(rustComments, 'pub async fn audit_comment');
+    ok(create.includes('notify_comment_reply('), '创建路径会发通知');
+    ok(audit.includes('notify_comment_reply('), '人工复核 0→1 路径也会发通知');
+    ok(/if was_approved != 1 && new_approved == 1/.test(audit),
+        '复核路径只在"本次真的从不可见变成可见"时发（重复点按钮不重复通知）');
+    ok(/\(1, Some\(t\)\) if t != uid/.test(create),
+        '创建路径只在"已公开 + 是回复 + 不是回自己"时发');
+    ok(audit.includes('if t != owner'), '复核路径同样挡掉自我回复');
+    for (const [needle, why] of [
+        ['review_notice_text', '留言板那条"审核结果"通知的文案映射'],
+        ['guestbook?lid=', '留言板的深链'],
+        ['push_notice_checked', '另一套通知落库出口'],
+    ]) {
+        ok(!create.includes(needle) && !audit.includes(needle), `评论通知里没有${why}的副本`);
+    }
+}
+ok(!/notify_review_result/.test(rustComments),
+    '审核结果通知**不发**给评论作者（没有「我的评论」入口，点进去看不到自己那条）——'
+    + '要接就接在 audit_comment 那一处，别另起链路');
+
+console.log('\n深链定位 —— 读 ?cid= 并滚到那一条：');
+ok(comp.includes('useSearchParams'), '用路由的 searchParams 读参数（不是裸解析 location）');
+ok(/const cid = Number\(searchParams\.get\('cid'\)\) \|\| 0/.test(comp),
+    "参数名是 cid，取不到时是 0（不是 NaN——NaN 会一路传进 getElementById）");
+ok(/locatedRef\.current === cid/.test(comp),
+    '记的是"定位过哪个 cid"而不是布尔（同页再点另一条通知要能重新定位）');
+ok(/document\.getElementById\(`c-\$\{cid\}`\)/.test(comp), '锚点选择器与行上的 id 同源');
+ok(comp.includes('id={`c-${c.id}`}'), '每一行都带 #c-<id> 锚点');
+ok(/scrollIntoView\(\{ block: 'center', behavior: 'auto' \}\)/.test(comp),
+    '**瞬时**滚动（平滑滚动会被本页挂载时的 scrollToTop 顶掉）');
+ok(comp.includes("el.classList.add('comment-hit')"), '加高亮类');
+ok(/if \(!el\) return/.test(comp), '找不到那一条就安静兜底（页面已经打开了，不弹提示）');
+const sass = read('frontend/src/components/CommentSection/index.sass');
+ok(/&\.comment-hit\s*\n\s*animation: commentHit/.test(sass), '高亮类有对应动画');
+ok(/@keyframes commentHit/.test(sass), '动画关键帧在同一份样式里（不散落到别处）');
 
 console.log(`\ncomment-render: ${passed} 通过, ${failed} 失败`);
 process.exit(failed ? 1 : 0);
