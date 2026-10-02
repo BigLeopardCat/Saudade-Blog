@@ -24,7 +24,10 @@
  * 所以对一条回复的回复，`rootId` 仍是那条顶层。这里只按 `rootId` 分组，
  * 缩进层级天然只有两层，与数据一致（不是靠 CSS 假装出来的）。
  *
- * 评论 id 与留言板 `talk.id` 是**两个命名空间**，所以显示带 `#C` 前缀。
+ * **③ 昵称后面跟的是作者的 `UID`，不是评论 id**（主人 20261003 点名）。原先那里写的是
+ * `#C<评论 id>`，主人要的是"这条是谁发的"——即 `userId`（留言板 `talk.id` 与评论 `id`
+ * 是两个命名空间，拿评论 id 出来对人没有任何用）。评论 id 仍然在 `data-cid` 上，
+ * 深链 `?cid=` 与定位高亮照旧按它走。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
@@ -234,8 +237,10 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
                     )}
                     <span className="commentName">{c.nickname}</span>
                     <RoleBadge role={c.role} size={20} />
-                    {/* 评论 id：小一号、淡一点——它是排障/定位用的，不该抢昵称的视线 */}
-                    <span className="commentId">#C{c.id}</span>
+                    {/* 作者 uid：极小一号、淡一档——它是"这条是谁发的"的身份锚，
+                        不该抢昵称的视线。**别再退回评论 id**：那是另一个命名空间，
+                        对人没有意义（深链定位仍走本行外层那个 data-cid）。 */}
+                    <span className="commentUid">UID:{c.userId}</span>
                     <span className="commentTime">{c.createdAt}</span>
                 </div>
                 <CommentBody content={c.content} />
