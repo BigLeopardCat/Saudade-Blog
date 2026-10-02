@@ -6,9 +6,9 @@
 # 20260830 增第 4 项：nginx error.log 增量扫描（监控补齐 C）。
 # 异常只追加 logs/health.log（轻量、不打扰），未来可接告警通道。
 #
-# PROJECT_DIR 可覆盖（20261001 开源前准备）：默认值仍是原开发机的绝对路径，
-# 所以线上 cron 行为零变化；别人克隆到别处跑时 `PROJECT_DIR=... bash scripts/healthcheck.sh`。
-PROJECT_DIR="${PROJECT_DIR:-/home/ubuntu/memory_blog_rust}"
+# PROJECT_DIR 可覆盖：默认值是**本机（生产服务器）上的仓库落点**，所以线上 cron 零配置。
+# 别人克隆到别处跑时 `PROJECT_DIR=... bash scripts/healthcheck.sh`。
+PROJECT_DIR="${PROJECT_DIR:-/home/ubuntu/Saudade-Blog}"
 LOG="$PROJECT_DIR/logs/health.log"
 STAMP=/tmp/health_state
 TS=$(date "+%Y-%m-%d %H:%M:%S")
@@ -29,13 +29,16 @@ ready=$(curl -s --max-time 5 http://127.0.0.1:8010/health | grep -o '"agent_read
 # spawn 子进程，cmdline 是 python3 -c spawn_main，按命令行匹配不到）。
 # ⚠️ 20260923 修正三处（此前每次重启都刷 3 行假"崩溃 respawn"，全量 15 行里真阳性 0）：
 #   ① 子进程里有一个 `multiprocessing.resource_tracker`，它**不是 worker** ⇒ 按 cmdline
-#      里的 `multiprocessing-fork` 过滤（uvicorn --workers 2 的真 worker 就是那 2 个）。
+#      里的 `multiprocessing-fork` 过滤（uvicorn --workers N 的真 worker 就是那 N 个，
+#      N 见下面的 EXPECT_WORKERS）。
 #   ② master 换了的时候**不再逐个报子进程**：master 换 ⇒ 子进程 pid 必然全新，逐个报
 #      等于"必然全中"。原代码把 `LAST_PIDS=""` 当"上次没有 worker"用，方向正好写反了。
 #   ③ 主动重启 vs 崩溃自愈用 systemd 的 NRestarts 区分（实测：`systemctl restart` 不增这个
 #      计数——13:56 那次主动重启前后都是 0；Restart=always 拉起来才会涨）⇒ 涨了才是崩溃。
 #      另加"worker 数 ≠ 期望"的判据：静默死掉一个是 12:29 事故的形状，旧版反而看不出来。
-EXPECT_WORKERS=2
+# 20261002：2 → 4（unit 里 --workers 4）。**这个数必须与 unit 同步**，否则探针每分钟
+# 报一次 `WARN uvicorn worker 数 4 ≠ 2` —— 一条恒亮的假警告会把真事故淹掉。
+EXPECT_WORKERS=4
 master=$(pgrep -f "[u]vicorn server:app" | sort -n | head -1)
 [ -z "$master" ] && { fail "FAIL uvicorn 进程组不存在"; exit 0; }
 workers=""

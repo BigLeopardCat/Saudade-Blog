@@ -55,6 +55,13 @@
 - **20260920 起断言里多一个 `role`**（取自 DB 的 `user.role`，不信登录 token 里可能是
   7 天前的角色）：agent 侧据此做**能力判据**（见 `saudade-blog-agent/docs/secretary.md`）。
   角色缺失/未知 = **零权限**，由 agent 的 shadow 模式先观测不拦截。
+- **取值域**（Rust `src/authz.rs::KNOWN_ROLES` ↔ agent `agent/principal.py::KNOWN_ROLES`，
+  跨语言契约，改一侧须同步另一侧 + 两侧单测）：`admin` / `superadmin` / `secretary` /
+  `user` / `zako`（20261002 新增）。**`zako`（杂鱼）是唯一一个"零工具"角色**：能力边界
+  不是靠授予表配出来的，而是四层收口里最硬的那一层——agent 的 `planner_node` 顶部短路
+  让 `execute` 节点在本请求里**一次都不会被进入**（另外三层是技能可见性 / native schema /
+  `scopes_for(zako) == 空集`，都是软的：authz 在 shadow 档下只记账不拦）。详见
+  `saudade-blog-agent/docs/secretary.md` §3.6 与 `tests/test_zako_role.py`。
 
 ⚠️ 这条断言只解决"**uid 是不是真的**"，不解决"**这台机器上谁能调 agent**"（回环边界照旧）；
 一旦 agent 要跨机部署（或容器网络不再是 loopback），还是要加真正的服务间凭据（见 §6）。
@@ -105,7 +112,8 @@
   确认框（通用协议：问题 + N 个选项 + 令牌）。用户点「确定」→ 前端发一条**隐藏确认请求**
   （带 `confirm_token`）。
 - ⚠️ **隐藏确认请求是一条"不带用户消息的写通道"**：Rust 见 `confirm_token` 就**不落用户消息**
-  （历史里不留痕），**Rust 侧不验签**（两个 worker、无状态）。**令牌是这条通道上的唯一凭据**：
+  （历史里不留痕），**Rust 侧不验签**（单进程多线程、零状态——没有可放待办表的地方）。
+  **令牌是这条通道上的唯一凭据**：
   HMAC-SHA256 签名、绑定 `uid + conversation_id`、TTL **600 秒**、服务端**零状态**
   （无内存待办表、无迁移）。agent 侧验签失败（签名/版本/uid/会话/过期任一不符，或密钥空缺）
   → **零执行**，只有一句"确认已过期，没有执行任何改动"。令牌**不落 trace、不进日志、不进

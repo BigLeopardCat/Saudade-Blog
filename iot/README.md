@@ -105,6 +105,23 @@ sudo systemctl restart saudade-agent && sleep 8
 
 ---
 
+## 代价（要不要装 / 要不要留）
+
+**结论：在用/偶尔用 ⇒ 建议保留**，但账要摆在明面上（20261002 实测，细节与复现命令见
+[docs/iot-device-integration.md](../docs/iot-device-integration.md) §7）：
+
+| 代价 | 量级 |
+|---|---|
+| 常驻内存 | EMQX ~42 MiB + device-service ~1 MiB（对比 agent 每 worker ~130 MiB） |
+| 磁盘 | `/usr/lib/emqx` 89 MB + `/var/lib/emqx` 1.3 MB ≈ 90 MB |
+| 公网面 | 多一个 **8883** 端口（MQTTS）要放行、要盯证书 |
+| 运维面 | **两个不经 CI 的 systemd unit** + device-service 源码不在本仓（手动 `cargo build --release`） |
+| 证书 | MQTTS 与 HTTPS 同源，**续期要两处同步**（漏一处 = 设备全掉线而网页正常） |
+| 内存上限 | EMQX 的 `MemoryHigh/MemoryMax` 只写在 systemd drop-in 里，**仓库看不见** ⇒ 已在运维手册 §3 记一份 |
+
+**它不是免费开关，但相对收益（设备接入/远程 OTA/遥测面板）这点代价是划算的**——注意它
+**不需要**那块最贵的资源：CPU 几乎零占用，内存只占生产总用量（~576 MiB）的 7%。
+
 ## 卸
 
 ```bash
