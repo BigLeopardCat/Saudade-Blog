@@ -36,7 +36,7 @@ pub struct ChatRequest {
     // 带上的 HMAC 待办令牌（agent 侧签发与验签，见 saudade-blog-agent/agent/confirm.py）。
     // 语义是"这是一次已授权的执行"而不是一条用户发言：
     //   ① **不落用户消息**（历史里不留空消息，否则污染 20 条注入窗口与标题派生）；
-    //   ② Rust 侧**不验签**（两个 worker、无状态；令牌的 uid/会话绑定由 agent 校验，
+    //   ② Rust 侧**不验签**（单进程多线程、零状态；令牌的 uid/会话绑定由 agent 校验，
     //      agent 拿到的 uid 是本端已鉴权的 uid）；
     //   ③ 回复与执行回执照常落库（那就是真发生过的执行）。
     #[serde(default)]
@@ -1993,6 +1993,61 @@ fn spawn_save_assistant_reply(
     });
 }
 
+/// 流式早退的**协议**：`/api/chat/stream` 的失败必须走 SSE 帧，不能走 JSON body。
+///
+/// 20261002 事故（主人报"agent 炸了不断重启，前端一行异常都没有，用户那句话直接进了对话框"）：
+/// `prepare_chat` 的各种拒绝与 agent 连接失败都在这里返回 `Json(ChatResponse)`，而 axum 的
+/// `Json` 默认 **HTTP 200** ⇒ 前端唯一的失败判据 `if (!resp.ok)` 全部漏过：它照常建气泡、
+/// 读到一个不含 `\n\n` 的 JSON body（切不出任何帧）、按"空回复"静默收场、把气泡删掉。
+/// 结果就是**用户只看到自己那句话，没有任何错误提示**；服务端 rust.log 里它长得和一次成功
+/// 一模一样（`status=200 ms=44`，而真实回答 p50 是 9.6s）。生产实证：08:37:54 与 08:39:30
+/// 两次请求 rust.log 记 200，agent 侧**没有对应 trace**（请求根本没到 agent）。
+///
+/// 两条**必须保持 JSON + 状态码**的例外（前端按状态码特判，见 `chat-stream.js`）：
+/// `404 conversation_not_found`、`409 confirm_already_used`——改它们等于把前端那两段
+/// 特判（还原输入/结算确认卡）打成死代码。
+fn early_exit_response(status: StatusCode, body: ChatResponse, from: &str) -> Response {
+    if status == StatusCode::NOT_FOUND || status == StatusCode::CONFLICT {
+        // 这两条是**预期内**的用户动作（会话已删 / 确认卡重复点），前端按状态码特判，
+        // 记 INFO 不记 WARN——WARN 只留给"没人预期会失败却失败了"
+        info!(stage = from, status = %status, error = body.error.as_deref().unwrap_or(""), "chat: 流式请求按状态码早退");
+        return (status, Json(body)).into_response();
+    }
+    // 可观测性（事故里第二个缺口）：这条路径此前在 rust.log 里与一次成功**完全同形**
+    // （都是 status=200），agent 侧连 trace 都没有 ⇒ 谁都没发现。这里留一条 WARN。
+    warn!(
+        stage = from,
+        status = %status,
+        error = body.error.as_deref().unwrap_or(""),
+        "chat: 流式请求早退，已转 SSE 错误帧（此前会以 200+JSON 静默丢弃）"
+    );
+    // 走 SSE 的两支：① 有正文的早退（访客合规告知，success=true + reply）——当一条普通
+    // 回复发出去再正常终止，前端渲染成正常气泡；② 其余（含冻结/令牌收回/agent 不可用）
+    // ——发 `__ERROR__` 终止帧，前端据此渲染错误气泡 + 失败标记（已有现成路径）。
+    let payload = if body.success && !body.reply.is_empty() {
+        let text = serde_json::to_string(&body.reply).unwrap_or_else(|_| "\"\"".into());
+        format!("data: {text}\n\ndata: __END__\n\n")
+    } else {
+        let msg = body
+            .error
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "服务暂时不可用，这一轮没有生成回复，请稍后再试。".to_string());
+        let detail = serde_json::to_string(&msg).unwrap_or_else(|_| "\"服务暂时不可用\"".into());
+        format!("data: __ERROR__:{detail}\n\n")
+    };
+    (
+        [
+            (header::CONTENT_TYPE, "text/event-stream"),
+            (header::CACHE_CONTROL, "no-cache"),
+            (header::CONNECTION, "keep-alive"),
+            // 与正常路径同口径：nginx 不缓冲，否则这唯一一帧也会被攒着
+            (header::HeaderName::from_static("x-accel-buffering"), "no"),
+        ],
+        Body::from(payload),
+    )
+        .into_response()
+}
+
 /// SSE 流式对话：转发 agent /chat/stream，边转发边累积文本，
 /// 流结束后保存历史与摘要（agent 端 payload 为 JSON 编码，避免 \n\n 破坏帧边界）
 pub async fn chat_stream_handler(
@@ -2001,7 +2056,9 @@ pub async fn chat_stream_handler(
 ) -> Response {
     let ctx = match prepare_chat(&state, req).await {
         Ok(c) => c,
-        Err(e) => return e.into_response(),
+        // 早退一律转成 SSE 帧（见 early_exit_response 的头注）：这里原本是
+        // `e.into_response()`，会把 200 + JSON 原样吐给一个只认 SSE 的客户端
+        Err((status, Json(body))) => return early_exit_response(status, body, "prepare_chat"),
     };
 
     let stream_url = agent_chat_url().strip_suffix("/chat").unwrap_or("").to_string() + "/chat/stream";
@@ -2017,11 +2074,32 @@ pub async fn chat_stream_handler(
         .await {
         Ok(r) => r,
         Err(e) => {
-            return Json(ChatResponse { reply: String::new(), success: false, error: Some(format!("Agent unavailable: {}", e)) }).into_response();
+            return early_exit_response(
+                StatusCode::OK,
+                ChatResponse {
+                    reply: String::new(),
+                    success: false,
+                    // 这句话现在**会显示给用户**（此前只进 JSON body，客户端不解析）⇒
+                    // 说人话，不把 reqwest 的英文错误串摆给用户；细节留在上一条 WARN 里
+                    error: Some(format!("服务这边暂时联系不上（{}），这一轮没有生成回复，请稍后再说一次。", e)),
+                },
+                "agent_connect",
+            );
         }
     };
     if !upstream.status().is_success() {
-        return Json(ChatResponse { reply: String::new(), success: false, error: Some(format!("Agent error: {}", upstream.status())) }).into_response();
+        return early_exit_response(
+            StatusCode::OK,
+            ChatResponse {
+                reply: String::new(),
+                success: false,
+                error: Some(format!(
+                    "服务这边出了点问题（上游 {}），这一轮没有生成回复，请稍后再说一次。",
+                    upstream.status().as_u16()
+                )),
+            },
+            "agent_status",
+        );
     }
 
     let state = state.clone();
@@ -2756,6 +2834,84 @@ mod tests {
     /// 只钉"名字没被单方面改掉"，不检查语义（那要靠人）。改前端时若把某个前缀
     /// 换成变量或改了名，这里会红 —— 那不是误报，是在问"Rust 这一半同步了吗"。
     /// 反向不成立：前端多认一种帧是无害的（Rust 不发它而已），所以不查。
+    // ── 流式早退协议（`early_exit_response`，20261002 事故）────────────────
+    //
+    // 事故形状：早退路径返回 `200 + application/json`，而流式客户端的失败判据只有
+    // `!resp.ok` ⇒ 全部被当作成功：照常建气泡、读一个切不出任何帧的 body、按"空回复"
+    // 静默收场（气泡删掉、只留用户自己那句话、**零提示**）。生产实证：20261002
+    // 08:37:54 / 08:39:30 两次请求 rust.log 记 `status=200`，agent 侧无对应 trace。
+    //
+    // 这里的判据是**响应形态**（内容类型 + 载荷能不能切出终止帧），不是文案：
+    // 文案会改，形态是协议。
+    async fn body_of(r: Response) -> String {
+        let bytes = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
+        String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    fn early(status: StatusCode, reply: &str, success: bool, error: Option<&str>) -> Response {
+        early_exit_response(
+            status,
+            ChatResponse { reply: reply.into(), success, error: error.map(Into::into) },
+            "test",
+        )
+    }
+
+    #[tokio::test]
+    async fn early_exit_is_sse_not_json() {
+        let r = early(StatusCode::OK, "", false, Some("服务这边暂时联系不上"));
+        assert_eq!(r.status(), StatusCode::OK);
+        assert_eq!(r.headers().get(header::CONTENT_TYPE).unwrap(), "text/event-stream");
+        // 与正常路径同口径：不告知 nginx 就会把这唯一一帧也攒着
+        assert_eq!(r.headers().get("x-accel-buffering").unwrap(), "no");
+        assert_eq!(body_of(r).await, "data: __ERROR__:\"服务这边暂时联系不上\"\n\n");
+    }
+
+    /// 有正文的早退（访客合规告知）：**当一条普通回复发出去**再正常终止，
+    /// 而不是丢掉正文只喊一声错了——那段文案是写给访客看的全部内容。
+    #[tokio::test]
+    async fn early_exit_with_reply_becomes_a_normal_answer() {
+        let r = early(StatusCode::OK, "尊敬的访客：…", true, None);
+        let body = body_of(r).await;
+        assert_eq!(body, "data: \"尊敬的访客：…\"\n\ndata: __END__\n\n");
+    }
+
+    /// 没有原因（旧版/空串）也不能发出一个空载荷的 `__ERROR__` 帧——
+    /// 前端会把它原样当作用户可见的一句话。
+    #[tokio::test]
+    async fn early_exit_never_sends_an_empty_error_frame() {
+        let body = body_of(early(StatusCode::OK, "", false, Some("   "))).await;
+        assert!(body.starts_with("data: __ERROR__:\""), "{body}");
+        assert!(body.len() > "data: __ERROR__:\"\"\n\n".len(), "兜底话术不得为空：{body}");
+    }
+
+    /// **两条例外必须原地不动**：前端按状态码特判它们（还原输入 / 结算确认卡），
+    /// 改成 SSE 帧等于把那两段打成死代码。
+    #[tokio::test]
+    async fn early_exit_keeps_status_code_exceptions_as_json() {
+        for (st, code) in [
+            (StatusCode::NOT_FOUND, "conversation_not_found"),
+            (StatusCode::CONFLICT, "confirm_already_used"),
+        ] {
+            let r = early(st, "", false, Some(code));
+            assert_eq!(r.status(), st);
+            assert_eq!(r.headers().get(header::CONTENT_TYPE).unwrap(), "application/json");
+            assert!(body_of(r).await.contains(code));
+        }
+    }
+
+    /// 载荷形态守卫：每一帧都以 `data: ` 开头、以空行分隔——**这正是前端切帧的判据**
+    /// （`buf.indexOf('\n\n')`）。JSON body 一个 `\n\n` 都没有，所以旧形态必然零帧。
+    #[tokio::test]
+    async fn early_exit_body_is_splittable_into_sse_frames() {
+        let body = body_of(early(StatusCode::OK, "半句话", true, None)).await;
+        let frames: Vec<&str> = body.trim_end_matches("\n\n").split("\n\n").collect();
+        assert!(!frames.is_empty());
+        for f in &frames {
+            assert!(f.starts_with("data: "), "帧不以 data: 开头：{f:?}");
+        }
+        assert_eq!(frames.last(), Some(&"data: __END__"), "最后一帧必须是终止帧");
+    }
+
     #[test]
     fn frame_prefixes_match_frontend() {
         // 路径相对于本文件；`include_str!` 是编译期读入 ⇒ 前端动了这个文件会重编本测试

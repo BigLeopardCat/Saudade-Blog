@@ -18,6 +18,8 @@ import vm from 'vm';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import { installDom, installScriptLoader } from './stubs/dom.mjs';
+// SSE 桩要带 content-type：20261002 起前端据它判"这是不是流"
+import { sseHeaders } from './stubs/sse.mjs';
 
 const W = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../public/live2d-widgets');
 const dump = (label) => {
@@ -182,12 +184,12 @@ globalThis.fetch = async (url, opts) => {
       const enc = new TextEncoder();
       const FRAMES = ['data: __ERROR__:"与 Agent 的连接中断，回复可能不完整"\n\n'];
       let i = 0;
-      return { ok: true, body: { getReader: () => ({ read: async () => (i < FRAMES.length ? { done: false, value: enc.encode(FRAMES[i++]) } : { done: true, value: undefined }) }) } };
+      return { ok: true, ...sseHeaders(), body: { getReader: () => ({ read: async () => (i < FRAMES.length ? { done: false, value: enc.encode(FRAMES[i++]) } : { done: true, value: undefined }) }) } };
     }
     const enc = new TextEncoder();
     const FRAMES = ['data: ' + JSON.stringify('喵呜测试') + '\n\n', 'data: __END__\n\n'];
     let i = 0;
-    return { ok: true, body: { getReader: () => ({ read: async () => (i < FRAMES.length ? { done: false, value: enc.encode(FRAMES[i++]) } : { done: true, value: undefined }) }) } };
+    return { ok: true, ...sseHeaders(), body: { getReader: () => ({ read: async () => (i < FRAMES.length ? { done: false, value: enc.encode(FRAMES[i++]) } : { done: true, value: undefined }) }) } };
   }
   throw new Error('unexpected fetch: ' + url);
 };

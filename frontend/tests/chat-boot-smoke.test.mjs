@@ -11,6 +11,8 @@ import vm from 'vm';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import { installDom, installScriptLoader } from './stubs/dom.mjs';
+// SSE 桩要带 content-type：20261002 起前端据它判"这是不是流"（缺了会被当成非流响应）
+import { sseHeaders } from './stubs/sse.mjs';
 
 const W = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../public/live2d-widgets');
 
@@ -93,6 +95,7 @@ globalThis.fetch = async (url, opts) => {
     let i = 0;
     return {
       ok: true,
+      ...sseHeaders(),
       body: { getReader: () => ({ read: async () => (i < FRAMES.length ? { done: false, value: enc.encode(FRAMES[i++]) } : { done: true, value: undefined }) }) },
     };
   }
