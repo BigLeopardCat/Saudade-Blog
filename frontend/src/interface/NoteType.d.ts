@@ -22,12 +22,15 @@ export interface NoteType {
     noteKey: string
     // 编辑修改稿链接：有值 = 本行是那篇文章（id）的自动保存修改稿
     draftOf?: number | null;
-    // 卡片上的三个数（20260930）。**只有公开列表接口会回**，详情接口连键都没有 ⇒
-    // 这里的可选性是契约本身（不是"忘写了"）：`undefined` = 这一路没有这个数，
-    // 卡片据此整个不渲染那一排；`0` = 真的是 0，照常显示。
+    // 卡片上的几个数（20260930；20261003 补讨论数）。**只有公开列表接口会回**，
+    // 详情接口连键都没有 ⇒ 这里的可选性是契约本身（不是"忘写了"）：`undefined` =
+    // 这一路没有这个数，卡片据此整个不渲染那一排；`0` = 真的是 0，照常显示。
     views?: number;
     likes?: number;
     favorites?: number;
+    // 讨论数。**口径 = 公开讨论区看得见的那些**（`approved = 1 AND is_deleted = 0`），
+    // 所以卡片上的数一定等于点进去数出来的条数（后端 `attach_stats` 那一条）。
+    comments?: number;
     // 这篇文章的作者（20261001）。**判据是"谁发的"**：发布那一刻的操作者，不是站点主人。
     // 可选的理由与上面三个数同源：文章没有作者记录（本列之前发布的老文章 / 发布者账号已销）
     // 或这次没查着 ⇒ 键不出现，卡片回退站点级署名（`utils/noteAuthor.ts` 是唯一判据）。
@@ -50,12 +53,13 @@ export interface formatNote {
     status: string;
     createTime: Date;
     updateTime: Date | string;
-    // 列表接口附带的三个人数（20260930，见上面 NoteType 里那段）；`formatNote` 是
+    // 列表接口附带的几个人数（20260930，见上面 NoteType 里那段）；`formatNote` 是
     // **接口原始行**的类型，所以这里必须有——ContentHome 是 `{...item}` 透传的，
-    // 缺了这一行 TS 会认不出，卡片拿到的是 undefined（症状 = 三个数全不显示）。
+    // 缺了这一行 TS 会认不出，卡片拿到的是 undefined（症状 = 这几个数全不显示）。
     views?: number;
     likes?: number;
     favorites?: number;
+    comments?: number;
     // 作者（20261001，见 `NoteType` 里那一段）。ContentHome 是 `{...item}` 透传的，
     // 这里缺一行 TS 就认不出，卡片会拿到 undefined ⇒ 全部退回站点署名（"管理员发的
     // 文章仍显示超级管理员"那副样子原样复发）。

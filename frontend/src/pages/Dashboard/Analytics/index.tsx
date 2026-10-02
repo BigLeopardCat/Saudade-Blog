@@ -25,7 +25,7 @@ import {useIsDarkMode} from "../../../theme";
  *
  * 两个页签（形制照「用户管理」那一页，`label` 用 `<h3>`）：
  *
- *   · **文章数据** —— 阅读量 / 点赞量 / 收藏量，三个汇总卡 + 三个全局榜 + 30 天趋势，
+ *   · **文章数据** —— 阅读量 / 点赞量 / 收藏量 / 讨论量，四个汇总卡 + 四个全局榜 + 30 天趋势，
  *     外加**周报 / 月报 / 年报**（按期一张可展开的列表）。数据源
  *     `GET /api/protected/stats/notes`（当下快照）与 `.../notes/periods`（分期）。
  *   · **用户活跃** —— 直接渲染 `GET /api/protected/stats/users`（`src/routes/stats.rs`）。
@@ -35,7 +35,7 @@ import {useIsDarkMode} from "../../../theme";
  * 口径三条（与后端模块头注同源，改的时候一起看）：
  *
  * 1. **只统计"当前可见"的文章**。已转草稿/私密的文章连同它的历史阅读量一起排除——
- *    报表的三个数字（总量、排行、趋势）用同一个可见集，不然它们会自己跟自己打架。
+ *    报表的四个数字（总量、排行、趋势）用同一个可见集，不然它们会自己跟自己打架。
  *    注意这与"删文章"不同：删文章走外键 CASCADE，那些行是真的没了，
  *    所以**总阅读量会变小**，"只增不减"在本页不成立（页面上有一枚 Tag 说明口径）。
  * 2. **`daily` 已经由后端补零**（最近 30 天天天有一条），前端不要再自己拼日期，
@@ -50,7 +50,7 @@ import {useIsDarkMode} from "../../../theme";
  * 两条版本线，同时引会把 G2 运行时打进两份）。**排行榜刻意不用图表库**：
  * 标题长短差得远，图表里必然要截断，而这一页的价值恰恰是"哪几篇"——
  * 所以排行是 HTML 列表（完整标题 + 一条按比例的背景条），
- * 只有趋势那一张用真图表（30 个点连成的三条线是 HTML 拼不出来的东西）。
+ * 只有趋势那一张用真图表（30 个点连成的四条线是 HTML 拼不出来的东西）。
  */
 
 /** 后端字段逐个过一道类型闸。`GET` 回来的是运行时数据，直接 `.map()`
@@ -88,12 +88,12 @@ const KINDS: { value: PeriodKind; label: string; limit: number; unit: string }[]
     {value: 'year', label: '年报', limit: 5, unit: '年'},
 ];
 
-/** 排行榜一块：HTML 列表，不是图表。条宽按本块最大值归一 —— 三块各归各的，
+/** 排行榜一块：HTML 列表，不是图表。条宽按本块最大值归一 —— 四块各归各的，
  *  阅读量与点赞量本来就不在一个量级上，共用一把尺子会让点赞全成一条线。 */
 const rankPanel = (
     title: string,
     rows: NoteRankRow[],
-    metric: 'views' | 'likes' | 'favorites',
+    metric: 'views' | 'likes' | 'favorites' | 'comments',
     accent: string,
     accentDark: string,
 ) => {
@@ -159,9 +159,11 @@ const NoteData = () => {
                 totalViews: num(d?.totalViews),
                 totalLikes: num(d?.totalLikes),
                 totalFavorites: num(d?.totalFavorites),
+                totalComments: num(d?.totalComments),
                 topViewed: asRows(d?.topViewed),
                 topLiked: asRows(d?.topLiked),
                 topFavorited: asRows(d?.topFavorited),
+                topCommented: asRows(d?.topCommented),
                 daily: asDaily(d?.daily),
             })
         }).catch(() => {
@@ -206,6 +208,10 @@ const NoteData = () => {
         {date: d.date, type: '阅读量', value: num(d.views)},
         {date: d.date, type: '点赞量', value: num(d.likes)},
         {date: d.date, type: '收藏量', value: num(d.favorites)},
+        // 讨论量的日趋势（20261003）。**量级差一大截**（阅读是三位数、讨论个位数），
+        // 同一条 y 轴下这条线会贴着 0 走——这是刻意接受的：四张汇总卡与四个榜给了
+        // 各自独立的尺度，趋势图的价值在"形状"（哪天有人聊起来），不在绝对值比大小。
+        {date: d.date, type: '讨论量', value: num(d.comments)},
     ])
     const trendConfig = {
         data: trendData,
@@ -255,12 +261,19 @@ const NoteData = () => {
                             <Statistic title="总收藏量" value={report?.totalFavorites ?? 0}
                                        formatter={(v) => <CountUp end={Number(v)} separator=","/>}/>
                         </Card>
+                        {/* 第四张卡（20261003）：与卡片/详情页同一个口径——只算公开看得见的
+                            评论，所以这里的数字一定等于各处点进去数出来的条数。 */}
+                        <Card className="akCard" style={{"--ak-bg": '#d9ecec', "--ak-bg-dark": 'rgba(140, 215, 215, 0.16)'} as React.CSSProperties}>
+                            <Statistic title="总讨论量" value={report?.totalComments ?? 0}
+                                       formatter={(v) => <CountUp end={Number(v)} separator=","/>}/>
+                        </Card>
                     </div>
 
                     <div className="akPanels">
                         {rankPanel('阅读量 Top 10', report?.topViewed ?? [], 'views', '#4a54b8', '#a9b1f0')}
                         {rankPanel('点赞量 Top 10', report?.topLiked ?? [], 'likes', '#b03a63', '#f2a6c0')}
                         {rankPanel('收藏量 Top 10', report?.topFavorited ?? [], 'favorites', '#8a6a1f', '#e0c98a')}
+                        {rankPanel('讨论量 Top 10', report?.topCommented ?? [], 'comments', '#1f7a6a', '#7fd4c4')}
                     </div>
 
                     <div className="akPanel akPanelWide">
@@ -273,7 +286,7 @@ const NoteData = () => {
                     </div>
 
                     {/* ── 周报 / 月报 / 年报 ─────────────────────────────────────────
-                        形制是**一张可展开的期列表**：折叠态给出"哪一期、三个数"，
+                        形制是**一张可展开的期列表**：折叠态给出"哪一期、四个数"，
                         展开才是这一期的正文（阅读量前 5 名）。这样十二期能一屏扫完，
                         想深看哪一期就点哪一期。 */}
                     <div className="akPanel akPanelWide akPeriods">
@@ -318,6 +331,7 @@ const NoteData = () => {
                                                 <span>阅读 {fmt(p.views)}</span>
                                                 <span>点赞 {fmt(p.likes)}</span>
                                                 <span>收藏 {fmt(p.favorites)}</span>
+                                                <span>讨论 {fmt(p.comments)}</span>
                                             </span>
                                         </span>
                                     ),
@@ -339,6 +353,7 @@ const NoteData = () => {
                                                         <span>阅读 {fmt(num(r.views))}</span>
                                                         <span>点赞 {fmt(num(r.likes))}</span>
                                                         <span>收藏 {fmt(num(r.favorites))}</span>
+                                                        <span>讨论 {fmt(num(r.comments))}</span>
                                                     </span>
                                                 </li>
                                             ))}
@@ -361,6 +376,10 @@ const USER_COLUMNS: ColumnsType<UserActivityRow> = [
     {title: '角色', dataIndex: 'role', width: 110},
     {title: '会话数', dataIndex: 'conversations', width: 100, align: 'right', render: (v: number) => fmt(num(v))},
     {title: '消息数', dataIndex: 'messages', width: 100, align: 'right', render: (v: number) => fmt(num(v))},
+    // 讨论数（20261003）：**与文章报表那个「讨论数」口径不同**（这里含待审/驳回，
+    // 只排除软删——本页问的是"这个账号做过什么"）。列名边上不加注解，口径写在
+    // 类型文件与后端模块头注里，页面上一条 Tag 说不清两个口径。
+    {title: '讨论数', dataIndex: 'comments', width: 100, align: 'right', render: (v: number) => fmt(num(v))},
     {
         title: '最近活动', dataIndex: 'lastActiveAt', width: 170,
         // null = 既无会话也无消息。**显示「无活动」而不是空白**：
@@ -391,6 +410,7 @@ const UserActivity = () => {
                 totalConversations: num(d?.totalConversations),
                 totalMessages: num(d?.totalMessages),
                 totalExecutions: num(d?.totalExecutions),
+                totalComments: num(d?.totalComments),
                 activeUsers7d: num(d?.activeUsers7d),
                 activeUsers30d: num(d?.activeUsers30d),
                 listedUsers: num(d?.listedUsers),
@@ -412,6 +432,9 @@ const UserActivity = () => {
         {title: '总会话数', value: data?.totalConversations ?? 0, bg: '#e9dcf5', bgDark: 'rgba(190, 150, 240, 0.16)'},
         {title: '总消息数', value: data?.totalMessages ?? 0, bg: '#e6e0c4', bgDark: 'rgba(226, 214, 160, 0.16)'},
         {title: '总执行数', value: data?.totalExecutions ?? 0, bg: '#d5ecf0', bgDark: 'rgba(130, 210, 225, 0.16)'},
+        // 第七张卡（20261003）。口径见 `UserActivityRow.comments`：全站讨论量，
+        // 含待审/驳回（本页问的是"账号做过什么"，风控视角下这才是要看的数）。
+        {title: '总讨论数', value: data?.totalComments ?? 0, bg: '#d9ecec', bgDark: 'rgba(140, 215, 215, 0.16)'},
     ]
 
     return (

@@ -1,4 +1,4 @@
-// ═ 文章卡片读数：浏览 / 点赞 / 收藏（20260930）══
+// ═ 文章卡片读数：浏览 / 点赞 / 收藏 / 讨论（20260930；20261003 补讨论）══
 //   node tests/article-card-stats.test.mjs
 //
 // 现场（用户要求）："给文章卡片加上浏览数，点赞数，收藏数和对应图标，
@@ -6,9 +6,9 @@
 //
 // 这套件管**判据与接线**，几何那半边在 `article-card-stats.test.py`（要真浏览器量）。
 // 锁三件：
-//   ① ★「读不到 ≠ 0」——后端三条聚合查询只挂一条时那个键**根本不存在**，
+//   ① ★「读不到 ≠ 0」——后端四条聚合查询只挂一条时那个键**根本不存在**，
 //      显示成 0 等于在统计出故障的那天让全站文章集体谎报"0 阅读"；
-//   ② 三个数**各判各的**（只挂一个也能只显示那一个），`0` 是事实照常显示；
+//   ② 四个数**各判各的**（只挂一个也能只显示那一个），`0` 是事实照常显示；
 //   ③ 接线：Article.tsx 真的用这条判据（不是自己写三个 `&&`）、图标取自 NoteStatIcons
 //      （不再是第二个眼睛 SVG 副本）、且**没有行内写死颜色**（夜间模式的第一号坑）。
 import * as esbuild from 'esbuild';
@@ -47,20 +47,26 @@ console.log('\n① 读不到 ≠ 0：键缺席 / null / 非数字 都不产生�
     ok(keys({ views: '0' }).length === 0, '字符串 "0" 也当"没有"（类型变了宁可少显示一个数）');
     ok(keys({ views: NaN }).length === 0, 'NaN ⇒ 不显示（Infinity 同理）');
     ok(keys({ views: Infinity }).length === 0, 'Infinity ⇒ 不显示');
+    // 讨论数（20261003）是**第四路独立查询**，缺席规则与前三路一模一样：只挂三路
+    // 而讨论那路失败时，卡片显示三个数、不是"讨论 0"。
+    ok(keys({ views: 12, likes: 3, favorites: 1, comments: undefined }).join() === 'views,likes,favorites',
+        '讨论数缺席 ⇒ 不显示那一格（另三个照常）');
 }
 
-console.log('\n② 0 是事实，照常显示；三个数各判各的');
+console.log('\n② 0 是事实，照常显示；四个数各判各的');
 {
-    ok(JSON.stringify(vals({ views: 0, likes: 0, favorites: 0 })) === '[0,0,0]',
-        '三个 0 ⇒ 显示三个 0（新站上线第一天就是这样，不能空着）', vals({ views: 0, likes: 0, favorites: 0 }));
+    ok(JSON.stringify(vals({ views: 0, likes: 0, favorites: 0, comments: 0 })) === '[0,0,0,0]',
+        '四个 0 ⇒ 显示四个 0（新站上线第一天就是这样，不能空着）',
+        vals({ views: 0, likes: 0, favorites: 0, comments: 0 }));
     ok(keys({ views: 12 }).join() === 'views', '只挂了阅读 ⇒ 只显示阅读那一格');
     ok(keys({ views: 12, likes: 3, favorites: undefined }).join() === 'views,likes',
         '挂两个、缺一个 ⇒ 显示两个（一个缺席不影响另外两个）');
-    const long = M.statCells({ views: 1, likes: 2, favorites: 3 });
+    const long = M.statCells({ views: 1, likes: 2, favorites: 3, comments: 4 });
     ok(long.every((c) => typeof c.label === 'string' && c.label.length > 0),
         '每格都带人读标签（同时用作 title 悬停说明）', long.map((c) => c.label));
-    ok(M.statCells({ favorites: 5, views: 1, likes: 2 }).map((c) => c.key).join() === 'views,likes,favorites',
-        '顺序恒为 阅读→点赞→收藏（与卡片上的一致，不受对象键序影响）');
+    ok(M.statCells({ comments: 5, favorites: 5, views: 1, likes: 2 }).map((c) => c.key).join()
+        === 'views,likes,favorites,comments',
+        '顺序恒为 阅读→点赞→收藏→讨论（与卡片上的一致，不受对象键序影响）');
 }
 
 console.log('\n③ 接线：Article.tsx 用这条判据，图标与颜色都不各写一份');
@@ -75,9 +81,14 @@ console.log('\n③ 接线：Article.tsx 用这条判据，图标与颜色都不�
 
     const src = read('src/frontHome/Content/ContentHome/Article.tsx');
     ok(/statCells\(item\)/.test(src), '卡片调的是 statCells()（唯一判据），不是自己写三个 &&');
-    ok(!/typeof item\.(views|likes|favorites)/.test(src), '卡片里没有第二份 typeof 判据');
+    ok(!/typeof item\.(views|likes|favorites|comments)/.test(src), '卡片里没有第二份 typeof 判据');
     ok(/from\s*["'][^"']*components\/NoteStatIcons/.test(src), '图标取自 NoteStatIcons');
     ok(/STAT_ICON/.test(src) && /ArticleStatNum/.test(src), '渲染 .ArticleStat / .ArticleStatNum（几何套件量的是这两个类）');
+    // 图标表与判据表必须**一一对得上**：`STAT_CELL_ORDER` 里有讨论、而 `STAT_ICON` 漏了
+    // 这一个键时，画出来是"数字前面空一格"——不报错、不崩，只是缺个图，肉眼很难定性。
+    for (const k of M.STAT_CELL_ORDER.map((c) => c.key)) {
+        ok(new RegExp(`\\b${k}:\\s*<\\w+Icon`).test(src), `STAT_ICON 里有 ${k} 的图标（键对不上就画成空白）`);
+    }
     // 夜间模式第一号坑：行内 style 特异性最高，`.dark &` 赢不了（见 CLAUDE.md 的记录）
     ok(!/ArticleStat[^>]*style=\{\{/.test(src), '读数格子不写行内 style（配色交给 .ArticleStats 的主题变量）');
 

@@ -6,7 +6,7 @@ import {NoteType} from "../../../interface/NoteType";
 import {CategoriesType} from "../../../interface/CategoriesType";
 import {renderNoteTags} from "../../../apis/TagMethods.tsx";
 import { coverCropStyle, cropFromRow } from "../../../utils/coverCrop";
-import { EyeIcon, HeartIcon, StarIcon } from "../../../components/NoteStatIcons/index.tsx";
+import { CommentIcon, EyeIcon, HeartIcon, StarIcon } from "../../../components/NoteStatIcons/index.tsx";
 import { statCells } from "../../../utils/noteStats";
 import { resetDescScroll } from "../../../utils/descHover";
 
@@ -26,16 +26,20 @@ interface ArticleOption {
     tagList: tag[]
 }
 
-/** 三个数各自的图标。**图标在这里、判据在 `utils/noteStats`**——那边是可断言的纯函数
- *  （"读不到 ≠ 0"那条规则），这边只管画。 */
+/** 几个数各自的图标。**图标在这里、判据在 `utils/noteStats`**——那边是可断言的纯函数
+ *  （"读不到 ≠ 0"那条规则），这边只管画。键必须与 `StatCell['key']` 一一对应：
+ *  加一个数而这里漏一个键，画出来就是"数字前面空一格"（`STAT_ICON[key]` 为 undefined，
+ *  不报错、也不崩，只是缺个图）。 */
 const STAT_ICON: Record<string, React.ReactNode> = {
     views: <EyeIcon size={13} />,
     likes: <HeartIcon size={13} />,
     favorites: <StarIcon size={13} />,
+    // 讨论数（20261003 用户第 4 条）。与详情页那一列同源同尺寸，只是卡片档小一号（13）
+    comments: <CommentIcon size={13} />,
 }
 
 /**
- * 卡片上的三个数：阅读 / 点赞 / 收藏（20260930）。
+ * 卡片上的几个数：阅读 / 点赞 / 收藏 / 讨论（20260930，20261003 补讨论）。
  *
  * 显示哪几个由 `statCells()` 定（后端三条聚合查询可能只挂了一条，"读不到"绝不显示成 0，
  * 见 `utils/noteStats.ts`）；一个数都没有时**整个容器不渲染**，不留一条空白行

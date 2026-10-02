@@ -78,8 +78,8 @@ SASS_FILE = FE / "src/frontHome/Content/ContentHome/index.sass"
 RESET_CSS = FE / "src/frontHome/main.css"
 
 # 与 Article.tsx 同形的标记（不挂 React：本套件量的是类名与结构决定的布局，
-# 图标就是那三段 path，尺寸由 width/height 属性定）。
-# 三个数的值取 12 / 3 / 1 —— 个位数与两位数都在场，能看出定宽有没有起作用。
+# 图标就是那四段 path，尺寸由 width/height 属性定）。
+# 四个数的值取 12 / 3 / 1 / 8 —— 个位数与两位数都在场，能看出定宽有没有起作用。
 ICONS = {
     "views": '<svg aria-hidden="true" viewBox="0 0 24 24" width="13" height="13" fill="none" '
              'stroke="currentColor" stroke-width="1.8"><path d="M1.8 12S5.6 5.5 12 5.5 22.2 12 22.2 12 '
@@ -89,13 +89,20 @@ ICONS = {
              '7.3 0 5.2 5.2 0 0 1 0 7.3z"/></svg>',
     "favorites": '<svg aria-hidden="true" viewBox="0 0 24 24" width="13" height="13" fill="currentColor">'
                  '<path d="M12 2.6l2.9 5.9 6.5.9-4.7 4.6 1.1 6.5-5.8-3.1-5.8 3.1 1.1-6.5L2.6 9.4l6.5-.9z"/></svg>',
+    # 讨论（20261003 用户第 4 条）：只有描边一件——讨论没有「已讨论」这种开关态，
+    # 与 Article.tsx 的 `CommentIcon` 逐字节同形（单描边、`fill="none"`）。
+    "comments": '<svg aria-hidden="true" viewBox="0 0 24 24" width="13" height="13" fill="none" '
+                'stroke="currentColor" stroke-width="1.8" stroke-linejoin="round">'
+                '<path d="M4.1 3.9h15.8a2.2 2.2 0 0 1 2.2 2.2v8.6a2.2 2.2 0 0 1-2.2 2.2h-8.6l-4.4 3.4'
+                'v-3.4H4.1a2.2 2.2 0 0 1-2.2-2.2V6.1a2.2 2.2 0 0 1 2.2-2.2z"/></svg>',
 }
 STATS = ('<div class="ArticleStats" id="stats">'
          + "".join(f'<span class="ArticleStat" title="{label}">{ICONS[k]}'
                    f'<span class="ArticleStatNum">{v}</span></span>'
                    for k, label, v in (("views", "阅读量", 12),
                                        ("likes", "点赞数", 3),
-                                       ("favorites", "收藏数", 1)))
+                                       ("favorites", "收藏数", 1),
+                                       ("comments", "讨论数", 8)))
          + "</div>")
 
 def TAGS(n: int) -> str:
@@ -326,13 +333,15 @@ with sync_playwright() as p:
         check(f"{tag} · 两张卡同宽且等于容器宽（分类名长短不改卡片宽度）",
               abs(s["card"]["w"] - w) < 1 and abs(l["card"]["w"] - w) < 1,
               f"短名 {s['card']['w']} / 长名 {l['card']['w']} / 容器 {w}")
-        check(f"{tag} · 读数块没被压缩（flex-shrink: 0 生效：三格宽度不变）",
+        check(f"{tag} · 读数块没被压缩（flex-shrink: 0 生效：四格宽度不变）",
               abs(s["stats"]["w"] - on["stats"]["w"]) < 1,
               f"{w}px {s['stats']['w']} vs 1280px {on['stats']['w']}")
-        check(f"{tag} · 三个数都还在（截断不是隐藏）", s["cellCount"] == 3, str(s["cellCount"]))
+        check(f"{tag} · 四个数都还在（截断不是隐藏）", s["cellCount"] == 4, str(s["cellCount"]))
         check(f"{tag} · 页面不出现横向滚动", not s["pageOverflow"] and not l["pageOverflow"])
     # 截断的方向：**分类名**牺牲，读数不牺牲。三档各司其职：
-    #   341 + 真实长名（`# 本项目介绍` 84px）：245−110−10 = 125px 放得下 ⇒ **不许截**；
+    #   341 + 真实长名（`# 本项目介绍` 84px）：头宽 285 − 读数 148 − 间距 ≈ 52px 余量，
+    #     放得下 ⇒ **不许截**。（20261003 四格读数块由 110 → 148px，余量随之收窄到 52px
+    #     ——仍在，但再往这排加第五个数就要重算这条。）
     #   341 / 300 + 压力名（约 180px）：放不下 ⇒ **必须真的出现省略号**（而不是把卡撑宽）；
     #   300 + 短名：放得下 ⇒ 不许截（证明不是无差别加省略号）。
     wide = pg.evaluate(PAINT, {"markup": mk(cat=CAT_LONG, w=341)})
@@ -353,7 +362,8 @@ with sync_playwright() as p:
 
     print("⑤b ★ 手机档（≤768px 两列）：读数整块落到分类**下面那一行**，同屏一刀切")
     # 手机不适用"同一行"：375px 视口下卡片只有 172px、头约 148px，而**读数块自己
-    # 就要 105px** ⇒ 同一行留给分类名只剩几十像素，分类名会退化成一个省略号点、等于把
+    # 就要一百多像素**（20261003 起是**四格**，比三格又宽出约一格 + 一个间距）⇒ 同一行
+    # 留给分类名只剩几十像素，分类名会退化成一个省略号点、等于把
     # 分类信息删掉。所以手机档改成上下两行——**按档位一刀切，不是按卡片各自判定**
     # （后者正是老 `flex-wrap: wrap` 的错：同屏混排）。
     # ⚠️ 宽度**不再由桩的 `w=` 决定**（20261001）：手机档那条 `width: 95%` 带了 `!important`
@@ -375,7 +385,7 @@ with sync_playwright() as p:
     check("  两张卡等高且同宽（用户报的'参差'就是这个）",
           abs(ms["card"]["h"] - ml["card"]["h"]) < 1 and abs(ms["card"]["w"] - ml["card"]["w"]) < 1,
           f"高 {ms['card']['h']} vs {ml['card']['h']}／宽 {ms['card']['w']} vs {ml['card']['w']}")
-    check("  手机档的读数块仍是 110px（没被压扁）",
+    check("  手机档的读数块与桌面同宽（没被压扁）",
           abs(ml["stats"]["w"] - on["stats"]["w"]) < 1,
           f"{ml['stats']['w']} vs 桌面 {on['stats']['w']}")
     check("  手机档分类名拿满**整行宽**（stretch 生效，且真实长名放得下不被截）",
@@ -384,19 +394,20 @@ with sync_playwright() as p:
     check("  读数左对齐于分类名（同一列基准，不是居中的）",
           abs(ms["stats"]["left"] - ms["cat"]["left"]) < 1,
           f"stats.left {ms['stats']['left']} / cat.left {ms['cat']['left']}")
-    check("  三个数都在、且页面不出现横向滚动",
-          ml["cellCount"] == 3 and not ms["pageOverflow"] and not ml["pageOverflow"],
+    check("  四个数都在、且页面不出现横向滚动",
+          ml["cellCount"] == 4 and not ms["pageOverflow"] and not ml["pageOverflow"],
           f"{ml['cellCount']} / {ml['pageOverflow']}")
     pg.set_viewport_size({"width": 1280, "height": 900})
 
-    print("⑥ 三个数：顺序、数值、图标尺寸")
-    check("顺序恒为 阅读 → 点赞 → 收藏", on["cellTexts"] == ["12", "3", "1"], str(on["cellTexts"]))
+    print("⑥ 四个数：顺序、数值、图标尺寸")
+    check("顺序恒为 阅读 → 点赞 → 收藏 → 讨论",
+          on["cellTexts"] == ["12", "3", "1", "8"], str(on["cellTexts"]))
     check("图标是 svg 且 13×13",
           on["svgSize"] and abs(on["svgSize"]["w"] - 13) < 0.6 and abs(on["svgSize"]["h"] - 13) < 0.6,
           str(on["svgSize"]))
-    check("三个格子都有 title（悬停说明：阅读量/点赞数/收藏数）",
+    check("四个格子都有 title（悬停说明：阅读量/点赞数/收藏数/讨论数）",
           pg.evaluate("() => [...document.querySelectorAll('.ArticleStat')].map(e => e.title)")
-          == ["阅读量", "点赞数", "收藏数"],
+          == ["阅读量", "点赞数", "收藏数", "讨论数"],
           str(pg.evaluate("() => [...document.querySelectorAll('.ArticleStat')].map(e => e.title)")))
 
     print("⑦ ★ 标签换行：卡片按内容长高，页脚与「更新于」都不许被切掉（20260930 现场）")

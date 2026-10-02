@@ -74,7 +74,7 @@ pub struct NoteDto {
     #[serde(rename = "noteTags")]
     pub tags: String,
 
-    // ── 卡片上的三个数（20260930，见 `note_stats::counts_for`）────────────────────
+    // ── 卡片上的四个数（20260930，20261003 补讨论数；见 `note_stats::counts_for`）──
     // **`None` 时整个键不出现在 JSON 里**（不是 `null`）：这是刻意的，因为只有列表接口
     // 会挂数，详情接口不挂——`get_article_detail`（看板娘读文章详情）那条路因此**一个
     // 字节都没变**，跨仓契约不受影响。
@@ -101,6 +101,11 @@ pub struct NoteDto {
     pub likes: Option<i64>,
     #[serde(rename = "favorites", skip_serializing_if = "Option::is_none")]
     pub favorites: Option<i64>,
+    /// 讨论数（20261003）。**与上面三个数同一条纪律**（`None` ⇒ 键不出现 ⇒ 卡片不渲染
+    /// 这一格）。数量口径 = 公开讨论区看得见的那些（`approved = 1 AND is_deleted = 0`，
+    /// 见 `note_stats::comments_of`）——点一下卡片进去数得出来的就是这个数。
+    #[serde(rename = "comments", skip_serializing_if = "Option::is_none")]
+    pub comments: Option<i64>,
 }
 
 /// 封面裁剪参数兜底：焦点归一化到 0..1，缩放夹在 1..4；NaN/inf 等脏值退回默认。
@@ -149,6 +154,7 @@ fn map_note(n: note::Model, cat: Option<category::Model>) -> NoteDto {
         views: None,
         likes: None,
         favorites: None,
+        comments: None,
     }
 }
 
@@ -895,14 +901,15 @@ pub async fn get_note_detail(
     dto
 }
 
-/// 给一批列表行挂上卡片要的三个数（阅读 / 点赞 / 收藏，查询在 `note_stats::counts_for`）。
+/// 给一批列表行挂上卡片要的四个数（阅读 / 点赞 / 收藏 / 讨论，查询在
+/// `note_stats::counts_for`）。
 ///
-/// **失败只降级、不报错**：统计查询挂了就三列留 `None`（卡片那一排不渲染），列表本身照常
-/// 返回——三个数是装饰，不是"列表能不能看"的前提。这也正是 `Option` 而非 `i64` 的理由：
+/// **失败只降级、不报错**：统计查询挂了就四列留 `None`（卡片那一排不渲染），列表本身照常
+/// 返回——四个数是装饰，不是"列表能不能看"的前提。这也正是 `Option` 而非 `i64` 的理由：
 /// 一次查询失败绝不能变成"站上每篇文章都 0 阅读"。
 ///
 /// 只挂在**公开列表**（首页/分类页的卡片、搜索、置顶）上；后台那两个列表不挂——那里一次
-/// 可能拉上千行（Times 归档页 `page_size=999`），而这三个数的消费者只有卡片。
+/// 可能拉上千行（Times 归档页 `page_size=999`），而这四个数的消费者只有卡片。
 /// 给这一批文章挂上「谁发的」（`note.user_id` → 那个账号的 `nickname`/`avatar`）。
 ///
 /// **回退链**（与 `web_info::site_author` 共用站点级那一份，口径只有一处）：
@@ -981,10 +988,11 @@ async fn attach_stats(db: &sea_orm::DatabaseConnection, dtos: &mut [NoteDto]) {
                     dto.views = Some(c.views);
                     dto.likes = Some(c.likes);
                     dto.favorites = Some(c.favorites);
+                    dto.comments = Some(c.comments);
                 }
             }
         }
-        Err(e) => tracing::warn!("[notes] 列表附带统计失败，本页三个数不显示: {e}"),
+        Err(e) => tracing::warn!("[notes] 列表附带统计失败，本页四个数不显示: {e}"),
     }
 }
 
