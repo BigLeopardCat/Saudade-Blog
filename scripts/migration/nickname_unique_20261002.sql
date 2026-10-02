@@ -54,14 +54,19 @@ SELECT VERSION() AS mysql_version;
 --     分组口径 = 索引口径：空串/纯空白归为 NULL（**不参与唯一性**），大小写不敏感。
 --     `IS NOT NULL` 这个条件不能少：没设昵称的账号会一起落进 NULL 这一组，
 --     少了它"三个人都没设昵称"会被报成一个重名组，执行者据此白白停手。
+-- ⚠️ HAVING 里引用的是**别名 `归一组`**，不是把 GROUP BY 那个表达式原样再写一遍：
+--    MySQL 8 在 HAVING 里重新解析 `NULLIF(TRIM(nickname),'')` 时**匹配不上** GROUP BY
+--    的同一个表达式，报 `ERROR 1054 Unknown column 'nickname' in 'having clause'`
+--    （20261003 实跑发现——这文件写出来到跑之前从没被执行过）。别名是 MySQL 允许的、
+--    也是唯一能表达它的写法；判据本身一字未改（同一个表达式，只是给它起了名字）。
 SELECT '重复组' AS done,
        NULLIF(TRIM(nickname), '') AS 归一组,
        COUNT(*)                   AS 行数,
        GROUP_CONCAT(id ORDER BY id) AS ids,
        GROUP_CONCAT(username ORDER BY id) AS 账号
   FROM `user`
- GROUP BY NULLIF(TRIM(nickname), '')
-HAVING COUNT(*) > 1 AND NULLIF(TRIM(nickname), '') IS NOT NULL;
+ GROUP BY 归一组
+HAVING COUNT(*) > 1 AND 归一组 IS NOT NULL;
 
 -- 1c) 空/空白昵称现状。这些行**不受**唯一约束（NULL 不进唯一索引），
 --     这里只是让执行者知道有多少账号还没设昵称。
@@ -83,18 +88,30 @@ ALTER TABLE `user`
         AFTER `nickname`;
 
 -- ── ④ 存量去重：每组保留 MIN(id)，其余改名为 `原名_<id>` 并置标记 ────────────
--- 窗口函数 `ROW_NUMBER() OVER (PARTITION BY nickname ORDER BY id)` 在**改之前**
--- 对全表求值（派生表被物化，UPDATE 的赋值不会影响本次编号）——所以"谁保留原名"
--- 是确定的：注册最早的那个。
--- `LEFT(nickname, 64 - CHAR_LENGTH('_' || id))` 保证结果**不超过 varchar(64)**：
+-- ⚠️ **分组口径必须与 ①/⑤ 和索引逐字相同**：`PARTITION BY NULLIF(TRIM(nickname),'')`
+--    ＋ `WHERE NULLIF(TRIM(nickname),'') IS NOT NULL`。两处都不能少，各有各的错法：
+--      · 少了 `NULLIF(TRIM(...))` 直接用 `PARTITION BY nickname`：**没设昵称的账号**
+--        （nickname = ''）会全部落进同一组，rn = 1,2,3… ⇒ 从第二个起被"改名"成 `_<id>`。
+--        它们根本不是重名者，却被改了名、还置了 `nickname_auto_renamed = 1`（本人会看到
+--        "你的昵称与他人重复"的横幅）——而 ①/⑤ 的 `IS NOT NULL` 明确说过它们不算一组。
+--        **20261003 实跑踩到**：本库 4 个空昵称账号，其中 3 个被改成 `_721`/`_722`/`_725`。
+--      · 少了 `WHERE ... IS NOT NULL`：NULL 在窗口分区里**互为 peer**，会重新聚成一组，
+--        于是同一批空昵称账号照样被 rn>1 命中（换成 NULLIF 只是把 bug 挪了个位置）。
+--        所以那一行不是冗余——它才是真正把空昵称**排除在分组之外**的判据。
+--    两者合起来才等于"空串与纯空白不参与唯一性"这一条规则；规则只有一个，写法也就只有一种。
+-- 窗口函数在**改之前**对全表求值（派生表被物化，UPDATE 的赋值不会影响本次编号）——
+-- 所以"谁保留原名"是确定的：注册最早的那个。
+-- `LEFT(TRIM(nickname), 64 - CHAR_LENGTH('_' || id))` 保证结果**不超过 varchar(64)**：
 -- 原名本来就 ≤64，截到"留得下后缀"的长度再拼，长昵称也不会被截断报错。
 -- 幂等：第二次跑时 rn>1 的行已带后缀、不再同名，影响 0 行。
 UPDATE `user` AS u
   JOIN (
-      SELECT id, ROW_NUMBER() OVER (PARTITION BY nickname ORDER BY id) AS rn
+      SELECT id,
+             ROW_NUMBER() OVER (PARTITION BY NULLIF(TRIM(nickname), '') ORDER BY id) AS rn
         FROM `user`
+       WHERE NULLIF(TRIM(nickname), '') IS NOT NULL
   ) AS d ON d.id = u.id AND d.rn > 1
-   SET u.nickname = CONCAT(LEFT(u.nickname, 64 - CHAR_LENGTH(CONCAT('_', u.id))), '_', u.id),
+   SET u.nickname = CONCAT(LEFT(TRIM(u.nickname), 64 - CHAR_LENGTH(CONCAT('_', u.id))), '_', u.id),
        u.nickname_auto_renamed = 1;
 
 -- ── ⑤ 建索引**之前**的最后一道核对：仍必须为 0 组 ──────────────────────────
@@ -110,8 +127,8 @@ SELECT '重复组（建索引前必须为空）' AS done,
        GROUP_CONCAT(id ORDER BY id) AS ids,
        GROUP_CONCAT(username ORDER BY id) AS 账号
   FROM `user`
- GROUP BY NULLIF(TRIM(nickname), '')
-HAVING COUNT(*) > 1 AND NULLIF(TRIM(nickname), '') IS NOT NULL;
+ GROUP BY 归一组
+HAVING COUNT(*) > 1 AND 归一组 IS NOT NULL;
 
 -- ── ⑥ 建唯一索引 ───────────────────────────────────────────────────────────
 -- 函数索引：表达式外**必须再套一层括号**（`((expr))`），单层会被当成列名。
@@ -137,9 +154,10 @@ SELECT '全表核对' AS done,
 -- 7c) 重名组数：**必须为 0**（与 1b / ⑤ 同一条判据，含 IS NOT NULL 那一半）。
 --     为 0 = 索引确实在按预期约束；不为 0 ⇒ 索引没建成，回到 ⑥ 看报错。
 SELECT '重名组数（必须 0）' AS done, COUNT(*) AS 重名组数 FROM (
-    SELECT 1 FROM `user`
-     GROUP BY NULLIF(TRIM(nickname), '')
-    HAVING COUNT(*) > 1 AND NULLIF(TRIM(nickname), '') IS NOT NULL
+    SELECT NULLIF(TRIM(nickname), '') AS 归一组
+      FROM `user`
+     GROUP BY 归一组
+    HAVING COUNT(*) > 1 AND 归一组 IS NOT NULL
 ) AS dup;
 
 -- 7d) 标记（重复执行会因主键/唯一键报错 ⇒ 那说明已经打过，忽略即可）
