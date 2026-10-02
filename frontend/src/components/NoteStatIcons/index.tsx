@@ -1,5 +1,6 @@
 /**
- * 文章读数图标三件套：浏览（眼）/ 点赞（心）/ 收藏（星）。20260930 新增。
+ * 文章读数图标四件套：浏览（眼）/ 点赞（心）/ 收藏（星）/ 讨论（气泡）。
+ * 20260930 新增前三件，20261003 补第四件（用户第 4、5 条：卡片与详情页都要显示讨论数）。
  *
  * ## 为什么是内联 SVG，而不是 emoji 或字体图标
  *
@@ -25,8 +26,10 @@
  *
  * ## 描边件与实心件（五件套）
  *
- * · **描边**：眼睛（`EyeIcon`）、空心（`HeartOutlineIcon`）、空星（`StarOutlineIcon`）
- *   —— 同一套 `strokeWidth`（1.8）与圆角端点，摆在一起是一条线语言。
+ * · **描边**：眼睛（`EyeIcon`）、空心（`HeartOutlineIcon`）、空星（`StarOutlineIcon`）、
+ *   气泡（`CommentIcon`）—— 同一套 `strokeWidth`（1.8）与圆角端点，摆在一起是一条线语言。
+ *   讨论数只有"有多少"这一种语义（没有"我评论过没有"这个状态），所以它**只有描边一件**，
+ *   不像心/星那样成对。
  * · **实心**：心（`HeartIcon`）、星（`StarIcon`）—— 同一条路径的 `fill` 版。
  * · 卡片上那三个数是"有多少"，一律实心更清楚（眼睛例外：实心会糊成一团，瞳孔与眼白
  *   在 12px 下分不开）。
@@ -38,6 +41,24 @@ interface IconProps {
     /** 边长（px）。默认 14 = 详情页沿用的尺寸 */
     size?: number
 }
+
+/** 讨论数：描边气泡（带一个小尾巴，与眼睛/心/星共用同一套描边语言）。
+ *  画成"说话"的形状而不是"三横线"（列表/菜单那种），是因为这一格旁边还有分类、标签那
+ *  几件也用横线；在 12px 下"三横线"会与它们糊成一类。 */
+export const CommentIcon: React.FC<IconProps> = ({ size = 14 }) => (
+    <svg
+        aria-hidden="true"
+        viewBox="0 0 24 24"
+        width={size}
+        height={size}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+    >
+        <path d="M4.1 3.9h15.8a2.2 2.2 0 0 1 2.2 2.2v8.6a2.2 2.2 0 0 1-2.2 2.2h-8.6l-4.4 3.4v-3.4H4.1a2.2 2.2 0 0 1-2.2-2.2V6.1a2.2 2.2 0 0 1 2.2-2.2z" />
+    </svg>
+)
 
 /** 浏览数：描边眼睛 */
 export const EyeIcon: React.FC<IconProps> = ({ size = 14 }) => (

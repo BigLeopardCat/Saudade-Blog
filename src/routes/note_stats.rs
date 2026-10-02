@@ -55,7 +55,7 @@ use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::entity::{note, note_like, note_view, user_favorite};
+use crate::entity::{note, note_comment, note_like, note_view, user_favorite};
 use crate::routes::AppState;
 use crate::utils::ApiResponse;
 
@@ -101,6 +101,10 @@ pub struct NoteStatsDto {
     pub views: i64,
     pub likes: i64,
     pub favorites: i64,
+    /// 讨论数（20261003）。**口径必须与公开讨论区逐字相同**：`approved = 1 AND
+    /// is_deleted = 0`（同 `comment_counts` 的注释）——否则详情页胶囊上的数会比点进去
+    /// 看到的条数多，那是最容易被当成"数错了"的一类不一致。
+    pub comments: i64,
     /// 未登录 / 令牌已收回 / 账号被冻结 ⇒ false。**这不表示"请求失败"**（见模块头注 1）。
     pub liked: bool,
 }
@@ -158,6 +162,20 @@ async fn likes_of(db: &DatabaseConnection, note_id: i32) -> Result<i64, DbErr> {
 async fn favorites_of(db: &DatabaseConnection, note_id: i32) -> Result<i64, DbErr> {
     user_favorite::Entity::find()
         .filter(user_favorite::Column::NoteId.eq(note_id))
+        .count(db)
+        .await
+        .map(|n| n as i64)
+}
+
+/// 讨论数（20261003）。**两个 filter 缺一不可，且必须与公开列表同源**：
+/// `approved = 1`（待审/驳回的不算，读者根本看不到）`AND is_deleted = 0`（软删的不算）
+/// —— `routes/comments.rs::list_comments` 读的正是这两条。数多一条会让详情页胶囊
+/// 与点进去的条数对不上（"数错了"是这类计数最容易被报上来的一种）。
+async fn comments_of(db: &DatabaseConnection, note_id: i32) -> Result<i64, DbErr> {
+    note_comment::Entity::find()
+        .filter(note_comment::Column::NoteId.eq(note_id))
+        .filter(note_comment::Column::Approved.eq(1))
+        .filter(note_comment::Column::IsDeleted.eq(0))
         .count(db)
         .await
         .map(|n| n as i64)
@@ -285,6 +303,7 @@ async fn read_stats(
         views: views_of(db, note_id).await?,
         likes: likes_of(db, note_id).await?,
         favorites: favorites_of(db, note_id).await?,
+        comments: comments_of(db, note_id).await?,
         liked: liked_by(db, note_id, who).await,
     })
 }
@@ -496,14 +515,17 @@ pub async fn unlike_note(
 // 批量计数（文章卡片上的三个数：阅读 / 点赞 / 收藏）
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// 一篇文章的公共计数。三个数**不同源**：阅读来自 `note_view`、点赞来自 `note_like`、
-/// 收藏来自 `user_favorite`（20260922 收藏功能）——但对卡片来说它们是一排三个数，
-/// 所以一次取齐、不拆成三个接口。
+/// 一篇文章的公共计数。四个数**不同源**：阅读来自 `note_view`、点赞来自 `note_like`、
+/// 收藏来自 `user_favorite`（20260922 收藏功能）、讨论来自 `note_comment`（20261003）
+/// ——但对卡片来说它们是一排四个数，所以一次取齐、不拆成四个接口。
 #[derive(Clone, Copy, Default)]
 pub struct NoteCounts {
     pub views: i64,
     pub likes: i64,
     pub favorites: i64,
+    /// 讨论数。与 `comments_of` **同一个口径**（`approved = 1 AND is_deleted = 0`），
+    /// 见那里的注释。
+    pub comments: i64,
 }
 
 /// `GROUP BY note_id` 的结果收进 `note_id → 合计`。`SUM()`/`COUNT()` 在零行时是 NULL
@@ -512,8 +534,8 @@ fn collect(r: Result<Vec<(i32, Option<i64>)>, DbErr>) -> Result<HashMap<i32, i64
     r.map(|v| v.into_iter().map(|(id, n)| (id, n.unwrap_or(0))).collect())
 }
 
-/// 一批文章的计数。**每张表一条 `GROUP BY` 查询（共三条）**，不是"每篇文章三条查询"——
-/// 列表一页 6–48 篇，逐篇查会把 6 次往返放大成 144 次。
+/// 一批文章的计数。**每张表一条 `GROUP BY` 查询（共四条）**，不是"每篇文章四条查询"——
+/// 列表一页 6–48 篇，逐篇查会把 6 次往返放大成 288 次。
 ///
 /// 只算传进来的 id：调用方给的是本页真正要渲染的那些行，不会顺手把全站算一遍。
 /// 空列表必须短路——`IN ()` 是 SQL 语法错误（同上面报表里那处）。
@@ -559,6 +581,21 @@ pub async fn counts_for(
             .all(db)
             .await,
     )?;
+    // 讨论数（20261003）。两条 filter 与 `comments_of` 逐字相同——卡片的数必须等于
+    // 点进去看到的条数，否则读者第一眼就发现对不上。
+    let comments = collect(
+        note_comment::Entity::find()
+            .select_only()
+            .column(note_comment::Column::NoteId)
+            .column_as(Expr::col(note_comment::Column::Id).count(), "total")
+            .filter(note_comment::Column::NoteId.is_in(ids.clone()))
+            .filter(note_comment::Column::Approved.eq(1))
+            .filter(note_comment::Column::IsDeleted.eq(0))
+            .group_by(note_comment::Column::NoteId)
+            .into_tuple::<(i32, Option<i64>)>()
+            .all(db)
+            .await,
+    )?;
 
     // **SQL 不会为"没人读过"的文章造行**，所以这里按传入的 id 逐个补零。对"列表里真实
     // 存在的文章"来说 0 是**事实**（它存在，只是还没人读过），与"根本取不到数"要分开表达：
@@ -572,6 +609,7 @@ pub async fn counts_for(
                     views: views.get(&id).copied().unwrap_or(0),
                     likes: likes.get(&id).copied().unwrap_or(0),
                     favorites: favorites.get(&id).copied().unwrap_or(0),
+                    comments: comments.get(&id).copied().unwrap_or(0),
                 },
             )
         })
@@ -587,12 +625,16 @@ pub struct NoteRankRow {
     #[serde(rename = "noteId")]
     pub note_id: i32,
     pub title: String,
-    /// 三个数**每一行都带**（哪怕这一行只出现在另一个榜上）：榜是按其中一个数排的，
-    /// 但看榜的人（后台与看板娘）下一个问题必然是"那篇的赞/收藏呢"。
-    /// `rank()` 只按 `metric` 排序，**不改这三个数**。
+    /// 四个数**每一行都带**（哪怕这一行只出现在另一个榜上）：榜是按其中一个数排的，
+    /// 但看榜的人（后台与看板娘）下一个问题必然是"那篇的赞/收藏/讨论呢"。
+    /// `rank()` 只按 `metric` 排序，**不改这四个数**。
     pub views: i64,
     pub likes: i64,
     pub favorites: i64,
+    /// 讨论数（20261003 补）。**口径 = 公开讨论区看得见的那些**
+    /// （`approved = 1 AND is_deleted = 0`，同 `comments_of`）——与文章卡片/详情页上
+    /// 那个数逐字同源，后台看到的数一定等于点进去数出来的条数。
+    pub comments: i64,
 }
 
 #[derive(Serialize, Default)]
@@ -604,6 +646,9 @@ pub struct DailyRow {
     /// 与 `likes` 同一条路（`user_favorite.created_at` 的日期分桶）。20261001 补：
     /// 汇总卡与排行榜都三个数了，趋势图只有两条线，读的人第一眼就会问"收藏呢"。
     pub favorites: i64,
+    /// 讨论量的日趋势（20261003 补，`note_comment.created_at` 的日期分桶）。
+    /// 同一条"补零"纪律：没有讨论的日子是 0，不是缺席。
+    pub comments: i64,
 }
 
 #[derive(Serialize, Default)]
@@ -618,7 +663,10 @@ pub struct NoteStatsReportDto {
     /// 当前可见文章的收藏量合计（同 `total_views`/`total_likes` 的口径）
     #[serde(rename = "totalFavorites")]
     pub total_favorites: i64,
-    /// 三个榜：**数组顺序即名次**（第 0 项 = 第 1 名），没有单独的 rank 字段。
+    /// 当前可见文章的讨论量合计（同上面三条口径：只算可见文章上的、且公开看得见的那些评论）
+    #[serde(rename = "totalComments")]
+    pub total_comments: i64,
+    /// 四个榜：**数组顺序即名次**（第 0 项 = 第 1 名），没有单独的 rank 字段。
     /// 同一个名次在不同榜上可以不是同一篇——消费方（后台面板 / 看板娘报表）
     /// 必须把"哪个榜的第几名"说清楚，别把两个榜的序号串起来用。
     #[serde(rename = "topViewed")]
@@ -627,6 +675,8 @@ pub struct NoteStatsReportDto {
     pub top_liked: Vec<NoteRankRow>,
     #[serde(rename = "topFavorited")]
     pub top_favorited: Vec<NoteRankRow>,
+    #[serde(rename = "topCommented")]
+    pub top_commented: Vec<NoteRankRow>,
     /// 最近 30 天，**定长 30 行、缺日补零**（见下）
     pub daily: Vec<DailyRow>,
 }
@@ -756,6 +806,28 @@ pub async fn note_report(
         Err(e) => return Json(ApiResponse::error(&e)),
     };
 
+    // 讨论数：**两条过滤与公开讨论区逐字相同**（`approved = 1 AND is_deleted = 0`，
+    // 同 `comments_of`）。不加这两条的话后台会数出"点进去看不到的评论"——
+    // 那是最容易被当成"数错了"的一类不一致。
+    let comments = match sum_by_note(
+        note_comment::Entity::find()
+            .select_only()
+            .column(note_comment::Column::NoteId)
+            .column_as(Expr::col(note_comment::Column::Id).count(), "total")
+            .filter(note_comment::Column::Approved.eq(1))
+            .filter(note_comment::Column::IsDeleted.eq(0))
+            .group_by(note_comment::Column::NoteId)
+            .into_tuple::<(i32, Option<i64>)>()
+            .all(db)
+            .await,
+        "note_comment",
+    )
+    .await
+    {
+        Ok(m) => m,
+        Err(e) => return Json(ApiResponse::error(&e)),
+    };
+
     let all_rows = |m: &HashMap<i32, i64>| -> Vec<NoteRankRow> {
         titles
             .iter()
@@ -765,6 +837,7 @@ pub async fn note_report(
                 views: views.get(id).copied().unwrap_or(0),
                 likes: likes.get(id).copied().unwrap_or(0),
                 favorites: favorites.get(id).copied().unwrap_or(0),
+                comments: comments.get(id).copied().unwrap_or(0),
             })
             .filter(|r| m.get(&r.note_id).copied().unwrap_or(0) > 0)
             .collect()
@@ -772,6 +845,7 @@ pub async fn note_report(
     let top_viewed = rank(all_rows(&views), &views);
     let top_liked = rank(all_rows(&likes), &likes);
     let top_favorited = rank(all_rows(&favorites), &favorites);
+    let top_commented = rank(all_rows(&comments), &comments);
 
     // 趋势：最近 30 天。**必须补零**——SQL 不会为没流量的日子造行，直接返回会给出
     // 一根根断掉的横轴（周五有数、周六周日整个消失，看起来像数据丢了）。
@@ -782,7 +856,13 @@ pub async fn note_report(
         let d = start + chrono::Duration::days(i);
         daily.insert(
             d,
-            DailyRow { date: d.format("%Y-%m-%d").to_string(), views: 0, likes: 0, favorites: 0 },
+            DailyRow {
+                date: d.format("%Y-%m-%d").to_string(),
+                views: 0,
+                likes: 0,
+                favorites: 0,
+                comments: 0,
+            },
         );
     }
     // 空 id 列表会让 `IN ()` 成为语法错误 ⇒ 先短路（库里一篇文章都没有的情况）
@@ -847,6 +927,26 @@ pub async fn note_report(
                 return Json(ApiResponse::error("统计查询失败，请稍后再试"));
             }
         }
+        // 讨论的日趋势：与点赞/收藏同一条路，只是**多了两条过滤**（公开可见的那些才
+        // 算讨论量）。不加过滤线会跳一下——一条待审评论被通过的那一刻才出现在趋势上，
+        // 而它一直躺在库里。
+        match note_comment::Entity::find()
+            .select_only()
+            .column(note_comment::Column::CreatedAt)
+            .filter(note_comment::Column::NoteId.is_in(ids.clone()))
+            .filter(note_comment::Column::CreatedAt.gte(cutoff))
+            .filter(note_comment::Column::Approved.eq(1))
+            .filter(note_comment::Column::IsDeleted.eq(0))
+            .into_tuple::<chrono::NaiveDateTime>()
+            .all(db)
+            .await
+        {
+            Ok(rows) => bucket_by_day(&mut daily, rows, |r| &mut r.comments),
+            Err(e) => {
+                tracing::error!("[stats] note_comment 日趋势失败: {e}");
+                return Json(ApiResponse::error("统计查询失败，请稍后再试"));
+            }
+        }
     }
 
     let visible_ids: HashSet<i32> = ids.iter().copied().collect();
@@ -865,6 +965,11 @@ pub async fn note_report(
         .filter(|(id, _)| visible_ids.contains(id))
         .map(|(_, v)| *v)
         .sum();
+    let total_comments: i64 = comments
+        .iter()
+        .filter(|(id, _)| visible_ids.contains(id))
+        .map(|(_, v)| *v)
+        .sum();
 
     let mut daily: Vec<DailyRow> = daily.into_values().collect();
     daily.sort_by(|a, b| a.date.cmp(&b.date));
@@ -874,9 +979,11 @@ pub async fn note_report(
         total_views,
         total_likes,
         total_favorites,
+        total_comments,
         top_viewed,
         top_liked,
         top_favorited,
+        top_commented,
         daily,
     }))
 }
@@ -1018,8 +1125,11 @@ pub struct PeriodRow {
     pub views: i64,
     pub likes: i64,
     pub favorites: i64,
+    /// 本期讨论量（20261003 补）。口径同全局：只算**公开可见**的评论
+    /// （`approved = 1 AND is_deleted = 0`），且只算当前可见文章上的。
+    pub comments: i64,
     /// 本期**阅读量**前 5（名次口径是本期内，与全局榜无关）。
-    /// 每行三个数都带——看榜的人下一个问题必然是"那篇的赞/收藏呢"。
+    /// 每行四个数都带——看榜的人下一个问题必然是"那篇的赞/收藏/讨论呢"。
     #[serde(rename = "topNotes")]
     pub top_notes: Vec<NoteRankRow>,
 }
@@ -1106,8 +1216,10 @@ pub async fn note_period_report(
         )));
     }
 
-    // 一篇文章在某一期里的三个数：`(期 key, note_id) → [views, likes, favorites]`
-    type Acc = HashMap<(String, i32), [i64; 3]>;
+    // 一篇文章在某一期里的四个数：`(期 key, note_id) → [views, likes, favorites, comments]`
+    // ⚠️ 下标是**位置**约定的（0 阅读 / 1 点赞 / 2 收藏 / 3 讨论），下面累加处的
+    // `[0]` / `[1usize]` / `[2usize]` / `[3usize]` 与 `or_insert([0; 4])` 必须一起看。
+    type Acc = HashMap<(String, i32), [i64; 4]>;
     let mut acc: Acc = HashMap::new();
     // 期 key 的归属：日期 → 期。kept 是倒序的，构建顺序无所谓（期界互不重叠）
     let period_of = |d: chrono::NaiveDate| -> Option<String> {
@@ -1130,7 +1242,7 @@ pub async fn note_period_report(
             Ok(rows) => {
                 for (id, d, c) in rows {
                     if let Some(k) = period_of(d) {
-                        acc.entry((k, id)).or_insert([0, 0, 0])[0] += c as i64;
+                        acc.entry((k, id)).or_insert([0; 4])[0] += c as i64;
                     }
                 }
             }
@@ -1160,17 +1272,30 @@ pub async fn note_period_report(
             .into_tuple::<(i32, chrono::NaiveDateTime)>()
             .all(db)
             .await;
-        for (rows, slot) in [(likes, 1usize), (favs, 2usize)] {
+        // 讨论：与点赞/收藏同一条路（`created_at` 取日期），但**多两条过滤**
+        // （公开可见的那些才算——与全局报表的 totalComments 同一口径）。
+        let cmts: Result<Vec<(i32, chrono::NaiveDateTime)>, DbErr> = note_comment::Entity::find()
+            .select_only()
+            .column(note_comment::Column::NoteId)
+            .column(note_comment::Column::CreatedAt)
+            .filter(note_comment::Column::NoteId.is_in(ids.clone()))
+            .filter(note_comment::Column::CreatedAt.gte(from))
+            .filter(note_comment::Column::Approved.eq(1))
+            .filter(note_comment::Column::IsDeleted.eq(0))
+            .into_tuple::<(i32, chrono::NaiveDateTime)>()
+            .all(db)
+            .await;
+        for (rows, slot) in [(likes, 1usize), (favs, 2usize), (cmts, 3usize)] {
             match rows {
                 Ok(rows) => {
                     for (id, t) in rows {
                         if let Some(k) = period_of(t.date()) {
-                            acc.entry((k, id)).or_insert([0, 0, 0])[slot] += 1;
+                            acc.entry((k, id)).or_insert([0; 4])[slot] += 1;
                         }
                     }
                 }
                 Err(e) => {
-                    tracing::error!("[stats] 分期点赞/收藏失败: {e}");
+                    tracing::error!("[stats] 分期点赞/收藏/讨论失败: {e}");
                     return Json(ApiResponse::error("统计查询失败，请稍后再试"));
                 }
             }
@@ -1183,21 +1308,25 @@ pub async fn note_period_report(
     let mut periods: Vec<PeriodRow> = Vec::with_capacity(kept.len());
     for p in &kept {
         let mut rows: Vec<NoteRankRow> = Vec::new();
-        let (mut tv, mut tl, mut tf) = (0i64, 0i64, 0i64);
+        let (mut tv, mut tl, mut tf, mut tc) = (0i64, 0i64, 0i64, 0i64);
         for (id, title) in titles.iter() {
             let Some(v) = acc.get(&(p.key.clone(), *id)) else { continue };
-            if v == &[0, 0, 0] {
+            // 「本期一行没有」= **四个数**全是 0。判据必须随下标表一起加长：
+            // 只判前三个的话，"这期只被讨论、没被阅读"的文章会进榜、且在榜上显示一串 0。
+            if v == &[0, 0, 0, 0] {
                 continue;
             }
             tv += v[0];
             tl += v[1];
             tf += v[2];
+            tc += v[3];
             rows.push(NoteRankRow {
                 note_id: *id,
                 title: title.clone(),
                 views: v[0],
                 likes: v[1],
                 favorites: v[2],
+                comments: v[3],
             });
         }
         // 名次口径 = **本期阅读量**（与全局榜同一把尺子，只是范围收到这一期）；
@@ -1213,6 +1342,7 @@ pub async fn note_period_report(
             views: tv,
             likes: tl,
             favorites: tf,
+            comments: tc,
             top_notes: rows,
         });
     }

@@ -16,17 +16,21 @@ import type {NoteType} from "../interface/NoteType";
  * 接口若哪天改了类型，宁可少显示一个数，也不要显示一个错的。
  */
 export interface StatCell {
-    key: 'views' | 'likes' | 'favorites'
+    key: 'views' | 'likes' | 'favorites' | 'comments'
     /** 人读的标签，同时用作 `title`（悬停说明），不显示在卡片上 */
     label: string
     value: number
 }
 
-/** 按固定顺序（阅读 → 点赞 → 收藏）给出该显示的几个数；顺序写死 = 卡片上三处顺序一致 */
+/** 按固定顺序（阅读 → 点赞 → 收藏 → 讨论）给出该显示的几个数，顺序写死 = 卡片上
+ *  几个数的次序恒定。**新加的一律排在末尾**：改这个数组会让站上每一张卡片的数换位置。
+ *  ⚠️ 详情页那一列是另一套次序（收藏/浏览/点赞/讨论，20260926 起就在那儿），两处**没有**
+ *  对齐过、也不由本文件决定——别拿这个数组去推详情页的 DOM 顺序。 */
 export const STAT_CELL_ORDER: ReadonlyArray<{ key: StatCell['key']; label: string }> = [
     { key: 'views', label: '阅读量' },
     { key: 'likes', label: '点赞数' },
     { key: 'favorites', label: '收藏数' },
+    { key: 'comments', label: '讨论数' },
 ]
 
 export function statCells(item: Partial<NoteType> | null | undefined): StatCell[] {

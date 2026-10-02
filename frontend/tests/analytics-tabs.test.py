@@ -2,7 +2,7 @@
 """后台「数据统计」页的无头验收：真组件 + 真 antd + 假后端。
 
 20261001 这一轮把这一页从"一张假的月更折线 + 一张假饼图"改成了**两个页签**：
-  · 文章数据 —— 阅读量 / 点赞量 / 收藏量（三个汇总卡 + 三个榜 + 30 天趋势）
+  · 文章数据 —— 阅读量 / 点赞量 / 收藏量 / 讨论量（四个汇总卡 + 四个榜 + 30 天趋势）
     + **周报 / 月报 / 年报**（按期一张可展开的列表）；
   · 用户活跃 —— 直接渲染 `GET /api/protected/stats/users`。
 
@@ -49,7 +49,7 @@ DEFINE = ('import.meta.env={"VITE_HTTP_BASEURL":"","VITE_CDN_BASEURL":"",'
 
 # ── 假后端 ────────────────────────────────────────────────────────────────────
 # 三份数据刻意做出**三处不同的边界情形**，判据才不是空转：
-#   · 文章报表：三个榜各有内容，总数非零；
+#   · 文章报表：四个榜各有内容，总数非零；
 #   · 期报：week 三期（第一期 partial）、month 一期、year **since=null**（一行记录都没有）
 #     —— 这正是"空态 vs 一堆 0"那条判据要的输入；
 #   · 用户报表：明细里留一行 `lastActiveAt: null`（"无活动"要显示成文字而不是空白）。
@@ -61,17 +61,19 @@ const env = (data: any) => ({ status: 200, data: { code: 200, message: 'ok', dat
 const rank = (n: number, base: number) => Array.from({ length: 5 }, (_, i) => ({
   noteId: 100 + i, title: '示例文章 ' + (i + 1) + '（标题长一点，验证省略号）',
   views: base - i * n, likes: base - i * n - 1, favorites: base - i * n - 2,
+  comments: (base - i * n) % 7,
 }));
 
 const DAILY = Array.from({ length: 30 }, (_, i) => ({
   date: '2026-09-' + String(i + 1).padStart(2, '0'),
-  views: i * 3, likes: i % 5, favorites: i % 3,
+  views: i * 3, likes: i % 5, favorites: i % 3, comments: i % 4,
 }));
 
 const REPORT = {
   generatedAt: '2026-10-01 12:00',
-  totalViews: 1234, totalLikes: 56, totalFavorites: 7,
+  totalViews: 1234, totalLikes: 56, totalFavorites: 7, totalComments: 19,
   topViewed: rank(10, 500), topLiked: rank(2, 40), topFavorited: rank(1, 20),
+  topCommented: rank(3, 30),
   daily: DAILY,
 };
 
@@ -81,20 +83,20 @@ const PERIODS: any = {
     generatedAt: '2026-10-01 12:00', kind: 'week', since: '2026-09-28',
     periods: [
       { key: '2026-W40', label: '2026 年第 40 周', start: '2026-09-28', end: '2026-10-04',
-        partial: true, views: 300, likes: 12, favorites: 3,
+        partial: true, views: 300, likes: 12, favorites: 3, comments: 8,
         topNotes: rank(5, 100) },
       { key: '2026-W39', label: '2026 年第 39 周', start: '2026-09-21', end: '2026-09-27',
-        partial: false, views: 280, likes: 9, favorites: 1,
+        partial: false, views: 280, likes: 9, favorites: 1, comments: 5,
         topNotes: rank(4, 90) },
       { key: '2026-W38', label: '2026 年第 38 周', start: '2026-09-14', end: '2026-09-20',
-        partial: false, views: 0, likes: 0, favorites: 0, topNotes: [] },
+        partial: false, views: 0, likes: 0, favorites: 0, comments: 0, topNotes: [] },
     ],
   },
   month: {
     generatedAt: '2026-10-01 12:00', kind: 'month', since: '2026-09-28',
     periods: [
       { key: '2026-10', label: '2026 年 10 月', start: '2026-10-01', end: '2026-10-31',
-        partial: true, views: 42, likes: 3, favorites: 1, topNotes: rank(3, 30) },
+        partial: true, views: 42, likes: 3, favorites: 1, comments: 2, topNotes: rank(3, 30) },
     ],
   },
   year: { generatedAt: '2026-10-01 12:00', kind: 'year', since: null, periods: [] },
@@ -104,10 +106,13 @@ const USERS = {
   generatedAt: '2026-10-01 12:00',
   roleCounts: [{ role: 'admin', count: 1 }, { role: 'user', count: 3 }],
   totalUsers: 4, totalConversations: 9, totalMessages: 88, totalExecutions: 12,
+  totalComments: 19,
   activeUsers7d: 2, activeUsers30d: 3, listedUsers: 2,
   users: [
-    { id: 1, name: '管理员', role: 'admin', conversations: 6, messages: 70, lastActiveAt: '2026-10-01 11:30' },
-    { id: 2, name: '用户#2', role: 'user', conversations: 3, messages: 18, lastActiveAt: null },
+    { id: 1, name: '管理员', role: 'admin', conversations: 6, messages: 70, comments: 11,
+      lastActiveAt: '2026-10-01 11:30' },
+    { id: 2, name: '用户#2', role: 'user', conversations: 3, messages: 18, comments: 0,
+      lastActiveAt: null },
   ],
 };
 
@@ -217,17 +222,17 @@ with sync_playwright() as p:
           head["tabs"] == ["文章数据", "用户活跃"], str(head["tabs"]))
     check("默认落在「文章数据」", head["active"] == "文章数据", str(head["active"]))
 
-    # ── 二、文章数据页：三个汇总卡 + 三个榜 ────────────────────────────────────
-    print("\n【二】文章数据：阅读量 / 点赞量 / 收藏量")
+    # ── 二、文章数据页：四个汇总卡 + 四个榜 ────────────────────────────────────
+    print("\n【二】文章数据：阅读量 / 点赞量 / 收藏量 / 讨论量")
     cards = pg.evaluate("""() => [...document.querySelectorAll('.analyticsBody .akCard .ant-statistic-title')]
         .map((el) => el.textContent.trim())""")
-    check("三个汇总卡：总阅读量 / 总点赞量 / 总收藏量",
-          cards == ["总阅读量", "总点赞量", "总收藏量"], str(cards))
+    check("四个汇总卡：总阅读量 / 总点赞量 / 总收藏量 / 总讨论量",
+          cards == ["总阅读量", "总点赞量", "总收藏量", "总讨论量"], str(cards))
     panels = pg.evaluate("""() => [...document.querySelectorAll('.analyticsBody .akPanel > h3')]
         .map((el) => el.textContent.trim())""")
-    check("三个榜单在位",
-          [t for t in panels if t.startswith(('阅读量 Top', '点赞量 Top', '收藏量 Top'))]
-          == ["阅读量 Top 10", "点赞量 Top 10", "收藏量 Top 10"], str(panels))
+    check("四个榜单在位",
+          [t for t in panels if t.startswith(('阅读量 Top', '点赞量 Top', '收藏量 Top', '讨论量 Top'))]
+          == ["阅读量 Top 10", "点赞量 Top 10", "收藏量 Top 10", "讨论量 Top 10"], str(panels))
     lines = pg.evaluate("""() => {
         const canvas = document.querySelector('.analyticsBody .akChart canvas');
         return { hasChart: !!canvas, w: canvas ? canvas.width : 0 };
@@ -243,8 +248,8 @@ with sync_playwright() as p:
             partial: !!el.querySelector('.akPartial'),
         }))""")
     check("列出了三期（后端给了三期）", len(rows) == 3, str(len(rows)))
-    check("行上带三个数（阅读/点赞/收藏）",
-          all('阅读' in r["nums"] and '点赞' in r["nums"] and '收藏' in r["nums"] for r in rows),
+    check("行上带四个数（阅读/点赞/收藏/讨论）",
+          all(all(k in r["nums"] for k in ('阅读', '点赞', '收藏', '讨论')) for r in rows),
           str(rows[0]["nums"]) if rows else "")
     check("只有标记 partial 的那一期挂「部分统计」",
           [r["partial"] for r in rows] == [True, False, False], str([r["partial"] for r in rows]))
@@ -268,8 +273,8 @@ with sync_playwright() as p:
     check("展开第一期后出现榜单正文", bool(opened) and opened["n"] == 5, str(opened and opened["n"]))
     check("正文里的标题是完整标题（不是图表里的截断）",
           bool(opened) and "示例文章 1" in (opened["first"] or ""), str(opened and opened["first"]))
-    check("期报正文每行带三个数",
-          bool(opened) and all(k in opened["nums"] for k in ("阅读", "点赞", "收藏")),
+    check("期报正文每行带四个数",
+          bool(opened) and all(k in opened["nums"] for k in ("阅读", "点赞", "收藏", "讨论")),
           str(opened and opened["nums"]))
 
     # 第三期（零数据）展开后要说"没有数据"，而不是空面板
@@ -330,12 +335,12 @@ with sync_playwright() as p:
           hidden.count("none") == 1 and len(hidden) == 2, str(hidden))
     # ⚠️ 必须**限定在活动页签内**：antd 的 Tabs 默认 `destroyInactiveTabPane=false`，
     # 头一个页签进过一次就留在 DOM 里（只是 `display:none`）。不加这层会一次数到
-    # 九个卡（文章数据那三个 + 这里六个），看起来像"多渲染了"，其实是对面那个页签。
+    # 十一个卡（文章数据那四个 + 这里七个），看起来像"多渲染了"，其实是对面那个页签。
     u_cards = pg.evaluate("""() => [...document.querySelectorAll(
             '.analyticsBody .ant-tabs-tabpane-active .akCard .ant-statistic-title')]
         .map((el) => el.textContent.trim())""")
-    check("六张汇总卡（活跃 7 天/30 天 + 用户/会话/消息/执行）",
-          u_cards == ["活跃用户（7 天）", "活跃用户（30 天）", "用户总数", "总会话数", "总消息数", "总执行数"],
+    check("七张汇总卡（活跃 7 天/30 天 + 用户/会话/消息/执行/讨论）",
+          u_cards == ["活跃用户（7 天）", "活跃用户（30 天）", "用户总数", "总会话数", "总消息数", "总执行数", "总讨论数"],
           str(u_cards))
     table = pg.evaluate("""() => {
         const rows = [...document.querySelectorAll('.analyticsBody .ant-table-tbody tr.ant-table-row')];
@@ -348,8 +353,8 @@ with sync_playwright() as p:
     check("明细两行都在", table["n"] == 2, str(table["n"]))
     # `lastActiveAt: null` 必须显示成文字 —— 空白会被读成"渲染坏了"（stats.rs 的口径原话）
     check("无活动的用户显示「无活动」而不是空白", table["last"][1] == "无活动", str(table["last"]))
-    check("表头是活动口径那几列",
-          table["head"] == ["用户", "角色", "会话数", "消息数", "最近活动"], str(table["head"]))
+    check("表头是活动口径那几列（讨论数在第 5 列，最近活动仍是最后一列）",
+          table["head"] == ["用户", "角色", "会话数", "消息数", "讨论数", "最近活动"], str(table["head"]))
 
     check("全程无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
