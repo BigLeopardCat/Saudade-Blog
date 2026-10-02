@@ -100,7 +100,8 @@ shutil.copyfile(WIDGET_CSS, SB / "widget.css")
 
 # DOM 的**结构**照抄真页面，盒子尺寸只求"都在同一个点上重叠"：
 #   · `.frontRoot` 是整站那层（App.tsx:67），里面放一张写满视口的页；
-#   · `#waifu` 是 agent 仓的根节点（`position:fixed; left:15px; height:300px`）。
+#   · `#waifu` 是 agent 仓的根节点（`position:fixed; height:300px`，left 由那份
+#     widget.css 说了算——20261003 起是 165px，本套件**不抄这个数**）。
 #     两处夹具补偿，都写在夹具的 <style>/DOM 里，真 widget.css 一字未改：
 #     ① `bottom:-500px` 是收起态（滑出屏外），覆盖成 0 —— 本套件量的是层级不是位置；
 #     ② 它没有 `width`，真页面里宽度由子节点（canvas / 对话面板）撑出来，
@@ -160,15 +161,29 @@ threading.Thread(target=_server.serve_forever, daemon=True).start()
 from playwright.sync_api import sync_playwright  # noqa: E402
 
 URL = f"http://127.0.0.1:{_server.server_address[1]}/index.html"
-# 左下角：`#waifu` 是 left:15px + 60×47、贴着视口底缘 ⇒ 这个点必然同时落在
-# 整站页 / 看板娘 / 任何一个满屏浮层上。取 (40, 375) 在 400px 高的视口里。
-PX, PY = 40, 375
 
 with sync_playwright() as p:
     browser = p.chromium.launch()
     pg = browser.new_page(viewport={"width": 900, "height": 400})
     pg.goto(URL)
     pg.wait_for_timeout(200)
+
+    # 探针点**按实测盒子现算**，不硬写坐标：硬写的那版是 (40, 375)，靠 "#waifu 在
+    # left:15px" 才成立——20261003 用户第 2 条把它挪到 165px（= 板块半宽）之后，
+    # 那个点当场落到了页面层上，而断言只会红一句、看不出是探针自己失效。
+    # 现算：横向取盒子中心，纵向取盒底往上 25px（盒子 300px 高、贴视口底缘）。
+    PX, PY = pg.evaluate("""() => {
+        const r = document.getElementById('waifu').getBoundingClientRect();
+        return [r.left + r.width / 2, r.top + r.height - 25];
+    }""")
+    # 红基线：这个点必须真在 `#waifu` 盒内。少了它，"看板娘压得住页面"在探针点
+    # 根本没碰到看板娘时也是绿的（本次改动就是这么把它弄红的）。
+    inside = pg.evaluate("""([x, y]) => {
+        const r = document.getElementById('waifu').getBoundingClientRect();
+        return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+    }""", [PX, PY])
+    check("★ 探针点落在 #waifu 盒内（否则下面那组量的是别的东西）",
+          inside, f"({PX:.0f}, {PY:.0f})")
 
     def top(spec):
         pg.evaluate("(s) => window.__set(s)", spec)

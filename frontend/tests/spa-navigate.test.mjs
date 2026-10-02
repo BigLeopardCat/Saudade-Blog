@@ -231,7 +231,10 @@ console.log('\n⑥ 版本号：改了 widget 脚本必须 bump（nginx 对 live2
     // content-type 兜底：不是 text/event-stream 就如实报错）。改 chat-stream.js 必须
     // bump——nginx 对 live2d-widgets 是 1 年 immutable，不 bump 访客吃的是旧脚本，
     // 而**旧脚本没有这道兜底**（也正是那次事故里前端一声不吭的原因）。
-    ok(ver === '20261002c', 'VER 已 bump 到本轮（20261002c）', { ver });
+    // 20261002d = 「看板娘初始位置右移半个板块宽」那一轮（widget.css 的 #waifu
+    // left: 15px → 165px = #live2d 板块 300px 的一半，并补一条 <480px 的回落）。
+    // 位置写在样式表里 ⇒ 同样必须 bump，否则访客吃 1 年缓存仍看到贴左的旧位置。
+    ok(ver === '20261002d', 'VER 已 bump 到本轮（20261002d）', { ver });
     const tsx = readFileSync(path.join(root, 'src/components/Live2dAgent/index.tsx'), 'utf8');
     ok(tsx.includes('boot.js?v=' + ver), 'Live2dAgent 的 ?v= 与 VER 一致');
 }
