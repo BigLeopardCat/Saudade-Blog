@@ -15,7 +15,7 @@ export interface Exhibit {
     Component: LazyExoticComponent<ComponentType>;
 }
 
-export const EXHIBITS: Exhibit[] = [
+const ALL_EXHIBITS: Exhibit[] = [
     {
         key: 'wordgraph',
         title: '文章向量空间',
@@ -33,6 +33,13 @@ export const EXHIBITS: Exhibit[] = [
         Component: lazy(() => import('./wordgraph/WordGraphExhibit')),
     },
 ];
+
+/** 语料归属自校验（构建期，见 `vite.config.ts` 的 GRAPH_OWNERSHIP）：
+ *  向量空间的产物里内嵌的是**建图时那些文章**的词与标题。产物 manifest 记着它属于哪个
+ *  站点，不是本站就**整件不注册** —— 第三方 clone 部署看到的是"首页没有这件展品"，
+ *  而不是别人的文章向量空间，也不是一张加载失败的破卡片。
+ *  自己重建过图谱的人，manifest 里写的就是他自己站点的地址，构建期自动通过。 */
+export const EXHIBITS: Exhibit[] = __GRAPH_LOCAL__ ? ALL_EXHIBITS : [];
 
 /** `2026-09-16T01:31:59+08:00` → `2026年09月16日 UTC+8 01:31:59`。
  *  形状不符就原样返回——好消息是一条能看懂的时间串，坏消息也好过空白。 */

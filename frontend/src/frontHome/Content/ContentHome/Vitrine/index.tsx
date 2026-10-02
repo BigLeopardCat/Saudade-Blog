@@ -82,6 +82,14 @@ import './index.sass';
  *    `pointer-events: none` 同时也是滚轮穿透的载体（滚轮是指针事件），别删。
  */
 export default function Vitrine() {
+    // 语料归属自校验（见 `exhibits.ts`）会把不属于本站的展品滤掉，那时 `EXHIBITS` 是空数组。
+    // 空数组**不能再往下走**：本体里写着 `EXHIBITS[0].Component`，会当场崩；而且 hooks
+    // 不能有条件地跳过，所以"有没有展品"只能在这层判 —— 本组件自己一个 hook 都不带。
+    return EXHIBITS.length ? <VitrineBoard /> : null;
+}
+
+/** 展示柜本体。只在**有展品**时挂载（入口见上面那个外壳）。 */
+function VitrineBoard() {
     const rootRef = useRef<HTMLElement | null>(null);
     const fallRef = useRef<HTMLSpanElement | null>(null);
     const dragRef = useRef<Drag | null>(null);

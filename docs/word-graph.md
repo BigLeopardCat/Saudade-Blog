@@ -33,12 +33,32 @@ Rust 侧 `src/routes/graph.rs`（`POST /api/public/graph/query`）→ agent `rag
 | 文件 | 内容 | 缓存 |
 |---|---|---|
 | `graph-<id>.js` | `export default {v, model, dim, built, articles[], nodes[], edges[], stats{}}` | 1 年 immutable |
-| `manifest.json` | `{"v":"<id>","file":"graph-<id>.js","bytes":N,"built":"<ISO+08:00>"}` 101 字节 | no-store |
+| `manifest.json` | `{"v":"<id>","file":"graph-<id>.js","bytes":N,"built":"<ISO+08:00>","site":"<归属站点>"}` 131 字节 | no-store |
 
 `manifest.json` 里的 `built` 与产物内那份**同源**（`build_word_graph.py` 写 manifest 时直接取
 payload 的 `built`）——展示柜标题栏那个「2026年09月16日 UTC+8 01:31:59」角标读的就是它（§8.9），
 所以**重出图后角标自动跟着走**，前端不必改一个字。`built` 可选：老 manifest 没有这个字段时
 `loadManifest()` 照样返回，`badge` 返回 null、角标不渲染（不会打出 `undefined年`）。
+
+**`site` = 产物的归属站点**（`build_word_graph.py` 写入，缺省取 `--api-base` 的 origin）。
+产物里内嵌的是**建图时那些文章**的词与标题，所以别人 clone 这个仓直接部署，展品会把原作者
+的文章画到他的首页上。前端在**构建期**拿 `site` 跟本站地址比（`vite.config.ts` 的
+`GRAPH_OWNERSHIP`），不是本站就**整件不注册**（`exhibits.ts`）——第三方看到的是"首页没有
+这件展品"，不是别人的语料，也不是一张加载失败的破卡片。
+
+判定规则（缺 `site` / 产物建在回环地址 ⇒ 认作本地，老产物向后兼容）：
+
+| `manifest.site` | 本站 `SITE_URL` | 结果 |
+|---|---|---|
+| 缺失（老产物） | 任意 | 注册（向后兼容） |
+| `http://localhost:3000` 等回环地址 | 任意 | 注册（开发者自己建的图） |
+| `https://saudade.site` | `https://saudade.site` | 注册 |
+| `https://saudade.site` | `https://example.com` | **不注册** |
+
+**重建过图谱的人自动通过** —— 他跑 `build_word_graph.py` 时 `site` 取的是他自己的
+`--api-base`，manifest 里写的就是他自己的站点。本地 `vite dev` 另有豁免（`vite.config.ts`
+的 `command === 'serve'`），否则改前端的人会因为"站点地址是 localhost"而看不到展品。
+生产构建**不给** localhost 豁免：站点地址配错时结果是"隐藏"（安全方向）。
 
 **为什么用 `.js` 而不是 `.json`**：nginx 的 immutable 白名单是
 `-[a-zA-Z0-9_-]{8,}\.(js|css|woff2?|mp4|webm|jpe?g|png|webp)`（`sites-enabled/blog` 两个

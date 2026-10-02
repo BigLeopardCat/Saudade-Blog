@@ -7,3 +7,9 @@
  */
 declare const __SITE_URL__: string;
 declare const __SITE_AUTHOR__: string;
+
+/**
+ * 构建期注入：图谱产物的语料是否属于本站（判定见 `vite.config.ts` 的 GRAPH_OWNERSHIP）。
+ * 消费方只有 `Vitrine/exhibits.ts` —— 不是本站就不注册那件展品。
+ */
+declare const __GRAPH_LOCAL__: boolean;
