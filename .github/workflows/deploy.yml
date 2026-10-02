@@ -175,6 +175,10 @@ jobs:
           # **不设不会报错，只会静默生成 http://localhost:5173 的地址** —— 所以线上必须设它；
           # 代码侧的中性默认值是为了 fork 不要指向本项目的域名（见 frontend/vite.config.ts）。
           VITE_SITE_URL: ${{ vars.VITE_SITE_URL }}
+          # 站点署名（index.html 的 <meta name="author">）。与 SITE_URL 同理走 Variable：
+          # 代码侧的缺省是**空串**（fork 不该继承本项目作者的署名），没配时构建会把那一行
+          # 整条删掉。⚠️ **这个 Variable 必须设**，否则线上的署名会消失。
+          VITE_SITE_AUTHOR: ${{ vars.VITE_SITE_AUTHOR }}
         run: |
           npm ci
           # 看板娘前端**两棵树**（live2d-widgets/、live2d_model/）的源码：20261002 前端搬家起

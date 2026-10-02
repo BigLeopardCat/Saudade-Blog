@@ -20,7 +20,9 @@ import react from '@vitejs/plugin-react';
  * 否则 HTML 一个默认值、TS 一个默认值，改一处忘一处就会 canonical 与 og:url 打架。
  */
 const SITE_URL = (process.env.VITE_SITE_URL || 'http://localhost:5173').replace(/\/+$/, '');
-const SITE_AUTHOR = process.env.VITE_SITE_AUTHOR || 'Sora';
+// 署名同理：**缺省是空串**，不预设任何人的名字。fork 出去的人不设它，页面上就没有署名，
+// 而不是继承本项目作者的。线上由 CI 的仓库 Variable `VITE_SITE_AUTHOR` 显式传入。
+const SITE_AUTHOR = process.env.VITE_SITE_AUTHOR || '';
 
 if (!process.env.VITE_SITE_URL) {
     console.warn(
@@ -34,9 +36,16 @@ const siteIdentity = (): Plugin => ({
     transformIndexHtml: {
         // 'pre'：先于 Vite 自己的 env 替换跑。两边占位符不重叠，但显式定序免得将来撞上。
         order: 'pre',
-        handler: (html: string) => html
-            .replace(/__SITE_URL__/g, SITE_URL)
-            .replace(/__SITE_AUTHOR__/g, SITE_AUTHOR),
+        handler: (html: string) => {
+            const out = html
+                .replace(/__SITE_URL__/g, SITE_URL)
+                .replace(/__SITE_AUTHOR__/g, SITE_AUTHOR);
+            // 没配署名就把整行删掉：留 `<meta name="author" content="">` 对爬虫与人
+            // 都没有意义，而**留占位符原样**更糟（这正是本文件头注反对的那种做法）。
+            return SITE_AUTHOR
+                ? out
+                : out.replace(/^[^\S\n]*<meta name="author"[^>]*>\n/m, '');
+        },
     },
     // robots.txt 整份由这里生成（`public/robots.txt` 已删）。
     //
