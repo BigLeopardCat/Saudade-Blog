@@ -162,6 +162,16 @@ eq(count(talks, 'if forced && approved == 1 { 0 } else { approved }'), 1,
 ok(count(strip(codeOnly(risk)), 'forced && approved') === 0,
     '压 0 的判据不在 risk.rs（它只回 verdict，不碰 approved）');
 
+// 「`<= 0` = 这一档显式关闭」这条规则**只许住一处**。20261003 CI 抓到的真实缺陷：
+// 原来调用方判 `min_interval_secs > 0`，而 `check_and_mark` 内部又写 `gap_secs.max(1)`
+// —— 同一个规则两份实现、且下面那份把 0 悄悄变成"1 秒"（一个关不掉的闸）。
+// 这类 bug 本地 `cargo check` 永远看不见（测试跑不了），只有 CI 的 Rust 用例能抓。
+const limiter = bodyOf(risk, 'fn check_and_mark');
+ok(/gap_secs <= 0/.test(limiter) && /return Ok\(\(\)\)/.test(limiter),
+    'check_and_mark 自己认「<= 0 = 关闭」（不是 `gap_secs.max(1)` 那种把 0 变 1 秒的写法）');
+ok(count(strip(risk), 'min_interval_secs > 0') === 0,
+    '调用方不再自己判一遍（规则一份，不在两处各实现一次）');
+
 // 三档行为：拒发 / 转人工 / 自动禁言，各有一处
 const apply = bodyOf(risk, 'pub async fn apply_verdict');
 ok(/RateLimited \{ count \}/.test(apply) && /notify_rate_limited/.test(apply), '限流档：通知本人');
