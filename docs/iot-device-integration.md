@@ -1,10 +1,15 @@
 # IoT 设备接入物联网平台指南
 
-> 平台 = saudade.site 的 IoT 能力：设备注册/参数配置/指令下发/遥测/在线状态/OTA。
+> 平台 = 本站的 IoT 能力：设备注册/参数配置/指令下发/遥测/在线状态/OTA。
+> **这是可选件，出厂默认不装**——装/卸的三处开关、目录与脚本见 [iot/](../iot/)。
 > 架构：nginx（`/device-api` 反代 + `/device-console` 静态）→ **device-service**（Rust, :3100，
 > 业务 API + MQTT 桥）→ **EMQX**（MQTT broker）→ **ESP32 等设备**。
 > 控制台：https://saudade.site/device-console/（复用博客登录态，无二次登录）。
-> 设备参考实现：[ESP32-S3-OBC](../ESP32-S3-OBC/docs/device-integration.md)（固件仓库，接入示例 + 拓展指南）。
+> 设备参考实现：[BigLeopardCat/ESP32-S3-OBC](https://github.com/BigLeopardCat/ESP32-S3-OBC)
+> （**另一个仓**，实际在跑的固件在那儿）；本仓 [iot/firmware/](../iot/firmware/) 是抽出来的
+> 最小骨架与接口说明。
+>
+> ⚠️ 文中 `saudade.site` 是**示例站点**，换成你自己的域名（与站点证书一致）。
 
 ---
 

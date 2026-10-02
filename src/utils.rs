@@ -104,3 +104,26 @@ pub fn site_url() -> String {
         .trim_end_matches('/')
         .to_string()
 }
+
+/// 物联网平台（EMQX + device-service + 静态控制台）是否部署在本站：读 `IOT_ENABLED`。
+///
+/// **出厂缺省是关**（与 `site_url` 同一取向：没配时按"没装"处理，而不是按项目作者装了的
+/// 样子）。那三块是**可选件**，源码收在仓库 `iot/` 目录，装不装由部署者决定；关掉时
+/// nginx 不 include 那两个 snippet ⇒ `/device-console/` 与 `/device-api/*` 根本不存在
+/// （`/device-console/` 会落到 SPA fallback 返回首页的 index.html）。
+///
+/// 本函数负责**只负责 Rust 这一侧的唯一一处消费点**——`sitemap.xml` 的固定页面表
+/// （[`crate::routes::sitemap`]）。别的消费面各读各的配置体系、值同源：agent 读
+/// `config/settings.py` 的 `iot_enabled`，nginx 侧由 `iot/toggle.sh` 增删 snippet，
+/// 前端**零消费点**（它只在 `SPA_NAV_DENY` 里提到这个路径，那是"不走 SPA 桥"的意思，
+/// 与装没装无关）。别在这里加缓存：调用点只有"每次抓 sitemap"，一次 getenv 可忽略，
+/// 而 `OnceLock` 会让测试里改环境变量失效（同 `site_url`）。
+///
+/// 取值口径与 agent 侧 `_settings.iot_enabled`（pydantic-settings，真值集
+/// `1/true/yes/on`）**必须一致**：两边对同一个 `.env` 里的 `IOT_ENABLED=1` 都要认成"开"。
+pub fn iot_enabled() -> bool {
+    matches!(
+        env::var("IOT_ENABLED").unwrap_or_default().trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}

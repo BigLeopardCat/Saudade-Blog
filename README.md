@@ -33,7 +33,7 @@ nginx（静态资源 + 反代 + MQTT WSS；JWT 校验在 Rust 侧）
 | **Rust 后端**（Axum + SeaORM + MySQL 8） | 博客主流量（文章/分类/标签/友链/留言板）、登录鉴权（JWT）、聊天链路中枢（鉴权 → 历史入库 → SSE 逐帧转发） | `src/` |
 | **前端**（React 18 + Vite + antd + bytemd） | SPA；看板娘与聊天面板由 `live2d-widgets/`（boot.js 入口，纯 JS 子模块拆分）驱动 | `frontend/` |
 | **AI Agent**（FastAPI + 手写 LangGraph） | 看板娘大脑：对话生成、博客查询、导航/特效/夜间命令、IoT 设备显示。**独立 git 仓库** | `saudade-blog-agent/` |
-| **IoT**（EMQX 5 + Rust device-service） | ESP32 设备接入（MQTT over TLS）、OLED 显示、设备控制台（`/device-console/`）。**可选项**，默认不启用 | `iot/`（服务本体另仓，见其 README） |
+| **IoT**（EMQX 5 + Rust device-service） | ESP32 设备接入（MQTT over TLS）、OLED 显示、设备控制台（`/device-console/`）。**可选件**，出厂默认不启用 | `iot/`；服务本体不在本仓，见 [iot/device-service/README.md](iot/device-service/README.md) |
 
 Agent 的核心理念是**把执行层的自由拿掉**（20260903 架构裁决，自由 ReAct / LLM 质检 / 重考轮
 已废除）。固定流程任务（导航/特效/夜间/设备显示）落地为 `skills.py` 里的静态技能定义：

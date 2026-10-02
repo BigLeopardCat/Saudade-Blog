@@ -18,9 +18,9 @@ nginx（唯一公网入口）
    ├── /                → 前端构建产物（SPA，静态直服）
    ├── /api/*           → Rust 后端（回环 :3000）
    ├── /api/chat/stream → Rust → Python Agent（回环 :8010，SSE 转发）
-   ├── /device-console/ → IoT 控制台静态页
-   ├── /device-api/*    → device-service（回环 :3100）
-   └── mqtts://…:8883   → EMQX MQTT broker（设备接入）
+   ├── /device-console/ → IoT 控制台静态页        ← 下面这三条是**可选件**
+   ├── /device-api/*    → device-service（回环 :3100）   出厂默认不启用；
+   └── mqtts://…:8883   → EMQX MQTT broker（设备接入）  装/卸见 iot/README.md
 ```
 
 | 端口 | 进程 | 说明 |

@@ -1,0 +1,22 @@
+# 本目录里**由脚本生成、且含凭据或本机路径**的东西不进库。
+#
+# 为什么单独写一份而不是全靠根 .gitignore：本目录是"照着装"的地方，
+# 下面这些文件在装完之后的机器上必然出现，而它们**只能存在一次**
+# （口令/密钥/API Key），误提交一次就得全部轮换。
+
+# EMQX 配置脚本的落盘凭据（configure_emqx.py 写，0600）
+emqx/.api_key
+emqx/.admin_creds
+
+# device-service 内部账号（gen_svc_env.py 写，0600）
+device-service/svc.env
+
+# 渲染产物：含本机绝对路径，由 toggle.sh 重新生成，不进库
+nginx/iot.conf
+
+# 本机试装时的临时文件
+*.local
+*.bak
+
+# 目录里的两个 py 脚本被直接跑过就会留下这个（根 .gitignore 也有，这里再钉一次）
+__pycache__/

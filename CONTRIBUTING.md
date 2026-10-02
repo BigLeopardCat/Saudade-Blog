@@ -28,8 +28,9 @@
 **忘了换，改动就永远不会上线，而且没有任何东西会变红**（`frontend/widget.lock.json` 里
 有同一句提醒）。
 
-还有两个不在本仓库的东西（README 的架构图里有）：IoT 设备服务 `device-service`
-与设备控制台 `device-console/`。
+还有一个不在本仓库的东西（README 的架构图里有）：IoT 设备服务 `device-service`
+（源码未公开，本仓 [iot/device-service/](iot/device-service/) 有单元模板与接口契约）。
+它是**可选件**，不装不影响其余部分——设备控制台 `iot/device-console/` 已经收进本仓。
 
 ---
 
