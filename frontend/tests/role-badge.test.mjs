@@ -97,6 +97,11 @@ const glyphs = `${field(specs.superadmin, 'lead') || ''}${field(specs.superadmin
 ok([...glyphs].every((ch) => (ch.codePointAt(0) ?? 0) < 0x2000),
     '站长那两条表情位上一个表情/符号字符都没有（emoji 有个"悄悄混进 from/to"的同族错法）',
     glyphs)
+// 20261003 主人看过对照图后否掉了"把原管理员那对给站长"的写法：那等于管理员接手超管那套
+// 的同时、超管穿上管理员刚脱下的那套，两档成了衣服对调。锁死它，别在调色时又绕回去。
+const su = `${field(specs.superadmin, 'from')}→${field(specs.superadmin, 'to')}`
+ok(su !== '#d94f9a→#ffb38a',
+    '站长**不穿**原管理员那对（玫粉→蜜桃）——那一眼看过去像谁也没换新，主人否过', su)
 
 console.log('\n⑤ 文案只有一处实现：ROLE_LABEL')
 const labelSuper = (auth.match(/superadmin:\s*'([^']+)'/) || [])[1]
