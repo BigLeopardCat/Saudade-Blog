@@ -2,7 +2,7 @@ import './index.sass'
 import { Button, Dropdown, Input, message, Modal, Tabs, Tag, Tooltip } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
 import type { TabsProps } from 'antd';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import BoardManage from '../BoardManage';
 import QuotaManage from '../QuotaManage';
@@ -15,6 +15,11 @@ import QuotaManage from '../QuotaManage';
 import http from "../../../apis/axios.tsx";
 import getToken from "../../../apis/getToken.tsx";
 import { useLiveRefresh } from "../../../utils/liveRefresh.ts";
+// 账号列表的**单一真源**住在同目录的 ./tempUsers.ts（模块级缓存，20261002）。
+// 这一页从"自己拿着数组、挂载时拉一次"改成"订阅那份缓存"——见该文件头注的四条纪律。
+// 注意 `invalidateTempUsers`（写操作后）与 `refreshTempUsers`（定时/事件叫醒）不是
+// 同义词：前者会**作废在途读数**再重拉，后者与在途请求去重。别顺手换着用。
+import { invalidateTempUsers, refreshTempUsers, useTempUsers, type TempUser } from "./tempUsers.ts";
 import { quotaChipText, quotaLevel, type QuotaLevel } from "../../../utils/quota.ts";
 import { ROLE_LABEL, roleLabel, getRoleFromToken, getUidFromToken } from "../../../utils/auth.ts";
 import { RoleBadge } from "../../../components/RoleBadge";
@@ -107,6 +112,10 @@ const quotaChip = (u: any): { text: string; level: QuotaLevel | null } => {
     return { text: quotaChipText(used, lim), level: quotaLevel(lim - used, lim) }
 }
 
+/** 缓存还没到手时的占位**空数组常量**。必须是模块级同一个引用：写成 `?? []`
+ *  会在每次渲染造一个新数组，把下面 `filteredUsers` 的 memo 每次都打穿。 */
+const NO_USERS: TempUser[] = []
+
 const Users = () => {
     const [searchParams] = useSearchParams()
     // 初始 Tab 走**白名单**（20260929 起两个）：`?tab=` 是给别处点进来的深链用的
@@ -118,10 +127,19 @@ const Users = () => {
     })
 
     // ── 临时用户（账号管理）──
-    // 这里原来有一行 `const token = localStorage.getItem('tokenKey')`，六处 fetch
+    // 列表本体自 20261002 起住在 `./tempUsers.ts`（模块级缓存），这一页只是它的消费者。
+    // 原来这里挂载时 `setTimeout(loadTempUsers, 500)` 拉一次——切走再切回来是同一套
+    // "先空一下再填上"，而两次的数据几乎一模一样（用户报的"每次点都重新拉数据"，
+    // 那个 500ms 空窗正是观感的来源）。现在切回页签**首帧就是上次那份**，同时在后台
+    // 静默刷新一次；`enabled` 为 false（不在账号页签）时一次请求都不发。
+    // 这里原来还有一行 `const token = localStorage.getItem('tokenKey')`，六处 fetch
     // 各拼一次 `'Bearer ' + token`。改走共享客户端之后它没有用武之地——令牌由
     // `src/apis/axios.tsx` 的请求拦截器统一加（且顺手归一了 `Bearer ` 前缀）。
-    const [tempUsers, setTempUsers] = useState<any[]>([])
+    const { users: cachedUsers, failed: usersFailed } = useTempUsers(tab === 'accounts')
+    /** 给下面那几处渲染用的数组形态。`null`（还没成功读到过）不能塌成 `[]`——
+     *  "读不到"与"读到了、确实是空的"是两件事，塌掉之后占位文案就只剩"暂无账号"
+     *  一种说法了（本仓已经栽过这个谎）。空态的三分法见列表那一段。 */
+    const tempUsers = cachedUsers ?? NO_USERS
     const [tempUsername, setTempUsername] = useState('')
     const [tempPassword, setTempPassword] = useState('')
     const [pwModalOpen, setPwModalOpen] = useState(false)
@@ -151,21 +169,6 @@ const Users = () => {
                 || String(u.id ?? '').includes(q)))
     }, [tempUsers, accFilter, accQuery])
 
-    const loadTempUsers = async () => {
-        try {
-            // 这个接口回的是**裸数组**（不是 {code,message,data} 那层壳，见
-            // src/routes/temp_user.rs::list_temp_users）——所以判据是 res.data 本身，
-            // 别顺手写成 `res.data.data`（那会永远拿到 undefined、列表恒空，
-            // 而 axios 不报错、页面不红，看起来只是"没有账号"）。
-            const res = await http.get('/api/temp-users')
-            if (Array.isArray(res?.data)) setTempUsers(res.data)
-        } catch { /* ignore */ }
-    }
-
-    useEffect(() => {
-        setTimeout(loadTempUsers, 500)
-    }, [])
-
     const handleCreateTempUser = async () => {
         if (!tempUsername || !tempPassword) { message.warning('请输入用户名和密码'); return }
         try {
@@ -175,7 +178,7 @@ const Users = () => {
                 message.success('创建成功')
                 setTempUsername('')
                 setTempPassword('')
-                loadTempUsers()
+                invalidateTempUsers()
             } else {
                 message.error(res.data?.message)
             }
@@ -210,7 +213,7 @@ const Users = () => {
                 // 写死字面量「已删除」的。读错字段不会报错、不会红，只会弹一个空条，
                 // 所以这里跟着同一条纪律走，别让第六个入口再各写各的。
                 message.success(res.data.data || '已删除')
-                loadTempUsers()
+                invalidateTempUsers()
             }
             else { message.error(res.data?.message) }
         } catch { message.error('请求失败') }
@@ -240,7 +243,7 @@ const Users = () => {
                 // 其登录状态已全部失效」放在 `data`。照 `message` 显示出来的就是那个
                 // 只有一个「ok」的弹窗条（用户 20260926 报的现场）。
                 message.success(res.data.data || '操作完成')
-                loadTempUsers()
+                invalidateTempUsers()
             }
             else { message.error(res.data?.message) }
         } catch { message.error('请求失败') }
@@ -305,7 +308,7 @@ const Users = () => {
                 // 人话在 `data` 里不在 `message` 里（`success` 的 message 恒为 "ok"，
                 // 见 src/utils.rs）——同一个坑这一页已经踩过一次，别再踩第二次
                 message.success(res.data.data || '操作完成')
-                loadTempUsers()
+                invalidateTempUsers()
             } else { message.error(res.data?.message) }
         } catch { message.error('请求失败') }
     }
@@ -369,7 +372,7 @@ const Users = () => {
             const res = await http.post('/api/temp-users/' + t.id + '/quota-reset')
             if (res.data?.code === 200) {
                 message.success(res.data.data || '操作完成')
-                loadTempUsers()
+                invalidateTempUsers()
             } else { message.error(res.data?.message) }
         } catch { message.error('请求失败') }
     }
@@ -405,15 +408,20 @@ const Users = () => {
         } catch { message.error('请求失败') }
     }
 
-    /* 跨端同步（20260926）：账号列表此前只在挂载时拉一次（还刻意延迟 500ms 让首屏先出来）。
-       现在接 `utils/liveRefresh.ts`——看板娘收尾事件 / 切回可见 / 20 秒轮询，任一发生就重拉。
+    /* 跨端同步（20260926；20261002 改接缓存 store）：看板娘收尾事件 / 切回可见 /
+       20 秒轮询，任一发生就叫醒 `./tempUsers.ts` 去刷一次。**轮询不拥有数据**——它只可能用
+       更新的服务端真相替换缓存，不存在"把缓存冲掉"（数据只有 store 里那一份）。
        五个写入口的弹窗开着时**一律不拉**（`skip`）：冻结/解冻、变更身份、发通知、改密码、
        恢复码。理由都是同一句——**绝不覆盖主人正在编辑或正在确认的东西**：冻结那个弹窗存的
        是一份**目标状态快照**（见 `statusTarget` 的注释），底下列表在它开着的时候换掉，主人
        点下去的那一下就跟自己看到的那一行对不上了。
-       `tab !== 'accounts'`（评论管理页签）也跳过：那一半的同步由它自己的页面负责，
-       在别人的页签上偷偷轮询这份账号列表是白花流量。 */
-    useLiveRefresh(loadTempUsers, {
+       注意 skip 只挡这一路的**轮询**：写操作成功后的 `invalidateTempUsers()` 不受它影响
+       （那是主人自己刚做完的动作，界面必须马上反映），而此刻弹窗早已先关掉（五处都是
+       "先关窗再发请求"）。
+       `tab !== 'accounts'`（留言/评论/额度页签）也跳过：那几半的同步由各自的页面负责，
+       在别人的页签上偷偷轮询这份账号列表是白花流量；`useTempUsers(false)` 那一侧也会让
+       消费计数归零，于是连事件触发的拉取都一并停掉。 */
+    useLiveRefresh(() => refreshTempUsers(), {
         skip: () => tab !== 'accounts'
             || !!statusTarget || !!roleTarget || !!notifyTarget || !!quotaTarget
             || pwModalOpen || recoveryModalOpen,
@@ -478,19 +486,39 @@ const Users = () => {
                                     onChange={e => setAccQuery(e.target.value)}
                                     style={{ width: 240 }}
                                 />
+                                {/* 手动刷新走 `invalidateTempUsers` 而不是 `refreshTempUsers`：
+                                    后者与在途请求去重，主人点了按钮却"什么都没发生"（那次请求
+                                    恰好还在路上）；前者先作废在途读数再发一次新的，点了必有一次
+                                    真请求。 */}
                                 <Button
                                     icon={<ReloadOutlined />}
-                                    onClick={() => loadTempUsers()}
+                                    onClick={() => invalidateTempUsers()}
                                 >
                                     刷新
                                 </Button>
-                                <span className="tu-count">共 {filteredUsers.length} 个账号</span>
+                                {/* 计数也要跟着三态走：缓存没到手时写「共 0 个账号」是与上面
+                                    空态同一族的谎（"读不到"讲成"没有"），而这一处更醒目——
+                                    它就挂在筛选栏右边，扫一眼就是结论。 */}
+                                <span className="tu-count">
+                                    {cachedUsers === null ? '正在读取账号…' : `共 ${filteredUsers.length} 个账号`}
+                                </span>
                             </div>
                         </div>
                         <div className="tu-list-wrap">
                             {filteredUsers.length === 0 ? (
                                 <div className="tu-empty">
-                                    {tempUsers.length === 0 ? '暂无账号' : '没有匹配的账号'}
+                                    {/* 空态**三分**（20261002）：缓存没到手 = 还在读或读失败，
+                                        缓存到手但列表空 = 账号真的是 0 个。前两种绝不能说成
+                                        「暂无账号」——那是把"读不到"讲成"没有"（本仓的老谎，
+                                        而且账号列表空一屏恰好是那种会让人以为"账号都没了"的
+                                        时刻）。第三态里再分"筛掉了"与"真的没有"。 */}
+                                    {cachedUsers === null ? (
+                                        usersFailed
+                                            ? <>读取失败 <Button type="link" size="small" onClick={() => invalidateTempUsers()}>点此重试</Button></>
+                                            : '正在读取…'
+                                    ) : (
+                                        tempUsers.length === 0 ? '暂无账号' : '没有匹配的账号'
+                                    )}
                                 </div>
                             ) : (
                                 <div className="tu-list">
