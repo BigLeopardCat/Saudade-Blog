@@ -227,7 +227,11 @@ console.log('\n⑥ 版本号：改了 widget 脚本必须 bump（nginx 对 live2
     // 20261002b = 「看板娘层级交给宿主页面的阶梯」那一轮（widget.css 的 #waifu 与
     // #waifu-toggle 从写死的 2147483000 / 9999 改成 var(--z-agent, 1000)）。改的是
     // live2d-widgets 下的样式表 ⇒ 同样必须 bump。
-    ok(ver === '20261002b', 'VER 已 bump 到本轮（20261002b）', { ver });
+    // 20261002c = 「流式早退不再用 200+JSON 装成成功」那一轮（chat-stream.js 加了
+    // content-type 兜底：不是 text/event-stream 就如实报错）。改 chat-stream.js 必须
+    // bump——nginx 对 live2d-widgets 是 1 年 immutable，不 bump 访客吃的是旧脚本，
+    // 而**旧脚本没有这道兜底**（也正是那次事故里前端一声不吭的原因）。
+    ok(ver === '20261002c', 'VER 已 bump 到本轮（20261002c）', { ver });
     const tsx = readFileSync(path.join(root, 'src/components/Live2dAgent/index.tsx'), 'utf8');
     ok(tsx.includes('boot.js?v=' + ver), 'Live2dAgent 的 ?v= 与 VER 一致');
 }
