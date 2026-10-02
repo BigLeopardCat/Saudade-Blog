@@ -28,8 +28,19 @@ pub const ROLE_SECRETARY: &str = "secretary";
 /// 普通访客 / 体验账号：只读公开内容、操作自己的设备与自己的页面。
 pub const ROLE_USER: &str = "user";
 
+/// 杂鱼（20261002）：**零工具**身份，和它对话时 agent 拒绝调用任何工具、只用
+/// 「雌小鬼」的口吻闲聊。它进不了后台（`can_access_console` 只认管理员族），
+/// 但**会出现在后台账号列表里**（`is_listable_role` 的判据是"已知角色且非超管"）
+/// ——这正是设计：博主看得见它、能冻它、能改它的身份。
+///
+/// 能力边界**不在这里表达**：Rust 侧只认"这是个已登记的角色"。真正的收口在 agent 侧
+/// （`agent/principal.py` 的 `CHAT_ONLY_ROLES` 与其三条派生），其中"结构上不可能调用
+/// 工具"的那一条是 planner 的短路，不是这张表能表达的东西。
+pub const ROLE_ZAKO: &str = "zako";
+
 /// `user.role` 的取值域（DB 列无 ENUM/CHECK 约束，这里就是唯一声明）。
-pub const KNOWN_ROLES: [&str; 4] = [ROLE_ADMIN, ROLE_SUPERADMIN, ROLE_SECRETARY, ROLE_USER];
+pub const KNOWN_ROLES: [&str; 5] =
+    [ROLE_ADMIN, ROLE_SUPERADMIN, ROLE_SECRETARY, ROLE_USER, ROLE_ZAKO];
 
 /// 未知/异常角色按最保守处理（不授予任何能力）——**失败取向与 agent 侧一致**：
 /// 从不默认放行、也从不默认当管理员。
@@ -168,6 +179,7 @@ pub fn role_label(role: &str) -> &'static str {
         ROLE_SUPERADMIN => "超级管理员",
         ROLE_SECRETARY => "秘书",
         ROLE_USER => "普通用户",
+        ROLE_ZAKO => "杂鱼",
         _ => "未登记身份",
     }
 }
@@ -241,15 +253,18 @@ mod tests {
         assert!(can_access_console(ROLE_SUPERADMIN));
         assert!(!can_access_console(ROLE_SECRETARY));
         assert!(!can_access_console(ROLE_USER));
+        // 20261002：杂鱼也进不了后台（它是"零工具"角色，不是管理员族的一员）
+        assert!(!can_access_console(ROLE_ZAKO));
         assert!(!can_access_console("root"));
         assert!(!can_access_console(""));
     }
 
     #[test]
-    fn 取值域就是这四个() {
-        assert_eq!(KNOWN_ROLES.len(), 4);
+    fn 取值域就是这五个() {
+        assert_eq!(KNOWN_ROLES.len(), 5);
         assert!(is_known_role("superadmin"));
         assert!(is_known_role("secretary"));
+        assert!(is_known_role(ROLE_ZAKO)); // 20261002 杂鱼
         assert!(!is_known_role("Secretary")); // 大小写敏感：角色名不收模糊匹配
         assert!(!is_known_role("administrator")); // 旧别名不认（曾散落在文档里）
         assert!(!is_known_role("SuperAdmin"));
@@ -261,6 +276,7 @@ mod tests {
         assert!(!is_superadmin(ROLE_ADMIN));
         assert!(!is_superadmin(ROLE_SECRETARY));
         assert!(!is_superadmin(ROLE_USER));
+        assert!(!is_superadmin(ROLE_ZAKO));
         assert!(!is_superadmin(""));
     }
 
@@ -272,6 +288,9 @@ mod tests {
         assert!(is_listable_role(ROLE_ADMIN));
         assert!(is_listable_role(ROLE_SECRETARY));
         assert!(is_listable_role(ROLE_USER));
+        // 20261002：杂鱼**要**列出来——博主得看得见它、能冻它、能改它的身份
+        // （这正是"后台可指派的正经角色"这条设计的一部分）。
+        assert!(is_listable_role(ROLE_ZAKO));
         // 未知角色也不列（前端判不出它该归到哪一档筛选项下）
         assert!(!is_listable_role(""));
         assert!(!is_listable_role("SuperAdmin"));
@@ -297,18 +316,23 @@ mod tests {
             (2, sup, 1, sup, Err(FreezeDenial::TargetSuperadmin)),
             // 管理员之间 → 拒（两个方向都是同一句）
             (7, admin, 8, admin, Err(FreezeDenial::PeerAdmin)),
-            // 管理员冻秘书 / 普通用户 → 放行（本次问答明确：秘书可被管理员冻）
+            // 管理员冻秘书 / 普通用户 / 杂鱼 → 放行（本次问答明确：秘书可被管理员冻；
+            // 20261002 杂鱼同档——它不是管理员，也不是超管）
             (7, admin, 9, sec, Ok(())),
             (7, admin, 10, usr, Ok(())),
-            // 超管冻管理员 / 秘书 / 普通用户 → 放行
+            (7, admin, 12, ROLE_ZAKO, Ok(())),
+            // 超管冻管理员 / 秘书 / 普通用户 / 杂鱼 → 放行
             (1, sup, 7, admin, Ok(())),
             (1, sup, 9, sec, Ok(())),
             (1, sup, 10, usr, Ok(())),
+            (1, sup, 12, ROLE_ZAKO, Ok(())),
             // 发起人自己没有后台管理面权限 → 拒（判据自足，不依赖路由先过闸）
             (9, sec, 10, usr, Err(FreezeDenial::NotPermitted)),
             (10, usr, 11, usr, Err(FreezeDenial::NotPermitted)),
             (0, "", 10, usr, Err(FreezeDenial::NotPermitted)),
             (0, "root", 10, usr, Err(FreezeDenial::NotPermitted)),
+            // 20261002：杂鱼当发起人同样过不了第一关（零工具身份没有后台准入）
+            (12, ROLE_ZAKO, 10, usr, Err(FreezeDenial::NotPermitted)),
             // 目标角色未知 ⇒ 不特殊对待（admin 冻未知角色放行——**未知不等于超管**；
             // 幂等与"存在的账号"由路由查库保证，policy 不猜）
             (7, admin, 11, "root", Ok(())),
@@ -353,6 +377,11 @@ mod tests {
             (1, sup, 10, usr, sec, Ok(())),
             (1, sup, 7, admin, usr, Ok(())),
             (1, sup, 7, admin, sec, Ok(())),
+            // 20261002 杂鱼：可被指派（进可指派范围 = 后台下拉里选得到）、也可被改出去。
+            // 「能进后台指派」是这条设计的一半，另一半在 agent 侧的 CHAT_ONLY_ROLES。
+            (1, sup, 10, usr, ROLE_ZAKO, Ok(())),
+            (1, sup, 7, admin, ROLE_ZAKO, Ok(())),
+            (1, sup, 12, ROLE_ZAKO, usr, Ok(())),
         ];
         for (op_uid, op_role, t_uid, t_role, new_role, want) in cases {
             assert_eq!(
@@ -368,6 +397,7 @@ mod tests {
         assert!(is_assignable_role(ROLE_ADMIN));
         assert!(is_assignable_role(ROLE_SECRETARY));
         assert!(is_assignable_role(ROLE_USER));
+        assert!(is_assignable_role(ROLE_ZAKO)); // 20261002：杂鱼是正经角色，后台可指派
         assert!(!is_assignable_role(ROLE_SUPERADMIN));
         assert!(!is_assignable_role("root"));
     }
