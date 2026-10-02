@@ -433,6 +433,24 @@ cd <仓库根> && saudade-blog-agent/.venv/bin/python \
 #    d) 超管的三道防线（20260926）：账号列表/报表不列 superadmin 行（界面 + agent 的
 #       名录来源）→ `check_freeze`/`check_role_change` 的 `TargetSuperadmin` → 只见于
 #       数据库迁移。`cargo test --lib authz::` 逐格锁着策略表。
+#    g) **禁言是另一件事**（20261002 内容风控；与冻结**共规则、不共后果**）：
+#       · 入口 `POST /api/temp-users/:id/mute`，body `{muted: bool, hours: int|null}`
+#         （`hours` 为 `null` 或 `<=0` ⇒ 永久，见 `authz::MUTE_FOREVER`）。
+#       · 判据**复用 `check_freeze`**（同一张规则表：不许禁自己 / 不许禁超管 / 管理员互禁 /
+#         目标须存在），**话术另出一份**（`temp_user.rs::mute_denial_message`，动词
+#         `禁言|解除禁言`）：「只有管理员可以禁言或解除禁言」/「不能{禁言|解除禁言}自己的账号」/
+#         「不能{禁言|解除禁言}超级管理员账号」/「管理员之间不可互相{禁言|解除禁言}」。
+#         agent 侧同冻结一样逐字转述（`agent/skills.py` 的 `reply_contract`）。
+#       · **冻结改 `user.status` + bump `token_version`；禁言只写 `user.muted_until`，
+#         绝不碰另外两样**——被禁言的人必须**仍能登录、仍能读文章、仍能对话**，只是发不出
+#         评论与留言。故拦截点只在两个写入入口（`comments.rs` / `talks.rs` 的
+#         `risk::screen`），**`middleware.rs` 与 `authz` 的令牌校验一个字都不改**。
+#         改这条边界 = 把"限制发言"变成"封号"，是本仓明令不许的合并。
+#       · 自动禁言那条通知的正文**必须说清分野**（`risk::mute_notice_body`：仍可登录/浏览/
+#         对话），照抄冻结那句 `account_change_body`（"你此前登录的全部设备已失效"）就是假话。
+#       离线锁：`cd frontend && node tests/content-risk.test.mjs`（96 条，含"禁言不碰
+#       status/token_version"、"哨兵比较只在 authz.rs"、"前端账号页/个人中心文案"）；
+#       策略表锁：`cargo test --lib authz::`。
 
 # ⑬ 用户对话额度（20260929；普通用户终身 500 轮，`CHAT_QUOTA_LIMIT` 可调，管理员不限额）
 #    a) 判据（全部离线、秒级）：

@@ -87,6 +87,18 @@ pub struct TempUserInfo {
     /// 两侧都不许把 500 写死——它是 `CHAT_QUOTA_LIMIT`，改上限不该需要一次迁移。
     #[serde(rename = "chatQuotaLimit")]
     pub chat_quota_limit: i32,
+    /// **现在是否处于禁言期**（20261002 内容风控）。判据是 `crate::authz::is_muted`
+    /// （"现在 < 到期时刻"），**不是"这一列非空"**——到期之后那一列还留着旧值，
+    /// 而那时人已经能正常发言了。给它算好布尔值，是因为这是 agent 侧
+    /// `_account_muted` 幂等判定（"现在就是禁言中 ⇒ 不重复弹卡"）唯一需要的那个事实。
+    pub muted: bool,
+    /// 禁言到期时刻（原始库值，`%Y-%m-%d %H:%M:%S`）。
+    /// **`null` = 从未禁言，`9999-12-31 23:59:59` = 永久**（`authz::MUTE_FOREVER`）
+    /// ——两者不能合并：合并之后后台与 agent 都分不出"永久"与"从没禁过"。
+    /// 显示成"永久/到几号"是**消费方的事**（前端账号页、agent 的渲染层各有一处），
+    /// 这里只回原始值，不替它们做翻译。
+    #[serde(rename = "mutedUntil")]
+    pub muted_until: Option<String>,
 }
 
 /// 账号列表（20260926）：原来只回 `role="user"` 的临时账号，博主因此**在后台
@@ -127,6 +139,10 @@ pub async fn list_temp_users(
             // 都认这个形状——agent 那边甚至写明了"不要包信封"。**只加字段。**
             chat_quota_used: u.chat_quota_used,
             chat_quota_limit: crate::routes::quota::limit_of(&u.role),
+            // 禁言两列（20261002）：`muted` 是**现算的**（到期即自动为假，没有定时任务
+            // 去清那一列）；`muted_until` 原样回库值，供显示"到几号 / 永久"。
+            muted: crate::authz::is_muted(u.muted_until, chrono::Local::now().naive_local()),
+            muted_until: u.muted_until.map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string()),
         })
         .collect())
 }
@@ -261,6 +277,164 @@ fn freeze_denial_message(denial: crate::authz::FreezeDenial, frozen: bool) -> St
         D::SelfTarget => format!("不能{verb}自己的账号"),
         D::TargetSuperadmin => format!("不能{verb}超级管理员账号"),
         D::PeerAdmin => format!("管理员之间不可互相{verb}"),
+    }
+}
+
+/// 禁言 / 解禁被拒的中文话术（`freeze_denial_message` 的**姊妹函数**，20261002）。
+///
+/// **规则一份、话术两份**（见 `authz::check_freeze` 头注）：四条判据对"冻结"与"禁言"
+/// 是同一件事，所以判据函数共用；而话术必须各出一份——它们是**跨语言契约**，
+/// agent 要逐字转述，把"不能冻结超级管理员"说成"不能禁言超级管理员"得由这里产出。
+///
+/// ⚠️ 这四句同 `freeze_denial_message` 一样是不可随手改的措辞
+/// （见 `docs/security-boundary.md` §7⑫）。
+fn mute_denial_message(denial: crate::authz::FreezeDenial, muted: bool) -> String {
+    use crate::authz::FreezeDenial as D;
+    let verb = if muted { "禁言" } else { "解除禁言" };
+    match denial {
+        D::NotPermitted => "只有管理员可以禁言或解除禁言".to_string(),
+        D::SelfTarget => format!("不能{verb}自己的账号"),
+        D::TargetSuperadmin => format!("不能{verb}超级管理员账号"),
+        D::PeerAdmin => format!("管理员之间不可互相{verb}"),
+    }
+}
+
+/// 禁言/解禁通知正文。**绝不复用 `account_change_body`**：那一份写着"你此前登录的
+/// 全部设备已失效，需要重新登录"，而禁言**从不 bump `token_version`**——照抄过来的
+/// 那句是彻头彻尾的假话，当事人会以为被踢下线了（这正是"消息壳架空判据"那一族坑）。
+fn mute_change_body(muted: bool, action: &str, when: &str) -> String {
+    if muted {
+        format!(
+            "{when}，{action}。你的登录状态不受影响——仍可正常登录、浏览文章、与泠月喵对话，\
+只是暂时不能发布评论与留言。"
+        )
+    } else {
+        format!("{when}，{action}。你现在可以正常发布评论与留言了。")
+    }
+}
+
+#[derive(Deserialize)]
+pub struct SetMuteReq {
+    /// true = 禁言，false = 解禁。**与 `frozen` 同一条纪律**：不做"切换"语义，
+    /// 前端把按钮的当前含义直接写进来（重试/双击/多标签页下"切换"会自己跟自己打架）。
+    pub muted: bool,
+    /// 禁言时长（小时）。**`null` 或 `<= 0` ⇒ 永久**（`authz::MUTE_FOREVER`）；
+    /// 解禁方向忽略它。做成 `Option` 而不是"0 表示永久"：后台的时长选项里
+    /// "永久"是一个明确的选项，不该与"填了个 0"共用一条路。
+    #[serde(default)]
+    pub hours: Option<i32>,
+}
+
+/// POST /api/temp-users/:id/mute：禁言 / 解除禁言一个账号（20261002 内容风控）。
+///
+/// **禁言不是冻结**（这是本接口存在的全部理由）：被禁言的人**照常登录、照常浏览、
+/// 照常跟 agent 对话**——他只是发不出评论与留言。所以这里：
+///   · **绝不改 `status`**（那是冻结的地盘）；
+///   · **绝不 bump `token_version`**（与冻结正相反：禁言必须让当事人留在登录态里，
+///     否则通知他都读不到——而通知恰恰是这个功能对当事人唯一可见的那一面）；
+///   · 只写 `muted_until` 一列，判据由 `authz::is_muted` 在**两个写入入口**读。
+///
+/// 判据复用 `authz::check_freeze`（四条规则对两件事是同一条），话术各出一份
+/// （见 `mute_denial_message`）。目标角色同样要求已知角色——与 `list_temp_users`
+/// 同一个取值域：不让一个"列表里根本看不见"的账号从这里被改状态。
+///
+/// **解禁方向的真 no-op**（本来就是 NULL）：不写库、不发通知。禁言方向不做 no-op
+/// ——对一个已在禁言期的账号再禁一次是**有意义的操作**（改时长/转永久），
+/// "现在就是禁言中"那条幂等判定属于**发起方**（agent 的弹卡逻辑），不属于这里。
+pub async fn set_user_muted(
+    State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
+    Path(user_id): Path<i32>,
+    Json(payload): Json<SetMuteReq>,
+) -> Json<crate::utils::ApiResponse<String>> {
+    let Some(operator) = crate::auth_jwt::auth_uid(&state.db, &headers).await.ok() else {
+        return Json(crate::utils::ApiResponse::error("未登录"));
+    };
+    let Some(operator_row) = user::Entity::find_by_id(operator).one(&state.db).await.unwrap_or(None)
+    else {
+        return Json(crate::utils::ApiResponse::error("未登录"));
+    };
+    let Some(target) = user::Entity::find_by_id(user_id).one(&state.db).await.unwrap_or(None) else {
+        return Json(crate::utils::ApiResponse::error("用户不存在"));
+    };
+    if !crate::authz::is_known_role(&target.role) {
+        return Json(crate::utils::ApiResponse::error("该账号角色未登记，不能改状态"));
+    }
+    let muted = payload.muted;
+    if let Err(denial) =
+        crate::authz::check_freeze(operator, &operator_row.role, user_id, &target.role)
+    {
+        return Json(crate::utils::ApiResponse::error(&mute_denial_message(
+            denial, muted,
+        )));
+    }
+    // 到期时刻：永久走常量、限时走 `Local::now() + N 小时`（+08:00 钟面，同库钟面约定）。
+    let until = if !muted {
+        None
+    } else {
+        match payload.hours {
+            Some(h) if h > 0 => Some(chrono::Local::now().naive_local() + Duration::hours(h as i64)),
+            _ => Some(crate::authz::mute_forever_at()),
+        }
+    };
+    // 解禁方向的真 no-op：本来就是"从未禁言"（NULL）⇒ 不写库、不发通知。
+    // **判据是 NULL 而不是 `is_muted`**：对"禁言已过期、但那列还留着旧值"的账号点解禁，
+    // 是在清理一个残留值，应当写下去（写完之后后台那一列才真正是空的）。
+    if !muted && target.muted_until.is_none() {
+        return Json(crate::utils::ApiResponse::success(
+            "该账号当前没有被禁言".to_string(),
+        ));
+    }
+    let mut am: user::ActiveModel = target.into();
+    am.muted_until = Set(until);
+    // **不碰 status / token_version**（见头注）。更新 `updated_at` 也没有必要——
+    // 这张表没有 updated_at 列。
+    match am.update(&state.db).await {
+        Ok(_) => {
+            let label = match until {
+                Some(u) => crate::authz::mute_until_text(u),
+                None => "解禁".to_string(),
+            };
+            tracing::info!(
+                "[账号管理] {}账号 uid={}（{label}，发起人 uid={} role={}）",
+                if muted { "禁言" } else { "解除禁言" },
+                user_id,
+                operator,
+                operator_row.role
+            );
+            // 通知当事人（best-effort、**必须写在 update 成功之后**，同冻结那一条纪律）。
+            // 这条通知是禁言功能对当事人唯一可见的一面 —— 没有它，人只会发现自己
+            // "评论发不出去了"而不知道为什么。
+            let when = chrono::Local::now().format("%Y年%m月%d日 %H:%M").to_string();
+            let action = format!(
+                "{}{}",
+                actor_label(&operator_row),
+                if muted {
+                    format!("禁言了你的账号（{label}）")
+                } else {
+                    "解除了你的禁言".to_string()
+                },
+            );
+            crate::routes::notice::push_notice(
+                &state.db,
+                user_id,
+                if muted { "账号已被禁言" } else { "账号已解除禁言" },
+                Some(mute_change_body(muted, &action, &when)),
+                None,
+            )
+            .await;
+            Json(crate::utils::ApiResponse::success(
+                if muted {
+                    format!("账号已禁言（{label}），其登录与浏览不受影响")
+                } else {
+                    "账号已解除禁言，对方现在可以正常发布评论与留言".to_string()
+                },
+            ))
+        }
+        Err(e) => {
+            tracing::error!("[账号管理] 禁言写库失败 uid={}: {}", user_id, e);
+            Json(crate::utils::ApiResponse::error("操作失败，请稍后再试"))
+        }
     }
 }
 
@@ -517,6 +691,81 @@ mod tests {
         );
     }
 
+    /// 禁言话术（20261002）：四条判据与冻结**共用一份规则表**，但话术必须自己出一份
+    /// ——同样是跨语言契约（agent 逐字转述），把"不能冻结超管"说成"不能禁言超管"
+    /// 必须由这里产出。所以这条测试的重点是：**动词换对了，且与冻结那四句不同形**。
+    #[test]
+    fn 禁言话术与冻结同规则但各说各的动词() {
+        use FreezeDenial as D;
+        assert_eq!(
+            super::mute_denial_message(D::NotPermitted, true),
+            "只有管理员可以禁言或解除禁言"
+        );
+        assert_eq!(super::mute_denial_message(D::SelfTarget, true), "不能禁言自己的账号");
+        assert_eq!(
+            super::mute_denial_message(D::TargetSuperadmin, true),
+            "不能禁言超级管理员账号"
+        );
+        assert_eq!(super::mute_denial_message(D::PeerAdmin, true), "管理员之间不可互相禁言");
+        // 解禁方向换动词（与冻结那一族的"解冻"各说各的）
+        assert_eq!(super::mute_denial_message(D::SelfTarget, false), "不能解除禁言自己的账号");
+        assert_eq!(
+            super::mute_denial_message(D::TargetSuperadmin, false),
+            "不能解除禁言超级管理员账号"
+        );
+        assert_eq!(
+            super::mute_denial_message(D::PeerAdmin, false),
+            "管理员之间不可互相解除禁言"
+        );
+        assert_eq!(
+            super::mute_denial_message(D::NotPermitted, false),
+            "只有管理员可以禁言或解除禁言"
+        );
+        // **禁言话术里不许出现"冻结"**：这两件事混说，当事人会以为账号被封了
+        for muted in [true, false] {
+            for d in [D::NotPermitted, D::SelfTarget, D::TargetSuperadmin, D::PeerAdmin] {
+                let s = super::mute_denial_message(d, muted);
+                assert!(!s.contains("冻结") && !s.contains("解冻"), "{s}");
+            }
+        }
+    }
+
+    /// 到期时刻的人话：**永久那一支直说永久，不念 `9999` 哨兵值**。
+    /// 与 `authz::mute_denial_message` 是同一条纪律（那儿有一个同形的断言）。
+    #[test]
+    fn 禁言到期时刻永久直说永久() {
+        let until = chrono::NaiveDateTime::parse_from_str(
+            "2026-10-04 12:00:00",
+            "%Y-%m-%d %H:%M:%S",
+        )
+        .unwrap();
+        assert_eq!(crate::authz::mute_until_text(until), "至 2026-10-04 12:00");
+        let forever = crate::authz::mute_until_text(crate::authz::mute_forever_at());
+        assert_eq!(forever, "永久");
+        assert!(!forever.contains("9999"), "{forever}");
+    }
+
+    /// 禁言通知正文**绝不复用 `account_change_body`**：那一份写着"你此前登录的全部
+    /// 设备已失效，需要重新登录"，而禁言从不 bump `token_version`——照抄就是一句假话。
+    /// 这条测试钉住的就是那半句不许出现。
+    #[test]
+    fn 禁言通知不说登录失效() {
+        let muted = super::mute_change_body(true, "管理员「心关」（uid=7）禁言了你的账号（至 2026-10-04 12:00）", "2026年10月03日 12:00");
+        assert!(muted.contains("禁言了你的账号"), "{muted}");
+        assert!(muted.contains("至 2026-10-04 12:00"), "{muted}");
+        assert!(muted.contains("仍可正常登录、浏览文章、与泠月喵对话"), "{muted}");
+        assert!(!muted.contains("失效"), "{muted}");
+        assert!(!muted.contains("重新登录"), "{muted}");
+
+        let unmuted = super::mute_change_body(false, "管理员「心关」（uid=7）解除了你的禁言", "2026年10月03日 12:00");
+        assert!(unmuted.contains("可以正常发布评论与留言"), "{unmuted}");
+        assert!(!unmuted.contains("失效"), "{unmuted}");
+
+        // 反面对照：冻结那一份**必须**保留那半句（两件事不是同一件事）
+        let frozen = super::account_change_body("博主冻结了你的账号", "2026年10月03日 12:00");
+        assert!(frozen.contains("需要重新登录"), "{frozen}");
+    }
+
     /// 变更身份的七句：六句拒绝 + 一句"超管只能走迁移"。
     /// `NotAssignable` 的措辞必须点出**替代路径**（数据库迁移），否则主人被拒之后
     /// 不知道该去哪儿加第二个超管。
@@ -575,6 +824,9 @@ mod tests {
             status: 0,
             token_version: 0,
             chat_quota_used: 0,
+            // 禁言到期时间（20261002 内容风控）。这个测试行没被禁过 ⇒ NULL = 从未禁言
+            // （**不是** `9999-…`：那表示永久，见 `authz::MUTE_FOREVER`）。
+            muted_until: None,
         }
     }
 

@@ -228,11 +228,28 @@ async fn insert_talk(
     // 20260923：同时接住 AI 给的驳回理由（reject_reason），供审核结果通知与后台展示
     // 20260926：AI 的说明对所有裁决都留痕（ai_reason）——存疑那一支此前把说明丢掉了，
     // 而后台「评论管理」显示的"驳回理由：未填写"绝大多数就是这一支来的（13/18 实测）。
+    //
+    // 内容风控（20261002）：**河灯留言才过闸**（src=talk 是后台管理员自己发的说说，
+    // 对他限流没有意义——同 `decide_review` 那条界线）。闸门的三种拒绝在这里就地返回，
+    // 判定结果（forced）留到审核裁决之后再施加：见下方 `if forced && approved == 1`。
+    let mut forced = false;
+    if src == "board" {
+        let cfg = crate::risk::load_config(&state.db).await;
+        match crate::risk::screen(state, uid, &cfg).await {
+            // 同 comments.rs：叫 `risk_verdict`，与下面 agent 回的裁决词（`"verdict"` 那个 JSON 键）
+            // 区分开——这两个"裁决"在同一个函数里只隔几十行。
+            Ok(risk_verdict) => forced = crate::risk::apply_verdict(state, uid, &cfg, risk_verdict).await,
+            Err(reject) => return Json(ApiResponse::error(&reject.message())),
+        }
+    }
     let (approved, ai_result, ai_reason, reject_reason) = if src == "board" {
         board_approved(state, uid, content).await
     } else {
         (1, None, None, None)
     };
+    // 风控档位只在"本来会直接公开"时改判成待审：**只把 1 压成 0，绝不把 2 松成 0**
+    // ——AI 已经判过驳回的内容，不该因为"这个人发得太快"就退回到"没人裁过"。
+    let approved = if forced && approved == 1 { 0 } else { approved };
     // 通知要用，先各留一份（下面 Set(...) 会把它们 move 走）
     let ai_judged = ai_result.is_some();
     let reason_for_notice = reject_reason.clone();

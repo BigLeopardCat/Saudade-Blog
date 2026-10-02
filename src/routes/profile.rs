@@ -123,13 +123,27 @@ pub async fn update_profile(
     am.nickname = Set(nick.to_string());
     am.nickname_auto_renamed = Set(0);
     match am.update(&state.db).await {
-        Ok(u) => Json(ApiResponse::success(super::auth::ProfileDto {
-            username: u.username,
-            nickname: u.nickname,
-            nickname_auto_renamed: u.nickname_auto_renamed != 0,
-            avatar: u.avatar,
-            role: u.role,
-        })),
+        Ok(u) => {
+            // 禁言两列（20261002）：改昵称与禁言是两件事，但回执是同一个 DTO
+            // ——**口径必须与 `auth::profile` 逐字相同**（那边有一处同形的计算）。
+            // 被禁言的人当然也能改昵称（禁言只挡发评论/发留言两个入口），
+            // 所以这里不能写死 false。
+            let muted = crate::authz::is_muted(u.muted_until, chrono::Local::now().naive_local());
+            let muted_until = if muted {
+                u.muted_until.map(crate::authz::mute_until_text)
+            } else {
+                None
+            };
+            Json(ApiResponse::success(super::auth::ProfileDto {
+                username: u.username,
+                nickname: u.nickname,
+                nickname_auto_renamed: u.nickname_auto_renamed != 0,
+                avatar: u.avatar,
+                role: u.role,
+                muted,
+                muted_until,
+            }))
+        }
         Err(e) => {
             tracing::error!("[profile] 改昵称失败 uid={}: {}", uid, e);
             if is_duplicate_key(&e) {

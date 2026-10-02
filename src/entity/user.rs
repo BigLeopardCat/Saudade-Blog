@@ -37,6 +37,15 @@ pub struct Model {
     /// 判据与算术全在 `crate::quota`，**别在本文件或任何 handler 里内联第二份**。
     /// 迁移：`scripts/migration/user_chat_quota_20260929.sql`（列序 `AFTER token_version`）
     pub chat_quota_used: i32,
+    /// 禁言到期时间（20261002 内容风控与分级禁言）：`NULL` = **从未禁言**，
+    /// `9999-12-31 23:59:59` = **永久**（常量 `crate::authz::MUTE_FOREVER`）。
+    /// 判据只看 `crate::authz::is_muted`——**别在本文件或任何 handler 里内联比较**：
+    /// "未禁言"与"永久"必须可区分（NULL 表永久会让这两者同形）。
+    ///
+    /// **禁言不是冻结**（`status`）：它不改变令牌有效性、不进 `check_token`，
+    /// 只挡"发评论 / 发留言"两个写入入口——被禁言的人照常登录、浏览、跟 agent 对话。
+    /// 迁移：`scripts/migration/user_mute_20261002.sql`（列序 `AFTER chat_quota_used`）
+    pub muted_until: Option<chrono::NaiveDateTime>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

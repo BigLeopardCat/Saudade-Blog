@@ -86,6 +86,48 @@
       color: var(--washi-ink-2, #7c6584)
       background: var(--washi-paper-2, #fff6fa)
 
+  // 风控设置行（20261002）：与 `.cm-review` 同族的一段固定行，默认收起
+  // （工具栏那个「风控设置」开关控制渲染）。配色走 washi 令牌，深浅两档自动跟随，
+  // 所以下面**不写 `.contentDark` 覆盖块**（同本文件头注那条）。
+  .cm-risk
+    display: flex
+    align-items: center
+    gap: 14px
+    flex-wrap: wrap
+    padding: 8px 12px
+    border: 1px solid var(--washi-line-2, rgba(198, 152, 192, 0.22))
+    border-radius: 8px
+    background: var(--washi-paper-2, #fff6fa)
+    // 固定段（同 `.cm-toolbar` / `.cm-review`）：矮窗时不许被 flex 压扁
+    flex: 0 0 auto
+
+    .cm-risk-title
+      font-size: 13px
+      font-weight: 600
+      color: var(--washi-ink-2, #7c6584)
+
+    .cm-risk-item
+      display: flex
+      align-items: center
+      gap: 6px
+      font-size: 13px
+      color: var(--washi-ink-2, #7c6584)
+
+      .cm-risk-input
+        width: 76px
+
+      // 单位（秒/条/小时）：比标签更淡，不参与"要读哪个数"的竞争
+      > i
+        font-style: normal
+        font-size: 12px
+        color: var(--washi-ink-3, #a08ba8)
+
+    .cm-risk-hint
+      flex: 1 1 100%
+      font-size: 12px
+      line-height: 1.6
+      color: var(--washi-ink-3, #a08ba8)
+
   // 正文与理由：正文自己一行，理由/已删除缩在下面，三行都在「评论内容」列里
   // （ellipsis 由 antd 打在单元格上，这里只管折行）
   .cm-content

@@ -19,6 +19,14 @@ export interface ProfileInfo {
      *  ——即"不显示横幅"：这是唯一一种安静的失败，而反过来的默认值会在所有老账号上
      *  弹一条假的"你的昵称重复了"。 */
     nicknameAutoRenamed?: boolean;
+    /** **当前是否处于禁言期**（20261002 内容风控）：true 时个人中心显示一条横幅。
+     *  判据在后端（`authz::is_muted` = 现在 < 到期时刻），前端**不做时间比较**——
+     *  自己算一遍就会有两个真相源，而"永久"是一个哨兵值、比错一次就露馅。
+     *  字段缺失按 false（老后端 + 新前端）：不显示横幅是这里唯一安静的失败。 */
+    muted?: boolean;
+    /** 禁言到期时刻的**人话**（`永久` / `至 2026-10-04 12:00`），未禁言时 null。
+     *  由后端 `authz::mute_until_text` 产出，前端**只印不算**（见上一条）。 */
+    mutedUntil?: string | null;
 }
 
 /** GET /api/protected/favorites 的单行 */

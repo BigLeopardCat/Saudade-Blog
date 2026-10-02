@@ -8,7 +8,13 @@ use axum::{
 use tower::ServiceExt; // for `oneshot`
 
 fn test_state(db: sea_orm::DatabaseConnection) -> AppState {
-    AppState { db, rate_limiter: LoginRateLimiter::new(5, 60, 300) }
+    AppState {
+        db,
+        rate_limiter: LoginRateLimiter::new(5, 60, 300),
+        // 内容风控的发布间隔刹车（20261002）：路由结构测试不碰这条链路，
+        // 给一个空计数器即可（阈值由 risk::load_config 每请求现读）。
+        post_limiter: saudade_blog::risk::PostRateLimiter::new(),
+    }
 }
 
 #[tokio::test]

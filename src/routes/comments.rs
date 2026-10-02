@@ -301,6 +301,18 @@ pub async fn create_comment(
     if content.chars().count() > MAX_COMMENT_CHARS {
         return Json(ApiResponse::error("评论过长（最多 300 字）"));
     }
+    // 内容风控（20261002）：与河灯留言**同一道闸、同一份实现**（`risk::screen`
+    // 把评论与留言合起来数——需求原文是"短期内大量留言评论"）。
+    // 位置：在形状校验之后、读父行之前——被禁言的人不该靠"回复一条不存在的评论"
+    // 绕过这条判据，而形状校验是纯本地的、失败时也不占间隔。
+    let cfg = crate::risk::load_config(&state.db).await;
+    let forced = match crate::risk::screen(&state, uid, &cfg).await {
+        // 变量叫 `risk_verdict` 而不是 `verdict`：这个文件里"裁决"另有其主
+        // （`decide_review` 回的 agent 裁决词），而这是风控的三档结论（Pass/RateLimited/Muted），
+        // 两件事挨着出现在同一个函数里，同名的代价是下一次有人读错。
+        Ok(risk_verdict) => crate::risk::apply_verdict(&state, uid, &cfg, risk_verdict).await,
+        Err(reject) => return Json(ApiResponse::error(&reject.message())),
+    };
     // 回复关系：**只信 parent_id**，三个列全部由父行派生。
     let (parent_id, root_id, reply_to_uid) = match payload.parent_id {
         None => (None, None, None),
@@ -337,6 +349,11 @@ pub async fn create_comment(
         super::web_info::review_switches_of(&state.db, ai_key, manual_key).await;
     let (approved, ai_result, ai_reason, reject_reason) =
         super::talks::decide_review("comment", uid, &content, ai_on, manual_on).await;
+    // 风控档位只在"本来会直接公开"时改判成待审：**只把 1 压成 0，绝不把 2 松成 0**
+    // ——AI 已经判过驳回的内容，不该因为"这个人发得太快"退回成"没人裁过"。
+    // 放在通知判定之前：压成 0 之后 `reply_target` 自然是 None（待审的回复不该惊动被回复者，
+    // 否则对方点进去看不见任何东西）。前端拿到 `approved=0` 会据实提示"待人工复核"。
+    let approved = if forced && approved == 1 { 0 } else { approved };
     // 回复通知的两个入参要在 `content` 被 move 进 ActiveModel 之前留一手。
     // **只有真要发的时候才克隆**：顶层评论占绝大多数，为它们克隆一份正文是白花。
     // （发不发的判据与 `notify_comment_reply` 头注一一对应：已公开 + 是回复 + 不是回自己）

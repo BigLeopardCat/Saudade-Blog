@@ -37,6 +37,12 @@ export interface TempUser {
     status: number
     chatQuotaUsed: number
     chatQuotaLimit: number
+    /** 现在是否处于禁言期（20261002 内容风控）。**后端算好的**（`authz::is_muted`），
+     *  前端不做时间比较——见 `isMuted` 那条注。缺字段按 false。 */
+    muted?: boolean
+    /** 禁言到期时刻，**原始库值**（`null` = 从未禁言，`9999-12-31 23:59:59` = 永久）。
+     *  与 `TempUserInfo::muted_until` 是同一个跨语言契约，显示翻译见 `muteUntilText`。 */
+    mutedUntil?: string | null
     [k: string]: unknown
 }
 

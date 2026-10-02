@@ -711,6 +711,26 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                 />
             )}
 
+            {/* 禁言横幅（20261002 内容风控）。**它必须把"不是封号"说清楚**：当事人
+                发现自己评论发不出去时，第一反应是"我被封了"，而这两件事的后果差得远
+                （禁言只挡评论与留言两个入口）。所以 description 里逐个点名"仍然能做"的事。
+                到期时间**只印不算**——它由后端 `authz::mute_until_text` 产出（`永久` /
+                `至 …`），前端自己判"9999 年就是永久"等于把那个哨兵值抄了第二份。
+                字段缺失或为 false 一律不渲染（老后端 + 新前端：不显示是这里唯一安静的失败）。 */}
+            {profile?.muted && (
+                <Alert
+                    className="ucMuteBanner"
+                    type="warning"
+                    showIcon
+                    message="你暂时不能发布评论与留言"
+                    description={
+                        <>你的账号被临时禁言{profile?.mutedUntil ? `（${profile.mutedUntil}）` : ''}，
+                            期间发出的评论与留言会被拒；其余一切照常——仍可登录、浏览文章、与泠月喵对话。
+                            如有疑问请联系博主。</>
+                    }
+                />
+            )}
+
             <div className="ucField">
                 <span className="ucLabel">昵称</span>
                 <Input

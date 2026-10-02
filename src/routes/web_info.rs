@@ -94,6 +94,23 @@ pub struct WebSettingPayload {
     pub comment_ai_review_enabled: Option<bool>,
     #[serde(rename = "commentManualReviewEnabled")]
     pub comment_manual_review_enabled: Option<bool>,
+
+    // 内容风控阈值（20261002 分级禁言）。同样是 KV 表、零迁移。**五个键名与
+    // `crate::risk::RISK_KEYS` 逐字相同**（那边是读取侧的唯一实现，这里只做透传）。
+    //
+    // **缺键回 `None` 而不是 `0`**：两者含义完全不同——`None` = "没配过、用出厂默认"，
+    // `0` = "管理员显式关掉了这一档"。合成一个值之后，设置卡第一次打开就会把闸门
+    // 全部显示成"已关闭"，而库里其实什么配置都没有。
+    #[serde(rename = "contentRateWindowSecs")]
+    pub content_rate_window_secs: Option<i64>,
+    #[serde(rename = "contentMinIntervalSecs")]
+    pub content_min_interval_secs: Option<i64>,
+    #[serde(rename = "contentRateLimit")]
+    pub content_rate_limit: Option<i64>,
+    #[serde(rename = "contentMuteLimit")]
+    pub content_mute_limit: Option<i64>,
+    #[serde(rename = "contentMuteHours")]
+    pub content_mute_hours: Option<i64>,
 }
 
 pub async fn get_web_settings(
@@ -115,6 +132,14 @@ pub async fn get_web_settings(
     let (board_ai, board_manual) = BOARD_REVIEW_KEYS;
     let (comment_ai, comment_manual) = COMMENT_REVIEW_KEYS;
 
+    // 风控阈值：键名从 `risk::RISK_KEYS` 取（**读取侧的判据也在那边**，这里只透传）。
+    // 值不是整数（或压根没这个键）→ `None`：设置卡按"用默认值"渲染，
+    // 而 `risk::parse_config` 遇到同样的情况也回落默认值 —— 两侧口径一致。
+    let risk_num =
+        |k: &str| -> Option<i64> { get_direct(k).and_then(|v| v.trim().parse::<i64>().ok()) };
+    let [risk_window, risk_gap, risk_rate, risk_mute, risk_hours] =
+        crate::risk::RISK_KEYS.map(risk_num);
+
     let payload = WebSettingPayload {
         blog_title: get_val("blog_title"),
         blog_author: get_val("author"),
@@ -133,6 +158,12 @@ pub async fn get_web_settings(
 
         comment_ai_review_enabled: get_direct(comment_ai).map(|v| v == "true"),
         comment_manual_review_enabled: get_direct(comment_manual).map(|v| v == "true"),
+
+        content_rate_window_secs: risk_window,
+        content_min_interval_secs: risk_gap,
+        content_rate_limit: risk_rate,
+        content_mute_limit: risk_mute,
+        content_mute_hours: risk_hours,
     };
 
     Json(ApiResponse::success(payload))
@@ -275,6 +306,20 @@ pub async fn update_web_info(
     if let Some(v) = payload.manual_review_enabled { map.insert(board_manual, v.to_string()); }
     if let Some(v) = payload.comment_ai_review_enabled { map.insert(comment_ai, v.to_string()); }
     if let Some(v) = payload.comment_manual_review_enabled { map.insert(comment_manual, v.to_string()); }
+
+    // 风控阈值：`Option<i64>` + `if let Some` = 只写请求里带了的那些（同上面四个开关的
+    // 理由——设置卡不该顺手改写自己没在管的字段）。**不改这里的语义**：请求里带 `0`
+    // 就是把那一档显式关掉，照写不误（`risk::parse_config` 认这个值）。
+    // 三条写入路径共用同一组键名常量，与读取侧（`risk::load_config`）必然同源。
+    for (key, val) in [
+        (crate::risk::RISK_KEYS[0], payload.content_rate_window_secs),
+        (crate::risk::RISK_KEYS[1], payload.content_min_interval_secs),
+        (crate::risk::RISK_KEYS[2], payload.content_rate_limit),
+        (crate::risk::RISK_KEYS[3], payload.content_mute_limit),
+        (crate::risk::RISK_KEYS[4], payload.content_mute_hours),
+    ] {
+        if let Some(v) = val { map.insert(key, v.to_string()); }
+    }
 
     for (k, v) in map {
         let entry = web_info::Entity::find()

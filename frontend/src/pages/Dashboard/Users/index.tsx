@@ -1,5 +1,5 @@
 import './index.sass'
-import { Button, Dropdown, Input, message, Modal, Tabs, Tag, Tooltip } from 'antd';
+import { Button, Dropdown, Input, message, Modal, Radio, Tabs, Tag, Tooltip } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
 import type { TabsProps } from 'antd';
 import { useMemo, useState } from 'react';
@@ -58,6 +58,39 @@ import { RoleBadge } from "../../../components/RoleBadge";
  *  真发生了也宁可少标一个"冻结"（后端照样会拒它），而不是把整页账号标成冻结。
  *  这里刻意不做「=== 1 才算冻结」：那会与后端对不上，后端认的是 != 0。 */
 const isFrozen = (u: any) => Number(u.status ?? 0) !== 0
+
+/** 账号**当前是否处于禁言期**（20261002 内容风控）。
+ *
+ *  ⚠️ 判据**不在这一页**：后端算好了 `muted` 再回传（`authz::is_muted` = 现在 < 到期
+ *  时刻）。前端自己拿 `mutedUntil` 跟当前时间比大小会造出第二个真相源——而且"永久"
+ *  是一个哨兵值，比错一次就露馅。这里是**取用**，不是重算。
+ *  字段缺失按 false（老后端 + 新前端）：不标"已禁言"是这里唯一安静的失败，
+ *  而反过来的默认值会把整页账号标成禁言。 */
+const isMuted = (u: any) => !!u.muted
+
+/** `mutedUntil`（原始库值）→ 列表上那一截人话（`永久` / `2026-10-04 12:00`）。
+ *
+ *  这是后端 `authz::mute_until_text` 的**镜像**，而不是"前端也判一次"：账号列表是
+ *  裸数组形状的**跨语言契约**（`TempUserInfo`，agent 的工具层也读它），不能为了
+ *  显示美观再多加一个字段——那边要的是原始事实（谁被禁到什么时候），这边要的是能读的字。
+ *  哨兵值与后端 `authz::MUTE_FOREVER` 同源；用**字符串比大小**（定宽 ISO 格式，
+ *  字典序即时间序），不做日期解析——解析要处理时区与非法值，而这里只需要"是不是那个哨兵"。 */
+const MUTE_FOREVER = '9999-12-31 23:59:59'
+const muteUntilText = (v?: string | null) => {
+    if (!v) return ''
+    if (v >= MUTE_FOREVER) return '永久'
+    return v.slice(0, 16) // 去掉秒：列表里到分钟足够
+}
+
+/** 禁言时长选项（小时）。**`0` = 永久**（后端认 `null` / `<=0` 为永久，
+ *  见 `SetMuteReq`）——列表里放一个"永久"选项比让管理员自己算小时数清楚得多。
+ *  默认选 24 小时：最常见的处置是"先关一天看看"，而最不该成为默认的是永久。 */
+const MUTE_DURATIONS: { hours: number; label: string }[] = [
+    { hours: 1, label: '1 小时' },
+    { hours: 24, label: '24 小时' },
+    { hours: 24 * 7, label: '7 天' },
+    { hours: 0, label: '永久' },
+]
 
 /** 筛选项：前三个按**角色**分流，最后一个是与角色正交的**状态**筛选
  *  （20260926 用户点名要的三个：管理员账号 / 普通用户账号 / 冻结账号）。
@@ -278,6 +311,55 @@ const Users = () => {
         if (t) await handleSetStatus(t, frozen)
     }
 
+    /** 禁言 / 解除禁言（20261002 内容风控）。**与冻结是两件事**，这一页上必须分得清：
+     *  冻结改的是 `user.status`（踢下线、作废令牌），禁言改的是 `user.muted_until`——
+     *  **不碰登录、不碰令牌**，对方照样能登录、能读文章、能跟泠月喵对话，只是发不出
+     *  评论与留言。所以：①这个按钮**不写 danger**（红按钮在这一页的含义是"把人赶走"）；
+     *  ②下面那个弹窗的正文**一个字都不提"下线/失效"**（提了就是假话——`temp_user.rs`
+     *  里为此专门写了 `mute_change_body` 而不复用 `account_change_body`，同一件事在
+     *  通知正文与这里各说一遍就是两份真相，所以这里的措辞与它对齐）。
+     *
+     *  `hours` 只在**禁言方向**有意义：`1/24/168` 小时，或 `0` = 永久（后端 `SetMuteReq`
+     *  认 `null` / `<= 0` 为永久）。解禁方向不带它——"解禁要多久"不是一个问题。
+     *  与冻结同一条纪律：传**目标状态**而不是"切换一下"，重试/双击都安全。 */
+    const handleSetMute = async (user: any, muted: boolean, hours: number) => {
+        try {
+            const res = await http.post('/api/temp-users/' + user.id + '/mute',
+                { muted, hours: muted ? hours : null })
+            if (res.data?.code === 200) {
+                // 人话在 **`data`** 里、不在 `message` 里——同 `handleSetStatus` 那条注
+                // （`ApiResponse::success` 的 `message` 恒为字面量 `"ok"`）。
+                message.success(res.data.data || '操作完成')
+                invalidateTempUsers()
+            }
+            else { message.error(res.data?.message) }
+        } catch { message.error('请求失败') }
+    }
+
+    /** 禁言确认弹窗。`muteTarget` + `muteHours` 都是**开窗那一刻的快照**——同
+     *  `statusTarget`/`statusNext` 那条注：窗口开着的这段时间列表可能被重拉，
+     *  现算会让"我选的 24 小时、确定下去变成永久了"。 */
+    const [muteTarget, setMuteTarget] = useState<any>(null)
+    const [muteHours, setMuteHours] = useState(24)
+    const askSetMute = (user: any) => {
+        setMuteTarget(user)
+        setMuteHours(24)    // 每次开窗回到默认档，不沿用上一次的选择
+    }
+    const confirmSetMute = async () => {
+        const t = muteTarget
+        const hours = muteHours
+        setMuteTarget(null)
+        if (t) await handleSetMute(t, true, hours)
+    }
+    /** 解禁确认：**单独一个窗口**，不与禁言共用一个（禁言要选时长、解禁没有这一维，
+     *  硬塞进同一个弹窗就得让半个窗口在两种方向下长得不一样）。 */
+    const [unmuteTarget, setUnmuteTarget] = useState<any>(null)
+    const confirmUnmute = async () => {
+        const t = unmuteTarget
+        setUnmuteTarget(null)
+        if (t) await handleSetMute(t, false, 0)
+    }
+
     /** 我自己的角色（20260926）。**只用于界面分流**——这一页此前刻意不读令牌
      *  （权限判据全在后端），这次为了"哪个按钮该不该亮"破例：管理员之间不能互相
      *  冻结、只有超管能改身份，这两个判据后端都有一份，这里的副本只是别让人白点
@@ -423,8 +505,8 @@ const Users = () => {
     /* 跨端同步（20260926；20261002 改接缓存 store）：看板娘收尾事件 / 切回可见 /
        20 秒轮询，任一发生就叫醒 `./tempUsers.ts` 去刷一次。**轮询不拥有数据**——它只可能用
        更新的服务端真相替换缓存，不存在"把缓存冲掉"（数据只有 store 里那一份）。
-       五个写入口的弹窗开着时**一律不拉**（`skip`）：冻结/解冻、变更身份、发通知、改密码、
-       恢复码。理由都是同一句——**绝不覆盖主人正在编辑或正在确认的东西**：冻结那个弹窗存的
+       七个写入口的弹窗开着时**一律不拉**（`skip`）：冻结/解冻、变更身份、发通知、改密码、
+       恢复码、禁言、解禁。理由都是同一句——**绝不覆盖主人正在编辑或正在确认的东西**：冻结那个弹窗存的
        是一份**目标状态快照**（见 `statusTarget` 的注释），底下列表在它开着的时候换掉，主人
        点下去的那一下就跟自己看到的那一行对不上了。
        注意 skip 只挡这一路的**轮询**：写操作成功后的 `invalidateTempUsers()` 不受它影响
@@ -436,6 +518,7 @@ const Users = () => {
     useLiveRefresh(() => refreshTempUsers(), {
         skip: () => tab !== 'accounts'
             || !!statusTarget || !!roleTarget || !!notifyTarget || !!quotaTarget
+            || !!muteTarget || !!unmuteTarget
             || pwModalOpen || recoveryModalOpen,
     });
 
@@ -566,6 +649,30 @@ const Users = () => {
                                               {isFrozen(u) ? '解冻' : '冻结'}
                                           </Button>
                                       )
+                                      /** 这一行的禁言按钮该不该亮。条件与冻结**逐字相同**
+                                       *  （后端 `authz::check_mute` 与 `check_freeze` 共用一张
+                                       *  规则表，只有动词不同），所以两个 `Blocked` 只看动作词
+                                       *  是否一致一眼就能核对——**这不是重复，是同一张规则表
+                                       *  在两处的投影**；真出分歧的地方是后端那一处。
+                                       *  ⚠️ 两句文案是跨语言契约，与 `routes/temp_user.rs::
+                                       *  mute_denial_message` 逐字同源，agent 转述的就是它们。 */
+                                      const muteBlocked =
+                                          (myUid !== null && u.id === myUid) ? '不能禁言自己的账号'
+                                              : (myRole === 'admin' && u.role === 'admin')
+                                                  ? '管理员之间不可互相禁言' : ''
+                                      const muted = isMuted(u)
+                                      /** 禁言/解禁：一个按钮两种含义，按当前状态取反。
+                                       *  **两侧都不给 danger**——禁言不踢人下线，红按钮留给冻结。 */
+                                      const muteBtn = (
+                                          <Button
+                                              size="small"
+                                              className="tu-mute-btn"
+                                              disabled={!!muteBlocked}
+                                              onClick={() => (muted ? setUnmuteTarget(u) : askSetMute(u))}
+                                          >
+                                              {muted ? '解除禁言' : '禁言'}
+                                          </Button>
+                                      )
                                       return (
                                         <div key={u.id} className="tu-row">
                                             <div>
@@ -581,6 +688,17 @@ const Users = () => {
                                                     冻结账号筛选视图里也是这一行，得一眼看出为什么它在这儿 */}
                                                 {isFrozen(u) && (
                                                     <Tag color="red" style={{ marginLeft: 8 }}>已冻结</Tag>
+                                                )}
+                                                {/* 禁言状态（20261002）：与「已冻结」并列但**各说各的**
+                                                    ——冻结标签说的是"登录态没了"，这一枚说的是"发言被
+                                                    关了"，两枚同时出现**不是矛盾**（一个被冻结又恰在禁言
+                                                    期内的账号是真的存在）。到期时刻写在标签里：只有
+                                                    "已禁言"三个字的话，管理员没法回答"关到什么时候"，
+                                                    而这正是他下一步要判断的东西（该不该解禁）。 */}
+                                                {muted && (
+                                                    <Tag color="orange" style={{ marginLeft: 8 }}>
+                                                        已禁言{u.mutedUntil ? ` · ${muteUntilText(u.mutedUntil)}` : ''}
+                                                    </Tag>
                                                 )}
                                                 <span className="tu-id">ID: {u.id}</span>
                                                 {/* 额度（20260929）：正常用户终身 500 轮、管理员不限额。
@@ -610,6 +728,12 @@ const Users = () => {
                                                 {freezeBlocked
                                                     ? <Tooltip title={freezeBlocked}>{freezeBtn}</Tooltip>
                                                     : freezeBtn}
+                                                {/* 禁言（20261002）：与冻结并列的第二道"限制这个账号"的动作。
+                                                    被挡住时同样用 Tooltip 说明原因——与冻结那不是"顺手也加一个"，
+                                                    而是同一张规则表在这里的同一处投影（见 `muteBlocked` 的注）。 */}
+                                                {muteBlocked
+                                                    ? <Tooltip title={muteBlocked}>{muteBtn}</Tooltip>
+                                                    : muteBtn}
                                                 {/* 变更身份（20260926；**20261002 下放给管理员**）：
                                                     入口可见性 = `canChangeRoleOf`（超管全档、管理员只
                                                     低两档），**看不见的档位连入口都不渲染**——
@@ -735,6 +859,72 @@ const Users = () => {
                                 {statusNext
                                     ? '冻结后：该账号无法再登录，已登录的网页会话立即失效；解冻后需要重新登录，冻结前的登录状态不会恢复。'
                                     : '解冻后：该账号可以重新登录；它冻结前的登录状态不会恢复。'}
+                            </div>
+                        </div>
+                    </Modal>
+
+                    {/* 禁言确认（20261002 内容风控）。与冻结那个弹窗同三条纪律（按钮写动作词、
+                        受控 Modal、正文说清后果），但正文说的是**另一件事**：
+                        · 这里**一个字都不提"下线/失效"**——禁言不碰登录态，提了就是假话，
+                          而这一页的使用者会照着弹窗正文去预判对方的体验（`temp_user.rs::mute_change_body`
+                          为同一件事专门写了一份正文，两处说同一件事实，所以措辞要对齐）；
+                        · 后果写**两段**：被拒的是什么（发布评论与留言），不受影响的是什么
+                          （登录、浏览、对话）——只说前一半会让人以为禁言等于封号；
+                        · 时长选择放在正文里（Radio 一行四档），默认 24 小时：最常见的处置是
+                          "先关一天看看"，而**最不该成为默认的是永久**。 */}
+                    <Modal
+                        title={'禁言账号 - ' + (muteTarget?.username || '')}
+                        open={!!muteTarget}
+                        onOk={confirmSetMute}
+                        onCancel={() => setMuteTarget(null)}
+                        okText="禁言"
+                        cancelText="取消"
+                        okButtonProps={{ className: 'tu-mute-ok' }}
+                        cancelButtonProps={{ className: 'tu-mute-cancel' }}
+                        width={440}
+                    >
+                        <div style={{ marginTop: 12, lineHeight: 1.7 }}>
+                            <div>
+                                确定要禁言 <strong>{muteTarget?.username}</strong> 吗？
+                            </div>
+                            <div style={{ marginTop: 8 }}>
+                                <Radio.Group
+                                    className="tu-mute-duration"
+                                    value={muteHours}
+                                    onChange={(e) => setMuteHours(e.target.value)}
+                                >
+                                    {MUTE_DURATIONS.map((d) => (
+                                        <Radio key={d.hours} value={d.hours}>{d.label}</Radio>
+                                    ))}
+                                </Radio.Group>
+                            </div>
+                            <div style={{ marginTop: 8, color: 'var(--washi-ink-2, #7c6584)' }}>
+                                禁言期间：该账号不能发布文章评论与留言，这两处提交会被直接拒绝。
+                                其余一切照常——仍可登录、浏览文章、与泠月喵对话，点赞也不受影响。
+                            </div>
+                        </div>
+                    </Modal>
+
+                    {/* 解禁确认。**单开一个窗口**而不是与禁言共用：解禁没有"多久"这一维，
+                        塞进同一个弹窗会得到一个在两方向下长得不一样的窗口。 */}
+                    <Modal
+                        title={'解除禁言 - ' + (unmuteTarget?.username || '')}
+                        open={!!unmuteTarget}
+                        onOk={confirmUnmute}
+                        onCancel={() => setUnmuteTarget(null)}
+                        okText="解除禁言"
+                        cancelText="取消"
+                        okButtonProps={{ className: 'tu-unmute-ok' }}
+                        cancelButtonProps={{ className: 'tu-unmute-cancel' }}
+                        width={420}
+                    >
+                        <div style={{ marginTop: 12, lineHeight: 1.7 }}>
+                            <div>
+                                确定要解除 <strong>{unmuteTarget?.username}</strong> 的禁言吗？
+                            </div>
+                            <div style={{ marginTop: 8, color: 'var(--washi-ink-2, #7c6584)' }}>
+                                解禁后该账号可以立即发布评论与留言。这与冻结无关：期间它的登录
+                                状态一直有效，不受本次操作影响。
                             </div>
                         </div>
                     </Modal>
