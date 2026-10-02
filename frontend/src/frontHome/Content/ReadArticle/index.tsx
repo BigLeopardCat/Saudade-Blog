@@ -26,6 +26,7 @@ import getToken from "../../../apis/getToken.tsx";
 import {addFavorite, errMsg, ok, removeFavorite} from "../../../apis/ProfileMethods.tsx";
 import { applyLocalFavorite, useFavorites } from "../../../components/UserCenter/favorites.ts";
 import {useLiveRefresh} from "../../../utils/liveRefresh.ts";
+import CommentSection from "../../../components/CommentSection";
 
 // ByteMD imports
 import { Viewer } from '@bytemd/react'
@@ -665,6 +666,10 @@ const ReadArticle = () => {
                              />
                         </div>
                     </div>
+                    {/* 讨论区（20261002）：正文之后。XSS 防线在渲染侧的 markdown 管线
+                        （CommentSection 里的 renderBlogMarkdown，与文章页 Viewer 同一条），
+                        服务端只校验形状、不转义存储——见组件头注 ① */}
+                    <CommentSection noteId={id} />
                 </>
             )}
         </div>
