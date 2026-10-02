@@ -308,7 +308,14 @@ const USERS = [
   { id: 1, username: 'root_admin', role: 'admin', status: 0,
     chatQuotaUsed: 0, chatQuotaLimit: 0 },
   ...Array.from({ length: 28 }, (_, i) => ({
-    id: 100 + i, username: 'guest' + (i + 1), role: 'user', status: i >= 26 ? 1 : 0,
+    id: 100 + i, username: 'guest' + (i + 1),
+    // i===19（guest20）刻意是**杂鱼**：20261002 把改身份下放给管理员之后，
+    // 「低两档的行才有入口」这条要有个杂鱼行才测得全（前端 `ADMIN_ROLE_TIERS`
+    // 里那两档是 user 与 zako）。它同时是后台行上唯一一枚杂鱼徽章的宿主。
+    // 挑 guest20 是因为全文件没有一处引用它，且 `guest1` 前缀检索不会命中它
+    // （「guest20」的前六个字符是 guest2）。
+    role: i === 19 ? 'zako' : 'user',
+    status: i >= 26 ? 1 : 0,
     ...(i === 26 ? {} : { chatQuotaUsed: i === 0 ? 137 : (i * 13) % 500,
                           chatQuotaLimit: 500 }) })),
   { id: 200, username: 'sec_zhang', role: 'secretary', status: 0,
@@ -506,15 +513,24 @@ GEO = """() => {
         notifyBtns: [...document.querySelectorAll('.tu-row')].map(
             (r) => ({ u: r.querySelector('strong').textContent,
                       has: !!r.querySelector('.tu-notify-btn') })),
-        // 「变更身份」入口只在超管视角下存在（不是禁用——普通管理员从来没有过这个能力）
+        // 「变更身份」入口：超管每行都有，管理员**只在低两档的行上**有
+        // （20261002 下放；不是禁用——够不着的行根本没有这颗按钮）。
+        // 行角色从徽章的 data-role 读：**普通用户那档不渲染徽章**（既有规则），
+        // 所以读不到就按 'user' 算——这正是界面上那条规则本身。
         roleBtns: [...document.querySelectorAll('.tu-row')].map(
             (r) => ({ u: r.querySelector('strong').textContent,
+                      role: (r.querySelector('[data-role]') || { dataset: {} }).dataset.role || 'user',
                       has: !!r.querySelector('.tu-role-btn') })),
-        // 行上的角色标签（改身份之后要能看见它跟着变）
+        // 行上的身份徽章（改身份之后要能看见它跟着变）。20261002 起这是
+        // `RoleBadge`（整枚内联 SVG），**不再是 `.ant-tag`**：
+        //   · 取 `[data-role]` 的 `aria-label`——里面是干净的身份名；
+        //   · 不读 textContent：SVG `<text>` 里是**逐字加空格**的「管 理 员」，
+        //     而且「已冻结」那枚仍是 antd Tag（两个不同来路的东西混在一个夹具里，
+        //     改天谁多挂一枚标签就会让断言读到一个拼接串）。
         roleTags: [...document.querySelectorAll('.tu-row')].map(
             (r) => ({ u: r.querySelector('strong').textContent,
-                      tag: [...r.querySelectorAll('.ant-tag')]
-                          .map((t) => t.textContent.replace(/\s+/g, '')).join('|') })),
+                      tag: (r.querySelector('[data-role]') || {getAttribute: () => ''})
+                          .getAttribute('aria-label') || '' })),
     };
 }"""
 
@@ -868,10 +884,13 @@ with sync_playwright() as p:
     check("筛「普通用户账号」：管理员被排除、秘书也在这一档（非管理员）",
           "root_admin" not in names and "sec_zhang" in names and len(names) == 29,
           f'{len(names)} 行，含秘书={"sec_zhang" in names}')
-    check("普通账号行**有**删除按钮（秘书也不是普通用户，同样没有）",
-          all(r["del"] for r in g["delBtns"] if r["u"] != "sec_zhang")
-          and not [r for r in g["delBtns"] if r["u"] == "sec_zhang"][0]["del"],
-          str([r for r in g["delBtns"] if not r["del"]]))
+    # 删除按钮只给**普通用户**那一档（后端 `delete_temp_user` 也这么判：秘书与杂鱼
+    # 都拒，理由是"该账号不是普通用户，不能在这里删除"）。夹具里非普通用户的就两行：
+    # sec_zhang 与 guest20（20261002 起是杂鱼）——两个都要没有，只挑一个验就漏一半。
+    check("普通账号行**有**删除按钮（秘书与杂鱼都不是普通用户，同样没有）",
+          all(r["del"] for r in g["delBtns"] if r["u"] not in ("sec_zhang", "guest20"))
+          and not any(r["del"] for r in g["delBtns"] if r["u"] in ("sec_zhang", "guest20")),
+          str([r["u"] for r in g["delBtns"] if not r["del"]]))
 
     pg.locator(".tu-tabs button", has_text="全部").first.click()
     pg.wait_for_timeout(200)
@@ -1205,11 +1224,46 @@ with sync_playwright() as p:
     tips = tooltips(pg, '.tu-row:has(strong:text-is("root_admin")) .tu-freeze-btn')
     check("自己那一行的说明是「不能冻结自己的账号」（与后端同一句话，不是「管理员之间」）",
           any("不能冻结自己的账号" in t for t in tips), str(tips))
-    check("管理员视角下**一个「变更身份」入口都没有**（这不是「禁用」，是从来不属于他）",
-          not any(r["has"] for r in g["roleBtns"])
-          and pg.evaluate("() => document.querySelectorAll('.tu-role-btn').length") == 0,
-          str(g["roleBtns"]))
+    # 变更身份（20261002 下放）：管理员**能改的只有低两档**——
+    # 够得着的行有入口、够不着的行连按钮都不渲染（不是禁用：禁用会让人以为"本可以有"）。
+    # 两半一起断言，只看一半都测不出判据写反（"全都有"或"全都没有"都能单过一半）。
+    _low = [r for r in g["roleBtns"] if r["role"] in ("user", "zako")]
+    _high = [r for r in g["roleBtns"] if r["role"] not in ("user", "zako")]
+    check("管理员视角：普通用户/杂鱼那些行**有**「变更身份」入口",
+          _low and all(r["has"] for r in _low),
+          str([r["u"] for r in _low if not r["has"]]))
+    check("管理员视角：管理员/秘书那些行**一个入口都没有**（够不着，不是禁用）",
+          _high and not any(r["has"] for r in _high),
+          str([r["u"] for r in _high if r["has"]]))
+    check("合起来 = 恰好 28 行有入口（30 行里排除管理员与秘书那两行）",
+          sum(1 for r in g["roleBtns"] if r["has"]) == 28,
+          str(sum(1 for r in g["roleBtns"] if r["has"])))
+    # 徽章（20261002 B 件）在后台行上也要认得出身份——杂鱼行是唯一一枚非「已冻结」标签
+    check("杂鱼那一行挂着「杂鱼」徽章（data-role=zako，文案走 aria-label）",
+          pg.get_attribute('.tu-row:has(strong:text-is("guest20")) [data-role]', 'aria-label') == "杂鱼"
+          and pg.get_attribute('.tu-row:has(strong:text-is("guest20")) [data-role]', 'data-role') == "zako",
+          str(pg.get_attribute('.tu-row:has(strong:text-is("guest20")) [data-role]', 'aria-label')))
+    check("普通用户那行**不挂**徽章（既有规则：后台行上只标出例外）",
+          pg.locator('.tu-row:has(strong:text-is("guest1")) [data-role]').count() == 0,
+          str(pg.locator('.tu-row:has(strong:text-is("guest1")) [data-role]').count()))
     check("第六节①无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
+    pg.close()
+
+    # ①b 管理员打开菜单：**恰好只剩另一档**（当前身份不列，够不着的档也不列）
+    # 这一条锁的是"两档之间搬"在界面上的形状：普通用户那行只剩「杂鱼」、
+    # 杂鱼那行只剩「普通用户」——菜单里出现第三项就说明档位收窄没生效。
+    pg = mount(br)
+    pg.locator('.tu-row:has(strong:text-is("guest1")) .tu-role-btn').click()
+    pg.wait_for_timeout(300)
+    check("管理员点普通用户那行：菜单只剩「杂鱼」一项",
+          menu_items(pg) == ["杂鱼"], str(menu_items(pg)))
+    pg.keyboard.press("Escape")
+    pg.wait_for_timeout(200)
+    pg.locator('.tu-row:has(strong:text-is("guest20")) .tu-role-btn').click()
+    pg.wait_for_timeout(300)
+    check("管理员点杂鱼那行：菜单只剩「普通用户」一项（两个方向都通）",
+          menu_items(pg) == ["普通用户"], str(menu_items(pg)))
+    check("第六节①b无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
     # ② 管理员看**另一个**管理员那一行（uid 换成不在名单里的 721）

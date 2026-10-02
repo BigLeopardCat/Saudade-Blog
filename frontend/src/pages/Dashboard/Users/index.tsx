@@ -16,7 +16,8 @@ import http from "../../../apis/axios.tsx";
 import getToken from "../../../apis/getToken.tsx";
 import { useLiveRefresh } from "../../../utils/liveRefresh.ts";
 import { quotaChipText, quotaLevel, type QuotaLevel } from "../../../utils/quota.ts";
-import { ROLE_LABEL, roleLabel, roleTagColor, getRoleFromToken, getUidFromToken } from "../../../utils/auth.ts";
+import { ROLE_LABEL, roleLabel, getRoleFromToken, getUidFromToken } from "../../../utils/auth.ts";
+import { RoleBadge } from "../../../components/RoleBadge";
 
 /** 用户管理 = 账号管理（临时访客账号）+ 评论管理（河灯留言审核）
  *  20260905 拍板：原 Announcement 内嵌临时用户段迁入「账号管理」；
@@ -74,6 +75,11 @@ const ASSIGNABLE_ROLES: { role: string; rank: number }[] = [
 ]
 const roleRank = (role?: string | null) =>
     ASSIGNABLE_ROLES.find((r) => r.role === role)?.rank ?? -1
+
+/** 管理员（非超管）能动的那两档（20261002 下放）。**与 Rust 侧 `authz::is_admin_tier`
+ *  同一份口径**：判据只有一份实现（在后端），这里是"按钮该不该出现"的副本，
+ *  改这里就要一起改那里，反之亦然。 */
+const ADMIN_ROLE_TIERS: string[] = ['user', 'zako']
 
 /** 行上那一截额度：**文案 + 档位**（20260929，20260929b 改口径）。
  *
@@ -276,6 +282,18 @@ const Users = () => {
         setRoleTarget(user)
         setRoleNext(role)
     }
+    /* 变更身份的**授权面**（20261002 下放给管理员）——这里的副本只是"按钮该不该出现"，
+       真正的判据在 Rust 侧 `authz::check_role_change`，两边口径必须一致：
+         · 超管：除超管外的四档随便搬（`ASSIGNABLE_ROLES` 全体）；
+         · 管理员：只在**普通用户 / 杂鱼**这两档之间搬（`authz::is_admin_tier`）。
+       「目标不在我管的范围里」这一支**不渲染入口**（不是禁用、更不是点了才被拒）——
+       与「非普通账号不给删除按钮」同一条纪律：没有这个能力的人不必看见这颗按钮。
+       代价是同一页上不同角色看到的行不一样，这正是它该有的样子。 */
+    const roleMenuRoles = myRole === 'superadmin'
+        ? ASSIGNABLE_ROLES
+        : ASSIGNABLE_ROLES.filter((r) => ADMIN_ROLE_TIERS.includes(r.role))
+    const canChangeRoleOf = (role?: string | null) =>
+        myRole === 'superadmin' || (myRole === 'admin' && ADMIN_ROLE_TIERS.includes(role || ''))
     const confirmSetRole = async () => {
         const t = roleTarget
         const r = roleNext
@@ -512,10 +530,12 @@ const Users = () => {
                                         <div key={u.id} className="tu-row">
                                             <div>
                                                 <strong className={isFrozen(u) ? 'tu-frozen-name' : ''}>{u.username}</strong>
+                                                {/* 身份徽章（20261002 换掉 antd 的具名色 Tag）：
+                                                    图形 + 形状 + 配色三样一起区分五档，见 RoleBadge 头注。
+                                                    「普通用户不显示」这条规则不变——后台行上满屏都是普通用户，
+                                                    这一枚只用来**标出例外**。 */}
                                                 {u.role !== 'user' && (
-                                                    <Tag color={roleTagColor(u.role)} style={{ marginLeft: 8 }}>
-                                                        {ROLE_LABEL[u.role] || u.role}
-                                                    </Tag>
+                                                    <RoleBadge role={u.role} size={22} style={{ marginLeft: 8 }} />
                                                 )}
                                                 {/* 冻结状态**显示成标签**而不是只靠按钮文案：
                                                     冻结账号筛选视图里也是这一行，得一眼看出为什么它在这儿 */}
@@ -550,16 +570,17 @@ const Users = () => {
                                                 {freezeBlocked
                                                     ? <Tooltip title={freezeBlocked}>{freezeBtn}</Tooltip>
                                                     : freezeBtn}
-                                                {/* 变更身份（20260926）：只有超管看得见这个入口。
-                                                    不多给一个"把它禁掉"的中间态——普通管理员从来没有
-                                                    过这个能力，禁用按钮会让人以为"本可以有"。
-                                                    菜单里**不列当前身份**：一个"改成我现在这个"的
-                                                    选项只会带来一次什么都没发生的往返。 */}
-                                                {myRole === 'superadmin' && (
+                                                {/* 变更身份（20260926；**20261002 下放给管理员**）：
+                                                    入口可见性 = `canChangeRoleOf`（超管全档、管理员只
+                                                    低两档），**看不见的档位连入口都不渲染**——
+                                                    不多给一个"把它禁掉"的中间态，禁用按钮会让人
+                                                    以为"本可以有"。菜单里**不列当前身份**：一个
+                                                    "改成我现在这个"的选项只会带来一次什么都没发生的往返。 */}
+                                                {canChangeRoleOf(u.role) && (
                                                     <Dropdown
                                                         trigger={['click']}
                                                         menu={{
-                                                            items: ASSIGNABLE_ROLES
+                                                            items: roleMenuRoles
                                                                 .filter((r) => r.role !== u.role)
                                                                 .map((r) => ({ key: r.role, label: ROLE_LABEL[r.role] })),
                                                             onClick: ({ key }) => askSetRole(u, key),

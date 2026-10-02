@@ -84,14 +84,6 @@ export function roleLabel(role?: string | null): string {
     return ROLE_LABEL[role] || role
 }
 
-/** 角色标签的颜色（与 ROLE_LABEL 同一张表的展示面，放在一起免得两处漂移）。
- *  未知角色给中性色——不为认不出的角色编一个"看起来很严重"的颜色。 */
-export function roleTagColor(role?: string | null): string {
-    if (role === 'superadmin') return 'purple'
-    if (role === 'admin') return 'gold'
-    if (role === 'secretary') return 'blue'
-    // 杂鱼用 orange：与秘书的 blue 区分开，又不给它"看起来很重要"的颜色
-    // （purple/gold 是管理员族的）。它是零工具角色，标签只需要"认得出"。
-    if (role === 'zako') return 'orange'
-    return 'default'
-}
+// `roleTagColor` 已删（20261002）：身份标签换成了 `components/RoleBadge`（整枚内联 SVG，
+// 每档自带图形/形状/配色，见那个组件的头注）。这函数留着就是**第二套颜色表**——
+// 哪天有人加个角色，改一处不改另一处不会有任何东西报红。
