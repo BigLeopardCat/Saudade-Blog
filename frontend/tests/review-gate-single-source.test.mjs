@@ -133,7 +133,11 @@ ok(comments.includes('super::talks::decide_review("comment", uid'),
     '评论调的是 talks::decide_review（tag=\"comment\"）');
 for (const [needle, why] of [
     ['AGENT_URL', 'AI 端点地址'],
-    ['verdict', '裁决词'],
+    // ⚠️ 判据是**带引号的 JSON 键** `"verdict"`，不是裸词：评论模块 20261002 起有
+    // 一个同名的局部变量（`Ok(risk_verdict) =>`，是 `risk::RiskVerdict` 的**风控三档**，
+    // 与 agent 回的裁决词毫无关系）。裸词判据会把那个变量误判成"照抄了一份裁决"，
+    // 而这条断言的真正对象一直是 `v.get("verdict")` 那一步。
+    ['"verdict"', '裁决词的读取'],
     ['"pass"', 'pass 分支'],
     ['AiReason', 'AI 说明的裁决映射'],
     ['Some("flag"', '存疑分支'],

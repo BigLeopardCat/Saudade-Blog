@@ -100,6 +100,12 @@ pub enum FreezeDenial {
 }
 
 /// 冻结 / 解冻一个账号的判据（解冻同规则）。
+///
+/// **禁言（`temp_user::set_user_muted`）也走这一张规则表**（20261002）：四条判据
+/// （谁有资格 / 不许动自己 / 不许动超管 / 管理员之间不许互相动手）对"冻结"与"禁言"
+/// 是**同一件事**——都是"一个管理员对另一个账号动手"。做法因此是**规则一份、话术两份**
+/// （`temp_user::freeze_denial_message` 与 `temp_user::mute_denial_message`，动词参数化），
+/// 而不是复制一张规则表：两张表迟早会在"加一种角色"那天漂移，而漂移的表现是静默放行。
 pub fn check_freeze(
     op_uid: i32,
     op_role: &str,
@@ -279,6 +285,106 @@ pub fn check_token(status: i8, token_version: i32, claims_ver: Option<i32>) -> R
         }
     }
     Ok(())
+}
+
+// ── 禁言（20261002 内容风控）───────────────────────────────────────────────
+//
+// 与上一节的分界（写一遍，因为这两件事最容易混）：`check_token` 回答的是**"这个令牌
+// 还算不算数"**，而禁言**不改变**那个答案。被禁言的人照常登录、照常浏览、照常跟 agent
+// 对话——他只是发不出评论与留言。
+//
+// 所以这一节没有任何函数被 `middleware` / `check_token` 调用，调用点只有两处写入
+// handler 的入口（`comments::create_comment`、`talks::insert_talk` 的 src=board 那一支）。
+// **禁言的常见误修法是在中间件里拦"禁言用户的一切请求"**——那等于把禁言做成冻结，
+// 而冻结已经存在、语义也完全不同（踢下线 + 作废令牌）。
+
+/// 「永久禁言」在 `user.muted_until` 里的字面量。
+///
+/// **不用 NULL 表永久**：NULL 已经是"从未禁言"的意思，两者同形会让后台列表、后台
+/// 的幂等判定（"现在就是禁言中 ⇒ 不重复弹卡"）与通知文案全都分不出来。
+/// 这个值也**不是**"足够远的未来"那种需要重算的近似——它是取值域的一部分（写进
+/// 迁移注释、`TempUserInfo` 的读法、agent 侧的工具参数），改它要三处一起改。
+pub const MUTE_FOREVER: &str = "9999-12-31 23:59:59";
+
+/// 现在是否处于禁言期。**判据只此一处**（`is_frozen` 的同位函数）。
+///
+/// 到期**不需要任何人去清**：判据就是"现在 < 到期时刻"，过了那一刻自然为假——
+/// 没有定时任务、没有后台解禁队列。这也是"永久"必须是一个真实时刻而不是 NULL 的
+/// 另一半理由：这个判据要对两种状态给出同一个形状的答案。
+pub fn is_muted(muted_until: Option<chrono::NaiveDateTime>, now: chrono::NaiveDateTime) -> bool {
+    match muted_until {
+        None => false,
+        Some(until) => now < until,
+    }
+}
+
+/// 「永久」那一刻（写库时的取值）。与 `MUTE_FOREVER` 同源：字面量解析失败就 panic
+/// ——它是个编译期常量字符串，解析不了说明有人改错了它，**这时候静默回落成
+/// "禁言到 1970 年"比崩溃危险得多**（那等于把禁言变成一句空话）。
+pub fn mute_forever_at() -> chrono::NaiveDateTime {
+    use chrono::NaiveDateTime;
+    NaiveDateTime::parse_from_str(MUTE_FOREVER, "%Y-%m-%d %H:%M:%S")
+        .expect("MUTE_FOREVER 是不可解析的时间字面量")
+}
+
+/// 禁言中被拒时，给当事人的那一句原话（**跨语言契约**：agent 逐字转述，
+/// 见 `docs/security-boundary.md` §7⑫）。
+///
+/// 三件事必须说清，少一件当事人就会去做无用功：
+///   · **你还在这儿**（能登录能看，只是发不了）——不然他会以为自己被封号了；
+///   · **到什么时候**（永久那种要直说永久，不能显示成 9999 年）；
+///   · **还剩多久**（钟面时刻是给日历的，剩余量是给人做决定的）。
+pub fn mute_denial_message(until: chrono::NaiveDateTime, now: chrono::NaiveDateTime) -> String {
+    if until >= mute_forever_at() {
+        return "你已被禁言（永久），期间不能发布评论与留言。".to_string();
+    }
+    format!(
+        "你已被禁言，至 {}（还剩约 {}），期间不能发布评论与留言。",
+        until.format("%Y-%m-%d %H:%M"),
+        mute_remain_text(until, now)
+    )
+}
+
+/// 「还剩多久」的人话。**禁言话术与禁言通知共用这一份**（`risk::mute_notice_body` 也调它）
+/// ——两处各写一遍的话，"不足一小时按分钟说"这类边界只会在一处被修。
+pub fn mute_remain_text(until: chrono::NaiveDateTime, now: chrono::NaiveDateTime) -> String {
+    let left = until - now;
+    if left.num_hours() >= 1 {
+        format!("{} 小时", left.num_hours())
+    } else {
+        format!("{} 分钟", left.num_minutes().max(1))
+    }
+}
+
+/// 禁言到期时刻的人话：`永久` 或 `至 2026-10-04 12:00`。
+///
+/// **「永久」那一支直说永久、不念哨兵值**（`mute_denial_message` 同一条纪律——
+/// 当事人不该在界面上读到 `9999-12-31`）。做成共享函数是因为**三个地方要说同一句话**：
+/// 后台账号页的成功回执、账号变更通知的正文、个人中心的横幅；
+/// 三处各判一次 `>= mute_forever_at()` 的话，改哨兵值时必然只改到其中一两处。
+pub fn mute_until_text(until: chrono::NaiveDateTime) -> String {
+    if until >= mute_forever_at() {
+        "永久".to_string()
+    } else {
+        format!("至 {}", until.format("%Y-%m-%d %H:%M"))
+    }
+}
+
+/// 嵌在句子中间的期限短语：`至 2026-10-04 12:00（还剩约 3 小时）` / `（永久）`。
+///
+/// 与 [`mute_until_text`] 只差一副括号：那一份是三个地方共用的**标签**
+/// （后台回执、账号通知正文、个人中心横幅），这一份是自动禁言通知里**夹在句子中间**
+/// 的短语——硬把两者合成一个字符串，就得让其中一句读起来别扭。
+/// **但哨兵判据与日期格式都只有一份**（都从 [`mute_forever_at`] 与
+/// [`mute_until_text`] 来）：`risk::mute_notice_body` 此前自己判了一次
+/// `>= mute_forever_at()` 并自己 `format!` 了日期，是整个仓库里第三份"至 X"的实现，
+/// 改哨兵值时必然漏掉它。
+pub fn mute_span_text(until: chrono::NaiveDateTime, now: chrono::NaiveDateTime) -> String {
+    if until >= mute_forever_at() {
+        "（永久）".to_string()
+    } else {
+        format!("{}（还剩约 {}）", mute_until_text(until), mute_remain_text(until, now))
+    }
 }
 
 #[cfg(test)]
@@ -564,5 +670,56 @@ mod tests {
         // …但**冻结判据照旧生效**（这是"代码里没有豁免通道"的那半）
         assert_eq!(check_token(STATUS_FROZEN, 0, None), Err(TokenDenial::Frozen));
         assert_eq!(check_token(9, 0, None), Err(TokenDenial::Frozen));
+    }
+
+    /// 禁言判据的三态：从未禁言 / 还在期内 / 已过期。**永久也要走同一个判据**
+    /// ——它只是一个很远的时刻，不是特殊分支（特殊分支就是"两套判据"，那才会漂）。
+    #[test]
+    fn 禁言判据的三种状态() {
+        use chrono::NaiveDateTime;
+        let now = NaiveDateTime::parse_from_str("2026-10-03 12:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let later =
+            NaiveDateTime::parse_from_str("2026-10-04 12:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let earlier =
+            NaiveDateTime::parse_from_str("2026-10-02 12:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        assert!(!is_muted(None, now), "NULL = 从未禁言");
+        assert!(is_muted(Some(later), now), "到期时刻在将来 ⇒ 禁言中");
+        assert!(!is_muted(Some(earlier), now), "到期时刻已过 ⇒ 自然解禁（不需要谁来清）");
+        // 边界：正好到期的那一刻不算禁言中（`<`，不是 `<=`）
+        assert!(!is_muted(Some(now), now));
+        // 永久
+        assert!(is_muted(Some(mute_forever_at()), now));
+    }
+
+    /// 「永久」必须可解析、且**比任何合理的"现在"都远**：它若写错，`is_muted` 那一支
+    /// 会静默变成"没有禁言"，而那正是最不该静默的地方。
+    #[test]
+    fn 永久禁言那一刻是可解析的字面量() {
+        assert_eq!(MUTE_FOREVER, "9999-12-31 23:59:59");
+        let forever = mute_forever_at();
+        let now = chrono::Local::now().naive_local();
+        assert!(forever > now);
+        // 判据认的也是它（不是"比 9999 年稍早"的近似）
+        assert!(is_muted(Some(forever), now));
+    }
+
+    /// 禁言话术三件必须说清的事：人还在、到什么时候、还剩多久。
+    #[test]
+    fn 禁言话术说清到什么时候与还剩多久() {
+        use chrono::NaiveDateTime;
+        let now = NaiveDateTime::parse_from_str("2026-10-03 12:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let tomorrow =
+            NaiveDateTime::parse_from_str("2026-10-04 12:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        let msg = mute_denial_message(tomorrow, now);
+        assert!(msg.contains("2026-10-04 12:00"), "{msg}");
+        assert!(msg.contains("24 小时"), "{msg}");
+        assert!(msg.contains("不能发布评论与留言"), "话术要说清「还能登录、只是发不了」，而不是读成封号：{msg}");
+        // 不足一小时按分钟说（"还剩 0 小时"等于没说）
+        let soon = NaiveDateTime::parse_from_str("2026-10-03 12:30:00", "%Y-%m-%d %H:%M:%S").unwrap();
+        assert!(mute_denial_message(soon, now).contains("30 分钟"));
+        // 永久直说永久，不显示成 9999 年
+        let forever = mute_denial_message(mute_forever_at(), now);
+        assert!(forever.contains("永久"), "{forever}");
+        assert!(!forever.contains("9999"), "别把内部哨兵值当成人话念出来：{forever}");
     }
 }

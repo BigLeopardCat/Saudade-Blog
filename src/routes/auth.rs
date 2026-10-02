@@ -186,6 +186,18 @@ pub struct ProfileDto {
     /// 而"管理员被降成普通用户"之后，那枚旧令牌会一直自称管理员（前端判据看的是
     /// 这里，所以标签必须跟着库走）。取值域见 `crate::authz`。
     pub role: String,
+    /// **当前是否处于禁言期**（20261002 内容风控）。判据是 `authz::is_muted`
+    /// （"现在 < 到期时刻"），**不是"那一列非空"**——到期之后旧值还留着，
+    /// 而那时人已经能正常发言了。个人中心据它显示一条横幅。
+    pub muted: bool,
+    /// 禁言到期时刻的人话（`永久` / `至 2026-10-04 12:00`），未禁言时为 null。
+    ///
+    /// **由服务端从 `authz::mute_until_text` 产出**，前端只负责印出来：
+    /// 让前端自己判"9999 年就是永久"等于把那个哨兵值抄了第二份，改的时候必然漏一处。
+    /// 同一条纪律见 `TempUserInfo::muted_until`（那边回的是**原始库值**，因为它的
+    /// 消费方里有一个是 agent 的工具层，它要的是事实而不是文案）。
+    #[serde(rename = "mutedUntil")]
+    pub muted_until: Option<String>,
 }
 
 pub async fn profile(
@@ -199,12 +211,22 @@ pub async fn profile(
         Ok(id) => match user::Entity::find_by_id(id).one(&state.db).await.unwrap_or(None) {
             Some(u) => {
                 let nick = if u.nickname.is_empty() { u.username.clone() } else { u.nickname };
+                // 禁言两列现算（20261002）：`muted` 是判据、文案只在为真时给
+                // ——未禁言的人拿到一个 `null`，前端据此整条横幅不渲染。
+                let muted = crate::authz::is_muted(u.muted_until, chrono::Local::now().naive_local());
+                let muted_until = if muted {
+                    u.muted_until.map(crate::authz::mute_until_text)
+                } else {
+                    None
+                };
                 Json(ApiResponse::success(ProfileDto {
                     username: u.username,
                     nickname: nick,
                     nickname_auto_renamed: u.nickname_auto_renamed != 0,
                     avatar: u.avatar,
                     role: u.role,
+                    muted,
+                    muted_until,
                 }))
             }
             None => Json(ApiResponse::error("账号不存在")),

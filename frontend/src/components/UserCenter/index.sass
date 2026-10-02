@@ -154,6 +154,14 @@
       .ant-alert-description
         font-size: 13px
 
+    // 禁言横幅（20261002 内容风控）：与昵称横幅同一套（只压字号、不碰颜色）。
+    // 两条横幅**可能同时出现**（被禁言的人又恰好是迁移改过名的那个），
+    // 所以这里只写各自的选择器、不写"二选一"的布局假设。
+    .ucMuteBanner
+      .ant-alert-message,
+      .ant-alert-description
+        font-size: 13px
+
   .ucField
     display: flex
     align-items: center

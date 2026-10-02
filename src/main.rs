@@ -48,7 +48,12 @@ async fn main() {
         max_attempts, window_secs, lockout_secs,
     );
 
-    let app_state = AppState { db, rate_limiter };
+    // 内容风控的最小间隔刹车（20261002）：阈值不在启动期读——它住 `web_info`，
+    // 每个发帖请求现读现用，管理员改了不必重启（见 `risk::load_config`）。
+    // 这里只把计数器建出来。
+    let post_limiter = saudade_blog::risk::PostRateLimiter::new();
+
+    let app_state = AppState { db, rate_limiter, post_limiter };
     let app = create_router(app_state);
 
     let items = vec![

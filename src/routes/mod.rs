@@ -36,6 +36,10 @@ use crate::rate_limiter::LoginRateLimiter;
 pub struct AppState {
     pub db: DatabaseConnection,
     pub rate_limiter: LoginRateLimiter,
+    /// 发评论 / 发留言的最小间隔刹车（20261002 内容风控）。
+    /// **与 `rate_limiter` 是两个东西、两套阈值**：那个管登录失败，这个管内容发布，
+    /// 且它只负责"别连打"，真正的判据与窗口计数在 `crate::risk`（见其模块头注）。
+    pub post_limiter: crate::risk::PostRateLimiter,
 }
 
 pub fn create_router(state: AppState) -> Router {
@@ -318,6 +322,12 @@ pub fn create_router(state: AppState) -> Router {
                 // handler 住在 routes/quota.rs 而不是 temp_user.rs：额度那件事
                 // （上限怎么算、通知怎么写、不限额怎么办）只有那一处实现。
                 .route("/api/temp-users/:id/quota-reset", post(quota::reset_user_quota))
+                // 禁言 / 解禁（20261002 内容风控）：账号管理页那一行的第五个动作，
+                // 与 agent 的 `account_mute` / `account_unmute` 工具共用它。
+                // **判据与冻结同源**（`authz::check_freeze`），但效果完全不同：
+                // 禁言只写 `muted_until`，不改 status、不动 token_version——被禁言的人
+                // 照常登录浏览，只是发不出评论与留言（见 temp_user::set_user_muted 头注）。
+                .route("/api/temp-users/:id/mute", post(temp_user::set_user_muted))
 
         // 对话额度审核（20260929）：后台「额度管理」页签与 agent 的
         // `list_quota_requests` / `approve_quota_request` 等工具共用的两条。

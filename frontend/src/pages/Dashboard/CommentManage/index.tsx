@@ -78,6 +78,23 @@ const STATUS_FILTERS: { key: string; label: string; match: (r: CommentAdminItem)
 const AI_KEY = 'commentAiReviewEnabled';
 const MANUAL_KEY = 'commentManualReviewEnabled';
 
+/** 五个风控键（**后端 `risk::RISK_KEYS` 的镜像**，顺序也一致——那个常量在 Rust 侧
+ *  还是解析时的下标，顺序错了整组阈值会串位）。
+ *
+ *  `def` 是**界面上的占位提示**（"没配过时后端用的那个值"），**不参与提交**：
+ *  提交什么只由输入框里有没有字决定。这两件事必须分开——把 `def` 当作值写进库里，
+ *  等于把"没配过"永久固化成"配过了"，以后改默认值这个站也不会跟着变。
+ *
+ *  前缀是 `content` 而不是 `comment`：**这一套管的是评论与留言两种内容**
+ *  （后端把两边合起来数），界面上的标题也照此写。 */
+const RISK_FIELDS: { key: string; label: string; def: number; unit: string }[] = [
+    { key: 'contentRateWindowSecs', label: '统计窗口', def: 600, unit: '秒' },
+    { key: 'contentMinIntervalSecs', label: '最小间隔', def: 5, unit: '秒' },
+    { key: 'contentRateLimit', label: '转人工阈值', def: 10, unit: '条' },
+    { key: 'contentMuteLimit', label: '自动禁言阈值', def: 20, unit: '条' },
+    { key: 'contentMuteHours', label: '禁言时长', def: 24, unit: '小时' },
+];
+
 /** 删除确认。与留言板同款（Popconfirm + 动作词按钮），抽成本文件里的一个小函数只是为了
  *  让 `columns` 里那段读起来还是一行——**它不是共享件，别往外提**。 */
 const DeleteButton = ({ onConfirm }: { onConfirm: () => void }) => (
@@ -101,6 +118,13 @@ const CommentManage = () => {
     // 审核开关（web_info key-value，缺省关）
     const [aiOn, setAiOn] = useState(false);
     const [manualOn, setManualOn] = useState(false);
+    // 内容风控阈值（20261002）：**空串 = 这个键库里没有**，不是一个数值。
+    // 与 `aiOn` 那种布尔开关不同，这里必须能表达"没配过"——后端缺键回落出厂默认，
+    // 而填 0 是"管理员显式关掉这一档"（见 `risk::parse_config` 的三条取值规则）。
+    // 用字符串而不是 number 就是为了留住这个区别：`Number('') === 0` 会把两者合并。
+    const [riskOpen, setRiskOpen] = useState(false);
+    const [riskForm, setRiskForm] = useState<Record<string, string>>({});
+    const [riskBusy, setRiskBusy] = useState(false);
     // 驳回弹窗：驳回要能说明理由，理由会随 Reply 通知发给被回复者（见下）
     const [rejecting, setRejecting] = useState<CommentAdminItem | null>(null);
     const [rejectReason, setRejectReason] = useState('');
@@ -130,6 +154,11 @@ const CommentManage = () => {
             if (d) {
                 setAiOn(!!d[AI_KEY]);
                 setManualOn(!!d[MANUAL_KEY]);
+                // 风控阈值：**缺键给空串，不给 0**（`== null` 同时盖住 null 与 undefined）。
+                // 写成 0 的话，设置卡一打开就把五档全显示成"已关闭"——而库里其实什么都没有。
+                setRiskForm(Object.fromEntries(
+                    RISK_FIELDS.map((f) => [f.key, d[f.key] == null ? '' : String(d[f.key])]),
+                ));
             }
         } catch { /* 读取失败保持默认关，入库判定与服务端一致 */ }
     };
@@ -168,6 +197,45 @@ const CommentManage = () => {
         } catch {
             setter(prev);
             message.error('保存失败');
+        }
+    };
+
+    /** 保存风控阈值。三条规则与后端 `risk::parse_config` 一一对应（两边口径必须一致，
+     *  否则界面显示的和实际生效的会是两回事）：
+     *   · **留空 ⇒ 不提交这个键**（库里保持现状；没有过就是出厂默认）；
+     *   · **`0` 或负数 ⇒ 显式关掉那一档**，照提交；
+     *   · **填了但不是整数 ⇒ 当场报错、整份不提交**——静默丢弃是最坏的一种：
+     *     主人以为存上了，而闸门用的还是旧值（"改了设置卡、后端读不到"那个坑）。 */
+    const saveRisk = async () => {
+        const payload: Record<string, number> = {};
+        for (const f of RISK_FIELDS) {
+            const raw = (riskForm[f.key] ?? '').trim();
+            if (raw === '') continue;
+            if (!/^-?\d+$/.test(raw)) {
+                message.error(`「${f.label}」要填整数（留空表示沿用默认）`);
+                return;
+            }
+            payload[f.key] = Number(raw);
+        }
+        if (Object.keys(payload).length === 0) {
+            message.info('没有要保存的项：留空表示沿用默认值');
+            return;
+        }
+        setRiskBusy(true);
+        try {
+            const res = await http.post('/api/protected/websetting', payload);
+            if (res.data?.code === 200) {
+                // 阈值是**每个请求现读**的（`risk::load_config`），所以不必重启也不必有
+                // "生效"按钮——回读一次把库里的真值显示出来（而不是把输入框当真相源）
+                message.success('风控阈值已保存，下一条评论 / 留言起生效');
+                await loadSwitches();
+            } else {
+                message.error(res.data?.message || '保存失败');
+            }
+        } catch {
+            message.error('保存失败');
+        } finally {
+            setRiskBusy(false);
         }
     };
 
@@ -418,6 +486,10 @@ const CommentManage = () => {
                 <Button icon={<ReloadOutlined />} onClick={() => refresh()} loading={loading}>
                     刷新
                 </Button>
+                {/* 风控设置默认收起：它是一组"配一次就不动"的阈值，常驻会白占一行高度 */}
+                <Button className="cm-risk-toggle" onClick={() => setRiskOpen((v) => !v)}>
+                    风控设置{riskOpen ? ' ▲' : ' ▼'}
+                </Button>
                 <span className="cm-count">共 {filtered.length} 条评论</span>
             </div>
             <div className="cm-review">
@@ -440,6 +512,37 @@ const CommentManage = () => {
                     这对开关只管评论，与「留言管理」那对互不影响
                 </span>
             </div>
+            {/* 内容风控阈值（20261002）。默认收起（见工具栏那个开关）——它是一组
+                "配一次就不动"的数，而这一页的高度链是固定的（多一个常驻行就少一行表格）。
+                **标题里点明"与留言一起计数"**：那两个阈值管的是评论 + 留言的合计条数，
+                只盯着本页读会以为只数评论，于是把阈值调得偏小、留言板跟着被误伤。 */}
+            {riskOpen && (
+                <div className="cm-risk">
+                    <span className="cm-risk-title">内容风控（评论与留言一起计数）</span>
+                    {RISK_FIELDS.map((f) => (
+                        <label key={f.key} className="cm-risk-item">
+                            <span>{f.label}</span>
+                            <Input
+                                size="small"
+                                className="cm-risk-input"
+                                value={riskForm[f.key] ?? ''}
+                                placeholder={String(f.def)}
+                                onChange={(e) => setRiskForm((p) => ({ ...p, [f.key]: e.target.value }))}
+                            />
+                            <i>{f.unit}</i>
+                        </label>
+                    ))}
+                    <Button size="small" type="primary" loading={riskBusy} onClick={saveRisk}>
+                        保存
+                    </Button>
+                    <span className="cm-risk-hint">
+                        留空 = 沿用默认（灰字里的数）；填 0 = 显式关掉那一档。
+                        窗口内发布合计达到「转人工阈值」⇒ 本条转待审并通知本人；
+                        达到「自动禁言阈值」⇒ 写入禁言、通知本人，本条照常保留待审；
+                        间隔不足则直接拒发。被禁言的人仍能登录、浏览、对话。
+                    </span>
+                </div>
+            )}
             {/* 滚动从整页挪进这一块（同 BoardManage）：上面两行是固定的，**只有这张表在
                 窗口内滚**，表头用 CSS sticky 吸在这一块的顶沿（见 index.sass）；
                 分页条也移出滚动区、钉在底部。 */}
@@ -458,7 +561,8 @@ const CommentManage = () => {
                     通过/待审/未通过）。待审与未通过的评论不进公开列表；可「通过」放行、「驳回」
                     隐藏（驳回后可「恢复通过」改判）或删除。评论被删除后不再公开显示（它下面的回复
                     也一起消失），这里保留一行供溯源、不可再审。被回复者会收到一条站内通知，
-                    点进去直接定位到这条回复；驳回时理由会一并带上。
+                    点进去直接定位到这条回复；驳回时理由会一并带上。风控阈值在工具栏的
+                    「风控设置」里（短时间内大量发评论 / 留言会被限流或自动临时禁言）。
                 </p>
             </div>
             <div className="cm-foot">
