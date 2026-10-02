@@ -42,14 +42,29 @@ console.log('迁移 —— 函数索引与存量去重：');
 ok(/ADD UNIQUE KEY `uk_user_nickname` \(\(NULLIF\(TRIM\(nickname\), ''\)\)\)/.test(migration),
     '唯一索引是**函数索引**且表达式外有双层括号（单层会被 MySQL 当成列名）');
 ok(migration.includes('VERSION()'), '先打印 MySQL 版本（函数索引需要 ≥ 8.0.13）');
-ok(/HAVING COUNT\(\*\) > 1 AND NULLIF\(TRIM\(nickname\), ''\) IS NOT NULL/.test(migration),
+// 判据是"归一后非空"，且**必须经别名**引用：MySQL 8 在 HAVING 里把 GROUP BY 那个表达式
+// 原样重写一遍会报 `ERROR 1054 Unknown column 'nickname' in 'having clause'`（20261003 实跑
+// 发现——这文件从写出来到跑之前从没被执行过）。别名只是给它起个名字，判据一字未改。
+ok(/NULLIF\(TRIM\(nickname\), ''\) AS 归一组/.test(migration),
+    '分组表达式被**命名**（`AS 归一组`）——HAVING 里只能引别名，重写表达式会 1054');
+ok(migration.includes('GROUP BY 归一组') && migration.includes('HAVING COUNT(*) > 1 AND 归一组 IS NOT NULL'),
     '重复组判据带 IS NOT NULL——没设昵称的账号会一起落进 NULL 组，少了它"三个人都没设昵称"会被报成重名组');
-ok(migration.includes('ROW_NUMBER() OVER (PARTITION BY nickname ORDER BY id)'),
-    '存量去重按注册先后编号（最早的保留原名）');
+// ④ 的**分组口径必须与 ①/⑤ 和索引逐字相同**。20261003 生产实跑踩到：原来写的是
+// `PARTITION BY nickname`（原始值），4 个没设昵称的账号共享空串 ⇒ 落进同一分区、
+// rn = 1..4 ⇒ 其中 3 行被改成 `_<id>` 并置了自动改名标记。而 ①/⑤ 都带 `IS NOT NULL`、
+// 报"0 个重名组"——**两句并列出现而不矛盾**，正是这个 bug 最难自己发现的地方。
+// 所以这两条不是"把字符串换成新的"，而是把"全文件只有一种口径"变成可执行的判据。
+ok(migration.includes("ROW_NUMBER() OVER (PARTITION BY NULLIF(TRIM(nickname), '') ORDER BY id)"),
+    '存量去重的**分组口径 == 索引口径**（不是原始的 nickname）——按原始值分组会把空昵称账号算成一族');
+ok(/WHERE NULLIF\(TRIM\(nickname\), ''\) IS NOT NULL/.test(migration),
+    '④ 的派生表**排除空昵称**：NULL 在窗口分区里互为 peer，只换成 NULLIF 而不加 WHERE 等于 bug 挪个位置');
+ok(!/PARTITION BY (?!NULLIF)/.test(strip(migration)) && !/GROUP BY nickname\b/.test(strip(migration)),
+    '全文件再无**裸 nickname 分组**（strip 掉注释后仍不许出现——注释里刻意留着旧写法当反例）');
+ok(migration.includes('ROW_NUMBER() OVER'), '存量去重按注册先后编号（最早的保留原名）');
 ok(/nickname_auto_renamed` tinyint\(1\) NOT NULL DEFAULT 0/.test(migration),
     '新增标记列 nickname_auto_renamed，默认 0');
 ok(migration.includes("AFTER `nickname`"), '列序 AFTER nickname（与 entity 的字段顺序一致）');
-ok(migration.includes("SET u.nickname = CONCAT(LEFT(u.nickname, 64 - CHAR_LENGTH(CONCAT('_', u.id))), '_', u.id)"),
+ok(migration.includes("SET u.nickname = CONCAT(LEFT(TRIM(u.nickname), 64 - CHAR_LENGTH(CONCAT('_', u.id))), '_', u.id)"),
     '改名用 LEFT(...) 截到留得下后缀，不会把 varchar(64) 撑爆');
 ok(migration.indexOf('ADD UNIQUE KEY') < migration.indexOf("VALUES ('nickname_unique_20261002')"),
     '打 flag 在建索引之后');
