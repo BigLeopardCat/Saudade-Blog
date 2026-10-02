@@ -48,12 +48,39 @@
 数据库名**必须叫 `saudade_blog`** —— `scripts/migration/*.sql` 里凡是**带了** `USE` 语句的
 （绝大多数）都写死这个名字，改名要逐条改。有三份**没有** `USE`——
 `chat_conversation_20260903.sql`、`execution_log_20260904.sql`、`password_reset_token_20260921.sql`
-——所以下面第 2.1 步是显式把库名传给 `mysql`（`mysql ... saudade_blog < "$f"`），
+——所以建库那一步是显式把库名传给 `mysql`（`mysql ... saudade_blog < "$f"`），
 **不要靠脚本自带的 `USE`**：那三份在别人的库上会报 "No database selected"。
 
+> ⚠️ **反过来说，带 `USE` 的那些在你的库上会去打生产库吗？不会 —— 但前提是你别绕过下面这个脚本。**
+> `USE saudade_blog;` 会把连接**切到那个库**，所以 `mysql <你的库> < 某个迁移.sql` 读到那一行之后，
+> 后面所有语句都打到 `saudade_blog` 上，而且 mysql 不会报错。下面这个脚本对每个文件都先剥掉
+> `USE` 行、再显式点名库名，剥不干净就中止 —— 直接手抄它的循环逻辑时请把这层照抄过去。
+
+建库用一个脚本（[`scripts/migration/fresh_install.sh`](scripts/migration/fresh_install.sh)），
+**不要**自己把 `*.sql` 按顺序全跑一遍：
+
 ```bash
-mysql -uroot -p -e "CREATE DATABASE saudade_blog CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+# 第一个参数是库名。库名叫 saudade_blog 是对的（见上面那段），脚本因此要你明确声明一次
+# ——它默认拒收这个名字，免得在产线机器上打错字时静默改了那个库。
+ALLOW_PRODUCTION_NAME=1 bash scripts/migration/fresh_install.sh saudade_blog -uroot -p
 ```
+
+**为什么不能"按文件名顺序把 `*.sql` 全跑一遍"**：`0000_base_schema.sql` 是
+**20261001 的生产库快照**——那天（含）之前所有增量迁移的效果**已经在里面了**，而它们大多
+是无保护的 `ALTER TABLE … ADD COLUMN`（没有 `IF NOT EXISTS`）。照单全跑必然在半路撞上
+`ERROR 1060 Duplicate column name`。20261003 在空库上实测：40 个文件里 **17 个**会红
+（`note_cover_crop_20260912` / `note_author_20261001` / `user_chat_quota_20260929`…），
+`chat_conversation_20260903.sql` 还会撞 `ERROR 1050 Table 'conversation' already exists`。
+（撞错的那 17 个**不是坏迁移**：它们在快照之前，本来就该在快照之前跑完。）
+
+所以规则是：**基架 = 快照，之后只补快照日期之后的迁移**。日期就是文件名里的
+`_YYYYMMDD.sql` 后缀，脚本按它筛（快照日当天及更早的一律跳过）。**加了新迁移不需要动脚本**；
+将来重新导出基架时，把脚本里的 `SNAPSHOT` 改成新的导出日、并把 `0000_` 那份整体替换
+（它自己的头注写着这条纪律）。
+
+脚本做的四件事：拒绝把 `saudade_blog` 当目标库 → 建库（utf8mb4）→ 逐文件剥 `USE` 后应用 →
+最后报出表数（**26 张基架 + 快照后迁移 ⇒ 20261003 是 27 张**，多的那张是 `note_comment`）。
+它**不幂等**：库里已经有表就直接拒绝（想重来就先 `DROP DATABASE`）。
 
 再建一个**应用账号**。后端进程用它连库，不该拿 `root` 跑（`root` 只用来建库、跑迁移和救急）：
 
@@ -67,29 +94,7 @@ mysql -uroot -p -e "CREATE USER 'saudade_blog'@'localhost' IDENTIFIED BY '换成
 建号之后改 `.env` 就行。（本仓的迁移脚本里**没有** `CREATE USER`/`GRANT` 语句，
 所以别指望跑迁移能顺带把账号建出来。）
 
-然后把 `scripts/migration/` 下的迁移按**文件名顺序**跑一遍。
-注意**跳过夹具**（下面有解释）：
-
-```bash
-for f in $(ls scripts/migration/*.sql | sort); do
-    case "$f" in
-        # 评测夹具与原作者的一次性账号脚本：不是站点运行所需的结构，跳过
-        */golden_*.sql|*/test_accounts_*.sql|*/user_rename_sora_*.sql|*/user_remove_legacy_hash_account_*.sql|*/superadmin_role_*.sql|*/secretary_role_*.sql|*/zako_role_*.sql)
-            echo "== 跳过 $f"; continue ;;
-    esac
-    echo "== $f"
-    mysql -uroot -p saudade_blog < "$f"
-done
-```
-
-**第一个文件是 [`scripts/migration/0000_base_schema.sql`](scripts/migration/0000_base_schema.sql)**，
-它就是建基架的那一份（26 张表的建表语句，从生产库 `mysqldump --no-data` 导出，只有结构、
-零数据）。名字以 `0000_` 开头不是装饰：`ls | sort` 是纯字典序，只有这样才能保证它排在
-所有 `ALTER TABLE` 之前 —— 后面每一个迁移都假定这些表已经存在，改名会让排在它前面的
-脚本先在"表不存在"上失败（例如 `agent_task_20260927.sql` 的
-`CREATE TABLE IF NOT EXISTS agent_task` 与紧随其后的 `INSERT INTO migration_flags`）。
-
-其余脚本都写成幂等的（`IF NOT EXISTS` / `IF EXISTS` / 靠 `migration_flags` 表打标记），
+多数迁移都写成幂等的（`IF NOT EXISTS` / `IF EXISTS` / 靠 `migration_flags` 表打标记），
 重复执行安全 —— 但**能只跑一次就跑一次**，个别脚本带数据回填，重跑会覆盖你改过的数据。
 
 > ⚠️ **`scripts/migration/` 里混着"夹具"和作者的一次性脚本，别把整个目录无脑跑一遍。**
@@ -184,7 +189,7 @@ agent 在独立仓库里，有自己的 README 与 `.env.example`。它默认跑
 #  没取到的话 cargo test 会在这里报一个看不出前因后果的编译错）
 cd frontend && npm run fetch:widget && cd ..
 
-# 后端：MockDatabase，**不连真库**
+# 后端：MockDatabase（不连库）+ 真 MySQL 那一层（见下）
 cargo test
 
 # 前端
@@ -200,6 +205,21 @@ npm run lint                                      # ESLint
 > 历史上有一次 push 因为这个红掉，结果是那次**什么都没部署**，而看 CI 只知道"失败了"。
 >
 > 另一条：`npm test` **不包含** ESLint，两者是分开的两道门。
+
+`cargo test` 里还挂着一层**真 MySQL** 的集成测（`tests/mysql_integration.rs`），它由
+环境变量 `TEST_MYSQL_URL` 门控：
+
+```bash
+# 不设 ⇒ 那几条自己跳过（本地默认如此，不需要任何准备）。
+# 设了 ⇒ 真连库跑；**连不上是失败不是跳过**（静默跳过会让这道闸变成装饰）。
+bash scripts/migration/fresh_install.sh saudade_it -uroot -p   # 先备一个空库（名字自取）
+TEST_MYSQL_URL="mysql://root:密码@127.0.0.1:3306/saudade_it" cargo test --test mysql_integration
+```
+
+它验的是 MockDatabase **结构上验不了**的那一类（`SUM(<整数列>)` 返回 DECIMAL、
+零行时 NULL 折零、空 id 列表必须短路、几条外键真的插得进去）。最要紧的是第一条：
+20260930 线上那次 500 就是它，而 `cargo check` 与 mock 全绿。CI 会起一个 `mysql:8.0`
+服务容器跑它（见 `deploy.yml` 的 `check` job），**它门住部署**。
 
 ### 3.2 沙箱套件（要 Playwright + 无头 Chrome，**不进 CI**）
 
@@ -221,10 +241,16 @@ python3 frontend/tests/某个.test.py
 
 | 套件 | 在哪 | 说明 |
 |---|---|---|
-| `tests/api_tests.rs` | 本仓 | 走 MockDatabase，跟着 `cargo test` 跑 |
-| `tests/frontend_contract/test_api.py` | 本仓 | **手动跑**（Python，`requests`）：要一个**活着的** `localhost:3000`，登录类用例还要你自己给凭据 —— `BLOG_TEST_USER=... BLOG_TEST_PASSWORD=... python3 tests/frontend_contract/test_api.py`。不给凭据也能跑，登录相关用例自动跳过。**它不在 `cargo test` 里**，也不进 CI |
+| `tests/api_tests.rs` | 本仓 | 走 MockDatabase，跟着 `cargo test` 跑（无需任何外部依赖） |
+| `tests/mysql_integration.rs` | 本仓 | **真 MySQL**，跟着 `cargo test` 跑，但要 `TEST_MYSQL_URL`（不设即跳过，见 §3.1）。CI 有服务容器 |
+| `tests/manual/test_api.py` | 本仓 | **手动跑**（Python，`requests`）：要一个**活着的** `localhost:3000`，登录类用例还要你自己给凭据 —— `BLOG_TEST_USER=... BLOG_TEST_PASSWORD=... python3 tests/manual/test_api.py`。不给凭据也能跑，登录相关用例自动跳过。**它不在 `cargo test` 里**，也不进 CI |
 | `eval/`（agent 仓） | `saudade-blog-agent/eval/` | golden set 端到端，要真服务与真语料，按需跑 |
 | `scripts/*.py` | 本仓 `scripts/` | 部署与巡检脚本（`deploy/` 下几个）**没有对应套件**，不进 CI。本仓 `scripts/` 下**没有 `eval/` 目录**——评测全在 agent 仓 |
+
+**目录就是判据**：`tests/` 根下跟着 `cargo test` 跑（要外部依赖的用环境变量门控成"不设即跳过"），
+`tests/manual/` 下是**要活服务或真凭据**、只能手动跑的（20261003 起这么分；`tests/frontend_contract/`
+这个名字已经不在了）。前端那两批同理：`frontend/tests/*.test.mjs` 进 CI，
+`frontend/tests/*.test.py` 要无头 Chrome、走夜间沙箱。
 
 **CI 到底跑哪几项**：见 [.github/workflows/deploy.yml](.github/workflows/deploy.yml)
 的 `check` job。别照抄本文档 —— 那里的 `paths-filter` 决定了某些改动会**整个跳过**

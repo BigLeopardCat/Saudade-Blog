@@ -96,6 +96,10 @@ nginx error.log 增量扫描，异常追加 health.log。
 
 ## 给贡献者
 
+- **测试分几层、各验什么、在哪儿跑**：[CONTRIBUTING.md](CONTRIBUTING.md) 的 §3 是唯一清单
+  ——`tests/`（跟着 `cargo test`：MockDatabase 一层 + 真 MySQL 一层）、`tests/manual/`
+  （要活服务与真凭据，手动跑）、`frontend/tests/`（`*.test.mjs` 进 CI；`*.test.py` 无头
+  Chrome 沙箱走夜间）。建库的第一步也在那儿（§2.1）。改动前后请先读那两节，别照抄本文。
 - **新增 Agent 工具**：在 `tools/base.py` 用 `@tool` 定义并加入 `_TOOL_REGISTRY`；若服务于
   固定流程任务，**必须**在 `skills.py` 注册对应技能（触发条件 + 工具序列模板 + 回复契约），
   否则 planner 无法可靠选择它——这是 agent 的核心约定。
