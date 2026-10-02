@@ -696,12 +696,29 @@ const MESSAGE_MAX_CHARS: usize = 500;
 /// 前端输入框 maxLength 也是 60，两处同值。
 const MESSAGE_TITLE_MAX_CHARS: usize = 60;
 
-/// 两个人的展示信息：`(展示名, 头像)`，查不到就退化成「用户#id」——
-/// 宁可显示得笨，也不编一个名字出来。
-async fn peer_map(
+/// 一个 uid 的展示材料——**全站"给别的用户起名字"的唯一口径**。
+///
+/// 展示名（`name`）的规则：昵称优先，空串（没设过）退回账号；取不到用户行
+/// （账号已销）由调用方兜 `用户#<id>`——宁可显示得笨，也不编一个名字出来。
+/// 20261002 起评论也走这一份（`role` 是权限身份徽章要的），所以**别在别处再写
+/// 一份 `if nickname.is_empty()`**。
+///
+/// 别在这里加"最后一次活跃"之类的派生数据——它是身份，不是统计（统计走 `stats.rs`）。
+pub(crate) struct PeerInfo {
+    /// **展示名**：昵称优先，空串（没设过）退回账号。见 [`peer_map`]
+    pub name: String,
+    /// 账号本身（后台要按它找人时用；公开侧一律用 `name`）
+    pub username: String,
+    pub avatar: Option<String>,
+    /// 角色（权限身份徽章用）。**从库里现读**，不是令牌快照
+    pub role: String,
+}
+
+/// 一批 uid → [`PeerInfo`]。空 ids 直接回空表（不发 `IN (NULL)` 白查询）。
+pub(crate) async fn peer_map(
     db: &sea_orm::DatabaseConnection,
     ids: &[i32],
-) -> HashMap<i32, (String, Option<String>)> {
+) -> HashMap<i32, PeerInfo> {
     if ids.is_empty() {
         return HashMap::new();
     }
@@ -714,7 +731,7 @@ async fn peer_map(
         .into_iter()
         .map(|u| {
             let name = if u.nickname.trim().is_empty() { u.username.clone() } else { u.nickname };
-            (u.id, (name, u.avatar))
+            (u.id, PeerInfo { name, username: u.username, avatar: u.avatar, role: u.role })
         })
         .collect()
 }
@@ -722,12 +739,12 @@ async fn peer_map(
 fn to_message_dto(
     m: user_message::Model,
     uid: i32,
-    peers: &HashMap<i32, (String, Option<String>)>,
+    peers: &HashMap<i32, PeerInfo>,
 ) -> MessageDto {
     let peer_id = if m.from_user_id == uid { m.to_user_id } else { m.from_user_id };
     let (name, avatar) = peers
         .get(&peer_id)
-        .cloned()
+        .map(|p| (p.name.clone(), p.avatar.clone()))
         .unwrap_or_else(|| (format!("用户#{}", peer_id), None));
     MessageDto {
         id: m.id,
@@ -878,7 +895,10 @@ pub async fn send_message(
         }
     };
     let name = if t.nickname.trim().is_empty() { t.username.clone() } else { t.nickname.clone() };
-    let peers = HashMap::from([(t.id, (name, t.avatar.clone()))]);
+    let peers = HashMap::from([(
+        t.id,
+        PeerInfo { name, username: t.username.clone(), avatar: t.avatar.clone(), role: t.role.clone() },
+    )]);
     Json(ApiResponse::success(to_message_dto(saved, uid, &peers)))
 }
 

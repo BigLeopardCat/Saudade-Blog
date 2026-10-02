@@ -32,3 +32,6 @@ pub mod quota_request;
 // 文章阅读量 / 点赞量（20260930）：按天聚合的阅读数 + 一人一行不可重复的点赞
 pub mod note_view;
 pub mod note_like;
+// 文章评论（20261002）：两层结构（评论 + 回复），与河灯留言板是两张表——
+// 评论挂文章、留言挂留言板，各自的展示列与读取路径完全不同（见 entity/note_comment.rs）
+pub mod note_comment;

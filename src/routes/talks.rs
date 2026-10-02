@@ -12,7 +12,7 @@ use crate::utils::ApiResponse;
 /// 一处"自己解 token"的旁路——冻结一个账号之后，它照旧能放河灯、能看"我的河灯"。
 /// 河灯是访客内容，正是冻结该停掉的东西。判据回到唯一出口上，这个函数只剩"取个
 /// `Option` 方便 let-else"的形。
-async fn current_uid(db: &sea_orm::DatabaseConnection, headers: &HeaderMap) -> Option<i32> {
+pub(crate) async fn current_uid(db: &sea_orm::DatabaseConnection, headers: &HeaderMap) -> Option<i32> {
     crate::auth_jwt::auth_uid(db, headers).await.ok()
 }
 
@@ -315,7 +315,7 @@ fn review_http() -> &'static reqwest::Client {
 ///
 /// 按**字符**截而不是字节：列是 varchar(200)（MySQL 计字符），中文理由按字节切会
 /// 在半个汉字上截断、落库报错。
-fn clip_reject_reason(raw: &str) -> Option<String> {
+pub(crate) fn clip_reject_reason(raw: &str) -> Option<String> {
     let t = raw.trim();
     if t.is_empty() {
         return None;
@@ -455,6 +455,9 @@ async fn notify_review_result(
 /// `src/routes/comments.rs`），搬移时只做两件事：把 `review_switches` 那一行提到调用方、
 /// 把两个布尔收成参数。**判定逻辑、四路回落、话术一字未改**。
 ///
+/// `tag` 只进日志（`[board]` / `[comment]`）：四路回落的告警是排查"为什么这条转人工了"
+/// 的第一落点，两种内容共用一个实现之后，日志里分不出是谁在失败就等于白记。
+///
 /// 为什么值得单独抽：这是全仓最敏感的一条链路——宁可多一次人工复核，
 /// 也绝不放行一条未经审核的公开内容。它的兜底有四路（AI 说 pass/reject/存疑、
 /// 超时、非 2xx、响应解析失败），**每一路都倒向"转人工"**；抽成可复用函数是为了让
@@ -466,6 +469,7 @@ async fn notify_review_result(
 /// 不收 `state`：这条链路**不碰库也不碰 `AppState`**——agent 端点从 `AGENT_URL`
 /// 环境变量取（见下），断言现签。所以评论那条路复用它的成本是零依赖。
 pub(crate) async fn decide_review(
+    tag: &str,
     uid: i32,
     content: &str,
     ai_on: bool,
@@ -512,23 +516,23 @@ pub(crate) async fn decide_review(
                             (approved, Some("reject".to_string()), ai_reason.clone(), ai_reason)
                         }
                         _ => {
-                            tracing::info!("[board] AI 审核判定存疑，进人工复核");
+                            tracing::info!("[{tag}] AI 审核判定存疑，进人工复核");
                             (0, Some("flag".to_string()), ai_reason, None)
                         }
                     }
                 }
                 Err(e) => {
-                    tracing::warn!("[board] AI 审核响应解析失败，进入人工复核: {e}");
+                    tracing::warn!("[{tag}] AI 审核响应解析失败，进入人工复核: {e}");
                     (0, None, None, None)
                 }
             }
         }
         Ok(r) => {
-            tracing::warn!("[board] AI 审核端点异常(HTTP {}），进入人工复核", r.status());
+            tracing::warn!("[{tag}] AI 审核端点异常(HTTP {}），进入人工复核", r.status());
             (0, None, None, None)
         }
         Err(e) => {
-            tracing::warn!("[board] AI 审核不可用，进入人工复核: {e}");
+            tracing::warn!("[{tag}] AI 审核不可用，进入人工复核: {e}");
             (0, None, None, None)
         }
     }
@@ -539,7 +543,7 @@ pub(crate) async fn decide_review(
 async fn board_approved(state: &Arc<AppState>, uid: i32, content: &str)
     -> (i8, Option<String>, Option<String>, Option<String>) {
     let (ai_on, manual_on) = super::web_info::review_switches(&state.db).await;
-    decide_review(uid, content, ai_on, manual_on).await
+    decide_review("board", uid, content, ai_on, manual_on).await
 }
 
 /// POST /api/public/board：河灯留言板放灯（强制登录）
