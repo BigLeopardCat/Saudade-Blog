@@ -185,7 +185,7 @@ npm run lint                                      # ESLint
 |---|---|---|
 | `*.test.mjs` | `tests/` | `npm test`（`node` 直跑 + `node:assert`，没有 jest） |
 | 渲染沙箱 `*.test.py` | `tests/` | 手动 `python3 tests/某个.test.py`，要 Playwright |
-| 前后端契约 | 仓库根 `tests/frontend_contract/test_api.py` | **手动跑**（Python + 要活着的后端），不在 `cargo test` 里 |
+| 前后端契约 | 仓库根 `tests/manual/test_api.py` | **手动跑**（Python + 要活着的后端），不在 `cargo test` 里 |
 
 渲染沙箱（真组件 + 无头 Chrome + 数值断言）跑不进 CI 的秒级 job，由
 `scripts/nightly_sandboxes.sh` 夜间串行跑。依赖装法见 `tests/requirements.txt`。

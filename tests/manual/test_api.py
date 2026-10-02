@@ -1,3 +1,9 @@
+# ══ tests/manual/：要**外部依赖**的手动套件（20261003 从 tests/frontend_contract/ 挪来）══
+# 目录名就是判据：这里的套件跑起来要一个**活着的服务**（本文件要 3000 端口的真后端、
+# 登录类用例还要真凭据），所以 `cargo test` 与 CI 都不带它们。自动化的那两批在别处：
+# `tests/api_tests.rs` + `tests/mysql_integration.rs`（跟着 `cargo test` 跑）、
+# `frontend/tests/*.test.mjs`（`npm test`，进 CI）。
+# 判据的完整清单与"哪一层跑什么"见 CONTRIBUTING.md §3。
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -10,7 +16,7 @@ BASE_URL = "http://localhost:3000"
 
 # 账号口令**不进仓库**（20260930）。此前这里是写死的真实账号（本站在用的那一个），
 # 仓库一公开就等于把凭据一起发了。要跑这套手动契约测试，自己把凭据给进来：
-#     BLOG_TEST_USER=... BLOG_TEST_PASSWORD=... python3 tests/frontend_contract/test_api.py
+#     BLOG_TEST_USER=... BLOG_TEST_PASSWORD=... python3 tests/manual/test_api.py
 # 不给也照跑：需要登录的用例自动跳过，公开路由那部分不受影响（**本文件不在 CI 里**，
 # 是手动跑的契约测试——正因如此，写死一个口令在这里没人会发现）。
 TEST_USER = os.environ.get("BLOG_TEST_USER", "")
