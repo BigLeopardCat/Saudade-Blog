@@ -1,0 +1,61 @@
+# === 物联网平台对外入口（可选件）===
+#
+# 这份是**模板**，不是能直接 include 的配置：里面有一个占位符
+#   __IOT_ROOT__   → 本仓 iot/device-console 的**绝对路径**
+# 由 `iot/toggle.sh on` 渲染到 `/etc/nginx/snippets/blog-iot/iot.conf` 后生效
+# （站点配置里那行 include 用的通配，见 `iot/nginx/include-line.txt`）。
+#
+# 为什么整块可选：站点配置里 include 的是
+#   include /etc/nginx/snippets/blog-iot/*.conf;
+# 通配符匹配不到文件时 nginx **不报错**——所以"没装 IoT"的部署里这个目录空着就行，
+# 三个入口一起不存在。反过来如果直接 include 两个具体文件（本站过去就是这样），
+# 别人克隆下来 `nginx -t` 会直接失败（那两个文件不在仓库里）。
+#
+# 改这里的端口/路径时，三处消费面必须同源（见 iot/README.md 的《开关与三处消费面》）：
+#   · Rust sitemap 列不列 /device-console/  → 读 .env 的 IOT_ENABLED（src/utils.rs::iot_enabled）
+#   · agent 说不说"本站未部署"              → 读 .env 的 IOT_ENABLED（config/settings.py）
+#   · 本文件在不在                          → 由 iot/toggle.sh 增删
+
+# MQTT 对外入口（EMQX）：WSS = MQTT over WebSocket + TLS。
+# nginx 终结 TLS，转发 EMQX 的 WS 监听器（EMQX 侧监听 127.0.0.1:8083，见 iot/emqx/）。
+# 设备控制台页面实时通信走这里，身份用博客签发的 JWT（EMQX 侧按 jwt 机制校验签名）。
+location /mqtt {
+    proxy_pass http://127.0.0.1:8083;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    # WebSocket 长连接：超时不能按普通请求设
+    proxy_read_timeout 300s;
+    proxy_send_timeout 300s;
+    proxy_connect_timeout 10s;
+}
+
+# 设备管理 API：/device-api/xxx → 127.0.0.1:3100/xxx
+# （device-service 自己再校验一次博客 JWT；它不在本仓，见 iot/device-service/README.md）
+location /device-api/ {
+    proxy_pass http://127.0.0.1:3100/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 30s;
+    client_max_body_size 2m;   # OTA 固件走这个口，按预期固件大小调
+}
+
+# 设备控制台页（静态，非 SPA）。
+# `^~`：别让它落进站点里那条"带 content hash 的资源"正则 location（那会 try_files 判死）。
+location ^~ /device-console/ {
+    alias __IOT_ROOT__/;
+    expires -1;
+    add_header Cache-Control "no-store, no-cache, must-revalidate";
+}
+
+# 无斜杠请求 301 到带斜杠（否则落到 SPA fallback，返回首页而不是控制台）
+location = /device-console {
+    return 301 /device-console/;
+}

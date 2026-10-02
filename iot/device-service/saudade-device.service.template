@@ -1,0 +1,28 @@
+# systemd 单元模板：拷到 /etc/systemd/system/saudade-device.service 后，
+# 把 <...> 四处占位改成本机实际路径（WorkingDirectory / EnvironmentFile / ExecStart /
+# 以及 User），然后 `sudo systemctl daemon-reload && sudo systemctl enable --now saudade-device`。
+#
+# ⚠️ 三处路径**必须都指到同一个目录**：WorkingDirectory 定相对路径的基准，
+#    EnvironmentFile 给凭据（DEVICE_SVC_* / DEVICE_DB_PATH / DEVICE_LOG_FILE），
+#    ExecStart 是二进制。改一处漏一处不报错，只是行为诡异：
+#    · 漏 EnvironmentFile ⇒ 起不来（DEVICE_SVC_KEY 是必须的，见下）
+#    · 漏 WorkingDirectory ⇒ 二进制里的相对路径（日志默认值等）落到别的目录
+# 仓库目录改名之后**这三个路径都要跟着改**（本机 20261002 做过一次：memory_blog_rust
+# → Saudade-Blog）——漏了的表现是 `systemctl status` 里 Restart 计数一直往上涨。
+
+[Unit]
+Description=Saudade IoT device service (device registry / config push / telemetry)
+After=network.target emqx.service
+Wants=emqx.service
+
+[Service]
+Type=simple
+User=<跑服务的系统用户，本机是 ubuntu>
+WorkingDirectory=<device-service 源码或部署目录的绝对路径>
+EnvironmentFile=<上面那个目录>/svc.env
+ExecStart=<上面那个目录>/target/release/device-service
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

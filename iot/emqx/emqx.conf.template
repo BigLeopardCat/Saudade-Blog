@@ -1,0 +1,61 @@
+## EMQX 5.x 配置（模板）——拷到 /etc/emqx/emqx.conf 后按 <...> 占位改掉。
+##
+## 三条设计（照抄本站的取向，改之前先想清楚为什么）：
+##   1. **只有设备接入那一个端口对外开放**（8883 mqtts）。1883 / 8083 / 18083 一律绑回环，
+##      对外入口交给 nginx 终结 TLS（见 ../nginx/iot.conf.template）。理由：让"哪些端口
+##      暴露在公网"这件事只有 nginx 一处说了算，broker 直接暴露的东西越少越好。
+##   2. **8883 的口证复用站点证书**（同 nginx 那份）。设备端只认一个域名，不用再发一套 CA。
+##      换证书时**两处都要换**（nginx 与这里），漏一处表现为"网页正常、设备连不上"。
+##   3. `process_limit` 压到默认的一半：这台机器内存小，broker 失控时先撞进程上限而不是 OOM。
+
+node {
+  name = "emqx@127.0.0.1"
+  ## 换成随机值：集群 cookie 泄漏 = 别人能把自己的节点加进你的集群
+  cookie = "<改成随机串，openssl rand -hex 16>"
+  ## 默认 2097152；压一半，兜住 broker 失控时的最坏内存
+  process_limit = 1048576
+  data_dir = "/var/lib/emqx"
+}
+
+cluster {
+  name = emqxcl
+  discovery_strategy = manual
+}
+
+dashboard {
+  listeners {
+    http.bind = 18083
+    # https.bind = 18084
+    https {
+      ssl_options {
+        certfile = "${EMQX_ETC_DIR}/certs/cert.pem"
+        keyfile  = "${EMQX_ETC_DIR}/certs/key.pem"
+      }
+    }
+  }
+}
+
+## --- 内部监听：一律回环（公网入口只走 nginx）---
+listeners.tcp.default.bind = "127.0.0.1:1883"    ## device-service 用它连本机
+listeners.ws.default.bind  = "127.0.0.1:8083"    ## 网页控制台的 WSS 经 nginx 转到这里
+dashboard.listeners.http.bind = "127.0.0.1:18083" ## 别把 Dashboard 挂到公网
+
+## --- 8883 MQTT over TLS：ESP32 设备接入 ---
+## 证书放 /etc/emqx/certs/ 下（EMQX 以 emqx 用户运行，注意属主与读权限）。
+## 用与 nginx 同一份站点证书：**换证书时两处都要换**。
+listeners.ssl.default {
+  bind = "0.0.0.0:8883"
+  ssl_options {
+    cacertfile = "/etc/emqx/certs/<你的证书链>.crt"   ## 含中间证书的全链，设备端要么内置同一条链要么跳过校验
+    certfile   = "/etc/emqx/certs/<你的证书链>.crt"
+    keyfile    = "/etc/emqx/certs/<你的域名>.key"
+  }
+}
+
+## 认证链与 ACL **不写在这里**：由 emqx/configure_emqx.py 经 REST API 配置
+## （幂等，可重复跑）。写在文件里的话，Dashboard 上一改就与文件不一致，两边打架。
+## 那个脚本配置的是：
+##   · 认证链 1：jwt（复用博客 JWT_SECRET）—— 网页控制台与设备共用同一套令牌
+##   · 认证链 2：password_based + http backend → device-service 的 /api/devices/auth
+##               （设备用 device_id + device_key 认证，由 device-service 查 SQLite 决定）
+##   · 授权：no_match = deny（白名单式），规则按 用户/设备/控制台 三个命名空间给

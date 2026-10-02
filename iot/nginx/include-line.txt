@@ -1,0 +1,13 @@
+# 把下面这一行加进站点配置（/etc/nginx/sites-enabled/blog）**每一个 443 server 块**，
+# 位置要在 `location /` 之前（与本站其它 include 同级即可）：
+#
+#     include /etc/nginx/snippets/blog-iot/*.conf;
+#
+# 注意三点：
+#
+# 1. **是通配** —— 这个目录空着时 nginx 不报错，正是"可拔插"的实现方式。
+#    不要把它改成指向 iot.conf 的具体文件名，那样没装 IoT 的部署会 `nginx -t` 失败。
+# 2. **两个 server 块都要加** —— 本站有"IP 自签"与"域名正式证书"两个 443 块，
+#    少加一个的表现是「用域名访问控制台 404、用 IP 访问却正常」，很难一眼看出。
+# 3. **备份文件不要放 /etc/nginx/sites-enabled/ 下** —— 那里的 `include *` 不过滤后缀，
+#    `blog.bak` 会被当活配置加载，直接 duplicate default server、nginx 起不来。

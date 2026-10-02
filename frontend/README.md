@@ -150,8 +150,8 @@ nginx 对 `/live2d-widgets/` 目录设了 **1 年 immutable 缓存**，不换 UR
 1. `frontend/public/live2d-widgets/boot.js` 的 `VER` 常量（源头，其余都是跟着它）
 2. `frontend/src/components/Live2dAgent/index.tsx` 里 `boot.js?v=` 的查询串
 3. `frontend/tests/spa-navigate.test.mjs` 里手抄的那份字面量（有断言钉着，漏了会红）
-4. **仓库外**还有一个消费方：IoT 设备控制台的 `index.html` 直接引 `boot.js?v=`（没有 React 打包）。
-   它当前在 `/home/ubuntu/mqtt-demo/device-console/`，收进本仓 `iot/device-console/` 后改指仓内路径
+4. IoT 设备控制台的 `index.html` 直接引 `boot.js?v=`（它没有 React 打包，是 nginx 直服的
+   静态页）。文件在 [`../iot/device-console/index.html`](../iot/device-console/index.html)
 5. **agent 仓** `frontend/README.md` 里记录的「当前值」（纯文档，写的是哪一档）
 
 其中 1–4 漏了会真的出问题（功能面）；5 只是文档与代码对不上。

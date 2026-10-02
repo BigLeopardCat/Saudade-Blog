@@ -26,15 +26,19 @@ pub async fn sitemap_xml(State(st): State<Arc<AppState>>) -> Response {
     // （20261001 开源前准备）。默认值仍是本站，见 `utils::site_url`。
     let site = crate::utils::site_url();
 
-    // 固定页面（优先级高）
-    let static_urls: &[(&str, &str)] = &[
+    // 固定页面（优先级高）。物联网控制台是**可选件**（源码收在仓库 `iot/`，装不装由
+    // 部署者决定，见 `utils::iot_enabled`）：没装时列出来就是给爬虫一个 404，而那正是
+    // 本站"开源后别人照着部署"最容易踩的一处——所以按开关收，不写死在表里。
+    let mut static_urls: Vec<(&str, &str)> = vec![
         ("/", "1.0"),
         ("/times", "0.9"),
         ("/talk", "0.8"),
         ("/guestbook", "0.8"),
         ("/about", "0.8"),
-        ("/device-console/", "0.7"),
     ];
+    if crate::utils::iot_enabled() {
+        static_urls.push(("/device-console/", "0.7"));
+    }
 
     // 分类页
     let cats = category::Entity::find().all(&st.db).await.unwrap_or_default();
