@@ -1,4 +1,4 @@
-USE memory_blog;
+USE saudade_blog;
 -- 20260919 清理 note.tags 里的悬空标签 id（**会改生产文章数据**，执行前先跑下面的预演 SELECT）。
 --
 -- 背景：`note.tags` 是逗号分隔的裸 id 串，没有外键、删除标签时也从不回写引用。于是删掉

@@ -1,4 +1,4 @@
-USE memory_blog;
+USE saudade_blog;
 -- =============================================================================
 -- 用户对话额度（20260929）：user.chat_quota_used + quota_request 表
 --
@@ -102,16 +102,16 @@ CREATE TABLE IF NOT EXISTS `quota_request` (
 SELECT '列已存在' AS done, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT,
        ORDINAL_POSITION
   FROM information_schema.COLUMNS
- WHERE TABLE_SCHEMA = 'memory_blog' AND TABLE_NAME = 'user'
+ WHERE TABLE_SCHEMA = 'saudade_blog' AND TABLE_NAME = 'user'
    AND COLUMN_NAME = 'chat_quota_used';
 
 SELECT '表已存在' AS done, TABLE_NAME, ENGINE, TABLE_COLLATION
   FROM information_schema.TABLES
- WHERE TABLE_SCHEMA = 'memory_blog' AND TABLE_NAME = 'quota_request';
+ WHERE TABLE_SCHEMA = 'saudade_blog' AND TABLE_NAME = 'quota_request';
 
 SELECT '列清单' AS done, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT
   FROM information_schema.COLUMNS
- WHERE TABLE_SCHEMA = 'memory_blog' AND TABLE_NAME = 'quota_request'
+ WHERE TABLE_SCHEMA = 'saudade_blog' AND TABLE_NAME = 'quota_request'
  ORDER BY ORDINAL_POSITION;
 
 -- ── ② 存量行核对：不得出现非默认值（本文件不回填任何数据）──────────────────

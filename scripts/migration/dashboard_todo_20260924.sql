@@ -1,4 +1,4 @@
-USE memory_blog;
+USE saudade_blog;
 -- =============================================================================
 -- 后台首页待办表（20260924）：dashboard_todo
 --
@@ -47,11 +47,11 @@ CREATE TABLE IF NOT EXISTS `dashboard_todo` (
 -- 应用后自检：表在不在、列齐不齐、此刻有几行（预期 0）
 SELECT '表已存在' AS done, TABLE_NAME, ENGINE, TABLE_COLLATION
 FROM information_schema.TABLES
-WHERE TABLE_SCHEMA = 'memory_blog' AND TABLE_NAME = 'dashboard_todo';
+WHERE TABLE_SCHEMA = 'saudade_blog' AND TABLE_NAME = 'dashboard_todo';
 
 SELECT '列清单' AS done, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE
 FROM information_schema.COLUMNS
-WHERE TABLE_SCHEMA = 'memory_blog' AND TABLE_NAME = 'dashboard_todo'
+WHERE TABLE_SCHEMA = 'saudade_blog' AND TABLE_NAME = 'dashboard_todo'
 ORDER BY ORDINAL_POSITION;
 
 SELECT '当前行数（预期 0）' AS done, COUNT(*) AS 待办行数 FROM `dashboard_todo`;

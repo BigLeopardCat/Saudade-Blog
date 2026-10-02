@@ -1,10 +1,10 @@
-USE memory_blog;
+USE saudade_blog;
 -- =============================================================================
 -- 基架（第 0 号）：26 张表的建表语句 —— **从零建库的第一块积木**
 --
 -- 为什么在仓库里：`scripts/migration/` 下其余 35 个文件**全是增量 ALTER**
 -- （加列/加索引/回填），每一个都假定这些表已经存在。没有这一份，照 CONTRIBUTING
--- 的建库步骤走到一半就会撞上"Table 'memory_blog.note' doesn't exist"。
+-- 的建库步骤走到一半就会撞上"Table 'saudade_blog.note' doesn't exist"。
 --
 -- 从哪来：20261001 在生产库上 `mysqldump --no-data` 导出，**只取结构、零行数据**。
 -- 表选项里的 `AUTO_INCREMENT=<起始值>` 已全部脱掉（那是"这张表被写过多少行"的

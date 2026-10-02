@@ -1,4 +1,4 @@
-USE memory_blog;
+USE saudade_blog;
 -- 20260912d 河灯留言板（talk 表 src='board'）列表查询补索引。
 -- 背景：talk 表原来只有 PRIMARY(id) 一个索引，四条列表查询 EXPLAIN 实测全是
 --       `type=ALL + Using where + Using filesort`（29 行时不显，留言多起来就是

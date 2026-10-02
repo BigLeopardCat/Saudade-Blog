@@ -1,4 +1,4 @@
-USE memory_blog;
+USE saudade_blog;
 -- 20260905 后台审核双状态显示（issue9）：talk 表补 ai_result 列，持久化 AI 审核判定。
 -- 背景：20260905 留言审核上线后，AI 判定只即时决定 approved（pass→1 / flag→0）不留痕，
 -- 后台只能看到人工侧结果，无法区分「AI 拦截→人工放行/驳回」与「未走 AI 直接通过」。

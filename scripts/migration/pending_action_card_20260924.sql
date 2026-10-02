@@ -1,4 +1,4 @@
-USE memory_blog;
+USE saudade_blog;
 -- =============================================================================
 -- 确认卡片跨刷新存活 + 令牌一次性核销（20260924）：pending_action 加 5 列
 --
@@ -72,18 +72,18 @@ ALTER TABLE `pending_action`
 -- 应用后自检：5 列都在、类型对不对、这几个键有没有建上
 SELECT '列清单' AS done, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE
 FROM information_schema.COLUMNS
-WHERE TABLE_SCHEMA = 'memory_blog' AND TABLE_NAME = 'pending_action'
+WHERE TABLE_SCHEMA = 'saudade_blog' AND TABLE_NAME = 'pending_action'
   AND COLUMN_NAME IN ('question', 'options', 'jti', 'expires_at', 'claimed_at')
 ORDER BY ORDINAL_POSITION;
 
 SELECT '应恰为 5 列' AS done, COUNT(*) AS 新列数
 FROM information_schema.COLUMNS
-WHERE TABLE_SCHEMA = 'memory_blog' AND TABLE_NAME = 'pending_action'
+WHERE TABLE_SCHEMA = 'saudade_blog' AND TABLE_NAME = 'pending_action'
   AND COLUMN_NAME IN ('question', 'options', 'jti', 'expires_at', 'claimed_at');
 
 SELECT '核销索引' AS done, INDEX_NAME, GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX) AS 列
 FROM information_schema.STATISTICS
-WHERE TABLE_SCHEMA = 'memory_blog' AND TABLE_NAME = 'pending_action'
+WHERE TABLE_SCHEMA = 'saudade_blog' AND TABLE_NAME = 'pending_action'
   AND INDEX_NAME = 'idx_pa_jti_claim'
 GROUP BY INDEX_NAME;
 

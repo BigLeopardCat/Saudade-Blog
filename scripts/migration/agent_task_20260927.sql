@@ -1,4 +1,4 @@
-USE memory_blog;
+USE saudade_blog;
 -- =============================================================================
 -- 会话级任务状态（20260927）：agent_task 表
 --
@@ -101,16 +101,16 @@ CREATE TABLE IF NOT EXISTS `agent_task` (
 -- 应用后自检：表在不在、列齐不齐、此刻有几行（预期 0）
 SELECT '表已存在' AS done, TABLE_NAME, ENGINE, TABLE_COLLATION
 FROM information_schema.TABLES
-WHERE TABLE_SCHEMA = 'memory_blog' AND TABLE_NAME = 'agent_task';
+WHERE TABLE_SCHEMA = 'saudade_blog' AND TABLE_NAME = 'agent_task';
 
 SELECT '列清单' AS done, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE
 FROM information_schema.COLUMNS
-WHERE TABLE_SCHEMA = 'memory_blog' AND TABLE_NAME = 'agent_task'
+WHERE TABLE_SCHEMA = 'saudade_blog' AND TABLE_NAME = 'agent_task'
 ORDER BY ORDINAL_POSITION;
 
 SELECT '索引清单' AS done, INDEX_NAME, GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX) AS cols, NON_UNIQUE
 FROM information_schema.STATISTICS
-WHERE TABLE_SCHEMA = 'memory_blog' AND TABLE_NAME = 'agent_task'
+WHERE TABLE_SCHEMA = 'saudade_blog' AND TABLE_NAME = 'agent_task'
 GROUP BY INDEX_NAME, NON_UNIQUE;
 
 SELECT '当前行数（预期 0）' AS done, COUNT(*) AS 任务行数 FROM `agent_task`;

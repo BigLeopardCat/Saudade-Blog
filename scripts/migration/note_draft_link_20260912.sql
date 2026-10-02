@@ -1,4 +1,4 @@
-USE memory_blog;
+USE saudade_blog;
 -- 20260912c 编辑修改稿：note 表补 1 列，把「正在编辑的已发布文章」的自动保存落到一行独立修改稿上。
 -- 背景：编辑器原来的自动保存只写 localStorage（note_draft_{id}），有两个洞——① 保存成功后
 --       removeItem 与 navigate 触发的卸载落盘互相抢，草稿清不掉，二次进编辑页必弹「已恢复未保存

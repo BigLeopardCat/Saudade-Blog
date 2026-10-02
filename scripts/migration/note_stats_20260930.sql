@@ -1,4 +1,4 @@
-USE memory_blog;
+USE saudade_blog;
 -- =============================================================================
 -- 文章阅读量 / 点赞量（20260930）
 --
@@ -75,5 +75,5 @@ INSERT INTO migration_flags (flag_name) VALUES ('note_stats_20260930');
 -- 校验：两张表都在、索引条数对得上（期望 note_view 3 条、note_like 3 条）
 SELECT TABLE_NAME, INDEX_NAME, COLUMN_NAME, SEQ_IN_INDEX
 FROM information_schema.STATISTICS
-WHERE TABLE_SCHEMA = 'memory_blog' AND TABLE_NAME IN ('note_view', 'note_like')
+WHERE TABLE_SCHEMA = 'saudade_blog' AND TABLE_NAME IN ('note_view', 'note_like')
 ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX;

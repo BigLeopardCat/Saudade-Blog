@@ -1,4 +1,4 @@
-USE memory_blog;
+USE saudade_blog;
 -- =============================================================================
 -- 账号冻结 + 令牌收回（20260926）：user.status / user.token_version
 --
@@ -60,7 +60,7 @@ ALTER TABLE `user`
 --       且 `status` 排在 `role` 之后、`token_version` 紧挨 `status`。
 SELECT '列已存在' AS done, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT, ORDINAL_POSITION
   FROM information_schema.COLUMNS
- WHERE TABLE_SCHEMA = 'memory_blog' AND TABLE_NAME = 'user'
+ WHERE TABLE_SCHEMA = 'saudade_blog' AND TABLE_NAME = 'user'
    AND COLUMN_NAME IN ('status', 'token_version')
  ORDER BY ORDINAL_POSITION;
 
