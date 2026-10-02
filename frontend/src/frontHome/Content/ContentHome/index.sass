@@ -397,18 +397,20 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
       display: inline-flex
       align-items: center
       gap: 7px
-      padding: 7px 16px
+      padding: 8px 18px
       border-radius: 999px
       background: rgba(255, 255, 255, 0.72)
       border: 1px solid rgba(214, 160, 200, 0.55)
       box-shadow: 0 6px 16px rgba(186, 120, 170, 0.16)
-      font-size: 15px
+      // 20261003 用户第 7 条「主页社交组件和文本再放大一些」：15 → 16.5px。
+      // 放大是**成组**的（标签/标题/命令条/签名一起），只放大一件会让那一列看着散。
+      font-size: 16.5px
       letter-spacing: 0.06em
       color: #a4508b
       transform: rotate(-1.5deg)
       .heroTagStar
         color: #e58ec4
-        font-size: 14px
+        font-size: 15.5px
         // 只有透明度动画：合成器就能跑完，不碰布局也不碰前景重绘
         //（这块地皮紧挨着看板娘，任何会重绘前景的动效都在同一屏上抢 GPU）
         animation: tag-twinkle 3.4s ease-in-out infinite
@@ -427,10 +429,12 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
     .home-title-h3
       margin: 0
       margin-top: 16px
-      // 放大（20260930 五轮，用户「文本放大」）。旧值 2.5rem 是"缝"约束下的产物，
-      // 那条约束已随展示柜搬家作废（见本块头注）。上限 3.2rem 定在"两行标题不会
-      // 比右列高出一个头"的位置；下限仍留 2.5rem，窄桌面靠它不挤爆右列。
-      font-size: clamp(2.5rem, 3.6vw, 3.2rem)
+      // 放大（20260930 五轮，用户「文本放大」），20261003 第 7 条再放大一档
+      // （2.5/3.6vw/3.2rem → 2.75/4vw/3.5rem）。旧值 2.5rem 是"缝"约束下的产物，
+      // 那条约束已随展示柜搬家作废（见本块头注）。上限 3.5rem 定在"1440 那档
+      // 文字列 + gap + 右列仍落在内容盒（0.84 × 视口）之内"的位置——再往上
+      // `.SayWords`（`flex: 0 1 auto`）会被迫收缩、标题折成两行。
+      font-size: clamp(2.75rem, 4vw, 3.5rem)
       line-height: 1.18
       color: #b3175e
       -webkit-text-stroke: 3px #ffffff
@@ -450,12 +454,13 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
       align-items: center
       gap: 6px
       margin-top: 18px
-      padding: 8px 14px
+      padding: 9px 16px
       border-radius: 10px
       background: rgba(40, 32, 54, 0.88)
       box-shadow: 0 10px 24px rgba(90, 60, 110, 0.18)
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace
-      font-size: 14.5px
+      // 14.5 → 16（20261003 第 7 条）：与标签、标题、签名同一批放大
+      font-size: 16px
       line-height: 1.2
       white-space: nowrap
       .termUser
@@ -472,12 +477,16 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
         background: #ffd9ec
         animation: caret-blink 1.1s steps(1, end) infinite
 
+    // 336 → 384（20261003 第 7 条「社交组件再放大一些」）：四颗按钮 45 → 54px
+    // 之后按钮总宽 216px，这个盒子把它们摊开到与原来同档的间距（(384−216)/3 = 56px）。
+    // ⚠️ 这个数是**按钮尺寸的函数**：改 `.SocialBtn` 的边长必须一起回来核（宽度不改
+    // 就会变成"四颗挤在左边剩一大截空白"）。
     .Social
-      width: 336px
+      width: 384px
       display: flex
       flex-direction: row
       justify-content: space-between
-      margin-top: 22px
+      margin-top: 26px
   .frontAvatar
     width: min(320px, 70vw) !important
     height: min(320px, 70vw) !important
@@ -530,14 +539,16 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
   @media screen and (max-width: 768px)
     .SayWords
       .home-title-h3
-        font-size: 2rem
+        // 2 → 2.2rem（20261003 第 7 条）。下限仍是"375px 上不折两行还贴边"那条线。
+        font-size: 2.2rem
         -webkit-text-stroke-width: 2px
       .heroTerminal
         margin-top: 14px
-        font-size: 12.5px
+        font-size: 13.5px
       .Social
         width: 100%
-        max-width: 300px
+        // 300 → 340：桌面档按钮放大到 54px 之后，300px 会把四颗挤成一条
+        max-width: 340px
 
   // 减少动效：樱花整片不出现（停在地上之外反而像碎屑），光标常亮。
   // ⚠️ 两条选择器都必须写**全链**（`.petals .petal` / `.SayWords .heroTerminal .termCaret`）：
@@ -1695,7 +1706,9 @@ html[data-theme='dark'] .SayWords h2
   margin: 0
   white-space: nowrap
   font-family: 'LXGW WenKai TC', 'Kaiti SC', 'STKaiti', 'KaiTi', serif
-  font-size: 20px
+  // 20 → 23px（20261003 第 7 条「文本再放大一些」）。签名是绝对定位的，放大只影响
+  // 它自己的盒宽（居中靠 `.heroBottom` 的 flex），不动 `.heroBottom` 那 86/20px 的定位。
+  font-size: 23px
   font-weight: 400
   letter-spacing: 3px
   // 兜底实体色（不吃 background-clip 的环境走它），渐变在 @supports 里替换

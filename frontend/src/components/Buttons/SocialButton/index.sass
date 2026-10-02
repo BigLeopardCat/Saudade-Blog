@@ -1,6 +1,13 @@
 .SocialBtn
-  width: 45px
-  height: 45px
+  // 45 → 54px（20261003 用户第 7 条「主页社交组件再放大一些」）。**唯独这一颗组件
+  // 服务于首页那一排**（消费者只有 `frontHome/Content/ContentHome`），所以放大它不会
+  // 波及别处。
+  // ⚠️ `font-size` 必须一起提：四张 svg 的 `height` 都是 `1.6em`，只放大盒子等于
+  // 把图标留在原地、四周多出一圈空白。19px × 1.6em = 30.4px 图形（原来 16 × 1.6 = 25.6）。
+  // ⚠️ 盒子一改，`.Social` 的宽度（384px = 216 + 3×56）就要跟着核——见那条注释。
+  width: 54px
+  height: 54px
+  font-size: 19px
   display: flex
   align-items: center
   justify-content: center
