@@ -75,6 +75,34 @@
     // ── 输入区 ──────────────────────────────────────────────
     .commentComposer
         margin-bottom: 22px
+
+        // ── 字数计数搬进输入框内（20261003 用户第 3 条）────────────────────
+        //
+        // 用户原话：「把字数统计文本移入输入框就能腾出空间，减小按钮到输入框的缝隙了」。
+        // antd 的契约是把它**吊在输入框下方 22px 处**（`antd/es/input/style/textarea.js`：
+        // `position:absolute; bottom: -(fontSize × lineHeight) = -22px; inset-inline-end:0`，
+        // `pointer-events:none`）——它不占布局空间，所以以前必须给输入框挂全站那 22px 的
+        // `.counter-room`（`src/index.css`，另外五个消费方共用），**那一整行空白正是
+        // 「发表评论按钮离输入框太远」的来源**。搬进来之后那 22px 就不再需要了。
+        //
+        // 优先级：antd 的规则是 `.ant-input-textarea-show-count .ant-input-data-count`（0,2,0），
+        // 这里的 `.commentComposer ... .ant-input-data-count` 是（0,3,0）⇒ 稳胜。
+        // **只作用于本组件**：全站 `.counter-room` 与其余五个消费方一字未动。
+        // 哪天线把 antd 的 bottom 改成非负（占位布局），这几条就该删（同 index.css 的复核点）。
+        .ant-input-textarea-show-count
+            .ant-input-data-count
+                bottom: 4px
+                inset-inline-end: 10px
+                // 缩小并定住行高：下面那个 padding-bottom 是按「4 + 16 = 20」算出来的
+                font-size: 0.78rem
+                line-height: 16px
+            // 给计数让出它自己那一行，否则长文本的末行会钻到数字底下。
+            // rc-textarea 的 autosize 会把 padding-top/bottom 一起量进去
+            // （`calculateNodeHeight.js` 的 SIZING_STYLE 里有这两项）⇒ autoSize 的总高
+            // 会跟着 +22，不会把最后一行挤出去。
+            textarea.ant-input
+                padding-bottom: 26px
+
         .commentReplyBar
             display: flex
             align-items: center

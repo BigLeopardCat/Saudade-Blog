@@ -270,18 +270,14 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
                             <button type="button" onClick={() => setReplyTo(null)}>取消</button>
                         </div>
                     )}
-                    {/* `counter-room`：给 antd 的 showCount 计数腾 22px。计数是
-                        `span.ant-input-data-count`（rc-textarea 渲染的真实元素，
-                        **不是** `[data-count]` 那个属性），antd 给它
-                        `position:absolute; bottom:-22px` ——**吊在输入框下方、不占布局空间**，
-                        而下一行就是 `.commentComposerFoot`（表情按钮 + 发送按钮）——
-                        不腾地方，那串「0 / 300」正好压在右边那颗「发表评论」上
-                        （20261003 用户反馈"字数限制计数文本和其他组件重叠遮挡"）。
-                        值只有一处：`src/index.css` 的 `.counter-room`（全站统一，
-                        **不许在这里另写一个 margin-bottom**）。 */}
+                    {/* **计数已搬进输入框内**（20261003 用户第 3 条），所以这里不再挂全站的
+                        `counter-room`（那 22px 是给"计数吊在框下方"腾的地方，也正是
+                        「按钮离输入框太远」的来源）。计数元素是 `span.ant-input-data-count`
+                        （rc-textarea 渲染的真实元素，**不是** `[data-count]` 那个属性），
+                        现在由 `index.sass` 的 `.commentComposer .ant-input-textarea-show-count`
+                        把它按在框内的右下角，并给最后一行让出宽度。 */}
                     <Input.TextArea
                         ref={taRef}
-                        className="counter-room"
                         value={content}
                         onChange={(e) => setContent(e.target.value)}
                         placeholder={replyTo ? `回复 @${replyTo.nickname}…` : '说点什么吧…（支持 markdown 与站内表情）'}

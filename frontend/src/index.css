@@ -17,7 +17,12 @@
  * 里那几条**几何重叠**断言——它们量的是"真的没被压住"，不是"CSS 写对了"。
  *
  * 提交人眼复核点：`.ant-input-data-count` 的 bottom 必须是负值（antd 的契约），
- * 哪天 antd 改成占位布局，这条规则就该删。 */
+ * 哪天 antd 改成占位布局，这条规则就该删。
+ *
+ * 20261003：**讨论区输入框退出了这一族**——它把计数搬进了框内（见
+ * `components/CommentSection/index.sass`），不再需要腾这 22px（那正是「发表评论
+ * 按钮离输入框太远」的来源）。剩下六处一字未动：`UserCenter`（两处）、
+ * `Dashboard/{Users,QuotaManage,CommentManage,BoardManage}`。 */
 .counter-room {
     margin-bottom: 22px;
 }
