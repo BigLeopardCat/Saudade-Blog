@@ -6,13 +6,24 @@
 
 ## 1. 拓扑：谁能碰到谁
 
+```mermaid
+flowchart TB
+    NET(["公网"])
+    NGX["nginx :443<br/>（唯一公网入口）"]
+    DIST["静态 dist<br/>含图谱产物 graph/*.js<br/>① 公开读，无鉴权"]
+    subgraph L["其余进程一律只绑回环 127.0.0.1"]
+        RUST["Rust 后端 :3000"]
+        AGT["Python agent :8010"]
+        DEV["device-service :3100<br/>自己校验博客 JWT（/device-api/*）"]
+    end
+    NET -->|"TLS"| NGX
+    NGX -->|"静态直服"| DIST
+    NGX -->|"/api/*"| RUST
+    NGX -->|"/device-api/*"| DEV
+    RUST -->|"转发请求 + X-Agent-Assertion"| AGT
 ```
-公网 ──TLS──► nginx :443 ──► Rust 后端 :3000 (127.0.0.1) ──► Python agent :8010 (127.0.0.1)
-                    │                                              ▲
-                    └─ 静态 dist（含图谱产物 graph/*.js）           │
-                       ① 公开读，无鉴权                               │
-                                                        device-service :3100 (127.0.0.1)
-```
+> nginx **对 8010 零匹配**——公网碰不到 agent，只有"经 Rust"这一条路（图上没有 NGX → AGT 的边
+> 就是这个意思，不是漏画）。
 
 三条硬事实（都实测过）：
 
