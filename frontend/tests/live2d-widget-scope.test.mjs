@@ -142,18 +142,26 @@ for (const f of ['chat-stream.js', 'chat-engine.js', 'chat-render.js', 'chat-ses
     ok(/ctx\.state\.pendingAsk = null/.test(tail(i)), `清空消息区（第 ${i + 1} 行）同时丢掉挂起的确认`);
   }
 }
-// ── ②b 初始位置：右移「看板娘板块」宽度的一半（20261003 用户第 2 条）──────────
-// 用户原话：「看板娘初始位置右移看板娘板块宽度一半」。板块 = `#live2d` 的 300px
-// ⇒ 半宽 150px，15 + 150 = 165。**锁值不锁推导**：`#live2d` 的宽度哪天变了，这条
-// 会红着让人回来重算半宽（这正是它该做的），而不是自己跟着漂。
-// 窄屏回落也得在：165 + 300 = 465 的右缘在 <480px 的视口里放不下。
+// ── ②b 初始位置：板块半宽再左移 20px、下移 10px（20261003 用户第 1/2 条）──────
+// 沿革：先「右移看板娘板块宽度一半」⇒ 板块 = `#live2d` 的 300px，半宽 150px，
+// 15 + 150 = 165；再按「稍微左移一点下移一点」收 20px ⇒ **145**（纵向另有一条
+// `#waifu` 的 `transform: translateY(-5px)`，即从贴平的 -15px 少抬 10px）。
+// **锁值不锁推导**：`#live2d` 的宽度哪天变了，这条会红着让人回来重算半宽
+// （这正是它该做的），而不是自己跟着漂。
+// 窄屏回落也得在：145 + 300 = 445 的右缘在 <480px 的视口里放不下。
 {
   const css = W('widget.css');
-  ok(/#waifu \{[^}]*\bleft: 165px/.test(css),
-     'widget.css：#waifu 初始 left = 165px（= 板块 300px 的一半 + 原来的 15px）');
+  ok(/#waifu \{[^}]*\bleft: 145px/.test(css),
+     'widget.css：#waifu 初始 left = 145px（= 板块 300px 的一半 + 15 − 20）');
+  // 纵向：整块抬 5px；`#waifu:hover` 必须**同值**（现状是刻意的"hover 不抬升"，
+  // 只改一处鼠标一上去就跳）——两处一起锁，改一处当场红。
+  ok(/#waifu \{[^}]*transform: translateY\(-5px\)/.test(css),
+     'widget.css：#waifu 基态 transform = translateY(-5px)');
+  ok(/#waifu:hover \{\s*[^}]*transform: translateY\(-5px\)/.test(css),
+     'widget.css：#waifu:hover 与基态同值（不抬升）');
   // 回落只收 #waifu 一条，且必须落在 #waifu 主规则**之后**（同特异度、后写者赢；
   // 写在前面会被整条静默压掉——本文件里已有同族的坑）。
-  const iMain = css.search(/#waifu \{[^}]*\bleft: 165px/);
+  const iMain = css.search(/#waifu \{[^}]*\bleft: 145px/);
   const iFallback = css.search(/@media \(max-width: 479px\) \{\s*#waifu \{ left: 15px; \}/);
   ok(iFallback > iMain, 'widget.css：<480px 回落原位，且写在其后（写前面会被压掉）');
   // 收起态那枚唤回贴纸**不跟着动**：它只在与本体互斥的收起态出现，恒贴左下角。
