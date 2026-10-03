@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""文章横幅「读数四件」= 四件同形的一列（20260926 起；20261001 改形态；20261003 改方向）。
+"""文章横幅「读数四件」= 2×2 的四个等大格子（20260926 起；20261001 改形态；20261003 改排布）。
 
   python3 tests/read-stats-cluster.test.py
 
@@ -14,21 +14,20 @@
     .readLikeBtn                     64 × 30    4px 10px    13    .55
 
 一件竖的、两件横的，高度差到 2.6 倍 —— 排在一行里怎么摆都对不齐。所以 20261001 改成
-一簇 `.readStats` + 三件共用几何 `.readStat`，竖排随之取消。
+一簇 `.readStats` + 三件共用几何 `.readStat`。此后这一簇的**排布**改过三次，`.readStat`
+那份几何**一次都没动**（"大小不一"的判据因此一直有效）：
 
-**20261003 用户第 5 条把方向又改回来了**：「点赞收藏观看评论图标不要横向平铺会影响
-标题居中显示，改为纵向排列」——并补上第四件「讨论」。这一次的竖排与 20260926 那一版
-**不是同一件事**：那一版是"一件竖、两件横"的混搭（几何不齐），现在是**四件同形、整簇
-成一列**，`.readStat` 那份几何一个字都没动，改的只是它摆的方向。
+    20261001  一行三件      —— 治"大小不一"
+    20261003a 竖排一列四件  —— 治"横排 260px 把标题挤偏"
+    20261003b **2×2 四件**  —— 用户第 2 条「右侧是四个数据组件 2*2 排布」
 
-为什么横排会把标题挤偏（这是本条修复的**因果**，不是副作用）：
-`.readInfo` 是三列 [作者 | 中区标题+日期 | 本簇]，中区 `flex: 1 1 auto` 吃余量 ⇒
-**中区中线 = 卡片中线 + (作者宽 − 簇宽)/2**。横排时簇宽 ≈313px、竖排后 ≈79px（实测，
-见本文件 ①c / ⑦b 两组），中区中线因此从偏 −136px 回到偏 −19px。⚠️ 所以"簇变窄"必须
-被锁住：簇里任何一件变宽都会把标题重新推偏（`.readFavLabel` 的 `3em` 与数字的 `4ch`
-就是为此存在的，判据在 ②b）。
+为什么 2×2 之后就**不必再管簇的宽度**了：挤偏的成因是"中区吃余量 ⇒ 中区中线 =
+卡片中线 + (左区宽 − 右区宽)/2"，它成立的前提是`.readInfo` 是 **flex 行**。本轮改成
+**三列车格**、两条侧轨写同一个变量（`.readInfo` 的 `--read-side`）⇒ 中区中线与卡片
+中线**结构上重合**，与两边装什么都无关。判据因此升级成一条更强的不变量：
+**中区中线与卡片中线差 < 1px**（①c 与 ⑦ 两组都量它），且**左区与右区的宽度逐字相等**（②）。
 
-为什么用无头浏览器而不是 node 桩：这是**布局**问题（flex 收缩、行盒、等高、绝对定位盒
+为什么用无头浏览器而不是 node 桩：这是**布局**问题（行盒、等高、格子的宽高、绝对定位盒
 是否越出 overflow:hidden 的父盒），桩里算不出这些。真 CSS = node 侧真编译的 `.sass` +
 仓库里那份 `* { box-sizing: border-box }` 重置（`src/frontHome/main.css`），页面里手写与
 `index.tsx` 同形的标记（不挂 React——类名与结构就是全部接口）。
@@ -37,19 +36,22 @@
   ① **四件同形**（正面判据）：高度/圆角/描边宽/描边色/内边距/字号六项逐项相等，且换内容
      也不变（收藏 ⇄ 已收藏、数字一位 ⇄ 四位）；
      ①b 反向对照：把旧的三套几何内联写回去 ⇒ 高度当场不等（证明 ① 抓得住"大小不一"）；
-     ①c ★**同一列**：四件横向中心相同、按 DOM 顺序自上而下、互不重叠；**反向对照**：
-     把 `flex-direction` 写回 `row` ⇒ 四个中心当场各不相同、整簇由竖变横；
-  ② 整簇 `flex: 0 0 auto`（不被挤窄的那一份），高度 = 4×件高 + 3×间距；
-     ②b 文案/数字变长时整簇**不挪位**（`.readFavLabel{min-width:3em}`、数字 `4ch`）；
-     **反向对照**：四条定宽一起抹掉 ⇒ 簇宽与左缘当场变；
-  ③ **挤压回归**（20260926 那件事）：超长标题下整簇不被挤窄；
-     ③b 反向对照：四条防线一起撤 ⇒ 文案**确实**折成两行；
+     ①c ★**2×2**：横向中心恰好两个值、纵向中心恰好两个值、四个格子等大，且按 DOM 顺序
+     落在左上/右上/左下/右下；**反向对照**：把列数写回 1 ⇒ ①c 当场不成立；
+  ② ★**两条侧轨等宽**（结构性居中的唯一来源）：左区、右区宽度逐字相等，簇高 = 2×件高 +
+     间距；**中区中线与卡片中线差 < 1px**；
+     ②b 文案/数字变长时**件内内容**不挪（`.readFavLabel{min-width:3em}`、数字 `4ch`），
+     且内容始终装得下格子（`scrollWidth ≤ clientWidth`）；**反向对照**：把两条定宽一起
+     抹掉 ⇒ 文案当场宽 13px（图标跟着跳）；
+  ③ **挤压回归**（20260926 那件事）：超长标题下四个格子与两条侧轨逐字不动；
+     ③b 反向对照：把中区轨道写成 `1fr`（少了 `minmax(0, …)`）⇒ 一格长词当场把整行顶出卡片；
   ④ 图标：四件的 svg 同尺寸 14px、`aria-hidden`，文案仍在 `span.readFavLabel` 里；
   ⑤ 三态色一字未改；讨论数是**读数不是按钮**（字色与浏览同档、比两个按钮淡）；
-  ⑥ ★手机档（327px / 768px 两档）：四件各自收成 24px 高 / 4px 间距，**且整个读数盒
-     不越出封面顶**；**反向对照**：把手机档那三条覆盖撤回 200px 那一版 ⇒ 上沿当场越界；
-  ⑦ 布局锁死：四种标题长度下日期与右区的坐标逐字相同（20261001 用户第 4 条）；
-     ⑦b 反向对照：拆回平级三项 + `space-between` ⇒ 日期当场漂走。
+  ⑥ ★手机档（327px / 768px 两档）：`.readInfo` 落成**单列**（手机的三列放不下）、
+     四件收成 24px 高 / 4px 间距，**且整个信息盒不越出封面顶**；
+     **反向对照**：把封面高撤回 200px ⇒ 上沿当场越界；
+  ⑦ 布局锁死：四种标题长度下中区、右区、左区、卡片高的坐标逐字相同，且每次中区都居中；
+     ⑦b 反向对照：把两条侧轨写成**不等宽** ⇒ 中区当场偏 40px（居中靠的就是"等宽"这一条）。
 """
 import pathlib
 import subprocess
@@ -76,16 +78,27 @@ SASS_JS = 'const sass=require("sass");process.stdout.write(sass.compile(process.
 SASS_FILE = FE / "src/frontHome/Content/ReadArticle/index.sass"
 RESET_CSS = FE / "src/frontHome/main.css"
 
-# 与 index.tsx 同形的标记：.readContainer > .readCover > .readInfo > .readStats > 四件
-# （antd 的 Flex 用普通 div 代替——它的宽度不影响本套件的判据）
+# 与 index.tsx 同形的标记：三区并列（作者 / 标题 / 读数四件）。
+# ⚠️ 这一版的结构**本身**就是判据的一部分：两条侧轨的宽度由 `.readInfo` 的列模板决定，
+# 夹具少一个区（或把某区嵌进另一区）就会让"结构性居中"那条判据失去意义。
+# 头像写死 40×40 的内联样式 —— 线上那件是 antd `Avatar size={40}`（尺寸来自它的内联样式），
+# 夹具不挂 React，就把这个数写在这里（只有它影响左区的高度）。
 MARKUP = """
 <div class="readContainer">
   <div class="readCover" id="cover">
     <div class="readInfo" id="info">
-      <div class="ant-flex readAuthor" id="author"><span class="frontAvatar">头像</span>泠月</div>
+      <div class="readAuthor" id="author">
+        <div class="readAuthorRow" id="arow">
+          <span class="frontAvatar" id="av" style="width:40px;height:40px;display:inline-block">头</span>
+          <span class="readAuthorName" id="name">{author}</span>
+        </div>
+        <div class="readTimes" id="times">
+          <span id="pub">发布于 2026-10-01</span>
+          <span id="upd">更新于 2026-10-03</span>
+        </div>
+      </div>
       <div class="readMain" id="main">
         <h1 id="title">{title}</h1>
-        <h3 id="date">2026-09-26</h3>
       </div>
       <div class="readStats" id="wrap">
         <button type="button" class="readStat readFavBtn{faved}" id="btn" title="收藏">
@@ -118,15 +131,17 @@ LEGACY_GEOM = """
 #likebtn { height: 30px; padding: 4px 10px; }
 """
 
-# ①c 的反向对照：把方向写回横排（= 用户第 5 条报的那一版）。
-LEGACY_ROW = "#wrap { flex-direction: row !important; }"
+# ①c 的反向对照：把列数写回 1（= 20261003a 那一版竖排一列）。四条列宽判据当场不成立。
+LEGACY_ONE_COL = "#wrap { grid-template-columns: 1fr !important; }"
 
-# ②b 的反向对照：把**全部**四条定宽一起抹掉。只抹 `#label` 是不够的（实测）——
-# 竖排 `align-items: stretch` 下簇宽 = 最宽那一件的自然宽，抹掉 label 的 min-width 后
-# 最宽的变成了带 4ch 数字的那几件，簇宽纹丝不动。要证明定宽在起作用，就得把
-# 3em（文案）与 4ch（三个数字）一起撤掉。
+# ②b 的反向对照：把两件定宽一起抹掉（文案 3em + 数字 4ch）。判的是**件内内容**的宽度
+# ——格子本身是定宽的，内容变宽不会再动格子，但图标会在胶囊里左右跳（这就是它俩存在的理由）。
 LEGACY_MINW = ("#label { min-width: 0 !important; }"
                "#viewsnum, #likenum, #commentnum { min-width: 0 !important; }")
+
+# ⑦b 的反向对照：两条侧轨**不等宽**（左 180 / 右 260）⇒ 中区中线当场偏 40px。
+# 这一条比"当年那套 flex 到底漂多少"更直接：居中靠的就是"等宽"这一条，不是别的。
+LEGACY_ASYM = "#info { grid-template-columns: 180px 1fr 260px !important; }"
 
 # ⑥ 的反向对照：把手机档那三条覆盖撤回 20261003 之前的 200px 那一版
 # （封面高、`.readInfo` 的 bottom/内边距、四件的 24px/4px）。
@@ -162,28 +177,13 @@ from playwright.sync_api import sync_playwright  # noqa: E402
 
 # `o.legacy` 是**反向对照**：把某一组判据的前提手动破坏掉，证明那组判据不是空断言。
 PAINT = """(o) => {
-  for (const n of ['legacy-geom', 'legacy-flex', 'legacy-minw', 'legacy-layout',
-                   'legacy-row', 'legacy-mobile']) {
-    const el = document.getElementById(n);
-    if (el) el.remove();
-  }
+  // 反向对照的样式表是**累加**在页面上的，每次重画先清掉上一张（只清我们加的那些）。
+  for (const s of [...document.querySelectorAll('style[id^="legacy"]')]) s.remove();
   document.getElementById('root').innerHTML = o.markup;
-  const add = (css) => { const s = document.createElement('style');
-    s.id = o.legacy; s.textContent = css; document.head.appendChild(s); };
-  if (o.legacy === 'legacy-geom') add(o.css);
-  if (o.legacy === 'legacy-row') add(o.css);
-  if (o.legacy === 'legacy-minw') add(o.css);
-  if (o.legacy === 'legacy-mobile') add(o.css);
-  if (o.legacy === 'legacy-flex') add(
-    '.readInfo { width: 420px !important; }' +
-    '.readInfo .readMain { flex: 0 0 auto !important; min-width: auto !important; }' +
-    '#wrap { flex: 0 1 auto !important; min-width: 0 !important; }' +
-    '#btn { flex: 0 1 auto !important; min-width: 0 !important; }' +
-    '#label { white-space: normal !important; min-width: 0 !important; }');
-  if (o.legacy === 'legacy-layout') {
-    // 拆回 20261001 之前的形态：中区那一层拿掉（display: contents）+ 五个子项 space-between
-    document.querySelector('.readMain').style.display = 'contents';
-    document.querySelector('.readInfo').style.justifyContent = 'space-between';
+  if (o.css) {
+    const s = document.createElement('style');
+    s.id = o.legacy || 'legacy'; s.textContent = o.css;
+    document.head.appendChild(s);
   }
   const box = (id) => {
     const el = document.getElementById(id);
@@ -193,6 +193,7 @@ PAINT = """(o) => {
       w: r.width, h: r.height, left: r.left, right: r.right,
       cx: r.left + r.width / 2, cy: r.top + r.height / 2,
       top: r.top, bottom: r.bottom,
+      sw: el.scrollWidth, cw: el.clientWidth,
       radius: cs.borderTopLeftRadius, bw: cs.borderTopWidth, bc: cs.borderTopColor,
       pad: cs.padding, fs: cs.fontSize, dir: cs.flexDirection,
       bg: cs.backgroundColor, color: cs.color,
@@ -207,23 +208,23 @@ PAINT = """(o) => {
   return {
     btn: box('btn'), views: box('views'), like: box('likebtn'), com: box('comments'),
     wrap: box('wrap'), cover: box('cover'), info: box('info'), main: box('main'),
-    wrapFlex: getComputedStyle(document.getElementById('wrap')).flex,
+    author: box('author'), arow: box('arow'), av: box('av'), name: box('name'),
+    times: box('times'), label: box('label'), viewsnum: box('viewsnum'),
     wrapGap: parseFloat(getComputedStyle(document.getElementById('wrap')).gap) || 0,
     labelText: document.getElementById('label').textContent,
     labelLines: rng('label').length,
     titleLines: rng('title').length,
     titleW: document.getElementById('title').getBoundingClientRect().width,
     titleH: document.getElementById('title').getBoundingClientRect().height,
-    dateLeft: document.getElementById('date').getBoundingClientRect().left,
-    dateTop: document.getElementById('date').getBoundingClientRect().top,
     infoH: document.querySelector('.readInfo').getBoundingClientRect().height,
   };
 }"""
 
 
 def mk(title: str = LONG_TITLE, faved: str = " isFaved", text: str = "已收藏",
-       views: str = "128", likes: str = "7", liked: str = "", comments: str = "3") -> str:
-    return MARKUP.format(title=title, faved=faved, text=text,
+       views: str = "128", likes: str = "7", liked: str = "", comments: str = "3",
+       author: str = "泠月") -> str:
+    return MARKUP.format(title=title, faved=faved, text=text, author=author,
                          views=views, likes=likes, liked=liked, comments=comments)
 
 
@@ -266,99 +267,109 @@ with sync_playwright() as p:
     check("  且最高/最矮是 2.6 倍上下（竖排胶囊 62 / 读数 24）",
           max(old) / min(old) > 2.4, f"{max(old)} / {min(old)}")
 
-    print("①c ★同一列（20261003 用户第 5 条「改为纵向排列」）")
+    print("①c ★2×2（20261003 用户第 2 条「右侧是四个数据组件 2*2 排布」）")
+    cx = [round(r[k]["cx"], 1) for k in ITEMS]
     cy = [round(r[k]["cy"], 1) for k in ITEMS]
-    check("四件的竖直中心两两不同 —— 不是横排",
-          len(set(cy)) == len(cy), str(cy))
-    check("  按 DOM 顺序自上而下、互不重叠（收藏 → 浏览 → 点赞 → 讨论）",
-          all(r[a]["bottom"] <= r[b]["top"] + 0.5 for a, b in zip(ITEMS, ITEMS[1:])),
-          str([(k, round(r[k]["top"], 1), round(r[k]["bottom"], 1)) for k in ITEMS]))
-    check("  四件横向中心相同（`align-items: stretch` 的等宽一列，不是犬牙交错）",
-          max(r[k]["cx"] for k in ITEMS) - min(r[k]["cx"] for k in ITEMS) < 0.5,
-          str([round(r[k]["cx"], 1) for k in ITEMS]))
-    # ★ 这条才是用户报的那件事本身：横排把中区标题推偏多少
-    off_col = r["main"]["cx"] - r["info"]["cx"]
-    check(f"  · 中区中线与卡片中线只差 {off_col:+.1f}px（横排时差一个数量级，见下）",
-          abs(off_col) < 30, f"{off_col:+.1f}px")
+    check("四件横向中心恰好两个值（落成两列）", len(set(cx)) == 2, str(cx))
+    check("  四件纵向中心恰好两个值（落成两行）", len(set(cy)) == 2, str(cy))
+    # DOM 顺序 = 阅读顺序：收藏→浏览→点赞→讨论 应落在 左上→右上→左下→右下。
+    # 具体地：奇偶配对（第 1/3 件同列、第 2/4 件同列）且第 1 件在第 2 件左边。
+    check("  按 DOM 顺序落在 左上 → 右上 → 左下 → 右下",
+          cx[0] == cx[2] and cx[1] == cx[3] and cy[0] == cy[1] and cy[2] == cy[3]
+          and cx[0] < cx[1] and cy[0] < cy[2],
+          str([(k, round(r[k]["cx"], 1), round(r[k]["cy"], 1)) for k in ITEMS]))
+    check("  四个格子等宽等高（`1fr 1fr` + grid 默认 stretch）",
+          len({round(r[k]["w"], 1) for k in ITEMS}) == 1
+          and len({round(r[k]["h"], 1) for k in ITEMS}) == 1,
+          str([(round(r[k]["w"], 1), round(r[k]["h"], 1)) for k in ITEMS]))
+    # ★ 用户第 2 条第一句就是「现在标题没有居中」。这条判据量的是**结构**：
+    # 中区的中线是不是落在这张卡的中线上。旧 flex 版这里偏 ±30px 都算"看着还行"
+    # （因为靠"两边碰巧差不多宽"），所以阈值从 30px 收到 1px。
+    off = r["main"]["cx"] - r["info"]["cx"]
+    check(f"  ★中区中线与卡片中线差 {off:+.1f}px（< 1px —— 结构性居中，不是「看着还行」）",
+          abs(off) < 1, f"{off:+.1f}px")
 
-    print("①c′ 反向对照：把方向写回 `row` ⇒ 四个中心当场各不相同、整簇由竖变横")
-    rrow = pg.evaluate(PAINT, {"markup": mk(), "legacy": "legacy-row", "css": LEGACY_ROW})
-    row_cy = [round(rrow[k]["cy"], 1) for k in ITEMS]
-    check("  row 下四件竖直中心相同（①c「不是横排」的判据确实有牙）",
-          max(row_cy) - min(row_cy) < 0.5, str(row_cy))
-    row_cx = [round(rrow[k]["cx"], 1) for k in ITEMS]
-    check("  row 下四件横向中心各不相同（①c「同一列」当场不成立）",
-          len(set(row_cx)) == len(row_cx), str(row_cx))
-    check(f"  row 的簇宽 {rrow['wrap']['w']:.0f} > 竖排 {r['wrap']['w']:.0f} 的 3 倍"
-          "（「簇变窄」是标题归位的因果）",
-          rrow["wrap"]["w"] > 3 * r["wrap"]["w"],
-          f'{round(rrow["wrap"]["w"],1)} vs {round(r["wrap"]["w"],1)}')
-    off_row = rrow["main"]["cx"] - rrow["info"]["cx"]
-    check(f"  row 下中区中线偏 {off_row:+.1f}px（vs 竖排 {off_col:+.1f}px）——正是用户看到的那一偏",
-          abs(off_row) > 100, f"{off_row:+.1f}px")
+    print("①c′ 反向对照：把列数写回 1 ⇒ ①c 的四条判据当场不成立")
+    r1 = pg.evaluate(PAINT, {"markup": mk(), "legacy": "legacy-onecol", "css": LEGACY_ONE_COL})
+    one_cx = [round(r1[k]["cx"], 1) for k in ITEMS]
+    check("  一列时横向中心只剩一个值（①c「恰好两个值」当场不成立）",
+          len(set(one_cx)) == 1, str(one_cx))
+    check("  且四件的竖直中心各不相同（①c「恰好两个值」当场不成立）",
+          len({round(r1[k]["cy"], 1) for k in ITEMS}) == len(ITEMS),
+          str([round(r1[k]["cy"], 1) for k in ITEMS]))
+    # ⚠️ 这里曾经有一条"整簇变窄 ⇒ 标题归位"的因果判据。**现在没有了**：簇的宽度由
+    # 侧轨定死（180px），它在列里怎么排都不影响中区。这正是本轮的结构性改善——
+    # 标题的居中不再依赖"簇有多宽"，所以也没有"簇一变宽标题就偏"这条回归路径。
+    check("  一列时整簇的宽度/左缘逐字不变（标题居中不再受簇的排布影响）",
+          abs(r1["wrap"]["w"] - r["wrap"]["w"]) < 0.5
+          and abs(r1["wrap"]["left"] - r["wrap"]["left"]) < 0.5,
+          f'{round(r1["wrap"]["w"],1)}@{round(r1["wrap"]["left"],1)} vs '
+          f'{round(r["wrap"]["w"],1)}@{round(r["wrap"]["left"],1)}')
 
-    print("② 一列：整簇不收缩、高度 = 4×件高 + 3×间距")
-    check("整簇的 flex 是 0 0 auto（不收缩的那一份）", r["wrapFlex"] == "0 0 auto", r["wrapFlex"])
-    expect_h = 4 * r["btn"]["h"] + 3 * r["wrapGap"]
-    check(f"整簇高度 = 四件 + 三道间距（{expect_h:.1f}px，没有多余的行高把它撑开）",
+    print("② ★两条侧轨等宽（结构性居中的唯一来源）+ 整簇 = 2×2 的格数账")
+    check(f"★左区与右区宽度逐字相等（同一个 `--read-side` 写两遍，实得 {r['wrap']['w']:.0f}px）",
+          abs(r["author"]["w"] - r["wrap"]["w"]) < 0.5,
+          f'{round(r["author"]["w"],1)} vs {round(r["wrap"]["w"],1)}')
+    check("  侧轨 = 180px（左区里那行「发布于 2026-10-01」@12px 定出来的）",
+          abs(r["wrap"]["w"] - 180) < 0.5, f'{round(r["wrap"]["w"],1)}')
+    # 中区拿到的是 880 − 2×24（卡片内边距）− 2×180（侧轨）− 2×24（列间距）= 424px。
+    # 这是"标题有多少余量"的唯一一处锁：改 `--read-side` / 卡片宽 / 间距都会动它。
+    check(f"  中区轨道宽 {r['main']['w']:.0f}px = 880 − 2×24 − 2×180 − 2×24 = 424",
+          abs(r["main"]["w"] - 424) < 0.5, f'{round(r["main"]["w"],1)}')
+    expect_h = 2 * r["btn"]["h"] + r["wrapGap"]
+    check(f"整簇高 = 两行 + 一道间距（{expect_h:.1f}px，不是四行）",
           abs(r["wrap"]["h"] - expect_h) < 0.5,
-          f'{r["wrap"]["h"]} vs {expect_h}')
-    check("  整簇宽度 = 单件宽度（`stretch` 让四件同宽，簇不额外长胖）",
-          abs(r["wrap"]["w"] - r["btn"]["w"]) < 0.5,
-          f'{round(r["wrap"]["w"],1)} vs {round(r["btn"]["w"],1)}')
+          f'{round(r["wrap"]["h"],1)} vs {expect_h}')
+    check("  整簇宽 = 两格 + 一道间距（同一条 `1fr 1fr` 列宽，实得 2×87 + 6 = 180）",
+          abs(r["wrap"]["w"] - (2 * r["btn"]["w"] + r["wrapGap"])) < 0.5,
+          f'{round(r["wrap"]["w"],1)} vs {round(2 * r["btn"]["w"] + r["wrapGap"],1)}')
 
-    print("②b 文案/数字变长时整簇**不挪位**（定宽 min-width 的判据）")
-    # ⚠️ 量的是**整簇的左缘/宽度**，不是任何一件的。整簇在这个 flex 行里是最后一项、
-    # 右缘被 `.readInfo` 的右内边距钉死（中间那区 `flex: 1 1 auto` 会把任何富余/亏空
-    # 吃掉），所以"某一件变宽了"表现为**整簇向左长**——变的是左缘与簇宽。
-    # 竖排之后多一层：`align-items: stretch` 下**簇宽 = 最宽那一件的自然宽**，
-    # 所以任何一件变宽都会把四件一起撑宽（而不是只撑自己）——这正是下面反向对照要证的。
+    print("②b 文案/数字变长时件内内容**不挪位**，且内容始终装得下格子")
+    # ⚠️ 判据从"整簇的宽/左缘"改成了"**件内内容**的宽"。格子现在是定宽的
+    # （(180−6)/2 = 87px，由轨道算出来），文案变长只会在胶囊里把图标挤来挤去
+    # ——那正是 `3em` / `4ch` 这两条定宽存在的理由。
     two = pg.evaluate(PAINT, {"markup": mk(faved="", text="收藏", views="7", likes="0",
                                            comments="0")})
-    check("收藏（两字）⇄ 已收藏（三字）：整簇宽度与左缘都不动",
-          abs(two["wrap"]["w"] - r["wrap"]["w"]) < 0.5
-          and abs(two["wrap"]["left"] - r["wrap"]["left"]) < 0.5,
-          f'{round(two["wrap"]["w"],1)} → {round(r["wrap"]["w"],1)} / '
-          f'{round(two["wrap"]["left"],1)} → {round(r["wrap"]["left"],1)}')
+    r4 = pg.evaluate(PAINT, {"markup": mk(faved=" isFaved", text="已收藏", views="1234",
+                                          likes="9999", comments="1234")})
+    check("收藏（两字）⇄ 已收藏（三字）：`3em` 兜住 ⇒ 文案盒宽度逐字不变",
+          abs(two["label"]["w"] - r4["label"]["w"]) < 0.5,
+          f'{round(two["label"]["w"],1)} vs {round(r4["label"]["w"],1)}')
     # 4ch 的覆盖范围就是 1–4 位（`min-width` 兜底不封顶，5 位会变宽——那是刻意的，
     # 见 sass 里那段注释）。判据取 4 位正是那道坎：999 → 1000。
-    r4 = pg.evaluate(PAINT, {"markup": mk(faved="", text="收藏", views="1234", likes="9999",
-                                          comments="1234")})
-    check("  三个数字 1 位 ⇄ 4 位：整簇宽度与左缘都不动",
-          abs(r4["wrap"]["w"] - r["wrap"]["w"]) < 0.5
-          and abs(r4["wrap"]["left"] - r["wrap"]["left"]) < 0.5,
-          f'{round(r["wrap"]["w"],1)} → {round(r4["wrap"]["w"],1)} / '
-          f'{round(r["wrap"]["left"],1)} → {round(r4["wrap"]["left"],1)}')
+    check("  数字 1 位 ⇄ 4 位：`4ch` 兜住 ⇒ 数字盒宽度逐字不变",
+          abs(two["viewsnum"]["w"] - r4["viewsnum"]["w"]) < 0.5,
+          f'{round(two["viewsnum"]["w"],1)} vs {round(r4["viewsnum"]["w"],1)}')
+    check("  换内容后四件的盒子（宽/高）与整簇位置都不动（格子是定宽的）",
+          all(abs(two[k]["w"] - r4[k]["w"]) < 0.5 and abs(two[k]["h"] - r4[k]["h"]) < 0.5
+              for k in ITEMS)
+          and abs(two["wrap"]["left"] - r4["wrap"]["left"]) < 0.5,
+          str([(k, round(two[k]["w"], 1), round(r4[k]["w"], 1)) for k in ITEMS]))
+    # 格子只有 87px 宽，内容再宽就会画出胶囊之外（`.readStats` 的 `min-width: 0`
+    # 只保证"不让格子顶宽"，不保证"内容装得下"）——所以这一条要单独量。
+    for tag, rr in (("最窄（收藏 / 一位数字）", two), ("最宽（已收藏 / 四位数字）", r4)):
+        check(f"  {tag}：四件的内容都装得下格子（scrollWidth ≤ clientWidth）",
+              all(rr[k]["sw"] <= rr[k]["cw"] + 0.5 for k in ITEMS),
+              str([(k, rr[k]["sw"], rr[k]["cw"]) for k in ITEMS]))
     rmin = pg.evaluate(PAINT, {"markup": mk(faved="", text="收藏", views="7", likes="0",
                                             comments="0"),
                                "legacy": "legacy-minw", "css": LEGACY_MINW})
-    check("  反向对照：把四条定宽一起抹掉后**确实**变窄/挪位（②b 不是空断言）",
-          rmin["wrap"]["w"] < two["wrap"]["w"] - 5
-          or abs(rmin["wrap"]["left"] - two["wrap"]["left"]) > 5,
-          f'有 {round(two["wrap"]["w"],1)}@{round(two["wrap"]["left"],1)} / '
-          f'无 {round(rmin["wrap"]["w"],1)}@{round(rmin["wrap"]["left"],1)}')
+    check("  反向对照：把两条定宽抹掉后文案盒**确实**缩了 13px（②b 不是空断言）",
+          rmin["label"]["w"] < two["label"]["w"] - 10,
+          f'{round(two["label"]["w"],1)} → {round(rmin["label"]["w"],1)}')
 
-    print("③ 挤压回归：超长标题下整簇不被挤窄")
+    print("③ 超长标题下四个格子与两条侧轨逐字不动")
     rnat = pg.evaluate(PAINT, {"markup": mk(title="短标题")})
-    check("与短标题时的整簇宽度逐字相等（一个像素都没被挤掉）",
-          abs(r["wrap"]["w"] - rnat["wrap"]["w"]) < 0.5,
-          f'长标题 {round(r["wrap"]["w"],1)} / 短标题 {round(rnat["wrap"]["w"],1)}')
-    check("标题确实占掉了空间（否则这个场景没被复现）", r["titleW"] > 200, f'{r["titleW"]}')
+    check("与短标题时（中区宽/左缘、整簇左缘、左区宽、卡片高）逐字相等",
+          (round(r["main"]["w"], 1), round(r["main"]["left"], 1),
+           round(r["wrap"]["left"], 1), round(r["author"]["w"], 1),
+           round(r["infoH"], 1))
+          == (round(rnat["main"]["w"], 1), round(rnat["main"]["left"], 1),
+              round(rnat["wrap"]["left"], 1), round(rnat["author"]["w"], 1),
+              round(rnat["infoH"], 1)),
+          f'{r["infoH"]:.1f} / {rnat["infoH"]:.1f}')
+    check("标题确实占掉了空间（否则这个场景没被复现）", r["titleW"] > 300, f'{r["titleW"]}')
     check("文案只有一个行盒（没折成两行）", r["labelLines"] == 1, str(r["labelLines"]))
-
-    print("③b 反向对照：把这四条防线一起撤掉 ⇒ 文案真的折成两行（③ 不是空断言）")
-    # ⚠️ 光把整簇改成 `flex: 0 1 auto` **压不窄它**——实测宽度纹丝不动。因为中区是
-    # `flex: 1 1 auto` + `min-width: 0`，**任何**亏空都由它先让，整簇永远轮不到收缩。
-    # 所以要复现 20260926 那件事，得把四条防线一起撤掉（中区不再让、整簇可收缩、
-    # 按钮可收缩、文案可折行）——这也顺带说明这四条**每一条都在起作用**。
-    rsq = pg.evaluate(PAINT, {"markup": mk(), "legacy": "legacy-flex"})
-    check("  撤掉防线后整簇被压窄（flex: 0 0 auto 真在起作用）",
-          rsq["wrap"]["w"] < r["wrap"]["w"] - 5,
-          f'{round(r["wrap"]["w"],1)} → {round(rsq["wrap"]["w"],1)}')
-    check("  文案当场折成两行（用户 20260926 报的「已收」「藏」）",
-          rsq["labelLines"] >= 2, f'lines {rsq["labelLines"]}')
-    check("  修好之后只有一个行盒（white-space: nowrap 是结构性的，不是碰巧）",
-          r["labelLines"] == 1, str(r["labelLines"]))
 
     print("④ 图标：四件同尺寸 14px、aria-hidden，文案仍在 span.readFavLabel")
     for name, part in parts:
@@ -390,7 +401,7 @@ with sync_playwright() as p:
     check("  四件的描边色本来就相同（20261001 把它统一成一条）",
           len({r[k]["bc"] for k in ITEMS}) == 1, str({k: r[k]["bc"] for k in ITEMS}))
 
-    print("⑥ ★手机档（327px / 768px）：四件收成 24px/4px，且整个读数盒不越封面顶")
+    print("⑥ ★手机档（327px / 768px）：三区落成单列，四件仍 2×2 并收成 24px/4px")
     pg.set_viewport_size({"width": 768, "height": 900})
     r6 = pg.evaluate(PAINT, {"markup": mk()})
     check("文案仍是一个行盒", r6["labelLines"] == 1, str(r6["labelLines"]))
@@ -398,14 +409,24 @@ with sync_playwright() as p:
           len({round(r6[k]["h"], 1) for k in ITEMS}) == 1 and abs(r6["btn"]["h"] - 24) < 0.5,
           str([round(r6[k]["h"], 1) for k in ITEMS]))
     check("间距收成 4px", abs(r6["wrapGap"] - 4) < 0.5, str(r6["wrapGap"]))
-    check("整簇仍是一列（四件横向中心相同、竖直中心各不相同）",
-          max(r6[k]["cx"] for k in ITEMS) - min(r6[k]["cx"] for k in ITEMS) < 0.5
-          and len({round(r6[k]["cy"], 1) for k in ITEMS}) == len(ITEMS),
-          str([round(r6[k]["cy"], 1) for k in ITEMS]))
-    # ★ 这条是 20261003 把封面从 200 抬到 240 的全部理由：`.readInfo` 是
-    # `bottom: B` + `translateY(-50%)` 的绝对定位盒，`.readCover` 又是 `overflow: hidden`
-    # ⇒ 上沿 = 封面高 − B − 1.5×盒高。四件竖排把盒高从 68 撑到 138，200 档算不平。
-    check(f"  ★整簇上沿不越出封面（簇 top {r6['wrap']['top']:.0f} / 封面 top 0）",
+    check("四件仍是 2×2（列变窄了，排布不跟着改）",
+          len({round(r6[k]["cx"], 1) for k in ITEMS}) == 2
+          and len({round(r6[k]["cy"], 1) for k in ITEMS}) == 2,
+          str([(k, round(r6[k]["cx"], 1), round(r6[k]["cy"], 1)) for k in ITEMS]))
+    # ★ 手机档三区**必须回落成单列**：`.readInfo` 宽 = 100% − 32px ≈ 343px（768px 档
+    # 也才 736px），三条 180px 的轨道根本摆不下。单列的判据 = 三区同左同宽 + 依次向下。
+    check("★三区落成单列（同左缘、同宽、依次向下）",
+          abs(r6["author"]["left"] - r6["main"]["left"]) < 0.5
+          and abs(r6["main"]["left"] - r6["wrap"]["left"]) < 0.5
+          and abs(r6["author"]["w"] - r6["wrap"]["w"]) < 0.5
+          and r6["author"]["bottom"] <= r6["main"]["top"] + 0.5
+          and r6["main"]["bottom"] <= r6["wrap"]["top"] + 0.5,
+          str([(k, round(r6[k]["left"], 1), round(r6[k]["top"], 1)) for k in
+               ("author", "main", "wrap")]))
+    # ★ 这条是 20261003 把封面从 200 抬到 260 的全部理由：`.readInfo` 是
+    # `bottom: B` + `translateX(-50%)` 的绝对定位盒，`.readCover` 又是 `overflow: hidden`
+    # ⇒ 上沿 = 封面高 − B − 盒高（三区竖着叠起来之后盒高从 68 涨到 226）。
+    check(f"  ★整个信息盒不越出封面顶（信息盒上沿 {r6['info']['top']:.0f} / 封面 top 0）",
           r6["wrap"]["top"] >= 0 and r6["info"]["top"] >= 0,
           f'info top {r6["info"]["top"]:.1f} / wrap top {r6["wrap"]["top"]:.1f}')
     for w in (327, 768):
@@ -414,7 +435,7 @@ with sync_playwright() as p:
         check(f"  {w}px 档同样不越界（上沿 {rw['info']['top']:.0f}、簇 {rw['wrap']['top']:.0f}）",
               rw["info"]["top"] >= 0 and rw["wrap"]["top"] >= 0,
               f'info {rw["info"]["top"]:.1f} / wrap {rw["wrap"]["top"]:.1f}')
-    check("  327px 与 768px 同属手机档：簇几何逐字相同",
+    check("  327px 与 768px 同属手机档：四件几何逐字相同",
           abs(r6["wrap"]["w"] - rw["wrap"]["w"]) < 0.5
           and abs(r6["wrap"]["h"] - rw["wrap"]["h"]) < 0.5,
           f'{round(r6["wrap"]["w"],1)}x{round(r6["wrap"]["h"],1)} vs '
@@ -425,20 +446,27 @@ with sync_playwright() as p:
     check(f"  撤回后整盒上沿 = {rm['info']['top']:.0f}px（负 = 被 `overflow: hidden` 裁掉）"
           "——⑥ 那条判据确实有牙",
           rm["info"]["top"] < -5, f'info top {rm["info"]["top"]:.1f}')
-    check(f"  裁掉的正好是最上面那件（收藏 top {rm['btn']['top']:.0f}px）",
-          rm["btn"]["top"] < 0, f'{rm["btn"]["top"]:.1f}')
+    # 绝对定位盒是**底边锚定**的：越界时被裁掉的是**最上面那一区**（作者行），
+    # 不是读数簇（它在最下面，反而还在页面里）。这条断言与上一版正好相反——
+    # 上一版三区还并排、读数簇贴着上边。
+    check(f"  裁掉的正好是最上面那一区（作者行 top {rm['author']['top']:.0f}px）",
+          rm["author"]["top"] < 0, f'{rm["author"]["top"]:.1f}')
 
-    print("⑦ 布局锁死：四种标题长度下右区/日期几何逐字相同（20261001 用户第 4 条）")
+    print("⑦ 布局锁死：四种标题长度下三区几何逐字相同，且每次都居中（20261001 第 4 条）")
     pg.set_viewport_size({"width": 1280, "height": 900})
     titles = ["短文", "一篇中等长度的文章标题",
               "一篇标题特别长的文章：从零开始把站内对话助手接进个人博客的完整记录与踩坑清单（下篇）",
               "一篇标题特别长的文章：从零开始把站内对话助手接进个人博客的完整记录与踩坑清单（下篇）"
               "——再补一段足够长的副标题把这一行彻底撑满看看会发生什么"]
     got = [pg.evaluate(PAINT, {"markup": mk(title=t)}) for t in titles]
-    key = lambda x: (round(x["dateLeft"], 1), round(x["dateTop"], 1),
-                     round(x["wrap"]["left"], 1), round(x["infoH"], 1))
-    check("★ 四档标题下（日期 x/y、整簇左缘、卡片高）逐字相同",
+    key = lambda x: (round(x["main"]["left"], 1), round(x["main"]["w"], 1),
+                     round(x["wrap"]["left"], 1), round(x["author"]["left"], 1),
+                     round(x["infoH"], 1))
+    check("★ 四档标题下（中区左缘/宽、整簇左缘、左区左缘、卡片高）逐字相同",
           len({key(x) for x in got}) == 1, str([key(x) for x in got]))
+    check("  ★四档都是居中的（中区中线 = 卡片中线，与标题多长无关）",
+          all(abs(x["main"]["cx"] - x["info"]["cx"]) < 1 for x in got),
+          str([round(x["main"]["cx"] - x["info"]["cx"], 1) for x in got]))
     # ⚠️ `Range` 数的是**排版出来的**行盒，被 `-webkit-line-clamp` 裁掉的那几行仍在
     # 布局里 ⇒ 超长标题这里读到 4 而不是 2。这正是我们要的证据：标题远超两行，
     # 而盒高被上面那条判据钉死在两行。
@@ -452,18 +480,16 @@ with sync_playwright() as p:
           abs(got[0]["titleH"] - got[-1]["titleH"]) < 0.5,
           f'{got[0]["titleH"]} vs {got[-1]["titleH"]}')
 
-    print("⑦b 反向对照：拆回平级五项 + `space-between`，日期当场漂走")
-    ls = pg.evaluate(PAINT, {"markup": mk(title=titles[0]), "legacy": "legacy-layout"})
-    ll = pg.evaluate(PAINT, {"markup": mk(title=titles[-1]), "legacy": "legacy-layout"})
-    check("  拆回平级后日期位置确实随标题长度变（⑦ 不是空断言）",
-          abs(ls["dateLeft"] - ll["dateLeft"]) > 40,
-          f'{round(ls["dateLeft"],1)} → {round(ll["dateLeft"],1)}')
-    # 顺带把旧形态**到底漂的是什么**钉下来，免得后来者以为当年漂的是右侧那几件：
-    # `space-between` 把**最后一项**钉死在右缘，所以整簇左缘恒定不动，漂的是它左边的
-    # 日期（以及左边那一大段空白）。这正是 20261001 把日期收进中区的原因。
-    check("  而整簇被 space-between 钉在右缘、左缘恒定（当年漂的是**日期**，不是它）",
-          abs(ls["wrap"]["left"] - ll["wrap"]["left"]) < 1,
-          f'{round(ls["wrap"]["left"],1)} → {round(ll["wrap"]["left"],1)}')
+    print("⑦b 反向对照：两条侧轨写成不等宽 ⇒ 中区当场偏 40px（居中靠的就是「等宽」）")
+    asym = pg.evaluate(PAINT, {"markup": mk(title=titles[0]),
+                               "legacy": "legacy-asym", "css": LEGACY_ASYM})
+    off_asym = asym["main"]["cx"] - asym["info"]["cx"]
+    check(f"  左 180 / 右 260 时中区偏 {off_asym:+.1f}px（①c 与 ⑦ 的 < 1px 确实有牙）",
+          abs(off_asym) > 30, f"{off_asym:+.1f}px")
+    # 顺带说明**为什么**这一条是"结构性"的：偏的正是两条轨道宽度差的一半
+    # （(260 − 180) / 2 = 40），与标题多长、四件多宽都无关。
+    check("  偏移量 = 两轨宽度差的一半（(260 − 180)/2 = 40）——与内容无关",
+          abs(abs(off_asym) - 40) < 1, f'{abs(off_asym):.1f}')
 
     check("无 JS 运行时报错", not errs, "; ".join(errs[:2]))
     br.close()

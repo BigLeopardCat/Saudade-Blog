@@ -559,20 +559,32 @@ const ReadArticle = () => {
                             transition={{ duration: 1 }}
                         >
                             <div className="readInfo">
-                                {/* 三区锁死的左区（头像 + 名字）。`flex: 0 0 auto` —— 见
-                                    `.readMain` 上头那段：中区吃满余量，左边这一簇与右边
-                                    那两簇的宽度都不随标题长短变。 */}
-                                <Flex gap={"small"} justify={"center"} align={"center"} className="readAuthor">
-                                    <Avatar src={who.avatar} size={40} className="frontAvatar" />
-                                    {who.name}
-                                </Flex>
-                                {/* 中区：标题 + 日期一列。20261001 之前这两件是**行内平级**的
-                                    三个 flex 项（`space-between` 把五个项均分），标题一长
-                                    日期就往左漂 —— 用户第 4 条「布局没有锁死，会被标题长度
-                                    影响」。现在中区自己吃满余量，日期钉在中区左缘。 */}
+                                {/* 左区：头像 + 作者名一行，发布日期/更新时间**两行**在下面
+                                    （20261003 用户第 2 条：「左侧头像作者，下面是发布时间
+                                    更新时间」）。原来的日期挂在中区标题下面，与标题同宽
+                                    同折行——用户要的是把两个时间归到"作者"这一栏。
+
+                                    结构上是 `.readAuthor` 这一列 + 两个子块：上块是 antd Flex
+                                    横排（头像 + 名字），下块 `.readTimes` 竖排两行。名字那一层
+                                    必须有 `span.readAuthorName` 才截得住——格子的轨道是定宽
+                                    180px，长昵称若不截断就会画出轨道之外（见 sass 里那段）。 */}
+                                <div className="readAuthor">
+                                    <Flex gap={"small"} align={"center"} className="readAuthorRow">
+                                        <Avatar src={who.avatar} size={40} className="frontAvatar" />
+                                        <span className="readAuthorName">{who.name}</span>
+                                    </Flex>
+                                    <div className="readTimes">
+                                        <span>发布于 {dayjs(article?.createTime).format("YYYY-MM-DD")}</span>
+                                        <span>更新于 {dayjs(article?.updateTime).format("YYYY-MM-DD")}</span>
+                                    </div>
+                                </div>
+                                {/* 中区：只剩标题，且**居中**（20261003 用户第 2 条：「中间是
+                                    居中标题显示区域」）。20261001 之前这里是三个行内平级的 flex
+                                    项、`space-between` 均分余量，标题一长日期就往左漂；今天居中
+                                    靠的是**两侧轨道等宽**这一条结构不变量，不再靠"标题多长"。
+                                    推导与那两个旋钮写在 sass 的 `.readInfo` 那段。 */}
                                 <div className="readMain">
                                     <h1>{article?.noteTitle}</h1>
-                                    <h3>{dayjs(article?.updateTime).format("YYYY-MM-DD")}</h3>
                                 </div>
                                 {/* 右区：四件读数**同一个簇**（20261001，用户第 1 条「详情页三图标
                                     样式和布局太丑了，大小不一，排列奇怪」）。
@@ -585,10 +597,12 @@ const ReadArticle = () => {
                                     几何全在 `.readStat` 里，别在这里的内联或新类上再写一份
                                     （"三处各写一遍"正是这一条被报上来的由来）。
 
-                                    **排列方向由 sass 定成竖排**（20261003 用户第 5 条：
-                                    「不要横向平铺会影响标题居中显示」）——簇的宽度决定中区标题
-                                    偏多少，横排 260px 时标题看着就是歪的，竖排 ~77px 即归位。
-                                    所以这里只管顺序，别在 JSX 上加任何 `flexDirection`/内联宽度。 */}
+                                    **排列由 sass 定成 2×2**（20261003 用户第 2 条：「右侧是四个
+                                    数据组件 2*2 排布」；上一版第 5 条要的是竖排一列，本版把
+                                    那一列的宽度给了左区——见 sass 的 `.readInfo` 那段）。
+                                    所以这里只管顺序，别在 JSX 上加任何 `flexDirection`/内联宽度：
+                                    DOM 顺序是 收藏 → 浏览 → 点赞 → 讨论，格子里的位置由
+                                    `.readStats` 的 `grid-template-columns` 决定。 */}
                                 <div className="readStats">
                                     <button
                                         type="button"
