@@ -608,19 +608,7 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
     position: relative
     cursor: pointer
     width: 80%
-    // 20261004（用户第九报：「轮播图占一行是不是太长了不协调」）：640 → 460。
-    //
-    // 这一条**不是**"把整块缩小一点"，而是行高对齐：首屏 `.SelfDescription` 是
-    // `min-height: 100vh`（整整一屏），紧跟其后的就是顶卡这一行 —— 它自己吃掉 640px，
-    // 而下面 `.allArticles` 的每一行只有 430–510px。于是"顶卡那一行"成了全页最重的一行，
-    // 与它下面的行不成比例；从页面顶部数起要滚过 1.7 屏才看得到第一张文章卡，
-    // 这正是用户说的"一页的信息量太少"。
-    // 460 落在文章卡行高（430–510）的区间内 ⇒ 顶卡与下面的网格行"一样重"。
-    // ⚠️ 与长度联动的两处已一并收窄（见 `.topContent` 的 `contentTitle` / `topFooter`）：
-    // 内容是 `justify-content: center` 的定高列，不改内边距就是"高的那几行被挤出去"。
-    // 手机档不受影响（它是 `height: auto !important`，高度由 `.TopArticleInner` 的
-    // 竖排内容撑出来）。
-    height: 460px
+    height: 640px
     //background: #212121
     //background: $pic-background-cover
     background: var(--pic-background-cover)
@@ -638,7 +626,7 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
     // 同时删掉原来的 `display: flex` / `flex-direction: column`：它们**本来就进不了场**
     // ——文件后段那条手机档写了 `display: block !important`（列布局由 `.TopArticleInner`
     // 承担），`!important` 加源序两道都赢，留着只会让人以为顶卡在手机上是 flex 容器。
-    // `height: auto !important` 留着（`!important` 不受源序影响，覆盖桌面那条 460px 是它的职责）。
+    // `height: auto !important` 留着（`!important` 不受源序影响，覆盖 640px 是它的职责）。
     @media screen and (max-width: 768px)
       width: 95%
       height: auto !important
@@ -783,13 +771,7 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
       .contentTitle
         font-weight: 900
         font-size: 40px
-        // 20261004：60 → 32。与 `.topFooter` 的 `margin-top` 一起收，配对的理由见
-        // `.TopArticle` 那条注释：卡高 640 → 460 收掉的是**这一列的余量**，而这两条
-        // 60px 就是余量的全部来源 —— 不收的话 460 里只剩 16px 富余，字体度量一漂
-        // 简介第 4 行就会被 `-webkit-line-clamp: 4` 之外的东西顶出去。
-        // 两个数**必须成对改**（只改一条 = 整列重新居中，标题/简介/页脚一起上下窜，
-        // 正是 20260930 那次"悬浮顶卡标题会抖动布局"的同族现象）。
-        margin-bottom: 32px
+        margin-bottom: 60px
         overflow: hidden
         text-overflow: ellipsis
         display: -webkit-box
@@ -805,8 +787,7 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
         text-indent: 1em
       .topFooter
         //color: #cccccc
-        // 20261004：60 → 32，与上面 `.contentTitle` 的 `margin-bottom` 配对（见那条注释）
-        margin-top: 32px
+        margin-top: 60px
         .post-date
           background-color: #1e73be26
           font-size: 12px
@@ -947,17 +928,7 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
       // `.ArticleDescription:hover` 的展开上限（= 卡底 − 简介顶）。20261001 复核：封面与标题
       // 一起改时**卡底与浮层顶同向移动、相减抵消**，只有"被下限兜住"的那一档真变（余量
       // 25 → 20px）⇒ 最挤那档仍是 150px，上限 140 因此没动（判据在 `.test.py` 第 ⑫ 组）。
-      //
-      // 20261004（用户第九报「一页的信息量太少」）：470 → 430，与 `.ArticleCover` 的
-      // 200 → 160 **成对**。这一对的作用与上面 20261001 那轮同型、结论也一样：
-      // 浮层可用高度 = 卡底 − 槽顶，封面与下限各让 40 ⇒ 两者一起动、相减抵消，
-      // **每一档的可用高度逐像素不变**（⑫ 组那张表 170/150/182/214/246 原样成立，
-      // 所以上面 140 的上限仍然不用动）。变的只有卡的绝对高：
-      // 1 行标题 + 无标签 470 → 430、3 行标题 510 → 470、+1 行标签 542 → 502。
-      // 同排等高、页脚钉底这些结论都不受影响（判据在 `tests/article-grid.test.py`）。
-      // ⚠️ 只改其中一个就是**真改比例**（封面单独降 = 卡内白空 +40、下限单独降 = 浮层被切），
-      // 这一对必须同进同退。
-      min-height: 430px
+      min-height: 470px
       background: var(--pic-background-cover)
       --tw-shadow: 0 10px 15px -3px rgba(0, 0, 0, .1), 0 4px 6px -2px rgba(0, 0, 0, .05)
       border-radius: 15px
@@ -978,10 +949,7 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
         // 510/542/574/606，**封面那 −40 与标题那 −12 各占一半**。
         // ⚠️ 改封面高度会**等量吃掉**简介浮层的可用高度（见 `.ArticleDescription:hover`），
         // 但若卡底也跟着动（内容自然高那一档），两者相减抵消——只有"被下限兜住"的卡净损失。
-        // 20261004（用户第九报「一页的信息量太少」）：200 → 160。**必须与 `.ArticleCard`
-        // 的 `min-height` 成对改**（那条 470 → 430），理由与 20261001 那轮完全一样：
-        // 两者同向移动时卡底与浮层顶相减抵消 ⇒ 简介浮层的可用高度一档都不变。
-        height: 160px
+        height: 200px
         flex-shrink: 0
         // 20260912 封面裁剪参数：焦点缩放会让图片放大溢出，必须在这里裁掉；
         // 圆角也挪到被裁的容器上——放在 img 上会被 transform 一起放大。
@@ -1151,9 +1119,6 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
           //   3 行标题 + 3 行标签（卡 606） = 246px
           // （20260930 二轮那组是 564/520/596/628/660 → 150/175/182/214/246。这一轮只动了
           //  **被下限兜住**的那一档：封面与标题一起改，其余各档卡底与浮层顶同向移动、相减抵消。）
-          // ⚠️ 20261004 封面 200→160 / 下限 470→430 之后**这张表一列都不用改**——正是上面
-          // "同向移动、相减抵消"的推论（各档卡高变成 470/430/502/534/566，可用高度不变）。
-          // 谁将来只改其中一个数，这张表就是第一个该重量化的地方。
           // 三条反直觉的地方，别按"内容越多越挤"去推：
           //   · 标题越长**不会**更挤——卡片按内容长高（下限只是兜底），标题多一行卡就高
           //     一行、浮层顶与卡底**同步下移** ⇒ 可用高度只取决于「浮层底下那一段」；
@@ -1404,18 +1369,13 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
     max-height: 60px
     // 绝对定位：贴在槽顶向下长，占位恒为槽的 60px。展开时它压住标签/页脚，
     // 所以展开态给底色与投影（底色取卡自己的变量，夜间跟着变，不写死颜色）。
-    // 顶卡上限 20261004 由 12 行（240px）收到 10 行（200px）——**卡高 640 → 460 的连带**，
-    // 与 `.ArticleCover`/`.ArticleCard` 那对"两个数必须一起动"是同一个道理：
-    // 浮层是绝对定位向下长、不参与布局，可用高度只有「列下沿 − 槽顶」这一段，
-    // 卡一矮这一段就等量变短（这里 ≈223px）。**240 > 223 ⇒ 最后一行会被 `overflow: hidden`
-    // 切掉半个**，正是 `.ArticleDescription` 那条注释里用户报过的老毛病。
-    // 探针在 `tests/article-card-hover.test.py` 第 ⑦ 组（「浮层没跑出卡片」）。
+    // 顶卡上限取 12 行 = 240px：这一列是居中的、上下都有余量，比普通卡的 7 行（140px）可以更长。
     position: absolute
     top: 0
     left: 0
     &:hover
       -webkit-line-clamp: unset
-      max-height: 200px
+      max-height: 240px
       overflow-y: auto
       z-index: 6
       background: var(--pic-background-cover)
