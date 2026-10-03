@@ -96,6 +96,20 @@ const ContentHome = () => {
     const navigate = useNavigate()
     const [otherArticles,setOtherArticles] = useState<NoteType[]>(cachedOtherArticles)
     const [topArticles,setTopArticles] = useState<NoteType[]>(cachedTopArticles)
+    /**
+     * 卡片要不要放入场动画（20261004 用户第十一报：「每次回到首页都有卡片一张张出来的
+     * 动画，明明已经加载缓存好了吧，那过渡动画纯纯耗时影响体验」）。
+     *
+     * 判据就是**这一屏的文章是不是现拉的**：`isCachedOther` 为真（本会话已经拉过一次）
+     * 且缓存里真有条目 ⇒ 数据是同步拿到的，动画除了拖时间什么都不做 ⇒ 关掉。
+     * 上面那段 `fromDashboard` 清缓存的代码在这行**之前**跑，所以从后台回来时
+     * 缓存已经空了、这里自然算出 true —— 那一趟确实要等网络，动画是它的进度反馈。
+     *
+     * ⚠️ 用 `useState(初始化函数)` 在**挂载时冻结**，不要写成每次渲染都算的表达式：
+     * framer-motion 的 `initial` 只在挂载那一次读，值中途翻转的话已渲染的卡片会换掉
+     * 动画语义（一半有 initial 一半没有），而且 `Article` 里那份 `isVisible` 初值也跟着错。
+     */
+    const [enterAnimation] = useState(() => !(isCachedOther && cachedOtherArticles.length > 0))
     const Categories = useSelector((state: { categories: categoryList }) => state.categories.categories);
     const tagList = useSelector((state: {tags: any}) => state.tags.tag)
     const social = useSelector((state:{user:{social: SocialType}}) => state.user.social)
@@ -457,7 +471,7 @@ const ContentHome = () => {
             <div className="allArticles">
 
                 {otherArticles.map((item,index) => (
-                    <Article item={item} index={index} Categories={Categories} avatar={avatar} name={name} tagList={tagList} key={item.key}/>
+                    <Article item={item} index={index} Categories={Categories} avatar={avatar} name={name} tagList={tagList} enter={enterAnimation} key={item.key}/>
                 ))}
             </div>
             {loading ? (

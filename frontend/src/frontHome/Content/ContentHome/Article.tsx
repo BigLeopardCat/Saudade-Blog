@@ -24,7 +24,22 @@ interface ArticleOption {
     avatar: string
     name: string
     tagList: tag[]
+    /**
+     * 入场动画（`opacity 0 → 1` + `y: -20 → 0`，逐张延迟）是否启用，默认启用。
+     *
+     * 首页把「这一屏是不是现拉的」传进来（见 `ContentHome/index.tsx` 的 `enterAnimation`）：
+     * 命中模块级缓存时**必须传 false** —— 数据早就躺在内存里，卡片还是照放一遍逐张入场，
+     * 用户看到的就是"点回首页 → 先看见一片空白 → 卡片一张张冒出来"，纯等待、零信息。
+     */
+    enter?: boolean
 }
+
+/** 入场延迟的步长与上限（20261004）。原来是 `delay: index * 0.2` 且**不封顶**：
+ *  第一行看着是好看的 0/0.2/0.4 阶梯，但延迟是按下标线性长的 —— 第 20 张卡要等 **4 秒**
+ *  才淡入，而它的 `isVisible` 是由 IntersectionObserver 在**滚到它跟前**才置位的，
+ *  于是"滚到哪儿等几秒"完全由一个跟可见性无关的序号决定。封顶之后最坏 0.5s。 */
+const ENTER_DELAY_STEP = 0.1
+const ENTER_DELAY_MAX_STEPS = 5
 
 /** 几个数各自的图标。**图标在这里、判据在 `utils/noteStats`**——那边是可断言的纯函数
  *  （"读不到 ≠ 0"那条规则），这边只管画。键必须与 `StatCell['key']` 一一对应：
@@ -60,11 +75,15 @@ const NoteStats: React.FC<{ item: NoteType }> = ({ item }) => {
     )
 }
 
-const Article:React.FC<ArticleOption> = ({ item, index, Categories, avatar, name, tagList }) => {
-    const [isVisible, setIsVisible] = useState(false);
+const Article:React.FC<ArticleOption> = ({ item, index, Categories, avatar, name, tagList, enter = true }) => {
+    // 不放动画的那一档直接起手就可见：既省掉观察器，也保证下面 `{isVisible && <LazyImage/>}`
+    // 那道门是开的（封面图本身仍由 LazyImage 自己的 IntersectionObserver 决定何时真去取，
+    // 所以这里"立刻挂载"不等于"立刻下载 N 张图"）。
+    const [isVisible, setIsVisible] = useState(!enter);
     const elementRef = useRef(null);
 
     useEffect(() => {
+        if (!enter) return;
         const observer = new IntersectionObserver((entries) => {
             entries.forEach((entry) => {
                 if (entry.isIntersecting) {
@@ -81,14 +100,18 @@ const Article:React.FC<ArticleOption> = ({ item, index, Categories, avatar, name
         return () => {
             observer.disconnect();
         };
-    }, []);
+    }, [enter]);
 
     return (
         <motion.div
             key={index}
-            initial={{ opacity: 0, y: -20 }}
+            // `initial={false}` = framer-motion 的"不做入场动画"，直接以 `animate` 的值渲染
+            // （写 `{}` 或 `{opacity: 1, y: 0}` 都拦不住它先渲染 `initial` 那一帧）
+            initial={enter ? { opacity: 0, y: -20 } : false}
             animate={isVisible ? { opacity: 1, y: 0 } : {}}
-            transition={{ duration: 0.5, delay: index * 0.2 }}
+            transition={enter
+                ? { duration: 0.5, delay: Math.min(index, ENTER_DELAY_MAX_STEPS) * ENTER_DELAY_STEP }
+                : { duration: 0 }}
             ref={elementRef}
             className="article"
         >
