@@ -1,3 +1,16 @@
+// 页签容器（三个页签共用）：**全页滚动的唯一一处**（20261004 修）。
+// 外壳链条：`.contain{height:100vh}` → `.content{height:100%}` → `.Card{height:95%;
+// overflow:hidden}` → `.ant-card-body{height:100%}`（index.css:366）⇒ 内容超过卡片高度
+// 时会被 `.Card` **静默裁掉**。这里原来写的是内联 `overflowY:'scroll'`，但**没有高度**：
+// 块级的自动高度由内容决定 ⇒ 元素永远和内容一样高、overflow 一条都轮不到生效，
+// 结果就是"页面滚不动、日志框看不全"（用户 20261004 报的）。高度必须给上。
+// `padding` 同时从内联样式搬进来（本仓纪律：内联 style 特异性最高，先搬出来再说）。
+.allin
+  height: 100%
+  overflow-y: auto
+  overflow-x: hidden
+  padding: 20px
+
 .web_setting
   margin-top: 63px
   display: flex
