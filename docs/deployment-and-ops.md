@@ -170,6 +170,17 @@ logs/
 约定：模板进仓库（`.env.example`），真值只在服务器上。**别在 sites-enabled 里放备份文件**——
 nginx 会把它们一起加载，导致 duplicate server；备份移出该目录。
 
+两条与首页图谱产物相关的部署注意（20261003 起）：
+
+- 后台重建出来的产物写在 **agent 仓**的 `data/word_graph/web/`，由 Rust 的
+  `GET /api/public/graph/{manifest,artifact/:file}` 供出，默认路径写死在
+  `src/routes/graph.rs::artifact_dir`（agent 仓不在默认位置时用 `GRAPH_ARTIFACT_DIR` 改）。
+  **它不在 `frontend/dist` 里**，所以部署管线不会碰它，重建完刷新首页即生效。
+- `^~ /api/` 前缀 location 会跳过所有正则 location ⇒ `/api/public/graph/artifact/graph-xxx.js`
+  的 `Content-Type` 与 `Cache-Control` 完全由 Rust 决定。**日后加正则 location 时别让它匹配
+  `/api/...js`**：一旦抢在前面，产物的 `text/javascript` 与一年 immutable 会一起失效
+  （症状是类型变成 `text/html` 或被 no-store，页面看着正常、只是每次刷新全量重下）。
+
 ---
 
 ## 6. 故障排查手册
