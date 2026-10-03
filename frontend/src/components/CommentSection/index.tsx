@@ -28,6 +28,21 @@
  * `#C<评论 id>`，主人要的是"这条是谁发的"——即 `userId`（留言板 `talk.id` 与评论 `id`
  * 是两个命名空间，拿评论 id 出来对人没有任何用）。评论 id 仍然在 `data-cid` 上，
  * 深链 `?cid=` 与定位高亮照旧按它走。
+ *
+ * **④ 回复框就地展开，顶层那个输入框只发顶层评论**（用户 20261003 第 3 条）。
+ * 原话：「讨论区回复的时候，如果评论很靠下，每次回复都要滚到顶部输入框才能回复好麻烦」。
+ * 根因不是"没滚动"，而是**回复框根本只有顶部那一个**：点某行的「回复」只是把 `replyTo`
+ * 设上，框还在页面顶端——于是他要么往回滚，要么压根没发现自己点中了（症状 = "点了没反应"）。
+ *
+ * 现在的形态：点「回复」→ **那一行自己的 `.commentMain` 里**展开一个输入框（`.isInline`
+ * 修饰符），焦点落进去、`scrollIntoView({block:'nearest'})` 只在需要时滚最小距离。
+ * 读到哪里就在哪里回，视线不离开那行。
+ *
+ * 由此两条纪律：
+ *   · **顶层框不再有"正在回复 @xx"那条**（`.commentReplyBar` 现在只出现在行内框里）。
+ *     留一条通往顶部的回复路径 = 那个坑原样还在，只是多了一个更好的入口；
+ *   · **行内框按「哪一行」而不是「哪一条」开**：`openFor` 存的是评论 id，同时最多一个
+ *     展开（换一行就把上一个收起），所以行内那份 state 是**单份**的，不是一行的副本。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
@@ -73,8 +88,12 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
     const [items, setItems] = useState<CommentItem[] | null>(null)
     const [failed, setFailed] = useState(false)
     const [content, setContent] = useState('')
-    const [replyTo, setReplyTo] = useState<CommentItem | null>(null)
     const [busy, setBusy] = useState(false)
+    /** 行内回复框：**开在哪一行**（评论 id；null = 没开）。同时最多一个。
+     *  与 `content` 分开存，是为了收起再展开时**顶层草稿不被冲掉**（见文件头注 ④）。 */
+    const [openFor, setOpenFor] = useState<number | null>(null)
+    const [replyContent, setReplyContent] = useState('')
+    const [replyBusy, setReplyBusy] = useState(false)
     /** 「预览」开关（20261003）。**不是可选项**：评论区整段按 markdown 渲染，而站上多数人
      *  并不认识 markdown——`_下划线_` 会被吃成斜体、`2*3*4` 会变成 `2<em>3</em>4`、行首
      *  `#`/`>`/`- ` 会变成标题/引用/列表。写的人看不见这件事，读的人才看得见（那时已经发出去了）。
@@ -83,6 +102,7 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
     const [pendingDelete, setPendingDelete] = useState<CommentItem | null>(null)
     const [deleting, setDeleting] = useState(false)
     const taRef = useRef<TextAreaRef>(null)
+    const replyTaRef = useRef<TextAreaRef>(null)
     /** 已经定位过的 cid（**记的是值不是布尔**：同页再点另一条通知时要能重新定位） */
     const locatedRef = useRef<number | null>(null)
     const [searchParams] = useSearchParams()
@@ -153,20 +173,43 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
         window.setTimeout(() => el.classList.remove('comment-hit'), 1800)
     }, [cid, items])
 
-    /** 把 `:名字:` 插到光标处（不是追加到末尾——插完把光标挪到表情之后继续打字） */
-    const pickSticker = (name: string) => {
+    /** 把 `:名字:` 插到光标处（不是追加到末尾——插完把光标挪到表情之后继续打字）。
+     *  **顶层框与行内回复框共用这一份**：草稿值由调用方给，函数只负责切/插/回光标。 */
+    const insertSticker = (
+        el: HTMLTextAreaElement | null | undefined,
+        value: string,
+        setValue: (v: string) => void,
+        name: string,
+    ) => {
         const token = `:${name}:`
-        const el = taRef.current?.resizableTextArea?.textArea
-        if (!el) { setContent((v) => v + token); return }
-        const start = el.selectionStart ?? content.length
+        if (!el) { setValue(value + token); return }
+        const start = el.selectionStart ?? value.length
         const end = el.selectionEnd ?? start
-        const next = content.slice(0, start) + token + content.slice(end)
-        setContent(next)
+        setValue(value.slice(0, start) + token + value.slice(end))
         requestAnimationFrame(() => {
             el.focus()
             const at = start + token.length
             el.setSelectionRange(at, at)
         })
+    }
+
+    const pickSticker = (name: string) =>
+        insertSticker(taRef.current?.resizableTextArea?.textArea, content, setContent, name)
+    const pickReplySticker = (name: string) =>
+        insertSticker(replyTaRef.current?.resizableTextArea?.textArea, replyContent, setReplyContent, name)
+
+    /** 发表之后那一段：**审核三态文案只有这一处实现**（顶层框与行内回复共用）。
+     *  返回是否成功，由调用方决定清不清草稿。三种审核结果说三种话——
+     *  **不把"待审"说成"已发布"**（这也正是接口要回 `approved` 的原因）。 */
+    const postComment = async (text: string, parentId: number | null) => {
+        const res = await createComment(key, text, parentId)
+        if (!ok(res)) { message.error(errMsg(res)); return false }
+        const { approved } = res.data.data
+        await load()
+        if (approved === 1) message.success('评论已发布')
+        else if (approved === 0) message.info('评论已提交，通过人工复核后才会公开显示')
+        else message.warning('评论未通过审核，不会公开展示')
+        return true
     }
 
     const submit = async () => {
@@ -179,22 +222,51 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
         }
         setBusy(true)
         try {
-            const res = await createComment(key, text, replyTo?.id ?? null)
-            if (!ok(res)) { message.error(errMsg(res)); return }
-            const { approved } = res.data.data
-            setContent('')
-            setReplyTo(null)
-            await load()
-            // 三种审核结果说三种话：**不把"待审"说成"已发布"**。
-            // 这也正是接口要回 `approved` 的原因（只给 id 的话这里只能含糊其辞）。
-            if (approved === 1) message.success('评论已发布')
-            else if (approved === 0) message.info('评论已提交，通过人工复核后才会公开显示')
-            else message.warning('评论未通过审核，不会公开展示')
+            // 顶层框只发顶层评论——回复一律走行内那个框（见文件头注 ④）
+            if (await postComment(text, null)) setContent('')
         } catch (e) {
             console.error('发表评论失败', e)
             message.error('发表失败，请稍后再试')
         } finally {
             setBusy(false)
+        }
+    }
+
+    /** 展开某一行的回复框，并把焦点与视线都留在那一行（用户 20261003 第 3 条）。 */
+    const openReply = (comment: CommentItem) => {
+        setOpenFor(comment.id)
+        setReplyContent('')
+        // 焦点必须等下一帧：这一帧行内框还没渲染出来，ref 还是 null。
+        requestAnimationFrame(() => {
+            const el = replyTaRef.current?.resizableTextArea?.textArea
+            if (!el) return
+            el.focus()
+            // `block:'nearest'`：**只在真的看不见时才滚，且只滚最小距离**。
+            // 这条是整件事的要点——回复靠下的评论时，视线不该被甩回页面顶部。
+            el.closest('.commentRow')?.scrollIntoView({ block: 'nearest', behavior: 'auto' })
+        })
+    }
+
+    const closeReply = () => { setOpenFor(null); setReplyContent('') }
+
+    const submitReply = async () => {
+        const parentId = openFor
+        if (parentId === null) return
+        const text = replyContent.trim()
+        if (!loggedIn) { message.warning('请先登录后再参与讨论'); return }
+        if (!text) { message.warning('回复不能为空'); return }
+        if (replyContent.length > MAX_COMMENT_CHARS) {
+            message.warning(`回复过长（最多 ${MAX_COMMENT_CHARS} 字）`)
+            return
+        }
+        setReplyBusy(true)
+        try {
+            if (await postComment(text, parentId)) closeReply()
+        } catch (e) {
+            console.error('发表回复失败', e)
+            message.error('回复失败，请稍后再试')
+        } finally {
+            setReplyBusy(false)
         }
     }
 
@@ -252,13 +324,50 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
                 )}
                 <CommentBody content={c.content} />
                 <div className="commentActions">
-                    <button type="button" onClick={() => setReplyTo(c)}>回复</button>
+                    <button type="button" onClick={() => openReply(c)}>回复</button>
                     {c.mine && (
                         <button type="button" className="isDanger" onClick={() => setPendingDelete(c)}>
                             删除
                         </button>
                     )}
                 </div>
+                {/* 行内回复框：**住在这行的 `.commentMain` 里**，就在刚点的那颗「回复」
+                    底下（见文件头注 ④）。样式整个复用 `.commentComposer`（`.isInline`
+                    只是几条覆盖），所以计数按进框内、按钮字号那几条修复它一并吃到。
+                    **不带预览按钮**：这里回的是别人已经写出来的一句话，写的人不用先
+                    猜 markdown 会把它吃成什么样。 */}
+                {openFor === c.id && (
+                    <div className="commentComposer isInline">
+                        <div className="commentReplyBar">
+                            <span>正在回复 @{c.nickname}</span>
+                            <button type="button" onClick={closeReply}>取消</button>
+                        </div>
+                        <Input.TextArea
+                            ref={replyTaRef}
+                            value={replyContent}
+                            onChange={(e) => setReplyContent(e.target.value)}
+                            placeholder={`回复 @${c.nickname}…`}
+                            autoSize={{ minRows: 2, maxRows: 6 }}
+                            maxLength={MAX_COMMENT_CHARS}
+                            showCount
+                            // Esc 收起（与表情面板同一个键意）
+                            onKeyDown={(e) => { if (e.key === 'Escape') closeReply() }}
+                        />
+                        <div className="commentComposerFoot">
+                            <div className="commentComposerTools">
+                                <StickerPicker onPick={pickReplySticker} disabled={replyBusy} />
+                            </div>
+                            <button
+                                type="button"
+                                className="commentSubmit"
+                                disabled={replyBusy || !replyContent.trim()}
+                                onClick={submitReply}
+                            >
+                                {replyBusy ? '发送中…' : '回复'}
+                            </button>
+                        </div>
+                    </div>
+                )}
             </div>
         </div>
     )
@@ -276,12 +385,8 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
                 </p>
             ) : (
                 <div className="commentComposer">
-                    {replyTo && (
-                        <div className="commentReplyBar">
-                            <span>正在回复 @{replyTo.nickname}</span>
-                            <button type="button" onClick={() => setReplyTo(null)}>取消</button>
-                        </div>
-                    )}
+                    {/* **这里没有"正在回复 @xx"那条**：回复一律在那一行就地展开
+                        （文件头注 ④）。留一条通往顶部的回复路径 = 那个坑原样还在。 */}
                     {/* **计数已搬进输入框内**（20261003 用户第 3 条），所以这里不再挂全站的
                         `counter-room`（那 22px 是给"计数吊在框下方"腾的地方，也正是
                         「按钮离输入框太远」的来源）。计数元素是 `span.ant-input-data-count`
@@ -292,7 +397,7 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
                         ref={taRef}
                         value={content}
                         onChange={(e) => setContent(e.target.value)}
-                        placeholder={replyTo ? `回复 @${replyTo.nickname}…` : '说点什么吧…（支持 markdown 与站内表情）'}
+                        placeholder="说点什么吧…（支持 markdown 与站内表情）"
                         autoSize={{ minRows: 3, maxRows: 8 }}
                         maxLength={MAX_COMMENT_CHARS}
                         showCount
@@ -319,7 +424,7 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
                             disabled={busy || !content.trim()}
                             onClick={submit}
                         >
-                            {busy ? '发送中…' : replyTo ? '回复' : '发表评论'}
+                            {busy ? '发送中…' : '发表评论'}
                         </button>
                     </div>
                     {preview && (

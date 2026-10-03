@@ -162,16 +162,39 @@ SASS_REPLY_OLD = """        .commentReplyTo
             font-size: 0.8rem
 """
 
+# ── 红基线 D（⑩b）：把「回复」退回**只能开在页面顶部那个输入框**——20261003 用户第 3 条
+# 报的那一版（「评论很靠下时每次回复都要滚到顶部输入框」）。四处在沙箱拷贝上打补丁，
+# `FE` 里一字不动：点「回复」设回顶层状态、顶层框渲染回那条「正在回复 @xx」、
+# state 声明补回来、提交时带上被回复的那条 id。
+# **它翻的是 ⑩ 的结构判据**（行内框不存在 ⇒ "住在这一行的 .commentMain 里"当场红），
+# 以及"顶层框里没有那条回复栏"。
+TSX_OPEN_INLINE = "onClick={() => openReply(c)}"
+TSX_OPEN_TOP = "onClick={() => setTopReply(c)}"
+TSX_TOP_COMPOSER = '                <div className="commentComposer">\n'
+TSX_TOP_BAR = ('                <div className="commentComposer">\n'
+               '                    {topReply && (\n'
+               '                        <div className="commentReplyBar">\n'
+               '                            <span>正在回复 @{topReply.nickname}</span>\n'
+               '                            <button type="button" onClick={() => setTopReply(null)}>取消</button>\n'
+               '                        </div>\n'
+               '                    )}\n')
+TSX_BUSY_STATE = "    const [busy, setBusy] = useState(false)\n"
+TSX_TOPREPLY_STATE = TSX_BUSY_STATE + \
+    "    const [topReply, setTopReply] = useState<CommentItem | null>(null)\n"
+TSX_POST_NULL = "await postComment(text, null)"
+TSX_POST_TOP = "await postComment(text, topReply?.id ?? null)"
+
 
 def build(variant: str) -> pathlib.Path:
     """variant:
     'fixed'  src 原样；
     'broken' 改之前的样子（tsx 挂回 counter-room + sass 摘掉按进框内那条）——红基线 A；
     'bare'   只摘掉按进框内那条（= 20261003 早上用户报重叠时的样子）——红基线 B；
-    'replyto-old' 「回复 @某人」退回身份行行首（20261003 用户第 3 条报的那一版）——红基线 C。
-    三个红基线各自翻的是不同的那几条判据，所以三个都要跑：
+    'replyto-old' 「回复 @某人」退回身份行行首（20261003 用户第 3 条报的那一版）——红基线 C；
+    'reply-top'  「回复」退回"只能开在页面顶部那个输入框"——红基线 D。
+    四个红基线各自翻的是不同的那几条判据，所以四个都要跑：
     A 翻的是「缝隙」与「落在框内」，B 翻的是「计数与按钮不相交」（当年那 22px 就是为它加的），
-    C 翻的是 ⑨ 里「回复标记另有自己的一行」。"""
+    C 翻的是 ⑨ 里「回复标记另有自己的一行」，D 翻的是 ⑩ 里「回复框住在被回复的那一行里」。"""
     sb = pathlib.Path(tempfile.mkdtemp(prefix=f"comment-layout-{variant}-"))
     shutil.copytree(FE / "src", sb / "src")
     (sb / "node_modules").symlink_to(FE / "node_modules")
@@ -206,6 +229,19 @@ def build(variant: str) -> pathlib.Path:
         src = p.read_text(encoding="utf-8")
         assert src.count(TA_REF) == 1, "红基线补丁没找到 `ref={taRef}`"
         p.write_text(src.replace(TA_REF, TA_REF + ROOM_ATTR, 1), encoding="utf-8")
+
+    if variant == "reply-top":
+        p = sb / "src/components/CommentSection/index.tsx"
+        src = p.read_text(encoding="utf-8")
+        for old, new, what in (
+            (TSX_OPEN_INLINE, TSX_OPEN_TOP, "「回复」那颗按钮的 onClick"),
+            (TSX_TOP_COMPOSER, TSX_TOP_BAR, "顶层 composer 的开标签"),
+            (TSX_BUSY_STATE, TSX_TOPREPLY_STATE, "`busy` 那句 state 声明"),
+            (TSX_POST_NULL, TSX_POST_TOP, "顶层框提交时传的 parentId"),
+        ):
+            assert src.count(old) == 1, f"红基线 D 没找到{what}"
+            src = src.replace(old, new, 1)
+        p.write_text(src, encoding="utf-8")
 
     (sb / "entry.tsx").write_text(ENTRY, encoding="utf-8")
 
@@ -291,6 +327,7 @@ FIXED = build("fixed")
 BROKEN = build("broken")
 BARE = build("bare")
 REPLY_OLD = build("replyto-old")
+REPLY_TOP = build("reply-top")
 
 print(f"沙箱：{FIXED}")
 
@@ -440,6 +477,90 @@ with sync_playwright() as p:
     pg.click(".commentPreviewBtn")
     pg.wait_for_timeout(200)
     check("再点一次收起", pg.locator(".commentPreview").count() == 0)
+
+    print("\n⑩ 回复框就地展开（用户 20261003 第 3 条：评论很靠下时不必滚回顶部输入框）")
+    # 先把最后一条顶层评论（#30）滚到视野中间——**这正是用户说的"很靠下"那个位置**。
+    # 不先滚下去，下面那条"视线没被甩回顶部"就测不出东西来（页面本来就在顶部）。
+    pg.evaluate("document.querySelector('#c-30').scrollIntoView({block:'center',behavior:'auto'})")
+    pg.wait_for_timeout(250)
+    y_before = pg.evaluate("window.scrollY")
+    check("前提：页面确实滚下去了（否则这组判据量的是页面顶部那条评论）",
+          y_before > 400, f"scrollY={y_before}")
+
+    def open_reply(cid):
+        pg.locator(f"#{cid} .commentActions button").first.click()
+        pg.wait_for_timeout(350)
+
+    open_reply("c-30")
+    check("行内回复框恰好一个，带 .commentComposer.isInline",
+          pg.locator(".commentComposer.isInline").count() == 1,
+          pg.locator(".commentComposer.isInline").count())
+    check("★它就住在被回复的**那一行**的 .commentMain 里（结构判据）",
+          pg.evaluate("() => { const b = document.querySelector('.commentComposer.isInline');"
+                      " return !!b && !!b.closest('.commentMain')"
+                      " && (b.closest('.commentRow') || {}).id === 'c-30'; }"))
+    check("★焦点已经落进行内那个 textarea（点完就能直接打字）",
+          pg.evaluate("() => document.activeElement === "
+                      "document.querySelector('.commentComposer.isInline textarea')"))
+    check("★行内框整个落在视口里（展开的目的就是「不用滚」）",
+          inside(box(pg, ".commentComposer.isInline"),
+                 {"x": 0, "y": 0, "w": 1280, "h": 900, "right": 1280, "bottom": 900}),
+          box(pg, ".commentComposer.isInline"))
+    check("★视线没被甩回顶部（滚过的那一段还在）",
+          pg.evaluate("window.scrollY") > y_before * 0.6,
+          f"before={y_before} now={pg.evaluate('window.scrollY')}")
+    check("★行内框紧贴它回复的那条评论（≤60px；红基线 D 里它会离这条评论两千多像素）",
+          bool(box(pg, "#c-30 .commentBody")) and 0 <=
+          box(pg, ".commentComposer.isInline")["y"] - box(pg, "#c-30 .commentBody")["bottom"] <= 60,
+          f'缝隙 {round(box(pg, ".commentComposer.isInline")["y"] - box(pg, "#c-30 .commentBody")["bottom"], 1)}px')
+    check("行内框里写明「正在回复 @谁」",
+          pg.locator(".commentComposer.isInline .commentReplyBar span").inner_text().strip()
+          == "正在回复 @访客30",
+          pg.locator(".commentComposer.isInline .commentReplyBar span").inner_text().strip())
+    check("★顶层那个输入框里**没有**那条回复栏（回复不再走顶部那条老路）",
+          pg.locator(".commentComposer:not(.isInline) .commentReplyBar").count() == 0,
+          pg.locator(".commentComposer:not(.isInline) .commentReplyBar").count())
+    check("顶层框只发顶层评论：按钮文案是「发表评论」不是「回复」",
+          pg.locator(".commentComposer:not(.isInline) .commentSubmit").inner_text().strip() == "发表评论",
+          pg.locator(".commentComposer:not(.isInline) .commentSubmit").inner_text().strip())
+
+    print("\n⑩b 同时只开一个；Esc 与「取消」都能收起")
+    open_reply("c-29")
+    check("换一行点「回复」：行内框仍只有一个（上一行自动收起）",
+          pg.locator(".commentComposer.isInline").count() == 1,
+          pg.locator(".commentComposer.isInline").count())
+    check("  且开在新点的那一行（c-29）",
+          pg.evaluate("() => (document.querySelector('.commentComposer.isInline')"
+                      ".closest('.commentRow') || {}).id") == "c-29")
+    pg.keyboard.press("Escape")
+    pg.wait_for_timeout(250)
+    check("Esc 收起行内框（焦点在框里，键意与表情面板一致）",
+          pg.locator(".commentComposer.isInline").count() == 0,
+          pg.locator(".commentComposer.isInline").count())
+    open_reply("c-28")
+    pg.locator(".commentComposer.isInline .commentReplyBar button").click()
+    pg.wait_for_timeout(250)
+    check("「取消」也收起", pg.locator(".commentComposer.isInline").count() == 0,
+          pg.locator(".commentComposer.isInline").count())
+
+    print("\n⑩c 就地发出去（不是「打开一个框然后逼你回顶部提交」）")
+    # 顶层框里那段草稿是 ⑤ 留下的（`_下划线_ …`）——**故意不清理**：这样下面那条
+    # 「两个框的草稿互不干扰」才不是说空话（空草稿被"保持为空"是最容易假绿的一种）。
+    top_before = pg.input_value(".commentComposer:not(.isInline) textarea")
+    check("前提：顶层框里本来就有一段落草稿（不是空的——空的「没被动过」证明不了什么）",
+          top_before.strip() != "", top_before)
+    open_reply("c-27")
+    pg.fill(".commentComposer.isInline textarea", "就地回复一条")
+    pg.locator(".commentComposer.isInline .commentSubmit").click()
+    pg.wait_for_timeout(400)
+    check("发送后行内框收起（回复已提交）",
+          pg.locator(".commentComposer.isInline").count() == 0,
+          pg.locator(".commentComposer.isInline").count())
+    check("顶层框那段草稿一字未动（两个框的草稿互不干扰）",
+          pg.input_value(".commentComposer:not(.isInline) textarea") == top_before,
+          pg.input_value(".commentComposer:not(.isInline) textarea"))
+    pg.evaluate("window.scrollTo(0, 0)")
+    pg.wait_for_timeout(150)
 
     print("\n⑥ 未登录：只给登录提示，不给输入区")
     pg.evaluate("window.__mount('/article/1', null)")
@@ -598,6 +719,38 @@ with sync_playwright() as p:
           f'rt={o["rt"] and round(o["rt"]["x"], 1)}..{o["rt"] and round(o["rt"]["right"], 1)} '
           f'name.x={round(o["name"]["x"], 1)}')
     pg4.close()
+
+    # ══ 五、红基线 D：把「回复」退回只能开在页面顶部那个输入框 ═══════════════════════
+    print("\n⑩d 红基线 D（reply-top 变体）：点「回复」时框还在页面顶部，靠下的那条够不着")
+    pg5 = br.new_page(viewport={"width": 1280, "height": 900})
+    errs5 = []
+    pg5.on("pageerror", lambda e: errs5.append(str(e)))
+    pg5.add_init_script("window.__BOOT = { path: '/article/1', token: 't' };")
+    pg5.goto(REPLY_TOP.as_uri() + "/index.html")
+    pg5.wait_for_selector(".commentComposer", timeout=8000)
+    pg5.wait_for_timeout(300)
+    check("对照组页面本身是好的（没有 JS 错误、列表在）",
+          not errs5 and pg5.locator(".commentThread").count() == 30, "; ".join(errs5[:1]))
+    pg5.evaluate("document.querySelector('#c-30').scrollIntoView({block:'center',behavior:'auto'})")
+    pg5.wait_for_timeout(250)
+    pg5.locator("#c-30 .commentActions button").first.click()
+    pg5.wait_for_timeout(350)
+    check("★对照组里**没有**行内框—— ⇒ ⑩ 那几条「住在这一行的 .commentMain 里」有牙",
+          pg5.locator(".commentComposer.isInline").count() == 0,
+          pg5.locator(".commentComposer.isInline").count())
+    check("★对照组里回复栏出现在**顶层**那个输入框上—— ⇒ ⑩「顶层没有那条」有牙",
+          pg5.locator(".commentComposer:not(.isInline) .commentReplyBar").count() == 1,
+          pg5.locator(".commentComposer:not(.isInline) .commentReplyBar").count())
+    # 这就是用户那句话的**几何翻译**：框在页面顶部，而要看的那条评论在两千多像素以外。
+    bar = box(pg5, ".commentComposer:not(.isInline) .commentReplyBar")
+    check("★对照组里那个框离被回复的评论 2000px 以上（「每次都要滚到顶部」就是这件事）",
+          bool(bar) and abs(bar["y"] - pg5.evaluate(
+              "() => document.querySelector('#c-30').getBoundingClientRect().y")) > 2000,
+          f'bar.y={bar and round(bar["y"], 1)}')
+    check("★对照组里焦点**没有**落在任何输入框里（点完还得自己去找框）",
+          pg5.evaluate("() => document.activeElement.tagName") != "TEXTAREA",
+          pg5.evaluate("() => document.activeElement.tagName"))
+    pg5.close()
     br.close()
 
 print(f"\ncomment-layout: {'全绿' if not FAILS else str(len(FAILS)) + ' 条红'}\n")
