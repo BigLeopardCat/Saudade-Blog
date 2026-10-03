@@ -3,6 +3,15 @@ name: Deploy Blog
 on:
   push:
     branches: [cn_sora_blog]
+  # 手动补一次部署（20261003 加）。**不是"随手重跑"的便利按钮，而是补一条会丢部署的路**：
+  # 部署与否由 `check-changes` 看**这次 push 的 diff** 决定（`base: github.event.before`），
+  # 于是"修一条只让 CI 变绿、本身不进产物的路"（典型：只改 `frontend/tests/**`）那次 push
+  # 会被合法地判成"没有东西要部署"——而它前面那次 push 正是因为这条测试红着才没部署成。
+  # 两次一叠加，**该落地的提交再没有下一次机会**：线上的 build-info 停在旧 sha，而这边一路绿灯。
+  # 本仓 20261003 真踩过（评论投票那批 `src/**` 就卡在这儿）。补的时候：
+  #   gh workflow run "Deploy Blog" --ref cn_sora_blog
+  # 它会按**当前 HEAD** 重新走一遍完整构建与部署，不依赖 diff。
+  workflow_dispatch:
 
 # 并发闸（20260923）：同一分支连着推两次会起两个 run，此前两者**并行**，而部署的先后
 # 由"谁构建得快 / 谁上传得晚"决定——实测较新那个（只改前端、包更小）先跑完，较旧那个后
@@ -22,13 +31,18 @@ jobs:
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
-      # 要不要跑这次部署：任一半变了、或改到了部署管线本身（infra）就跑。
-      deploy: "${{ steps.filter.outputs.backend == 'true' || steps.filter.outputs.frontend == 'true' || steps.filter.outputs.infra == 'true' }}"
+      # 要不要跑这次部署：手动触发**恒跑**（那时没有 diff 可比，见上面 workflow_dispatch 那段），
+      # 否则任一半变了、或改到了部署管线本身（infra）就跑。
+      deploy: "${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.backend == 'true' || steps.filter.outputs.frontend == 'true' || steps.filter.outputs.infra == 'true' }}"
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: dorny/paths-filter@v3
+      # 手动触发时 `github.event.before` 是空的（不是 push 事件就没有"上一个提交"），
+      # 喂给 paths-filter 会拿一个空 base 去比 —— 所以这一步**只在 push 时跑**，
+      # 手动那次直接由上面的 `deploy` 短路成 true，不看过滤器。
+      - if: github.event_name == 'push'
+        uses: dorny/paths-filter@v3
         id: filter
         with:
           base: ${{ github.event.before }}
