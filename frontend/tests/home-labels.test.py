@@ -8,7 +8,8 @@
   · 置顶的尾尖是 `clip-path` 切出来的 —— 源码写着 `polygon(...)` 不代表浏览器算出来的
     就是一枚箭头尾尖（写成四角手撕边也是合法的 `polygon`）；
   · 「文章」左缘那道装订边（`border-left`）与右端的圆角，是**实测盒子**；
-  · More 那枚 chevron 是"两条边 + 转 -45°"，靠 `::after` 的宽高与 border 判定；
+  · More 那枚 chevron 是"两条边 + 转 +45°"（指向下，20261004 由 -45° 改来），
+    靠 `::after` 的宽高与 border 判定；
   · **三块牌子静置时一律不许动**（八轮的总纲，也是用户这句话的落点）：常驻循环
     （`ribbon-float` / `tag-twinkle` / `more-nudge`）撤得只剩置顶尾尖那枚 ✦ 的呼吸，
     且它只动 opacity、不产生位移。这条判据是 `animationName` + `transform` 一起读的
@@ -198,9 +199,9 @@ with sync_playwright() as p:
           f'{plate["anim"]} / {plate["after"]["anim"]} / {icon["anim"]}')
 
     # ── 三、More ─────────────────────────────────────────────────────────────
-    print("\n【三】More：右端一枚 chevron（静置不动，悬停才走）")
+    print("\n【三】More：右端一枚 chevron（指向下、静置不动，悬停才走）")
     more = probe("#more")
-    # chevron = 一个 8×8 的盒子 + 只画右边和下边 + 转 -45°。
+    # chevron = 一个 8×8 的盒子 + 只画右边和下边 + 转 +45°。
     # 判 border 的**宽度**而不是有没有 border：`.allContent` 的基础规则给整块牌子
     # 留了 1px 的四边边框（`border: 1px solid var(--washi-line)`），
     # 只判"有边框"的话，箭头那两条边和牌子自己的四条边分不开。
@@ -213,6 +214,15 @@ with sync_playwright() as p:
     check("★ 箭头静置时不动、但**仍是斜的**（角度已从 keyframe 搬进基规则）",
           more["after"]["anim"] == "none" and more["after"]["transform"] != "none",
           f'{more["after"]["anim"]} / {more["after"]["transform"]}')
+    # 方向（20261004 用户第十报：「刷新卡片是向下展示，按钮箭头向右不合适」）。
+    # **只判"斜的"是不够的**——−45° 也是斜的，而它画的正是那枚向右的箭头。
+    # 角度只能从计算值的矩阵里读：`matrix(a, b, c, d, e, f)`，CSS 正角 = 顺时针
+    # ⇒ `b > 0`（顺时针 45°）才是"右 + 下两条边"读成的 ↓；`b < 0` 就是 →。
+    _m = more["after"]["transform"]
+    _nums = [float(x) for x in _m[_m.index("(") + 1:-1].split(",")] if "matrix" in _m else []
+    check("★ 箭头指向**下**（旋转矩阵的 b > 0 = 顺时针；−45° 那枚是向右的）",
+          len(_nums) == 6 and _nums[1] > 0.5 and _nums[3] > 0.5,
+          f"transform={_m}")
     check("More 不再挂 `.allContent` 那枚 ✦（同一族里两枚记号不许撞车）",
           "✦" not in more["after"]["content"], more["after"]["content"])
     check("左缘装订边仍在（同一块牌子，只是尺寸与手感不同）",
@@ -225,7 +235,7 @@ with sync_playwright() as p:
     pg.hover("#more")
     pg.wait_for_timeout(400)
     hov = probe("#more")
-    check("悬停后箭头右移（动效改为只在指针接触时发生）",
+    check("悬停后箭头顺着指向下移（动效改为只在指针接触时发生）",
           hov["after"]["transform"] != more["after"]["transform"]
           and hov["after"]["transform"] != "none",
           f'{more["after"]["transform"]} → {hov["after"]["transform"]}')
