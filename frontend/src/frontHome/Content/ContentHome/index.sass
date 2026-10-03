@@ -167,13 +167,15 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
     // 不会变成"文字与内页之间一道随视口高度变化的沟"
     justify-content: center
     gap: 28px
-    // ⚠️ 下留白必须 ≥ `.heroBottom` 那一行自己占的高度：签名 `bottom: 86px` + 行高 27px
-    // ⇒ 它顶边在离 hero 下缘 113px 处，留 56px 的话右列（内页 + 展示柜）的下缘会压在
-    // 签名上（实测 768×900：展示柜底 1177 vs 签名 1120..1147；414×800：798 vs 741..768，
-    // 连下翻按钮一起被压）—— 用户第 1 条「个性签名，下翻按钮……盖在上面了」的另一半。
-    // 128 在 113 之上再留 15px 呼吸。桌面档是 148px（本来就不冲突，见上面那条）。
+    // ⚠️ 下留白必须 ≥ `.heroBottom` 那一行自己占的高度：签名 `bottom: 86px` + 行高
+    // **29px**（字号 24.5 那档的行盒；上一档 23px 时是 27px）⇒ 它顶边在离 hero 下缘
+    // 115px 处，留 56px 的话右列（内页 + 展示柜）的下缘会压在签名上（实测 768×900：
+    // 展示柜底 1177 vs 签名 1120..1147；414×800：798 vs 741..768，连下翻按钮一起被压）
+    // —— 用户第 1 条「个性签名，下翻按钮……盖在上面了」的另一半。
+    // 132 在 115 之上再留 17px 呼吸（上一档字号是 128/15px）。桌面档是 148px
+    // （本来就不冲突，见上面那条）。
     --hero-pad-t: 104px
-    --hero-pad-b: 128px
+    --hero-pad-b: 132px
     padding: var(--hero-pad-t) 5% var(--hero-pad-b)
 
   // ① 拼贴底：色块用 radial-gradient 自带羽化——**不用 `filter: blur()`** 做柔化，
@@ -382,6 +384,12 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
 
   .SayWords
     animation: left-in 1s forwards
+    // 整列上移 16px（20261003 用户第 1 条「社交按钮和文本上移」）。
+    // ⚠️ 用 `top` 而**不是** `transform`：上面那条 `animation: left-in` 的 keyframes 动的
+    // 就是 `transform`，动画在层叠里压过普通声明 ⇒ 写 `transform: translateY(-16px)`
+    // 会被入场动画静默盖掉（`forwards` 之后仍停在 keyframes 的终值上）。
+    // `position: relative` 住在上面那条共享规则（`.SayWords, .frontAvatar`）里。
+    top: -16px
     // ⚠️ 这三行原来**多缩进了一级**，编译出来是 `animation-display: flex` /
     // `animation-flex-direction` / `animation-align-items`（三行全废），于是 `.SayWords`
     // 一直是个普通块级盒——`align-items: flex-start` 从来没生效过。原来的样子碰巧不难看
@@ -402,15 +410,16 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
       background: rgba(255, 255, 255, 0.72)
       border: 1px solid rgba(214, 160, 200, 0.55)
       box-shadow: 0 6px 16px rgba(186, 120, 170, 0.16)
-      // 20261003 用户第 7 条「主页社交组件和文本再放大一些」：15 → 16.5px。
-      // 放大是**成组**的（标签/标题/命令条/签名一起），只放大一件会让那一列看着散。
-      font-size: 16.5px
+      // 20261003 用户第 7 条「主页社交组件和文本再放大一些」：15 → 16.5px；
+      // 本轮「社交按钮和文本上移放大一点文本」：16.5 → 17.5px。放大是**成组**的
+      // （标签/标题/命令条/签名一起），只放大一件会让那一列看着散。
+      font-size: 17.5px
       letter-spacing: 0.06em
       color: #a4508b
       transform: rotate(-1.5deg)
       .heroTagStar
         color: #e58ec4
-        font-size: 15.5px
+        font-size: 16.5px
         // 只有透明度动画：合成器就能跑完，不碰布局也不碰前景重绘
         //（这块地皮紧挨着看板娘，任何会重绘前景的动效都在同一屏上抢 GPU）
         animation: tag-twinkle 3.4s ease-in-out infinite
@@ -430,11 +439,14 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
       margin: 0
       margin-top: 16px
       // 放大（20260930 五轮，用户「文本放大」），20261003 第 7 条再放大一档
-      // （2.5/3.6vw/3.2rem → 2.75/4vw/3.5rem）。旧值 2.5rem 是"缝"约束下的产物，
-      // 那条约束已随展示柜搬家作废（见本块头注）。上限 3.5rem 定在"1440 那档
-      // 文字列 + gap + 右列仍落在内容盒（0.84 × 视口）之内"的位置——再往上
-      // `.SayWords`（`flex: 0 1 auto`）会被迫收缩、标题折成两行。
-      font-size: clamp(2.75rem, 4vw, 3.5rem)
+      // （2.5/3.6vw/3.2rem → 2.75/4vw/3.5rem），本轮再把上限抬到 3.75rem
+      // （用户「社交按钮和文本上移放大一点文本」）。旧值 2.5rem 是"缝"约束下的产物，
+      // 那条约束已随展示柜搬家作废（见本块头注）。上限定在"1440 那档文字列 + gap +
+      // 右列仍落在内容盒（0.84 × 视口）之内"的位置——再往上 `.SayWords`
+      // （`flex: 0 1 auto`）会被迫收缩、标题折成两行。
+      // ⚠️ 4vw 要到 1500px 视口才够 60px ⇒ 这个上限只在 ≥1500px 生效，1366/1440
+      // 两档量到的仍是 4vw 的值（判据在 `home-hero.test.py` 第 ① 组那三档）。
+      font-size: clamp(2.75rem, 4vw, 3.75rem)
       line-height: 1.18
       color: #b3175e
       -webkit-text-stroke: 3px #ffffff
@@ -459,8 +471,9 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
       background: rgba(40, 32, 54, 0.88)
       box-shadow: 0 10px 24px rgba(90, 60, 110, 0.18)
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace
-      // 14.5 → 16（20261003 第 7 条）：与标签、标题、签名同一批放大
-      font-size: 16px
+      // 14.5 → 16（20261003 第 7 条）→ 17（本轮「文本再放大一点」）：与标签、标题、
+      // 签名同一批放大（它是那一列里唯一的等宽字，字号不改会明显矮一档）。
+      font-size: 17px
       line-height: 1.2
       white-space: nowrap
       .termUser
@@ -473,7 +486,8 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
         color: rgba(255, 255, 255, 0.45)
       .termCaret
         width: 8px
-        height: 15px
+        // 15 → 16：命令条字号 16 → 17（行高 1.2 ⇒ 20.4px）之后，光标太矮会像缺了一截
+        height: 16px
         background: #ffd9ec
         animation: caret-blink 1.1s steps(1, end) infinite
 
@@ -1706,9 +1720,11 @@ html[data-theme='dark'] .SayWords h2
   margin: 0
   white-space: nowrap
   font-family: 'LXGW WenKai TC', 'Kaiti SC', 'STKaiti', 'KaiTi', serif
-  // 20 → 23px（20261003 第 7 条「文本再放大一些」）。签名是绝对定位的，放大只影响
-  // 它自己的盒宽（居中靠 `.heroBottom` 的 flex），不动 `.heroBottom` 那 86/20px 的定位。
-  font-size: 23px
+  // 20 → 23px（20261003 第 7 条「文本再放大一些」）→ 24.5px（本轮「文本再放大一点」）。
+  // 签名是绝对定位的，放大只影响它自己的盒宽（居中靠 `.heroBottom` 的 flex），
+  // 不动 `.heroBottom` 那 86/20px 的定位。⚠️ 它同时是手机档 `--hero-pad-b` 的输入：
+  // 行高随之 27 → 29px，那条留白两边一起核过（见 `.SelfDescription` 手机档注释）。
+  font-size: 24.5px
   font-weight: 400
   letter-spacing: 3px
   // 兜底实体色（不吃 background-clip 的环境走它），渐变在 @supports 里替换

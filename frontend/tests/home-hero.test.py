@@ -145,15 +145,26 @@ WIDTH_FULL = ("min(38vw, 520px, max(300px, calc((100vh - var(--hero-pad-t) "
               "- var(--hero-pad-b) - 24px - 8px) / 1.1875)))")
 WIDTH_OLD = "min(38vw, 520px)"
 
+# 红基线（第 ①e 组）用的补丁：把 `.SayWords` 那条"整列上移 16px"摘掉。同一套逐字匹配 +
+# assert（匹配不上就当场炸，不然"对照组其实没被改"会让这条断言变成永真）。全文件里
+# `top: -16px` 只此一处（`assert count == 1` 就是这条的前提）。
+SAY_TOP_NEW = "top: -16px"
+SAY_TOP_OLD = "top: 0"
 
-def build_sandbox(broken_width: bool = False) -> pathlib.Path:
+
+def build_sandbox(broken_width: bool = False, no_say_shift: bool = False) -> pathlib.Path:
     sb = pathlib.Path(tempfile.mkdtemp(prefix="homehero-"))
     srcs = [("home.css", SASS_FILE), ("vitrine.css", VITRINE_SASS)]
-    if broken_width:
+    if broken_width or no_say_shift:
         text = SASS_FILE.read_text(encoding="utf-8")
-        assert text.count(WIDTH_FULL) == 1, "红基线补丁没找到 `.heroRight` 的宽度公式"
+        if broken_width:
+            assert text.count(WIDTH_FULL) == 1, "红基线补丁没找到 `.heroRight` 的宽度公式"
+            text = text.replace(WIDTH_FULL, WIDTH_OLD)
+        if no_say_shift:
+            assert text.count(SAY_TOP_NEW) == 1, "红基线补丁没找到 `.SayWords` 的上移声明"
+            text = text.replace(SAY_TOP_NEW, SAY_TOP_OLD)
         patched = sb / "_home.broken.sass"
-        patched.write_text(text.replace(WIDTH_FULL, WIDTH_OLD), encoding="utf-8")
+        patched.write_text(text, encoding="utf-8")
         srcs[0] = ("home.css", patched)
     for name, src in srcs:
         r = subprocess.run(["node", "-e", SASS_JS, str(src)], cwd=str(FE), capture_output=True)
@@ -185,8 +196,10 @@ def build_sandbox(broken_width: bool = False) -> pathlib.Path:
 
 SANDBOX = build_sandbox()
 BROKEN = build_sandbox(broken_width=True)
+NOSAY = build_sandbox(no_say_shift=True)
 URL = SANDBOX.as_uri() + "/index.html"
 BROKEN_URL = BROKEN.as_uri() + "/index.html"
+NOSAY_URL = NOSAY.as_uri() + "/index.html"
 HERO_CSS = (SANDBOX / "home.css").read_text(encoding="utf-8")
 VITRINE_CSS = (SANDBOX / "vitrine.css").read_text(encoding="utf-8")
 
@@ -409,15 +422,18 @@ with sync_playwright() as p:
           m["say"]["transform"] == "none" and m["panel"]["transform"] == "none",
           f"say {m['say']['transform']} / panel {m['panel']['transform']}")
     # 标题字号五轮起走 `clamp()`（用户要"文本放大"）——四轮那条"字号必须是 2.5rem"的锁随之
-    # 作废，改成**按视口算期望值**，锁的仍是"这个 clamp 还在"。20261003 第 7 条再放大一档
-    # （2.5/3.6vw/3.2rem → 2.75/4vw/3.5rem）。
+    # 作废，改成**按视口算期望值**，锁的仍是"这个 clamp 还在"。20261003 两度放大
+    # （2.5/3.6vw/3.2rem → 2.75/4vw/3.5rem → 上限 3.75rem）。
+    #
+    # ⚠️ 上限 56→60px 只在 1920 那档看得出来（1440 的 4vw = 57.6 未触顶，也是 57.6：
+    #    旧上限 56 同样是"被夹住"的），所以三档一起量才既有"clamp 还在"也有"上限抬了"。
     for vw in (1366, 1440, 1920):
         pg.set_viewport_size({"width": vw, "height": 900})
         fs = float(pg.evaluate(
             "() => { const e = document.querySelector('#title');"
             " return e ? getComputedStyle(e).fontSize.replace('px','') : '0'; }"))
-        expect = min(max(44.0, 0.04 * vw), 56.0)
-        check(f"{vw}px：标题字号 = clamp(2.75rem, 4vw, 3.5rem) = {expect:.1f}px",
+        expect = min(max(44.0, 0.04 * vw), 60.0)
+        check(f"{vw}px：标题字号 = clamp(2.75rem, 4vw, 3.75rem) = {expect:.1f}px",
               abs(fs - expect) <= 0.6, f"实测 {fs}px")
     pg.set_viewport_size({"width": 1440, "height": 900})
     m = pg.evaluate(PAINT, {"markup": HERO, "dark": False})
@@ -430,17 +446,18 @@ with sync_playwright() as p:
           title["strokeW"] == "3px" and title["strokeC"] == "rgb(255, 255, 255)",
           f"{title['strokeW']} / {title['strokeC']}")
 
-    print("\n== ①d 第 7 条「社交组件和文本再放大一些」：那一列是**成组**放大的 ==")
+    print("\n== ①d 「社交组件和文本再放大一些」：那一列是**成组**放大的 ==")
     # 只放大一件会让那一列看着散（标签大、命令条小、按钮还是旧尺寸）。四条一起量，
-    # 任何一条单独回退都会红。数值都是 20261003 的新值：标签 15→16.5、星 14→15.5、
-    # 命令条 14.5→16、社交 336→384（按钮 45→54）。
-    check("★ 窗贴标签 16.5px、其字号的函数（星 15.5px）跟着走",
-          m["tag"]["fs"] == "16.5px"
+    # 任何一条单独回退都会红。数值都是 20261003 这一轮的新值：标签 16.5→17.5、
+    # 星 15.5→16.5、命令条 16→17（社交条 384 / 按钮 54 是**上一轮**的值，本轮按用户
+    # 「放大一点**文本**」只动文字，社交按钮尺寸与 `.Social` 宽度一个像素都不动）。
+    check("★ 窗贴标签 17.5px、其字号的函数（星 16.5px）跟着走",
+          m["tag"]["fs"] == "17.5px"
           and pg.evaluate("() => getComputedStyle(document.querySelector('.heroTagStar')).fontSize")
-          == "15.5px",
+          == "16.5px",
           f"tag {m['tag']['fs']}")
-    check("★ 命令条 16px（它是那一列里唯一的等宽字，字号不改会明显矮一档）",
-          m["term"]["fs"] == "16px", f"实测 {m['term']['fs']}")
+    check("★ 命令条 17px（它是那一列里唯一的等宽字，字号不改会明显矮一档）",
+          m["term"]["fs"] == "17px", f"实测 {m['term']['fs']}")
     check("★ 社交条宽 384px（= 四颗 54px 按钮 + 3×56px 缝，是按钮尺寸的函数）",
           m["social"]["w"] == 384, f"实测 {m['social']['w']}")
     soc_fill = pg.evaluate(
@@ -456,6 +473,41 @@ with sync_playwright() as p:
           and abs(soc_fill["left"]) <= 1 and abs(soc_fill["right"]) <= 1,
           f"{soc_fill}")
 
+    print("\n== ①e ★「整列上移 16px」是量出来的（读 top 的实测几何，不读源码字面）==")
+    # 用户第 1 条要的是「社交按钮和文本**上移**」。这条声明为什么必须住在 `top` 上而不是
+    # `transform` 里，sass 那一处注释写了（入场动画 `left-in` 的 keyframes 就是 `transform`，
+    # 会把它盖掉）——那件事**几何量不出来**（被盖掉的结果与没写过一样），所以这里只钉
+    # "它真的把这一列抬起来了 16px"：
+    #   · 对照组 = 同一份 sass 摘掉那一行（与第 ①c 组同一套补丁机制，逐字匹配 + assert）；
+    #   · 比的是**静置 rect.top**，`left-in` 与 `.heroPanel/.vitrine` 的绘制变换在沙箱里
+    #     已经关掉（见 build_sandbox 的那个 `<style>`），不会给两组各引入半个盒宽。
+    # 一行 `top` 挪的是**这一列里每一件**：所以五件各量一次——只挪一件（比如只抬标签）
+    # 在这里会当场红，那正是"整列"这个词的判据。
+    pgs = br.new_page(viewport={"width": 1440, "height": 900})
+    errss: list[str] = []
+    pgs.on("pageerror", lambda e: errss.append(str(e)))
+    pgs.goto(URL)
+    fixed_say = pgs.evaluate(PAINT, {"markup": HERO, "dark": False})
+    pgs.goto(NOSAY_URL)
+    old_say = pgs.evaluate(PAINT, {"markup": HERO, "dark": False})
+    check("对照组页面本身是好的（补丁后 sass 仍编译过、无 JS 报错）",
+          not errss and old_say["say"] is not None, "; ".join(errss[:1]))
+    diffs = {k: old_say[k]["top"] - fixed_say[k]["top"]
+             for k in ("say", "tag", "title", "term", "social")}
+    check("★ 标签/标题/命令条/社交条/整列　五件的位移**都是 16px**"
+          "（= 摘掉 `top: -16px` 前后同一视口实测 rect.top 之差）",
+          all(abs(v - 16) <= 1 for v in diffs.values()), f"实测位移 {diffs}")
+    # 这条同时把它的**代价**钉在明处：`top` 只挪绘制、不动流 ⇒ 右列与 hero 的高度一字不变，
+    # 于是文字列与右列的视觉间距宽了 16px（手机档 28→44，见第 ⑤ 组那条）。
+    # 若哪天有人把它改成 `margin-top: -16px`（真挪流），这两条会红 —— 那是有意为之的提示。
+    check("  且它是**绘制位移**不是流位移：hero 高度与右列 top 一个像素没变"
+          "（所以手机档的视觉间距会宽 16px，第 ⑤ 组按新值量）",
+          abs(fixed_say["hero"]["h"] - old_say["hero"]["h"]) <= 1
+          and abs(fixed_say["right"]["top"] - old_say["right"]["top"]) <= 1,
+          f'hero.h {old_say["hero"]["h"]}→{fixed_say["hero"]["h"]} / '
+          f'right.top {old_say["right"]["top"]}→{fixed_say["right"]["top"]}')
+    pgs.close()
+
     print("\n== ② 底部那行：签名居中 + 渐变填充 + 箭头在它下方（内联 style 收进 sass 的回归锁）==")
     m = seam_at(pg, 1440)
     onesay, scroll, hero, panel, right = m["onesay"], m["scroll"], m["hero"], m["panel"], m["right"]
@@ -466,9 +518,9 @@ with sync_playwright() as p:
     check("签名离 hero 下缘 86px（`bottom: 86px` 是相对 `.heroBottom` 这行算的）",
           abs(hero["bottom"] - onesay["bottom"] - 86) <= 1,
           f"hero.bottom−onesay.bottom = {hero['bottom'] - onesay['bottom']}")
-    check("★ 签名是**渐变字**（粉紫渐变填充 + 透明字色），字号 23px（第 7 条 20 → 23）",
+    check("★ 签名是**渐变字**（粉紫渐变填充 + 透明字色），字号 24.5px（20 → 23 → 24.5）",
           onesay["fill"] == "rgba(0, 0, 0, 0)" and "linear-gradient" in onesay["bgImage"]
-          and onesay["fs"] == "23px",
+          and onesay["fs"] == "24.5px",
           f"fill {onesay['fill']} / fs {onesay['fs']} / bg {onesay['bgImage'][:48]}")
     check("★ 渐变档**没有投影**（`background-clip: text` 下投影画在字形里，会把渐变洗淡）",
           onesay["textShadow"] == "none", f"实测 {onesay['textShadow']}")
@@ -555,8 +607,13 @@ with sync_playwright() as p:
     # 上面那三条判据）。数值断言把"声明有没有落地"钉死，光看"是不是一列"是看不出来的。
     check("★ 手机档的 `padding: … 5% …` 真的生效（左 5% = 18.75px，父规则的 10% 是 37.5px）",
           abs(say["left"] - 375 * 0.05) <= 1, f"say.left {say['left']}（5% 期望 18.75 / 10% 是 37.5）")
-    check("★ 手机档的 `gap: 28px` 真的生效（父规则的 clamp() 会给出别的数）",
-          abs(right["top"] - say["bottom"] - 28) <= 1, f"文字与右列的间距 {right['top'] - say['bottom']}")
+    # 期望值 44 = 这一档声明的 `gap: 28px` **+** `.SayWords` 那 16px 绘制位移（第 ①e 组）。
+    # 这里量的是**视觉**间距：`top` 只挪绘制、不动流 ⇒ 右列该在哪还在哪、文字下缘上抬 16px，
+    # 缝因此比声明的宽 16px。
+    # 判据的"牙"仍在：媒体档若没落地，父规则那条 `clamp(32px, 4vw, 80px)` 在 375px 给出
+    # 32px（4vw=15 撞下限）⇒ 量到 48，与 44 差 4px > 1px 容差，照样红。
+    check("★ 手机档的 `gap: 28px` 真的生效（+ 上面那 16px 绘制位移 = 44）",
+          abs(right["top"] - say["bottom"] - 44) <= 1, f"文字与右列的间距 {right['top'] - say['bottom']}")
     check("  手机档仍占满首屏（`min-height: 100vh` 没被手机档撤掉）",
           hero["h"] >= 780, f"hero.h {hero['h']}")
     check("标题降到 2.2rem=35.2px、描边收细到 2px（桌面的 clamp 下限 2.75rem 会折两行贴边）",
