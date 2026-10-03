@@ -25,6 +25,10 @@
 # `_YYYYMMDD.sql` 后缀，本脚本按它筛。加了新迁移**不需要**动本脚本；将来重新导出基架时，
 # 只需把下面的 `SNAPSHOT` 改成新的导出日。
 #
+# ⚠️ 这条规则有个前提：**快照是完整的**。它并不总是——快照是生产库的导出，生产库漏跑过的
+# 迁移，快照里自然也没有，而日期规则会把那份迁移静默跳过（`password_reset_token` 就是这么
+# 从 20260921 一直漏到 20261004 的）。这类迁移登记在下面的 `apply_despite_snapshot` 名单里强制补跑。
+#
 # ── ⚠️ 关于 `USE saudade_blog;`（本目录最危险的一条约定）────────────────────
 # 每个迁移文件开头都写死 `USE saudade_blog;`。本脚本把它**一律剥掉**，并且库名永远用
 # 位置参数显式传给 `mysql`。不剥的话，`mysql <你的库> < 某个迁移.sql` 会在读到那一行的
@@ -50,6 +54,28 @@ skip_fixture() {
         golden_*.sql|test_accounts_*.sql|user_rename_sora_*.sql) return 0 ;;
         user_remove_legacy_hash_account_*.sql) return 0 ;;
         superadmin_role_*.sql|secretary_role_*.sql|zako_role_*.sql) return 0 ;;
+    esac
+    return 1
+}
+
+# 日期 ≤ SNAPSHOT、但**基架里确实没有它的效果**的迁移：必须补跑（20261004）。
+#
+# "基架 = 快照 ⇒ 快照日前的迁移一律跳过"这条规则**默认快照是完整的**。快照就是一份
+# 生产库的导出，于是它只包含"生产库当时真有的东西"——而 `password_reset_token` 这张表
+# 生产上**从来没建成过**：迁移文件 20260921 就写好了、代码（`routes/auth.rs` 的
+# `reset_password`、`routes/temp_user.rs` 的 `create_password_reset_token`）一直在引用它，
+# 但那一次迁移漏跑了。快照里因此也没有它，而日期规则又把这份迁移静默吃掉
+# ⇒ **从零建库的人建不出这张表，一路建到线上仍然是坏的**（20261004 实测：生产库
+# 28 张表里没有 `password_reset_token`，`fresh_install.sh` 的产物同样没有）。
+#
+# 加进本名单的门槛只有一条：**脚本必须幂等**——它会被无条件跑一遍，不看日期。
+# （这里是 `CREATE TABLE IF NOT EXISTS`。）重新导出基架、`SNAPSHOT` 前移之后，
+# 名单里的项要逐条核对：效果进了新快照的就删掉。
+#
+# ⚠️ 同 `skip_fixture`：`|` 是 case 的语法，只能写成字面 pattern，不许 `$变量` 展开。
+apply_despite_snapshot() {
+    case "$1" in
+        password_reset_token_*.sql) return 0 ;;
     esac
     return 1
 }
@@ -147,8 +173,8 @@ while IFS= read -r f; do
         echo "   ↷ $name（文件名里没有 YYYYMMDD，跳过）"
         continue
     fi
-    if [ "$date" -le "$SNAPSHOT" ]; then
-        continue   # 快照那天及更早的，效果已经在基架里
+    if [ "$date" -le "$SNAPSHOT" ] && ! apply_despite_snapshot "$name"; then
+        continue   # 快照那天及更早的，效果已经在基架里（例外见 apply_despite_snapshot）
     fi
     echo "   → $name"
     if ! apply "$f"; then
