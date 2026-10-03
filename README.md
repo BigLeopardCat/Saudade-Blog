@@ -12,13 +12,34 @@ MySQL，agent 进程本身无状态：每次请求都是新线程，连续性由
 
 首页另有一件展品：**文章向量空间图谱**。它把本站文章抽出的关键词按 embedding 投到三维空间，
 点是词、相关的词之间连线，可拖动视角、双击词跳转文章，也能在下方输入框里做**向量检索**定位。
+点画多大按**文章热度**（浏览、点赞、收藏、评论加权）算，不按词的重要度。
 
-图谱是**按站点构建**的产物：agent 仓的建图脚本从你自己的文章库抽词、算 embedding、布局，
-并在产物里记下它属于哪个站点。构建时若这份标记与本站不符（例如直接克隆了别人的仓库、
-没重新建图），这件展品**不会被注册**——你既不会看到别人的语料，也不会看到一张坏掉的卡片。
+图谱是**按站点构建**的产物，而"换一批文章"这件事不需要你改代码或重新部署：后台
+**「站点设置 → 向量图谱」**有一个页面，点一下就在服务端按当前**公开文章**重算一遍——
+进度、内存占用与日志尾部轮询可见，跑完**刷新首页就是新图**。产物的主题词与 embedding
+由 agent 仓的建图脚本负责；重建任务把产物写到 agent 自己的目录后，由后端直接供出
+（`GET /api/public/graph/manifest` + `/api/public/graph/artifact/:file`，见下），
+仓库里 committed 的那份 `frontend/public/graph/` 只是"从没重建过的站点"的种子。
+
+归属站点闸在**运行期**判、不在构建期：产物里记的 `site` 与访客浏览器的 origin 不一致时，
+展品渲染成"文章向量空间尚未为本站点生成，请在后台重建"——把该做什么直接告诉你，
+而不是让卡片凭空消失。所以迁移到自己的机器后，重建一次就够了。
 
 它与对话是两条独立的检索线：图谱查询走 1024 维精确余弦（纯 Python 点积），agent 问答走
-词法 BM25（语料量小，且要为低配部署留内存余量）。细节见 [docs/word-graph.md](docs/word-graph.md)。
+词法 BM25（语料量小，且要为低配部署留内存余量）。**热度只影响画多大，不参与检索排序**
+（局部关键词回退仍按词的重要度打分，否则热门文章的词会垄断所有查询）。
+细节见 [docs/word-graph.md](docs/word-graph.md)。
+
+## 站上有什么
+
+- **写作与内容**：Markdown 文章（内嵌编辑器）、分类与标签、封面裁剪、图库。
+- **阅读与互动**：站内搜索、阅读量/点赞/收藏、评论区（Markdown、表情、点赞与踩、
+  就地展开回复）、河灯留言板与灯影集、友链、公告。
+- **看板娘对话**：站内问答、页面跳转、特效与夜间模式开关；接入 IoT 后还能把内容推到
+  ESP32 的 OLED 屏（见《架构一览》与会话时序）。
+- **展示柜**：文章向量空间图谱，可由后台一键按当前公开文章重算（见上文）。
+- **后台**：内容/评论/留言板管理、用户与角色、对话额度、站点设置与待办、访问统计。
+- **可选件**：ESP32 物联网接入（MQTT over TLS + 设备控制台），不装不影响其余部分。
 
 ## 架构一览
 
@@ -102,6 +123,66 @@ sequenceDiagram
 > 完整分段（每一步做了什么、字段叫什么、失败怎么收场）见 agent 仓库
 > `docs/agent-architecture.md` 的《3. 一次对话的完整链路》；这里只保留骨架。
 
+## 项目结构
+
+```
+Saudade-Blog/
+├── src/                      # Rust 后端（Axum + SeaORM + MySQL 8）
+│   ├── main.rs               # 入口：读 .env、连库、只监听 127.0.0.1:3000（对外靠 nginx 反代）
+│   ├── routes/               # 全部 HTTP 路由与 handler，mod.rs 是挂载点（公开/受保护两张路由表）
+│   │   ├── chat.rs           # 对话核心：鉴权、历史入库、SSE 逐帧转发、断连清理
+│   │   ├── notes.rs          # 文章列表/详情/站内搜索
+│   │   ├── graph.rs          # 向量图谱：产物供给 + 后台重建代理
+│   │   └── …（评论、留言板、标签、上传、后台统计…）
+│   ├── entity/               # sea-orm 实体定义（与数据库表一一对应）
+│   ├── auth_jwt.rs           # JWT 签发与校验（HS256）
+│   ├── authz.rs / quota.rs   # 角色权限判定 / 对话额度
+│   └── middleware.rs         # 请求日志、CORS 等中间件
+├── frontend/                 # React SPA（**不含**看板娘，见下文《看板娘前端》）
+│   ├── src/
+│   │   ├── frontHome/        # 前台页面（首页、文章页、展示柜…）
+│   │   ├── pages/            # 登录页、河灯讨论区（RiverBoard）、后台 Dashboard
+│   │   ├── components/       # 通用组件（评论区、编辑器、徽章…）
+│   │   ├── apis/             # 后端接口封装
+│   │   └── router/           # 路由表
+│   ├── public/               # 静态资源；构建前 `npm run fetch:widget` 取回看板娘（见下）
+│   ├── tests/                # 前端测试（*.test.mjs 进 CI；*.test.py 无头沙箱走夜间）
+│   └── vite.config.ts        # 构建配置（站点地址等构建期变量在这里读）
+├── saudade-blog-agent/       # 看板娘的"大脑"（**独立 git 仓库**，本仓 .gitignore 忽略）
+├── iot/                      # ESP32 物联网接入（可选件：控制台、固件骨架、开关脚本）
+├── scripts/
+│   ├── migration/            # 建库与增量迁移（入口 fresh_install.sh，**别手跑 *.sql**）
+│   ├── deploy/               # 部署脚本（CI 调用；也可手动兜底）
+│   ├── dev/                  # 开发辅助（如装 git hooks）
+│   └── healthcheck.sh        # 心跳探针（建议 cron 周期执行）
+├── docs/                     # 设计文档：部署与运维 / 安全边界 / 向量图谱 / IoT
+├── tests/                    # 后端集成测试（跟着 cargo test 跑；tests/manual/ 需活服务）
+└── .github/workflows/        # CI/CD（push 自动构建 + 部署）
+```
+
+## 快速开始
+
+前置：**Rust** stable、**Node.js** ≥ 18、**MySQL** 8。想跑 AI 对话再加 **Python** 3.10+。
+
+```bash
+git clone <本仓地址> && cd Saudade-Blog
+
+# 1) 建库。库名必须叫 saudade_blog，用脚本建而不是把 *.sql 按文件名顺序全跑一遍
+ALLOW_PRODUCTION_NAME=1 bash scripts/migration/fresh_install.sh saudade_blog -uroot -p
+
+# 2) 再建一个应用账号（后端进程用它连库，别拿 root 跑），并照 §2.1 授权
+# 3) 配环境变量；DATABASE_URL 与 JWT_SECRET 不配就起不来，对外部署还要改 SITE_URL
+cp .env.example .env
+
+# 4) 起后端（只监听回环，前面挂 nginx 才对外）
+cargo run
+```
+
+前端、agent 与 IoT 各自的起法，"哪些迁移脚本不能无脑跑""两个站点地址变量为什么都要设"
+这类问题，都在 [CONTRIBUTING.md](CONTRIBUTING.md) 的《2. 跑起来》里——**那一节是唯一的
+操作清单，本文不重复**。每个环境变量干什么、默认值是什么，看
+[.env.example](.env.example)（它是这一类信息在本仓的唯一出处）。
+
 ## 开发流程（重要约定）
 
 > **部署一律走 CI：本地不编译、不手动构建。** `vite build` 与 `cargo build --release`
@@ -114,7 +195,7 @@ flowchart LR
     CI["GitHub Actions 云端构建<br/>Rust 编译 + 前端打包<br/>（agent 另有评测门禁）"]
     R2["上传 R2<br/>按提交号归档 deploy/&lt;sha&gt;/"]
     TRIG["SSH 触发部署<br/>CI 等它结束<br/>退出码 = 部署结果"]
-    LIVE["二进制替换 + systemctl restart<br/>dist 直接覆盖"]
+    LIVE["二进制替换<br/>（源码变了才重启服务）<br/>dist 直接覆盖"]
 
     PUSH --> CI --> R2 --> TRIG --> LIVE
 ```
@@ -164,9 +245,12 @@ nginx error.log 增量扫描，异常追加 health.log。
 - **新增 Agent 工具**：在 `tools/base.py` 用 `@tool` 定义并加入 `_TOOL_REGISTRY`；若服务于
   固定流程任务，**必须**在 `skills.py` 注册对应技能（触发条件 + 工具序列模板 + 回复契约），
   否则 planner 无法可靠选择它——这是 agent 的核心约定。
-- **接口一览**：公开（登录、文章/分类/标签/友链/留言板、聊天 SSE `/api/chat/stream`、
-  前端监控上报 `/api/monitor/log`）；受保护（JWT：内容增删改、图片上传、`/device-api/*`、
-  **图谱检索 `/api/public/graph/query`**——要求登录，防匿名刷 embedding 调用）。
+- **接口一览**：公开（登录、文章/分类/标签/友链/留言板、评论点赞踩、图谱产物
+  `/api/public/graph/{manifest,artifact/:file}`、聊天 SSE `/api/chat/stream`、
+  前端监控上报 `/api/monitor/log`）；**路径在公开表、但 handler 内要求登录**的只有一条——
+  图谱检索 `/api/public/graph/query`（它要花 embedding 调用，不能真匿名开放）；
+  受保护（JWT + 管理员：内容增删改、图片上传、后台统计与审核、图谱重建
+  `/api/protected/graph/rebuild*`、`/device-api/*`）。
 - **SSE 帧协议**：`\n\n` 分隔 + JSON 编码；命令帧（导航/特效/夜间）、`__PROCESS__` 过程轨迹、
   `__RESET__` 否定轮清屏、`__SUMMARY__` 摘要回流、`__END__` 结束。改协议三端（Python/Rust/前端）同步。
 - **设计与文档索引**（`docs/`）：

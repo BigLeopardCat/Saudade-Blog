@@ -76,6 +76,12 @@ flowchart TB
 | MQTTS **8883** | 公网 | **设备接入**（TLS，正式证书，与 HTTPS 同源） |
 | TCP 1883 | 仅回环 | device-service 内部连接 |
 | WSS 8083 | 仅回环（nginx /mqtt） | 控制台实时流 |
+| Dashboard **18083** | 仅回环 | EMQX 自带管理台；**别挂公网**（明文 HTTP + 单一口令） |
+
+> **看 Dashboard 走 SSH 隧道**：`ssh -L 18083:127.0.0.1:18083 <服务器>` 再开
+> `http://127.0.0.1:18083`。登录口令不在仓库里——`iot/emqx/configure_emqx.py` 首跑时
+> 会轮换管理员口令并把新口令与 API Key 落盘到 `iot/emqx/.admin_creds`、`.api_key`
+> （0600、已 gitignore）；**只有这两个文件丢了才需要重跑脚本**（见 `iot/emqx/README.md`）。
 
 认证链（顺序匹配）：
 1. **JWT 认证链**（网页用户）：password = 博客 JWT，HMAC 校验（secret = 博客 `JWT_SECRET`）
@@ -274,15 +280,23 @@ esp_mqtt_client_config_t cfg = {
 
 ### 7.1 边际代价
 
-| 项 | 实测 | 对比 |
+| 项 | 实测（20261004 cgroup 口径） | 对比 |
 |---|---|---|
-| 常驻内存 | EMQX ~42 MiB + device-service ~1 MiB | agent 每加一个 worker 就是 ~130 MiB ⇒ **IoT 全量约等于 1/3 个 worker** |
-| 磁盘 | `/usr/lib/emqx` 89 MB + `/var/lib/emqx` 1.3 MB ≈ 90 MB | 40G 盘上占 0.2%；开发侧源码 `mqtt-demo` 14 MB、固件仓 70 MB 不算运行依赖 |
+| 常驻内存 | EMQX ~48 MiB + device-service **~4.5 MiB** ≈ **52 MiB** | agent 每加一个 worker 就是 ~130 MiB ⇒ **IoT 全量约等于 0.4 个 worker** |
+| 磁盘 | `/usr/lib/emqx` 89 MB + `/var/lib/emqx` 1.4 MB ≈ 90 MB | 40G 盘上占 0.2%；开发侧源码 `mqtt-demo` 14 MB、固件仓 70 MB 不算运行依赖 |
 | CPU | 空闲时 ~0（load 0.10/0.21/0.35 的机器上无可见贡献） | — |
 | 公网面 | 多开 **8883**（MQTTS） | 主站只开 80/443；这是**唯一为设备开的口子**，安全组与证书都要单独管 |
 | 运维面 | **两个不经 CI 的 unit**（emqx、saudade-device）；device-service 源码不在本仓，改动要手动 `cargo build --release` + 重启 | 主站两个服务都走 CI；这两件是"游离在流水线之外"的例外 |
 
-按生产合计 ~576 MiB 算，**IoT 占约 7%**；按生产 CPU 占用算约等于 0。
+> ⚠️ **device-service 那一行改过一次口径**：早先这里与
+> [deployment-and-ops.md](deployment-and-ops.md) §8.2 都写 ~1 MiB，20261004 量到 **4.5 MiB**
+> （4.7 MB，一个 Rust + SQLite + MQTT 客户端的常驻量级本来就该是这个数，1 MiB 更像"没量、
+> 估的"）。**结论不受影响**：IoT 全量 52 MiB，对照 agent"凉 241 ↔ 热 456 MiB"的摆动
+> ——它比 agent 自己的日常波动还小。
+>
+> **分母要连着状态引**：生产合计在 **~410 MiB（agent 刚重启）↔ ~620 MiB（worker 跑过重活）**
+> 之间，所以"IoT 占几个百分点"这个数会随取样时刻在 **8%~13%** 之间变（52/620 与 52/410）。
+> 表里那条"≈0.4 个 worker"用的是**上界 130 MiB/worker**，不受这个摆动影响，引用它更稳。
 
 ### 7.2 两个必须记住的运维风险（不是代价，是坑）
 
@@ -296,7 +310,7 @@ esp_mqtt_client_config_t cfg = {
 
 三条任一成立再动它，否则保留：① 长期（>3 个月）没有一台设备在线、也不打算再接；
 ② 需要用 8883 这个公网端口去换别的服务；③ 服务器要缩容到 2GB 以下（那时 90MB 磁盘与
-42MB 内存才真正开始有意义）。
+52 MiB 内存才真正开始有意义——这个数在 3.7GB 上是零头，到 2GB 上就是 2.5% 的整机）。
 
 ### 7.4 怎么卸（分两档，别只做第一档）
 
@@ -311,6 +325,15 @@ sudo systemctl disable --now emqx saudade-device
 # 彻底清（可选）：删 iot/ 目录、/usr/lib/emqx、/var/lib/emqx、drop-in 与 8883 安全组规则
 ```
 
-**两档的差别**：`toggle.sh off` 之后 agent 的工具面与前端入口都没了，但 EMQX 仍在监听
-8883 并占着内存；**只做第一档等于"看起来拆了，其实没省资源"**。[iot/README.md](../iot/README.md)
-的《代价》一节是给"要不要装/要不要留"做决策用的短版。
+**两档的差别**：第一档做完之后前端三个入口（`/device-console/`、`/device-api/`、`/mqtt`）
+与 agent 的工具面都没了，但 EMQX 仍在监听 8883 并占着内存；**只做第一档等于"看起来拆了，
+其实没省资源"**（省的是 52 MiB 里的 device-service 那 4.5 MiB 与 agent 说真话的那点逻辑，
+几乎为零）。[iot/README.md](../iot/README.md) 的《代价》一节是给"要不要装/要不要留"做决策用的短版。
+
+> ⚠️ **别以为 `toggle.sh off` 一条就够**（脚本自己的头注与结尾都在说这件事）：
+> 它**只动 nginx 那一面**。另外两处（Rust 读的 `.env`、agent 读的 `.env` 里的 `IOT_ENABLED`）
+> 得手动改，而且**改完要各自重启**——Rust 那条管的是 `sitemap.xml` 列不列设备控制台，
+> agent 那条管的是"被问到物联网平台时说真话还是说本站未部署"。三处不一致**不会报错**，
+> 典型症状是"agent 带你跳一个 404"或"页面能开但 agent 说本站没有"；
+> 核对用 `./iot/status.sh`（判据是**内容**不是状态码——卸载后 `/device-console/` 仍会
+> 落进 SPA fallback 返回 200 的首页，见 [deployment-and-ops.md](deployment-and-ops.md)）。

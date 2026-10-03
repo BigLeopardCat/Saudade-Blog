@@ -37,7 +37,7 @@ flowchart TB
 
 | 入口 | 鉴权在哪 | 判据 | 实测失败形态 |
 |---|---|---|---|
-| `/api/chat`、`/api/chat/stream` | Rust | JWT（HS256 / `JWT_SECRET`） | 401 |
+| `/api/chat`、`/api/chat/stream` | Rust | JWT（HS256 / `JWT_SECRET`） | **200 + `success:false`**（冻结/已收回/令牌不可用）或不带令牌的合规告知（`success:true`）——**聊天链路从不回 401**，只有非法 `conversation_id` 才 404 |
 | `/api/public/graph/query` | Rust | **要求登录**（防匿名刷 embedding 调用） | 401 `{"ok":false,"reason":"login_required"}` ← 匿名 curl 实测 |
 | `/api/public/notes*` 等公开读 | 无（有意公开） | — | 200 |
 | `GET /api/public/notes/:id/stats` | 无（有意公开） | 阅读量/点赞数与"我点过没有"；未登录 ⇒ `liked:false`（**是成功，不是降级**） | 200 |
@@ -296,7 +296,7 @@ QPS 量级在个位数，这个代价可以忽略；规模上去之后的下一�
 | `summary` / `executions` | 8000 字符 | 注入文本，防越灌越长 |
 | `current_url` / `page_title` / `effects` / `darkmode` | 500 字符 | 都是短标量 |
 | `/graph/query` 的 `q` | 128 字符 | 前端本就截到 64（`locate.ts QUERY_MAX`） |
-| `/review` 的 `content` | 4000 字符 | 留言本身 2000 上限，留一倍余量；模型只取前 500 |
+| `/review` 的 `content` | 4000 字符 | 留言（河灯，`talks.rs`）本身 **500 字**上限，留 8 倍余量；模型只取前 500 |
 | 并发流（每 worker） | 8 → **503**（排队 3s 仍拿不到） | LLM 流是最贵资源（单次最长 180s）；无闸时并发只会一起排队到超时 |
 | `/review` 并发 | 4 → **503**（排队 3s） | 20260925 新增的**独立**小闸：此前它不占任何闸，谁连得上 8010 就能免费烧模型额度。刻意不共用对话那 8 个槽位（留言审核是同步短任务，抢槽位会让留言高峰把对话打成 503）；`threading.BoundedSemaphore` 版，因为它是 `sync def`（跑线程池、不占事件循环） |
 
@@ -342,13 +342,18 @@ QPS 量级在个位数，这个代价可以忽略；规模上去之后的下一�
 | **没有短令牌 + refresh 轮换** | 令牌一旦泄漏，在 `exp` 之前一直可用（`ver` 只能让**服务端主动**作废，挡不住"服务端不知道"的持有者） | 7 天单令牌（见 §2.3）。企业做法是 access 短（5–15 分钟）+ refresh 长且**一次性轮换**（重放旧 refresh 即判定失窃并全族作废）；本系统是单人博客，改密码 + 冻结两条主动通道已覆盖真实需求，**没有为此加一张 refresh 表**。要加时注意：轮换的判据是"一个 refresh 用了两次"，需要服务端存已用过的序列 |
 | **冻结/收回管不到物联网那条链路**（device-service 与 EMQX broker） | 一个被冻结账号手里那枚 7 天令牌，在过期前**仍然是一枚合法身份**：`device-service` 收它、`/device-api/*` 照走（范围是它自己名下的设备）、`mqtts` 连接照建（`device-console` 复用的就是同一枚 `localStorage.tokenKey`）。即"冻结 = 全站立刻下线"这句话**对 IoT 那半边为假** | **今天没修，如实记**。结构性原因：那两个验证者**各自解一遍同一个 JWT、且都不查库**——device-service 的令牌校验函数用自己的 `Claims{sub,exp,role}` 只验签与 `exp`（**无 `deny_unknown_fields`，所以新增的 `ver` 声明不会打挂它**，这一点已核过是安全的：`Cargo.toml` 里只有 `rusqlite`、没有 MySQL 客户端，它今天也**没有能力**查 `user.status`），EMQX broker 侧同样只校验签名与 `exp`（`iot/emqx/configure_emqx.py` 的 `mechanism=jwt` 块）。要收口得让 device-service 能读 `user.status`/`token_version`（先得给它一条 MySQL 通道），或改成回调博客后端做在线校验——是一次跨服务的改造。**本仓的冻结功能不受此影响**：站点自身的所有 `/api/*` 通道（含前台）都走 `auth_uid`/`auth_guard`，冻结即生效；受影响的只有 device-api 与 MQTT 两个入口。因此后台冻结弹窗的文案写的是"已登录的**网页会话**立即失效"，没有写"所有设备"——**文案不许越过判据** |
 | **登录令牌在 `localStorage`**（不是 HttpOnly cookie） | XSS 能直接读走它；`HttpOnly` 能让脚本读不到（但仍能被"以你的身份发请求"） | 未改。改成 cookie 要同时动前端存取、CORS/CSRF（`SameSite` + 双提交令牌）、以及 device-console 那半边复用 `localStorage.tokenKey` 的链路（见 §1）——是一次跨三个前端的改造，今天没做，**如实记在这里** |
-| 没有**按用户/IP 的限流** | 单个已登录用户可以连续发起对话占满并发槽 | Rust 侧也没有；只有总并发闸 |
+| **对话链路**没有按用户/IP 的限流 | 单个已登录用户可以连续发起对话占满并发槽（槽位本身有闸，见 §4） | 对话这一路只有总并发闸。**别推广成"Rust 侧没有限流"**：内容发布有按 uid 的限流（`src/risk.rs` 的 `PostRateLimiter` 间隔闸 + 窗口计数 ⇒ 超限转人工 / 自动禁言），登录有按 IP/账号的失败限流（`LoginRateLimiter`） |
 | **分块传输**（无 Content-Length）不过体积闸 | 构造性的大 body 能绕过 §4 的第一行 | 只靠字段级限额兜，已写在代码注释里 |
 | agent 端点**无服务间凭据** | 同机的任意进程可调（含 `/chat/stream`） | 依赖回环边界；跨机部署前必须补。**"我代表谁"已由 §2.1 的断言解决，这条说的是"谁在调我"**——20260925 起 `/chat`、`/review` 的**身份**都核了（缺头 401），`/graph/query` 连身份都不核（它不涉及身份，失败一律降级 200 + ok=false）；"谁在调我"这一维三者照旧 |
 | **写操作的事前授权只覆盖了一半** | 设备屏显等"用户眼前"的写仍然只有"调用前查断连"这道防护；**代用户写站点内容**这一类已有人在回路闸（20260921 第三轮起还多了一个可选出口：非命令措辞的意图 → 确认弹窗，一次点击代替一轮对话），但**还没有这样的工具**，所以闸今天空转 | 20260920 起 agent 侧落地：需确认的 scope（`CONSENT_SCOPES`）未获用户**本轮消息**明确确认 → 产 `__ERROR__: 待确认[consent_required]` 帧、**不调用工具**，且 gate 5a 让叙述侧无法把它说成"已完成"（`agent/authz.py` + `test_authz.py` ⑨，见 `saudade-blog-agent/docs/secretary.md` §3.4）。**20260921 第二轮**：后台写（标签创建/文章状态/文章标签）落在 `write.console`，闸**第一次真正承重**；"以谁的名义"的审计同步落地（写回执带 `principal_role`，零迁移渲染进 `execution_log.detail`）。**第三轮**：判据入口剥系统消息壳（此前锚定判据在真实输入形态下从未命中过）+ 确认弹窗（`__CONFIRM__:` 帧 + HMAC 无状态令牌 + 隐藏确认请求，见 §2.2）。**20260922 第四轮**：写面扩到九件（标签改/删、分类增改删 + 层级移动端点），闸与目标校验照旧生效、"目标"这一轮起可以是**名字**（工具对着实时字典解析，解不出即零写）。**第五/六轮**：公告三件（快道结构性关闭）与留言复核/删除两件（靶子是访客内容；删留言进 `_ALWAYS_CONFIRM_TOOLS`）+ 身份地基（见 §2.2）。**剩下的**：① `uid=0`（无身份）时写命令约每 6 次有 1 次被 narrator 讲成"本轮没有执行任何工具"而撞上洞③判据 → 走 gate 打回（兜底文案已按原因码分）；② 前一轮记为"目标解不出来时仍会弹确认框"的那条**已落地**：目标预检（`_write_target_refusal`）在弹窗之前就零工具收尾，绝不弹一个"点了也只会被拒"的框 |
 | **阅读量可以被匿名刷**（20260930 新增的能力） | `POST /api/public/notes/:id/view` 是匿名写、服务端无身份可依 ⇒ 换个浏览器/清掉 `localStorage`/直接 curl 就能重复 +1。**它统计的是"页面被打开的次数"，不是"多少个人读过"**——报表上的数字照这个口径读 | 不修（刻意）：要真去重就得给访客发一个设备指纹或 IP 计数，前者是隐私问题、后者在 nginx 后面还要取 `X-Forwarded-For`（可伪造），成本远高于收益 |
 | **点赞数也可以被匿名刷**（20261001 起；此前那条"点赞没有这个问题"的结论**已作废**） | `POST/DELETE /api/public/notes/:id/like` 放开匿名（用户要求）后，去重键是**客户端自己生成、自己上报**的 `X-Visitor-Key`（存在 `localStorage`）：清掉它、换个浏览器、或者直接 curl 换一个 key，同一个人就能重复点赞。**"点赞数"从此与阅读量同一档可信度**——它统计的是"有多少次点赞动作被发出来"，不是"多少个人点了赞"，报表上的数字照这个口径读 | 不修（刻意，与阅读量同一条取舍：真去重要么上设备指纹、要么上 IP 计数，前者是隐私问题、后者在 nginx 后面还要取可伪造的 `X-Forwarded-For`）。保住的是**幂等性**而非"一人一票"：`UNIQUE(note_id,visitor_key)`（匿名行）与 `UNIQUE(note_id,user_id)`（登录行）两条键分工，同一个 key 重复点仍然只落一行；登录态点赞会顺带清掉同一 `visitor_key` 的匿名行，所以"先匿名点、再登录点"不会投出两票。服务端只做格式校验（8–64 位、`[A-Za-z0-9_-]`），**不把 `visitor_key` 当身份凭据**：伪造它换不来任何权限，能拿到的与"没登录的访客"完全一样 |
 | 工具错误只分了**两类**（empty / unavailable），没有统一错误码枚举 | 想按错误类型做重试策略（超时 vs 鉴权失败）时还得读文案 | 20260916 已落地两类 + checker 的 `unavailable` 受阻码；更细的分类按需再加 |
+| **没有任何 HTTP 安全响应头** | HSTS / CSP / X-Frame-Options / X-Content-Type-Options 一个都没设——实测 `curl -I https://<站点>/` 只回 `Cache-Control`。点击劫持、MIME 嗅探、降级劫持这几类经典面**完全靠浏览器默认行为兜** | 现状如此，没有成文策略（nginx 站点配置里 `add_header` 只用于 `Cache-Control`）。要补的顺序：先 HSTS 与 `X-Content-Type-Options: nosniff`、再 `X-Frame-Options: SAMEORIGIN`，**CSP 放最后**且先用 `Report-Only` 跑一段（本站有自托管的看板娘与模型资源，写死策略容易误杀） |
+| **依赖漏洞没有响应流程** | 依赖（cargo / npm / pip）里出了 CVE 不会有人知道，升级全靠人工注意到 | 仓库没有 `dependabot.yml`，CI 里也没有 `cargo audit` / `npm audit` / `pip-audit` 任何一步 |
+| **没有漏洞披露政策与安全联系人** | 外部研究者不知道该报给谁、按什么规则、多久回应 | 没有 `SECURITY.md`；`CONTRIBUTING.md` 里也没有披露条款 |
+| **密钥轮换没有成文流程** | `JWT_SECRET` 泄漏时，轮换它 = **所有已发出的令牌立即失效（全员重新登录）**，且库里旧令牌不会被清理、只是验不过——这件事没有写下来的执行步骤；中转桶凭据与模型 key 同理 | 没有轮换周期、没有演练；只有"泄漏过的密钥被动滚动过一次"这一条事实 |
+| **日志与 trace 里有访客原文** | 对话正文、留言片段会落进 `logs/agent/traces/*.json` 与各服务日志；目录 0700、文件 0600，但**保留期没有对外说明** | trace 按 mtime >24h 压缩、>30 天删除（agent 仓 `eval/trace_retention.py`）；其余日志由 logrotate 保留 14 天。**外部文档若要写数据保留，照这两条写，别另编** |
 
 已完成（20260916，留档说明为什么值得做）：
 - **协作取消有针对性测试**：`test_cancel.py` 把"取消后不写设备"从"结构保证"变成"回归锁住"；
@@ -411,7 +416,7 @@ cd saudade-blog-agent && .venv/bin/python eval/probe_admin_write.py --uid <uid> 
 #    b) 真链路（打 127.0.0.1:3000，自己建一个一次性账号当靶子、跑完删掉）：
 cd <仓库根> && saudade-blog-agent/.venv/bin/python \
      scripts/probe_token_revoke.py --admin-uid <uid>
-#    19 条断言，覆盖：冻结 ⇒ 旧令牌当场失效（后台 401 / 普通接口带原因拒绝）、
+#    23 处断言（静态 check() 计数，含【六】【七】两段条件断言），覆盖：冻结 ⇒ 旧令牌当场失效（后台 401 / 普通接口带原因拒绝）、
 #    连登录都进不来；解冻 ⇒ 旧令牌**仍然**失效（代次只增不减）、重新登录才可用；
 #    不带 ver 的令牌（agent 代调令牌的形状）照常放行；改密码 ⇒ 旧令牌失效而新令牌可用；
 #    不能冻结自己；非普通账号不能从这个入口删掉。
@@ -459,7 +464,7 @@ cd <仓库根> && saudade-blog-agent/.venv/bin/python \
 #         改这条边界 = 把"限制发言"变成"封号"，是本仓明令不许的合并。
 #       · 自动禁言那条通知的正文**必须说清分野**（`risk::mute_notice_body`：仍可登录/浏览/
 #         对话），照抄冻结那句 `account_change_body`（"你此前登录的全部设备已失效"）就是假话。
-#       离线锁：`cd frontend && node tests/content-risk.test.mjs`（96 条，含"禁言不碰
+#       离线锁：`cd frontend && node tests/content-risk.test.mjs`（99 条，含"禁言不碰
 #       status/token_version"、"哨兵比较只在 authz.rs"、"前端账号页/个人中心文案"）；
 #       策略表锁：`cargo test --lib authz::`。
 
