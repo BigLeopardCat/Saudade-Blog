@@ -23,6 +23,9 @@
 //     `112px 6% 148px 8%`、文字与手账内页的间距是 48px 不是 28px；
 //   · 同文件 `.TopArticle` 手机档：`width: 95%` 被父规则的 `width: 80%` 压掉
 //     ⇒ 手机上置顶卡比普通卡（后段 `.allArticles` 那条 95%）窄一圈，两边对不齐。
+//     （20261004 复核：那两条 `width` 都已删——顶带拆成左轮播/右公告栏后，宽度统一
+//     归行容器 `.TopBand`（桌面 90% / 手机 95%），`.TopArticle` 只剩 `min-width: 0`。
+//     判据本身与这段病史无关，留在这是"同一个坑别踩第二次"的记录。）
 //
 // 20261001 的第三处（特异性型，编辑这一版时抓到的）：`ReadArticle/index.sass` 的
 // `@media (max-width:768px)` 整块——`width`/`padding`/`height`/`bottom`/`max-width` 五条

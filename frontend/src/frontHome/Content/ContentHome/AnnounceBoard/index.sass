@@ -1,0 +1,261 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   首页顶带右栏 —— 公告栏那张和纸小卡（20261004）
+
+   与左栏的置顶轮播卡**同一行、同一高**：高度不在这里定，由 `.ContentContainer .TopBand`
+   的 `height: 460px` + `align-items: stretch` 拉平（见 ContentHome/index.sass）。
+   这里只管"纸长什么样"与"列表怎么滚"。
+
+   两条必须知道的：
+   · **不要写 `height: 100%`**。等高只有一个来源（行容器的 stretch），多一个来源就多一套
+     "内容溢出时到底谁说了算"的判定；要滚的是里面的 `.abBody`。
+   · 每个 `var()` 都带兜底字面量：本仓的无头沙箱只编译**组件自己的** .sass，
+     `src/index.css` 里的全局令牌在沙箱里不存在（这条踩过，见 AnnouncementModal/index.sass）。
+     真机上令牌在场、兜底不生效 —— 夜间档靠 `.frontDark` 换令牌值自动翻转，**不写任何字面色**。
+
+   动效：只有 hover 的底色过渡。**没有常驻动画**（本仓有两次"首页动画烧帧"的事故记录，
+   见 App.sass 与 Vitrine/index.sass 的头注）；骨架条也是静态的。
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.AnnounceBoard
+    position: relative
+    display: flex
+    flex-direction: column
+    /* grid 项防溢出：标题很长时不把列撑宽 */
+    min-width: 0
+    padding: 24px 20px 14px
+    background-color: var(--washi-paper, #fffdfa)
+    /* 纸的淡彩：与公告弹窗同一支配方（左上一点粉、右下一点天青），只是更淡 */
+    background-image: radial-gradient(120% 90% at 6% 0%, rgba(255, 158, 201, 0.16), rgba(255, 158, 201, 0) 62%), radial-gradient(110% 85% at 100% 100%, rgba(143, 211, 234, 0.14), rgba(143, 211, 234, 0) 58%)
+    border: 1px solid var(--washi-line, rgba(198, 152, 192, 0.42))
+    border-radius: 15px
+    box-shadow: var(--washi-shadow-lg, 0 22px 54px rgba(120, 90, 140, 0.22))
+    /* 顶上那条胶带是**故意探出卡片**的（与弹窗同款），hidden 会把它齐根切掉 */
+    overflow: visible
+
+/* 一条和纸胶带横在纸顶上（与 `.washiModal` 那条同款，只是窄一点）。
+   用伪元素而不是塞 DOM：它不参与布局，也就不动标题的位置。 */
+.AnnounceBoard::before
+    content: ''
+    position: absolute
+    top: -12px
+    left: 50%
+    width: 104px
+    height: 26px
+    margin-left: -52px
+    background: var(--washi-tape, rgba(255, 222, 238, 0.86))
+    box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.5), inset -1px 0 0 rgba(255, 255, 255, 0.5)
+    transform: rotate(-2.4deg)
+    pointer-events: none
+
+.abHead
+    display: flex
+    align-items: center
+    gap: 8px
+    flex: none
+    margin-bottom: 12px
+    padding-bottom: 10px
+    border-bottom: 1px dashed var(--washi-line, rgba(198, 152, 192, 0.42))
+
+    .iconfont
+        flex: none
+        font-size: 16px
+        line-height: 1
+        color: var(--washi-pink-deep, #d94f9a)
+
+.abTitle
+    font-size: 14px
+    font-weight: 700
+    letter-spacing: 0.12em
+    /* 描边渐变字：与首页「文章」牌子 / 签名同一支渐变（深浅两档在 index.css 各一份） */
+    background-image: var(--washi-grad, linear-gradient(100deg, #ff7fc0 0%, #b06ee8 52%, #63b8e8 100%))
+    -webkit-background-clip: text
+    background-clip: text
+    color: transparent
+    -webkit-text-fill-color: transparent
+
+/* 列表区：**这里才是那个滚动容器**（卡片本身高度由行容器给，见文件头第 ① 条）。
+   `min-height: 0` 是 flex 子项能滚的前提 —— 少了它，子项的最小尺寸是内容尺寸。 */
+.abBody
+    display: flex
+    flex-direction: column
+    gap: 2px
+    flex: 1 1 auto
+    min-height: 0
+    overflow-y: auto
+    overscroll-behavior: contain
+
+/* 一行公告。用**原生 button**（与 `.washiOk` 同因：antd 的按钮样式特异度与我们这套
+   打平甚至更高，打平就按源序裁决、cssinjs 永远后注入 ⇒ 底色会被它盖掉）。 */
+.abRow
+    display: flex
+    align-items: center
+    gap: 8px
+    flex: none
+    width: 100%
+    padding: 7px 8px
+    border: none
+    border-radius: 8px
+    background: transparent
+    font-family: inherit
+    text-align: left
+    cursor: pointer
+    transition: background 0.22s ease, transform 0.22s ease
+
+.abRow:hover
+    background: var(--washi-tape, rgba(255, 222, 238, 0.86))
+    /* 轻微右移：这一行的"可点"手感，位移 2px 不动布局 */
+    transform: translateX(2px)
+
+.abRow:focus-visible
+    outline: 2px solid var(--washi-pink-deep, #d94f9a)
+    outline-offset: 1px
+
+.abDate
+    flex: none
+    width: 46px
+    font-size: 12px
+    line-height: 20px
+    color: var(--washi-ink-3, #a08ba8)
+    /* 数字等宽：不然每条日期长短不一，左列看着参差 */
+    font-variant-numeric: tabular-nums
+    letter-spacing: 0.5px
+
+.abRowTitle
+    flex: 1 1 auto
+    min-width: 0
+    font-size: 13.5px
+    line-height: 20px
+    color: var(--washi-ink, #4a3550)
+    overflow: hidden
+    text-overflow: ellipsis
+    white-space: nowrap
+
+/* 「全部 N 条 ›」：列表底部那条入口（只在多于 5 条时渲染，见 TSX） */
+.abMore
+    flex: none
+    width: 100%
+    margin-top: 8px
+    padding-top: 8px
+    border: none
+    border-top: 1px dashed var(--washi-line, rgba(198, 152, 192, 0.42))
+    background: transparent
+    font-family: inherit
+    font-size: 12.5px
+    letter-spacing: 0.06em
+    color: var(--washi-ink-2, #7c6584)
+    cursor: pointer
+    transition: color 0.22s ease
+
+.abMore:hover
+    color: var(--washi-pink-deep, #d94f9a)
+
+/* ── 三态里的另外两态（加载中 / 读不到 / 空）─────────────────────────────
+   ⚠️ 读不到**必须**长得与"没有公告"不一样：把接口失败画成空列表，就是替服务端说
+   "公告就是没有"，本仓对这个形状有过明确判决（见 AnnounceBoard/index.tsx 头注第 ① 条）。 */
+.abSkeleton
+    display: flex
+    flex-direction: column
+    gap: 12px
+    padding: 8px 8px 4px
+
+.abSkeletonRow
+    height: 11px
+    border-radius: 6px
+    background: var(--washi-line, rgba(198, 152, 192, 0.42))
+    opacity: 0.55
+
+.abSkeletonRow:nth-child(2)
+    width: 78%
+
+.abSkeletonRow:nth-child(3)
+    width: 88%
+
+.abSkeletonRow:nth-child(4)
+    width: 64%
+
+.abState
+    flex: 1 1 auto
+    display: flex
+    flex-direction: column
+    align-items: center
+    justify-content: center
+    gap: 12px
+    padding: 12px
+
+    p
+        margin: 0
+        font-size: 13px
+        color: var(--washi-ink-2, #7c6584)
+
+.abRetry
+    padding: 5px 18px
+    border: 1px solid var(--washi-line, rgba(198, 152, 192, 0.42))
+    border-radius: 999px
+    background: var(--washi-paper-2, #fff6fa)
+    font-family: inherit
+    font-size: 12.5px
+    color: var(--washi-ink, #4a3550)
+    cursor: pointer
+    transition: background 0.22s ease
+
+.abRetry:hover
+    background: var(--washi-tape, rgba(255, 222, 238, 0.86))
+
+/* ── 弹窗内部（皮归 components/AnnouncementModal/index.sass 的 `.washiModal`）── */
+.abModalTitle
+    font-weight: 700
+    font-size: 18px
+    line-height: 1.5
+    letter-spacing: 1px
+    text-align: center
+    padding: 0 32px
+
+.abModalBody
+    max-height: 58vh
+    overflow-y: auto
+
+/* 「‹ 返回列表」：只有从"全部 N 条"那一档进来的详情才有它 */
+.abBack
+    display: block
+    margin-bottom: 6px
+    padding: 0
+    border: none
+    background: transparent
+    font-family: inherit
+    font-size: 12.5px
+    color: var(--washi-ink-2, #7c6584)
+    cursor: pointer
+    transition: color 0.22s ease
+
+.abBack:hover
+    color: var(--washi-pink-deep, #d94f9a)
+
+.abRowModal
+    padding: 9px 8px
+
+/* ── 手机档 ────────────────────────────────────────────────────────────── */
+@media screen and (max-width: 768px)
+    .AnnounceBoard
+        padding: 20px 16px 12px
+
+    /* 顶上那行胶带比桌面窄一档，免得在窄卡上横穿整张纸 */
+    .AnnounceBoard::before
+        width: 88px
+        margin-left: -44px
+
+    /* 手机上卡片高度是 auto（顶带叠成单列）⇒ 列表自己封顶，长了在卡内滚，
+       不把整页推长 */
+    .abBody
+        max-height: 300px
+
+/* 减少动效档：**必须写在文件末尾**——同选择器同特异度时后写者赢，这块若落在上面那些
+   规则之前会被整个静默压掉（本仓已踩过三次，门禁 frontend/tests/sass-media-shadow.test.mjs）。 */
+@media (prefers-reduced-motion: reduce)
+    .abRow,
+    .abMore,
+    .abRetry,
+    .abBack
+        transition: none
+
+    .abRow:hover
+        transform: none

@@ -604,10 +604,55 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
   align-items: center
   padding: 80px 0 80px 0
   background: var(--container-background-color)
+  // 顶带容器（20261004 用户第十二报）：置顶轮播那一行从"整行一条大卡"拆成**左轮播 / 右公告栏**。
+  //
+  // 宽度取 90% 与 `.allArticles` 对齐（旧顶卡是 80%，与下面的网格右缘本来就差一截）；
+  // 栅格 1.82:1 ≈ 64% / 36%，左侧给轮播（它内部还是 6fr/4fr 的"封面 + 文字"）。
+  //
+  // ⚠️ 三条不要动：
+  //   · `height: 460px` + `grid-template-rows: 100%` + `align-items: stretch` 是**两栏等高的
+  //     唯一来源**（行高钉死见下面那条注释）。别再往右栏（`.AnnounceBoard`）写
+  //     `height: 100%` —— 两个来源并存时，"内容溢出到底谁说了算"就成了两套判定
+  //     （右栏要滚的是它自己的 `.abBody`）。
+  //   · `height: 460px` 也是首屏节奏的锚：这一行的高度与 20261004 第九报（640 → 460）
+  //     定下的完全一致，下面的文章网格一像素都没挪。
+  //   · 手机档叠成单列、行高交还给内容（`height: auto`）。
+  .TopBand
+    position: relative
+    width: 90%
+    display: grid
+    grid-template-columns: minmax(0, 1.82fr) minmax(0, 1fr)
+    // 行高**显式钉成一行、等于容器高**。少了这一条，隐式行是 `auto` = 两栏内容的
+    // max-content ⇒ 右栏公告一多，行就跟着长、把 `height: 460px` 顶穿（实测塞 60 条时
+    // 整行 2269px、右栏根本不滚 —— `geometry` 那支套件第 ② 组量的就是这个）。
+    // 钉死之后：右栏拿到**确定高度** ⇒ 里面那个 `flex:1 1 auto; min-height:0` 的 `.abBody`
+    // 才真的封顶并可滚。`100%` 指的是容器自己那条 460（高度是 definite，无循环引用）。
+    grid-template-rows: 100%
+    // 与 `.allArticles` 的 grid-gap 同值：上下两段的行距/列距读起来是一个节奏
+    gap: 30px
+    height: 460px
+    align-items: stretch
+
+    @media screen and (max-width: 768px)
+      grid-template-columns: 1fr
+      // 单列时容器高是 `auto` ⇒ 百分比行高没有参照，显式写回 `auto`（行交还内容）
+      grid-template-rows: auto
+      width: 95%
+      height: auto
+      gap: 20px
+
   .TopArticle
     position: relative
     cursor: pointer
-    width: 80%
+    // 宽度归 `.TopBand` 的栅格轨道（`minmax(0, …)` + stretch 撑满左栏）。
+    // `min-width: 0` 是栅格项能收窄的前提（否则最窄内容尺寸会把轨道顶开）。
+    min-width: 0
+    // ⚠️ `display` 写 flex 而**不是** grid：这一条原先是 `display: grid`，但元素上那份
+    // `style={{ display: 'flex', position: 'relative' }}` 内联一直把它压着 —— 也就是说
+    // 从写下那天起 grid 就没生效过。20261004 随"内联搬进类名"一起把它改成真实生效值，
+    // 免得内联一搬走、那条死声明突然醒来变脸（网格与弹性在这一层的差别是个盲盒：
+    // 卡里只有裁剪壳一个在流内的孩子，但有多个绝对定位件）。
+    display: flex
     // 20261004（用户第九报：「轮播图占一行是不是太长了不协调」）：640 → 460。
     //
     // 这一条**不是**"把整块缩小一点"，而是行高对齐：首屏 `.SelfDescription` 是
@@ -628,19 +673,11 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
     border-radius: 15px
     box-shadow: var(--box-shadow-color)
 
-    grid-template-rows: none
-    display: grid
-
     // ⚠️ 手机档**必须写在上面那批声明之后**（与文件开头 `.SelfDescription` 那条同一个坑：
-    // sass 按源码位置原样吐进产物，同选择器同特异度下后写者赢）。原来写在前面的结果是
-    // `width: 95%` 被父规则的 `width: 80%` 静默压掉 ⇒ 手机上置顶卡比普通卡
-    // （后段 `.allArticles` 那条 95%）窄一圈，两边对不齐。
-    // 同时删掉原来的 `display: flex` / `flex-direction: column`：它们**本来就进不了场**
-    // ——文件后段那条手机档写了 `display: block !important`（列布局由 `.TopArticleInner`
-    // 承担），`!important` 加源序两道都赢，留着只会让人以为顶卡在手机上是 flex 容器。
-    // `height: auto !important` 留着（`!important` 不受源序影响，覆盖桌面那条 460px 是它的职责）。
+    // sass 按源码位置原样吐进产物，同选择器同特异度下后写者赢）。
+    // 20261004：`width: 95%` 那条**已删** —— 宽度归 `.TopBand`（手机档那边同样 95%），
+    // 这一档只剩高度一件事（覆盖桌面那条 460px 是它的职责）。
     @media screen and (max-width: 768px)
-      width: 95%
       height: auto !important
 
     // ⚠️ 悬停位移的落点是 `top: -38px`（相对基态 −14px 仍是抬 20px，与五轮同一个幅度）。
@@ -720,22 +757,10 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
       position: relative
       height: 100%
       overflow: hidden
-      overflow: hidden
-      .topDots
-        position: absolute
-        bottom: 20px
-        left: 50%
-        display: flex
-        transform: translate(-50%,-50%)
-        .topDot
-          cursor: pointer
-          width: 10px
-          height: 10px
-          background: white
-          border-radius: 50%
-          margin-left: 10px
-        .dotCurrent
-          background: #7880d1
+      // 20261004：这里原来还嵌着一整块 `.topDots`（小写单数）+ `.topDot` + `.dotCurrent`
+      // —— **加进 DOM 的那天起就没命中过任何元素**：JSX 用的是 `.topDotsContainer`
+      // （见文件后段那条，`.TopCover` 里从来没有任何 `.topDots`）。同名的真规则在那边，
+      // 这一块只是"看着像还在用"的垃圾（顺带删掉重复写了两遍的 `overflow: hidden`）。
       img
         // 20260912 圆角由 .TopCover（border-radius + overflow hidden）裁剪，img 自己不再设，
         // 否则封面裁剪的 transform: scale 会把圆角一起放大
@@ -763,7 +788,11 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
       display: flex
       flex-direction: column
       justify-content: center
-      padding: 3rem
+      // 20261004 第十二报：左右内边距 3rem → 2rem。文字列变窄了（顶卡从"整行 80%"降为
+      // "90% 行里的 64% 那一栏"），横向得把 32px 还给内容。
+      // ⚠️ **纵向仍是 3rem**：纵向那笔账跟的是卡高（460）与 `.contentTitle`/
+      // `.topFooter` 那对 32px，与栏宽一点关系都没有 —— 两笔账别搅在一起。
+      padding: 3rem 2rem
       justify-content: center
       align-items: flex-start
       position: relative
@@ -782,7 +811,15 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
         overflow: hidden
       .contentTitle
         font-weight: 900
-        font-size: 40px
+        // 20261004 第十二报：40 → 34。**只跟栏宽走**：顶卡从"整行 80% 的 40% 文字列"
+        // （1440 屏约 460px）变成"90% 行里 64% 那一栏的 40%"（约 330px），40px 的中文
+        // 标题在 330px 里一行只放得下 8 个字，两行 clamp 会碎得很难看。
+        // ⚠️ 别再拿它跟下面 32px 那对搅在一起 —— 那两条跟的是**卡高**（460，见 `.TopArticle`
+        // 那条注释），
+        // 字号跟的是**栏宽**。字号一改，`justify-content: center` 的整列高度跟着变 ⇒
+        // 简介槽顶会上下移 ⇒ 浮层可用高度也变，量它的探针在
+        // `tests/article-card-hover.test.py` 第 ⑦ 组（「浮层没跑出卡片」）。
+        font-size: 34px
         // 20261004：60 → 32。与 `.topFooter` 的 `margin-top` 一起收，配对的理由见
         // `.TopArticle` 那条注释：卡高 640 → 460 收掉的是**这一列的余量**，而这两条
         // 60px 就是余量的全部来源 —— 不收的话 460 里只剩 16px 富余，字体度量一漂
@@ -1546,6 +1583,27 @@ html[data-theme='dark'] .SayWords h2
   transition: max-height 0.8s ease
   max-height: 60px
 
+// ── 轮播的两层壳（20261004）─────────────────────────────────────────────────
+// 这两条原来**逐字写在 index.tsx 的内联 style 里**。搬进类名只为一件事：
+// 轨道那条 `transition` 进了 CSS，reduced-motion 档才关得掉它（内联特异性最高）。
+// `transform` 仍留在 JSX —— 它的值跟着 `currentTop` 走，不属于"静态形态"。
+//
+// `.topCarouselViewport`（裁剪壳）：圆角必须与 `.TopArticle` 的 15px 对齐，
+// 否则封面四个角会在卡片圆角里露出方角。
+// `.topTrack`（轨道）：flex 横排，每个 `.TopArticleInner` 占满一屏宽（`flex-shrink: 0`
+// 仍写在 JSX 那条内联上，见 `.TopArticleInner` 的 `width/height: 100%`）。
+.topCarouselViewport
+  width: 100%
+  height: 100%
+  border-radius: 15px
+  overflow: hidden
+
+.topTrack
+  display: flex
+  width: 100%
+  height: 100%
+  transition: transform 0.8s cubic-bezier(0.25, 1, 0.5, 1)
+
 .TopArticleInner
   display: grid
   grid-template-columns: 6fr 4fr
@@ -1556,18 +1614,10 @@ html[data-theme='dark'] .SayWords h2
     flex-direction: column
 
 
-@media screen and (max-width: 768px)
-  .TopCover
-    height: 200px !important
-    border-radius: 15px 15px 0 0 !important
-    width: 100% !important
-  .TopArticleInner
-    display: flex !important
-    flex-direction: column !important
-  .TopArticle
-    height: auto !important
-    display: block !important
-
+// 手机档：置顶卡与普通卡等高（V14）
+// 20261004：原来这里是**两份逐字重复**的同名媒体块（20261001 那轮复制粘贴留下的），
+// 合并成一份。`!important` 不能省：裸 `.TopCover` / `.TopArticle`（0,1,0）**输给**上面
+// 收在 `.ContentContainer` 里的那两条（0,2,0），媒体查询不改特异性。
 @media screen and (max-width: 768px)
   .TopCover
     height: 200px !important
@@ -1849,6 +1899,11 @@ html[data-theme='dark'] .SayWords h2
       animation: none
   // `.Top` 的悬停位移走的是 `top` 的 transition，不吃 transform ⇒ 这里要单独关
   .ContentContainer .TopArticle .Top
+    transition: none
+  // 轮播轨道（20261004）：换页那条 0.8s 的 transform 过渡。它原先**内联**在 `.topTrack`
+  // 上，CSS 永远盖不动内联 —— 搬进类名的**唯一理由**就是能让这一条生效（见 `.topTrack` 注释）。
+  // ⚠️ 全链照抄基规则的选择器（`@media` 不改特异性，这是本文件记过三次的同族坑）。
+  .ContentContainer .TopBand .TopArticle .topCarouselViewport .topTrack
     transition: none
   // 「文章」牌子只剩一条颜色/影子的过渡，一起关掉（悬停态本身仍在，只是瞬间到位）
   .ContentContainer .allContent

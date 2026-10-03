@@ -171,16 +171,20 @@ CARD_MARKUP = """
 </div>
 """
 
-# 置顶卡：与 ContentHome/index.tsx 的 `.TopArticle` 同形（`display:flex` 是那边的内联样式，
-# 会压掉 sass 里的 `display:grid`，所以这里也写成内联）。
+# 置顶卡：与 ContentHome/index.tsx 的 `.TopArticle` 同形。
+# 20261004 第十二报起它**不再是整行**，而是 `.TopBand` 那条两栏带里的左栏（右栏是公告栏）：
+# 宽度归栅格轨道（`1.82fr / 1fr`）、`display:flex` 归 sass，所以这两处内联都撤了。
+# 沙箱里只有一个栅格项（不放公告栏）—— 显式轨道照样两条都在，左轨宽度与线上一致。
 TOP_MARKUP = """
 <div class="ContentContainer" id="cc">
-  <div class="TopArticle" id="card" style="display:flex;position:relative">
+  <div class="TopBand" id="band">
+  <div class="TopArticle" id="card">
     <!-- 置顶贴纸（20261001 六轮）：`.Top` 只剩定位（`top` 写进 sass，内联的
          `translateY(-40%)` 已删），长相全在 `.TopTape` 那张胶带上。 -->
     <div class="Top"><span class="TopTape">置顶</span></div>
-    <div style="width:100%;height:100%;border-radius:15px;overflow:hidden">
-      <div style="display:flex;width:100%;height:100%">
+    <!-- 裁剪壳 + 轨道（20261004 从内联搬成类名，只剩 `transform` 还在 JSX 上） -->
+    <div class="topCarouselViewport">
+      <div class="topTrack">
         <div class="TopArticleInner" id="inner">
           <div class="TopCover" id="cover"></div>
           <div class="topContent" id="content">
@@ -202,6 +206,7 @@ TOP_MARKUP = """
         </div>
       </div>
     </div>
+  </div>
   </div>
 </div>
 """
@@ -529,13 +534,14 @@ with sync_playwright() as p:
 
     # ⑦′ 顶卡的"中等长度"档：与第 ③ 组同一个道理（这一档才是负 margin 方案露馅的地方），
     # 而顶卡是**垂直居中**列 ⇒ 占位一变整列都动，比普通卡更早暴露。
-    print("⑦′ 置顶卡 + 中等长度简介（展开 80px < 上限 200px）：整列仍不动")
+    print("⑦′ 置顶卡 + 中等长度简介（展开 100px < 上限 200px）：整列仍不动")
     med_top_mk = TOP_MARKUP.format(title=LONG_TITLE, desc=LONG_DESC, tags=tags(6))
     top_med = pg.evaluate(PAINT, {"markup": med_top_mk})
     dt_hv = hover_stable(pg, "#desc")
     check("展开高度严格落在 静置 60px 与上限 200px 之间、是行高整数倍、正文没被 padding 吃掉"
-          "（同一段文字在顶卡里是 4 行 = 80px：这一列比普通卡宽 ≈70px，所以行数更少——"
-          "两个卡的文字换行数不一样，别把普通卡那条数抄过来）",
+          "（同一段文字在顶卡里是 5 行 = 100px：20261004 顶卡从「整行 80%」降为两栏带的左栏、"
+          "文字列反而比普通卡窄 ⇒ 同样一段字比上一版多折一行。两个卡的文字换行数不一样，"
+          "别把普通卡那条数抄过来；**改栏宽就得重新量这个数**）",
           60 < dt_hv["descH"] < 200 and dt_hv["descH"] % int(dt_hv["lineHeight"]) == 0
           and dt_hv["paddingBottom"] in ("0px", ""),
           f"h={dt_hv['descH']} 行高={dt_hv['lineHeight']} padding-bottom={dt_hv['paddingBottom']}")

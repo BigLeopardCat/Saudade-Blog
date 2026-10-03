@@ -24,6 +24,7 @@ import { resetDescScroll } from '../../../utils/descHover';
 import heroBg from '../../../assets/hero_bg.mp4';
 import heroPoster from '../../../assets/hero_poster.jpg';
 import Vitrine from './Vitrine';
+import AnnounceBoard from './AnnounceBoard';
 
 
 // 模块级缓存：只在同一次 SPA 会话内复用，离开 Dashboard 后自动失效
@@ -390,17 +391,32 @@ const ContentHome = () => {
             </motion.div>
         </div>
         <div className="ContentContainer dark-pic">
-            {topArticles.length>0&&<div className="TopArticle" style={{ display: 'flex', position: 'relative' }} ref={topRef}
+            {/* 顶带（20261004 用户第十二报：「置顶卡片细长太丑还占一整行，改为左半部分置顶
+                轮播图，右半部分公告栏」）：整行拆成**左轮播 / 右公告栏**两栏。
+                行容器 `.TopBand` 承担三件事：① 两栏的栅格与**同高**（`align-items: stretch`，
+                高度 460 仍在左卡上，行高不变 ⇒ 首屏节奏不动）；② 悬停暂停 —— 鼠标进右栏
+                也该让左栏停下来（原来这两个事件挂在 `.TopArticle` 上，鼠标一出卡片就恢复）；
+                ③ `topRef`（离屏暂停的 IntersectionObserver 哨兵）—— 现在量的是整行。
+                ⚠️ **`.TopArticle` 这个类名与 `.Top > .TopTape` 的嵌套必须原样留着**：
+                `article-card-hover.test.*` / `z-index.test.py` / `home-labels.test.py`
+                用的都是直接子组合器，改名或挪层会让一批判据集体失锚。 */}
+            {topArticles.length>0&&<div className="TopBand" ref={topRef}
                 onMouseEnter={() => setHoverPaused(true)}
                 onMouseLeave={() => setHoverPaused(false)}
             >
+                <div className="TopArticle">
                 {/* 置顶贴纸（20261001 六轮）：`.Top` 只管定位、`.TopTape` 才是那张胶带。
                     原来这里内联了 `transform: translateY(-40%)` 与 `zIndex: 10` —— 前者是
                     **常驻动效写不进去**的根因（内联特异性最高），已删；位置改由 sass 的
                     `top` 说了算（顺带从"悬在卡片上方"挪到"骑在卡片顶边上"），
                     `zIndex` 也挪进了 `.Top` 规则。字与图标的大小/颜色一并交给 sass。 */}
                 <div className="Top"><span className="TopTape"><i className="iconfont icon-sticky1" aria-hidden="true"></i>置顶</span></div>
-                <div style={{ width: '100%', height: '100%', borderRadius: '15px', overflow: 'hidden' }}><div style={{ display: 'flex', width: '100%', height: '100%', transition: 'transform 0.8s cubic-bezier(0.25, 1, 0.5, 1)', transform: `translateX(-${currentTop * 100}%)` }}>
+                {/* 裁剪壳 + 轨道（20261004）：这两层原来通篇是**内联样式**。这里把"不随状态变"
+                    的那部分提成类名（`.topCarouselViewport` / `.topTrack`，见 index.sass），
+                    **只留 `transform` 在 JSX**——它的值跟着 `currentTop` 走。
+                    提类的另一个理由：轨道那条 `transition` 进了类之后，reduced-motion 档才关得掉
+                    （内联样式特异性最高，CSS 里的媒体查询永远盖不动它）。 */}
+                <div className="topCarouselViewport"><div className="topTrack" style={{ transform: `translateX(-${currentTop * 100}%)` }}>
                     {topArticles.map((item) => (
                         <div className="TopArticleInner" key={item.key} onClick={() => navigate(`/article/${item.key}`)} style={{ width: '100%', flexShrink: 0, height: '100%' }}>
                             <div className="TopCover">
@@ -451,6 +467,10 @@ const ContentHome = () => {
                         setCurrentTop(index);
                     }}></div>)}
                 </div>
+                </div>
+                {/* 右栏：公告栏（`ContentHome/AnnounceBoard`）。它自己拉数据、自己管三态，
+                    这里只负责把它摆到右栏 —— 与轮播没有数据往来。 */}
+                <AnnounceBoard />
             </div>}
 
 

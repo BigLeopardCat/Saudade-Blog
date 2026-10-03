@@ -8,19 +8,10 @@ import {
     watchAnnouncements,
     type PendingAnnouncement,
 } from './pending.ts'
+// 20261004：`fmtCnTime` 搬去 `utils/cnTime.ts` —— 首页那张公告栏列表也要显示时间
+// （那边只要 `MM-DD`），抽成一份共用。原先本地这份的时区注释一并搬走，见那个文件头。
+import { fmtCnTime } from '../../utils/cnTime'
 import './index.sass'
-
-/** 后端公告时间**已经是 +08:00 中国钟面**（DB 会话 time_zone=+08:00，见 CLAUDE.md 时区约定），
- * 原样展示即可，这里只做"去掉秒"的规范化——**不做任何时区换算**。
- * 20260922 修正：旧实现把 `s` 当 UTC（拼 'Z'）再 +8h，那是 20260827 统一时区**之前**的口径；
- * 时区统一后（main.rs `timezone(Some("+08:00"))` + 存量数据已迁移）DB 值即本地钟面，
- * 于是线上的公告时间整整多了 8 小时。刻意用字符串正则而不是 Date：只要不构造 Date，
- * 就不可能出现"浏览器时区/UTC 解释"这类二次偏移。 */
-const fmtCnTime = (s: string) => {
-    if (!s) return ''
-    const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/.exec(s)
-    return m ? `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}` : s
-}
 
 /**
  * 公告弹窗：antd Modal 默认白底卡片形态（20260905 去背景图回归——曾用 公告栏.png
