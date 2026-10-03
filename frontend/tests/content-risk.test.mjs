@@ -148,9 +148,20 @@ ok(/src == "board"/.test(talks) && /if src == "board" \{\s*\n\s*let cfg = crate:
 
 // 闸的位置：comments.rs 里必须在**审核裁决之前**（限流的那条不该白烧一次 AI 审核），
 // 且在 uid 落地之后（要按人计数）
-const cmAuthIdx = comments.indexOf('let uid = super::talks::current_uid');
-const cmScreenIdx = comments.indexOf('crate::risk::screen');
-const cmReviewIdx = comments.indexOf('super::talks::decide_review(');
+//
+// ⚠️ **三个位置都必须在 `create_comment` 的函数体里取**（20261003 修）。原来直接用
+// `comments.indexOf` 在全文件找，看着是"文件里这行在屏幕那行之前"，其实找到的是
+// **`list_comments`（读路径）里的同一句鉴权**——它天然排在文件更靠前的位置，于是这条
+// 断言一直在**替另一个函数**做担保：`create_comment` 就算把闸提到鉴权之前，它照样绿。
+// 触发条件是 20261003 加投票时读路径换了身份写法（`optional_who`，匿名也要能亮自己那票），
+// 那句字面量消失，假绿才露出来——**这类"判据的前提住在别人手里"的坑，本仓已经吃过多次**：
+// 判据要锚在被判的那段代码上，不能锚在"文件里正好也有这么一行"。
+const cmBody = bodyOf(comments, 'pub async fn create_comment');
+const cmAuthIdx = cmBody.indexOf('super::talks::current_uid');
+const cmScreenIdx = cmBody.indexOf('crate::risk::screen');
+const cmReviewIdx = cmBody.indexOf('super::talks::decide_review(');
+// 取空体说明 `create_comment` 被改名/搬走了——下面两条会当场红，但先说清是哪一步坏的
+ok(cmBody.length > 0, '取到 create_comment 的函数体（改名不会静默换个人来担保）');
 ok(cmAuthIdx >= 0 && cmScreenIdx > cmAuthIdx, '过闸在鉴权之后（要按 uid 计数）');
 ok(cmReviewIdx > cmScreenIdx, '过闸在审核裁决之前（限流的条目不烧 AI 审核）');
 
