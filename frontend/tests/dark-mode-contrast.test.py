@@ -109,13 +109,37 @@ const REPORT = {
     date: '2026-09-' + String(i + 1).padStart(2, '0'), views: i * 3, likes: i,
   })),
 };
+// ⚠️ 桩的**形状**：必须同时是"可调用函数"和"带方法的对象"——真 `axios.create()`
+// 实例两者都是，而这一页族两种写法都在用：
+//   · `apis/ProfileMethods.tsx`（个人中心那一族）写 `http({url, method})`；
+//   · 账号/留言/评论/额度四个页签写 `http.get(...)` / `http.post(...)`。
+// 只做裸函数 ⇒ 方法形态是 `TypeError: http.get is not a function`，而组件里的
+// try/catch 会把它吃掉 ⇒ **整页只剩空壳**，那条错只出现在 pageerror 里。20261003
+// 的夜间沙箱正是这么红的：Users 页报"文本元素 0 / 页面异常 16"（16 条都是同一条
+// TypeError），看着完全不像配色问题，而本探针判失败的正是"这一页扫不到字"。
+// 同族的坑与两个方向的判据见 `tests/users-page.test.py` 里那段同源注释。
+const ok = (d: any) => ({ status: 200, data: d });
 const http: any = (cfg: any = {}) => {
   const url: string = (cfg && cfg.url) || '';
   if (url.indexOf('/stats/notes') >= 0) {
-    return Promise.resolve({ status: 200, data: { code: 200, data: REPORT } });
+    return Promise.resolve(ok({ code: 200, data: REPORT }));
   }
-  return Promise.resolve({ status: 200, data: { code: 200, data: [] } });
+  // `/api/temp-users` 回的是**裸数组**（不是 {code,message,data} 那层壳，见
+  // `Users/tempUsers.ts` 的 TempUser 注释）——多套一层壳会让账号列表整块不渲染。
+  if (url.indexOf('/api/temp-users') === 0) {
+    return Promise.resolve(ok([]));
+  }
+  return Promise.resolve(ok({ code: 200, data: [] }));
 };
+// 方法形态（axios 实例上的 .get/.post/.put/.delete）。`data` 只在带 body 的动词上给，
+// GET 的第二个参数是 config（`{params}` 那一类）——接错位置会把 config 当 body 发出去。
+const asMethod = (method: string) => (url: string, a?: any, b?: any) =>
+  http(method === 'GET' ? { url, method, ...(a || {}) }
+                        : { url, method, data: a, ...(b || {}) });
+http.get = asMethod('GET');
+http.post = asMethod('POST');
+http.put = asMethod('PUT');
+http.delete = asMethod('DELETE');
 export default http;
 """
 

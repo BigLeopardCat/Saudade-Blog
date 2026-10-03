@@ -1579,8 +1579,12 @@ with sync_playwright() as p:
     pg.wait_for_timeout(400)
     tabs = pg.evaluate("""() => [...document.querySelectorAll('.ant-tabs-tab')]
         .map((t) => t.textContent.replace(/\\s+/g, ''))""")
-    check("三个页签都在（账号管理 / 评论管理 / 额度管理）",
-          tabs == ["账号管理", "评论管理", "额度管理"], str(tabs))
+    # 四个页签（20261002 起；此前三条，本轮断言跟着改）：`fe849d2` 把 BoardManage 那一页
+    # 从「评论管理」改回它本来的名字「留言管理」，文章评论另开了「评论管理」页签
+    # （`CommentManage`，读 note_comment）。**顺序也是判据**——页签顺序变了就等于
+    # 用户在侧栏/深链上看到的入口变了，所以这里逐字比整个列表，不写"包含"。
+    check("四个页签都在（账号管理 / 留言管理 / 评论管理 / 额度管理）",
+          tabs == ["账号管理", "留言管理", "评论管理", "额度管理"], str(tabs))
     check("`?tab=quota` 深链落在额度管理上",
           pg.evaluate("() => !!document.querySelector('.QuotaManage')"), str(tabs))
     _sel = pg.evaluate("() => document.querySelector('.qm-tabs .sel').textContent")
