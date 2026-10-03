@@ -18,12 +18,17 @@
 锁五件：
   ① 编译产物里那几条**确实带着 `!important`**（这一档能不能赢全靠它——判据 ④ 的反向对照
      会证明没有它就回落）；
-  ② 375px：正文满宽（= 视口）且内边距 12px 10px、封面 200px、描述卡满宽、`.readInfo`
-     bottom 25px、`.markdown-body` max-width 100%；
+  ② 375px：正文满宽（= 视口）且内边距 12px 10px、封面 260px、描述卡满宽、`.readInfo`
+     bottom 12px 且**宽度 343px（视口 − 32）居中**、`.markdown-body` max-width 100%；
   ③ 768/769 边界：媒体档只到 768px（769 起必须回到桌面值，否则是"溢出到桌面上"的另一种病）；
   ④ **反向对照**：把编译产物里这一段的 `!important` 剥掉再量一次 ⇒ 正文**确实**掉回
-     80%（300px）、封面掉回 400px。证明 ② 不是空断言（这些数确实来自这一档）。
+     80%（300px）、封面掉回 400px、`.readInfo` 掉回 880px（宽出屏幕）。证明 ② 不是空断言。
   ⑤ 1200px 桌面档一字未动：正文 880px / 内边距 20px / 封面 400px / 描述卡内边距 25px。
+
+⚠️ 20261003：`.readInfo` 那三条（宽 880 → `calc(100% - 32px)`、三列 → 单列、bottom 45 → 12）
+是**顺带修掉的既有缺陷**：它从来就没有宽度覆盖，`left: 50%` + 横向 −50% 让这个 880px 的
+定宽盒在 375px 上两边各伸出屏幕 236px/540px —— 三列时屏幕上"剩的正好是中间那条标题"所以
+看不出来，改成单列（20261003 用户第 2 条）就全露馅了。本套件因此多量一条**盒子宽度**。
 
 （判据 ④ 之所以连"剥掉之后掉到哪"都钉住：剥完必须**恰好**回到 `.readContainer` 那条的值，
 说明压死它的是那条规则、而不是别的什么。根因的形状由 CI 的
@@ -56,10 +61,13 @@ RESET_CSS = FE / "src/frontHome/main.css"
 
 # 与 index.tsx 同形：.readContainer > (.readCover > .readInfo) + .readDescription
 # + .readContent.markdown-body（正文那两个类在同一个元素上，见 index.tsx:622）
+# `.readInfo` 里只渲染中区（标题那一格）：本套件量的是正文/描述卡/封面的几何与标题字号，
+# 左区（作者+时间）与右区（读数四件）不参与任何一条判据 —— 它们的几何在
+# `read-stats-cluster.test.py` 里是主角，那边有完整的三区夹具。
 MARKUP = """
 <div class="readContainer">
   <div class="readCover">
-    <div class="readInfo"><h1>标题</h1></div>
+    <div class="readInfo"><div class="readMain"><h1>标题</h1></div></div>
   </div>
   <div class="readDescription"><p>摘要</p></div>
   <div class="readContent markdown-body"><p>正文</p></div>
@@ -69,14 +77,21 @@ MARKUP = """
 MQ = "@media only screen and (max-width: 768px)"
 
 # 这一段里该有的 !important 条数（`.readContent` / `.readDescription` 各宽+内边距 4 条、
-# 封面高 1、信息条 bottom 1、正文 max-width 1、pre 的 overflow-x 1）。反向对照剥的就是它们。
-N_IMPORTANT = 8
+# 封面高 1、`.readInfo` 的列数/行距/宽/max-width/横向居中/bottom/内边距 7 条、
+# 正文 max-width 1、pre 的 overflow-x 1）。反向对照剥的就是它们。
+N_IMPORTANT = 14
 STRIP = [
     "width: 100% !important",          # 出现两次（正文与描述卡各一，字面相同）
     "padding: 12px 10px !important",
     "padding: 12px !important",
-    "height: 200px !important",
-    "bottom: 25px !important",
+    "height: 260px !important",
+    "grid-template-columns: 1fr !important",
+    "row-gap: 10px !important",
+    "width: calc(100% - 32px) !important",
+    "max-width: calc(100% - 32px) !important",
+    "transform: translateX(-50%) !important",
+    "bottom: 12px !important",
+    "padding: 12px 16px !important",
     "max-width: 100% !important",
     "overflow-x: hidden !important",
 ]
@@ -134,7 +149,8 @@ MEASURE = """(markup) => {
     const e = document.querySelector(s);
     const r = e.getBoundingClientRect();
     const cs = getComputedStyle(e);
-    return { w: r.width, h: r.height, padL: cs.paddingLeft, maxW: cs.maxWidth, bottom: cs.bottom };
+    return { w: r.width, h: r.height, left: r.left, right: r.right,
+             padL: cs.paddingLeft, maxW: cs.maxWidth, bottom: cs.bottom };
   };
   return {
     vw: window.innerWidth,
@@ -174,9 +190,18 @@ with sync_playwright() as p:
           abs(m["content"]["w"] - 375) < 1, f"w={m['content']['w']}")
     check("正文内边距 12px 10px（不是 20px）",
           abs(float(m["content"]["padL"].rstrip("px")) - 10) < 0.5, m["content"]["padL"])
-    check("封面高 200px（不是 400）", abs(m["cover"]["h"] - 200) < 1, f"h={m['cover']['h']}")
-    check("封面信息条 bottom 25px（不是 45）",
-          abs(float(m["info"]["bottom"].rstrip("px")) - 25) < 0.5, m["info"]["bottom"])
+    check("封面高 260px（不是 400）", abs(m["cover"]["h"] - 260) < 1, f"h={m['cover']['h']}")
+    check("封面信息条 bottom 12px（不是 45）",
+          abs(float(m["info"]["bottom"].rstrip("px")) - 12) < 0.5, m["info"]["bottom"])
+    # ★ 20261003 顺带修掉的那条既有缺陷：`.readInfo` 基础规则写死 880px（桌面三列的账），
+    # 手机档从来没有宽度覆盖 ⇒ `left: 50%` + 横向 −50% 让这个 880px 的盒子两边各伸出屏幕
+    # 一大截，靠 `overflow: hidden` 裁掉。三列时屏幕上剩的正好是中间那条标题（看不出来），
+    # 改成单列之后左区/右区会全部跑到屏幕外 —— 所以单列必须与这条宽度一起改。
+    check("★信息条宽 = 视口 − 32（343px，不是桌面的 880）",
+          abs(m["info"]["w"] - 343) < 1, f"w={m['info']['w']}")
+    check("  且两侧各留 16px 居中（左缘 16 / 右缘 359）",
+          abs(m["info"]["left"] - 16) < 1 and abs(m["info"]["right"] - 359) < 1,
+          f'left {m["info"]["left"]:.1f} / right {m["info"]["right"]:.1f}')
     check("描述卡满宽 375 且内边距 12px（不是 25）",
           abs(m["desc"]["w"] - 375) < 1 and abs(float(m["desc"]["padL"].rstrip("px")) - 12) < 0.5,
           f"w={m['desc']['w']} pad={m['desc']['padL']}")
@@ -203,6 +228,11 @@ with sync_playwright() as p:
     check("  封面掉回 400px", abs(l["cover"]["h"] - 400) < 1, f"h={l['cover']['h']}")
     check("  封面信息条掉回 45px",
           abs(float(l["info"]["bottom"].rstrip("px")) - 45) < 0.5, l["info"]["bottom"])
+    # 顺带把"手机上原来是什么样"钉住：880px 的定宽盒在 375px 视口里左缘 −252.5px
+    # （= 187.5 − 440），两边各伸出屏幕一大截 —— 这就是 20261003 顺带修掉的那条缺陷。
+    check("  信息条掉回 880px 宽、左缘 −252.5px（整块宽出屏幕，靠裁切才看得见）",
+          abs(l["info"]["w"] - 880) < 1 and l["info"]["left"] < -200,
+          f'w={l["info"]["w"]} left={l["info"]["left"]:.1f}')
     # "半死"的证据：同一块里 h1 的字号没有任何桌面规则跟它抢 ⇒ 剥不剥 !important 都不变，
     # 所以肉眼看"字变小了"会以为整块在干活。这条同时是②的陪衬：不是所有声明都靠 !important 活着。
     check("  同一次对照里 `.readInfo h1` 字号**一个像素没变**（它是这块里本来就没被压的那条）",

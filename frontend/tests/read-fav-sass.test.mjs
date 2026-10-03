@@ -80,20 +80,21 @@ const LABEL = INFO + ' .readFavLabel';
 /** 簇里的每一支（几何唯一性判据的作用域，见 ③） */
 const CLUSTER_MEMBERS = [STAT, FAV, LIKE, VIEWS, COMMENTS];
 
-console.log('\n① 整簇：住一个 wrapper、不许被 flex 挤小');
+console.log('\n① 整簇：住一个 wrapper、2×2 两列等宽');
 {
-    const f = decl(CLUSTER, 'flex', '0 0 auto');
-    ok(f.found, CLUSTER + ' 有 flex 声明', f);
-    ok(f.match, '  值是 0 0 auto（被挤窄的只该是中区那个标题，不是读数）', f);
-    const m = decl(CLUSTER, 'margin-top', '6px');
-    ok(m.match, '  原有的 margin-top: 6px 还在', m);
-    ok(decl(CLUSTER, 'display', 'flex').found, '  四件同簇（display: flex）');
-    // 20261003 第 5 条：由行改列。`stretch` 是"四件同宽"的来处——列向 flex 的交叉轴
-    // 宽度由最宽的那一件定，四件各自被撑到同一个宽度。
-    ok(decl(CLUSTER, 'flex-direction', 'column').found, '  竖排（flex-direction: column）');
-    ok(decl(CLUSTER, 'align-items', 'stretch').found, '  交叉轴 stretch（四件等宽，不犬牙交错）');
+    ok(decl(CLUSTER, 'display', 'grid').found, '  四件同簇（display: grid）');
+    // 20261003 用户第 2 条「右侧是四个数据组件 2*2 排布」：两列等宽 ⇒ 四件落在
+    // 左上/右上/左下/右下四个等大的格子里（DOM 顺序即阅读顺序，无需 grid-area）。
+    ok(decl(CLUSTER, 'grid-template-columns', '1fr 1fr').found,
+        '  2×2：两列 `1fr 1fr`（等宽，不是"内容多宽就多宽"）');
     const g = decl(CLUSTER, 'gap', '6px');
     ok(g.found && g.match, '  四件之间固定 6px（不再是"各簇自带 margin"那种间接间距）', g);
+    // `margin-top: 6px` 是竖排那一版的账（整簇与中区标题错开一点）。2×2 之后整簇只有
+    // 66px 高、由 `align-items: center` 摆正，那 6px 只会把右区往下推、与左区错开。
+    ok(!decl(CLUSTER, 'margin-top', '6px').found, '  竖排那一版的 margin-top: 6px 已撤');
+    // 格子的宽是定死的（= 侧轨 180px ÷ 2），`min-width: 0` 是"内容再宽也别把格子顶出
+    // 轨道"的兜底 —— 长文案不截断的话会画出胶囊之外（几何判据在 .test.py 的 ②b）。
+    ok(decl(CLUSTER, 'min-width', '0').found, '  min-width: 0（内容不许把格子顶宽）');
 }
 
 console.log('\n② 四件共用一份几何（.readStat）');
@@ -142,14 +143,16 @@ console.log('\n③ 「大小不一」的回归锁：几何只许声明一次');
         ok(!/display|flex-direction|writing-mode/.test(body),
             `  ${name}按钮不再自带布局（display/方向都不该在这里）`, body.slice(0, 60));
     }
-    // 竖排走的是**整簇的 flex-direction: column**，不是给每一件写 `writing-mode`：
-    // 后者是上一版的形态（治的是"被挤成两行"的症状，病根已由 flex: 0 0 auto 治掉），
-    // 它会把每个胶囊里的字一起竖过来 —— 20261003 要的竖排不是那个意思。
+    // 2×2 走的是**整簇的 `grid-template-columns`**，不是给每一件挪位置（`grid-area` /
+    // `order` 都不该出现）：DOM 顺序即阅读顺序，位置完全由那两条列宽决定。
     const sassSrc = readFileSync(SASS_FILE, 'utf8');
     const clusterBlock = sassSrc.slice(sassSrc.indexOf('.readStats'), sassSrc.indexOf('.readDescription'));
     ok(!/writing-mode|text-orientation/.test(clusterBlock),
         '  不是 writing-mode 那套竖排（字仍是横的，竖的只是排列方向）', clusterBlock.length);
-    ok(/flex-direction:\s*column/.test(clusterBlock), '  竖排真的落在整簇上（flex-direction: column）');
+    ok(/grid-template-columns:\s*1fr 1fr/.test(clusterBlock), '  2×2 真的落在整簇上（grid-template-columns）');
+    // ⚠️ `order` 前面必须带边界：`border:` 里也含 "order:"（这条第一次写就踩了）
+    ok(!/grid-area|grid-column|(?:^|[\s;])order\s*:/.test(clusterBlock),
+        '  没有逐件挪位置（顺序 = DOM 顺序）');
     ok(!/readFavWrap|readLikeWrap/.test(sassSrc), '  旧的两个 wrapper（.readFavWrap / .readLikeWrap）已拆掉');
 }
 
@@ -224,17 +227,47 @@ console.log('\n⑥ 源码契约：四件是真的同一个簇的四个孩子');
     }
 }
 
-console.log('\n⑦ 三区锁死：中区吃满余量、左右两区不收缩（用户第 4 条「布局没有锁死」）');
+console.log('\n⑦ 三列锁死：两侧轨道等宽 ⇒ 中区结构性居中（用户第 2 条 + 第 4 条）');
 {
-    const jc = decl(INFO, 'justify-content', 'flex-start');
-    ok(jc.found && jc.match,
-        '`.readInfo` 不再是 `space-between`（五个子项平分余量 ⇒ 日期的位置全看标题多长）', jc);
-    const gap = decl(INFO, 'gap', '24px');
+    ok(decl(INFO, 'display', 'grid').found,
+        '`.readInfo` 是三列车格（不再是 flex 行 —— flex 行里中区的中线 = 卡片中线 +'
+        + ' (左区宽 − 右区宽)/2，居中只能靠"两边碰巧一样宽"）');
+    // ★ 这条是本轮居中的**全部依据**：两条侧轨写同一个变量 ⇒ 结构上必然等宽
+    // ⇒ 中区的中线落点必然与卡片中线重合。两个 `var(--read-side)` 少一个就退回
+    // "谁宽谁说了算"，那时标题看着又偏了。
+    const cols = decl(INFO, 'grid-template-columns',
+                      'var(--read-side) minmax(0, 1fr) var(--read-side)');
+    ok(cols.found && cols.match, '  ★两侧轨道同宽（同一个 `--read-side` 写两遍）', cols);
+    ok(decl(INFO, '--read-side', '180px').found,
+        '  侧轨 180px（由左区最长的「发布于 2026-10-01」@12px 定，不是随手取的数）');
+    const gap = decl(INFO, 'column-gap', '24px');
     ok(gap.found && gap.match, '  三区之间是固定间距 24px', gap);
-    ok(decl(INFO + ' .readAuthor', 'flex', '0 0 auto').found, '左区（作者）不收缩');
-    ok(decl(INFO + ' .readMain', 'flex', '1 1 auto').found, '中区吃满余量');
-    ok(decl(INFO + ' .readMain', 'min-width', '0').found,
-        '  中区 `min-width: 0`（不给它的话长标题会把这一区顶出去，折行反而失效）');
+    // ⚠️ 中区那条写成 `minmax(0, 1fr)`：`1fr` 等价于 `minmax(auto, 1fr)`，下限是这一格的
+    // min-content。（今天 `h1` 那条 `word-break: break-word` 已把 min-content 压到一个字，
+    // 无头探针实测两种写法结果相同 —— 所以这是"不依赖 word-break"的显式形式，
+    // 哪天 word-break 被改回 `normal`，少写 `minmax(0, …)` 当场顶宽、clamp 失效。）
+    ok(/minmax\(0,\s*1fr\)/.test(cols.value || ''),
+        '  中区轨道 `minmax(0, 1fr)`（`1fr` 的下限是 min-content，本仓靠 word-break 兜着）', cols);
+    ok(decl(INFO, 'align-items', 'center').found, '  三区在行内竖直居中');
+    // 左区：一列（头像+名字一行、两个时间两行）
+    ok(decl(INFO + ' .readAuthor', 'flex-direction', 'column').found, '左区是一列（作者行 + 时间行）');
+    ok(decl(INFO + ' .readAuthor', 'min-width', '0').found,
+        '  左区 `min-width: 0`（否则长昵称会画出 180px 的轨道之外）');
+    // 名字截断必须真的挂在名字那一层：轨道是定宽的，截不住就等于把标题重新推偏
+    const AUTHOR = INFO + ' .readAuthor';
+    const nm = decl(AUTHOR + ' .readAuthorName', 'text-overflow', 'ellipsis');
+    ok(nm.found && nm.match, '  长昵称在 `.readAuthorName` 上截断（不是把轨道顶宽）', nm);
+    ok(decl(AUTHOR + ' .readAuthorName', 'white-space', 'nowrap').found, '  名字不折行（截断的前提）');
+    // 头像不许被名字挤扁：flex 项默认 shrink ⇒ 实测 40 → 33px 的一个椭圆
+    ok(decl(AUTHOR + ' .readAuthorRow .frontAvatar', 'flex', '0 0 auto').found,
+        '  头像 `flex: 0 0 auto`（该缩的只有名字，实测不加这条头像会被压成 33px）');
+    // 两个时间：竖排两行、字号小一档
+    ok(decl(AUTHOR + ' .readTimes', 'flex-direction', 'column').found, '两个时间竖排两行');
+    ok(decl(AUTHOR + ' .readTimes', 'font-size', '12px').found, '  字号 12px（比标题小一档，不与正文抢注意力）');
+    ok(decl(AUTHOR + ' .readTimes', 'white-space', 'nowrap').found, '  不折行（定宽轨道的另一半天）');
+    ok(decl(INFO + ' .readMain', 'min-width', '0').found, '中区 `min-width: 0`');
+    const ta = decl(INFO + ' .readMain h1', 'text-align', 'center');
+    ok(ta.found && ta.match, '  ★标题居中（用户第 2 条「中间是居中标题显示区域」）', ta);
     const clamp = decl(INFO + ' .readMain h1', '-webkit-line-clamp', '2');
     ok(clamp.found && clamp.match, '标题两行封顶（三行会把整张卡拉高 ⇒ 底边跟着挪）', clamp);
     const mh = decl(INFO + ' .readMain h1', 'min-height', '2.4em');
@@ -244,13 +277,24 @@ console.log('\n⑦ 三区锁死：中区吃满余量、左右两区不收缩（�
     const mainH1 = rules.get(INFO + ' .readMain h1') || '';
     ok(!/(?:^|;)\s*font-size\s*:/.test(mainH1),
         '  桌面这条**不写 font-size**（否则手机档的 1.4rem 被静默盖掉）', mainH1.slice(0, 80));
-    ok(decl(INFO + ' .readMain h3', 'margin', '0').found, '日期去掉默认外边距（否则位置随字号浮动）');
+    // 日期搬去左区之后中区里没有 <h3> 了，那条 `h3 { margin: 0 }` 必须一起走
+    // （留着就是一条永远挂不上的死规则，下次有人照着它找日期会白找一场）。
+    // 只看 `.readInfo` 这一支的选择器：正文 `.markdown-body` 里那几条 h2/h3 是另一回事。
+    const deadH3 = [...rules.keys()].filter((s) => s.startsWith(INFO) && /\bh3$/.test(s));
+    ok(deadH3.length === 0, '  中区里那条 h3 规则已随日期一起拆掉（没有死规则留在原地）', deadH3);
     // TSX 侧：结构真的分了三区，否则上面那些规则一条也挂不上
     const tsx = readFileSync(TSX_FILE, 'utf8');
     ok(/className="readAuthor"/.test(tsx) && /className="readMain"/.test(tsx),
         'index.tsx 里挂上了 readAuthor / readMain 两个类名');
-    ok(/<div className="readMain">\s*<h1>/.test(tsx), '  标题与日期真的**包在同一个中区**里');
-    // 右区那簇是**直接子项**（`.readInfo` 的 gap 才管得住它）—— 嵌进中区就跑进标题那一列了
+    ok(/<div className="readMain">\s*<h1>/.test(tsx), '  中区里只有标题');
+    ok(!/<h3>/.test(tsx), '  tsx 里不再渲染 <h3>（日期已搬去左区）');
+    ok(/<span className="readAuthorName">\{who\.name\}<\/span>/.test(tsx),
+        '作者名包在 `.readAuthorName` 里（截断要有个元素可挂）');
+    // 两个时间都是**本文数据**：发布时间用 createTime、更新时间用 updateTime
+    ok(/发布于 \{dayjs\(article\?\.createTime\)\.format\("YYYY-MM-DD"\)\}/.test(tsx)
+       && /更新于 \{dayjs\(article\?\.updateTime\)\.format\("YYYY-MM-DD"\)\}/.test(tsx),
+        '左区两个时间取自 createTime / updateTime（不是同一个值抄两遍）');
+    // 右区那簇是**直接子项**（它自己占第三条轨道）—— 嵌进中区就跑进标题那一列了
     ok(/<div className="readStats">/.test(tsx) && /readInfo[\s\S]{0,60}readStats/.test(tsx) === false,
         '  簇与 readMain 是并列的兄弟（结构由缩进决定，这里只锁类名格式）');
 }
