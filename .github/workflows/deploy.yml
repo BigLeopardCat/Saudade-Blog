@@ -102,6 +102,38 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # 提交信息闸门（下面那一步）要 `git log <before>..<sha>` ⇒ 必须真拿到 `before`
+          # 那个对象；默认的浅克隆（depth=1）里只有这次 push 的 tip。
+          fetch-depth: 0
+
+      - name: Commit message lint（与本地同一份 .githooks/commit-msg）
+        # 规范的正文只写在 CONTRIBUTING.md 的《提交约定》一节，这里跑的就是那份钩子脚本本身
+        # ——**一份实现两处共用**。为什么 CI 也要跑一遍：`core.hooksPath` 是 git 的本地配置
+        # （`.git/config`，不入库），不会被 clone 带走，所以只挂本机钩子等于"闸门只对配过
+        # `scripts/dev/install-hooks.sh` 的人生效"。这一层不依赖任何人的本地配置。
+        env:
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            # 首推/强推/新建分支时 before 是全 0 或已被回收 —— 取不到基线就整段跳过。
+            # 宁可漏一次也别在这里造一个假红（它没有可对照的范围）。
+            echo "取不到 base 提交 ${BEFORE} ⇒ 本次跳过提交信息校验（**不是**通过）"
+            exit 0
+          fi
+          fail=0
+          MSGFILE="$(mktemp)"
+          while read -r sha; do
+            [ -n "$sha" ] || continue
+            git log -1 --format=%B "$sha" > "$MSGFILE"
+            if ! bash .githooks/commit-msg "$MSGFILE"; then
+              echo "::error::提交 ${sha:0:9} 的信息不合规（见上面的说明）"
+              fail=1
+            fi
+          done < <(git log --no-merges --format=%H "${BEFORE}..${SHA}")
+          exit "$fail"
 
       - name: Setup Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
