@@ -229,12 +229,10 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
             />
             <div className="commentMain">
                 <div className="commentMeta">
-                    {/* 行首「回复 @某人」：只有回复才有（顶层的 replyToUid 恒 null） */}
-                    {isReply && (
-                        <span className="commentReplyTo">
-                            回复 @{c.replyToNickname || '已注销用户'}
-                        </span>
-                    )}
+                    {/* 身份行：昵称 + 徽章 + UID + 时间。**顺序 = 阅读顺序**，别往这行里
+                        塞别的东西 —— 20261003 用户第 3 条报的正是「回复 @xx 直接把头像和
+                        昵称隔断了」：当年「回复 @某人」挂在这一行的**行首**，它左边就是
+                        头像 ⇒ 头像与昵称之间插着一句「回复 @…」。它现在另起一行，见下。 */}
                     <span className="commentName">{c.nickname}</span>
                     <RoleBadge role={c.role} size={20} />
                     {/* 作者 uid：极小一号、淡一档——它是"这条是谁发的"的身份锚，
@@ -243,6 +241,15 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
                     <span className="commentUid">UID:{c.userId}</span>
                     <span className="commentTime">{c.createdAt}</span>
                 </div>
+                {/* 「回复 @某人」**另起一行**，紧贴正文（20261003 用户第 3 条：「另起一行
+                    回复 @xxx」）。只有回复才有（顶层的 replyToUid 恒 null）。
+                    它是块级元素、住在 `.commentMeta` 与 `<CommentBody>` 之间 ⇒ 读法是
+                    「谁 → 回复谁 → 正文」，头像一个都不隔断。 */}
+                {isReply && (
+                    <div className="commentReplyTo">
+                        回复 @{c.replyToNickname || '已注销用户'}
+                    </div>
+                )}
                 <CommentBody content={c.content} />
                 <div className="commentActions">
                     <button type="button" onClick={() => setReplyTo(c)}>回复</button>
