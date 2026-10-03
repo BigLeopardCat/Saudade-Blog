@@ -5,13 +5,23 @@
 //      （pages/Dashboard/index.tsx:319），文字色让它继承 antd 的 token（深色档自动翻白）。
 //      所以这页**不引 useIsDarkMode()** —— JS 侧没有一处要按主题取的值，
 //      多引一个 hook 只是多一处会失效的真相源；
-//   ③ 日志区**固定高度自己滚**：建图日志有 400 行，让它撑开页面等于把状态卡片顶出屏幕。
+//   ③ **页签不自己滚，交给外面那层 `.allin`**（UserControl/index.sass）。这一页只是
+//      普通块级内容，多高就多高；滚动的责任在页签容器上**一处**。原来两处都没滚：
+//      `.allin` 挂着 `overflowY:'scroll'` 但**没有高度**（块级自动高度 ⇒ 那行 overflow
+//      形同虚设），而 `.Card` 是 `height:95%` + `overflow:hidden` ⇒ 超出的部分被静默裁掉，
+//      **无处可滚**（20261004 用户实测："不能整页滚动看完整的日志框"）。
+//      别在这一页再加 `height:100%`：`.ant-card-body` 有确切高度，那样会让**本页自己**
+//      长出一条滚动条，跟外层叠成两层滚动。
+//   ④ 日志区**只设上限、不设固定高**：短日志整段看得见，400 行的长日志封顶在 56vh 后
+//      自己滚（原来写死 260px，是在"页面不能滚"的前提下被迫的取舍——现在页面能滚了，
+//      把日志锁在 260px 反而让一句话要来回拖两次滚动条）。
 .graphRebuild
   display: flex
   flex-direction: column
   gap: 14px
   max-width: 940px
-  padding: 8px 4px 32px
+  margin: 0 auto
+  padding: 4px 0 28px
 
   h4
     margin: 0 0 8px
@@ -113,7 +123,8 @@
 
   .grLog
     margin: 0
-    height: 260px
+    min-height: 200px
+    max-height: 56vh
     overflow: auto
     padding: 10px 12px
     border-radius: 8px

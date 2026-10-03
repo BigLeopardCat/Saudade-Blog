@@ -172,8 +172,11 @@ const UserControl = () => {
         },
     ];
 
+    // 内联 style 搬进 index.sass 的 `.allin`（20261004）：原来只有 `padding` 与
+    // `overflowY:'scroll'`，**没有高度** ⇒ 块级自动高度让那行 overflow 从未生效，
+    // 整页超出的部分被 `.Card{overflow:hidden}` 裁掉且无处可滚。高度写在类里。
     return (
-        <div style={{ padding: 20,overflowY:'scroll' }} className='allin'>
+        <div className='allin'>
             <Fab variant="circular" size='small' style={{ position: 'absolute', cursor: 'pointer' }} onClick={comeBack}>
                 <ArrowBackIosIcon fontSize='small' style={{cursor:'pointer'}}/>
             </Fab>
