@@ -326,7 +326,7 @@ const GraphRebuild = () => {
                 <Alert
                     type='warning' showIcon
                     message={`可用内存 ${st?.mem_available_mb}MB，低于起任务所需的 ${st?.mem_min_mb}MB`}
-                    description='建图要起 umap/numba，服务端会直接拒绝启动（硬上会把整站拖垮）。腾出内存后再点。'
+                    description='建图要起 umap/numba，服务端会直接拒绝启动（硬上会把整站拖垮）。这个阈值是实测线而不是拍的：400 节点的一次真实重建峰值 552MB，取 ~1.27 倍余量；换页空间不计入。腾出内存后再点；确有把握时也可以在 agent 的 .env 里写 GRAPH_BUILD_MEM_MIN_MB 改阈值。'
                 />
             )}
             {articleCount !== null && articleCount >= PAGE_LIMIT && (

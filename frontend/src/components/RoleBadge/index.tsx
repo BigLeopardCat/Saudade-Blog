@@ -117,7 +117,7 @@ const SPECS: Record<string, BadgeSpec> = {
     },
     // 普通用户：最素的一档——无虚线、字小一档，只有一条细白边（本来就不倾斜）
     user: {
-        lead: '🍃', from: '#ffd9e8', to: '#fffaf5', ink: '#a8547e',
+        lead: '', from: '#ffd9e8', to: '#fffaf5', ink: '#a8547e',
         tilt: 0, ring: 'plain', padX: 9, fontSize: 11,
     },
     // 杂鱼：照主人给的样例——粉→蓝渐变、白色虚线内边、**-2° 是唯一保留的倾角**
