@@ -274,7 +274,14 @@
             flex-wrap: wrap
             gap: 6px
             line-height: 1.4
+        // 「回复 @某人」**自成一行**（20261003 用户第 3 条）。它原来挂在 `.commentMeta`
+        // 的行首，于是排在最前面——左边紧挨头像 ⇒ 头像与昵称之间被这句话隔断。
+        // 现在它在 `.commentMeta` 与 `.commentBody` 之间，块级、紧贴正文。
+        // ⚠️ 保持块级：改回行内（或把它挪回 `.commentMeta` 里）就等于把这一条退回去
+        // （判据在 `tests/comment-layout.test.py` 的 ⑧ 组）。
         .commentReplyTo
+            display: block
+            margin: 2px 0 4px
             font-size: 0.8rem
             color: var(--washi-pink-deep, #d94f9a)
         .commentName

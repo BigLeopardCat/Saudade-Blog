@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-"""讨论区几何与深链沙箱（20261003）：计数搬进输入框 / 按钮贴着输入框 / 未登录态 / ?cid= 定位。
+"""讨论区几何与深链沙箱（20261003）：计数搬进输入框 / 按钮贴着输入框 / 未登录态 / ?cid= 定位
+/ 回复标记另起一行。
 
 ## 这个沙箱为什么必须有
 
@@ -136,14 +137,41 @@ TA_REF = "                        ref={taRef}\n"
 ROOM_ATTR = '                        className="counter-room"\n'
 COUNT_BOTTOM = "                bottom: 4px\n"
 
+# ── 红基线 C（⑨b）：把「回复 @某人」退回**身份行行首**（20261003 用户第 3 条报的那一版）。
+# 两处一起退才算真还原：DOM 退回 `.commentMeta` 的首位，CSS 退回"行内小字"（不带 display/边距）。
+# 只在沙箱拷贝上打补丁，`FE` 里一字不动。
+TSX_META_OPEN = '                <div className="commentMeta">\n'
+TSX_REPLY_NEW = """                {isReply && (
+                    <div className="commentReplyTo">
+                        回复 @{c.replyToNickname || '已注销用户'}
+                    </div>
+                )}
+"""
+TSX_REPLY_OLD = """                    {isReply && (
+                        <span className="commentReplyTo">
+                            回复 @{c.replyToNickname || '已注销用户'}
+                        </span>
+                    )}
+"""
+SASS_REPLY_NEW = """        .commentReplyTo
+            display: block
+            margin: 2px 0 4px
+            font-size: 0.8rem
+"""
+SASS_REPLY_OLD = """        .commentReplyTo
+            font-size: 0.8rem
+"""
+
 
 def build(variant: str) -> pathlib.Path:
     """variant:
     'fixed'  src 原样；
     'broken' 改之前的样子（tsx 挂回 counter-room + sass 摘掉按进框内那条）——红基线 A；
-    'bare'   只摘掉按进框内那条（= 20261003 早上用户报重叠时的样子）——红基线 B。
-    两个红基线各自翻的是 ② 里不同的那几条，所以两个都要跑：
-    A 翻的是「缝隙」与「落在框内」，B 翻的是「计数与按钮不相交」（当年那 22px 就是为它加的）。"""
+    'bare'   只摘掉按进框内那条（= 20261003 早上用户报重叠时的样子）——红基线 B；
+    'replyto-old' 「回复 @某人」退回身份行行首（20261003 用户第 3 条报的那一版）——红基线 C。
+    三个红基线各自翻的是不同的那几条判据，所以三个都要跑：
+    A 翻的是「缝隙」与「落在框内」，B 翻的是「计数与按钮不相交」（当年那 22px 就是为它加的），
+    C 翻的是 ⑨ 里「回复标记另有自己的一行」。"""
     sb = pathlib.Path(tempfile.mkdtemp(prefix=f"comment-layout-{variant}-"))
     shutil.copytree(FE / "src", sb / "src")
     (sb / "node_modules").symlink_to(FE / "node_modules")
@@ -152,8 +180,21 @@ def build(variant: str) -> pathlib.Path:
     (sb / "src/apis/CommentMethods.tsx").write_text(STUB_COMMENTS, encoding="utf-8")
     (sb / "src/apis/getToken.tsx").write_text(STUB_TOKEN, encoding="utf-8")
 
+    if variant == "replyto-old":
+        p = sb / "src/components/CommentSection/index.tsx"
+        src = p.read_text(encoding="utf-8")
+        assert src.count(TSX_REPLY_NEW) == 1, "红基线 C 没找到「另起一行」那段 JSX"
+        assert src.count(TSX_META_OPEN) == 1, "红基线 C 没找到 `.commentMeta` 的开标签"
+        src = src.replace(TSX_REPLY_NEW, "", 1)                     # 新的删掉
+        src = src.replace(TSX_META_OPEN, TSX_META_OPEN + TSX_REPLY_OLD, 1)  # 旧的插回行首
+        p.write_text(src, encoding="utf-8")
+        s = sb / "src/components/CommentSection/index.sass"
+        txt = s.read_text(encoding="utf-8")
+        assert txt.count(SASS_REPLY_NEW) == 1, "红基线 C 没找到块级那三条声明"
+        s.write_text(txt.replace(SASS_REPLY_NEW, SASS_REPLY_OLD, 1), encoding="utf-8")
+
     sass_src = SASS_SRC
-    if variant in ("broken", "bare"):
+    if variant in ("broken", "bare", "replyto-old"):
         s = sb / "src/components/CommentSection/index.sass"
         txt = s.read_text(encoding="utf-8")
         assert txt.count(COUNT_BOTTOM) == 1, "红基线补丁没找到把计数按进框内的 `bottom: 4px`"
@@ -214,6 +255,30 @@ TEXTAREA = ".commentComposer textarea"
 FOOT = ".commentComposerFoot"
 SUBMIT = ".commentSubmit"
 
+# ⑨ 用：回复行里那几件的盒子与**文档顺序**。判"另起一行"要看几何，判"没插在头像与昵称
+# 之间"要看顺序与水平带 —— 光看 CSS 里写没写 `display: block` 是证明不了这两件事的。
+REPLY_GEOM = """() => {
+  const rows = document.querySelectorAll('.commentRow.isReply');
+  const row = rows[0];
+  if (!row) return { rows: 0 };
+  const q = (s) => row.querySelector(s);
+  const b = (e) => { const r = e.getBoundingClientRect();
+    return {x: r.x, y: r.y, w: r.width, h: r.height, right: r.right, bottom: r.bottom}; };
+  const before = (a, b) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+  const meta = q('.commentMeta'), name = q('.commentName'), av = q('.commentAvatar');
+  const rt = q('.commentReplyTo'), body = q('.commentBody');
+  return {
+    rows: rows.length,
+    topRowsWithRt: [...document.querySelectorAll('.commentRow:not(.isReply)')]
+        .filter(r => r.querySelector('.commentReplyTo')).length,
+    meta: b(meta), name: b(name), av: av ? b(av) : null,
+    rt: rt ? b(rt) : null, body: body ? b(body) : null,
+    rtInsideMeta: !!rt && meta.contains(rt),
+    nameBeforeRt: !!rt && before(name, rt),
+    rtBeforeBody: !!rt && before(rt, body),
+  };
+}"""
+
 # 计数该有多大地方待着：它在框内右下角（`bottom:4px` + `line-height:16px`）⇒ 与框底
 # 只差几像素。**判"在框里"用 `inside()`，不是判"不相交"**——不相交在它被藏起来、
 # 或者跑到八百里外时同样是绿的。
@@ -225,6 +290,7 @@ def inside(inner, outer, slack=0.5):
 FIXED = build("fixed")
 BROKEN = build("broken")
 BARE = build("bare")
+REPLY_OLD = build("replyto-old")
 
 print(f"沙箱：{FIXED}")
 
@@ -423,6 +489,35 @@ with sync_playwright() as p:
     check("评论 id 仍在 data-cid 上（深链 ?cid= 与高亮靠它）", idrow["cid"] == "42", idrow["cid"])
     check("★ 这行字比昵称明显小（主人：「可以非常小」）", idrow["uidFont"] < idrow["nameFont"] - 3,
           f'uid {idrow["uidFont"]}px vs 昵称 {idrow["nameFont"]}px')
+
+    print("\n⑨ 「回复 @某人」另起一行，不再隔断头像与昵称（20261003 用户第 3 条）")
+    # 用户原话：「回复评论，应该是头像右上角是对应用户昵称，徽章，UID，另起一行回复 @xxx，
+    # 现在的布局回复 @xx 直接把头像和昵称隔断了」。根因是**纯 DOM 顺序**：那个节点当年挂在
+    # `.commentMeta` 的**首位**，于是它排在昵称之前、左边紧挨头像。
+    # 这一组量三件事：身份行里没有它、它自己占一行、它不在头像与昵称之间。
+    rg = pg.evaluate(REPLY_GEOM)
+    check("前提：回复行有两条（夹具里 41 / 42）", rg["rows"] == 2, rg["rows"])
+    check("顶层评论不渲染这个节点（只有回复才有）", rg["topRowsWithRt"] == 0,
+          rg["topRowsWithRt"])
+    check("★它不在身份行 `.commentMeta` 里（结构判据）", not rg["rtInsideMeta"],
+          rg["rtInsideMeta"])
+    check("★DOM 顺序：昵称在前、它在前、正文在后（谁 → 回复谁 → 正文）",
+          rg["nameBeforeRt"] and rg["rtBeforeBody"],
+          f'nameBeforeRt={rg["nameBeforeRt"]} rtBeforeBody={rg["rtBeforeBody"]}')
+    check("★几何：它有自己的一行——上缘落在身份行之下",
+          bool(rg["rt"]) and rg["rt"]["y"] >= rg["meta"]["bottom"] - 1,
+          f'rt.y={rg["rt"] and round(rg["rt"]["y"], 1)} meta.bottom={round(rg["meta"]["bottom"], 1)}')
+    check("  且紧贴身份行（≤8px，不是飘到别处去）",
+          bool(rg["rt"]) and 0 <= rg["rt"]["y"] - rg["meta"]["bottom"] <= 8,
+          f'缝隙 {rg["rt"] and round(rg["rt"]["y"] - rg["meta"]["bottom"], 1)}px')
+    check("  与昵称**不在同一水平带**（纵向不相交 ⇒ 视觉上不可能夹在头像与昵称之间）",
+          bool(rg["rt"]) and min(rg["rt"]["bottom"], rg["name"]["bottom"])
+          - max(rg["rt"]["y"], rg["name"]["y"]) <= 0,
+          f'rt={round(rg["rt"]["y"], 1)}..{round(rg["rt"]["bottom"], 1)} '
+          f'name={round(rg["name"]["y"], 1)}..{round(rg["name"]["bottom"], 1)}')
+    check("  左缘与身份行对齐（另起一行，不是缩进到别处）",
+          bool(rg["rt"]) and abs(rg["rt"]["x"] - rg["meta"]["x"]) < 1.5,
+          f'rt.x={rg["rt"] and round(rg["rt"]["x"], 1)} meta.x={round(rg["meta"]["x"], 1)}')
     pg.close()
 
     # ══ 二、红基线 A：还原改之前的形态（counter-room 挂回来 + 计数落回框外）══════════
@@ -474,6 +569,35 @@ with sync_playwright() as p:
     check("对照组里计数也确实压着整行按钮区", overlap(c3, box(pg3, FOOT)) > 2,
           f"相交 {overlap(c3, box(pg3, FOOT)):.1f}px")
     pg3.close()
+
+    # ══ 四、红基线 C：把「回复 @某人」退回身份行行首 ═══════════════════════════════
+    print("\n⑨b 红基线 C（replyto-old 变体）：回复标记回到行首，头像与昵称被它隔断")
+    pg4 = br.new_page(viewport={"width": 1280, "height": 900})
+    errs4 = []
+    pg4.on("pageerror", lambda e: errs4.append(str(e)))
+    pg4.add_init_script("window.__BOOT = { path: '/article/1', token: 't' };")
+    pg4.goto(REPLY_OLD.as_uri() + "/index.html")
+    pg4.wait_for_selector(".commentComposer", timeout=8000)
+    pg4.wait_for_timeout(300)
+    check("对照组页面本身是好的（没有 JS 错误、回复行还在）",
+          not errs4 and pg4.locator(".commentRow.isReply").count() == 2, "; ".join(errs4[:1]))
+    o = pg4.evaluate(REPLY_GEOM)
+    check("★对照组里它**就在**身份行内（⑨ 那条「不在身份行里」有牙）",
+          o["rtInsideMeta"] is True, o["rtInsideMeta"])
+    check("★对照组里昵称排在它**之后**（⑨ 那条 DOM 顺序判据有牙）",
+          o["nameBeforeRt"] is False, o["nameBeforeRt"])
+    # 这条是用户报的那句话的**几何翻译**：它横插在头像右缘与昵称左缘之间，
+    # 且与昵称处在同一水平带 —— 于是"头像 / 回复@xx / 昵称"排成一行。
+    check("★对照组里头像与昵称确实被它隔开（它落在两者的水平之间、同一水平带）",
+          bool(o["av"]) and bool(o["rt"]) and bool(o["name"])
+          and o["av"]["right"] <= o["rt"]["x"] + 0.5
+          and o["rt"]["right"] <= o["name"]["x"] + 0.5
+          and min(o["rt"]["bottom"], o["name"]["bottom"])
+          - max(o["rt"]["y"], o["name"]["y"]) > 0,
+          f'av.right={o["av"] and round(o["av"]["right"], 1)} '
+          f'rt={o["rt"] and round(o["rt"]["x"], 1)}..{o["rt"] and round(o["rt"]["right"], 1)} '
+          f'name.x={round(o["name"]["x"], 1)}')
+    pg4.close()
     br.close()
 
 print(f"\ncomment-layout: {'全绿' if not FAILS else str(len(FAILS)) + ' 条红'}\n")
