@@ -634,7 +634,10 @@ export class WordGraphEngine {
         // 20260917：**悬停也算焦点**（用户："悬浮时在向量边上也要显示直接相连的名字"）。
         // 此前只有 sel 触发，于是"悬浮有名字、它连着的点没名字"，得先点一下才看得到。
         // 用并集而不是"悬停覆盖选中"：光标扫过画布时不该把刚选好那一片的名字擦掉。
-        // 每节点 ≤3 条边、最大度 9，并集最多几十个，预算 40 由 take 自己兜。
+        // 每个焦点要把**它全部的边**过一遍：真实产物的度数是 max 9 / 均值 3.9
+        // （建图脚本那个 `[:3]` 是每点各自取前三再取并集，不是"每点只有 3 条"，
+        // 见 docs/word-graph.md 的《建图管线》那条注），两个焦点的并集最多几十个，
+        // 预算 LABEL_MAX = 50 由 take 自己兜。
         for (const f of new Set([this.hover, sel])) {
             if (f === null) continue;
             for (const e of data.edges) {
@@ -655,8 +658,8 @@ export class WordGraphEngine {
         if (zl.length > 1) zl.sort((a, b) => this.proj.d[a] - this.proj.d[b]);   // 最近的先占位
         for (let k = 0; k < zl.length && k < LABEL_NEAR; k++) take(zl[k], false, true);
         // A 层：全局热度前 N 名常驻（hard——"热度高的向量一直显式展示名字"）
-        const byImp = this.byHeat;
-        for (let k = 0; k < byImp.length && k < LABEL_A; k++) take(byImp[k], false, true);
+        const ranked = this.byHeat;   // 20261003 起是**热度**序，不是重要度序（见 heatOf 的头注）
+        for (let k = 0; k < ranked.length && k < LABEL_A; k++) take(ranked[k], false, true);
         // B 层：其余按"离相机近"补位（拉近自然揭示更多）。只在查询聚焦时让位——
         // 悬停/选中一个词不该让别的名字全消失（那会让"选中看邻居"这件事没法看）。
         // ⚠️ 必须从**最近**的点往回补：this.order 是远→近排的（画家算法），照它正序走
