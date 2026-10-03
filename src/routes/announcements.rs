@@ -120,7 +120,9 @@ pub async fn update_announcement(
         content: Set(payload.content),
         ..Default::default()
     };
-    announcement::Entity::update(a).exec(&state.db).await.unwrap();
+    if let Err(e) = announcement::Entity::update(a).exec(&state.db).await {
+        return super::db_error("更新公告", &e);
+    }
     if let Some(old) = old {
         // 已展开的通知行跟随更新（标题/正文）。`created_at` 不动：通知的时间语义是
         // "公告什么时候发布的"，不是"什么时候被编辑"——它还是匹配键。
@@ -154,9 +156,13 @@ pub async fn delete_announcement(
         .all(&state.db)
         .await
         .unwrap_or_default();
-    announcement::Entity::delete_many()
+    if let Err(e) = announcement::Entity::delete_many()
         .filter(announcement::Column::Id.is_in(ids))
-        .exec(&state.db).await.unwrap();
+        .exec(&state.db)
+        .await
+    {
+        return super::db_error("删除公告", &e);
+    }
     for a in rows {
         if let Err(e) = user_notification::Entity::delete_many()
             .filter(user_notification::Column::Kind.eq(KIND_ANNOUNCEMENT))

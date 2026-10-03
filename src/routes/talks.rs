@@ -139,13 +139,19 @@ pub async fn delete_my_board(
     let Some(uid) = current_uid(&state.db, &headers).await else {
         return Json(ApiResponse::error("请先登录"));
     };
-    let Some(t) = talk::Entity::find_by_id(id).one(&state.db).await.unwrap() else {
+    let found = match talk::Entity::find_by_id(id).one(&state.db).await {
+        Ok(v) => v,
+        Err(e) => return super::db_error("读取河灯", &e),
+    };
+    let Some(t) = found else {
         return Json(ApiResponse { code: 404, message: "Talk not found".to_string(), data: String::default() });
     };
     if t.src != "board" || t.user_id != uid {
         return Json(ApiResponse::error("只能收回自己放的河灯"));
     }
-    talk::Entity::delete_by_id(id).exec(&state.db).await.unwrap();
+    if let Err(e) = talk::Entity::delete_by_id(id).exec(&state.db).await {
+        return super::db_error("收回河灯", &e);
+    }
     Json(ApiResponse::success("Deleted".to_string()))
 }
 
@@ -269,7 +275,10 @@ async fn insert_talk(
         updated_at: Set(chrono::Local::now().naive_local()),
         ..Default::default()
     };
-    let inserted = talk::Entity::insert(t).exec(&state.db).await.unwrap();
+    let inserted = match talk::Entity::insert(t).exec(&state.db).await {
+        Ok(r) => r,
+        Err(e) => return super::db_error("发布留言", &e),
+    };
     // 审核结果通知（20260923，20260926 补待审那条）。
     //
     // 发的判据分两半，**合起来 = "这行留言的审核状态值得告诉作者"**：
@@ -593,7 +602,9 @@ pub async fn delete_talk(
     let Some(_uid) = current_uid(&state.db, &headers).await else {
         return Json(ApiResponse::error("请先登录"));
     };
-    talk::Entity::delete_by_id(id).exec(&state.db).await.unwrap();
+    if let Err(e) = talk::Entity::delete_by_id(id).exec(&state.db).await {
+        return super::db_error("删除说说", &e);
+    }
     Json(ApiResponse::success("Deleted".to_string()))
 }
 
@@ -607,10 +618,10 @@ pub async fn update_talk(
     let Some(_uid) = current_uid(&state.db, &headers).await else {
         return Json(ApiResponse::error("请先登录"));
     };
-    let talk_model = talk::Entity::find_by_id(id)
-        .one(&state.db)
-        .await
-        .unwrap();
+    let talk_model = match talk::Entity::find_by_id(id).one(&state.db).await {
+        Ok(v) => v,
+        Err(e) => return super::db_error("读取说说", &e),
+    };
 
     if let Some(t) = talk_model {
         let mut active_model: talk::ActiveModel = t.into();
@@ -618,7 +629,9 @@ pub async fn update_talk(
         active_model.content = Set(payload.content);
         active_model.updated_at = Set(chrono::Local::now().naive_local());
 
-        talk::Entity::update(active_model).exec(&state.db).await.unwrap();
+        if let Err(e) = talk::Entity::update(active_model).exec(&state.db).await {
+            return super::db_error("更新说说", &e);
+        }
         Json(ApiResponse::success("Updated".to_string()))
     } else {
         Json(ApiResponse { code: 404, message: "Talk not found".to_string(), data: String::default() })
@@ -735,7 +748,9 @@ pub async fn delete_board(
     let Some(_uid) = current_uid(&state.db, &headers).await else {
         return Json(ApiResponse::error("请先登录"));
     };
-    talk::Entity::delete_by_id(id).exec(&state.db).await.unwrap();
+    if let Err(e) = talk::Entity::delete_by_id(id).exec(&state.db).await {
+        return super::db_error("删除河灯", &e);
+    }
     Json(ApiResponse::success("Deleted".to_string()))
 }
 
@@ -770,7 +785,11 @@ pub async fn audit_board(
     let Some(_uid) = current_uid(&state.db, &headers).await else {
         return Json(ApiResponse::error("请先登录"));
     };
-    let Some(t) = talk::Entity::find_by_id(id).one(&state.db).await.unwrap() else {
+    let found = match talk::Entity::find_by_id(id).one(&state.db).await {
+        Ok(v) => v,
+        Err(e) => return super::db_error("读取河灯", &e),
+    };
+    let Some(t) = found else {
         return Json(ApiResponse { code: 404, message: "Talk not found".to_string(), data: String::default() });
     };
     // 审核只作用于河灯留言（说说 src=talk 不走审核流程，拒绝误审）
@@ -802,7 +821,9 @@ pub async fn audit_board(
     };
     active_model.reject_reason = Set(final_reason.clone());
     active_model.updated_at = Set(chrono::Local::now().naive_local());
-    talk::Entity::update(active_model).exec(&state.db).await.unwrap();
+    if let Err(e) = talk::Entity::update(active_model).exec(&state.db).await {
+        return super::db_error("保存人工复核结果", &e);
+    }
     // 人工裁决的每一步都是终态（通过 / 驳回 / 改判），发通知——用户拍板「改判再发」。
     // 20260926 注释更正：此前这里写着"与 insert_talk 的『只在 AI 终态发』不冲突"，那句话
     // 已经不成立——insert_talk 现在入库时就发一条「等待人工复核」，人工裁完**必然**再发一条。

@@ -86,7 +86,9 @@ pub async fn create_friend(
         status: Set(payload.status.or(Some(0))),
         ..Default::default()
     };
-    friend::Entity::insert(f).exec(&state.db).await.unwrap();
+    if let Err(e) = friend::Entity::insert(f).exec(&state.db).await {
+        return super::db_error("新增友链", &e);
+    }
     Json(ApiResponse::success("Created".to_string()))
 }
 
@@ -98,7 +100,10 @@ pub async fn update_friend(
     if !validate_site_url(&payload.url) {
         return Json(ApiResponse::error("siteUrl 仅允许 http/https 协议"));
     }
-    let f = friend::Entity::find_by_id(id).one(&state.db).await.unwrap();
+    let f = match friend::Entity::find_by_id(id).one(&state.db).await {
+        Ok(v) => v,
+        Err(e) => return super::db_error("读取友链", &e),
+    };
     if let Some(x) = f {
         let mut a: friend::ActiveModel = x.into();
         a.name = Set(payload.name);
@@ -106,7 +111,9 @@ pub async fn update_friend(
         a.avatar = Set(Some(payload.avatar));
         a.description = Set(Some(payload.description));
         a.status = Set(payload.status.or(Some(1)));
-        a.update(&state.db).await.unwrap();
+        if let Err(e) = a.update(&state.db).await {
+            return super::db_error("更新友链", &e);
+        }
         Json(ApiResponse::success("Updated".to_string()))
     } else {
         Json(ApiResponse::error("Not found"))
@@ -117,7 +124,9 @@ pub async fn delete_friend(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i32>,
 ) -> Json<ApiResponse<String>> {
-    friend::Entity::delete_by_id(id).exec(&state.db).await.unwrap();
+    if let Err(e) = friend::Entity::delete_by_id(id).exec(&state.db).await {
+        return super::db_error("删除友链", &e);
+    }
     Json(ApiResponse::success("Deleted".to_string()))
 }
 
