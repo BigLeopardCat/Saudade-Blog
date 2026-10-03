@@ -21,6 +21,7 @@ pub mod todos;    // 后台首页待办（20260924；整份列表按用户落库
 pub mod quota;    // 用户对话额度（20260929；上限与算术在 crate::quota，本模块只管读写）
 pub mod note_stats; // 文章阅读量/点赞量（20260930；**绝不能记进 get_note_detail**，见模块头注）
 pub mod comments;   // 文章评论（20261002）：审核复用 talks::decide_review，存储走 note_comment 表
+pub mod comment_votes; // 评论点赞/踩（20261003）：一票一行、**访客可投**，身份复用 note_stats::{identify, Who}
 
 use axum::{
     routing::{get, post, delete, put},
@@ -167,6 +168,10 @@ pub fn create_router(state: AppState) -> Router {
             get(comments::list_comments).post(comments::create_comment),
         )
         .route("/api/public/comments/:id", delete(comments::delete_my_comment))
+        // 评论点赞/踩（20261003 用户第 4 条）：**访客也能投**（登录或 X-Visitor-Key），
+        // 所以与上面三条同理必须留在公开域；`value` 走请求体（+1 / -1 / 0=撤回），
+        // 一个端点装三种动作，前端不必记三条 URL。
+        .route("/api/public/comments/:id/vote", post(comment_votes::vote_comment))
 
         // Web/User Public
         .route("/api/public/user", get(web_info::get_user_info))

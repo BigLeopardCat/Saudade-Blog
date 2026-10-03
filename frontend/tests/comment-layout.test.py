@@ -56,25 +56,43 @@ def check(desc, cond, detail=""):
 
 # ── 夹具：30 条顶层 + 两条回复（回复的回复仍挂在第一条回复的顶层下，测分组） ──────
 def fixture_comments():
+    """30 条顶层 + 2 条回复。
+
+    每行那三个投票字段（`up`/`down`/`myVote`，20261003 用户第 4 条）**不是随手填的**——
+    取值刻意造成"按票数高亮"与"按 `myVote` 高亮"给出**相反**答案的那一组，
+    于是 ⑪ 里那条断言真能分辨两种写法（否则它只是"class 里有 isOn"这种谁都能过的空话）：
+
+      · #1  up=3  down=7  myVote= 1 ⇒ 票多的是**踩**，我投的是**赞**
+      · #30 up=12 down=0  myVote=-1 ⇒ 票多的是**赞**，我投的是**踩**（#1 的反向）
+      · #2  up=0  down=0  myVote= 0 ⇒ 两个计数都是 0 ⇒ 数字必须**一颗都不显示**
+      · 其余全 0（同上，一排 `👍0 👎0` 正是要量掉的那种噪声）
+
+    #2 与 #30 的 `mine` 都是 True ⇒ 它们同时充当"按钮顺序 回复 → 赞 → 踩 → 删除"的样本。
+    """
     items = []
+    votes = {1: (3, 7, 1), 30: (12, 0, -1)}
     for i in range(1, 31):
+        up, down, myvote = votes.get(i, (0, 0, 0))
         items.append({
             "id": i, "noteId": 1, "content": f"第 {i} 条顶层评论，用来把页面撑高一点。",
             "parentId": None, "rootId": None, "replyToUid": None, "replyToNickname": None,
             "userId": 700 + i, "nickname": f"访客{i}", "avatar": "",
             "role": "admin" if i == 3 else "user", "mine": i in (2, 30),
             "createdAt": "2026-10-03 12:00:00",
+            "up": up, "down": down, "myVote": myvote,
         })
     items.append({
         "id": 41, "noteId": 1, "content": "回复最后一条顶层。", "parentId": 30, "rootId": 30,
         "replyToUid": 730, "replyToNickname": "访客30", "userId": 801, "nickname": "甲",
         "avatar": "", "role": "secretary", "mine": False, "createdAt": "2026-10-03 12:01:00",
+        "up": 0, "down": 0, "myVote": 0,
     })
     # **深链目标**：回复的回复——它仍挂在顶层 30 下（服务端派生 rootId），排在整个讨论区最后一行
     items.append({
         "id": 42, "noteId": 1, "content": "回复的回复。", "parentId": 41, "rootId": 30,
         "replyToUid": 801, "replyToNickname": "甲", "userId": 802, "nickname": "乙",
         "avatar": "", "role": "zako", "mine": False, "createdAt": "2026-10-03 12:02:00",
+        "up": 0, "down": 0, "myVote": 0,
     })
     return items
 
@@ -95,6 +113,40 @@ export const listComments = () =>
 export const createComment = () => Promise.resolve(env({ id: 999, approved: 1 }));
 
 export const deleteMyComment = () => Promise.resolve(env('ok'));
+
+/** 投票（⑪ 组要量的那一条）。三件事都记在 window 上，判据才拿得到：
+ *
+ *  · `window.__votes` —— **发出去的** `[id, value]` 序列。断言"点了赞发的是 1、
+ *    再点一次发的是 0（撤回）"只能看这里，不能看界面（界面在乐观更新之后就已经变了，
+ *    两种写法长得一模一样）；
+ *  · `window.__voteFail` —— 置真则回一个 `code: 500` 的信封。**失败必须回滚**这条
+ *    要它才量得出来（不回滚的实现在这里会留下一个假的乐观值）；
+ *  · `window.__voteHold` —— 置真则**不回**，把 resolve 挂到 `window.__voteRelease()`
+ *    上。乐观更新是"点下去当场就变"，不把它按住就永远看不见中间那一瞬。
+ *
+ *  回执的数是**服务端口径**，故意与"本地自增"不同（夹具里 #30 是 up=12）：
+ *  若前端显示的是自己算的账，⑪ 里那条"数字换成回执给的 7"当场就红。 */
+export const voteComment = (id: number, value: number) => {
+    const w = window as any;
+    (w.__votes = w.__votes || []).push([id, value]);
+    const up = value === 1 ? 7 : value === 0 ? 0 : 4;
+    const down = value === -1 ? 9 : value === 0 ? 0 : 2;
+    const apply = () => {
+        // 票数是**聚合值**：回执就是服务端算完的事实，顺手把它写回"服务端那份库"
+        // （`window.__comments`）。否则中途任何一次重拉/重挂都会退回夹具的旧数——
+        // 那种红查起来极贵，而且它不是产品缺陷，是桩没跟上。
+        const row = (w.__comments || []).find((c: any) => c.id === id);
+        if (row) { row.up = up; row.down = down; row.myVote = value; }
+        return env({ up, down, myVote: value });
+    };
+    if (w.__voteFail) {
+        return Promise.resolve({ status: 200, data: { code: 500, message: '投票没成功', data: null } });
+    }
+    if (w.__voteHold) {
+        return new Promise((resolve) => { w.__voteRelease = () => resolve(apply()); });
+    }
+    return Promise.resolve(apply());
+};
 '''
 
 STUB_TOKEN = '''\
@@ -184,6 +236,12 @@ TSX_TOPREPLY_STATE = TSX_BUSY_STATE + \
 TSX_POST_NULL = "await postComment(text, null)"
 TSX_POST_TOP = "await postComment(text, topReply?.id ?? null)"
 
+# ── 红基线 E（⑪e）：把「我投过没投过」换成**票多的那一侧**高亮——这是同族网页里最常见的
+# 那种写法，也正是用户第 4 条要量掉的那件事（读者会把它读成"这是我投的"）。只改一句，
+# 其余一字不动 ⇒ 对照组红的只可能是 ⑪ 里那两条高亮判据（同一页的计数判据仍该是绿的）。
+TSX_VOTE_ON = "                        const on = c.myVote === dir\n"
+TSX_VOTE_BY_COUNT = "                        const on = dir === 1 ? c.up > c.down : c.down > c.up\n"
+
 
 def build(variant: str) -> pathlib.Path:
     """variant:
@@ -191,10 +249,13 @@ def build(variant: str) -> pathlib.Path:
     'broken' 改之前的样子（tsx 挂回 counter-room + sass 摘掉按进框内那条）——红基线 A；
     'bare'   只摘掉按进框内那条（= 20261003 早上用户报重叠时的样子）——红基线 B；
     'replyto-old' 「回复 @某人」退回身份行行首（20261003 用户第 3 条报的那一版）——红基线 C；
-    'reply-top'  「回复」退回"只能开在页面顶部那个输入框"——红基线 D。
-    四个红基线各自翻的是不同的那几条判据，所以四个都要跑：
+    'reply-top'  「回复」退回"只能开在页面顶部那个输入框"——红基线 D；
+    'vote-by-count' 高亮从 `myVote` 换成"票多的那一侧"——红基线 E。
+    五个红基线各自翻的是不同的那几条判据，所以五个都要跑：
     A 翻的是「缝隙」与「落在框内」，B 翻的是「计数与按钮不相交」（当年那 22px 就是为它加的），
-    C 翻的是 ⑨ 里「回复标记另有自己的一行」，D 翻的是 ⑩ 里「回复框住在被回复的那一行里」。"""
+    C 翻的是 ⑨ 里「回复标记另有自己的一行」，D 翻的是 ⑩ 里「回复框住在被回复的那一行里」，
+    E 翻的是 ⑪ 里「高亮跟着 myVote 走」（夹具里 #1/#30 的票数与 myVote 方向**相反**，
+    就是为了让这一条分辨得出两种写法）。"""
     sb = pathlib.Path(tempfile.mkdtemp(prefix=f"comment-layout-{variant}-"))
     shutil.copytree(FE / "src", sb / "src")
     (sb / "node_modules").symlink_to(FE / "node_modules")
@@ -242,6 +303,12 @@ def build(variant: str) -> pathlib.Path:
             assert src.count(old) == 1, f"红基线 D 没找到{what}"
             src = src.replace(old, new, 1)
         p.write_text(src, encoding="utf-8")
+
+    if variant == "vote-by-count":
+        p = sb / "src/components/CommentSection/index.tsx"
+        src = p.read_text(encoding="utf-8")
+        assert src.count(TSX_VOTE_ON) == 1, "红基线 E 没找到「高亮看 myVote」那句"
+        p.write_text(src.replace(TSX_VOTE_ON, TSX_VOTE_BY_COUNT, 1), encoding="utf-8")
 
     (sb / "entry.tsx").write_text(ENTRY, encoding="utf-8")
 
@@ -291,6 +358,26 @@ TEXTAREA = ".commentComposer textarea"
 FOOT = ".commentComposerFoot"
 SUBMIT = ".commentSubmit"
 
+# ⑪ 用：一行评论的动作区读成一份结构化快照——按钮顺序（`aria-label` 兜底取文本）、
+# 哪一颗亮着、`aria-pressed`、两颗钮各自的数字（没有 `.commentVoteNum` 记 null，
+# 于是"0 不显示数字"与"数字换成了回执那个值"是同一处量的）、颜色、disabled。
+# **数量、顺序、状态一起取**：分开取会给出"读了三次 DOM"的假象，中间任何一次重绘
+# 都可能让三条判据各自看到不同的一瞬。
+VOTE_ROW = """(cid) => {
+  const row = document.querySelector('#c-' + cid);
+  if (!row) return null;
+  const v = [...row.querySelectorAll('.commentVote')];
+  return {
+    labels: [...row.querySelectorAll('.commentActions button')].map(
+        (b) => b.getAttribute('aria-label') || (b.textContent || '').trim()),
+    on: v.map((x) => x.classList.contains('isOn')),
+    pressed: v.map((x) => x.getAttribute('aria-pressed')),
+    nums: v.map((x) => { const n = x.querySelector('.commentVoteNum'); return n ? n.textContent : null; }),
+    colors: v.map((x) => getComputedStyle(x).color),
+    disabled: v.map((x) => x.disabled),
+  };
+}"""
+
 # ⑨ 用：回复行里那几件的盒子与**文档顺序**。判"另起一行"要看几何，判"没插在头像与昵称
 # 之间"要看顺序与水平带 —— 光看 CSS 里写没写 `display: block` 是证明不了这两件事的。
 REPLY_GEOM = """() => {
@@ -328,6 +415,7 @@ BROKEN = build("broken")
 BARE = build("bare")
 REPLY_OLD = build("replyto-old")
 REPLY_TOP = build("reply-top")
+VOTE_BY_COUNT = build("vote-by-count")
 
 print(f"沙箱：{FIXED}")
 
@@ -639,6 +727,117 @@ with sync_playwright() as p:
     check("  左缘与身份行对齐（另起一行，不是缩进到别处）",
           bool(rg["rt"]) and abs(rg["rt"]["x"] - rg["meta"]["x"]) < 1.5,
           f'rt.x={rg["rt"] and round(rg["rt"]["x"], 1)} meta.x={round(rg["meta"]["x"], 1)}')
+
+    # ══ ⑪ 赞 / 踩（20261003 用户第 4 条「讨论区评论增加点赞和踩」）══════════════════
+    print("\n⑪ 赞 / 踩：高亮跟 myVote（不是票多的那侧）、计数为 0 不显示数字、按钮顺序")
+    # 夹具那三个数是这组判据的**前提**，所以先把它本身量一遍：如果哪天有人"顺手"把
+    # #1 改成 up=7/down=3，⑪ 里"高亮跟 myVote"那条会变成按票数高亮也照样通过
+    # ——判据还在，牙没了。这种退化必须是红的（同 ② 组"前提：计数确实在"那条的取向）。
+    fx = pg.evaluate("() => (window.__comments || [])"
+                     ".filter((c) => [1, 2, 30].includes(c.id))"
+                     ".map((c) => [c.id, c.up, c.down, c.myVote])")
+    check("前提：夹具里 #1 是「踩的票多、我投赞」，#2 两个数都是 0，"
+          "#30 是 #1 的反向 —— 少了这组刻意相反的取值，下面的高亮判据就退化成永真",
+          fx == [[1, 3, 7, 1], [2, 0, 0, 0], [30, 12, 0, -1]], fx)
+    check("前提：32 行各两颗钮（赞 / 踩）都渲染出来了",
+          pg.locator(".commentVote").count() == 64, pg.locator(".commentVote").count())
+
+    r30 = pg.evaluate(VOTE_ROW, 30)
+    r1 = pg.evaluate(VOTE_ROW, 1)
+    r2 = pg.evaluate(VOTE_ROW, 2)
+    check("按钮顺序 回复 → 赞 → 踩 → 删除（删除仍是最后一颗：破坏性动作排最后）",
+          r30["labels"] == ["回复", "赞", "踩", "删除"], r30["labels"])
+    check("  别人的评论没有「删除」（顺序判据不是靠最后那颗凑出来的）",
+          r1["labels"] == ["回复", "赞", "踩"], r1["labels"])
+    check("★高亮跟着 myVote 走：#1 我投的是赞 ⇒ 赞亮、踩不亮（可是踩 7 票 > 赞 3 票）",
+          r1["on"] == [True, False] and r1["pressed"] == ["true", "false"],
+          f'on={r1["on"]} pressed={r1["pressed"]}')
+    check("  #30 是反向的一组：赞有 12 票，但我投的是踩 ⇒ 亮的只有踩",
+          r30["on"] == [False, True] and r30["pressed"] == ["false", "true"],
+          f'on={r30["on"]} pressed={r30["pressed"]}')
+    check("  亮不亮看得出来（不是只差一个 class：颜色确实不同）",
+          r1["colors"][0] != r1["colors"][1], r1["colors"])
+    check("★计数照常显示，与高亮无关（3 / 7）", r1["nums"] == ["3", "7"], r1["nums"])
+    check("★计数为 0 不显示数字：#2 两颗钮都只剩图标，`👍0` 那种噪声不许有",
+          r2["nums"] == [None, None] and pg.locator("#c-2 .commentVoteNum").count() == 0,
+          r2["nums"])
+    vg = pg.evaluate("""() => {
+      const r = [...document.querySelectorAll('#c-30 .commentVote')]
+          .map((x) => x.getBoundingClientRect());
+      return { upRight: r[0].right, downLeft: r[1].left,
+               y0: r[0].y, h0: r[0].height, y1: r[1].y, h1: r[1].height };
+    }""")
+    check("踩排在赞的右边（DOM 顺序之外再量一次几何）",
+          vg["downLeft"] >= vg["upRight"] - 0.5,
+          f'赞右缘 {round(vg["upRight"], 1)} 踩左缘 {round(vg["downLeft"], 1)}')
+    check("  两颗钮在同一水平带上（没被挤到另一行去）",
+          min(vg["y0"] + vg["h0"], vg["y1"] + vg["h1"]) - max(vg["y0"], vg["y1"]) > 0,
+          f'y {round(vg["y0"], 1)}+{round(vg["h0"], 1)} / {round(vg["y1"], 1)}+{round(vg["h1"], 1)}')
+
+    print("\n⑪b 点一次发什么：改投发 ±1、再点同一边发 0（撤回）、显示的数来自服务端回执")
+    # 这里量的是**发出去的 value**：界面在乐观更新之后就已经变了，"改投"与"撤回"
+    # 两种实现长得一模一样 —— 只有把请求记下来才分得清（桩里那个 `__votes`）。
+    pg.evaluate("window.__votes = []")
+    pg.locator("#c-30 .commentVote").first.click()
+    pg.wait_for_timeout(300)
+    check("★点「赞」发的是 value=1（#30 原本 myVote=-1 ⇒ 这是**改投**，不是撤回）",
+          pg.evaluate("window.__votes") == [[30, 1]], pg.evaluate("window.__votes"))
+    a30 = pg.evaluate(VOTE_ROW, 30)
+    check("★显示的数字来自**服务端回执**：夹具里 #30 的赞是 12，回执给的是 7"
+          "（本地自增会显示 13 ⇒ 这条分辨得出『自己算账』那种写法）",
+          a30["nums"] == ["7", "2"], a30["nums"])
+    check("  回执里的 myVote 覆盖了乐观值 ⇒ 赞亮、踩灭",
+          a30["on"] == [True, False], a30["on"])
+    check("  投完就解锁（in-flight 那把锁不会漏）",
+          a30["disabled"] == [False, False], a30["disabled"])
+
+    pg.evaluate("window.__votes = []")
+    pg.locator("#c-30 .commentVote").first.click()
+    pg.wait_for_timeout(300)
+    check("★再点一次已经点亮的那一侧 = 撤回（value=0，不是再投一遍）",
+          pg.evaluate("window.__votes") == [[30, 0]], pg.evaluate("window.__votes"))
+    z30 = pg.evaluate(VOTE_ROW, 30)
+    check("★撤回后回执里两个数都是 0 ⇒ 数字整颗收掉（不留 `👍0 👎0`）",
+          z30["nums"] == [None, None], z30["nums"])
+    check("  且没有一颗还亮着", z30["on"] == [False, False], z30["on"])
+
+    print("\n⑪c 乐观更新：点下去当场就变（不等一个来回），但那只是占位、回执一到就整组覆盖")
+    # 桩按住不回（`__voteHold`）才看得见中间那一瞬——否则"乐观更新"与"等回来再改"
+    # 在界面上没有任何区别（这是这一组最容易写成永真的地方）。
+    pg.evaluate("window.__voteHold = true")
+    pg.locator("#c-2 .commentVote").first.click()
+    pg.wait_for_timeout(250)
+    mid = pg.evaluate(VOTE_ROW, 2)
+    check("★请求还挂着（桩没回）时按钮已经亮、数字已经 +1 —— 乐观值就是这一瞬",
+          mid["on"] == [True, False] and mid["nums"][0] == "1",
+          f'on={mid["on"]} nums={mid["nums"]}')
+    check("  同时它被锁住（连点两下不该发出两个相反方向的请求）",
+          mid["disabled"] == [True, True], mid["disabled"])
+    pg.evaluate("window.__voteRelease()")
+    pg.wait_for_timeout(300)
+    pg.evaluate("window.__voteHold = false")
+    done = pg.evaluate(VOTE_ROW, 2)
+    check("★回执一到就覆盖那笔本地账（乐观值是 1，回执给的是 7 —— 覆盖了才对得上）",
+          done["nums"][0] == "7" and done["on"] == [True, False], f'nums={done["nums"]}')
+    check("  锁也解开了", done["disabled"] == [False, False], done["disabled"])
+
+    print("\n⑪d 失败回滚：code≠200 时退回原样，并把服务端那句话显示出来")
+    pg.evaluate("window.__voteFail = true")
+    pg.evaluate("window.__votes = []")
+    pg.locator("#c-42 .commentVote").first.click()
+    pg.wait_for_timeout(400)
+    pg.evaluate("window.__voteFail = false")
+    check("前提：失败那一下确实发出去了（否则下面的「没留下痕迹」是空话）",
+          pg.evaluate("window.__votes") == [[42, 1]], pg.evaluate("window.__votes"))
+    f42 = pg.evaluate(VOTE_ROW, 42)
+    check("★失败后没留下假的乐观值（数字与高亮都退回原样）",
+          f42["nums"] == [None, None] and f42["on"] == [False, False],
+          f'nums={f42["nums"]} on={f42["on"]}')
+    check("  按钮解锁（不然后面这颗钮永远点不动）",
+          f42["disabled"] == [False, False], f42["disabled"])
+    msg = pg.evaluate("() => { const m = document.querySelector('.ant-message-error');"
+                      " return m ? m.textContent.trim() : null }")
+    check("★提示语用的是服务端那一句（errMsg，不是本地编的通用话）", msg == "投票没成功", msg)
     pg.close()
 
     # ══ 二、红基线 A：还原改之前的形态（counter-room 挂回来 + 计数落回框外）══════════
@@ -751,6 +950,29 @@ with sync_playwright() as p:
           pg5.evaluate("() => document.activeElement.tagName") != "TEXTAREA",
           pg5.evaluate("() => document.activeElement.tagName"))
     pg5.close()
+
+    # ══ 六、红基线 E：高亮从「我投的那一票」换成「票多的那一侧」══════════════════════
+    print("\n⑪e 红基线 E（vote-by-count 变体）：高亮跟着票数走")
+    pg6 = br.new_page(viewport={"width": 1280, "height": 900})
+    errs6 = []
+    pg6.on("pageerror", lambda e: errs6.append(str(e)))
+    pg6.add_init_script("window.__BOOT = { path: '/article/1', token: 't' };")
+    pg6.goto(VOTE_BY_COUNT.as_uri() + "/index.html")
+    pg6.wait_for_selector(".commentThread", timeout=8000)
+    pg6.wait_for_timeout(300)
+    check("对照组页面本身是好的（没有 JS 错误、两颗钮都在）",
+          not errs6 and pg6.locator("#c-1 .commentVote").count() == 2, "; ".join(errs6[:1]))
+    b1 = pg6.evaluate(VOTE_ROW, 1)
+    check("★对照组里亮的是**票多的那一侧**（踩 7 票 > 赞 3 票）"
+          "—— ⇒ ⑪ 那条「高亮跟 myVote 走」有牙",
+          b1["on"] == [False, True], b1["on"])
+    b30 = pg6.evaluate(VOTE_ROW, 30)
+    check("★反向那组也翻过来（#30 票多的是赞）—— 两条一起才排得掉『恰好蒙对』",
+          b30["on"] == [True, False], b30["on"])
+    # 对照组只差那一句 ⇒ 同页的**计数**判据该照旧是绿的：红的必须只落在高亮那两条上。
+    check("  对照组的计数显示没变（3 / 7）—— ⇒ 上面那两条红只可能是高亮那一处",
+          b1["nums"] == ["3", "7"], b1["nums"])
+    pg6.close()
     br.close()
 
 print(f"\ncomment-layout: {'全绿' if not FAILS else str(len(FAILS)) + ' 条红'}\n")
