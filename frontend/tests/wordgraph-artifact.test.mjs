@@ -3,7 +3,8 @@
 // 建图脚本自己有一道质量门（fidelity / len_sim_rho / 节点数），这里是从**产物**
 // 反着再验一遍：契约（manifest → 带 hash 的文件名 → export default）、几何合法性、
 // 图的连通性、以及那条最容易静默失效的 nginx immutable 文件名规则。
-import { readFileSync, statSync, existsSync } from 'fs';
+import { readFileSync, statSync, existsSync, mkdtempSync, writeFileSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
 import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 
@@ -156,7 +157,23 @@ if (!existsSync(prodManifestPath)) {
     const pPath = path.join(AGENT_WEB, pm.file);
     if (existsSync(pPath)) {
         eq(statSync(pPath).size, pm.bytes, '生产 manifest.bytes 与实际文件大小一致');
-        const pg = (await import(pathToFileURL(pPath).href)).default;
+        // ⚠️ **不能直接 import 这个路径**：Node 按**最近的 package.json** 决定 `.js` 是不是
+        //    ESM，而 `saudade-blog-agent/` 下没有 package.json（种子那份能直接 import，
+        //    只是因为 `frontend/package.json` 里写了 `"type": "module"`）——直接 import 会
+        //    按 CommonJS 解析，`export default` 当场语法错，**整段崩在断言之前**：本机实测
+        //    连一行 FAIL 都打不出来，进程带栈退出（CI 上这段恒跳过，所以只有生产机上看得见）。
+        //    但"它必须是合法的 ES module"这条本身要验（浏览器里 `loader.ts` 就是
+        //    `await import(url)` 拿它的）⇒ 复制成 `.mjs` 再 import：既真验了 ESM 可解析性，
+        //    又不被周边 package.json 左右。
+        const tmp = mkdtempSync(path.join(tmpdir(), 'wg-prod-'));
+        const tmpFile = path.join(tmp, 'prod.mjs');
+        writeFileSync(tmpFile, readFileSync(pPath));
+        let pg;
+        try {
+            pg = (await import(pathToFileURL(tmpFile).href)).default;
+        } finally {
+            rmSync(tmp, { recursive: true, force: true });
+        }
         ok(Array.isArray(pg?.nodes) && pg.nodes.length > 0, '生产产物有节点', pg?.nodes?.length);
         // 热度是"按文章热度画大小"的**唯一数据来源**：没有 h 就只能退回 tf-idf 重要度，
         // 用户要的那个效果就不存在（而这种缺失在页面上看不出来——图照画，只是大小没意义）。
