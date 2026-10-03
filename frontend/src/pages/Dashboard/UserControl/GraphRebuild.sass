@@ -1,0 +1,136 @@
+// 向量图谱页签（20261003 用户第 2 条）。三条纪律与这页抄的 Analytics/index.sass 相同：
+//   ① 颜色一律落在**类规则**里，不在 TSX 里写内联 style —— 内联样式特异性最高，
+//      写死在那里 `.dark &` 永远赢不了（20260923 后台接深色 token 时实测白字压浅底）；
+//   ② 暗色只需覆一层底色：后台根节点是 `<div class="contain dark">`
+//      （pages/Dashboard/index.tsx:319），文字色让它继承 antd 的 token（深色档自动翻白）。
+//      所以这页**不引 useIsDarkMode()** —— JS 侧没有一处要按主题取的值，
+//      多引一个 hook 只是多一处会失效的真相源；
+//   ③ 日志区**固定高度自己滚**：建图日志有 400 行，让它撑开页面等于把状态卡片顶出屏幕。
+.graphRebuild
+  display: flex
+  flex-direction: column
+  gap: 14px
+  max-width: 940px
+  padding: 8px 4px 32px
+
+  h4
+    margin: 0 0 8px
+    font-size: 15px
+    font-weight: 600
+
+  .grIntro
+    margin: 0
+    font-size: 13px
+    line-height: 1.8
+
+  .grForm
+    display: flex
+    flex-direction: column
+    gap: 10px
+    padding: 14px 16px
+    border-radius: 8px
+    background: rgba(0, 0, 0, 0.02)
+    .dark &
+      background: rgba(255, 255, 255, 0.06)
+
+  .grRow
+    display: flex
+    align-items: center
+    gap: 10px
+    flex-wrap: wrap
+
+  // 单选组/多行内容要与标签**顶对齐**（居中的话标签会飘在整块中间）
+  .grRowTop
+    align-items: flex-start
+
+  .grLabel
+    flex: 0 0 76px
+    font-size: 13px
+
+  .grLabelGap
+    margin-left: 12px
+
+  .grHint
+    font-size: 12px
+    opacity: 0.6
+
+  .grInput
+    max-width: 420px
+
+  .grSelect
+    min-width: 260px
+
+  .grFlags
+    gap: 18px
+    font-size: 13px
+    label
+      display: inline-flex
+      align-items: center
+      gap: 6px
+      cursor: pointer
+
+  // 「强制重嵌全部词」是要花钱的那一个 —— 危险色只在这一处
+  .grDanger
+    color: #c0392b
+    .dark &
+      color: #ff7875
+
+  .grActions
+    display: flex
+    gap: 10px
+    flex-wrap: wrap
+
+  .grState
+    display: flex
+    flex-direction: column
+    gap: 10px
+
+  .grMuted
+    margin: 0
+    font-size: 13px
+    opacity: 0.6
+
+  // 状态/产物两份清单同形：两列（名 / 值），窄屏自己折
+  .grMeta
+    margin: 0
+    padding: 0
+    list-style: none
+    display: grid
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr))
+    gap: 4px 16px
+    font-size: 13px
+
+  .grResult
+    padding: 12px 14px
+    border-radius: 8px
+    background: rgba(0, 0, 0, 0.02)
+    .dark &
+      background: rgba(255, 255, 255, 0.06)
+
+  .grLogWrap
+    display: flex
+    flex-direction: column
+
+  .grLog
+    margin: 0
+    height: 260px
+    overflow: auto
+    padding: 10px 12px
+    border-radius: 8px
+    font-size: 12px
+    line-height: 1.55
+    white-space: pre-wrap
+    word-break: break-all
+    background: #f6f7f9
+    color: #24303c
+    .dark &
+      background: #1b1f24
+      color: #d7dde5
+
+  .grArgv
+    font-size: 12px
+    opacity: 0.85
+    code
+      display: block
+      margin-top: 6px
+      word-break: break-all

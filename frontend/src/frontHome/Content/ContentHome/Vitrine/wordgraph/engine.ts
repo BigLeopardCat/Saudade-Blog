@@ -38,7 +38,7 @@ const FLIGHT_MAX = 3;
 /** 边按相似度分 4 档透明度，每档一次 stroke：778 条边 → 4 次绘制调用。
  *  逐条 stroke 在低端机上就是掉帧主因。 */
 const EDGE_BUCKETS = 4;
-/** 标签预算：Z 层（贴脸）+ A 层（重要度常驻）+ N 层（邻居）+ B 层（按深度补）总上限。
+/** 标签预算：Z 层（贴脸）+ A 层（热度常驻）+ N 层（邻居）+ B 层（按深度补）总上限。
  *  C 层（悬停/选中/查询命中）不受限。34 → 40（20260915b）→ **50（20260917 用户要求）**：
  *  窗口放大后画布更宽，50 个 11px 标签仍没到糊的程度，而"放大到脸上却没名字"体验上更不能接受。
  *  注意 40 个时实测已经会挤掉个别邻居标签（线上 21 个邻居里 3 个没画上）。 */
@@ -46,7 +46,7 @@ const LABEL_A = 22;
 const LABEL_MAX = 50;
 /** Z 层（贴脸）阈值：相机离这个点 ≤ 这个深度就给它上标签。
  *
- *  **不能**用"投影半径 ≥ N px"当判据：点半径公式 `(1.7+3.1√n)*(dist/depth)` 在 target
+ *  **不能**用"投影半径 ≥ N px"当判据：点半径公式 `(1.7+3.1√heat)*(dist/depth)` 在 target
  *  平面上恰好等于括号里的值（≤4.8px）——放大只是把点摊开，并不会让点变大
  *  （20260915b 无头实测：Z 层从未命中）。
  *
@@ -113,6 +113,28 @@ export function neighborsOf(g: GraphData, idx: number): { w: string; s: number }
     return [...best].map(([w, s]) => ({ w, s })).sort((a, b) => b.s - a.s);
 }
 
+/** 点的大小 / 标签字号 / 常显标签优先级**统一**用的取值：文章热度（20261003 起）。
+ *
+ *  以前这三处都用 `n`（tf-idf 归一化重要度）。用户的原话是"不按那个没有意义的重要度
+ *  画大小"——`n` 说的是"这个词在语料里多有代表性"，跟**访客想看什么**没关系：一个
+ *  没人读的文章里的生僻词可以比爆款标题里的词更大。现在按文章热度画（阅读/点赞/
+ *  收藏/评论的 log1p 加权，口径见建图脚本），大小就变成"有多少人真的读过它"。
+ *
+ *  ⚠️ `n` 仍留在产物里、仍归 `locate.ts` 的检索相关性用——**热度不该影响搜索排序**，
+ *  否则查什么都是那几个爆款文章的词。
+ *
+ *  地板：`h` 全为 0 时（新站还没流量）所有点会缩成同一个模子，图就不成图了。
+ *  0.15 让"零热度"仍有可见体积，同时仍明显小于有热度的词（半径下限 2.9px vs 上限 4.8px）。
+ *
+ *  老产物（没有 `h`）原样退回 `n`：产物是内容寻址的，改了前端不代表浏览器手里的那份
+ *  已经换了，回退是必须的，不是"兼容旧版"的客气话。 */
+const HEAT_FLOOR = 0.15;
+export function heatOf(n: GraphNode): number {
+    const h = n.h;
+    if (typeof h !== 'number' || !Number.isFinite(h)) return n.n;
+    return HEAT_FLOOR + (1 - HEAT_FLOOR) * Math.min(Math.max(h, 0), 1);
+}
+
 export interface EngineOpts {
     onHover?: (node: number | null) => void;
     onActivate?: (node: number) => void;
@@ -159,7 +181,8 @@ export class WordGraphEngine {
     private anchor: [number, number, number] = [0, 0, 0];
     private flight: [number, number, number] = [0, 0, 0];
 
-    private byImportance: number[];
+    /** 按热度降序的节点下标（A 层常显标签按它取前 LABEL_A 个）。 */
+    private byHeat: number[];
     private labelW = new Map<string, number>();
     private placed: number[] = [];
     private zlist: number[] = [];               // 贴脸层候选（每帧复用，避免分配）
@@ -189,7 +212,9 @@ export class WordGraphEngine {
         this.proj = new Projection(n);
         this.order = new Array(n);
         for (let i = 0; i < n; i++) this.order[i] = i;
-        this.byImportance = this.order.slice().sort((a, b) => data.nodes[b].n - data.nodes[a].n);
+        // 常显标签的优先级 = 热度（与点的大小同源，否则"大小按热度、标签还是按重要度"
+        // 就是两张皮：画面上大的词没名字、旁边小一圈的反而常驻）。
+        this.byHeat = this.order.slice().sort((a, b) => heatOf(data.nodes[b]) - heatOf(data.nodes[a]));
 
         let sMin = Infinity; let sMax = -Infinity;
         for (const e of data.edges) { if (e[2] < sMin) sMin = e[2]; if (e[2] > sMax) sMax = e[2]; }
@@ -543,7 +568,7 @@ export class WordGraphEngine {
             }
             return false;
         };
-        /** hard = 被显式关注的词（选中/邻居/贴脸/常驻重要度前 N）：一个位置放不下就换个位置，
+        /** hard = 被显式关注的词（选中/邻居/贴脸/常驻热度前 N）：一个位置放不下就换个位置，
          *  实在无处可放才放弃。false = 补位层，撞了就让开，免得满屏乱飘。
          *  force = 当前焦点（悬停/选中/查询命中）：连一个空位都没有时也照画——它是用户此刻
          *  正在看的东西，被别人的名字挤掉比压在一起更糟（有描边光晕，压着也读得出）。
@@ -558,7 +583,7 @@ export class WordGraphEngine {
             // （C 的 force 亮色 → A/B 的暗色补位），所以"先画者胜"就是要的语义。
             if (labeled.has(i)) return false;
             const n = data.nodes[i];
-            const size = force || n.n > 0.55 ? 12.5 : 11;
+            const size = force || heatOf(n) > 0.55 ? 12.5 : 11;
             const font = `${force ? '600 ' : ''}${size}px ${LABEL_FONT}`;
             const key = `${font}|${n.w}`;
             let tw = this.labelW.get(key);
@@ -566,7 +591,7 @@ export class WordGraphEngine {
             if (!force && placed.length >= cap) return false;
             // 候选位：右 → 左 → 上 → 下。原来只试"右，放不下就改左，再不行就放弃"——
             // 于是 `device` 这种前排词会被旁边 `git` 的名字顶掉（20260915b 无头实测），
-            // 而用户要的正是"重要度高的向量一直显式展示向量名"。
+            // 而用户要的正是"热度高的向量一直显式展示向量名"。
             const nx = this.proj.x[i], ny = this.proj.y[i], nr = this.proj.r[i];
             const ty = ny - size * 0.55;
             const cands: number[][] = hard
@@ -629,8 +654,8 @@ export class WordGraphEngine {
         }
         if (zl.length > 1) zl.sort((a, b) => this.proj.d[a] - this.proj.d[b]);   // 最近的先占位
         for (let k = 0; k < zl.length && k < LABEL_NEAR; k++) take(zl[k], false, true);
-        // A 层：全局重要度前 N 名常驻（hard——"重要度高的向量一直显式展示名字"）
-        const byImp = this.byImportance;
+        // A 层：全局热度前 N 名常驻（hard——"热度高的向量一直显式展示名字"）
+        const byImp = this.byHeat;
         for (let k = 0; k < byImp.length && k < LABEL_A; k++) take(byImp[k], false, true);
         // B 层：其余按"离相机近"补位（拉近自然揭示更多）。只在查询聚焦时让位——
         // 悬停/选中一个词不该让别的名字全消失（那会让"选中看邻居"这件事没法看）。
@@ -870,7 +895,7 @@ export function projectNodes(nodes: GraphNode[], cam: Camera, w: number, h: numb
         // [POINT_SCALE_MIN, POINT_SCALE_MAX] 带内 —— 不夹的话相机一飞进去远处就全塌成
         // 1px 暗点（见常数处注释）。
         const k = dist / depth;
-        out.r[i] = (1.7 + 3.1 * Math.sqrt(n.n))
+        out.r[i] = (1.7 + 3.1 * Math.sqrt(heatOf(n)))
             * (k < POINT_SCALE_MIN ? POINT_SCALE_MIN : (k > POINT_SCALE_MAX ? POINT_SCALE_MAX : k));
     }
 }

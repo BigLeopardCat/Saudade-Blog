@@ -8,8 +8,13 @@ export interface GraphNode {
     /** 词（ASCII 取语料中出现最多的大小写形式） */
     w: string;
     x: number; y: number; z: number;
-    /** 归一化重要度 0~1（tf-idf），决定点的大小与标签优先级 */
+    /** 归一化重要度 0~1（tf-idf）。**不再决定点的大小**（20261003 起改由 `h` 决定），
+     *  只留给局部关键词回退 `locate.ts` 做检索相关性——热门文章的词不该垄断一切查询。 */
     n: number;
+    /** 归一化文章热度 0~1（20261003 加）= 0.75×主归属文章热度 + 0.25×次归属文章热度；
+     *  文章热度由阅读/点赞/收藏/评论的 log1p 加权算出（权重见建图脚本）。
+     *  决定点的大小、标签字号与常显标签的优先级。**老产物没有这个字段**。 */
+    h?: number;
     /** 主归属文章下标（指向 articles[]） */
     a: number;
     /** 次归属文章下标 */
@@ -28,6 +33,8 @@ export interface GraphArticle {
     g: string[];
     /** 分类名 */
     c: string;
+    /** 归一化热度 0~1（20261003 加，口径同 `GraphNode.h`）。老产物没有这个字段。 */
+    hv?: number;
 }
 
 export interface GraphStats {

@@ -2,9 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import UserState from '../../../../../interface/UserState';
-import { loadGraph } from './loader';
+import { SiteMismatchError, loadGraph } from './loader';
 import { locate } from './locate';
-import { WordGraphEngine, cameraFor, neighborsOf, wordKey } from './engine';
+import { WordGraphEngine, cameraFor, heatOf, neighborsOf, wordKey } from './engine';
 import { WG_PARAM, clearSaved, decideBoot, queryFromUrl, readSaved, writeSaved } from './remember';
 import type { GraphData, LocateHit } from './types';
 import type { SavedSearch } from './remember';
@@ -16,7 +16,13 @@ export default function WordGraphExhibit() {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const engRef = useRef<WordGraphEngine | null>(null);
     const [data, setData] = useState<GraphData | null>(null);
-    const [failed, setFailed] = useState(false);
+    /** 加载失败的两种**不同**情形，UI 必须分开（20261003）：
+     *  - `unavailable`：产物的文件读不到/坏了（部署没完、网络抖动）。整块不渲染，
+     *    不画"加载失败"的面纱——给访客看一张坏卡片不如不显示。
+     *  - `site`：产物读得到，但它是**别的站点**的文章算出来的。这时要明确说出来，
+     *    否则"迁移到自己的服务器 + 重建过一次"的人只会看到首页少了一件展品，
+     *    看不出该做什么（这正是那道构建期旧闸留下的坑）。 */
+    const [failed, setFailed] = useState<null | 'unavailable' | 'site'>(null);
     const [hover, setHover] = useState<number | null>(null);
     const [sel, setSel] = useState<number | null>(null);
     const [chips, setChips] = useState<LocateHit[]>([]);
@@ -40,7 +46,9 @@ export default function WordGraphExhibit() {
 
     useEffect(() => {
         let alive = true;
-        loadGraph().then((d) => { if (alive) setData(d); }).catch(() => { if (alive) setFailed(true); });
+        loadGraph().then((d) => { if (alive) setData(d); }).catch((e) => {
+            if (alive) setFailed(e instanceof SiteMismatchError ? 'site' : 'unavailable');
+        });
         return () => { alive = false; };
     }, []);
 
@@ -193,9 +201,23 @@ export default function WordGraphExhibit() {
         [shown, data]);
 
     // 读不到产物 ⇒ 整块不渲染，**不再**画一张「图谱数据加载失败」的面纱。
-    // 与角标那条一个取向：不可用就不显示，而不是给访客看一张坏卡片。展品本身已经过了
-    // 语料归属自校验（exhibits.ts）才会挂载到这里，所以走到这一步是真读不到产物。
-    if (failed) return null;
+    // 与角标那条一个取向：不可用就不显示，而不是给访客看一张坏卡片。
+    if (failed === 'unavailable') return null;
+
+    // 产物读到了但不是本站的 ⇒ 必须说清楚。这里**不画别人的数据**（`loader` 在取产物
+    // 之前就把这一路拦掉了），只是告诉部署者该怎么办：后台「站点设置 → 向量图谱」
+    // 重建一次，manifest 里就会写上本站地址，这个位置自然换成他自己的图。
+    if (failed === 'site') {
+        return (
+            <div className="wg-root wg-absent">
+                <p className="wg-absent-t">文章向量空间尚未为本站点生成</p>
+                <p className="wg-absent-s">
+                    首页这份产物属于另一个站点，不在这里展示。
+                    在后台「站点设置 → 向量图谱」重建一次即可拥有本站自己的图。
+                </p>
+            </div>
+        );
+    }
 
     return (
         <div className="wg-root">
@@ -213,7 +235,10 @@ export default function WordGraphExhibit() {
                     <div className="wg-card">
                         <b>{hv.w}</b>
                         <span className="wg-card-meta">
-                            重要度 {Math.round(hv.n * 100)}
+                            {/* 20261003 起点的大小由**文章热度**决定（老产物退回 tf-idf
+                                重要度，`heatOf` 一处兜住）——读数卡必须跟着说同一个口径，
+                                否则"点这么大"和"重要度 NN"两张皮，用户没法对照。 */}
+                            热度 {Math.round(heatOf(hv) * 100)}
                             {hvArt ? ` · ${hvArt.t}` : ''}
                         </span>
                         {nbWords.length > 0 && (
