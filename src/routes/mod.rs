@@ -43,6 +43,23 @@ pub struct AppState {
     pub post_limiter: crate::risk::PostRateLimiter,
 }
 
+/// 数据库出错时的统一出口：**记一行日志 + 回 500 信封**。
+///
+/// 20261004：清掉一批 handler 里的 `.unwrap()`（friends / announcements / talks）。
+/// 那些 `.unwrap()` 的后果不是"返回错误"，而是**该请求的 tokio 任务 panic**——
+/// 客户端收到的是连接被重置、看不到任何信封，而并发一高（连接池占满、死锁、瞬时超时）
+/// 这类 panic 会成片出现且难定位。同文件里其它函数早就写着
+/// `match ... { Err(e) => { tracing::error!(..); Json(ApiResponse::error(..)) } }`，
+/// 这一批只是漏了；统一收进这个函数，顺便保证**不把库内细节**（表名 / SQL / 驱动原文）
+/// 回到客户端——报文只有一句稳定的人话，细节只进服务端日志。
+pub(crate) fn db_error<T: Default>(
+    what: &str,
+    e: &sea_orm::DbErr,
+) -> axum::Json<crate::utils::ApiResponse<T>> {
+    tracing::error!("[db] {what} 失败: {e}");
+    axum::Json(crate::utils::ApiResponse::error("服务暂时不可用，请稍后再试"))
+}
+
 pub fn create_router(state: AppState) -> Router {
     // H5 修复：CORS 白名单。默认仅允许博客域名，可通过 CORS_ALLOWED_ORIGINS 环境变量
     // 追加多个来源（逗号分隔，如 "https://example.com,http://localhost:5173"）。
