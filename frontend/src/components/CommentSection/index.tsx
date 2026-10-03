@@ -43,6 +43,16 @@
  *     留一条通往顶部的回复路径 = 那个坑原样还在，只是多了一个更好的入口；
  *   · **行内框按「哪一行」而不是「哪一条」开**：`openFor` 存的是评论 id，同时最多一个
  *     展开（换一行就把上一个收起），所以行内那份 state 是**单份**的，不是一行的副本。
+ *
+ * **⑤ 点赞 / 踩（用户 20261003 第 4 条）**：「访客也能点，**不改排序**」是拍板过的形态——
+ * 讨论区仍是时间序（按票数排会让一条新评论永远沉底，而这是讨论区不是热榜）。
+ * 三条纪律：
+ *   · **高亮看 `myVote`，数字看 `up`/`down`**。把高亮挂在"票多的那一侧"上，
+ *     读者会以为是自己投的（同族错法：首页点赞的心形）；
+ *   · **乐观更新，失败回滚**。等一个来回再变色，手感就是"没点上"；但乐观值只是
+ *     占位，服务端回执（它才看得见别人的票）一到就**整组覆盖**；
+ *   · **数字为 0 不显示**（只留图标）——一排 `👍 0  👎 0` 是噪声，而"没人投过"这件事
+ *     本来就是空的。**踩在赞右边**：与多数站点一致，也让"先看总赞数"这条阅读习惯成立。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
@@ -50,8 +60,8 @@ import { Input, Modal, message } from 'antd'
 // 光标插入表情要拿到真正的 <textarea>：antd 的 TextArea 包了一层自动高度容器，
 // 引用类型自带 `resizableTextArea.textArea`（不要用 as 硬转，那层结构改名后会静默失效）
 import type { TextAreaRef } from 'antd/es/input/TextArea'
-import type { CommentItem } from '../../interface/CommentType'
-import { createComment, deleteMyComment, listComments } from '../../apis/CommentMethods'
+import type { CommentItem, CommentVote } from '../../interface/CommentType'
+import { createComment, deleteMyComment, listComments, voteComment } from '../../apis/CommentMethods'
 import { errMsg, ok } from '../../apis/ProfileMethods'
 import { renderBlogMarkdown } from '../../utils/chatMarkdown'
 import { resolveApiAssetUrl } from '../../utils/runtimeApi'
@@ -77,6 +87,22 @@ const CommentBody = ({ content }: { content: string }) => {
             dangerouslySetInnerHTML={{ __html: html }}
         />
     )
+}
+
+/** 乐观推进一条评论的票：给定"现在这三个数"与"这次要投成什么"，算出点完之后的三个数。
+ *
+ *  **纯函数**（不碰 state），因为这里的顺序最容易写反：**先撤旧票、再落新票**。
+ *  反过来（先落新票再撤旧）在"赞→踩"时会多出一个 down，而且**只在改主意那一种点击上错**
+ *  ——随手连点两下赞是看不出来的，等有人截图说"我只踩了一下显示 2"时才开始查。
+ *  撤的时候各自减自己那一侧（不可能减成负数：撤的正是自己上次加的那一票）。 */
+const optimisticVote = (v: CommentVote, next: -1 | 0 | 1): CommentVote => {
+    let up = v.up
+    let down = v.down
+    if (v.myVote === 1) up -= 1
+    else if (v.myVote === -1) down -= 1
+    if (next === 1) up += 1
+    else if (next === -1) down += 1
+    return { up, down, myVote: next }
 }
 
 interface CommentSectionProps {
@@ -287,6 +313,50 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
         }
     }
 
+    /** 正在投票的评论 id。**用 Set 而不是单个 id**：他可能连着点不同评论的票，
+     *  为一条 in-flight 就把整个讨论区锁住没必要。它只用来挡住**同一条**的重复提交
+     *  （连点两下不该发出两个相反方向的请求，那会让结果取决于谁先回来）。 */
+    const [votingIds, setVotingIds] = useState<Set<number>>(new Set())
+
+    /** 就地改掉某一条的三个数。**乐观更新与回滚共用这一处**——
+     *  写两份"怎么改"就是给回滚留了一条与更新不一致的路。 */
+    const applyVote = (id: number, v: CommentVote) =>
+        setItems((prev) => (prev ? prev.map((c) => (c.id === id ? { ...c, ...v } : c)) : prev))
+
+    /** 点「赞」/「踩」。**再点自己已经点亮的那一侧 = 撤回**（`value: 0`，
+     *  与后端同一语义，见 `apis/CommentMethods.tsx::voteComment`）。 */
+    const vote = async (c: CommentItem, dir: 1 | -1) => {
+        if (votingIds.has(c.id)) return
+        const next: -1 | 0 | 1 = c.myVote === dir ? 0 : dir
+        // 回滚用的快照。**取的是这次渲染看到的那一份**：若后台恰好在这几十毫秒里
+        // 刷新了列表，回滚会写回一个略旧的数——这比"失败后什么都不回滚、留着一个
+        // 假的乐观值"好得多，下一次 `useLiveRefresh` 也会把它拉回真值。
+        const before: CommentVote = { up: c.up, down: c.down, myVote: c.myVote }
+        setVotingIds((s) => new Set(s).add(c.id))
+        applyVote(c.id, optimisticVote(before, next))
+        try {
+            const res = await voteComment(c.id, next)
+            if (!ok(res)) {
+                applyVote(c.id, before)
+                message.error(errMsg(res))
+                return
+            }
+            // 服务端回执是**事实**（别人这一秒投的票也在里面）⇒ 覆盖掉本地那笔乐观账。
+            // 别在这里"只改我这一票"：本地算出来的数与服务端可能差着别人的票。
+            applyVote(c.id, res.data.data)
+        } catch (e) {
+            console.error('评论投票失败', e)
+            applyVote(c.id, before)
+            message.error('操作失败，请稍后再试')
+        } finally {
+            setVotingIds((s) => {
+                const n = new Set(s)
+                n.delete(c.id)
+                return n
+            })
+        }
+    }
+
     const renderRow = (c: CommentItem, isReply: boolean) => (
         <div
             key={c.id}
@@ -325,6 +395,31 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
                 <CommentBody content={c.content} />
                 <div className="commentActions">
                     <button type="button" onClick={() => openReply(c)}>回复</button>
+                    {/* 赞 / 踩（文件头注 ⑤）。位置：**「回复」之后、「删除」之前**——
+                        回复是讨论区的主要动作（行内回复框就开在它底下），删除是破坏性的、
+                        照旧排最后。`aria-pressed` 读的是 `myVote`（我投的），不是票多的那一侧。 */}
+                    {([1, -1] as const).map((dir) => {
+                        const on = c.myVote === dir
+                        const n = dir === 1 ? c.up : c.down
+                        return (
+                            <button
+                                key={dir}
+                                type="button"
+                                className={`commentVote${on ? ' isOn' : ''}`}
+                                aria-pressed={on}
+                                aria-label={dir === 1 ? '赞' : '踩'}
+                                disabled={votingIds.has(c.id)}
+                                onClick={() => void vote(c, dir)}
+                            >
+                                <span className="commentVoteIcon" aria-hidden="true">
+                                    {dir === 1 ? '👍' : '👎'}
+                                </span>
+                                {/* 0 不显示（文件头注 ⑤）：一排 `👍 0 👎 0` 只是噪声。
+                                    为 0 时按钮宽度靠图标撑着，位置不跳（见 index.sass 的 padding 抵消）。 */}
+                                {n > 0 && <span className="commentVoteNum">{n}</span>}
+                            </button>
+                        )
+                    })}
                     {c.mine && (
                         <button type="button" className="isDanger" onClick={() => setPendingDelete(c)}>
                             删除

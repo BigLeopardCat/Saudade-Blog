@@ -206,7 +206,11 @@ fn visitor_key(headers: &HeaderMap) -> Option<String> {
 }
 
 /// 这次请求**是谁**（20261001 起有两种身份）。
-enum Who {
+///
+/// `pub(super)`：`comment_votes.rs`（评论点赞/踩，20261003）与这里共用同一套身份解析
+/// ——**它必须是同一份**。登录态要顺带认下"同一台浏览器此前匿名投的那一行"，
+/// 这条规则抄成第二份就迟早会分叉（两处对"我是谁"的回答不一样）。
+pub(super) enum Who {
     /// 登录用户。`key` 是同一请求里带的访客标识——登录态下它**不参与"我是谁"**，
     /// 只用于把"这台浏览器此前匿名投的那一票"一并认下来（见 `like_note` 的说明）。
     User { uid: i32, key: Option<String> },
@@ -218,25 +222,42 @@ impl Who {
     /// 日志里的身份标签。**不打印完整的 `visitor_key`**：它对排障没用（认不出人是谁），
     /// 却会被抄进长期留存的日志文件——前 8 位足够把"同一台浏览器的几次请求"对上号。
     /// （标识是纯 ASCII，切片不会切到多字节字符中间。）
-    fn tag(&self) -> String {
+    pub(super) fn tag(&self) -> String {
         match self {
             Who::User { uid, .. } => format!("uid={}", uid),
             Who::Visitor(k) => format!("visitor={}…", &k[..k.len().min(8)]),
         }
     }
 
-    /// 这个身份在 `note_like` 里对应的过滤条件（读与删共用一份，免得两处写歪）。
-    fn cond(&self) -> Condition {
+    /// 登录用户的 uid（匿名访客为 `None`）。给需要"这条评论是不是他发的"这类
+    /// 与访客无关的判据用——**别拿它当"有没有身份"**：匿名访客也有身份。
+    pub(super) fn uid(&self) -> Option<i32> {
+        match self {
+            Who::User { uid, .. } => Some(*uid),
+            Who::Visitor(_) => None,
+        }
+    }
+
+    /// 这个身份在**一张"两种身份并排"的表**上的过滤条件（读与删共用一份，
+    /// 免得两处写歪）。
+    ///
+    /// 列由调用方传进来，因为每张表有自己的 `Column` 枚举（`note_like` 的与
+    /// `note_comment_vote` 的不是同一个类型），但**语义只有这一份**：登录态要顺带
+    /// 认下"同一台浏览器此前匿名投的那一行"——不认的话，先匿名投、再登录，
+    /// 高亮会当场变空，而计数里明明有那一票。
+    pub(super) fn cond_on<UC, VC>(&self, user_col: UC, visitor_col: VC) -> Condition
+    where
+        UC: ColumnTrait + Copy,
+        VC: ColumnTrait + Copy,
+    {
         match self {
             Who::User { uid, key } => {
-                let own = Condition::any().add(note_like::Column::UserId.eq(*uid));
-                // 登录后**同一台浏览器**此前匿名投的那一票也算"我点过"：
-                // 不认的话，先匿名点赞、再登录，心形会当场变空——而计数里明明有那一票。
+                let own = Condition::any().add(user_col.eq(*uid));
                 match key {
                     Some(k) => own.add(
                         Condition::all()
-                            .add(note_like::Column::UserId.is_null())
-                            .add(note_like::Column::VisitorKey.eq(k.clone())),
+                            .add(user_col.is_null())
+                            .add(visitor_col.eq(k.clone())),
                     ),
                     None => own,
                 }
@@ -245,10 +266,15 @@ impl Who {
                 // `user_id IS NULL` 是白写的（登录行一律 visitor_key=NULL，见插入处），
                 // 但把它写上等于把这条不变量钉在查询里，不必让读者去别处求证。
                 Condition::all()
-                    .add(note_like::Column::UserId.is_null())
-                    .add(note_like::Column::VisitorKey.eq(k.clone()))
+                    .add(user_col.is_null())
+                    .add(visitor_col.eq(k.clone()))
             }
         }
+    }
+
+    /// 这个身份在 `note_like` 里对应的过滤条件。
+    fn cond(&self) -> Condition {
+        self.cond_on(note_like::Column::UserId, note_like::Column::VisitorKey)
     }
 }
 
@@ -259,7 +285,7 @@ impl Who {
 ///     这一支**绝不降级成匿名**：账号被冻结的人不该因为"换个身份"就照常点赞。
 ///     （他能清掉 localStorage 再来——那是匿名点赞固有的口子，见迁移头注语义 ①——
 ///      但我们不主动替他换。）读接口按模块头注第 1 条把它当"没认出来"处理。
-async fn identify(
+pub(super) async fn identify(
     db: &DatabaseConnection,
     headers: &HeaderMap,
 ) -> Result<Option<Who>, crate::auth_jwt::AuthError> {
@@ -289,7 +315,7 @@ async fn liked_by(db: &DatabaseConnection, note_id: i32, who: Option<&Who>) -> b
 
 /// 尽力而为的身份：**失败一律当未登录**，不向上传播错误。
 /// 这正是模块头注第 1 条的落地——读接口不能因为"令牌过期"就整条请求失败。
-async fn optional_who(db: &DatabaseConnection, headers: &HeaderMap) -> Option<Who> {
+pub(super) async fn optional_who(db: &DatabaseConnection, headers: &HeaderMap) -> Option<Who> {
     identify(db, headers).await.ok().flatten()
 }
 

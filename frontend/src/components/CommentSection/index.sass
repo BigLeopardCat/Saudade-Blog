@@ -338,6 +338,40 @@
                 &.isDanger:hover
                     color: #e04b4b
 
+            // ── 赞 / 踩（20261003 用户第 4 条）────────────────────────────
+            // 它们与「回复/删除」同住这一行（同为 0.78rem 的次要动作），多出来的是
+            // 一个居中图标 + 一个计数，以及"我投过"的高亮。**高亮看 `myVote`
+            // （我投的），不是票多的那一侧**——按票数高亮会让人以为是自己投的。
+            .commentVote
+                display: inline-flex
+                align-items: center
+                gap: 3px
+                // padding 用**负外边距抵消**：点亮与否、有没有数字，按钮的位置都不动。
+                // 否则点一下赞整行会横跳一格（而数字为 0 时还会整颗钮缩一格）。
+                padding: 1px 7px
+                margin: -1px -7px
+                border-radius: 10px
+                transition: background 0.15s, color 0.15s
+                &.isOn
+                    color: var(--washi-pink-deep, #d94f9a)
+                    // 一层极淡的底色，而不是描边：`.commentActions` 这一行本身没有任何
+                    // 边框，单独给一颗钮描边会让它显得比旁边两个"高一档"。
+                    // 13% 的透明度在日夜两态都读得出来（浅底上是压暗、深底上是提亮）。
+                    background: rgba(217, 79, 154, 0.13)
+                    // **刻意不加粗**：加粗会改变按钮宽度，上面那条"位置不动"就白写了。
+                    // 两态的区别只有颜色与底色。
+                &:disabled
+                    cursor: default
+                    opacity: 0.55
+                .commentVoteIcon
+                    // line-height: 1 是必须的：emoji 的字框比 0.78rem 的字号高得多，
+                    // 不压平会把这颗钮顶得比旁边的「回复」高一截。
+                    font-size: 0.86rem
+                    line-height: 1
+                .commentVoteNum
+                    // 等宽数字：票数从 9 涨到 10 时按钮不会因为多一位而挪一下
+                    font-variant-numeric: tabular-nums
+
 @keyframes commentHit
     0%, 25%
         box-shadow: inset 0 0 0 2px #e74c3c, 0 0 12px rgba(231, 76, 60, 0.35)

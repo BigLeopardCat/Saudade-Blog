@@ -50,7 +50,7 @@ const ADMIN_PAGE_LIMIT: u64 = 500;
 /// 文章是否**公开可见**——与 `notes::list_public_notes` 的 STRICT FILTER 同一口径
 /// （`is_public = 1` 且 `status <> 'draft'`）。两条读取路径**必须**同口径：否则会出现
 /// "评论读得到、文章打不开"（或反过来）这种自相矛盾的组合。
-async fn note_visible(db: &sea_orm::DatabaseConnection, note_id: i32) -> bool {
+pub(super) async fn note_visible(db: &sea_orm::DatabaseConnection, note_id: i32) -> bool {
     note::Entity::find()
         .filter(note::Column::Id.eq(note_id))
         .filter(note::Column::IsPublic.eq(true))
@@ -111,6 +111,13 @@ pub struct CommentDto {
     pub role: String,
     /// 是否当前登录用户所发（删按钮的门控）。未登录恒 false
     pub mine: bool,
+    /// 赞 / 踩 / **我投的那一票**（20261003 用户第 4 条）。三个数与投票接口的回执
+    /// （`comment_votes::CommentVoteDto`）**同名同义**，前端也共用同一个类型。
+    /// `myVote` 恒 -1/0/1（0 = 我没投），它决定按钮点亮，`up`/`down` 决定数字。
+    pub up: i64,
+    pub down: i64,
+    #[serde(rename = "myVote")]
+    pub my_vote: i8,
     #[serde(rename = "createdAt")]
     pub created_at: String,
 }
@@ -127,7 +134,11 @@ pub async fn list_comments(
     headers: HeaderMap,
     Path(note_id): Path<i32>,
 ) -> Json<ApiResponse<Vec<CommentDto>>> {
-    let uid = super::talks::current_uid(&state.db, &headers).await;
+    // 读路径的身份：令牌过期/收回/冻结一律当**没登录**（模块头注第 1 条），不整条请求失败。
+    // 一次解析两个用途——`mine`（这条是不是我发的，只登录用户有）与 `myVote`
+    // （我投过没投过，**匿名访客也要有**：他刚点过的那一票必须还亮着）。
+    let who = super::note_stats::optional_who(&state.db, &headers).await;
+    let uid = who.as_ref().and_then(|w| w.uid());
     if !note_visible(&state.db, note_id).await {
         return Json(ApiResponse::error("文章不存在或不可见"));
     }
@@ -173,18 +184,40 @@ pub async fn list_comments(
     uids.sort_unstable();
     uids.dedup();
     let peers = super::profile::peer_map(&state.db, &uids).await;
+    // 票数一次取全（**两条查询**，不是每条评论两条，见 `comment_votes` 的取舍）。
+    // 取不到就当没有票：讨论区的正文必须照常显示——投票是附属信息，
+    // 不该因为它读失败就让整页评论消失（同上面 `replies` 的 `unwrap_or_default`）。
+    let ids: Vec<i32> = rows.iter().map(|c| c.id).collect();
+    let counts = super::comment_votes::vote_counts_for(&state.db, &ids)
+        .await
+        .unwrap_or_default();
+    let mine = super::comment_votes::my_votes(&state.db, &ids, who.as_ref()).await;
     let dtos: Vec<CommentDto> = rows
         .into_iter()
-        .map(|c| to_dto(&c, uid, &peers))
+        .map(|c| {
+            let (up, down) = counts.get(&c.id).copied().unwrap_or((0, 0));
+            to_dto(
+                &c,
+                uid,
+                &peers,
+                super::comment_votes::CommentVoteDto {
+                    up,
+                    down,
+                    my_vote: mine.get(&c.id).copied().unwrap_or(0),
+                },
+            )
+        })
         .collect();
     Json(ApiResponse::success(dtos))
 }
 
-/// 行 → DTO。`me` = 当前登录 uid（None = 未登录）。
+/// 行 → DTO。`me` = 当前登录 uid（None = 未登录）；`vote` = 这一行的票（票数是
+/// 调用方**批量**查好的，逐行查会把两次往返放大成上百次，见 `list_comments`）。
 fn to_dto(
     c: &note_comment::Model,
     me: Option<i32>,
     peers: &std::collections::HashMap<i32, super::profile::PeerInfo>,
+    vote: super::comment_votes::CommentVoteDto,
 ) -> CommentDto {
     let (nickname, avatar, role) = match peers.get(&c.user_id) {
         Some(p) => (p.name.clone(), p.avatar.clone(), p.role.clone()),
@@ -207,6 +240,9 @@ fn to_dto(
         avatar,
         role,
         mine: me == Some(c.user_id),
+        up: vote.up,
+        down: vote.down,
+        my_vote: vote.my_vote,
         created_at: c.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
     }
 }

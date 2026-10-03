@@ -35,3 +35,5 @@ pub mod note_like;
 // 文章评论（20261002）：两层结构（评论 + 回复），与河灯留言板是两张表——
 // 评论挂文章、留言挂留言板，各自的展示列与读取路径完全不同（见 entity/note_comment.rs）
 pub mod note_comment;
+// 评论点赞/踩（20261003）：一票一行、两种身份并排，形制照 note_like 那张（见该文件头注）
+pub mod note_comment_vote;
