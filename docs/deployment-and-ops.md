@@ -10,18 +10,34 @@
 
 ## 1. 架构拓扑与端口
 
+```mermaid
+flowchart TB
+    B["访客浏览器"]
+
+    NGX["nginx（唯一公网入口）<br/>:80 / :443"]
+
+    SPA["前端构建产物（SPA）<br/>静态直服"]
+    RUST["Rust 后端<br/>回环 :3000"]
+    AGT["Python Agent<br/>回环 :8010"]
+
+    subgraph Optional["可选件：出厂默认不启用（装/卸见 iot/README.md）"]
+        CONSOLE["IoT 控制台静态页"]
+        DEV["device-service<br/>回环 :3100"]
+        EMQX["EMQX MQTT broker<br/>mqtts :8883"]
+    end
+
+    B -->|"443 (HTTPS)"| NGX
+    NGX -->|"/"| SPA
+    NGX -->|"/api/*"| RUST
+    NGX -->|"/device-console/"| CONSOLE
+    NGX -->|"/device-api/*"| DEV
+    NGX -->|"设备接入"| EMQX
+    RUST -->|"SSE 转发"| AGT
 ```
-访客浏览器
-   │ 443 (HTTPS)
-   ▼
-nginx（唯一公网入口）
-   ├── /                → 前端构建产物（SPA，静态直服）
-   ├── /api/*           → Rust 后端（回环 :3000）
-   ├── /api/chat/stream → Rust → Python Agent（回环 :8010，SSE 转发）
-   ├── /device-console/ → IoT 控制台静态页        ← 下面这三条是**可选件**
-   ├── /device-api/*    → device-service（回环 :3100）   出厂默认不启用；
-   └── mqtts://…:8883   → EMQX MQTT broker（设备接入）  装/卸见 iot/README.md
-```
+
+> 这张图原来是手画的字符图，中文注释宽度按 2 列算、稍有编辑就错位；换成 mermaid 之后
+> 分支再多也不会散。同类的还有 [iot-device-integration.md](iot-device-integration.md)
+> 的平台架构图与指令回执闭环图。
 
 | 端口 | 进程 | 说明 |
 |---|---|---|

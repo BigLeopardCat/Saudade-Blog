@@ -17,17 +17,23 @@
 
 ## 1. 平台架构
 
+```mermaid
+flowchart TB
+    CONSOLE["网页控制台 device-console/<br/>凭 localStorage.tokenKey（博客 JWT）"]
+    ESP["ESP32 设备<br/>凭 TLS 证书链校验"]
+
+    API["GET/PUT /device-api/api/*<br/>Authorization: Bearer JWT"]
+    EMQX["EMQX broker<br/>mqtts://&lt;你的域名&gt;:8883"]
+    DS["device-service :3100"]
+    SQL[("SQLite<br/>devices / config_history / telemetry / cmd_history")]
+
+    CONSOLE --> API --> DS
+    DS <-->|"MQTT 1883（回环）"| EMQX
+    EMQX <-->|"认证链：JWT 链(网页用户) → HTTP 链(设备)"| ESP
+    DS --- SQL
+    DS -.->|"console/&lt;owner&gt;/devices/&lt;id&gt;/&lt;kind&gt;<br/>设备事件转发回控制台实时流"| CONSOLE
 ```
-网页控制台 (device-console/)                ESP32 设备
-    │  localStorage.tokenKey (博客 JWT)        │  TLS 证书链校验
-    ▼                                          ▼
-GET/PUT /device-api/api/*               mqtts://<你的域名>:8883 (EMQX)
-    │  Bearer JWT                             │  认证链：JWT 链(网页用户) → HTTP 链(设备)
-    ▼                                          ▼
-device-service (:3100) ◄─────────── MQTT 1883 (回环) ────────────┘
-    │  SQLite：devices / config_history / telemetry / cmd_history
-    └─► 设备事件经 console/<owner>/devices/<id>/<kind> 转发回控制台实时流
-```
+
 
 **两种接入身份**，凭据体系互不相通：
 
@@ -110,15 +116,21 @@ console/<username>/#      # 网页用户实时流
 
 ### 3.3 指令与回执（req_id 端到端闭环）
 
-```
-控制台/agent  PUT /api/devices/<id>/cmd     （可选头 X-Request-Id → 注入 req_id）
-     │  服务端写 cmd_history (req_id)
-     ▼
-devices/<id>/cmd  {"type":"display","text":"...","req_id":"a1b2c3"}
-     ▼ 设备执行
-devices/<id>/cmd/ack  {"ack":true,"type":"display","req_id":"a1b2c3"}   ← req_id 原样带回
-     ▼ 服务端按 req_id 精确匹配未回执记录
-GET /api/devices/<id>/cmd/<req_id>  →  {"acked": true, "ack": "<设备回执原始 JSON>", "ack_ts": "..."}
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as 控制台 / agent
+    participant S as device-service
+    participant D as ESP32 设备
+
+    C->>S: PUT /api/devices/<id>/cmd<br/>（可选头 X-Request-Id → 注入 req_id）
+    S->>S: 写 cmd_history(req_id)
+    S->>D: devices/<id>/cmd<br/>{"type":"display","text":"…","req_id":"a1b2c3"}
+    D->>D: 执行
+    D->>S: devices/<id>/cmd/ack<br/>{"ack":true,…,"req_id":"a1b2c3"}（req_id 原样带回）
+    Note over S: 按 req_id 精确匹配未回执记录
+    C->>S: GET /api/devices/<id>/cmd/<req_id>
+    S-->>C: {"acked": true, "ack": "<设备回执原始 JSON>", "ack_ts": "…"}
 ```
 
 - 设备回执**缺失 req_id** 时，服务端退化为匹配最近一条未回执记录（兼容旧固件）。

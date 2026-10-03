@@ -22,16 +22,39 @@ MySQL，agent 进程本身无状态：每次请求都是新线程，连续性由
 
 ## 架构一览
 
+```mermaid
+flowchart TB
+    subgraph Browser["访客浏览器"]
+        SPA["React SPA<br/>文章 / 分类 / 标签 / 留言板"]
+        WAIFU["Live2D 看板娘 + 对话面板<br/>boot.js + chat-*.js"]
+    end
+
+    NGX["nginx :443<br/>静态直服 + 反代<br/>（JWT 校验在 Rust 侧）"]
+
+    subgraph Host["同一台主机（除 nginx 外全部只绑回环）"]
+        RUST["Rust 后端 :3000<br/>Axum + SeaORM<br/>博客 API · 登录鉴权 · 对话编排 · 记忆入库"]
+        AGT["Python Agent :8010<br/>FastAPI + 手写 LangGraph<br/>planner 决策 ⇄ execute 确定性执行 → model 叙述 → gate 检查"]
+        DEV["device-service :3100<br/>IoT 设备服务（可选件）"]
+        DB[("MySQL 8<br/>业务数据 · chat_history · chat_summary")]
+    end
+
+    ESP["ESP32 OLED 设备"]
+
+    SPA --> NGX
+    WAIFU -->|"POST /api/chat/stream（SSE）"| NGX
+    NGX --> RUST
+    NGX -->|"/device-console/ · /device-api/*"| DEV
+    RUST <-->|"sea-orm"| DB
+    RUST -->|"转发请求体"| AGT
+    AGT -->|"SSE 帧"| RUST
+    AGT -->|"调 api/public、api/protected"| RUST
+    DEV <-->|"MQTT over TLS :8883"| ESP
 ```
-浏览器（React SPA + Live2D 看板娘）
-  │  HTTPS /api/chat/stream（SSE 流式对话）
-  ▼
-nginx（静态资源 + 反代 + MQTT WSS；JWT 校验在 Rust 侧）
-  ├── Rust 后端 :3000 ────────── Python Agent :8010
-  │    博客 API / 登录鉴权        手写 LangGraph 图
-  │    聊天转发 / 记忆入库        planner 决策 ⇄ execute 确定性执行 → model 叙述 → gate 检查
-  └── device-service :3100 ── MQTT over TLS :8883 ── ESP32 OLED 设备
-```
+
+> 这张图原来是手画的字符图（`│ ├── ▼`）。字符图在等宽字体里勉强能看，但只要注释里混进中文
+> （宽度按 2 列算）或者被别的编辑器重排过，线立刻错位 —— 换 mermaid 是这个原因，不是口味问题。
+> 同类的还有 [docs/deployment-and-ops.md](docs/deployment-and-ops.md) 的拓扑图、
+> [docs/iot-device-integration.md](docs/iot-device-integration.md) 的平台架构图与指令回执闭环图。
 
 | 组件 | 职责 | 位置 |
 |---|---|---|
@@ -49,18 +72,56 @@ Agent 的核心理念是**把执行层的自由拿掉**（20260903 架构裁决�
 独立任务生成。详细架构见 [agent 仓库](https://github.com/BigLeopardCat/saudade-blog-agent)
 的 README 与 `docs/agent-architecture.md`。
 
+### 一次对话的时序
+
+上图画的是"谁连着谁"，这张画的是"一轮对话里谁先谁后"。**记忆的读写全在 Rust 这一侧**，
+Agent 进程本身不存任何对话状态 —— 它拿到的是 Rust 从库里读好、塞进请求体的那几段。
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant B as 浏览器（看板娘面板）
+    participant N as nginx
+    participant R as Rust :3000
+    participant A as Python Agent :8010
+    participant DB as MySQL
+
+    B->>N: POST /api/chat/stream（Authorization: Bearer JWT）
+    N->>R: 反代
+    R->>R: 解析 JWT → user_id
+    R->>DB: 存用户消息；读最近 20 条历史 + 会话摘要 + 最近执行回执
+    R->>A: 转发请求体（message / history / summary / executions / 页面状态 / needs_summary）
+    Note over A: planner 决策 ⇄ execute 确定性执行（≤4 轮）<br/>→ model 叙述 → gate 事实检查
+    A-->>R: SSE 帧（文本 / 命令 / 过程 / 执行回执 / 终结标记）
+    R-->>B: 逐帧转发（X-Accel-Buffering: no，否则帧被缓冲成一次性返回）
+    Note over R: 流结束后
+    R->>DB: 存 assistant 回复；upsert 会话摘要；写执行回执
+    B->>B: 文本上屏 + 口型驱动；到帧即执行命令（跳转 / 特效 / 夜间模式）
+```
+
+> 完整分段（每一步做了什么、字段叫什么、失败怎么收场）见 agent 仓库
+> `docs/agent-architecture.md` 的《3. 一次对话的完整链路》；这里只保留骨架。
+
 ## 开发流程（重要约定）
 
 > **部署一律走 CI：本地不编译、不手动构建。** `vite build` 与 `cargo build --release`
 > 的内存开销都很大，内存不足时会 OOM 甚至拖垮整台机器（本项目就这么翻过一次车）。
 > 本地验证只用轻量命令（`cargo check` / `tsc` / `npm test`）。
 
-```text
-git push（主仓库 cn_sora_blog / agent 仓库）
-  → GitHub Actions 云端构建（Rust 编译 + 前端打包；agent 另有评测门禁）
-  → 上传 R2（按提交号归档 deploy/<sha>/）→ SSH 触发部署并**等它结束**（退出码 = 部署结果）
-  → 二进制替换 + systemctl restart；dist 直接覆盖
+```mermaid
+flowchart LR
+    PUSH["git push<br/>（主仓库 cn_sora_blog / agent 仓库）"]
+    CI["GitHub Actions 云端构建<br/>Rust 编译 + 前端打包<br/>（agent 另有评测门禁）"]
+    R2["上传 R2<br/>按提交号归档 deploy/&lt;sha&gt;/"]
+    TRIG["SSH 触发部署<br/>CI 等它结束<br/>退出码 = 部署结果"]
+    LIVE["二进制替换 + systemctl restart<br/>dist 直接覆盖"]
+
+    PUSH --> CI --> R2 --> TRIG --> LIVE
 ```
+
+> ⚠️ 这套流程里有个容易忽略的语义：**CI 的绿灯代表"真部署成功了"**，不是"构建过了"。
+> 部署脚本的退出码会被 CI 等回来（早先不是这样，触发完就放走，于是"两次 CI 全绿、
+> 却有一半的后端从没落地"）。线上到底跑的是哪个提交，只认 `build-info.json` 里的 sha。
 
 按组件：
 

@@ -30,12 +30,19 @@
 
 ## 链路
 
-```
-设备 ──mqtts://<你的域名>:8883──→ EMQX ──http 认证回调──→ device-service
-   │                                ↑
-   └── 遥测 devices/<id>/telemetry ─┘      配置/devices/<id>/config（retain）
-                                          指令/devices/<id>/cmd
-                                          回执/devices/<id>/config/ack
+```mermaid
+sequenceDiagram
+    autonumber
+    participant D as ESP32 设备
+    participant E as EMQX（mqtts :8883）
+    participant S as device-service
+    D->>E: 连接（用户名 = device_id，密码 = device_key）
+    E->>S: HTTP 认证回调 POST /api/devices/auth
+    Note over E,S: 未知凭证回 ignore（继续认证链，绝不 deny）
+    D->>E: 遥测 devices/<id>/telemetry（即心跳）
+    S->>E: 配置 devices/<id>/config（retain）
+    S->>E: 指令 devices/<id>/cmd（禁 retain）
+    D->>E: 回执 devices/<id>/config/ack
 ```
 
 主题里的 `<id>` 就是 `DEVICE_ID`，而 EMQX 的 ACL 把每个用户关在自己的命名空间里
