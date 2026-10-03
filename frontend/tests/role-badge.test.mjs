@@ -77,8 +77,10 @@ ok(field(specs.admin, 'from') === '#b9a7f5' && field(specs.admin, 'to') === '#ff
     [field(specs.admin, 'from'), field(specs.admin, 'to')])
 ok(field(specs.admin, 'ring') === 'double', '管理员＝双层白描边', field(specs.admin, 'ring'))
 ok(field(specs.admin, 'stars') === true, '管理员＝两端小星（这一档现在唯一带星）', field(specs.admin, 'stars'))
-ok(field(specs.admin, 'lead') === '🛡', '管理员仍带自己的盾牌（接手的是样式，不是身份）',
+ok(field(specs.admin, 'lead') === '👑', '管理员带皇冠（20261003 主人点名换掉盾牌）',
     field(specs.admin, 'lead'))
+ok(!['superadmin', 'secretary', 'user', 'zako'].some((r) => field(specs[r], 'lead') === '👑'),
+    '皇冠只有管理员一档在用', TIERS.map((r) => [r, field(specs[r], 'lead')]))
 ok(TIERS.filter((r) => field(specs[r], 'stars') === true).join() === 'admin',
     '整张表里只有 admin 带 stars——多一档就是原样式没换干净',
     TIERS.filter((r) => field(specs[r], 'stars') === true))
