@@ -155,7 +155,25 @@ const GraphRebuild = () => {
     const buildParams = (mode: 'rebuild' | 'precheck'): GraphBuildParams | string => {
         const p: GraphBuildParams = { mode }
         if (apiBase.trim()) p.api_base = apiBase.trim()
-        if (site.trim()) p.site = site.trim()
+        if (site.trim()) {
+            // ⚠️ **必须带 scheme**：`saudade.site` 这种裸域名会被脚本原样写进 manifest
+            // （`build_word_graph.py::origin_of()` 只在匹配到 `^https?://` 时才规整），
+            // 而前端 `loader.ts::siteMatches` 里 `new URL()` 解析不了它 ⇒ 展品直接显示
+            // 「尚未为本站点生成」**且没有任何错误日志**——整条链上没人校验过这个值
+            // （Rust 只传、agent 只限长度 200）。填错的两种形态症状一样，界面上分不出来，
+            // 所以在这一处拦掉：留空是合法的（= 不署名，任何站点都显示），非空就必须能解析。
+            const s = site.trim()
+            let okUrl = false
+            try {
+                const u = new URL(s)
+                okUrl = (u.protocol === 'http:' || u.protocol === 'https:') && !!u.hostname
+            } catch { okUrl = false }
+            if (!okUrl) {
+                return '归属站点要写成带协议的地址（例如 https://你的域名）；' +
+                    '裸域名前端解析不了、产物会写进去但首页永远不显示。想不署名就留空'
+            }
+            p.site = s
+        }
         if (mode === 'precheck') return p
         if (maxNodes != null) p.max_nodes = maxNodes
         if (minChars != null) p.min_chars = minChars
@@ -326,7 +344,7 @@ const GraphRebuild = () => {
                 <Alert
                     type='warning' showIcon
                     message={`可用内存 ${st?.mem_available_mb}MB，低于起任务所需的 ${st?.mem_min_mb}MB`}
-                    description='建图要起 umap/numba，服务端会直接拒绝启动（硬上会把整站拖垮）。这个阈值是实测线而不是拍的：400 节点的一次真实重建峰值 552MB，取 ~1.27 倍余量；换页空间不计入。腾出内存后再点；确有把握时也可以在 agent 的 .env 里写 GRAPH_BUILD_MEM_MIN_MB 改阈值。'
+                    description='建图要起 umap/numba，服务端会直接拒绝启动（硬上会把整站拖垮）。这个阈值是实测线而不是拍的：400 节点的一次真实重建峰值 552MB，取 ~1.16 倍余量（余量故意留小——本机可用内存实测在 699–1070MB 之间晃，余量一大这扇门就常年关着）；换页空间不计入。腾出内存后再点；确有把握时也可以在 agent 的 .env 里写 GRAPH_BUILD_MEM_MIN_MB 改阈值。'
                 />
             )}
             {articleCount !== null && articleCount >= PAGE_LIMIT && (
