@@ -20,24 +20,37 @@ pub struct LoginRequest {
     password: String,
 }
 
-/// 从请求头中提取客户端真实 IP（nginx 反代后取 X-Forwarded-For 第一个地址）
+/// 从请求头中提取客户端真实 IP（限流按 IP+账号记账，见 `login` / `profile::change_password`）。
 /// 20260922：改 `pub(crate)` —— 个人中心改密码那条路也要按 IP+账号记账（同一份凭据，
 /// 不该因为是「已登录」就放宽爆破成本）。
+///
+/// ⚠️ **只信 nginx 覆写过的头**（20261004 修，此前读 `X-Forwarded-For` 的**第一段**）：
+/// 本站 nginx 用的是 `$proxy_add_x_forwarded_for`，它的语义是
+/// `"$http_x_forwarded_for, $remote_addr"`——**客户端自带的 XFF 前缀原样保留**。
+/// 于是"取第一段"取到的正是攻击者随手填的值：登录限流只要发一个
+/// `X-Forwarded-For: 1.2.3.4` 就换成全新配额，爆破次数无上限，而这条限流是本站
+/// 唯一的在线爆破刹车。
+///
+/// 优先级（前两条都只认"最近的这一跳"）：
+///   ① `X-Real-IP`：nginx 的 `proxy_set_header X-Real-IP $remote_addr` 是**覆写**语义，
+///      客户端送什么都不作数，它就是本连接的对端地址；本站走的就是这条。
+///   ② `X-Forwarded-For` 的**最后一段**（不是第一段）：`$proxy_add_x_forwarded_for`
+///      把真实对端**追加在末尾**，攻击者只能污染前面。这条只给"挂在别的代理后面、
+///      设 XFF 不设 X-Real-IP"的部署兜底，本站用不到。
+///   ③ 都没有 → `"unknown"`：限流退化成**按账号**计（所有请求同一个 ip 键）。
+///      这是**更严**而不是更松——比按一个可伪造的 IP 记账安全。
 pub(crate) fn get_client_ip(headers: &HeaderMap) -> String {
-    if let Some(val) = headers.get("x-forwarded-for") {
-        if let Ok(val) = val.to_str() {
-            if let Some(first) = val.split(',').next() {
-                let ip = first.trim();
-                if !ip.is_empty() {
-                    return ip.to_string();
-                }
-            }
+    if let Some(ip) = headers.get("x-real-ip").and_then(|v| v.to_str().ok()) {
+        let ip = ip.trim();
+        if !ip.is_empty() {
+            return ip.to_string();
         }
     }
-    if let Some(val) = headers.get("x-real-ip") {
-        if let Ok(val) = val.to_str() {
-            if !val.is_empty() {
-                return val.to_string();
+    if let Some(val) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+        if let Some(last) = val.rsplit(',').next() {
+            let ip = last.trim();
+            if !ip.is_empty() {
+                return ip.to_string();
             }
         }
     }
