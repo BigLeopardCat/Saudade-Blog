@@ -6,7 +6,17 @@
 不起服务：`page.route` 把 /graph/manifest.json 与产物文件从磁盘直接喂回去，
 所以**真实的 loader.ts 也一并被验了**（manifest 校验 → 动态 import → export default）。
 
-五条断言，第 4 条是性能硬门槛：
+⚠️ 两条**必须先喂回去**的事实（20261003 产物改由 API 供出之后）：
+  ①  `/api/public/graph/manifest` 一律回 **200 + `{}`** —— 本沙箱没有 Rust/agent，
+      这正是"从没重建过的站点"在生产上拿到的东西 ⇒ 顺带把 loader 的**回落**那条腿
+      验到了（`HITS`）。**别改成 404**：那会让首页每次加载都往控制台扔一条红字，
+      第一节"无 console error"那条断言会红，而红得与它声称在测的东西没关系。
+  ②  manifest 里的 `site` 要**改写成沙箱页面自己的 origin**。committed 那份产物署名的是
+      `https://saudade.site`，而沙箱页面住在 `http://vitrine.test` —— 照原样喂进去，
+      运行期的语料归属闸会（正确地）判"不是本站"，`loadGraph()` 直接拒绝，下面每条断言
+      都会因为"没画"而红，而红得与它们声称在测的东西一个字都没关系。第 9 节专门验这条闸。
+
+断言，第 4 条是性能硬门槛：
   1. 画布真的画了东西（非透明像素 > 阈值、颜色 ≥ 2）
   2. 拖动改变画面
   3. 定位后视图确实朝命中簇移动，且命中簇被摆到画面中心
@@ -37,6 +47,17 @@ WG_SRC = ROOT / "src" / "frontHome" / "Content" / "ContentHome" / "Vitrine" / "w
 CANVAS_W, CANVAS_H = 620, 460
 DEFINE = ('import.meta.env={"VITE_HTTP_BASEURL":"","VITE_CDN_BASEURL":"",'
           '"MODE":"production","DEV":false,"PROD":true,"BASE_URL":"/"}')
+
+# 沙箱页面的地址。**必须是个真 URL**（见 new_page 里的 goto 注），而它的 origin 就是
+# 运行期语料归属闸的比对基准 —— 所以这几条是同一个事实的三处写法，动一处要动三处。
+PAGE_URL = "http://vitrine.test/"
+PAGE_ORIGIN = "http://vitrine.test"
+
+# 喂回去的请求计数（每建一个页面重置）。三笔各证明一件事：
+#   api_manifest  —— 先问 API 那条路（后台重建的产物优先）
+#   seed_manifest —— API 缺席时回落到仓库里那份种子
+#   artifact      —— 真的去拉了产物（第 9 节里它必须保持 0：不是本站就**连拉都不拉**）
+HITS = {"api_manifest": 0, "seed_manifest": 0, "artifact": 0}
 
 passed = failed = 0
 
@@ -155,7 +176,11 @@ def main() -> int:
     return 0 if failed == 0 else 1
 
 
-def new_page(browser, manifest, artifact, js, reduced_motion=None):
+def new_page(browser, manifest, artifact, js, reduced_motion=None, site=PAGE_ORIGIN):
+    """`site` = 喂回去的 manifest 里写哪个归属站点。默认改写成本沙箱页面自己的 origin
+    （= "产物属于本站"，正是生产上重建完的情形）；传 `None` = 原样喂 committed 那份，
+    给第 9 节验"别人的产物不画"用。见模块头注那两条必须先喂回去的事实。"""
+    HITS.update(api_manifest=0, seed_manifest=0, artifact=0)
     ctx = browser.new_context(viewport={"width": 900, "height": 700},
                               reduced_motion=reduced_motion)
     page = ctx.new_page()
@@ -163,19 +188,30 @@ def new_page(browser, manifest, artifact, js, reduced_motion=None):
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.on("console", lambda m: errors.append(f"console.{m.type}: {m.text}")
             if m.type == "error" else None)
+    served = manifest if site is None else {**manifest, "site": site}
+
     # 整个源都由内存喂：页面本身 + /graph/*。**必须 goto 一个真 URL 而不是
     # set_content**——about:blank 没有 base URL，loader 里的相对 fetch 会直接
     # "Failed to parse URL"（而且那样也就验不到相对路径拼得对不对了）。
     def serve(route):
         path = route.request.url.split("?", 1)[0]
-        if path.endswith("/graph/manifest.json"):
-            route.fulfill(status=200, content_type="application/json", body=json.dumps(manifest))
-        elif path.endswith(f"/graph/{manifest['file']}"):
+        if path.endswith("/api/public/graph/manifest"):
+            # 本沙箱没有 Rust/agent ⇒ 这条路的答案是"本站还没有服务端产物"，
+            # 而它在生产上就是 **200 + `{}`**（见 src/routes/graph.rs 的头注：首页每次
+            # 加载都问一次，做成 404 会让每个访客的控制台多一条红字）。
+            # 于是 loader 的**回落**那条腿被真的走了一遍（计数见 HITS）。
+            HITS["api_manifest"] += 1
+            route.fulfill(status=200, content_type="application/json", body='{}')
+        elif path.endswith("/graph/manifest.json"):
+            HITS["seed_manifest"] += 1
+            route.fulfill(status=200, content_type="application/json", body=json.dumps(served))
+        elif path.endswith(f"/graph/{manifest['file']}") or path.endswith(f"/api/public/graph/artifact/{manifest['file']}"):
+            HITS["artifact"] += 1
             route.fulfill(status=200, content_type="text/javascript", body=artifact)
         else:
             route.fulfill(status=200, content_type="text/html", body=PAGE)
     page.route("**/*", serve)
-    page.goto("http://vitrine.test/")
+    page.goto(PAGE_URL)
     # 计数器必须在 engine 构造之前装上
     page.evaluate("""() => {
       window.__raf = 0;
@@ -201,6 +237,11 @@ def run(browser, manifest, artifact, js):
     ok(s["n"] > 2000, "画布画出了内容（非透明像素 > 2000）", s)
     ok(s["colors"] >= 2, "至少 2 种颜色（点按文章着色）", s)
     ok(errors == [], "首屏无 console error / pageerror", errors)
+    # loader 的两条腿各走了一次（20261003）：先问 API（重建产物优先），API 说"还没有"
+    # 再回落仓库里的种子。计数而不是打桩 —— 这条判据读的是**真发出去的请求**。
+    ok(HITS["api_manifest"] == 1, "先问 API 那条路（后台重建的产物优先）", HITS)
+    ok(HITS["seed_manifest"] == 1, "API 缺席时回落到仓库里那份种子", HITS)
+    ok(HITS["artifact"] == 1, "产物只拉一次（模块级缓存在起作用）", HITS)
 
     print("== 2. 空闲 3 秒 rAF 必须为 0（性能硬门槛）==")
     a = page.evaluate("window.__raf")
@@ -419,6 +460,38 @@ def run(browser, manifest, artifact, js):
     ok(s3["n"] > 2000, "reduced-motion 下照常渲染", s3)
     ok(errors2 == [], "reduced-motion 下无报错", errors2)
     ctx2.close()
+
+    run_site_gate(browser, manifest, artifact, js)
+
+
+def run_site_gate(browser, manifest, artifact, js):
+    """第 9 节：产物属于**别的站点** ⇒ 不画别人的文章。
+
+    20261003 那道语料归属闸从构建期搬到了运行期（判据见 `loader.ts::siteMatches`）。
+    搬家的理由是"别人用不了"：构建期比的是构建机上的 `SITE_URL`，迁移到新域名的人
+    **永远**过不了闸。搬完之后必须确认它仍然拦得住——这正是本节。
+
+    这里 manifest **原样喂**（`site=None`）：committed 那份署名 `https://saudade.site`，
+    而页面住在 `http://vitrine.test` ⇒ 判据必须拒绝。两条腿都要验：
+
+      ① `loadGraph()` 抛 `SiteMismatchError`（不是别的错，也不是静默画出来）；
+      ② **产物一个字节都没被请求**——归属判断在取产物**之前**。"先下载了再判断"
+         等于先把别人的文章搬进访客的浏览器，那是这道闸唯一真正要防的事。
+    """
+    print("== 9. 别人的产物不画（运行期语料归属闸）==")
+    ctx, page, errors = new_page(browser, manifest, artifact, js, site=None)
+    page.evaluate("""async () => {
+      window.__err = null;
+      try { await WG.loadGraph(); } catch (e) { window.__err = { name: e.name, msg: String(e.message) }; }
+    }""")
+    err = page.evaluate("window.__err")
+    ok(err is not None and err["name"] == "SiteMismatchError",
+       "产物不属于本站 ⇒ loadGraph 抛 SiteMismatchError", err)
+    ok(HITS["artifact"] == 0,
+       "★ 归属判断在**取产物之前**：别人的产物一个字节都没下载", HITS)
+    ok(HITS["seed_manifest"] == 1, "manifest 本身照读（判据靠它，不靠猜）", HITS)
+    ok(errors == [], "全程无 console error", errors)
+    ctx.close()
 
 
 if __name__ == "__main__":

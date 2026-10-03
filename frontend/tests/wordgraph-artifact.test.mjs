@@ -18,9 +18,16 @@ const ok = (cond, name, detail) => {
 const eq = (got, exp, name) => ok(got === exp, name, { got, exp });
 const truthy = (v, name) => ok(!!v, name, { got: v });
 
-// nginx（/etc/nginx/sites-enabled/blog）只对形如 -<8位以上hash>.<白名单扩展名> 的
-// 文件给 1 年 immutable 缓存；扩展名白名单里有 js、没有 json。文件名一旦不合规，
-// 产物会掉进 no-store 每次刷新全量重下——性能事故，但页面看起来完全正常。
+// 产物文件的缓存头**两条路各归各的**（20261003 起产物改由 API 供出）：
+//   ① 仓库里 committed 的种子（public/graph/ → dist/graph/）：由 nginx 决定 ——
+//      它只对形如 -<8位以上hash>.<白名单扩展名> 的文件给 1 年 immutable，白名单里有
+//      js、没有 json。文件名一旦不合规就会掉进 no-store 每次刷新全量重下 ——
+//      性能事故，但页面看起来完全正常（这就是它值得被断言的原因）。
+//   ② 后台重建的产物（agent 的 data/word_graph/web/）：由 Rust 的
+//      `/api/public/graph/artifact/:file` 供出，Content-Type / Cache-Control 全在
+//      `src/routes/graph.rs` 里 —— nginx 那两个 443 块的 `^~ /api/` 前缀 location
+//      跳过所有正则 location，`\.(js|css|json)$` 那条抢不走。
+// 两边**同一条文件名形状**：前端 loader.ts 的动态 import 与 Rust 的白名单校验共用它。
 const FILE_RE = /^graph-[A-Za-z0-9_-]{8,}\.js$/;
 /** 建图脚本把坐标缩放到 98 分位后 clip 到 ±WORLD_R。前端相机参数按这个尺度定死 */
 const WORLD_R = 1.6;
@@ -123,6 +130,42 @@ console.log('== 质量指标 ==');
     truthy(g.built, '记录了构建时间', g.built);
     truthy(g.model && g.dim > 0, '记录了 embedding 模型与维度', { model: g.model, dim: g.dim });
     ok(stats.n_nodes === nodes.length, 'stats.n_nodes 与实际节点数一致', { stats: stats.n_nodes, real: nodes.length });
+}
+
+// ── 后台重建的产物（存在才验）────────────────────────────────────────────
+// 上面那一整段验的是**仓库里 committed 的种子**：从没重建过的站点走的就是它。
+// 重建过的站点走另一份（agent 的 data/word_graph/web/，由 Rust 供出）——那份不在
+// 版本控制里、本机也不一定有（没重建过就整个目录不存在），所以整段按"存在才验"。
+// ⚠️ CI 上永远不存在（agent 是另一个仓库、这个目录也 gitignore）⇒ 这一段只在
+// 生产机上跑得到，它守的是"这台机器当前供出去的那份产物"。
+const AGENT_WEB = process.env.GRAPH_ARTIFACT_DIR
+    || path.resolve(here, '../../saudade-blog-agent/data/word_graph/web');
+const prodManifestPath = path.join(AGENT_WEB, 'manifest.json');
+console.log('== 生产产物（后台重建）==');
+if (!existsSync(prodManifestPath)) {
+    console.log(`  · 跳过：${AGENT_WEB} 下没有 manifest.json（这台机器还没在后台重建过）`);
+} else {
+    const pm = JSON.parse(readFileSync(prodManifestPath, 'utf8'));
+    truthy(FILE_RE.test(pm.file), '生产 manifest.file 符合同一条命名规则', pm.file);
+    truthy(FILE_RE.test(`graph-${pm.v}.js`) && pm.file === `graph-${pm.v}.js`,
+        '生产 manifest.file 与 v 一致（graph-<v>.js）', pm);
+    // 归属站点是这个文件存在的全部意义：重建任务把它当参数收下来（页面传浏览器的 origin），
+    // 没有它前端就永远判"不是本站"⇒ 展品显示"尚未为本站点生成"。
+    truthy(typeof pm.site === 'string' && pm.site.trim() !== '',
+        '生产 manifest 写了 site（否则首页永远认不出这是本站的图）', pm);
+    const pPath = path.join(AGENT_WEB, pm.file);
+    if (existsSync(pPath)) {
+        eq(statSync(pPath).size, pm.bytes, '生产 manifest.bytes 与实际文件大小一致');
+        const pg = (await import(pathToFileURL(pPath).href)).default;
+        ok(Array.isArray(pg?.nodes) && pg.nodes.length > 0, '生产产物有节点', pg?.nodes?.length);
+        // 热度是"按文章热度画大小"的**唯一数据来源**：没有 h 就只能退回 tf-idf 重要度，
+        // 用户要的那个效果就不存在（而这种缺失在页面上看不出来——图照画，只是大小没意义）。
+        ok(typeof pg?.nodes?.[0]?.h === 'number', '生产产物带热度字段 h（否则大小退回 tf-idf 重要度）',
+            pg?.nodes?.[0]);
+        console.log(`   生产产物 ${pm.file}（${pm.bytes} 字节，site=${pm.site}）`);
+    } else {
+        ok(false, '生产 manifest 指向的产物文件存在', pm.file);
+    }
 }
 
 console.log(`\n${failed === 0 ? '✓' : '✗'} wordgraph-artifact: ${passed} passed, ${failed} failed`);

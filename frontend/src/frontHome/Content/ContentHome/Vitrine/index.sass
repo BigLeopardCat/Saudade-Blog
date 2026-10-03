@@ -490,6 +490,31 @@ $bar-line: 16px
   color: rgba(200, 214, 238, 0.45)
   pointer-events: none
 
+// 「本站还没有自己的图谱」这块（20261003）。与 .wg-veil 的分工：veil 说"正在画"，
+// 这里是**确定的事实**——产物属于别的站点，重试一万次也不会变。所以它要读得清、
+// 还要说得出下一步做什么（不然迁到自己服务器的人只会看到首页少了一件展品）。
+// ⚠️ 文案里的入口名与后台页签保持一致（站点设置 → 向量图谱），改页签名要一起改。
+.wg-absent
+  display: flex
+  flex-direction: column
+  align-items: center
+  justify-content: center
+  gap: 6px
+  padding: 0 32px
+  text-align: center
+
+.wg-absent-t
+  margin: 0
+  font-size: 13px
+  color: rgba(200, 214, 238, 0.75)
+
+.wg-absent-s
+  margin: 0
+  max-width: 460px
+  font-size: 11.5px
+  line-height: 1.7
+  color: rgba(200, 214, 238, 0.45)
+
 // 读数卡片：坐落在 **.wg-foot 之上**（DOM 上是它最后一个子元素，见 WordGraphExhibit）。
 // bottom: calc(100% + 8px) 是相对整条 foot 的高度算的 ⇒ 检索框/工具行/chips 换行/note
 // 提示怎么变，卡片都不会被压到。20260916 之前它挂在 .wg-root 下按固定 92px 估高：

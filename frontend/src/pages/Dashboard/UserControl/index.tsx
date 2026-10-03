@@ -8,6 +8,7 @@ import React, {useEffect, useState} from "react";
 import { webInfo } from "../../../interface/Setting";
 import http from "../../../apis/axios.tsx";
 import {useNavigate} from "react-router-dom";
+import GraphRebuild from "./GraphRebuild";
 
 /**
  * 站点设置（/dashboard/usercontrol）。20260930 从四页签收成两页签：
@@ -26,6 +27,10 @@ import {useNavigate} from "react-router-dom";
  *
  * 剩下两个页签都是**真的有人读**的：站点信息喂页脚与首页署名，社交媒体喂首页那排按钮
  * （20260930 之前只有 Github 读设置，B 站/邮箱/QQ 三项是硬编码——那正是隐私泄漏的源头）。
+ *
+ * 20261003 加了第三个页签「向量图谱」（`./GraphRebuild`）：按用户的原话，手动重算图谱的
+ * 入口就放在这里，不新开侧边栏——侧边栏那一格的索引（8）已被本页占用，动它要连带改
+ * `HASH_INDEX` 与所有书签。它不是"设置"，而是**本页本来就是"站点自己的东西怎么配"** 的去处。
  */
 const EMPTY: webInfo = {
     blogTitle: '',
@@ -158,6 +163,12 @@ const UserControl = () => {
                     </div>
                 </form>
             </>,
+        },
+        {
+            key: '3',
+            label: <h3>向量图谱</h3>,
+            // 不属于 webInfo 那套表单：它不写设置，而是起一个后台任务（见 GraphRebuild 头注）
+            children: <GraphRebuild />,
         },
     ];
 

@@ -200,6 +200,13 @@ pub fn create_router(state: AppState) -> Router {
         // protected_routes 那条链路是后台管理用的（auth_guard 全 admin），
         // 而这里任何登录用户都该能用；查询要花 embedding 调用，也不能真匿名开放。
         .route("/api/public/graph/query", post(graph::graph_query))
+        // 图谱产物本身（20261003）：产物由后台重建任务写进 agent 的 data/word_graph/web，
+        // 从这里供出去 ⇒ 重建完刷新首页就换新图，不必等一次 vite build + 部署。
+        // **公开**（产物是给所有访客看的展示数据，不含任何私有内容）；静态那份
+        // committed 产物是"从没重建过的站点"的种子，前端拿不到 manifest 就回落它。
+        .route("/api/public/graph/manifest", get(graph::graph_manifest))
+        // 文件名由 handler 白名单校验（`graph-<id>.js`），见 valid_artifact_name
+        .route("/api/public/graph/artifact/:file", get(graph::graph_artifact))
         
         // Static Image Download (Public)
         .nest_service("/api/protect/download", ServeDir::new(upload_dir()))
@@ -356,6 +363,15 @@ pub fn create_router(state: AppState) -> Router {
         // 与上面那条同前缀不同路径，不是它的子资源——上面是"当下快照"，
         // 这条是"每期一行的历史"，两条的缓存/刷新语义都不一样。
         .route("/api/protected/stats/notes/periods", get(note_stats::note_period_report))
+
+        // 向量图谱重建（20261003）：后台 /dashboard/usercontrol 的「向量图谱」页签。
+        // 挂守卫域内 ⇒ 只有 admin 进得来；handler 再以**发起人身份**现签断言转给 agent
+        // （agent 侧按 `admin.console` 再判一次，两道门同一份角色来源）。
+        // 三条：起任务（含 mode=precheck 的环境预检）/ 轮询状态 / 取消。
+        // 生产产物由 `/api/public/graph/manifest`、`/api/public/graph/artifact/:file` 供出。
+        .route("/api/protected/graph/rebuild", post(graph::rebuild_start))
+        .route("/api/protected/graph/rebuild/status", get(graph::rebuild_status))
+        .route("/api/protected/graph/rebuild/cancel", post(graph::rebuild_cancel))
 
         // WebSettings
         .route("/api/protected/websetting",

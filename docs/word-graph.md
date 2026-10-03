@@ -40,25 +40,72 @@ payload 的 `built`）——展示柜标题栏那个「2026年09月16日 UTC+8 0
 所以**重出图后角标自动跟着走**，前端不必改一个字。`built` 可选：老 manifest 没有这个字段时
 `loadManifest()` 照样返回，`badge` 返回 null、角标不渲染（不会打出 `undefined年`）。
 
-**`site` = 产物的归属站点**（`build_word_graph.py` 写入，缺省取 `--api-base` 的 origin）。
-产物里内嵌的是**建图时那些文章**的词与标题，所以别人 clone 这个仓直接部署，展品会把原作者
-的文章画到他的首页上。前端在**构建期**拿 `site` 跟本站地址比（`vite.config.ts` 的
-`GRAPH_OWNERSHIP`），不是本站就**整件不注册**（`exhibits.ts`）——第三方看到的是"首页没有
-这件展品"，不是别人的语料，也不是一张加载失败的破卡片。
+**`site` = 产物的归属站点**（`build_word_graph.py` 写入；后台重建时由页面传**浏览器自己的
+origin**，见 §1.1b）。产物里内嵌的是**建图时那些文章**的词与标题，所以别人 clone 这个仓
+直接部署，展品会把原作者的文章画到他的首页上。前端拿 `site` 跟本站 origin 比
+（`loader.ts::siteMatches`），不是本站就**在取产物之前抛 `SiteMismatchError`**
+（`WordGraphExhibit` 显示"尚未为本站点生成"）——第三方看到的是这一句提示，不是别人的语料，
+也不是一张加载失败的破卡片。
 
-判定规则（缺 `site` / 产物建在回环地址 ⇒ 认作本地，老产物向后兼容）：
+> ⚠️ **这道闸 20261003 从构建期搬到了运行期**（原来在 `vite.config.ts` 的
+> `GRAPH_OWNERSHIP` / `__GRAPH_LOCAL__`）。构建期比对的致命处在于：**页面在构建那一刻
+> 还不知道自己会被从哪里打开**，判据被烧进 bundle ⇒ "迁移到新机器 → 重新建图 → 构建一次"
+> 这条再正常不过的路**永远过不了闸**（构建机上看不到新域名下的新产物）。这正是用户说的
+> "别人用不了"的一半；另一半是产物只能靠 `vite build` 才到得了浏览器（§1.1b）。
 
-| `manifest.site` | 本站 `SITE_URL` | 结果 |
+判定规则（缺 `site` / 产物建在回环地址 ⇒ 认作本站，老产物向后兼容）：
+
+| `manifest.site` | 访客浏览器的 origin | 结果 |
 |---|---|---|
-| 缺失（老产物） | 任意 | 注册（向后兼容） |
-| `http://localhost:3000` 等回环地址 | 任意 | 注册（开发者自己建的图） |
-| `https://saudade.site` | `https://saudade.site` | 注册 |
-| `https://saudade.site` | `https://example.com` | **不注册** |
+| 缺失（老产物） | 任意 | 显示（向后兼容） |
+| `http://localhost:3000` 等回环地址 | 任意 | 显示（开发者自己建的图） |
+| `https://saudade.site` | `https://saudade.site` | 显示 |
+| `https://saudade.site` | `https://example.com` | **不显示**，提示去后台重建 |
 
-**重建过图谱的人自动通过** —— 他跑 `build_word_graph.py` 时 `site` 取的是他自己的
-`--api-base`，manifest 里写的就是他自己的站点。本地 `vite dev` 另有豁免（`vite.config.ts`
-的 `command === 'serve'`），否则改前端的人会因为"站点地址是 localhost"而看不到展品。
-生产构建**不给** localhost 豁免：站点地址配错时结果是"隐藏"（安全方向）。
+**重建过图谱的人自动通过** —— 后台那个页签会把发起重建时的 origin 写进 manifest
+（`site` 默认填的就是它），于是产物天然属于他自己。**闸在取产物之前**是有意的：先下载
+再判断，等于把另一个站点的文章词表拉进了访客的浏览器（沙箱断言 `HITS["artifact"] == 0`
+钉着这一点）。
+
+### 1.1b 两条产物通道 + 后台重建（20261003 用户第 2 条）
+
+**要解决的问题**：产物原来只写在 `frontend/public/graph/`，而 nginx 直服的是
+`frontend/dist` —— 中间隔着一次 `vite build`。于是"在后台点一下重建"根本走不通：
+服务端写的文件到不了浏览器，而且下一次 CI 部署的 dist 差集清理还会把 `dist/graph`
+换回仓库里的旧版（**静默回退成旧图**）。
+
+**现在两条通道，同一个文件名形状**（`^graph-[A-Za-z0-9_-]{8,}\.js$`，前端
+`loader.ts:FILE_RE` 与 Rust `valid_artifact_name` 各一份、必须同源）：
+
+| 通道 | 目录 | 谁来供 | 谁写 |
+|---|---|---|---|
+| 种子 | `frontend/public/graph/`（committed） | nginx 直服 `dist/graph/` | 人工跑脚本 + 提交 |
+| 生产 | `saudade-blog-agent/data/word_graph/web/`（不进 git） | Rust `GET /api/public/graph/{manifest,artifact/:file}` | 后台重建任务 |
+
+前端**先问 API、再回落静态**（`loader.ts::loadManifest`，模块级缓存）。顺序刻意反过来：
+没重建过的站点多花一次请求，换来的是"重建完刷新即新图"——**重出图不必等一次 CI 部署**。
+
+两条通道的缓存头各归各的：种子那条由 nginx 决定（下面那段白名单）；生产那条由
+`src/routes/graph.rs` 决定（`text/javascript; charset=utf-8` + 一年 immutable），
+`^~ /api/` 前缀 location 会跳过所有正则 location，所以 `\.(js|css|json)$` 抢不走它。
+⚠️ 日后若有人加一条能匹配 `/api/...js` 的正则 location，这里设的头全部失效
+（症状：产物被 no-store，或类型变成 `text/html`）。
+
+**没有服务端产物时 manifest 返回 200 + `{}`，不是 404**：首页每次加载都会问一次这个端点，
+一个从没重建过的站点（正是"别人 clone 下去直接部署"那一类）会让**每个访客的控制台每次
+都多一条红字**，而这是可降级端点。契约是**"`file` 字段缺席"** ⇒ 前端回落静态种子；
+真读出错（权限/IO）才 500。
+
+**重建入口**：后台「站点设置 → 向量图谱」页签（`pages/Dashboard/UserControl/GraphRebuild.tsx`）
+→ Rust `/api/protected/graph/rebuild{,/status,/cancel}`（以发起人身份现签断言）
+→ agent `rag/graph_build.py`（文件锁 + `state.json` + 内存预检 + 自成进程组的子进程）
+→ 产物写进上表"生产"那一格。页面 1.5s 轮询状态与日志尾部；成功摘要里的节点/字节/版本
+读的是**产物自己写的账**，向量用量拿不到那行日志时说的是"没调 embedding"而不是 0/0
+（`--dry-run` 与"全命中缓存"是两件事）。
+
+**只算公开文章**由 Rust 保证：脚本走 `/api/public/notes`，而那条 SQL 里就写着
+`IsPublic=true AND Status!='draft'`（`src/routes/notes.rs`）。上限是列表接口一页
+1000 篇（`page_size` clamp 1..1000）——正好 1000 就可能是被截断的，页面会就此警告。
 
 **为什么用 `.js` 而不是 `.json`**：nginx 的 immutable 白名单是
 `-[a-zA-Z0-9_-]{8,}\.(js|css|woff2?|mp4|webm|jpe?g|png|webp)`（`sites-enabled/blog` 两个
@@ -73,6 +120,25 @@ payload 的 `built`）——展示柜标题栏那个「2026年09月16日 UTC+8 0
 
 字段名故意单字母（`w/x/y/z/n/a/a2`、边是 `[a,b,sim]`）：当前这一代（`1d1323374540`）是
 400 点 + 778 边，payload 45KB（单字母键名是当初把体积压下来的手段）。`types.ts` 是这份契约的注释版。
+
+节点上另有两个 20261003 加的字段（**同一代的老产物没有它们，前端要能照常画**）：
+
+| 字段 | 在哪 | 含义 |
+|---|---|---|
+| `h` | `nodes[]` | 节点热度 = `0.75·heat[主文章] + 0.25·heat[次文章]`，归一化到 0..1 |
+| `hv` | `articles[]` | 该篇自己的热度（0..1），读数卡显示的就是它 |
+
+`heat = log1p(views) + 3·log1p(likes) + 3·log1p(favorites) + 4·log1p(comments)`
+（权重是建图脚本里 `HEAT_W` 那**一块常量**，要调只调那里；每个读数先 log1p 再乘，
+免得一篇爆款把其余文章全压成一个点）。
+
+- **取不到读数不是错误**：那篇照常进图、热度记 0，id 进 `stats.heat_missing` 单列
+  ——"接口没给"与"读数真的是 0"是两件事（同 `note_stats` 的 `liked` 口径）。
+  四个读数必须齐全，缺一个就整篇算"取不到"，**不拿 0 顶替**。
+- **`n`（tf·idf 重要度）留在产物里，但不再决定点的大小**：它只喂 `locate.ts` 的
+  局部关键词回退做检索相关性。**热度不许影响搜索排序**——否则热门文章的词会垄断一切查询。
+- 前端取 `heatOf(n) = n.h ?? n.n`（老产物自动退回重要度），再走一个地板
+  `h_eff = 0.15 + 0.85·h`：新站所有读数都是 0 时图还是一样的图，不会塌成一群同样大的点。
 
 > ⚠️ **`v` 里含构建时间戳**：`build_id = sha1(JSON(不含 v))[:12]`，而 payload 里有 `built`
 > 字段（本地钟面时间），所以**重跑一次就会得到新文件名，哪怕内容一字未改**。不是幂等内容
@@ -111,19 +177,28 @@ payload 的 `built`）——展示柜标题栏那个「2026年09月16日 UTC+8 0
 
 `saudade-blog-agent/scripts/build_word_graph.py`（dev 工具，不进生产 venv）
 
-运行环境：**系统 python3.12 + `--target` 装到一个仓库外的独立目录**（下称 `$GRAPH_LIB`）**的 numpy/jieba**
-（`numpy 2.5.2` 来自系统 python）。完整命令：
+运行环境（20261003 起）：**`uv run --no-project` 的临时环境**，依赖清单在
+`scripts/requirements-graph.txt`（numpy/jieba/umap/numba/scipy）。旧的"`--target` 装到
+仓库外独立目录 + `PYTHONPATH=$GRAPH_LIB`"那条路已经退役——它要求每台机器先手工铺一遍
+依赖，而"别人迁移这个项目"正是本轮要解决的问题。**numpy 仍然不进生产 venv**（§1.2）。
 
 ```bash
 cd saudade-blog-agent
-PYTHONPATH=$GRAPH_LIB python3 scripts/build_word_graph.py            # 出图
-PYTHONPATH=$GRAPH_LIB python3 scripts/build_word_graph.py --dry-run  # 只看词表，不调 embedding
+# ① 推荐路径：后台「站点设置 → 向量图谱」点一下（见 §1.1b）。它就是用下面这行跑的，
+#    依赖在临时环境里现装（umap/numba/scipy 刻意不进生产 venv）。
+uv run --no-project --python 3.12 --with-requirements scripts/requirements-graph.txt \
+    python3 scripts/build_word_graph.py --out-web data/word_graph/web --out-agent data/word_graph
+
+# ② 手动只跑词表（不调 embedding、不写产物）——纯 CPU，零 API 成本
+uv run --no-project --python 3.12 --with-requirements scripts/requirements-graph.txt \
+    python3 scripts/build_word_graph.py --dry-run
 ```
 
 | 步 | 做什么 | 关键参数 |
 |---|---|---|
-| ① | 拉语料：列表 → 逐篇详情（正文走 `/notes/:id`，列表接口正文为空） | `--api-base` |
+| ① | 拉语料：列表 → 逐篇详情（正文走 `/notes/:id`，列表接口正文为空）。**列表接口一页上限 1000 篇**，正好 1000 就可能是被截断的（后台页会就此警告） | `--api-base` |
 | ② | 过滤：`EXCLUDE_IDS={9,10,11}`（测试文）+ 正文 <400 字 + 标题 `^(测试\|test\|hello\|aaa\|untitled)` | `--exclude-ids --min-chars` |
+| ②b | **热度**：逐篇读 `GET /notes/:id/stats` → `heat`（`HEAT_W` 权重块，见 §1）→ 归一到 0..1，写进 `nodes[].h` / `articles[].hv`（20261003：**点的大小就由它决定**）。取不到读数的文章照常进图、记 0，id 单列进 `stats.heat_missing` | |
 | ③ | 清洗：去 front-matter/HTML 注释/图片/裸 URL，`[text](url)` 留 text，**保留代码围栏内容**（rust/axum/tokio 正是好词） | |
 | ④ | 抽词 `jieba.posseg`：`POS_DROP` 词性闸 + ASCII 3~16 字 + 中文 ≥2 字 + 停用词 + 词黑名单 + 词形折叠（log/logs 并成一个点） | `scripts/graph_blocklist.txt`、`scripts/graph_userdict.txt`（§2.1） |
 | ⑤ | 选词：每篇按 `imp=tf·idf` 取前 `clamp(round(0.9·√chars)+8, 14, 70)` 个，全局再按重要度裁到 `--max-nodes`，最后把允许清单里选中的词补回 | `--max-nodes`（默认 400）、`scripts/graph_allow.txt`（§2.1） |
@@ -334,16 +409,21 @@ UMAP 只关心邻域、剥掉全局混杂方向反而更干净。τ 要跟着调
 
 ## 5. 重建流程
 
+> **日常重建走后台那个页签**（§1.1b）：它写的是 agent 的 `data/word_graph/web/`，
+> 不产生任何 git 变更、不必等 CI 部署。下面这段是**改代码的人**（词表/黑名单/布局）
+> 才需要的手工流程。
+
 ```bash
 cd saudade-blog-agent
+UV="uv run --no-project --python 3.12 --with-requirements scripts/requirements-graph.txt"
 
 # 1) 只改词表/黑名单/用户词典/允许清单的话，先干跑看一眼（零 API 成本）
-PYTHONPATH=$GRAPH_LIB python3 scripts/build_word_graph.py --dry-run
+$UV python3 scripts/build_word_graph.py --dry-run
 #    看 eval/report/wordgraph/<ts>_vocab.txt，确认没有误伤
 #    ⚠️ --dry-run 在 embedding 之前就 return，所以**拿不到质量门指标**（只看词表用它）
 
-# 2) 正式出图（写了两份产物：前端 public/graph + agent data/word_graph）
-PYTHONPATH=$GRAPH_LIB python3 scripts/build_word_graph.py
+# 2) 正式出图（不带 --out-web 时写的是仓库里那份种子 frontend/public/graph + agent data/word_graph）
+$UV python3 scripts/build_word_graph.py
 
 # 3) 前端与 agent 的产物都在 git 里（agent data/word_graph 被 gitignore，但它不被代码引用，
 #    只被同一台机器上的 agent 进程读——所以出图后**不需要**任何同步动作）
@@ -583,7 +663,9 @@ height: calc(min(58vh, 640px) + 72px);
 ### 8.4 标签分层：谁的名字非显示不可
 
 用户的两条要求：① 重要度高的词**一直**显式展示名字；② 放大到脸上的词不能还要点一下才出名字。
-（生成器 §2 里 `imp = tf·idf` 归一化后的 `n` 就是"重要度"，见 §1 产物契约。）
+（生成器 §2 里 `imp = tf·idf` 归一化后的 `n` 就是"重要度"，见 §1 产物契约。
+⚠️ **20261003 起 A 层用的不是 `n` 而是热度 `heatOf(n)`**——点的大小改由文章热度决定之后，
+"大的词一直有名字、小的词反而常驻"就成了两张皮的明显 bug。与半径、字号同源。）
 
 按优先级排五层，总预算 `LABEL_MAX = 50`（C 层不受限）：
 
@@ -592,7 +674,7 @@ height: calc(min(58vh, 640px) + 72px);
 | C | 查询命中 / 悬停 / 选中 | `hard` + `force` | 当前焦点，连一个空位都没有时也照画 |
 | N | 选中词的邻居（每节点 ≤3 条边） | `hard` | 线亮了名字要跟上 |
 | Z | **贴脸的**：相机距它 ≤ `NEAR_LABEL_D = 1.5` 世界单位且落在画布内 | `hard` | 最多 10 个，按距离由近到远 |
-| A | 全局重要度前 `LABEL_A = 22` | `hard` | 用户要的"一直显式展示" |
+| A | 全局**热度**前 `LABEL_A = 22` | `hard` | 用户要的"一直显式展示"（20261003 起按热度，同上） |
 | B | 其余按**由近到远**补位到 50 | 撞了就让开 | 拉近自然揭示更多；查询聚焦时让位 |
 
 两个实测出来的坑（都已修）：
@@ -618,7 +700,7 @@ height: calc(min(58vh, 640px) + 72px);
 根因是**分层各自独立调 `take()`，而 `take()` 里没有"这一帧这个节点已经画过"的记录**：
 一个词可以同时是
 ① 查询命中（C 层 `force`）、② 选中词的邻居（N 层 `hard`）、③ 相机贴脸（Z 层 `hard`）、
-④ 重要度前 22（A 层 `hard`）——每层都成功放一次名，于是同帧两个（最多时看到 3 个）标签。
+④ 热度前 22（A 层 `hard`）——每层都成功放一次名，于是同帧两个（最多时看到 3 个）标签。
 第二轮给 `hard` 加的**四向候选位**恰好放大了它：原来只有"右/左"两个位置，第二次调用经常撞上
 同一个已占位置而失败；有了四个方向，换个方向就放下了。
 

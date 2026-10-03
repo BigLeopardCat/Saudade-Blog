@@ -82,9 +82,10 @@ import './index.sass';
  *    `pointer-events: none` 同时也是滚轮穿透的载体（滚轮是指针事件），别删。
  */
 export default function Vitrine() {
-    // 语料归属自校验（见 `exhibits.ts`）会把不属于本站的展品滤掉，那时 `EXHIBITS` 是空数组。
-    // 空数组**不能再往下走**：本体里写着 `EXHIBITS[0].Component`，会当场崩；而且 hooks
-    // 不能有条件地跳过，所以"有没有展品"只能在这层判 —— 本组件自己一个 hook 都不带。
+    // 20261003 起注册表恒非空（语料归属闸搬到运行期了，见 `exhibits.ts`），这条判据
+    // 现在是**纯粹的结构守卫**：本体里写着 `EXHIBITS[0].Component`，注册表一旦被清空
+    // 就会当场崩；而 hooks 不能有条件地跳过，所以"有没有展品"只能在这层判 ——
+    // 本组件自己一个 hook 都不带。别因为"现在是常量"就把这层删掉。
     return EXHIBITS.length ? <VitrineBoard /> : null;
 }
 
