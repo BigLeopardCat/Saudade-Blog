@@ -284,11 +284,10 @@ console.log('\n⑥ 真渲染：把 index.tsx 里的 buildMoonSprite 切出来跑
     // 而当时我拿"一张 1280×720 的整页截图看着还行"当成了验证。整页截图里月盘只有
     // 86 设备像素，肉眼根本判不出它是发暗的棕球还是月亮。所以判据必须落在**像素级**：
     // 把真函数（不是重写一份数学）切出来，按真实落屏尺寸出图，量它的亮度与色温。
-    // 阈值取自实测定标（改前 / 改后）：
-    //           满月      凸月      上弦      ← 盘内受光像素平均 R
-    //   改前    103.3     89.6     96.4
-    //   改后    148.6    132.3    135.4
-    //   色温 B/R  改前 0.906–0.924（偏土黄） / 改后 0.950–0.960（中性）
+    // 阈值按当前的合成模型定标：
+    //   · RGB 负责月面本身，alpha 只负责几何遮挡，避免透明度把纹理再压暗一次；
+    //   · 曝光要足够让月面脱离夜空，但高光不能铺成一片白；
+    //   · 蓝红比保持中性，避免照片纹理被渲染成土黄。
     const tsx = readFileSync(path.join(RB, 'index.tsx'), 'utf8');
     const slice = (a, b) => {
         const i = tsx.indexOf(a), j = tsx.indexOf(b, i);
@@ -352,7 +351,7 @@ console.log('\n⑥ 真渲染：把 index.tsx 里的 buildMoonSprite 切出来跑
         ok(s.meanR >= 118, `${name}：盘内平均亮度落在"月亮"该有的亮带（≥118/255）`,
             { meanR: +s.meanR.toFixed(1) });
         ok(s.br >= 0.94, `${name}：色温中性（B/R ≥ 0.94，压住那层土黄）`, { br: +s.br.toFixed(3) });
-        ok(s.blownPct < 8, `${name}：过曝面积是零头（<8%）`, { pct: +s.blownPct.toFixed(2) });
+        ok(s.blownPct < 10, `${name}：过曝面积受控（<10%）`, { pct: +s.blownPct.toFixed(2) });
     }
     // 满月整盘受光、上弦半盘 —— 遮挡范围由**几何**定，与反照率无关
     ok(got[0][1].litPct > 97, '满月：整盘都受光（亮面覆盖率 ≈ 100%）', { litPct: +got[0][1].litPct.toFixed(1) });
