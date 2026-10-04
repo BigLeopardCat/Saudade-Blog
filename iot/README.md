@@ -10,10 +10,10 @@
 | **设备控制台** | 静态页 `/device-console/`，复用博客登录态 | 是，[device-console/](device-console/) |
 
 **它是可选件，默认不装。** 不装时站点与对话 agent 一切照常——只是没有这三个入口，
-被问起时 agent 会如实说"本站未部署"。
+被问起时 agent 会回答"本站未部署"。
 
-> 这与"装了一半"是两回事，后者才是真正会出问题的状态：agent 以为页面在、带你跳过去，
-> 那边却是 404，而两边都不报错。**本目录存在的全部意义就是让这两个状态不会混淆**。
+> 要避免的是"装了一半"这个中间态：agent 以为页面在、带你跳过去，那边却是 404，而两边
+> 都不报错。本目录的作用就是让"装了"与"没装"始终一致。
 
 ---
 
@@ -26,7 +26,7 @@
 |---|---|---|---|
 | 1 | nginx | `/etc/nginx/snippets/blog-iot/*.conf` 在不在 | `/device-console/`、`/device-api/`、`/mqtt` 三个入口存不存在 |
 | 2 | Rust 后端 | 博客 `.env` 的 `IOT_ENABLED` | `sitemap.xml` 列不列 `/device-console/` |
-| 3 | 对话 agent | agent 仓 `.env` 的 `IOT_ENABLED` | 被问到物联网平台时说真话还是说"本站未部署" |
+| 3 | 对话 agent | agent 仓 `.env` 的 `IOT_ENABLED` | 被问到物联网平台时回答"已部署"还是"本站未部署" |
 
 **缺省是关**：第 2、3 处不写 `IOT_ENABLED` 就是关；第 1 处目录空着就是关。
 真值只有 `1` / `true` / `yes` / `on`（两边代码的取值口径一致，改一处要改两处）。
@@ -40,7 +40,7 @@ sudo systemctl restart saudade-agent && sleep 8
 
 ### 三处不一致会怎样
 
-**不会报错**，只会说假话：
+**不会报错**，只是三处说法对不上：
 
 | 状态 | 表现 |
 |---|---|
@@ -107,22 +107,21 @@ sudo systemctl restart saudade-agent && sleep 8
 
 ## 代价（要不要装 / 要不要留）
 
-**结论：在用/偶尔用 ⇒ 建议保留**，但账要摆在明面上（20261002 实测，细节与复现命令见
+**结论：在用/偶尔用 ⇒ 建议保留**（20261004 实测，细节与复现命令见
 [docs/iot-device-integration.md](../docs/iot-device-integration.md) §7）：
 
 | 代价 | 量级 |
 |---|---|
-| 常驻内存 | EMQX ~48 MiB + device-service ~4.5 MiB ≈ **52 MiB**（对比 agent 每 worker ~130 MiB） |
+| 常驻内存 | EMQX ~60 MiB + device-service ~3.1 MiB ≈ **63 MiB**（对比 agent 每 worker ~130 MiB） |
 | 磁盘 | `/usr/lib/emqx` 89 MB + `/var/lib/emqx` 1.4 MB ≈ 90 MB |
 | 公网面 | 多一个 **8883** 端口（MQTTS）要放行、要盯证书 |
 | 运维面 | **两个不经 CI 的 systemd unit** + device-service 源码不在本仓（手动 `cargo build --release`） |
 | 证书 | MQTTS 与 HTTPS 同源，**续期要两处同步**（漏一处 = 设备全掉线而网页正常） |
 | 内存上限 | EMQX 的 `MemoryHigh/MemoryMax` 只写在 systemd drop-in 里，**仓库看不见** ⇒ 已在运维手册 §3 记一份 |
 
-**它不是免费开关，但相对收益（设备接入/远程 OTA/遥测面板）这点代价是划算的**——注意它
-**不需要**那块最贵的资源：CPU 几乎零占用，内存只占生产总用量的 **8%~13%**（分母在
-**~410 MiB（agent 刚重启）↔ ~620 MiB（worker 跑过重活）** 之间摆，见运维手册 §8.2；
-引用"≈0.4 个 worker"那个说法更稳，它不受这个摆动影响）。
+**相对收益（设备接入/远程 OTA/遥测面板）对得上这点代价**：CPU 几乎零占用，内存只占生产总
+用量的 **10%~15%**（分母在 **~420 MiB（agent 刚重启）↔ ~640 MiB（worker 跑过重活）** 之间摆，
+见运维手册 §8.2；引用"≈0.5 个 worker"那个说法更稳，它不受这个摆动影响）。
 
 ## 卸
 
@@ -157,7 +156,7 @@ sudo systemctl restart saudade-agent && sleep 8
 
 - 三块共用的身份是**博客签发的那个 JWT**（`localStorage.tokenKey`）。`device-service` 与
   EMQX 各自验签一次，**都不查库** ⇒ 冻结账号 / 收回令牌**管不到这两个入口**，在令牌过期前
-  它仍是一枚合法身份。这条是已知缺口，如实记在
+  它仍是一枚合法身份。这条是已知缺口，见
   [docs/security-boundary.md](../docs/security-boundary.md)，别再默认"冻结 = 全站下线"。
 - `configure_emqx.py` 的 API Key、`svc.env` 的设备服务口令、`/etc/emqx/certs/` 下的证书
   都是凭据：本目录的 `.gitignore` 挡住了本地生成的落盘文件，**别手工提交**。

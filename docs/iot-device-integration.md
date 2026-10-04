@@ -9,9 +9,7 @@
 > （**另一个仓**，实际在跑的固件在那儿）；本仓 [iot/firmware/](../iot/firmware/) 是抽出来的
 > 最小骨架与接口说明。
 >
-> ⚠️ 文中 `<你的域名>` 是占位，换成你自己的域名（与站点证书一致）。作者的线上演示站是
-> `saudade.site`——凡是"照着填进你自己环境"的值都写成了占位，凡是能直接对着演示站跑的
-> 复现命令才留着真域名。
+> ⚠️ 文中 `<你的域名>` 是占位，换成你自己的域名（与站点证书一致）。
 
 ---
 
@@ -206,9 +204,9 @@ sequenceDiagram
 
 | 端点 | 鉴权 | 说明 |
 |---|---|---|
-| `GET /api/ota/info` | **设备 Basic**（device_id:device_key） | `{"version":"1.3.0","md5":...,"size":N}`；无版本 `{"version":null}` |
+| `GET /api/ota/info` | **设备 Basic**（device_id:device_key） | `{"version":"1.3.0","md5":...,"size":N}`；没有上传过固件时是 `{"version":null}`（本站当前就是这一种） |
 | `GET /api/ota/fw/:file` | 设备 Basic | 固件下载（目录穿越防护） |
-| `GET /api/ota/versions` | JWT | `{"current":"1.3.0","versions":[...]}` |
+| `GET /api/ota/versions` | JWT | `{"current":"1.3.0","versions":[...]}`（同上，没上传过时 `current` 是 `null`） |
 | `PUT /api/ota/firmware?version=1.2.0` | JWT + **role=admin** | 上传固件（body=原始 bin）→ 落盘 + 重建 `current.bin` 指针 |
 | `PUT /api/ota/rollback` | JWT + admin | 固件回滚（current 指针切回上一版） |
 
@@ -282,21 +280,21 @@ esp_mqtt_client_config_t cfg = {
 
 | 项 | 实测（20261004 cgroup 口径） | 对比 |
 |---|---|---|
-| 常驻内存 | EMQX ~48 MiB + device-service **~4.5 MiB** ≈ **52 MiB** | agent 每加一个 worker 就是 ~130 MiB ⇒ **IoT 全量约等于 0.4 个 worker** |
+| 常驻内存 | EMQX **~60 MiB**（58–61 MiB）+ device-service **~3.1 MiB** ≈ **63 MiB** | agent 每加一个 worker 就是 ~130 MiB（上界）⇒ **IoT 全量约等于半个 worker** |
 | 磁盘 | `/usr/lib/emqx` 89 MB + `/var/lib/emqx` 1.4 MB ≈ 90 MB | 40G 盘上占 0.2%；开发侧源码 `mqtt-demo` 14 MB、固件仓 70 MB 不算运行依赖 |
 | CPU | 空闲时 ~0（load 0.10/0.21/0.35 的机器上无可见贡献） | — |
 | 公网面 | 多开 **8883**（MQTTS） | 主站只开 80/443；这是**唯一为设备开的口子**，安全组与证书都要单独管 |
 | 运维面 | **两个不经 CI 的 unit**（emqx、saudade-device）；device-service 源码不在本仓，改动要手动 `cargo build --release` + 重启 | 主站两个服务都走 CI；这两件是"游离在流水线之外"的例外 |
 
 > ⚠️ **device-service 那一行改过一次口径**：早先这里与
-> [deployment-and-ops.md](deployment-and-ops.md) §8.2 都写 ~1 MiB，20261004 量到 **4.5 MiB**
-> （4.7 MB，一个 Rust + SQLite + MQTT 客户端的常驻量级本来就该是这个数，1 MiB 更像"没量、
-> 估的"）。**结论不受影响**：IoT 全量 52 MiB，对照 agent"凉 241 ↔ 热 456 MiB"的摆动
+> [deployment-and-ops.md](deployment-and-ops.md) §8.2 都写 ~1 MiB，20261004 量到 **3.1 MiB**
+> ——一个 Rust + SQLite + MQTT 客户端的常驻量级本来就该是几 MiB，1 MiB 更像没量、估的。
+> **结论不受影响**：IoT 全量 ~63 MiB，对照 agent"凉 241 ↔ 热 456 MiB"的摆动
 > ——它比 agent 自己的日常波动还小。
 >
-> **分母要连着状态引**：生产合计在 **~410 MiB（agent 刚重启）↔ ~620 MiB（worker 跑过重活）**
-> 之间，所以"IoT 占几个百分点"这个数会随取样时刻在 **8%~13%** 之间变（52/620 与 52/410）。
-> 表里那条"≈0.4 个 worker"用的是**上界 130 MiB/worker**，不受这个摆动影响，引用它更稳。
+> **分母要连着状态引**：生产合计在 **~420 MiB（agent 刚重启）↔ ~640 MiB（worker 跑过重活）**
+> 之间，所以"IoT 占几个百分点"这个数会随取样时刻在 **10%~15%** 之间变（63/640 与 63/420）。
+> 表里那条"半个 worker"用的是**上界 130 MiB/worker**，不受这个摆动影响，引用它更稳。
 
 ### 7.2 两个必须记住的运维风险（不是代价，是坑）
 
@@ -310,7 +308,7 @@ esp_mqtt_client_config_t cfg = {
 
 三条任一成立再动它，否则保留：① 长期（>3 个月）没有一台设备在线、也不打算再接；
 ② 需要用 8883 这个公网端口去换别的服务；③ 服务器要缩容到 2GB 以下（那时 90MB 磁盘与
-52 MiB 内存才真正开始有意义——这个数在 3.7GB 上是零头，到 2GB 上就是 2.5% 的整机）。
+63 MiB 内存才真正开始有意义——这个数在 3.7GB 上是零头，到 2GB 上就是 3% 的整机）。
 
 ### 7.4 怎么卸（分两档，别只做第一档）
 
@@ -327,7 +325,7 @@ sudo systemctl disable --now emqx saudade-device
 
 **两档的差别**：第一档做完之后前端三个入口（`/device-console/`、`/device-api/`、`/mqtt`）
 与 agent 的工具面都没了，但 EMQX 仍在监听 8883 并占着内存；**只做第一档等于"看起来拆了，
-其实没省资源"**（省的是 52 MiB 里的 device-service 那 4.5 MiB 与 agent 说真话的那点逻辑，
+其实没省资源"**（省的是 63 MiB 里的 device-service 那 3.1 MiB 与 agent 说真话的那点逻辑，
 几乎为零）。[iot/README.md](../iot/README.md) 的《代价》一节是给"要不要装/要不要留"做决策用的短版。
 
 > ⚠️ **别以为 `toggle.sh off` 一条就够**（脚本自己的头注与结尾都在说这件事）：

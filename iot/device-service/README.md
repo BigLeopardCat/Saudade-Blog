@@ -1,7 +1,7 @@
 # device-service（设备服务，Rust, :3100）
 
 设备注册表、`device_key` 校验、参数配置下发、遥测缓存。它连同机的 EMQX（内部账号），
-对外只经 nginx 的 `/device-api/`。，与博客共用同一套 JWT（`JWT_SECRET`）。
+对外只经 nginx 的 `/device-api/`，与博客共用同一套 JWT（`JWT_SECRET`）。
 
 ## ⚠️ 服务本体**不在本仓**
 
@@ -60,5 +60,5 @@ systemctl status saudade-device
 
 它验博客令牌时**只验签与 `exp`，不查库** —— 所以后台"冻结账号"或"收回令牌"**管不到**
 `/device-api/*`。一个被冻结的账号，在它那枚令牌过期前仍然能操作自己名下的设备。
-EMQX 侧同理。这是已知缺口，如实记在 [../../docs/security-boundary.md](../../docs/security-boundary.md)，
+EMQX 侧同理。这是已知缺口，见 [../../docs/security-boundary.md](../../docs/security-boundary.md)，
 别当成"冻结 = 全站立刻下线"。

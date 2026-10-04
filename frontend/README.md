@@ -41,7 +41,7 @@ CORS_ALLOWED_ORIGINS=http://localhost:5173
 ```
 
 **别在跑着服务的机器上跑 `npm run build`。** `vite build` 内存开销大，会 OOM 甚至
-拖垮整机（真发生过）。构建交给 CI，本地验证用 `tsc` + `npm test` 就够了。
+拖垮整机。构建交给 CI，本地验证用 `tsc` + `npm test` 就够了。
 
 ## 目录结构
 
@@ -81,7 +81,7 @@ chat-render.js           消息渲染（markdown、代码高亮、贴纸）
 chat-engine.js           数据层（拉历史、发消息、会话态）
 chat-stream.js           交互层（SSE 解析、命令执行、发送/停止）
 chat-session.js          会话列表 UI 壳
-widget.css               看板娘与聊天面板样式（自研，2048 行）
+widget.css               看板娘与聊天面板样式（自研，2072 行）
 vendor/                  pixi.js / pixi-live2d-display 的 UMD 产物（**不入库**，见下）
 ```
 
@@ -92,10 +92,9 @@ vendor/                  pixi.js / pixi-live2d-display 的 UMD 产物（**不入
 ### 这些文件的源码**不在本仓**（20261002 起）
 
 它住在 [saudade-blog-agent](https://github.com/BigLeopardCat/saudade-blog-agent) 的
-`frontend/` 下：**代码以 MIT 分发**（那个仓根部的 Python 部分是 Apache-2.0；只有 MIT 才与本站
-的 GPL-2.0 兼容，所以两边分得很清），**美术资源（模型、贴图、面板图标、角色形象设计）以
-CC BY-NC-SA 4.0 分发**——可自用可改、不可商用、改作须同样协议，见那边的
-`frontend/ASSETS-LICENSE.md`（它**不是** OSI 开源许可）。本仓不跟踪这棵树，只在
+`frontend/` 下：**代码以 MIT 分发**（MIT 与本站的 GPL-2.0 兼容），**美术资源（模型、贴图、
+面板图标、角色形象设计）以 CC BY-NC-SA 4.0 分发**——可自用可改、不可商用、改作须同样协议，
+见那边的 `frontend/ASSETS-LICENSE.md`（它**不是** OSI 开源许可）。本仓不跟踪这棵树，只在
 [widget.lock.json](widget.lock.json) 里钉一个提交号：
 
 ```bash

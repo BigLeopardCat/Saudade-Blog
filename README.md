@@ -72,11 +72,6 @@ flowchart TB
     DEV <-->|"MQTT over TLS :8883"| ESP
 ```
 
-> 这张图原来是手画的字符图（`│ ├── ▼`）。字符图在等宽字体里勉强能看，但只要注释里混进中文
-> （宽度按 2 列算）或者被别的编辑器重排过，线立刻错位 —— 换 mermaid 是这个原因，不是口味问题。
-> 同类的还有 [docs/deployment-and-ops.md](docs/deployment-and-ops.md) 的拓扑图、
-> [docs/iot-device-integration.md](docs/iot-device-integration.md) 的平台架构图与指令回执闭环图。
-
 | 组件 | 职责 | 位置 |
 |---|---|---|
 | **Rust 后端**（Axum + SeaORM + MySQL 8） | 博客主流量（文章/分类/标签/友链/留言板）、登录鉴权（JWT）、聊天链路中枢（鉴权 → 历史入库 → SSE 逐帧转发） | `src/` |
@@ -84,8 +79,8 @@ flowchart TB
 | **AI Agent**（FastAPI + 手写 LangGraph） | 看板娘大脑：对话生成、博客查询、导航/特效/夜间命令、IoT 设备显示。**独立 git 仓库** | `saudade-blog-agent/` |
 | **IoT**（EMQX 5 + Rust device-service） | ESP32 设备接入（MQTT over TLS）、OLED 显示、设备控制台（`/device-console/`）。**可选件**，出厂默认不启用 | `iot/`；服务本体不在本仓，见 [iot/device-service/README.md](iot/device-service/README.md) |
 
-Agent 的核心理念是**把执行层的自由拿掉**（20260903 架构裁决，自由 ReAct / LLM 质检 / 重考轮
-已废除）。固定流程任务（导航/特效/夜间/设备显示）落地为 `skills.py` 里的静态技能定义：
+Agent 的核心理念是**把执行层的自由拿掉**。固定流程任务（导航/特效/夜间/设备显示）落地为
+`skills.py` 里的静态技能定义：
 **planner 是唯一决策者**（选技能 + 填参数 + 产出调用清单），**execute 是确定性执行器**
 （照单执行，无授权分支、无自由意志），每条执行再经 checker 验收（PASS 才成为系统确认事实），
 最后 **model 零工具叙述**（结构上发不出工具调用）、**gate 确定性检查**叙述是否失真。
@@ -121,7 +116,7 @@ sequenceDiagram
 ```
 
 > 完整分段（每一步做了什么、字段叫什么、失败怎么收场）见 agent 仓库
-> `docs/agent-architecture.md` 的《3. 一次对话的完整链路》；这里只保留骨架。
+> `docs/agent-architecture.md` 的《3. 一次对话的完整链路》。
 
 ## 项目结构
 
@@ -179,14 +174,13 @@ cargo run
 ```
 
 前端、agent 与 IoT 各自的起法，"哪些迁移脚本不能无脑跑""两个站点地址变量为什么都要设"
-这类问题，都在 [CONTRIBUTING.md](CONTRIBUTING.md) 的《2. 跑起来》里——**那一节是唯一的
-操作清单，本文不重复**。每个环境变量干什么、默认值是什么，看
+这类问题，都在 [CONTRIBUTING.md](CONTRIBUTING.md) 的《2. 跑起来》里。每个环境变量干什么、默认值是什么，看
 [.env.example](.env.example)（它是这一类信息在本仓的唯一出处）。
 
 ## 开发流程（重要约定）
 
 > **部署一律走 CI：本地不编译、不手动构建。** `vite build` 与 `cargo build --release`
-> 的内存开销都很大，内存不足时会 OOM 甚至拖垮整台机器（本项目就这么翻过一次车）。
+> 的内存开销都很大，内存不足时会 OOM 甚至拖垮整台机器。
 > 本地验证只用轻量命令（`cargo check` / `tsc` / `npm test`）。
 
 ```mermaid
@@ -200,20 +194,18 @@ flowchart LR
     PUSH --> CI --> R2 --> TRIG --> LIVE
 ```
 
-> ⚠️ 这套流程里有个容易忽略的语义：**CI 的绿灯代表"真部署成功了"**，不是"构建过了"。
-> 部署脚本的退出码会被 CI 等回来（早先不是这样，触发完就放走，于是"两次 CI 全绿、
-> 却有一半的后端从没落地"）。线上到底跑的是哪个提交，只认 `build-info.json` 里的 sha。
+> 注意这套流程的语义：**CI 的绿灯代表"真部署成功了"**，不是"构建过了"——
+> 部署脚本的退出码会被 CI 等回来。线上到底跑的是哪个提交，只认 `build-info.json` 里的 sha。
 
 按组件：
 
 - **后端（本仓库 `src/`）**：本地只做 `RUSTFLAGS="-D warnings" cargo check`（严格自检；
   CI 未设 RUSTFLAGS，warning 不挂构建——此模式是本地纪律，不是 CI 门槛），push 即由 CI 编译部署。
 - **前端（本仓库 `frontend/`）**：本地不构建，改动 push 走 CI。看板娘前端（`live2d-widgets/`）
-  的缓存版本号有**多点同步**要求，改动前先读
-  [frontend/README.md](frontend/README.md) 的《改这里的文件要 bump 版本号》一节——
-  那里是同步点的唯一清单，本文不重复列举。
-- **Agent（`saudade-blog-agent/`，独立仓库）**：改技能/工具/prompt 后需重启服务生效
-  （改完要重启 agent 服务才生效）；push 走独立 CI。改技能注册表 / plan 契约 /
+  的缓存版本号要在多处同步，改动前先读
+  [frontend/README.md](frontend/README.md) 的《改这里的文件要 bump 版本号》一节。
+- **Agent（`saudade-blog-agent/`，独立仓库）**：改技能/工具/prompt 后需重启服务才生效；
+  push 走独立 CI。改技能注册表 / plan 契约 /
   摘要逻辑后必跑 `test_skills.py`（L0）与 `eval/run_golden.py`（L2 真实 LLM 端到端）。
 
 ## 部署与运维
@@ -230,7 +222,10 @@ flowchart LR
 日志统一在 `logs/`，按组分层（logrotate 按日轮转、定期归档）：
 
 - `logs/agent/` —— **agent 组**：agent.log + `traces/`（每轮对话的节点耗时 trace JSON，排障首选）
-- `logs/frontend/` —— **前端组**：monitor.log（浏览器 JS 异常 / API 失败自动上报，全量仅去重）
+  + `golden_traces/`（评测 golden set 每次运行落一份，排障不看这里）
+- `logs/frontend/` —— **前端组**：monitor.log（浏览器 JS 异常 / 接口失败 / 资源加载失败 /
+  React 渲染期崩溃自动上报；`type` 是闭集、同一条按 60 秒计数合并，行格式见
+  [deployment-and-ops.md](docs/deployment-and-ops.md) 的日志一节）
 - `logs/` 根 —— 后端组：rust.log（含全局 access 行）、health.log（探针）、deploy.log（CI 触发）、device.log
 
 探针 `scripts/healthcheck.sh`（建议由 cron 周期执行）：服务存活检查 + uvicorn worker 崩溃检测 +
@@ -241,7 +236,7 @@ nginx error.log 增量扫描，异常追加 health.log。
 - **测试分几层、各验什么、在哪儿跑**：[CONTRIBUTING.md](CONTRIBUTING.md) 的 §3 是唯一清单
   ——`tests/`（跟着 `cargo test`：MockDatabase 一层 + 真 MySQL 一层）、`tests/manual/`
   （要活服务与真凭据，手动跑）、`frontend/tests/`（`*.test.mjs` 进 CI；`*.test.py` 无头
-  Chrome 沙箱走夜间）。建库的第一步也在那儿（§2.1）。改动前后请先读那两节，别照抄本文。
+  Chrome 沙箱走夜间）。建库的第一步也在那儿（§2.1）。
 - **新增 Agent 工具**：在 `tools/base.py` 用 `@tool` 定义并加入 `_TOOL_REGISTRY`；若服务于
   固定流程任务，**必须**在 `skills.py` 注册对应技能（触发条件 + 工具序列模板 + 回复契约），
   否则 planner 无法可靠选择它——这是 agent 的核心约定。
