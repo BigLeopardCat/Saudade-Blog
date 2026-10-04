@@ -149,6 +149,25 @@ def ink(img, bg=(255, 255, 255), tol=12):
     return sum(1 for p in px if abs(p[0] - bg[0]) > tol or abs(p[1] - bg[1]) > tol or abs(p[2] - bg[2]) > tol)
 
 
+def ink_bbox(img, bg=(255, 255, 255), tol=12):
+    """非背景像素的外接框 (l, t, r, b) 与像素数。空白页上只有看板娘在画 ⇒
+    整屏的外接框就是**角色本体**的外接框（⑨ 手机档要量的正是它，而不是 300px 的盒）。
+    没有非背景像素时返回 ((0, 0, -1, -1), 0)。"""
+    w, h = img.size
+    px = img.load()
+    l, t, r, b, n = w, h, -1, -1, 0
+    for y in range(h):
+        for x in range(w):
+            p = px[x, y]
+            if abs(p[0] - bg[0]) > tol or abs(p[1] - bg[1]) > tol or abs(p[2] - bg[2]) > tol:
+                n += 1
+                if x < l: l = x
+                if y < t: t = y
+                if x > r: r = x
+                if y > b: b = y
+    return (l, t, r, b), n
+
+
 # ── ⑦ 用的探针：把一段行内代码塞进真气泡，量它的底与字 ────────────────────────
 # 底色是**半透明**的（`rgba(...)`）⇒ getComputedStyle 给的是字面量，直接拿它算对比度
 # 得到的是个假数。这里沿着祖先链把每一层的 background-color 从底往上复合，直到遇到
@@ -284,6 +303,29 @@ DOM_STATE = """() => {
     mouth: window.__mouthOverride,
     hasMouthApi: typeof window.__setMouthOpen === 'function'
                  && typeof window.__setMouthClose === 'function',
+  };
+}"""
+
+
+# ⑨ 用：命中测试（这一点击到底落在谁头上）。
+# ⚠️ `elementFromPoint` **会跳过 `pointer-events:none` 的元素** —— 正因为它会跳，
+# 这个探针必须配一条**正控**：点在角色墨迹上要落回 `#waifu`。只有正控绿了，
+# "空白处落到了正文"才说明盒子那部分真的透过去了，而不是探针本身恒返回"不是 #waifu"
+# （本仓记过这一族假绿：`pointer-events:none` 让命中测试与红基线**一起**哑掉）。
+# 传入的 bb 是 ⑨ 量出来的"盒"与"墨迹"两组坐标，点由它们派生 —— 写死坐标会在
+# 模型/尺寸一动时变成"点在哪儿都不知道"的断言。
+MOBILE_HIT = """(bb) => {
+  const inW = (el) => { for (let n = el; n; n = n.parentElement) if (n.id === 'waifu') return true; return false; };
+  const probe = (x, y) => {
+    const e = document.elementFromPoint(x, y);
+    return e ? (inW(e) ? 'waifu' : 'out') : 'null';
+  };
+  const cx = Math.round((bb.inkL + bb.inkR) / 2);
+  const cy = Math.round((bb.inkT + bb.inkB) / 2);
+  return {
+    blank: [[bb.boxR - 5, bb.boxT + 20], [bb.boxL + 5, bb.boxT + 20],
+            [bb.boxR - 5, bb.boxB - 5]].map(([x, y]) => probe(x, y)),
+    body: [[cx, cy], [bb.inkL + 8, bb.inkB - 20]].map(([x, y]) => probe(x, y)),
   };
 }"""
 
@@ -589,6 +631,83 @@ def main():
                   f"最差 {worst['name']} {contrast(worst['fill'], worst['bg']):.2f}:1 "
                   f"icon={fmt(worst['fill'])} bg={fmt(worst['bg'])}")
         page.evaluate("() => document.getElementById('waifu-chat').classList.remove('washiDark')")
+
+        # ── ⑨ 手机档：整块缩到半尺寸、贴住左缘（20261005 主人报的第四条）──────────
+        # 报的是「手机上盖住大半个正文与表格」。修前 390×844 实测：300×300 的盒子落在
+        # x15..315，**角色墨迹**本身就有 165×278px（x84..249、y558..836）——正压在正文栏
+        # 中间，而且盒子里没画东西的地方也吃点击（正文在那 300×300 矩形内一律点不到）。
+        # 这一节在**真视口 + 真模型**上量两件事：
+        #   ① 墨迹外接框（在哪儿、多大）。用空 body 的白页 ⇒ 整屏非背景像素就是角色本体
+        #      （工具条 opacity:0、唤回钮在视口外、对话面板 display:none、#waifu-tips 恒
+        #      `display:none !important`），不必再猜哪儿是画布哪儿是正文。
+        #   ② 盒子里那些**没内容**的地方点得到底下的正文。
+        # 判据的上下界都留了余量（新值 x≤100 / y≥696，界给 130 / 660；修前是 249 / 558），
+        # 所以它锁的是"整块真的小了、真的下移了"，不是某一帧的像素。
+        # 红基线：② 那组点在"把 `#waifu{pointer-events:auto}` 加回来"之后必须**全落回
+        # #waifu** —— 既证明探针不是恒返回 'out' 的哑探针，也证明这一条真的在判新行为。
+        mp = browser.new_page(viewport={"width": 390, "height": 844})
+        mp.goto(url, wait_until="load")
+        ok9 = wait(mp, "() => { const w = document.getElementById('waifu');"
+                       " const t = document.getElementById('waifu-tool');"
+                       " return !!(w && w.classList.contains('waifu-active') && t && t.children.length >= 5); }")
+        check("⑨ 手机档 390×844 下初始化完成（角色 + 六个工具钮）", ok9)
+        if ok9:
+            wait(mp, "() => { const w = document.getElementById('waifu');"
+                     " return !!(w && w.dataset.slideInOnce); }")
+            mp.wait_for_timeout(2000)            # 等滑入动画走完（外框没到位时截图会落空）
+            mimg = Image.open(io.BytesIO(mp.screenshot())).convert("RGB")
+            (il, it, ir, ib), n9 = ink_bbox(mimg)
+            print(f"      · 手机档角色墨迹 {n9} px，外接框 x{il}..{ir} y{it}..{ib}"
+                  f"（{ir - il + 1}×{ib - it + 1}）")
+            check("⑨ 手机档角色仍画得出来（非背景像素 > 3000；半尺寸下修前是 20791）",
+                  n9 > 3000, n9)
+            # 界都留了余量，因为模型**每隔一会儿有一次大动作**（抬手/跳跃，④ 段量过）。
+            # 实测静态帧 x≤100 / y≥695；界给 140 / 640 —— 大动作那一帧也进不来，
+            # 而修前的 249 / 558（A 臂实测 248 / 546）离这两条界都还差得远。
+            check("⑨ 角色墨迹右缘收到左半屏（≤140px；修前 248）", ir <= 140, f"右缘 {ir}")
+            check("⑨ 角色整体下移到屏底（墨迹顶 ≥640px；修前 546）", it >= 640, f"顶 {it}")
+            check("⑨ 墨迹没顶出视口", ir < 390 and ib <= 844, f"x{il}..{ir} y{it}..{ib}")
+
+            # 布局盒必须**一个字都没动**：300×300 贴在 left:15 —— 这条是
+            # "#waifu-chat 的定位基准没变"的代理判据（面板是 #waifu 的子节点，
+            # 祖先一旦有 transform 就会改它的包含块；缩放只加在 #waifu-canvas 上）。
+            mst = mp.evaluate(DOM_STATE)
+            mbox = mp.evaluate("() => { const b = document.getElementById('waifu').getBoundingClientRect();"
+                               " return [Math.round(b.left), Math.round(b.top),"
+                               " Math.round(b.width), Math.round(b.height)]; }")
+            check("⑨ #waifu 布局盒仍是 300×300 贴 left:15（对话面板的包含块没变）",
+                  mbox[0] == 15 and mbox[2] == 300 and mbox[3] == 300, str(mbox))
+            check("⑨ 画布**渲染**尺寸缩到 150×150（缩放真的落在 #waifu-canvas 上）",
+                  mst["canvasW"] == 150 and mst["canvasH"] == 150,
+                  f"{mst['canvasW']}×{mst['canvasH']}")
+            check("⑨ #live2d 的 CSS 尺寸仍是 300×300（缩放是 transform，不是改盒模型）",
+                  mst["canvasStyleW"] == "300px", str(mst["canvasStyleW"]))
+            # 工具条要跟着缩小的角色走：原来锚在 300px 盒的右缘（A 臂实测视口 x294），
+            # 缩小后必须挪到角色那一带，否则六个钮会飘在没有角色的空处。
+            # 判据只写"挪到左边来了"（x≤140），**不写"在角色右缘之外"** ——
+            # 后者会与大动作帧的墨迹右缘耦合（模型一抬手就红），而它想抓的只是"没重锚"。
+            mtool = mp.evaluate("() => { const b = document.getElementById('waifu-tool')"
+                                ".getBoundingClientRect();"
+                                " return [Math.round(b.left), Math.round(b.top),"
+                                " Math.round(b.right), Math.round(b.bottom)]; }")
+            check("⑨ 工具条跟着角色重锚（左缘挪到角色那一带、仍在视口内；修前 294）",
+                  0 < mtool[0] <= 140 and mtool[3] <= 844, str(mtool))
+
+            box = {"boxL": mbox[0], "boxT": mbox[1], "boxR": mbox[0] + mbox[2],
+                   "boxB": mbox[1] + mbox[3], "inkL": il, "inkT": it, "inkR": ir, "inkB": ib}
+            hit = mp.evaluate(MOBILE_HIT, box)
+            check("⑨ 角色身上的点是**点得中**的（正控：五点里这三点必须落回 #waifu）",
+                  hit["body"] == ["waifu", "waifu"], str(hit["body"]))
+            check("⑨ 盒子里没内容的地方点得到底下的正文（空白点都出 #waifu）",
+                  hit["blank"] == ["out", "out", "out"], str(hit["blank"]))
+
+            # 红基线：把放行撤掉（= 修前的行为），同样三个空白点必须**全被盒子吞掉**。
+            # 没有这一步，"空白点全是 out"没法与"探针坏了/点根本没落在盒子里"区分开。
+            mp.add_style_tag(content="#waifu { pointer-events: auto !important; }")
+            hit_red = mp.evaluate(MOBILE_HIT, box)
+            check("⑨ 红基线：撤掉放行后同样三个空白点全被 #waifu 吞掉（探针不是哑的）",
+                  hit_red["blank"] == ["waifu", "waifu", "waifu"], str(hit_red["blank"]))
+            mp.close()
 
         browser.close()
     httpd.shutdown()
