@@ -321,15 +321,20 @@ mod tests {
 
     /// 清单本身不许有重复项：重复项不会报错，只会让"清单长度 = 类型数"这个前提悄悄失真
     /// （前端那条防漂测试按集合比对，重复项会让两边看起来一致而实际各少一种）。
-    /// 顺带钉住形状：全是小写 ASCII 下划线，前端测试的字面量提取按这个形状写。
+    /// 顺带钉住形状：小写 ASCII 字母 / **数字** / 下划线——数字这一格必须有，
+    /// `live2d_load_fail` 里就带着个 `2`（前端那条提取规则 `monitor-report.test.mjs`
+    /// 的头注写明了"写成 `[a-z_]+` 会静默漏掉它"）：两边必须是同一个形状，
+    /// 否则防漂测试会一边漏、一边不认。
     #[test]
     fn whitelist_shape_is_sane() {
         let mut seen = std::collections::HashSet::new();
         for k in MONITOR_KINDS {
             assert!(seen.insert(k), "{k} 在白名单里出现了两次");
             assert!(
-                !k.is_empty() && k.chars().all(|c| c.is_ascii_lowercase() || c == '_'),
-                "{k} 不是小写下划线形状"
+                !k.is_empty()
+                    && k.chars()
+                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'),
+                "{k} 不是小写字母数字下划线形状"
             );
         }
         assert_eq!(seen.len(), MONITOR_KINDS.len());
