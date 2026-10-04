@@ -24,6 +24,26 @@
 //!   · 讨论数的两条过滤（`approved = 1 AND is_deleted = 0`）在真 SQL 下的取舍，
 //!     以及 `note_view`/`note_like`/`user_favorite` 上那几条**外键**真的能插得进去。
 //!
+//! ## 第二半（20261004）：额度 / 会话 / 申请认领
+//!
+//! 同一个理由往下推——那三块的核心判据**全部是 DB 语义**，MockDatabase 一行都证明不了：
+//!
+//! · ⑥ **`quota::try_consume` 的边界**：它靠 `rows_affected == 1` 认"抢到了这一轮"，
+//!   靠 `WHERE chat_quota_used < limit` 挡超限。这两件事都是**真 UPDATE 的语义**，
+//!   mock 里喂一个 `rows_affected` 进去只是把答案抄了一遍。这里真跑：**最后一格
+//!   恰好扣一次、被挡住的那一轮一个数都不许动**——"最后一格被扣两次"的直接判据。
+//! · ⑦⑧ **会话搜索与列表**：`LIKE` 的 `%`/`_` 转义（不转义就是用户输入注入面）、
+//!   `pinned` 优先 + `updated_at` 倒序的**三键排序**、以及命中锚"每会话取最新命中消息"。
+//!   这三条都要求库真的按行返回，且都要真 JWT 走完 `create_router` 的中间件。
+//! · ⑨ **额度申请的原子认领**：`UPDATE ... WHERE id = ? AND status = 0` 认领到才清零、
+//!   才发通知。重复点通过时第二次必须**一行都不改**——判据是"清零没再发生"（把
+//!   计数器在两刀之间推到 5，第二刀若生效就会把它抹成 0）与"通知没多出第二条"。
+//!
+//! ⑦⑧ 起要签真令牌、走真路由：`create_router` + 真 JWT（`create_token` 自会读
+//! `JWT_SECRET`，本文件自己把它设上）。夹具一律用 `9000000xx` 高位 id，且**按用户隔离**
+//! ——⑦⑧ 只在 `CONV_UID` 名下建会话、⑨ 只在 `APPLY_UID` 名下建申请，
+//! 所以"另一个用例留下的行"不会污染断言（⑥ 连用户都是自己的）。
+//!
 //! ## 门控（务必看清，别把它改宽）
 //!
 //! · `TEST_MYSQL_URL` **没设** ⇒ 打印一行"跳过"然后返回（本地 `cargo test`、
@@ -50,16 +70,33 @@
 
 use std::time::Duration;
 
+use axum::body::Body;
+use axum::http::{header, Request, StatusCode};
 use sea_orm::{
     ConnectOptions, ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement,
 };
+use saudade_blog::auth_jwt;
+use saudade_blog::quota::{self, ConsumeOutcome};
 use saudade_blog::routes::note_stats::counts_for;
+use saudade_blog::routes::quota::{NO_REASON_FALLBACK, NOTICE_APPROVED_TITLE};
+use saudade_blog::{create_router, AppState};
+use tower::ServiceExt; // for `oneshot`
 
-/// 四个用例各占一个 id（见文件头注）
+/// 前五个用例各占一个 note id（见文件头注）
 const NOTE_SUM: i32 = 900000001;
 const NOTE_EMPTY: i32 = 900000002;
 const NOTE_COMMENTS: i32 = 900000003;
 const NOTE_LIKES: i32 = 900000004;
+
+/// 后五个用例各占一个**用户** id。**每个用例一个**：`cargo test` 默认多线程并发，
+/// 两个用例共用 uid 时，其中一个的 `make_user`（先 DELETE 再 INSERT）会把另一个
+/// 正在用的那一行抽走——症状是随机红，且只在并发时出现。
+const QUOTA_UID: i32 = 900000011;
+const QUOTA_UID2: i32 = 900000016;
+const CONV_SEARCH_UID: i32 = 900000012;
+const CONV_LIST_UID: i32 = 900000013;
+const ADMIN_UID: i32 = 900000014;
+const APPLY_UID: i32 = 900000015;
 
 /// 打开被测库。`None` = 没设 `TEST_MYSQL_URL`（调用方直接返回，即"跳过"）。
 ///
@@ -102,7 +139,19 @@ async fn connect() -> Option<DatabaseConnection> {
 /// 库里的结构得像 `scripts/migration/fresh_install.sh` 建出来的那套。
 /// 缺表就带着"怎么补"的提示失败，别让它退化成一个看不出前因后果的 SQL 报错。
 async fn ensure_schema(db: &DatabaseConnection) {
-    let want = ["note", "note_view", "note_like", "user_favorite", "note_comment"];
+    // ⑥–⑨ 起还要 `user`（签真令牌要有行才行）+ 会话两张 + 申请与通知两张
+    let want = [
+        "note",
+        "note_view",
+        "note_like",
+        "user_favorite",
+        "note_comment",
+        "user",
+        "conversation",
+        "chat_history",
+        "quota_request",
+        "user_notification",
+    ];
     let list = want.map(|t| format!("'{t}'")).join(",");
     let row = db
         .query_one(Statement::from_string(
@@ -143,6 +192,201 @@ async fn make_note(db: &DatabaseConnection, id: i32) {
         ),
     )
     .await;
+}
+
+/// 建一个夹具账号（`user` 的必填列只有 username/password/role，其余走默认）。
+/// `username` 与 `nickname` 都带 id，避开那两个唯一键。
+async fn make_user(db: &DatabaseConnection, id: i32, role: &str) {
+    // 先删干净：`user_notification` 有外键 ON DELETE CASCADE，上次跑挂留下的通知会跟着走
+    exec(db, &format!("DELETE FROM user WHERE id = {id}")).await;
+    exec(
+        db,
+        &format!(
+            "INSERT INTO user (id, username, nickname, password, role) \
+             VALUES ({id}, 'it_fixture_{id}', 'it-{id}', 'x', '{role}')"
+        ),
+    )
+    .await;
+}
+
+/// 取一个标量（INT 列）。夹具的每一处断言都要绕开 `try_get_by_index` 的类型报错，
+/// 收进这里免得每条用例各写一遍。
+async fn one_i64(db: &DatabaseConnection, sql: &str) -> Option<i64> {
+    let row = db
+        .query_one(Statement::from_string(DbBackend::MySql, sql.to_string()))
+        .await
+        .unwrap_or_else(|e| panic!("SQL 失败：{e}\n  {sql}"))
+        .expect("这道查询连一行都没回来");
+    row.try_get_by_index(0).expect("这一列不是整数")
+}
+
+/// 同上，取 TEXT/VARCHAR 列（可空）。
+async fn one_text(db: &DatabaseConnection, sql: &str) -> Option<String> {
+    let row = db
+        .query_one(Statement::from_string(DbBackend::MySql, sql.to_string()))
+        .await
+        .unwrap_or_else(|e| panic!("SQL 失败：{e}\n  {sql}"))
+        .expect("这道查询连一行都没回来");
+    row.try_get_by_index::<Option<String>>(0).expect("这一列不是文本")
+}
+
+async fn count_of(db: &DatabaseConnection, sql: &str) -> i64 {
+    one_i64(db, sql).await.expect("COUNT(*) 不可能是 NULL")
+}
+
+/// 某个账号当前的额度计数器（`used_of` 的名字直说它读的是哪一列）。
+async fn used_of(db: &DatabaseConnection, uid: i32) -> i32 {
+    one_i64(
+        db,
+        &format!("SELECT chat_quota_used FROM user WHERE id = {uid}"),
+    )
+    .await
+    .expect("夹具账号不在库里（`make_user` 没跑？）") as i32
+}
+
+// ── 真链路（create_router + 真 JWT）用的小工具 ────────────────────────────────
+
+/// `create_token` / `verify_token` 都从进程环境读 `JWT_SECRET`（没设就 panic）。
+/// `OnceLock` 保证只写一次——多个用例并发时后来的直接复用，不会互相覆盖。
+fn jwt_secret() {
+    static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    ONCE.get_or_init(|| {
+        std::env::set_var(
+            "JWT_SECRET",
+            "mysql-integration-test-secret-not-for-production",
+        );
+    });
+}
+
+/// 真库 + 真链路要**两个句柄**：`sea_orm::DatabaseConnection` 在 0.12 里**不是 `Clone`**
+/// （它是 enum，真正的共享在 sqlx 自己的 Arc 里，没暴露到这一层），所以"给路由一个、
+/// 自己留一个做直接 SQL 断言"只能各开一个池。两个池指向同一个库，语义上无差别。
+///
+/// 跳过的那次打印只发生一遍：第一个 `connect()` 返回 `None` 时 `?` 就已经把整个函数
+/// 短路掉了（第二个根本不会被调用）。
+async fn connect_pair() -> Option<(DatabaseConnection, DatabaseConnection)> {
+    let db = connect().await?;
+    let db_app = connect().await?;
+    Some((db, db_app))
+}
+
+/// 带真库的应用（与 `tests/api_tests.rs::test_state` 同形，只是 db 换成真的）。
+fn test_app(db: DatabaseConnection) -> axum::Router {
+    jwt_secret();
+    create_router(AppState {
+        db,
+        rate_limiter: saudade_blog::rate_limiter::LoginRateLimiter::new(5, 60, 300),
+        post_limiter: saudade_blog::risk::PostRateLimiter::new(),
+    })
+}
+
+/// 发一条请求并取回 `(状态码, JSON 体)`。
+///
+/// **不是绕过路由直接调 handler**：要验的正是"经中间件判过身份之后"的行为
+/// （⑦⑧ 的 `auth_uid`、⑨ 的 `auth_guard` 都在链路上）。
+/// 非 JSON 的响应（401/403 的空体）解析失败时回 `Null`，调用方按状态码断言。
+async fn call(
+    app: axum::Router,
+    method: &str,
+    uri: &str,
+    token: Option<&str>,
+    body: Option<&str>,
+) -> (StatusCode, serde_json::Value) {
+    let mut b = Request::builder().method(method).uri(uri);
+    if let Some(t) = token {
+        b = b.header(header::AUTHORIZATION, format!("Bearer {t}"));
+    }
+    let body = match body {
+        Some(j) => {
+            b = b.header(header::CONTENT_TYPE, "application/json");
+            Body::from(j.to_string())
+        }
+        None => Body::empty(),
+    };
+    let res = app.oneshot(b.body(body).unwrap()).await.unwrap();
+    let status = res.status();
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    let json = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+    (status, json)
+}
+
+/// 建一个会话（`title` = NULL 是合法状态：标题由首条用户消息派生），回它的 id。
+async fn make_conversation(db: &DatabaseConnection, uid: i32, title: Option<&str>) -> i32 {
+    let t = match title {
+        Some(t) => format!("'{t}'"),
+        None => "NULL".to_string(),
+    };
+    exec(
+        db,
+        &format!(
+            "INSERT INTO conversation (user_id, title, created_at, updated_at) \
+             VALUES ({uid}, {t}, NOW(), NOW())"
+        ),
+    )
+    .await;
+    one_i64(
+        db,
+        &format!("SELECT MAX(id) FROM conversation WHERE user_id = {uid}"),
+    )
+    .await
+    .expect("刚才插进去的会话不见得查不到") as i32
+}
+
+/// 往会话里塞一条消息，回它的 id（`chat_history.id` 全局自增 ⇒ 消息 id 的大小
+/// 就是"谁更新"的判据，命中锚取的就是最大值）。
+async fn add_msg(db: &DatabaseConnection, uid: i32, cid: i32, content: &str) -> i32 {
+    exec(
+        db,
+        &format!(
+            "INSERT INTO chat_history (user_id, conversation_id, role, content, created_at) \
+             VALUES ({uid}, {cid}, 'user', '{content}', NOW())"
+        ),
+    )
+    .await;
+    one_i64(
+        db,
+        &format!("SELECT MAX(id) FROM chat_history WHERE conversation_id = {cid}"),
+    )
+    .await
+    .expect("刚插进去的消息查不到") as i32
+}
+
+/// 清掉某个 uid 名下的会话与消息（两个会话用例共用一个 uid 也要各清各的）。
+async fn clear_conversations(db: &DatabaseConnection, uid: i32) {
+    exec(
+        db,
+        &format!("DELETE FROM chat_history WHERE user_id = {uid}"),
+    )
+    .await;
+    exec(
+        db,
+        &format!("DELETE FROM conversation WHERE user_id = {uid}"),
+    )
+    .await;
+}
+
+/// 会话响应里的 id 列表，按返回顺序。
+fn conv_ids(j: &serde_json::Value) -> Vec<i32> {
+    j["conversations"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|c| c["id"].as_i64().map(|v| v as i32))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// 某个会话在响应里的 `hit_id`（未命中该会话时回 None）。
+fn hit_id_of(j: &serde_json::Value, cid: i32) -> Option<i32> {
+    j["conversations"]
+        .as_array()?
+        .iter()
+        .find(|c| c["id"].as_i64() == Some(cid as i64))
+        .and_then(|c| c["hit_id"].as_i64())
+        .map(|v| v as i32)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -296,4 +540,418 @@ async fn counts_for_empty_ids_never_reaches_sql() {
          真发出去就是一条 ERROR 1064",
     );
     assert!(got.is_empty(), "空进空出");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ⑥ 额度：`try_consume` 的最后一格恰好扣一次，被挡住的那一轮一个数都不动
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// 还剩一格时这一轮该被扣，扣完正好等于上限。
+#[tokio::test]
+async fn try_consume_charges_the_last_slot_exactly_once() {
+    let Some(db) = connect().await else { return };
+    make_user(&db, QUOTA_UID, "user").await;
+    const LIMIT: i32 = 3;
+    exec(
+        &db,
+        &format!("UPDATE user SET chat_quota_used = 2 WHERE id = {QUOTA_UID}"),
+    )
+    .await;
+
+    assert_eq!(
+        quota::try_consume(&db, QUOTA_UID, LIMIT).await,
+        ConsumeOutcome::Consumed,
+        "还剩一格（2/3），这一轮该被扣下来"
+    );
+    assert_eq!(
+        used_of(&db, QUOTA_UID).await,
+        LIMIT,
+        "扣完正好等于上限（不是 2、不是 4——一轮就是一轮）"
+    );
+
+    // ★ 本文件最值钱的一条断言：配额用尽之后**计数器不许再动**。
+    //
+    // 判据住的正是 `try_consume` 头注 ① 那件事：`UPDATE ... WHERE used < limit`
+    // 匹配不到行 ⇒ `rows_affected == 0` ⇒ Exhausted。谁把这条 SQL"优化"成
+    // `CASE WHEN used < limit THEN used + 1 ELSE used END` 那种"匹配而不改变"的写法，
+    // `rows_affected` 会变成 1（MySQL 数的是"真正改变的行"，而那个写法不改值 ⇒ 其实还是 0；
+    // 真正的坑是反过来把判断搬到应用层），0 的含义就在"没抢到"与"抢到了但没变"之间漂移。
+    // 漂移的症状只有一个：**最后一格被扣两次** ⇒ 上限 500 的人实际只能聊 499 轮。
+    for i in 0..2 {
+        assert_eq!(
+            quota::try_consume(&db, QUOTA_UID, LIMIT).await,
+            ConsumeOutcome::Exhausted,
+            "第 {} 次超限调用该被挡住",
+            i + 1
+        );
+        assert_eq!(
+            used_of(&db, QUOTA_UID).await,
+            LIMIT,
+            "★ 被挡住的那一轮**一个数都不许动**（第 {} 次超限调用把它推到了别处）",
+            i + 1
+        );
+    }
+}
+
+/// "0 行"这个信号不区分"被上限挡住"与"人没了"——两条都落在 `Exhausted`。
+/// `Degraded` 只留给 `Err`（DB 故障），这个分类边界必须钉住：它是 fail-open 的唯一入口。
+#[tokio::test]
+async fn try_consume_reports_zero_rows_as_exhausted_not_degraded() {
+    let Some(db) = connect().await else { return };
+    make_user(&db, QUOTA_UID2, "user").await;
+    exec(
+        &db,
+        &format!("UPDATE user SET chat_quota_used = 0 WHERE id = {QUOTA_UID2}"),
+    )
+    .await;
+
+    assert_eq!(
+        quota::try_consume(&db, QUOTA_UID2, 5).await,
+        ConsumeOutcome::Consumed
+    );
+    assert_eq!(
+        used_of(&db, QUOTA_UID2).await,
+        1,
+        "一轮就是一轮（不是 0、不是 2）"
+    );
+
+    // 不存在的 uid：同样命中 0 行 ⇒ Exhausted。调用方只会在认证过的 uid 上调用它，
+    // 这里只是把这条分类钉下来——**别把"0 行"改判成 Degraded**，那会让一个被删掉的
+    // 账号在每轮对话里静默走 fail-open 那条路，而日志里一个告警都不会有。
+    assert_eq!(
+        quota::try_consume(&db, QUOTA_UID2 + 999, 5).await,
+        ConsumeOutcome::Exhausted,
+        "0 行一律读作 Exhausted；Degraded 只留给 Err（DB 故障，那是 fail-open 的唯一入口）"
+    );
+
+    // 上限为 0（`WHERE used < 0` 永不成立）：一次都不放行，而且**不动计数器**
+    assert_eq!(
+        quota::try_consume(&db, QUOTA_UID2, 0).await,
+        ConsumeOutcome::Exhausted,
+        "上限 0 ⇒ 一次都不放行"
+    );
+    assert_eq!(used_of(&db, QUOTA_UID2).await, 1, "被挡住的那次不许计数");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ⑦ 会话搜索：`LIKE` 的 `%` 与 `_` 必须按**字面**匹配（用户输入注入面）
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// 用户输入里的 `%` / `_` 不转义就是通配符：搜 "100%" 会连带命中任何含 "100" 的会话，
+/// 搜 "a_b" 会连带命中 "aXb"。这条判据只有真库能出——LIKE 的语义在 SQL 里。
+#[tokio::test]
+async fn conversation_search_escapes_like_wildcards() {
+    let Some((db, db_app)) = connect_pair().await else { return };
+    make_user(&db, CONV_SEARCH_UID, "user").await;
+    clear_conversations(&db, CONV_SEARCH_UID).await;
+
+    // 两对"字面命中 / 只被通配符命中"的标题。**右边那条就是判据本身**：
+    // 不转义时它会一起冒出来。
+    let pct = make_conversation(&db, CONV_SEARCH_UID, Some("rate_100%now")).await;
+    let pct_decoy = make_conversation(&db, CONV_SEARCH_UID, Some("rateX100Ynow")).await;
+    let und = make_conversation(&db, CONV_SEARCH_UID, Some("a_b")).await;
+    let und_decoy = make_conversation(&db, CONV_SEARCH_UID, Some("aXb")).await;
+
+    let app = test_app(db_app);
+    let token = auth_jwt::create_token(CONV_SEARCH_UID, "user", 0);
+
+    // `%` 走 URL 编码（%25），axum 的 Query 会解回字面 `%`
+    let (st, j) = call(
+        app.clone(),
+        "GET",
+        "/api/chat/conversations?q=100%25",
+        Some(&token),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "带真令牌的列表请求不该 401/403：{j}");
+    let ids = conv_ids(&j);
+    assert_eq!(
+        ids,
+        vec![pct],
+        "只有**字面**含 `100%` 的那条该被命中。拿到了 {ids:?}（含 {} 就说明 `%` 没转义、\
+         退化成通配符了）",
+        pct_decoy
+    );
+
+    // `_` 是 LIKE 的单字符通配符
+    let (_, j) = call(
+        app,
+        "GET",
+        "/api/chat/conversations?q=a_b",
+        Some(&token),
+        None,
+    )
+    .await;
+    let ids = conv_ids(&j);
+    assert_eq!(
+        ids,
+        vec![und],
+        "只有**字面**含 `a_b` 的那条该被命中。拿到了 {ids:?}（含 {} 就说明 `_` 没转义）",
+        und_decoy
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ⑧ 会话列表：置顶优先 + 最后活动倒序；命中锚指"每会话最新那条命中消息"
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn conversation_list_pins_first_and_anchors_hits() {
+    let Some((db, db_app)) = connect_pair().await else { return };
+    make_user(&db, CONV_LIST_UID, "user").await;
+    clear_conversations(&db, CONV_LIST_UID).await;
+
+    let pinned = make_conversation(&db, CONV_LIST_UID, Some("pinned old")).await;
+    let mid = make_conversation(&db, CONV_LIST_UID, Some("mid")).await;
+    let new = make_conversation(&db, CONV_LIST_UID, Some("spark title")).await;
+
+    // 时间必须显式拨开：`NOW()` 的秒精度让三条落在同一秒，排序就退化成按 id 兜底，
+    // 而"最后活动倒序"这条判据会**假绿**（id 顺序恰好与时间顺序一致）。
+    // 置顶那条刻意拨到很老：证明它排第一靠的是 `pinned`，与时间无关。
+    exec(
+        &db,
+        &format!(
+            "UPDATE conversation SET pinned = 1, updated_at = '2020-01-01 00:00:00' \
+             WHERE id = {pinned}"
+        ),
+    )
+    .await;
+    exec(
+        &db,
+        &format!("UPDATE conversation SET updated_at = '2026-01-02 00:00:00' WHERE id = {mid}"),
+    )
+    .await;
+    exec(
+        &db,
+        &format!("UPDATE conversation SET updated_at = '2026-01-03 00:00:00' WHERE id = {new}"),
+    )
+    .await;
+
+    // 消息：mid 里两条命中（要取**最新**那条），new 里一条不命中（走"仅标题命中"那一支）
+    add_msg(&db, CONV_LIST_UID, pinned, "hello").await;
+    add_msg(&db, CONV_LIST_UID, mid, "first").await;
+    add_msg(&db, CONV_LIST_UID, mid, "spark second").await;
+    let mid_newest_hit = add_msg(&db, CONV_LIST_UID, mid, "spark third").await;
+    let new_first_msg = add_msg(&db, CONV_LIST_UID, new, "greeting").await;
+
+    let app = test_app(db_app);
+    let token = auth_jwt::create_token(CONV_LIST_UID, "user", 0);
+
+    // 不搜索：置顶优先，组内按最后活动倒序
+    let (st, j) = call(app.clone(), "GET", "/api/chat/conversations", Some(&token), None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(
+        conv_ids(&j),
+        vec![pinned, new, mid],
+        "置顶的排第一（虽然它的 updated_at 是 2020 年），其余按最后活动倒序"
+    );
+    assert!(
+        hit_id_of(&j, mid).is_none(),
+        "没搜索时 hit_id 一律 null（前端据此决定是否定位）"
+    );
+
+    // 搜索：命中锚 = 每会话最新那条命中消息；仅标题命中的回落成该会话首条消息
+    let (_, j) = call(
+        app,
+        "GET",
+        "/api/chat/conversations?q=spark",
+        Some(&token),
+        None,
+    )
+    .await;
+    assert_eq!(
+        conv_ids(&j),
+        vec![new, mid],
+        "置顶那条不含这个词，不该出现"
+    );
+    assert_eq!(
+        hit_id_of(&j, mid),
+        Some(mid_newest_hit),
+        "内容命中要定位到**最新**那条命中消息，不是第一条"
+    );
+    assert_eq!(
+        hit_id_of(&j, new),
+        Some(new_first_msg),
+        "仅标题命中的会话定位到**标题出处**（首条消息），不是最新消息"
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ⑨ 额度申请：认领只生效一次（第二刀零副作用）
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// `review_quota_request` 的顺序是**读校验 → 原子认领 → 副作用 → 通知**。
+/// 这里逐条钉住"认领不到就什么都不做"：第二刀既不许再清零，也不许多发一条通知。
+#[tokio::test]
+async fn quota_review_claims_once_and_touches_nothing_on_the_second_call() {
+    let Some((db, db_app)) = connect_pair().await else { return };
+    make_user(&db, ADMIN_UID, "admin").await;
+    make_user(&db, APPLY_UID, "user").await;
+    exec(
+        &db,
+        &format!("UPDATE user SET chat_quota_used = 7 WHERE id = {APPLY_UID}"),
+    )
+    .await;
+    exec(
+        &db,
+        &format!("DELETE FROM user_notification WHERE user_id = {APPLY_UID}"),
+    )
+    .await;
+    exec(
+        &db,
+        &format!("DELETE FROM quota_request WHERE user_id = {APPLY_UID}"),
+    )
+    .await;
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO quota_request (user_id, reason, status) \
+             VALUES ({APPLY_UID}, 'it reason', 0)"
+        ),
+    )
+    .await;
+    let rid = one_i64(
+        &db,
+        &format!("SELECT MAX(id) FROM quota_request WHERE user_id = {APPLY_UID}"),
+    )
+    .await
+    .expect("刚插进去的申请查不到") as i32;
+
+    let app = test_app(db_app);
+    let admin = auth_jwt::create_token(ADMIN_UID, "admin", 0);
+    let uri = format!("/api/protected/quota/requests/{rid}/review");
+
+    // ① 第一刀：认领得到 ⇒ 清零 + 一条通知
+    let (st, j) = call(
+        app.clone(),
+        "POST",
+        &uri,
+        Some(&admin),
+        Some(r#"{"approved":true}"#),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{j}");
+    assert_eq!(j["code"], 200, "管理员该能批准这条申请：{j}");
+    assert_eq!(
+        used_of(&db, APPLY_UID).await,
+        0,
+        "批准的唯一动作就是把计数器归零"
+    );
+    assert_eq!(
+        count_of(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM user_notification \
+                 WHERE user_id = {APPLY_UID} AND title = '{NOTICE_APPROVED_TITLE}'"
+            )
+        )
+        .await,
+        1,
+        "批准要发一条通知"
+    );
+
+    // ② 他又聊了 5 轮。第二刀若真的又清一次零，这个数会被抹掉——**这就是判据**：
+    //    （不这么放的话"重复批准又清了一次"在计数器上完全不可见，只有通知条数看得见）
+    exec(
+        &db,
+        &format!("UPDATE user SET chat_quota_used = 5 WHERE id = {APPLY_UID}"),
+    )
+    .await;
+    let (st2, j2) = call(
+        app.clone(),
+        "POST",
+        &uri,
+        Some(&admin),
+        Some(r#"{"approved":true}"#),
+    )
+    .await;
+    assert_eq!(st2, StatusCode::OK, "重复处理是正常结局，不是 500 级的服务器错误");
+    assert_eq!(j2["code"], 500, "信封里如实说「已经处理过了」：{j2}");
+    assert_eq!(
+        j2["message"], "这条申请已经处理过了",
+        "措辞是跨语言契约（agent 逐字转述），别顺手改：{j2}"
+    );
+    assert_eq!(
+        used_of(&db, APPLY_UID).await,
+        5,
+        "★ 第二刀必须**零副作用**：他已经聊过的那 5 轮不许被抹掉"
+    );
+    assert_eq!(
+        count_of(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM user_notification \
+                 WHERE user_id = {APPLY_UID} AND title = '{NOTICE_APPROVED_TITLE}'"
+            )
+        )
+        .await,
+        1,
+        "★ 也不许发第二条「额度已清零」——那一条是假的"
+    );
+    assert_eq!(
+        count_of(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM quota_request \
+                 WHERE id = {rid} AND status = 1 AND handled_by = {ADMIN_UID}"
+            )
+        )
+        .await,
+        1,
+        "认领写下的 status/handled_by 只该有一份"
+    );
+
+    // ③ 驳回：没填理由 ⇒ 库里 `note` 是 NULL，通知正文回落成系统写的那一句。
+    //    **不往库里塞一句编好的话**是这条路径的承重纪律（模块头注 ②）。
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO quota_request (user_id, reason, status) \
+             VALUES ({APPLY_UID}, 'second reason', 0)"
+        ),
+    )
+    .await;
+    let rid2 = one_i64(
+        &db,
+        &format!("SELECT MAX(id) FROM quota_request WHERE user_id = {APPLY_UID}"),
+    )
+    .await
+    .expect("第二份申请查不到") as i32;
+    let (_, j3) = call(
+        app,
+        "POST",
+        &format!("/api/protected/quota/requests/{rid2}/review"),
+        Some(&admin),
+        Some(r#"{"approved":false}"#),
+    )
+    .await;
+    assert_eq!(j3["code"], 200, "{j3}");
+    assert_eq!(
+        one_text(
+            &db,
+            &format!("SELECT note FROM quota_request WHERE id = {rid2}")
+        )
+        .await,
+        None,
+        "空理由落 NULL——库里不留一句不是人写的'理由'"
+    );
+    let content = one_text(
+        &db,
+        &format!(
+            "SELECT content FROM user_notification \
+             WHERE user_id = {APPLY_UID} ORDER BY id DESC LIMIT 1"
+        ),
+    )
+    .await
+    .unwrap_or_default();
+    assert!(
+        content.contains(NO_REASON_FALLBACK),
+        "通知正文要在**通知层**回落成「{NO_REASON_FALLBACK}」，实得：{content}"
+    );
+    assert_eq!(
+        used_of(&db, APPLY_UID).await,
+        5,
+        "驳回不动额度（一个字节都不动）"
+    );
 }
