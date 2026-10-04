@@ -10,6 +10,12 @@
   const EFFECTS = {};
   let sakuraAnimId = null, rainAnimId = null, snowAnimId = null;
 
+  // 三个特效的容器都挂在 body 上（跨层），层级走宿主页面的阶梯——**必须低于看板娘与对话
+  // 面板**（`--z-agent`，见 frontend/src/index.css 的 z-index 阶梯，那里是全站层级值的唯一
+  // 出处）。它们以前写死 99999，那是"比谁都大"、不是"最高"：花瓣、雨点、雪花一律盖在对话
+  // 面板前面（用户 20261005 报的）。兜底 950 与 `--z-effect` 同值，脱离本站也能独立用。
+  const EFFECT_Z = 'var(--z-effect, 950)';
+
   // 真实樱花花瓣图片（来源 github.com/WRXinYue/sakura_fall 的 sakura_fall1，保留原始宽高比）
   const PETAL_SRC = ['/icons/sakura/1.png', '/icons/sakura/2.png', '/icons/sakura/3.png', '/icons/sakura/4.png'];
 
@@ -36,6 +42,7 @@
     container.appendChild(img);
 
     const vy = 0.45 + Math.random() * 0.7; // 下落速度：慢，且每片不同
+    const lifeFactor = 1.3 + Math.random() * 0.7; // 寿命 = 落完整屏所需帧数 × 这个系数
     return {
       el: img,
       // 从**整幅宽度**里出生（旧版固定从右缘外进来，屏幕左侧永远看不到花瓣从天而降）
@@ -55,8 +62,9 @@
       rotSpeed: (Math.random() - 0.5) * 2.4,    // 慢转（旧版 ±4°/帧，转得像贴纸）
       opacity: 0.5 + Math.random() * 0.5,
       life: 0,
+      lifeFactor, // 窗口尺寸一变要按新的视口高重算寿命，系数得留着（见 handleResize）
       // 寿命按"落完整屏要多久"折算：速度慢的花瓣才不会被寿命提前收走（旧版是写死的 800–1400 帧）
-      maxLife: Math.round((window.innerHeight + 360) / vy * (1.3 + Math.random() * 0.7)),
+      maxLife: Math.round((window.innerHeight + 360) / vy * lifeFactor),
     };
   }
 
@@ -64,7 +72,7 @@
     if (EFFECTS.sakura) return;
     const container = document.createElement('div');
     container.id = 'effect-sakura-container';
-    container.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:99999;';
+    container.style.cssText = `position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:${EFFECT_Z};`;
     document.body.appendChild(container);
 
     const petals = [];
@@ -73,7 +81,24 @@
       petals.push(p);
       p.el.style.transform = `translate(${p.x}px,${p.y}px) rotate(${p.rot}deg)`;
     }
-    EFFECTS.sakura = { container, petals };
+    // 窗口尺寸变了：把每片花瓣的坐标按新旧比例一起缩放，**分布形状不变**。
+    // 不重算的话横竖屏一换就两头不讨好——拉高窗口，花瓣全挤在上半屏；再拉矮，成片的
+    // y 超出新视口，被下面那条出界判定一把清空，屏幕瞬间空掉。寿命是按视口高折算的，
+    // 也得跟着一起改，否则拉高之后花瓣会集体提前消失。
+    let vw = window.innerWidth, vh = window.innerHeight;
+    function handleResize() {
+      const nw = window.innerWidth, nh = window.innerHeight;
+      if (!nw || !nh || (nw === vw && nh === vh)) return;
+      const kx = nw / vw, ky = nh / vh;
+      vw = nw; vh = nh;
+      petals.forEach(p => {
+        p.x *= kx;
+        p.y *= ky;
+        p.maxLife = Math.round((nh + 360) / p.vy * p.lifeFactor);
+      });
+    }
+    window.addEventListener('resize', handleResize);
+    EFFECTS.sakura = { container, petals, handleResize };
 
     let last = 0, spawnTimer = 0;
     function tick(now) {
@@ -120,6 +145,7 @@
   window.stopSakura = function() {
     if (sakuraAnimId) { cancelAnimationFrame(sakuraAnimId); sakuraAnimId = null; }
     if (EFFECTS.sakura) {
+      window.removeEventListener('resize', EFFECTS.sakura.handleResize);
       EFFECTS.sakura.petals.forEach(p => { if (p.el.parentNode) p.el.parentNode.removeChild(p.el); });
       if (EFFECTS.sakura.container.parentNode) EFFECTS.sakura.container.parentNode.removeChild(EFFECTS.sakura.container);
       EFFECTS.sakura = null;
@@ -132,7 +158,7 @@
     
     const canvas = document.createElement('canvas');
     canvas.id = 'effect-rain-canvas';
-    canvas.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:99999;';
+    canvas.style.cssText = `position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:${EFFECT_Z};`;
     document.body.appendChild(canvas);
     const ctx = canvas.getContext('2d');
     let W, H;
@@ -254,7 +280,7 @@
     if (EFFECTS.snow) return;
     const container = document.createElement('div');
     container.id = 'effect-snow-container';
-    container.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:99999;';
+    container.style.cssText = `position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:${EFFECT_Z};`;
     document.body.appendChild(container);
 
     const flakes = [];

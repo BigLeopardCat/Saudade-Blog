@@ -70,11 +70,23 @@ for k in sorted(set(LADDER) | set(TS_VALS)):
     if k in LADDER and k in TS_VALS:
         check(f"  · --z-{k} 两边都是 {LADDER[k]}", LADDER[k] == TS_VALS[k],
               f"css {LADDER[k]} / ts {TS_VALS[k]}")
-check("跨层的三档次序正确（agent < exhibit < lightbox < panel < modal < toast）",
-      (LADDER.get("agent", 0) < LADDER.get("exhibit", 0) < LADDER.get("lightbox", 0)
+check("跨层的三档次序正确（effect < agent < exhibit < lightbox < panel < modal < toast）",
+      (LADDER.get("effect", 0) < LADDER.get("agent", 0) < LADDER.get("exhibit", 0)
+       < LADDER.get("lightbox", 0)
        < LADDER.get("panel", 0) < LADDER.get("modal", 0) < LADDER.get("toast", 1 << 30)),
-      f'{LADDER.get("agent")} / {LADDER.get("exhibit")} / {LADDER.get("lightbox")} / '
+      f'{LADDER.get("effect")} / {LADDER.get("agent")} / {LADDER.get("exhibit")} / '
+      f'{LADDER.get("lightbox")} / '
       f'{LADDER.get("panel")} / {LADDER.get("modal")} / {LADDER.get("toast")}')
+# 特效那一档还有个**消费面**：effects.js 里三个容器写的是 `var(--z-effect, 950)`，
+# 兜底值必须与阶梯同值，否则脱离本站加载时是另一个数（"文档里 950、代码里是别的"）。
+_eff = (FE / "public/effects.js").read_text(encoding="utf-8")
+_eff_fb = re.findall(r"var\(--z-effect,\s*(\d+)\)", _eff)
+check("effects.js 读 --z-effect 且兜底值与阶梯同值",
+      _eff_fb and all(int(v) == LADDER.get("effect") for v in _eff_fb),
+      f'effects.js {sorted(set(_eff_fb))} / 阶梯 {LADDER.get("effect")}')
+check("effects.js 三个特效容器都不再写死 99999",
+      _eff.count("z-index:99999") == 0 and _eff.count("${EFFECT_Z}") == 3,
+      f'99999×{_eff.count("z-index:99999")} / EFFECT_Z×{_eff.count("${EFFECT_Z}")}')
 
 # ── ②③ 真实堆叠（无头 Chrome）──────────────────────────────────────────────
 # 编译真 App.sass（`.frontRoot` 的 isolation、`body.exhibit-zoomed` 的抬升、
