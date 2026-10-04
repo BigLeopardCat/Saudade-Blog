@@ -690,7 +690,12 @@ const ReadArticle = () => {
                         <p>{article?.description}</p>
                     </div>
                     <div className='readContent markdown-body'>
+                        {/* `readBody` 不是装饰：`.readContent` 是 flex 竖列 + `align-items:center`，
+                            子项按 fit-content 定尺、下限是 min-content ⇒ 正文里的宽表格/长代码行
+                            会把这一层顶出视口（手机档实测 659px / 左缘 −134px）。宽度必须由
+                            sass 里那条 `.readBody` 钉死，别删。见 index.sass 同处注释。 */}
                         <motion.div
+                            className='readBody'
                             initial={{ opacity: 0, y: 20 }}
                             animate={{ opacity: 1, y: 0 }}
                             transition={{ duration: 1 }}

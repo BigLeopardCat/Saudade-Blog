@@ -23,7 +23,12 @@
   ③ 768/769 边界：媒体档只到 768px（769 起必须回到桌面值，否则是"溢出到桌面上"的另一种病）；
   ④ **反向对照**：把编译产物里这一段的 `!important` 剥掉再量一次 ⇒ 正文**确实**掉回
      80%（300px）、封面掉回 400px、`.readInfo` 掉回 880px（宽出屏幕）。证明 ② 不是空断言。
-  ⑤ 1200px 桌面档一字未动：正文 880px / 内边距 20px / 封面 400px / 描述卡内边距 25px。
+  ⑤ 1200px 桌面档一字未动：正文 880px / 内边距 20px / 封面 400px / 描述卡内边距 25px；
+  ⑥ **正文包裹层不被宽原子顶出视口**（20261005 新档，与媒体档无关、病根在基础层那条
+     `display:flex; flex-direction:column; align-items:center`）——夹具复现真 DOM 的三层
+     嵌套 + 一整行不折行的代码，量包裹层宽度与 `documentElement.scrollWidth`；**红基线**
+     单独摘掉 `.readBody` 那条规则（它没有 `!important`，④ 的剥法够不到它），必须当场
+     顶到 2000px 以外。线上根因与实测数字写在 ⑥ 的小节头注里。
 
 ⚠️ 20261003：`.readInfo` 那三条（宽 880 → `calc(100% - 32px)`、三列 → 单列、bottom 45 → 12）
 是**顺带修掉的既有缺陷**：它从来就没有宽度覆盖，`left: 50%` + 横向 −50% 让这个 880px 的
@@ -64,13 +69,35 @@ RESET_CSS = FE / "src/frontHome/main.css"
 # `.readInfo` 里只渲染中区（标题那一格）：本套件量的是正文/描述卡/封面的几何与标题字号，
 # 左区（作者+时间）与右区（读数四件）不参与任何一条判据 —— 它们的几何在
 # `read-stats-cluster.test.py` 里是主角，那边有完整的三区夹具。
+# 20261005 起夹具里补上了真 DOM 的**三层嵌套**（`.readContent > .readBody > #content`）：
+# 正文包裹层那一条（判据 ⑥）只有在子项真的挂在 `.readContent` 下面时才量得出来。
+# 旧夹具把 `<p>正文</p>` 直接挂在 `.readContent` 上，`.readBody` 整层不存在 ⇒ 那一类
+# 缺陷它一条都看不见。②–⑤ 量的是 `.readContent`/`.readDescription`/`.readCover`/`.readInfo`
+# 自己的盒子，加一层 `width:100%` 的包裹不影响它们。
 MARKUP = """
 <div class="readContainer">
   <div class="readCover">
     <div class="readInfo"><div class="readMain"><h1>标题</h1></div></div>
   </div>
   <div class="readDescription"><p>摘要</p></div>
-  <div class="readContent markdown-body"><p>正文</p></div>
+  <div class="readContent markdown-body">
+    <div class="readBody"><div id="content" class="markdown-body"><p>正文</p></div></div>
+  </div>
+</div>
+"""
+
+# 判据 ⑥ 的夹具：一个**宽原子**（一整行不折行的代码）。真页面上 `code` 的
+# `white-space: pre` 来自 bytemd/hljs（线上实测 computed：`pre` = pre-wrap、`code` = pre），
+# 本沙箱只加载本仓那份 sass + 复位表，所以这一条由夹具自己写 —— 这是**补沙箱缺的那张表**，
+# 不是给被测规则开后门：`.readBody` 与 `pre` 那两条都不碰 `code` 的 white-space。
+WIDE_ATOM = '<pre><code style="white-space: pre">' + ('abcdefghij' * 60) + '</code></pre>'
+MARKUP_WIDE = """
+<div class="readContainer">
+  <div class="readCover"><div class="readInfo"><div class="readMain"><h1>标题</h1></div></div></div>
+  <div class="readContent markdown-body">
+    <div class="readBody"><div id="content" class="markdown-body">""" + WIDE_ATOM + """</div></div>
+    <div class="navigation" id="toc"></div>
+  </div>
 </div>
 """
 
@@ -93,7 +120,9 @@ STRIP = [
     "bottom: 12px !important",
     "padding: 12px 16px !important",
     "max-width: 100% !important",
-    "overflow-x: hidden !important",
+    # 20261005：`pre` 这条由 `hidden` 改成 `auto`（长代码行改成可横向滑，理由见 sass 同处
+    # 注释）。反向对照要剥的仍然是**这一条**，只是取的值变了。
+    "overflow-x: auto !important",
 ]
 
 
@@ -138,8 +167,21 @@ START, END = block_region(CSS, MQ)
 BLOCK = CSS[START:END]
 LEGACY = CSS[:START] + BLOCK.replace(" !important", "") + CSS[END:]
 
+# 判据 ⑥ 的反向对照：**单独**摘掉 `.readBody` 那条（它写的是基础层、没有 `!important`，
+# 上面那份 LEGACY 剥不到它）。摘掉之后正文包裹层回到"由 fit-content 定尺"，宽原子当场
+# 把整层顶出去 —— 这条对照是 ⑥ 的全部意义所在。
+import re  # noqa: E402
+
+READBODY_RE = re.compile(r"\.readContainer \.readContent \.readBody \{[^}]*\}")
+_m = READBODY_RE.search(CSS)
+if _m is None:
+    raise SystemExit("编译产物里没有 `.readContainer .readContent .readBody` 规则 ——"
+                     " 类名（index.tsx 的 className='readBody'）与 sass 对不上了")
+NO_BODY = CSS[:_m.start()] + CSS[_m.end():]
+
 SB = build_sandbox(CSS, "fixed")
 SB_LEGACY = build_sandbox(LEGACY, "legacy")
+SB_NO_BODY = build_sandbox(NO_BODY, "nobody")
 
 from playwright.sync_api import sync_playwright  # noqa: E402
 
@@ -247,6 +289,73 @@ with sync_playwright() as p:
     check("封面 400px", abs(d["cover"]["h"] - 400) < 1, f"h={d['cover']['h']}")
     check("描述卡内边距 25px", abs(float(d["desc"]["padL"].rstrip("px")) - 25) < 0.5,
           d["desc"]["padL"])
+
+    print("⑥ 正文包裹层：宽原子不许把整层顶出视口（20261005 新档）")
+    # 现场：手机档文章页正文被左右切开。根因**不在媒体档**，在基础规则那条
+    # `.readContent { display:flex; flex-direction:column; align-items:center }` ——
+    # flex 竖列 + 居中 ⇒ 子项在**交叉轴**上按 fit-content 定尺，而 fit-content 的下限是
+    # min-content。正文里只要有**一个** min-content 超过视口的原子，这一层就被顶宽、
+    # 左右对称溢出；`html { overflow-x: hidden }` 把两边裁掉 ⇒ 症状是"正文被切了"，
+    # 不是"能左右滑"（浏览器连滚动条都不给）。
+    # 线上实测（20261005 05:5x，`/article/16`，390×844 DPR2 移动 UA）：
+    #   `.readContent` = 390px(x=0)，**它的子项 = 658.7px(x=−134.4)**，`window.innerWidth`
+    #   被撑到 524（视觉视口缩小）。触发它的原子就是 `<pre><code>`——`code` 拿到
+    #   `white-space: pre` 之后，**最长那一行代码的宽度就是这一层的 min-content**
+    #   （该文最长行 69 字符 ⇒ 598.7px > 370px 可用宽度）。
+    # 修法 = 基础层给包裹层一条 `width: 100%`（`.readBody`，见 sass 同处注释）。
+    WIDE_MEASURE = """(markup) => {
+      document.getElementById('root').innerHTML = markup;
+      const w = document.querySelector('.readBody');
+      const r = w.getBoundingClientRect();
+      const pre = document.querySelector('pre');
+      return {
+        w: +r.width.toFixed(1), l: +r.left.toFixed(1), r: +r.right.toFixed(1),
+        docScrollW: document.documentElement.scrollWidth,
+        clientW: document.documentElement.clientWidth,
+        // 代码块自己能不能横向滑（`pre` 那条 20261005 由 hidden 改成 auto）
+        preScrollW: pre ? pre.scrollWidth : null,
+        preClientW: pre ? pre.clientWidth : null,
+      };
+    }"""
+
+    def measure_wide(url: str) -> dict:
+        pg = br.new_page(viewport={"width": 390, "height": 844})
+        pg.on("pageerror", lambda e: errs.append(str(e)))
+        pg.goto(url)
+        pg.wait_for_timeout(120)
+        out = pg.evaluate(WIDE_MEASURE, MARKUP_WIDE)
+        pg.close()
+        return out
+
+    # 夹具自检：宽原子真的挂在 `.readBody` 里、`pre` 真的超宽 —— 少了这一条，下面
+    # "没有溢出"在夹具根本没造出宽原子时也是绿的。
+    fx = measure_wide(URL)
+    check(f"★夹具自检：代码块内容宽 {fx['preScrollW']}px 远大于其可见宽 "
+          f"{fx['preClientW']}px（宽原子真的造出来了，否则下面的判据是空的）",
+          fx["preScrollW"] is not None and fx["preClientW"] is not None
+          and fx["preScrollW"] > 3000 and fx["preScrollW"] > fx["preClientW"] * 5, str(fx))
+    check("★正文包裹层 = 视口 − 左右内边距（370px，左缘 10 / 右缘 380）",
+          abs(fx["w"] - 370) < 1 and abs(fx["l"] - 10) < 1 and abs(fx["r"] - 380) < 1,
+          f'w={fx["w"]} l={fx["l"]} r={fx["r"]}')
+    check("★页面级没有横向溢出（documentElement.scrollWidth ≤ 视口 390）",
+          fx["docScrollW"] <= 390, f'scrollW={fx["docScrollW"]} clientW={fx["clientW"]}')
+    check("  超长代码行由**代码块自己**横向滑（`pre` scrollWidth > clientWidth）",
+          fx["preScrollW"] > fx["preClientW"], f'{fx["preScrollW"]} / {fx["preClientW"]}')
+
+    print("⑥b 反向对照：单独摘掉 `.readBody` 那条 ⇒ 整层当场被顶出去（证明 ⑥ 不是空断言）")
+    nb = measure_wide(SB_NO_BODY.as_uri() + "/index.html")
+    check("★对照组里包裹层被顶到 min-content（> 2000px）且左缘远在屏幕外",
+          nb["w"] > 2000 and nb["l"] < -2000, f'w={nb["w"]} l={nb["l"]}')
+    check("★对照组里页面级横向溢出确实存在（这正是「被切开」的成因）",
+          nb["docScrollW"] > 390, f'scrollW={nb["docScrollW"]}')
+    check("  对照组与修好那版**只差那一条**（两边 `pre` 都是 auto、都在滑）",
+          nb["preScrollW"] == fx["preScrollW"], f'{nb["preScrollW"]} vs {fx["preScrollW"]}')
+
+    # 负空间：这个类名是 JSX 与 sass 之间**唯一的**接缝，改名一边就是静默失效
+    # （`className='readBody'` 还在、sass 那边没规则 ⇒ 上面两组判据全绿而线上照旧）。
+    _tsx = (FE / "src/frontHome/Content/ReadArticle/index.tsx").read_text(encoding="utf-8")
+    check("★`index.tsx` 里那个 motion.div 挂着 className='readBody'（同名接缝）",
+          "className='readBody'" in _tsx, "找不到这个字面")
 
     check("无 JS 运行时报错", not errs, "；".join(errs[:3]))
     br.close()
