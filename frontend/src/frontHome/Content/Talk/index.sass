@@ -43,6 +43,24 @@
   h2
     color:  var(--font-title-color)
     font-size: 30px
+  // 空态与读失败态（20261005）：以前两者都是"页面空白"，现在各有各的话。
+  // 颜色走令牌，夜间同一套。
+  .talkEmpty
+    display: flex
+    align-items: center
+    gap: 12px
+    margin-top: 40px
+    color: var(--font-p-color)
+    .talkRetry
+      cursor: pointer
+      padding: 2px 12px
+      font: inherit
+      color: var(--font-title-color)
+      background: var(--pic-background-cover)
+      border: 1px solid var(--font-p-color)
+      border-radius: 6px
+      &:hover
+        opacity: .8
   .talk
     position: relative
     width: 90%
@@ -86,10 +104,28 @@
     // 颜色走 CSS 变量（`--font-p-color`）而不是写死——本页要活过浅色与夜间两套主题。
     .talk-foot
       display: flex
-      justify-content: flex-end
+      // 20261005：发布者展示名进来之后这一行不再是单向右贴 —— 名字在左、时刻在右，
+      // 两端对齐。名字缺省时（后端没带 `nickname`）它是空跨度，宽度 0，时刻照旧贴右。
+      justify-content: space-between
+      align-items: baseline
+      gap: 8px
       margin-top: 4px
 
+      // 发布者展示名（讨论区那种"谁发的"）。字号与时刻同档、颜色也走令牌，
+      // 夜间与浅色共用一套（本页要活过两套主题，不写死色值）。
+      .talk-who
+        font-size: 12px
+        color: var(--font-p-color)
+        opacity: .75
+        overflow: hidden
+        text-overflow: ellipsis
+        white-space: nowrap
+
       .talk-clock
+        // 自己顶到右端：只靠父级的 `space-between` 的话，这一行的位置就绑死在
+        // "左边那个跨度存在"上——它哪天被删掉/条件隐藏，时刻会静默滑到左边
+        // （20261005 红基线实测：老组件没有 `.talk-who`，时刻从右缘 809 滑到 538）。
+        margin-left: auto
         font-size: 12px
         letter-spacing: .08em
         // 等宽数字：列表里每条的时刻上下对齐，扫起来不用重新找位

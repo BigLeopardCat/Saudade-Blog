@@ -26,6 +26,12 @@ pub struct TalkDto {
     pub cat: String,
     pub v: i32,
     pub author: String,
+    /// 发布者**展示名**（昵称优先，空昵称退账号；账号已销退 `用户#<id>`）。
+    /// **只有说说（src=talk）填充**：河灯留言的公开行走自由留名 `author`，不把账号
+    /// 身份发出去（`_board_text_keys` 那条 "留名不是账号" 的边界，见 list_by_src 取舍）。
+    pub nickname: Option<String>,
+    /// 发布者头像（站内路径或外链）。同样**只有说说填充**。
+    pub avatar: Option<String>,
     /// 是否当前登录用户所放（"我的河灯"分组用）
     pub mine: bool,
     /// 审核状态：1=通过（公开列表可见）/ 0=待审 / 2=未通过（驳回）。
@@ -72,18 +78,37 @@ async fn list_by_src(
             return Json(ApiResponse::error("查询失败，请稍后再试"));
         }
     };
-    let dtos = talks.into_iter().map(|t| TalkDto {
-        id: t.id,
-        title: t.title.unwrap_or_default(),
-        content: t.content,
-        cat: t.cat,
-        v: t.v as i32,
-        author: t.author,
-        mine: uid.map(|u| t.user_id == u).unwrap_or(false),
-        approved: t.approved, // 公开列表已过滤 approved=1，恒 1
-        reject_reason: t.reject_reason, // approved=1 恒 NULL（改判通过时清空）
-        created_at: t.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
-        updated_at: t.updated_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+    // 发布者身份：**只给说说查**（20261005）。取舍两头：
+    //   · 要给 —— 说说卡片原来只有 `author`（自由留名，说说这条路上恒空），前端拿不到
+    //     "是谁发的"，只好退而用**看的人自己**的头像（历史实现就是这么错的）；
+    //   · 只给说说 —— 河灯留言的公开面刻意不带账号身份（留名是自由文本，见
+    //     `_board_text_keys`），而 agent 的 `list_talks` 就是打这个接口、整行进模型的
+    //     帧：给每条都挂昵称+头像 URL 会让每轮的说说帧凭空变大。两点都只要 talk 这一档。
+    let peers = if src == "talk" {
+        let mut uids: Vec<i32> = talks.iter().map(|t| t.user_id).collect();
+        uids.sort_unstable();
+        uids.dedup();
+        super::profile::peer_map(&state.db, &uids).await
+    } else {
+        std::collections::HashMap::new()
+    };
+    let dtos = talks.into_iter().map(|t| {
+        let peer = peers.get(&t.user_id);
+        TalkDto {
+            id: t.id,
+            title: t.title.unwrap_or_default(),
+            content: t.content,
+            cat: t.cat,
+            v: t.v as i32,
+            author: t.author,
+            nickname: peer.map(|p| p.name.clone()),
+            avatar: peer.and_then(|p| p.avatar.clone()),
+            mine: uid.map(|u| t.user_id == u).unwrap_or(false),
+            approved: t.approved, // 公开列表已过滤 approved=1，恒 1
+            reject_reason: t.reject_reason, // approved=1 恒 NULL（改判通过时清空）
+            created_at: t.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+            updated_at: t.updated_at.format("%Y-%m-%d %H:%M:%S").to_string(),
+        }
     }).collect();
     Json(ApiResponse::success(dtos))
 }
@@ -119,6 +144,10 @@ pub async fn list_my_boards(
         cat: t.cat,
         v: t.v as i32,
         author: t.author,
+        // 「我的河灯」是留言板那一侧：自己的身份自己知道，不在这里重复发一遍
+        // （只有说说填充发布者信息，见 `list_by_src`）。
+        nickname: None,
+        avatar: None,
         mine: true,
         approved: t.approved,
         // 「我的河灯」是驳回理由的主要出口：灯影集在这里显示「未通过 · 理由」
@@ -215,6 +244,27 @@ async fn insert_talk(
         0..=2 => payload.v,
         _ => 0,
     };
+    // `title` 这一列上**挤着两套语义**，按来源分派（20261005 修）：
+    //   · 说说（src=talk）——自有标题，就是后台表单里"标题"那一栏（`talkTitle`）。
+    //   · 河灯留言（src=board）——没有独立标题，这一列存的是**印章**（愿/寄/忆/诉），
+    //     也就是上面的 `cat`；留言板的公开行/后台行都不读它，但 agent 的
+    //     `list_guestbook` 摘要与存量数据都是按这个形状读的，**保持原样**（改它会静默
+    //     改变它们的视野）。
+    // 此前的实现是**两个来源共用一行 `title = cat`**：写说说时标题被印章覆盖，默认
+    // 落成「愿」——用户报的"说说标题取 1 变成愿了"就是这一行。留意 `update_talk`
+    // 一直是按 `payload.title` 写的，于是同一篇说说"新建时叫愿、编辑一次才对"。
+    let title = if src == "talk" {
+        let t = payload.title.trim();
+        // 上限 100 字：DB 列是 varchar(255)，留足余量；换行/控制字符不在这里处理，
+        // 前端渲染走 markdown 管线的安全分支（同 comments.rs 的 XSS 边界说明）。
+        if t.chars().count() > 100 {
+            t.chars().take(100).collect::<String>()
+        } else {
+            t.to_string()
+        }
+    } else {
+        cat.clone()
+    };
     if content.is_empty() {
         return Json(ApiResponse::error("留言不能为空"));
     }
@@ -260,7 +310,7 @@ async fn insert_talk(
     let ai_judged = ai_result.is_some();
     let reason_for_notice = reject_reason.clone();
     let t = talk::ActiveModel {
-        title: Set(Some(cat.clone())),
+        title: Set(Some(title)),
         content: Set(content.to_string()),
         cat: Set(cat),
         v: Set(v),
