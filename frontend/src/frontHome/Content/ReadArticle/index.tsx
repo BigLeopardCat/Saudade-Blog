@@ -524,15 +524,28 @@ const ReadArticle = () => {
                     <div className="readCover" ref={coverRef}>
                         {/* poster 层 = 文章封面（沿用卡片那套裁剪参数）。视频播起来之前、
                             素材缺失或访客要求减少动效时，这里就是画面，观感与改造前一致。
-                            不用 <video poster>：一整层 <img> 的 object-fit/裁剪控制更稳。 */}
-                        <motion.img
-                            className={`readCoverPoster${videoReady ? ' isHidden' : ''}`}
-                            src={resolveApiAssetUrl(article?.cover)}
-                            style={coverCropMotionStyle(cropFromRow(article))}
-                            initial={{ filter: "blur(10px)" }}
-                            animate={{ filter: "blur(0px)" }}
-                            transition={{ duration: 1 }}
-                        />
+                            不用 <video poster>：一整层 <img> 的 object-fit/裁剪控制更稳。
+
+                            ⚠️ **没有封面时绝不能渲染这个 `<img>`**：`resolveApiAssetUrl('')`
+                            返回空串 ⇒ `<img src="">` 会解析成**当前文档地址**再发一次请求，
+                            必然失败并画成破图图标。实测线上真实访客（monitor.log：
+                            `type=resource_error … msg=img 资源加载失败`，url 是文章页本身）
+                            就是撞在这一条上——手机档尤其显眼，因为视频在移动网络下要么
+                            还没起来、要么被"减少动效"整个关掉，poster 就是唯一画面。
+                            改成一个纯 CSS 兜底层：宽高与定位和 poster 逐字相同，
+                            只是不再发那次必然失败的请求。 */}
+                        {article?.cover ? (
+                            <motion.img
+                                className={`readCoverPoster${videoReady ? ' isHidden' : ''}`}
+                                src={resolveApiAssetUrl(article.cover)}
+                                style={coverCropMotionStyle(cropFromRow(article))}
+                                initial={{ filter: "blur(10px)" }}
+                                animate={{ filter: "blur(0px)" }}
+                                transition={{ duration: 1 }}
+                            />
+                        ) : (
+                            <div className="readCoverPoster readCoverFallback" aria-hidden="true" />
+                        )}
                         {/* 背景视频（20260912）：横幅图片比例随视口在 2:1~4:1 间漂移、没法适配，
                             改成循环视频；日夜各一段，key 换源即重新 autoplay。
                             离屏暂停见下面的 IntersectionObserver：详情页一往下滚它立刻出视口。 */}

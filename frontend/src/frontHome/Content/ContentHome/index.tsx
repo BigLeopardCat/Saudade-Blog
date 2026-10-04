@@ -404,10 +404,15 @@ const ContentHome = () => {
                     {topArticles.map((item) => (
                         <div className="TopArticleInner" key={item.key} onClick={() => navigate(`/article/${item.key}`)} style={{ width: '100%', flexShrink: 0, height: '100%' }}>
                             <div className="TopCover">
-                                <img
-                                    src={resolveApiAssetUrl(item.cover)}
-                                    style={{ width: '100%', height: '100%', objectFit: 'cover', ...coverCropStyle(carouselCropOf(item)) }}
-                                />
+                                {/* 没封面就不渲染 <img>：空 `src` 会按当前文档地址解析，
+                                    每个无封面条目都朝首页本身再发一次必然失败的请求并画成
+                                    破图（与 `LazyImage` 同一族，见那边的注释）。 */}
+                                {resolveApiAssetUrl(item.cover) && (
+                                    <img
+                                        src={resolveApiAssetUrl(item.cover)}
+                                        style={{ width: '100%', height: '100%', objectFit: 'cover', ...coverCropStyle(carouselCropOf(item)) }}
+                                    />
+                                )}
                             </div>
                             <div className="topContent">
                                 <h4># {Categories.find(c => c.categoryKey === item.noteCategory)?.categoryTitle}</h4>

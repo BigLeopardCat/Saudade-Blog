@@ -42,6 +42,18 @@ html
       transition: opacity 0.6s ease
       &.isHidden
         opacity: 0
+    // 文章没有封面时 poster 的替身（见 index.tsx 同处注释：空 `src` 会去请求页面本身，
+    // 必然失败并画成破图）。定位/尺寸/层序由上面 `.readCoverPoster` 那一组一并给出，
+    // 这里只补画面：底色取和纸渐变，再压一层上浅下深的暗罩——`.readInfo` 的文字是
+    // `#fff1eb`（近白）且贴在盒子底部，底端不压暗就白字读白底。两层都用令牌/透明黑，
+    // 夜间跟着 `.frontDark` 自动走。
+    .readCoverFallback
+      background: var(--washi-grad)
+      &::after
+        content: ''
+        position: absolute
+        inset: 0
+        background: linear-gradient(180deg, rgba(0, 0, 0, 0.28) 0%, rgba(0, 0, 0, 0.16) 45%, rgba(0, 0, 0, 0.62) 100%)
     // 保留原有的 img 规则（.readInfo 里的 antd 头像 img 靠它兜底尺寸）；
     // poster 由上面更具体的选择器覆盖成绝对定位
     img
