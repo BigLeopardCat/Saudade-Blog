@@ -239,7 +239,10 @@ console.log('\n⑥ 版本号：改了 widget 脚本必须 bump（nginx 对 live2
     // 20261005a = 「选图按钮的图标夜间看不见」那一轮（widget.css 把 .chat-img-btn 加进
     // .chat-rail-btn / .conv-head-btn 那两组 color 名单）。改的是 live2d-widgets 下的
     // 样式表 ⇒ 同样必须 bump。
-    ok(ver === '20261005a', 'VER 已 bump 到本轮（20261005a）', { ver });
+    // 20261005b = 「手机档看板娘盖住正文」那一轮（widget.css 的 <480px 块：整块缩到半尺寸、
+    // 贴住左缘、空白处放行命中）。同上——样式表在 live2d-widgets 下，不 bump 访客吃
+    // 1 年 immutable 缓存，手机上看到的还是那个占半个屏的旧盒子。
+    ok(ver === '20261005b', 'VER 已 bump 到本轮（20261005b）', { ver });
     const tsx = readFileSync(path.join(root, 'src/components/Live2dAgent/index.tsx'), 'utf8');
     ok(tsx.includes('boot.js?v=' + ver), 'Live2dAgent 的 ?v= 与 VER 一致');
 }

@@ -169,6 +169,69 @@ for (const f of ['chat-stream.js', 'chat-engine.js', 'chat-render.js', 'chat-ses
      'widget.css：#waifu-toggle 仍恒在 15px（它不属于"看板娘本体"，不跟着右移）');
 }
 
+// ── ②c 手机档：整块缩到半尺寸、贴住左缘（20261005 用户第 4 条）────────────────
+// 报的是「手机上盖住大半个正文与表格」：修前 390×844 下 300×300 的盒子占满
+// x15..315，角色墨迹本身就有 165×291px 压在正文栏中间，而且盒子里**没画东西的地方
+// 也吃点击**（正文在那个矩形里一律点不到）。真渲染与命中行为由
+// `tests/live2d-render.test.py` ⑨ 负责（含"换回修前 widget.css 要变红"的红基线）；
+// 这里锁**结构**：缩放加在哪个元素上、工具条有没有重锚、命中是不是按子节点放行。
+//
+// 为什么锁得这么细：这四条里有三条**改错任何一条都不会报错**——
+//   · 缩放加到 `#waifu` 上 ⇒ 对话面板（它的子节点）一起缩，且祖先的 transform 会
+//     成为面板的包含块（`bottom: calc(100% + 12px)` 按缩放后的盒解析）⇒ 面板飘走；
+//   · 忘了重锚工具条 ⇒ 六个钮留在 300px 盒的右缘，而角色已经缩到左边 ⇒ 钮飘在空处；
+//   · 忘了放行子节点（只写容器那句 `pointer-events: none`）⇒ 连角色和按钮都点不中。
+// 三者都编译得过、都渲染得出画面。
+{
+  const css = W('widget.css');
+  // 取 `@media (max-width: 479px)` 的块内容：花括号配对，且**先剥注释**
+  // （这个文件的注释里会写选择器与取值，注释里的花括号会把朴素计数带跑偏）。
+  const mediaBody = (src, q) => {
+    const s = src.replace(/\/\*[\s\S]*?\*\//g, '');
+    const i = s.indexOf('@media ' + q);
+    if (i < 0) return '';
+    let depth = 0, start = -1;
+    for (let k = i; k < s.length; k++) {
+      if (s[k] === '{') { if (depth === 0) start = k; depth++; }
+      else if (s[k] === '}') { depth--; if (depth === 0) return s.slice(start + 1, k); }
+    }
+    return '';
+  };
+  const mob = mediaBody(css, '(max-width: 479px)');
+  ok(mob.length > 0, 'widget.css：找得到 <480px 那个块');
+  const rules = [...mob.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({
+    sel: m[1].split(',').map((s) => s.trim()).filter(Boolean), body: m[2],
+  }));
+  const withSel = (sel) => rules.filter((r) => r.sel.includes(sel));
+  const has = (sel, re) => withSel(sel).some((r) => re.test(r.body));
+
+  ok(has('#waifu-canvas', /transform:\s*translateX\(-34px\)\s*scale\(\.5\)/),
+     '手机档：缩放落在 #waifu-canvas 上（translateX(-34px) scale(.5)）');
+  ok(has('#waifu-canvas', /transform-origin:\s*left bottom/),
+     '手机档：#waifu-canvas 的 transform-origin = left bottom（缩完贴住盒底）');
+  // 负空间：缩放**不许**挂到 #waifu 上——那是面板的祖先。
+  ok(!rules.some((r) => r.sel.includes('#waifu') && /transform:\s*scale|zoom:/.test(r.body)),
+     '手机档：#waifu 身上没有缩放（有的话对话面板一起缩、包含块也变）');
+  ok(!rules.some((r) => r.sel.includes('#waifu') && /transform:/.test(r.body)
+                        && !/pointer-events/.test(r.body) && /scale|rotate|skew/.test(r.body)),
+     '手机档：#waifu 上没有别的（缩放类）transform');
+  // 工具条重锚：原来 `right:-10px` 锚在 300px 盒的右缘。
+  ok(has('#waifu-tool', /right:\s*auto/) && has('#waifu-tool', /left:\s*88px/),
+     '手机档：工具条重锚（right:auto + left:88px，跟着缩小的角色走）');
+  // 命中放行：容器 none，四个子节点 auto。四个各有各的理由（见 widget.css 注释）：
+  // 画布本体、工具条、chat-stream 追加的特效钮、对话面板。
+  ok(has('#waifu', /pointer-events:\s*none/),
+     '手机档：#waifu 不吃命中（空白处的点击穿到底下的正文）');
+  const auto = rules.filter((r) => /pointer-events:\s*auto/.test(r.body)).flatMap((r) => r.sel);
+  for (const sel of ['#waifu-canvas', '#waifu-tool', '#waifu-tool-star-box', '#waifu-chat']) {
+    ok(auto.includes(sel), `手机档：${sel} 重新拿到命中（pointer-events: auto）`);
+  }
+  // 负空间：`#waifu-tips` 在手机档不需要任何规则——本仓这条是 `display: none !important`
+  // （提示语整个走对话面板）。给它写定位是一条**永远不会生效**的死声明。
+  ok(!auto.includes('#waifu-tips') && !withSel('#waifu-tips').length,
+     '手机档：没有给 #waifu-tips 写规则（它是 display:none，写了也不生效）');
+}
+
 // ── ③ 确认卡片存活（20260923：帧到了、卡片却被当孤儿删掉）────────────────────
 // 真实事故（静态版判据）：agent 帧齐、Rust 真转发、前端也真渲染出了卡片，但弹卡后
 // 几十毫秒另一次 reconcileDOM（别的窗口写了会话缓存 ⇒ 本轮收尾补拉历史）把它当
