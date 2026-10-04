@@ -28,10 +28,16 @@
     几何断言会红，而线上是好的）；
   · 真 react-dom 渲染 → Playwright 断言。
 
+另外 ⑫（20261005 用户第 3 条「赞和踩不在同一水平线，好像踩高了一点」）量的是**图标
+墨迹**：把真 `<svg>` 栅格化到 canvas 再扫非透明行——两个 svg 盒子的几何在旧稿里逐项
+相等，量盒子永远全绿，而差在字形内部的墨迹上。带一条**冻结字面**（20261005 改动前那版
+几何）的红基线——基线的取法钉在时间上，不钉在当前提交上（见下面 `OLD_ICON` 的头注）。
+
 用法（仓库任意位置）：python3 frontend/tests/comment-layout.test.py
 """
 import json
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -401,6 +407,80 @@ REPLY_GEOM = """() => {
     rtBeforeBody: !!rt && before(rt, body),
   };
 }"""
+
+# ⑫ 用：把一枚真 svg **栅格化**再扫非透明行 —— 得到的是"这颗图标在屏幕上占哪几条像素行"，
+# 也就是用户看得见的那条边。**不能量盒子**：旧稿里两颗 svg 的盒子逐项相等（同 14px、
+# 同 viewBox、同一条镜像路径），量盒子永远全绿，而人眼看到的差在**字形内部的墨迹**上。
+# 做法：克隆 → 把 width/height 写成 480（= 20px / 用户单位，够分辨 0.25 个单位）、
+# 把 `stroke` 从 `currentColor` 钉成黑（离线 svg 里 `color` 取初值，钉死免得受主题影响）
+# → XMLSerializer → data URL → canvas.drawImage → 扫 alpha。
+INK_HELPER = """() => {
+  window.__inkOf = (svg) => new Promise((res) => {
+    const S = 24 * 20;
+    const c = svg.cloneNode(true);
+    c.setAttribute('width', String(S));
+    c.setAttribute('height', String(S));
+    c.setAttribute('stroke', '#000');
+    c.removeAttribute('style');
+    const url = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
+      new XMLSerializer().serializeToString(c));
+    const img = new Image();
+    img.onload = () => {
+      const cv = document.createElement('canvas');
+      cv.width = S; cv.height = S;
+      const ctx = cv.getContext('2d');
+      ctx.drawImage(img, 0, 0, S, S);
+      const d = ctx.getImageData(0, 0, S, S).data;
+      let top = -1, bottom = -1;
+      for (let y = 0; y < S; y++) {
+        for (let x = 0; x < S; x++) {
+          if (d[(y * S + x) * 4 + 3] > 8) { if (top < 0) top = y; bottom = y; break; }
+        }
+      }
+      // 行号 → 用户单位（`bottom + 1` 是因为第 bottom 行覆盖 [bottom, bottom+1] 那一段）
+      res(top < 0 ? null : {
+        top: +(top / 20).toFixed(2), bottom: +((bottom + 1) / 20).toFixed(2),
+        cy: +((((top + bottom + 1) / 2) / 20)).toFixed(2),
+        h: +(((bottom - top + 1) / 20)).toFixed(2),
+      });
+    };
+    img.onerror = () => res(null);
+    img.src = url;
+  });
+}"""
+INK_OF = """(sel) => { const e = document.querySelector(sel); return e ? window.__inkOf(e) : null }"""
+# 红基线用：把一段 svg 源码塞进一个**游离**节点（不必挂进文档）再量同一件事。
+OLD_INK = """(html) => {
+  const host = document.createElement('div');
+  host.innerHTML = html;
+  const svg = host.querySelector('svg');
+  return svg ? window.__inkOf(svg) : null;
+}"""
+
+# ⑫ 的红基线 = **20261005 改动前**那一版两枚拇指的几何（下面两段字面，逐字抄自改动前的
+# `NoteStatIcons/index.tsx`）。与 `mermaid-mobile-zoom.test.py` 同一取法：换臂跑同一套
+# 判据，读几何不读"看起来对"。
+#
+# ⚠️ 它**不能**写成 `git show HEAD:`：这条基线要的是"改动前那个形状"，而 `git show HEAD`
+# 在改动**提交之后**取到的就是改动后的文件 —— 两条臂逐字相同，红基线当场失效
+# （20261005 实测：提交前绿、提交后红，报的是"赞 12 / 踩 12"）。基线的取法必须钉在
+# **时间**上（一个冻结的字面），不能钉在"当前提交"上。要换这两段，就是**改判据本身**
+# （说明对齐的基准变了），不能顺手跟着工作区刷新。
+#
+# 属性写成连字符小写：这一臂把 svg 源码塞进 `innerHTML`，驼峰属性名在 HTML 里不生效
+# （`strokeWidth` 不在 HTML 解析器的 SVG 属性修正表里，认不出来就整条丢掉 ⇒ 描边退回
+# 默认的 1），量到的就不是"改动前的几何"而是"改动前的几何 + 一个错的描边"（实测墨迹高
+# 20.8 而不是 21.6，红基线就成了假红）。`viewBox` 例外：它在修正表里，保持驼峰。
+_SVG_HEAD = ('<svg aria-hidden="true" viewBox="0 0 24 24" width="14" height="14" fill="none"'
+             ' stroke="currentColor" stroke-width="1.8" stroke-linejoin="round">')
+OLD_ICON = {
+    "ThumbUpIcon": _SVG_HEAD
+    + '<path d="M13.8 9V5.3a2.8 2.8 0 0 0-2.8-2.8l-3.9 8.9v10.9h11.2a2 2 0 0 0 1.97-1.65l1.4-9.1a2 2 0 0 0-1.97-2.35z" />'
+    + '<path d="M7.1 22.3H4.5a2.4 2.4 0 0 1-2.4-2.4v-7a2.4 2.4 0 0 1 2.4-2.4h2.6" /></svg>',
+    "ThumbDownIcon": _SVG_HEAD
+    + '<path d="M13.8 15v3.7a2.8 2.8 0 0 1-2.8 2.8l-3.9-8.9V1.7h11.2a2 2 0 0 1 1.97 1.65l1.4 9.1a2 2 0 0 1-1.97 2.35z" />'
+    + '<path d="M7.1 1.7H4.5a2.4 2.4 0 0 0-2.4 2.4v7a2.4 2.4 0 0 0 2.4 2.4h2.6" /></svg>',
+}
 
 # 计数该有多大地方待着：它在框内右下角（`bottom:4px` + `line-height:16px`）⇒ 与框底
 # 只差几像素。**判"在框里"用 `inside()`，不是判"不相交"**——不相交在它被藏起来、
@@ -973,6 +1053,57 @@ with sync_playwright() as p:
     check("  对照组的计数显示没变（3 / 7）—— ⇒ 上面那两条红只可能是高亮那一处",
           b1["nums"] == ["3", "7"], b1["nums"])
     pg6.close()
+
+    # ══ 七、赞 / 踩图标的墨迹在同一水平线（20261005 用户第 3 条）══════════════════════
+    # 用户原话：「讨论区赞和踩图标视觉上不在同一水平线，好像踩高了一点。」
+    # 根因**不在** `.commentVote`（两颗钮一样高、都是 `align-items:center`，svg 盒子逐项
+    # 相等），在**字形自己**：初稿那条拇指几何在 24 字框里偏下（墨迹 y ∈ [2.5, 22.3]、
+    # 中心 12.4），而踩是它关于 y=12 的镜像 ⇒ 踩的中心跑到 11.6。两颗并排就差 **0.8 个
+    # 用户单位**（14px 下 0.47px；手机 DPR3 上是 1～2 个物理像素——眼睛比的正是"拳头上沿 /
+    # 下沿"那条横边，所以看得见）。修法 = 把这条几何整体上移 0.4 个单位让墨迹居中。
+    # ⚠️ 判据只能量**墨迹**：旧稿里两个 svg 盒子的几何完全一致，量盒子（或量 viewBox、
+    # 量 `d` 里的数字）永远全绿。这里把真 svg 用 XMLSerializer 序列化、栅格化到 canvas、
+    # 扫非透明行——这就是"用户看见的那条边"。
+    print("\n⑫ 赞 / 踩图标：两条墨迹落在同一水平线上（量真渲染色块的行范围，不量盒子）")
+    pg7 = br.new_page(viewport={"width": 1280, "height": 900})
+    errs7 = []
+    pg7.on("pageerror", lambda e: errs7.append(str(e)))
+    pg7.add_init_script("window.__BOOT = { path: '/article/1', token: 't' };")
+    pg7.goto(FIXED.as_uri() + "/index.html")
+    pg7.wait_for_selector(".commentThread", timeout=8000)
+    pg7.wait_for_timeout(300)
+    pg7.evaluate(INK_HELPER)
+    up = pg7.evaluate(INK_OF, '#c-1 .commentVote[aria-label="赞"] svg')
+    dn = pg7.evaluate(INK_OF, '#c-1 .commentVote[aria-label="踩"] svg')
+    check("★前提：两张图都真栅格化出了墨迹（空图会让下面「中心相同」变成永真）",
+          bool(up) and bool(dn) and 15 < up["h"] < 24 and 15 < dn["h"] < 24, f"{up} / {dn}")
+    check("★两颗墨迹中心都落在字框中线 12.0 上（±0.4 单位）—— 对齐靠的是**两条都居中**",
+          abs(up["cy"] - 12) <= 0.4 and abs(dn["cy"] - 12) <= 0.4,
+          f'赞 {up["cy"]} / 踩 {dn["cy"]}')
+    check("★两颗墨迹中心互差 ≤ 0.25 单位（= 同一水平线；改动前是 0.8）",
+          abs(dn["cy"] - up["cy"]) <= 0.25,
+          f'{dn["cy"] - up["cy"]:+.2f} 单位 = {(dn["cy"] - up["cy"]) / 24 * 14:+.3f}px @14px')
+    boxes = pg7.evaluate("""() => ['赞', '踩'].map((l) => {
+      const r = document.querySelector('#c-1 .commentVote[aria-label="' + l + '"] svg')
+        .getBoundingClientRect();
+      return { top: +r.top.toFixed(2), h: +r.height.toFixed(2) };
+    })""")
+    check("★上下文：那一行里两个 svg 盒子同高同顶（±0.5px）—— 缺了这条，"
+          "「字框里居中」推不出「屏幕上同线」",
+          abs(boxes[0]["top"] - boxes[1]["top"]) <= 0.5 and abs(boxes[0]["h"] - boxes[1]["h"]) <= 0.5,
+          str(boxes))
+    check("  两颗仍是彼此的镜像（赞上沿+踩下沿 ≈ 24、反之亦然）——不是「各挪半格凑齐」",
+          abs(up["top"] + dn["bottom"] - 24) <= 0.6 and abs(up["bottom"] + dn["top"] - 24) <= 0.6,
+          f'{up["top"]}+{dn["bottom"]} / {up["bottom"]}+{dn["top"]}')
+    ou = pg7.evaluate(OLD_INK, OLD_ICON["ThumbUpIcon"])
+    od = pg7.evaluate(OLD_INK, OLD_ICON["ThumbDownIcon"])
+    check("★红基线：改动前那版两颗墨迹中心差 0.8 单位（14px 下 0.47px）—— ⇒ 上面那条有牙",
+          bool(ou) and bool(od) and abs(od["cy"] - ou["cy"]) >= 0.6,
+          f'赞 {ou and ou["cy"]} / 踩 {od and od["cy"]}')
+    check("  红基线的墨迹高与现版一致（这次是**纯平移**，字形的形状没动）",
+          bool(ou) and abs(ou["h"] - up["h"]) <= 0.2, f'{ou and ou["h"]} vs {up["h"]}')
+    check("无 JS 运行时报错（第 ⑦ 节这一页）", not errs7, "; ".join(errs7[:2]))
+    pg7.close()
     br.close()
 
 print(f"\ncomment-layout: {'全绿' if not FAILS else str(len(FAILS)) + ' 条红'}\n")
