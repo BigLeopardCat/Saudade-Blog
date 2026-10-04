@@ -38,17 +38,32 @@ const Footer = () => {
     }, []);
     return <>
         <footer className='footerContainer'>
-            {/* 这一行是**上游开源项目**（github.com/LinMoQC/Memory-Blog，GPL-2.0）的作者署名，
-                不是本站部署者的身份信息 —— 它本来就公开在上游仓库与 README 里，照原样保留。
-                由本站部署者自己署名的是下面那一行（`copyright` 设置）。 */}
+            {/* ⚠️ 页脚这两行是**两种不同身份**，别再合成一行，也别互相替换：
+                ① **来源链**（`.footLine`，静态、硬编码，对任何部署者都一样）——回答"这个站点建在
+                   谁的工作之上"。上游是 github.com/LinMoQC/Memory-Blog（GPL-2.0），Rust 这一支
+                   是本站重写的。这两件事是**历史事实**：别人 fork 走部署，这一行**照样是他该显示的**
+                   （GPL 也要求保留上游署名），**不许换成部署者自己的名字**。
+                ② **本站部署者**（`.footNote`，动态，取自后台设置 `blogCopyright`，没填回退到
+                   `blogAuthor`）——别人拿去部署时**不用改代码**，在后台填自己的名字即可，
+                   这一行会自动变成他的。这是本仓的既定口径：**部署者身份一律走设置，
+                   源码里不许出现部署者身份**（备案号 blogIcp / blogPublicIcp 同理，见 :26-28）。
+                两点容易踩：
+                · 上游那行**不写 "Copyright … All rights reserved."** —— 它只是署名，不是本站的
+                  许可声明。本仓库以 GPL-2.0 分发（见 LICENSE／README §许可），"保留所有权利"
+                  与 GPL 授予的复制/修改/再分发权相抵；真要说许可，指向 LICENSE，别在页脚写。
+                · 年份**取当前年**、不写死：写死的那一版（`© 2026`）过一年就成了陈年话。 */}
             {/* ⚠️ 全页脚**零行内样式**（20261001 第 4 条这轮清掉的）：这一片的颜色、字号、
                 间距原来全写在 `style={{…}}` 里，而内联特异性最高 —— 主题令牌压不动它，
                 换夜间/换配色只能 `!important` 硬压。形状归 `Footer/index.sass`，
                 分段配色归 `src/index.css` 的 `--band-foot*`。**别再加回来。** */}
-            <p className="footLine">Copyright © 2024 林陌青川 (LinMo). All rights reserved.</p>
-            <p className="footNote">Based on work refactored, extended and optimized with <span className="footTech footTechRust">Rust</span> &amp; <span className="footTech footTechAxum">Axum</span>.</p>
+            {/* 上游署名那一句 20261005 前的原文是
+                「Based on work refactored, extended and optimized with Rust & Axum.」——
+                没有施事主语（Rust 重写是谁做的读不出来），那是 2026-06-16 把
+                「…Optimized **by Sora Saudade** (2026)」改成「…**with** Rust & Axum」时丢的。
+                现在拆成两句、各自带主语：第一句说"基于谁"，第二句说"谁重写的"。 */}
+            <p className="footLine">Based on Memory-Blog by 林陌青川 (LinMo). Refactored, extended and optimized in <span className="footTech footTechRust">Rust</span> &amp; <span className="footTech footTechAxum">Axum</span> by Sora Saudade.</p>
             {copyright && (
-                <p className="footNote">Copyright &copy; 2026 {copyright}.</p>
+                <p className="footNote">Copyright &copy; {new Date().getFullYear()} {copyright}.</p>
             )}
             <em className="footPoem"><p>{onySay}</p></em>
             {/* 两个备案号**各自独立渲染**：只有 ICP 的站很多，只有网安备案的几乎没有，
