@@ -262,6 +262,14 @@ nginx error.log 增量扫描，异常追加 health.log。
 本仓库以 **GPL-2.0** 分发，全文与版权声明见 [LICENSE](LICENSE)。
 第三方组件及其许可见 [THIRD-PARTY.md](THIRD-PARTY.md)。
 
+本仓库**不是从零写的**：它源于 [Memory-Blog](https://github.com/LinMoQC/Memory-Blog)
+（版权归 **林陌青川 (LinMo)**），本仓库是它的 Rust + Axum 重写分支。License 头部因此有
+**两条**版权声明（上游的与本仓库的），**分发时一条都不能删**。
+
+要在本仓库基础上二次开发：把你自己的版权声明**追加**在 LICENSE 的版权链后面即可；
+站点的署名走后台的站点设置（`blogCopyright`），**不用改代码**。来源链的完整说明见
+[THIRD-PARTY.md §0](THIRD-PARTY.md)。
+
 ### 看板娘前端（不在本仓）
 
 看板娘前端（`live2d-widgets/` 与 `live2d_model/`：渲染层、聊天面板、模型与贴图）不在本仓，

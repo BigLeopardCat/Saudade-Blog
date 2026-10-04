@@ -5,6 +5,24 @@
 以 `Cargo.lock`、`frontend/package-lock.json` 与实际安装的 `node_modules` 为准——那里面有
 每个传递依赖的准确版本，而它们的许可文件随包分发。
 
+## 0. 本仓库的来源（不是从零写的）
+
+在下面那份第三方清单之外，还有一条**必须随分发保留**的版权链：
+
+| 版权声明 | 对应作品 |
+|---|---|
+| `Copyright (C) 2024 林陌青川 (LinMo)` | 上游 [Memory-Blog](https://github.com/LinMoQC/Memory-Blog)（GPL-2.0），本仓库的前身 |
+| `Copyright (C) 2026 BigLeopardCat` | 本仓库：把它重写为 Rust + Axum，并在此之后扩展 |
+
+两条都写在 [LICENSE](LICENSE) 头部；本仓库以 GPL-2.0 分发，与上游一致。站点页脚那一行
+（`Based on Memory-Blog by 林陌青川 (LinMo). Refactored, extended and optimized in Rust & Axum
+by Sora Saudade.`）是这条链在页面上的呈现，**不是**本站的许可声明——许可一律以 LICENSE 为准。
+
+**若你在本仓库基础上二次开发**：上面两条版权声明**一条都不能删**（GPL-2.0 要求保留既有声明），
+把你自己的**追加**在后面即可。页脚同理，但它多一层：来源那一行（页脚第一行）原样保留，
+署部署者自己的名字的是它**下面**那一行——那行走后台的站点设置（`blogCopyright`，没填回退到
+博客作者名），**不需要改代码**。
+
 ## 1. 构建前自取、不进版本库的运行时
 
 这几份**刻意不入 git**（体积，或与专有许可有关），由 `npm run vendor:live2d` 与
@@ -61,12 +79,29 @@
 - **highlight.js 是 BSD-3-Clause**（不是 MIT），保留署名即可。
 - **react-helmet-async 是 Apache-2.0**，对该组件的修改需按该许可说明。
 
-## 4. 字体与图标
+## 4. 字体、图标与页面脚本
 
 | 资源 | 许可 |
 |---|---|
 | Font Awesome Free 6.7.2（`live2d-widgets/renderer.js` 的 `ICONS`，工具条图标） | 图标 CC BY 4.0 / 字体 SIL OFL 1.1 / 代码 MIT —— <https://fontawesome.com/license/free> |
 | Roboto（@fontsource/roboto） | SIL OFL 1.1 |
+| 樱花花瓣 PNG（`frontend/public/icons/sakura/1–4.png`） | **来源未记录**，见下 |
+| `frontend/public/sakura.js`（jQuery 3.1.1 + JQuery-Snowfall 打包件，**当前无人引用**） | jQuery：MIT；JQuery-Snowfall：MIT（见下） |
+
+**樱花花瓣 PNG——来源需要补上。** 这四张图是页面「樱花」特效**实际在用**的素材
+（`frontend/public/effects.js` 的 `PETAL_SRC`），但仓库里没有记录它们从哪来：不是本仓库
+原创，也不属于本文件里任何一项。**这是本文档里唯一一处无法说明来源的资产**——若你要把
+本项目用于商业用途，或要接受别人的二次分发，先把它查清；查不到出处就换成自制或明确
+许可的素材更稳妥（同 §1 对 Live2D 的提醒：越是"随手找来的图"，越容易在分发时踩坑）。
+
+**`frontend/public/sakura.js`——它并不是页面上那个樱花特效。** 这个 100KB 的打包件内容 =
+jQuery 3.1.1 + [JQuery-Snowfall](https://github.com/loktar00/JQuery-Snowfall)（作者 Jason
+Brown，GitHub `loktar00`）。页面上真正生效的樱花是 `effects.js` 里按 snowfall 原理**自己
+重写**的一份（`window.startSakura`），两者没有调用关系：**全仓代码与已发布文章里都搜不到
+`sakura.js` 的加载点**，它只是随 `public/` 一起被打进产物、白白发出去的 100KB。
+许可方面要留意——这个打包件里 **JQuery-Snowfall 的许可声明已被剥掉**（只剩 jQuery 那行
+banner），而 MIT 要求声明随分发一起带上。稳妥的做法是补上它的声明，或者干脆删掉这个没人
+引用的文件（删掉既省 100KB 又免掉这一条）。
 
 ## 5. Rust crates
 
