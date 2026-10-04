@@ -141,6 +141,31 @@ export const openZoomOverlay = (source: HTMLElement): void => {
     const r = stage.getBoundingClientRect()
     return clamp(Math.min((r.width - 56) / (w0 + padX), (r.height - 72) / (h0 + padY)), 0.1, 1)
   }
+  /**
+   * 浮层**打开时**的比例。
+   *
+   * 窄屏上"整图适配"对**带细字的图**没有意义：/article/19 那张流程图 viewBox 宽 1112px，
+   * 在 390px 舞台里适配出来是 0.291 ⇒ 图上标签只剩 ~5px 高（20261005 实测；行内那张被压成
+   * 276px 的图是同一量级）——"点开放大"点完还是看不清，等于白点。所以窄屏起点让给"能读"：
+   * 折算成 ~720px 的显示宽度（标签 ≈12px），双击回"整图适配"看结构，细节靠捏合继续放大。
+   *
+   * 桌面档（舞台 ≥768px）不动：适配比例本来 ≥1，与从前一字不差。
+   * 只管 mermaid 图框（`isFrame`）：正文照片同宽但"看细节"不是它的第一读法，起点裁掉一截
+   * 反而突兀 —— 它们仍旧整图适配。
+   */
+  const readableScale = (): number => {
+    const fit = fitScale()
+    // ⚠️ 判"窄屏"必须用**舞台自己的宽度**，不能用 `window.innerWidth`：浮层里那份未缩放的
+    // content 有 1146px 宽（缩放只走 `transform`、不进布局），文档一横向溢出，移动端
+    // Chromium 的 `innerWidth` 就跟着涨——20261005 实测：同一个 390px 视口里，模块读到的
+    // `innerWidth` 先报 1146、再报 740，用它的实现会**静默退回"整图适配"**（旧行为），
+    // 而页面级量到的 `innerWidth` 又是 390，两边对不上。（同族现象：线上那篇被宽原子顶开的
+    // 文章，390px 视口的 `innerWidth` 也被撑到 524，见 `index.sass` 里 `.readBody` 那段注释。）
+    // 舞台是 `position: fixed; inset: 0`，它才等于"这张图真正要被读的盒子"。
+    if (!isFrame || stage.getBoundingClientRect().width > 768) return fit
+    const natural = w0 + padX
+    return clamp(Math.max(fit, Math.min(1, 720 / natural)), 0.1, 1)
+  }
   const zoomAt = (factor: number, px: number, py: number): void => {
     const ns = clamp(scale * factor, 0.4, 16)
     const [cx, cy] = center()
@@ -149,13 +174,25 @@ export const openZoomOverlay = (source: HTMLElement): void => {
     scale = ns
     apply()
   }
-  const reset = (): void => {
+  /** 整图适配（桌面档的"还原"目标，也是窄屏双击的另一个端点） */
+  const fitView = (): void => {
     scale = fitScale()
     tx = 0
     ty = 0
     apply()
   }
+  const reset = (): void => {
+    scale = readableScale()
+    tx = 0
+    ty = 0
+    apply()
+  }
   reset()
+  // 提示语随档位变：窄屏起点是"能读"（整图被裁），双击的另一端是"整图"
+  tip.textContent =
+    readableScale() > fitScale() + 1e-6
+      ? '双指缩放 · 拖拽移动 · 双击切换「整图 / 细节」 · 单击空白关闭'
+      : '滚轮 / 捏合缩放 · 拖拽移动 · 双击还原 · 单击空白关闭 · Esc'
 
   // ── 滚轮缩放(以光标为中心) ──
   const onWheel = (e: WheelEvent): void => {
@@ -234,10 +271,21 @@ export const openZoomOverlay = (source: HTMLElement): void => {
       closeTimer = null
     }
     e.preventDefault()
-    if (scale <= fitScale() * 1.05) {
-      zoomAt((fitScale() * 2.5) / scale, e.clientX, e.clientY)
+    const fit = fitScale()
+    // 窄屏（起点是"能读"、整图被裁）：双击在「能读 ↔ 整图适配」之间切 —— 这两个端点才是
+    // 手机上真正要来回看的两个状态。桌面档照旧在「适配 ↔ 2.5× 适配」之间切。
+    if (readableScale() > fit + 1e-6) {
+      if (Math.abs(scale - fit) < 0.02 && Math.abs(tx) < 1 && Math.abs(ty) < 1) {
+        reset()
+      } else {
+        fitView()
+      }
+      return
+    }
+    if (scale <= fit * 1.05) {
+      zoomAt((fit * 2.5) / scale, e.clientX, e.clientY)
     } else {
-      reset()
+      fitView()
     }
   }
   stage.addEventListener("dblclick", onDblClick)

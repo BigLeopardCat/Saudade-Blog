@@ -302,6 +302,21 @@ html
     align-items: center
     position: relative
 
+    // 正文包裹层（index.tsx 里那个 motion.div）**必须自己钉住宽度**。
+    // 本块是 `display:flex; flex-direction:column; align-items:center` ⇒ 子项在**交叉轴**上
+    // 按 fit-content 定尺，而 fit-content 的下限是 min-content。正文里只要出现一个宽原子
+    // （表格 / 一整行长代码 / mermaid），这一层就被顶到那个 min-content 那么宽、**左右对称
+    // 溢出**。手机档实测（20261005）：390px 视口里这一层 659px、左缘 −134px，而
+    // `html { overflow-x: hidden }` 把溢出部分裁掉 ⇒ 症状是"正文被切了"而不是"能左右滑"
+    // （报告人看到的正是这个）。桌面档 659 < 880 所以看不出来——那是**没触发**，不是没问题：
+    // 换一篇表格更宽的文章一样会顶出去。
+    // 钉成 100% 之后，宽原子由它们各自的机制收进盒内（下面 `table` 的 `table-layout: fixed`
+    // 与 `pre` 的 `overflow-x: auto` 就是干这个的）。`min-width: 0` 是配套的一条：交叉轴上
+    // 的自动最小尺寸同样会兜住 min-content，写着比"知道它今天不生效"可靠。
+    .readBody
+      width: 100%
+      min-width: 0
+
     .markdown-body
       width: 100%
       max-width: 880px
@@ -620,7 +635,17 @@ html
     pre
       white-space: pre-wrap
       word-break: break-all
-      overflow-x: hidden !important
+      // 20261005：`hidden` → `auto`。这一条原来是 `hidden`（想把长行"折起来"），
+      // 但同一处那两条 `white-space`/`word-break` 写在 `pre` 上、真正排版的文本节点却在
+      // `<pre><code>` 里，而 `code` 的 `white-space` 被 bytemd/hljs 顶成 `pre`
+      // （线上实测 computed `pre` = pre-wrap、`code` = pre）⇒ **折行从来没发生过**，
+      // 长行只是被裁掉了尾巴、还没有任何办法看到（`hidden` 不给滚动条）。
+      // 改成 `auto` 后超长代码行可以横向滑——与基础样式里 `pre` 的那条 `overflow-x: auto`
+      // 同行为（桌面一直是滑的，只有手机档被改成了 hidden）。
+      // ⚠️ 别改回 `hidden`：`.readBody` 那条宽度钉死之后正文可用宽度从 599px 掉到 ~330px
+      // （`.readContent` 390 − 左右各 10 内边距 − 代码块自身内边距），能整行放下的代码
+      // 从 ~65 字符缩到 ~36 字符；`hidden` = 把超出的部分直接吃掉。
+      overflow-x: auto !important
       font-size: 13px
 
 // ── mermaid 图独立框(第 38 轮):边界清晰 + 单击放大提示 ──
@@ -654,6 +679,17 @@ html
     pointer-events: none
   &:hover::after
     opacity: 1
+  // 触屏没有 hover ⇒ 上面那条角标在手机上**等于不存在**（功能没有入口），而手机上这张图
+  // 本来就被压得极小：/article/19 那张流程图 viewBox 1112×598，390px 视口里只渲染成
+  // 276px 宽、图上标签 ~5px 高（20261005 实测）——"点开放大"是唯一的读法，提示必须先看得见。
+  // 同族理由与写法见 `Vitrine/index.sass` 那条 `@media (hover: none)`
+  //（「触屏没有 hover：直接常亮，否则这个功能等于不存在」）。
+  // ⚠️ 这条必须写在 `&::after`（opacity: 0）**之后**：同特异度靠源序赢，sass 按源码位置
+  // 吐产物（这类"同选择器、同特异度"的媒体档正是 `tests/sass-media-shadow.test.mjs` 判据 ①
+  // 盯的形状）。也不要改成给 `&::after` 加 `!important` —— 那会把 `:hover` 那条一起吃掉。
+  @media (hover: none)
+    &::after
+      opacity: 1
   svg
     display: block
     margin: 0 auto
