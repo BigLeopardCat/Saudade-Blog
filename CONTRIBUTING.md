@@ -3,8 +3,7 @@
 面向想在本地把它跑起来、或者想提 PR 的人。项目整体在 [README.md](README.md)，
 这里是"怎么动手"。
 
-> 遇到文档与代码不一致：**以代码为准**，然后顺手把文档改了 —— 这份文件以前就有过
-> 指向不存在目录的条目（`src-tauri/`、`migration/`），那种错比没有文档更费人时间。
+> 遇到文档与代码不一致：**以代码为准**，然后顺手把文档改了。
 
 ---
 
@@ -51,10 +50,10 @@
 ——所以建库那一步是显式把库名传给 `mysql`（`mysql ... saudade_blog < "$f"`），
 **不要靠脚本自带的 `USE`**：那三份在别人的库上会报 "No database selected"。
 
-> ⚠️ **反过来说，带 `USE` 的那些在你的库上会去打生产库吗？不会 —— 但前提是你别绕过下面这个脚本。**
-> `USE saudade_blog;` 会把连接**切到那个库**，所以 `mysql <你的库> < 某个迁移.sql` 读到那一行之后，
-> 后面所有语句都打到 `saudade_blog` 上，而且 mysql 不会报错。下面这个脚本对每个文件都先剥掉
-> `USE` 行、再显式点名库名，剥不干净就中止 —— 直接手抄它的循环逻辑时请把这层照抄过去。
+> ⚠️ **带 `USE` 的那些迁移会把你连的库顶掉。** `USE saudade_blog;` 会把连接**切到那个库**，
+> 所以 `mysql <你的库> < 某个迁移.sql` 读到那一行之后，后面所有语句都打到 `saudade_blog` 上，
+> 而且 mysql 不会报错。下面这个脚本对每个文件都先剥掉 `USE` 行、再显式点名库名，
+> 剥不干净就中止 —— 自己写循环时要把这一层照抄过去。
 
 建库用一个脚本（[`scripts/migration/fresh_install.sh`](scripts/migration/fresh_install.sh)），
 **不要**自己把 `*.sql` 按顺序全跑一遍：
@@ -67,11 +66,10 @@ ALLOW_PRODUCTION_NAME=1 bash scripts/migration/fresh_install.sh saudade_blog -ur
 
 **为什么不能"按文件名顺序把 `*.sql` 全跑一遍"**：`0000_base_schema.sql` 是
 **20261001 的生产库快照**——那天（含）之前所有增量迁移的效果**已经在里面了**，而它们大多
-是无保护的 `ALTER TABLE … ADD COLUMN`（没有 `IF NOT EXISTS`）。照单全跑必然在半路撞上
-`ERROR 1060 Duplicate column name`。20261003 在空库上实测：40 个文件里 **17 个**会红
-（`note_cover_crop_20260912` / `note_author_20261001` / `user_chat_quota_20260929`…），
-`chat_conversation_20260903.sql` 还会撞 `ERROR 1050 Table 'conversation' already exists`。
-（撞错的那 17 个**不是坏迁移**：它们在快照之前，本来就该在快照之前跑完。）
+是无保护的 `ALTER TABLE … ADD COLUMN`（没有 `IF NOT EXISTS`）。照单全跑会在半路撞上
+`ERROR 1060 Duplicate column name`，以及 `chat_conversation_20260903.sql` 的
+`ERROR 1050 Table 'conversation' already exists`。那些报错的迁移本身没有坏，
+只是它们属于快照之前、不该再跑一次。
 
 所以规则是：**基架 = 快照，之后只补快照日期之后的迁移**。日期就是文件名里的
 `_YYYYMMDD.sql` 后缀，脚本按它筛（快照日当天及更早的一律跳过）。**加了新迁移不需要动脚本**；
@@ -80,9 +78,8 @@ ALLOW_PRODUCTION_NAME=1 bash scripts/migration/fresh_install.sh saudade_blog -ur
 
 ⚠️ 上面这条规则的**前提是快照完整**，而它并不总是完整：快照是生产库的导出，**生产库漏跑过的
 迁移，快照里自然也没有**，日期规则又会把那份迁移静默跳过 —— 结果是"从零建库"一路建到线上
-仍然是坏的。`password_reset_token_20260921.sql` 就是这么漏的（20260921 写好、一直没人跑，
-而 `routes/auth.rs` 的 `reset_password` 从一开始就在引用它；20261004 才发现生产库 28 张表里
-没有这张表）。这类迁移登记在脚本的 `apply_despite_snapshot()` 名单里**强制补跑**，
+仍然是坏的（`password_reset_token_20260921.sql` 就漏过：代码从第一天起就在引用那张表，
+而库里没有）。这类迁移登记在脚本的 `apply_despite_snapshot()` 名单里**强制补跑**，
 门槛只有一条：**脚本必须幂等**（它会被无条件跑一遍，不看日期）。重新导出基架、`SNAPSHOT`
 前移之后，名单要逐条核对、把效果已进新快照的删掉。
 
@@ -106,8 +103,8 @@ mysql -uroot -p -e "CREATE USER 'saudade_blog'@'localhost' IDENTIFIED BY '换成
 多数迁移都写成幂等的（`IF NOT EXISTS` / `IF EXISTS` / 靠 `migration_flags` 表打标记），
 重复执行安全 —— 但**能只跑一次就跑一次**，个别脚本带数据回填，重跑会覆盖你改过的数据。
 
-> ⚠️ **`scripts/migration/` 里混着"夹具"和作者的一次性脚本，别把整个目录无脑跑一遍。**
-> 上面的循环跳过的就是它们：
+> ⚠️ **`scripts/migration/` 里混着评测夹具与一次性脚本，不要整个目录无脑跑一遍。**
+> `fresh_install.sh` 跳过它们，但自己写循环时要照着同样跳过：
 >
 > | 跳过 | 是什么 |
 > |---|---|
@@ -119,7 +116,6 @@ mysql -uroot -p -e "CREATE USER 'saudade_blog'@'localhost' IDENTIFIED BY '换成
 >
 > 前两类跑进你的库会凭空多出几个 `agent_fixture_*` / `agent_test_user_*` 账号；
 > 后三类在你的库上没有对象，跑也是空转。**判断依据是文件名里的主题，不是日期。**
-> 这个目录按用途混放是历史遗留（见「已知缺口」），加新文件时照着上表想想属于哪一类。
 
 ### 2.2 环境变量
 
@@ -132,8 +128,7 @@ cp .env.example .env
 
 - `DATABASE_URL` 和 `JWT_SECRET` **不配就起不来**（前者 `main.rs` 直接 panic，后者登录时 panic）
 - `SITE_URL` **别人部署必须改成自己的域名** —— 它在后端决定 sitemap 里的链接与 CORS 默认白名单。
-  不设**不会**回落到原作者的站：缺省值是中性占位 `http://localhost:3000`（`src/utils.rs::site_url`
-  的注释写明了这个取向），爬虫会忽略它 —— 也就是说**不设的后果是"不对外宣称"，不是"替别人宣传"**
+  缺省值是中性占位 `http://localhost:3000`（见 `src/utils.rs::site_url`），爬虫会忽略它
 - 前端那一半的站点地址走 **`VITE_SITE_URL`**（构建期变量，同名不同前缀，`.env` 里那份 `SITE_URL`
   管不着它）：`frontend/index.html` 的 canonical / og:url 占位符由 vite 在构建时替换。
   两个都要设，别只设一个
@@ -165,10 +160,9 @@ npm run dev             # Vite 开发服务器
 而 `vendor:live2d` 往它的 `vendor/` 子目录里写——反过来的话刚取到的 `vendor/` 会被抹掉。
 
 漏掉 `fetch:widget` 的话，`npm run dev` 打得开、聊天面板也在，只有看板娘**一帧不画**，
-控制台报 `chat-stream.js` 之类 404（`vendor:live2d` 还会因为找不到目录而失败，算是撞上了）。
+控制台报 `chat-stream.js` 之类 404（`vendor:live2d` 也会因为找不到目录而失败）。
 漏掉 `vendor:live2d` 则是同一个症状、报 `/live2d-widgets/vendor/pixi.min.js` 加载失败——
-这是**故意**的：那些是第三方产物，不适合进本仓的源码树，所以选择"要么显式取一次、
-要么不渲染"，而不是悄悄塞进 git。
+那几份第三方产物**不入库**（见 §5），必须显式取一次，否则不渲染。
 
 开发模式下**不需要配代理**：`src/utils/runtimeApi.ts` 检测到端口是 **5173（`npm run dev`）
 或 4173（`npm run preview`）**时会自动把 API 指到 `http://<当前主机>:3000`。但跨源了，
@@ -210,8 +204,8 @@ npm run lint                                      # ESLint
 ```
 
 > ⚠️ 本地复核 lint 时**必须**带 `--report-unused-disable-directives`（`npm run lint`
-> 脚本里已经带了）。原因：一条**多余的** `eslint-disable-next-line` 在这里判 error ——
-> 历史上有一次 push 因为这个红掉，结果是那次**什么都没部署**，而看 CI 只知道"失败了"。
+> 脚本里已经带了）：一条**多余的** `eslint-disable-next-line` 在这里判 error，
+> 而它会让 CI 红 —— CI 红就意味着这次 push 什么都没部署。
 >
 > 另一条：`npm test` **不包含** ESLint，两者是分开的两道门。
 
@@ -225,10 +219,19 @@ bash scripts/migration/fresh_install.sh saudade_it -uroot -p   # 先备一个空
 TEST_MYSQL_URL="mysql://root:密码@127.0.0.1:3306/saudade_it" cargo test --test mysql_integration
 ```
 
-它验的是 MockDatabase **结构上验不了**的那一类（`SUM(<整数列>)` 返回 DECIMAL、
-零行时 NULL 折零、空 id 列表必须短路、几条外键真的插得进去）。最要紧的是第一条：
-20260930 线上那次 500 就是它，而 `cargo check` 与 mock 全绿。CI 会起一个 `mysql:8.0`
-服务容器跑它（见 `deploy.yml` 的 `check` job），**它门住部署**。
+它验的是 MockDatabase **结构上验不了**的那一类：
+
+- `SUM(<整数列>)` 返回 DECIMAL、零行时 NULL 折零、空 id 列表必须短路、几条外键真的
+  插得进去 —— 最要紧的是第一条，`cargo check` 与 mock 都验不出它；
+- **额度扣减的边界**（`quota::try_consume`）：`WHERE used < limit` 的最后一格恰好扣一次、
+  被挡住的那一轮一个数都不许动 —— `rows_affected == 1` 这个判据是真的 UPDATE 语义；
+- **会话搜索的 LIKE 转义**（`%`/`_` 要按字面匹配）与列表的置顶/倒序/命中锚；
+- **额度申请的原子认领**：重复点"通过"第二刀必须零副作用（清零没再发生、通知没多出第二条）。
+
+后三组要真 JWT 走完 `create_router` 的中间件，所以它们**自己把 `JWT_SECRET` 设上**
+（`create_token` 从进程环境读密钥）。
+
+CI 会起一个 `mysql:8.0` 服务容器跑它（见 `deploy.yml` 的 `check` job），**它门住部署**。
 
 ### 3.2 沙箱套件（要 Playwright + 无头 Chrome，**不进 CI**）
 
@@ -257,20 +260,18 @@ python3 frontend/tests/某个.test.py
 | `scripts/*.py` | 本仓 `scripts/` | 部署与巡检脚本（`deploy/` 下几个）**没有对应套件**，不进 CI。本仓 `scripts/` 下**没有 `eval/` 目录**——评测全在 agent 仓 |
 
 **目录就是判据**：`tests/` 根下跟着 `cargo test` 跑（要外部依赖的用环境变量门控成"不设即跳过"），
-`tests/manual/` 下是**要活服务或真凭据**、只能手动跑的（20261003 起这么分；`tests/frontend_contract/`
-这个名字已经不在了）。前端那两批同理：`frontend/tests/*.test.mjs` 进 CI，
-`frontend/tests/*.test.py` 要无头 Chrome、走夜间沙箱。
+`tests/manual/` 下是**要活服务或真凭据**、只能手动跑的。前端那两批同理：
+`frontend/tests/*.test.mjs` 进 CI，`frontend/tests/*.test.py` 要无头 Chrome、走夜间沙箱。
 
 **CI 到底跑哪几项**：见 [.github/workflows/deploy.yml](.github/workflows/deploy.yml)
-的 `check` job。别照抄本文档 —— 那里的 `paths-filter` 决定了某些改动会**整个跳过**
+的 `check` job —— 那里的 `paths-filter` 决定了某些改动会**整个跳过**
 （job 显示 success 但什么都没做）。
 
 ---
 
 ## 4. 提交约定
 
-> **这一节是提交规范的唯一事实源。** 别的文档（包括 `CLAUDE.md`）只指过来，不再另存一份 ——
-> 两份规则迟早会漂，而"按哪一份执行"没有仲裁者。
+> **这一节是提交规范的唯一事实源**，别的文档只指过来、不另存一份。
 
 - 分支：从 `cn_sora_blog` 切出来（默认工作分支）
 
@@ -300,8 +301,7 @@ fix: 留言板驳回理由一直显示未填写
 - 改动的"为什么"写在**代码注释里**，不要只写在提交信息里：提交信息会随历史沉底，
   注释会跟着那行代码走。
 
-两类反例（第一类的形状在历史上真出现过：20260922 复盘时两个仓各有 4 条"首行即全文"
-的提交，最长 510 字符）：
+两类反例：
 
 ```
 ✗ fix: 修复标题不居中、读数改 2×2、看板娘左移 20px、讨论区回复另起一行
@@ -330,8 +330,6 @@ bash scripts/dev/install-hooks.sh     # = git config core.hooksPath .githooks，
 
 ### 改代码时的几条硬约束
 
-这些是踩过坑换来的，不是风格偏好：
-
 1. **本地不编译大产物**。`vite build` 和 `cargo build --release` 内存开销很大，低内存机器上
    会 OOM 甚至拖垮整机。本地只跑 `cargo check`、`tsc`、`npm test`，构建交给 CI。
 2. **永远不要 `cargo clean`**（`target/release/` 里是线上正在跑的那个二进制）。
@@ -358,9 +356,8 @@ bash scripts/dev/install-hooks.sh     # = git config core.hooksPath .githooks，
 | GPL-3.0-only | ❌ 不行 |
 | 专有 / 未声明许可 | ❌ 不行 |
 
-这不是理论洁癖：看板娘的渲染层当初就是从 GPL-3.0 的上游项目一路带进来的，等要开源时
-才发现和博客自身的 GPL-2.0 冲突，只能整体重写（已于 20261001 换成 MIT 的
-pixi.js + pixi-live2d-display，见 [frontend/README.md](frontend/README.md)）。
+看板娘的渲染层是自研代码，基于 MIT 的 pixi.js + pixi-live2d-display
+（见 [frontend/README.md](frontend/README.md)）。
 **图片、字体、模型文件同样适用** —— "从某个 CDN 引一张图"也可能是在分发别人的作品。
 
 还有一类**可以进构建产物、但不能进源码树**的：Live2D 的 Cubism Core 运行时是专有许可，
@@ -368,8 +365,8 @@ pixi.js + pixi-live2d-display，见 [frontend/README.md](frontend/README.md)）�
 **这段字节是不是从本仓发出去的**——从官方源直取没问题，放进 git 就等于本仓在分发它。
 
 **看板娘前端（`live2d-widgets/` + `live2d_model/`）的源码住在 `saudade-blog-agent` 仓**
-（20261002 起；该仓其余部分是 Apache-2.0，**没有并进本仓的源码树**，只是构建时按 pin 取产物）。
-那边 `frontend/LICENSE` 是 MIT 全文，与本仓的 GPL-2.0 兼容，这条链是通的。代价要记住：
+（20261002 起；**没有并进本仓的源码树**，只是构建时按 pin 取产物）。那边以 MIT 分发
+（`frontend/LICENSE`），与本仓的 GPL-2.0 兼容，这条链是通的。代价要记住：
 **MIT 要求把版权与许可声明随分发一起带上**，所以那段的全文抄在本仓
 [README.md](README.md) 的《许可》一节里——动那里之前先想清楚这一条。
 其余第三方组件、版本与许可以及兼容性判据，统一见 [THIRD-PARTY.md](THIRD-PARTY.md)。
@@ -379,8 +376,7 @@ pixi.js + pixi-live2d-display，见 [frontend/README.md](frontend/README.md)）�
 （agent 仓 `frontend/ASSETS-LICENSE.md`）：可自用、可改，**不可商用**，改作须同样协议。
 **带 NC 的许可不是 OSI 开源许可**——那一部分属于"源码可用"。它与 GPL-2.0 的关系是
 "同一介质上的聚合"（构建时取来一起打包、不是并进本仓源码树），所以不冲突；
-但**上一行的兼容性结论只对代码那一半成立**，往本仓引进美术资源时别拿它当通行证。
-（这条链在 20261002 之前是"模型与贴图也按 MIT"——用户后来把美术单独拆出来改了协议。）
+但**上面那条兼容性结论只对代码那一半成立**，往本仓引进美术资源时不能拿它当通行证。
 
 ---
 
@@ -388,9 +384,9 @@ pixi.js + pixi-live2d-display，见 [frontend/README.md](frontend/README.md)）�
 
 诚实列出，免得你按文档走到一半撞墙：
 
-- **`0000_base_schema.sql` 没在空库上真跑过**（见那个文件的头注）——它逐字复刻了线上
-  26 张表的 DDL（已比对核实），但"倒进一个空库、一把跑通"这一步没做（导出账号没有
-  `CREATE DATABASE` 权限）。第一次真跑会发生在你的空库上；若报错多半是外键顺序，
+- **`0000_base_schema.sql` 是生产库快照**——它逐字复刻线上 26 张表的 DDL，CI 每次 push
+  都会用 `fresh_install.sh` 在一个空的 `mysql:8.0` 容器上从零建一遍（`deploy.yml` 的
+  `Bootstrap MySQL schema` 那一步），所以这条路一直有人走。你的库上若报错多半是外键顺序，
   文件开头的 `FOREIGN_KEY_CHECKS=0` 就是为它准备的。
 - **`scripts/migration/` 目录混着夹具与作者一次性脚本**（见 2.1 的两条提示）——
   没有按用途分目录，只能靠文件名前缀辨认。想改成分目录的话，先确认没人按路径引用它们。
