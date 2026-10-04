@@ -360,14 +360,17 @@
                     background: rgba(217, 79, 154, 0.13)
                     // **刻意不加粗**：加粗会改变按钮宽度，上面那条"位置不动"就白写了。
                     // 两态的区别只有颜色与底色。
+                    //
+                    // 上面这行 `color` 在 20261005 之前是**空头支票**：图标当时是彩色表情
+                    // 字形，颜色由平台调色板决定、`color` 基本不参与，真正看得见的只有这个
+                    // 底色。换成吃 `currentColor` 的 SVG 之后它才真的生效——所以**这条声明
+                    // 别删**（删了在 emoji 时代看不出差别，现在一眼就能看出来）。
                 &:disabled
                     cursor: default
                     opacity: 0.55
-                .commentVoteIcon
-                    // line-height: 1 是必须的：emoji 的字框比 0.78rem 的字号高得多，
-                    // 不压平会把这颗钮顶得比旁边的「回复」高一截。
-                    font-size: 0.86rem
-                    line-height: 1
+                // 图标（svg）是这颗钮的 flex item，靠上面的 `align-items: center` 对齐，
+                // 不需要 `.commentVoteIcon` 那层 span 早先给 emoji 字框压平用的
+                // font-size / line-height——那一层已随 emoji 一起删掉（20261005）。
                 .commentVoteNum
                     // 等宽数字：票数从 9 涨到 10 时按钮不会因为多一位而挪一下
                     font-variant-numeric: tabular-nums
