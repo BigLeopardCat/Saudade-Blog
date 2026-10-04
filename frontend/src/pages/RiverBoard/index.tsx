@@ -492,7 +492,7 @@ const buildMoonSprite = (geo: { size: number; ss: number }) => {
                 const q = Math.hypot((nx - m.x) / m.rx, (ny - m.y) / m.ry);
                 paperTone -= m.a * smoothstep(1.15, 0.2, q);
             }
-            const tone = Math.max(0.68, Math.min(1, paperTone * (0.9 + 0.1 * smoothstep(-0.2, 0.8, dot))));
+            const tone = Math.max(0.68, Math.min(1, paperTone));
             // 暖纸色月面：只保留低对比色块，不再把照片的高频细节压成环状纹理。
             data[i4] = Math.round(247 * tone);
             data[i4 + 1] = Math.round(229 * tone);
