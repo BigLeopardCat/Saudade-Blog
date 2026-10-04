@@ -85,23 +85,45 @@ by Sora Saudade.`）是这条链在页面上的呈现，**不是**本站的许�
 |---|---|
 | Font Awesome Free 6.7.2（`live2d-widgets/renderer.js` 的 `ICONS`，工具条图标） | 图标 CC BY 4.0 / 字体 SIL OFL 1.1 / 代码 MIT —— <https://fontawesome.com/license/free> |
 | Roboto（@fontsource/roboto） | SIL OFL 1.1 |
-| 樱花花瓣 PNG（`frontend/public/icons/sakura/1–4.png`） | **来源未记录**，见下 |
-| `frontend/public/sakura.js`（jQuery 3.1.1 + JQuery-Snowfall 打包件，**当前无人引用**） | jQuery：MIT；JQuery-Snowfall：MIT（见下） |
+| 樱花花瓣 PNG（`frontend/public/icons/sakura/1–4.png`） | **上游仓库未声明许可**（见下） |
+| `frontend/public/sakura.js`（jQuery 3.1.1 + JQuery-Snowfall + 上游自写代码的打包件，**当前无人引用**） | jQuery / JQuery-Snowfall：MIT；**上游自写部分未声明许可**（见下） |
 
-**樱花花瓣 PNG——来源需要补上。** 这四张图是页面「樱花」特效**实际在用**的素材
-（`frontend/public/effects.js` 的 `PETAL_SRC`），但仓库里没有记录它们从哪来：不是本仓库
-原创，也不属于本文件里任何一项。**这是本文档里唯一一处无法说明来源的资产**——若你要把
-本项目用于商业用途，或要接受别人的二次分发，先把它查清；查不到出处就换成自制或明确
-许可的素材更稳妥（同 §1 对 Live2D 的提醒：越是"随手找来的图"，越容易在分发时踩坑）。
+### 樱花素材的来路（20261005 查实）
 
-**`frontend/public/sakura.js`——它并不是页面上那个樱花特效。** 这个 100KB 的打包件内容 =
+五份文件同出一个仓库：[WRXinYue/sakura_fall](https://github.com/WRXinYue/sakura_fall)
+的 `sakura_fall1/`，与本仓**逐字节相同**——下表可用 `git hash-object <文件>` 逐条复核：
+
+| 本仓文件 | 上游路径 | git blob 哈希 |
+|---|---|---|
+| `frontend/public/icons/sakura/1.png` | `sakura_fall1/js/img/1.png` | `101d112d38b890ae157d221d8334c6fa0f4a2356` |
+| `frontend/public/icons/sakura/2.png` | `sakura_fall1/js/img/2.png` | `23e0a4ccc577aa35d9c1c790df228fa883a68b5d` |
+| `frontend/public/icons/sakura/3.png` | `sakura_fall1/js/img/3.png` | `24e229f0706dfd884b7339fef23ba743a515583a` |
+| `frontend/public/icons/sakura/4.png` | `sakura_fall1/js/img/4.png` | `b7f99c6123041e0a8709153d990d391594820d69` |
+| `frontend/public/sakura.js` | `sakura_fall1/js/sakura.js` | `9f3a29ae443b7af239d3894c8106ec743de7d851` |
+
+**但那个仓库没有许可。** 根目录只有 `README.md`（空）、`sakura_fall1/`、`sakura_fall2/`；
+GitHub 的 license 接口对该仓返回 404，仓库元数据里 `license: null`；仓库建于 2022-08-06
+之后再没更新过。按默认版权规则即**保留所有权利**——本项目并没有取得再分发这五份文件的授权。
+
+它和 §1 的 Live2D 不是一类问题：Live2D 是"另有条款约束的专有软件"，这里是"**根本没有条款**"。
+三件事可以分开处理：
+
+- **`sakura.js` 删掉最省事**：它当前**无人引用**（见下），只是随 `public/` 一起进产物、
+  白白发出去的 100KB。删掉它既去掉一份来路不明的文件，也顺带免掉"它里面 JQuery-Snowfall
+  的 MIT 声明已被剥掉"这个隐患。
+- **四张花瓣 PNG 在用**（`frontend/public/effects.js` 的 `PETAL_SRC`），删不得。要清干净就
+  换成自制或明确许可的花瓣图——`effects.js` 按原始宽高比缩放（`width` + `height:auto`），
+  同尺寸的替代图可以直接顶替，不必改代码。
+- **保留现状也可以**，但**拿去做商业站点之前**得先解决：授权只有原作者能给，最直接的办法是
+  到上游仓库开个 issue 问一句，或者换成自制素材。
+
+**`frontend/public/sakura.js` 并不是页面上那个樱花特效。** 这个 100KB 的打包件内容 =
 jQuery 3.1.1 + [JQuery-Snowfall](https://github.com/loktar00/JQuery-Snowfall)（作者 Jason
-Brown，GitHub `loktar00`）。页面上真正生效的樱花是 `effects.js` 里按 snowfall 原理**自己
-重写**的一份（`window.startSakura`），两者没有调用关系：**全仓代码与已发布文章里都搜不到
-`sakura.js` 的加载点**，它只是随 `public/` 一起被打进产物、白白发出去的 100KB。
-许可方面要留意——这个打包件里 **JQuery-Snowfall 的许可声明已被剥掉**（只剩 jQuery 那行
-banner），而 MIT 要求声明随分发一起带上。稳妥的做法是补上它的声明，或者干脆删掉这个没人
-引用的文件（删掉既省 100KB 又免掉这一条）。
+Brown，GitHub `loktar00`）+ 上游作者自己的一段代码。页面上真正生效的樱花是 `effects.js` 里
+**自己重写**的一份（`window.startSakura`），两者没有调用关系：**全仓代码与已发布文章里都
+搜不到 `sakura.js` 的加载点**，它只是随 `public/` 被打进产物。它里面 **JQuery-Snowfall 的
+许可声明已被剥掉**（只剩 jQuery 那行 banner），而 MIT 要求声明随分发一起带上——这也是"删掉
+比修补它更省事"的理由。
 
 ## 5. Rust crates
 
