@@ -1472,3 +1472,279 @@
   letter-spacing: 0.18em;
   white-space: nowrap;
 }
+
+/* ---------------- 20261005：留言板整体视觉重绘 ----------------
+   统一材质为「墨青夜河 + 月白纸笺 + 朱砂印」。
+   这组覆盖保留原 DOM 与交互，只替换视觉层级，避免玻璃胶囊、古籍棕色和
+   紫黑弹窗各自抢主题。 */
+.rz-root {
+  --rz-ink: #10232b;
+  --rz-ink-deep: #07151c;
+  --rz-paper: rgba(238, 226, 197, 0.96);
+  --rz-paper-dim: rgba(221, 211, 186, 0.82);
+  --rz-paper-line: rgba(238, 226, 197, 0.28);
+  --rz-vermilion: #b84f43;
+  --rz-vermilion-bright: #e18a6c;
+  --rz-moon: #f5dca9;
+  --rz-shadow: 0 20px 60px rgba(2, 10, 14, 0.45);
+  background: #07151c;
+
+  .rz-veg {
+    background:
+      radial-gradient(ellipse at 50% 35%, transparent 42%, rgba(2, 13, 18, 0.32) 100%),
+      linear-gradient(to bottom, rgba(2, 13, 18, 0.28) 0%, transparent 22%, transparent 70%, rgba(2, 10, 14, 0.5) 100%);
+  }
+
+  .rz-ui {
+    .rz-title {
+      top: 30px;
+      left: 36px;
+      color: var(--rz-paper);
+      font-size: 21px;
+      letter-spacing: 0.28em;
+      text-shadow: 0 2px 20px rgba(245, 220, 169, 0.2);
+
+      i {
+        width: 8px;
+        height: 8px;
+        margin-right: 10px;
+        background: var(--rz-moon);
+        box-shadow: 0 0 16px rgba(245, 220, 169, 0.8);
+      }
+
+      .rz-couplet {
+        top: calc(100% + 16px);
+        gap: 13px;
+
+        > span {
+          color: rgba(238, 226, 197, 0.72);
+          font-size: 13px;
+          letter-spacing: 0.18em;
+
+          b {
+            color: var(--rz-vermilion-bright);
+            font-size: 15px;
+          }
+        }
+      }
+    }
+
+    .rz-hint {
+      bottom: 28px;
+      color: rgba(238, 226, 197, 0.56);
+      font-size: 12px;
+      letter-spacing: 0.2em;
+    }
+
+    .rz-home-btn,
+    .rz-album-btn,
+    .rz-wish-btn {
+      background: rgba(7, 21, 28, 0.72);
+      border: 1px solid var(--rz-paper-line);
+      border-radius: 6px;
+      box-shadow: 0 10px 28px rgba(2, 10, 14, 0.25);
+      color: var(--rz-paper-dim);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      transition: transform 0.2s ease, color 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+
+      &:hover,
+      &:focus-visible {
+        transform: translateY(-2px);
+        background: rgba(16, 39, 47, 0.88);
+        border-color: rgba(245, 220, 169, 0.64);
+        color: var(--rz-paper);
+      }
+    }
+
+    .rz-home-btn {
+      bottom: 184px;
+      padding: 9px 16px;
+      font-size: 12px;
+      letter-spacing: 0.18em;
+    }
+
+    .rz-album-btn {
+      bottom: 108px;
+      padding: 9px 10px;
+      font-size: 11px;
+      letter-spacing: 0.16em;
+    }
+
+    .rz-wish-btn {
+      bottom: 30px;
+      padding: 10px 17px;
+      color: var(--rz-paper);
+      font-size: 13px;
+      letter-spacing: 0.2em;
+
+      i {
+        background: var(--rz-vermilion-bright);
+        box-shadow: 0 0 12px rgba(225, 138, 108, 0.8);
+      }
+    }
+  }
+
+  .rz-lantern .rz-bubble,
+  .rz-modal .rz-modal-box {
+    background: var(--rz-paper);
+    border: 0;
+    border-radius: 4px;
+    box-shadow: var(--rz-shadow);
+    color: var(--rz-ink);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+
+    &::after {
+      background: var(--rz-paper);
+      border: 0;
+    }
+
+    .rz-msg {
+      color: var(--rz-ink);
+      text-shadow: none;
+      letter-spacing: 0.08em;
+    }
+
+    .rz-who {
+      color: rgba(16, 35, 43, 0.56);
+      text-shadow: none;
+    }
+
+    .rz-seal {
+      background: var(--rz-vermilion);
+      color: #fff0d7;
+      box-shadow: none;
+    }
+  }
+
+  .rz-lantern .rz-bubble {
+    border-left: 4px solid var(--rz-vermilion);
+  }
+
+  .rz-modal {
+    background: rgba(3, 14, 19, 0.66);
+
+    .rz-modal-box {
+      .rz-modal-close {
+        background: transparent;
+        border: 1px solid rgba(16, 35, 43, 0.28);
+        border-radius: 3px;
+        color: rgba(16, 35, 43, 0.66);
+
+        &:hover,
+        &:focus-visible {
+          background: rgba(16, 35, 43, 0.08);
+          border-color: rgba(16, 35, 43, 0.55);
+          color: var(--rz-ink);
+        }
+      }
+    }
+  }
+
+  .rz-notice-modal .rz-notice-box,
+  .rz-album-modal .rz-album-box,
+  .rz-wish-modal .rz-wish-box {
+    background: var(--rz-paper);
+    border: 0;
+    outline: 1px solid rgba(238, 226, 197, 0.45);
+    outline-offset: 5px;
+    box-shadow: var(--rz-shadow);
+    color: var(--rz-ink);
+
+    .rz-notice-title,
+    .rz-album-title,
+    .rz-wish-title {
+      color: var(--rz-ink);
+      text-shadow: none;
+      letter-spacing: 0.28em;
+    }
+
+    .rz-notice-body p,
+    .rz-wish-sub {
+      color: rgba(16, 35, 43, 0.62);
+    }
+
+    .rz-album-search input,
+    .rz-wish-input,
+    .rz-wish-author {
+      background: rgba(16, 35, 43, 0.06);
+      border-color: rgba(16, 35, 43, 0.2);
+      color: var(--rz-ink);
+
+      &::placeholder {
+        color: rgba(16, 35, 43, 0.38);
+      }
+
+      &:focus {
+        border-color: var(--rz-vermilion);
+      }
+    }
+
+    .rz-lamp-card,
+    .rz-cat-card,
+    .rz-album-tabs button {
+      background: rgba(16, 35, 43, 0.045);
+      border-color: rgba(16, 35, 43, 0.16);
+      color: rgba(16, 35, 43, 0.72);
+
+      &:hover,
+      &:focus-visible,
+      &.sel {
+        background: rgba(184, 79, 67, 0.09);
+        border-color: rgba(184, 79, 67, 0.58);
+        box-shadow: none;
+      }
+    }
+
+    .rz-wish-foot .rz-wish-ghost {
+      color: rgba(16, 35, 43, 0.58);
+      border-color: rgba(16, 35, 43, 0.24);
+      border-radius: 3px;
+    }
+
+    .rz-wish-foot .rz-wish-primary,
+    .rz-notice-foot .rz-wish-primary {
+      background: var(--rz-vermilion);
+      border: 0;
+      border-radius: 3px;
+      color: #fff0d7;
+      box-shadow: none;
+
+      &:hover:not(:disabled),
+      &:focus-visible:not(:disabled) {
+        background: #963c36;
+      }
+    }
+  }
+}
+
+@media (max-width: 620px) {
+  .rz-root .rz-ui {
+    .rz-title {
+      top: 20px;
+      left: 20px;
+      font-size: 17px;
+    }
+
+    .rz-home-btn {
+      left: 18px;
+      bottom: 164px;
+    }
+
+    .rz-album-btn {
+      left: 18px;
+      bottom: 94px;
+    }
+
+    .rz-wish-btn {
+      left: 18px;
+      bottom: 26px;
+    }
+  }
+
+  .rz-root .rz-wish-modal .rz-wish-box {
+    width: min(90vw, 520px);
+    max-width: min(90vw, 520px);
+  }
+}

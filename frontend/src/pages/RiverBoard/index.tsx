@@ -832,10 +832,10 @@ export default function RiverBoard() {
 
             // 夜空
             const sky = ctx.createLinearGradient(0, 0, 0, v.yH * 1.25);
-            sky.addColorStop(0, "#02040c");
-            sky.addColorStop(0.42, "#081029");
-            sky.addColorStop(0.78, "#101a3c");
-            sky.addColorStop(1, "#1c2450");
+            sky.addColorStop(0, "#07131a");
+            sky.addColorStop(0.42, "#0b2030");
+            sky.addColorStop(0.78, "#123044");
+            sky.addColorStop(1, "#1b4050");
             ctx.fillStyle = sky;
             ctx.fillRect(-MARGIN, -MARGIN, w + MARGIN * 2, v.yH * 1.25 + MARGIN * 2);
 
@@ -918,17 +918,17 @@ export default function RiverBoard() {
                 ctx.fillStyle = c1;
                 ctx.fill();
             };
-            ridge(v.yH * 0.82, 3.1, h * 0.045, "#0b1230");
-            ridge(v.yH * 0.92, 8.7, h * 0.062, "#070d22");
-            ridge(v.yH * 0.97, 1.7, h * 0.05, "#050a18");
+            ridge(v.yH * 0.82, 3.1, h * 0.045, "#0b2430");
+            ridge(v.yH * 0.92, 8.7, h * 0.062, "#071b25");
+            ridge(v.yH * 0.97, 1.7, h * 0.05, "#05131b");
 
             // 河水底色 + 河心天光带
             const riverBase = ctx.createLinearGradient(0, v.yH, 0, h);
             // 第 23 轮：整体调暗到接近背景（山体 #050a18-#0b1230），河面不再比远山更亮
-            riverBase.addColorStop(0, "#0e1738");
-            riverBase.addColorStop(0.3, "#081030");
-            riverBase.addColorStop(0.62, "#050b22");
-            riverBase.addColorStop(1, "#02040d");
+            riverBase.addColorStop(0, "#12384a");
+            riverBase.addColorStop(0.3, "#0b2a3b");
+            riverBase.addColorStop(0.62, "#061d2a");
+            riverBase.addColorStop(1, "#041018");
             traceRiver(ctx, 0, 1.14, false);
             ctx.fillStyle = riverBase;
             ctx.fill();
@@ -1080,7 +1080,7 @@ export default function RiverBoard() {
         front.quadraticCurveTo(pkx + 34, pky - 42, pkx + 56, pky - 44);
         front.closePath();
         front.fill();
-        front.fillStyle = "#050a18";
+        front.fillStyle = "#04131b";
         front.fillRect(pkx + 13, pky - 78, 3.5, 22);
         front.beginPath();
         front.arc(pkx + 14.75, pky - 86, 4.5, 0, Math.PI * 2);
