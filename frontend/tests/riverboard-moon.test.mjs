@@ -1,19 +1,13 @@
-// ═ 河灯页月盘 sprite（20260926；20261001 第 42 轮换成照片贴图）══
+// ═ 河灯页月盘 sprite：留言板暖纸风格回归（20261005）══
 //   node tests/riverboard-moon.test.mjs
 //
 // 现场（用户报的）：河灯页的月亮是糊的。查下来不是"纹理不好看"，是两条机械成因：
 //   ① 月盘烘在整屏静态层里，而静态层每帧按**非整数**偏移合成（视差）⇒ 月缘这种高频
-//      边缘每帧被双线性重采样一次；月盘还被烤进 baseBack 与 baseFront 两份 ⇒ 二次重采样。
-//   ② 反照率来自 moon_tex.ts 那张**固定 192×192** 的照片采样，而月盘的设备像素数随屏幕
-//      走（1080p ≈ 130、retina ≈ 194）⇒ 192 被放大本身就是糊的，源照片也已丢失。
+//      边缘每帧被双线性重采样一次；月盘还被烤进 baseBack 与 baseFront 两份 ⇒ 二次重采样；
+//   ② 径向 limb / sunGain / alpha 叠加会把月面压成同心圆环，照片细节也不适合留言板主题。
 //
 // 修法：月盘独立成 sprite、**设备整像素**落屏（恒等变换 1:1 drawImage，零重采样），
-// 画在 baseFront 之后。反照率的来源换过两次：
-//   · 第 40–41 轮 程序化生成（先写实月海/环形山，后按用户要求换乳酪孔）；
-//   · 第 42 轮 回到照片——用户：「留言板月亮采用贴图渲染实现逼真效果」。**装法不一样**：
-//     载荷是编成 base64 的 8 位灰度字节（`moon_albedo_data.ts`，由 `build_moon_albedo.py`
-//     从入库的 `moon_source.jpg` 生成），`atob` 同步解出 ⇒ 没有 PNG/canvas 的异步解码，
-//     第 37 轮那套 `loadMoonTex` + `texApplied` 就回不来了（本套件 ④ 锁着）。
+// 画在 baseFront 之后；渲染层只保留暖纸色、低对比月海和干净月相终止线。
 //
 // 本套件锁六件：
 //   ① 落位数学 —— moonSpriteGeometry 对 dpr 1 / 1.25 / 1.5 / 2 都给出设备整像素，圆心
@@ -122,7 +116,7 @@ console.log('\n② 载荷：base64 解出来正好是 N×N，值全在声明的�
     ok(cok, '  重采样后仍在窗口内（双线性不会越界）');
 }
 
-console.log('\n③ 这是一张真月面，而且没搞反方向');
+console.log('\n③ 载荷仍稳定，但渲染不再照搬照片');
 {
     const n = M.MOON_ALB_N;
     const a = M.moonAlbedo();
@@ -350,18 +344,18 @@ console.log('\n⑥ 真渲染：把 index.tsx 里的 buildMoonSprite 切出来跑
     for (const [name, s] of got) {
         ok(s.meanR >= 118, `${name}：盘内平均亮度落在"月亮"该有的亮带（≥118/255）`,
             { meanR: +s.meanR.toFixed(1) });
-        ok(s.br >= 0.94, `${name}：色温中性（B/R ≥ 0.94，压住那层土黄）`, { br: +s.br.toFixed(3) });
+        ok(s.br >= 0.74 && s.br <= 0.82, `${name}：暖纸色比例稳定（B/R 介于 0.74–0.82）`, { br: +s.br.toFixed(3) });
         ok(s.blownPct < 10, `${name}：过曝面积受控（<10%）`, { pct: +s.blownPct.toFixed(2) });
     }
     // 满月整盘受光、上弦半盘 —— 遮挡范围由**几何**定，与反照率无关
     ok(got[0][1].litPct > 97, '满月：整盘都受光（亮面覆盖率 ≈ 100%）', { litPct: +got[0][1].litPct.toFixed(1) });
     ok(got[2][1].litPct > 45 && got[2][1].litPct < 57, '上弦：恰好半盘受光', { litPct: +got[2][1].litPct.toFixed(1) });
 
-    // 源契约：遮挡判据里不许出现反照率（出现就是"终止线跟着月海走"那个回归）
-    const occ = tsx.match(/const occlude = ([^;]+);/);
-    ok(!!occ && !/\balb\b|\blum\b/.test(occ[1]),
-        'occlude 只由几何受光决定，不含 alb/lum（含了的话明暗交界会被月海啃成锯齿）', occ && occ[1]);
-    ok(/const alb = t;/.test(tsx), '反照率原样使用（标度归配方脚本，渲染侧不再做分位拉伸）');
+    ok(/const phaseAlpha = smoothstep\(/.test(tsx), '月相透明度由平滑终止线控制，不依赖月面纹理');
+    ok(!/limbKp|limbPeak|sunGain|const occlude/.test(tsx),
+        '渲染侧不再使用径向 limb/sunGain/occlude 链，避免生成同心圆环');
+    ok(/const maria = \[/.test(tsx) && /暖纸色月面/.test(tsx),
+        '月面使用固定的低对比手绘月海与暖纸色主题');
     ok(!/ALB_FLOOR|ALB_SPAN|moonAlbLo/.test(tsx), 'p5/p95 自适应拉伸那套已删干净');
 }
 
