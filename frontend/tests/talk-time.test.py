@@ -42,13 +42,46 @@ def check(desc, cond, detail=""):
         FAILS.append(desc)
 
 
+def tiny_png(rgb: tuple) -> str:
+    """1×1 PNG 的 data URL。
+
+    头像是**必须真的加载得出来**的：antd 的 `Avatar` 在图片加载失败时会把 `<img>` 撤掉、
+    换成默认图标——样本若指向一个 404 的路径，"img 的 src 对不对"这条断言会**恒定假红**
+    （与实现对不对无关）。两个不同的纯色让它同时满足"每行不同"与"都加载得出来"。
+    """
+    import base64
+    import struct
+    import zlib
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return (struct.pack(">I", len(data)) + tag + data
+                + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF))
+
+    png = (b"\x89PNG\r\n\x1a\n"
+           + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+           + chunk(b"IDAT", zlib.compress(b"\x00" + bytes(rgb)))
+           + chunk(b"IEND", b""))
+    return "data:image/png;base64," + base64.b64encode(png).decode()
+
+
 # 样本：第 2 条刻意是**去年**的（跨年）。若年份取的是"当前年"，这条会当场露馅。
+# 20261005 追加：每条带自己的 `nickname`/`avatar`（后端 `src=talk` 的列表现在带发布者
+# 信息），且两条**刻意不同** —— 若实现回头去取"看的人自己"的头像（历史 bug），
+# 两张卡会同时变成下面那个探针值，⑤ 的断言当场红。
 TALKS = [
     {"talkKey": 1, "talkTitle": "今天的说说", "content": "第一条正文",
-     "createTime": "2026-09-24 12:34:56", "updateTime": "2026-09-24 12:34:56"},
+     "createTime": "2026-09-24 12:34:56", "updateTime": "2026-09-24 12:34:56",
+     "nickname": "Sora Saudade", "avatar": tiny_png((220, 80, 80))},
     {"talkKey": 2, "talkTitle": "去年的说说", "content": "第二条正文",
-     "createTime": "2025-12-31 23:59:59", "updateTime": "2025-12-31 23:59:59"},
+     "createTime": "2025-12-31 23:59:59", "updateTime": "2025-12-31 23:59:59",
+     "nickname": "泠月喵", "avatar": tiny_png((80, 120, 220))},
 ]
+
+# redux 桩里的"当前登录用户"。20261005 起组件**不该**再读它（头像/名字都该来自每行数据）；
+# 留一个**可辨认、且真的加载得出来**的第三张图，就是为了让"又回去读登录用户"这件事
+# 在断言里现形：给个 404 的路径的话，antd 会把 `<img>` 撤掉，红基线只能红出"没有 img"，
+# 分不清"取错了头像"和"压根没渲染头像"（20261005 红基线第一版就踩了这个）。
+VIEWER_AVATAR = tiny_png((60, 180, 90))
 
 
 def build_sandbox() -> pathlib.Path:
@@ -67,11 +100,11 @@ def build_sandbox() -> pathlib.Path:
     # 边界②：redux——只桩"读"。状态对象保持同一个实例（每次返回新对象会让 useSelector
     # 判定"变了"而无限重渲染）。
     (stubs / "redux.tsx").write_text('''\
-const state: any = { user: { avatar: '', name: 'Sora' } };
+const state: any = { user: { avatar: %s, name: 'Sora' } };
 export const useSelector = (fn: any) => fn(state);
 export const useDispatch = () => (_a: any) => undefined;
 export const Provider = ({ children }: any) => children;
-''', encoding="utf-8")
+''' % __import__("json").dumps(VIEWER_AVATAR), encoding="utf-8")
 
     (sb / "src/components/SeoHelmet.tsx").write_text(
         "const SeoHelmet = (_p: any) => null;\nexport default SeoHelmet;\n", encoding="utf-8")
@@ -241,6 +274,42 @@ with sync_playwright() as p:
     check("两条说说的日期块水平位置一致（链条是直的）",
           abs(g0["time"]["r"] - g1["time"]["r"]) <= 1,
           f"{g0['time']['r']:.0f} vs {g1['time']['r']:.0f}")
+
+    # ⑤ 发布者身份（20261005 用户报："不是以登录用户发的，说说卡片显示对应用户信息"）。
+    # 修之前这里取的是 `state.user.avatar`（**看的人自己**的头像）：未登录时它为空串，
+    # 每张卡都是个空头像；登录了则每条都显示自己的脸。现在取每行的 `nickname`/`avatar`。
+    # 红基线：把组件换回 HEAD 版（react-redux 那条 `useSelector` 仍在），这两条都会红
+    # ——头像变成下面那个探针值、`.talk-who` 整个元素不存在。
+    print("⑤ 发布者身份（每条说说用自己的 nickname/avatar，不是看的人自己的）")
+    # 头像 src 取的是属性里的原值（浏览器不会把相对路径补成绝对路径，读 attribute 稳妥）
+    avatar_srcs = pg.eval_on_selector_all(
+        ".talk .ant-avatar img", "els => els.map(e => e.getAttribute('src'))")
+    check("两条说说各有一个头像 img（不是空头像）", len(avatar_srcs) == 2, str(avatar_srcs))
+    check("头像取的是**这一行**的 avatar",
+          avatar_srcs == [TALKS[0]["avatar"], TALKS[1]["avatar"]], str(avatar_srcs))
+    check("头像**不是**当前登录用户的（历史 bug：拿 state.user.avatar）",
+          VIEWER_AVATAR not in avatar_srcs, str(avatar_srcs))
+    whos = pg.eval_on_selector_all(".talk-who", "els => els.map(e => e.textContent.trim())")
+    check("每条说说的卡片上有发布者展示名", whos == [TALKS[0]["nickname"], TALKS[1]["nickname"]],
+          str(whos))
+    check("展示名在左、时刻在右（两端对齐，名字没把时刻挤走）",
+          pg.evaluate("""() => {
+            const rows = [...document.querySelectorAll('.article')];
+            return rows.length > 0 && rows.every(a => {
+              const whoEl = a.querySelector('.talk-who');
+              const clkEl = a.querySelector('.talk-clock');
+              // 缺元素要判**红**，不能让 `querySelector` 返回 null 后抛异常
+              // （红基线里老组件没有 .talk-who，抛异常会把后面几条一起带走）。
+              if (!whoEl || !clkEl) return false;
+              const who = whoEl.getBoundingClientRect();
+              const clk = clkEl.getBoundingClientRect();
+              return who.left < clk.left && who.right <= clk.left + 1;
+            });
+          }"""))
+    # 空态与读失败态是两件事（20261005）：本样本有数据，两者都不该出现——
+    # 这条同时钉住"正常路径没被新加的状态机误伤"。
+    check("有数据时不显示空态/读失败态", pg.locator(".talkEmpty").count() == 0,
+          str(pg.locator(".talkEmpty").count()))
 
     br.close()
 

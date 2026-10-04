@@ -7,8 +7,6 @@ import SearchButton from "../../../components/Buttons/SearchButton";
 import {useEffect, useState} from "react";
 import {Talk, updateTalk} from "../../../interface/TalkType";
 import dayjs from "dayjs";
-import {useSelector} from "react-redux";
-import UserState from "../../../interface/UserState";
 import {createTalk, delTalkById, getTalkList, updateTalkById} from "../../../apis/TalkMethods.tsx";
 
 const Comments = () => {
@@ -19,7 +17,6 @@ const Comments = () => {
     const [confirmLoading, setConfirmLoading] = useState(false);
     const [talks,setTalks] = useState([])
     const [isEdit,setEdit] = useState(0)
-    const avatar = useSelector((state: { user: UserState }) => state.user.avatar);
 
 
     useEffect(() => {
@@ -31,10 +28,13 @@ const Comments = () => {
     //获取说说
     const initTalkList = async () => {
         const res = await getTalkList()
-        if(res.status === 200){
+        // `res.status` 只说明 HTTP 通了（后端出错也回 200，业务码在 body 里）——
+        // 不判 `data.code` 的话，一次查询故障与"后台一条说说都没有"在网格里长得一样。
+        if(res.status === 200 && res.data.code === 200){
             return res.data.data
         }else {
             message.error("获取失败")
+            return []
         }
     }
 
@@ -189,11 +189,15 @@ const Comments = () => {
                                 </Popconfirm>
                             ]}
                         >
+                            {/* 头像/名字取这条说说**自己的**发布者（20261005 修）。
+                                原来这里是当前登录用户的头像（`state.user.avatar`），
+                                未登录时是空串 ⇒ 后台每张卡都是个空头像。 */}
                             <Card.Meta
-                                avatar={<Avatar src={avatar} />}
+                                avatar={<Avatar src={talk.avatar || undefined} />}
                                 title={talk.talkTitle}
                                 description={talk.content}
                             />
+                            <div className='talkCard__who'>{talk.nickname}</div>
                         </Card>
                     </Col>
                 ))}

@@ -29,3 +29,13 @@
       transform: scale(1.1)
     .ant-card-body
       padding: 10px
+
+  // 发布者展示名（20261005）：说说卡上"谁发的"。与前台那张卡同一语义，
+  // 只是这里靠右、更淡。颜色走后台的和纸令牌（`--washi-ink-3` 浅/深各一档），
+  // 不写死色值 —— 后台有夜间档，写死的字在深色底下会消失。
+  .talkCard__who
+    margin-top: 6px
+    font-size: 12px
+    font-weight: 400
+    text-align: right
+    color: var(--washi-ink-3, #a08ba8)
