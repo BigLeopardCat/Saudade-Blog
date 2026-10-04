@@ -1,0 +1,128 @@
+/* 渲染期错误的兜底卡（20261004）。皮肤与公告弹窗同一套和纸语言：
+   纸底 + 顶胶带 + 淡彩，令牌全走 --washi-*（深浅两档由 .frontDark 提供，
+   兜底 UI 可能落在 App 根之外，类名由 index.tsx 自己带上）。 */
+
+.errorBoundary
+    display: flex
+    align-items: center
+    justify-content: center
+    min-height: 70vh
+    padding: 40px 20px
+    box-sizing: border-box
+    /* 不给自己铺底：页面自己的背景透上来，兜底卡不假装是某一段带子 */
+
+.errorBoundary__card
+    position: relative
+    width: 100%
+    max-width: 560px
+    padding: 40px 32px 30px
+    box-sizing: border-box
+    text-align: center
+    background-color: var(--washi-paper, #fffdfa)
+    /* 与 .washiModal 同款两层淡彩：左上一点粉、右下一点天青 */
+    background-image: radial-gradient(120% 90% at 6% 0%, rgba(255, 158, 201, 0.22), rgba(255, 158, 201, 0) 62%), radial-gradient(110% 85% at 100% 100%, rgba(143, 211, 234, 0.18), rgba(143, 211, 234, 0) 58%)
+    border: 1px solid var(--washi-line, rgba(198, 152, 192, 0.42))
+    border-radius: var(--washi-radius, 14px)
+    /* overflow 必须 visible：顶上那条胶带故意探出卡片 */
+    overflow: visible
+    box-shadow: var(--washi-shadow, 0 14px 34px rgba(120, 90, 140, 0.16))
+    color: var(--washi-ink, #4a3550)
+
+    /* 和纸胶带，一半探出卡片顶 */
+    &::before
+        content: ''
+        position: absolute
+        top: -13px
+        left: 50%
+        width: 130px
+        height: 28px
+        margin-left: -65px
+        background: var(--washi-tape, rgba(255, 222, 238, 0.86))
+        box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.5), inset -1px 0 0 rgba(255, 255, 255, 0.5)
+        transform: rotate(-2.4deg)
+        pointer-events: none
+
+.errorBoundary__title
+    font-size: 22px
+    font-weight: 600
+    letter-spacing: 1px
+    /* 描边渐变字：与站点标题/签名同一支令牌，夜间自动换粉白 */
+    background: var(--washi-grad, linear-gradient(100deg, #ff7fc0 0%, #b06ee8 52%, #63b8e8 100%))
+    -webkit-background-clip: text
+    background-clip: text
+    color: transparent
+
+.errorBoundary__desc
+    margin-top: 12px
+    font-size: 14px
+    line-height: 1.8
+    color: var(--washi-ink-2, #7c6584)
+
+/* 原始错误信息：给用户看是次要的，给"截个图就能报上来"是主要的。
+   monospace + 可选中 + 定高滚动，免得一条长堆栈把卡片撑到两屏。 */
+.errorBoundary__msg
+    max-height: 160px
+    margin: 18px 0 0
+    padding: 10px 12px
+    overflow: auto
+    box-sizing: border-box
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace
+    font-size: 12px
+    line-height: 1.6
+    text-align: left
+    white-space: pre-wrap
+    word-break: break-all
+    color: var(--washi-ink-2, #7c6584)
+    background: var(--washi-paper-2, #fff6fa)
+    border: 1px solid var(--washi-line-2, rgba(198, 152, 192, 0.22))
+    border-radius: 10px
+    user-select: text
+
+.errorBoundary__actions
+    display: flex
+    gap: 12px
+    justify-content: center
+    margin-top: 22px
+
+.errorBoundary__btn
+    display: inline-flex
+    align-items: center
+    justify-content: center
+    min-width: 96px
+    height: 36px
+    padding: 0 18px
+    box-sizing: border-box
+    font-size: 14px
+    font-family: inherit
+    color: var(--washi-ink, #4a3550)
+    text-decoration: none
+    cursor: pointer
+    background: var(--washi-tape-2, rgba(214, 226, 255, 0.8))
+    border: 1px solid var(--washi-line, rgba(198, 152, 192, 0.42))
+    border-radius: 999px
+    transition: transform 200ms ease, background-color 200ms ease
+
+    &:hover
+        background: var(--washi-tape, rgba(255, 222, 238, 0.86))
+        transform: translateY(-1px)
+
+.errorBoundary__btn--primary
+    color: #fff
+    background: var(--washi-pink-deep, #d94f9a)
+    border-color: transparent
+
+    &:hover
+        color: #fff
+        background: var(--washi-pink-deep, #d94f9a)
+
+/* 手机档：兜底卡也要能在窄屏读完 */
+@media screen and (max-width: 768px)
+    .errorBoundary
+        min-height: 60vh
+        padding: 24px 14px
+
+    .errorBoundary__card
+        padding: 34px 20px 24px
+
+    .errorBoundary__actions
+        flex-direction: column

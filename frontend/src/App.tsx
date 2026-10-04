@@ -12,6 +12,7 @@ import { readDarkMode, autoThemeDecision } from './theme';
 import BottomMenu from "./components/BottomMenu";
 import Live2dAgent from "./components/Live2dAgent";
 import AnnouncementModal from "./components/AnnouncementModal";
+import ErrorBoundary from "./components/ErrorBoundary";
 
 function App() {
     const [isDark, setDark] = useState(false);
@@ -66,7 +67,12 @@ function App() {
     return (
         <div className={isDark ? 'frontDark frontRoot' : 'frontRoot'}>
             <Head setDark={setDark} isDark={isDark} scrollHeight={scrollHeight}/>
-            <Outlet />
+            {/* 兜底只包内容区（20261004）：页面崩了的时候头、尾、菜单、看板娘都还在，
+                刷新/换页就能离开故障页。整个壳崩了由 main.tsx 那层接（scope 不同，
+                日志里分得开）。 */}
+            <ErrorBoundary scope="page">
+                <Outlet />
+            </ErrorBoundary>
             <Footer />
             <BottomMenu scrollHeight={scrollHeight} isDark={isDark} setDark={setDark}/>
             <Live2dAgent />
