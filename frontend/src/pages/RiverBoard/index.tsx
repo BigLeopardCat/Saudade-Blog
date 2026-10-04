@@ -427,9 +427,9 @@ const moonPhaseParams = () => {
     };
 };
 
-/** 画月盘 sprite（内部 2× 超采样后缩到目标设备尺寸）。光照几何与旧版一致——
-   反照率来源（真实照片表）与落位方式（设备整像素）换过，第 43 轮又调了
-   反照率的标度/色温/遮挡判据，见函数体内注释。 */
+/** 画月盘 sprite（内部 2× 超采样后缩到目标设备尺寸）。
+ * 留言板风格使用暖纸色和低对比手绘月海；月相只由干净的终止线决定，
+ * 不再使用会制造同心圆痕迹的径向暗化。 */
 const buildMoonSprite = (geo: { size: number; ss: number }) => {
     const P = geo.size * geo.ss;
     const R = P / 2;
@@ -446,15 +446,16 @@ const buildMoonSprite = (geo: { size: number; ss: number }) => {
           20261001 第 43 轮把遮挡判据从 `lum` 换成**几何受光**（见下方 occlude 处）；
        ② 反照率**原样**进亮度域（标度由配方脚本归一，渲染侧不再拉伸）；
        ③ 亮面亮度按相位归一（摄影语义：八种月相最亮点亮度一致）。 */
-    const EXPOSURE = 0.88;     // 亮面峰值 ≈ 0.88×1.45 = 1.28，保留照片纹理并压住高光
-    // 相位亮度归一（摄影语义：相机按月亮曝光，八种月相的最亮点亮度应一致）：
-    // 不归一的话上下弦最亮点只有满月的约一半，叠加 8 档月相量化会看着"忽明忽暗"
-    // 额外的周边限暗压得很轻（0.12）：程序化反照率自身不带月缘暗化，不会 double 成"黑圈"
-    const limbKp = 0.12 + 0.24 * (1 - Math.abs(lzNow));
-    const limbPeak = lzNow >= 0
-        ? 1 - limbKp * Math.pow(Math.abs(lxNow), 2.6)
-        : (1 - limbKp) * Math.pow(Math.abs(lxNow), 0.9);
-    const sunGain = Math.min(2.2, 1 / Math.max(0.05, limbPeak));
+    const smoothstep = (edge0: number, edge1: number, value: number) => {
+        const t = Math.max(0, Math.min(1, (value - edge0) / (edge1 - edge0)));
+        return t * t * (3 - 2 * t);
+    };
+    const maria = [
+        { x: -0.42, y: 0.16, rx: 0.38, ry: 0.23, a: 0.13 },
+        { x: 0.18, y: -0.24, rx: 0.31, ry: 0.18, a: 0.09 },
+        { x: 0.43, y: 0.19, rx: 0.22, ry: 0.28, a: 0.08 },
+        { x: -0.06, y: 0.47, rx: 0.24, ry: 0.15, a: 0.07 },
+    ] as const;
     const rOut = R + 0.5 * geo.ss;   // 外沿 1 设备像素的线性覆盖率（抗锯齿）
     const albA = ensureMoonAlbedo();
     const N = Math.round(Math.sqrt(albA.length));
@@ -469,13 +470,10 @@ const buildMoonSprite = (geo: { size: number; ss: number }) => {
             const cov = Math.min(1, rOut - rho);   // 覆盖率：外沿线性升到 1
             if (cov <= 0) continue;
             const nx = X / R, ny = Y / R;
-            const radial = rho / R;                // 0=月心 1=月缘
-            const nz = Math.sqrt(Math.max(0, 1 - radial * radial));
+            const nz = Math.sqrt(Math.max(0, 1 - (rho / R) * (rho / R)));
             // 终止线回到几何位置（旧写法 dot<=0.02 直接跳过 → 暗面整片消失）
             const dot = nx * lxNow + nz * lzNow;
-            const sun = Math.pow(Math.max(0, dot), 0.9);
-            // 周边限暗：满月最平（真实满月本就没什么立体感），上下弦最陡
-            const limb = 1 - limbKp * Math.pow(radial, 2.6);
+            const phaseAlpha = smoothstep(-0.035, 0.12, dot);
             // 双线性采样反照率（表已按盘内中位数归一，见 `ensureMoonAlbedo`）。
             // 最近邻会露出块状，双线性只在静态层跑一次、成本可忽略
             const fx = ((nx + 1) / 2) * N - 0.5;
@@ -489,33 +487,17 @@ const buildMoonSprite = (geo: { size: number; ss: number }) => {
             const s00 = albA[cy0 * N + cx0], s10 = albA[cy0 * N + cx1];
             const s01 = albA[cy1 * N + cx0], s11 = albA[cy1 * N + cx1];
             const t = (s00 * (1 - tx) + s10 * tx) * (1 - ty) + (s01 * (1 - tx) + s11 * tx) * ty;
-            const alb = t;
-            // 受光面：只有太阳直射那一项
-            const light = Math.max(0, sun) * limb;
-            const lum = Math.min(1, EXPOSURE * sunGain * light * alb);
-            const warm = 1 + 0.03 * Math.max(0, dot); // 受光处偏暖
-            // 颜色只表达色温/亮度，alpha 只表达几何覆盖（两者解耦是这一族的核心）。
-            // occlude：只有**真的受光**的岩面才遮挡背景。暗面不遮挡——月盘周围那圈光晕
-            // 是大气散射，物理上就在月亮前面，会照亮整个盘面；旧写法暗面也不透明，盖住
-            // 光晕后成了夜空里一块比背景还暗的黑板（20260912 用户："黑底盘太假"）。
-            // 判据用**几何受光**（sun×limb，不含反照率）而不是 lum：用 lum 的话明暗交界的
-            // 位置会跟着反照率走——月海（暗）比高地（亮）更早变透明，终止线于是被地物啃成
-            // 锯齿（20261001 第 43 轮实测，放大 6 倍一眼可见）。几何受光只跟光方向有关，
-            // 终止线因此是一条干净的曲线，暗面照样完全透出背景
-            const occlude = Math.min(1, Math.pow(EXPOSURE * sunGain * light, 0.58) * 1.18);
-            // ImageData 的颜色会再次乘 alpha 合成。用遮挡后的亮度直接写 RGB
-            // 会让月面在弦月和盈凸月时被压暗两次；这里以 alpha 反推颜色，
-            // 让透明度只负责终止线的柔和，月海纹理仍保持真实对比。
-            const visibleLum = Math.min(1, lum / Math.max(occlude, 0.12));
-            data[i4] = Math.round(255 * visibleLum * warm);
-            data[i4 + 1] = Math.round(255 * visibleLum * 0.99 * warm);
-            // 蓝系数 0.86 → 0.94 → 0.97（20260901 第 41 轮"奶酪" → 第 42 轮照片 → 第 43 轮）：
-            // 0.86 是给手写反照率调的偏暖档，压在**照片**上就是一层土黄/橄榄色（源照片本身
-            // 是中性灰），第 43 轮实测那层黄是"看着像贴图"的主因之一。
-            // 留一点点暖（配合上面 `warm` 的 1.03）当月光，但基本回到中性。
-            // 与光照/月相/遮挡无关，要更冷把它往 1.0 提即可（就这一行）
-            data[i4 + 2] = Math.round(255 * visibleLum * 0.98);
-            data[i4 + 3] = Math.round(cov * occlude * 255);
+            let paperTone = 0.92 + (t - 1) * 0.12;
+            for (const m of maria) {
+                const q = Math.hypot((nx - m.x) / m.rx, (ny - m.y) / m.ry);
+                paperTone -= m.a * smoothstep(1.15, 0.2, q);
+            }
+            const tone = Math.max(0.68, Math.min(1, paperTone * (0.9 + 0.1 * smoothstep(-0.2, 0.8, dot))));
+            // 暖纸色月面：只保留低对比色块，不再把照片的高频细节压成环状纹理。
+            data[i4] = Math.round(247 * tone);
+            data[i4 + 1] = Math.round(229 * tone);
+            data[i4 + 2] = Math.round(193 * tone);
+            data[i4 + 3] = Math.round(cov * phaseAlpha * 255);
         }
     }
     // 地球反照叠加层已下线（20260912 用户第二次反馈："我不希望看到他的底盘和边缘形状…
