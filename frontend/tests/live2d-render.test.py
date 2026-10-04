@@ -192,6 +192,44 @@ HL_PROBE = """() => {
 }"""
 
 
+# ⑧ 用：面板里每颗"带 svg 图标的按钮"，量它的**图标色 vs 背后的合成底色**。
+# 为什么得逐个量、不能查一遍配色表：图标色走 `currentColor`，它取什么值取决于**宿主控件
+# 自己有没有声明 `color`** —— 表单控件（button/input/select/textarea）的 UA 样式表给的是
+# `color: buttontext`，那是**元素上的具名值、不是继承值**，外层的 `#waifu-chat { color: … }`
+# 根本传不进去。漏了一颗，源码里看不出任何异常（`fill="#203042"` 还明明白白写着深蓝）。
+ICON_PROBE = """() => {
+  const rgba = (s) => {
+    const m = String(s).match(/rgba?\\(([^)]+)\\)/);
+    if (!m) return [0, 0, 0, 0];
+    const p = m[1].split(',').map((x) => parseFloat(x));
+    return [p[0], p[1], p[2], p.length > 3 ? p[3] : 1];
+  };
+  const over = (fg, bg) => [fg[0] * fg[3] + bg[0] * (1 - fg[3]),
+                            fg[1] * fg[3] + bg[1] * (1 - fg[3]),
+                            fg[2] * fg[3] + bg[2] * (1 - fg[3]), 1];
+  const flatten = (el) => {
+    const stack = [];
+    for (let n = el; n; n = n.parentElement) {
+      const c = rgba(getComputedStyle(n).backgroundColor);
+      stack.push(c);
+      if (c[3] >= 1) break;
+    }
+    let out = [255, 255, 255, 1];
+    for (let i = stack.length - 1; i >= 0; i--) out = over(stack[i], out);
+    return out.slice(0, 3).map((v) => Math.round(v));
+  };
+  const out = [];
+  document.querySelectorAll('#waifu-chat button').forEach((b) => {
+    if (!b.querySelector('svg path')) return;
+    const p = b.querySelector('svg path');
+    out.push({ name: b.id || String(b.className),
+               fill: rgba(getComputedStyle(p).fill).slice(0, 3).map((v) => Math.round(v)),
+               bg: flatten(b) });
+  });
+  return out;
+}"""
+
+
 def _lum(c):
     def f(v):
         v /= 255
@@ -527,6 +565,29 @@ def main():
                   tint >= 1.15, f"{tint:.2f}:1  chip={fmt(m['chip'])} panel={fmt(m['panel'])}")
             check(f"⑦ [{mode}] 芯片上的字读得清（WCAG 正文 4.5:1；旧实现夜里 1.09:1）",
                   legible >= 4.5, f"{legible:.2f}:1  text={fmt(m['text'])} chip={fmt(m['chip'])}")
+        page.evaluate("() => document.getElementById('waifu-chat').classList.remove('washiDark')")
+
+        # ── ⑧ 面板里带图标的按钮：两档都得读得清（20261005）────────────────────
+        # 报的是「夜间模式侧边栏的选择图片按钮图标看不清」。它不是配色没跟上主题，而是
+        # **那颗 `<button>` 自己没写 `color`**：表单控件的 UA 样式表给的是
+        # `color: buttontext`（元素上的具名值、不是继承值）⇒ 外层 `#waifu-chat` 的
+        # `color: var(--washi-ink)` 传不进去，恒解析成黑。上面那条
+        # `#waifu-chat svg path { fill: currentColor }` 本意是"让图标跟着各自按钮的 color
+        # 走"，遇上它就跟着黑走了 —— 白日黑压粉纸看不出问题（15:1），夜里黑压深紫纸面
+        # 只有 1.69:1。判据因此**只能落在真浏览器算出来的色上**：源码里 `fill="#203042"`
+        # 明明写着深蓝，静态断言看不出它已经被 CSS 盖掉。地板取 3:1，与
+        # `dark-mode-contrast.test.py` 同一把尺。
+        for mode in ("light", "dark"):
+            page.evaluate("(d) => document.getElementById('waifu-chat')"
+                          ".classList.toggle('washiDark', d)", mode == "dark")
+            page.wait_for_timeout(120)
+            icons = page.evaluate(ICON_PROBE)
+            worst = min(icons, key=lambda i: contrast(i["fill"], i["bg"])) if icons else None
+            check(f"⑧ [{mode}] 面板里带图标的按钮都读得清（{len(icons)} 颗，≥3:1）",
+                  worst is not None and contrast(worst["fill"], worst["bg"]) >= 3.0,
+                  "" if worst is None else
+                  f"最差 {worst['name']} {contrast(worst['fill'], worst['bg']):.2f}:1 "
+                  f"icon={fmt(worst['fill'])} bg={fmt(worst['bg'])}")
         page.evaluate("() => document.getElementById('waifu-chat').classList.remove('washiDark')")
 
         browser.close()
