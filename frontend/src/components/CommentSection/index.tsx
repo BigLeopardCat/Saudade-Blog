@@ -51,8 +51,12 @@
  *     读者会以为是自己投的（同族错法：首页点赞的心形）；
  *   · **乐观更新，失败回滚**。等一个来回再变色，手感就是"没点上"；但乐观值只是
  *     占位，服务端回执（它才看得见别人的票）一到就**整组覆盖**；
- *   · **数字为 0 不显示**（只留图标）——一排 `👍 0  👎 0` 是噪声，而"没人投过"这件事
+ *   · **数字为 0 不显示**（只留图标）——一排「图标 0  图标 0」是噪声，而"没人投过"这件事
  *     本来就是空的。**踩在赞右边**：与多数站点一致，也让"先看总赞数"这条阅读习惯成立。
+ *
+ * 图标 20261005 起改用 `NoteStatIcons` 的 `ThumbUpIcon` / `ThumbDownIcon`（原来写的是
+ * 彩色表情字形）。不是审美问题：emoji 的字形颜色由平台调色板决定、`color` 基本不参与，
+ * 于是上面第一条「高亮」实际只剩 `.isOn` 的底色在起作用。详见该图标的注释。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
@@ -67,6 +71,7 @@ import { renderBlogMarkdown } from '../../utils/chatMarkdown'
 import { resolveApiAssetUrl } from '../../utils/runtimeApi'
 import { DEFAULT_AVATAR_URL } from '../UserCenter/identity'
 import RoleBadge from '../RoleBadge'
+import { ThumbUpIcon, ThumbDownIcon } from '../NoteStatIcons'
 import StickerPicker from './StickerPicker'
 import getToken from '../../apis/getToken'
 import { useLiveRefresh } from '../../utils/liveRefresh'
@@ -411,11 +416,12 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
                                 disabled={votingIds.has(c.id)}
                                 onClick={() => void vote(c, dir)}
                             >
-                                <span className="commentVoteIcon" aria-hidden="true">
-                                    {dir === 1 ? '👍' : '👎'}
-                                </span>
-                                {/* 0 不显示（文件头注 ⑤）：一排 `👍 0 👎 0` 只是噪声。
-                                    为 0 时按钮宽度靠图标撑着，位置不跳（见 index.sass 的 padding 抵消）。 */}
+                                {dir === 1 ? <ThumbUpIcon /> : <ThumbDownIcon />}
+                                {/* 0 不显示（文件头注 ⑤）：一排「图标 0 图标 0」只是噪声。
+                                    为 0 时按钮宽度靠图标撑着，位置不跳（见 index.sass 的 padding 抵消）。
+                                    图标取自 `NoteStatIcons`（20261005 起，替掉原来那两个彩色表情
+                                    字形——它们在 `.isOn` 那一态里颜色是失效的，理由写在
+                                    `ThumbUpIcon` 的注释里）。 */}
                                 {n > 0 && <span className="commentVoteNum">{n}</span>}
                             </button>
                         )
