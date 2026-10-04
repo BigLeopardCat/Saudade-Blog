@@ -236,7 +236,10 @@ console.log('\n⑥ 版本号：改了 widget 脚本必须 bump（nginx 对 live2
     // 20261003a = 「初始位置再左移 20px、下移 10px」那一轮（#waifu 的 left 145px、
     // transform translateY(-5px)）。
     // 位置写在样式表里 ⇒ 同样必须 bump，否则访客吃 1 年缓存仍看到贴左的旧位置。
-    ok(ver === '20261003a', 'VER 已 bump 到本轮（20261003a）', { ver });
+    // 20261005a = 「选图按钮的图标夜间看不见」那一轮（widget.css 把 .chat-img-btn 加进
+    // .chat-rail-btn / .conv-head-btn 那两组 color 名单）。改的是 live2d-widgets 下的
+    // 样式表 ⇒ 同样必须 bump。
+    ok(ver === '20261005a', 'VER 已 bump 到本轮（20261005a）', { ver });
     const tsx = readFileSync(path.join(root, 'src/components/Live2dAgent/index.tsx'), 'utf8');
     ok(tsx.includes('boot.js?v=' + ver), 'Live2dAgent 的 ?v= 与 VER 一致');
 }
