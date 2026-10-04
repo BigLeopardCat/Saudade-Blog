@@ -76,6 +76,10 @@ export default defineConfig(() => ({
     // "后台重建 → 刷新首页即新图"这条链在开发态根本验不了。Rust 在本机 3000。
     // 注意只影响 dev（`vite build` 不看这个键），线上仍是 nginx 反代 /api。
     server: {
+        // 远程开发容器需要监听所有网卡，VS Code 才能发现并转发 5173。
+        host: '0.0.0.0',
+        port: 5173,
+        strictPort: true,
         proxy: {
             '/api': 'http://127.0.0.1:3000',
         },

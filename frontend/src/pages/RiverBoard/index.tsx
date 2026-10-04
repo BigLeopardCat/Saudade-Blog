@@ -374,7 +374,7 @@ interface Amb {
 let amb: Amb | null = null;
 
 /* 月亮几何（组件内多处共享：绘制与星光避让用同一份常量） */
-const MOON = { x: 0.7, y: 0.16, r: 0.073 } as const; // r 0.093 → 0.073：月亮缩小
+const MOON = { x: 0.7, y: 0.16, r: 0.078 } as const;
 
 /* 月面反照率（20261001 第 42 轮：真实照片采样表，见 `moon_surface.ts` 头注）。
    载荷是编成 base64 的 8 位灰度字节，`atob` **同步**解出来——不再有"异步就绪后重画
@@ -446,7 +446,7 @@ const buildMoonSprite = (geo: { size: number; ss: number }) => {
           20261001 第 43 轮把遮挡判据从 `lum` 换成**几何受光**（见下方 occlude 处）；
        ② 反照率**原样**进亮度域（标度由配方脚本归一，渲染侧不再拉伸）；
        ③ 亮面亮度按相位归一（摄影语义：八种月相最亮点亮度一致）。 */
-    const EXPOSURE = 0.85;     // 亮面峰值 ≈ 0.85×1.45 = 1.23，最高的高地轻微夹顶（实测 0.5%）
+    const EXPOSURE = 0.88;     // 亮面峰值 ≈ 0.88×1.45 = 1.28，保留照片纹理并压住高光
     // 相位亮度归一（摄影语义：相机按月亮曝光，八种月相的最亮点亮度应一致）：
     // 不归一的话上下弦最亮点只有满月的约一半，叠加 8 档月相量化会看着"忽明忽暗"
     // 额外的周边限暗压得很轻（0.12）：程序化反照率自身不带月缘暗化，不会 double 成"黑圈"
@@ -491,7 +491,8 @@ const buildMoonSprite = (geo: { size: number; ss: number }) => {
             const t = (s00 * (1 - tx) + s10 * tx) * (1 - ty) + (s01 * (1 - tx) + s11 * tx) * ty;
             const alb = t;
             // 受光面：只有太阳直射那一项
-            const lum = Math.min(1, EXPOSURE * sunGain * sun * alb * limb);
+            const light = Math.max(0, sun) * limb;
+            const lum = Math.min(1, EXPOSURE * sunGain * light * alb);
             const warm = 1 + 0.03 * Math.max(0, dot); // 受光处偏暖
             // 颜色只表达色温/亮度，alpha 只表达几何覆盖（两者解耦是这一族的核心）。
             // occlude：只有**真的受光**的岩面才遮挡背景。暗面不遮挡——月盘周围那圈光晕
@@ -501,15 +502,19 @@ const buildMoonSprite = (geo: { size: number; ss: number }) => {
             // 位置会跟着反照率走——月海（暗）比高地（亮）更早变透明，终止线于是被地物啃成
             // 锯齿（20261001 第 43 轮实测，放大 6 倍一眼可见）。几何受光只跟光方向有关，
             // 终止线因此是一条干净的曲线，暗面照样完全透出背景
-            const occlude = Math.min(1, EXPOSURE * sunGain * sun * limb * 6);
-            data[i4] = Math.round(255 * lum * warm);
-            data[i4 + 1] = Math.round(255 * lum * 0.99 * warm);
+            const occlude = Math.min(1, Math.pow(EXPOSURE * sunGain * light, 0.58) * 1.18);
+            // ImageData 的颜色会再次乘 alpha 合成。用遮挡后的亮度直接写 RGB
+            // 会让月面在弦月和盈凸月时被压暗两次；这里以 alpha 反推颜色，
+            // 让透明度只负责终止线的柔和，月海纹理仍保持真实对比。
+            const visibleLum = Math.min(1, lum / Math.max(occlude, 0.12));
+            data[i4] = Math.round(255 * visibleLum * warm);
+            data[i4 + 1] = Math.round(255 * visibleLum * 0.99 * warm);
             // 蓝系数 0.86 → 0.94 → 0.97（20260901 第 41 轮"奶酪" → 第 42 轮照片 → 第 43 轮）：
             // 0.86 是给手写反照率调的偏暖档，压在**照片**上就是一层土黄/橄榄色（源照片本身
             // 是中性灰），第 43 轮实测那层黄是"看着像贴图"的主因之一。
             // 留一点点暖（配合上面 `warm` 的 1.03）当月光，但基本回到中性。
             // 与光照/月相/遮挡无关，要更冷把它往 1.0 提即可（就这一行）
-            data[i4 + 2] = Math.round(255 * lum * 0.97);
+            data[i4 + 2] = Math.round(255 * visibleLum * 0.98);
             data[i4 + 3] = Math.round(cov * occlude * 255);
         }
     }
@@ -880,12 +885,12 @@ export default function RiverBoard() {
             // 注意：月晕的相位在**烘培时**定下（与改动前一致），页面开着跨过月相档
             // 不会自己变——月盘 sprite 同此（两者同源同档，不会各飘一边）。
             const hx = mxMoon + lxHalo * rMoon * 0.5, hy = myMoon;
-            const halo = ctx.createRadialGradient(hx, hy, 0, hx, hy, w * 0.22);
-            halo.addColorStop(0, `rgba(255,238,200,${0.26 * haloK})`);
-            halo.addColorStop(0.3, `rgba(255,226,170,${0.09 * haloK})`);
-            halo.addColorStop(1, "rgba(255,226,170,0)");
+            const halo = ctx.createRadialGradient(hx, hy, 0, hx, hy, w * 0.19);
+            halo.addColorStop(0, `rgba(255,244,216,${0.22 * haloK})`);
+            halo.addColorStop(0.28, `rgba(219,228,255,${0.075 * haloK})`);
+            halo.addColorStop(1, "rgba(190,208,255,0)");
             ctx.fillStyle = halo;
-            ctx.fillRect(hx - w * 0.32, hy - w * 0.32, w * 0.64, w * 0.64);
+            ctx.fillRect(hx - w * 0.28, hy - w * 0.28, w * 0.56, w * 0.56);
             /* 地球反照叠加层已下线（20260912 用户第二次反馈："我不希望看到他的底盘和边缘形状…
                现在就能看到灰蒙蒙的月亮圆形轮廓"）。物理上地球反照是对的，但在这幅画里它表现为
                一个边缘可辨的灰盘：夜空背景不是纯黑而是带光晕的蓝，任何"整圆"都会读成虚假的底盘。
@@ -990,7 +995,7 @@ export default function RiverBoard() {
         buildMoonSprite(moonSpriteGeometry(
             w * MOON.x,
             h * MOON.y,
-            Math.min(w, h) * MOON.r * 0.82 * 2,
+            Math.min(w, h) * MOON.r * 0.9 * 2,
             v.dpr,
         ));
 
@@ -1309,7 +1314,7 @@ export default function RiverBoard() {
            高频边缘每帧被双线性重采样磨一次；月盘单独拿出来按设备像素画，零重采样。
            视差与静态层走同一层（0.2/0.1，与星辰一致——月亮本就在星空间一平面）。 */
         if (moonSprite) {
-            const rD = Math.min(w, h) * MOON.r * 0.82;
+            const rD = Math.min(w, h) * MOON.r * 0.9;
             const geo = moonSpriteGeometry(w * MOON.x + px * 0.2, h * MOON.y + py * 0.1, rD * 2, v.dpr);
             ctx.save();
             ctx.setTransform(1, 0, 0, 1, 0, 0);
