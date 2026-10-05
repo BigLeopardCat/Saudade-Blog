@@ -18,6 +18,7 @@ import { message } from "antd";
 import { bytemdStickers } from "../../utils/stickers";
 import ImagePicker from './ImagePicker.tsx'
 import type { UploadedImage } from './ImagePicker.tsx'
+import { encodeAssetUrl } from '../../utils/assetUrl'
 
 const basePlugins = [
     gfm({ singleTilde: false }),
@@ -102,7 +103,12 @@ const Editor_ = ({ setNoteContent, noteContent }: Editor_Props) => {
             throw new Error(response.data?.message || 'upload failed');
         }
         message.success('添加成功');
-        return [{ alt: '', url: response.data.data, title: '' }];
+        // 这里返回的 url 会**直接**被 bytemd 拼进正文（`svelte/editor.js::handleImageUpload`
+        // 拿返回值 map/join 后 appendBlock）⇒ 拖拽/粘贴上传这条路上，
+        // `![](${url})` 是在 bytemd 里完成的，本组件没有插手的地方。所以编码必须落在这
+        // 里（返回之前）。图库那条路会再经 `insertImage` 走一遍同一个函数 —— 幂等，见
+        // utils/assetUrl.ts 里"跳过 %"那段说明。
+        return [{ alt: '', url: encodeAssetUrl(response.data.data), title: '' }];
     };
 
     /**
@@ -128,7 +134,8 @@ const Editor_ = ({ setNoteContent, noteContent }: Editor_Props) => {
     /**
      * 往正文里插图，**照抄 bytemd 自己的单张路径**（`svelte/editor.js::handleImageUpload`）：
      * `appendBlock` 从光标往下找第一处空行插入 `![](url)`，再把光标落回那一行、聚焦。
-     * alt 故意留空 —— 与拖拽/粘贴上传产出的 markdown **逐字节一样**。
+     * alt 故意留空 —— 与拖拽/粘贴上传产出的 markdown **逐字节一样**（编码也走同一个
+     * `encodeAssetUrl`，所以两条路产出的那一行仍逐字节相同）。
      */
     const insertImage = (url: string) => {
         const ctx = ctxRef.current
@@ -136,7 +143,7 @@ const Editor_ = ({ setNoteContent, noteContent }: Editor_Props) => {
             message.error('编辑器还没准备好，请稍后再试')
             return
         }
-        const pos = ctx.appendBlock(`![](${url})`)
+        const pos = ctx.appendBlock(`![](${encodeAssetUrl(url)})`)
         ctx.editor.setSelection(pos, ctx.codemirror.Pos(pos.line))
         ctx.editor.focus()
     }
