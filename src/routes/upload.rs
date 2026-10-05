@@ -11,6 +11,7 @@ use tokio::io::AsyncWriteExt;
 use sea_orm::{ActiveModelTrait, EntityTrait, Set, QueryOrder, ColumnTrait, QueryFilter, Condition};
 use crate::entity::image;
 use crate::entity::note;
+use crate::r2;
 use sha2::{Digest, Sha256};
 
 // ── 同一份字节重复上传 ⇒ 复用已有文件（20260924，用户拍板的 A 方案）─────────────
@@ -125,13 +126,128 @@ fn image_short_name(url: &str) -> String {
     url.rsplit('/').next().unwrap_or(url).to_string()
 }
 
+// ── R2 图床路径（20261006，用户第 3 条）─────────────────────────────────────
+// 目标不是"存得下"，是**出图带宽离开这台 3M 上行的机器**（`/api/protect/download/`
+// 是上行大头）；用户另有一条硬要求：用量超 9.5G 就停传，防止产生账单。
+//
+// 一条铁律贯穿这个文件：**面板上写着存 R2 的时候，图绝不许悄悄落回本地盘**。
+// 所以这里只有"走 R2"和"这不是 R2 的活（`None`）"两种返回，没有"R2 失败就回落"——
+// 回落的后果是图库页面显示着一堆 `https://…` 地址、文件却躺在服务器上，
+// 而这件事没有任何人会看出来（直到盘满）。
+//
+// 本地那条路径**一行都没改**：`try_r2_upload` 返回 `None` 时控制流原样继续。
+// 这样"没配 R2 的部署行为与今天逐字节相同"是由结构保证的，不是靠人记住。
+
+/// 上传临界区：`列桶 → 判定 → PUT` 三步必须**串行**。两个并发上传各自读到
+/// "还剩 1MB"，就会一起写进去、一起超限 —— 配额判定读的是一个共享的外部状态，
+/// 它天然需要临界区。静态量而不是 `AppState` 字段：这是进程级互斥，与请求无关。
+static R2_UPLOAD_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// 体积给人看的 GB（GiB 口径，与面板上的 `r2ImageQuotaGB` 同一把尺子）。
+fn gib(bytes: u64) -> f64 {
+    bytes as f64 / (1024.0 * 1024.0 * 1024.0)
+}
+
+/// 按扩展名给 content-type。**不能省**：R2 会把上传时存的类型原样回给浏览器，
+/// 给错了就是"图能下、但浏览器当文件下载"或者不显示。
+fn guess_content_type(name: &str) -> &'static str {
+    let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "avif" => "image/avif",
+        "svg" => "image/svg+xml",
+        "bmp" => "image/bmp",
+        "ico" => "image/x-icon",
+        _ => "application/octet-stream",
+    }
+}
+
+/// 走 R2 的整条上传路径。`None` = **这次不该走 R2**（开关关着 / 桶名·前缀·域名没配全）
+/// ⇒ 调用方原样走本地盘。
+async fn try_r2_upload(
+    state: &Arc<AppState>,
+    file_name: &str,
+    data: &[u8],
+    digest: &str,
+) -> Option<ApiResponse<String>> {
+    let cfg = r2::load_config(&state.db).await;
+    if !cfg.active() {
+        return None;
+    }
+    let Some(creds) = r2::load_creds() else {
+        // 面板说"存 R2"、服务端却没有凭据：**报错而不是偷偷落本地盘**。
+        // 这一条是"面板与事实不符"里最容易发生也最难发现的一种。
+        return Some(ApiResponse::error(
+            "图库已切到 R2，但服务端没有 R2 凭据（.env 缺 R2_ENDPOINT / R2_ACCESS_KEY / \
+             R2_SECRET_KEY）。这次没有上传任何文件：请补齐凭据，或先关掉面板里的 R2 开关。",
+        ));
+    };
+
+    let key = r2::object_key(&cfg.prefix, digest, file_name);
+    let url = r2::public_url(&cfg.public_base, &key);
+
+    // ① 同一份字节传过没有。对象键是内容寻址的（`<前缀>/<sha256 前 16 位>/<原名>`），
+    //    所以"同一个键"就是"同一份字节 + 同一个名字"——与本地那条
+    //    「同一份字节重复上传 ⇒ 复用」（20260924 用户拍板）判据逐字同形。
+    match r2::head_object(&creds, &cfg.bucket, &key).await {
+        Ok(true) => {
+            ensure_image_row(state, &url).await;
+            return Some(ApiResponse {
+                code: 200,
+                message: "这张图在 R2 上已经存在，已复用（未重复上传）".to_string(),
+                data: url,
+            });
+        }
+        Ok(false) => {}
+        Err(e) => {
+            return Some(ApiResponse::error(&format!(
+                "R2 探测对象失败，本次未上传（没有回落本地盘）：{e}"
+            )))
+        }
+    }
+
+    // ② 用量判定与写入在同一临界区里
+    let _guard = R2_UPLOAD_LOCK.lock().await;
+    let used = match r2::list_used_bytes(&creds, &cfg.bucket, &cfg.prefix).await {
+        Ok(v) => v,
+        Err(e) => {
+            // fail-closed：读不出用量就不写。最坏是"这会儿传不了图"，
+            // 绝不会是"漏算用量、账单照跑"（用户要防的就是后者）。
+            return Some(ApiResponse::error(&format!(
+                "R2 用量读不出来，本次未上传（宁可暂时传不了，也不冒超配额的风险）：{e}"
+            )));
+        }
+    };
+    if r2::quota_exceeded(used, data.len() as u64, cfg.quota_bytes) {
+        return Some(ApiResponse::error(&format!(
+            "R2 已用 {:.2} GB / 上限 {:.2} GB，再传这张会超限，已拒绝。请先清理，或在面板里调高配额。",
+            gib(used),
+            gib(cfg.quota_bytes)
+        )));
+    }
+
+    if let Err(e) =
+        r2::put_object(&creds, &cfg.bucket, &key, data.to_vec(), guess_content_type(file_name)).await
+    {
+        return Some(ApiResponse::error(&format!(
+            "上传到 R2 失败，本次未上传（没有回落本地盘）：{e}"
+        )));
+    }
+
+    ensure_image_row(state, &url).await;
+    Some(ApiResponse::success(url))
+}
+
 // POST /api/protect/upload
 pub async fn upload_image(
     State(state): State<Arc<AppState>>,
     mut multipart: Multipart,
 ) -> Json<ApiResponse<String>> {
     let upload_dir = upload_dir();
-    
+
     // Iterate over fields
     while let Ok(Some(field)) = multipart.next_field().await {
         // We look for a field that has a filename
@@ -139,7 +255,7 @@ pub async fn upload_image(
              let file_name = file_name.to_string();
              // Simple sanitization: only keep basename
              let file_name = Path::new(&file_name).file_name().unwrap_or_default().to_string_lossy().to_string();
-             
+
              // Prepend timestamp to avoid collision（本地时区钟面，与 DB 时间约定一致）
              let timestamp = chrono::Local::now().format("%Y%m%d%H%M%S").to_string();
              let new_name = format!("{}_{}", timestamp, file_name);
@@ -148,6 +264,10 @@ pub async fn upload_image(
              if let Ok(data) = field.bytes().await {
                  // 命中已有文件 = 这次上传根本不需要发生：不写盘、不新增行
                  let digest = sha256_hex(&data);
+                 // R2 图床（开关关着 / 没配全 ⇒ None ⇒ 下面的本地路径原样执行）
+                 if let Some(resp) = try_r2_upload(&state, &file_name, &data, &digest).await {
+                     return Json(resp);
+                 }
                  if let Some(existing) = find_duplicate_url(&upload_dir, &file_name, &digest).await {
                      ensure_image_row(&state, &existing).await;
                      return Json(ApiResponse::success(existing));
@@ -219,17 +339,54 @@ pub async fn delete_images(
         )));
     }
 
+    // R2 的两样东西在循环外各取一次（每张图都读一遍库/环境没意义）
+    let r2cfg = r2::load_config(&state.db).await;
+    let r2creds = r2::load_creds();
+    // R2 侧删除失败的那些（非 404）。有就整体报错——**但库里成功的那些已经删了**，
+    // 报错文案要把这件事说清楚（不然博主会以为一张都没删）。
+    let mut r2_failed: Vec<String> = Vec::new();
+
     let upload_dir = upload_dir();
     for url in urls {
         // Find in DB
         if let Ok(Some(img)) = image::Entity::find()
             .filter(image::Column::ImageUrl.eq(&url))
             .one(&state.db)
-            .await 
+            .await
         {
+            // ── R2 的图（20261006）──────────────────────────────────────────
+            // **必须走这里**：R2 的 URL 是绝对地址，下面的本地分支既找不到
+            // `/upload/` 也找不到 `/download/`，会直接跳过删文件那步、把库里的行删掉
+            // —— 对象于是永远留在桶里，没有任何入口能再看见它（盘看不见、账单看得见）。
+            // 顺序也与本地相反：**先删对象，成功才删行**（404 也算成功：本来就没了）。
+            if let Some(key) = r2::r2_key_of(&url, &r2cfg) {
+                match r2creds.as_ref() {
+                    None => r2_failed.push(format!(
+                        "{}（服务端没有 R2 凭据，无法删除对象）",
+                        image_short_name(&url)
+                    )),
+                    Some(creds) => match r2::delete_object(creds, &r2cfg.bucket, &key).await {
+                        Ok(()) => {
+                            let _ = image::Entity::delete_by_id(img.image_key).exec(&state.db).await;
+                        }
+                        Err(e) => r2_failed.push(format!("{}（{e}）", image_short_name(&url))),
+                    },
+                }
+                continue;
+            }
+            // 绝对地址、却不是当前公开域名下的（多半是面板里换过域名）：
+            // **不删行**——删了就等于把对象丢在桶里且再也没人看得见它。
+            if url.starts_with("http://") || url.starts_with("https://") {
+                r2_failed.push(format!(
+                    "{}（不是当前 R2 公开域名下的地址，改过域名？）",
+                    image_short_name(&url)
+                ));
+                continue;
+            }
+
             // Delete file logic: Extract filename from URL
             let filename_opt = if let Some(part) = url.split("/upload/").nth(1) {
-                Some(part) 
+                Some(part)
             } else if let Some(part) = url.split("/download/").nth(1) {
                 Some(part)
             } else {
@@ -247,5 +404,73 @@ pub async fn delete_images(
             let _ = image::Entity::delete_by_id(img.image_key).exec(&state.db).await;
         }
     }
+    if !r2_failed.is_empty() {
+        return Json(ApiResponse::error(&format!(
+            "这几张的 R2 对象没删掉，图库里的行也保留着（其余已删除）：{}",
+            r2_failed.join("；")
+        )));
+    }
     Json(ApiResponse::success("Deleted".to_string()))
+}
+
+// ── R2 用量（面板用量条的数据源）────────────────────────────────────────────
+/// ⚠️ `used_bytes` 在**列表失败时是 0**，而 `0` 不是"用量是 0"的意思 ——
+/// 前端必须看 `list_error` 分支：非空 ⇒ 用量条转灰、显示原因，**不许**显示 0%。
+/// （这是本仓反复出现过的那类坑：缺键/缺数当成 0，于是"读不到"被读成"很空"。）
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct R2Usage {
+    /// 面板里的总开关（用户点的那一个）
+    pub enabled: bool,
+    /// 四样是否齐备（开关 + 桶名 + 前缀 + 公开域名）——即"这次上传会不会走 R2"
+    pub configured: bool,
+    /// 服务端 .env 里的凭据在不在（不在 ⇒ 配了也传不上去）
+    pub credentials: bool,
+    pub bucket: String,
+    pub prefix: String,
+    pub public_base: String,
+    pub quota_gb: f64,
+    pub limit_bytes: u64,
+    pub used_bytes: u64,
+    /// **为什么没有可信读数**（未启用 / 没配全 / 没凭据 / 列表失败）。
+    /// `None` 才代表 `used_bytes` 可信；非 `None` 时前端据它分支（先看 enabled/configured）。
+    pub list_error: Option<String>,
+}
+
+// GET /api/protect/images/r2
+pub async fn r2_usage(State(state): State<Arc<AppState>>) -> Json<ApiResponse<R2Usage>> {
+    let cfg = r2::load_config(&state.db).await;
+    let creds = r2::load_creds();
+    let mut used_bytes = 0u64;
+    let mut list_error = None;
+    if cfg.active() {
+        match creds.as_ref() {
+            None => {
+                list_error = Some(
+                    "服务端没有 R2 凭据（.env 缺 R2_ENDPOINT / R2_ACCESS_KEY / R2_SECRET_KEY）"
+                        .to_string(),
+                )
+            }
+            Some(c) => match r2::list_used_bytes(c, &cfg.bucket, &cfg.prefix).await {
+                Ok(v) => used_bytes = v,
+                Err(e) => list_error = Some(e),
+            },
+        }
+    } else if !cfg.enabled {
+        list_error = Some("R2 图床未启用（面板里关着开关）".to_string());
+    } else {
+        list_error = Some("R2 图床没配全（桶名 / 前缀 / 公开域名）".to_string());
+    }
+    Json(ApiResponse::success(R2Usage {
+        enabled: cfg.enabled,
+        configured: cfg.active(),
+        credentials: creds.is_some(),
+        bucket: cfg.bucket,
+        prefix: cfg.prefix,
+        public_base: cfg.public_base,
+        quota_gb: gib(cfg.quota_bytes),
+        limit_bytes: cfg.quota_bytes,
+        used_bytes,
+        list_error,
+    }))
 }

@@ -233,6 +233,10 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/protect/upload", post(upload::upload_image))
         .route("/api/protect/images", get(upload::list_images))
         .route("/api/protect/delImg", delete(upload::delete_images))
+        // R2 图床的用量读数（20261006）：挂在这一组里 ⇒ 自动只要管理员
+        // （`auth_guard` 对整个 protected_routes 域生效）。真值来自 R2 自己的
+        // ListObjectsV2，不是 SUM(image.size) —— 理由见 src/r2.rs 头注
+        .route("/api/protect/images/r2", get(upload::r2_usage))
 
         // Notes Protected
         // NEW ADMIN ROUTE for listing all notes
