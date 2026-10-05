@@ -37,7 +37,14 @@
 
 （判据 ④ 之所以连"剥掉之后掉到哪"都钉住：剥完必须**恰好**回到 `.readContainer` 那条的值，
 说明压死它的是那条规则、而不是别的什么。根因的形状由 CI 的
-`tests/sass-media-shadow.test.mjs`（特异性档）全仓盯着，这一份只管"渲染出来是什么"。）
+`sass-media-shadow.test.mjs`（特异性档）全仓盯着，这一份只管"渲染出来是什么"。）
+
+20261005 加了两节（同一处两个不同的病，见各自小节头注）：
+  ⑦ 正文列内边距只留一处 + 手机档那三条死声明的**渲染值**（⑦b 是字面删规则的反向对照）；
+  ⑧ 阅读面换和纸米白 `--washi-paper-warm`（浅色档）/ 正文补 0.2px 描边且**不重排**
+     （摘掉描边那条后同段落的宽/高/行数必须逐项相同）。⑧ 的沙箱比 ①–⑦ 多加载一张
+     `src/index.css`：底色走的是 `--washi-*` 令牌，不加载它就量不到真值；夹具外面还要套
+     一层 `.frontRoot`（那两条规则的祖先选择器），暗色档那条另用 `.frontRoot.frontDark` 臂。
 """
 import pathlib
 import subprocess
@@ -131,6 +138,34 @@ MARKUP_TEXT = """
 """
 
 MQ = "@media only screen and (max-width: 768px)"
+
+# 判据 ⑧ 的夹具：底色 + 描边。比 ⑦ 多两件东西 ——
+#   ① 外面套一层 `.frontRoot`：底色那两条规则的祖先选择器就是它
+#     （`.frontRoot:not(.frontDark) &` / `.frontDark &`），夹具里没有它，这两条**一条都不命中**，
+#      量到的永远是"没有背景"（上一版沙箱就是这样，"白天底色"这个缺陷它根本看不见）；
+#   ② 一只**会折行的长段落** + 一只 `li` + 一段行内 `code` + 一个 `pre > code`：
+#      描边要覆盖正文（含列表），要**避开**代码；而"不重排"这一条必须有会折行的段落才量得出来
+#      —— 单行段落摘掉描边也还是单行，行数判据恒真。段落里混排中英，让断行点不是某个整数。
+COLOR_MARKUP = """
+<div class="frontRoot">
+  <div class="readContainer">
+    <div class="readContent markdown-body">
+      <div class="readBody"><div id="content" class="markdown-body">
+        <div class="markdown-body">
+          <h1>正文里的标题</h1>
+          <p>这是一段会折行的正文，用来量描边会不会改变字形的前进宽度。汉字与 Latin 混排，
+             line wrapping 的断点落在哪里由字体度量决定，只要前进宽度一个像素都不变，
+             段落的高度、宽度与行数就应当逐像素相同。这段要够长，长到在 660 的列宽里
+             至少折成三行，否则行数判据没有分辨力。再补一句让它更长一些。</p>
+          <ul><li>列表项也要被描边覆盖</li></ul>
+          <p>行内代码 <code>npm test</code> 应当被清零。</p>
+          <pre><code>echo hello</code></pre>
+        </div>
+      </div></div>
+    </div>
+  </div>
+</div>
+"""
 
 # 这一段里该有的 !important 条数（`.readContent` / `.readDescription` 各宽+内边距 4 条、
 # 封面高 1、`.readInfo` 的列数/行距/宽/max-width/横向居中/bottom/内边距 7 条、
@@ -469,6 +504,119 @@ with sync_playwright() as p:
           nl["outer"]["padL"] == "15px", nl["outer"]["padL"])
     check(f'★正文列掉回 {nl["pW"][0]}px（≤320：两层 15px 全叠才会是这个数）',
           nl["pW"][0] <= 320, str(nl["pW"]))
+
+    print("⑧ 阅读面换和纸米白 + 正文补 0.2px 描边（20261005 第二轮）")
+    # 同一处两轮反馈、两个不同的病：
+    #   ① 「白色背景有点刺眼」——第一轮把白天底色从"半透明白叠出来的灰 #c1c3c6"换成
+    #      `--washi-paper`（#fffdfa），可纸白本身亮度 253、几乎就是纯白。这一轮换成
+    #      `--washi-paper-warm`（#f7f1e7，亮度 242，带黄相 = 和纸）。
+    #   ② 「文章页字体还是看起来比讨论区细」——正文与讨论区正文是**同一条字体栈、
+    #      同一个字重(400)、同一种颜色**，差别只有字号（17 vs 14.72px）。DPR2 下量中心
+    #      扫描线上的墨迹宽，两者都是 1 CSS px：CJK 在小字号被格点吸附、大字号不吸附
+    #      ⇒ 相对笔画 0.0588 vs 0.0679，字越大反而显得越细。`font-weight` 在微软雅黑上
+    #      推不动（只有 Light/Regular/Bold），只剩描边这一根杠杆。
+    # 本节两支都钉：底色（浅色档米白 / 暗色档仍 transparent）与描边（正文 0.2px、
+    # 代码清零、**不重排**）。不重排是"能上"的前提：描边若参与排版，全站行数/分页都会动。
+    def build_color_sandbox(css: str, name: str) -> pathlib.Path:
+        # 与 ①②⑦ 那个沙箱**只差**一张表：`src/index.css`（`--washi-*` 令牌与
+        # `.frontDark` 分支的出处）。底色那两条走的是变量 ⇒ 不加载它就量不到真值。
+        sb = pathlib.Path(tempfile.mkdtemp(prefix=f"readcol-{name}-"))
+        (sb / "read.css").write_text(css, encoding="utf-8")
+        shutil.copy(RESET_CSS, sb / "main.css")
+        shutil.copy(EDITOR_CSS, sb / "editor.css")
+        shutil.copy(FE / "src/index.css", sb / "tokens.css")
+        (sb / "index.html").write_text(
+            '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
+            '<link rel="stylesheet" href="main.css"><link rel="stylesheet" href="tokens.css">'
+            '<link rel="stylesheet" href="editor.css"><link rel="stylesheet" href="read.css">'
+            '</head><body><div id="root"></div></body></html>', encoding="utf-8")
+        return sb
+
+    # 不重排那一臂：按**字面**把描边摘掉（1 处，锚点命中数先断言），其余一字不动。
+    # 与 ⑦b 同一取法：不读 `git show HEAD:`（提交之后两条臂会逐字相同、红基线恒真）。
+    STROKE = "-webkit-text-stroke: 0.2px currentColor;"
+    if CSS.count(STROKE) != 1:
+        raise SystemExit(f"编译产物里 `{STROKE}` 出现 {CSS.count(STROKE)} 次（应为 1）"
+                         " —— 描边那条改名/挪窝了，⑧ 的不重排对照要先对齐")
+    NO_STROKE = CSS.replace(STROKE, "-webkit-text-stroke: 0;")
+    SB_COLOR = build_color_sandbox(CSS, "warm")
+    SB_NO_STROKE = build_color_sandbox(NO_STROKE, "bare")
+
+    COLOR = """(arg) => {
+      document.getElementById('root').innerHTML = arg.markup;
+      const cs = (s) => {
+        const e = document.querySelector(s); if (!e) return null;
+        const c = getComputedStyle(e), r = e.getBoundingClientRect();
+        return { bg: c.backgroundColor, sw: c.webkitTextStrokeWidth, sc: c.webkitTextStrokeColor,
+                 color: c.color, w: +r.width.toFixed(2), h: +r.height.toFixed(2), fs: c.fontSize };
+      };
+      const inner = '.readBody > .markdown-body > .markdown-body';
+      const p = document.querySelector(inner + ' > p');
+      // 行数用 Range 数**行框**：段落折了几行是"有没有重排"最直接的证据
+      //（宽高在 660 这种定宽列里可能因为最后一行断点位置而凑巧相等，行数不会）。
+      const rg = document.createRange();
+      rg.selectNodeContents(p);
+      return {
+        light: cs('.readContainer'),
+        p: cs(inner + ' > p'),
+        li: cs('.readBody li'), h1: cs('.readBody h1'),
+        pre: cs('.readBody pre'), code: cs('.readBody pre code'),
+        inlineCode: cs(inner + ' > p > code'),
+        lines: rg.getClientRects().length,
+        warm: getComputedStyle(document.documentElement)
+                .getPropertyValue('--washi-paper-warm').trim(),
+      };
+    }"""
+
+    def measure_color(sb: pathlib.Path, dark: bool) -> dict:
+        markup = (COLOR_MARKUP.replace('class="frontRoot"', 'class="frontRoot frontDark"')
+                  if dark else COLOR_MARKUP)
+        pg = br.new_page(viewport={"width": 1440, "height": 900})
+        pg.on("pageerror", lambda e: errs.append(str(e)))
+        pg.goto(sb.as_uri() + "/index.html")
+        pg.wait_for_timeout(120)
+        out = pg.evaluate(COLOR, {"markup": markup})
+        pg.close()
+        return out
+
+    cl = measure_color(SB_COLOR, dark=False)
+    cd = measure_color(SB_COLOR, dark=True)
+    check("前提：令牌本身解析出来了（`--washi-paper-warm` 读得到值，否则下面量的是空）",
+          cl["warm"] == "#f7f1e7", repr(cl["warm"]))
+    check("★浅色档阅读面 = 和纸米白 rgb(247,241,231)（#f7f1e7）",
+          cl["light"]["bg"] == "rgb(247, 241, 231)", cl["light"]["bg"])
+    check("  ★且它不再是纸白 rgb(255,253,250)——那正是用户说「刺眼」的那一档亮度",
+          cl["light"]["bg"] != "rgb(255, 253, 250)", cl["light"]["bg"])
+    check("★暗色档仍是 transparent（夜间那支一字未动，透 body 深蓝渐变）",
+          cd["light"]["bg"] == "rgba(0, 0, 0, 0)", cd["light"]["bg"])
+    check("★正文（含列表、标题）带 0.2px 描边，颜色 = 当前字色（`currentColor`）",
+          cl["p"]["sw"] == "0.2px" and cl["li"]["sw"] == "0.2px" and cl["h1"]["sw"] == "0.2px"
+          and cl["p"]["sc"] == cl["p"]["color"],
+          f'p {cl["p"]["sw"]} / li {cl["li"]["sw"]} / h1 {cl["h1"]["sw"]}，'
+          f'描边色 {cl["p"]["sc"]} vs 字色 {cl["p"]["color"]}')
+    check("★代码清零：`pre`/`pre code`/行内 `code` 三处都是 0px（深底浅字描边会失衡）",
+          cl["pre"]["sw"] == "0px" and cl["code"]["sw"] == "0px"
+          and cl["inlineCode"]["sw"] == "0px",
+          f'pre {cl["pre"]["sw"]} / pre code {cl["code"]["sw"]} / 行内 {cl["inlineCode"]["sw"]}')
+    check(f'  描边没有改字号（正文仍 {cl["p"]["fs"]}）', cl["p"]["fs"] == "17px", cl["p"]["fs"])
+
+    cn = measure_color(SB_NO_STROKE, dark=False)
+    check("  对照臂的前提：描边真的没了（正文 0px）", cn["p"]["sw"] == "0px", cn["p"]["sw"])
+    check(f'★不重排：同段落的宽 {cl["p"]["w"]} / 高 {cl["p"]["h"]} / 行数 {cl["lines"]} '
+          f'与摘掉描边那臂（{cn["p"]["w"]} / {cn["p"]["h"]} / {cn["lines"]}）逐项相同',
+          cl["p"]["w"] == cn["p"]["w"] and cl["p"]["h"] == cn["p"]["h"]
+          and cl["lines"] == cn["lines"],
+          f'带描边 {cl["p"]["w"]}×{cl["p"]["h"]} {cl["lines"]} 行 / '
+          f'不带 {cn["p"]["w"]}×{cn["p"]["h"]} {cn["lines"]} 行')
+    check(f'  夹具自检：那一段真的折成了多行（{cl["lines"]} 行 ≥ 3，否则行数判据无分辨力）',
+          cl["lines"] >= 3, str(cl["lines"]))
+
+    # 负空间：米白这个令牌**只许有一个出处**（`:root` 浅色档）。真加进 `.frontDark`
+    # 分支，夜间两支就会互相跟着变 —— 而上面那条"暗色档 transparent"判据量的是
+    # `.readContainer`，令牌被重定义了它也照样绿（这条规则压根不读那个变量）。
+    _idx = (FE / "src/index.css").read_text(encoding="utf-8")
+    check("★`--washi-paper-warm` 在 index.css 里只出现 1 次（只在 `:root`，夜间档不重定义）",
+          _idx.count("--washi-paper-warm") == 1, str(_idx.count("--washi-paper-warm")))
 
     # 负空间：这个类名是 JSX 与 sass 之间**唯一的**接缝，改名一边就是静默失效
     # （`className='readBody'` 还在、sass 那边没规则 ⇒ 上面两组判据全绿而线上照旧）。
