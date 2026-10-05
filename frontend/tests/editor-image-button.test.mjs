@@ -321,7 +321,11 @@ console.log('\n④ 我们自己的组件仍钉着这套契约（换了写法这�
             '监听器挂在编辑器外层那个 div 上（bytemd 工具栏在它里面）');
         ok(/editorEffect: \(ctx\) => \{ ctxRef\.current = ctx/.test(f),
             'ctx 从 editorEffect 里取（bytemd 只把上下文交给插件）');
-        ok(/appendBlock\(`!\[\]\(\$\{url\}\)`\)/.test(f), '插入用 `appendBlock(\'![](url)\')`（与拖拽上传逐字节一样）');
+        // 20261006：插入前先过一遍 `encodeAssetUrl`（地址里带空格时裸拼会整段退化成纯文本，
+        // 见 `tests/asset-url.test.mjs` 与 `src/utils/assetUrl.ts`）。变的是**编码**，不是形状：
+        // alt 仍是空串、url 仍是那一个 —— 所以下面第 ③ 组"与拖拽上传同形"的前提不变。
+        ok(/appendBlock\(`!\[\]\(\$\{encodeAssetUrl\(url\)\}\)`\)/.test(f),
+            '插入用 `appendBlock(\'![](encodeAssetUrl(url))\')`（地址先编码再拼 markdown）');
         ok(/setSelection\(pos, ctx\.codemirror\.Pos\(pos\.line\)\)/.test(f), '光标落在刚插入的那一行上');
 
         // 同一轮修掉的真缺陷：本仓失败一律 HTTP 200 + code:500
@@ -331,8 +335,8 @@ console.log('\n④ 我们自己的组件仍钉着这套契约（换了写法这�
         // 算出的负行号。成功那一支的形状（alt/title 都给空串）也一并钉住：alt 给空串正是
         // 上面第 ③ 组里"与拖拽上传同形"的前提。
         ok(!/return \[\];/.test(f), '失败不 `return [];`（会让 bytemd 插空行 + 负行号）');
-        ok(/return \[\{ alt: '', url: response\.data\.data, title: '' \}\];/.test(f),
-            '成功那一支仍返回 `{ alt: \'\', url, title: \'\' }`（alt 空串 ⇒ 插出来是 `![](url)`）');
+        ok(/return \[\{ alt: '', url: encodeAssetUrl\(response\.data\.data\), title: '' \}\];/.test(f),
+            '成功那一支仍返回 `{ alt: \'\', url, title: \'\' }`（alt 空串 ⇒ 插出来是 `![](url)`），url 已编码');
         ok(/throw new Error\(/.test(f), '失败改为 throw（调用方按"没拿到图片"处理）');
     }
 
