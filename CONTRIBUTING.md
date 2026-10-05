@@ -401,8 +401,11 @@ bash scripts/dev/install-hooks.sh     # = git config core.hooksPath .githooks，
   文件开头的 `FOREIGN_KEY_CHECKS=0` 就是为它准备的。
 - **`scripts/migration/` 目录混着夹具与作者一次性脚本**（见 2.1 的两条提示）——
   没有按用途分目录，只能靠文件名前缀辨认。想改成分目录的话，先确认没人按路径引用它们。
-- `scripts/` 下几个脚本里的路径写死了开发机的位置（`PROJECT_DIR` 环境变量已能覆盖
-  `healthcheck.sh` / `nightly_sandboxes.sh` / `deploy/*.sh` 四个，CI 工作流里那处仍写死）。
+- **六处路径的默认值写的是维护者那台机器的位置**（`healthcheck.sh` / `nightly_sandboxes.sh` /
+  `deploy/*.sh` 四个脚本、`deploy.yml` 里那次 ssh、`src/routes/graph.rs` 的产物目录），
+  但**每一处都能不改被跟踪的文件地覆盖**：`PROJECT_DIR`、`DEPLOY_REPO_DIR`（仓库 Variable）、
+  `GRAPH_ARTIFACT_DIR`。**fork 时设这些就行**，没设才会落到那个默认值上——所以这不是
+  "你得改源码"，只是默认值对你没意义。
 - 沙箱套件跑完后**不清理自己的临时目录**（`tempfile.mkdtemp` 建了就不删），跑多了会在
   `/tmp` 里积出可观的空间。已知，未修。
 
