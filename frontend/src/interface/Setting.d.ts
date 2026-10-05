@@ -59,6 +59,15 @@ export interface R2Usage {
     enabled: boolean;
     configured: boolean;
     credentials: boolean;
+    /**
+     * 这对凭据取自哪一组 `.env` 变量（`R2_IMAGE_*` = 图库专用令牌 / `R2_*` = 部署令牌）。
+     * `credentials` 为假时缺席。**只报来源，不含任何密钥**。
+     *
+     * 为什么要显示它：R2 的 API 令牌是**按桶授权**的（不是账号级），拿部署那枚去列
+     * 图片桶会得到 `403 AccessDenied` —— 而它在这条链上的长相与"代码写错了"分不开
+     * （用量读不出来 ⇒ fail-closed ⇒ 图库一直说不能传）。面板上这行是那场排查的判据。
+     */
+    credsSource?: string | null;
     bucket: string;
     prefix: string;
     publicBase: string;

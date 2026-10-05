@@ -426,6 +426,10 @@ pub struct R2Usage {
     pub configured: bool,
     /// 服务端 .env 里的凭据在不在（不在 ⇒ 配了也传不上去）
     pub credentials: bool,
+    /// 这对凭据取自哪一组变量（`R2_IMAGE_*` = 图库专用令牌 / `R2_*` = 部署令牌）。
+    /// `credentials == false` 时为 `None`。**只报来源，不含任何密钥** —— 面板上那行
+    /// 就是"列桶为什么 403"最省事的判据（见 `r2.rs` 文件头"令牌按桶授权"那一段）。
+    pub creds_source: Option<String>,
     pub bucket: String,
     pub prefix: String,
     pub public_base: String,
@@ -447,7 +451,8 @@ pub async fn r2_usage(State(state): State<Arc<AppState>>) -> Json<ApiResponse<R2
         match creds.as_ref() {
             None => {
                 list_error = Some(
-                    "服务端没有 R2 凭据（.env 缺 R2_ENDPOINT / R2_ACCESS_KEY / R2_SECRET_KEY）"
+                    "服务端没有 R2 凭据（.env 里既没有 R2_IMAGE_ACCESS_KEY / R2_IMAGE_SECRET_KEY，\
+                     也没有 R2_ACCESS_KEY / R2_SECRET_KEY）"
                         .to_string(),
                 )
             }
@@ -465,6 +470,13 @@ pub async fn r2_usage(State(state): State<Arc<AppState>>) -> Json<ApiResponse<R2
         enabled: cfg.enabled,
         configured: cfg.active(),
         credentials: creds.is_some(),
+        creds_source: creds.as_ref().map(|c| {
+            if c.image_token {
+                "R2_IMAGE_*（图库专用令牌）".to_string()
+            } else {
+                "R2_*（部署令牌）".to_string()
+            }
+        }),
         bucket: cfg.bucket,
         prefix: cfg.prefix,
         public_base: cfg.public_base,
