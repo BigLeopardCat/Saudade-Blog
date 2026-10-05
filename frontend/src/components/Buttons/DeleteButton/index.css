@@ -27,6 +27,10 @@
     transform: translateX(70px);
     height: 40px;
     width: 40px;
+    /* 与上传钮同一条理由（20261006）：全局 `.icon{min-width:60px}` 是给侧栏导航写的，
+       它会把这里 40px 的槽撑成 60px —— 图标被挤到按钮右缘只剩 4px，与旁边那颗
+       上传钮一起看着"塌"。两颗按钮本来就是同一套皮，一处漏一处不补就会长得不一样。 */
+    min-width: 0;
     display: flex;
     align-items: center;
     justify-content: center;
