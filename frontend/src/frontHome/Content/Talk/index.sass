@@ -98,48 +98,63 @@
       color: var(--font-title-color)
       padding: 10px
 
-    // 卡片右下角的精确时刻（20260924 三轮：从左下角挪到右下角，它上面那条虚线也撤了）。
-    // 虚线原是为了"把时刻和正文分开"，但它横贯整张卡、又顶开 6px，主人嫌它占高度——
-    // 改成靠右之后时间自己就与正文错开了，不需要那条线。
-    // 颜色走 CSS 变量（`--font-p-color`）而不是写死——本页要活过浅色与夜间两套主题。
-    .talk-foot
+    // 第一行：署名（左）＋精确时刻（右），20261006 用户第 4 条起就是**卡片首行**了——
+    // 上一版这是卡片底部单独一行（`.talk-foot`，署名 20261005 才加进来），现在整块撤了、
+    // 时刻上移到这里（用户按预览拍的板）。
+    // 三行都在 `Card.Meta` 的 description 槽里（见 index.tsx 的注释：title 槽弃用），
+    // 所以这里的选择器是 `.talk-head` 的子元素、不是 `.ant-card-meta-*`。
+    .talk-head
       display: flex
-      // 20261005：发布者展示名进来之后这一行不再是单向右贴 —— 名字在左、时刻在右，
-      // 两端对齐。名字缺省时（后端没带 `nickname`）它是空跨度，宽度 0，时刻照旧贴右。
+      // 名字在左、时刻在右，两端对齐。名字缺省时（后端没带 `nickname`）它是空跨度，
+      // 宽度 0，时刻照旧贴右。
       justify-content: space-between
+      // baseline：署名（12px）与时刻（12px 但带 letter-spacing）按字底对齐，
+      // 不按盒子底 —— 后者在有 letter-spacing 的一侧会差一个半行距。
       align-items: baseline
       gap: 8px
-      margin-top: 4px
 
-      // 发布者展示名（讨论区那种"谁发的"）。字号与时刻同档、颜色也走令牌，
-      // 夜间与浅色共用一套（本页要活过两套主题，不写死色值）。
-      .talk-who
-        font-size: 12px
-        color: var(--font-p-color)
-        opacity: .75
-        overflow: hidden
-        text-overflow: ellipsis
-        white-space: nowrap
+    // 发布者展示名（讨论区那种"谁发的"）。字号与时刻同档、颜色也走令牌，
+    // 夜间与浅色共用一套（本页要活过两套主题，不写死色值）。
+    .talk-who
+      font-size: 12px
+      color: var(--font-p-color)
+      opacity: .75
+      overflow: hidden
+      text-overflow: ellipsis
+      white-space: nowrap
 
-      .talk-clock
-        // 自己顶到右端：只靠父级的 `space-between` 的话，这一行的位置就绑死在
-        // "左边那个跨度存在"上——它哪天被删掉/条件隐藏，时刻会静默滑到左边
-        // （20261005 红基线实测：老组件没有 `.talk-who`，时刻从右缘 809 滑到 538）。
-        margin-left: auto
-        font-size: 12px
-        letter-spacing: .08em
-        // 等宽数字：列表里每条的时刻上下对齐，扫起来不用重新找位
-        font-variant-numeric: tabular-nums
-        color: var(--font-p-color)
-        opacity: .75
+    .talk-clock
+      // 自己顶到右端：只靠父级的 `space-between` 的话，这一行的位置就绑死在
+      // "左边那个跨度存在"上——它哪天被删掉/条件隐藏，时刻会静默滑到左边
+      // （20261005 红基线实测：老组件没有 `.talk-who`，时刻从右缘 809 滑到 538）。
+      margin-left: auto
+      font-size: 12px
+      letter-spacing: .08em
+      // 等宽数字：列表里每条的时刻上下对齐，扫起来不用重新找位
+      font-variant-numeric: tabular-nums
+      color: var(--font-p-color)
+      opacity: .75
+
+    // 标题：另起一行（20261006 用户第 4 条）。
+    // 必须自己写 `color` —— 下面 `.ant-card-meta-description` 那条把整个 description
+    // 染成正文色（`--font-p-color !important`），而三行都在 description 里，
+    // 标题不反制就与正文一个颜色了。这条**不需要** `!important`：`!important` 定的是
+    // 父元素自身的颜色，本元素自己匹配到的声明永远压过继承来的值。
+    .talk-title
+      font-size: 16px
+      font-weight: 600
+      color: var(--font-title-color)
+      margin: 6px 0 2px
 .timeLine
   @media only screen and (max-width: 800px)
     width: 80%
   color:  var(--font-p-color)
   cursor: pointer
-.TalkContainer 
-  .talk 
-    .ant-card-meta-title
-      color: var(--font-title-color) !important
+.TalkContainer
+  .talk
+    // 20261006：`.ant-card-meta-title` 那条撤了 —— `Card.Meta` 的 `title` 槽已弃用
+    // （署名不能进那个槽：它会把这行染成标题色），三行（署名行／标题／正文）**全在
+    // description 里**，标题的标题色由上面的 `.talk-title` 自己认领。
+    // 留这条注释是为了下次别再把它加回来：那条规则现在的匹配面是 0。
     .ant-card-meta-description
       color: var(--font-p-color) !important
