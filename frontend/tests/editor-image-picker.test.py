@@ -28,6 +28,9 @@
     `response.status !== 200` 的包（本仓失败是 HTTP 200 + code:500 ⇒ 那句恒真），它**必须**
     把 `![]()` 插进正文。
   · 第五节：图库为空 / 读不到时给的是人话，且「本地上传」仍然可用（不能把人卡死）。
+  · 第六节：文件名里带**半角空格**时，插进正文的必须是编码后的地址（用户那张图不渲染的
+    病根：CommonMark 的 link destination 不允许空白字符 ⇒ 整段退化成纯文本，一个 `<img>`
+    都没生成）。负控 = 另打一份把 `encodeAssetUrl` 改成**恒等**的包，正文里必须出现裸空格。
 
 见 CLAUDE.md §2：本机不能 vite build。esbuild 把**真组件**打成 bundle、只桩一个边界
 （`src/apis/axios.tsx`）。三个必踩的坑：① 桩必须是**可调用对象**（`ImageMethods` 调的是
@@ -254,6 +257,14 @@ def build_sandbox() -> pathlib.Path:
            "if (!url) {", "if (false) {", "弹窗侧的空 url 闸")
     esbuild(oldcheck, "entry.tsx", "bundle.js")
     write_html(oldcheck, "bundle.js", css)
+
+    # 负控丙（第六节）：把编码函数改成**恒等** ⇒ 带空格的文件名必须把裸空格带回正文。
+    # 没有它，第六节那条"正文里是 %20 形态"可能只是"反正也没有空格"（假绿）。
+    noencode = fork(sb, "noencode")
+    mutate(noencode, "src/utils/assetUrl.ts",
+           "return head + name.replace(FORBIDDEN, pctEncode)", "return url", "assetUrl 编码")
+    esbuild(noencode, "entry.tsx", "bundle.js")
+    write_html(noencode, "bundle.js", css)
     return sb
 
 
@@ -277,6 +288,7 @@ BASE = f"http://127.0.0.1:{_server.server_address[1]}/"
 URL = BASE + "index.html"
 NOSTOP_URL = BASE + "nostop/index.html"
 OLDCHECK_URL = BASE + "oldcheck/index.html"
+NOENCODE_URL = BASE + "noencode/index.html"
 
 # 内置图片按钮（左组下标 5）。**必须带左组前缀**：右组下标 5 是「源码」那颗按钮。
 IMG = '.bytemd-toolbar-left > .bytemd-toolbar-icon[bytemd-tippy-path="5"]'
@@ -493,7 +505,44 @@ with sync_playwright() as pw:
     check("图库读不到时「本地上传」仍然可用",
           page.evaluate(f"() => document.querySelectorAll('{FILE_INPUT}').length") == 1)
 
-    for p, name in ((page, "主档"), (npage, "负控甲（抹 stopPropagation）"), (opage, "负控乙（修前判据）")):
+    # ═════════════════════════════════════════════════════════════════════════════
+    print("\n⑥ 文件名带空格 ⇒ 插进正文的是编码后的地址（负控：编码改成恒等 ⇒ 裸空格回到正文）")
+    # ═════════════════════════════════════════════════════════════════════════════
+    # 用户那张不渲染的图就是这个形态：上传时文件名 = 时间戳 + 原名，**空格原样留着**，
+    # 而 `![](${url})` 裸拼 ⇒ CommonMark 的 link destination 不允许空白字符，整段退化成
+    # 纯文本（一个 `<img>` 都没生成；文件在、`%20` 访问 200 —— 不是文件问题）。
+    SPACEY = "/api/protect/download/20261006033033_sunset (1) 副本.png"
+    SPACEY_ENC = "/api/protect/download/20261006033033_sunset%20%281%29%20副本.png"
+
+    def upload_spacey(pg):
+        """同一个上传动作在某一档包上跑一遍，回正文。挂载后正文必须是空的（下面有前置断言）。"""
+        pg.evaluate("(u) => { window.__uploadUrl = u; window.__upFail = false;"
+                    " window.__imgFail = false; window.__images = []; }", SPACEY)
+        click_image_icon(pg)
+        pick_tab(pg, "本地上传")
+        pg.set_input_files(FILE_INPUT, {"name": "sunset (1) 副本.png",
+                                        "mimeType": "image/png", "buffer": PNG})
+        pg.wait_for_timeout(700)
+        return pg.evaluate("() => window.__doc()")
+
+    page6 = mount(br)
+    check("前置：新页面正文是空的（下面的整串断言才有意义）",
+          page6.evaluate("() => window.__doc()") == "")
+    doc6 = upload_spacey(page6)
+    check("带空格的文件名：插进正文的是 %20 形态",
+          doc6 == "\n![](%s)" % SPACEY_ENC, repr(doc6))
+    check("反面：正文里**没有**裸空格形态的地址", SPACEY not in doc6, repr(doc6))
+    check("只编禁区字符：中文/全角标点没被一起编掉", "副本" in doc6, repr(doc6))
+
+    # 负控丙：同一段流程在**恒等编码**的包上跑，裸空格必须原样落进正文
+    n6 = mount(br, url=NOENCODE_URL)
+    ndoc = upload_spacey(n6)
+    check("负控：encodeAssetUrl 改成恒等 ⇒ 裸空格原样进正文（说明上面那条判据是有效的）",
+          ndoc == "\n![](%s)" % SPACEY, repr(ndoc))
+
+    for p, name in ((page, "主档"), (npage, "负控甲（抹 stopPropagation）"),
+                    (opage, "负控乙（修前判据）"),
+                    (page6, "第六节主档"), (n6, "负控丙（编码改成恒等）")):
         check(f"{name}没有页面异常", not p.errs, "; ".join(p.errs[:3]))
 
     br.close()
