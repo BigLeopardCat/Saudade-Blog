@@ -17,8 +17,16 @@ html
   font-size: 1rem
   // 20260830：白天背景与 /about 页一致（--container-background-color 半透明白
   // 遮罩，AboutMe 同款）；暗色透明透 body 深蓝渐变（原视觉）
+  // 20261005 白天改纸白（用户报「白天字体太细看着累眼，是因为背景的原因吗」——**是**）：
+  // 半透明白是叠在**两层**之上的——`.frontRoot` 自己的 33% 白，再下面还有 `body` 那条
+  // **从登录页漏出来的**深色渐变（`pages/Login/index.sass:11` 的 160deg #0d1319→#1d2634）。
+  // 线上实测正文四周底色 = **#c1c3c6**（一整幅均匀的灰，不是白）：纯黑 16px 正文落在灰底上
+  // 笔画显得发薄、画面发闷，正是"太细/累眼"的来源。
+  // 改成 `--washi-paper`（不透明 #fffdfa）：正文真的落在纸上，也和全站的和纸面一致。
+  // ⚠️ 夜间那支**保持 transparent**（透 body 深蓝 = 刻意视觉）：别把两支并成同一个令牌，
+  // `--washi-paper` 在 `.frontDark` 下是 rgba(38,32,48,.92)，夜间观感会被一起改掉。
   .frontRoot:not(.frontDark) &
-    background: var(--container-background-color)
+    background: var(--washi-paper)
   .frontDark &
     background: transparent
   .readCover
@@ -492,12 +500,22 @@ html
       color: var(--font-title-color)
       margin: 2rem 0 2rem 0
 
+    // 20261005：正文 16 → 17px（用户「也有点小」，见 .readContainer 那段白天底色的注释）。
+    // 行高跟着字号走（1.85 ⇒ 31.45px，原来写死 30px，字号一动就偏）。`1.0625rem` 是**故意**
+    // 写成 rem 的：访客改浏览器默认字号时它是可缩放的，写死 `17px` 就不跟了。
+    // ⚠️ 别用 `font-weight` 去救"太细"：Windows 的 CJK 回退是微软雅黑，只有 Light/Regular/Bold
+    // 三档，`font-weight: 500` 在 Chrome/Windows 上渲染结果**等于 400**（本机实测无差异）。
+    // 真要更粗，杠杆是 `-webkit-text-stroke: 0.2px currentColor`（未采用，需真机 A/B）。
     p
-      font-size: 1rem
+      font-size: 1.0625rem
       max-width: 90rem
       color: var(--font-title-color)
-      line-height: 30px
+      line-height: 1.85
       margin: 1rem 0 1rem 0
+    // 列表项原来被 github-markdown-light 按 `.markdown-body li`（0,1,1）压成 24px，
+    // 与相邻段落 30px 打架（那段正文看着一紧一松）。本条 (0,3,1) 稳压它。
+    li
+      line-height: 1.85
       &::after
         content: ''
         position: absolute
