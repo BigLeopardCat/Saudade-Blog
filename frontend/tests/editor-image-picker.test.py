@@ -261,8 +261,10 @@ def build_sandbox() -> pathlib.Path:
     # 负控丙（第六节）：把编码函数改成**恒等** ⇒ 带空格的文件名必须把裸空格带回正文。
     # 没有它，第六节那条"正文里是 %20 形态"可能只是"反正也没有空格"（假绿）。
     noencode = fork(sb, "noencode")
+    # 锚点跟着实现走：20261006 起编码是「按码点切 + 逐字符 `isForbidden` 判定」。
+    # 把它换成"恒等"，整串照旧拼回去（`head + name`）⇒ 与 `return url` 同义。
     mutate(noencode, "src/utils/assetUrl.ts",
-           "return head + name.replace(FORBIDDEN, pctEncode)", "return url", "assetUrl 编码")
+           "(isForbidden(ch) ? pctEncode(ch) : ch)", "ch", "assetUrl 编码")
     esbuild(noencode, "entry.tsx", "bundle.js")
     write_html(noencode, "bundle.js", css)
     return sb
