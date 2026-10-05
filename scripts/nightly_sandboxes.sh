@@ -34,6 +34,18 @@ MARK=${MARK:-"$HOME/sandbox_regression.failed"}
 TS=$(date '+%Y-%m-%d %H:%M:%S')
 DRY=${DRY:-0}
 
+# ── 临时目录隔离（20261006）────────────────────────────────────────────────────
+# 此前沙箱里的 `tempfile.mkdtemp(prefix=…)` 全撒在 /tmp 根上，而**绝大多数套件跑完不删**
+# （37 个 .py 里只有 10 个在 happy path 末尾删一次，异常/超时路径不执行）。实测攒到
+# 2265 个目录 / 4.76G——占整个 /tmp 的 85%（单 `comment-layout-` 一族就 141 个 / 2.5G）。
+#
+# 现在每个套件拿到一个**专属 TMPDIR**：它的 mkdtemp 全部落在这一格里。
+#   通过 ⇒ 删掉这一格；失败 ⇒ **留下**（那是排障材料：截图、构建产物）并把路径写进日志。
+# 选择"由运行器统一隔离"而不是"改 61 个套件的源码各自清理"，就因为运行器知道**过没过**，
+# 套件自己分不出这两种结局。新增套件也自动被覆盖，不必注册。
+SANDBOX_TMP=${SANDBOX_TMP:-/tmp/saudade-sandboxes}
+RUN="$SANDBOX_TMP/$(date +%Y%m%dT%H%M%S)"
+
 # 沙箱要 node（esbuild）与 python3（playwright 在 ~/.local，chromium 在 ~/.cache）——
 # cron 的 PATH 很短，显式给全，免得"人在终端跑得过、cron 里找不到命令"。
 export PATH="/usr/local/bin:/usr/bin:/bin:$HOME/.local/bin"
@@ -82,23 +94,36 @@ fi
 fail=0
 n=0
 nfail=0
+say "[$TS] 本轮临时目录：$RUN"
 for t in "${SUITES[@]}"; do
   n=$((n + 1))
   name=$(basename "$t")
+  suite_tmp="$RUN/${name%.py}"
   say "--- $name ---"
   if [ "$DRY" = "1" ]; then
-    say "[DRY] timeout -k 30 480 python3 $t"
+    say "[DRY] mkdir -p $suite_tmp && TMPDIR=$suite_tmp timeout -k 30 480 python3 $t"
     continue
   fi
-  if timeout -k 30 480 python3 "$t" >>"$LOG" 2>&1; then
+  # **必须真建出来**：TMPDIR 指向一个不存在的目录时，tempfile.gettempdir() 会**静默回落到
+  # /tmp**——隔离看着生效、实际一行没生效，正是本仓最怕的那类半死。
+  if ! mkdir -p "$suite_tmp"; then
+    fail=1
+    nfail=$((nfail + 1))
+    say "[$TS] $name FAILED（建不出临时目录 $suite_tmp）"
+    continue
+  fi
+  if TMPDIR="$suite_tmp" timeout -k 30 480 python3 "$t" >>"$LOG" 2>&1; then
+    rm -rf "$suite_tmp"
     say "[$TS] $name OK"
   else
     rc=$?
     fail=1
     nfail=$((nfail + 1))
-    say "[$TS] $name FAILED（退出码 $rc，超时上限 480s）"
+    say "[$TS] $name FAILED（退出码 $rc，超时上限 480s）；现场留在 $suite_tmp"
   fi
 done
+# 轮次目录只收**空的**：失败现场那一格还装着东西，rmdir 会自然失败、不动它。
+rmdir "$RUN" 2>/dev/null || true
 
 say "════ $((n - nfail))/$n 个沙箱通过 ════"
 if [ "$DRY" = "1" ]; then
@@ -112,3 +137,14 @@ else
   say "[$TS] FAILED — 见上方输出（哨兵 $MARK 已置位，healthcheck 会报一次）"
   touch "$MARK"
 fi
+
+# ── 清扫（20261006）：扫走隔离盖不住的那些 ──────────────────────────────────────
+# TMPDIR 隔离能盖住"由运行器拉起来的套件"，盖不住**手跑单个套件**
+# （`python3 frontend/tests/xxx.test.py` 没人给它 TMPDIR）与中途被 kill 的轮次——
+# 那些仍旧落在 /tmp 根上。清扫脚本按**从套件源码推出的前缀**认领它们（不写手写名单），
+# 另收 24h 以上的陈旧轮次目录；判据是白名单 + 年龄闸 + 路径必须在根之下。
+# 默认只列不删，这里显式 --apply。清扫失败**不影响**沙箱结果——账单卫生不该把一次
+# 真实的套件失败搅浑（同 agent 仓 nightly 调 trace_retention.py 的做法）。
+say "[$TS] 清扫临时目录："
+python3 scripts/prune_sandbox_tmp.py --apply >>"$LOG" 2>&1 \
+  || say "[$TS] 清扫运行异常（不影响沙箱结果）"

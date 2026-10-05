@@ -16,14 +16,30 @@
  * （现名 `chat-time-divider.test.mjs` / `chat-boot-smoke.test.mjs`）——它们当时
  * 各自都跑不到自己声称在测的地方（缺 `document.querySelector`、缺会话桩、时钟没钉死，
  * 详见 `stubs/dom.mjs` 头注），修好后每条断言都确定可判。
+ *
+ * 20261006 变更（**临时目录隔离**，与 `scripts/nightly_sandboxes.sh` 同一套约定）：
+ * 24 个套件用 `mkdtempSync(path.join(tmpdir(), '…'))` 建临时目录，此前一个都不删
+ * （只有 `wordgraph-artifact.test.mjs` 有 `finally`）——本机 `npm test` 跑几遍就往
+ * /tmp 撒几十个目录，`cmt-` 那一族攒到 60 个 / 588MB。现在每个套件拿到**专属 TMPDIR**，
+ * 通过才删、失败留下并打印路径。手跑单个套件（`node tests/xxx.test.mjs`）没人给它
+ * TMPDIR，仍旧落在 /tmp，由夜间清扫收掉。
  */
-import { readdirSync } from 'node:fs'
+import { readdirSync, mkdirSync, rmSync, rmdirSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 
 const dir = path.dirname(fileURLToPath(import.meta.url))
 const suites = readdirSync(dir).filter((f) => f.endsWith('.test.mjs')).sort()
+
+// 临时目录根与"轮次目录"：与 nightly_sandboxes.sh 共用同一个默认根，这样清扫脚本的
+// 第二条规则（收 24h 以上的陈旧轮次目录）对两侧一视同仁。
+// 每个套件的格子**必须先 mkdir**——TMPDIR 指向不存在的目录时 `os.tmpdir()` 会静默
+// 回落到 /tmp（Python 那边 `tempfile.gettempdir()` 同理）：隔离看着生效、实际没生效。
+const tmpRoot = process.env.SANDBOX_TMP || path.join(tmpdir(), 'saudade-sandboxes')
+const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+$/, 'Z')
+const runDir = path.join(tmpRoot, stamp)
 
 if (suites.length === 0) {
     console.error('❌ tests/ 下没有 *.test.mjs')
@@ -33,8 +49,29 @@ if (suites.length === 0) {
 const failed = []
 for (const f of suites) {
     console.log(`\n──── ${f} ────`)
-    const r = spawnSync(process.execPath, [path.join(dir, f)], { stdio: 'inherit' })
-    if (r.status !== 0) failed.push(`${f}（退出码 ${r.status}）`)
+    const suiteTmp = path.join(runDir, f.replace(/\.test\.mjs$/, ''))
+    try {
+        mkdirSync(suiteTmp, { recursive: true })
+    } catch (e) {
+        failed.push(`${f}（建不出临时目录 ${suiteTmp}：${e.message}）`)
+        continue
+    }
+    const r = spawnSync(process.execPath, [path.join(dir, f)], {
+        stdio: 'inherit',
+        env: { ...process.env, TMPDIR: suiteTmp },
+    })
+    if (r.status !== 0) {
+        // 失败现场**不删**：那是排障材料。路径写进失败列表里（末尾会汇总打印）。
+        failed.push(`${f}（退出码 ${r.status}，现场留在 ${suiteTmp}）`)
+    } else {
+        rmSync(suiteTmp, { recursive: true, force: true })
+    }
+}
+// 轮次目录只收**空的**：失败现场那一格还装着东西，rmdirSync 会自然抛错、不动它。
+try {
+    rmdirSync(runDir)
+} catch {
+    // 非空（有失败现场）或还没被建出来——两种都按预期处理，不做任何事
 }
 
 console.log(`\n════ ${suites.length - failed.length}/${suites.length} 个套件通过 ════`)

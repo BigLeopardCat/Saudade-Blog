@@ -332,6 +332,7 @@ for p in $(pgrep -P "$m"); do tr -d '\0' < /proc/$p/cmdline | grep -q multiproce
 | 目录 | 大小 | 说明 |
 |---|---|---|
 | `target/` | 4.1 GB | Rust 构建产物。**生产二进制就在这里 ⇒ 永不 `cargo clean`** |
+| `/tmp` | 1.4 GB | 杂项（探针状态、`systemd-private-*`、几个仓的临时克隆）。**20261006 之前这里涨到 5.6 GB**，其中 4.5 GB 是渲染沙箱 `mkdtemp` 的残留——现在由两个运行器的 `TMPDIR` 隔离 + 夜跑末尾的清扫管住（见 §4 与 [frontend/README.md](../frontend/README.md) 的《沙箱用得上的三个坑》） |
 | `saudade-blog-agent/` | 249 MB | 含 `.venv` |
 | `logs/` | 109 MB | agent 日志 + trace（按天删/压，见 §4） |
 | `/usr/lib/emqx` | 89 MB | EMQX 发行包（可选件） |
@@ -340,12 +341,15 @@ for p in $(pgrep -P "$m"); do tr -d '\0' < /proc/$p/cmdline | grep -q multiproce
 | device-service 源码目录（在仓库外） | 14 MB | 含它自己的 `target/` |
 | `/var/lib/emqx` | 1.4 MB | EMQX 运行数据 |
 
-40G 盘已用 81%（约 31G）：**4 GB 的 `target/` 与 89 MB 的 EMQX 是两块可辨认的大头，但都不能
-随手删**（前者是生产二进制，后者是可选件的本体）。清理口径与踩过的坑记在 agent 仓的
-`docs/问题记录.md`；**增长最快的通常是 `logs/` 与 trace，先看 §4 的保留策略是否在跑**。
+40G 盘已用 **65%（约 25 GB，余 14 GB）**：**4 GB 的 `target/` 与 89 MB 的 EMQX 是两块可辨认的
+大头，但都不能随手删**（前者是生产二进制，后者是可选件的本体）。清理口径与踩过的坑记在
+agent 仓的 `docs/问题记录.md`；**增长最快的通常是 `logs/` 与 trace，先看 §4 的保留策略是否
+在跑**——`/tmp` 现在也有了自己的清理（20261006，见上表）。它的**触发者是本机的 cron**
+（夜跑末尾调一次 `scripts/prune_sandbox_tmp.py`）：隔离在两个运行器里，跟着仓库走；
+打理隔离盖不住的那部分（手跑单个套件）则需要有人真的调那个脚本。
 
 ```bash
-du -sh target logs frontend/dist saudade-blog-agent /usr/lib/emqx /var/lib/emqx
+du -sh target logs frontend/dist saudade-blog-agent /tmp /usr/lib/emqx /var/lib/emqx
 ```
 
 ### 8.5 负载画像（对话侧）
