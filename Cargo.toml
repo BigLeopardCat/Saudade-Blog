@@ -21,6 +21,10 @@ sha2 = "0.10"
 argon2 = { version = "0.5", features = ["std"] }
 hex = "0.4"
 jsonwebtoken = { version = "10.3.0", features = ["rust_crypto"] }
+# R2 图床（20261006）：SigV4 的 HMAC-SHA256。**没有新增下载**——jsonwebtoken 早就把它
+# 带进依赖树（Cargo.lock 里本来就有 0.12.1），这一行只是把传递依赖提成直接依赖。
+# 引 aws-sdk-s3 要拉几十个 crate，而这里只需要一个 HMAC。
+hmac = "0.12"
 
 reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls", "stream"] }
 futures = "0.3"

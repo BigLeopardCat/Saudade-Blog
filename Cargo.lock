@@ -2100,6 +2100,7 @@ dependencies = [
  "dotenvy",
  "futures",
  "hex",
+ "hmac",
  "http-body-util",
  "jsonwebtoken",
  "reqwest",
