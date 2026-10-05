@@ -324,6 +324,20 @@ html
     .readBody
       width: 100%
       min-width: 0
+      // 20261005：正文列的内边距只留**这一处**（下面这个数字），两层 `.markdown-body` 里层清零。
+      // 起因：编辑器样式表（components/Editor/index.css，被 router 静态引入 ⇒ 全局生效）那两条
+      // `.markdown-body{padding:45px}` 与 `@media(max-width:767px){padding:15px}` 是打在**每一个**
+      // `.markdown-body` 上的，而文章正文是两层嵌套（`#content.markdown-body` + bytemd Viewer
+      // 自己那层）⇒ 桌面 45+45、手机 15+15 **全叠起来**：线上实测 390px 视口左右各
+      // `10(.readContent) + 15 + 15 = 40px` 空白，正文列只剩 310px —— 用户报的「左右两侧空白还多」。
+      // 特异性 (0,3,0) > 编辑器的 (0,1,0)：不看谁先加载、不靠源序。
+      // ⚠️ 桌面这个 90px 是**照着今天的有效宽**取的：840 − 180 = 660，与改动前逐像素相同
+      //（原来那 660 是 45+45 两层"碰巧"叠出来的），所以桌面观感零变化。
+      > .markdown-body
+        padding: 0 90px
+        // bytemd Viewer 自己那层（`#content.markdown-body > .markdown-body`）
+        > .markdown-body
+          padding: 0
 
     .markdown-body
       width: 100%
@@ -646,25 +660,46 @@ html
         // 卡住的内容也一并缩到 12px——写第二份值只会成为"改一处必须同步另一处"。
   .markdown-body
     max-width: 100% !important
-    h1
-      font-size: 1.6rem
-    p
-      line-height: 1.7em
-    pre
-      white-space: pre-wrap
-      word-break: break-all
-      // 20261005：`hidden` → `auto`。这一条原来是 `hidden`（想把长行"折起来"），
-      // 但同一处那两条 `white-space`/`word-break` 写在 `pre` 上、真正排版的文本节点却在
-      // `<pre><code>` 里，而 `code` 的 `white-space` 被 bytemd/hljs 顶成 `pre`
-      // （线上实测 computed `pre` = pre-wrap、`code` = pre）⇒ **折行从来没发生过**，
-      // 长行只是被裁掉了尾巴、还没有任何办法看到（`hidden` 不给滚动条）。
-      // 改成 `auto` 后超长代码行可以横向滑——与基础样式里 `pre` 的那条 `overflow-x: auto`
-      // 同行为（桌面一直是滑的，只有手机档被改成了 hidden）。
-      // ⚠️ 别改回 `hidden`：`.readBody` 那条宽度钉死之后正文可用宽度从 599px 掉到 ~330px
-      // （`.readContent` 390 − 左右各 10 内边距 − 代码块自身内边距），能整行放下的代码
-      // 从 ~65 字符缩到 ~36 字符；`hidden` = 把超出的部分直接吃掉。
-      overflow-x: auto !important
-      font-size: 13px
+  // 20261005：下面这一组**原来是"一条都没生效"的**——`.markdown-body h1`、`.markdown-body p`、
+  // `.markdown-body pre` 的特异性是 (0,1,x)，而基础层那几条挂在 `.readContainer .readContent`
+  // 之下（p/h1 是 (0,2,1)、pre 是 (0,3,1)），媒体查询**不改特异性** ⇒ 全被压死。
+  // 线上实测（390px 视口）：正文 p 行高仍是基础值、`pre` 字号也是基础值——这一块的头注
+  // 曾写着「它们现在是干净的（没有同名更高特异性规则）」，**那句话是错的**。
+  // 现在把选择器写足到比基础层高一层，不靠 `!important`：这一档的 `!important` 条数被
+  // `tests/read-mobile.test.py` 钉着（14 条），能用特异性解决的就别去动那个数。
+  // 判据读的是**渲染后的 computed 值**（同套件第 ⑦ 节），不再是"源码里写着"。
+  .readContainer
+    .readContent
+      .readBody
+        // 正文列 390 − 2×10（.readContent 的内边距）− 2×12 = 346px（改动前 310px = 那两层
+        // 编辑器内边距各 15px 全叠出来的）。选择器与基础层那两条**逐字相同**，靠"本块在文件
+        // 更后面"取胜（sass 按源码顺序吐出产物）——与 `.readStats` 那几条同一取法。
+        > .markdown-body
+          padding: 0 12px
+          > .markdown-body
+            padding: 0
+        h1
+          font-size: 1.6rem
+        p
+          line-height: 1.7em
+          margin: 0.9rem 0
+        h2, h3, h4
+          // 桌面是 `margin: 2rem 0`（上下各 32px）；手机档收一档，别让标题前后各空半屏
+          margin: 1.5rem 0 0.9rem
+        pre
+          // 20261005：`hidden` → `auto`。这一条原来是 `hidden`（想把长行"折起来"），
+          // 但真正排版的文本节点在 `<pre><code>` 里，而 `code` 的 `white-space` 被
+          // bytemd/hljs 顶成 `pre`（线上实测 computed `pre` = pre-wrap、`code` = pre）
+          // ⇒ **折行从来没发生过**，长行只是被裁掉了尾巴、还没有任何办法看到
+          // （`hidden` 不给滚动条）。改成 `auto` 后超长代码行可以横向滑——与基础样式里
+          // `pre` 的那条 `overflow-x: auto` 同行为（桌面一直是滑的）。
+          // ⚠️ 别改回 `hidden`：能整行放下的代码从 ~65 字符缩到 ~36 字符，
+          // `hidden` = 把超出的部分直接吃掉。
+          // ⚠️ 同处原来那两条 `white-space: pre-wrap` / `word-break: break-all` **已删除**：
+          // 它们和本条的 (0,1,1) 一样被压死过、一次都没生效，而"长行可横向滑"已经拍板
+          // （活着的那条是下面的 `overflow-x`）。留着只会让下一个人以为折行是既定行为。
+          overflow-x: auto !important
+          font-size: 13px
 
 // ── mermaid 图独立框(第 38 轮):边界清晰 + 单击放大提示 ──
 .readContent .markdown-body .bytemd-mermaid

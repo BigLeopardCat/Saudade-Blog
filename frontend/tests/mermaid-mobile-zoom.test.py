@@ -92,8 +92,9 @@ MOBILE_UA = ("Mozilla/5.0 (Linux; Android 12; NOH-AN00) AppleWebKit/537.36"
 DESKTOP_UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
               " Chrome/120 Safari/537.36")
 
-# 与线上一致的取值：`.readContent` 390 − 左右各 10 内边距 = 370 的正文列，图框再吃
-# 16+16 padding 与 1+1 border ⇒ 行内 svg ≈336px；浮层里 content = viewBox + 34 = 1146、
+# 与线上一致的取值：`.readContent` 390 − 左右各 10 内边距 = 370，正文列再吃那**一处**
+# 内边距 12+12 = 346（20261005 起；此前是两层编辑器内边距各 15 ⇒ 310），图框再吃
+# 16+16 padding 与 1+1 border ⇒ 行内 svg ≈312px；浮层里 content = viewBox + 34 = 1146、
 # 桌面舞台适配比例 1.21 ⇒ clamp 到 1。
 HOVER_NONE_RE = None  # 编译后才知道字面，见下
 

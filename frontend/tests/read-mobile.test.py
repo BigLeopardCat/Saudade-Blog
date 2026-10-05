@@ -63,6 +63,13 @@ SASS_JS = 'const sass=require("sass");process.stdout.write(sass.compile(process.
 
 SASS_FILE = FE / "src/frontHome/Content/ReadArticle/index.sass"
 RESET_CSS = FE / "src/frontHome/main.css"
+# 沙箱里**必须**有第三张表：编辑器那份（`components/Editor/index.css`，被 router 静态引入
+# ⇒ 线上对每一个 `.markdown-body` 都生效）。第 ⑦ 节量的那种缺陷**就是它漏进来的**
+#（`.markdown-body{padding:45px}` + 媒体档 15px，打在正文那两层嵌套上 ⇒ 桌面 45+45、
+# 手机 15+15 全叠）——不把它放进沙箱，判据测的是一个"没有编辑器样式表的世界"，
+# 上一轮那句"手机档内边距 12px 10px 已经对了"就是这么落在空处的。
+# 次序照线上：编辑器表在前、本仓 sass 在后（产物里 `components/Editor` 在 ReadArticle 之前）。
+EDITOR_CSS = FE / "src/components/Editor/index.css"
 
 # 与 index.tsx 同形：.readContainer > (.readCover > .readInfo) + .readDescription
 # + .readContent.markdown-body（正文那两个类在同一个元素上，见 index.tsx:622）
@@ -81,7 +88,9 @@ MARKUP = """
   </div>
   <div class="readDescription"><p>摘要</p></div>
   <div class="readContent markdown-body">
-    <div class="readBody"><div id="content" class="markdown-body"><p>正文</p></div></div>
+    <div class="readBody"><div id="content" class="markdown-body">
+      <div class="markdown-body"><p>正文</p></div>
+    </div></div>
   </div>
 </div>
 """
@@ -95,8 +104,28 @@ MARKUP_WIDE = """
 <div class="readContainer">
   <div class="readCover"><div class="readInfo"><div class="readMain"><h1>标题</h1></div></div></div>
   <div class="readContent markdown-body">
-    <div class="readBody"><div id="content" class="markdown-body">""" + WIDE_ATOM + """</div></div>
+    <div class="readBody"><div id="content" class="markdown-body">
+      <div class="markdown-body">""" + WIDE_ATOM + """</div>
+    </div></div>
     <div class="navigation" id="toc"></div>
+  </div>
+</div>
+"""
+
+# 判据 ⑦ 的夹具：正文那两层嵌套里放齐"会被手机档那几条声明改到"的三种块
+#（h1 / p / pre），量它们的**渲染值**。h1 与 p 是 20261005 之前"写了但被压死"的那几条，
+# pre 是只有 `overflow-x` 活着的那一条。
+MARKUP_TEXT = """
+<div class="readContainer">
+  <div class="readContent markdown-body">
+    <div class="readBody"><div id="content" class="markdown-body">
+      <div class="markdown-body">
+        <h1>正文里的一级标题</h1>
+        <p>第一段正文，用来量字号与行距。</p>
+        <p>第二段正文，用来量段间距。</p>
+        <pre><code>echo hello</code></pre>
+      </div>
+    </div></div>
   </div>
 </div>
 """
@@ -137,9 +166,11 @@ def build_sandbox(css: str, name: str) -> pathlib.Path:
     sb = pathlib.Path(tempfile.mkdtemp(prefix=f"readmob-{name}-"))
     (sb / "read.css").write_text(css, encoding="utf-8")
     shutil.copy(RESET_CSS, sb / "main.css")
+    shutil.copy(EDITOR_CSS, sb / "editor.css")
     (sb / "index.html").write_text(
         '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
-        '<link rel="stylesheet" href="main.css"><link rel="stylesheet" href="read.css">'
+        '<link rel="stylesheet" href="main.css"><link rel="stylesheet" href="editor.css">'
+        '<link rel="stylesheet" href="read.css">'
         '</head><body><div id="root"></div></body></html>',
         encoding="utf-8")
     return sb
@@ -182,6 +213,28 @@ NO_BODY = CSS[:_m.start()] + CSS[_m.end():]
 SB = build_sandbox(CSS, "fixed")
 SB_LEGACY = build_sandbox(LEGACY, "legacy")
 SB_NO_BODY = build_sandbox(NO_BODY, "nobody")
+
+
+# 判据 ⑦b 的反向对照：**删掉** 20261005 新加的那两条内边距规则，其余一字不动
+#（编辑器表在、手机档的 !important 也全在）⇒ 手机档正文列必须掉回 310px。
+# 这是"改动前那一臂"的取法：按**字面**删本次新增的规则，**不读 `git show HEAD:`**
+#（提交之后它取到的就是改动后那份，两条臂逐字相同、红基线恒真 —— 同族教训见
+# `mermaid-mobile-zoom.test.py` 的换臂注释）。
+def drop_rules(css: str, sel: str) -> str:
+    needle = sel + " {"
+    n = css.count(needle)
+    if n == 0:
+        raise SystemExit(f"编译产物里找不到 `{needle}` —— 内边距那两条改名了，⑦b 要先对齐")
+    for _ in range(n):
+        i = css.index(needle)
+        css = css[:i] + css[i:].split("}", 1)[1]
+    return css
+
+
+NO_PAD = drop_rules(drop_rules(
+    CSS, ".readContainer .readContent .readBody > .markdown-body > .markdown-body"),
+    ".readContainer .readContent .readBody > .markdown-body")
+SB_NO_PAD = build_sandbox(NO_PAD, "nopad")
 
 from playwright.sync_api import sync_playwright  # noqa: E402
 
@@ -350,6 +403,72 @@ with sync_playwright() as p:
           nb["docScrollW"] > 390, f'scrollW={nb["docScrollW"]}')
     check("  对照组与修好那版**只差那一条**（两边 `pre` 都是 auto、都在滑）",
           nb["preScrollW"] == fx["preScrollW"], f'{nb["preScrollW"]} vs {fx["preScrollW"]}')
+
+    print("⑦ 正文列的内边距只留一处 + 手机档那三条死声明真的活了（20261005 新档）")
+    # 现场：正文是**两层** `.markdown-body` 嵌套（`#content` + bytemd Viewer 自己那层），
+    # 而编辑器样式表那两条 padding 是 class 选择器 —— 不管你在第几层都命中
+    # ⇒ 桌面 45+45、手机 15+15 **全部叠加**。用户报的「左右两侧空白还多」就是它：
+    # 线上实测 390px 左右各 40px，正文列只剩 310px。
+    # 同一族的另一副面孔：媒体档里 `.markdown-body h1/p/pre` 那几条 (0,1,x) 被基础层的
+    # (0,2,1)/(0,3,1) 压死，**一条都没生效过**（头注却写着"它们是干净的"）。所以本节
+    # 只读 computed 值 —— "源码里写着"与"渲染成这样"在这一族里根本不是一回事。
+    LAYOUT = """(markup) => {
+      document.getElementById('root').innerHTML = markup;
+      const cs = (s) => {
+        const e = document.querySelector(s); if (!e) return null;
+        const c = getComputedStyle(e), r = e.getBoundingClientRect();
+        return { padL: c.paddingLeft, padR: c.paddingRight, w: +r.width.toFixed(1),
+                 lh: c.lineHeight, fs: c.fontSize, x: +r.left.toFixed(1) };
+      };
+      return {
+        vw: innerWidth, mq: matchMedia('(max-width: 768px)').matches,
+        outer: cs('.readBody > .markdown-body'),
+        inner: cs('.readBody > .markdown-body > .markdown-body'),
+        p: cs('.readBody p'), h1: cs('.readBody h1'), pre: cs('.readBody pre'),
+        pW: [...document.querySelectorAll('.readBody p')]
+              .map((e) => +e.getBoundingClientRect().width.toFixed(1)),
+      };
+    }"""
+
+    def measure_layout(url: str, width: int) -> dict:
+        pg = br.new_page(viewport={"width": width, "height": 900})
+        pg.on("pageerror", lambda e: errs.append(str(e)))
+        pg.goto(url)
+        pg.wait_for_timeout(120)
+        out = pg.evaluate(LAYOUT, MARKUP_TEXT)
+        pg.close()
+        return out
+
+    t = measure_layout(URL, 390)
+    check("前提：这一节量的就是手机档", t["mq"] is True, str(t["mq"]))
+    check("★两层都不再吃编辑器那 15px（外层 12 / 内层 0）",
+          t["outer"]["padL"] == "12px" and t["inner"]["padL"] == "0px",
+          f'外 {t["outer"]["padL"]} / 内 {t["inner"]["padL"]}')
+    check(f'★正文列 {t["pW"][0]}px（= 390 − 2×10 − 2×12 = 346；改动前是 310）',
+          abs(t["pW"][0] - 346) < 1, str(t["pW"]))
+    check(f'  正文 17px / 行高 {t["p"]["lh"]}（= 1.7 × 17 = 28.9px；这条原来被压死，'
+          f'手机档一直吃的是桌面那个行高）',
+          t["p"]["fs"] == "17px" and abs(float(t["p"]["lh"].rstrip("px")) - 28.9) < 0.2, str(t["p"]))
+    check(f'  `h1` = {t["h1"]["fs"]}（1.6rem；基础档 3.5rem = 56px，手机档原来也是它）',
+          t["h1"]["fs"] == "25.6px", t["h1"]["fs"])
+    check(f'  `pre` = {t["pre"]["fs"]}（手机档那一条原来同样没生效）',
+          t["pre"]["fs"] == "13px", t["pre"]["fs"])
+
+    d = measure_layout(URL, 1440)
+    check("★桌面档正文列仍是 660px（＝840 − 2×90，与改动前逐像素同宽）",
+          abs(d["pW"][0] - 660) < 1 and d["outer"]["padL"] == "90px" and d["inner"]["padL"] == "0px",
+          f'p={d["pW"][0]} 外 {d["outer"]["padL"]} / 内 {d["inner"]["padL"]}')
+    check(f'  桌面档正文 17px / 行高 {d["p"]["lh"]}（= 1.85 × 17 ≈ 31.45px）',
+          d["p"]["fs"] == "17px" and abs(float(d["p"]["lh"].rstrip("px")) - 31.45) < 0.3, str(d["p"]))
+    check(f'  桌面档 `h1` 仍是 3.5rem = {d["h1"]["fs"]}（媒体档没有漏到桌面）',
+          d["h1"]["fs"] == "56px", d["h1"]["fs"])
+
+    print("⑦b 反向对照：字面删掉新加的那两条内边距规则 ⇒ 手机档正文列当场掉回 310px")
+    nl = measure_layout(SB_NO_PAD.as_uri() + "/index.html", 390)
+    check("★对照里外层的左内边距回到编辑器那 15px（缺陷本体）",
+          nl["outer"]["padL"] == "15px", nl["outer"]["padL"])
+    check(f'★正文列掉回 {nl["pW"][0]}px（≤320：两层 15px 全叠才会是这个数）',
+          nl["pW"][0] <= 320, str(nl["pW"]))
 
     # 负空间：这个类名是 JSX 与 sass 之间**唯一的**接缝，改名一边就是静默失效
     # （`className='readBody'` 还在、sass 那边没规则 ⇒ 上面两组判据全绿而线上照旧）。
