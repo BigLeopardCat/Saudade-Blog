@@ -12,6 +12,17 @@ on:
   #   gh workflow run "Deploy Blog" --ref cn_sora_blog
   # 它会按**当前 HEAD** 重新走一遍完整构建与部署，不依赖 diff。
   workflow_dispatch:
+  # PR 上**只跑 check**（20261006 加）。动机：本仓已经是 public 仓库，而此前 PR 上
+  # **一个检查都不跑**——PR 页面"没有红灯"的含义是"没跑过"。外部贡献者提交后得不到任何反馈，
+  # 而他们本机多半跑不了 `cargo test` 里的真 MySQL 那一层。
+  #
+  # 能不能跑：`check` job **一个 secret 都不需要**（提交信息闸 + cargo test + mysql:8.0
+  # 服务容器 + tsc + npm test + eslint），所以**连 fork 来的 PR 也跑得起来**——
+  # 而部署那一半要 R2 凭据与 SSH 私钥，GitHub 不向 fork PR 传 secret，**那一半在 PR 上必须不跑**。
+  # 做法不是加 job 级 if，而是让 `check-changes` 的 `deploy` 输出在 PR 上恒为 false：
+  # `build-and-deploy` 的每一步本来就带 `if: ...deploy == 'true'`，于是它自然空转。
+  pull_request:
+    branches: [cn_sora_blog]
 
 # 并发闸（20260923）：同一分支连着推两次会起两个 run，此前两者**并行**，而部署的先后
 # 由"谁构建得快 / 谁上传得晚"决定——实测较新那个（只改前端、包更小）先跑完，较旧那个后
@@ -20,7 +31,10 @@ on:
 # 跑完，最终落地的必然是较新那次的产物。
 concurrency:
   group: deploy-${{ github.ref }}
-  cancel-in-progress: false
+  # PR 上可以打断（20261006）：那里一次部署都不会发生，排队等前一个只是让人白等一分钟。
+  # push 上**不能**——那一次串行化是 20260923 那次"较新的包覆盖较旧的包、导致某次后端
+  # 从未落地"事故的修复，见上面那段。
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -33,7 +47,12 @@ jobs:
       frontend: ${{ steps.filter.outputs.frontend }}
       # 要不要跑这次部署：手动触发**恒跑**（那时没有 diff 可比，见上面 workflow_dispatch 那段），
       # 否则任一半变了、或改到了部署管线本身（infra）就跑。
-      deploy: "${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.backend == 'true' || steps.filter.outputs.frontend == 'true' || steps.filter.outputs.infra == 'true' }}"
+      # `!= 'pull_request'` 这一条不是冗余（20261006 加）：PR 上 paths-filter 那一步**不跑**
+      # ⇒ 三个 output 都是空串 ⇒ 整条式子本来就为 false。但那是**靠缺席算出来的假**，
+      # 而"部署在 PR 上被条件挡住"这件事必须一眼看得出来——哪天有人往 filter 前面加一步、
+      # 或者换成别的 action 把 output 初始化成 true，这条链就断了，而断掉的症状是
+      # **PR 触发一次真部署**（要 secret、要 SSH、会换线上的二进制）。
+      deploy: "${{ (github.event_name == 'workflow_dispatch' || steps.filter.outputs.backend == 'true' || steps.filter.outputs.frontend == 'true' || steps.filter.outputs.infra == 'true') && github.event_name != 'pull_request' }}"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -41,6 +60,7 @@ jobs:
       # 手动触发时 `github.event.before` 是空的（不是 push 事件就没有"上一个提交"），
       # 喂给 paths-filter 会拿一个空 base 去比 —— 所以这一步**只在 push 时跑**，
       # 手动那次直接由上面的 `deploy` 短路成 true，不看过滤器。
+      # PR 上同理不跑（它不是 push），而且 PR 上本来就不部署（见上面的 `deploy`）。
       - if: github.event_name == 'push'
         uses: dorny/paths-filter@v3
         id: filter
@@ -127,7 +147,9 @@ jobs:
         # （`.git/config`，不入库），不会被 clone 带走，所以只挂本机钩子等于"闸门只对配过
         # `scripts/dev/install-hooks.sh` 的人生效"。这一层不依赖任何人的本地配置。
         env:
-          BEFORE: ${{ github.event.before }}
+          # PR 上没有 `github.event.before`（那不是 push 事件），改用 PR 的 base sha：
+          # 要校验的就是这个 PR 带上来的那几条提交。两者都取不到时下面会**响亮地**跳过。
+          BEFORE: ${{ github.event.pull_request.base.sha || github.event.before }}
           SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
