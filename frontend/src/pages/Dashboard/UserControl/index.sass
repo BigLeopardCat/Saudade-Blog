@@ -22,7 +22,15 @@
 // 「公开域名」那一格的占位符是这一节里最长的字，窄了就会被截断成半句。
 // 顶距比 `.web_setting` 小：那个 63px 是给 MUI TextField 浮动 label 留的，
 // 这一节全是 antd 控件、没有那层需要让位的浮标。
+// 20261006 修：这块原来只有 `max-width` 没有左右外边距 ⇒ 整块贴在 `.allin` 左边
+// （用户报「布局烂了、没居中」）。`.web_setting` 是靠父级 flex `align-items:center`
+// 把它当**子元素**居中的，而这里是一整块表单、`.allin` 也不是 flex ⇒ 只能用
+// `margin-*: auto`（与 `GraphRebuild.sass` 的 `.graphRebuild{max-width:940px;margin:0 auto}`
+// 同一套写法）。**不要**给它或 `.allin` 加高度：`.Card` 固定高 + `overflow:hidden` 会
+// 把超出的内容静默裁掉，滚动责任只在 `.allin` 一处（见本文件顶部）。
 .r2_storage
   margin-top: 36px
+  margin-left: auto
+  margin-right: auto
   padding-bottom: 12px
   max-width: 560px

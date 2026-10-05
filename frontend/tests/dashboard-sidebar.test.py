@@ -60,14 +60,42 @@ export default http;
 """
 
 # 边界②：路由。只记 navigate 的入参；Outlet 渲染空（后台各页不在本脚本关注面内）。
+#
+# ⚠️ 20261006：这个桩**必须是个会响应的迷你路由**，不能再返回写死的 pathname。
+# 侧栏高亮原来是「点一下才 setState」，那版桩能跑；改成**按 pathname 派生**之后，
+# 写死的桩会让所有"点击后高亮"停在原地——测试会以「假绿」的形式通过（永远停在主页）。
+# 于是这里维护一份真实 path + 订阅集合：navigate 与 window.__setPath 都改它并通知订阅者。
+# 初值取 URL 上的 `#/...`（本套件用 `URL + "#/dashboard/albums"` 模拟深链），
+# 这样"带路径打开就该亮对"也能测（老代码这里恒回落「主页」）。
 STUB_ROUTER = """\
+import * as React from 'react';
+
+let path: string = (window.location.hash || '').startsWith('#/')
+  ? window.location.hash.slice(1) : '/dashboard';
+const subs = new Set<(p: string) => void>();
+const setPath = (p: string) => {
+  path = p;
+  subs.forEach((fn) => fn(p));
+};
+// 供测试模拟"不经侧栏的那次跳转"（图库页那颗「R2 配置」按钮就是这种）。
+(window as any).__setPath = setPath;
+
 export const useNavigate = () => (to: string, opts?: any) => {
   const w = window as any;
   w.__nav = (w.__nav || []).concat([{ to, opts }]);
+  if (typeof to === 'string') setPath(to);
 };
 export const Outlet = () => null;
 export const Link = ({ children }: any) => children;
-export const useLocation = () => ({ pathname: '/dashboard', hash: '#/dashboard' });
+export const useLocation = () => {
+  const [p, setP] = React.useState(path);
+  React.useEffect(() => {
+    subs.add(setP);
+    setP(path);
+    return () => { subs.delete(setP); };
+  }, []);
+  return { pathname: p, search: '', hash: '', state: null };
+};
 """
 
 # 边界③：redux。**只桩"读"**——状态对象每次返回同一个实例（返回新对象会让 useSelector
@@ -151,9 +179,10 @@ from playwright.sync_api import sync_playwright  # noqa: E402
 
 URL = f"http://127.0.0.1:{_server.server_address[1]}/index.html"
 
-# 侧栏里的项（`.menu-links` 下按渲染顺序）：0 主页 / 1 笔记 / 2 说说 / …；默认选中的是 0。
+# 侧栏里的项（`.menu-links` 下按渲染顺序）：0 主页 / 1 笔记 / 2 说说 / …
+# 夹具不导航 ⇒ 路径就是 /dashboard ⇒ 选中的是 0（高亮按 pathname 派生，见第六节）。
 UNSELECTED = 2   # 说说
-SELECTED = 0     # 主页（SelectCurrent 初值 1 ⇒ nav_select）
+SELECTED = 0     # 主页
 
 
 def probe_hover(page, idx):
@@ -318,36 +347,56 @@ with sync_playwright() as p:
               all(f is None for f in g["pathFills"]), str(g["pathFills"]))
     svg_dk.close()
 
-    # ── 六、底部「站点设置」也进高亮圈 ─────────────────────────────────────────
-    print("\n【六】侧栏「站点设置」选中态（含带 hash 刷新）")
+    # ── 六、高亮**按路径派生**（点一下才亮那套是死的）────────────────────────────
+    #
+    # 20261006 改。老实现的病根：路由早就是 `createBrowserRouter`（真实 path），全仓没有
+    # 任何地方写 hash，而侧栏高亮读的是 `location.hash` ⇒ 那份 HASH_INDEX **在线上恒不
+    # 命中**，任何一次刷新/程序化跳转都回落成「主页」。
+    # ⚠️ 本节里**真正区分新旧实现的只有第 ① 条**（下面那条 `__setPath`）：本夹具的桩是
+    # 从 URL 上的 `#/...` 播种 path 的，而老实现恰好也认得那个 hash ⇒ 第 ② 条在老代码上
+    # 也能过，它是「路径没变时不回归」的锁，不是对照。②③ 的价值在于：改成按 pathname 派生
+    # 之后，"点一下才亮"这条老路被彻底删掉了，得有人钉住它别又退回去。
+    print("\n【六】侧栏高亮跟随路径（含不经侧栏的跳转）")
+    HIGH = """() => ({
+        menu: [...document.querySelectorAll('.menu-links .nav-links.nav_select')]
+                .map((el) => el.textContent.trim()),
+        bottom: [...document.querySelectorAll('.bottom-content .nav-links.nav_select')]
+                .map((el) => el.textContent.trim()),
+        total: document.querySelectorAll('.nav-links.nav_select').length,
+    })"""
     sc = br.new_page(viewport={"width": 1280, "height": 900})
     sc_errs = []
     sc.on("pageerror", lambda e: sc_errs.append(str(e)))
     sc.add_init_script("window.__nav = []; localStorage.setItem('tokenKey', 'x.y.z');")
-    sc.goto(URL + "#/dashboard/usercontrol")
+    # ② 深链：带路径打开就该亮对
+    sc.goto(URL + "#/dashboard/albums")
     sc.wait_for_selector(".menu-links .nav-links", timeout=10000)
     sc.wait_for_timeout(400)
-    check("带 #/dashboard/usercontrol 重载：站点设置拿到 nav_select",
-          sc.evaluate("""() => [...document.querySelectorAll('.bottom-content .nav-links')]
-              .some((el) => el.textContent.includes('站点设置') && el.classList.contains('nav_select'))"""))
-    # 反面：HASH_INDEX 没这一项时会 `?? 1` 回落，把高亮错点给「主页」
-    check("重载后没有回落点亮「主页」",
-          sc.evaluate("() => document.querySelectorAll('.menu-links .nav_select').length") == 0)
+    got = sc.evaluate(HIGH)
+    check("带 #/dashboard/albums 打开：高亮落在「图库」", got["menu"] == ["图库"], str(got))
+    check("反面：没有回落点亮「主页」（老实现脱掉 hash 后就是这个症状）", "主页" not in got["menu"], str(got))
 
-    sc.locator(".menu-links .nav-links").first.click()   # 对照：先让高亮回到「主页」
+    # ③ 旧用例（原来在新夹具下会假绿——它只是永远停在主页）：点一下就跟着走
+    sc.locator(".menu-links .nav-links").first.click()
     sc.wait_for_timeout(200)
-    check("对照：点「主页」后高亮在主页上",
-          sc.evaluate("() => document.querySelectorAll('.menu-links .nav_select').length") == 1)
+    check("点「主页」后唯一高亮就是主页",
+          sc.evaluate(HIGH)["menu"] == ["主页"], str(sc.evaluate(HIGH)))
+
+    # ① 不经侧栏的跳转：图库页那颗「R2 配置」`navigate('/dashboard/usercontrol')`，
+    #    点完高亮原来仍停在图库图标上（用户报的那条）。**本节的对照就是它**：
+    #    老实现（点一下才 setState）走这条路径时高亮不会动 ⇒ 这条必然红。
+    sc.evaluate("() => window.__setPath('/dashboard/usercontrol')")
+    sc.wait_for_timeout(200)
+    got = sc.evaluate(HIGH)
+    check("从图库跳设置：蓝容器跟着过来，且全场只有它一个高亮",
+          got["bottom"] == ["站点设置"] and got["menu"] == [] and got["total"] == 1, str(got))
+
+    # ③ 旧用例：点站点设置本身
     sc.locator(".bottom-content .nav-links").filter(has_text="站点设置").first.click()
     sc.wait_for_timeout(200)
-    check("点站点设置：蓝容器跟着过来，且全场只有它一个高亮",
-          sc.evaluate("""() => {
-              const li = [...document.querySelectorAll('.bottom-content .nav-links')]
-                  .find((el) => el.textContent.includes('站点设置'));
-              return li.classList.contains('nav_select')
-                  && document.querySelectorAll('.nav-links.nav_select').length === 1
-                  && document.querySelectorAll('.menu-links .nav_select').length === 0;
-          }"""))
+    got = sc.evaluate(HIGH)
+    check("点站点设置：仍在它身上，且只有它一个",
+          got["bottom"] == ["站点设置"] and got["menu"] == [] and got["total"] == 1, str(got))
     # 只认最后一条：上面那记对照点击已经往 __nav 里放过一条 /dashboard（探针自己的足迹）
     check("点站点设置：导航到 /dashboard/usercontrol",
           sc.evaluate("() => window.__nav[window.__nav.length - 1].to") == "/dashboard/usercontrol",
