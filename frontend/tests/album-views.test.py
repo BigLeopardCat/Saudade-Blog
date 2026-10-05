@@ -21,6 +21,11 @@
   · **展示方式记在本地**（第五节）—— 刷新后还是列表（`localStorage.albumViewMode`）。
   · **列表方式不打乱页面上原有的那条写路径**（第六节）—— 选中后走原样的删除弹窗，
     `DELETE /api/protect/delImg` 的 body 是被选中那张图的 URL。
+  · **工具栏那条分隔线**（第七节）—— 线必须是工具栏**自己的下边框**（在流内、随几何走），
+    不许是"按魔法数 `top: 90px` 落位"的绝对定位线；上传钮/删除钮里的图标槽必须 40px 且
+    整个落在按钮框里（真凶是全局 `.icon{min-width:60px}`，所以这一节把 `pages/Dashboard/index.css`
+    与真站的图标字体一并注入——少了任一个，这条几何断言都会**假绿**）。第七节自带负控：
+    另打一份"把那条绝对定位线拼回去"的页面，上面那几条必须红。
 
 见 CLAUDE.md §2：本机不能 vite build。esbuild 把**真组件**打成 bundle，只桩一个边界
 （`src/apis/axios.tsx`）；页面 sass 用 programmatic API 单独编译后注入（顺带过一遍编译，
@@ -72,6 +77,25 @@ NAMED = [
     ("20251231235959_末班车.png", "末班车.png"),
 ]
 LONG_URL = "/api/protect/download/20261001000000_" + LONG_TAIL + ".png"
+
+# ── 第七节要的两份样式 ───────────────────────────────────────────────────────────
+# ① 后台的**全局** CSS。它从来没进过这个沙箱，而上传按钮那件事故的真凶就住在这里：
+#    `.icon{min-width:60px}`（以及 `.image,.icon` 那条同款）。只有把它拼进页面，
+#    按钮里的 `<span class="icon">` 才会被撑成 60px、才会真的压出按钮右缘 ——
+#    不注入它的话几何断言**必然假绿**（那正是这次要补的缺口）。
+DASH_CSS = (FE / "src/pages/Dashboard/index.css").read_text(encoding="utf-8")
+
+# ② 修复前的分隔线（字面量内嵌，负控专用，见 build_sandbox 尾注）：
+#    `.action_img` 自己没有线，线是一条 `position:absolute; top:90px` 的伪元素
+#    —— 它按 `.allin`（唯一带 `transform` 的祖先）定位，所以线落在"面板顶往下 90px"，
+#    与工具栏的真实高度无关。
+OLD_DIVIDER_CSS = """
+.action_img{position:static;padding-bottom:0;border-bottom:none}
+.action_img::before{content:'';position:absolute;width:98%;height:3px;
+  background-color:var(--washi-line,rgba(198,152,192,.42));top:90px;z-index:3;
+  border-radius:5px;left:50%;transform:translateX(-50%)}
+"""
+
 ALL_URLS = ["/api/protect/download/" + n for n, _ in NAMED] + [LONG_URL]
 N = len(ALL_URLS)                                          # 6 张
 
@@ -151,14 +175,24 @@ def esbuild(sb: pathlib.Path, entry: str, outfile: str):
         raise SystemExit("esbuild 打包失败：\n%s" % r.stderr.decode("utf-8", "replace"))
 
 
-def write_html(sb: pathlib.Path, bundle: str, css: str):
+def write_html(sb: pathlib.Path, bundle: str, css: str, extra: str = ""):
     (sb / "index.html").write_text(
         '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
+        # 图标字体：**真站就是自托管的这三行**（index.html 的 `<link>` + `.iconfont` 内联块，
+        # 20261001 起不再引 CDN）。沙箱里少了它，工具栏那个 `<i class="iconfont icon-xiangce">`
+        # 就**没有字形**（空盒子、高 0）⇒ 工具栏比真站矮一截，而"分隔线压不压按钮"这件事
+        # 只由工具栏高度决定（线钉在面板顶往下 90px）—— 少了字体就是那条几何断言假绿。
+        '<link rel="stylesheet" href="/fonts/font_4335817_6gqxzh34cy.css">'
+        '<style>.iconfont{font-family:"iconfont" !important;font-size:24px;font-style:normal;'
+        '-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}</style>'
         '<style>html,body,#root{height:100%;margin:0}'
         # 真站在 frontend/src/frontHome/main.css 里有全局 `*{box-sizing:border-box}`，
         # 后台页面同样吃它；不照搬的话几何断言会在沙箱里失真。
         '*{box-sizing:border-box;margin:0;padding:0}</style>'
-        '<style>' + css + '</style></head><body><div id="root"></div>'
+        '<style>' + css + '</style>'
+        # `extra` 逐字节排在最后：给负控档留着"把某条规则覆盖回修复前"的位置
+        + ('<style>' + extra + '</style>' if extra else '')
+        + '</head><body><div id="root"></div>'
         '<script src="' + bundle + '"></script></body></html>', encoding="utf-8")
 
 
@@ -166,6 +200,8 @@ def build_sandbox() -> pathlib.Path:
     sb = pathlib.Path(tempfile.mkdtemp(prefix="album-views-"))
     shutil.copytree(FE / "src", sb / "src")
     (sb / "node_modules").symlink_to(FE / "node_modules")
+    # 图标字体照搬真站那三份（CSS 里的 `src` 是同目录相对路径，所以整目录一起拷）
+    shutil.copytree(FE / "public/fonts", sb / "fonts")
 
     (sb / "src/apis/axios.tsx").write_text(FAKE_AXIOS, encoding="utf-8")
     (sb / "entry.tsx").write_text(ENTRY.replace("__LONGTAIL__", LONG_TAIL), encoding="utf-8")
@@ -183,7 +219,8 @@ def build_sandbox() -> pathlib.Path:
     esbuild(sb, "entry.tsx", "bundle.js")
     if not (sb / "bundle.css").exists():
         raise SystemExit("esbuild 没产出 bundle.css：.css 的导入链断了（勾选框样式将无从比对）")
-    write_html(sb, "bundle.js", css_out.read_text() + "\n" + (sb / "bundle.css").read_text())
+    base_css = css_out.read_text() + "\n" + (sb / "bundle.css").read_text() + "\n" + DASH_CSS
+    write_html(sb, "bundle.js", base_css)
 
     # ── 负控（第四节）：另打一份**把 `e.stopPropagation()` 抹掉**的包 ────────────────
     bad = sb / "bad"
@@ -199,7 +236,20 @@ def build_sandbox() -> pathlib.Path:
                          "否则它证明不了任何事")
     tsx.write_text(src.replace("(e) => e.stopPropagation()", "() => {}"), encoding="utf-8")
     esbuild(bad, "entry.tsx", "bundle.js")
-    write_html(bad, "bundle.js", css_out.read_text() + "\n" + (sb / "bundle.css").read_text())
+    write_html(bad, "bundle.js", base_css)
+
+    # ── 负控（第七节）：另打一份**把工具栏分隔线还原成修复前形态**的包 ──────────────
+    # 目的：第七节那几条几何断言必须**能红**。这里不是"再打一份会挂的包"，而是把
+    # **修复前那条规则**原样拼回去（`OLD_DIVIDER_CSS` 是内嵌字面量，**不读 `git show HEAD`**
+    # ——测试的红基线不许钉在某次提交上）。
+    # 覆盖分两半，缺一不可：① `.action_img` 自己那条 `border-bottom` 要去掉（修复前工具栏
+    # 自己没有线），② 把那条绝对定位的 `::before` 加回来。
+    old = sb / "olddiv"
+    shutil.copytree(sb / "src", old / "src")
+    (old / "node_modules").symlink_to(FE / "node_modules")
+    (old / "entry.tsx").write_text((sb / "entry.tsx").read_text(), encoding="utf-8")
+    esbuild(old, "entry.tsx", "bundle.js")
+    write_html(old, "bundle.js", base_css, extra=OLD_DIVIDER_CSS)
     return sb
 
 
@@ -223,6 +273,7 @@ from playwright.sync_api import sync_playwright  # noqa: E402
 BASE = f"http://127.0.0.1:{_server.server_address[1]}/"
 URL = BASE + "index.html"
 BAD_URL = BASE + "bad/index.html"
+OLDDIV_URL = BASE + "olddiv/index.html"
 
 
 def mount(br, url=URL, view=None, size=(1440, 900)):
@@ -263,11 +314,61 @@ GEO = """() => {
                  h: Math.round(r.height), rt: Math.round(r.right), b: Math.round(r.bottom) };
     };
     const rows = [...document.querySelectorAll('.albumRow')];
+    // ── 第七节：工具栏、上传按钮、以及"那条线到底在哪" ─────────────────────────
+    const bar = document.querySelector('.action_img');
+    const btn = document.querySelector('.action_img .select');
+    const icon = btn && btn.querySelector('.icon');
+    const img = icon && icon.querySelector('img');
+    const allin = document.querySelector('.allin');
+    const bcs = bar ? getComputedStyle(bar) : null;
+    const before = bar ? getComputedStyle(bar, '::before') : null;
+    // 分隔线的位置只有两种形态，这里统一折算成**视口 y**：
+    //   · 修复后 = 工具栏自己的 `border-bottom`（流内）⇒ 它的上缘 = bottom - 宽度
+    //   · 修复前 = `.action_img::before` 那条绝对定位的线 ⇒ 相对 `.allin`（唯一带
+    //     `transform` 的祖先，也就是它的包含块）的 top 值 + `.allin` 的视口位置
+    // 归一之后，"线在按钮下面吗"这一条断言在两档上问的是同一个问题。
+    const lineY = (() => {
+        if (!bar) return null;
+        const bw = parseFloat(bcs.borderBottomWidth) || 0;
+        if (before && before.content !== 'none' && before.position === 'absolute'
+            && before.top !== 'auto') {
+            return Math.round((allin ? allin.getBoundingClientRect().top : 0)
+                              + parseFloat(before.top));
+        }
+        return bw > 0 ? Math.round(bar.getBoundingClientRect().bottom - bw) : null;
+    })();
+    const barInfo = bar ? {
+        bar: R(bar),
+        lineY: lineY,
+        barBorderBottom: bcs.borderBottomWidth,
+        barPosition: bcs.position,
+        btn: R(btn),
+        icon: R(icon),
+        img: R(img),
+        iconMinW: icon ? getComputedStyle(icon).minWidth : null,
+        iconW: icon ? getComputedStyle(icon).width : null,
+        iconH: icon ? getComputedStyle(icon).height : null,
+        iconPos: icon ? getComputedStyle(icon).position : null,
+        imgW: img ? getComputedStyle(img).width : null,
+        beforeContent: before ? before.content : null,
+        beforePos: before ? before.position : null,
+        beforeTop: before ? before.top : null,
+        // 同一根 `.icon` 泄漏也照到旁边那颗删除钮（`.noselect .icon`）—— 一并量出来，
+        // 免得只修一半、两颗按钮长得不一样
+        del: (() => {
+            const d = document.querySelector('.albumActions .noselect');
+            const di = d && d.querySelector('.icon');
+            return d ? { btn: R(d), icon: R(di), iconMinW: di ? getComputedStyle(di).minWidth : null,
+                         iconPos: di ? getComputedStyle(di).position : null } : null;
+        })(),
+    } : null;
+
     const sel = document.querySelector('.albumSelCount');
     const seg = document.querySelector('.ant-segmented');
     const del = document.querySelector('.albumActions .noselect');
     return {
         rows: rows.length,
+        bar: barInfo,
         gridImgs: document.querySelectorAll('.imgShade').length,
         listWrap: !!document.querySelector('.albumList'),
         thumb: R(document.querySelector('.albumThumb')),
@@ -502,6 +603,84 @@ with sync_playwright() as p:
           g["selCount"] == "已选中0张图片"
           and sum(1 for r in g["rowInfo"] if r["checked"]) == 0, g["selCount"])
     check("第六节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
+    pg.close()
+
+    # ── 七、工具栏分隔线与按钮里的图标（20261006，用户第 2 条）─────────────────
+    print("\n【七】工具栏：线是工具栏自己的下边框；上传钮的图标槽没被全局 `.icon` 撑出按钮")
+    # 这一节的**真凶住在全局 CSS 里**（`pages/Dashboard/index.css` 的 `.icon{min-width:60px}`，
+    # 那是给侧栏导航写的），而这个沙箱此前从不注入它 ⇒ 断言会假绿。两个补丁一起做的：
+    #   · `build_sandbox` 把那份全局 CSS 拼进页面（连同真站的图标字体，见 `write_html` 注释）；
+    #   · 下面第一条守卫读源码，确认那条规则**还在**（它被删/改名时，这一节就失去了
+    #     它存在的理由，得自己红 —— 而不是在缺少真凶的页面上继续"通过"）。
+    dash = (FE / "src/pages/Dashboard/index.css").read_text(encoding="utf-8")
+    check("前置守卫：`pages/Dashboard/index.css` 里那条 `.icon{min-width:60px}` 还在"
+          "（沙箱要靠它复现真凶；哪天它没了，本节断言等于没在测东西）",
+          re.search(r"\.icon\s*\{[^}]*min-width:\s*60px", dash) is not None)
+
+    pg = mount(br)
+    g = geo(pg)["bar"]
+
+    # ① 线 = 工具栏自己的下边框（在流内）。旧形态是"一条按魔法数 90px 落位的绝对定位线"，
+    #    它与工具栏的真实几何无关 —— 判据取"线到工具栏底边的距离"，而不是取某个具体像素值。
+    check("分隔线就是工具栏自己的下边框（3px，且在工具栏底边沿上）",
+          g["barBorderBottom"] == "3px" and 0 <= g["bar"]["b"] - g["lineY"] <= 3,
+          f'border-bottom={g["barBorderBottom"]} bar.bottom={g["bar"]["b"]} lineY={g["lineY"]}')
+    check("  没有别的线了（`.action_img::before` 不再存在 —— 它才是那个会横穿按钮的东西）",
+          g["beforeContent"] == "none", str(g["beforeContent"]))
+    check("  工具栏成了定位容器（`position: relative`）",
+          g["barPosition"] == "relative", str(g["barPosition"]))
+    check("线整体在按钮**下面**（任何字体/宽度下都不可能与自己的子元素重叠）",
+          g["lineY"] >= g["btn"]["b"], f'lineY={g["lineY"]} btn.bottom={g["btn"]["b"]}')
+
+    # ② 上传钮里的图标槽：全局 `.icon{min-width:60px}` 会把它撑成 60px（min-width 恒胜 width），
+    #    实测槽的右缘 180 > 按钮右缘 170 —— 图标被推出按钮框、整体右移 10px。
+    check("上传钮仍是 150×50", g["btn"]["w"] == 150 and g["btn"]["h"] == 50, str(g["btn"]))
+    check("  图标槽真的被 `min-width:0` 收回了 40px（全局那条 min-width 不再生效）",
+          g["iconMinW"] == "0px" and g["icon"]["w"] == 40,
+          f'min-width={g["iconMinW"]} w={g["icon"]["w"]}')
+    check("  图标槽**整个**在按钮里（右缘不许越出按钮框）",
+          g["icon"]["rt"] <= g["btn"]["rt"] and g["icon"]["l"] >= g["btn"]["l"],
+          f'icon={g["icon"]} btn={g["btn"]}')
+    check("  槽内的图标本体给了明确尺寸 18×18（源图 30×30，原样渲染会大过旁边的删除图标）",
+          g["imgW"] == "18px" and g["img"] and g["img"]["w"] == 18 and g["img"]["h"] == 18,
+          f'css={g["imgW"]} rect={g["img"]}')
+
+    # ③ 同一根泄漏也照到旁边那颗删除钮（同一套皮、同一个 `.icon` 类）
+    d = g["del"]
+    check("删除钮的图标槽同样收回了 40px、且整个在按钮里（两颗按钮不许长得不一样）",
+          d and d["iconMinW"] == "0px" and d["icon"]["w"] == 40
+          and d["icon"]["rt"] <= d["btn"]["rt"],
+          str(d))
+
+    # ④ 悬停那一下（图标槽展开铺满按钮）不许被上面的 min-width 改动弄坏
+    pg.locator(".action_img .select").hover()
+    pg.wait_for_timeout(400)
+    h = geo(pg)["bar"]["icon"]
+    check("悬停：图标槽展开到整个按钮宽（150）且与按钮左缘齐平",
+          h["w"] == 150 and h["l"] == g["btn"]["l"], str(h))
+    check("第七节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
+    pg.close()
+
+    # 负控：把分隔线还原成修复前那条绝对定位的线（字面量内嵌，不读 git 历史）—— 必须复现
+    print("\n【七-负控】同一份页面、只把分隔线还原成修复前那条绝对定位线 ⇒ 上面那几条必须红")
+    pg = mount(br, url=OLDDIV_URL)
+    ob = geo(pg)["bar"]
+    check("负控前置：旧形态的线真的回来了（`::before` + `position:absolute`、工具栏自己没有线）",
+          ob["beforeContent"] != "none" and ob["beforePos"] == "absolute"
+          and ob["barBorderBottom"] == "0px",
+          f'content={ob["beforeContent"]} pos={ob["beforePos"]} '
+          f'border-bottom={ob["barBorderBottom"]}')
+    check("负控：'线到工具栏底边 0..3px' 这条断言在旧形态上**不成立**"
+          "（旧线钉在面板顶 +90px，工具栏一长高就切进按钮）",
+          not (0 <= ob["bar"]["b"] - ob["lineY"] <= 3),
+          f'bar.bottom={ob["bar"]["b"]} lineY={ob["lineY"]}')
+    # 旧的线是**绝对定位**的，它的包含块是 `.allin`（唯一带 transform 的祖先）：
+    # 线到按钮底边的距离 = 60 - (工具栏高 + 50)/2 ⇒ 工具栏高过 70px 就翻负、横穿按钮。
+    # 把这条关系写进负控，是为了说明"为什么这不是换个数字（90→110）的事"。
+    gap = ob["lineY"] - ob["btn"]["b"]
+    check(f"  且这条距离由工具栏高度决定（实测间距 {gap}px = 60 - (高 {ob['bar']['h']} + 50)/2，"
+          "工具栏一长高就翻负）",
+          abs(gap - (60 - (ob["bar"]["h"] + 50) / 2)) <= 1, str(gap))
     pg.close()
 
     br.close()

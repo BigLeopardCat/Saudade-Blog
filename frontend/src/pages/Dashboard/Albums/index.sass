@@ -19,19 +19,22 @@
     opacity: 1
     transform: translateX(0)
 
+// 工具栏下面那条分隔线（20261006 改法）。
+// 原来是 `&::before` 画的一条 `position: absolute; top: 90px` 的线，两个毛病叠在一起：
+//   ① `.action_img` 当时**没有 `position`**，于是真正的包含块是唯一带 `transform` 的
+//      `.allin` —— 那条线按"面板顶往下 90px"落位，**与工具栏自己的几何无关**。
+//      工具栏一长高（换字体、加一件控件、窄屏换行），线就往上切进按钮里；沙箱里
+//      量到的关系是「线在工具栏顶往下 60px」，于是工具栏高过 70px 就会横穿那颗
+//      50px 的上传按钮。这正是"图标（被）压进分隔线"那件事故的形状。
+//   ② 90px 是个魔法数，和工具栏的真实高度没有任何关系。
+// 改法：线变成工具栏**自己的下边框** —— 它在流内、随工具栏几何走，任何字体/宽度下
+// 都不可能与自己的子元素重叠（边框恒在 padding 之外）。`border-radius` 放在这里
+// 是为了留住原来那条线两端的圆角。
 .action_img
-  &::before
-    content: ''
-    position: absolute
-    width: 98%
-    height: 3px
-    // 20261001 批 E：深灰 #3a3a48 → 纸线（令牌自己分深浅两档）
-    background-color: var(--washi-line, rgba(198, 152, 192, 0.42))
-    top: 90px
-    z-index: 3
-    border-radius: 5px
-    left: 50%
-    transform: translateX(-50%)
+  position: relative
+  padding-bottom: 12px
+  border-bottom: 3px solid var(--washi-line, rgba(198, 152, 192, 0.42))
+  border-radius: 5px
 
 
 // ── 列表展示（20261001，用户第 2 条）──────────────────────────────────────
