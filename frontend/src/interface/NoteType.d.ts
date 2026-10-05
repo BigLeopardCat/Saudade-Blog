@@ -22,6 +22,12 @@ export interface NoteType {
     noteKey: string
     // 编辑修改稿链接：有值 = 本行是那篇文章（id）的自动保存修改稿
     draftOf?: number | null;
+    // 站上是否公开可见（20261006）。**键名就是下划线形态**：后端 `NoteDto.is_public`
+    // 是唯一一个没有 serde rename 的字段，所以 JSON 里就叫 `is_public`（不像 `isTop`
+    // 那样有个 camelCase 别名）。`normalizeNoteRows` 是 `...item` 透传，不必加映射。
+    // **判据用 `utils/noteVisibility.ts`，不要在这里就地读两个字段** —— 公开可见口径
+    // 与 Rust 侧四处逐字同源，散开写就会漂。
+    is_public?: boolean;
     // 卡片上的几个数（20260930；20261003 补讨论数）。**只有公开列表接口会回**，
     // 详情接口连键都没有 ⇒ 这里的可选性是契约本身（不是"忘写了"）：`undefined` =
     // 这一路没有这个数，卡片据此整个不渲染那一排；`0` = 真的是 0，照常显示。
