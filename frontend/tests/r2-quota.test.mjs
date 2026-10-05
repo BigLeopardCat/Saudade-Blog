@@ -9,8 +9,9 @@
 // 所以本套件钉两层：
 //  ① 纯映射本身的边界（GiB 口径、百分比钳位、恰好等于上限、读数不可信时的显示）；
 //  ② **跨语言守卫**（读 `src/r2.rs` / `src/routes/upload.rs` / `src/routes/mod.rs`）：
-//     前端这份判据、键名、单位必须与 Rust 那份同形。形状一变就红 —— 这一层才是本套件
-//     真正在防的东西，第 ① 层只是它的前提。
+//     前端这份判据、键名、单位必须与 Rust 那份同形，外加**配置只有一处入口**
+//     （20261006 起：表单在站点设置·图库存储，图库页只留用量与灰态）。形状一变就红
+//     —— 这一层才是本套件真正在防的东西，第 ① 层只是它的前提。
 //
 // 为什么进 CI：全是纯函数（无 DOM 无 React），而它们判错的表现是"账单"或"假成功"。
 import { readFileSync, mkdtempSync } from 'node:fs';
@@ -122,12 +123,13 @@ console.log('\n⑤ 用量文案：读数不可信时只显示原因，绝不显�
     ok(formatGib(0) === '0.00 GB', 'formatGib(0) 是给人看的 0.00 GB');
 }
 
-console.log('\n⑥ 跨语言守卫：前端的判据/键名/单位必须与 Rust 同形');
+console.log('\n⑥ 跨语言守卫：前端的判据/键名/单位必须与 Rust 同形，且配置只有一处入口');
 {
     const rust = readFileSync(path.join(repo, 'src/r2.rs'), 'utf8');
     const upload = readFileSync(path.join(repo, 'src/routes/upload.rs'), 'utf8');
     const mod = readFileSync(path.join(repo, 'src/routes/mod.rs'), 'utf8');
-    const page = readFileSync(path.join(root, 'src/pages/Dashboard/Albums/index.tsx'), 'utf8');
+    const albums = readFileSync(path.join(root, 'src/pages/Dashboard/Albums/index.tsx'), 'utf8');
+    const form = readFileSync(path.join(root, 'src/pages/Dashboard/UserControl/R2Storage.tsx'), 'utf8');
     const self = readFileSync(path.join(root, 'src/utils/r2Quota.ts'), 'utf8');
 
     ok(/pub const DEFAULT_QUOTA_GB: f64 = 9\.5;/.test(rust),
@@ -143,10 +145,20 @@ console.log('\n⑥ 跨语言守卫：前端的判据/键名/单位必须与 Rust
     const keys = [...rust.matchAll(/"(r2Image[A-Za-z]+)"/g)].map((m) => m[1]);
     const declared = [...new Set(keys)].sort();
     ok(declared.length === 5, `Rust \`R2_KEYS\` 仍是五个键名`, declared);
-    const used = [...new Set([...page.matchAll(/r2Image[A-Za-z]+/g)].map((m) => m[0]))].sort();
+    const used = [...new Set([...form.matchAll(/r2Image[A-Za-z]+/g)].map((m) => m[0]))].sort();
     ok(used.length === 5 && used.every((k, i) => k === declared[i]),
-        '图库页提交/读取的五个字段名与 R2_KEYS 逐个相同（改名漏一处 = 面板填了不生效）',
+        '图库存储页签提交/读取的五个字段名与 R2_KEYS 逐个相同（改名漏一处 = 面板填了不生效）',
         { declared, used });
+    // **配置只有一处入口**（20261006 用户拍板「挪到站点设置，单一入口」）：图库页
+    // 从此一个 `r2Image*` 键都不该有。谁要把表单加回去，先看这条 —— 同一份数据挂两个
+    // 表单，结果是"改了一处、另一处还是旧值"，谁也说不清以哪个为准。
+    ok(!/r2Image[A-Za-z]*/.test(albums),
+        '图库页不再出现任何 r2Image* 键（配置的唯一入口是站点设置·图库存储）');
+    // 那颗按钮必须真的跳过去（它现在只是入口，跳错地方 = 点开啥也改不了）
+    ok(albums.includes("navigate('/dashboard/usercontrol'") && /tab:\s*'4'/.test(albums),
+        '图库页那颗「R2 存储」按钮跳向站点设置的图库存储页签');
+    ok(form.includes("getR2Usage") && form.includes("'/api/protected/websetting'"),
+        '图库存储页签自己读用量（/api/protect/images/r2）与存值（/api/protected/websetting）');
 
     // 读取用的路由名与 Rust 挂的那条必须一致（否则用量永远读不到，条子恒显示"读取中"）
     const api = readFileSync(path.join(root, 'src/apis/ImageMethods.tsx'), 'utf8');
@@ -167,9 +179,12 @@ console.log('\n⑥ 跨语言守卫：前端的判据/键名/单位必须与 Rust
         'Rust `R2Usage` 用 camelCase 序列化 `list_error`');
     ok(self.includes('listError'),
         '前端那份读的就是 `listError`（缺它就会把"读不到"当"很空"）');
-    // 前端不许绕过那份判据自己写"能不能传"（第二份判据 = 条子与按钮迟早各说各话）
-    ok(!/limitBytes\s*[<>]=?|>=?\s*r2\.limitBytes/.test(page),
-        '页面里没有第二份超限判据（一律走 utils/r2Quota）');
+    // 前端不许绕过那份判据自己写"能不能传"（第二份判据 = 条子与按钮迟早各说各话）。
+    // 两个面都查：图库页（灰态）与站点设置那页（条子）。
+    for (const [where, src] of [['图库页', albums], ['图库存储页签', form]]) {
+        ok(!/limitBytes\s*[<>]=?|>=?\s*\w*\.?limitBytes/.test(src),
+            `${where}没有第二份超限判据（一律走 utils/r2Quota）`);
+    }
 }
 
 console.log(`\n${pass}/${pass + fail} 项通过`);

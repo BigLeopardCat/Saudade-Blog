@@ -16,3 +16,13 @@
   display: flex
   align-items: center
   flex-direction: column
+
+// 「图库存储」页签（20261006）：**宽度收在这里、不收在内联 style**（本仓纪律：
+// 内联 style 特异性最高，改版时改不动）。560px 与它搬进来之前在弹窗里的宽度一致 ——
+// 「公开域名」那一格的占位符是这一节里最长的字，窄了就会被截断成半句。
+// 顶距比 `.web_setting` 小：那个 63px 是给 MUI TextField 浮动 label 留的，
+// 这一节全是 antd 控件、没有那层需要让位的浮标。
+.r2_storage
+  margin-top: 36px
+  padding-bottom: 12px
+  max-width: 560px

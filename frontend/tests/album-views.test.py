@@ -26,6 +26,11 @@
     整个落在按钮框里（真凶是全局 `.icon{min-width:60px}`，所以这一节把 `pages/Dashboard/index.css`
     与真站的图标字体一并注入——少了任一个，这条几何断言都会**假绿**）。第七节自带负控：
     另打一份"把那条绝对定位线拼回去"的页面，上面那几条必须红。
+  · **R2 那颗按钮是够到配置的唯一一条路**（第八节，20261006）——配置表单搬到站点设置
+    （`#/dashboard/usercontrol` 的「图库存储」页签）之后，图库页只剩这颗按钮：它要没跳、
+    或跳错页签，用户就永远改不了配置，而页面上不会有任何报错。所以这一节真点一次、
+    读 Router 的 location（探针见 `ENTRY`）。⚠️ 挂载因此必须包在 `MemoryRouter` 里
+    （`useNavigate()` 在 Router 外会当场抛 ⇒ 整页白屏、所有断言超时）。
 
 见 CLAUDE.md §2：本机不能 vite build。esbuild 把**真组件**打成 bundle，只桩一个边界
 （`src/apis/axios.tsx`）；页面 sass 用 programmatic API 单独编译后注入（顺带过一遍编译，
@@ -141,7 +146,17 @@ export default http;
 ENTRY = """\
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import Albums from './src/pages/Dashboard/Albums/index.tsx';
+
+// ⚠️ 挂载必须包在 Router 里（20261006）。真站里这一页永远活在 Router 内
+// （`router/index.tsx`），而图库页现在用 `useNavigate()` 跳去站点设置改 R2 配置 ——
+// 少了 Router 上下文它会**当场抛**，表现是整页白屏、本文件每一条断言都超时。
+// 第八节还靠下面这颗探针读路由（点那颗按钮必须真的换路由）。
+const Probe = () => {
+  const loc = useLocation() as any;
+  return <div id="probe" data-path={loc.pathname} data-tab={(loc.state && loc.state.tab) || ''} />;
+};
 
 // 夹具与 Python 侧同名同序（超长名那一条由 Python 注入 __LONGTAIL__）。
 const NAMED: [string, string][] = [
@@ -157,7 +172,12 @@ const LIST = [
   LONG,
 ].map((f, i) => ({ imageKey: 900 + i, imageUrl: '/api/protect/download/' + f }));
 (window as any).__images = LIST;
-(window as any).__mount = () => createRoot(document.getElementById('root')!).render(<Albums />);
+(window as any).__mount = () => createRoot(document.getElementById('root')!).render(
+  <MemoryRouter initialEntries={['/dashboard/albums']}>
+    <Albums />
+    <Probe />
+  </MemoryRouter>
+);
 """
 
 
@@ -405,6 +425,14 @@ def write_calls(pg):
     """本页发出的**写请求**（非 GET）。"禁用/空选时一个请求都不发"这类断言用它。"""
     return pg.evaluate("""() => window.__calls.filter((c) => c.method !== 'GET')
         .map((c) => ({ url: c.url, method: c.method, body: c.data }))""")
+
+
+def probe(pg):
+    """当前路由（ENTRY 里那颗探针印出来的）。第八节用。"""
+    return pg.evaluate("""() => {
+        const el = document.getElementById('probe');
+        return el ? { path: el.getAttribute('data-path'), tab: el.getAttribute('data-tab') } : null;
+    }""")
 
 
 def to_list(pg):
@@ -681,6 +709,27 @@ with sync_playwright() as p:
     check(f"  且这条距离由工具栏高度决定（实测间距 {gap}px = 60 - (高 {ob['bar']['h']} + 50)/2，"
           "工具栏一长高就翻负）",
           abs(gap - (60 - (ob["bar"]["h"] + 50) / 2)) <= 1, str(gap))
+    pg.close()
+
+    # ── 八、R2 那颗按钮是「去站点设置改配置」的真入口（20261006，用户第 3 条）──────
+    # 20261006 用户拍板「配置挪到站点设置，单一入口」⇒ 图库页从此**没有** R2 表单，
+    # 只剩这颗按钮。于是它成了从图库够到配置的**唯一一条路**：它要是没跳（或跳错页签），
+    # 用户就永远改不了配置，而页面上不会有任何报错 —— 这正是必须真跑一遍才看得见的东西。
+    print("\n【八】「R2 存储」按钮真的跳到站点设置的「图库存储」页签")
+    pg = mount(br)
+    check("前置：起始路由是图库页", (probe(pg) or {}).get("path") == "/dashboard/albums", str(probe(pg)))
+    r2btn = pg.locator(".albumActions button.ant-btn:has-text('R2')")
+    check("前置：工具栏那颗 R2 按钮在（没被挪走/改名）", r2btn.count() == 1, str(r2btn.count()))
+    r2btn.click()
+    pg.wait_for_timeout(300)
+    p = probe(pg) or {}
+    check("点它 ⇒ 路由换成 /dashboard/usercontrol", p.get("path") == "/dashboard/usercontrol", str(p))
+    check("  且带上了 tab=4（不带就落在「站点信息」上，看着像按钮没生效）",
+          p.get("tab") == "4", str(p))
+    check("  这一页**没有**开任何弹窗（配置表单已不在这里 —— 单一入口）",
+          pg.locator(".ant-modal-wrap:visible").count() == 0,
+          str(pg.locator(".ant-modal-wrap:visible").count()))
+    check("第八节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
     br.close()
