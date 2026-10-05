@@ -7,8 +7,9 @@ import ArrowBackIosIcon from "@mui/icons-material/ArrowBackIos";
 import React, {useEffect, useState} from "react";
 import { webInfo } from "../../../interface/Setting";
 import http from "../../../apis/axios.tsx";
-import {useNavigate} from "react-router-dom";
+import {useLocation, useNavigate} from "react-router-dom";
 import GraphRebuild from "./GraphRebuild";
+import R2Storage from "./R2Storage";
 
 /**
  * 站点设置（/dashboard/usercontrol）。20260930 从四页签收成两页签：
@@ -31,6 +32,15 @@ import GraphRebuild from "./GraphRebuild";
  * 20261003 加了第三个页签「向量图谱」（`./GraphRebuild`）：按用户的原话，手动重算图谱的
  * 入口就放在这里，不新开侧边栏——侧边栏那一格的索引（8）已被本页占用，动它要连带改
  * `HASH_INDEX` 与所有书签。它不是"设置"，而是**本页本来就是"站点自己的东西怎么配"** 的去处。
+ *
+ * 20261006 加了第四个页签「图库存储」（`./R2Storage`，用户第 3 条）。三条理由压在一起：
+ *   · 用户拍板「挪到站点设置，单一入口」——图库那边从此只留用量与灰态，不再有配置表单；
+ *   · 与「向量图谱」同属"站点自己的东西怎么配"，语义就是本页；
+ *   · **凭据不在这里**（只从服务端 .env 读）。⚠️ 但也**别把本页当保险箱**：
+ *     `GET /api/protected/websetting` 会把每一行**明文回传**给面板，而那道门是
+ *     `authz::can_access_console`（admin ‖ superadmin）——"站点设置只有超管能打开"
+ *     这件事今天并不成立（本页自己的路门 `AuthRouter` 用的也是 `isAdminToken`）。
+ *     凡是不能明文回传的东西，就不该进 `web_info`（同 `openAiToken` 被删的理由）。
  */
 const EMPTY: webInfo = {
     blogTitle: '',
@@ -47,6 +57,10 @@ const EMPTY: webInfo = {
 
 const UserControl = () => {
     const navigate = useNavigate()
+    // 落在哪个页签，默认第一个。图库页那颗「R2 存储 · N%」按钮带 `{tab:'4'}` 跳过来——
+    // 少了这一步，用户点"设置"却落在「站点信息」上，读起来就像那颗按钮没干它说的事。
+    // 只影响首次挂载（`defaultActiveKey` 是非受控的），之后随用户点。
+    const initialTab = ((useLocation().state as { tab?: string } | null)?.tab) ?? '1'
     const [webInfo, setWebInfo] = useState<webInfo>(EMPTY);
 
     useEffect(() => {
@@ -170,6 +184,13 @@ const UserControl = () => {
             // 不属于 webInfo 那套表单：它不写设置，而是起一个后台任务（见 GraphRebuild 头注）
             children: <GraphRebuild />,
         },
+        {
+            key: '4',
+            label: <h3>图库存储</h3>,
+            // 同样不属于 webInfo 那套表单：它只提交 R2 那五个键（见 R2Storage 头注）。
+            // 图库页那颗「R2 存储 · N%」按钮会带着 `{tab:'4'}` 跳到这里。
+            children: <R2Storage />,
+        },
     ];
 
     // 内联 style 搬进 index.sass 的 `.allin`（20261004）：原来只有 `padding` 与
@@ -180,7 +201,7 @@ const UserControl = () => {
             <Fab variant="circular" size='small' style={{ position: 'absolute', cursor: 'pointer' }} onClick={comeBack}>
                 <ArrowBackIosIcon fontSize='small' style={{cursor:'pointer'}}/>
             </Fab>
-            <Tabs defaultActiveKey="1" items={items} centered={true} />
+            <Tabs defaultActiveKey={initialTab} items={items} centered={true} />
         </div>
     );
 }
