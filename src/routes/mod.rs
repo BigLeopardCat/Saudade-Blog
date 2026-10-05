@@ -226,8 +226,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/public/graph/artifact/:file", get(graph::graph_artifact))
         
         // Static Image Download (Public)
-        .nest_service("/api/protect/download", ServeDir::new(upload_dir()))
-        .nest_service("/christmas", ServeDir::new("/opt/memory_blog_rust/static/christmas"));
+        .nest_service("/api/protect/download", ServeDir::new(upload_dir()));
 
     let protected_routes = Router::new()
         // Images
