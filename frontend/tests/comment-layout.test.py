@@ -29,9 +29,12 @@
   · 真 react-dom 渲染 → Playwright 断言。
 
 另外 ⑫（20261005 用户第 3 条「赞和踩不在同一水平线，好像踩高了一点」）量的是**图标
-墨迹**：把真 `<svg>` 栅格化到 canvas 再扫非透明行——两个 svg 盒子的几何在旧稿里逐项
-相等，量盒子永远全绿，而差在字形内部的墨迹上。带一条**冻结字面**（20261005 改动前那版
-几何）的红基线——基线的取法钉在时间上，不钉在当前提交上（见下面 `OLD_ICON` 的头注）。
+墨迹的重心**：把真 `<svg>` 栅格化到 canvas，按 alpha 加权求重心。**口径是重心，不是
+外框**——这条修过两次，第一次修的就是外框：把两个 svg 盒子的几何弄成逐项相等（同 14px、
+同 viewBox、镜像路径，外框中心都落在 12.0），用户仍然说踩偏高。因为墨迹质量不是均匀
+分布的（朝上那颗压在下半、镜像后压在上半），外框对齐得再准也盖不住重心差。带一条
+**冻结字面**（20261005 改动前那版几何）的红基线——基线的取法钉在时间上，不钉在当前
+提交上（见下面 `OLD_ICON` 的头注）。
 
 用法（仓库任意位置）：python3 frontend/tests/comment-layout.test.py
 """
@@ -408,12 +411,14 @@ REPLY_GEOM = """() => {
   };
 }"""
 
-# ⑫ 用：把一枚真 svg **栅格化**再扫非透明行 —— 得到的是"这颗图标在屏幕上占哪几条像素行"，
-# 也就是用户看得见的那条边。**不能量盒子**：旧稿里两颗 svg 的盒子逐项相等（同 14px、
-# 同 viewBox、同一条镜像路径），量盒子永远全绿，而人眼看到的差在**字形内部的墨迹**上。
+# ⑫ 用：把一枚真 svg **栅格化**再扫像素 —— 得到的是"这颗图标在屏幕上占了哪些像素、
+# 质量偏在哪一半"。**不能量盒子**：上一稿把两颗 svg 的外框做成逐项相等（同 14px、同
+# viewBox、同一条镜像路径、外框中心都落在 12.0），量盒子永远全绿，而用户还是说踩偏高
+# ——人眼对的是**墨迹重心**，字形质量不是均匀分布的。
 # 做法：克隆 → 把 width/height 写成 480（= 20px / 用户单位，够分辨 0.25 个单位）、
 # 把 `stroke` 从 `currentColor` 钉成黑（离线 svg 里 `color` 取初值，钉死免得受主题影响）
 # → XMLSerializer → data URL → canvas.drawImage → 扫 alpha。
+# 重心按 **alpha 加权**（alpha ≈ 该像素被墨盖住的比例，比"非透明就算 1 个点"更贴真）。
 INK_HELPER = """() => {
   window.__inkOf = (svg) => new Promise((res) => {
     const S = 24 * 20;
@@ -431,16 +436,24 @@ INK_HELPER = """() => {
       const ctx = cv.getContext('2d');
       ctx.drawImage(img, 0, 0, S, S);
       const d = ctx.getImageData(0, 0, S, S).data;
-      let top = -1, bottom = -1;
+      let top = -1, bottom = -1, wsum = 0, aysum = 0, mass = 0;
       for (let y = 0; y < S; y++) {
         for (let x = 0; x < S; x++) {
-          if (d[(y * S + x) * 4 + 3] > 8) { if (top < 0) top = y; bottom = y; break; }
+          const a = d[(y * S + x) * 4 + 3];
+          if (a > 8) {
+            if (top < 0) top = y;
+            bottom = y;
+            aysum += (y + 0.5) * a;   // 像素行的中心线是 y + 0.5
+            wsum += a; mass += 1;
+          }
         }
       }
       // 行号 → 用户单位（`bottom + 1` 是因为第 bottom 行覆盖 [bottom, bottom+1] 那一段）
       res(top < 0 ? null : {
         top: +(top / 20).toFixed(2), bottom: +((bottom + 1) / 20).toFixed(2),
-        cy: +((((top + bottom + 1) / 2) / 20)).toFixed(2),
+        cy: +((((top + bottom + 1) / 2) / 20)).toFixed(2),      // 外框中心（留着当对照）
+        cym: +(aysum / wsum / 20).toFixed(3),                   // ★ 墨迹重心（判据用这个）
+        pxs: mass,
         h: +(((bottom - top + 1) / 20)).toFixed(2),
       });
     };
@@ -457,9 +470,13 @@ OLD_INK = """(html) => {
   return svg ? window.__inkOf(svg) : null;
 }"""
 
-# ⑫ 的红基线 = **20261005 改动前**那一版两枚拇指的几何（下面两段字面，逐字抄自改动前的
-# `NoteStatIcons/index.tsx`）。与 `mermaid-mobile-zoom.test.py` 同一取法：换臂跑同一套
-# 判据，读几何不读"看起来对"。
+# ⑫ 的红基线 = **"外框居中"那一版**两枚拇指的几何（下面两段字面，逐字抄自 20261005 那次
+# 改动后的 `NoteStatIcons/index.tsx`，也就是**重心对齐之前**的形态）。与
+# `mermaid-mobile-zoom.test.py` 同一取法：换臂跑同一套判据，读几何不读"看起来对"。
+#
+# 它证明的正是这一节口径换代的必要性：这一版外框中心两颗都精确落在 12.0（盒子逐项相等、
+# 镜像关系完好），**重心**却差 3.93 个单位（14px 下 2.29px）——用户报的就是它。红基线
+# 必须量到这个数，否则说明判据又退回"量外框"，那套口径上一轮已经证明是瞎的。
 #
 # ⚠️ 它**不能**写成 `git show HEAD:`：这条基线要的是"改动前那个形状"，而 `git show HEAD`
 # 在改动**提交之后**取到的就是改动后的文件 —— 两条臂逐字相同，红基线当场失效
@@ -475,11 +492,11 @@ _SVG_HEAD = ('<svg aria-hidden="true" viewBox="0 0 24 24" width="14" height="14"
              ' stroke="currentColor" stroke-width="1.8" stroke-linejoin="round">')
 OLD_ICON = {
     "ThumbUpIcon": _SVG_HEAD
-    + '<path d="M13.8 9V5.3a2.8 2.8 0 0 0-2.8-2.8l-3.9 8.9v10.9h11.2a2 2 0 0 0 1.97-1.65l1.4-9.1a2 2 0 0 0-1.97-2.35z" />'
-    + '<path d="M7.1 22.3H4.5a2.4 2.4 0 0 1-2.4-2.4v-7a2.4 2.4 0 0 1 2.4-2.4h2.6" /></svg>',
+    + '<path d="M13.8 8.6V4.9a2.8 2.8 0 0 0-2.8-2.8l-3.9 8.9v10.9h11.2a2 2 0 0 0 1.97-1.65l1.4-9.1a2 2 0 0 0-1.97-2.35z" />'
+    + '<path d="M7.1 21.9H4.5a2.4 2.4 0 0 1-2.4-2.4v-7a2.4 2.4 0 0 1 2.4-2.4h2.6" /></svg>',
     "ThumbDownIcon": _SVG_HEAD
-    + '<path d="M13.8 15v3.7a2.8 2.8 0 0 1-2.8 2.8l-3.9-8.9V1.7h11.2a2 2 0 0 1 1.97 1.65l1.4 9.1a2 2 0 0 1-1.97 2.35z" />'
-    + '<path d="M7.1 1.7H4.5a2.4 2.4 0 0 0-2.4 2.4v7a2.4 2.4 0 0 0 2.4 2.4h2.6" /></svg>',
+    + '<path d="M13.8 15.4v3.7a2.8 2.8 0 0 1-2.8 2.8l-3.9-8.9V2.1h11.2a2 2 0 0 1 1.97 1.65l1.4 9.1a2 2 0 0 1-1.97 2.35z" />'
+    + '<path d="M7.1 2.1H4.5a2.4 2.4 0 0 0-2.4 2.4v7a2.4 2.4 0 0 0 2.4 2.4h2.6" /></svg>',
 }
 
 # 计数该有多大地方待着：它在框内右下角（`bottom:4px` + `line-height:16px`）⇒ 与框底
@@ -1054,17 +1071,17 @@ with sync_playwright() as p:
           b1["nums"] == ["3", "7"], b1["nums"])
     pg6.close()
 
-    # ══ 七、赞 / 踩图标的墨迹在同一水平线（20261005 用户第 3 条）══════════════════════
-    # 用户原话：「讨论区赞和踩图标视觉上不在同一水平线，好像踩高了一点。」
-    # 根因**不在** `.commentVote`（两颗钮一样高、都是 `align-items:center`，svg 盒子逐项
-    # 相等），在**字形自己**：初稿那条拇指几何在 24 字框里偏下（墨迹 y ∈ [2.5, 22.3]、
-    # 中心 12.4），而踩是它关于 y=12 的镜像 ⇒ 踩的中心跑到 11.6。两颗并排就差 **0.8 个
-    # 用户单位**（14px 下 0.47px；手机 DPR3 上是 1～2 个物理像素——眼睛比的正是"拳头上沿 /
-    # 下沿"那条横边，所以看得见）。修法 = 把这条几何整体上移 0.4 个单位让墨迹居中。
-    # ⚠️ 判据只能量**墨迹**：旧稿里两个 svg 盒子的几何完全一致，量盒子（或量 viewBox、
-    # 量 `d` 里的数字）永远全绿。这里把真 svg 用 XMLSerializer 序列化、栅格化到 canvas、
-    # 扫非透明行——这就是"用户看见的那条边"。
-    print("\n⑫ 赞 / 踩图标：两条墨迹落在同一水平线上（量真渲染色块的行范围，不量盒子）")
+    # ══ 七、赞 / 踩图标的墨迹重心在同一水平线（20261005 用户第 3 条）══════════════════
+    # 用户原话：「讨论区赞和踩图标视觉上不在同一水平线，好像踩高了一点。」（第二次报）
+    # 根因**不在** `.commentVote`，也**不在**外框：上一轮已经把两个 svg 盒子的几何做成
+    # 逐项相等、外框中心都落在 12.0，用户仍说偏高。差在**墨迹重心**——朝上那颗的质量压在
+    # 下半（掌根 + 腕带两块实心区），镜像过去之后朝下那颗的质量压在上半，于是"看起来"
+    # 一个偏下一个偏上。实测重心：赞 13.83 / 踩 9.90（用户单位），差 **3.93 个单位**
+    # = 14px 下 **2.29px**（手机 DPR3 上是 7 个物理像素）。
+    # 修法 = 两颗各走一个方向相反的整体平移（赞 −0.8、踩 +1.1，写成 `<g transform>`），
+    # 把重心差收到 ~2.0 个单位；这是平移的极限（字框余量用尽：赞上沿剩 1.0、踩下沿剩 1.2）。
+    # ⚠️ 判据只能量**重心**：量盒子（或量 viewBox、量 `d` 里的数字）在上一稿里全绿。
+    print("\n⑫ 赞 / 踩图标：墨迹重心落在同一水平线上（量栅格化后的 alpha 加权重心，不量外框）")
     pg7 = br.new_page(viewport={"width": 1280, "height": 900})
     errs7 = []
     pg7.on("pageerror", lambda e: errs7.append(str(e)))
@@ -1075,31 +1092,49 @@ with sync_playwright() as p:
     pg7.evaluate(INK_HELPER)
     up = pg7.evaluate(INK_OF, '#c-1 .commentVote[aria-label="赞"] svg')
     dn = pg7.evaluate(INK_OF, '#c-1 .commentVote[aria-label="踩"] svg')
-    check("★前提：两张图都真栅格化出了墨迹（空图会让下面「中心相同」变成永真）",
-          bool(up) and bool(dn) and 15 < up["h"] < 24 and 15 < dn["h"] < 24, f"{up} / {dn}")
-    check("★两颗墨迹中心都落在字框中线 12.0 上（±0.4 单位）—— 对齐靠的是**两条都居中**",
-          abs(up["cy"] - 12) <= 0.4 and abs(dn["cy"] - 12) <= 0.4,
-          f'赞 {up["cy"]} / 踩 {dn["cy"]}')
-    check("★两颗墨迹中心互差 ≤ 0.25 单位（= 同一水平线；改动前是 0.8）",
-          abs(dn["cy"] - up["cy"]) <= 0.25,
-          f'{dn["cy"] - up["cy"]:+.2f} 单位 = {(dn["cy"] - up["cy"]) / 24 * 14:+.3f}px @14px')
+    check("★前提：两张图都真栅格化出了墨迹（空图会让下面「重心相同」变成永真）",
+          bool(up) and bool(dn) and 15 < up["h"] < 24 and 15 < dn["h"] < 24
+          and up["pxs"] > 2000 and dn["pxs"] > 2000, f"{up} / {dn}")
+
+    def gap_px(a, b):
+        return abs(b["cym"] - a["cym"]) / 24 * 14
+
+    # 阈值取 1.4px：实测 1.13px（= 平移余量用尽后的地板），留一点渲染噪声。
+    # 它比「外框居中」那一版的 2.24px 小一半——这就是两次修法的差别，不是"差不多"。
+    check("★两颗墨迹重心互差 ≤ 1.4px @14px（同一条视线；外框居中那一版是 2.24px）",
+          gap_px(up, dn) <= 1.4,
+          f'赞 {up["cym"]} / 踩 {dn["cym"]} → 差 '
+          f'{abs(dn["cym"] - up["cym"]):.2f} 单位 = {gap_px(up, dn):.3f}px @14px')
+    check("★两颗墨迹都还在字框里（平移是「用满余量」，不是画出框）——"
+          "出框会被 svg 的视口裁掉，那就不只是位置问题了",
+          up["top"] >= 0 and dn["top"] >= 0 and up["bottom"] <= 24 and dn["bottom"] <= 24,
+          f'赞 [{up["top"]},{up["bottom"]}] 踩 [{dn["top"]},{dn["bottom"]}]')
+    check("  两颗的墨迹高度仍然相等（±0.1 单位）——对齐靠平移，没有偷偷缩放",
+          abs(up["h"] - dn["h"]) <= 0.1, f'{up["h"]} vs {dn["h"]}')
     boxes = pg7.evaluate("""() => ['赞', '踩'].map((l) => {
       const r = document.querySelector('#c-1 .commentVote[aria-label="' + l + '"] svg')
         .getBoundingClientRect();
       return { top: +r.top.toFixed(2), h: +r.height.toFixed(2) };
     })""")
     check("★上下文：那一行里两个 svg 盒子同高同顶（±0.5px）—— 缺了这条，"
-          "「字框里居中」推不出「屏幕上同线」",
+          "「字框里对齐」推不出「屏幕上同线」",
           abs(boxes[0]["top"] - boxes[1]["top"]) <= 0.5 and abs(boxes[0]["h"] - boxes[1]["h"]) <= 0.5,
           str(boxes))
-    check("  两颗仍是彼此的镜像（赞上沿+踩下沿 ≈ 24、反之亦然）——不是「各挪半格凑齐」",
-          abs(up["top"] + dn["bottom"] - 24) <= 0.6 and abs(up["bottom"] + dn["top"] - 24) <= 0.6,
-          f'{up["top"]}+{dn["bottom"]} / {up["bottom"]}+{dn["top"]}')
     ou = pg7.evaluate(OLD_INK, OLD_ICON["ThumbUpIcon"])
     od = pg7.evaluate(OLD_INK, OLD_ICON["ThumbDownIcon"])
-    check("★红基线：改动前那版两颗墨迹中心差 0.8 单位（14px 下 0.47px）—— ⇒ 上面那条有牙",
-          bool(ou) and bool(od) and abs(od["cy"] - ou["cy"]) >= 0.6,
+    check("★红基线：外框居中那一版（冻结字面）重心差 ≥ 1.8px @14px —— ⇒ 上面那条有牙"
+          "（不红就说明探针量不出重心，或者口径又退回外框了）",
+          bool(ou) and bool(od) and gap_px(ou, od) >= 1.8,
+          f'赞 {ou and ou["cym"]} / 踩 {od and od["cym"]} → '
+          f'{gap_px(ou, od) if (ou and od) else float("nan"):.3f}px @14px')
+    check("  红基线外框中心确实都落在 12.0（±0.15）—— 那一版**不是**偏心，是质量偏心，"
+          "这一条把两次修的差别钉在报告里",
+          bool(ou) and bool(od) and abs(ou["cy"] - 12) <= 0.15 and abs(od["cy"] - 12) <= 0.15,
           f'赞 {ou and ou["cy"]} / 踩 {od and od["cy"]}')
+    check("  方向对：赞的重心上移、踩的重心下移（位移 < 1.5 单位，是平移不是重画）",
+          bool(ou) and bool(od) and 0 < ou["cym"] - up["cym"] < 1.5
+          and 0 < dn["cym"] - od["cym"] < 1.5,
+          f'赞 {ou and ou["cym"]}→{up["cym"]} / 踩 {od and od["cym"]}→{dn["cym"]}')
     check("  红基线的墨迹高与现版一致（这次是**纯平移**，字形的形状没动）",
           bool(ou) and abs(ou["h"] - up["h"]) <= 0.2, f'{ou and ou["h"]} vs {up["h"]}')
     check("无 JS 运行时报错（第 ⑦ 节这一页）", not errs7, "; ".join(errs7[:2]))
