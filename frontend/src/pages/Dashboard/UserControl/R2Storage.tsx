@@ -147,6 +147,12 @@ const R2Storage = () => {
                     strokeColor={pct === null ? '#bfbfbf' : undefined}
                     showInfo={false}
                 />
+                {/* 凭据来源（20261006 晚）。R2 令牌**按桶授权**：拿部署那枚去列图片桶
+                    会得 403 AccessDenied，而那个症状与"代码写错了"长得一模一样 ——
+                    这行是分辨它俩最快的判据（服务端只报来源，不含任何密钥）。 */}
+                <span style={{ fontSize: 12, color: text.ok ? '#999' : '#c88' }}>
+                    凭据来源：{usage?.credsSource || '未配置（图库走本机磁盘）'}
+                </span>
             </div>
 
             <Space direction="vertical" size={12} style={{ width: '100%' }}>

@@ -10,11 +10,15 @@
 //! ── 配置分两半住 ──────────────────────────────────────────────────────────
 //! · **桶名 / 前缀 / 公开域名 / 配额 / 开关** 住 `web_info`（KV 表，**不需要迁移**，
 //!   面板改完即生效）。键名只在 [`R2_KEYS`] 列一次，读侧、写侧、前端都引用这一组。
-//! · **凭据**（`R2_ENDPOINT` / `R2_ACCESS_KEY` / `R2_SECRET_KEY`）只从 `.env` 读，
+//! · **凭据**（`R2_IMAGE_*`，逐项回落到 `R2_*`）只从 `.env` 读，
 //!   **绝不进 `web_info`、绝不进任何面板接口**（与 `openAiToken`/`githubToken` 那批
 //!   被删掉的字段同一条取舍，见 `routes/web_info.rs`）。
 //!   ⚠️ `R2_BUCKET` 是**部署桶**（`scripts/deploy/*` 往它传部署包），图像代码**永不读它**
 //!   —— 桶名只从 `web_info` 取。这一条最容易被人"顺手复用"。
+//!   ⚠️ **`R2_*` 那对是部署令牌、不是账号级**：R2 的 API 令牌**按桶授权**，部署那枚
+//!   只管 `saudade-blog`（`deploy/<sha>/…` 全在它里面）。拿它去列图片桶 ⇒ `403
+//!   AccessDenied` ⇒ 用量读不出来 ⇒ fail-closed 拦下上传 —— 症状长得像代码 bug。
+//!   所以图库这一路优先读**图库专用**那一组（见 [`creds_from`]）。
 //!
 //! ── 为什么自己签 SigV4（而不是引 SDK）──────────────────────────────────────
 //! R2 兼容 S3，签名就是 AWS SigV4（region `auto`、service `s3`、签名头
@@ -399,6 +403,19 @@ fn amz_date_now() -> String {
 
 // ══ 凭据（只从 .env 读）══════════════════════════════════════════════════════
 
+/// 图库**专用**令牌的三个变量名（20261006 晚）。R2 的 API 令牌是**按桶授权**的，
+/// 不是账号级：部署链那枚（[`DEPLOY_ENV_KEYS`]）只管部署桶，拿它列图片桶必得 `403
+/// AccessDenied`。用户手里那枚图片桶令牌是独立的，就住在这一组。
+pub const IMAGE_ENV_KEYS: [&str; 3] = [
+    "R2_IMAGE_ENDPOINT",
+    "R2_IMAGE_ACCESS_KEY",
+    "R2_IMAGE_SECRET_KEY",
+];
+
+/// 部署链那组（`scripts/deploy/upload_to_r2.py` 与 `deploy_from_r2.sh` 读的同一组）。
+/// 图库里它只作回落 —— **别把图片桶加进它**（那等于让部署令牌多担一份权限，见文件头）。
+pub const DEPLOY_ENV_KEYS: [&str; 3] = ["R2_ENDPOINT", "R2_ACCESS_KEY", "R2_SECRET_KEY"];
+
 /// R2 凭据。**不进 `web_info`、不进任何接口、不进日志**。
 #[derive(Debug, Clone)]
 pub struct Creds {
@@ -406,6 +423,10 @@ pub struct Creds {
     pub endpoint: String,
     pub access_key: String,
     pub secret_key: String,
+    /// 这对凭据里有没有「图库专用」的成分（三项里任意一项取自 `R2_IMAGE_*`）。
+    /// **只用于面板上那行"凭据来源"**：配错令牌时一眼看出用的是哪一对，
+    /// 不必再去猜"列桶为什么 403"。
+    pub image_token: bool,
 }
 
 impl Creds {
@@ -425,16 +446,41 @@ impl Creds {
     }
 }
 
-/// 读凭据。**三个变量缺一不可**，缺任何一个 ⇒ `None`（= 没配 R2 ⇒ 走本地盘）。
-/// endpoint 补 scheme：R2 控制台给的那串不带 `https://`，手抄时也常被漏掉。
-pub fn load_creds() -> Option<Creds> {
-    let endpoint = std::env::var("R2_ENDPOINT").ok()?;
-    let access_key = std::env::var("R2_ACCESS_KEY").ok()?;
-    let secret_key = std::env::var("R2_SECRET_KEY").ok()?;
-    let endpoint = endpoint.trim().trim_end_matches('/').to_string();
-    if endpoint.is_empty() || access_key.trim().is_empty() || secret_key.trim().is_empty() {
-        return None;
+/// 从"取变量"的闭包解析凭据（纯函数 —— 单测直接喂一个 map，不碰进程环境）。
+///
+/// **逐项回落**：每项先看 `R2_IMAGE_<X>`，缺席或空串则用 `R2_<X>`。于是 `.env` 只加
+/// `R2_IMAGE_ACCESS_KEY` / `R2_IMAGE_SECRET_KEY` 两行就能生效（endpoint 同一个账号、
+/// 照旧回落），**一个都不加 ⇒ 与从前逐字节相同**（部署那组照旧）。
+///
+/// **三项全无 ⇒ `None`**（= 没配 R2 ⇒ 走本地盘）。endpoint 补 scheme：R2 控制台给的
+/// 那串不带 `https://`，手抄时也常被漏掉。
+pub fn creds_from(get: impl Fn(&str) -> Option<String>) -> Option<Creds> {
+    // 逐项回落。返回 (值, 是否来自 R2_IMAGE_*)
+    let pick = |i: usize| {
+        let from_image = get(IMAGE_ENV_KEYS[i]).map(|v| v.trim().to_string());
+        match from_image {
+            Some(v) if !v.is_empty() => Some((v, true)),
+            _ => get(DEPLOY_ENV_KEYS[i])
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+                .map(|v| (v, false)),
+        }
+    };
+    let (endpoint, ep_image) = pick(0)?;
+    let (access_key, ak_image) = pick(1)?;
+    let (secret_key, sk_image) = pick(2)?;
+
+    // 混搭的令牌对（一半图库、一半部署）几乎一定是配置事故：签出来的名对不上，
+    // 失败长相（SignatureDoesNotMatch）与"密钥抄错"分不开。当场喊一声。
+    if ak_image != sk_image {
+        tracing::warn!(
+            "[r2] 凭据混搭：access key 来自 {}，secret 来自 {} —— 请成对配置（否则签名必失败）",
+            if ak_image { IMAGE_ENV_KEYS[1] } else { DEPLOY_ENV_KEYS[1] },
+            if sk_image { IMAGE_ENV_KEYS[2] } else { DEPLOY_ENV_KEYS[2] },
+        );
     }
+
+    let endpoint = endpoint.trim_end_matches('/').to_string();
     let endpoint = if endpoint.contains("://") {
         endpoint
     } else {
@@ -442,9 +488,15 @@ pub fn load_creds() -> Option<Creds> {
     };
     Some(Creds {
         endpoint,
-        access_key: access_key.trim().to_string(),
-        secret_key: secret_key.trim().to_string(),
+        access_key,
+        secret_key,
+        image_token: ep_image || ak_image || sk_image,
     })
+}
+
+/// 读凭据（进程环境版）。三个变量缺一不可 —— 图库那组优先，逐项回落部署那组。
+pub fn load_creds() -> Option<Creds> {
+    creds_from(|k| std::env::var(k).ok())
 }
 
 // ══ 网络 ════════════════════════════════════════════════════════════════════
@@ -934,6 +986,7 @@ mod tests {
                     endpoint: "https://acc.r2.cloudflarestorage.com".to_string(),
                     access_key: "ak".to_string(),
                     secret_key: "sk".to_string(),
+                    image_token: false,
                 },
                 EMPTY_SHA256,
                 "20150830T123600Z",
@@ -1260,6 +1313,7 @@ mod tests {
             endpoint: "https://acc.r2.cloudflarestorage.com".to_string(),
             access_key: "ak".to_string(),
             secret_key: "sk".to_string(),
+            image_token: false,
         };
         assert_eq!(c.host(), "acc.r2.cloudflarestorage.com");
         assert_eq!(c.path_of("my-bucket", "gallery/ab/图.png"), "/my-bucket/gallery/ab/%E5%9B%BE.png");
@@ -1270,5 +1324,67 @@ mod tests {
             ..c.clone()
         };
         assert_eq!(no_scheme.host(), "x.example.com");
+    }
+
+    /// 图库专用令牌优先、逐项回落部署那组（20261006 晚：列桶 403 的根因是"复用了部署
+    /// 令牌"，而 R2 令牌是按桶授权的）。判据全是**选没选对那一组**，不涉及任何真密钥。
+    #[test]
+    fn creds_prefer_image_token_with_per_key_fallback() {
+        let map = |pairs: &[(&str, &str)]| {
+            let kv: Vec<(String, String)> = pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+            move |k: &str| kv.iter().find(|(a, _)| a == k).map(|(_, b)| b.clone())
+        };
+
+        // ① 只加了两个新变量（endpoint 回落部署那项）+ scheme 补全 + 标记为图库令牌
+        let c = creds_from(map(&[
+            ("R2_IMAGE_ACCESS_KEY", "img-ak"),
+            ("R2_IMAGE_SECRET_KEY", "img-sk"),
+            ("R2_ENDPOINT", "acc.r2.cloudflarestorage.com"),
+        ]))
+        .expect("三项齐备");
+        assert_eq!((c.access_key.as_str(), c.secret_key.as_str()), ("img-ak", "img-sk"));
+        assert_eq!(c.endpoint, "https://acc.r2.cloudflarestorage.com");
+        assert!(c.image_token);
+
+        // ② 一个都不加 ⇒ 完全走部署那组（**行为与从前逐字节相同**）
+        let c = creds_from(map(&[
+            ("R2_ENDPOINT", "https://acc.r2.cloudflarestorage.com"),
+            ("R2_ACCESS_KEY", "d-ak"),
+            ("R2_SECRET_KEY", "d-sk"),
+        ]))
+        .expect("部署那组齐备");
+        assert_eq!(c.access_key, "d-ak");
+        assert!(!c.image_token);
+
+        // ③ 图库那组显式给 endpoint ⇒ 用它（换成别的账号也配得出来），尾斜杠照旧归一
+        let c = creds_from(map(&[
+            ("R2_IMAGE_ENDPOINT", "https://img.example.com/"),
+            ("R2_IMAGE_ACCESS_KEY", "i"),
+            ("R2_IMAGE_SECRET_KEY", "s"),
+            ("R2_ENDPOINT", "https://acc.r2.cloudflarestorage.com"),
+        ]))
+        .expect("两组都在时图库组赢");
+        assert_eq!(c.endpoint, "https://img.example.com");
+
+        // ④ 空串 = 没填（不能把空串当"给了个空值"用）
+        let c = creds_from(map(&[
+            ("R2_IMAGE_ACCESS_KEY", "  "),
+            ("R2_ENDPOINT", "https://acc.r2.cloudflarestorage.com"),
+            ("R2_ACCESS_KEY", "d-ak"),
+            ("R2_SECRET_KEY", "d-sk"),
+        ]))
+        .expect("空格回落部署那组");
+        assert_eq!(c.access_key, "d-ak");
+        assert!(!c.image_token);
+
+        // ⑤ 缺一格（两个来源都没有 secret）⇒ None = 没配 R2，回落到本地盘
+        assert!(creds_from(map(&[
+            ("R2_ENDPOINT", "https://acc.r2.cloudflarestorage.com"),
+            ("R2_ACCESS_KEY", "d-ak"),
+        ]))
+        .is_none());
     }
 }
