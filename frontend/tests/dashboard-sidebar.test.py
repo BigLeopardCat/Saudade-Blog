@@ -290,6 +290,67 @@ with sync_playwright() as p:
           f'超出 {g["sw"]["right"] - g["bar"]["right"]:.1f}px')
     geo_page.evaluate("() => { document.querySelector('.toggle-switch').style.transform = ''; }")
 
+    # ── 三b、第三档「极简」（20261006 用户第 3 条）───────────────────────────────
+    #
+    # 三档 = 0 / 88 / 250，类名互斥（`.mini` / `.close` / 无）。判据全部只有真跑一遍才看得见：
+    #   · 收到 0 宽时**底色带留不留**取决于要不要连 padding 一起收（`.shell` 是 content-box）；
+    #   · 两颗圆钮是 `position:absolute; right:-25px`，只要有人顺手给 `.shell` 加一句
+    #     `overflow:hidden`，它们会当场消失 —— 而"钮不见了"光看代码是想不到的。
+    # 此刻 geo_page 停在**展开态（250）**（上一节刚点过 `.toggle`）。
+    print("\n【三b】侧栏第三档（极简）")
+    ROT = """() => {
+        const rot = (sel) => {
+            const el = document.querySelector(sel);
+            if (!el) return 'missing';
+            const cs = getComputedStyle(el);
+            if (cs.display === 'none' || cs.visibility === 'hidden') return 'hidden';
+            const m = new DOMMatrix(cs.transform);
+            return Math.round(Math.atan2(m.b, m.a) * 180 / Math.PI);
+        };
+        const shell = document.querySelector('div.shell');
+        const bar = document.querySelector('.menu-bar');
+        const r = (el) => { const b = el.getBoundingClientRect(); return { left: b.left, width: b.width }; };
+        return { tier: shell.className, toggle: rot('.toggle'), collapse: rot('.toggle-collapse'),
+                 shellW: r(shell).width, barW: r(bar).width,
+                 shellLeft: r(shell).left, toggleBox: r(document.querySelector('.toggle')),
+                 collapseBox: document.querySelector('.toggle-collapse')
+                     ? r(document.querySelector('.toggle-collapse')) : null };
+    }"""
+    g = geo_page.evaluate(ROT)
+    check("展开档（250）：那颗钮朝左（rotate 180 = 往下一档）",
+          g["toggle"] == 180 or g["toggle"] == -180, str(g["toggle"]))
+    check("展开档（250）：没有第二颗钮（左向钮只在收起档出现）",
+          g["collapse"] == "hidden", str(g["collapse"]))
+
+    geo_page.click(".toggle")                       # 250 → 88
+    geo_page.wait_for_timeout(600)
+    g = geo_page.evaluate(ROT)
+    check("收起档（88）：两颗钮都在（▶ 展开 / ◀ 再收一档）",
+          g["toggle"] == 0 and g["collapse"] == 180, f'toggle={g["toggle"]} collapse={g["collapse"]}')
+    check("收起档（88）：两颗钮不重叠（下面的那颗在下面）",
+          g["collapseBox"]["left"] == g["toggleBox"]["left"]
+          and g["collapseBox"]["width"] == g["toggleBox"]["width"],
+          str(g["toggleBox"]) + " / " + str(g["collapseBox"]))
+
+    geo_page.click(".toggle-collapse")              # 88 → 0
+    geo_page.wait_for_timeout(600)
+    g = geo_page.evaluate(ROT)
+    check("极简档：shell 带上 mini 类", "mini" in g["tier"], g["tier"])
+    check(f"极简档：宽度真的收到 0（实测 {g['shellW']:.1f}px，含 padding）",
+          g["shellW"] <= 0.5, f'shellW={g["shellW"]:.1f}')
+    check(f"极简档：内容区没有残留的底色带（.menu-bar 宽 {g['barW']:.1f}px）",
+          g["barW"] <= 0.5, f'barW={g["barW"]:.1f}')
+    check("极简档：只剩那一颗钮（第二颗收起来了）", g["collapse"] == "hidden", str(g["collapse"]))
+    check("极简档：那颗钮朝右（▶ = 往上一档）", g["toggle"] == 0, str(g["toggle"]))
+    check("极简档：钮**没被裁掉**（`.shell` 不能有 overflow:hidden）",
+          g["toggleBox"]["width"] > 20 and g["shellLeft"] <= 0, str(g["toggleBox"]))
+
+    geo_page.click(".toggle")                       # 0 → 88
+    geo_page.wait_for_timeout(600)
+    g = geo_page.evaluate(ROT)
+    check("从极简档点那颗钮：回到收起档（88）而不是展开档",
+          "close" in g["tier"] and abs(g["barW"] - 88) < 1, f'{g["tier"]} barW={g["barW"]:.1f}')
+
     # ── 四、那颗按钮：返回外部首页，不再退出登录 ────────────────────────────────
     print("\n【四】侧栏「返回首页」按钮（原「退出登录」）")
     btn = geo_page.locator(".bottom-content .nav-links").filter(has_text="返回首页")
