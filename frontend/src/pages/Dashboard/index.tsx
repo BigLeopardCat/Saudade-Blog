@@ -95,7 +95,11 @@ const Dashboard = () => {
     //hooks区域
     const navigate = useNavigate();
     const { pathname } = useLocation();
-    const [isShellClosed, setShellClosed] = useState(true);
+    /* 侧栏宽度三档（20261006 用户第 3 条）：0 = 极简（只剩那颗圆钮）、1 = 收起 88px、
+       2 = 展开 250px。默认仍是 1（与原来 `isShellClosed=true` 完全一致）。
+       ⚠️ 三档是**互斥**的类名（`.mini` / `.close` / 无），不能叠——`.close` 与 `.mini`
+       在 CSS 里各自往反方向拉宽度，同时挂上谁赢只看规则先后。 */
+    const [tier, setTier] = useState<0 | 1 | 2>(1);
     const [isDarkMode, setDarkMode] = useState(false);
     const [loading, setLoading] = useState(false);
     const [searchVal, setSearchVal] = useState('');
@@ -143,12 +147,21 @@ const Dashboard = () => {
 
     //回调函数区域
 
+    /* 那颗 `.toggle`（圆钮里的箭头）：展开态显 ◀、其余显 ▶，所以它的动作是
+       「88 ⇄ 250」，而极简档（0）按一下先回到 88 —— 与箭头指的方向一致。 */
     const handleToggleClick = () => {
-        setShellClosed(!isShellClosed);
+        setTier(t => (t === 1 ? 2 : 1));
     };
 
+    /* 第二颗圆钮（只在 88 档出现）：◀ = 再收一档到极简。 */
+    const handleCollapseClick = () => {
+        setTier(0);
+    };
+
+    /* 点搜索框要能打字 ⇒ 把它所在的侧栏展开（沿用原来 `setShellClosed(false)` 的语义：
+       那是"展开到 250"，不是"收起"）。 */
     const handleSearchClick = () => {
-        setShellClosed(false);
+        setTier(2);
     };
 
     const handleModeSwitch = () => {
@@ -321,8 +334,8 @@ const Dashboard = () => {
                 <>
 
                     <div className={`content ${isDarkMode ? 'contentDark' : ''}`} ref={fullScreenRef}>
-                        <div className={`shell ${isShellClosed ? 'close' : ''} ${isDarkMode ? 'dark' : ''} slider`}>
-                            <nav className={`shell ${isShellClosed ? 'close' : ''} ${isDarkMode ? 'dark' : '' }`}>
+                        <div className={`shell ${tier === 0 ? 'mini' : tier === 1 ? 'close' : ''} ${isDarkMode ? 'dark' : ''} slider`}>
+                            <nav className={`shell ${tier === 0 ? 'mini' : tier === 1 ? 'close' : ''} ${isDarkMode ? 'dark' : '' }`}>
                                 <header>
                                     <div className="image-text">
                         <span className="image">
@@ -334,7 +347,14 @@ const Dashboard = () => {
                                             </span>
                                         </div>
                                     </div>
+                                    {/* 两颗圆钮的**类名必须分开**（20261006）：
+                                        `.toggle` 是那颗一直都在的（展开态朝左、其余朝右），
+                                        `.toggle-collapse` 是新增的、只在 88 档出现的第二颗（朝左）。
+                                        合成一个类名会让两处选择器都失去意义（套件里就用 `.toggle`
+                                        量 88→250）。第一颗的**位置**没动 —— 它的 top 是 50%，
+                                        第二颗挂在 `calc(50% + 32px)`。 */}
                                     <i className="iconfont icon-iconfonticonfontarrowright toggle" onClick={handleToggleClick} style={{fontSize: 20}}></i>
+                                    <i className="iconfont icon-iconfonticonfontarrowright toggle-collapse" onClick={handleCollapseClick} style={{fontSize: 20}}></i>
                                 </header>
 
                                 <div className="menu-bar">

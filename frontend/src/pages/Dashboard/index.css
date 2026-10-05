@@ -174,6 +174,62 @@ body {
     transform: translateY(-50%) rotate(0deg);
 }
 
+/* ── 第三档「极简」（20261006 用户第 3 条）：只剩那颗圆钮 ──────────────────────
+   三档宽度 = 0 / 88 / 250，类名互斥（`.mini` / `.close` / 无），见 index.tsx 的 tier。
+
+   ⚠️ 宽度必须**连 padding 一起收**：`.shell` 是 content-box（`width:250px` + 左右 14px
+      padding ⇒ 实测 278px 宽），只把 width 写成 0 会在原地留下一条 28px 的底色带。
+
+   ⚠️ **绝不能给 `.shell` 加 `overflow:hidden`**：两颗圆钮都是
+      `position:absolute; right:-25px`（包含块是 `.shell header`），加了就把钮自己裁掉。
+
+   `.icon` / `.image` 带 `min-width:60px`，收到 0 宽后它们仍按原尺寸参与布局、会画到
+   内容区上 ⇒ 用 `visibility:hidden` 把两块内容藏掉（**不是** display:none：那会让
+   `.menu-bar` 的高度塌掉，圆钮的垂直参照跟着变）。圆钮是 `.image-text` 的**兄弟**，
+   不受这条影响。 */
+.shell.mini{
+    width: 0;
+    padding-left: 0;
+    padding-right: 0;
+}
+
+.shell.mini .image-text,
+.shell.mini .menu-bar{
+    visibility: hidden;
+}
+
+/* 极简档只有那一颗钮，它此时是「往上走一档」的 ▶（同 `.close` 那个方向）。 */
+.shell.mini .toggle{
+    transform: translateY(-50%) rotate(0deg);
+}
+
+/* 第二颗圆钮：◀ = 再收一档到极简。**只在 88 档出现**（展开档由第一颗显 ◀，
+   极简档不该再有「继续收」这个动作）。整块样式与 `.toggle` 同源，只有 top 与
+   display 不同 —— 底色/描边仍由文件末尾那块手账皮的 `.toggle, .toggle-collapse`
+   一起管，改配色时两处都要在。 */
+.toggle-collapse{
+    position: absolute;
+    top: calc(50% + 32px);
+    right: -25px;
+    transform: translateY(-50%) rotate(180deg);
+    height: 25px;
+    width: 25px;
+    background-color: var(--primary-color);
+    color: #ccc;
+    border-radius: 50%;
+    display: none;
+    justify-content: center;
+    padding: 1px;
+    font-size: 17px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    text-align: center;
+}
+
+.shell.close .toggle-collapse{
+    display: flex;
+}
+
 .menu{
     margin-top: 40px;
 }
@@ -898,7 +954,7 @@ li.search-box input::placeholder {
 /* ⑨ 收起/展开侧栏的圆钮：原先 `--primary-color`（#695CFE / #3a3b3c）配 `#ccc` 字。
       改成手账粉圆钮配深墨箭头 —— 一条规则管两档（粉在浅色是 #ff9ec9、夜间是 #ffb3d9，
       两档都压得住 #40263f，约 8.6:1 与 10:1）。 */
-.toggle {
+.toggle, .toggle-collapse {
     background-color: var(--washi-pink, #ff9ec9);
     color: #40263f;
     box-shadow: 0 4px 12px -4px rgba(217, 79, 154, 0.55);
