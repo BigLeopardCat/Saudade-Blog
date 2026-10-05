@@ -242,7 +242,10 @@ console.log('\n⑥ 版本号：改了 widget 脚本必须 bump（nginx 对 live2
     // 20261005b = 「手机档看板娘盖住正文」那一轮（widget.css 的 <480px 块：整块缩到半尺寸、
     // 贴住左缘、空白处放行命中）。同上——样式表在 live2d-widgets 下，不 bump 访客吃
     // 1 年 immutable 缓存，手机上看到的还是那个占半个屏的旧盒子。
-    ok(ver === '20261005b', 'VER 已 bump 到本轮（20261005b）', { ver });
+    // 20261006a = 「确认卡多一枚『其他（我来说）』」那一轮（chat-stream.js 的改口支、
+    // chat-render.js 的输入行模板、widget.css 的三态样式）。三个文件都在
+    // live2d-widgets 下 ⇒ 必须 bump；不 bump 访客吃 1 年缓存，卡上永远只有两枚按钮。
+    ok(ver === '20261006a', 'VER 已 bump 到本轮（20261006a）', { ver });
     const tsx = readFileSync(path.join(root, 'src/components/Live2dAgent/index.tsx'), 'utf8');
     ok(tsx.includes('boot.js?v=' + ver), 'Live2dAgent 的 ?v= 与 VER 一致');
 }
