@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
-"""说说页（/talk）时间显示的无头验收（20260924）。
+"""说说页（/talk）时间显示与卡片版式的无头验收（20260924 起，20261006 扩充）。
 
-锁两件事（用户本轮的两条要求）：
+锁三件事：
   ① 日期链条上带**年份**——原来是只有 `MM.DD` 的单行，跨年的说说在列表里长得一模一样；
-  ② 卡片**左下角**带精确 `HH:mm:ss`。
+  ② 卡片上带精确 `HH:mm:ss`（20260924 起在卡片**左下角**，20261006 随署名行上移到**首行右侧**）；
+  ③ **卡片版式**（20261006 用户第 4 条）：头像 → 署名同一行、标题另起一行、正文在标题下面。
+     时刻的位置在 ② 与 ③ 之间来回动过一次，本文件同时钉住"挪到哪了"，避免下次静默漂走。
 
 为什么值得单独一个沙箱：这两处都是"看着像对了、其实拿的是错值"的地方——
 年份若是从 `new Date()` 取（而不是从每条数据的 createTime），页面看起来完全正常，
@@ -184,7 +186,7 @@ with sync_playwright() as p:
             return y.right <= d.left + 1 && y.top < d.bottom && d.top < y.bottom;
           }"""))
 
-    print("③ 卡片左下角的精确时刻")
+    print("③ 卡片上的精确时刻（20261006 起在署名行右端）")
     clocks = pg.eval_on_selector_all(".talk-clock", "els => els.map(e => e.textContent.trim())")
     check("两个时刻都在（H:M:S 各两位）", clocks == ["12:34:56", "23:59:59"], str(clocks))
     check("等宽数字（tabular-nums：列表里各条时刻上下对齐）",
@@ -195,7 +197,7 @@ with sync_playwright() as p:
               "() => { const c = getComputedStyle(document.querySelector('.talk-clock')).color;"
               " const m = c.match(/[\\d.]+/g); return m.length < 4 || +m[3] > 0.9; }"))
 
-    print("④ 几何（日期在卡片左侧、时刻在卡片右下角）")
+    print("④ 几何（日期在卡片左侧、首行 = 头像｜署名｜时刻、标题与正文依次在下）")
     geo = pg.evaluate("""() => {
       const r = (el) => { const b = el.getBoundingClientRect();
         return {l: b.left, r: b.right, t: b.top, b: b.bottom, w: b.width}; };
@@ -207,14 +209,29 @@ with sync_playwright() as p:
         const body = r(a.querySelector('.ant-card-body'));
         const meta = r(a.querySelector('.ant-card-meta'));
         const clock = r(a.querySelector('.talk-clock'));
-        const foot = a.querySelector('.talk-foot');
-        const fs = getComputedStyle(foot);
+        // 20261006 新增：署名行（.talk-head）与它里面的三个块、以及头像。
+        // **缺元素给 null，不抛**（`rn`）：红基线上 `.talk-head`/`.talk-title` 根本不存在，
+        // 抛异常会把整条 evaluate 连同后面所有检查一起带走 —— 那样只知道"红了"，
+        // 不知道是结构没落地还是几何不对。
+        const rn = (el) => el ? r(el) : null;
+        const av = rn(a.querySelector('.ant-avatar'));
+        const head = rn(a.querySelector('.talk-head'));
+        const who = rn(a.querySelector('.talk-who'));
+        const title = rn(a.querySelector('.talk-title'));
+        const content = rn(a.querySelector('.talk-content'));
+        const cs = (sel) => { const el = a.querySelector(sel);
+          return el ? getComputedStyle(el) : null; };
         // 竖线上的圆点 = `.talk:after`（伪元素，只能用 computed style 反推几何）
         const csDot = getComputedStyle(a.querySelector('.talk'), ':after');
         const dotL = card.l + parseFloat(csDot.left);
         const dotR = dotL + parseFloat(csDot.width);
         return {time, year, day, card, body, meta, clock, dotL, dotR,
-                footBorders: [fs.borderTopWidth, fs.borderTopStyle],
+                av, head, who, title, content,
+                // 颜色读 computed style：三行都住在 `description` 里，而描述块有一条
+                // `color: var(--font-p-color) !important` —— 标题有没有被它一起染成
+                // 正文色，只有真算一遍才知道（这条同时是"标题色是否与正文同色"的判据）。
+                titleColor: cs('.talk-title') && cs('.talk-title').color,
+                contentColor: cs('.talk-content') && cs('.talk-content').color,
                 // 字号取 computed style（不是量高度）：高度会被 line-height 与
                 // 字体自身的上下留白带偏，量出来不是字号本身。
                 yearFs: getComputedStyle(a.querySelector('.talkTime-year')).fontSize,
@@ -256,21 +273,61 @@ with sync_playwright() as p:
     # 不透明度一起提上来之后别又倒回去（.65 → .8）：字号大了再压那么淡就只是发灰。
     check("年份不透明度 = 0.8（四轮从 .65 提上来，字号变大后不再压那么淡）",
           g0["yearOpacity"] == "0.8", g0["yearOpacity"])
-    check("时刻在卡片内、且在正文（Meta）下方",
-          g0["clock"]["t"] >= g0["meta"]["b"] - 1
+    # 20261006：时刻从"卡片底部的独立一行"（`.talk-foot`）挪进了**正文块的首行**，
+    # 与署名同一行右端。所以这里锁的不再是"在 Meta 下方"，而是"在 Meta 之内"。
+    check("时刻进了正文块（Meta）内部，仍在卡片里",
+          g0["meta"]["t"] - 1 <= g0["clock"]["t"] and g0["clock"]["b"] <= g0["meta"]["b"] + 1
           and g0["clock"]["l"] >= g0["card"]["l"]
           and g0["clock"]["r"] <= g0["card"]["r"],
-          f"时刻顶 {g0['clock']['t']:.0f} / 正文底 {g0['meta']['b']:.0f}")
-    # 20260924 三轮：时刻从左下角挪到右下角，它上面那条虚线也撤了
-    check("时刻靠右（距卡片右缘 < 半宽，即右下角而非居中/左下）",
+          f"时刻 {g0['clock']['t']:.0f}..{g0['clock']['b']:.0f} / "
+          f"正文块 {g0['meta']['t']:.0f}..{g0['meta']['b']:.0f}")
+    check("时刻靠右（距卡片右缘 < 半宽，即右端而非居中/左端）",
           0 <= g0["card"]["r"] - g0["clock"]["r"] < g0["card"]["w"] / 2,
           f"距右缘 {g0['card']['r'] - g0['clock']['r']:.0f}px / 半宽 {g0['card']['w'] / 2:.0f}px")
-    check("时刻贴着卡片的右下角（右缘与卡片内边距对齐，不是浮在中间）",
+    check("时刻右缘与正文块右缘对齐（右对齐没被这轮挪位改掉）",
           abs((g0["body"]["r"] - g0["clock"]["r"]) - (g0["body"]["r"] - g0["meta"]["r"])) <= 1,
-          f"时刻右缘 {g0['clock']['r']:.0f} / 正文右缘 {g0['meta']['r']:.0f}")
-    check("那条虚线分割线撤了（不再占高度、也不再横贯整张卡）",
-          g0["footBorders"][1] == "none" and g0["footBorders"][0] == "0px",
-          str(g0["footBorders"]))
+          f"时刻右缘 {g0['clock']['r']:.0f} / 正文块右缘 {g0['meta']['r']:.0f}")
+    # 旧的那一行整块撤了：`.talk-foot` 一旦被加回来，时刻就会被它拉回卡片底部（两条红线）。
+    check("旧的那一行整块撤了（页面上不再有 `.talk-foot`）",
+          pg.locator(".talk-foot").count() == 0, str(pg.locator(".talk-foot").count()))
+
+    # ⑥ 卡片版式（20261006 用户第 4 条）：头像 → 署名同一行、标题另起一行。
+    # 这是**新几何**：改动前 `.talk-head`/`.talk-title`/`.talk-content` 三个元素都不存在
+    # （署名在卡片底部单独一行、标题在 `Card.Meta` 的 title 槽里），下面每条都会红。
+    print("⑥ 卡片版式：头像→署名同一行，标题另起一行")
+    # 元素缺席时探针给 None ⇒ 先判结构，再判几何：分开才知道红的是"没落地"还是"位置不对"。
+    missing = [k for k in ("av", "head", "who", "title", "content") if g0[k] is None]
+    shape_ok = not missing
+    check("三行结构齐备（头像 / .talk-head 署名行 / .talk-title / .talk-content）",
+          shape_ok, "缺：" + ",".join(missing) if missing else "")
+
+    def at(k, side):
+        """打印用：元素缺席时打「—」，别在格式化里再抛一次。"""
+        return "—" if g0[k] is None else f"{g0[k][side]:.0f}"
+
+    check("署名在头像**右侧**且与头像**同一行**（纵向区间重叠）",
+          shape_ok and g0["who"]["l"] >= g0["av"]["r"] - 1
+          and g0["who"]["t"] < g0["av"]["b"] and g0["av"]["t"] < g0["who"]["b"],
+          f"署名 {at('who', 'l')}..{at('who', 'r')} / 头像右缘 {at('av', 'r')}，"
+          f"署名 {at('who', 't')}..{at('who', 'b')} / 头像 {at('av', 't')}..{at('av', 'b')}")
+    check("署名左缘与标题左缘对齐（标题另起一行，但不缩进）",
+          shape_ok and abs(g0["title"]["l"] - g0["who"]["l"]) <= 1,
+          f"署名 {at('who', 'l')} / 标题 {at('title', 'l')}")
+    check("标题在署名行**下面**（另起一行，不是挤在同一行）",
+          shape_ok and g0["title"]["t"] >= g0["head"]["b"] - 1,
+          f"标题顶 {at('title', 't')} / 署名行底 {at('head', 'b')}")
+    check("正文在标题**下面**（顺序没颠倒）",
+          shape_ok and g0["content"]["t"] >= g0["title"]["b"] - 1,
+          f"正文顶 {at('content', 't')} / 标题底 {at('title', 'b')}")
+    check("时刻与署名同排（都在 `.talk-head` 这一行里）且署名在左、时刻在右",
+          shape_ok and g0["head"]["t"] - 1 <= g0["clock"]["t"]
+          and g0["clock"]["b"] <= g0["head"]["b"] + 1
+          and g0["who"]["l"] < g0["clock"]["l"] and g0["who"]["r"] <= g0["clock"]["l"] + 1,
+          f"署名行 {at('head', 't')}..{at('head', 'b')} / 时刻 {at('clock', 't')}")
+    check("标题是标题色、正文是正文色（标题没被描述块的那条 !important 一起染成正文色）",
+          g0["titleColor"] is not None and g0["titleColor"] != g0["contentColor"]
+          and g0["titleColor"] == "rgb(17, 17, 17)",
+          f"标题 {g0['titleColor']} / 正文 {g0['contentColor']}")
     check("两条说说的日期块水平位置一致（链条是直的）",
           abs(g0["time"]["r"] - g1["time"]["r"]) <= 1,
           f"{g0['time']['r']:.0f} vs {g1['time']['r']:.0f}")
@@ -292,7 +349,10 @@ with sync_playwright() as p:
     whos = pg.eval_on_selector_all(".talk-who", "els => els.map(e => e.textContent.trim())")
     check("每条说说的卡片上有发布者展示名", whos == [TALKS[0]["nickname"], TALKS[1]["nickname"]],
           str(whos))
-    check("展示名在左、时刻在右（两端对齐，名字没把时刻挤走）",
+    # 20261006：这条原来是"左右两端对齐（名字在卡片底、时刻在右下角）"，现在锁的是**同一行**
+    # 里的左右关系 —— 与 ⑥ 的区别是它要求**每一条**都成立（⑥ 只看第一条），名字长短不同的
+    # 两条都必须把时刻留在右边（长名字若没吃到 flex 的收缩，会把时刻挤出卡片）。
+    check("每条都是署名在左、时刻在右，且在同一行（两端对齐，名字没把时刻挤走）",
           pg.evaluate("""() => {
             const rows = [...document.querySelectorAll('.article')];
             return rows.length > 0 && rows.every(a => {
@@ -303,7 +363,9 @@ with sync_playwright() as p:
               if (!whoEl || !clkEl) return false;
               const who = whoEl.getBoundingClientRect();
               const clk = clkEl.getBoundingClientRect();
-              return who.left < clk.left && who.right <= clk.left + 1;
+              // 左：署名右缘在时刻左缘之前；同一行：两者的竖直区间有重叠
+              return who.left < clk.left && who.right <= clk.left + 1
+                     && who.top < clk.bottom && clk.top < who.bottom;
             });
           }"""))
     # 空态与读失败态是两件事（20261005）：本样本有数据，两者都不该出现——

@@ -43,7 +43,7 @@ const TalkList = () => {
         </div>}
         {!loadFailed && talkList.length === 0 && <div className='talkEmpty'>还没有说说</div>}
         {!loadFailed && talkList.map((talk:Talk,index) => {
-            // 一次解析、三处用（链条的年份、链条的月日、卡片左下角的时分秒）——
+            // 一次解析、三处用（链条的年份、链条的月日、卡片首行的时分秒）——
             // 后端给的是 "YYYY-MM-DD HH:MM:SS" 本地钟面字符串，dayjs 直接可解。
             const at = dayjs(talk.createTime)
             return (
@@ -73,19 +73,29 @@ const TalkList = () => {
                         是空串 ⇒ 每张卡都是个空头像；登录了则每条都显示自己的脸。后端现在
                         在 `src=talk` 的列表里带上 `nickname`/`avatar`（`user_id` 那一行的
                         真实账号，取不到用户行时后端兜 `用户#<id>`）。 */}
+                    {/* 20261006 用户第 4 条：署名挪到**头像右侧同一行**、标题另起一行。
+                        三行**全部**放进 `description`，`Card.Meta` 的 `title` 槽弃用 ——
+                        不是为了省事，是因为本文件的 `.ant-card-meta-title` 有一条
+                        `color: var(--font-title-color) !important`，署名进了那个槽会被
+                        染成标题色，压回去就得再堆一条 !important（而 antd 在没有 title
+                        时**不渲染**那个 div，见 `card/Meta.js`：`title ? <div …/> : null`
+                        —— 所以留空槽不会多出一个缝）。
+                        顺带把时刻从卡片底部提到这一行（用户按预览拍的板），
+                        `.talk-foot` 那一行整块撤掉。 */}
                     <Card.Meta
                         avatar={<Avatar src={talk.avatar || undefined} />}
-                        title={talk.talkTitle}
-                        description={talk.content}
+                        description={<>
+                            {/* 第一行：署名（左）＋精确时刻（右）。
+                                时刻放秒是有意的：说说常连发，同一天里几条的时间差就是
+                                "这条在回哪条"的线索（20260924 用户要求，原在左下角）。 */}
+                            <div className='talk-head'>
+                                <span className='talk-who'>{talk.nickname}</span>
+                                <span className='talk-clock'>{at.format('HH:mm:ss')}</span>
+                            </div>
+                            <div className='talk-title'>{talk.talkTitle}</div>
+                            <div className='talk-content'>{talk.content}</div>
+                        </>}
                     />
-                    {/* 卡片右下角：精确时刻（20260924 用户要求；三轮起从左下角挪到右下角，
-                        它上面那条虚线也撤了——主人原话"不要占用这么高的分割线"）。
-                        放秒是有意的：说说常连发，同一天里几条的时间差就是"这条在回哪条"的线索。
-                        20261005 起左边补上发布者展示名（讨论区那种"谁发的"）。 */}
-                    <div className='talk-foot'>
-                        <span className='talk-who'>{talk.nickname}</span>
-                        <span className='talk-clock'>{at.format('HH:mm:ss')}</span>
-                    </div>
                 </Card>
             </motion.div>
             )
