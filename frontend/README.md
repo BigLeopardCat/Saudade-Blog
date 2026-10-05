@@ -189,9 +189,17 @@ npm run lint                                      # ESLint
 渲染沙箱（真组件 + 无头 Chrome + 数值断言）跑不进 CI 的秒级 job，由
 `scripts/nightly_sandboxes.sh` 夜间串行跑。依赖装法见 `tests/requirements.txt`。
 
-> 沙箱用得上的两个坑（都踩过）：① 沙箱里只编译**单个组件**的 sass，全站 `index.css`
+> 沙箱用得上的三个坑（都踩过）：① 沙箱里只编译**单个组件**的 sass，全站 `index.css`
 > 的全局规则在沙箱里不存在，几何断言会把"样式没生效"误读成"页面缺陷"；
-> ② 公共 DOM stub 在 `tests/stubs/dom.mjs`，改它会影响所有套件。
+> ② 公共 DOM stub 在 `tests/stubs/dom.mjs`，改它会影响所有套件；
+> ③ **临时目录由运行器管，不由套件管**（20261006）。两个运行器给每个套件一个**专属
+> `TMPDIR`**（`tempfile.gettempdir()` / `os.tmpdir()` 认它），套件里的 `mkdtemp` 因此都落在
+> 这一格里——**通过就删、失败留下**（现场路径会打印出来）。所以：**别在套件里自己
+> `rmtree` 临时目录**（失败时那正好把现场删了），也别假设 `mkdtemp()` 落在 `/tmp` 根上。
+> 两个边界，别以为"隔离了 = 全清了"：**手跑单个套件**（`python3 tests/xxx.test.py`）没人
+> 给它 `TMPDIR`，仍旧落在 `/tmp`，由当晚 04:40 的清扫收走；另有 8 处路径写死的小产物隔离
+> 不到（`head-bar-colors` / `login-modal-theme` / `user-center` 的截图，以及 `mermaid-theme`
+> 把工作目录建在 `node_modules/` 下）。想换根目录：`SANDBOX_TMP=/path`。
 
 ## 许可
 

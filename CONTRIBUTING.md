@@ -406,8 +406,6 @@ bash scripts/dev/install-hooks.sh     # = git config core.hooksPath .githooks，
   但**每一处都能不改被跟踪的文件地覆盖**：`PROJECT_DIR`、`DEPLOY_REPO_DIR`（仓库 Variable）、
   `GRAPH_ARTIFACT_DIR`。**fork 时设这些就行**，没设才会落到那个默认值上——所以这不是
   "你得改源码"，只是默认值对你没意义。
-- 沙箱套件跑完后**不清理自己的临时目录**（`tempfile.mkdtemp` 建了就不删），跑多了会在
-  `/tmp` 里积出可观的空间。已知，未修。
 
 ---
 
