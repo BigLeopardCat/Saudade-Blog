@@ -1,0 +1,74 @@
+name: 报告一个 bug
+description: 行为不对、CI 绿了却没上线、或者某条链路静默失效
+title: "bug: "
+labels: ["needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        这个仓最贵的一类 bug 是**「看着在跑、其实没跑」**：CI 全绿而这次什么都没部署、
+        接口返回 200 但内容是兜底页、测试红了却没人知道它其实一直被跳过。
+        如果你遇到的是这一种，请尤其把**"你是怎么发现它没生效的"**写清楚——
+        那通常是这次报告里最有价值的部分。
+
+        **安全问题不要在这里报**，见
+        [SECURITY.md](https://github.com/BigLeopardCat/Saudade-Blog/blob/cn_sora_blog/SECURITY.md)。
+        另外：这个仓连着的是一个**真的在用的站点**，请别在报告里贴真实用户的
+        文章原文、会话内容或任何令牌——用你自己造的样例复现。
+  - type: textarea
+    id: what
+    attributes:
+      label: 发生了什么
+      description: 实际看到的行为。有原话/原文就贴，别转述。
+      placeholder: |
+        POST /api/... 返回 200，但 body 是「…」
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 你期望什么，为什么
+      description: 期望的依据是什么——文档写了、代码注释说了、还是同类场景不是这样？
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: 怎么复现
+      description: 最小步骤。跑过哪些命令、请求的路径与请求体、看了哪一行日志或哪个文件。
+      placeholder: |
+        1. `cd frontend && npm run fetch:widget && cd .. && cargo test` → 第 NN 条红，输出是「…」
+        2. 或者：`curl -s -X POST http://127.0.0.1:3000/api/... -d '{…}'` → 「…」
+    validations:
+      required: true
+  - type: dropdown
+    id: side
+    attributes:
+      label: 问题在哪一侧
+      options:
+        - 后端（Rust，src/）
+        - 前端（React，frontend/）
+        - 看板娘对话（Python agent，在另一个仓）
+        - 数据库 / 迁移脚本（scripts/migration/）
+        - 部署管线（.github/workflows/、scripts/deploy/）
+        - 不确定
+    validations:
+      required: true
+  - type: textarea
+    id: silent
+    attributes:
+      label: 它是"静默"的吗
+      description: |
+        有没有东西**本该**告诉你它坏了、但没有？比如：CI 全绿、日志没有任何报错、
+        测试被静默跳过、接口用 200 掩盖了失败。这种信息比错误本身更值钱。
+    validations:
+      required: false
+  - type: input
+    id: version
+    attributes:
+      label: 涉及的提交号 / 线上跑的版本
+      description: |
+        `git rev-parse --short HEAD`；如果你看到的是**线上**的行为，
+        站点的 `/build-info.json` 会告诉你线上跑的是哪个提交。
+    validations:
+      required: false

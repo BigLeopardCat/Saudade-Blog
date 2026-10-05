@@ -184,7 +184,12 @@ agent 在独立仓库里，有自己的 README 与 `.env.example`。它默认跑
 
 ## 3. 测试
 
-### 3.1 秒级套件（推 PR 时 CI 会跑，本地请先跑一遍）
+### 3.1 秒级套件（push 到 `cn_sora_blog` 时 CI 会跑；**PR 上不跑**）
+
+> **PR 上没有任何自动检查。** `deploy.yml` 只挂 `push: [cn_sora_blog]` 与手动触发，
+> **没有 `pull_request` 触发器**，所以 PR 页面上"没有红灯"的含义是"没跑过"、不是"过了"。
+> 这件事本身记在 [ROADMAP.md](ROADMAP.md) 的待办里。在那之前，
+> 下面这几条**请自己在本机跑一遍**再提交。
 
 ```bash
 # 看板娘前端两棵树不在 git 里（源码在 agent 仓）⇒ cargo test **之前**必须先取
@@ -263,9 +268,11 @@ python3 frontend/tests/某个.test.py
 `tests/manual/` 下是**要活服务或真凭据**、只能手动跑的。前端那两批同理：
 `frontend/tests/*.test.mjs` 进 CI，`frontend/tests/*.test.py` 要无头 Chrome、走夜间沙箱。
 
-**CI 到底跑哪几项**：见 [.github/workflows/deploy.yml](.github/workflows/deploy.yml)
-的 `check` job —— 那里的 `paths-filter` 决定了某些改动会**整个跳过**
-（job 显示 success 但什么都没做）。
+**CI 到底跑哪几项**：见 [.github/workflows/deploy.yml](.github/workflows/deploy.yml)。
+`check` job（上面那几条检查）**任何 push 都跑**；会被 `paths-filter` 跳过的是**部署那一半**——
+只改 `tests/**`、文档或根目录治理文件的 push，`build-and-deploy` 的每一步都被条件跳过，
+**而 run 仍然全绿**。看绿灯时要意识到它可能什么都没部署，
+真正的判据是线上 `build-info.json` 里的 sha，不是 CI 的颜色。
 
 ---
 
@@ -394,3 +401,16 @@ bash scripts/dev/install-hooks.sh     # = git config core.hooksPath .githooks，
   `healthcheck.sh` / `nightly_sandboxes.sh` / `deploy/*.sh` 四个，CI 工作流里那处仍写死）。
 - 沙箱套件跑完后**不清理自己的临时目录**（`tempfile.mkdtemp` 建了就不删），跑多了会在
   `/tmp` 里积出可观的空间。已知，未修。
+
+---
+
+## 7. 相关文件
+
+| 文件 | 什么时候看它 |
+|---|---|
+| [ROADMAP.md](ROADMAP.md) | 现在在做什么、什么在等条件、什么**明确不做**（提提议前先看，尤其是那几张表） |
+| [SECURITY.md](SECURITY.md) | 发现安全问题、或者想确认某件事算不算（里面有一份《已知且已经接受的取舍》） |
+| [docs/security-boundary.md](docs/security-boundary.md) | 想弄清"谁信谁"：各条防线在哪、限额是多少、已知缺口 |
+| [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | 参与本仓的言行规范 |
+| [THIRD-PARTY.md](THIRD-PARTY.md) | 引入新依赖前查许可 |
+| [docs/deployment-and-ops.md](docs/deployment-and-ops.md) | 部署与运维（资源画像、服务管理、回滚） |

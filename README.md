@@ -233,6 +233,10 @@ nginx error.log 增量扫描，异常追加 health.log。
 
 ## 给贡献者
 
+- **想参与**：[CONTRIBUTING.md](CONTRIBUTING.md)（怎么在本地跑起来、提交约定、
+  **本地不许跑什么**）、[ROADMAP.md](ROADMAP.md)（现在做什么、什么在等一个条件、
+  什么明确不做）、[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)、
+  [SECURITY.md](SECURITY.md)（安全问题的私密报告通道）。
 - **测试分几层、各验什么、在哪儿跑**：[CONTRIBUTING.md](CONTRIBUTING.md) 的 §3 是唯一清单
   ——`tests/`（跟着 `cargo test`：MockDatabase 一层 + 真 MySQL 一层）、`tests/manual/`
   （要活服务与真凭据，手动跑）、`frontend/tests/`（`*.test.mjs` 进 CI；`*.test.py` 无头
