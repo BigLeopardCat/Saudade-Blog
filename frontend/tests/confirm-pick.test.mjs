@@ -67,5 +67,30 @@ const ok = (cond, name, extra) => {
        '  重建时逐个渲染 opts（N 枚按钮的自愈路径与首渲染同源）');
 }
 
+// ── ④ 卡片内改口（20261006）：「其他（我来说）」是**入口**，不是选择记号 ──────
+// 点它不结算、不发请求，只把卡片里的输入行露出来；提交出去的是**普通新轮**
+// （非 silent、不带 confirmToken/confirmPick）。它一旦漏进下面那条隐藏确认请求，
+// 服务端 `confirm.narrow` 对认不出的取值 fail-closed（零执行），而卡片已经写成
+// 「确认中…」——屏幕上看不出异常、系统里一个字节都没动。所以这里锁**两件事**：
+// 这一支在不在，以及它在不在"结算 → 发请求"那条路之前。
+{
+    ok(/if \(value === 'other'\)/.test(code), "改口的拦截支在场（`value === 'other'`）");
+    const iOther = code.indexOf("if (value === 'other')");
+    const iSettle = code.indexOf("askSettle('确认中…'");
+    const iPick = code.indexOf('confirmPick:');
+    ok(iOther > 0 && iSettle > iOther && iPick > iOther,
+       '  且排在「确认中…」结算与 confirmPick 隐藏请求**之前**',
+       '排在后面 = 卡片结算了、服务端 fail-closed 拒掉、零执行');
+    ok(code.indexOf("if (value === 'no')") > iOther,
+       '  「取消」那一支仍在它之后（两个早退的相对次序没被换过）');
+    // 露输入框那一半必须**只**露输入框：这里是"还没做结论"的时刻，一旦顺手
+    // 写了结算文案，卡片就有了一个不作数的结论。（取到这一支自己的 `return;`
+    // 为止，不往后扫——后面正常路径上的结算不该算到它头上。）
+    const seg = code.slice(iOther, code.indexOf('return;', iOther));
+    ok(seg.length > 0 && !/askSettle\(/.test(seg),
+       '  拦截支内没有任何结算调用（此刻卡片仍 live）');
+    ok(/reveal/i.test(seg), '  它做的是"露出输入行"（reveal），不是别的');
+}
+
 console.log(`\n${pass} 项通过` + (fail ? `、${fail} 项失败` : ''));
 process.exit(fail ? 1 : 0);

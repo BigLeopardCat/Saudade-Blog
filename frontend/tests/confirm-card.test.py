@@ -73,9 +73,16 @@ def text_frame(s):
 
 def confirm_frame(q="要把《Python asyncio 异步并发》加进收藏吗？",
                   token="FAKE_TOKEN_FOR_TEST_ONLY", with_token=True, exp=0):
-    """exp = 令牌失效时刻（UTC 秒）。0 = 帧里不带 exp（旧服务端形态，前端按无倒计时处理）。"""
+    """exp = 令牌失效时刻（UTC 秒）。0 = 帧里不带 exp（旧服务端形态，前端按无倒计时处理）。
+
+    opts 照抄 agent 侧 `adminops.confirm_opts(1)` 的**当前形态**（20261006 起是三枚：
+    确定 / 其他（我来说）/ 取消）。夹具与生产同形是本沙箱的老规矩——两枚的夹具会让
+    上游加了按钮之后这里仍然全绿（那样测的是线上不存在的形态）。
+    """
     ask = {"q": q, "id": "c1", "summary": "收藏文章 23",
-           "opts": [{"label": "确定", "value": "yes"}, {"label": "取消", "value": "no"}]}
+           "opts": [{"label": "确定", "value": "yes", "kind": "primary"},
+                    {"label": "其他（我来说）", "value": "other", "kind": "default"},
+                    {"label": "取消", "value": "no", "kind": "default"}]}
     if with_token:
         ask["token"] = token
     if exp:
@@ -285,6 +292,30 @@ ASK_STATE = """() => {
   };
 }"""
 
+ASK_OTHER = """() => {
+  // ⑬ 腿（改口输入行，20261006）用：行在不在、显没显、光标在不在、卡片有没有结论。
+  // display 读的是**计算样式**：判据若是"有 .active 类"就只是同义反复，
+  // 而这条行最容易坏的方式恰恰是"类加上了、屏幕上没显形"（display:flex 被别的
+  // 规则压掉），所以同时要 show + display + height 三个读数。
+  const row = document.getElementById('chat-ask-other');
+  const inp = document.getElementById('chat-ask-other-input');
+  const box = document.getElementById('chat-ask');
+  return {
+    shown: !!(row && row.classList.contains('active')),
+    display: row ? getComputedStyle(row).display : null,
+    height: row ? Math.round(row.getBoundingClientRect().height) : 0,
+    value: inp ? inp.value : null,
+    focused: !!(inp && document.activeElement === inp),
+    note: box ? ((box.querySelector('.chat-ask-note') || {}).textContent || null) : null,
+    askState: box ? (box.dataset.askState || null) : null,
+    pending: window.__ctx.state.pendingAsk ? 'SET' : null,
+    streamCalls: window.__stub.streamCalls,
+    lastBody: window.__stub.lastBody,
+    reports: window.__reports.slice(),
+  };
+}"""
+
+
 SEND = """(text) => {
   const i = document.getElementById('chat-input');
   i.value = text;
@@ -323,6 +354,11 @@ def reset_evidence(pg):
 
 
 ASK_ID = "c1"        # confirm_frame 里签发的待办标识（逐跳埋点靠它串成同一件事）
+
+# 卡片**可点**时的按钮清单 = agent 侧 adminops.confirm_opts(1) 的当前字面（20261006
+# 起是三枚）。夹具与断言共用这一份：形态再变时只改这里，不会出现"夹具加了一枚、
+# 断言还按两枚写"这种一处改一处忘的假红（也别各写各的字面）。
+BTNS_LIVE = ["确定", "其他（我来说）", "取消"]
 
 
 def by_fail(reports):
@@ -459,7 +495,8 @@ def main():
             check("卡片可见（active + 高度 > 0）", st["active"] and st["height"] > 0,
                   f"display={st['display']} height={st['height']}")
             check("问句文本 = 帧里的 q", st["q"] == "要把《Python asyncio 异步并发》加进收藏吗？", repr(st["q"]))
-            check("按钮 = 帧里的 opts（确定/取消）", st["btns"] == ["确定", "取消"], str(st["btns"]))
+            check("按钮 = 帧里的 opts（确定 / 其他（我来说）/ 取消，逐字来自帧）",
+                  st["btns"] == ["确定", "其他（我来说）", "取消"], str(st["btns"]))
             check("待办仍在（未点击不该被清）", st["pending"] == "SET", str(st["pending"]))
             check("卡片是消息流末位子节点", st["isLast"], f"last={st['isLast']}")
             check("渲染路径无**失败**上报（正常分支的 frame/card 两跳另算，见 ⑧）",
@@ -566,15 +603,15 @@ def main():
             pg6, errs6 = open_page(b, url)
             run_round(pg6, ROUND)
             st = pg6.evaluate(ASK_STATE)
-            check("前置：卡片可点（askState=live，两枚按钮）",
-                  st["askState"] == "live" and st["btns"] == ["确定", "取消"], str(st))
+            check("前置：卡片可点（askState=live，按钮与帧里的 opts 逐字一致）",
+                  st["askState"] == "live" and st["btns"] == BTNS_LIVE, str(st))
 
             # ⑥a 忙守卫：跨窗远端轮期间点确定（此前**必现**丢包）
             reset_evidence(pg6)            # 弹卡那一轮自己也发过请求，先清零
             pg6.evaluate("() => { window.__ctx.state.remoteRounds = { other: 1 }; }")
             st = pg6.evaluate(CLICK, "yes")
             check("忙时点击：按钮**保持**（这一次点击没有被兑现，还能再点）",
-                  st["btns"] == ["确定", "取消"], str(st))
+                  st["btns"] == BTNS_LIVE, str(st))
             check("忙时点击：待办仍在（没有被一次性核销掉）", st["pending"] == "SET", str(st))
             check("忙时点击：没有发出任何请求", pg6.evaluate("() => window.__stub.streamCalls") == 0,
                   str(pg6.evaluate("() => window.__stub.lastBody")))
@@ -640,7 +677,7 @@ def main():
             pg6.wait_for_timeout(300)
             st = pg6.evaluate(ASK_STATE)
             check("竞态丢包：卡片**回滚**成可重试（按钮回来了）",
-                  st["btns"] == ["确定", "取消"] and st["askState"] == "live", str(st))
+                  st["btns"] == BTNS_LIVE and st["askState"] == "live", str(st))
             check("竞态丢包：问句下面写明「没发出去」（不是一句乐观的已确认）",
                   "没发出去" in (st["q"] or "") and "可以再点一次" in (st["q"] or ""), repr(st["q"]))
             check("竞态丢包：待办被放回（用户还有一次机会）", st["pending"] == "SET", str(st))
@@ -659,7 +696,7 @@ def main():
                             confirm_frame(exp=exp_future), "__END__"])
             st = pg7.evaluate(ASK_STATE)
             check("前置：带 exp 的帧照样渲染成可点卡片",
-                  st["askState"] == "live" and st["btns"] == ["确定", "取消"], str(st))
+                  st["askState"] == "live" and st["btns"] == BTNS_LIVE, str(st))
             pg7.wait_for_timeout(2600)
             st = pg7.evaluate(ASK_STATE)
             check("到期后自动结算为「已过期」（不再保持可点）",
@@ -689,7 +726,7 @@ def main():
                             confirm_frame(exp=int(time.time()) + 600), "__END__"])
             st = pg7.evaluate(ASK_STATE)
             check("前置：长定时器被吞掉后卡片停在可点（节流后它就是不会自己结算）",
-                  st["askState"] == "live" and st["btns"] == ["确定", "取消"], str(st))
+                  st["askState"] == "live" and st["btns"] == BTNS_LIVE, str(st))
             # 合成节流的后果：这段时间里令牌真的过期了（把待办里的 exp 拨到过去——
             # 服务端验签比较的正是这个数，前端这里读的也是同一个字段）
             pg7.evaluate("""() => {
@@ -869,14 +906,14 @@ def main():
             pg9, errs9 = open_page(b, url)
             run_round(pg9, ROUND)
             st = pg9.evaluate(ASK_STATE)
-            check("⑨a 前置：卡片可点", st["askState"] == "live" and st["btns"] == ["确定", "取消"],
+            check("⑨a 前置：卡片可点", st["askState"] == "live" and st["btns"] == BTNS_LIVE,
                   str(st))
             store = pg9.evaluate(ASK_STORE)
             check("⑨a 弹卡那一刻就把卡片存进了 localStorage（按 tokenKey + 会话分桶）",
                   bool(store["conv"]) and bool(store["parsed"]) and store["count"] == 1
                   and store["parsed"].get("token") == "FAKE_TOKEN_FOR_TEST_ONLY"
                   and store["parsed"].get("q") == "要把《Python asyncio 异步并发》加进收藏吗？"
-                  and len(store["parsed"].get("opts") or []) == 2
+                  and len(store["parsed"].get("opts") or []) == len(BTNS_LIVE)
                   and store["key"].endswith("_" + str(store["conv"])),
                   json.dumps(store, ensure_ascii=False)[:400])
             reboot(pg9)
@@ -884,7 +921,7 @@ def main():
             check("⑨a 刷新后卡片自己回来了（问句/按钮与刷新前逐字一致）",
                   st["inMessages"] and st["active"] and st["askState"] == "live"
                   and st["q"] == "要把《Python asyncio 异步并发》加进收藏吗？"
-                  and st["btns"] == ["确定", "取消"] and st["isLast"], str(st))
+                  and st["btns"] == BTNS_LIVE and st["isLast"], str(st))
             check("⑨a 接回来的待办是**活的**（能再点一次，不是一张看着像的静态卡）",
                   st["pending"] == "SET", str(st))
             seq = flow_stages(st["reports"], ASK_ID)
@@ -1064,7 +1101,7 @@ def main():
             st = pg12.evaluate(ASK_STATE)
             check("⑫b 前置：刷新后卡片独占消息流（走存档接回，不是新弹的）",
                   st["active"] and st["isLast"] and st["askState"] == "live"
-                  and st["btns"] == ["确定", "取消"], str(st)[:200])
+                  and st["btns"] == ["确定", "其他（我来说）", "取消"], str(st)[:200])
             # ② DB 那一趟随后补齐：先是主人的问句，再是助理的回复（两趟到达——
             # 生产里就是"本地缓存桶先渲染 / DB 后到"的先后差，不是假设的时序）。
             pg12.evaluate("""() => { window.__stub.historyItems = [
@@ -1100,6 +1137,96 @@ def main():
             check("⑫c 期间无失败上报", by_fail(st["reports"]) == [], flow_message(st["reports"]))
             check("⑫腿页面无未捕获异常", errs12 == [], " | ".join(errs12[:4]))
             pg12.close()
+
+            # ── ⑬ 卡片内改口：「其他（我来说）」就地打字，按**普通新轮**发出去 ──
+            # 用户原话（20261006）："弹窗是否用改给个 other 选项输入框，而不是点了
+            # 否再重新输入会话。" 这一腿要证三件事，缺一件都不算成立：
+            #   ① 点它**什么都不结算**——卡片仍 live、零请求、零 click 埋点；
+            #   ② 提交之后卡片结算成 amend（与 cancel 分开记），输入行收起、内容清空；
+            #   ③ 那段话是作为**普通新轮**发出去的：请求体里有它、**没有**确认令牌。
+            # ③ 是核心——"一次点头只兑现一次"那条不变量全靠"改口不走确认通道"。
+            print("\n⑬ 卡片内改口：点「其他（我来说）」→ 就地输入 → 回车")
+            pg13, errs13 = open_page(b, url)
+            run_round(pg13, ROUND)
+            st = pg13.evaluate(ASK_STATE)
+            check("⑬a 前置：卡上是三枚（帧里有多少枚就画多少枚）",
+                  st["btns"] == ["确定", "其他（我来说）", "取消"], str(st["btns"]))
+            o = pg13.evaluate(ASK_OTHER)
+            check("⑬a 前置：输入行默认收起（display:none、零高度），不是靠 hidden 属性",
+                  not o["shown"] and o["display"] == "none" and o["height"] == 0, str(o))
+
+            # 这一轮自己发过一次请求（那是主输入框那条路，不是本腿要看的）——先把两个
+            # 请求证人清零再点，否则"点了其他没发请求"这条断言读的是上一轮的读数。
+            pg13.evaluate("""() => {
+              window.__stub.lastBody = null;
+              window.__stub.streamCalls = 0;
+            }""")
+            pg13.evaluate(CLICK, "other")
+            pg13.wait_for_timeout(200)
+            o = pg13.evaluate(ASK_OTHER)
+            check("⑬b 点「其他（我来说）」⇒ 输入行显形（.active + display:flex + 有高度）",
+                  o["shown"] and o["display"] == "flex" and o["height"] > 0, str(o))
+            check("⑬b 且光标已在里面（点开就等着打字，不必再点一次）", o["focused"], str(o))
+            check("⑬b 卡片**没有**结算（按钮没换成灰字、状态仍是 live、待办仍在）",
+                  o["note"] is None and o["askState"] == "live" and o["pending"] == "SET", str(o))
+            check("⑬b 一个请求都没发出去（它是个入口，不是一种选择）",
+                  o["streamCalls"] == 0 and not o["lastBody"], str(o))
+            check("⑬b 也**没有** click 埋点（点开不算结论；报了就会变成 click=2/settle=1 的假线索）",
+                  not [1 for s, _ in flow_stages(o["reports"], ASK_ID) if s == "click"],
+                  flow_message(o["reports"]))
+
+            # 输入法合成中按回车 = 选字，不是提交。判据：dispatch 一个 isComposing 的
+            # Enter，界面必须纹丝不动——少了这条判据，打「改成写「今晚早点睡」」会在
+            # 选第一个词的时候把半截拼音**真的发出去**（不是多一个字，是发出一条新轮）。
+            pg13.evaluate("""() => {
+              const inp = document.getElementById('chat-ask-other-input');
+              inp.value = '改成写「今晚';
+              inp.dispatchEvent(new KeyboardEvent('keydown',
+                { key: 'Enter', isComposing: true, bubbles: true, cancelable: true }));
+            }""")
+            pg13.wait_for_timeout(200)
+            o = pg13.evaluate(ASK_OTHER)
+            check("⑬c 合成中的回车不提交（那一下是选字）",
+                  o["streamCalls"] == 0 and o["note"] is None and o["pending"] == "SET", str(o))
+
+            # 真提交：换掉回放帧（否则这一轮又会回放同一张确认卡，把断言搅浑），
+            # 只清两个请求证人、**不清**上报（下面要读 click/settle 两跳）。
+            pg13.evaluate("""(f) => {
+              window.__frames = f;
+              window.__stub.lastBody = null;
+              window.__stub.streamCalls = 0;
+            }""", [text_frame("好，那就按你说的来。"), "__END__"])
+            pg13.fill("#chat-ask-other-input", "改成写「今晚早点睡」")
+            pg13.press("#chat-ask-other-input", "Enter")
+            pg13.wait_for_function("() => !window.__ctx.state.isSending", timeout=10000)
+            pg13.wait_for_timeout(500)
+            o = pg13.evaluate(ASK_OTHER)
+            st = pg13.evaluate(ASK_STATE)
+            check("⑬d 卡片结算成「这次不算，按你说的来」（不是「已取消」——他没取消，是改口）",
+                  st["note"] == "这次不算，按你说的来", repr(st["note"]))
+            check("⑬d 可点的按钮没了、待办也摘了（不留一张还能再签一次字的卡）",
+                  not st["btns"] and st["pending"] is None and st["askState"] == "settled", str(st))
+            check("⑬d 输入行收起且内容清空（不留一个'还能改口'的假象）",
+                  not o["shown"] and o["height"] == 0 and (o["value"] or "") == "", str(o))
+            check("⑬d 真的发了一条新轮，请求体里就是那句话",
+                  o["streamCalls"] == 1 and "改成写「今晚早点睡」" in (o["lastBody"] or ""),
+                  str(o["lastBody"])[:200])
+            check("⑬d 而且它**不带**确认令牌/挑选值（改口走的是普通发言那条路）",
+                  "confirm_token" not in (o["lastBody"] or "")
+                  and "confirm_pick" not in (o["lastBody"] or ""), str(o["lastBody"])[:200])
+            check("⑬d 新轮真的收尾了（回答渲染进了气泡）",
+                  "好，那就按你说的来。" in st["allText"], repr(st["allText"][:120]))
+            stg = flow_stages(o["reports"], ASK_ID)
+            check("⑬d 埋点：click(value=other) → settle(result=amend)（取消与改口分开记）",
+                  any(s == "click" and kv.get("value") == "other" for s, kv in stg)
+                  and any(s == "settle" and kv.get("result") == "amend" for s, kv in stg),
+                  flow_message(o["reports"]))
+            check("⑬d 跳数配平：click 一次、settle 一次（不配平会被对账读成'点了没结论'）",
+                  sum(1 for s, _ in stg if s == "click") == 1
+                  and sum(1 for s, _ in stg if s == "settle") == 1, flow_message(o["reports"]))
+            check("⑬d 无失败上报", by_fail(o["reports"]) == [], flow_message(o["reports"]))
+            check("⑬腿页面无未捕获异常", errs13 == [], " | ".join(errs13[:4]))
+            pg13.close()
 
             check("①③腿页面无未捕获异常", errs == [], " | ".join(errs[:4]))
             b.close()
