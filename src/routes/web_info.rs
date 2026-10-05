@@ -111,6 +111,25 @@ pub struct WebSettingPayload {
     pub content_mute_limit: Option<i64>,
     #[serde(rename = "contentMuteHours")]
     pub content_mute_hours: Option<i64>,
+
+    // 图库 R2 图床（20261006，用户第 3 条）。键名与 `crate::r2::R2_KEYS` 逐字相同
+    // （那边是读取侧与上传判定侧的唯一实现，这里只做透传）。
+    //
+    // ⚠️ **凭据绝不进这里**：`R2_ENDPOINT` / `R2_ACCESS_KEY` / `R2_SECRET_KEY` 只从
+    // `.env` 读（`r2::load_creds`）。这正是本节头注里 `openAiToken`/`githubToken` 被删掉的
+    // 同一条理由——`web_info` 是业务库，而这个接口会把每一行**明文回传**给面板。
+    // 桶名/前缀/公开域名不是凭据：知道桶名也写不进去任何东西。
+    #[serde(rename = "r2ImageBucket")]
+    pub r2_image_bucket: Option<String>,
+    #[serde(rename = "r2ImagePrefix")]
+    pub r2_image_prefix: Option<String>,
+    #[serde(rename = "r2ImagePublicBase")]
+    pub r2_image_public_base: Option<String>,
+    /// 配额（GB，可小数）。缺省/坏值在读取侧回落 9.5（见 `r2::parse_config`）。
+    #[serde(rename = "r2ImageQuotaGB")]
+    pub r2_image_quota_gb: Option<f64>,
+    #[serde(rename = "r2ImageEnabled")]
+    pub r2_image_enabled: Option<bool>,
 }
 
 pub async fn get_web_settings(
@@ -140,6 +159,12 @@ pub async fn get_web_settings(
     let [risk_window, risk_gap, risk_rate, risk_mute, risk_hours] =
         crate::risk::RISK_KEYS.map(risk_num);
 
+    // R2 图床的五个键：键名从 `r2::R2_KEYS` 取（同上面两组开关的理由）。
+    // 配额回传的是**存着的原文**解析出的数，不是 `r2::parse_config` 算出的生效值：
+    // 面板要能显示"你填的是 2"，而生效值另有 `/api/protect/images/r2` 那边报。
+    let [r2_bucket, r2_prefix, r2_base, r2_quota, r2_enabled] = crate::r2::R2_KEYS.map(get_direct);
+    let r2_quota = r2_quota.and_then(|v| v.trim().parse::<f64>().ok());
+
     let payload = WebSettingPayload {
         blog_title: get_val("blog_title"),
         blog_author: get_val("author"),
@@ -164,6 +189,12 @@ pub async fn get_web_settings(
         content_rate_limit: risk_rate,
         content_mute_limit: risk_mute,
         content_mute_hours: risk_hours,
+
+        r2_image_bucket: r2_bucket,
+        r2_image_prefix: r2_prefix,
+        r2_image_public_base: r2_base,
+        r2_image_quota_gb: r2_quota,
+        r2_image_enabled: r2_enabled.map(|v| v.trim().eq_ignore_ascii_case("true")),
     };
 
     Json(ApiResponse::success(payload))
@@ -272,6 +303,55 @@ pub async fn update_web_info(
     Json(payload): Json<WebSettingPayload>,
 ) -> Json<ApiResponse<String>> {
     let mut map = std::collections::HashMap::new();
+
+    // ── R2 图床的五个键（20261006）─────────────────────────────────────────
+    // **先校验、再落任何一笔**：这个接口是"一次点头办 N 件"，写到一半发现域名填错了
+    // 再回滚是做不到的；而"存进去了、却因为格式不对永远不生效"正是最难查的一类
+    // （面板上看值好端端在那儿）。所以在进写循环之前就把不合格的挡下来。
+    //
+    // 读取侧（`r2::parse_config`）是**宽容**的：脏值回落默认、认不出的当未配置。
+    // 两侧口径不同是刻意的——读侧要防"库里躺着一行坏数据把整站卡住"，
+    // 写侧面对的是**正在打字的人**，此刻能解释清楚，就没有理由把问题存下来。
+    let [r2_bucket_key, r2_prefix_key, r2_base_key, r2_quota_key, r2_enabled_key] =
+        crate::r2::R2_KEYS;
+    if let Some(v) = payload.r2_image_bucket.as_ref() {
+        map.insert(r2_bucket_key, v.trim().to_string());
+    }
+    if let Some(v) = payload.r2_image_prefix.as_ref() {
+        // 前缀归一（去两端空白与 `/`）：存进去的就是生效的那个串
+        map.insert(r2_prefix_key, crate::r2::normalize_prefix(v));
+    }
+    if let Some(v) = payload.r2_image_public_base.as_ref() {
+        if v.trim().is_empty() {
+            // 清空是合法操作 = 回到"未配置"（走本地盘）
+            map.insert(r2_base_key, String::new());
+        } else {
+            match crate::r2::normalize_base(v) {
+                Some(base) => map.insert(r2_base_key, base),
+                None => {
+                    return Json(ApiResponse::error(
+                        "R2 公开域名要填完整的 http(s):// 地址（例：https://img.example.com），\
+                         末尾斜杠可有可无。这次没有任何设置被保存。",
+                    ))
+                }
+            };
+        }
+    }
+    match payload.r2_image_quota_gb {
+        // 缺省 = 这一格没提交（别的页面保存时不会带它）⇒ 不写，保持原值
+        None => {}
+        Some(gb) if gb.is_finite() && gb > 0.0 => {
+            map.insert(r2_quota_key, format!("{gb}"));
+        }
+        Some(_) => {
+            return Json(ApiResponse::error(
+                "R2 配额要填一个大于 0 的数字（单位 GB）。这次没有任何设置被保存。",
+            ))
+        }
+    }
+    if let Some(v) = payload.r2_image_enabled {
+        map.insert(r2_enabled_key, v.to_string());
+    }
 
     if let Some(v) = payload.blog_title { map.insert("blog_title", v); }
     if let Some(v) = payload.blog_author { map.insert("author", v); }

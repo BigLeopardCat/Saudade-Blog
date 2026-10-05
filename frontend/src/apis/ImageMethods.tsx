@@ -23,4 +23,12 @@ function uploadImages(formData: FormData){
     })
 }
 
-export {getImageList, delImages, uploadImages};
+/** R2 图床的用量读数（20261006）。真值来自 R2 自己的对象列表，不是库里的行 —— 见 src/r2.rs。 */
+function getR2Usage(){
+    return http({
+        url: '/api/protect/images/r2',
+        method: 'GET'
+    })
+}
+
+export {getImageList, delImages, uploadImages, getR2Usage};

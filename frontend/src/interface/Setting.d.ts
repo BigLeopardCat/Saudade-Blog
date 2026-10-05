@@ -25,4 +25,45 @@ export interface webInfo{
     socialEmail: string;
     socialBilibili: string;
     socialQQ: string;
+
+    /**
+     * 图库 R2 图床（20261006，用户第 3 条）。**五个键名与 Rust `src/r2.rs::R2_KEYS`
+     * 逐字相同**——它们同时是 `web_info` 的键名与这个接口的 JSON 字段名，
+     * 改名要三处一起（Rust 常量 / 这里 / 图库页那个设置弹窗的提交载荷）。
+     *
+     * 全部可选：站点设置页（UserControl）提交自己管的字段时不会带这五个，
+     * 而接口的语义正是"只写请求里带了的那些"（`Option` + `if let Some`）。
+     *
+     * ⚠️ **凭据不在这里**：R2_ENDPOINT / R2_ACCESS_KEY / R2_SECRET_KEY 只从服务端
+     * `.env` 读，永远不经这个接口——面板会把自己收到的每一行明文回传。
+     */
+    r2ImageBucket?: string;
+    /** 对象键前缀（归一后两端无 `/`；留空 = 未配置 ⇒ 走本地盘） */
+    r2ImagePrefix?: string;
+    /** 公开访问域名（`https://img.example.com` 这种；**换它会让存量图 URL 失效**） */
+    r2ImagePublicBase?: string;
+    /** 配额，单位 GB（实为 GiB 口径，见 `utils/r2Quota.ts` 头注） */
+    r2ImageQuotaGB?: number;
+    /** 总开关。**只有 `true` 为真**（服务端口径，见 `r2::parse_config`） */
+    r2ImageEnabled?: boolean;
+}
+
+/**
+ * `/api/protect/images/r2` 的返回载荷（Rust `routes/upload.rs::R2Usage`）。
+ *
+ * ⚠️ `usedBytes` 在 `listError` 非空时是 **0**，而 0 不是"用量是 0"的意思 ——
+ * 展示一律走 `utils/r2Quota.ts` 的 `usageText`/`uploadBlocked`，它们据 `listError`
+ * 分支（这条纪律与全仓"缺键绝不编 0"一致）。
+ */
+export interface R2Usage {
+    enabled: boolean;
+    configured: boolean;
+    credentials: boolean;
+    bucket: string;
+    prefix: string;
+    publicBase: string;
+    quotaGB: number;
+    limitBytes: number;
+    usedBytes: number;
+    listError?: string | null;
 }

@@ -80,3 +80,33 @@
 .select:active .icon svg {
     transform: scale(0.8);
 }
+
+/* 置灰态（20261006）：R2 配额满 / 用量读不出来时。**只降不透明度、不改几何** ——
+   旁边那颗删除钮与「已选中 N 张」都在同一行里，按钮一变尺寸整行就会挪。
+   配色不走 `filter: grayscale`：那会把 `--washi-pink` 的夜间/日间两档一起糊成一个灰，
+   而这里只该表达"现在不能按"。 */
+.select-disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.select-disabled:hover {
+    background: var(--washi-pink-deep, #d94f9a);
+}
+
+/* 悬停展开的那套效果对禁用态要**整体按住**：`disabled` 的元素照样会命中 `:hover`，
+   不按住的话灰按钮一悬停就展开、文字消失——那个动画的语义是"按下去会怎样"，
+   而这时候按下去什么都不会发生。三条覆盖的特异性都高于 `.select:hover …`（多一节） */
+.select-disabled:hover .text {
+    color: var(--washi-paper-3, #f6f0ff);
+}
+
+.select-disabled:hover .icon {
+    width: 40px;
+    border-left: 1px solid rgba(0, 0, 0, 0.18);
+    transform: translateX(100px);
+}
+
+.select-disabled:active .icon svg {
+    transform: none;
+}
