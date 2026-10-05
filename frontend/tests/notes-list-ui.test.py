@@ -106,6 +106,7 @@ import * as React from 'react';
 import { createRoot } from 'react-dom/client';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import AllNotes from './src/pages/Dashboard/Notes/AllNotes/index.tsx';
+import Notes from './src/pages/Dashboard/Notes/index.tsx';
 
 // MemoryRouter 不改浏览器地址栏（这正是它的用途），所以"导航去哪了"要自己记：
 // 一个与页面同级的间谍组件，每次 location 变化就往 window.__loc 里追加一条。
@@ -125,6 +126,17 @@ function Spy() {
     <Spy />
     <Routes>
       <Route path="/dashboard/notes/allnotes" element={<AllNotes />} />
+    </Routes>
+  </MemoryRouter>
+);
+
+// 第六节用：单独挂**笔记页外壳**（面包屑 + 左侧子菜单）本身。
+// 它不读 redux、也不发请求，所以只需要一个裸 MemoryRouter；
+// 挂到另一个 root 上，免得和上面那个 createRoot 抢同一个容器。
+(window as any).__mountNotes = (path: string) => createRoot(document.getElementById('rootNotes')!).render(
+  <MemoryRouter initialEntries={[path]}>
+    <Routes>
+      <Route path="/dashboard/notes/*" element={<Notes />} />
     </Routes>
   </MemoryRouter>
 );
@@ -181,7 +193,8 @@ def build_sandbox() -> pathlib.Path:
     (sb / "index.html").write_text(
         '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
         '<style>html,body,#root{height:100%;margin:0}</style>'
-        '<style>' + "\n".join(css) + '</style></head><body><div id="root"></div>'
+        '<style>' + "\n".join(css) + '</style></head><body>'
+        '<div id="root"></div><div id="rootNotes"></div>'
         '<script src="bundle.js"></script></body></html>', encoding="utf-8")
     return sb
 
@@ -491,6 +504,35 @@ with sync_playwright() as p:
           and pg.evaluate("() => document.querySelectorAll('.AllCard .ant-pagination-item').length") == 1)
     check("第五节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
+
+    # ── 六、面包屑与子菜单选中按路径派生（20261006 修）─────────────────────────
+    # 病根与侧栏高亮是**同一个**：路由是 `createBrowserRouter`（真实 path、全仓无人写
+    # hash），而这段原来读 `location.hash` ⇒ 恒不命中，面包屑**永远**是「未知页面」。
+    # 旧实现下本节的每一条都必然红（它连 '全部文章' 都显示不出来），所以这里不需要另设对照。
+    print("\n【六】笔记页面包屑（原来恒显示「未知页面」）")
+    CRUMB = ("() => { const li = document.querySelectorAll('.header .ant-breadcrumb li');"
+             " return li.length ? li[li.length - 1].textContent.trim() : ''; }")
+
+    def notes_crumb(path):
+        p = br.new_page(viewport={"width": 1280, "height": 800})
+        e = []
+        p.on("pageerror", lambda x: e.append(str(x)))
+        p.goto(URL)
+        p.evaluate("(path) => window.__mountNotes(path)", path)
+        p.wait_for_selector(".header .ant-breadcrumb", timeout=10000)
+        p.wait_for_timeout(200)
+        got = p.evaluate(CRUMB)
+        p.close()
+        return got, e
+
+    for path, want in (("/dashboard/notes", "全部文章"),
+                       ("/dashboard/notes/alltags", "全部标签"),
+                       ("/dashboard/notes/allcategorize", "全部分类"),
+                       # 带参路径：老实现只认精确串，这条同样落进「未知页面」
+                       ("/dashboard/notes/newnote/123", "编辑文章")):
+        got, errs = notes_crumb(path)
+        check(f"{path} → 面包屑「{want}」", got == want, f"得到「{got}」")
+        check(f"{path} → 无页面异常", not errs, "; ".join(errs[:3]))
 
     br.close()
 

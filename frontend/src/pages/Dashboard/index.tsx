@@ -2,7 +2,7 @@ import {useEffect, useRef, useState, type ReactNode} from 'react';
 import './index.css';
 // import '../../assets/font/iconfont.js';
 // import '../../assets/font/iconfont.css';
-import {Outlet, useNavigate} from "react-router-dom";
+import {Outlet, useLocation, useNavigate} from "react-router-dom";
 import {Card, Spin, Avatar, ConfigProvider, theme as antdTheme} from "antd";
 import MainContext from "../../components/conText.tsx";
 import Switch from "../../components/Switch";
@@ -94,7 +94,7 @@ const WASHI_THEME = {
 const Dashboard = () => {
     //hooks区域
     const navigate = useNavigate();
-    const [SelectCurrent,setSelectCurrent] = useState(1)
+    const { pathname } = useLocation();
     const [isShellClosed, setShellClosed] = useState(true);
     const [isDarkMode, setDarkMode] = useState(false);
     const [loading, setLoading] = useState(false);
@@ -111,22 +111,6 @@ const Dashboard = () => {
         dispatch<any>(fetchCategories())
         dispatch<any>(fetchTags())
         dispatch<any>(fetchNoteList(true))
-        // hash → 侧栏高亮索引（与下方 sidebar 数组 index 一一对应）。
-        // 底部那两颗（站点设置 / 返回首页）不在 sidebar 数组里，但**必须在这里映射**：
-        // 「站点设置」落在 #/dashboard/usercontrol，不映射就回落 1 ⇒ 刷新后高亮跑到「主页」。
-        // 索引用 8（sidebar 只到 7，子菜单是 201+），与顶部菜单不冲突。
-        const HASH_INDEX: Record<string, number> = {
-            '#/dashboard': 1,
-            '#/dashboard/comments': 3,
-            '#/dashboard/albums': 4,
-            '#/dashboard/announcement': 5,
-            '#/dashboard/users': 6,
-            '#/dashboard/analytics': 7,
-            '#/dashboard/usercontrol': 8,
-        };
-        const currentHashCode =
-            location.hash.startsWith('#/dashboard/notes') ? 2 : (HASH_INDEX[location.hash] ?? 1);
-        setSelectCurrent(currentHashCode)
         setLoading(true);
         setDarkMode(readDarkMode());
         // 反向同步：看板娘面板 / agent 的 DARKMODE 命令在这个页面上切主题时，壳里的
@@ -251,6 +235,17 @@ const Dashboard = () => {
         }
     ]
 
+    /* 侧栏高亮**按当前路径派生**（20261006 修）。
+       原来读的是 `location.hash`：路由早在 `main.tsx` 就换成了 `createBrowserRouter`
+       （真实 path，全仓没有任何地方写 hash），于是那份 HASH_INDEX **恒不命中** ⇒
+       刷新/深链/程序化跳转（图库页的「R2 配置」）一律回落到「主页」。
+       现在直接反查 `sidebar` 自己的 `to`，不再维护第二份「路径 → 编号」表：
+       `/dashboard` → '' → 主页(1)，`/dashboard/notes/xxx` → 'notes' → 2，以此类推。
+       底部「站点设置」是硬编码的 li、不在 sidebar 数组里 ⇒ 只能特判（沿用原来的 8）。
+       只读 `pathname`：`useLocation()` 每次返回**新对象**，拿整个 location 做依赖会白渲染。 */
+    const seg = pathname.replace(/^\/dashboard\/?/, '').split('/')[0];
+    const activeIndex = seg === 'usercontrol' ? 8 : (sidebar.find(i => i.to === seg)?.index ?? 1);
+
 
     //全屏
     const fullScreenRef = useRef<HTMLDivElement>(null);
@@ -353,10 +348,9 @@ const Dashboard = () => {
                                             {sidebar.map(item => {
                                                 const fillSvg = NAV_FILL_SVG[item.icon];
                                                 return (
-                                                <li className={`nav-links ${SelectCurrent === item.index ? 'nav_select' : ''}`}
+                                                <li className={`nav-links ${activeIndex === item.index ? 'nav_select' : ''}`}
                                                     onClick={() => {
                                                         navigate(item.to ? `/dashboard/${item.to}` : '/dashboard')
-                                                        setSelectCurrent(item.index)
                                                     }} key={item.index}>
                                                     {fillSvg ? (
                                                         /* 填充型 SVG：置 .icon 槽内，fill=currentColor 随 hover/选中变色 */
@@ -379,11 +373,12 @@ const Dashboard = () => {
                                     <div className="bottom-content">
                                         {/* 20260905：管理类并入侧栏「用户管理」，本项回归设置专属（站点信息/用户信息/社交/其他）。
                                             20260923：补 nav_select —— 它不在 sidebar 数组里，原来只 navigate 不置高亮，
-                                            于是点它之后蓝色容器仍停在上一个被点的图标上（用户报的"选中没跟上"）。 */}
-                                        <li className={`nav-links ${SelectCurrent === 8 ? 'nav_select' : ''}`}
+                                            于是点它之后蓝色容器仍停在上一个被点的图标上（用户报的"选中没跟上"）。
+                                            20261006：高亮改由 `activeIndex` 按路径派生（见上方），此处不再自己 setState
+                                            —— 从图库页点「R2 配置」跳过来的那种**不经侧栏**的跳转，原来就漏掉了。 */}
+                                        <li className={`nav-links ${activeIndex === 8 ? 'nav_select' : ''}`}
                                             onClick={() => {
                                                 navigate('/dashboard/usercontrol');
-                                                setSelectCurrent(8);
                                             }}>
                                             <i className="iconfont icon-iconfontcog icon"></i>
                                             <span className="text nac-text">站点设置</span>
