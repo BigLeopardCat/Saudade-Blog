@@ -36,6 +36,7 @@ import frontmatter from "@bytemd/plugin-frontmatter";
 import gemoji from "@bytemd/plugin-gemoji";
 import highlight from "@bytemd/plugin-highlight";
 import mermaid from '@bytemd/plugin-mermaid'
+import { MERMAID_CONFIG } from '../../../utils/mermaidTheme'
 import math from "@bytemd/plugin-math";
 import { initZoomDelegation } from "./zoomOverlay";
 import { decorateCodeBlocks } from "../../../utils/chatMarkdown";
@@ -102,7 +103,8 @@ const plugins = [
     frontmatter(),
     gemoji(),
     highlight(),
-    mermaid(),
+    // 配色走 utils/mermaidTheme.ts 那一份（看板娘对话框用同一份，见 chatMarkdown.ts）
+    mermaid(MERMAID_CONFIG),
     math(),
     bytemdStickers
 ]

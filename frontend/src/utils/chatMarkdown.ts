@@ -22,6 +22,7 @@ import breaks from '@bytemd/plugin-breaks'
 import gemoji from '@bytemd/plugin-gemoji'
 import math from '@bytemd/plugin-math'
 import mermaid from '@bytemd/plugin-mermaid'
+import { MERMAID_CONFIG } from './mermaidTheme'
 import { remarkStickers } from './stickers'
 
 // 与 bytemd Viewer 相同：克隆默认 schema 并允许 className（供高亮等插件使用）
@@ -46,7 +47,9 @@ processor = processor
 // 插件声明的入参是完整 BytemdViewerContext（含 file），但实现只解构 markdownBody
 //（@bytemd/plugin-mermaid dist 里 viewerEffect({ markdownBody })）⇒ 按实际使用面收窄签名，
 // 不伪造一个 file 去迎合类型
-const mermaidViewerEffect = mermaid().viewerEffect as
+// 配色走 `utils/mermaidTheme.ts` 那一份（**必须**与文章页传同一个值：mermaid 是全局单例，
+// 谁先渲染谁定调）。裸 `mermaid()` 会让对话框里的图和文章页不同款。
+const mermaidViewerEffect = mermaid(MERMAID_CONFIG).viewerEffect as
   ((ctx: { markdownBody: HTMLElement }) => void) | undefined
 
 export const renderBlogMarkdown = (text: string): string => {
