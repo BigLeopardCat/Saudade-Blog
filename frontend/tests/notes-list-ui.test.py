@@ -302,7 +302,10 @@ with sync_playwright() as p:
     check("是 antd 的小号按钮（不再是 40px 的圆形 Fab）",
           geo["small"] and geo["btn"]["h"] <= 26, f'h={geo["btn"]["h"]:.1f}')
     check("点它之前没有别的 add 按钮残留（旧 Fab 已删）", geo["fabAdd"] == 0, str(geo["fabAdd"]))
-    check("按钮在「全部文章」标签按钮之前（right <= tab.left）",
+    # 20261006：「页面上的第一个页签」现在是**公开文章**（它排在「全部文章」前面），
+    # 这条判据比的是"按钮在所有页签之前"，与第一个页签叫什么无关，故数值判据不动、
+    # 只把措辞改准（页签顺序另有【三·补】专节锁）。
+    check("按钮在第一个页签（公开文章）之前（right <= tab.left）",
           geo["btn"]["right"] <= geo["tab"]["left"] + 0.5,
           f'btn.right={geo["btn"]["right"]:.1f} tab.left={geo["tab"]["left"]:.1f}')
     check("按钮与标签条同一行（垂直重叠）",
@@ -376,6 +379,45 @@ with sync_playwright() as p:
     check("切 tab 后页码回到第 1 页",
           pg.evaluate("() => document.querySelector('.AllCard .ant-pagination-item-active').textContent") == '1')
     check("第三节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
+    pg.close()
+
+    # ── 三·补、「公开文章」页签（20261006 用户第 5 条）─────────────────────────
+    # 用户原话：「不要给文章标签位置加个公开文章标签，是多余的…在『全部文章』页标签前加个
+    # 『公开文章』，或者再加个筛选项。」→ 绿标撤掉、页签排在**最前**。
+    # 两条判据分开：① 顺序与 key（`key` 仍是 '4'，页签顺序变了但 `?tab=` 的契约没变）；
+    # ② 切过去时**发出去的请求体** —— 公开与否必须由后端判（前端一个条件都不加，
+    #   只有 `only_public` 能表达"这个集合"）。光看界面看不出这两件事。
+    print("\n【三·补】「公开文章」页签：排最前，筛选由后端做")
+    pg = mount(br)
+    tabs = pg.evaluate("""() => [...document.querySelectorAll('.AllCard .ant-tabs-tab')]
+        .map((t) => ({ text: t.textContent.trim(),
+                       key: t.getAttribute('data-node-key')
+                            || (t.querySelector('[role="tab"]') || {}).id || '' }))""")
+    labels = [t["text"] for t in tabs]
+    check("共四个页签", len(tabs) == 4, str(labels))
+    check("第一个是「公开文章」", labels[:1] == ["公开文章"], str(labels[:1]))
+    check("其余三个顺序不变（全部/私密/草稿）",
+          labels[1:] == ["全部文章", "私密文章", "草稿箱"], str(labels[1:]))
+    check("「公开文章」的 key 仍是 '4'（显示顺序变了，`?tab=` 的契约没变）",
+          tabs and "4" in tabs[0]["key"], str(tabs[:1]))
+    n0 = pg.evaluate("() => window.__calls.length")
+    pg.locator(".AllCard .ant-tabs-tab", has_text="公开文章").first.click()
+    pg.wait_for_timeout(700)
+    calls = pg.evaluate("() => window.__calls")
+    last = calls[-1] if calls else {}
+    check("切到「公开文章」会重新拉一次（切 tab 本来就该重拉）",
+          len(calls) == n0 + 1, f"{n0} → {len(calls)}")
+    check("请求走 /notes/search（不是 /notes/list —— 那个端点没有这个筛选）",
+          str(last.get("url", "")).endswith("/notes/search"), str(last.get("url")))
+    check("请求体只有 only_public:true，没有前端臆断的 status/其它条件",
+          last.get("data") == {"only_public": True}, str(last.get("data")))
+    check("不带筛选时列表仍然有行（不是空页）",
+          pg.locator(".AllCard .ant-table-row").count() > 0,
+          str(pg.locator(".AllCard .ant-table-row").count()))
+    check("地址栏记的是 tab=4（深链/刷新能回到这个页签）",
+          str(pg.evaluate("() => window.__loc[window.__loc.length - 1]")).endswith("tab=4"),
+          str(pg.evaluate("() => window.__loc[window.__loc.length - 1]")))
+    check("三·补节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
     # ── 四、深链里的日期条件点搜索会被清掉 ─────────────────────────────────────

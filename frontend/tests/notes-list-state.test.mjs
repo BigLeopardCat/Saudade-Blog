@@ -66,8 +66,12 @@ console.log('== URL ⇄ ListQuery：默认值不落 URL、空值删除 ==');
 
 console.log('== 非法值回落 ==');
 {
-    eq(S.parseListQuery('?tab=9').tab, '1', 'tab 非 1/2/3 → 1');
+    // 合法集 20261006 起是 1–4（'4' = 公开文章，页签条上排在最前但编号不动）
+    eq(S.parseListQuery('?tab=9').tab, '1', 'tab 不合法（1/2/3/4 之外）→ 1');
     eq(S.parseListQuery('?tab=2').tab, '2', 'tab=2 保留');
+    eq(S.parseListQuery('?tab=4').tab, '4', 'tab=4（公开文章）保留');
+    eq(S.buildListQuery({ ...D, tab: '4' }), 'tab=4', '公开文章页签落进 URL（它是非默认 tab）');
+    eq(S.parseListQuery(S.buildListQuery({ ...D, tab: '4' })).tab, '4', 'tab=4 build → parse 往返一致');
     eq(S.parseListQuery('?page=0').page, 1, 'page=0 → 1');
     eq(S.parseListQuery('?page=-3').page, 1, 'page 负数 → 1');
     eq(S.parseListQuery('?page=abc').page, 1, 'page 非数字 → 1');
@@ -163,6 +167,13 @@ console.log('== listRequest：list / search 分流 ==');
     eq(S.listRequest(D), { mode: 'list' }, '全部文章 + 零条件 → /notes/list');
     eq(S.listRequest({ ...D, tab: '2' }), { mode: 'search', body: { status: 'private' } }, '私密 tab → search(status=private)');
     eq(S.listRequest({ ...D, tab: '3' }), { mode: 'search', body: { status: 'draft' } }, '草稿 tab → search(status=draft)');
+    // 「公开文章」页签（20261006）：零筛选也**必须**走 search —— 那个集合由后端算
+    // （is_public + status!=draft + draft_of IS NULL），前端一个条件都不加也拿不到它。
+    eq(S.listRequest({ ...D, tab: '4' }), { mode: 'search', body: { only_public: true } },
+        '公开文章 tab → search(only_public=true)，不能落回 /notes/list');
+    eq(S.listRequest({ ...D, tab: '4', kw: '架构', cat: '技术' }).body,
+        { keyword: '架构', categories: '技术', only_public: true }, '公开文章页签与筛选条件叠加');
+    eq(S.listRequest({ ...D, tab: '4', page: 3 }).mode, 'search', '公开文章翻页也还是 search');
     eq(S.listRequest({ ...D, kw: '架构' }), { mode: 'search', body: { keyword: '架构' } }, '关键词 → keyword');
     eq(S.listRequest({ ...D, title: '文档' }), { mode: 'search', body: { title: '文档' } }, '标题筛选 → title（后端 20260919 才真正支持）');
     eq(S.listRequest({ ...D, top: '1' }).body, { is_top: 1 }, '置顶 → is_top 数字');

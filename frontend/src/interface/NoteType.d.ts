@@ -25,8 +25,10 @@ export interface NoteType {
     // 站上是否公开可见（20261006）。**键名就是下划线形态**：后端 `NoteDto.is_public`
     // 是唯一一个没有 serde rename 的字段，所以 JSON 里就叫 `is_public`（不像 `isTop`
     // 那样有个 camelCase 别名）。`normalizeNoteRows` 是 `...item` 透传，不必加映射。
-    // **判据用 `utils/noteVisibility.ts`，不要在这里就地读两个字段** —— 公开可见口径
-    // 与 Rust 侧四处逐字同源，散开写就会漂。
+    // **前端不再拿它算口径**（20261006）：判据只有一处 —— 后端（`list_public_notes` 与
+    // `search_all_notes` 的 `only_public`），列表侧的入口是「公开文章」页签。曾经那套
+    // 前端算的 `utils/noteVisibility.ts` 已删（它把 `status` 为 NULL 的老行当公开，
+    // 与后端 `Status.ne("draft")` 的三值逻辑不一致）。这个键留在类型里是因为 DTO 真有它。
     is_public?: boolean;
     // 卡片上的几个数（20260930；20261003 补讨论数）。**只有公开列表接口会回**，
     // 详情接口连键都没有 ⇒ 这里的可选性是契约本身（不是"忘写了"）：`undefined` =

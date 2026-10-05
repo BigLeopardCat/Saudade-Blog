@@ -237,6 +237,10 @@ pub struct SearchRequest {
     pub is_top: Option<i32>,
     pub start_date: Option<String>,
     pub end_date: Option<String>,
+    /// 后台列表「公开文章」页签（20261006 用户第 5 条）。`true` = 只要**站上真能读到**的那些。
+    ///
+    /// 口径不新造，用既有的那一份（见 `search_all_notes` 里的落地处）。
+    pub only_public: Option<bool>,
 }
 
 /// 读标签字典，返回 `id → 名字`。
@@ -568,7 +572,24 @@ pub async fn search_all_notes(
         // Allow filtering by specific status
          condition = condition.add(note::Column::Status.eq(s));
     }
-    
+
+    // 「公开文章」页签（20261006 用户第 5 条）：把 `/notes/search` 收窄成**站上真能读到的
+    // 那些**。三条判据各有出处，别各自发明：
+    //   ① `is_public = true` + ② `status != 'draft'` —— 与 `list_public_notes`（:172-173）
+    //      一字不差，那才是 nginx 后面访客看得见的集合；
+    //   ③ `draft_of IS NULL` —— 与 `list_all_notes`（:212）一致：`shot` 出来的编辑修改稿是
+    //      影子行，不排掉的话「公开 ⊂ 全部文章」不成立（同一篇会在两个页签里各出现一次）。
+    // ⚠️ ② 对 `status IS NULL` 的老行是 **NULL 判定**（SQL 三值逻辑），那些行**不进**本页签。
+    // 这是**有意的**：它们也确实进不了 `list_public_notes`（同一条 `ne` 谓词），页面跟着后端的
+    // 真实行为走。前端曾有一份 `noteVisibility.ts` 把 NULL 当公开，那是前端自己臆断的口径，
+    // 已随绿标一起删除。
+    if let Some(true) = payload.only_public {
+        condition = condition.add(note::Column::IsPublic.eq(true));
+        condition = condition.add(note::Column::Status.ne("draft"));
+        condition = condition.add(note::Column::DraftOf.is_null());
+    }
+
+
     // NEW FILTERS
     if let Some(top) = payload.is_top {
         condition = condition.add(note::Column::IsTop.eq(top));
