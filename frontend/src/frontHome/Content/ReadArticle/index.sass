@@ -22,11 +22,15 @@ html
   // **从登录页漏出来的**深色渐变（`pages/Login/index.sass:11` 的 160deg #0d1319→#1d2634）。
   // 线上实测正文四周底色 = **#c1c3c6**（一整幅均匀的灰，不是白）：纯黑 16px 正文落在灰底上
   // 笔画显得发薄、画面发闷，正是"太细/累眼"的来源。
-  // 改成 `--washi-paper`（不透明 #fffdfa）：正文真的落在纸上，也和全站的和纸面一致。
-  // ⚠️ 夜间那支**保持 transparent**（透 body 深蓝 = 刻意视觉）：别把两支并成同一个令牌，
-  // `--washi-paper` 在 `.frontDark` 下是 rgba(38,32,48,.92)，夜间观感会被一起改掉。
+  // 改成不透明纸白后，用户第二轮反馈又指出**纸白本身也偏亮**：「白色背景有点刺眼，
+  // 有没有符合博客主题的颜色」⇒ 这一支换成 `--washi-paper-warm`（#f7f1e7 米白，亮度 242）。
+  // 为什么不直接用站点那三个纸令牌：`--washi-paper` 就是 #fffdfa（等于刚被否掉的那档亮度），
+  // `-2`/`-3` 是粉紫相（大面积铺阅读面会与正文同屏打架）；米白带黄相，才是"和纸"的观感。
+  // `--washi-paper-warm` 只在 `:root`（浅色档）定义，**故意不在 `.frontDark` 里重定义**——
+  // 它唯一的用途就是这一支，而这一支只在非暗色下命中。
+  // ⚠️ 夜间那支**保持 transparent**（透 body 深蓝 = 刻意视觉）：别把两支并成同一个令牌。
   .frontRoot:not(.frontDark) &
-    background: var(--washi-paper)
+    background: var(--washi-paper-warm)
   .frontDark &
     background: transparent
   .readCover
@@ -338,6 +342,30 @@ html
         // bytemd Viewer 自己那层（`#content.markdown-body > .markdown-body`）
         > .markdown-body
           padding: 0
+          // 20261005 第二轮的「文章页字体还是看起来比讨论区细」——
+          // 正文与讨论区正文本来就是**同一条字体栈、同一个字重(400)、同一种颜色**，
+          // 差别只有字号（17px vs 14.72px）。细的是**相对笔画**：DPR2 下量中心扫描线上的
+          // 墨迹宽，两者都是 2 物理像素（= 1 CSS px），可 CJK 的笔画在小字号被格点吸附、
+          // 大字号不吸附 ⇒ 除以各自 em 之后 **0.0588 vs 0.0679**，大字号反而显得更细。
+          // `font-weight` 救不了（微软雅黑只有 Light/Regular/Bold，500 ≡ 400），
+          // 唯一可用的杠杆是描边：0.2px 按 `w/2` 各补一边 ⇒ 1.0 → 1.2 CSS px，
+          // 相对笔画 0.0706，与讨论区的 0.0679 齐平。
+          // 实测量到的是"墨量"（截一段正文，累加 `255 − 灰度`）而不是 50% 阈值下的游程宽：
+          // 0.2px 补上去的是**字缘的抗锯齿覆盖率**，不是一整像素，所以游程宽不变
+          // （DPR2 下都是 2 物理像素）而墨量涨。DPR2 **+22.5%**、DPR1 **+13.7%**
+          //（＝0.2/1.0 的量级，与上面的换算一致）。**DPR1 才是 Windows 用户的常态**，
+          // 那一档涨得最少但确实在画——这条杠杆的"下限"就长这样，别指望它像加粗一档。
+          // ✅ **它不改字形前进宽度**（描边是画上去的，不参与排版）⇒ 不重排、行数不变、
+          //    段落几何逐像素不变（`frontend/tests/read-mobile.test.py` 第 ⑧ 节拿"带规则/
+          //    摘掉规则"两臂量同一段落的宽高，必须完全相等）。
+          // `currentColor`：正文是 `var(--font-title-color)`，日间近黑、夜间近白，一支通吃。
+          -webkit-text-stroke: 0.2px currentColor
+          // 代码不描边：等宽字形笔画本来就细而密，再补边会糊成一团；而且代码块是
+          // **深底浅字**，描边会让字重看着失衡（正文是浅底深字，方向相反）。
+          // 这两条是 `-webkit-text-stroke: 0`（不是 unset）——它可继承，
+          // 覆盖掉从上面传下来的值即可，`unset` 在这里等于 `inherit`，等于白写。
+          pre, code, kbd, samp
+            -webkit-text-stroke: 0
 
     .markdown-body
       width: 100%
@@ -519,7 +547,8 @@ html
     // 写成 rem 的：访客改浏览器默认字号时它是可缩放的，写死 `17px` 就不跟了。
     // ⚠️ 别用 `font-weight` 去救"太细"：Windows 的 CJK 回退是微软雅黑，只有 Light/Regular/Bold
     // 三档，`font-weight: 500` 在 Chrome/Windows 上渲染结果**等于 400**（本机实测无差异）。
-    // 真要更粗，杠杆是 `-webkit-text-stroke: 0.2px currentColor`（未采用，需真机 A/B）。
+    // 笔画那半由 `.readBody > .markdown-body > .markdown-body` 上的
+    // `-webkit-text-stroke: 0.2px currentColor` 负责（20261005 第二轮加的，含实测口径）。
     p
       font-size: 1.0625rem
       max-width: 90rem
