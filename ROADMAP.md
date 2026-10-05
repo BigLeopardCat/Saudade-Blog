@@ -48,7 +48,7 @@
 | **把 `device-service` 也开源** | 它现在只以"单元模板 + 接口契约"的形式在 [iot/device-service/](iot/device-service/) 里；服务本体不在任何公开仓。要开放先得把里面写死的东西（topic 前缀、凭据从哪读、对部署方式的假设）通用化 | 有人真的想自己搭一套——开个 issue 说一声就算 |
 | **`scripts/migration/` 按用途分目录**（夹具 / 一次性脚本 / 真正的迁移） | 现在靠文件名前缀辨认，[CONTRIBUTING §2.1](CONTRIBUTING.md) 里列了该跳过哪几类。分目录要先确认没有脚本按路径引用它们 | 这个目录再添第三类脚本，或者有人在 issue 里说被它绊过一次 |
 | **沙箱套件跑完清理自己的临时目录** | `frontend/tests/*.test.py` 用 `tempfile.mkdtemp` 建了不删，跑多了会在 `/tmp` 积出空间。已知未修 | `/tmp` 因它涨到需要人工清一次 |
-| **把脚本里的开发机路径彻底参数化** | `PROJECT_DIR` 环境变量已经能覆盖 `healthcheck.sh` / `nightly_sandboxes.sh` / `deploy/*.sh` 四个；CI 工作流里那一处仍写死 | 有人在别的机器上部署时真撞上 |
+| **把脚本里的开发机路径彻底参数化** | 现在**六处**的默认值写的是开发者那台机器的位置（`healthcheck.sh` / `nightly_sandboxes.sh` / `deploy/*.sh` 四个脚本、`deploy.yml` 里那次 ssh、`src/routes/graph.rs` 的产物目录），但**每一处都能不改被跟踪的文件地覆盖**——`PROJECT_DIR` / `DEPLOY_REPO_DIR`（仓库 Variable）/ `GRAPH_ARTIFACT_DIR`，所以 fork 的人设一下就行。真正更好的改法是让脚本从**自身位置**推出仓根（`$(dirname "$0")/../..`），那样连设都不用设 | 有人在别的机器上部署时真撞上 |
 
 ---
 
