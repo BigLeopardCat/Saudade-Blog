@@ -23,10 +23,15 @@
 import { parseNoteTags } from '../../../../utils/noteTags';
 import type { NoteType } from '../../../../interface/NoteType';
 
-export type ListTab = '1' | '2' | '3';
+/**
+ * 页签编号。'4' = **公开文章**（20261006 用户第 5 条新加），它在页签条上排在**最前面**，
+ * 但编号刻意取 4 —— 编号是 URL 里的既有契约（`?tab=2/3` 的深链、默认 `'1'`、
+ * 「默认值不落 URL」的 `buildListQuery` 全都按 '1' 写死），拿它当数组下标用会把这些一起搅动。
+ */
+export type ListTab = '1' | '2' | '3' | '4';
 
 export interface ListQuery {
-    /** '1' 全部文章 / '2' 私密文章 / '3' 草稿箱 */
+    /** '1' 全部文章 / '2' 私密文章 / '3' 草稿箱 / '4' 公开文章 */
     tab: ListTab;
     /** 页码，从 1 开始 */
     page: number;
@@ -84,7 +89,7 @@ function asString(value: unknown): string {
  * 读 URL。容忍缺参、脏值、以及历史深链：
  * - `keyword` 是 `kw` 的**旧别名**（`Dashboard/index.tsx` 的搜索框曾直接跳 `?keyword=`），
  *   两者同时存在时以 `kw` 为准 —— 已存在的 bookmark 不能失效；
- * - `page` 非正整数 → 1；`tab` 非 1/2/3 → '1'；日期不合法 → 丢弃。
+ * - `page` 非正整数 → 1；`tab` 非 1/2/3/4 → '1'；日期不合法 → 丢弃。
  */
 export function parseListQuery(search: string | URLSearchParams): ListQuery {
     const params =
@@ -93,7 +98,8 @@ export function parseListQuery(search: string | URLSearchParams): ListQuery {
             : search;
 
     const rawTab = params.get('tab');
-    const tab: ListTab = rawTab === '2' || rawTab === '3' ? rawTab : '1';
+    const tab: ListTab =
+        rawTab === '2' || rawTab === '3' || rawTab === '4' ? rawTab : '1';
 
     const rawPage = Number(params.get('page'));
     const page = Number.isInteger(rawPage) && rawPage > 0 ? rawPage : 1;
@@ -206,7 +212,8 @@ export type ListRequest =
  * 该发哪个请求：
  * - 「全部文章」且**零条件** → `/notes/list`（它排除 `draft_of` 影子行，与搜索端点语义不同，
  *   不能合并成一个）；
- * - 其余 → `/notes/search`，把 URL 里的条件翻译成后端字段。
+ * - 其余 → `/notes/search`，把 URL 里的条件翻译成后端字段。**「公开文章」页签（'4'）永远
+ *   走这一支**：它编号就不是 '1'，而且它本体自带 `only_public` 条件（零筛选也非空请求）。
  *
  * 注意 `tags` 是前端过滤，**不进 body**（后端 `SearchRequest` 没有这个字段，
  * 而且它过去是"填了也白填"的静默空操作）。
@@ -231,6 +238,10 @@ export function listRequest(query: ListQuery): ListRequest {
     if (query.to) body.end_date = query.to;
     if (query.tab === '2') body.status = 'private';
     if (query.tab === '3') body.status = 'draft';
+    // 「公开文章」页签（20261006）：口径由**后端**给（`is_public=true` 且 `status != 'draft'`
+    // 且非影子行），前端不自己算 —— 站上真正能读到的那套判据有 6 处同源，前端再抄一份
+    // 就会各自漂（这就是被删掉的 `utils/noteVisibility.ts` 干过的事）。
+    if (query.tab === '4') body.only_public = true;
 
     return { mode: 'search', body };
 }

@@ -38,7 +38,6 @@ import {delAllNotes, delNote, getAdminNotes, searchAdminNotes, updateNoteStatus}
 import {resolveApiAssetUrl} from "../../../../utils/runtimeApi";
 import NoteTagSelect from "../../../../components/NoteTagSelect/index.tsx";
 import {joinNoteTags, parseNoteTags} from "../../../../utils/noteTags";
-import {isPubliclyVisible} from "../../../../utils/noteVisibility";
 import {useLiveRefresh} from "../../../../utils/liveRefresh.ts";
 import {
     DEFAULT_LIST_QUERY,
@@ -472,18 +471,10 @@ const AllNotes = () => {
             // 折叠渲染：只显示前 3 个，其余收进 Popover（列宽只有 20%，三四个长标签名
             // 就能把它挤爆）。悬空 id（标签已删、文章还引用着）不再渲染成空白小块。
             //
-            // 「公开文章」那颗绿标（20261006）排在标签**之前**，且**不吃那 3 个名额**
-            // ——它是文章的状态、不是一枚标签，掺进折叠计数会让"+N"的数忽大忽小。
-            // 判据（`is_public && status != 'draft'`，与站上公开口径逐字同源）在
-            // `utils/noteVisibility.ts`，这里只管画。
-            render: (_, record) => (
-                <span style={{display: 'inline-flex', alignItems: 'center', maxWidth: '100%', overflow: 'hidden'}}>
-                    {isPubliclyVisible(record) && (
-                        <Tag color="green" style={{marginInlineEnd: 4, marginBottom: 0}}>公开文章</Tag>
-                    )}
-                    {renderNoteTagsCollapsed(record.noteTags, tagList, 3)}
-                </span>
-            ),
+            // 20261006 用户第 5 条：「公开文章」那颗绿标**撤了** —— 文章状态字段本来就有，
+            // 在这列再画一遍是重复（而且它跟标签挤同一格，谁多谁少还看心情）。要看公开的
+            // 走列表上方的「公开文章」页签，筛选由后端做（见 `listState.ts` 的 `only_public`）。
+            render: (_, record) => renderNoteTagsCollapsed(record.noteTags, tagList, 3),
         },
         {
             title: '是否置顶',
@@ -554,7 +545,15 @@ const AllNotes = () => {
     };
     const hasSelected = selectedRowKeys.length > 0;
 
+    // 20261006 用户第 5 条：「公开文章」排在最前（他要的是"在『全部文章』前面加一个页签"）。
+    // key 仍是 '4' 而不是把它改成 '0' 或重排编号 —— 数组顺序只决定**显示顺序**，key 是 URL
+    // 契约（`?tab=2/3` 的深链、默认 '1'、「默认值不落 URL」的 `buildListQuery` 都按这些字面量
+    // 写死），把编号跟着显示顺序挪一遍等于让所有已存在的链接指到别的页签。
     const items: TabsProps['items'] = [
+        {
+            label: '公开文章',
+            key: '4',
+        },
         {
             label: '全部文章',
             key: '1',
