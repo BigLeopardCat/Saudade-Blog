@@ -23,3 +23,27 @@
 .bytemd {
     height: calc(100vh - 200px);
 }
+
+/* ── 编辑器里那个图库弹窗（ImagePicker） ────────────────────────────────────────
+   antd 的弹窗走 portal 挂到 body 下，不在包裹元素里 ⇒ 这几个类名只能是全局的
+   （别试图用 `.saudade-note-editor .xxx` 去作用域它，那样一条都匹配不上）。 */
+.editor-image-picker-scroll {
+    max-height: 60vh;
+    overflow-y: auto;
+}
+
+.editor-image-picker-center {
+    display: flex;
+    justify-content: center;
+    padding: 32px 0;
+}
+
+/* 图库里那张图的原名（已经剥掉 14 位时间戳前缀，见 utils/assetName.ts） */
+.editor-gallery-name {
+    font-size: 12px;
+    line-height: 18px;
+    color: rgba(0, 0, 0, 0.65);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
