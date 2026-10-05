@@ -160,7 +160,8 @@ Saudade-Blog/
 前置：**Rust** stable、**Node.js** ≥ 18、**MySQL** 8。想跑 AI 对话再加 **Python** 3.10+。
 
 ```bash
-git clone <本仓地址> && cd Saudade-Blog
+git clone https://github.com/BigLeopardCat/Saudade-Blog.git && cd Saudade-Blog
+# 默认分支是 cn_sora_blog（不是 main），clone 下来就在它上面
 
 # 1) 建库。库名必须叫 saudade_blog，用脚本建而不是把 *.sql 按文件名顺序全跑一遍
 ALLOW_PRODUCTION_NAME=1 bash scripts/migration/fresh_install.sh saudade_blog -uroot -p
@@ -177,11 +178,20 @@ cargo run
 这类问题，都在 [CONTRIBUTING.md](CONTRIBUTING.md) 的《2. 跑起来》里。每个环境变量干什么、默认值是什么，看
 [.env.example](.env.example)（它是这一类信息在本仓的唯一出处）。
 
-## 开发流程（重要约定）
+## 部署流程
 
-> **部署一律走 CI：本地不编译、不手动构建。** `vite build` 与 `cargo build --release`
-> 的内存开销都很大，内存不足时会 OOM 甚至拖垮整台机器。
-> 本地验证只用轻量命令（`cargo check` / `tsc` / `npm test`）。
+本节描述的是**本仓自带的那套 CI/CD**（`.github/workflows/deploy.yml` + `scripts/deploy/`，
+两者都在仓库里，谁都能读、能改），以及维护者用它的方式。先说清楚边界：
+
+> **"本地不编译"是维护者那一侧的纪律，不是对你的要求。** 他跑这套东西的那台机器
+> **同时是生产服务器**（`cargo build --release` 与 `vite build` 的内存开销会把整机拖垮——
+> 这事真发生过）。你把仓库 clone 到自己机器上，想怎么构建就怎么构建，不受这条约束。
+>
+> **fork 之后**：部署那一半要自己的 R2 凭据与 SSH 私钥（都是仓库 secret），不配它就只跑得起来
+> 另一半——`check`（测试与类型检查）**一个 secret 都不需要**，所以你 fork 出去照样有完整的质量反馈。
+> **PR 上也只跑 `check`**，不会有人因为提了个 PR 而把维护者的线上换掉。
+
+维护者本地的验证只用轻量命令（`cargo check` / `tsc` / `npm test`），构建交给 CI。
 
 ```mermaid
 flowchart LR
@@ -197,18 +207,23 @@ flowchart LR
 > 注意这套流程的语义：**CI 的绿灯代表"真部署成功了"**，不是"构建过了"——
 > 部署脚本的退出码会被 CI 等回来。线上到底跑的是哪个提交，只认 `build-info.json` 里的 sha。
 
-按组件：
+按组件（下面这些"本地怎么做"说的都是**维护者那台生产机**上的做法）：
 
-- **后端（本仓库 `src/`）**：本地只做 `RUSTFLAGS="-D warnings" cargo check`（严格自检；
+- **后端（本仓库 `src/`）**：他那台机子上只做 `RUSTFLAGS="-D warnings" cargo check`（严格自检；
   CI 未设 RUSTFLAGS，warning 不挂构建——此模式是本地纪律，不是 CI 门槛），push 即由 CI 编译部署。
-- **前端（本仓库 `frontend/`）**：本地不构建，改动 push 走 CI。看板娘前端（`live2d-widgets/`）
-  的缓存版本号要在多处同步，改动前先读
-  [frontend/README.md](frontend/README.md) 的《改这里的文件要 bump 版本号》一节。
+  你本机 `cargo build --release` 随意。
+- **前端（本仓库 `frontend/`）**：同上，他本地不构建、push 走 CI。**改动前先读
+  [frontend/README.md](frontend/README.md) 的《改这里的文件要 bump 版本号》一节**——
+  看板娘前端的缓存版本号要在多处同步，漏一处访客会继续吃旧脚本。
 - **Agent（`saudade-blog-agent/`，独立仓库）**：改技能/工具/prompt 后需重启服务才生效；
   push 走独立 CI。改技能注册表 / plan 契约 /
   摘要逻辑后必跑 `test_skills.py`（L0）与 `eval/run_golden.py`（L2 真实 LLM 端到端）。
 
 ## 部署与运维
+
+**这一节描述的是本项目的线上部署**（维护者那一台机器），不是本仓对你的要求——
+fork 之后按你自己的方式跑就行，本节的价值在于：想读懂 `scripts/deploy/`、`healthcheck.sh`
+与那些日志路径时，能对上号。
 
 服务均为 systemd 托管（agent/rust 为 `Restart=always` 崩溃自愈；device 为 `Restart=on-failure`）：
 
@@ -234,8 +249,8 @@ nginx error.log 增量扫描，异常追加 health.log。
 ## 给贡献者
 
 - **想参与**：[CONTRIBUTING.md](CONTRIBUTING.md)（怎么在本地跑起来、提交约定、
-  **本地不许跑什么**）、[ROADMAP.md](ROADMAP.md)（现在做什么、什么在等一个条件、
-  什么明确不做）、[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)、
+  哪些命令是"维护者那台机器上不能跑"而不是"你不能跑"）、[ROADMAP.md](ROADMAP.md)
+  （现在做什么、什么在等一个条件、什么明确不做）、[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)、
   [SECURITY.md](SECURITY.md)（安全问题的私密报告通道）。
 - **测试分几层、各验什么、在哪儿跑**：[CONTRIBUTING.md](CONTRIBUTING.md) 的 §3 是唯一清单
   ——`tests/`（跟着 `cargo test`：MockDatabase 一层 + 真 MySQL 一层）、`tests/manual/`

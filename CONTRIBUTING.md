@@ -184,12 +184,11 @@ agent 在独立仓库里，有自己的 README 与 `.env.example`。它默认跑
 
 ## 3. 测试
 
-### 3.1 秒级套件（push 到 `cn_sora_blog` 时 CI 会跑；**PR 上不跑**）
+### 3.1 秒级套件（push 与 PR 上都会跑）
 
-> **PR 上没有任何自动检查。** `deploy.yml` 只挂 `push: [cn_sora_blog]` 与手动触发，
-> **没有 `pull_request` 触发器**，所以 PR 页面上"没有红灯"的含义是"没跑过"、不是"过了"。
-> 这件事本身记在 [ROADMAP.md](ROADMAP.md) 的待办里。在那之前，
-> 下面这几条**请自己在本机跑一遍**再提交。
+> **CI 在 PR 上只跑下面这几项，不跑部署**（20261006 起）。它在 PR 上**不需要任何 secret**，
+> 所以 fork 来的 PR 一样有反馈；部署那一半要 R2 与 SSH 凭据，PR 上恒不触发。
+> 即便如此，**提交前自己跑一遍**仍然值得：CI 要排几分钟，而这几条在本机是秒级的。
 
 ```bash
 # 看板娘前端两棵树不在 git 里（源码在 agent 仓）⇒ cargo test **之前**必须先取
@@ -337,9 +336,14 @@ bash scripts/dev/install-hooks.sh     # = git config core.hooksPath .githooks，
 
 ### 改代码时的几条硬约束
 
-1. **本地不编译大产物**。`vite build` 和 `cargo build --release` 内存开销很大，低内存机器上
-   会 OOM 甚至拖垮整机。本地只跑 `cargo check`、`tsc`、`npm test`，构建交给 CI。
-2. **永远不要 `cargo clean`**（`target/release/` 里是线上正在跑的那个二进制）。
+> ⚠️ **第 1、2 条是维护者那一侧的纪律，不是对你的要求**：他跑这套东西的那台机器
+> **同时是生产服务器**（`cargo build --release` 与 `vite build` 的内存开销会把整机拖垮，
+> 真发生过）。你 clone 到自己机器上，想构建就构建、想 `cargo clean` 就清，
+> 不受这两条约束——但下面第 3 条对谁都成立。
+
+1. **（维护者）本地不编译大产物**。`vite build` 和 `cargo build --release` 内存开销很大，
+   低内存机器上会 OOM 甚至拖垮整机。他本地只跑 `cargo check`、`tsc`、`npm test`，构建交给 CI。
+2. **（维护者）永远不要 `cargo clean`**（那台机器上 `target/release/` 里是线上正在跑的二进制）。
 3. **动 git 前逐文件核对**，别用 `git add -A` / `git commit -a` —— 工作区里可能挂着
    别的分支/会话的改动。
 4. **改协议/契约要三端同步**。SSE 帧协议（Python ↔ Rust ↔ 前端）、执行回执的字段名、
