@@ -1,0 +1,13 @@
+# 关掉空白 issue：下面两个模板各带一组必须回答的问题（怎么复现、触发条件是什么），
+# 而这个仓里"为什么不做"和"怎么做"的信息量一样大——空白 issue 最常缺的就是这两样。
+blank_issues_enabled: false
+contact_links:
+  - name: 安全问题（**不要**开公开 issue）
+    url: https://github.com/BigLeopardCat/Saudade-Blog/blob/cn_sora_blog/SECURITY.md
+    about: 本仓转 public 之后，公开 issue 等于公开利用方式。按 SECURITY.md 走私密报告通道。
+  - name: 我想先读代码 / 想在本地跑起来
+    url: https://github.com/BigLeopardCat/Saudade-Blog/blob/cn_sora_blog/CONTRIBUTING.md
+    about: 怎么建库、怎么起前后端、提交前跑什么，以及本地**不许**跑什么。
+  - name: 下一步打算做什么
+    url: https://github.com/BigLeopardCat/Saudade-Blog/blob/cn_sora_blog/ROADMAP.md
+    about: 现在在做什么、什么在等条件、什么明确不做。提提议前先看一眼这里。
