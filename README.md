@@ -3,6 +3,9 @@
 个人博客系统。Rust 后端、React 前端、独立的 Python 对话 Agent，以及一个 Live2D 看板娘。
 另有一套可选的 ESP32 物联网接入（不装不影响其余部分，见 [iot/](iot/)）。
 
+License: GPL-2.0-or-later —— 两条版权声明（上游与本仓）与第三方组件说明见
+[LICENSE](LICENSE) 与 [THIRD-PARTY.md](THIRD-PARTY.md)。
+
 示例站点：<https://saudade.site>
 
 看板娘"泠月喵"可以回答关于站内文章的问题、跳转页面、开关页面特效、切换夜间模式；
