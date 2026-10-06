@@ -1,5 +1,6 @@
 import './index.sass'
-import {useCallback, useEffect, useState} from "react";
+import {useCallback, useEffect, useRef, useState} from "react";
+import {useSearchParams} from "react-router-dom";
 import {Avatar, Card, message} from "antd";
 import {Talk} from "../../../interface/TalkType";
 import { motion } from 'framer-motion';
@@ -14,6 +15,16 @@ const TalkList = () => {
     // `code=500`（data 是空数组）时走的是 `.then`，列表被设成 []——页面变成一片空白，
     // 与"站内还没发过说说"长得一模一样。这是本仓"读不到 ≠ 没有"那条纪律的又一处落点。
     const [loadFailed,setLoadFailed] = useState(false)
+    /** 已经定位过的 tk（**记的是值不是布尔**：同页再点另一条说说时要能重新定位） */
+    const locatedRef = useRef<number | null>(null)
+    /* 深链 `?tk=<talk id>`（20261006）：站内聚合搜索的一条说说点进来时定位到它。
+     *
+     * ⚠️ **必须是响应式的 `useSearchParams`，不能是"挂载时读一次地址栏"**（留言板那份
+     * `/guestbook?lid=` 就是那么写的）：`/talk → /talk?tk=5` 是**同一条路由**，React Router
+     * 不会重挂载本组件——挂载时读一次的实现只在"从别的页面跳进来"时有效，用户已经站在
+     * `/talk` 上再点一条说说会**静默不定位**（与 `CommentSection` 的 `?cid=` 同一处坑）。 */
+    const [searchParams] = useSearchParams()
+    const tk = Number(searchParams.get('tk')) || 0
 
     const load = useCallback(() => {
         setLoadFailed(false)
@@ -34,6 +45,33 @@ const TalkList = () => {
         load()
     }, [load])
 
+    /* 深链定位（`?tk=`）：列表到位后滚到那一条并闪一下高亮。**与 `CommentSection` 的
+     * `?cid=` 同一套做法**（那边踩过的坑这里一个都不少）：
+     *
+     * · **必须等 `talkList` 到位**——那一行是渲染出来的，DOM 里还没有就 `getElementById` 不到。
+     * · **瞬时滚动 + double-rAF 重放**，不用 `behavior: 'smooth'`：本页挂载时会
+     *   `scrollToTop()`，而那是**平滑**滚动——列表回来时它可能还在动画里，随后的平滑定位
+     *   会被顶掉或与之拉扯，症状就是"点进来停在页面顶部"。瞬时滚动会取消在途的平滑动画，
+     *   double-rAF 再补一次压过同帧的其它滚动。
+     * · **目标不在列表里就安静兜底**：说明这条说说已被删/被驳回，而页面本身已经开在说说
+     *   列表上了，再弹一句"没找到"只会添乱（同 `CommentSection` 与留言板）。
+     * · **不写 cleanup**：摘掉高亮由那个 1.8s 定时器负责，若放进 cleanup，一次无关的重渲染
+     *   就会把还没闪完的高亮掐掉。
+     */
+    useEffect(() => {
+        if (!tk || talkList.length === 0 || locatedRef.current === tk) return
+        const el = document.getElementById(`t-${tk}`)
+        if (!el) return
+        locatedRef.current = tk
+        const jump = () => el.scrollIntoView({ block: 'center', behavior: 'auto' })
+        requestAnimationFrame(() => {
+            jump()
+            requestAnimationFrame(jump)
+        })
+        el.classList.add('talk-hit')
+        window.setTimeout(() => el.classList.remove('talk-hit'), 1800)
+    }, [tk, talkList])
+
     return <div className='TalkContainer'>
         <SeoHelmet title="说说" url="/talk" />
         <h2>说说</h2>
@@ -48,10 +86,14 @@ const TalkList = () => {
             const at = dayjs(talk.createTime)
             return (
             <motion.div
-            key={index}
+            // 用 `talkKey` 而不是数组下标：下标当 key 时列表一变（有一条被删/新发一条）
+            // 后面的卡片会整片错位复用。深链定位也要这个 key 稳定。
+            key={talk.talkKey}
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: index * 0.2 ,ease: "linear"}}
+            // 入场错峰（每张往后 0.2s）。**带 `tk` 时压成 0**：深链落到第二十条时那张卡
+            // 按 index*0.2 要等 4 秒才铺开，而 `scrollIntoView` 量到的是**位移中**的盒子。
+            transition={{ duration: 0.5, delay: tk ? 0 : index * 0.2 ,ease: "linear"}}
             className="article"
             style={{position:'relative'}}
         >
@@ -63,7 +105,11 @@ const TalkList = () => {
                     <span className='talkTime-day'>{at.format('MM.DD')}</span>
                 </h3>
                 <Card
-                    key={talk.talkKey}
+                    // 深链锚点。**放在 Card 上、不放外层 `motion.div` 上**：外层那个元素
+                    // 带着 framer-motion 的入场位移（`y: -20 → 0`，走 transform），锚点挂上去
+                    // `scrollIntoView` 量到的是**位移中**的盒子（同"错峰延迟"那条的理由）。
+                    // antd 的 Card 会把 `id` 透传到根 div 上（`Card.js` 的 `divProps` 就是 `...others`）。
+                    id={`t-${talk.talkKey}`}
                     hoverable
                     style={{ width: 700, marginTop: 25 ,fontWeight:600}}
                     className='talk'
