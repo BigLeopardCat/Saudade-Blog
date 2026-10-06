@@ -1,0 +1,75 @@
+# 依赖更新的自动化（20261006）。三件事各自解决一个具体问题：
+#
+#   ① 安全更新此前**没开**（vulnerability alerts 与 security updates 都是 disabled）。
+#      Rust 依赖是**编译进生产二进制**的那一半，一条 RUSTSEC 公告就是线上的洞，
+#      没人盯着就等于永远不知道。仓库设置那一侧 20261006 已打开，这个文件管的是版本更新。
+#   ② 版本更新**分批成组**：不分组的话一周能开出十几个 PR，最后必然是被全部无视——
+#      "开着没人看的告警"和没开是一回事。
+#   ③ `github-actions` 这一条是给 `.github/workflows/deploy.yml` 里那 5 个 action 准备的。
+#      那个文件里配着 SSH 私钥与 R2 凭据，而这些 action 现在都是按 `@v4` 这种**可变 tag**
+#      引用的 ⇒ tag 被上游改动一次，下一次 push 的 run 就带着凭据执行任意代码。
+#      钉成 40 位提交号才是唯一稳的写法，钉了之后靠这个生态自动提 bump PR，不必人肉维护。
+#
+# ⚠️ 本仓的默认分支 `cn_sora_blog` **就是部署分支**（push 即部署）⇒ dependabot 的 PR
+# 默认指向它，merge 一次就真上线一次。闸门在 CI：`build-and-deploy` 被 `check` needs 住，
+# 检查不过不构建不上传不部署；PR 上一次部署都不会发生。所以看 dependabot 的 PR 时
+# **看 check 的红绿**，别当成"机器人提的，直接合"。
+#
+# ⚠️ 提交信息：CI 的 check job 对 PR 带上来的**每一条提交**都跑 `.githooks/commit-msg`，
+# 而那个钩子要求首行是 `type: 描述`（type 在白名单里）。dependabot 默认写的是
+# `Bump x from a to b`——**没有 type**，那会让每一个 dependabot PR 都红在提交信息闸上。
+# 下面的 `commit-message.prefix` 就是为了过这道闸，别删。副作用要知道：
+# 摘要正文是 dependabot 生成的英文（改不成中文，它只认 prefix），所以这几个 PR 的
+# 首行形如 `chore: Bump serde from 1.0.100 to 1.0.110`——**过机器闸，但不是中文摘要**。
+
+version: 2
+updates:
+  # ── Rust 后端：编译进生产二进制的那一半 ────────────────────────────────
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: chore
+      prefix-development: chore
+    groups:
+      # 只把 minor/patch 合成一个 PR；major **单独开**——它可能真的需要人读一遍
+      # changelog（serde、sea-orm 这种大版本会带破坏性改动，而本仓的 CI 只跑
+      # `cargo test` + tsc，类型之外的行为回归它测不出来）。
+      cargo-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # ── 前端：构建进 dist，nginx 直接服务 ──────────────────────────────────
+  - package-ecosystem: npm
+    directory: "/frontend"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: chore
+      prefix-development: chore
+    groups:
+      npm-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # ── 工作流自己用的 action（见文件头 ③）────────────────────────────────
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: chore
+      prefix-development: chore
