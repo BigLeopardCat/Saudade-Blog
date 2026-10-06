@@ -1,0 +1,210 @@
+# nginx 站点模板：静态直服前端 + 反代 Rust 后端
+#
+# 用法：
+#   sudo cp deploy/nginx/blog.conf.template /etc/nginx/sites-available/blog
+#   sudo sed -i "s#__APP_DIR__#$PWD#g" /etc/nginx/sites-available/blog
+#   # 再把 <你的域名> / <证书名> 换成实际值，然后：
+#   sudo ln -sf /etc/nginx/sites-available/blog /etc/nginx/sites-enabled/blog
+#   sudo nginx -t && sudo systemctl reload nginx
+#
+# ⚠️ **备份文件不要放在 sites-enabled/ 里**：那是 `include /etc/nginx/sites-enabled/*`，
+#    目录里的任何文件都会被加载 ⇒ 一个 `blog.conf.bak` 就是一组重复的 server，
+#    nginx -t 报 duplicate default server 起不来。备份放 sites-available/ 或别处。
+#
+# ⚠️ 三个 location 的**先后是承重的**，顺序反了就静默出错（各自的原因写在原处）。
+#
+# 这个文件里没有秘密：证书与密钥在 /etc/nginx/ssl/ 下（0600），不在仓库里。
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TLS 证书：两种做法，选一种
+#
+# 甲、**先把站点跑起来**（DNS 还没指过来 / 还没有证书）：用自签证书 + 一个
+#     `default_server` 块，靠 IP 访问（浏览器会报证书不受信，点继续即可）。
+#     下面第一个 server 块就是它，证书自己签：
+#         sudo mkdir -p /etc/nginx/ssl
+#         sudo openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+#              -keyout /etc/nginx/ssl/selfsigned.key \
+#              -out /etc/nginx/ssl/selfsigned.crt -subj "/CN=localhost"
+#
+# 乙、**正式证书**（有了域名之后）：第二个 server 块。证书放成
+#     `/etc/nginx/ssl/<证书名>.crt` + `<证书名>.key`，或用 certbot 之类的 ACME 客户端
+#     自动续期（那就把下面两行换成 certbot 写好的路径，并把 80 那个块的跳转让给
+#     certbot 的 challenge——`.well-known/acme-challenge` 必须在跳转**之前**放行，
+#     否则续期永远失败）。
+#
+# 两者可以并存（本模板就是这样）：`default_server` 兜住按 IP / 未知 Host 来的请求，
+# 正式块接住域名。**只留乙也行**，但那时任何未匹配 Host 的请求会落到第一个 server。
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# ══ 甲：IP / 未知 Host 兜底（自签证书）═══════════════════════════════════════
+server {
+    listen 443 ssl http2 default_server;
+    server_name _;
+
+    ssl_certificate     /etc/nginx/ssl/selfsigned.crt;
+    ssl_certificate_key /etc/nginx/ssl/selfsigned.key;
+
+    root __APP_DIR__/frontend/dist;
+
+    # 看板娘模型与运行时资源 → 强缓存
+    # ⚠️ 必须排在下面 `\.(js|css|json)$` 的 no-store 正则**之前**，否则被它吃掉。
+    # 这些文件不含 content hash 且极少变更（换模型时手动清缓存即可）；脚本换版靠
+    # `?v=` 查询串（不同 query 是不同缓存条目），immutable 不影响版本更新。
+    location ~* ^/(live2d_model|cubism5|live2d-widgets)/ {
+        try_files $uri =404;
+        expires 1y;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        access_log off;
+    }
+
+    # 带 content hash 的资源 → 长期缓存
+    location ~* "-[a-zA-Z0-9_-]{8,}\.(js|css|woff2?|mp4|webm|jpe?g|png|webp)" {
+        try_files $uri =404;
+        expires 1y;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        access_log off;
+    }
+
+    # 无哈希的 JS/CSS/JSON → 不缓存（改了就得立刻生效的那种）
+    location ~* \.(js|css|json)$ {
+        try_files $uri =404;
+        expires -1;
+        add_header Cache-Control "no-store, no-cache, must-revalidate";
+    }
+
+    # 无哈希的图片/字体 → 短缓存 7 天。
+    # `location /` 与上面那条都是 no-store，而头像 / favicon / 图标字体都没 content hash
+    # ⇒ 不加这条的话每打开一次页面就全部重下（实测约 260 KB/次）。
+    # 位置必须在 `location /` **之前**（前缀 location 会让位给正则）。
+    location ~* \.(png|jpe?g|gif|ico|svg|webp|bmp|tiff?|ttf|otf|eot|woff2?)$ {
+        try_files $uri =404;
+        expires 7d;
+        add_header Cache-Control "public, max-age=604800";
+        access_log off;
+    }
+
+    location = /sitemap.xml {
+        proxy_pass http://127.0.0.1:3000;
+    }
+
+    # SPA 兜底：任何未命中的路径回 index.html（前端路由）
+    location / {
+        try_files $uri $uri/ /index.html;
+        expires -1;
+        add_header Cache-Control "no-store, no-cache, must-revalidate";
+    }
+
+    # ★ `^~` 不是装饰：上面那条"带 content hash 的资源"是**正则** location，nginx 里
+    #   正则优先级高于普通前缀 location ⇒ 任何形如 `-8位以上哈希.扩展名` 的 URL 都会
+    #   在到达本块之前被它按 `try_files $uri =404` 判死。受害的是**上传的图**：
+    #   形如 `20260831011133_49996ec2-....png` 的封面 ⇒ 后端 200、过 nginx 404，
+    #   页面上是一张破图。`^~` 让本前缀块优先于正则，/api/ 从此一律交给后端。
+    location ^~ /api/ {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        client_max_body_size 20m;
+        # 对话是 SSE：长回答（公式推导等）LLM 生成可能超过 60s，必须放宽。
+        # Rust 侧已设 `X-Accel-Buffering: no`（别去掉），否则帧会被缓冲到结束才下发。
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+        proxy_connect_timeout 10s;
+    }
+
+    # 物联网平台是**可选件**（源码在仓库 iot/）。装了就把下面这行解注，并读
+    # iot/nginx/include-line.txt——目录为空 = 通配匹配不到文件，nginx 不报错，
+    # /mqtt、/device-api/、/device-console/ 三个入口一起"不存在"（这就是"可拔插"）。
+    # 装卸用 iot/toggle.sh；装法见 iot/README.md。
+    # include /etc/nginx/snippets/blog-iot/*.conf;
+
+    location = /logo.png {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+}
+
+
+# ══ 乙：正式域名（证书换成你自己的）═════════════════════════════════════════
+# 与上面是**同一条配置**，只换 server_name 与两行证书路径。改上面那块时，
+# 记得**两块一起改**——它们各自独立，漏一块的症状是"域名访问 404 / 样式全丢"。
+server {
+    listen 443 ssl http2;
+    server_name <你的域名> www.<你的域名>;
+
+    ssl_certificate     /etc/nginx/ssl/<证书名>.crt;
+    ssl_certificate_key /etc/nginx/ssl/<证书名>.key;
+
+    root __APP_DIR__/frontend/dist;
+
+    location ~* ^/(live2d_model|cubism5|live2d-widgets)/ {
+        try_files $uri =404;
+        expires 1y;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        access_log off;
+    }
+
+    location ~* "-[a-zA-Z0-9_-]{8,}\.(js|css|woff2?|mp4|webm|jpe?g|png|webp)" {
+        try_files $uri =404;
+        expires 1y;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        access_log off;
+    }
+
+    location ~* \.(js|css|json)$ {
+        try_files $uri =404;
+        expires -1;
+        add_header Cache-Control "no-store, no-cache, must-revalidate";
+    }
+
+    location ~* \.(png|jpe?g|gif|ico|svg|webp|bmp|tiff?|ttf|otf|eot|woff2?)$ {
+        try_files $uri =404;
+        expires 7d;
+        add_header Cache-Control "public, max-age=604800";
+        access_log off;
+    }
+
+    location = /sitemap.xml {
+        proxy_pass http://127.0.0.1:3000;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+        expires -1;
+        add_header Cache-Control "no-store, no-cache, must-revalidate";
+    }
+
+    location ^~ /api/ {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        client_max_body_size 20m;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+        proxy_connect_timeout 10s;
+    }
+
+    # include /etc/nginx/snippets/blog-iot/*.conf;
+
+    location = /logo.png {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+}
+
+
+# ══ HTTP → HTTPS 强制跳转 ═══════════════════════════════════════════════════
+# ⚠️ 用 certbot 之类的 ACME 客户端时，它需要在跳转**之前**接住
+#    `/.well-known/acme-challenge/`（那一段由 certbot 自己插，别把它挤掉），
+#    否则证书到期后永远续不上，而症状只是"某天浏览器报证书过期"。
+server {
+    listen 80 default_server;
+    server_name _;
+    return 301 https://$host$request_uri;
+}

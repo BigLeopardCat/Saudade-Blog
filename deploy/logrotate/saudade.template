@@ -1,0 +1,41 @@
+# logrotate 模板：项目所有服务日志统一轮转
+#
+# 用法：
+#   sudo sed "s#__APP_DIR__#/你的/部署根目录#g; s#<你的用户名>#你的用户名#g" \
+#        deploy/logrotate/saudade.template | sudo tee /etc/logrotate.d/saudade >/dev/null
+#   sudo chmod 644 /etc/logrotate.d/saudade
+#   sudo logrotate -d /etc/logrotate.d/saudade     # -d = 干跑，只打印不动作
+#
+# ⚠️⚠️ **属主必须是跑服务的那个用户**。logrotate 的 `su` 一行要求日志文件属于
+#     那个用户；如果文件是 root 属主（比如先手工 `touch` 出来的、或者服务一度以
+#     root 跑过），轮转会在日志里写一句警告然后**静默跳过**——文件一直长，而你以
+#     为轮转开着。建完目录后先确认一次：`ls -l __APP_DIR__/logs/`。
+#     日志目录本身收紧到 0700、文件 0600（属主仍是服务用户，三个服务都 User=<你的用户名>）。
+#
+# copytruncate：进程/systemd 持有 fd 继续写原文件，**无需重启服务**。
+# 代价是从"复制"到"截断"之间写入的少数几行会丢——对一个日志文件来说可以接受，
+# 换来的是一次轮转不打断任何在途请求（尤其是不打断正在流式的对话）。
+#
+# 三个 glob 对应日志分组（见 docs/deployment-and-ops.md §4）：
+#   logs/           后端组（rust.log / deploy.log / health.log / device.log）
+#   logs/agent/     agent 服务（agent.log）
+#   logs/frontend/  前端错误上报（monitor.log）
+#
+# ⚠️ **这里没有 traces 的块，是刻意的**：trace 是"一次会话一个文件、写完即静止"的
+#    产物，而 logrotate 的 `rotate N` 靠**同名文件**后缀 +1 计数——对文件名唯一的
+#    文件完全无效（配置写着 rotate 14，实际最老的文件 26 天）。它的保留期由 agent 仓
+#    的 `eval/trace_retention.py` 执行（>24h 压缩、>30 天删，默认只列不删）。**别再
+#    给 traces 加一个轮转块**——那正是这个仓反复踩的"装饰性配置"（策略写了、没人执行）。
+
+__APP_DIR__/logs/*.log
+__APP_DIR__/logs/agent/*.log
+__APP_DIR__/logs/frontend/*.log {
+    daily
+    rotate 14
+    compress
+    missingok
+    notifempty
+    copytruncate
+    create 0640 <你的用户名> <你的用户名>
+    su <你的用户名> <你的用户名>
+}
