@@ -225,6 +225,23 @@ jobs:
           MYSQL_BIN: docker exec -i ${{ job.services.mysql.id }} mysql
         run: bash scripts/migration/fresh_install.sh saudade_blog_it -h127.0.0.1 -P3306 -uroot -pci-root-pw
 
+      - name: Uploads verifier（纯函数自检 + 真库冒烟）
+        # `scripts/verify_uploads.py` 核对"库里引用的本地图"与"盘上真实文件"，
+        # 是迁移/恢复的验收判据。它的 SQL 属于"没有真库就一个字都验不了"那一类
+        # （`cargo check` 全绿对它没意义：列名写错、`IFNULL` 少一层，本机不跑就永远不知道），
+        # 所以借 job 里这个真 MySQL 跑一遍。空库 + 空目录 ⇒ 没有缺图 ⇒ 退出码必须是 0。
+        # runner 上没有 mysql 客户端 ⇒ 与上一步同一条路（`MYSQL_BIN` 容器前缀）。
+        env:
+          MYSQL_BIN: docker exec -i ${{ job.services.mysql.id }} mysql
+          # 随 runner 消亡的一次性容器口令，与生产库无关
+          DATABASE_URL: mysql://root:ci-root-pw@127.0.0.1:3306/saudade_blog_it
+          UPLOAD_DIR: ${{ runner.temp }}/ci-uploads
+        run: |
+          set -euo pipefail
+          python3 scripts/verify_uploads.py --self-test
+          mkdir -p "$UPLOAD_DIR"
+          python3 scripts/verify_uploads.py
+
       - name: Rust tests（MockDatabase + 真 MySQL 两层）
         # TEST_MYSQL_URL 在场 ⇒ tests/mysql_integration.rs 真连库跑；缺席 ⇒ 它自己跳过
         # （贡献者本机 `cargo test` 因此不受影响）。**在场但连不上是失败、不是跳过**，
