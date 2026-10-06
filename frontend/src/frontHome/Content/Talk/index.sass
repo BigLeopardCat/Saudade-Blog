@@ -62,6 +62,13 @@
       &:hover
         opacity: .8
   .talk
+    // 深链定位（`?tk=`）时闪一下：与评论区 `.comment-hit` **同一套做法**（同色、同时长、
+    // 同为 inset 描边 + 外发光），只换了动画名。页面里两处"我刚把你指的那条圈出来了"
+    // 长得不一样会显得是两回事。
+    // ⚠️ 挂在 `.talk`（卡片）这一层，也正是 `id={`t-…`}` 所在的那一层——高亮与锚点同层，
+    // 不会出现"圈住的是外面那圈留白"。
+    &.talk-hit
+      animation: talkHit 1.8s ease-out
     position: relative
     width: 90%
     max-width: 400px
@@ -158,3 +165,12 @@
     // 留这条注释是为了下次别再把它加回来：那条规则现在的匹配面是 0。
     .ant-card-meta-description
       color: var(--font-p-color) !important
+
+// 深链高亮。与 `components/CommentSection/index.sass` 的 `@keyframes commentHit` 逐字同形
+// （`0%, 25%` 处最亮 = 前 0.45s 停住让人看清，然后淡出）。**两处各写一份**，因为
+// sass 的 `@keyframes` 在这个构建里不做跨文件共享；改一处要记得另一处。
+@keyframes talkHit
+  0%, 25%
+    box-shadow: inset 0 0 0 2px #e74c3c, 0 0 12px rgba(231, 76, 60, 0.35)
+  100%
+    box-shadow: inset 0 0 0 2px transparent, 0 0 0 transparent

@@ -6,6 +6,9 @@
   ② 卡片上带精确 `HH:mm:ss`（20260924 起在卡片**左下角**，20261006 随署名行上移到**首行右侧**）；
   ③ **卡片版式**（20261006 用户第 4 条）：头像 → 署名同一行、标题另起一行、正文在标题下面。
      时刻的位置在 ② 与 ③ 之间来回动过一次，本文件同时钉住"挪到哪了"，避免下次静默漂走。
+  ④ **深链定位**（20261006 站内聚合搜索）：`/talk?tk=<id>` 要落到那一条上。
+     走的是**同一条路由内换地址**那条路（`window.__nav`）——"挂载时读一次地址栏"的实现在
+     这里必然静默失效，而那正是留言板 `?lid=` 的写法、也是本轮最容易抄错的一处。
 
 为什么值得单独一个沙箱：这两处都是"看着像对了、其实拿的是错值"的地方——
 年份若是从 `new Date()` 取（而不是从每条数据的 createTime），页面看起来完全正常，
@@ -114,8 +117,21 @@ export const Provider = ({ children }: any) => children;
     (sb / "entry.tsx").write_text('''\
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
+import { MemoryRouter, useNavigate } from 'react-router-dom';
 import TalkList from './src/frontHome/Content/Talk/index.tsx';
-(window as any).__mount = () => createRoot(document.getElementById('root')!).render(<TalkList />);
+
+// ⑦ 深链那一节要能**在同一个 Router 里**换地址（`/talk → /talk?tk=2`），
+// 所以这里把 navigate 借出来给外面用。**不能只桩 router**：`useSearchParams` 只有在
+// 真 Router 上下文里才有值，桩掉它就等于把 ⑦ 要验的那件事（响应式读地址栏）一起验没了。
+let nav: any = null;
+const NavProbe = () => { nav = useNavigate(); return null; };
+(window as any).__nav = (to: string) => nav(to);
+(window as any).__mount = (url?: string) =>
+  createRoot(document.getElementById('root')!).render(
+    <MemoryRouter initialEntries={[url || '/talk']}>
+      <NavProbe />
+      <TalkList />
+    </MemoryRouter>);
 ''', encoding="utf-8")
 
     # ② sass 真编译（programmatic API）
@@ -373,6 +389,85 @@ with sync_playwright() as p:
     check("有数据时不显示空态/读失败态", pg.locator(".talkEmpty").count() == 0,
           str(pg.locator(".talkEmpty").count()))
 
+    # ⑦ 深链定位（`?tk=`，20261006 站内聚合搜索）：点一条说说进来要落到那一条上并闪一下。
+    # **另开一页、视口压到 400 高**：本样本只有两张卡，900 高的视口里页面根本滚不动，
+    # "有没有滚过去"这件事就无从断言（`scrollIntoView` 会是个静默的空操作）。
+    # 压到 400 让页面真的溢出，几何断言才有内容。
+    print("⑦ 深链定位（?tk=）：同一条路由内换地址也要落到那一条上")
+    pg2 = br.new_page(viewport={"width": 1280, "height": 400})
+    errs2 = []
+    pg2.on("pageerror", lambda e: errs2.append(str(e)))
+    pg2.goto(URL)
+    pg2.wait_for_timeout(600)
+    check("页面可滚动（这条前提不成立的话，下面几条都是空断言）",
+          pg2.evaluate("() => document.documentElement.scrollHeight > innerHeight + 100"),
+          pg2.evaluate("() => document.documentElement.scrollHeight + '/' + innerHeight"))
+    check("没有 tk 时不高亮任何人、页面停在顶部",
+          pg2.locator(".talk-hit").count() == 0
+          and pg2.evaluate("() => window.scrollY") == 0)
+
+    # 导航前先把目标卡的位置量下来（"它本来被切在视口下缘"是"滚过去了"这条判据的前提）。
+    # 取的是**到视口中心的距离**：本样本只有两张卡，页面滚到底也不足以把第二张正对中心
+    # （文档高度 527、视口 400 ⇒ 最多只能滚 127，`scrollIntoView` 的居中要求被夹住了）。
+    # 所以判据只能是"明显更靠近中心"，不能写"正好居中"——那是夹具给不出的位置。
+    def center_dist():
+        return pg2.evaluate("""() => {
+          const el = document.getElementById('t-2');
+          if (!el) return -1;
+          const b = el.getBoundingClientRect();
+          return Math.abs((b.top + b.bottom) / 2 - innerHeight / 2);
+        }""")
+
+    pg2.wait_for_timeout(200)   # 先等入场动画收尾（y:-20→0 走 transform，会进 rect）
+    dist_before = center_dist()
+    check("导航前目标卡离视口中心很远（本判据的前提：它本来不在视野里）",
+          dist_before > 200, f"{dist_before:.0f}px")
+
+    # ★ 同一条路由内换地址 —— **正是"挂载时读一次 window.location.search"那种实现会静默
+    # 失效的那一格**（组件不重挂载，那个实现一辈子看不到新参数）。留言板 `/guestbook?lid=`
+    # 就是这么写的，所以这里必须走一次真导航，而不是直接带着 `?tk=2` 开页面。
+    pg2.evaluate("() => window.__nav('/talk?tk=2')")
+    pg2.wait_for_timeout(400)
+    check("导航后无 JS 报错", not errs2, "; ".join(errs2[:2]))
+    check("刚好一张卡被高亮（不是全部、也不是零张）",
+          pg2.locator(".talk-hit").count() == 1, str(pg2.locator(".talk-hit").count()))
+    check("高亮的是 tk=2 那一张（锚点在卡片本身，不是外层动画盒）",
+          pg2.evaluate("""() => {
+            const hit = document.querySelector('.talk-hit');
+            const card = document.getElementById('t-2');
+            if (!hit || !card) return false;
+            // 同一个元素：高亮与锚点同层（挂在 motion.div 上的话这里会是 false）
+            if (hit !== card) return false;
+            // 锚点必须**是卡片**，不是外面那层 .article 包壳
+            return card.classList.contains('talk') && card.closest('.article') !== card;
+          }"""))
+    pg2.wait_for_timeout(300)   # 等入场动画收尾再量几何
+    dist_after = center_dist()
+    check("目标卡明显滚向视口中心（至少近了 100px——不滚动的话这个数一动不动）",
+          dist_after >= 0 and dist_after <= dist_before - 100,
+          f"{dist_before:.0f} → {dist_after:.0f}")
+    check("页面确实滚下去了（不是停在顶部）", pg2.evaluate("() => window.scrollY") > 0,
+          str(pg2.evaluate("() => window.scrollY")))
+
+    # 高亮是**一闪而过**的：1.8s 后自己摘掉，不然列表里永远圈着一条。
+    # 先把"摘掉之前确实亮着"记下来：只断言"1.8s 后没有高亮"的话，**从没亮过**也是绿的
+    # （负控里这条就是靠这个假通过混过去的——高亮那条链整个没跑起来，它照样 ✅）。
+    lit_before_wait = pg2.locator(".talk-hit").count()
+    pg2.wait_for_timeout(2000)
+    check("高亮亮过、且 1.8s 后自己摘掉（不留一条永远圈着的卡）",
+          lit_before_wait == 1 and pg2.locator(".talk-hit").count() == 0,
+          f"等待前 {lit_before_wait} / 等待后 {pg2.locator('.talk-hit').count()}")
+
+    # 目标不在列表里（说说被删/被驳回）⇒ **安静兜底**：不报错、不高亮、页面留住。
+    # 与 `CommentSection` 的 `?cid=`、留言板的 `?lid=` 同一条纪律：页面本身已经开对了，
+    # 再弹一句"没找到"只会添乱。
+    pg2.evaluate("() => window.__nav('/talk?tk=999')")
+    pg2.wait_for_timeout(400)
+    check("指向不存在的说说：不报错、不高亮",
+          not errs2 and pg2.locator(".talk-hit").count() == 0,
+          "; ".join(errs2[:2]) if errs2 else str(pg2.locator(".talk-hit").count()))
+
+    pg2.close()
     br.close()
 
 print()
