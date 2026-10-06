@@ -12,17 +12,36 @@ interface UpLoadButtonProps {
      */
     disabled?: boolean;
     title?: string;
+    /**
+     * 按钮上的字（20261006 加，为了图库页并排的两颗上传钮）。不给 = 「上传」，
+     * **且不带任何修饰类** —— 几何与从前逐字节相同（编辑器/封面那几处的调用方
+     * 一个都不用改）。
+     */
+    label?: string;
+    /**
+     * 底色档（20261006 加）：不给 = 手账主色（粉）；`alt` = 墨色那一档。
+     * 只有"两颗并排、必须一眼分出谁是谁"的场合才用（图库页：本站服务器 / R2 图床）。
+     */
+    tone?: 'alt';
 }
 
-const UpLoadButton = ({ onClick, disabled, title }: UpLoadButtonProps) => {
+/** 类名拼接。顺序固定，避免同一份类拼出两串不同的字符串（测试按 class 找元素）。 */
+const classes = (parts: Array<string | undefined | false>) =>
+    ['select', ...parts].filter(Boolean).join(' ');
+
+const UpLoadButton = ({ onClick, disabled, title, label, tone }: UpLoadButtonProps) => {
     return (
         <button
-            className={disabled ? 'select select-disabled' : 'select'}
+            className={classes([
+                label ? 'select-labeled' : '',
+                tone === 'alt' ? 'select-alt' : '',
+                disabled ? 'select-disabled' : '',
+            ])}
             onClick={disabled ? undefined : onClick}
             disabled={disabled}
             title={title}
         >
-            <span className="text">上传</span>
+            <span className="text">{label || '上传'}</span>
             <span className="icon">
                 <img src={img} alt="" />
             </span>

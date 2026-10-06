@@ -10,6 +10,7 @@ import { message, Upload } from 'antd';
 import CheckButton from "../../../components/Buttons/CheckButton";
 import {ImgUrl} from "../../../interface/ImgTypes";
 import {delImages, getImageList, getR2Usage, uploadImages} from "../../../apis/ImageMethods.tsx";
+import type {UploadTarget} from "../../../apis/ImageMethods.tsx";
 import ImageCompression from "../../../apis/ImageCompression.tsx";
 import { resolveApiAssetUrl } from '../../../utils/runtimeApi';
 import { assetDisplayName } from '../../../utils/assetName';
@@ -52,6 +53,14 @@ const Albums = () => {
     // 连注释里写一遍它也会红——这条守卫是要"想加回表单"的人先撞一次墙）。
     const navigate = useNavigate();
     const [r2, setR2] = useState<R2Usage | null>(null);
+
+    // ── 这次上传存哪儿（20261006，用户第 1 条：两颗按钮分别上传）──────────────
+    // 起因：图库切到 R2 之后，那颗**唯一**的上传钮被 `uploadBlocked()` 灰掉了
+    // （配额满、或用量读不出来——而读不出来正是令牌没配好时的常态），
+    // 于是"存本机盘"这条明明还好的路**点不动了**。服务端那头当时也没有入口：
+    // `try_r2_upload` 在面板开着 R2 时永不返回 `None`（静默改道，不报错）。
+    // 现在两颗钮各带一个显式 target，服务端按它办。
+    const [uploadTarget, setUploadTarget] = useState<UploadTarget>('local');
 
     const changeView = (v: AlbumView) => {
         setView(v);
@@ -145,8 +154,9 @@ const Albums = () => {
         // 更新选择的数量
         setSelectDelete(prevCount => isChecked ? prevCount - 1 : prevCount + 1);
     };
-    //上传悬浮框
-    const showModal = () => {
+    //上传悬浮框（`target` 决定这次传到哪儿，弹窗标题与提示都跟着它变）
+    const showModal = (target: UploadTarget) => {
+        setUploadTarget(target);
         setIsModalOpen(true);
     };
 
@@ -171,7 +181,8 @@ const Albums = () => {
             const compressedFile = await ImageCompression(req.file);
             const formData = new FormData();
             formData.append('file', compressedFile);
-            uploadImages(formData).then((res) => {
+            // 显式 target：**这次点的是哪颗钮，就传到哪儿**（不再由面板开关替用户决定）
+            uploadImages(formData, uploadTarget).then((res) => {
                 // ⚠️ 判**业务码**而不是 `res.status`（20261006 修）。本仓的失败一律是
                 // HTTP 200 + `code: 500`（服务端从不靠状态码表达业务失败），所以原先那句
                 // `res.status === 200` 恒真 —— 配额拒绝、R2 凭据缺失、PUT 失败**全都被
@@ -231,6 +242,13 @@ const Albums = () => {
     // 读数不可信时**不显示百分比**（`usagePercent` 对 limit<=0 返回的是 100 ——
     // 那是"算不出来"的表达，印在按钮上会变成一句假话："R2 存储 · 100%"）
     const r2Pct = r2 && !r2.listError ? usagePercent(r2.usedBytes, r2.limitBytes) : null;
+    // R2 那颗钮能不能点。**两种原因分开关**：没配全（去配置）与配额/读数（去清理）。
+    // 顺序不能反：没配全时 `uploadBlocked` 按契约是"不拦"（它只管配额那件事），
+    // 只有这里才知道"压根没启用"。
+    const r2Disabled = !r2Configured || r2Blocked.blocked;
+    const r2DisabledReason = !r2Configured
+        ? '图库没启用 R2 图床（去「站点设置 → 图库存储」配置）'
+        : r2Blocked.reason;
 
 
     return <div style={{height: '100%'}} className='allin'>
@@ -247,12 +265,31 @@ const Albums = () => {
     >
             <div style={{display: "flex",flexDirection: 'row',alignItems:'center',justifyContent: 'space-between',marginTop: 30,marginLeft: 20,marginRight: 20}} className={"action_img"}>
                 <div style={{display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 12}}>
-                    <UpLoadButton onClick={showModal} disabled={r2Blocked.blocked} title={r2Blocked.reason || undefined} />
+                    {/* ① 存本站服务器：**永不被 R2 的状态灰掉** —— 这正是本轮要修的那件事。
+                        R2 开着、用量又读不出来的时候，本机盘这条路明明是好的，
+                        从前那颗唯一的按钮却会被灰掉，于是整页一个能传的地方都没有。 */}
+                    <UpLoadButton
+                        onClick={() => showModal('local')}
+                        label="传到本站"
+                        title="上传到本站服务器（文件存在这台机器上）"
+                    />
+                    {/* ② 存 R2 图床：没配全 / 配额满 / 读数不可信时灰掉（判据同源于 utils/r2Quota） */}
+                    <UpLoadButton
+                        onClick={() => showModal('r2')}
+                        label="传到 R2"
+                        tone="alt"
+                        disabled={r2Disabled}
+                        title={r2DisabledReason || '上传到 R2 图床（文件存在对象存储上）'}
+                    />
                     {/* 不能点就必须说出为什么（只藏在 title 里，触屏上根本看不到）。
-                        这一行只在被拦时渲染 —— 平时它不占位、不改变工具栏几何。 */}
-                    {r2Blocked.blocked && (
-                        <span style={{color: 'var(--washi-pink-deep, #d94f9a)', fontSize: 13, maxWidth: 260}}>
-                            {r2Blocked.reason}
+                        这一行只跟 R2 那颗走 —— 服务器那颗永远能点，没有理由要说。
+                        平时它不占位、不改变工具栏几何。 */}
+                    {r2Disabled && (
+                        <span
+                            className="albumR2Blocked"
+                            style={{color: 'var(--washi-pink-deep, #d94f9a)', fontSize: 13, maxWidth: 260}}
+                        >
+                            {r2DisabledReason}
                         </span>
                     )}
                 </div>
@@ -344,6 +381,7 @@ const Albums = () => {
                    onCancel={handleCancel}
                    okText='完成'
                    cancelText='取消'
+                   title={uploadTarget === 'r2' ? '上传到 R2 图床' : '上传到本站服务器'}
             >
                 <Dragger {...props} listType='picture'>
                     <p className="ant-upload-drag-icon">
@@ -352,6 +390,13 @@ const Albums = () => {
                     <p className="ant-upload-text">点击或拖动文件到此区域进行上传</p>
                     <p className="ant-upload-hint">
                         支持单个或批量上传
+                    </p>
+                    {/* 两档的差异必须写在弹窗里：拖进去的图是落到本机盘还是进桶，
+                        决定了它以后"搬机器/换域名会不会失效"，而这一眼看得出来最省事。 */}
+                    <p className="ant-upload-hint">
+                        {uploadTarget === 'r2'
+                            ? `这次传到 R2 图床${r2?.publicBase ? `（公开域 ${r2.publicBase}）` : ''}，不占本机磁盘。`
+                            : '这次传到本站服务器（存在这台机器的磁盘上），地址是站内相对路径。'}
                     </p>
                 </Dragger>
 

@@ -110,3 +110,33 @@
 .select-disabled:active .icon svg {
     transform: none;
 }
+
+/* ── 带字的变体（20261006，图库页并排两颗上传钮）─────────────────────────────
+   只动**文字那一格**的横向起点：35px → 16px，把留给文字的位置从 65px 抬到 84px，
+   够放四个汉字。按钮宽度（150）、图标槽（40 / translateX(100)）与悬停展开那套
+   **一个数都不动** —— `tests/album-views.test.py` 量的正是那几处几何。
+   特异性与 `.select .text` 同级（0,2,0），靠"写在后面"取胜。 */
+.select-labeled .text {
+    transform: translateX(16px);
+    white-space: nowrap;
+}
+
+/* ── 墨色那一档（第二颗钮：R2 图床）──────────────────────────────────────────
+   ⚠️ 这里**不能**用 `--washi-sky` / `--washi-lav`（同族的浅色令牌）：它们配
+   `--washi-paper-3` 只有 1.7:1 左右，白天等于看不见字。`--washi-ink` 与
+   `--washi-paper-3` 是成对的**互为反色**（浅色档深墨底 + 粉白字、夜间档粉白底 +
+   深墨字），两档都在 9:1 以上；悬停往 `--washi-ink-2` 走亮一档，与主色那颗的
+   方向一致（见上 `.select:hover`）。 */
+.select-alt {
+    background: var(--washi-ink, #4a3550);
+}
+
+.select-alt:hover {
+    background: var(--washi-ink-2, #7c6584);
+}
+
+/* 禁用态：底色调回本色（与 `.select-disabled:hover` 那条同款，特异性多一节压过
+   上面的悬停）。缺了它，灰按钮一悬停就"亮起来"，像是能点。 */
+.select-alt.select-disabled:hover {
+    background: var(--washi-ink, #4a3550);
+}

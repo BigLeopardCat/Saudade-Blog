@@ -1,7 +1,7 @@
 use axum::{
     body::Body,
     extract::{Request, State},
-    http::{Method, StatusCode, header},
+    http::{HeaderValue, Method, StatusCode, header},
     middleware::Next,
     response::Response,
 };
@@ -27,6 +27,42 @@ pub async fn access_log(req: Request, next: Next) -> Response {
     if !(method == Method::GET && path == "/api/login") {
         info!(method = %method, path = %path, status = %resp.status().as_u16(), ms = ms, "http");
     }
+    resp
+}
+
+/// `/api/protect/download/` 出图侧的响应头加固（20261006，用户第 2 条）。
+///
+/// 这条路由把 `<UPLOAD_DIR>` 整个目录**公开、无鉴权**地直出（`ServeDir`），而
+/// content-type 是 `ServeDir` **按后缀猜**的 —— 猜错的表现不只是"图打不开"：
+/// 一个叫 `x.html` 的文件会在这里、在这个域下被当 HTML 渲染，同源 XSS 就成立了。
+/// 上传口那侧已经只收图片（后缀白名单 + 字节头，见 `utils::ALLOWED_IMAGE_EXTS`），
+/// 这里是第二道闸，判据共用 `utils::is_image_path`：
+///
+/// · 非图路径 ⇒ `Content-Type: application/octet-stream` + `Content-Disposition: attachment`
+///   （浏览器只会下载、绝不渲染）+ `X-Content-Type-Options: nosniff`；
+/// · 图片路径 ⇒ 只补 `nosniff`（后缀与字节已在上传口对齐，这里堵的是"浏览器自作主张
+///   嗅成别的类型"）。
+///
+/// **只动响应头，一个字节的 body 都不碰**：这条路由是出图主力（上行大头都在这里），
+/// 任何缓冲/改写都会把内存和延迟一起抬上去。
+///
+/// 目录列表（`/api/protect/download/` 与 `/api/protect/download/avatars`）落在非图那侧
+/// ⇒ 变成下载，不会在浏览器里列目录（`ServeDir` 本来也不列，这一层是顺带兜住）。
+pub async fn download_headers(req: Request, next: Next) -> Response {
+    let is_image = crate::utils::is_image_path(req.uri().path());
+    let mut resp = next.run(req).await;
+    let headers = resp.headers_mut();
+    if !is_image {
+        headers.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/octet-stream"),
+        );
+        headers.insert(
+            header::CONTENT_DISPOSITION,
+            HeaderValue::from_static("attachment"),
+        );
+    }
+    headers.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
     resp
 }
 

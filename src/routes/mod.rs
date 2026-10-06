@@ -226,7 +226,15 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/public/graph/artifact/:file", get(graph::graph_artifact))
         
         // Static Image Download (Public)
-        .nest_service("/api/protect/download", ServeDir::new(upload_dir()));
+        // 20261006（用户第 2 条）：出图侧包一层响应头加固 —— 图片补 `nosniff`，
+        // 非图一律 `application/octet-stream` + `attachment`（**只下载、不渲染**）。
+        // 判据与上传口同源（`utils::is_image_path` / 后缀白名单），见 download_headers 头注。
+        .nest_service(
+            "/api/protect/download",
+            Router::new()
+                .fallback_service(ServeDir::new(upload_dir()))
+                .layer(middleware::from_fn(crate::middleware::download_headers)),
+        );
 
     let protected_routes = Router::new()
         // Images
