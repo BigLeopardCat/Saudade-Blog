@@ -11,6 +11,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use crate::routes::AppState;
 use crate::auth_jwt;
+// LIKE 转义（% _ \ → 字面量）：20261006 起唯一实现在 search_core（聚合搜索也用它）。
+use crate::search_core::like_escape;
 use crate::entity::{
     agent_task, chat_history, chat_summary, conversation, execution_log, pending_action,
 };
@@ -87,18 +89,9 @@ pub struct ListQuery {
     q: Option<String>,
 }
 
-/// MySQL LIKE 默认反斜杠转义：用户输入的字面 % _ \ 若不转义，% _ 会当通配符、
-/// \ 会吞掉后续转义语义——内容搜索的用户输入注入面，须逐字符转义成 \% \_ \\
-fn like_escape(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for ch in s.chars() {
-        if ch == '%' || ch == '_' || ch == '\\' {
-            out.push('\\');
-        }
-        out.push(ch);
-    }
-    out
-}
+// `like_escape` 已搬到 `crate::search_core`（20261006）：这里原来有一份私有实现，
+// `routes/upload.rs` 还有一份，聚合搜索要用第三处 ⇒ 三处一份（语义逐字不变，见模块头注）。
+// 名字走文件顶部那条 `use crate::search_core::like_escape;`（`mod tests` 靠 `use super::*` 取到）。
 
 /// GET /api/chat/conversations：当前用户会话列表（最后活动倒序）。
 /// q 参数（20260903e）：标题 LIKE OR 会话内消息内容命中过滤，并带 hit_id 供前端定位。
@@ -506,59 +499,9 @@ pub async fn search_chat_messages(
 mod tests {
     use super::*;
 
-    // ── LIKE 转义：用户输入里的通配符必须变成字面量 ─────────────────────────
-    //
-    // 这三条只钉"转义函数"这一半；**另一半（真库真的按字面匹配）在
-    // `tests/mysql_integration.rs` 的会话搜索用例里**——LIKE 的语义在 SQL 里，
-    // 这里证明不了它。两半合起来才是完整的判据。
-    #[test]
-    fn 转义把百分号变成字面量() {
-        assert_eq!(like_escape("100%"), "100\\%");
-        assert_eq!(like_escape("a%b%c"), "a\\%b\\%c");
-    }
-
-    #[test]
-    fn 转义把下划线变成字面量() {
-        // `_` 是 LIKE 的单字符通配符：不转义时搜 `a_b` 会命中 `aXb`
-        assert_eq!(like_escape("a_b"), "a\\_b");
-        assert_eq!(like_escape("__init__"), "\\_\\_init\\_\\_");
-    }
-
-    #[test]
-    fn 反斜杠自己也要转义否则会吞掉后一个字符() {
-        // `\%` 是"字面百分号"，所以输入里的 `\` 必须先变成 `\\`
-        // —— 顺序错了（先转 % 再转 \）会把刚加上的 `\` 又转一遍，变成 `\\%`
-        assert_eq!(like_escape("a\\b"), "a\\\\b");
-        assert_eq!(like_escape("\\%"), "\\\\\\%");
-        assert_eq!(like_escape("\\_"), "\\\\\\_");
-    }
-
-    #[test]
-    fn 普通字符一个都不动() {
-        assert_eq!(like_escape(""), "");
-        assert_eq!(like_escape("hello world"), "hello world");
-        assert_eq!(like_escape("中文也原样"), "中文也原样");
-    }
-
-    #[test]
-    fn 转义只加反斜杠不改字符数() {
-        // 按 char 迭代而不是按字节：多字节字符不会被劈开。
-        // ⚠️ 判据**不能**写成 `out.contains("中文")`——反斜杠是插在字符**之间**的，
-        // 转义之后原文本来就不再连续出现（20261004 这么红过一次）。
-        // 要判的是"每个字符都完整地活着"：真按字节切了多字节字符会变成 U+FFFD，
-        // `contains(ch)` 立刻失败。
-        let s = "中%文_字\\";
-        assert_eq!(s.chars().count(), 6, "夹具写错了");
-        let out = like_escape(s);
-        assert_eq!(
-            out.chars().count(),
-            s.chars().count() + 3,
-            "三个特殊字符各加一个反斜杠，其余一个不多一个不少"
-        );
-        for ch in s.chars() {
-            assert!(out.contains(ch), "字符 {ch} 转义后不见了（多字节被劈开？）：{out}");
-        }
-    }
+    // `like_escape` 的五条测试随实现一起搬到了 `crate::search_core::like_escape_tests`
+    // （20261006）。这里不再留一份：同一份规则两份测试，改一份另一份开始假绿。
+    // 会话搜索自己的那半（真库真的按字面匹配）仍在 `tests/mysql_integration.rs`。
 
     // ── DB 时间戳 → 毫秒 ───────────────────────────────────────────────────
     #[test]

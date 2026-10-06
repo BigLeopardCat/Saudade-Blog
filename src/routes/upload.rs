@@ -14,6 +14,8 @@ use sea_orm::{ActiveModelTrait, EntityTrait, Set, QueryOrder, ColumnTrait, Query
 use crate::entity::image;
 use crate::entity::note;
 use crate::r2;
+// LIKE 通配符转义：20261006 起唯一实现在 search_core（原先本文件与 conversation.rs 各一份）。
+use crate::search_core::like_escape;
 use sha2::{Digest, Sha256};
 
 // ── 同一份字节重复上传 ⇒ 复用已有文件（20260924，用户拍板的 A 方案）─────────────
@@ -94,12 +96,11 @@ async fn ensure_image_row(state: &Arc<AppState>, url: &str) {
     }
 }
 
-/// LIKE 的通配符转义：图库 URL 里几乎每张图都带 `_`（`20260912013218_EMQX.png`），
-/// 而 `_` 在 LIKE 里是"任意单字符"——不转义的话 `a_b.png` 会命中 `axb.png`。
-/// 与 `routes/conversation.rs` 的同名函数同款；没合并到一处是为了不动那条链路。
-fn like_escape(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
-}
+// LIKE 的通配符转义：图库 URL 里几乎每张图都带 `_`（`20260912013218_EMQX.png`），
+// 而 `_` 在 LIKE 里是"任意单字符"——不转义的话 `a_b.png` 会命中 `axb.png`。
+// 这里原先有一份私有实现（与 `routes/conversation.rs` 的同名函数同款，注释写着"没合并到
+// 一处是为了不动那条链路"）。20261006 聚合搜索要用第三处 ⇒ 三处一份，实现在
+// `crate::search_core::like_escape`。两份旧实现语义逐字等价（链式 replace 与逐字符遍历同结果）。
 
 /// 这张图还有哪些文章在用（封面字段 / 正文文本）。返回 (文章 id, 标题)。
 async fn notes_using(state: &Arc<AppState>, url: &str) -> Vec<(i32, String)> {
