@@ -10,24 +10,24 @@ interface SeoHelmetProps {
   suffix?: boolean;
 }
 
-// 站点地址（canonical / og:url 的绝对前缀）。**别人部署必须能改** —— 这一处与
-// `index.html` 的 `__SITE_URL__` 是同一个值，两处都读 `VITE_SITE_URL`（默认值写在
+// 站点身份（canonical / og:url 的绝对前缀、站名、默认描述）。**别人部署必须能改** ——
+// 这几处与 `index.html` 的占位符是同一批值，都读 `VITE_SITE_*`（默认值写在
 // `vite.config.ts` 里，不读 `.env`：本仓 `.env*` 整类被 gitignore，别人 clone 后没有
-// 任何 .env，占位符会原样留在产物里）。改自己域名只需设 `VITE_SITE_URL`。
-import { SITE_URL } from '../utils/siteUrl';
+// 任何 .env，占位符会原样留在产物里）。改自己的域名/站名/描述只需设对应变量。
+import { SITE_URL, SITE_TITLE, SITE_DESCRIPTION } from '../utils/siteUrl';
 
 const SITE = SITE_URL;
 
 const SeoHelmet: React.FC<SeoHelmetProps> = ({
   title,
-  description = '个人技术博客 · Rust、React、IoT 开发',
+  description = SITE_DESCRIPTION,
   image = '/logo.png',
   url = '/',
   type = 'website',
   suffix = true,
 }) => {
   // 20260905：分隔符弃 em dash（用户：标题不想要破折号），改竖线；首页不拼后缀
-  const fullTitle = suffix === false ? title : `${title} | Saudade Blog`;
+  const fullTitle = suffix === false ? title : `${title} | ${SITE_TITLE}`;
   const fullUrl = `${SITE}${url}`;
   const fullImage = image.startsWith('http') ? image : `${SITE}${image}`;
 

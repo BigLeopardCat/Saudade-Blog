@@ -365,6 +365,16 @@ jobs:
           # 代码侧的缺省是**空串**（fork 不该继承本项目作者的署名），没配时构建会把那一行
           # 整条删掉。⚠️ **这个 Variable 必须设**，否则线上的署名会消失。
           VITE_SITE_AUTHOR: ${{ vars.VITE_SITE_AUTHOR }}
+          # 站名与描述（20261007 起也走 Variable）：<title> / og:title / og:description /
+          # twitter:* / 各页标题后缀 / 首页 SeoHelmet 全部取自这两项。**代码里不再写死**——
+          # 仓库是公开的，写死等于把本站的品牌与描述交给每个 clone 它的人。
+          # 未设时用中性占位（"个人博客" / "本站开发地址，尚未配置站点描述。"），构建日志会
+          # 打一行 [site-identity] 警告；线上要自己的文案就必须设。
+          VITE_SITE_TITLE: ${{ vars.VITE_SITE_TITLE }}
+          VITE_SITE_DESCRIPTION: ${{ vars.VITE_SITE_DESCRIPTION }}
+          # keywords（<meta name="keywords">）。**缺省空串 ⇒ 构建时整行删掉**：主流搜索
+          # 引擎早就不看它，留一份泛泛词表只会让人以为 SEO 靠它。要留就设自己的词表。
+          VITE_SITE_KEYWORDS: ${{ vars.VITE_SITE_KEYWORDS }}
         run: |
           npm ci
           # 看板娘前端**两棵树**（live2d-widgets/、live2d_model/）的源码：20261002 前端搬家起
