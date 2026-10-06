@@ -166,7 +166,10 @@ const Comments = () => {
                 </div>
                 <SearchButton style={{marginLeft: '50px'}}/>
             </div>
-            <Row gutter={16} style={{ display: 'grid',
+            {/* `talkGrid` 只为窄屏那条媒体规则能选中它（`grid-template-columns` 是内联的、
+                普通声明够不着）：窄屏降成单列 `1fr` —— 容器比 300px 还窄时，
+                `minmax(300px, 1fr)` 会把轨道撑到 300 往外顶。 */}
+            <Row gutter={16} className="talkGrid" style={{ display: 'grid',
                 gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
                 gridGap: 30 }}>
                 {talks.map((talk:Talk) => (

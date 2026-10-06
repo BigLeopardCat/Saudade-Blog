@@ -112,3 +112,25 @@
       width: 80px
 
 
+
+/* ⚠️ **窄屏（20261006 用户第 6 条）**：两处写死的横向尺寸在手机上都不成立 ——
+   ① `.link-items` 的轨道下限 200px 比窄屏正文（~330px）只差一点点，`minmax(200px,1fr)`
+   在更窄的机器上会把轨道顶出容器；② 友链申请那张网格的 `grid-gap: 90px` 是桌面口径，
+   窄屏两列之间留 90px 等于把卡片压扁。两处都收：轨道下限降到 140px、间距 16px；
+   申请卡 `width:270` 是内联的 ⇒ 只能靠 `!important` 改成吃满一列。
+   ⚠️ 申请那张写的是 **`1fr`**，不是 `repeat(auto-fit, minmax(0, 1fr))`：后者看着像"自动单列"，
+   实测（无头 Chromium，390 视口）是**按卡片数量把一行铺满**（3 张卡各 97px），而卡片的
+   `ant-card-body` min-content 是 226px —— 它托着 `min-width:auto` 这条自动下限拒绝再缩，
+   于是内容溢出轨道、被 `.allin{overflow:hidden}` 裁掉（文字看不见）。`1fr` = 一行。 */
+@media only screen and (max-width: 1024px)
+  .link-items
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr))
+    grid-gap: 16px
+    margin-right: 0
+
+  .reqGrid
+    grid-template-columns: 1fr !important
+    grid-gap: 16px !important
+
+  .reqGrid .resCard
+    width: 100% !important

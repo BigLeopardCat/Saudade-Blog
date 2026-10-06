@@ -833,3 +833,42 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
     transform: translateY(0)
   50%
     transform: translateY(-5px)
+
+/* 这两块原先的宽度/高度/`display` 挂在 JSX 的**内联** style 上（20261006 搬进来）。
+   照原值抄，桌面上逐像素不变：`.left`(25%) 是头像+签名那一栏，`.center`(60%) 是日历。
+   ⚠️ 必须排在下面那条窄屏媒体**之前** —— 本仓 `sass-media-shadow` 套件判的就是
+   "媒体档声明的属性被后面的普通规则压死"，顺序反了会直接判红。 */
+.home .left
+  width: 25%
+  height: 100%
+  display: flex
+  flex-direction: column
+
+.home .center
+  width: 60%
+  height: 100%
+
+/* ⚠️ **窄屏（20261006 用户第 6 条）**：`.left`(25%) 与 `.center`(60%) 的宽度原本挂在**内联**
+   style 上（本轮搬到这里，见 `index.tsx` 那两段注释）：内联压过普通声明，媒体档够不着。
+   两处一起说清：
+     · `<1024`：`flex-direction: column`，两块各吃满一行。此前 768~1024 之间两块并排，
+       日历那一栏只剩 ~60% 还要塞一整个月历。
+     · `<768` 的 `.center` 本来就 `display:none`（见上面那条 768 媒体），只剩 `.left` 独占一行 ——
+       它按 25% 算的话（97px @390）头像和签名挤成一团，正是用户报的"页面被截断"的一处。 */
+@media only screen and (max-width: 1024px)
+  .home
+    flex-direction: column
+    .left
+      width: 100%
+      height: auto
+    .center
+      width: 100%
+      height: auto
+      padding: 20px 0 0 0
+    /* `.about_logo` 在 ≤1530 档挂着 `transform: scale(1.4)`（:379-383，为的是宽屏两栏并排时
+       把左边那一栏的 logo 放大）。它**不改布局宽度、但改渲染宽度**：89% 的盒子 × 1.4
+       = 一栏的 124.6% ⇒ 左右各探出一截。宽屏时那一栏两侧有的是空地，探出去也没人看见；
+       窄屏单列之后它就顶到视口边上了 —— 无头 Chromium 实测 390 视口 `documentElement.scrollWidth`
+       = 407（多出 17px 的横向滚动），1024 视口 1099。单列本来就不需要放大，直接还原。 */
+    .about_logo
+      transform: none

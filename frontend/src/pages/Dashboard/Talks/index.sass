@@ -39,3 +39,27 @@
     font-weight: 400
     text-align: right
     color: var(--washi-ink-3, #a08ba8)
+/* ⚠️ **窄屏（20261006 用户第 6 条）**：卡片里写死 `width:300`、容器写死 `height:100vh`
+   + 内滚动，两样在手机上都成立不了 —— 300px 的卡放在 ~330px 的正文里左右各贴边，
+   而 100vh 的滚动容器套在"整页滚动"模型里会变成一个**内嵌的**滚动区（滚到一半
+   手指一停就卡在它里面）。窄屏全部放开：卡片吃满一列、容器回归内容高。
+   两条都带 `!important`：宽度是**内联**的（内联压过一切普通声明，只有 `!important` 能翻盘）。
+   ⚠️ 单列写的是 **`1fr`**，不是 `repeat(auto-fit, minmax(0, 1fr))` —— 后者看着像"自动单列"，
+   实测（无头 Chromium，390 视口，同一批 5 张卡）**它按卡片数量把一行铺满**：
+   `minmax(0,1fr)` 的最小值是 0 ⇒ auto-fit 数得出"能塞 5 条"，轨道各 55px、卡片只剩 **39px 宽**
+   （`width:100%` 也救不了：轨道的 1fr 只有 55，卡片的 `min-width:auto` 又托着 min-content
+   不让它溢出轨道）。`1fr` = 一行，实测卡片 324px = 整幅正文宽。 */
+@media only screen and (max-width: 1024px)
+  .Comments_Body
+    height: auto
+    overflow-y: visible
+    padding: 12px
+
+  .Comments_Body .talkGrid
+    grid-template-columns: 1fr !important
+    grid-gap: 16px !important
+
+  .Comments_Body .talkCard
+    width: 100% !important
+    // 卡片自己也要能缩：`min-width:auto` 这条自动下限会让 flex/grid 项拒绝缩到内容宽以下。
+    min-width: 0

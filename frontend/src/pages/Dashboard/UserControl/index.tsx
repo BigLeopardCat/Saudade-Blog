@@ -136,6 +136,8 @@ const UserControl = () => {
             focused
             multiline={extra?.multiline}
             rows={extra?.multiline ? 3 : undefined}
+            // `uc-70` 只为窄屏那条媒体规则当抓手（宽度是内联的，普通声明够不着）
+            className='uc-70'
             style={{ width: '70%', marginBottom: 20 }}
             onChange={handleChange}
             value={webInfo[id]}
@@ -157,7 +159,7 @@ const UserControl = () => {
                     {field('blogIcp', 'ICP 备案号')}
                     {field('blogPublicIcp', '公安网安备案号')}
                     {field('blogCopyright', '版权署名')}
-                    <div style={{ justifyContent: 'flex-end', display: 'flex', width: '70%' }}>
+                    <div className='uc-70' style={{ justifyContent: 'flex-end', display: 'flex', width: '70%' }}>
                         <Button variant="contained" style={{ width: 100 }} type='submit'>保存</Button>
                     </div>
                 </form>
@@ -172,7 +174,7 @@ const UserControl = () => {
                     {field('socialBilibili', 'Bilibili')}
                     {field('socialEmail', 'Email')}
                     {field('socialQQ', 'QQ')}
-                    <div style={{ justifyContent: 'flex-end', display: 'flex', width: '70%' }}>
+                    <div className='uc-70' style={{ justifyContent: 'flex-end', display: 'flex', width: '70%' }}>
                         <Button variant="contained" style={{ width: 100 }} type='submit'>保存</Button>
                     </div>
                 </form>

@@ -19,3 +19,18 @@
   .ant-menu-light .ant-menu-submenu-selected >.ant-menu-submenu-title
     //color: #1D1F2C
     
+/* ⚠️ **窄屏（20261006 用户第 6 条）**：`Notes` 这一层是子导航 —— `.header` 横排着一个
+   **写死 125px** 的竖排 `Menu`（全部文章 / 新建文章 / 分类管理 / 标签管理）加一条面包屑。
+   ⚠️ 实测口径（无头 Chromium + 本文件编译产物，390 视口）：**两边其实塞得下** ——
+   菜单 125px、面包屑 120px，合计 255px < 卡内 ~324px，所以下面这条**平时不会触发**。
+   它是一条**保险**：面包屑的宽度跟着页名走（多一个字就多 ~20px），而菜单那 125px 写死在
+   内联 style 上、不让位；一旦合计超出容器，默认的 `nowrap` 是把面包屑**压扁**
+   （图标与字被压成一列竖字）而不是换行。允许折行 = 装不下时整条掉到菜单下面。
+   ⚠️ 顺带记一条**没做**的事：`.header::before` 那条纸线是 `position:absolute` + `margin-top:40px`
+   （贴着单行 header 的底边）。真折行时 header 变两行高、这条线会停在两行之间 ——
+   因为上面量到平时不折行，本轮**没有**动它（改它要同时给 `.header` 加 `position:relative`
+   并把线改成 `bottom:0`，属于"为一条不触发的分支提前改版式"）。 */
+@media only screen and (max-width: 1024px)
+  .header
+    flex-wrap: wrap
+    align-items: flex-start

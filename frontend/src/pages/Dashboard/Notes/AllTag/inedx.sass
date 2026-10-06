@@ -27,3 +27,24 @@
     width: 40%
     margin-left: 10%
     margin-top: 50px
+
+/* ⚠️ **窄屏（20261006 用户第 6 条）**：这一页是左右分栏 —— 新建标签表单 `.newTagForm`
+   占 50% 左浮，它后面那个 div（里面是标签树）被浮动挤到剩下的 50%，树自己在里面再占 40%
+   （**不是**"两栏各占 50% + 40%"：实测 390 视口表单 178px、树 71px；1440 视口 634px / 254px，
+   两个宽度的比例对得上"树的 40% 是相对那一半算的"）。
+   手机上就是挤成一团：树名只装得下两三个字。⚠️ 它**不是溢出** —— 实测两个宽度下
+   `documentElement.scrollWidth` 都等于视口宽，量"跑出屏幕"的红是量不出来的，只能量宽度。
+   窄屏收成单列（各 100%、取消浮动，实测两栏都变成 357px），竖着排下来。 */
+@media only screen and (max-width: 1024px)
+  .tag_card
+    .newTagForm
+      width: 100%
+      float: none
+      height: auto
+      border-right: none
+      padding-bottom: 16px
+    .ant-tree
+      width: 100%
+      float: none
+      margin-left: 0
+      margin-top: 20px

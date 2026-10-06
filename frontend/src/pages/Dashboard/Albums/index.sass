@@ -92,3 +92,26 @@
 
 .albumActions
   gap: 14px
+
+/* ⚠️ **窄屏（20261006 用户第 6 条）**：图库那张卡是 `height: 86vh` + 自己内滚 ——
+   在"整页滚动"的窄屏模型里，86vh 的滚动区套在页面里，翻到第 20 张时手指一停就卡在
+   它里面（页面本身还滚得动，两个滚动区互相抢）。窄屏放开成内容高，滚的只有页面。
+   两条都要 `!important`：那两个值挂在**内联** style 上（见 `index.tsx` 那句注释）。 */
+@media only screen and (max-width: 1024px)
+  .albumScrollCard
+    height: auto !important
+    overflow-y: visible !important
+  /* 顶部那一行（`.action_img`：左边"R2 存储不可用"角标 + 中间「图库」标题 + 右边一排动作钮）
+     是 `display:flex; flex-direction:row; justify-content:space-between`，**三组谁都不许折行**。
+     窄屏卡内只有 ~324px，三组加起来 ~341px ⇒ 中间那组（「图库」+ 相册图标）被挤到 x=394，
+     整块**跑到屏幕外面**去了（`.allin` 是 `overflow:hidden`，连横向拖都够不着它）——
+     无头 Chromium 实测 390 视口：`h2` 的 left = 394、视口宽 390。
+     修法 = 允许折行：装不下的组整组掉到下一行；再给各组 `min-width:0` + 自身也能折行，
+     否则 flex 项的自动最小尺寸（内容宽）会让它拒绝缩、折行照样顶出去。 */
+  .action_img
+    flex-wrap: wrap
+    row-gap: 10px
+  .action_img > div
+    flex-wrap: wrap
+    min-width: 0
+    row-gap: 8px
