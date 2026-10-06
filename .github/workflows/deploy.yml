@@ -173,15 +173,34 @@ jobs:
             exit 0
           fi
           fail=0
+          skipped=0
           MSGFILE="$(mktemp)"
           while read -r sha; do
             [ -n "$sha" ] || continue
+            # dependabot 生成的提交豁免。首行由机器人按 `Bump <包> from <旧> to <新>` 拼，
+            # 包名一长就必然超过 60 字符——20261006 实测：16 个 PR 里 6 个红在这条上，
+            # 一条都不是代码问题，而红的是机器人没法自己改的那种。dependabot 自己有时会
+            # 缩短首行（丢掉版本区间）来碰运气，所以是"有时绿、有时红"，更难判读。
+            # 规则本体一个字没动，`.githooks/commit-msg` 仍是唯一事实源——这里只是按
+            # **作者**把它本来就不适用的一类摘出去。
+            # 这不是安全闸（是格式闸）：谁真想绕，把提交邮箱里塞个 dependabot 就行，
+            # 后果也只是格式不合规。
+            case "$(git log -1 --format=%ae "$sha")" in
+              *dependabot*)
+                echo "跳过 ${sha:0:9}：dependabot 生成的提交（首行长度不由人控制，**不是**通过）"
+                skipped=$((skipped + 1))
+                continue
+                ;;
+            esac
             git log -1 --format=%B "$sha" > "$MSGFILE"
             if ! bash .githooks/commit-msg "$MSGFILE"; then
               echo "::error::提交 ${sha:0:9} 的信息不合规（见上面的说明）"
               fail=1
             fi
           done < <(git log --no-merges --format=%H "${BEFORE}..${SHA}")
+          if [ "$skipped" -gt 0 ]; then
+            echo "本次跳过 ${skipped} 条 dependabot 提交（**不是**通过）"
+          fi
           exit "$fail"
 
       - name: Setup Rust
