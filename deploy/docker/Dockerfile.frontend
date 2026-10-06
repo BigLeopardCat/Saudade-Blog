@@ -1,0 +1,86 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+#  前端：node 构建 → nginx 只服静态文件
+#
+#  构建上下文 = 仓库根（compose 里 `context: ../..`）。这个镜像里的 nginx **只有静态
+#  文件和反向代理**，站点配置由宿主渲染好、只读挂进来（见 prepare.sh / README）：
+#  渲染要 sed/awk，而那两样在 nginx:alpine 里没有，硬要塞就得往运行镜像里装一堆构建工具。
+#
+#  ⚠️ 四条命令的**顺序是承重的**（npm ci → fetch:widget → vendor:live2d → build）：
+#     · fetch:widget 整树替换 public/live2d-widgets/ 与 public/live2d_model/
+#     · vendor:live2d 往 public/live2d-widgets/vendor/ 与 public/cubism5/ 写第三方产物
+#     反过来跑 = 刚取到的 vendor/ 被整树替换抹掉（脚本有"保留已存在 vendor/"的兜底，
+#     但那是兜底不是契约）。少跑任何一条 = 打出一个**没有看板娘**的站点：页面、样式、
+#     聊天面板全正常，只有角色不渲染 —— 这是本仓唯一会静默出错的地方，所以最后有两条
+#     `test -f` 做产物级断言（照抄 CI 的兜底，不看中间步骤的自述）。
+# ═══════════════════════════════════════════════════════════════════════════════
+FROM node:20-slim AS build
+
+# git：fetch:widget 是按 widget.lock.json 钉的 sha 稀疏检出 agent 仓（只用 Node 内建 + git，
+# 不需要 node_modules）。ca-certificates：npm 与那几处 HTTPS 取件都要。
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app/frontend
+# 先只拷锁与清单、跑 npm ci：这一层因此在"只改源码、没改依赖"时直接命中缓存。
+# widget.lock.json 必须先到（fetch:widget 在下一步读它；顺带让"改了 pin"能正确地
+# 让后续各层失效）。
+COPY frontend/package.json frontend/package-lock.json frontend/widget.lock.json ./
+RUN npm ci --no-audit --no-fund
+
+COPY frontend/ ./
+
+# vite 的堆上限：**默认 3072 而不是 CI 的 4096**，因为这个镜像多半在人家的 4GB 小机器上
+# 跑（本仓裸机那套也是按 min(内存-1024, 3072) 推的）。构建 OOM 会是一条很吵的失败
+# （不是静默），真要抬就 `--build-arg NODE_HEAP=4096`。
+ARG NODE_HEAP=3072
+ENV NODE_OPTIONS="--max-old-space-size=${NODE_HEAP}"
+
+# 站点身份是**构建期**变量：vite 把它们烤进 HTML（canonical / og:url / <title> / 描述）
+# 与 TS（src/utils/siteUrl.ts 经由 define）。缺省值是中性的本地开发占位
+# （http://localhost:5173 / "个人博客"），**不会报错**，只会静默产出一个写着别人机器地址的
+# 站点 —— 所以 prepare.sh 一定要把它们传进来。空串等同没设（vite.config.ts 用的是 `||`，
+# 不是 `??`），署名与 keywords 缺省就是空串 ⇒ 整行被删掉，不继承任何人的名字。
+ARG VITE_SITE_URL=""
+ARG VITE_SITE_TITLE=""
+ARG VITE_SITE_DESCRIPTION=""
+ARG VITE_SITE_AUTHOR=""
+ARG VITE_SITE_KEYWORDS=""
+ENV VITE_SITE_URL="${VITE_SITE_URL}" \
+    VITE_SITE_TITLE="${VITE_SITE_TITLE}" \
+    VITE_SITE_DESCRIPTION="${VITE_SITE_DESCRIPTION}" \
+    VITE_SITE_AUTHOR="${VITE_SITE_AUTHOR}" \
+    VITE_SITE_KEYWORDS="${VITE_SITE_KEYWORDS}"
+# VITE_CDN_BASEURL **故意不设**：它是"图片走 CDN"的开关，自建部署要的是本机
+# `/api/protect/download/` 那条路（空 = 与本机同一行为）。
+
+RUN npm run fetch:widget \
+ && npm run vendor:live2d \
+ && npm run build \
+ # 产物级断言（照抄 CI）：包真拿到了那两棵树，而不是 vite "若无其事地"打了一个空壳
+ && test -f dist/live2d-widgets/chat-stream.js \
+ && test -f dist/live2d_model/agent_2.model3.json
+
+
+# ── 运行期：nginx 只服 /srv/frontend/dist ─────────────────────────────────────
+FROM nginx:1.27-alpine AS runtime
+
+# 时区：alpine 自带的 /usr/share/zoneinfo 是空的（tzdata 是一个单独的包）⇒ 不装的话
+# `TZ=Asia/Shanghai` 在这里是**空操作**，nginx 日志的时间戳会差 8 小时。
+RUN apk add --no-cache tzdata
+ENV TZ=Asia/Shanghai
+
+# ⚠️ 官方 nginx 镜像的 nginx.conf **只有** `include /etc/nginx/conf.d/*.conf;`——
+#    Debian/Ubuntu 打包的那套 `sites-available` / `sites-enabled` 在这里根本不存在。
+#    站点配置照裸机路径写的话，症状是 nginx 起来、`-t` 也绿、站点却是 404。
+#    ⇒ 宿主渲染好的文件由 compose 只读挂到 `/etc/nginx/conf.d/blog.conf`。
+# ⚠️ 那一份必须删掉：它有 `listen 80 default_server`，与模板里那个 80→443 跳转块
+#    （也是 default_server）撞名 ⇒ nginx -t 报 "duplicate default server"，容器起不来。
+RUN rm -f /etc/nginx/conf.d/default.conf
+
+# 站点根：模板渲染时 APP_DIR=/srv（`root /srv/frontend/dist`）。这个路径是**约定**，
+# 改这里就要同时改 prepare.sh 里的 APP_DIR。
+COPY --from=build /app/frontend/dist /srv/frontend/dist
+
+# 证书由宿主挂进 /etc/nginx/ssl（甲块恒用 selfsigned.crt/.key，乙块用 CERT_NAME 那一对）。
+# 监听 80/443 由 host 网络直接落到宿主的这两个端口上（compose 里没有 ports）。

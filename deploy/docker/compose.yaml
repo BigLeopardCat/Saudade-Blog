@@ -1,0 +1,210 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+#  Saudade Blog —— Docker 自建部署（五个服务，一把 `docker compose up -d` 起）
+#
+#  先跑 `bash prepare.sh`：这个文件里所有 ${…} 的值都来自它写出来的
+#  `deploy/docker/.env`（compose 自动读同目录下这一份），四个 env_file 也由它生成。
+#  **没有 prepare.sh 的产品，这个文件一行都跑不起来**（下面那几个 `:?` 就是为此设的）。
+#
+#  ── 网络拓扑（一个刻意的取舍，改之前先读这段）────────────────────────────────
+#  backend / agent / nginx 用 **host 网络**，只有 mysql 走桥接 + 只发布到 127.0.0.1。
+#  原因是两处硬编码的回环监听：`src/main.rs` 绑 `127.0.0.1:3000`（A9 起，安全加固的一部分）
+#  与 uvicorn 的 `--host 127.0.0.1`。桥接网络下 nginx 容器**够不到**它们，唯一的替代是
+#  改那两行代码——而那是"为了迁就容器"去松开一条安全边界，不值当。
+#  代价（README 里也写了）：**Linux-only**（host 网络在 Docker Desktop 上不成立）、
+#  占用宿主 80/443，以及宿主上不能已经有服务占着 3000/8010/3306。
+#
+#  ── 配置住在哪（一个键只有一个写者）──────────────────────────────────────────
+#    站点身份 / 数据目录 / 属主 / MySQL root 口令 → deploy/docker/.env（compose 插值用）
+#    后端应用配置（DATABASE_URL、JWT_SECRET…）  → generated/backend.env（env_file）
+#    agent 应用配置（BLOG_API_BASE、密钥…）      → generated/agent.env（env_file）
+#    口令与密钥的原始记录                        → generated/.credentials（0600）
+#  下面 `environment:` 里**只放两样**：容器里的**路径**（宿主目录挂进容器后的坐标，宿主
+#  侧无从知晓）与**只读进程环境**的旋钮（那四个走 os.environ，写进 .env 是无效的——见
+#  agent 服务里的注释）。应用行为配置一律留在那两份 .env 里，改的时候只改一处地方。
+# ═══════════════════════════════════════════════════════════════════════════════
+name: saudade-blog    # 固定项目名 ⇒ 数据卷叫 saudade-blog_mysql-data，不随目录名漂
+
+services:
+  # ── MySQL：唯一走桥接的服务（客户端在宿主上，靠 127.0.0.1:3306 那个发布口）──────
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    command:
+      # 时区：镜像里没有 tzdata 时 `TZ` 是空操作，而 mysql 自己的默认时区是 SYSTEM
+      # （容器里 = UTC）⇒ `DEFAULT CURRENT_TIMESTAMP` 会存成 UTC 钟面，与全站 +08:00 的
+      # 约定（main.rs 那条 `timezone(Some("+08:00"))`、tz_cn_20260827 迁移）不一致。
+      # 用偏移量形式（`+08:00`）而不是 `Asia/Shanghai`：后者要求 mysql 里导入过时区表。
+      - --default-time-zone=+08:00
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?先跑 bash prepare.sh 生成 deploy/docker/.env}
+      # 官方镜像默认只建 root@localhost；而 db-init 那个一次性容器是**从别的容器**连过来的，
+      # 在 MySQL 眼里它不是 localhost ⇒ 不开这个的话 db-init 一上来就 Access denied。
+      MYSQL_ROOT_HOST: "%"
+      TZ: ${TZ:-Asia/Shanghai}
+    ports:
+      # 只发布到回环：后端在 host 网络上，连 127.0.0.1:3306 就够了。
+      # ⚠️ 这条是本套部署**唯一**对宿主端口的绑定，且宿主必须没有别的 MySQL 占着它。
+      - "127.0.0.1:3306:3306"
+    volumes:
+      # 命名卷（不是宿主目录）：MySQL 要求数据目录属主是镜像里那个 mysql 用户，
+      # 用宿主目录就得先 sudo chown 999:999 —— prepare.sh 不干需要 root 的事。
+      # 备份/迁移：`docker compose exec mysql mysqldump …`（README 的《备份》一节）。
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      # **故意不带口令**：`mysqladmin ping` 在"认证被拒"时也返回 0（文档明写），
+      # 所以它恰恰是我们要的信号——"server 已经在 TCP 上听着了"，而不是"口令对不对"。
+      # 顺带避开一个坑：口令写在 healthcheck 里会出现在 `docker inspect` 的输出里。
+      # 首次初始化时官方镜像跑的是 `--skip-networking` 的临时 server ⇒ 那时 TCP 连不上，
+      # 这个探针自然是红的，等正式 server 起来才转绿 ✓
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    logging: &log-limits
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+
+  # ── 一次性：建库 → 应用账号 → 第一个管理员（幂等，每次 up -d 都会重跑）──────────
+  db-init:
+    image: mysql:8.0          # 借它的 mysql 客户端 + bash；源码从宿主只读挂进来
+    restart: "no"             # 它是个任务，不是常驻服务
+    # ⚠️ 覆盖 entrypoint 之后，镜像自带的 CMD（`mysqld`）会作为**位置参数**追加到这条后面
+    #    ⇒ 实际是 `bash /repo/.../db-init.sh mysqld`。db-init.sh 不读位置参数，忽略即可
+    #    （这也是为什么它开头没有 `set --` 之类的参数处理）。
+    entrypoint: ["bash", "/repo/deploy/docker/db-init.sh"]
+    env_file:
+      # 一个文件两个用途：人看的口令记录 + 这里给脚本的输入。
+      - ./generated/.credentials
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      MYSQL_HOST: mysql
+      MIG_DIR: /repo/scripts/migration
+    volumes:
+      # 只挂需要的两处：`scripts/`（含 migration 那 40 多份 SQL）与脚本自己。
+      # **不要图省事挂仓库根**：bind mount 不吃 .dockerignore，会把仓库根那份 `.env` 也暴露进去。
+      - ../../scripts:/repo/scripts:ro
+      - ./db-init.sh:/repo/deploy/docker/db-init.sh:ro
+    depends_on:
+      mysql:
+        condition: service_healthy
+    logging: *log-limits
+
+  # ── Rust 后端（host 网络，绑 127.0.0.1:3000）─────────────────────────────────
+  backend:
+    build:
+      context: ../..                      # 仓库根：三份 Dockerfile 共用同一个上下文
+      dockerfile: deploy/docker/Dockerfile.backend
+    image: saudade-blog-backend:local
+    restart: unless-stopped
+    network_mode: host
+    # 以**宿主用户**的身份跑：uploads/ 与 logs/ 是宿主目录，容器里如果是 root 写，
+    # 宿主的你自己反而删不掉自己的文件（还会让下次 prepare.sh 建目录时撞权限）。
+    user: "${SAUDADE_UID:-1000}:${SAUDADE_GID:-1000}"
+    working_dir: /srv                     # dotenv() 按工作目录找 .env（镜像里没有这份）
+    env_file:
+      - ./generated/backend.env
+    environment:
+      # 容器里的坐标（宿主路径由挂载决定，见 volumes）
+      UPLOAD_DIR: /data/uploads
+      GRAPH_ARTIFACT_DIR: /data/word_graph/web
+      # 监控日志要**绝对路径**：`src/routes/monitor.rs` 打不开父目录时也返回 200（静默失败），
+      # 而镜像里 /srv/logs/frontend 已经建好了 ⇒ 只有写死绝对路径才保证落进挂载的那个目录。
+      SAUDADE_MONITOR_LOG: /srv/logs/frontend/monitor.log
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - ${SAUDADE_DATA_DIR}/uploads:/data/uploads
+      # 只读：图谱由 agent 侧写（`rag/graph_build.py`），后端只是另一个读它的人。
+      # 两边挂载点不同、宿主目录同一个 —— 这就是它们交换那份产物的方式。
+      - ${SAUDADE_DATA_DIR}/agent-data/word_graph/web:/data/word_graph/web:ro
+      - ${SAUDADE_DATA_DIR}/logs/frontend:/srv/logs/frontend
+    depends_on:
+      db-init:
+        condition: service_completed_successfully    # 库没建完就起后端 = 一堆 500
+    # ⚠️ 没有 stop_grace_period：`src/main.rs` 没装 SIGTERM 处理器（裸机那边 systemd 发
+    #    SIGTERM 也是当场退出，行为一致），设了也不会有优雅停机。要真优雅地断 SSE，
+    #    得先给后端加 `with_graceful_shutdown` —— 那是另一件事，别在这里凑。
+    logging: *log-limits
+
+  # ── Python agent（host 网络，绑 127.0.0.1:8010）──────────────────────────────
+  agent:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.agent
+    image: saudade-blog-agent:local
+    restart: unless-stopped
+    network_mode: host
+    user: "${SAUDADE_UID:-1000}:${SAUDADE_GID:-1000}"
+    # init: true（tini 当 1 号进程）：uvicorn 自己会收 SIGTERM，但中间的 shell 不会有
+    # 僵尸进程回收 —— 这条不是为了 "更规范"，是为了让下面的 stop_grace_period 真的生效。
+    init: true
+    # 与 `deploy/systemd/saudade-agent.service.template` 的 TimeoutStopSec=120 对齐：
+    # SIGTERM 之后等在途 SSE 对话自然收尾（回复通常 10-30s）。docker 默认的 10s 会把
+    # 正在进行的对话**当场砍掉**，而用户看到的只是"回复断了"。
+    stop_grace_period: 120s
+    env_file:
+      - ./generated/agent.env
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      # uvicorn 的 worker 数（入口脚本读它，默认 4）。小内存机器降到 2 也行；
+      # 实测每 worker 常驻 135–150MB（docs/deployment-and-ops.md 的《资源画像》）。
+      AGENT_WORKERS: ${AGENT_WORKERS:-4}
+      # ── 下面四个是**只读进程环境**的旋钮（server.py 走 os.environ，不读 .env）──────
+      #    写进 generated/agent.env 是**无效的**（pydantic 那套根本不管它们，而 os.environ
+      #    只看进程环境）—— 要改就在这里改，然后 `docker compose up -d`（restart 不生效）。
+      #    冒号后面是**代码里的默认值**，不打算改就别解注：
+      # AGENT_RECURSION_LIMIT: "30"           # 图的最大轮次（默认 30）
+      # AGENT_MAX_BODY_BYTES: "12582912"      # 请求体上限，12MiB（默认）
+      # AGENT_MAX_CONCURRENT: "8"             # 并发流上限（默认 8）
+      # AGENT_MAX_REVIEW: "4"                 # 审核那条侧任务的并发（默认 4）
+    volumes:
+      - ${SAUDADE_DATA_DIR}/traces:/data/traces          # TRACE_DIR=/data/traces（agent.env 里）
+      - ${SAUDADE_DATA_DIR}/agent-data:/app/data         # uv 缓存 + 全站问答图谱的产物
+      # 站点证书 → 容器启动时被拼进 CA bundle（agent-entrypoint.sh）。**不能省**：
+      # 少了它，站内只读工具会全部静默降级成"服务不可用"（见那个脚本的头注）。
+      - ./generated/ssl/trusted.crt:/etc/ssl/extra/trusted.crt:ro
+    extra_hosts:
+      # agent 的 BLOG_API_BASE 是 `https://<域名>/api/public`，而它要访问的其实就是
+      # **同一个宿主**（nginx 在 host 网络上）。这台机器可能还没有那条 DNS 记录、
+      # 也可能有 hairpin 问题 ⇒ 直接钉进 /etc/hosts，不依赖外部解析。
+      - "${SITE_DOMAIN:?prepare.sh 没写 SITE_DOMAIN}:127.0.0.1"
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    logging: *log-limits
+
+  # ── nginx：静态文件 + 反代（host 网络，占宿主 80/443）────────────────────────
+  nginx:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.frontend
+      args:
+        # 站点身份是**构建期**变量（vite 把它们烤进 HTML）。缺省值是中性的本地占位
+        # （localhost:5173），**不会报错**，只会静默产出一个写着别人机器地址的站点 ——
+        # 所以这四个必须传，值来自 prepare.sh 写的 .env。
+        VITE_SITE_URL: ${SITE_URL:?prepare.sh 没写 SITE_URL}
+        VITE_SITE_TITLE: ${SITE_TITLE:-}
+        VITE_SITE_DESCRIPTION: ${SITE_DESCRIPTION:-}
+        VITE_SITE_AUTHOR: ${SITE_AUTHOR:-}
+        VITE_SITE_KEYWORDS: ${SITE_KEYWORDS:-}
+        # vite 的堆上限。4GB 小机器构建 OOM 就提到 4096（`NODE_HEAP=4096 docker compose build`）。
+        NODE_HEAP: ${NODE_HEAP:-3072}
+    image: saudade-blog-frontend:local
+    restart: unless-stopped
+    network_mode: host
+    # 站点配置与证书都在宿主上渲染好（render.sh 要 sed/awk，而 nginx:alpine 里没有那些工具）。
+    # ⚠️ 改配置要分清改的是哪一种 —— 判据在 README 的《改配置》一节：
+    #    · 改了挂进来的**文件内容**（blog.conf / 证书）：`docker compose restart nginx` 就够
+    #      —— 进程重跑会重读文件。
+    #    · 改了 `.env` / `env_file` 里的**变量**：必须 `docker compose up -d`。环境变量是
+    #      容器**创建时**定死的，`restart` 复用的是同一个容器，改不动它们（这也是为什么
+    #      "改了没生效"往往不是配置写错了，是没重建）。
+    volumes:
+      - ./generated/blog.conf:/etc/nginx/conf.d/blog.conf:ro
+      - ./generated/ssl:/etc/nginx/ssl:ro
+    # 故意**不依赖 db-init**：nginx 只服静态文件，站点先能打开、API 那半边随后就位，
+    # 与裸机那套（nginx 常驻，Rust 没起来就 502）的行为一致。
+    logging: *log-limits
+
+volumes:
+  mysql-data:      # 由 docker 管理（名字前缀是上面的 name:）—— 删它 = 删库，README 有备份做法
