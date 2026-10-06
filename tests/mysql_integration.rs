@@ -39,6 +39,18 @@
 //!   才发通知。重复点通过时第二次必须**一行都不改**——判据是"清零没再发生"（把
 //!   计数器在两刀之间推到 5，第二刀若生效就会把它抹成 0）与"通知没多出第二条"。
 //!
+//! ## 第三半（20261006）：站内聚合搜索
+//!
+//! ⑩ 站内聚合搜索一次把**四张表**倒给访客（文章 / 说说 / 留言 / 评论），所以它的核心判据
+//!   全是**可见性谓词**——`is_public` / `status <> 'draft'` / `approved` / `is_deleted`，
+//!   外加"评论的父文章必须可见"。这些在 `MockDatabase` 面前**一律显示为通过**（mock 既不
+//!   执行 SQL 也不解码返回行），所以唯一的真判据就是：播一条**不该出现**的行进去，
+//!   再断言它**没有**出现。断言一律写成**精确 id 集合**而非"包含"——漏掉任何一条谓词，
+//!   结果都是**多出几行**，而"包含"型断言对多出来的行照样绿。
+//!   另外两件只有真库能证明：留言那一行的 `title` 列存的是**印章不是标题**（只许搜 content），
+//!   以及 `like_escape` 的反斜杠那一面——不转义时 `\p` 会被 LIKE 读成 `p`，**丢的是命中**
+//!   （与 `%` 变通配符只会多捞的方向相反），只有夹具里真放一条含字面量 `c:\path` 的行才抓得住。
+//!
 //! ⑦⑧ 起要签真令牌、走真路由：`create_router` + 真 JWT（`create_token` 自会读
 //! `JWT_SECRET`，本文件自己把它设上）。夹具一律用 `9000000xx` 高位 id，且**按用户隔离**
 //! ——⑦⑧ 只在 `CONV_UID` 名下建会话、⑨ 只在 `APPLY_UID` 名下建申请，
@@ -63,10 +75,14 @@
 //!
 //! ## 夹具数据用高位 id
 //!
-//! 四个用例各占一个 `9000000xx` 的 note id，互不干扰（`cargo test` 默认多线程并发跑）。
-//! 用高位是为了**在一份不干净的开发库上也能跑**：这些 id 不会撞上任何真实文章。
+//! 每个用例各占自己的一小段 `9000000xx` id，互不干扰（`cargo test` 默认多线程并发跑）。
+//! 用高位是为了**在一份不干净的开发库上也能跑**：这些 id 不会撞上任何真实内容。
 //! 每个用例开头先清一遍自己的残留（上次跑挂了留下的），结尾不强制清理——残留也只影响
-//! 它自己那个 id，且下次开头会清掉。
+//! 它自己那几行，且下次开头会清掉。
+//!
+//! ⚠️ ⑩ 的**关键词**也必须是"真实内容里不可能出现的怪串"（`qqzz聚合夹具`）。它跨四张表
+//! 断言**精确 id 集合**，关键词一旦撞上库里任何一条真实内容，红的理由会看着像"搜索坏了"。
+//! 这条要求只对本用例成立：别的用例关键字面 id，不关键字面命中。
 
 use std::time::Duration;
 
@@ -954,4 +970,242 @@ async fn quota_review_claims_once_and_touches_nothing_on_the_second_call() {
         5,
         "驳回不动额度（一个字节都不动）"
     );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// ⑩ 站内聚合搜索（20261006）：四类内容的**命中集合**必须精确
+// ════════════════════════════════════════════════════════════════════════════
+//
+// 为什么非要有这一层：这个端点一次把**四张表**倒给访客，所以它的核心判据全是
+// 可见性谓词——`is_public` / `status <> 'draft'` / `approved` / `is_deleted`，
+// 外加"评论的父文章必须可见"。这些在 `MockDatabase` 面前**全是"通过"**：
+// mock 只比对我们喂进去的那串 SQL 文本，不会真的执行。唯一的真判据是——
+// 播一条**不该出现**的行进去，再断言它**没有**出现。
+//
+// 本用例的断言一律是**精确 id 集合**（不是"包含"）。"包含"型断言对本接口尤其危险：
+// 四条谓词里漏掉任何一条，结果都是**多出几行**而不是少几行——而"包含"照样绿。
+//
+// ## 负控记录（写这条用例时实际跑过的，别删这段）
+//
+// 三处各改坏一次、确认本用例转红、随即还原：
+//   · 留言分支的 SQL 预筛里加上 `title LIKE`（印章是「愿」，等于全表命中）→ 红；
+//   · 去掉 `is_deleted = 0` → 红；去掉 `note_id IN (可见文章)` → 红；
+//   · 去掉 `like_escape` → 红（见下面那条反斜杠夹具，**只有它能抓住转义**）。
+// 三处都不是靠"看代码觉得对"。
+
+/// 夹具关键词：**刻意是个真实内容里不可能出现的怪串**。
+/// 本用例断言的是精确 id 集合——关键词一旦撞上库里任何一条真实内容
+///（开发库上尤其容易），断言会莫名其妙地红，而根因看着像"搜索坏了"。
+const AGG_KW: &str = "qqzz聚合夹具";
+
+const AGG_NOTE_OK: i32 = 900000021; // 公开 + 已发布 + 标题命中 ⇒ 该出现
+const AGG_NOTE_DRAFT: i32 = 900000022; // status='draft' ⇒ 不许出现
+const AGG_NOTE_HIDDEN: i32 = 900000023; // is_public=0 ⇒ 不许出现
+
+const AGG_TALK_TITLE: i32 = 900000031; // approved=1，**标题**命中
+const AGG_TALK_BODY: i32 = 900000032; // approved=1，**正文**命中
+const AGG_TALK_PENDING: i32 = 900000033; // approved=0 ⇒ 不许出现
+const AGG_BOARD_OK: i32 = 900000034; // src=board，正文命中
+const AGG_BOARD_SIGN: i32 = 900000035; // src=board，**印章里有关键词、正文没有** ⇒ 不许出现
+const AGG_BOARD_BACKSLASH: i32 = 900000036; // 反斜杠夹具，只被第二条查询命中
+
+const AGG_COMMENT_OK: i32 = 900000041; // 可见文章下、已过审、未删 ⇒ 该出现
+const AGG_COMMENT_HIDDEN_NOTE: i32 = 900000042; // 挂在不许出现的那篇文章上 ⇒ 不许出现
+const AGG_COMMENT_DELETED: i32 = 900000043; // is_deleted=1 ⇒ 不许出现
+const AGG_COMMENT_PENDING: i32 = 900000044; // approved=0 ⇒ 不许出现
+
+/// 取某一类结果里的 `key` 集合（**升序**：服务端按相关度排，集合断言不该依赖它）。
+///
+/// 回 `i32` 是为了与上面那批夹具常量同型（`key` 在线上是 int，收窄无损）。
+fn agg_keys(j: &serde_json::Value, bucket: &str) -> Vec<i32> {
+    let mut v: Vec<i32> = j["data"][bucket]
+        .as_array()
+        .unwrap_or_else(|| panic!("data.{bucket} 不是数组：{j}"))
+        .iter()
+        .map(|h| h["key"].as_i64().expect("命中行没有整数 key") as i32)
+        .collect();
+    v.sort_unstable();
+    v
+}
+
+#[tokio::test]
+async fn test_聚合搜索的四类命中集合与可见性谓词() {
+    let Some((db, db_app)) = connect_pair().await else {
+        return;
+    };
+
+    // ── 播种（先清自己的残留：上次跑挂了会留下行）────────────────────────
+    for id in [
+        AGG_NOTE_OK,
+        AGG_NOTE_DRAFT,
+        AGG_NOTE_HIDDEN,
+    ] {
+        exec(&db, &format!("DELETE FROM note WHERE id = {id}")).await;
+    }
+    for id in [
+        AGG_TALK_TITLE,
+        AGG_TALK_BODY,
+        AGG_TALK_PENDING,
+        AGG_BOARD_OK,
+        AGG_BOARD_SIGN,
+        AGG_BOARD_BACKSLASH,
+    ] {
+        exec(&db, &format!("DELETE FROM talk WHERE id = {id}")).await;
+    }
+    for id in [
+        AGG_COMMENT_OK,
+        AGG_COMMENT_HIDDEN_NOTE,
+        AGG_COMMENT_DELETED,
+        AGG_COMMENT_PENDING,
+    ] {
+        exec(&db, &format!("DELETE FROM note_comment WHERE id = {id}")).await;
+    }
+
+    // 三篇文章。**只有第一行该被搜到**；另外两行是两条谓词的负控。
+    // 正文都刻意不含关键词 ⇒ 分数只来自标题（100），排序可预期。
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO note (id, title, content, created_at, updated_at, is_public, status) VALUES \
+             ({AGG_NOTE_OK},     '{AGG_KW} 可见文章', '正文里没有那个词', NOW(), NOW(), 1, 'published'), \
+             ({AGG_NOTE_DRAFT},  '{AGG_KW} 草稿',     '正文里没有那个词', NOW(), NOW(), 1, 'draft'), \
+             ({AGG_NOTE_HIDDEN}, '{AGG_KW} 隐藏文章', '正文里没有那个词', NOW(), NOW(), 0, 'published')"
+        ),
+    )
+    .await;
+
+    // 说说 / 留言。`title` 那一列的**两套语义**正是这段夹具的重点：
+    // 说说的 `title` 是标题（该被搜），留言的 `title` 是印章「愿」（**不许**被搜）。
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO talk (id, title, content, cat, v, author, user_id, src, approved, created_at, updated_at) VALUES \
+             ({AGG_TALK_TITLE}, '{AGG_KW} 说说标题', '说说正文里没有那个词', '愿', 0, '', 0, 'talk',  1, NOW(), NOW()), \
+             ({AGG_TALK_BODY},  '无关标题',           '说说正文里出现 {AGG_KW} 一次', '愿', 0, '', 0, 'talk', 1, NOW(), NOW()), \
+             ({AGG_TALK_PENDING}, '无关标题',         '待审的正文里也有 {AGG_KW}', '愿', 0, '', 0, 'talk',  0, NOW(), NOW()), \
+             ({AGG_BOARD_OK},   '愿',                 '河灯正文里也有 {AGG_KW}', '愿', 0, '留名甲', 0, 'board', 1, NOW(), NOW()), \
+             ({AGG_BOARD_SIGN}, '{AGG_KW}',           '这条河灯的正文里没有那个词', '愿', 0, '留名乙', 0, 'board', 1, NOW(), NOW())"
+        ),
+    )
+    .await;
+
+    // 反斜杠夹具：正文含字面量 `c:\path`。
+    // 这是**唯一能抓住 `like_escape` 的判据**：用户搜 `c:\path` 时，未转义的
+    // LIKE 模式 `%c:\path%` 里 `\p` 会被 MySQL 当成转义的 `p`（等价于搜 `c:path`），
+    // 于是这一行**根本不会被取回来**，内存里那一遍再准也救不了——**丢的是命中**。
+    // 注意这条与"`%` 变成通配符"不同：那个方向只会多取行（内存会筛掉），抓不住。
+    exec(
+        &db,
+        &format!(
+            r"INSERT INTO talk (id, title, content, cat, v, author, user_id, src, approved, created_at, updated_at) VALUES
+             ({AGG_BOARD_BACKSLASH}, '愿', '路径 c:\\path 结束', '愿', 0, '留名丙', 0, 'board', 1, NOW(), NOW())"
+        ),
+    )
+    .await;
+
+    // 四条评论，**只有第一条该出现**。
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO note_comment (id, note_id, user_id, content, approved, is_deleted, created_at, updated_at) VALUES \
+             ({AGG_COMMENT_OK},          {AGG_NOTE_OK},     0, '评论正文 {AGG_KW}', 1, 0, NOW(), NOW()), \
+             ({AGG_COMMENT_HIDDEN_NOTE}, {AGG_NOTE_HIDDEN}, 0, '评论正文 {AGG_KW}', 1, 0, NOW(), NOW()), \
+             ({AGG_COMMENT_DELETED},     {AGG_NOTE_OK},     0, '评论正文 {AGG_KW}', 1, 1, NOW(), NOW()), \
+             ({AGG_COMMENT_PENDING},     {AGG_NOTE_OK},     0, '评论正文 {AGG_KW}', 0, 0, NOW(), NOW())"
+        ),
+    )
+    .await;
+
+    // ── 真链路 ────────────────────────────────────────────────────────
+    let body = format!(r#"{{"keyword":"{AGG_KW}"}}"#);
+    let (st, j) = call(test_app(db_app), "POST", "/api/public/search", None, Some(&body)).await;
+    assert_eq!(st, StatusCode::OK, "聚合搜索不该在 HTTP 层失败：{j}");
+    assert_eq!(j["code"], 200, "信封 code 必须是 200：{j}");
+
+    // 四个数组的**精确** id 集合（多一行少一行都红）
+    assert_eq!(agg_keys(&j, "notes"), vec![AGG_NOTE_OK], "文章：只有公开+已发布那一篇该出现");
+    assert_eq!(
+        agg_keys(&j, "talks"),
+        vec![AGG_TALK_TITLE, AGG_TALK_BODY],
+        "说说：approved=0 的不许出现"
+    );
+    assert_eq!(
+        agg_keys(&j, "board"),
+        vec![AGG_BOARD_OK],
+        "留言：只有**正文**命中的那条；印章里带关键词的那条不许出现"
+    );
+    assert_eq!(
+        agg_keys(&j, "comments"),
+        vec![AGG_COMMENT_OK],
+        "评论：软删/未过审/挂在不可见文章下的三条都不许出现"
+    );
+
+    // 三处同源：总数 == counts 四项之和 == 四个数组长度之和
+    assert_eq!(j["data"]["total"], 5, "命中总数：{j}");
+    assert_eq!(j["data"]["counts"]["note"], 1);
+    assert_eq!(j["data"]["counts"]["talk"], 2);
+    assert_eq!(j["data"]["counts"]["board"], 1);
+    assert_eq!(j["data"]["counts"]["comment"], 1);
+
+    // 说说行按分数排在前面的是**标题命中的那条**（标题 +100 vs 正文 1 次 +1）。
+    // 这条钉的是"打分的标题维度真的接上了"——它就是 +100 那一档的可见后果。
+    let talk_order: Vec<i64> = j["data"]["talks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| h["key"].as_i64().unwrap())
+        .collect();
+    assert_eq!(
+        talk_order,
+        vec![AGG_TALK_TITLE as i64, AGG_TALK_BODY as i64],
+        "标题命中的该排在只命中正文的前面"
+    );
+
+    // 评论行必须带上**跳转所需的两件东西**：所属文章 id 与那篇文章的标题。
+    let c0 = &j["data"]["comments"][0];
+    assert_eq!(c0["type"], "comment");
+    assert_eq!(
+        c0["noteId"], AGG_NOTE_OK,
+        "评论行不带 noteId，前端就拼不出 /article/<id>?cid=<id>"
+    );
+    assert_eq!(
+        c0["title"], format!("{AGG_KW} 可见文章"),
+        "评论行的行首标题该是**它挂在哪篇文章**上（不是评论自己的正文）"
+    );
+    // 其余三类的 noteId 恒缺席（前端凭它是否存在判"能不能跳"）
+    for (bucket, k) in [("notes", AGG_NOTE_OK), ("talks", AGG_TALK_TITLE), ("board", AGG_BOARD_OK)] {
+        let row = j["data"][bucket]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|h| h["key"] == k)
+            .unwrap_or_else(|| panic!("{bucket} 里没有 {k}：{j}"));
+        assert!(row["noteId"].is_null(), "{bucket} 的 noteId 该是 null：{row}");
+    }
+    // 留言行的行首标题恒空串（`title` 那一列是印章，不能当标题显示）
+    let b0 = &j["data"]["board"][0];
+    assert_eq!(b0["type"], "board");
+    assert_eq!(b0["title"], "", "留言行的标题必须留空");
+    assert_eq!(b0["snippet"], "河灯正文里也有 qqzz聚合夹具", "摘要该是正文（折平空白后）");
+    // 留言的作者是**自由留名**，不是账号身份
+    assert_eq!(b0["author"], "留名甲");
+
+    // ── 第二条查询：LIKE 转义（反斜杠）────────────────────────────────
+    // `keyword` 在这里真的是 `c:\path`（JSON 里 `\\` 折成一个反斜杠），
+    // 而夹具正文里存的是**字面量** `c:\path`（SQL 里的 `'… c:\\path …'` 同样折成一个）。
+    let body = r#"{"keyword":"c:\\path"}"#;
+    let (st, j) = call(test_app(db), "POST", "/api/public/search", None, Some(body)).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(
+        agg_keys(&j, "board"),
+        vec![AGG_BOARD_BACKSLASH],
+        "搜 `c:\\path` 必须命中那条**含字面量反斜杠**的留言——\
+         取不到就是 like_escape 漏了（`\\p` 被 LIKE 当成转义的 `p`，直接搜成了 `c:path`）：{j}"
+    );
+    // 另一面：转义**不该把别的行顺带捞进来**。这三条零断言在 CI 那种干净库上恒成立
+    //（夹具关键词之外的正文不会出现 `c:\path`）；开发库上若有真实内容写着这个路径，
+    // 这里会红，而那是夹具假设不成立、不是搜索坏了。
+    assert_eq!(j["data"]["counts"]["note"], 0);
+    assert_eq!(j["data"]["counts"]["talk"], 0);
+    assert_eq!(j["data"]["counts"]["comment"], 0);
 }

@@ -448,3 +448,77 @@ async fn test_额度扣减的判据是_rows_affected_而不是猜的() {
         "绑定值必须是「+1、uid=126、上限=500」这个顺序：{log}"
     );
 }
+
+// ---- 站内聚合搜索（20261006）----
+//
+// 这一节只钉三件事，都是 MockDatabase（**没有任何查询预期**）下能确定的：
+//   ① 路由真的挂上了，且体解析在碰库之前（拿非法 JSON 探，见下）；
+//   ② 「没给关键词 / 给了但切不出可用 term」这两条路**根本不查库**——所以它们能在
+//      零预期的 MockDatabase 上跑通。handler 只要把任何一次查询提到短路之前，这组立刻 panic；
+//   ③ 信封的形状（total / counts / 四个数组），前端就是按它渲染的。
+//
+// ⚠️ **真库上的命中口径（谁该出现、谁不许出现）不在这里**——MockDatabase 只会比对一个
+// 字符串、不会真的执行 LIKE，可见性谓词（is_public / approved / is_deleted / 父文章可见）
+// 在它面前全是"通过"。那些判据在 `tests/mysql_integration.rs`，两半合起来才算数。
+
+/// 与 `req_api_code` 同源，但把整个信封带回来（聚合搜索的判据要看 `data` 里的数）。
+async fn req_api_json(app: axum::Router, body: &str) -> (StatusCode, serde_json::Value) {
+    let res = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/public/search")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = res.status();
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+    let v = serde_json::from_slice::<serde_json::Value>(&bytes).unwrap_or(serde_json::Value::Null);
+    (status, v)
+}
+
+/// 路由存在性 + 体解析早于碰库：非法 JSON 必须死在 extractor 层（400），
+/// **不是** 404（路由没挂）/ 405（方法不对），也**不是** 500（跑到查询里去了）。
+#[tokio::test]
+async fn test_聚合搜索路由已挂载且体解析在碰库之前() {
+    let (status, _) = req_api_json(mock_app(), "{ 这不是 JSON").await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "非 400 说明要么路由没挂（404）、要么请求已经跑到查询里去了（500）"
+    );
+}
+
+/// 「没给关键词 / 全空白 / 切不出 term」三条路都回**空信封**，且都不查库。
+///
+/// 第三条（`第1章`）是本组里最有价值的一条：它锁住"非空关键词切完一无所剩 ⇒ 回空、
+/// **不要**落进任何'无关键词就返回全部'的分支"。若哪天有人给聚合搜索加上"空查询返回
+/// 最新内容"这类兜底，这条会因为 MockDatabase panic 而红——正是我们要它红的地方。
+#[tokio::test]
+async fn test_聚合搜索空关键词与不可用关键词都回空且不查库() {
+    let cases: [&str; 4] = [
+        "{}",                      // 字段缺席
+        r#"{"keyword":null}"#,     // 显式 null
+        r#"{"keyword":"   "}"#,    // 全空白
+        r#"{"keyword":"第1章"}"#,  // 非空，但切完一个可用 term 都不剩
+    ];
+    for body in cases {
+        let (status, v) = req_api_json(mock_app(), body).await;
+        assert_eq!(status, StatusCode::OK, "{body} 不该在 HTTP 层失败");
+        assert_eq!(v["code"], 200, "{body} 该是成功信封（空结果是结果，不是错误）");
+        assert_eq!(v["data"]["total"], 0, "{body} 命中总数必须是 0");
+        for k in ["note", "talk", "board", "comment"] {
+            assert_eq!(v["data"]["counts"][k], 0, "{body} 的 {k} 计数必须是 0");
+        }
+        for k in ["notes", "talks", "board", "comments"] {
+            assert_eq!(
+                v["data"][k].as_array().map(|a| a.len()),
+                Some(0),
+                "{body} 的 {k} 必须是空数组（不是 null——前端直接 .map 它）"
+            );
+        }
+    }
+}
