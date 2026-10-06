@@ -560,7 +560,7 @@ const Users = () => {
                                 <Button type="primary" onClick={handleCreateTempUser}>新建临时用户</Button>
                             </div>
                             <p className="tu-hint">
-                                临时用户可登录前台发布说说、放河灯留言（供家人/访客开账号用）
+                                临时用户可登录前台发布说说、放河灯留言（供访客开账号用）
                             </p>
                             <div className="tu-filter">
                                 <div className="tu-tabs" role="tablist">
