@@ -32,7 +32,18 @@ bash deploy/install.sh                     # 交互向导；口令用 read -s �
 它按 §3–§10 的顺序把整条路走完：前置检查 → 目录权限 → 建库/应用账号/第一个管理员 →
 两份 `.env` → agent 的 `.venv` → 构建（`cargo build --release` + `vite build`）→ TLS 证书 →
 nginx → systemd ×2 → logrotate + 心跳 cron → 起服务 → 验收。**幂等**：重跑安全，
-已有的 `.env` 只补缺键、库里已经有表就整段跳过、配置文件一律"渲染 → 语法自检 → 替换"。
+但"安全"的含义要说准（20261007 修订）——
+
+- `.env` 分两种情况：**这次刚由脚本从 `.env.example` 创建** ⇒ 生成的值一律**顶掉**模板里
+  那些占位说明（`改成你的密码` / `请换成……` / `example.com`）；**本来就在** ⇒ 只补缺键，
+  你改过的值一个都不动。
+- **口令与 `JWT_SECRET` 从 `deploy/.credentials` 沿用**，不会每次重掷 —— 重掷等于把一台
+  跑着的机器锁在门外（库里被 `ALTER USER` 改成新口令，而 `.env` 里还写着旧的）。
+- 库里已经有表 ⇒ 跳过建库，但会把**迁移台账**（`migration_flags` 有几条、最近一条是什么）
+  摆出来；「建全了没有」由你自己对照 `scripts/migration/` 判断，安装脚本刻意不下这个结论。
+- 配置文件一律"渲染 → 语法自检 → 替换"（先写临时文件再 `mv`，中途失败原文件不动）。
+- **验收的退出码是真的**：有项目没通过时脚本以非 0 退出（20261007 之前这里恒返回 0，
+  在 CI / 脚本 / runbook 里永远是"成功"）。
 
 ```bash
 # IoT（EMQX + 控制台 + 设备接入，见 iot/README.md）是**选装件**：
@@ -67,6 +78,10 @@ bash deploy/install.sh --dry-run -y --domain blog.example.com
 - **凭据落在 `deploy/.credentials`**（0600，已 gitignore）。脚本**只打印那个路径，不打印值**；
   MySQL root 口令走 0600 临时 defaults 文件，不进 `ps`；管理员口令从 stdin 喂 SQL。
   看完请自行转移或删除。
+  ⚠️ 这份文件里的**管理员口令要当"这次想用的口令"读，不是"一定登得进去的口令"**：
+  库里已经有管理员时脚本不会改它的口令（那是显式动作，见 §4.3）。重跑时脚本会当场核一遍
+  并告诉你对得上/对不上（老格式 SHA-256 能当场算，Argon2id 只能靠真登录那一下）。
+  模型 API Key **不写进这份文件**（它不属于"本机生成的东西"）。
 - **device-service 它补不了**——源码不在任何公开仓（见
   [iot/device-service/README.md](../iot/device-service/README.md)）。装 IoT 的那一趟最后会把
   缺口与接口契约打成清单给你。
@@ -207,6 +222,13 @@ mysql -uroot -p -e "
 用户名要与 `.env` 里 `DATABASE_URL` 那一段一致。**库里没有任何地方写死它**——换名字
 建号之后改 `.env` 就行。
 
+> ⚠️ 上面那条建的是 `@'localhost'`，而 `DATABASE_URL` 里的主机写的是 `127.0.0.1`。
+> 这两个能不能对上，取决于 MySQL 有没有做反向名字解析：`skip_name_resolve` **关着**
+> （默认）时 127.0.0.1 会被解析成 localhost，打开时就不会——而打开它是很多"MySQL 加固
+> 清单"的第一条。症状是 `Access denied for user 'saudade_blog'@'127.0.0.1'`，而账号在库里
+> 明明有。`bash deploy/install.sh` 的做法是**两个 host 都建一遍**，手搓的话照做：
+> 把上面那条 `CREATE USER`/`GRANT` 用 `@'127.0.0.1'` 再跑一次即可。
+
 ### 4.3 第一个管理员
 
 > ⚠️ **这个项目没有注册入口。** `src/routes/mod.rs` 里没有 register / signup 路由，
@@ -232,6 +254,9 @@ mysql -uroot -p saudade_blog -e "
   Argon2id PHC 串，优先用它**——`SHA2()` 是给"手上只有 mysql 客户端"的人的兜底。
 - `nickname` / `status` / `token_version` / `chat_quota_used` 都有默认值，不必填。
   `status=0` 是正常，`1` 是冻结。
+- **`user.username` 上有唯一键**：库里已经有一个同名账号时，这条 INSERT 会以一句
+  `Duplicate entry` 收场。（用 `bash deploy/install.sh` 装的话它会先拦一道，并把两条出路
+  连 SQL 一起打给你：换个用户名重跑，或者就地把那个账号的 `role` 改成 `admin`。）
 
 > 可选：`scripts/migration/superadmin_role_20260926.sql` 能把**更高级别的
 > `superadmin`** 授给 **uid=1**（超级管理员不能冻结/降级、且不出现在后台账号列表里）。
@@ -253,6 +278,13 @@ cp .env.example .env
 cp saudade-blog-agent/.env.example saudade-blog-agent/.env
 ```
 
+> ⚠️ **`cp` 下来的是一份带占位值的模板，不是一份能跑的配置。** 这两份 example 里有几个
+> **未注释**的占位：父仓的 `DATABASE_URL=…改成你的密码…`、`JWT_SECRET=请换成一串随机字符`、
+> `SITE_URL=https://example.com`，agent 的 `BLOG_API_BASE=https://<你的域名>/api/public`。
+> 忘了改不会报错——后端连不上库、agent 认真回答**别人博客**里的问题。
+> （`bash deploy/install.sh` 那条路不用操心这件事：全新 `.env` 里这些占位会被它生成的值
+> 直接顶掉；手改这条路得自己逐条改。）
+
 **父仓这份**，必改的：
 
 | 变量 | 说明 |
@@ -269,7 +301,7 @@ cp saudade-blog-agent/.env.example saudade-blog-agent/.env
 
 | 变量 | 说明 |
 |---|---|
-| `LLM_PROVIDER` + 对应的 `*_API_KEY` / `*_BASE_URL` / `*_MODEL` | 模型服务商。**`QWEN_BASE_URL` 一定要显式设**——不设会落到代码里的默认值，而那个值绑定的是上游维护者的接入点 |
+| `LLM_PROVIDER` + 对应的 `*_API_KEY` / `*_BASE_URL` / `*_MODEL` | 模型服务商。**`*_BASE_URL` 要设的是"你选的那个提供方"的键**（`DEEPSEEK_BASE_URL` / `QWEN_BASE_URL` / `OPENAI_BASE_URL`）；qwen 尤其要注意——不设会落到代码里的默认值，而那个值绑定的是上游维护者的接入点（症状是每次对话都 401） |
 | `BLOG_API_BASE` | **你自己站点的** `/api/public` 地址。agent 的每个只读工具与 RAG 语料都从它取数。**不改的话你的看板娘会认真回答别人博客里的问题**，而且不报错 |
 | `JWT_SECRET` | **必须与父仓那份逐字相同**——agent 用它验签 Rust 发来的身份断言 |
 | `TRACE_DIR` | 对话 trace 落盘目录。默认值绑定上游部署环境，**自建部署须覆盖** |
@@ -434,6 +466,11 @@ curl -s -o /dev/null -w "%{http_code}\n" https://<你的域名>/<一张上传图
 ——对话走的是 `nginx → Rust(3000) → agent(8010) → 模型 API`，它是整条链路的最终验收。
 对话无响应时按 [deployment-and-ops.md §6](../docs/deployment-and-ops.md) 的排查表走
 （先看 agent 日志的退出原因，再看 trace 的分段耗时）。
+
+`bash deploy/install.sh` 最后那一步就是上面这套的自动化版本（外加"两个单元开机自启了吗"）：
+**它现在以真退出码收场** —— 有项目没通过就非 0 退出，并把没通过的那几行重打一遍。
+装完它还会把这次钉在哪个提交上记进 `logs/install-info.txt`（工作区脏的话也照记，
+那正是"线上跑的到底是哪一版"的答案）。
 
 ---
 
