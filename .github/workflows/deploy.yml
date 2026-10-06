@@ -154,6 +154,26 @@ jobs:
           # 那个对象；默认的浅克隆（depth=1）里只有这次 push 的 tip。
           fetch-depth: 0
 
+      - name: 锁文件不许带本机镜像源
+        # 排在最前面：这条 5 秒就能判，而它挡住的那类坏法会在 3 分钟后（npm ci）才炸，
+        # 且炸出来的是一句 `getaddrinfo ENOTFOUND mirrors.…`，看不出跟锁文件有关。
+        # 本质：本机 npm 走 `~/.npmrc` 里配的镜像，**任何一次在本机重新生成锁文件**
+        # 都会把新条目的 `resolved` 写成镜像地址。本机一切正常（npm 认得那个源），
+        # runner 上却连不上 —— 20261006 真踩过一次：3 个条目把整个 check 打红。
+        # 只查一件事：每条 resolved 的主机名必须是 registry.npmjs.org。
+        # 将来若真的引入 git/`file:` 依赖（它们的 resolved 本来就不是 http 源），
+        # 这条会**响亮地**变红 —— 那时按提示放宽白名单，别把这条删了。
+        run: |
+          set -euo pipefail
+          bad="$(grep -o '"resolved": "[^"]*"' frontend/package-lock.json \
+                 | grep -v 'https://registry.npmjs.org/' || true)"
+          if [ -n "$bad" ]; then
+            echo "$bad" | sed 's/^/  /'
+            echo "::error::锁文件里有非官方源的 resolved（多半是本机的 npm 镜像混进去了）"
+            exit 1
+          fi
+          echo "✓ 锁里 $(grep -c '"resolved"' frontend/package-lock.json) 条 resolved 全在 registry.npmjs.org"
+
       - name: Commit message lint（与本地同一份 .githooks/commit-msg）
         # 规范的正文只写在 CONTRIBUTING.md 的《提交约定》一节，这里跑的就是那份钩子脚本本身
         # ——**一份实现两处共用**。为什么 CI 也要跑一遍：`core.hooksPath` 是 git 的本地配置
@@ -173,15 +193,34 @@ jobs:
             exit 0
           fi
           fail=0
+          skipped=0
           MSGFILE="$(mktemp)"
           while read -r sha; do
             [ -n "$sha" ] || continue
+            # dependabot 生成的提交豁免。首行由机器人按 `Bump <包> from <旧> to <新>` 拼，
+            # 包名一长就必然超过 60 字符——20261006 实测：16 个 PR 里 6 个红在这条上，
+            # 一条都不是代码问题，而红的是机器人没法自己改的那种。dependabot 自己有时会
+            # 缩短首行（丢掉版本区间）来碰运气，所以是"有时绿、有时红"，更难判读。
+            # 规则本体一个字没动，`.githooks/commit-msg` 仍是唯一事实源——这里只是按
+            # **作者**把它本来就不适用的一类摘出去。
+            # 这不是安全闸（是格式闸）：谁真想绕，把提交邮箱里塞个 dependabot 就行，
+            # 后果也只是格式不合规。
+            case "$(git log -1 --format=%ae "$sha")" in
+              *dependabot*)
+                echo "跳过 ${sha:0:9}：dependabot 生成的提交（首行长度不由人控制，**不是**通过）"
+                skipped=$((skipped + 1))
+                continue
+                ;;
+            esac
             git log -1 --format=%B "$sha" > "$MSGFILE"
             if ! bash .githooks/commit-msg "$MSGFILE"; then
               echo "::error::提交 ${sha:0:9} 的信息不合规（见上面的说明）"
               fail=1
             fi
           done < <(git log --no-merges --format=%H "${BEFORE}..${SHA}")
+          if [ "$skipped" -gt 0 ]; then
+            echo "本次跳过 ${skipped} 条 dependabot 提交（**不是**通过）"
+          fi
           exit "$fail"
 
       - name: Setup Rust
