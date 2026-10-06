@@ -31,6 +31,11 @@
     或跳错页签，用户就永远改不了配置，而页面上不会有任何报错。所以这一节真点一次、
     读 Router 的 location（探针见 `ENTRY`）。⚠️ 挂载因此必须包在 `MemoryRouter` 里
     （`useNavigate()` 在 Router 外会当场抛 ⇒ 整页白屏、所有断言超时）。
+  · **上传的两条通道各是一颗钮**（七之二节，20261006 用户第 1 条）——用户原话
+    「不要让 R2 开启存储图片时服务器上传途径失效」。判据钉的是**那颗服务器钮不许被
+    R2 的状态牵连**：本沙箱里 R2 是没配全的（假后端给 `configured: false`），正是从前
+    会把唯一那颗钮灰掉的两种情形之一 —— 它必须照样可点，被灰的只该是 R2 那颗，
+    且旁边要写清为什么。两颗钮的底色也必须不同（读**计算色**，不读源码）。
 
 见 CLAUDE.md §2：本机不能 vite build。esbuild 把**真组件**打成 bundle，只桩一个边界
 （`src/apis/axios.tsx`）；页面 sass 用 programmatic API 单独编译后注入（顺带过一遍编译，
@@ -680,13 +685,45 @@ with sync_playwright() as p:
           and d["icon"]["rt"] <= d["btn"]["rt"],
           str(d))
 
-    # ④ 悬停那一下（图标槽展开铺满按钮）不许被上面的 min-width 改动弄坏
-    pg.locator(".action_img .select").hover()
+    # ④ 悬停那一下（图标槽展开铺满按钮）不许被上面的 min-width 改动弄坏。
+    #    ⚠️ 20261006 起工具栏有**两颗** `.select`（传到本站 / 传到 R2），`querySelector`
+    #    取的是第一颗（= 传到本站，与上面 `g["btn"]` 量的同一颗），但 playwright 的
+    #    locator 在 strict 模式下会为"两个都命中"直接抛错 ⇒ 这里必须点名一颗。
+    pg.locator(".action_img .select").first.hover()
     pg.wait_for_timeout(400)
     h = geo(pg)["bar"]["icon"]
     check("悬停：图标槽展开到整个按钮宽（150）且与按钮左缘齐平",
           h["w"] == 150 and h["l"] == g["btn"]["l"], str(h))
     check("第七节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
+    pg.close()
+
+    # ── 七之二、上传的两条通道各是一颗钮（20261006，用户第 1 条）───────────────
+    # 用户原话：「将上传服务器和上传R2做两个按钮分别上传，不要让R2开启存储图片时
+    # 服务器上传途径失效」。所以这一节的判据是**那颗服务器钮不许被 R2 的状态牵连**：
+    # 这个沙箱里 R2 是**没配全**的（假后端给 `configured: false`）—— 正是从前会把
+    # 唯一那颗钮灰掉的两种情形之一。它必须照样可点；被灰的只该是 R2 那颗，且旁边
+    # 要写清为什么（只藏在 title 里、触屏看不见，等于没说）。
+    print("\n【七之二】两颗上传钮：R2 没配好时，服务器那颗照样能点")
+    pg = mount(br)
+    ups = pg.locator(".action_img button.select")
+    check("工具栏里正好两颗上传钮（分别传本站与 R2）", ups.count() == 2, str(ups.count()))
+    check("  第一颗是「传到本站」", ups.nth(0).inner_text().strip() == "传到本站",
+          ups.nth(0).inner_text().strip())
+    check("  第二颗是「传到 R2」", ups.nth(1).inner_text().strip() == "传到 R2",
+          ups.nth(1).inner_text().strip())
+    check("  **服务器那颗没被灰**（R2 没配全时它必须照旧可点 —— 这就是本轮要修的事）",
+          ups.nth(0).is_enabled(), "disabled")
+    check("  R2 那颗被灰掉了", ups.nth(1).is_disabled(), "enabled")
+    reason = pg.locator(".albumR2Blocked")
+    check("  且被灰时旁边写着原因（不是只有 title）",
+          reason.count() == 1 and len(reason.inner_text().strip()) > 0,
+          reason.inner_text() if reason.count() else "（没有那颗说明）")
+    # 两颗钮的皮必须不同色（并排时一眼分得出谁是谁）：量计算色，不读源码
+    colors = pg.evaluate("""() => [...document.querySelectorAll('.action_img button.select')]
+        .map(b => getComputedStyle(b).backgroundColor)""")
+    check("  两颗钮底色不同（服务器=手账粉 / R2=墨色那一档）",
+          colors[0] != colors[1], str(colors))
+    check("第七之二节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
     # 负控：把分隔线还原成修复前那条绝对定位的线（字面量内嵌，不读 git 历史）—— 必须复现

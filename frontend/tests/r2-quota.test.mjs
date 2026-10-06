@@ -185,6 +185,25 @@ console.log('\n⑥ 跨语言守卫：前端的判据/键名/单位必须与 Rust
         ok(!/limitBytes\s*[<>]=?|>=?\s*\w*\.?limitBytes/.test(src),
             `${where}没有第二份超限判据（一律走 utils/r2Quota）`);
     }
+
+    // ── 上传目标（20261006，用户第 1 条）：图库页两颗按钮分别上传 ─────────────
+    // 契约两侧都锁：Rust 只认 local / r2，前端只拼这两个字面量。这条链路里最贵的错
+    // 是"打错一个字就悄悄按缺省处理"——人以为传到了 R2，图却躺在服务器上。
+    ok(/Some\("local"\)\s*=>\s*Some\(UploadTarget::Local\)/.test(upload)
+        && /Some\("r2"\)\s*=>\s*Some\(UploadTarget::R2\)/.test(upload),
+        'Rust 的 `target` 认 `local` / `r2` 两个字面量');
+    ok(/Some\(_\)\s*=>\s*None/.test(upload),
+        '认不出的 target 返回 None ⇒ 调用方**报错**（不是按缺省处理）');
+    // 结构判据：`local` 那一次必须**整段跳过** R2 —— 这正是"R2 开着时服务器那条路还能用"
+    // 的实现。哪天有人把这段合并回"先试 R2、失败再本地"，这条会红。
+    ok(/if target != UploadTarget::Local \{[\s\S]*?try_r2_upload\(/.test(upload),
+        '`target=local` 时不走 try_r2_upload（R2 开着也照样存本机盘）');
+    ok(/async fn try_r2_upload\([\s\S]{0,300}?required: bool/.test(upload) && upload.includes('if required {'),
+        '`try_r2_upload` 收 `required`：点名 R2 却没配全时返回错误，**绝不回落本机盘**');
+    ok(/formData\.append\('target'/.test(api) && /'local' \| 'r2'/.test(api),
+        '前端只在 ImageMethods 一处拼 `target` 字段名，取值就是那两个（改名漏一处 = 静默走缺省）');
+    ok(/uploadImages\(formData,\s*uploadTarget\)/.test(albums),
+        '图库页把自己选的那颗钮的 target 传下去（不传 = 又变成由面板开关替用户决定）');
 }
 
 console.log(`\n${pass}/${pass + fail} 项通过`);

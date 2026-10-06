@@ -11,9 +11,13 @@
 //!   3. 时间列一律 +08:00 本地钟面（`chrono::Local::now().naive_local()`），与全库一致。
 //!
 //! 头像上传是本站**唯一**面向普通用户的文件写入面，因此校验写在这里：
-//! 类型按**字节头**判（不认客户端给的 content-type/扩展名），只收 jpg/png/webp/gif，
-//! SVG 这类能带脚本的格式一律拒绝（它由本站同源下发，内联渲染即 XSS）；
-//! 大小显式拦 2MiB（nginx 是 20m，路由上单独放开到 4MiB 好让我们自己给出中文错误）。
+//! 类型按**字节头**判（不认客户端给的 content-type/扩展名），SVG 这类能带脚本的格式
+//! 一律拒绝（它由本站同源下发，内联渲染即 XSS）；大小显式拦 2MiB（nginx 是 20m，
+//! 路由上单独放开到 4MiB 好让我们自己给出中文错误）。
+//!
+//! 20261006 起"哪把尺子"搬到 `utils`（`sniff_image_ext` + 后缀白名单），与图库上传
+//! 共用一份 —— 两处各写一份的结局是"一处收紧了、另一处还是老样子"，而那正是漏洞
+//! 最常待的地方。
 
 use axum::{Json, extract::State, http::HeaderMap};
 use sea_orm::{
@@ -29,7 +33,10 @@ use crate::entity::{
     note, talk, user, user_favorite, user_message, user_message_draft, user_notification,
 };
 use crate::routes::AppState;
-use crate::utils::{upload_dir, ApiResponse, hash_password, verify_password};
+use crate::utils::{
+    hash_password, sniff_image_ext, upload_dir, verify_password, ApiResponse,
+    ALLOWED_IMAGE_EXTS_TEXT,
+};
 
 /// 头像字节上限（裁切后的产物通常 100KB 以内）。路由上的 `DefaultBodyLimit` 放到 4MiB
 /// 是**为了让超限走我们自己的中文错误**——axum 默认 2MiB 会在 extractor 层直接 413、
@@ -234,24 +241,6 @@ pub struct AvatarDto {
     pub avatar: String,
 }
 
-/// 按**字节头**认图片类型。客户端给的 content-type 与文件名都是客户端说了算的，
-/// 不参与判定。只认这四种；认不出即拒绝（SVG/HTML 都在"认不出"这一侧）。
-fn sniff_image_ext(data: &[u8]) -> Option<&'static str> {
-    if data.len() >= 3 && data[0..3] == [0xFF, 0xD8, 0xFF] {
-        return Some("jpg");
-    }
-    if data.len() >= 8 && data[0..8] == [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A] {
-        return Some("png");
-    }
-    if data.len() >= 12 && &data[0..4] == b"RIFF" && &data[8..12] == b"WEBP" {
-        return Some("webp");
-    }
-    if data.len() >= 6 && (&data[0..6] == b"GIF87a" || &data[0..6] == b"GIF89a") {
-        return Some("gif");
-    }
-    None
-}
-
 /// 落盘目录：`<UPLOAD_DIR>/avatars/`，对外 URL 前缀 `/api/protect/download/avatars/`
 /// ——`ServeDir` 已经把整个 UPLOAD_DIR 挂在 `/api/protect/download` 下（公开、无鉴权），
 /// 所以子目录天然可访问。头像不进 `image` 表：那张表是编辑器素材库（后台图片管理列表
@@ -285,9 +274,17 @@ pub async fn upload_avatar(
     if data.len() > AVATAR_MAX_BYTES {
         return Json(ApiResponse::error("头像不能超过 2MB"));
     }
+    // 判据住在 `utils::sniff_image_ext`（20261006 从本文件搬过去，与图库上传共用
+    // 同一把尺子）。认不出即拒绝 —— 客户端给的 content-type 与文件名都不参与判定。
     let Some(ext) = sniff_image_ext(&data) else {
-        return Json(ApiResponse::error("只支持 JPG/PNG/WebP/GIF 图片"));
+        return Json(ApiResponse::error(&format!("只支持这些图片格式：{ALLOWED_IMAGE_EXTS_TEXT}")));
     };
+    // 后缀与内容两条都要过。这里的 `ext` 是刚从**字节头**认出来的，所以这一条今天
+    // 恒真 —— 留着是为了让"头像这扇门与图库那把尺子同源"这件事在代码里看得见：
+    // 哪天有人给 sniff 加一种"能认但不在白名单"的格式，这里就是拦它的地方。
+    if !crate::utils::image_ext_allowed(ext) {
+        return Json(ApiResponse::error(&format!("只支持这些图片格式：{ALLOWED_IMAGE_EXTS_TEXT}")));
+    }
 
     let dir = upload_dir().join("avatars");
     if let Err(e) = tokio::fs::create_dir_all(&dir).await {
