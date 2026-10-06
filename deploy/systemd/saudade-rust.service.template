@@ -1,0 +1,47 @@
+# systemd 单元模板：Rust 后端（axum + sea-orm，回环 :3000）
+#
+# 用法（把下面四处 <...> 换成你的实际值，然后）：
+#   sudo cp deploy/systemd/saudade-rust.service.template /etc/systemd/system/saudade-rust.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now saudade-rust
+#   systemctl status saudade-rust
+#
+# ⚠️ User / Group / WorkingDirectory / ExecStart **必须都指向同一个部署目录**，
+#    改一处漏一处不会报错，只会行为诡异：
+#      · 漏 WorkingDirectory ⇒ `dotenv()` 读不到 .env ⇒ 启动时 panic（DATABASE_URL 为空），
+#        或者更坏——读到了别的目录下的一份 .env；
+#      · 漏 ExecStart ⇒ 起的是旧二进制，而且日志照样在滚。
+#
+# ⚠️ **本单元故意没有 `EnvironmentFile=`**：环境变量由 `main.rs` 的 `dotenv()` 从
+#    **WorkingDirectory 下的 `.env`** 加载，所以把 `.env` 放在部署根目录就行
+#    （`cp .env.example .env` 之后填值，见 deploy/README.md §3）。
+#    这与 agent 的单元同一条纪律，但**不要**把两个单元改成同一个样子——它们各自的
+#    取值来源不同（agent 走 pydantic-settings 读 .env + 需要时走 Environment=，
+#    Rust 走 dotenv 读工作目录）。混起来就会出现"改了 .env 但服务没变"。
+#
+# 日志：追加写固定文件，由 logrotate 轮转（copytruncate，进程持有 fd 不用重启）。
+#     ⚠️ 日志文件的**属主必须是跑服务的那个用户**，否则 logrotate 会静默失败
+#     （见 deploy/logrotate/saudade.template 的注）。
+
+[Unit]
+Description=Saudade Blog Rust Backend (axum + sea-orm)
+# MySQL 是硬依赖（连不上直接 panic）。emqx 只是"先起来再说"：**没装 IoT 时这一项
+# 是无害的空序**（systemd 对不存在的单元只记一条 ordering、不会因此失败），装了
+# （iot/README.md）就有用，所以留着。
+After=network-online.target mysql.service emqx.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=<你的用户名>
+Group=<你的用户名>
+WorkingDirectory=__APP_DIR__
+ExecStart=__APP_DIR__/target/release/saudade_blog_bin
+# 崩溃/被杀/OOM 自动拉起
+Restart=always
+RestartSec=5
+StandardOutput=append:__APP_DIR__/logs/rust.log
+StandardError=append:__APP_DIR__/logs/rust.log
+
+[Install]
+WantedBy=multi-user.target

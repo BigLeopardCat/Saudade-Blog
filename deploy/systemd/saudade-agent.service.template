@@ -1,0 +1,62 @@
+# systemd 单元模板：Python Agent（FastAPI，回环 :8010）
+#
+# 用法（把下面四处 <...> / __APP_DIR__ 换成你的实际值，然后）：
+#   sudo cp deploy/systemd/saudade-agent.service.template /etc/systemd/system/saudade-agent.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now saudade-agent
+#   curl -s http://127.0.0.1:8010/health
+#
+# ⚠️ User / Group / WorkingDirectory / ExecStart 四处必须自洽（同 rust 那份模板的注）。
+#    **WorkingDirectory 是 agent 仓的目录**（`__APP_DIR__/saudade-blog-agent`），
+#    不是部署根目录——`.env` 与 `.venv` 都在它下面。
+#
+# ── 环境变量：这里有一条容易踩的边界 ────────────────────────────────────────
+# agent 的配置有**两个来源**，本单元只覆盖得了其中一个：
+#
+#   ① `config/settings.py`（pydantic-settings）读 **`.env`** —— 写 `.env` 就生效，
+#      不需要动本单元。绝大多数配置（LLM provider/key、BLOG_API_BASE、JWT_SECRET、
+#      TRACE_DIR…）都走这条。
+#
+#   ② `server.py` 里 `AGENT_RECURSION_LIMIT` / `AGENT_MAX_BODY_BYTES` /
+#      `AGENT_MAX_CONCURRENT` / `AGENT_MAX_REVIEW` 四个直接读**进程环境**
+#      （`os.environ`）。**写进 `.env` 一点作用都没有**——`.env` 只喂 pydantic 的
+#      Settings 对象，不会进进程环境（本单元也没有 `EnvironmentFile=`，即使有，
+#      那也只会把 `.env` 灌进进程环境、与 pydantic 各读一份，仍是两套）。
+#      要改就写在下面的 `Environment=` 里（已给出注释掉的样例）。
+#      默认值恰好是多数人想要的那个，所以只有真想改的时候才会发现"改了没用"。
+#
+# 完整的两张表见 agent 仓 README 的《环境变量》一节。
+
+[Unit]
+Description=Saudade Blog AI Agent (LangGraph waifu)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=<你的用户名>
+Group=<你的用户名>
+WorkingDirectory=__APP_DIR__/saudade-blog-agent
+
+# 参数与手动启动必须逐字一致：`--no-access-log` 是**必须**的——请求开始/结束的
+# 可观测性由 server.py 自己的生命周期日志提供（带 tid/时长/帧数/退出原因），
+# 打开 access log 只会把同一条信息重复一遍。
+# PYTHONFAULTHANDLER=1 让段错误有 traceback；PYTHONUNBUFFERED=1 让日志不被缓冲。
+ExecStart=/usr/bin/env PYTHONFAULTHANDLER=1 PYTHONUNBUFFERED=1 __APP_DIR__/saudade-blog-agent/.venv/bin/uvicorn server:app --host 127.0.0.1 --port 8010 --workers 4 --no-access-log
+
+# ② 那一类进程环境变量写在这里（默认值见 agent 仓 README，不用改就别打开）：
+# Environment=AGENT_RECURSION_LIMIT=30
+# Environment=AGENT_MAX_BODY_BYTES=12582912
+# Environment=AGENT_MAX_CONCURRENT=8
+# Environment=AGENT_MAX_REVIEW=4
+
+Restart=always
+RestartSec=5
+# 优雅停机窗口：SIGTERM 后等在途 SSE 对话自然收尾（正常回复 10-30s，流式总时长上限
+# 300s）；120s 到点强制杀，避免一次 restart 被一个挂住的对话拖死。
+TimeoutStopSec=120
+StandardOutput=append:__APP_DIR__/logs/agent/agent.log
+StandardError=append:__APP_DIR__/logs/agent/agent.log
+
+[Install]
+WantedBy=multi-user.target
