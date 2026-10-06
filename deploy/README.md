@@ -10,8 +10,70 @@
 > ——每一份的开头都写了怎么替换。
 >
 > ⚠️ 别把本目录与 [`scripts/deploy/`](../scripts/deploy/) 搞混：那是**本仓 CI/CD 的运行时代码**
-> （`deploy_from_r2.sh` 等，被 CI 调用、改了会触发一次真部署）；`deploy/` 这一份是**给人看的
-> 模板与步骤**，没有任何东西在执行它，改它只会让 CI 判定"本次无可部署变化"而跳过部署。
+> （`deploy_from_r2.sh` 等，被 CI 调用、改了会触发一次真部署）；`deploy/` 这一份里的模板是
+> **给人看的**，本仓的 CI 不碰它们——`deploy/**` 不在 `deploy.yml` 的任何一组路径过滤器里，
+> 所以只改这里的 push 会让 CI 判定"本次无可部署变化"而跳过部署（绿灯、什么都没上线）。
+>
+> 只有 [install.sh](install.sh) 是**可执行的**，而它跑在**你要部署的那台机器上**（不是 CI、
+> 也不是本仓的部署管线）。它读的就是本目录这几个模板——模板是唯一事实源，脚本只做渲染。
+
+---
+
+## 一条命令装完（推荐先看这个）
+
+下面 §1–§12 是逐步走查；**只想把它装起来的话，一行就够**：
+
+```bash
+git clone https://github.com/BigLeopardCat/Saudade-Blog.git && cd Saudade-Blog
+git clone https://github.com/BigLeopardCat/saudade-blog-agent.git saudade-blog-agent
+bash deploy/install.sh                     # 交互向导；口令用 read -s 问，不回显
+```
+
+它按 §3–§10 的顺序把整条路走完：前置检查 → 目录权限 → 建库/应用账号/第一个管理员 →
+两份 `.env` → agent 的 `.venv` → 构建（`cargo build --release` + `vite build`）→ TLS 证书 →
+nginx → systemd ×2 → logrotate + 心跳 cron → 起服务 → 验收。**幂等**：重跑安全，
+已有的 `.env` 只补缺键、库里已经有表就整段跳过、配置文件一律"渲染 → 语法自检 → 替换"。
+
+```bash
+# IoT（EMQX + 控制台 + 设备接入，见 iot/README.md）是**选装件**：
+# 交互向导会问你一句（默认不装）；不想被问就直接表态——
+bash deploy/install.sh --with-iot
+
+# 站点已经在跑，只补装 IoT
+bash deploy/install.sh --iot-only
+
+# 非交互（CI、脚本里调）：所有值都能用 flag 或同名大写环境变量预填
+bash deploy/install.sh -y --domain blog.example.com --admin-pass "$(openssl rand -hex 12)"
+
+# 先看看它会做什么：渲染产物落临时目录，系统一个字节都不改
+bash deploy/install.sh --dry-run -y --domain blog.example.com
+# 然后跟线上对一遍（本仓的站点配置就是这么核对过的）：
+#   diff -u /etc/nginx/sites-enabled/blog <那个目录>/etc/nginx/sites-available/blog
+```
+
+`bash deploy/install.sh --help` 是全部 flag 的清单（域名、库名、管理员、上传目录、
+证书、站点名与描述、LLM 提供方与 key、EMQX 版本…）。
+
+> **向导会问的只有"还没定过的"那些项**：flag / 同名大写环境变量给过的，它一声不吭直接用；
+> `-y` 则一律取默认（可选件因此**默认不装**）。`--vite-heap MB` 是构建期拨盘，
+> 见 §6。
+
+四条要知道的边界：
+
+- **它不替你装系统包**。缺 `nginx` / `mysql` / `cargo` / `uv` 就停下并给出各发行版的安装命令
+  ——装错了比没装更难查，这一步交给人。
+- **它不猜**。`--domain` 不给就按"只有 IP"的形态装（乙块整块略去，靠自签证书 + 兜底块应答）；
+  非 Ubuntu 上装 EMQX 会明确告诉你"这一步要你自己下 .deb"，而不是硬跑一遍装错。
+- **凭据落在 `deploy/.credentials`**（0600，已 gitignore）。脚本**只打印那个路径，不打印值**；
+  MySQL root 口令走 0600 临时 defaults 文件，不进 `ps`；管理员口令从 stdin 喂 SQL。
+  看完请自行转移或删除。
+- **device-service 它补不了**——源码不在任何公开仓（见
+  [iot/device-service/README.md](../iot/device-service/README.md)）。装 IoT 的那一趟最后会把
+  缺口与接口契约打成清单给你。
+
+> ⚠️ `--with-iot` 会真的改四处：`/etc/emqx/`、`/etc/nginx/snippets/blog-iot/`、
+> **两份** `.env` 的 `IOT_ENABLED`、以及 EMQX 的认证链与 ACL（ACL 是**全量替换**语义）。
+> 三处消费面必须同源这件事见 [iot/README.md](../iot/README.md)。
 
 ---
 
@@ -248,6 +310,13 @@ npm run vendor:live2d            # 看板娘运行时的三份第三方产物不
 NODE_OPTIONS="--max-old-space-size=3072" npx vite build
 ```
 
+> **`3072` 是"官方部署那台机器上的取值"，不是硬性门槛**——`--max-old-space-size` 只是给 V8
+> 老生代划的上限。**设小了的代价小得多**：构建自己报 `JavaScript heap out of memory` 退出，
+> 机器安然无恙，重来一次就行；设大了才会跟常驻服务抢内存、把整机拖垮。
+> 所以按机器实际内存给：`min(内存 − 1024, 3072)`，下限 512。
+> `bash deploy/install.sh` 就是这么算的，要手动覆盖用 `--vite-heap MB`（它同时会打印
+> 这个值的来处）。
+
 `fetch:widget` 与 `vendor:live2d` **顺序不能反**：前者整树替换
 `public/live2d-widgets/`，后者往它的 `vendor/` 子目录里写——反了的话刚取到的
 `vendor/` 会被抹掉。漏掉 `fetch:widget` 的症状是页面打得开、聊天面板也在，
@@ -277,6 +346,10 @@ sudo nginx -t && sudo systemctl reload nginx
 2. **两个 443 server 块（IP 兜底 + 域名）内容相同、彼此独立**。改一块记得改另一块。
 3. **备份文件不要放 `sites-enabled/`**：那是通配 include，一个 `blog.conf.bak` 就是一组
    重复 server，`nginx -t` 报 duplicate default server。
+4. **改之前先确认"生效的那一份"是哪个文件**：`readlink -f /etc/nginx/sites-enabled/blog`。
+   正常输出是 `/etc/nginx/sites-available/blog`（软链）；**若输出就是它自己**，说明这台机器上
+   两份是互不相干的独立文件——此时编辑 `sites-available/` 那份**不会生效**，而 `nginx -t`
+   照样全绿（它测的正是生效那份，语法自然没错），于是改动看着像"没起效"。
 
 TLS 续期：模板用的是 `/etc/nginx/ssl/` 下的证书文件。想用 ACME（certbot 之类）自动续期，
 把两行证书路径换成 ACME 客户端写好的路径，并注意 80 那个跳转块——客户端需要在跳转
