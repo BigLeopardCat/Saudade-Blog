@@ -6,8 +6,8 @@ edition = "2021"
 [dependencies]
 axum = { version = "0.7", features = ["macros", "multipart"] }
 tokio = { version = "1", features = ["full"] }
-sea-orm = { version = "0.12", features = [ "sqlx-mysql", "runtime-tokio-rustls", "macros", "mock" ] }
-sqlx = { version = "0.7", features = ["mysql", "runtime-tokio-rustls"] }
+sea-orm = { version = "1.1", features = [ "sqlx-mysql", "runtime-tokio-rustls", "macros", "mock" ] }
+sqlx = { version = "0.8", features = ["mysql", "runtime-tokio-rustls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tower-http = { version = "0.5", features = ["cors", "trace", "fs"] }
@@ -26,12 +26,28 @@ jsonwebtoken = { version = "10.3.0", features = ["rust_crypto"] }
 # 引 aws-sdk-s3 要拉几十个 crate，而这里只需要一个 HMAC。
 hmac = "0.12"
 
-reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls", "stream"] }
+# ⚠️ 这一行在 0.11 与 0.12 里**不等价**（20261007 升级时读 changelog 才发现）：
+# 0.11 的默认项只有一个 `default-tls`（native-tls，我们不要），而 `charset` 与 HTTP/2
+# 那时候是**无条件编进去**的；0.12 把它们变成了特征 ⇒ 同一行 `default-features = false`
+# 会**静默地**再关掉两样东西。逐条交代：
+#   charset     —— 关掉后 `resp.text()` 不再看 Content-Type 的 charset 参数（改成 UTF-8
+#                  lossy、且不去 BOM）。本仓两处 `text()` 都读 R2 的 XML（永远是 UTF-8）
+#                  ⇒ 今天行为一致；但 encoding_rs 早已在依赖树里（multer 带来的）
+#                  ⇒ **开着零新增依赖**，所以开，别留一条"哪天换个源就悄悄乱码"的路。
+#   HTTP/2      —— **故意不开**。0.11 是白带的（h2 是无条件依赖），0.12 关掉后退回 HTTP/1.1：
+#                  对 R2 与本机 agent 都是一次一个请求、不复用连接，功能上无差；开回来要新增
+#                  h2 这个包（一整套协议实现，且 HTTP/2 的历史 CVE 大多在这类实现里）。
+#                  真要开就单独立项，别顺手带上。
+#   system-proxy—— 也**故意不开**：这是 0.12 新增的默认项，会读 HTTP_PROXY/HTTPS_PROXY
+#                  环境变量。0.11 不读（那时只能在代码里 `.proxy()`）⇒ 开着等于让环境变量
+#                  能悄悄改写发往 R2 的连接目标，与 0.11 对齐才是"不动行为"的那一边。
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream", "charset"] }
 futures = "0.3"
 async-stream = "0.3"
 
 [dev-dependencies]
-reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls", "stream"] }
+# 与上面那条依赖逐字相同（charset 的理由见上）
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream", "charset"] }
 futures = "0.3"
 async-stream = "0.3"
 tower = { version = "0.4", features = ["util"] }
