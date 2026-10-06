@@ -36,9 +36,20 @@ let isCachedOther = false;
 // 否则「列数变化后重拉」与「More 续翻」会用到两个不同的 per_page（页偏移错位 → 重复/漏项）
 let cachedPageSize = 6;
 
-/** 每页条数 = 栅格列数 × 2（需求：默认显示满两行）。量不到列数时回退 6 = 改造前的固定值 */
+/** 量不到列数时回退的每页条数 = 改造前的固定值（真正的公式在下面 `pageSizeFor`） */
 const FALLBACK_PAGE_SIZE = 6;
+/** 每页条数上限（后端 `pageSize` 是 `clamp(1, 1000)`，这个 48 只是前端的自律） */
 const MAX_PAGE_SIZE = 48;
+/** 桌面档一页几行 */
+const DESKTOP_ROWS = 2;
+/** 列数 ≤ 这个数就算窄屏（手机档的 `.allArticles` 是 `repeat(2, 1fr)`，见 index.sass 手机档） */
+const NARROW_COLS = 2;
+/**
+ * 窄屏一页几行（20261006 用户第 5 条）：「在移动端点 MORE 按钮文章卡片只多加载两行，
+ * 让人很容易失去耐心，一次加载卡片数量太少」⇒ 手机档从两行提到**四行**（2 列 × 4 = 8 张）。
+ * 桌面各档不受影响（仍是两行）—— 一屏能看几张跟屏宽是同一件事，桌面上两行就填满了。
+ */
+const NARROW_ROWS = 4;
 
 /**
  * 栅格真实列数。两个坑：
@@ -54,9 +65,15 @@ const colsOf = (el: HTMLElement | null): number => {
         .filter(t => t.endsWith('px') && parseFloat(t) > 0).length
 }
 
-/** 列数 → 每页条数（满两行）；越界/量不到时回退固定值 */
+/**
+ * 列数 → 每页条数：桌面满两行、窄屏满四行；越界/量不到时回退固定值。
+ * ⚠️ 首屏与 MORE 走的是**同一个函数**（`fetchFirst` 与列数变化回调两处各调一次），
+ * 拆成两个条数会让"已渲染条数"与"下一页的偏移"错位（重复/漏项，见 `cachedPageSize` 注释）。
+ */
 const pageSizeFor = (cols: number): number =>
-    Number.isFinite(cols) && cols > 0 ? Math.min(cols * 2, MAX_PAGE_SIZE) : FALLBACK_PAGE_SIZE
+    Number.isFinite(cols) && cols > 0
+        ? Math.min(cols * (cols <= NARROW_COLS ? NARROW_ROWS : DESKTOP_ROWS), MAX_PAGE_SIZE)
+        : FALLBACK_PAGE_SIZE
 
 const ContentHome = () => {
     const [currentTop,setCurrentTop] = useState(0);
