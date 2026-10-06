@@ -10,9 +10,10 @@
 //!   · `split_terms` / `script_runs` / `keyword_given` 从 `notes.rs` **原样搬来**（逐字未改）；
 //!   · `like_escape` 原来是 `conversation.rs` 与 `upload.rs` **各一份**私有实现，
 //!     第三处要用时一并收到这里（三处一份）；
-//!   · `count_terms` / `score_term` / `score_term_sum` 是把 `notes.rs` 里已有的做法**泛化**
-//!     （标题 +100 / 标签 +30 / 正文次数封顶 10），**不引入新语义** ——
-//!     文章那一栏的判定与打分因此与改动前逐条一致。
+//!   · `count_terms` / `score_term` / `score_term_sum` / `rank_tiered` 是把 `notes.rs` 里
+//!     已有的做法**泛化**（标题 +100 / 标签 +30 / 正文次数封顶 10；全中优先的分档），
+//!     **不引入新语义** —— 文章那一栏的判定与排序因此与改动前逐条一致；
+//!   · `snippet`（结果行摘要）是新写的，只服务聚合搜索的展示面。
 //!
 //! ⚠️ 本模块**不碰** `search_notes` 的 handler 本身。那个端点同时服务 agent 的
 //! `search_notes` 工具（`notes.rs` 里那条注释明写），它的行为不许因为「抽公共件」而变。
@@ -168,6 +169,55 @@ pub(crate) fn score_term_sum(
     terms.iter().map(|t| score_term(t, title, tags, body)).sum()
 }
 
+/// 多词命中后**分档 + 排序**（20260920 引入，20261006 抽成公共件）：
+///
+/// **全中优先**——多词查询先只留"每个词都命中"的那些（精度优先）；一条全中的都没有时，
+/// 才降级用"部分命中"（召回兜底：搜 "Docker 部署博客" 不该是一片空白）。
+/// 档内按各词分项求和（+ `created_at` 兜底）排序；单词查询只有一档，等价于旧行为。
+///
+/// 入参每行 = `(命中词数, 分数, 时间, 载荷)`；返回载荷（调用方自己装 DTO）。
+/// 文章那一栏的排序与 `search_notes` **同一条规则** —— 抽件前后逐条一致。
+pub(crate) fn rank_tiered<T>(
+    terms_len: usize,
+    rows: Vec<(usize, i64, chrono::NaiveDateTime, T)>,
+) -> Vec<T> {
+    let mut all: Vec<(usize, i64, chrono::NaiveDateTime, T)> = Vec::new();
+    let mut part: Vec<(usize, i64, chrono::NaiveDateTime, T)> = Vec::new();
+    for row in rows {
+        if row.0 == 0 {
+            continue;
+        }
+        if row.0 == terms_len {
+            all.push(row);
+        } else {
+            part.push(row);
+        }
+    }
+    let mut scored = if all.is_empty() { part } else { all };
+    scored.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then_with(|| b.1.cmp(&a.1))
+            .then_with(|| b.2.cmp(&a.2))
+    });
+    scored.into_iter().map(|(_, _, _, t)| t).collect()
+}
+
+/// 结果行摘要：空白折平（换行/多空格折叠成一个空格）后按**字符**截断。
+///
+/// 为什么按字符而不是字节：中文列宽按字算，按字节截会把一个字劈成 U+FFFD。
+/// 为什么折平空白：这些摘要进的是搜索结果的一行两行截断槽，原文里的换行会把布局撑歪，
+/// 而且头 100 个字符可能全是缩进。评论正文本来就带 `\n`（`comments::clean_content`
+/// 特意留着它），留言板那篇 `talk_brief` 也为 `\r` 专门拍过平——折叠是这两条经验的收口。
+pub(crate) fn snippet(s: &str, max_chars: usize) -> String {
+    let flat = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.chars().count() <= max_chars {
+        return flat;
+    }
+    let mut out: String = flat.chars().take(max_chars).collect();
+    out.push('…');
+    out
+}
+
 #[cfg(test)]
 mod split_terms_tests {
     use super::{keyword_given, split_terms};
@@ -319,5 +369,68 @@ mod score_tests {
         assert_eq!(count_terms(&terms, |_| true), 2);
         assert_eq!(count_terms(&terms, |_| false), 0);
         assert_eq!(count_terms(&[], |_| true), 0);
+    }
+}
+
+#[cfg(test)]
+mod rank_and_snippet_tests {
+    use super::{rank_tiered, snippet};
+    use chrono::{NaiveDate, NaiveDateTime};
+
+    fn at(y: i32, m: u32, d: u32) -> NaiveDateTime {
+        NaiveDate::from_ymd_opt(y, m, d).unwrap().and_hms_opt(0, 0, 0).unwrap()
+    }
+
+    /// **"全中优先"的本体**：第一档哪怕分数更低、时间更旧，也整体排在第二档前面。
+    /// 这条红了就说明"降级到部分命中"被写反了（精度优先退化成了分数优先）。
+    #[test]
+    fn 全中档压过分数更高的部分命中档() {
+        let rows = vec![
+            // 命中 1 个词，但分数高得多、时间也新得多
+            (1usize, 999i64, at(2026, 10, 1), "部分命中"),
+            // 命中全部 2 个词，分数低、时间旧
+            (2usize, 5i64, at(2020, 1, 1), "全中"),
+        ];
+        assert_eq!(rank_tiered(2, rows), vec!["全中", "部分命中"]);
+    }
+
+    /// 一条全中都没有时才降级：此时按分数、再按时间倒序。
+    #[test]
+    fn 没有全中时降级并按分数与时间倒序() {
+        let rows = vec![
+            (1usize, 10i64, at(2026, 1, 1), "分低但新"),
+            (1usize, 50i64, at(2020, 1, 1), "分高但旧"),
+            (1usize, 50i64, at(2026, 9, 9), "分高且新"),
+        ];
+        assert_eq!(rank_tiered(2, rows), vec!["分高且新", "分高但旧", "分低但新"]);
+    }
+
+    #[test]
+    fn 零命中的行被丢弃() {
+        let rows = vec![
+            (0usize, 100i64, at(2026, 1, 1), "没命中"),
+            (1usize, 1i64, at(2020, 1, 1), "命中"),
+        ];
+        assert_eq!(rank_tiered(1, rows), vec!["命中"]);
+    }
+
+    /// 单词查询只有一档：保住"切词前"的老行为（分数 + 时间倒序）。
+    #[test]
+    fn 单词查询与旧行为一致() {
+        let rows = vec![
+            (1usize, 0i64, at(2026, 5, 5), "同分新"),
+            (1usize, 0i64, at(2026, 1, 1), "同分旧"),
+        ];
+        assert_eq!(rank_tiered(1, rows), vec!["同分新", "同分旧"]);
+    }
+
+    /// 摘要：折平空白 + 按**字符**截断（中文不被劈成 U+FFFD）。
+    #[test]
+    fn 摘要折平空白并按字符截断() {
+        assert_eq!(snippet("  你好\n\n世界  ", 100), "你好 世界");
+        assert_eq!(snippet(&"中".repeat(10), 4), "中中中中…");
+        // 正好等于上限：不加省略号（否则"没截断"和"截断了"看起来一样）
+        assert_eq!(snippet("中中中中", 4), "中中中中");
+        assert_eq!(snippet("", 10), "");
     }
 }

@@ -22,6 +22,7 @@ pub mod quota;    // 用户对话额度（20260929；上限与算术在 crate::q
 pub mod note_stats; // 文章阅读量/点赞量（20260930；**绝不能记进 get_note_detail**，见模块头注）
 pub mod comments;   // 文章评论（20261002）：审核复用 talks::decide_review，存储走 note_comment 表
 pub mod comment_votes; // 评论点赞/踩（20261003）：一票一行、**访客可投**，身份复用 note_stats::{identify, Who}
+pub mod search; // 站内聚合搜索（20261006）：文章/说说/留言/评论一次搜，规则走 crate::search_core
 
 use axum::{
     routing::{get, post, delete, put},
@@ -136,6 +137,11 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/public/notes", get(notes::list_public_notes))
         .route("/api/public/notes/page", get(notes::list_public_notes)) 
         .route("/api/public/notes/search", post(notes::search_notes))
+        // 站内聚合搜索（20261006）：文章 / 说说 / 留言 / 评论四类一次搜，供首页搜索框。
+        // **必须留在这里**（public_routes）——protected_routes 域内 auth_guard 全量要求
+        // 管理员，而搜索框是给未登录访客用的。它不取代上面那条：`notes/search` 还背着
+        // agent 的 `search_notes` 工具与前台分类页。
+        .route("/api/public/search", post(search::search_all))
         .route("/api/public/notes/:id", get(notes::get_note_detail))
         .route("/api/public/topnotes", get(notes::get_top_notes))
 
