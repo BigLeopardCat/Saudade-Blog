@@ -1,7 +1,33 @@
-// 登录页（20260921 改版：现代化卡片 + 注册/忘记密码入口）
-// 配色沿用站内既有的"夜/河灯"词汇：墨色底 + 河灯金 #f0c987（同 RiverBoard 的
-// 待审印章色），不再用旧的青色霓虹。输入框保持**深底白字**——浏览器自动填充的
-// 覆盖规则（-webkit-autofill 那段）依赖它，浅底会让填充后的字看不见。
+// 登录页（20260921 改版；20261006 起**跟随全站昼夜**）
+//
+// 这一页从前**恒深色**：下面所有色值都是写死的深色字面量，也不读 `isDarkMode`。原因是
+// 它在 App 壳之外（`router/index.tsx` 里 `login` 是顶层路由，不在那层 `.frontDark` 底下），
+// 全站切昼夜它一动不动。20261006 用户第 3 条：「登录页的白天模式页面风格做成博客主页白天
+// 模式同风格，但是不要加胶带什么的，只做颜色配色纹路变化」。
+//
+// 两档的分工：
+//   · **白天** = 主页首屏（`ContentHome/index.sass` 的 `.collageBg`）那套和纸配色 ——
+//     粉紫拼贴底 + 28px 方格纸 + 纸白卡片 + 墨紫字。页面里的东西一律走 `--washi-*`
+//     令牌（`:root` 就是浅色档）。
+//   · **夜间** = 20260921 那套墨蓝 + 河灯金，**原样搬过来**（不是重新调）——视觉不变的
+//     保证来自"搬家"而不是"重新配"。
+//   ⚠️ 明确**不加**任何胶带/贴纸/缎带（`.heroPanelTape` / `.vit-tape` / `.TopTape` /
+//      `.ContentContainer::before` 那族一个都不引）：用户点掉了。
+//
+// 两档挂在哪儿（都在 index.tsx 的 effect 里，见那里注释）：`.login-page` 自己挂
+// `frontDark`（于是 `--washi-*` 自动切夜间档）；`body` 挂 `login-route` +
+// `login-dark`（页面底；后者还管**弹窗**——modal 走 Portal 挂在 body 上，
+// `.login-page.frontDark` 够不着它）。
+//
+// 两档主按钮的"面"与字色共用一份：登录卡片那颗与弹窗里那两颗是同一套观感，别各写各的。
+// 白天档刻意用**浅粉渐变 + 墨字**（与夜间的浅金 + 深褐是同一种收法）：白字压在深粉
+// `#d94f9a` 上只有 3.8:1，压紫 `#8e63e0` 上 4.2:1 —— 都过不了 4.5:1（15px/600 不算
+// 大字号），`tests/login-modal-theme.test.py` 会当场判红。浅粉那两端分别是 6.5:1 / 6.6:1。
+$cta-day: linear-gradient(135deg, #ffd7ea 0%, #f0b9dd 100%)
+$cta-night: linear-gradient(135deg, #f7dcae 0%, #e8b866 100%)
+$cta-ink-day: #4a3550      // == --washi-ink 白天那一档
+$cta-ink-night: #2a2113    // 原值（河灯金上的深褐）
+
 html
   height: 100%
 
@@ -9,6 +35,14 @@ body
   margin: 0
   padding: 0
   font-family: sans-serif
+
+// 页面底：与 `.login-page` 同一张（这里是"卡片外/回弹露出"的那部分）。
+// 默认白天档 —— `body` 上的类由 index.tsx 在挂载时加上（同时也就不会有"整站别处也吃到
+// 这张底"的问题：类一卸，规则就不生效）。
+body.login-route
+  background: linear-gradient(160deg, #fff6fa 0%, #ffe9f4 36%, #f2ecff 68%, #e9f4ff 100%)
+
+body.login-route.login-dark
   background: linear-gradient(160deg, #0d1319 0%, #171f2a 55%, #1d2634 100%)
 
 .login-page
@@ -20,30 +54,59 @@ body
   padding: 24px
   box-sizing: border-box
   overflow: hidden
+  // 白天档的页面底（照抄主页首屏拼贴底那条 160deg 渐变）。`.frontDark` 下换成墨蓝。
+  background: linear-gradient(160deg, #fff6fa 0%, #ffe9f4 36%, #f2ecff 68%, #e9f4ff 100%)
 
-  // 顶部一团"月晕"：纯装饰，不参与布局也不吃点击
-  &::before
+  // 纹路 = 主页那层 28px 方格纸（`ContentHome/index.sass` 的 `.collageBg::after` 同一组
+  // 数）。守的是"只做颜色配色纹路变化"这句里的**纹路**那半。
+  &::after
     content: ''
     position: absolute
-    top: -180px
-    left: 50%
-    width: 620px
-    height: 620px
-    transform: translateX(-50%)
-    background: radial-gradient(circle, rgba(240,196,110,.12) 0%, rgba(240,196,110,.04) 45%, transparent 70%)
+    inset: 0
+    background-image: linear-gradient(rgba(160, 120, 190, 0.09) 1px, transparent 1px), linear-gradient(90deg, rgba(160, 120, 190, 0.09) 1px, transparent 1px)
+    background-size: 28px 28px
     pointer-events: none
+
+  // 顶部一团"月晕"：纯装饰，不参与布局也不吃点击。
+  // **只有夜间档有**（白天是拼贴底 + 方格纸，再来一团光晕就成了第四种元素）。
+  &.frontDark
+    background: linear-gradient(160deg, #0d1319 0%, #171f2a 55%, #1d2634 100%)
+
+    &::after
+      background-image: none
+
+    &::before
+      content: ''
+      position: absolute
+      top: -180px
+      left: 50%
+      width: 620px
+      height: 620px
+      transform: translateX(-50%)
+      background: radial-gradient(circle, rgba(240,196,110,.12) 0%, rgba(240,196,110,.04) 45%, transparent 70%)
+      pointer-events: none
 
 .login-box
   position: relative
+  // 压在上面那层方格纸之上：`::after` 是 `.login-page` 的**最后一个**子盒（伪元素排在实子盒
+  // 之后），不给这里一个 z-index 的话纹路会画在卡片**表面上**（9% 的紫线，在纸白卡上看得见）。
+  z-index: 1
   width: 400px
   max-width: 100%
   padding: 34px 32px 26px
   box-sizing: border-box
-  border: 1px solid rgba(255,255,255,.12)
+  // 白天：纸白实底 + 和纸细边 + 纸影。**不用 `backdrop-filter`**（底是不透明的，
+  // 模糊既看不出效果又白付一层合成）；夜间那档才需要它（玻璃卡片压在墨蓝底上）。
+  border: 1px solid var(--washi-line, rgba(198, 152, 192, 0.42))
   border-radius: 18px
-  background: linear-gradient(180deg, rgba(255,255,255,.07) 0%, rgba(255,255,255,.025) 100%)
-  backdrop-filter: blur(14px)
-  box-shadow: 0 24px 64px rgba(0,0,0,.55)
+  background: var(--washi-paper, #fffdfa)
+  box-shadow: var(--washi-shadow-lg, 0 22px 54px rgba(120, 90, 140, 0.22))
+
+  .frontDark &
+    border: 1px solid rgba(255,255,255,.12)
+    background: linear-gradient(180deg, rgba(255,255,255,.07) 0%, rgba(255,255,255,.025) 100%)
+    backdrop-filter: blur(14px)
+    box-shadow: 0 24px 64px rgba(0,0,0,.55)
 
 .login-brand
   // 30px（原 26px）：头像是这一块的下缘，它到下面「账号」的距离就是这一条 —— 20260924 把
@@ -53,21 +116,25 @@ body
 
   h2
     margin: 0
-    color: #f6f2ea
+    color: var(--washi-ink, #4a3550)
     font-size: 23px
     font-weight: 600
     letter-spacing: .04em
 
   // 20260924：原来是 `.login-sub` 那行「登录后体验完整服务」小字，换成访客自己的三态头像。
-  // 一圈暖金细边 + 投影，把默认头像那张浅底方图与深色卡片分开（antd Avatar 默认是
-  // inline-block，display:block + margin auto 才在 .login-brand 的 text-align:center 里居中）。
+  // 一圈细边 + 投影，把默认头像那张浅底方图与卡片分开（antd Avatar 默认是 inline-block，
+  // display:block + margin auto 才在 .login-brand 的 text-align:center 里居中）。
   .login-avatar
     display: block
     // 16px（原 14px）：标题 23px 那行与头像之间的呼吸；尺寸由 antd 的 size=84 给
     // （20260924 用户反馈"有点小"，64 → 84；比头部那个 64 明显大一号）。
     margin: 16px auto 0
-    border: 1px solid rgba(240,201,135,.35)
-    box-shadow: 0 6px 18px rgba(0,0,0,.35)
+    border: 1px solid var(--washi-line, rgba(198, 152, 192, 0.42))
+    box-shadow: 0 6px 18px rgba(120, 90, 140, 0.2)
+
+    .frontDark &
+      border: 1px solid rgba(240,201,135,.35)
+      box-shadow: 0 6px 18px rgba(0,0,0,.35)
 
 .field
   position: relative
@@ -76,7 +143,7 @@ body
   label
     display: block
     margin-bottom: 7px
-    color: rgba(255,255,255,.5)
+    color: var(--washi-ink-2, #7c6584)
     font-size: 12px
     letter-spacing: .12em
     // 汉字不加字距会挤在一起，加一点点即可
@@ -86,36 +153,65 @@ body
     width: 100%
     padding: 12px 14px
     box-sizing: border-box
-    color: #fff
+    color: var(--washi-ink, #4a3550)
     font-size: 15px
-    border: 1px solid rgba(255,255,255,.14)
+    border: 1px solid var(--washi-line, rgba(198, 152, 192, 0.42))
     border-radius: 10px
     outline: none
-    background: rgba(255,255,255,.05)
+    // 框比卡片淡一档的粉白：和纸上"挖"出来的那一格，与纸白卡片分得开
+    background: var(--washi-paper-2, #fff6fa)
     transition: border-color .25s, box-shadow .25s, background .25s
 
     &::placeholder
-      color: rgba(255,255,255,.28)
+      color: var(--washi-ink-3, #a08ba8)
 
     &:focus
-      border-color: #f0c987
-      background: rgba(255,255,255,.08)
-      box-shadow: 0 0 0 3px rgba(240,196,110,.16)
+      border-color: var(--washi-pink-deep, #d94f9a)
+      background: var(--washi-paper, #fffdfa)
+      box-shadow: 0 0 0 3px rgba(217, 79, 154, .16)
 
     &:disabled
       opacity: .6
       cursor: not-allowed
 
-  // 浏览器自动填充时保持深底白字（否则填充后是白底黑字/黄底黑字）
+  // 浏览器自动填充时保持**本色底 + 本色字**（否则填充后是系统那套白底黑字/黄底黑字）。
+  // ⚠️ 白天档与夜间档要**各写一份**：这组属性用的不是可继承的令牌，`-webkit-text-fill-color`
+  // 自己在哪条规则里就取哪个值（白天档留 deep 色、夜间档留白字），反过来就看不见了。
   input:-webkit-autofill,
   input:-webkit-autofill:hover,
   input:-webkit-autofill:focus,
   input:-webkit-autofill:active
     -webkit-background-clip: text
-    -webkit-text-fill-color: #fff
-    caret-color: #fff
+    -webkit-text-fill-color: var(--washi-ink, #4a3550)
+    caret-color: var(--washi-ink, #4a3550)
     transition: background-color 5000s ease-in-out 0s, caret-color 0s
-    box-shadow: 0 0 0 1000px #191f28 inset
+    box-shadow: 0 0 0 1000px var(--washi-paper-2, #fff6fa) inset
+
+  .frontDark &
+    label
+      color: rgba(255,255,255,.5)
+
+    input
+      color: #fff
+      border-color: rgba(255,255,255,.14)
+      background: rgba(255,255,255,.05)
+
+      &::placeholder
+        color: rgba(255,255,255,.28)
+
+      &:focus
+        border-color: #f0c987
+        background: rgba(255,255,255,.08)
+        box-shadow: 0 0 0 3px rgba(240,196,110,.16)
+
+    // 夜间档照旧是**深底白字**（与上面的 input 规则同源，只是字色反过来）
+    input:-webkit-autofill,
+    input:-webkit-autofill:hover,
+    input:-webkit-autofill:focus,
+    input:-webkit-autofill:active
+      -webkit-text-fill-color: #fff
+      caret-color: #fff
+      box-shadow: 0 0 0 1000px #191f28 inset
 
 // 密码框右侧的显隐按钮：绝对定位在输入框内，不吃 Tab 焦点。
 // 20260922 起是眼睛图标（与后台"修改密码"的 Input.Password 同一套 Eye/EyeInvisible），
@@ -132,7 +228,7 @@ body
     width: 26px
     height: 26px
     padding: 0
-    color: rgba(255,255,255,.42)
+    color: var(--washi-ink-3, #a08ba8)
     font-size: 16px
     border: none
     border-radius: 6px
@@ -141,8 +237,16 @@ body
     transition: color .2s, background-color .2s
 
     &:hover
-      color: #f0c987
-      background: rgba(255,255,255,.07)
+      color: var(--washi-pink-deep, #d94f9a)
+      background: rgba(198, 152, 192, .18)
+
+  .frontDark &
+    .pwd-toggle
+      color: rgba(255,255,255,.42)
+
+      &:hover
+        color: #f0c987
+        background: rgba(255,255,255,.07)
 
   input
     padding-right: 42px
@@ -162,20 +266,20 @@ body
   width: 100%
   margin-top: 8px
   padding: 12px
-  color: #2a2113
+  color: $cta-ink-day
   font-size: 15px
   font-weight: 600
   letter-spacing: .18em
   border: none
   border-radius: 10px
-  background: linear-gradient(135deg, #f7dcae 0%, #e8b866 100%)
-  box-shadow: 0 10px 26px rgba(232,184,102,.22)
+  background: $cta-day
+  box-shadow: 0 10px 26px rgba(217, 79, 154, .22)
   cursor: pointer
   transition: transform .2s, box-shadow .2s, filter .2s
 
   &:hover:not(:disabled)
     transform: translateY(-1px)
-    box-shadow: 0 14px 32px rgba(232,184,102,.3)
+    box-shadow: 0 14px 32px rgba(217, 79, 154, .3)
     filter: brightness(1.04)
 
   &:active:not(:disabled)
@@ -184,6 +288,14 @@ body
   &:disabled
     opacity: .62
     cursor: not-allowed
+
+  .frontDark &
+    color: $cta-ink-night
+    background: $cta-night
+    box-shadow: 0 10px 26px rgba(232,184,102,.22)
+
+    &:hover:not(:disabled)
+      box-shadow: 0 14px 32px rgba(232,184,102,.3)
 
 .login-links
   display: flex
@@ -195,7 +307,7 @@ body
 
   button
     padding: 0
-    color: rgba(255,255,255,.55)
+    color: var(--washi-ink-2, #7c6584)
     font-size: 13px
     border: none
     background: none
@@ -203,33 +315,54 @@ body
     transition: color .2s
 
     &:hover
-      color: #f0c987
+      color: var(--washi-pink-deep, #d94f9a)
 
   .sep
-    color: rgba(255,255,255,.18)
+    color: var(--washi-ink-3, #a08ba8)
+
+  .frontDark &
+    button
+      color: rgba(255,255,255,.55)
+
+      &:hover
+        color: #f0c987
+
+    .sep
+      color: rgba(255,255,255,.18)
 
 .login-foot
   margin-top: 22px
   padding-top: 14px
   text-align: center
-  border-top: 1px solid rgba(255,255,255,.08)
+  border-top: 1px solid var(--washi-line-2, rgba(198, 152, 192, 0.22))
 
   a
-    color: rgba(255,255,255,.4)
+    color: var(--washi-ink-3, #a08ba8)
     font-size: 12px
     text-decoration: none
     transition: color .2s
 
     &:hover
-      color: #f0c987
+      color: var(--washi-pink-deep, #d94f9a)
+
+  .frontDark &
+    border-top-color: rgba(255,255,255,.08)
+
+    a
+      color: rgba(255,255,255,.4)
+
+      &:hover
+        color: #f0c987
 
 // ── 提示弹窗（注册 / 忘记密码）─────────────────────────────
-// 弹窗挂在 body 上（antd Portal），不继承 .login-page 的样式，所以这里用顶层选择器。
-// 底色不是这里定的：两个 Modal 都套了 ConfigProvider 的 darkAlgorithm（见 index.tsx），
-// 否则默认浅底会让下面这些浅色字直接看不见。这里只管排版与自绘的页脚/表单控件。
+// 弹窗挂在 body 上（antd Portal），不继承 .login-page 的样式，所以这里用顶层选择器；
+// 深浅两档也因此挂在 **body 的那颗类**上（`body.login-dark`，见 index.tsx）。
+// 底色不是这里定的：两个 Modal 都跟着 ConfigProvider 的主题走（见 index.tsx 那两套
+// theme），否则浅色算法下正文的浅色字会落在白底上（20260922 实测）。
+// 这里只管排版与自绘的页脚/表单控件 —— 白天档一律走 `--washi-*` 令牌（`:root` 就是浅色档）。
 .login-modal-body
   text-align: center
-  color: rgba(255,255,255,.75)
+  color: var(--washi-ink-2, #7c6584)
   font-size: 13px
   line-height: 1.75
 
@@ -246,7 +379,7 @@ body
     margin-bottom: 4px
 
   b
-    color: #f0c987
+    color: var(--washi-pink-deep, #d94f9a)
 
 .login-modal-foot
   display: flex
@@ -265,10 +398,10 @@ body
     transition: filter .2s
 
   .login-modal-primary
-    color: #2a2113
+    color: $cta-ink-day
     font-weight: 600
     border: none
-    background: linear-gradient(135deg, #f7dcae 0%, #e8b866 100%)
+    background: $cta-day
 
     &:hover
       filter: brightness(1.05)
@@ -281,7 +414,7 @@ body
   display: flex
   flex-direction: column
   gap: 10px
-  color: rgba(255,255,255,.75)
+  color: var(--washi-ink-2, #7c6584)
   text-align: center
 
   p
@@ -293,21 +426,21 @@ body
     width: 100%
     padding: 10px 12px
     box-sizing: border-box
-    color: #fff
+    color: var(--washi-ink, #4a3550)
     font-size: 14px
-    border: 1px solid rgba(255,255,255,.16)
+    border: 1px solid var(--washi-line, rgba(198, 152, 192, 0.42))
     border-radius: 10px
     outline: none
-    background: rgba(255,255,255,.06)
+    background: var(--washi-paper-2, #fff6fa)
     transition: border-color .25s, box-shadow .25s
 
     &::placeholder
-      color: rgba(255,255,255,.28)
+      color: var(--washi-ink-3, #a08ba8)
 
-    // 与登录卡片上的输入框同一套聚焦样式（金边 + 外发光），别两处各写一份观感
+    // 与登录卡片上的输入框同一套聚焦样式（粉边 + 外发光），别两处各写一份观感
     &:focus
-      border-color: #f0c987
-      box-shadow: 0 0 0 3px rgba(240,196,110,.16)
+      border-color: var(--washi-pink-deep, #d94f9a)
+      box-shadow: 0 0 0 3px rgba(217, 79, 154, .16)
 
     &:disabled
       opacity: .6
@@ -319,12 +452,12 @@ body
     align-self: stretch
     padding: 10px
     margin-top: 2px
-    color: #2a2113
+    color: $cta-ink-day
     font-size: 14px
     font-weight: 600
     border: 0
     border-radius: 10px
-    background: linear-gradient(135deg, #f7dcae 0%, #e8b866 100%)
+    background: $cta-day
     cursor: pointer
     transition: filter .2s
 
@@ -334,6 +467,35 @@ body
     &:disabled
       opacity: .62
       cursor: not-allowed
+
+// 夜间档：20260921 那套原样（浅字 + 河灯金），一字未改地搬到 `body.login-dark` 底下。
+// 为什么不是 `.login-page.frontDark`：弹窗在 body 下，够不着页面里的那个类。
+body.login-dark
+  .login-modal-body
+    color: rgba(255,255,255,.75)
+
+    b
+      color: #f0c987
+
+  .login-modal-foot .login-modal-primary,
+  .login-reset-form button
+    color: $cta-ink-night
+    background: $cta-night
+
+  .login-reset-form
+    color: rgba(255,255,255,.75)
+
+    input
+      color: #fff
+      border-color: rgba(255,255,255,.16)
+      background: rgba(255,255,255,.06)
+
+      &::placeholder
+        color: rgba(255,255,255,.28)
+
+      &:focus
+        border-color: #f0c987
+        box-shadow: 0 0 0 3px rgba(240,196,110,.16)
 
 @media (max-width: 480px)
   .login-box

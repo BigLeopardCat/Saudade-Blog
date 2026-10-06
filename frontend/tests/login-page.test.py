@@ -4,6 +4,12 @@
 跳转契约（20260922）也在这里锁：管理员 token → /dashboard，普通用户/无 token → /。
 两岔都要在，只锁一岔就会漏掉"普通用户被送进后台吃一次无权限再弹回来"那类问题。
 
+**昼夜两档（20261006 用户第 3 条）**：这一页从前恒深色，现在跟随全站
+（白天 = 主页那套和纸配色，夜间 = 原来的墨蓝 + 河灯金，见 src/pages/Login/index.sass
+的头注）。判据因此分两套夹具跑：主页面**不带 isDarkMode**（= 全站默认的白天档），
+另开一个 `pg_d` 在挂载前写 `localStorage.isDarkMode = 'true'` 当夜间夹具。
+③ 那一节里量色值的那几条因此住到 `pg_d` 上 —— 它们量的正是"夜间档还是原来那副样子"。
+
 本机不能 vite build（3.7GB 内存会 OOM，见 CLAUDE.md §2），沿用既定替代手段：
   · sass 用 programmatic API 编译（`node_modules/.bin/sass` 在 Node 18 上会因
     chokidar 的 ERR_REQUIRE_ESM 直接崩，别用 CLI）；
@@ -41,6 +47,21 @@ def check(desc, cond, detail=""):
     print(("  ✅ " if cond else "  ❌ ") + desc + (f"  [{detail}]" if detail else ""))
     if not cond:
         FAILS.append(desc)
+
+
+def _lum(rgb):
+    """WCAG 2.x 相对亮度（传 0-255 三元组）。"""
+    def f(c):
+        c = c / 255
+        return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+    r, g, b = (f(v) for v in rgb)
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def contrast_ratio(fg, bg):
+    a, b = _lum(fg), _lum(bg)
+    hi, lo = max(a, b), min(a, b)
+    return (hi + 0.05) / (lo + 0.05)
 
 
 def jwt_with_role(role: str) -> str:
@@ -144,6 +165,11 @@ import Login from './src/pages/Login/index.tsx';
                     "require('fs').writeFileSync(process.argv[2],r.css);",
                     str(FE / LOGIN_SASS), str(sb / "login.css")],
                    cwd=str(FE), check=True)
+    # ②b 全站令牌（`src/index.css` 的 `:root` 与夜间档）。
+    # **必须一起引**：登录页自 20261006 起用 `--washi-*` 分昼夜两档，不引这份的话
+    # `getComputedStyle` 拿到的是 `var()` 的**回退值**（写在各处的字面量）——白天那几条
+    # 断言会变成"量回退值"，改令牌也照样绿，是一条假绿的判据。
+    shutil.copyfile(FE / "src/index.css", sb / "tokens.css")
 
     # ③ esbuild 打包（.sass 的裸 import 会被 text loader 吞掉，CSS 由页面单独引入）
     subprocess.run([str(FE / "node_modules/.bin/esbuild"), "entry.tsx",
@@ -156,6 +182,7 @@ import Login from './src/pages/Login/index.tsx';
 
     (sb / "index.html").write_text(
         '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
+        '<link rel="stylesheet" href="tokens.css">'
         '<link rel="stylesheet" href="login.css"></head><body><div id="root"></div>'
         '<script src="bundle.js"></script><script>window.__mount && window.__mount();</script>'
         '</body></html>', encoding="utf-8")
@@ -302,23 +329,126 @@ with sync_playwright() as p:
         "const i=document.querySelector('input#account').getBoundingClientRect();"
         "return i.left>=b.left && i.right<=b.right;}"))
 
-    print("③ 样式生效（sass 编译 + 聚焦态）")
+    print("③ 样式生效 · 白天档（这一页没写 isDarkMode ⇒ 走全站默认的白天）")
     # 账号框有 autoFocus ⇒ 量"未聚焦"必须先 blur（否则两次都读到聚焦态，这条会假绿）
     pg.evaluate("() => document.activeElement && document.activeElement.blur()")
     pg.wait_for_timeout(350)
-    rest = pg.evaluate("() => getComputedStyle(document.querySelector('input#account')).borderTopColor")
+
+    def styles(page, sel, pseudo=None, props=("borderTopColor",)):
+        return page.evaluate(
+            """([sel, pseudo, props]) => {
+                 const el = document.querySelector(sel);
+                 const cs = getComputedStyle(el, pseudo);
+                 const o = {}; props.forEach(p => o[p] = cs[p]); return o;
+               }""", [sel, pseudo, list(props)])
+
+    page_bg = pg.evaluate("() => getComputedStyle(document.querySelector('.login-page')).backgroundImage")
+    # 判据是"这条渐变就是主页首屏 `.collageBg` 那条"：两端色值都在。只断言"有渐变"是不够的
+    # —— 换成墨蓝那条也是渐变（20261006 之前的样子）。
+    check("页面底是主页那套拼贴渐变（#fff6fa → #e9f4ff 两端都在）",
+          "255, 246, 250" in page_bg and "233, 244, 255" in page_bg, page_bg[:120])
+    tex = styles(pg, ".login-page", "::after", ("backgroundImage", "backgroundSize"))
+    # 两层（横线 + 竖线）都必须是 28px；`background-size` 会原样拼成 "28px 28px, 28px 28px"，
+    # 所以按逗号拆开比集合，别拿整串去 == 一个单层的写法（那样量的是字符串拼接习惯）。
+    tex_sizes = {v.strip() for v in tex["backgroundSize"].split(",")}
+    check("白天有纹路：两层 28px 方格纸（照抄主页首屏那一层）",
+          tex_sizes == {"28px 28px"} and "160, 120, 190" in tex["backgroundImage"],
+          f'{tex["backgroundSize"]} / {tex["backgroundImage"][:80]}')
+    check("白天没有那团月晕（`::before` 只在夜间档）",
+          pg.evaluate("() => getComputedStyle(document.querySelector('.login-page'), '::before').content") == "none")
+    check("body 挂了 login-route（页面底），白天不挂 login-dark",
+          pg.evaluate("() => document.body.classList.contains('login-route')"
+                      " && !document.body.classList.contains('login-dark')"))
+    check("根节点白天不带 frontDark（`--washi-*` 因此停在浅色档）",
+          pg.evaluate("() => document.querySelector('.login-page').className") == "login-page",
+          pg.evaluate("() => document.querySelector('.login-page').className"))
+    boxday = styles(pg, ".login-box", None, ("backgroundColor", "backdropFilter", "borderRadius"))
+    check("卡片是纸白实底（#fffdfa）", boxday["backgroundColor"] == "rgb(255, 253, 250)", boxday["backgroundColor"])
+    check("白天不做 backdrop-filter（底是不透明的，模糊看不出效果还白付一层合成）",
+          boxday["backdropFilter"] == "none", boxday["backdropFilter"])
+    check("卡片圆角 18px", boxday["borderRadius"] == "18px", boxday["borderRadius"])
+
+    rest = styles(pg, "input#account")["borderTopColor"]
     pg.click("input#account")
     pg.wait_for_timeout(350)
-    focus = pg.evaluate("() => getComputedStyle(document.querySelector('input#account')).borderTopColor")
-    shadow = pg.evaluate("() => getComputedStyle(document.querySelector('input#account')).boxShadow")
-    check("未聚焦边框是淡白", rest == "rgba(255, 255, 255, 0.14)", rest)
-    check("聚焦边框变河灯金 #f0c987", focus == "rgb(240, 201, 135)", focus)
-    check("聚焦有金色外发光环", "240, 196, 110" in shadow, shadow[:60])
-    check("卡片圆角 18px", pg.evaluate("() => getComputedStyle(document.querySelector('.login-box')).borderRadius") == "18px")
-    check("主按钮是河灯金渐变", "232, 184, 102" in pg.evaluate(
-        "() => getComputedStyle(document.querySelector('.login-submit')).backgroundImage"))
+    foc = styles(pg, "input#account", None, ("borderTopColor", "boxShadow", "backgroundColor"))
+    check("未聚焦边框是和纸粉线（--washi-line 白天档）",
+          "198, 152, 192" in rest, rest)
+    check("聚焦边框变深粉 #d94f9a（白天的强调色，不是夜间的河灯金）",
+          foc["borderTopColor"] == "rgb(217, 79, 154)", foc["borderTopColor"])
+    check("聚焦有粉色外发光环", "217, 79, 154" in foc["boxShadow"], foc["boxShadow"][:60])
+
+    # 主按钮的对比度：**从渲染结果里读**两个渐变色标与字色（不写死在测试里），逐个算 WCAG。
+    # 这条是"浅粉渐变 + 墨字"这个选择的守门人 —— 计划里原本写的白字压在 #d94f9a 上只有
+    # 3.8:1、压 #8e63e0 上 4.2:1，都过不了 4.5:1（15px/600 够不到大字号）。哪天有人把
+    # 渐变换回深粉或把字色改白，这里当场红。
+    sub_day = styles(pg, ".login-submit", None, ("backgroundImage", "color"))
+    stops = [(int(a), int(b), int(c)) for a, b, c in
+             re.findall(r"rgb\((\d+),\s*(\d+),\s*(\d+)", sub_day["backgroundImage"])]
+    check("白天主按钮是浅粉渐变（#ffd7ea → #f0b9dd）", len(stops) >= 2, sub_day["backgroundImage"][:80])
+    ink = [int(v) for v in re.findall(r"\d+", sub_day["color"])[:3]]
+    worst = min((contrast_ratio(ink, s) for s in stops), default=0)
+    check("按钮字色对**每一个**渐变色标都 ≥ 4.5:1",
+          worst >= 4.5, f"最差 {worst:.2f}:1  字{ink} 色标{stops}")
     check("旧霓虹青已撤（页面无 #03e9f4）", "3, 233, 244" not in pg.evaluate(
         "() => [document.querySelector('.login-submit'), document.body].map(e=>getComputedStyle(e).backgroundImage).join()"))
+
+    print("③b 夜间档（挂载前写 isDarkMode='true'）：还是 20260921 那副墨蓝样子")
+    pg_d = br.new_page(viewport={"width": 1280, "height": 900})
+    pg_d.add_init_script("localStorage.setItem('isDarkMode', 'true');")
+    pg_d.goto(URL)
+    pg_d.wait_for_timeout(400)
+    check("根节点挂上 frontDark（`--washi-*` 切夜间档）",
+          "frontDark" in pg_d.evaluate("() => document.querySelector('.login-page').className"),
+          pg_d.evaluate("() => document.querySelector('.login-page').className"))
+    check("body 同时挂 login-route + login-dark",
+          pg_d.evaluate("() => document.body.classList.contains('login-route')"
+                        " && document.body.classList.contains('login-dark')"))
+    dark_bg = pg_d.evaluate("() => getComputedStyle(document.querySelector('.login-page')).backgroundImage")
+    check("页面底回到墨蓝渐变（#0d1319 → #1d2634）",
+          "13, 19, 25" in dark_bg and "29, 38, 52" in dark_bg, dark_bg[:120])
+    check("夜间才有那团月晕（`::before` 有内容）",
+          pg_d.evaluate("() => getComputedStyle(document.querySelector('.login-page'), '::before').content") != "none")
+    check("夜间不铺方格纸（`::after` 的图被关掉，只剩月晕）",
+          "none" in pg_d.evaluate(
+              "() => getComputedStyle(document.querySelector('.login-page'), '::after').backgroundImage"))
+    boxn = styles(pg_d, ".login-box", None, ("backgroundColor", "backdropFilter"))
+    check("夜间卡片是玻璃（backdrop-filter 还在）",
+          "blur(14px)" in boxn["backdropFilter"], boxn["backdropFilter"])
+    pg_d.evaluate("() => document.activeElement && document.activeElement.blur()")
+    pg_d.wait_for_timeout(350)
+    rest_n = styles(pg_d, "input#account")["borderTopColor"]
+    pg_d.click("input#account")
+    pg_d.wait_for_timeout(350)
+    foc_n = styles(pg_d, "input#account", None, ("borderTopColor", "boxShadow"))
+    check("未聚焦边框是淡白", rest_n == "rgba(255, 255, 255, 0.14)", rest_n)
+    check("聚焦边框变河灯金 #f0c987", foc_n["borderTopColor"] == "rgb(240, 201, 135)", foc_n["borderTopColor"])
+    check("聚焦有金色外发光环", "240, 196, 110" in foc_n["boxShadow"], foc_n["boxShadow"][:60])
+    sub_night = styles(pg_d, ".login-submit", None, ("backgroundImage", "color"))
+    check("主按钮是河灯金渐变", "232, 184, 102" in sub_night["backgroundImage"], sub_night["backgroundImage"][:80])
+    stops_n = [(int(a), int(b), int(c)) for a, b, c in
+               re.findall(r"rgb\((\d+),\s*(\d+),\s*(\d+)", sub_night["backgroundImage"])]
+    ink_n = [int(v) for v in re.findall(r"\d+", sub_night["color"])[:3]]
+    worst_n = min((contrast_ratio(ink_n, s) for s in stops_n), default=0)
+    check("夜间按钮字色同样逐档 ≥ 4.5:1", worst_n >= 4.5, f"最差 {worst_n:.2f}:1")
+    check("弹窗主题跟着切到深色算法（墨蓝底 + 河灯金主色）", pg_d.evaluate(
+        "() => (window.__cpThemes || []).some(t => t && t.algorithm === '__DARK_ALGORITHM__'"
+        " && t.token && t.token.colorBgElevated)"))
+    pg_d.close()
+
+    print("③c 即时跟随：头部/看板娘切换时不刷新页面就换档")
+    # `useIsDarkMode()` 听的就是这个事件（全仓唯一在 React 里响应主题变化的写法）。
+    # 判据取"类真的挂上了"——只断言 state 变了是量不到 DOM 的。
+    pg.evaluate("() => window.dispatchEvent(new CustomEvent('darkmode-change', {detail: true}))")
+    pg.wait_for_timeout(250)
+    check("派发 darkmode-change(true) → 不刷新就切成夜间档",
+          "frontDark" in pg.evaluate("() => document.querySelector('.login-page').className")
+          and pg.evaluate("() => document.body.classList.contains('login-dark')"))
+    pg.evaluate("() => window.dispatchEvent(new CustomEvent('darkmode-change', {detail: false}))")
+    pg.wait_for_timeout(250)
+    check("再派发 false → 切回白天档",
+          pg.evaluate("() => document.querySelector('.login-page').className") == "login-page"
+          and pg.evaluate("() => !document.body.classList.contains('login-dark')"))
 
     print("④ 注册入口 → 不开放注册的声明（只有一个出口，且居中）")
     pg.click(".login-links button:nth-child(3)")
@@ -383,9 +513,11 @@ with sync_playwright() as p:
     pg.wait_for_timeout(250)
     check("重开后表单是空的（不留上一次的恢复码）",
           pg.evaluate("() => [...document.querySelectorAll('.login-reset-form input')].every(i => i.value === '')"))
-    check("弹窗挂了深色主题（ConfigProvider 传下 darkAlgorithm + 墨蓝底）", pg.evaluate(
-        "() => (window.__cpThemes || []).some(t => t && t.algorithm === '__DARK_ALGORITHM__'"
-        " && t.token && t.token.colorBgElevated)"))
+    # 弹窗主题：白天档 = antd 默认浅色算法 + 和纸主色（**不能带 darkAlgorithm**，
+    # 否则白天的弹窗还是墨蓝底）。字面量 `#d94f9a` 与 `--washi-pink-deep` 白天那一档同值。
+    check("白天弹窗走浅色算法 + 和纸主色（不带 darkAlgorithm）", pg.evaluate(
+        "() => (window.__cpThemes || []).some(t => t && !t.algorithm"
+        " && t.token && t.token.colorPrimary === '#d94f9a')"))
 
     print("⑥ 提交契约（空值 → 原生校验；成功 → 派发 fetchToken + 按 token 分流跳转）")
     pg.evaluate("() => { window.__msgLog.length = 0; window.__nav = []; }")
