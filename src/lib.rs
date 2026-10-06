@@ -13,6 +13,11 @@ pub mod risk;
 // SigV4 自己签（hmac+sha2，零新增下载），用量闸以 R2 自己的 ListObjectsV2 为真值。
 // 判据只在两处：`R2Config::active`（这次该不该走 R2）与 `r2::quota_exceeded`（还能不能写）
 pub mod r2;
+// 站内搜索的共用纯函数（20261006）：切词 / 命中判定 / 打分 / 排序分档 / LIKE 转义。
+// 原先这些散在 routes/notes.rs（切词、打分）与 routes/conversation.rs、routes/upload.rs
+// （like_escape 各一份私有实现）里；聚合搜索（routes/search.rs）是第二个消费方，
+// 规则因此在**一处**收口——见模块头注。
+pub mod search_core;
 
 pub use routes::{create_router, AppState};
 pub mod auth_jwt;

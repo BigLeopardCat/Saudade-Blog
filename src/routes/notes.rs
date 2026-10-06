@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use crate::entity::{note, category, tag_one, tag_two, user};
 use crate::routes::AppState;
+use crate::search_core::{count_terms, keyword_given, score_term_sum, split_terms};
 use crate::utils::ApiResponse;
 
 #[derive(Deserialize)]
@@ -248,7 +249,9 @@ pub struct SearchRequest {
 /// 一级/二级是**两张独立自增**的表，id 命名空间并不隔离（历史上还有过重号），
 /// 所以这里用一张 map 装两级、二级后写覆盖一级。**只用于搜索命中与 `note.tags` 的
 /// id→名字解析，不要拿它建树/判层级**——那是 `tags.rs` 的 `fatherKey` 的活。
-async fn load_tag_names(db: &sea_orm::DatabaseConnection) -> HashMap<i32, String> {
+///
+/// `pub(crate)`：20261006 聚合搜索（`routes/search.rs`）的文章那一栏共用这一份字典。
+pub(crate) async fn load_tag_names(db: &sea_orm::DatabaseConnection) -> HashMap<i32, String> {
     let mut map: HashMap<i32, String> = HashMap::new();
     if let Ok(rows) = tag_one::Entity::find().all(db).await {
         for r in rows {
@@ -267,7 +270,7 @@ async fn load_tag_names(db: &sea_orm::DatabaseConnection) -> HashMap<i32, String
 ///
 /// 这是本文件里「标签能不能被搜索命中」的唯一正路：库里存的是 id，搜索框里打的是名字，
 /// 中间必须过一遍字典。
-fn note_tag_names(tags: Option<&str>, dict: &HashMap<i32, String>) -> Vec<String> {
+pub(crate) fn note_tag_names(tags: Option<&str>, dict: &HashMap<i32, String>) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for piece in tags.unwrap_or("").split(',') {
         if let Ok(id) = piece.trim().parse::<i32>() {
@@ -282,104 +285,30 @@ fn note_tag_names(tags: Option<&str>, dict: &HashMap<i32, String>) -> Vec<String
 }
 
 /// 关键词是否命中这篇文章：标题 / 正文 / **标签名字**。`kw` 必须已小写化。
-fn note_hits_keyword(n: &note::Model, kw: &str, tag_names: &[String]) -> bool {
+///
+/// `pub(crate)`：20261006 聚合搜索的文章那一栏走**同一套命中判定**（不能各写一份，
+/// 否则"首页搜得到的文章"与"分类页搜得到的"会开始漂）。
+pub(crate) fn note_hits_keyword(n: &note::Model, kw: &str, tag_names: &[String]) -> bool {
     n.title.to_lowercase().contains(kw)
         || n.content.to_lowercase().contains(kw)
         || tag_names.iter().any(|t| t.to_lowercase().contains(kw))
 }
 
-/// 关键词切词（20260920）：按 Unicode 空白切（含全角空格），小写化、保序去重。
-///
-/// 为什么必须切：命中判定是**整串子串匹配**，用户口语里的多词查询一带空格就 0 命中。
-/// 实测（线上）：`search_notes("ESP32-S3 OBC")` → []（文章《ESP32-S3-OBC固件接入参考》
-/// 标题里没有这个空格形态），而 `"OBC"` / `"固件接入"` / `"ESP32-S3"` 都能命中它——
-/// agent 于是如实回答"站内没有这篇"（**假否定**，用户看得见）。
-///
-/// 丢弃长度 1 且非 ASCII 字母数字的 term：中文单字/标点（"的/了/是"）无语义判别力，
-/// 留着会把整库拉进候选。单词查询（无空白）走同一路径，行为与切词前一致。
-///
-/// 另有一条与之同源的规则：**整段一个字母数字都没有的 term 也丢**（`。。。` / `...` / emoji）
-/// ——长度规则只管住单字符，`。。。` 是三个字符、长度规则放它过去，"纯标点切完一个 term 都不剩"
-/// 这条保证因此在 3 字符以上落空（20260923 CI 质量闸抓出：`split_terms_tests` 里那条断言
-/// 从写下起就没真跑过——此前 CI 只 `cargo build`，`#[cfg(test)]` 从不编译）。
-///
-/// **二次切分（20260921）**：空白切完还要在同一段内按**脚本类别**再切一次（见 `script_runs`）
-/// ——中文和 ASCII 混排是用户口语的常态，`search_notes("ESP32固件")` 这种整串在标题里
-/// 并不连续出现（标题是《ESP32-S3-OBC固件接入参考》），不切就是**假否定**（agent 如实回答
-/// "站内没有这篇"）。切完仍走「档位」判定（全部 term 命中才算全中），严格度不降。
-///
-/// 长度规则对**单字符段**收紧了一格：只保留"整段查询本身就只有一个字符"的情形
-/// （用户就打了 `1` / `a`）。混排切出来的单字符残片（`第1章` 里的 `1`）一律丢弃——
-/// 那是切分副产品，留着会让 `第1章` 退化成"搜所有含数字 1 的文章"。
-///
-/// 注意"切完一个 term 都不剩"（`第1章` / 纯标点）与"没给关键词"是**两回事**：
-/// 前者必须回空结果，调用方用 `keyword_given` 区分（否则会落进"无关键词 → 返回整表"
-/// 的分支，搜 `第1章` 得到全站列表——那是假命中，与切词前那类假否定是同一处代码的两面）。
-fn split_terms(kw: &str) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    for piece in kw.split_whitespace() {
-        let piece = piece.to_lowercase();
-        let whole_piece = piece.chars().count() == 1;
-        for t in script_runs(&piece) {
-            // 纯符号段（`。。。` / `...` / `!!!` / emoji）一律丢：这类 term 没有任何判别力，
-            // 留着就是把"搜所有含这三个点的文章"当成一次真检索。判据是**整段一个字母数字都没有**，
-            // 而不是"含标点就丢"——`C++` / `ESP32-S3` / `node.js` / `3.5` 里的标点是词的一部分
-            // （见 script_runs），它们各有字母数字，照常保留。
-            if !t.chars().any(|c| c.is_alphanumeric()) {
-                continue;
-            }
-            if t.chars().count() < 2 && !(whole_piece && t.chars().all(|c| c.is_ascii_alphanumeric())) {
-                continue;
-            }
-            if !out.iter().any(|x| x == &t) {
-                out.push(t);
-            }
-        }
-    }
-    out
-}
-
-/// 用户**是否给了**关键词（`None` / 空串 / 全空白 = 没给，其余 = 给了）。
-///
-/// 存在的理由：`split_terms` 可能把一个**非空**关键词切成一无所有（`第1章`、纯标点），
-/// 而两个搜索处理函数都把"terms 为空"当作"没有关键词"、直接返回整表——于是这类查询
-/// 会得到全站文章列表。这是**假命中**，必须用本函数把它和"真的没给关键词"分开。
-fn keyword_given(kw: Option<&str>) -> bool {
-    kw.map(|k| !k.trim().is_empty()).unwrap_or(false)
-}
-
-/// 一段文本按**脚本类别**切成连续段：ASCII 字符算一类，其余（汉字 / 全角标点 / 假名 / emoji）算另一类。
-/// 纯 ASCII 段或纯非 ASCII 段切出来仍是它自己（二次切分对它们零影响）。
-///
-/// 为什么按类别切、而不是"凡非字母数字都当分隔符"：`C++` / `ESP32-S3` / `node.js` 里的
-/// `+ - .` 是词的一部分，按标点切会把它们剁成单字符残片，其中 `c` 会命中几乎整个库。
-/// **只有跨脚本才切**。
-fn script_runs(piece: &str) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    let mut cur = String::new();
-    let mut cur_is_ascii: Option<bool> = None;
-    for ch in piece.chars() {
-        let is_ascii = ch.is_ascii();
-        if let Some(prev) = cur_is_ascii {
-            if prev != is_ascii {
-                out.push(std::mem::take(&mut cur));
-                cur_is_ascii = Some(is_ascii);
-            }
-        } else {
-            cur_is_ascii = Some(is_ascii);
-        }
-        cur.push(ch);
-    }
-    if !cur.is_empty() {
-        out.push(cur);
-    }
-    out
-}
+// ── 切词 / 命中 / 打分：实现已搬到 `search_core`（20261006） ────────────────────────
+//
+// `split_terms` / `script_runs` / `keyword_given` 三件**原样**搬进了 `crate::search_core`，
+// 连同它们的单测。搬家的理由只有一个：聚合搜索（`routes/search.rs`）是第二个消费方，
+// 「怎么切词」这条规则不能有第二份 —— 本仓在这上面栽过太多次（同一套规则抄两份、后来各漂各的）。
+// 这里保留的几个 `note_*` 助手是**转调**：权重、判定、大小写口径逐字不变，
+// 所以文章那一栏的结果与改动前**逐条一致**。
+//
+// ⚠️ `search_notes` 的 handler 本身（下面那个函数，含它的分档循环）**一个字没改**：
+// 它同时服务 agent 的 `search_notes` 工具，不趟这摊水。
 
 /// 命中的 term 个数（0 = 不命中；`terms.len()` = 全中）。**档位即这个词数**——
 /// 前台按「全中优先、无全中才降级到部分命中」分档（见 search_notes）。
 fn term_hit_count(n: &note::Model, terms: &[String], tag_names: &[String]) -> usize {
-    terms.iter().filter(|t| note_hits_keyword(n, t, tag_names)).count()
+    count_terms(terms, |t| note_hits_keyword(n, t, tag_names))
 }
 
 /// 多词命中：任一 term 命中即算（后台筛选用——召回优先，后台列表自己排序）。
@@ -387,37 +316,20 @@ fn note_hits_terms(n: &note::Model, terms: &[String], tag_names: &[String]) -> b
     term_hit_count(n, terms, tag_names) > 0
 }
 
-/// 关键词相关度打分（20260912，search_notes 排序用）：命中标题 +100 / 命中标签 +30 /
-/// 正文出现次数（上限 10，防长文堆词刷分）。确定性、可解释；不追求语义相关，够覆盖
-/// 「专讲这个词的文章排在只顺带提一次的长文之前」即可。大小写不敏感——与查询侧
-/// `LIKE` 的排序规则（utf8mb4 默认 ci）一致，否则搜 "python" 时命中的标题一轮
-/// 打分全 0，排序退化成按时间。
+/// 多词打分（20260920）：每个 term 各按同一套权重计分后**求和**（档内排序用）。
+///
+/// 权重（标题命中 +100 / 标签命中 +30 / 正文出现次数、上限 10，防长文堆词刷分）与
+/// 大小写口径住在 `search_core::score_term`——聚合搜索共用同一套，这里只把文章的
+/// 标题/标签/正文喂进去。
 ///
 /// `tag_names` 是该文标签的**名字**（由 `note_tag_names` 过字典得到）。旧版这里直接拿
 /// `note.tags` 的 id 串 `contains(kw)`：搜标签名永远 0 分，搜纯数字（"1"）却被
 /// id 1/10/21 全部加成 +30 —— 这就是「按相关度排序」里那部分假信号。
-fn search_score(note: &note::Model, kw: &str, tag_names: &[String]) -> i64 {
-    let kw = kw.to_lowercase();
-    if kw.is_empty() {
-        return 0;
-    }
-    let mut score = 0i64;
-    if note.title.to_lowercase().contains(&kw) {
-        score += 100;
-    }
-    if tag_names.iter().any(|t| t.to_lowercase().contains(&kw)) {
-        score += 30;
-    }
-    score + note.content.to_lowercase().matches(&kw).count().min(10) as i64
-}
-
-/// 多词打分（20260920）：每个 term 各按 `search_score` 计分后**求和**（档内排序用）。
 ///
 /// 不再额外加"多词全中"奖励——命中词数由调用方的**档位**承担（全中优先），
-/// 档内只比"每个词命中的位置有多好"（标题 100 / 标签 30 / 正文次数）。
-/// 单词查询时与旧分数完全一致。
+/// 档内只比"每个词命中的位置有多好"。单词查询时与旧分数完全一致。
 fn search_score_terms(note: &note::Model, terms: &[String], tag_names: &[String]) -> i64 {
-    terms.iter().map(|t| search_score(note, t, tag_names)).sum()
+    score_term_sum(terms, Some(&note.title), tag_names, &note.content)
 }
 
 pub async fn search_notes(
@@ -1245,58 +1157,5 @@ pub async fn get_note_for_edit(
     (StatusCode::OK, Json(ApiResponse::success(dto))).into_response()
 }
 
-#[cfg(test)]
-mod split_terms_tests {
-    use super::{keyword_given, split_terms};
-
-    fn terms(kw: &str) -> Vec<String> {
-        split_terms(kw)
-    }
-
-    /// 纯中文 / 纯 ASCII / 多空白段：**与二次切分前逐字一致**（不许有行为漂移）。
-    #[test]
-    fn unchanged_for_single_script() {
-        assert_eq!(terms("架构"), vec!["架构"]);
-        assert_eq!(terms("ESP32-S3 OBC"), vec!["esp32-s3", "obc"]);
-        assert_eq!(terms("C++"), vec!["c++"]);
-        assert_eq!(terms("node.js"), vec!["node.js"]);
-        assert_eq!(terms("架构 设计"), vec!["架构", "设计"]);
-        assert_eq!(terms("1"), vec!["1"]);          // 整段就是一个字符：既有行为保留
-        assert_eq!(terms("a b"), vec!["a", "b"]);
-        assert_eq!(terms("   "), Vec::<String>::new());
-        assert_eq!(terms("的"), Vec::<String>::new()); // 单字中文无语义判别力
-        assert_eq!(terms("架构架构 架构"), vec!["架构架构", "架构"]);
-    }
-
-    /// 中英混排按脚本类别切开（20260921 修的核心）：整串子串匹配对口语混排是假否定。
-    #[test]
-    fn splits_mixed_script() {
-        assert_eq!(terms("ESP32固件"), vec!["esp32", "固件"]);
-        assert_eq!(terms("ESP32-S3-OBC固件接入"), vec!["esp32-s3-obc", "固件接入"]);
-        // 中间夹一个单字中文：切成三段后该单字被长度规则丢掉，剩下的正是有判别力的两词
-        assert_eq!(terms("Python的asyncio"), vec!["python", "asyncio"]);
-        // ASCII 标点不断词（只有跨脚本才切）——"架构-设计" 切在 `-` 上是因为它两侧是不同脚本
-        assert_eq!(terms("架构-设计"), vec!["架构", "设计"]);
-    }
-
-    /// 混排切出来的**单字符残片**必须丢掉：`第1章` 若留下 `1`，就退化成"搜所有含数字 1 的文章"。
-    #[test]
-    fn drops_single_char_fragments_from_split() {
-        assert_eq!(terms("第1章"), Vec::<String>::new());
-    }
-
-    /// 切完一无所剩的**非空**关键词必须与"没给关键词"分开：前者回空结果、
-    /// 后者返回整表（分类页/文章列表就是靠后者一次拉全量）。混作一谈会让
-    /// `第1章` 这类查询拿到全站文章列表（假命中）。
-    #[test]
-    fn keyword_given_distinguishes_blank_from_unusable() {
-        assert!(keyword_given(Some("架构")));
-        assert!(keyword_given(Some("  架构  ")));
-        assert!(!keyword_given(Some("")));
-        assert!(!keyword_given(Some("   ")));
-        assert!(!keyword_given(None));
-        // 非空但切不出 term：这是"给了关键词"，不是"没给"
-        assert!(keyword_given(Some("第1章")) && terms("第1章").is_empty());
-        assert!(keyword_given(Some("。。。")) && terms("。。。").is_empty());
-    }
-}
+// `#[cfg(test)] mod split_terms_tests` 随 `split_terms` 一起搬到了 `crate::search_core`
+// （20261006）：测试跟着实现走，否则改一份、另一份假绿。
