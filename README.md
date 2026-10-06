@@ -148,6 +148,7 @@ Saudade-Blog/
 │   └── vite.config.ts        # 构建配置（站点地址等构建期变量在这里读）
 ├── saudade-blog-agent/       # 看板娘的"大脑"（**独立 git 仓库**，本仓 .gitignore 忽略）
 ├── iot/                      # ESP32 物联网接入（可选件：控制台、固件骨架、开关脚本）
+├── deploy/                   # 部署模板（nginx / systemd ×2 / logrotate）+ 从零部署走查
 ├── scripts/
 │   ├── migration/            # 建库与增量迁移（入口 fresh_install.sh，**别手跑 *.sql**）
 │   ├── deploy/               # 部署脚本（CI 调用；也可手动兜底）
@@ -238,6 +239,11 @@ flowchart LR
 **这一节描述的是本项目的线上部署**（维护者那一台机器），不是本仓对你的要求——
 fork 之后按你自己的方式跑就行，本节的价值在于：想读懂 `scripts/deploy/`、`healthcheck.sh`
 与那些日志路径时，能对上号。
+
+> **想在自己机器上真的部署一份**（nginx 站点配置、两个 systemd 单元、TLS 证书、
+> 目录布局与权限、首次建库与第一个管理员、logrotate、日常更新）→ 走
+> **[deploy/README.md](deploy/README.md)**。那一份是**可复制的步骤**，模板都在
+> [deploy/](deploy/) 目录里；本节讲的是"它长什么样、为什么这么摆"。
 
 服务均为 systemd 托管（agent/rust 为 `Restart=always` 崩溃自愈；device 为 `Restart=on-failure`）：
 

@@ -186,6 +186,13 @@ agent 在独立仓库里，有自己的 README 与 `.env.example`。它默认跑
 
 不跑 agent 的话，博客本身（文章、留言板、后台）一切正常，只有看板娘不会答话。
 
+### 2.6 真要部署到服务器上
+
+上面 2.1–2.5 是**本地把它跑起来**（`cargo run` + `npm run dev`），够开发用了。
+要真的对外提供服务（nginx 站点配置与 TLS、两个 systemd 单元、目录布局与权限、
+logrotate、关掉开发用的宽松档），走 **[deploy/README.md](deploy/README.md)**——
+那一份是"从一台空 VPS 到跑着的站点"的可复制步骤，模板都在 [deploy/](deploy/) 里。
+
 ---
 
 ## 3. 测试
