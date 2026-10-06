@@ -1,4 +1,10 @@
 import { Button, Form, Input, Modal, Table, message } from 'antd'
+/* 显式标注列类型：不标注的话 `responsive: ['lg']` 会被推成 `string[]`，
+   而 `ColumnType.responsive` 要的是 `Breakpoint[]` —— tsc 直接在 `Table` 那行报不兼容。
+   行类型照本页真实用到的四个字段写（不写 `<any>`：`no-explicit-any` 是会进 CI 的告警）。 */
+import type { ColumnsType } from 'antd/es/table'
+
+type AnnouncementRow = { id: number; title: string; content: string; createdAt: string }
 import { useEffect, useRef, useState } from 'react'
 import { getAnnouncements, createAnnouncement, updateAnnouncement, deleteAnnouncement } from '../../../apis/AnnouncementMethods.tsx'
 import { notifyAnnouncementPublished } from '../../../components/AnnouncementModal/pending.ts'
@@ -71,11 +77,18 @@ const AnnouncementPage = () => {
         load()
     }
 
-    const columns = [
-        { title: 'ID', dataIndex: 'id', width: 60 },
+    /* ⚠️ **窄屏裁列（20261006 用户第 6 条）**：`ID` 与 `时间` 挂 `responsive: ['lg']`
+       （视口 < `screenLG`，本仓在 `WASHI_THEME.common` 里抬到 1024），窄屏只留
+       标题 / 内容 / 操作。这两列是本页唯一写死 px 的（60 + 180），而 `内容` 带
+       `ellipsis` ⇒ 表格是 `table-layout: fixed`、定宽列先把自己拿满 —— 390 屏上不裁列
+       的话，两条正文列一共只剩 26px（量于无头 Chromium），等于什么都看不见。
+       这里不需要 `useBreakpoint` 收窄：裁掉那两列后剩下的全是"没写宽"的列，
+       固定布局会把富余摊给它们，不会溢出。 */
+    const columns: ColumnsType<AnnouncementRow> = [
+        { title: 'ID', dataIndex: 'id', width: 60, responsive: ['lg'] },
         { title: '标题', dataIndex: 'title' },
         { title: '内容', dataIndex: 'content', ellipsis: true },
-        { title: '时间', dataIndex: 'createdAt', width: 180 },
+        { title: '时间', dataIndex: 'createdAt', width: 180, responsive: ['lg'] },
         {
             title: '操作', width: 100,
             render: (_: any, record: any) => <a onClick={() => openEdit(record)}>编辑</a>

@@ -3,6 +3,7 @@ import {
     Button,
     ConfigProvider,
     Form,
+    Grid,
     Image,
     Input,
     message,
@@ -407,6 +408,23 @@ const AllNotes = () => {
     // 列宽一律用**百分比且合计 < 100%**：表格是 `table-layout: fixed` + `width:100%`，
     // 固定 px 宽在容器更宽时会留空档、更窄时又把表撑出去（横向滚动条就是这么回来的）。
     // 合计留 5% 的余量给最左边那列由 rowSelection 自动插入的勾选列（32px）。
+    //
+    // ⚠️ **窄屏裁列 + 重排列宽（20261006 用户第 6 条）**：下面六列挂了 `responsive: ['lg']`
+    // —— 视口 < `screenLG`（本仓在 `WASHI_THEME.common` 里抬到 1024）时 antd 直接把它们
+    // 从列定义里筛掉。**这是本页唯一能走的路**：这里明确禁止加 `scroll.x`（列宽是百分比 +
+    // `table-layout: fixed`，加了等于把表宽写死），所以横向溢出只能靠"少几列"来治。
+    //
+    // ⚠️⚠️ 裁完**必须同时重排剩下的列宽**（`isNarrow` 那两处）：一开始我按"剩下三列合计
+    // 40%，固定布局会把那 60% 富余摊回它们"来收尾 —— **那是错的**。实测（无头 Chromium，
+    // 390 视口）：百分比是**照字面算**的，富余全给了**没写宽**的那一列 ——
+    // 也就是 rowSelection 那个勾选列，它被撑到 234px，而 标题/状态/操作 照旧是
+    // 78 / 31 / 47px（操作那一格要塞三颗 40px 的圆钮 ⇒ 直接糊成一团）。
+    // 现在的窄屏口径：勾选列留 13%（≈44px），剩下一律给"标题 + 操作"两列，
+    // **`状态` 也一并挂 `lg`** —— 勾选格 / 标题 / 三颗圆钮这三样在 335px 里就是塞不下
+    // 第四格：`操作` 光三颗圆钮就要 ~128px，加上单元格左右内边距，占满 42% 才刚好。
+    // 状态那个图标本来也冗余（`操作` 里的配置钮打开的就是它）。宽屏（≥1024）**逐像素不变**。
+    const screens = Grid.useBreakpoint();
+    const isNarrow = !screens.lg;
     const columns: TableProps<NoteType>['columns'] = [
         {
             title: '封面缩略图',
@@ -414,6 +432,7 @@ const AllNotes = () => {
             key: 'cover',
             width: '7%',
             align: "center",
+            responsive: ['lg'],
             // 锁死高度：不锁的话行高随每张封面原图的宽高比跳，几行下去表格就参差不齐
             render: (cover) => <Image src={resolveApiAssetUrl(cover)} alt="封面缩略图" style={{ width: '100%', maxWidth: 90, height: 56, objectFit: 'cover', borderRadius: 5}} />
         },
@@ -421,7 +440,7 @@ const AllNotes = () => {
             title: '文章标题',
             dataIndex: 'noteTitle',
             key: 'title',
-            width: '20%',
+            width: isNarrow ? '45%' : '20%',
             align: "center",
             // className 落到 th/td 上，供验证脚本按列定位（别用 td:nth-child —— rowSelection
             // 会插一列，序号会错位）
@@ -442,6 +461,7 @@ const AllNotes = () => {
             key: 'categories',
             width: '9%',
             align: "center",
+            responsive: ['lg'],
             render: (item) => (
                 <>
                     {categories
@@ -468,6 +488,7 @@ const AllNotes = () => {
             width: '20%',
             align: "center",
             className: 'note-tags-col',
+            responsive: ['lg'],
             // 折叠渲染：只显示前 3 个，其余收进 Popover（列宽只有 20%，三四个长标签名
             // 就能把它挤爆）。悬空 id（标签已删、文章还引用着）不再渲染成空白小块。
             //
@@ -482,6 +503,7 @@ const AllNotes = () => {
             dataIndex: 'isTop',
             width: '7%',
             align: "center",
+            responsive: ['lg'],
             render: (isTop) => (isTop ? <i className={`iconfont icon-yes`} style={{fontSize:24}}></i> : <i className={`iconfont icon-no`} style={{fontSize:24}}></i>),
         },
         {
@@ -490,6 +512,7 @@ const AllNotes = () => {
             dataIndex: 'updateTime',
             width: '12%',
             align: "center",
+            responsive: ['lg'],
             // 以前这里写死 width:160 —— 在 fixed 布局里就是个会撑破列的隐患
             render: (time) => <span style={{fontWeight:600, whiteSpace:'nowrap'}}>{time}</span>,
         },
@@ -499,12 +522,13 @@ const AllNotes = () => {
             dataIndex: 'status',
             width: '8%',
             align: "center",
+            responsive: ['lg'],
             render: (status) => (status === 'public' ?  <i className={`iconfont icon-public1`}></i> : status === 'private' ? <i className={`iconfont icon-private4`}></i>: status === 'draft' ? <i className={`iconfont icon-caogaoxiang1`}></i>: '未知状态'),
         },
         {
             title: '操作',
             key: 'action',
-            width: '12%',
+            width: isNarrow ? '42%' : '12%',
             align: "center",
             render: (item) => (
                 <div style={{display: "flex",flexDirection:'row',alignItems:'center',justifyContent:'center'}}>

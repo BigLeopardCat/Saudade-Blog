@@ -1,6 +1,6 @@
 import './index.sass'
 import { useEffect, useMemo, useState } from "react";
-import { Button, Input, Modal, Pagination, Popconfirm, Switch, Table, Tag, Tooltip, message } from "antd";
+import { Button, Grid, Input, Modal, Pagination, Popconfirm, Switch, Table, Tag, Tooltip, message } from "antd";
 import { ReloadOutlined } from "@ant-design/icons";
 import type { ColumnsType } from 'antd/es/table';
 import http from "../../../apis/axios.tsx";
@@ -244,9 +244,21 @@ const BoardManage = () => {
         }
     };
 
+    /* ⚠️ **窄屏裁列 + 收窄（20261006 用户第 6 条）**：视口 < `screenLG`（本仓在
+       `WASHI_THEME.common` 里把它抬到 1024）时，低信息量的列挂 `responsive: ['lg']`
+       直接筛掉，窄屏只留 **留言内容 + 人工审核 + 操作**（全列宽合计 870px，390 屏上不裁就得横拖两屏多）。
+       剩下那几列里写死 px 的还要**收窄**（下面 `isNarrow` 那几处三元）：这不是可选的 ——
+       这些表是 `table-layout: fixed`（antd 见到 `ellipsis` 就会加），定宽列先把自己拿满、
+       剩下的才轮到没写宽的正文列，实测 390 屏上**只裁列不收宽**正文列只剩 66px。
+       断点用 antd 自己的 `useBreakpoint`：它读的正是 `WASHI_THEME.common.screenLG`
+       那颗令牌 ⇒ 与 CSS 那条 `@media`、壳里那条 matchMedia 同一处事实源，不会漂开
+       （它是 `useLayoutEffect`，首帧那个空的 `{}` 上不了屏 ⇒ 宽屏不会闪一下窄屏形态）。
+       宽屏（≥1024）逐像素不变。 */
+    const screens = Grid.useBreakpoint();
+    const isNarrow = !screens.lg;
     const columns: ColumnsType<BoardItem> = [
         {
-            title: '印章', dataIndex: 'cat', width: 70,
+            title: '印章', dataIndex: 'cat', width: 70, responsive: ['lg'],
             render: (c: string) => <span className="bm-seal">{c}</span>,
         },
         {
@@ -265,11 +277,11 @@ const BoardManage = () => {
             ),
         },
         {
-            title: '留名', dataIndex: 'author', width: 120,
+            title: '留名', dataIndex: 'author', width: 120, responsive: ['lg'],
             render: (a: string) => (a ? a : <span className="bm-anon">无名</span>),
         },
         {
-            title: '发布用户', key: 'user', width: 220,
+            title: '发布用户', key: 'user', width: 220, responsive: ['lg'],
             render: (_, r) => (
                 <span className="bm-user">
                     {r.nickname || r.username}
@@ -278,13 +290,13 @@ const BoardManage = () => {
             ),
         },
         {
-            title: '灯型', dataIndex: 'v', width: 90,
+            title: '灯型', dataIndex: 'v', width: 90, responsive: ['lg'],
             render: (v: number) => LAMP_NAMES[v] ?? LAMP_NAMES[0],
         },
-        { title: '时间', dataIndex: 'createTime', width: 160 },
+        { title: '时间', dataIndex: 'createTime', width: 160, responsive: ['lg'] },
         {
             /* 两段审核之第一段：AI 初审判定留痕（issue9 起落库展示） */
-            title: 'AI 审核', key: 'ai', width: 110,
+            title: 'AI 审核', key: 'ai', width: 110, responsive: ['lg'],
             render: (_, r) =>
                 r.ai_result === 'flag' ? (
                     <Tooltip title={aiTip('AI 初审判定疑似，拦下转人工裁决', r)}>
@@ -306,7 +318,7 @@ const BoardManage = () => {
         },
         {
             /* 两段审核之第二段：人工裁决结果（0 待审 / 1 通过 / 2 未通过=驳回） */
-            title: '人工审核', key: 'manual', width: 110,
+            title: '人工审核', key: 'manual', width: isNarrow ? 80 : 110,
             render: (_, r) =>
                 r.approved === 1 ? (
                     <Tooltip title="已放行，留言板公开展示">
@@ -323,7 +335,7 @@ const BoardManage = () => {
                 ),
         },
         {
-            title: '操作', key: 'op', width: 190,
+            title: '操作', key: 'op', width: isNarrow ? 130 : 190,
             render: (_, r) => {
                 // 驳回按钮**一处实现、两态共用**（20260930）：待审(0) 与已通过(1) 都挂它。
                 // 已通过的也能驳回 = 把已经放行的留言收回来（后端 handler 从来没有状态守卫，
