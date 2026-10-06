@@ -15,6 +15,12 @@
   这一轮换成**书签条**：每条 34px、左缘贴在列的左缘（不留圆角）、右端切一道燕尾
   （`clip-path` 挖 V 口），整组 ~122px。标签与数字也从**上下两行**并成**一条线**。
 
+· **20261006**「这三个书签太细长了」。第三轮压扁了，横向却还铺满整列（320px 列 ⇒
+  一条 320px）—— 于是"书签"读起来像一道横线。这一轮**加高收窄**：56px 高、列宽的
+  **78%**，徽章/字号各抬一档（燕尾跟着从 11px 加深到 14px，否则那道口读起来像缺角）。
+  判据因此从"宽度 == 列宽"改成"宽度 == 列宽 × 0.78"——**只断言"变窄了"是不够的**：
+  78% 与 60% 都"变窄了"，而用户要的是这个比例。
+
 为什么值得单起一个脚本而不是靠眼睛：这个组件的缺陷**全是几何的**（等不等高、越没越界、
 内容有没有被裁、燕尾是不是真切出来了），而它在页面里长什么样取决于列有多高多宽 ——
 只在"某一档视口"下看过一次，换个高度就变了。所以这里量四档：常规 / 窄列 / 被压矮 /
@@ -51,11 +57,13 @@ DEFINE = ('import.meta.env={"VITE_HTTP_BASEURL":"","VITE_CDN_BASEURL":"","MODE":
 COUNTS = {"noteCount": 1024, "tagCount": 128, "categoryCount": 9}
 
 # 设计量（与 index.sass 是同一个数，改一处要改两处）。
-STRIP_H = 34          # 一条书签的高度
+STRIP_H = 56          # 一条书签的高度（20261006：34 → 56，"太细长"那一轮）
+STRIP_W_PCT = 0.78    # 条宽占列宽的比例（20261006 新增：从前是铺满 100%）
 STRIP_GAP = 10        # 条间距
-GROUP_H = 3 * STRIP_H + 2 * STRIP_GAP   # 122
-BATCH = 22            # 徽章边长
-NOTCH = 11            # 燕尾 V 口的深度
+GROUP_H = 3 * STRIP_H + 2 * STRIP_GAP   # 188
+BATCH = 30            # 徽章边长（22 → 30）
+NOTCH = 14            # 燕尾 V 口的深度（11 → 14，跟着条子加高）
+SLIM_MAX = STRIP_H + 8   # "细条"的上限：一档容差，别把 +2px 的微调判成"变回大卡"
 
 FAILS = []
 
@@ -209,7 +217,7 @@ def card_shot(pg, r, card):
     """把一条书签原样截下来（含它外面的页面底），供像素判据用。
 
     ⚠️ 为什么不解析 `clip-path` 的计算值：Chromium 对它**保留百分比不解析** ——
-    读回来是 `polygon(0px 0px, 100% 0px, calc(100% - 11px) 50%, 100% 100%, 0px 100%)`，
+    读回来是 `polygon(0px 0px, 100% 0px, calc(100% - 14px) 50%, 100% 100%, 0px 100%)`，
     要比顶点就得自己把 `100%` / `calc()` 再算一遍，那等于把被测的几何在测试里重写一份
     （写错了两边一起错，还测不出来）。取像素是**对着渲染结果**量。
     """
@@ -231,7 +239,7 @@ def card_color(card):
 def notch_depth(shot, color, y=None):
     """右侧中线那条扫描线上，**条子色最后出现的位置**距右缘多少像素。
 
-    这就是燕尾的深度：矩形是 0、V 口是设计值 11、"收成一个箭头尖"会比 11 大得多。
+    这就是燕尾的深度：矩形是 0、V 口是设计值 14、"收成一个箭头尖"会比 14 大得多。
     比"取一个点看是不是透明"强的地方在于它给出**一个数**，深度写错了也能抓到。
     """
     w, h = shot.size
@@ -258,10 +266,13 @@ def main():
             ws = [round(c["w"], 1) for c in cards]
             check(f"三条等高（{hs}）", max(hs) - min(hs) < 1, f"max-min={max(hs) - min(hs):.1f}")
             check(f"三条等宽（{ws}）", max(ws) - min(ws) < 1, f"max-min={max(ws) - min(ws):.1f}")
-            check(f"宽度跟着列走（列 320px ⇒ 条 {ws[0]:.0f}px，不再是 75% / 固定 210px）",
-                  abs(ws[0] - 320) < 1, f"card={ws[0]:.1f}")
-            # 「书签大小」= 这一轮的题目本身。34px 是设计的量，不跟内容走。
-            check(f"每条都是细条（高 {hs[0]:.0f}px ≤ 44）", max(hs) <= 44, str(hs))
+            # 20261006：宽度的判据从"跟着列走（== 列宽）"改成"**列宽的 78%**"。
+            # 只断言"比列窄"是不够的 —— 78% 与 60% 都通过，而用户要的是这个比例。
+            check(f"宽度是列宽的 {STRIP_W_PCT:.0%}（列 320px ⇒ 条 {320 * STRIP_W_PCT:.0f}px，"
+                  f"不再是铺满整列、也不再是 75% / 固定 210px）",
+                  abs(ws[0] - 320 * STRIP_W_PCT) < 1, f"card={ws[0]:.1f}")
+            # 「书签大小」= 这一轮的题目本身。56px 是设计的量，不跟内容走。
+            check(f"每条都是细条（高 {hs[0]:.0f}px ≤ {SLIM_MAX}）", max(hs) <= SLIM_MAX, str(hs))
             check(f"整组高 {GROUP_H}px（三条 + 两道 10px 缝）",
                   abs((max(c["bottom"] for c in cards) - min(c["top"] for c in cards)) - GROUP_H) < 2,
                   f"{max(c['bottom'] for c in cards) - min(c['top'] for c in cards):.1f}")
@@ -270,7 +281,7 @@ def main():
             group = max(c["bottom"] for c in cards) - min(c["top"] for c in cards)
             col_h = cont["bottom"] - cont["top"]
             check(f"整组只占列高的一小块（{group:.0f}/{col_h:.0f}px）",
-                  group <= 160, f"{group:.0f}px")
+                  group <= 220, f"{group:.0f}px")
             # 「贴在边上」：条子左缘与容器左缘齐平（左边缘不留圆角，是"夹进纸里"的那一头）
             check("三条左缘与容器左缘齐平（贴在边上）",
                   all(abs(c["left"] - cont["left"]) < 1 for c in cards)
@@ -319,8 +330,10 @@ def main():
                   cards[i]["value"] == value, cards[i]["value"])
         if len(cards) == 3:
             c0 = cards[0]
-            check("数字与标签在同一行（34px 的条子放不下两行）",
-                  abs((c0["valueTop"] + 18) - c0["labelBottom"]) < 12
+            # `+22` 是数字那一档的字号（20261006 从 18 抬到 22）：`valueTop` 是行盒顶，
+            # 加一个字号约等于它的下缘；用旧字号配新字号会在容差里慢慢漂到红。
+            check("数字与标签在同一行（条子放不下两行）",
+                  abs((c0["valueTop"] + 22) - c0["labelBottom"]) < 12
                   and c0["valueTop"] < c0["labelBottom"],
                   f"valueTop={c0['valueTop']:.0f} labelBottom={c0['labelBottom']:.0f}")
             check("数字排在标签右边（不是上下两行）",
@@ -336,17 +349,18 @@ def main():
         c2 = r2["cards"]
         check("窄列下仍是三条", len(c2) == 3, f"count={len(c2)}")
         if len(c2) == 3:
-            check("条子宽度跟着缩（240px）", abs(c2[0]["w"] - 240) < 1, f"card={c2[0]['w']:.1f}")
+            check(f"条子宽度跟着缩（列 240px ⇒ 条 {240 * STRIP_W_PCT:.0f}px）",
+                  abs(c2[0]["w"] - 240 * STRIP_W_PCT) < 1, f"card={c2[0]['w']:.1f}")
             check("横向没有溢出（labelClipped 记录被省略的那个）",
                   all(c["scrollW"] <= c["clientW"] + 1 for c in c2),
                   str([round(c["scrollW"] - c["clientW"], 1) for c in c2]))
 
         print("\n⑤ 被压矮档：这条子**本来就矮**，所以常规的矮列根本压不着它")
-        # 900 视口 - 660 = 剩约 240px，远大于整组的 122px ⇒ 不该出现滚动条。
+        # 900 视口 - 660 = 剩约 240px，仍大于整组的 188px ⇒ 不该出现滚动条。
         # （旧版三张 76px 下限的大卡在这里刚好会溢出 —— 这条断言就是"变小了"的收益。）
         r3 = mount(pg, url, head=660)
         cont3, c3 = r3["container"], r3["cards"]
-        check("列只剩 ~240px 时也不再需要滚动（整组 122px 装得下）",
+        check(f"列只剩 ~240px 时也不再需要滚动（整组 {GROUP_H}px 装得下）",
               cont3["scrollH"] <= cont3["clientH"] + 1,
               f"scrollH={cont3['scrollH']} clientH={cont3['clientH']}")
         check("三条都还在", len(c3) == 3, f"count={len(c3)}")
@@ -400,8 +414,10 @@ def main():
         legacy = pg.evaluate(MEASURE)
         lc = legacy["cards"]
         leg_h = [round(c["h"], 1) for c in lc]
+        # 阈值跟着设计量走（`SLIM_MAX`）：旧规则下这一组会撑满整列（几百 px），
+        # 这里写死 44 反而会在条子加高之后变成"永远绿"——那样这条负控就没牙了。
         check("注入旧规则后条子不再是细条 ⇒「细条」这条判据有牙",
-              max(leg_h) > 44, str(leg_h))
+              max(leg_h) > SLIM_MAX, str(leg_h))
         leg_shot = card_shot(pg, legacy, lc[0])
         leg_depth = notch_depth(leg_shot, card_color(lc[0]))
         check("注入旧规则后燕尾没了 ⇒「燕尾」这条判据有牙",
