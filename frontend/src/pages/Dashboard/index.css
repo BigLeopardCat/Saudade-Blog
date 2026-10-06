@@ -404,7 +404,14 @@ li.search-box input {
     isolation: isolate;
     box-sizing: border-box;
     overflow: hidden;
-    margin-left: 20px;
+    /* ── 这三个数原先挂在 index.tsx 的**内联 style** 上（20261006 搬来）───────────────
+       取值逐字节不变：宽 90%、高 95%、左边距 80px。
+       搬家的原因：内联样式压过一切普通 CSS 声明 ⇒ 只要它们还在内联上，窄屏那条
+       `@media` 里对 .Card 写的宽与左距就全是**静默失效**（本仓反复吃亏的"半死"）。
+       ⚠️ 这一条原来那个 `margin-left:20px` 是**被内联盖死的死值**，顺手收口掉了。 */
+    width: 90%;
+    height: 95%;
+    margin-left: 80px;
     border: 1px solid transparent;
     padding: 0;
 }
@@ -1194,4 +1201,197 @@ body.dash-skin .mainbox .search_input::placeholder {
 }
 body.dash-skin .mainbox .search_icon {
     fill: var(--washi-paper-3, #f6f0ff);
+}
+
+/* ══ 窄屏外壳的两个新件（20261006 用户第 6 条）══════════════════════════════════════
+
+   默认值**必须写在这里、不能只写在下面那个媒体块里**：媒体块不命中时这两件会退回
+   浏览器默认外观（一颗裸 button 与一个空 div），会明晃晃地出现在桌面上。
+   媒体块里只翻 `display`。 */
+
+.pad-menu-btn {
+    display: none;
+    position: fixed;
+    top: 12px;
+    left: 12px;
+    /* 低于遮罩的 1100 ⇒ 抽屉打开时它被遮罩盖住，点左上角等于"点遮罩关闭"。 */
+    z-index: 90;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--washi-line-2, rgba(198, 152, 192, 0.22));
+    border-radius: 12px;
+    background-color: var(--washi-paper, #fffdfa);
+    color: var(--washi-ink, #4a3550);
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    box-shadow: 0 6px 16px -8px rgba(120, 90, 140, 0.45);
+}
+
+/* 夜间档。`.dark` 挂在 `.contain` 上（index.tsx），按钮是它的后代 ⇒ 命中。
+   这里只动底色与字色 ⇒ 与媒体块里那唯一一条 `display` 不撞属性。 */
+.dark .pad-menu-btn {
+    background-color: var(--washi-paper-2, #2a2338);
+    color: var(--washi-ink-2, #c9b8d3);
+    border-color: var(--washi-line, rgba(255, 255, 255, 0.16));
+}
+
+.nav-backdrop {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 1100;
+    background-color: rgba(24, 16, 32, 0.42);
+}
+
+/* ══ 窄屏（≤1024px）：离屏抽屉 + 整页滚动（20261006 用户第 6 条）══════════════════
+
+   用户原话："左侧边栏完全收起却没有腾出空间，每个选项菜单展开后，具体页面直接被屏幕
+   截断，文章页面移动端尤为严重"。三条根因：
+
+     ① 侧栏是 `position:fixed` 的浮动层，**从设计上就不占布局空间**；而 .content 恒
+        width:100%、.Card 的宽 90% 与左距 80px 全是常量、从不跟 tier 联动 ⇒ 390px 视口
+        下卡片外框 = 351+80 再被父级居中，两侧一起溢出、右侧被裁。**每一档都这样**，
+        不是"收起了才坏"。
+     ② .Card 是固定高 + overflow:hidden ⇒ 每个子页面必须自己接 100% 高度链。没接的
+        七个（公告 / 新文章 / 标签 / 分类 / 说说 / 相册 / 友链）内容被静默裁掉且无处可滚。
+     ③ 一批写死的横向尺寸（表格 scroll.x:1000、卡片 width:300/270…）。
+
+   已拍板的三条：断点 **1024 单档**、窄屏侧栏 **离屏抽屉**、窄屏内容 **整页滚动**。
+
+   ⚠️ **本块必须待在文件最末尾**：文件里 `.Card` 有两条普通规则、`.shell.slider` 有一条，
+      都会被后写的普通规则掀翻（第 851 行那条成文约定说的就是这个）。
+   ⚠️ `frontend/tests/sass-media-shadow.test.mjs` 是**进 CI 的**，它扫 `src` 下所有样式文件：
+      判据① 找"媒体块之后还有没有同选择器的普通规则"（压在末尾 ⇒ 候选恒空）；
+      判据② 找"媒体选择器是不是某条**更长**的普通选择器的后缀"（下面逐条核过，无靶子）。
+      【写这条注释时踩的坑，留个记号】这一行原先是那个带通配符的路径原文。
+      CSS 注释**不认嵌套、也不认星号**：通配符里"星号紧跟斜杠"的那两个字，
+      正好就是注释的结束标志 ⇒ 注释在那儿当场关掉，后面半截注释连同下一行的
+      `@media` 一起被当成选择器吃掉。症状极隐蔽：样式表里仍能读到 158 条规则、
+      `.pad-menu-btn` 的 `display:none` 照样生效，**只有这一整块静静消失**，
+      浏览器一个字都不报。所以本文件里写路径一律不带通配符。
+   ⚠️ 本文件也进首页 bundle ⇒ **只写类选择器**（同第 853 行的纪律）。
+   ⚠️ **断点 1024 三处同源**：这里、index.tsx 里那条 matchMedia、以及
+      `WASHI_THEME.common.screenLG`（antd 表格列 responsive:['lg'] 的门槛）。改一处三处同改。 */
+
+@media only screen and (max-width: 1024px) {
+
+    /* ── ① 整页滚动：外壳不再锁视口高 ─────────────────────────────────────────────
+       .contain 是 100vh、.content 是 height:100% + display:flex + align-items:center。
+       内容高于视口时，flex 居中会让卡片**上下同时溢出**——顶上那半截在文档流之外，
+       滚动条也够不着（本仓 "flex 居中溢出" 那一族的老坑）。窄屏改成"从顶部开始、向下滚"。
+       `float:none` 是防"浮动元素不撑高父级、.contain 塌陷"。
+       dvh 用两条声明做渐进增强（老浏览器忽略后一条），治移动端地址栏收缩时的跳动。 */
+    .contain {
+        height: auto;
+        min-height: 100vh;
+        min-height: 100dvh;
+    }
+
+    .content {
+        display: block;
+        float: none;
+        height: auto;
+        min-height: 100vh;
+        min-height: 100dvh;
+        box-sizing: border-box;
+        /* 64px 上内边距是给汉堡钮让位的。**必须是 padding，不能写成 .Card 的 margin-top**：
+           两者之间没有边框也没有内边距，块级上下外边距会一路塌陷出去，卡片根本不会被
+           推下来，汉堡钮照样压在它头上。 */
+        padding: 64px 12px 12px;
+    }
+
+    /* ── ② 内容卡：占满全宽、高度交给内容 ─────────────────────────────────────────
+       宽 / 高 / 左距 已从内联搬到基础规则（内联压过一切普通声明；不搬的话下面这几条
+       是**静默失效**的，这正是本条改动的第一个前提）。
+       `overflow:visible` 覆盖基础规则那条 overflow:hidden —— 基础规则一个字没动，
+       CI 的 graph-rebuild-panel.test.mjs 那两条正则要的正是"基础规则里留着它"。 */
+    .Card {
+        width: 100%;
+        height: auto;
+        margin: 0;
+        overflow: visible;
+    }
+
+    /* 放开高度链：子页面写死的 height:100% / 90% 在 auto 父级下退化成内容高，
+       整页滚动接管 —— 七个没接管高度链的页面就此一并修好。 */
+    .ant-card .ant-card-body {
+        height: auto;
+    }
+
+    /* ── ③ 侧栏：离屏抽屉 ───────────────────────────────────────────────────────
+       `.shell` **嵌套两层**、两层带同样的 tier 类名，只有外层多一个 `slider`
+       （第 883-885 行那条注释说的就是它）。**transform 只加在外层**：它成为内层
+       position:fixed 的包含块，nav 跟着一起位移 —— 推两层会位移两倍。
+
+       内层这颗 fixed 的**包含块是外层的 padding box**（transform 造的），而内层宽 250
+       （全站 reset 是 `* { box-sizing: border-box }` ⇒ `width:250` 就是边框盒，
+       内外两层都是 250，不是 250+28）。所以外层**必须把 padding 收成 0**：
+       留着桌面的 14px，padding box 只剩 222 宽，内层就从边框盒往里 14px 起算、整体右移。
+       收 0 之后 padding box == 边框盒 == 250，与内层严丝合缝，
+       `translateX(-100%)` 正好把整块（外层底色 ＋ 内层 nav）一起送出屏外、一点不剩。 */
+    .shell.slider {
+        width: 250px;
+        padding: 0;
+        transform: translateX(-100%);
+        /* 抬到遮罩（1100）之上，也抬到看板娘 `#waifu`（z-index 1000）之上：
+           不然抽屉打开时看板娘浮在遮罩上、还能点。这条只在窄屏，桌面仍是 100。 */
+        z-index: 1110;
+    }
+
+    .shell.slider.nav-open {
+        transform: translateX(0);
+    }
+
+    .shell.shell-nav {
+        width: 250px;
+        padding: 10px 14px;
+    }
+
+    /* ── ④ 窄屏下 tier 三档整体作废 ───────────────────────────────────────────────
+       抽屉只有"开/关"，88px 那两档没有意义。`.shell.slider` 与 `.shell.shell-nav` 都是
+       两个类（0,2,0）：对 `.shell.mini`（0,2,0）同特异度、本块在最后 ⇒ 后写者赢；
+       对 `.close`（0,1,0）直接碾压。**所以这里一条 !important 都不需要。**
+       顺手把 tier 藏掉的两块内容还原回来。 */
+    .shell.mini .image-text,
+    .shell.mini .menu-bar {
+        visibility: visible;
+    }
+
+    .shell.close .text {
+        opacity: 1;
+    }
+
+    /* 两颗圆钮（展开 / 收起箭头）在抽屉语义下没有意义，且 right:-25px 会露到屏外。
+
+       ⚠️ 必须写 **`.shell.shell-nav`**（0,3,0）而不是 `.shell`（0,2,0）：对面那条是
+       `.shell.close .toggle-collapse{display:flex}` —— 三个简单选择器 = **0,3,0**，
+       裸 `.shell` 是**压不过它的**（媒体块放在末尾也救不了：媒体查询不改特异性）。
+       88 档（`tier===1`，`dashboard-sidebar.test.py` 在 1280 下会切到的那一档）正好就是
+       `.close` ⇒ 写错的话窄屏收起档会留一颗 25px 的圆钮挂在 `right:-25px`、露出屏外。
+       两颗钮都在内层 `nav.shell.shell-nav` 的 `<header>` 里（index.tsx:401-421），
+       所以这个前缀命中得了它们。 */
+    .shell.shell-nav .toggle,
+    .shell.shell-nav .toggle-collapse {
+        display: none;
+    }
+
+    /* ── ⑤ 全屏钮让位 ─────────────────────────────────────────────────────────────
+       .content 不再是定位上下文后，position:absolute 的它会挂到初始包含块、随页面滚走；
+       而触屏上全屏本来也没什么用，右下角还与看板娘抢位置。 */
+    .setting_btn {
+        display: none;
+    }
+
+    /* ── ⑥ 两个新件：基础样式在上面的普通规则里，这里只翻可见性 ──────────────────── */
+    .pad-menu-btn {
+        display: flex;
+    }
+
+    .nav-backdrop.show {
+        display: block;
+    }
 }

@@ -103,6 +103,20 @@ const Dashboard = () => {
     const [isDarkMode, setDarkMode] = useState(false);
     const [loading, setLoading] = useState(false);
     const [searchVal, setSearchVal] = useState('');
+    /* 窄屏抽屉的两颗新状态（20261006 用户第 6 条：dashboard 移动端适配）。
+       ⚠️ **不复用上面的 tier**：tier 是「宽度轴」（0/88/250，由两颗圆钮驱动，被
+       `dashboard-sidebar.test.py` 在 1280 下逐档断言），抽屉是「开合轴」（二元）。
+       两者语义正交——硬塞进 tier 会得到跨断点 resize 时无意义的状态（"窄屏的 0 是关抽屉、
+       桌面的 0 是宽 0"），还得改 `handleToggleClick` 的 `t===1?2:1`，当场撞红桌面套件。
+       窄屏下 tier 三档在 CSS 里**整体作废**（见 index.css 末尾那段），JS 一个字不用改。
+
+       ⚠️ **断点 1024 三处同源**：index.css 末尾的 `@media (max-width:1024px)`、下面那条
+       matchMedia、以及 `WASHI_THEME.common.screenLG`（它决定 antd 表格列 `responsive:['lg']`
+       的门槛）。改一处必须三处同改，否则会出现"外壳已是抽屉、表格却还是全列"的破口。
+
+       ⚠️ **不另立 `isNarrow` state**：窄屏的可见性由 CSS 单独负责（这类"某个宽度下才存在"
+       的状态在 JS 里再存一份，只会多一个能漂移的真相源），JS 这边只需要"跨断点把抽屉关掉"。 */
+    const [navOpen, setNavOpen] = useState(false);
     const dispatch = useDispatch();
     // 侧栏那格身份 = **正在看后台的这个人**（20260930 用户点名：头像不许硬编码成站点那张）。
     // 站点作者名（`state.user.name`）仍是兜底：本机没有账号记录时侧栏不至于空着。
@@ -124,6 +138,30 @@ const Dashboard = () => {
         window.addEventListener('darkmode-change', onDarkModeChange);
         return () => window.removeEventListener('darkmode-change', onDarkModeChange);
     },[])
+
+    /* 窄屏抽屉的三条收尾（20261006）。 */
+
+    /* ① 跨断点一律关抽屉：进也关、出也关（否则拖动窗口变宽后，`nav-open` 会留在台面上，
+          而那个类名在桌面档没有样式——状态与画面长期不一致，下次变窄会突兀地弹开）。 */
+    useEffect(() => {
+        const mq = window.matchMedia('(max-width:1024px)');
+        const onChange = () => setNavOpen(false);
+        mq.addEventListener('change', onChange);
+        return () => mq.removeEventListener('change', onChange);
+    }, []);
+
+    /* ② 路由一变就关抽屉（覆盖图库页「R2 配置」那种不经侧栏的程序化跳转）。
+          ⚠️ 它**盖不住「点已选中的那一项」**——pathname 没变、effect 不重跑，
+          所以每个 li 的 onClick 里另有一句 setNavOpen(false)，两条缺一不可。 */
+    useEffect(() => { setNavOpen(false); }, [pathname]);
+
+    /* ③ Esc 关抽屉。只在开着的时候挂监听，关着时不占键盘。 */
+    useEffect(() => {
+        if (!navOpen) return;
+        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setNavOpen(false); };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [navOpen]);
 
     /* 手账皮的**范围根**（20261001 批 E）：内部页那层样式全部写在 `body.dash-skin`
        下（见 index.css 末尾那块）。必须挂 body 而不是 `.Card` —— antd 的 Modal /
@@ -163,6 +201,11 @@ const Dashboard = () => {
     const handleSearchClick = () => {
         setTier(2);
     };
+
+    /* 点侧栏里的任一项就关抽屉（窄屏）。桌面下 `navOpen` 恒假 ⇒ 这只是一句无副作用的
+       setState。**注意它必须挂在 li 上而不是靠 `[pathname]` 那条 effect**：点"当前已在
+       的那一项"时 pathname 不变，effect 不重跑，抽屉会赖着不走。 */
+    const closeNav = () => setNavOpen(false);
 
     const handleModeSwitch = () => {
         setDarkMode(!isDarkMode);
@@ -334,8 +377,28 @@ const Dashboard = () => {
                 <>
 
                     <div className={`content ${isDarkMode ? 'contentDark' : ''}`} ref={fullScreenRef}>
-                        <div className={`shell ${tier === 0 ? 'mini' : tier === 1 ? 'close' : ''} ${isDarkMode ? 'dark' : ''} slider`}>
-                            <nav className={`shell ${tier === 0 ? 'mini' : tier === 1 ? 'close' : ''} ${isDarkMode ? 'dark' : '' }`}>
+                        {/* 窄屏外壳（20261006 用户第 6 条）：汉堡钮 + 遮罩。
+                            两边都只在 index.css 末尾那条 `@media (max-width:1024px)` 里有样式，
+                            桌面是 `display:none` ⇒ 对桌面零影响。
+
+                            ⚠️ 汉堡钮必须放在 `.shell` **之外**：抽屉靠给外层 `.shell.slider` 加
+                            `transform: translateX(-100%)` 滑出屏外，按钮放进去会被一起推走。
+                            ⚠️ 图标 `icon-bars` 是**前台移动端头部**（frontHome/Head/index.tsx）
+                            用的同一枚，别自创。 */}
+                        <button type="button" className="pad-menu-btn" aria-label="打开导航"
+                                aria-expanded={navOpen} onClick={() => setNavOpen(true)}>
+                            <i className="iconfont icon-bars" aria-hidden="true"></i>
+                        </button>
+
+                        {/* 遮罩：点它关抽屉。只在窄屏且开着时显示。 */}
+                        <div className={`nav-backdrop${navOpen ? ' show' : ''}`}
+                             aria-hidden="true" onClick={closeNav} />
+
+                        {/* `.shell` 是**嵌套两层**的，两层带同样的 tier 类名；只有外层多一个
+                            `slider`。**transform 只加在外层**：它会让外层的固定定位成为
+                            nav 的包含块，nav 跟着一起位移——推两层会位移两倍。 */}
+                        <div className={`shell ${tier === 0 ? 'mini' : tier === 1 ? 'close' : ''} ${isDarkMode ? 'dark' : ''} slider${navOpen ? ' nav-open' : ''}`}>
+                            <nav className={`shell ${tier === 0 ? 'mini' : tier === 1 ? 'close' : ''} ${isDarkMode ? 'dark' : '' } shell-nav`}>
                                 <header>
                                     <div className="image-text">
                         <span className="image">
@@ -371,6 +434,7 @@ const Dashboard = () => {
                                                 <li className={`nav-links ${activeIndex === item.index ? 'nav_select' : ''}`}
                                                     onClick={() => {
                                                         navigate(item.to ? `/dashboard/${item.to}` : '/dashboard')
+                                                        closeNav()
                                                     }} key={item.index}>
                                                     {fillSvg ? (
                                                         /* 填充型 SVG：置 .icon 槽内，fill=currentColor 随 hover/选中变色 */
@@ -399,6 +463,7 @@ const Dashboard = () => {
                                         <li className={`nav-links ${activeIndex === 8 ? 'nav_select' : ''}`}
                                             onClick={() => {
                                                 navigate('/dashboard/usercontrol');
+                                                closeNav()
                                             }}>
                                             <i className="iconfont icon-iconfontcog icon"></i>
                                             <span className="text nac-text">站点设置</span>
@@ -409,7 +474,7 @@ const Dashboard = () => {
                                             退出登录仍有入口——博客头部头像菜单里那颗「退出」。
                                             所以这里既不 deleteToken 也不派发 auth-change：令牌留着，
                                             回到前台仍是登录态。 */}
-                                        <li className="nav-links" onClick={() => navigate('/')}>
+                                        <li className="nav-links" onClick={() => { navigate('/'); closeNav(); }}>
                                             <i className="iconfont icon-tuichu icon"></i>
                                             <span className="text nac-text">返回首页</span>
                                         </li>
@@ -429,7 +494,11 @@ const Dashboard = () => {
                                 </div>
                             </nav>
                         </div>
-                        <Card style={{ width: "90%",height: '95%' ,marginLeft:80}} className={`Card ${isDarkMode ? 'CardDark' : ''}`}>
+                        {/* ⚠️ 这三个数（90% / 95% / 80px）**从内联搬到了 index.css 的 `.Card`**
+                            （20261006）：内联样式压过一切普通 CSS 声明 ⇒ 只要它们还挂在这里，
+                            窄屏那条 `@media` 里写多少 `.Card{width:100%; margin-left:0}` 都是
+                            **静默失效**（本仓反复吃亏的"半死"）。搬走后行为逐字节不变。 */}
+                        <Card className={`Card ${isDarkMode ? 'CardDark' : ''}`}>
                             <MainContext.Provider value={isDarkMode.toString()}>
                                 <Outlet />
                             </MainContext.Provider>
