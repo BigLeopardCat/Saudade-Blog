@@ -132,6 +132,12 @@ cp .env.example .env
 - 前端那一半的站点地址走 **`VITE_SITE_URL`**（构建期变量，同名不同前缀，`.env` 里那份 `SITE_URL`
   管不着它）：`frontend/index.html` 的 canonical / og:url 占位符由 vite 在构建时替换。
   两个都要设，别只设一个
+- **站点的名字与描述也全走构建期变量**（20261007 起）：`VITE_SITE_TITLE`、
+  `VITE_SITE_DESCRIPTION`，另有 `VITE_SITE_KEYWORDS`（不设就整行删掉）与 `VITE_SITE_AUTHOR`
+  （不设就整行删掉）。它们决定 `<title>`、`<meta name="description">`、og/twitter 卡片与
+  各页标题的后缀 —— 仓库里**一处都没有写死**，所以 fork 出去的人不设这些，得到的是中性占位
+  （`个人博客` / `本站开发地址，尚未配置站点描述。`）而不是上游作者的站名与文案。
+  默认值只写在 [frontend/vite.config.ts](frontend/vite.config.ts) 一处，HTML 与 TS 两侧同源
 
 ### 2.3 起后端
 

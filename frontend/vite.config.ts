@@ -23,6 +23,15 @@ const SITE_URL = (process.env.VITE_SITE_URL || 'http://localhost:5173').replace(
 // 署名同理：**缺省是空串**，不预设任何人的名字。fork 出去的人不设它，页面上就没有署名，
 // 而不是继承本项目作者的。线上由 CI 的仓库 Variable `VITE_SITE_AUTHOR` 显式传入。
 const SITE_AUTHOR = process.env.VITE_SITE_AUTHOR || '';
+// 站名与描述（20261007 改）：**缺省是中性占位，不是本项目的文案** —— 与 SITE_URL 同理。
+// 改之前这两项是写死在 index.html 与 SeoHelmet.tsx 里的字面量：谁 clone 部署，谁的站就叫
+// 同一个名字、用同一句描述（品牌被带走，搜索引擎还可能把两个站按近重复内容处理）。
+// 现在默认值仍然只有这一份，HTML 与 TS 两侧都从这里取。
+const SITE_TITLE = process.env.VITE_SITE_TITLE || '个人博客';
+const SITE_DESCRIPTION = process.env.VITE_SITE_DESCRIPTION || '本站开发地址，尚未配置站点描述。';
+// keywords：**缺省空串 ⇒ 把那一整行删掉**（与署名同一处理）。主流搜索引擎早就不看它
+// （spam 时代的遗留），留一份泛泛的词表只会让人以为 SEO 靠它；要留的人设自己的变量。
+const SITE_KEYWORDS = process.env.VITE_SITE_KEYWORDS || '';
 
 if (!process.env.VITE_SITE_URL) {
     console.warn(
@@ -30,6 +39,23 @@ if (!process.env.VITE_SITE_URL) {
         + `${SITE_URL} —— 线上构建必须设它（CI 见 deploy.yml 的 VITE_SITE_URL 环境变量）。`,
     );
 }
+if (!process.env.VITE_SITE_TITLE || !process.env.VITE_SITE_DESCRIPTION) {
+    console.warn(
+        '[site-identity] 未设 VITE_SITE_TITLE / VITE_SITE_DESCRIPTION，站名与描述用中性占位 '
+        + `("${SITE_TITLE}" / "${SITE_DESCRIPTION}") —— 自己的站点要设这两个（CI 见 deploy.yml）。`,
+    );
+}
+
+/**
+ * HTML 属性值与元素文本的转义。站名与描述以前是仓库里的字面量（天然安全），现在是
+ * **配置注入**（仓库 Variable，部署者自己填）—— 一个没转义的 `"` 就能把 meta 标签撕成
+ * 两半，而产物照样构建成功、CI 照样绿。URL 那几处不动，保持原行为。
+ */
+const esc = (s: string) => s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 
 const siteIdentity = (): Plugin => ({
     name: 'saudade-site-identity',
@@ -37,14 +63,17 @@ const siteIdentity = (): Plugin => ({
         // 'pre'：先于 Vite 自己的 env 替换跑。两边占位符不重叠，但显式定序免得将来撞上。
         order: 'pre',
         handler: (html: string) => {
-            const out = html
+            let out = html
                 .replace(/__SITE_URL__/g, SITE_URL)
-                .replace(/__SITE_AUTHOR__/g, SITE_AUTHOR);
-            // 没配署名就把整行删掉：留 `<meta name="author" content="">` 对爬虫与人
+                .replace(/__SITE_AUTHOR__/g, SITE_AUTHOR)
+                .replace(/__SITE_TITLE__/g, esc(SITE_TITLE))
+                .replace(/__SITE_DESCRIPTION__/g, esc(SITE_DESCRIPTION))
+                .replace(/__SITE_KEYWORDS__/g, esc(SITE_KEYWORDS));
+            // 没配署名 / keywords 就把整行删掉：留一个空 content 的 meta 对爬虫与人
             // 都没有意义，而**留占位符原样**更糟（这正是本文件头注反对的那种做法）。
-            return SITE_AUTHOR
-                ? out
-                : out.replace(/^[^\S\n]*<meta name="author"[^>]*>\n/m, '');
+            if (!SITE_AUTHOR) out = out.replace(/^[^\S\n]*<meta name="author"[^>]*>\n/m, '');
+            if (!SITE_KEYWORDS) out = out.replace(/^[^\S\n]*<meta name="keywords"[^>]*>\n/m, '');
+            return out;
         },
     },
     // robots.txt 整份由这里生成（`public/robots.txt` 已删）。
@@ -92,6 +121,11 @@ export default defineConfig(() => ({
     define: {
         __SITE_URL__: JSON.stringify(SITE_URL),
         __SITE_AUTHOR__: JSON.stringify(SITE_AUTHOR),
+        // 站名 / 描述 / keywords 同理：**TS 侧不许有第二份默认值**。
+        // 这里注入的是**未转义**的原值（TS 里是字符串，交给 React 转义）。
+        __SITE_TITLE__: JSON.stringify(SITE_TITLE),
+        __SITE_DESCRIPTION__: JSON.stringify(SITE_DESCRIPTION),
+        __SITE_KEYWORDS__: JSON.stringify(SITE_KEYWORDS),
     },
 
     build: {

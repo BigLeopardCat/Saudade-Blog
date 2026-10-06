@@ -1,4 +1,7 @@
 import SeoHelmet from "../../../components/SeoHelmet";
+// 首页的站名与描述走站点身份（构建期变量，默认值是中性占位）——**别在这里写死文案**：
+// 仓库是公开的，写死等于把本站的品牌与描述交给每一个 clone 它的人。
+import {SITE_TITLE, SITE_DESCRIPTION} from "../../../utils/siteUrl";
 import './index.sass'
 // 段落带（首页被切成几段、每段什么色）单独一份，见 sections.sass 头注。
 // ⚠️ **必须排在 `./index.sass` 之后**：同特异度下后写者赢，挪到前面就等于整份没写。
@@ -319,7 +322,7 @@ const ContentHome = () => {
     };
 
     return <>
-        <SeoHelmet title="Saudade Blog" description="个人技术博客 · Rust、React、IoT 开发经验与项目实践" url="/" suffix={false} />
+        <SeoHelmet title={SITE_TITLE} description={SITE_DESCRIPTION} url="/" suffix={false} />
         <div className="SelfDescription" ref={heroRef}>
             {/* 拼贴底（20260930 四轮，用户：「主页也想要这种图片的风格」——参考图是
                 粉紫淡彩的日系手账封面）。三层柔和色块 + 一层方格纸 + 撒几片樱花，
