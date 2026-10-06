@@ -39,6 +39,19 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
 
+# 令牌权限写死在文件里（20261006）。此前**一条都没写**，靠仓库设置里的
+# `default_workflow_permissions: read` 兜着——那个值现在是对的，但它住在仓库设置里、
+# 不在仓库里：谁能改仓库设置，谁就能悄悄把这里放宽成 `write`，而 workflow 文件上
+# **一个字都不会变**，评审时看不出来。
+#
+# 本仓的部署链不需要 GitHub API 的写权限：产物上传到 R2（用自己的密钥）、
+# 部署靠 ssh 触发服务器上的脚本。所以 `contents: read` 就是全部所需。
+# ⚠️ 哪天真想让 `dorny/paths-filter` 在 **PR** 上也跑，得再加 `pull-requests: read`
+# ——它走 API 列 PR 的改动文件（现在那一步带 `if: github.event_name == 'push'`，
+# 所以不需要）。
+permissions:
+  contents: read
+
 jobs:
   check-changes:
     runs-on: ubuntu-latest
