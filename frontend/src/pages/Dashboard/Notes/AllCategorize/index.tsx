@@ -2,6 +2,7 @@ import './index.sass'
 import {
     ColorPicker,
     Form,
+    Grid,
     Input, message,
     Modal, Popconfirm,
     Space,
@@ -27,8 +28,14 @@ import {
     updateCategory
 } from "../../../../apis/CategoryMethods.tsx";
 import {useLiveRefresh} from "../../../../utils/liveRefresh.ts";
-const  AllCategorize = () => {
-    //hooks区域
+const  AllCategorize = () => {    //hooks区域
+    /* 窄屏（< `screenLG`，本仓在 `WASHI_THEME.common` 里抬到 1024）不再横向拖表。
+       用 antd 自己的 `useBreakpoint` 而不是另写一条 `matchMedia('(max-width:1024px)')`：
+       它读的正是同一颗 `screenLG` 令牌 ⇒ **断点只有一处事实源**，不会跟 CSS 那边漂开。
+       （它内部是 `useLayoutEffect`，首帧那个空的 `{}` 来不及上屏就被 forceUpdate 顶掉，
+       所以桌面不会闪一下"窄屏形态"。） */
+    const screens = Grid.useBreakpoint();
+    const isNarrow = !screens.lg;
     const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
     const [staticDate,setStaticDate] = useState<CategoriesType[]>([])
     const [open, setOpen] = useState(false);
@@ -186,6 +193,11 @@ const  AllCategorize = () => {
     };
 
     //Tab数据
+    // ⚠️ **窄屏裁列（20261006 用户第 6 条）**：三列挂 `responsive: ['lg']`（视口 <
+    // `screenLG`，本仓在 `WASHI_THEME.common` 里抬到 1024），窄屏只留 序列 / 分类名称 /
+    // 文章数量 / 操作。本页的横向溢出原本由下面 `scroll` 的 `x:1000` 兜着 ——
+    // 那是"整张表 1000px 宽、装不下的横向拖"，手机上等于一进去就得拖着看；
+    // 窄屏去掉 `x`（保留 `y`）＋ 裁掉三列，剩下的自然落进屏宽。宽屏逐像素不变。
     const columns: TableProps<CategoriesType>['columns'] = [
         {
           title: '序列',
@@ -203,13 +215,15 @@ const  AllCategorize = () => {
             title: '分类介绍',
             dataIndex: 'introduce',
             key: 'key',
-            align: "center"
+            align: "center",
+            responsive: ['lg'],
         },
         {
             title: '分类图标',
             dataIndex: 'icon',
             key: 'key',
             align: "center",
+            responsive: ['lg'],
             render: (icon) => <i className={`fa ${icon}`} aria-hidden="true"></i>
         },
         {
@@ -223,12 +237,18 @@ const  AllCategorize = () => {
             key: 'key',
             dataIndex: 'color',
             align: "center",
+            responsive: ['lg'],
             render: (color) => <Tag color={color}>{color}</Tag>
         },
         {
             title: '操作',
             key: 'key',
             align: "center",
+            // 只有这一列在窄屏给宽度（其余留着不写 = 让浏览器均分）：`操作` 里是两颗 40px 的
+            // 圆钮（`Space` 中间还隔 8px ⇒ 至少要 88px），均分下来的那一份装不下。
+            // 实测 390 视口：均分是 81px（容器再窄到真实卡片里只剩 ~68px）。
+            // 宽屏给 `undefined` = 与改动前逐像素一致。
+            width: isNarrow ? '28%' : undefined,
             render: (item) => (
                 <Space size="middle">
                     <Fab color="info" aria-label="edit" size='small' onClick={() => Change_Categories(item)}>
@@ -288,6 +308,9 @@ const  AllCategorize = () => {
     const handledelCancel = () => {
         setIsModalOpen(false);
     };
+    /* 窄屏去掉 `x`（那是"整张表写死 1000px 宽"的横向拖，手机上毫无意义；裁掉三列之后
+       剩下的本来就装得下）。`y`（480 竖向滚动）两档都留着。 */
+    const tableScroll = isNarrow ? { y: 480 } : { y: 480, x: 1000 };
     return <>
         <div style={listStyle} className="searchRes catListBox">
             <Table columns={columns} dataSource={staticDate} pagination={{pageSize: 8}}
@@ -313,7 +336,7 @@ const  AllCategorize = () => {
                        </h2>
                    </>}
                    rowSelection={rowSelection}
-                   scroll={{y:480,x:1000}}
+                   scroll={tableScroll}
             />
         </div>
 

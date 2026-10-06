@@ -87,7 +87,18 @@ const WASHI_THEME = {
            改成深墨后是 6.4:1。（浅色档的 #d94f9a 压白字是 3.8:1，与出厂蓝同档，不动。） */
         colorTextLightSolid: '#3a2340',
     },
-    common: { borderRadius: 8 },
+    common: {
+        borderRadius: 8,
+        /* antd 的 `lg` 断点（表格列的 `responsive: ['lg']` 用它筛列）默认是 **992**，
+           比我们那条 CSS 断点低 32px ⇒ 992~1024 之间会出现"外壳已是抽屉、表格却还是
+           全列"的破口。把它抬到 1024，两把尺子**精确对齐**。
+           ⚠️ **断点 1024 三处同源**：这里、`Dashboard/index.css` 末尾那条 `@media`、
+           以及壳里那条 matchMedia。改一处必须三处同改。
+           antd 会校验 `screenLGMin <= screenLG <= screenLGMax <= screenXLMin`
+           （768 ≤ 1024 ≤ 1199 ≤ 1200，成立）⇒ 不会抛；后台也没有别处用 `lg`/`xl`
+           的 Grid 属性，改它只影响 Table 的列筛选。 */
+        screenLG: 1024,
+    },
 };
 
 

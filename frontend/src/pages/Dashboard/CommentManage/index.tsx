@@ -1,6 +1,6 @@
 import './index.sass'
 import { useEffect, useMemo, useState } from "react";
-import { Button, Input, Modal, Pagination, Popconfirm, Switch, Table, Tag, Tooltip, message } from "antd";
+import { Button, Grid, Input, Modal, Pagination, Popconfirm, Switch, Table, Tag, Tooltip, message } from "antd";
 import { ReloadOutlined } from "@ant-design/icons";
 import type { ColumnsType } from 'antd/es/table';
 import http from "../../../apis/axios.tsx";
@@ -337,9 +337,21 @@ const CommentManage = () => {
         }
     };
 
+    /* ⚠️ **窄屏裁列 + 收窄（20261006 用户第 6 条）**：视口 < `screenLG`（本仓在
+       `WASHI_THEME.common` 里把它抬到 1024）时，低信息量的列挂 `responsive: ['lg']`
+       直接筛掉，窄屏只留 **评论内容 + 人工审核 + 操作** 这三列 —— 正好是裁决一条评论需要的全部信息。
+       剩下那几列里写死 px 的还要**收窄**（下面 `isNarrow` 那几处三元）：这不是可选的 ——
+       这些表是 `table-layout: fixed`（antd 见到 `ellipsis` 就会加），定宽列先把自己拿满、
+       剩下的才轮到没写宽的正文列，实测 390 屏上**只裁列不收宽**正文列只剩 66px。
+       断点用 antd 自己的 `useBreakpoint`：它读的正是 `WASHI_THEME.common.screenLG`
+       那颗令牌 ⇒ 与 CSS 那条 `@media`、壳里那条 matchMedia 同一处事实源，不会漂开
+       （它是 `useLayoutEffect`，首帧那个空的 `{}` 上不了屏 ⇒ 宽屏不会闪一下窄屏形态）。
+       宽屏（≥1024）逐像素不变。 */
+    const screens = Grid.useBreakpoint();
+    const isNarrow = !screens.lg;
     const columns: ColumnsType<CommentAdminItem> = [
         {
-            title: '文章', dataIndex: 'noteTitle', width: 170, ellipsis: true,
+            title: '文章', dataIndex: 'noteTitle', width: 170, ellipsis: true, responsive: ['lg'],
             render: (t: string, r) => (t
                 ? <a href={`/article/${r.noteId}`} target="_blank" rel="noreferrer">{t}</a>
                 : <span className="cm-dim">（文章已删除）</span>),
@@ -361,7 +373,7 @@ const CommentManage = () => {
             ),
         },
         {
-            title: '评论者', key: 'user', width: 190,
+            title: '评论者', key: 'user', width: 190, responsive: ['lg'],
             render: (_, r) => (
                 <span className="cm-user">
                     {r.nickname || r.username}
@@ -370,15 +382,15 @@ const CommentManage = () => {
             ),
         },
         {
-            title: '回复对象', dataIndex: 'replyToNickname', width: 120,
+            title: '回复对象', dataIndex: 'replyToNickname', width: 120, responsive: ['lg'],
             render: (n: string | null | undefined) => (n
                 ? <span className="cm-replyto">回复 @{n}</span>
                 : <span className="cm-dim">—</span>),
         },
-        { title: '时间', dataIndex: 'createTime', width: 160 },
+        { title: '时间', dataIndex: 'createTime', width: 160, responsive: ['lg'] },
         {
             /* 两段审核之第一段：AI 初审判定留痕 */
-            title: 'AI 审核', key: 'ai', width: 110,
+            title: 'AI 审核', key: 'ai', width: 110, responsive: ['lg'],
             render: (_, r) =>
                 r.aiResult === 'flag' ? (
                     <Tooltip title={aiTip('AI 初审判定疑似，拦下转人工裁决', r)}>
@@ -400,7 +412,7 @@ const CommentManage = () => {
         },
         {
             /* 两段审核之第二段：人工裁决结果（0 待审 / 1 通过 / 2 未通过=驳回） */
-            title: '人工审核', key: 'manual', width: 110,
+            title: '人工审核', key: 'manual', width: isNarrow ? 80 : 110,
             render: (_, r) =>
                 r.approved === 1 ? (
                     <Tooltip title="已放行，讨论区公开展示">
@@ -417,7 +429,7 @@ const CommentManage = () => {
                 ),
         },
         {
-            title: '操作', key: 'op', width: 180,
+            title: '操作', key: 'op', width: isNarrow ? 120 : 180,
             render: (_, r) => {
                 // 已删除的行**没有任何操作**：公开侧按 is_deleted = 0 过滤，改判看不见效果
                 // （见文件头注 ②）。这里给一句说明而不是留一片空白——空白会被读成"这行坏了"。

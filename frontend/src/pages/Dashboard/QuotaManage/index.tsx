@@ -1,6 +1,6 @@
 import './index.sass'
 import { useEffect, useMemo, useState } from "react";
-import { Button, Input, Modal, Pagination, Table, Tag, Tooltip, message } from "antd";
+import { Button, Grid, Input, Modal, Pagination, Table, Tag, Tooltip, message } from "antd";
 import { ReloadOutlined } from "@ant-design/icons";
 import type { ColumnsType } from 'antd/es/table';
 // 走接口层而不是就地写 URL（这一页与 agent 的 `list_quota_requests` 工具**共用同一条
@@ -177,9 +177,28 @@ const QuotaManage = () => {
         if (okDone) setApproving(null);
     };
 
+    /* ⚠️ **窄屏裁列 + 收窄（20261006 用户第 6 条）**：视口 < `screenLG`（本仓在
+       `WASHI_THEME.common` 里把它抬到 1024）时，低信息量的列挂 `responsive: ['lg']`
+       直接筛掉，窄屏只留 **申请人 + 申请理由 + 操作**。
+       —— 这里**没留「状态」而留了「申请人」**（与计划里那句「留标题+状态+操作」是故意
+       不同的取舍）：本页默认就停在「待处理」页签上，`状态` 列在窄屏几乎是个常量；而
+       「批准」把对方的额度恢复到上限、**不可逆**（没有「改回原值」这个入口），所以
+       「这一行是谁」比「这一行什么状态」更要紧。余额/上限、申请时间同样挂 `lg`：
+       余额在批准确认弹窗里有，申请时间对「要不要批」没有影响。。
+       剩下那几列里写死 px 的还要**收窄**（下面 `isNarrow` 那几处三元）：这不是可选的 ——
+       这些表是 `table-layout: fixed`（antd 见到 `ellipsis` 就会加），定宽列先把自己拿满、
+       剩下的才轮到没写宽的正文列，实测 390 屏上**只裁列不收宽**正文列只剩 66px。
+       断点用 antd 自己的 `useBreakpoint`：它读的正是 `WASHI_THEME.common.screenLG`
+       那颗令牌 ⇒ 与 CSS 那条 `@media`、壳里那条 matchMedia 同一处事实源，不会漂开
+       （它是 `useLayoutEffect`，首帧那个空的 `{}` 上不了屏 ⇒ 宽屏不会闪一下窄屏形态）。
+       宽屏（≥1024）逐像素不变。 */
+    const screens = Grid.useBreakpoint();
+    const isNarrow = !screens.lg;
     const columns: ColumnsType<QuotaRow> = [
         {
-            title: '申请人', key: 'user', width: 220,
+            // 窄屏收窄到 110（昵称照旧折行、`@账号名 · 用户 #id` 那行跟着挤）——
+            // 这一列是窄屏三列里唯一不能删的（谁能被恢复满额），所以让出宽度的是自己。
+            title: '申请人', key: 'user', width: isNarrow ? 110 : 220,
             render: (_, r) => (
                 <span className="qm-user">
                     {r.nickname || r.username}
@@ -190,7 +209,7 @@ const QuotaManage = () => {
         {
             // 标题也跟着改口径（20260929b）：这一列现在给的是**余额**，标题写「已用 / 上限」
             // 就与格子里的字对不上了。
-            title: '剩余 / 上限', key: 'usage', width: 130,
+            title: '剩余 / 上限', key: 'usage', width: 130, responsive: ['lg'],
             // **数字来自服务端**（`limit` 由 env 决定、`used` 是他此刻的真实值），
             // 前端不把 500 写死——上限是可以调的，写死的那一刻这一列就在说谎。
             render: (_, r) => (
@@ -216,9 +235,9 @@ const QuotaManage = () => {
                 </>
             ),
         },
-        { title: '申请时间', dataIndex: 'createdAt', width: 160 },
+        { title: '申请时间', dataIndex: 'createdAt', width: 160, responsive: ['lg'] },
         {
-            title: '状态', key: 'status', width: 200,
+            title: '状态', key: 'status', width: 200, responsive: ['lg'],
             render: (_, r) => {
                 const st = STATUS_TAG[r.status] || { text: '未知', color: 'default', tip: '' };
                 return (
@@ -233,7 +252,7 @@ const QuotaManage = () => {
             },
         },
         {
-            title: '操作', key: 'op', width: 150,
+            title: '操作', key: 'op', width: isNarrow ? 110 : 150,
             render: (_, r) => (
                 // 已处理的行一条动作都不给（后端也只是"已经处理过了"，不是错误）
                 r.status === 0 ? (
