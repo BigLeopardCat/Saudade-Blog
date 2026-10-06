@@ -200,7 +200,7 @@ jobs:
       # 仓），而 `cargo test` 里那条 `include_str!("../../frontend/public/live2d-widgets/
       # chat-stream.js")` 是**编译期**读入 ⇒ 必须先把它取到那条路径下，Rust 这一半才编得过。
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
@@ -307,7 +307,7 @@ jobs:
 
       - name: Setup Node.js
         if: needs.check-changes.outputs.deploy == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 20
 
