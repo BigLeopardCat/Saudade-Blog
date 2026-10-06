@@ -7,6 +7,11 @@
   这里不 alias antd，让它真渲染（antd v5 是 CSS-in-JS，无外部样式表要引），
   Playwright 里按 WCAG 相对亮度算对比度：底色够不够暗、字够不够亮，是数值判据不是眼感。
 
+**昼夜两档（20261006 用户第 3 条）**：登录页从前恒深色、现在跟随全站 ⇒ 弹窗底色也跟着
+切（白天 = antd 浅色算法 + 和纸粉主色，夜间 = 原来那套墨蓝 + 河灯金）。
+`fresh_page(dark=True)` 在挂载前写 `localStorage.isDarkMode = 'true'`，两档各量一遍——
+这一节的重点正是"浅字落在白底上"这类**只有渲染出来才看得见**的事故，只测一档等于只守一半。
+
 用法：python3 frontend/tests/login-modal-theme.test.py
 注意：本机无中文字体（fc-list CJK = 0）⇒ 截图里的汉字是豆腐块，属环境限制；
       对比度与几何不受影响（量的都是颜色与盒模型）。
@@ -82,8 +87,14 @@ import Login from './src/pages/Login/index.tsx';
                     f"--alias:react-redux={sb}/stub-redux.tsx"],
                    cwd=str(sb), check=True, capture_output=True)
 
+    (sb / "index.css").write_text((FE / "src/index.css").read_text(encoding="utf-8"), encoding="utf-8")
+
     (sb / "index.html").write_text(
         '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
+        # index.css 必须在前面：登录页自 20261006 起按昼夜两档用 `--washi-*`，
+        # 不引全站令牌的话 `getComputedStyle` 量到的是 `var()` 的**回退值**——
+        # 那样"改令牌也照样绿"，白天那几条判据就成了假绿。
+        '<link rel="stylesheet" href="index.css">'
         '<link rel="stylesheet" href="login.css"></head><body><div id="root"></div>'
         '<script src="bundle.js"></script><script>window.__mount && window.__mount();</script>'
         '</body></html>', encoding="utf-8")
@@ -156,17 +167,22 @@ with sync_playwright() as p:
     br = p.chromium.launch()
     errs = []
 
-    def fresh_page():
+    def fresh_page(dark=False):
         """每个弹窗用**新开的页面**测：弹窗关了再开会有 antd 的退场动画与遮罩残留，
-        点下一个入口会被上一个弹窗的输入框拦（实测 60 次重试都不通），不如各测各的。"""
+        点下一个入口会被上一个弹窗的输入框拦（实测 60 次重试都不通），不如各测各的。
+
+        `dark=True` ⇒ 挂载前写下 `isDarkMode`（这份夹具没写 = 全站默认的白天档）。
+        必须在 goto 之前下笔：`useIsDarkMode()` 的初值在**挂载时**读一次 localStorage。"""
         page = br.new_page(viewport={"width": 1280, "height": 900})
         page.on("pageerror", lambda e: errs.append(str(e)))
+        if dark:
+            page.add_init_script("localStorage.setItem('isDarkMode', 'true');")
         page.goto(URL)
         page.evaluate(HELPERS)
         page.wait_for_timeout(300)
         return page
 
-    print("① 注册弹窗（真 antd + ConfigProvider darkAlgorithm）")
+    print("① 注册弹窗 · 白天档（默认：不写 isDarkMode = 全站白天）")
     pg = fresh_page()
     pg.click(".login-links button:nth-child(3)")
     pg.wait_for_selector(".ant-modal-content", timeout=5000)
@@ -175,7 +191,8 @@ with sync_playwright() as p:
     check("真 antd 弹窗已挂载（.ant-modal-content）", pg.locator(".ant-modal-content").count() == 1)
     check("遮罩存在", pg.locator(".ant-modal-mask").count() == 1)
     card = pg.evaluate("() => window.__probe('.ant-modal-content')")
-    check("弹窗底色是深色（相对亮度 < 0.15）", card and card["lum"] < 0.15, f'{card["bg"]} lum={card["lum"]:.3f}')
+    check("白天弹窗底色是浅色（相对亮度 > 0.8，不是墨蓝那套）",
+          card and card["lum"] > 0.8, f'{card["bg"]} lum={card["lum"]:.3f}')
     title = pg.evaluate("() => window.__probe('.ant-modal-title')")
     check("标题对比度 ≥ 4.5:1", title and title["ratio"] >= 4.5, f'{title["ratio"]:.2f}:1')
     body = pg.evaluate("() => window.__probe('.login-modal-body')")
@@ -183,11 +200,14 @@ with sync_playwright() as p:
     listItem = pg.evaluate("() => window.__probe('.login-modal-body li')")
     check("列表项对比度 ≥ 4.5:1", listItem and listItem["ratio"] >= 4.5, f'{listItem["ratio"]:.2f}:1')
     bold = pg.evaluate("() => window.__probe('.login-modal-body b')")
-    check("高亮词（河灯金）对比度 ≥ 3:1", bold and bold["ratio"] >= 3, f'{bold["ratio"]:.2f}:1')
+    check("高亮词（和纸深粉 #d94f9a）对比度 ≥ 3:1", bold and bold["ratio"] >= 3, f'{bold["ratio"]:.2f}:1')
     close = pg.evaluate("() => window.__probe('.ant-modal-close')")
     check("关闭图标对比度 ≥ 3:1", close and close["ratio"] >= 3, f'{close["ratio"]:.2f}:1')
     btn = pg.evaluate("() => window.__probeGrad('.login-modal-primary')")
-    check("页脚主按钮文字压金渐变可读（最差色标 ≥ 4.5:1）", btn and btn["ratio"] >= 4.5,
+    check("页脚主按钮是白天的浅粉渐变（不是夜间的金渐变）",
+          btn and any("255, 215, 234" in s for s in btn["stops"]),
+          " | ".join((btn or {}).get("stops", []))[:80])
+    check("页脚主按钮文字压浅粉渐变可读（最差色标 ≥ 4.5:1）", btn and btn["ratio"] >= 4.5,
           f'{btn["ratio"]:.2f}:1 各色标 ' + ", ".join(f"{r:.1f}" for r in (btn or {}).get("perStop", [])))
     check("页脚只有一个出口（没有留言板按钮）",
           pg.locator(".login-modal-foot button").count() == 1
@@ -203,6 +223,28 @@ with sync_playwright() as p:
     check("弹窗不溢出视口", mrect["top"] >= 0 and mrect["bottom"] <= 900,
           f'top={mrect["top"]:.0f} bottom={mrect["bottom"]:.0f}')
     pg.screenshot(path="/tmp/login-modal-register.png")
+    pg.close()
+
+    print("①b 注册弹窗 · 夜间档（同一颗弹窗，20260921 那套墨蓝 + 河灯金）")
+    pg = fresh_page(dark=True)
+    pg.click(".login-links button:nth-child(3)")
+    pg.wait_for_selector(".ant-modal-content", timeout=5000)
+    pg.wait_for_timeout(500)
+    card_n = pg.evaluate("() => window.__probe('.ant-modal-content')")
+    check("夜间弹窗底色是深色（相对亮度 < 0.15）", card_n and card_n["lum"] < 0.15,
+          f'{card_n["bg"]} lum={card_n["lum"]:.3f}')
+    for sel, name, floor in ((".ant-modal-title", "标题", 4.5),
+                             (".login-modal-body", "正文", 4.5),
+                             (".login-modal-body li", "列表项", 4.5),
+                             (".login-modal-body b", "高亮词（河灯金）", 3),
+                             (".ant-modal-close", "关闭图标", 3)):
+        pr = pg.evaluate(f"() => window.__probe('{sel}')")
+        check(f"夜间 {name} 对比度 ≥ {floor}:1", pr and pr["ratio"] >= floor, f'{pr["ratio"]:.2f}:1')
+    btn_n = pg.evaluate("() => window.__probeGrad('.login-modal-primary')")
+    check("夜间页脚主按钮回到金渐变", btn_n and any("232, 184, 102" in s for s in btn_n["stops"]),
+          " | ".join((btn_n or {}).get("stops", []))[:80])
+    check("夜间按钮文字压金渐变可读（最差色标 ≥ 4.5:1）", btn_n and btn_n["ratio"] >= 4.5,
+          f'{btn_n["ratio"]:.2f}:1')
     pg.close()
 
     print("② 重置密码弹窗（表单：输入框自身也要看得见）")
@@ -228,7 +270,7 @@ with sync_playwright() as p:
         "() => {const s=getComputedStyle(document.querySelector('.login-reset-form input'));"
         "return parseFloat(s.borderTopWidth) >= 1 && !s.borderTopColor.endsWith(', 0)');}"))
     sub = pg.evaluate("() => window.__probeGrad('.login-reset-form button')")
-    check("提交按钮文字压金渐变可读（最差色标 ≥ 4.5:1）", sub and sub["ratio"] >= 4.5,
+    check("提交按钮文字压浅粉渐变可读（最差色标 ≥ 4.5:1）", sub and sub["ratio"] >= 4.5,
           f'{sub["ratio"]:.2f}:1 各色标 ' + ", ".join(f"{r:.1f}" for r in (sub or {}).get("perStop", [])))
     check("没有页脚（「取消」是多余的：X/遮罩/Esc 都能关）",
           pg.locator(".login-modal-foot").count() == 0)
@@ -246,6 +288,33 @@ with sync_playwright() as p:
             "const b=document.querySelector('.login-reset-form button').getBoundingClientRect();"
             "return `input ${i.left.toFixed(0)}+${i.width.toFixed(0)} / btn ${b.left.toFixed(0)}+${b.width.toFixed(0)}`;}"))
     pg.screenshot(path="/tmp/login-modal-reset.png")
+    pg.close()
+
+    # ②b 夜间档的重置表单：这一批控件（`.login-reset-form` 那几条字色/底色）自 20261006 起
+    # 挪到 `body.login-dark` 底下（弹窗挂在 body 上，够不着页面里的 `.frontDark`）——
+    # **换了作用域就要重量一遍**，否则"没生效"与"生效了"在白天夹具里长得一模一样。
+    print("②b 重置密码弹窗 · 夜间档（浅字不许落在浅底上）")
+    pg = fresh_page(dark=True)
+    pg.click(".login-links button:nth-child(1)")
+    pg.wait_for_selector(".login-reset-form input", timeout=5000)
+    pg.wait_for_timeout(500)
+    modal_n = pg.evaluate("() => window.__probe('.ant-modal-content')")
+    inp_n = pg.evaluate("() => window.__probe('.login-reset-form input')")
+    check("夜间弹窗仍是深色", modal_n and modal_n["lum"] < 0.15,
+          f'{modal_n["bg"]} lum={modal_n["lum"]:.3f}')
+    check("夜间表单输入框文字对比度 ≥ 4.5:1（白字没落在白底上）",
+          inp_n and inp_n["ratio"] >= 4.5, f'{inp_n["ratio"]:.2f}:1')
+    check("夜间输入框底色与弹窗底色不同（框看得见）", pg.evaluate(
+        "() => getComputedStyle(document.querySelector('.login-reset-form input')).backgroundColor"
+        " !== getComputedStyle(document.querySelector('.ant-modal-content')).backgroundColor"),
+        pg.evaluate("() => getComputedStyle(document.querySelector('.login-reset-form input')).backgroundColor"))
+    check("夜间表单说明文字对比度 ≥ 4.5:1", pg.evaluate(
+        "() => window.__probe('.login-reset-form p')")["ratio"] >= 4.5,
+        f'{pg.evaluate("() => window.__probe(\'.login-reset-form p\')")["ratio"]:.2f}:1')
+    sub_n = pg.evaluate("() => window.__probeGrad('.login-reset-form button')")
+    check("夜间提交按钮回到金渐变且可读", sub_n and sub_n["ratio"] >= 4.5
+          and any("232, 184, 102" in s for s in sub_n["stops"]),
+          f'{sub_n["ratio"]:.2f}:1')
     pg.close()
 
     print("③ 密码显隐图标（真 antd 图标组件）")

@@ -11,20 +11,33 @@ import { readKnownUsers, selectLoginAvatar, useViewerAvatar } from '../../compon
 import { isAdminToken } from '../../utils/auth.ts';
 import UserData from "../../interface/UserData";
 import SeoHelmet from "../../components/SeoHelmet";
+import { useIsDarkMode } from '../../theme';
 
 type NoticeKind = 'register' | 'forgot' | null;
 
-// 弹窗配色：登录页是深色页面，而 antd 弹窗默认是浅色的（全站其余弹窗都长在浅色后台里，
-// 所以没有全局深色主题可用）⇒ 不套深色算法时，弹窗正文的浅色字全落在白底上，既"风格和
-// 外部不一致"，字也基本看不见（20260922 用户实测）。
-// 走官方途径（darkAlgorithm + 河灯金主色）而不是覆写 `.ant-modal-*` 的 CSS：antd v5 是
-// CSS-in-JS 注入，手写选择器得跟它拼特异性，且标题/关闭图标吃的是 token 而非一条
-// background——改一条治不了全身。
+// ── 弹窗主题（两档，20261006 起跟着这一页的昼夜走）──────────────────────────
+// 弹窗挂在 body 上（antd Portal），所以**页面自己的背景色管不着它**：主题得显式给。
+// 走官方途径（algorithm + token）而不是覆写 `.ant-modal-*` 的 CSS：antd v5 是 CSS-in-JS
+// 注入，手写选择器得跟它拼特异性，且标题/关闭图标吃的是 token 而非一条 background ——
+// 改一条治不了全身。
+//
+// 夜间档 = 20260922 那一套原样（墨蓝底 + 河灯金主色），当时登录页恒深色、不套深色算法
+// 时弹窗正文的浅色字全落在白底上（实测）。
 const DARK_MODAL_THEME = {
     algorithm: antdTheme.darkAlgorithm,
     token: {
         colorBgElevated: '#1b2330',   // 与登录卡片同族的墨蓝（不用 antd 默认的 #141414）
         colorPrimary: '#e8b866',      // 河灯金深端，与 .login-submit 的渐变同源
+        borderRadius: 12,
+    },
+};
+
+// 白天档 = antd 默认浅色算法 + 和纸主色。**`token` 只能给字面量**：`colorPrimary` 是
+// 派生色（hover / 选中 / 边框都从它算），传 `var(--washi-pink-deep)` 会算不出来。
+// 值 = `--washi-pink-deep` 白天的那个（两处一起改时对一下 `src/index.css`）。
+const LIGHT_MODAL_THEME = {
+    token: {
+        colorPrimary: '#d94f9a',
         borderRadius: 12,
     },
 };
@@ -48,6 +61,28 @@ const Login: React.FC = () => {
     // =上次那个账号的头像；从没登录过=默认头像。登录页正是"退出后落回"的地方——令牌没了，
     // 展示身份不该跟着失忆（三态的选择与缓存见 components/UserCenter/identity.ts）。
     const viewerAvatar = useViewerAvatar();
+    // ── 昼夜（20261006 用户第 3 条）──────────────────────────────────────────
+    // 这一页从前**恒深色**：色值全写死在 index.sass 里，也不读 `isDarkMode`。原因是它在
+    // App 壳之外（`router/index.tsx` 里 `login` 是**顶层路由**，不在那层 `.frontDark` 底下），
+    // 于是全站切昼夜它一动不动。现在跟随全站：白天 = 主页那套和纸配色，夜间 = 原来的墨蓝。
+    //
+    // 复用 `useIsDarkMode()`（src/theme.ts，全仓唯一在 React 里跟随主题的写法，含
+    // 挂载补读 + 听 `darkmode-change`）——不在这里另写一套读法。
+    const isDark = useIsDarkMode();
+
+    // 页面底（含卡片外的部分、手机端回弹露出的部分）挂在 body 上：sass 里那份 `body`
+    // 规则从前是**无条件**的深色渐变，现在按这两颗类分档。`.login-page` 自己也带同一张
+    // 底，所以首帧不会闪一下白。
+    useEffect(() => {
+        document.body.classList.add('login-route');
+        return () => document.body.classList.remove('login-route');
+    }, []);
+    // 夜间那颗类还负责**弹窗**：modal 走 Portal 挂在 body 下，够不着 `.login-page.frontDark`，
+    // 手写的那批 `.login-modal-*` / `.login-reset-form` 配色得靠它分档。
+    useEffect(() => {
+        document.body.classList.toggle('login-dark', isDark);
+        return () => document.body.classList.remove('login-dark');
+    }, [isDark]);
     // 本机登录过的账号清单只读一次：它是 localStorage 里的东西，用户在这页打字时不会变
     // （登录成功会整页跳走）。判据与"为什么不能按输入的名字去查头像"见 selectLoginAvatar。
     const [knownUsers] = useState(() => readKnownUsers());
@@ -171,7 +206,9 @@ const Login: React.FC = () => {
         <>
             <SeoHelmet title="登录" url="/login" />
             {contextHolder}
-            <div className="login-page">
+            {/* `frontDark` 借给这一页：`--washi-*` 在 `:root` 是浅色档、在这个类下才是夜间档
+                （src/index.css 那两段），白天零成本。 */}
+            <div className={isDark ? 'login-page frontDark' : 'login-page'}>
                 <div className="login-box">
                     <header className="login-brand">
                         <h2>Saudade Blog</h2>
@@ -253,7 +290,7 @@ const Login: React.FC = () => {
                     </div>
                 </div>
 
-                <ConfigProvider theme={DARK_MODAL_THEME}>
+                <ConfigProvider theme={isDark ? DARK_MODAL_THEME : LIGHT_MODAL_THEME}>
                     {/* 注册：本站不开自助注册，这里只做声明，不给任何"去注册"的出口 */}
                     <Modal
                         open={notice === 'register'}
