@@ -12,8 +12,19 @@
 #
 # 先读这三条；改脚本前也先认这三条：
 #
-#   1. **幂等**。重跑安全：已有 `.env` 只补缺键、绝不覆盖；库里已经有表就整段跳过；
-#      配置一律"渲染 → 语法自检 → 替换"。跑第二遍的唯一后果是又打印了一遍状态。
+#   1. **幂等**。重跑安全，但"安全"的含义要说准（20261007 修订，此前这里写的是
+#      "已有 .env 只补缺键、绝不覆盖"，那半句就是下面那条 bug 的温床）：
+#        · `.env` 分两种情况：**这次刚由本脚本从 `.env.example` 创建** ⇒ 生成的值
+#          一律**顶掉**模板里那些占位说明（`DATABASE_URL=…改成你的密码…` 之类）；
+#          **本来就在** ⇒ 只补缺键、绝不覆盖你改过的值。
+#        · 口令与 `JWT_SECRET` **从 `.credentials` 沿用**，不再每次重掷 —— 库里那份
+#          口令不会被 `ALTER USER` 改走、`.env` 里的 `DATABASE_URL` 也不会与它错位
+#          （重掷 = 把一台跑着的机器锁在门外，而凭据文件还写着新口令）。
+#        · 库里已经有表 ⇒ 跳过建库，但**把迁移台账摆出来**（见 setup_database / db_state_report）：
+#          表数、`migration_flags` 里有多少行标记、最新一条是什么。**这个脚本刻意不判"建全了没有"**
+#          —— 判据（哪些文件该跑、快照日期）住在 scripts/migration/fresh_install.sh 里，在
+#          这里另抄一份就等于造一台假红机器；它只保证"你**看得见**自己接手的是个什么样的库"。
+#      配置一律"渲染 → 语法自检 → 替换"。
 #   2. **口令不进 stdout / argv**。MySQL root 口令走 0600 临时 defaults 文件（`ps` 上看不见）；
 #      管理员口令从 stdin 喂 SQL；随机生成的口令与 `JWT_SECRET` 落在 `deploy/.credentials`
 #      （0600，已 gitignore）——**脚本只打印那个路径，不打印值**。
@@ -116,9 +127,21 @@ put_root() {   # 需要 root 的文件写入，内容从 stdin 来 → put_root 
         cat >"$staged"
         note "[dry-run] $dest → $staged"
     else
+        # **同目录临时文件 + mv**，不是 `tee` 就地写（20261007）：
+        # 就地写的窗口里目标文件是半截内容 —— 而这里的读者是**另一个进程**（nginx 收到
+        # reload 就去 parse、systemd 起来就去读单元），一次读取撞进那个窗口是什么样全看
+        # 运气：`nginx -t` 报一个莫名其妙的行号、或者 `logrotate` 少一条规则。
+        # 同目录是必须的（跨文件系统 rename 会退化成复制，又变回非原子）；临时文件带点号
+        # 前缀，所以即使这脚本半途被杀留下一个，nginx 的 `conf.d/*.conf`、systemd 的
+        # `*.service`、logrotate 的目录扫描都不会认它。
+        local tmp="$dest.tmp.$$"
         $SUDO mkdir -p "$(dirname "$dest")"
-        $SUDO tee "$dest" >/dev/null
-        $SUDO chmod "$mode" "$dest"
+        if ! $SUDO tee "$tmp" >/dev/null; then
+            $SUDO rm -f "$tmp"
+            die "写 $tmp 失败（内容没有落到 $dest 上，原文件未动）"
+        fi
+        $SUDO chmod "$mode" "$tmp"
+        $SUDO mv -f "$tmp" "$dest"
     fi
 }
 
@@ -143,11 +166,17 @@ ask() {   # ask <变量名> <提示> [默认值] —— 已经有值（flag/env�
 }
 
 ask_secret() {   # ask_secret <变量名> <提示> [默认值] [生成器命令] —— 不回显
-    local var=$1 prompt=$2 def=${3:-} gen=${4:-} val
+    local var=$1 prompt=$2 def=${3:-} gen=${4:-} val hint
     val="${!var}"
+    # 回车的后果有三种，**必须分开说**（此前一律写"留空 = 随机生成"）：
+    # 对 `LLM_API_KEY` 那样的可选密钥，回车是"先不配"，不是"给我生成一个假的"——
+    # 写错的后果是有人以为随便按了回车就配好了。
+    if   [ -n "$gen" ]; then hint="留空 = 随机生成"
+    elif [ -n "$def" ]; then hint="留空 = 用默认值"
+    else                     hint="留空 = 先不配"; fi
     if [ -z "$val" ] && [ "$ASSUME_YES" = 0 ]; then
         [ "$HAVE_TTY" = 1 ] || die "$var 没有值（用 --yes 或直接给参数）"
-        printf '   %s（不回显；留空 = 随机生成）: ' "$prompt" >&2
+        printf '   %s（不回显；%s）: ' "$prompt" "$hint" >&2
         read -r -s val </dev/tty || val=""
         printf '\n' >&2
     fi
@@ -208,21 +237,74 @@ add_env_if_missing() {
     if grep -qE "^[[:space:]]*${key}=" "$file"; then return 0; fi
     set_env "$file" "$key" "$val"
 }
+# ⚠️ `add_env_if_missing` 的语义是"**完全没有这个键**才写"，它挡不住本仓模板里那一类
+#    占位值：`.env.example` 里 `DATABASE_URL=mysql://saudade_blog:改成你的密码@…` 是
+#    **未注释**的（为了让照着 example 手改的人一眼看见要改哪一行），于是键在、值是中文
+#    占位说明 —— 安装器生成的真口令被它挡在门外，而 `verify()` 照样全绿（20261007 实测：
+#    后端连不上库、JWT_SECRET 是公开模板里那句话、agent 的只读工具全指着 `<你的域名>`）。
+#    修法是把"这份 .env 是不是**这次刚由我们从模板复制出来的**"这个事实带进写入：
+#      fresh = 刚 cp 出来的 ⇒ 生成的值**顶掉**模板里的占位（set_env）
+#      keep  = 本来就在     ⇒ 只补缺键（add_env_if_missing）
+#    判据（deploy/docker/check.sh 的第 ⑧ 节会真跑一遍）：全新 clone 下 setup_env 的产物里
+#    不许留下任何一份 `.env.example` 的占位值。
+put_env() {   # put_env <fresh|keep> <文件> <键> <值>
+    case "$1" in
+        fresh) set_env "$2" "$3" "$4" ;;
+        keep)  add_env_if_missing "$2" "$3" "$4" ;;
+        *)     die "put_env: 第一个参数只能是 fresh 或 keep（收到 $1）" ;;
+    esac
+}
 
 rand_hex() { openssl rand -hex "${1:-32}"; }
 rand_pw()  { openssl rand -hex "${1:-16}"; }   # 纯 hex ⇒ 一定不含空格/引号/#，可安全进 .env
 
-# ── 渲染模板 ──────────────────────────────────────────────────────────────────
-esc() { printf '%s' "$1" | sed -e 's/[&\\|]/\\&/g'; }   # sed 替换串里这三个字符有含义
-render() {   # render <模板> <OLD=NEW…>
-    local tpl=$1; shift
-    local -a args=()
-    local pair
-    for pair in "$@"; do
-        args+=(-e "s|$(esc "${pair%%=*}")|$(esc "${pair#*=}")|g")
+# ── 连接串里的 userinfo 必须转义 ───────────────────────────────────────────────
+# 口令是本脚本生成的（纯 hex，安全），但 `DB_PASS=... ` 可以由用户给（`--db-pass` /
+# 环境变量），而 `mysql://账号:口令@主机:端口/库` 这个形状里，口令中的 `@ : / ? # %`
+# 每一个都能把连接串切到别的意思上 —— 症状是后端连不上、或连到一个"看起来对"的错库，
+# 而且驱动报的错五花八门。转义后 raw 值照旧进 `.credentials` 与 SQL（那两处要原文），
+# **只有拼进 URL 的那一次**走它。按 RFC 3986 的 unreserved 集合放行，其余逐字节转义。
+urlenc() {
+    local s=$1 out= c hex i
+    local LC_ALL=C        # 逐**字节**走：多字节字符整体放进 %XX 序列里，不能被按字符掰开
+    for (( i=0; i<${#s}; i++ )); do
+        c=${s:i:1}
+        case "$c" in
+            [A-Za-z0-9.~_-]) out+=$c ;;
+            *) printf -v hex '%%%02X' "'$c"; out+=$hex ;;
+        esac
     done
-    sed "${args[@]}" "$tpl"
+    printf '%s' "$out"
 }
+
+# ── 从 .credentials 取回上一次生成的值 ────────────────────────────────────────
+# 这是**口令的唯一记录**（库里那份是单向哈希，取不回来）。重跑时靠它沿用口令与
+# JWT_SECRET：重新掷一次的话，`ALTER USER` 会把库里那份改成新值、而已经写好的
+# `.env` 里的 `DATABASE_URL` 还指着旧的（只补缺键、不覆盖）⇒ 一台本来跑得好好的
+# 机器被自己的安装脚本锁在门外，且凭据文件上写着的是一个当时还没生效的新口令。
+# 取不到（首次部署 / 文件被删）就返回空 ⇒ 上层照旧随机生成。
+read_cred() {
+    [ -f "$CRED_FILE" ] || return 0
+    awk -v k="$1" '{ if ($1 == k) { sub(/^[^ \t]+[ \t]+/, ""); print; exit } }' "$CRED_FILE"
+}
+
+# 从 .env 里读一个键的**当前值**（只认未注释的那一行）。没有/被注释 ⇒ 打印空。
+# 只用在"要不要说'已经在用了'这种结论上"——写不写由 set_env/add_env_if_missing 决定。
+read_env() {
+    [ -f "$1" ] || return 0
+    awk -v k="$2" '$0 ~ "^[[:space:]]*"k"=" { sub(/^[^=]*=/, ""); print; exit }' "$1"
+}
+
+# ── 渲染模板 ──────────────────────────────────────────────────────────────────
+# `esc` / `render` / `render_nginx` 都住在 deploy/nginx/render.sh —— 那是**唯一实现**，
+# Docker 那条安装路的宿主侧脚本（deploy/docker/prepare.sh）source 的也是同一份，只是把
+# APP_DIR 传成容器里的 /srv。别把函数体抄回来：抄回来的那一刻，「按结构标记切掉乙块」的
+# awk 就有两个版本了（症状是 nginx -t 失败，或者静默留着 <你的域名> 占位符）。
+# 这里只负责 source，输入全靠上面的变量。
+# 判据：`bash deploy/docker/prepare.sh --print blog.conf --domain X` 与
+#       `APP_DIR=/srv bash deploy/install.sh --dry-run -y --domain X` 的产物**逐字节相同**
+#       —— 那条断言在 deploy/docker/check.sh 里，本机无 docker 也跑得动。
+source "$DEPLOY_DIR/nginx/render.sh"
 
 usage() {
     cat <<'EOF'
@@ -273,6 +355,13 @@ Saudade Blog —— 从零部署（交互向导）
 EOF
     exit 0
 }
+
+# ── 参数解析**之前**的那几个值（20261007 加）────────────────────────────────────
+# 用来区分"用户这次显式给的值"与"代码里的默认值"：`LLM_PROVIDER` / `ADMIN_USER` 这类
+# 键**两者都非空**，光看当前值是分不出来的，而重跑时这个区分决定"要不要沿用上一趟的
+# `.credentials`"。默认值变了（或用户给了 flag/env）就说明是显式的。
+ORIG_LLM_PROVIDER="$LLM_PROVIDER"
+ORIG_ADMIN_USER="$ADMIN_USER"
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -349,6 +438,26 @@ preflight() {
 
     if [ "$APP_USER" = "root" ]; then die "别用 root 跑服务，换一个普通用户再来。"; fi
 
+    # **跑这个脚本的人**与**跑服务的用户**必须是同一个（20261007 加）。
+    # 这一条看起来像洁癖，其实是下面四处权限的同一个根：`.env` 落成 0600、`logs/` 落成
+    # 0700、上传件目录、logrotate 模板里的 `su $APP_USER` —— 它们都只写"谁属主"，不 chown。
+    # 于是"以 A 跑安装、以 B 跑服务"这件事的后果是**四处的静默失败**，而且一处都不报错：
+    #   · Rust 的 dotenv() 读不到 0600 的 .env ⇒ 起来了但连不上库，登录一路 500；
+    #   · `logs/rust.log` / `logs/agent/agent.log` 写不进去（systemd 的 append 会失败）；
+    #   · logrotate 的 `su` 一行不匹配 ⇒ 日志**静默地不轮转**（配置看着没问题）；
+    #   · 上传接口能 200 但文件是别人写的，下一次安装建目录时撞权限。
+    # 修法只有"换个人跑"，或者把 --app-user 给成当前用户 —— 两条路都写在这儿。
+    if [ "$DRY_RUN" != 1 ] && [ "$APP_USER" != "$(id -un)" ]; then
+        die "跑这个脚本的是 $(id -un)，而服务要用的用户是 $APP_USER。二者不一致时
+    .env(0600)/logs(0700)/上传件目录的属主都是 $(id -un)，服务那边读不到、写不进，
+    而且**四种失败都不报错**（读不到 .env 就是连不上库、日志静默不轮转）。
+    两条出路：① 换成那个用户重跑（sudo -u $APP_USER -H bash $DEPLOY_DIR/install.sh …）；
+    ② 就让服务用当前用户跑：--app-user $(id -un)。"
+    fi
+    if [ "$DRY_RUN" = 1 ] && [ "$APP_USER" != "$(id -un)" ]; then
+        warn "dry-run：服务用户($APP_USER)与当前用户($(id -un))不一致 —— 真跑会在这里停下"
+    fi
+
     local missing=() m
     for m in bash curl openssl python3 mysql nginx; do
         have "$m" || missing+=("$m")
@@ -421,7 +530,24 @@ preflight() {
 # ═══════════════════════════════════════════════════════════════════════════════
 collect() {
     step "收集参数（回车用默认值；口令不回显，留空 = 随机生成）"
-    ask DOMAIN "站点域名（裸域名，不带 https://；没有域名就直接回车）"
+
+    # ══ 先把上一趟的值取回来，再问 ══════════════════════════════════════════════
+    # 判据一律是"**这次显式给了就听你的，没给就沿用 `.credentials`**"（20261007）。
+    # 在此之前这里是从头掷一遍：`ALTER USER` 把库里那份口令改成新的，而 `.env` 里
+    # （只补缺键、不覆盖）的 `DATABASE_URL` 还指着旧的 ⇒ 一台跑得好好的机器被自己的
+    # 安装脚本锁在门外；`write_creds` 又把凭据文件**截断重写**，于是连"旧口令是多少"
+    # 这个唯一的记录也没了。首次部署没有 `.credentials` ⇒ 取到的全是空 ⇒ 行为与从前
+    # 逐字相同。
+    local cred_url cred_domain cred_prov cred_v
+    cred_url="$(read_cred 站点地址)"
+    case "$cred_url" in
+        # 只认 https://…：`http://<ip>` 是"只有 IP、没有域名"那种形态，把 IP 当域名
+        # 填回来会让重跑悄悄把站点从 http 升成 https（自签证书配上 https 的 IP）。
+        https://*) cred_domain="${cred_url#https://}"; cred_domain="${cred_domain%%/*}" ;;
+        *)         cred_domain="" ;;
+    esac
+
+    ask DOMAIN "站点域名（裸域名，不带 https://；没有域名就直接回车）" "$cred_domain"
     if [ -z "$SITE_URL" ]; then
         if [ -n "$DOMAIN" ]; then
             SITE_URL="https://$DOMAIN"
@@ -432,7 +558,14 @@ collect() {
     if [ -z "$SITE_URL" ]; then die "站点地址推不出来，用 --site-url 显式给一个"; fi
     ask UPLOAD_DIR "上传件目录（生产建议放在工作区之外）" "$HOME/saudade-uploads"
 
+    # 口令与 JWT_SECRET：**只在这次没给的时候**沿用上一趟 .credentials 里那份。
+    # `--db-pass` / 环境变量给了就用给的（那正是"我要换口令"的表达方式）。
     ask DB_USER "数据库应用账号"
+    cred_v="$(read_cred 数据库口令)";   [ -n "$DB_PASS" ]    || DB_PASS="$cred_v"
+    cred_v="$(read_cred JWT_SECRET)";   [ -n "$JWT_SECRET" ] || JWT_SECRET="$cred_v"
+    cred_v="$(read_cred 管理员口令)";   [ -n "$ADMIN_PASS" ] || ADMIN_PASS="$cred_v"
+    cred_v="$(read_cred 管理员账号)";   [ -n "$cred_v" ] && [ "$ADMIN_USER" = "$ORIG_ADMIN_USER" ] \
+                                        && ADMIN_USER="$cred_v"
     ask_secret DB_PASS "应用账号的口令" "" "rand_pw 16"
     ask_secret JWT_SECRET "JWT_SECRET（两份 .env 共用；换掉 = 所有人重新登录）" "" "rand_hex 32"
     ask ADMIN_USER "第一个管理员的用户名"
@@ -441,8 +574,17 @@ collect() {
 
     say ""
     say "看板娘用的模型服务商（agent 读它自己那份 .env）"
+    # 沿用同样只在"这次没显式给"时发生 —— 不沿用的话，重跑会把上一趟选的 qwen
+    # 悄悄改回代码默认的 deepseek（下面 setup_env 对提供方那一行是 set_env，写死）。
+    cred_prov="$(read_cred 模型提供方)"
+    if [ -n "$cred_prov" ] && [ "$LLM_PROVIDER" = "$ORIG_LLM_PROVIDER" ]; then
+        LLM_PROVIDER="$cred_prov"
+        say "提供方沿用上一趟的：$LLM_PROVIDER（要换：--provider X 加 --llm-key Y）"
+    fi
     ask LLM_PROVIDER "提供方（deepseek|qwen|openai）"
-    ask LLM_API_KEY "API Key（留空 = 先不配：其余功能都正常，只有看板娘不会答话）"
+    # **不回显**：API Key 与口令是同一类东西，此前它是用 `ask` 问的（明文打在屏幕上，
+    # 而且有人会把屏幕截图贴进 issue）。
+    ask_secret LLM_API_KEY "API Key（留空 = 先不配：其余功能都正常，只有看板娘不会答话）"
     if [ "$LLM_PROVIDER" = "qwen" ]; then
         ask LLM_BASE_URL "QWEN_BASE_URL（**必须显式给**：代码里的默认值绑的是上游维护者的接入点）" \
             "https://dashscope.aliyuncs.com/compatible-mode/v1"
@@ -493,10 +635,11 @@ write_creds() {   # 口令落盘，**只打印路径**；值不进 stdout
     umask 077
     {
         printf '# deploy/install.sh 生成的凭据 —— 只在本机有一份，已 gitignore\n'
-        printf '# 生成时间 %s\n\n' "$(date '+%F %T')"
+        printf '# 生成时间 %s（重跑会沿用上一趟的口令与 JWT_SECRET，本文件随之更新）\n\n' "$(date '+%F %T')"
         printf '站点地址     %s\n' "$SITE_URL"
         printf '管理员账号   %s\n' "$ADMIN_USER"
         printf '管理员口令   %s\n' "$ADMIN_PASS"
+        printf '模型提供方   %s\n' "$LLM_PROVIDER"
         printf '数据库账号   %s\n' "$DB_USER"
         printf '数据库口令   %s\n' "$DB_PASS"
         printf 'JWT_SECRET   %s\n' "$JWT_SECRET"
@@ -544,7 +687,7 @@ setup_database() {
     step "数据库：建库 → 应用账号 → 第一个管理员"
     if [ "$DRY_RUN" = 1 ]; then
         say "[dry-run] 会做：查 $DB_NAME 在不在；不在就用 fresh_install.sh 建；"
-        say "          建 $DB_USER@localhost 并授权；INSERT 一个 role=admin 的账号。"
+        say "          建 $DB_USER@'localhost' 与 @'127.0.0.1' 并授权；INSERT 一个 role=admin 的账号。"
         return 0
     fi
 
@@ -558,6 +701,7 @@ setup_database() {
 
     if [ "$n" != "0" ]; then
         say "$DB_NAME 里已经有 $n 张表 —— 整段跳过（**脚本绝不 DROP 库**）"
+        db_state_report
     else
         say "从零建库（基架快照 + 快照之后的迁移）…"
         # ⚠️ 迁移文件里绝大多数写死了 `USE saudade_blog;`，所以库名必须叫这个。
@@ -568,29 +712,114 @@ setup_database() {
         ok "建库完成"
     fi
 
-    say "应用账号 $DB_USER@localhost"
-    printf "CREATE USER IF NOT EXISTS '%s'@'localhost' IDENTIFIED BY '%s';\n\
-ALTER USER '%s'@'localhost' IDENTIFIED BY '%s';\n\
-GRANT ALL PRIVILEGES ON \`%s\`.* TO '%s'@'localhost';\nFLUSH PRIVILEGES;\n" \
-        "$(sql_quote "$DB_USER")" "$(sql_quote "$DB_PASS")" \
-        "$(sql_quote "$DB_USER")" "$(sql_quote "$DB_PASS")" \
-        "$(sql_quote "$DB_NAME")" "$(sql_quote "$DB_USER")" | mysql_root
+    # 应用账号建在**两个 host** 上（20261007）。连接串写的是 `127.0.0.1`，而 MySQL 认不认
+    # 得上 `@'localhost'`，取决于它有没有做反向名字解析：`skip_name_resolve` 关着（默认）
+    # 时 127.0.0.1 会被解析成 localhost，打开时就不会 —— 而打开它是很多"MySQL 加固清单"
+    # 的第一条，关我什么事都不问就把一个跑得好好的站点打死（症状：
+    # `Access denied for user 'saudade_blog'@'127.0.0.1'`，而账号在库里明明有）。
+    # 两条都建、都授权，就不依赖那个开关了：多一行记录，换掉一整类"改了配置就登不上"。
+    local host
+    for host in localhost 127.0.0.1; do
+        printf "CREATE USER IF NOT EXISTS '%s'@'%s' IDENTIFIED BY '%s';\n\
+ALTER USER '%s'@'%s' IDENTIFIED BY '%s';\n\
+GRANT ALL PRIVILEGES ON \`%s\`.* TO '%s'@'%s';\nFLUSH PRIVILEGES;\n" \
+            "$(sql_quote "$DB_USER")" "$host" "$(sql_quote "$DB_PASS")" \
+            "$(sql_quote "$DB_USER")" "$host" "$(sql_quote "$DB_PASS")" \
+            "$(sql_quote "$DB_NAME")" "$(sql_quote "$DB_USER")" "$host" | mysql_root \
+            || die "建/改 $DB_USER@'$host' 失败（上面的 SQL 报错就是原因）"
+        say "应用账号 $DB_USER@'$host'"
+    done
     ok "账号就绪（口令与 .env 里的 DATABASE_URL 一致）"
 
-    local cnt
+    admin_account
+}
+
+# 库里"已经有表"**不等于**"建全了"：这一步把能看见的都摆出来（20261007）。
+# ⚠️ 它**不下结论**，这是刻意的 —— 一个"完整性判据"需要知道"从零建库会跑哪些迁移"，
+#    而那套筛选规则（快照日 + 夹具名单 + 强制补跑名单）住在 `scripts/migration/
+#    fresh_install.sh` 里。在这里抄一份过来就会各漂各的，抄不准的版本则会把快照日之前
+#    的几十份迁移全判成"缺失"（它们的标记本来就不在库里）—— 那是一条**假红机器**。
+#    所以这里只报事实：库里有几个标记、最长的那个叫什么、有没有那张表。
+db_state_report() {
+    local flags
+    flags="$(printf 'SELECT flag_name FROM migration_flags ORDER BY applied_at;\n' \
+             | mysql_root -N -B "$DB_NAME" 2>/dev/null || true)"
+    if [ -z "$flags" ]; then
+        warn "库里没有 migration_flags 表（或一行标记都没有）—— 这个库不是这几份迁移建出来的"
+        note "完整性核不了。把它当「新库的基线」之前，先确认它到底是谁建的。"
+    else
+        say "迁移标记 $(printf '%s\n' "$flags" | wc -l | tr -d ' ') 个，最近的是 $(printf '%s\n' "$flags" | tail -1)"
+        note "对照 scripts/migration/：文件名带 _YYYYMMDD 的那些里，日期**晚于**快照日"
+        note "（fresh_install.sh 头注的 SNAPSHOT）的都该有对应标记。少一个就是那次迁移没跑成。"
+        note "本脚本不做迁移 —— 缺的那几份要手工补（剥掉文件开头的 USE 行再执行）。"
+    fi
+}
+
+# 第一个管理员。两件事都属于"错了就静默"，所以都在这儿说清楚：
+#   · 用户名撞 `user.username` 的唯一键 ⇒ MySQL 甩一句 `Duplicate entry` 然后脚本中止，
+#     报错指向 SQL，读起来像是脚本坏了；
+#   · 库里**早就有**这个管理员 ⇒ 这次不会改它的口令，而 `.credentials` 是截断重写的
+#     ⇒ 文件里那一行变成"这次想用的口令"而不是"能登进去的口令"。这种错必须当场说。
+admin_account() {
+    local cnt dupe
     cnt="$(printf 'SELECT COUNT(*) FROM `user` WHERE role=%s;\n' "'admin'" | mysql_root -N -B "$DB_NAME")"
     if [ "$cnt" != "0" ]; then
         say "库里已经有 $cnt 个管理员 —— 不再建（要加人自己 INSERT，本项目没有注册入口）"
-    else
-        # 无盐单轮 SHA-256 是**旧格式**；verify_password 认它，并在首次登录成功后
-        # 就地升级成 Argon2id。这条 INSERT 是"手上只有 mysql 客户端"时最省事的路径。
-        printf "INSERT INTO \`user\` (username, nickname, password, role)\n\
-VALUES ('%s', '%s', SHA2('%s', 256), 'admin');\n" \
-            "$(sql_quote "$ADMIN_USER")" "$(sql_quote "$ADMIN_NICK")" "$(sql_quote "$ADMIN_PASS")" \
-            | mysql_root "$DB_NAME"
-        ok "第一个管理员 $ADMIN_USER 已建（**role=admin 才能进 /dashboard**）"
-        note "口令在 $CRED_FILE 里；首次登录成功后库里那一行会自动升级成 Argon2id。"
+        cred_honesty_check || true
+        return 0
     fi
+
+    dupe="$(printf 'SELECT id, username, role FROM `user` WHERE username=%s LIMIT 1;\n' \
+            "'$(sql_quote "$ADMIN_USER")'" | mysql_root -N -B "$DB_NAME")"
+    if [ -n "$dupe" ]; then
+        die "库里已经有同名账号（id 账号 角色 = $dupe），而它不是 role=admin。
+    本项目没有注册入口，加人只能 INSERT —— 所以这里先拦一道，不让它变成一句
+    'Duplicate entry' 的 SQL 报错。两条出路：
+      ① 换个用户名重跑：--admin-user 别的名字；
+      ② 就是它的话，把角色改过来：
+         UPDATE \`user\` SET role='admin' WHERE username='$(sql_quote "$ADMIN_USER")';"
+    fi
+
+    # 无盐单轮 SHA-256 是**旧格式**；verify_password 认它，并在首次登录成功后
+    # 就地升级成 Argon2id。这条 INSERT 是"手上只有 mysql 客户端"时最省事的路径。
+    printf "INSERT INTO \`user\` (username, nickname, password, role)\n\
+VALUES ('%s', '%s', SHA2('%s', 256), 'admin');\n" \
+        "$(sql_quote "$ADMIN_USER")" "$(sql_quote "$ADMIN_NICK")" "$(sql_quote "$ADMIN_PASS")" \
+        | mysql_root "$DB_NAME" || die "第一个管理员没建进去（上面的 SQL 报错就是原因）"
+    ok "第一个管理员 $ADMIN_USER 已建（**role=admin 才能进 /dashboard**）"
+    note "口令在 $CRED_FILE 里；首次登录成功后库里那一行会自动升级成 Argon2id。"
+}
+
+# 凭据文件里那份管理员口令**真的能登进去吗**。
+# 库里存的是单向哈希，所以只对两种情形能给出确定答案：
+#   · 旧格式（无盐单轮 SHA-256）⇒ 当场算一遍对得上就是对的；
+#   · Argon2id（20260917 起的格式，随机盐）⇒ **判不了**，如实说判不了。
+# 判不了就说判不了 —— 这一条的失败样式是"用户照着文件登录、失败，然后去怀疑脚本"。
+cred_honesty_check() {
+    local pw want
+    pw="$(printf 'SELECT password FROM `user` WHERE username=%s LIMIT 1;\n' \
+          "'$(sql_quote "$ADMIN_USER")'" | mysql_root -N -B "$DB_NAME" 2>/dev/null || true)"
+    if [ -z "$pw" ]; then
+        warn "库里没有叫 $ADMIN_USER 的管理员 —— $CRED_FILE 里那两行（账号/口令）不对应任何账号"
+        return 0
+    fi
+    case "$pw" in
+        '$argon2'*)
+            note "库里那份是 Argon2id（20260917 起；随机盐，没法在 SQL 里对）⇒"
+            note "$CRED_FILE 里这一行是「这次想用的口令」，**不是**从库里读出来的；"
+            note "它是不是能登进去的口令，只有登录那一下才知道。"
+            ;;
+        *)
+            want="$(printf "SELECT SHA2('%s',256);\n" "$(sql_quote "$ADMIN_PASS")" | mysql_root -N -B)"
+            if [ -n "$want" ] && [ "$pw" = "$want" ]; then
+                ok "$CRED_FILE 里这份口令与库里 $ADMIN_USER 那一行对得上"
+            else
+                warn "$CRED_FILE 里这份口令**不等于**库里 $ADMIN_USER 那一行的口令"
+                note "库里那行是先前的部署建的，这一步不改它（改口令是显式动作，见 deploy/README.md）。"
+                note "要它跟着文件走：UPDATE \`user\` SET password=SHA2('<新口令>',256) WHERE username='$ADMIN_USER';"
+            fi
+            ;;
+    esac
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -601,63 +830,93 @@ setup_env() {
     local benv="$APP_DIR/.env" aenv="$AGENT_DIR/.env"
 
     if [ "$DRY_RUN" = 1 ]; then
-        say "[dry-run] 父仓 .env ：$([ -f "$benv" ] && echo '存在 → 只补缺键' || echo '从 .env.example 新建')"
-        say "[dry-run] agent .env：$([ -f "$aenv" ] && echo '存在 → 只补缺键' || echo '从 .env.example 新建')"
+        say "[dry-run] 父仓 .env ：$([ -f "$benv" ] && echo '存在 → 只补缺键（不动你改过的值）' \
+                                                     || echo '从 .env.example 新建 → 生成的值顶掉模板里的占位说明')"
+        say "[dry-run] agent .env：$([ -f "$aenv" ] && echo '存在 → 只补缺键（不动你改过的值）' \
+                                                     || echo '从 .env.example 新建 → 生成的值顶掉模板里的占位说明')"
         return 0
     fi
 
     # ── 父仓那份（Rust 用；main.rs 的 dotenv() 读**工作目录**下的 .env）──
+    local bmode amode
     if [ -f "$benv" ]; then
-        say "父仓 .env 已存在 —— 只补缺键，不动你的现有配置"
+        bmode=keep; say "父仓 .env 已存在 —— 只补缺键，不动你的现有配置"
     else
-        cp "$APP_DIR/.env.example" "$benv"
+        cp "$APP_DIR/.env.example" "$benv"; bmode=fresh
     fi
     chmod 600 "$benv"
-    add_env_if_missing "$benv" DATABASE_URL "mysql://$DB_USER:$DB_PASS@127.0.0.1:3306/$DB_NAME"
-    add_env_if_missing "$benv" JWT_SECRET   "$JWT_SECRET"
-    add_env_if_missing "$benv" SITE_URL     "$SITE_URL"
-    add_env_if_missing "$benv" UPLOAD_DIR   "$UPLOAD_DIR"
-    add_env_if_missing "$benv" AGENT_URL    "http://127.0.0.1:8010/chat"
-    add_env_if_missing "$benv" CORS_ALLOWED_ORIGINS "$SITE_URL"
-    ok "父仓 .env"
+    # 口令进 URL 之前**必须编码**：`@ : / ? # %` 在 userinfo 这一段里每一个都能把连接串
+    # 切到别的意思上（生成的纯 hex 口令碰不到，但 `--db-pass` 可以是任何东西）。
+    put_env "$bmode" "$benv" DATABASE_URL \
+        "mysql://$(urlenc "$DB_USER"):$(urlenc "$DB_PASS")@127.0.0.1:3306/$DB_NAME"
+    put_env "$bmode" "$benv" JWT_SECRET   "$JWT_SECRET"
+    put_env "$bmode" "$benv" SITE_URL     "$SITE_URL"
+    put_env "$bmode" "$benv" UPLOAD_DIR   "$UPLOAD_DIR"
+    put_env "$bmode" "$benv" AGENT_URL    "http://127.0.0.1:8010/chat"
+    put_env "$bmode" "$benv" CORS_ALLOWED_ORIGINS "$SITE_URL"
+    ok "父仓 .env（$([ "$bmode" = fresh ] && echo '新建：生成的值已顶掉模板占位' || echo '沿用：只补缺键')）"
 
     # ── agent 那份（Python 用；config/settings.py 走 pydantic-settings）──
     if [ -f "$aenv" ]; then
-        say "agent .env 已存在 —— 只补缺键，不动你的现有配置"
+        amode=keep; say "agent .env 已存在 —— 只补缺键，不动你的现有配置"
     else
         if [ ! -f "$AGENT_DIR/.env.example" ]; then
             die "找不到 $AGENT_DIR/.env.example（agent 仓克隆到位了吗）"
         fi
-        cp "$AGENT_DIR/.env.example" "$aenv"
+        cp "$AGENT_DIR/.env.example" "$aenv"; amode=fresh
     fi
     chmod 600 "$aenv"
-    add_env_if_missing "$aenv" JWT_SECRET "$JWT_SECRET"
+    put_env "$amode" "$aenv" JWT_SECRET "$JWT_SECRET"
     note "两份 .env 的 JWT_SECRET **必须逐字相同**：agent 用它验 Rust 发来的身份断言。"
-    add_env_if_missing "$aenv" BLOG_API_BASE "$SITE_URL/api/public"
+    put_env "$amode" "$aenv" BLOG_API_BASE "$SITE_URL/api/public"
     note "不改 BLOG_API_BASE 的话，你的看板娘会认真回答**别人博客**里的问题，而且不报错。"
-    add_env_if_missing "$aenv" TRACE_DIR "$APP_DIR/logs/agent/traces"
+    put_env "$amode" "$aenv" TRACE_DIR "$APP_DIR/logs/agent/traces"
     note "TRACE_DIR 一定显式设：代码里的默认值绑的是上游维护者的机器。"
-    add_env_if_missing "$aenv" GRAPH_API_BASE "http://127.0.0.1:3000/api/public"
+    put_env "$amode" "$aenv" GRAPH_API_BASE "http://127.0.0.1:3000/api/public"
+    ok "agent .env（$([ "$amode" = fresh ] && echo '新建：生成的值已顶掉模板占位' || echo '沿用：只补缺键')）"
 
     if [ "$IOT_ONLY" = 0 ]; then
         # 全新部署走这条；--iot-only 那趟不动这些（它只补 IoT 相关的键）
-        set_env "$aenv" LLM_PROVIDER "$LLM_PROVIDER"
+        local prov_key cur_key
+        prov_key="$(printf '%s' "$LLM_PROVIDER" | tr '[:lower:]' '[:upper:]')_API_KEY"
+        put_env "$amode" "$aenv" LLM_PROVIDER "$LLM_PROVIDER"
+        cur_key="$(read_env "$aenv" "$prov_key")"
         if [ -n "$LLM_API_KEY" ]; then
-            set_env "$aenv" "$(printf '%s' "$LLM_PROVIDER" | tr '[:lower:]' '[:upper:]')_API_KEY" "$LLM_API_KEY"
+            put_env "$amode" "$aenv" "$prov_key" "$LLM_API_KEY"
+        elif [ -n "$cur_key" ] && [ "$cur_key" != "your-api-key-here" ]; then
+            # 重跑时 LLM_API_KEY 是空的（.credentials 里刻意不记它）—— 已有的那份**没被动过**，
+            # 所以这里不能报"没配"：那会把一个配好的站点说成没配。
+            # ⚠️ 必须排掉模板占位串 `your-api-key-here`（`.env.example` 里那一行是**未注释**的）：
+            #    不排的话，"这次刚 cp 出来的 .env 里抄着一句模板说明"会被说成"已在沿用"——
+            #    那是把"没配"报成"配好了"，症状是看板娘不答话而安装器说一切就绪。
+            note "沿用 .env 里已有的 $prov_key（这次没给 --llm-key，它就没被改过）"
         else
             warn "没配模型 API Key —— 站点一切正常，只有看板娘不会答话"
+            note "补法：改 $aenv 里的 $prov_key，或重跑并给 --llm-key"
         fi
-        if [ -n "$LLM_BASE_URL" ]; then set_env "$aenv" QWEN_BASE_URL "$LLM_BASE_URL"; fi
+        # Base URL 写在**当前提供方自己的键**上（20261007 修）：此前无论选了谁都写
+        # `QWEN_BASE_URL`，于是在 deepseek 上给的那个自定义地址落进一个没人读的键里，
+        # 而 agent 继续用它自己那份默认端点 —— 症状是"我明明改了地址，怎么还打那个端点"。
+        if [ -n "$LLM_BASE_URL" ]; then
+            # 这里**故意用 set_env 而不是 put_env**（同 IOT_ENABLED 的理由）：`--llm-base-url`
+            # 是显式表态，而 keep 分支"有键就不写"会让重跑时的这个参数变成一个静默空操作
+            # —— 症状正是"我明明给了地址，它还是打旧端点"。已有值要保住的话，别传这个参数。
+            set_env "$aenv" "$(printf '%s' "$LLM_PROVIDER" | tr '[:lower:]' '[:upper:]')_BASE_URL" "$LLM_BASE_URL"
+        elif [ "$LLM_PROVIDER" != "qwen" ]; then
+            note "没给 --llm-base-url ⇒ $LLM_PROVIDER 用它自己的默认端点；要换端点就补一个"
+            note "（$LLM_PROVIDER 的键名是 $(printf '%s' "$LLM_PROVIDER" | tr '[:lower:]' '[:upper:]')_BASE_URL）"
+        fi
         # 生产档：缺身份断言的请求直接 401。默认 0 只是为滚动上线方便，全新部署不需要。
-        set_env "$aenv" AGENT_REQUIRE_ASSERTION 1
+        put_env "$amode" "$aenv" AGENT_REQUIRE_ASSERTION 1
     fi
 
     if [ "$WITH_IOT" = 1 ]; then
+        # 这一处**不走 put_env**：`--with-iot` 是显式表态，已有的 `IOT_ENABLED=0` 也必须翻成 1
+        # （keep 分支"有键就不写"在这里正好是反的 —— 会让用户明明说了装、它却还关着）。
         add_env_if_missing "$benv" IOT_ENABLED 1
         set_env "$aenv" IOT_ENABLED 1
         ok "两处 IOT_ENABLED 已置 1（父仓 + agent 仓）"
     fi
-    ok "agent .env"
 
     warn "agent 的四个进程环境变量（AGENT_RECURSION_LIMIT / AGENT_MAX_BODY_BYTES /"
     warn "AGENT_MAX_CONCURRENT / AGENT_MAX_REVIEW）**写 .env 一点作用都没有**，"
@@ -692,11 +951,26 @@ setup_venv() {
 build() {
     step "构建产物"
     if [ "$DO_BUILD" = 0 ]; then
+        local miss=0
         say "--no-build：跳过。这两样要你自己放到位："
-        note "target/release/saudade_blog_bin"
-        note "frontend/dist/（就是 nginx 的 root）"
-        if [ ! -x "$APP_DIR/target/release/saudade_blog_bin" ]; then warn "二进制不在，systemd 起不来"; fi
-        if [ ! -f "$APP_DIR/frontend/dist/index.html" ]; then warn "dist 不在，nginx 会 403/404"; fi
+        note "target/release/saudade_blog_bin（可执行）"
+        note "frontend/dist/（就是 nginx 的 root，里面要有 index.html）"
+        if [ ! -x "$APP_DIR/target/release/saudade_blog_bin" ]; then
+            warn "二进制不在或不可执行：$APP_DIR/target/release/saudade_blog_bin"
+            miss=1
+        fi
+        if [ ! -f "$APP_DIR/frontend/dist/index.html" ]; then
+            warn "dist 不在或没有 index.html：$APP_DIR/frontend/dist/"
+            miss=1
+        fi
+        if [ "$miss" = 1 ]; then
+            # 从前这两条只是两行 ⚠️，而最后一步验收不看它们、脚本退出码恒 0 ⇒ 「缺产物」
+            # 这件事在 CI/脚本里拦不住（--no-build 就成了一个能静默产出一个起不来的站点的开关）。
+            note "这两条在**最后一步验收**里也会判红（20261007 起退出码会传出来，不再恒 0）。"
+            note "--no-build 的正经用法是「在别的机器上编好再拷过来」，不是「跳过不管」。"
+        else
+            ok "两份产物都在 —— --no-build 的前提成立"
+        fi
         return 0
     fi
 
@@ -803,49 +1077,8 @@ setup_tls() {
 # ═══════════════════════════════════════════════════════════════════════════════
 # 8. nginx
 # ═══════════════════════════════════════════════════════════════════════════════
-render_nginx() {
-    local out
-    out="$(render "$DEPLOY_DIR/nginx/blog.conf.template" \
-        "__APP_DIR__=$APP_DIR" "<你的域名>=$DOMAIN" "<证书名>=$CERT_NAME")"
-
-    # ⚠️ 甲块（IP / 未知 Host 兜底）的证书路径在模板里**写死**是 selfsigned.*，
-    #    那是刻意的、不要"顺手统一"成 --cert 给的那个名字：按 IP 访问时没有任何
-    #    证书能对上名字（CN 只能是 localhost），拿正式证书去接只是白搭一张。
-    #    所以两张证书各管各的，$CERT_NAME 只作用于乙块（见 setup_tls）。
-
-    if [ -z "$DOMAIN" ]; then
-        # 没给域名 → 乙块整块略去。留着 <你的域名> 会让 `nginx -t` 直接失败。
-        # 用结构标记切分；标记找不到就**不切** —— 宁可让 nginx 报错，也不要静默拼出半个块。
-        if ! printf '%s' "$out" | grep -q '^# ══ 乙：'; then
-            die "模板结构变了：找不到乙块标记（deploy/nginx/blog.conf.template）"
-        fi
-        if ! printf '%s' "$out" | grep -q '^# ══ HTTP'; then
-            die "模板结构变了：找不到 HTTP 跳转标记"
-        fi
-        out="$(printf '%s' "$out" | awk '
-            /^# ══ 乙：/ {
-                print "# ══ 乙：正式域名 —— 这次没给域名，整块略去 ═════════════════════════"
-                print "#   （占位符留在 server_name 上会让 nginx -t 直接失败，所以是去掉，"
-                print "#    不是留着当记号——别把这段当成\"还没填\"）"
-                print "#   有域名之后重跑：bash deploy/install.sh --domain 你的域名"
-                skip = 1; next
-            }
-            /^# ══ HTTP/ { skip = 0 }
-            !skip { print }
-        ')"
-        note "没给域名 ⇒ nginx 少渲染乙块，站点只按 IP / 未知 Host 应答（自签证书）"
-    fi
-
-    if [ "$WITH_IOT" = 1 ]; then
-        # 站点配置里那行通配 include 是 IoT 三个入口的**唯一入口**，模板里是注释着的。
-        out="$(printf '%s' "$out" | sed \
-            's|^\([[:space:]]*\)# include /etc/nginx/snippets/blog-iot/\*\.conf;|\1include /etc/nginx/snippets/blog-iot/*.conf;|')"
-        if ! printf '%s' "$out" | grep -q '^[[:space:]]*include /etc/nginx/snippets/blog-iot/\*\.conf;'; then
-            die "没能把那行 IoT include 解注（两个 443 块都要有）"
-        fi
-    fi
-    printf '%s\n' "$out"
-}
+# render_nginx() 的**唯一实现**在 deploy/nginx/render.sh（本文件上面 source 的就是它）。
+# 渲染走 stdout、人话走 stderr；落地那一步在 setup_nginx 里。
 
 setup_nginx() {
     step "nginx 站点"
@@ -928,7 +1161,15 @@ setup_logrotate() {
 start_services() {
     step "起服务"
     if [ "$DRY_RUN" = 1 ]; then note "[dry-run] 不做 enable / restart"; return 0; fi
-    run_sudo systemctl enable saudade-rust saudade-agent >/dev/null 2>&1 || true
+    # `enable` 不许被 `|| true` 吞掉（20261007）：它失败的样子是**开机不自启** —— 平时
+    # 一点看不出来，只有机器重启后才暴露（服务全不在了），而那正是最不想排查的时刻。
+    # 它会失败的情形是真实的：单元文件里引用了不存在的用户、`systemctl` 在容器里、
+    # D-Bus 不可达……每一种都该当场说一句。
+    if ! run_sudo systemctl enable saudade-rust saudade-agent; then
+        warn "systemctl enable 失败 —— **这台机器重启后两个服务不会自己起来**"
+        note "现在站点是好的（下面 restart 会拉起来），但重启之后要手工 start。"
+        note "看一眼原因：systemctl status saudade-rust；enable 的报错就在那上面一行。"
+    fi
     run_sudo systemctl restart saudade-rust
     run_sudo systemctl restart saudade-agent
     say "等 agent 起来（worker 要 import 一堆东西）…"
@@ -967,6 +1208,18 @@ verify() {
     if [ -f "$APP_DIR/frontend/dist/index.html" ]; then ok "dist 就位"
     else warn "frontend/dist/index.html 不在"; rc=1; fi
 
+    # ⑤ 两个单元**开机自启**了吗。上面 start_services 里 enable 失败只会打一行 ⚠️
+    #    （它失败的样子平时完全看不出来 —— 机器重启之后服务全不在），所以这里再判一次：
+    #    这是唯一能在重启之前就发现它的地方。
+    local u enabled_ok=1
+    for u in saudade-rust saudade-agent; do
+        if $SUDO systemctl is-enabled --quiet "$u" 2>/dev/null; then :; else
+            warn "$u 不是 enabled —— 这台机器重启后它不会自己起来"
+            rc=1; enabled_ok=0
+        fi
+    done
+    [ "$enabled_ok" = 1 ] && ok "两个单元都开机自启"
+
     if [ "$rc" = 0 ]; then
         printf '\n   下一步：用 %s%s%s 登录 /dashboard 发一篇文章，再去首页跟看板娘说句话——\n' \
             "$C_B" "$ADMIN_USER" "$C_0" >&2
@@ -974,11 +1227,12 @@ verify() {
         say "口令在 $CRED_FILE。对话没反应时按 docs/deployment-and-ops.md §6 的排查表走。"
     else
         warn "有几项没通过（上面标了 ⚠️）。脚本没有回滚，配置都在原地，改完重跑即可。"
+        note "**本次以非 0 退出**（20261007 起；在此之前这里恒返回 0，脚本化调用看不出失败）。"
         note "按症状先看 logs/rust.log、logs/agent/agent.log、systemctl status <单元>。"
         note "agent 若是「导入期崩溃循环」（/health 空、worker 反复 respawn），"
         note "日志在 logs/agent/agent.log 而**不是** journalctl；F821 之类未定义名一眼可见。"
     fi
-    return 0
+    return "$rc"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1129,12 +1383,34 @@ EOF
 # ═══════════════════════════════════════════════════════════════════════════════
 # main
 # ═══════════════════════════════════════════════════════════════════════════════
+# 这台机器上的代码钉在哪个提交上（20261007 加）。排障时这是**第一个要问的问题**，
+# 而它此前只存在于跑脚本那个人的 shell 历史里（多跑几次、换个人来，就没人说得清了）。
+# 脏工作区也照记 —— 记的是"当时盘上是什么"，那正是"线上跑的是哪一版"的答案。
+record_versions() {
+    local pr ar pd ad
+    pr="$(git -C "$APP_DIR" rev-parse --short HEAD 2>/dev/null || true)"
+    ar="$(git -C "$AGENT_DIR" rev-parse --short HEAD 2>/dev/null || true)"
+    pd="$(git -C "$APP_DIR" status --porcelain 2>/dev/null || true)"
+    ad="$(git -C "$AGENT_DIR" status --porcelain 2>/dev/null || true)"
+    {
+        printf '装机时间 %s\n' "$(date '+%F %T %z')"
+        printf '父仓     %s%s\n' "${pr:-（不是 git 工作区）}" "$([ -n "$pd" ] && echo '  ← 有未提交改动（跑的就是这些改动）')"
+        printf 'agent 仓 %s%s\n' "${ar:-（不是 git 工作区）}" "$([ -n "$ad" ] && echo '  ← 有未提交改动（跑的就是这些改动）')"
+        printf '站点     domain=%s site_url=%s admin=%s provider=%s\n' \
+            "${DOMAIN:-（无，只有 IP）}" "$SITE_URL" "$ADMIN_USER" "$LLM_PROVIDER"
+    } >>"$APP_DIR/logs/install-info.txt" 2>/dev/null || true
+    say "本次钉在：父仓 ${pr:-?} / agent 仓 ${ar:-?}（记进 logs/install-info.txt）"
+    [ -z "$pd$ad" ] || warn "工作区里有未提交改动 —— 上面记的就是**盘上现在这份**，不是某个干净的提交"
+}
+
 main() {
     printf '%s\n' "${C_B}Saudade Blog —— 从零部署${C_0}" >&2
     printf '   部署根目录 %s\n' "$APP_DIR" >&2
     if [ "$DRY_RUN" = 1 ]; then
         printf '   %sdry-run：渲染产物落在 %s，不碰系统%s\n' "$C_Y" "$STAGE" "$C_0" >&2
     fi
+
+    local rc=0
 
     preflight
 
@@ -1152,7 +1428,11 @@ main() {
         setup_systemd
         setup_logrotate
         start_services
-        verify
+        # 验收的退出码**必须传出来**（20261007）：它从前是 `return 0` 恒真，于是
+        # 「后端没起来」「dist 不在」「两个单元没 enable」这些结论一个都传不到调用方 ——
+        # 在 CI / 脚本 / 别人写的 runbook 里，这个脚本永远是"成功"。`|| rc=$?` 这一写法
+        # 同时把 errexit 挡在门外：验收失败是**结论**，不是脚本本身的错误。
+        verify || rc=$?
     fi
 
     if [ "$WITH_IOT" = 1 ]; then setup_iot; fi
@@ -1163,10 +1443,16 @@ main() {
         say "对照线上：diff -u /etc/nginx/sites-enabled/blog $STAGE/etc/nginx/sites-available/blog"
     else
         say "凭据：$CRED_FILE（0600）"
+        record_versions
         say "排障：docs/deployment-and-ops.md §6；IoT 体检：./iot/status.sh"
         say "更新：父仓走 CI（push → 构建 → 部署 → 重启）；agent 仓是 git pull + systemctl restart。"
         say "只改文档/测试的 push 会**绿灯但什么都没部署** —— 判据只认 build-info.json 里的 sha。"
     fi
+
+    if [ "$rc" != 0 ]; then
+        printf '\n%s❌ 验收有项目没通过（见上面标 ⚠️ 的几行）—— 本次以 %d 退出。%s\n' "$C_R" "$rc" "$C_0" >&2
+    fi
+    return "$rc"
 }
 
 main "$@"
