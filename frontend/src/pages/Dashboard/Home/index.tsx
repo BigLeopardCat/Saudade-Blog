@@ -403,7 +403,12 @@ const Home = () => {
         return (
         <div className="home">
 
-            <div className='left' style={{height: '100%',width:'25%',display:'flex',flexDirection:'column'}}>
+            {/* ⚠️ 这里原先挂着内联 `{height:'100%',width:'25%',display:'flex',flexDirection:'column'}`。
+                宽度搬进 `Home/index.sass` 的 `.home .left`（20261006，用户第 6 条）：内联压过一切
+                普通声明，窄屏那条媒体规则够不着它 —— 而 `width:25%` 正是窄屏必须改掉的那一个
+                （`<768` 时 `.right` 已经 `display:none`、`.center` 也 `display:none`，
+                只剩 `.left` 一个人占 25% ⇒ 头像和签名挤在 ~97px 里）。 */}
+            <div className='left'>
                <div className="about_logo">
                    <div className="about_me">
                        {/* 头像外圈不再写内联 `border`（内联 style 特异性最高，会把 CSS 里
@@ -418,7 +423,9 @@ const Home = () => {
                <ArticleAnalytics />
            </div>
 
-            <div className='center' style={{height: '100%',width:'60%',paddingRight:30, paddingTop: 50}}>
+            {/* 宽度同理搬进 sass（内联 `width:'60%'` 窄屏要改成 100%）；两个 padding 留着 ——
+                它们不参与窄屏的槽位计算。 */}
+            <div className='center' style={{paddingRight:30, paddingTop: 50}}>
                 <ArticleRecord isDark={isDark}/>
             </div>
 

@@ -322,7 +322,9 @@ const Albums = () => {
                     </div>
                 </div>
             </div>
-            <Card style={{ width: '100%', height: '86vh', marginLeft: '0%', marginTop: '0%', overflowY: 'scroll', backgroundColor: 'transparent', border: "none" }}>
+            {/* `albumScrollCard` 只给窄屏那条媒体规则当抓手：`height:86vh` + 内滚动写在内联上，
+                普通 CSS 声明够不着它（内联优先级最高），窄屏只能用 `!important` 翻过来。 */}
+            <Card className="albumScrollCard" style={{ width: '100%', height: '86vh', marginLeft: '0%', marginTop: '0%', overflowY: 'scroll', backgroundColor: 'transparent', border: "none" }}>
                 {view === 'list' ? (
                     <div className={"albumList"}>
                         {staticDate.map(item => {

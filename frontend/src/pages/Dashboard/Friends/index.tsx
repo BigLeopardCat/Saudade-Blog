@@ -183,7 +183,9 @@ const Friends = () => {
                                 <h3 className="link-title">
                                     <span className="link-fix" style={{ color: isDarkMode ? 'cornflowerblue' : 'black' }}>友链申请</span>
                                 </h3>
-                                <div style={{ display: 'grid',gridTemplateColumns:'repeat(auto-fit, minmax(210px,' +
+                                {/* `reqGrid` 同 Talks 那张：`grid-template-columns`/`grid-gap` 写在内联上，
+                                    窄屏要改只能用带 `!important` 的媒体规则去够它。 */}
+                                <div className="reqGrid" style={{ display: 'grid',gridTemplateColumns:'repeat(auto-fit, minmax(210px,' +
                                         ' 1fr))', gridGap:90}}>
                                     {
                                         staticReq.map(item => (

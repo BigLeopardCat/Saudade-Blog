@@ -34,3 +34,10 @@
   margin-right: auto
   padding-bottom: 12px
   max-width: 560px
+/* ⚠️ **窄屏（20261006 用户第 6 条）**：站点信息那几列的输入框与保存条写死 `width: 70%`，
+   在 ~330px 的正文里只剩 ~230px —— 加上左右内边距，"站点信息 / 社交媒体"这些四五字的
+   标签就换行、输入框看着像被截断。窄屏吃满一行。
+   `!important` 是必须的：那三处宽度都挂在**内联** style 上。 */
+@media only screen and (max-width: 1024px)
+  .uc-70
+    width: 100% !important
