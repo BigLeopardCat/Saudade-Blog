@@ -164,10 +164,46 @@ origin**，见 §1.1b）。产物里内嵌的是**建图时那些文章**的词�
 
 | 文件 | 内容 |
 |---|---|
-| `index.json` | `{build_id, model, dim, count, built, strip_top, words[]}`（当前 3731B，400 词；随词数变） |
+| `index.json` | `{build_id, model, dim, count, built, strip_top, words[], base_url}`（当前 3731B，400 词；随词数变）。**`model` / `base_url` 记的是这份产物建在哪片 embedding 空间上**（20261007 起），查询侧拿它当场对一次——不符就 `space_mismatch` 明着降级，见下 |
 | `vectors.f32` | L2 归一化后的节点向量，`count × dim` 小端 float32 行主序（1638400B = 400×1024×4） |
 | `mean.f32` | 语料均值（dim 个 float） |
 | `dirs.f32` | 被剔除的主方向（`strip_top × dim`）；当前 `strip_top=1` ⇒ **4096 B**（1×1024）。`strip_top=0` 时它是 0 字节——查询侧本来就按 `index.json` 的 `strip_top` 读，两种都能跑 |
+
+#### embedding 空间：建图与查询共用一处配置（20261007）
+
+图谱这一路原先自成一格：建图脚本要 `QWEN_API_KEY`/`QWEN_BASE_URL`（缺了直接 `sys.exit`），
+模型/维度/批量**三处硬编码** `text-embedding-v4`/1024/批 10，查询侧读 `settings.qwen_*`——
+而 agent 的 RAG 向量路另有一份 `EMBEDDING_*`。两处各配各的，换一个聚合平台要改两遍。
+
+现在两端共用 `rag/embed_space.py` 一条解析规则（**只用标准库**：建图跑在
+`uv run --no-project` 的隔离环境里，那里没有 pydantic，也没有 agent 的其他模块）：
+
+- 配了 `EMBEDDING_MODEL` + `EMBEDDING_API_KEY`（非空、非占位 `your-api-key-here`）⇒ **用它**
+  （`EMBEDDING_BASE_URL` 留空 = OpenAI SDK 默认端点）；
+- 否则回落 `QWEN_API_KEY`/`QWEN_BASE_URL` + `text-embedding-v4`/1024/批 10
+  ⇒ **只配 `QWEN_*` 的老部署行为逐字不变**；
+- 两处都空 ⇒ 建图当场停下，**并说清缺的是哪一格**（`rag/embed_space.py::missing_config`
+  一句话，建图侧 `sys.exit`、查询侧 WARNING 共用它——同一件事在终端与日志里必须说成一件）。
+
+判据与 `Settings.embedding_configured` 同一口径（有一条测试锁着不许漂）。
+`EMBEDDING_DIM=0` 的语义与 RAG 那侧一致：**不向 API 传 `dimensions`**，以返回长度为准。
+
+**换空间之后必须重建一次图谱**：产物记着自己那片空间（`model` + `base_url`），
+查询侧 `_load()` 会当场对一次，不符则
+
+* 记**一条** WARNING（每个 `build_id` 只记一次，不刷日志），
+* `query_words` 返回 `{"ok": false, "reason": "space_mismatch"}`——**在花掉那次 embedding
+  调用之前**就返回（零 API 成本），
+
+Rust → 前端照既有降级链路退回本地关键词匹配。老产物没有 `base_url` 这一格 ⇒ 那一格不判
+（只在这一格上 fail-open）。**静默混两代向量**是这里最坏的失效形态：图谱按 A 模型的空间连边、
+查询却拿 B 模型的向量找人，症状正是 §1.3 那句"搜 X 结果飞到一个视觉上离 X 很远的角落"，
+而且不报错。
+
+建图侧的 `eval/cache/word_graph_vectors.json`（键 = `md5(词)`，4.8MB/453 条，已 gitignore）
+**按空间记账**：文件头记下这片空间的 `{model, base_url, dim}`，对不上就**整份作废重嵌**，
+绝不半读（半读 = 两代向量混进同一张图）；旧格式（没有签名）只在"就是那条老路"时认
+——旧文件的唯一可能出处是 `text-embedding-v4` + `QWEN_BASE_URL`。
 
 **生产 venv 里没有 numpy**（当初刻意没装）。所以 `rag/wordgraph.py` 用 stdlib `array('f')`
 读裸 float32，点积走 `map(operator.mul, row, q)`（C 循环）：400×1024 实测 **17ms**
@@ -205,6 +241,14 @@ uv run --no-project --python 3.12 --with-requirements scripts/requirements-graph
     python3 scripts/build_word_graph.py --dry-run
 ```
 
+⚠️ **建图还需要一份可用的 embedding 配置**（上面那条推荐的完整重建要；`--dry-run` 不要，
+它不调 embedding）：`EMBEDDING_MODEL`+`EMBEDDING_API_KEY` 配了就用它，
+没配则回落 `QWEN_API_KEY`/`QWEN_BASE_URL`
++ `text-embedding-v4`（见 §1.2）。**两处都空会当场停下、说清缺的是哪一格**——这个缺口在
+20261007 之前没写在这里，症状是"我明明配了向量检索的 key，后台重建却报缺配置"。
+这几项**写在 systemd 单元的环境里也照样认**（进程环境优先于 `.env`，与 pydantic-settings
+的优先级一致）。
+
 | 步 | 做什么 | 关键参数 |
 |---|---|---|
 | ① | 拉语料：列表 → 逐篇详情（正文走 `/notes/:id`，列表接口正文为空）。**列表接口一页上限 1000 篇**，正好 1000 就可能是被截断的（后台页会就此警告） | `--api-base` |
@@ -213,7 +257,7 @@ uv run --no-project --python 3.12 --with-requirements scripts/requirements-graph
 | ③ | 清洗：去 front-matter/HTML 注释/图片/裸 URL，`[text](url)` 留 text，**保留代码围栏内容**（rust/axum/tokio 正是好词） | |
 | ④ | 抽词 `jieba.posseg`：`POS_DROP` 词性闸 + ASCII 3~16 字 + 中文 ≥2 字 + 停用词 + 词黑名单 + 词形折叠（log/logs 并成一个点） | `scripts/graph_blocklist.txt`、`scripts/graph_userdict.txt`（§2.1） |
 | ⑤ | 选词：每篇按 `imp=tf·idf` 取前 `clamp(round(0.9·√chars)+8, 14, 70)` 个，全局再按重要度裁到 `--max-nodes`，最后把允许清单里选中的词补回 | `--max-nodes`（默认 400）、`scripts/graph_allow.txt`（§2.1） |
-| ⑥ | 嵌入**裸词**（不拼上下文，与查询侧同构）：`text-embedding-v4` / 1024 维 / 批 10 / md5 缓存 | `--refresh` 强制重嵌 |
+| ⑥ | 嵌入**裸词**（不拼上下文，与查询侧同构）：模型/端点/维度/批量**由解析出的 embedding 空间决定**（配了 `EMBEDDING_*` 用它，否则回落 `QWEN_*` + `text-embedding-v4`/1024/批 10）；缓存键 = `md5(词)`，**缓存按空间记账**（换空间整份作废重嵌，见 §1.2） | `--refresh` 强制重嵌 |
 | ⑦ | 处理空间变换：去均值 → **去主方向（`strip_top=1`，剥掉"语言轴"，见 §3.4）** → 软白化 `U[:,:3]·S[:3]^α` → 尾部压缩 `sign·\|z\|^γ` —— **连边/指标/查询都用这套语义**，三维坐标不再由它出 | `--strip-top 1 --alpha 0.3 --gamma 1.0 --clip 1.6` |
 | ⑧ | 布局：**UMAP 三维**（见 §3） | `--layout umap --umap-neighbors 15 --umap-min-dist 0.2` |
 | ⑨ | 连边：处理空间 kNN，`--knn-k 6`、`cos ≥ --knn-tau 0.20`（τ 跟 `strip_top` 一起调，理由见 §3 第 4 条）；补最近邻救孤立点；每条边只要**任一端点**把它排进自己的前三就保留 | |
@@ -397,7 +441,7 @@ UMAP 只关心邻域、剥掉全局混杂方向反而更干净。τ 要跟着调
 
 > ⚠️ **降级判据只有一条：服务这条路通不通。** 20260916e 拆掉服务端 BM25 弃权闸后，
 > 后端不再有"我判定图里没有这句话"这种结论态（`reason` 只剩 `empty_query` /
-> `artifact_missing` / `embed_failed` / `dim_mismatch` 四种故障语义），
+> `artifact_missing` / `embed_failed` / `dim_mismatch` / `space_mismatch` 五种故障语义），
 > 所以 A 路返回值是**两态**：`LocateHit[]`（路通了）vs `null`（路不通）。
 > 闸为什么加、又为什么拆，见 §10。
 
@@ -410,9 +454,12 @@ UMAP 只关心邻域、剥掉全局混杂方向反而更干净。τ 要跟着调
 > 降级准"**。现在 `wordKey()` 是唯一来源（`engine.ts` 导出，`locate.ts` 直接 import 它），
 > 三处匹配全部走它。**加新匹配点时也用 `wordKey`，别再各写一份 `toLowerCase`。**
 
-`query_words()` **绝不抛异常**；`_embed_one` 显式用 `settings.qwen_api_key/qwen_base_url`，
-**不跟 `active_llm_*`**——active provider 可能是 deepseek（没有 embeddings 端点），
-跟着 active 走会在切 provider 时哑掉。
+`query_words()` **绝不抛异常**；`_embed_one` 用**解析出的 embedding 空间**
+（`rag/embed_space.py`：配了 `EMBEDDING_*` 就用它，否则回落 `QWEN_*` + `text-embedding-v4`，
+与建图脚本同一条规则，见 §1.2），**不跟 `active_llm_*`**——active provider 可能是
+deepseek（没有 embeddings 端点），跟着 active 走会在切 provider 时哑掉。
+它的超时 `EMBED_TIMEOUT = 5.0` 是**查询热路径**的值（§4.1 的 7s > 6s > 5s 里最小那个），
+**不是**检索那侧的 `EMBEDDING_TIMEOUT=15`——换成后者等于让上游先超时、静默退化成本地匹配。
 
 ### 4.4 embedding 预热（否则部署后第一个查询必然降级）
 
@@ -1138,6 +1185,13 @@ ls -lt saudade-blog-agent/data/word_graph/web/
 前端画的是 A 代的词，双击跳的文章 id 也是 A 代的，而查询侧按 B 代返回词。
 
 ### 12.2 重出图之后：什么立刻生效、什么要等、什么不用管
+
+> ⚠️ **反过来的那条也要记住：改了 `EMBEDDING_*`（或 `QWEN_BASE_URL` 那一族）之后，
+> 必须重建一次图。** 建图与查询共用一份配置（§1.2），改配置那一刻起**新的** embedding
+> 空间就生效了，而盘上那张图还是旧的 ⇒ 查询侧 `space_mismatch`、前端退回本地关键词匹配
+> （明着降级，日志里有一条 WARNING；不用重启、不用改任何东西，重建一次即恢复）。
+> 本仓 20261007 当时的实测结论是**不需要重建**：本机 `EMBEDDING_*` 与 `QWEN_*` 指向同一
+> 端点、同一模型，453 条旧缓存照样命中——但那只对"本来就没换空间"的部署成立。
 
 | 那一层 | 重出图后 | 说明 |
 |---|---|---|
