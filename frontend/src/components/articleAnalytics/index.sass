@@ -1,14 +1,16 @@
 .analyticsCard
-  // 20261001 第三轮。用户原话：「dashboard页面的文章总数，分类总数，标签总数，改成书签的
-  // 样式大小就是细条书签贴在边上不需要占这么大地方」。
+  // 20261006 第四轮。用户原话：「后台 ✨文章总数 / ❤️分类总数 / 🎯标签总数 这三个书签
+  // 太细长了」——第三轮把 100px 的大卡压成 34px 细条，横向却还是铺满整列（370px），
+  // 于是"书签"读起来像一道横线。这一轮**加高收窄**：56px 高、列宽的 78%。
   //
-  // 上一轮（20260930）解决的是"最终高度是谁定的"——三张卡 `flex: 1 1 0` 等分那一列。
-  // 布局是清楚了，但**卡本身还是三张 100px 高的大卡**，实测吃掉左栏整个剩余高度（~380px）。
-  // 这一轮是尺寸问题：三条 34px 的书签，整组 ~122px。
+  // 三轮的次序与各自解决的事，别再混起来：
+  //   20260930 —— 谁定高度（三张卡 `flex: 1 1 0` 等分左栏，吃掉 ~380px）；
+  //   20261001 —— 造型（大卡 → 燕尾书签条，34px / 100%）；
+  //   20261006 —— 长宽比（56px / 78%，徽章与字号一起抬一档）。
   //
-  // ⚠️ 于是 `flex` 不再吃高度（`0 1 auto`）：这一列余下的空间整个让出去，
-  // 条子只在自己需要的那 122px 里。`flex-shrink` 留 1 + `min-height: 0` + `overflow-y: auto`
-  // 是**兜底**：左栏被压到比 122px 还矮时在这一组内滚动，而不是让条子探出列外。
+  // ⚠️ `flex` 仍不吃高度（`0 1 auto`）：这一列余下的空间整个让出去，
+  // 条子只在自己需要的那一组里。`flex-shrink` 留 1 + `min-height: 0` + `overflow-y: auto`
+  // 是**兜底**：左栏被压得比整组还矮时在这一组内滚动，而不是让条子探出列外。
   display: flex
   flex-direction: column
   align-items: stretch
@@ -37,16 +39,22 @@
     border: 0
     // ⚠️ 这里**不能有 `box-shadow`**：下面那条 `clip-path` 会把盒子外的阴影整片裁掉
     // （同 `.TopTape` 的注释）。要投影只能 `filter: drop-shadow`，本组件不需要。
-    width: 100%
+    // 这一轮加高到 56px 之后仍然成立 —— 想"补一点立体感"的人先看这条。
+    //
+    // 宽度 78%（不是 100%）：书签是**夹在纸边上**的一小片，铺满整列就变回横条了。
+    // 父级是 `align-items: stretch`，但那只在交叉轴尺寸为 `auto` 时才生效 ——
+    // 这里写了显式 width，于是它照旧贴在**左缘**（书签要夹进纸里的那一头）。
+    width: 78%
     // 高度是**设计的量**，不跟内容走：三个数的位数不同（9 / 128 / 1,024），
-    // 内容撑高会让三条长短不一。"细条"就是它 34px 这个数。
+    // 内容撑高会让三条长短不一。
     flex: 0 0 auto
-    height: 34px
+    height: 56px
     margin: 0
     border-radius: 0
     display: flex
-    // 右端燕尾：V 口深 11px。左缘与上下缘是直边 —— 书签是"切"出来的，不是"捏"出来的
-    clip-path: polygon(0 0, 100% 0, calc(100% - 11px) 50%, 100% 100%, 0 100%)
+    // 右端燕尾：V 口深 14px（条子加高后 V 也要跟着加，否则那道口读起来像缺角）。
+    // 左缘与上下缘是直边 —— 书签是"切"出来的，不是"捏"出来的
+    clip-path: polygon(0 0, 100% 0, calc(100% - 14px) 50%, 100% 100%, 0 100%)
     transition: transform .18s ease, filter .18s ease
     &:hover
       // 抽出来一点：书签的动效方向是**沿条子往外**（横向），不是上下浮 ——
@@ -62,25 +70,25 @@
       align-items: center
       gap: 9px
       width: 100%
-      // 右边那 18px = 燕尾的 11px + 7px 呼吸：数字不能被那道口"咬"到
-      padding: 0 18px 0 10px
+      // 右边那 22px = 燕尾的 14px + 8px 呼吸：数字不能被那道口"咬"到
+      padding: 0 22px 0 10px
 
   .akBadge
     // 底色同理由 TSX 以 --ak-badge 传入（颜色不许进内联 style，见 index.tsx 注释）
     background: var(--ak-badge)
     flex: 0 0 auto
-    width: 22px
-    height: 22px
-    border-radius: 7px
+    width: 30px
+    height: 30px
+    border-radius: 9px
     display: flex
     align-items: center
     justify-content: center
-    font-size: 12px
+    font-size: 15px
     line-height: 1
     box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .06)
 
-  // 这一轮从**上下两行**改成**一条线**：34px 的条子放不下两行，而"标签在左、数字在右"
-  // 恰好把一条 370px 的细条用满（两端对齐），中间那段留白就是书签的纸面。
+  // 20261001 从**上下两行**改成**一条线**："标签在左、数字在右"把一条细条用满
+  // （两端对齐），中间那段留白就是书签的纸面。加高收窄之后这条排法仍然成立。
   .akText
     display: flex
     flex-direction: row
@@ -92,7 +100,7 @@
     min-width: 0
 
   .akLabel
-    font-size: 12px
+    font-size: 13px
     font-weight: 600
     line-height: 1.2
     // 兜底实色：`dark-mode-contrast.test.py` 读的就是 computed color（后台页在它的
@@ -105,12 +113,12 @@
     text-overflow: ellipsis
 
   .ant-statistic-content
-    // 不写会让 antd 的 1.5714 行高把这一行的行盒撑到 ~37px（条子只有 34px，
-    // 撑出去的部分会被 `clip-path` 切掉）
+    // 不写会让 antd 的 1.5714 行高把这一行的行盒撑出条子外（撑出去的部分会被
+    // `clip-path` 切掉）—— 34px 那会儿是 ~37px，56px 这档约 35px，同样得按住
     line-height: 1
 
   .ant-statistic .ant-statistic-content .ant-statistic-content-value
-    font-size: 18px
+    font-size: 22px
     font-weight: 700
     line-height: 1
     // 等宽数字：CountUp 从 0 涨到真实值的过程中数字宽度不变
