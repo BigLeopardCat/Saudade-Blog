@@ -11,7 +11,17 @@ import {useDispatch, useSelector} from "react-redux";
 import {fetchTags} from "../../store/components/tags.tsx";
 import {fetchSocial, fetchUserInfo} from "../../store/components/user.tsx";
 import {fetchNoteList} from "../../store/components/note.tsx";
-import { searchNotes } from "../../apis/NoteMethods.tsx";
+import { searchAll } from "../../apis/SearchMethods.tsx";
+import {
+    AggregateHit,
+    AggregateResult,
+    SearchType,
+    TYPE_LABEL,
+    TYPE_ORDER,
+    allHits,
+    hitsOf,
+    hitTarget,
+} from "./aggregate";
 import '../main.css'
 import MoonToSun from "../MoonToSun";
 import { recordUserChoice } from "../../theme";
@@ -76,7 +86,15 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
 
     // Search Logic
     const [searchKeyword, setSearchKeyword] = useState('');
-    const [searchResults, setSearchResults] = useState<any[]>([]);
+    /* 聚合搜索（20261006）：一次搜文章 / 说说 / 留言 / 评论。
+     * `null` = 还没搜过——与"搜了但一条都没命中"（total 为 0 的对象）是**两回事**，
+     * 前者不该显示"未找到相关内容"。 */
+    const [agg, setAgg] = useState<AggregateResult | null>(null);
+    /** 单选筛选：`'all'` = 四类都显示；点某一枚计数只看那一类（**再点它一次回到全部**）。 */
+    const [activeType, setActiveType] = useState<SearchType | 'all'>('all');
+    /* 读失败与"确实没命中"必须分开（同 Talk 页 20261005 那条纪律）。
+     * 接口故障时渲染成"未找到相关内容"，等于替站内声明"没有这条内容"——而事实是没读到。 */
+    const [searchFailed, setSearchFailed] = useState(false);
     const [isSearching, setIsSearching] = useState(false);
 
     useEffect(() => {
@@ -190,17 +208,28 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
     // Debounced search function
     const performSearch = async (keyword: string) => {
         if(!keyword.trim()) {
-            setSearchResults([]);
+            setAgg(null);
+            setSearchFailed(false);
+            setActiveType('all');
             return;
         }
+        setSearchFailed(false);
         setIsSearching(true);
         try {
-            const res = await searchNotes({ keyword: keyword });
-            if(res.status === 200) {
-                setSearchResults(res.data.data);
+            const res = await searchAll({ keyword: keyword });
+            // **两层都要判**：HTTP 200 不代表业务成功（本站的信封是 `code`）。
+            // 只看 `res.status === 200` 的话，`code: 500` 时会把 `data`（可能是空数组）
+            // 当成结果——那正是 Talk 页 20261005 修过的那类"读不到被渲染成没有"。
+            if(res.status === 200 && res.data?.code === 200) {
+                setAgg(res.data.data);
+                // 换了一次查询 ⇒ 筛选回到"全部"。否则上一次点的"只看说说"会留在原地，
+                // 而用户看到的是"搜索框里换了词却什么都没有"。
+                setActiveType('all');
+            } else {
+                setSearchFailed(true);
             }
         } catch(err) {
-            // silent error or message
+            setSearchFailed(true);
         } finally {
             setIsSearching(false);
         }
@@ -214,7 +243,9 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
         setSearchKeyword(val);
         // Clean results if empty
         if (!val.trim()) {
-            setSearchResults([]);
+            setAgg(null);
+            setSearchFailed(false);
+            setActiveType('all');
             return;
         }
         debouncedSearch(val);
@@ -227,9 +258,17 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
          }
     }
 
-    const toArticle = (id: number) => {
+    /** 点一枚计数：选中它只看这一类；**再点已选中的那枚回到全部**（单选，用户拍板）。 */
+    const toggleType = (t: SearchType) => {
+        setActiveType((cur) => (cur === t ? 'all' : t));
+    };
+
+    /** 点一条结果：关掉弹窗，跳到那一条自己（四类的目标见 `aggregate.ts::hitTarget`）。 */
+    const openHit = (item: AggregateHit) => {
         setIsModalOpen(false);
-        navigate(`article/${id}`);
+        // ⚠️ 绝对路径。原来这里是 `navigate('article/' + id)`（相对），而搜索框在**每一页**
+        // 都有：在 `/article/3` 上再搜再点会拼成 `/article/article/5`。
+        navigate(hitTarget(item));
     }
 
     /** 头像菜单里的「设置」= 打开那个大窗口（20260922）——**所有登录用户同一入口**。
@@ -266,6 +305,13 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
             )}
         </span>
     )
+
+    /* 结果列表：`'all'` 时四类按 `TYPE_ORDER` 拼成一条（同类相邻、组内仍是后端的相关度序）；
+     * 选了某一类就只剩那一组。**筛选在渲染处做、不重新请求**——四类是一次搜回来的，
+     * 点一枚计数再打一次网络，除了慢还会让"计数"与"列表"有机会对不上。 */
+    const visibleHits: AggregateHit[] = agg
+        ? (activeType === 'all' ? allHits(agg) : hitsOf(agg, activeType))
+        : [];
 
     return (
         <>
@@ -415,7 +461,19 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                     },
                 }}
             >
-                <Modal open={isModalOpen} onCancel={handleCancel} footer={null} width={'100vh'} >
+                {/* `rootClassName` 是**必须的**：Modal 是 portal 到 body 的浮层，
+                    不继承页面上的 `.frontDark` —— 结果行/计数栏这些新写的样式走
+                    `var(--washi-*)`，夜间档只有挂上 `.washiDark` 才拿得到（见 index.css
+                    里那三个类的注释）。不加的话夜间会白纸压白字。
+
+                    ⚠️ 只加 `.washiDark`，**没有** `.washiModal`（本仓别处的浮层是
+                    `washiModal washiDark` 两个一起加）。`.washiModal` 不是"主题开关"，
+                    它是**公告弹窗那套皮**：不透明和纸底 + 顶上探出半截的胶带
+                    （见 `AnnouncementModal/index.sass`）。这个搜索弹窗是刻意要透明的
+                    （输入框直接压在遮罩的模糊图上，`ConfigProvider` 里也把
+                    `Modal.contentBg` 设成了 transparent），套上那层皮等于换了个弹窗。 */}
+                <Modal open={isModalOpen} onCancel={handleCancel} footer={null} width={'100vh'}
+                       rootClassName={isDark ? 'washiDark' : undefined} >
                     <div style={{height:'80vh'}} className='searchModal'>
                         <div style={{
                                 position: 'relative', 
@@ -454,59 +512,70 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                             ></i>
                         </div>
                         
-                        <Card 
+                        <Card
                             style={{
-                                width:'80%', 
+                                width:'80%',
                                 margin: '20px auto 0',
-                                height: '85%', 
-                                overflowY:'auto', 
-                                background: 'transparent', 
+                                height: '85%',
+                                overflowY:'auto',
+                                background: 'transparent',
                                 display: searchKeyword ? 'block' : 'none'
                             }}
                             title={
-                                <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: isDark ? '#fff' : '#333'}}>
-                                    <span style={{
-                                        background: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.7)',
-                                        padding: '4px 8px',
-                                        borderRadius: '4px',
-                                        fontSize: '14px',
-                                        backdropFilter: 'blur(4px)'
-                                    }}>
-                                        搜索结果 ({searchResults.length})
+                                <div className='searchTitleRow'>
+                                    {/* 用户原话里的写法：`搜索结果（命中数量）` 后面跟四类计数。
+                                        括号用**全角**（与计数那几枚一致）。 */}
+                                    <span className='searchTotal'>搜索结果（{agg?.total ?? 0}）</span>
+                                    <span className='searchChips'>
+                                        {TYPE_ORDER.map((t) => (
+                                            <button
+                                                key={t}
+                                                type='button'
+                                                className={'search-chip' + (activeType === t ? ' is-active' : '')}
+                                                onClick={() => toggleType(t)}
+                                            >
+                                                {TYPE_LABEL[t]}（{agg?.counts?.[t] ?? 0}）
+                                            </button>
+                                        ))}
                                     </span>
-                                    {isSearching && <span style={{fontSize: '12px', opacity: 0.7}}>搜索中...</span>}
+                                    {isSearching && <span className='searchBusy'>搜索中...</span>}
                                 </div>
-                            } 
+                            }
                             bordered={false}
                         >
                              <div className="search-results-list">
-                                {searchResults.map((item: any) => (
-                                    <div 
-                                        key={item.key || item.id} 
-                                        onClick={() => toArticle(item.key || item.id)}
+                                {visibleHits.map((item: AggregateHit) => (
+                                    <div
+                                        // 四类混排，key 必须带上类型：文章 5 与评论 5 是两条东西
+                                        key={`${item.type}-${item.key}`}
+                                        onClick={() => openHit(item)}
                                         className="search-item"
-                                        style={{
-                                            padding: '12px',
-                                            marginBottom: '8px',
-                                            borderRadius: '6px',
-                                            cursor: 'pointer',
-                                            background: isDark ? '#333' : '#f5f5f5',
-                                            color: isDark ? '#fff' : '#333',
-                                            transition: 'all 0.3s',
-                                            border: isDark ? '1px solid #444' : 'none'
-                                        }}
                                     >
-                                        <div style={{fontWeight: 'bold', fontSize: '16px', marginBottom: '4px'}}>
-                                            {item.noteTitle || item.title}
-                                        </div>
-                                        <div style={{fontSize: '13px', opacity: 0.8, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden'}}>
-                                            {item.description || item.content?.substring(0, 100)}
+                                        <span className={'search-badge search-badge-' + item.type}>
+                                            {TYPE_LABEL[item.type]}
+                                        </span>
+                                        <div className='search-item-main'>
+                                            {/* 留言那一条**没有标题**（它那一列的 title 是印章，
+                                                后端给的是空串）——空就别占一行 */}
+                                            {item.title && <div className='search-item-title'>{item.title}</div>}
+                                            <div className='search-item-snippet'>{item.snippet}</div>
+                                            <div className='search-item-meta'>
+                                                {[item.author, item.createTime].filter(Boolean).join(' · ')}
+                                            </div>
                                         </div>
                                     </div>
                                 ))}
-                                {searchResults.length === 0 && !isSearching && (
-                                    <div style={{textAlign: 'center', color: isDark ? '#888' : '#999', padding: '20px'}}>
-                                        未找到相关文章
+                                {/* 空态。三条互斥的说法，**别合并**：
+                                    · 读失败 ≠ 没命中（故障不能说成"站内没有"）；
+                                    · 选了某一类而那一类 0 命中，与"四类全空"也不是一回事。 */}
+                                {!isSearching && searchFailed && (
+                                    <div className='searchEmpty'>搜索失败，请稍后再试</div>
+                                )}
+                                {!isSearching && !searchFailed && agg && visibleHits.length === 0 && (
+                                    <div className='searchEmpty'>
+                                        {agg.total === 0
+                                            ? '未找到相关内容'
+                                            : `「${TYPE_LABEL[activeType as SearchType]}」里没有命中的内容`}
                                     </div>
                                 )}
                              </div>
