@@ -1,0 +1,29 @@
+# 谁负责哪些路径（20261006）。
+#
+# 只有一名维护者时，这份文件**不改变任何行为**——它现在的作用有两个：
+#   · 把「改到哪里等于动生产」写在明面上（下游几条注释就是这件事）；
+#   · 它是分支保护里「要求代码所有者复核」那一项能生效的**前提**：没有这个文件，
+#     那一项无从判起。将来加了协作者、想打开那一项时，闸门本体就是这份文件。
+#
+# 为什么下面几条单列，而不是只留一条 `*`：
+#
+#   `.github/workflows/**` —— 本仓的部署链是 github → ssh → 服务器上的脚本。
+#     这个目录的一次改动，就能让**下一次 push 的 run**带着 R2 凭据与 SSH 私钥
+#     执行任意代码。而 CI 那把私钥在服务器上**没有任何 `command=` 限制**，ubuntu 又有
+#     `(ALL : ALL) NOPASSWD: ALL` 的 sudo ⇒ 那条链的尽头是这台生产机的 root。
+#     这不是"重要文件"，这是"改动入口"。
+#
+#   `scripts/deploy/**` —— 落地脚本本身（解包、替换二进制、重启服务）。改它等于改
+#     部署时在服务器上执行什么。
+#
+#   `src/**` / `Cargo.toml` / `Cargo.lock` —— 直接编译进生产二进制；`Cargo.lock`
+#     单列是因为锁文件的改动可以来自一次 dependabot 的 merge，而它同样决定二进制内容。
+
+* @BigLeopardCat
+
+.github/workflows/ @BigLeopardCat
+.github/dependabot.yml @BigLeopardCat
+scripts/deploy/ @BigLeopardCat
+src/ @BigLeopardCat
+Cargo.toml @BigLeopardCat
+Cargo.lock @BigLeopardCat
