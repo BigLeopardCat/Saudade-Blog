@@ -192,6 +192,8 @@ agent 在独立仓库里，有自己的 README 与 `.env.example`。它默认跑
 要真的对外提供服务（nginx 站点配置与 TLS、两个 systemd 单元、目录布局与权限、
 logrotate、关掉开发用的宽松档），走 **[deploy/README.md](deploy/README.md)**——
 那一份是"从一台空 VPS 到跑着的站点"的可复制步骤，模板都在 [deploy/](deploy/) 里。
+**只想装起来的话**，那份文档开头有一条命令：`bash deploy/install.sh`
+（向导会问要不要连 IoT 可选件一起装，`-y` 下默认不装；`--dry-run` 只渲染不落地）。
 
 ---
 
