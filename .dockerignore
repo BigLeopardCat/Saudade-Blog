@@ -1,0 +1,66 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+#  Docker 构建上下文（**仓库根**，三个 Dockerfile 共用）
+#
+#  没有这个文件时上下文是本机的整个工作区：target/ 4.6G + frontend/node_modules 1.1G
+#  + saudade-blog-agent/.venv 98M —— 光是打包上下文就要几分钟，而且每跑一次都把
+#  这些字节重发一遍（本机就是生产机，磁盘与内存都不宽裕）。
+#
+#  三条纪律：
+#   ① 排掉"能由构建步骤重新生成的"（node_modules/dist/那三棵看板娘树/.venv/__pycache__）
+#      —— 带进去等于让镜像内容取决于"构建者机器上碰巧有什么"。
+#   ② 排掉"运行期数据"（uploads/ logs/ data/）—— 那些是宿主目录，容器里一律走挂载。
+#   ③ 排掉"秘密"（任何 .env*）—— 镜像里不许有凭据；容器配置一律由 compose 的
+#      env_file/environment 注入（见 deploy/docker/README.md）。
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ── ① 构建产物与依赖树 ────────────────────────────────────────────────────────
+/target
+/frontend/node_modules
+/frontend/dist
+/frontend/stats.html
+/frontend/screenshots
+/frontend/.npmrc
+# 看板娘那三棵树由构建期的 fetch:widget / vendor:live2d 现取（见 frontend/README.md 的
+# 版本号一节与 Dockerfile.frontend 里的顺序说明）⇒ 不进上下文：
+# live2d_model/agent_2.moc3 这类贴图与模型文件加起来 3MB 上下，而更重要的是——本机那份
+# 可能带着 *.bak / 旧版本，混进上下文就等于把一个不确定的输入塞进镜像。
+/frontend/public/live2d-widgets
+/frontend/public/live2d_model
+/frontend/public/cubism5
+
+# ── agent 仓：只留源码（它是嵌套的独立仓，本仓 gitignore 不跟踪它，但 docker 看得见）──
+# ⚠️ 这个目录必须**存在**且叫这个名字（`<仓库根>/saudade-blog-agent`）：Dockerfile.agent
+#    的第一条 COPY 就是它，缺了会响亮地报 "COPY failed: file not found"。
+/saudade-blog-agent/.venv
+/saudade-blog-agent/.git
+/saudade-blog-agent/data
+/saudade-blog-agent/logs
+/saudade-blog-agent/eval/cache
+/saudade-blog-agent/.pytest_cache
+/saudade-blog-agent/.ruff_cache
+/saudade-blog-agent/.env
+/saudade-blog-agent/.env.local
+# 兜底：整个上下文里任何位置的字节码与本地备份都不进镜像
+**/__pycache__
+**/*.pyc
+**/*.bak
+**/*.orig
+
+# ── ② 运行期数据（宿主目录，容器里靠挂载）──────────────────────────────────────
+/uploads
+/logs
+/data
+
+# ── ③ 秘密与运行期生成的配置 ──────────────────────────────────────────────────
+# 两份 .env 的**底稿**（.env.example）也一并排掉：镜像里没有任何代码读它
+# （prepare.sh 是在宿主上读源仓的 .env.example 的），留着只是多个可能过期的副本。
+.env*
+deploy/docker/generated
+deploy/docker/.env
+deploy/.credentials
+
+# ── 与构建无关的重物/元数据（只排**根目录**这几处，写成绝对路径避免误伤嵌套目录）──
+/.git
+/.github
+/docs
+/iot

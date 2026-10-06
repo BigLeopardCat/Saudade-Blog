@@ -1,0 +1,59 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+#  Python agent（FastAPI + LangGraph，回环 :8010）
+#
+#  构建上下文 = 仓库根，agent 源码从上下文的 `saudade-blog-agent/` 进来。那个目录是**另一
+#  个仓**（BigLeopardCat/saudade-blog-agent，独立公开仓、有自己的 CI），必须克隆在
+#  `<仓库根>/saudade-blog-agent` 这个位置与名字上 —— 与裸机那套（install.sh）要求的一致。
+#  缺了它这一阶段会响亮地报 "COPY failed: file not found"，不会静默出一个空壳镜像。
+#
+#  ⚠️ 这里**不用** agent 仓自己的 `.dockerignore`：构建上下文是仓库根，docker 只认上下文
+#     根目录那一份（就是本仓根目录的 .dockerignore）。agent 仓那份在这个路径下是**无效**
+#     文件，所以干脆不放（一个"看着在起作用、其实没生效"的文件比没有更坏）。
+#
+#  ⚠️ 基础镜像 = python **3.10**，与 agent 仓的 `.python-version`（3.10）一致。换成别的
+#     小版本会让 uv 去下载一个托管的解释器（能跑通，但多一层下载、且与产线不是同一个
+#     解释器）。
+# ═══════════════════════════════════════════════════════════════════════════════
+FROM python:3.10-slim
+
+# tzdata：slim 镜像里没有 /usr/share/zoneinfo ⇒ `TZ=Asia/Shanghai` 是空操作，
+# 日志会差 8 小时，而 `utils/trace.py` 落的是 `<TRACE_DIR>/<YYYYMMDD>/` —— 差出的
+# 那 8 小时会让"今天的 trace"落到**昨天**那个目录里（症状是当天目录空着，很难反推）。
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends tzdata ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+ENV TZ=Asia/Shanghai
+
+# uv：**版本钉死**，与产线那台机器上 `uv --version` 同一个（0.11.28）。钉的理由与 rust 那条
+# 一样：`uv sync` 是按 uv.lock 复现环境，换一个 uv 大版本就有"复现出来的东西不一样"的余地。
+RUN python -m pip install --no-cache-dir uv==0.11.28
+
+WORKDIR /app
+COPY saudade-blog-agent/ /app/
+
+# ── uv 的运行期位置（都在**可写、且被宿主目录覆盖**的地方）──────────────────────
+# `.venv` 留在 /app（镜像内，只读使用）；缓存与托管的解释器写进 /app/data —— 那底下是
+# 宿主的持久目录（compose 挂的），于是"后台点一次重建向量图谱"要下载的那一套
+# （numpy/jieba/umap 的 wheel）只下一次，容器重建也不用重来。
+# UV_PYTHON_PREFERENCE=system：优先用镜像里这个 3.10（uv 默认偏好自己托管的解释器，
+# 那会平白多下载一个 Python）。
+ENV UV_PROJECT_ENVIRONMENT=/app/.venv \
+    UV_CACHE_DIR=/app/data/.uv-cache \
+    UV_PYTHON_INSTALL_DIR=/app/data/.uv-python \
+    UV_PYTHON_PREFERENCE=system \
+    UV_LINK_MODE=copy \
+    PYTHONFAULTHANDLER=1 \
+    PYTHONUNBUFFERED=1
+
+# --frozen：**只按 uv.lock 装**，构建期不重新解析依赖（pyproject 与 lock 不一致就直接红）。
+# --no-dev：运行时不需要 langchain（那条实验臂 agent/react_line.py 是 dev 组的依赖，
+# 只有 eval/experiments 与它的单测用得到）。生产链路一个字都不碰它 —— 这一条写在
+# agent 仓 pyproject.toml 的注释里；要在容器里跑那条 A/B 的话，得自己加 --dev 重建。
+RUN uv sync --frozen --no-dev
+
+COPY deploy/docker/agent-entrypoint.sh /usr/local/bin/agent-entrypoint.sh
+RUN chmod +x /usr/local/bin/agent-entrypoint.sh
+
+# 入口做两件事：把站点证书拼进 CA bundle（见脚本内的解释），然后 **exec** uvicorn
+# （exec 很要紧：uvicorn 要是留在 shell 后面，SIGTERM 到不了它，优雅停机就没了）。
+ENTRYPOINT ["/usr/local/bin/agent-entrypoint.sh"]

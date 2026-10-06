@@ -1,0 +1,74 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+#  Rust 后端（axum + sea-orm + MySQL）
+#
+#  构建上下文 = **仓库根**（compose 里 `context: ../..`）。三个 Dockerfile 共用同一个
+#  上下文，是为了少一类"dockerfile / COPY 到底相对谁解析"的坑；排重物靠根目录的
+#  `.dockerignore`（target/ 4.6G、frontend/node_modules 1.1G 全在里面）。
+#
+#  工具链钉 **1.92.0**：与 CI 逐字同一个版本（deploy.yml 里 setup-rust-toolchain 的那个）。
+#  不钉的话，自己部署的人装出来的二进制与线上不是同一个编译器产的，出了问题没法对照。
+#
+#  ⚠️ 这里跑的是 `cargo build --release`，**不是 cargo test**。两者的区别在这个仓不是
+#     形式上的：`src/routes/chat.rs` 的 `frame_prefixes_match_frontend` 用
+#     `include_str!("../../frontend/public/live2d-widgets/chat-stream.js")`，而那个文件
+#     不在 git 里（要靠 `npm run fetch:widget` 从 agent 仓取）。它是 `#[cfg(test)]` 里的
+#     编译期读入 ⇒ 构建不用它、测试离不了它。**别顺手往这里加 `cargo test`**：
+#     那会让镜像构建依赖一棵现在没被 COPY 进来的树。
+# ═══════════════════════════════════════════════════════════════════════════════
+FROM rust:1.92-slim AS build
+
+# ring（rustls 的密码学内核）需要一个 C 编译器。rust:*-slim 自己就装了 gcc / libc6-dev，
+# 这一行是幂等保险：装了就是 no-op，哪天官方镜像改了构成也不至于卡在这里。
+# 本仓没有 native-tls / openssl-sys（reqwest 与 sea-orm 都走 rustls）⇒ 不需要 libssl-dev。
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends gcc libc6-dev \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+COPY Cargo.toml Cargo.lock ./
+
+# 先在**只有依赖**的状态下编一遍：Cargo.toml 里 lib 与 bin 都在（src/lib.rs + src/main.rs），
+# 所以两个桩文件都得给 —— 少一个这里就报 "couldn't read src/lib.rs"。
+# 收益在增量：改 src/ 之后重建时，下面那一层只重编本仓那两个目标，axum/sea-orm 那一整棵
+# 十几分钟的编译直接复用。
+RUN mkdir -p src \
+ && printf '\n' > src/lib.rs \
+ && printf 'fn main() {}\n' > src/main.rs \
+ && cargo build --release --locked
+
+COPY src ./src
+# --locked = 只认 Cargo.lock 里钉的版本，构建期偷偷升级依赖是硬失败。
+# 与 CI 同一条纪律：依赖变了要显式改 Cargo.toml + 重新 lock。
+RUN cargo build --release --locked \
+ && cp target/release/saudade_blog_bin /usr/local/bin/saudade_blog_bin
+
+# strip 只影响体积（约 -30%）；镜像里没有 binutils 时跳过，**别让它挡构建**
+RUN strip /usr/local/bin/saudade_blog_bin || true
+
+
+# ── 运行期：debian + 一个二进制 ────────────────────────────────────────────────
+FROM debian:bookworm-slim AS runtime
+
+# tzdata 不是装饰：没有 /usr/share/zoneinfo 时 `TZ=Asia/Shanghai` 是**空操作**，日志与
+# 落库时间戳会静默差 8 小时（本仓的时区约定是 +08:00 钟面，见 docs/deployment-and-ops.md）。
+# ca-certificates 备着出去取证书链（R2 图床那条路是 rustls + 内置根证书，其实不读它，
+# 装上只为 bash/openssl 之类排障时行为正常）。
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends tzdata ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+ENV TZ=Asia/Shanghai
+
+WORKDIR /srv
+# 这一条对应一个**静默失败**：src/routes/monitor.rs 打不开日志文件的父目录时仍然返回 200，
+# 只是**一行都不写**（前端上报看着一切正常，日志里什么都没有）。所以父目录在镜像里就建好，
+# 并且 compose 里显式给 `SAUDADE_MONITOR_LOG` 绝对路径 —— 那句才是真正决定落到哪儿的。
+# （正常路径下 /srv/logs 会被宿主目录挂载覆盖，这一条是"没挂时也别静默"的兜底。）
+RUN mkdir -p /srv/logs/frontend
+
+COPY --from=build /usr/local/bin/saudade_blog_bin /usr/local/bin/saudade_blog_bin
+
+# 监听地址是代码里硬编码的 **127.0.0.1:3000**（src/main.rs:65-68，A9 那次安全加固）⇒
+# 这个容器必须走 host 网络（compose 里 `network_mode: host`），端口映射对它无效：
+# 映射只在容器有自己的网络命名空间时才有意义。**故意不写 EXPOSE** —— 它在这儿既不
+# 生效又会让人以为"改 port 就行"。
+ENTRYPOINT ["/usr/local/bin/saudade_blog_bin"]
