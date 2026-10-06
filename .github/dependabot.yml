@@ -32,7 +32,13 @@ updates:
       day: monday
       time: "07:00"
       timezone: Asia/Shanghai
-    open-pull-requests-limit: 3
+    # 3 太窄：major 与 minor/patch 共用这几个槽位，而 major 常常没人合（要读 changelog）
+    # ⇒ 槽位被长期占着，**补丁级的安全更新反而开不出来**。20261006 实测：`bytes` 与
+    # `rand` 早就有可用补丁（各一条告警），PR 列表里却一条都没有，原因是 cargo 的 3 个
+    # 槽全被 sea-orm / tower-http / minor-patch 组占满。放宽到 10 不是鼓励都合，
+    # 是让"该出现的那几条"能出现——合不合由 CI 红绿与 changelog 决定。
+    # （security update 不受这个上限约束，所以它只影响版本更新。）
+    open-pull-requests-limit: 10
     commit-message:
       prefix: chore
       prefix-development: chore
@@ -52,7 +58,9 @@ updates:
       day: monday
       time: "07:00"
       timezone: Asia/Shanghai
-    open-pull-requests-limit: 3
+    # 同 cargo：槽位被 major（vite 5→6、react-router 6→7 这类）占满时，
+    # 纯补丁的传递依赖更新（browserslist 这种）连 PR 都开不出来。
+    open-pull-requests-limit: 10
     commit-message:
       prefix: chore
       prefix-development: chore
