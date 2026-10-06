@@ -149,11 +149,22 @@ Saudade-Blog/
 │   ├── migration/            # 建库与增量迁移（入口 fresh_install.sh，**别手跑 *.sql**）
 │   ├── deploy/               # 部署脚本（CI 调用；也可手动兜底）
 │   ├── dev/                  # 开发辅助（如装 git hooks）
+│   ├── verify_uploads.py     # 核对"库里引用的图"与"盘上文件"（迁移/恢复的验收判据）
 │   └── healthcheck.sh        # 心跳探针（建议 cron 周期执行）
+├── uploads/                  # 上传件（图片 + avatars/）——默认位置，**不进 git**，见下
 ├── docs/                     # 设计文档：部署与运维 / 安全边界 / 向量图谱 / IoT
 ├── tests/                    # 后端集成测试（跟着 cargo test 跑；tests/manual/ 需活服务）
 └── .github/workflows/        # CI/CD（push 自动构建 + 部署）
 ```
+
+> **`uploads/` 是上传件的默认位置**：不配 `UPLOAD_DIR` 时落在这里，目录在**第一次上传时
+> 自动创建**（无需手工 mkdir），`.gitignore` 已忽略它。对"clone 下来跑跑看"这样正好；
+> **生产建议用 `.env` 的 `UPLOAD_DIR` 把它指到工作区之外**——它是全站唯一**只有盘上一份**
+> 的数据（文章正文与封面存的是指向它的 URL，库里的记录不会随文件一起回来）。
+>
+> 因此**迁移/恢复 = 两件一起走**：数据库 dump ＋ `UPLOAD_DIR` 那个目录。落地后跑一次
+> `python3 scripts/verify_uploads.py`，它会把"正在被引用却有文件缺失"的图连**是哪篇文章**一起
+> 列出来；那一节为零，就说明这次搬家是完整的。
 
 ## 快速开始
 
