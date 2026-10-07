@@ -15,7 +15,10 @@
 #   ④ 键集合不漂：prepare.sh 会写进两份 .env 的键，全都在两份 `.env.example` ∪
 #      install.sh ∪ Rust `env::var` 那张名单里；且 **IOT_ENABLED 不在 agent 那份里**
 #      （空串给 bool 字段 ⇒ pydantic ValidationError ⇒ agent 导入期崩，见 CONTRIBUTING）
-#   ⑤ 三个镜像里那几条"不写就会静默出错"的指令都在（构建顺序、产物断言、tzdata…）
+#   ⑤ 三个镜像里那几条"不写就会静默出错"的指令都在（构建顺序、产物断言、tzdata…），
+#      外加**后端那条 `find … touch`**：cargo 按 mtime 判新鲜度，而 BuildKit 的 COPY 保留
+#      clone 时的旧 mtime ⇒ 不刷新就等于"真源码一个字都没编、空桩上线"（20261007 实测）；
+#      有 cargo 的机器上还会把这条机制**可执行地复刻**一遍（⑤.1）
 #   ⑥ prepare.sh 写进 agent.env 的键，agent 那边真的有读取路径（Settings 字段 or os.environ）
 #   ⑦ db-init.sh 的控制流：拿一个**桩 mysql**（只录不连）跑五种场景 —— 空库/已有表/
 #      已有管理员/建库假成功/同名非管理员账号。这是它在上线前的唯一一次被执行。
@@ -242,6 +245,21 @@ l_vendor="$(grep -n 'npm run vendor:live2d' Dockerfile.frontend | cut -d: -f1 | 
 assert_has Dockerfile.backend 'mkdir -p /srv/logs/frontend' "后端镜像预建监控日志目录（打不开也返回 200 ⇒ 只能靠预建）"
 [ "$(grep -c 'cargo build --release --locked' Dockerfile.backend)" = 2 ] && pass "后端两次 --locked（桩层缓存 + 真源码）" \
     || fail "后端 cargo build 不是两次 --locked"
+# ⚠️ 桩层缓存有一处"删掉就静默"的前提（20261007 用户那台机器实测）：cargo 按 **mtime**
+# 判目标新不新，而 BuildKit 的 COPY **保留 clone 时的旧 mtime** ⇒ 真源码反比刚编出来的桩
+# 产物更旧 ⇒ cargo 报 `Finished` 一个字节都不编，`cp` 复制的还是 `fn main() {}`。
+# 症状：镜像构建全绿、容器退出码 0、无限 Restarting，二进制里没有一句启动日志。
+assert_has Dockerfile.backend 'find src -type f -exec touch' "真源码 COPY 进来后刷新 mtime（不刷新 ⇒ cargo 拿空桩当已最新）"
+l_copy="$(grep -n '^COPY src \./src' Dockerfile.backend | cut -d: -f1 | head -1)"
+l_touch="$(grep -n 'find src -type f -exec touch' Dockerfile.backend | cut -d: -f1 | head -1)"
+l_build="$(grep -n 'cargo build --release --locked' Dockerfile.backend | tail -1 | cut -d: -f1)"
+[ -n "$l_copy" ] && [ -n "$l_touch" ] && [ -n "$l_build" ] \
+    && [ "$l_copy" -lt "$l_touch" ] && [ "$l_touch" -lt "$l_build" ] \
+    && pass "顺序承重：COPY src（L$l_copy）→ touch（L$l_touch）→ 真构建（L$l_build）" \
+    || fail "COPY src / touch / 真构建 的顺序不对（L${l_copy:-无} / L${l_touch:-无} / L${l_build:-无}）"
+# 光有 touch 还不够：它哪天被删掉时，构建必须**响亮地失败**而不是静静出个空桩。
+assert_has Dockerfile.backend "grep -aq 'DATABASE_URL'" "构建期断言：产物里必须有 DATABASE_URL（空桩没有）"
+assert_has Dockerfile.backend 'stat -c %s target/release/saudade_blog_bin' "构建期断言：体积下限（真二进制 18.3 MiB，空桩差一个数量级）"
 # 只看**指令行**：这两个 Dockerfile 都有一段注释专门解释"为什么这里不许出现 X"，
 # 直接 grep 全文会被自己的注释判红（假红比漏判更坏——它会训练人忽略这条判据）。
 grep -v '^[[:space:]]*#' Dockerfile.backend | grep -q 'cargo test' \
@@ -260,6 +278,55 @@ if grep -rn 'sites-enabled' --exclude=check.sh --exclude=README.md --exclude='*.
     fail "有文件真的指向 sites-enabled（官方 nginx 镜像里没有这个目录，站点会静默 404）"
 else
     pass "没有任何**指令**指向 sites-enabled（只出现在解释性注释里）"
+fi
+
+# ── ⑤.1「那条 touch 是承重的」的**可执行复刻**（有 cargo 才跑，没有就跳过）──────────
+# 上面那条 grep 只证明"这行字还在"。这一条判的是**机制本身**：造一个同形状的小 crate
+# （lib+bin、零依赖、离线），照 Dockerfile 的次序走一遍 —— 桩构建 → 把**带旧 mtime** 的
+# 真源码放进去（模拟 BuildKit 保留 clone 那一刻的 mtime）→ touch → 重建 ⇒ 产物必须是真的。
+# 「不 touch 会怎样」只当**信息**打出来、**不作断言**：判据的前提不能长在 cargo 的实现
+# 细节上（哪天它改成按内容判新鲜度，那句话自理过期，但不该因此判红）。
+if command -v cargo >/dev/null 2>&1; then
+    D="$SCRATCH/mtime-probe"; mkdir -p "$D/src" "$D/real"
+    cat >"$D/Cargo.toml" <<'TOML'
+[package]
+name = "probe"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "probe"
+path = "src/lib.rs"
+
+[[bin]]
+name = "probe_bin"
+path = "src/main.rs"
+TOML
+    probe_run() {   # probe_run <touch|notouch>：照 Dockerfile 的次序跑一遍；产物是真的则返回 0
+        rm -rf "$D/target"
+        printf '\n' >"$D/src/lib.rs"
+        printf 'fn main() {}\n' >"$D/src/main.rs"
+        (cd "$D" && cargo build --release --offline >/dev/null 2>&1) || return 1
+        printf 'pub fn hi() -> u32 { 42 }\n' >"$D/real/lib.rs"
+        printf 'fn main() { println!("Server starting"); let _ = std::env::var("DATABASE_URL"); println!("{}", probe::hi()); }\n' >"$D/real/main.rs"
+        touch -d '2020-01-01 00:00:00' "$D/real/lib.rs" "$D/real/main.rs"
+        cp -p "$D/real/lib.rs" "$D/real/main.rs" "$D/src/"
+        [ "$1" = touch ] && find "$D/src" -type f -exec touch {} +
+        (cd "$D" && cargo build --release --offline >/dev/null 2>&1) || return 1
+        grep -aq 'DATABASE_URL' "$D/target/release/probe_bin"
+    }
+    if probe_run touch; then
+        pass "复刻：真源码带旧 mtime 进来、touch 之后重建 ⇒ 产物是真二进制（不是空桩）"
+    else
+        fail "复刻：touch 之后产物仍不是真二进制 —— Dockerfile 里那条救不回来了"
+    fi
+    if probe_run notouch; then
+        printf '  ℹ 对照组：这次不 touch 也编出了真二进制（touch 现在冗余但无害，仍要留着）\n'
+    else
+        printf '  ℹ 对照组：不 touch ⇒ 产物仍是空桩（用户那台机器上发生的正是这件事）\n'
+    fi
+else
+    skip "没装 cargo ⇒ 跳过「那条 touch 是承重的」的可执行复刻"
 fi
 
 # ═══ ⑥ 这些键 agent 那边真的读吗 ════════════════════════════════════════════════
