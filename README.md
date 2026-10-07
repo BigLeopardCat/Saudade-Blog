@@ -1,19 +1,64 @@
 # Saudade Blog
 
+[![License](https://img.shields.io/badge/license-GPL--2.0--or--later-blue.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/BigLeopardCat/Saudade-Blog?label=release)](https://github.com/BigLeopardCat/Saudade-Blog/releases)
+[![Agent Release](https://img.shields.io/github/v/release/BigLeopardCat/saudade-blog-agent?label=agent)](https://github.com/BigLeopardCat/saudade-blog-agent/releases)
+[![Deploy Blog](https://github.com/BigLeopardCat/Saudade-Blog/actions/workflows/deploy.yml/badge.svg?branch=cn_sora_blog)](https://github.com/BigLeopardCat/Saudade-Blog/actions/workflows/deploy.yml)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+
 个人博客系统。Rust 后端、React 前端、独立的 Python 对话 Agent，以及一个 Live2D 看板娘。
 另有一套可选的 ESP32 物联网接入（不装不影响其余部分，见 [iot/](iot/)）。
 
-License: GPL-2.0-or-later —— 两条版权声明（上游与本仓）与第三方组件说明见
-[LICENSE](LICENSE) 与 [THIRD-PARTY.md](THIRD-PARTY.md)。
+示例站点：<https://saudade.site> · **GPL-2.0-or-later**（两条版权声明——上游与本仓——与第三方
+组件说明见 [LICENSE](LICENSE) 与 [THIRD-PARTY.md](THIRD-PARTY.md)）
 
-示例站点：<https://saudade.site>
+## 站上有什么
+
+- **写作与内容**：Markdown 文章（内嵌编辑器）、分类与标签、封面裁剪、图库。
+- **阅读与互动**：站内搜索、阅读量/点赞/收藏、评论区（Markdown、表情、点赞与踩、
+  就地展开回复）、留言板、公告。
+- **看板娘对话**：站内问答、页面跳转、特效与夜间模式开关；接入 IoT 后还能把内容推到
+  ESP32 的 OLED 屏（见《架构一览》与会话时序）。
+- **展示柜**：文章向量空间图谱，可由后台一键按当前公开文章重算（见《文章向量空间图谱》）。
+- **后台**：内容/评论/留言板管理、用户与角色、对话额度、站点设置与待办、访问统计。
+- **可选件**：ESP32 物联网接入（MQTT over TLS + 设备控制台），不装不影响其余部分。
+
+## 快速开始
+
+前置：**Rust** stable、**Node.js** ≥ 18、**MySQL** 8。想跑 AI 对话再加 **Python** 3.10+。
+
+```bash
+git clone https://github.com/BigLeopardCat/Saudade-Blog.git && cd Saudade-Blog
+# 默认分支是 cn_sora_blog（不是 main），clone 下来就在它上面
+
+# 1) 建库。库名必须叫 saudade_blog，用脚本建而不是把 *.sql 按文件名顺序全跑一遍
+ALLOW_PRODUCTION_NAME=1 bash scripts/migration/fresh_install.sh saudade_blog -uroot -p
+
+# 2) 再建一个应用账号（后端进程用它连库，别拿 root 跑），并照 §2.1 授权
+# 3) 配环境变量；DATABASE_URL 与 JWT_SECRET 不配就起不来，对外部署还要改 SITE_URL
+cp .env.example .env
+
+# 4) 起后端（只监听回环，前面挂 nginx 才对外）
+cargo run
+```
+
+前端、agent 与 IoT 各自的起法，"哪些迁移脚本不能无脑跑""两个站点地址变量为什么都要设"
+这类问题，都在 [CONTRIBUTING.md](CONTRIBUTING.md) 的《2. 跑起来》里。每个环境变量干什么、默认值是什么，看
+[.env.example](.env.example)（它是这一类信息在本仓的唯一出处）。
+
+**想直接把它装到一台服务器上**（nginx、systemd ×2、TLS、MySQL 建库、logrotate 的完整走查），
+见 [deploy/README.md](deploy/README.md)——开头有一条命令的路径：`bash deploy/install.sh`。
+
+## 看板娘对话
 
 看板娘"泠月喵"可以回答关于站内文章的问题、跳转页面、开关页面特效、切换夜间模式；
 接入物联网后还可以把内容推送到 ESP32 的 OLED 屏上。她的对话能力来自一个独立部署的
 Python Agent（手写 LangGraph 图：**planner ⇄ execute → model → gate**）。对话记忆全部外置
 MySQL，agent 进程本身无状态：每次请求都是新线程，连续性由后端注入历史与摘要维持。
 
-首页另有一件展品：**文章向量空间图谱**。它把本站文章抽出的关键词按 embedding 投到三维空间，
+## 文章向量空间图谱
+
+首页有一件展品：**文章向量空间图谱**。它把本站文章抽出的关键词按 embedding 投到三维空间，
 点是词、相关的词之间连线，可拖动视角、双击词跳转文章，也能在下方输入框里做**向量检索**定位。
 点画多大按**文章热度**（浏览、点赞、收藏、评论加权）算，不按词的重要度。
 
@@ -21,7 +66,7 @@ MySQL，agent 进程本身无状态：每次请求都是新线程，连续性由
 **「站点设置 → 向量图谱」**有一个页面，点一下就在服务端按当前**公开文章**重算一遍——
 进度、内存占用与日志尾部轮询可见，跑完**刷新首页就是新图**。产物的主题词与 embedding
 由 agent 仓的建图脚本负责；重建任务把产物写到 agent 自己的目录后，由后端直接供出
-（`GET /api/public/graph/manifest` + `/api/public/graph/artifact/:file`，见下），
+（`GET /api/public/graph/manifest` + `/api/public/graph/artifact/:file`，见《给贡献者》的接口一览），
 仓库里 committed 的那份 `frontend/public/graph/` 只是"从没重建过的站点"的种子。
 
 归属站点闸在**运行期**判、不在构建期：产物里记的 `site` 与访客浏览器的 origin 不一致时，
@@ -32,17 +77,6 @@ MySQL，agent 进程本身无状态：每次请求都是新线程，连续性由
 词法 BM25（语料量小，且要为低配部署留内存余量）。**热度只影响画多大，不参与检索排序**
 （局部关键词回退仍按词的重要度打分，否则热门文章的词会垄断所有查询）。
 细节见 [docs/word-graph.md](docs/word-graph.md)。
-
-## 站上有什么
-
-- **写作与内容**：Markdown 文章（内嵌编辑器）、分类与标签、封面裁剪、图库。
-- **阅读与互动**：站内搜索、阅读量/点赞/收藏、评论区（Markdown、表情、点赞与踩、
-  就地展开回复）、河灯留言板与灯影集、友链、公告。
-- **看板娘对话**：站内问答、页面跳转、特效与夜间模式开关；接入 IoT 后还能把内容推到
-  ESP32 的 OLED 屏（见《架构一览》与会话时序）。
-- **展示柜**：文章向量空间图谱，可由后台一键按当前公开文章重算（见上文）。
-- **后台**：内容/评论/留言板管理、用户与角色、对话额度、站点设置与待办、访问统计。
-- **可选件**：ESP32 物联网接入（MQTT over TLS + 设备控制台），不装不影响其余部分。
 
 ## 架构一览
 
@@ -77,7 +111,7 @@ flowchart TB
 
 | 组件 | 职责 | 位置 |
 |---|---|---|
-| **Rust 后端**（Axum + SeaORM + MySQL 8） | 博客主流量（文章/分类/标签/友链/留言板）、登录鉴权（JWT）、聊天链路中枢（鉴权 → 历史入库 → SSE 逐帧转发） | `src/` |
+| **Rust 后端**（Axum + SeaORM + MySQL 8） | 博客主流量（文章/分类/标签/留言板）、登录鉴权（JWT）、聊天链路中枢（鉴权 → 历史入库 → SSE 逐帧转发） | `src/` |
 | **前端**（React 18 + Vite + antd + bytemd） | SPA；看板娘与聊天面板由 `live2d-widgets/`（boot.js 入口，纯 JS 子模块拆分）驱动 | `frontend/` |
 | **AI Agent**（FastAPI + 手写 LangGraph） | 看板娘大脑：对话生成、博客查询、导航/特效/夜间命令、IoT 设备显示。**独立 git 仓库** | `saudade-blog-agent/` |
 | **IoT**（EMQX 5 + Rust device-service） | ESP32 设备接入（MQTT over TLS）、OLED 显示、设备控制台（`/device-console/`）。**可选件**，出厂默认不启用 | `iot/`；服务本体不在本仓，见 [iot/device-service/README.md](iot/device-service/README.md) |
@@ -139,7 +173,7 @@ Saudade-Blog/
 ├── frontend/                 # React SPA（**不含**看板娘，见下文《看板娘前端》）
 │   ├── src/
 │   │   ├── frontHome/        # 前台页面（首页、文章页、展示柜…）
-│   │   ├── pages/            # 登录页、河灯讨论区（RiverBoard）、后台 Dashboard
+│   │   ├── pages/            # 登录页、留言板（RiverBoard）、后台 Dashboard
 │   │   ├── components/       # 通用组件（评论区、编辑器、徽章…）
 │   │   ├── apis/             # 后端接口封装
 │   │   └── router/           # 路由表
@@ -169,29 +203,6 @@ Saudade-Blog/
 > 因此**迁移/恢复 = 两件一起走**：数据库 dump ＋ `UPLOAD_DIR` 那个目录。落地后跑一次
 > `python3 scripts/verify_uploads.py`，它会把"正在被引用却有文件缺失"的图连**是哪篇文章**一起
 > 列出来；那一节为零，就说明这次搬家是完整的。
-
-## 快速开始
-
-前置：**Rust** stable、**Node.js** ≥ 18、**MySQL** 8。想跑 AI 对话再加 **Python** 3.10+。
-
-```bash
-git clone https://github.com/BigLeopardCat/Saudade-Blog.git && cd Saudade-Blog
-# 默认分支是 cn_sora_blog（不是 main），clone 下来就在它上面
-
-# 1) 建库。库名必须叫 saudade_blog，用脚本建而不是把 *.sql 按文件名顺序全跑一遍
-ALLOW_PRODUCTION_NAME=1 bash scripts/migration/fresh_install.sh saudade_blog -uroot -p
-
-# 2) 再建一个应用账号（后端进程用它连库，别拿 root 跑），并照 §2.1 授权
-# 3) 配环境变量；DATABASE_URL 与 JWT_SECRET 不配就起不来，对外部署还要改 SITE_URL
-cp .env.example .env
-
-# 4) 起后端（只监听回环，前面挂 nginx 才对外）
-cargo run
-```
-
-前端、agent 与 IoT 各自的起法，"哪些迁移脚本不能无脑跑""两个站点地址变量为什么都要设"
-这类问题，都在 [CONTRIBUTING.md](CONTRIBUTING.md) 的《2. 跑起来》里。每个环境变量干什么、默认值是什么，看
-[.env.example](.env.example)（它是这一类信息在本仓的唯一出处）。
 
 ## 部署流程
 
@@ -281,7 +292,7 @@ nginx error.log 增量扫描，异常追加 health.log。
 - **新增 Agent 工具**：在 `tools/base.py` 用 `@tool` 定义并加入 `_TOOL_REGISTRY`；若服务于
   固定流程任务，**必须**在 `skills.py` 注册对应技能（触发条件 + 工具序列模板 + 回复契约），
   否则 planner 无法可靠选择它——这是 agent 的核心约定。
-- **接口一览**：公开（登录、文章/分类/标签/友链/留言板、评论点赞踩、图谱产物
+- **接口一览**：公开（登录、文章/分类/标签/留言板、评论点赞踩、图谱产物
   `/api/public/graph/{manifest,artifact/:file}`、聊天 SSE `/api/chat/stream`、
   前端监控上报 `/api/monitor/log`）；**路径在公开表、但 handler 内要求登录**的只有一条——
   图谱检索 `/api/public/graph/query`（它要花 embedding 调用，不能真匿名开放）；

@@ -94,18 +94,22 @@ bash deploy/install.sh --dry-run -y --domain blog.example.com
 
 ## 0. 全貌：一次部署由什么组成
 
-```
-                    访客浏览器
-                        │ 443
-                    ┌───▼────┐
-                    │ nginx  │  唯一公网入口（静态直服 + 反代）
-                    └─┬────┬─┘
-        /            │    │  /api/*
-   frontend/dist     │    └──────────► Rust 后端  127.0.0.1:3000
-   （静态文件）       │                    │ SSE 转发
-                     │                    └────► Python Agent  127.0.0.1:8010
-                     │                              │
-              （可选）IoT 三入口              MySQL 127.0.0.1:3306
+```mermaid
+flowchart TB
+    B["访客浏览器"]
+    N["nginx :443<br/>唯一公网入口<br/>静态直服 + 反代"]
+    D["frontend/dist<br/>静态文件"]
+    R["Rust 后端<br/>127.0.0.1:3000"]
+    A["Python Agent<br/>127.0.0.1:8010"]
+    M[("MySQL 8<br/>127.0.0.1:3306")]
+    I["IoT device-service<br/>127.0.0.1:3100<br/>（可选件，默认不装）"]
+
+    B -->|"443"| N
+    N -->|"/ 及其他前端路由"| D
+    N -->|"/api/*"| R
+    N -.->|"/device-console/ · /device-api/*"| I
+    R -->|"SSE 转发"| A
+    R <-->|"sea-orm"| M
 ```
 
 **两个 git 仓库**（都是公开仓）：
