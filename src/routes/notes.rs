@@ -676,6 +676,20 @@ pub async fn create_note(
     }
 }
 
+/// 署名回填的判据（纯函数，便于单测）：**两条同时成立**才把当前操作者记成作者。
+///
+/// · `author_missing`：这一行的 `user_id` 还空着（老文章从没记过作者 / 失败的写入重试）；
+/// · `from_editor`：这一笔是**编辑器提交**（`title`/`content` 至少带来一个，见
+///   `update_note` 开头那行）——也就是"发布"这一路。
+///
+/// 缺第二条时，只改标签（`noteTags`）或只改状态（`{status,isTop}`）的写会把**写的人**
+/// 记成作者。这两条路的调用方都不是在发布文章（后台列表的快速改状态、agent 的
+/// `set_article_tags`/`set_article_status`），而"只在为空时补写"这条规矩会让错误署名
+/// **再也改不回来**——20261007 文章 23 被评测身份 uid 721 这样记名的现场见函数内注释。
+fn should_backfill_author(author_missing: bool, from_editor: bool) -> bool {
+    author_missing && from_editor
+}
+
 pub async fn update_note(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i32>,
@@ -708,10 +722,21 @@ pub async fn update_note(
         // 作者只在**为空**时补写：「谁发的」是发布那一刻的事实，别人后来编辑这篇文章
         // （改标题/改状态/换个管理员接手）都不该把署名改成最后保存的那个人。
         // 为空的两条路：老文章第一次被编辑时补上、以及失败的写入重试。
-        let author_missing = n.user_id.is_none();
+        //
+        // 20261007 补第二道判据 `from_editor`：**纯元数据写不算"发布"，写它的人也不因此
+        // 成为作者**。此前只要 `user_id` 为空，任何一次写（只带 noteTags 的标签写、只带
+        // {status,isTop} 的状态写）都会把**写的人**记成作者——而这两条路的调用方（后台列表
+        // 的快速改状态、agent 的 set_article_tags / set_article_status）都不是在发布文章。
+        // 生产实证：20261007 08:26 评测跑的 `set_article_tags` 以评测管理员身份（uid 721）
+        // 写文章 23 的标签，那一行当时 `user_id` 为 NULL ⇒ 站点上这篇老文章的作者被记成了
+        // `agent_test_admin_721`；而"只在为空时补写"这条规矩反过来让它**再也改不回来**
+        // ——主人自己反复在后台编辑器里保存都不动它（20261007 20:11 两次）。
+        // 编辑器提交（title/content 至少带来一个）才是"发布"那一路 ⇒ 老文章第一次被编辑
+        // 时照旧补上；纯元数据写一律不碰署名。
+        let backfill_author = should_backfill_author(n.user_id.is_none(), from_editor);
         let mut active_model: note::ActiveModel = n.into();
 
-        if author_missing {
+        if backfill_author {
             if let Ok(uid) = crate::auth_jwt::auth_uid(&state.db, &headers).await {
                 active_model.user_id = Set(Some(uid));
             }
@@ -1159,3 +1184,27 @@ pub async fn get_note_for_edit(
 
 // `#[cfg(test)] mod split_terms_tests` 随 `split_terms` 一起搬到了 `crate::search_core`
 // （20261006）：测试跟着实现走，否则改一份、另一份假绿。
+
+#[cfg(test)]
+mod tests {
+    use super::should_backfill_author;
+
+    /// 署名回填的四个组合（20261007 修的 bug 就在第一行之外的两个"false"上）。
+    ///
+    /// 这条判据红过的样子：文章 23 的 `user_id` 为空，agent 以评测管理员身份只写了一次
+    /// `noteTags` ⇒ 那一行被记成 `agent_test_admin_721`，而"只在为空时补写"让主人自己
+    /// 反复保存也改不回来。所以第二、三条不是"顺手也断言一下"，它们是这个 bug 的两半。
+    #[test]
+    fn 署名只认编辑器提交且只补空行() {
+        assert!(should_backfill_author(true, true), "老文章第一次被编辑器保存 ⇒ 补上作者");
+        assert!(
+            !should_backfill_author(true, false),
+            "只改标签/状态的元数据写不是发布 ⇒ 不许把写它的人记成作者"
+        );
+        assert!(
+            !should_backfill_author(false, true),
+            "已经有作者的行 ⇒ 后来的保存不许改写署名（谁发的≠最后保存的）"
+        );
+        assert!(!should_backfill_author(false, false));
+    }
+}
