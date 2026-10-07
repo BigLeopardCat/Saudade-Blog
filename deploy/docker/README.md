@@ -179,6 +179,25 @@ curl -skN -X POST https://$DOM/api/chat/stream \
 **发过文章之后再补一条更硬的**：问「站内搜索『部署』，列出前 3 篇的标题和链接」—— 回复里必须
 出现**你自己库里的真标题**。只有泛泛而谈、没有真标题，就还是上面那个 CA 问题。
 
+### 容器在 Restarting 循环里、日志一个字都没有（backend）
+
+`docker compose ps` 里 backend 反复 Restarting、`docker compose logs backend` 是空的 ——
+**先别查配置**，先判镜像里那个二进制到底是不是真程序：
+
+```bash
+docker compose run --rm --entrypoint sh backend -c \
+  'ls -l /usr/local/bin/saudade_blog_bin; grep -c DATABASE_URL /usr/local/bin/saudade_blog_bin'
+```
+
+期望：约 **18.3 MiB（1900 万字节上下）**、计数 ≥1。**几十万字节 / 计数 0 = 空桩**——那是
+"先只编依赖"那一层留下的 `fn main() {}`：cargo 按 **mtime** 判新鲜度，而 BuildKit 的 COPY
+**保留 `git clone` 那一刻的旧 mtime**，真源码反比刚编出来的产物更旧 ⇒ cargo 报 `Finished`、
+一个字节都不编，`cp` 复制的还是桩；桩退 0，重启策略就把它无限重起（这就是"没有报错"的原因）。
+
+治本是 `Dockerfile.backend` 里那条 `find … touch`，另有一道**构建期断言**（体积 + 必含
+`DATABASE_URL`）兜底 ⇒ 这个形状现在应当**在构建时就失败**。还能走到 Restarting，说明手上
+是旧镜像：`docker compose build backend`（改过的层之后的部分必然重建，不用 `--no-cache`）。
+
 ### 崩了贴什么
 
 ```
@@ -295,7 +314,9 @@ bash check.sh
 
 它判的全是"错了就静默"的那几件事：脚本语法与 `--dry-run` 的边界、compose 的解析/网络/重启语义
 与引用完整性、**nginx 配置与裸机侧逐字节一致**（附"换域名会变"的反面判据）、键集合不漂、
-「写进 `agent.env` 的每个键 agent 那边真的有读取路径」、镜像里那几条承重指令、`db-init.sh` 五种
+「写进 `agent.env` 的每个键 agent 那边真的有读取路径」、镜像里那几条承重指令（含后端那条
+**`find … touch`**——用一个小 crate 把"cargo 按 mtime 判新鲜度、不刷新就出空桩"这条机制
+**真跑一遍**复刻出来，没装 cargo 的机器上标 `↷ 跳过`）、`db-init.sh` 五种
 场景（用桩 mysql 跑：空库/已有表/已有管理员/建库假成功/同名非管理员账号），以及**把裸机那侧
 `deploy/install.sh` 的 `setup_env` 真跑一遍**（复制到 scratch、摘掉末尾的 `main` 再 source）：
 全新的 `.env` 里不许留下 `.env.example` 的占位值、已有的 `.env` 一个键都不许被改、

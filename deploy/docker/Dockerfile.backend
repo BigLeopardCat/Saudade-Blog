@@ -37,9 +37,38 @@ RUN mkdir -p src \
  && cargo build --release --locked
 
 COPY src ./src
+
+# ⚠️⚠️ 这一行 `find … touch` 是**承重**的，删掉它会静默产出一个空桩镜像（20261007 实测）。
+#
+# cargo 判"要不要重编"用的是 **mtime**：所有输入都比产物旧 ⇒ 认定已是最新，直接
+# `Finished … in 0.02s`、一个字节都不编。而 BuildKit 的 COPY **保留源文件的 mtime**
+# （= 构建者 `git clone` 那一刻），比上面几秒前刚编出来的桩产物**更旧** ⇒ 真源码 COPY
+# 进来之后 cargo 认为两个目标都还是新的，下面 `cp` 复制的仍然是那个 `fn main() {}`。
+#
+# 症状是本仓最警惕的那一类**静默**：`docker compose build` 全绿，容器退出码 0，然后无限
+# Restarting —— 二进制里没有一句启动日志、也没有 DATABASE_URL。本机没有 docker，是拿一个
+# 同形状的小 crate 复现的：不 touch ⇒ `Finished` + 空桩；只 touch（内容一个字不改）⇒ 真二进制。
+#
+# 用 `find src -type f` 而不是点名那两个文件：将来 src/ 里多了被 `include_str!` 读进去的
+# 非 .rs 文件，它同样是构建输入、同样要刷新 mtime。
+RUN find src -type f -exec touch {} +
+
 # --locked = 只认 Cargo.lock 里钉的版本，构建期偷偷升级依赖是硬失败。
 # 与 CI 同一条纪律：依赖变了要显式改 Cargo.toml + 重新 lock。
+#
+# 末尾那段是**空桩的出口判据**：上面那行 touch 万一哪天被删掉，构建必须在这里响亮地失败，
+# 而不是产出一个"构建得过、容器起得来、退 0、然后重启循环"的镜像。两条判据各自独立：
+#   · 体积：CI 产出的真二进制 19189784 字节（18.3 MiB，20261007 实测）；空桩差一个数量级，
+#     4 MiB 这条线离两边都够远。
+#   · `DATABASE_URL`：main.rs 缺它就 panic ⇒ 这个字面量在真二进制里是**结构上**必然存在的
+#     （实测真二进制里 'Server starting' / 'listening on' / 'JWT_SECRET' 也都在，但那几句
+#     是日志与别处的措辞，改字就假红，所以判据不取它们）。
 RUN cargo build --release --locked \
+ && size="$(stat -c %s target/release/saudade_blog_bin)" \
+ && if [ "$size" -lt 4194304 ] || ! grep -aq 'DATABASE_URL' target/release/saudade_blog_bin; then \
+        printf '\n✗ 编出来的 target/release/saudade_blog_bin 只有 %s 字节、里面没有 DATABASE_URL。\n  这是上面那次桩构建留下的 `fn main() {}` —— 真源码一个字都没参与编译（cargo 按 mtime 判"已是最新"）。\n  先看那条 find…touch 还在不在。\n' "$size" >&2; \
+        exit 1; \
+    fi \
  && cp target/release/saudade_blog_bin /usr/local/bin/saudade_blog_bin
 
 # strip 只影响体积（约 -30%）；镜像里没有 binutils 时跳过，**别让它挡构建**
