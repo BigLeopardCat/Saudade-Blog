@@ -248,7 +248,10 @@ console.log('\n⑥ 版本号：改了 widget 脚本必须 bump（nginx 对 live2
     // 20261008a = 「新增四枚表情包」那一轮（chat-render.js 的 fallback 内联清单从 8 名
     // 加到 12 名：困困/躺平/嫌弃/比心）。同样在 live2d-widgets 下 ⇒ 必须 bump，否则
     // 看板娘对话里这四枚一年内只显示成文本。
-    ok(ver === '20261008a', 'VER 已 bump 到本轮（20261008a）', { ver });
+    // 20261008b = 「新消息来了窗口不跟着往下滚」那一轮（chat-engine.js 的滚动语义：程序化
+    // 回底那一跳不再被读成"主人翻上去了"，且历史区有新内容时亮提示条）。同上 ⇒ 必须 bump，
+    // 不 bump 访客一年内还是那个滚到一半就停住的对话面板。
+    ok(ver === '20261008b', 'VER 已 bump 到本轮（20261008b）', { ver });
     const tsx = readFileSync(path.join(root, 'src/components/Live2dAgent/index.tsx'), 'utf8');
     ok(tsx.includes('boot.js?v=' + ver), 'Live2dAgent 的 ?v= 与 VER 一致');
 }
