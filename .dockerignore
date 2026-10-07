@@ -40,6 +40,11 @@
 /saudade-blog-agent/.ruff_cache
 /saudade-blog-agent/.env
 /saudade-blog-agent/.env.local
+# agent 仓的 `art-source/`（看板娘美术的原始 .psd，19 MiB）：**源码仓的素材，不是 agent 的
+# 构建输入**。Dockerfile.agent 把整棵 agent 树 COPY 进镜像 ⇒ 不排掉的话每次 build 都要把这
+# 19 MiB 发给 daemon、还要落进镜像层。它也不随 `docker compose up -d` 起任何作用。
+# 注：这只挡构建上下文；`git clone` agent 仓的人照样会拿到它（那是有意的——素材就该能被拿到）。
+/saudade-blog-agent/art-source
 # 兜底：整个上下文里任何位置的字节码与本地备份都不进镜像
 **/__pycache__
 **/*.pyc
