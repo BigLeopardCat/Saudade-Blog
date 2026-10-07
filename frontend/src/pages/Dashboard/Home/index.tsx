@@ -618,13 +618,26 @@ const Home = () => {
                                             onDragEnd={() => setDragId(null)}
                                         />
                                         <Checkbox checked={todo.done} onChange={() => toggleTodo(todo.id)} />
-                                        <Input
+                                        {/* 待办文字（20261007 从单行 `<Input>` 换成自增高的 `TextArea`）。
+                                            单行输入框按定义**不换行**：长待办只在框里露出前十几字，
+                                            剩下的要聚焦后拿方向键一个个挪才看得见 —— 实测 68 字的一条
+                                            在 287px 宽的框里 scrollWidth 是 571px，也就是说**一半多的
+                                            内容根本不在视野里**（症状就是"看不到这条待办是什么"）。
+                                            `autoSize` 让它随内容折行、行高自己涨，整条都读得到。
+                                            回车**仍然什么都不做**（与换之前那个单行框一致）：待办是一条
+                                            一件事，让它凭空多出一个换行只是往库里塞一个脏字符，跟"看得见"
+                                            这件事无关（要换行，文字自己会折）。 */}
+                                        <Input.TextArea
                                             className={'todo-text' + (todo.done ? ' done' : '')}
                                             value={todo.text}
                                             autoFocus={todo.id === focusId}
                                             onChange={(e) => updateTodo(todo.id, e.target.value)}
                                             onBlur={() => dropIfEmpty(todo)}
-                                            bordered={false}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Enter') e.preventDefault();
+                                            }}
+                                            autoSize={{minRows: 1}}
+                                            variant="borderless"
                                             placeholder="写点什么…"
                                         />
                                         {/* 每行自己的排期按钮：没排期只露一枚淡日历图标，

@@ -747,10 +747,15 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
             &:hover
               opacity: 1
 
+          // 待办文字（20261007 起是**多行**的 `Input.TextArea`，见 index.tsx 那段注释）。
+          // `flex: 1` + `min-width: 0` 与换之前同义：文字自己吃掉余下的宽度。多出来的一条是
+          // `resize: none` —— 这是个自增高的 textarea，右下角那枚拖拽手柄既没用（高度由内容
+          // 决定），又会正好压在后面那颗删除图标上。
           .todo-text
             flex: 1
             min-width: 0
             padding: 0
+            resize: none
             background: transparent
             font-weight: 600
             &.done

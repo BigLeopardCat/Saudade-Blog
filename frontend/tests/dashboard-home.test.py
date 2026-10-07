@@ -1300,6 +1300,82 @@ with sync_playwright() as p:
     pg.reload()
     pg.wait_for_timeout(600)
 
+    # ────────────────────────────────────────────────────────────────────────
+    # ⑳ 长待办：文字要换行把行撑开，不许在单行框里被切掉（20261007）
+    #
+    # 缺陷形态：待办文字此前住在一个**单行** `<Input>` 里，而单行输入框按定义不换行 ——
+    # 长待办只在框里露出前十几字，剩下的要聚焦后用方向键一个个挪才看得见，实际等于
+    # 「看不到这条待办是什么」。修法是把它换成 `Input.TextArea` + `autoSize`（行高随内容涨）。
+    #
+    # 判据故意写成一句**与元素类型无关**的话：**内容既不横向溢出、也不纵向溢出**（= 全在框里）。
+    # 原来那个 `<input>` 必然横向溢出；换行正常的 textarea 两个方向都不溢出 —— 所以这条
+    # 判据既抓得住旧形态，也不会因为将来换别的实现而失效。
+    print("⑳ 长待办读得全：文字换行把行撑开，不许被切掉")
+
+    LONG = ("把这一季度所有文章的分类与标签重新梳理一遍，顺便核对每篇的封面还在不在，"
+            "缺的那几张按图库里的原图补回去，补完再跑一次全站搜索确认排序没乱")
+
+    def text_probe(i):
+        return pg.evaluate("""(i) => {
+          const row = document.querySelectorAll('.todo-row')[i];
+          const el = row.querySelector('.todo-text');
+          const rb = row.getBoundingClientRect();
+          const eb = el.getBoundingClientRect();
+          return {fs: getComputedStyle(el).fontSize, lh: getComputedStyle(el).lineHeight,
+                  tag: el.tagName, sw: el.scrollWidth, cw: el.clientWidth,
+                  sh: el.scrollHeight, ch: el.clientHeight,
+                  rowH: Math.round(rb.height * 10) / 10,
+                  textH: Math.round(eb.height * 10) / 10,
+                  val: el.value};
+        }""", i)
+
+    def find_row(text):
+        return pg.evaluate("""(t) => [...document.querySelectorAll('.todo-row')]
+            .findIndex(r => r.querySelector('.todo-text').value === t)""", text)
+
+    short_idx = find_row("没排期的一条")          # 留作对照：不许跟着一起变胖
+    long_idx = find_row("今天要做的")             # 被灌长文本的那一条
+    check("（前置）两条基准待办都还在列表里",
+          short_idx >= 0 and long_idx >= 0, f"短 {short_idx} / 长 {long_idx}")
+    short_idx, long_idx = max(short_idx, 0), max(long_idx, 0)
+    before_short = text_probe(short_idx)
+
+    # 走真 UI 灌进去：fill() 触发的是 React 的 onChange，与主人手敲同一条路
+    pg.locator(".todo-row").nth(long_idx).locator(".todo-text").fill(LONG)
+    pg.wait_for_timeout(250)
+    long_box = text_probe(long_idx)
+    after_short = text_probe(short_idx)
+
+    check("（前置）长文本真的进去了", long_box["val"] == LONG, f"{len(long_box['val'])} 字")
+    check("长待办整条都在框里（横向不溢出）",
+          long_box["sw"] <= long_box["cw"] + 1,
+          f"scrollWidth {long_box['sw']} vs clientWidth {long_box['cw']}")
+    check("长待办整条都在框里（纵向不溢出）",
+          long_box["sh"] <= long_box["ch"] + 1,
+          f"scrollHeight {long_box['sh']} vs clientHeight {long_box['ch']}")
+    check("行被撑开了（这就是「展开」：一行 30px 装不下它）",
+          long_box["rowH"] > 34, f"行高 {long_box['rowH']}px")
+    check("短待办不跟着一起变胖（还是原来那么高）",
+          abs(after_short["rowH"] - before_short["rowH"]) <= 1 and after_short["rowH"] <= 36,
+          f"{before_short['rowH']} → {after_short['rowH']}px")
+
+    # 牙齿：把换行关掉（`wrap=off` 就是原来那个单行框的行为），同一段长文本必须立刻溢出。
+    # 这条红了说明上面「不溢出」那两条测的是空气（比如框被撑宽成整屏、或文本根本没进去）。
+    broken = pg.evaluate("""(i) => {
+      const el = document.querySelectorAll('.todo-row')[i].querySelector('.todo-text');
+      el.setAttribute('wrap', 'off');
+      el.style.whiteSpace = 'pre';
+      el.style.overflowX = 'auto';
+      const out = {sw: el.scrollWidth, cw: el.clientWidth};
+      el.removeAttribute('wrap');
+      el.style.whiteSpace = '';
+      el.style.overflowX = '';
+      return out;
+    }""", long_idx)
+    check("★ 判据有牙：关掉换行（= 原来那个单行框）⇒ 同一段文本立刻横向溢出",
+          broken["sw"] > broken["cw"] + 5,
+          f"关掉后 scrollWidth {broken['sw']} vs {broken['cw']}")
+
     br.close()
 
 print()
