@@ -20,8 +20,10 @@ FROM rust:1.92-slim AS build
 # ring（rustls 的密码学内核）需要一个 C 编译器。rust:*-slim 自己就装了 gcc / libc6-dev，
 # 这一行是幂等保险：装了就是 no-op，哪天官方镜像改了构成也不至于卡在这里。
 # 本仓没有 native-tls / openssl-sys（reqwest 与 sea-orm 都走 rustls）⇒ 不需要 libssl-dev。
+# findutils 同理是保险：下面那条"刷新 mtime"用的就是 `find`，而它缺席时的报错
+# （`find: not found`）会发生在**中间那一层**，读起来像"构建环境坏了"而不是"少个工具"。
 RUN apt-get update \
- && apt-get install -y --no-install-recommends gcc libc6-dev \
+ && apt-get install -y --no-install-recommends gcc libc6-dev findutils \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
