@@ -250,6 +250,7 @@ assert_has Dockerfile.backend 'mkdir -p /srv/logs/frontend' "后端镜像预建�
 # 产物更旧 ⇒ cargo 报 `Finished` 一个字节都不编，`cp` 复制的还是 `fn main() {}`。
 # 症状：镜像构建全绿、容器退出码 0、无限 Restarting，二进制里没有一句启动日志。
 assert_has Dockerfile.backend 'find src -type f -exec touch' "真源码 COPY 进来后刷新 mtime（不刷新 ⇒ cargo 拿空桩当已最新）"
+assert_has Dockerfile.backend 'install -y --no-install-recommends gcc libc6-dev findutils' "上面那条用的是 find ⇒ findutils 显式装着（缺席的报错长得像构建环境坏了）"
 l_copy="$(grep -n '^COPY src \./src' Dockerfile.backend | cut -d: -f1 | head -1)"
 l_touch="$(grep -n 'find src -type f -exec touch' Dockerfile.backend | cut -d: -f1 | head -1)"
 l_build="$(grep -n 'cargo build --release --locked' Dockerfile.backend | tail -1 | cut -d: -f1)"
