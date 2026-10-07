@@ -43,7 +43,7 @@ cargo run
 ```
 
 前端、agent 与 IoT 各自的起法，"哪些迁移脚本不能无脑跑""两个站点地址变量为什么都要设"
-这类问题，都在 [CONTRIBUTING.md](CONTRIBUTING.md) 的《2. 跑起来》里。每个环境变量干什么、默认值是什么，看
+这类问题，都在 [CONTRIBUTING.md](CONTRIBUTING.md)。每个环境变量干什么、默认值是什么，看
 [.env.example](.env.example)（它是这一类信息在本仓的唯一出处）。
 
 **想直接把它装到一台服务器上**（nginx、systemd ×2、TLS、MySQL 建库、logrotate 的完整走查），
