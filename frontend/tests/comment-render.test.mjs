@@ -105,6 +105,10 @@ console.log('渲染管线 —— 危险输入被剥掉：');
     const s2 = renderBlogMarkdown('贴贴 :贴贴: 啦');
     ok(/<img[^>]*src="\/stickers\/tietie\.png"/.test(s2) && /贴贴\s/.test(s2),
         '句子中间的表情同样转换，前后文字保留', s2);
+    // 20261008 新增那四枚：名字在清单里、素材路径也接上了（只加名字忘了放图会在这里露）
+    const s3 = renderBlogMarkdown(':比心: :困困: :躺平: :嫌弃:');
+    ok(['bixin', 'kunkun', 'tangping', 'xianqi'].every((f) => s3.includes(`/stickers/${f}.png`)),
+        '20261008 新增的四枚（比心/困困/躺平/嫌弃）都渲染成图', s3);
 }
 {
     // 未知的 :xx: 原样保留（stickers.ts 的既定语义），不该被当成表情
@@ -136,7 +140,7 @@ ok(!/escapeHtml/.test(strip(comp)), '没有在这里另写一份 escapeHtml');
 console.log('\n组件 —— 表情包清单不抄第二份：');
 ok(picker.includes('STICKER_NAMES') && picker.includes('STICKERS'),
     '选择器遍历 utils/stickers.ts 的清单（新增表情只改那一处）');
-ok(!/头疼|委屈|害羞|比耶|犯错|生气|贴贴|震惊/.test(strip(picker)),
+ok(!/头疼|委屈|害羞|比耶|犯错|生气|贴贴|震惊|困困|躺平|嫌弃|比心/.test(strip(picker)),
     '选择器里没有硬编码的表情名');
 ok(picker.includes('onPick(name)') && /`:\$\{name\}:`/.test(strip(picker)),
     '选中只回名字，由调用方拼成 :名字: 文本');
