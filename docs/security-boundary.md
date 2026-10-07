@@ -39,18 +39,18 @@ flowchart TB
 | `/api/public/graph/query` | Rust | **要求登录**（防匿名刷 embedding 调用） | 401 `{"ok":false,"reason":"login_required"}` ← 匿名 curl 实测 |
 | `/api/public/notes*` 等公开读 | 无（有意公开） | — | 200 |
 | `GET /api/public/notes/:id/stats` | 无（有意公开） | 阅读量/点赞数与"我点过没有"；未登录 ⇒ `liked:false`（**是成功，不是降级**） | 200 |
-| `POST /api/public/notes/:id/view`（20260930） | **无**（匿名写） | 阅读计数按天 `+1`。**没有身份可依 ⇒ 没有去重**：前端用 `localStorage` 按"访客+文章+当天"去重（见 `ReadArticle/index.tsx` 的 `saudaReadLog`），服务端只挡"文章不可见"（查不到即 404） | 200（无 token 也 200） |
-| `POST` / `DELETE /api/public/notes/:id/like`（20260930；**20261001 起匿名也可**） | Rust（handler 自身 `identify`） | **登录账号，或浏览器自报的 `X-Visitor-Key`**（两者都没有才拒）；**刻意挂 `public_routes` 而不是守卫域**——`protected_routes` 的 `auth_guard` 判的是管理员（`authz::can_access_console`），挪过去会把普通用户全 403。令牌在但不可用（过期/收回/**冻结**）时**不降级成匿名**，如实回原因 | 200 + `code:500`「未登录」（**不是 401**，同 §2 下方那条公开端点约定）；**匿名写是 200 成功** |
-| `GET /api/protected/stats/notes`（20260930） | Rust | `auth_guard`（仅管理员），与 `/api/protected/stats/users` 同族 | 401 |
+| `POST /api/public/notes/:id/view` | **无**（匿名写） | 阅读计数按天 `+1`。**没有身份可依 ⇒ 没有去重**：前端用 `localStorage` 按"访客+文章+当天"去重（见 `ReadArticle/index.tsx` 的 `saudaReadLog`），服务端只挡"文章不可见"（查不到即 404） | 200（无 token 也 200） |
+| `POST` / `DELETE /api/public/notes/:id/like`（**匿名也可**） | Rust（handler 自身 `identify`） | **登录账号，或浏览器自报的 `X-Visitor-Key`**（两者都没有才拒）；**刻意挂 `public_routes` 而不是守卫域**——`protected_routes` 的 `auth_guard` 判的是管理员（`authz::can_access_console`），挪过去会把普通用户全 403。令牌在但不可用（过期/收回/**冻结**）时**不降级成匿名**，如实回原因 | 200 + `code:500`「未登录」（**不是 401**，同 §2 下方那条公开端点约定）；**匿名写是 200 成功** |
+| `GET /api/protected/stats/notes` | Rust | `auth_guard`（仅管理员），与 `/api/protected/stats/users` 同族 | 401 |
 | agent `/chat`、`/chat/stream` | **无**（回环）＋ 身份断言 | 信任前提 = 回环（loopback）；Rust 另签一条 60s 断言声明"这个 uid 是认证过的" | 缺头 401（开关已开，实测） |
-| agent `/review`（20260925 起同款） | **无**（回环）＋ 身份断言 ＋ 并发闸 4 | 同上；调用方是 Rust 的 `talks.rs`。**Rust 必须先发头**——开关在生产 .env 里已是 1 | 缺头 401（实测）；闸满 503 |
+| agent `/review`（同款） | **无**（回环）＋ 身份断言 ＋ 并发闸 4 | 同上；调用方是 Rust 的 `talks.rs`。**Rust 必须先发头**——开关在生产 .env 里已是 1 | 缺头 401（实测）；闸满 503 |
 | agent `/graph/query` | **无**（回环） | 信任前提 = 回环（loopback）；**没有**断言（它不涉及身份，失败一律降级 200 + ok=false） | 同机的任何进程都能调 |
 
 **agent 侧为什么可以没有鉴权**：它只听回环，公网到不了；能调它的只有同机的 Rust 与
 （理论上）同机的其他进程。这是**单机部署下的取舍**，代价是：
 "**能在服务器上执行命令的人 = agent 的全权限**"。
 
-### 2.1 服务间身份断言（20260917 落地，20260920 加角色）
+### 2.1 服务间身份断言（uid + 角色）
 
 上面那条"回环即信任"的假设，在**身份**这一维已经不用再靠它兜：Rust 每次转发对话时用同一个
 `JWT_SECRET` 签一条短时效断言（`aud="agent"`、60 秒、`X-Agent-Assertion` 头），agent 验签通过
@@ -58,15 +58,15 @@ flowchart TB
 
 - 判据在 agent `server.py::_verify_assertion_claims`（手写 HS256 校验，只依赖标准库）；
 - **开关 `AGENT_REQUIRE_ASSERTION` 在部署的 .env 里已经是 1**：缺头/验签失败一律 401
-  （20260925 实测：不带头的 `POST 127.0.0.1:8010/review` → `401 缺少有效的服务间身份断言`）。
+  （实测：不带头的 `POST 127.0.0.1:8010/review` → `401 缺少有效的服务间身份断言`）。
   **代码默认值仍是 False**（`config/settings.py`），所以"滚动上线"的老口径只在
   "新增一个接断言的端点"时适用，且方向是**先让 Rust 发头、再让 agent 核**；
-- **20260920 起断言里多一个 `role`**（取自 DB 的 `user.role`，不信登录 token 里可能是
+- **断言里还有一个 `role`**（取自 DB 的 `user.role`，不信登录 token 里可能是
   7 天前的角色）：agent 侧据此做**能力判据**（见 `saudade-blog-agent/docs/secretary.md`）。
   角色缺失/未知 = **零权限**，由 agent 的 shadow 模式先观测不拦截。
 - **取值域**（Rust `src/authz.rs::KNOWN_ROLES` ↔ agent `agent/principal.py::KNOWN_ROLES`，
   跨语言契约，改一侧须同步另一侧 + 两侧单测）：`admin` / `superadmin` / `secretary` /
-  `user` / `zako`（20261002 新增）。**`zako`（杂鱼）是唯一一个"零工具"角色**：能力边界
+  `user` / `zako`。**`zako`（杂鱼）是唯一一个"零工具"角色**：能力边界
   不是靠授予表配出来的，而是四层收口里最硬的那一层——agent 的 `planner_node` 顶部短路
   让 `execute` 节点在本请求里**一次都不会被进入**（另外三层是技能可见性 / native schema /
   `scopes_for(zako) == 空集`，都是软的：authz 在 shadow 档下只记账不拦）。详见
@@ -75,12 +75,11 @@ flowchart TB
 ⚠️ 这条断言只解决"**uid 是不是真的**"，不解决"**这台机器上谁能调 agent**"（回环边界照旧）；
 一旦 agent 要跨机部署（或容器网络不再是 loopback），还是要加真正的服务间凭据（见 §6）。
 
-### 2.2 agent → Rust 的代调通道（20260921 新增，管理助手）
+### 2.2 agent → Rust 的代调通道（管理助手）
 
-上面那条是 **Rust → agent**；20260921 起反方向多了一条：agent 要读后台数据（留言审核状况、
-用户统计），于是**以本轮发起人的身份**去调 `/api/protected/*`。同日第二轮把这条通道的
-**写**方向也开了（标签创建、文章状态/置顶、文章标签）；**20260922 起写面扩到九件**
-（标签改名/改色/换父级/换层级、删标签、分类增改删，见 §2.2 末段）。
+上面那条是 **Rust → agent**；反方向还有一条：agent 要读后台数据（留言审核状况、用户统计）、
+也要代主人**写**（标签增改删与换层级、分类增改删、文章状态/置顶/文章标签、公告、留言复核与
+删除，共十四件），于是**以本轮发起人的身份**去调 `/api/protected/*`。
 
 - **怎么代**：`tools/base.py` 用本轮的 uid 现签一条 **60 秒** HS256 JWT（payload 只有
   `sub`/`exp`/`role`，**不带 `aud`**——Rust 的 `verify_token` 用 `Validation::default()`，
@@ -109,14 +108,14 @@ flowchart TB
 之间插 U+200B 零宽空格——它不是 Unicode 空白，Python 与 JS 的 `\s` 都不匹配，所以两侧的
 命令行识别一起失效，而文本仍然可读）。
 
-**写方向（20260921 第二/三轮）多出的信任边界**——这里有一条**新的通道形态**：
+**写方向多出的信任边界**——这里有一条**新的通道形态**：
 
 - **门的顺序**：`uid<=0` 不发请求 → scope 授权（`write.console`，`_HARD_SCOPES`）→ 同意
   （本轮消息必须是明确命令）→ 目标有据（`article_id` 来自本轮帧/页面上下文/用户点到的数字）
   → 工具自身 fail-closed（认不出的颜色不许静默回落成哈希色）。任何一环不过 = **零执行**。
   **注意判据看到的是真实输入形态**：本轮用户消息带 `[当前问题]: ` 系统锚点，判据入口必须先剥
-  这个壳（`authz._strip_system_tags`；不剥的话锚定判据一条都命不中——20260921 实测，
-  明确命令也被判成"没表达意图"，见 `saudade-blog-agent/docs/secretary.md` §3.4/§5.3）。
+  这个壳（`authz._strip_system_tags`；不剥的话锚定判据一条都命不中，明确命令也会被判成
+  "没表达意图"，见 `saudade-blog-agent/docs/secretary.md` §3.4/§5.3）。
 - **确认弹窗**（`__CONFIRM__:` 帧）：写操作没被判成明确命令时，agent 不执行，而是下发一个
   确认框（通用协议：问题 + N 个选项 + 令牌）。用户点「确定」→ 前端发一条**隐藏确认请求**
   （带 `confirm_token`）。
@@ -133,13 +132,13 @@ flowchart TB
   不防"本地能读到自己 SSE 流的人"（那个人的身份本来就是令牌里的 uid）。另外弹窗轮**零 LLM、
   零执行且路由到 END**，所以那一轮的叙述不可能声称"已完成"。
 
-**20260922 写面扩容 + 一条会批量改写文章数据的端点**：写工具从三件扩到九件（标签改名/改色/
-换父级/换层级、删标签、分类增改删），并新增 `POST /api/protected/tag/move`。判据同前
-（`write.console` + 同意 + 目标有据），但"目标"这一轮起可以是**名字**——工具在 execute 阶段对着
+**一条会批量改写文章数据的端点**：标签与分类那五件走 `write.console`，其中
+`POST /api/protected/tag/move` 最危险。判据同前
+（`write.console` + 同意 + 目标有据），但"目标"可以是**名字**——工具在 execute 阶段对着
 **实时字典**解析成 id，解不出（查无此名/歧义/层级不符）即**零写 + 如实说明**，绝不猜、绝不顺手
 新建。**`tag/move` 是唯一能在一次请求里改写多篇文章数据的在线接口**，风险与约束写在这里：
 
-- **什么时候会碰文章数据**：一级↔二级互转时若新旧 id 不同（20260919 起新分配的二级 id ≥ 10000，
+- **什么时候会碰文章数据**：一级↔二级互转时若新旧 id 不同（新分配的二级 id ≥ 10000，
   这类标签升级必然走新 id），要重写 `note.tags`。换父级（二级→二级）不动 `note.tags`、id 不变，
   整个操作**可逆**。
 - **重写纪律**：只重写**真正引用该标签**的行；按 `,` 切开逐个数值比较（**绝不 `String::replace`
@@ -154,11 +153,10 @@ flowchart TB
   （把引用从所有文章上摘掉），删分类是 `ON DELETE SET NULL`（文章变成没有分类）。用户拍板
   「任何标签都能删，弹窗确认即可」——**代价靠确认卡说清，而不是靠禁止**。
 - **测试与残留**：`test_tag_admin.py`（离线、进 CI）+ golden 零真写用例 + 活体探针（真写后**必须
-  复原**，断言读后端真值而不读工具回执）。探针曾把一条建分类留在生产库（planner 转写名字吃掉
-  首尾下划线 ⇒ 按整名匹配的清理没认出来），**已按 token 认人修掉并清理**——凡是"探针自己建的
-  东西"，清理判据不能依赖模型转写后的字面值。
+  复原**，断言读后端真值而不读工具回执）。**凡是"探针自己建的东西"，清理判据不能依赖模型
+  转写后的字面值**——按 token / 后端真值认人，否则改名就会留下清理不掉的残留。
 
-**20260922 再扩容两族 + 一条身份地基（同一天两批）**：写面从九件到十四件——
+**另外两族 + 一条身份地基**：
 
 - **公告三件**（代发/改/删）：写面里唯一**对全体访客可见**的动作（公告挂首页）。因此
   `authz._ALWAYS_CONFIRM_TOOLS` 把这三件**结构性**排除在"同轮命令即确认"之外（哪怕
@@ -184,13 +182,12 @@ flowchart TB
   说的是假话："我其实没有去站里查过"，可系统确实查过）。豁免判据 = 计划注记带
   `_LEDGER_NOTE_PREFIX`（注记是系统产物，narrator 写不进去）。
 
-### 2.3 登录令牌的生命周期（20260926：从"只能等它过期"到"能当场作废"）
+### 2.3 登录令牌的生命周期（代次收回）
 
-**改之前的事实**：登录令牌是**自包含的 HS256 JWT**
-（`sub`/`exp`/`role`，TTL **7 天**，密钥 `JWT_SECRET`）。自包含的含义是**校验只需要密钥、不需要
-任何服务端状态**——好处是零查询，代价是**签发之后谁也收不回来**：改密码、踢设备、封账号，
-在旧形态里一件都做不到，唯一的"收回"就是等 7 天。这不是实现疏忽，是这套令牌形态的**结构性
-后果**；要收回就必须往服务端引入状态，没有第三条路。
+登录令牌是**自包含的 HS256 JWT**（`sub`/`exp`/`role`，TTL **7 天**，密钥 `JWT_SECRET`）：
+校验只需要密钥、不需要任何服务端状态 ⇒ 零查询，但**签发之后谁也收不回来**——改密码、踢设备、
+封账号在纯自包含形态下一件都做不到，唯一的"收回"就是等它过期。要收回就必须往服务端引入状态，
+没有第三条路。
 
 **现在的形态**：`user` 表加两列（迁移 `scripts/migration/user_status_token_version_20260926.sql`）——
 `status`（`0` 正常 / `1` 冻结）与 `token_version`（令牌代次，**只增不减**）。签发的 JWT 里多一个
@@ -199,16 +196,14 @@ flowchart TB
 - **判据只有一个出口**：`src/authz.rs::check_token(status, token_version, claims_ver)`。
   `auth_uid`（`src/auth_jwt.rs`）是 Rust 侧**唯一的身份出口**——handler 不再自己解 token，
   而是调它，于是"新增一个端点忘了检查"这条最典型的绕过通道**结构上不存在**。
-  这句承诺当天就被验证过两次：`graph.rs`（向量图谱查询）与 `talks.rs`（河灯）各有一个
-  手写的 `current_uid`，**只验签不查库** ⇒ 冻结一个账号之后它照旧能刷 embedding 查询、
-  照旧能放河灯（`talks.rs` 那处还有八个别名调用点）。两处都改成 `auth_uid` 的薄壳，
-  并加了一条**结构锁**单测：`cargo test --lib authz::tests::解析令牌的入口只有两处`
-  遍历 `src/**/*.rs`，断言只有 `auth_jwt.rs`（出口）与 `middleware.rs`（后台闸，它必须
-  另起一份因为要区分 401/403）可以出现那个解析函数的名字；变异探针验过（把 `talks.rs`
-  改回旧写法，测试立刻红并点出文件名）。**"唯一出口"是可被验证的，不是自称的。**
-  结构锁证明的是"接线是对的"，**行为**另由 §7⑫ 探针在真链路上验：冻结中的令牌打
-  `POST /api/public/graph/query` → 401、打 `GET /api/protect/board/mine` → 「请先登录」。
-  两条反过来的写法（"我改成调 `auth_uid` 了所以肯定生效"）都是推理，不是证据。
+  这条"唯一出口"由两条性质不同的锁撑着，缺一不可：**结构锁**
+  `cargo test --lib authz::tests::解析令牌的入口只有两处` 遍历 `src/**/*.rs`，断言那个解析
+  函数的名字只允许出现在 `auth_jwt.rs`（出口）与 `middleware.rs`（后台闸，它必须另起一份，
+  因为要区分 401/403）；**行为锁**是 §7⑫ 的真链路探针（冻结中的令牌打
+  `POST /api/public/graph/query` → 401、打 `GET /api/protect/board/mine` → 「请先登录」）。
+  结构锁只证明"接线是对的"，行为锁才证明"真的生效"——反过来写（"我改成调 `auth_uid` 了
+  所以肯定生效"）是推理，不是证据。历史上有两处手写的 `current_uid`（`graph.rs`、`talks.rs`
+  及其八个别名调用点）只验签不查库，现已全部改走 `auth_uid` 的薄壳。
 - **两种令牌靠"有没有代次声明"区分**（`Claims.ver: Option<i32>`，不是 `i32`）：
   - `Some(v)` = **客户端持有的登录令牌**，逐次比对，改密码/冻结即失效；
   - `None` = **没有代次声明**，只判冻结、跳过代次比对。谁属于这一支：①部署那一刻还活着的
@@ -248,7 +243,7 @@ flowchart TB
 **代价**：每个认证请求多**一次 `user` 主键查询**。这是"能收回"的
 入场费，不是可优化项——无状态与实际收回在定义上互斥。`auth_guard`（后台）本来就在按
 `claims.sub` 查库判角色，所以那一侧是零增量；增量在**原本不查库**的前台接口（`profile` /
-`todos` / `conversation` / `chat`）：它们此前只验签，现在多一次 PK 命中。单机 MySQL、
+`todos` / `conversation` / `chat`）：它们只验签、不查库，现在多一次 PK 命中。单机 MySQL、
 QPS 量级在个位数，这个代价可以忽略；规模上去之后的下一步是**缓存代次**（键 = uid，
 失效判定靠冻结/改密码这两个写入点主动删键），而不是退回无状态。
 
@@ -262,14 +257,14 @@ QPS 量级在个位数，这个代价可以忽略；规模上去之后的下一�
 ## 3. 传输安全
 
 - **agent → 外部 HTTP**：`tools/base.py` 的共享 `httpx.Client` 使用**默认的 TLS 校验**
-  （20260916 修：原为 `verify=False`）。这个 client 不只打自家站点公开 API，还打**第三方**
+  （**曾误设为 `verify=False`，已修**）。这个 client 不只打自家站点公开 API，还打**第三方**
   `https://wttr.in`（天气工具），关校验等于给第三方响应体开了一道中间人口子——而响应会进 prompt。
-  两个域名的证书链都正常（实测 `verify=True` 均 200），所以关校验从来不是"必需"。
+  两个域名的证书链都正常（`verify=True` 均 200），所以关校验从来不是"必需"。
   `test_hardening.py` 里有一条断言盯着 SSLContext 的 `verify_mode == CERT_REQUIRED`。
 - **IoT 链路**：设备侧 `mqtts://<你的域名>:8883`（TLS），`device-api` 复用的就是博客 JWT。
 - **Rust → agent**：回环 HTTP（不加密）。与本条边界假设一致：回环不设防。
 
-### 3.1 服务器文件权限（20260925 收紧，`chmod` 是命令、不改代码）
+### 3.1 服务器文件权限（`chmod` 是命令、不改代码）
 
 | 对象 | 权限 | 依据 |
 |---|---|---|
@@ -280,7 +275,7 @@ QPS 量级在个位数，这个代价可以忽略；规模上去之后的下一�
 属主仍是跑服务的那个用户、三个服务都以它运行 ⇒ **不重启、不换属主**；实测重启后 `agent.log`
 照常追加（systemd 以 root 打开 append 目标，服务通过继承的 fd 写）。
 
-## 4. 输入限额（20260916 新增，`server.py`）
+## 4. 输入限额（`server.py`）
 
 输入全部经 Rust 转发（回环 + 已鉴权），所以限额防的**不是陌生人**，而是：前端出 bug 塞了畸形请求、
 被塞超长字段白烧 token、同机的其他进程乱调把 worker 拖垮。
@@ -296,13 +291,13 @@ QPS 量级在个位数，这个代价可以忽略；规模上去之后的下一�
 | `/graph/query` 的 `q` | 128 字符 | 前端本就截到 64（`locate.ts QUERY_MAX`） |
 | `/review` 的 `content` | 4000 字符 | 留言（河灯，`talks.rs`）本身 **500 字**上限，留 8 倍余量；模型只取前 500 |
 | 并发流（每 worker） | 8 → **503**（排队 3s 仍拿不到） | LLM 流是最贵资源（单次最长 120s，`llm_timeout`）；无闸时并发只会一起排队到超时 |
-| `/review` 并发 | 4 → **503**（排队 3s） | 20260925 新增的**独立**小闸：此前它不占任何闸，谁连得上 8010 就能免费烧模型额度。刻意不共用对话那 8 个槽位（留言审核是同步短任务，抢槽位会让留言高峰把对话打成 503）；`threading.BoundedSemaphore` 版，因为它是 `sync def`（跑线程池、不占事件循环） |
+| `/review` 并发 | 4 → **503**（排队 3s） | **独立**小闸：不占任何闸的话，谁连得上 8010 就能免费烧模型额度。刻意不共用对话那 8 个槽位（留言审核是同步短任务，抢槽位会让留言高峰把对话打成 503）；`threading.BoundedSemaphore` 版，因为它是 `sync def`（跑线程池、不占事件循环） |
 
 落点：字段级是 Pydantic `Field`/`field_validator`（`ChatRequest`、`GraphQueryRequest`），
 体积是 `body_limit_middleware`，并发是 `_try_acquire_slot`（槽位由 `/chat/stream` 的生成器
 `finally` 归还，所有退出路径都经过那里）。
 
-**另一类是"形状"而不是"长度"**（20260925）：`current_url`/`page_title`/`current_effects`/
+**另一类是"形状"而不是"长度"**：`current_url`/`page_title`/`current_effects`/
 `current_darkmode` 由浏览器给、Rust 原样转发，却拼进 `[System: …]` 那一段 ⇒ 拼之前先剥掉
 换行、方括号、分号、等号（`server._ctx_field`），否则访客能在自己的字段里长出第二段
 （伪造 `current_darkmode=on`）。`get_weather` 的城市名同理（只接受中英文、空格与 `, . ' -`，
@@ -325,8 +320,8 @@ QPS 量级在个位数，这个代价可以忽略；规模上去之后的下一�
   3. **token 照常计费**：取消不能回收已经发出去的那次调用。
   ⇒ 想真正掐断在途请求，得换异步 LLM 客户端 + 真取消（anyio cancel scope / httpx abort），
   属架构级改动；当前是"检查点拦住所有**下一步动作**、拦不住**正在路上的那一次请求**"的取舍。
-- 写操作安全：`execute` 在**调用工具之前**检查取消（节点入口 + **逐 spec**，20260916 补——此前
-  只在入口检查一次，`[导航, 屏显]` 这类多写操作清单在中途断连时会把屏显也写掉）。中途取消用
+- 写操作安全：`execute` 在**调用工具之前**检查取消，**节点入口与每一个 spec 各查一次**
+  （只在入口查一次的话，`[导航, 屏显]` 这类多写操作清单在中途断连时会把剩下的也写掉）。中途取消用
   `break` 而不是 `raise`：已执行项的**回执必须留下**（那是真发生过的事实）。
 - 文档：`saudade-blog-agent/docs/问题记录.md`（**在 agent 仓里，不在本仓 `docs/` 下**）有完整的
   事故与机制记录；针对性回归见 `saudade-blog-agent/tests/test_cancel.py`（节点入口检查 /
@@ -336,30 +331,23 @@ QPS 量级在个位数，这个代价可以忽略；规模上去之后的下一�
 
 | 缺口 | 影响 | 现状 |
 |---|---|---|
-| **令牌收回只到"账号"粒度，没有"设备"粒度** | 用户想问"我现在登录着哪些设备、把那一台踢掉"时答不了；能做的只有"改密码/被冻结 ⇒ 该账号全部令牌作废" | 20260926 起代次收回（见 §2.3）解决了"能不能收回"，**没解决"收回哪一枚"**——按下沉到单令牌就得上 `jti` + 黑名单（每枚一张表、随过期时间清理），而本系统的实际需求是"全家一起下线"，代次计数器用一行整数办完了同一件事。真要做设备管理，那条路是 `jti` 而不是把代次拆细 |
+| **令牌收回只到"账号"粒度，没有"设备"粒度** | 用户想问"我现在登录着哪些设备、把那一台踢掉"时答不了；能做的只有"改密码/被冻结 ⇒ 该账号全部令牌作废" | 代次收回（见 §2.3）解决了"能不能收回"，**没解决"收回哪一枚"**——按下沉到单令牌就得上 `jti` + 黑名单（每枚一张表、随过期时间清理），而本系统的实际需求是"全家一起下线"，代次计数器用一行整数办完了同一件事。真要做设备管理，那条路是 `jti` 而不是把代次拆细 |
 | **没有短令牌 + refresh 轮换** | 令牌一旦泄漏，在 `exp` 之前一直可用（`ver` 只能让**服务端主动**作废，挡不住"服务端不知道"的持有者） | 7 天单令牌（见 §2.3）。企业做法是 access 短（5–15 分钟）+ refresh 长且**一次性轮换**（重放旧 refresh 即判定失窃并全族作废）；本系统是单人博客，改密码 + 冻结两条主动通道已覆盖真实需求，**没有为此加一张 refresh 表**。要加时注意：轮换的判据是"一个 refresh 用了两次"，需要服务端存已用过的序列 |
 | **冻结/收回管不到物联网那条链路**（device-service 与 EMQX broker） | 一个被冻结账号手里那枚 7 天令牌，在过期前**仍然是一枚合法身份**：`device-service` 收它、`/device-api/*` 照走（范围是它自己名下的设备）、`mqtts` 连接照建（`device-console` 复用的就是同一枚 `localStorage.tokenKey`）。即"冻结 = 全站立刻下线"这句话**对 IoT 那半边为假** | **未修**。结构性原因：那两个验证者**各自解一遍同一个 JWT、且都不查库**——device-service 的令牌校验函数用自己的 `Claims{sub,exp,role}` 只验签与 `exp`（**无 `deny_unknown_fields`，所以新增的 `ver` 声明不会打挂它**，这一点已核过是安全的：`Cargo.toml` 里只有 `rusqlite`、没有 MySQL 客户端，它今天也**没有能力**查 `user.status`），EMQX broker 侧同样只校验签名与 `exp`（`iot/emqx/configure_emqx.py` 的 `mechanism=jwt` 块）。要收口得让 device-service 能读 `user.status`/`token_version`（先得给它一条 MySQL 通道），或改成回调博客后端做在线校验——是一次跨服务的改造。**本仓的冻结功能不受此影响**：站点自身的所有 `/api/*` 通道（含前台）都走 `auth_uid`/`auth_guard`，冻结即生效；受影响的只有 device-api 与 MQTT 两个入口。因此后台冻结弹窗的文案写的是"已登录的**网页会话**立即失效"，没有写"所有设备"——**文案不许越过判据** |
 | **登录令牌在 `localStorage`**（不是 HttpOnly cookie） | XSS 能直接读走它；`HttpOnly` 能让脚本读不到（但仍能被"以你的身份发请求"） | 未改。改成 cookie 要同时动前端存取、CORS/CSRF（`SameSite` + 双提交令牌）、以及 device-console 那半边复用 `localStorage.tokenKey` 的链路（见 §1）——是一次跨三个前端的改造，当前未做 |
 | **对话链路**没有按用户/IP 的限流 | 单个已登录用户可以连续发起对话占满并发槽（槽位本身有闸，见 §4） | 对话这一路只有总并发闸。**别推广成"Rust 侧没有限流"**：内容发布有按 uid 的限流（`src/risk.rs` 的 `PostRateLimiter` 间隔闸 + 窗口计数 ⇒ 超限转人工 / 自动禁言），登录有按 IP/账号的失败限流（`LoginRateLimiter`） |
 | **分块传输**（无 Content-Length）不过体积闸 | 构造性的大 body 能绕过 §4 的第一行 | 只靠字段级限额兜，已写在代码注释里 |
-| agent 端点**无服务间凭据** | 同机的任意进程可调（含 `/chat/stream`） | 依赖回环边界；跨机部署前必须补。**"我代表谁"已由 §2.1 的断言解决，这条说的是"谁在调我"**——20260925 起 `/chat`、`/review` 的**身份**都核了（缺头 401），`/graph/query` 连身份都不核（它不涉及身份，失败一律降级 200 + ok=false）；"谁在调我"这一维三者照旧 |
-| **写操作的事前授权只覆盖了一半** | 设备屏显等"用户眼前"的写仍然只有"调用前查断连"这道防护；**代用户写站点内容**这一类已有人在回路闸（20260921 第三轮起还多了一个可选出口：非命令措辞的意图 → 确认弹窗，一次点击代替一轮对话），但**还没有这样的工具**，所以闸今天空转 | 20260920 起 agent 侧落地：需确认的 scope（`CONSENT_SCOPES`）未获用户**本轮消息**明确确认 → 产 `__ERROR__: 待确认[consent_required]` 帧、**不调用工具**，且 gate 5a 让叙述侧无法把它说成"已完成"（`agent/authz.py` + `test_authz.py` ⑨，见 `saudade-blog-agent/docs/secretary.md` §3.4）。**20260921 第二轮**：后台写（标签创建/文章状态/文章标签）落在 `write.console`，闸**第一次真正承重**；"以谁的名义"的审计同步落地（写回执带 `principal_role`，零迁移渲染进 `execution_log.detail`）。**第三轮**：判据入口剥系统消息壳（此前锚定判据在真实输入形态下从未命中过）+ 确认弹窗（`__CONFIRM__:` 帧 + HMAC 无状态令牌 + 隐藏确认请求，见 §2.2）。**20260922 第四轮**：写面扩到九件（标签改/删、分类增改删 + 层级移动端点），闸与目标校验照旧生效、"目标"这一轮起可以是**名字**（工具对着实时字典解析，解不出即零写）。**第五/六轮**：公告三件（快道结构性关闭）与留言复核/删除两件（靶子是访客内容；删留言进 `_ALWAYS_CONFIRM_TOOLS`）+ 身份地基（见 §2.2）。**剩下的**：① `uid=0`（无身份）时写命令约每 6 次有 1 次被 narrator 讲成"本轮没有执行任何工具"而撞上洞③判据 → 走 gate 打回（兜底文案已按原因码分）；② 前一轮记为"目标解不出来时仍会弹确认框"的那条**已落地**：目标预检（`_write_target_refusal`）在弹窗之前就零工具收尾，绝不弹一个"点了也只会被拒"的框 |
-| **阅读量可以被匿名刷**（20260930 新增的能力） | `POST /api/public/notes/:id/view` 是匿名写、服务端无身份可依 ⇒ 换个浏览器/清掉 `localStorage`/直接 curl 就能重复 +1。**它统计的是"页面被打开的次数"，不是"多少个人读过"**——报表上的数字照这个口径读 | 不修（刻意）：要真去重就得给访客发一个设备指纹或 IP 计数，前者是隐私问题、后者在 nginx 后面还要取 `X-Forwarded-For`（可伪造），成本远高于收益 |
-| **点赞数也可以被匿名刷**（20261001 起；此前那条"点赞没有这个问题"的结论**已作废**） | `POST/DELETE /api/public/notes/:id/like` 放开匿名（用户要求）后，去重键是**客户端自己生成、自己上报**的 `X-Visitor-Key`（存在 `localStorage`）：清掉它、换个浏览器、或者直接 curl 换一个 key，同一个人就能重复点赞。**"点赞数"从此与阅读量同一档可信度**——它统计的是"有多少次点赞动作被发出来"，不是"多少个人点了赞"，报表上的数字照这个口径读 | 不修（刻意，与阅读量同一条取舍：真去重要么上设备指纹、要么上 IP 计数，前者是隐私问题、后者在 nginx 后面还要取可伪造的 `X-Forwarded-For`）。保住的是**幂等性**而非"一人一票"：`UNIQUE(note_id,visitor_key)`（匿名行）与 `UNIQUE(note_id,user_id)`（登录行）两条键分工，同一个 key 重复点仍然只落一行；登录态点赞会顺带清掉同一 `visitor_key` 的匿名行，所以"先匿名点、再登录点"不会投出两票。服务端只做格式校验（8–64 位、`[A-Za-z0-9_-]`），**不把 `visitor_key` 当身份凭据**：伪造它换不来任何权限，能拿到的与"没登录的访客"完全一样 |
-| 工具错误只分了**两类**（empty / unavailable），没有统一错误码枚举 | 想按错误类型做重试策略（超时 vs 鉴权失败）时还得读文案 | 20260916 已落地两类 + checker 的 `unavailable` 受阻码；更细的分类按需再加 |
-| **没有任何 HTTP 安全响应头** | HSTS / CSP / X-Frame-Options / X-Content-Type-Options 一个都没设——实测 `curl -I https://<站点>/` 只回 `Cache-Control`。点击劫持、MIME 嗅探、降级劫持这几类经典面**完全靠浏览器默认行为兜** | 现状如此，没有成文策略（nginx 站点配置里 `add_header` 只用于 `Cache-Control`）。要补的顺序：先 HSTS 与 `X-Content-Type-Options: nosniff`、再 `X-Frame-Options: SAMEORIGIN`，**CSP 放最后**且先用 `Report-Only` 跑一段（本站有自托管的看板娘与模型资源，写死策略容易误杀） |
-| **依赖漏洞没有响应流程** | 依赖（cargo / npm / pip）里出了 CVE 不会有人知道，升级全靠人工注意到 | 仓库没有 `dependabot.yml`，CI 里也没有 `cargo audit` / `npm audit` / `pip-audit` 任何一步 |
-| **没有漏洞披露政策与安全联系人** | 外部研究者不知道该报给谁、按什么规则、多久回应 | 没有 `SECURITY.md`；`CONTRIBUTING.md` 里也没有披露条款 |
-| **密钥轮换没有成文流程** | `JWT_SECRET` 泄漏时，轮换它 = **所有已发出的令牌立即失效（全员重新登录）**，且库里旧令牌不会被清理、只是验不过——这件事没有写下来的执行步骤；中转桶凭据与模型 key 同理 | 没有轮换周期、没有演练；只有"泄漏过的密钥被动滚动过一次"这一条事实 |
+| agent 端点**无服务间凭据** | 同机的任意进程可调（含 `/chat/stream`） | 依赖回环边界；跨机部署前必须补。**"我代表谁"已由 §2.1 的断言解决，这条说的是"谁在调我"**——`/chat`、`/review` 的**身份**都核了（缺头 401），`/graph/query` 连身份都不核（它不涉及身份，失败一律降级 200 + ok=false）；"谁在调我"这一维三者照旧 |
+| **写操作的事前授权只覆盖了一半** | 设备屏显等"用户眼前"的写仍然只有"调用前查断连"这道防护；**代用户写站点内容**这一类已有人在回路闸（非命令措辞的意图 → 确认弹窗，一次点击代替一轮对话），但**还没有这样的工具**，所以闸今天空转 | 需确认的 scope（`CONSENT_SCOPES`）未获用户**本轮消息**明确确认 → 产 `__ERROR__: 待确认[consent_required]` 帧、**不调用工具**，且 gate 5a 让叙述侧无法把它说成"已完成"（`agent/authz.py` + `test_authz.py` ⑨，见 `saudade-blog-agent/docs/secretary.md` §3.4）。后台写落在 `write.console`，闸在这里**真正承重**；"以谁的名义"由写回执带的 `principal_role` 记账（零迁移渲染进 `execution_log.detail`）。写面现覆盖十四件（含公告三件与留言复核/删除两件；删留言与公告写进 `_ALWAYS_CONFIRM_TOOLS`），"目标"可以是**名字**（工具对着实时字典解析，解不出即零写）。**剩下的**：① `uid=0`（无身份）时写命令约每 6 次有 1 次被 narrator 讲成"本轮没有执行任何工具"而撞上洞③判据 → 走 gate 打回（兜底文案已按原因码分）；② 目标预检（`_write_target_refusal`）在弹窗之前就零工具收尾，绝不弹一个"点了也只会被拒"的框 |
+| **阅读量可以被匿名刷** | `POST /api/public/notes/:id/view` 是匿名写、服务端无身份可依 ⇒ 换个浏览器/清掉 `localStorage`/直接 curl 就能重复 +1。**它统计的是"页面被打开的次数"，不是"多少个人读过"**——报表上的数字照这个口径读 | 不修（刻意）：要真去重就得给访客发一个设备指纹或 IP 计数，前者是隐私问题、后者在 nginx 后面还要取 `X-Forwarded-For`（可伪造），成本远高于收益 |
+| **点赞数也可以被匿名刷** | `POST/DELETE /api/public/notes/:id/like` 放开匿名之后，去重键是**客户端自己生成、自己上报**的 `X-Visitor-Key`（存在 `localStorage`）：清掉它、换个浏览器、或者直接 curl 换一个 key，同一个人就能重复点赞。**"点赞数"从此与阅读量同一档可信度**——它统计的是"有多少次点赞动作被发出来"，不是"多少个人点了赞"，报表上的数字照这个口径读 | 不修（刻意，与阅读量同一条取舍：真去重要么上设备指纹、要么上 IP 计数，前者是隐私问题、后者在 nginx 后面还要取可伪造的 `X-Forwarded-For`）。保住的是**幂等性**而非"一人一票"：`UNIQUE(note_id,visitor_key)`（匿名行）与 `UNIQUE(note_id,user_id)`（登录行）两条键分工，同一个 key 重复点仍然只落一行；登录态点赞会顺带清掉同一 `visitor_key` 的匿名行，所以"先匿名点、再登录点"不会投出两票。服务端只做格式校验（8–64 位、`[A-Za-z0-9_-]`），**不把 `visitor_key` 当身份凭据**：伪造它换不来任何权限，能拿到的与"没登录的访客"完全一样 |
+| 工具错误只分了**两类**（empty / unavailable），没有统一错误码枚举 | 想按错误类型做重试策略（超时 vs 鉴权失败）时还得读文案 | 已落地两类 + checker 的 `unavailable` 受阻码；更细的分类按需再加 |
+| **HTTP 安全响应头只补了一半** | HSTS **仍然一个都没设**；`X-Frame-Options` 与 CSP 只写在镜像自带的 `frontend/nginx.conf:54-56` 里，真正生效的生产站点配置 `deploy/nginx/blog.conf.template` 的 `add_header` 至今只有 `Cache-Control` ⇒ 线上这几类经典面**仍靠浏览器默认行为兜** | `X-Content-Type-Options: nosniff` 已在应用层补齐（下载与产物出图：`src/middleware.rs:65`、`src/routes/graph.rs:265,302`）。要补的顺序：先 HSTS（确认全站 HTTPS 后再考虑 `preload`）、再加 `X-Frame-Options: SAMEORIGIN`，**CSP 放最后**且先用 `Report-Only` 跑一段（本站有自托管的看板娘与模型资源，写死策略容易误杀）。补的时候**镜像 conf 与生产模板两处一起改**，只改一处等于没改 |
+| **依赖漏洞没有响应流程** | 依赖（cargo / npm / pip）里出了 CVE 不会有人知道，升级全靠人工注意到 | `.github/dependabot.yml` **已落地**（按生态开 PR），但**CI 里仍没有 `cargo audit` / `npm audit` / `pip-audit` 任何一步** ⇒ 只有"有人开了 PR"这条被动通道，没有"扫出来"这条主动通道 |
+| **漏洞披露没有成文承诺** | 外部研究者不知道该报给谁、按什么规则、多久回应 | `SECURITY.md` **已有**（`CONTRIBUTING.md` 与 `README.md` 都链它）⇒ 披露渠道与响应口径**以那份为准，别在别处再写一份** |
+| **密钥轮换没有成文流程** | `JWT_SECRET` 泄漏时，轮换它 = **所有已发出的令牌立即失效（全员重新登录）**，且库里旧令牌不会被清理、只是验不过——这件事没有写下来的执行步骤；中转桶凭据与模型 key 同理 | 没有轮换周期、没有演练 |
 | **日志与 trace 里有访客原文** | 对话正文、留言片段会落进 `logs/agent/traces/*.json` 与各服务日志；目录 0700、文件 0600，但**保留期没有对外说明** | trace 按 mtime >24h 压缩、>30 天删除（agent 仓 `eval/trace_retention.py`）；其余日志由 logrotate 保留 14 天。**外部文档若要写数据保留，照这两条写，别另编** |
 
-已完成（20260916）：
-- **协作取消有针对性测试**：`test_cancel.py` 把"取消后不写设备"从"结构保证"变成"回归锁住"；
-  写它的时候顺带发现并修掉了逐 spec 检查缺失（多写操作清单中途取消会把剩下的写操作执行完）。
-- **工具错误分了两类**：`ToolResult`（str 子类，带 `kind`）+ `_get` 失败不再返回 `[]`；
-  checker 对 `unavailable` 判 BLOCK——**"服务挂了"不再作为事实进入跨轮执行记忆**（此前
-  "查询设备列表失败: Connection refused" 会被记成 receipt，下轮质疑"你查到了什么"时
-  agent 会照着故障回执编）。
 
 ## 7. 怎么验证（都可复现）
 
@@ -378,7 +366,7 @@ cd saudade-blog-agent && .venv/bin/python tests/test_hardening.py
 curl -s -o /dev/null -w '%{http_code}\n' -X POST http://127.0.0.1:8010/graph/query \
      -H 'Content-Type: application/json' -d '{"q":"物联网"}'   # → 200
 
-# ⑤ 新增的后台统计端点确实在守卫域内（无 token / 伪 token 都应 401，实测均 401）
+# ⑤ 后台统计端点在守卫域内（无 token / 伪 token 都应 401）
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3000/api/protected/stats/users
 curl -s -o /dev/null -w '%{http_code}\n' -H 'Authorization: Bearer bogus.token.here' \
      http://127.0.0.1:3000/api/protected/stats/users
@@ -402,14 +390,14 @@ cd saudade-blog-agent && .venv/bin/python tests/test_confirm.py
 #    探针自己读帧流（令牌只在帧里），断言读后端真值，不看工具回执
 cd saudade-blog-agent && .venv/bin/python eval/probe_admin_write.py --uid <uid> --allow-write
 
-# ⑪ /review 的身份链路，两个方向（20260925 实测；密钥从父仓 .env 现读，不落盘、不打印）
+# ⑪ /review 的身份链路，两个方向（密钥从父仓 .env 现读，不落盘、不打印）
 #    手签一条 HS256 断言（aud=agent、sub=<uid>、exp=now+60，密钥取博客仓根 .env
 #    的 JWT_SECRET），分别不带/带 `X-Agent-Assertion` POST 127.0.0.1:8010/review：
 #      → 无头：401 {"detail":"缺少有效的服务间身份断言"}
 #      → 带头：200 {"verdict":"pass"|"flag", ...}
 #    带头的 200 同时证明两仓 JWT_SECRET 一致（用父仓的密钥签的断言被 agent 认了）。
 
-# ⑫ 令牌收回与账号冻结（20260926，见 §2.3）
+# ⑫ 令牌收回与账号冻结（见 §2.3）
 #    a) 判据与结构锁（秒级、离线）：cargo test --lib authz::
 #    b) 真链路（打 127.0.0.1:3000，自己建一个一次性账号当靶子、跑完删掉）：
 cd <仓库根> && saudade-blog-agent/.venv/bin/python \
@@ -420,7 +408,7 @@ cd <仓库根> && saudade-blog-agent/.venv/bin/python \
 #    不能冻结自己；非普通账号不能从这个入口删掉。
 #    ⚠️ 冻结会顺手把代次 +1 ⇒ **绝不要在真人账号上跑**（等于把人踢下线）；
 #       靶子账号用 `probe_revoke_` 前缀，脚本自己删，失败中途留下的残留可据此清理。
-#    c) **拒绝话术是跨语言契约**（20260926，判据在 `src/authz.rs` 的
+#    c) **拒绝话术是跨语言契约**（判据在 `src/authz.rs` 的
 #       `check_freeze` / `check_role_change`，话术在 `src/routes/temp_user.rs`）：
 #         · 冻结/解冻：「不能{冻结|解冻}自己的账号」/「不能{冻结|解冻}超级管理员账号」/
 #           「管理员之间不可互相{冻结|解冻}」/「只有管理员可以冻结或解冻账号」
@@ -429,25 +417,25 @@ cd <仓库根> && saudade-blog-agent/.venv/bin/python \
 #           指派，要增加请走数据库迁移」/「管理员只能变更普通用户或杂鱼的身份」/
 #           「管理员只能把账号改成普通用户或杂鱼」
 #       agent 的冻结/解冻技能要求模型**逐字转述**这里的原话（不复述、不翻译成"系统故障"），
-#       20261002 批 J 后 `account_set_role` 同样逐字转述；所以改措辞等于改契约：改完要同时
+#       身份后 `account_set_role` 同样逐字转述；所以改措辞等于改契约：改完要同时
 #       看 agent 侧 `agent/skills.py` 的 `reply_contract` 与 `docs/` 里的说明。
 #       **策略本身只在这里实现一份**，agent 侧不复制判据（`check_role_change` 是唯一一份，
 #       agent 连"能不能改/能改成什么"都不预检——见 `agent/authz.py` 里 `set_account_role`
 #       的注：冻结预检那次"更保守但说错政策"就是复制判据的代价）。
-#    e) **变更身份的授权矩阵（20261002 批 J）**：发起人判据从 `is_superadmin` 放宽为
+#    e) **变更身份的授权矩阵**：发起人判据从 `is_superadmin` 放宽为
 #       `can_access_console`（管理员**或**超管），但**只对非超管发起人**加"低两档"约束：
 #       `target_role` 与 `new_role` **都**必须 ∈ `{普通用户, 杂鱼}`，否则拒（分别是
 #       `AdminTargetTier` / `AdminAssignTier` 两句）。超管行为不变（除超管外四档都能改派）。
 #       逐格策略表在 `src/authz.rs` 的 `check_role_change` 单测里（含 admin↔超管两个方向
 #       的新案例），`cargo test --lib authz::` 是那张表的锁。
-#    f) **账号变更通知落名（20261002 批 J）**：`set_user_role` 与 `set_user_status`
+#    f) **账号变更通知落名**：`set_user_role` 与 `set_user_status`
 #       （冻结/解冻）的正文首段由 `actor_label(row)` 拼出 = `{身份中文}「{昵称}」（uid={id}）`
-#       （昵称为空回退账号名）。此前写死"博主…"，转发起人来做时当事人读到的是一句错话。
+#       （昵称为空回退账号名）。**不许写死"博主…"**——转发起人来做时当事人读到的就是一句错话。
 #       agent 代理执行走的也是这两个端点，所以通知与审计**自动覆盖**，无需第二处实现。
-#    d) 超管的三道防线（20260926）：账号列表/报表不列 superadmin 行（界面 + agent 的
+#    d) 超管的三道防线：账号列表/报表不列 superadmin 行（界面 + agent 的
 #       名录来源）→ `check_freeze`/`check_role_change` 的 `TargetSuperadmin` → 只见于
 #       数据库迁移。`cargo test --lib authz::` 逐格锁着策略表。
-#    g) **禁言是另一件事**（20261002 内容风控；与冻结**共规则、不共后果**）：
+#    g) **禁言是另一件事**（内容风控；与冻结**共规则、不共后果**）：
 #       · 入口 `POST /api/temp-users/:id/mute`，body `{muted: bool, hours: int|null}`
 #         （`hours` 为 `null` 或 `<=0` ⇒ 永久，见 `authz::MUTE_FOREVER`）。
 #       · 判据**复用 `check_freeze`**（同一张规则表：不许禁自己 / 不许禁超管 / 管理员互禁 /
@@ -466,7 +454,7 @@ cd <仓库根> && saudade-blog-agent/.venv/bin/python \
 #       status/token_version"、"哨兵比较只在 authz.rs"、"前端账号页/个人中心文案"）；
 #       策略表锁：`cargo test --lib authz::`。
 
-# ⑬ 用户对话额度（20260929；普通用户终身 500 轮，`CHAT_QUOTA_LIMIT` 可调，管理员不限额）
+# ⑬ 用户对话额度（普通用户终身 500 轮，`CHAT_QUOTA_LIMIT` 可调，管理员不限额）
 #    a) 判据（全部离线、秒级）：
 cd <仓库根> && cargo test --lib quota    # 9 条：算术/饱和/角色表/转发键集
 cd <仓库根> && cargo test --test api_tests   # 含额度路由守卫与 rows_affected 判据
@@ -511,7 +499,7 @@ cd saudade-blog-agent && SAUDADE_REQUIRE_PARENT=1 .venv/bin/python tests/test_ch
 #       ⇒ `rows_affected` 是唯一判据：1=扣到 / 0=用尽 / Err=降级 fail-open），审核先**原子认领**
 #       （`WHERE id=? AND status=0`，认领不到 ⇒ **零副作用**：不清零、不发通知）⇒ 并发下
 #       计数器绝不越过上限，同一个人的额度绝不会被清两次。
-#    f) **读数的口径 = 余额**（20260929b，用户要求"500 开始减少而不是 0 开始计数"）。
+#    f) **读数的口径 = 余额**（"500 开始减少"，不是"从 0 开始计数"）。
 #       **存的是累计**（`chat_quota_used`，那条 `WHERE … < ?` 的并发不变量靠它），**显示的是
 #       余额**——减法在每一侧各做一次、各只有一处：前端 `frontend/src/utils/quota.ts`
 #       （四处显示共用，含档位色阈值）、agent 侧 `adminops.py` 的 `_quota_pair` /
