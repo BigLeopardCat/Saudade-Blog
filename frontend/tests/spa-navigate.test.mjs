@@ -245,7 +245,10 @@ console.log('\n⑥ 版本号：改了 widget 脚本必须 bump（nginx 对 live2
     // 20261006a = 「确认卡多一枚『其他（我来说）』」那一轮（chat-stream.js 的改口支、
     // chat-render.js 的输入行模板、widget.css 的三态样式）。三个文件都在
     // live2d-widgets 下 ⇒ 必须 bump；不 bump 访客吃 1 年缓存，卡上永远只有两枚按钮。
-    ok(ver === '20261006a', 'VER 已 bump 到本轮（20261006a）', { ver });
+    // 20261008a = 「新增四枚表情包」那一轮（chat-render.js 的 fallback 内联清单从 8 名
+    // 加到 12 名：困困/躺平/嫌弃/比心）。同样在 live2d-widgets 下 ⇒ 必须 bump，否则
+    // 看板娘对话里这四枚一年内只显示成文本。
+    ok(ver === '20261008a', 'VER 已 bump 到本轮（20261008a）', { ver });
     const tsx = readFileSync(path.join(root, 'src/components/Live2dAgent/index.tsx'), 'utf8');
     ok(tsx.includes('boot.js?v=' + ver), 'Live2dAgent 的 ?v= 与 VER 一致');
 }
