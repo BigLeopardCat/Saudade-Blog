@@ -24,6 +24,10 @@ export const STICKERS: Record<string, string> = {
   生气: '/stickers/shengqi.png',
   贴贴: '/stickers/tietie.png',
   震惊: '/stickers/zhenjing.png',
+  困困: '/stickers/kunkun.png',
+  躺平: '/stickers/tangping.png',
+  嫌弃: '/stickers/xianqi.png',
+  比心: '/stickers/bixin.png',
 }
 
 export const STICKER_NAMES: string[] = Object.keys(STICKERS)
