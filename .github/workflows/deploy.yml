@@ -75,7 +75,7 @@ jobs:
       # 手动那次直接由上面的 `deploy` 短路成 true，不看过滤器。
       # PR 上同理不跑（它不是 push），而且 PR 上本来就不部署（见上面的 `deploy`）。
       - if: github.event_name == 'push'
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@v4
         id: filter
         with:
           base: ${{ github.event.before }}
