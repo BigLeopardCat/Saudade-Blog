@@ -8,6 +8,8 @@ html
   // 20260830：readBackground/homeBg 图床图已删除（picgo），404 不再渲染——
   // 背景改用 CSS 变量体系，不依赖图床图；无 background-attachment: fixed
   // （整页重绘，滚动卡顿主因）
+  // 下面这两档（见本节末尾）才是真正上屏的那两支；这里是**兜底**：万一哪天少了
+  // `.frontRoot` 祖先（正常渲染链路里不会），透明也比留一块黑/白强。
   background: transparent
   // 整页级 backdrop-filter 性能开销大（与主页 frontRoot 同类），注释
   // backdrop-filter: blur(10px)
@@ -15,24 +17,37 @@ html
   flex-direction: column
   align-items: center
   font-size: 1rem
-  // 20260830：白天背景与 /about 页一致（--container-background-color 半透明白
-  // 遮罩，AboutMe 同款）；暗色透明透 body 深蓝渐变（原视觉）
-  // 20261005 白天改纸白（用户报「白天字体太细看着累眼，是因为背景的原因吗」——**是**）：
-  // 半透明白是叠在**两层**之上的——`.frontRoot` 自己的 33% 白，再下面还有 `body` 那条
-  // **从登录页漏出来的**深色渐变（`pages/Login/index.sass:11` 的 160deg #0d1319→#1d2634）。
-  // 线上实测正文四周底色 = **#c1c3c6**（一整幅均匀的灰，不是白）：纯黑 16px 正文落在灰底上
-  // 笔画显得发薄、画面发闷，正是"太细/累眼"的来源。
-  // 改成不透明纸白后，用户第二轮反馈又指出**纸白本身也偏亮**：「白色背景有点刺眼，
-  // 有没有符合博客主题的颜色」⇒ 这一支换成 `--washi-paper-warm`（#f7f1e7 米白，亮度 242）。
-  // 为什么不直接用站点那三个纸令牌：`--washi-paper` 就是 #fffdfa（等于刚被否掉的那档亮度），
-  // `-2`/`-3` 是粉紫相（大面积铺阅读面会与正文同屏打架）；米白带黄相，才是"和纸"的观感。
-  // `--washi-paper-warm` 只在 `:root`（浅色档）定义，**故意不在 `.frontDark` 里重定义**——
-  // 它唯一的用途就是这一支，而这一支只在非暗色下命中。
-  // ⚠️ 夜间那支**保持 transparent**（透 body 深蓝 = 刻意视觉）：别把两支并成同一个令牌。
+  // ── 阅读面底色：两档都**自给自足**（20261008 拍的；之前是靠"透出去看别处"）──
+  // 白天 = **博客主题背景** = 与站内其它内容页同一支令牌 `--container-background-color`
+  // （半透明白遮罩；AboutMe / Categories / Talk / Times / FriendList 都用它）。
+  // 线上 /about 实测正文四周 rgb(248,249,252)（同一支令牌、同一层叠）；本机照线上层叠渲染
+  // 文章页（带同一条泄漏的 body 一起），这一支叠出来是 rgb(246,248,251) —— 同一档近白微蓝，
+  // 差的 1~2 个色阶是逐层 8bit 合成的取整，不是两个颜色。
+  // 夜间 = 不透明深墨蓝 **#121a27**：值就是 20261006 之前屏幕上的那一档（当时实测
+  // rgb(18,26,39)）。**刻意不透明**——这一支从此盖在谁身上都成立。
+  //
+  // 为什么两档都不许再写 transparent（20261008 修的病灶）：
+  // 这条规则从前是「白天 = 半透明白遮罩 / 夜间 = transparent」，而**夜间那支的底色根本
+  // 不在本页里**：透明的下面是 `.frontRoot` 的 33% 黑，再下面才是 `body`。改动前 `body`
+  // 身上挂着 `pages/Login/index.sass` 里**一条裸 `body` 规则**的深色渐变（#0d1319→#1d2634）
+  // —— 登录页是顶层路由、被 `router/index.tsx` 静态 import ⇒ 那份 CSS 全站加载 ⇒ 整站的
+  // body 都是它。于是"透明的阅读面"看到的其实是**别的页面漏出来的一张底**（20260830 那句
+  // 「暗色透明透 body 深蓝渐变（原视觉）」描述的正是这个来历，只是当时没人知道它是漏的）。
+  // ca6b9b0（20261006，登录页跟昼夜）把那支收成了 `body.login-route` ⇒ 泄漏断了，`body`
+  // 退回 `pages/Dashboard/index.css` 的 `body{background-color:#E4E9F7}`（后台模板的浅紫蓝，
+  // **不跟昼夜**；同样因为 router 静态 import 而全站生效）⇒ 夜间阅读面变成 33% 黑压在
+  // #E4E9F7 上 = **rgb(153,156,165) 浅灰**，而正文是白字 ⇒ 对比度 **2.76:1**
+  // （20261008 用户原话「文本都看不清了」；线上实测就是这个值）。
+  // 同一根病 20261005 白天也犯过一次：那时 body 还是深色，半透明白遮罩叠出来是一整幅
+  // #c1c3c6 的灰，被读成"字体太细、累眼"。泄漏断掉之后这一支叠出来就是近白（上面那条实测值），
+  // 所以白天又回到了 20260830 的原设计。
+  // ⚠️ 一句话教训：**底色写成 transparent，等于把这一页的观感抵押给了别的页面的 CSS**。
+  // 判据在 `tests/read-mobile.test.py` ⑧（量的是"夜间那支不透明且是那个色"，不是量
+  // "源码里写没写 transparent"——那样写出来的判据在泄漏断开时照样绿）。
   .frontRoot:not(.frontDark) &
-    background: var(--washi-paper-warm)
+    background: var(--container-background-color)
   .frontDark &
-    background: transparent
+    background: #121a27
   .readCover
     position: relative
     width: 100%

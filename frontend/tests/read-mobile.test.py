@@ -41,10 +41,12 @@
 
 20261005 加了两节（同一处两个不同的病，见各自小节头注）：
   ⑦ 正文列内边距只留一处 + 手机档那三条死声明的**渲染值**（⑦b 是字面删规则的反向对照）；
-  ⑧ 阅读面换和纸米白 `--washi-paper-warm`（浅色档）/ 正文补 0.2px 描边且**不重排**
-     （摘掉描边那条后同段落的宽/高/行数必须逐项相同）。⑧ 的沙箱比 ①–⑦ 多加载一张
-     `src/index.css`：底色走的是 `--washi-*` 令牌，不加载它就量不到真值；夹具外面还要套
-     一层 `.frontRoot`（那两条规则的祖先选择器），暗色档那条另用 `.frontRoot.frontDark` 臂。
+  ⑧ 阅读面底色**两档**（20261008 换：白天 = 站内其它内容页那支 `--container-background-color`、
+     夜间 = 不透明 `#121a27`）/ 正文补 0.2px 描边且**不重排**（摘掉描边那条后同段落的
+     宽/高/行数必须逐项相同）。底色那支读的是 `var(--container-background-color)`（出处
+     `src/frontHome/main.css`，沙箱按线上次序拷成 main.css）⇒ 夹具外面要套一层 `.frontRoot`
+     （那两条规则的祖先选择器），暗色档另用 `.frontRoot.frontDark` 臂。本节另有一臂**反向
+     对照**（⑧c）：把夜间那支按行为改回 `transparent`（旧写法）⇒ "不透明"那条判据当场红。
 """
 import pathlib
 import subprocess
@@ -505,21 +507,29 @@ with sync_playwright() as p:
     check(f'★正文列掉回 {nl["pW"][0]}px（≤320：两层 15px 全叠才会是这个数）',
           nl["pW"][0] <= 320, str(nl["pW"]))
 
-    print("⑧ 阅读面换和纸米白 + 正文补 0.2px 描边（20261005 第二轮）")
-    # 同一处两轮反馈、两个不同的病：
-    #   ① 「白色背景有点刺眼」——第一轮把白天底色从"半透明白叠出来的灰 #c1c3c6"换成
-    #      `--washi-paper`（#fffdfa），可纸白本身亮度 253、几乎就是纯白。这一轮换成
-    #      `--washi-paper-warm`（#f7f1e7，亮度 242，带黄相 = 和纸）。
-    #   ② 「文章页字体还是看起来比讨论区细」——正文与讨论区正文是**同一条字体栈、
-    #      同一个字重(400)、同一种颜色**，差别只有字号（17 vs 14.72px）。DPR2 下量中心
-    #      扫描线上的墨迹宽，两者都是 1 CSS px：CJK 在小字号被格点吸附、大字号不吸附
-    #      ⇒ 相对笔画 0.0588 vs 0.0679，字越大反而显得越细。`font-weight` 在微软雅黑上
-    #      推不动（只有 Light/Regular/Bold），只剩描边这一根杠杆。
-    # 本节两支都钉：底色（浅色档米白 / 暗色档仍 transparent）与描边（正文 0.2px、
-    # 代码清零、**不重排**）。不重排是"能上"的前提：描边若参与排版，全站行数/分页都会动。
+    print("⑧ 阅读面底色两档（20261008 换底）+ 正文补 0.2px 描边（20261005 第二轮）")
+    # 同一处几轮反馈、两个不同的病：
+    #   ① 底色。20261008 用户：「夜间模式什么时候改的文章详情页的背景颜色，文本都看不清了，
+    #      该回去，白天模式背景也改成博客主题背景」——两档一起改，改掉的其实是同一个病：
+    #      这一支从前**夜间写 transparent**，等于把阅读面的底抵押给了 `body`；而 `body` 上
+    #      那张深色底是登录页一条裸 `body` 规则漏出来的。ca6b9b0（20261006）把它收成
+    #      `body.login-route` ⇒ 泄漏断了，`body` 退回后台模板的 #E4E9F7 ⇒ 夜间阅读面成了
+    #      33% 黑压在浅紫蓝上的 rgb(153,156,165)（白字 2.76:1）。成因全在 sass 那段注释里。
+    #      本节钉**渲染值**：白天那支与站内其它内容页是**同一支令牌**（`--container-background
+    #      -color`，半透明白 ⇒ computed background-image 里必须出现 rgba(255,255,255,.6)），
+    #      夜间那支必须**不透明**且是 rgb(18,26,39)。"不透明"是这条判据的关键：旧写法
+    #      transparent 的 computed 值是 rgba(0,0,0,0) ⇒ 当场红（⑧c 的反向对照证明这一点）。
+    #   ② 描边（20261005 第二轮「文章页字体还是看起来比讨论区细」）——正文与讨论区正文是
+    #      **同一条字体栈、同一个字重(400)、同一种颜色**，差别只有字号（17 vs 14.72px）。
+    #      DPR2 下量中心扫描线上的墨迹宽，两者都是 1 CSS px：CJK 在小字号被格点吸附、
+    #      大字号不吸附 ⇒ 相对笔画 0.0588 vs 0.0679，字越大反而显得越细。`font-weight`
+    #      在微软雅黑上推不动（只有 Light/Regular/Bold），只剩描边这一根杠杆。
+    #      不重排是"能上"的前提：描边若参与排版，全站行数/分页都会动。
     def build_color_sandbox(css: str, name: str) -> pathlib.Path:
-        # 与 ①②⑦ 那个沙箱**只差**一张表：`src/index.css`（`--washi-*` 令牌与
-        # `.frontDark` 分支的出处）。底色那两条走的是变量 ⇒ 不加载它就量不到真值。
+        # 与 ①②⑦ 那个沙箱**只差**一张表：`src/index.css`。底色那支 20261008 起读的是
+        # `--container-background-color`（出处 `src/frontHome/main.css`，按线上次序就是本
+        # 沙箱的 main.css），已不读 index.css；这张表留着是因为线上它真的在（main.tsx 第一行
+        # import），少一张就变成"量一个缺了全站令牌表的世界"。
         sb = pathlib.Path(tempfile.mkdtemp(prefix=f"readcol-{name}-"))
         (sb / "read.css").write_text(css, encoding="utf-8")
         shutil.copy(RESET_CSS, sb / "main.css")
@@ -539,15 +549,33 @@ with sync_playwright() as p:
         raise SystemExit(f"编译产物里 `{STROKE}` 出现 {CSS.count(STROKE)} 次（应为 1）"
                          " —— 描边那条改名/挪窝了，⑧ 的不重排对照要先对齐")
     NO_STROKE = CSS.replace(STROKE, "-webkit-text-stroke: 0;")
-    SB_COLOR = build_color_sandbox(CSS, "warm")
+    SB_COLOR = build_color_sandbox(CSS, "theme")
     SB_NO_STROKE = build_color_sandbox(NO_STROKE, "bare")
+
+    # ⑧c 的反向对照：把夜间那支**按行为**改回旧写法（transparent）⇒ 判据必须当场红。
+    # 为什么非要这一臂：本轮修的病**全在"不透明"这三个字上**，而"不透明"在源码文本里
+    # 看不出来（`background: transparent` 与 `background: #121a27` 都是一行合法 sass，
+    # 而前者在脱离泄漏之后会静默变成浅灰底）。剥掉行为、量到的也必须是行为。
+    # 取法是锚点（正则命中那一块 + 块内那条 background）而不是写死字符串：dart-sass
+    # 对 `#121a27` 的输出形式（hex 还是 rgb()）不是本套件该钉的东西。
+    _m = re.search(r"\.frontDark \.readContainer\s*\{([^}]*)\}", CSS)
+    if not _m:
+        raise SystemExit("编译产物里找不到 `.frontDark .readContainer{}` —— 夜间底色挪窝了，"
+                         "⑧c 的反向对照要先对齐")
+    _bg = re.search(r"background:\s*[^;]+;", _m.group(0))
+    if not _bg:
+        raise SystemExit(f"夜间那一块里没有 background：{_m.group(0)!r}")
+    SB_NIGHT_OLD = build_color_sandbox(
+        CSS.replace(_m.group(0), _m.group(0).replace(_bg.group(0), "background: transparent;")),
+        "oldnight")
 
     COLOR = """(arg) => {
       document.getElementById('root').innerHTML = arg.markup;
       const cs = (s) => {
         const e = document.querySelector(s); if (!e) return null;
         const c = getComputedStyle(e), r = e.getBoundingClientRect();
-        return { bg: c.backgroundColor, sw: c.webkitTextStrokeWidth, sc: c.webkitTextStrokeColor,
+        return { bg: c.backgroundColor, bi: c.backgroundImage,
+                 sw: c.webkitTextStrokeWidth, sc: c.webkitTextStrokeColor,
                  color: c.color, w: +r.width.toFixed(2), h: +r.height.toFixed(2), fs: c.fontSize };
       };
       const inner = '.readBody > .markdown-body > .markdown-body';
@@ -563,8 +591,8 @@ with sync_playwright() as p:
         pre: cs('.readBody pre'), code: cs('.readBody pre code'),
         inlineCode: cs(inner + ' > p > code'),
         lines: rg.getClientRects().length,
-        warm: getComputedStyle(document.documentElement)
-                .getPropertyValue('--washi-paper-warm').trim(),
+        tile: getComputedStyle(document.documentElement)
+                .getPropertyValue('--container-background-color').trim(),
       };
     }"""
 
@@ -581,14 +609,23 @@ with sync_playwright() as p:
 
     cl = measure_color(SB_COLOR, dark=False)
     cd = measure_color(SB_COLOR, dark=True)
-    check("前提：令牌本身解析出来了（`--washi-paper-warm` 读得到值，否则下面量的是空）",
-          cl["warm"] == "#f7f1e7", repr(cl["warm"]))
-    check("★浅色档阅读面 = 和纸米白 rgb(247,241,231)（#f7f1e7）",
-          cl["light"]["bg"] == "rgb(247, 241, 231)", cl["light"]["bg"])
-    check("  ★且它不再是纸白 rgb(255,253,250)——那正是用户说「刺眼」的那一档亮度",
-          cl["light"]["bg"] != "rgb(255, 253, 250)", cl["light"]["bg"])
-    check("★暗色档仍是 transparent（夜间那支一字未动，透 body 深蓝渐变）",
-          cd["light"]["bg"] == "rgba(0, 0, 0, 0)", cd["light"]["bg"])
+    co = measure_color(SB_NIGHT_OLD, dark=True)
+    _nz = lambda s: re.sub(r"\s+", "", s or "")  # noqa: E731 —— 归一化空白后再比字面
+    check("前提：`--container-background-color` 解析出来了（否则下面量的是空）",
+          "255, 255, 255" in cl["tile"] and "0.6" in cl["tile"], repr(cl["tile"]))
+    check("★白天档 = 站内其它内容页那一支：`.readContainer` 的 background-image 就是"
+          " `--container-background-color`（半透明白遮罩，不是自己另调的一个色）",
+          _nz(cl["light"]["bi"]) == _nz(cl["tile"]),
+          f'读到 {cl["light"]["bi"]!r} / 令牌 {cl["tile"]!r}')
+    check("  ★且它**不是不透明色**（半透明是这一支的本性：叠在主题底上才是那个近白）",
+          cl["light"]["bg"] == "rgba(0, 0, 0, 0)", cl["light"]["bg"])
+    check("★夜间档 = 不透明深墨蓝 rgb(18,26,39)（= 20261006 之前屏幕上的那一档；"
+          "computed 值不带 alpha，就是「不透明」这个判据本身）",
+          cd["light"]["bg"] == "rgb(18, 26, 39)", cd["light"]["bg"])
+    check("★⑧c 反向对照：同一份产物把夜间那支按行为改回 transparent ⇒ 当场不是那个色"
+          "（旧写法在泄漏断掉之后就会静默变成浅灰底，这条对照证明上面那条判据咬得住）",
+          co["light"]["bg"] == "rgba(0, 0, 0, 0)" and co["light"]["bg"] != "rgb(18, 26, 39)",
+          co["light"]["bg"])
     check("★正文（含列表、标题）带 0.2px 描边，颜色 = 当前字色（`currentColor`）",
           cl["p"]["sw"] == "0.2px" and cl["li"]["sw"] == "0.2px" and cl["h1"]["sw"] == "0.2px"
           and cl["p"]["sc"] == cl["p"]["color"],
@@ -611,12 +648,20 @@ with sync_playwright() as p:
     check(f'  夹具自检：那一段真的折成了多行（{cl["lines"]} 行 ≥ 3，否则行数判据无分辨力）',
           cl["lines"] >= 3, str(cl["lines"]))
 
-    # 负空间：米白这个令牌**只许有一个出处**（`:root` 浅色档）。真加进 `.frontDark`
-    # 分支，夜间两支就会互相跟着变 —— 而上面那条"暗色档 transparent"判据量的是
-    # `.readContainer`，令牌被重定义了它也照样绿（这条规则压根不读那个变量）。
-    _idx = (FE / "src/index.css").read_text(encoding="utf-8")
-    check("★`--washi-paper-warm` 在 index.css 里只出现 1 次（只在 `:root`，夜间档不重定义）",
-          _idx.count("--washi-paper-warm") == 1, str(_idx.count("--washi-paper-warm")))
+    # 负空间一：白天那支的"同源"是**跨文件**的（ReadArticle 与 AboutMe 各写一遍
+    # `var(--container-background-color)`）⇒ 只量这一页，量得再对也不代表两边还牵着手。
+    # 数的是**编译产物**（sass 已剥注释）：源码注释里为了讲道理会引用令牌名，照源码数
+    # 就会数到"注释里的那个"——本仓栽过这个跟头。
+    _about = (FE / "src/frontHome/Content/AboutMe/index.sass").read_text(encoding="utf-8")
+    check("★白天那支与 /about 那类内容页用的是同一支令牌（本页产物里出现 1 次，/about 里也有）",
+          CSS.count("var(--container-background-color)") == 1
+          and "var(--container-background-color)" in _about,
+          f'本页产物 {CSS.count("var(--container-background-color)")} 次 / '
+          f'/about 里{"有" if "var(--container-background-color)" in _about else "没有"}')
+
+    # 负空间二：米白那个令牌 20261008 随它的唯一用处一起删了。判据同样只认编译产物。
+    check("★`--washi-paper-warm` 在编译产物里一次都不出现（零引用的令牌不许留）",
+          "--washi-paper-warm" not in CSS, "还在")
 
     # 负空间：这个类名是 JSX 与 sass 之间**唯一的**接缝，改名一边就是静默失效
     # （`className='readBody'` 还在、sass 那边没规则 ⇒ 上面两组判据全绿而线上照旧）。
