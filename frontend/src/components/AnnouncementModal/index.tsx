@@ -2,6 +2,7 @@ import { Modal } from 'antd'
 import { useEffect, useRef, useState } from 'react'
 import { useIsDarkMode } from '../../theme'
 import { Z } from '../../zIndex'
+import StickerText from '../StickerText'
 import {
     fetchPendingAnnouncement,
     markAnnouncementRead,
@@ -179,7 +180,12 @@ const AnnouncementModal = () => {
                 lineHeight: 1.9,
                 fontSize: 15,
             }}>
-                <div className="washiText" style={{ whiteSpace: 'pre-wrap', textAlign: 'justify' }}>{pending?.content}</div>
+                {/* 正文里的 `:名字:` 渲染成表情（20261008）：公告与个人中心那份通知是
+                    同一条内容，只修个人中心会出现"弹窗里还是字面 :头疼:"。
+                    走 StickerText（纯文本宿主那条），换行仍由 pre-wrap 负责。 */}
+                <div className="washiText" style={{ whiteSpace: 'pre-wrap', textAlign: 'justify' }}>
+                    <StickerText text={pending?.content || ''} />
+                </div>
                 <div className="washiTime" style={{ marginTop: 14, fontSize: 12, textAlign: 'right' }}>
                     {fmtCnTime(pending?.time || '')}
                 </div>

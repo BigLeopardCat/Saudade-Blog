@@ -73,7 +73,10 @@ const state: any = (window as any).__state = {
     { noteId: 22, title: 'ESP32 固件', status: 'published', createdAt: '2026-09-19 09:30:00' },
   ],
   notifications: [
-    { id: 101, type: 'announcement', title: '服务器维护', content: '今晚 23:00 维护', link: null, isRead: false, createdAt: '2026-09-22 08:00:00' },
+    // 101 的正文带一个表情（20261008）：公告和通知面板此前把 `:头疼:` 当纯文本渲染
+    // （用户报的原话是"agent 发过去的通知带的表情包没有渲染"）。表情前后的文字保留，
+    // 是因为下面的判据要同时验"文字还在"与"冒号语法没了"。
+    { id: 101, type: 'announcement', title: '服务器维护', content: '今晚 23:00 维护 :头疼: 请提前保存草稿', link: null, isRead: false, createdAt: '2026-09-22 08:00:00' },
     { id: 100, type: 'announcement', title: '新功能上线', content: '个人中心来啦', link: null, isRead: true, createdAt: '2026-09-21 08:00:00' },
     // 审核结果通知（20260923）：`type='notice'` 的第一个真实生产者（留言审核终态）。
     // **带 link** ⇒ 列表里应出现「去看看」，点了要标已读 + 关窗 + 跳转。
@@ -925,6 +928,111 @@ with sync_playwright() as p:
           str(rc and rc[-1]["data"]))
     check("跳转前关掉个人中心窗口（不然新页面被窗口盖住）",
           pg.evaluate("() => window.__closed === true"))
+    pg.close()
+
+    print("⑥c 公告和通知：表情包渲染 + 整行可点展开成占满窗口的详情（底部居中「标记为已读」）")
+    pg = fresh_page()
+    pg.click(".ant-tabs-tab >> nth=3")
+    pg.wait_for_selector(PANE + " .ucNoticeRow", timeout=10000)
+
+    # ── 表情包：冒号语法必须消失、换成 <img class="sticker"> ──
+    list_txt = pg.locator(PANE).inner_text()
+    st = pg.locator(PANE + " .ucNoticeRow img.sticker").first
+    check("通知正文里的 :头疼: 渲染成表情（img.sticker 在列表行里）",
+          pg.locator(PANE + " .ucNoticeRow img.sticker").count() >= 1,
+          str(pg.locator(PANE + " .ucNoticeRow img.sticker").count()))
+    check("列表里不再出现字面量「:头疼:」（渲染了、原文也没被吃掉两头）",
+          ":头疼:" not in list_txt and "今晚 23:00 维护" in list_txt and "请提前保存草稿" in list_txt,
+          list_txt.replace("\n", " ")[:140])
+    # 几何判据（不读 CSS 文本）：全局 `img.sticker { height: 1.8em }` 真的作用到了这里。
+    # 少了它，"class 写对了但那条全局规则没进这一页"照样全绿——`.ucBodyText` 的
+    # font-size 是 13px ⇒ 期望高度 23.4px；图片撑成原始尺寸（>40px）或塌成 0 都算红。
+    sgeo = pg.evaluate("""() => {
+      const img = document.querySelector('.ucNoticeRow img.sticker');
+      const box = img.closest('.ucBodyText');
+      return { h: img.getBoundingClientRect().height,
+               w: img.getBoundingClientRect().width,
+               fs: parseFloat(getComputedStyle(box).fontSize),
+               src: img.getAttribute('src'), alt: img.getAttribute('alt') };
+    }""")
+    check("表情按所在行的字号缩放（height ≈ 1.8×13px，四个属性来自 src/index.css 那条全局规则）",
+          abs(sgeo["h"] - sgeo["fs"] * 1.8) < 1.5, f"h={sgeo['h']:.1f} fs={sgeo['fs']} {sgeo}")
+    check("表情取的是本尊素材、alt 是名字（不是裂图/占位）",
+          sgeo["src"].endswith("/stickers/touteng.png") and sgeo["alt"] == "头疼", str(sgeo))
+
+    # ── 整行可点 ⇒ 占满窗口的详情 ──
+    lgeo = pg.evaluate("""() => {
+      const row = document.querySelector('.ucNoticeRow');
+      return { fs: parseFloat(getComputedStyle(row.querySelector('.ucBodyText')).fontSize) };
+    }""")
+    pg.locator(PANE + " .ucNoticeRow").filter(has_text="服务器维护").click()
+    pg.wait_for_selector(PANE + " .ucNoticeDetail", timeout=5000)
+    check("点整行 ⇒ 展开成详情，列表被整个顶掉（不是塞在列表里）",
+          pg.locator(PANE + " .ucNoticeRow:visible").count() == 0
+          and pg.locator(PANE + " .ucNoticeDetail").count() == 1,
+          "rows=%d" % pg.locator(PANE + " .ucNoticeRow:visible").count())
+    dgeo = pg.evaluate("""() => {
+      const d = document.querySelector('.ucNoticeDetail');
+      const body = d.querySelector('.ucNoticeDetailBody');
+      const foot = d.querySelector('.ucNoticeDetailFoot');
+      const btns = [...foot.querySelectorAll('button')];
+      const db = d.getBoundingClientRect();
+      // "居中"要量**按钮**、不能量页脚容器：页脚是块级 flex 子项，不管左对齐还是居中，
+      // 它自己的 rect 都撑满整宽（中心恒等于容器中心）⇒ 拿容器量等于恒真。
+      const bb = btns.length ? btns[0].getBoundingClientRect() : null;
+      return { detail: db.height, pane: d.closest('.ucPane').clientHeight,
+               body: body.getBoundingClientRect().height,
+               bodyFs: parseFloat(getComputedStyle(body).fontSize),
+               text: body.textContent,
+               sticker: body.querySelectorAll('img.sticker').length,
+               off: bb ? Math.abs((bb.left + bb.right) / 2 - (db.left + db.right) / 2) : -1,
+               footTop: foot.getBoundingClientRect().top,
+               bodyBottom: body.getBoundingClientRect().bottom,
+               btns: btns.map(b => b.textContent) };
+    }""")
+    check("详情占满整个窗口高度（不是缩成两行）",
+          dgeo["detail"] >= dgeo["pane"] - 2 and dgeo["body"] > 0,
+          f"detail={dgeo['detail']:.0f} pane={dgeo['pane']} body={dgeo['body']:.0f}")
+    check("「放大」是字号真的变大了（列表 13px → 详情 16px）",
+          dgeo["bodyFs"] > lgeo["fs"], f"detail={dgeo['bodyFs']} list={lgeo['fs']}")
+    check("详情里的表情也渲染了（放大后不许退回字面量）",
+          dgeo["sticker"] >= 1 and ":头疼:" not in dgeo["text"], str(dgeo["text"])[:120])
+    check("页脚那颗按钮**居中**（按钮中心对齐详情中心，容差 2px）",
+          0 <= dgeo["off"] <= 2, f"off={dgeo['off']:.2f}")
+    check("页脚贴在正文下方（长正文在 body 里自己滚，页脚不被顶出窗口）",
+          dgeo["footTop"] >= dgeo["bodyBottom"] - 1, f"foot={dgeo['footTop']:.0f} bodyEnd={dgeo['bodyBottom']:.0f}")
+    check("页脚里是「标记为已读」（这条还没读 ⇒ 不退化成「已读」）",
+          any("标记为已读" in b for b in dgeo["btns"]), str(dgeo["btns"]))
+
+    # 点它 ⇒ 只标这一条（ids=[101]），当场变「已读」
+    n_rd = len(find_call(pg, "/api/protected/notifications/read", "POST"))
+    pg.locator(PANE + " .ucNoticeDetailFoot button").filter(has_text="标记为已读").click()
+    pg.wait_for_timeout(700)
+    rd = find_call(pg, "/api/protected/notifications/read", "POST")
+    check("详情里点「标记为已读」只标这一条（ids=[101]，不是 all:true）",
+          len(rd) == n_rd + 1 and rd[-1]["data"].get("ids") == [101] and rd[-1]["data"].get("all") is False,
+          str(rd and rd[-1]["data"]))
+    check("标完当场变「已读」（展开态读的是列表那份数据，不是打开时的快照）",
+          pg.locator(PANE + " .ucNoticeDetailFoot button").filter(has_text="标记为已读").count() == 0
+          and "已读" in pg.locator(PANE + " .ucNoticeDetailFoot").inner_text(),
+          pg.locator(PANE + " .ucNoticeDetailFoot").inner_text())
+
+    pg.click(PANE + " .ucNoticeDetailBar button")
+    pg.wait_for_selector(PANE + " .ucNoticeRow", timeout=5000)
+    check("「返回公告和通知」回到列表",
+          pg.locator(PANE + " .ucNoticeDetail").count() == 0
+          and pg.locator(PANE + " .ucNoticeRow").count() == 3,
+          str(pg.locator(PANE + " .ucNoticeRow").count()))
+
+    # ── stopPropagation：行内那颗按钮有自己的动作，别顺手把详情也打开了 ──
+    n_rd = len(find_call(pg, "/api/protected/notifications/read", "POST"))
+    pg.locator(PANE + " .ucNoticeRow").filter(has_text="留言未通过审核").locator("button", has_text="标记已读").click()
+    pg.wait_for_timeout(700)
+    rd = find_call(pg, "/api/protected/notifications/read", "POST")
+    check("列表行的「标记已读」只标已读、**不展开详情**（冒泡被拦住）",
+          len(rd) == n_rd + 1 and rd[-1]["data"].get("ids") == [102]
+          and pg.locator(PANE + " .ucNoticeDetail").count() == 0,
+          "detail=%d" % pg.locator(PANE + " .ucNoticeDetail").count())
     pg.close()
 
     print("⑦ 站内信箱：四个二级签页 / 三行式条目（时间在最右）/ 点开占满窗口的详情")

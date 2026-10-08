@@ -14,6 +14,15 @@
  */
 import type { Root } from 'mdast'
 
+/** 一段文本拆出来的片段：普通文本，或一个**命中的**表情（未知名字不是片段，是普通文本）。
+ *  给**纯文本宿主**用（个人中心的通知、公告弹窗、`.ucBodyText` 这类不跑 markdown 的地方）：
+ *  React 直接把片段渲染成文本节点与 `<img>`，全程不产生 HTML 字符串 ——
+ *  于是也不必碰 `dangerouslySetInnerHTML`（那条路的纪律是"只许喂 renderBlogMarkdown 的产物"，
+ *  见 CommentSection/index.tsx 头注）。markdown 宿主仍走 `renderBlogMarkdown`（同一条 remarkStickers）。 */
+export type StickerPiece =
+  | { kind: 'text'; text: string }
+  | { kind: 'sticker'; name: string; url: string }
+
 /** 名字（中文）→ 素材路径（public/stickers/ 下） */
 export const STICKERS: Record<string, string> = {
   头疼: '/stickers/touteng.png',
@@ -64,14 +73,22 @@ export function remarkStickers(this: unknown) {
   }
 }
 
-/** 把一段文本拆成 text/image 交替节点；无命中时原样返回 [原文] */
-function splitStickerText(value: string): any[] {
+/** 扫出所有**命中清单**的 `:名字:` 位置。
+ *  两个渲染器（mdast 侧与 React 片段侧）共用这一遍扫描：同一份正则、同一条
+ *  "未知名字原样保留为文本"的判据 ⇒ 改匹配规则只有这一处。 */
+function matchStickers(value: string): RegExpExecArray[] {
   const matches: RegExpExecArray[] = []
   STICKER_RE.lastIndex = 0
   let m: RegExpExecArray | null
   while ((m = STICKER_RE.exec(value)) !== null) {
     if (STICKERS[m[1]]) matches.push(m)
   }
+  return matches
+}
+
+/** 把一段文本拆成 text/image 交替节点；无命中时原样返回 [原文] */
+function splitStickerText(value: string): any[] {
+  const matches = matchStickers(value)
   if (matches.length === 0) return [value]
 
   const pieces: any[] = []
@@ -90,6 +107,29 @@ function splitStickerText(value: string): any[] {
     cursor = idx + match[0].length
   }
   if (cursor < value.length) pieces.push({ type: 'text', value: value.slice(cursor) })
+  return pieces
+}
+
+/** 把一段**纯文本**拆成 text/sticker 交替的片段；无命中（含空串）时返回一个纯文本片段。
+ *
+ *  与 `splitStickerText` 的差别只在产物形状：那个产 mdast 节点（喂 remark-rehype），
+ *  这个产数据片段（喂 React）。**扫描是同一遍**（`matchStickers`）。
+ *
+ *  判据与 mdast 侧一致：只有命中 `STICKERS` 的名字才算表情，未知名字（`:不存在的:`
+ *  或被 `STICKER_RE` 长度上限挡掉的）原样留在文本里。 */
+export function splitStickers(value: string): StickerPiece[] {
+  const matches = matchStickers(value)
+  if (matches.length === 0) return [{ kind: 'text', text: value }]
+
+  const pieces: StickerPiece[] = []
+  let cursor = 0
+  for (const match of matches) {
+    const idx = match.index
+    if (idx > cursor) pieces.push({ kind: 'text', text: value.slice(cursor, idx) })
+    pieces.push({ kind: 'sticker', name: match[1], url: STICKERS[match[1]] })
+    cursor = idx + match[0].length
+  }
+  if (cursor < value.length) pieces.push({ kind: 'text', text: value.slice(cursor) })
   return pieces
 }
 

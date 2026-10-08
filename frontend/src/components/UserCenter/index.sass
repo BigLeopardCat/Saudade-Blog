@@ -376,6 +376,64 @@
       line-height: 1.6
       word-break: break-word
 
+  // ── 公告和通知（20261008：整行可点 → 展开成占满窗口的详情）───────────────────
+  //
+  // 形态与站内信箱那封详情同构（`.ucMailDetail` 一族），但**没有并成一份**：那边
+  // 三个类名正被 `frontend/tests/user-center.test.py` 逐条量着（`.ucMailRow` /
+  // `.ucMailDetail` / `.ucMailDetailBody`），改名要连测试一起动；这里按同一套值另起
+  // 一份，**改尺寸时两处一起看**。
+  .ucNoticeRow
+    // 整行可点 = 打开详情（与 `.ucMailRow` 同一种交互：手型 + 同值悬停底色）
+    cursor: pointer
+
+    &:hover
+      background: rgba(128, 128, 128, 0.08)
+
+  .ucNoticeDetail
+    display: flex
+    flex-direction: column
+    gap: 14px
+    // 「占满整个窗口」（主人原话）：它是 `.ucPane` 里的普通块级子元素，不给
+    // min-height 就只按内容长——一条两行的通知会缩成两行。
+    min-height: 100%
+
+    .ucNoticeDetailBar
+      display: flex
+      align-items: center
+
+    .ucNoticeDetailHead
+      display: flex
+      align-items: center
+      gap: 8px
+
+      .ucNoticeWhen
+        font-size: 12px
+        opacity: 0.55
+
+    .ucNoticeDetailTitle
+      font-size: 16px
+      font-weight: 600
+
+    // 正文 = 「放大」之后的样子：列表里是 13px + 4 行夹取，这里 16px/1.9 全文。
+    // flex:1 + min-height:0 ⇒ 长通知在**自己的区域里**滚，页脚不被顶出窗口。
+    .ucNoticeDetailBody
+      flex: 1
+      min-height: 0
+      overflow-y: auto
+      font-size: 16px
+      line-height: 1.9
+      white-space: pre-wrap
+      word-break: break-word
+      padding-right: 4px
+
+    // 页脚**居中**（主人指定，"标记为已读"就在这儿）。正文 flex:1 吃掉余量 ⇒
+    // 短通知的页脚落在窗口底部，长通知也始终贴着底——不会随正文长度上下漂。
+    .ucNoticeDetailFoot
+      display: flex
+      align-items: center
+      justify-content: center
+      gap: 12px
+
   .ucCompose
     margin-bottom: 8px
 

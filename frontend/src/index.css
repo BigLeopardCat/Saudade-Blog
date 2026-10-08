@@ -27,6 +27,30 @@
     margin-bottom: 22px;
 }
 
+/* 内置表情包（`:名字:` → `img.sticker`，见 `utils/stickers.ts`）的行内尺寸。
+ *
+ * 为什么这一份是**全局**的：此前三处各写了一遍同样四个属性（`.readContent .markdown-body`
+ * 在 ReadArticle/index.sass、`.commentSection .commentBody` 在 CommentSection/index.sass、
+ * `.markdown-body` 在 Editor/index.css）。它们非写不可的原因是**作用域**——那份
+ * `.markdown-body` 的规则住在编辑器路由的 CSS 里，文章页/讨论区加载不到它。
+ * `index.css` 是 main.tsx 第一行 import 的，哪个路由都在 ⇒ 新宿主（个人中心通知、
+ * 公告弹窗）白拿一份，不必再往两个文件里加第四条同源规则。
+ *
+ * 那三份 scoped 副本**照旧保留**：它们选择器更长、优先级更高，值与这里逐字相同，
+ * 行为不变；删它们要逐处回归，而收益只是少几行 CSS。
+ *
+ * ⚠️ **只认 `.sticker` 这个 class，不认 `[src^="/stickers/"]`**（另三处都是两条
+ * 一起写）。理由是本条是全局的：评论区的表情选择器（`CommentSection/StickerPicker.tsx`）
+ * 直接渲染 `<img src="/stickers/…">`（**不带 class**，那是"插入文本 `:名字:`"这条纪律的
+ * 副产品），它的 `height: 40px` 住在 `.commentStickerItem img` 里 —— 两者同为 (0,1,1)，
+ * 谁生效要看打包顺序。带上 src 前缀那条选择器就会把它拖进这场平局。 */
+img.sticker {
+    height: 1.8em;
+    vertical-align: middle;
+    display: inline-block;
+    margin: 0 2px;
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    z-index 阶梯 —— 20261002
 

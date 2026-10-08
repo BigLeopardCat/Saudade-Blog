@@ -59,6 +59,7 @@ import type {
     UnreadSummary,
 } from '../../interface/ProfileType'
 import AvatarCropModal from '../AvatarCropModal'
+import StickerText from '../StickerText'
 import { RoleBadge } from '../RoleBadge'
 import { DEFAULT_AVATAR_URL } from './identity'
 import { notifyUnreadChanged, useUnread } from './unread'
@@ -126,6 +127,8 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
     const [talks, setTalks] = useState<MyTalk[] | null>(null)
     const [notices, setNotices] = useState<NotificationItem[] | null>(null)
     const [noticeUnread, setNoticeUnread] = useState(0)
+    /** 点开的那条通知（null = 在列表态）。**存 id 不存整条**——见 `openedNotice`。 */
+    const [noticeOpenId, setNoticeOpenId] = useState<number | null>(null)
     const [mailbox, setMailbox] = useState<Mailbox | null>(null)
     /** 对话额度（20260929）：null = 还没拉过。**这个数每一轮对话都在变**，所以
      *  `agent-turn-done` 那条 effect 必须带上它（见下面那段注释）。 */
@@ -876,7 +879,65 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
         </div>
     )
 
-    const noticesPane = (
+    /** 点开的那条通知：**现从 `notices` 里按 id 取**，不存整条快照。
+     *
+     *  与信箱那边（`opened`，刻意存快照）**不同**，是为了点完底部那颗「标记为已读」
+     *  当场就是已读态——`markNoticesRead` 改的是列表那一份，取快照的话这里会停在
+     *  "未读"上、按钮永远亮着。副作用是 agent-turn-done 重拉列表时这里也跟着更新
+     *  （好事：那正是"窗口开着时 agent 刚发来一条"的场景）；万一这条在重拉后没了
+     *  （比如被删），`find` 落空 ⇒ 自动退回列表，不会渲染一封幽灵信。 */
+    const openedNotice =
+        noticeOpenId == null ? null : (notices || []).find((n) => n.id === noticeOpenId) || null
+
+    /** 详情（用户 20261008 要求：「展开到整个个人中心窗口」——列表里字号小、长公告读着累）。
+     *
+     *  形态与站内信箱那封"占满窗口的详情"同构（返回条 / 标签+时间 / 标题 / 正文），
+     *  顶掉整个 `.ucPane` 的内容。**没有做成 Modal**：本组件自己就是一个 Modal，
+     *  再套一层要在同一个 React 子树里继承 z-index（见本文件下方那两处 `zIndex`
+     *  注释踩过的坑），而信箱已经证明"就地顶掉窗格"这一手够用。
+     *
+     *  与信箱**另一处刻意不同**：那边点开即标已读（"点开了就是读了"），这里不标——
+     *  底部那颗「标记为已读」是主人点名要的按钮，自动标了它就成了个装饰。 */
+    const noticeDetail = (n: NotificationItem) => (
+        <div className="ucNoticeDetail">
+            <div className="ucNoticeDetailBar">
+                <Button size="small" onClick={() => setNoticeOpenId(null)}>
+                    返回公告和通知
+                </Button>
+            </div>
+            <div className="ucNoticeDetailHead">
+                <Tag color={n.type === 'announcement' ? 'geekblue' : 'cyan'}>
+                    {n.type === 'announcement' ? '公告' : '通知'}
+                </Tag>
+                <span className="ucNoticeWhen">{fmtMinute(n.createdAt)}</span>
+            </div>
+            <div className="ucNoticeDetailTitle">{n.title}</div>
+            <div className="ucNoticeDetailBody">
+                <StickerText text={n.content} />
+            </div>
+            {/* 页脚**居中**（主人指定）：左右各留一颗按钮时用 flex 居中，不是 space-between */}
+            <div className="ucNoticeDetailFoot">
+                {/* 带 link 的通知（留言审核结果）在详情里也要能直达——列表里那颗按钮
+                    点开详情后就被盖住了，不留这一颗等于"展开一次就回不去了" */}
+                {n.link ? (
+                    <Button className="ucGoBtn" onClick={() => openNotice(n)}>
+                        去看看
+                    </Button>
+                ) : null}
+                {n.isRead ? (
+                    <span className="ucHint">已读</span>
+                ) : (
+                    <Button type="primary" onClick={() => markNoticesRead([n.id])}>
+                        标记为已读
+                    </Button>
+                )}
+            </div>
+        </div>
+    )
+
+    const noticesPane = openedNotice ? (
+        <div className="ucPane">{noticeDetail(openedNotice)}</div>
+    ) : (
         <div className="ucPane">
             <div className="ucPaneBar">
                 <span className="ucHint">
@@ -892,11 +953,24 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                 locale={{ emptyText: <Empty description="暂无公告和通知" /> }}
                 renderItem={(n) => (
                     <List.Item
+                        // 整行可点 = 展开成占满窗口的详情（20261008 主人要求）。
+                        // 行内那两颗按钮**必须 stopPropagation**：它们各有自己的动作
+                        // （跳走 / 标已读），不拦就变成"点一下既标已读又展开了详情"。
+                        className="ucNoticeRow"
+                        onClick={() => setNoticeOpenId(n.id)}
                         actions={[
                             // 有 link 的通知给一颗直达按钮（20260923 起：留言审核结果通知）
                             ...(n.link
                                 ? [
-                                      <Button className="ucGoBtn" type="link" key="go" onClick={() => openNotice(n)}>
+                                      <Button
+                                          className="ucGoBtn"
+                                          type="link"
+                                          key="go"
+                                          onClick={(e) => {
+                                              e.stopPropagation()
+                                              void openNotice(n)
+                                          }}
+                                      >
                                           去看看
                                       </Button>,
                                   ]
@@ -904,7 +978,14 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                             ...(n.isRead
                                 ? []
                                 : [
-                                      <Button type="link" key="read" onClick={() => markNoticesRead([n.id])}>
+                                      <Button
+                                          type="link"
+                                          key="read"
+                                          onClick={(e) => {
+                                              e.stopPropagation()
+                                              void markNoticesRead([n.id])
+                                          }}
+                                      >
                                           标记已读
                                       </Button>,
                                   ]),
@@ -922,7 +1003,14 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                             }
                             description={
                                 <div className="ucBody">
-                                    <div className="ucBodyText">{n.content}</div>
+                                    {/* 通知正文里的 `:名字:` 也渲染成表情（20261008）：
+                                        agent 发来的通知带表情时，此前是一串字面文本。
+                                        走 StickerText（纯文本宿主那条），**不跑 markdown**
+                                        —— 上面 `.ucBodyText` 的 4 行夹取是按行数算的，
+                                        换成块级的 `<p>` 就判不准了。 */}
+                                    <div className="ucBodyText">
+                                        <StickerText text={n.content} />
+                                    </div>
                                     <div className="ucBodyTime">{fmtMinute(n.createdAt)}</div>
                                 </div>
                             }
