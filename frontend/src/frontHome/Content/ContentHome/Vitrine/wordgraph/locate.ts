@@ -64,7 +64,7 @@ async function queryVector(q: string): Promise<LocateHit[] | null> {
         if (!res.ok) return null;
         const j = await res.json();
         // ok=false 一律当故障（拆闸后 reason 只剩 empty_query/artifact_missing/
-        // embed_failed/dim_mismatch 四种故障语义），退本地兜底。
+        // embed_failed/dim_mismatch/space_mismatch 五种故障语义），退本地兜底。
         if (!j || j.ok !== true || !Array.isArray(j.words)) return null;
         const out: LocateHit[] = [];
         for (const it of j.words) {
