@@ -152,6 +152,9 @@ sequenceDiagram
 - **心跳** = 非 retain 的真实遥测/回执（30s TTL 内刷新即在线）；`status=offline` 立即离线。
 - retain 的 `status online` 订阅时被重放，**不计入心跳**——这是 2026-08-28"断电假在线"事故的
   修复核心（问题记录 2.1）：设备断电后 30s 内判定离线，下发返回 409 而非假成功。
+- ⚠️ **离线 TTL 的口径存疑，改之前先确认**：本文写 **30s**，而 `iot/firmware/固件开发指南.md`
+  写的是「120s 内无任何遥测 → 离线」。device-service 的源码不在本仓（这里只有 `.service`
+  模板与设置脚本），**当场核不了**；动这个数之前去那份源码里找常量，别按其中一边改另一边。
 - 正常掉线由**遗嘱消息**（last will，retain `"offline"`）自动补发；主动重启前可先发 offline。
 
 ### 3.5 遥测（即心跳）
@@ -262,7 +265,8 @@ esp_mqtt_client_config_t cfg = {
 
 - **安全组**：公网需放行 8883（MQTTS）。REST 全走 443 无需额外放行。
 - **证书**：MQTTS 证书与 HTTPS 同源（同一张证书覆盖你的域名），到期需续期并同步
-  EMQX 的证书目录（20260831 已续期至 **2026-11-07**；nginx 侧另有一份同源副本，**续期要两处同步**）。
+  EMQX 的证书目录。**nginx 侧另有一份同源副本，续期要两处一起换**。查当前有效期（别照抄
+  某个具体日期，它会过期）：`openssl x509 -enddate -noout -in <证书路径>`。
 - **设备服务部署**：device-service 不在本仓库、不经 CI（独立目录），改动需手动
   `cargo build --release` + 重启 device 服务（3.7GB 机器注意内存）。
 - **数据**：SQLite WAL（devices/config_history/telemetry/cmd_history），量小无需外部依赖。
@@ -271,7 +275,7 @@ esp_mqtt_client_config_t cfg = {
 
 ---
 
-## 7. 机器代价与保留结论（20261002 实测）
+## 7. 机器代价与保留结论（20261004 实测）
 
 **结论：本站的 IoT 是"在用/偶尔用"，建议保留**——代价可量化且都很小，而拆掉它并不会让
 主站变快（主站的瓶颈在 LLM API 延迟，不在这台机器）。下面是账，引用时连着日期一起引。
@@ -286,11 +290,9 @@ esp_mqtt_client_config_t cfg = {
 | 公网面 | 多开 **8883**（MQTTS） | 主站只开 80/443；这是**唯一为设备开的口子**，安全组与证书都要单独管 |
 | 运维面 | **两个不经 CI 的 unit**（emqx、saudade-device）；device-service 源码不在本仓，改动要手动 `cargo build --release` + 重启 | 主站两个服务都走 CI；这两件是"游离在流水线之外"的例外 |
 
-> ⚠️ **device-service 那一行改过一次口径**：早先这里与
-> [deployment-and-ops.md](deployment-and-ops.md) §8.2 都写 ~1 MiB，20261004 量到 **3.1 MiB**
-> ——一个 Rust + SQLite + MQTT 客户端的常驻量级本来就该是几 MiB，1 MiB 更像没量、估的。
-> **结论不受影响**：IoT 全量 ~63 MiB，对照 agent"凉 241 ↔ 热 456 MiB"的摆动
-> ——它比 agent 自己的日常波动还小。
+> ⚠️ **device-service 是几 MiB 量级，不是 1 MiB**——一个 Rust + SQLite + MQTT 客户端的常驻
+> 本来就在这个档，写 1 MiB 是估的。**结论不受影响**：IoT 全量 ~63 MiB，对照 agent
+> "凉 241 ↔ 热 456 MiB"的摆动——它比 agent 自己的日常波动还小。
 >
 > **分母要连着状态引**：生产合计在 **~420 MiB（agent 刚重启）↔ ~640 MiB（worker 跑过重活）**
 > 之间，所以"IoT 占几个百分点"这个数会随取样时刻在 **10%~15%** 之间变（63/640 与 63/420）。

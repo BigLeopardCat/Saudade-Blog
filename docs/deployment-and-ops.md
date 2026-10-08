@@ -50,7 +50,7 @@ flowchart TB
 |---|---|---|
 | 80/443 | nginx | 静态 + 反代 + SSE 透传（`X-Accel-Buffering: no`，否则帧被缓冲成一次性返回） |
 | 3000 | Rust 后端 | axum + sea-orm + MySQL；博客主 API + 对话编排 |
-| 8010 | Python Agent | FastAPI，4 workers（20261002 起，见《资源画像与容量》）；对话生成 + 工具执行 + RAG |
+| 8010 | Python Agent | FastAPI，4 workers（见《资源画像与容量》）；对话生成 + 工具执行 + RAG |
 | 3100 | IoT 设备服务 | Rust；设备注册/遥测/cmd 下发（校验博客 JWT） |
 | 8883 | EMQX | MQTT over TLS；设备 ↔ device-service 消息总线 |
 | 3306 | MySQL | 博客业务库 + 对话历史 + IoT 数据 |
@@ -137,7 +137,7 @@ push 到 `cn_sora_blog` 分支触发构建与部署：
 |---|---|---|
 | nginx | 发行版默认 | 静态根 `frontend/dist` + 反代 3000/8010/3100；**配置改动只需 `reload`** |
 | Rust 后端 | `Restart=always` | 工作目录即仓库根，环境文件由 dotenv 从工作目录加载 |
-| Python Agent | `Restart=always` | uvicorn 4 workers 绑回环（20261002 起）；`TimeoutStopSec=120` 让在途对话优雅结束 |
+| Python Agent | `Restart=always` | uvicorn 4 workers 绑回环；`TimeoutStopSec=120` 让在途对话优雅结束 |
 | MySQL | 发行版默认 | 业务库 + 对话历史 + IoT 数据（单实例，无主从） |
 | EMQX | `Restart=on-failure`（drop-in 改 `RestartSec=5s`） | MQTT broker；**带内存上限**（drop-in 见下） |
 | IoT device-service | `Restart=on-failure` | 独立目录与独立仓库，不在博客仓库内 |
@@ -200,7 +200,7 @@ logs/
 - **心跳探针**（建议由 cron 周期执行，`scripts/healthcheck.sh`，共 **6 段**）：① Rust 存活
   ② agent `/health` 的 `agent_ready` ③ **uvicorn worker 崩溃检测**（pid 集合对比——worker
   静默死亡，自己不写任何日志）④ nginx error.log 增量扫描 ⑤ 残留无头浏览器清理
-  ⑥ **夜间任务失败哨兵**（20260924 加：夜间套件非零退出/未跑 ⇒ WARN）。异常追加 `health.log`。
+  ⑥ **夜间任务失败哨兵**（夜间套件非零退出/未跑 ⇒ WARN）。异常追加 `health.log`。
   装上就是一行 cron（探针只写日志，不发通知——**告警投递需要自己接**，见《已知缺口》）：
 
   ```
@@ -223,7 +223,7 @@ logs/
 约定：模板进仓库（`.env.example`），真值只在服务器上。**别在 sites-enabled 里放备份文件**——
 nginx 会把它们一起加载，导致 duplicate server；备份移出该目录。
 
-两条与首页图谱产物相关的部署注意（20261003 起）：
+两条与首页图谱产物相关的部署注意：
 
 - 后台重建出来的产物写在 **agent 仓**的 `data/word_graph/web/`，由 Rust 的
   `GET /api/public/graph/{manifest,artifact/:file}` 供出，默认路径写死在
@@ -336,7 +336,7 @@ for p in $(pgrep -P "$m"); do tr -d '\0' < /proc/$p/cmdline | grep -q multiproce
 | 目录 | 大小 | 说明 |
 |---|---|---|
 | `target/` | 4.1 GB | Rust 构建产物。**生产二进制就在这里 ⇒ 永不 `cargo clean`** |
-| `/tmp` | 1.4 GB | 杂项（探针状态、`systemd-private-*`、几个仓的临时克隆）。**20261006 之前这里涨到 5.6 GB**，其中 4.5 GB 是渲染沙箱 `mkdtemp` 的残留——现在由两个运行器的 `TMPDIR` 隔离 + 夜跑末尾的清扫管住（见 §4 与 [frontend/README.md](../frontend/README.md) 的《沙箱用得上的三个坑》） |
+| `/tmp` | 1.4 GB | 杂项（探针状态、`systemd-private-*`、几个仓的临时克隆）。渲染沙箱的 `mkdtemp` 残留曾是这里的大头，现由两个运行器的 `TMPDIR` 隔离 + 夜跑末尾的清扫管住（见 §4 与 [frontend/README.md](../frontend/README.md) 的《沙箱用得上的三个坑》） |
 | `saudade-blog-agent/` | 249 MB | 含 `.venv` |
 | `logs/` | 109 MB | agent 日志 + trace（按天删/压，见 §4） |
 | `/usr/lib/emqx` | 89 MB | EMQX 发行包（可选件） |
@@ -464,7 +464,9 @@ defaults 文件、不进 argv。
 - **没有整机灾难恢复预案**：重启后 MySQL → EMQX → rust/agent 的启动顺序靠 systemd 依赖，
   从未在"冷启动"场景下演练过。
 - **探针只写日志、不发通知**：`health.log` 里攒着告警，但没有人会被叫醒。
-- **依赖漏洞响应**：仓库没有 `dependabot.yml`，CI 里也没有 `cargo audit` / `pip-audit` 这类步骤。
+- **依赖漏洞响应**：`.github/dependabot.yml` 已有（按生态开 PR），但 CI 里仍没有 `cargo audit` /
+  `pip-audit` 这类步骤 ⇒ 只有"有人开了 PR"这条被动通道，没有主动扫描。
 - **密钥轮换流程**：`JWT_SECRET` 换一次等于所有人重新登录（旧令牌立即失效），但**没有成文的
-  轮换周期与泄漏处置步骤**；其余凭据（中转桶、模型 API key）只在泄漏后被动滚动过。
-- **没有漏洞披露政策与安全联系人**（仓库里没有 `SECURITY.md`）。
+  轮换周期与泄漏处置步骤**；其余凭据（中转桶、模型 API key）同样没有成文流程。
+- **漏洞披露**：`SECURITY.md` 已有（`CONTRIBUTING.md` 与 `README.md` 都链它）——披露渠道与
+  响应口径**以那份为准，别在别处再写一份**。
