@@ -8,7 +8,7 @@ import MainContext from "../../components/conText.tsx";
 import Switch from "../../components/Switch";
 import SettingButton from "../../components/Buttons/SettingButton";
 import {useDispatch, useSelector} from "react-redux";
-import {fetchUserInfo} from "../../store/components/user.tsx";
+import {fetchUserInfo, fetchSocial} from "../../store/components/user.tsx";
 import UserState from "../../interface/UserState";
 import {fetchCategories} from "../../store/components/categories.tsx";
 import {fetchTags} from "../../store/components/tags.tsx";
@@ -137,6 +137,12 @@ const Dashboard = () => {
     //初始渲染
     useEffect(() => {
         dispatch<any>(fetchUserInfo())
+        // 站点社媒链接（20261009）：首页那张 GitHub 贡献图从 `state.user.social` 现取用户名，
+        // 而这份数据**只有前台壳的 Head 在拉**。后台是另一颗壳（不在 App 路由树下），
+        // 少了这一句时"从后台刷新/登录后直接跳进来"两条路都读到 null —— 图上不去、也不报错，
+        // 只剩 `.articleRecordImg` 那个定高空框（只有"先前台逛一圈再双击头像进来"才正常，
+        // 因为 redux store 在 SPA 导航里是同一个）。后台自己拉一次，任何入口都成立。
+        dispatch<any>(fetchSocial())
         dispatch<any>(fetchCategories())
         dispatch<any>(fetchTags())
         dispatch<any>(fetchNoteList(true))
