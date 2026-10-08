@@ -41,10 +41,10 @@
 
 20261005 加了两节（同一处两个不同的病，见各自小节头注）：
   ⑦ 正文列内边距只留一处 + 手机档那三条死声明的**渲染值**（⑦b 是字面删规则的反向对照）；
-  ⑧ 阅读面底色**两档**（20261008 换：白天 = 站内其它内容页那支 `--container-background-color`、
-     夜间 = 不透明 `#121a27`）/ 正文补 0.2px 描边且**不重排**（摘掉描边那条后同段落的
-     宽/高/行数必须逐项相同）。底色那支读的是 `var(--container-background-color)`（出处
-     `src/frontHome/main.css`，沙箱按线上次序拷成 main.css）⇒ 夹具外面要套一层 `.frontRoot`
+  ⑧ 阅读面底色**两档**（20261008 换：白天 = 主题底 `--washi-theme-bg`（粉紫天青那张，
+     首页首屏/登录页同一支）、夜间 = 不透明 `#121a27`）/ 正文补 0.2px 描边且**不重排**
+     （摘掉描边那条后同段落的宽/高/行数必须逐项相同）。白天那支读的是 `var(--washi-theme-bg)`
+     （出处 `src/index.css`，沙箱拷成 tokens.css）⇒ 夹具外面要套一层 `.frontRoot`
      （那两条规则的祖先选择器），暗色档另用 `.frontRoot.frontDark` 臂。本节另有一臂**反向
      对照**（⑧c）：把夜间那支按行为改回 `transparent`（旧写法）⇒ "不透明"那条判据当场红。
 """
@@ -515,10 +515,13 @@ with sync_playwright() as p:
     #      那张深色底是登录页一条裸 `body` 规则漏出来的。ca6b9b0（20261006）把它收成
     #      `body.login-route` ⇒ 泄漏断了，`body` 退回后台模板的 #E4E9F7 ⇒ 夜间阅读面成了
     #      33% 黑压在浅紫蓝上的 rgb(153,156,165)（白字 2.76:1）。成因全在 sass 那段注释里。
-    #      本节钉**渲染值**：白天那支与站内其它内容页是**同一支令牌**（`--container-background
-    #      -color`，半透明白 ⇒ computed background-image 里必须出现 rgba(255,255,255,.6)），
-    #      夜间那支必须**不透明**且是 rgb(18,26,39)。"不透明"是这条判据的关键：旧写法
-    #      transparent 的 computed 值是 rgba(0,0,0,0) ⇒ 当场红（⑧c 的反向对照证明这一点）。
+    #      本节钉**渲染值**：白天那支必须是主题底那条渐变（两端色值都在 computed 里）、
+    #      **且不再等于站内内容页那支**（用户第二轮就是否掉了那支："白天怎么文章详情页是
+    #      纯白，不是博客主题色系背景"——半透明白遮罩叠出来是 rgb(246,248,251) 的近白，
+    #      铺满一篇长文就是一整幅白）；夜间那支必须**不透明**且是 rgb(18,26,39)。"不透明"
+    #      是夜间那条判据的关键：旧写法 transparent 的 computed 值是 rgba(0,0,0,0) ⇒ 当场红
+    #      （⑧c 的反向对照证明这一点）。另加一条**可读性**判据：深色正文与渐变**每一个色停**
+    #      的对比度都要 ≥4.5:1 —— 主题底可以花，但不能把字压到看不清。
     #   ② 描边（20261005 第二轮「文章页字体还是看起来比讨论区细」）——正文与讨论区正文是
     #      **同一条字体栈、同一个字重(400)、同一种颜色**，差别只有字号（17 vs 14.72px）。
     #      DPR2 下量中心扫描线上的墨迹宽，两者都是 1 CSS px：CJK 在小字号被格点吸附、
@@ -526,10 +529,10 @@ with sync_playwright() as p:
     #      在微软雅黑上推不动（只有 Light/Regular/Bold），只剩描边这一根杠杆。
     #      不重排是"能上"的前提：描边若参与排版，全站行数/分页都会动。
     def build_color_sandbox(css: str, name: str) -> pathlib.Path:
-        # 与 ①②⑦ 那个沙箱**只差**一张表：`src/index.css`。底色那支 20261008 起读的是
-        # `--container-background-color`（出处 `src/frontHome/main.css`，按线上次序就是本
-        # 沙箱的 main.css），已不读 index.css；这张表留着是因为线上它真的在（main.tsx 第一行
-        # import），少一张就变成"量一个缺了全站令牌表的世界"。
+        # 与 ①②⑦ 那个沙箱**只差**一张表：`src/index.css`。底色那支 20261008 第二轮起读的是
+        # `--washi-theme-bg`（出处就是这张表，线上它由 main.tsx 第一行 import）——**少一张
+        # 就量不出东西**：令牌没定义时 `var()` 整条 background 落空，白天那支会变成透明
+        # （而"透明"正好是旧写法，判据会以为改回去了）。
         sb = pathlib.Path(tempfile.mkdtemp(prefix=f"readcol-{name}-"))
         (sb / "read.css").write_text(css, encoding="utf-8")
         shutil.copy(RESET_CSS, sb / "main.css")
@@ -593,6 +596,8 @@ with sync_playwright() as p:
         lines: rg.getClientRects().length,
         tile: getComputedStyle(document.documentElement)
                 .getPropertyValue('--container-background-color').trim(),
+        themebg: getComputedStyle(document.documentElement)
+                .getPropertyValue('--washi-theme-bg').trim(),
       };
     }"""
 
@@ -611,14 +616,48 @@ with sync_playwright() as p:
     cd = measure_color(SB_COLOR, dark=True)
     co = measure_color(SB_NIGHT_OLD, dark=True)
     _nz = lambda s: re.sub(r"\s+", "", s or "")  # noqa: E731 —— 归一化空白后再比字面
-    check("前提：`--container-background-color` 解析出来了（否则下面量的是空）",
-          "255, 255, 255" in cl["tile"] and "0.6" in cl["tile"], repr(cl["tile"]))
-    check("★白天档 = 站内其它内容页那一支：`.readContainer` 的 background-image 就是"
-          " `--container-background-color`（半透明白遮罩，不是自己另调的一个色）",
-          _nz(cl["light"]["bi"]) == _nz(cl["tile"]),
-          f'读到 {cl["light"]["bi"]!r} / 令牌 {cl["tile"]!r}')
-    check("  ★且它**不是不透明色**（半透明是这一支的本性：叠在主题底上才是那个近白）",
-          cl["light"]["bg"] == "rgba(0, 0, 0, 0)", cl["light"]["bg"])
+
+    def _norm_bg(s: str) -> str:
+        # 令牌的**声明值**是 `#fff6fa` 这种十六进制，浏览器把它**算**成 `rgb(255, 246, 250)`
+        # 才放进 background-image。要比"渲染出来的就是那一支"，就得先归一到同一种写法，
+        # 否则比的是"十六进制 ≠ rgb()"这种格式差异（20261008 当场踩到，两条判据假红）。
+        s = (s or "").lower()
+        s = re.sub(r"#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})",
+                   lambda m: "rgb(%d,%d,%d)" % tuple(int(v, 16) for v in m.groups()), s)
+        return _nz(s)
+
+    check("前提：两支令牌都解析出来了（少一支下面量的是空/落空）",
+          "255, 255, 255" in cl["tile"] and "0.6" in cl["tile"]
+          and "rgb(255,246,250)" in _norm_bg(cl["themebg"])
+          and "rgb(233,244,255)" in _norm_bg(cl["themebg"]),
+          f'内容页那支 {cl["tile"]!r} / 主题底 {cl["themebg"]!r}')
+    check("★白天档 = **主题底**：`.readContainer` 的 background-image 就是 `--washi-theme-bg`"
+          "（粉紫天青那张，与首页首屏/登录页同源）",
+          _norm_bg(cl["light"]["bi"]) == _norm_bg(cl["themebg"]),
+          f'读到 {cl["light"]["bi"]!r} / 令牌 {cl["themebg"]!r}')
+    check("★白天档**不再**是站内内容页那支半透明白遮罩（20261008 第二轮用户否掉的就是它："
+          "铺满一篇长文是一整幅白，看不出主题色）",
+          _norm_bg(cl["light"]["bi"]) != _norm_bg(cl["tile"])
+          and "233, 244, 255" in cl["light"]["bi"],
+          f'读到 {cl["light"]["bi"]!r}')
+    # 可读性：主题底可以花，但不能把字压到看不清。渐变里最亮的那个色停是最坏情况。
+    def _lum(c):
+        def f(v):
+            v = v / 255
+            return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
+        r, g, b = (f(x) for x in c)
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+    def _ratio(c1, c2):
+        a, bb = _lum(c1), _lum(c2)
+        return (max(a, bb) + 0.05) / (min(a, bb) + 0.05)
+
+    _stops = [tuple(int(v) for v in m) for m in
+              re.findall(r"rgb\((\d+), (\d+), (\d+)\)", cl["light"]["bi"])]
+    _ink = tuple(int(v) for v in re.match(r"rgba?\((\d+), (\d+), (\d+)", cl["p"]["color"]).groups())
+    _worst = min((_ratio(_ink, s), s) for s in _stops) if _stops else (0, None)
+    check(f'★正文压在这条渐变上仍然看得清：与每个色停的对比度都 ≥4.5（最差 {_worst[0]:.1f}:1）',
+          len(_stops) >= 2 and _worst[0] >= 4.5, f'色停 {_stops} / 字色 {cl["p"]["color"]}')
     check("★夜间档 = 不透明深墨蓝 rgb(18,26,39)（= 20261006 之前屏幕上的那一档；"
           "computed 值不带 alpha，就是「不透明」这个判据本身）",
           cd["light"]["bg"] == "rgb(18, 26, 39)", cd["light"]["bg"])
@@ -648,16 +687,32 @@ with sync_playwright() as p:
     check(f'  夹具自检：那一段真的折成了多行（{cl["lines"]} 行 ≥ 3，否则行数判据无分辨力）',
           cl["lines"] >= 3, str(cl["lines"]))
 
-    # 负空间一：白天那支的"同源"是**跨文件**的（ReadArticle 与 AboutMe 各写一遍
-    # `var(--container-background-color)`）⇒ 只量这一页，量得再对也不代表两边还牵着手。
-    # 数的是**编译产物**（sass 已剥注释）：源码注释里为了讲道理会引用令牌名，照源码数
-    # 就会数到"注释里的那个"——本仓栽过这个跟头。
-    _about = (FE / "src/frontHome/Content/AboutMe/index.sass").read_text(encoding="utf-8")
-    check("★白天那支与 /about 那类内容页用的是同一支令牌（本页产物里出现 1 次，/about 里也有）",
-          CSS.count("var(--container-background-color)") == 1
-          and "var(--container-background-color)" in _about,
-          f'本页产物 {CSS.count("var(--container-background-color)")} 次 / '
-          f'/about 里{"有" if "var(--container-background-color)" in _about else "没有"}')
+    # 负空间一：主题底那张纸是**跨文件同源**的（ReadArticle / 首页首屏 `.collageBg` /
+    # 登录页两条），20261008 收成 `--washi-theme-bg` 一支。只量这一页，量得再对也不代表
+    # 那三处还牵着手 ⇒ 这里按**源码**数：三处都只写 `var(--washi-theme-bg)`、都不再写那张
+    # 渐变的字面值（写着字面值就是"改一处必须同步另一处"的形状，那正是收令牌要治的病）。
+    # 只有 `src/index.css` 该出现字面值，且只出现一次。
+    _CONSUMERS = ["src/pages/Login/index.sass",
+                  "src/frontHome/Content/ContentHome/index.sass",
+                  "src/frontHome/Content/ReadArticle/index.sass"]
+    _LIT = "linear-gradient(160deg, #fff6fa"
+    _lit_bad = [p for p in _CONSUMERS
+                if _LIT in (FE / p).read_text(encoding="utf-8")]
+    _var_missing = [p for p in _CONSUMERS
+                    if "var(--washi-theme-bg)" not in (FE / p).read_text(encoding="utf-8")]
+    _tok = (FE / "src/index.css").read_text(encoding="utf-8")
+    check("★主题底三处同源、值只写一份：首页首屏/登录页/文章阅读面都写 `var(--washi-theme-bg)`，"
+          "都不再抄那张渐变的字面值（字面值只该在 `src/index.css` 里出现一次）",
+          not _lit_bad and not _var_missing and _tok.count("--washi-theme-bg:") == 1,
+          f'仍写字面值的 {_lit_bad} / 没写 var 的 {_var_missing} / '
+          f'index.css 里定义 {_tok.count("--washi-theme-bg:")} 次')
+    # 负空间一之二：这一支**不许有夜间档**。`.frontDark, .dark, .washiDark` 那档也挂在 body 上
+    # （后台/浮层用），而 var() 是继承来的 —— 一旦给它一个暗值，白天臂会被一个挂在 body 上的
+    # `.washiDark` 悄悄翻黑（令牌不看你自己那支是不是夜间臂）。
+    _nightblock = re.search(r"\.frontDark,\s*\.dark,\s*\.washiDark\s*\{([\s\S]*?)\n\}", _tok)
+    check("★主题底**只定义在这一档**（`.frontDark, .dark, .washiDark` 那档里不许出现它）",
+          _nightblock is not None and "--washi-theme-bg" not in _nightblock.group(1),
+          "夜间档里也定义了它" if _nightblock else "找不到夜间令牌块")
 
     # 负空间二：米白那个令牌 20261008 随它的唯一用处一起删了。判据同样只认编译产物。
     check("★`--washi-paper-warm` 在编译产物里一次都不出现（零引用的令牌不许留）",

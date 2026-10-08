@@ -187,7 +187,8 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
     z-index: 0
     pointer-events: none
     overflow: hidden
-    background: linear-gradient(160deg, #fff6fa 0%, #ffe9f4 36%, #f2ecff 68%, #e9f4ff 100%)
+    // 值走 `--washi-theme-bg`（src/index.css）：登录页底与文章页阅读面也用这一张
+    background: var(--washi-theme-bg)
     &::after
       content: ''
       position: absolute

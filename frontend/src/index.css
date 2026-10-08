@@ -118,6 +118,16 @@ img.sticker {
     --washi-paper: #fffdfa;
     --washi-paper-2: #fff6fa;
     --washi-paper-3: #f6f0ff;
+    /* 主题底（粉紫天青那一张）。三处同源、值只写这一份：首页首屏拼贴底
+       （ContentHome 的 `.collageBg`）、登录页底（`body.login-route` 与 `.login-page`）、
+       文章页阅读面（ReadArticle）—— 20261008 起这三处一律 `var(--washi-theme-bg)`。
+       ⚠️ **刻意只有白天档**（这是上面那条"深浅两档必须成对"的**例外**）：这三处各自的夜间臂
+       都有自己的值（首页首屏是墨紫近黑、登录页是墨蓝、文章阅读面是深墨蓝 #121a27），
+       谁都不该在夜里拿到这一支。所以下面 `.frontDark, .dark, .washiDark` 那档**不许**补它 ——
+       补了反而危险：那个类名也会挂在 `body` 上（后台/浮层用），而 `var()` 是**继承**来的，
+       一个挂在 body 上的 `.washiDark` 就会把这些白天臂悄悄翻成暗的（令牌不看你那一支
+       是不是夜间臂，只看最近的定义住哪儿）。 */
+    --washi-theme-bg: linear-gradient(160deg, #fff6fa 0%, #ffe9f4 36%, #f2ecff 68%, #e9f4ff 100%);
     /* 20261008 删掉了 `--washi-paper-warm`（#f7f1e7 米白）。它 20261005 为文章页阅读面
        而生（用户当时说纯白"刺眼"），用途只有那**一处**；20261008 用户改口要"博客主题
        背景"，那一支改用站内既有的 `--container-background-color`（与 /about 等页同源），

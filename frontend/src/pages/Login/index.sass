@@ -39,8 +39,10 @@ body
 // 页面底：与 `.login-page` 同一张（这里是"卡片外/回弹露出"的那部分）。
 // 默认白天档 —— `body` 上的类由 index.tsx 在挂载时加上（同时也就不会有"整站别处也吃到
 // 这张底"的问题：类一卸，规则就不生效）。
+// 值走 `--washi-theme-bg`（src/index.css）：这张粉紫天青底首页首屏与文章页阅读面也在用，
+// 20261008 收成一支令牌，改主题底只改那一处。
 body.login-route
-  background: linear-gradient(160deg, #fff6fa 0%, #ffe9f4 36%, #f2ecff 68%, #e9f4ff 100%)
+  background: var(--washi-theme-bg)
 
 body.login-route.login-dark
   background: linear-gradient(160deg, #0d1319 0%, #171f2a 55%, #1d2634 100%)
@@ -54,8 +56,8 @@ body.login-route.login-dark
   padding: 24px
   box-sizing: border-box
   overflow: hidden
-  // 白天档的页面底（照抄主页首屏拼贴底那条 160deg 渐变）。`.frontDark` 下换成墨蓝。
-  background: linear-gradient(160deg, #fff6fa 0%, #ffe9f4 36%, #f2ecff 68%, #e9f4ff 100%)
+  // 白天档的页面底（主页首屏拼贴底那条 160deg 渐变，`--washi-theme-bg`）。`.frontDark` 下换成墨蓝。
+  background: var(--washi-theme-bg)
 
   // 纹路 = 主页那层 28px 方格纸（`ContentHome/index.sass` 的 `.collageBg::after` 同一组
   // 数）。守的是"只做颜色配色纹路变化"这句里的**纹路**那半。
