@@ -303,7 +303,7 @@ nginx error.log 增量扫描，异常追加 health.log。
 - **设计与文档索引**（`docs/`）：
   [部署与运维手册](docs/deployment-and-ops.md)（拓扑端口 / CI-CD / systemd / 日志 / 排查）、
   [安全边界与加固](docs/security-boundary.md)（信任边界、输入限额、已知缺口）、
-  [向量图谱](docs/word-graph.md)（选词 / 降维 / 布局 / 检索的完整实测记录）、
+  [向量图谱](docs/word-graph.md)（产物契约 / 建图管线 / 查询链路 / 线上重建与运维）、
   [IoT 设备接入](docs/iot-device-integration.md)。
 - **Agent 侧机制**（模型行为边界、断连中断、防幻觉闸、评测体系）见
   [saudade-blog-agent](https://github.com/BigLeopardCat/saudade-blog-agent) 的 `docs/`。

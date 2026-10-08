@@ -15,7 +15,7 @@
 | `frontend/` | 博客前端 SPA（**不含**看板娘与对话面板，见下） | React 18 + Vite 5 + antd + sass |
 | `saudade-blog-agent/` | 看板娘的"大脑" | Python（FastAPI + 手写 LangGraph） |
 | `scripts/` | 部署、迁移、巡检脚本 | bash / python |
-| `docs/` | 设计文档（安全边界、评测分层、词图等） | Markdown |
+| `docs/` | 设计文档（安全边界、部署与运维、向量图谱、IoT 等） | Markdown |
 
 **`saudade-blog-agent/` 是一个独立的 git 仓库**，被本仓 `.gitignore` 忽略。它的改动
 不在本仓的 CI 里，也不随本仓部署。只有你要动"看板娘会怎么答话"时才需要它。
