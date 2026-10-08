@@ -1236,7 +1236,10 @@
       margin-top: 26px;
       font-size: 13px;
       letter-spacing: 0.5em;
-      color: rgba(240, 226, 200, 0.5);
+      /* 「河灯将明 · 稍候」：0.5 压在这条渐变的**两端**各只有 4.36:1（20261009 实测，
+         两端 #02040c / #081029 算下来一样），够不着 AA —— 0.62 两端各 ≥6.1:1。
+         这层幕是不透明的，比场景里那几行字好算：底就是它自己。 */
+      color: rgba(240, 226, 200, 0.62);
       text-indent: 0.5em;
     }
   }
@@ -1485,6 +1488,9 @@
   --rz-paper-line: rgba(238, 226, 197, 0.28);
   --rz-vermilion: #b84f43;
   --rz-vermilion-bright: #e18a6c;
+  /* 朱砂落在月白纸笺上的那一档（20261009）：夜河那支 #ff9d8a 是为深底选的，
+     压纸面只有 1.4:1；纸面上的朱红只有这一档够深（纸 5.9:1 / 浅绛底 4.8:1）。 */
+  --rz-vermilion-ink: #853630;
   --rz-moon: #f5dca9;
   --rz-shadow: 0 20px 60px rgba(2, 10, 14, 0.45);
   background: #03050c;
@@ -1529,9 +1535,11 @@
       }
     }
 
+    /* 底部提示：0.56 在夜河底上 20261009 实测 3.5~4.1:1（画布的水光比纯底亮），
+       提到 0.78（同一底上 ≥8:1，留足画布亮部的余量） */
     .rz-hint {
       bottom: 28px;
-      color: rgba(238, 226, 197, 0.56);
+      color: rgba(238, 226, 197, 0.78);
       font-size: 12px;
       letter-spacing: 0.2em;
     }
@@ -1606,13 +1614,17 @@
       letter-spacing: 0.08em;
     }
 
+    /* 落款/时间：纸面上 0.56 只有 3.5:1（20261009 提到 0.78 ⇒ 6.5:1） */
     .rz-who {
-      color: rgba(16, 35, 43, 0.56);
+      color: rgba(16, 35, 43, 0.78);
       text-shadow: none;
     }
 
+    /* 印面用 `.rz-seal`（`#a33f30` + 米色字）而不是 `--rz-vermilion`（`#b84f43`
+       配 `#fff0d7` 只有 4.41:1，20261009 实测差 0.09 够不着 AA）——后者继续管
+       气泡左沿那条朱线。 */
     .rz-seal {
-      background: var(--rz-vermilion);
+      background: #a33f30;
       color: #fff0d7;
       box-shadow: none;
     }
@@ -1630,7 +1642,7 @@
         background: transparent;
         border: 1px solid rgba(16, 35, 43, 0.28);
         border-radius: 3px;
-        color: rgba(16, 35, 43, 0.66);
+        color: rgba(16, 35, 43, 0.78);
 
         &:hover,
         &:focus-visible {
@@ -1660,9 +1672,10 @@
       letter-spacing: 0.28em;
     }
 
+    /* 正文副本：0.62 在纸面上是 4.1:1，够不着 AA（20261009 提到 0.78 ⇒ 6.5:1） */
     .rz-notice-body p,
     .rz-wish-sub {
-      color: rgba(16, 35, 43, 0.62);
+      color: rgba(16, 35, 43, 0.78);
     }
 
     .rz-album-search input,
@@ -1672,8 +1685,9 @@
       border-color: rgba(16, 35, 43, 0.2);
       color: var(--rz-ink);
 
+      /* 占位符：0.38 只有 2.2:1（20261009 提到 0.68 ⇒ 4.6:1） */
       &::placeholder {
-        color: rgba(16, 35, 43, 0.38);
+        color: rgba(16, 35, 43, 0.68);
       }
 
       &:focus {
@@ -1698,14 +1712,15 @@
     }
 
     .rz-wish-foot .rz-wish-ghost {
-      color: rgba(16, 35, 43, 0.58);
+      color: rgba(16, 35, 43, 0.78);
       border-color: rgba(16, 35, 43, 0.24);
       border-radius: 3px;
     }
 
+    /* 主按钮同印面：底压深一档（`#b84f43` 配米色字 4.41:1，差一点） */
     .rz-wish-foot .rz-wish-primary,
     .rz-notice-foot .rz-wish-primary {
-      background: var(--rz-vermilion);
+      background: #a33f30;
       border: 0;
       border-radius: 3px;
       color: #fff0d7;
@@ -1717,6 +1732,232 @@
       }
     }
   }
+}
+
+/* ---------------- 20261009：纸面上的遗留夜河色 ----------------
+   用户报「河灯留言板字体颜色太淡看不清」。不是审美问题：20261005 把三个弹窗与气泡换成
+   月白纸笺时，只重描了它**逐个点名**的选择器；没被点名的那一族还留着"深底浅字"时代的
+   取值（火漆棕底 + 米色字），当年是为夜河底选的。压在纸面上（`--rz-paper` ≈
+   rgb(229,217,190)）之后的实测对比度：
+
+     灯影集条目底 `rgba(16,10,4,.38)` + `.rz-album-msg` 0.9 ……… 2.49:1
+     `.rz-album-meta`（11px）0.42 ……………………………………… 1.54:1
+     `.rz-album-empty` 0.4 ………………………………………… 1.02:1 ← 几乎与纸同色
+     页签选中 `#ffe4ae`（20261005 覆盖了它的底与边，唯独没覆盖 color）… 1.25:1
+     `.rz-minetag` 全族（待审金／未通过朱／已点亮灰金）………… 1.0~1.3:1
+     `.rz-reject` `.rz-album-reason` `.rz-reclaim-err` 的 `#ff9d8a` … 1.3~1.4:1
+     选灯／心印卡：20261005 那两条覆盖（(0,4,0)）被基形（(0,5,0)）与 `.rz-cat-name b/i`
+     的 (0,6,1) 一直压着 ⇒ **从未生效**，卡片至今是紫黑底、字是米色（6.2:1 读得出，
+     但整族没上纸面 —— 这一条不是"看不清"，是"压根没改到"）
+     `.rz-wish-count` 0.35 ；`.rz-reclaim` 0.72 ……………………… 1.03 / 1.07:1
+
+   这一族按纸面重定成三档墨 + 一档朱砂；每条旁边的读数是
+   `frontend/tests/riverboard-contrast.test.py` 量出来的（真编译本文件 + 按 index.tsx
+   搭标记，量**合成后**的底色，含字色自身的 alpha）——纸面容器内 54 段全部 ≥4.5，最低 4.8：
+     正文 `var(--rz-ink)` ／ 次要 `rgba(16,35,43,.78)` ／ 最弱 `rgba(16,35,43,.70)`
+     ／ 朱砂 `var(--rz-vermilion-ink)`。底与边一并换成"浅墨／浅绛"，不再用火漆棕。
+
+   两处必须按**完整路径**重写：20261005 那两条 `.rz-lamp-card`/`.rz-cat-card` 覆盖的选择器
+   是 (0,4,0)，而基形 `.rz-root .rz-wish-modal .rz-wish-box .rz-lamp-grid .rz-lamp-card`
+   是 (0,5,0)、心印卡的 `.rz-cat-name b/i` 更是 (0,6,1) —— 它们**一直被基形压着**
+   （选灯／选印卡片至今仍是紫黑底），这里补到同特异性。
+   同理，`:hover` 态的浅色也是基形直接给的（`.rz-album-tabs button:hover`、
+   `.rz-wish-ghost:hover`），不显式给 color，鼠标一上去字就消失在纸里。 */
+
+/* 卷首朱印「雅集」 */
+.rz-root .rz-album-modal .rz-album-box::before {
+  color: var(--rz-vermilion-ink);
+  border-color: rgba(133, 54, 48, 0.55);
+}
+
+.rz-root .rz-album-modal .rz-album-box .rz-album-find {
+  background: rgba(16, 35, 43, 0.045);
+  border-color: rgba(16, 35, 43, 0.16);
+  color: rgba(16, 35, 43, 0.78);
+
+  &.on,
+  &:hover,
+  &:focus-visible {
+    background: rgba(184, 79, 67, 0.09);
+    border-color: rgba(184, 79, 67, 0.5);
+    color: var(--rz-ink);
+  }
+}
+
+.rz-root .rz-album-modal .rz-album-box .rz-album-tabs button:hover,
+.rz-root .rz-album-modal .rz-album-box .rz-album-tabs button:focus-visible,
+.rz-root .rz-album-modal .rz-album-box .rz-album-tabs button.sel {
+  color: var(--rz-ink);
+}
+
+/* 类型筛选印章：未选 = 浅绛底 + 朱砂字，选中 = 实心朱砂 + 米色字 */
+.rz-root .rz-album-modal .rz-album-box .rz-album-catf .rz-album-catf-seal {
+  background: rgba(184, 79, 67, 0.1);
+  border-color: rgba(184, 79, 67, 0.45);
+  color: var(--rz-vermilion-ink);
+
+  &:hover,
+  &:focus-visible {
+    background: rgba(184, 79, 67, 0.16);
+    border-color: rgba(184, 79, 67, 0.6);
+    color: var(--rz-ink);
+  }
+
+  &.sel {
+    background: #a33f30;
+    border-color: rgba(255, 214, 170, 0.6);
+    color: #ffe8c8;
+  }
+}
+
+.rz-root .rz-album-modal .rz-album-box .rz-album-item {
+  background: rgba(16, 35, 43, 0.045);
+  border-color: rgba(16, 35, 43, 0.16);
+
+  &:hover,
+  &:focus-visible {
+    background: rgba(184, 79, 67, 0.09);
+    border-color: rgba(184, 79, 67, 0.5);
+  }
+}
+
+.rz-root .rz-album-modal .rz-album-box .rz-album-msg {   /* 10.7:1（条目底） */
+  color: var(--rz-ink);
+}
+
+.rz-root .rz-album-modal .rz-album-box .rz-album-meta {  /* 6.2:1（条目底） */
+  color: rgba(16, 35, 43, 0.78);
+}
+
+.rz-root .rz-album-modal .rz-album-box .rz-album-reason { /* 4.8:1（条目底） */
+  border-left-color: rgba(133, 54, 48, 0.55);
+  color: var(--rz-vermilion-ink);
+}
+
+.rz-root .rz-album-modal .rz-album-box .rz-album-empty { /* 5.1:1（纸面） */
+  color: rgba(16, 35, 43, 0.7);
+}
+
+/* 条目列表的滚动条：金线在纸面上看不见 */
+.rz-root .rz-album-modal .rz-album-box .rz-album-list {
+  scrollbar-color: rgba(16, 35, 43, 0.28) transparent;
+
+  &::-webkit-scrollbar-thumb {
+    background: rgba(16, 35, 43, 0.28);
+  }
+}
+
+/* 状态标签：两处复用（灯影集条目内、细读弹窗状态行） */
+.rz-root .rz-album-modal .rz-album-box .rz-minetag,
+.rz-root .rz-modal .rz-modal-box .rz-minetag,
+.rz-root .rz-wish-modal .rz-wish-box .rz-minetag {
+  background: rgba(16, 35, 43, 0.05);
+  border-color: rgba(16, 35, 43, 0.28);
+  color: rgba(16, 35, 43, 0.78);
+
+  &.rz-wait {                 /* 待审：金 → 纸面上的深金褐（金在纸上够不着 AA，5.1:1） */
+    color: #6b4e16;
+    border-color: rgba(140, 110, 40, 0.5);
+    background: rgba(200, 150, 60, 0.12);
+  }
+
+  &.rz-no {                   /* 未通过：朱 */
+    color: var(--rz-vermilion-ink);
+    border-color: rgba(133, 54, 48, 0.5);
+    background: rgba(231, 76, 60, 0.12);
+  }
+
+  &.rz-ok {                   /* 已点亮：最弱的一档 */
+    color: rgba(16, 35, 43, 0.7);
+    border-color: rgba(16, 35, 43, 0.24);
+    background: transparent;
+  }
+}
+
+/* 细读弹窗：「自己的河灯」那一簇 */
+.rz-root .rz-modal .rz-modal-box .rz-reject {
+  border-left-color: rgba(133, 54, 48, 0.55);
+  color: var(--rz-vermilion-ink);
+}
+
+.rz-root .rz-modal .rz-modal-box .rz-reject-label {
+  border-right-color: rgba(133, 54, 48, 0.35);
+  color: var(--rz-vermilion-ink);
+}
+
+.rz-root .rz-modal .rz-modal-box .rz-reclaim {
+  background: rgba(16, 35, 43, 0.05);
+  border-color: rgba(16, 35, 43, 0.28);
+  color: rgba(16, 35, 43, 0.78);
+
+  &:hover,
+  &:focus-visible {
+    background: rgba(184, 79, 67, 0.09);
+    border-color: rgba(184, 79, 67, 0.5);
+    color: var(--rz-ink);
+  }
+
+  &.armed {                   /* 第二击确认态：纸面上的朱 */
+    background: rgba(231, 76, 60, 0.12);
+    border-color: rgba(133, 54, 48, 0.62);
+    color: var(--rz-vermilion-ink);
+  }
+}
+
+.rz-root .rz-modal .rz-modal-box .rz-reclaim-err {
+  color: var(--rz-vermilion-ink);
+}
+
+/* 心愿弹窗：字数 / 匿名钮 / 选灯卡 / 心印卡 */
+.rz-root .rz-wish-modal .rz-wish-box .rz-wish-count {
+  color: rgba(16, 35, 43, 0.7);
+}
+
+.rz-root .rz-wish-modal .rz-wish-box .rz-wish-author-row .rz-wish-anon {
+  background: rgba(16, 35, 43, 0.05);
+  border-color: rgba(16, 35, 43, 0.2);
+  color: rgba(16, 35, 43, 0.78);
+
+  &:hover,
+  &:focus-visible {
+    border-color: rgba(184, 79, 67, 0.5);
+    color: var(--rz-ink);
+  }
+
+  &.on {                      /* 匿名态：浅绛底 + 朱砂字 */
+    background: rgba(184, 79, 67, 0.12);
+    border-color: rgba(184, 79, 67, 0.5);
+    color: var(--rz-vermilion-ink);
+  }
+}
+
+.rz-root .rz-wish-modal .rz-wish-box .rz-lamp-grid .rz-lamp-card,
+.rz-root .rz-wish-modal .rz-wish-box .rz-cat-grid .rz-cat-card {
+  background: rgba(16, 35, 43, 0.045);
+  border-color: rgba(16, 35, 43, 0.16);
+  color: rgba(16, 35, 43, 0.78);
+
+  &:hover,
+  &:focus-visible,
+  &.sel {
+    background: rgba(184, 79, 67, 0.09);
+    border-color: rgba(184, 79, 67, 0.58);
+    box-shadow: none;
+  }
+}
+
+.rz-root .rz-wish-modal .rz-wish-box .rz-cat-grid .rz-cat-card .rz-cat-name b {
+  color: var(--rz-ink);
+}
+
+.rz-root .rz-wish-modal .rz-wish-box .rz-cat-grid .rz-cat-card .rz-cat-name i {
+  color: rgba(16, 35, 43, 0.78);
+}
+
+/* 次按钮的悬停：基形的 `#ffe9c4` 一悬停就消失在纸里 */
+.rz-root .rz-wish-modal .rz-wish-box .rz-wish-foot .rz-wish-ghost:hover,
+.rz-root .rz-wish-modal .rz-wish-box .rz-wish-foot .rz-wish-ghost:focus-visible {
+  color: var(--rz-ink);
 }
 
 @media (max-width: 620px) {
