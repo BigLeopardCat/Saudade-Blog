@@ -255,6 +255,10 @@ fork 之后按你自己的方式跑就行，本节的价值在于：想读懂 `s
 > [deploy/](deploy/) 目录里；本节讲的是"它长什么样、为什么这么摆"。
 > **只想装起来的话**，那一份开头有一条命令：`bash deploy/install.sh`
 > （向导会问要不要连 IoT 可选件一起装，`-y` 下默认不装；`--dry-run` 只渲染不落地）。
+>
+> **想用 Docker 起一整套**（MySQL + Rust + agent + nginx，一条 `docker compose up -d`）→
+> 见 [deploy/docker/](deploy/docker/)。那条路只给 Linux + 自己有域名的人用（三个服务走 host
+> 网络、镜像只能本地 build、不带 IoT 与部署管线），边界与 11 条验收清单都在它的 README 里。
 
 服务均为 systemd 托管（agent/rust 为 `Restart=always` 崩溃自愈；device 为 `Restart=on-failure`）：
 
