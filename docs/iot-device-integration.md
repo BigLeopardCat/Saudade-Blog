@@ -1,12 +1,12 @@
 # IoT 设备接入物联网平台指南
 
 > 平台 = 本站的 IoT 能力：设备注册/参数配置/指令下发/遥测/在线状态/OTA。
-> **这是可选件，出厂默认不装**——装/卸的三处开关、目录与脚本见 [iot/](../iot/)。
-> 架构：nginx（`/device-api` 反代 + `/device-console` 静态）→ **device-service**（Rust, :3100，
-> 业务 API + MQTT 桥）→ **EMQX**（MQTT broker）→ **ESP32 等设备**。
+> 这是可选件，出厂默认不装；装/卸的三处开关、目录与脚本见 [iot/](../iot/)。
+> 架构：nginx（`/device-api` 反代 + `/device-console` 静态）→ device-service（Rust, :3100，
+> 业务 API + MQTT 桥）→ EMQX（MQTT broker）→ ESP32 等设备。
 > 控制台：https://saudade.site/device-console/（复用博客登录态，无二次登录）。
 > 设备参考实现：[BigLeopardCat/ESP32-S3-OBC](https://github.com/BigLeopardCat/ESP32-S3-OBC)
-> （**另一个仓**，实际在跑的固件在那儿）；本仓 [iot/firmware/](../iot/firmware/) 是抽出来的
+> （另一个仓，实际在跑的固件在那儿）；本仓 [iot/firmware/](../iot/firmware/) 是抽出来的
 > 最小骨架与接口说明。
 >
 > ⚠️ 文中 `<你的域名>` 是占位，换成你自己的域名（与站点证书一致）。
@@ -33,14 +33,14 @@ flowchart TB
 ```
 
 
-**两种接入身份**，凭据体系互不相通：
+两种接入身份，凭据体系互不相通：
 
 | 身份 | 凭据 | 用途 |
 |---|---|---|
 | **网页用户** | 博客 JWT（Bearer/密码） | REST API（设备管理/下发/OTA 管理）+ 控制台实时流（MQTT WSS） |
 | **设备** | `device_id` + `device_key` | MQTT 接入（用户名/密码）+ OTA 拉取（HTTP Basic） |
 
-**三条通道**：
+三条通道：
 
 | 通道 | 地址 | 设备用 | 网页用 |
 |---|---|---|---|
@@ -52,16 +52,16 @@ flowchart TB
 
 ## 2. 快速接入流程（5 步）
 
-1. **注册设备**：控制台"注册设备"按钮（或 `POST /api/devices`）→ 获得一次性凭据：
+1. 注册设备：控制台"注册设备"按钮（或 `POST /api/devices`）→ 获得一次性凭据：
    ```json
    {"device_id": "dev-<uuid32>", "device_key": "dk-<uuid32>", "note": "device_key 仅显示一次，请写入固件并妥善保存"}
    ```
    ⚠️ `device_key` 只返回这一次，丢失只能删除重建设备。
-2. **填入固件**：把 `device_id`/`device_key` 写入固件配置（参考实现：`main.c` 顶部宏）。
-3. **连上 MQTT**：`mqtts://<你的域名>:8883`，用户名=`device_id`，密码=`device_key`，
+2. 填入固件：把 `device_id`/`device_key` 写入固件配置（参考实现：`main.c` 顶部宏）。
+3. 连上 MQTT：`mqtts://<你的域名>:8883`，用户名=`device_id`，密码=`device_key`，
    校验服务器证书链（正式证书）。
-4. **订阅/上报**：订阅 `devices/<id>/config`、`devices/<id>/cmd`；发布遥测、状态、回执。
-5. **验证**：控制台看到设备上线 → 下发一条显示指令 → 设备执行 + 回执 ✓。
+4. 订阅/上报：订阅 `devices/<id>/config`、`devices/<id>/cmd`；发布遥测、状态、回执。
+5. 验证：控制台看到设备上线 → 下发一条显示指令 → 设备执行 + 回执 ✓。
 
 ---
 
@@ -74,21 +74,21 @@ flowchart TB
 | MQTTS **8883** | 公网 | **设备接入**（TLS，正式证书，与 HTTPS 同源） |
 | TCP 1883 | 仅回环 | device-service 内部连接 |
 | WSS 8083 | 仅回环（nginx /mqtt） | 控制台实时流 |
-| Dashboard **18083** | 仅回环 | EMQX 自带管理台；**别挂公网**（明文 HTTP + 单一口令） |
+| Dashboard **18083** | 仅回环 | EMQX 自带管理台；**不要挂到公网**（明文 HTTP + 单一口令） |
 
-> **看 Dashboard 走 SSH 隧道**：`ssh -L 18083:127.0.0.1:18083 <服务器>` 再开
-> `http://127.0.0.1:18083`。登录口令不在仓库里——`iot/emqx/configure_emqx.py` 首跑时
-> 会轮换管理员口令并把新口令与 API Key 落盘到 `iot/emqx/.admin_creds`、`.api_key`
-> （0600、已 gitignore）；**只有这两个文件丢了才需要重跑脚本**（见 `iot/emqx/README.md`）。
+> 看 Dashboard 走 SSH 隧道：`ssh -L 18083:127.0.0.1:18083 <服务器>` 再开
+> `http://127.0.0.1:18083`。登录口令不在仓库里：`iot/emqx/configure_emqx.py` 首跑时会轮换
+> 管理员口令并把新口令与 API Key 落盘到 `iot/emqx/.admin_creds`、`.api_key`
+> （0600、已 gitignore）。只有这两个文件丢了才需要重跑脚本（见 `iot/emqx/README.md`）。
 
 认证链（顺序匹配）：
-1. **JWT 认证链**（网页用户）：password = 博客 JWT，HMAC 校验（secret = 博客 `JWT_SECRET`）
-2. **HTTP 认证链**（设备）：回调 `POST http://127.0.0.1:3100/api/devices/auth`，
-   body `{"username": ..., "password": ...}`——设备凭证正确 → `allow`；未知 → `ignore`
+1. JWT 认证链（网页用户）：password = 博客 JWT，HMAC 校验（secret = 博客 `JWT_SECRET`）
+2. HTTP 认证链（设备）：回调 `POST http://127.0.0.1:3100/api/devices/auth`，
+   body `{"username": ..., "password": ...}`：设备凭证正确 → `allow`；未知 → `ignore`
    （继续认证链，**绝不能 deny**，否则把 MQTT 死锁在自定义逻辑上）
 3. 内部账号 `svc`（设备服务自身，superuser）
 
-**ACL**（`no_match=deny` 默认全拒，内置规则）：
+ACL（`no_match=deny` 默认全拒，内置规则）：
 
 ```
 broadcast/#               # 所有
@@ -97,7 +97,7 @@ devices/<username>/#      # 设备（username=device_id）——设备只能碰�
 console/<username>/#      # 网页用户实时流
 ```
 
-设备（username=`device_id`）**只能访问 `devices/<自己>/#`**——ACL 层面隔离，跨设备不可达。
+设备（username=`device_id`）只能访问 `devices/<自己>/#`：ACL 层面隔离，跨设备不可达。
 
 ### 3.2 Topic 全表
 
@@ -113,9 +113,11 @@ console/<username>/#      # 网页用户实时流
 | `devices/<id>/status` | 设备→服务 | 1 | online 可 retain | 字符串 `"online"` / `"offline"` |
 | `console/<owner>/devices/<id>/<kind>` | 服务→浏览器 | 1 | 否 | 事件转发（telemetry/ack/status 分发） |
 
-**retain 语义（两个坑，历史踩过）**：
+retain 语义（两处易错点）：
+
 - `config` **必须 retain**：设备上线即收到最新配置（配置自愈）。
-- `cmd` **严禁 retain**：一次性动作，retain 会重放旧指令（曾导致 OLED"换内容无效"——重放旧指令覆盖新内容，见问题记录 2.5）。
+- `cmd` **严禁 retain**：一次性动作，retain 会重放旧指令（曾导致 OLED"换内容无效"，
+  重放旧指令覆盖新内容，见问题记录 2.5）。
 - 遥测必须非 retain：retain 遥测会被当成心跳重放，破坏在线判定。
 
 ### 3.3 指令与回执（req_id 端到端闭环）
@@ -137,27 +139,28 @@ sequenceDiagram
     S-->>C: {"acked": true, "ack": "<设备回执原始 JSON>", "ack_ts": "…"}
 ```
 
-- 设备回执**缺失 req_id** 时，服务端退化为匹配最近一条未回执记录（兼容旧固件）。
+- 设备回执缺失 req_id 时，服务端退化为匹配最近一条未回执记录（兼容旧固件）。
 - 回执也刷新在线心跳；`X-Request-Id` 头是 agent trace_id 透传链的一环（四端对账）。
-- ⚠️ **本仓的固件模板没实现这条回执**（20261002 核实）：`iot/firmware/template_ESP32_OBC.ino`
+- ⚠️ 本仓的固件模板没实现这条回执（20261002 核实）：`iot/firmware/template_ESP32_OBC.ino`
   与 `template_ESP32_OBC_ESP_IDF.c` 只发布 `config/ack`（见各自的 `MQTT_TOPIC_ACK`），
-  `handle_command` 执行完 display/restart/ota_check/gpio/beep 后**不回包**——两个模板、
-  `iot/firmware/README.md` 的主题表、`固件开发指南.md` 都是如此。这是**模板的缺口、不是契约的错**：
-  服务端正是靠上面那条 req_id 兜底才不至于卡死（`GET .../cmd/<req_id>` 会一直 `acked:false`，
-  直到被环形 100 条挤掉）。ESP32 固件的**真相源在另一个仓**（`ESP32-S3-OBC`），
-  仓内这两个文件是让人照着接的骨架；抄它们时**要自己补 `cmd/ack`**，别以为已经通了。
+  `handle_command` 执行完 display/restart/ota_check/gpio/beep 后不回包。两个模板、
+  `iot/firmware/README.md` 的主题表、`固件开发指南.md` 都是如此。这是**模板的缺口、
+  不是契约的错**：服务端正是靠上面那条 req_id 兜底才不至于卡死（`GET .../cmd/<req_id>`
+  会一直 `acked:false`，直到被环形 100 条挤掉）。ESP32 固件的真相源在另一个仓
+  （`ESP32-S3-OBC`），仓内这两个文件是供人参照接入的骨架；照抄时**必须自行补 `cmd/ack`**，
+  不可假定该链路已经连通。
 
 ### 3.4 在线状态判定（防"假在线"）
 
-- **心跳** = 非 retain 的真实遥测/回执（30s TTL 内刷新即在线）；`status=offline` 立即离线。
-- retain 的 `status online` 订阅时被重放，**不计入心跳**——这是 2026-08-28"断电假在线"事故的
-  修复核心（问题记录 2.1）：设备断电后 30s 内判定离线，下发返回 409 而非假成功。
-- **离线 TTL = 30s**（20261009 定案）。device-service 的源码不在本仓，但改动记录在 agent 仓
-  `docs/问题记录.md` §2.1：`ONLINE_TTL` 从 **120s 收到 30s**（心跳 5s 一次；最坏"心跳停 →
+- 心跳 = 非 retain 的真实遥测/回执（30s TTL 内刷新即在线）；`status=offline` 立即离线。
+- retain 的 `status online` 订阅时被重放，不计入心跳：这是 2026-08-28"断电假在线"事故的
+  修复核心（问题记录 2.1）。设备断电后 30s 内判定离线，下发返回 409 而非假成功。
+- 离线 TTL = 30s（20261009 定案）。device-service 的源码不在本仓，但改动记录在 agent 仓
+  `docs/问题记录.md` §2.1：`ONLINE_TTL` 从 120s 收到 30s（心跳 5s 一次；最坏"心跳停 →
   判离线"30s，比遗嘱早约 80s 暴露）。`iot/firmware/固件开发指南.md` 里那句「120s 内无任何
-  遥测 → 离线」是**旧口径**，同期已同步改成 30s。再动这个数，去 device-service 源码里找常量，
-  别只改本仓的两处引用。
-- 正常掉线由**遗嘱消息**（last will，retain `"offline"`）自动补发；主动重启前可先发 offline。
+  遥测 → 离线」是旧口径，同期已同步改成 30s。再动这个数，去 device-service 源码里找常量，
+  不要只改本仓的两处引用。
+- 正常掉线由遗嘱消息（last will，retain `"offline"`）自动补发；主动重启前可先发 offline。
 
 ### 3.5 遥测（即心跳）
 
@@ -190,7 +193,7 @@ sequenceDiagram
 | `PUT /api/devices/:id/config` | body `{"config": {...任意 JSON}}` → `cfg_version` +1 → 写 `config_history`（保留 10 版）→ 发布 MQTT → 响应 `{"ok":true,"published":true,"cfg_version":N}` |
 | `PUT /api/devices/:id/config/rollback` | 回滚上一版重新下发（版本继续 +1，不倒退） |
 
-设备回执后 `cfg_acked_version` 更新，`sync` 变 `synced`——控制台据此显示"已同步 vN"。
+设备回执后 `cfg_acked_version` 更新，`sync` 变 `synced`，控制台据此显示"已同步 vN"。
 
 ### 指令
 
@@ -257,30 +260,30 @@ esp_mqtt_client_config_t cfg = {
 ```
 
 要点：遥测即心跳；回执必须带 `req_id`；config 保留策略与 cmd 禁 retain 的差异是平台语义核心。
-**第 6 步是骨架里唯一一处"照着写还不够"的地方**——两个模板源码到此为止（只回 `config/ack`），
-补 `cmd/ack` 需要自己加一个 `MQTT_TOPIC_CMD_ACK "devices/" DEVICE_ID "/cmd/ack"` 并在
+**第 6 步是骨架中唯一需要自行补齐的地方**：两个模板源码到此为止（只回 `config/ack`），
+补 `cmd/ack` 需要自行加一个 `MQTT_TOPIC_CMD_ACK "devices/" DEVICE_ID "/cmd/ack"` 并在
 `handle_command` 的各分支末尾 publish 带 `req_id` 的结果。
 
 ---
 
 ## 6. 运维注意
 
-- **安全组**：公网需放行 8883（MQTTS）。REST 全走 443 无需额外放行。
-- **证书**：MQTTS 证书与 HTTPS 同源（同一张证书覆盖你的域名），到期需续期并同步
-  EMQX 的证书目录。**nginx 侧另有一份同源副本，续期要两处一起换**。查当前有效期（别照抄
-  某个具体日期，它会过期）：`openssl x509 -enddate -noout -in <证书路径>`。
-- **设备服务部署**：device-service 不在本仓库、不经 CI（独立目录），改动需手动
+- 安全组：公网需放行 8883（MQTTS）。REST 全走 443 无需额外放行。
+- 证书：MQTTS 证书与 HTTPS 同源（同一张证书覆盖你的域名），到期需续期并同步
+  EMQX 的证书目录。nginx 侧另有一份同源副本，续期要两处一起换。当前有效期查法（不要照抄
+  文档里的某个具体日期，它会过期）：`openssl x509 -enddate -noout -in <证书路径>`。
+- 设备服务部署：device-service 不在本仓库、不经 CI（独立目录），改动需手动
   `cargo build --release` + 重启 device 服务（3.7GB 机器注意内存）。
-- **数据**：SQLite WAL（devices/config_history/telemetry/cmd_history），量小无需外部依赖。
-- **日志**：`logs/device.log`（DEVICE_LOG_FILE 配置）；MQTT 三段式日志（已入队→发出→broker 确认）
-  是排查"下发假成功"的第一入口（问题记录 2.2）。
+- 数据：SQLite WAL（devices/config_history/telemetry/cmd_history），量小无需外部依赖。
+- 日志：`logs/device.log`（DEVICE_LOG_FILE 配置）；MQTT 三段式日志（已入队→发出→broker
+  确认）是排查"下发假成功"的第一入口（问题记录 2.2）。
 
 ---
 
 ## 7. 机器代价与保留结论（20261004 实测）
 
-**结论：本站的 IoT 是"在用/偶尔用"，建议保留**——代价可量化且都很小，而拆掉它并不会让
-主站变快（主站的瓶颈在 LLM API 延迟，不在这台机器）。下面是账，引用时连着日期一起引。
+结论：本站的 IoT 属"在用/偶尔用"，建议保留：代价可量化且都很小，而拆掉它并不会让
+主站变快（主站的瓶颈在 LLM API 延迟，不在这台机器）。下表为实测数据，引用时请连同日期一并引用。
 
 ### 7.1 边际代价
 
@@ -292,29 +295,29 @@ esp_mqtt_client_config_t cfg = {
 | 公网面 | 多开 **8883**（MQTTS） | 主站只开 80/443；这是**唯一为设备开的口子**，安全组与证书都要单独管 |
 | 运维面 | **两个不经 CI 的 unit**（emqx、saudade-device）；device-service 源码不在本仓，改动要手动 `cargo build --release` + 重启 | 主站两个服务都走 CI；这两件是"游离在流水线之外"的例外 |
 
-> ⚠️ **device-service 是几 MiB 量级，不是 1 MiB**——一个 Rust + SQLite + MQTT 客户端的常驻
-> 本来就在这个档，写 1 MiB 是估的。**结论不受影响**：IoT 全量 ~63 MiB，对照 agent
-> "凉 241 ↔ 热 456 MiB"的摆动——它比 agent 自己的日常波动还小。
+> ⚠️ device-service 是几 MiB 量级：一个 Rust + SQLite + MQTT 客户端的常驻即在此档。
+> 结论不受影响：IoT 全量 ~63 MiB，对照 agent "凉 241 ↔ 热 456 MiB"的摆动，它比 agent
+> 自己的日常波动还小。
 >
-> **分母要连着状态引**：生产合计在 **~420 MiB（agent 刚重启）↔ ~640 MiB（worker 跑过重活）**
-> 之间，所以"IoT 占几个百分点"这个数会随取样时刻在 **10%~15%** 之间变（63/640 与 63/420）。
-> 表里那条"半个 worker"用的是**上界 130 MiB/worker**，不受这个摆动影响，引用它更稳。
+> 分母要连同状态一并引用：生产合计在 ~420 MiB（agent 刚重启）↔ ~640 MiB（worker 跑过重活）
+> 之间，所以"IoT 占几个百分点"这个数会随取样时刻在 10%~15% 之间变（63/640 与 63/420）。
+> 表里那条"半个 worker"用的是上界 130 MiB/worker，不受这个摆动影响，引用它更稳。
 
-### 7.2 两个必须记住的运维风险（不是代价，是坑）
+### 7.2 两个必须记住的运维风险
 
-- **EMQX 的内存上限只写在 systemd drop-in 里**（`MemoryHigh=384M` / `MemoryMax=512M`），
-  仓库里原本看不见——已在 [deployment-and-ops.md](deployment-and-ops.md) §3 记一份。
-  重建机器时漏掉这个 drop-in ⇒ broker 在压力下无人刹车。
-- **MQTTS 证书与 HTTPS 同源，续期要两处同步**：只续 nginx 侧 ⇒ 网页正常、**设备全掉线**，
+- EMQX 的内存上限只写在 systemd drop-in 里（`MemoryHigh=384M` / `MemoryMax=512M`），
+  仓库里原本看不见，已在 [deployment-and-ops.md](deployment-and-ops.md) §3 记一份。
+  重建机器时漏掉这个 drop-in，broker 在压力下就无人刹车。
+- MQTTS 证书与 HTTPS 同源，续期要两处同步：只续 nginx 侧会导致网页正常、设备全掉线，
   而且掉线的表现是"设备离线"不是"证书过期"，很容易查到错的方向。
 
 ### 7.3 什么时候才该拆
 
-三条任一成立再动它，否则保留：① 长期（>3 个月）没有一台设备在线、也不打算再接；
+下列三条任一成立时才考虑拆除，否则保留：① 长期（>3 个月）没有一台设备在线、也不打算再接；
 ② 需要用 8883 这个公网端口去换别的服务；③ 服务器要缩容到 2GB 以下（那时 90MB 磁盘与
-63 MiB 内存才真正开始有意义——这个数在 3.7GB 上是零头，到 2GB 上就是 3% 的整机）。
+63 MiB 内存才真正开始有意义，这个数在 3.7GB 上是零头，到 2GB 上就是 3% 的整机）。
 
-### 7.4 怎么卸（分两档，别只做第一档）
+### 7.4 如何卸载（分两档）
 
 ```bash
 # 第一档：主站侧关掉（控制台/API 入口消失，服务还活着）——三处开关见 iot/README.md
@@ -327,15 +330,15 @@ sudo systemctl disable --now emqx saudade-device
 # 彻底清（可选）：删 iot/ 目录、/usr/lib/emqx、/var/lib/emqx、drop-in 与 8883 安全组规则
 ```
 
-**两档的差别**：第一档做完之后前端三个入口（`/device-console/`、`/device-api/`、`/mqtt`）
-与 agent 的工具面都没了，但 EMQX 仍在监听 8883 并占着内存；**只做第一档等于"看起来拆了，
-其实没省资源"**（省的是 63 MiB 里的 device-service 那 3.1 MiB 与 agent 说真话的那点逻辑，
-几乎为零）。[iot/README.md](../iot/README.md) 的《代价》一节是给"要不要装/要不要留"做决策用的短版。
+两档的差别：第一档做完之后前端三个入口（`/device-console/`、`/device-api/`、`/mqtt`）
+与 agent 的工具面都不再提供，但 EMQX 仍在监听 8883 并占着内存。只做第一档并未真正省下资源
+（省的是 63 MiB 里的 device-service 那 3.1 MiB，以及 agent 说真话的那点逻辑，几乎为零）。
+[iot/README.md](../iot/README.md) 的《代价》一节是供"要不要装/要不要留"决策用的短版。
 
-> ⚠️ **别以为 `toggle.sh off` 一条就够**（脚本自己的头注与结尾都在说这件事）：
-> 它**只动 nginx 那一面**。另外两处（Rust 读的 `.env`、agent 读的 `.env` 里的 `IOT_ENABLED`）
-> 得手动改，而且**改完要各自重启**——Rust 那条管的是 `sitemap.xml` 列不列设备控制台，
-> agent 那条管的是"被问到物联网平台时说真话还是说本站未部署"。三处不一致**不会报错**，
+> ⚠️ `toggle.sh off` 只覆盖 nginx 一侧（该脚本的头注与结尾均如此说明）：
+> 另外两处（Rust 读的 `.env`、agent 读的 `.env` 里的 `IOT_ENABLED`）**需手动修改，
+> 且改完要各自重启**。Rust 那条管的是 `sitemap.xml` 列不列设备控制台，
+> agent 那条管的是"被问到物联网平台时说真话还是说本站未部署"。三处不一致不会报错，
 > 典型症状是"agent 带你跳一个 404"或"页面能开但 agent 说本站没有"；
-> 核对用 `./iot/status.sh`（判据是**内容**不是状态码——卸载后 `/device-console/` 仍会
+> 核对用 `./iot/status.sh`（判据是内容不是状态码：卸载后 `/device-console/` 仍会
 > 落进 SPA fallback 返回 200 的首页，见 [deployment-and-ops.md](deployment-and-ops.md)）。
