@@ -9,23 +9,23 @@
 个人博客系统。Rust 后端、React 前端、独立的 Python 对话 Agent，以及一个 Live2D 看板娘。
 另有一套可选的 ESP32 物联网接入（不装不影响其余部分，见 [iot/](iot/)）。
 
-示例站点：<https://saudade.site> · **GPL-2.0-or-later**（两条版权声明——上游与本仓——与第三方
-组件说明见 [LICENSE](LICENSE) 与 [THIRD-PARTY.md](THIRD-PARTY.md)）
+示例站点：<https://saudade.site> · GPL-2.0-or-later（许可证全文、上游与本仓两条版权声明，
+以及第三方组件说明见 [LICENSE](LICENSE) 与 [THIRD-PARTY.md](THIRD-PARTY.md)）
 
 ## 站上有什么
 
-- **写作与内容**：Markdown 文章（内嵌编辑器）、分类与标签、封面裁剪、图库。
-- **阅读与互动**：站内搜索、阅读量/点赞/收藏、评论区（Markdown、表情、点赞与踩、
+- 写作与内容：Markdown 文章（内嵌编辑器）、分类与标签、封面裁剪、图库。
+- 阅读与互动：站内搜索、阅读量/点赞/收藏、评论区（Markdown、表情、点赞与踩、
   就地展开回复）、留言板、公告。
-- **看板娘对话**：站内问答、页面跳转、特效与夜间模式开关；接入 IoT 后还能把内容推到
+- 看板娘对话：站内问答、页面跳转、特效与夜间模式开关；接入 IoT 后还能把内容推到
   ESP32 的 OLED 屏（见《架构一览》与会话时序）。
-- **展示柜**：文章向量空间图谱，可由后台一键按当前公开文章重算（见《文章向量空间图谱》）。
-- **后台**：内容/评论/留言板管理、用户与角色、对话额度、站点设置与待办、访问统计。
-- **可选件**：ESP32 物联网接入（MQTT over TLS + 设备控制台），不装不影响其余部分。
+- 展示柜：文章向量空间图谱，可由后台一键按当前公开文章重算（见《文章向量空间图谱》）。
+- 后台：内容/评论/留言板管理、用户与角色、对话额度、站点设置与待办、访问统计。
+- 可选件：ESP32 物联网接入（MQTT over TLS + 设备控制台），不装不影响其余部分。
 
 ## 快速开始
 
-前置：**Rust** stable、**Node.js** ≥ 18、**MySQL** 8。想跑 AI 对话再加 **Python** 3.10+。
+前置：Rust stable、Node.js ≥ 18、MySQL 8。想跑 AI 对话再加 Python 3.10+。
 
 ```bash
 git clone https://github.com/BigLeopardCat/Saudade-Blog.git && cd Saudade-Blog
@@ -42,39 +42,39 @@ cp .env.example .env
 cargo run
 ```
 
-前端、agent 与 IoT 各自的起法，"哪些迁移脚本不能无脑跑""两个站点地址变量为什么都要设"
-这类问题，都在 [CONTRIBUTING.md](CONTRIBUTING.md)。每个环境变量干什么、默认值是什么，看
-[.env.example](.env.example)（它是这一类信息在本仓的唯一出处）。
+前端、agent 与 IoT 各自的启动方式，哪些迁移脚本不能直接跑、为什么两个站点地址变量都要设，
+这些都在 [CONTRIBUTING.md](CONTRIBUTING.md) 里。每个环境变量的作用与默认值见
+[.env.example](.env.example)，它是这类信息在本仓的唯一出处。
 
-**想直接把它装到一台服务器上**（nginx、systemd ×2、TLS、MySQL 建库、logrotate 的完整走查），
-见 [deploy/README.md](deploy/README.md)——开头有一条命令的路径：`bash deploy/install.sh`。
+想直接把它装到一台服务器上（nginx、systemd ×2、TLS、MySQL 建库、logrotate 的完整走查），
+见 [deploy/README.md](deploy/README.md)；开头给了一条命令的路径：`bash deploy/install.sh`。
 
 ## 看板娘对话
 
-看板娘"泠月喵"可以回答关于站内文章的问题、跳转页面、开关页面特效、切换夜间模式；
+看板娘「泠月喵」可以回答关于站内文章的问题、跳转页面、开关页面特效、切换夜间模式；
 接入物联网后还可以把内容推送到 ESP32 的 OLED 屏上。她的对话能力来自一个独立部署的
-Python Agent（手写 LangGraph 图：**planner ⇄ execute → model → gate**）。对话记忆全部外置
+Python Agent（手写 LangGraph 图：planner ⇄ execute → model → gate）。对话记忆全部外置
 MySQL，agent 进程本身无状态：每次请求都是新线程，连续性由后端注入历史与摘要维持。
 
 ## 文章向量空间图谱
 
-首页有一件展品：**文章向量空间图谱**。它把本站文章抽出的关键词按 embedding 投到三维空间，
-点是词、相关的词之间连线，可拖动视角、双击词跳转文章，也能在下方输入框里做**向量检索**定位。
-点画多大按**文章热度**（浏览、点赞、收藏、评论加权）算，不按词的重要度。
+首页有一件展品：文章向量空间图谱。它把本站文章抽出的关键词按 embedding 投到三维空间，
+点是词，相关的词之间连线；可拖动视角、双击词跳转文章，也能在下方输入框里做向量检索定位。
+点的大小按文章热度（浏览、点赞、收藏、评论加权）计算，不按词的重要度。
 
-图谱是**按站点构建**的产物，而"换一批文章"这件事不需要你改代码或重新部署：后台
-**「站点设置 → 向量图谱」**有一个页面，点一下就在服务端按当前**公开文章**重算一遍——
-进度、内存占用与日志尾部轮询可见，跑完**刷新首页就是新图**。产物的主题词与 embedding
-由 agent 仓的建图脚本负责；重建任务把产物写到 agent 自己的目录后，由后端直接供出
-（`GET /api/public/graph/manifest` + `/api/public/graph/artifact/:file`，见《给贡献者》的接口一览），
-仓库里 committed 的那份 `frontend/public/graph/` 只是"从没重建过的站点"的种子。
+图谱是按站点构建的产物，换一批文章不需要改代码或重新部署：后台「站点设置 → 向量图谱」有
+一个页面，点一下即在服务端按当前公开文章重算一遍，进度、内存占用与日志尾部轮询可见，
+跑完刷新首页就是新图。产物的主题词与 embedding 由 agent 仓的建图脚本负责；重建任务把产物
+写到 agent 自己的目录，再由后端直接供出（`GET /api/public/graph/manifest` +
+`/api/public/graph/artifact/:file`，见《给贡献者》的接口一览）。仓库里 committed 的那份
+`frontend/public/graph/` 只是从未重建过的站点的种子。
 
-归属站点闸在**运行期**判、不在构建期：产物里记的 `site` 与访客浏览器的 origin 不一致时，
-展品渲染成"文章向量空间尚未为本站点生成，请在后台重建"——把该做什么直接告诉你，
-而不是让卡片凭空消失。所以迁移到自己的机器后，重建一次就够了。
+归属站点闸在运行期判定，不在构建期：产物里记的 `site` 与访客浏览器的 origin 不一致时，
+展品渲染成「文章向量空间尚未为本站点生成，请在后台重建」，而不是让卡片凭空消失。
+因此迁移到自己的机器后，重建一次即可。
 
 它与对话是两条独立的检索线：图谱查询走 1024 维精确余弦（纯 Python 点积），agent 问答走
-词法 BM25（语料量小，且要为低配部署留内存余量）。**热度只影响画多大，不参与检索排序**
+词法 BM25（语料量小，且要为低配部署留内存余量）。热度只影响点的大小，不参与检索排序
 （局部关键词回退仍按词的重要度打分，否则热门文章的词会垄断所有查询）。
 细节见 [docs/word-graph.md](docs/word-graph.md)。
 
@@ -114,19 +114,18 @@ flowchart LR
 | **AI Agent**（FastAPI + 手写 LangGraph） | 看板娘大脑：对话生成、博客查询、导航/特效/夜间命令、IoT 设备显示。**独立 git 仓库** | `saudade-blog-agent/` |
 | **IoT**（EMQX 5 + Rust device-service） | ESP32 设备接入（MQTT over TLS）、OLED 显示、设备控制台（`/device-console/`）。**可选件**，出厂默认不启用 | `iot/`；服务本体不在本仓，见 [iot/device-service/README.md](iot/device-service/README.md) |
 
-Agent 的核心理念是**把执行层的自由拿掉**。固定流程任务（导航/特效/夜间/设备显示）落地为
-`skills.py` 里的静态技能定义：
-**planner 是唯一决策者**（选技能 + 填参数 + 产出调用清单），**execute 是确定性执行器**
-（照单执行，无授权分支、无自由意志），每条执行再经 checker 验收（PASS 才成为系统确认事实），
-最后 **model 零工具叙述**（结构上发不出工具调用）、**gate 确定性检查**叙述是否失真。
-于是"模型假装执行"在拓扑上不可能发生。记忆方面，模型对记忆**无写权限**：滚动摘要由后端
-独立任务生成。详细架构见 [agent 仓库](https://github.com/BigLeopardCat/saudade-blog-agent)
+Agent 的核心理念是取消执行层的自由。固定流程任务（导航、特效、夜间、设备显示）落地为
+`skills.py` 里的静态技能定义：planner 是唯一决策者（选技能、填参数、产出调用清单），
+execute 是确定性执行器（照单执行，无授权分支、无自由意志），每条执行再经 checker 验收
+（PASS 才成为系统确认事实），最后 model 零工具叙述（结构上发不出工具调用）、gate 确定性
+检查叙述是否失真。因此模型假装执行在拓扑上不可能发生。记忆方面，模型对记忆无写权限：
+滚动摘要由后端独立任务生成。详细架构见 [agent 仓库](https://github.com/BigLeopardCat/saudade-blog-agent)
 的 README 与 `docs/agent-architecture.md`。
 
 ### 一次对话的时序
 
-上图画的是"谁连着谁"，这张画的是"一轮对话里谁先谁后"。**记忆的读写全在 Rust 这一侧**，
-Agent 进程本身不存任何对话状态 —— 它拿到的是 Rust 从库里读好、塞进请求体的那几段。
+上图描述各组件之间的连接关系，下图描述一轮对话里各步骤的先后。记忆的读写全部在 Rust 这一侧，
+Agent 进程本身不存任何对话状态；它拿到的是 Rust 从库里读好、塞进请求体的那几段。
 
 ```mermaid
 sequenceDiagram
@@ -193,27 +192,27 @@ Saudade-Blog/
 └── .github/workflows/        # CI/CD（push 自动构建 + 部署）
 ```
 
-> **`uploads/` 是上传件的默认位置**：不配 `UPLOAD_DIR` 时落在这里，目录在**第一次上传时
-> 自动创建**（无需手工 mkdir），`.gitignore` 已忽略它。对"clone 下来跑跑看"这样正好；
-> **生产建议用 `.env` 的 `UPLOAD_DIR` 把它指到工作区之外**——它是全站唯一**只有盘上一份**
-> 的数据（文章正文与封面存的是指向它的 URL，库里的记录不会随文件一起回来）。
+> `uploads/` 是上传件的默认位置：不配 `UPLOAD_DIR` 时落在这里，目录在第一次上传时自动创建
+> （无需手工 mkdir），`.gitignore` 已忽略它。clone 下来试跑时这样正合适；**生产环境建议
+> 用 `.env` 的 `UPLOAD_DIR` 把它指到工作区之外**，因为它是全站唯一只有盘上一份的数据
+> （文章正文与封面存的是指向它的 URL，库里的记录不会随文件一起回来）。
 >
-> 因此**迁移/恢复 = 两件一起走**：数据库 dump ＋ `UPLOAD_DIR` 那个目录。落地后跑一次
-> `python3 scripts/verify_uploads.py`，它会把"正在被引用却有文件缺失"的图连**是哪篇文章**一起
-> 列出来；那一节为零，就说明这次搬家是完整的。
+> 因此迁移与恢复是两件一起走：数据库 dump 加上 `UPLOAD_DIR` 那个目录。落地后跑一次
+> `python3 scripts/verify_uploads.py`，它会把正在被引用却缺失文件的图连是哪篇文章一起
+> 列出来；输出为空即说明这次搬家是完整的。
 
 ## 部署流程
 
-本节描述的是**本仓自带的那套 CI/CD**（`.github/workflows/deploy.yml` + `scripts/deploy/`，
-两者都在仓库里，谁都能读、能改），以及维护者用它的方式。先说清楚边界：
+本节描述本仓自带的那套 CI/CD（`.github/workflows/deploy.yml` 与 `scripts/deploy/`，
+两者都在仓库里，人人可读可改），以及维护者使用它的方式。先说清楚边界：
 
-> **"本地不编译"是维护者那一侧的纪律，不是对你的要求。** 他跑这套东西的那台机器
-> **同时是生产服务器**（`cargo build --release` 与 `vite build` 的内存开销会把整机拖垮——
-> 这事真发生过）。你把仓库 clone 到自己机器上，想怎么构建就怎么构建，不受这条约束。
+> "本地不编译"是维护者一侧的纪律，不是对贡献者的要求。 维护者运行这套东西的机器
+> 同时是生产服务器，`cargo build --release` 与 `vite build` 的内存开销会把整机拖垮，
+> 这是实际发生过的事。把仓库 clone 到自己机器上之后，构建方式不受这条约束。
 >
-> **fork 之后**：部署那一半要自己的 R2 凭据与 SSH 私钥（都是仓库 secret），不配它就只跑得起来
-> 另一半——`check`（测试与类型检查）**一个 secret 都不需要**，所以你 fork 出去照样有完整的质量反馈。
-> **PR 上也只跑 `check`**，不会有人因为提了个 PR 而把维护者的线上换掉。
+> 关于 fork：部署那一半需要自己的 R2 凭据与 SSH 私钥（都是仓库 secret），不配就只跑得
+> 起来另一半。`check`（测试与类型检查）不需要任何 secret，所以 fork 出去照样有完整的质量
+> 反馈。PR 上也只跑 `check`，不会因为提交 PR 而替换维护者的线上服务。
 
 维护者本地的验证只用轻量命令（`cargo check` / `tsc` / `npm test`），构建交给 CI。
 
@@ -228,37 +227,36 @@ flowchart LR
     PUSH --> CI --> R2 --> TRIG --> LIVE
 ```
 
-> 注意这套流程的语义：**CI 的绿灯代表"真部署成功了"**，不是"构建过了"——
-> 部署脚本的退出码会被 CI 等回来。线上到底跑的是哪个提交，只认 `build-info.json` 里的 sha。
+> 这套流程的语义是：CI 的绿灯代表真部署成功了，不是构建过了；部署脚本的退出码会被 CI 等回来。线上到底跑的是哪个提交，只认 `build-info.json` 里的 sha。
 
-按组件（下面这些"本地怎么做"说的都是**维护者那台生产机**上的做法）：
+按组件说明（下文"本地怎么做"指的都是维护者那台生产机上的做法）：
 
-- **后端（本仓库 `src/`）**：他那台机子上只做 `RUSTFLAGS="-D warnings" cargo check`（严格自检；
-  CI 未设 RUSTFLAGS，warning 不挂构建——此模式是本地纪律，不是 CI 门槛），push 即由 CI 编译部署。
-  你本机 `cargo build --release` 随意。
-- **前端（本仓库 `frontend/`）**：同上，他本地不构建、push 走 CI。**改动前先读
-  [frontend/README.md](frontend/README.md) 的《改这里的文件要 bump 版本号》一节**——
+- 后端（本仓库 `src/`）：那台机器上只做 `RUSTFLAGS="-D warnings" cargo check`（严格自检；
+  CI 未设 RUSTFLAGS，warning 不挂构建，此模式是本地纪律，不是 CI 门槛），push 即由 CI 编译部署。
+  其他机器上 `cargo build --release` 随意。
+- 前端（本仓库 `frontend/`）：同上，本地不构建，push 走 CI。**改动前先读
+  [frontend/README.md](frontend/README.md) 的《改这里的文件要 bump 版本号》一节**：
   看板娘前端的缓存版本号要在多处同步，漏一处访客会继续吃旧脚本。
-- **Agent（`saudade-blog-agent/`，独立仓库）**：改技能/工具/prompt 后需重启服务才生效；
-  push 走独立 CI。改技能注册表 / plan 契约 /
-  摘要逻辑后必跑 `test_skills.py`（L0）与 `eval/run_golden.py`（L2 真实 LLM 端到端）。
+- Agent（`saudade-blog-agent/`，独立仓库）：改技能/工具/prompt 后需重启服务才生效；
+  push 走独立 CI。改技能注册表、plan 契约或摘要逻辑后必跑 `test_skills.py`（L0）与
+  `eval/run_golden.py`（L2 真实 LLM 端到端）。
 
 ## 部署与运维
 
-**这一节描述的是本项目的线上部署**（维护者那一台机器），不是本仓对你的要求——
-fork 之后按你自己的方式跑就行，本节的价值在于：想读懂 `scripts/deploy/`、`healthcheck.sh`
-与那些日志路径时，能对上号。
+这一节描述本项目的线上部署（维护者那一台机器），不是本仓对贡献者的要求；fork 之后按
+自己的方式运行即可。这一节的作用是：读 `scripts/deploy/`、`healthcheck.sh` 与那些日志路径时，
+能对上号。
 
-> **想在自己机器上真的部署一份**（nginx 站点配置、两个 systemd 单元、TLS 证书、
-> 目录布局与权限、首次建库与第一个管理员、logrotate、日常更新）→ 走
-> **[deploy/README.md](deploy/README.md)**。那一份是**可复制的步骤**，模板都在
-> [deploy/](deploy/) 目录里；本节讲的是"它长什么样、为什么这么摆"。
-> **只想装起来的话**，那一份开头有一条命令：`bash deploy/install.sh`
+> 想在自己机器上真的部署一份（nginx 站点配置、两个 systemd 单元、TLS 证书、
+> 目录布局与权限、首次建库与第一个管理员、logrotate、日常更新），见
+> [deploy/README.md](deploy/README.md)。那一份是可复制的步骤，模板都在
+> [deploy/](deploy/) 目录里；本节讲的是它的形态与取舍。
+> 只想装起来的话，那一份开头有一条命令：`bash deploy/install.sh`
 > （向导会问要不要连 IoT 可选件一起装，`-y` 下默认不装；`--dry-run` 只渲染不落地）。
 >
-> **想用 Docker 起一整套**（MySQL + Rust + agent + nginx，一条 `docker compose up -d`）→
-> 见 [deploy/docker/](deploy/docker/)。那条路只给 Linux + 自己有域名的人用（三个服务走 host
-> 网络、镜像只能本地 build、不带 IoT 与部署管线），边界与 11 条验收清单都在它的 README 里。
+> 想用 Docker 起一整套（MySQL + Rust + agent + nginx，一条 `docker compose up -d`）
+> 见 [deploy/docker/](deploy/docker/)。那条路只给 Linux 加自有域名的场景使用：三个服务走
+> host 网络、镜像只能本地构建、不带 IoT 与部署管线，边界与 11 条验收清单都在它的 README 里。
 
 服务均为 systemd 托管（agent/rust 为 `Restart=always` 崩溃自愈；device 为 `Restart=on-failure`）：
 
@@ -271,58 +269,57 @@ fork 之后按你自己的方式跑就行，本节的价值在于：想读懂 `s
 
 日志统一在 `logs/`，按组分层（logrotate 按日轮转、定期归档）：
 
-- `logs/agent/` —— **agent 组**：agent.log + `traces/`（每轮对话的节点耗时 trace JSON，排障首选）
+- `logs/agent/` ， agent 组：agent.log + `traces/`（每轮对话的节点耗时 trace JSON，排障首选）
   + `golden_traces/`（评测 golden set 每次运行落一份，排障不看这里）
-- `logs/frontend/` —— **前端组**：monitor.log（浏览器 JS 异常 / 接口失败 / 资源加载失败 /
+- `logs/frontend/` ， 前端组：monitor.log（浏览器 JS 异常 / 接口失败 / 资源加载失败 /
   React 渲染期崩溃自动上报；`type` 是闭集、同一条按 60 秒计数合并，行格式见
   [deployment-and-ops.md](docs/deployment-and-ops.md) 的日志一节）
-- `logs/` 根 —— 后端组：rust.log（含全局 access 行）、health.log（探针）、deploy.log（CI 触发）、device.log
+- `logs/` 根 ， 后端组：rust.log（含全局 access 行）、health.log（探针）、deploy.log（CI 触发）、device.log
 
 探针 `scripts/healthcheck.sh`（建议由 cron 周期执行）：服务存活检查 + uvicorn worker 崩溃检测 +
 nginx error.log 增量扫描，异常追加 health.log。
 
 ## 给贡献者
 
-- **想参与**：[CONTRIBUTING.md](CONTRIBUTING.md)（怎么在本地跑起来、提交约定、
+- 想参与：[CONTRIBUTING.md](CONTRIBUTING.md)（怎么在本地跑起来、提交约定、
   哪些命令是"维护者那台机器上不能跑"而不是"你不能跑"）、[ROADMAP.md](ROADMAP.md)
   （现在做什么、什么在等一个条件、什么明确不做）、[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)、
   [SECURITY.md](SECURITY.md)（安全问题的私密报告通道）。
-- **测试分几层、各验什么、在哪儿跑**：[CONTRIBUTING.md](CONTRIBUTING.md) 的 §3 是唯一清单
-  ——`tests/`（跟着 `cargo test`：MockDatabase 一层 + 真 MySQL 一层）、`tests/manual/`
+- 测试分几层、各验什么、在哪儿跑：[CONTRIBUTING.md](CONTRIBUTING.md) 的 §3 是唯一清单：`tests/`（跟着 `cargo test`：MockDatabase 一层 + 真 MySQL 一层）、`tests/manual/`
   （要活服务与真凭据，手动跑）、`frontend/tests/`（`*.test.mjs` 进 CI；`*.test.py` 无头
   Chrome 沙箱走夜间）。建库的第一步也在那儿（§2.1）。
-- **新增 Agent 工具**：在 `tools/base.py` 用 `@tool` 定义并加入 `_TOOL_REGISTRY`；若服务于
+- 新增 Agent 工具：在 `tools/base.py` 用 `@tool` 定义并加入 `_TOOL_REGISTRY`；若服务于
   固定流程任务，**必须**在 `skills.py` 注册对应技能（触发条件 + 工具序列模板 + 回复契约），
-  否则 planner 无法可靠选择它——这是 agent 的核心约定。
-- **接口一览**：公开（登录、文章/分类/标签/留言板、评论点赞踩、图谱产物
+  否则 planner 无法可靠选择它，这是 agent 的核心约定。
+- 接口一览：公开（登录、文章/分类/标签/留言板、评论点赞踩、图谱产物
   `/api/public/graph/{manifest,artifact/:file}`、聊天 SSE `/api/chat/stream`、
-  前端监控上报 `/api/monitor/log`）；**路径在公开表、但 handler 内要求登录**的只有一条——
+  前端监控上报 `/api/monitor/log`）；路径在公开表、但 handler 内要求登录的只有一条：
   图谱检索 `/api/public/graph/query`（它要花 embedding 调用，不能真匿名开放）；
   受保护（JWT + 管理员：内容增删改、图片上传、后台统计与审核、图谱重建
   `/api/protected/graph/rebuild*`、`/device-api/*`）。
-- **SSE 帧协议**：`\n\n` 分隔 + JSON 编码；命令帧（导航/特效/夜间）、`__PROCESS__` 过程轨迹、
+- SSE 帧协议：`\n\n` 分隔 + JSON 编码；命令帧（导航/特效/夜间）、`__PROCESS__` 过程轨迹、
   `__RESET__` 否定轮清屏、`__SUMMARY__` 摘要回流、`__END__` 结束。改协议三端（Python/Rust/前端）同步。
-- **设计与文档索引**（`docs/`）：
+- 设计与文档索引（`docs/`）：
   [部署与运维手册](docs/deployment-and-ops.md)（拓扑端口 / CI-CD / systemd / 日志 / 排查）、
   [安全边界与加固](docs/security-boundary.md)（信任边界、输入限额、已知缺口）、
   [向量图谱](docs/word-graph.md)（产物契约 / 建图管线 / 查询链路 / 线上重建与运维）、
   [IoT 设备接入](docs/iot-device-integration.md)。
-- **Agent 侧机制**（模型行为边界、断连中断、防幻觉闸、评测体系）见
+- Agent 侧机制（模型行为边界、断连中断、防幻觉闸、评测体系）见
   [saudade-blog-agent](https://github.com/BigLeopardCat/saudade-blog-agent) 的 `docs/`。
-- **第三方组件与许可**：[THIRD-PARTY.md](THIRD-PARTY.md)。
+- 第三方组件与许可：[THIRD-PARTY.md](THIRD-PARTY.md)。
 
 ## 许可
 
-本仓库以 **GPL-2.0** 分发，全文与版权声明见 [LICENSE](LICENSE)。
+本仓库以 GPL-2.0 分发，全文与版权声明见 [LICENSE](LICENSE)。
 第三方组件及其许可见 [THIRD-PARTY.md](THIRD-PARTY.md)。
 
-本仓库**不是从零写的**：它源于 [Memory-Blog](https://github.com/LinMoQC/Memory-Blog)
-（版权归 **林陌青川 (LinMo)**）——把上游仓库克隆到本地当基座，重写成 Rust + Axum。
-它是**独立仓库**：**不是**上游的 fork，也不在上游的分支列表里。License 头部因此有
-**两条**版权声明（上游的与本仓库的），**分发时一条都不能删**。
+本仓库不是从零写的：它源于 [Memory-Blog](https://github.com/LinMoQC/Memory-Blog)
+（版权归 林陌青川 (LinMo)），做法是把上游仓库克隆到本地当基座，重写成 Rust + Axum。
+它是独立仓库：不是上游的 fork，也不在上游的分支列表里。因此 LICENSE 头部有
+两条版权声明（上游与本仓各一条），分发时一条都不能删。
 
-要在本仓库基础上二次开发：把你自己的版权声明**追加**在 LICENSE 的版权链后面即可；
-站点的署名走后台的站点设置（`blogCopyright`），**不用改代码**。来源链的完整说明见
+在本仓库基础上二次开发时，把自己的版权声明追加在 LICENSE 的版权链之后即可；
+站点的署名走后台的站点设置（`blogCopyright`），不用改代码。来源链的完整说明见
 [THIRD-PARTY.md §0](THIRD-PARTY.md)。
 
 ### 看板娘前端（不在本仓）
@@ -333,13 +330,13 @@ nginx error.log 增量扫描，异常追加 health.log。
 
 这棵树的许可分两半，边界按"文件是代码还是美术"划，与目录结构无关：
 
-- **代码**（`boot.js` / `renderer.js` / `chat-*.js` / `widget.css` 等）以 **MIT** 分发，可商用。
+- 代码（`boot.js` / `renderer.js` / `chat-*.js` / `widget.css` 等）以 MIT 分发，可商用。
   版权与许可声明照录于本节末尾，MIT 要求它随分发一起带上。
-- **美术资源**（`live2d_model/agent_2.*` 模型与贴图、`lingyue-toggle.png` 面板图标，以及
-  「泠月喵」这个**形象设计本身**）以 **CC BY-NC-SA 4.0** 分发（署名 · 非商业性使用 ·
-  相同方式共享）：可以自用、可以改，**不可商用**，改作必须以同样协议分发。全文见 agent 仓的
+- 美术资源（`live2d_model/agent_2.*` 模型与贴图、`lingyue-toggle.png` 面板图标，以及
+  「泠月喵」这个形象设计本身）以 CC BY-NC-SA 4.0 分发（署名 · 非商业性使用 ·
+  相同方式共享）：可以自用、可以改，不可商用，改作必须以同样协议分发。全文见 agent 仓的
   [frontend/ASSETS-LICENSE.md](https://github.com/BigLeopardCat/saudade-blog-agent/blob/main/frontend/ASSETS-LICENSE.md)。
-  需要留意的是它**不是** OSI 意义上的开源许可，这一部分属于"源码可用"：fork 出去做**商业**
+  需要注意它不是 OSI 意义上的开源许可，这一部分属于"源码可用"：fork 出去做商业
   站点时不能带这套美术，把 `live2d_model/` 换掉即可；代码那一半仍是 MIT。
 
 ### MIT 全文（适用于看板娘前端的代码）
