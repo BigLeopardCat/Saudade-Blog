@@ -81,7 +81,7 @@ MySQL，agent 进程本身无状态：每次请求都是新线程，连续性由
 ## 架构一览
 
 ```mermaid
-flowchart TB
+flowchart LR
     subgraph Browser["访客浏览器"]
         SPA["React SPA<br/>文章 / 分类 / 标签 / 留言板"]
         WAIFU["Live2D 看板娘 + 对话面板<br/>boot.js + chat-*.js"]
@@ -103,9 +103,7 @@ flowchart TB
     NGX --> RUST
     NGX -->|"/device-console/ · /device-api/*"| DEV
     RUST <-->|"sea-orm"| DB
-    RUST -->|"转发请求体"| AGT
-    AGT -->|"SSE 帧"| RUST
-    AGT -->|"调 api/public、api/protected"| RUST
+    RUST <-->|"转发请求体 ⇄ SSE 帧、调 api/public·api/protected"| AGT
     DEV <-->|"MQTT over TLS :8883"| ESP
 ```
 
