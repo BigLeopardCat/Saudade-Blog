@@ -158,7 +158,7 @@ dist 差集清理会把服务端写的文件换回仓库里那份（**静默回�
 > ⚠️ **`v` 里含构建时间戳**：`build_id = sha1(JSON(不含 v))[:12]`，而 payload 里有 `built`
 > 字段（本地钟面时间），所以**重跑一次就会得到新文件名，哪怕内容一字未改**。不是幂等内容
 > 哈希，只是"一次构建一个不可变 URL"。想知道内容有没有变，比 `graph-*.js` 的字节数或 diff
-> 前 200 字节（`built` 在第 79 字节附近）。
+> 前 200 字节（`built` 在第 55 字节附近——`export default {"model":…,` 那段前缀之后）。
 
 脚本本地只保留最近 2 代 `graph-*.js`（按 mtime），留一代给 manifest 手动回滚。
 **但仓库里只跟一代**——回滚靠 git 历史，不靠多留一个 37KB 的死文件。
@@ -526,7 +526,7 @@ node tests/wordgraph-artifact.test.mjs    # 39 条：产物契约 + 质量门（
                                           #   + 生产产物（存在才验，见下）
 node tests/wordgraph-remember.test.mjs    # 33 条：检索态恢复（URL/sessionStorage，§11）
 node tests/theme-choice.test.mjs          # 53 条：主题边界（与本文无关，一起跑免得漏）
-python3 tests/wordgraph_render.py         # 20 条：playwright 真实渲染（不起服务）
+python3 tests/wordgraph_render.py         # 36 条：playwright 真实渲染（不起服务）
 node /tmp/wg-labels.mjs                   # 18 条：引擎渲染语义（标签去重 / 连线基线），见下
 node /tmp/wg_sizes.mjs                    # 真产物的点半径/透明度改前后对照表（§8.11）
 python3 /tmp/vit_accept_d.py              # 26 条：**线上**验收（标题栏墨迹对齐 / 连线档位 / 飞入点云）
@@ -541,7 +541,9 @@ python3 /tmp/vit_accept_d.py              # 26 条：**线上**验收（标题�
 > `.mjs` 再 import，既真验了 ESM 可解析性又不被周边 `package.json` 左右）。这类"只在生产机上
 > 跑"的断言要当成**手跑项**看待：它有可能是红的而 CI 一直绿。
 
-**布局决策别凭观感**：`scripts/layout_ab.py` 是离线 A/B 夹具（7 种布局，同语料/同 embedding/
+**布局决策别凭观感**：`scripts/layout_ab.py` 是离线 A/B 夹具（`--variant` 六选一：
+`baseline` / `umap` / `umap_spring` / `isomap_knn` / `isomap_edges` / `smacof_edges`，
+同语料/同 embedding/
 同边集，只换布局，口径与质量门一致）——换布局就得靠它（见 §3）。改布局/调参先跑它。
 
 agent 侧查询链路的纯函数测试（`test_wordgraph_gate.py`）随弃权闸一起删除（见 §10）——
@@ -610,8 +612,8 @@ agent 仓的 `eval.yml` 跑的是 `tests/run_all.py`，它按**磁盘枚举** `t
 - 数据懒加载：**只在夜间挂载的那一刻**才去取 manifest + 动态 import 产物，模块级 promise 缓存。
 - 帧耗时滞回降档：单帧绘制超 **22ms** 就累加一个计数，**连续 6 帧**偏慢即降到
   「DPR 1 + 标签减半」，此后只降不升（避免在阈值附近来回抖）；无 WebGL 的机器一开始就降档。
-- **⛔ 窗口不用 `backdrop-filter`**：站点为此出过两次事故（`App.sass:10-11`、
-  `ContentHome/index.sass:81-82`），合成器逐帧重算模糊。半透明观感靠纯 rgba + 静态
+- **⛔ 窗口不用 `backdrop-filter`**：站点为此出过两次事故（记录在 `App.sass:14-16` 与
+  `ContentHome/index.sass:64`），合成器逐帧重算模糊。半透明观感靠纯 rgba + 静态
   radial-gradient。
 - `prefers-reduced-motion` 下 `flyTo` 直接瞬移，不走动画。
 
@@ -645,23 +647,34 @@ agent 仓的 `eval.yml` 跑的是 `tests/run_all.py`，它按**磁盘枚举** `t
 ## 8. 交互与几何
 
 几何证据一律用 playwright 打**线上首页 + 临时注入新版 CSS** 再 `getBoundingClientRect` 实测
-（一次性脚本不入库）；空白区 = `.SayWords` 右缘 → `.TopMao` 左缘。
+（一次性脚本不入库）；展示柜的列宽与首屏高度预算由 `frontend/tests/home-hero.test.py` 按同一条
+式子算期望值（见 §8.1）。
 
-### 8.1 窗口几何：左缘锚在签名右侧，底边钉住
+### 8.1 卡片几何：住在右列里，宽度由列宽给
 
-设计约束来自用户原话「左侧延伸到接近于 Sereno da Saudade 字样右侧，上方延伸两个检索框高度」：
+展示柜**不再是一个自己算坐标的窗口**——20261001 那次"搬到视频下面"之后，
+`left: calc(8vw + 450px)` / `bottom: 18.7vh` / 高度公式，以及 `≤1300px`、`≤1100px` 两个断点
+**整节作废**（`Vitrine/index.sass` 头注原话："旧几何**已随搬家作废**"）。现在它是
+`.heroRight` 右列里的**第二张卡**：
 
 ```
-left: calc(8vw + 450px);  right: 96px;  bottom: 18.7vh;
-height: calc(min(58vh, 640px) + 72px);
-/* ≤1300px：right: 84px; height: calc(min(52vh,520px) + 72px)   ≤1100px：display:none */
+.heroRight   width: min(38vw, 520px, max(300px, calc((100vh − 上留白 − 下留白 − 24px − 8px) / 1.1875)))
+  .heroPanel   4:3              手账内页（视频）
+  .vitrine     16:7  margin-top: 24px，宽度吃列宽 100%
 ```
 
-- **左 = 8vw + 438 + 12**。`.SayWords` 的左缘就是 `.SelfDescription` 的 `padding-left: 8%`，
-  而它的宽度 = 那行 h3 文字的宽度（2.5rem，实测 **437.9px**，系统 sans-serif）⇒ 左缘 = 8vw+450，
-  左缝实测 12.1±0.1。**别改成百分比系数，也别再往下压**：h3 是定宽文本，换成 vw 在窄屏会
-  直接压到字上；那 437.9 是 **Linux sans-serif** 的量，换霞鹜文楷等中文字体可能更宽，
-  这 12px 就是留给字体差异的余量。
+- **列宽那条 `min(…)` 是三选一**（`ContentHome/index.sass` 的 `.heroRight`）：`38vw` / `520px`
+  是"窄桌面不挤爆左列标题"的上限（标题 `clamp()` 上限时约 534px）；`max(300px, (100vh −
+  上下留白 − 32px) / 1.1875)` 是**按剩下的高度反算宽度**——右列高 = `1.1875 × 列宽 + 24`
+  （内页 4:3 的 0.75 ＋ 间隙 24 ＋ 展示柜 16:7 的 0.4375），**严格正比于宽度**，所以"让首屏
+  装进一屏"只有反算这一条结构性解法（20261003 用户第 1 条「签名和下翻按钮必须下滚才能看见」）。
+  ⚠️ **`1.1875` 是推导线、不是随手一填**：改内页的 `aspect-ratio` 或展示柜的高度比，必须回来
+  重算它，`frontend/tests/home-hero.test.py` 第 ① 组按同一条式子算期望值。手机档（≤768px）
+  整条覆盖成 `width: 100%`——375×667 上没有任何宽度能救。
+- **放大态是这一列里的 `position: fixed` 弹层**（`.vitrine.is-zoomed`，`width: min(90vw,1180px)`）。
+  `.heroRight` 自带 z-index ⇒ 它自己就是一个层叠上下文，所以放大时整列要抬到
+  `z-index: 200`（`body.exhibit-zoomed`）：不抬这一下，置顶缎带与那条粉/薄荷交界胶带会
+  画在弹层**上面**。
 - **滚轮穿透靠 `pointer-events`，不靠改几何**：内联态（未放大）的图谱整块不吃指针事件
   （`Vitrine/index.sass` 的 `.vitrine:not(.is-zoomed) .vit-body { pointer-events: none }`）
   ⇒ 鼠标停在卡片上往下滚，事件直接穿透到页面、正常翻页；点开卡片放大之后才是
@@ -669,23 +682,10 @@ height: calc(min(58vh, 640px) + 72px);
   ⚠️ **不要再引入"默认锁定 + 悬停浮现解锁按钮 + 毛玻璃"那套机制**（曾经有过，已整块删除：
   `engine.ts` 的 `setLocked` 与 `index.sass` 的锁定层一起）；"窗口占屏大"不等于要收窄几何。
   数值判据见 `frontend/tests/wordgraph_render.py` 第 8 条（滚轮缩图谱、页面不动）。
-- **高 = 老式高度 + 72**（两个检索框 33×2 + 间隙 6）。**底边必须钉住**：若继续沿用
-  `top:50% + translateY(-46%)`，增量会一半往下长，1366×768 那档（下缝只剩 34px）立刻压到签名上。
-  18.7vh 就是老式定位折算出的底边留白（三档实测一致）。
-- 七视口实测（0 项不达标）：
-
-| 视口 | 窗口 | 左缝 | 右缝 | 上缝 | 下缝 | 画布宽 |
-|---|---|---|---|---|---|---|
-| 1152×720 | 526×446 | 12.2 | 84 | 139 | 25.6 | 523.8 |
-| 1280×800 | 644×488 | 12.1 | 84 | 162.4 | 40.6 | 641.6 |
-| 1366×768 | 711×517 | 12.1 | 96 | 107 | **34.6** | 708.7 |
-| 1440×900 | 779×594 | 12.1 | 96 | 137.7 | 59.3 | 776.8 |
-| 1600×900 | 926×594 | 12.1 | 96 | 137.7 | 59.3 | 924 |
-| 1920×1080 | **1220×698** | 12.1 | 96 | 179.7 | 93 | 1218.4 |
-| 2560×1440 | **1809×712** | 12.1 | 96 | 458.7 | 160.3 | 1807.2 |
-
-  2560 那档高度被 `640+72` 的上限先绷住，所以带鱼屏上窗口"横着长"（1809×712）。
-- 最紧的两档：**1366×768 的下缝 34.6**（`.home-one-say` 常在 659）、1280/1152 的右缝 84。
+- **两条禁令落在 `Vitrine/index.sass` 头注**：① 不用 `backdrop-filter`（原因见 §7）；
+  ② `overflow: hidden` **不许**写在 `.vit-3d` 上——它是 `transform-style: preserve-3d` 的容器，
+  overflow 是分组属性、会把它强制拍平成 flat，翻页动效直接消失；圆角与裁剪一律下沉到
+  `.vit-face`。
   要再加宽加高，先看这两处。
 
 ### 8.2 滚轮穿云：到底之后继续前进，退回时先退位移
@@ -874,7 +874,7 @@ min 0.135`——**重出一次图这组数就会动**（语料变了 UMAP 就重
 
 ```
 r     = (1.7 + 3.1·√heatOf(n)) · (dist / depth)  // depth = 该点到相机的距离
-alpha = clamp(1.35 − depth / (dist·1.6), 0.3, 1)
+alpha = clamp(1.35 − depth / (dist·1.6), 0.5, 1)
 ```
 
 `dist` 一路能滚到 `DIST_MIN = 0.4`，于是团外看着正常的点，飞进去以后按 `dist/depth` 一起塌：
