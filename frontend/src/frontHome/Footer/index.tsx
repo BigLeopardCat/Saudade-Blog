@@ -44,8 +44,9 @@ const Footer = () => {
         <footer className='footerContainer'>
             {/* ⚠️ 页脚这两行是**两种不同身份**，别再合成一行，也别互相替换：
                 ① **来源链**（`.footLine`，静态、硬编码，对任何部署者都一样）——回答"这个站点建在
-                   谁的工作之上"。上游是 github.com/LinMoQC/Memory-Blog（GPL-2.0），Rust 这一支
-                   是本站重写的。这两件事是**历史事实**：别人 fork 走部署，这一行**照样是他该显示的**
+                   谁的工作之上"。上游是 github.com/LinMoQC/Memory-Blog（GPL-2.0），本站把它的
+                   代码克隆到本地当基座，重写成了 Rust + Axum。这两件事是**历史事实**：别人 fork
+                   走部署，这一行**照样是他该显示的**
                    （GPL 也要求保留上游署名），**不许换成部署者自己的名字**。
                 ② **本站部署者**（`.footNote`，动态，取自后台设置 `blogCopyright`，没填回退到
                    `blogAuthor`）——别人拿去部署时**不用改代码**，在后台填自己的名字即可，
