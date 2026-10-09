@@ -72,7 +72,8 @@ push 到 `cn_sora_blog` 分支触发构建与部署：
      → [云端] vite build（React → dist）
      → [云端] 打包（二进制 + dist）→ 上传对象存储中转桶（R2）
               按提交号归档：deploy/<sha>/deploy.tar.gz
-     → [云端] SSH 触发服务器上的部署脚本，并等它结束（退出码 = 部署结果）
+     → [云端] SSH 触发服务器上的 scripts/deploy/trigger_deploy.sh <sha>，并等它结束
+              （它 nohup 起 deploy_from_r2.sh、在同一 ssh 会话里等——退出码 = 部署结果）
      → [服务器] 下载解压 → 替换二进制 → 源码有变才重启 Rust 服务
      → [服务器] dist 解压到位 → nginx 直接服务新文件（无需重启）
      → [服务器] 写 frontend/dist/build-info.json（sha + 部署时刻）
@@ -84,8 +85,10 @@ push 到 `cn_sora_blog` 分支触发构建与部署：
 - **按提交号归档**：产物落在 `deploy/<sha>/deploy.tar.gz`，且 CI **等部署脚本的退出码**——
   所以 **CI 绿灯 = 真部署成功了**，不是"构建过了"。反过来，若两次构建共用一个键，后上传的
   会覆盖先上传的，部署到哪一版就取决于上传先后，而两次 CI 都是绿的。
-- **同分支的 run 串行化**（`concurrency` + `cancel-in-progress: false`）：后来的排队等前一个，
-  不打断正在跑的部署。
+- **同分支的 run 串行化**（`concurrency` + `cancel-in-progress: ${{ github.event_name == 'pull_request' }}`）：
+  **push 的 run 排队等前一个、不打断正在跑的部署**（这条串行化正是 20260923"较新的包覆盖较旧的包、
+  某次后端从未落地"那次事故的修复）；**PR 上的 run 可以被取消**——那里一次部署都不会发生，
+  排队等前一个只是让评审白等。
 - **重启是有条件的**：仅当 `git diff <上一版 sha> <本次 sha> -- src Cargo.toml Cargo.lock`
   有变化（或存活探测发现后端已经不在响应）才 `systemctl restart`；只改前端的提交不重启后端。
 - **只改测试/文档的 push 会"绿灯但什么都没部署"**：部署过滤器看的是**本次 diff**，若本次没有
@@ -104,7 +107,9 @@ push 到 `cn_sora_blog` 分支触发构建与部署：
 
 三条取舍：
 
-- **为什么在云端构建**：`vite build` 的堆需求可达约 3GB，与常驻服务同机并发时会 OOM 拖垮整机。
+- **为什么在云端构建**：`vite build` 要给到几 GB 的堆（CI runner 上配的是
+  `NODE_OPTIONS=--max-old-space-size=4096`；本地那条安装路按 `min(内存−1024, 3072)` 算，
+  下限 512，见 [deploy/README.md](../deploy/README.md) §6），与常驻服务同机并发时会 OOM 拖垮整机。
   所以本地只做 `cargo check` 级别的轻量验证，真正的构建交给 CI runner。
 - **为什么中转桶不当静态直服**：测速定论——R2 跨境 TTFB 0.7–1.3s，而服务器骨干网出站是毫秒级；
   3M 出站带宽下本地直服仍是正解。对象存储在这里承担的是「云端产物 → 服务器」的搬运，不是 CDN。
@@ -126,6 +131,16 @@ push 到 `cn_sora_blog` 分支触发构建与部署：
 - **本地验证用轻量命令**：前端不构建、直接 push 等 CI；后端只 `cargo check`。
 - **严格自检是本地纪律，不是 CI 门槛**：`RUSTFLAGS="-D warnings" cargo check`——CI 未设这条，
   warning 不会挂构建；unused import 之类提交前自己清掉。
+- **流水线里有三个 job，职责别混**：`check-changes`（diff 过滤器）→ `check`（**任何 push 与
+  PR 都跑**）→ `build-and-deploy`（只在 `cn_sora_blog` 的 push 上真跑，每一步带
+  `if: …deploy == 'true'`；PR 上该输出恒 false ⇒ 自然空转）。
+- **`check` 一个 secret 都不需要**，所以 fork 来的 PR 也跑得起来；它门住部署
+  （`build-and-deploy` 的 `needs` 里有它，红了就不构建、不上传、不部署）。它跑的是：
+  锁文件不许带本机镜像源 → 提交信息 lint（与本地同一份 `.githooks/commit-msg`）→
+  `fetch:widget` → 起一个 `mysql:8.0` 服务容器并 bootstrap schema → `verify_uploads.py` →
+  `cargo test`（MockDatabase + 真 MySQL 两层）→ `tsc --noEmit` → 前端 `*.test.mjs` 套件 →
+  ESLint。**`*.test.py` 那几套要 Playwright，故意不进 CI**（夜跑或手跑）。
+- **改过 `frontend/src/**` 的提交，本地先跑 `npm run lint`**——那一步在 CI 里是真闸。
 
 ---
 
@@ -274,8 +289,8 @@ nginx 会把它们一起加载，导致 duplicate server；备份移出该目录
 ### 8.1 机器规格（示例部署）
 
 一个小型单机 VPS：**4 vCPU / 3.7 GB 内存 / 40 GB 盘，无 GPU**。下面所有数字都是在这个规格上
-量的（最近一次重测 **20261004**）；你的机器大概率不同，**先按同一组命令量一遍自己的**，
-再决定要不要照抄这里的取舍。
+量的（最近一次整体重测 **20261004**；§8.4 的磁盘数字 **20261009** 又复测过一次）；你的机器
+大概率不同，**先按同一组命令量一遍自己的**，再决定要不要照抄这里的取舍。
 
 ```bash
 nproc; grep -m1 'model name' /proc/cpuinfo; free -m; df -h /; cat /proc/loadavg
@@ -335,22 +350,23 @@ for p in $(pgrep -P "$m"); do tr -d '\0' < /proc/$p/cmdline | grep -q multiproce
 
 | 目录 | 大小 | 说明 |
 |---|---|---|
-| `target/` | 4.1 GB | Rust 构建产物。**生产二进制就在这里 ⇒ 永不 `cargo clean`** |
-| `/tmp` | 1.4 GB | 杂项（探针状态、`systemd-private-*`、几个仓的临时克隆）。渲染沙箱的 `mkdtemp` 残留曾是这里的大头，现由两个运行器的 `TMPDIR` 隔离 + 夜跑末尾的清扫管住（见 §4 与 [frontend/README.md](../frontend/README.md) 的《沙箱用得上的三个坑》） |
-| `saudade-blog-agent/` | 249 MB | 含 `.venv` |
-| `logs/` | 109 MB | agent 日志 + trace（按天删/压，见 §4） |
+| `target/` | 4.6 GB | Rust 构建产物。**生产二进制就在这里 ⇒ 永不 `cargo clean`** |
+| `/tmp` | 3.4 GB | 杂项。渲染沙箱的 `mkdtemp` 残留曾是这里的大头，现由两个运行器的 `TMPDIR` 隔离 + 夜跑末尾的清扫管住（见 §4 与 [frontend/README.md](../frontend/README.md) 的《沙箱用得上的三个坑》）；现在占地方的是历次**手跑**验证留下的具名目录（`*-manual` / `verify-clone-*` / `bundle*` 那类）——清扫脚本的前缀是从套件源码推的，认不出这些手建的名字 |
+| `saudade-blog-agent/` | 356 MB | 含 `.venv` |
+| `logs/` | 266 MB | agent 日志 + trace（按天删/压，见 §4） |
 | `/usr/lib/emqx` | 89 MB | EMQX 发行包（可选件） |
 | ESP32 固件源码仓（在仓库外） | 70 MB | 开发产物，非运行依赖 |
 | `frontend/dist` | 18 MB | 前端产物 |
-| device-service 源码目录（在仓库外） | 14 MB | 含它自己的 `target/` |
-| `/var/lib/emqx` | 1.4 MB | EMQX 运行数据 |
+| device-service 源码目录（在仓库外） | 13 MB | 含它自己的 `target/` |
+| `/var/lib/emqx` | 1.3 MB | EMQX 运行数据 |
 
-40G 盘已用 **65%（约 25 GB，余 14 GB）**：**4 GB 的 `target/` 与 89 MB 的 EMQX 是两块可辨认的
-大头，但都不能随手删**（前者是生产二进制，后者是可选件的本体）。清理口径与踩过的坑记在
-agent 仓的 `docs/问题记录.md`；**增长最快的通常是 `logs/` 与 trace，先看 §4 的保留策略是否
-在跑**——`/tmp` 现在也有了自己的清理（20261006，见上表）。它的**触发者是本机的 cron**
-（夜跑末尾调一次 `scripts/prune_sandbox_tmp.py`）：隔离在两个运行器里，跟着仓库走；
-打理隔离盖不住的那部分（手跑单个套件）则需要有人真的调那个脚本。
+40G 盘已用 **86%（约 33 GB，余 5.5 GB）**（20261009 复测）：**4.6 GB 的 `target/` 与 3.4 GB 的
+`/tmp` 是两块最大的，但都不能随手删**（前者是生产二进制；后者见上表——清扫只认套件自己
+`mkdtemp` 出来的名字）。清理口径与踩过的坑记在 agent 仓的 `docs/问题记录.md`；**增长最快的
+通常是 `logs/` 与 trace，先看 §4 的保留策略是否在跑**——`/tmp` 现在也有了自己的清理
+（20261006，见上表）。它的**触发者是本机的 cron**（夜跑末尾调一次
+`scripts/prune_sandbox_tmp.py`）：隔离在两个运行器里，跟着仓库走；打理隔离盖不住的那部分
+（手跑单个套件）则需要有人真的调那个脚本。
 
 ```bash
 du -sh target logs frontend/dist saudade-blog-agent /tmp /usr/lib/emqx /var/lib/emqx
@@ -428,8 +444,8 @@ API 不在服务器上，不要用对话压这一项）：
 - **升级优先级：内存 > 磁盘 > CPU**。
   - 内存（3.7 GB → 8 GB）：唯一的实际收益是"能在这台机器上跑构建/测试"与容纳更多开发工具；
     如果开发环境另置，2 GB 都够跑生产。
-  - 磁盘（40 G，81% 已用，约 31 G）：`target/` 占 4 GB 且不许删，`logs/` 是持续增长项；
-    再加一块盘或扩到 80 G 更稳妥。
+  - 磁盘（40 G，86% 已用，约 33 G；20261009 复测）：`target/` 占 4.6 GB 且不许删，
+    `logs/` 与 `/tmp` 是持续增长项；再加一块盘或扩到 80 G 更稳妥。
   - CPU：**不需要**。4 vCPU 在 load 0.3 下长期空转。
 - **纪律不变**：本地不 build（`vite build` / `cargo build --release` 会 OOM）；worker 调到 4 之后
   依然要盯 `free -m`——但压力来源是开发工具，不是服务本身。

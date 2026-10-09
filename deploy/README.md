@@ -90,6 +90,14 @@ bash deploy/install.sh --dry-run -y --domain blog.example.com
 > **两份** `.env` 的 `IOT_ENABLED`、以及 EMQX 的认证链与 ACL（ACL 是**全量替换**语义）。
 > 三处消费面必须同源这件事见 [iot/README.md](../iot/README.md)。
 
+> **另有一条 Docker 路**（[deploy/docker/](docker/)）：**一条 `docker compose up -d` 起整套站**
+> （MySQL + Rust 后端 + agent + nginx），`prepare.sh` 在宿主侧生成配置与自签证书。它**只给
+> "自己有一台 Linux 机器、有一个域名"的人**用：三个服务走 host 网络（所以 Docker Desktop
+> 不成立）、占宿主 80/443、镜像**只能本地 build 不许推 registry**、**没有 IoT / 设备控制台**、
+> 也没有 logrotate / 心跳 / trace 保留 / 部署管线（日志与上传件会无界增长，得自己挂 cron）。
+> 它与上面这条 `install.sh` 的路**共用同一份 nginx 渲染器**——同一组输入下产物逐字节相同。
+> 边界、验收清单（11 条）与排障见 [docker/README.md](docker/README.md)。
+
 ---
 
 ## 0. 全貌：一次部署由什么组成
@@ -327,12 +335,14 @@ cp saudade-blog-agent/.env.example saudade-blog-agent/.env
 
 **推荐：交给 CI。** 父仓自带的流水线在云端跑 `cargo build --release` 与 `vite build`，
 把产物打包上传到对象存储中转桶，再 SSH 到服务器执行
-[`scripts/deploy/deploy_from_r2.sh`](../scripts/deploy/deploy_from_r2.sh) 落地。
-**它等部署脚本的退出码** ⇒ CI 绿灯 = 真部署成功了，不是"构建过了"。装法见
-[README §部署流程](../README.md)：要自己的 R2 凭据与 SSH 私钥（都是仓库 secret）。
+[`scripts/deploy/trigger_deploy.sh`](../scripts/deploy/trigger_deploy.sh) `<提交号>` 落地
+（它 `nohup` 起 [`deploy_from_r2.sh`](../scripts/deploy/deploy_from_r2.sh)、在同一个 ssh
+会话里等它结束）。**CI 等的是这一条的退出码** ⇒ CI 绿灯 = 真部署成功了，不是"构建过了"。
+装法见 [README §部署流程](../README.md)：要自己的 R2 凭据与 SSH 私钥（都是仓库 secret）。
 
-这么做的实际理由很硬：`vite build` 的堆需求可达约 3 GB，与常驻服务同机并发会 OOM
-拖垮整机（本项目的示例部署上真实发生过一次）。**如果你的机器够大，本机构建也没问题**：
+这么做的实际理由很硬：`vite build` 要给到几 GB 的堆（CI runner 上配的是 `4096`），与常驻
+服务同机并发会 OOM 拖垮整机（本项目的示例部署上真实发生过一次）。**如果你的机器够大，
+本机构建也没问题**：
 
 ```bash
 # 后端
@@ -343,15 +353,15 @@ cd frontend
 npm ci                           # 按锁文件装依赖
 npm run fetch:widget             # 看板娘前端两棵树：源码在 agent 仓，按 pin 取回来
 npm run vendor:live2d            # 看板娘运行时的三份第三方产物不入库，必须单独就位
-NODE_OPTIONS="--max-old-space-size=3072" npx vite build
+NODE_OPTIONS="--max-old-space-size=3072" npx vite build     # 这里的 3072 只是示例
 ```
 
-> **`3072` 是"官方部署那台机器上的取值"，不是硬性门槛**——`--max-old-space-size` 只是给 V8
-> 老生代划的上限。**设小了的代价小得多**：构建自己报 `JavaScript heap out of memory` 退出，
-> 机器安然无恙，重来一次就行；设大了才会跟常驻服务抢内存、把整机拖垮。
-> 所以按机器实际内存给：`min(内存 − 1024, 3072)`，下限 512。
-> `bash deploy/install.sh` 就是这么算的，要手动覆盖用 `--vite-heap MB`（它同时会打印
-> 这个值的来处）。
+> **`--max-old-space-size` 只是给 V8 老生代划的上限，不是硬性门槛。** **设小了的代价小得多**：
+> 构建自己报 `JavaScript heap out of memory` 退出，机器安然无恙，重来一次就行；设大了才会跟
+> 常驻服务抢内存、把整机拖垮。所以按机器实际内存给：`bash deploy/install.sh` 算的是
+> **`min(内存 − 1024, 3072)`**（下限 512）——`3072` 是**上限**，不是"某台机器上的取值"
+> （本项目的 3.7 GB 示例部署上它算出 **2699**）。要手动覆盖用 `--vite-heap MB`（它同时会
+> 打印这个值的来处）。CI 的 runner 内存大得多，那边固定配 **4096**。
 
 `fetch:widget` 与 `vendor:live2d` **顺序不能反**：前者整树替换
 `public/live2d-widgets/`，后者往它的 `vendor/` 子目录里写——反了的话刚取到的
@@ -374,7 +384,7 @@ sudo ln -sf /etc/nginx/sites-available/blog /etc/nginx/sites-enabled/blog
 sudo nginx -t && sudo systemctl reload nginx
 ```
 
-模板里三处**容易静默出错**的地方（原文都带了注释）：
+模板里四处**容易静默出错**的地方（原文都带了注释）：
 
 1. **`location ^~ /api/` 的 `^~` 不是装饰**。不带它，`/api/` 会被上面那条"带 content
    hash 的资源"**正则** location 抢走（nginx 里正则优先于普通前缀），于是形如
