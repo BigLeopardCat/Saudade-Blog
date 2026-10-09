@@ -11,8 +11,8 @@
 
 | 版权声明 | 对应作品 |
 |---|---|
-| `Copyright (C) 2024 林陌青川 (LinMo)` | 上游 [Memory-Blog](https://github.com/LinMoQC/Memory-Blog)（GPL-2.0），本仓库的前身 |
-| `Copyright (C) 2026 BigLeopardCat` | 本仓库：把它重写为 Rust + Axum，并在此之后扩展 |
+| `Copyright (C) 2024 林陌青川 (LinMo)` | 上游 [Memory-Blog](https://github.com/LinMoQC/Memory-Blog)（GPL-2.0）；本站把它的代码克隆到本地当基座重写成 Rust + Axum，本仓库因此是**独立仓库**，不是它的 fork |
+| `Copyright (C) 2026 BigLeopardCat` | 本仓库：Rust + Axum 重写与后续扩展 |
 
 两条都写在 [LICENSE](LICENSE) 头部；本仓库以 GPL-2.0 分发，与上游一致。站点页脚那一行
 （`Based on Memory-Blog by 林陌青川 (LinMo). Refactored, extended and optimized in Rust & Axum

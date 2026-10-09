@@ -1,6 +1,6 @@
     Saudade Blog —— 个人博客系统
 
-    Copyright (C) 2024 林陌青川 (LinMo) —— 上游 Memory-Blog（本仓库的前身）
+    Copyright (C) 2024 林陌青川 (LinMo) —— 上游 Memory-Blog（本站重写所依据的基座）
     Copyright (C) 2026 BigLeopardCat —— 本仓库：Rust + Axum 重写与后续扩展
 
     This program is free software; you can redistribute it and/or modify

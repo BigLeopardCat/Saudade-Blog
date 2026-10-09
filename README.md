@@ -315,7 +315,8 @@ nginx error.log 增量扫描，异常追加 health.log。
 第三方组件及其许可见 [THIRD-PARTY.md](THIRD-PARTY.md)。
 
 本仓库**不是从零写的**：它源于 [Memory-Blog](https://github.com/LinMoQC/Memory-Blog)
-（版权归 **林陌青川 (LinMo)**），本仓库是它的 Rust + Axum 重写分支。License 头部因此有
+（版权归 **林陌青川 (LinMo)**）——把上游仓库克隆到本地当基座，重写成 Rust + Axum。
+它是**独立仓库**：**不是**上游的 fork，也不在上游的分支列表里。License 头部因此有
 **两条**版权声明（上游的与本仓库的），**分发时一条都不能删**。
 
 要在本仓库基础上二次开发：把你自己的版权声明**追加**在 LICENSE 的版权链后面即可；
