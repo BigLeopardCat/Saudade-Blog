@@ -157,8 +157,11 @@ COLOR_MARKUP = """
           <h1>正文里的标题</h1>
           <p>这是一段会折行的正文，用来量描边会不会改变字形的前进宽度。汉字与 Latin 混排，
              line wrapping 的断点落在哪里由字体度量决定，只要前进宽度一个像素都不变，
-             段落的高度、宽度与行数就应当逐像素相同。这段要够长，长到在 660 的列宽里
-             至少折成三行，否则行数判据没有分辨力。再补一句让它更长一些。</p>
+             段落的高度、宽度与行数就应当逐像素相同。这段要够长，长到在 836 的列宽里
+             至少折成三行，否则行数判据没有分辨力。再补一句让它更长一些，再多补两句：
+             正文列 20261010 从 660 撑到 836 之后，同样的字数会少折一行，所以夹具的长度
+             必须跟着版面的有效宽走——改宽了它就要重新量一遍，否则这条不重排判据没有
+             分辨力。这里再多写一点，确保在三行以上稳定成立。</p>
           <ul><li>列表项也要被描边覆盖</li></ul>
           <p>行内代码 <code>npm test</code> 应当被清零。</p>
           <pre><code>echo hello</code></pre>
@@ -355,7 +358,7 @@ with sync_playwright() as p:
     check("媒体档仍命中（对面不是靠「没命中」取胜的）", l["mq"] is True, str(l["mq"]))
     check("  正文掉回 300px（＝375×80%，就是 `.readContainer .readContent` 那条）",
           abs(l["content"]["w"] - 300) < 1.5, f"w={l['content']['w']}")
-    check("  正文内边距掉回 20px", abs(float(l["content"]["padL"].rstrip("px")) - 20) < 0.5,
+    check("  正文内边距掉回 22px", abs(float(l["content"]["padL"].rstrip("px")) - 22) < 0.5,
           l["content"]["padL"])
     check("  封面掉回 400px", abs(l["cover"]["h"] - 400) < 1, f"h={l['cover']['h']}")
     check("  封面信息条掉回 45px",
@@ -374,7 +377,7 @@ with sync_playwright() as p:
     d = measure(URL, 1200)
     check("媒体档不命中", d["mq"] is False, str(d["mq"]))
     check("正文 880px（max-width 生效）", abs(d["content"]["w"] - 880) < 1, f"w={d['content']['w']}")
-    check("正文内边距 20px", abs(float(d["content"]["padL"].rstrip("px")) - 20) < 0.5,
+    check("正文内边距 22px", abs(float(d["content"]["padL"].rstrip("px")) - 22) < 0.5,
           d["content"]["padL"])
     check("封面 400px", abs(d["cover"]["h"] - 400) < 1, f"h={d['cover']['h']}")
     check("描述卡内边距 25px", abs(float(d["desc"]["padL"].rstrip("px")) - 25) < 0.5,
@@ -492,13 +495,47 @@ with sync_playwright() as p:
           t["pre"]["fs"] == "13px", t["pre"]["fs"])
 
     d = measure_layout(URL, 1440)
-    check("★桌面档正文列仍是 660px（＝840 − 2×90，与改动前逐像素同宽）",
-          abs(d["pW"][0] - 660) < 1 and d["outer"]["padL"] == "90px" and d["inner"]["padL"] == "0px",
+    check("★桌面档正文列 836px（＝880 − 2×22，与讨论区正文列同宽，20261010 改）",
+          abs(d["pW"][0] - 836) < 1 and d["outer"]["padL"] == "0px" and d["inner"]["padL"] == "0px",
           f'p={d["pW"][0]} 外 {d["outer"]["padL"]} / 内 {d["inner"]["padL"]}')
     check(f'  桌面档正文 17px / 行高 {d["p"]["lh"]}（= 1.85 × 17 ≈ 31.45px）',
           d["p"]["fs"] == "17px" and abs(float(d["p"]["lh"].rstrip("px")) - 31.45) < 0.3, str(d["p"]))
     check(f'  桌面档 `h1` 仍是 3.5rem = {d["h1"]["fs"]}（媒体档没有漏到桌面）',
           d["h1"]["fs"] == "56px", d["h1"]["fs"])
+
+    # 20261010 补：这一条钉的是**跨组件**的不变量——正文列与讨论区（`CommentSection`）
+    # 正文列同宽。它靠的是"两边容器横向内边距同值（各 22px）"，而讨论区是**另一个组件**
+    # 的 sass，本套件默认不编译它。只钉自己这侧的 836 是钉不住的：哪天讨论区把 22 改成
+    # 别的一档，两栏就悄悄错开、而上面那条判据照样全绿。所以现场编译那份 sass，量它
+    # **渲染后**的内容盒宽（`clientWidth` 已去掉卡片那 1px 边框，再减左右内边距）。
+    CMT_SASS = FE / "src/components/CommentSection/index.sass"
+    cmt = subprocess.run(["node", "-e", SASS_JS, str(CMT_SASS)], cwd=str(FE),
+                         capture_output=True)
+    if cmt.returncode != 0:
+        raise SystemExit("CommentSection sass 编译失败：\n"
+                         + cmt.stderr.decode("utf-8", "replace"))
+    SB_CMT = build_sandbox(cmt.stdout.decode("utf-8"), "cmt")
+    CMT_MEASURE = """() => {
+      document.getElementById('root').innerHTML =
+        '<div class="commentSection"><div class="commentThread"><div class="commentRow">'
+        + '<img class="commentAvatar" alt=""><div class="commentMain">'
+        + '<div class="commentBody markdown-body"><p>讨论区正文</p></div>'
+        + '</div></div></div></div>';
+      const sec = document.querySelector('.commentSection');
+      const cs = getComputedStyle(sec);
+      const p = document.querySelector('.commentMain p').getBoundingClientRect();
+      return { inner: sec.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight),
+               padL: parseFloat(cs.paddingLeft), mainW: p.width };
+    }"""
+    pg = br.new_page(viewport={"width": 1440, "height": 900})
+    pg.goto(SB_CMT.as_uri() + "/index.html")
+    pg.wait_for_timeout(80)
+    c = pg.evaluate(CMT_MEASURE)
+    pg.close()
+    check(f'★讨论区内容盒 {c["inner"]:.0f}px 与正文列 {d["pW"][0]:.0f}px 同宽'
+          f'（两边容器横向内边距都是 22px；讨论区另吃卡片那 1px×2 边框，故差 2px）',
+          abs(c["inner"] - d["pW"][0]) < 3 and abs(c["padL"] - 22) < 0.5,
+          f'讨论区 inner={c["inner"]:.1f} padL={c["padL"]} / 正文 p={d["pW"][0]}')
 
     print("⑦b 反向对照：字面删掉新加的那两条内边距规则 ⇒ 手机档正文列当场掉回 310px")
     nl = measure_layout(SB_NO_PAD.as_uri() + "/index.html", 390)
@@ -584,7 +621,7 @@ with sync_playwright() as p:
       const inner = '.readBody > .markdown-body > .markdown-body';
       const p = document.querySelector(inner + ' > p');
       // 行数用 Range 数**行框**：段落折了几行是"有没有重排"最直接的证据
-      //（宽高在 660 这种定宽列里可能因为最后一行断点位置而凑巧相等，行数不会）。
+      //（宽高在 836 这种定宽列里可能因为最后一行断点位置而凑巧相等，行数不会）。
       const rg = document.createRange();
       rg.selectNodeContents(p);
       return {

@@ -327,7 +327,10 @@ html
     max-width: 880px
     width: 80%
     height: auto
-    padding: 20px
+    // 20261010：横向内边距 20px → 22px，与讨论区 `.commentSection`（`padding: 20px 22px 26px`）
+    // 取同一个值。配合下面 `.readBody > .markdown-body` 的 padding 归零，正文列撑到
+    // 880 − 2×22 = 836px，与讨论区正文列左右边缘重合（算式见 `.readBody` 那一段注释）。
+    padding: 20px 22px
     margin: 0 auto 0
     border-radius: 8px
     word-wrap: break-word
@@ -357,10 +360,18 @@ html
       // 自己那层）⇒ 桌面 45+45、手机 15+15 **全叠起来**：线上实测 390px 视口左右各
       // `10(.readContent) + 15 + 15 = 40px` 空白，正文列只剩 310px —— 用户报的「左右两侧空白还多」。
       // 特异性 (0,3,0) > 编辑器的 (0,1,0)：不看谁先加载、不靠源序。
-      // ⚠️ 桌面这个 90px 是**照着今天的有效宽**取的：840 − 180 = 660，与改动前逐像素相同
-      //（原来那 660 是 45+45 两层"碰巧"叠出来的），所以桌面观感零变化。
+      // ⚠️ 20261010：这一处横向内边距由 `0 90px` 收到 `0`，正文列 660px → 836px。
+      // 起因是主人对着页面说「文章一行是不是太短了，改成和讨论区一样的长度」。讨论区
+      // `.commentSection` 与这里同口径（80% / max 880），但左右各吃到 22px 内边距 ⇒
+      // 它的正文列是 836px；而这里那 90px 是 20261005 特意留的旧有效宽（660 原是 45+45
+      // 两层编辑器内边距"碰巧"叠出来的，当时的目标是"桌面观感零变化"）。收掉之后两处
+      // 正文列等宽：`.readContent` 22px + 本层 0 ⇒ 880 − 2×22 = 836px。
+      // 讨论区那张卡另有 1px 边框、在 border-box 下再吃掉内容宽 ⇒ 严格算它是 834px，
+      // 左右各差 1px，肉眼不可见，不为它去凑一个 23px 的怪值。
+      // 手机档不吃这一条：媒体档里同名选择器写的是 `0 12px`（"正文列 346px"那个算式），
+      // 本行只影响桌面档。
       > .markdown-body
-        padding: 0 90px
+        padding: 0
         // bytemd Viewer 自己那层（`#content.markdown-body > .markdown-body`）
         > .markdown-body
           padding: 0
