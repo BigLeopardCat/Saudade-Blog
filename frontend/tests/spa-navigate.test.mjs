@@ -251,7 +251,10 @@ console.log('\n⑥ 版本号：改了 widget 脚本必须 bump（nginx 对 live2
     // 20261008b = 「新消息来了窗口不跟着往下滚」那一轮（chat-engine.js 的滚动语义：程序化
     // 回底那一跳不再被读成"主人翻上去了"，且历史区有新内容时亮提示条）。同上 ⇒ 必须 bump，
     // 不 bump 访客一年内还是那个滚到一半就停住的对话面板。
-    ok(ver === '20261008b', 'VER 已 bump 到本轮（20261008b）', { ver });
+    // 20261011a = 「看板娘默认位置回退」那一轮（widget.css：#waifu 的 left 145px → 15px、
+    // transform translateY(-5px) → -15px，即撤销 20261003 那两次位移）。同上 ⇒ 必须 bump，
+    // 不 bump 访客一年内看到的还是右移 130px、少抬 10px 的那一版。
+    ok(ver === '20261011a', 'VER 已 bump 到本轮（20261011a）', { ver });
     const tsx = readFileSync(path.join(root, 'src/components/Live2dAgent/index.tsx'), 'utf8');
     ok(tsx.includes('boot.js?v=' + ver), 'Live2dAgent 的 ?v= 与 VER 一致');
 }
