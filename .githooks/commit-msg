@@ -13,7 +13,7 @@
 #   ① 首行 ≤ 60 字符（**中文按 1 个字算**，不是字节数）；
 #   ② 首行 `type: 描述`，type 在白名单里、冒号后有空格；
 #   ③ 有正文时，首行与正文之间必须空一行；
-#   ④ 不许出现 `Co-Authored-By`（用户明确要求不加共同作者署名）。
+#   ④ 不许出现 `Co-Authored-By` / 共同作者署名这类 trailer。
 # 豁免：`Merge` / `Revert` / `fixup!` / `squash!` 打头的首行（都不是人写的正文）。
 set -euo pipefail
 
@@ -81,8 +81,8 @@ if [ "$(printf '%s\n' "$MSG" | wc -l)" -gt 1 ] && [ -n "$SECOND" ]; then
   fail "首行与正文之间要空一行（第二行现在有字）"
 fi
 
-if printf '%s\n' "$MSG" | grep -q '^Co-Authored-By:'; then
-  fail "不许加 Co-Authored-By（用户明确要求不加共同作者署名）"
+if printf '%s\n' "$MSG" | grep -qi '^co-authored-by:'; then
+  fail "不许加 Co-Authored-By / 共同作者署名"
 fi
 
 exit 0
