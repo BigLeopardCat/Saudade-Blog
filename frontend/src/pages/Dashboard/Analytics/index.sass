@@ -58,6 +58,19 @@
     padding: 40px 0
     opacity: 0.85
 
+  // ── 汇总卡：一行统计条（20261011 第五轮）────────────────────────────────────
+  // 用户原话：「带数字的容器或者卡片就一个数值，容器却那么大」。改之前实测：
+  // **121px 高 × 253–338px 宽，光 antd 默认的 body 内边距就吃掉 48px**（24px×2）——
+  // 而内容只有两行：14px 的标签（22px 行高）+ 4px 间距 + 30px 的数字（47px 行高）= 73px。
+  // 一块大色块里就一个数，四周全是空气。
+  //
+  // 这一轮做的是**并线 + 定高**，与后台首页那三条书签条（`components/articleAnalytics`）
+  // 第 20261001 轮同一手法：标签与数字并到一条线上，高度改成**设计的量**（56px）而不是
+  // 跟内容走 —— 两层原因：① 内容撑高会让几张卡随数字位数长短不齐；② 显式定高之后
+  // 高度不再依赖 antd 的行高 token，改版不会悄悄把它撑回去。
+  //
+  // ⚠️ 宽度那条 `flex: 1 1 200px` **刻意没动**：用户说的是"容器相对内容太大"（高度与
+  //    内边距），不是"太宽"。四张铺满一行、各自带身份色，这一层的观感是要留的。
   .akSummary
     display: flex
     gap: 16px
@@ -74,9 +87,44 @@
         background: var(--ak-bg-dark)
       border: 0
       box-shadow: 0 1px 22px -8px rgba(26, 26, 26, .6)
+      // 上面刚定的那个量（见本节头注）：**高度不跟内容走**
+      height: 56px
+
+      .ant-card-body
+        height: 100%
+        padding: 0 14px
+        display: flex
+        align-items: center
+
+      // 标签与数字并线。`space-between` 让数字贴右缘 —— 一行里四张卡的标签长短不一，
+      // 数字落在同一条竖线上才读得出"哪个数属于哪张卡"以外的对齐感。
+      // `baseline` 不是 `center`：两个字号差一档（13 / 24），按中线对齐会让数字看起来偏上。
+      .ant-statistic
+        display: flex
+        align-items: baseline
+        justify-content: space-between
+        gap: 10px
+        width: 100%
+
+      .ant-statistic-title
+        // antd 默认给标签 `margin-bottom: 4px`（它是给上下两行那套留的）——并线之后
+        // 那 4px 会把整条压歪，必须摘掉
+        margin-bottom: 0
+        font-size: 13px
+        // 标签是这一行里**唯一可以牺牲的部分**：卡窄到放不下时截断标签，
+        // 绝不截断数字，也不许把数字挤出卡外（`min-width: 0` 才让 flex 允许它收缩）
+        min-width: 0
+        overflow: hidden
+        text-overflow: ellipsis
+        white-space: nowrap
+
+      .ant-statistic-content
+        flex: 0 0 auto
 
     .ant-statistic .ant-statistic-content .ant-statistic-content-value
-      font-size: 30px
+      font-size: 24px
+      // 数字自己那行高（antd 默认 1.35）会把 24px 撑成 32px：这条与上面 56px 是同一个量
+      line-height: 1
 
   .akPanels
     display: flex
