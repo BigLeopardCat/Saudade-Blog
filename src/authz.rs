@@ -1,4 +1,4 @@
-//! 权限模型（角色 / scope）——Rust 侧的声明表（20260920，秘书类功能地基）。
+//! 权限模型（角色 / scope）——Rust 侧的声明表（20260920，身份与权限地基）。
 //!
 //! **这是跨语言契约的一端**：角色名与 scope 名必须与 agent 侧
 //! `saudade-blog-agent/agent/authz.py` 一致（改一侧须同步另一侧 + 两侧单测）。
@@ -8,7 +8,7 @@
 //!
 //! 为什么要有这个模块（而不是继续散落的字面量）：
 //! `middleware.rs` 里 `u.role == "admin"`、`temp_user.rs` 里 `"user"` 是**同一
-//! 个取值域的两处硬编码**——秘书角色要进来时，这种散落就是漂移的来源。
+//! 个取值域的两处硬编码**——取值域每变一次，这种散落就是漂移的来源。
 //! 现在取值域只在本模块声明，判据点引用常量。
 
 /// 博主本人（uid=1）：后台全权。
@@ -19,11 +19,6 @@ pub const ROLE_ADMIN: &str = "admin";
 /// 提权走迁移 `scripts/migration/superadmin_role_20260926.sql`（库里只有一个，且
 /// **界面上加不出第二个**：`is_assignable_role` 把 superadmin 排除在可指派范围外）。
 pub const ROLE_SUPERADMIN: &str = "superadmin";
-
-/// 秘书：可以读他人数据、可以代博主做写操作，但**进不了后台管理面**
-/// （后台准入只认 `ROLE_ADMIN` 与 `ROLE_SUPERADMIN`；秘书的能力边界在 agent 侧的
-/// scope 表里表达，不在后台路由上表达）。
-pub const ROLE_SECRETARY: &str = "secretary";
 
 /// 普通访客 / 体验账号：只读公开内容、操作自己的设备与自己的页面。
 pub const ROLE_USER: &str = "user";
@@ -39,8 +34,7 @@ pub const ROLE_USER: &str = "user";
 pub const ROLE_ZAKO: &str = "zako";
 
 /// `user.role` 的取值域（DB 列无 ENUM/CHECK 约束，这里就是唯一声明）。
-pub const KNOWN_ROLES: [&str; 5] =
-    [ROLE_ADMIN, ROLE_SUPERADMIN, ROLE_SECRETARY, ROLE_USER, ROLE_ZAKO];
+pub const KNOWN_ROLES: [&str; 4] = [ROLE_ADMIN, ROLE_SUPERADMIN, ROLE_USER, ROLE_ZAKO];
 
 /// 未知/异常角色按最保守处理（不授予任何能力）——**失败取向与 agent 侧一致**：
 /// 从不默认放行、也从不默认当管理员。
@@ -57,7 +51,7 @@ pub fn is_superadmin(role: &str) -> bool {
 /// 能不能进后台管理面（`middleware::auth_guard` 的唯一判据）。
 ///
 /// 刻意做成函数而不是 `role == ROLE_ADMIN` 内联：20260926 加超管时正是只改了这里
-/// 一处（外加调用它的 `profile.rs` 自动跟着走），单测锁住"秘书不得进后台"。
+/// 一处（外加调用它的 `profile.rs` 自动跟着走），单测锁住"非管理员族不得进后台"。
 pub fn can_access_console(role: &str) -> bool {
     role == ROLE_ADMIN || role == ROLE_SUPERADMIN
 }
@@ -130,7 +124,7 @@ pub fn check_freeze(
 /// 变更身份被拒的原因。
 #[derive(Debug, PartialEq, Eq)]
 pub enum RoleChangeDenial {
-    /// 发起人自己没有后台管理面权限（秘书/普通用户/杂鱼/未知角色）
+    /// 发起人自己没有后台管理面权限（普通用户/杂鱼/未知角色）
     NotPermitted,
     /// 目标是发起人自己：改了就把自己锁在外面（降级自己 = 当场失去改回来的能力）
     SelfTarget,
@@ -149,9 +143,9 @@ pub enum RoleChangeDenial {
 /// 管理员（非超管）能动的那两档：普通用户 与 杂鱼（20261002 主人拍板）。
 ///
 /// **这是一条"两档之间搬"的规则，不是"能往低处改"的规则**：`{user, zako}` 两个
-/// 方向都放行（普通用户 ⇄ 杂鱼），而**目标是**这两档之外的任何人（管理员、秘书、
-/// 超管）一律拒。写成"目标与新身份**都**要在这一档里"是刻意的对称——
-/// 只判方向（`rank` 大小）会漏掉"管理员把秘书改成普通用户"（那是往下改，
+/// 方向都放行（普通用户 ⇄ 杂鱼），而**目标是**这两档之外的任何人（管理员、超管）
+/// 一律拒。写成"目标与新身份**都**要在这一档里"是刻意的对称——
+/// 只判方向（`rank` 大小）会漏掉"管理员去改另一个管理员的身份"（那是往下改，
 /// 但它动的是别人的权限档位，不在授权范围内）。
 ///
 /// 超管不受这条约束（除超管外四档随便搬，与从前逐字相同）。
@@ -166,7 +160,7 @@ pub fn is_admin_tier(role: &str) -> bool {
 /// 变更一个账号的身份的判据。20261002 起**下放给管理员**（此前只有超管能发起）。
 ///
 /// 下放的边界（主人拍板）：管理员只能在 `{普通用户, 杂鱼}` 这两档之间搬，
-/// **不动权限更高的账号，也不往更高的档位指派**——加管理员/给秘书/提权仍然只有超管
+/// **不动权限更高的账号，也不往更高的档位指派**——加管理员/提权仍然只有超管
 /// 能做。超管的行为一个字没变（除超管外四档）。
 ///
 /// 判据顺序里 **`NotPermitted` 仍然是第一关**（自足，不依赖路由先过闸），
@@ -213,7 +207,7 @@ pub fn is_assignable_role(role: &str) -> bool {
     is_known_role(role) && !is_superadmin(role)
 }
 
-/// 角色在**服务端话术**里的中文名（用于拼"身份已改为秘书…"这类回复句）。
+/// 角色在**服务端话术**里的中文名（用于拼"身份已改为杂鱼…"这类回复句）。
 ///
 /// 前端 `utils/auth.ts::ROLE_LABEL` 是另一份、用途也不同的映射（界面标签，还带
 /// 颜色）——两份都从同一组角色名出发，改角色名时两边会一起红（各有单测/沙箱锁着）。
@@ -222,7 +216,6 @@ pub fn role_label(role: &str) -> &'static str {
     match role {
         ROLE_ADMIN => "管理员",
         ROLE_SUPERADMIN => "超级管理员",
-        ROLE_SECRETARY => "秘书",
         ROLE_USER => "普通用户",
         ROLE_ZAKO => "杂鱼",
         _ => "未登记身份",
@@ -392,11 +385,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn 秘书不得进后台管理面() {
+    fn 非管理员族不得进后台管理面() {
         assert!(can_access_console(ROLE_ADMIN));
         // 20260926：超管也要能进——漏了这一条，uid=1 提权当天就进不了后台
         assert!(can_access_console(ROLE_SUPERADMIN));
-        assert!(!can_access_console(ROLE_SECRETARY));
         assert!(!can_access_console(ROLE_USER));
         // 20261002：杂鱼也进不了后台（它是"零工具"角色，不是管理员族的一员）
         assert!(!can_access_console(ROLE_ZAKO));
@@ -405,12 +397,11 @@ mod tests {
     }
 
     #[test]
-    fn 取值域就是这五个() {
-        assert_eq!(KNOWN_ROLES.len(), 5);
+    fn 取值域就是这四个() {
+        assert_eq!(KNOWN_ROLES.len(), 4);
         assert!(is_known_role("superadmin"));
-        assert!(is_known_role("secretary"));
         assert!(is_known_role(ROLE_ZAKO)); // 20261002 杂鱼
-        assert!(!is_known_role("Secretary")); // 大小写敏感：角色名不收模糊匹配
+        assert!(!is_known_role("Admin")); // 大小写敏感：角色名不收模糊匹配
         assert!(!is_known_role("administrator")); // 旧别名不认（曾散落在文档里）
         assert!(!is_known_role("SuperAdmin"));
     }
@@ -419,7 +410,6 @@ mod tests {
     fn 超管判据只认那一个名字() {
         assert!(is_superadmin(ROLE_SUPERADMIN));
         assert!(!is_superadmin(ROLE_ADMIN));
-        assert!(!is_superadmin(ROLE_SECRETARY));
         assert!(!is_superadmin(ROLE_USER));
         assert!(!is_superadmin(ROLE_ZAKO));
         assert!(!is_superadmin(""));
@@ -431,7 +421,6 @@ mod tests {
     fn 列表可见的角色里没有超管() {
         assert!(!is_listable_role(ROLE_SUPERADMIN));
         assert!(is_listable_role(ROLE_ADMIN));
-        assert!(is_listable_role(ROLE_SECRETARY));
         assert!(is_listable_role(ROLE_USER));
         // 20261002：杂鱼**要**列出来——博主得看得见它、能冻它、能改它的身份
         // （这正是"后台可指派的正经角色"这条设计的一部分）。
@@ -448,11 +437,11 @@ mod tests {
     fn 冻结策略表() {
         let admin = ROLE_ADMIN;
         let sup = ROLE_SUPERADMIN;
-        let sec = ROLE_SECRETARY;
         let usr = ROLE_USER;
         // (发起人 uid, 发起人角色, 目标 uid, 目标角色, 期望)
         let cases: &[(i32, &str, i32, &str, Result<(), FreezeDenial>)] = &[
-            // 自己 → 拒（三个角色各一次：谁都不能冻自己）
+            // 自己 → 拒（管理员与超管各一次 = `SelfTarget`；普通用户那一格**先被第一关
+            // 拦下** ⇒ 回的是 `NotPermitted`——判据顺序的可见后果，不是写错了）
             (7, admin, 7, admin, Err(FreezeDenial::SelfTarget)),
             (1, sup, 1, sup, Err(FreezeDenial::SelfTarget)),
             (9, usr, 9, usr, Err(FreezeDenial::NotPermitted)),
@@ -461,18 +450,15 @@ mod tests {
             (2, sup, 1, sup, Err(FreezeDenial::TargetSuperadmin)),
             // 管理员之间 → 拒（两个方向都是同一句）
             (7, admin, 8, admin, Err(FreezeDenial::PeerAdmin)),
-            // 管理员冻秘书 / 普通用户 / 杂鱼 → 放行（本次问答明确：秘书可被管理员冻；
-            // 20261002 杂鱼同档——它不是管理员，也不是超管）
-            (7, admin, 9, sec, Ok(())),
+            // 管理员冻普通用户 / 杂鱼 → 放行（20261002 起低两档同档——
+            // 它们既不是管理员，也不是超管）
             (7, admin, 10, usr, Ok(())),
             (7, admin, 12, ROLE_ZAKO, Ok(())),
-            // 超管冻管理员 / 秘书 / 普通用户 / 杂鱼 → 放行
+            // 超管冻管理员 / 普通用户 / 杂鱼 → 放行
             (1, sup, 7, admin, Ok(())),
-            (1, sup, 9, sec, Ok(())),
             (1, sup, 10, usr, Ok(())),
             (1, sup, 12, ROLE_ZAKO, Ok(())),
             // 发起人自己没有后台管理面权限 → 拒（判据自足，不依赖路由先过闸）
-            (9, sec, 10, usr, Err(FreezeDenial::NotPermitted)),
             (10, usr, 11, usr, Err(FreezeDenial::NotPermitted)),
             (0, "", 10, usr, Err(FreezeDenial::NotPermitted)),
             (0, "root", 10, usr, Err(FreezeDenial::NotPermitted)),
@@ -495,21 +481,19 @@ mod tests {
 
     /// 变更身份策略表逐格。**超管：除超管外四档随便搬；管理员：只在低两档之间搬。**
     ///
-    /// 20261002 这一格发生了**语义反转**：`(7, admin, 9, sec, usr)` 原先拒的理由是
-    /// "发起人不是超管"，现在发起人这一关过了，拒的理由变成"秘书不归管理员管"
+    /// 20261002 这一格发生了**语义反转**：`(7, admin, 8, admin, usr)` 原先拒的理由是
+    /// "发起人不是超管"，现在发起人这一关过了，拒的理由变成"管理员不归管理员管"
     /// （`AdminTargetTier`）。表里留着它、并写明理由，正是为了让这次反转看得见——
     /// 策略一旦松动，回归锁必须**在表里**说明白松动的是哪一格。
     #[test]
     fn 改角色策略表() {
         let admin = ROLE_ADMIN;
         let sup = ROLE_SUPERADMIN;
-        let sec = ROLE_SECRETARY;
         let usr = ROLE_USER;
         let cases: &[(i32, &str, i32, &str, &str, Result<(), RoleChangeDenial>)] = &[
             // ── 发起人没有后台管理面权限 → 拒（这是唯一一条与"发起人是谁"有关的判据；
             //    20261002 起判据是 can_access_console，不再是"必须超管"）──
-            (9, sec, 10, usr, admin, Err(RoleChangeDenial::NotPermitted)),
-            (10, usr, 11, usr, sec, Err(RoleChangeDenial::NotPermitted)),
+            (10, usr, 11, usr, ROLE_ZAKO, Err(RoleChangeDenial::NotPermitted)),
             (12, ROLE_ZAKO, 10, usr, usr, Err(RoleChangeDenial::NotPermitted)),
             (0, "", 10, usr, usr, Err(RoleChangeDenial::NotPermitted)),
             (0, "root", 10, usr, usr, Err(RoleChangeDenial::NotPermitted)),
@@ -521,20 +505,20 @@ mod tests {
             (7, admin, 1, sup, usr, Err(RoleChangeDenial::TargetSuperadmin)),
             // 新身份不在取值域 → 拒（先于档位判据：说不存在的身份时，
             // "站内没这个身份"比"管理员只能改成低两档"更接近事实）
-            (1, sup, 9, sec, "root", Err(RoleChangeDenial::UnknownRole)),
-            (1, sup, 9, sec, "", Err(RoleChangeDenial::UnknownRole)),
-            (1, sup, 9, sec, "Admin", Err(RoleChangeDenial::UnknownRole)),
+            (1, sup, 9, usr, "root", Err(RoleChangeDenial::UnknownRole)),
+            (1, sup, 9, usr, "", Err(RoleChangeDenial::UnknownRole)),
+            (1, sup, 9, usr, "Admin", Err(RoleChangeDenial::UnknownRole)),
             (7, admin, 10, usr, "root", Err(RoleChangeDenial::UnknownRole)),
             // 新身份是超管 → 拒（要加第二个超管走迁移，不是页面上点一下）
-            (1, sup, 9, sec, sup, Err(RoleChangeDenial::NotAssignable)),
+            (1, sup, 9, usr, sup, Err(RoleChangeDenial::NotAssignable)),
             (1, sup, 7, admin, sup, Err(RoleChangeDenial::NotAssignable)),
             (7, admin, 10, usr, sup, Err(RoleChangeDenial::NotAssignable)),
-            // ── 超管正常路径：把秘书/普通用户/管理员改成四档里的任一档 ──
-            (1, sup, 9, sec, usr, Ok(())),
-            (1, sup, 9, sec, admin, Ok(())),
-            (1, sup, 10, usr, sec, Ok(())),
+            // ── 超管正常路径：把普通用户/管理员/杂鱼改成四档里的任一档 ──
+            (1, sup, 9, usr, ROLE_ZAKO, Ok(())),
+            (1, sup, 9, usr, admin, Ok(())),
+            (1, sup, 10, usr, admin, Ok(())),
             (1, sup, 7, admin, usr, Ok(())),
-            (1, sup, 7, admin, sec, Ok(())),
+            (1, sup, 7, admin, ROLE_ZAKO, Ok(())),
             // 20261002 杂鱼：可被指派（进可指派范围 = 后台下拉里选得到）、也可被改出去。
             // 「能进后台指派」是这条设计的一半，另一半在 agent 侧的 CHAT_ONLY_ROLES。
             (1, sup, 10, usr, ROLE_ZAKO, Ok(())),
@@ -544,15 +528,12 @@ mod tests {
             (7, admin, 10, usr, ROLE_ZAKO, Ok(())),
             (7, admin, 12, ROLE_ZAKO, usr, Ok(())),
             (7, admin, 12, ROLE_ZAKO, ROLE_ZAKO, Ok(())), // 幂等（路由层会先短路，判据本身放行）
-            // 目标不在低两档 → 拒（**语义反转的那一格**：秘书不归管理员管）
-            (7, admin, 9, sec, usr, Err(RoleChangeDenial::AdminTargetTier)),
+            // 目标不在低两档 → 拒（**语义反转的那一格**：管理员不归管理员管）
             (7, admin, 8, admin, usr, Err(RoleChangeDenial::AdminTargetTier)),
             (7, admin, 8, admin, ROLE_ZAKO, Err(RoleChangeDenial::AdminTargetTier)),
             // 目标在低两档、但要指派到更高的档 → 拒（**只能搬，不能提权**）
             (7, admin, 10, usr, admin, Err(RoleChangeDenial::AdminAssignTier)),
-            (7, admin, 10, usr, sec, Err(RoleChangeDenial::AdminAssignTier)),
             (7, admin, 12, ROLE_ZAKO, admin, Err(RoleChangeDenial::AdminAssignTier)),
-            (7, admin, 12, ROLE_ZAKO, sec, Err(RoleChangeDenial::AdminAssignTier)),
         ];
         for (op_uid, op_role, t_uid, t_role, new_role, want) in cases {
             assert_eq!(
@@ -570,7 +551,6 @@ mod tests {
     fn 管理员能动的是哪两档() {
         assert!(is_admin_tier(ROLE_USER));
         assert!(is_admin_tier(ROLE_ZAKO));
-        assert!(!is_admin_tier(ROLE_SECRETARY));
         assert!(!is_admin_tier(ROLE_ADMIN));
         assert!(!is_admin_tier(ROLE_SUPERADMIN));
         assert!(!is_admin_tier("root"));
@@ -581,7 +561,6 @@ mod tests {
     #[test]
     fn 可指派范围不含超管() {
         assert!(is_assignable_role(ROLE_ADMIN));
-        assert!(is_assignable_role(ROLE_SECRETARY));
         assert!(is_assignable_role(ROLE_USER));
         assert!(is_assignable_role(ROLE_ZAKO)); // 20261002：杂鱼是正经角色，后台可指派
         assert!(!is_assignable_role(ROLE_SUPERADMIN));

@@ -53,7 +53,7 @@ skip_fixture() {
     case "$1" in
         golden_*.sql|test_accounts_*.sql|user_rename_sora_*.sql) return 0 ;;
         user_remove_legacy_hash_account_*.sql) return 0 ;;
-        superadmin_role_*.sql|secretary_role_*.sql|zako_role_*.sql) return 0 ;;
+        superadmin_role_*.sql|drop_secretary_role_*.sql|zako_role_*.sql) return 0 ;;
     esac
     return 1
 }

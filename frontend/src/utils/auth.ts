@@ -13,7 +13,7 @@
 export interface TokenClaims {
     /** 用户 id（后端 auth_uid 用的就是它） */
     sub?: number
-    /** 角色：admin 管理员 / superadmin 超级管理员 / secretary 秘书 / user 普通用户 */
+    /** 角色：admin 管理员 / superadmin 超级管理员 / user 普通用户 / zako 杂鱼 */
     role?: string
     /** 过期时间（秒级 unix） */
     exp?: number
@@ -76,7 +76,6 @@ export const ROLE_LABEL: Record<string, string> = {
     // 就是站点主人本人，徽章上也就只印这两个字（`RoleBadge` 的头注：文案只从这张表取，
     // 不许在组件里另抄一份——所以改文案只改这一行，徽章、个人中心、账号页一起变）。
     superadmin: '站长',
-    secretary: '秘书',
     user: '普通用户',
     zako: '杂鱼',
 }

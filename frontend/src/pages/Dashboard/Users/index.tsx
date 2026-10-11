@@ -120,7 +120,6 @@ const ACC_FILTERS: { key: string; label: string; match: (u: any) => boolean }[] 
 const ASSIGNABLE_ROLES: { role: string; rank: number }[] = [
     { role: 'zako', rank: -2 },
     { role: 'user', rank: 0 },
-    { role: 'secretary', rank: 1 },
     { role: 'admin', rank: 2 },
 ]
 const roleRank = (role?: string | null) =>
@@ -678,7 +677,7 @@ const Users = () => {
                                             <div>
                                                 <strong className={isFrozen(u) ? 'tu-frozen-name' : ''}>{u.username}</strong>
                                                 {/* 身份徽章（20261002 换掉 antd 的具名色 Tag）：
-                                                    图形 + 形状 + 配色三样一起区分五档，见 RoleBadge 头注。
+                                                    图形 + 形状 + 配色三样一起区分四档，见 RoleBadge 头注。
                                                     「普通用户不显示」这条规则不变——后台行上满屏都是普通用户，
                                                     这一枚只用来**标出例外**。 */}
                                                 {u.role !== 'user' && (
@@ -930,7 +929,7 @@ const Users = () => {
                     </Modal>
 
                     {/* 变更身份确认（20260926）。与冻结那个弹窗同三条纪律：
-                        按钮写动作词（「改成秘书」而不是「确定」）、danger 跟着方向走、
+                        按钮写动作词（「改成管理员」而不是「确定」）、danger 跟着方向走、
                         受控 Modal（命令式弹窗沙箱测不到）。正文写**两件事**：改完之后
                         他还能干什么（新身份），以及**他会被踢下线**——后者是这次变更
                         唯一不可逆的那半边（旧令牌代次已作废，换不回旧会话）。 */}

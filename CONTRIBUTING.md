@@ -111,7 +111,7 @@ mysql -uroot -p -e "CREATE USER 'saudade_blog'@'localhost' IDENTIFIED BY '换成
 > | `test_accounts_*.sql` | 评测用的测试账号（`agent_test_user_*`） |
 > | `user_rename_sora_*.sql` | 把作者 uid=1 的用户名改回 `sora` |
 > | `user_remove_legacy_hash_account_*.sql` | 删作者库里那个遗留的哈希账号 |
-> | `superadmin_role_*.sql` / `secretary_role_*.sql` / `zako_role_*.sql` | 把 uid=1 提为 superadmin / 把某个账号提为 secretary / 给某个账号授角色（`@zako='REPLACE_ME'`，不填就空转） |
+> | `superadmin_role_*.sql` / `zako_role_*.sql` / `drop_secretary_role_*.sql` | 把 uid=1 提为 superadmin / 给某个账号授角色（`@zako='REPLACE_ME'`，不填就空转）/ 把库里残留的 `secretary` 行降回 `user`（新库里恒 0 行） |
 >
 > 前两类跑进你的库会凭空多出几个 `agent_fixture_*` / `agent_test_user_*` 账号；
 > 后三类在你的库上没有对象，跑也是空转。判断依据是文件名里的主题，不是日期。

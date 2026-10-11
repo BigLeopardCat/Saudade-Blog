@@ -7,7 +7,7 @@
 // **源码断言**配着无头沙箱在看的——沙箱只在夜间跑，白天改错了没人会知道。
 //
 // 所以这里把主人这次点的三件事钉成可执行的判据：
-//   ① **扶正**：除杂鱼外倾角一律 0（20261003 之前五档各不相同，"歪多少"本身就是特征）；
+//   ① **扶正**：除杂鱼外倾角一律 0（20261003 之前各档各不相同，"歪多少"本身就是特征）；
 //   ② **换装**：`admin` 接手原 `superadmin` 那一套（薰衣草→粉、双层白边、两端小星）；
 //   ③ **站长的文本只有两个字**：不带表情，且文案只从 `ROLE_LABEL` 取（组件里不许另写一份）。
 //
@@ -52,14 +52,14 @@ function field(spec, key) {
     return m[4] === 'true'
 }
 
-const TIERS = ['superadmin', 'admin', 'secretary', 'user', 'zako']
+const TIERS = ['superadmin', 'admin', 'user', 'zako']
 
-console.log('① 五档都在，且各自的取色互不相同')
+console.log('① 四档都在，且各自的取色互不相同')
 const specs = Object.fromEntries(TIERS.map((r) => [r, specOf(r)]))
-ok(TIERS.every((r) => specs[r].length > 0), 'SPECS 里五档都有对象字面量',
+ok(TIERS.every((r) => specs[r].length > 0), 'SPECS 里四档都有对象字面量',
     TIERS.filter((r) => !specs[r]))
 const pairs = TIERS.map((r) => `${field(specs[r], 'from')}→${field(specs[r], 'to')}`)
-ok(new Set(pairs).size === 5, '五档的渐变两端两两不同（配色仍是主要辨识手段）', pairs)
+ok(new Set(pairs).size === 4, '四档的渐变两端两两不同（配色仍是主要辨识手段）', pairs)
 // 扶正之后倾角不再携带信息 ⇒ 配色若有重复就是真的分不出来了
 ok(TIERS.every((r) => field(specs[r], 'ink')), '每一档都显式写了 ink（不靠继承）',
     TIERS.map((r) => [r, field(specs[r], 'ink')]))
@@ -68,7 +68,7 @@ console.log('\n② 扶正：除杂鱼外倾角一律 0')
 const tilts = Object.fromEntries(TIERS.map((r) => [r, field(specs[r], 'tilt')]))
 ok(tilts.zako === -2, '杂鱼保留 -2°（主人样例那一版就是这个角度）', tilts.zako)
 ok(TIERS.filter((r) => r !== 'zako').every((r) => tilts[r] === 0),
-    '其余四档倾角全部回正', tilts)
+    '其余三档倾角全部回正', tilts)
 ok(TIERS.every((r) => typeof tilts[r] === 'number'), '每一档都显式写了 tilt（不靠默认值）', tilts)
 
 console.log('\n③ 换装：管理员接手原超管那一套')
@@ -79,7 +79,7 @@ ok(field(specs.admin, 'ring') === 'double', '管理员＝双层白描边', field
 ok(field(specs.admin, 'stars') === true, '管理员＝两端小星（这一档现在唯一带星）', field(specs.admin, 'stars'))
 ok(field(specs.admin, 'lead') === '👑', '管理员带皇冠（20261003 主人点名换掉盾牌）',
     field(specs.admin, 'lead'))
-ok(!['superadmin', 'secretary', 'user', 'zako'].some((r) => field(specs[r], 'lead') === '👑'),
+ok(!['superadmin', 'user', 'zako'].some((r) => field(specs[r], 'lead') === '👑'),
     '皇冠只有管理员一档在用', TIERS.map((r) => [r, field(specs[r], 'lead')]))
 ok(TIERS.filter((r) => field(specs[r], 'stars') === true).join() === 'admin',
     '整张表里只有 admin 带 stars——多一档就是原样式没换干净',
@@ -111,9 +111,9 @@ ok(labelSuper === '站长', 'ROLE_LABEL.superadmin == 「站长」', labelSuper)
 ok(/ROLE_LABEL\[role\]/.test(strip(badge)),
     '徽章文案仍从 ROLE_LABEL 取（组件里不另抄一份中文名）')
 // 组件里**不许**出现身份中文名——注释里刻意写着（那是在解释文案从哪来），只判代码
-ok(!/['"`](站长|管理员|秘书|普通用户|杂鱼)['"`]/.test(strip(badge)),
+ok(!/['"`](站长|管理员|普通用户|杂鱼)['"`]/.test(strip(badge)),
     '组件的代码里没有任何身份中文名字面量（第二份名字表就是这么长出来的）',
-    strip(badge).match(/['"`](站长|管理员|秘书|普通用户|杂鱼)['"`]/))
+    strip(badge).match(/['"`](站长|管理员|普通用户|杂鱼)['"`]/))
 ok(/label = \(role && ROLE_LABEL\[role\]\) \|\| role \|\| '—'/.test(badge),
     '取不到就回退原值（漏改映射时显示英文 role 而不是编一个名字）')
 ok(/^\s{4}superadmin:\s*'/m.test(strip(auth)),

@@ -53,8 +53,8 @@ pub fn create_token(user_id: i32, role: &str, token_version: i32) -> String {
 /// 断言被当成登录 token 复用）。agent 侧验签见 saudade-blog-agent/server.py 的
 /// `_verify_assertion_claims` / `_resolve_principal`。
 ///
-/// 20260920 起额外带 `role`：agent 只有 uid 的话，"这个人能让我做什么"无处表达，
-/// 秘书（以某人的名义按授予范围办事）就落不了地。角色由调用方查 DB 得到
+/// 20260920 起额外带 `role`：agent 只有 uid 的话，"这个人能让我做什么"无处表达
+/// （以某人的名义、按授予的范围办事就落不了地）。角色由调用方查 DB 得到
 /// （见 chat.rs prepare_chat），agent 侧只认签名里的这个值。
 #[derive(Debug, Serialize)]
 struct AssertionClaims {
@@ -62,7 +62,7 @@ struct AssertionClaims {
     aud: String,
     exp: usize,
     iat: usize,
-    /// 角色（20260920，秘书类功能地基）：agent 侧据此决定"我能代表他做什么"
+    /// 角色（20260920，身份与权限地基）：agent 侧据此决定"我能代表他做什么"
     /// （`saudade-blog-agent/agent/authz.py` 的角色→scope 表）。
     /// 取值为 `user.role` 原值，**由调用方从 DB 查**（不信登录 token 里可能是
     /// 7 天前的角色——与 `middleware::auth_guard` 同一条纪律）。

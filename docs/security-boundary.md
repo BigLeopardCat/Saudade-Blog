@@ -62,15 +62,15 @@ agent 侧可以没有鉴权的原因：它只听回环，公网到不了；能�
   代码默认值仍是 False（`config/settings.py`），所以"滚动上线"的老口径只在
   "新增一个接断言的端点"时适用，且方向是先让 Rust 发头、再让 agent 核；
 - 断言里还有一个 `role`（取自 DB 的 `user.role`，不信登录 token 里可能是
-  7 天前的角色）：agent 侧据此做能力判据（见 `saudade-blog-agent/docs/secretary.md`）。
+  7 天前的角色）：agent 侧据此做能力判据（见 `saudade-blog-agent/docs/identity-and-permissions.md`）。
   角色缺失/未知 = 零权限，由 agent 的 shadow 模式先观测不拦截。
 - 取值域（Rust `src/authz.rs::KNOWN_ROLES` ↔ agent `agent/principal.py::KNOWN_ROLES`，
-  跨语言契约，改一侧须同步另一侧 + 两侧单测）：`admin` / `superadmin` / `secretary` /
-  `user` / `zako`。**`zako`（杂鱼）是唯一一个"零工具"角色**：能力边界
+  跨语言契约，改一侧须同步另一侧 + 两侧单测）：`admin` / `superadmin` / `user` /
+  `zako`。**`zako`（杂鱼）是唯一一个"零工具"角色**：能力边界
   不是靠授予表配出来的，而是四层收口里最硬的那一层：agent 的 `planner_node` 顶部短路
   让 `execute` 节点在本请求里一次都不会被进入（另外三层是技能可见性 / native schema /
   `scopes_for(zako) == 空集`，都是软的：authz 在 shadow 档下只记账不拦）。详见
-  `saudade-blog-agent/docs/secretary.md` §3.6 与 `tests/test_zako_role.py`。
+  `saudade-blog-agent/docs/identity-and-permissions.md` §3.6 与 `tests/test_zako_role.py`。
 
 ⚠️ 这条断言只解决"uid 是不是真的"，不解决"这台机器上谁能调 agent"（回环边界照旧）；
 一旦 agent 要跨机部署（或容器网络不再是 loopback），还是要加真正的服务间凭据（见 §6）。
@@ -102,7 +102,7 @@ agent 侧可以没有鉴权的原因：它只听回环，公网到不了；能�
   帧/页面上下文/用户显式点到的数字，否则 `unknown_target`）。**一切"没做成"必须是
   `unavailable`：Rust 的 `ApiResponse::error` 是 HTTP 200 + code 500**，只看状态码会把
   "创建失败"读成成功，而成功回执会作为系统确认事实落进 `execution_log` 并在下一轮注入。
-  详见 `saudade-blog-agent/docs/secretary.md` §5.2。
+  详见 `saudade-blog-agent/docs/identity-and-permissions.md` §5.2。
 
 **这条通道带来的新注入面（必须知道）**：agent 从此会读攻击者可控的文本：待审留言的
 正文会进入工具帧。注入最多导致答错、不导致做错（写方向另有三道确定性门，见下）；
@@ -117,7 +117,7 @@ agent 侧可以没有鉴权的原因：它只听回环，公网到不了；能�
   → 工具自身 fail-closed（认不出的颜色不许静默回落成哈希色）。任何一环不过 = 零执行。
   注意判据看到的是真实输入形态：本轮用户消息带 `[当前问题]: ` 系统锚点，判据入口必须先剥
   这个壳（`authz._strip_system_tags`；不剥的话锚定判据一条都命不中，明确命令也会被判成
-  "没表达意图"，见 `saudade-blog-agent/docs/secretary.md` §3.4/§5.3）。
+  "没表达意图"，见 `saudade-blog-agent/docs/identity-and-permissions.md` §3.4/§5.3）。
 - 确认弹窗（`__CONFIRM__:` 帧）：写操作没被判成明确命令时，agent 不执行，而是下发一个
   确认框（通用协议：问题 + N 个选项 + 令牌）。用户点「确定」→ 前端发一条隐藏确认请求
   （带 `confirm_token`）。
@@ -344,7 +344,7 @@ QPS 量级在个位数，这个代价可以忽略；规模上去之后的下一�
 | **对话链路**没有按用户/IP 的限流 | 单个已登录用户可以连续发起对话占满并发槽（槽位本身有闸，见 §4） | 对话这一路只有总并发闸。**不应推广成"Rust 侧没有限流"**：内容发布有按 uid 的限流（`src/risk.rs` 的 `PostRateLimiter` 间隔闸 + 窗口计数 ⇒ 超限转人工 / 自动禁言），登录有按 IP/账号的失败限流（`LoginRateLimiter`） |
 | **分块传输**（无 Content-Length）不过体积闸 | 构造性的大 body 能绕过 §4 的第一行 | 只靠字段级限额兜，已写在代码注释里 |
 | agent 端点**无服务间凭据** | 同机的任意进程可调（含 `/chat/stream`） | 依赖回环边界；跨机部署前必须补。**"我代表谁"已由 §2.1 的断言解决，这条说的是"谁在调我"**：`/chat`、`/review` 的**身份**都核了（缺头 401），`/graph/query` 连身份都不核（它不涉及身份，失败一律降级 200 + ok=false）；"谁在调我"这一维三者照旧 |
-| **写操作的事前授权只覆盖了一半** | 设备屏显等"用户眼前"的写仍然只有"调用前查断连"这道防护；**代用户写站点内容**这一类已有人在回路闸（非命令措辞的意图 → 确认弹窗，一次点击代替一轮对话），但**还没有这样的工具**，所以闸今天空转 | 需确认的 scope（`CONSENT_SCOPES`）未获用户**本轮消息**明确确认 → 产 `__ERROR__: 待确认[consent_required]` 帧、**不调用工具**，且 gate 5a 让叙述侧无法把它说成"已完成"（`agent/authz.py` + `test_authz.py` ⑨，见 `saudade-blog-agent/docs/secretary.md` §3.4）。后台写落在 `write.console`，闸在这里**真正承重**；"以谁的名义"由写回执带的 `principal_role` 记账（零迁移渲染进 `execution_log.detail`）。写面现覆盖十四件（含公告三件与留言复核/删除两件；删留言与公告写进 `_ALWAYS_CONFIRM_TOOLS`），"目标"可以是**名字**（工具对着实时字典解析，解不出即零写）。**剩下的**：① `uid=0`（无身份）时写命令约每 6 次有 1 次被 narrator 讲成"本轮没有执行任何工具"而撞上洞③判据 → 走 gate 打回（兜底文案已按原因码分）；② 目标预检（`_write_target_refusal`）在弹窗之前就零工具收尾，绝不弹一个"点了也只会被拒"的框 |
+| **写操作的事前授权只覆盖了一半** | 设备屏显等"用户眼前"的写仍然只有"调用前查断连"这道防护；**代用户写站点内容**这一类已有人在回路闸（非命令措辞的意图 → 确认弹窗，一次点击代替一轮对话），但**还没有这样的工具**，所以闸今天空转 | 需确认的 scope（`CONSENT_SCOPES`）未获用户**本轮消息**明确确认 → 产 `__ERROR__: 待确认[consent_required]` 帧、**不调用工具**，且 gate 5a 让叙述侧无法把它说成"已完成"（`agent/authz.py` + `test_authz.py` ⑨，见 `saudade-blog-agent/docs/identity-and-permissions.md` §3.4）。后台写落在 `write.console`，闸在这里**真正承重**；"以谁的名义"由写回执带的 `principal_role` 记账（零迁移渲染进 `execution_log.detail`）。写面现覆盖十四件（含公告三件与留言复核/删除两件；删留言与公告写进 `_ALWAYS_CONFIRM_TOOLS`），"目标"可以是**名字**（工具对着实时字典解析，解不出即零写）。**剩下的**：① `uid=0`（无身份）时写命令约每 6 次有 1 次被 narrator 讲成"本轮没有执行任何工具"而撞上洞③判据 → 走 gate 打回（兜底文案已按原因码分）；② 目标预检（`_write_target_refusal`）在弹窗之前就零工具收尾，绝不弹一个"点了也只会被拒"的框 |
 | **阅读量可以被匿名刷** | `POST /api/public/notes/:id/view` 是匿名写、服务端无身份可依 ⇒ 换个浏览器/清掉 `localStorage`/直接 curl 就能重复 +1。**它统计的是"页面被打开的次数"，不是"多少个人读过"**：报表上的数字照这个口径读 | 不修（刻意）：要真去重就得给访客发一个设备指纹或 IP 计数，前者是隐私问题、后者在 nginx 后面还要取 `X-Forwarded-For`（可伪造），成本远高于收益 |
 | **点赞数也可以被匿名刷** | `POST/DELETE /api/public/notes/:id/like` 放开匿名之后，去重键是**客户端自己生成、自己上报**的 `X-Visitor-Key`（存在 `localStorage`）：清掉它、换个浏览器、或者直接 curl 换一个 key，同一个人就能重复点赞。**"点赞数"从此与阅读量同一档可信度**：它统计的是"有多少次点赞动作被发出来"，不是"多少个人点了赞"，报表上的数字照这个口径读 | 不修（刻意，与阅读量同一条取舍：真去重要么上设备指纹、要么上 IP 计数，前者是隐私问题、后者在 nginx 后面还要取可伪造的 `X-Forwarded-For`）。保住的是**幂等性**而非"一人一票"：`UNIQUE(note_id,visitor_key)`（匿名行）与 `UNIQUE(note_id,user_id)`（登录行）两条键分工，同一个 key 重复点仍然只落一行；登录态点赞会顺带清掉同一 `visitor_key` 的匿名行，所以"先匿名点、再登录点"不会投出两票。服务端只做格式校验（8–64 位、`[A-Za-z0-9_-]`），**不把 `visitor_key` 当身份凭据**：伪造它换不来任何权限，能拿到的与"没登录的访客"完全一样 |
 | 工具错误只分了**两类**（empty / unavailable），没有统一错误码枚举 | 想按错误类型做重试策略（超时 vs 鉴权失败）时还得读文案 | 已落地两类 + checker 的 `unavailable` 受阻码；更细的分类按需再加 |

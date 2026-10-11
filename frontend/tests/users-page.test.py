@@ -181,7 +181,7 @@ const req = async (cfg: any) => {
     if (deny) return env0({ code: 500, message: deny });
     const u = ((window as any).__users as any[]).find((x) => x.id === id);
     if (u) u.role = r;
-    const label = ({ admin: '管理员', secretary: '秘书', user: '普通用户' } as any)[r] || r;
+    const label = ({ superadmin: '站长', admin: '管理员', user: '普通用户', zako: '杂鱼' } as any)[r] || r;
     return env0({ code: 200, message: 'ok',
                   data: '身份已改为' + label + '，该账号的登录状态已失效，请让对方重新登录' });
   }
@@ -318,7 +318,9 @@ const USERS = [
     status: i >= 26 ? 1 : 0,
     ...(i === 26 ? {} : { chatQuotaUsed: i === 0 ? 137 : (i * 13) % 500,
                           chatQuotaLimit: 500 }) })),
-  { id: 200, username: 'sec_zhang', role: 'secretary', status: 0,
+  // id 200 是**变更身份**那一节的靶子（第六节③b 与第七节发通知都点名这一行）：
+  // 挑一个不在 `guest*` 序列里的名字，免得被那句 `guest1` 前缀检索命中。
+  { id: 200, username: 'plain_zhang', role: 'user', status: 0,
     chatQuotaUsed: 12, chatQuotaLimit: 500 },
 ];
 (window as any).__users = USERS;
@@ -881,15 +883,16 @@ with sync_playwright() as p:
     pg.wait_for_timeout(200)
     g = pg.evaluate(GEO)
     names = [r["u"] for r in g["delBtns"]]
-    check("筛「普通用户账号」：管理员被排除、秘书也在这一档（非管理员）",
-          "root_admin" not in names and "sec_zhang" in names and len(names) == 29,
-          f'{len(names)} 行，含秘书={"sec_zhang" in names}')
-    # 删除按钮只给**普通用户**那一档（后端 `delete_temp_user` 也这么判：秘书与杂鱼
-    # 都拒，理由是"该账号不是普通用户，不能在这里删除"）。夹具里非普通用户的就两行：
-    # sec_zhang 与 guest20（20261002 起是杂鱼）——两个都要没有，只挑一个验就漏一半。
-    check("普通账号行**有**删除按钮（秘书与杂鱼都不是普通用户，同样没有）",
-          all(r["del"] for r in g["delBtns"] if r["u"] not in ("sec_zhang", "guest20"))
-          and not any(r["del"] for r in g["delBtns"] if r["u"] in ("sec_zhang", "guest20")),
+    check("筛「普通用户账号」：管理员被排除、杂鱼也在这一档（非管理员）",
+          "root_admin" not in names and "guest20" in names and len(names) == 29,
+          f'{len(names)} 行，含杂鱼={"guest20" in names}')
+    # 删除按钮只给**普通用户**那一档（后端 `delete_temp_user` 也这么判：不是 user 就拒，
+    # 理由是"该账号不是普通用户，不能在这里删除"）。夹具里非普通用户的只剩 guest20
+    # 一行（20261011 撤掉 secretary 之后，杂鱼是唯一一种非普通用户角色）——正反两侧
+    # 仍要一起断言，只看一半的话"全有"或"全没有"都能单过。
+    check("普通账号行**有**删除按钮（杂鱼不是普通用户，同样没有）",
+          all(r["del"] for r in g["delBtns"] if r["u"] != "guest20")
+          and not any(r["del"] for r in g["delBtns"] if r["u"] == "guest20"),
           str([r["u"] for r in g["delBtns"] if not r["del"]]))
 
     pg.locator(".tu-tabs button", has_text="全部").first.click()
@@ -1232,11 +1235,11 @@ with sync_playwright() as p:
     check("管理员视角：普通用户/杂鱼那些行**有**「变更身份」入口",
           _low and all(r["has"] for r in _low),
           str([r["u"] for r in _low if not r["has"]]))
-    check("管理员视角：管理员/秘书那些行**一个入口都没有**（够不着，不是禁用）",
+    check("管理员视角：管理员那一行**一个入口都没有**（够不着，不是禁用）",
           _high and not any(r["has"] for r in _high),
           str([r["u"] for r in _high if r["has"]]))
-    check("合起来 = 恰好 28 行有入口（30 行里排除管理员与秘书那两行）",
-          sum(1 for r in g["roleBtns"] if r["has"]) == 28,
+    check("合起来 = 恰好 29 行有入口（30 行里排除管理员那一行）",
+          sum(1 for r in g["roleBtns"] if r["has"]) == 29,
           str(sum(1 for r in g["roleBtns"] if r["has"])))
     # 徽章（20261002 B 件）在后台行上也要认得出身份——杂鱼行是唯一一枚非「已冻结」标签
     check("杂鱼那一行挂着「杂鱼」徽章（data-role=zako，文案走 aria-label）",
@@ -1292,21 +1295,22 @@ with sync_playwright() as p:
     check("超管视角下每一行都有「变更身份」", all(r["has"] for r in g["roleBtns"]),
           str([r for r in g["roleBtns"] if not r["has"]]))
 
-    # ③b 走一遍变更身份：秘书 → 普通用户（降级）看弹窗，再改成管理员（升级）看真的发出去
-    pg.locator('.tu-row:has(strong:text-is("sec_zhang")) .tu-role-btn').click()
+    # ③b 走一遍变更身份：普通用户 → 杂鱼（降级）看弹窗，再改成管理员（升级）看真的发出去
+    pg.locator('.tu-row:has(strong:text-is("plain_zhang")) .tu-role-btn').click()
     pg.wait_for_timeout(300)
     menu = menu_items(pg)
-    # 20261002 加了杂鱼：可指派范围变成四档，菜单按 `ASSIGNABLE_ROLES` 的顺序排。
-    check("点「变更身份」：菜单是**另三档**（不列当前身份，也没有超级管理员这一档）",
-          menu == ["杂鱼", "普通用户", "管理员"], str(menu))
-    click_menu_item(pg, "普通用户")
+    # 可指派的三档按 `ASSIGNABLE_ROLES` 的顺序排（杂鱼 → 普通用户 → 管理员），
+    # 且**不列当前身份**——这一行是普通用户，所以菜单里没有它。
+    check("点「变更身份」：菜单是**另两档**（不列当前身份，也没有超级管理员这一档）",
+          menu == ["杂鱼", "管理员"], str(menu))
+    click_menu_item(pg, "杂鱼")
     pg.wait_for_timeout(300)
     d = pg.evaluate(ROLE_DIALOG)
     check("选一档之后是**先弹确认框**，不是直接下手", d is not None, str(d))
-    check("确认框标题带目标账号名", d and "sec_zhang" in d["title"], str(d and d["title"]))
-    check("确认按钮上是这一下的动作词「改成普通用户」，不是「确定/OK」",
-          d and d["ok"] == "改成普通用户", str(d and d["ok"]))
-    check("正文写清改前改后两个身份", d and "秘书" in d["body"] and "普通用户" in d["body"],
+    check("确认框标题带目标账号名", d and "plain_zhang" in d["title"], str(d and d["title"]))
+    check("确认按钮上是这一下的动作词「改成杂鱼」，不是「确定/OK」",
+          d and d["ok"] == "改成杂鱼", str(d and d["ok"]))
+    check("正文写清改前改后两个身份", d and "普通用户" in d["body"] and "杂鱼" in d["body"],
           str(d and d["body"]))
     check("正文写清该账号会被踢下线（这是这次变更唯一不可逆的那半边）",
           d and "立即失效" in d["body"], str(d and d["body"]))
@@ -1320,7 +1324,7 @@ with sync_playwright() as p:
           f'dlg={pg.evaluate(ROLE_DIALOG)} posts={role_posts(pg)}')
 
     before = pg.evaluate("() => window.__calls.length")
-    pg.locator('.tu-row:has(strong:text-is("sec_zhang")) .tu-role-btn').click()
+    pg.locator('.tu-row:has(strong:text-is("plain_zhang")) .tu-role-btn').click()
     pg.wait_for_timeout(300)
     click_menu_item(pg, "管理员")
     pg.wait_for_timeout(300)
@@ -1339,8 +1343,8 @@ with sync_playwright() as p:
           pg.evaluate("() => window.__calls.length") > before + 1,
           f'before={before} after={pg.evaluate("() => window.__calls.length")}')
     tags = {r["u"]: r["tag"] for r in pg.evaluate(GEO)["roleTags"]}
-    check("行上的角色标签跟着变了（秘书 → 管理员；桩真按请求体改了那一行）",
-          tags.get("sec_zhang") == "管理员", str(tags.get("sec_zhang")))
+    check("行上的角色标签跟着变了（普通用户 → 管理员；桩真按请求体改了那一行）",
+          tags.get("plain_zhang") == "管理员", str(tags.get("plain_zhang")))
     _n = notices(pg)
     check("成功提示是后端那句中文（身份已改为管理员…）",
           any("身份已改为管理员" in x for x in _n), str(_n))
@@ -1480,7 +1484,7 @@ with sync_playwright() as p:
           str(pg.evaluate("() => window.__calls.filter((c) => c.method==='GET').map((c)=>c.url)")))
 
     # 填全两项走一遍：标题也要真的进请求体
-    pg.locator('.tu-row:has(strong:text-is("sec_zhang")) .tu-notify-btn').click()
+    pg.locator('.tu-row:has(strong:text-is("plain_zhang")) .tu-notify-btn').click()
     pg.wait_for_timeout(300)
     pg.locator(".tu-notify-title").fill("资料补齐提醒")
     pg.locator(".tu-notify-body textarea").fill("请补齐资料")
@@ -1488,7 +1492,7 @@ with sync_playwright() as p:
     pg.locator(".ant-modal-wrap .tu-notify-ok").click()
     pg.wait_for_timeout(700)
     posts = notice_posts(pg)
-    check("填了标题 ⇒ 请求体里带上它（收件人是另一行：sec_zhang = id 200）",
+    check("填了标题 ⇒ 请求体里带上它（收件人是另一行：plain_zhang = id 200）",
           len(posts) == 2 and posts[-1]["url"] == "/api/temp-users/200/notice"
           and posts[-1]["body"] == {"title": "资料补齐提醒", "content": "请补齐资料"},
           str(posts[-1] if posts else None))
@@ -1522,8 +1526,8 @@ with sync_playwright() as p:
           chips.get("guest1") == "额度：剩363/500", str(chips.get("guest1")))
     check("不限额的账号显示「不限额」而不是 0/0（0 是「不限」，不是「上限为零」）",
           chips.get("root_admin") == "额度：不限额", str(chips.get("root_admin")))
-    check("秘书照 500 算（免额角色只有 can_access_console，不按「非普通用户」一刀切）",
-          chips.get("sec_zhang") == "额度：剩488/500", str(chips.get("sec_zhang")))
+    check("杂鱼照 500 算（免额只看 can_access_console，不按「非普通用户」一刀切）",
+          chips.get("guest20") == "额度：剩253/500", str(chips.get("guest20")))
     check("两个字段缺席（前端已上线、后端还没到）显示「额度 —」，不是会被读成「用完了」的 0/0",
           chips.get("guest27") == "额度—", str(chips.get("guest27")))
     btns = quota_btns(pg)

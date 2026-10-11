@@ -320,7 +320,7 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
         }))),
     };
 
-    // 角色（20260920，秘书类功能地基）：查 DB 而非读登录 token 里的 role——token
+    // 角色（20260920，身份与权限地基）：查 DB 而非读登录 token 里的 role——token
     // 7 天有效，改过角色的用户会带着旧角色跑（与 middleware::auth_guard 同一条纪律）。
     // 查不到/查失败一律 None：身份断言里就带 null，agent 按"身份不明 = 零权限"处理。
     // **绝不因为读不到角色就默认授予任何一档**。DB 故障只降级（不阻断对话）。
@@ -807,7 +807,6 @@ fn actor_prefix(row: &serde_json::Value) -> String {
         // 超级管理员（20260926）：不加这一臂的后果是"超管动的那一下，回执上什么都没写"，
         // 而前缀缺失与"旧回执没这个字段"长得一模一样 ⇒ 审计链上凭空少一截。
         "superadmin" => "以超级管理员身份 · ".to_string(),
-        "secretary" => "以秘书身份 · ".to_string(),
         _ => String::new(),
     }
 }

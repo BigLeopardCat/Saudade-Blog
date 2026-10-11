@@ -93,7 +93,7 @@ def fixture_comments():
     items.append({
         "id": 41, "noteId": 1, "content": "回复最后一条顶层。", "parentId": 30, "rootId": 30,
         "replyToUid": 730, "replyToNickname": "访客30", "userId": 801, "nickname": "甲",
-        "avatar": "", "role": "secretary", "mine": False, "createdAt": "2026-10-03 12:01:00",
+        "avatar": "", "role": "user", "mine": False, "createdAt": "2026-10-03 12:01:00",
         "up": 0, "down": 0, "myVote": 0,
     })
     # **深链目标**：回复的回复——它仍挂在顶层 30 下（服务端派生 rootId），排在整个讨论区最后一行

@@ -8,10 +8,9 @@ USE saudade_blog;
 -- 只改一行，不做批量、不建角色表、不动任何现有账号的角色：
 --   admin    = 博主本人（后台全权，auth_guard 唯一准入角色族）
 --   user     = 访客/体验号（本迁移不动）
---   secretary= 秘书（本迁移不动）
 --   zako     = 提升后的这一个账号（零工具：agent 侧 planner 顶层短路，
 --              execute 节点在本请求里一次都不会被进入——见
---              saudade-blog-agent/docs/secretary.md §3.6）
+--              saudade-blog-agent/docs/identity-and-permissions.md §3.6）
 --
 -- ⚠️ **必须最后跑**：先让新代码上线（agent 仓 push + restart、父仓 Rust/前端 deploy），
 --    再执行本迁移。旧二进制/旧 agent 不认识 `zako` ⇒ `is_known_role` 判假、
@@ -25,10 +24,10 @@ USE saudade_blog;
 --   ② 把这个账号的用户名填进下面的 @zako；
 --   ③ 逐段执行（① 看、② 改、③ 验收、④ 打标记）。
 --
--- ⚠️ 与秘书那条的一条**不同**（别看错）：zako 是"已知角色且非超管" ⇒ 它会出现在后台
---    「临时用户」账号列表里（判据是 `authz::is_listable_role`）。这是**设计**——博主得
---    看得见它、能冻它、能改它的身份（zako 在 `is_assignable_role` 的可指派范围内）。
---    secretary 迁移注释里那句"提权后不再出现在临时用户列表"描述的是更早的过滤实现。
+-- ⚠️ 提权后 zako **仍会出现在后台「临时用户」账号列表里**：它是"已知角色且非超管"
+--    （判据是 `authz::is_listable_role`），这是**设计**——博主得看得见它、能冻它、
+--    能改它的身份（zako 在 `is_assignable_role` 的可指派范围内）。同族的
+--    `superadmin_role_*.sql` 才是不出现在列表里的那一档（超管不在可列范围内）。
 
 -- ── 前置：目标账号名（须与库里实际用户名**完全一致**，大小写敏感）──────────
 -- 不存在也不会报错（下一步影响 0 行、③ 的 must_be_1 会变成 0）——所以 ③ 必须看。

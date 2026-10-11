@@ -49,7 +49,7 @@ fn parse_limit(raw: Option<&str>) -> i32 {
 }
 
 /// 这个人是不是不限量。**只认 `authz::can_access_console`**（admin + superadmin），
-/// 秘书与未知角色一律按有限算（未知 = 最保守，与 `authz` 的失败取向一致）；
+/// 其余角色一律按有限算（未知 = 最保守，与 `authz` 的失败取向一致）；
 /// 查不到角色（`None`）= 身份不明 ⇒ 有限。
 pub fn is_unlimited(role: Option<&str>) -> bool {
     role.map(authz::can_access_console).unwrap_or(false)
@@ -192,9 +192,8 @@ mod tests {
     fn 只有能进后台的人不限量() {
         assert!(is_unlimited(Some(authz::ROLE_ADMIN)));
         assert!(is_unlimited(Some(authz::ROLE_SUPERADMIN)));
-        // 秘书能读他人数据、能代做写操作，但**额度按普通用户算**（用户拍板）
-        assert!(!is_unlimited(Some(authz::ROLE_SECRETARY)));
         assert!(!is_unlimited(Some(authz::ROLE_USER)));
+        assert!(!is_unlimited(Some(authz::ROLE_ZAKO)));
         // 未知角色 = 最保守（不默认放行），查不到角色 = 身份不明 ⇒ 有限
         assert!(!is_unlimited(Some("root")));
         assert!(!is_unlimited(Some("")));
