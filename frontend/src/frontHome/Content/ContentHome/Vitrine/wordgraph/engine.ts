@@ -106,7 +106,7 @@ export function wordKey(w: string): string { return w.toLowerCase(); }
 export function neighborsOf(g: GraphData, idx: number): { w: string; s: number }[] {
     const best = new Map<string, number>();          // 同一个邻居留最大的那条边
     for (const e of g.edges) {
-        let w = '';
+        let w: string;
         if (e[0] === idx) w = g.nodes[e[1]].w;
         else if (e[1] === idx) w = g.nodes[e[0]].w;
         else continue;

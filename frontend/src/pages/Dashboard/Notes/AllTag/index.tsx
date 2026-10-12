@@ -230,7 +230,7 @@ const AllTag = () => {
             clearSelection()
             await refresh()
             message.success('删除成功')
-        } catch (error) {
+        } catch {
             message.error('删除失败')
         }
     };
@@ -256,7 +256,7 @@ const AllTag = () => {
                 } else {
                     message.error('更新失败')
                 }
-            } catch (error) {
+            } catch {
                 message.error("更新失败：标签名可能已存在")
             }
             return
@@ -275,7 +275,7 @@ const AllTag = () => {
                     await refresh()
                     message.success('添加成功');
                 }
-            } catch (error) {
+            } catch {
                 message.error("添加失败：标签名可能已存在")
             }
         } else {
@@ -299,7 +299,7 @@ const AllTag = () => {
                     await refresh()
                     message.success('添加成功');
                 }
-            } catch (error) {
+            } catch {
                 message.error("添加失败：标签名可能已存在")
             }
         }

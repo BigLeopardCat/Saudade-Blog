@@ -95,7 +95,7 @@ const NoteTagSelect: React.FC<NoteTagSelectProps> = ({
             }
             setNewTagName('');
             message.success(`已新建标签「${title}」`);
-        } catch (error) {
+        } catch {
             message.error('新建失败（标签名可能已存在）');
         } finally {
             setCreating(false);

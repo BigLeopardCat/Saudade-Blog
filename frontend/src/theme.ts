@@ -51,7 +51,7 @@ export function recordUserChoice(v: string): void {
         }
         localStorage.setItem('darkModeUserChoice', v);
         localStorage.setItem('darkModeChoiceDay', currentThemeDay());
-    } catch (e) { /* ignore */ }
+    } catch { /* ignore */ }
 }
 
 // choice 是否在本次主题日内有效（无日期 = 旧版写入 → 视为已过期，自动切换恢复）。
@@ -62,7 +62,7 @@ export function userChoiceActive(): boolean {
     try {
         return !!localStorage.getItem('darkModeUserChoice')
             && localStorage.getItem('darkModeChoiceDay') === currentThemeDay();
-    } catch (e) { return false; }
+    } catch { return false; }
 }
 
 /** 夜窗闩：'1' = 本次夜窗（23:00 起）的入场边界已经处理过。
@@ -71,14 +71,14 @@ export function userChoiceActive(): boolean {
 const LATCH_KEY = 'darkModeInWindow';
 
 function readLatch(): string {
-    try { return localStorage.getItem(LATCH_KEY) || ''; } catch (e) { return ''; }
+    try { return localStorage.getItem(LATCH_KEY) || ''; } catch { return ''; }
 }
 
 function writeLatch(on: boolean): void {
     try {
         if (on) localStorage.setItem(LATCH_KEY, '1');
         else { localStorage.removeItem(LATCH_KEY); localStorage.removeItem('darkModeUserChoice'); localStorage.removeItem('darkModeChoiceDay'); }
-    } catch (e) { /* ignore */ }
+    } catch { /* ignore */ }
 }
 
 /**

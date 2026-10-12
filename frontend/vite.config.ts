@@ -130,25 +130,32 @@ export default defineConfig(() => ({
 
     build: {
         cssCodeSplit: true,
-        terserOptions: {
-            compress: {
-                drop_console: true,
-                drop_debugger: true,
-            }
-        },
         assetsDir: 'assets',
         assetsInlineLimit: 4096,
         sourcemap: false,
         reportCompressedSize: false,
-        rollupOptions: {
+        // 20261013：`vite@8` 的内核从 rollup+esbuild 换成 **Rolldown**（oxc 转译）。
+        // `rollupOptions` 已成 `rolldownOptions` 的**弃用别名**，这里改用它本身。
+        rolldownOptions: {
             output: {
                 chunkFileNames: 'vendor/[name]-[hash].js',
                 entryFileNames: 'js/[name]-[hash].js',
                 assetFileNames: '[ext]/[name]-[hash].[ext]',
-                manualChunks: {
-                    'react-vendor': ['react', 'react-dom'],
+                // `manualChunks` 的对象形态（`{'react-vendor': ['react','react-dom']}`）
+                // 在 Rolldown 下**必坏**：它把 manualChunks 当函数直接调用，传对象当场
+                // `TypeError: manualChunks is not a function`（构建整个失败，不是降级）。
+                // 官方替代是 `output.codeSplitting.groups`（`advancedChunks` 也已弃用）。
+                // 意图不变：react/react-dom 单独成块、哈希稳定 ⇒ 它们不动时这一块能长缓存。
+                // `scheduler` 一并归入——它是 react-dom 的唯一运行时依赖，拆出去等于白拆。
+                codeSplitting: {
+                    groups: [
+                        {
+                            name: 'react-vendor',
+                            test: /[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/,
+                        },
+                    ],
                 },
             },
-        }
+        },
     }
 }));

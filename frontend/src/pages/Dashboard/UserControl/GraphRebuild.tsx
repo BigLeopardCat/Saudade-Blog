@@ -163,7 +163,7 @@ const GraphRebuild = () => {
             // （Rust 只传、agent 只限长度 200）。填错的两种形态症状一样，界面上分不出来，
             // 所以在这一处拦掉：留空是合法的（= 不署名，任何站点都显示），非空就必须能解析。
             const s = site.trim()
-            let okUrl = false
+            let okUrl: boolean
             try {
                 const u = new URL(s)
                 okUrl = (u.protocol === 'http:' || u.protocol === 'https:') && !!u.hostname

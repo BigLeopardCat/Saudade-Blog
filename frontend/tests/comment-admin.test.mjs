@@ -250,11 +250,13 @@ console.log('\n路由 —— 后台三条在 protected 域内，公开三条在 
     const pub = rustMod.indexOf('let public_routes = Router::new()');
     const prot = rustMod.indexOf('let protected_routes = Router::new()');
     ok(pub > 0 && prot > pub, '路由表里两半的起点都找得到', { pub, prot });
-    for (const r of ['/api/protect/comments', '/api/protect/comments/:id/audit', '/api/protect/comments/:id']) {
+    // ⚠️ 读的是 **axum 路由模式字面量**（20261013 axum 0.8 起是 `{id}`；旧写法 `:id`
+    // 在 0.8 里是注册期 panic）。**实际 HTTP URL 一个字没变**，变的只是模式语法。
+    for (const r of ['/api/protect/comments', '/api/protect/comments/{id}/audit', '/api/protect/comments/{id}']) {
         const at = rustMod.indexOf(`"${r}"`);
         ok(at > prot, `后台那条 ${r} 在 protected 域内（admin 守卫）`, at);
     }
-    for (const r of ['/api/public/notes/:id/comments', '/api/public/comments/:id']) {
+    for (const r of ['/api/public/notes/{id}/comments', '/api/public/comments/{id}']) {
         const at = rustMod.indexOf(`"${r}"`);
         ok(at > pub && at < prot,
             `公开那条 ${r} 留在 public 域内（挂到 protected 上 = 全体普通用户 403，评论区对访客关闭）`, at);

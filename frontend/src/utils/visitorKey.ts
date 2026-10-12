@@ -65,7 +65,7 @@ export function getVisitorKey(): string {
         const next = makeKey()
         localStorage.setItem(VISITOR_KEY_STORAGE, next)
         return next
-    } catch (e) {
+    } catch {
         if (!ephemeral) ephemeral = makeKey()
         return ephemeral
     }

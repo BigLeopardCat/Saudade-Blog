@@ -247,7 +247,7 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                     if (ok(res)) setQuota(res.data.data)
                     else message.error(errMsg(res))
                 }
-            } catch (e) {
+            } catch {
                 message.error('网络异常，请稍后再试')
             } finally {
                 setLoadingTab(false)
@@ -273,7 +273,7 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
             const res = await getDrafts()
             if (ok(res)) setDrafts(res.data.data || [])
             else message.error(errMsg(res))
-        } catch (e) {
+        } catch {
             message.error('网络异常，请稍后再试')
         } finally {
             setLoadingTab(false)
@@ -347,7 +347,7 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
             } else {
                 message.error(errMsg(res, '头像上传失败'))
             }
-        } catch (e) {
+        } catch {
             message.error('头像上传失败，请稍后再试')
         } finally {
             setUploading(false)
@@ -375,7 +375,7 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
             } else {
                 message.error(errMsg(res, '保存失败'))
             }
-        } catch (e) {
+        } catch {
             message.error('网络异常，请稍后再试')
         } finally {
             setSavingNick(false)
@@ -411,7 +411,7 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
             } else {
                 message.error(errMsg(res, '修改失败'))
             }
-        } catch (e) {
+        } catch {
             message.error('网络异常，请稍后再试')
         } finally {
             setSavingPwd(false)
@@ -430,7 +430,7 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
             } else {
                 message.error(errMsg(res))
             }
-        } catch (e) {
+        } catch {
             message.error('网络异常，请稍后再试')
         }
     }
@@ -455,7 +455,7 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
             } else {
                 message.error(errMsg(res))
             }
-        } catch (e) {
+        } catch {
             message.error('网络异常，请稍后再试')
         }
     }
@@ -506,14 +506,14 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                     try {
                         const del = await deleteDraft(id)
                         if (ok(del)) setDrafts((list) => (list || []).filter((d) => d.id !== id))
-                    } catch (e) {
+                    } catch {
                         /* 保留草稿，用户可在草稿箱里手动删 */
                     }
                 }
             } else {
                 message.error(errMsg(res, '发送失败'))
             }
-        } catch (e) {
+        } catch {
             message.error('网络异常，请稍后再试')
         } finally {
             setSending(false)
@@ -531,7 +531,7 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                 setMailbox(res.data.data)
                 notifyUnreadChanged()
             }
-        } catch (e) {
+        } catch {
             /* 标记已读失败不妨碍看信：详情已经打开了 */
         }
     }
@@ -560,7 +560,7 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
             } else {
                 message.error(errMsg(res, '保存失败'))
             }
-        } catch (e) {
+        } catch {
             message.error('网络异常，请稍后再试')
         } finally {
             setSavingDraft(false)
@@ -596,7 +596,7 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
             } else {
                 message.error(errMsg(res))
             }
-        } catch (e) {
+        } catch {
             message.error('网络异常，请稍后再试')
         }
     }
@@ -610,7 +610,7 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
             } else {
                 message.error(errMsg(res))
             }
-        } catch (e) {
+        } catch {
             message.error('网络异常，请稍后再试')
         }
     }
@@ -1043,7 +1043,7 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
             // 写后重读：拿不到就保留旧读数（不本地拼一条"已提交"）
             const after = await getMyQuota()
             if (ok(after)) setQuota(after.data.data)
-        } catch (e) {
+        } catch {
             message.error('网络异常，请稍后再试')
         } finally {
             setApplying(false)

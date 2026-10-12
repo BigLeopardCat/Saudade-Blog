@@ -83,11 +83,11 @@ export interface PendingAnnouncement {
 export function notifyAnnouncementPublished(): void {
     try {
         window.dispatchEvent(new CustomEvent(ANNOUNCEMENT_PUBLISHED_EVENT))
-    } catch (e) { /* ignore */ }
+    } catch { /* ignore */ }
 }
 
 function readSeenId(): number {
-    try { return parseInt(localStorage.getItem(ANNOUNCEMENT_SEEN_KEY) || '0', 10) || 0 } catch (e) { return 0 }
+    try { return parseInt(localStorage.getItem(ANNOUNCEMENT_SEEN_KEY) || '0', 10) || 0 } catch { return 0 }
 }
 
 /** 拉一次"此刻该弹的那条公告"；没有 → null（未登录走本机水位，见文件头） */
@@ -129,13 +129,13 @@ export async function fetchPendingAnnouncement(): Promise<PendingAnnouncement | 
  */
 export async function markAnnouncementRead(p: PendingAnnouncement): Promise<void> {
     if (p.source === 'local') {
-        try { localStorage.setItem(ANNOUNCEMENT_SEEN_KEY, String(p.id)) } catch (e) { /* ignore */ }
+        try { localStorage.setItem(ANNOUNCEMENT_SEEN_KEY, String(p.id)) } catch { /* ignore */ }
         return
     }
     try {
         const res = await readNotifications({ ids: [p.id] })
         if (ok(res)) notifyUnreadChanged()
-    } catch (e) { /* 记不上就地留着：下次复查还会弹一次，比静默丢掉强 */ }
+    } catch { /* 记不上就地留着：下次复查还会弹一次，比静默丢掉强 */ }
 }
 
 /**

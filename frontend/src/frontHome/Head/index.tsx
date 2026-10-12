@@ -202,7 +202,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
         recordUserChoice(!isDark ? 'dark' : 'light');
         // 同步看板娘 agent 的全局状态：boot.js 监听 darkmode-change 更新 __darkMode，
         // 否则页面内手动切换后 current_darkmode 上报陈旧值，agent 感知只能靠对话记忆
-        try { window.dispatchEvent(new CustomEvent('darkmode-change', { detail: !isDark })); } catch (e) {/* ignore */}
+        try { window.dispatchEvent(new CustomEvent('darkmode-change', { detail: !isDark })); } catch {/* ignore */}
     };
 
     // Debounced search function
@@ -228,7 +228,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
             } else {
                 setSearchFailed(true);
             }
-        } catch(err) {
+        } catch {
             setSearchFailed(true);
         } finally {
             setIsSearching(false);

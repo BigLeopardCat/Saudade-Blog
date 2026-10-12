@@ -80,7 +80,7 @@ const AnnouncementModal = () => {
                 openRef.current = true
                 setPending(p)
                 setOpen(true)
-            } catch (e) {
+            } catch {
                 /* 查询本身抛了（网络/解析）：按"读不到"处理，等下一次复查 */
             } finally {
                 checkingRef.current = false

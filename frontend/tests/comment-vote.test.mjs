@@ -66,15 +66,18 @@ console.log('\n路由 —— 一条公开写路由，挂在 public 域内：');
     const pub = rustMod.indexOf('let public_routes = Router::new()');
     const prot = rustMod.indexOf('let protected_routes = Router::new()');
     ok(/pub mod comment_votes;/.test(rustMod), '模块已登记（漏了这句 handler 根本挂不上）');
-    const at = rustMod.indexOf('"/api/public/comments/:id/vote"');
+    // ⚠️ 读的是 **axum 路由模式字面量**（20261013 axum 0.8 起是 `{id}`；旧写法 `:id`
+    // 在 0.8 里是注册期 panic）。**实际 HTTP URL 一个字没变**——所以下一行的前端断言
+    // 仍然是 `${id}`，两边不用改成同一种写法。
+    const at = rustMod.indexOf('"/api/public/comments/{id}/vote"');
     ok(at > pub && at < prot,
         '投票路由留在 public 域内（挂到 protected 上 = auth_guard 对全体普通用户 403，'
         + '症状是"访客点不动"而根因在路由表里）', at);
     ok(/post\(comment_votes::vote_comment\)/.test(rustMod),
         '用 POST 挂的是 comment_votes::vote_comment');
-    ok(count(rustMod, '"/api/public/comments/:id/vote"') === 1,
+    ok(count(rustMod, '"/api/public/comments/{id}/vote"') === 1,
         '这条路由只挂了一次（同一个资源挂两次 = 有一条静默生效、改的时候只改到另一条）',
-        count(rustMod, '"/api/public/comments/:id/vote"'));
+        count(rustMod, '"/api/public/comments/{id}/vote"'));
     ok(/\/api\/public\/comments\/\$\{id\}\/vote/.test(tsApis),
         '前端拼的是同一条路径（前后端各写一份字面量，这是它们必须逐字相同的地方）');
 }

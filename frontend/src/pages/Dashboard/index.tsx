@@ -231,7 +231,7 @@ const Dashboard = () => {
         recordUserChoice(!isDarkMode ? 'dark' : 'light');
         // 同 Head 的协议：派发 darkmode-change。少了这一句，后台切完主题后看板娘的
         // `window.__darkMode`（agent 请求体 current_darkmode 的来源）仍是旧值。
-        try { window.dispatchEvent(new CustomEvent('darkmode-change', { detail: !isDarkMode })); } catch (e) { /* ignore */ }
+        try { window.dispatchEvent(new CustomEvent('darkmode-change', { detail: !isDarkMode })); } catch { /* ignore */ }
     };
 
     // 导航栏数据

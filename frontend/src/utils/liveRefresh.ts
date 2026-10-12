@@ -71,7 +71,7 @@ function fanout(pollersOnly: boolean): void {
         if (pollersOnly && !c.poll) return
         try {
             c.fire()
-        } catch (e) { /* 一个消费者抛错不该拖垮其余（与 unread.ts 的 emit 同一条） */
+        } catch { /* 一个消费者抛错不该拖垮其余（与 unread.ts 的 emit 同一条） */
         }
     })
 }

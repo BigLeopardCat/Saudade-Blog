@@ -23,7 +23,7 @@ function App() {
         const handleDarkModeChange = (e: Event) => {
             const on = !!(e as CustomEvent).detail;
             setDark(on);
-            try { localStorage.setItem('isDarkMode', JSON.stringify(on)); } catch (err) { /* ignore */ }
+            try { localStorage.setItem('isDarkMode', JSON.stringify(on)); } catch { /* ignore */ }
         };
         window.addEventListener('darkmode-change', handleDarkModeChange);
         const handleScroll = () => {
@@ -52,7 +52,7 @@ function App() {
                 if (next !== null) {
                     window.dispatchEvent(new CustomEvent('darkmode-change', { detail: next }));
                 }
-            } catch (err) { /* ignore */ }
+            } catch { /* ignore */ }
         };
         prefersAuto();
         const timer = setInterval(prefersAuto, 60 * 1000);

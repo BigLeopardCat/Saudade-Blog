@@ -63,7 +63,7 @@ export function readRememberedUser(): RememberedUser | null {
     try {
         const raw = localStorage.getItem(LAST_USER_KEY)
         return raw ? toRememberedUser(JSON.parse(raw)) : null
-    } catch (e) {
+    } catch {
         return null
     }
 }
@@ -85,7 +85,7 @@ export function readKnownUsers(): RememberedUser[] {
                     .filter((u): u is RememberedUser => !!u && !!u.username)
             }
         }
-    } catch (e) {
+    } catch {
         /* 坏数据 → 落回 lastUser 那条 */
     }
     const last = readRememberedUser()
@@ -120,7 +120,7 @@ export function rememberUser(u: { username?: string; nickname?: string; avatar?:
             .filter((x) => x.username.trim().toLowerCase() !== row.username.trim().toLowerCase())
         localStorage.setItem(KNOWN_USERS_KEY,
             JSON.stringify([row, ...rest].slice(0, KNOWN_USERS_MAX)))
-    } catch (e) {
+    } catch {
         /* 隐私模式下 localStorage 可能不可写——头像退回默认，不影响任何请求 */
     }
 }
@@ -216,7 +216,7 @@ function derive(): ViewerProfile {
 }
 
 function emit(): void {
-    subs.forEach((fn) => { try { fn() } catch (e) { /* 一个订阅者抛错不该拖垮其余 */ } })
+    subs.forEach((fn) => { try { fn() } catch { /* 一个订阅者抛错不该拖垮其余 */ } })
 }
 
 /** 换快照：**值没变就不换引用、不发通知**（理由同 unread.ts 的 setSnap：内容相同的新

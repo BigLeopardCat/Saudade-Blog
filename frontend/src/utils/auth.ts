@@ -35,7 +35,7 @@ export function getTokenClaims(token?: string | null): TokenClaims | null {
                 .join(''),
         )
         return JSON.parse(json) as TokenClaims
-    } catch (e) {
+    } catch {
         return null
     }
 }

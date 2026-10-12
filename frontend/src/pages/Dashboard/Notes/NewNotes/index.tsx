@@ -128,7 +128,7 @@ const NewNotes = () => {
                 body,
                 keepalive: true,
             }).catch(() => { /* 尽力而为 */ });
-        } catch (e) { /* ignore */ }
+        } catch { /* ignore */ }
     };
 
     const onAutosaveFail = () => {
@@ -337,7 +337,7 @@ const NewNotes = () => {
                     }]);
                 }
                 setHydrated(true) // 回填完毕，此后才允许自动保存
-            }catch (error){
+            }catch{
                 message.error("获取文章信息出错")
                 // 故意不置 hydrated：读失败时宁可关掉自动保存，也不能把空内容写进文章
             }
@@ -499,7 +499,7 @@ const NewNotes = () => {
                     savedIdRef.current = targetId;
                     setEditId(targetId);
                 }
-            } catch (e) { /* 落到 createNote 兜底 */ }
+            } catch { /* 落到 createNote 兜底 */ }
         }
 
         // 冻结自动保存，并等在途的那一发回来。两件事缺一不可：
@@ -507,7 +507,7 @@ const NewNotes = () => {
         // 同内容修改稿（草稿箱凭空多一份）；冻结则挡住这 2s 窗口内新排的自动保存。
         publishingRef.current = true;
         if (autosaveTimer.current) { clearTimeout(autosaveTimer.current); autosaveTimer.current = null; }
-        if (inFlightRef.current) { try { await inFlightRef.current; } catch (e) { /* 失败已由重试链兜 */ } }
+        if (inFlightRef.current) { try { await inFlightRef.current; } catch { /* 失败已由重试链兜 */ } }
 
         const snapBeforePublish = JSON.stringify(buildPayloadRef.current());
 

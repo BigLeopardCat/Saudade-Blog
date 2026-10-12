@@ -147,10 +147,12 @@ for (const [needle, why] of [
 const routes = read('src/routes/mod.rs');
 const pubBlock = routes.slice(routes.indexOf('let public_routes'), routes.indexOf('let protected_routes'));
 const protBlock = routes.slice(routes.indexOf('let protected_routes'));
-ok(pubBlock.includes('/api/public/notes/:id/comments'),
+// ⚠️ 判据读的是 **axum 路由模式字面量**（20261013 axum 0.8 起是 `{id}`；旧写法 `:id`
+// 在 0.8 里是注册期 panic）。**实际 HTTP URL 一个字没变**，变的只是模式语法。
+ok(pubBlock.includes('/api/public/notes/{id}/comments'),
     '评论的公开读写挂在 public_routes（挂进 protected 域就是普通用户 403）');
-ok(pubBlock.includes('/api/public/comments/:id'), '自删也挂在 public_routes');
-ok(!protBlock.includes('/api/public/notes/:id/comments'), 'protected 域里没有它');
+ok(pubBlock.includes('/api/public/comments/{id}'), '自删也挂在 public_routes');
+ok(!protBlock.includes('/api/public/notes/{id}/comments'), 'protected 域里没有它');
 ok(protBlock.includes('/api/protect/comments'), '后台三条挂在 protected_routes（要 admin 守卫）');
 ok(!pubBlock.includes('/api/protect/comments'), '后台接口没漏进公开域');
 ok(/COMMENT_REVIEW_KEYS/.test(comments) && comments.includes('review_switches_of'),

@@ -51,7 +51,7 @@ const subs = new Set<() => void>()
 const key = (id: number | string) => String(id)
 
 function emit(): void {
-    subs.forEach((fn) => { try { fn() } catch (e) { /* 一个订阅者抛错不该拖垮其余 */ } })
+    subs.forEach((fn) => { try { fn() } catch { /* 一个订阅者抛错不该拖垮其余 */ } })
 }
 
 /** 订阅本 store（组件不要直接调，走 useFavorites） */

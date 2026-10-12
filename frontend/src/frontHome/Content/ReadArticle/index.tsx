@@ -243,7 +243,7 @@ const ReadArticle = () => {
             } else {
                 message.error(errMsg(res))
             }
-        } catch (e) {
+        } catch {
             message.error('网络异常，请稍后再试')
         } finally {
             setLikeBusy(false)
@@ -286,7 +286,7 @@ const ReadArticle = () => {
             } else {
                 message.error(errMsg(res))
             }
-        } catch (e) {
+        } catch {
             message.error('网络异常，请稍后再试')
         } finally {
             setFavBusy(false)

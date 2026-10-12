@@ -153,7 +153,7 @@ const Login: React.FC = () => {
                     ? result.message
                     : '登录失败，账号或密码错误！');
             }
-        } catch (error) {
+        } catch {
             messageApi.error('登录失败，账号或密码错误！');
         } finally {
             setIsLoading(false);

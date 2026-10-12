@@ -13,9 +13,9 @@ const PhoneSwitch = ({isDark,setDark}: PhoneSwitchProps) => {
     const handleChange = () => {
         const next = !isDark;
         setDark(next);
-        try { localStorage.setItem('isDarkMode', JSON.stringify(next)); } catch (e) {/* ignore */}
+        try { localStorage.setItem('isDarkMode', JSON.stringify(next)); } catch {/* ignore */}
         recordUserChoice(next ? 'dark' : 'light');
-        try { window.dispatchEvent(new CustomEvent('darkmode-change', { detail: next })); } catch (e) {/* ignore */}
+        try { window.dispatchEvent(new CustomEvent('darkmode-change', { detail: next })); } catch {/* ignore */}
     };
     return <div className="phoneSwitch">
         <label htmlFor="switch" className="phoneSwitch-toggle">

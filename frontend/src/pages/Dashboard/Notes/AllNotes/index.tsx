@@ -307,7 +307,7 @@ const AllNotes = () => {
                 dispatch<any>(fetchNoteList(true))
                 message.success('删除成功')
             }
-        } catch (error) {
+        } catch {
             message.error('删除失败')
         }
     }
@@ -323,7 +323,7 @@ const AllNotes = () => {
                 setSelectedRowKeys([])
                 message.success('删除成功')
             }
-        } catch (error) {
+        } catch {
             message.error('删除失败')
         }
     }
@@ -383,7 +383,7 @@ const AllNotes = () => {
                 setEditRow(null)
                 message.success('文章配置已更新')
             }
-        }catch (error){
+        }catch{
             message.error("配置更新失败")
         }
     }

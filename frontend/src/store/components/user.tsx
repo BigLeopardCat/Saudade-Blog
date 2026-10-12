@@ -88,7 +88,7 @@ const fetchUserInfo = () => {
                 blogCopyright: s(userinfo.data.data.blogCopyright),
             }
             dispatch(setUserInfo(res))
-        }catch (error){
+        }catch{
             deleteToken()
         }
     }
@@ -102,7 +102,7 @@ const fetchSocial = () => {
                 method: "GET"
             })
             dispatch(setSocial(social.data.data))
-        }catch (error){
+        }catch{
             console.error('Failed to fetch social');
         }
     }
