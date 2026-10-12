@@ -121,4 +121,25 @@ if [ -n "$sent_sig" ] && [ "$sent_sig" != "${LAST_SENTINEL:-}" ]; then
   fail "WARN 夜间任务留下失败哨兵:$sent_sig（看 ~/agent_regression.log、~/sandbox_regression.log）"
 fi
 echo "LAST_SENTINEL='$sent_sig'" >> "$STAMP"
+
+# 7. agent.log 出站协议违规增量扫描（20261012）
+#    `agent/graph.py` 在 narrator 那次 LLM 调用之前挂了一道**出站合规绊线**
+#    （`context.strict_wire_issues`）：序列不合严格服务商协议时只记一条 ERROR
+#    （含 `wire_illegal` 锚点）与一条 trace 事件，**绝不改序列**（理由见那里）。
+#    问题在于**生产跑在 qwen 上时它永远是绿的**——qwen 容忍那两条非法形状，
+#    于是 20260928 那个"`tool_call_id` 重复"的洞在库里躺了 8 天，直到换服务商才炸
+#    （deepseek 整轮 400）。**绊线红了却只在日志里 = 没有出口**，这一项就是那个出口：
+#    形状与第 4 项（nginx error.log 增量）逐条相同——记字节基线、只扫增量段、
+#    文件变小（logrotate copytruncate）就重置基线。
+#    取证锚点用 ASCII 单 token `wire_illegal`（与 trace 事件同名），**不 grep 那句中文**：
+#    句子改一个字就断的取证，断掉时是静默的。
+AGENT_LOG="$PROJECT_DIR/logs/agent/agent.log"
+agent_size=$(stat -c %s "$AGENT_LOG" 2>/dev/null || echo 0)
+[ "$agent_size" -lt "${AGENT_LOG_SIZE:-0}" ] && AGENT_LOG_SIZE=0
+if [ "$agent_size" -gt "${AGENT_LOG_SIZE:-0}" ]; then
+  wire=$(tail -c $((agent_size - ${AGENT_LOG_SIZE:-0})) "$AGENT_LOG" \
+         | grep -c "wire_illegal" || true)
+  [ "${wire:-0}" -gt 0 ] && fail "WARN agent 出站序列不合严格服务商协议 ${wire} 次（绊线只报不修；查 graph._frame_id 与 context.with_tool_call_pairs 的配对）"
+fi
+echo "AGENT_LOG_SIZE=$agent_size" >> "$STAMP"
 exit 0
