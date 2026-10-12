@@ -1543,7 +1543,17 @@ const TASK_READ_TTL_HOURS: i64 = 72;
 const TASK_TEXT_COL_MAX: usize = 300;
 /// `steps` 列上限（审计线索，非执行依据；超出只存前缀，绝不为了"看起来是合法 JSON"
 /// 去改写内容——解不出来时读侧会如实给 Null）
-const TASK_STEPS_COL_MAX: usize = 4000;
+///
+/// **20261012 从 4000 上调到 16000**：agent 侧的步骤从"只有工具名"扩成
+/// `{label,tool,skill,args}`（参数落库，见 `agent/tasks.py` 的同名常量），4000 字符
+/// 已经不够八步带实参的计划。两处常量**必须同值**——它是跨语言的契约，只改一边就是
+/// 一边在截、一边以为没截（Python 侧 `tasks.certify_steps` 按同一个数自证）。
+///
+/// 16000 是**算出来的、不是拍的**：`steps` 是 MySQL `text`＝65535 **字节**，而
+/// `.chars().take()` 数的是**字符**。utf8mb4 下 1 字符 ≤ 4 字节 ⇒
+/// 16000 × 4 = 64000 < 65535，最坏情况下也顶不到列宽（超过列宽在严格模式下是
+/// 1406，那一行会整个落不进去）。再往上调之前，先把这条不等式重算一遍。
+const TASK_STEPS_COL_MAX: usize = 16000;
 /// 幂等键列上限（= 迁移里的 varchar(80)）
 const TASK_IDEM_COL_MAX: usize = 80;
 
