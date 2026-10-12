@@ -109,7 +109,7 @@ pub fn create_router(state: AppState) -> Router {
             "/api/protected/favorites",
             get(profile::list_favorites).post(profile::add_favorite),
         )
-        .route("/api/protected/favorites/:note_id", delete(profile::remove_favorite))
+        .route("/api/protected/favorites/{note_id}", delete(profile::remove_favorite))
         .route("/api/protected/notifications", get(profile::list_notifications))
         .route("/api/protected/notifications/summary", get(profile::notification_summary))
         .route("/api/protected/notifications/read", post(profile::read_notifications))
@@ -120,7 +120,7 @@ pub fn create_router(state: AppState) -> Router {
             "/api/protected/messages/drafts",
             get(profile::list_drafts).post(profile::save_draft),
         )
-        .route("/api/protected/messages/drafts/:id", delete(profile::delete_draft))
+        .route("/api/protected/messages/drafts/{id}", delete(profile::delete_draft))
         .route("/api/protected/my/talks", get(profile::list_my_talks))
         // 对话额度（20260929）：个人中心「对话额度」页签——看现状 + 提交重置申请。
         // 与 profile 同一条纪律：挂公开路由、handler 内部自身鉴权（查的/写的都是
@@ -131,7 +131,7 @@ pub fn create_router(state: AppState) -> Router {
         // 必须挂在 admin 守卫之外（守卫域内全部接口仅管理员可用，见 protected_routes
         // 末尾 route_layer；handler 内部 current_uid 自身鉴权，同 profile 先例）
         .route("/api/protect/board/mine", get(talks::list_my_boards))
-        .route("/api/protect/board/mine/:id", delete(talks::delete_my_board))
+        .route("/api/protect/board/mine/{id}", delete(talks::delete_my_board))
         
         // Public Notes
         .route("/api/public/notes", get(notes::list_public_notes))
@@ -142,7 +142,7 @@ pub fn create_router(state: AppState) -> Router {
         // 管理员，而搜索框是给未登录访客用的。它不取代上面那条：`notes/search` 还背着
         // agent 的 `search_notes` 工具与前台分类页。
         .route("/api/public/search", post(search::search_all))
-        .route("/api/public/notes/:id", get(notes::get_note_detail))
+        .route("/api/public/notes/{id}", get(notes::get_note_detail))
         .route("/api/public/topnotes", get(notes::get_top_notes))
 
         // 文章阅读量/点赞量（20260930）：**与详情端点分开**是硬要求——详情端点被 agent
@@ -152,10 +152,10 @@ pub fn create_router(state: AppState) -> Router {
         // 前端按天去重、这里只收数。`like` 需要登录，但**必须挂公开路由**——
         // 挂进守卫域会被 auth_guard 按管理员判据把普通用户全部 403。
         // 三条都不返回 401（前端 axios 拦截器见 401 就清 token 跳登录页）。
-        .route("/api/public/notes/:id/stats", get(note_stats::note_stats))
-        .route("/api/public/notes/:id/view", post(note_stats::report_view))
+        .route("/api/public/notes/{id}/stats", get(note_stats::note_stats))
+        .route("/api/public/notes/{id}/view", post(note_stats::report_view))
         .route(
-            "/api/public/notes/:id/like",
+            "/api/public/notes/{id}/like",
             post(note_stats::like_note).delete(note_stats::unlike_note),
         )
         
@@ -187,14 +187,14 @@ pub fn create_router(state: AppState) -> Router {
         // ⚠️ 这三条必须留在 public_routes：protected_routes 域内由 auth_guard 全量要求
         // 管理员，挂过去就是普通用户 403（评论区对全体访客关闭）。
         .route(
-            "/api/public/notes/:id/comments",
+            "/api/public/notes/{id}/comments",
             get(comments::list_comments).post(comments::create_comment),
         )
-        .route("/api/public/comments/:id", delete(comments::delete_my_comment))
+        .route("/api/public/comments/{id}", delete(comments::delete_my_comment))
         // 评论点赞/踩（20261003 用户第 4 条）：**访客也能投**（登录或 X-Visitor-Key），
         // 所以与上面三条同理必须留在公开域；`value` 走请求体（+1 / -1 / 0=撤回），
         // 一个端点装三种动作，前端不必记三条 URL。
-        .route("/api/public/comments/:id/vote", post(comment_votes::vote_comment))
+        .route("/api/public/comments/{id}/vote", post(comment_votes::vote_comment))
 
         // Web/User Public
         .route("/api/public/user", get(web_info::get_user_info))
@@ -211,7 +211,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/chat/search", get(conversation::search_chat_messages))
         // 会话管理（20260903 会话化；handler 内手写鉴权同 chat 系）
         .route("/api/chat/conversations", get(conversation::list_conversations).post(conversation::create_conversation))
-        .route("/api/chat/conversations/:id", delete(conversation::delete_conversation).patch(conversation::update_conversation))
+        .route("/api/chat/conversations/{id}", delete(conversation::delete_conversation).patch(conversation::update_conversation))
         
         // Knowledge Base (GET public for agent)
         .route("/api/knowledge", get(knowledge::list_knowledge))
@@ -229,7 +229,7 @@ pub fn create_router(state: AppState) -> Router {
         // committed 产物是"从没重建过的站点"的种子，前端拿不到 manifest 就回落它。
         .route("/api/public/graph/manifest", get(graph::graph_manifest))
         // 文件名由 handler 白名单校验（`graph-<id>.js`），见 valid_artifact_name
-        .route("/api/public/graph/artifact/:file", get(graph::graph_artifact))
+        .route("/api/public/graph/artifact/{file}", get(graph::graph_artifact))
         
         // Static Image Download (Public)
         // 20261006（用户第 2 条）：出图侧包一层响应头加固 —— 图片补 `nosniff`，
@@ -261,7 +261,7 @@ pub fn create_router(state: AppState) -> Router {
             post(notes::create_note)
             .delete(notes::delete_note)
         )
-        .route("/api/protected/notes/:id",
+        .route("/api/protected/notes/{id}",
             post(notes::update_note)
         )
 
@@ -279,8 +279,8 @@ pub fn create_router(state: AppState) -> Router {
         // 公开那三条在 public_routes（见上方注），**这里的三条与它们不是一回事**：
         // 那三条是给访客读、给作者写/自删的，这三条只给管理员。
         .route("/api/protect/comments", get(comments::list_comments_admin))
-        .route("/api/protect/comments/:id/audit", put(comments::audit_comment))
-        .route("/api/protect/comments/:id", delete(comments::delete_comment_admin))
+        .route("/api/protect/comments/{id}/audit", put(comments::audit_comment))
+        .route("/api/protect/comments/{id}", delete(comments::delete_comment_admin))
         // 翻完成标记（20260926）：同一族的第二条最小通道——按**正文**认出唯一那一行、
         // 只翻它的 done（查无此条/有多条一律零写，判据见 todos.rs 的 pick_todo）。
         .route("/api/protected/todos/done", post(todos::set_todo_done))
@@ -289,18 +289,18 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/protected/todos/date", post(todos::set_todo_date))
 
         // 编辑草稿（20260912c）：自动保存 + 编辑器专用读入口
-        // 读入口单独开是因为公开的 GET /api/public/notes/:id 会挡掉草稿/私密文章（A4 修复），
+        // 读入口单独开是因为公开的 GET /api/public/notes/{id} 会挡掉草稿/私密文章（A4 修复），
         // 草稿箱里点开一篇草稿会 404。写法上用独立前缀 /api/protected/draft/，
-        // 不跟 /api/protected/notes/:id 的静态段/参数段混在同一层。
+        // 不跟 /api/protected/notes/{id} 的静态段/参数段混在同一层。
         .route("/api/protected/draft/autosave", post(notes::autosave_note))
-        .route("/api/protected/draft/editor/:id", get(notes::get_note_for_edit))
+        .route("/api/protected/draft/editor/{id}", get(notes::get_note_for_edit))
 
         // Categories
         .route("/api/protected/category", 
              post(categories::create_category)
              .delete(categories::delete_category) 
         )
-        .route("/api/protected/category/:id", 
+        .route("/api/protected/category/{id}", 
              post(categories::update_category)
         )
 
@@ -308,72 +308,72 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/protected/tagone", post(tags::create_tag_one))
         .route("/api/protected/tagtwo", post(tags::create_tag_two))
         .route("/api/protected/tag", delete(tags::delete_tags))
-        // 换父级 / 一级↔二级互转（20260921）。独立路径而非塞进 PUT /tagtwo/:id：
+        // 换父级 / 一级↔二级互转（20260921）。独立路径而非塞进 PUT /tagtwo/{id}：
         // access_log 只有一行 `POST path=`，藏在改名接口里就分不清"改了个名"和"重写了
         // 几百篇文章的 note.tags"；且它的契约与改名不同（可能改 id、可能被拒）。
         .route("/api/protected/tag/move", post(tags::move_tag))
         .route("/api/protected/announcements", post(announcements::create_announcement).delete(announcements::delete_announcement))
-        .route("/api/protected/announcements/:id", put(announcements::update_announcement))
-        .route("/api/protected/tagone/:id", put(tags::update_tag_one))
-        .route("/api/protected/tagtwo/:id", put(tags::update_tag_two))
+        .route("/api/protected/announcements/{id}", put(announcements::update_announcement))
+        .route("/api/protected/tagone/{id}", put(tags::update_tag_one))
+        .route("/api/protected/tagtwo/{id}", put(tags::update_tag_two))
 
         // Friends
         .route("/api/protected/friend", post(friends::create_friend)) 
         .route("/api/protected/friends", 
              delete(friends::delete_friends) 
         )
-         .route("/api/protected/friend/:id",
+         .route("/api/protected/friend/{id}",
             delete(friends::delete_friend)
             .put(friends::update_friend) 
         )
-        .route("/api/protected/friends/:id", 
+        .route("/api/protected/friends/{id}", 
              post(friends::update_friend) 
         )
 
         // Talks
         .route("/api/protect/talk", post(talks::create_talk))
-        .route("/api/protect/talk/:id",
+        .route("/api/protect/talk/{id}",
              delete(talks::delete_talk)
              .put(talks::update_talk)
         )
 
         // 留言管理（后台）：河灯留言列表/删除/内容审核（审核机制预留，暂未启用）
         .route("/api/protect/board", get(talks::list_board_admin))
-        .route("/api/protect/board/:id", delete(talks::delete_board))
-        .route("/api/protect/board/:id/audit", put(talks::audit_board))
+        .route("/api/protect/board/{id}", delete(talks::delete_board))
+        .route("/api/protect/board/{id}/audit", put(talks::audit_board))
 
         // Knowledge Base (write/admin)
         .route("/api/knowledge", post(knowledge::add_knowledge))
-        .route("/api/knowledge/:id", delete(knowledge::delete_knowledge))
+        .route("/api/knowledge/{id}", delete(knowledge::delete_knowledge))
         
         // Temp Users
         .route("/api/temp-users", get(temp_user::list_temp_users).post(temp_user::create_temp_user))
-        .route("/api/temp-users/:id", delete(temp_user::delete_temp_user))
-                .route("/api/temp-users/:id/password", post(temp_user::change_password))
-                .route("/api/temp-users/:id/password-reset-token", post(temp_user::create_password_reset_token))
+        .route("/api/temp-users/{id}", delete(temp_user::delete_temp_user))
+                .route("/api/temp-users/{id}/password", post(temp_user::change_password))
+                .route("/api/temp-users/{id}/password-reset-token", post(temp_user::create_password_reset_token))
                 // 冻结 / 解冻（20260926）：挂在同一族下——它就是账号管理页第二个按钮，
                 // 与改密码/恢复码同一批操作、同一份权限（auth_guard 只放管理员）
-                .route("/api/temp-users/:id/status", post(temp_user::set_user_status))
+                .route("/api/temp-users/{id}/status", post(temp_user::set_user_status))
                 // 变更身份（20260926）：同一族，但判据更严——只有超级管理员能发起
                 // （`authz::check_role_change` 第一条）。挂在这里是为了共用 auth_guard，
                 // **不是**因为权限等同：能进这一族 ≠ 能改身份。
-                .route("/api/temp-users/:id/role", post(temp_user::set_user_role))
+                .route("/api/temp-users/{id}/role", post(temp_user::set_user_role))
                 // 发通知（20260926）：挂同一族——它就是账号管理页第三个按钮，与
                 // 冻结/改密码同一份权限（auth_guard 只放管理员）。目标是"列表里可见的
                 // 账号"（`authz::is_listable_role`），所以**超管收不到**这条通道的东西。
-                .route("/api/temp-users/:id/notice", post(temp_user::send_user_notice))
+                .route("/api/temp-users/{id}/notice", post(temp_user::send_user_notice))
                 // 重置额度（20260929）：同一族的第四个动作——账号管理页那一行的
                 // 「重置额度」按钮与 agent 的 `reset_user_quota` 工具共用它。
                 // **不需要对方申请过**（与"批准申请"的分工见 routes/quota.rs 头注）。
                 // handler 住在 routes/quota.rs 而不是 temp_user.rs：额度那件事
                 // （上限怎么算、通知怎么写、不限额怎么办）只有那一处实现。
-                .route("/api/temp-users/:id/quota-reset", post(quota::reset_user_quota))
+                .route("/api/temp-users/{id}/quota-reset", post(quota::reset_user_quota))
                 // 禁言 / 解禁（20261002 内容风控）：账号管理页那一行的第五个动作，
                 // 与 agent 的 `account_mute` / `account_unmute` 工具共用它。
                 // **判据与冻结同源**（`authz::check_freeze`），但效果完全不同：
                 // 禁言只写 `muted_until`，不改 status、不动 token_version——被禁言的人
                 // 照常登录浏览，只是发不出评论与留言（见 temp_user::set_user_muted 头注）。
-                .route("/api/temp-users/:id/mute", post(temp_user::set_user_muted))
+                .route("/api/temp-users/{id}/mute", post(temp_user::set_user_muted))
 
         // 对话额度审核（20260929）：后台「额度管理」页签与 agent 的
         // `list_quota_requests` / `approve_quota_request` 等工具共用的两条。
@@ -381,7 +381,7 @@ pub fn create_router(state: AppState) -> Router {
         // 见 routes/stats.rs 头注的同一形态）。
         .route("/api/protected/quota/requests", get(quota::list_quota_requests))
         .route(
-            "/api/protected/quota/requests/:id/review",
+            "/api/protected/quota/requests/{id}/review",
             post(quota::review_quota_request),
         )
         
@@ -402,7 +402,7 @@ pub fn create_router(state: AppState) -> Router {
         // 挂守卫域内 ⇒ 只有 admin 进得来；handler 再以**发起人身份**现签断言转给 agent
         // （agent 侧按 `admin.console` 再判一次，两道门同一份角色来源）。
         // 三条：起任务（含 mode=precheck 的环境预检）/ 轮询状态 / 取消。
-        // 生产产物由 `/api/public/graph/manifest`、`/api/public/graph/artifact/:file` 供出。
+        // 生产产物由 `/api/public/graph/manifest`、`/api/public/graph/artifact/{file}` 供出。
         .route("/api/protected/graph/rebuild", post(graph::rebuild_start))
         .route("/api/protected/graph/rebuild/status", get(graph::rebuild_status))
         .route("/api/protected/graph/rebuild/cancel", post(graph::rebuild_cancel))

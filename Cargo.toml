@@ -2,15 +2,35 @@
 name = "saudade_blog"
 version = "0.1.0"
 edition = "2021"
+# 声明 MSRV（20261013）。本机 cargo 是 1.96，而 CI（`deploy.yml` 的 setup-rust-toolchain）
+# 与 `deploy/docker/Dockerfile.backend` 钉的是 **1.92.0** —— 此前这两处是**唯二**记着这件事
+# 的地方，而它们都不是"版本解析会读的东西"：`cargo update` 会毫不客气地挑一个需要 1.93+
+# 的 crate，失败发生在 CI 或镜像构建里，本机 `cargo check` 全绿。写下来之后它才是机器可读的。
+rust-version = "1.92"
+# 解析器 v3（20261013）：**MSRV-aware 的版本解析**。与上一行是**一对**——只写 `rust-version`
+# 而留默认的 v2，cargo 仍然会挑超出 MSRV 的版本，然后在构建期报"这个 crate 需要更新的
+# 编译器"。两条一起才有"lock 里的东西 CI 那台也编得动"这个含义。
+resolver = "3"
 
 [dependencies]
-axum = { version = "0.7", features = ["macros", "multipart"] }
+# 0.7 → 0.8（20261013）。**破坏面只有路径参数写法**：0.8 起 `:id` 不再是合法路径、要写
+# `{id}`（0.7 里那种写法在 0.8 里是**启动期 panic**，不是编译错误 ⇒ 离线套件与 `cargo check`
+# 都拦不住，得靠 `cargo test`）。全仓 35 处已改，全在 `src/routes/mod.rs` 一个文件里。
+# 为什么只有这一处：本仓 `src/` 里 `.nest(` 0 处、通配 `*` 0 处、`Path<...>` 提取器 39 处
+# 而它的签名 0.8 未变 ⇒ 不用动。
+axum = { version = "0.8", features = ["macros", "multipart"] }
 tokio = { version = "1", features = ["full"] }
 sea-orm = { version = "1.1", features = [ "sqlx-mysql", "runtime-tokio-rustls", "macros", "mock" ] }
 sqlx = { version = "0.8", features = ["mysql", "runtime-tokio-rustls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tower-http = { version = "0.5", features = ["cors", "trace", "fs"] }
+# 0.5 → 0.7（20261013，跨两个 minor）。用的三个特征（cors / trace / fs）都在，
+# `CorsLayer` / `ServeDir` 那些调用点**一个字都没改**（`cargo check --all-targets` 零错零警）。
+# ⚠️ 这一升会在依赖树里**留下两个 tower-http**：0.7.1（我们直接用的）与 **0.6.11**
+# （`reqwest` 0.13.5 自己的**非可选**依赖——它那几个 `decompression-*` 特征只是转发，
+# 但 `tower-http` 本身不是可选的）。两棵都编进二进制是 reqwest 0.13 的既定形状，
+# 不是我们写错了；`cargo tree -d` 看得见。别看到就想去 `[patch]` 掉它。
+tower-http = { version = "0.7", features = ["cors", "trace", "fs"] }
 dotenvy = "0.15"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["chrono"] }
@@ -26,31 +46,56 @@ jsonwebtoken = { version = "10.3.0", features = ["rust_crypto"] }
 # 引 aws-sdk-s3 要拉几十个 crate，而这里只需要一个 HMAC。
 hmac = "0.12"
 
-# ⚠️ 这一行在 0.11 与 0.12 里**不等价**（20261007 升级时读 changelog 才发现）：
-# 0.11 的默认项只有一个 `default-tls`（native-tls，我们不要），而 `charset` 与 HTTP/2
-# 那时候是**无条件编进去**的；0.12 把它们变成了特征 ⇒ 同一行 `default-features = false`
-# 会**静默地**再关掉两样东西。逐条交代：
-#   charset     —— 关掉后 `resp.text()` 不再看 Content-Type 的 charset 参数（改成 UTF-8
-#                  lossy、且不去 BOM）。本仓两处 `text()` 都读 R2 的 XML（永远是 UTF-8）
-#                  ⇒ 今天行为一致；但 encoding_rs 早已在依赖树里（multer 带来的）
-#                  ⇒ **开着零新增依赖**，所以开，别留一条"哪天换个源就悄悄乱码"的路。
-#   HTTP/2      —— **故意不开**。0.11 是白带的（h2 是无条件依赖），0.12 关掉后退回 HTTP/1.1：
-#                  对 R2 与本机 agent 都是一次一个请求、不复用连接，功能上无差；开回来要新增
-#                  h2 这个包（一整套协议实现，且 HTTP/2 的历史 CVE 大多在这类实现里）。
-#                  真要开就单独立项，别顺手带上。
-#   system-proxy—— 也**故意不开**：这是 0.12 新增的默认项，会读 HTTP_PROXY/HTTPS_PROXY
-#                  环境变量。0.11 不读（那时只能在代码里 `.proxy()`）⇒ 开着等于让环境变量
-#                  能悄悄改写发往 R2 的连接目标，与 0.11 对齐才是"不动行为"的那一边。
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream", "charset"] }
+# ⚠️ 这一行在 0.11 / 0.12 / 0.13 里**都不等价**（20261007 与 20261013 两次升级各踩到一次
+# "同一行 `default-features = false` 悄悄换了行为"）。每升一次都要重读一遍那一版 crates.io
+# 上 Cargo.toml 的 `[features]` 段。0.13.5 的事实（逐条抄下来的）：
+#   default      = ["default-tls", "charset", "http2", "system-proxy"]
+#   default-tls  = ["rustls"]                     ← 0.12 里它是 **native-tls**，0.13 换成 rustls
+#   charset      = ["dep:encoding_rs", "dep:mime"]
+#   http2        = ["dep:h2", "hyper/http2", "hyper-util/http2", "hyper-rustls?/http2"]
+#   system-proxy = ["hyper-util/client-proxy-system"]
+# 三个开关逐条交代（前两条与 0.12 时结论相同，第三条 0.13 里**变了**）：
+#   charset     —— 仍然**显式开着**：`default-features = false` 会把它一起关掉，关掉后
+#                  `resp.text()` 不再看 Content-Type 的 charset 参数（改 UTF-8 lossy、不去 BOM）。
+#                  本仓两处 `text()` 都读 R2 的 XML（永远 UTF-8）⇒ 今天行为一致；开着零新增
+#                  依赖（encoding_rs 本就在树里）⇒ 开，别留"哪天换个源就悄悄乱码"的路。
+#   HTTP/2      —— **仍然故意不开**。对 R2 与本机 agent 都是一次一个请求、不复用连接，功能上
+#                  无差；开回来要新增 h2 这个包（一整套协议实现，且 HTTP/2 的历史 CVE 大多在
+#                  这类实现里）。真要开就单独立项，别顺手带上。
+#   system-proxy—— **仍然故意不开**：它会读 HTTP_PROXY/HTTPS_PROXY 环境变量 ⇒ 等于让环境变量
+#                  能悄悄改写发往 R2 的连接目标。0.11 不读，与"不动行为"的那一边对齐才是对的。
+#
+# ⚠️ **0.13 真正的行为变化不在上面三条，而在 TLS 那一项的名字里**：
+#   · 0.12 的特征叫 `rustls-tls`，展开是 `rustls-tls-webpki-roots` ⇒ **ring** 作密码学内核
+#     + **webpki-roots**（编进二进制的一捆 Mozilla 根证书，**不读系统信任库**）。
+#   · 0.13 **没有 `rustls-tls` 这个特征了**（照抄旧行 = cargo 直接报 "feature does not
+#     exist"，这是好事：响亮失败，不是静默降级）。现在的 `rustls` 展开是
+#     `__rustls-aws-lc-rs` + `dep:rustls-platform-verifier` ⇒ 密码学内核换成 **aws-lc-rs**，
+#     根证书改从**平台/系统信任库**取（Linux 上即 /etc/ssl/certs）。
+#     0.13 **没有 webpki-roots 那一支可选**——特征表里只有 `rustls` / `rustls-no-provider` /
+#     `native-tls*` 三族 ⇒ 想要 rustls 就只能连平台验证器一起要。
+#   两处连带影响，都已经核过并落到文件里（不是"知道就行"）：
+#     · 构建期：aws-lc-sys 的构建脚本要 **cmake**（ring 只要 C 编译器，之前的 Dockerfile
+#       只装了 gcc 就是按 ring 写的）⇒ `deploy/docker/Dockerfile.backend` 的 build 阶段
+#       补了 cmake。CI 那半边没改：`deploy.yml` 的 `cargo test` 直接跑在 `ubuntu-latest`
+#       上，cmake 是**那个 runner 镜像自带的**——也就是说 CI 这一侧现在是"靠 runner 的
+#       构成"而不是"本仓钉住的"，镜像哪天不带它了，红的是 `cargo test` 那一步
+#       （响亮的，不会静默）。真要不依赖它就往 Rust 那一步前面加一句 apt install。
+#     · 运行期：根证书改从系统信任库读 ⇒ 容器里 **ca-certificates 从"备着"变成"承重"**。
+#       它本来就装在 runtime 阶段（那句注释已同步改写）。
+# 真要退回"根证书编进二进制"，0.13 里没有这条路（要换 native-tls，或自己装 CryptoProvider），
+# 得单独立项，别顺手带上。
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "stream", "charset"] }
 futures = "0.3"
 async-stream = "0.3"
 
 [dev-dependencies]
-# 与上面那条依赖逐字相同（charset 的理由见上）
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream", "charset"] }
+# 与上面那条依赖逐字相同（charset 与 TLS 那一族的理由见上）
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "stream", "charset"] }
 futures = "0.3"
 async-stream = "0.3"
-tower = { version = "0.4", features = ["util"] }
+# 0.4 → 0.5（20261013）。只在测试里用（`ServiceExt::oneshot` 那一族），API 未变。
+tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
 
 [lib]

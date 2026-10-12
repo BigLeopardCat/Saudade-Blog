@@ -17,13 +17,19 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 FROM rust:1.92-slim AS build
 
-# ring（rustls 的密码学内核）需要一个 C 编译器。rust:*-slim 自己就装了 gcc / libc6-dev，
+# 密码学内核需要一个 C 编译器。rust:*-slim 自己就装了 gcc / libc6-dev，
 # 这一行是幂等保险：装了就是 no-op，哪天官方镜像改了构成也不至于卡在这里。
 # 本仓没有 native-tls / openssl-sys（reqwest 与 sea-orm 都走 rustls）⇒ 不需要 libssl-dev。
+# ⚠️ cmake（20261013 加，reqwest 0.12→0.13 的连带项）：0.12 的 `rustls-tls` 用 **ring**，
+# 只要一个 C 编译器；0.13 把 TLS 那支换成 `rustls` = **aws-lc-rs**，而 aws-lc-sys 的构建
+# 脚本是**用 CMake 配 AWS-LC 那棵 C 源树**的 ⇒ 少了 cmake 这一层直接失败
+# （`aws-lc-sys` 的 README「Build Prerequisites」）。Go / Perl **不需要**
+# （同 README：AWS-LC 自带生成好的构建文件）；NASM 只在 Windows 上要。
+# 别把 cmake 删了以为"gcc 就够"——那是 ring 时代的结论。
 # findutils 同理是保险：下面那条"刷新 mtime"用的就是 `find`，而它缺席时的报错
 # （`find: not found`）会发生在**中间那一层**，读起来像"构建环境坏了"而不是"少个工具"。
 RUN apt-get update \
- && apt-get install -y --no-install-recommends gcc libc6-dev findutils \
+ && apt-get install -y --no-install-recommends gcc libc6-dev cmake findutils \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
@@ -82,8 +88,13 @@ FROM debian:bookworm-slim AS runtime
 
 # tzdata 不是装饰：没有 /usr/share/zoneinfo 时 `TZ=Asia/Shanghai` 是**空操作**，日志与
 # 落库时间戳会静默差 8 小时（本仓的时区约定是 +08:00 钟面，见 docs/deployment-and-ops.md）。
-# ca-certificates 备着出去取证书链（R2 图床那条路是 rustls + 内置根证书，其实不读它，
-# 装上只为 bash/openssl 之类排障时行为正常）。
+# ⚠️ ca-certificates 从"备着"变成了**承重**（20261013，reqwest 0.12→0.13 的连带项）：
+# 0.12 的 `rustls-tls` 用的是 **webpki-roots**（一捆编进二进制的 Mozilla 根证书，**不读
+# 系统信任库**）；0.13 把 TLS 那支换成 `rustls` = **rustls-platform-verifier** ⇒ 根证书
+# 改从**平台信任库**读，Linux 上就是 /etc/ssl/certs（由 ca-certificates 提供）。
+# 这一条装着的就没动了，但那句"其实不读它"已经不成立 —— 删了它，R2 图床的 HTTPS 会
+# 在**运行期**握手失败（而不是构建期报错），是典型"改了依赖、坏在证书"的那种静默。
+# 顺带留一句：bash/openssl 之类排障仍然用得着它。
 RUN apt-get update \
  && apt-get install -y --no-install-recommends tzdata ca-certificates \
  && rm -rf /var/lib/apt/lists/*
