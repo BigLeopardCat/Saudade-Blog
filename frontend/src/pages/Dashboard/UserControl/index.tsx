@@ -3,13 +3,19 @@ import type { TabsProps } from 'antd';
 import "./index.sass"
 import { Fab, TextField } from "@mui/material";
 import Button from '@mui/material/Button';
-import ArrowBackIosIcon from "@mui/icons-material/ArrowBackIos";
+import ArrowBackIosIconDefault from "@mui/icons-material/ArrowBackIos";
 import React, {useEffect, useState} from "react";
 import { webInfo } from "../../../interface/Setting";
 import http from "../../../apis/axios.tsx";
 import {useLocation, useNavigate} from "react-router-dom";
 import GraphRebuild from "./GraphRebuild";
 import R2Storage from "./R2Storage";
+import {cjsDefault} from "../../../utils/cjsDefault";
+
+// @mui 的图标包是 CJS，Vite 8 之后默认 import 拿到的是名字空间对象而不是组件
+// （这一页就是 `/dashboard/usercontrol` 整页 `Unexpected Application Error! React #130`
+//  的来源）。判据与三种形态见 utils/cjsDefault.ts。**不要改回裸的 default import。**
+const ArrowBackIosIcon = cjsDefault(ArrowBackIosIconDefault)
 
 /**
  * 站点设置（/dashboard/usercontrol）。20260930 从四页签收成两页签：

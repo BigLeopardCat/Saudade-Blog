@@ -10,7 +10,8 @@ import 'dayjs/locale/zh-cn';
 // 只 import 不会把中文设为默认语言：日历头那个月份下拉读的是 dayjs 的全局语言，
 // 不设就一直是英文缩写（Sep / Oct）。全站只有中文，直接设成默认（20260924）。
 dayjs.locale('zh-cn');
-import zhCN from "antd/lib/locale/zh_CN";
+import zhCNDefault from "antd/lib/locale/zh_CN";
+import {cjsDefault} from "../../../utils/cjsDefault";
 import ArticleRecord from "../../../components/articleRecord";
 import ArticleAnalytics from "../../../components/articleAnalytics";
 import Typed from 'typed.js';
@@ -28,6 +29,11 @@ import {useUnread} from "../../../components/UserCenter/unread";
 // 「看板娘一轮对话收尾」信号（20260926 起也用在这张卡上）：agent 可能刚往这份列表里
 // 追加过一条——常量的定义与派发点见 components/UserCenter/agentTurn.ts。
 import {AGENT_TURN_DONE_EVENT} from "../../../components/UserCenter/agentTurn";
+
+// antd 的 locale 包是 CJS，Vite 8 之后默认 import 拿到的是名字空间对象而不是那份 locale
+// （antd 读不到内置文案就**静默**退回英文，不报错、不崩）。判据与三种形态见
+// utils/cjsDefault.ts。**不要改回 `import zhCN from "antd/lib/locale/zh_CN"`。**
+const zhCN = cjsDefault(zhCNDefault)
 
 type Todo = {id: number, text: string, done: boolean, date?: string};
 

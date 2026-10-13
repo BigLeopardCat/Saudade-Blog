@@ -21,7 +21,7 @@ import {
 import type { TableProps, TabsProps } from 'antd';
 // 分页条自己带 locale：`showSizeChanger` 的「10 条/页」「跳至」是 antd 的**内置文案**，
 // 不套 locale 会在这里冒出英文（后台壳的 ConfigProvider 只设了 theme，没设 locale）
-import zhCN from "antd/lib/locale/zh_CN";
+import zhCNDefault from "antd/lib/locale/zh_CN";
 import React, {useCallback, useEffect, useMemo, useRef, useState} from "react";
 import {useLocation, useNavigate, useSearchParams} from "react-router-dom";
 import {NoteType} from "../../../../interface/NoteType";
@@ -30,10 +30,11 @@ import {fetchNoteList} from "../../../../store/components/note.tsx";
 import {QuestionCircleOutlined, ReloadOutlined} from '@ant-design/icons';
 import dayjs from "dayjs";
 import {Fab} from "@mui/material";
-import DeleteIcon from "@mui/icons-material/Delete";
-import DeleteForeverIcon from "@mui/icons-material/DeleteForever";
-import EditIcon from "@mui/icons-material/Edit";
-import ChangeCircleIcon from "@mui/icons-material/ChangeCircle";
+import DeleteIconDefault from "@mui/icons-material/Delete";
+import DeleteForeverIconDefault from "@mui/icons-material/DeleteForever";
+import EditIconDefault from "@mui/icons-material/Edit";
+import ChangeCircleIconDefault from "@mui/icons-material/ChangeCircle";
+import {cjsDefault} from "../../../../utils/cjsDefault";
 import {renderNoteTagsCollapsed} from "../../../../apis/TagMethods.tsx";
 import {delAllNotes, delNote, getAdminNotes, searchAdminNotes, updateNoteStatus} from "../../../../apis/NoteMethods.tsx";
 import {resolveApiAssetUrl} from "../../../../utils/runtimeApi";
@@ -57,6 +58,16 @@ import {
     patchRow,
     saveListReturn,
 } from "./listState";
+
+// antd 的 locale 包与 @mui 的图标包都是 CJS，Vite 8 之后默认 import 拿到的是名字空间对象
+// 而不是组件/locale（图标当组件用会 `Element type is invalid … got: object` ＝ React #130；
+// locale 只是**静默**退回英文）。判据与三种形态见 utils/cjsDefault.ts。
+// **不要改回裸的 default import。**
+const zhCN = cjsDefault(zhCNDefault)
+const DeleteIcon = cjsDefault(DeleteIconDefault)
+const DeleteForeverIcon = cjsDefault(DeleteForeverIconDefault)
+const EditIcon = cjsDefault(EditIconDefault)
+const ChangeCircleIcon = cjsDefault(ChangeCircleIconDefault)
 
 /**
  * 状态归一：DTO 在 status 为 NULL 时给的是 `"published"`（`map_note` 的兜底），

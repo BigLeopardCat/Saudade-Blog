@@ -1,11 +1,17 @@
 import {Card, Statistic} from "antd";
-import CountUp from "react-countup";
+import CountUpDefault from "react-countup";
+import { cjsDefault } from "../../utils/cjsDefault";
 import './index.sass'
 import {useSelector} from "react-redux";
 import {noteList} from "../../store/components/note.tsx";
 import React from "react";
 import {useNavigate} from "react-router-dom";
 import WordCloud from "../wordCloud";
+
+// react-countup 的 build 是 CJS，Vite 8 之后默认 import 可能拿到名字空间对象而不是组件
+// （症状是 `Minified React error #130 … got: object`，判据与三种形态见 utils/cjsDefault.ts）。
+// **不要改回 `import CountUp from "react-countup"`。**
+const CountUp = cjsDefault(CountUpDefault)
 
 const ArticleAnalytics = () => {
     const tagCount = useSelector((state: {tags: any}) => state.tags.tagCount)

@@ -3,7 +3,8 @@ import React, {useCallback, useEffect, useState} from "react";
 import {Button, Card, Collapse, Empty, Segmented, Spin, Statistic, Table, Tag, Tabs} from "antd";
 import type {TabsProps} from "antd";
 import type {ColumnsType} from 'antd/es/table';
-import CountUp from "react-countup";
+import CountUpDefault from "react-countup";
+import { cjsDefault } from "../../../utils/cjsDefault";
 import './index.sass'
 import {errMsg, ok} from "../../../apis/ProfileMethods.tsx";
 import {getNotePeriodReport, getNoteStatsReport, getUserStatsReport} from "../../../apis/NoteStatsMethods.tsx";
@@ -18,6 +19,11 @@ import type {
     UserStatsReport,
 } from "../../../interface/NoteStatsType";
 import {useIsDarkMode} from "../../../theme";
+
+// react-countup 的 build 是 CJS，Vite 8 之后默认 import 可能拿到名字空间对象而不是组件
+// （症状是 `Minified React error #130 … got: object`，判据与三种形态见 utils/cjsDefault.ts）。
+// **不要改回 `import CountUp from "react-countup"`。**
+const CountUp = cjsDefault(CountUpDefault)
 
 /**
  * 数据统计（20260930 整页重写；20261001 加页签、收藏量、周月年报）。**此前这一页是写死的

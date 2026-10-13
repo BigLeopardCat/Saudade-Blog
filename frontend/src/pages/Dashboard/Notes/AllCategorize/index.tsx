@@ -16,10 +16,10 @@ import {CategoriesType} from "../../../../interface/CategoriesType";
 import {fetchCategories} from "../../../../store/components/categories.tsx";
 import {useDispatch} from "react-redux";
 import {Fab} from "@mui/material";
-import AddIcon from '@mui/icons-material/Add';
-import EditIcon from '@mui/icons-material/Edit';
-import DeleteIcon from '@mui/icons-material/Delete';
-import DeleteForeverIcon from "@mui/icons-material/DeleteForever";
+import AddIconDefault from '@mui/icons-material/Add';
+import EditIconDefault from '@mui/icons-material/Edit';
+import DeleteIconDefault from '@mui/icons-material/Delete';
+import DeleteForeverIconDefault from "@mui/icons-material/DeleteForever";
 import {
     addCategory,
     delAllCategory,
@@ -28,6 +28,16 @@ import {
     updateCategory
 } from "../../../../apis/CategoryMethods.tsx";
 import {useLiveRefresh} from "../../../../utils/liveRefresh.ts";
+import {cjsDefault} from "../../../../utils/cjsDefault";
+
+// @mui 的图标包是 CJS，Vite 8 之后默认 import 拿到的是名字空间对象而不是组件
+// （症状是 `Element type is invalid … got: object` ＝ React #130；判据与三种形态见
+//  utils/cjsDefault.ts）。**不要改回裸的 default import。**
+const AddIcon = cjsDefault(AddIconDefault)
+const EditIcon = cjsDefault(EditIconDefault)
+const DeleteIcon = cjsDefault(DeleteIconDefault)
+const DeleteForeverIcon = cjsDefault(DeleteForeverIconDefault)
+
 const  AllCategorize = () => {    //hooks区域
     /* 窄屏（< `screenLG`，本仓在 `WASHI_THEME.common` 里抬到 1024）不再横向拖表。
        用 antd 自己的 `useBreakpoint` 而不是另写一条 `matchMedia('(max-width:1024px)')`：

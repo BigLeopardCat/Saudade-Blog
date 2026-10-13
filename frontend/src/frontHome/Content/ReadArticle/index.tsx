@@ -7,8 +7,9 @@ import {Avatar, Flex, message} from "antd";
 import {useSelector} from "react-redux";
 import UserState from "../../../interface/UserState";
 import dayjs from "dayjs";
-import MarkdownNavbar from 'markdown-navbar'
+import MarkdownNavbarDefault from 'markdown-navbar'
 import 'markdown-navbar/dist/navbar.css'
+import { cjsDefault } from "../../../utils/cjsDefault";
 import Loading from "../../Loading";
 import scrollToTop from "../../../utils/scrollToTop.tsx";
 import { noteAuthor } from "../../../utils/noteAuthor";
@@ -96,6 +97,11 @@ const releaseTodayRead = (noteId: string) => {
         localStorage.setItem(READ_LOG_KEY, JSON.stringify(log));
     } catch { /* 同上：存不进去也无所谓，最坏是这一天不再上报 */ }
 };
+
+// markdown-navbar 是 CJS 包，Vite 8 之后默认 import 拿到的可能是名字空间对象而不是组件
+// （整个 `Element type is invalid … got: object` 就是这么来的，判据与三种形态见
+//  utils/cjsDefault.ts 的头注）。**不要改回 `import MarkdownNavbar from …`。**
+const MarkdownNavbar = cjsDefault(MarkdownNavbarDefault)
 
 const plugins = [
     gfm({ singleTilde: false }),
