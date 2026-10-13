@@ -16,6 +16,7 @@
 注意：本机无中文字体（fc-list CJK = 0）⇒ 截图里的汉字是豆腐块，属环境限制；
       对比度与几何不受影响（量的都是颜色与盒模型）。
 """
+import datetime as dt
 import pathlib
 import shutil
 import subprocess
@@ -172,8 +173,15 @@ with sync_playwright() as p:
         点下一个入口会被上一个弹窗的输入框拦（实测 60 次重试都不通），不如各测各的。
 
         `dark=True` ⇒ 挂载前写下 `isDarkMode`（这份夹具没写 = 全站默认的白天档）。
-        必须在 goto 之前下笔：`useIsDarkMode()` 的初值在**挂载时**读一次 localStorage。"""
+        必须在 goto 之前下笔：`useIsDarkMode()` 的初值在**挂载时**读一次 localStorage。
+
+        ⚠️ 20261013：这一页现在**自己会跟着钟面切档**（挂了 `useAutoThemeSwitch()`，见
+        login-page.test.py 的 ③d），于是"不写 isDarkMode = 白天档"这条夹具会把**跑套件的
+        那一刻**带进判据——23:00-06:00 之间跑，页面在挂载后一分钟内自动切夜，白天档那几条
+        当场变红（20261013 23:4x 实测红 2 条）。钉在本地 14:00（ticker 的设计无动作时段）。
+        `time=` 传 datetime：传**数字时单位是秒**，传毫秒会落到公元 58753 年而套件照样绿。"""
         page = br.new_page(viewport={"width": 1280, "height": 900})
+        page.clock.install(time=dt.datetime(2026, 10, 13, 14, 0, 0))
         page.on("pageerror", lambda e: errs.append(str(e)))
         if dark:
             page.add_init_script("localStorage.setItem('isDarkMode', 'true');")

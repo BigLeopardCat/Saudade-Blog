@@ -21,6 +21,7 @@
 依赖：frontend/node_modules（esbuild + react + react-dom）、playwright（python）。
 """
 import base64
+import datetime as dt
 import json
 import pathlib
 import re
@@ -196,11 +197,38 @@ from playwright.sync_api import sync_playwright  # noqa: E402
 
 with sync_playwright() as p:
     br = p.chromium.launch()
-    pg = br.new_page(viewport={"width": 1280, "height": 900})
+
+    # ── 时钟夹具（20261013）──────────────────────────────────────────────────
+    # 这一页现在**自己会跟着钟面切档**（挂 `useAutoThemeSwitch()`，判据见 ③d），于是
+    # "没写 isDarkMode ⇒ 白天档"这类夹具必须**把时间钉住**：不钉的话，套件在 23:00-06:00
+    # 之间跑时页面的分钟 ticker 会把冷启动的浅色页切成夜间，③a 那一整段（白天档）当场
+    # 全红 —— 20261013 23:42 实测，连带红 10 项，而那是**夹具随时辰变**，不是样式坏了。
+    # 钉在本地 14:00：正是 ticker 的设计无动作时段（06:00-23:00 只认访客），夹具回到
+    # "测的是样式、不是钟表"。
+    # ⚠️ `install(time=)` 传**数字时单位是秒**（`_impl/_clock.py::parse_time` 内部再 ×1000）
+    #    —— 传毫秒会落到公元 58753 年：时段判据静默走错，而套件照样一片绿。传 datetime 最稳。
+    # ⚠️ `install` 只设起始时刻、时钟照常自己走（实测 300ms 的 setTimeout 照常触发）；要冻住
+    #    得再 `pause_at()`。③d 靠 `fast_forward` 跳，不需要冻。
+    DAYTIME = dt.datetime(2026, 10, 13, 14, 0, 0)
+
+    def new_page(t=DAYTIME, **kw):
+        # `br.new_page()` 每个页面自带一个匿名 context（localStorage 不串页），这里保持原语义。
+        page = br.new_page(**kw)
+        page.clock.install(time=t)
+        return page
+
+    pg = new_page(viewport={"width": 1280, "height": 900})
     errs = []
     pg.on("pageerror", lambda e: errs.append(str(e)))
     pg.goto(URL)
     pg.wait_for_timeout(400)
+
+    print("⓪ 时钟夹具生效（夹具的前提：钟面卡在 14:00，不是「跑的那一刻」）")
+    # 这一条是**判据的前提守卫**：时钟没钉上时，白天档那 10 条会随跑的时刻忽绿忽红，
+    # 而"绿"和"红"都读不出是样式坏了还是钟面飘了。先量钟面，再量样式。
+    check("浏览器钟面停在本地 14:00（ticker 的设计无动作时段）",
+          pg.evaluate("() => new Date().getHours()") == 14,
+          pg.evaluate("() => new Date().toString()"))
 
     print("① 结构（旧页面的霓虹锚点应已不存在）")
     check("无 JS 运行时报错", not errs, "; ".join(errs[:2]))
@@ -233,7 +261,7 @@ with sync_playwright() as p:
     # state 在挂载时读一次 localStorage），已跑起来的 page 改了也不会重读。
     # 顺带锁"未登录不为一张头像打后端"——见 identity.ts 的 pull()。
     AVATAR_2 = "/api/protect/download/avatar-sora-20260922.png"
-    pg_b = br.new_page(viewport={"width": 1280, "height": 900})
+    pg_b = new_page(viewport={"width": 1280, "height": 900})
     reqs_b = []
     pg_b.on("request", lambda r: reqs_b.append(f"{r.resource_type} {r.url}"))
     pg_b.add_init_script(
@@ -286,7 +314,7 @@ with sync_playwright() as p:
     # 认得较旧的那个 / 认得较新的那个 / 认不得的仍回默认。
     print("①d 本机登录过的多个账号：输哪个认哪个（清单，不是只记最近一个）")
     AVATAR_3 = "/api/protect/download/avatar-kohaku-20260924.png"
-    pg_c = br.new_page(viewport={"width": 1280, "height": 900})
+    pg_c = new_page(viewport={"width": 1280, "height": 900})
     reqs_c = []
     pg_c.on("request", lambda r: reqs_c.append(f"{r.resource_type} {r.url}"))
     pg_c.add_init_script(
@@ -394,7 +422,7 @@ with sync_playwright() as p:
         "() => [document.querySelector('.login-submit'), document.body].map(e=>getComputedStyle(e).backgroundImage).join()"))
 
     print("③b 夜间档（挂载前写 isDarkMode='true'）：还是 20260921 那副墨蓝样子")
-    pg_d = br.new_page(viewport={"width": 1280, "height": 900})
+    pg_d = new_page(viewport={"width": 1280, "height": 900})
     pg_d.add_init_script("localStorage.setItem('isDarkMode', 'true');")
     pg_d.goto(URL)
     pg_d.wait_for_timeout(400)
@@ -435,6 +463,47 @@ with sync_playwright() as p:
         "() => (window.__cpThemes || []).some(t => t && t.algorithm === '__DARK_ALGORITHM__'"
         " && t.token && t.token.colorBgElevated)"))
     pg_d.close()
+
+    print("③d 跨 23:00：这一页在 App 壳之外，自己也得做边界动作（20261013 修）")
+    # 从前只有 App.tsx 调 `autoThemeDecision`，而 `login` 是顶层路由（`router/index.tsx`
+    # 里与 `/` 平级，不在那层 `.frontDark` 底下）⇒ 夜里直达这一页**整晚浅色**、停在页上
+    # 跨 23:00 也不切（20261013 线上实测：留白亮度 234/228/243，同刻首页 26/26/12）。
+    # 判据只能是"把钟推到边界上真跑一遍"——③a/③b 那两套夹具都**先预置 isDarkMode 再
+    # goto**，无论这一页有没有 ticker 都会绿，测不到这条。修法是挂 `useAutoThemeSwitch()`。
+    # ⚠️ 传 datetime 而不是毫秒：theme 的 isNightHour/currentThemeDay 走**浏览器本地钟面**，
+    #    而 install 的数字单位是秒（见 new_page 的头注）。这一页故意**不**钉 14:00。
+    pg_e = new_page(dt.datetime(2026, 10, 13, 22, 58, 0), viewport={"width": 1280, "height": 900})
+    pg_e.goto(URL)
+    pg_e.wait_for_timeout(400)
+    check("起始时刻真的是 2026-10-13 22:58（钉子先钉牢，下面那几条才有意义）",
+          pg_e.evaluate("() => {const d = new Date();"
+                        "return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate()"
+                        "+ ' ' + d.getHours() + ':' + String(d.getMinutes()).padStart(2, '0');}"
+                        ) == "2026-10-13 22:58",
+          pg_e.evaluate("() => new Date().toString()"))
+    check("22:58 冷启动（存储为空）：白天档，不挂 frontDark",
+          "frontDark" not in pg_e.evaluate("() => document.querySelector('.login-page').className"),
+          pg_e.evaluate("() => document.querySelector('.login-page').className"))
+    # Playwright 的时钟串："08"=8 秒、"03:00"=3 分、"07:00:00"=7 小时
+    pg_e.clock.fast_forward("03:00")
+    pg_e.wait_for_timeout(200)
+    cls_e = pg_e.evaluate("() => document.querySelector('.login-page').className")
+    check("跨 23:00 后自己挂上 frontDark", "frontDark" in cls_e, cls_e)
+    # 落盘格式 = `JSON.stringify(布尔)` ⇒ 裸 `true`（全仓 5 个写入点全都是这个写法：theme /
+    # Head / PhoneSwitch / Dashboard / chat-stream.js）。`readDarkMode` 另兼容带引号的旧式
+    # `'"true"'`，但**别拿它当期望值**——那是兼容读取的，不是现在写出来的。
+    check("结果也落了盘（此前这一页从不写 isDarkMode）",
+          pg_e.evaluate("() => localStorage.getItem('isDarkMode')") == "true",
+          str(pg_e.evaluate("() => localStorage.getItem('isDarkMode')")))
+    check("夜窗闩已置位（证明边界真的跑过，而不是碰巧本来就暗）",
+          pg_e.evaluate("() => !!localStorage.getItem('darkModeInWindow')"))
+    pg_e.clock.fast_forward("07:00:00")
+    pg_e.wait_for_timeout(200)
+    cls_e2 = pg_e.evaluate("() => document.querySelector('.login-page').className")
+    check("推到 06:00 之后切回白天档（出窗那一半也在）", "frontDark" not in cls_e2, cls_e2)
+    check("出窗后闩与意愿一起清（新的一天重新开始）",
+          pg_e.evaluate("() => !localStorage.getItem('darkModeInWindow')"))
+    pg_e.close()
 
     print("③c 即时跟随：头部/看板娘切换时不刷新页面就换档")
     # `useIsDarkMode()` 听的就是这个事件（全仓唯一在 React 里响应主题变化的写法）。
@@ -604,7 +673,7 @@ with sync_playwright() as p:
           bool(sels) and sels[0][0] == ".field-pwdinput[type=password]",
           sels[0][0] if sels else "没有这条规则")
 
-    pg2 = br.new_page(viewport={"width": 1280, "height": 900})
+    pg2 = new_page(viewport={"width": 1280, "height": 900})
     pg2.add_init_script("window.__token = 'fake-token';")
     pg2.goto(URL)
     pg2.wait_for_timeout(400)
@@ -614,7 +683,7 @@ with sync_playwright() as p:
 
     # 另一岔：管理员 token 才是"一进来就直达后台"。分开两个 page 是因为 token 得在
     # 挂载前就位（add_init_script），改一个 page 的 localStorage 影响不到已跑的 effect。
-    pg4 = br.new_page(viewport={"width": 1280, "height": 900})
+    pg4 = new_page(viewport={"width": 1280, "height": 900})
     pg4.add_init_script(f"window.__token = {json.dumps(jwt_with_role('admin'))};")
     pg4.goto(URL)
     pg4.wait_for_timeout(400)
@@ -623,7 +692,7 @@ with sync_playwright() as p:
           json.dumps(pg4.evaluate("() => window.__nav"), ensure_ascii=False))
 
     print("⑨ 移动端（380px 宽）")
-    pg3 = br.new_page(viewport={"width": 380, "height": 780})
+    pg3 = new_page(viewport={"width": 380, "height": 780})
     pg3.goto(URL)
     pg3.wait_for_timeout(400)
     b3 = pg3.locator(".login-box").bounding_box()

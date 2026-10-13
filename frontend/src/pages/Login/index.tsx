@@ -11,7 +11,7 @@ import { readKnownUsers, selectLoginAvatar, useViewerAvatar } from '../../compon
 import { isAdminToken } from '../../utils/auth.ts';
 import UserData from "../../interface/UserData";
 import SeoHelmet from "../../components/SeoHelmet";
-import { useIsDarkMode } from '../../theme';
+import { useIsDarkMode, useAutoThemeSwitch } from '../../theme';
 
 type NoticeKind = 'register' | 'forgot' | null;
 
@@ -68,6 +68,14 @@ const Login: React.FC = () => {
     //
     // 复用 `useIsDarkMode()`（src/theme.ts，全仓唯一在 React 里跟随主题的写法，含
     // 挂载补读 + 听 `darkmode-change`）——不在这里另写一套读法。
+    //
+    // ⚠️ 20261013：「跟随」有两半，只读不算——**半个**。`useIsDarkMode` 只会读，而
+    // 23:00/06:00 那两条边界动作原来只长在 App.tsx 里，这一页在 App 壳之外，于是它在
+    // 夜窗内永远收不到切换通知：冷启动直达 `/login` 整晚浅色、停在页上跨 23:00 也不切
+    // （实测留白亮度 234/228/243，同刻首页 26/26/12）。挂上 `useAutoThemeSwitch()`
+    // 这一页才真的自己会切（它同时负责把结果写回 `isDarkMode`——此前这一页连落盘都没有）。
+    // 判据：tests/login-page.test.py 的「跨 23:00」那一节。
+    useAutoThemeSwitch();
     const isDark = useIsDarkMode();
 
     // 页面底（含卡片外的部分、手机端回弹露出的部分）挂在 body 上：sass 里那份 `body`

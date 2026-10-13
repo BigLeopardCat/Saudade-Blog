@@ -65,9 +65,17 @@ export function userChoiceActive(): boolean {
     } catch { return false; }
 }
 
-/** 夜窗闩：'1' = 本次夜窗（23:00 起）的入场边界已经处理过。
- *  这是"边界一次性动作"的载体——每分钟的 ticker 也靠它知道"这条边界我处理过了"。
- *  出窗时清除（回到"未处理"），所以它不绑日期、跨日不会误伤。 */
+/** 夜窗闩：存的是**这一窗所属的主题日**（`currentThemeDay()`），= 本次夜窗（23:00 起）的
+ *  入场边界已经处理过。这是"边界一次性动作"的载体——每分钟的 ticker 也靠它知道
+ *  "这条边界我处理过了"。
+ *
+ *  ⚠️ 20261013 改：从前存裸 `'1'`、且注释自称"不绑日期、跨日不会误伤"——**恰好相反**。
+ *  闩只在 06:00-23:00 的白天分支里被清，所以"整夜在窗内、当天白天再没打开过页面"的访客
+ *  会把闩留到**下一个夜窗**，下一夜 23:00 那句 `readLatch() === '1'` 直接 return null ⇒
+ *  **整晚不切夜**（实测：只在夜里访问的访客第一晚切、之后每晚都不切）。绑主题日就自愈了：
+ *  主题日以 06:00 为界翻篇，而整段 23:00→06:00 属同一主题日 ⇒ 同一窗内仍然只处理一次，
+ *  新窗的主题日必不等于旧窗的 ⇒ 陈旧闩自动失效。
+ *  存量访客存储里那个裸 `'1'` 与任何主题日都不相等，同样按陈旧处理（自愈，无需迁移）。 */
 const LATCH_KEY = 'darkModeInWindow';
 
 function readLatch(): string {
@@ -76,7 +84,7 @@ function readLatch(): string {
 
 function writeLatch(on: boolean): void {
     try {
-        if (on) localStorage.setItem(LATCH_KEY, '1');
+        if (on) localStorage.setItem(LATCH_KEY, currentThemeDay());
         else { localStorage.removeItem(LATCH_KEY); localStorage.removeItem('darkModeUserChoice'); localStorage.removeItem('darkModeChoiceDay'); }
     } catch { /* ignore */ }
 }
@@ -103,14 +111,15 @@ export function autoThemeDecision(now: Date = new Date()): boolean | null {
     if (isNightHour(now)) {
         // 进窗：整段夜窗只处理一次，且"处理过"与"是否动作"是两件事——
         // 访客已在窗内表态时这里不动作，但边界照样算处理过（否则下一分钟还会再问一遍）。
-        if (readLatch() === '1') return null;
+        // 比对的是**主题日**而不是"有没有闩"：昨晚留下的闩不该吃掉今晚的入场（见 LATCH_KEY）。
+        if (readLatch() === currentThemeDay()) return null;
         writeLatch(true);
         if (userChoiceActive()) return null;
         return readDarkMode() ? null : true;
     }
     // 出窗：只有"进过窗"才轮到自动恢复。没进过窗（白天/前半夜开的夜间模式，或整夜关机
     // 且入窗前就关掉）一律不动——这就是"非窗口时间完全遵循访客主题决定"。
-    if (readLatch() === '1') {
+    if (readLatch()) {
         const wasNight = readDarkMode();
         writeLatch(false);                    // 闩与意愿一起清（新的一天重新开始）
         return wasNight ? false : null;
@@ -134,4 +143,48 @@ export function useIsDarkMode(): boolean {
         return () => window.removeEventListener('darkmode-change', onChange);
     }, []);
     return isDark;
+}
+
+/**
+ * 自动昼夜的**唯一执行者**：挂上它，这条路由就会在 23:00/06:00 两条边界被通知一次，
+ * 并把**任何** `darkmode-change`（自动切换 / 头部开关 / 看板娘 DARKMODE 命令）的结果
+ * 写回 `localStorage.isDarkMode`。
+ *
+ * ⚠️ 必须挂在**每一条不在 App 壳里、却要跟随昼夜的顶层路由**上。`/login` 就是这样的
+ *    路由（`router/index.tsx` 里 `login` 与 `/` 平级）——20261013 之前只有 App.tsx 调
+ *    `autoThemeDecision`，于是登录页在 23:00/06:00 **从来不被告知**，夜里成了全站唯一
+ *    亮着的一页（实测冷启动直达 /login：亮度 234/228/243，与同刻首页 26/26/12 对照）。
+ *    `/guestbook` 与 `/dashboard` 各有自己的暗色形态，**故意不挂**。
+ *
+ * 多处同时挂上不会互相打架：判定本身是边界一次的（闩按主题日，见 autoThemeDecision），
+ * 第二个实例跑到的永远是 `null`。App.tsx 原来把这段写在页面里，20261013 抽出来共用——
+ * 判据 `tests/theme-choice.test.mjs`（纯函数）+ `tests/login-page.test.py`（跨 23:00 真渲染）。
+ */
+export function useAutoThemeSwitch(): void {
+    useEffect(() => {
+        // 落盘：任何来源的主题变化都写进 isDarkMode。此前这件事只有 App 壳在做，
+        // 所以在登录页上（看板娘仍可能执行 DARKMODE 命令）切了不落盘，刷新即丢。
+        const persist = (e: Event) => {
+            const on = !!(e as CustomEvent).detail;
+            try { localStorage.setItem('isDarkMode', JSON.stringify(on)); } catch { /* 隐私模式写不了，忽略 */ }
+        };
+        const prefersAuto = () => {
+            try {
+                const next = autoThemeDecision();
+                if (next !== null) {
+                    window.dispatchEvent(new CustomEvent('darkmode-change', { detail: next }));
+                }
+            } catch { /* 读 localStorage 失败不致命，下一分钟再来 */ }
+        };
+        window.addEventListener('darkmode-change', persist);
+        prefersAuto();
+        const timer = setInterval(prefersAuto, 60 * 1000);
+        const onVisible = () => { if (!document.hidden) prefersAuto(); };
+        document.addEventListener('visibilitychange', onVisible);
+        return () => {
+            window.removeEventListener('darkmode-change', persist);
+            clearInterval(timer);
+            document.removeEventListener('visibilitychange', onVisible);
+        };
+    }, []);
 }

@@ -78,8 +78,10 @@ console.log('== 23:00 进窗：自动切夜，且只切一次 ==');
     eq(dark(), true, '状态已落到夜间');
 
     // 边界是"一次事件"：接着每分钟跑，不能再动作（否则窗口内访客的改动会被反复顶掉）
-    for (const m of [[23, 1], [23, 2], [23, 30], [0, 15], [5, 58], [5, 59]]) {
-        at(m[0], m[1]);
+    // ⚠️ 日期必须显式给：`at()` 的 day 默认 15，`[0, 15]` 这种写法会**把钟往回拨**
+    //    （15 日 00:15 早于 15 日 23:00）⇒ 主题日倒退，绑主题日的闩会被判成"新窗"。
+    for (const m of [[23, 1, 15], [23, 2, 15], [23, 30, 15], [0, 15, 16], [5, 58, 16], [5, 59, 16]]) {
+        at(m[0], m[1], m[2]);
         eq(tick(new Date()), null, `${String(m[0]).padStart(2, '0')}:${String(m[1]).padStart(2, '0')} 窗内不再动作`);
     }
     eq(dark(), true, '整段夜窗保持夜间');
@@ -94,8 +96,9 @@ console.log('== 窗口内访客自己改：让位，本窗口不再自动改 =='
     theme.recordUserChoice('light');                 // 访客当场切浅色（Head/index.tsx）
     localStorage.setItem('isDarkMode', '"false"');
     let cur = false;
-    for (const m of [[23, 31], [0, 15], [3, 40], [5, 59]]) {   // 跨到次日凌晨，仍在同一夜窗内
-        at(m[0], m[1]);
+    // 跨到次日凌晨，仍在同一夜窗内（日期显式给，别让 at() 把钟往回拨）
+    for (const m of [[23, 31, 15], [0, 15, 16], [3, 40, 16], [5, 59, 16]]) {
+        at(m[0], m[1], m[2]);
         const d = tick(new Date());
         if (d !== null) cur = d;
     }
@@ -208,6 +211,42 @@ console.log('== 页面整夜关着 / 窗口内才打开 ==');
     at(8, 0, 16);
     eq(tick(new Date()), null, '整夜未进窗的夜间模式：白天打开也不动它');
     eq(dark(), true, '仍是访客选择的夜间');
+}
+
+console.log('== 陈旧闩不许吃掉下一晚的入场（20261013 修）==');
+{
+    // 闩只在 06:00-23:00 的**白天分支**里被清，所以"整夜在窗内、当天白天再没打开过页面"
+    // 的访客会把它原样留到下一个夜窗。旧代码闩存裸 '1'、判据是 `=== '1'` ⇒ 下一晚
+    // 23:00 直接 return null，**整晚不切夜**；现在闩绑主题日，新窗的主题日必不等于旧窗的。
+    store.clear(); at(23, 10, 15);
+    localStorage.setItem('isDarkMode', '"true"');
+    eq(tick(new Date()), null, '昨夜入窗：已是夜间 → 不动作（但闩已按昨夜的主题日置位）');
+    eq(store.get('darkModeInWindow'), theme.currentThemeDay(), '闩记的是主题日，不是裸 \'1\'');
+    theme.recordUserChoice('light');                       // 访客窗内切成浅色
+    localStorage.setItem('isDarkMode', '"false"');
+    // 白天完全没打开过页面（没有 tick 去清它）⇒ 闩与那条意愿一起留到今晚
+    at(23, 10, 16);
+    eq(tick(new Date()), true, '今晚 23:10：陈旧闩不生效，照常自动切夜');
+    eq(dark(), true, '状态落到夜间');
+    eq(tick(new Date()), null, '今晚同一个夜窗内仍只处理一次（闩现在绑的是今晚）');
+}
+{
+    // 存量自愈：老访客存储里那个裸 '1' 与任何主题日都不相等 ⇒ 按陈旧处理，无需迁移。
+    store.clear(); at(23, 10, 16);
+    localStorage.setItem('darkModeInWindow', '1');
+    localStorage.setItem('isDarkMode', '"false"');
+    eq(tick(new Date()), true, '存量裸 \'1\' 闩：今晚照常切夜（自愈）');
+}
+{
+    // 反向：**同一晚**的第二分钟绝不能被切第二次（这是"边界一次性"的本体，
+    // 绑主题日不能把它破掉——主题日在 23:00→06:00 整段是一个值）。
+    store.clear(); at(23, 0, 15);
+    localStorage.setItem('isDarkMode', '"false"');
+    eq(tick(new Date()), true, '23:00 切夜');
+    for (const h of [0, 3, 5]) {
+        at(h, 30, 16);                                     // 跨到次日凌晨，主题日仍未翻篇
+        eq(tick(new Date()), null, `${String(h).padStart(2, '0')}:30 仍在同一主题日 → 不重复入场`);
+    }
 }
 
 console.log('== 旧版残留 / agent 侧的值 ==');
