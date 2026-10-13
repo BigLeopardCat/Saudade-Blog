@@ -349,8 +349,20 @@ console.log('\n④ 我们自己的组件仍钉着这套契约（换了写法这�
         ok(/onPick\(img\.imageUrl\)/.test(f), '图库选中时递出去的是**库里那个原始地址**');
         ok(!/onPick\(resolveApiAssetUrl/.test(f), '递出去的不是 CDN 化后的地址（换公开域名就认不回桶了）');
         ok(/src=\{resolveApiAssetUrl\(img\.imageUrl\)\}/.test(f), 'CDN 化只用在缩略图 src 上');
-        ok(/res\.data\?\.code !== 200/.test(f), '图库列表也判业务码');
+        // 20261014：图库列表的取数与判据搬进共用的取数钩子（三处消费方一份，见 galleryPager.ts）。
+        // 判据跟着实现走 —— 在这一处钉住"弹窗确实用那份钩子"，业务码那两条改钉钩子本身。
+        ok(/useGalleryPager\(\)/.test(f), '图库列表经 useGalleryPager 取（分页/判据的唯一一处在 utils/galleryPager.ts）');
         ok(/accept="image\/\*"/.test(f) && /Upload\.Dragger/.test(f), '本地上传仍是拖拽/点选（accept=image/*）');
+    }
+
+    const pager = readRel('src/utils/galleryPager.ts');
+    if (pager) {
+        const f = flat(pager);
+        ok(/res\.data\?\.code !== 200/.test(f), '图库列表判**业务码**（HTTP 200 ≠ 业务成功）');
+        ok(!/res\.status === 200/.test(f), '图库列表不用 HTTP 状态判成功（恒真 ⇒ 假成功）');
+        // 游标 = 已加载的最后一张；`hasMore` 与页大小同源（服务端不报总数，见 galleryPager 头注）
+        ok(/loaded\.current\[loaded\.current\.length - 1\]/.test(f), '下一页游标取的是**最后一张**（不是第一张）');
+        ok(/rows\.length >= GALLERY_PAGE_SIZE/.test(f), '`hasMore` 与页大小同源（页大小只有一份）');
     }
 }
 

@@ -10,7 +10,7 @@ use crate::utils::{
 use std::path::Path;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
-use sea_orm::{ActiveModelTrait, EntityTrait, Set, QueryOrder, ColumnTrait, QueryFilter, Condition};
+use sea_orm::{ActiveModelTrait, EntityTrait, Set, QueryOrder, QuerySelect, ColumnTrait, QueryFilter, Condition};
 use crate::entity::image;
 use crate::entity::note;
 use crate::r2;
@@ -464,14 +464,47 @@ pub async fn upload_image(
 }
 
 // GET /api/protect/images
+/// 图库列表的查询参数（20261014 加分页）。
+///
+/// 从前这里是 `SELECT * ORDER BY image_key DESC` **整表返回**：三处消费方
+/// （编辑器插图弹窗 `components/Editor/ImagePicker.tsx`、文章封面弹窗
+/// `pages/Dashboard/Notes/NewNotes/index.tsx`、图库页 `pages/Dashboard/Albums/index.tsx`）
+/// 各自把全站图片一次性渲染出来。行数只会涨（同一张图去重后仍然一张一行），
+/// 而"打开一个选图弹窗"要拉全站图这条路径没有任何上界。
+///
+/// **游标分页，不是 offset**：排序键是自增主键、新图插在**头部**，用 offset 的话
+/// "翻页期间有人上传了一张图"会让第二页重复第一页的尾巴（也就漏掉一行）；
+/// `image_key < before` 不会——游标是一条**钉在数据上**的位置。
+///
+/// ⚠️ **不传 `limit` = 全量与从前一字不差**：分页是加法。老调用方（别人的脚本、
+/// 探针、浏览器里那份还没换版的 dist）不会因为这次改动突然只看到半张图库；
+/// 本仓的三个消费方都传 `before`/`limit`，页大小与"还有没有下一页"的判据在
+/// `frontend/src/utils/galleryPager.ts`（唯一一份）。
+#[derive(serde::Deserialize)]
+pub struct ImageListQuery {
+    /// 只回 `image_key < before` 的行；首页不传。取的是**上一页最后一张**的 key。
+    #[serde(default)]
+    pub before: Option<i32>,
+    /// 最多回几行。不传 = 不截断（见上面那条兼容说明）。
+    /// **刻意不在这里夹一个上限**：调用方按自己的页大小取值，"回来的行数 == 页大小
+    /// ⇒ 可能还有下一页"是客户端的判据——服务端偷偷把 500 夹成 200，客户端会
+    /// 因为"只回了 200 不是 500"而认为到底了，那不叫保护，叫**静默截断**。
+    #[serde(default)]
+    pub limit: Option<u64>,
+}
+
 pub async fn list_images(
     State(state): State<Arc<AppState>>,
+    axum::extract::Query(q): axum::extract::Query<ImageListQuery>,
 ) -> Json<ApiResponse<Vec<image::Model>>> {
-    let images = image::Entity::find()
-        .order_by_desc(image::Column::ImageKey)
-        .all(&state.db)
-        .await
-        .unwrap_or_default();
+    let mut finder = image::Entity::find().order_by_desc(image::Column::ImageKey);
+    if let Some(before) = q.before {
+        finder = finder.filter(image::Column::ImageKey.lt(before));
+    }
+    if let Some(limit) = q.limit {
+        finder = finder.limit(limit);
+    }
+    let images = finder.all(&state.db).await.unwrap_or_default();
 
     Json(ApiResponse::success(images))
 }

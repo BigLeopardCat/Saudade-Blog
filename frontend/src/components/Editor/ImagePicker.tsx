@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Alert, Card, Col, Empty, Modal, Row, Spin, Tabs, Upload, message } from 'antd'
+import { Alert, Button, Card, Col, Empty, Modal, Row, Spin, Tabs, Upload, message } from 'antd'
 import { InboxOutlined } from '@ant-design/icons'
 import type { EditorProps } from '@bytemd/react'
-import { getImageList } from '../../apis/ImageMethods.tsx'
-import { ImgUrl } from '../../interface/ImgTypes'
+import { useGalleryPager } from '../../utils/galleryPager.ts'
 import { assetDisplayName } from '../../utils/assetName'
 import { resolveApiAssetUrl } from '../../utils/runtimeApi'
 
@@ -43,40 +42,18 @@ interface ImagePickerProps {
 
 const ImagePicker = ({ open, onCancel, onPick, upload }: ImagePickerProps) => {
     const [tab, setTab] = useState('gallery')
-    const [images, setImages] = useState<ImgUrl[]>([])
-    const [loading, setLoading] = useState(false)
-    const [loadError, setLoadError] = useState('')
     const [uploading, setUploading] = useState(false)
+    // 列表与分页（20261014）：`loadMore` 是"从图库选图"里那一页之后的续拉，
+    // 判据（游标 / hasMore / 取数闸）全在 `utils/galleryPager.ts`——三处消费方共用一份。
+    const { images, loading, loadingMore, error, hasMore, reload, loadMore } = useGalleryPager()
 
     // 每次打开都回到「图库」页签并重拉一次列表：图库是主入口，别让上一次的选择粘住，
     // 也别用上次那份可能已经过时的列表（别人刚传的图应该看得见）。
     useEffect(() => {
         if (!open) return
         setTab('gallery')
-        setLoading(true)
-        setLoadError('')
-        // `alive` 防的是"关掉又立刻打开"时前一次请求的迟到回包把新一次的列表覆盖掉
-        let alive = true
-        getImageList()
-            .then((res) => {
-                if (!alive) return
-                if (res.data?.code !== 200) {
-                    setImages([])
-                    setLoadError(res.data?.message || '图库读取失败')
-                    return
-                }
-                setImages(Array.isArray(res.data?.data) ? res.data.data : [])
-            })
-            .catch(() => {
-                if (!alive) return
-                setImages([])
-                setLoadError('图库读取失败')
-            })
-            .finally(() => {
-                if (alive) setLoading(false)
-            })
-        return () => { alive = false }
-    }, [open])
+        void reload()
+    }, [open, reload])
 
     const localUpload = async (file: File) => {
         setUploading(true)
@@ -100,8 +77,8 @@ const ImagePicker = ({ open, onCancel, onPick, upload }: ImagePickerProps) => {
         <div className="editor-image-picker">
             {loading ? (
                 <div className="editor-image-picker-center"><Spin /></div>
-            ) : loadError ? (
-                <Alert type="error" showIcon message={loadError} />
+            ) : error ? (
+                <Alert type="error" showIcon message={error} />
             ) : images.length === 0 ? (
                 <Empty description="图库里还没有图片，可以用「本地上传」传一张" />
             ) : (
@@ -131,6 +108,20 @@ const ImagePicker = ({ open, onCancel, onPick, upload }: ImagePickerProps) => {
                             </Col>
                         ))}
                     </Row>
+                    {/* 「载入更多」是**手动**的（与图库页那条滚动自动续不同）：这是一个弹窗，
+                        没有"滚到底"这个动作可听，按钮是这里唯一能表达"还有下一页"的地方。
+                        只在一页真的取满（`hasMore`）时出现——凑不满一页就是到底了。 */}
+                    {hasMore && (
+                        <div className="editor-image-picker-more">
+                            <Button
+                                type="link"
+                                loading={loadingMore}
+                                onClick={() => { void loadMore() }}
+                            >
+                                载入更多
+                            </Button>
+                        </div>
+                    )}
                 </div>
             )}
         </div>

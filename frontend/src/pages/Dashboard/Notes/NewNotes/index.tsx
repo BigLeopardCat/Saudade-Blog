@@ -6,7 +6,7 @@ import {
     Form,
     Modal,
     Select,
-    Upload, Switch, Radio, UploadProps, UploadFile, GetProp, message, Row, Col, Card
+    Upload, Switch, Radio, UploadProps, UploadFile, GetProp, message, Row, Col, Card, Empty, Spin
 } from "antd";
 import {PlusOutlined, PictureOutlined, EditOutlined} from "@ant-design/icons";
 import React, {useEffect,  useState, useRef} from "react";
@@ -17,8 +17,9 @@ import {fetchNoteList} from "../../../../store/components/note.tsx";
 import {createNote, updateNote, delNote, autosaveDraft, getNoteForEdit, type AutosaveDraftPayload} from "../../../../apis/NoteMethods.tsx";
 import getToken from "../../../../apis/getToken.tsx";
 import ImageCompression from "../../../../apis/ImageCompression.tsx";
-import {uploadImages, getImageList} from "../../../../apis/ImageMethods.tsx";
+import {uploadImages} from "../../../../apis/ImageMethods.tsx";
 import { resolveApiAssetUrl, runtimeBaseURL } from '../../../../utils/runtimeApi';
+import {useGalleryPager} from "../../../../utils/galleryPager.ts";
 import CoverCropModal from '../../../../components/CoverCropModal';
 import NoteTagSelect from '../../../../components/NoteTagSelect/index.tsx';
 import {readListReturn} from '../AllNotes/listState';
@@ -232,9 +233,10 @@ const NewNotes = () => {
     // 标签字典现在由 NoteTagSelect 自己从 redux 取（编辑器不再直接读 tagList）
     const categories = useSelector((state: {categories: any}) => state.categories.categories);
 
-    // Gallery Modal State
+    // Gallery Modal State（20261014 起列表由 utils/galleryPager.ts 管：游标分页 + `hasMore`）
     const [galleryOpen, setGalleryOpen] = useState(false);
-    const [galleryImages, setGalleryImages] = useState<any[]>([]);
+    const { images: galleryImages, loading: galleryLoading, loadingMore: galleryLoadingMore,
+            error: galleryError, hasMore: galleryHasMore, reload: reloadGallery, loadMore: loadMoreGallery } = useGalleryPager();
 
     const formItemLayout = {
         labelCol: {
@@ -270,16 +272,12 @@ const NewNotes = () => {
         if (!id) setHydrated(true)
     },[id])
 
-    // Load images when gallery opens
+    // 打开选图弹窗时重拉第一页（`status === 200` 那条老判据换成了信封里的 `code`——
+    // 见 utils/galleryPager.ts：本仓的失败一律是 HTTP 200 + code 500）。
     useEffect(() => {
-        if (galleryOpen) {
-            getImageList().then(res => {
-                if(res.status === 200) {
-                   setGalleryImages(Array.isArray(res?.data?.data) ? res.data.data : []);
-                }
-            });
-        }
-    }, [galleryOpen]);
+        if (!galleryOpen) return;
+        void reloadGallery();
+    }, [galleryOpen, reloadGallery]);
 
     async function initNote(){
         if(id){
@@ -633,18 +631,36 @@ const NewNotes = () => {
                 width={800}
             >
                 <div style={{ maxHeight: '60vh', overflowY: 'auto' }}>
-                    <Row gutter={[16, 16]}>
-                        {galleryImages.map((img: any) => (
-                            <Col span={6} key={img.imageKey}>
-                                <Card
-                                    hoverable
-                                    cover={<img alt="example" src={resolveApiAssetUrl(img.imageUrl)} style={{ height: 100, objectFit: 'cover' }} />}
-                                    onClick={() => selectGalleryImage(img.imageUrl)}
-                                >
-                                </Card>
-                            </Col>
-                        ))}
-                    </Row>
+                    {galleryLoading ? (
+                        <div style={{ textAlign: 'center', padding: 24 }}><Spin /></div>
+                    ) : galleryError ? (
+                        <div style={{ color: '#d94f9a' }}>{galleryError}</div>
+                    ) : galleryImages.length === 0 ? (
+                        <Empty description="图库里还没有图片，可以去「图库」页传一张" />
+                    ) : (
+                        <>
+                            <Row gutter={[16, 16]}>
+                                {galleryImages.map((img: any) => (
+                                    <Col span={6} key={img.imageKey}>
+                                        <Card
+                                            hoverable
+                                            cover={<img alt="example" src={resolveApiAssetUrl(img.imageUrl)} style={{ height: 100, objectFit: 'cover' }} />}
+                                            onClick={() => selectGalleryImage(img.imageUrl)}
+                                        >
+                                        </Card>
+                                    </Col>
+                                ))}
+                            </Row>
+                            {/* 与编辑器那颗「从图库选图」一样：弹窗里没有"滚到底"可听，按页手动续 */}
+                            {galleryHasMore && (
+                                <div style={{ textAlign: 'center', marginTop: 12 }}>
+                                    <Button type="link" loading={galleryLoadingMore} onClick={() => { void loadMoreGallery() }}>
+                                        载入更多
+                                    </Button>
+                                </div>
+                            )}
+                        </>
+                    )}
                 </div>
             </Modal>
 

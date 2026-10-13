@@ -46,6 +46,7 @@
 import functools
 import http.server
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -97,11 +98,20 @@ const req = async (cfg: any) => {
     url, method,
     // FormData 序列化出来是 {}，所以单记一份文件名 —— 上传断言靠它
     form: isForm ? { field: 'file', name: (cfg.data.get('file') as File)?.name || '' } : null,
+    // 查询串（图库分页的游标与页大小都从这里断言；别的接口不带 params ⇒ null）
+    params: cfg.params || null,
   });
   await delay(20);
   if (url === '/api/protect/images') {
     if ((window as any).__imgFail) return raw({ code: 500, message: '图库读取失败', data: '' });
-    return env(wire((window as any).__images));
+    // 20261014：这条桩要**照着真接口的语义答** —— 真接口认 `image_key < before` 与 `limit`。
+    // 桩若无视查询串（照旧整份回），分页那一节就会在"每页都是全量"的假世界里变绿。
+    const all = ((window as any).__images as any[]) || [];
+    const p = cfg.params || {};
+    let rows = all;
+    if (p.before != null) rows = rows.filter((r) => r.imageKey < p.before);
+    if (p.limit != null) rows = rows.slice(0, p.limit);
+    return env(wire(rows));
   }
   if (url === '/api/protect/upload') {
     if ((window as any).__upFail) return raw({ code: 500, message: 'R2 配额已满，暂时不能上传', data: '' });
@@ -267,6 +277,16 @@ def build_sandbox() -> pathlib.Path:
            "(isForbidden(ch) ? pctEncode(ch) : ch)", "ch", "assetUrl 编码")
     esbuild(noencode, "entry.tsx", "bundle.js")
     write_html(noencode, "bundle.js", css)
+
+    # 负控丁（第七节）：把"下一页的游标"从**最后一张**改成**第一张** ⇒ 第二次请求必然把
+    # 第一页原样再要一遍，列表里出现重复行、最后一页永远够不着。没有它，第七节那条
+    # "点完变成 65 张且不重复"可能只是"桩反正把整份都回了"（假绿）。
+    badcursor = fork(sb, "badcursor")
+    mutate(badcursor, "src/utils/galleryPager.ts",
+           "const last = loaded.current[loaded.current.length - 1];",
+           "const last = loaded.current[0];", "分页游标")
+    esbuild(badcursor, "entry.tsx", "bundle.js")
+    write_html(badcursor, "bundle.js", css)
     return sb
 
 
@@ -291,6 +311,14 @@ URL = BASE + "index.html"
 NOSTOP_URL = BASE + "nostop/index.html"
 OLDCHECK_URL = BASE + "oldcheck/index.html"
 NOENCODE_URL = BASE + "noencode/index.html"
+BADCURSOR_URL = BASE + "badcursor/index.html"
+
+# 页大小取自**唯一那一份**常数（`apis/ImageMethods.tsx`）：这里写死 60 就等于把契约抄成两份，
+# 改了实现而没改这里的话，第七节的夹具会静默变得不再"大于一页"（那才是真正的假绿）。
+PAGE_SIZE = int(re.search(r"GALLERY_PAGE_SIZE\s*=\s*(\d+)",
+                          (FE / "src/apis/ImageMethods.tsx").read_text(encoding="utf-8")).group(1))
+# 服务端按 `image_key DESC` 出，>一页才谈得上续拉；多出的 5 张正是"最后一页"
+BIG = [{"imageKey": k, "imageUrl": "/api/protect/download/p%d.png" % k} for k in range(3000, 3000 - (PAGE_SIZE + 5), -1)]
 
 # 内置图片按钮（左组下标 5）。**必须带左组前缀**：右组下标 5 是「源码」那颗按钮。
 IMG = '.bytemd-toolbar-left > .bytemd-toolbar-icon[bytemd-tippy-path="5"]'
@@ -542,9 +570,69 @@ with sync_playwright() as pw:
     check("负控：encodeAssetUrl 改成恒等 ⇒ 裸空格原样进正文（说明上面那条判据是有效的）",
           ndoc == "\n![](%s)" % SPACEY, repr(ndoc))
 
+    # ═════════════════════════════════════════════════════════════════════════════
+    print("\n⑦ 一页装不下时「载入更多」续拉（游标 = 最后一张；负控：改成第一张 ⇒ 重复行）")
+    # ═════════════════════════════════════════════════════════════════════════════
+    # 用户报的是"整页拉"这件事（20261014）：图库攒到几百张时，每开一次选图弹窗就把整表
+    # 拉一遍。这一节锁的是"分页真的发生了"——
+    #   · 第一页只回页大小那么多，且请求里**带上了 limit**；
+    #   · 「载入更多」把**已加载的最后一张**当游标（服务端认 `image_key < before`）；
+    #   · 续拉是**追加**（第二页接在后面，不是把第一页换掉），且不出现重复行；
+    #   · 凑不满一页 ⇒ `hasMore` 变假、按钮消失（界面不再假装"还有"）。
+    more = ".editor-image-picker-more button"
+
+    def keys(pg):
+        """当前网格里的 imageKey 序列（从缩略图 src 的 `p<key>.png` 反解，顺序即渲染顺序）。"""
+        return [int(m) for m in pg.evaluate(
+            """() => [...document.querySelectorAll('.editor-gallery-item')]
+                 .map((i) => (i.getAttribute('src') || '').match(/p(\\d+)\\.png/))
+                 .map((m) => (m ? m[1] : ''))""") if m]
+
+    page7 = mount(br, images=BIG)
+    check("前置：夹具比一页大（否则这一节什么都没证明）", len(BIG) > PAGE_SIZE, f"{len(BIG)} vs {PAGE_SIZE}")
+    click_image_icon(page7)
+    page7.wait_for_timeout(300)
+    check("第一页只渲染页大小那么多张", len(cards(page7)) == PAGE_SIZE, str(len(cards(page7))))
+    img_calls = page7.evaluate("() => window.__calls.filter((c) => c.url === '/api/protect/images')")
+    check("请求里带了 limit = 页大小（不带就是整表拉，正是本轮要治的那件事）",
+          bool(img_calls) and img_calls[-1]["params"] and img_calls[-1]["params"].get("limit") == PAGE_SIZE,
+          str(img_calls[-1]["params"] if img_calls else None))
+    check("第一页不带 before（不传就是第一页）",
+          bool(img_calls) and "before" not in (img_calls[-1]["params"] or {}),
+          str(img_calls[-1]["params"] if img_calls else None))
+    check("第一页正好取满 ⇒ 出现「载入更多」", page7.evaluate(f"() => document.querySelectorAll('{more}').length") == 1)
+    check("第一页就是服务端给的那一段（第一张 = 夹具头一张）", keys(page7)[:1] == [BIG[0]["imageKey"]], str(keys(page7)[:2]))
+
+    page7.click(more)
+    page7.wait_for_timeout(600)
+    img_calls = page7.evaluate("() => window.__calls.filter((c) => c.url === '/api/protect/images')")
+    ks = keys(page7)
+    tail = img_calls[-1]["params"].get("before") if img_calls else None
+    check("「载入更多」发的请求带上了 before = **已加载的最后一张**的 imageKey",
+          tail == BIG[PAGE_SIZE - 1]["imageKey"], f"before={tail} 期望={BIG[PAGE_SIZE - 1]['imageKey']}")
+    check("续拉是**追加**：总数 = 一页 + 第二页", len(ks) == len(BIG), f"{len(ks)} vs {len(BIG)}")
+    check("第二页接在**后面**（头一张没变 —— 不是换了一页）", ks[:1] == [BIG[0]["imageKey"]], str(ks[:2]))
+    check("没有重复行（同一张图出现两次 = 游标取错了）", len(set(ks)) == len(ks), f"{len(ks)-len(set(ks))} 行重复")
+    check("续拉后网格里是两组不同的 key（第一段 + 尾巴）",
+          ks == [b["imageKey"] for b in BIG], str(ks[PAGE_SIZE - 1:PAGE_SIZE + 2]))
+    check("第二页凑不满 ⇒ 「载入更多」消失（界面不再假装还有）",
+          page7.evaluate(f"() => document.querySelectorAll('{more}').length") == 0)
+
+    # 负控丁：游标改成"第一张" ⇒ 第二次请求把第一页原样再要一遍，列表里**必须**出现重复行
+    n7 = mount(br, images=BIG, url=BADCURSOR_URL)
+    click_image_icon(n7)
+    n7.wait_for_timeout(300)
+    if n7.evaluate(f"() => document.querySelectorAll('{more}').length") == 1:
+        n7.click(more)
+        n7.wait_for_timeout(600)
+    nks = keys(n7)
+    check("负控：游标取第一张 ⇒ 第二页把第一页重复了一遍（说明上面那条'不重复'不是假绿）",
+          len(nks) > len(set(nks)), f"{len(nks)} 行 / {len(set(nks))} 个不同 key")
+
     for p, name in ((page, "主档"), (npage, "负控甲（抹 stopPropagation）"),
                     (opage, "负控乙（修前判据）"),
-                    (page6, "第六节主档"), (n6, "负控丙（编码改成恒等）")):
+                    (page6, "第六节主档"), (n6, "负控丙（编码改成恒等）"),
+                    (page7, "第七节主档"), (n7, "负控丁（游标取第一张）")):
         check(f"{name}没有页面异常", not p.errs, "; ".join(p.errs[:3]))
 
     br.close()

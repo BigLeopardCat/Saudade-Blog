@@ -38,6 +38,13 @@
     padding: 32px 0;
 }
 
+/* 「载入更多」那一行（图库分页，20261014）——它住在**滚动容器里**，所以居中靠这一句，
+   不能像外面那些块一样用 flex 居中父元素。 */
+.editor-image-picker-more {
+    text-align: center;
+    padding: 8px 0 4px;
+}
+
 /* 图库里那张图的原名（已经剥掉 14 位时间戳前缀，见 utils/assetName.ts） */
 .editor-gallery-name {
     font-size: 12px;

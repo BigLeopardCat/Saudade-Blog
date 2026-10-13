@@ -1,9 +1,27 @@
 import http from "./axios.tsx";
 
-function getImageList(){
+/**
+ * 图库一页取多少张（20261014 起图库分页）。
+ *
+ * ⚠️ **必须与"还有没有下一页"的判据同源**：服务端不报总数，客户端认的是
+ * "这一次回来的行数 == 页大小 ⇒ 可能还有下一页"（见 `utils/galleryPager.ts`）。
+ * 这个常数同时是**请求里的 limit** 与**那条比较的右边**，所以它只能有一份。
+ */
+const GALLERY_PAGE_SIZE = 60;
+
+/**
+ * 图库列表（游标分页）。`before` = 上一页最后一张的 `imageKey`，不传就是第一页。
+ *
+ * 服务端（`routes/upload.rs::list_images`）认的是 `image_key < before`：排序键是自增
+ * 主键、新图插在头部，用 offset 会在"翻页期间有人上传"时重复/漏行，游标不会。
+ * 响应形状没变（`data` 仍是数组）——所以老调用方传不传都拿得到一份合法的列表，
+ * 差别只在"有多少张"。
+ */
+function getImageList(before?: number){
     return http({
         url: '/api/protect/images',
-        method: 'GET'
+        method: 'GET',
+        params: { limit: GALLERY_PAGE_SIZE, ...(before != null ? { before } : {}) },
     })
 }
 
@@ -50,4 +68,4 @@ function getR2Usage(){
     })
 }
 
-export {getImageList, delImages, uploadImages, getR2Usage};
+export {getImageList, delImages, uploadImages, getR2Usage, GALLERY_PAGE_SIZE};

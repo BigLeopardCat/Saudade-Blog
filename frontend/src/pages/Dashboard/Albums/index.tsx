@@ -9,7 +9,7 @@ import type { UploadProps } from 'antd';
 import { message, Upload } from 'antd';
 import CheckButton from "../../../components/Buttons/CheckButton";
 import {ImgUrl} from "../../../interface/ImgTypes";
-import {delImages, getImageList, getR2Usage, uploadImages} from "../../../apis/ImageMethods.tsx";
+import {delImages, getR2Usage, uploadImages} from "../../../apis/ImageMethods.tsx";
 import type {UploadTarget} from "../../../apis/ImageMethods.tsx";
 import ImageCompression from "../../../apis/ImageCompression.tsx";
 import { resolveApiAssetUrl } from '../../../utils/runtimeApi';
@@ -17,6 +17,7 @@ import { assetDisplayName } from '../../../utils/assetName';
 import type {R2Usage} from "../../../interface/Setting.d";
 import {usagePercent, uploadBlocked} from "../../../utils/r2Quota";
 import {useNavigate} from "react-router-dom";
+import {useGalleryPager} from "../../../utils/galleryPager.ts";
 
 
 /** 图库的两种展示方式（用户要求：一种当前的直接展开，一种列表——行首缩略图 + 图片名）。 */
@@ -31,7 +32,8 @@ const Albums = () => {
     const [uploadedFiles, setUploadedFiles] = useState<UploadFile[]>([]);
     const [SelectDelete,setSelectDelete] = useState(0)
     const [checkStatus, setCheckStatus] = useState<Record<string, boolean>>({});
-    const [staticDate, setStaticDate] = useState<ImgUrl[]>([]);
+    // 图库列表（20261014 起是游标分页，逻辑在 utils/galleryPager.ts，三个消费方共用一份）
+    const { images: staticDate, reload: reloadImages, loadMore, hasMore } = useGalleryPager();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isModaldelOpen, setIsDelModalOpen] = useState(false);
     const [view, setView] = useState<AlbumView>(() => {
@@ -78,13 +80,9 @@ const Albums = () => {
     },[])
 
 
-    // 获取图片列表
+    /** 重拉第一页（挂载 / 删完 / 传完）。名字保留：三处调用点说的都是"从头来一次"。 */
     const initImageList = () => {
-        getImageList().then((res) => {
-            setStaticDate(res.data.data)
-        }).catch((error) => {
-            throw error
-        })
+        void reloadImages()
     }
 
     // ── R2 用量 ────────────────────────────────────────────────────────────
@@ -109,9 +107,11 @@ const Albums = () => {
         navigate('/dashboard/usercontrol', { state: { tab: '4' } });
     };
 
-    //回调函数区域
-    const fetchData = async () => {
-
+    // 回调函数区域。`fetchData` 从前是个**空函数**（壳搭好了、没人接）：`InfiniteScroll`
+    // 一直挂着 `hasMore={true}` 在滚到底时调它，而它什么都不做 ⇒ 滚到底只是"看起来
+    // 没反应"。20261014 起它接的是真分页：游标 = 已加载的最后一张（见 galleryPager.ts）。
+    const fetchData = () => {
+        void loadMore();
     };
 
     const Delete = useCallback(() => {
@@ -255,11 +255,13 @@ const Albums = () => {
         <InfiniteScroll
         dataLength={staticDate.length}
         next={fetchData}
-        hasMore={true}
+        hasMore={hasMore}
         loader={null}
         endMessage={
             <p style={{ textAlign: 'center' }}>
-                <b>Yay! You have seen it all</b>
+                {/* 有分页之后"到底了"是常态：`hasMore` 为假时 InfiniteScroll 就渲染这一句。
+                    原来是句英文（"Yay! You have seen it all"）——全站中文，换成同一句人话。 */}
+                <b>没有更多了</b>
             </p>
         }
     >
