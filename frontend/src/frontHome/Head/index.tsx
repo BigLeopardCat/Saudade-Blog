@@ -1,6 +1,6 @@
 import {Avatar, Card, ConfigProvider, Modal} from 'antd'
 import './index.sass'
-import {Key, ReactElement, ReactNode, ReactPortal, useEffect, useMemo, useRef, useState} from "react";
+import {Key, ReactElement, ReactNode, ReactPortal, useEffect, useRef, useState} from "react";
 import {useLocation, useNavigate} from "react-router-dom";
 import {debounce} from 'lodash';
 import Switch from "../../components/Switch";
@@ -205,11 +205,9 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
         try { window.dispatchEvent(new CustomEvent('darkmode-change', { detail: !isDark })); } catch {/* ignore */}
     };
 
-    // 序号闸（只认最后一次查询）+ 指向"最新 performSearch 闭包"的 ref——两者都在下面那段
-    // 注释里解释。⚠️ ref 用 `null` 起步、`?.` 调用：写成 `useRef(performSearch)` 会在
-    // `const performSearch` 求值之前读它 ⇒ TDZ 报错、整页白屏。
+    // 序号闸（只认最后一次查询）——下面那段注释里解释。⚠️ 它必须**声明在
+    // `performSearch` 之前**（函数体里读它），而 `useRef` 的求值顺序就是声明顺序。
     const searchSeq = useRef(0);
-    const performSearchRef = useRef<((kw: string) => Promise<void>) | null>(null);
 
     // Debounced search function
     const performSearch = async (keyword: string) => {
@@ -259,21 +257,48 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
     // 既有套件量不出来，是因为它一直用 `fill()`：一次 input 事件，永远只有一个实例。
     //
     // 修法两头都要，缺一条都还抖：
-    //   ① 防抖器只建一次（`useMemo` + 存 `performSearch` 的 ref，保证读到的仍是最新闭包）；
+    //   ① 挂着的那一次请求必须**能被顶掉**（`searchTimer` 一个定时器 + 下面两个函数）；
     //   ② 回包只认**最后一次**查询（`searchSeq` 序号闸）——网络乱序时旧关键词的结果会盖在
     //      新结果上，那已经不只是抖，是**显示错的搜索结果**（本地假后端是同步返回的，
     //      所以只有真网络才看得见，判据因此要在沙箱里手造乱序，见那个套件的「乱序回包」节）。
     //
-    const debouncedSearch = useMemo(
-        () => debounce((kw: string) => { void performSearchRef.current?.(kw); }, 500),
-        [],
-    );
-    // 让 ref 永远指向**最新一次 render** 的 performSearch（先挂载、后赋值：本组件的
-    // performSearch 只碰状态 setter 与模块级 API，取首轮闭包其实也不会错，留这一行是
-    // 为了将来有人在里面读 state 时不静默变旧闭包）。
-    useEffect(() => { performSearchRef.current = performSearch; });
-    // 卸载（或换页）时把挂着的那一次清掉：否则它会在这张页面已经走了之后再 setIsSearching
-    useEffect(() => () => debouncedSearch.cancel(), [debouncedSearch]);
+    // ⚠️ ①不用 lodash 的 `debounce`（第一版就是它）：`debounce(...)` 得建在组件体里，
+    //    而"每次 render 建一个新实例"正是这个 bug 本身；改成 `useMemo(…, [])` 包一层能过
+    //    tsc 与本机套件，却被 CI 的 React Compiler 闸判死
+    //    （`react-hooks/preserve-manual-memoization`：这个 `useMemo` 编译器复现不出来 ⇒
+    //    整个组件被跳过优化）。而"清掉上一个定时器、再排一个"本来就不需要库——
+    //    这里用文件里已有的那个 timed-ref 写法（见上面的 `hoverLeaveTimer`），
+    //    组件里一处手写记忆化都不留，编译器没有可判错的东西。
+    const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    /** 撤掉挂着的那一次防抖查询（清空输入 / 回车立即查 / 卸载三处都要它）。 */
+    const cancelScheduledSearch = () => {
+        if (searchTimer.current !== null) {
+            clearTimeout(searchTimer.current);
+            searchTimer.current = null;
+        }
+    };
+
+    /** 把这一次查询排在 500ms 之后（trailing）；期间再敲一个字就被顶掉，只发最后一次。
+     *  取当前 render 的 `performSearch` 闭包**是对的**：它只碰状态 setter、序号闸与
+     *  模块级 API，读不到任何会变旧的东西。 */
+    const scheduleSearch = (kw: string) => {
+        cancelScheduledSearch();
+        searchTimer.current = setTimeout(() => {
+            searchTimer.current = null;
+            void performSearch(kw);
+        }, 500);
+    };
+
+    // 卸载（或换页）时把挂着的那一次清掉：否则它会在这张页面已经走了之后再 setIsSearching。
+    // 清理体**内联**在这里、不调 `cancelScheduledSearch`：那样会让 exhaustive-deps 要求
+    // 把它列进依赖，而依赖一变这个 effect 就会重跑、每次都把挂着的定时器清掉——防抖直接失效。
+    useEffect(() => () => {
+        if (searchTimer.current !== null) {
+            clearTimeout(searchTimer.current);
+            searchTimer.current = null;
+        }
+    }, []);
 
     const onSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const val = e.target.value;
@@ -284,16 +309,16 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
             // 清空输入框之后，先前在途的那次回包还会把结果面**填回来**（用户看到
             // "框已经空了，底下还挂着一堆上一次的结果"）；挂着的防抖 timer 也会在
             // 清空之后到点，用一个已经不在框里的旧关键词再发一次。
-            debouncedSearch.cancel();
+            cancelScheduledSearch();
             void performSearch('');
             return;
         }
-        debouncedSearch(val);
+        scheduleSearch(val);
     };
 
     const handleSearch = async (e: any) => {
          if (e.key === 'Enter') {
-             debouncedSearch.cancel(); // cancel pending
+             cancelScheduledSearch(); // 回车立即查 ⇒ 先顶掉挂着的那一次，别查两遍
              performSearch(searchKeyword);
          }
     }
