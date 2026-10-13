@@ -218,9 +218,16 @@ const BoardManage = () => {
     }, [page, catFilter, applied, asc]);
 
     // 两个审核开关：只在挂载时读一次（它们与翻页/筛选无关，别跟着重复拉）。
+    //
+    // ⚠️ 这里**不许**加 `// eslint-disable-next-line react-hooks/exhaustive-deps`：
+    // `loadSwitches` 一个响应式值都不读（只用 `http` 与两个 setter），exhaustive-deps
+    // 因此**不报**它 ⇒ 加一句就是"多余的 disable"，而 `linterOptions` 里那条
+    // `reportUnusedDisableDirectives: 'error'` 会把它判成 **error**、整个 check job 变红
+    // ⇒ 那次 push 一个字节都不会部署（20261014 实测：本批第一次就是栽在这一行）。
+    // 上面那条 effect 的 disable 是**必须**的，别跟着一起删：那里 `load` 读了
+    // `page/catFilter/applied/asc`，是真报了才需要压。
     useEffect(() => {
         void loadSwitches();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     /* 跨端同步（20260926，用户报「评论状态变更前端跟不上 agent，要刷新网页」）：
