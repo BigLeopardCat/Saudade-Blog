@@ -1239,6 +1239,14 @@ async fn test_聚合搜索的四类命中集合与可见性谓词() {
 /// 它照旧是"真实内容里不可能出现的怪串"（精确集合断言的前提）。
 const BOARDQ_KW: &str = "qqzzboardkw";
 
+/// 调用方。**必须是管理员**——这条接口住在 `protected_routes` 域里，域上挂了
+/// `auth_guard`（`routes/mod.rs` 末尾那个 `route_layer`），而它判的是**库里的
+/// `user.role`**（`authz::can_access_console`，不信 JWT 里的 role）⇒ 光有一枚合法令牌
+/// 只会拿到 403。（本条用例的第一版就是这么写的：普通 user 令牌，CI 上第一条断言
+/// 就报了 403——handler 自己那个 `current_uid` 只是域内的第二道、更弱的检查。）
+/// 夹具里没有任何留言指向这个账号 ⇒ 他不参与命中集合。
+const BOARDQ_UID_ADMIN: i32 = 900000050;
+
 const BOARDQ_UID_A: i32 = 900000051; // 用户名里带关键词
 const BOARDQ_UID_B: i32 = 900000052; // 昵称里带关键词，且名下**有三条**命中行
 /// 一个**不存在的用户**：孤儿留言指向它（线上对应"发布者账号已经删了"）。
@@ -1293,16 +1301,17 @@ async fn test_后台留言列表的服务端筛选分页与连接语义() {
     };
 
     // ── 播种（先清自己的残留：上次跑挂了会留下行）────────────────────────
-    // `talk` 的孤儿行指向 `BOARDQ_GHOST_UID`，它没有 user 行可删——注意别在这里
-    // "顺手"把 51/52 之外的东西也删掉。
+    // `talk` 的孤儿行指向 `BOARDQ_GHOST_UID`，它**没有** user 行可删——别在这里
+    // "顺手"把它也塞进 DELETE：那行删不掉的 SQL 会让播种当场 panic。
     for id in BOARDQ_HITS.into_iter().chain([BOARDQ_DECOY, BOARDQ_OTHER_SRC]) {
         exec(&db, &format!("DELETE FROM talk WHERE id = {id}")).await;
     }
-    for id in [BOARDQ_UID_A, BOARDQ_UID_B] {
+    for id in [BOARDQ_UID_ADMIN, BOARDQ_UID_A, BOARDQ_UID_B] {
         exec(&db, &format!("DELETE FROM user WHERE id = {id}")).await;
     }
 
-    // 两个用户：**命中四列里的不同两列**（用户名的是 A、昵称的是 B）。
+    // 三个用户：一个是调用方（管理员，见上面那条常量的说明），另外两个**命中四列里的
+    // 不同两列**（用户名的是 A、昵称的是 B）。
     // B 名下三条留言 ⇒ "join 让行翻倍"若有发生，B 那三条会变成 9 行、并集立刻对不上。
     // A 的昵称**刻意不含关键词**（四点全不沾）：四列里只要有一列没被真跑过，
     // 精确集合断言就还绿着——所以"哪一列命中"必须一列一列地钉死。
@@ -1313,6 +1322,7 @@ async fn test_后台留言列表的服务端筛选分页与连接语义() {
         &db,
         &format!(
             "INSERT INTO user (id, username, nickname, password, role) VALUES \
+             ({BOARDQ_UID_ADMIN}, 'nb-qqzz-admin', 'nb-qqzz-admin', 'x', 'admin'), \
              ({BOARDQ_UID_A}, '{BOARDQ_KW}_a', 'nb-jia-qqzz', 'x', 'user'), \
              ({BOARDQ_UID_B}, 'b_{BOARDQ_KW}', '{BOARDQ_KW}_yi', 'x', 'user')"
         ),
@@ -1320,7 +1330,8 @@ async fn test_后台留言列表的服务端筛选分页与连接语义() {
     .await;
 
     // 九条 talk：七条该被搜到、两条是负控（四列全不命中的诱饵、`src='talk'` 的说说）。
-    // 每一行的 `title` 都是印章（留言那一列的语义），正文只在前两行与孤儿行里出现关键词。
+    // 每一行的 `title` 都是印章（留言那一列的语义）；正文里有关键词的只有三条
+    //（BODY / OTHER_SRC / ORPHAN）——OTHER_SRC 那一条正是"src 谓词"的负控。
     exec(
         &db,
         &format!(
@@ -1340,8 +1351,9 @@ async fn test_后台留言列表的服务端筛选分页与连接语义() {
 
     // ── 真链路 ────────────────────────────────────────────────────────
     jwt_secret();
-    // 这条接口只要求"登录了"（`current_uid` ⇒ `auth_jwt::auth_uid`），不要管理员角色。
-    let token = auth_jwt::create_token(BOARDQ_UID_A, "user", 0);
+    // 域名「管理员」是 `auth_guard` 判的（查库、只看按 uid 取回来的那一行的 `role`），
+    // 而 JWT 里的 role 字符串它不读 ⇒ 这里给 "admin" 只是与库里那行保持一致的写法。
+    let token = auth_jwt::create_token(BOARDQ_UID_ADMIN, "admin", 0);
     let app = test_app(db_app);
 
     // ① 分页的第一页：总数来自 COUNT、次序是"时间倒序 → id 倒序"。
@@ -1356,7 +1368,7 @@ async fn test_后台留言列表的服务端筛选分页与连接语义() {
     assert_eq!(st, StatusCode::OK, "留言管理列表不该在 HTTP 层失败：{j}");
     assert_eq!(
         j["code"], 200,
-        "信封 code 必须是 200（走到这一步说明令牌经住了 auth_uid）：{j}"
+        "信封 code 必须是 200（走到这一步说明令牌经住了 auth_guard 与 auth_uid）：{j}"
     );
     assert_eq!(
         j["total"], 7,
