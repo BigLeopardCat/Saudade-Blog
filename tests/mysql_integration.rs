@@ -1284,7 +1284,15 @@ fn board_ids(j: &serde_json::Value) -> Vec<i32> {
         .as_array()
         .unwrap_or_else(|| panic!("data 不是数组（信封形状变了？）：{j}"))
         .iter()
-        .map(|r| r["id"].as_i64().expect("留言行没有整数 id") as i32)
+        // ⚠️ 这一行的 id **不叫 `id`**：`BoardAdminDto` 把它 `rename` 成了 `talkKey`
+        //（留言管理那一页的前端也按 `talkKey` 读）。第一版这里写的是 `id`，CI 上当场
+        // panic 在"没有整数 id"——断言的行形状同样是住在别人手里的前提。
+        .map(|r| {
+            r["talkKey"]
+                .as_i64()
+                .unwrap_or_else(|| panic!("留言行没有整数 talkKey：{r}"))
+                as i32
+        })
         .collect()
 }
 
