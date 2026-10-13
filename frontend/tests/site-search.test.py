@@ -87,6 +87,20 @@ const http = async (cfg: any) => {
   await delay(30);
 
   if (url === '/api/public/search') {
+    // 竞态用例专用（`__seqTest`）：**回什么由关键词本身决定**，且指定某个关键词走慢通道。
+    // 这样"最后画在屏幕上的是哪一次的结果"是一眼可读的（条数 = 关键词长度、标题里带关键词）。
+    if ((window as any).__seqTest) {
+      const kw = ((cfg.data || {}).keyword || '') as string;
+      if (kw === (window as any).__slowKw) await delay(1500);
+      const n = kw.length;
+      return env({
+        total: n, counts: { note: n, talk: 0, board: 0, comment: 0 },
+        notes: Array.from({ length: n }, (_, i) => ({
+          type: 'note', key: 100 + i, title: `№${i + 1}·${kw}`, snippet: '正文 ' + kw,
+          author: '站长', noteId: null, createTime: '2026-07-01 10:00:00' })),
+        talks: [], board: [], comments: [],
+      });
+    }
     if ((window as any).__searchFail) return fail('查询失败，请稍后再试');
     if ((window as any).__searchEmpty) {
       return env({ total: 0, counts: { note: 0, talk: 0, board: 0, comment: 0 },
@@ -261,6 +275,12 @@ def badges(p):
                                   "els => els.map(e => e.textContent.trim())")
 
 
+def titles(p):
+    """结果行的标题文本（留言那一行没有标题，自然不在里面）——①d 判「屏幕上是谁的结果」用。"""
+    return p.eval_on_selector_all(".search-item .search-item-title",
+                                  "els => els.map(e => e.textContent.trim())")
+
+
 def nav_last(p):
     return p.evaluate("() => (window.__nav || []).slice(-1)[0]")
 
@@ -291,6 +311,68 @@ with sync_playwright() as p:
           s and s[0]["url"] == "/api/public/search" and s[0]["method"] == "POST"
           and (s[0]["data"] or {}).get("keyword") == "河灯",
           str(s[:1]))
+
+    # ── ①b 逐字符输入（用户 20261013 报的「输入内容时抖动」）────────────────────
+    # ①节一直用 `fill()`，而 `fill()` 只发**一次** input 事件 ⇒ 它看不见"防抖器每次
+    # render 换一个新的"这件事。真人是逐字符敲的，这里就必须逐字符敲（`keyboard.type`）。
+    # 修复前的实测：敲 5 个字发 **5 次**请求（河 / 河灯 / 河灯留 / 河灯留言 / 河灯留言板），
+    # 每个回包各 `setAgg` 一次 ⇒ 结果面随回包先后反复重画（抖动），且乱序时会显示错的词的结果。
+    print("\n①b 逐字符敲入：整串只发一次请求（防抖器只建一次，不是每次 render 一个新的）")
+    pn, errs = open_modal(br)
+    pn.click(".searchModalInput")
+    pn.keyboard.type("河灯留言板", delay=60)      # 5 个字、共 ~300ms < 500ms 防抖
+    pn.wait_for_timeout(1200)
+    s = searches(pn)
+    check("敲 5 个字只发一次请求（修复前 5 次）", len(s) == 1,
+          f"{len(s)} 次：" + str([(c["data"] or {}).get("keyword") for c in s]))
+    check("发出去的是**整串**关键词，不是某个中间前缀",
+          s and (s[0]["data"] or {}).get("keyword") == "河灯留言板",
+          str([(c["data"] or {}).get("keyword") for c in s]))
+    pn.close()
+    all_errs.extend(errs)
+
+    # ── ①c 清空输入框 ───────────────────────────────────────────────────────
+    # 防御的是"清空之后，先前沿途按键留下的那些防抖定时器一个个到点，用**已经不在框里**
+    # 的旧关键词接着发请求"。修复前实测：敲两个字（河、河灯）后立刻清空，照样发出
+    # **2 次**（`河`、`河灯`）——因为每次按键各建了一个防抖器，清空这条早退路径谁也没 cancel。
+    # 注意症状在 DOM 里是**看不见**的：卡片整块的 display 由 `searchKeyword` 决定
+    # （空 ⇒ 整块隐藏），所以在途回包就算把 agg 填回来也渲染不出来 ⇒ 判据只能落在
+    # 请求本身（"清空后一次都不许发"），不能落在"列表是不是空的"（那恒真）。
+    print("\n①c 清空输入框：挂着的那些防抖不许再发请求")
+    pn, errs = open_modal(br)
+    pn.click(".searchModalInput")
+    pn.keyboard.type("河灯", delay=40)
+    pn.wait_for_timeout(60)                      # 仍在 500ms 防抖窗口内
+    pn.fill(".searchModalInput", "")
+    pn.wait_for_timeout(1000)                    # 足够让那次防抖到点（若没被 cancel）
+    check("清空之后一次请求都没发（挂着的那次被 cancel 掉了）",
+          len(searches(pn)) == 0,
+          f"{len(searches(pn))} 次：" + str([(c["data"] or {}).get("keyword") for c in searches(pn)]))
+    pn.close()
+    all_errs.extend(errs)
+
+    # ── ①d 乱序回包 ────────────────────────────────────────────────────────
+    # 真网络上"慢的是前一次查询"是常态，本地假后端按调用顺序同步返回 ⇒ 只有**手造慢通道**
+    # 才看得见。没有序号闸时，慢的旧回包最后落地、把新关键词的结果盖掉 —— 那不只是抖，
+    # 是**显示错的搜索结果**（框里写着 A，列表里是 B 的结果）。
+    print("\n①d 乱序回包：先发的慢回包不许盖掉后发的快结果")
+    pn, errs = open_modal(br, "window.__seqTest = true; window.__slowKw = '河';")
+    pn.click(".searchModalInput")
+    pn.keyboard.type("河", delay=40)
+    pn.wait_for_timeout(700)                     # 第一条（关键词「河」，慢通道 1.5s）已在途
+    check("这时确实有一条请求在途", len(searches(pn)) == 1, f"{len(searches(pn))} 次")
+    pn.keyboard.type("灯", delay=40)             # 值变成「河灯」→ 500ms 后再发一条（快）
+    pn.wait_for_timeout(1000)                    # 快的那条先落地
+    check("先看到的是新关键词「河灯」的结果（2 条）",
+          pn.locator(".search-item").count() == 2,
+          f"{pn.locator('.search-item').count()} 条：" + str(titles(pn)))
+    pn.wait_for_timeout(1700)                    # 慢的那条（旧关键词「河」）此刻才落地
+    check("旧关键词的慢回包落地后，列表仍是「河灯」的结果（没有被盖回 1 条）",
+          titles(pn) == ["№1·河灯", "№2·河灯"], str(titles(pn)))
+    check("两次请求都发出去了（判据是「谁画在屏幕上」，不是「省掉了一次请求」）",
+          len(searches(pn)) == 2, f"{len(searches(pn))} 次")
+    pn.close()
+    all_errs.extend(errs)
 
     # ── ② 标题行：总数 + 四枚计数 ────────────────────────────────────────────
     print("② 标题行 =「搜索结果（总数）」+ 文章/说说/留言/评论 四枚计数")
@@ -447,6 +529,116 @@ with sync_playwright() as p:
                   f"font={m['inputFont']} card={m['cardRatio']:.2f}")
         pg.close()
         all_errs.extend(errs)
+
+    # ── ⑩ 遮罩与药丸：背景压得够不够暗、字压在上面读不读得出来 ────────────────
+    # 用户 20261013 原话：「检索框把背景暗度和迷糊度压得不够低，导致看不清检索框部分文本」。
+    # 这个弹窗的**全部内容都没有自己的底**（`Modal.contentBg=transparent` + `.searchModal`
+    # transparent），遮罩就是它的背景 ⇒ 底下那屏从遮罩的透明里透上来，字压在**忽明忽暗**的
+    # 图案上。所以这里量两件东西：
+    #   ① 遮罩这一层有没有真的被压暗/模糊（computed 值——这是**确定性**的读数）；
+    #   ② 药丸里那行字底下的亮度**跳动幅度**（像素读数——"读起来累不累"的真身是它，
+    #      不是平均对比度：修复前黑字压在 0.7 白药丸上本来就有 9.9:1）。
+    #
+    # 样板是**注入的纯黑白棋盘**（8px，约当正文的字级细节），不是沙箱里那点内容：
+    # 沙箱 Head 后面本来是一片空白，量什么都是 0.01（实测），那种判据看着绿、其实什么都没测。
+    # 棋盘是全对比度的最坏情况 ⇒ 读数是"上界"，只许比这更好。
+    #
+    # ⚠️ `backdrop-filter` 的**像素**读数在这个无头环境里不可用：实测 blur(2px) 生效
+    #    （相邻跳变 6.59→2.72），而 blur(10px)/blur(30px) 反而退回**没有模糊**的样子
+    #    （6.19 / 5.04，棋盘原样透出来）—— 这是渲染器的降级，不是页面的毛病。所以模糊只按
+    #    computed 值判，"压暗"按像素判（像素那边把模糊临时摘掉，两臂都摘，读数才可比）。
+    print("\n⑩ 遮罩：压暗 + 模糊都写在真渲染上；药丸里的字压在可读的底上")
+    pg, errs = open_modal(br)
+    pg.fill(".searchModalInput", "Hello world 123")   # 本机无中文字体 ⇒ 用 ASCII 才量得到真字形
+    pg.wait_for_timeout(700)
+
+    # ⚠️ 先读 computed、**再**注入样板与覆盖：下面那一段会把 `backdrop-filter` 内联成 none
+    #    （像素两臂都摘掉模糊），读晚了就永远读到 'none' —— 这个顺序是判据的一部分。
+    cs = pg.evaluate("""() => {
+        const m = document.querySelector('.ant-modal-mask');
+        const s = getComputedStyle(m);
+        const i = getComputedStyle(document.querySelector('.searchModalInput'));
+        return { cls: m.className, bg: s.backgroundColor, bf: s.backdropFilter || s.webkitBackdropFilter,
+                 pill: i.backgroundColor, ink: i.color };
+    }""")
+    alpha = float((cs["bg"].split(",")[3] or "1").strip(" )")) if "," in cs["bg"] else 1.0
+    check("遮罩挂上了 .search-mask（classNames.mask 真的落到那一层上）",
+          "search-mask" in cs["cls"], cs["cls"])
+    check("遮罩底色比 antd 出厂值（0.45）更暗（alpha ≥ 0.6，且没被 antd 的运行时样式盖掉）",
+          alpha >= 0.6, f'{cs["bg"]} alpha={alpha}')
+    check("遮罩带模糊（backdrop-filter 里有 blur(≥8px)）",
+          "blur(" in cs["bf"] and float(cs["bf"].split("blur(")[1].split("px")[0]) >= 8,
+          repr(cs["bf"]))
+    check("药丸仍是半透明（没被改成一坨实心白）",
+          0.7 <= float(cs["pill"].split(",")[3].strip(" )")) < 1.0, cs["pill"])
+
+    # 遮罩底下铺一张纯黑白棋盘（8px）：位置固定、全对比度，量的是"背景能透上来多少"
+    pg.evaluate("""() => {
+        const d = document.createElement('div');
+        d.id = '__checker';
+        d.style.cssText = 'position:fixed;left:0;top:0;right:0;height:600px;z-index:1;' +
+          'background-image:repeating-conic-gradient(#000 0% 25%, #fff 0% 50%);background-size:8px 8px;';
+        document.body.appendChild(d);
+        // 模糊在这个渲染器里对大半径会降级（见上面注释）⇒ 像素那一半的两臂都摘掉它，
+        // 免得"这一臂模糊生效、那一臂没生效"把读数搞乱。
+        document.querySelector('.ant-modal-mask').style.backdropFilter = 'none';
+    }""")
+    pg.wait_for_timeout(250)
+
+    from PIL import Image  # noqa: E402  （与 live2d-render.test.py 同一处依赖）
+    import io  # noqa: E402
+
+    def shot(p, box):
+        return Image.open(io.BytesIO(p.screenshot(clip=box))).convert("L")
+
+    def wcag(v1, v2):
+        f = lambda v: (((v / 255) + 0.055) / 1.055) ** 2.4 if v / 255 > 0.03928 else (v / 255) / 12.92
+        a, b = f(v1), f(v2)
+        return (max(a, b) + 0.05) / (min(a, b) + 0.05)
+
+    r = pg.evaluate("() => document.querySelector('.searchModalInput').getBoundingClientRect().toJSON()")
+
+    def band_box():
+        """药丸里**没有字**的一条横带（避开文字中线与两端的圆角）。"""
+        return {"x": int(r["x"] + r["width"] * 0.15), "y": int(r["y"] + r["height"] * 0.78),
+                "width": int(r["width"] * 0.70), "height": int(r["height"] * 0.12)}
+
+    def spread(bbox):
+        d = sorted(shot(pg, bbox).getdata())
+        return d[-1] - d[0], d[len(d) // 2]
+
+    w_now, mid_now = spread(band_box())
+    # 字那一块：取最暗的 2% 当"墨"，与**同一张图**的中位色比 —— 字与底在同一张图里，
+    # 不受"页面底色到底算哪一层"影响（这是 login-modal 那套 `__probe` 的教训）。
+    ink_box = {"x": int(r["x"] + 30), "y": int(r["y"] + 8),
+               "width": int(r["width"] - 60), "height": int(r["height"] - 16)}
+    ink_px = sorted(shot(pg, ink_box).getdata())
+    ink = ink_px[max(0, int(len(ink_px) * 0.02))]
+    ratio = wcag(ink, mid_now)
+    print(f"     （药丸底 中位={mid_now} 带宽={w_now}/255；字墨={ink}；字/底对比 {ratio:.1f}:1）")
+    check("药丸里那行字的对比度 ≥ 4.5:1", ratio >= 4.5, f"{ratio:.2f}:1")
+    check("字底下的亮度跳动压住了（最坏样板下带宽 ≤ 22/255；修复前是 42）",
+          w_now <= 22, f"{w_now}/255")
+
+    # 正控：把遮罩退回 antd 的出厂值 0.45（只改这一个属性），带宽**必须**变大——
+    # 否则这个读数是死的（"改回去也照样绿"＝判据没接在这件事上）。
+    pg.evaluate("() => {document.querySelector('.ant-modal-mask').style.background='rgba(0,0,0,0.45)';}")
+    pg.wait_for_timeout(250)
+    w_ctl, _ = spread(band_box())
+    check("正控：遮罩退回 0.45 时带宽明显变大（读数接在遮罩上，不是恒绿）",
+          w_ctl > w_now + 6, f"0.45 → {w_ctl}/255 vs 0.62 → {w_now}/255")
+    # 正控二：药丸退回 0.7（只改这一个属性）——它这一层对读数的贡献比遮罩还大
+    pg.evaluate("""() => {
+        document.querySelector('.ant-modal-mask').style.background='';
+        document.querySelector('.searchModalInput').style.background='rgba(255,255,255,0.7)';
+    }""")
+    pg.wait_for_timeout(250)
+    w_ctl2, _ = spread(band_box())
+    check("正控：药丸退回 0.7 时带宽也变大", w_ctl2 > w_now + 4,
+          f"0.7 → {w_ctl2}/255 vs 0.82 → {w_now}/255")
+    pg.screenshot(path="/tmp/site-search-mask.png")
+    pg.close()
+    all_errs.extend(errs)
 
     print("\n⑨ 全程无 JS 报错")
     check("无 pageerror", not all_errs, "; ".join(all_errs[:3]))

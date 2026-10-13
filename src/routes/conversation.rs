@@ -5,6 +5,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use sea_orm::{ActiveModelTrait, ColumnTrait, Condition, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set, TransactionTrait};
+use sea_orm::sea_query::Expr;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
@@ -115,20 +116,42 @@ pub async fn list_conversations(
     };
     let q = query.q.as_deref().map(str::trim).filter(|s| !s.is_empty());
     // 内容命中（搜索时）：用户全历史消息内容 LIKE 扫描（带 % _ \ 转义），
-    // order_by_desc(Id) 下每会话首见即最新命中（id 全局自增、会话内亦单调）——
-    // hit_by_conv 既作列表过滤条件，也随行回传作定位锚点
+    // hit_by_conv 既作列表过滤条件，也随行回传作定位锚点（每会话取**最大** id 那条）。
+    //
+    // 20261014：折叠从 Rust 搬进 SQL。从前是 `…order_by_desc(Id).all(&db)` 把**每一条**
+    // 命中消息的**整行**拉进内存、再逐行 `entry().or_insert()` 折成"每会话一条"——
+    // 除了 id / conversation_id 之外那些列没人看，而命中行数随用户历史线性涨
+    // （同文件 `search_chat_messages` 是同一条查询 + `limit(100)`，可见这里当初漏了）。
+    // 现在 `GROUP BY conversation_id` + `MAX(id)`：**结果与从前逐字等价**
+    //（`id` 全局自增 ⇒ 会话内也单调，故"降序首见"就是这个 MAX），传回的行数却从
+    // "命中消息数"降到"命中会话数"。过滤/聚合留在 SQL 里，别拉进 Rust 再筛（行业常规做法，
+    // 仓里 `note_stats.rs:577` 那批计数查询是同一个写法）。
+    // ⚠️ 这里刻意**不加** `limit`：hit_by_conv 是下面那张列表的**过滤条件**，砍掉几条
+    // 就会让"明明聊过这个词"的会话从搜索结果里静默消失——比多查几行坏得多。
+    // 上界本来就由用户自己的会话数兜着（紧跟其后的列表查询另有 `limit(200)`）。
     let mut hit_by_conv: HashMap<i32, i32> = HashMap::new();
     if let Some(q) = q {
         let pat = format!("%{}%", like_escape(q));
         let rows = chat_history::Entity::find()
+            .select_only()
+            .column(chat_history::Column::ConversationId)
+            .column_as(Expr::col(chat_history::Column::Id).max(), "max_id")
             .filter(chat_history::Column::UserId.eq(uid))
             .filter(chat_history::Column::Content.like(&pat))
-            .order_by_desc(chat_history::Column::Id)
+            .group_by(chat_history::Column::ConversationId)
+            // 聚合列必须按 **i64** 收：MySQL 的 MAX/COUNT 一律以 64 位返回（`id` 本身
+            // 是 i32），照 `id` 的类型去解会解不出来——而 `unwrap_or_default()` 会把
+            // "解不出来"咽成**空命中集**（症状 = 内容搜索静默只剩标题命中）。
+            // 同一个聚合在 `stats.rs:270`（后台报表数消息）就是这么收的，照抄。
+            // `Option` 是给"整组 NULL"留的余量（GROUP BY 的组非空，正常取不到 None）。
+            .into_tuple::<(i32, Option<i64>)>()
             .all(&state.db)
             .await
             .unwrap_or_default();
-        for r in rows {
-            hit_by_conv.entry(r.conversation_id).or_insert(r.id);
+        for (cid, hid) in rows {
+            if let Some(hid) = hid {
+                hit_by_conv.insert(cid, hid as i32);
+            }
         }
     }
     // 20260903b：置顶会话 pinned 优先（组内仍按最后活动倒序）

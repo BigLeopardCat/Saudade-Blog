@@ -733,16 +733,25 @@ pub(crate) async fn peer_map(
     if ids.is_empty() {
         return HashMap::new();
     }
-    let users = user::Entity::find()
+    // 只取 PeerInfo 真正用到的五列（20261014）：从前整行 `user::Model`，`SELECT *`
+    // 把这批人的 **password 哈希** 也捞进内存，而私信列表只读 username / nickname /
+    // avatar / role。与 `notes.rs::attach_authors` 同一族的修法。
+    user::Entity::find()
+        .select_only()
+        .column(user::Column::Id)
+        .column(user::Column::Username)
+        .column(user::Column::Nickname)
+        .column(user::Column::Avatar)
+        .column(user::Column::Role)
         .filter(user::Column::Id.is_in(ids.to_vec()))
+        .into_tuple::<(i32, String, String, Option<String>, String)>()
         .all(db)
         .await
-        .unwrap_or_default();
-    users
+        .unwrap_or_default()
         .into_iter()
-        .map(|u| {
-            let name = if u.nickname.trim().is_empty() { u.username.clone() } else { u.nickname };
-            (u.id, PeerInfo { name, username: u.username, avatar: u.avatar, role: u.role })
+        .map(|(id, username, nickname, avatar, role)| {
+            let name = if nickname.trim().is_empty() { username.clone() } else { nickname };
+            (id, PeerInfo { name, username, avatar, role })
         })
         .collect()
 }

@@ -1,5 +1,5 @@
 use axum::{Json, extract::{State, Query, Path}, http::{HeaderMap, StatusCode}, response::{IntoResponse, Response}};
-use sea_orm::{EntityTrait, ColumnTrait, QueryFilter, QueryOrder, Condition, ActiveModelTrait, Set, PaginatorTrait, ActiveValue::NotSet};
+use sea_orm::{EntityTrait, ColumnTrait, QueryFilter, QueryOrder, QuerySelect, Condition, ActiveModelTrait, Set, PaginatorTrait, ActiveValue::NotSet};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -900,18 +900,38 @@ async fn attach_authors(db: &sea_orm::DatabaseConnection, dtos: &mut [NoteDto]) 
         return;
     }
 
-    let users = match user::Entity::find()
+    // 只取署名真正用到的四列（20261014）。从前是整行 `user::Model`——`SELECT *`
+    // 把每个作者的 **password 哈希** 也捞进内存，而这里只用 username / nickname / avatar。
+    // ⚠️ `match` 保留：**失败**与**查着了但一个都没匹配上**必须分开（前者一个键都不写，
+    // 见函数头注），所以不能省成 `unwrap_or_default()`。
+    struct AuthorRow {
+        username: String,
+        nickname: String,
+        avatar: Option<String>,
+    }
+    let users: Vec<(i32, AuthorRow)> = match user::Entity::find()
+        .select_only()
+        .column(user::Column::Id)
+        .column(user::Column::Username)
+        .column(user::Column::Nickname)
+        .column(user::Column::Avatar)
         .filter(user::Column::Id.is_in(ids))
+        .into_tuple::<(i32, String, String, Option<String>)>()
         .all(db)
         .await
     {
-        Ok(v) => v,
+        Ok(v) => v
+            .into_iter()
+            .map(|(id, username, nickname, avatar)| {
+                (id, AuthorRow { username, nickname, avatar })
+            })
+            .collect(),
         Err(e) => {
             tracing::warn!("[notes] 作者查询失败，本页不挂署名（前端回退站点级）: {e}");
             return;
         }
     };
-    let by_id: HashMap<i32, user::Model> = users.into_iter().map(|u| (u.id, u)).collect();
+    let by_id: HashMap<i32, AuthorRow> = users.into_iter().collect();
     let (site_name, site_avatar) = crate::routes::web_info::site_author(db).await;
 
     for dto in dtos.iter_mut() {

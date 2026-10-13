@@ -286,18 +286,48 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
 
     
 
+// ── 搜索弹窗的遮罩：压暗 + 模糊（20261013 用户报「检索框把背景暗度和迷糊度压得不够低，
+//    导致看不清检索框部分文本」）────────────────────────────────────────────────
+// 这个弹窗的**全部内容都没有自己的底**：`ConfigProvider` 把 `Modal.contentBg` 设成
+// transparent、`boxShadow` 设成 none，`.searchModal` 也是 transparent——遮罩就是结果的背景。
+// 而遮罩一直是 antd 的出厂值 `rgba(0, 0, 0, 0.45)`、`backdrop-filter: none`：底下那屏
+// （首页的卡片/封面/看板娘）从 55% 的透明里透上来，字压在**高频的图案**上、明暗一直在变
+// ⇒ 药丸里那行字读起来费劲。注意这**不是**平均对比度不够——实测黑字压在 0.7 的白药丸上
+// 有 9.9:1；是背景在忽明忽暗地动。消掉高频只有一条路：模糊。
+//
+// 下面 `.searchModalInput` 的注释里"压在模态遮罩的模糊图上"那句一直写着，但模糊**从来没有过**
+// ——20261001 全站摘 `backdrop-filter` 时（见 file 顶上顶栏那段"全站禁令"）漏掉了这一处，
+// 而这段内容正是照"有模糊"设计的。这里把它补回来。
+//
+// ⚠️ 与顶栏那条全站禁令不冲突：禁的是**常驻**的大面积模糊（首屏顶栏，那一屏还住着看板娘，
+//    见 memory「后台 GPU 高于首页」）。这一块跟着弹窗一起挂/卸，只在访客自己按开搜索时
+//    存在，是瞬时浮层，不是首屏常驻成本。
+//
+// 选择器写成 `.ant-modal-mask.search-mask`（两段）：`.search-mask` 由 Head/index.tsx 的
+// `classNames={{mask: …}}` 挂上，而 antd 自己的遮罩色是 CSS-in-JS 运行时注入 `<style>` 的，
+// 单个类与它权重相同、**看注入顺序分胜负**（不可靠）⇒ 用两段把权重压过去。
+.ant-modal-mask.search-mask
+  background: rgba(0, 0, 0, 0.62)
+  backdrop-filter: blur(10px)
+
 .searchModal
   display: flex
   flex-direction: column
   align-items: center
   padding: 50px
   .searchModalInput
-    background: rgba(255, 255, 255, 0.7)
+    // 0.7 → 0.82（20261013 同上一条）：药丸自己这一层 alpha 对"字底下的明暗跳动"影响
+    // 比遮罩那一层还大。极端样板（药丸正后方的纯黑白 8px 棋盘，即最坏情况）实测药丸内
+    // 的亮度带宽：遮罩出厂值 0.45+药丸 0.7 = 42/255；遮罩 0.62+药丸 0.7 = 29；
+    // 遮罩 0.62+药丸 0.82 = **17**；字/底对比 9.9:1 → 13.5:1。
+    // 仍是半透明（18% 的模糊背景透上来），观感还是"压在模糊图上"，不是换了张白纸。
+    background: rgba(255, 255, 255, 0.82)
     // 必须显式给边框：这个文件此前只写了 border-radius/outline，没写 border ⇒ 吃到
     // 浏览器对 <input> 的默认值 `2px inset rgb(118,118,118)`（实测 computed style），
     // 而 inset 的斜角让**上边缘/左边缘更暗** —— 访客看到的就是"搜索框上边缘一圈黑线"。
     // 换成一条细的实心边：去掉斜角发黑，同时保住药丸在模糊背景上的轮廓
-    //（.ant-modal-content 底色是透明的，这个输入框直接压在模态遮罩的模糊图上）。
+    //（.ant-modal-content 底色是透明的，这个输入框直接压在模态遮罩上；遮罩的模糊与压暗
+    // 见文件里上面那段 `.ant-modal-mask.search-mask`）。
     border: 1px solid rgba(0, 0, 0, 0.12)
     width: 80%
     padding: 12px 24px

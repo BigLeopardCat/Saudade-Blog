@@ -1,5 +1,5 @@
 use axum::{Json, extract::State};
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, Set};
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use crate::entity::{announcement, user, user_notification};
@@ -23,16 +23,26 @@ const KIND_ANNOUNCEMENT: &str = "announcement";
 /// 给**所有用户**展开一条公告通知（新用户不会错过历史公告这件事本期不做——
 /// 没有回溯补发，见 migration 头注"只建结构，不含数据回填"）。
 async fn fan_out(state: &Arc<AppState>, a: &announcement::Model) {
-    let users = match user::Entity::find().all(&state.db).await {
+    // 只取 id（20261014）。从前是 `user::Entity::find().all(…)` —— `find()` 是 `SELECT *`，
+    // 于是每存一次公告就把**整张 user 表**（含 password 那列的哈希）拉进内存，再逐行
+    // 只读一个 `u.id` 去插通知。这里整条链只需要 id：`select_only` + `into_tuple::<i32>()`
+    // （仓里同族的写法见 `talks.rs:756`、`stats.rs:219`，都是"只取用到的列 + into_tuple"）。
+    let users: Vec<i32> = match user::Entity::find()
+        .select_only()
+        .column(user::Column::Id)
+        .into_tuple::<i32>()
+        .all(&state.db)
+        .await
+    {
         Ok(v) => v,
         Err(e) => {
             tracing::error!("[announcement] 展开公告失败，读用户列表出错 id={}: {}", a.id, e);
             return;
         }
     };
-    for u in users {
+    for uid in users {
         let am = user_notification::ActiveModel {
-            user_id: Set(u.id),
+            user_id: Set(uid),
             kind: Set(KIND_ANNOUNCEMENT.to_string()),
             title: Set(a.title.clone()),
             content: Set(Some(a.content.clone())),
@@ -41,7 +51,7 @@ async fn fan_out(state: &Arc<AppState>, a: &announcement::Model) {
             ..Default::default()
         };
         if let Err(e) = user_notification::Entity::insert(am).exec(&state.db).await {
-            tracing::error!("[announcement] 展开公告失败 id={} uid={}: {}", a.id, u.id, e);
+            tracing::error!("[announcement] 展开公告失败 id={} uid={}: {}", a.id, uid, e);
         }
     }
 }

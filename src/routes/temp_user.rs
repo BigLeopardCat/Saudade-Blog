@@ -1,5 +1,5 @@
 use axum::{Json, extract::{State, Path}};
-use sea_orm::{EntityTrait, Set, QueryFilter, ColumnTrait, ActiveModelTrait};
+use sea_orm::{EntityTrait, Set, QueryFilter, QuerySelect, ColumnTrait, ActiveModelTrait};
 use chrono::{Duration, Utc};
 use uuid::Uuid;
 use serde::{Deserialize, Serialize};
@@ -119,30 +119,48 @@ pub struct TempUserInfo {
 pub async fn list_temp_users(
     State(state): State<Arc<AppState>>,
 ) -> Json<Vec<TempUserInfo>> {
-    let users = user::Entity::find()
+    // 只取列表真正用到的六列（20261014）。从前是 `user::Entity::find().all(…)`——
+    // `find()` 是 `SELECT *`，于是这个接口把**每个账号的 password 哈希**都拉进内存、
+    // 再在下面的 map 里丢掉。返回面从来只有这六个字段，多拉的一列也没人读。
+    // 与公告展开（`announcements.rs::fan_out`）是同一族的修法：需要的列写清楚。
+    //
+    // ⚠️ 角色过滤**故意留在 Rust 里**（下面那个 `filter`）：已知角色的表住在
+    // `crate::authz`，把它搬进 SQL 就等于在第二处手抄一份角色清单——本仓最贵的那类漂移
+    // （见 memory「手抄表上锁六站」）。列表规模是个位到几十行，过滤留在哪一侧都一样快。
+    let rows = user::Entity::find()
+        .select_only()
+        .column(user::Column::Id)
+        .column(user::Column::Username)
+        .column(user::Column::Role)
+        .column(user::Column::Status)
+        .column(user::Column::ChatQuotaUsed)
+        .column(user::Column::MutedUntil)
+        .into_tuple::<(i32, String, String, i8, i32, Option<chrono::NaiveDateTime>)>()
         .all(&state.db)
         .await
         .unwrap_or_default();
-    Json(users.into_iter()
+    Json(rows.into_iter()
         // 判据在 `authz::is_listable_role`（= 已知角色 且 不是超管），抽出去是为了
         // 让"超管不露脸"这条需求可测：两个条件写在两行里时，删掉任何一行都不报错
-        .filter(|u| crate::authz::is_listable_role(&u.role))
-        .map(|u| TempUserInfo {
-            id: u.id,
-            username: u.username,
-            role: u.role.clone(),
-            status: u.status,
+        .filter(|(_id, _username, role, _status, _quota, _muted)| {
+            crate::authz::is_listable_role(role)
+        })
+        .map(|(id, username, role, status, chat_quota_used, muted_until)| TempUserInfo {
+            id,
+            username,
+            role: role.clone(),
+            status,
             // 额度两列（20260929）：已用照抄库里那个数；上限**不查库**（走
             // `crate::quota::limit()`），不限量的角色回 0（见 `routes::quota::limit_of`）。
             // **信封一个字节不动**：这是裸数组而不是 `ApiResponse`，三个消费方
             // （前端账号页、`scripts/probe_token_revoke.py`、agent 的 `_user_directory`）
             // 都认这个形状——agent 那边甚至写明了"不要包信封"。**只加字段。**
-            chat_quota_used: u.chat_quota_used,
-            chat_quota_limit: crate::routes::quota::limit_of(&u.role),
+            chat_quota_used,
+            chat_quota_limit: crate::routes::quota::limit_of(&role),
             // 禁言两列（20261002）：`muted` 是**现算的**（到期即自动为假，没有定时任务
             // 去清那一列）；`muted_until` 原样回库值，供显示"到几号 / 永久"。
-            muted: crate::authz::is_muted(u.muted_until, chrono::Local::now().naive_local()),
-            muted_until: u.muted_until.map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string()),
+            muted: crate::authz::is_muted(muted_until, chrono::Local::now().naive_local()),
+            muted_until: muted_until.map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string()),
         })
         .collect())
 }

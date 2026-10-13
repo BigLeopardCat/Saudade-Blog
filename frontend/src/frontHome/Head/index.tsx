@@ -1,6 +1,6 @@
 import {Avatar, Card, ConfigProvider, Modal} from 'antd'
 import './index.sass'
-import {Key, ReactElement, ReactNode, ReactPortal, useEffect, useRef, useState} from "react";
+import {Key, ReactElement, ReactNode, ReactPortal, useEffect, useMemo, useRef, useState} from "react";
 import {useLocation, useNavigate} from "react-router-dom";
 import {debounce} from 'lodash';
 import Switch from "../../components/Switch";
@@ -205,18 +205,32 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
         try { window.dispatchEvent(new CustomEvent('darkmode-change', { detail: !isDark })); } catch {/* ignore */}
     };
 
+    // 序号闸（只认最后一次查询）+ 指向"最新 performSearch 闭包"的 ref——两者都在下面那段
+    // 注释里解释。⚠️ ref 用 `null` 起步、`?.` 调用：写成 `useRef(performSearch)` 会在
+    // `const performSearch` 求值之前读它 ⇒ TDZ 报错、整页白屏。
+    const searchSeq = useRef(0);
+    const performSearchRef = useRef<((kw: string) => Promise<void>) | null>(null);
+
     // Debounced search function
     const performSearch = async (keyword: string) => {
+        // 序号闸在**最前面**：连"清空输入"也算一次查询（否则清空之后，先前在途的回包
+        // 会把结果面又填回来）。下面每个出口都要对得上号，尤其 `finally` 里那个
+        // `setIsSearching(false)`——不作废的话，旧回包会把新查询的"搜索中"提前灭掉。
+        const seq = ++searchSeq.current;
         if(!keyword.trim()) {
             setAgg(null);
             setSearchFailed(false);
             setActiveType('all');
+            // 清空 = 这一轮没有查询在跑。不置这一下的话，在途回包被序号闸作废后
+            // 就再没人把「搜索中...」灭掉了（它会一直挂着）。
+            setIsSearching(false);
             return;
         }
         setSearchFailed(false);
         setIsSearching(true);
         try {
             const res = await searchAll({ keyword: keyword });
+            if (seq !== searchSeq.current) return;          // 已经发起了更新的查询 → 这次作废
             // **两层都要判**：HTTP 200 不代表业务成功（本站的信封是 `code`）。
             // 只看 `res.status === 200` 的话，`code: 500` 时会把 `data`（可能是空数组）
             // 当成结果——那正是 Talk 页 20261005 修过的那类"读不到被渲染成没有"。
@@ -229,23 +243,49 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                 setSearchFailed(true);
             }
         } catch {
+            if (seq !== searchSeq.current) return;
             setSearchFailed(true);
         } finally {
-            setIsSearching(false);
+            if (seq === searchSeq.current) setIsSearching(false);
         }
     };
 
-    // Create a memoized debounced version
-    const debouncedSearch = debounce(performSearch, 500);
+    // ── 搜索的防抖与竞态（20261013 修「输入时结果面抖动」）────────────────────
+    // 防抖器从前写成 `const debouncedSearch = debounce(performSearch, 500)`，就在**组件体**里
+    // ——每次 render 都是一个**新实例**，而上一次挂起的定时器再没有人去 cancel 它。
+    // 逐字符输入的实测（`tests/site-search.test.py` 的「逐字符」那一节）：敲 5 个字发出
+    // **5 次**请求，关键词依次是 `河`/`河灯`/`河灯留`/`河灯留言`/`河灯留言板` —— 防抖等于
+    // 没有，而每个回包都要 `setAgg` 一次，结果面就随着回包的先后反复重画（用户报的"抖动"）。
+    // 既有套件量不出来，是因为它一直用 `fill()`：一次 input 事件，永远只有一个实例。
+    //
+    // 修法两头都要，缺一条都还抖：
+    //   ① 防抖器只建一次（`useMemo` + 存 `performSearch` 的 ref，保证读到的仍是最新闭包）；
+    //   ② 回包只认**最后一次**查询（`searchSeq` 序号闸）——网络乱序时旧关键词的结果会盖在
+    //      新结果上，那已经不只是抖，是**显示错的搜索结果**（本地假后端是同步返回的，
+    //      所以只有真网络才看得见，判据因此要在沙箱里手造乱序，见那个套件的「乱序回包」节）。
+    //
+    const debouncedSearch = useMemo(
+        () => debounce((kw: string) => { void performSearchRef.current?.(kw); }, 500),
+        [],
+    );
+    // 让 ref 永远指向**最新一次 render** 的 performSearch（先挂载、后赋值：本组件的
+    // performSearch 只碰状态 setter 与模块级 API，取首轮闭包其实也不会错，留这一行是
+    // 为了将来有人在里面读 state 时不静默变旧闭包）。
+    useEffect(() => { performSearchRef.current = performSearch; });
+    // 卸载（或换页）时把挂着的那一次清掉：否则它会在这张页面已经走了之后再 setIsSearching
+    useEffect(() => () => debouncedSearch.cancel(), [debouncedSearch]);
 
     const onSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const val = e.target.value;
         setSearchKeyword(val);
-        // Clean results if empty
         if (!val.trim()) {
-            setAgg(null);
-            setSearchFailed(false);
-            setActiveType('all');
+            // 清空走**同一条**路径（`performSearch('')`）：它要顶掉序号闸、还要顺手把
+            // 「搜索中…」灭掉。从前这里自己抄了一遍清空逻辑，漏了这两件事——于是
+            // 清空输入框之后，先前在途的那次回包还会把结果面**填回来**（用户看到
+            // "框已经空了，底下还挂着一堆上一次的结果"）；挂着的防抖 timer 也会在
+            // 清空之后到点，用一个已经不在框里的旧关键词再发一次。
+            debouncedSearch.cancel();
+            void performSearch('');
             return;
         }
         debouncedSearch(val);
@@ -470,10 +510,16 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                     `washiModal washiDark` 两个一起加）。`.washiModal` 不是"主题开关"，
                     它是**公告弹窗那套皮**：不透明和纸底 + 顶上探出半截的胶带
                     （见 `AnnouncementModal/index.sass`）。这个搜索弹窗是刻意要透明的
-                    （输入框直接压在遮罩的模糊图上，`ConfigProvider` 里也把
-                    `Modal.contentBg` 设成了 transparent），套上那层皮等于换了个弹窗。 */}
+                    （`ConfigProvider` 里把 `Modal.contentBg` 设成了 transparent，
+                    内容直接压在遮罩上），套上那层皮等于换了个弹窗。
+
+                    `classNames.mask` 是**遮罩那一层的钩子**（rc-dialog 的
+                    `classNames.mask`，antd Modal 原样透传）——`.search-mask` 见 index.sass。
+                    它的必要性和「模糊图」那件事见 sass 里那段注释：这一段内容**没有自己的底**，
+                    遮罩就是它的全部背景。 */}
                 <Modal open={isModalOpen} onCancel={handleCancel} footer={null} width={'100vh'}
-                       rootClassName={isDark ? 'washiDark' : undefined} >
+                       rootClassName={isDark ? 'washiDark' : undefined}
+                       classNames={{ mask: 'search-mask' }} >
                     <div style={{height:'80vh'}} className='searchModal'>
                         <div style={{
                                 position: 'relative', 
