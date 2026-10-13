@@ -18,13 +18,53 @@ impl<T> ApiResponse<T> {
             data,
         }
     }
-    
+
     pub fn error(msg: &str) -> Self where T: Default {
          Self {
             code: 500,
             message: msg.to_string(),
             data: T::default(),
         }
+    }
+}
+
+/// 分页版信封（20261014）：**全站信封的形状没变**（`code` / `message` / `data` 还是那三个，
+/// 由 `flatten` 直接嵌 [`ApiResponse`] —— 不是另抄一份，两处不会各漂各的），只多一个
+/// `total`。
+///
+/// ## 为什么需要一个新类型，而不是给 `ApiResponse` 加一个字段
+/// `ApiResponse` 被**每一个** handler 用着（还有七八处直接写结构体字面量的），加字段是一次
+/// 全站改动。而分页只有少数几页需要——`flatten` + 这个类型是把改动关在这次要用它的 handler 里。
+///
+/// ## 为什么是"多一个字段"而不是"把 data 换成 {rows, total}"
+/// **`data` 必须还是原来那个形状**：同一条接口往往既有分页调用方、也有老调用方
+/// （实例：`GET /api/protect/board`，前端列表要分页，agent 的三个工具与 golden 夹具
+/// 按**数组**读它）。把 `data` 从数组改成对象，那些调用方读出来的是 `undefined`/空——
+/// 不报错，只是永远没有数据。多出来的键对它们不可见，这才是能加的。
+///
+/// ## `total` 缺席时不出现在 JSON 里
+/// `skip_serializing_if` 让不分页的响应**逐字节**与从前相同（`total: null` 也是一处不同，
+/// 而老调用方里多的是按字段数/按位置看的）。
+#[derive(Serialize)]
+pub struct ApiResponsePage<T> {
+    #[serde(flatten)]
+    pub base: ApiResponse<T>,
+    /// 满足筛选条件的**总条数**（不是本页条数）。分页时必有，不分页时没有。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total: Option<i64>,
+}
+
+impl<T> ApiResponsePage<T> {
+    /// `total` 给 `None` = 这一次没分页（响应里不会出现这个键）。
+    pub fn success(data: T, total: Option<i64>) -> Self {
+        Self { base: ApiResponse::success(data), total }
+    }
+
+    pub fn error(msg: &str) -> Self
+    where
+        T: Default,
+    {
+        Self { base: ApiResponse::error(msg), total: None }
     }
 }
 

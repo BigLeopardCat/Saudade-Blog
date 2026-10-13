@@ -23,6 +23,23 @@ pub struct Model {
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-pub enum Relation {}
+pub enum Relation {
+    /// 发布者（`user_id` → `user.id`）。20261014 加：后台留言管理的**服务端检索**要能
+    /// 按用户名/昵称过滤（那两列在 user 表上）——此前那一页是"整表拉回来在前端 includes"，
+    /// 所以从没需要过这条关系。user_id → user.id 是**多对一**，join 不会让 talk 行翻倍
+    /// （计数因此照旧正确，见 `routes/talks.rs::board_admin_filter`）。
+    #[sea_orm(
+        belongs_to = "super::user::Entity",
+        from = "Column::UserId",
+        to = "super::user::Column::Id"
+    )]
+    User,
+}
+
+impl Related<super::user::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::User.def()
+    }
+}
 
 impl ActiveModelBehavior for ActiveModel {}

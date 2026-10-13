@@ -95,6 +95,32 @@ const env = (data: any) => ({ status: 200, data: { code: 200, message: 'ok', dat
 const wire = (d: any) => (d == null ? d : JSON.parse(JSON.stringify(d)));
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// `GET /api/protect/board` 自 20261014 起是**服务端筛选 + 分页**的（参数与判据见
+// src/routes/talks.rs 的 BoardAdminQuery / board_admin_filter）。桩必须真的做同一件事：
+// 少了这一步，第九节那些"表格里只剩愿 / 只剩 10 行 / 共 25 条"的断言判的就是**桩自己**
+// 的行为——页面一条条件都不发也照样全绿。所以这里逐条照抄服务端：cat 精确、q 子串命中
+// 四列、order 按 createTime + talkKey、page/page_size 切片、**total 是过滤后的总条数**
+// （不是本页条数——那个数客户端算不出来，正是"总数必须来自信封"的判据）。
+// 不带 page_size = 不分页（老调用方那条路：响应里连 total 键都没有）。
+const boardPage = (p: any) => {
+  let rows = wire((window as any).__board) as any[];
+  const cat = (p && p.cat) || '';
+  const q = ((p && p.q) || '').toString();
+  if (cat) rows = rows.filter((r) => r.cat === cat);
+  if (q) rows = rows.filter((r) => [r.content, r.author, r.username, r.nickname]
+    .some((v) => String(v == null ? '' : v).includes(q)));
+  const asc = (p && p.order) === 'asc';
+  rows.sort((a, b) => {
+    const c = a.createTime < b.createTime ? -1 : a.createTime > b.createTime ? 1 : 0;
+    return asc ? (c || a.talkKey - b.talkKey) : (-c || b.talkKey - a.talkKey);
+  });
+  const total = rows.length;
+  const size = (p && p.page_size) ? Number(p.page_size) : 0;
+  if (!size) return { data: rows, total: null };
+  const page = Math.max(1, Number((p && p.page) || 1));
+  return { data: rows.slice((page - 1) * size, page * size), total };
+};
+
 // ⚠️ 必须是**带方法的对象**，不能是裸函数：真实 `src/apis/axios.tsx` 导出的是
 // `axios.create()` 出来的实例，调用方写的是 `http.get(...)`/`http.put(...)`。
 // 做成裸函数时 `http.get` 是 undefined ⇒ 组件里 `try{ await http.get() }catch{}`
@@ -102,7 +128,7 @@ const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const req = async (cfg: any) => {
   const url = cfg.url as string;
   const method = (cfg.method || 'GET').toUpperCase();
-  calls.push({ url, method, data: wire(cfg.data) });
+  calls.push({ url, method, data: wire(cfg.data), params: wire(cfg.params) });
   await delay(20);
   // 列表：回**假后端那一份**（页数/条数/各行字段都从它派生，断言才是数据驱动的）
   if (url === '/api/protect/board') {
@@ -110,7 +136,14 @@ const req = async (cfg: any) => {
     // （`delay(20)` 那 20ms 靠 evaluate 的往返去撞，是在赌时序）。扣一次就自动清掉。
     const h = (window as any).__holdNext;
     if (h) { (window as any).__holdNext = null; await h; }
-    return env(wire((window as any).__board));
+    const p = cfg.params || {};
+    // 乱序回包用的**手造慢通道**（第九③节）：关键词命中 `__slowKw` 的那一次多等 2.5s。
+    // 本地假后端是按调用顺序同步返回的，"慢的是前一次查询"这种常态只有手造才看得见。
+    if ((window as any).__slowKw && p.q === (window as any).__slowKw) await delay(2500);
+    const r = boardPage(p);
+    // 不分页时**不出现 `total` 键**（服务端 `skip_serializing_if` 的同一件事）
+    return r.total == null ? env(r.data)
+      : { status: 200, data: { code: 200, message: 'ok', data: r.data, total: r.total } };
   }
   if (url === '/api/protected/websetting') {
     // 人工复核开着：这不是随手挑的取值——"待审行带 AI 判定/AI 说明"这种状态**只在它开着时
@@ -174,8 +207,13 @@ const BOARD = [
   mk(9, { content: '已驳回乙', approved: 2, ai_result: 'reject' }),
 ];
 (window as any).__board = BOARD;
-// 条数可换：用来证"行数是跟着响应走的"，不是恰好撞上 10
-(window as any).__setBoardSize = (n: number) => { (window as any).__board = BOARD.slice(0, n); };
+// 条数可换：用来证"行数是跟着响应走的"，不是恰好撞上 10。
+// 20261014 起还要能**超过一页**（>10）——分页搬到服务端之后，夹具得有第 2、3 页才验得出
+// "本页条数 ≠ 总数"（第九节）。前 10 条与 BOARD 逐字相同，前面几节不受影响。
+(window as any).__setBoardSize = (n: number) => {
+  (window as any).__board = Array.from({ length: n }, (_, i) =>
+    i < BOARD.length ? BOARD[i] : mk(i, { content: '批量留言' + i }));
+};
 (window as any).__mount = () => createRoot(document.getElementById('root')!).render(<BoardManage />);
 """
 
@@ -242,14 +280,17 @@ URL = f"http://127.0.0.1:{_server.server_address[1]}/index.html"
 VIS = ".ant-modal-wrap:visible"
 
 
-def mount(br, board_n=None, size=(1440, 900)):
-    """挂载页面。`board_n` 指定假后端返回几条（默认 10 = 整个夹具）。"""
+def mount(br, board_n=None, size=(1440, 900), pre=None):
+    """挂载页面。`board_n` 指定假后端返回几条（默认 10 = 整个夹具）。
+    `pre` 是挂载**之前**求值的一小段 JS（乱序回包那节用它设慢通道的关键词）。"""
     page = br.new_page(viewport={"width": size[0], "height": size[1]})
     errs = []
     page.on("pageerror", lambda e: errs.append(str(e)))
     page.goto(URL)
     if board_n:
         page.evaluate("(n) => window.__setBoardSize(n)", board_n)
+    if pre:
+        page.evaluate(pre)
     page.evaluate("() => window.__mount()")
     try:
         page.wait_for_selector(".ant-table-row", timeout=10000)
@@ -283,11 +324,15 @@ GEO_LIST = """() => {
         rowInfo: rows.map((r) => {
             const c = r.querySelector('.bm-content');
             const e = r.querySelector('.bm-reason');
+            // 印章（第 1 格）：第九节判"服务端筛选"用——类型条件若没发出去/没生效，
+            // 这一列里就会出现别的类型
+            const s = r.querySelector('.bm-seal');
             // 「人工审核」列（第 8 格 = 索引 7；第 1 格是「印章」）的标签文案——本地写回
             // 是否真的把那一行翻成「未通过」，唯一能看出来的地方（见第七节）。
             const mt = r.querySelector('td:nth-child(8) .ant-tag');
             return {
                 content: c ? c.textContent : null,
+                seal: s ? nz(s.textContent) : null,
                 reject: cnt(r, '驳回'), pass: cnt(r, '通过'), restore: cnt(r, '恢复通过'),
                 del_: cnt(r, '删除'),
                 manualTag: mt ? nz(mt.textContent) : null,
@@ -357,6 +402,34 @@ def get_urls(pg):
 def board_gets(pg):
     """本页发出的 `GET /api/protect/board` 次数（第八节的唯一判据）。"""
     return get_urls(pg).count("/api/protect/board")
+
+
+def board_params(pg):
+    """本页发出的每一次 `GET /api/protect/board` 的**查询参数**（第九节的判据：
+    筛选/页码这些条件到底发出去没有）。
+
+    ⚠️ 判据必须同时落在**参数**和**界面**上，缺一条都有假绿的路：
+      · 只看界面——桩自己会把过滤做掉，"页面把整库拉回来在前端 filter"也照样剩 7 行；
+      · 只看参数——条件发出去了，但表格还画着上一份（`dataSource` 没跟着换）也照样绿。"""
+    return pg.evaluate("""() => window.__calls.filter((c) =>
+        c.method === 'GET' && c.url === '/api/protect/board').map((c) => c.params || {})""")
+
+
+def click_page(pg, n):
+    """点页脚上第 n 页（antd 给页码按钮挂 `.ant-pagination-item-<n>`）。"""
+    pg.locator(".bm-foot .ant-pagination-item-%d" % n).first.click()
+    pg.wait_for_timeout(600)
+
+
+def click_cat(pg, c):
+    """点筛选页签（「全部」/「愿」…）。按整串文案找（抹空白后相等），同行内按钮那条理由。"""
+    pg.evaluate("""(c) => {
+        const nz = (s) => String(s == null ? '' : s).replace(/\\s+/g, '');
+        const b = [...document.querySelectorAll('.bm-tabs button')].find((x) => nz(x.textContent) === c);
+        if (!b) throw new Error('没有这个页签：' + c);
+        b.click();
+    }""", c)
+    pg.wait_for_timeout(600)
 
 
 def fire_agent_done(pg):
@@ -821,6 +894,160 @@ with sync_playwright() as p:
     check("  放行后 loading 收掉、列表是新的一份", spinning(pg) == 0 and board_gets(pg) == base + 3,
           f'spin={spinning(pg)} gets={board_gets(pg)}')
     check("第八节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
+    pg.close()
+
+    # ── 九、筛选/搜索/排序/分页搬到服务端（20261014）──────────────────────────
+    # 现场（用户问的）：「好多数据库表的调用是不是根本不符合行业规范，我是直接整页拉」。
+    # 这一页此前是 `GET /api/protect/board` **整表拉回来、在前端 filter + sort + slice**。
+    # 三个后果都不是"慢一点"：
+    #   · 搜到的只是"**已经拉到的那一份**里符合条件的"，而那一份随留言增长只会变大；
+    #   · 翻到第 3 页要先下载全部留言正文（每条最多 200 字）；
+    #   · 「共 N 条」是本地的数组长度，服务端有多少条它并不知道（下面 `共25条留言` 那条
+    #     就是它的正控：**本页 10 行 vs 总数 25**，后者客户端算不出来，只能来自信封）。
+    # 现在条件与页码都发给服务端，判据只有一处（`talks.rs::board_admin_filter`）。
+    #
+    # 桩必须**真的**照服务端做（见 FAKE_AXIOS 的 `boardPage`）——否则"表格里只剩愿/只剩
+    # 10 行"判的是桩自己的行为。所以每条判据都成对：**参数发出去了没有**（`board_params`）
+    # ＋**界面认了没有**（`GEO_LIST`）。
+    print("\n【九】筛选/搜索/排序/分页搬到服务端：条件真的发出去了、表格只装这一页")
+    pg = mount(br, board_n=25)
+    g9 = pg.evaluate(GEO_LIST)
+    p0 = board_params(pg)
+    check("前置：25 条 = 3 页；第一页只装 10 行（页大小），而「共 N 条」是 25",
+          g9["rows"] == 10 and g9["count"] == "共25条留言" and g9["pagers"] == 3,
+          f'rows={g9["rows"]} count={g9["count"]} pagers={g9["pagers"]}')
+    check("  「共 25 条」不是本页条数 ⇒ 总数只能来自响应信封（客户端数出来的会是 10）",
+          g9["count"] != "共10条留言", g9["count"])
+    check("挂载那一次就带着分页参数（page/page_size/order），而**空筛选整条不发**",
+          len(p0) == 1 and p0[0].get("page") == 1 and p0[0].get("page_size") == 10
+          and p0[0].get("order") == "desc" and "cat" not in p0[0] and "q" not in p0[0],
+          str(p0))
+
+    # 翻页：页码也是服务端的条件（客户端不再 slice），且装的是**剩下那一页**
+    page1 = [r["content"] for r in g9["rowInfo"]]
+    click_page(pg, 3)
+    g9b = pg.evaluate(GEO_LIST)
+    p1 = board_params(pg)
+    check("翻到第 3 页 ⇒ 请求带 page=3（页码发去了服务端，不是客户端切数组）",
+          p1[-1].get("page") == 3 and p1[-1].get("page_size") == 10, str(p1[-1]))
+    check("  第 3 页只剩 5 行（25 = 10+10+5），且与第一页**一条都不重复**",
+          g9b["rows"] == 5
+          and not (set(r["content"] for r in g9b["rowInfo"]) & set(page1)),
+          f'rows={g9b["rows"]} 交集={sorted(set(r["content"] for r in g9b["rowInfo"]) & set(page1))}')
+    check("  总数不随页码变（仍是 25，不是本页那 5 条）", g9b["count"] == "共25条留言",
+          g9b["count"])
+
+    # 类型筛选：条件发给服务端，表格里剩下的**每一行**都是这个类型
+    click_cat(pg, "愿")
+    g9c = pg.evaluate(GEO_LIST)
+    p2 = board_params(pg)
+    check("点「愿」⇒ 请求带 cat=愿，且**回第一页**（新条件的结果可能只有一页）",
+          p2[-1].get("cat") == "愿" and p2[-1].get("page") == 1, str(p2[-1]))
+    check("  表格里每一行的印章都是「愿」（过滤在服务端做，客户端只拿到这一页）",
+          g9c["rows"] > 0 and all(r["seal"] == "愿" for r in g9c["rowInfo"]),
+          str(sorted(set(r["seal"] for r in g9c["rowInfo"]))))
+    check("  「共 N 条」跟着变成筛选后的总数（7），不是整库的 25",
+          g9c["count"] == "共7条留言", g9c["count"])
+    check("第九①无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
+    pg.close()
+
+    # ── 九② 背景重拉照带条件 ──────────────────────────────────────────────────
+    # 条件搬到服务端之后才会坏的地方：背景重拉（看板娘收尾 / 20 秒轮询）若走的是**不带
+    # 条件**的那条取数，主人正看着「愿」这一档，底下列表会被悄悄换成全部留言——上面的
+    # 页签还亮着，数据已经不是它那一份了（这一页此前整表拉，所以从来没有这个问题）。
+    print("\n【九②】背景重拉带的仍是当前条件（不是一次无条件全量重取）")
+    pg = mount(br, board_n=25)
+    click_cat(pg, "愿")
+    pg.wait_for_timeout(2100)                  # 过掉 liveRefresh 的 2s 节流窗口
+    fire_agent_done(pg)
+    pg.wait_for_timeout(600)
+    p_after = board_params(pg)[-1]
+    check("看板娘收尾事件触发的那一次带 cat=愿、page=1（条件没被丢掉）",
+          p_after.get("cat") == "愿" and p_after.get("page") == 1, str(p_after))
+    g_f = pg.evaluate(GEO_LIST)
+    check("  重拉之后表格里仍只剩「愿」（没有被换成全部 25 条里的一页）",
+          g_f["rows"] > 0 and all(r["seal"] == "愿" for r in g_f["rowInfo"]),
+          str(sorted(set(r["seal"] for r in g_f["rowInfo"]))))
+
+    # 删除之后总数跟着减：这一页是**本地剔除、不重拉**（连审 10 条不重发 10 次全量），
+    # 以前 N 就是数组长度、自洽；现在 N 来自服务端，必须自己跟着减一，否则「共 N 条」与
+    # 分页器会停在旧数上直到下一次重拉。
+    g_b = pg.evaluate(GEO_LIST)
+    n_gets = board_gets(pg)
+    row_loc(pg, g_b["rowInfo"][0]["content"]).locator(
+        "button", has_text=re.compile(r"^删\s*除$")).first.click()
+    pg.wait_for_timeout(300)
+    pg.locator(".ant-popover:visible .ant-popconfirm-buttons .ant-btn-primary").click()
+    pg.wait_for_timeout(600)
+    g_a = pg.evaluate(GEO_LIST)
+    check("删掉一条 ⇒ 行数少一行、「共 N 条」同时减一（不重拉也自洽）",
+          g_a["rows"] == g_b["rows"] - 1 and g_a["count"] == "共6条留言",
+          f'rows={g_b["rows"]}->{g_a["rows"]} count={g_a["count"]}')
+    check("  没有为了追总数而重拉列表（本地剔除这条纪律照旧）",
+          board_gets(pg) == n_gets, str(board_gets(pg)))
+    check("第九②无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
+    pg.close()
+
+    # ── 九③ 关键词：防抖 / 清空取消 / 乱序回包 ────────────────────────────────
+    # 打字是这一页唯一"会连发"的条件（类型/时序/页码都是点一下）。搬到服务端之后不防抖
+    # 就是每敲一个字发一次查询。三条判据逐条对照站内检索框那一套（site-search.test.py 的
+    # ①b/①c/①d）——那边是同一种坑，这一页是同一个坑的第二处。
+    print("\n【九③】关键词：整串只发一次 / 清空不许再发 / 乱序回包只认最后一次")
+    pg = mount(br)
+    n0 = len(board_params(pg))
+    pg.click(".bm-toolbar input")
+    pg.keyboard.type("驳回靶子", delay=60)      # 4 个字、共 ~240ms < 400ms 防抖
+    pg.wait_for_timeout(1200)
+    s = board_params(pg)[n0:]
+    check("敲 4 个字只发一次请求（防抖器只建一次，不是每次 render 新建一个）",
+          len(s) == 1, f"{len(s)} 次：" + str([x.get("q") for x in s]))
+    check("  发出去的是**整串**关键词，不是某个中间前缀",
+          bool(s) and s[0].get("q") == "驳回靶子", str([x.get("q") for x in s]))
+    check("  表格里只剩命中的 4 条（过滤是服务端做的）",
+          pg.evaluate(GEO_LIST)["rows"] == 4, str(pg.evaluate(GEO_LIST)["rows"]))
+    pg.close()
+
+    # 清空：防御的是"清空之后挂着的那次防抖到点，用一个已经不在框里的旧关键词又发一次"。
+    # 注意症状在 DOM 里**看不见**（框空了、列表还是那一份），判据只能落在请求本身。
+    pg = mount(br)
+    n0 = len(board_params(pg))
+    pg.click(".bm-toolbar input")
+    pg.keyboard.type("驳回", delay=40)
+    pg.wait_for_timeout(60)                    # 仍在 400ms 防抖窗口内
+    pg.fill(".bm-toolbar input", "")
+    pg.wait_for_timeout(900)                   # 足够让那次防抖到点（若没被 cancel）
+    check("清空之后一次请求都没发（挂着的那次被 cancel 掉了）",
+          len(board_params(pg)) == n0, str([x.get("q") for x in board_params(pg)[n0:]]))
+    pg.close()
+
+    # 乱序回包：真网络上"慢的是前一次查询"是常态，而本地假后端按调用顺序同步返回 ⇒ 只有
+    # **手造慢通道**才看得见。没有序号闸时，慢的旧回包最后落地、把新关键词的结果盖掉——
+    # 那不只是抖，是**显示错的搜索结果**（框里写着 B，表格里是 A 的结果）。
+    pg = mount(br, pre="window.__slowKw = '靶子'")
+    n0 = len(board_params(pg))
+    pg.click(".bm-toolbar input")
+    pg.keyboard.type("靶子", delay=40)
+    pg.wait_for_timeout(700)                   # 「靶子」那一次已发出（慢通道 2.5s）
+    check("这时确实有一条请求在途（「靶子」）", len(board_params(pg)) == n0 + 1,
+          str([x.get("q") for x in board_params(pg)[n0:]]))
+    # 换词用**全选覆盖**，不用退格：退两次会经过空串，而空串走的是"清空 ⇒ 立刻无条件查一次"
+    # 那条路（本身是对的，见上面的清空判据），会在两条关键词请求中间多插一条无 q 的请求，
+    # "两次请求"这条判据就判不清了。
+    pg.keyboard.press("Control+a")
+    pg.keyboard.type("通过甲", delay=40)        # 值变成「通过甲」→ 400ms 后再发一条（快）
+    pg.wait_for_timeout(1000)                  # 快的那条先落地
+    g_fast = pg.evaluate(GEO_LIST)
+    check("先看到的是新关键词「通过甲」的结果（1 条）",
+          g_fast["rows"] == 1 and g_fast["rowInfo"][0]["content"] == "通过甲",
+          str([r["content"] for r in g_fast["rowInfo"]]))
+    pg.wait_for_timeout(1600)                  # 慢的那条（旧关键词）此刻才落地
+    g_late = pg.evaluate(GEO_LIST)
+    check("旧关键词的慢回包落地后，表格仍是「通过甲」的结果（没有被盖回 4 条）",
+          g_late["rows"] == 1 and g_late["rowInfo"][0]["content"] == "通过甲",
+          str([r["content"] for r in g_late["rowInfo"]]))
+    check("  两次请求都发出去了（判据是「谁画在屏幕上」，不是「省掉了一次请求」）",
+          len(board_params(pg)) == n0 + 2, str([x.get("q") for x in board_params(pg)[n0:]]))
+    check("第九③无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
     br.close()

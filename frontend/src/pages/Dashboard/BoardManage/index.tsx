@@ -1,5 +1,5 @@
 import './index.sass'
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button, Grid, Input, Modal, Pagination, Popconfirm, Switch, Table, Tag, Tooltip, message } from "antd";
 import { ReloadOutlined } from "@ant-design/icons";
 import type { ColumnsType } from 'antd/es/table';
@@ -39,6 +39,19 @@ import { BOARD_REJECT_PRESETS, REJECT_REASON_MAX, aiTip } from "../ContentManage
  *  拉一次、也没有刷新入口 ⇒ 主人开着这一页、让看板娘替她驳回一条，界面纹丝不动。现在接
  *  `utils/liveRefresh.ts`（看板娘收尾事件 / 切回可见 / 20 秒轮询）＋工具栏一个「刷新」按钮；
  *  弹窗开着时那几轮一律不拉（见下面 `useLiveRefresh` 那段的理由）。
+ *  20261014 改动（用户问「好多数据库表的调用是不是根本不符合行业规范，我是直接整页拉」）：
+ *  筛选/搜索/排序/分页**全部搬到服务端**（参数见 talks.rs 的 `BoardAdminQuery`，判据见
+ *  `board_admin_filter`）。此前这一页是 `GET /api/protect/board` 整表拉回来、在前端
+ *  filter + sort + slice —— 三个后果，都不是"慢一点"：
+ *    · 搜到的只是"**已经拉到的那一份**里符合条件的"，而那一份随留言增长只会越来越大；
+ *    · 翻到第 3 页要先下载全部留言正文（每条最多 200 字）；
+ *    · 「共 N 条」是本地的数组长度，服务端有多少条它并不知道。
+ *  现在「前端搜到的」= 全库里符合条件的，判据只有服务端那一处。两个配套纪律：
+ *    · 关键词**必须防抖**（一次筛选就是一次查询了，见 `QUERY_DEBOUNCE_MS`）；
+ *    · 回包**只认最后一次**（`listSeq`：筛选/翻页挨得近时会有多个请求在途，乱序回包会把
+ *      上一次的结果盖回来）。
+ *  接口**不带参数时行为与从前逐字节相同**（agent 的三个工具与 golden 夹具按数组读这条
+ *  接口，`page_size` 不传就不分页、不算 COUNT、响应里也不会多出 `total` 键）。
  */
 interface BoardItem {
     talkKey: number;
@@ -67,15 +80,26 @@ interface BoardItem {
 
 const CATS = ['愿', '寄', '忆', '诉'];
 const LAMP_NAMES = ['莲花灯', '八角灯', '圆笼灯'];
-/** 每页条数：分页从 Table 搬到外面那一条，这里的数就是唯一真源（两处都得用它） */
+/** 每页条数：分页从 Table 搬到外面那一条，这里的数就是唯一真源（两处都得用它）。
+ *  20261014 起它同时是**发给服务端的 `page_size`**——列表真的按它切在服务端做，
+ *  外面那条 Pagination 与这张表格因此不可能各算各的。 */
 const PAGE_SIZE = 10;
+
+/** 关键词防抖窗口（毫秒）。与站内检索框同一个数——这一页的搜索 20261014 起也是一次
+ *  服务端查询，不防抖就是"每敲一个字发一次请求、每个回包重画一遍表格"。 */
+const QUERY_DEBOUNCE_MS = 400;
 
 const BoardManage = () => {
     const [items, setItems] = useState<BoardItem[]>([]);
+    /** 满足筛选条件的**总条数**（服务端信封里的 `total`，不是本页条数）——
+     *  外面那条 Pagination 与工具栏的「共 N 条留言」都用它。 */
+    const [total, setTotal] = useState(0);
     const [loading, setLoading] = useState(false);
     const [catFilter, setCatFilter] = useState(''); // 类型筛选（空 = 全部）
-    const [query, setQuery] = useState(''); // 关键词：留言/留名/用户名/昵称
+    const [query, setQuery] = useState(''); // 检索框里**显示**的那个词（每次击键都变）
+    const [applied, setApplied] = useState(''); // 真正发给服务端的那个关键词（防抖之后）
     const [asc, setAsc] = useState(false); // 时序正序/倒序
+    const [page, setPage] = useState(1);
     // 审核开关（web_info key-value，缺省关）
     const [aiOn, setAiOn] = useState(false);
     const [manualOn, setManualOn] = useState(false);
@@ -84,20 +108,48 @@ const BoardManage = () => {
     const [rejectReason, setRejectReason] = useState('');
     const [rejectBusy, setRejectBusy] = useState(false);
 
-    /** 拉列表。`silent` = 这一次是**背景重拉**（看板娘收尾事件 / 20 秒轮询）：
+    /** 列表取数序号：条件/页码挨得近时会有多个请求在途，**只认最后发出去的那一次**。
+     *  少了这道闸，乱序回包会把上一次筛选的结果盖回来——用户看到的是"筛完又自己变回去了"。
+     *  与 `frontHome/Head` 的 `searchSeq` 是同一条纪律（那边的现场注释更详细）。 */
+    const listSeq = useRef(0);
+
+    /** 拉**当前这一页**：类型、关键词、时序、页码四个条件都发给服务端，回来的就是这一页。
+     *  此前是"整表拉回来在前端 filter + sort + slice"——那样搜到的只是"已经拉到的那一份
+     *  里符合条件的"，而这一份随留言增长只会越来越大。
+     *
+     *  `silent` = 这一次是**背景重拉**（看板娘收尾事件 / 20 秒轮询）：
      *  · 不闪表格的 loading——后台每 20 秒抖一下 spinner，会让人以为页面自己在动；
      *  · 失败也不弹提示——服务端真挂了的话，主人手动点一次「刷新」会弹；每 20 秒叠一条
      *    「获取留言失败」只会把页面刷满，反而盖住别的东西。
-     *  手动那一次（挂载 / 工具栏「刷新」）照旧给反馈。 */
+     *  手动那一次（工具栏「刷新」）照旧给反馈。 */
     const load = async (opts?: { silent?: boolean }) => {
+        const seq = ++listSeq.current;
         if (!opts?.silent) setLoading(true);
         try {
-            const res = await http.get('/api/protect/board');
-            setItems(Array.isArray(res?.data?.data) ? res.data.data : []);
+            const res = await http.get('/api/protect/board', {
+                params: {
+                    page,
+                    page_size: PAGE_SIZE,
+                    order: asc ? 'asc' : 'desc',
+                    // 空筛选**整条不发**：服务端把"少了这个参数"与"空串"归成同一件事，
+                    // 少发一个也让请求 URL 与手测时敲的那条命令逐字对得上
+                    ...(catFilter ? { cat: catFilter } : {}),
+                    ...(applied.trim() ? { q: applied.trim() } : {}),
+                },
+            });
+            // 读到的是**旧条件**的回包 ⇒ 丢弃。连 loading 都不动：那一位归更晚的那次请求管
+            if (seq !== listSeq.current) return;
+            const rows = Array.isArray(res?.data?.data) ? res.data.data : [];
+            setItems(rows);
+            // 总数只认信封里那个，**别拿本页条数当总数**（那只是"结果正好一页"时的巧合）。
+            // 服务端没给（旧后端 / 半截部署）时退回本页条数：宁可只显示一页，也不凭空编一个
+            // 总数（缺键绝不编 0 —— 编出来的数会同时写进文案与分页器，看着很像真的）。
+            const t = res?.data?.total;
+            setTotal(typeof t === 'number' ? t : rows.length);
         } catch {
-            if (!opts?.silent) message.error('获取留言失败');
+            if (!opts?.silent && seq === listSeq.current) message.error('获取留言失败');
         } finally {
-            if (!opts?.silent) setLoading(false);
+            if (!opts?.silent && seq === listSeq.current) setLoading(false);
         }
     };
 
@@ -113,13 +165,61 @@ const BoardManage = () => {
     };
 
     /** 这一页的「重拉一次」= 列表 + 两个审核开关（开关也可能在别处被改，是同一份服务端状态）。
-     *  挂载、工具栏「刷新」、事件与轮询全走这一条，少一条路径就少一处会漂的判据。 */
+     *  工具栏「刷新」、事件与轮询走这一条，少一条路径就少一处会漂的判据。
+     *  （**挂载**不走它：挂载那一次由下面「条件变了就拉一页」那条 effect 承担，走它会把
+     *  列表请求发两遍。） */
     const refresh = async (opts?: { silent?: boolean }) => {
         await Promise.all([load(opts), loadSwitches()]);
     };
 
+    /** 关键词防抖的定时器。⚠️ 防抖器**不能**建在组件体里（每次 render 新建一个 ⇒ 上一次
+     *  的定时器永远没人取消，等于没防抖——`frontHome/Head` 为这件事踩过两轮，第二版用
+     *  `useMemo` 固定实例还被 CI 的 React Compiler 闸判死）。用文件里已有的 timed-ref 写法。 */
+    const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    /** 撤掉挂着的那一次防抖查询（清空输入 / 卸载两处都要它）。 */
+    const cancelScheduledSearch = () => {
+        if (searchTimer.current !== null) {
+            clearTimeout(searchTimer.current);
+            searchTimer.current = null;
+        }
+    };
+
+    /** 把这次关键词排在 `QUERY_DEBOUNCE_MS` 之后生效；期间再敲一个字就被顶掉，只发最后一次。
+     *  生效时**回第一页**：新条件的结果可能只有一页，停在「第 3 页」时表格是空的，
+     *  看着像"筛出来什么都没有"。 */
+    const scheduleSearch = (kw: string) => {
+        cancelScheduledSearch();
+        searchTimer.current = setTimeout(() => {
+            searchTimer.current = null;
+            // 关键词真的变了才回第一页：同一个词敲了又删回去，不该把翻到第 3 页的人拽回来
+            if (kw !== applied) setPage(1);
+            setApplied(kw);
+        }, QUERY_DEBOUNCE_MS);
+    };
+
+    // 卸载时把挂着的那一次清掉（清理体**内联**在这里、不调 `cancelScheduledSearch`：那样
+    // 会让 exhaustive-deps 要求把它列进依赖，而依赖一变这个 effect 就重跑、每次都把挂着的
+    // 定时器清掉——防抖直接失效。同 `frontHome/Head`）。
+    useEffect(() => () => {
+        if (searchTimer.current !== null) {
+            clearTimeout(searchTimer.current);
+            searchTimer.current = null;
+        }
+    }, []);
+
+    /* 列表：挂载 + 四个条件里任何一个变了就拉一页（这就是"服务端筛选"的全部接线）。
+     * ⚠️ `load` 每轮渲染都是新闭包（读的正是列在这条依赖里的那几个原始值），把它本身列进
+     * 依赖等于每次渲染都重拉一遍 —— 所以依赖只列原始值。**回第一页**不在这里做，在各条件
+     * 的改动处做（那里才知道该不该回：翻页时当然不回）。 */
     useEffect(() => {
-        refresh();
+        void load();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [page, catFilter, applied, asc]);
+
+    // 两个审核开关：只在挂载时读一次（它们与翻页/筛选无关，别跟着重复拉）。
+    useEffect(() => {
+        void loadSwitches();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
@@ -202,40 +302,22 @@ const BoardManage = () => {
         }
     };
 
-    /* 查询筛选：类型 + 关键词 + 时序（倒序默认，新近在前），类似灯影集的检索体验 */
-    const filtered = useMemo(() => {
-        const q = query.trim();
-        return [...items]
-            .filter((it) => catFilter === '' || it.cat === catFilter)
-            .filter((it) =>
-                q === '' ||
-                it.content.includes(q) ||
-                it.author.includes(q) ||
-                it.nickname.includes(q) ||
-                it.username.includes(q)
-            )
-            .sort((a, b) => {
-                const cmp = a.createTime < b.createTime ? -1 : a.createTime > b.createTime ? 1 : 0;
-                return asc ? cmp || a.talkKey - b.talkKey : -cmp || b.talkKey - a.talkKey;
-            });
-    }, [items, catFilter, query, asc]);
+    /* 查询筛选（类型 + 关键词 + 时序）与分页**都在服务端做** —— 三个条件连同 `page` 一起
+     * 发给 `/api/protect/board`，`items` 里装的就是"当前这一页"，这里不再 filter/sort/slice。
+     * 判据只有服务端那一处（`talks.rs::board_admin_filter`）：前端搜到的 = 全库里符合条件
+     * 的，而不是"已经加载进来的那份里符合条件的"。 */
 
-    /** 分页（20260926 从 Table 搬到这条页脚上，见下面 .bm-scroll 的说明）。
-     *  当前页只切**已经筛过**的那份，所以筛选条件一变就得回到第一页——否则会停在
-     *  「第 3 页」而结果只有 1 页，表格空着、看着像"筛出来什么都没有"。 */
-    const [page, setPage] = useState(1);
-    useEffect(() => { setPage(1); }, [catFilter, query, asc]);
-    const pageRows = useMemo(
-        () => filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
-        [filtered, page],
-    );
     /* 删除留言：管理员确认后删除，留言板不再展示 */
     const del = async (id: number) => {
         try {
             const res = await http.delete(`/api/protect/board/${id}`);
             if (res.data?.code === 200) {
                 message.success('已删除');
-                setItems((prev) => prev.filter((it) => it.talkKey !== id)); // 同上：本地剔除，不重拉全量
+                setItems((prev) => prev.filter((it) => it.talkKey !== id)); // 同上：本地剔除，不重拉
+                // 总数跟着减一：这一行本来就来自**当前这一页**（本页 = 筛选后的那一段），
+                // 删掉它总条数必然少一条。不减的话「共 N 条」与外面那条 Pagination 会停在
+                // 旧数上，直到下一次重拉才追上。
+                setTotal((t) => Math.max(0, t - 1));
             } else {
                 message.error(res.data?.message || '删除失败');
             }
@@ -385,22 +467,44 @@ const BoardManage = () => {
         <div className="BoardManage">
             <div className="bm-toolbar">
                 <div className="bm-tabs" role="tablist">
-                    <button type="button" className={catFilter === '' ? 'sel' : ''} onClick={() => setCatFilter('')}>全部</button>
+                    <button type="button" className={catFilter === '' ? 'sel' : ''} onClick={() => { setCatFilter(''); setPage(1); }}>全部</button>
                     {CATS.map((c) => (
-                        <button key={c} type="button" className={catFilter === c ? 'sel' : ''} onClick={() => setCatFilter(c)}>{c}</button>
+                        <button key={c} type="button" className={catFilter === c ? 'sel' : ''} onClick={() => { setCatFilter(c); setPage(1); }}>{c}</button>
                     ))}
                 </div>
+                {/* input 里显示 `query`、发出去的是防抖后的 `applied`，两者故意分开：
+                    打字过程中每个字都改 input，但**只有停下来那一次**才发查询。
+                    清空（含点 ×）立刻查：挂在窗口里的那次会在清空之后到点，用一个已经不在
+                    框里的旧关键词再发一次，把结果面又填回来。 */}
                 <Input.Search
                     placeholder="检索留言、留名、用户名或昵称…"
                     allowClear
-                    onChange={(e) => setQuery(e.target.value)}
+                    value={query}
+                    onChange={(e) => {
+                        const v = e.target.value;
+                        setQuery(v);
+                        if (v === '') {
+                            cancelScheduledSearch();
+                            if (applied !== '') setPage(1);
+                            setApplied('');
+                            return;
+                        }
+                        scheduleSearch(v);
+                    }}
+                    // 回车 / 点那颗搜索按钮 = **立刻查**（顶掉挂着的防抖那一次，不查两遍）
+                    onSearch={(v) => {
+                        cancelScheduledSearch();
+                        if (v !== applied) setPage(1);
+                        setApplied(v);
+                    }}
                     style={{ width: 300 }}
                 />
-                <Button onClick={() => setAsc((a) => !a)}>{asc ? '时序 ↑' : '时序 ↓'}</Button>
+                <Button onClick={() => { setAsc((a) => !a); setPage(1); }}>{asc ? '时序 ↑' : '时序 ↓'}</Button>
                 <Button icon={<ReloadOutlined />} onClick={() => refresh()} loading={loading}>
                     刷新
                 </Button>
-                <span className="bm-count">共 {filtered.length} 条留言</span>
+                {/* 总数来自服务端信封（这一页几条以前被当成总数用——"只有一页"时就看不出来） */}
+                <span className="bm-count">共 {total} 条留言</span>
             </div>
             <div className="bm-review">
                 <span className="bm-review-item">
@@ -430,7 +534,7 @@ const BoardManage = () => {
                 <Table
                     rowKey="talkKey"
                     columns={columns}
-                    dataSource={pageRows}
+                    dataSource={items}
                     loading={loading}
                     size="middle"
                     pagination={false}
@@ -448,7 +552,7 @@ const BoardManage = () => {
                     size="small"
                     current={page}
                     pageSize={PAGE_SIZE}
-                    total={filtered.length}
+                    total={total}
                     showSizeChanger={false}
                     onChange={setPage}
                     showTotal={(t) => `共 ${t} 条留言`}

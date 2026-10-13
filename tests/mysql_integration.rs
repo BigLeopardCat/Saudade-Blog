@@ -51,6 +51,22 @@
 //!   以及 `like_escape` 的反斜杠那一面——不转义时 `\p` 会被 LIKE 读成 `p`，**丢的是命中**
 //!   （与 `%` 变通配符只会多捞的方向相反），只有夹具里真放一条含字面量 `c:\path` 的行才抓得住。
 //!
+//! ## 第四半（20261014）：后台留言列表的服务端筛选与分页
+//!
+//! ⑪ `GET /api/protect/board` 在这一批之前是"整表拉回前端、前端再筛再切页"，现在
+//!   筛选/搜索/排序/分页都在服务端做。这里的判据几乎全是 **JOIN 语义**，对 `MockDatabase`
+//!   完全隐形：
+//!   · 关键词要能命中**用户名/昵称**（在 user 表上）⇒ 查询带 `LEFT JOIN user`。LEFT 还是
+//!     INNER，唯一的分界线是**发布者已经不在了**的那些留言（`user_id` 指向一个查不到的
+//!     用户）：INNER 会把它们从管理员眼前静默摘掉，而它们恰恰是最该被看见的行；
+//!   · 列表与计数**共用同一条未执行的查询**（`board_admin_filter`）⇒「共 N 条」必须等于
+//!     实际翻得出来的条数，且**同秒多行**要靠 id 参与排序才不重不漏；
+//!   · `like_escape` 在 `%` 那一面：不转义时搜 `qqzz%boardkw` 会把 `qqzzboardkw` 一起捞
+//!     回来（**多取行**——与 ⑩ 反斜杠那面"丢命中"的方向相反，所以那一面抓不住这一面）。
+//!
+//!   夹具的所有行 `created_at` **取同一个字面量**：分页要验的正是"同秒多行"这个最难的情形，
+//!   用 `NOW()` 播种会让每行的秒数各不相同 ⇒ 分页断言恰好退化成最容易通过的那种。
+//!
 //! ⑦⑧ 起要签真令牌、走真路由：`create_router` + 真 JWT（`create_token` 自会读
 //! `JWT_SECRET`，本文件自己把它设上）。夹具一律用 `9000000xx` 高位 id，且**按用户隔离**
 //! ——⑦⑧ 只在 `CONV_UID` 名下建会话、⑨ 只在 `APPLY_UID` 名下建申请，
@@ -1208,4 +1224,306 @@ async fn test_聚合搜索的四类命中集合与可见性谓词() {
     assert_eq!(j["data"]["counts"]["note"], 0);
     assert_eq!(j["data"]["counts"]["talk"], 0);
     assert_eq!(j["data"]["counts"]["comment"], 0);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// ⑪ 后台留言列表（20261014）：服务端筛选 / 排序 / 分页 / LEFT JOIN
+// ════════════════════════════════════════════════════════════════════════════
+//
+// 断言一律写成**精确 id 集合**或**精确 id 序列**。这一页从"整表拉回前端筛"改成
+// 服务端筛之后，最典型的坏法恰好都是"多给你几行"或"少给你几行"而两侧都看着对——
+// 用"包含"断言会全绿。
+
+/// 夹具关键词。**必须纯 ASCII**——与 ⑩ 不同：⑩ 只用它当 POST body，这里它要进
+/// **查询串**，`http::Uri` 不收非 ASCII 字节（中文会 panic 在 `b.body(..).unwrap()`）。
+/// 它照旧是"真实内容里不可能出现的怪串"（精确集合断言的前提）。
+const BOARDQ_KW: &str = "qqzzboardkw";
+
+const BOARDQ_UID_A: i32 = 900000051; // 用户名里带关键词
+const BOARDQ_UID_B: i32 = 900000052; // 昵称里带关键词，且名下**有三条**命中行
+/// 一个**不存在的用户**：孤儿留言指向它（线上对应"发布者账号已经删了"）。
+/// 高位夹具段里没有任何用例会建这个 id ⇒ `LEFT JOIN` 与 `INNER JOIN` 的分界线落在这里。
+const BOARDQ_GHOST_UID: i32 = 900000059;
+
+const BOARDQ_BODY: i32 = 900000061; // 正文命中，愿
+const BOARDQ_SIGN: i32 = 900000062; // **留名**命中，寄
+const BOARDQ_UBYNAME: i32 = 900000063; // **用户名**命中（A），愿
+const BOARDQ_UBYNICK: i32 = 900000064; // **昵称**命中（B），愿
+const BOARDQ_DECOY: i32 = 900000065; // 诱饵：四列全不命中，诉
+const BOARDQ_OTHER_SRC: i32 = 900000066; // `src='talk'` 的说说，正文命中 ⇒ 不许出现
+const BOARDQ_UBYNICK2: i32 = 900000067; // 昵称命中（B），愿
+const BOARDQ_UBYNICK3: i32 = 900000068; // 昵称命中（B），愿
+const BOARDQ_ORPHAN: i32 = 900000069; // 正文命中，但发布者已不存在
+
+/// 全部夹具行共用的时间戳（见文件头第四半的最后一段）：**同秒多行**是分页最难的情形。
+const BOARDQ_AT: &str = "2026-01-02 03:04:05";
+
+/// `q=BOARDQ_KW` 该命中的**全部**行（无序；要比集合时先各自排序）。
+const BOARDQ_HITS: [i32; 7] = [
+    BOARDQ_BODY,
+    BOARDQ_SIGN,
+    BOARDQ_UBYNAME,
+    BOARDQ_UBYNICK,
+    BOARDQ_UBYNICK2,
+    BOARDQ_UBYNICK3,
+    BOARDQ_ORPHAN,
+];
+
+/// 取列表里的 id 序列（**刻意不排序**：这一页的次序本身就是判据的一部分——
+/// 倒序/正序与"同秒按 id 排"都要能被看见。要比集合的调用方自己排）。
+fn board_ids(j: &serde_json::Value) -> Vec<i32> {
+    j["data"]
+        .as_array()
+        .unwrap_or_else(|| panic!("data 不是数组（信封形状变了？）：{j}"))
+        .iter()
+        .map(|r| r["id"].as_i64().expect("留言行没有整数 id") as i32)
+        .collect()
+}
+
+/// 升序副本，专门给"集合相等"的断言用。
+fn sorted(mut v: Vec<i32>) -> Vec<i32> {
+    v.sort_unstable();
+    v
+}
+
+#[tokio::test]
+async fn test_后台留言列表的服务端筛选分页与连接语义() {
+    let Some((db, db_app)) = connect_pair().await else {
+        return;
+    };
+
+    // ── 播种（先清自己的残留：上次跑挂了会留下行）────────────────────────
+    // `talk` 的孤儿行指向 `BOARDQ_GHOST_UID`，它没有 user 行可删——注意别在这里
+    // "顺手"把 51/52 之外的东西也删掉。
+    for id in BOARDQ_HITS.into_iter().chain([BOARDQ_DECOY, BOARDQ_OTHER_SRC]) {
+        exec(&db, &format!("DELETE FROM talk WHERE id = {id}")).await;
+    }
+    for id in [BOARDQ_UID_A, BOARDQ_UID_B] {
+        exec(&db, &format!("DELETE FROM user WHERE id = {id}")).await;
+    }
+
+    // 两个用户：**命中四列里的不同两列**（用户名的是 A、昵称的是 B）。
+    // B 名下三条留言 ⇒ "join 让行翻倍"若有发生，B 那三条会变成 9 行、并集立刻对不上。
+    // A 的昵称**刻意不含关键词**（四点全不沾）：四列里只要有一列没被真跑过，
+    // 精确集合断言就还绿着——所以"哪一列命中"必须一列一列地钉死。
+    // 这两个账号的 username / nickname 也都取自夹具的怪串：那两列上有唯一索引
+    //（`nickname_unique_20261002.sql`），用 'jia' 这种常见词撞上库里已有的行，
+    // 会让**播种那一步**就失败——而报错看着像"测试坏了"，不是"唯一约束起作用了"。
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO user (id, username, nickname, password, role) VALUES \
+             ({BOARDQ_UID_A}, '{BOARDQ_KW}_a', 'nb-jia-qqzz', 'x', 'user'), \
+             ({BOARDQ_UID_B}, 'b_{BOARDQ_KW}', '{BOARDQ_KW}_yi', 'x', 'user')"
+        ),
+    )
+    .await;
+
+    // 九条 talk：七条该被搜到、两条是负控（四列全不命中的诱饵、`src='talk'` 的说说）。
+    // 每一行的 `title` 都是印章（留言那一列的语义），正文只在前两行与孤儿行里出现关键词。
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO talk (id, title, content, cat, v, author, user_id, src, approved, created_at, updated_at) VALUES \
+             ({BOARDQ_BODY},      '愿', '灯下写着 {BOARDQ_KW} 两个字', '愿', 0, 'jia',              0,                  'board', 1, '{BOARDQ_AT}', NOW()), \
+             ({BOARDQ_SIGN},      '寄', '正文里没有那个词',             '寄', 0, '{BOARDQ_KW}_ming', 0,                  'board', 1, '{BOARDQ_AT}', NOW()), \
+             ({BOARDQ_UBYNAME},   '愿', '正文里没有那个词',             '愿', 0, 'bing',             {BOARDQ_UID_A},     'board', 1, '{BOARDQ_AT}', NOW()), \
+             ({BOARDQ_UBYNICK},   '愿', '正文里没有那个词',             '愿', 0, 'ding',             {BOARDQ_UID_B},     'board', 1, '{BOARDQ_AT}', NOW()), \
+             ({BOARDQ_DECOY},     '诉', '正文里没有那个词',             '诉', 0, 'wu',               0,                  'board', 1, '{BOARDQ_AT}', NOW()), \
+             ({BOARDQ_OTHER_SRC}, '无关标题', '说说正文里也有 {BOARDQ_KW}', '愿', 0, '',            0,                  'talk',  1, '{BOARDQ_AT}', NOW()), \
+             ({BOARDQ_UBYNICK2},  '愿', '正文里没有那个词',             '愿', 0, 'ji',               {BOARDQ_UID_B},     'board', 1, '{BOARDQ_AT}', NOW()), \
+             ({BOARDQ_UBYNICK3},  '愿', '正文里没有那个词',             '愿', 0, 'geng',             {BOARDQ_UID_B},     'board', 1, '{BOARDQ_AT}', NOW()), \
+             ({BOARDQ_ORPHAN},    '愿', '灯下也写着 {BOARDQ_KW} 两个字', '愿', 0, 'xin',             {BOARDQ_GHOST_UID}, 'board', 1, '{BOARDQ_AT}', NOW())"
+        ),
+    )
+    .await;
+
+    // ── 真链路 ────────────────────────────────────────────────────────
+    jwt_secret();
+    // 这条接口只要求"登录了"（`current_uid` ⇒ `auth_jwt::auth_uid`），不要管理员角色。
+    let token = auth_jwt::create_token(BOARDQ_UID_A, "user", 0);
+    let app = test_app(db_app);
+
+    // ① 分页的第一页：总数来自 COUNT、次序是"时间倒序 → id 倒序"。
+    let (st, j) = call(
+        app.clone(),
+        "GET",
+        &format!("/api/protect/board?q={BOARDQ_KW}&page=1&page_size=2"),
+        Some(&token),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "留言管理列表不该在 HTTP 层失败：{j}");
+    assert_eq!(
+        j["code"], 200,
+        "信封 code 必须是 200（走到这一步说明令牌经住了 auth_uid）：{j}"
+    );
+    assert_eq!(
+        j["total"], 7,
+        "「共 N 条」是**总条数**、不是本页条数——一页 2 条而总数 7 才是对的：{j}"
+    );
+    // 同秒多行 ⇒ 次序只能由 id 那一层定下来。少了它，MySQL 对同秒行的次序不保证，
+    // 这一条会时绿时红，而翻页会重复/漏行。
+    assert_eq!(
+        board_ids(&j),
+        vec![BOARDQ_ORPHAN, BOARDQ_UBYNICK3],
+        "倒序 + 同秒按 id 倒排：{j}"
+    );
+
+    // ② 翻完所有页：**并集不重不漏**、每一页的 total 都等于 7。
+    let mut seen: Vec<i32> = Vec::new();
+    for p in 1..=4 {
+        let (st, j) = call(
+            app.clone(),
+            "GET",
+            &format!("/api/protect/board?q={BOARDQ_KW}&page={p}&page_size=2"),
+            Some(&token),
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK);
+        assert_eq!(j["total"], 7, "每一页都该报同一个总数（第 {p} 页）：{j}");
+        seen.extend(board_ids(&j));
+    }
+    assert_eq!(seen.len(), 7, "四页共 8 格、最后一页只有 1 条：{seen:?}");
+    assert_eq!(
+        sorted(seen),
+        sorted(BOARDQ_HITS.to_vec()),
+        "翻页并集必须**不多不少**：多了是 join 让行翻倍或负控混了进来，少了是丢行"
+    );
+
+    // ③ 翻过头的那一页：**空页照样带总数**（`total` 取自 COUNT、不是取 rows.length）。
+    let (_, j) = call(
+        app.clone(),
+        "GET",
+        &format!("/api/protect/board?q={BOARDQ_KW}&page=5&page_size=2"),
+        Some(&token),
+        None,
+    )
+    .await;
+    assert!(board_ids(&j).is_empty(), "第 5 页该是空的：{j}");
+    assert_eq!(j["total"], 7, "空页的 total 仍是 7：{j}");
+
+    // ④ `order=asc` 把整段反过来（旧在前）。同秒 ⇒ 恰好是 id 升序。
+    let (_, j) = call(
+        app.clone(),
+        "GET",
+        &format!("/api/protect/board?q={BOARDQ_KW}&order=asc&page=1&page_size=200"),
+        Some(&token),
+        None,
+    )
+    .await;
+    assert_eq!(
+        board_ids(&j),
+        sorted(BOARDQ_HITS.to_vec()),
+        "`order=asc` 该是 id 升序（全部同秒）：{j}"
+    );
+
+    // ⑤ `cat` 与关键词**同时**生效（印章：愿 = E6 84 BF / 寄 = E5 AF 84，查询串里
+    //    中文必须百分号编码）。两张精确集合把 `cat` 那一侧的谓词钉死。
+    let (_, j) = call(
+        app.clone(),
+        "GET",
+        &format!("/api/protect/board?q={BOARDQ_KW}&cat=%E6%84%BF&page=1&page_size=200"),
+        Some(&token),
+        None,
+    )
+    .await;
+    assert_eq!(
+        j["total"], 6,
+        "`cat=愿` 的命中是六条（诱饵那条是诉、留名那条是寄）：{j}"
+    );
+    assert_eq!(
+        sorted(board_ids(&j)),
+        sorted(vec![
+            BOARDQ_BODY,
+            BOARDQ_UBYNAME,
+            BOARDQ_UBYNICK,
+            BOARDQ_UBYNICK2,
+            BOARDQ_UBYNICK3,
+            BOARDQ_ORPHAN,
+        ]),
+        "`cat=愿` 的精确集合：{j}"
+    );
+    let (_, j) = call(
+        app.clone(),
+        "GET",
+        &format!("/api/protect/board?q={BOARDQ_KW}&cat=%E5%AF%84&page=1&page_size=200"),
+        Some(&token),
+        None,
+    )
+    .await;
+    assert_eq!(board_ids(&j), vec![BOARDQ_SIGN], "`cat=寄` 只有留名那条：{j}");
+    assert_eq!(j["total"], 1, "两组之和必须回到 7：{j}");
+
+    // ⑥ `like_escape` 的 `%` 那一面。搜 `qqzzboardkw%`（查询串里 `%25`）时，未转义的
+    //    模式 `%qqzzboardkw%%` 里那个 `%` 是**通配符**，会把七条全捞回来——**多取行**。
+    //    （与 ⑩ 反斜杠那面"丢命中"的方向相反，所以那一条抓不住这一面。）
+    let (_, j) = call(
+        app.clone(),
+        "GET",
+        &format!("/api/protect/board?q={BOARDQ_KW}%25&page=1&page_size=10"),
+        Some(&token),
+        None,
+    )
+    .await;
+    assert_eq!(
+        j["total"], 0,
+        "搜 `{BOARDQ_KW}%` 该一条不中：夹具里没有哪个字段含字面的 `%`。\
+         这里非 0 就是 like_escape 漏了（`%` 被当成了通配符）：{j}"
+    );
+    assert!(board_ids(&j).is_empty(), "{j}");
+
+    // ⑦ `page` 只在给了 `page_size` 时生效；`page_size` 夹在 [1, 200]。
+    let (_, j) = call(
+        app.clone(),
+        "GET",
+        &format!("/api/protect/board?q={BOARDQ_KW}&page=2"),
+        Some(&token),
+        None,
+    )
+    .await;
+    assert_eq!(
+        board_ids(&j).len(),
+        7,
+        "只给 page 不触发分页（否则第 2 页只剩 2 条，等于把整段截成半截）：{j}"
+    );
+    let (_, j) = call(
+        app.clone(),
+        "GET",
+        &format!("/api/protect/board?q={BOARDQ_KW}&page=1&page_size=0"),
+        Some(&token),
+        None,
+    )
+    .await;
+    assert_eq!(
+        board_ids(&j).len(),
+        1,
+        "`page_size=0` 夹到 1（0 会让 `(page-1)*size` 与分页断言一起失效）：{j}"
+    );
+    assert_eq!(j["total"], 7, "{j}");
+
+    // ⑧ 无参调用：与 20261014 之前**逐字节相同**——老调用方（agent 的三个工具、
+    //    golden 夹具）按**数组**读 `data`。
+    let (st, j) = call(app, "GET", "/api/protect/board", Some(&token), None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(
+        j.get("total").is_none(),
+        "不带参数时响应里**不许出现** `total` 键（`skip_serializing_if` 让它整个消失，
+         老调用方里有按字段数看的）：{j}"
+    );
+    let all = board_ids(&j);
+    // 这条接口不是按用户隔离的（管理员看的是全站留言），开发库上可能有真实行
+    // ⇒ 只能断言**包含**，断言不了精确集合。
+    for id in BOARDQ_HITS.into_iter().chain([BOARDQ_DECOY]) {
+        assert!(
+            all.contains(&id),
+            "全量列表里少了 id={id}。孤儿行（发布者已不存在）尤其重要——\
+             `LEFT JOIN` 写成 `INNER JOIN` 就是把它从管理员眼前静默摘掉：{j}"
+        );
+    }
+    assert!(
+        !all.contains(&BOARDQ_OTHER_SRC),
+        "`src='talk'` 的说说不是留言，不许出现在留言管理里：{j}"
+    );
 }
