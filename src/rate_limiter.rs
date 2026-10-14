@@ -100,7 +100,12 @@ impl LoginRateLimiter {
 
     /// 记录一次失败尝试
     pub fn record_failure(&self, ip: &str, username: &str) {
-        let key = format!("{}:{}", ip, username);
+        self.push(ip, username);
+    }
+
+    /// 计数一次（`record_failure` / `hit` 共用的入口）
+    fn push(&self, ip: &str, subject: &str) {
+        let key = format!("{}:{}", ip, subject);
         let now = Instant::now();
 
         if let Ok(mut map) = self.inner.lock() {
@@ -112,6 +117,31 @@ impl LoginRateLimiter {
             if entry.locked_until.is_none() {
                 entry.attempts.push(now);
             }
+        }
+    }
+
+    /// **计数式的闸门**：判一次、记一次，窗口内放行前 `max_attempts` 次（20261015）。
+    ///
+    /// 与登录那条路径（`check` + `record_failure`）的区别只在**语义**，状态机是同一个：
+    /// 登录是"先判后记、只有失败才记"，而匿名可写的端点（如前端错误上报）没有"失败"
+    /// 这个概念——**每一个被受理的请求就是一次计数**，所以把两拍并成一拍。
+    ///
+    /// 计数语义与 `check` 逐字一致：窗口内第 1..=max 次返回 `Ok`，第 max+1 次起返回
+    /// `Err` 并锁定 `lockout_duration`。措辞是**通用的**（不是"登录"），因为这条路径的
+    /// `subject` 不一定是账号名（调用方只该拿它做日志/回包，别拿去判断类型）。
+    pub fn hit(&self, ip: &str, subject: &str) -> Result<(), String> {
+        match self.check(ip, subject) {
+            Ok(()) => {
+                self.push(ip, subject);
+                Ok(())
+            }
+            // 首次触发的 Err 就是"整段锁定从现在开始"，所以报完整锁定时长是**上界**
+            // （后续请求再报也没错，只是偏保守）；不把 check 那句"登录尝试"的措辞
+            // 漏到非登录的调用方去。
+            Err(_) => Err(format!(
+                "请求过于频繁，请 {} 秒后再试",
+                self.lockout_duration.as_secs()
+            )),
         }
     }
 
@@ -193,6 +223,32 @@ mod tests {
 
         assert!(limiter.check(ip, "admin").is_err());
         assert!(limiter.check(ip, "other_user").is_ok());
+    }
+
+    /// `hit` 的计数语义（20261015）：窗口内放行 max 次，第 max+1 次起锁定。
+    /// 与登录那组的差别是**受理的每一次都算数**（登录只有失败才算），所以这里
+    /// 连续 `hit` 三次就该满额——判据同时钉住"不早锁一次、也不晚锁一次"。
+    #[test]
+    fn hit_allows_exactly_max_per_window() {
+        let limiter = LoginRateLimiter::new(3, 60, 300);
+        for i in 1..=3 {
+            assert!(limiter.hit("1.2.3.4", "monitor").is_ok(), "第 {i} 次应放行");
+        }
+        let err = limiter.hit("1.2.3.4", "monitor").unwrap_err();
+        assert!(err.contains("过于频繁"), "{err}");
+        // 措辞不许把"登录"漏给非登录的调用方（回给访客的就是这句话）
+        assert!(!err.contains("登录"), "非登录路径的措辞里不该出现「登录」: {err}");
+    }
+
+    /// `hit` 与登录**共用同一个状态机**（同一张 map），但键不同 ⇒ 配额互不干扰。
+    /// 这条是"新增一个限流维度不会顺手把登录配额吃掉"的回归锁。
+    #[test]
+    fn hit_and_login_quotas_are_independent() {
+        let limiter = LoginRateLimiter::new(1, 60, 300);
+        assert!(limiter.hit("1.2.3.4", "monitor").is_ok());
+        assert!(limiter.hit("1.2.3.4", "monitor").is_err());
+        // 同一 IP 的登录路径不受影响（subject 不同 = 不同的键）
+        assert!(limiter.check("1.2.3.4", "admin").is_ok());
     }
 
     #[test]

@@ -5,8 +5,11 @@
 //
 // 设计取舍：
 //   - 匿名可写：访客错误上报最有价值，不要求登录（带 token 时解析出 uid 标记来源）；
-//   - 防刷：body 上限 8KB（超限 413）+ logrotate 兜底磁盘；不做 per-IP 限流，
-//     异常增长时 health.log 的 WARN（access 日志）会暴露；
+//   - 防刷：body 上限 8KB（超限 413）+ logrotate 兜底磁盘；**20261015 起补 per-IP 计数闸**
+//     （`AppState::report_limiter`：默认 120 条/60 秒，超限 429 并锁 300 秒，可用
+//     `MONITOR_REPORT_*` 环境变量调）。此前那句「不做 per-IP 限流」的理由是"60 秒去重
+//     已经在合并同 key 的行"——去重合并的是**显示**，写入照旧一次不落，所以它挡不住
+//     "把上报端点当免费磁盘写入放大器"（实测口径：单 IP 每秒几百条各自不同的 key）；
 //   - 落盘方式：每条开-写-关（低流量无碍），copytruncate 轮转安全（不持 fd）；
 //     手动拼行与 rust.log 视觉对齐（%Y-%m-%d %H:%M:%S%.3f + key=value）。
 //
@@ -176,6 +179,21 @@ fn dedupe_count(key: &str) -> u32 {
 }
 
 pub async fn report_log(State(state): State<Arc<AppState>>, req: Request<Body>) -> Response {
+    // 每 IP 计数闸（20261015）。放在**最前面**，在解析身份之前：`auth_uid` 要查一次库，
+    // 而被限流的洪水不该连库都碰到。取 IP 用登录那套出口（只信 nginx 覆写的头，
+    // 见 `auth::get_client_ip` 头注）——这里同样**不能**读 XFF 第一段，否则换个假 IP
+    // 就换了配额，闸门等于没有。
+    // 回 429 而不是静默吞：静默会让人以为是"上报成功但日志没写"（那是另一个更坏的故障）。
+    // 3xx/4xx 都不影响前端的 report.ts（它本来就不看结果）。
+    let ip = super::auth::get_client_ip(req.headers());
+    if let Err(msg) = state.report_limiter.hit(&ip, "report") {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(serde_json::json!({"ok": false, "error": msg})),
+        )
+            .into_response();
+    }
+
     // 带 token 时解析 uid，无则 guest（访客错误同样值得记录）——headers 须在 into_body 前读。
     // 20260926：身份走同一个出口 ⇒ 冻结/令牌被收回的账号在这里也归 guest（它确实已经
     // 不是"登录中的用户"了）。这条端点本就匿名可写，**uid 只是日志归属**、不授予任何能力；

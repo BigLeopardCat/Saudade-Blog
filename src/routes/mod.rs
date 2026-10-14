@@ -42,6 +42,11 @@ pub struct AppState {
     /// **与 `rate_limiter` 是两个东西、两套阈值**：那个管登录失败，这个管内容发布，
     /// 且它只负责"别连打"，真正的判据与窗口计数在 `crate::risk`（见其模块头注）。
     pub post_limiter: crate::risk::PostRateLimiter,
+    /// 前端错误上报（`/api/monitor/log`，**匿名可写**）的每 IP 计数闸（20261015）。
+    /// 与前两个又是两回事：那个管登录失败、那个管内容发布，这一条不判内容也不判身份，
+    /// 只数次数——它挡的是"把上报端点当免费的磁盘写入放大器"（每条都是一次开-写-关）。
+    /// 复用 `LoginRateLimiter` 的滑动窗口 + 锁定状态机（`hit` 那拍），**阈值另起一套**。
+    pub report_limiter: LoginRateLimiter,
 }
 
 /// 数据库出错时的统一出口：**记一行日志 + 回 500 信封**。

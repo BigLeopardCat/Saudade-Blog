@@ -53,7 +53,21 @@ async fn main() {
     // 这里只把计数器建出来。
     let post_limiter = saudade_blog::risk::PostRateLimiter::new();
 
-    let app_state = AppState { db, rate_limiter, post_limiter };
+    // 错误上报的计数闸（20261015）：`/api/monitor/log` 匿名可写、每条都开-写-关一次日志
+    // 文件，此前只有"body ≤ 8KB"与"60 秒同 key 去重"两道——**去重只合并显示，不挡写入**，
+    // 于是同一个 IP 能无限刷真实落盘的行。阈值刻意比登录宽得多（正常访客一页报几十条
+    // 是常事，宁漏勿误伤真实报错），且可经环境变量调，误伤了不必改代码重部署。
+    let report_max = env::var("MONITOR_REPORT_MAX")
+        .ok().and_then(|v| v.parse().ok()).unwrap_or(120);
+    let report_window_secs = env::var("MONITOR_REPORT_WINDOW_SECS")
+        .ok().and_then(|v| v.parse().ok()).unwrap_or(60);
+    let report_lockout_secs = env::var("MONITOR_REPORT_LOCKOUT_SECS")
+        .ok().and_then(|v| v.parse().ok()).unwrap_or(300);
+    let report_limiter = saudade_blog::rate_limiter::LoginRateLimiter::new(
+        report_max, report_window_secs, report_lockout_secs,
+    );
+
+    let app_state = AppState { db, rate_limiter, post_limiter, report_limiter };
     let app = create_router(app_state);
 
     let items = vec![
