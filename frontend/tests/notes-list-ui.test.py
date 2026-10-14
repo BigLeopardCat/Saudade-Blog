@@ -576,6 +576,82 @@ with sync_playwright() as p:
         check(f"{path} → 面包屑「{want}」", got == want, f"得到「{got}」")
         check(f"{path} → 无页面异常", not errs, "; ".join(errs[:3]))
 
+    # ── 七、文章分类列的标签：文字要落在标签容器正中间 ──────────────────────────
+    # 20261014 用户第 2 条。原来那一格是个行内 style 的居中 div，看着像居中、两轴其实都偏，
+    # **两处偏移都是量出来的**（不是估的）：
+    #   · 水平 −4.00px：antd 的 `.ant-tag` 自带 `margin-inline-end: 8px`，而 flex 的
+    #     `justify-content:center` 居的是**外边距盒** ⇒ 边框盒整体左移 8/2；
+    #   · 垂直 −1.50px：Tag 的 `line-height:20px` 里塞了个 antd `Space`（inline-flex），
+    #     行盒被撑到 23px 而内容只有 20px ⇒ 图标+文字贴着内容盒上沿、底下空 3px，
+    #     标签也比平时高 3px（25px vs 22px）。
+    # （这两个数是**挂了 iconfont 在真页面上**量到的。本套件的沙箱不挂字体，`<i>` 是零宽
+    #   空盒，同一处改回来只会读到 dx=−4.00px / dy=+2.00px / 内容盒 24px —— 方向与结论一样，
+    #   数值别照抄。）
+    # 判据取"标签边框盒中心 == 所在单元格中心"与"图标+文字这一组的中心 == 标签内容盒中心"
+    # —— 两轴各一条，都在半像素内。**不判字面量高度**：22px 只是 antd 默认值的另一种写法，
+    # 内容真居中了高度自然就回去了。
+    #
+    # 量的是 antd 的 `Space`（`.ant-space`）盒子，不是"图标盒 ∪ 文字盒"的并集 —— 这个沙箱
+    # **不挂 iconfont**（本套件的 index.html 里没有那两份字体样式表），`<i>` 是个零宽空盒，
+    # 拿它算并集等于只量了文字。`Space` 本来就是那个被撑开的 inline-flex 盒子，两处的偏差
+    # （外边距盒居中的 −4px、行盒被撑开的那些余量）都落在它身上。
+    print("\n【七】文章分类列的标签文本居中")
+    pg = mount(br)
+    CAT = """() => {
+        const tds = [...document.querySelectorAll('.AllCard tbody .ant-table-row td')];
+        const td = tds.find((t) => t.querySelector('.note-category-cell'));
+        if (!td) return null;
+        const tag = td.querySelector('.ant-tag');
+        const grp = tag.querySelector('.ant-space');
+        if (!grp) return null;
+        const cs = getComputedStyle(tag);
+        const R = (el) => { const b = el.getBoundingClientRect();
+            return { l: b.left, r: b.right, t: b.top, b: b.bottom,
+                     cx: b.left + b.width / 2, cy: b.top + b.height / 2, h: b.height }; };
+        const tr = R(tag), dr = R(td), gr = R(grp);
+        // 标签自己的**内容盒**（边框盒去掉边框与内边距）—— 判据是"这一组落在内容盒正中"，
+        // 不是"落在边框盒正中"：antd 的 Tag 左右各 7px 内边距，拿边框盒当基准会把内边距算成偏差。
+        const cL = tr.l + parseFloat(cs.borderLeftWidth) + parseFloat(cs.paddingLeft);
+        const cR = tr.r - parseFloat(cs.borderRightWidth) - parseFloat(cs.paddingRight);
+        const cT = tr.t + parseFloat(cs.borderTopWidth) + parseFloat(cs.paddingTop);
+        const cB = tr.b - parseFloat(cs.borderBottomWidth) - parseFloat(cs.paddingBottom);
+        const tg = document.querySelector('.AllCard tbody .note-tags-col .ant-tag');
+        return {
+            dxTagTd: tr.cx - dr.cx,
+            dxGroupContent: gr.cx - (cL + cR) / 2,
+            dyGroupContent: gr.cy - (cT + cB) / 2,
+            tagH: tr.h, contentH: cB - cT, groupH: gr.h,
+            catDisplay: cs.display, catAlign: cs.alignItems,
+            // 对照组：**文章标签列**是"一排标签"共用一格，绝不能被上面那条 flex 居中规则沾上。
+            // 判 display 同一件事要挑**样式表设的**属性 —— 那列的右外边距是组件里的**行内** style
+            // （`marginInlineEnd: 4`，见 TagMethods.tsx），行内权重永远压过我的选择器，拿它当判据
+            // 就算规则真泛化过去也是绿的（假对照）。`display` 由样表给，泛化就会真变红。
+            tagsCount: document.querySelectorAll('.AllCard tbody .note-tags-col .ant-tag').length,
+            tagsDisplay: tg ? getComputedStyle(tg).display : null,
+        };
+    }"""
+    geo = pg.evaluate(CAT)
+    check("文章分类列渲染出了「图标 + 文字」的标签", geo is not None)
+    if geo:
+        check("标签边框盒**水平**居中于所在单元格（|dx| < 0.5px，原来 −4.00px）",
+              abs(geo["dxTagTd"]) < 0.5, f'dx={geo["dxTagTd"]:+.2f}px')
+        check("「图标+文字」这一组**水平**居中于标签内容盒（|dx| < 0.5px）",
+              abs(geo["dxGroupContent"]) < 0.5, f'dx={geo["dxGroupContent"]:+.2f}px')
+        check("「图标+文字」这一组**垂直**居中于标签内容盒（|dy| < 0.5px，原来 −1.50px）",
+              abs(geo["dyGroupContent"]) < 0.5, f'dy={geo["dyGroupContent"]:+.2f}px')
+        # 内容盒高度应当就是那一组自己的高度，多出来的那几 px 正是"行盒被 inline-flex 撑开"
+        # 的余量。判"两者之差 < 0.5"而不判具体数值 —— 字号/行高一改，绝对数就陈旧了。
+        check("标签内容盒高度 == 那一组自己的高度（没有撑出来的余量）",
+              abs(geo["contentH"] - geo["groupH"]) < 0.5,
+              f'内容盒={geo["contentH"]}px 组={geo["groupH"]}px 标签={geo["tagH"]}px')
+        check("文章分类列的标签确实是 flex 居中容器（两条竖轴居中的前提）",
+              "flex" in geo["catDisplay"], f'display={geo["catDisplay"]}')
+        check("对照：文章标签列的标签**不是** flex 居中容器（选择器没泛化到那一排）",
+              geo["tagsCount"] >= 2 and "flex" not in geo["tagsDisplay"],
+              f'标签列 {geo["tagsCount"]} 个 display={geo["tagsDisplay"]}')
+    check("第七节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
+    pg.close()
+
     br.close()
 
 print()

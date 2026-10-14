@@ -478,7 +478,7 @@ const AllNotes = () => {
                     {categories
                         .filter((category: { categoryTitle: string;categoryKey:number }) => category.categoryKey === item)
                         .map((category: { color: string | undefined; categoryKey?: React.Key; key?: React.Key; icon: any; categoryTitle: string | number | boolean | React.ReactElement<any, string | React.JSXElementConstructor<any>> | Iterable<React.ReactNode> | React.ReactPortal | null | undefined; }) => (
-                            <div style={{ display: 'flex', alignItems: 'center',justifyContent:'center' }} key={category.categoryKey ?? category.key}>
+                            <div className="note-category-cell" key={category.categoryKey ?? category.key}>
                                 <Tag color={category.color}>
                                     <Space align={'center'} size={3}>
                                         <i className={`iconfont ${category.icon}`} style={{ display: 'block', fontSize: 18}}></i>

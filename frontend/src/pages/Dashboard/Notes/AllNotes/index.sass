@@ -80,6 +80,28 @@
     .ant-pagination
       margin: 0
 
+// 「文章分类」列：图标 + 分类名要落在标签正中间。原先是行内 style 的一个居中 div，
+// 看着像居中、实际两轴都偏 —— 都是用无头探针量出来的数，不是估的：
+//   · 水平偏 −4.00px：antd 的 `.ant-tag` 自带 `margin-inline-end: 8px`，而 flex 的
+//     `justify-content:center` 居的是**外边距盒** ⇒ 边框盒整体左移 8/2。
+//   · 垂直偏 −1.50px：Tag 的 `line-height:20px` 里塞了个 antd `Space`（inline-flex），
+//     行盒被撑到 23px 而内容只有 20px ⇒ 图标+文字贴着内容盒上沿、底下空 3px，
+//     标签也比平时高 3px（25px vs 22px）。
+// 各治各的：外边距清零治水平；Tag 自己变成 flex 容器、交叉轴居中治垂直（高度一并回到 22px）。
+// ⚠️ 选择器必须收在这个格子里 —— `.AllCard .ant-tag` 泛匹配会连「文章标签」列一起改：
+// 那列是**一排**标签共用一格（见 note-tags-col），它们的摆放不该跟着这格走。（那列的右
+// 外边距是组件里**行内**写死的，样式表本来就压不过；真正会被改掉的是 `display`。）
+.note-category-cell
+  display: flex
+  align-items: center
+  justify-content: center
+
+  .ant-tag
+    display: inline-flex
+    align-items: center
+    justify-content: center
+    margin-inline-end: 0
+
 // 标题列的省略号必须自己写：antd 的 `ellipsis` 对 flex 子项无效（复合 render 里的 Space
 // 是 inline-flex），实测 computed `textOverflow` 仍是 `clip`，长标题只会被硬裁。
 // `min-width:0` 在**容器和文本两处**都要有，缺一个省略号都不生效。
