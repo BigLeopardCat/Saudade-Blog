@@ -710,6 +710,11 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
       height: 100%
       overflow: hidden
       overflow: hidden
+      // ⚠️ 这一整块（`.TopCover .topDots`）**在标记里没有对应物**：轮播圆点渲染出来的是
+      // `.topDotsContainer`（见 index.tsx，以及文件下方那份同形规则），这里的选择器一个
+      // 都命中不了。留着没删是因为"删死代码"是另一件事，但**别把它当成现行规则**：改圆点
+      // 要看下面 `.topDotsContainer` 那份。（也留个心眼：哪天有人把标记改回 `.topDots`，
+      // 两份会同时命中，而下面那份后写者赢。）
       .topDots
         position: absolute
         bottom: 20px
@@ -724,7 +729,9 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
           border-radius: 50%
           margin-left: 10px
         .dotCurrent
-          background: #7880d1
+          // 20261014：与下面那份一起改走令牌 —— 原来写死 #7880d1（蓝紫，深浅同值）。
+          // 它眼下不生效，但留着旧色等于给"哪天复活"埋雷。
+          background: var(--washi-pink-deep, #d94f9a)
       img
         // 20260912 圆角由 .TopCover（border-radius + overflow hidden）裁剪，img 自己不再设，
         // 否则封面裁剪的 transform: scale 会把圆角一起放大
@@ -1541,6 +1548,9 @@ html[data-theme='dark'] .SayWords h2
     height: auto !important
     display: block !important
 
+// 轮播圆点（**这一份才是现行规则**：标记里渲染的是 `.topDotsContainer`，上面 `.TopCover
+// `.topDots`` 那份一个选择器都命中不了）。未选中的点是白的（压在封面图上，白色才读得出），
+// 当前那颗走站里的强调色。
 .topDotsContainer
   position: absolute
   bottom: 20px
@@ -1557,7 +1567,9 @@ html[data-theme='dark'] .SayWords h2
     border-radius: 50%
     margin-left: 10px
   .dotCurrent
-    background: #7880d1
+    // 20261014：原来写死 #7880d1（蓝紫）—— 与说说那个圆点同一个色值，深浅两档同一个
+    // 颜色，而站里的强调色是 --washi-pink-deep。改走令牌后与归档/说说的点同源。
+    background: var(--washi-pink-deep, #d94f9a)
 
 // ── Mobile (≤768px)：卡片瘦身，置顶卡与普通卡等高（V14）──
 @media screen and (max-width: 768px)

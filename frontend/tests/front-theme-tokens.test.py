@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""前台三个"老页"（归档 / 说说 / 分类）的配色必须走和纸令牌，且深浅两档要真的分档。
+"""前台三个"老页"（归档 / 说说 / 分类）＋首页轮播圆点：配色必须走和纸令牌，且深浅两档要真的分档。
 
 20261014 配色专项的判据。用户原话：「归档页，说说等等风格也同步到博客主题配色风格」
 —— 这三页（都是 `frontHome/Content/*` 下的列表页）一直没跟上 20261001 那批和纸改版，
@@ -35,6 +35,11 @@ API 单独编译后拼进沙箱的 index.html，再由 Playwright 读计算值�
 依赖：frontend/node_modules（esbuild/react/react-dom/antd/react-router-dom/react-helmet-async）、
       playwright(python)。本套件不进 CI（要无头 Chrome），由 `scripts/nightly_sandboxes.sh`
       每天 04:40 串行跑，结果在 ~/sandbox_regression.log。
+
+第四节（20261014 追加）量的是**首页轮播的「当前圆点」** —— 同一批里最后一处写死的强调色
+（`#7880d1`，与说说那个圆点同一个色值）。首页挂不起来（import 了 mp4/jpg，还拉进画布
+组件），所以取本仓对首页既有套件的老办法：**真 sass + 同形标记**、单独一份 dots.html
+（不与那三个真页面共用一份 style —— 它们有 `.post-date` 这类同名选择器，串在一起会互相压）。
 """
 import functools
 import http.server
@@ -242,6 +247,31 @@ def build_sandbox() -> pathlib.Path:
                        cwd=str(FE), check=True)
         css.append(out.read_text())
 
+    # 首页轮播的「当前圆点」住在 `ContentHome/index.sass`，而首页**挂不起来**：它 import 了
+    # `hero_bg.mp4`/`hero_poster.jpg`（esbuild 要再加两个 loader）并拉进 `Vitrine`（画布）。
+    # 这一处照本仓对首页既有套件的老办法（`home-hero` / `article-grid` / `home-labels`）：
+    # **真 sass + 同形标记**，只放这一格，不与上面三个真页面抢同一个 style（那三页的判据里
+    # 有 `.post-date` 这类同名选择器，串在一起会互相压）。
+    dots_css = sb / "dots.css"
+    subprocess.run(["node", "-e",
+                    "const s=require('sass');const r=s.compile(process.argv[1],{style:'expanded'});"
+                    "require('fs').writeFileSync(process.argv[2],r.css);",
+                    str(FE / "src/frontHome/Content/ContentHome/index.sass"), str(dots_css)],
+                   cwd=str(FE), check=True)
+    # 同形标记：轮播那颗「当前」圆点。`.topDotsContainer` 才是标记里真渲染的那层（另一份
+    # `.TopCover .topDots` 在标记里没有对应物，是死规则，本套件不判它）。
+    (sb / "dots.html").write_text(
+        '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
+        '<style>html,body,#root{margin:0;min-height:100%}body{background:#f3f3f3}</style>'
+        '<style>' + "\n".join(css + [dots_css.read_text()]) + '</style></head><body>'
+        '<div class="frontRoot">'
+        '  <div class="ContentContainer"><div class="TopArticle">'
+        '    <div class="topDotsContainer">'
+        '      <div class="topDot"></div><div class="topDot dotCurrent" id="cur"></div>'
+        '    </div>'
+        '  </div></div>'
+        '</div></body></html>', encoding="utf-8")
+
     r = subprocess.run([str(FE / "node_modules/.bin/esbuild"), "entry.tsx",
                         "--bundle", "--format=iife", "--outfile=bundle.js",
                         "--loader:.sass=text", "--jsx=automatic",
@@ -280,6 +310,7 @@ threading.Thread(target=_server.serve_forever, daemon=True).start()
 from playwright.sync_api import sync_playwright  # noqa: E402
 
 URL = f"http://127.0.0.1:{_server.server_address[1]}/index.html"
+DOTS_URL = f"http://127.0.0.1:{_server.server_address[1]}/dots.html"
 
 
 def norm(c):
@@ -373,6 +404,58 @@ with sync_playwright() as p:
           readings["Categories/day"]["retired"] == "",
           "读到 %r" % readings["Categories/day"]["retired"])
 
+    # ── 四、首页轮播的「当前圆点」（20261014 同一批：它是最后一个写死的强调色）──────
+    # 用户原话里的「等等」覆盖到了这里：`.dotCurrent` 写死 `#7880d1`（蓝紫）——**与说说那个
+    # 圆点同一个色值**，也是深浅两档同一个颜色，而站里的强调色是 `--washi-pink-deep`。
+    # 未选中那颗仍是白的（压在封面图上，白色才读得出），**不跟着改** —— 那条也判，免得日后
+    # 有人"顺手统一"把两颗都染成粉的。
+    print("\n【四】首页轮播的当前圆点走 --washi-pink-deep")
+    DOTS = r"""() => {
+      const host = document.querySelector('.frontRoot');
+      const expected = (tok) => {
+        const d = document.createElement('div');
+        d.style.color = 'var(' + tok + ')';
+        host.appendChild(d);
+        const c = getComputedStyle(d).color;
+        d.remove();
+        return c;
+      };
+      const cur = document.querySelector('.topDotsContainer .dotCurrent');
+      const idle = document.querySelector('.topDotsContainer .topDot:not(.dotCurrent)');
+      return {
+        count: document.querySelectorAll('.topDotsContainer .topDot').length,
+        cur: cur ? getComputedStyle(cur).backgroundColor : null,
+        idle: idle ? getComputedStyle(idle).backgroundColor : null,
+        want: expected('--washi-pink-deep'),
+      };
+    }"""
+    dots = {}
+    for dark in (False, True):
+        page = br.new_page(viewport={"width": 1280, "height": 900})
+        errs = []
+        page.on("pageerror", lambda e: errs.append(str(e)))
+        page.goto(DOTS_URL)
+        page.evaluate("(d) => document.querySelector('.frontRoot').classList.toggle('frontDark', d)", dark)
+        page.wait_for_timeout(150)
+        dots["night" if dark else "day"] = page.evaluate(DOTS)
+        dots["night" if dark else "day"]["errs"] = errs[:2]
+        page.close()
+
+    for key in ("day", "night"):
+        d = dots[key]
+        check("%s：轮播圆点渲染出来了（两颗：白点 + 当前点）" % key, d["count"] == 2, str(d["count"]))
+        check("%s：无页面异常" % key, not d["errs"], "; ".join(d["errs"]))
+        ok, detail = near(d["cur"], d["want"])
+        check("%s：当前圆点走 --washi-pink-deep" % key, ok, detail)
+        # 反控：未选中那颗必须还是白的（`background: white`）。这条防的是"把两颗一起染粉"
+        # ——那也能让上面两条变绿，但圆点在封面图上就分不出"当前"了。
+        check("%s：未选中的圆点仍是白的（没被一起染成强调色）" % key,
+              norm(d["idle"]) == (255.0, 255.0, 255.0, 1.0), str(d["idle"]))
+    # 与一·自证同一条理由：写死色值的直接症状就是两档同值。
+    check("当前圆点：白天与夜间不是同一个值（写死的直接症状就是两档同值）",
+          norm(dots["day"]["cur"]) != norm(dots["night"]["cur"]),
+          "day=%s night=%s" % (dots["day"]["cur"], dots["night"]["cur"]))
+
     br.close()
 
 print()
@@ -381,4 +464,4 @@ if FAILS:
     for f in FAILS:
         print("   - " + f)
     sys.exit(1)
-print("✅ 前台三个老页的和纸配色：全部通过")
+print("✅ 前台三个老页 + 首页轮播圆点的和纸配色：全部通过")
