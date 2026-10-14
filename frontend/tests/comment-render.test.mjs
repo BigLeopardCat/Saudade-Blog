@@ -60,7 +60,7 @@ execFileSync(path.join(root, 'node_modules/.bin/esbuild'), [
     '--platform=node', `--outfile=${bundle}`, '--log-level=error',
 ], { stdio: ['ignore', 'ignore', 'inherit'] });
 
-const { renderBlogMarkdown } = await import(bundle);
+const { renderBlogMarkdown, escapeHtmlText } = await import(bundle);
 
 console.log('渲染管线 —— 危险输入被剥掉：');
 {
@@ -114,6 +114,39 @@ console.log('渲染管线 —— 危险输入被剥掉：');
     // 未知的 :xx: 原样保留（stickers.ts 的既定语义），不该被当成表情
     const s = renderBlogMarkdown(':没这个表情:');
     ok(!/<img/.test(s), '清单外的 :名字: 不转换', s);
+}
+
+// ── ①b 回退路径：管线抛异常时，产物也不许是原文（20261015）─────────────────
+// `renderBlogMarkdown` 的 catch 原来 `return text`。产物有两个消费点都是
+// `dangerouslySetInnerHTML`（CommentSection 与看板娘对话框）⇒ 交回原文等于
+// "因为渲染失败，所以这次不消毒"，方向正好是反的。
+// 这一条**必须真让管线抛**再断言（读源码文本那种写法对这个洞是瞎的：写错的那版
+// 也有 try/catch，只是 catch 里返回的东西不同）。可控的抛异常输入：`<div>` 嵌套到
+// 足够深会让 rehype-raw 的树遍历爆栈（`Maximum call stack size exceeded`）。
+// ⚠️ 深度门槛**不是单调的**，别按"几百层够用"写：20261015 实测 400/2000/3000 层都不抛
+// （各自跑通并正常消毒），1600/4000 抛、6000 与 8000 连跑 3 次稳定抛。爆不爆栈取决于
+// 那个深度在树遍历里刚好要多深的调用栈，取 6000 是踩着实测的安全边距（约 300ms/次）。
+console.log('\n回退路径 —— 渲染失败时降级成纯文本：');
+{
+    const deep = '<div>'.repeat(6000) + '<img src=x onerror="alert(1)">' + '</div>'.repeat(6000);
+    let threw = false;
+    const origError = console.error;
+    console.error = (...a) => { if (String(a[0]).includes('render failed')) threw = true; };
+    const s = renderBlogMarkdown(deep);
+    console.error = origError;
+    ok(threw, '该输入确实让管线抛异常（这条不绿 ⇒ 下面两条测的不是回退路径）',
+        { len: deep.length });
+    // 判据是"一个 `<` 都没有"，**不是**"不含 onerror 这个字符串"：回退产物是纯文本，
+    // 里面那些字母（onerror=…）原样躺着是正确的——它们只是字，不是属性。转义函数
+    // 把每个 `<` 都变成 `&lt;`，所以产物里只要还剩一个 `<` 就说明这段文本会被当标签解析
+    ok(!s.includes('<'), '回退产物里一个 `<` 都没有（标签全变成了 &lt;）', s.slice(0, 70));
+    ok(s.includes('&lt;div&gt;'), '原文还在，只是被转义（降级成纯文本，不是丢内容）',
+        s.slice(0, 70));
+}
+{
+    // 回退路径的转义函数本身：五个字符都得转（`'` 与 `"` 少一个，落进属性语境就漏）
+    ok(escapeHtmlText(`&<>"'`).replace(/&amp;|&lt;|&gt;|&quot;|&#39;/g, '') === '',
+        'escapeHtmlText 把 & < > " \' 五个字符全部转义', escapeHtmlText(`&<>"'`));
 }
 
 // ── ② 源码契约 ─────────────────────────────────────────────────────────────

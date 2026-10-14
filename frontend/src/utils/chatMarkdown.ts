@@ -52,12 +52,29 @@ processor = processor
 const mermaidViewerEffect = mermaid(MERMAID_CONFIG).viewerEffect as
   ((ctx: { markdownBody: HTMLElement }) => void) | undefined
 
+/** HTML 转义（只给下面那条回退路径用）。
+ *
+ * 这是**唯一**允许出现在本模块里的另一套转义：管线自身靠 rehype-sanitize，
+ * 而回退路径根本没有管线可依赖，只能把原文当纯文本吐出去。 */
+export const escapeHtmlText = (s: string): string =>
+  s.replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string))
+
 export const renderBlogMarkdown = (text: string): string => {
   try {
     return String(processor.processSync(text))
   } catch (e) {
+    // 管线挂了要**降级成纯文本**，不能把原文原样交回去（20261015）：
+    // 产物有两个消费点都是 `dangerouslySetInnerHTML`（CommentSection 与看板娘对话框），
+    // 交回原文等于"因为渲染失败，所以这次不消毒"——**失败反倒放宽**，方向正好是反的。
+    // 触发条件是有的（实测：`<div>` 深嵌套会让 rehype-raw 的树遍历爆栈，但门槛
+    // **不单调**——400/2000/3000 层都不抛、1600/4000/6000 层抛，取值见
+    // `frontend/tests/comment-render.test.mjs` 的 ①b 段；`String()` 顺带兜住非字符串入参）。
+    // 现状够不到真实攻击面——评论正文两侧都卡 300 字（`MAX_COMMENT_CHARS`），
+    // 这个长度内没找到能触发爆栈的形状（20261015 逐形状实测）；所以这是纵深防御里
+    // 最便宜的一条：**错误分支的默认动作也是"安全的那个"**。
     console.error('[chatMarkdown] render failed:', e)
-    return text
+    return escapeHtmlText(String(text))
   }
 }
 
