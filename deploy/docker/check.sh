@@ -253,7 +253,29 @@ assert_has Dockerfile.backend 'mkdir -p /srv/logs/frontend' "后端镜像预建�
 # 产物更旧 ⇒ cargo 报 `Finished` 一个字节都不编，`cp` 复制的还是 `fn main() {}`。
 # 症状：镜像构建全绿、容器退出码 0、无限 Restarting，二进制里没有一句启动日志。
 assert_has Dockerfile.backend 'find src -type f -exec touch' "真源码 COPY 进来后刷新 mtime（不刷新 ⇒ cargo 拿空桩当已最新）"
-assert_has Dockerfile.backend 'install -y --no-install-recommends gcc libc6-dev findutils' "上面那条用的是 find ⇒ findutils 显式装着（缺席的报错长得像构建环境坏了）"
+# 上面那条 `find … touch` 的**工具依赖**，以及 C 工具链：逐包判，**不写整串**（20261015）。
+# 原写法是整串精确匹配 `install -y --no-install-recommends gcc libc6-dev findutils`，
+# 而 Dockerfile 那行后来加了 `cmake`（它上面的注释写明 aws-lc-sys 要用 CMake 配那棵 C 源树）
+# ⇒ 整串再也匹配不上：**恒红，而红的原因跟它想守的东西无关**（它守的 findutils 好好的）。
+# 两条讲究：
+#   ① 只在**那条 apt 行**里找包名，不全文 grep —— 文件上方那段注释里也出现 gcc / findutils
+#      这些词，全文匹配会拿注释当证据（同族的坑本仓记过：判据要读程序、别读文本）；
+#   ② 取"触到 find 那条**之前**的最后一条 apt 行" = 它俩同在那个构建阶段，
+#      不靠"文件里第一条 apt 行"这种巧合（runtime 阶段还有一条装 tzdata 的）。
+l_find_apt="$(grep -n 'find src -type f -exec touch' Dockerfile.backend | cut -d: -f1 | head -1)"
+l_apt="$(grep -n 'apt-get install -y --no-install-recommends' Dockerfile.backend | cut -d: -f1 \
+    | awk -v f="${l_find_apt:-0}" '$1 < f { last = $1 } END { print last }')"
+: >"$SCRATCH/backend-apt.pkgs"
+[ -n "$l_apt" ] && sed -n "${l_apt}p" Dockerfile.backend | tr -s '[:space:]' '\n' >"$SCRATCH/backend-apt.pkgs"
+for p in gcc libc6-dev cmake findutils; do
+    case "$p" in
+      findutils) why="上一行那条 find … touch 用的就是它（它缺席时报的是中间层的 find: not found，读起来像构建环境坏了）" ;;
+      cmake)     why="aws-lc-sys 要用 CMake 配 C 源树（别把它删了以为 gcc 就够 —— 那是 ring 时代的结论）" ;;
+      *)         why="C 工具链" ;;
+    esac
+    if grep -qx -- "$p" "$SCRATCH/backend-apt.pkgs"; then pass "后端构建阶段的 apt 行装了 $p（$why）"
+    else fail "后端构建阶段（Dockerfile.backend:${l_apt:-无}）的 apt 行少了 $p —— $why"; fi
+done
 l_copy="$(grep -n '^COPY src \./src' Dockerfile.backend | cut -d: -f1 | head -1)"
 l_touch="$(grep -n 'find src -type f -exec touch' Dockerfile.backend | cut -d: -f1 | head -1)"
 l_build="$(grep -n 'cargo build --release --locked' Dockerfile.backend | tail -1 | cut -d: -f1)"
