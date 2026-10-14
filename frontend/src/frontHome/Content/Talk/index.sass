@@ -74,20 +74,26 @@
     max-width: 400px
     padding: 20px
     margin-bottom: 10px
-    background-color: var(--pic-background-cover)
+    // 20261014：原来是 `--pic-background-cover`（#fafafa / #212121 —— 中性灰，是给图片
+    // 占位块和输入框用的那一支）。说说卡片是这一页的主面，跟站里其余卡片一样走和纸：
+    // 白天暖白 #fffdfa，夜间紫调深墨（中性灰 #212121 与全站的夜色不是一套）。
+    background-color: var(--washi-paper, #fffdfa)
     color: var(--font-title-color)
     color: var(--font-title-color)
     color: var(--font-title-color)
     transition: 0.3s
     @media only screen and (max-width: 800px)
       max-width: 300px
+    // 20261014：这条竖线与下面那个圆点原来各写死一个色（#b1cee3 淡钢蓝、#7880d1 蓝紫），
+    // 深浅两档同一个值，与和纸的粉紫天青不是一套。改走令牌后与归档页的时间轴同源：
+    // 线 = `--washi-line`（那里也是这根线），点 = `--washi-pink-deep`（那里也是这个点）。
     &:before
       content: ""
       position: absolute
       left: -3.05rem
       top: -30%
       bottom: 0
-      border-left: 4px solid #b1cee3
+      border-left: 4px solid var(--washi-line, rgba(198, 152, 192, 0.42))
       border-radius: 2px
     &:after
       content: ""
@@ -98,7 +104,7 @@
       width: .5rem
       border-radius: 50%
       position: absolute
-      background-color: #7880d1
+      background-color: var(--washi-pink-deep, #d94f9a)
     .ant-card-body
       color: var(--font-title-color)
       color: var(--font-title-color)

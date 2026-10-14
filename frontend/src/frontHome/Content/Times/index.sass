@@ -18,7 +18,9 @@
     hr
       width: 100px
       height: 3px
-      background-color: #ce7397
+      // 20261014 配色收进和纸令牌（原来是写死的 #ce7397 —— 深浅两档一个值，
+      // 与站点其余部分的粉紫天青不是一套）
+      background-color: var(--washi-pink-deep, #d94f9a)
     h2
       color:  var(--font-title-color)
       font-weight: 600
@@ -51,13 +53,26 @@
 
 
 
-.ant-timeline-item-tail
-  border-inline-start: 2px solid rgba(255, 255, 255, 0.3) !important
+// 归档页那根时间轴（全站只有这一个 antd Timeline）。三条都收进 `.TimesContainer`
+// —— 原来挂在全局类名上，将来哪天别处多出一个 Timeline 会被一起染色。
+//
+// 20261014 配色专项：这两条原来各有一个毛病，都是**量出来的**（探针
+// `frontend/.harness-tagprobe/theme.py`，读 computed 不读源码）：
+//   · 竖线写的是 `rgba(255,255,255,0.3)` —— 白线压在浅色页面上**白天等于看不见**
+//     （夜间反倒是对的）。今天统一走 `--washi-line`（白天粉线、夜间白线）。
+//   · `.ant-timeline-item-head-blue` 那三条**根本没生效**：computed 仍是 antd 的
+//     `#1677ff` 与**白色**圆点底。原因是 antd v5 的 cssinjs 是运行时注入的，
+//     同权重（0,1,0）时后写者赢，而它注在静态样式表之后。
+//     ⇒ 收进 `.TimesContainer`（权重升到 0,2,0）就赢了，不必动 `!important`；
+//       圆点底写 `transparent` 是原意（做成一个环，而不是一颗白点 —— 夜间那颗白点很扎眼）。
+.TimesContainer
+  .ant-timeline-item-tail
+    border-inline-start: 2px solid var(--washi-line, rgba(198, 152, 192, 0.42)) !important
 
-.ant-timeline-item-head-blue
-  color: #1890ff
-  border-color: #1890ff
-  background: transparent
+  .ant-timeline-item-head-blue
+    color: var(--washi-pink-deep, #d94f9a)
+    border-color: var(--washi-pink-deep, #d94f9a)
+    background: transparent
 
 .TimesContainer .timeLine
    color: var(--font-p-color) !important

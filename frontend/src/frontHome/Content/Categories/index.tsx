@@ -68,11 +68,15 @@ const Categories = () => {
                             <div className="articleTop">
                                 <h2>{item.noteTitle}</h2>
                                 {item.isTop===1&&<span><i
-                                    className="iconfont icon-tuding" style={{fontSize: 23,color:'red'}}></i></span>}
+                                    className="iconfont icon-tuding" style={{fontSize: 23,color:'var(--washi-pink-deep)'}}></i></span>}
                             </div>
                             <p>{item.description}</p>
-                            <div className='articleFooter'><span style={{fontSize:13,color:'#7f7e7e'}} className='post-date'><i className="iconfont icon-naozhong icon" style={{fontSize: 22, display: 'inline',verticalAlign: 'sub'}}></i>发布于 {dayjs(item.updateTime).format('YYYY-MM-DD')}</span>
-                                <span style={{color:'#ed5f96',float:'right'}}>阅读全文→</span>
+                            {/* 两处行内色 20261014 改走令牌（原来写死 #7f7e7e / #ed5f96，
+                                深浅两档一个值；#ed5f96 那个粉与站里的 --washi-pink-deep
+                                本来就几乎同色，索性统一）。行内色在**子元素**上，权重上压过
+                                `.articleFooter` 自己那条，所以这两处不改的话父级改了也看不见。 */}
+                            <div className='articleFooter'><span style={{fontSize:13,color:'var(--font-p-color)'}} className='post-date'><i className="iconfont icon-naozhong icon" style={{fontSize: 22, display: 'inline',verticalAlign: 'sub'}}></i>发布于 {dayjs(item.updateTime).format('YYYY-MM-DD')}</span>
+                                <span style={{color:'var(--washi-pink-deep)',float:'right'}}>阅读全文→</span>
                             </div>
                         </div>
                     </li>

@@ -51,7 +51,12 @@
       padding: 10px
       &:hover
         transition: 1s
-        background: var(--category-hover-color)
+        // 20261014：原来是 `--category-hover-color`（#b1cee3 / #37708b 淡钢蓝）。
+        // 那是全站**唯一**的消费点，令牌本身已随之撤掉（main.css 两档的定义一并删）。
+        // 换成 `--washi-head`：它是这一套令牌里唯一"白天浅、夜间深"的**面**色
+        // （#f2e7ed / #3b3548）——悬停行的底色必须这样分档，否则夜间会是一块亮底
+        // 压白字（`--washi-lav` 那类夜间仍是浅色的令牌在这里会读不成）。
+        background: var(--washi-head, #f2e7ed)
         border-radius: 10px
     img
       border-radius: 10px
@@ -87,6 +92,9 @@
         width: 100%
         height: 20px
         margin-top: 1rem
-        color: rgba(31, 41, 55, .9)
+        // 20261014：原来是写死的 `rgba(31,41,55,.9)`（深蓝灰）—— 深浅两档一个值，
+        // 夜间就是深灰字压在深底上，等于看不见。改走 `--font-p-color`（与上面 `p` 同源，
+        // 它本来就是这一页的"次要文字"色，白天 #898989、夜间 #cccccc）。
+        color: var(--font-p-color)
 
 
