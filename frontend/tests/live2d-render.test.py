@@ -49,6 +49,16 @@ WIDGET = PUBLIC / "live2d-widgets"
 TITLE = "回归台标题A1"          # 欢迎语要把它填进「」里，用个不会自然出现的串
 PAGE_PATH = "/article/16"        # 文章页才会出现"欢迎阅读"（首页走的是时段问候）
 
+# ⑩ 用：一个**带标签的标题**（20261015）。走的是与 PAGE_PATH 同一条路径——文章页，
+# 于是 renderer.js 的欢迎语会把 `document.title` 原样填进 `#waifu-tips` 的 innerHTML。
+# 载荷选这条是因为它同时钉三件事：① 真能造出元素（`<img>`，旧的未转义实现会把它当真标签
+# 解析）；② 真能执行（`onerror` 在 img 加载失败时触发，落一个可读的标记）；
+# ③ 里面还有一个 `<b>`，用来区分"转义了值"与"把整条文案连同模板一起转义"
+# （模板自带的那个 `<span>` 必须还在，否则强调色就没了）。**不含 `</title`**——
+# 那会提前结束 harness 的 `<title>`，让标题变成别的东西。
+EVIL_TITLE = '回归台标题B9<img src=x onerror="window.__xss=1"><b>B</b>'
+EVIL_PATH = "/article/17"
+
 # 口型的三个状态（④ 用）。direct 是 chat-stream.js:1187 的原样写法与取值。
 MOUTH = {
     "close": "() => window.__setMouthClose()",
@@ -110,7 +120,7 @@ HARNESS = """<!DOCTYPE html>
 class Handler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         path = self.path.split("?")[0]
-        if path in ("/", PAGE_PATH):
+        if path in ("/", PAGE_PATH, EVIL_PATH):
             # 版本号照抄 boot.js 的 VER：入口改版后这里跟着换，测试永远加载"本代"入口
             ver = ""
             try:
@@ -118,7 +128,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 ver = src.split("const VER = '")[1].split("'")[0]
             except Exception:
                 pass
-            body = HARNESS.replace("%TITLE%", TITLE).replace("__VER__", ver).encode("utf-8")
+            # 标题按路径给：⑩ 那条路径喂的是带标签的载荷（同一份 harness，只换 title）
+            title = EVIL_TITLE if path == EVIL_PATH else TITLE
+            body = HARNESS.replace("%TITLE%", title).replace("__VER__", ver).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -327,6 +339,34 @@ MOBILE_HIT = """(bb) => {
             [bb.boxR - 5, bb.boxB - 5]].map(([x, y]) => probe(x, y)),
     body: [[cx, cy], [bb.inkL + 8, bb.inkB - 20]].map(([x, y]) => probe(x, y)),
   };
+}"""
+
+
+# ── ⑩ 用：`#waifu-tips` 里那段欢迎语的实况（innerHTML / 文本 / 里面真有几个元素）──
+# 读 innerHTML 而不是只看 textContent：这段文本最后是 `el.innerHTML = …` 写进去的，
+# 判"标题里的标签有没有被当成标签"必须看在 **DOM 里造出了什么元素**。
+TIPS_PROBE = """() => {
+  const tip = document.getElementById('waifu-tips');
+  return {
+    html: tip ? tip.innerHTML : null,
+    text: tip ? tip.textContent : null,
+    imgs: tip ? tip.querySelectorAll('img').length : -1,
+    bolds: tip ? tip.querySelectorAll('b').length : -1,
+    spans: tip ? tip.querySelectorAll('span').length : -1,
+    xss: (typeof window.__xss === 'undefined') ? null : window.__xss,
+  };
+}"""
+
+# ⑩ 的红基线：把**同一个载荷**不经转义塞进文档（= 修前那段代码的产物就是这形状），
+# 断言探针那边真的会多出一个 <img>、`onerror` 真的会跑。没有这一步，"没造出 <img>"
+# 与"探针本来就数不着 img / 载荷本来就是死的"分辨不开。
+XSS_CTL = """(payload) => {
+  const d = document.createElement('div');
+  d.id = 'xss-control';
+  d.innerHTML = payload;
+  document.body.appendChild(d);
+  return { imgs: d.querySelectorAll('img').length,
+           bolds: d.querySelectorAll('b').length };
 }"""
 
 
@@ -708,6 +748,42 @@ def main():
             check("⑨ 红基线：撤掉放行后同样三个空白点全被 #waifu 吞掉（探针不是哑的）",
                   hit_red["blank"] == ["waifu", "waifu", "waifu"], str(hit_red["blank"]))
             mp.close()
+
+        # ── ⑩ 欢迎语里的标题不许被当标记解析（20261015）───────────────────────
+        # 链路：`document.title` → renderer.js 的 `subst(MSG.welcome, document.title)` →
+        # `#waifu-tips` 的 `innerHTML`。模板自带 `<span>`（强调色），所以**不能**整段转义，
+        # 只能转义填进去的那个值——而值来自页面之外。这条锁的就是"值没被当标记"。
+        # 同一条欢迎语还会被 boot.js 的 observeTips 抄进对话面板（同一份实现，两个消费点）。
+        evil_url = url.replace(PAGE_PATH, EVIL_PATH)
+        ep = browser.new_page(viewport={"width": 900, "height": 720})
+        ep.goto(evil_url, wait_until="load")
+        got_tips = wait(ep, "() => { const t = document.getElementById('waifu-tips');"
+                            " return !!(t && t.textContent.includes('回归台标题B9')); }")
+        check("⑩ 带标签的标题走到了欢迎语里（⑦ 的那条链路在，下面三条才有对象）", got_tips)
+        if got_tips:
+            t10 = ep.evaluate(TIPS_PROBE)
+            # ① **值被转义**：DOM 里没有多出来的元素，原文以 `&lt;img` 的形态留在 innerHTML 里
+            check("⑩ 标题里的 `<img …>` 没被解析成元素（#waifu-tips 里 0 个 img）",
+                  t10["imgs"] == 0 and t10["bolds"] == 0,
+                  f"imgs={t10['imgs']} b={t10['bolds']} html={repr(t10['html'])[:90]}")
+            check("⑩ 原文还在，只是被转义（innerHTML 里是 &lt;img）",
+                  bool(t10["html"]) and "&lt;img" in t10["html"], repr(t10["html"])[:90])
+            # ② **模板自己那个 <span> 必须还在**——"把整段文案一起转义"也能让上面两条绿，
+            #    但那样标题的强调色就没了（⑩ 判的是"转义值"，不是"转义一切"）
+            check("⑩ 模板自带的 <span>（标题强调色）没被一起转义",
+                  t10["spans"] == 1, f"spans={t10['spans']}")
+            # ③ **onerror 没跑**：载荷里那个 handler 一次都没被触发
+            check("⑩ 载荷里的 onerror 没有执行（window.__xss 未置位）",
+                  t10["xss"] is None, repr(t10["xss"]))
+            # 红基线：同一载荷、同一个探针，只把转义去掉 ⇒ 必须造出 <img> 且 onerror 真的跑。
+            # 这一条同时证明载荷是活的、探针不是哑的、`window.__xss` 这个标记机制有效。
+            ctl = ep.evaluate(XSS_CTL, EVIL_TITLE)
+            ep.wait_for_timeout(400)      # onerror 要等 img 的加载失败事件
+            xss_after = ep.evaluate("() => (typeof window.__xss === 'undefined') ? null : window.__xss")
+            check("⑩ 红基线：同一载荷不转义时确实造出 <img> 且 onerror 跑起来",
+                  ctl["imgs"] == 1 and ctl["bolds"] == 1 and xss_after == 1,
+                  f"{ctl} xss={xss_after}")
+        ep.close()
 
         browser.close()
     httpd.shutdown()
