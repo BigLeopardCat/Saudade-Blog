@@ -14,6 +14,10 @@ fn test_state(db: sea_orm::DatabaseConnection) -> AppState {
         // 内容风控的发布间隔刹车（20261002）：路由结构测试不碰这条链路，
         // 给一个空计数器即可（阈值由 risk::load_config 每请求现读）。
         post_limiter: saudade_blog::risk::PostRateLimiter::new(),
+        // 错误上报的每 IP 计数闸（20261015）：与 `rate_limiter` 是同一个类型、另一套阈值。
+        // 这里照抄生产口径——本文件没有用例打 `/api/monitor/log`，取哪一档都不影响断言，
+        // 给生产值是为了将来加用例时不会莫名其妙撞上自己设的限流。
+        report_limiter: LoginRateLimiter::new(120, 60, 300),
     }
 }
 

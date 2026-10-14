@@ -309,6 +309,9 @@ fn test_app(db: DatabaseConnection) -> axum::Router {
         db,
         rate_limiter: saudade_blog::rate_limiter::LoginRateLimiter::new(5, 60, 300),
         post_limiter: saudade_blog::risk::PostRateLimiter::new(),
+        // 错误上报的每 IP 计数闸（20261015）：与上面那条同形、照抄生产口径（本文件不打
+        // `/api/monitor/log`）。
+        report_limiter: saudade_blog::rate_limiter::LoginRateLimiter::new(120, 60, 300),
     })
 }
 
