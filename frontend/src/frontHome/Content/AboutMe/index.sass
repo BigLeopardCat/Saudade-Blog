@@ -1,7 +1,9 @@
 .AboutContainer
   min-height: calc(100vh - 172.4px)
   width: 100%
-  background: var(--container-background-color)
+  // 20261014：整页底改走 `--washi-page-bg`（日 = 主题纸、夜 = 墨紫近黑，见 src/index.css）。
+  // 这一页 20261008 还当过"近白内容页"的参照物（文章页那次），现在跟其余内容页同源。
+  background: var(--washi-page-bg)
   display: flex
   flex-direction: column
   justify-content: center

@@ -1401,7 +1401,9 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
 
 // 夜间档的拼贴底：靛紫天色 + 三块压暗的色块 + 更淡的方格纸（粉白那套只用于白天）
 .frontDark .SelfDescription .collageBg
-  background: linear-gradient(160deg, #16121f 0%, #1c1730 40%, #141a2a 100%)
+  // 20261014：值搬进 `--washi-page-bg` 的夜间臂（src/index.css）——归档/说说/分类/关于
+  // 四页的整页底用的是**同一张夜纸**，各写各的就是"改一处必须同步另一处"。
+  background: var(--washi-page-bg)
   &::after
     background-image: linear-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, 0.045) 1px, transparent 1px)
   .blobA

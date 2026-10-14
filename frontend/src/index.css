@@ -128,6 +128,17 @@ img.sticker {
        一个挂在 body 上的 `.washiDark` 就会把这些白天臂悄悄翻成暗的（令牌不看你那一支
        是不是夜间臂，只看最近的定义住哪儿）。 */
     --washi-theme-bg: linear-gradient(160deg, #fff6fa 0%, #ffe9f4 36%, #f2ecff 68%, #e9f4ff 100%);
+    /* 前台**内容页**的整页底（归档 / 说说 / 分类 / 关于）。这四页没有首屏，"正文区"
+       就是**一整张纸**，所以底色不能再是那种"半透明白铺在别处底色上"的叠加
+       （`--container-background-color`：白天叠出近白、夜间叠出**一块平灰** rgb(74,74,74)
+       —— 20261014 用户原话「背景色对不上，一片白茫茫和灰色」）。与文章页 20261008
+       那次是同一个病、同一处方子（见 ReadArticle/index.sass 头注）。
+       日间 = 主题纸本身；夜间 = 首页首屏夜底那张墨紫（`.frontDark .SelfDescription
+       .collageBg` 现在也引用这一支 ⇒ 值只有一份，不会两边各写各的）。
+       ⚠️ 这一支**必须两档成对**，与 `--washi-theme-bg` 那条"刻意只有白天档"不同：
+       那一支的三处消费点各自有夜间臂，而这一支的四个消费点**都只有这一条 background**
+       ⇒ 夜里少写一行，内容页就是白天的粉紫纸配夜间的白字。 */
+    --washi-page-bg: var(--washi-theme-bg);
     /* 20261008 删掉了 `--washi-paper-warm`（#f7f1e7 米白）。它 20261005 为文章页阅读面
        而生（用户当时说纯白"刺眼"），用途只有那**一处**；20261008 用户改口要"博客主题
        背景"，那一支改用站内既有的 `--container-background-color`（与 /about 等页同源），
@@ -224,4 +235,12 @@ img.sticker {
     --band-foot: linear-gradient(180deg, #2f2745 0%, #262033 54%, #201a2c 100%);
     --band-foot-ink: #f3e8f6;
     --band-foot-ink-2: rgba(243, 232, 246, 0.68);
+
+    /* 内容页整页底的夜间臂（白天档见上，是 `--washi-theme-bg` 本身）。值 = 首页首屏
+       那张拼贴底的夜档，原样搬来 —— 它一直是这几页该有的"夜色"（`.frontDark
+       .SelfDescription .collageBg` 是同一个值，那边现在引用这一支）。
+       ⚠️ 别合并进 `--washi-theme-bg`：那一支**刻意不给夜间档**，真给它补上会反噬
+       登录页/文章页自己的夜间臂（那个类名也挂在 body 上，`var()` 是继承来的，
+       见上面那条注释）。 */
+    --washi-page-bg: linear-gradient(160deg, #16121f 0%, #1c1730 40%, #141a2a 100%);
 }

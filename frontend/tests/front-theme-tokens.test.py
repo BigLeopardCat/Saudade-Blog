@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""前台三个"老页"（归档 / 说说 / 分类）＋首页轮播圆点：配色必须走和纸令牌，且深浅两档要真的分档。
+"""前台内容页（归档 / 说说 / 分类 / 关于）＋首页轮播圆点：配色必须走和纸令牌，且深浅两档要真的分档。
 
 20261014 配色专项的判据。用户原话：「归档页，说说等等风格也同步到博客主题配色风格」
 —— 这三页（都是 `frontHome/Content/*` 下的列表页）一直没跟上 20261001 那批和纸改版，
@@ -35,6 +35,21 @@ API 单独编译后拼进沙箱的 index.html，再由 Playwright 读计算值�
 依赖：frontend/node_modules（esbuild/react/react-dom/antd/react-router-dom/react-helmet-async）、
       playwright(python)。本套件不进 CI（要无头 Chrome），由 `scripts/nightly_sandboxes.sh`
       每天 04:40 串行跑，结果在 ~/sandbox_regression.log。
+
+第五节（20261014 同一批的第二轮）量的是**内容页的整页底**，也是用户回话的那半条：
+「背景色对不上，一片白茫茫和灰色，说说卡片颜色白天米白色也不对」。这四页
+（归档 / 说说 / 分类 / 关于）的容器底一直是 `--container-background-color`
+（60% 白 / 60% 黑，压在 `.frontRoot` 那条老渐变上 ⇒ 白天叠成一片近白、夜间叠成
+一块 rgb(74,74,74) 的平灰），而首页首屏、登录页、文章页用的是 `--washi-theme-bg`
+那张粉紫天青的纸。修法与文章页 20261008 那次同源（见 ReadArticle/index.sass 头注）：
+四页容器底改走 `--washi-page-bg`（日 = `var(--washi-theme-bg)`、夜 = 墨紫近黑那一支，
+两档成对写在 src/index.css —— 夜里漏写就会"白天的粉紫纸配夜间的白字"，所以这一节
+**专门判夜间臂在场**）。
+
+这一节的量法与前面有一处不同：判的是 **background-image** 而不是 background-color
+——令牌值是 `linear-gradient(...)`，落到计算样式里只有 `backgroundImage` 有值。
+`backgroundColor` **也判**（判它是不是 transparent）：那正是"底被换掉了"而不是
+"又叠了一层半透明白"的证据，而这四页原来的毛病就在"叠加"。
 
 第四节（20261014 追加）量的是**首页轮播的「当前圆点」** —— 同一批里最后一处写死的强调色
 （`#7880d1`，与说说那个圆点同一个色值）。首页挂不起来（import 了 mp4/jpg，还拉进画布
@@ -119,11 +134,12 @@ import { HelmetProvider } from 'react-helmet-async';
 import Times from './src/frontHome/Content/Times/index.tsx';
 import Talk from './src/frontHome/Content/Talk/index.tsx';
 import Categories from './src/frontHome/Content/Categories/index.tsx';
+import AboutMe from './src/frontHome/Content/AboutMe/index.tsx';
 
-const PAGES: any = { Times, Talk, Categories };
-// 每页各自的初始地址 —— MemoryRouter 认的是**路径**，三个页面挂在同一套路由上时
+const PAGES: any = { Times, Talk, Categories, AboutMe };
+// 每页各自的初始地址 —— MemoryRouter 认的是**路径**，四个页面挂在同一套路由上时
 // 只有第一条能匹配，另两个渲染成空（症状是 `g(...)` 读到 null 而不是判红，很难查）。
-const AT: any = { Times: '/times', Talk: '/talk', Categories: '/categories/code' };
+const AT: any = { Times: '/times', Talk: '/talk', Categories: '/categories/code', AboutMe: '/about' };
 // 前台根节点的类名照抄 App.tsx：夜里是 `frontDark frontRoot`。令牌的夜间定义挂在
 // `.frontDark` 上（index.css），不按这个类名挂就量不到夜间档 —— 整节会"全绿地空转"。
 (window as any).__mount = (name: string, dark: boolean) => {
@@ -136,6 +152,7 @@ const AT: any = { Times: '/times', Talk: '/talk', Categories: '/categories/code'
             <Route path="/times" element={<Times />} />
             <Route path="/talk" element={<Talk />} />
             <Route path="/categories/:id" element={<Categories />} />
+            <Route path="/about" element={<AboutMe />} />
           </Routes>
         </MemoryRouter>
       </div>
@@ -156,6 +173,15 @@ MEASURE = r"""([name, dark]) => {
     d.remove();
     return c;
   };
+  // 令牌值是整条 `linear-gradient(...)`，只有 `background-image` 接得住它（见文件头第五节）。
+  const expectedImg = (tok) => {
+    const d = document.createElement('div');
+    d.style.backgroundImage = 'var(' + tok + ')';
+    host.appendChild(d);
+    const c = getComputedStyle(d).backgroundImage;
+    d.remove();
+    return c;
+  };
   const g = (sel, pseudo) => {
     const el = document.querySelector(sel);
     if (!el) return null;
@@ -166,8 +192,16 @@ MEASURE = r"""([name, dark]) => {
   // 元素缺席时给 `null` 而不是抛异常：**缺席本身就是一条判据**（下面第一节会判"都在场"），
   // 让它以"取不到值"的形式走到断言里，报出来的是"这一处没渲染"，而不是一条 TypeError。
   const pick = (sel, field, pseudo) => { const x = g(sel, pseudo); return x ? x[field] : null; };
+  // 整页底的落点就是各页自己的那个容器。**别按页名拼类名**——关于页的组件叫 `AboutMe`、
+  // 容器却叫 `.AboutContainer`（第一版就是这么写的，量到 None，四页里那一页全红）。
+  const SEL = { Times: '.TimesContainer', Talk: '.TalkContainer',
+                Categories: '.CategoriesContainer', AboutMe: '.AboutContainer' };
+  const page = document.querySelector(SEL[name] || ('.' + name + 'Container'));
+  const pageCs = page ? getComputedStyle(page) : null;
   return {
     got: {
+      pageBg:            pageCs ? pageCs.backgroundImage : null,
+      pageBgColor:       pageCs ? pageCs.backgroundColor : null,
       hrBg:              pick('.TimesContainer hr', 'bg'),
       tailBl:            pick('.TimesContainer .ant-timeline-item-tail', 'bl'),
       headColor:         pick('.TimesContainer .ant-timeline-item-head', 'color'),
@@ -183,6 +217,12 @@ MEASURE = r"""([name, dark]) => {
       pinkDeep:  expected('--washi-pink-deep'),
       line:      expected('--washi-line'),
       paper:     expected('--washi-paper'),
+      paper2:    expected('--washi-paper-2'),
+      pageBg:    expectedImg('--washi-page-bg'),
+      // 反控用的旧值：这四页原来挂的就是它（`main.css` 里的半透明白/黑渐变）。
+      // 它也是**渐变**，所以能跟上面那条同格式比对——"换成主题纸"与"还挂着旧的"
+      // 在这条上是两个不同的字符串（旧的代码跑本套件，这条必红）。
+      legacyPg:  expectedImg('--container-background-color'),
       fontP:     expected('--font-p-color'),
       transparent: 'rgba(0, 0, 0, 0)',
     },
@@ -190,6 +230,7 @@ MEASURE = r"""([name, dark]) => {
     // 里又加了一条，而那条不会有任何消费方 ⇒ 又是一份"写了没人用"的配置）
     retired: rootCs.getPropertyValue('--category-hover-color').trim(),
     counts: {
+      page: page ? 1 : 0,
       timeline: document.querySelectorAll('.TimesContainer .ant-timeline-item').length,
       talk: document.querySelectorAll('.TalkContainer .talk').length,
       footer: document.querySelectorAll('.CategoriesContainer .articleFooter').length,
@@ -201,6 +242,16 @@ MEASURE = r"""([name, dark]) => {
 # 每一行 = 一条断言：页/档 → 取值路径、期望的令牌、人话。
 # `pinkDeep` 那几处是"强调色"、`line` 是"线"、`paper` 是"面"、`fontP` 是"次要文字"。
 CASES = [
+    # 整页底（第五节）：四页 × 两档。期望值 = 现场解析出来的 `--washi-page-bg`，
+    # 于是"日间臂是不是主题纸、夜间臂在不在"这两件事都在这一条里判掉了。
+    ("Times/day",        "pageBg", "pageBg", "归档页整页底走 --washi-page-bg（白天 = 主题纸）"),
+    ("Times/night",      "pageBg", "pageBg", "归档页整页底走 --washi-page-bg（夜 = 墨紫近黑）"),
+    ("Talk/day",         "pageBg", "pageBg", "说说页整页底走 --washi-page-bg（白天 = 主题纸）"),
+    ("Talk/night",       "pageBg", "pageBg", "说说页整页底走 --washi-page-bg（夜 = 墨紫近黑）"),
+    ("Categories/day",   "pageBg", "pageBg", "分类页整页底走 --washi-page-bg（白天 = 主题纸）"),
+    ("Categories/night", "pageBg", "pageBg", "分类页整页底走 --washi-page-bg（夜 = 墨紫近黑）"),
+    ("AboutMe/day",      "pageBg", "pageBg", "关于页整页底走 --washi-page-bg（白天 = 主题纸）"),
+    ("AboutMe/night",    "pageBg", "pageBg", "关于页整页底走 --washi-page-bg（夜 = 墨紫近黑）"),
     ("Times/day",   "hrBg",         "pinkDeep",    "归档页分隔线走 --washi-pink-deep"),
     ("Times/night", "hrBg",         "pinkDeep",    "归档页分隔线走 --washi-pink-deep（夜）"),
     ("Times/day",   "tailBl",       "line",        "归档页时间轴竖线走 --washi-line（白天可见）"),
@@ -209,8 +260,8 @@ CASES = [
     ("Times/night", "headColor",    "pinkDeep",    "归档页时间轴圆点走 --washi-pink-deep（夜）"),
     ("Times/day",   "headBg",       "transparent", "归档页时间轴圆点是空心的（原意就是 transparent）"),
     ("Times/night", "headBg",       "transparent", "归档页时间轴圆点是空心的（夜）"),
-    ("Talk/day",    "talkCardBg",   "paper",       "说说卡片走 --washi-paper"),
-    ("Talk/night",  "talkCardBg",   "paper",       "说说卡片走 --washi-paper（夜）"),
+    ("Talk/day",    "talkCardBg",   "paper2",      "说说卡片走 --washi-paper-2（与首页文章卡片同源）"),
+    ("Talk/night",  "talkCardBg",   "paper2",      "说说卡片走 --washi-paper-2（夜）"),
     ("Talk/day",    "talkLineBl",   "line",        "说说的日期链条竖线走 --washi-line"),
     ("Talk/night",  "talkLineBl",   "line",        "说说的日期链条竖线走 --washi-line（夜）"),
     ("Talk/day",    "talkDotBg",    "pinkDeep",    "说说的日期链条圆点走 --washi-pink-deep"),
@@ -236,7 +287,7 @@ def build_sandbox() -> pathlib.Path:
     (sb / "stub-redux.tsx").write_text(STUB_REDUX, encoding="utf-8")
     (sb / "entry.tsx").write_text(ENTRY, encoding="utf-8")
 
-    pages = ["Times", "Talk", "Categories"]
+    pages = ["Times", "Talk", "Categories", "AboutMe"]
     css = [(FE / "src/index.css").read_text(), (FE / "src/frontHome/main.css").read_text()]
     for name in pages:
         out = sb / (name + ".css")
@@ -310,6 +361,10 @@ threading.Thread(target=_server.serve_forever, daemon=True).start()
 from playwright.sync_api import sync_playwright  # noqa: E402
 
 URL = f"http://127.0.0.1:{_server.server_address[1]}/index.html"
+# 页面 → 它的列表容器类名。与 entry.tsx 的 `PAGES` 一一对应，**不能按页名拼**：
+# 关于页的组件叫 `AboutMe`，容器是 `.AboutContainer`（见 MEASURE 里同一处的注释）。
+CONT = {"Times": ".TimesContainer", "Talk": ".TalkContainer",
+        "Categories": ".CategoriesContainer", "AboutMe": ".AboutContainer"}
 DOTS_URL = f"http://127.0.0.1:{_server.server_address[1]}/dots.html"
 
 
@@ -349,8 +404,8 @@ with sync_playwright() as p:
     readings = {}
     errs_by = {}
 
-    print("\n【一】三个老页的配色走和纸令牌（day + night 各量一遍）")
-    for name in ("Times", "Talk", "Categories"):
+    print("\n【一】四个内容页的配色走和纸令牌（day + night 各量一遍）")
+    for name in ("Times", "Talk", "Categories", "AboutMe"):
         for dark in (False, True):
             key = "%s/%s" % (name, "night" if dark else "day")
             page = br.new_page(viewport={"width": 1280, "height": 900})
@@ -359,7 +414,7 @@ with sync_playwright() as p:
             page.goto(URL)
             page.evaluate("([n, d]) => window.__mount(n, d)", [name, dark])
             try:
-                page.wait_for_selector(".%sContainer" % name, timeout=10000)
+                page.wait_for_selector(CONT[name], timeout=10000)
             except Exception:
                 pass
             page.wait_for_timeout(600)
@@ -371,13 +426,13 @@ with sync_playwright() as p:
     # 少了这一段，**空页面在"两档读数相同"这条上也是绿的**（都读到默认值），整套会静默空转。
     for key, m in readings.items():
         c = m["counts"]
-        check("%s：页面真渲染出来了（时间轴/说说/列表至少有一处）" % key,
-              max(c["timeline"], c["talk"], c["footer"]) > 0, str(c))
+        check("%s：页面真渲染出来了（列表容器/时间轴/说说/列表至少有一处）" % key,
+              max(c["page"], c["timeline"], c["talk"], c["footer"]) > 0, str(c))
         check("%s：无页面异常" % key, not errs_by[key], "; ".join(errs_by[key][:2]))
-    for key in ("Times/day", "Talk/day", "Categories/day"):
+    for key in ("Times/day", "Talk/day", "Categories/day", "AboutMe/day"):
         c = readings[key]["counts"]
         check("%s：要判的那几处**都在场**（缺席的话对应断言无从谈起）" % key,
-              (key != "Times/day" or c["timeline"] > 0)
+              c["page"] > 0
               and (key != "Talk/day" or c["talk"] > 0)
               and (key != "Categories/day" or (c["footer"] > 0 and c["top"] > 0)), str(c))
 
@@ -456,6 +511,35 @@ with sync_playwright() as p:
           norm(dots["day"]["cur"]) != norm(dots["night"]["cur"]),
           "day=%s night=%s" % (dots["day"]["cur"], dots["night"]["cur"]))
 
+    # ── 五、内容页的整页底（承【二】里那 8 条"等于 --washi-page-bg"，这里判控制）────
+    # 【二】已经钉住"这四页的底**等于**那支令牌"；三条控制各自堵一个具体的坏法：
+    #   ① 白天与夜间不同 → 堵"夜间臂漏写"（漏了就是白天档继承下去，两档同值）。
+    #      这条不是形式主义：`--washi-theme-bg` 那支**刻意只有白天档**，本支是它的
+    #      成对版本，两者挨着放，下一个人很容易把夜间那行删掉"去掉重复"。
+    #   ② background-color 是 transparent → 堵"又叠了一层"：原来那套毛病就是
+    #      半透明白压在别处底色上叠出来的（白天近白、夜间平灰），叠加式修法同样能让
+    #      ① 变绿而用户看到的还是一层灰。
+    #   ③ 两档都真的挂上了图 → 堵"令牌解析不出来"（那种情形下 ①② 都可能空转绿）。
+    print("\n【五】内容页的整页底：两档成对、是换掉不是叠加")
+    for name in ("Times", "Talk", "Categories", "AboutMe"):
+        dday = readings["%s/day" % name]["got"]
+        dnight = readings["%s/night" % name]["got"]
+        check("%s：整页底白天与夜间不是同一张纸（堵夜间臂漏写）" % name,
+              bool(dday["pageBg"]) and bool(dnight["pageBg"]) and dday["pageBg"] != dnight["pageBg"],
+              "day=%s night=%s" % (dday["pageBg"], dnight["pageBg"]))
+        for arm, got in (("day", dday), ("night", dnight)):
+            check("%s/%s：整页底是 background-image（shorthand 把 background-color 重置成 transparent —— 不是又叠了一层半透明白）" % (name, arm),
+                  norm(got["pageBgColor"]) == (0.0, 0.0, 0.0, 0.0),
+                  "background-color=%s" % got["pageBgColor"])
+            check("%s/%s：整页底真的挂上了图（不是 none —— 否则上面的断言可能在空转）" % (name, arm),
+                  (got["pageBg"] or "").strip() not in ("", "none"), str(got["pageBg"])[:60])
+        # ④ 反控：不能还是那支旧令牌的值。这条是"本套件在改动前不是绿的"的**直接证据**
+        #    （旧代码下四页都挂在 `--container-background-color` 上，这里逐字相等 ⇒ 全红）。
+        legacy = readings["%s/day" % name]["want"]["legacyPg"]
+        check("%s：整页底已经不是 `--container-background-color` 那条半透明渐变（反控）" % name,
+              bool(dday["pageBg"]) and dday["pageBg"] != legacy,
+              "page=%s legacy=%s" % (str(dday["pageBg"])[:48], str(legacy)[:48]))
+
     br.close()
 
 print()
@@ -464,4 +548,4 @@ if FAILS:
     for f in FAILS:
         print("   - " + f)
     sys.exit(1)
-print("✅ 前台三个老页 + 首页轮播圆点的和纸配色：全部通过")
+print("✅ 前台内容页（整页底 + 各处配色）＋首页轮播圆点的和纸配色：全部通过")

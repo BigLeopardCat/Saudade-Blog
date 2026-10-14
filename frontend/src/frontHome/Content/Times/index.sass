@@ -1,7 +1,12 @@
 .TimesContainer
   min-height: calc(100vh - 172.4px)
   width: 100%
-  background: var(--container-background-color)
+  // 20261014：整页底改走 `--washi-page-bg`（日 = 主题纸粉紫天青、夜 = 墨紫近黑，
+  // 见 src/index.css）。原来是 `--container-background-color` —— 半透明白叠在
+  // `.frontRoot` 的浅灰上 ⇒ 白天一整幅近白、夜间一块 rgb(74,74,74) 的平灰
+  // （用户原话「背景色对不上，一片白茫茫和灰色」）。归档页没有卡片，正文直接坐在
+  // 这张纸上，所以这一支就是整页观感本身。
+  background: var(--washi-page-bg)
   display: flex
   align-items: center
   display: flex

@@ -1,7 +1,9 @@
 .TalkContainer
   min-height: calc(100vh - 172.4px)
   width: 100%
-  background: var(--container-background-color)
+  // 20261014：整页底改走 `--washi-page-bg`（日 = 主题纸、夜 = 墨紫近黑，见 src/index.css）。
+  // 原来是 `--container-background-color`（半透明白叠在浅灰上 ⇒ 白天近白、夜间平灰）。
+  background: var(--washi-page-bg)
   display: flex
   flex-direction: column
   align-items: center
@@ -75,9 +77,12 @@
     padding: 20px
     margin-bottom: 10px
     // 20261014：原来是 `--pic-background-cover`（#fafafa / #212121 —— 中性灰，是给图片
-    // 占位块和输入框用的那一支）。说说卡片是这一页的主面，跟站里其余卡片一样走和纸：
-    // 白天暖白 #fffdfa，夜间紫调深墨（中性灰 #212121 与全站的夜色不是一套）。
-    background-color: var(--washi-paper, #fffdfa)
+    // 占位块和输入框用的那一支）。说说卡片是这一页的主面，走和纸。
+    // 同日第二轮：先选的 `--washi-paper`（#fffdfa 暖白）被用户读成"米白"——
+    // 那是压在**换成主题纸之前的灰底**上的观感；现在底色已是主题纸，
+    // 卡片该跟首页文章卡片同源 ⇒ `--washi-paper-2`（#fff6fa 粉白 / #2a2338，
+    // 与 ContentHome 的文章卡同一个值）。用户 20261014 拍板。
+    background-color: var(--washi-paper-2, #fff6fa)
     color: var(--font-title-color)
     color: var(--font-title-color)
     color: var(--font-title-color)

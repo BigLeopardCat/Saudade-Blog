@@ -747,8 +747,14 @@ with sync_playwright() as p:
     # （后台/浮层用），而 var() 是继承来的 —— 一旦给它一个暗值，白天臂会被一个挂在 body 上的
     # `.washiDark` 悄悄翻黑（令牌不看你自己那支是不是夜间臂）。
     _nightblock = re.search(r"\.frontDark,\s*\.dark,\s*\.washiDark\s*\{([\s\S]*?)\n\}", _tok)
+    # 比之前先**剥掉块内注释**：这条判的是"夜间档里不许**定义/引用**这一支"，不是"不许
+    # 提它的名字"。20261014 实测踩到——给 `--washi-page-bg` 写夜间臂那轮，紧随其后的
+    # 警告注释（"别把两者合并，那一支刻意不给夜间档"）里提到了这个令牌名 ⇒ 判据在**注释处
+    # 假红**（同族教训：注释会关掉断言/在注释处截断，见 sass-media-shadow 那条）。
+    _nb = _nightblock.group(1) if _nightblock else None
+    _nb_code = None if _nb is None else re.sub(r"/\*[\s\S]*?\*/", "", _nb)
     check("★主题底**只定义在这一档**（`.frontDark, .dark, .washiDark` 那档里不许出现它）",
-          _nightblock is not None and "--washi-theme-bg" not in _nightblock.group(1),
+          _nb_code is not None and "--washi-theme-bg" not in _nb_code,
           "夜间档里也定义了它" if _nightblock else "找不到夜间令牌块")
 
     # 负空间二：米白那个令牌 20261008 随它的唯一用处一起删了。判据同样只认编译产物。
