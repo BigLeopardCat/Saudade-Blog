@@ -59,7 +59,10 @@ done
 snapshot() {   # 产物 + 仓库外那两处"绝不该被 docker 那套碰"的东西，一起留指纹
     { ls -la generated .env 2>/dev/null; md5sum generated/* generated/.credentials generated/ssl/* .env 2>/dev/null
       md5sum "$REPO_DIR/.env" 2>/dev/null; ls -la "$REPO_DIR/deploy/.credentials" 2>/dev/null
-      md5sum "$REPO_DIR"/deploy/nginx/* 2>/dev/null; } | sed 's/[0-9]\{2\}:[0-9]\{2\}/TIME/' >"$1"
+      # 这里用 find 而不是 `deploy/nginx/*`：那底下现在有子目录（snippets/），
+      # md5sum 撞上目录会往 stderr 吐 "Is a directory" —— 噪声，而且容易被读成故障。
+      # find 顺带把"递归都别动"也一起锁住了。
+      find "$REPO_DIR/deploy/nginx" -type f -exec md5sum {} + | sort; } | sed 's/[0-9]\{2\}:[0-9]\{2\}/TIME/' >"$1"
 }
 snapshot "$SCRATCH/before.txt"
 bash prepare.sh --dry-run --yes --domain check.example.com --data-dir "$SCRATCH/data" \

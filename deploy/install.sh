@@ -1082,6 +1082,13 @@ setup_tls() {
 
 setup_nginx() {
     step "nginx 站点"
+    # 安全响应头：定义在 deploy/nginx/snippets/blog-headers/security.conf（唯一事实源），
+    # 站点配置里**每个 location** 都通配 include 它。**先落它、再落站点配置**——通配
+    # include 匹配不到文件时 nginx 不报错（与 blog-iot 同源的性质），所以顺序反了不会
+    # 有任何东西变红，只会静默少五条头（脚本没找见就直接 die，不留半截状态）。
+    local hdr_src="$DEPLOY_DIR/nginx/snippets/blog-headers/security.conf"
+    [ -f "$hdr_src" ] || die "找不到安全响应头的定义文件：$hdr_src"
+    put_root /etc/nginx/snippets/blog-headers/security.conf 644 < "$hdr_src"
     render_nginx | put_root /etc/nginx/sites-available/blog 644
     run_sudo ln -sf /etc/nginx/sites-available/blog /etc/nginx/sites-enabled/blog
 

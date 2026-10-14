@@ -377,14 +377,23 @@ sudo cp deploy/nginx/blog.conf.template /etc/nginx/sites-available/blog
 sudo sed -i "s#__APP_DIR__#$PWD#g" /etc/nginx/sites-available/blog
 sudo nano /etc/nginx/sites-available/blog     # 把 <你的域名> / <证书名> 换成实际值
 
+# 安全响应头：模板里**每个 location** 都 include 它（漏了这步 nginx 不报错，只是少五条头）
+sudo mkdir -p /etc/nginx/snippets/blog-headers
+sudo cp deploy/nginx/snippets/blog-headers/security.conf /etc/nginx/snippets/blog-headers/
+
 # 证书：先自签把站点跑起来，或直接放正式证书——两种做法写在模板开头
 sudo mkdir -p /etc/nginx/ssl
 
 sudo ln -sf /etc/nginx/sites-available/blog /etc/nginx/sites-enabled/blog
 sudo nginx -t && sudo systemctl reload nginx
+
+# 判据（判的是响应头本身，不是有没有那个文件）
+bash scripts/check_security_headers.sh 你的域名
 ```
 
-模板里四处**容易静默出错**的地方（原文都带了注释）：
+> `deploy/install.sh` 会把上面两步（snippet + 站点配置）**一起**做掉，走它就不用管这些。
+
+模板里五处**容易静默出错**的地方（原文都带了注释）：
 
 1. **`location ^~ /api/` 的 `^~` 不是装饰**。不带它，`/api/` 会被上面那条"带 content
    hash 的资源"**正则** location 抢走（nginx 里正则优先于普通前缀），于是形如
@@ -396,6 +405,11 @@ sudo nginx -t && sudo systemctl reload nginx
    正常输出是 `/etc/nginx/sites-available/blog`（软链）；**若输出就是它自己**，说明这台机器上
    两份是互不相干的独立文件——此时编辑 `sites-available/` 那份**不会生效**，而 `nginx -t`
    照样全绿（它测的正是生效那份，语法自然没错），于是改动看着像"没起效"。
+5. **安全响应头要逐 location include**（`include /etc/nginx/snippets/blog-headers/*.conf;`）。
+   nginx 的 `add_header` **不继承**：某个 location 里只要有任何一条 `add_header`，server 块
+   里的那一片就对该 location 失效，而本模板每个 location 都有 `add_header Cache-Control …`
+   ⇒ 只写一次等于没写，症状是"首页五条齐、静态资源与 `/api/` 一条都没有"。**新增 location
+   时记得也 include 一遍**；判据是 `scripts/check_security_headers.sh`（逐路径 × 逐头）。
 
 TLS 续期：模板用的是 `/etc/nginx/ssl/` 下的证书文件。想用 ACME（certbot 之类）自动续期，
 把两行证书路径换成 ACME 客户端写好的路径，并注意 80 那个跳转块——客户端需要在跳转

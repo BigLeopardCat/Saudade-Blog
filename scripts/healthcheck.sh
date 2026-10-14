@@ -142,4 +142,21 @@ if [ "$agent_size" -gt "${AGENT_LOG_SIZE:-0}" ]; then
   [ "${wire:-0}" -gt 0 ] && fail "WARN agent 出站序列不合严格服务商协议 ${wire} 次（绊线只报不修；查 graph._frame_id 与 context.with_tool_call_pairs 的配对）"
 fi
 echo "AGENT_LOG_SIZE=$agent_size" >> "$STAMP"
+
+# 8. 全站安全响应头（20261015）
+#    五条头（nosniff / Referrer-Policy / X-Frame-Options / Permissions-Policy / HSTS）
+#    **只活在 /etc/nginx**：不在部署包里、不经 CI、不受任何测试覆盖，改坏它此前
+#    没有任何东西会红——正是本仓反复吃过的那类"配置漂移无人喊"。
+#    判据只有一份：`scripts/check_security_headers.sh`（`deploy_from_r2.sh` 末尾跑的
+#    是同一个；那份是**非致命**的部署日志，真正的喊人出口是这里 —— 写 health.log）。
+#    这一项只判"头在不在"：nginx 挂了拿不到响应由第 1/4 项负责，不在这里重复报。
+hdr_sh="$PROJECT_DIR/scripts/check_security_headers.sh"
+if [ -f "$hdr_sh" ]; then
+  hdr_out=$(bash "$hdr_sh" 2>&1) || \
+    fail "WARN 安全响应头缺失：$(printf '%s' "$hdr_out" | tr '\n' '; ' | cut -c1-180)"
+else
+  # 判据不在场 ≠ 头齐备（本仓的老账：**缺键绝不读成 0**）。这条 WARN 说的是"这一项
+  # 这轮没验"，不是"头没了"——两种情况的话得分开说，否则修错方向。
+  fail "WARN 安全响应头这一项没验（找不到 $hdr_sh）"
+fi
 exit 0

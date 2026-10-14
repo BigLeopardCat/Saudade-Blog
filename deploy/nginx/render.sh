@@ -2,8 +2,10 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 #  nginx 站点配置的渲染 —— **唯一实现**，两个调用方共用：
 #    · 裸机：deploy/install.sh（source 它，由 setup_nginx 落到 sites-available/blog）
-#    · 容器：deploy/docker/render-nginx.sh（渲染成 deploy/docker/generated/blog.conf，
-#            再由 compose 只读挂进 nginx 容器的 /etc/nginx/conf.d/blog.conf）
+#    · 容器：deploy/docker/prepare.sh（渲染成 deploy/docker/generated/blog.conf，
+#            再由 compose 只读挂进 nginx 容器的 /etc/nginx/conf.d/blog.conf。
+#            注意**不止一处挂载**：blog-headers 那个 snippet 目录是另一行，
+#            站点配置里每个 location 都通配 include 它）
 #  为什么必须共用：函数体里那段「按结构标记切掉乙块」的 awk 一旦分家，改模板结构时就只有
 #  一边会跟着改 —— 另一边的症状是 nginx -t 失败，或者静默留着 <你的域名> 占位符。
 #

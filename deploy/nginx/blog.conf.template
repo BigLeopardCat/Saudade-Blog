@@ -16,6 +16,31 @@
 # 这个文件里没有秘密：证书与密钥在 /etc/nginx/ssl/ 下（0600），不在仓库里。
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 安全响应头（五条：nosniff / Referrer-Policy / X-Frame-Options /
+# Permissions-Policy / HSTS）—— 20261015 审计落地
+#
+#   定义在 `deploy/nginx/snippets/blog-headers/security.conf`（**唯一事实源**），
+#   下面**每个 location** 与两个 server 块都 include 一份：
+#         include /etc/nginx/snippets/blog-headers/*.conf;
+#
+#   ⚠️ 为什么逐 location include、而不是只写一次：nginx 的 `add_header` **不继承** ——
+#      某个 location 里只要出现任何一条 add_header，server 块里的那一片就对该
+#      location 失效。本模板每个 location 都有 `add_header Cache-Control …` ⇒ 只写
+#      server 块等于没写；而症状是"首页五条齐、静态资源与 /api/ 一条都没有"，
+#      单看首页完全正常。⚠️ **新增 location 时记得也 include 一遍。**
+#      （本机 nginx 1.24 没有 `add_header_inherit`，更新的主线才有。）
+#
+#   安装：`deploy/install.sh` 会自动做下面两步；照本文开头手抄模板的话自己来一次：
+#         sudo mkdir -p /etc/nginx/snippets/blog-headers
+#         sudo cp deploy/nginx/snippets/blog-headers/security.conf \
+#                 /etc/nginx/snippets/blog-headers/
+#   不装也能起来：通配 include 匹配不到文件时 nginx **不报错**（与 blog-iot 同源的
+#   性质，实测过"目录本身不存在也不报"），只是那五条头不会出现——机器判据
+#   `scripts/check_security_headers.sh` 会如实报出来，而不是假装齐备。
+#   容器那条路（deploy/docker）由 compose 把这个目录只读挂进 nginx 镜像的同一路径。
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ─────────────────────────────────────────────────────────────────────────────
 # TLS 证书：两种做法，选一种
 #
 # 甲、**先把站点跑起来**（DNS 还没指过来 / 还没有证书）：用自签证书 + 一个
@@ -47,11 +72,16 @@ server {
 
     root __APP_DIR__/frontend/dist;
 
+    # 安全响应头（server 块这一份只兜"没命中任何 location"的响应，**每个 location
+    # 还要各 include 一份**——add_header 不继承，原因见文件开头那个注释块）
+    include /etc/nginx/snippets/blog-headers/*.conf;
+
     # 看板娘模型与运行时资源 → 强缓存
     # ⚠️ 必须排在下面 `\.(js|css|json)$` 的 no-store 正则**之前**，否则被它吃掉。
     # 这些文件不含 content hash 且极少变更（换模型时手动清缓存即可）；脚本换版靠
     # `?v=` 查询串（不同 query 是不同缓存条目），immutable 不影响版本更新。
     location ~* ^/(live2d_model|cubism5|live2d-widgets)/ {
+        include /etc/nginx/snippets/blog-headers/*.conf;
         try_files $uri =404;
         expires 1y;
         add_header Cache-Control "public, max-age=31536000, immutable";
@@ -60,6 +90,7 @@ server {
 
     # 带 content hash 的资源 → 长期缓存
     location ~* "-[a-zA-Z0-9_-]{8,}\.(js|css|woff2?|mp4|webm|jpe?g|png|webp)" {
+        include /etc/nginx/snippets/blog-headers/*.conf;
         try_files $uri =404;
         expires 1y;
         add_header Cache-Control "public, max-age=31536000, immutable";
@@ -68,6 +99,7 @@ server {
 
     # 无哈希的 JS/CSS/JSON → 不缓存（改了就得立刻生效的那种）
     location ~* \.(js|css|json)$ {
+        include /etc/nginx/snippets/blog-headers/*.conf;
         try_files $uri =404;
         expires -1;
         add_header Cache-Control "no-store, no-cache, must-revalidate";
@@ -78,6 +110,7 @@ server {
     # ⇒ 不加这条的话每打开一次页面就全部重下（实测约 260 KB/次）。
     # 位置必须在 `location /` **之前**（前缀 location 会让位给正则）。
     location ~* \.(png|jpe?g|gif|ico|svg|webp|bmp|tiff?|ttf|otf|eot|woff2?)$ {
+        include /etc/nginx/snippets/blog-headers/*.conf;
         try_files $uri =404;
         expires 7d;
         add_header Cache-Control "public, max-age=604800";
@@ -85,11 +118,13 @@ server {
     }
 
     location = /sitemap.xml {
+        include /etc/nginx/snippets/blog-headers/*.conf;
         proxy_pass http://127.0.0.1:3000;
     }
 
     # SPA 兜底：任何未命中的路径回 index.html（前端路由）
     location / {
+        include /etc/nginx/snippets/blog-headers/*.conf;
         try_files $uri $uri/ /index.html;
         expires -1;
         add_header Cache-Control "no-store, no-cache, must-revalidate";
@@ -101,6 +136,7 @@ server {
     #   形如 `20260831011133_49996ec2-....png` 的封面 ⇒ 后端 200、过 nginx 404，
     #   页面上是一张破图。`^~` 让本前缀块优先于正则，/api/ 从此一律交给后端。
     location ^~ /api/ {
+        include /etc/nginx/snippets/blog-headers/*.conf;
         proxy_pass http://127.0.0.1:3000;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
@@ -122,6 +158,7 @@ server {
     # include /etc/nginx/snippets/blog-iot/*.conf;
 
     location = /logo.png {
+        include /etc/nginx/snippets/blog-headers/*.conf;
         expires 1y;
         add_header Cache-Control "public, immutable";
     }
@@ -140,7 +177,12 @@ server {
 
     root __APP_DIR__/frontend/dist;
 
+    # 安全响应头（server 块这一份只兜"没命中任何 location"的响应，**每个 location
+    # 还要各 include 一份**——add_header 不继承，原因见文件开头那个注释块）
+    include /etc/nginx/snippets/blog-headers/*.conf;
+
     location ~* ^/(live2d_model|cubism5|live2d-widgets)/ {
+        include /etc/nginx/snippets/blog-headers/*.conf;
         try_files $uri =404;
         expires 1y;
         add_header Cache-Control "public, max-age=31536000, immutable";
@@ -148,6 +190,7 @@ server {
     }
 
     location ~* "-[a-zA-Z0-9_-]{8,}\.(js|css|woff2?|mp4|webm|jpe?g|png|webp)" {
+        include /etc/nginx/snippets/blog-headers/*.conf;
         try_files $uri =404;
         expires 1y;
         add_header Cache-Control "public, max-age=31536000, immutable";
@@ -155,12 +198,14 @@ server {
     }
 
     location ~* \.(js|css|json)$ {
+        include /etc/nginx/snippets/blog-headers/*.conf;
         try_files $uri =404;
         expires -1;
         add_header Cache-Control "no-store, no-cache, must-revalidate";
     }
 
     location ~* \.(png|jpe?g|gif|ico|svg|webp|bmp|tiff?|ttf|otf|eot|woff2?)$ {
+        include /etc/nginx/snippets/blog-headers/*.conf;
         try_files $uri =404;
         expires 7d;
         add_header Cache-Control "public, max-age=604800";
@@ -168,16 +213,19 @@ server {
     }
 
     location = /sitemap.xml {
+        include /etc/nginx/snippets/blog-headers/*.conf;
         proxy_pass http://127.0.0.1:3000;
     }
 
     location / {
+        include /etc/nginx/snippets/blog-headers/*.conf;
         try_files $uri $uri/ /index.html;
         expires -1;
         add_header Cache-Control "no-store, no-cache, must-revalidate";
     }
 
     location ^~ /api/ {
+        include /etc/nginx/snippets/blog-headers/*.conf;
         proxy_pass http://127.0.0.1:3000;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
@@ -193,6 +241,7 @@ server {
     # include /etc/nginx/snippets/blog-iot/*.conf;
 
     location = /logo.png {
+        include /etc/nginx/snippets/blog-headers/*.conf;
         expires 1y;
         add_header Cache-Control "public, immutable";
     }

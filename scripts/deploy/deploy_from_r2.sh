@@ -235,3 +235,18 @@ if [ -f scripts/deploy/prune_r2.py ]; then
 else
   echo "⚠️ 找不到 scripts/deploy/prune_r2.py，跳过 R2 产物清理"
 fi
+
+# ── 安全响应头复核（20261015）：非致命，待遇同上面的 R2 清理 ──────────────
+# 这五条头只活在 /etc/nginx（不在部署包里、不受任何测试覆盖），而"部署"正是
+# nginx 配置最可能被动过的时刻（同一批人、同一台机器、同一段时间）。**不改部署结果**：
+# 配置漂移不该把一次成功的部署标红——真正喊人靠探针（healthcheck 第 8 项，写 health.log）。
+# 判据只有一份，就是下面这个脚本（探针跑的是同一个）。
+if [ -f scripts/check_security_headers.sh ]; then
+  if out=$(bash scripts/check_security_headers.sh 2>&1); then
+    echo "✅ $(date '+%H:%M:%S') 安全响应头齐备"
+  else
+    echo "⚠️ $(date '+%H:%M:%S') 安全响应头缺失（不影响本次部署）：$(printf '%s' "$out" | tr '\n' '; ' | cut -c1-200)"
+  fi
+else
+  echo "⚠️ 找不到 scripts/check_security_headers.sh，跳过安全响应头复核"
+fi

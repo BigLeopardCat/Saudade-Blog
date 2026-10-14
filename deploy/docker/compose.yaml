@@ -202,6 +202,14 @@ services:
     volumes:
       - ./generated/blog.conf:/etc/nginx/conf.d/blog.conf:ro
       - ./generated/ssl:/etc/nginx/ssl:ro
+      # 安全响应头（blog.conf 里**每个 location** 都通配 include
+      # `/etc/nginx/snippets/blog-headers/*.conf`；add_header 不继承，原因写在
+      # deploy/nginx/blog.conf.template 开头）。这里挂仓库里的**源文件目录**、不拷进
+      # generated/：它本来就是唯一事实源，多一份拷贝就多一个漂移面。
+      # 与上一行 /etc/nginx/ssl 同一种做法：目录挂载自己会建出容器内不存在的路径。
+      # ⚠️ 这是**目录**挂载 ⇒ 万一这个基础镜像自带 `/etc/nginx/snippets/`，它那一份会被
+      # 整个盖住（本文件里的 include 只引用 blog-headers/ 这一个子目录，不碰其它）。
+      - ../nginx/snippets/blog-headers:/etc/nginx/snippets/blog-headers:ro
     # 故意**不依赖 db-init**：nginx 只服静态文件，站点先能打开、API 那半边随后就位，
     # 与裸机那套（nginx 常驻，Rust 没起来就 502）的行为一致。
     logging: *log-limits

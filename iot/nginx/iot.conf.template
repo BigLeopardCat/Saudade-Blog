@@ -53,6 +53,11 @@ location ^~ /device-console/ {
     alias __IOT_ROOT__/;
     expires -1;
     add_header Cache-Control "no-store, no-cache, must-revalidate";
+    # 全站安全响应头（20261015）。**这一行不是多余的**：本块有上面那条 add_header ⇒
+    # nginx 不继承 server 块里的，站点配置那一份在这里失效——只有显式 include 才拿得到。
+    # 目录通配（而不是具体文件名）是有意的：文件不在时 nginx **不报错**（实测过），
+    # 所以克隆本仓、没建那个目录的人 `nginx -t` 照样过（与整个 iot 可选件的理由同源）。
+    include /etc/nginx/snippets/blog-headers/*.conf;
 }
 
 # 无斜杠请求 301 到带斜杠（否则落到 SPA fallback，返回首页而不是控制台）

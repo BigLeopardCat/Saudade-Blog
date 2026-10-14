@@ -9,7 +9,7 @@ bash prepare.sh                       # 交互向导：域名 / 模型 key / 管
 docker compose build && docker compose up -d
 ```
 
-跑完按 §3 的《验收清单》逐条 curl 一遍 —— 那 11 条每一条都能判死。
+跑完按 §3 的《验收清单》逐条 curl 一遍 —— 那 12 条每一条都能判死。
 
 ---
 
@@ -124,6 +124,7 @@ docker compose logs db-init     # 应当以「✅ 完成。库 saudade_blog：NN
 | `generated/agent.env` | agent 容器（env_file） | `JWT_SECRET`（与上一份**逐字相同**）/ `BLOG_API_BASE` / 模型 key / `TRACE_DIR`… |
 | `generated/.credentials` | 你看 + db-init 当 env_file | 三条口令与 JWT 密钥的原始记录（0600） |
 | `generated/blog.conf`、`generated/ssl/` | nginx 容器（只读挂载） | 站点配置与证书 |
+| `deploy/nginx/snippets/blog-headers/` | nginx 容器（只读挂载） | 五条安全响应头。**这是唯一一份**（不拷进 `generated/`）：`blog.conf` 里每个 location 都通配 include 它 |
 
 `generated/` 与 `.env` 都在 `.gitignore` 里 —— **秘密不会进 git**。
 
@@ -132,7 +133,7 @@ docker compose logs db-init     # 应当以「✅ 完成。库 saudade_blog：NN
 
 ---
 
-## 3. 验收清单（11 条，每条都能判死）
+## 3. 验收清单（12 条，每条都能判死）
 
 先备两个变量（口令从 `generated/.credentials` 取，不要打到聊天窗口里）：
 
@@ -156,6 +157,7 @@ TOKEN=$(curl -s -X POST https://$DOM/api/login -H 'Content-Type: application/jso
 | 9 | `curl -s -X POST https://$DOM/api/monitor/log -H 'Content-Type: application/json' -d '{"kind":"other","message":"docker smoke test"}'` 然后 `docker compose exec backend tail -1 /srv/logs/frontend/monitor.log` | 最后一行有 `docker smoke test`（打不开父目录也返回 200 ⇒ 这是**唯一**能判它的方式） |
 | 10 | `curl -s -X POST https://$DOM/api/protected/graph/rebuild -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{}'`，再 `curl -s https://$DOM/api/protected/graph/rebuild/status -H "Authorization: Bearer $TOKEN"`；最后 `curl -sk -o /dev/null -w '%{http_code}\n' https://$DOM/api/public/graph/manifest` | 接口通、status 里有日志；manifest `200`。**没配 embedding 的话重建会如实报错** —— 那条错误本身就是判据（说明接口通了），不是故障 |
 | 11 | 改 `generated/backend.env` 里一个值 → `docker compose restart backend` **不生效**；`docker compose up -d` 才生效 | 这条判的是 §4.1 那句话本身。**环境变量在容器创建时定死**，`restart` 复用的是同一个容器 |
+| 12 | `bash ../../scripts/check_security_headers.sh "$DOM"` | 打印「安全响应头齐备（3 条路径 × 5 条头）」。缺 = `blog.conf` 里那些通配 include 没挂上 snippet（compose 里 `../nginx/snippets/blog-headers` 那一行）——**站点照样打得开**，所以必须显式判 |
 
 ### 第 6 条：真聊一轮（一条同时验四件事）
 

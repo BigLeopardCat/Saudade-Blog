@@ -212,10 +212,13 @@ logs/
   - `dup=N` 是服务端 60 秒窗口内的重复计数（跨访客：同一处报错不会用一百行把真线索
     冲掉）。因此 `dup>1` 读作"至少 N 次"，不等于同一个人报了 N 次。
 - 时区：Rust 与 agent 日志统一本地 +08:00 钟面，跨文件对账没有 8 小时差。
-- 心跳探针（建议由 cron 周期执行，`scripts/healthcheck.sh`，共 6 段）：① Rust 存活
+- 心跳探针（建议由 cron 周期执行，`scripts/healthcheck.sh`，共 8 段）：① Rust 存活
   ② agent `/health` 的 `agent_ready` ③ uvicorn worker 崩溃检测（pid 集合对比；worker
   静默死亡，自己不写任何日志）④ nginx error.log 增量扫描 ⑤ 残留无头浏览器清理
-  ⑥ 夜间任务失败哨兵（夜间套件非零退出/未跑 ⇒ WARN）。异常追加 `health.log`。
+  ⑥ 夜间任务失败哨兵（夜间套件非零退出/未跑 ⇒ WARN）⑦ agent 出站协议违规增量扫描
+  （扫 `agent.log` 增量段里的 `wire_illegal` 锚点）⑧ 全站安全响应头（跑
+  `scripts/check_security_headers.sh`，逐路径 × 逐头——那五条头只活在 nginx 配置里，
+  不在部署包里、不受任何测试覆盖，改坏它此前没有任何东西会红）。异常追加 `health.log`。
   装上就是一行 cron（探针只写日志，不发通知；告警投递需要自己接，见《已知缺口》）：
 
   ```
