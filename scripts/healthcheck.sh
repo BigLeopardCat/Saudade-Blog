@@ -159,4 +159,35 @@ else
   # 这轮没验"，不是"头没了"——两种情况的话得分开说，否则修错方向。
   fail "WARN 安全响应头这一项没验（找不到 $hdr_sh）"
 fi
+
+# 9. 每日零成本观测一行（20261016）
+#    20261012 起夜间回归整体挂起（主人「钱包扛不住」），而 nightly_regression.sh 把
+#    L1/L2/L3 + trace_alert + golden_draft 装在**同一个脚本**里 ⇒ 一停全停，生产健康
+#    只剩本探针每分钟那八项。`eval/token_cost_report.py`（成本/前缀缓存）与
+#    `eval/trace_metrics.py`（真实流量效率）是两件**零 LLM 成本**的读数装置，却没有任何
+#    自动通道——代价有现场：20261016 planner 的前缀缓存命中率 84.6% → 51.8%（当天改了
+#    提示词 = 整段前缀失效 = 多花钱），这件事此前**没有任何东西会报**。
+#    形状与第 6 项（哨兵）同款：**按天边沿触发**，一天最多一行，不每分钟刷屏。
+#    跑挂了当天也留一行 WARN——**不重试是刻意的**：脚本本身坏掉时每分钟重试会刷屏，
+#    而"每天一条 WARN"照样看得见。判 WARN 不判 FAIL：服务活着，断的是观测线。
+METRICS_DAY=/tmp/health_metrics_day
+TODAY=$(date +%Y%m%d)
+if [ "$(cat "$METRICS_DAY" 2>/dev/null)" != "$TODAY" ]; then
+  echo "$TODAY" > "$METRICS_DAY"     # 先落印再跑：跑挂了也不重试（理由见上）
+  AGENT_DIR="$PROJECT_DIR/saudade-blog-agent"
+  dm="$AGENT_DIR/eval/daily_metrics.py"
+  if [ -f "$dm" ]; then
+    dm_out=$(cd "$AGENT_DIR" && timeout 180 .venv/bin/python eval/daily_metrics.py 2>&1)
+    dm_rc=$?
+    if [ "$dm_rc" = "0" ] && [ -n "$dm_out" ]; then
+      echo "$TS METRICS $dm_out" >> "$LOG"
+    else
+      fail "WARN 每日观测没跑出来（rc=$dm_rc）：$(printf '%s' "$dm_out" | tail -2 | tr '\n' ';' | cut -c1-200)"
+    fi
+  else
+    # 「判据不在场」≠「没问题」（同第 8 项那条纪律）。它在 agent 仓的 main 上，
+    # 生产树 pull 之后才有——这条 WARN 说的是"这一项这轮没验"，不是"线上坏了"。
+    fail "WARN 每日观测脚本不在场（$dm）——它在 agent 仓 main 上，生产树 pull 之后才有"
+  fi
+fi
 exit 0
