@@ -191,7 +191,7 @@ console.log('\n组件 —— 三种审核结果说三种话：');
 ok(comp.includes("if (approved === 1) message.success('评论已发布')"), '已公开 → 说"已发布"');
 ok(/approved === 0\) message\.info\(/.test(comp), '待人工复核 → 另说一句（不含"已发布"）');
 ok(/message\.warning\('评论未通过审核/.test(comp), '未通过 → 如实说未通过');
-ok(rustComments.includes('pub approved: i8') && rustComments.includes('approved,') ,
+ok(rustComments.includes('pub approved: i16') && rustComments.includes('approved,') ,
     '后端回传 approved（只回 id 的话前端只能含糊其辞）');
 
 console.log('\n挂载点 —— 在正文之后：');

@@ -110,7 +110,9 @@ console.log('\n值域 —— ±1 是票，0 是撤回（不是缺省）：');
         '后端校验三种取值，0 被显式认成合法（当缺省处理 ⇒ 想撤回反而投了一票）');
     ok(/0 => withdraw_vote\(/.test(rustVotes) && /=> set_vote\(/.test(rustVotes),
         '0 走撤回（DELETE 行）、±1 走 upsert —— 库里没有"0 分票"这一档');
-    ok(/pub value: i8/.test(rustEntityVote), 'entity 的 value 是 i8（TINYINT，够放 ±1）');
+    // 20261018 切库到 PG：`tinyint(1)` 变成 `smallint`，`sqlx-postgres` 按 OID 精确匹配
+    // ⇒ 实体这一格必须跟着从 i8 变 i16（i8 在 PG 侧映射的是 `"char"` oid 18，读不出来）。
+    ok(/pub value: i16/.test(rustEntityVote), 'entity 的 value 是 i16（PG smallint，够放 ±1）');
     const tsComment = read('frontend/src/components/CommentSection/index.tsx');
     ok(/const next: -1 \| 0 \| 1 = c\.myVote === dir \? 0 : dir/.test(bodyOf(tsComment, 'const vote = async')),
         '前端"再点一次已点亮的那一侧 = 撤回"发的是 0（不是再投一遍）');
@@ -122,7 +124,7 @@ console.log('\n值域 —— ±1 是票，0 是撤回（不是缺省）：');
 console.log('\n键名 —— 列表行与投票回执是**同一种东西**（前端只写一份解析）：');
 {
     for (const [name, src] of [['投票回执', rustVotes], ['列表行', rustComments]]) {
-        ok(/pub up: i64,\s*\n\s*pub down: i64,\s*\n\s*#\[serde\(rename = "myVote"\)\]\s*\n\s*pub my_vote: i8,/
+        ok(/pub up: i64,\s*\n\s*pub down: i64,\s*\n\s*#\[serde\(rename = "myVote"\)\]\s*\n\s*pub my_vote: i16,/
             .test(src.replace(/\r/g, '')),
             `${name} DTO 是 up/down(myVote) —— 与 TS 的 CommentVote 逐字对应`, name);
     }

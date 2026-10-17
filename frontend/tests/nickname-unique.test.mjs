@@ -71,8 +71,10 @@ ok(migration.indexOf('ADD UNIQUE KEY') < migration.indexOf("VALUES ('nickname_un
 ok(/回滚[\s\S]*DROP INDEX `uk_user_nickname`/.test(migration), '回滚段里有 DROP INDEX');
 
 console.log('\nRust 实体 —— 列必须与迁移同时在场：');
-ok(/pub nickname_auto_renamed: i8,/.test(entityRs),
-    'entity 有 nickname_auto_renamed: i8（tinyint(1) → i8）');
+// 20261018 切库到 PG：`tinyint(1)` → `smallint`，`sqlx-postgres` 按 OID 精确匹配
+// ⇒ 这一格必须跟着变 i16（i8 在 PG 侧映射 `"char"` oid 18，整片路由读不出来）。
+ok(/pub nickname_auto_renamed: i16,/.test(entityRs),
+    'entity 有 nickname_auto_renamed: i16（PG smallint）');
 ok(entityRs.includes('nickname_unique_20261002.sql'),
     '实体注释里指回迁移文件（改列的人得知道有份迁移要跑）');
 
@@ -93,8 +95,10 @@ function dupFn() {
     const i = profileRs.indexOf('fn is_duplicate_key');
     return i < 0 ? '' : profileRs.slice(i, i + 900);
 }
-ok(dupFn().includes('as_database_error') && /matches!\(c\.as_ref\(\), "1062"/.test(dupFn()),
+ok(dupFn().includes('as_database_error') && /matches!\(c\.as_ref\(\),[^)]*"1062"/.test(dupFn()),
     'is_duplicate_key 走**错误码**，不是 `contains("Duplicate entry")`（后者会把别人的报错也算成重复键）');
+ok(/"23505"/.test(dupFn()),
+    'PG 的唯一键冲突码 23505 与 MySQL 的 1062 并列在同一处 —— 切库后前者才是真会命中的那个');
 ok(!strip(dupFn()).includes('to_string().contains'),
     '代码里没有字符串匹配错误信息那一套');
 
@@ -102,7 +106,7 @@ console.log('\nDTO —— 跨语言键名：');
 ok(authRs.includes('#[serde(rename = "nicknameAutoRenamed")]'),
     'ProfileDto 用驼峰线上键名（本仓 DTO 口径，同 oldPassword）');
 ok(/nickname_auto_renamed: u\.nickname_auto_renamed != 0/.test(authRs),
-    'profile() 把列翻译成 bool 再出接口（不是把 i8 直接吐出去）');
+    'profile() 把列翻译成 bool 再出接口（不是把整数宽度直接吐出去）');
 
 console.log('\n前端 —— 类型与横幅：');
 ok(/nicknameAutoRenamed\?: boolean/.test(types),
