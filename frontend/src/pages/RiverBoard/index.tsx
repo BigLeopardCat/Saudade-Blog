@@ -5,6 +5,19 @@ import { moonAlbedo, moonSpriteGeometry } from "./moon_surface.ts";
 import { useLiveRefresh } from "../../utils/liveRefresh";
 import { useNavigate } from "react-router-dom";
 import Live2dAgent from "../../components/Live2dAgent"; // 沉浸页也保留看板娘（顶层路由无 App 布局）
+import type { Geo, MoonGeom } from "./render/geo";
+import {
+    bakeCloudStrip,
+    CLOUD_HIGH,
+    CLOUD_LOW,
+    drawClouds,
+    drawHorizonGlow,
+    drawHorizonMist,
+    drawMilkyWay,
+    drawMoonHalo,
+    drawRidges,
+    paintSky,
+} from "./render/sky";
 
 /* 河灯留言板 ── 一条只存在于路由之下的河。
    整页为独立顶层路由（/he），不挂博客的头部与底部。
@@ -577,6 +590,24 @@ let lanternLightCv: HTMLCanvasElement | null = null;
 let slowCv: HTMLCanvasElement | null = null;
 let slowTick = 0;
 
+/* 云层条带（20261018）：体积云烘成条带（宽度 = 视口 + 出血 + 一倍漂移余量），
+   逐帧在天空裁剪区内按视差与漂移各画一笔。**不烤进静态层**——它要有自己的
+   视差与漂移，烤进去就等于把云钉死在天空上。 */
+let cloudStrips: Array<{ cv: HTMLCanvasElement; par: number; speed: number }> | null = null;
+
+/** 烘云层。`soft` 档只烘一层（逐像素 fbm 是烘焙期唯一的重活）。 */
+const buildCloudStrips = (w: number, yH: number, margin: number, soft: boolean) => {
+    // 漂移是**有界振荡**（±0.25w），不是无界累加 —— 无界累加绕回时会"跳一下"，
+    // 而有界振荡看起来一样自然，且条带宽度可以精确算出来，边缘永远不会露馅。
+    const stripW = Math.round(w + 2 * margin + w * 0.5);
+    const stripH = Math.round(Math.max(80, yH * 1.16));
+    cloudStrips = [];
+    cloudStrips.push({ cv: bakeCloudStrip(stripW, stripH, CLOUD_HIGH), par: 0.16, speed: 0.34 });
+    if (!soft) {
+        cloudStrips.push({ cv: bakeCloudStrip(stripW, stripH, CLOUD_LOW), par: 0.24, speed: 0.62 });
+    }
+};
+
 /* ------------------------- 组件 ------------------------- */
 
 export default function RiverBoard() {
@@ -849,7 +880,8 @@ export default function RiverBoard() {
     /* ---- 静态层（背景） ---- */
     const renderBase = (
         backCv: HTMLCanvasElement,
-        frontCv: HTMLCanvasElement
+        frontCv: HTMLCanvasElement,
+        soft: boolean
     ) => {
         const a = amb;
         if (!a) return;
@@ -863,20 +895,28 @@ export default function RiverBoard() {
             ctx.clearRect(-MARGIN, -MARGIN, w + MARGIN * 2, h + MARGIN * 2);
         };
         const draw = (ctx: CanvasRenderingContext2D) => {
+            /* 新渲染模块（render/）的显式几何契约：riverX/riverY/traceRiver 的本体
+               留在组件里不动（它们是每帧上百次调用的热路径），只把这一个接口对象递出去。 */
+            const geo: Geo = { w, h, yH: v.yH, margin: MARGIN, dpr: v.dpr, riverX, riverY, traceRiver };
+            const { lx: lxHalo, haloK } = moonPhaseParams();
+            const moon: MoonGeom = {
+                x: w * MOON.x,
+                y: h * MOON.y,
+                r: Math.min(w, h) * MOON.r,
+                haloK,
+                lx: lxHalo,
+            };
 
-            // 夜空
-            const sky = ctx.createLinearGradient(0, 0, 0, v.yH * 1.25);
-            sky.addColorStop(0, "#02040c");
-            sky.addColorStop(0.42, "#081029");
-            sky.addColorStop(0.78, "#101a3c");
-            sky.addColorStop(1, "#1c2450");
-            ctx.fillStyle = sky;
-            ctx.fillRect(-MARGIN, -MARGIN, w + MARGIN * 2, v.yH * 1.25 + MARGIN * 2);
+            /* 夜空（20261018 电影感重制，自远及近）：
+               渐变 → 银河 → 星辰 → 月晕 → 地平线辉光 → 三层远山（带大气透视）→ 近地平线薄雾。
+               云不在这里 —— 它要有自己的视差与漂移，见 drawScene 里那两笔。 */
+            paintSky(ctx, geo);
+            drawMilkyWay(ctx, geo);
 
             // 月亮常量先行：星辰绘制需跳过月盘（星星不得透过月亮）
-            const mxMoon = w * MOON.x;
-            const myMoon = h * MOON.y;
-            const rMoon = Math.min(w, h) * MOON.r;
+            const mxMoon = moon.x;
+            const myMoon = moon.y;
+            const rMoon = moon.r;
 
             // 星辰（静态基色）；月盘内的星略过——月亮实心，星星不得透过
             for (const st of a.stars) {
@@ -895,66 +935,31 @@ export default function RiverBoard() {
             // 静态层每帧按非整数视差偏移合成，月缘这种高频边缘会被反复重采样磨糊。
             // 这里只留**月晕**：它是极低频的软渐变，烘进静态层看不出重采样，
             // 也没必要每帧重建渐变。
-            const { lx: lxHalo, haloK } = moonPhaseParams();
-            // 光晕以发光区域（亮月牙）中心为圆心向四周完整扩散（不再裁剪半圆）：
-            // 圆心随月相偏到亮面侧，暗面侧自然远离光心渐弱，不再有生硬的半圆边界。
-            // 注意：月晕的相位在**烘培时**定下（与改动前一致），页面开着跨过月相档
-            // 不会自己变——月盘 sprite 同此（两者同源同档，不会各飘一边）。
-            const hx = mxMoon + lxHalo * rMoon * 0.5, hy = myMoon;
-            const halo = ctx.createRadialGradient(hx, hy, 0, hx, hy, w * 0.19);
-            halo.addColorStop(0, `rgba(255,244,216,${0.22 * haloK})`);
-            halo.addColorStop(0.28, `rgba(219,228,255,${0.075 * haloK})`);
-            halo.addColorStop(1, "rgba(190,208,255,0)");
-            ctx.fillStyle = halo;
-            ctx.fillRect(hx - w * 0.28, hy - w * 0.28, w * 0.56, w * 0.56);
-            /* 地球反照叠加层已下线（20260912 用户第二次反馈："我不希望看到他的底盘和边缘形状…
+            /* 月晕（20261018 改成三层：紧核 / 中景散射 / 很宽的外晕，见 render/sky.ts）。
+               光晕以发光区域（亮月牙）中心为圆心向四周完整扩散（不再裁剪半圆）：
+               圆心随月相偏到亮面侧，暗面侧自然远离光心渐弱，不再有生硬的半圆边界。
+               注意：月晕的相位在**烘培时**定下（与改动前一致），页面开着跨过月相档
+               不会自己变——月盘 sprite 同此（两者同源同档，不会各飘一边）。
+               地球反照叠加层已下线（20260912 用户第二次反馈："我不希望看到他的底盘和边缘形状…
                现在就能看到灰蒙蒙的月亮圆形轮廓"）。物理上地球反照是对的，但在这幅画里它表现为
                一个边缘可辨的灰盘：夜空背景不是纯黑而是带光晕的蓝，任何"整圆"都会读成虚假的底盘。
                结论：暗面完全不画（透出背景），只留受光的那部分。
                月缘近场辉光同理（内半径 1.0·rMoon 的环形渐变，暗面侧会露出一段圆弧内边界——
-               那正是"月亮的圆形轮廓"）；光晕统一由上面那道以亮面为圆心、半径 0.22w 的软光晕承担。 */
+               那正是"月亮的圆形轮廓"）；光晕统一由下面这道以亮面为圆心、多层衰减的软光晕承担。 */
+            drawMoonHalo(ctx, geo, moon);
 
-            // 云影（静态，随视差层缓慢移动）
-            ctx.fillStyle = "rgba(24,32,60,0.10)";
-            for (let c = 0; c < 3; c++) {
-                const cx = ((c * 431) % (w + 500)) * 0.6 + w * 0.1 + c * 120;
-                const cy = h * (0.08 + c * 0.09);
-                for (let b = 0; b < 5; b++) {
-                    const bx = cx + Math.sin(c * 7.3 + b * 1.9) * 90;
-                    const by = cy + Math.cos(c * 5.1 + b * 2.7) * 22;
-                    const br = 60 + b * 26;
-                    const g = ctx.createRadialGradient(bx, by, 0, bx, by, br);
-                    g.addColorStop(0, "rgba(23,31,58,0.10)");
-                    g.addColorStop(1, "rgba(23,31,58,0)");
-                    ctx.fillStyle = g;
-                    ctx.beginPath();
-                    ctx.arc(bx, by, br, 0, Math.PI * 2);
-                    ctx.fill();
-                }
-            }
+            /* 云（20261018）不再烤在这里 —— 旧的"云影"是三个径向渐变糊成的暗斑，
+               既没有体积也没有月光。现在换成真云层：见 render/sky.ts 的 bakeCloudStrip，
+               逐帧在天空裁剪区内画（要有自己的视差与漂移，所以不能烤进静态层）。 */
 
-            // 远山三层（纯剪影填充——不再画顶部波浪描边线，山体就是实的山）
-            const ridge = (base: number, seed: number, amp: number, c1: string) => {
-                ctx.beginPath();
-                ctx.moveTo(-MARGIN - 20, h + MARGIN);
-                ctx.lineTo(-MARGIN - 20, base);
-                for (let x = -MARGIN - 20; x <= w + MARGIN + 20; x += 9) {
-                    ctx.lineTo(
-                        x,
-                        base +
-                            Math.sin(x * 0.0042 + seed) * amp * 1.2 +
-                            Math.sin(x * 0.011 + seed * 2.7) * amp * 0.7 +
-                            Math.sin(x * 0.023 + seed * 5.1) * amp * 0.28
-                    );
-                }
-                ctx.lineTo(w + MARGIN + 20, h + MARGIN);
-                ctx.closePath();
-                ctx.fillStyle = c1;
-                ctx.fill();
-            };
-            ridge(v.yH * 0.82, 3.1, h * 0.045, "#0b1230");
-            ridge(v.yH * 0.92, 8.7, h * 0.062, "#070d22");
-            ridge(v.yH * 0.97, 1.7, h * 0.05, "#050a18");
+            // 地平线辉光：把光"锚"在月亮方位上，天空因此不是一条均匀的渐变
+            drawHorizonGlow(ctx, geo, moon);
+
+            // 远山三层 + 大气透视（render/sky.ts）：越远越被空气散射洗淡，最近那层带树线
+            drawRidges(ctx, geo, moon);
+
+            // 近地平线薄雾：水天过渡不是一条硬线
+            drawHorizonMist(ctx, geo, moon);
 
             // 河水底色 + 河心天光带
             const riverBase = ctx.createLinearGradient(0, v.yH, 0, h);
@@ -1160,6 +1165,9 @@ export default function RiverBoard() {
         slowCv = slow;
         slowTick = 0;
         renderSlow(slow.getContext("2d")!);
+
+        // 云层条带（20261018）：与静态层同批烘，软渲染档只烘一层
+        buildCloudStrips(w, v.yH, MARGIN, soft);
     };
 
     /* 慢层（流向纹/碎光点/涟漪）：合并到离屏缓冲，每 3 帧重绘一次（≈20fps）。
@@ -1336,6 +1344,20 @@ export default function RiverBoard() {
             ctx.setTransform(1, 0, 0, 1, 0, 0);
             ctx.imageSmoothingQuality = "high";   // sprite 是 2× 超采样，缩下来要缩得干净
             ctx.drawImage(moonSprite.cv, geo.x, geo.y, geo.size, geo.size);
+            ctx.restore();
+        }
+
+        /* 云层（20261018）：画在月盘**之后**，所以云会从月亮前面飘过 —— 这是这幅夜景
+           唯一能读出来的"月亮在云后面"。裁剪用与星辰同一张天空路径（山脊之上），
+           山脊因此永远压住云；两层各自视差 + 有界漂移（±0.25w，无绕回跳变）。
+           性能降级时漂移冻结（云仍在，只是不动）。 */
+        if (cloudStrips) {
+            const drift = reduce ? 0 : (Math.sin(t * 0.017) * 0.5 + Math.sin(t * 0.0071 + 2.1) * 0.5) * w * 0.25;
+            ctx.save();
+            ctx.translate(px * 0.2, py * 0.1);
+            ctx.clip(buildSkyClip(w, h), "evenodd");
+            ctx.translate(-px * 0.2, -py * 0.1);
+            drawClouds(ctx, cloudStrips, px, py, drift, MARGIN, 0);
             ctx.restore();
         }
 
@@ -1715,7 +1737,7 @@ export default function RiverBoard() {
             };
             baseBack = makeBase();
             baseFront = makeBase();
-            renderBase(baseBack, baseFront);
+            renderBase(baseBack, baseFront, softRender);
         };
 
         // resize 防抖（20260912）：下面这一趟会重建全部粒子 + 两张全屏画布 + renderBase
