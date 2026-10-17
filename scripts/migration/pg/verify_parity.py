@@ -31,6 +31,12 @@ from mysql2pg import (DB_NAME, NO_DEFAULT, colliding_indexes,  # noqa: E402
 PG_BIN = os.environ.get("PG_BIN", "sudo -n -u postgres psql")
 PG_DB = os.environ.get("PG_DB", DB_NAME)
 
+# **手写的、MySQL 那边没有对应物的表**（见 `0001_rag_vectors.sql` 头注：向量从来没进过
+# MySQL）。它们不进本判据的射程 —— 逐位对账在 `verify_vectors.py` 那边。
+# 不加这个豁免的话，本判据从"搬完向量"那一刻起**永久红**，而红在一个正确的事实上；
+# 判据一旦有恒红的项，真红就没人看了。
+HAND_WRITTEN = {"rag_vector", "rag_vector_space"}
+
 
 def pg_query(sql: str) -> list[list[str]]:
     argv = PG_BIN.split() + ["-d", PG_DB, "-t", "-A", "-F", "\t", "-c", sql]
@@ -155,8 +161,8 @@ def main() -> int:
         if want != got:
             bad.append("%s\n      MySQL/生成器: %r\n      PG         : %r" % (what, want, got))
 
-    # ① 表
-    diff("表集合", sorted(my["cols"]), sorted(pg["cols"]))
+    # ① 表（手写的那两张先摘出去，见 HAND_WRITTEN）
+    diff("表集合", sorted(my["cols"]), sorted(t for t in pg["cols"] if t not in HAND_WRITTEN))
 
     # ② 列 / 类型 / 可空 / 默认 / 自增 / 注释
     for t in sorted(my["cols"]):
@@ -213,9 +219,12 @@ def main() -> int:
     # ⑥ 库级时区：`DEFAULT CURRENT_TIMESTAMP` 落在 timestamp 上要靠它才是 +08:00 钟面
     diff("库级 TimeZone", "Asia/Shanghai", pg["tz"])
 
-    print("MySQL %d 张表 / %d 列    PG %d 张表 / %d 列   索引 %d   外键 %d   触发器 %d"
+    print("MySQL %d 张表 / %d 列    PG %d 张表 / %d 列（另有手写 %d 张不在射程内）"
+          "    索引 %d   外键 %d   触发器 %d"
           % (len(my["cols"]), sum(len(v) for v in my["cols"].values()),
-             len(pg["cols"]), sum(len(v) for v in pg["cols"].values()),
+             len(pg["cols"]) - len(HAND_WRITTEN & set(pg["cols"])),
+             sum(len(v) for k, v in pg["cols"].items() if k not in HAND_WRITTEN),
+             len(HAND_WRITTEN & set(pg["cols"])),
              len(pg["idx"]), len(got_fk), len(pg["trig"])))
     if bad:
         print("\n✗ %d 处对不上：" % len(bad))
@@ -223,6 +232,8 @@ def main() -> int:
             print("  - " + b)
         return 1
     print("✓ 结构逐项一致（表 / 列 / 类型 / 可空 / 默认 / 自增 / 索引 / 主键 / 外键 / 注释 / 触发器 / 时区）")
+    print("  （手写的 %s 由 `verify_vectors.py` 管：那一份是逐**位**对账）"
+          % "/".join(sorted(HAND_WRITTEN)))
     print("  ⚠️ 有两件事**本判据结构上验不了**，别读成「已验证」：")
     print("     ① 排序规则的大小写敏感性 —— 行为差异，不是结构差异。20261017 已拍板「登录按大小写」")
     print("        ⇒ PG 这边（敏感）就是目标行为，MySQL 那边（不敏感）才是**要离开**的那一侧。")
