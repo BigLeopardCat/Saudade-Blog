@@ -77,6 +77,22 @@
 //!   夹具的所有行 `created_at` **取同一个字面量**：分页要验的正是"同秒多行"这个最难的情形，
 //!   用 `NOW()` 播种会让每行的秒数各不相同 ⇒ 分页断言恰好退化成最容易通过的那种。
 //!
+//! ## 第五半（20261018）：聊天图片
+//!
+//! ⑬ `chat_image` 是**手写迁移**建的表（`0003_chat_image.sql`，不在 `0000_schema.sql` 里
+//!   ——那一份是从 MySQL 的 `information_schema` 生成的，而图片从来没进过任何库）。
+//!   三条判据各自钉一件只有真库能证明的事：
+//!   · **往返逐字相等**：dataURL 进库出库一个字节都不能变（夹具的 base64 刻意含
+//!     `+` `/` `=`）。走**真链路** `GET /api/chat/history`，因为查表只能证明"存进去了"、
+//!     证明不了 `HistoryItem.images` 这一格接上了线；
+//!   · **外键级联删**：删 `chat_history` 行 ⇒ 它的图跟着走。这是本表破例用 DB 外键的
+//!     唯一理由（删 `chat_history` 的地方有 5 处，漏一处就是永久孤儿且没有任何东西会红）；
+//!   · **`(message_id, seq)` 唯一键**挡重放——应用层"先查再插"中间那个窗口就是第二次写。
+//!
+//! ⑬ 的夹具也**必须**在 `ensure_schema` 的 `want` 名单里带上 `chat_image`：漏了它，
+//! 失败会退化成一裸 SQL 报错（`relation "chat_image" does not exist`），
+//! 看不出"这个库该建两份结构"这个前因后果。
+//!
 //! ⑦⑧ 起要签真令牌、走真路由：`create_router` + 真 JWT（`create_token` 自会读
 //! `JWT_SECRET`，本文件自己把它设上）。夹具一律用 `9000000xx` 高位 id，且**按用户隔离**
 //! ——⑦⑧ 只在 `CONV_UID` 名下建会话、⑨ 只在 `APPLY_UID` 名下建申请，
@@ -105,12 +121,17 @@
 //! 用法（本机，**不要指向生产库**）：
 //!
 //! ```bash
-//! # 结构由一个**库级**脚本建（scripts/migration/pg/0000_schema.sql）。⚠️ 它头注里
-//! # 写死了库名 `saudade_blog`（脚本内有一句 `ALTER DATABASE "saudade_blog" …`）——
-//! # 建一个另名的测库时，要么把那一句改成新库名，要么就按它头注那样把库也建成
+//! # 结构由**两份**脚本按序建：0000（库级，从 MySQL 生成）+ 编号迁移里进 CI 的那几份。
+//! # 「哪几份进 CI」的唯一事实源是 scripts/migration/pg/ci_schema_files.py（它打印的就是
+//! # 要按序喂给 psql 的清单，`--self-test` 保证磁盘上每个编号迁移都归过类）——
+//! # 别在这里另抄一份文件名。
+//! # ⚠️ 0000 头注里写死了库名 `saudade_blog`（脚本内有一句 `ALTER DATABASE "saudade_blog" …`）
+//! # ——建一个另名的测库时，要么把那一句改成新库名，要么就按它头注那样把库也建成
 //! # `saudade_blog`（那种情况务必用**独立实例**，别撞上生产库）。
 //! psql -c "CREATE DATABASE saudade_it ENCODING 'UTF8'"
-//! psql -d saudade_it -v ON_ERROR_STOP=1 -f scripts/migration/pg/0000_schema.sql
+//! for f in $(python3 scripts/migration/pg/ci_schema_files.py); do
+//!   psql -d saudade_it -v ON_ERROR_STOP=1 -f "$f" || exit 1
+//! done
 //! TEST_PG_URL="postgres://saudade_app:密码@127.0.0.1:5432/saudade_it" cargo test --test pg_integration
 //! ```
 //!
@@ -152,6 +173,7 @@ const QUOTA_UID: i32 = 900000011;
 const QUOTA_UID2: i32 = 900000016;
 const CONV_SEARCH_UID: i32 = 900000012;
 const CONV_LIST_UID: i32 = 900000013;
+const IMG_UID: i32 = 900000017;
 const ADMIN_UID: i32 = 900000014;
 const APPLY_UID: i32 = 900000015;
 
@@ -197,6 +219,10 @@ async fn connect() -> Option<DatabaseConnection> {
 /// 缺表就带着"怎么补"的提示失败，别让它退化成一个看不出前因后果的 SQL 报错。
 async fn ensure_schema(db: &DatabaseConnection) {
     // ⑥–⑨ 起还要 `user`（签真令牌要有行才行）+ 会话两张 + 申请与通知两张
+    // `chat_image`（20261018）：**它不在 `0000_schema.sql` 里**——是 `0003_chat_image.sql`
+    // 建的（手写迁移，见那个文件的头注）。加进这份名单有两个作用：① 它的用例失败时
+    // 得到的是"库结构不全 + 怎么补"，不是一条裸 SQL 报错；② 顺带把"CI 只加载 0000"
+    // 这个洞钉在明面上——清单见 `scripts/migration/pg/ci_schema_files.py`。
     let want = [
         "note",
         "note_view",
@@ -206,6 +232,7 @@ async fn ensure_schema(db: &DatabaseConnection) {
         "user",
         "conversation",
         "chat_history",
+        "chat_image",
         "quota_request",
         "user_notification",
     ];
@@ -228,8 +255,9 @@ async fn ensure_schema(db: &DatabaseConnection) {
     assert_eq!(
         got,
         want.len() as i64,
-        "库结构不全（要 {} 张表，只找到 {got} 张）。先建结构：\n\
-         psql -d <库名> -v ON_ERROR_STOP=1 -f scripts/migration/pg/0000_schema.sql",
+        "库结构不全（要 {} 张表，只找到 {got} 张）。先建结构（**两份都要**，顺序不能反）：\n\
+         psql -d <库名> -v ON_ERROR_STOP=1 -f scripts/migration/pg/0000_schema.sql\n\
+         psql -d <库名> -v ON_ERROR_STOP=1 -f scripts/migration/pg/0003_chat_image.sql",
         want.len()
     );
 }
@@ -1614,7 +1642,7 @@ async fn test_后台留言列表的服务端筛选分页与连接语义() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ⑨ 阅读上报的 upsert：同一天连报三次要**原地累加到 3**，而不是一行都写不进去
+// ⑫ 阅读上报的 upsert：同一天连报三次要**原地累加到 3**，而不是一行都写不进去
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// 为什么这条判据要**读库里的真值**、而不是看接口的状态码：
@@ -1685,4 +1713,156 @@ async fn view_report_upserts_instead_of_violating_the_unique_key() {
         Some(today.as_str()),
         "view_date 存的必须是本地钟面日期（与 `report_view` 的 `Local::now().date_naive()` 同源）"
     );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ⑬ 聊天图片（20261018）：往返逐字相等 / 外键级联删 / (message_id, seq) 唯一
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// 往一条消息上挂一张图（`seq` 是同一条消息内的次序）。**照抄 `prepare_chat` 的写法**
+/// ——它落的也是完整 dataURL（含 `data:image/…;base64,` 前缀），不是裸 base64。
+async fn add_img(db: &DatabaseConnection, mid: i32, seq: i16, data: &str) {
+    // dataURL 里可能有单引号以外的任意字符；用 PG 的 dollar-quoting 兜住，
+    // 免得夹具里的 `'` 把 SQL 撕开（本文件其余夹具都是 `format!` 拼串，没有绑定参数）。
+    exec(
+        db,
+        &format!(
+            "INSERT INTO chat_image (message_id, seq, data) VALUES ({mid}, {seq}, $img${data}$img$)"
+        ),
+    )
+    .await;
+}
+
+/// 某条消息名下的图片张数。
+async fn img_count(db: &DatabaseConnection, mid: i32) -> i64 {
+    count_of(
+        db,
+        &format!("SELECT COUNT(*) FROM chat_image WHERE message_id = {mid}"),
+    )
+    .await
+}
+
+/// **dataURL 进库、出库必须逐字相等**——这是"图片落库"这件事唯一诚实的判据。
+/// 夹具刻意选含 `+` `/` `=` 的 base64（这三类字符在 form-encoding / URL 转义 / 手工拼接
+/// 里各是一个常见的坏点），任何一层把字节改掉，`assert_eq!` 当场红。
+///
+/// 走的是**真链路**（`GET /api/chat/history`）而不是直接查表：要验的正是
+/// `HistoryItem.images` 这一格真的接上了线（查表只能证明"存进去了"，证明不了
+/// "读得出来"——20261018 之前那半截 `mapDbItems` 白名单就是这种静默丢字段）。
+#[tokio::test]
+async fn chat_history_returns_images_byte_for_byte() {
+    let Some((db, db_app)) = connect_pair().await else { return };
+    make_user(&db, IMG_UID, "user").await;
+    clear_conversations(&db, IMG_UID).await;
+    let cid = make_conversation(&db, IMG_UID, Some("带图的会话")).await;
+
+    // `+` `/` `=` 各出现，末尾还有 `==`（base64 填充）
+    const IMG_A: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg+/x==";
+    const IMG_B: &str = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ+AAA==";
+    let with_imgs = add_msg(&db, IMG_UID, cid, "看看这两张\n[图片×2]").await;
+    add_img(&db, with_imgs, 0, IMG_A).await;
+    add_img(&db, with_imgs, 1, IMG_B).await;
+    let plain = add_msg(&db, IMG_UID, cid, "这条没有图").await;
+
+    let app = test_app(db_app);
+    let token = auth_jwt::create_token(IMG_UID, "user", 0);
+    let (st, j) = call(
+        app,
+        "GET",
+        &format!("/api/chat/history?conversation_id={cid}"),
+        Some(&token),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "带真令牌的历史请求不该 401/403：{j}");
+
+    let items = j["items"].as_array().expect("items 必须是数组");
+    assert_eq!(items.len(), 2, "两条消息都要在：{j}");
+    // 历史是**时间升序**（阅读序）⇒ 先发的那条在前
+    assert_eq!(items[0]["id"].as_i64(), Some(with_imgs as i64), "{j}");
+    assert_eq!(items[1]["id"].as_i64(), Some(plain as i64), "{j}");
+
+    let got: Vec<&str> = items[0]["images"]
+        .as_array()
+        .expect("images 必须是数组（缺键 / null 都说明这一格没接上线）")
+        .iter()
+        .map(|v| v.as_str().expect("images 的元素必须是字符串"))
+        .collect();
+    assert_eq!(
+        got,
+        vec![IMG_A, IMG_B],
+        "dataURL 必须逐字相等、且按 seq 顺序。拿到 {got:?}"
+    );
+
+    // 没图的那条：**空数组，不是缺键、不是 null** —— 前端 `migrateItem` 认的是数组本身。
+    let none = items[1]["images"]
+        .as_array()
+        .expect("没有图的消息也要给 `images: []`（缺键会让前端多一条降级路径）");
+    assert!(none.is_empty(), "没有图的消息 images 该是空数组，拿到 {none:?}");
+    assert_eq!(img_count(&db, plain).await, 0, "空数组要对应「库里真没有图」");
+}
+
+/// **外键级联删**——这是本表破例用 DB 外键（而不是照 chat 家族惯例走应用层级联）的
+/// **唯一理由**：删 `chat_history` 的地方有 5 处（`discard_handler` / 每会话 500 条删头 /
+/// `DiscardAbortedExchange::drop` / `delete_conversation` / 删临时账号），漏一处就是
+/// 图片**永久孤儿**，而且**没有任何东西会红**。
+///
+/// 所以这条判据必须验"删消息 ⇒ 图跟着没了"，而不是"删消息的代码里也写了删图"——
+/// 后者只是把 5 处人工同步又抄了一遍。
+#[tokio::test]
+async fn deleting_a_message_cascades_to_its_images() {
+    let Some((db, _db_app)) = connect_pair().await else { return };
+    make_user(&db, IMG_UID, "user").await;
+    clear_conversations(&db, IMG_UID).await;
+    let cid = make_conversation(&db, IMG_UID, Some("级联")).await;
+    let mid = add_msg(&db, IMG_UID, cid, "两张\n[图片×2]").await;
+    add_img(&db, mid, 0, "data:image/png;base64,AAA").await;
+    add_img(&db, mid, 1, "data:image/png;base64,BBB").await;
+    assert_eq!(img_count(&db, mid).await, 2, "前提：两张图确实插进去了");
+
+    exec(&db, &format!("DELETE FROM chat_history WHERE id = {mid}")).await;
+
+    assert_eq!(
+        img_count(&db, mid).await,
+        0,
+        "删掉消息之后它的图必须跟着走。**留着一行就是永久孤儿**——读路径只按\
+         `message_id IN (最近 50 条的 id)` 取图，那条消息再也不会被读到，而它占的字节\
+         会一直留在库里，没有任何东西会红。外键（`fk_chat_image_msg` ON DELETE CASCADE）\
+         就是为这一条存在的。"
+    );
+}
+
+/// `(message_id, seq)` 唯一键：重放 / 双标签页重复提交**挡在库这一层**。
+/// 应用层去重做不到这件事——两个并发请求各自查一次"有没有"再各自插，中间那个窗口
+/// 就是第二次写（同族事故见 `quota::try_consume` 的头注）。
+#[tokio::test]
+async fn chat_image_unique_key_blocks_a_replayed_seq() {
+    let Some((db, _db_app)) = connect_pair().await else { return };
+    make_user(&db, IMG_UID, "user").await;
+    clear_conversations(&db, IMG_UID).await;
+    let cid = make_conversation(&db, IMG_UID, Some("唯一键")).await;
+    let mid = add_msg(&db, IMG_UID, cid, "一张\n[图片]").await;
+    add_img(&db, mid, 0, "data:image/png;base64,AAA").await;
+
+    let dup = db
+        .execute(Statement::from_string(
+            DbBackend::Postgres,
+            format!(
+                "INSERT INTO chat_image (message_id, seq, data) \
+                 VALUES ({mid}, 0, 'data:image/png;base64,BBB')"
+            ),
+        ))
+        .await;
+    let err = dup.expect_err("同一个 (message_id, seq) 插第二次必须被唯一键挡住");
+    // ⚠️ 只断言"报错了"是**空真**：表不存在、列名写错、外键指向不存在的消息……
+    // 任何一种都报错。把约束名钉住，红的才是唯一键这一件事。
+    let msg = err.to_string();
+    assert!(
+        msg.contains("chat_image_uk_msg_seq"),
+        "报错必须来自那个唯一索引（拿到的是：{msg}）"
+    );
+    assert_eq!(img_count(&db, mid).await, 1, "被挡住之后不该多出一行");
+    // 换一个 seq 是**另一张图**，必须插得进（别把唯一键写成"一条消息只许一张图"）
+    add_img(&db, mid, 1, "data:image/png;base64,BBB").await;
+    assert_eq!(img_count(&db, mid).await, 2, "seq 不同就是不同的图");
 }

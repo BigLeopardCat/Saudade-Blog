@@ -11,6 +11,8 @@ pub mod image;
 pub mod knowledge_base;
 pub mod chat_history;
 pub mod chat_summary;
+// 聊天图片（20261018）：只做展示，模型看不到历史图（见该文件头注 + agent 仓 ADR-0013）
+pub mod chat_image;
 pub mod execution_log;
 pub mod conversation;
 pub mod password_reset_token;

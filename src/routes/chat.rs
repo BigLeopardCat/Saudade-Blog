@@ -60,7 +60,7 @@ pub struct ChatResponse {
 use sea_orm::{EntityTrait, Set, QueryOrder, QueryFilter, ColumnTrait, QuerySelect, ActiveModelTrait, PaginatorTrait};
 use sea_orm::sea_query::Expr; // Expr 不在 sea-orm 根（0.12.15 仅 pub use sea_query 全名）
 use crate::entity::{
-    agent_task, chat_history, chat_summary, conversation, execution_log, pending_action,
+    agent_task, chat_history, chat_image, chat_summary, conversation, execution_log, pending_action,
 };
 use crate::routes::conversation::resolve_conversation_id;
 use futures::StreamExt;
@@ -104,6 +104,43 @@ pub struct HistoryItem {
     pub role: String,
     pub content: String,
     pub time: i64,
+    /// 聊天图片（20261018）：完整 dataURL 数组，**与前端 `item.images` 同形状**
+    /// （前端零转换直接塞进渲染路径）。空数组 = 这条消息没有图 —— **不是缺键**
+    /// （前端 `migrateItem` 认的是数组本身，给 `null` 会走另一条路）。
+    /// 顺序 = 用户发送顺序（`chat_image.seq`）。
+    ///
+    /// ⚠️ 只有 `GET /api/chat/history` 带这个字段；`GET /api/chat/search` 的命中行
+    /// **不带**（只显示 200 字摘要，带图没意义，还要白扛几十 MB）。
+    pub images: Vec<String>,
+}
+
+/// 历史响应里图片的字节预算（20261018）：8 MiB —— **与请求体上限同一个数**
+/// （少一个要记的魔数）。为什么必须有：一次回 50 条，而 Rust 侧只校验请求体 8MB、
+/// **不校验张数与单张大小**（前端那"最多 6 张 ×1MB"是**前端自律**）⇒ 理论最坏几十 MB。
+/// 而 `saveHistory` 故意把 `images` 剥掉不落 localStorage ⇒ **每次刷新都要重下**；
+/// 前端 `pullHistory` 有 8 秒超时，超时**静默**走 `applyLocal()`（只打一行 console）
+/// ⇒ 用户看到的还是占位块、**没有任何红**。
+/// 正常用法永远碰不到它，它是安全阀不是常规路径。
+const CHAT_HISTORY_IMAGE_BUDGET: usize = 8 * 1024 * 1024;
+
+/// 按预算裁剪图片（纯函数，判据在下面的 `mod tests`）。
+/// 输入**从新到旧**的 `(消息 id, 该条图片总字节)`，返回允许带图的 id 集合。
+/// 装不下的那条**与比它更早的全部**不给图 —— 给"残缺数组"（本该 3 张只给 1 张）
+/// 会让用户以为图丢了，空数组走的是前端既有的"这条没图"路径，是诚实的那一个。
+fn fit_image_budget(newest_first: &[(i32, usize)]) -> std::collections::HashSet<i32> {
+    let mut out = std::collections::HashSet::new();
+    let mut used = 0usize;
+    for &(id, n) in newest_first {
+        if n == 0 {
+            continue; // 这条本来就没图，不占预算也不算"装不下"
+        }
+        if used + n > CHAT_HISTORY_IMAGE_BUDGET {
+            break;
+        }
+        used += n;
+        out.insert(id);
+    }
+    out
 }
 
 /// GET /api/chat/history 查询参数（20260903 会话化）：conversation_id 可选——
@@ -172,6 +209,49 @@ pub async fn chat_history_handler(
         .all(&state.db)
         .await
         .unwrap_or_default();
+    // 聊天图片（20261018）：**多一次查询**把最近 50 条的图折进来。
+    // 另开一张表就是为了让热路径（这 50 条、发给 agent 的 21 条）**一个字节都不多读**
+    // ——加列的话"排除大字段"只能靠"记得在每个查询点写 select_only"这条纪律，
+    // 漏一处就是"历史接口变慢"而没人知道。
+    // 查询失败 → 空图集（历史本身照常返回；图是增强，不是这条接口的存在理由），
+    // 但**要留一行日志**（理由见下面那个 Err 分支）。
+    let ids: Vec<i32> = recent.iter().map(|h| h.id).collect();
+    let mut imgs_by_msg: std::collections::HashMap<i32, Vec<String>> =
+        std::collections::HashMap::new();
+    if !ids.is_empty() {
+        match chat_image::Entity::find()
+            .filter(chat_image::Column::MessageId.is_in(ids.iter().copied()))
+            .order_by_asc(chat_image::Column::MessageId)
+            .order_by_asc(chat_image::Column::Seq)
+            .all(&state.db)
+            .await
+        {
+            Ok(rows) => {
+                for r in rows {
+                    imgs_by_msg.entry(r.message_id).or_default().push(r.data);
+                }
+            }
+            // **不能 `.ok()` 式吞掉**：这一格失败的症状与"这条消息本来就没图"**长得一模一样**
+            // （都是空数组 ⇒ 前端照旧渲染占位块），而那个占位块的文案是"ⓘ图片已过期"
+            // ——用户会以为是图丢了。写一行日志，至少让这件事在 logs/rust.log 里留个痕。
+            Err(e) => warn!(
+                user_id = uid,
+                conversation_id = conv_id,
+                count = ids.len(),
+                "chat: 历史图片查询失败（本轮历史不带图）: {}",
+                e
+            ),
+        }
+    }
+    // 预算装填：`recent` 已是 id 降序 = 时间降序，正好是从新到旧
+    let budget_in: Vec<(i32, usize)> = recent
+        .iter()
+        .map(|h| {
+            let n = imgs_by_msg.get(&h.id).map_or(0, |v| v.iter().map(String::len).sum::<usize>());
+            (h.id, n)
+        })
+        .collect();
+    let allowed = fit_image_budget(&budget_in);
     let items: Vec<HistoryItem> = recent
         .iter()
         .rev() // 时间升序（聊天软件阅读序）
@@ -180,6 +260,11 @@ pub async fn chat_history_handler(
             role: h.role.clone(),
             content: h.content.clone(),
             time: h.created_at.and_local_timezone(chrono::Local).single().map(|dt| dt.timestamp_millis()).unwrap_or(0),
+            images: if allowed.contains(&h.id) {
+                imgs_by_msg.remove(&h.id).unwrap_or_default()
+            } else {
+                Vec::new()
+            },
         })
         .collect();
     (
@@ -445,6 +530,45 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
             ..Default::default()
         }.insert(&state.db).await.ok().map(|m| m.id)
     };
+
+    // 聊天图片落库（20261018）：在此之前图片**从来不落库**——Rust 把它透传给 agent
+    // 之后就丢掉，只在 content 末尾拼 `[图片]` 标记。于是刷新/换设备后只剩占位块
+    // 「ⓘ图片已过期」，聊天记录是不完整的（实测存量 7 条已永久丢）。
+    //
+    // **一条 `insert_many`**（不是循环逐张）：PG 里多行 INSERT 是**原子的** ⇒
+    // 要么这一条消息的图全落、要么一条都不落，不会留下"content 写着 `[图片×3]`
+    // 而库里只有 2 行"的半截态。**不为此开事务**：把用户消息也卷进事务的话，
+    // 插图失败会连用户消息一起回滚 ⇒ 下一轮上下文少一条消息，比"图没存上"坏得多。
+    //
+    // 失败不让整轮失败（与统计失败同取向：图没存上是可观测的损失，让读者看不了
+    // 回复是更大的损失），但必须 `warn!` —— `.ok()` 式吞错是这个设计里唯一的静默面。
+    // `is_confirm` 轮 `user_msg_id` 是 None（它不落用户消息，没有挂靠点）⇒ 自然跳过；
+    // 空数组不插（防御旧客户端发 `image: []`，与上面 stored_content 同一取向）。
+    // 删除靠 DB 外键级联（见 entity/chat_image.rs 头注），这里不写任何删除逻辑。
+    if let (Some(mid), Some(imgs)) = (user_msg_id, payload.image.as_deref()) {
+        if !imgs.is_empty() {
+            let rows: Vec<chat_image::ActiveModel> = imgs
+                .iter()
+                .enumerate()
+                .map(|(i, data)| chat_image::ActiveModel {
+                    message_id: Set(mid),
+                    seq: Set(i as i16),
+                    data: Set(data.clone()),
+                    ..Default::default()
+                })
+                .collect();
+            if let Err(e) = chat_image::Entity::insert_many(rows).exec(&state.db).await {
+                warn!(
+                    user_id = uid,
+                    conversation_id,
+                    message_id = mid,
+                    count = imgs.len(),
+                    "chat: 聊天图片落库失败（图没存上，回复照常）: {}",
+                    e
+                );
+            }
+        }
+    }
 
     // 会话标题守卫 + 最后活动时间（列表排序）
     if user_msg_id.is_some() {
@@ -2358,6 +2482,39 @@ pub async fn chat_stream_handler(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// 历史图片的字节预算（20261018）。**为什么值得有这条判据**：`CHAT_HISTORY_IMAGE_BUDGET`
+    /// 是一个"正常用法永远碰不到"的安全阀 —— 没有判据钉着，它会在某次重构里被顺手删掉
+    /// 或改成 `>=`，而**没有任何东西会红**（线上要等某个用户攒够几十 MB 图才发现）。
+    /// 输入按 `(id, 字节)` **从新到旧**给（与 `chat_history_handler` 里 `recent` 的顺序一致）。
+    #[test]
+    fn image_budget_fills_newest_first_and_cuts_the_rest() {
+        let mb = 1024 * 1024;
+        // 新→旧：3MB + 3MB 装得下；第 3 条 3MB 会越界 ⇒ 它**和更早的**都不给图
+        let got = fit_image_budget(&[(30, 3 * mb), (20, 3 * mb), (10, 3 * mb), (5, 1 * mb)]);
+        assert!(got.contains(&30) && got.contains(&20), "预算内的必须带上");
+        assert!(!got.contains(&10), "越界的那条不给图（不是残缺数组）");
+        assert!(!got.contains(&5), "比越界那条更早的也不给 —— 装填是从新到旧的单向过程");
+    }
+
+    /// 边界：恰好等于预算**算装得下**（`>` 不是 `>=`）。这条钉的是"安全阀不要早咬一口"。
+    #[test]
+    fn image_budget_boundary_is_inclusive() {
+        let mb = 1024 * 1024;
+        let got = fit_image_budget(&[(1, 4 * mb), (2, 4 * mb)]);
+        assert_eq!(got.len(), 2, "4+4 == 8MiB 恰好等于预算 ⇒ 两条都带");
+        let got = fit_image_budget(&[(1, 4 * mb), (2, 4 * mb + 1)]);
+        assert!(!got.contains(&2), "多 1 字节就越界");
+    }
+
+    /// 没图的消息（0 字节）**不占预算、也不中断装填** —— 否则"中间夹着一条纯文本"
+    /// 会把更早的图全部误杀（这是最容易写错的一种：把 0 当成"装不下"）。
+    #[test]
+    fn image_budget_skips_imageless_without_breaking_the_fill() {
+        let mb = 1024 * 1024;
+        let got = fit_image_budget(&[(3, 4 * mb), (2, 0), (1, 4 * mb)]);
+        assert_eq!(got, [1, 3].into_iter().collect(), "0 字节那条跳过，后面的照装");
+    }
 
     /// agent 自报 `success: false`（HTTP 仍是 200）⇒ 必须**判失败**，且把它的原话当原因。
     /// 事故形状：这条路上曾经只看 HTTP 状态码，于是内部异常被吞成"一次成功但空回复"，
