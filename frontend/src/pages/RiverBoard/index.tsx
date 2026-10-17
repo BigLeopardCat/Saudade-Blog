@@ -18,6 +18,18 @@ import {
     drawRidges,
     paintSky,
 } from "./render/sky";
+import {
+    bandSprite,
+    buildReflection,
+    drawCaustics,
+    drawLanternReflections,
+    drawMoonColumn,
+    drawMoonGlitter,
+    drawReflection,
+    drawShoreFoam,
+    type ReflBuild,
+    type ReflLantern,
+} from "./render/water";
 
 /* 河灯留言板 ── 一条只存在于路由之下的河。
    整页为独立顶层路由（/he），不挂博客的头部与底部。
@@ -590,6 +602,19 @@ let lanternLightCv: HTMLCanvasElement | null = null;
 let slowCv: HTMLCanvasElement | null = null;
 let slowTick = 0;
 
+/* 静态背景层的当前画布（applyResize 里建/换；倒影要拿它当镜像源） */
+let baseBackCv: HTMLCanvasElement | null = null;
+/* 水面倒影（20261018 阶段 2）：
+   `reflSkyCv` = baseBack 的降采样副本 + 月盘（baseBack 里只有月晕、没有月盘，
+                 只镜 baseBack 会得到"有光晕没有月亮"的倒影）；
+   `reflCv`    = 把 reflSkyCv 按透视压缩镜像到水面、逐行横向撕开、乘菲涅尔斜坡。
+   每 `reflEvery` 帧重建一次，逐帧只多一次 drawImage。 */
+let reflSkyCv: HTMLCanvasElement | null = null;
+let reflCv: ReflBuild | null = null;
+let reflTick = 0;
+let reflEvery = 3;
+let reflQuality = 0.5;
+
 /* 云层条带（20261018）：体积云烘成条带（宽度 = 视口 + 出血 + 一倍漂移余量），
    逐帧在天空裁剪区内按视差与漂移各画一笔。**不烤进静态层**——它要有自己的
    视差与漂移，烤进去就等于把云钉死在天空上。 */
@@ -715,6 +740,18 @@ export default function RiverBoard() {
         const v = viewRef.current;
         // d 可能因重生为负数：pow 负数小数次幂是 NaN，会传染整帧绘制
         return v.yH + (v.h * 1.06 - v.yH) * Math.pow(Math.max(0, d), 1.42);
+    };
+    /* riverX 的反解（水面月光碎路要问"月亮那一列在这个深度落在哪条 u 上"）。
+       这是**同一条 bend/半宽公式的第二份拷贝** —— 两份一旦漂开，月光碎路就会
+       画到别列上去。守卫是一条像素判据而不是文本锁：riverboard-scene.test.py
+       的「月光碎路：月亮所在列比同行别处亮」量的就是 riverX(riverUAt(moon.x,d),d)
+       是否真的落在 moon.x 上。 */
+    const riverUAt = (x: number, d: number): number | null => {
+        const v = viewRef.current;
+        const c = v.w * (0.51 + 0.045 * Math.sin(0.6 + d * 2.2));
+        const hw = v.w * (0.15 + d * d * 1.08);
+        const u = 0.5 + (x - c) / (2 * hw);
+        return u < -0.02 || u > 1.02 ? null : u;
     };
 
     /* 灯笼像素坐标（与 DOM 写入完全同源：视差+晃摆+碰撞位移一次算齐，
@@ -877,6 +914,45 @@ export default function RiverBoard() {
 
     const MARGIN = 40; // 静态层出血边，给鼠标视差留位移余地
 
+    /* ---- 水面倒影（阶段 2） ---- */
+
+    /** 重建倒影缓冲。`phase` 是波相位（由帧号推），同一 phase 必得同一张图。
+     *  分两步：先降采样出"天空 + 月盘"源图，再交给 render/water.ts 做镜像。 */
+    const refreshReflection = (geo: Geo, phase: number, soft: boolean) => {
+        const v = viewRef.current;
+        const q = reflQuality;
+        /* 源图**只要地平线以上那一条**：`buildReflection` 采样的天空行是
+           `s = yH·e^1.35 ∈ [0, yH]`，河面那一半一次都读不到。原来按 `v.h` 建整张，
+           等于每 3 帧白降采样 62% 的面积 —— 而这是整帧里最贵的一笔（全幅
+           2160×1350 缩到 740×490）。画布自己会把越界的部分裁掉，所以下面那条
+           `drawImage(back, …)` 一个字都不用改，缩到 `v.h` 也无所谓。
+           配套：`buildReflection` 的 `ky` 也按这条新高度算（见 render/water.ts）。 */
+        const sw = Math.max(4, Math.round((v.w + 2 * MARGIN) * q));
+        const sh = Math.max(4, Math.round((v.yH + 2 * MARGIN) * q));
+        if (!reflSkyCv) reflSkyCv = document.createElement("canvas");
+        if (reflSkyCv.width !== sw) reflSkyCv.width = sw;
+        if (reflSkyCv.height !== sh) reflSkyCv.height = sh;
+        const sg = reflSkyCv.getContext("2d")!;
+        sg.setTransform(q, 0, 0, q, 0, 0);
+        sg.clearRect(-MARGIN, -MARGIN, v.w + 2 * MARGIN, v.yH + 2 * MARGIN);
+        sg.translate(MARGIN, MARGIN);
+        const back = baseBackCv;
+        if (!back) return;
+        sg.drawImage(back, -MARGIN, -MARGIN, v.w + 2 * MARGIN, v.h + 2 * MARGIN);
+        /* 月盘：静态层里只有月晕，月盘 sprite 是逐帧单独落屏的 —— 不补这一笔，
+           倒影里就只剩一团没有月亮的晕。用**不带视差**的位置（与静态层同层）。
+           但**只给半透明度**：满不透明度的月盘经 `e^1.35` 的垂直压缩会被拉成
+           120×217 的实心椭圆，铺在河面上是一盏探照灯（实测）。月光路的形状由
+           `drawMoonColumn` 显式画，这里的盘只是镜面核。 */
+        if (moonSprite) {
+            const rD = Math.min(v.w, v.h) * MOON.r * 0.9;
+            sg.globalAlpha = 0.45;
+            sg.drawImage(moonSprite.cv, v.w * MOON.x - rD, v.h * MOON.y - rD, rD * 2, rD * 2);
+            sg.globalAlpha = 1;
+        }
+        reflCv = buildReflection(reflSkyCv, geo, q, phase, soft, reflCv?.cv);
+    };
+
     /* ---- 静态层（背景） ---- */
     const renderBase = (
         backCv: HTMLCanvasElement,
@@ -889,15 +965,20 @@ export default function RiverBoard() {
         const front = frontCv.getContext("2d")!;
         const v = viewRef.current;
         const { w, h } = v;
+        /* 新渲染模块（render/）的显式几何契约：riverX/riverY/traceRiver 的本体
+           留在组件里不动（它们是每帧上百次调用的热路径），只把这一个接口对象递出去。
+           在 renderBase 作用域上构建（不放进 draw）—— draw 会被 back/front 各调一次，
+           而 renderBase 末尾的倒影重建也要用同一份几何。 */
+        const geo: Geo = {
+            w, h, yH: v.yH, margin: MARGIN, dpr: v.dpr,
+            riverX, riverY, riverUAt, traceRiver,
+        };
         const prep = (ctx: CanvasRenderingContext2D) => {
             ctx.setTransform(v.dpr, 0, 0, v.dpr, 0, 0);
             ctx.translate(MARGIN, MARGIN);
             ctx.clearRect(-MARGIN, -MARGIN, w + MARGIN * 2, h + MARGIN * 2);
         };
         const draw = (ctx: CanvasRenderingContext2D) => {
-            /* 新渲染模块（render/）的显式几何契约：riverX/riverY/traceRiver 的本体
-               留在组件里不动（它们是每帧上百次调用的热路径），只把这一个接口对象递出去。 */
-            const geo: Geo = { w, h, yH: v.yH, margin: MARGIN, dpr: v.dpr, riverX, riverY, traceRiver };
             const { lx: lxHalo, haloK } = moonPhaseParams();
             const moon: MoonGeom = {
                 x: w * MOON.x,
@@ -964,7 +1045,11 @@ export default function RiverBoard() {
             // 河水底色 + 河心天光带
             const riverBase = ctx.createLinearGradient(0, v.yH, 0, h);
             // 第 23 轮：整体调暗到接近背景（山体 #050a18-#0b1230），河面不再比远山更亮
-            riverBase.addColorStop(0, "#0e1738");
+            /* 20261018：首端从**全透明**淡入。这一层以前被 baseFront 的不透明满铺
+               盖住（见下面那段修复），从没在屏幕上出现过；揭开之后，它的硬上缘
+               正好压在地平线上，把水天过渡拉成一道直线。 */
+            riverBase.addColorStop(0, "rgba(14,23,56,0)");
+            riverBase.addColorStop(0.07, "rgba(14,23,56,0.85)");
             riverBase.addColorStop(0.3, "#081030");
             riverBase.addColorStop(0.62, "#050b22");
             riverBase.addColorStop(1, "#02040d");
@@ -1005,6 +1090,16 @@ export default function RiverBoard() {
                     ctx.fill();
                 }
             }
+
+            /* 岸线浪花 + 浅水焦散（20261018 阶段 2）：都烘在静态层，逐帧零成本。
+               浪花必须画在**岸线柔光之上**——柔光是"岸的倒影"，浪花是"水拍岸"，
+               后者更贴水线、更碎。 */
+            traceRiver(ctx, 0, 1.14, false);
+            ctx.save();
+            ctx.clip();
+            drawCaustics(ctx, geo);
+            drawShoreFoam(ctx, geo);
+            ctx.restore();
         };
 
         prep(back);
@@ -1022,14 +1117,23 @@ export default function RiverBoard() {
 
         prep(front);
         front.drawImage(backCv, -MARGIN, -MARGIN, w + MARGIN * 2, h + MARGIN * 2);
-        // 前层打底：河流两侧不再铺大块暗坡——整幅夜色水面渐变（水天一色延伸），
-        // 河道由 backCv 的 riverBase 提亮出明暗层次，弧线边缘微光勾勒河道边界
+        /* 前层打底：河流两侧不再铺大块暗坡——整幅夜色水面渐变（水天一色延伸），
+           河道由 backCv 的 riverBase 提亮出明暗层次，弧线边缘微光勾勒河道边界。
+
+           **20261018 修**：这一笔原先是不透明满铺矩形，把 backCv 里整条河道
+           （河水底色 / 河心天光带 / 岸线内侧柔光 / 新加的浪花与焦散）**全盖住了**
+           —— 上一段注释写的"河道由 backCv 的 riverBase 提亮"从写下那天起就没生效过，
+           河面能看见的形状其实只来自 drawScene 里那几层很淡的动态叠加。这就是
+           "水面是平的"最直接的原因。改成 evenodd：矩形挖掉河道，只填两岸。
+           （`traceRiver` 自己会 beginPath，所以必须**先**画河道子路径、再 append 矩形。） */
+        traceRiver(front, 0, 1.14, false);
+        front.rect(-MARGIN - 8, v.yH - 4, w + MARGIN * 2 + 16, h + 44);
         const shoreGrad = front.createLinearGradient(0, v.yH - 4, 0, h + 40);
         shoreGrad.addColorStop(0, "#0a132c");
         shoreGrad.addColorStop(0.55, "#061022");
         shoreGrad.addColorStop(1, "#040918");
         front.fillStyle = shoreGrad;
-        front.fillRect(-MARGIN - 8, v.yH - 4, w + MARGIN * 2 + 16, h + 44);
+        front.fill("evenodd");
 
         // 垂柳（右上空枝，加粗加密保证剪影清晰可见）
         front.strokeStyle = "#01030a";
@@ -1168,6 +1272,14 @@ export default function RiverBoard() {
 
         // 云层条带（20261018）：与静态层同批烘，软渲染档只烘一层
         buildCloudStrips(w, v.yH, MARGIN, soft);
+
+        /* 水面倒影（阶段 2）：软渲染档降到 1/8 分辨率、每 8 帧重建一次。
+           倒影块的成本 = 条数 × 条面积，1/8 分辨率下每帧摊销不到 0.1ms。 */
+        reflQuality = soft ? 0.125 : 0.5;
+        reflEvery = soft ? 8 : 3;
+        reflTick = 0;
+        reflCv = null; // 尺寸可能变了，下一帧重建
+        refreshReflection(geo, 0, soft);
     };
 
     /* 慢层（流向纹/碎光点/涟漪）：合并到离屏缓冲，每 3 帧重绘一次（≈20fps）。
@@ -1203,10 +1315,15 @@ export default function RiverBoard() {
                 : `rgba(198,216,255,${alpha * (dHead > 0.5 ? 0.85 : 1)})`;
             sc.lineWidth = 0.7 + dHead * 2.2;
             sc.lineCap = "round";
+            /* 断续：170 条**连续**长弧铺在河面上，读成一片玻璃划痕（阶段 2 把河面
+               压暗之后尤其明显）。真实的水面流向纹是被波纹切断的一节节，所以
+               给它加一段点划、走完立刻复位（同一个 sc 后面还要画碎光点/涟漪）。 */
+            sc.setLineDash([11, 9]);
             sc.beginPath();
             sc.moveTo(xT, yTl);
             sc.quadraticCurveTo(xm, (yH0 + yTl) / 2, xH, yH0);
             sc.stroke();
+            sc.setLineDash([]);
         }
 
         // 波面碎光点（随流向向远方游动）
@@ -1317,7 +1434,7 @@ export default function RiverBoard() {
     // 萤火虫/流星等"氛围装饰"只随系统偏好关（20260905 用户反馈：软渲染静态
     // 强制 reduced 把萤火虫也关了 → 装饰类改由 sysReduce 单独门控，性能降级
     // 不再剥夺它们）
-    const drawScene = (ctx: CanvasRenderingContext2D, t: number, reduce: boolean, sysReduce: boolean, baseBack: HTMLCanvasElement, baseFront: HTMLCanvasElement) => {
+    const drawScene = (ctx: CanvasRenderingContext2D, t: number, reduce: boolean, sysReduce: boolean, baseBack: HTMLCanvasElement, baseFront: HTMLCanvasElement, soft: boolean) => {
         if (!amb) return;
         const v = viewRef.current;
         const { w, h } = v;
@@ -1327,6 +1444,21 @@ export default function RiverBoard() {
             mouseRef.current.x = 0.5;
             mouseRef.current.y = 0.5;
         }
+        /* 水面层（阶段 2）要用的几何契约与月亮几何 —— 与 renderBase 里那份同源。
+           月亮取**不带视差**的位置：碎路与倒影都锚在"月亮在水面上的那一列"，
+           那一列属于静态层（视差 0.2 只作用在天空本身，水面的镜像列不动）。 */
+        const geo: Geo = {
+            w, h, yH: v.yH, margin: MARGIN, dpr: v.dpr,
+            riverX, riverY, riverUAt, traceRiver,
+        };
+        const { lx: lxMoon, haloK: haloKMoon } = moonPhaseParams();
+        const moon: MoonGeom = {
+            x: w * MOON.x,
+            y: h * MOON.y,
+            r: Math.min(w, h) * MOON.r,
+            haloK: haloKMoon,
+            lx: lxMoon,
+        };
         ctx.clearRect(0, 0, w, h);
 
         // 静态层合成（带视差）
@@ -1366,6 +1498,17 @@ export default function RiverBoard() {
         traceRiver(ctx, 0, 1.14, false);
         ctx.clip();
 
+        /* ① 倒影（阶段 2 的地基）：天空 + 月盘 + 云 + 远山在水里的镜像。
+           整块每 reflEvery 帧重建一次（`phase` 由帧号推，波相位连续），
+           逐帧只这一笔 drawImage。菲涅尔权重已经烘在缓冲的 alpha 里。 */
+        if (reflTick++ % reflEvery === 0 || !reflCv) {
+            /* 相位由**动画时间 t** 推、不是由帧号推：帧号取决于跑到第几帧，
+               同一份代码两次渲染会停在不同的相位上（跨构建的像素对比因此全是噪声）。
+               t 由真实经过时间累加，生产上照样在动。 */
+            refreshReflection(geo, t * 3.3, soft);
+        }
+        if (reflCv) drawReflection(ctx, reflCv, geo);
+
         // 宽幅水光带（随流向向远方缓慢漂移的整体明暗，羽化边避免块状感）
         for (const bd of amb.bands) {
             bd.d0 -= bd.wd * 0.7 * (reduce ? 0.15 : 1) * 0.005; // 宽幅水光带：慢漂（≈河灯速度的 1/4）
@@ -1374,63 +1517,49 @@ export default function RiverBoard() {
             const yT = riverY(dTop), yB = riverY(dBot);
             if (yB < v.yH - 4) continue;
             if (yT > h + 30) continue;
-            const N = 22;
-            const wobAmp = 0.011 * (0.4 + 0.6 * bd.wd * 4);
-            ctx.beginPath();
-            for (let i = 0; i <= N; i++) {
-                const u = i / N;
-                const wob = Math.sin(u * 7.4 + t * 0.5 * (reduce ? 0.2 : 1) + bd.ph) * wobAmp;
-                ctx.lineTo(riverX(u, Math.min(1.09, dTop + wob * 0.3)), riverY(dTop + wob));
-            }
-            for (let i = N; i >= 0; i--) {
-                const u = i / N;
-                ctx.lineTo(riverX(u, dBot), riverY(dBot));
-            }
-            ctx.closePath();
-            const g = ctx.createLinearGradient(0, yT, 0, yB);
+            /* 竖直 alpha 斜坡改用**预烘贴图**（render/water.ts 的 bandSprite）：
+               原来是每条带每帧一次 createLinearGradient + 5 个 `rgba()` 模板串 ——
+               真正的开销是那 5 次颜色字符串解析，不是渐变对象本身。
+               代价：原来那条沿 u 的 ±4px 波浪上缘没了。那点起伏落在渐变本身
+               30% 高的羽化过渡里（≈10px），量不出来也看不出来；换来的是
+               每帧 60 次颜色解析变成 0 次。 */
             // 远端渐隐：水光带只在中近段有（d 中点 < 0.2 完全淡出），
             // 河流尽头远端不保留反光
             const farFade = Math.min(1, Math.max(0, (dTop + dBot) / 2 - 0.2) / 0.3);
             const balpha = farFade * (bd.wd > 0.05 ? 0.042 : 0.03); // 第 22 轮：河面亮度略降
-            g.addColorStop(0, "rgba(150,178,240,0)");
-            g.addColorStop(0.3, `rgba(150,178,240,${balpha * 0.7})`);
-            g.addColorStop(0.5, `rgba(150,178,240,${balpha})`);
-            g.addColorStop(0.7, `rgba(150,178,240,${balpha * 0.7})`);
-            g.addColorStop(1, "rgba(150,178,240,0)");
-            ctx.fillStyle = g;
-            ctx.fill();
+            if (balpha < 0.002) continue;
+            ctx.globalAlpha = balpha;
+            ctx.drawImage(bandSprite(), 0, yT, w, yB - yT);
+            ctx.globalAlpha = 1;
         }
 
-        // 月光碎影（"波光粼粼"）：贴水面的碎光横线列，自脚下向河心延伸
-        // （静态光晕为独立预渲染层，bands 之上合成）。第 24 轮细节优化：
-        // ① 透视修正——近景线粗长、远景线细短（旧版 lineWidth 随 k 变粗、spread 变宽，
-        //    反透视）；
-        // ② 每行带按 i 固定的伪随机横向错落（抖动仅水平、随波不随形），
-        //    碎感真实，不再是一条均匀的线列；
-        // ③ 范围收止 d≈0.19（第 25 轮加长，原 0.31）——河流尽头远端不保留反光；
-        // ④ 远段闪烁熄灭门槛更高、亮度衰减更陡，闪灭节奏越远越碎。
+        /* 月光碎影（"波光粼粼"）：静态光晕层 + 碎光点场，都在 bands 之上合成。
+           20261018 阶段 2 重做：原来那 46 道横线铺在**河道中线**（u=0.5）上，而月亮
+           在 0.7w —— 碎光带和光源不在同一列，读起来像"水面自己在发光"。现在
+           碎路锁在**月亮那一列**上（render/water.ts 的 drawMoonGlitter）：
+           由 riverUAt 反解出月亮的屏幕 x 落在该深度的哪条 u 上，河道装不下就跳过
+           —— 于是碎路自然成为"从河道右缘切入、越近越宽"的一条楔形。
+           闪烁不再是 `sin·sin` 的均匀抖动，而是每颗独立的双频生死周期。 */
         if (moonGlowCv) ctx.drawImage(moonGlowCv, -MARGIN, -MARGIN, w + MARGIN * 2, h + MARGIN * 2);
-        const uM = 0.5;
         ctx.save();
-        for (let i = 0; i < 46; i++) {
-            const k = i / 46;
-            const d = 0.93 - Math.pow(k, 1.16) * 0.74; // 近景 0.93 → 远景 0.19（远端收止）
-            const flick = 0.06 + 0.52 * Math.abs(Math.sin(t * 2.6 + i * 7.7) * Math.sin(t * 1.1 + i * 3.3));
-            if (k > 0.45 && flick < 0.17) continue;
-            const jit = (Math.sin(i * 12.9898) * 0.5 + Math.sin(i * 78.233 + 3) * 0.5) * 0.006;
-            const u = uM + Math.pow(k, 1.5) * 0.05 * Math.sin(t * 1.4 + i * 2.1) + jit;
-            const spreadU = 0.022 - 0.012 * k; // 近宽远窄（透视）
-            const y = riverY(d);
-            const xl = riverX(u - spreadU, d);
-            const xr = riverX(u + spreadU, d);
-            ctx.strokeStyle = `rgba(255,232,178,${flick * (1 - k * 0.7)})`;
-            ctx.lineWidth = 1.6 - k * 1.05; // 近粗远细（透视）
-            ctx.lineCap = "round";
-            ctx.beginPath();
-            ctx.moveTo(xl, y);
-            ctx.lineTo(xr, y);
-            ctx.stroke();
+        /* 先铺柱体底、再撒碎光点：柱体是"月光洒在河上"那条路的**形状**，
+           碎光点是它上面断开的**细节**。少了柱体，碎点就是散落一地的亮点，
+           看不出是从月亮来的（倒影缓冲里那个椭圆已经压到半透明，撑不起形状）。 */
+        drawMoonColumn(ctx, geo, moon, t, reduce);
+        drawMoonGlitter(ctx, geo, moon, t, soft, reduce);
+        ctx.restore();
+
+        /* 河灯在水里的倒影：灯下一条随波左右摆的暖色拖影，分 3 段错开
+           （一整段会读成"灯下挂了根棍子"）。画在碎光之后 —— 灯比月光近。 */
+        const reflLamps: ReflLantern[] = [];
+        for (const m of metaRef.current) {
+            const scl = Math.min(1, Math.pow(Math.max(0, m.d), 1.15) * 1.25);
+            if (scl < 0.05) continue;
+            const li = lanternXY(m);
+            reflLamps.push({ x: li.x, y: li.y, scl, warm: m.v === 0 || m.v === 2 ? 1 : 0.55 });
         }
+        ctx.save();
+        drawLanternReflections(ctx, geo, reflLamps, t, reduce);
         ctx.restore();
 
         // 流向纹/碎光点/涟漪：慢层离屏缓冲每 3 帧重绘，主画布每帧一次合成
@@ -1737,6 +1866,7 @@ export default function RiverBoard() {
             };
             baseBack = makeBase();
             baseFront = makeBase();
+            baseBackCv = baseBack; // 倒影的镜像源（refreshReflection 在 renderBase 末尾读它）
             renderBase(baseBack, baseFront, softRender);
         };
 
@@ -1806,7 +1936,8 @@ export default function RiverBoard() {
                 reduced() || perfDynReduce || softRender, // 性能降级（水流带减速等）
                 reduced(), // 系统级装饰门控：星光/萤火虫/流星只随系统偏好（20260905）
                 baseBack!,
-                baseFront!
+                baseFront!,
+                softRender // 水面层要按档位选倒影分辨率/碎光点数（阶段 2）
             );
             driveLanterns(dt);
             if (!reduced()) scrollTick(dt); // 气泡滚动是用户主动操作，不受动态降级影响

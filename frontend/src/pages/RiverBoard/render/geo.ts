@@ -23,6 +23,10 @@ export interface Geo {
     riverX(u: number, d: number): number;
     /** 河道纵向投影：d=0 在远山，d=1 在眼前 */
     riverY(d: number): number;
+    /** `riverX` 的反解：屏幕上横坐标 x 在深度 d 处对应哪条 u。
+     *  该深度上河道根本不含这一列时返回 null（月光倒影列在近地平线处会跑出河道）。
+     *  反解与 `riverX` 共用同一条公式（都在 index.tsx 里），不在这里重写一遍。 */
+    riverUAt(x: number, d: number): number | null;
     /** 把河道路径（dFrom→dTo 的一段）追加进当前路径；调用方负责 beginPath/clip/fill。
      *  `easeUDepth` 是 index.tsx 里那份实现的既有第三参（当前所有调用点都传 false）。 */
     traceRiver(ctx: CanvasRenderingContext2D, dFrom: number, dTo: number, easeUDepth?: boolean): void;
