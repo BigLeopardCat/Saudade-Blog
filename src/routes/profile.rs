@@ -200,8 +200,10 @@ pub async fn change_password(
         Ok(uid) => uid,
         Err(e) => return Json(ApiResponse::error(e.message())),
     };
-    if payload.new_password.chars().count() < 8 {
-        return Json(ApiResponse::error("新密码至少 8 位"));
+    // 这一处**本来就是对的**（`chars().count()`），现在只是把判据挪到共用函数里
+    // （20261017）——三处入口同一个口径，顺带补上了此前一处都没有的长度上限。
+    if let Some(msg) = crate::utils::password_reject(&payload.new_password) {
+        return Json(ApiResponse::error(msg));
     }
     let Some(u) = user::Entity::find_by_id(uid).one(&state.db).await.unwrap_or(None) else {
         return Json(ApiResponse::error("账号不存在"));

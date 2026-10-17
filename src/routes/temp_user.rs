@@ -891,10 +891,27 @@ pub async fn create_temp_user(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<CreateTempUser>,
 ) -> Json<crate::utils::ApiResponse<String>> {
+    // ── 判据（20261017 补）──────────────────────────────────────────────────
+    // 这个函数此前**一条校验都没有**：没有长度、没有字符集、连空串都不挡
+    // （`username` 在库里是 `NOT NULL`，但空串是合法值 ⇒ 能建出一个空账号名的账号，
+    // 而登录侧 `Username.eq("")` 查得到它 ⇒ 那是个能登进去的账号）。
+    // 唯一挡着的是 DB 的 `varchar(255)`。前端那两个框当时也没有 `maxLength`。
+    //
+    // 判据与落库必须看**同一个串**：先 `trim()` 再校验、再拿这个值去查重和写库。
+    // 否则「'   ' 通过检查、被存成三个空格」或者「查重用未 trim 的值、写库用 trim 的」
+    // 这类事就会出现。字符集白名单本批刻意不做（建号是管理员专用入口，不是公开注册）。
+    let username = payload.username.trim();
+    if let Some(msg) = crate::utils::username_reject(username) {
+        return Json(crate::utils::ApiResponse::error(msg));
+    }
+    if let Some(msg) = crate::utils::password_reject(&payload.password) {
+        return Json(crate::utils::ApiResponse::error(msg));
+    }
+
     let encrypted_password = hash_password(&payload.password);   // 20260917：Argon2id
 
     let existing = user::Entity::find()
-        .filter(user::Column::Username.eq(&payload.username))
+        .filter(user::Column::Username.eq(username))
         .one(&state.db)
         .await
         .unwrap_or(None);
@@ -903,12 +920,20 @@ pub async fn create_temp_user(
         return Json(crate::utils::ApiResponse::error("用户名已存在"));
     }
 
-    let _ = user::ActiveModel {
-        username: Set(payload.username.clone()),
+    // ⚠️ **这里此前是 `let _ = …save()`，于是写失败也报"创建成功"。** 会实际发生的
+    // 有两条路：① 超长（本函数现在自己挡了，但 DB 那一层仍是最后一道）；② 并发同名
+    // ——查重在插入之前，两个请求可以同时通过查重、其中一个撞 UNIQUE 失败。
+    // 操作者看到"创建成功"而库里没有，是**操作者被骗**，不是"少建了一个账号"。
+    let created = (user::ActiveModel {
+        username: Set(username.to_string()),
         password: Set(encrypted_password),
         role: Set("user".into()),
         ..Default::default()
-    }.save(&state.db).await;
+    }).save(&state.db).await;
+    if let Err(e) = created {
+        tracing::error!("[账号管理] 创建账号失败 username={username}: {e}");
+        return Json(crate::utils::ApiResponse::error("创建失败，请稍后再试"));
+    }
 
     Json(crate::utils::ApiResponse::success("临时用户创建成功".to_string()))
 }
@@ -994,8 +1019,11 @@ pub async fn change_password(
     Path(user_id): Path<i32>,
     Json(payload): Json<ChangePasswordReq>,
 ) -> Json<crate::utils::ApiResponse<String>> {
-    if payload.password.len() < 3 {
-        return Json(crate::utils::ApiResponse::error("密码长度至少3位"));
+    // 判据收敛到 `utils::password_reject`（20261017）。这里此前是 `payload.password.len() < 3`
+    // —— `len()` 是**字节数**，于是"至少 3 位"实际是"**1 个汉字就够**"（3 字节）。
+    // 三处入口（本人改密码 / 找回密码 / 这里）现在同一个函数，不会再各漂各的。
+    if let Some(msg) = crate::utils::password_reject(&payload.password) {
+        return Json(crate::utils::ApiResponse::error(msg));
     }
     let user_opt = user::Entity::find_by_id(user_id)
         .one(&state.db)

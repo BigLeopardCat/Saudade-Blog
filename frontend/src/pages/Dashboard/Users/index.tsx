@@ -214,10 +214,18 @@ const Users = () => {
     }, [tempUsers, accFilter, accQuery])
 
     const handleCreateTempUser = async () => {
-        if (!tempUsername || !tempPassword) { message.warning('请输入用户名和密码'); return }
+        // 前端这两条只是**不让请求白跑一趟**，判据的权威在后端（`utils::username_reject` /
+        // `password_reject`）。口径与后端逐字对齐：账号名先 trim 再判、按**字符**数算
+        // （`[...s].length` 数的是码点，`s.length` 数的是 UTF-16 单元 —— 汉字两者都是 1，
+        // 只有 emoji 这类代理对才会差，用码点更贴近后端 `chars().count()`）。
+        const name = tempUsername.trim()
+        if (!name) { message.warning('请输入用户名'); return }
+        if ([...name].length > 32) { message.warning('用户名最多 32 个字符'); return }
+        if ([...tempPassword].length < 8) { message.warning('密码至少 8 位'); return }
+        if ([...tempPassword].length > 128) { message.warning('密码最多 128 位'); return }
         try {
             const res = await http.post('/api/temp-users',
-                { username: tempUsername, password: tempPassword })
+                { username: name, password: tempPassword })
             if (res.data?.code === 200) {
                 message.success('创建成功')
                 setTempUsername('')
@@ -477,7 +485,10 @@ const Users = () => {
     }
 
     const handleChangePassword = async () => {
-        if (!pwNewPassword || pwNewPassword.length < 3) { message.warning('密码至少3位'); return }
+        // 判据与后端 `utils::password_reject` 同口径（20261017）。此前这里是 `< 3`
+        // —— 与后端那条 `len() < 3`（字节）配套，于是"至少 3 位"实际是 1 个汉字。
+        if ([...pwNewPassword].length < 8) { message.warning('密码至少 8 位'); return }
+        if ([...pwNewPassword].length > 128) { message.warning('密码最多 128 位'); return }
         try {
             const res = await http.post('/api/temp-users/' + pwTarget.id + '/password',
                 { password: pwNewPassword })
@@ -546,14 +557,17 @@ const Users = () => {
                                     placeholder="用户名"
                                     value={tempUsername}
                                     onChange={e => setTempUsername(e.target.value)}
+                                    // 上限与后端 `utils::USERNAME_MAX_CHARS` 同源（20261017）
+                                    maxLength={32}
                                     style={{ flex: 1 }}
                                 />
                                 <Input.Password
                                     name="new-account-password"
                                     autoComplete="new-password"
-                                    placeholder="密码"
+                                    placeholder="密码（至少 8 位）"
                                     value={tempPassword}
                                     onChange={e => setTempPassword(e.target.value)}
+                                    maxLength={128}
                                     style={{ flex: 1 }}
                                 />
                                 <Button type="primary" onClick={handleCreateTempUser}>新建临时用户</Button>
@@ -989,9 +1003,10 @@ const Users = () => {
                                 <Input.Password
                                     name="change-account-password"
                                     autoComplete="new-password"
-                                    placeholder="输入新密码"
+                                    placeholder="输入新密码（至少 8 位）"
                                     value={pwNewPassword}
                                     onChange={e => setPwNewPassword(e.target.value)}
+                                    maxLength={128}
                                 />
                             )}
                         </div>

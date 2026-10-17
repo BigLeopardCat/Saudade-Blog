@@ -114,6 +114,53 @@ pub fn needs_rehash(stored: &str) -> bool {
     !stored.starts_with("$argon2")
 }
 
+// ── 账号与口令的判据（20261017 收敛）────────────────────────────────────────
+//
+// **此前这套判据有三份，而且两份是错的。** 三处入口各写各的：
+//   · `profile::change_password`   `payload.new_password.chars().count() < 8`   ← 唯一写对的
+//   · `auth::reset_password`       `payload.new_password.len() < 8`
+//   · `temp_user::change_password` `payload.password.len() < 3`
+//
+// 错在 **`String::len()` 是字节数，不是字符数**：一个汉字 3 字节，于是「至少 8 位」
+// 在中文口令上实际是「至少 3 个字」，而「至少 3 位」是「**1 个汉字就够**」。
+// 用户心里的「位」是字符 ⇒ 判据一律走 `chars().count()`。
+//
+// 上限 128 不是 Argon2 的要求（它按内存参数计价，与输入长度无关），而是不让这个
+// 字段变成无界的带宽/内存入口；128 字符对任何真口令都够宽。
+pub const PASSWORD_MIN_CHARS: usize = 8;
+pub const PASSWORD_MAX_CHARS: usize = 128;
+
+/// 口令不合格时给出**给用户看的那句话**，合格返回 `None`。
+///
+/// 三个入口（本人改密码 / 找回密码 / 管理员改密码）共用这一个函数 —— 再抄一份
+/// 就会再漂一次，而漂的方向恰好是"中文口令比英文口令短"这种看不出来的地方。
+pub fn password_reject(pw: &str) -> Option<&'static str> {
+    let n = pw.chars().count();
+    if n < PASSWORD_MIN_CHARS {
+        return Some("密码至少 8 位");
+    }
+    if n > PASSWORD_MAX_CHARS {
+        return Some("密码过长（最多 128 位）");
+    }
+    None
+}
+
+/// 用户名字符数上限。**建号是管理员专用入口**，所以这个数只需要挡住"手滑贴进来一段
+/// 文本"，不需要当公开注册的防滥用闸（那种闸得住字符集白名单，本批刻意不做）。
+pub const USERNAME_MAX_CHARS: usize = 32;
+
+/// 账号名不合格时给出那句话，合格返回 `None`。**入参是已经 `trim()` 过的值**——
+/// 判据与落库必须看同一个串，否则「' ' 通过检查然后被存成空串」这种事就会发生。
+pub fn username_reject(name: &str) -> Option<&'static str> {
+    if name.is_empty() {
+        return Some("用户名不能为空");
+    }
+    if name.chars().count() > USERNAME_MAX_CHARS {
+        return Some("用户名过长（最多 32 个字符）");
+    }
+    None
+}
+
 /// 上传件落盘目录。**没配 `UPLOAD_DIR` 时是仓库工作区里的 `./uploads`** ——
 /// 那是出厂默认（方便别人 clone 下来直接跑），生产应当显式把它指到工作区之外：
 /// 部署脚本哪天加上 `--delete` / `git clean`，这里是唯一会丢的东西（见 `.env.example`）。
@@ -261,6 +308,46 @@ mod tests {
         assert!(image_ext_ok(".png"));
         assert!(!image_ext_ok("a."), "空后缀");
         assert!(!image_ext_ok(""), "空串");
+    }
+
+    /// 口令判据的边界，**重点是中文那几条**——三处入口此前各写各的，错的两处都是
+    /// 把 `len()`（字节）当成了字符数，而中文一个字 3 字节 ⇒ 判据在中文口令上
+    /// 悄悄放宽到 1/3。这几条断言就是钉住"按字符算"。
+    #[test]
+    fn password_reject_counts_chars_not_bytes() {
+        // 英文：8 个 ASCII 恰好合格
+        assert_eq!(password_reject("1234567"), Some("密码至少 8 位"));
+        assert_eq!(password_reject("12345678"), None);
+
+        // 中文：3 个字是 9 字节 —— 旧判据（`len() < 8`）会放行，新判据必须拦下。
+        // 这一条正是 `auth::reset_password` 那个洞。
+        assert_eq!(password_reject("一二三"), Some("密码至少 8 位"));
+        // 1 个字是 3 字节 —— 旧判据（`len() < 3`）会放行，新判据必须拦下。
+        // 这一条正是 `temp_user::change_password` 那个洞。
+        assert_eq!(password_reject("密"), Some("密码至少 8 位"));
+
+        // 8 个汉字合格（32 字节）
+        assert_eq!(password_reject("一二三四五六七八"), None);
+
+        // 上限：128 字符合格、129 超限。两侧都用 ASCII，避免把字节数混进来。
+        assert_eq!(password_reject(&"a".repeat(128)), None);
+        assert_eq!(password_reject(&"a".repeat(129)), Some("密码过长（最多 128 位）"));
+        // 上限也按字符算：129 个汉字是 387 字节，仍该拦
+        assert_eq!(password_reject(&"密".repeat(129)), Some("密码过长（最多 128 位）"));
+
+        // 空串走的是"太短"，不是"过长"
+        assert_eq!(password_reject(""), Some("密码至少 8 位"));
+    }
+
+    /// 账号名判据。**入参约定是已 `trim()` 的值**（调用方负责），所以这里不测空格。
+    #[test]
+    fn username_reject_boundaries() {
+        assert_eq!(username_reject(""), Some("用户名不能为空"));
+        assert_eq!(username_reject("sora"), None);
+        // 长度按**字符**算：32 个汉字合格、33 个超限（若按字节算，11 个汉字就超了）
+        assert_eq!(username_reject(&"名".repeat(32)), None);
+        assert_eq!(username_reject(&"名".repeat(33)), Some("用户名过长（最多 32 个字符）"));
+        assert_eq!(username_reject(&"a".repeat(33)), Some("用户名过长（最多 32 个字符）"));
     }
 
     #[test]

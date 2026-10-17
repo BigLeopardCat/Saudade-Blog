@@ -125,8 +125,14 @@ pub async fn reset_password(
 ) -> Json<ApiResponse<String>> {
     let username = payload.username.trim();
     let code = payload.recovery_code.trim();
-    if username.is_empty() || code.len() < 16 || payload.new_password.len() < 8 {
+    // 口令那一段走共用判据（20261017）：此前是 `payload.new_password.len() < 8`，
+    // 而 `len()` 是**字节数** ⇒ 3 个汉字（9 字节）就能过。账号名/恢复码的判据留在原地
+    // ——它们不是口令，共用那一个函数会把这三种语义搅在一起。
+    if username.is_empty() || code.len() < 16 {
         return Json(ApiResponse::error("账号、恢复码或新密码格式不正确"));
+    }
+    if let Some(msg) = crate::utils::password_reject(&payload.new_password) {
+        return Json(ApiResponse::error(msg));
     }
 
     let names = [username.to_string(), encrypt_password(username)];
