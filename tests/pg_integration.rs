@@ -82,6 +82,16 @@
 //! ——⑦⑧ 只在 `CONV_UID` 名下建会话、⑨ 只在 `APPLY_UID` 名下建申请，
 //! 所以"另一个用例留下的行"不会污染断言（⑥ 连用户都是自己的）。
 //!
+//! ## 本套件的会话时区是 **UTC**（判据别拿 `CURRENT_DATE` 当"今天"）
+//!
+//! `connect()` 走的是 sea-orm 的 `ConnectOptions::new(url)`，**没有**产线 `src/main.rs`
+//! 那句 `.options([("timezone", "Asia/Shanghai")])` ⇒ sqlx-postgres 的会话时区是 UTC，
+//! 而产线写进库的时间/日期是**本地 +08:00 钟面**（CLAUDE.md §4 时区约定）。00:00–08:00
+//! 之间两者**差一天**：20261018 05:03 实测，连接上的 `CURRENT_DATE` 是 10-17、库里
+//! 那一行是 10-18。夹具里的 `NOW()` 播种同样落的是 UTC 钟面（只是目前没有断言依赖它）。
+//! 判据要写"今天"就照 ⑨ 那样**按夹具独占 id 取行**、或与 `chrono::Local::now()` 比。
+//! （把产线那行 options 搬进来是更彻底的修法，但那是本套件自己的改动，另开一笔。）
+//!
 //! ## 门控（务必看清，别把它改宽）
 //!
 //! · `TEST_PG_URL` **没设** ⇒ 打印一行"跳过"然后返回（本地 `cargo test`、
@@ -1600,5 +1610,79 @@ async fn test_后台留言列表的服务端筛选分页与连接语义() {
     assert!(
         !all.contains(&BOARDQ_OTHER_SRC),
         "`src='talk'` 的说说不是留言，不许出现在留言管理里：{j}"
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ⑨ 阅读上报的 upsert：同一天连报三次要**原地累加到 3**，而不是一行都写不进去
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// 为什么这条判据要**读库里的真值**、而不是看接口的状态码：
+/// `report_view` 的 Err 分支只 `tracing::warn!`（设计如此——统计失败不该让读者看不了
+/// 正文），所以 upsert 写不进去时接口**照样回 200**。20261018 切库当天就是这么踩到的：
+/// PG 的 `ON CONFLICT … DO UPDATE SET` 里裸写 `cnt` 是**歧义**的（目标行与 `excluded`
+/// 都有这一列），PG 报 `column reference "cnt" is ambiguous`，而 MySQL 的
+/// `ON DUPLICATE KEY UPDATE` 把裸名解析成既有行、不报错 ⇒ 阅读数静默不涨。
+/// 接口是绿的、日志里只有一行 warn、前端只当"这次没数"。
+///
+/// ⚠️ 症状比"第二次起不涨"更重：PG 是**解析整条语句**时报的歧义，与走不走
+/// `DO UPDATE` 那一支无关 ⇒ **第一次上报就没落库**（反控实测：把表名去掉，下面
+/// 的 `COUNT(*)` 是 0 而不是 1）。所以这条用例的判据不能写成"第二次数了没"。
+#[tokio::test]
+async fn view_report_upserts_instead_of_violating_the_unique_key() {
+    let Some((db, db_app)) = connect_pair().await else { return };
+    const NOTE_VIEW_UPSERT: i32 = 900000005;
+    make_note(&db, NOTE_VIEW_UPSERT).await;
+    let app = test_app(db_app);
+
+    // 同一天连报三次：第一次 INSERT，后两次走 `DO UPDATE`（`cnt` 必须原地 +1）
+    for i in 1..=3 {
+        let (st, _) = call(
+            app.clone(),
+            "POST",
+            &format!("/api/public/notes/{NOTE_VIEW_UPSERT}/view"),
+            None,
+            None,
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "第 {i} 次上报的状态码");
+    }
+
+    // ⚠️ 判据里**不能拿 `CURRENT_DATE` 当"今天"**：sqlx-postgres 的会话时区是 **UTC**，
+    // 而本仓的约定是"一律存本地 +08:00 钟面"（CLAUDE.md §4 时区约定），`report_view`
+    // 写进去的是 `chrono::Local::now().date_naive()`。00:00–08:00 之间这两个**差一天**
+    // ——实测 05:03 跑这条用例，连接上的 `CURRENT_DATE` 是 10-17、库里那一行是 10-18，
+    // 于是这条判据会在"写入完全正确"的情况下红。夹具 id 是本用例独占的，按 note_id 取就够。
+    let rows = count_of(
+        &db,
+        &format!("SELECT COUNT(*) FROM note_view WHERE note_id = {NOTE_VIEW_UPSERT}"),
+    )
+    .await;
+    assert_eq!(rows, 1, "三次上报只该留一行（唯一键 (note_id, view_date) 的语义）");
+    // ⚠️ `cnt` 是 `integer`（int4）⇒ 只能走 `one_i32`；用 `one_i64` 会当场报
+    // `Rust type i64 … is not compatible with SQL type INT4`（分宽的理由见 `one_i64` 的注）
+    let cnt = one_i32(
+        &db,
+        &format!("SELECT cnt FROM note_view WHERE note_id = {NOTE_VIEW_UPSERT}"),
+    )
+    .await
+    .expect("note_view 里没有这一行——upsert 连 INSERT 那一步都没落下去");
+    assert_eq!(
+        cnt, 3,
+        "三次上报要累加成 3。**读到 1 就是 upsert 写失败了**——接口当时回的是 200，\
+         错误只进了 tracing::warn!（`src/routes/note_stats.rs::report_view`）"
+    );
+    // 顺手把"写进去的是**本地**日期"也钉住：这正是上一条注释里那个 UTC/本地差一天的
+    // 事实来源，将来若有人把 `Set(today)` 换成 SQL 的 `CURRENT_DATE`，红在这里。
+    let day = one_text(
+        &db,
+        &format!("SELECT view_date::text FROM note_view WHERE note_id = {NOTE_VIEW_UPSERT}"),
+    )
+    .await;
+    let today = chrono::Local::now().date_naive().to_string();
+    assert_eq!(
+        day.as_deref(),
+        Some(today.as_str()),
+        "view_date 存的必须是本地钟面日期（与 `report_view` 的 `Local::now().date_naive()` 同源）"
     );
 }

@@ -401,7 +401,13 @@ pub async fn report_view(
             OnConflict::columns([note_view::Column::NoteId, note_view::Column::ViewDate])
                 .values([(
                     note_view::Column::Cnt,
-                    Expr::col(note_view::Column::Cnt).add(1).into(),
+                    // ⚠️ **必须带上表名**：PG 的 `ON CONFLICT … DO UPDATE SET` 里，右侧
+                    // 裸写列名是**歧义**的 —— 目标行与 `excluded` 都有 `cnt`，PG 直接报
+                    // `column reference "cnt" is ambiguous`。MySQL 的
+                    // `ON DUPLICATE KEY UPDATE` 把裸名解析成"既有那一行"，不报错。
+                    // 症状极隐蔽：这条 upsert 的 Err 分支只 `tracing::warn!`（设计如此：
+                    // 统计失败不该让读者看不了正文），于是**阅读数静默不涨、接口照回 200**。
+                    Expr::col((note_view::Entity, note_view::Column::Cnt)).add(1).into(),
                 )])
                 .to_owned(),
         )
