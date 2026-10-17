@@ -112,6 +112,10 @@ done
 #    每分钟刷屏。哨兵每晚失败都被 touch（mtime 前进），所以"一直失败"是每晚一条、
 #    "修好了"则签名变空、静默（干净夜里 health.log 一行都不多）。
 #    判 WARN 不判 FAIL：服务都还活着，是测试套件红，不是线上挂了。
+#    ⚠️ **20261017 起两班都"默认不装"**（仓库口径：公开仓库不替克隆的人决定每天烧多少额度；
+#    开关分别是 agent 仓的 scripts/enable_nightly.sh 与下面的 crontab 行）。**没装 ⇒ 两个哨兵
+#    恒不存在 ⇒ 这一项恒静默**。静默在这里**不是绿**，是"这一项没在验"——缺键绝不读成 0
+#    （本仓老账）。所以别拿"health.log 里没有哨兵 WARN"当夜间跑过且通过的证据。
 SENTINELS="$HOME/agent_regression.failed $HOME/sandbox_regression.failed"
 sent_sig=""
 for s in $SENTINELS; do
@@ -170,6 +174,10 @@ fi
 #    形状与第 6 项（哨兵）同款：**按天边沿触发**，一天最多一行，不每分钟刷屏。
 #    跑挂了当天也留一行 WARN——**不重试是刻意的**：脚本本身坏掉时每分钟重试会刷屏，
 #    而"每天一条 WARN"照样看得见。判 WARN 不判 FAIL：服务活着，断的是观测线。
+#    ⚠️ **20261017 补**：本机当天重新开了夜间那班（主人「不是因为坏了，是之前成本暂停了」），
+#    但**仓库口径改成了"默认不装"**（开关在 agent 仓 scripts/enable_nightly.sh）。上面写的
+#    "挂起"是 20261016 那天的**事实**，留着不改；要读的是这条推论——**在默认部署里夜间不在场
+#    ⇒ 这一项（第 9 项）就是那个部署下唯一的自动观测通道**，它坏了就真的没有别的了。
 METRICS_DAY=/tmp/health_metrics_day
 TODAY=$(date +%Y%m%d)
 if [ "$(cat "$METRICS_DAY" 2>/dev/null)" != "$TODAY" ]; then

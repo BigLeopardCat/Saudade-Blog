@@ -464,7 +464,10 @@ sudo logrotate -d /etc/logrotate.d/saudade      # -d = 干跑，只打印不动�
 ⚠️ trace **不在** logrotate 里，这是刻意的：trace 是"一次会话一个文件、写完即静止"的
 产物，而 `rotate N` 靠同名文件后缀计数，对它完全无效（配置写着 `rotate 14`、实际最老
 的文件 26 天）。它的保留期由 agent 仓的 `eval/trace_retention.py` 执行，已接进
-`saudade-blog-agent/scripts/nightly_regression.sh`。
+`saudade-blog-agent/scripts/nightly_regression.sh`。⚠️ **那一班默认不装**（20261017 起）⇒
+没开夜间回归的部署里，这条保留期**没有任何东西在执行它**（正是本节开头说的那种"写了没人跑"
+的装饰性配置）——要么开那一班（agent 仓 `scripts/enable_nightly.sh`），要么自己排一条
+`eval/trace_retention.py --apply`。
 
 **心跳探针**（可选但推荐，cron 每分钟；只写日志、不发通知）：
 

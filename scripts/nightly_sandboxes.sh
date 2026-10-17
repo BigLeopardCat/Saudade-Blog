@@ -8,6 +8,12 @@
 # 看不见（两段代码各自看都对），单源扫描看不见，只有真模块 + 真时序能看见。
 #
 # 触发：crontab `40 4 * * *`（避开 04:00 的 agent nightly golden 与 04:20 的 apt-daily）。
+#   ⚠️ **这一行默认不装**（20261017 起是仓库口径）：`deploy/install.sh` 只装心跳探针那一行，
+#   本班要自己加 —— `40 4 * * * <本仓>/scripts/nightly_sandboxes.sh >/dev/null 2>&1`。
+#   理由与 agent 那班同源但便宜得多：它零 LLM、只跑前端沙箱；不过它要 Playwright 与无头
+#   Chrome，在没装这些的机器上每晚静默失败（`>/dev/null 2>&1` 把话全吃了）⇒ 加之前先手跑
+#   一次 `bash scripts/nightly_sandboxes.sh` 看它真能过。agent 那班的开关在 agent 仓
+#   `scripts/enable_nightly.sh`。
 # 结果追加到 ~/sandbox_regression.log；任一套件失败会在 ~/sandbox_regression.failed
 # 留下标记（存在 = 上次运行失败）。**哨兵由 scripts/healthcheck.sh 每分钟顺带检查**，
 # 新出现时往 logs/health.log 写一条 WARN——所以「夜间挂了」这件事有人看得见。

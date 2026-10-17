@@ -187,7 +187,8 @@ npm run lint                                      # ESLint
 | 前后端契约 | 仓库根 `tests/manual/test_api.py` | **手动跑**（Python + 要活着的后端），不在 `cargo test` 里 |
 
 渲染沙箱（真组件 + 无头 Chrome + 数值断言）跑不进 CI 的秒级 job，由
-`scripts/nightly_sandboxes.sh` 夜间串行跑。依赖装法见 `tests/requirements.txt`。
+`scripts/nightly_sandboxes.sh` 夜间串行跑（**那一班默认不装**，见 `CONTRIBUTING.md` §3.2）。
+依赖装法见 `tests/requirements.txt`。
 
 > 沙箱用得上的三个坑（都踩过）：① 沙箱里只编译**单个组件**的 sass，全站 `index.css`
 > 的全局规则在沙箱里不存在，几何断言会把"样式没生效"误读成"页面缺陷"；

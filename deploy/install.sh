@@ -1147,6 +1147,20 @@ setup_logrotate() {
     note "trace 刻意不在 logrotate 里：它是「一次会话一个文件」的一次性产物，"
     note "而 rotate N 靠同名文件后缀计数 —— 对它无效。保留期由 agent 仓的 trace_retention.py 执行。"
 
+    # 20261017：这里**刻意不装**夜间两班（04:00 的 agent 回归、04:40 的前端渲染沙箱）。
+    # 它们是公开仓库里"默认关、按需开"的档：agent 那班一次全量要真调 LLM 跑 golden
+    # （≈10M tok / ¥2.4，且跑的是维护者那台机器的语料与夹具），沙箱那班要 Playwright +
+    # 无头 Chrome。一键部署的人多半没有这些前置，装了只会得到两个每晚静默失败的 cron
+    # （`>/dev/null 2>&1` 把话全吃了）。这段在 dry-run 里也打，因为"没装什么"同样是结果。
+    # ⚠️ 这几行里**不许出现反引号**：note 的参数是双引号字符串，反引号会当场做命令替换
+    # ——本机实测过，写成 `bash …` 真的去执行了那支脚本（cwd 恰好在 agent 仓时后果是真改
+    # crontab）。本文件的既有惯例是拿「」当引号，照它写。
+    note "**夜间两班没有装**（刻意的，不是漏了）："
+    note "  · agent 回归：装法 = agent 仓的 bash scripts/enable_nightly.sh --apply（默认只干跑）"
+    note "  · 前端沙箱：见 scripts/nightly_sandboxes.sh 头部那一行 crontab，加之前先手跑一次"
+    note "没装它们不影响站点；但 healthcheck.sh 第 6 项（哨兵）与上面说的 trace 保留期执行者"
+    note "也会跟着不在场 —— 详见 docs/deployment-and-ops.md 的日志一节。"
+
     local line="* * * * * PROJECT_DIR=$APP_DIR $APP_DIR/scripts/healthcheck.sh >/dev/null 2>&1"
     if [ "$DRY_RUN" = 1 ]; then
         note "[dry-run] crontab 会加：$line"

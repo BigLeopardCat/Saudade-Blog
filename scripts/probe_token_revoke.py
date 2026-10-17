@@ -19,7 +19,9 @@
 本探针**不连数据库**（20260926 更正：此处原写「`DATABASE_URL` / `JWT_SECRET`」，而
 `DATABASE_URL` 从来没被读过——它自己的每个结论都是通过 HTTP 打出来的）。
 
-20260926 起由 agent 仓 `scripts/nightly_regression.sh` **每日跑一次（门禁）**，用
+20260926 起由 agent 仓 `scripts/nightly_regression.sh` **每日跑一次（门禁）**——⚠️ 20261017 起
+那一班**默认不装**（开关 = agent 仓 `scripts/enable_nightly.sh`）⇒ 没开它的部署里本探针
+**每天都不跑**，要自己排（它写生产库、建删自己的一次性靶子账号，别在别人的库上乱排），用
 `--admin-uid "$GOLDEN_ADMIN_UID" --no-self-probe`、排在 golden 之前：`GOLDEN_ADMIN_UID` 就是本
 探针要验的那个身份，探针验**语义**（冻结/改密码真的收回令牌、两处旁路真的收口），golden 侧的
 `eval/identity_preflight.py` 验**可用性**（这个 uid 今天还活着、角色还对）。它写生产库，

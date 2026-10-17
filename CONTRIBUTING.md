@@ -254,7 +254,9 @@ CI 会起一个 `mysql:8.0` 服务容器跑它（见 `deploy.yml` 的 `check` jo
 ### 3.2 沙箱套件（要 Playwright + 无头 Chrome，不进 CI）
 
 `frontend/tests/*.test.py` 是一批"真组件 + 无头 Chrome + 数值断言"的渲染沙箱。它们要
-真浏览器，CI 的秒级 job 装不下，所以由 `scripts/nightly_sandboxes.sh` 夜间串行跑。
+真浏览器，CI 的秒级 job 装不下，所以由 `scripts/nightly_sandboxes.sh` 夜间串行跑
+（**那一班默认不装**——`deploy/install.sh` 只装心跳探针；要开就自己加
+`40 4 * * * <本仓>/scripts/nightly_sandboxes.sh >/dev/null 2>&1`，加之前先手跑一次）。
 
 手动跑单个：
 

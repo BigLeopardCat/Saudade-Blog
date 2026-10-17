@@ -197,7 +197,9 @@ logs/
   而 logrotate 的 `rotate N` 靠同名文件后缀 +1 计数，对这类文件完全无效：配置写着
   `rotate 14`，实际最老的文件仍是 26 天。它们的保留期由 agent 仓自己执行：
   `saudade-blog-agent/eval/trace_retention.py`（按 mtime：>24h 压缩、>30 天删除；默认只列不删、
-  `--apply` 才动手，已接进 agent 仓的 `scripts/nightly_regression.sh`）管对话 trace，
+  `--apply` 才动手，已接进 agent 仓的 `scripts/nightly_regression.sh`；⚠️ 那一班**默认不装**
+  （开关 = agent 仓 `scripts/enable_nightly.sh`）⇒ 没开它的话，这条保留期在默认部署里
+  **没有人执行**，得自己排一条）管对话 trace，
   `saudade-blog-agent/eval/golden_trace.py::prune` 管 golden trace（最近 30 个 run +
   所有有失败记录的 run 永久保留）。
 - monitor.log 的一行长这样：
