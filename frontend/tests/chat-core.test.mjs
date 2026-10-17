@@ -169,6 +169,63 @@ console.log('== capItems / migrateItem ==');
   assert.eq(migProc2.process.length, 1, '非空 process 保留');
 }
 
+console.log('== 聊天图片（20261018：DB 行 → 气泡，images 不许被吃掉）==');
+{
+  const eqArr = (got, exp, name) => ok(JSON.stringify(got) === JSON.stringify(exp), name, { got, exp });
+  const DB_IMG = 'data:image/png;base64,iVBORw0KGgo+/x==';
+  const DECOY_THUMB = 'data:image/jpeg;base64,DECOY-DECOY-DECOY==';
+
+  // ── dbRowToItem：DB 行的字段映射 ──────────────────────────────────────────
+  const row = { id: 42, role: 'user', content: '看这张\n[图片]', time: 1700000000000, images: [DB_IMG] };
+  const bare = core.dbRowToItem(row);
+  assert.eq(bare.id, 'd42', 'id 加 d 前缀（前端稳定去重 id）');
+  assert.eq(bare.type, 'user', "role='user' → type='user'");
+  assert.eq(bare.text, '看这张\n[图片]', 'text = content（标记的剥离在 replaceWithIncoming，不在这儿）');
+  eqArr(bare.images, [DB_IMG], '**images 原样带过去**（这一格以前被白名单吃掉）');
+  assert.eq(core.dbRowToItem({ ...row, role: 'assistant' }).type, 'agent', 'assistant → agent');
+
+  // ── mapDbItems：漏传 lookupProcess 必须**抛**，不许静默默认 ────────────────
+  // 漏传的后果是 pullHistory 的 catch 静默降级成本地缓存（只有一行 console），
+  // 症状是"图不显示"——所以这里要响亮。
+  let threw = false;
+  try { core.mapDbItems([row]); } catch { threw = true; }
+  assert.truthy(threw, 'mapDbItems 漏传 lookupProcess 要抛（漏传会静默退化成无过程行）');
+  const mapped = core.mapDbItems([row], () => undefined);
+  eqArr(mapped[0].images, [DB_IMG], '经 mapDbItems → migrateItem 之后 images 仍在');
+  assert.eq(mapped[0].process, undefined, 'user 行不查过程行');
+
+  // ── replaceWithIncoming：DB 有图 ⇒ 不许回填、不许补占位 ────────────────────
+  // ⚠️ 两个"空真"陷阱，缺一个这条判据就是假的：
+  //   ① 夹具 content **必须**以 `\n[图片]` 结尾 —— needFill 要求文本匹配 /\[图片(?:×\d+)?\]/，
+  //      不带标记的话回填分支根本不进，"没触发回填"就成了空真；
+  //   ② local 里**必须**放一条同文本、带 thumbs 的**诱饵** —— 否则 withImg 为空，
+  //      回填照样不进，"没触发"还是空真。
+  // 诱饵的图与 DB 的图**不同**，所以"回填发生了"会当场改变 images 的值（不是靠运气）。
+  const local = [core.migrateItem({
+    id: 'l-1', type: 'user', text: '看这张\n[图片]', time: 1700000000000,
+    thumbs: [DECOY_THUMB],
+  })];
+  assert.eq(local[0].images[0], DECOY_THUMB, '前提：诱饵带的是缩略图（withImg 非空）');
+  const out = core.replaceWithIncoming(local, mapped, 1700000000000);
+  assert.eq(out.length, 1, '同一条消息不该被追加成两条');
+  eqArr(out[0].images, [DB_IMG],
+    '**images 必须还是 DB 那份**：回填只在 DB 没图时发生，DB 有图时拿本地缩略图去顶' +
+    '会把原图降级成 180px 缩略图（且是不可逆的——下次 saveHistory 就把它当唯一的图存下去）');
+  assert.eq(out[0].hasImg, undefined,
+    '有图就不该有 hasImg —— 置位会让前端渲染"ⓘ图片已过期"占位块盖住真图');
+  assert.eq(out[0].text, '看这张', 'DB 文本里的 [图片] 标记要剥掉（否则图文重复展示）');
+
+  // ── 老轮次（DB 没图，只有标记）：走占位块，是诚实的那一条路径 ──────────────
+  const lost = core.mapDbItems(
+    [{ id: 7, role: 'user', content: '早就丢了\n[图片×2]', time: 1600000000000, images: [] }],
+    () => undefined,
+  );
+  const out2 = core.replaceWithIncoming([], lost, 1600000000000);
+  assert.eq(out2[0].images, undefined, '空数组 = 这条没图（不是缺键，也不是残缺数组）');
+  assert.eq(out2[0].hasImg, 1, '真图消息但图没了 → 占位块（存量那 7 条就是这种）');
+  assert.eq(out2[0].text, '早就丢了', '标记照剥');
+}
+
 console.log('== 命令正则权威 COMMAND_RE ==');
 {
   const RE = core.COMMAND_RE;

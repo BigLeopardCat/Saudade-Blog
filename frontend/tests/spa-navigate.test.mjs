@@ -256,7 +256,10 @@ console.log('\n⑥ 版本号：改了 widget 脚本必须 bump（nginx 对 live2
     // 不 bump 访客一年内看到的还是右移 130px、少抬 10px 的那一版。
     // 20261015a = 「欢迎语里填进去的值先转义」那一轮（renderer.js 的 subst）。同上 ⇒ 必须
     // bump，不 bump 访客一年内拿到的还是"标题被当 HTML 解析"的那一版。
-    ok(ver === '20261015a', 'VER 已 bump 到本轮（20261015a）', { ver });
+    // 20261018a = 「聊天图片落库」那一轮（chat-core.js 新增 dbRowToItem、chat-engine.js 的
+    // mapDbItems 改调它——DB 行的 images 以前被一个手写白名单吃掉）。同上 ⇒ 必须 bump，
+    // 不 bump 的话**图在库里、界面还是"ⓘ图片已过期"占位块**，而且没有任何东西会红。
+    ok(ver === '20261018a', 'VER 已 bump 到本轮（20261018a）', { ver });
     const tsx = readFileSync(path.join(root, 'src/components/Live2dAgent/index.tsx'), 'utf8');
     ok(tsx.includes('boot.js?v=' + ver), 'Live2dAgent 的 ?v= 与 VER 一致');
 }
