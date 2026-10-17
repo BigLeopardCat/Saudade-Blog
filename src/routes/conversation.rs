@@ -5,7 +5,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use sea_orm::{ActiveModelTrait, ColumnTrait, Condition, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set, TransactionTrait};
-use sea_orm::sea_query::Expr;
+use sea_orm::sea_query::{Alias, Expr};
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
@@ -135,14 +135,25 @@ pub async fn list_conversations(
         let rows = chat_history::Entity::find()
             .select_only()
             .column(chat_history::Column::ConversationId)
-            .column_as(Expr::col(chat_history::Column::Id).max(), "max_id")
+            .column_as(
+                Expr::col(chat_history::Column::Id).max().cast_as(Alias::new("BIGINT")),
+                "max_id",
+            )
             .filter(chat_history::Column::UserId.eq(uid))
             .filter(chat_history::Column::Content.like(&pat))
             .group_by(chat_history::Column::ConversationId)
-            // 聚合列必须按 **i64** 收：MySQL 的 MAX/COUNT 一律以 64 位返回（`id` 本身
-            // 是 i32），照 `id` 的类型去解会解不出来——而 `unwrap_or_default()` 会把
-            // "解不出来"咽成**空命中集**（症状 = 内容搜索静默只剩标题命中）。
-            // 同一个聚合在 `stats.rs:270`（后台报表数消息）就是这么收的，照抄。
+            // 聚合列必须按 **i64** 收（`id` 本身是 i32），照 `id` 的类型去解会解不出来
+            // ——而 `unwrap_or_default()` 会把"解不出来"咽成**空命中集**
+            // （症状 = 内容搜索静默只剩标题命中，且不报任何错）。
+            //
+            // ⚠️ **20261018 切库到 PG 时补的那一手 `CAST(... AS BIGINT)`**：从前的理由是
+            // "MySQL 的 MAX/COUNT 一律以 64 位返回"，那句**在 PG 上不成立** ——
+            // `MAX(int4)` 在 PG 里就是 `int4`，按 `Option<i64>` 解同样失败。
+            // `SUM` 是反过来的（PG 的 `SUM(integer)` 返回 `bigint`、MySQL 返回 DECIMAL，
+            // 见 `note_stats.rs::sum_views`）；**只有 `COUNT(*)` 两边都是 64 位**，
+            // 所以 `stats.rs` 那三处不用动。
+            // 判据在 `tests/pg_integration.rs::conversation_list_pins_first_and_anchors_hits`
+            // ——它抓的正是这条：内容命中那条会话会整个从搜索结果里消失。
             // `Option` 是给"整组 NULL"留的余量（GROUP BY 的组非空，正常取不到 None）。
             .into_tuple::<(i32, Option<i64>)>()
             .all(&state.db)

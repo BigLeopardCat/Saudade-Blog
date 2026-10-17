@@ -436,8 +436,18 @@ async fn test_额度扣减的判据是_rows_affected_而不是猜的() {
         .append_exec_results([MockExecResult { last_insert_id: 0, rows_affected: 1 }])
         .into_connection();
     let _ = quota::try_consume(&db, 126, 500).await;
-    // 整条语句连同绑定值一起断言（`+ 1` 是以绑定参数下发的，不是字面量）
-    let log = format!("{:?}", db.into_transaction_log()).replace('`', "");
+    // 整条语句连同绑定值一起断言（`+ 1` 是以绑定参数下发的，不是字面量）。
+    // ⚠️ 先做**方言归一**再断言：标识符引号 MySQL 是反引号、PG 是双引号；占位符 MySQL 写
+    // `?`、PG 写 `$1`/`$2`/`$3`。这条判据判的是**语句形状**（原地递增 + 未到上限 + 按 uid
+    // 定位），不是哪种方言 —— 锁字面会让换后端时红在一个与判据无关的地方。
+    // ⚠️ `{:?}` 会把双引号**转义**成 `\"`（两个字符），所以先剥 `\"` 再剥反引号 ——
+    // 只剥引号会留下一串光秃秃的反斜杠，断言照样红。
+    let log = format!("{:?}", db.into_transaction_log())
+        .replace("\\\"", "")
+        .replace('`', "")
+        .replace("$1", "?")
+        .replace("$2", "?")
+        .replace("$3", "?");
     assert!(
         log.contains("chat_quota_used = chat_quota_used + ?"),
         "扣一轮必须是原地递增（写一个算好的值会在并发下互相抹掉）：{log}"

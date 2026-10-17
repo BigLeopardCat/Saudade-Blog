@@ -65,7 +65,8 @@
 //! ⑪ `GET /api/protect/board` 在这一批之前是"整表拉回前端、前端再筛再切页"，现在
 //!   筛选/搜索/排序/分页都在服务端做。这里的判据几乎全是 **JOIN 语义**，对 `MockDatabase`
 //!   完全隐形：
-//!   · 关键词要能命中**用户名/昵称**（在 user 表上）⇒ 查询带 `LEFT JOIN user`。LEFT 还是
+//!   · 关键词要能命中**用户名/昵称**（在 `user` 表上）⇒ 查询带 `LEFT JOIN "user"`（PG 里
+//!     `user` 是保留字，裸写等于 `current_user`）。LEFT 还是
 //!     INNER，唯一的分界线是**发布者已经不在了**的那些留言（`user_id` 指向一个查不到的
 //!     用户）：INNER 会把它们从管理员眼前静默摘掉，而它们恰恰是最该被看见的行；
 //!   · 列表与计数**共用同一条未执行的查询**（`board_admin_filter`）⇒「共 N 条」必须等于
@@ -247,11 +248,11 @@ async fn make_note(db: &DatabaseConnection, id: i32) {
 /// `username` 与 `nickname` 都带 id，避开那两个唯一键。
 async fn make_user(db: &DatabaseConnection, id: i32, role: &str) {
     // 先删干净：`user_notification` 有外键 ON DELETE CASCADE，上次跑挂留下的通知会跟着走
-    exec(db, &format!("DELETE FROM user WHERE id = {id}")).await;
+    exec(db, &format!("DELETE FROM \"user\" WHERE id = {id}")).await;
     exec(
         db,
         &format!(
-            "INSERT INTO user (id, username, nickname, password, role) \
+            "INSERT INTO \"user\" (id, username, nickname, password, role) \
              VALUES ({id}, 'it_fixture_{id}', 'it-{id}', 'x', '{role}')"
         ),
     )
@@ -304,7 +305,7 @@ async fn count_of(db: &DatabaseConnection, sql: &str) -> i64 {
 async fn used_of(db: &DatabaseConnection, uid: i32) -> i32 {
     one_i32(
         db,
-        &format!("SELECT chat_quota_used FROM user WHERE id = {uid}"),
+        &format!("SELECT chat_quota_used FROM \"user\" WHERE id = {uid}"),
     )
     .await
     .expect("夹具账号不在库里（`make_user` 没跑？）")
@@ -566,11 +567,11 @@ async fn counts_for_likes_and_favorites_use_count() {
 
     // 一个真实账号（收藏的 user_id 是 NOT NULL + 外键 ⇒ 必须有这一行）
     const UID: i32 = 900000004;
-    exec(&db, &format!("DELETE FROM user WHERE id = {UID}")).await;
+    exec(&db, &format!("DELETE FROM \"user\" WHERE id = {UID}")).await;
     exec(
         &db,
         &format!(
-            "INSERT INTO user (id, username, password) VALUES ({UID}, 'it_fixture_900000004', 'x')"
+            "INSERT INTO \"user\" (id, username, password) VALUES ({UID}, 'it_fixture_900000004', 'x')"
         ),
     )
     .await;
@@ -598,7 +599,7 @@ async fn counts_for_likes_and_favorites_use_count() {
     assert_eq!(c.views, 0, "这篇没人读过");
 
     // 收尾：把夹具账号撤掉（有外键 ON DELETE CASCADE，两行计数会跟着走）
-    exec(&db, &format!("DELETE FROM user WHERE id = {UID}")).await;
+    exec(&db, &format!("DELETE FROM \"user\" WHERE id = {UID}")).await;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -627,7 +628,7 @@ async fn try_consume_charges_the_last_slot_exactly_once() {
     const LIMIT: i32 = 3;
     exec(
         &db,
-        &format!("UPDATE user SET chat_quota_used = 2 WHERE id = {QUOTA_UID}"),
+        &format!("UPDATE \"user\" SET chat_quota_used = 2 WHERE id = {QUOTA_UID}"),
     )
     .await;
 
@@ -675,7 +676,7 @@ async fn try_consume_reports_zero_rows_as_exhausted_not_degraded() {
     make_user(&db, QUOTA_UID2, "user").await;
     exec(
         &db,
-        &format!("UPDATE user SET chat_quota_used = 0 WHERE id = {QUOTA_UID2}"),
+        &format!("UPDATE \"user\" SET chat_quota_used = 0 WHERE id = {QUOTA_UID2}"),
     )
     .await;
 
@@ -867,7 +868,7 @@ async fn quota_review_claims_once_and_touches_nothing_on_the_second_call() {
     make_user(&db, APPLY_UID, "user").await;
     exec(
         &db,
-        &format!("UPDATE user SET chat_quota_used = 7 WHERE id = {APPLY_UID}"),
+        &format!("UPDATE \"user\" SET chat_quota_used = 7 WHERE id = {APPLY_UID}"),
     )
     .await;
     exec(
@@ -932,7 +933,7 @@ async fn quota_review_claims_once_and_touches_nothing_on_the_second_call() {
     //    （不这么放的话"重复批准又清了一次"在计数器上完全不可见，只有通知条数看得见）
     exec(
         &db,
-        &format!("UPDATE user SET chat_quota_used = 5 WHERE id = {APPLY_UID}"),
+        &format!("UPDATE \"user\" SET chat_quota_used = 5 WHERE id = {APPLY_UID}"),
     )
     .await;
     let (st2, j2) = call(
@@ -1368,7 +1369,7 @@ async fn test_后台留言列表的服务端筛选分页与连接语义() {
         exec(&db, &format!("DELETE FROM talk WHERE id = {id}")).await;
     }
     for id in [BOARDQ_UID_ADMIN, BOARDQ_UID_A, BOARDQ_UID_B] {
-        exec(&db, &format!("DELETE FROM user WHERE id = {id}")).await;
+        exec(&db, &format!("DELETE FROM \"user\" WHERE id = {id}")).await;
     }
 
     // 三个用户：一个是调用方（管理员，见上面那条常量的说明），另外两个**命中四列里的
@@ -1382,7 +1383,7 @@ async fn test_后台留言列表的服务端筛选分页与连接语义() {
     exec(
         &db,
         &format!(
-            "INSERT INTO user (id, username, nickname, password, role) VALUES \
+            "INSERT INTO \"user\" (id, username, nickname, password, role) VALUES \
              ({BOARDQ_UID_ADMIN}, 'nb-qqzz-admin', 'nb-qqzz-admin', 'x', 'admin'), \
              ({BOARDQ_UID_A}, '{BOARDQ_KW}_a', 'nb-jia-qqzz', 'x', 'user'), \
              ({BOARDQ_UID_B}, 'b_{BOARDQ_KW}', '{BOARDQ_KW}_yi', 'x', 'user')"
