@@ -60,9 +60,21 @@ sudo -u postgres psql -c "ALTER ROLE saudade_app PASSWORD '换成你自己的密
 sudo -u postgres psql -c "CREATE DATABASE saudade_blog OWNER saudade_app ENCODING 'UTF8' \
   LC_COLLATE 'en_US.UTF-8' LC_CTYPE 'en_US.UTF-8' TEMPLATE template0"
 
-# ③ 结构。**一份文件建全库** —— PG 这一侧没有"快照 + 按日期补增量"那套。
+# ③ 结构。`0000_schema.sql` 建**基线**（PG 这一侧没有"快照 + 按日期补增量"那套），
+#    编号迁移再往上加东西。要喂哪几份、按什么序，**唯一事实源**是
+#    `scripts/migration/pg/ci_schema_files.py`（它打印的就是清单，CI 也照它建库；
+#    `--self-test` 保证磁盘上每个编号迁移都归过类）—— 别在这儿另抄一份文件名。
 sudo -u postgres psql -d saudade_blog -v ON_ERROR_STOP=1 -f scripts/migration/pg/0000_schema.sql
+for f in $(python3 scripts/migration/pg/ci_schema_files.py); do
+  sudo -u postgres psql -d saudade_blog -v ON_ERROR_STOP=1 -f "$f" || exit 1
+done
 ```
+
+⚠️ 上面这条循环是**给从零建库用的**（owner 会是 `postgres`）。生产上新增表要以**应用角色**
+跑，表与它的 identity 序列才天生归 `saudade_app`（`0002_owner_to_app.sql` 头注里那个
+"连得上却 0 张表"的坏法就是 owner 没对）：
+`psql -h 127.0.0.1 -U saudade_app -d saudade_blog -v ON_ERROR_STOP=1 -f - < <该文件>`。
+判据 = 跑完 `0002_owner_to_app.sql` 的差集为空。
 
 `ON_ERROR_STOP=1` 不能省：没有它 psql 会把每条报错打完还**退出 0**，
 "建库成功"就成了一句空话。

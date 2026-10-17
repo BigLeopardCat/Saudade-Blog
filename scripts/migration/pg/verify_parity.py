@@ -32,10 +32,26 @@ PG_BIN = os.environ.get("PG_BIN", "sudo -n -u postgres psql")
 PG_DB = os.environ.get("PG_DB", DB_NAME)
 
 # **手写的、MySQL 那边没有对应物的表**（见 `0001_rag_vectors.sql` 头注：向量从来没进过
-# MySQL）。它们不进本判据的射程 —— 逐位对账在 `verify_vectors.py` 那边。
+# MySQL；`chat_image` 同理，图片从来没进过任何库）。它们不进本判据的射程 ——
+# 向量那边逐位对账在 `verify_vectors.py`；`chat_image` 的判据在
+# `tests/pg_integration.rs`（往返逐字相等 + 级联删）。
 # 不加这个豁免的话，本判据从"搬完向量"那一刻起**永久红**，而红在一个正确的事实上；
 # 判据一旦有恒红的项，真红就没人看了。
-HAND_WRITTEN = {"rag_vector", "rag_vector_space"}
+#
+# ⚠️ **豁免要覆盖三类对象，不只是表**（20261018 修）：`pg["idx"]`（索引）与
+# `pg["cons"]`（外键）那两条 diff 拿的是**未过滤**的 PG 侧集合。今天之前一直绿，
+# 只是因为 `rag_vector`/`rag_vector_space` **既没有二级索引也没有外键** ——
+# 也就是说，这份豁免以前只是"碰巧够用"。`chat_image` 两样都有，第一条就能撞上。
+# （触发器那条 diff 不受影响：它取的是全库触发器，而 `chat_image` 没有触发器。）
+#
+# ⚠️ 还有一件事要说清楚，别读成"已验"：**手写表的列没有任何东西在核对**
+# （列 diff 只遍历 MySQL 那侧的表）。这是手写表的既定代价。
+HAND_WRITTEN = {"rag_vector", "rag_vector_space", "chat_image"}
+
+
+def _owned_by_hand_written(key) -> bool:
+    """索引 / 外键的键是 `(表名, 对象名)` —— 表名落在豁免集里就摘出去。"""
+    return key[0] in HAND_WRITTEN
 
 
 def pg_query(sql: str) -> list[list[str]]:
@@ -187,8 +203,10 @@ def main() -> int:
         else:
             want_idx[(t, nm)] = {"unique": e["unique"],
                                  "cols": norm_cols(", ".join(x[1] for x in sorted(e["seq"])))}
-    diff("索引集合", sorted(want_idx), sorted(pg["idx"]))
-    for k in sorted(set(want_idx) & set(pg["idx"])):
+    # 手写表的索引不在这条 diff 的射程里（见 HAND_WRITTEN 那段注释）
+    got_idx = {k: v for k, v in pg["idx"].items() if not _owned_by_hand_written(k)}
+    diff("索引集合", sorted(want_idx), sorted(got_idx))
+    for k in sorted(set(want_idx) & set(got_idx)):
         diff("索引 %s.%s 的唯一性" % k, want_idx[k]["unique"], pg["idx"][k]["unique"])
         diff("索引 %s.%s 的列" % k, want_idx[k]["cols"], pg["idx"][k]["cols"])
 
@@ -204,7 +222,8 @@ def main() -> int:
         upd, dele = my["rules"].get((t, n), ("NO ACTION", "NO ACTION"))
         want_fk[(t, n)] = {"type": "FOREIGN KEY", "cols": e["cols"], "ref": e["ref"],
                            "refcols": e["refcols"], "del": dele, "upd": upd}
-    got_fk = {k: v for k, v in pg["cons"].items() if v["type"] == "FOREIGN KEY"}
+    got_fk = {k: v for k, v in pg["cons"].items()
+              if v["type"] == "FOREIGN KEY" and not _owned_by_hand_written(k)}
     diff("外键集合", sorted(want_fk), sorted(got_fk))
     for k in sorted(set(want_fk) & set(got_fk)):
         diff("外键 %s.%s" % k, want_fk[k], got_fk[k])
@@ -232,8 +251,13 @@ def main() -> int:
             print("  - " + b)
         return 1
     print("✓ 结构逐项一致（表 / 列 / 类型 / 可空 / 默认 / 自增 / 索引 / 主键 / 外键 / 注释 / 触发器 / 时区）")
-    print("  （手写的 %s 由 `verify_vectors.py` 管：那一份是逐**位**对账）"
+    # 豁免掉的那几张**各有各的判据**，别一句话带过（以前这里写死了"由
+    # verify_vectors.py 管"，加 chat_image 之后那句话就成了错的）。
+    print("  （手写的 %s 不在上面这条判据的射程内，各有各的判据："
           % "/".join(sorted(HAND_WRITTEN)))
+    print("     · rag_vector / rag_vector_space → `verify_vectors.py`（逐**位**对账）")
+    print("     · chat_image → `tests/pg_integration.rs`（往返逐字相等 + 外键级联删）")
+    print("     ⚠️ 它们的**列**没有任何东西在核对——这是手写表的既定代价，别读成「已验」。）")
     print("  ⚠️ 有两件事**本判据结构上验不了**，别读成「已验证」：")
     print("     ① 排序规则的大小写敏感性 —— 行为差异，不是结构差异。20261017 已拍板「登录按大小写」")
     print("        ⇒ PG 这边（敏感）就是目标行为，MySQL 那边（不敏感）才是**要离开**的那一侧。")

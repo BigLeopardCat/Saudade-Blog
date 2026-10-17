@@ -287,12 +287,28 @@ jobs:
         # `ON_ERROR_STOP=1` 同理由：没有它 psql 会把每条报错打完还退出 0。
         run: |
           set -euo pipefail
-          docker exec -i ${{ job.services.postgres.id }} \
-            psql -U postgres -d saudade_blog -X -q -v ON_ERROR_STOP=1 \
-            -f - < scripts/migration/pg/0000_schema.sql
+          # ⚠️ 20261018 起**不是只加载 `0000`**：清单的唯一事实源是
+          # `scripts/migration/pg/ci_schema_files.py`（它同时持有"哪些进 CI、哪些不进、
+          # 为什么不进"，`--self-test` 断言磁盘上每个编号迁移都归过类）。
+          # 此前只喂 0000 ⇒ 任何"依赖某个编号迁移建出来的表"的集成测在这里红在
+          # **库结构不全**上，红得与代码无关，而**本机全绿**（本机库是完整的）。
+          # 加 `chat_image` 时第一次撞上这个洞（`rag_vector` 早就没进 CI，
+          # 只是那时没有任何 CI 判据碰过它）。
+          for f in $(python3 scripts/migration/pg/ci_schema_files.py); do
+            echo "── 加载 $(basename "$f")"
+            docker exec -i ${{ job.services.postgres.id }} \
+              psql -U postgres -d saudade_blog -X -q -v ON_ERROR_STOP=1 -f - < "$f"
+          done
+          # ⚠️ 这一步以 `postgres` 跑 ⇒ **CI 的 owner 语义与生产不同**（生产必须归
+          # `saudade_app`，见 0002/0003 的头注）。CI 绿**不代表** owner 对。
           echo "✓ 结构就绪：$(docker exec ${{ job.services.postgres.id }} \
             psql -U postgres -d saudade_blog -X -q -t -A \
             -c "SELECT count(*) FROM pg_tables WHERE schemaname='public'") 张表"
+
+      - name: 迁移清单自检（磁盘上每个编号迁移都归过类）
+        # 与上一步同一份事实源。放在这里是为了让"加了 0004 却没说它进不进 CI"
+        # 变成一条**当场可读的红**，而不是三个月后某个集成测的假红。
+        run: python3 scripts/migration/pg/ci_schema_files.py --self-test
 
       - name: Uploads verifier（纯函数自检 + 真库冒烟）
         # `scripts/verify_uploads.py` 核对"库里引用的本地图"与"盘上真实文件"，
