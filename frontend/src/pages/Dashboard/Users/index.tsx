@@ -688,7 +688,7 @@ const Users = () => {
                                       )
                                       return (
                                         <div key={u.id} className="tu-row">
-                                            <div>
+                                            <div className="tu-info">
                                                 <strong className={isFrozen(u) ? 'tu-frozen-name' : ''}>{u.username}</strong>
                                                 {/* 身份徽章（20261002 换掉 antd 的具名色 Tag）：
                                                     图形 + 形状 + 配色三样一起区分四档，见 RoleBadge 头注。
@@ -722,7 +722,7 @@ const Users = () => {
                                                     {qc.text}
                                                 </span>
                                             </div>
-                                            <div style={{ display: 'flex', gap: 8 }}>
+                                            <div className="tu-actions">
                                                 <Button size="small" onClick={() => openPwModal(u)}>修改密码</Button>
                                                 <Button size="small" onClick={() => handleCreateRecoveryCode(u)}>生成恢复码</Button>
                                                 {/* 发通知（20260926）：对**单个**账号发一条站内通知，
