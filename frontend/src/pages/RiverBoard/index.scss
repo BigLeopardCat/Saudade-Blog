@@ -118,7 +118,10 @@
       }
 
       /* 灯焰（f056f800 版）：单元素，flick（scale/rotate）与 sway 走不同属性——
-         flick 动画 transform，sway 动画 margin-left，互不覆盖 */
+         flick 动画 transform，sway 动画 translate，互不覆盖。
+         20261018 两笔欠账：① 去掉常驻 `mix-blend-mode: screen`（常驻混合 = 常驻
+         合成层，且辉光现在由画布发光代理承担）；② sway 从 margin-left 改 translate
+         （margin 是布局属性，逐帧 sway 会逐帧触发布局）。 */
       .rz-flame {
         position: absolute;
         left: 50%;
@@ -128,7 +131,6 @@
         margin: -52px 0 0 -26px;
         border-radius: 50%;
         background: radial-gradient(ellipse at 50% 62%, rgba(255, 248, 214, 1) 0%, rgba(255, 216, 122, 0.7) 42%, rgba(255, 182, 82, 0) 70%);
-        mix-blend-mode: screen;
         transform-origin: 50% 84%;
         animation: rz-flame-flick 1.15s steps(5, end) infinite, rz-flame-sway 3.2s ease-in-out infinite;
       }
@@ -1100,15 +1102,17 @@
     }
   }
 
-  /* 暗角 */
+  /* 暗角（20261018 加强）：加一道中间站，衰减从 56% 提到 42% 起步 —— 原来的两站
+     渐变（透明 → 0.42）在 56% 处有一个肉眼可辨的折点，读到的是"一圈黑边"；三站
+     才是电影暗角那种从画面中心一路滑下去的感觉。 */
   .rz-veg {
     position: absolute;
     inset: 0;
     z-index: 3;
     pointer-events: none;
     background:
-      radial-gradient(ellipse at 50% 42%, transparent 56%, rgba(3, 5, 12, 0.42) 100%),
-      linear-gradient(to bottom, rgba(3, 5, 12, 0.55) 0%, transparent 13%, transparent 76%, rgba(2, 3, 8, 0.62) 100%);
+      radial-gradient(ellipse at 50% 42%, transparent 42%, rgba(3, 5, 12, 0.2) 72%, rgba(3, 5, 12, 0.54) 100%),
+      linear-gradient(to bottom, rgba(3, 5, 12, 0.58) 0%, transparent 14%, transparent 74%, rgba(2, 3, 8, 0.68) 100%);
   }
 
   /* ---------------- 居中弹窗（细读心愿）：与河灯气泡完全同款，仅在底部箭头上方加关闭按钮 ---------------- */
@@ -1283,9 +1287,12 @@
   80% { transform: scale(1.02, 0.87) rotate(-0.4deg); opacity: 0.9; }
 }
 
+/* 摆焰：走独立的 `translate` 属性（不是 margin-left）—— 与 flick 的 transform
+   是两个属性、互不覆盖，而且 translate 由合成器处理、不触发布局。
+   摆幅与原 -26px → -22px 一致（4px）。 */
 @keyframes rz-flame-sway {
-  0%, 100% { margin-left: -26px; }
-  50% { margin-left: -22px; }
+  0%, 100% { translate: 0 0; }
+  50% { translate: 4px 0; }
 }
 
 @keyframes rz-hint-out {
@@ -1497,8 +1504,8 @@
 
   .rz-veg {
     background:
-      radial-gradient(ellipse at 50% 42%, transparent 56%, rgba(3, 5, 12, 0.42) 100%),
-      linear-gradient(to bottom, rgba(3, 5, 12, 0.55) 0%, transparent 13%, transparent 76%, rgba(2, 3, 8, 0.62) 100%);
+      radial-gradient(ellipse at 50% 42%, transparent 42%, rgba(3, 5, 12, 0.2) 72%, rgba(3, 5, 12, 0.54) 100%),
+      linear-gradient(to bottom, rgba(3, 5, 12, 0.58) 0%, transparent 14%, transparent 74%, rgba(2, 3, 8, 0.68) 100%);
   }
 
   .rz-ui {

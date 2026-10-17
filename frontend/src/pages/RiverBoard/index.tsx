@@ -30,6 +30,7 @@ import {
     type ReflBuild,
     type ReflLantern,
 } from "./render/water";
+import { beginGlow, blobSprite, bloom, drawGrain, drawRays, glowBlob, haloSprite } from "./render/post";
 
 /* 河灯留言板 ── 一条只存在于路由之下的河。
    整页为独立顶层路由（/he），不挂博客的头部与底部。
@@ -610,6 +611,9 @@ let baseBackCv: HTMLCanvasElement | null = null;
    `reflCv`    = 把 reflSkyCv 按透视压缩镜像到水面、逐行横向撕开、乘菲涅尔斜坡。
    每 `reflEvery` 帧重建一次，逐帧只多一次 drawImage。 */
 let reflSkyCv: HTMLCanvasElement | null = null;
+/* 发光缓冲（阶段 3 的泛光）：1/4 分辨率，只画**已知的发光体**（月盘/河灯/萤火虫/
+   水面月光柱）。不做阈值提取 —— 那要 getImageData 回读整屏，50ms 级。 */
+let glowCv: HTMLCanvasElement | null = null;
 let reflCv: ReflBuild | null = null;
 let reflTick = 0;
 let reflEvery = 3;
@@ -1669,6 +1673,68 @@ export default function RiverBoard() {
             };
         }
         ctx.restore();
+
+        /* ═══════════════ 阶段 3 · 后期处理 ═══════════════
+           顺序不能换：**先泛光 → 再光轴 → 最后颗粒**。
+           泛光要加在"画完的场景"上；光轴是光在**雾里**的散射，得在泛光之后（否则
+           被泛光糊掉）；颗粒是胶片乳剂，永远最后一层。
+           降级：`soft`（无 WebGL）整段关掉，回到阶段 2 的观感；`reduce`
+           （帧耗时超预算）只留紧光泛光 —— 柔光与光轴是氛围，紧光才是"光源还在发光"。
+           发光缓冲只画**已知的发光体**（月盘 / 每盏灯 / 萤火虫 / 水面月光柱）：
+           阈值提取要 getImageData 回读整屏（50ms 级），而且不可控 —— 想让谁发光就画谁。 */
+        if (!soft) {
+            if (!glowCv) glowCv = document.createElement("canvas");
+            const gg = beginGlow(glowCv, w, h, MARGIN);
+            gg.globalCompositeOperation = "lighter";
+            /* ① 月盘：**环**不是核 —— 月面是本页唯一"一字不许改"的资产，
+               软核叠上去会把月海暗斑一起提亮（实测漂成没有细节的白饼）。 */
+            glowBlob(gg, haloSprite(255, 238, 200), w * MOON.x, h * MOON.y,
+                     (Math.min(w, h) * MOON.r) / 0.3, 0.9);
+            /* ② 每盏河灯：DOM 河灯不在画布上，泛光只能靠这个**代理光斑** ——
+               这也是"美术指定 bloom"相对阈值提取的唯一不可替代之处。
+               半径贴着灯身（约 1.3 倍）：光斑铺到两三倍大就成了一团雾，灯是灯、
+               雾是雾，读者只会看到雾。 */
+            for (const m of metaRef.current) {
+                const scl = Math.min(1, Math.pow(Math.max(0, m.d), 1.15) * 1.25);
+                if (scl < 0.06) continue;
+                const li = lanternXY(m);
+                glowBlob(gg, blobSprite(255, 206, 138), li.x, li.y - 10 * scl,
+                         22 + 56 * scl, 0.12 + 0.28 * scl);
+            }
+            /* ③ 水面上的月光柱：沿月亮那一列放几个光斑（与场景里那条柱体同源）。
+               比灯还淡 —— 水面是**反光**，反光的泛光本来就该比光源弱一档。 */
+            for (let i = 0; i < 9; i++) {
+                const d = 0.3 + i * 0.075;
+                const u0 = riverUAt(moon.x, d);
+                if (u0 === null) continue;
+                const y = riverY(d);
+                if (y < v.yH - 4 || y > h + 20) continue;
+                glowBlob(gg, blobSprite(255, 226, 168), riverX(u0, d), y,
+                         12 + 62 * d, (0.06 + 0.12 * d) * (1 - 0.5 * i / 9));
+            }
+            /* ④ 萤火虫（低空巡游的荧光点）。 */
+            if (!sysReduce) {
+                for (const f of amb.fireflies) {
+                    if (f.d < 0.02 || f.d > 0.95) continue;
+                    glowBlob(gg, blobSprite(214, 255, 190), riverX(f.u, f.d) + px * 0.5,
+                             riverY(f.d) - 22, 9, 0.42);
+                }
+            }
+            bloom(ctx, glowCv, w, h, MARGIN, reduce);
+            if (!reduce) {
+                /* 光轴只出现在**地平线之上**：洒到河面上会读成"水里在发光"，
+                   而这条河的光源只有月亮。 */
+                ctx.save();
+                ctx.beginPath();
+                ctx.rect(-MARGIN, -MARGIN, w + MARGIN * 2, v.yH + MARGIN);
+                ctx.clip();
+                drawRays(ctx, w * MOON.x, h * MOON.y, Math.max(w, h) * 0.5, 0.16);
+                ctx.restore();
+            }
+            /* 颗粒：`sysReduce`（系统偏好）时钉死偏移 —— 它不是运动，但每 3 帧跳一次
+               偏移在"减少动态"的偏好下是多余的抖动。 */
+            drawGrain(ctx, w, h, MARGIN, sysReduce ? 0 : Math.floor(t * 60), reduce ? 0.12 : 0.22);
+        }
     };
 
     /* 灯笼逐帧驱动：与河水同向，向远方缓流。

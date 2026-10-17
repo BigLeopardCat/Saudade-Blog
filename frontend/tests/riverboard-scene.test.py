@@ -327,6 +327,66 @@ MEASURE = r"""
     }
   }
 
+  /* ── 后期（阶段 3）──
+     泛光 / 光轴 / 颗粒都画在画布上（DOM 暗角不参与），所以下面全部读画布像素。 */
+  // 绕月心的圆环带（盘外一圈）：泛光把它抬起来，而盘内的月面不该被它动到
+  const annulus = (r0, r1) => {
+    let s = 0, n = 0;
+    for (let rr = r0; rr <= r1; rr += 3) {
+      for (let k = 0; k < 64; k++) {
+        const a = (k / 64) * Math.PI * 2;
+        const x = mx + Math.cos(a) * rr, y = my + Math.sin(a) * rr;
+        if (x < 2 || x > W - 3 || y < 2 || y > H - 3) continue;
+        s += lum(x, y); n++;
+      }
+    }
+    return n ? s / n : 0;
+  };
+  // 月盘内部（半径 0.6mr 以内）：泛光**不许**把月面漂白 —— 月海细节靠这个量守住
+  const discMean = () => {
+    let s = 0, n = 0, mx2 = 0, mn2 = 0;
+    for (let yy = -mr * 0.6; yy <= mr * 0.6; yy += 2) {
+      for (let xx = -mr * 0.6; xx <= mr * 0.6; xx += 2) {
+        if (xx * xx + yy * yy > mr * mr * 0.36) continue;
+        const v = lum(mx + xx, my + yy);
+        s += v; n++;
+        // 月面"对比度"：盘内亮度的极差（月海是暗斑 ⇒ 有极差才有细节）
+        mx2 = Math.max(mx2, v); mn2 = mn2 ? Math.min(mn2, v) : v;
+      }
+    }
+    return { mean: n ? s / n : 0, range: mx2 - mn2 };
+  };
+  // 1px 步长的横向高频：颗粒是像素级噪声，天空自身的结构在 1px 尺度上是平的
+  const fineHF = (x0, y0, x1, y1) => {
+    let s = 0, n = 0;
+    for (let y = y0 | 0; y < y1; y++) {
+      for (let x = x0 | 0; x < x1 - 1; x++) { s += Math.abs(lum(x, y) - lum(x + 1, y)); n++; }
+    }
+    return n ? s / n : 0;
+  };
+  /* 光轴：绕月心的**角向亮度剖面**（沿半径积分，只取地平线之上）。
+     判据不在这一侧出，而是拿它与「摘掉光轴」那一版**逐角相减** —— 两个构建之间
+     只差光轴这一层，差值剖面就是光轴本身，星点/银河/月晕在相减里全消掉。
+     （本机试过直接量角向起伏：那个量的大头是月晕被地平线裁掉造成的，摘掉光轴
+     只动了 2%，是条空判据。）角向步长取 0.5°：光楔只有 0.6°–2° 宽，7.5° 的
+     步长几乎条条跨过去。 */
+  const rayProf = (() => {
+    const r0 = mr * 2.2, r1 = mr * 6.5, K = 720;
+    const out = [];
+    for (let k = 0; k < K; k++) {
+      const a = (k / K) * Math.PI * 2;
+      let s = 0, n = 0;
+      for (let rr = r0; rr <= r1; rr += 3) {
+        const x = mx + Math.cos(a) * rr, y = my + Math.sin(a) * rr;
+        if (x < 2 || x > W - 3 || y < 2 || y > yH - 4) continue;
+        s += lum(x, y); n++;
+      }
+      out.push(n > 20 ? +(s / n).toFixed(3) : null);
+    }
+    return out;
+  })();
+  const disc = discMean();
+
   return {
     W, H, dpr: W / window.innerWidth,
     // 水面（阶段 2）
@@ -359,6 +419,14 @@ MEASURE = r"""
     // 远山雾纱：最远那层山脊之上那一带 vs 它上方的天空
     ridgeFarBand: meanLum(W * 0.10, H * 0.215, W * 0.35, H * 0.245),
     ridgeFarSky: meanLum(W * 0.10, H * 0.150, W * 0.35, H * 0.175),
+    // 后期（阶段 3）
+    moonRingLum: annulus(mr * 1.3, mr * 2.0),      // 盘外一圈：泛光抬这里
+    moonDiscLum: disc.mean,                        // 盘内：泛光**不许**抬这里
+    moonDiscRange: disc.range,                     // 盘内极差：月海细节的代理量
+    // 远离一切发光体的左上天空：既在光轴射程（R=max(W,H)*0.5）之外，也不在银河带上
+    farSkyLum: meanLum(W * 0.02, H * 0.05, W * 0.11, H * 0.16),
+    grainHF: fineHF(W * 0.02, H * 0.05, W * 0.11, H * 0.16),
+    rayProf,
   };
 }
 """
@@ -639,6 +707,89 @@ def main() -> int:
     check("河道底色：改回不透明满铺后，水线边缘带明显变暗（那一笔确实盖住过河道）",
           wb["edgeLum"] > W_M["opaque"]["edgeLum"] * 1.08,
           {"evenodd": round(wb["edgeLum"], 2), "opaque": round(W_M["opaque"]["edgeLum"], 2)})
+
+    # ─────────────────────── 阶段 3 · 后期处理 ───────────────────────
+    POST = f"{RB}/render/post.ts"
+    BLOOM_ANCHOR = "    const sw = glow.width;\n    const sh = glow.height;"
+    RAYS_ANCHOR = "    ctx.save();\n    ctx.globalCompositeOperation = \"lighter\";\n    ctx.globalAlpha = alpha > 1 ? 1 : alpha;"
+    GRAIN_ANCHOR = "    if (!grainPat) grainPat = ctx.createPattern(grainTexture(), \"repeat\");"
+    MOONHALO_CALL = "haloSprite(255, 238, 200)"
+
+    print("\n⑥ 阶段 3 后期：四份「摘掉那一层」的反向对照（基准沿用上面的 base）")
+    pbuilds = {
+        # 泛光：整段不合成回主画布（发光缓冲照画，只是不叠回来）
+        "noBloom": build_sandbox({POST: [(BLOOM_ANCHOR, "    if (ctx) return;\n" + BLOOM_ANCHOR)]}),
+        # 光轴：不画（只影响地平线之上）
+        "noRays": build_sandbox({POST: [(RAYS_ANCHOR, "    if (ctx) return;\n" + RAYS_ANCHOR)]}),
+        # 颗粒：不铺噪声
+        "noGrain": build_sandbox({POST: [(GRAIN_ANCHOR, "    if (ctx) return;\n" + GRAIN_ANCHOR)]}),
+        # 月晕：把环形光晕换成**全透明**贴图（发光缓冲里这一笔等于没画）。
+        # 用 blobSprite(0,0,0) 而不是删掉调用：`lighter` 合成下黑色加零，等价于不画。
+        "noMoonHalo": build_sandbox({IDX: [(MOONHALO_CALL, "blobSprite(0, 0, 0)")]}),
+    }
+    P_M = {}
+    for k, sb in pbuilds.items():
+        P_M[k] = render(serve(sb))
+        if P_M[k].get("err"):
+            raise SystemExit("挂载失败（%s）：%s" % (k, P_M[k]))
+    for k, m in P_M.items():
+        print("     %-11s %s" % (k, json.dumps(
+            {kk: (round(vv, 3) if isinstance(vv, float) else vv) for kk, vv in m.items()
+             if kk in ("moonRingLum", "moonDiscLum", "moonDiscRange", "farSkyLum",
+                       "grainHF")},
+            ensure_ascii=False)))
+
+    print("\n⑦ 后期判据（每条都配反向对照；对照不红 = 判据是空断言）")
+
+    check("对照构建本身是「活页面」（后期各档的月亮区都非黑）",
+          all(P_M[k]["moonRingLum"] > 2 for k in pbuilds),
+          {k: round(P_M[k]["moonRingLum"], 2) for k in pbuilds})
+
+    # 泛光：抬的是**盘外那一圈**，不是全屏提亮。
+    # 两条一起看才有意义：只判"月亮周围变亮"，一层全屏加光也能过。
+    check("泛光：月盘外一圈的亮度在开泛光后显著抬升",
+          wb["moonRingLum"] > P_M["noBloom"]["moonRingLum"] * 1.12,
+          {"with": round(wb["moonRingLum"], 2), "without": round(P_M["noBloom"]["moonRingLum"], 2)})
+    ring_gain = wb["moonRingLum"] - P_M["noBloom"]["moonRingLum"]
+    far_gain = abs(wb["farSkyLum"] - P_M["noBloom"]["farSkyLum"])
+    check("　└ 对照：同一份改动**没有**把远离月亮的天空一起抬起来（不是全屏提亮）",
+          far_gain < ring_gain * 0.05,
+          {"远处Δ": round(far_gain, 3), "月周Δ": round(ring_gain, 3),
+           "远处/月周": round(far_gain / max(1e-9, ring_gain), 4)})
+
+    # 月盘：泛光**不许**动盘面。月面是本页唯一"一字不许改"的资产，而 `lighter`
+    # 合成天然会把它往白里推 —— 这条判据就是那道防线（实测第一版把月海漂没了）。
+    check("月盘：泛光没有把盘面漂白（盘内亮度与极差都守住了）",
+          wb["moonDiscLum"] < P_M["noBloom"]["moonDiscLum"] * 1.06
+          and wb["moonDiscRange"] > P_M["noBloom"]["moonDiscRange"] * 0.9,
+          {"盘内亮度 with/without": [round(wb["moonDiscLum"], 2), round(P_M["noBloom"]["moonDiscLum"], 2)],
+           "盘内极差 with/without": [round(wb["moonDiscRange"], 2), round(P_M["noBloom"]["moonDiscRange"], 2)]})
+
+    # 月晕：环形贴图单独摘掉 ⇒ 盘外那一圈必须掉下来（否则泛光的抬升另有来源）
+    check("月晕：摘掉环形光晕贴图后，盘外那一圈明显变暗",
+          wb["moonRingLum"] > P_M["noMoonHalo"]["moonRingLum"] * 1.10,
+          {"with": round(wb["moonRingLum"], 2), "without": round(P_M["noMoonHalo"]["moonRingLum"], 2)})
+
+    # 光轴：逐角相减的差值剖面。两条一起看 —— ① 光轴真的往天空里加了光；
+    # ② 这份加光**不是各向同性**的（各向同性 = 那只是一圈更大的月晕，
+    # 不是"绕月心放射的光柱"）。判据量的是形状，不是"有没有变亮"。
+    rp_a, rp_b = wb["rayProf"], P_M["noRays"]["rayProf"]
+    rdiff = [x - y for x, y in zip(rp_a, rp_b) if x is not None and y is not None]
+    if len(rdiff) < 24:
+        raise SystemExit("光轴差值剖面的有效角太少（%d）：地平线裁剪把取样带吃掉了" % len(rdiff))
+    rmean = sum(rdiff) / len(rdiff)
+    rstd = (sum((v - rmean) ** 2 for v in rdiff) / len(rdiff)) ** 0.5
+    check("光轴：地平线之上那一圈天空在开光轴后被加亮（逐角差值剖面的均值）",
+          rmean > 0.30,
+          {"均值": round(rmean, 3), "有效角数": len(rdiff)})
+    check("　└ 光轴不是各向同性的（差值剖面的起伏/均值 —— 各向同性就只是「更大的月晕」）",
+          rstd / max(1e-9, rmean) > 0.4,
+          {"起伏": round(rstd, 3), "起伏/均值": round(rstd / max(1e-9, rmean), 3)})
+
+    # 颗粒：1px 步长的高频。落在**平坦夜空**上 —— 那里除了颗粒没有任何像素级结构
+    check("颗粒：平坦夜空的像素级高频在摘掉颗粒后下降",
+          wb["grainHF"] > P_M["noGrain"]["grainHF"] * 1.06,
+          {"with": round(wb["grainHF"], 3), "without": round(P_M["noGrain"]["grainHF"], 3)})
 
     print("\n%s（通过 %d）" % ("全部通过" if FAIL == 0 else f"失败 {FAIL} 项", PASS))
     return 0 if FAIL == 0 else 1
