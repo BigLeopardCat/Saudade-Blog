@@ -1531,9 +1531,26 @@ fn json_capped(v: &serde_json::Value, key: &str, cap: usize) -> String {
 /// **未完结状态**（六态里的三态）——读侧查询过滤的唯一来源。写侧不判状态（状态由
 /// agent 声明，Rust 只存）；这里只有一个消费者，所以不另造 `is_open(state)` 包装。
 const TASK_OPEN_STATES: [&str; 3] = ["submitted", "running", "input_required"];
-/// 同一会话最多注入几条未完结任务（最新优先）。与 execution_log 的读侧去重同一条
-/// 纪律：**限额与裁剪都在读侧**——存量行无需迁移，改上限不动数据。
-const TASK_INLINE_MAX: usize = 3;
+// 「同一次注入最多列几条未完结任务」这一格**20261013 起不在这里**（原先有个
+// `TASK_INLINE_MAX = 3`，与 execution_log 的读侧去重同一条纪律）。
+//
+// 挪走的理由是一次实证事故（会话 347，`logs/agent/traces/20261013/` 23:07–23:10）：
+// 读侧按"最新 3 条"截断，而**回执结算与"下一件做什么"两条判据读的就是读回来的这份
+// 列表**（agent 侧 `tasks.rows_to_settle` / `graph._ledger_next`）——于是排序第 4 位
+// 往后的未完结行**结构上结不了账**（`advance_by_receipts` 拿不到它），却会在前面几行
+// 结算掉、窗口往前挪之后**复活成"台账里剩下的那件"**。当晚现场：09:52 那次登记的两行
+// 「以你的口吻通知他」（一行措辞长、一行是主人原话的切片）分别落在窗口内外，站内通知
+// 发出去的那一轮只结算了窗口里那行，另一行 4 分钟后被当成"下一件"重做了一遍
+// ——**同一条通知发了两遍**（发出后没有撤回通道）。
+//
+// 治法：**读侧给全集，裁剪只留在渲染那一步**。列几行给模型看是提示词尺寸的事，
+// 口径在 agent 侧（`config/settings.py` 的 `agent_task_inject_max`，由
+// `tasks.render_open_tasks` 施加）——两处都限就会让"结算射程"跟着提示词尺寸走，
+// 那正是这次事故的形状。
+//
+// 注意**改这里不改 graph 臂的提示词**：`render_open_tasks` 仍按最新优先取前 N 行，
+// 而下面的排序是 `order_by_desc(Id)`，所以注入的文本逐字节不变（只是它挑的那 3 行
+// 现在是从全集里挑的，不再是"碰巧被 SQL 留下的那 3 行"）。
 /// 读侧时效：超过这个时长的未完结任务不再注入（72 小时）。
 /// 与 `pending_action` 的 60 分钟刻意不同：那件事的凭据（确认令牌）10 分钟就失效，
 /// 而任务存在的理由正是"别把主人要的事忘了"——它必须比一轮对话活得久。但无限期挂着
@@ -1653,11 +1670,15 @@ async fn load_agent_tasks(db: &sea_orm::DatabaseConnection, conversation_id: i32
     let rows = agent_task::Entity::find()
         .filter(agent_task::Column::ConversationId.eq(conversation_id))
         .filter(agent_task::Column::CreatedAt.gte(cutoff))
-        // 终态过滤**在查询里**（不是取回来再筛）：限额是"最新 3 条"，先取再筛会让
-        // 几条已完结的任务把窗口占掉，注入的行数少于 3 且没人看得出来为什么
+        // 终态过滤**在查询里**（不是取回来再筛）：先取再筛会让几条已完结的任务把
+        // 注入的行挤掉，注入的行数变少且没人看得出来为什么
         .filter(agent_task::Column::State.is_in(TASK_OPEN_STATES))
         .order_by_desc(agent_task::Column::Id)
-        .limit(TASK_INLINE_MAX as u64)
+        // **这里没有 `.limit(...)` 是刻意的，别加回来**（20261013，理由见
+        // `TASK_OPEN_STATES` 上方那段）：这一份列表同时是**注入文本的来源**与
+        // **结算／"下一件做什么"两条判据的射程**，给它加窗口就等于让"哪几件事结得
+        // 掉账"跟着提示词尺寸走。列几行给模型看由 agent 侧 `render_open_tasks` 决定
+        // （最新优先取前 N 行），与这里取全集是两件事。
         .all(db)
         .await
         .unwrap_or_default();
