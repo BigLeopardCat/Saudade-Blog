@@ -5,10 +5,13 @@
 默认**只列计划不动库**（与 `mysql2pg_data.py` 同一立场），`--apply` 才真搬；
 `--sql` 只建表。重复跑安全：开头 `TRUNCATE` 那两张表重来。
 
+**与 `mysql2pg_data.py` 同一道闸**：那个 TRUNCATE 在切流之后就是"把在用的向量清空"，
+所以真搬要 `--apply` **加上** `--i-know-this-wipes-pg`（理由见 `mysql2pg_data.WIPE_FLAG`）。
+
 用法：
     python3 scripts/migration/pg/load_vectors.py --sql      # 只建表
     python3 scripts/migration/pg/load_vectors.py            # 干跑（读文件、校验、报计划）
-    python3 scripts/migration/pg/load_vectors.py --apply    # 真搬
+    python3 scripts/migration/pg/load_vectors.py --apply --i-know-this-wipes-pg
     python3 scripts/migration/pg/verify_vectors.py          # 判据：位级对账
 
 ── 两条只有搬向量才会踩到的 ─────────────────────────────────────────────────
@@ -33,7 +36,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from mysql2pg import REPO  # noqa: E402
-from mysql2pg_data import PG_BIN, PG_DB, apply_script, copy_field  # noqa: E402
+from mysql2pg_data import (PG_BIN, PG_DB, WIPE_FLAG, apply_script,  # noqa: E402
+                           copy_field, live_readers, refuse_wipe)
 
 SQL_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "0001_rag_vectors.sql")
 VECTOR_DIR = os.environ.get(
@@ -136,11 +140,16 @@ def run_sql_file(path: str) -> None:
 
 
 def main() -> int:
-    if "--sql" in sys.argv[1:]:
+    args = sys.argv[1:]
+    if "--sql" in args:
         print("建表：%s" % SQL_FILE)
         run_sql_file(SQL_FILE)
         print("✓ 建完（幂等：IF NOT EXISTS）")
         return 0
+
+    # 与 `mysql2pg_data.main()` 同一道闸、同一处位置（先拒、再干跑）。
+    if "--apply" in args and WIPE_FLAG not in args:
+        refuse_wipe(["rag_vector", "rag_vector_space"])
 
     if not os.path.isdir(VECTOR_DIR):
         sys.exit("找不到向量目录 %s（用 RAG_VECTOR_DIR 指别处）" % VECTOR_DIR)
@@ -163,11 +172,14 @@ def main() -> int:
     print("   建库时刻    %s" % m.get("built_at"))
     print()
 
-    if "--apply" not in sys.argv[1:]:
-        print("干跑结束（一个字都没写）。真搬：加 --apply（表还没建就先 --sql）")
+    if "--apply" not in args:
+        print("干跑结束（一个字都没写）。真搬：加 --apply %s（表还没建就先 --sql）" % WIPE_FLAG)
         return 0
 
     print("── 装载 ───────────────────────────────────────────────────────")
+    readers = live_readers()
+    print("   ⚠️ 接下来会 TRUNCATE rag_vector / rag_vector_space。此刻连着这个库的：%s"
+          % ("、".join(readers) if readers else "没有别人"))
     apply_script(build_script(a))
     print("   psql 退出码 0（一个事务；任何一步失败整体回滚）")
     print()

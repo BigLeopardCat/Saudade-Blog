@@ -21,6 +21,11 @@
 由此还有一条要记住的：**切流量那天必须重新搬一次**（在停止写之后、翻转之前），
 不能拿今天这份快照去翻。
 
+── 本判据还管一件事：外键孤儿 ──────────────────────────────────────────────
+装载时 `SET session_replication_role = replica` 把外键**关掉**了，所以载进去的数据
+**没有被 PG 独立验证过外键完整性**。本文的逐行对账比的是**内容**，不比"这行指向的父行在不在"。
+补上的那一节两侧都扫、看方向（PG 比 MySQL 多才算搬运的错）。详见那节的注释。
+
 用法：
     python3 scripts/migration/pg/verify_data_parity.py
     PG_DB=… PG_BIN="psql -U …" python3 …/verify_data_parity.py
@@ -32,9 +37,9 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from mysql2pg import entity_bools, load_catalog, q_ident  # noqa: E402
+from mysql2pg import SCHEMA, entity_bools, load_catalog, q_ident  # noqa: E402
 from mysql2pg_data import (PG_BIN, PG_DB, identity_col,  # noqa: E402
-                           is_str, read_rows)
+                           is_str, pg_scalar, query_raw, read_rows)
 
 
 # ── 读 PG ───────────────────────────────────────────────────────────────────
@@ -99,15 +104,6 @@ def read_pg(cat: dict, table: str) -> list[list[str | None]]:
     return rows
 
 
-def pg_scalar(sql: str) -> list[list[str]]:
-    argv = PG_BIN.split() + ["-d", PG_DB, "-X", "-q", "-t", "-A", "-F", "\t",
-                             "-v", "ON_ERROR_STOP=1", "-c", sql]
-    r = subprocess.run(argv, capture_output=True)
-    if r.returncode != 0:
-        sys.exit("psql 失败：%s" % r.stderr.decode("utf-8", "replace").strip())
-    return [ln.split("\t") for ln in r.stdout.decode("utf-8").split("\n") if ln != ""]
-
-
 # ── 归一 ────────────────────────────────────────────────────────────────────
 def canon(v: str | None, c: dict, is_bool: bool, side: str):
     """把一个字段归到「两边都该长成同一个样子」的形状。**两侧共用这一个函数** ——
@@ -131,6 +127,43 @@ def canon_rows(rows, cat, table, side, bools):
 
 def sort_key(r):
     return tuple("\x00N\x00" if x is None else x for x in r)
+
+
+# ── 外键孤儿扫描 ────────────────────────────────────────────────────────────
+# **为什么非有不可**：装载时 `SET session_replication_role = replica` 把外键**关掉**了
+# （否则没法按任意顺序 COPY）。于是载进去的数据**从来没有被 PG 独立验证过外键完整性** ——
+# 上面那轮"逐行对账"比的是**内容**，不比"这行指向的父行在不在"。源数据来自带 FK 的 InnoDB，
+# 所以今天大概率是干净的；但那是**靠前提对**，不是靠判据对。这一节把它补成判据。
+#
+# **两侧都扫、看方向**（与本文开头那条同一口径）：PG 孤儿数 == MySQL 孤儿数 ⇒ 是**源数据里
+# 本来就有**的事实（MySQL 那边也可能是 FK 事后才加的、或 `foreign_key_checks=0` 写进去的），
+# 只告警不判红；**PG 比 MySQL 多** ⇒ 才要查搬运。
+
+
+def fk_list(cat: dict) -> list[dict]:
+    return sorted(
+        ({"child": t, "parent": e["ref"], "cols": e["cols"],
+          "refcols": e["refcols"], "name": n}
+         for (t, n), e in cat["cons"].items() if e["type"] == "FOREIGN KEY"),
+        key=lambda x: (x["child"], x["name"]))
+
+
+def orphan_sql(fk: dict, side: str) -> str:
+    """数孤儿。**MATCH SIMPLE 的语义别写错**：PG 与 InnoDB 的默认都是「子列里**任一**为 NULL
+    ⇒ 这条约束就不适用」，所以孤儿 = 子列**全非空** 且找不到父行。
+    照 `=` 拼而不是 `IS NOT DISTINCT FROM`：NULL 已经被前一个条件排掉了。"""
+    def q(s: str) -> str:
+        return ("`%s`" % s) if side == "mysql" else q_ident(s)
+
+    def tbl(s: str) -> str:
+        return ("`%s`.`%s`" % (SCHEMA, s)) if side == "mysql" else q_ident(s)
+
+    notnull = " AND ".join("%s IS NOT NULL" % q(c) for c in fk["cols"])
+    match = " AND ".join("p.%s = ch.%s" % (q(a), q(b))
+                         for a, b in zip(fk["refcols"], fk["cols"]))
+    return ("SELECT COUNT(*) FROM %s ch WHERE %s AND NOT EXISTS "
+            "(SELECT 1 FROM %s p WHERE %s)"
+            % (tbl(fk["child"]), notnull, tbl(fk["parent"]), match))
 
 
 # ── 主 ──────────────────────────────────────────────────────────────────────
@@ -159,6 +192,26 @@ def main() -> int:
                               a[first], b[first]))
         print("   %-24s %6d 行  %s" % (t, len(my), mark))
 
+    # 外键孤儿（见上面那段"为什么非有不可"）
+    print("── 外键孤儿扫描（装载时外键是关着的，这一节是它的事后核对）────")
+    fks = fk_list(cat)
+    fk_bad = 0
+    for fk in fks:
+        my = int(query_raw(orphan_sql(fk, "mysql"))[0][0])
+        pg = int(pg_scalar(orphan_sql(fk, "pg"))[0][0])
+        if pg > my:
+            mark, fk_bad = "✗ PG 多 %d 行" % (pg - my), fk_bad + 1
+            bad.append("%s → %s：孤儿 MySQL %d 行 vs PG %d 行（搬运搬坏了，不是源数据的事）"
+                       % (fk["child"], fk["parent"], my, pg))
+        elif pg:
+            mark = "⚠ %d 行（两侧一样 ⇒ 源数据本来就有，不是搬运）" % pg
+        else:
+            mark = "✓"
+        print("   %-20s → %-18s MySQL %-4d PG %-4d %s"
+              % (fk["child"], fk["parent"], my, pg, mark))
+    if not fks:
+        print("   （目录里没有外键 —— 这不正常，先查 `mysql2pg.py` 的外键读取）")
+
     # 自增序列：搬完 setval 没归位的话，下一批 INSERT 会撞主键（本判据不看「有没有归位」，
     # 只看「下一个值会不会撞」）
     print("── 自增序列 ───────────────────────────────────────────────────")
@@ -186,6 +239,7 @@ def main() -> int:
             print("  - " + x)
         return 1
     print("✓ 数据逐行一致：%d 张表 / %d 行，每一行的每一个字段都对过" % (len(tables), total))
+    print("  （另：%d 个外键扫过孤儿，PG 一个都没多）" % len(fks))
     print("  （结构另判：`python3 scripts/migration/pg/verify_parity.py`）")
     return 0
 

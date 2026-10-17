@@ -9,9 +9,13 @@
 默认**只列计划不动库**（与 `scripts/deploy/prune_r2.py`、`eval/trace_retention.py` 同一立场），
 `--apply` 才真搬。重复跑是安全的：开头 `TRUNCATE … RESTART IDENTITY` 全表重来。
 
+**但"可重复跑"与"可以随便跑"是两件事**：那个 TRUNCATE 在切流之后就是"清空生产库"。
+所以真搬要过两道 —— `--apply` **加上** `--i-know-this-wipes-pg`（理由见下面那个常量）。
+
 用法：
     python3 scripts/migration/pg/mysql2pg_data.py            # 干跑：列计划 + 报脏数据
-    python3 scripts/migration/pg/mysql2pg_data.py --apply    # 真搬
+    python3 scripts/migration/pg/mysql2pg_data.py --apply    # 只敲这个会被拒（切流之后它是清库）
+    python3 scripts/migration/pg/mysql2pg_data.py --apply --i-know-this-wipes-pg
     python3 scripts/migration/pg/verify_data_parity.py       # 判据：两边逐行对账
 
 ── 三条只有搬数据才会踩到、建结构时看不见的坑 ────────────────────────────────
@@ -183,6 +187,47 @@ def apply_script(script: str) -> None:
         sys.exit("psql 退出码 %d —— 上面那几行就是原因（本笔已整体回滚）" % p.returncode)
 
 
+def pg_scalar(sql: str) -> list[list[str]]:
+    """读 PG，按制表符切。**只此一份** —— `verify_data_parity.py` 也从这里 import。
+    两个文件各写一份 psql 调用的话，口径一漂，对账就变成自己骗自己。"""
+    argv = PG_BIN.split() + ["-d", PG_DB, "-X", "-q", "-t", "-A", "-F", "\t",
+                             "-v", "ON_ERROR_STOP=1", "-c", sql]
+    r = subprocess.run(argv, capture_output=True)
+    if r.returncode != 0:
+        sys.exit("psql 失败：%s" % r.stderr.decode("utf-8", "replace").strip())
+    return [ln.split("\t") for ln in r.stdout.decode("utf-8").split("\n") if ln != ""]
+
+
+# ── 切流之后不许误跑（`--apply` 的第二道点名）────────────────────────────────
+# 本脚本开头是 `TRUNCATE TABLE 那 29 张表 RESTART IDENTITY CASCADE`。PG 今天没有任何读方
+# ⇒ 误跑一次爆炸半径为零；**切流那天起，误跑一次就是把生产库清空**。
+# 所以 `--apply` 不再够用，真搬要再点一次名。
+#
+# **为什么是 flag，而不是"探测有没有人连着"**：探测的结果**会变**（今天没人连、明天有人连），
+# 而闸必须在切流前后给同一个答案 —— 否则它绿的是"今天没事"，不是"这个动作不危险"。
+# 连接探测另有用处（告诉你正要抽掉谁脚下的地毯），所以两件都做：**flag 是闸，探测是信息**。
+WIPE_FLAG = "--i-know-this-wipes-pg"
+
+
+def refuse_wipe(tables: list[str]) -> None:
+    sys.exit(
+        "拒绝执行：`--apply` 开头是 `TRUNCATE TABLE %s RESTART IDENTITY CASCADE`。\n"
+        "  PG 今天没有读方 ⇒ 误跑一次爆炸半径为零；**切流之后，误跑一次就是把生产库清空**。\n"
+        "  真搬请再点一次名：  --apply %s\n"
+        "  （这道闸与「今天有没有人连着」无关 —— 闸要在切流前后给同一个答案。）"
+        % ("、".join(tables[:3]) + ("…" if len(tables) > 3 else ""), WIPE_FLAG))
+
+
+def live_readers() -> list[str]:
+    """谁正连着这个库。**只是信息，不是闸**（理由见上面 `WIPE_FLAG`）。"""
+    return ["%s/%s ×%s" % (a or "(无名)", u or "?", n) for a, u, n in pg_scalar(
+        "SELECT COALESCE(application_name,''), COALESCE(usename,''), count(*)::text"
+        "  FROM pg_stat_activity"
+        " WHERE datname = %s AND pid <> pg_backend_pid()"
+        "   AND backend_type = 'client backend'"
+        " GROUP BY 1, 2 ORDER BY 1, 2" % q_lit(PG_DB))]
+
+
 # ── 干跑：只查不写 ──────────────────────────────────────────────────────────
 def dry_run(cat: dict, bools: dict) -> int:
     tables = sorted(cat["cols"])
@@ -228,17 +273,26 @@ def dry_run(cat: dict, bools: dict) -> int:
 
 
 def main() -> int:
-    apply = "--apply" in sys.argv[1:]
+    args = sys.argv[1:]
+    apply = "--apply" in args
     cat = load_catalog()
     bools = entity_bools()
 
     if not apply:
         return dry_run(cat, bools)
 
+    # 第一道：切流之后 `--apply` 就是"清空生产库"。**先拒、再干跑** ——
+    # 少敲一个 flag 的人不该先看到一整份计划再被拒（那会让人以为"只差一步"）。
+    if WIPE_FLAG not in args:
+        refuse_wipe(sorted(cat["cols"]))
+
     # 真搬也先过一遍干跑的闸：哨兵冲突 / 布尔越界必须在装载之前挡住
     if dry_run(cat, bools) != 0:
         sys.exit("上面有红项 —— 先弄清是什么，别硬搬")
     print("── 装载 ───────────────────────────────────────────────────────")
+    readers = live_readers()
+    print("   ⚠️ 接下来会 TRUNCATE 这 %d 张表。此刻连着这个库的：%s"
+          % (len(cat["cols"]), "、".join(readers) if readers else "没有别人"))
     apply_script(build_script(cat, bools))
     print("   psql 退出码 0（整笔在一个事务里，任何一步失败整体回滚）")
     print()
