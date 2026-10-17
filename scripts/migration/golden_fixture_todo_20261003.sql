@@ -1,4 +1,12 @@
 USE saudade_blog;
+-- ⚠️ **20261017 起本文件的主人 uid 已作废——不要再重跑 §② 的复位/插入段。**
+-- 当天 721 被降权为 user（`fixture_admin_closeout_20261017.sql`），golden 的管理员身份
+-- 换成一个专用的新建夹具号 **756 `agent_golden_admin_20261017`**
+-- （`golden_admin_fixture_20261017.sql`），本文件建的那一行已随之迁到 756 名下。
+-- 再按本文件跑一遍会**在 721 名下重建一条**，而 721 已不是 `GOLDEN_ADMIN_UID` ⇒
+-- 夹具闸判 absent ⇒ `admin_todo_done_popup` / `admin_todo_reschedule_popup` 两条用例
+-- 静默跳过。**复位/清场改走 `golden_admin_fixture_20261017.sql` 的 §③ 判据（user_id = 756）。**
+-- 下面这份正文一字不改地留着：它是 20261003 那次**实际怎么做的**记录。
 -- =============================================================================
 -- 20261003 golden 弹卡用例夹具：待办 `agent_fixture_todo_pending_a（评测夹具，勿手改）`
 --        （主人 = 721 `agent_test_admin_721`）
