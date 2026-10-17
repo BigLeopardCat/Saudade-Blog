@@ -20,8 +20,17 @@ resolver = "3"
 # 而它的签名 0.8 未变 ⇒ 不用动。
 axum = { version = "0.8", features = ["macros", "multipart"] }
 tokio = { version = "1", features = ["full"] }
-sea-orm = { version = "1.1", features = [ "sqlx-mysql", "runtime-tokio-rustls", "macros", "mock" ] }
-sqlx = { version = "0.8", features = ["mysql", "runtime-tokio-rustls"] }
+# MySQL → PostgreSQL（20261018）：生产库已切到 PG，驱动随之换成 `sqlx-postgres`。
+# **只留一档是有意的**（一次性切换，不是双栈过渡）：`sqlx-mysql` 摘掉之后这个二进制
+# 结构上连不上 MySQL —— 回滚要重新部署上一版 sha 的包（见 `docs/` 的切库记录），
+# 而不是"改一行 `.env` 就回去"。这么选是为了不让两处方言分支（`CAST AS SIGNED/BIGINT`、
+# 重复键 SQLSTATE 1062 vs 23505）长期留在代码里。
+# ⚠️ **别拿 `Cargo.lock` 判断这条**：锁文件是**与特征无关**的，`sqlx` 那个伞包下面
+# 三个后端（mysql/postgres/sqlite）**永远**都列在它的 `dependencies` 里，摘不干净。
+# 判据是构建图，不是锁文件：`cargo tree -i sqlx-mysql` 应当报 **`nothing to print`**
+# （实测如此），而 `cargo tree -i sqlx-postgres` 能列出我们这一支。
+sea-orm = { version = "1.1", features = [ "sqlx-postgres", "runtime-tokio-rustls", "macros", "mock" ] }
+sqlx = { version = "0.8", features = ["postgres", "runtime-tokio-rustls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # 0.5 → 0.7（20261013，跨两个 minor）。用的三个特征（cors / trace / fs）都在，

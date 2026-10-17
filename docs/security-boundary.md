@@ -249,7 +249,7 @@ agent 侧可以没有鉴权的原因：它只听回环，公网到不了；能�
 代价：每个认证请求多一次 `user` 主键查询。这是"能收回"的
 入场费，不是可优化项：无状态与实际收回在定义上互斥。`auth_guard`（后台）本来就在按
 `claims.sub` 查库判角色，所以那一侧是零增量；增量在原本不查库的前台接口（`profile` /
-`todos` / `conversation` / `chat`）：它们只验签、不查库，现在多一次 PK 命中。单机 MySQL、
+`todos` / `conversation` / `chat`）：它们只验签、不查库，现在多一次 PK 命中。单机 PostgreSQL、
 QPS 量级在个位数，这个代价可以忽略；规模上去之后的下一步是缓存代次（键 = uid，
 失效判定靠冻结/改密码这两个写入点主动删键），而不是退回无状态。
 
@@ -339,7 +339,7 @@ QPS 量级在个位数，这个代价可以忽略；规模上去之后的下一�
 |---|---|---|
 | **令牌收回只到"账号"粒度，没有"设备"粒度** | 用户想问"我现在登录着哪些设备、把那一台踢掉"时答不了；能做的只有"改密码/被冻结 ⇒ 该账号全部令牌作废" | 代次收回（见 §2.3）解决了"能不能收回"，**没解决"收回哪一枚"**：按下沉到单令牌就得上 `jti` + 黑名单（每枚一张表、随过期时间清理），而本系统的实际需求是"全家一起下线"，代次计数器用一行整数办完了同一件事。真要做设备管理，那条路是 `jti` 而不是把代次拆细 |
 | **没有短令牌 + refresh 轮换** | 令牌一旦泄漏，在 `exp` 之前一直可用（`ver` 只能让**服务端主动**作废，挡不住"服务端不知道"的持有者） | 7 天单令牌（见 §2.3）。企业做法是 access 短（5–15 分钟）+ refresh 长且**一次性轮换**（重放旧 refresh 即判定失窃并全族作废）；本系统是单人博客，改密码 + 冻结两条主动通道已覆盖真实需求，**没有为此加一张 refresh 表**。要加时注意：轮换的判据是"一个 refresh 用了两次"，需要服务端存已用过的序列 |
-| **冻结/收回管不到物联网那条链路**（device-service 与 EMQX broker） | 一个被冻结账号手里那枚 7 天令牌，在过期前**仍然是一枚合法身份**：`device-service` 收它、`/device-api/*` 照走（范围是它自己名下的设备）、`mqtts` 连接照建（`device-console` 复用的就是同一枚 `localStorage.tokenKey`）。即"冻结 = 全站立刻下线"这句话**对 IoT 那半边为假** | **未修**。结构性原因：那两个验证者**各自解一遍同一个 JWT、且都不查库**：device-service 的令牌校验函数用自己的 `Claims{sub,exp,role}` 只验签与 `exp`（**无 `deny_unknown_fields`，所以新增的 `ver` 声明不会打挂它**，这一点已核过是安全的：`Cargo.toml` 里只有 `rusqlite`、没有 MySQL 客户端，它今天也**没有能力**查 `user.status`），EMQX broker 侧同样只校验签名与 `exp`（`iot/emqx/configure_emqx.py` 的 `mechanism=jwt` 块）。要收口得让 device-service 能读 `user.status`/`token_version`（先得给它一条 MySQL 通道），或改成回调博客后端做在线校验：是一次跨服务的改造。**本仓的冻结功能不受此影响**：站点自身的所有 `/api/*` 通道（含前台）都走 `auth_uid`/`auth_guard`，冻结即生效；受影响的只有 device-api 与 MQTT 两个入口。因此后台冻结弹窗的文案写的是"已登录的**网页会话**立即失效"，没有写"所有设备"：**文案不许越过判据** |
+| **冻结/收回管不到物联网那条链路**（device-service 与 EMQX broker） | 一个被冻结账号手里那枚 7 天令牌，在过期前**仍然是一枚合法身份**：`device-service` 收它、`/device-api/*` 照走（范围是它自己名下的设备）、`mqtts` 连接照建（`device-console` 复用的就是同一枚 `localStorage.tokenKey`）。即"冻结 = 全站立刻下线"这句话**对 IoT 那半边为假** | **未修**。结构性原因：那两个验证者**各自解一遍同一个 JWT、且都不查库**：device-service 的令牌校验函数用自己的 `Claims{sub,exp,role}` 只验签与 `exp`（**无 `deny_unknown_fields`，所以新增的 `ver` 声明不会打挂它**，这一点已核过是安全的：`Cargo.toml` 里只有 `rusqlite`、没有 MySQL 客户端，它今天也**没有能力**查 `user.status`），EMQX broker 侧同样只校验签名与 `exp`（`iot/emqx/configure_emqx.py` 的 `mechanism=jwt` 块）。要收口得让 device-service 能读 `user.status`/`token_version`（先得给它一条 PostgreSQL 通道），或改成回调博客后端做在线校验：是一次跨服务的改造。**本仓的冻结功能不受此影响**：站点自身的所有 `/api/*` 通道（含前台）都走 `auth_uid`/`auth_guard`，冻结即生效；受影响的只有 device-api 与 MQTT 两个入口。因此后台冻结弹窗的文案写的是"已登录的**网页会话**立即失效"，没有写"所有设备"：**文案不许越过判据** |
 | **登录令牌在 `localStorage`**（不是 HttpOnly cookie） | XSS 能直接读走它；`HttpOnly` 能让脚本读不到（但仍能被"以你的身份发请求"） | 未改。改成 cookie 要同时动前端存取、CORS/CSRF（`SameSite` + 双提交令牌）、以及 device-console 那半边复用 `localStorage.tokenKey` 的链路（见 §1）：是一次跨三个前端的改造，当前未做 |
 | **对话链路**没有按用户/IP 的限流 | 单个已登录用户可以连续发起对话占满并发槽（槽位本身有闸，见 §4） | 对话这一路只有总并发闸。**不应推广成"Rust 侧没有限流"**：内容发布有按 uid 的限流（`src/risk.rs` 的 `PostRateLimiter` 间隔闸 + 窗口计数 ⇒ 超限转人工 / 自动禁言），登录有按 IP/账号的失败限流（`LoginRateLimiter`） |
 | **分块传输**（无 Content-Length）不过体积闸 | 构造性的大 body 能绕过 §4 的第一行 | 只靠字段级限额兜，已写在代码注释里 |

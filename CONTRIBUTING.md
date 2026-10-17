@@ -38,83 +38,50 @@
 
 - Rust stable（`cargo --version` 能跑就行）
 - Node.js ≥ 18
-- MySQL 8
+- PostgreSQL 16
 - Python 3.10+（只有要跑 agent 时才需要）
 
 ### 2.1 建库与账号
 
-数据库名**必须叫 `saudade_blog`**：`scripts/migration/*.sql` 里凡是带了 `USE` 语句的
-（绝大多数）都写死这个名字，改名要逐条改。有三份没有 `USE`，分别是
-`chat_conversation_20260903.sql`、`execution_log_20260904.sql`、`password_reset_token_20260921.sql`，
-因此建库那一步是显式把库名传给 `mysql`（`mysql ... saudade_blog < "$f"`），
-不要依赖脚本自带的 `USE`：那三份在别人的库上会报 "No database selected"。
+20261018 起生产库是 **PostgreSQL**（此前是 MySQL，那一套已经冻结，见本节的末尾）。
+库名**必须叫 `saudade_blog`**：`scripts/migration/pg/0000_schema.sql` 里那条
+`ALTER DATABASE "saudade_blog" SET timezone …` 把名字写死了，换个名字跑它会在
+`ON_ERROR_STOP=1` 下当场中止。
 
-> ⚠️ 带 `USE` 的那些迁移会把你连的库顶掉。 `USE saudade_blog;` 会把连接切到那个库，
-> 所以 `mysql <你的库> < 某个迁移.sql` 读到那一行之后，后面所有语句都打到 `saudade_blog` 上，
-> 而且 mysql 不会报错。下面这个脚本对每个文件都先剥掉 `USE` 行、再显式点名库名，
-> 剥不干净就中止；自己写循环时要把这一层照抄过去。
-
-建库用一个脚本（[`scripts/migration/fresh_install.sh`](scripts/migration/fresh_install.sh)），
-不要自己把 `*.sql` 按顺序全跑一遍：
+三步建出来（与 `0000_schema.sql` 头注里那份命令同源）：
 
 ```bash
-# 第一个参数是库名。库名叫 saudade_blog 是对的（见上面那段），脚本因此要你明确声明一次
-# ——它默认拒收这个名字，免得在产线机器上打错字时静默改了那个库。
-ALLOW_PRODUCTION_NAME=1 bash scripts/migration/fresh_install.sh saudade_blog -uroot -p
+# ① 角色。口令**不在 CREATE ROLE 里设**，建完再 ALTER —— 免得口令落进 shell 历史。
+sudo -u postgres psql -c "CREATE ROLE saudade_app LOGIN"
+sudo -u postgres psql -c "ALTER ROLE saudade_app PASSWORD '换成你自己的密码'"
+
+# ② 库。COLLATE 必须是 en_US.UTF-8：**登录与唯一键的大小写敏感性由它决定**
+#    （20261017 拍板「登录按大小写」⇒ 敏感就是目标行为，别换成 *_ci 的排序规则）。
+sudo -u postgres psql -c "CREATE DATABASE saudade_blog OWNER saudade_app ENCODING 'UTF8' \
+  LC_COLLATE 'en_US.UTF-8' LC_CTYPE 'en_US.UTF-8' TEMPLATE template0"
+
+# ③ 结构。**一份文件建全库** —— PG 这一侧没有"快照 + 按日期补增量"那套。
+sudo -u postgres psql -d saudade_blog -v ON_ERROR_STOP=1 -f scripts/migration/pg/0000_schema.sql
 ```
 
-为什么不能"按文件名顺序把 `*.sql` 全跑一遍"：`0000_base_schema.sql` 是
-20261001 的生产库快照，那天（含）之前所有增量迁移的效果已经在里面了，
-而它们大多是无保护的 `ALTER TABLE … ADD COLUMN`（没有 `IF NOT EXISTS`）。照单全跑会在半路
-撞上 `ERROR 1060 Duplicate column name`，以及 `chat_conversation_20260903.sql` 的
-`ERROR 1050 Table 'conversation' already exists`。那些报错的迁移本身没有坏，
-只是它们属于快照之前，不该再跑一次。
-
-所以规则是：基架 = 快照，之后只补快照日期之后的迁移。日期就是文件名里的
-`_YYYYMMDD.sql` 后缀，脚本按它筛（快照日当天及更早的一律跳过）。加了新迁移不需要动脚本；
-将来重新导出基架时，把脚本里的 `SNAPSHOT` 改成新的导出日、并把 `0000_` 那份整体替换
-（它自己的头注写着这条纪律）。
-
-⚠️ 上面这条规则的前提是快照完整，而它并不总是完整：快照是生产库的导出，
-生产库漏跑过的迁移，快照里自然也没有，日期规则又会把那份迁移静默跳过，
-结果是"从零建库"一路建到线上仍然是坏的（`password_reset_token_20260921.sql` 就漏过：
-代码从第一天起就在引用那张表，而库里没有）。这类迁移登记在脚本的 `apply_despite_snapshot()`
-名单里强制补跑，门槛只有一条：**脚本必须幂等**（它会被无条件跑一遍，不看日期）。
-重新导出基架、`SNAPSHOT` 前移之后，名单要逐条核对，把效果已进新快照的删掉。
-
-脚本做的四件事：拒绝把 `saudade_blog` 当目标库；建库（utf8mb4）；逐文件剥 `USE` 后应用；
-最后报出表数（26 张基架 + 快照后迁移 ⇒ 20261004 是 29 张：`note_comment`、
-`note_comment_vote` 两张是快照后的迁移，`password_reset_token` 是上面那条例外补跑出来的）。
-它不幂等：库里已经有表就直接拒绝（想重来就先 `DROP DATABASE`）。
-
-再建一个应用账号。后端进程用它连库，不该拿 `root` 跑（`root` 只用来建库、跑迁移和救急）：
-
-```bash
-mysql -uroot -p -e "CREATE USER 'saudade_blog'@'localhost' IDENTIFIED BY '换成你自己的密码'; \
-                    GRANT ALL PRIVILEGES ON saudade_blog.* TO 'saudade_blog'@'localhost';"
-```
+`ON_ERROR_STOP=1` 不能省：没有它 psql 会把每条报错打完还**退出 0**，
+"建库成功"就成了一句空话。
 
 用户名要与 `.env` 里 `DATABASE_URL` 的那一段一致（`.env.example` 的样例就是这个）。
-库里没有任何地方写死它：库名在迁移脚本里写死了，用户名没有；想换用户名，
-建号之后改 `.env` 就行。（本仓的迁移脚本里没有 `CREATE USER`/`GRANT` 语句，
-跑迁移不会顺带把账号建出来。）
+库里没有任何地方写死它：库名在 `0000_schema.sql` 里写死了，用户名没有；
+想换用户名，建号之后改 `.env` 就行。
 
-多数迁移都写成幂等的（`IF NOT EXISTS` / `IF EXISTS` / 靠 `migration_flags` 表打标记），
-重复执行安全；但能只跑一次就跑一次，个别脚本带数据回填，重跑会覆盖你改过的数据。
+⚠️ **`0000_schema.sql` 今天是"生成物"，而它的生成器已经断粮**（20261018 切库）：
+那份文件由 `mysql2pg.py` 从**活 MySQL** 的 `information_schema` + `src/entity/*.rs` 生成，
+切流之后 MySQL 不再演进 ⇒ 那条"重跑生成器"的路作废。**新的结构变更要直接写成 PG 的迁移**
+（`scripts/migration/pg/` 下新起一个编号文件，像 `0001_rag_vectors.sql`、`0002_owner_to_app.sql` 那样），
+别再走生成器。这是本批留下的欠账，已记进 [ROADMAP.md](ROADMAP.md)。
 
-> ⚠️ `scripts/migration/` 里混着评测夹具与一次性脚本，不要整个目录无脑跑一遍。
-> `fresh_install.sh` 跳过它们，自己写循环时要照着同样跳过：
->
-> | 跳过 | 是什么 |
-> |---|---|
-> | `golden_*.sql` | 评测用例的夹具（测试分类、一条待审留言） |
-> | `test_accounts_*.sql` | 评测用的测试账号（`agent_test_user_*`） |
-> | `user_rename_sora_*.sql` | 把作者 uid=1 的用户名改回 `sora` |
-> | `user_remove_legacy_hash_account_*.sql` | 删作者库里那个遗留的哈希账号 |
-> | `superadmin_role_*.sql` / `zako_role_*.sql` / `drop_secretary_role_*.sql` | 把 uid=1 提为 superadmin / 给某个账号授角色（`@zako='REPLACE_ME'`，不填就空转）/ 把库里残留的 `secretary` 行降回 `user`（新库里恒 0 行） |
->
-> 前两类跑进你的库会凭空多出几个 `agent_fixture_*` / `agent_test_user_*` 账号；
-> 后三类在你的库上没有对象，跑也是空转。判断依据是文件名里的主题，不是日期。
+⚠️ `scripts/migration/*.sql`（MySQL 那一套）现在是**历史文件**：不再参与建库，
+也**不要**在 PG 上跑 —— 它们是 MySQL 方言（`USE` / `ENGINE` / 反引号 / `AUTO_INCREMENT`），
+跑不动，而它们的净效果已经全部体现在 `0000_schema.sql` 里。那个目录里还混着评测夹具与
+一次性脚本（`golden_*.sql` / `test_accounts_*.sql` / `user_rename_sora_*.sql` /
+`superadmin_role_*.sql` 等）—— 判断依据是文件名里的主题，不是日期。
 
 ### 2.2 环境变量
 
@@ -227,20 +194,25 @@ npm run lint                                      # ESLint
 >
 > 另一条：`npm test` 不包含 ESLint，两者是分开的两道门。
 
-`cargo test` 里还挂着一层真 MySQL 的集成测（`tests/mysql_integration.rs`），它由
-环境变量 `TEST_MYSQL_URL` 门控：
+`cargo test` 里还挂着一层真 PostgreSQL 的集成测（`tests/pg_integration.rs`），它由
+环境变量 `TEST_PG_URL` 门控：
 
 ```bash
 # 不设 ⇒ 那几条自己跳过（本地默认如此，不需要任何准备）。
 # 设了 ⇒ 真连库跑；**连不上是失败不是跳过**（静默跳过会让这道闸变成装饰）。
-bash scripts/migration/fresh_install.sh saudade_it -uroot -p   # 先备一个空库（名字自取）
-TEST_MYSQL_URL="mysql://root:密码@127.0.0.1:3306/saudade_it" cargo test --test mysql_integration
+# 先备一个空库（名字自取；`0000_schema.sql` 里那条 ALTER DATABASE 写死了库名，
+# 换库名跑要先把那一句去掉，见那个文件的头注）。
+sudo -u postgres psql -c "CREATE DATABASE saudade_it OWNER saudade_app ENCODING 'UTF8' LC_COLLATE 'en_US.UTF-8' LC_CTYPE 'en_US.UTF-8' TEMPLATE template0"
+sudo -u postgres psql -d saudade_it -v ON_ERROR_STOP=1 -f scripts/migration/pg/0000_schema.sql
+TEST_PG_URL="postgres://saudade_app:密码@127.0.0.1:5432/saudade_it" cargo test --test pg_integration
 ```
 
 它验的是 MockDatabase 结构上验不了的那一类：
 
-- `SUM(<整数列>)` 返回 DECIMAL、零行时 NULL 折零、空 id 列表必须短路、几条外键真的
-  插得进去；最要紧的是第一条，`cargo check` 与 mock 都验不出它；
+- 真库类型往返：`SUM` 的返回类型、零行时 NULL 折零、空 id 列表必须短路、几条外键真的
+  插得进去。**这一层在 PG 上比在 MySQL 上更值钱**：`sqlx-postgres` 的整数解码按 OID
+  **精确匹配**（`i64` 读不了 `int4`、`i8` 读不了 `smallint`），不像 `sqlx-mysql` 那样
+  一个宽度通吃 —— `cargo check` 与 mock 都验不出它，只有真库能；
 - 额度扣减的边界（`quota::try_consume`）：`WHERE used < limit` 的最后一格恰好扣一次、
   被挡住的那一轮一个数都不许动；`rows_affected == 1` 这个判据是真的 UPDATE 语义；
 - 会话搜索的 LIKE 转义（`%`/`_` 要按字面匹配）与列表的置顶/倒序/命中锚；
@@ -274,7 +246,7 @@ python3 frontend/tests/某个.test.py
 | 套件 | 在哪 | 说明 |
 |---|---|---|
 | `tests/api_tests.rs` | 本仓 | 走 MockDatabase，跟着 `cargo test` 跑（无需任何外部依赖） |
-| `tests/mysql_integration.rs` | 本仓 | **真 MySQL**，跟着 `cargo test` 跑，但要 `TEST_MYSQL_URL`（不设即跳过，见 §3.1）。CI 有服务容器 |
+| `tests/pg_integration.rs` | 本仓 | **真 PostgreSQL**，跟着 `cargo test` 跑，但要 `TEST_PG_URL`（不设即跳过，见 §3.1）。CI 有服务容器 |
 | `tests/manual/test_api.py` | 本仓 | **手动跑**（Python，`requests`）：要一个**活着的** `localhost:3000`，登录类用例还要你自己给凭据：`BLOG_TEST_USER=... BLOG_TEST_PASSWORD=... python3 tests/manual/test_api.py`。不给凭据也能跑，登录相关用例自动跳过。**它不在 `cargo test` 里**，也不进 CI |
 | `eval/`（agent 仓） | `saudade-blog-agent/eval/` | golden set 端到端，要真服务与真语料，按需跑 |
 | `scripts/*.py` | 本仓 `scripts/` | 部署与巡检脚本（`deploy/` 下几个）**没有对应套件**，不进 CI。本仓 `scripts/` 下**没有 `eval/` 目录**，评测全在 agent 仓 |
@@ -440,10 +412,10 @@ MIT 要求把版权与许可声明随分发一起带上，所以那段的全文�
 
 如实列出，免得按文档走到一半撞墙：
 
-- `0000_base_schema.sql` 是生产库快照：它逐字复刻线上 26 张表的 DDL，CI 每次 push
-  都会用 `fresh_install.sh` 在一个空的 `mysql:8.0` 容器上从零建一遍（`deploy.yml` 的
-  `Bootstrap MySQL schema` 那一步），所以这条路一直有人走。你的库上若报错多半是外键顺序，
-  文件开头的 `FOREIGN_KEY_CHECKS=0` 就是为它准备的。
+- `scripts/migration/0000_base_schema.sql` 与 `fresh_install.sh`（MySQL 那套从零建库的路）
+  已随 20261018 切库**冻结**：CI 不再走它们，PG 那侧用的是
+  `scripts/migration/pg/0000_schema.sql`（一份文件建全库，没有"快照 + 按日期补增量"）。
+  它们留在树里是历史，不是可执行的安装路径。
 - `scripts/migration/` 目录混着夹具与作者一次性脚本（见 2.1 的两条提示）：
   没有按用途分目录，只能靠文件名前缀辨认。想改成分目录的话，先确认没人按路径引用它们。
 - 六处路径的默认值写的是维护者那台机器的位置（`healthcheck.sh` / `nightly_sandboxes.sh` /

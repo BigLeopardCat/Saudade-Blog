@@ -73,9 +73,9 @@ pub const REASON_MAX: usize = 500;
 pub const NOTE_MAX: usize = 255;
 
 /// 申请行状态（三值，见 `entity/quota_request.rs` 头注 ①）——**只有 `0 → 1` 清零**。
-pub const STATUS_PENDING: i8 = 0;
-pub const STATUS_APPROVED: i8 = 1;
-pub const STATUS_REJECTED: i8 = 2;
+pub const STATUS_PENDING: i16 = 0;
+pub const STATUS_APPROVED: i16 = 1;
+pub const STATUS_REJECTED: i16 = 2;
 
 /// 时间列的展示口径：+08:00 本地钟面、秒级（与后台其余列表一致，前端直接显示字符串）。
 fn fmt_dt(t: &chrono::NaiveDateTime) -> String {
@@ -240,7 +240,7 @@ pub struct QuotaRequestDto {
     pub limit: i32,
     pub reason: Option<String>,
     /// `0` = 待处理 / `1` = 已批准 / `2` = 已驳回（三值，别当布尔用）
-    pub status: i8,
+    pub status: i16,
     pub note: Option<String>,
     #[serde(rename = "createdAt")]
     pub created_at: String,

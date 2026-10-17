@@ -25,7 +25,7 @@
 
 ## 快速开始
 
-前置：Rust stable、Node.js ≥ 18、MySQL 8。想跑 AI 对话再加 Python 3.10+。
+前置：Rust stable、Node.js ≥ 18、PostgreSQL 16。想跑 AI 对话再加 Python 3.10+。
 
 ```bash
 git clone https://github.com/BigLeopardCat/Saudade-Blog.git && cd Saudade-Blog
@@ -46,7 +46,7 @@ cargo run
 这些都在 [CONTRIBUTING.md](CONTRIBUTING.md) 里。每个环境变量的作用与默认值见
 [.env.example](.env.example)，它是这类信息在本仓的唯一出处。
 
-想直接把它装到一台服务器上（nginx、systemd ×2、TLS、MySQL 建库、logrotate 的完整走查），
+想直接把它装到一台服务器上（nginx、systemd ×2、TLS、PostgreSQL 建库、logrotate 的完整走查），
 见 [deploy/README.md](deploy/README.md)；开头给了一条命令的路径：`bash deploy/install.sh`。
 
 ## 看板娘对话
@@ -54,7 +54,7 @@ cargo run
 看板娘「泠月喵」可以回答关于站内文章的问题、跳转页面、开关页面特效、切换夜间模式；
 接入物联网后还可以把内容推送到 ESP32 的 OLED 屏上。她的对话能力来自一个独立部署的
 Python Agent（手写 LangGraph 图：planner ⇄ execute → model → gate）。对话记忆全部外置
-MySQL，agent 进程本身无状态：每次请求都是新线程，连续性由后端注入历史与摘要维持。
+PostgreSQL，agent 进程本身无状态：每次请求都是新线程，连续性由后端注入历史与摘要维持。
 
 ## 文章向量空间图谱
 
@@ -93,7 +93,7 @@ flowchart LR
         RUST["Rust 后端 :3000<br/>Axum + SeaORM<br/>博客 API · 登录鉴权 · 对话编排 · 记忆入库"]
         AGT["Python Agent :8010<br/>FastAPI + 手写 LangGraph<br/>planner 决策 ⇄ execute 确定性执行 → model 叙述 → gate 检查"]
         DEV["device-service :3100<br/>IoT 设备服务（可选件）"]
-        DB[("MySQL 8<br/>业务数据 · chat_history · chat_summary")]
+        DB[("PostgreSQL 16<br/>业务数据 · chat_history · chat_summary")]
     end
 
     ESP["ESP32 OLED 设备"]
@@ -109,7 +109,7 @@ flowchart LR
 
 | 组件 | 职责 | 位置 |
 |---|---|---|
-| **Rust 后端**（Axum + SeaORM + MySQL 8） | 博客主流量（文章/分类/标签/留言板）、登录鉴权（JWT）、聊天链路中枢（鉴权 → 历史入库 → SSE 逐帧转发） | `src/` |
+| **Rust 后端**（Axum + SeaORM + PostgreSQL 16） | 博客主流量（文章/分类/标签/留言板）、登录鉴权（JWT）、聊天链路中枢（鉴权 → 历史入库 → SSE 逐帧转发） | `src/` |
 | **前端**（React 18 + Vite + antd + bytemd） | SPA；看板娘与聊天面板由 `live2d-widgets/`（boot.js 入口，纯 JS 子模块拆分）驱动 | `frontend/` |
 | **AI Agent**（FastAPI + 手写 LangGraph） | 看板娘大脑：对话生成、博客查询、导航/特效/夜间命令、IoT 设备显示。**独立 git 仓库** | `saudade-blog-agent/` |
 | **IoT**（EMQX 5 + Rust device-service） | ESP32 设备接入（MQTT over TLS）、OLED 显示、设备控制台（`/device-console/`）。**可选件**，出厂默认不启用 | `iot/`；服务本体不在本仓，见 [iot/device-service/README.md](iot/device-service/README.md) |
@@ -134,7 +134,7 @@ sequenceDiagram
     participant N as nginx
     participant R as Rust :3000
     participant A as Python Agent :8010
-    participant DB as MySQL
+    participant DB as PostgreSQL
 
     B->>N: POST /api/chat/stream（Authorization: Bearer JWT）
     N->>R: 反代
@@ -156,7 +156,7 @@ sequenceDiagram
 
 ```
 Saudade-Blog/
-├── src/                      # Rust 后端（Axum + SeaORM + MySQL 8）
+├── src/                      # Rust 后端（Axum + SeaORM + PostgreSQL 16）
 │   ├── main.rs               # 入口：读 .env、连库、只监听 127.0.0.1:3000（对外靠 nginx 反代）
 │   ├── routes/               # 全部 HTTP 路由与 handler，mod.rs 是挂载点（公开/受保护两张路由表）
 │   │   ├── chat.rs           # 对话核心：鉴权、历史入库、SSE 逐帧转发、断连清理
@@ -254,9 +254,9 @@ flowchart LR
 > 只想装起来的话，那一份开头有一条命令：`bash deploy/install.sh`
 > （向导会问要不要连 IoT 可选件一起装，`-y` 下默认不装；`--dry-run` 只渲染不落地）。
 >
-> 想用 Docker 起一整套（MySQL + Rust + agent + nginx，一条 `docker compose up -d`）
-> 见 [deploy/docker/](deploy/docker/)。那条路只给 Linux 加自有域名的场景使用：三个服务走
-> host 网络、镜像只能本地构建、不带 IoT 与部署管线，边界与 11 条验收清单都在它的 README 里。
+> ⛔ **另一条 Docker 路（[deploy/docker/](deploy/docker/)）暂时不可用**：它起的还是 MySQL 库，
+> 而后端已经只认 `postgres://`（20261018 切库）。转换它记在 [ROADMAP](ROADMAP.md) 的《待办》里，
+> 在那之前别照它走。
 
 服务均为 systemd 托管（agent/rust 为 `Restart=always` 崩溃自愈；device 为 `Restart=on-failure`）：
 
@@ -285,7 +285,7 @@ nginx error.log 增量扫描，异常追加 health.log。
   哪些命令是"维护者那台机器上不能跑"而不是"你不能跑"）、[ROADMAP.md](ROADMAP.md)
   （现在做什么、什么在等一个条件、什么明确不做）、[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)、
   [SECURITY.md](SECURITY.md)（安全问题的私密报告通道）。
-- 测试分几层、各验什么、在哪儿跑：[CONTRIBUTING.md](CONTRIBUTING.md) 的 §3 是唯一清单：`tests/`（跟着 `cargo test`：MockDatabase 一层 + 真 MySQL 一层）、`tests/manual/`
+- 测试分几层、各验什么、在哪儿跑：[CONTRIBUTING.md](CONTRIBUTING.md) 的 §3 是唯一清单：`tests/`（跟着 `cargo test`：MockDatabase 一层 + 真 PostgreSQL 一层）、`tests/manual/`
   （要活服务与真凭据，手动跑）、`frontend/tests/`（`*.test.mjs` 进 CI；`*.test.py` 无头
   Chrome 沙箱走夜间）。建库的第一步也在那儿（§2.1）。
 - 新增 Agent 工具：在 `tools/base.py` 用 `@tool` 定义并加入 `_TOOL_REGISTRY`；若服务于

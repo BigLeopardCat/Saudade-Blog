@@ -122,27 +122,36 @@ jobs:
   #   ③ `npm test` —— tests/ 下全部 node 套件（条数以 tests/run-suites.mjs 的 glob 为准，
   #      这里不写死数字：20260924 加一个套件就让"11 个"这句注释过期了一次）。
   #      此前 package.json 里那句 "test": "jest" 是死脚本：没配置也没依赖，谁都跑不了；
-  #   ④ 真 MySQL（20261003）—— 同一个 `cargo test` 里还跑着 tests/mysql_integration.rs，
-  #      由一个 mysql:8.0 服务容器供库。它验的是 mock 结构上验不了的那一类（`SUM` 的
-  #      DECIMAL、NULL 折零、`IN ()` 短路、外键约束），代价是每次 push 多十几秒容器启动。
+  #   ④ 真 PostgreSQL（20261003 起是 MySQL，20261018 切库时跟着换）—— 同一个 `cargo test`
+  #      里还跑着 tests/pg_integration.rs，由一个 postgres:16 服务容器供库。它验的是 mock
+  #      结构上验不了的那一类（`SUM` 的返回类型、NULL 折零、`IN ()` 短路、外键约束），
+  #      代价是每次 push 多十几秒容器启动。**换到 PG 之后这一层更值钱**：`sqlx-postgres`
+  #      的整数解码按 OID 精确匹配（`i64` 读不了 `int4`、`i8` 读不了 `smallint`），
+  #      mock 与 `cargo check` 都验不出它，只有真库能。
   # 它与"要不要部署"无关：**任何 push 都跑**（改了测试/tsconfig 也算），而部署被它 needs 住
   # ——检查不过就不构建、不上传、不部署。`*.test.py` 那几套要 Playwright，故意不进 CI。
   check:
     runs-on: ubuntu-latest
-    # 真 MySQL（20261003）：`tests/mysql_integration.rs` 要一个**真的 8.0 库**才验得了
-    # 那几件 MockDatabase 结构上证明不了的事——最要紧的一条是 `SUM(<整数列>)` 返回
-    # DECIMAL（sea-orm 按 i64 解码当场报错，`cargo check` 与 mock 全绿，20260930 线上
-    # 就是这么 500 的）。**它门住部署**（build-and-deploy 的 needs 里有本 job）：真库这条
-    # 闸红掉，那一版就不上线。口令是**一次性的容器口令**，与生产库无关（容器随 runner 消亡）。
+    # 真 PostgreSQL（20261018 切库）：`tests/pg_integration.rs` 要一个**真的库**才验得了
+    # 那几件 MockDatabase 结构上证明不了的事——它既不执行 SQL 也不解码返回行，而真库类型
+    # 往返（`SUM` 的返回类型、零行时的 NULL、`rows_affected` 的语义、唯一键冲突的 SQLSTATE）
+    # 全在那一层。**它门住部署**（build-and-deploy 的 needs 里有本 job）：真库这条闸红掉，
+    # 那一版就不上线。口令是**一次性的容器口令**，与生产库无关（容器随 runner 消亡）。
+    #
+    # 库名取 `saudade_blog` 而不是 `saudade_blog_it`：`scripts/migration/pg/0000_schema.sql`
+    # 里那条 `ALTER DATABASE "saudade_blog" SET timezone …` **写死了库名**，换个库名跑它
+    # 会在 `ON_ERROR_STOP=1` 下当场中止。容器是随 runner 消亡的一次性实例，
+    # "别指向生产库"这件事由 `TEST_PG_URL` 这个变量保证，不由库名保证。
     services:
-      mysql:
-        image: mysql:8.0
+      postgres:
+        image: postgres:16
         env:
-          MYSQL_ROOT_PASSWORD: ci-root-pw
+          POSTGRES_PASSWORD: ci-root-pw
+          POSTGRES_DB: saudade_blog
         ports:
-          - 3306:3306
+          - 5432:5432
         options: >-
-          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -pci-root-pw --silent"
+          --health-cmd="pg_isready -U postgres"
           --health-interval=10s
           --health-timeout=5s
           --health-retries=10
@@ -256,40 +265,45 @@ jobs:
         run: npm run fetch:widget
         working-directory: ./frontend
 
-      - name: Wait for MySQL（真库集成测的服务容器）
+      - name: Wait for PostgreSQL（真库集成测的服务容器）
         # runner 通常已经等到 health 通过才起 steps，这里再自己探一次：几十秒的东西，
         # 换掉一整类"容器还没 ready 就把 `cargo test` 跑成红的"的假红。
         run: |
           for i in $(seq 1 30); do
-            if docker exec ${{ job.services.mysql.id }} \
-                 mysqladmin ping -h 127.0.0.1 -uroot -pci-root-pw --silent; then
-              echo "mysql 就绪（第 $i 次探测）"; exit 0
+            if docker exec ${{ job.services.postgres.id }} \
+                 pg_isready -U postgres --quiet; then
+              echo "postgres 就绪（第 $i 次探测）"; exit 0
             fi
             sleep 2
           done
-          echo "MySQL 服务容器 60 秒内没起来" >&2; exit 1
+          echo "PostgreSQL 服务容器 60 秒内没起来" >&2; exit 1
 
-      - name: Bootstrap MySQL schema（真库集成测的库）
-        # 建库走**仓库里那个脚本**，不在 CI 里另抄一份 recipe —— 顺带让"从零建库"
-        # 这条路每次 push 都真跑一遍（它 20261003 之前教的那一版是跑不通的，见脚本头注）。
-        # `docker exec -i <容器> mysql` 省掉在 runner 上装 mysql-client 的那一步。
-        # **`-i` 不能少**：脚本是把每个 SQL 文件从 stdin 喂进去的，而 `docker exec`
-        # 默认不接 stdin —— 少了它，mysql 拿到的是空输入、**每次都"成功"**，
-        # 建出来的库一张表都没有，然后集成测才在"库结构不全"上红。
-        env:
-          MYSQL_BIN: docker exec -i ${{ job.services.mysql.id }} mysql
-        run: bash scripts/migration/fresh_install.sh saudade_blog_it -h127.0.0.1 -P3306 -uroot -pci-root-pw
+      - name: Bootstrap PostgreSQL schema（真库集成测的库）
+        # 建库走**仓库里那份脚本**，不在 CI 里另抄一份 recipe —— 顺带让"从零建库"
+        # 这条路每次 push 都真跑一遍。`docker exec -i` 省掉在 runner 上装
+        # postgresql-client 的那一步；**`-i` 不能少**（脚本从 stdin 喂 SQL，
+        # `docker exec` 默认不接 stdin ⇒ 拿到空输入、**每次都"成功"**、
+        # 建出来的库一张表都没有，然后集成测才在"库结构不全"上红）。
+        # `ON_ERROR_STOP=1` 同理由：没有它 psql 会把每条报错打完还退出 0。
+        run: |
+          set -euo pipefail
+          docker exec -i ${{ job.services.postgres.id }} \
+            psql -U postgres -d saudade_blog -X -q -v ON_ERROR_STOP=1 \
+            -f - < scripts/migration/pg/0000_schema.sql
+          echo "✓ 结构就绪：$(docker exec ${{ job.services.postgres.id }} \
+            psql -U postgres -d saudade_blog -X -q -t -A \
+            -c "SELECT count(*) FROM pg_tables WHERE schemaname='public'") 张表"
 
       - name: Uploads verifier（纯函数自检 + 真库冒烟）
         # `scripts/verify_uploads.py` 核对"库里引用的本地图"与"盘上真实文件"，
         # 是迁移/恢复的验收判据。它的 SQL 属于"没有真库就一个字都验不了"那一类
         # （`cargo check` 全绿对它没意义：列名写错、`IFNULL` 少一层，本机不跑就永远不知道），
-        # 所以借 job 里这个真 MySQL 跑一遍。空库 + 空目录 ⇒ 没有缺图 ⇒ 退出码必须是 0。
-        # runner 上没有 mysql 客户端 ⇒ 与上一步同一条路（`MYSQL_BIN` 容器前缀）。
+        # 所以借 job 里这个真 PG 跑一遍。空库 + 空目录 ⇒ 没有缺图 ⇒ 退出码必须是 0。
+        # runner 上没有 psql ⇒ 与上一步同一条路（`PSQL_BIN` 容器前缀）。
         env:
-          MYSQL_BIN: docker exec -i ${{ job.services.mysql.id }} mysql
+          PSQL_BIN: docker exec -i ${{ job.services.postgres.id }} psql -U postgres
           # 随 runner 消亡的一次性容器口令，与生产库无关
-          DATABASE_URL: mysql://root:ci-root-pw@127.0.0.1:3306/saudade_blog_it
+          DATABASE_URL: postgres://postgres:ci-root-pw@127.0.0.1:5432/saudade_blog
           UPLOAD_DIR: ${{ runner.temp }}/ci-uploads
         run: |
           set -euo pipefail
@@ -297,12 +311,12 @@ jobs:
           mkdir -p "$UPLOAD_DIR"
           python3 scripts/verify_uploads.py
 
-      - name: Rust tests（MockDatabase + 真 MySQL 两层）
-        # TEST_MYSQL_URL 在场 ⇒ tests/mysql_integration.rs 真连库跑；缺席 ⇒ 它自己跳过
+      - name: Rust tests（MockDatabase + 真 PG 两层）
+        # TEST_PG_URL 在场 ⇒ tests/pg_integration.rs 真连库跑；缺席 ⇒ 它自己跳过
         # （贡献者本机 `cargo test` 因此不受影响）。**在场但连不上是失败、不是跳过**，
         # 见那个文件的头注。
         env:
-          TEST_MYSQL_URL: mysql://root:ci-root-pw@127.0.0.1:3306/saudade_blog_it
+          TEST_PG_URL: postgres://postgres:ci-root-pw@127.0.0.1:5432/saudade_blog
         run: cargo test
 
       - name: Install frontend deps

@@ -5,6 +5,14 @@
 #   bash deploy/install.sh                       # 交互向导，一路问下来
 #   bash deploy/install.sh --domain blog.me -y   # 也可以全部用参数预填（--help）
 #
+# ⛔ **20261018 切库后本脚本暂时不可用**：`src/` 与 `Cargo.toml` 已经只认
+#    `postgres://`（`sqlx-mysql` 从依赖里摘掉了），而本脚本建的是 MySQL 库、
+#    写的是 `DATABASE_URL=mysql://…` ⇒ 照它装完站点起不来。
+#    转换它要处理 `sudo -u postgres` 的建号/建库、`pg_hba` 与口令文件那一套
+#    （30+ 处），值得单独一批做、单独验。**在那之前请按 CONTRIBUTING.md §2.1
+#    手建 PG 库，或者等这一条从 ROADMAP 的《待办》里划掉。**
+#    别删这个警告：它挡住的是"照着跑一遍、装完发现起不来、还不知道为什么"。
+#
 # 它做的每一步都对应 deploy/README.md 的 §3–§10（IoT 那一段对应 iot/README.md）：
 #   前置检查 → 目录与权限 → 建库/应用账号/第一个管理员 → 两份 .env → agent 的 .venv
 #   → 构建（cargo + vite）→ TLS 证书 → nginx → systemd ×2 → logrotate + 心跳 cron

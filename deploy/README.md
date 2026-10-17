@@ -1,5 +1,12 @@
 # 从零部署
 
+> ⛔ **20261018：这一份（以及 `deploy/install.sh`、`deploy/docker/*`）暂时不可用。**
+> 生产库那天从 MySQL 切到了 PostgreSQL，`src/` 与 `Cargo.toml` 已经只认
+> `postgres://`，而这里教的还是建 MySQL 库、写 `DATABASE_URL=mysql://…`
+> ⇒ 照着走完，站点起不来。转换这条路径在 [ROADMAP](../ROADMAP.md) 的《待办》里。
+> 在那之前，本地/新机器建库请看 [CONTRIBUTING.md §2.1](../CONTRIBUTING.md)。
+> **别删这个警告**——它挡住的是"照文档跑一遍、装完发现起不来、还不知道为什么"。
+
 > **这份文档与 [docs/deployment-and-ops.md](../docs/deployment-and-ops.md) 的分工：**
 > 那一份讲**设计判断与排障思路**（为什么这么摆、出问题往哪看），坐标全部收掉了；
 > 这一份是**可复制的步骤**——照它走，能把一台空 VPS 变成跑着的站点。

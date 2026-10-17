@@ -69,15 +69,23 @@ const PERIOD_TOP_N: usize = 5;
 
 /// 阅读总量的求和表达式——**所有 `SUM(cnt)` 都必须从这里出去**。
 ///
-/// 为什么需要 `CAST(... AS SIGNED)`：**MySQL 的 `SUM(<整数列>)` 返回的是 `DECIMAL`
+/// 为什么需要这一手 `CAST`：**MySQL 的 `SUM(<整数列>)` 返回的是 `DECIMAL`
 /// 而不是 `BIGINT`**，于是 sea-orm 按 `Option<i64>` 解码时当场报
 /// `mismatched types; Rust type Option<i64> (as SQL type BIGINT) is not compatible
 /// with SQL type DECIMAL`。这不是编译期能发现的（`cargo check`/`cargo test` 全绿，
 /// 仓里的 api_tests 走 MockDatabase 不经过真解码），20260930 一部署就现形：
 /// 列表卡片三个数一个都不显示、`GET .../stats` 直接 500。
 /// 丢给 `COUNT(*)` 没有这个问题（它本来就是 BIGINT）——**只有求和要过这一手**。
+///
+/// ⚠️ **20261018 切库到 PG 时，这里的目标类型名必须跟着换**：MySQL 只认
+/// `SIGNED`/`UNSIGNED`，PG 只认 `BIGINT`（`CAST(x AS SIGNED)` 在 PG 上是语法错，
+/// 而 `CAST(x AS BIGINT)` 在 MySQL 上是语法错）——**没有两边都认的写法**。
+/// 换成 `BIGINT` 之后这一手在 PG 上是**冗余但无害**的（PG 的 `SUM(integer)` 本来就返回
+/// `bigint`），保留它的理由是不让这条"所有 `SUM(cnt)` 都必须从这里出去"的收口出现一个
+/// 只在 MySQL 上才需要的例外分支；`tests/api_tests.rs` 的源码锁也只断言这一行含
+/// `cast_as`、不锁类型名。
 fn sum_views() -> SimpleExpr {
-    Expr::col(note_view::Column::Cnt).sum().cast_as(Alias::new("SIGNED"))
+    Expr::col(note_view::Column::Cnt).sum().cast_as(Alias::new("BIGINT"))
 }
 
 /// 日趋势窗口（含今天，向前共 30 天）。

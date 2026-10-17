@@ -1,6 +1,6 @@
 use dotenvy::dotenv;
-use sea_orm::SqlxMySqlConnector;
-use sqlx::mysql::{MySqlConnectOptions, MySqlPoolOptions};
+use sea_orm::SqlxPostgresConnector;
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use std::env;
 use std::net::SocketAddr;
 use tracing_subscriber;
@@ -23,19 +23,27 @@ async fn main() {
         .init();
 
     let db_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-    // sqlx 默认把 MySQL 会话时区设为 UTC（time_zone 默认 "+00:00"），
-    // DEFAULT CURRENT_TIMESTAMP 会存 UTC 值——维护者直查 DB 差 8 小时。
-    // 覆盖为 +08:00：所有 CURRENT_TIMESTAMP 生成本地钟面时间。
+    // 20261018 生产库 MySQL → PostgreSQL。时区那一格**必须在这里显式钉住**：
+    // 切库前这段靠 `MySqlConnectOptions::timezone()` 把会话时区设成 +08:00（sqlx 的
+    // MySQL 默认是 "+00:00"，会让 DEFAULT CURRENT_TIMESTAMP 存 UTC 值、维护者直查差 8 小时），
+    // 而 **`PgConnectOptions` 没有 `.timezone()` 这个方法**——两侧 API 不对称，照搬编译不过。
+    // PG 的等价物是启动参数 `-c timezone=...`，经 `options()` 传。
+    //
+    // 库级也设了一份（`0000_schema.sql` 的 `ALTER DATABASE … SET timezone TO 'Asia/Shanghai'`），
+    // 新连接本来就会继承——这里再钉一遍**不是冗余**：`CURRENT_TIMESTAMP`/`now()` 返回
+    // `timestamptz`，写进无时区的 `timestamp` 列时按**会话时区**折算。会话时区一变，
+    // 全站时间戳集体偏 8 小时，而且**不会有任何报错**（正是本仓最贵的那类坏法）。
+    // 库级与连接级各自独立生效，两处同源是有意的。
     // entity 全部用 NaiveDateTime（sea-orm DateTime），不涉时区换算，无 skew。
-    let conn_opt: MySqlConnectOptions = db_url
-        .parse::<MySqlConnectOptions>()
+    let conn_opt: PgConnectOptions = db_url
+        .parse::<PgConnectOptions>()
         .expect("invalid DATABASE_URL")
-        .timezone(Some("+08:00".to_string()));
-    let pool = MySqlPoolOptions::new()
+        .options([("timezone", "Asia/Shanghai")]);
+    let pool = PgPoolOptions::new()
         .connect_with(conn_opt)
         .await
         .expect("Failed to connect to DB");
-    let db = SqlxMySqlConnector::from_sqlx_mysql_pool(pool);
+    let db = SqlxPostgresConnector::from_sqlx_postgres_pool(pool);
 
     // H2 修复：登录限流器 —— 密码错误 5 次/5 分钟窗口，锁定 15 分钟
     let max_attempts = env::var("LOGIN_MAX_ATTEMPTS")

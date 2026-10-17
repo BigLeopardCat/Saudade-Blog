@@ -1,3 +1,14 @@
+// ⚠️ 20261018 切库到 PostgreSQL：本文件里几个"0/1 小整数"列从 `i8` 改成了 `i16`。
+// **这不是风格，是硬要求** —— MySQL 那侧它们是 `tinyint`，`i8` 对得上；PG 那侧
+// （`scripts/migration/pg/0000_schema.sql` 由 `mysql2pg.py` 从实体生成）它们落成
+// **`smallint`**，而 sqlx-postgres 把 Rust `i8` 映射成 PG 的 `"char"`（oid 18，
+// 见 `sqlx-postgres/src/types/int.rs`），`"char" != smallint` ⇒ 解码时
+// `try_get` 直接 `mismatched types`、绑定参数时 PG 报
+// `operator does not exist: smallint = "char"`。**症状不是"某个接口坏"，是整行模型
+// 都读不出来**。`i16` 才映射到 `INT2`（`smallint`）。
+// ⇒ 本仓任何新增的 tinyint/smallint 语义列，Rust 侧一律写 `i16`（或 `bool`，PG 侧
+// `mysql2pg.py::entity_bools()` 会把 `bool` 生成成 `boolean`）。全仓同族的另外七处：
+// `talk.rs`、`quota_request.rs`、`note_comment.rs`、`note_comment_vote.rs`。
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -14,7 +25,7 @@ pub struct Model {
     /// **不是"这个昵称需要唯一"的开关**——唯一性由库里的函数索引
     /// `uk_user_nickname ((NULLIF(TRIM(nickname),'')))` 保证，与这一列无关。
     /// 迁移：`scripts/migration/nickname_unique_20261002.sql`（列序 `AFTER nickname`）
-    pub nickname_auto_renamed: i8,
+    pub nickname_auto_renamed: i16,
     /// 头像 URL（20260922 个人中心：上传裁切后落库的站内路径 `/api/protect/download/avatars/…`；
     /// NULL/空 = 没设过，展示端回退到站点主人头像（web_info 的 avatar，个人中心之前的行为）
     pub avatar: Option<String>,
@@ -24,7 +35,7 @@ pub struct Model {
     /// 取值域与判据在 `crate::authz`（`STATUS_ACTIVE` / `is_frozen`）——**别在本文件
     /// 或任何 handler 里内联数字**，未登记的值一律按冻结处理（失败取向不默认放行）。
     /// 迁移：`scripts/migration/user_status_token_version_20260926.sql`
-    pub status: i8,
+    pub status: i16,
     /// 令牌代次（20260926 令牌收回）：签发时写进 JWT 的 `ver` 声明，之后每个请求
     /// 拿这里的值与之比对——**库里的值一变大，此前签发的全部令牌当场作废**。
     /// 改密码 / 管理员重置 / 冻结账号都会 +1（见各自的 handler）。

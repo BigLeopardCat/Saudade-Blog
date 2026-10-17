@@ -1,5 +1,12 @@
 # Docker 自建部署
 
+> ⛔ **20261018：这一条路暂时不可用。** 生产库那天从 MySQL 切到了 PostgreSQL，
+> `src/` 与 `Cargo.toml` 已经只认 `postgres://`，而这里起的还是 MySQL 容器、`db-init`
+> 建的还是 MySQL 库 ⇒ **照它走完，后端起不来**（报的是 `has no supporting driver`，
+> 不是"连不上"）。转换这条路径记在 [ROADMAP](../../ROADMAP.md) 的《待办》里。
+> 在那之前，本地/新机器建库请看 [CONTRIBUTING.md §2.1](../../CONTRIBUTING.md)。
+> **别删这个警告**——下面所有命令、端口表、备份/口令轮换那几节都还是 MySQL 口径。
+
 一条 `docker compose up -d` 起整套站：MySQL + Rust 后端 + Python agent（看板娘）+ nginx。
 
 ```bash

@@ -117,7 +117,7 @@ pub struct CommentDto {
     pub up: i64,
     pub down: i64,
     #[serde(rename = "myVote")]
-    pub my_vote: i8,
+    pub my_vote: i16,
     #[serde(rename = "createdAt")]
     pub created_at: String,
 }
@@ -311,7 +311,7 @@ pub struct CreateComment {
 pub struct CreateCommentResult {
     pub id: i32,
     /// 0=待人工复核（公开侧看不到）/ 1=已公开 / 2=未通过
-    pub approved: i8,
+    pub approved: i16,
 }
 
 /// POST /api/public/notes/:id/comments —— 发一条评论/回复（强制登录）。
@@ -491,7 +491,7 @@ pub struct CommentAdminDto {
     #[serde(rename = "createTime")]
     pub created_at: String,
     /// 0=待审 / 1=通过 / 2=未通过（与留言板同口径，后台两个现成组件可直接复用）
-    pub approved: i8,
+    pub approved: i16,
     /// AI 判定留痕：pass / flag / reject；null = 没走 AI
     ///
     /// ⚠️ **键名是 `aiResult`，不是 `ai_result`**（20261002 与评论管理页一起定）：
@@ -514,7 +514,7 @@ pub struct CommentAdminDto {
     /// `is_deleted = 0` 过滤，删掉的评论在那边**不存在**。后台保留这一行是为了溯源
     /// （谁删了什么），并且明确标出来——已删的行**不可再审**（见 `audit_comment`）。
     #[serde(rename = "isDeleted")]
-    pub is_deleted: i8,
+    pub is_deleted: i16,
 }
 
 /// GET /api/protect/comments —— 评论管理列表（全部状态，倒序）。
@@ -599,7 +599,7 @@ pub async fn list_comments_admin(
 pub struct AuditCommentBody {
     /// 1=通过（放行展示）；0=驳回——写 `approved = 2`「未通过」，与待审(0) 区分
     /// （同留言板的 `AuditBody`：本人那一侧按 0 显示待审、2 显示未通过）
-    approved: i8,
+    approved: i16,
     /// 驳回理由，可空。**通过时请求里带什么都不生效**（改判即清空该列）。
     /// `serde(default)` 保证只发 approved 的调用方照常工作。
     #[serde(default)]

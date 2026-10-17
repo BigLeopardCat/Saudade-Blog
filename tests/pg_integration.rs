@@ -1,26 +1,35 @@
-//! 真 MySQL 集成测（20261003）：把 `counts_for` 的四条聚合语句放到**真库**上跑一遍。
+//! 真 PG 集成测（20261003；20261018 从 MySQL 迁到 PostgreSQL）：把 `counts_for` 的四条
+//! 聚合语句放到**真库**上跑一遍。
 //!
 //! ## 为什么非要有这一层
 //!
 //! 仓里原有的 `tests/api_tests.rs` 走 `MockDatabase`——它**不连接数据库、也不解码返回行**
 //! （mock 返回的是我们喂进去的值，模拟不了服务端真实的类型）。于是一整类事故对它完全
-//! 隐形：20260930 线上那次 500，根因是 **MySQL 的 `SUM(<整数列>)` 返回 `DECIMAL` 而不是
-//! `BIGINT`**，sea-orm 按 `Option<i64>` 解码当场报
+//! 隐形：真库返回的 SQL 类型与 sea-orm 期望的 Rust 类型对不上时，**只有真连接 + 真解码**
+//! 才会现形——`cargo check` 与 mock 都全绿。
+//!
+//! 历史锚点（切库前）：20260930 线上那次 500，根因是 **MySQL 的 `SUM(<整数列>)` 返回
+//! `DECIMAL` 而不是 `BIGINT`**，sea-orm 按 `Option<i64>` 解码当场报
 //!
 //! ```text
 //! mismatched types; Rust type Option<i64> (as SQL type BIGINT)
 //! is not compatible with SQL type DECIMAL
 //! ```
 //!
-//! ——`cargo check` 全绿、`cargo test`（MockDatabase）全绿，一部署就现形：文章列表卡片
-//! 三个数一个都不显示、`GET /stats` 直接 500。修法是所有求和都过
+//! ——文章列表卡片三个数一个都不显示、`GET /stats` 直接 500；当时修法是所有求和都过
 //! [`sum_views`](saudade_blog::routes::note_stats) 那一手的 `CAST(... AS SIGNED)`。
-//! **只有真库能把这条判据钉住**：本文件第一个用例就是"求和拿得回一个整数"，
-//! 谁把那个 `cast_as` 删了，这里立刻红。
+//!
+//! **切到 PG 之后这条判据的理由变了**：PG 的 `SUM(<整数列>)` 本来就返回 `bigint`，
+//! 所以"求和拿得回一个整数"在 PG 上不再是"防 DECIMAL 陷阱"，而是**把"真连接上 `SUM`
+//! 读回来的确实是 i64、且值就是那几个数"钉死**——它是这一层里唯一在真库上跑 `SUM`
+//! 并核对返回值（而非只核对其类型）的用例。`sum_views` 那手 `CAST(... AS BIGINT)` 在
+//! PG 上**冗余但无害**，留着是为了"所有 `SUM(cnt)` 都从一处出去"不出现一个只在旧库上
+//! 才需要的例外分支（见 `note_stats.rs::sum_views` 头注）。谁把真库读回来的数弄歪了，
+//! 本文件第一个用例立刻红。
 //!
 //! 顺带钉住的还有三件 MockDatabase 永远证明不了的事：
 //!   · `COUNT(*)`/`SUM` 在**零行**时是 NULL（`null → 0` 的折零逻辑真的走过一遍）；
-//!   · 空 id 列表必须**短路**——`IN ()` 在 MySQL 里是语法错误，不短路就是一条真报错；
+//!   · 空 id 列表必须**短路**——`IN ()` 是语法错误（PG 与 MySQL 同），不短路就是一条真报错；
 //!   · 讨论数的两条过滤（`approved = 1 AND is_deleted = 0`）在真 SQL 下的取舍，
 //!     以及 `note_view`/`note_like`/`user_favorite` 上那几条**外键**真的能插得进去。
 //!
@@ -35,7 +44,7 @@
 //! · ⑦⑧ **会话搜索与列表**：`LIKE` 的 `%`/`_` 转义（不转义就是用户输入注入面）、
 //!   `pinned` 优先 + `updated_at` 倒序的**三键排序**、以及命中锚"每会话取最新命中消息"。
 //!   这三条都要求库真的按行返回，且都要真 JWT 走完 `create_router` 的中间件。
-//! · ⑨ **额度申请的原子认领**：`UPDATE ... WHERE id = ? AND status = 0` 认领到才清零、
+//! · ⑨ **额度申请的原子认领**：`UPDATE ... WHERE id = $1 AND status = 0` 认领到才清零、
 //!   才发通知。重复点通过时第二次必须**一行都不改**——判据是"清零没再发生"（把
 //!   计数器在两刀之间推到 5，第二刀若生效就会把它抹成 0）与"通知没多出第二条"。
 //!
@@ -74,19 +83,24 @@
 //!
 //! ## 门控（务必看清，别把它改宽）
 //!
-//! · `TEST_MYSQL_URL` **没设** ⇒ 打印一行"跳过"然后返回（本地 `cargo test`、
+//! · `TEST_PG_URL` **没设** ⇒ 打印一行"跳过"然后返回（本地 `cargo test`、
 //!   贡献者的机器上都不受影响——他们大多没有现成的库）。
 //! · 设了但连不上 ⇒ **响亮失败**，绝不静默跳过。跳过的那些"绿"是这道闸唯一的敌人：
 //!   CI 里库没起来（服务容器没健康、口令写错）时如果也是绿的，那它就成了一道装饰。
-//! · 库必须有**结构**：`bash scripts/migration/fresh_install.sh <库名> …` 建出来的那种
-//!   （CI 的 `check` job 就跑这个脚本）。缺表时第一件事是带着提示失败，而不是抛一句
-//!   `Table 'x' doesn't exist` 让人猜。
+//! · 库必须有**结构**：由 `scripts/migration/pg/0000_schema.sql` 建出来的那种（它是
+//!   **库级**脚本）。缺表时第一件事是带着提示失败，而不是抛一句
+//!   `relation "x" does not exist` 让人猜。
 //!
-//! 用法（本机，库名自取；**不要指向生产库**）：
+//! 用法（本机，**不要指向生产库**）：
 //!
 //! ```bash
-//! MYSQL_BIN="mysql -uroot -p" bash scripts/migration/fresh_install.sh saudade_it
-//! TEST_MYSQL_URL="mysql://root:密码@127.0.0.1:3306/saudade_it" cargo test --test mysql_integration
+//! # 结构由一个**库级**脚本建（scripts/migration/pg/0000_schema.sql）。⚠️ 它头注里
+//! # 写死了库名 `saudade_blog`（脚本内有一句 `ALTER DATABASE "saudade_blog" …`）——
+//! # 建一个另名的测库时，要么把那一句改成新库名，要么就按它头注那样把库也建成
+//! # `saudade_blog`（那种情况务必用**独立实例**，别撞上生产库）。
+//! psql -c "CREATE DATABASE saudade_it ENCODING 'UTF8'"
+//! psql -d saudade_it -v ON_ERROR_STOP=1 -f scripts/migration/pg/0000_schema.sql
+//! TEST_PG_URL="postgres://saudade_app:密码@127.0.0.1:5432/saudade_it" cargo test --test pg_integration
 //! ```
 //!
 //! ## 夹具数据用高位 id
@@ -130,24 +144,24 @@ const CONV_LIST_UID: i32 = 900000013;
 const ADMIN_UID: i32 = 900000014;
 const APPLY_UID: i32 = 900000015;
 
-/// 打开被测库。`None` = 没设 `TEST_MYSQL_URL`（调用方直接返回，即"跳过"）。
+/// 打开被测库。`None` = 没设 `TEST_PG_URL`（调用方直接返回，即"跳过"）。
 ///
 /// 这里**不做 `unwrap_or_else` 之类的兜底**：环境变量在场时任何一步不成功都必须 panic
 /// （见文件头注的门控那一段）。
 async fn connect() -> Option<DatabaseConnection> {
-    let url = match std::env::var("TEST_MYSQL_URL") {
+    let url = match std::env::var("TEST_PG_URL") {
         Ok(u) if !u.trim().is_empty() => u,
         _ => {
             eprintln!(
-                "⏭  跳过：TEST_MYSQL_URL 没设（真库集成测，本地默认不跑；\
-                 见 tests/mysql_integration.rs 头注）"
+                "⏭  跳过：TEST_PG_URL 没设（真库集成测，本地默认不跑；\
+                 见 tests/pg_integration.rs 头注）"
             );
             return None;
         }
     };
     assert!(
-        url.starts_with("mysql://"),
-        "TEST_MYSQL_URL 必须以 mysql:// 开头（现在拿到的是 `{}…`）。\
+        url.starts_with("postgres://"),
+        "TEST_PG_URL 必须以 postgres:// 开头（现在拿到的是 `{}…`）。\
          这里只打印前缀，因为串里有口令。",
         &url[..url.len().min(12)]
     );
@@ -159,7 +173,7 @@ async fn connect() -> Option<DatabaseConnection> {
     opt.connect_timeout(Duration::from_secs(5)).max_connections(4);
     let db = Database::connect(opt).await.unwrap_or_else(|e| {
         panic!(
-            "TEST_MYSQL_URL 在场但连不上库：{e}\n\
+            "TEST_PG_URL 在场但连不上库：{e}\n\
              这条**不是跳过、是失败**——设了这个变量就意味着这道闸必须真跑起来。"
         )
     });
@@ -168,7 +182,7 @@ async fn connect() -> Option<DatabaseConnection> {
     Some(db)
 }
 
-/// 库里的结构得像 `scripts/migration/fresh_install.sh` 建出来的那套。
+/// 库里的结构得像 `scripts/migration/pg/0000_schema.sql` 建出来的那套。
 /// 缺表就带着"怎么补"的提示失败，别让它退化成一个看不出前因后果的 SQL 报错。
 async fn ensure_schema(db: &DatabaseConnection) {
     // ⑥–⑨ 起还要 `user`（签真令牌要有行才行）+ 会话两张 + 申请与通知两张
@@ -185,12 +199,15 @@ async fn ensure_schema(db: &DatabaseConnection) {
         "user_notification",
     ];
     let list = want.map(|t| format!("'{t}'")).join(",");
+    // `current_schema()` 是 MySQL `DATABASE()` 的**忠实对物**：两者都读作"这条连接当前把
+    // 不带限定的表名解析到哪个命名空间"。写死 `'public'` 只在 search_path 恰好是默认值时
+    // 等价——换个 schema 就会静默查空、误报"库结构不全"。
     let row = db
         .query_one(Statement::from_string(
-            DbBackend::MySql,
+            DbBackend::Postgres,
             format!(
-                "SELECT COUNT(*) FROM information_schema.TABLES \
-                 WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME IN ({list})"
+                "SELECT COUNT(*) FROM information_schema.tables \
+                 WHERE table_schema = current_schema() AND table_name IN ({list})"
             ),
         ))
         .await
@@ -201,14 +218,14 @@ async fn ensure_schema(db: &DatabaseConnection) {
         got,
         want.len() as i64,
         "库结构不全（要 {} 张表，只找到 {got} 张）。先建结构：\n\
-         bash scripts/migration/fresh_install.sh <库名> [mysql 参数…]",
+         psql -d <库名> -v ON_ERROR_STOP=1 -f scripts/migration/pg/0000_schema.sql",
         want.len()
     );
 }
 
 /// 跑一条写语句（原生 SQL——这里要验的正是**真 SQL 的语义**，不走 entity 更贴近现场）。
 async fn exec(db: &DatabaseConnection, sql: &str) {
-    db.execute(Statement::from_string(DbBackend::MySql, sql.to_string()))
+    db.execute(Statement::from_string(DbBackend::Postgres, sql.to_string()))
         .await
         .unwrap_or_else(|e| panic!("SQL 失败：{e}\n  {sql}"));
 }
@@ -241,11 +258,28 @@ async fn make_user(db: &DatabaseConnection, id: i32, role: &str) {
     .await;
 }
 
-/// 取一个标量（INT 列）。夹具的每一处断言都要绕开 `try_get_by_index` 的类型报错，
-/// 收进这里免得每条用例各写一遍。
+/// 取一个 `bigint` 标量（`COUNT(*)`、`SUM` 这一类）。
+///
+/// ⚠️ PG 与 MySQL 在这层有个**必须分宽**的差别：sqlx-postgres 的整数解码按 **OID 精确**
+/// 匹配（`i64` 只认 `int8`、`i32` 只认 `int4`），不像 sqlx-mysql 那样一个 `i64` 通吃所有
+/// 整数宽度。所以读 `int4` 列（`id` / `chat_quota_used` 那一族，`src/entity/` 里也是 `i32`）
+/// 要用 [`one_i32`]，读 `int8`（`COUNT(*)`）才用这里——用错宽度会当场报
+/// `Rust type i64 (as SQL type INT8) is not compatible with SQL type INT4`。
+/// 夹具的每一处断言都要绕开 `try_get_by_index` 的类型报错，收进这里免得每条用例各写一遍。
 async fn one_i64(db: &DatabaseConnection, sql: &str) -> Option<i64> {
     let row = db
-        .query_one(Statement::from_string(DbBackend::MySql, sql.to_string()))
+        .query_one(Statement::from_string(DbBackend::Postgres, sql.to_string()))
+        .await
+        .unwrap_or_else(|e| panic!("SQL 失败：{e}\n  {sql}"))
+        .expect("这道查询连一行都没回来");
+    row.try_get_by_index(0).expect("这一列不是整数")
+}
+
+/// 同上，取一个 `int4` 标量（`id` / `chat_quota_used` 那一族——PG 侧它们是 `integer`，
+/// 实体也是 `i32`）。分宽的理由见 [`one_i64`]。
+async fn one_i32(db: &DatabaseConnection, sql: &str) -> Option<i32> {
+    let row = db
+        .query_one(Statement::from_string(DbBackend::Postgres, sql.to_string()))
         .await
         .unwrap_or_else(|e| panic!("SQL 失败：{e}\n  {sql}"))
         .expect("这道查询连一行都没回来");
@@ -255,7 +289,7 @@ async fn one_i64(db: &DatabaseConnection, sql: &str) -> Option<i64> {
 /// 同上，取 TEXT/VARCHAR 列（可空）。
 async fn one_text(db: &DatabaseConnection, sql: &str) -> Option<String> {
     let row = db
-        .query_one(Statement::from_string(DbBackend::MySql, sql.to_string()))
+        .query_one(Statement::from_string(DbBackend::Postgres, sql.to_string()))
         .await
         .unwrap_or_else(|e| panic!("SQL 失败：{e}\n  {sql}"))
         .expect("这道查询连一行都没回来");
@@ -268,12 +302,12 @@ async fn count_of(db: &DatabaseConnection, sql: &str) -> i64 {
 
 /// 某个账号当前的额度计数器（`used_of` 的名字直说它读的是哪一列）。
 async fn used_of(db: &DatabaseConnection, uid: i32) -> i32 {
-    one_i64(
+    one_i32(
         db,
         &format!("SELECT chat_quota_used FROM user WHERE id = {uid}"),
     )
     .await
-    .expect("夹具账号不在库里（`make_user` 没跑？）") as i32
+    .expect("夹具账号不在库里（`make_user` 没跑？）")
 }
 
 // ── 真链路（create_router + 真 JWT）用的小工具 ────────────────────────────────
@@ -285,7 +319,7 @@ fn jwt_secret() {
     ONCE.get_or_init(|| {
         std::env::set_var(
             "JWT_SECRET",
-            "mysql-integration-test-secret-not-for-production",
+            "pg-integration-test-secret-not-for-production",
         );
     });
 }
@@ -361,12 +395,12 @@ async fn make_conversation(db: &DatabaseConnection, uid: i32, title: Option<&str
         ),
     )
     .await;
-    one_i64(
+    one_i32(
         db,
         &format!("SELECT MAX(id) FROM conversation WHERE user_id = {uid}"),
     )
     .await
-    .expect("刚才插进去的会话不见得查不到") as i32
+    .expect("刚才插进去的会话不见得查不到")
 }
 
 /// 往会话里塞一条消息，回它的 id（`chat_history.id` 全局自增 ⇒ 消息 id 的大小
@@ -380,12 +414,12 @@ async fn add_msg(db: &DatabaseConnection, uid: i32, cid: i32, content: &str) -> 
         ),
     )
     .await;
-    one_i64(
+    one_i32(
         db,
         &format!("SELECT MAX(id) FROM chat_history WHERE conversation_id = {cid}"),
     )
     .await
-    .expect("刚插进去的消息查不到") as i32
+    .expect("刚插进去的消息查不到")
 }
 
 /// 清掉某个 uid 名下的会话与消息（两个会话用例共用一个 uid 也要各清各的）。
@@ -425,7 +459,7 @@ fn hit_id_of(j: &serde_json::Value, cid: i32) -> Option<i32> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ① `SUM(<整数列>)` 必须拿得回一个 Rust 的 i64（DECIMAL 陷阱）
+// ① `SUM(<整数列>)` 必须拿得回一个 Rust 的 i64，且值就是那几个数
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -442,10 +476,14 @@ async fn sum_views_decodes_as_integer() {
     )
     .await;
 
+    // PG 上 `SUM(<整数列>)` 本来就返回 `bigint`，所以这条不再是"防 DECIMAL 陷阱"（那是
+    // 切库前 MySQL 上的事故，历史锚点见文件头注），而是**在真连接上把 `SUM` 读回来并核对
+    // 值**——`counts_for` 的四条里只有这一条在真库上跑聚合求和，谁把 `sum_views`
+    // （src/routes/note_stats.rs）那一手弄歪、或让 sea-orm 解不回 `i64`，这里立刻红。
     let got = counts_for(&db, &[NOTE_SUM]).await.expect(
-        "counts_for 报错了。**若错误里出现 `Rust type Option<i64> (as SQL type BIGINT) \
-         is not compatible with SQL type DECIMAL`**，就是 sum_views 的 CAST(... AS SIGNED) \
-         被删了——见 src/routes/note_stats.rs 与 tests/mysql_integration.rs 的头注",
+        "counts_for 报错了。所有 `SUM(cnt)` 都必须从 src/routes/note_stats.rs::sum_views \
+         出去（它把结果 cast 成 `BIGINT`，sea-orm 才按 `Option<i64>` 解得回）——见该处头注 \
+         与 tests/pg_integration.rs 的头注",
     );
     assert_eq!(got[&NOTE_SUM].views, 7, "3 + 4 要等于 7（多行求和走的是 SUM）");
 }
@@ -564,15 +602,15 @@ async fn counts_for_likes_and_favorites_use_count() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ⑤ 空 id 列表必须短路（`IN ()` 在 MySQL 里是语法错误）
+// ⑤ 空 id 列表必须短路（`IN ()` 是语法错误——PG 与 MySQL 同）
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[tokio::test]
 async fn counts_for_empty_ids_never_reaches_sql() {
     let Some(db) = connect().await else { return };
     let got = counts_for(&db, &[]).await.expect(
-        "空 id 列表必须**在发 SQL 之前**短路：`WHERE note_id IN ()` 是 MySQL 语法错误，\
-         真发出去就是一条 ERROR 1064",
+        "空 id 列表必须**在发 SQL 之前**短路：`WHERE note_id IN ()` 在 PG 里同样是语法错误\
+         （`syntax error at or near \")\"`），真发出去就是一条 ERROR",
     );
     assert!(got.is_empty(), "空进空出");
 }
@@ -609,8 +647,9 @@ async fn try_consume_charges_the_last_slot_exactly_once() {
     // 判据住的正是 `try_consume` 头注 ① 那件事：`UPDATE ... WHERE used < limit`
     // 匹配不到行 ⇒ `rows_affected == 0` ⇒ Exhausted。谁把这条 SQL"优化"成
     // `CASE WHEN used < limit THEN used + 1 ELSE used END` 那种"匹配而不改变"的写法，
-    // `rows_affected` 会变成 1（MySQL 数的是"真正改变的行"，而那个写法不改值 ⇒ 其实还是 0；
-    // 真正的坑是反过来把判断搬到应用层），0 的含义就在"没抢到"与"抢到了但没变"之间漂移。
+    // `rows_affected` 会变成 1（PG 的 `UPDATE` 报的是**匹配到并重写的行数**，不区分
+    // "值到底变没变"——`WHERE` 只按 `id` 匹配就恒命中一行），0 的含义于是就在"没抢到"与
+    // "抢到了但没变"之间漂移。真正的坑是反过来把判断搬到应用层。
     // 漂移的症状只有一个：**最后一格被扣两次** ⇒ 上限 500 的人实际只能聊 499 轮。
     for i in 0..2 {
         assert_eq!(
@@ -744,10 +783,13 @@ async fn conversation_list_pins_first_and_anchors_hits() {
     // 时间必须显式拨开：`NOW()` 的秒精度让三条落在同一秒，排序就退化成按 id 兜底，
     // 而"最后活动倒序"这条判据会**假绿**（id 顺序恰好与时间顺序一致）。
     // 置顶那条刻意拨到很老：证明它排第一靠的是 `pinned`，与时间无关。
+    // `conversation.pinned` 在 PG 侧是**真 boolean**（不是 MySQL 的 tinyint）⇒ 写 `true`，
+    // 写 `1` 会被 PG 拒绝（integer 不能隐式转 boolean）。`src/entity/conversation.rs` 里
+    // 它也是 `bool`。
     exec(
         &db,
         &format!(
-            "UPDATE conversation SET pinned = 1, updated_at = '2020-01-01 00:00:00' \
+            "UPDATE conversation SET pinned = true, updated_at = '2020-01-01 00:00:00' \
              WHERE id = {pinned}"
         ),
     )
@@ -846,12 +888,12 @@ async fn quota_review_claims_once_and_touches_nothing_on_the_second_call() {
         ),
     )
     .await;
-    let rid = one_i64(
+    let rid = one_i32(
         &db,
         &format!("SELECT MAX(id) FROM quota_request WHERE user_id = {APPLY_UID}"),
     )
     .await
-    .expect("刚插进去的申请查不到") as i32;
+    .expect("刚插进去的申请查不到");
 
     let app = test_app(db_app);
     let admin = auth_jwt::create_token(ADMIN_UID, "admin", 0);
@@ -947,12 +989,12 @@ async fn quota_review_claims_once_and_touches_nothing_on_the_second_call() {
         ),
     )
     .await;
-    let rid2 = one_i64(
+    let rid2 = one_i32(
         &db,
         &format!("SELECT MAX(id) FROM quota_request WHERE user_id = {APPLY_UID}"),
     )
     .await
-    .expect("第二份申请查不到") as i32;
+    .expect("第二份申请查不到");
     let (_, j3) = call(
         app,
         "POST",
@@ -1082,13 +1124,15 @@ async fn test_聚合搜索的四类命中集合与可见性谓词() {
 
     // 三篇文章。**只有第一行该被搜到**；另外两行是两条谓词的负控。
     // 正文都刻意不含关键词 ⇒ 分数只来自标题（100），排序可预期。
+    // `is_public` 在 PG 侧是**真 boolean**（`src/entity/note.rs` 里也是 `bool`）⇒ 写
+    // `true`/`false`，写 `1`/`0` 会被 PG 拒绝。
     exec(
         &db,
         &format!(
             "INSERT INTO note (id, title, content, created_at, updated_at, is_public, status) VALUES \
-             ({AGG_NOTE_OK},     '{AGG_KW} 可见文章', '正文里没有那个词', NOW(), NOW(), 1, 'published'), \
-             ({AGG_NOTE_DRAFT},  '{AGG_KW} 草稿',     '正文里没有那个词', NOW(), NOW(), 1, 'draft'), \
-             ({AGG_NOTE_HIDDEN}, '{AGG_KW} 隐藏文章', '正文里没有那个词', NOW(), NOW(), 0, 'published')"
+             ({AGG_NOTE_OK},     '{AGG_KW} 可见文章', '正文里没有那个词', NOW(), NOW(), true,  'published'), \
+             ({AGG_NOTE_DRAFT},  '{AGG_KW} 草稿',     '正文里没有那个词', NOW(), NOW(), true,  'draft'), \
+             ({AGG_NOTE_HIDDEN}, '{AGG_KW} 隐藏文章', '正文里没有那个词', NOW(), NOW(), false, 'published')"
         ),
     )
     .await;
@@ -1108,16 +1152,21 @@ async fn test_聚合搜索的四类命中集合与可见性谓词() {
     )
     .await;
 
-    // 反斜杠夹具：正文含字面量 `c:\path`。
+    // 反斜杠夹具：正文含**一个字面反斜杠**的 `c:\path`。
     // 这是**唯一能抓住 `like_escape` 的判据**：用户搜 `c:\path` 时，未转义的
-    // LIKE 模式 `%c:\path%` 里 `\p` 会被 MySQL 当成转义的 `p`（等价于搜 `c:path`），
+    // LIKE 模式 `%c:\path%` 里 `\p` 会被 PG 当成转义的 `p`（等价于搜 `c:path`），
     // 于是这一行**根本不会被取回来**，内存里那一遍再准也救不了——**丢的是命中**。
     // 注意这条与"`%` 变成通配符"不同：那个方向只会多取行（内存会筛掉），抓不住。
+    //
+    // ⚠️ 字面量里是**单个**反斜杠（`'… c:\path …'`），不是 MySQL 时代那个 `\\`：
+    // PG 默认 `standard_conforming_strings = on`，字符串里的反斜杠就是反斜杠、不吃一层
+    // （MySQL 默认会吃一层，所以旧夹具才写 `\\`）。写成 `\\` 会存进两个反斜杠，
+    // 这条判据当场失去意义。
     exec(
         &db,
         &format!(
             r"INSERT INTO talk (id, title, content, cat, v, author, user_id, src, approved, created_at, updated_at) VALUES
-             ({AGG_BOARD_BACKSLASH}, '愿', '路径 c:\\path 结束', '愿', 0, '留名丙', 0, 'board', 1, NOW(), NOW())"
+             ({AGG_BOARD_BACKSLASH}, '愿', '路径 c:\path 结束', '愿', 0, '留名丙', 0, 'board', 1, NOW(), NOW())"
         ),
     )
     .await;
@@ -1211,7 +1260,8 @@ async fn test_聚合搜索的四类命中集合与可见性谓词() {
 
     // ── 第二条查询：LIKE 转义（反斜杠）────────────────────────────────
     // `keyword` 在这里真的是 `c:\path`（JSON 里 `\\` 折成一个反斜杠），
-    // 而夹具正文里存的是**字面量** `c:\path`（SQL 里的 `'… c:\\path …'` 同样折成一个）。
+    // 而夹具正文里存的也是**字面量** `c:\path`（PG 的字符串字面量 `'… c:\path …'`
+    // 不消费反斜杠，见上面夹具那段的 ⚠️）。
     let body = r#"{"keyword":"c:\\path"}"#;
     let (st, j) = call(test_app(db), "POST", "/api/public/search", None, Some(body)).await;
     assert_eq!(st, StatusCode::OK);
@@ -1385,8 +1435,9 @@ async fn test_后台留言列表的服务端筛选分页与连接语义() {
         j["total"], 7,
         "「共 N 条」是**总条数**、不是本页条数——一页 2 条而总数 7 才是对的：{j}"
     );
-    // 同秒多行 ⇒ 次序只能由 id 那一层定下来。少了它，MySQL 对同秒行的次序不保证，
-    // 这一条会时绿时红，而翻页会重复/漏行。
+    // 同秒多行 ⇒ 次序只能由 id 那一层定下来。少了它，PG 对并列行的次序不保证
+    //（`ORDER BY` 只按键排，并列那些行的先后由执行计划决定），这一条会时绿时红，
+    // 而翻页会重复/漏行。
     assert_eq!(
         board_ids(&j),
         vec![BOARDQ_ORPHAN, BOARDQ_UBYNICK3],

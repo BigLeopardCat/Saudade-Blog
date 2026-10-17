@@ -49,14 +49,14 @@ flowchart TB
 | 端口 | 进程 | 说明 |
 |---|---|---|
 | 80/443 | nginx | 静态 + 反代 + SSE 透传（`X-Accel-Buffering: no`，否则帧被缓冲成一次性返回） |
-| 3000 | Rust 后端 | axum + sea-orm + MySQL；博客主 API + 对话编排 |
+| 3000 | Rust 后端 | axum + sea-orm + PostgreSQL；博客主 API + 对话编排 |
 | 8010 | Python Agent | FastAPI，4 workers（见《资源画像与容量》）；对话生成 + 工具执行 + RAG |
 | 3100 | IoT 设备服务 | Rust；设备注册/遥测/cmd 下发（校验博客 JWT） |
 | 8883 | EMQX | MQTT over TLS；设备 ↔ device-service 消息总线 |
-| 3306 | MySQL | 博客业务库 + 对话历史 + IoT 数据 |
+| 5432 | PostgreSQL | 博客业务库 + 对话历史 + IoT 数据 |
 
 除 nginx 外全部只绑回环，这是整套信任模型的基石，边界细节与实测命令见
-[security-boundary.md](security-boundary.md)。依赖：MySQL 8、EMQX（MQTTS 证书与 nginx 侧同源
+[security-boundary.md](security-boundary.md)。依赖：PostgreSQL 16、EMQX（MQTTS 证书与 nginx 侧同源
 双副本，续期要两处同步）。
 
 ---
@@ -137,8 +137,8 @@ push 到 `cn_sora_blog` 分支触发构建与部署：
 - `check` 一个 secret 都不需要，所以 fork 来的 PR 也跑得起来；它门住部署
   （`build-and-deploy` 的 `needs` 里有它，红了就不构建、不上传、不部署）。它跑的是：
   锁文件不许带本机镜像源 → 提交信息 lint（与本地同一份 `.githooks/commit-msg`）→
-  `fetch:widget` → 起一个 `mysql:8.0` 服务容器并 bootstrap schema → `verify_uploads.py` →
-  `cargo test`（MockDatabase + 真 MySQL 两层）→ `tsc --noEmit` → 前端 `*.test.mjs` 套件 →
+  `fetch:widget` → 起一个 `postgres:16` 服务容器并 bootstrap schema → `verify_uploads.py` →
+  `cargo test`（MockDatabase + 真 PostgreSQL 两层）→ `tsc --noEmit` → 前端 `*.test.mjs` 套件 →
   ESLint。`*.test.py` 那几套要 Playwright，故意不进 CI（夜跑或手跑）。
 - 改过 `frontend/src/` 的提交，本地先跑 `npm run lint`**：那一步在 CI 里是真闸。
 
@@ -153,7 +153,7 @@ push 到 `cn_sora_blog` 分支触发构建与部署：
 | nginx | 发行版默认 | 静态根 `frontend/dist` + 反代 3000/8010/3100；**配置改动只需 `reload`** |
 | Rust 后端 | `Restart=always` | 工作目录即仓库根，环境文件由 dotenv 从工作目录加载 |
 | Python Agent | `Restart=always` | uvicorn 4 workers 绑回环；`TimeoutStopSec=120` 让在途对话优雅结束 |
-| MySQL | 发行版默认 | 业务库 + 对话历史 + IoT 数据（单实例，无主从） |
+| PostgreSQL | 发行版默认（`postgresql@16-main`） | 业务库 + 对话历史 + IoT 数据（单实例，无主从） |
 | EMQX | `Restart=on-failure`（drop-in 改 `RestartSec=5s`） | MQTT broker；**带内存上限**（drop-in 见下） |
 | IoT device-service | `Restart=on-failure` | 独立目录与独立仓库，不在博客仓库内 |
 
@@ -308,7 +308,7 @@ nproc; grep -m1 'model name' /proc/cpuinfo; free -m; df -h /; cat /proc/loadavg
 | 服务 | 常驻 | 波动 |
 |---|---|---|
 | Python Agent（master + 4 workers） | **~241 MiB（刚重启、worker 还凉着）↔ ~456 MiB（跑过一轮重活）** | ⚠️ 见下 |
-| MySQL | ~81 MiB | 小 |
+| PostgreSQL | ~23 MiB | 小 |
 | EMQX | ~60 MiB | 42–65 MiB |
 | Rust 后端 | ~17 MiB | 小 |
 | nginx | ~20 MiB | 小 |
@@ -332,7 +332,7 @@ worker，worker 的 RSS 取决于它已经 import 了多重的模块：刚起来
 的上界），在 3.7 GB 机器上不算小数目，但对照下面 8.3 的开发工具占用，它并不是压力来源。
 
 ```bash
-for s in saudade-agent saudade-rust nginx mysql saudade-device emqx; do
+for s in saudade-agent saudade-rust nginx postgresql@16-main saudade-device emqx; do
   echo "$s $(systemctl show $s -p MemoryCurrent --value)"; done
 # worker 逐个看（worker 是 master 的 spawn_main 子进程，按 cmdline 匹配不到）：
 m=$(pgrep -f "[u]vicorn server:app" | sort -n | head -1)
@@ -472,17 +472,19 @@ python3 scripts/verify_uploads.py     # 退出码 0 = 没有"正在被引用却�
 ```
 
 它会把缺失的图连同是哪篇文章在引用一起列出来（也顺带报图库孤儿记录与盘上的无主文件）。
-`MYSQL_BIN` 可以给一个前缀（如 `docker exec -i <容器> mysql`），凭据默认走 0600 临时
-defaults 文件、不进 argv。
+`PSQL_BIN` 可以给一个前缀（如 `docker exec -i -e PGPASSWORD <容器> psql`）。口令走
+`PGPASSWORD` 环境变量，不进 argv；⚠️ 那个前缀里**要自己带上 `-e PGPASSWORD`**（`docker exec`
+不会转发宿主的环境变量，漏了会以 `fe_sendauth: no password supplied` 收场）。
 
 以下是本项目目前没有做的运维事项：
 
-- 数据库没有备份脚本，也没有恢复步骤：只有一个从零建库的 `scripts/migration/fresh_install.sh`。
-  生产库是单实例、无主从；`mysqldump` 需要自己安排（定时 + 异地存放），恢复演练也从未做过。
+- 数据库没有备份脚本，也没有恢复步骤：只有建库的 `scripts/migration/pg/0000_schema.sql`
+  （MySQL 那套 `fresh_install.sh` 已随 20261018 切库冻结，见 [CONTRIBUTING §6](../CONTRIBUTING.md)）。
+  生产库是单实例、无主从；`pg_dump` 需要自己安排（定时 + 异地存放），恢复演练也从未做过。
 - 上传件目录同样没有任何备份：上面那个 `verify_uploads.py` 验的是完整性、不是备份：
   它能告诉你"缺了三张、是哪三篇文章在用"，不能把缺的找回来。两件一起定时 dump 加异地存放
   这件事，与数据库那条缺口属于同一件事。
-- 没有整机灾难恢复预案：重启后 MySQL → EMQX → rust/agent 的启动顺序靠 systemd 依赖，
+- 没有整机灾难恢复预案：重启后 PostgreSQL → EMQX → rust/agent 的启动顺序靠 systemd 依赖，
   从未在"冷启动"场景下演练过。
 - 探针只写日志、不发通知：`health.log` 里攒着告警，但没有人会被叫醒。
 - 依赖漏洞响应：`.github/dependabot.yml` 已有（按生态开 PR），但 CI 里仍没有 `cargo audit` /

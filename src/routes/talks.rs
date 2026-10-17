@@ -38,7 +38,7 @@ pub struct TalkDto {
     pub mine: bool,
     /// 审核状态：1=通过（公开列表可见）/ 0=待审 / 2=未通过（驳回）。
     /// 公开列表已过滤 approved=1 恒 1；我的河灯接口返回本人全部状态
-    pub approved: i8,
+    pub approved: i16,
     /// 驳回理由（20260923）：仅 approved=2 时可能有值（AI 判定说明或管理员手填），
     /// 其余状态恒 null——改判通过时会清空。公开列表里恒 null（那里只有 approved=1）。
     #[serde(rename = "rejectReason")]
@@ -219,7 +219,7 @@ pub struct UpsertTalk {
     #[serde(default)]
     cat: String,
     #[serde(default)]
-    v: i8,
+    v: i16,
     // 留名（灯影集"按账户"分组用，可空）
     #[serde(default)]
     author: String,
@@ -444,7 +444,7 @@ pub(crate) fn talk_brief(content: &str) -> String {
 pub fn review_notice_text_for(
     noun: &str,
     venue: &str,
-    approved: i8,
+    approved: i16,
     brief: &str,
     reject_reason: Option<&str>,
 ) -> Option<(String, String)> {
@@ -477,7 +477,7 @@ pub fn review_notice_text_for(
 
 /// 留言板的审核通知文案（`review_notice_text_for` 的薄包装）。
 pub fn review_notice_text(
-    approved: i8,
+    approved: i16,
     brief: &str,
     reject_reason: Option<&str>,
 ) -> Option<(String, String)> {
@@ -499,7 +499,7 @@ async fn notify_review_result(
     uid: i32,
     talk_id: i32,
     content: &str,
-    approved: i8,
+    approved: i16,
     reject_reason: Option<&str>,
 ) {
     let brief = talk_brief(content);
@@ -555,7 +555,7 @@ pub(crate) async fn decide_review(
     content: &str,
     ai_on: bool,
     manual_on: bool,
-) -> (i8, Option<String>, Option<String>, Option<String>) {
+) -> (i16, Option<String>, Option<String>, Option<String>) {
     if !ai_on {
         if manual_on {
             return (0, None, None, None);
@@ -622,7 +622,7 @@ pub(crate) async fn decide_review(
 /// 留言板的裁决入口（`decide_review` 的薄包装，20261002 抽出）：读留言板的两个审核开关
 /// —— `aiReviewEnabled` / `manualReviewEnabled`（见 `web_info::BOARD_REVIEW_KEYS`）。
 async fn board_approved(state: &Arc<AppState>, uid: i32, content: &str)
-    -> (i8, Option<String>, Option<String>, Option<String>) {
+    -> (i16, Option<String>, Option<String>, Option<String>) {
     let (ai_on, manual_on) = super::web_info::review_switches(&state.db).await;
     decide_review("board", uid, content, ai_on, manual_on).await
 }
@@ -706,7 +706,7 @@ pub struct BoardAdminDto {
     pub user_id: i32,
     pub username: String,
     pub nickname: String,
-    pub approved: i8,
+    pub approved: i16,
     /// AI 审核判定留痕（20260905 issue9）："pass"=AI通过 / "flag"=AI拦截转人工 /
     /// null=未审（AI 关、人工全审、审核服务不可用转人工，或存量历史行）
     pub ai_result: Option<String>,
@@ -911,7 +911,7 @@ pub async fn delete_board(
 pub struct AuditBody {
     /// 1=通过（放行展示）；0=驳回——写 approved=2「未通过」，与待审(0)区分
     /// （20260905 issue8：本人「我的河灯」按 0 显示待审标签、2 显示未通过标签）
-    approved: i8,
+    approved: i16,
     /// 驳回理由（20260923 加，可空）：管理员手填，落 `talk.reject_reason`，
     /// 审核结果通知会带上它。**通过时请求里带什么都不生效**（改判即清空该列）。
     /// `serde(default)` 保证老前端（只发 approved）照常工作。

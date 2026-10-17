@@ -22,13 +22,15 @@ R2 的图是绝对 URL（`http(s)://…`），字节不在本机盘上，**单�
     python3 scripts/verify_uploads.py --uploads-dir /srv/uploads   # 覆盖 .env 的 UPLOAD_DIR
     python3 scripts/verify_uploads.py --self-test    # 只跑纯函数自检，不连库
 
-**凭据**只从仓库根的 `.env`（或同名环境变量）读，**不打印**：默认交给 mysql 客户端的
-是一个 0600 的临时 `--defaults-extra-file`，用完即删（`mysql -p<密码>` 在本机 `ps` 里
-对同机其他用户可见，所以不用那种写法）。`MYSQL_BIN` 给了前缀时（CI 用
-`docker exec -i <容器> mysql`，见 `scripts/migration/fresh_install.sh`）临时文件在容器里
-不存在，只能退回 `-u/-p` 参数——那条路**只配一次性容器口令，别配生产口令**。
+**凭据**只从仓库根的 `.env`（或同名环境变量）读，**不打印、也不进 argv**：一律走
+`PGPASSWORD` 环境变量交给子进程（20261018 切库时把 MySQL 那版的 0600 临时
+`--defaults-extra-file` 整个换掉了——psql 有 `PGPASSWORD` 这个更直接的机制）。
+`PSQL_BIN` 给前缀时（CI 用 `docker exec -i -e PGPASSWORD <容器> psql`）**`-e PGPASSWORD`
+不能少**，理由见 `pg_rows()` 的 docstring。
 """
 import argparse
+import csv
+import io
 import json
 import os
 import pathlib
@@ -36,7 +38,6 @@ import re
 import shlex
 import subprocess
 import sys
-import tempfile
 import urllib.parse
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -68,10 +69,14 @@ def load_env(root=ROOT):
     return env
 
 
-def parse_mysql_url(url):
-    """`mysql://user:pass@host:port/db` → (user, password, host, port, db)。
-    口令按 URL 规则解码（`@` `:` 等会被百分号转义），所以先从**最后一个** `@` 切。"""
-    m = re.match(r"^mysql://(.+)$", url or "")
+def parse_pg_url(url):
+    """`postgres://user:pass@host:port/db` → (user, password, host, port, db)。
+    口令按 URL 规则解码（`@` `:` 等会被百分号转义），所以先从**最后一个** `@` 切。
+
+    ⚠️ 20261018 切库：前缀只认 `postgres://`。`postgresql://` 也合法、但本仓
+    `.env` 与 CI 一律用短的那个——**只认一种**，另一种会在这里静默返回 `None`
+    （调用方的处理是"没有 DATABASE_URL ⇒ 报错退出"，不是"跳过"，所以不会假绿）。"""
+    m = re.match(r"^postgres://(.+)$", url or "")
     if not m:
         return None
     rest = m.group(1)
@@ -88,9 +93,9 @@ def parse_mysql_url(url):
     if ":" in hostpart:
         host, _, port = hostpart.partition(":")
     else:
-        host, port = hostpart, "3306"
+        host, port = hostpart, "5432"
     host = host or "127.0.0.1"
-    return user, password, host, port or "3306", db
+    return user, password, host, port or "5432", db
 
 
 def url_to_relpath(url):
@@ -121,10 +126,13 @@ def _self_test():
         if got != want:
             fails.append(f"{desc}: 得到 {got!r}，期望 {want!r}")
 
-    ck("连库串解析", parse_mysql_url("mysql://u:p%40w@127.0.0.1:3306/blog"),
-       ("u", "p@w", "127.0.0.1", "3306", "blog"))
-    ck("缺端口回落 3306", parse_mysql_url("mysql://u:p@db:3306/blog")[3], "3306")
-    ck("非 mysql 串", parse_mysql_url("postgres://x"), None)
+    ck("连库串解析", parse_pg_url("postgres://u:p%40w@127.0.0.1:5432/blog"),
+       ("u", "p@w", "127.0.0.1", "5432", "blog"))
+    ck("缺端口回落 5432", parse_pg_url("postgres://u:p@db/blog")[3], "5432")
+    # 负控：切库前那条 URL 现在必须**不被接受**——留着它当"前缀真的只认一种"的判据，
+    # 否则把正则写宽成 `postgres(ql)?://` 也没人知道。
+    ck("mysql 串不再被接受", parse_pg_url("mysql://u:p@127.0.0.1:3306/blog"), None)
+    ck("postgresql:// 长写也不接受", parse_pg_url("postgresql://u:p@h/blog"), None)
 
     ck("本地图取相对路径", url_to_relpath("/api/protect/download/2026_a.png"), "2026_a.png")
     ck("中文名要解码", url_to_relpath("/api/protect/download/2026_%E5%9B%BE.png"), "2026_图.png")
@@ -146,47 +154,43 @@ def _self_test():
     return 1 if fails else 0
 
 
-def mysql_rows(conn, sql):
+def pg_rows(conn, sql):
     """跑一条查询，返回按 tab 切好的行。
 
-    凭据怎么进 mysql 客户端，按有没有 `MYSQL_BIN` 分两条路（这个开关照抄
-    `scripts/migration/fresh_install.sh`：`MYSQL_BIN="docker exec -i <容器> mysql"`）：
+    **凭据一律走 `PGPASSWORD` 环境变量，绝不进 argv**（20261018 切库时重写过这一段）。
+    MySQL 那版靠一个 0600 的临时 `--defaults-extra-file`，因为 `mysql -p<密码>` 在本机
+    `ps` 里对同机其他用户可见；psql 有更直接的机制：`PGPASSWORD` 就是为这件事存在的，
+    子进程环境不落盘、不进 `ps`、不用建临时文件，所以切库时把那条路整个换掉了。
 
-    · 默认（本机装了客户端）：一个 0600 的临时 `--defaults-extra-file`，用完即删。
-      **不用 `-p<密码>`**：那串在本机 `ps` 里对同机其他用户可见。
-    · 给了 `MYSQL_BIN` 前缀（CI 就是这么跑的，runner 上没有客户端）：临时文件在
-      **容器里不存在**，只能走 `-u/-p` 参数。CI 用的是随 runner 消亡的一次性容器口令，
-      与生产库无关，所以这个例外是可接受的——**别把生产的口令配到这条路上**。
+    `PSQL_BIN` 给前缀时（CI 用 `docker exec -i -e PGPASSWORD <容器> psql`）——
+    **`-e PGPASSWORD` 不能少**：`docker exec` 不继承客户端环境，少了它容器里的 psql
+    会去要口令，而 CI 的 stdin 不是终端 ⇒ 它直接失败。`-e` 不带 `=值` 的形式是把
+    **客户端这边**的变量透进去，所以口令照样不进 argv。
     """
     user, password, host, port, db = conn
-    prefix = shlex.split(os.environ.get("MYSQL_BIN", "mysql"))
-
-    path = None
-    if len(prefix) == 1:  # 真·本机客户端 ⇒ 走临时文件那条安全的路
-        fd, path = tempfile.mkstemp(prefix="verify-uploads-")
-        os.write(fd, f"[client]\nuser={user}\npassword={password}\n".encode("utf-8"))
-        os.close(fd)
-        os.chmod(path, 0o600)
-        cred = [f"--defaults-extra-file={path}"]
-    else:
-        cred = [f"-u{user}", f"-p{password}"]
-
-    try:
-        out = subprocess.run(
-            prefix + cred + ["-h", host, "-P", port,
-                             # 显式定字符集：库里存着中文标题，客户端默认字符集不确定时会乱码
-                             # （记过同类事故：LANG 空 ⇒ latin1 ⇒ 中文标识符报 1064）
-                             "--default-character-set=utf8mb4", "-N", "-B", db, "-e", sql],
-            capture_output=True, text=True, errors="replace")
-    finally:
-        if path:
-            try:
-                os.unlink(path)
-            except OSError:
-                pass
+    prefix = shlex.split(os.environ.get("PSQL_BIN", "psql"))
+    # ⚠️ **必须包一层 `COPY … TO STDOUT (FORMAT csv)`，不能直接 `-c <SELECT>`。**
+    # psql 的 `-t -A` 输出**不转义字段里的换行**，而文章正文是多行的 ⇒ 一行正文会被
+    # 拆成好几"行"，轻则 `row[1]` IndexError，重则**静默少读到图**（正是本脚本要防的
+    # 那种假绿）。MySQL 那版的 `--batch` 会把 `\n`/`\t` 转义掉，所以这一条在切库时
+    # 从"客户端替我们做"变成了"我们得自己做"——实测踩到，不是推测。
+    # CSV 是标准做法：字段里的换行、制表符、引号都由它引起来，Python 的 `csv` 原样还回来。
+    out = subprocess.run(
+        # ⚠️ 端口是**小写 `-p`**。大写 `-P` 在 psql 里是 `\pset`（打印选项），
+        # 传个端口号进去会报 `\pset: unknown option: 5432` —— 与 mysql 客户端的
+        # `-P` 大写端口**正好相反**，从 MySQL 那边照抄过来必踩。
+        prefix + ["-U", user, "-h", host, "-p", port, "-d", db,
+                  # `-X` 不读 ~/.psqlrc（本机可能有影响输出的设置）；`-q` 静音。
+                  "-X", "-q",
+                  # 没有它 psql 会把每条报错打完还**退出 0** ⇒ 一条写错的列名
+                  # 会变成"查出来 0 行"，也就是"盘上没有缺图"的假绿。
+                  "-v", "ON_ERROR_STOP=1",
+                  "-c", "COPY (" + sql + ") TO STDOUT WITH (FORMAT csv)"],
+        capture_output=True, text=True, errors="replace",
+        env=dict(os.environ, PGPASSWORD=password))
     if out.returncode != 0:
-        raise RuntimeError((out.stderr or "").strip()[:400] or "mysql 退出码非 0")
-    return [line.split("\t") for line in out.stdout.splitlines() if line]
+        raise RuntimeError((out.stderr or "").strip()[:400] or "psql 退出码非 0")
+    return [r for r in csv.reader(io.StringIO(out.stdout)) if r]
 
 
 def collect(conn):
@@ -197,16 +201,16 @@ def collect(conn):
         if url:
             refs.setdefault(url, []).append(who)
 
-    for row in mysql_rows(conn, "SELECT image_url FROM images"):
+    for row in pg_rows(conn, "SELECT image_url FROM images"):
         add(row[0].strip(), None)  # 图库里挂着的（不一定有人用）
 
-    for row in mysql_rows(conn,
-                          "SELECT id, title, IFNULL(cover, '') FROM note "
+    for row in pg_rows(conn,
+                          "SELECT id, title, COALESCE(cover, '') FROM note "
                           "WHERE cover IS NOT NULL AND cover <> ''"):
         add(row[2].strip(), f"文章 {row[0]}《{(row[1] or '').strip()[:24]}》封面")
 
     # 正文只捞**含本地图前缀的那些行**，不让整库正文过大
-    for row in mysql_rows(conn,
+    for row in pg_rows(conn,
                           "SELECT id, title, content FROM note "
                           f"WHERE content LIKE '%{LOCAL_PREFIX}%'"):
         who = f"文章 {row[0]}《{(row[1] or '').strip()[:24]}》正文"
@@ -215,8 +219,12 @@ def collect(conn):
 
     # 用户头像住在 `user.avatar`（**不进 images 表**）。漏了这一句，盘上那几张头像
     # 就会全部落进"库里没有记录"那一桶——而它们恰恰也是迁移时必须跟着走的东西。
-    for row in mysql_rows(conn,
-                          "SELECT id, IFNULL(avatar, '') FROM user "
+    # ⚠️ `user` 在 PostgreSQL 里是**保留字**（裸写等于 `current_user`），必须加双引号：
+    # `FROM user` 在 PG 上报 `column "id" does not exist`（它把 `user` 读成了一个表达式
+    # 而不是表名，于是 `id` 找不到）——报错信息完全指不到真正的原因。MySQL 侧允许裸写，
+    # 所以这是切库时**只会在这里踩到**的一处。
+    for row in pg_rows(conn,
+                          "SELECT id, COALESCE(avatar, '') FROM \"user\" "
                           f"WHERE avatar LIKE '%{LOCAL_PREFIX}%'"):
         add(row[1].strip(), f"用户 {row[0]} 的头像")
     return refs
@@ -233,7 +241,7 @@ def main():
         return _self_test()
 
     env = load_env()
-    conn = parse_mysql_url(env.get("DATABASE_URL", ""))
+    conn = parse_pg_url(env.get("DATABASE_URL", ""))
     if not conn:
         print("✗ 读不到 DATABASE_URL（看仓库根的 .env，或用环境变量给）", file=sys.stderr)
         return 2

@@ -23,7 +23,7 @@ fn test_state(db: sea_orm::DatabaseConnection) -> AppState {
 
 #[tokio::test]
 async fn test_404_not_found() {
-    let db = MockDatabase::new(DatabaseBackend::MySql).into_connection();
+    let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
     let app = create_router(test_state(db));
 
     let response = app
@@ -36,7 +36,7 @@ async fn test_404_not_found() {
 
 #[tokio::test]
 async fn test_public_notes_route_structure() {
-    let db = MockDatabase::new(DatabaseBackend::MySql)
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
         .into_connection();
 
     let app = create_router(test_state(db));
@@ -54,7 +54,7 @@ async fn test_public_notes_route_structure() {
 // MockDatabase（无预期）下不触发任何查询，纯鉴权路径断言。
 
 fn mock_app() -> axum::Router {
-    let db = MockDatabase::new(DatabaseBackend::MySql).into_connection();
+    let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
     create_router(test_state(db))
 }
 
@@ -394,8 +394,9 @@ fn test_阅读求和不许绕开_sum_views_那一手_cast() {
     for (line, text) in &sql_sums {
         assert!(
             text.contains("cast_as"),
-            "note_stats.rs:{} 的求和没带 CAST（{}）——MySQL 的 SUM(<整数列>) 是 DECIMAL，\
-             i64 解不出来。把它挪进 sum_views()",
+            "note_stats.rs:{} 的求和没带 CAST（{}）——20260930 那次线上 500 就是没带它\
+             （MySQL 的 SUM(<整数列>) 返回 DECIMAL，i64 解不出来；20261018 切到 PG 后这一手\
+             是冗余但无害的，留着的理由是别让这条收口长出例外）。把它挪进 sum_views()",
             line,
             text
         );
@@ -417,7 +418,7 @@ async fn test_额度扣减的判据是_rows_affected_而不是猜的() {
     let cases: [(u64, ConsumeOutcome); 2] =
         [(1, ConsumeOutcome::Consumed), (0, ConsumeOutcome::Exhausted)];
     for (rows, want) in cases {
-        let db = MockDatabase::new(DatabaseBackend::MySql)
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_exec_results([MockExecResult { last_insert_id: 0, rows_affected: rows }])
             .into_connection();
         assert_eq!(quota::try_consume(&db, 126, 500).await, want, "rows_affected={rows}");
@@ -425,13 +426,13 @@ async fn test_额度扣减的判据是_rows_affected_而不是猜的() {
 
     // DB 故障 ⇒ fail-open（放行、不计数），**不是**当成"用完了"——
     // 后者会让数据库抖一下就把全站普通用户挡在门外
-    let boom = MockDatabase::new(DatabaseBackend::MySql)
+    let boom = MockDatabase::new(DatabaseBackend::Postgres)
         .append_exec_errors([sea_orm::DbErr::Custom("模拟 DB 故障".into())])
         .into_connection();
     assert_eq!(quota::try_consume(&boom, 126, 500).await, ConsumeOutcome::Degraded);
 
     // 语句本身：原地 +1，且带"还没到上限"这道条件
-    let db = MockDatabase::new(DatabaseBackend::MySql)
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
         .append_exec_results([MockExecResult { last_insert_id: 0, rows_affected: 1 }])
         .into_connection();
     let _ = quota::try_consume(&db, 126, 500).await;
@@ -463,7 +464,7 @@ async fn test_额度扣减的判据是_rows_affected_而不是猜的() {
 //
 // ⚠️ **真库上的命中口径（谁该出现、谁不许出现）不在这里**——MockDatabase 只会比对一个
 // 字符串、不会真的执行 LIKE，可见性谓词（is_public / approved / is_deleted / 父文章可见）
-// 在它面前全是"通过"。那些判据在 `tests/mysql_integration.rs`，两半合起来才算数。
+// 在它面前全是"通过"。那些判据在 `tests/pg_integration.rs`，两半合起来才算数。
 
 /// 与 `req_api_code` 同源，但把整个信封带回来（聚合搜索的判据要看 `data` 里的数）。
 async fn req_api_json(app: axum::Router, body: &str) -> (StatusCode, serde_json::Value) {

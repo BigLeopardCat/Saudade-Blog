@@ -230,13 +230,13 @@ pub fn role_label(role: &str) -> &'static str {
 
 /// `user.status` 取值域（DB 列无 ENUM/CHECK 约束，这里是唯一声明）。
 /// 迁移：`scripts/migration/user_status_token_version_20260926.sql`
-pub const STATUS_ACTIVE: i8 = 0;
+pub const STATUS_ACTIVE: i16 = 0;
 /// 冻结：拒登录、拒改密码与恢复码、已签发令牌全部失效。
-pub const STATUS_FROZEN: i8 = 1;
+pub const STATUS_FROZEN: i16 = 1;
 
 /// 账号是否已冻结。**未登记的值一律按冻结处理**（`!= ACTIVE`，不是 `== FROZEN`）：
 /// 库里出现第三种值时，我们要的是"不认识的账号状态不放行"，而不是"没写 1 就等于正常"。
-pub fn is_frozen(status: i8) -> bool {
+pub fn is_frozen(status: i16) -> bool {
     status != STATUS_ACTIVE
 }
 
@@ -268,7 +268,7 @@ pub enum TokenDenial {
 /// 失败取向没有被放宽：能签出"不带 `ver`"的令牌的人必须持有 `JWT_SECRET`，而拿到密钥
 /// 的人本来就能签任意 `ver`；`None` 这一支少掉的只是一次**无意义的比对**，冻结判定
 /// 照旧对它生效。
-pub fn check_token(status: i8, token_version: i32, claims_ver: Option<i32>) -> Result<(), TokenDenial> {
+pub fn check_token(status: i16, token_version: i32, claims_ver: Option<i32>) -> Result<(), TokenDenial> {
     if is_frozen(status) {
         return Err(TokenDenial::Frozen);
     }

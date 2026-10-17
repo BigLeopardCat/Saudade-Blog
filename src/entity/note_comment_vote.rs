@@ -29,7 +29,7 @@ pub struct Model {
     /// 匿名访客标识（浏览器生成、随 `X-Visitor-Key` 上报）。登录投票为 None
     pub visitor_key: Option<String>,
     /// `+1` = 赞 / `-1` = 踩。**没有 0**：撤回是 DELETE 行，见迁移文件头注
-    pub value: i8,
+    pub value: i16, // i16 的理由见 `entity/user.rs` 文件头（PG 侧是 smallint）
     /// +08:00 本地钟面（与全库时间列一致，见 CLAUDE.md 时区约定）
     pub created_at: DateTime,
     /// 改主意（赞↔踩）时刷新。**没有任何端点读它**，留作事后对账

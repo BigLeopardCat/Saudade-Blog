@@ -77,7 +77,7 @@ pub struct TempUserInfo {
     /// **不在后端翻译成字符串**——前端按 `crate::authz` 的同一套取值域自己判
     /// （冻结账号筛选项就是 `status !== 0`）。两边都对同一个数字做判断，
     /// 而不是一边翻译、另一边再反解。
-    pub status: i8,
+    pub status: i16,
     /// 终身对话额度已用轮数（20260929）。**这是跨语言契约**：agent 的额度工具
     /// （`tools/base.py` 的额度节）靠这个字段做写前预检与写后复核，
     /// 字段名与语义改一处要同步另一侧（见该文件头注与 `docs/security-boundary.md`）。
@@ -135,7 +135,7 @@ pub async fn list_temp_users(
         .column(user::Column::Status)
         .column(user::Column::ChatQuotaUsed)
         .column(user::Column::MutedUntil)
-        .into_tuple::<(i32, String, String, i8, i32, Option<chrono::NaiveDateTime>)>()
+        .into_tuple::<(i32, String, String, i16, i32, Option<chrono::NaiveDateTime>)>()
         .all(&state.db)
         .await
         .unwrap_or_default();

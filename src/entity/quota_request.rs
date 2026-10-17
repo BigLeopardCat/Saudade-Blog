@@ -30,7 +30,7 @@ pub struct Model {
     #[sea_orm(column_type = "Text", nullable)]
     pub reason: Option<String>,
     /// `0` = 待处理 / `1` = 已批准 / `2` = 已驳回（见头注 ①，**别当布尔用**）
-    pub status: i8,
+    pub status: i16,
     /// 管理员驳回理由（批准时为 NULL）。为空时读取端回落成"管理员没有填写理由"，
     /// **不假装它填了**——理由是给申请人看的，空话等于没答
     pub note: Option<String>,

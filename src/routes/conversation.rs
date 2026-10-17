@@ -524,7 +524,7 @@ mod tests {
 
     // `like_escape` 的五条测试随实现一起搬到了 `crate::search_core::like_escape_tests`
     // （20261006）。这里不再留一份：同一份规则两份测试，改一份另一份开始假绿。
-    // 会话搜索自己的那半（真库真的按字面匹配）仍在 `tests/mysql_integration.rs`。
+    // 会话搜索自己的那半（真库真的按字面匹配）仍在 `tests/pg_integration.rs`。
 
     // ── DB 时间戳 → 毫秒 ───────────────────────────────────────────────────
     #[test]

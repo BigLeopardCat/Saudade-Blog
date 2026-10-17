@@ -59,7 +59,14 @@ pub struct UpdateProfileRequest {
 /// 提示语照这个口径写，别说成"完全相同"。
 const NICKNAME_TAKEN: &str = "这个昵称已经有人用了，换一个吧";
 
-/// 这个 sea-orm 错误是不是**唯一索引拦下的重复键**（MySQL 1062 ER_DUP_ENTRY）。
+/// 这个 sea-orm 错误是不是**唯一索引拦下的重复键**。
+///
+/// ⚠️ 20261018 切库到 PostgreSQL 时**必须把 SQLSTATE 一起换**：MySQL 的重复键是
+/// `1062`（ER_DUP_ENTRY），PG 的是 `23505`（unique_violation）——两个值**互不相通**。
+/// 漏了这一处的症状是**静默**的：并发提交同一昵称时这条分支认不出来，用户拿到的是
+/// 泛化的"保存失败"而不是"这个昵称已经有人用了"；正常路径（一次只提交一个）永远测不到。
+/// `23000` 是 SQL 标准的完整性约束**类**码，PG 侧也会出现（驱动没给具体子码时）⇒ 保留。
+/// MySQL 那两个码留着不删：它们现在不可达，但删掉会让下一个人以为"这个判断从来只针对 PG"。
 ///
 /// 逐层解包而不是 `to_string().contains("Duplicate entry")`：后者会把任何一句恰好含这
 /// 几个字的报错（上游代理、连接器）也算成重复键。代价是写法绑在 sea-orm/sqlx 的枚举
@@ -76,7 +83,7 @@ fn is_duplicate_key(e: &sea_orm::DbErr) -> bool {
     let RuntimeErr::SqlxError(err) = rt else { return false };
     err.as_database_error()
         .and_then(|d| d.code())
-        .map(|c| matches!(c.as_ref(), "1062" | "23000"))
+        .map(|c| matches!(c.as_ref(), "23505" | "23000" | "1062"))
         .unwrap_or(false)
 }
 

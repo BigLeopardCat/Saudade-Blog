@@ -1,7 +1,7 @@
 # ══ tests/manual/：要**外部依赖**的手动套件（20261003 从 tests/frontend_contract/ 挪来）══
 # 目录名就是判据：这里的套件跑起来要一个**活着的服务**（本文件要 3000 端口的真后端、
 # 登录类用例还要真凭据），所以 `cargo test` 与 CI 都不带它们。自动化的那两批在别处：
-# `tests/api_tests.rs` + `tests/mysql_integration.rs`（跟着 `cargo test` 跑）、
+# `tests/api_tests.rs` + `tests/pg_integration.rs`（跟着 `cargo test` 跑）、
 # `frontend/tests/*.test.mjs`（`npm test`，进 CI）。
 # 判据的完整清单与"哪一层跑什么"见 CONTRIBUTING.md §3。
 import warnings

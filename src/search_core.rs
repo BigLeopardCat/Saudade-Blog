@@ -281,7 +281,7 @@ mod like_escape_tests {
     // ── LIKE 转义：用户输入里的通配符必须变成字面量 ─────────────────────────
     //
     // 这些只钉"转义函数"这一半；**另一半（真库真的按字面匹配）在
-    // `tests/mysql_integration.rs` 里**——LIKE 的语义在 SQL 里，这里证明不了它。
+    // `tests/pg_integration.rs` 里**——LIKE 的语义在 SQL 里，这里证明不了它。
     // 两半合起来才是完整的判据。
     #[test]
     fn 转义把百分号变成字面量() {

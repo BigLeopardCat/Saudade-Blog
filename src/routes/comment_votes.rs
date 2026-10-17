@@ -53,7 +53,7 @@ use super::AppState;
 /// 分层不同不矛盾——线协议要让前端一个函数表达三种动作，存储要让唯一键管住"投过没有"。
 #[derive(Deserialize)]
 pub struct VoteBody {
-    pub value: i8,
+    pub value: i16,
 }
 
 /// 一条评论的票数 + **我**投的那一票。列表里的每一行与投票回执**共用这一个形状**
@@ -66,7 +66,7 @@ pub struct CommentVoteDto {
     pub up: i64,
     pub down: i64,
     #[serde(rename = "myVote")]
-    pub my_vote: i8,
+    pub my_vote: i16,
 }
 
 /// 一批评论的赞/踩计数。**一条 `GROUP BY` 查询**，不是"每条评论两条"——
@@ -94,7 +94,7 @@ pub(super) async fn vote_counts_for(
         .filter(note_comment_vote::Column::CommentId.is_in(ids.to_vec()))
         .group_by(note_comment_vote::Column::CommentId)
         .group_by(note_comment_vote::Column::Value)
-        .into_tuple::<(i32, i8, i64)>()
+        .into_tuple::<(i32, i16, i64)>()
         .all(db)
         .await?;
 
@@ -120,7 +120,7 @@ pub(super) async fn my_votes(
     db: &DatabaseConnection,
     ids: &[i32],
     who: Option<&Who>,
-) -> HashMap<i32, i8> {
+) -> HashMap<i32, i16> {
     let Some(who) = who else { return HashMap::new() };
     if ids.is_empty() {
         return HashMap::new();
@@ -139,11 +139,11 @@ pub(super) async fn my_votes(
         // 取哪一行都行（清匿名行是写入侧的义务），这里定死按 id 倒序取最新的一行，
         // 免得同一份数据两次请求返回不同的高亮。
         .order_by_desc(note_comment_vote::Column::Id)
-        .into_tuple::<(i32, i8)>()
+        .into_tuple::<(i32, i16)>()
         .all(db)
         .await
         .map(|rows| {
-            let mut m: HashMap<i32, i8> = HashMap::new();
+            let mut m: HashMap<i32, i16> = HashMap::new();
             for (cid, v) in rows {
                 m.entry(cid).or_insert(v);
             }
@@ -153,7 +153,7 @@ pub(super) async fn my_votes(
 }
 
 /// 这个身份在**这一条**评论上投的那一票（`0` = 没投）。
-async fn my_vote_of(db: &DatabaseConnection, comment_id: i32, who: &Who) -> Result<i8, DbErr> {
+async fn my_vote_of(db: &DatabaseConnection, comment_id: i32, who: &Who) -> Result<i16, DbErr> {
     Ok(note_comment_vote::Entity::find()
         .select_only()
         .column(note_comment_vote::Column::Value)
@@ -163,7 +163,7 @@ async fn my_vote_of(db: &DatabaseConnection, comment_id: i32, who: &Who) -> Resu
             note_comment_vote::Column::VisitorKey,
         ))
         .order_by_desc(note_comment_vote::Column::Id)
-        .into_tuple::<i8>()
+        .into_tuple::<i16>()
         .one(db)
         .await?
         .unwrap_or(0))
@@ -290,7 +290,7 @@ async fn set_vote(
     db: &DatabaseConnection,
     comment_id: i32,
     who: &Who,
-    v: i8,
+    v: i16,
 ) -> Result<(), DbErr> {
     // 登录态先清掉同一 `visitor_key` 的匿名行：那行的主人就是这台浏览器，
     // 不清的话"先匿名投一票、再登录投一票"= 同一台机器投出两票（同 `insert_like`）。
