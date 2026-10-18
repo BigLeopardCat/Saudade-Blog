@@ -1996,3 +1996,125 @@
     max-width: min(90vw, 520px);
   }
 }
+
+/* ---------------- 20261018：纸与墨的材质（阶段 4 · 界面） ----------------
+   弹窗、气泡、四角按钮、标题对联此前**只有颜色没有质地**：纸是一块纯色，墨是一块
+   纯色，印也是一块纯色。这一块把三样东西补上 —— 纤维、切口、以及「河灯从下缘把
+   纸映暖」的那道光。
+
+   两条纪律：
+   ① **只动 `background-image` / `box-shadow` / `text-shadow` / `backdrop-filter`，
+      不碰 `background-color` 与 `color`**（唯一的例外是四角按钮，见下）。理由：
+      `riverboard-contrast.test.py` 的探针只读 `backgroundColor`（它自己在源码里
+      写明「渐变换不来合成底」），动颜色就等于把 20261009 逐条调出来的那套读数
+      一起改掉；而质地本来就该长在**同一张底**上 —— 底色回答「这是不是纸」，
+      质地回答「这是什么纸」。
+   ② 纹理一律**中性偏暗**（纸上只有纤维的阴影，没有提亮）。这样它只会把深色/浅色
+      字的对比度往有利方向推，不会往下拉。 */
+
+/* 纸面：抄纸帘的竹条压痕（竖，7px 一道）+ 纤维横丝（2° 斜，4px 一道）+
+   两团不规则的洇（纸浆厚薄不均）。全部是渐变，没有图片请求。 */
+@mixin rz-paper-face {
+  background-image:
+    repeating-linear-gradient(90deg, rgba(118, 94, 56, 0.05) 0 1px, transparent 1px 7px),
+    repeating-linear-gradient(2deg, rgba(118, 94, 56, 0.035) 0 1px, transparent 1px 4px),
+    radial-gradient(ellipse 62% 46% at 22% 14%, rgba(122, 94, 50, 0.055), transparent 72%),
+    radial-gradient(ellipse 56% 62% at 84% 80%, rgba(122, 94, 50, 0.05), transparent 74%);
+}
+
+/* 一张纸的四层影：主投影 / 贴地窄影 / 切口的一圈暗线 / 上缘的切口高光 /
+   下缘被河灯映暖的那道洇光。少了最后那条，纸就还是"贴在屏幕上的一块色"。 */
+@mixin rz-paper-lift {
+  box-shadow:
+    0 18px 44px rgba(2, 10, 14, 0.5),
+    0 2px 8px rgba(2, 10, 14, 0.35),
+    inset 0 0 0 1px rgba(150, 116, 70, 0.14),
+    inset 0 1px 0 rgba(255, 253, 246, 0.55),
+    inset 0 -24px 30px -26px rgba(206, 118, 54, 0.5);
+}
+
+.rz-root .rz-lantern .rz-bubble,
+.rz-root .rz-modal .rz-modal-box,
+.rz-root .rz-album-modal .rz-album-box {
+  @include rz-paper-face;
+  @include rz-paper-lift;
+}
+
+/* 气泡的口：`.rz-bubble::after` 是那个旋转 45° 的箭头，只给了底色。
+   给它一道同向的极淡纹就够 —— 箭头被旋转过，纹理跟着转，正好接得上主体。 */
+.rz-root .rz-lantern .rz-bubble::after {
+  background-image: linear-gradient(135deg, rgba(118, 94, 56, 0.05), transparent 70%);
+}
+
+/* 弹窗底幕：平铺的 66% 暗色换成带暗角的 —— 中心清楚、四周沉下去，
+   视线被压到纸上（这是"电影感"里最便宜也最有效的一招）。 */
+.rz-root .rz-modal {
+  background-image:
+    radial-gradient(ellipse 76% 66% at 50% 46%, rgba(3, 14, 19, 0.42) 0%, rgba(3, 14, 19, 0.8) 100%);
+}
+
+/* 四角按钮：玻璃换**墨**。原来那层 `backdrop-filter: blur(10px)` 是常驻的，
+   而它背后是逐帧重绘的画布 —— 三块模糊每帧都要重算。改成不透明的墨底 +
+   一层极淡的笔触纹：观感从「磨砂玻璃」变成「一方压深了的墨」，更贴主题，
+   也不再给每帧留一笔常驻成本。（这是本块唯一动 `background-color` 的地方：
+   0.72 → 0.84，墨压深一档。方向是**提高**浅色字的对比度，不会把第 ④ 节那些
+   读数往下拉。） */
+.rz-root .rz-ui .rz-home-btn,
+.rz-root .rz-ui .rz-album-btn,
+.rz-root .rz-ui .rz-wish-btn {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  background-color: rgba(7, 21, 28, 0.84);
+  background-image:
+    linear-gradient(180deg, rgba(245, 220, 169, 0.07), transparent 62%),
+    repeating-linear-gradient(94deg, rgba(245, 220, 169, 0.03) 0 1px, transparent 1px 5px);
+  box-shadow:
+    0 10px 28px rgba(2, 10, 14, 0.3),
+    inset 0 0 0 1px rgba(245, 220, 169, 0.07),
+    inset 0 -12px 18px -14px rgba(206, 118, 54, 0.4);
+}
+
+.rz-root .rz-ui .rz-home-btn:hover,
+.rz-root .rz-ui .rz-home-btn:focus-visible,
+.rz-root .rz-ui .rz-album-btn:hover,
+.rz-root .rz-ui .rz-album-btn:focus-visible,
+.rz-root .rz-ui .rz-wish-btn:hover,
+.rz-root .rz-ui .rz-wish-btn:focus-visible {
+  background-color: rgba(16, 39, 47, 0.92);
+}
+
+/* 标题与对联：夜河上的一行字，靠"墨洇"而不是靠描边立住。
+   月亮那一点也换成和画布里月晕同色系的暖白（原来那圈是纯提亮，偏冷）。 */
+.rz-root .rz-ui .rz-title {
+  text-shadow:
+    0 1px 2px rgba(2, 8, 14, 0.7),
+    0 0 22px rgba(245, 220, 169, 0.22);
+}
+
+.rz-root .rz-ui .rz-title i {
+  box-shadow:
+    0 0 16px rgba(245, 220, 169, 0.8),
+    0 0 42px rgba(245, 220, 169, 0.35);
+}
+
+.rz-root .rz-ui .rz-title .rz-couplet > span {
+  text-shadow: 0 1px 2px rgba(2, 8, 14, 0.65);
+}
+
+.rz-root .rz-ui .rz-title .rz-couplet > span b {
+  /* 朱砂落在纸/夜河上的"洇"：一圈很淡的外扩，不是描边 */
+  text-shadow:
+    0 1px 2px rgba(2, 8, 14, 0.6),
+    0 0 12px rgba(225, 138, 108, 0.55);
+}
+
+/* 印章：一块平色换成"盖下去的一枚印"—— 印泥的厚薄不均 + 边沿的洇。
+   盖在纸上的印，四边比中心实（压力大），所以中心给一点提亮、边给一点暗。 */
+.rz-root .rz-seal {
+  background-image:
+    radial-gradient(circle at 34% 30%, rgba(255, 240, 215, 0.14), transparent 62%),
+    repeating-linear-gradient(38deg, rgba(58, 16, 10, 0.1) 0 1px, transparent 1px 3px);
+  box-shadow:
+    0 0 0 1px rgba(163, 63, 48, 0.3),
+    0 0 10px rgba(163, 63, 48, 0.2);
+}

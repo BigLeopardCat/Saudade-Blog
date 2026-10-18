@@ -31,6 +31,7 @@ import {
     type ReflLantern,
 } from "./render/water";
 import { beginGlow, blobSprite, bloom, drawGrain, drawRays, glowBlob, haloSprite } from "./render/post";
+import { hash2 } from "./render/noise";
 
 /* 河灯留言板 ── 一条只存在于路由之下的河。
    整页为独立顶层路由（/he），不挂博客的头部与底部。
@@ -148,39 +149,209 @@ type Wish = {
 };
 
 /* ------------------------- 灯笼精灵预渲染 -------------------------
-   三种花样：莲花灯 / 八角灯 / 圆笼灯，全部用 Canvas 手绘，
-   比 CSS 拼装的灯笼精致得多，且只有一次离屏绘制成本。 */
+   三种花样：莲花灯 / 八角灯 / 圆笼灯，全部用 Canvas 手绘。**只烤一次**，
+   所以这里的逐像素成本可以放开用。
+
+   20261018（阶段 4）：从「平面径向渐变」改成**有材质**的灯笼 ——
+   ① 纸是**半透**的：光从焰心穿纸而出，越往外穿过的纸层越厚，于是
+      「近焰暖白 → 远端深琥珀」；蓝光被吸收得更快，所以远端同时偏暖偏深。
+   ② 纸有**纤维**：细颗粒（纸浆）+ 8px 粗斑（纤维结团）+ 整行同相的横纹
+      （抄纸时纤维的走向），三层叠。
+   ③ 竹骨**遮光**：骨线是暗的，而骨**朝光那一侧**的纸被骨撑起来、留一道亮边。
+   ④ 金属箍有**镜面亮带 + 上下暗边**，不是一块纯色。
+   ⑤ 轮廓内缘压暗（纸层最厚处）但保留暖光 ⇒ 读成「透光的纸」而不是
+      「涂成橙色的板」。 */
 
 const SPRITE_SIZE = 288;
 
+/* 纸纤维贴图（确定性）。`hash2` 而不是 `Math.random` —— 出图与像素判据都要可复现。 */
+let fiberPat: CanvasPattern | null = null;
+function fiberPattern(ctx: CanvasRenderingContext2D): CanvasPattern | null {
+    if (fiberPat) return fiberPat;
+    const N = 128;
+    const c = document.createElement("canvas");
+    c.width = c.height = N;
+    const g = c.getContext("2d");
+    if (!g) return null;
+    const img = g.createImageData(N, N);
+    const d = img.data;
+    for (let y = 0; y < N; y++) {
+        /* 整行同相：抄纸的纤维是横着淌的，这一层给的是「丝缕」不是「颗粒」。
+           只有颗粒的话，缩到屏幕上就成了一张均匀的噪点。 */
+        const streak = (hash2(0, y, 5152) - 0.5) * 0.9;
+        for (let x = 0; x < N; x++) {
+            /* 幅度**不能大**：纸是细的，粗斑一大就成麻布/帆布（实测 8px 块 ×0.6
+               的叠加把灯面糊成一张编织袋）。4px 块、整体 alpha 0.34 才是纸。 */
+            const v =
+                128 +
+                (hash2(x, y, 5150) - 0.5) * 26 +
+                (hash2(x >> 2, y >> 2, 5151) - 0.5) * 22 +
+                streak * 18;
+            const i = (y * N + x) * 4;
+            d[i] = d[i + 1] = d[i + 2] = v < 0 ? 0 : v > 255 ? 255 : v;
+            d[i + 3] = 255;
+        }
+    }
+    g.putImageData(img, 0, 0);
+    fiberPat = ctx.createPattern(c, "repeat");
+    return fiberPat;
+}
+
+/* 纸的透光曲线：近焰暖白 → 远端深琥珀。三盏灯共用同一条（同一种纸）。 */
+function paperGrad(
+    ctx: CanvasRenderingContext2D,
+    cx: number,
+    cy: number,
+    rIn: number,
+    rOut: number
+): CanvasGradient {
+    const g = ctx.createRadialGradient(cx, cy, rIn, cx, cy, rOut);
+    /* 值结构是这张精灵唯一真正重要的东西（屏幕上只有 60–118px）：
+       焰心过曝 → 一大片被照透的暖白 → 只有最外一圈沉到深琥珀。
+       中间段要是也压暗，整盏灯就成一颗橙色气球 —— 实测过。 */
+    g.addColorStop(0, "rgba(255,255,250,1)");
+    g.addColorStop(0.3, "rgba(255,244,214,1)");
+    g.addColorStop(0.6, "rgba(255,222,164,1)");
+    g.addColorStop(0.82, "rgba(246,188,112,1)");
+    g.addColorStop(0.94, "rgba(220,142,72,1)");
+    g.addColorStop(1, "rgba(174,88,36,1)");
+    return g;
+}
+
+/** 在**已经 clip 好**的区域里铺纸：透光渐变 + 纤维。 */
+function paperFill(
+    ctx: CanvasRenderingContext2D,
+    grad: CanvasGradient,
+    box: [number, number, number, number]
+): void {
+    ctx.fillStyle = grad;
+    ctx.fillRect(box[0], box[1], box[2], box[3]);
+    const pat = fiberPattern(ctx);
+    if (!pat) return;
+    ctx.save();
+    ctx.globalCompositeOperation = "overlay";
+    ctx.globalAlpha = 0.34;
+    ctx.fillStyle = pat;
+    ctx.fillRect(box[0], box[1], box[2], box[3]);
+    ctx.restore();
+}
+
+/** 轮廓内缘压暗：纸层最厚的地方在边上，光穿不透 —— 但只压一点点，
+ *  压狠了就成「描边」，纸的透光感反而没了。 */
+function innerShade(ctx: CanvasRenderingContext2D, S: number, shape: () => void): void {
+    ctx.save();
+    shape();
+    ctx.clip();
+    ctx.lineWidth = S * 0.05;
+    ctx.strokeStyle = "rgba(120,48,14,0.28)";
+    shape();
+    ctx.stroke();
+    ctx.restore();
+}
+
+/** 竹骨：暗线 + **朝光侧**的亮边（纸被骨撑起来，那一侧离焰更近）。
+ *  `toward` = 亮边偏哪一边（+1 右 / -1 左），按骨线方向算。 */
+function rib(
+    ctx: CanvasRenderingContext2D,
+    x1: number, y1: number, x2: number, y2: number,
+    w: number,
+    toward: number
+): void {
+    ctx.lineCap = "round";
+    ctx.strokeStyle = "rgba(126,58,20,0.42)";
+    ctx.lineWidth = w;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+    const dx = x2 - x1, dy = y2 - y1;
+    const L = Math.hypot(dx, dy) || 1;
+    const nx = (-dy / L) * toward * w * 0.85;
+    const ny = (dx / L) * toward * w * 0.85;
+    ctx.strokeStyle = "rgba(255,244,214,0.30)";
+    ctx.lineWidth = w * 0.42;
+    ctx.beginPath();
+    ctx.moveTo(x1 + nx, y1 + ny);
+    ctx.lineTo(x2 + nx, y2 + ny);
+    ctx.stroke();
+}
+
+/** 金属箍：镜面亮带 + 上下暗边。纯色填充读成「贴了一条色纸」。 */
+function metalBand(
+    ctx: CanvasRenderingContext2D,
+    x: number, y: number, w: number, h: number
+): void {
+    const g = ctx.createLinearGradient(0, y, 0, y + h);
+    g.addColorStop(0, "rgba(88,52,22,0.95)");
+    g.addColorStop(0.16, "rgba(198,140,74,0.97)");
+    g.addColorStop(0.4, "rgba(255,236,190,0.98)");
+    g.addColorStop(0.58, "rgba(186,122,58,0.97)");
+    g.addColorStop(1, "rgba(84,44,16,0.95)");
+    ctx.fillStyle = g;
+    ctx.fillRect(x, y, w, h);
+}
+
+/** 焰心：三盏灯共用。`r` 光晕半径，`tip` 火苗竖滴的半高。 */
+function paintFlame(
+    ctx: CanvasRenderingContext2D,
+    cx: number, cy: number, r: number, tip: number
+): void {
+    const fg = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+    fg.addColorStop(0, "rgba(255,252,240,1)");
+    fg.addColorStop(0.38, "rgba(255,232,160,0.96)");
+    fg.addColorStop(1, "rgba(255,178,80,0)");
+    ctx.fillStyle = fg;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+    const g = ctx.createLinearGradient(0, cy - tip, 0, cy + tip * 0.35);
+    g.addColorStop(0, "rgba(255,253,242,0.96)");
+    g.addColorStop(1, "rgba(255,196,96,0)");
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy - tip * 0.35, tip * 0.55, tip, 0, 0, Math.PI * 2);
+    ctx.fill();
+}
+
 function drawLotus(ctx: CanvasRenderingContext2D, S: number) {
     const cx = S / 2, cy = S / 2;
-    // —— 外层花瓣环 ——
     const petalRim = S * 0.30, petalLen = S * 0.42;
     const petals = 7;
+    // —— 外层花瓣环 ——
     for (let i = 0; i < petals; i++) {
         const a = (i / petals) * Math.PI * 2 - Math.PI / 2;
-        const back = i % 2 === 0;
+        const back = i % 2 === 0; // 奇偶交替 = 一前一后两层，后层压暗
         ctx.save();
         ctx.translate(cx, cy);
         ctx.rotate(a);
-        const grad = ctx.createLinearGradient(0, 0, 0, -petalLen);
-        grad.addColorStop(0, back ? "rgba(214,130,58,0.95)" : "rgba(240,168,90,0.98)");
-        grad.addColorStop(0.6, back ? "rgba(250,196,120,0.9)" : "rgba(255,216,146,0.97)");
-        grad.addColorStop(1, "rgba(255,228,170,0.92)");
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.moveTo(0, 0);
-        ctx.quadraticCurveTo(petalRim * 0.55, -petalLen * 0.30, 0, -petalLen); // 右缘
-        ctx.quadraticCurveTo(-petalRim * 0.55, -petalLen * 0.30, 0, 0);        // 左缘
-        ctx.closePath();
-        ctx.fill();
-        ctx.strokeStyle = "rgba(168,86,32,0.35)";
-        ctx.lineWidth = S * 0.008;
+        const shape = () => {
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.quadraticCurveTo(petalRim * 0.55, -petalLen * 0.30, 0, -petalLen); // 右缘
+            ctx.quadraticCurveTo(-petalRim * 0.55, -petalLen * 0.30, 0, 0);        // 左缘
+            ctx.closePath();
+        };
+        ctx.save();
+        shape();
+        ctx.clip();
+        /* 每片花瓣自己也是一片纸：靠花心的一端离焰近（亮），瓣尖远（深）。
+           后层再整体压一档 —— 前后两层不分开就成一朵平面贴花。 */
+        /* 花瓣比笼身**暗一档、暖一档**：它们是斜着背光的纸，穿过的料比正对
+           焰心的笼身厚。跟笼身一样亮的话，整朵花就糊成一块奶油。 */
+        const g = ctx.createLinearGradient(0, 0, 0, -petalLen);
+        g.addColorStop(0, back ? "rgba(236,186,116,1)" : "rgba(255,226,168,1)");
+        g.addColorStop(0.5, back ? "rgba(212,142,66,1)" : "rgba(246,180,96,1)");
+        g.addColorStop(1, back ? "rgba(152,70,24,1)" : "rgba(190,96,34,1)");
+        paperFill(ctx, g, [-petalRim * 1.2, -petalLen * 1.1, petalRim * 2.4, petalLen * 1.4]);
+        ctx.restore();
+        // 瓣缘：暗线（纸的切口，不透光）
+        ctx.strokeStyle = "rgba(146,68,22,0.42)";
+        ctx.lineWidth = S * 0.007;
+        shape();
         ctx.stroke();
-        // 花瓣中脉
-        ctx.strokeStyle = "rgba(255,240,205,0.5)";
-        ctx.lineWidth = S * 0.008;
+        // 中脉：亮线（纸在脉上鼓起、离焰更近）
+        ctx.strokeStyle = "rgba(255,244,214,0.42)";
+        ctx.lineWidth = S * 0.010;
         ctx.beginPath();
         ctx.moveTo(0, -petalLen * 0.08);
         ctx.quadraticCurveTo(petalRim * 0.14, -petalLen * 0.55, 0, -petalLen * 0.94);
@@ -188,53 +359,43 @@ function drawLotus(ctx: CanvasRenderingContext2D, S: number) {
         ctx.restore();
     }
     // —— 灯碗 ——
-    const bowl = ctx.createRadialGradient(cx, cy, S * 0.02, cx, cy, S * 0.30);
-    bowl.addColorStop(0, "rgba(255,238,196,0.98)");
-    bowl.addColorStop(0.55, "rgba(252,196,112,0.98)");
-    bowl.addColorStop(0.85, "rgba(226,138,62,0.98)");
-    bowl.addColorStop(1, "rgba(176,92,34,0.98)");
-    ctx.fillStyle = bowl;
-    ctx.beginPath();
-    ctx.ellipse(cx, cy, S * 0.30, S * 0.145, 0, 0, Math.PI * 2);
-    ctx.fill();
+    const bowl = () => {
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, S * 0.30, S * 0.145, 0, 0, Math.PI * 2);
+    };
+    ctx.save();
+    bowl();
+    ctx.clip();
+    /* 灯碗是全场最热的地方（焰就在碗里），所以它的曲线比笼身**更陡**：
+       中心过曝、到碗沿迅速沉下去。跟笼身共用一条曲线的话，碗会摊成一块
+       没有中心的奶油（实测）。 */
+    const bowlG = ctx.createRadialGradient(cx, cy, S * 0.015, cx, cy, S * 0.30);
+    bowlG.addColorStop(0, "rgba(255,254,246,1)");
+    bowlG.addColorStop(0.22, "rgba(255,238,190,1)");
+    bowlG.addColorStop(0.55, "rgba(250,198,118,1)");
+    bowlG.addColorStop(0.82, "rgba(226,146,68,1)");
+    bowlG.addColorStop(1, "rgba(170,82,32,1)");
+    paperFill(ctx, bowlG, [cx - S * 0.31, cy - S * 0.16, S * 0.62, S * 0.32]);
+    ctx.restore();
     // 灯碗骨线（向中心聚拢的竖肋）
-    ctx.strokeStyle = "rgba(150,74,22,0.30)";
-    ctx.lineWidth = S * 0.008;
     for (let i = 0; i < 9; i++) {
         const a = (i / 9) * Math.PI * 2;
-        ctx.beginPath();
-        ctx.moveTo(cx + Math.cos(a) * S * 0.015, cy + Math.sin(a) * S * 0.007);
-        ctx.quadraticCurveTo(
-            cx + Math.cos(a) * S * 0.16,
-            cy + S * 0.10 + Math.sin(a) * S * 0.05,
-            cx + Math.cos(a) * S * 0.295,
-            cy + Math.sin(a) * S * 0.143
+        rib(
+            ctx,
+            cx + Math.cos(a) * S * 0.015, cy + Math.sin(a) * S * 0.007,
+            cx + Math.cos(a) * S * 0.295, cy + Math.sin(a) * S * 0.143,
+            S * 0.008,
+            Math.cos(a) > 0 ? -1 : 1
         );
-        ctx.stroke();
     }
+    innerShade(ctx, S, bowl);
     // 碗沿
-    ctx.strokeStyle = "rgba(255,238,200,0.55)";
+    ctx.strokeStyle = "rgba(255,238,200,0.5)";
     ctx.lineWidth = S * 0.010;
-    ctx.beginPath();
-    ctx.ellipse(cx, cy, S * 0.30, S * 0.145, 0, 0, Math.PI * 2);
+    bowl();
     ctx.stroke();
     // —— 火焰 ——
-    const fg = ctx.createRadialGradient(cx, cy - S * 0.01, 0, cx, cy - S * 0.01, S * 0.09);
-    fg.addColorStop(0, "rgba(255,250,224,1)");
-    fg.addColorStop(0.4, "rgba(255,228,150,0.95)");
-    fg.addColorStop(1, "rgba(255,180,80,0)");
-    ctx.fillStyle = fg;
-    ctx.beginPath();
-    ctx.arc(cx, cy - S * 0.01, S * 0.09, 0, Math.PI * 2);
-    ctx.fill();
-    // 焰心竖滴（火苗）
-    const tip = ctx.createLinearGradient(0, cy - S * 0.085, 0, cy + S * 0.015);
-    tip.addColorStop(0, "rgba(255,252,235,0.95)");
-    tip.addColorStop(1, "rgba(255,196,96,0)");
-    ctx.fillStyle = tip;
-    ctx.beginPath();
-    ctx.ellipse(cx, cy - S * 0.035, S * 0.028, S * 0.052, 0, 0, Math.PI * 2);
-    ctx.fill();
+    paintFlame(ctx, cx, cy - S * 0.01, S * 0.09, S * 0.052);
 }
 
 function drawOct(ctx: CanvasRenderingContext2D, S: number) {
@@ -251,116 +412,111 @@ function drawOct(ctx: CanvasRenderingContext2D, S: number) {
         [cx - W, cy],
         [cx - W * 0.7, cy - H * 0.55],
     ];
-    const body = ctx.createRadialGradient(cx, cy, 0, cx, cy, W);
-    body.addColorStop(0, "rgba(255,240,198,0.98)");
-    body.addColorStop(0.6, "rgba(250,196,120,0.97)");
-    body.addColorStop(1, "rgba(214,128,56,0.96)");
-    ctx.fillStyle = body;
-    ctx.beginPath();
-    pts.forEach((p, i) => (i === 0 ? ctx.moveTo(p[0], p[1]) : ctx.lineTo(p[0], p[1])));
-    ctx.closePath();
-    ctx.fill();
-    // 菱形编格
-    ctx.strokeStyle = "rgba(150,72,20,0.28)";
-    ctx.lineWidth = S * 0.008;
-    for (let i = -2; i <= 2; i++) {
+    const shape = () => {
         ctx.beginPath();
-        ctx.moveTo(cx - W * 1.05, cy + i * H * 0.18);
-        ctx.lineTo(cx + W * 1.05, cy - i * H * 0.18);
-        ctx.stroke();
-    }
+        pts.forEach((p, i) => (i === 0 ? ctx.moveTo(p[0], p[1]) : ctx.lineTo(p[0], p[1])));
+        ctx.closePath();
+    };
+    ctx.save();
+    shape();
+    ctx.clip();
+    paperFill(ctx, paperGrad(ctx, cx, cy, 0, W), [cx - W * 1.1, cy - H * 1.1, W * 2.2, H * 2.2]);
+    ctx.restore();
+    /* 菱形编格（竹篾交叉）：两族**平行**斜线，各自的亮边朝向心——心是焰，纸的
+       鼓起面朝着它。
+       不能画成"八条过心的直线"（原来是那么画的）：那八条会在中心交成一点，纸面上
+       读成一颗星芒，而不是竹篾编格 —— 在 3× 放大下非常明显（实测）。平行族才是
+       "编"出来的菱形。
+       仍必须 clip 在笼身里：竹篾是按"整条直线"画的，不裁的话两端会**戳出轮廓**，
+       六角灯瞬间变成一只海胆（实测）。 */
+    ctx.save();
+    shape();
+    ctx.clip();
     for (let i = -2; i <= 2; i++) {
-        ctx.beginPath();
-        ctx.moveTo(cx - W * 1.05, cy - i * H * 0.18);
-        ctx.lineTo(cx + W * 1.05, cy + i * H * 0.18);
-        ctx.stroke();
+        const o = i * H * 0.32;
+        /* 两族的法线同向（都大致朝下）⇒ `toward` 只用按"在心上方还是下方"翻一次。 */
+        const toward = o > 0 ? -1 : 1;
+        rib(ctx, cx - W * 1.05, cy - H * 0.18 + o, cx + W * 1.05, cy + H * 0.18 + o,
+            S * 0.008, toward);
+        rib(ctx, cx - W * 1.05, cy + H * 0.18 + o, cx + W * 1.05, cy - H * 0.18 + o,
+            S * 0.008, toward);
     }
+    ctx.restore();
+    innerShade(ctx, S, shape);
     // 上下金箍
-    ctx.fillStyle = "rgba(196,124,52,0.95)";
-    ctx.fillRect(cx - W * 0.78, cy - H * 0.60, W * 1.56, S * 0.035);
-    ctx.fillRect(cx - W * 0.78, cy + H * 0.60 - S * 0.035, W * 1.56, S * 0.035);
+    metalBand(ctx, cx - W * 0.78, cy - H * 0.60, W * 1.56, S * 0.035);
+    metalBand(ctx, cx - W * 0.78, cy + H * 0.60 - S * 0.035, W * 1.56, S * 0.035);
     // 顶部提环（迷你）
-    ctx.strokeStyle = "rgba(200,140,70,0.9)";
+    ctx.strokeStyle = "rgba(214,158,92,0.92)";
     ctx.lineWidth = S * 0.014;
     ctx.beginPath();
     ctx.arc(cx, cy - H - S * 0.015, S * 0.03, Math.PI * 1.15, Math.PI * 1.85, true);
     ctx.stroke();
     // 火焰
-    const fg = ctx.createRadialGradient(cx, cy, 0, cx, cy, S * 0.10);
-    fg.addColorStop(0, "rgba(255,250,230,1)");
-    fg.addColorStop(0.45, "rgba(255,226,148,0.95)");
-    fg.addColorStop(1, "rgba(255,176,80,0)");
-    ctx.fillStyle = fg;
-    ctx.beginPath();
-    ctx.arc(cx, cy, S * 0.10, 0, Math.PI * 2);
-    ctx.fill();
-    const tip = ctx.createLinearGradient(0, cy - S * 0.09, 0, cy + S * 0.02);
-    tip.addColorStop(0, "rgba(255,252,238,0.95)");
-    tip.addColorStop(1, "rgba(255,196,96,0)");
-    ctx.fillStyle = tip;
-    ctx.beginPath();
-    ctx.ellipse(cx, cy, S * 0.030, S * 0.055, 0, 0, Math.PI * 2);
-    ctx.fill();
+    paintFlame(ctx, cx, cy, S * 0.10, S * 0.055);
 }
 
 function drawDrum(ctx: CanvasRenderingContext2D, S: number) {
     const cx = S / 2, cy = S / 2;
     const W = S * 0.25, H = S * 0.36; // 骨架略放大：把灯焰完整包进笼身
     // 圆笼灯笼身
-    const body = ctx.createRadialGradient(cx, cy, 0, cx, cy, W);
-    body.addColorStop(0, "rgba(255,238,192,0.98)");
-    body.addColorStop(0.55, "rgba(248,190,110,0.98)");
-    body.addColorStop(1, "rgba(208,124,54,0.98)");
-    ctx.fillStyle = body;
-    ctx.beginPath();
-    ctx.moveTo(cx - W, cy - H * 0.8);
-    ctx.quadraticCurveTo(cx - W * 1.35, cy, cx - W, cy + H * 0.8);
-    ctx.quadraticCurveTo(cx, cy + H, cx + W, cy + H * 0.8);
-    ctx.quadraticCurveTo(cx + W * 1.35, cy, cx + W, cy - H * 0.8);
-    ctx.quadraticCurveTo(cx, cy - H, cx - W, cy - H * 0.8);
-    ctx.closePath();
-    ctx.fill();
-    // 纵向肋
-    ctx.strokeStyle = "rgba(140,68,18,0.30)";
-    ctx.lineWidth = S * 0.008;
+    const shape = () => {
+        ctx.beginPath();
+        ctx.moveTo(cx - W, cy - H * 0.8);
+        ctx.quadraticCurveTo(cx - W * 1.35, cy, cx - W, cy + H * 0.8);
+        ctx.quadraticCurveTo(cx, cy + H, cx + W, cy + H * 0.8);
+        ctx.quadraticCurveTo(cx + W * 1.35, cy, cx + W, cy - H * 0.8);
+        ctx.quadraticCurveTo(cx, cy - H, cx - W, cy - H * 0.8);
+        ctx.closePath();
+    };
+    ctx.save();
+    shape();
+    ctx.clip();
+    paperFill(ctx, paperGrad(ctx, cx, cy, 0, W), [cx - W * 1.4, cy - H * 1.1, W * 2.8, H * 2.2]);
+    ctx.restore();
+    /* 肋与箍都 clip 在笼身里：它们按"整条"画，不裁就会戳出轮廓
+       （圆笼的横箍在桶腰以外的地方尤其明显）。 */
+    ctx.save();
+    shape();
+    ctx.clip();
+    // 纵向肋：亮边一律朝心（朝焰）
     for (let i = -2; i <= 2; i++) {
-        ctx.beginPath();
-        ctx.moveTo(cx + i * W * 0.4, cy - H * 0.78);
-        ctx.quadraticCurveTo(cx + i * W * 0.52, cy, cx + i * W * 0.4, cy + H * 0.78);
-        ctx.stroke();
+        if (i === 0) continue;
+        const x = cx + i * W * 0.4;
+        rib(ctx, x, cy - H * 0.78, x + i * W * 0.12, cy + H * 0.78, S * 0.008, i > 0 ? -1 : 1);
     }
-    // 横箍
-    ctx.strokeStyle = "rgba(200,120,52,0.6)";
-    ctx.lineWidth = S * 0.012;
+    // 横箍：暗线 + 上偏的亮边（箍的上缘朝天光，是金属最亮的一条）
+    ctx.lineCap = "round";
     for (const t of [-0.5, 0, 0.5]) {
-        ctx.beginPath();
         const y = cy + t * H * 0.9;
-        ctx.moveTo(cx - W * 1.04, y);
-        ctx.quadraticCurveTo(cx, y + H * 0.16, cx + W * 1.04, y);
-        ctx.stroke();
+        const hoop = (dy: number) => {
+            ctx.beginPath();
+            ctx.moveTo(cx - W * 1.04, y + dy);
+            ctx.quadraticCurveTo(cx, y + dy + H * 0.16, cx + W * 1.04, y + dy);
+            ctx.stroke();
+        };
+        ctx.strokeStyle = "rgba(140,70,24,0.5)";
+        ctx.lineWidth = S * 0.014;
+        hoop(0);
+        ctx.strokeStyle = "rgba(255,236,192,0.5)";
+        ctx.lineWidth = S * 0.005;
+        hoop(-S * 0.008);
     }
-    // 上下盖
-    ctx.fillStyle = "rgba(176,100,40,0.98)";
-    ctx.beginPath();
-    ctx.ellipse(cx, cy - H * 0.90, W * 0.9, S * 0.05, 0, 0, Math.PI * 2);
-    ctx.ellipse(cx, cy + H * 0.90, W * 0.9, S * 0.05, 0, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.restore();
+    innerShade(ctx, S, shape);
+    // 上下盖（木盖，比箍暗一档，别抢灯身的亮）
+    for (const dy of [-H * 0.90, H * 0.90]) {
+        const g = ctx.createLinearGradient(0, cy + dy - S * 0.038, 0, cy + dy + S * 0.038);
+        g.addColorStop(0, "rgba(226,178,116,0.98)");
+        g.addColorStop(0.42, "rgba(158,96,40,0.98)");
+        g.addColorStop(1, "rgba(74,38,12,0.98)");
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.ellipse(cx, cy + dy, W * 0.82, S * 0.038, 0, 0, Math.PI * 2);
+        ctx.fill();
+    }
     // 火焰
-    const fg = ctx.createRadialGradient(cx, cy, 0, cx, cy, S * 0.08);
-    fg.addColorStop(0, "rgba(255,251,232,1)");
-    fg.addColorStop(0.5, "rgba(255,228,152,0.95)");
-    fg.addColorStop(1, "rgba(255,178,80,0)");
-    ctx.fillStyle = fg;
-    ctx.beginPath();
-    ctx.arc(cx, cy, S * 0.08, 0, Math.PI * 2);
-    ctx.fill();
-    const tip = ctx.createLinearGradient(0, cy - S * 0.075, 0, cy + S * 0.02);
-    tip.addColorStop(0, "rgba(255,252,238,0.95)");
-    tip.addColorStop(1, "rgba(255,196,96,0)");
-    ctx.fillStyle = tip;
-    ctx.beginPath();
-    ctx.ellipse(cx, cy, S * 0.026, S * 0.05, 0, 0, Math.PI * 2);
-    ctx.fill();
+    paintFlame(ctx, cx, cy, S * 0.08, S * 0.05);
 }
 
 function buildSprites(): string[] {
