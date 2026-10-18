@@ -82,7 +82,10 @@ async fn current_uid(db: &sea_orm::DatabaseConnection, headers: &HeaderMap) -> O
 /// 默认 `http://127.0.0.1:8010/chat`。这里要的是基址，所以把尾部的
 /// `/chat`、`/chat/stream` 剥掉。**不动那个环境变量、不动 chat.rs**——
 /// 改语义会波及对话主链路，风险远大于这里省几行。
-fn agent_base_url() -> String {
+///
+/// 20261019 提为 `pub(crate)`：删会话时那条 checkpoint 钩子（`conversation.rs`）也要发
+/// 到同一个基址，**再抄一份解析逻辑就是又一处会漂的坐标**。
+pub(crate) fn agent_base_url() -> String {
     let raw = std::env::var("AGENT_URL")
         .unwrap_or_else(|_| "http://127.0.0.1:8010/chat".to_string());
     let trimmed = raw.trim_end_matches('/');

@@ -974,14 +974,23 @@ pub async fn delete_temp_user(
     //
     // 这里**不吞错也不中断**：级联清理失败只记一行 error，账号本体照旧删（与原本
     // "辅助清理失败不挡主流程"的取向一致）—— 但失败必须留痕，不能再是 `let _ =`。
-    if let Err(e) = crate::routes::conversation::purge_conversation_data(
+    let threads = match crate::routes::conversation::purge_conversation_data(
         &state.db,
         crate::routes::conversation::ConvScope::UserId(user_id),
     )
     .await
     {
-        tracing::error!("[账号管理] 级联清理会话数据失败 uid={user_id}: {e}（账号仍将删除）");
-    }
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!("[账号管理] 级联清理会话数据失败 uid={user_id}: {e}（账号仍将删除）");
+            Vec::new()
+        }
+    };
+    // agent 的 checkpoint 线程（20261019 批 D）：这一臂**必须由它自己**逐个删——那个
+    // `ConvScope::UserId` 臂删的是"这个 uid 名下的会话"，删完就再也问不出是哪几个了，
+    // 所以 id 由上面那个函数在删之前取好、原样带回来。失败只 warn（与上面同口径：
+    // 级联清理不挡主流程，但必须留痕）。
+    crate::routes::conversation::drop_checkpoint_threads(&threads).await;
     // 删主行**这一次不再吞错**（20261001）：这三个 `let _ =` 的级联删是辅助清理，
     // 吞掉无所谓；但 `user` 行本身删失败时必须如实报——否则下面那条"账号已删除"
     // 的审计通知就是假的，而误删恰恰是这次要防的事。

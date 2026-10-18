@@ -11,6 +11,7 @@ use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use crate::routes::AppState;
 use crate::auth_jwt;
 // LIKE 转义（% _ \ → 字面量）：20261006 起唯一实现在 search_core（聚合搜索也用它）。
@@ -301,10 +302,16 @@ pub(crate) enum ConvScope {
 ///
 /// 事务边界由调用方决定：`delete_conversation` 把它包在自己的事务里，
 /// `delete_temp_user` 不包（与它原本的形态一致）。
+///
+/// **返回值 = 这批被清掉的会话 id**（20261019 批 D）：agent 的上下文住在 checkpoint 库里
+/// （20261018 起挂 saver，20261019 起是**另一个 database**），那张表不归本进程管、也没有
+/// DB 外键可依 ⇒ 级联只能跨进程请 agent 删。**id 清单仍只有这一处**（同上面那条纪律：
+/// 谁要清 checkpoint，问这个函数要 id，别自己再查一遍——两处各查一遍就是上次那个 bug
+/// 的形状）。钩子本身在 `drop_checkpoint_threads`，**调用点在事务之外**（见它头注）。
 pub(crate) async fn purge_conversation_data<C: sea_orm::ConnectionTrait>(
     db: &C,
     scope: ConvScope,
-) -> Result<(), sea_orm::DbErr> {
+) -> Result<Vec<i32>, sea_orm::DbErr> {
     match scope {
         ConvScope::ConversationId(id) => {
             chat_history::Entity::delete_many()
@@ -331,10 +338,21 @@ pub(crate) async fn purge_conversation_data<C: sea_orm::ConnectionTrait>(
                 .filter(agent_task::Column::ConversationId.eq(id))
                 .exec(db).await?;
             conversation::Entity::delete_by_id(id).exec(db).await?;
+            Ok(vec![id])
         }
         ConvScope::UserId(uid) => {
             // 与上面**逐表同序**，只把过滤列从 conversation_id 换成 user_id。删账号时没有
             // "会话 id"可依，只能按归属列扫——所以五张表都必须在 user_id 上有值（它们都有）。
+            //
+            // 这一臂的会话 id 要在**删之前**取：下面最后一步把 `conversation` 行本身删掉，
+            // 删完就再也问不出"这个 uid 有过哪几个会话"了（`conv_<id>` 线程坐标也随之下落不明）。
+            let conv_ids: Vec<i32> = conversation::Entity::find()
+                .filter(conversation::Column::UserId.eq(uid))
+                .all(db)
+                .await?
+                .into_iter()
+                .map(|c| c.id)
+                .collect();
             chat_history::Entity::delete_many()
                 .filter(chat_history::Column::UserId.eq(uid))
                 .exec(db).await?;
@@ -353,9 +371,55 @@ pub(crate) async fn purge_conversation_data<C: sea_orm::ConnectionTrait>(
             conversation::Entity::delete_many()
                 .filter(conversation::Column::UserId.eq(uid))
                 .exec(db).await?;
+            Ok(conv_ids)
         }
     }
-    Ok(())
+}
+
+/// 把 checkpoint 库里的 `conv_<id>` 线程删掉（**best-effort**）。
+///
+/// **为什么是 HTTP 钩子而不是一条 DELETE**：agent 的上下文住在 checkpoint 库里，那张表
+/// 不归本进程管（20261019 起更是**另一个 database**）⇒ 级联只能跨进程请 agent 删
+/// （本仓 `DELETE /checkpoint/{conversation_id}`）。不删的后果与上面那五张表同形：会话没了，
+/// 那份正文**没有任何读取路径**，也**没有任何东西会红**。
+///
+/// 三条纪律：
+///   · **不进 DB 事务**：HTTP 不能挂在 `txn` 里（一次超时会把六张表的行锁攥住几秒），
+///     所以两个调用点都在事务之外——`delete_conversation` 在 `commit()` **之后**，
+///     `delete_temp_user` 本来就没有事务。
+///   · **失败不让业务删除失败**：checkpoint 是派生数据，钩子挂了照样删会话；残留由夜间
+///     `eval/pg_retention.py` 的保留期兜底。但**必须留痕**（warn）——「点了没反应」在本仓
+///     是禁止的。
+///   · **id 只从 `purge_conversation_data` 来**，这里不查库（清单只有一份）。
+///   · **有总预算**：一次删账号可能带几十个会话，逐条 3 秒超时会把它拖成 N×3 秒
+///     （agent 活着但不回话时每条都要等满）。超了就不再发，剩下的由保留期兜底。
+pub(crate) async fn drop_checkpoint_threads(ids: &[i32]) {
+    if ids.is_empty() {
+        return;
+    }
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let base = crate::routes::graph::agent_base_url();
+    let client = reqwest::Client::new();
+    for (done, id) in ids.iter().enumerate() {
+        if Instant::now() >= deadline {
+            tracing::warn!(
+                "[会话] checkpoint 钩子超出总预算 10s，剩 {} 条交给夜间保留期清（会话已删）",
+                ids.len() - done
+            );
+            break;
+        }
+        let url = format!("{base}/checkpoint/{id}");
+        match client.delete(&url).timeout(Duration::from_secs(3)).send().await {
+            Ok(r) if r.status().is_success() => {}
+            Ok(r) => tracing::warn!(
+                "[会话] checkpoint 钩子非 2xx（会话已删、agent 侧残留待保留期清）conv={id} status={}",
+                r.status()
+            ),
+            Err(e) => tracing::warn!(
+                "[会话] checkpoint 钩子失败（会话已删、agent 侧残留待保留期清）conv={id}: {e}"
+            ),
+        }
+    }
 }
 
 /// DELETE /api/chat/conversations/:id：删除会话 + 级联删其历史与摘要（用户级清洗手段）。
@@ -409,17 +473,26 @@ pub async fn delete_conversation(
                 .into_response()
         }
     };
-    if let Err(e) = purge_conversation_data(&txn, ConvScope::ConversationId(id)).await {
-        tracing::error!("[会话] 级联删除失败，回滚 conversation_id={id}: {e}");
-        let _ = txn.rollback().await;
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"success": false, "error": "删除失败"})),
-        )
-            .into_response();
-    }
+    let threads = match purge_conversation_data(&txn, ConvScope::ConversationId(id)).await {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!("[会话] 级联删除失败，回滚 conversation_id={id}: {e}");
+            let _ = txn.rollback().await;
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"success": false, "error": "删除失败"})),
+            )
+                .into_response();
+        }
+    };
     match txn.commit().await {
-        Ok(_) => (StatusCode::OK, Json(json!({"success": true}))).into_response(),
+        // checkpoint 钩子**在 commit 之后**（HTTP 不进事务，见 `drop_checkpoint_threads`）。
+        // 失败只 warn、不改这次的响应：会话在业务库里已经删干净了，这时候回一句"删除失败"
+        // 是假话——用户重试一次会得到 404。
+        Ok(_) => {
+            drop_checkpoint_threads(&threads).await;
+            (StatusCode::OK, Json(json!({"success": true}))).into_response()
+        }
         Err(_) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({"success": false, "error": "删除失败"})),
