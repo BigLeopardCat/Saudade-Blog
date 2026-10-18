@@ -174,6 +174,8 @@ const QUOTA_UID: i32 = 900000011;
 const QUOTA_UID2: i32 = 900000016;
 const CONV_SEARCH_UID: i32 = 900000012;
 const CONV_LIST_UID: i32 = 900000013;
+/// 会话搜索大小写那一条（⑧b）单独一个 uid：`make_user` 先删后插，共号会在并发跑时互删。
+const CONV_CI_UID: i32 = 900000058;
 // 聊天图片那一族（⑬）**三条用例各占一个 uid**：`cargo test` 默认多线程并发跑，
 // 共用同一个 uid 的话 `make_user` 会互相删对方刚插的行 —— 症状是
 // `duplicate key value violates unique constraint "user_pkey"`，
@@ -827,6 +829,71 @@ async fn conversation_search_escapes_like_wildcards() {
         vec![und],
         "只有**字面**含 `a_b` 的那条该被命中。拿到了 {ids:?}（含 {} 就说明 `_` 没转义）",
         und_decoy
+    );
+}
+
+// ── ⑧b 会话搜索的大小写（20261019）─────────────────────────────────────────────
+//
+// PG 的 `LIKE` **区分大小写**，而切流之前 MySQL 的排序规则是 `utf8mb4_0900_ai_ci`
+// （大小写**不**敏感）⇒ 会话搜索在切流那天**静默变敏感**了。产线实测：`chat_history` 里
+// `LIKE '%esp32%'` 命中 **0** 行、`ILIKE` 命中 **34** 行 —— 用户搜一个自己明明打过的词，
+// 得到的是"没聊过"。
+//
+// ⚠️ 这一处与文章搜索**不同**：那边 SQL 只是**预筛**、真判定在内存里
+// （`to_lowercase().contains`），这里**没有第二层** ⇒ `ILIKE` 就是这条搜索的**全部语义**。
+// 所以判据只能是端到端的（真库 + 真请求），没有别的地方能证明它。
+//
+// 四条 `.ilike` 全钉在这一条用例里：会话列表的**标题**命中与**正文**命中（`?q=` 两处），
+// 以及消息级搜索 `/api/chat/search`。
+
+#[tokio::test]
+async fn conversation_search_is_case_insensitive() {
+    let Some((db, db_app)) = connect_pair().await else { return };
+    make_user(&db, CONV_CI_UID, "user").await;
+    clear_conversations(&db, CONV_CI_UID).await;
+
+    // ① 标题里写的是**大写** `ESP32`；② 标题无关、**正文**里是大写（走另一处谓词）
+    let by_title = make_conversation(&db, CONV_CI_UID, Some("ESP32 固件笔记")).await;
+    let by_body = make_conversation(&db, CONV_CI_UID, Some("无关标题")).await;
+    add_msg(&db, CONV_CI_UID, by_body, "正文里也写 ESP32 大写").await;
+    // 负控：**真不含**该词的会话。大小写不敏感不等于"什么都命中"。
+    let clean = make_conversation(&db, CONV_CI_UID, Some("与关键词无关")).await;
+
+    let app = test_app(db_app);
+    let token = auth_jwt::create_token(CONV_CI_UID, "user", 0);
+
+    let (st, j) = call(
+        app.clone(),
+        "GET",
+        "/api/chat/conversations?q=esp32",
+        Some(&token),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{j}");
+    let ids = conv_ids(&j);
+    assert!(
+        ids.contains(&by_title) && ids.contains(&by_body),
+        "搜小写 `esp32` 必须命中**标题**里写 `ESP32` 与**正文**里写 `ESP32` 的两条会话。\
+         少了谁就是那一处还在用区分大小写的 `LIKE`。拿到 {ids:?}"
+    );
+    assert!(
+        !ids.contains(&clean),
+        "不该命中的会话被捞进来了（大小写不敏感 ≠ 什么都命中）：{ids:?}"
+    );
+
+    // 消息级搜索走的是**另一处**谓词（`search_chat_messages`）
+    let (st, j) = call(app, "GET", "/api/chat/search?q=esp32", Some(&token), None).await;
+    assert_eq!(st, StatusCode::OK, "{j}");
+    let hit_convs: Vec<i32> = j["hits"]
+        .as_array()
+        .unwrap_or_else(|| panic!("hits 不是数组：{j}"))
+        .iter()
+        .filter_map(|h| h["conversation_id"].as_i64().map(|v| v as i32))
+        .collect();
+    assert!(
+        hit_convs.contains(&by_body),
+        "消息级搜索同样要命中（这一处的 `LIKE` 与列表那两处是分开写的）：{j}"
     );
 }
 

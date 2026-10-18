@@ -5,6 +5,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use sea_orm::{ActiveModelTrait, ColumnTrait, Condition, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set, TransactionTrait};
+use sea_orm::sea_query::extension::postgres::PgExpr;
 use sea_orm::sea_query::{Alias, Expr};
 use serde::Deserialize;
 use serde_json::json;
@@ -131,6 +132,18 @@ pub async fn list_conversations(
     // 上界本来就由用户自己的会话数兜着（紧跟其后的列表查询另有 `limit(200)`）。
     let mut hit_by_conv: HashMap<i32, i32> = HashMap::new();
     if let Some(q) = q {
+        // ⚠️ **`ILIKE` 不是 `LIKE`**（20261019）。PG 的 `LIKE` **区分大小写**，而切流之前
+        // MySQL 的排序规则是 `utf8mb4_0900_ai_ci`（大小写不敏感）⇒ **会话搜索在切流那天
+        // 静默变敏感了**。产线实测：`chat_history` 里 `LIKE '%esp32%'` 命中 **0** 行、
+        // `ILIKE` 命中 **34** 行 —— 用户搜一个自己明明打过的词，结果是"没聊过"。
+        //
+        // 这一处与 `notes::search_notes` 那类**不同**：那边 SQL 只是**预筛**，真判定在内存里
+        // （`to_lowercase().contains`），所以大小写口径必须与内存一致；这里**没有第二层**
+        // ⇒ `ILIKE` 就是这条搜索的全部语义。改它等于改搜索行为，而目标是**回到切流前
+        // 用户看到的样子**（本仓在 `pg-business-schema` 里记的"排序规则对不上"那一格）。
+        //
+        // 本文件共四处：两处正文（这里 + `search_chat_messages`）、两处会话标题
+        // （`conversation.title` 是首条用户消息派生的，同一口径）。四处同源。
         let pat = format!("%{}%", like_escape(q));
         let rows = chat_history::Entity::find()
             .select_only()
@@ -140,7 +153,7 @@ pub async fn list_conversations(
                 "max_id",
             )
             .filter(chat_history::Column::UserId.eq(uid))
-            .filter(chat_history::Column::Content.like(&pat))
+            .filter(chat_history::Column::Content.into_expr().ilike(&pat))
             .group_by(chat_history::Column::ConversationId)
             // 聚合列必须按 **i64** 收（`id` 本身是 i32），照 `id` 的类型去解会解不出来
             // ——而 `unwrap_or_default()` 会把"解不出来"咽成**空命中集**
@@ -176,10 +189,10 @@ pub async fn list_conversations(
         // 标题 LIKE（Title 可 NULL：NULL LIKE 永不命中，天然安全）或内容命中会话；
         // hits 为空时省略 in 支（MySQL 不接受空 IN () 列表）
         let cond = if hit_by_conv.is_empty() {
-            Condition::any().add(conversation::Column::Title.like(&pat))
+            Condition::any().add(conversation::Column::Title.into_expr().ilike(&pat))
         } else {
             Condition::any()
-                .add(conversation::Column::Title.like(&pat))
+                .add(conversation::Column::Title.into_expr().ilike(&pat))
                 .add(conversation::Column::Id.is_in(hit_by_conv.keys().copied()))
         };
         finder = finder.filter(cond);
@@ -539,7 +552,7 @@ pub async fn search_chat_messages(
     // 候选池 = 最新 100 条命中（id desc），随后按**会话活动**重排（见下）
     let mut rows = chat_history::Entity::find()
         .filter(chat_history::Column::UserId.eq(uid))
-        .filter(chat_history::Column::Content.like(&pat))
+        .filter(chat_history::Column::Content.into_expr().ilike(&pat))
         .order_by_desc(chat_history::Column::Id)
         .limit(100)
         .all(&state.db)
