@@ -23,6 +23,7 @@ pub mod note_stats; // 文章阅读量/点赞量（20260930；**绝不能记进 
 pub mod comments;   // 文章评论（20261002）：审核复用 talks::decide_review，存储走 note_comment 表
 pub mod comment_votes; // 评论点赞/踩（20261003）：一票一行、**访客可投**，身份复用 note_stats::{identify, Who}
 pub mod search; // 站内聚合搜索（20261006）：文章/说说/留言/评论一次搜，规则走 crate::search_core
+pub mod note_tags; // 文章↔标签关联表（20261018）：`note.tags` 那一列逗号串的**唯一**读写出口
 
 use axum::{
     routing::{get, post, delete, put},

@@ -152,6 +152,7 @@ use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use sea_orm::{
     ConnectOptions, ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement,
+    TransactionTrait,
 };
 use saudade_blog::auth_jwt;
 use saudade_blog::quota::{self, ConsumeOutcome};
@@ -229,12 +230,14 @@ async fn ensure_schema(db: &DatabaseConnection) {
     // 建的（手写迁移，见那个文件的头注）。加进这份名单有两个作用：① 它的用例失败时
     // 得到的是"库结构不全 + 怎么补"，不是一条裸 SQL 报错；② 顺带把"CI 只加载 0000"
     // 这个洞钉在明面上——清单见 `scripts/migration/pg/ci_schema_files.py`。
+    // `note_tag`（20261018）：也是**手写迁移**建的（`0006_note_tag.sql`），理由同 `chat_image`。
     let want = [
         "note",
         "note_view",
         "note_like",
         "user_favorite",
         "note_comment",
+        "note_tag",
         "user",
         "conversation",
         "chat_history",
@@ -261,15 +264,19 @@ async fn ensure_schema(db: &DatabaseConnection) {
     assert_eq!(
         got,
         want.len() as i64,
-        "库结构不全（要 {} 张表，只找到 {got} 张）。先建结构（**两份都要**，顺序不能反）：\n\
+        "库结构不全（要 {} 张表，只找到 {got} 张）。先建结构（**按序全跑**，缺哪份都补上）：\n\
          psql -d <库名> -v ON_ERROR_STOP=1 -f scripts/migration/pg/0000_schema.sql\n\
-         psql -d <库名> -v ON_ERROR_STOP=1 -f scripts/migration/pg/0003_chat_image.sql",
+         psql -d <库名> -v ON_ERROR_STOP=1 -f scripts/migration/pg/0003_chat_image.sql\n\
+         psql -d <库名> -v ON_ERROR_STOP=1 -f scripts/migration/pg/0004_note_visibility.sql\n\
+         psql -d <库名> -v ON_ERROR_STOP=1 -f scripts/migration/pg/0005_orphan_cleanup.sql\n\
+         psql -d <库名> -v ON_ERROR_STOP=1 -f scripts/migration/pg/0006_note_tag.sql\n\
+         （清单的唯一事实源是 scripts/migration/pg/ci_schema_files.py —— CI 就按它建库）",
         want.len()
     );
 }
 
 /// 跑一条写语句（原生 SQL——这里要验的正是**真 SQL 的语义**，不走 entity 更贴近现场）。
-async fn exec(db: &DatabaseConnection, sql: &str) {
+async fn exec<C: ConnectionTrait>(db: &C, sql: &str) {
     db.execute(Statement::from_string(DbBackend::Postgres, sql.to_string()))
         .await
         .unwrap_or_else(|e| panic!("SQL 失败：{e}\n  {sql}"));
@@ -311,7 +318,7 @@ async fn make_user(db: &DatabaseConnection, id: i32, role: &str) {
 /// 要用 [`one_i32`]，读 `int8`（`COUNT(*)`）才用这里——用错宽度会当场报
 /// `Rust type i64 (as SQL type INT8) is not compatible with SQL type INT4`。
 /// 夹具的每一处断言都要绕开 `try_get_by_index` 的类型报错，收进这里免得每条用例各写一遍。
-async fn one_i64(db: &DatabaseConnection, sql: &str) -> Option<i64> {
+async fn one_i64<C: ConnectionTrait>(db: &C, sql: &str) -> Option<i64> {
     let row = db
         .query_one(Statement::from_string(DbBackend::Postgres, sql.to_string()))
         .await
@@ -322,7 +329,7 @@ async fn one_i64(db: &DatabaseConnection, sql: &str) -> Option<i64> {
 
 /// 同上，取一个 `int4` 标量（`id` / `chat_quota_used` 那一族——PG 侧它们是 `integer`，
 /// 实体也是 `i32`）。分宽的理由见 [`one_i64`]。
-async fn one_i32(db: &DatabaseConnection, sql: &str) -> Option<i32> {
+async fn one_i32<C: ConnectionTrait>(db: &C, sql: &str) -> Option<i32> {
     let row = db
         .query_one(Statement::from_string(DbBackend::Postgres, sql.to_string()))
         .await
@@ -332,7 +339,7 @@ async fn one_i32(db: &DatabaseConnection, sql: &str) -> Option<i32> {
 }
 
 /// 同上，取 TEXT/VARCHAR 列（可空）。
-async fn one_text(db: &DatabaseConnection, sql: &str) -> Option<String> {
+async fn one_text<C: ConnectionTrait>(db: &C, sql: &str) -> Option<String> {
     let row = db
         .query_one(Statement::from_string(DbBackend::Postgres, sql.to_string()))
         .await
@@ -341,7 +348,7 @@ async fn one_text(db: &DatabaseConnection, sql: &str) -> Option<String> {
     row.try_get_by_index::<Option<String>>(0).expect("这一列不是文本")
 }
 
-async fn count_of(db: &DatabaseConnection, sql: &str) -> i64 {
+async fn count_of<C: ConnectionTrait>(db: &C, sql: &str) -> i64 {
     one_i64(db, sql).await.expect("COUNT(*) 不可能是 NULL")
 }
 
@@ -2218,22 +2225,39 @@ async fn deleting_a_temp_user_purges_all_six_chat_tables() {
 // 所以把"每个用例一个 uid"从注释里的一条约定，变成一条会红的判据：扫**自己的源码**，
 // 每个 `const …_UID: i32 = N;` 的 N 都必须唯一。
 //
-// ⚠️ 射程说明（20261018 扩过一次）：覆盖 `_UID` 那一族（都往同一张 `user` 表里插）**以及**
-// `_NOTE` 那一族（都往 `note` 表里插）。`NOTE_SUM` / `AGG_NOTE_OK` 那些**不**在这个射程里
-// —— 它们不以后缀命名，扫不出干净的一组，那半边仍然只靠注释里的约定。
+// ⚠️ 射程说明（20261018 扩过一次）：覆盖 `_UID` 那一族（都往同一张 `user` 表里插）、
+// `_NOTE` 那一族（都往 `note` 表里插），以及 `TAGONE` / `TAGTWO` 那一族（⑲ 的标签夹具，
+// 分别往两张标签表里插）。`NOTE_SUM` / `AGG_NOTE_OK` 那些**不**在这个射程里 —— 它们不按
+// 那几种命名，扫不出干净的一组，那半边仍然只靠注释里的约定。
 //
 // 除了点对点查重，还要**点对段**：有的用例一次占一段 id（`VIS_NOTE_BASE` 那 6 个），
 // 别的点常量落进去一样是并发互删。段登记在 `ID_BLOCKS` 里（只写名字与段长，起始值从
 // 源码里现取 —— 写死值就又是一份会漂的手抄表）。
 //
-// ⚠️ **对账必须在同一张表里做**：`user` 与 `note` 的 id 是两个独立序列，同号完全合法
-// （`BOARDQ_UID_A = 900000051` 与 `VIS_NOTE_BASE = 900000051` 就是这样，不是冲突）。
-// 表由**名字里的那个词**认：含 `UID` 的算 `user` 表、含 `NOTE` 的算 `note` 表。
+// ⚠️ **对账必须在同一张表里做**：`user` / `note` / `tag_one` / `tag_two` 的 id 是四条
+// 独立序列，同号完全合法（`BOARDQ_UID_A = 900000051` 与 `VIS_NOTE_BASE = 900000051`
+// 就是这样，不是冲突；⑲ 的撞号夹具更是**刻意**同号）。
+// 表由**名字里的那个词**认（见 `fixture_ns`）。
 const ID_BLOCKS: &[(&str, i32)] = &[("VIS_NOTE_BASE", 6)];
 
-/// 名字里的那个词就是它的表（`UID` → user、其余按 `NOTE` → note）。见上面那段 ⚠️。
+/// 名字里的那个词就是它的表。见上面那段 ⚠️。
+///
+/// ⚠️ 判断顺序有讲究：先 `UID`，再 `TAGONE` / `TAGTWO`，最后 `NOTE`。`TAGONE` 不是
+/// `TAGTWO` 的子串，两者也不与 `NOTE` 互相包含 —— 但**将来加词时要注意**：
+/// 一个叫 `TAGONE_NOTE` 的常量会落进 `tag_one`（先判到的那个），而它按命名读起来像是
+/// `note` 的。给夹具起名时让后缀只有一个意思。
 fn fixture_ns(name: &str) -> &'static str {
-    if name.contains("UID") { "user" } else { "note" }
+    for (token, ns) in [
+        ("UID", "user"),
+        ("TAGONE", "tag_one"),
+        ("TAGTWO", "tag_two"),
+        ("NOTE", "note"),
+    ] {
+        if name.contains(token) {
+            return ns;
+        }
+    }
+    "note"
 }
 
 #[test]
@@ -2275,11 +2299,27 @@ fn fixture_uids_are_unique() {
     );
 
     // 点常量：一个常量 = 一个 id。
+    // 射程 = 名字里带 `_UID`（user）、带 `TAGONE` / `TAGTWO`（两张标签表）、或以 `_NOTE`
+    // 结尾（note）。`NOTE_SUM` / `AGG_NOTE_OK` 那些**仍然不在**射程里（不以后缀命名，
+    // 扫不出干净的一组）—— 那半边只有注释里的约定。
     let points: Vec<(String, i32)> = all
         .iter()
-        .filter(|(n, _)| n.contains("_UID") || n.ends_with("_NOTE"))
+        .filter(|(n, _)| {
+            n.contains("_UID") || n.contains("TAGONE") || n.contains("TAGTWO") || n.ends_with("_NOTE")
+        })
         .map(|(n, v)| (n.clone(), *v))
         .collect();
+    // 判据自己的正控（射程那一半）：⑲ 的标签夹具常量必须**真的被扫进来**。
+    // 少了这一条，"射程没扩上"与"扩上了且没有冲突"在输出上**一模一样**。
+    let tag_points = points
+        .iter()
+        .filter(|(n, _)| matches!(fixture_ns(n), "tag_one" | "tag_two"))
+        .count();
+    assert!(
+        tag_points >= 4,
+        "⑲ 的标签夹具常量一个都没被扫到（`points` 的过滤条件没跟着 `fixture_ns` 扩？）：{tag_points}"
+    );
+
     let mut seen: std::collections::HashMap<(&str, i32), String> = std::collections::HashMap::new();
     for (name, n) in &points {
         if let Some(prev) = seen.insert((fixture_ns(name), *n), name.clone()) {
@@ -2503,4 +2543,660 @@ fn 不许用_select_two_那版_partial_model() {
          `A_`/`B_` 别名），而调用点的 `.unwrap_or(vec![])` 会让它**静默变成空列表**。\
          单实体那版没问题，用它 + 单独查一次关联表：{offenders:?}"
     );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ⑲ 文章↔标签的关联表（20261018）：往返、级联按列、撞号、移动、回填
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// `note.tags` 那一列逗号串归一成了 `note_tag` 关联表（`0006_note_tag.sql`）。这一节钉的是
+// **存对了没有** —— `frontend/tests/note-tag-single-source.test.mjs` 那条源码锁只证明
+// "写路径只有一条"，证明不了数据对（那条锁自己的末尾也是这么写的）。
+//
+// ⚠️ **本节用例之间有一条隐式不变量要守**（也是它们唯一会互相踩的地方）：
+// **任何时刻已提交的 `note.tags` 里出现的 id，都必须在 `tag_one`/`tag_two` 里存在**
+// （soak 期两处同源，见 `note_tags.rs` 头注）。回填那条用例的守卫是**扫全表**的，
+// 所以只要某个用例在"标签已删、文章还在"的窗口里提交，它就会红在别人的残留上 ——
+// 而且红得完全看不出前因后果。⇒ 收尾一律**先删文章、再删标签**；建的时候反过来。
+//
+// ⚠️ 这条不变量的**唯一例外是 panic**：收尾整段被跳过 ⇒ 库里会留下"标签已删、文章还在"
+// 的残留，下一次跑时回填那条用例的守卫会因此红在一个与自己无关的原因上。所以那条用例
+// 失败时会**顺带把绊倒守卫的文章打印出来**（`DIAG_DIRTY_TAGS`）—— 看到那个诊断先清残留，
+// 别去查回填。
+//
+// ⚠️ 夹具 id 的取名规则（⑰ 按名字分表对账）：`_NOTE` 结尾 → `note` 表，
+// 名字里带 `TAGONE` → `tag_one` 表，带 `TAGTWO` → `tag_two` 表。
+/// ⚠️ **每个用例一个 uid**：`make_user` 先 DELETE 再 INSERT，两个用例共用一个号
+/// 会在并发跑时互相抽走对方正在用的那一行（⑰ 就是拦这个的静态判据）。
+const TAGRT_ADMIN_UID: i32 = 900000078;
+const TAGCAS_ADMIN_UID: i32 = 900000079;
+const TAGCOL_ADMIN_UID: i32 = 900000070;
+const TAGMOVE_ADMIN_UID: i32 = 900000080;
+const TAGAS_ADMIN_UID: i32 = 900000066;
+
+const TAGRT_NOTE: i32 = 900000071;
+/// ⚠️ 一级这个 id **比二级那个大**：这样"保序"与"按 id 排序"才分得开
+/// （今天的串恰好升序是历史巧合，不是语义 —— 见 `0006` 头注）。
+const TAGRT_TAGONE: i32 = 900000082;
+const TAGRT_TAGTWO: i32 = 900000081;
+
+const TAGCAS_NOTE: i32 = 900000072;
+const TAGCAS_OTHER_NOTE: i32 = 900000073;
+const TAGCAS_TAGONE: i32 = 900000083;
+const TAGCAS_TAGTWO: i32 = 900000088;
+
+const TAGCOL_NOTE: i32 = 900000074;
+/// 撞号夹具：同一个数字在两张表里各有一行（两条独立自增序列，同号完全合法）。
+const TAGCOL_TAGONE: i32 = 900000084;
+const TAGCOL_TAGTWO: i32 = 900000084;
+
+const TAGMOVE_NOTE: i32 = 900000075;
+/// ≥ `TAG_TWO_ID_BASE`（10000）⇒ 升级时**不许沿用旧 id**，必然走"换 id"那一支
+/// —— 也就是"改指向之后那一列还得跟着重算"最容易漏的那条路。
+const TAGMOVE_TAGTWO: i32 = 900000094;
+
+/// 自动保存那条路（克隆修改稿）用的夹具。
+const TAGAS_NOTE: i32 = 900000090;
+const TAGAS_TAGONE: i32 = 900000093;
+
+const TAGBACK_NOTE: i32 = 900000076;
+const TAGBACK_TAGONE: i32 = 900000085;
+const TAGBACK_TAGTWO: i32 = 900000089;
+
+/// 只被守卫的负控用：一个**两张表里都查不到**的 id（悬空）。
+const TAGGUARD_NOTE: i32 = 900000077;
+
+/// 诊断用（**不是判据**）：库里哪些文章的 `note.tags` 指着不存在的标签。
+///
+/// 存在的理由只有一个：0006 的守卫是扫全表的，红起来时得能一眼看出**是谁**把它绊倒的
+/// （多半是上一次跑挂的残留）。它刻意写得比迁移里那条预检**简单** —— 诊断不该长得像判据，
+/// 免得哪天有人把它当成"另一份口径"去同步。
+const DIAG_DIRTY_TAGS: &str = "SELECT coalesce(string_agg(n.id::text || ':' || n.tags, ' | '), '（无）') \
+     FROM note n \
+    WHERE coalesce(n.tags, '') <> '' \
+      AND EXISTS (SELECT 1 FROM unnest(string_to_array(n.tags, ',')) AS t(piece) \
+                   WHERE trim(t.piece) ~ '^[0-9]+$' \
+                     AND NOT EXISTS (SELECT 1 FROM tag_one o WHERE o.id::text = trim(t.piece)) \
+                     AND NOT EXISTS (SELECT 1 FROM tag_two w WHERE w.id::text = trim(t.piece)))";
+
+/// 建一篇属于某人的公开文章（`update_note` 那条路要 `auth_guard` 判库里的 role，
+/// 所以夹具账号得是 admin；`user_id` 也照实写上，免得撞上"缺作者就补写"那条支线）。
+async fn make_owned_note(db: &DatabaseConnection, id: i32, uid: i32) {
+    exec(db, &format!("DELETE FROM note WHERE id = {id}")).await;
+    exec(
+        db,
+        &format!(
+            "INSERT INTO note (id, title, content, created_at, updated_at, user_id, is_public, status) \
+             VALUES ({id}, '标签夹具', 'x', NOW(), NOW(), {uid}, true, 'public')"
+        ),
+    )
+    .await;
+}
+
+/// 建一行一级标签。**先建标签再建文章**（本节头注那条不变量）。
+async fn make_tag_one(db: &DatabaseConnection, id: i32, name: &str) {
+    exec(db, &format!("DELETE FROM tag_one WHERE id = {id}")).await;
+    exec(
+        db,
+        &format!("INSERT INTO tag_one (id, name, color) VALUES ({id}, '{name}', '#111111')"),
+    )
+    .await;
+}
+
+/// 建一行二级标签（不带父，本节不测父子）。
+async fn make_tag_two(db: &DatabaseConnection, id: i32, name: &str) {
+    exec(db, &format!("DELETE FROM tag_two WHERE id = {id}")).await;
+    exec(
+        db,
+        &format!("INSERT INTO tag_two (id, name, color) VALUES ({id}, '{name}', '#222222')"),
+    )
+    .await;
+}
+
+/// 关联表按 `seq` 拼出来的串 —— **与 `0007` 预检里那条重算语句同形**。
+async fn tag_agg(db: &DatabaseConnection, note_id: i32) -> Option<String> {
+    one_text(
+        db,
+        &format!(
+            "SELECT string_agg(coalesce(tag_one_id, tag_two_id)::text, ',' ORDER BY seq) \
+               FROM note_tag WHERE note_id = {note_id}"
+        ),
+    )
+    .await
+}
+
+/// soak 期那条不变量：`note.tags` 那一列与关联表重算出来的串**逐字相同**（含顺序）。
+///
+/// 漂了不会有人看见（所有读路径都在关联表上），代价要等 `0007` 的预检把"删列"拦下来才
+/// 显形 —— 而那时拿到的只是一句"两边漂了"。所以每一条改动关联表的用例收尾都调它一次。
+async fn assert_mirror_matches(db: &DatabaseConnection, note_id: i32) {
+    let col = one_text(db, &format!("SELECT tags FROM note WHERE id = {note_id}")).await;
+    let agg = tag_agg(db, note_id).await;
+    assert_eq!(
+        col, agg,
+        "文章 {note_id} 的 `note.tags` 与关联表重算出来的串不一致 —— soak 期两处同源，\
+         漂了的话 `0007_drop_note_tags_column.sql` 的预检会把删列拦下来，而那时只知道\
+         「两边漂了」（本用例的收尾 SQL 或某条写路径漏了 `resync_tags_column`）"
+    );
+}
+
+/// 一篇文章的 `noteTags`（走公开详情，也就是**连线上的那一份**）。
+async fn wire_note_tags(app: axum::Router, id: i32) -> String {
+    let (st, j) = call(app, "GET", &format!("/api/public/notes/{id}"), None, None).await;
+    assert_eq!(st, StatusCode::OK, "公开详情应当 200：{j}");
+    let v = &j["data"]["noteTags"];
+    assert!(v.is_string(), "`noteTags` 必须是字符串（缺键或 null 都会让前端解析炸）：{j}");
+    v.as_str().unwrap().to_string()
+}
+
+#[tokio::test]
+async fn note_tags_写路径往返逐字一致且归属按列() {
+    let Some((db, db_app)) = connect_pair().await else { return };
+    make_user(&db, TAGRT_ADMIN_UID, "admin").await;
+    // 建：先标签、再文章（本节头注）。
+    make_tag_one(&db, TAGRT_TAGONE, "往返一级").await;
+    make_tag_two(&db, TAGRT_TAGTWO, "往返二级").await;
+    make_owned_note(&db, TAGRT_NOTE, TAGRT_ADMIN_UID).await;
+
+    let app = test_app(db_app);
+    let admin = auth_jwt::create_token(TAGRT_ADMIN_UID, "admin", 0);
+
+    // ── ① 脏值 + 乱序 + 混两级，一起喂进去 ──────────────────────────────────
+    // 原串：一级(82) 在前、二级(81) 在后 —— **数字是降序**；外加重复、空片、一个空格。
+    let raw = format!("{TAGRT_TAGONE}, {TAGRT_TAGTWO},{TAGRT_TAGONE},,");
+    let (st, j) = call(
+        app.clone(),
+        "POST",
+        &format!("/api/protected/notes/{TAGRT_NOTE}"),
+        Some(&admin),
+        Some(&format!(r#"{{"noteTags": "{raw}"}}"#)),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{j}");
+    assert_eq!(j["code"], 200, "写标签必须成功：{j}");
+
+    // 期望 = 解析口径（只认 ASCII 数字、`>0`、**保序**去重）的结果，不是原串：
+    // 重复的去掉、空片丢掉、顺序照原样（**不是**按 id 排序）。
+    let want = format!("{TAGRT_TAGONE},{TAGRT_TAGTWO}");
+    assert_eq!(
+        one_text(&db, &format!("SELECT tags FROM note WHERE id = {TAGRT_NOTE}")).await.as_deref(),
+        Some(want.as_str()),
+        "那一列必须落成解析结果（去重、保序），不是原串"
+    );
+    assert_eq!(
+        tag_agg(&db, TAGRT_NOTE).await.as_deref(),
+        Some(want.as_str()),
+        "关联表按 seq 拼出来必须与那一列**逐字**相同（`0007` 预检用的就是这条）"
+    );
+    assert_eq!(
+        count_of(&db, &format!("SELECT COUNT(*) FROM note_tag WHERE note_id = {TAGRT_NOTE}")).await,
+        2,
+        "重复的 id 只许落一行"
+    );
+    // `seq` 从 0 起、连续 —— 它就是前端渲染标签的顺序。
+    assert_eq!(
+        one_text(&db, &format!(
+            "SELECT string_agg(seq::text, ',' ORDER BY seq) FROM note_tag WHERE note_id = {TAGRT_NOTE}"
+        ))
+        .await
+        .as_deref(),
+        Some("0,1"),
+        "`seq` 必须从 0 起连续（前端按存储顺序渲染标签）"
+    );
+    // 归属按**列**，不按数字大小：一级那个落 `tag_one_id`，二级那个落 `tag_two_id`。
+    assert_eq!(
+        one_text(&db, &format!(
+            "SELECT tag_one_id::text || '/' || coalesce(tag_two_id::text, '-') \
+               FROM note_tag WHERE note_id = {TAGRT_NOTE} AND seq = 0"
+        ))
+        .await
+        .as_deref(),
+        Some(format!("{TAGRT_TAGONE}/-").as_str()),
+        "id 更大的那个是**一级**（tag_one_id），归属只能按列判、不能按数字猜"
+    );
+    assert_eq!(
+        one_text(&db, &format!(
+            "SELECT coalesce(tag_one_id::text, '-') || '/' || tag_two_id::text \
+               FROM note_tag WHERE note_id = {TAGRT_NOTE} AND seq = 1"
+        ))
+        .await
+        .as_deref(),
+        Some(format!("-/{TAGRT_TAGTWO}").as_str())
+    );
+    // `num_nonnulls = 1` 这条约束（"这一行恰好指向一张表"）在**真数据**上没有被绕过。
+    assert_eq!(
+        count_of(&db, &format!(
+            "SELECT COUNT(*) FROM note_tag WHERE note_id = {TAGRT_NOTE} \
+              AND num_nonnulls(tag_one_id, tag_two_id) <> 1"
+        ))
+        .await,
+        0
+    );
+
+    // ── ② 线格式往返：详情接口给出的 `noteTags` 与写进去的解析结果逐字相同 ────
+    assert_eq!(
+        wire_note_tags(app.clone(), TAGRT_NOTE).await,
+        want,
+        "线格式（逗号分隔的 id 串）必须逐字不变 —— agent 仓与前端零改动就是靠这一条"
+    );
+
+    // ── ③ 空串：清空标签 ⇒ 关联表零行、那一列落 NULL、线上给 `\"\"` ─────────────
+    let (st, j) = call(
+        app.clone(),
+        "POST",
+        &format!("/api/protected/notes/{TAGRT_NOTE}"),
+        Some(&admin),
+        Some(r#"{"noteTags": ""}"#),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{j}");
+    assert_eq!(j["code"], 200, "{j}");
+    assert_eq!(
+        count_of(&db, &format!("SELECT COUNT(*) FROM note_tag WHERE note_id = {TAGRT_NOTE}")).await,
+        0,
+        "空串 = 一个标签都没有 ⇒ 关联行必须全清掉"
+    );
+    assert_eq!(
+        one_text(&db, &format!("SELECT tags FROM note WHERE id = {TAGRT_NOTE}")).await,
+        None,
+        "空列表要落成 NULL 而不是空串（存量里「没标签」一直是 NULL，写空串会让同一件事有两个字面值）"
+    );
+    assert_eq!(
+        wire_note_tags(app, TAGRT_NOTE).await,
+        "",
+        "线上仍然要给 `\"\"`（不是 null、不是缺键）—— 前端 `parseNoteTags` 两个都吃，\
+         但 agent 仓的 codec 逐字钉着这个形状"
+    );
+
+    // 收尾：**先删文章、再删标签**（本节头注那条不变量）。
+    exec(&db, &format!("DELETE FROM note WHERE id = {TAGRT_NOTE}")).await;
+    exec(&db, &format!("DELETE FROM tag_one WHERE id = {TAGRT_TAGONE}")).await;
+    exec(&db, &format!("DELETE FROM tag_two WHERE id = {TAGRT_TAGTWO}")).await;
+    exec(&db, &format!("DELETE FROM \"user\" WHERE id = {TAGRT_ADMIN_UID}")).await;
+}
+
+#[tokio::test]
+async fn note_tags_外键级联是按列生效的() {
+    let Some((db, db_app)) = connect_pair().await else { return };
+    make_user(&db, TAGCAS_ADMIN_UID, "admin").await;
+    make_tag_one(&db, TAGCAS_TAGONE, "级联一级").await;
+    make_tag_two(&db, TAGCAS_TAGTWO, "级联二级").await;
+    make_owned_note(&db, TAGCAS_NOTE, TAGCAS_ADMIN_UID).await;
+    make_owned_note(&db, TAGCAS_OTHER_NOTE, TAGCAS_ADMIN_UID).await;
+
+    let app = test_app(db_app);
+    let admin = auth_jwt::create_token(TAGCAS_ADMIN_UID, "admin", 0);
+    for (nid, tags) in [
+        (TAGCAS_NOTE, format!("{TAGCAS_TAGONE},{TAGCAS_TAGTWO}")),
+        // 另一篇只挂二级那个标签 —— 它是"删一级标签不许波及别处"的对照。
+        (TAGCAS_OTHER_NOTE, format!("{TAGCAS_TAGTWO}")),
+    ] {
+        let (st, j) = call(
+            app.clone(),
+            "POST",
+            &format!("/api/protected/notes/{nid}"),
+            Some(&admin),
+            Some(&format!(r#"{{"noteTags": "{tags}"}}"#)),
+        )
+        .await;
+        assert_eq!(st, StatusCode::OK, "{j}");
+        assert_eq!(j["code"], 200, "{j}");
+    }
+
+    // 删掉那一行一级标签（走真接口，不是裸 SQL —— 要验的正是"删标签这条路把那一列重算回来了"）。
+    let (st, j) = call(
+        app.clone(),
+        "DELETE",
+        "/api/protected/tag",
+        Some(&admin),
+        Some(&format!(r#"{{"level":"one","ids":[{TAGCAS_TAGONE}]}}"#)),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{j}");
+    assert_eq!(j["code"], 200, "删标签应当成功：{j}");
+
+    // ① 同篇里指向二级的那一行**还在**（旧 `prune_note_tags` 是"扫全表 + 按数字判"，
+    //    它和"按列级联"在这条上会给出不同的结果 —— 这条就是两者的分界线）。
+    assert_eq!(
+        count_of(&db, &format!("SELECT COUNT(*) FROM note_tag WHERE note_id = {TAGCAS_NOTE}")).await,
+        1,
+        "删一级标签只该带走指向它的那一行，同篇指向二级的行必须留着"
+    );
+    assert_eq!(
+        one_text(&db, &format!(
+            "SELECT tag_two_id::text FROM note_tag WHERE note_id = {TAGCAS_NOTE}"
+        ))
+        .await
+        .as_deref(),
+        Some(format!("{TAGCAS_TAGTWO}").as_str())
+    );
+    // ② 另一篇引用的是**别的标签**，一行都不该动。
+    assert_eq!(
+        count_of(&db, &format!(
+            "SELECT COUNT(*) FROM note_tag WHERE note_id = {TAGCAS_OTHER_NOTE}"
+        ))
+        .await,
+        1,
+        "删一个标签不该波及引用别的标签的文章"
+    );
+    // ③ 那一列跟着重算：一篇去掉一个、另一篇一个字不动（不是 NULL）。
+    assert_mirror_matches(&db, TAGCAS_NOTE).await;
+    assert_mirror_matches(&db, TAGCAS_OTHER_NOTE).await;
+    assert_eq!(
+        one_text(&db, &format!("SELECT tags FROM note WHERE id = {TAGCAS_NOTE}")).await.as_deref(),
+        Some(format!("{TAGCAS_TAGTWO}").as_str()),
+        "被删掉的那个 id 必须从那一列里消失（否则 0007 的预检会红）"
+    );
+    assert_eq!(
+        wire_note_tags(app, TAGCAS_NOTE).await,
+        format!("{TAGCAS_TAGTWO}")
+    );
+
+    // 收尾：先删文章、再删标签。
+    exec(&db, &format!("DELETE FROM note WHERE id IN ({TAGCAS_NOTE}, {TAGCAS_OTHER_NOTE})")).await;
+    exec(&db, &format!("DELETE FROM tag_two WHERE id = {TAGCAS_TAGTWO}")).await;
+    exec(&db, &format!("DELETE FROM \"user\" WHERE id = {TAGCAS_ADMIN_UID}")).await;
+}
+
+#[tokio::test]
+async fn note_tags_撞号时归一级且只出现一次() {
+    let Some((db, db_app)) = connect_pair().await else { return };
+    make_user(&db, TAGCOL_ADMIN_UID, "admin").await;
+    // 同一个数字在两张表里各建一行：两条自增序列互相独立，同号完全合法（`0006` 头注）。
+    make_tag_one(&db, TAGCOL_TAGONE, "撞号一级").await;
+    make_tag_two(&db, TAGCOL_TAGTWO, "撞号二级").await;
+    make_owned_note(&db, TAGCOL_NOTE, TAGCOL_ADMIN_UID).await;
+
+    let app = test_app(db_app);
+    let admin = auth_jwt::create_token(TAGCOL_ADMIN_UID, "admin", 0);
+    let (st, j) = call(
+        app.clone(),
+        "POST",
+        &format!("/api/protected/notes/{TAGCOL_NOTE}"),
+        Some(&admin),
+        Some(&format!(r#"{{"noteTags": "{TAGCOL_TAGONE}"}}"#)),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{j}");
+    assert_eq!(j["code"], 200, "{j}");
+
+    // 关联表落地之后这件事**结构性**不再含糊：一行自己知道指向哪张表。
+    assert_eq!(
+        count_of(&db, &format!("SELECT COUNT(*) FROM note_tag WHERE note_id = {TAGCOL_NOTE}")).await,
+        1,
+        "撞号的 id 只许落一行（同一个标签在一篇里出现两次是脏数据）"
+    );
+    assert_eq!(
+        one_text(&db, &format!(
+            "SELECT coalesce(tag_one_id::text, '-') || '/' || coalesce(tag_two_id::text, '-') \
+               FROM note_tag WHERE note_id = {TAGCOL_NOTE}"
+        ))
+        .await
+        .as_deref(),
+        Some(format!("{TAGCOL_TAGONE}/-").as_str()),
+        "撞号取**一级**（与前端 `flattenTagOptions`、`0006` 回填的取向同一处对齐）"
+    );
+    // 线上也必须是**一个** id，不是两个、也不是空。
+    let wire = wire_note_tags(app, TAGCOL_NOTE).await;
+    assert_eq!(wire, format!("{TAGCOL_TAGONE}"));
+    assert_eq!(wire.split(',').count(), 1, "撞号不许在线上变成两个标签：{wire}");
+    assert_mirror_matches(&db, TAGCOL_NOTE).await;
+
+    exec(&db, &format!("DELETE FROM note WHERE id = {TAGCOL_NOTE}")).await;
+    exec(&db, &format!("DELETE FROM tag_one WHERE id = {TAGCOL_TAGONE}")).await;
+    exec(&db, &format!("DELETE FROM tag_two WHERE id = {TAGCOL_TAGTWO}")).await;
+    exec(&db, &format!("DELETE FROM \"user\" WHERE id = {TAGCOL_ADMIN_UID}")).await;
+}
+
+#[tokio::test]
+async fn note_tags_跨表移动后标签仍挂在原文章上() {
+    let Some((db, db_app)) = connect_pair().await else { return };
+    make_user(&db, TAGMOVE_ADMIN_UID, "admin").await;
+    make_tag_two(&db, TAGMOVE_TAGTWO, "移动二级").await;
+    make_owned_note(&db, TAGMOVE_NOTE, TAGMOVE_ADMIN_UID).await;
+
+    let app = test_app(db_app);
+    let admin = auth_jwt::create_token(TAGMOVE_ADMIN_UID, "admin", 0);
+    let (st, j) = call(
+        app.clone(),
+        "POST",
+        &format!("/api/protected/notes/{TAGMOVE_NOTE}"),
+        Some(&admin),
+        Some(&format!(r#"{{"noteTags": "{TAGMOVE_TAGTWO}"}}"#)),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{j}");
+    assert_eq!(j["code"], 200, "{j}");
+
+    // 二 → 一。id ≥ `TAG_TWO_ID_BASE` ⇒ **不许沿用旧 id**，于是必然走"换 id"那一支。
+    let (st, j) = call(
+        app.clone(),
+        "POST",
+        "/api/protected/tag/move",
+        Some(&admin),
+        Some(&format!(
+            r#"{{"level":"two","id":{TAGMOVE_TAGTWO},"toLevel":"one"}}"#
+        )),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{j}");
+    assert_eq!(j["code"], 200, "移动应当成功：{j}");
+    assert_eq!(j["data"]["idChanged"], true, "id ≥ 10000 时不许沿用旧 id：{j}");
+    let new_id = j["data"]["toId"].as_i64().expect("toId 必须是数字") as i32;
+    assert_ne!(new_id, TAGMOVE_TAGTWO);
+
+    // ★ 这条用例的核心：标签**还挂在原来那篇文章上**。
+    // 顺序反了（先删旧标签行、再改指向）的话外键 `ON DELETE CASCADE` 会把关联行静默带走 ——
+    // 事务照常提交、接口回 200、标签从 API 上消失，没有任何东西报错。
+    assert_eq!(
+        count_of(&db, &format!("SELECT COUNT(*) FROM note_tag WHERE note_id = {TAGMOVE_NOTE}")).await,
+        1,
+        "跨表移动之后标签必须还在原来那篇文章上（没了 = 改指向与删旧行的顺序反了）"
+    );
+    assert_eq!(
+        one_text(&db, &format!(
+            "SELECT coalesce(tag_one_id::text, '-') || '/' || coalesce(tag_two_id::text, '-') \
+               FROM note_tag WHERE note_id = {TAGMOVE_NOTE}"
+        ))
+        .await
+        .as_deref(),
+        Some(format!("{new_id}/-").as_str()),
+        "改指向要**换列**（tag_two_id → tag_one_id），不能只换值"
+    );
+    // 换了 id ⇒ 那一列必须跟着重算（沿用旧 id 时它本来就还是对的，这一支才是最容易漏的）。
+    assert_mirror_matches(&db, TAGMOVE_NOTE).await;
+    assert_eq!(wire_note_tags(app, TAGMOVE_NOTE).await, format!("{new_id}"));
+    // 旧行真的没了（否则 `tag_two` 里会留一行孤儿标签）。
+    assert_eq!(
+        count_of(&db, &format!("SELECT COUNT(*) FROM tag_two WHERE id = {TAGMOVE_TAGTWO}")).await,
+        0
+    );
+
+    exec(&db, &format!("DELETE FROM note WHERE id = {TAGMOVE_NOTE}")).await;
+    exec(&db, &format!("DELETE FROM tag_one WHERE id = {new_id}")).await;
+    exec(&db, &format!("DELETE FROM \"user\" WHERE id = {TAGMOVE_ADMIN_UID}")).await;
+}
+
+#[tokio::test]
+async fn note_tag_回填逐字往返且悬空会被守卫拦下() {
+    let Some((db, _app)) = connect_pair().await else { return };
+    // `include_str!` 而不是把回填 SQL 抄一遍：抄一份出来就等于"第二个实现"，
+    // 而这份迁移只跑一次 —— 抄本会静静地与真本漂开，谁也不会发现。
+    let migration = include_str!("../scripts/migration/pg/0006_note_tag.sql");
+
+    // ── ① 回填往返 ─────────────────────────────────────────────────────────
+    // 整段放在一个**事务里、最后回滚**：① 种下的"遗留串"绝不提交，免得别的用例
+    // （尤其是本用例②的守卫）被它影响；② 本用例自己不留下任何残留。
+    make_tag_one(&db, TAGBACK_TAGONE, "回填一级").await;
+    make_tag_two(&db, TAGBACK_TAGTWO, "回填二级").await;
+    let txn = db.begin().await.expect("开事务失败");
+    // 遗留串刻意是脏的 + 乱序的 + 混两级的：重复、空片、以及**数字更大的那个在前**。
+    let legacy = format!("{TAGBACK_TAGONE},{TAGBACK_TAGONE},,{TAGBACK_TAGTWO}");
+    exec(
+        &txn,
+        &format!(
+            "INSERT INTO note (id, title, content, created_at, updated_at, is_public, status, tags) \
+             VALUES ({TAGBACK_NOTE}, '回填夹具', 'x', NOW(), NOW(), true, 'public', '{legacy}')"
+        ),
+    )
+    .await;
+    if let Err(e) = txn.execute_unprepared(migration).await {
+        // ⚠️ 这条 `expect` 会**连带**红在别人的残留上：0006 的守卫是扫全表的，只要库里
+        // 存在任何一篇"`note.tags` 指着已经不存在的标签"的文章，它就会中止整个迁移。
+        // 正常跑时不会（本节头注那条不变量），但**上一次跑挂在中途**会 —— 收尾整段被
+        // panic 跳过，残留就留在了库里。所以这里把"是谁把守卫绊倒的"直接问出来：
+        // 不然下一个人看到的是"回填失败了"，而真正的原因在上一次运行。
+        let dirty = one_text(&txn, DIAG_DIRTY_TAGS).await.unwrap_or_default();
+        panic!(
+            "跑 0006 的回填失败：{e}\n  \
+             守卫是**扫全表**的，绊倒它的文章是（`文章id:它的串`）：{dirty}\n  \
+             这些若不是本用例自己造的，就是上一次跑挂留下的残留（本节的收尾在 panic 时被跳过）——\
+             先清掉再跑。"
+        );
+    }
+
+    let want = format!("{TAGBACK_TAGONE},{TAGBACK_TAGTWO}");
+    assert_eq!(
+        one_text(&txn, &format!(
+            "SELECT string_agg(coalesce(tag_one_id, tag_two_id)::text, ',' ORDER BY seq) \
+               FROM note_tag WHERE note_id = {TAGBACK_NOTE}"
+        ))
+        .await
+        .as_deref(),
+        Some(want.as_str()),
+        "回填必须**逐字**复原（去重取首次出现、顺序照原串、两级按列归属）"
+    );
+    assert_eq!(
+        one_text(&txn, &format!(
+            "SELECT coalesce(tag_one_id::text,'-') || '/' || coalesce(tag_two_id::text,'-') \
+               FROM note_tag WHERE note_id = {TAGBACK_NOTE} AND seq = 0"
+        ))
+        .await
+        .as_deref(),
+        Some(format!("{TAGBACK_TAGONE}/-").as_str())
+    );
+    assert_eq!(
+        one_text(&txn, &format!(
+            "SELECT coalesce(tag_one_id::text,'-') || '/' || coalesce(tag_two_id::text,'-') \
+               FROM note_tag WHERE note_id = {TAGBACK_NOTE} AND seq = 1"
+        ))
+        .await
+        .as_deref(),
+        Some(format!("-/{TAGBACK_TAGTWO}").as_str())
+    );
+    // 回填**不碰**那一列（它只插关联行）：soak 期那一列本来就还是原样，
+    // 而 `0007` 的预检比的是"两边逐字相等"—— 这里顺带把"回填之后两边仍然相等"钉住。
+    assert_eq!(
+        one_text(&txn, &format!("SELECT tags FROM note WHERE id = {TAGBACK_NOTE}")).await.as_deref(),
+        Some(legacy.as_str()),
+        "回填只插关联行、不改那一列（那一列由「预检保证两边本来就一致」承接）"
+    );
+    // 重跑一次必须**一行都不加**（幂等：`NOT EXISTS` 那半）。
+    txn.execute_unprepared(migration).await.expect("重跑 0006 不该失败");
+    assert_eq!(
+        count_of(&txn, &format!("SELECT COUNT(*) FROM note_tag WHERE note_id = {TAGBACK_NOTE}")).await,
+        2,
+        "0006 重跑必须是 no-op（`NOT EXISTS` 那半）—— 它会被跑第二遍（改了库结构再跑一次是常态）"
+    );
+    txn.rollback().await.expect("回滚失败");
+
+    // ── ② 负控：悬空的 id 必须被守卫拦下 ────────────────────────────────────
+    // 没有这一条的话，①里那个"跑成功了"证明不了守卫在场 —— 一个恒真的守卫与一个
+    // 正确的守卫，在①里的表现**一模一样**。
+    let txn = db.begin().await.expect("开事务失败");
+    exec(
+        &txn,
+        &format!(
+            "INSERT INTO note (id, title, content, created_at, updated_at, is_public, status, tags) \
+             VALUES ({TAGGUARD_NOTE}, '悬空夹具', 'x', NOW(), NOW(), true, 'public', '999999999')"
+        ),
+    )
+    .await;
+    let e = txn
+        .execute_unprepared(migration)
+        .await
+        .expect_err("遗留串里有一个两张表都查不到的 id ⇒ 守卫必须中止整个迁移（本迁移不猜）");
+    let msg = e.to_string();
+    assert!(
+        msg.contains("本迁移不猜"),
+        "拦下它的必须是那条守卫（拿到的是：{msg}）"
+    );
+    txn.rollback().await.expect("回滚失败");
+
+    // 收尾：先删文章（上面两次都回滚了，这里其实没有残留）、再删标签。
+    exec(&db, &format!("DELETE FROM note WHERE id IN ({TAGBACK_NOTE}, {TAGGUARD_NOTE})")).await;
+    exec(&db, &format!("DELETE FROM tag_one WHERE id = {TAGBACK_TAGONE}")).await;
+    exec(&db, &format!("DELETE FROM tag_two WHERE id = {TAGBACK_TAGTWO}")).await;
+}
+
+#[tokio::test]
+async fn note_tags_修改稿从原行复制标签() {
+    let Some((db, db_app)) = connect_pair().await else { return };
+    make_user(&db, TAGAS_ADMIN_UID, "admin").await;
+    make_tag_one(&db, TAGAS_TAGONE, "修改稿一级").await;
+    make_owned_note(&db, TAGAS_NOTE, TAGAS_ADMIN_UID).await;
+    // 上一次跑挂留下的修改稿（`draft_of` 指着源行）。
+    exec(&db, &format!("DELETE FROM note WHERE draft_of = {TAGAS_NOTE}")).await;
+
+    let app = test_app(db_app);
+    let admin = auth_jwt::create_token(TAGAS_ADMIN_UID, "admin", 0);
+    let tags = format!("{TAGAS_TAGONE}");
+    let (st, j) = call(
+        app.clone(),
+        "POST",
+        &format!("/api/protected/notes/{TAGAS_NOTE}"),
+        Some(&admin),
+        Some(&format!(r#"{{"noteTags": "{tags}"}}"#)),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{j}");
+    assert_eq!(j["code"], 200, "{j}");
+
+    // 自动保存一个**非草稿**的源行 ⇒ `resolve_autosave_target` 克隆出一行修改稿。
+    // 这一笔**不带** `noteTags`（编辑器平时就是这么发的），所以修改稿的标签只能来自
+    // "从源行复制"那条路 —— 漏了的话"继续编辑"打开时标签栏是空的，用户一保存就把标签清光。
+    let (st, j) = call(
+        app.clone(),
+        "POST",
+        "/api/protected/draft/autosave",
+        Some(&admin),
+        Some(&format!(r#"{{"id":{TAGAS_NOTE},"noteTitle":"自动保存夹具"}}"#)),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{j}");
+    assert_eq!(j["code"], 200, "自动保存应当成功：{j}");
+    // ⚠️ 键名是 **`draftId`**（驼峰，有 serde rename），不是 `draft_id`：写成下划线会拿到
+    // `None`，而 `expect` 至少会当场报出来（静默版是 `unwrap_or(0)`，那会去查一篇不存在的文章）。
+    let rev = j["data"]["draftId"].as_i64().expect("draftId 必须是数字") as i32;
+    assert_ne!(rev, TAGAS_NOTE, "源行不是草稿 ⇒ 应当克隆出一行**新的**修改稿");
+    assert_eq!(
+        one_i32(&db, &format!("SELECT draft_of FROM note WHERE id = {rev}")).await,
+        Some(TAGAS_NOTE),
+        "克隆出来的那一行得记得自己是谁的修改稿"
+    );
+
+    // ★ 修改稿的标签必须与源行一致（关联表**不会**跟着列克隆走，得显式复制一份）。
+    assert_eq!(
+        tag_agg(&db, rev).await,
+        tag_agg(&db, TAGAS_NOTE).await,
+        "修改稿必须复制源行的标签（漏了 ⇒ 打开修改稿时标签栏是空的，一保存就把标签清光）"
+    );
+    assert_eq!(
+        tag_agg(&db, rev).await.as_deref(),
+        Some(tags.as_str()),
+        "而且复制过来的就是源行那一份"
+    );
+    // 两条路的"那一列"都得对上（克隆那一笔写的是关联表 + 那一列，两边同源）。
+    assert_mirror_matches(&db, rev).await;
+    assert_mirror_matches(&db, TAGAS_NOTE).await;
+    // 源行的标签一个都没被改动（克隆是"复制"，不是"搬走"）。
+    assert_eq!(
+        count_of(&db, &format!("SELECT COUNT(*) FROM note_tag WHERE note_id = {TAGAS_NOTE}")).await,
+        1
+    );
+
+    // 收尾：先删文章（源行 + 修改稿）、再删标签。
+    exec(&db, &format!("DELETE FROM note WHERE id = {rev} OR id = {TAGAS_NOTE}")).await;
+    exec(&db, &format!("DELETE FROM tag_one WHERE id = {TAGAS_TAGONE}")).await;
+    exec(&db, &format!("DELETE FROM \"user\" WHERE id = {TAGAS_ADMIN_UID}")).await;
 }

@@ -1,9 +1,10 @@
 use axum::{Json, extract::{State, Query, Path}, http::{HeaderMap, StatusCode}, response::{IntoResponse, Response}};
-use sea_orm::{EntityTrait, ColumnTrait, QueryFilter, QueryOrder, QuerySelect, Condition, ActiveModelTrait, Set, PaginatorTrait, ActiveValue::NotSet, DerivePartialModel};
+use sea_orm::{EntityTrait, ColumnTrait, QueryFilter, QueryOrder, QuerySelect, Condition, ActiveModelTrait, Set, PaginatorTrait, ActiveValue::NotSet, DerivePartialModel, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use crate::entity::{note, category, tag_one, tag_two, user};
+use crate::entity::{note, category, user};
+use crate::routes::note_tags::{self, attach_tags};
 use crate::routes::AppState;
 use crate::search_core::{count_terms, keyword_given, score_term_sum, split_terms};
 use crate::utils::ApiResponse;
@@ -186,7 +187,13 @@ fn map_note(n: note::Model, cat: Option<(i32, String)>) -> NoteDto {
         category_id: cat_id,
         category_title: cat_name,
         is_public: n.is_public,
-        tags: n.tags.unwrap_or_default(),
+        // ⚠️ **恒空串**（20261018）：标签的 id 串从 `note_tag` 关联表重建，由
+        // `note_tags::attach_tags` 在 handler 里挂上去 —— 与 `attach_authors` /
+        // `attach_stats` 同一个分工（`map_note` 是纯函数，不查库）。
+        // 这一行**不是**"忘了填"：`note.tags` 那列仍在写（soak 期两处同源，见
+        // `routes/note_tags.rs` 头注），但读路径已经不再看它 —— 所以这里刻意不读 `n.tags`，
+        // 免得"某一篇的列陈旧了"与"某一篇真的没标签"在连线上长得一样。
+        tags: String::new(),
         // 作者只搬 id 过来，名字/头像由 `attach_authors` 批量解析（`map_note` 是纯函数，
         // 不查库——与 `attach_stats` 同一个分工）。
         author_id: n.user_id,
@@ -232,7 +239,6 @@ pub struct NoteSummary {
     pub created_at: chrono::NaiveDateTime,
     pub updated_at: chrono::NaiveDateTime,
     pub is_public: bool,
-    pub tags: Option<String>,
     pub category_id: Option<i32>,
 }
 
@@ -261,7 +267,10 @@ impl NoteSummary {
             created_at: self.created_at,
             updated_at: self.updated_at,
             is_public: self.is_public,
-            tags: self.tags,
+            // `tags` 那一列**不在 `NoteSummary` 的列里**（20261018）：标签的 id 串改由
+            // `note_tag` 关联表重建（`note_tags::attach_tags`），列表查询因此连这一列也不读。
+            // 填 `None` 不是"读到了空" —— `map_note` 本来就不看它（见那边的注释）。
+            tags: None,
             category_id: self.category_id,
         }
     }
@@ -367,6 +376,7 @@ pub async fn list_public_notes(
 
     let cats = category_names(&state.db, notes.iter().filter_map(|r| r.category_id)).await;
     let mut dtos: Vec<NoteDto> = notes.into_iter().map(|r| summary_to_dto(r, &cats)).collect();
+    attach_tags(&state.db, &mut dtos).await;
     attach_stats(&state.db, &mut dtos).await;
     attach_authors(&state.db, &mut dtos).await;
 
@@ -393,6 +403,7 @@ pub async fn list_all_notes(
 
     let cats = category_names(&state.db, notes.iter().filter_map(|r| r.category_id)).await;
     let mut dtos: Vec<NoteDto> = notes.into_iter().map(|r| summary_to_dto(r, &cats)).collect();
+    attach_tags(&state.db, &mut dtos).await;
     attach_authors(&state.db, &mut dtos).await;
 
     Json(ApiResponse::success(dtos))
@@ -417,61 +428,17 @@ pub struct SearchRequest {
     pub only_public: Option<bool>,
 }
 
-/// 读标签字典，返回 `id → 名字`。
-///
-/// 一级/二级是**两张独立自增**的表，id 命名空间并不隔离（历史上还有过重号），
-/// 所以这里用一张 map 装两级、**撞号时一级优先**（20261018 对齐前端 `flattenTagOptions`
-/// 的口径；此前是二级覆盖一级，两边对同一篇给出不同的标签名，见 `merge_tag_name_dict`）。
-/// **只用于搜索命中与 `note.tags` 的 id→名字解析，不要拿它建树/判层级**——那是
-/// `tags.rs` 的 `fatherKey` 的活。
-///
-/// `pub(crate)`：20261006 聚合搜索（`routes/search.rs`）的文章那一栏共用这一份字典。
-pub(crate) async fn load_tag_names(db: &sea_orm::DatabaseConnection) -> HashMap<i32, String> {
-    let one: Vec<(i32, String)> = match tag_one::Entity::find().all(db).await {
-        Ok(rows) => rows.into_iter().map(|r| (r.id, r.name)).collect(),
-        Err(_) => Vec::new(),
-    };
-    let two: Vec<(i32, String)> = match tag_two::Entity::find().all(db).await {
-        Ok(rows) => rows.into_iter().map(|r| (r.id, r.name)).collect(),
-        Err(_) => Vec::new(),
-    };
-    merge_tag_name_dict(one, two)
-}
-
-/// 两级标签字典的合并规则：**一级优先**（先到先得，撞号时二级**不**覆盖一级）。
-///
-/// 20261018 之前是"一级先写、二级后写覆盖"⇒ 后端取**二级**的名字，而前端
-/// `TagMethods.tsx::flattenTagOptions` 是**一级优先** ⇒ 同一个 id、同一篇文章，两边显示
-/// 不同的标签名。今天库里零撞号，所以这条分歧是潜伏的 —— 但它是**两个实现各说各话**，
-/// 不是"其中一个对"，一旦撞号就会静默给出两种答案。对齐到一级优先（前端那份读法）。
-fn merge_tag_name_dict(
-    one: Vec<(i32, String)>,
-    two: Vec<(i32, String)>,
-) -> HashMap<i32, String> {
-    let mut map: HashMap<i32, String> = HashMap::with_capacity(one.len() + two.len());
-    for (id, name) in one.into_iter().chain(two) {
-        map.entry(id).or_insert(name);
-    }
-    map
-}
-
-/// 把 `note.tags`（逗号分隔的标签 **id** 串）解析成标签 **名字** 列表（去重、丢掉查不到的 id）。
-///
-/// 这是本文件里「标签能不能被搜索命中」的唯一正路：库里存的是 id，搜索框里打的是名字，
-/// 中间必须过一遍字典。
-pub(crate) fn note_tag_names(tags: Option<&str>, dict: &HashMap<i32, String>) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    for piece in tags.unwrap_or("").split(',') {
-        if let Ok(id) = piece.trim().parse::<i32>() {
-            if let Some(name) = dict.get(&id) {
-                if !out.iter().any(|x| x == name) {
-                    out.push(name.clone());
-                }
-            }
-        }
-    }
-    out
-}
+// ── 标签字典（20261018 改道）───────────────────────────────────────────────
+//
+// 这里原来有 `load_tag_names` / `merge_tag_name_dict` / `note_tag_names` 三件：
+// 把两级标签读成一张 `id → 名字` 的字典，再把 `note.tags` 那个 id 串过一遍字典翻成名字。
+// 「撞号取一级」那条规则就是在这张扁平字典上打的补丁（两级 id 命名空间不隔离，
+// 一个数字可能两张表都有）。
+//
+// 关联表落地之后这三件**整体退休**：`note_tag` 的一行自己知道指向哪张表，
+// 「这个 id 是哪一级」不再是需要猜的事 —— 读路径改为
+// `note_tags::load_note_tags`（一次取回整批的 `(id, 名字)`，按 `seq` 排好），
+// 撞号在**写入侧**就已经不可能（`replace_note_tags` 按列归属，不按数字大小）。
 
 /// 关键词是否命中这篇文章：标题 / 正文 / **标签名字**。`kw` 必须已小写化。
 ///
@@ -580,7 +547,6 @@ pub async fn search_notes(
     // 只有过一遍字典才知道名字。一遍遍历同时完成判定与打分（正文全量扫描不必做两次）。
     // 注：本端点同时服务博客前端搜索（NoteMethods.tsx）与 agent 的 search_notes，
     // 改动影响结果集（数字关键词不再假命中、标签名开始能搜到）与顺序，不影响 DTO。
-    let dict = load_tag_names(&state.db).await;
     // 切成 terms 后逐词判定（20260920，见 split_terms：整串子串匹配对多词查询是假否定）；
     // 空关键词（缺省/全空白）走原来的整表返回。
     let terms = payload
@@ -601,10 +567,17 @@ pub async fn search_notes(
     let notes = if terms.is_empty() {
         notes
     } else {
+        // 这一批文章的标签名一次取回（20261018 起走 `note_tag`，见 `note_tags` 模块头注）。
+        // **不再**是"先读全站字典、再拿 id 串去查"：关联表自己带归属，读的也就是这一批。
+        let ids: Vec<i32> = notes.iter().map(|r| r.0.id).collect();
+        let tag_map = note_tags::load_note_tags(&state.db, &ids).await;
         let mut all: Vec<(usize, i64, (note::Model, Vec<category::Model>))> = Vec::new();
         let mut part: Vec<(usize, i64, (note::Model, Vec<category::Model>))> = Vec::new();
         for r in notes {
-            let names = note_tag_names(r.0.tags.as_deref(), &dict);
+            let names: Vec<String> = tag_map
+                .get(&r.0.id)
+                .map(|v| v.iter().map(|t| t.name.clone()).collect())
+                .unwrap_or_default();
             let hit = term_hit_count(&r.0, &terms, &names);
             if hit == 0 {
                 continue;
@@ -630,6 +603,7 @@ pub async fn search_notes(
     let mut dtos: Vec<NoteDto> = notes.into_iter().map(|(n, cats)| {
         map_note_summary(n, cats.into_iter().next().map(|c| (c.id, c.name)))
     }).collect();
+    attach_tags(&state.db, &mut dtos).await;
     attach_stats(&state.db, &mut dtos).await;
     attach_authors(&state.db, &mut dtos).await;
 
@@ -721,8 +695,8 @@ pub async fn search_all_notes(
         .await
         .unwrap_or(vec![]);
 
-    // 关键词命中：标题 / 正文 / 标签**名字**（标签 id 先过字典）。后台列表不按相关度排序
-    // （它有自己的列排序/时间序），所以这里只做过滤，不打分。
+    // 关键词命中：标题 / 正文 / 标签**名字**（标签名从 `note_tag` 关联表取）。后台列表不按
+    // 相关度排序（它有自己的列排序/时间序），所以这里只做过滤，不打分。
     // 判定与前台同样先切词（20260920，见 split_terms）——否则后台搜"OBC 固件"是空、
     // 前台却有结果，两边对不上。
     let terms = payload
@@ -736,11 +710,16 @@ pub async fn search_all_notes(
     } else if terms.is_empty() {
         notes
     } else {
-        let dict = load_tag_names(&state.db).await;
+        let ids: Vec<i32> = notes.iter().map(|(n, _)| n.id).collect();
+        let tag_map = note_tags::load_note_tags(&state.db, &ids).await;
         notes
             .into_iter()
             .filter(|(n, _)| {
-                note_hits_terms(n, &terms, &note_tag_names(n.tags.as_deref(), &dict))
+                let names: Vec<String> = tag_map
+                    .get(&n.id)
+                    .map(|v| v.iter().map(|t| t.name.clone()).collect())
+                    .unwrap_or_default();
+                note_hits_terms(n, &terms, &names)
             })
             .collect()
     };
@@ -748,6 +727,10 @@ pub async fn search_all_notes(
     let mut dtos: Vec<NoteDto> = notes.into_iter().map(|(n, cats)| {
         map_note_summary(n, cats.into_iter().next().map(|c| (c.id, c.name)))
     }).collect();
+    // 标签照挂（20261018）：`map_note` 不再从 `note.tags` 那列取 id 串，改由关联表重建 ——
+    // **每一路都要显式挂**，而"某条路径忘了挂"的症状是"这篇文章的标签在列表里显示成空"。
+    // 与署名同族，见下面那段。
+    attach_tags(&state.db, &mut dtos).await;
     // 署名照挂（20261001）：本函数是后台列表的搜索入口，**与 `list_all_notes` 同一族**。
     // 这里不挂的话，同一篇文章在后台列表里署名是站点级、在公开首页上却是作者本人——
     // 而"某条路径忘了挂"正是这个 bug 的复发形状（见 `attach_authors` 头注）。
@@ -811,6 +794,7 @@ pub async fn get_top_notes(
 
     let cats = category_names(&state.db, notes.iter().filter_map(|r| r.category_id)).await;
     let mut dtos: Vec<NoteDto> = notes.into_iter().map(|r| summary_to_dto(r, &cats)).collect();
+    attach_tags(&state.db, &mut dtos).await;
     attach_stats(&state.db, &mut dtos).await;
     attach_authors(&state.db, &mut dtos).await;
 
@@ -842,6 +826,10 @@ pub async fn create_note(
     };
     let is_public = status_is_publicish(status_word) && payload.is_public.unwrap_or(true);
 
+    // 标签**不在这里写**：`replace_note_tags` 是唯一写点（它同时维护关联表与那一列，
+    // 见 `routes/note_tags.rs` 头注）。`ActiveModel` 里省掉 `tags` 就是"这一列不归这里管"。
+    let new_tags = payload.tags.clone();
+
     let new_note = note::ActiveModel {
         title: Set(title),
         content: Set(content),
@@ -860,13 +848,36 @@ pub async fn create_note(
         user_id: Set(author),
         created_at: Set(chrono::Local::now().naive_local()),
         updated_at: Set(chrono::Local::now().naive_local()),
-        tags: Set(payload.tags),
         ..Default::default()
     };
 
-    match new_note.insert(&state.db).await {
+    // 文章行与它的标签行必须**一起**成功：只落文章不落标签，编辑器再打开这篇
+    // 会看到"标签全没了"，一保存就把用户的标签清空。
+    let txn = match state.db.begin().await {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!("[notes] 建文章：开启事务失败: {e}");
+            return Json(ApiResponse::error("Error: 数据库不可用"));
+        }
+    };
+    let inserted = match new_note.insert(&txn).await {
+        Ok(m) => m,
+        Err(e) => {
+            let _ = txn.rollback().await;
+            return Json(ApiResponse::error(&format!("Error: {}", e)));
+        }
+    };
+    if let Err(e) = note_tags::replace_note_tags(&txn, inserted.id, new_tags.as_deref()).await {
+        tracing::error!("[notes] 建文章 {}：写标签失败: {e}", inserted.id);
+        let _ = txn.rollback().await;
+        return Json(ApiResponse::error(&format!("Error: {}", e)));
+    }
+    match txn.commit().await {
         Ok(_) => Json(ApiResponse::success("Note created successfully".to_string())),
-        Err(e) => Json(ApiResponse::error(&format!("Error: {}", e))),
+        Err(e) => {
+            tracing::error!("[notes] 建文章：提交失败: {e}");
+            Json(ApiResponse::error(&format!("Error: {}", e)))
+        }
     }
 }
 
@@ -893,6 +904,10 @@ pub async fn update_note(
     // 是不是「从编辑器提交的完整发布」：编辑器一定同时带 noteTitle + noteContent。
     // 在字段被逐个 move 进 active_model 之前先判定。
     let from_editor = payload.title.is_some() || payload.content.is_some();
+    // 标签单独走 `replace_note_tags`（唯一写点）。**没给就一个字节都不动** ——
+    // 后台的快速改状态、agent 的 `set_article_status` 都不带 `noteTags`，
+    // 把它们当成"清空标签"会让那些操作顺手把标签删光。
+    let new_tags = payload.tags.clone();
 
     let note_data = note::Entity::find_by_id(id).one(&state.db).await.unwrap_or(None);
 
@@ -951,8 +966,10 @@ pub async fn update_note(
         if let Some(v) = payload.carousel_focus_y { active_model.carousel_focus_y = Set(Some(clamp01(v))); }
         if let Some(v) = payload.carousel_zoom { active_model.carousel_zoom = Set(Some(clamp_zoom(v))); }
         if let Some(v) = payload.is_top { active_model.is_top = Set(Some(v)); }
-        if let Some(v) = payload.tags { active_model.tags = Set(Some(v)); }
-        
+        // ⚠️ `payload.tags` **不在这里写**（20261018）：标签的唯一写点是
+        // `replace_note_tags`，它在下面那个事务里跟这一笔一起提交。
+        // 在这里写列、在别处写关联表 = 两个落脚点各写一半，失败时留下半截状态。
+
         // 状态与可见性：**一次推导**（20261018）。
         //
         // 此前这里是"派生 → 允许显式覆盖 → 再补一次"的补丁摞补丁：只带 `{"is_public":true}`
@@ -986,8 +1003,30 @@ pub async fn update_note(
         }
 
         active_model.updated_at = Set(chrono::Local::now().naive_local());
-        
-        match active_model.update(&state.db).await {
+
+        // 文章行与标签行同一个事务（20261018）：`replace_note_tags` 自己写两张表，
+        // 而"内容存进去了、标签没存"是最难被发现的一类半截状态（用户看到保存成功）。
+        let txn = match state.db.begin().await {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::error!("[notes] 更新文章 {target_id}：开启事务失败: {e}");
+                return Json(ApiResponse::error("Error: 数据库不可用"));
+            }
+        };
+        if let Err(e) = active_model.update(&txn).await {
+            let _ = txn.rollback().await;
+            return Json(ApiResponse::error(&format!("Error: {}", e)));
+        }
+        if new_tags.is_some() {
+            if let Err(e) =
+                note_tags::replace_note_tags(&txn, target_id, new_tags.as_deref()).await
+            {
+                tracing::error!("[notes] 更新文章 {target_id}：写标签失败: {e}");
+                let _ = txn.rollback().await;
+                return Json(ApiResponse::error(&format!("Error: {}", e)));
+            }
+        }
+        match txn.commit().await {
             Ok(_) => {
                 // 发布即消费掉修改稿：编辑器提交（from_editor）时原文章行已拿到最新内容，
                 // 挂在它下面的修改稿就没有存在意义了，删掉免得草稿箱里留过期副本。
@@ -1001,7 +1040,10 @@ pub async fn update_note(
                 }
                 Json(ApiResponse::success("Note updated successfully".to_string()))
             }
-            Err(e) => Json(ApiResponse::error(&format!("Error: {}", e))),
+            Err(e) => {
+                tracing::error!("[notes] 更新文章 {target_id}：提交失败: {e}");
+                Json(ApiResponse::error(&format!("Error: {}", e)))
+            }
         }
     } else {
          Json(ApiResponse::error("Note not found"))
@@ -1047,6 +1089,7 @@ pub async fn get_note_detail(
     let mut dtos: Vec<NoteDto> = res.into_iter().next().map(|(n, cats)| {
         map_note(n, cats.into_iter().next().map(|c| (c.id, c.name)))
     }).into_iter().collect();
+    attach_tags(&state.db, &mut dtos).await;
     attach_authors(&state.db, &mut dtos).await;
     let dto = dtos.into_iter().next();
 
@@ -1280,7 +1323,16 @@ async fn resolve_autosave_target(
         return Ok(rev);
     }
 
-    // 克隆原行做修改稿（id 交给自增），内容随后由 payload 覆盖
+    // 克隆原行做修改稿（id 交给自增），内容随后由 payload 覆盖。
+    // ⚠️ 关联表**不会**跟着列克隆走（20261018）：`note_tag` 的行得显式复制一份，
+    // 否则"继续编辑"打开修改稿时标签栏是空的，用户一保存就把标签清光。
+    let src_tags = match note_tags::current_tags(&state.db, id).await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!("[notes] 建修改稿：读源行标签失败: {e}");
+            return Err("Create revision failed".to_string());
+        }
+    };
     let mut am: note::ActiveModel = n.into();
     am.id = NotSet;
     am.draft_of = Set(Some(id));
@@ -1288,9 +1340,22 @@ async fn resolve_autosave_target(
     am.is_public = Set(false);
     am.created_at = Set(now);
     am.updated_at = Set(now);
-    am.insert(&state.db)
+    let txn = state
+        .db
+        .begin()
         .await
-        .map_err(|e| format!("Create revision failed: {}", e))
+        .map_err(|e| format!("Create revision failed: {}", e))?;
+    let rev = am
+        .insert(&txn)
+        .await
+        .map_err(|e| format!("Create revision failed: {}", e))?;
+    note_tags::replace_note_tags(&txn, rev.id, src_tags.as_deref())
+        .await
+        .map_err(|e| format!("Create revision failed: {}", e))?;
+    txn.commit()
+        .await
+        .map_err(|e| format!("Create revision failed: {}", e))?;
+    Ok(rev)
 }
 
 pub async fn autosave_note(
@@ -1310,6 +1375,21 @@ pub async fn autosave_note(
     // 与 update_note 同规矩——只在为空时写（新建的那行草稿在建行的第一次自动保存
     // 就补上；修改稿是从原行克隆的，user_id 已经带过来了）。
     let author_missing = target.user_id.is_none();
+    // 这一笔没带 `noteTags` 就沿用行里现有的（`replace_note_tags` 下面**总会**调一次：
+    // 新建出来的草稿行也要把关联表落到"空"，克隆出来的修改稿要复制一份）。
+    // ⚠️ 沿用的是**关联表里的现状**（`note_tags::current_tags`），不是 `note.tags` 那一列
+    // —— 读那一列等于把"它可能已经陈旧"请进读路径，而陈旧是看不见的。
+    // 读失败**不许**退化成"没有标签"：那会让下一次自动保存把标签清光。
+    let eff_tags = match payload.tags.clone() {
+        Some(v) => Some(v),
+        None => match note_tags::current_tags(&state.db, target.id).await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!("[notes] 自动保存 {}：读现有标签失败: {e}", target.id);
+                return Json(ApiResponse::error("Error: 读现有标签失败"));
+            }
+        },
+    };
     let mut am: note::ActiveModel = target.into();
 
     if author_missing {
@@ -1330,19 +1410,41 @@ pub async fn autosave_note(
     if let Some(v) = payload.carousel_focus_y { am.carousel_focus_y = Set(Some(clamp01(v))); }
     if let Some(v) = payload.carousel_zoom { am.carousel_zoom = Set(Some(clamp_zoom(v))); }
     if let Some(v) = payload.is_top { am.is_top = Set(Some(v)); }
-    if let Some(v) = payload.tags { am.tags = Set(Some(v)); }
+    // 标签不在这里写（唯一写点是 `replace_note_tags`，见下）。
     // status / is_public 一律不动：写的一定是草稿（原行是草稿，克隆出来的修改稿也是草稿），
     // 发布是 update_note 的事。
     am.updated_at = Set(chrono::Local::now().naive_local());
 
-    match am.update(&state.db).await {
-        Ok(saved) => Json(ApiResponse::success(AutosaveDraftResult {
+    let txn = match state.db.begin().await {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!("[notes] 自动保存：开启事务失败: {e}");
+            return Json(ApiResponse::error("Error: 数据库不可用"));
+        }
+    };
+    let saved = match am.update(&txn).await {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = txn.rollback().await;
+            return Json(ApiResponse::error(&format!("Error: {}", e)));
+        }
+    };
+    if let Err(e) = note_tags::replace_note_tags(&txn, saved.id, eff_tags.as_deref()).await {
+        tracing::error!("[notes] 自动保存 {}：写标签失败: {e}", saved.id);
+        let _ = txn.rollback().await;
+        return Json(ApiResponse::error(&format!("Error: {}", e)));
+    }
+    match txn.commit().await {
+        Ok(_) => Json(ApiResponse::success(AutosaveDraftResult {
             id: client_id.unwrap_or(saved.id),
             draft_id: saved.id,
             is_revision,
             update_time: saved.updated_at.format("%Y-%m-%d %H:%M:%S").to_string(),
         })),
-        Err(e) => Json(ApiResponse::error(&format!("Error: {}", e))),
+        Err(e) => {
+            tracing::error!("[notes] 自动保存：提交失败: {e}");
+            Json(ApiResponse::error(&format!("Error: {}", e)))
+        }
     }
 }
 
@@ -1404,9 +1506,19 @@ pub async fn get_note_for_edit(
         }
     };
 
+    let (note_dto, draft_dto) = (
+        map_note(note_row, note_cats.into_iter().next().map(|c| (c.id, c.name))),
+        draft_row.map(|(d, cats)| map_note(d, cats.into_iter().next().map(|c| (c.id, c.name)))),
+    );
+    // 原文章与修改稿**一起**挂标签（一次查询 —— `attach_tags` 收的是一批 DTO）。
+    // 两行都得挂：编辑器靠 `noteTags` 回填标签选择器，漏了修改稿那一行，
+    // 用户打开"继续编辑"会发现标签全没了、一保存就把标签清空。
+    let mut rows: Vec<NoteDto> = std::iter::once(note_dto).chain(draft_dto).collect();
+    attach_tags(&state.db, &mut rows).await;
+    let mut rows = rows.into_iter();
     let dto = EditorNoteDto {
-        note: map_note(note_row, note_cats.into_iter().next().map(|c| (c.id, c.name))),
-        draft: draft_row.map(|(d, cats)| map_note(d, cats.into_iter().next().map(|c| (c.id, c.name)))),
+        note: rows.next().expect("上面刚放进去的原文章那一行"),
+        draft: rows.next(),
     };
 
     (StatusCode::OK, Json(ApiResponse::success(dto))).into_response()
@@ -1481,22 +1593,6 @@ mod tests {
             "反控失败：整实体的 SELECT 里居然没有 content ⇒ 上面那句「没有正文」\
              已经不是在测任何东西了。SQL={naive}"
         );
-    }
-
-    /// 两级标签撞号时**一级优先**（与前端 `flattenTagOptions` 同口径）。
-    ///
-    /// 红的样子：改回"二级后写覆盖一级"（20261018 之前后端就是那样）—— 那时同一个 id、
-    /// 同一篇文章，后端说二级的名字、前端说一级的名字，而**两边都不会报错**。
-    #[test]
-    fn 标签字典撞号取一级() {
-        let dict = merge_tag_name_dict(
-            vec![(7, "一级的名字".to_string()), (14, "只有一级有".to_string())],
-            vec![(7, "二级的名字".to_string()), (10006, "只有二级有".to_string())],
-        );
-        assert_eq!(dict.get(&7).map(String::as_str), Some("一级的名字"), "撞号时一级优先");
-        assert_eq!(dict.get(&14).map(String::as_str), Some("只有一级有"));
-        assert_eq!(dict.get(&10006).map(String::as_str), Some("只有二级有"));
-        assert_eq!(dict.len(), 3);
     }
 
     /// 状态词表的唯一解析点：只认三个词，`published` 归一成 `public`，其余一律 `None`。

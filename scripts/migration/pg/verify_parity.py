@@ -46,7 +46,22 @@ PG_DB = os.environ.get("PG_DB", DB_NAME)
 #
 # ⚠️ 还有一件事要说清楚，别读成"已验"：**手写表的列没有任何东西在核对**
 # （列 diff 只遍历 MySQL 那侧的表）。这是手写表的既定代价。
-HAND_WRITTEN = {"rag_vector", "rag_vector_space", "chat_image"}
+# 20261018 再加 `note_tag`（`0006_note_tag.sql`）：`note.tags` 那一列逗号串归一出来的
+# 关联表，MySQL 侧没有对应物。它的**列同样没有东西在核对** —— 判据在
+# `tests/pg_integration.rs`（回填往返逐字相等、外键级联按列生效、撞号归属、移动改指向）。
+HAND_WRITTEN = {"rag_vector", "rag_vector_space", "chat_image", "note_tag"}
+
+# 单列豁免：`(表, 列)` 点名，**不是**把整张表加进 `HAND_WRITTEN`（那会把它现有的
+# 索引 / 外键一起豁免掉，见上面那条 ⚠️）。
+#
+# 现在只有一条：`("note", "tags")` —— `0007_drop_note_tags_column.sql` 会在 soak 之后
+# 删掉它（内容已归一到 `note_tag` 关联表，`string_agg(tag_id, ',' ORDER BY seq)` 可无损重算）。
+# MySQL 侧那列**永远留着**（MySQL 已冻结），所以删完必然红在这条 diff 上。
+#
+# ⚠️ 这条豁免是**双向**的：两侧都按它过滤 ⇒ 列还在的时候它**不生效**（两边都摘掉，
+# 那一列压根不比），列没了之后它才起作用。代价说清楚：`note.tags` 这一列的
+# 类型 / 可空 / 默认 / 注释**从此没有东西在核对**，只有这一列。
+COLUMN_EXCEPTIONS = {("note", "tags")}
 
 
 def _owned_by_hand_written(key) -> bool:
@@ -185,8 +200,9 @@ def main() -> int:
         want = [{"name": c["name"], "type": pg_type(c, (t, c["name"]) in bools),
                  "nullable": c["nullable"], "default": pg_default(c, (t, c["name"]) in bools),
                  "identity": c["extra"] == "auto_increment", "comment": c["comment"]}
-                for c in my["cols"][t]]
-        got = pg["cols"].get(t, [])
+                for c in my["cols"][t]
+                if (t, c["name"]) not in COLUMN_EXCEPTIONS]
+        got = [c for c in pg["cols"].get(t, []) if (t, c["name"]) not in COLUMN_EXCEPTIONS]
         diff("%s：列序" % t, [c["name"] for c in want], [c["name"] for c in got])
         for a, b in zip(want, got):
             for k in ("type", "nullable", "default", "identity", "comment"):
@@ -253,10 +269,16 @@ def main() -> int:
     print("✓ 结构逐项一致（表 / 列 / 类型 / 可空 / 默认 / 自增 / 索引 / 主键 / 外键 / 注释 / 触发器 / 时区）")
     # 豁免掉的那几张**各有各的判据**，别一句话带过（以前这里写死了"由
     # verify_vectors.py 管"，加 chat_image 之后那句话就成了错的）。
+    # ⚠️ 这里点的是**库里真的有的**那几张（与上面那行计数同一个口径）。写 `HAND_WRITTEN`
+    # 全集的话，会印出"3 张"却列 4 个名字 —— 迁移还没跑（`note_tag` 还没建）时就是这样。
     print("  （手写的 %s 不在上面这条判据的射程内，各有各的判据："
-          % "/".join(sorted(HAND_WRITTEN)))
+          % "/".join(sorted(HAND_WRITTEN & set(pg["cols"]))))
     print("     · rag_vector / rag_vector_space → `verify_vectors.py`（逐**位**对账）")
     print("     · chat_image → `tests/pg_integration.rs`（往返逐字相等 + 外键级联删）")
+    print("     · note_tag → `tests/pg_integration.rs`（回填往返、级联按列生效、撞号归属、移动改指向）")
+    if COLUMN_EXCEPTIONS:
+        print("  ⚠️ 另有单列豁免 %s：那一列**两侧都不比**（列还在的时候这条不生效）。"
+              % "/".join("%s.%s" % tc for tc in sorted(COLUMN_EXCEPTIONS)))
     print("     ⚠️ 它们的**列**没有任何东西在核对——这是手写表的既定代价，别读成「已验」。）")
     print("  ⚠️ 有两件事**本判据结构上验不了**，别读成「已验证」：")
     print("     ① 排序规则的大小写敏感性 —— 行为差异，不是结构差异。20261017 已拍板「登录按大小写」")

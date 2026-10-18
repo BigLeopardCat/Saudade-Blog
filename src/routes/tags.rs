@@ -3,47 +3,16 @@ use sea_orm::{
     EntityTrait, ColumnTrait, QueryFilter, QuerySelect, Set, ActiveModelTrait,
     ConnectionTrait, TransactionTrait,
 };
-use sea_orm::entity::prelude::DateTime;
-use sea_orm::DatabaseConnection;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use crate::entity::{note, tag_one, tag_two};
-use crate::routes::AppState;
+use crate::entity::{tag_one, tag_two};
+use crate::routes::{note_tags, AppState};
 use crate::utils::ApiResponse;
 
-/// 每个标签的**公开可见**文章数 → `{tag_id: count}`（20260921）。
-///
-/// 口径与 `notes.rs::list_public_notes` **逐字一致**（`is_public = true` 且 `status != 'draft'`）
-/// ——改一处必须同步另一处，否则标签上写着「5 篇」、点进去只有 3 篇。
-/// `note.tags` 存的是逗号分隔的标签 **id** 串（不是名字）；同一篇里重复出现的 id 只算一次
-/// （库里有历史数据一个 id 写两遍）。
-///
-/// 只 select `tags` 一列：这个接口是公开的、标签页每次都会拉，正文（单篇可达几十 KB）没必要读。
-async fn public_note_tag_counts(db: &DatabaseConnection) -> HashMap<i32, i64> {
-    let rows: Vec<Option<String>> = note::Entity::find()
-        .select_only()
-        .column(note::Column::Tags)
-        .filter(note::Column::IsPublic.eq(true))
-        .filter(note::Column::Status.is_in(super::notes::public_status_words()))
-        .into_tuple::<Option<String>>()
-        .all(db)
-        .await
-        .unwrap_or_default();
-    let mut counts: HashMap<i32, i64> = HashMap::new();
-    for tags in rows.into_iter().flatten() {
-        let mut seen: Vec<i32> = Vec::new();
-        for piece in tags.split(',') {
-            if let Ok(id) = piece.trim().parse::<i32>() {
-                if !seen.contains(&id) {
-                    seen.push(id);
-                    *counts.entry(id).or_insert(0) += 1;
-                }
-            }
-        }
-    }
-    counts
-}
+// 「每个标签的公开可见文章数」的实现 20261018 搬到了 `routes/note_tags.rs`
+// （`public_tag_counts`）：口径从 `note.tags` 那列逗号串改成了 `note_tag` 关联表，
+// 而那张表**只许那一个模块碰**（见它的模块头注）。口径本身一个字没变：
+// `is_public = true` 且 status 在白名单里，同一篇里重复出现的标签只算一次。
 
 #[derive(Serialize)]
 pub struct TagOneDto {
@@ -84,7 +53,7 @@ pub struct TagTwoDto {
 pub async fn list_tags_one(
     State(state): State<Arc<AppState>>,
 ) -> Json<ApiResponse<Vec<TagOneDto>>> {
-    let counts = public_note_tag_counts(&state.db).await;
+    let counts = super::note_tags::public_tag_counts(&state.db).await;
     let t1s = tag_one::Entity::find().all(&state.db).await.unwrap_or(vec![]);
     let dtos = t1s.into_iter().map(|t| TagOneDto {
         id: t.id,
@@ -99,7 +68,7 @@ pub async fn list_tags_one(
 pub async fn list_tags_two(
     State(state): State<Arc<AppState>>,
 ) -> Json<ApiResponse<Vec<TagTwoDto>>> {
-     let counts = public_note_tag_counts(&state.db).await;
+     let counts = super::note_tags::public_tag_counts(&state.db).await;
      let t2s = tag_two::Entity::find().find_with_related(tag_one::Entity).all(&state.db).await.unwrap_or(vec![]);
 
      let dtos = t2s.into_iter().map(|(t2, t1s)| {
@@ -196,104 +165,80 @@ pub async fn delete_tags(
         return Json(ApiResponse::success("Deleted".to_string()));
     }
 
-    match payload.level.as_str() {
-        "one" => {
-            // 子标签由 FK `tag_two.tag_one_id → tag_one.id` 的 ON DELETE CASCADE 一起删。
-            // 这里不需要预先取子 id 去清 note.tags：下面的 prune 以字典删除后的实际状态为准。
-            if let Err(e) = tag_one::Entity::delete_many()
-                .filter(tag_one::Column::Id.is_in(ids))
-                .exec(&state.db)
-                .await
-            {
-                tracing::error!("删除一级标签失败: {e}");
-                return Json(ApiResponse::error("删除失败"));
-            }
-        }
-        "two" => {
-            if let Err(e) = tag_two::Entity::delete_many()
-                .filter(tag_two::Column::Id.is_in(ids))
-                .exec(&state.db)
-                .await
-            {
-                tracing::error!("删除二级标签失败: {e}");
-                return Json(ApiResponse::error("删除失败"));
-            }
-        }
+    let in_two = match payload.level.as_str() {
+        "one" => false,
+        "two" => true,
         other => {
             tracing::warn!("删除标签收到非法 level: {other}");
             return Json(ApiResponse::error("标签层级不合法"));
         }
-    }
+    };
 
-    // 删完顺手把 note.tags 里指向已删标签的 id 摘掉 —— 不做的话线上就留下悬空 id，
-    // 列表/卡片上渲染成空白标签小块（现存数据里 18 篇有标签的文章有 12 篇是这种）。
-    let pruned = prune_note_tags(&state).await;
-    if pruned > 0 {
-        tracing::info!("删除标签后清理了 {pruned} 行 note.tags");
-    }
-    Json(ApiResponse::success("Deleted".to_string()))
-}
-
-/// 把所有 `note.tags` 里**已经不存在于标签字典**的 id 摘掉（顺带去重、去空片），只写回有变化的行。
-///
-/// **判据是「两张表里都没有」而不是「调用方说删了哪些」**：两级标签 id 是两条独立自增序列、
-/// 历史上可能重号，所以「某 id 在一级标签里没了」不等于「note.tags 里这个 id 不是二级标签」。
-/// 这里以字典的实际状态为准，天然幂等、也不会误删另一级的同名 id。
-pub async fn prune_note_tags(state: &Arc<AppState>) -> usize {
-    let mut live: HashSet<i32> = HashSet::new();
-    if let Ok(rows) = tag_one::Entity::find().all(&state.db).await {
-        live.extend(rows.into_iter().map(|r| r.id));
-    }
-    if let Ok(rows) = tag_two::Entity::find().all(&state.db).await {
-        live.extend(rows.into_iter().map(|r| r.id));
-    }
-
-    // 只取 id + tags 两列（20261018）。这一趟要遍历**全表**（每删一次标签就扫一次），
-    // 而它需要的只有这两列 —— 从前是 `SELECT *` ⇒ 每删一个标签就把**全站正文**读进
-    // 内存一遍。这是本站随语料增长的两处读放大之一（另一处是列表接口）。
-    let notes: Vec<(i32, Option<String>)> = match note::Entity::find()
-        .select_only()
-        .column(note::Column::Id)
-        .column(note::Column::Tags)
-        .filter(note::Column::Tags.is_not_null())
-        .into_tuple::<(i32, Option<String>)>()
-        .all(&state.db)
-        .await
-    {
+    // ⚠️ **受影响文章必须在删之前记下来**：关联行由外键跟着标签一起走（CASCADE），
+    // 删完就再也问不出"谁挂过它" —— 而 `note.tags` 那一列还得按关联表重算
+    // （soak 期两处同源，见 `note_tags::resync_tags_column` 头注）。
+    let affected = match note_tags::note_ids_with_tags(&state.db, &ids, in_two).await {
         Ok(v) => v,
         Err(e) => {
-            tracing::error!("清理悬空标签：读取 note 失败: {e}");
-            return 0;
+            tracing::error!("删除标签：统计引用失败: {e}");
+            return Json(ApiResponse::error("删除失败（统计文章引用出错）"));
         }
     };
 
-    let mut changed = 0usize;
-    for (nid, tags) in notes {
-        let raw = tags.unwrap_or_default();
-        if raw.is_empty() {
-            continue;
+    // 删标签与"重算那一列"放进同一个事务：重算失败就整个回滚，管理员看到的是"删除失败、
+    // 什么都没发生"。分开做的话会出现"标签真删了、镜像列悄悄陈旧"——那正是 `0007` 的预检
+    // 之后要拦的东西，而到那时已经没人知道它是怎么变陈旧的。
+    let txn = match state.db.begin().await {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!("删除标签：开启事务失败: {e}");
+            return Json(ApiResponse::error("删除失败（数据库不可用）"));
         }
-        let mut kept: Vec<i32> = Vec::new();
-        for piece in raw.split(',') {
-            if let Ok(id) = piece.trim().parse::<i32>() {
-                if live.contains(&id) && !kept.contains(&id) {
-                    kept.push(id);
-                }
-            }
-        }
-        let new = kept.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(",");
-        if new == raw {
-            continue;
-        }
-        let mut am = note::ActiveModel { id: Set(nid), ..Default::default() };
-        am.tags = Set(if new.is_empty() { None } else { Some(new) });
-        match am.update(&state.db).await {
-            Ok(_) => changed += 1,
-            Err(e) => tracing::error!("清理悬空标签：更新 note {} 失败: {e}", nid),
-        }
+    };
+
+    // 子标签由 FK `tag_two.tag_one_id → tag_one.id` 的 ON DELETE CASCADE 一起删。
+    let del = if in_two {
+        tag_two::Entity::delete_many()
+            .filter(tag_two::Column::Id.is_in(ids))
+            .exec(&txn)
+            .await
+    } else {
+        tag_one::Entity::delete_many()
+            .filter(tag_one::Column::Id.is_in(ids))
+            .exec(&txn)
+            .await
+    };
+    if let Err(e) = del {
+        let _ = txn.rollback().await;
+        tracing::error!("删除标签失败: {e}");
+        return Json(ApiResponse::error("删除失败"));
     }
-    changed
+
+    if let Err(e) = note_tags::resync_tags_column(&txn, &affected).await {
+        let _ = txn.rollback().await;
+        tracing::error!("删除标签：重算 note.tags 镜像列失败: {e}");
+        return Json(ApiResponse::error("删除失败（改写文章标签引用出错，改动已回滚）"));
+    }
+    if let Err(e) = txn.commit().await {
+        tracing::error!("删除标签：提交失败: {e}");
+        return Json(ApiResponse::error("删除失败（提交事务出错，改动已回滚）"));
+    }
+
+    // 悬空引用**不再需要手工擦**（20261018）：`note_tag` 的三个外键都是 `ON DELETE CASCADE`，
+    // 上面那两条 DELETE 一提交，指向被删标签的关联行就跟着走了。
+    // 这里退休的 `prune_note_tags` 是本站最后一处"每删一个标签就扫全表 + 逐行重写"的读放大
+    // （它还要把 `note.tags` 那一列整篇重写一遍）。"删了标签文章上还挂着空白标签块"这件事
+    // 从"每次记得擦"变成了**结构性不可能**。
+    Json(ApiResponse::success("Deleted".to_string()))
 }
+
+// `prune_note_tags`（20261018 删除）：它原来负责"删完标签把 `note.tags` 里悬空的 id 摘掉"。
+// 关联表的外键 `ON DELETE CASCADE` 接管了这件事，而且是**按列**的、不用扫全表：
+// 删一个一级标签，只有指向它的关联行走，同一篇指向二级标签的行原样留着。
+//
+// ⚠️ 这条差异值得单独记一笔：旧实现是**全表扫 + 按数字判**（"这个 id 在两张表里都不在了就摘"），
+// 所以它顺手也会把别的原因造成的悬空一起擦掉；外键只管"我删的这一行"。今天没有别的悬空来路
+// （`replace_note_tags` 在写入侧就把查不到的 id 丢掉了，并 WARN）。
 
 #[derive(Deserialize)]
 pub struct UpdateTagOne {
@@ -419,7 +364,10 @@ pub struct MoveTagResult {
     /// 引用了该标签的 note 行数（含草稿/修改稿影子行、含非公开）
     #[serde(rename = "affectedNotes")]
     pub affected_notes: i64,
-    /// 实际改写 `note.tags` 的行数（同层移动与 keepId 路径恒为 0）
+    /// 实际被改写的关联行数（= 受影响的文章篇数）。**20261018 起语义变了**：它现在是
+    /// `note_tag` 上那条 `UPDATE` 的 `rows_affected`，同层移动恒为 0，而跨表移动**恒等于
+    /// `affectedNotes`** —— 沿用旧 id 也算改写（id 没变，但**列**从 `tag_one_id` 换成了
+    /// `tag_two_id`）。旧实现在这条路上是 0（字符串没变），读这个数的人要改口径。
     #[serde(rename = "rewrittenNotes")]
     pub rewritten_notes: u64,
     /// 非致命提示（重名、并发残留意等），逐条可读中文
@@ -508,109 +456,20 @@ fn keep_id_allowed(from_two: bool, to_two: bool, id: i32) -> bool {
     id < TAG_TWO_ID_BASE
 }
 
-/// `note.tags` 原文 → 重映射后的串；**None = 一个字节都不用动**。
-///
-/// **绝不能 `String::replace`**：`replace("1","12")` 会把 12/21/13 一起改坏；补分隔符
-/// （`,1,` → `,12,`）又漏掉首尾。唯一正确的做法是按 `,` 切开 → 逐片 parse → 数值比较 →
-/// 重拼（与 `prune_note_tags` 同一套解析口径，改一处必须同步另一处）。
-///
-/// 与 `prune_note_tags` 三处**有意不同**：① 它是"尽力而为的净化"、本函数是移动事务的一步，
-/// 调用方必须让写失败上抛回滚；② 只读 `(id, tags)` 两列，不把正文读进内存；③ 不动与本次移动
-/// 无关的行（返回 None）、也不顺手判悬空——那是全表净化，不是一次搬运该做的事。
-/// 保持原有顺序（顺序稳定才能"无变化 ⇒ 不写"）、去重、丢掉解析不出的片。
-fn remap_tag_ids(raw: &str, old_id: i32, new_id: i32) -> Option<String> {
-    let mut seen_old = false;
-    let mut out: Vec<i32> = Vec::new();
-    for piece in raw.split(',') {
-        if let Ok(id) = piece.trim().parse::<i32>() {
-            if id == old_id {
-                seen_old = true;
-            }
-            let id = if id == old_id { new_id } else { id };
-            if !out.contains(&id) {
-                out.push(id);
-            }
-        }
-    }
-    if !seen_old {
-        return None;
-    }
-    let next = out.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(",");
-    if next == raw {
-        None
-    } else {
-        Some(next)
-    }
-}
+// ── `note.tags` 串的四个字符串助手（20261018 整体删除）─────────────────────
+//
+// `remap_tag_ids`（按逗号切串、逐片 parse、数值比较、重拼）/ `note_refs_tag` /
+// `notes_referencing`（**读全表**再逐行判字符串）/ `swap_tag_refs`（**读全表**再逐行重写
+// `note.tags`）—— 这一族的存在理由只是"引用关系住在一个字符串里"。
+//
+// 关联表落地之后：
+//   · 改指向 = 一条 `UPDATE note_tag SET …`（`note_tags::move_tag_refs`）；
+//   · 影响面 = 一次 `SELECT note_id … WHERE tag_one_id = …`（`note_tags::note_ids_with_tag`）。
+// 两者都走索引、都只碰相关的那几行。`swap_tag_refs` 那条"写回时显式保留 `updated_at`，
+// 免得被改写的文章集体跳到列表最前"的纪律**连同它的注释一起退休**：新实现不写 `note` 表
+// 一个字，`updated_at` 压根不会被碰（这正是把引用关系搬出 `note` 的一个附带好处）。
 
-/// "这一行引用了 `tag_id` 吗"的**唯一判据**——预览计数与实际被重写的行集合同源，
-/// 不允许出现两套解析（预览说 3 篇、实际改 5 篇是最坏的一类不一致）。
-fn note_refs_tag(raw: &str, tag_id: i32) -> bool {
-    raw.split(',').any(|p| p.trim().parse::<i32>() == Ok(tag_id))
-}
 
-/// 引用了该标签的 note id 列表（含草稿与"修改稿影子行"、含非公开——`note.tags` 共用一套字典，
-/// 只改公开行会让草稿的引用悬空）。
-async fn notes_referencing<C: ConnectionTrait>(
-    db: &C,
-    tag_id: i32,
-) -> Result<Vec<i32>, sea_orm::DbErr> {
-    let rows: Vec<(i32, Option<String>)> = note::Entity::find()
-        .select_only()
-        .column(note::Column::Id)
-        .column(note::Column::Tags)
-        .filter(note::Column::Tags.is_not_null())
-        .into_tuple::<(i32, Option<String>)>()
-        .all(db)
-        .await?;
-    Ok(rows
-        .into_iter()
-        .filter(|(_, t)| match t {
-            Some(raw) => note_refs_tag(raw, tag_id),
-            None => false,
-        })
-        .map(|(id, _)| id)
-        .collect())
-}
-
-/// 把 `note.tags` 里所有 `old_id` 改成 `new_id`（跨表移动且没能沿用旧 id 时）。
-///
-/// 写失败**上抛**——它是移动事务的一步，部分成功比整体失败更糟（会留下悬空引用）。
-/// 写回时**显式保留 `updated_at`**：该列若带 `ON UPDATE CURRENT_TIMESTAMP`，被重写的文章会
-/// 集体跳到列表最前、sitemap 顺序变化——显式赋值让这件事与列定义无关。
-async fn swap_tag_refs<C: ConnectionTrait>(
-    db: &C,
-    old_id: i32,
-    new_id: i32,
-) -> Result<u64, sea_orm::DbErr> {
-    let rows: Vec<(i32, Option<String>, DateTime)> = note::Entity::find()
-        .select_only()
-        .column(note::Column::Id)
-        .column(note::Column::Tags)
-        .column(note::Column::UpdatedAt)
-        .filter(note::Column::Tags.is_not_null())
-        .into_tuple::<(i32, Option<String>, DateTime)>()
-        .all(db)
-        .await?;
-
-    let mut changed = 0u64;
-    for (nid, tags, updated) in rows {
-        let raw = tags.unwrap_or_default();
-        if raw.is_empty() {
-            continue;
-        }
-        let next = match remap_tag_ids(&raw, old_id, new_id) {
-            Some(n) => n,
-            None => continue,
-        };
-        let mut am = note::ActiveModel { id: Set(nid), ..Default::default() };
-        am.tags = Set(if next.is_empty() { None } else { Some(next) });
-        am.updated_at = Set(updated);
-        am.update(db).await?;
-        changed += 1;
-    }
-    Ok(changed)
-}
 
 /// 事务内的实际搬运（调用方负责 begin/commit/rollback）。Err 里是给用户看的中文原因。
 async fn do_move<C: ConnectionTrait>(db: &C, spec: &MoveSpec) -> Result<MoveTagResult, String> {
@@ -689,8 +548,8 @@ async fn do_move<C: ConnectionTrait>(db: &C, spec: &MoveSpec) -> Result<MoveTagR
         ));
     }
 
-    // ④ 影响面（预览与改写同源，见 notes_referencing）
-    let affected = notes_referencing(db, spec.id)
+    // ④ 影响面（预览与改写同源：两边都是"关联表里 tag_?_id = 这个 id 的行数"）
+    let affected = note_tags::note_ids_with_tag(db, spec.id, spec.from_two)
         .await
         .map_err(|e| {
             tracing::error!("移动标签：统计引用失败: {e}");
@@ -766,16 +625,21 @@ async fn do_move<C: ConnectionTrait>(db: &C, spec: &MoveSpec) -> Result<MoveTagR
             "移动失败（写入二级标签出错）".to_string()
         })?;
         to_id = if keep_id { spec.id } else { r.last_insert_id };
+        // ⚠️ **顺序不能换**：先把关联行改指向、**再**删旧标签行。
+        // 反过来的话 `note_tag_one_fk` 的 `ON DELETE CASCADE` 会把它们**静默带走**
+        // ——事务照常提交、标签从 API 上消失、没有任何东西报错（这正是本块头注里
+        // 那条"唯一的静默删除路径"在关联表上的第二副面孔）。
+        // 沿用旧 id 时同样要搬：id 没变，**列变了**（`tag_one_id` → `tag_two_id`）。
+        rewritten = note_tags::move_tag_refs(db, spec.id, spec.from_two, to_id)
+            .await
+            .map_err(|e| {
+                tracing::error!("移动标签：改指向失败: {e}");
+                "移动失败（改写文章标签引用出错）".to_string()
+            })?;
         tag_one::Entity::delete_by_id(spec.id).exec(db).await.map_err(|e| {
             tracing::error!("移动标签：降级删除一级标签 {} 失败: {e}", spec.id);
             "移动失败（删除原一级标签出错）".to_string()
         })?;
-        if to_id != spec.id {
-            rewritten = swap_tag_refs(db, spec.id, to_id).await.map_err(|e| {
-                tracing::error!("移动标签：改写 note.tags 失败: {e}");
-                "移动失败（改写文章标签引用出错）".to_string()
-            })?;
-        }
     } else {
         // 升级 二→一
         let mut am = tag_one::ActiveModel {
@@ -792,16 +656,34 @@ async fn do_move<C: ConnectionTrait>(db: &C, spec: &MoveSpec) -> Result<MoveTagR
             "移动失败（写入一级标签出错）".to_string()
         })?;
         to_id = if keep_id { spec.id } else { r.last_insert_id };
+        // 顺序同降级那一支：**先改指向、再删旧行**（理由见那边）。
+        rewritten = note_tags::move_tag_refs(db, spec.id, spec.from_two, to_id)
+            .await
+            .map_err(|e| {
+                tracing::error!("移动标签：改指向失败: {e}");
+                "移动失败（改写文章标签引用出错）".to_string()
+            })?;
         tag_two::Entity::delete_by_id(spec.id).exec(db).await.map_err(|e| {
             tracing::error!("移动标签：升级删除二级标签 {} 失败: {e}", spec.id);
             "移动失败（删除原二级标签出错）".to_string()
         })?;
-        if to_id != spec.id {
-            rewritten = swap_tag_refs(db, spec.id, to_id).await.map_err(|e| {
-                tracing::error!("移动标签：改写 note.tags 失败: {e}");
+    }
+
+    // ⑤b 改了 id 的移动必须把 `note.tags` 那一列跟着重算（soak 期两处同源的不变量，
+    //     见 `note_tags::resync_tags_column` 头注）。沿用旧 id 时这一列本来就还是对的
+    //     （id 一个字节没变），只有 `id_changed` 这一支需要算 —— 而它恰恰是最容易漏的：
+    //     旧实现 `swap_tag_refs` 顺手就把串改了，新实现改的是关联表。
+    if to_id != spec.id {
+        let ids = note_tags::note_ids_with_tag(db, to_id, spec.to_two)
+            .await
+            .map_err(|e| {
+                tracing::error!("移动标签：统计新 id 的引用失败: {e}");
                 "移动失败（改写文章标签引用出错）".to_string()
             })?;
-        }
+        note_tags::resync_tags_column(db, &ids).await.map_err(|e| {
+            tracing::error!("移动标签：重算 note.tags 镜像列失败: {e}");
+            "移动失败（改写文章标签引用出错）".to_string()
+        })?;
     }
 
     // ⑥ 只提示、不拒绝：三张表都没有 UNIQUE(name)，建的时候允许重名，移动忽然变严会把管理员
@@ -879,10 +761,12 @@ pub async fn move_tag(
                 tracing::error!("移动标签：提交失败: {e}");
                 return Json(ApiResponse::error("移动失败（提交事务出错，改动已回滚）"));
             }
-            // 提交后回读：newId 路径上"扫全表 → 逐行写"与并发写入之间有窗口，残留的旧 id
-            // 会渲染成空白标签块。**如实记进 warnings**，不假装没发生。
+            // 提交后回读。20261018 之前这里堵的是一条真实的竞态：旧实现是"扫全表 → 逐行写"，
+            // 中间新产生的引用会残留成空白标签块。改走关联表之后这条窗口**结构性关掉了**
+            // （改指向与删旧行在同一个事务里，而删完之后 FK 不许任何新行再指向那个 id），
+            // 所以这个分支今天是**防御性**的 —— 留着是因为"不会有残留"这件事本身没有别的判据。
             if result.id_changed {
-                if let Ok(left) = notes_referencing(&state.db, spec.id).await {
+                if let Ok(left) = note_tags::note_ids_with_tag(&state.db, spec.id, spec.from_two).await {
                     if !left.is_empty() {
                         tracing::error!(
                             "移动标签：提交后仍有 {} 行引用旧 id={}",
@@ -920,42 +804,11 @@ pub async fn move_tag(
 mod tests {
     use super::*;
 
-    #[test]
-    fn 重映射不吃前缀陷阱() {
-        // 1→12：改完与既有的 12 合并（去重）
-        assert_eq!(remap_tag_ids("1,12", 1, 12).as_deref(), Some("12"));
-        // 改 12 不许碰 1
-        assert_eq!(remap_tag_ids("1,12", 12, 13).as_deref(), Some("1,13"));
-        assert_eq!(remap_tag_ids("21,1", 1, 12).as_deref(), Some("21,12"));
-        assert_eq!(remap_tag_ids("13,1", 13, 1).as_deref(), Some("1"));
-    }
-
-    #[test]
-    fn 无关的行一个字节都不动() {
-        assert_eq!(remap_tag_ids("2,3", 1, 12), None);
-        assert_eq!(remap_tag_ids("", 1, 12), None);
-        assert_eq!(remap_tag_ids("12,21", 1, 12), None);
-    }
-
-    #[test]
-    fn 脏值与原地不动() {
-        assert_eq!(remap_tag_ids("1,,", 1, 12).as_deref(), Some("12"));
-        assert_eq!(remap_tag_ids("abc,1", 1, 12).as_deref(), Some("12"));
-        assert_eq!(remap_tag_ids(" 1 ,2", 1, 12).as_deref(), Some("12,2"));
-        // 原地不动 ⇒ 不写
-        assert_eq!(remap_tag_ids("1,2", 1, 1), None);
-        // 但"原地不动"遇上重复 id 仍是变化（去重是该函数的既定职责，库里真有 id 写两遍的行）
-        assert_eq!(remap_tag_ids("1,1", 1, 1).as_deref(), Some("1"));
-    }
-
-    #[test]
-    fn 引用判据与重映射同源() {
-        assert!(note_refs_tag("12,1", 1));
-        assert!(note_refs_tag("1", 1));
-        assert!(!note_refs_tag("12,21", 1));
-        assert!(!note_refs_tag("", 1));
-        assert!(!note_refs_tag("abc", 1));
-    }
+    // `重映射不吃前缀陷阱` / `无关的行一个字节都不动` / `脏值与原地不动` /
+    // `引用判据与重映射同源` 四条单测随 `remap_tag_ids` / `note_refs_tag` 一起删掉
+    // （20261018）：被测的东西不存在了。**解析口径本身没有丢** —— 它搬到了
+    // `note_tags::parse_tag_ids`，那边有一组同形的单测（含 `1,1,,` / `12abc` / ` 1 , 2 ` 这些
+    // 同一批脏值）。删测试的时候容易顺手把覆盖也删掉，所以这里点一句它搬去哪儿了。
 
     #[test]
     fn 入参校验() {

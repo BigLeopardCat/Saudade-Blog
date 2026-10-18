@@ -9,7 +9,8 @@
 //! 聚合搜索把**四张表**一次倒给访客，所以每一类的公开可见性谓词都必须逐条照抄现成读路径，
 //! 少一条就是泄露。四条原文出处：
 //!   · 文章   `notes::list_public_notes` / `notes::search_notes`：`is_public = 1`
-//!            且 `status <> 'draft'`
+//!            且 status 在 `notes::public_status_words()` 里（20261018 起是**白名单**，
+//!            此前是"排除 draft"的黑名单 —— 未知 status 从"放行"变成"拦截"）
 //!   · 说说   `talks::list_by_src`：`src = 'talk'` 且 `approved = 1`
 //!   · 留言   `talks::list_by_src`：`src = 'board'` 且 `approved = 1`
 //!   · 评论   `comments::list_comments`：`approved = 1` 且 `is_deleted = 0`，
@@ -123,10 +124,9 @@ pub async fn search_all(
     }
 
     // ── ① 文章 ────────────────────────────────────────────────────────
-    // 与 `notes::search_notes` **故意一致**地不做 SQL 侧关键词过滤：`note.tags` 存的是
-    // 逗号分隔的标签 **id**，SQL 只能对 id 串 LIKE（搜标签名永远 0 命中、搜纯数字却假命中）。
-    // 标签名要先过字典，只能在内存里判。代价是全量加载，理由同那边：本站文章量小、公开侧不分页。
-    let dict = super::notes::load_tag_names(&state.db).await;
+    // 与 `notes::search_notes` **故意一致**地不做 SQL 侧关键词过滤：标签名住在
+    // `note_tag` 关联表里（20261018 之前是 `note.tags` 那个 id 串），要匹配标签名就得
+    // 先把名字取回来。代价是全量加载，理由同那边：本站文章量小、公开侧不分页。
     let all_notes = match note::Entity::find()
         .filter(note::Column::IsPublic.eq(true))
         .filter(note::Column::Status.is_in(super::notes::public_status_words()))
@@ -136,6 +136,12 @@ pub async fn search_all(
         Ok(v) => v,
         Err(e) => return db_error("站内搜索-文章", &e),
     };
+    // 这一批的标签名一次取回（按 `seq` 排好，与展示顺序同源）
+    let tag_map = super::note_tags::load_note_tags(
+        &state.db,
+        &all_notes.iter().map(|n| n.id).collect::<Vec<i32>>(),
+    )
+    .await;
     // 这一批同时就是**评论能挂在哪些文章上**的可见集合（口径完全同源，省一次查询）：
     // 文章可见性只有这一处判据，两边各写一遍迟早会漂成"评论读得到、文章打不开"。
     let visible_ids: Vec<i32> = all_notes.iter().map(|n| n.id).collect();
@@ -144,7 +150,10 @@ pub async fn search_all(
 
     let mut note_rows = Vec::new();
     for n in all_notes {
-        let tag_names = super::notes::note_tag_names(n.tags.as_deref(), &dict);
+        let tag_names: Vec<String> = tag_map
+            .get(&n.id)
+            .map(|v| v.iter().map(|t| t.name.clone()).collect())
+            .unwrap_or_default();
         let hit = count_terms(&terms, |t| super::notes::note_hits_keyword(&n, t, &tag_names));
         if hit == 0 {
             continue;

@@ -55,9 +55,14 @@ console.log('\n① 函数式那一处：`profile.rs::visible_flags`');
 console.log('\n② sea-orm 那几处：公开判据是两半，必须成对');
 {
     // `search.rs` 20261018 补进来 —— 它一直在做公开文章过滤，此前**漏在这个名单外**。
+    // `tags.rs` 同一天**换成 `note_tags.rs`**：那一对谓词原来住在
+    // `tags.rs::public_note_tag_counts` 里，而那个函数连同"数标签篇数"这件事整体搬到了
+    // `note_tags.rs::public_tag_counts`（引用关系从 `note.tags` 那列挪进了关联表）。
+    // ⚠️ 这一条**必须跟着搬**，否则守卫会在"文件里没有那对谓词"上红 —— 而它红的理由
+    // （"这一处漏了状态谓词"）与真实情况（"这一处搬走了"）**完全不同**。
     const sites = [
         'src/routes/notes.rs',
-        'src/routes/tags.rs',
+        'src/routes/note_tags.rs',
         'src/routes/comments.rs',
         'src/routes/note_stats.rs',
         'src/routes/sitemap.rs',

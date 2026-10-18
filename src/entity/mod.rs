@@ -3,6 +3,8 @@ pub mod note;
 pub mod category;
 pub mod tag_one;
 pub mod tag_two;
+// 文章↔标签关联表（20261018）：`note.tags` 那列逗号串的结构化替代（见 entity/note_tag.rs）
+pub mod note_tag;
 pub mod friend;
 pub mod talk;
 pub mod web_info;
