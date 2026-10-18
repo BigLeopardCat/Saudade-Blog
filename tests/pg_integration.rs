@@ -1105,7 +1105,14 @@ async fn quota_review_claims_once_and_touches_nothing_on_the_second_call() {
 const AGG_KW: &str = "qqzz聚合夹具";
 
 const AGG_NOTE_OK: i32 = 900000021; // 公开 + 已发布 + 标题命中 ⇒ 该出现
-const AGG_NOTE_DRAFT: i32 = 900000022; // status='draft' ⇒ 不许出现
+/// ⚠️ 这一行**原来是 `is_public=true` + `status='draft'`** —— 那正是「黑名单漏洞」的现场
+/// （`status <> 'draft'` 是那半条唯一的守卫）。20261018 的 `note_status_visibility_ck`
+/// 之后**这种行不可能存在**（CHECK 直接拒），所以夹具只能是 `is_public=false`。
+/// **代价要说清楚**：这条现在是 `is_public` 那半的负控，**不再**独立检验状态谓词 ——
+/// 约束在场时「公开 ⇒ 状态词是公开那一档」，`Status.is_in(...)` 那半在库内是**冗余**的。
+/// 状态那半的判据只剩两处：⑭（约束本身）与 `frontend/tests/note-visibility.test.mjs`
+/// （源码锁）。别把这条读成「状态谓词被验过了」。
+const AGG_NOTE_DRAFT: i32 = 900000022; // is_public=0 + status='draft' ⇒ 不许出现
 const AGG_NOTE_HIDDEN: i32 = 900000023; // is_public=0 ⇒ 不许出现
 
 const AGG_TALK_TITLE: i32 = 900000031; // approved=1，**标题**命中
@@ -1167,7 +1174,9 @@ async fn test_聚合搜索的四类命中集合与可见性谓词() {
         exec(&db, &format!("DELETE FROM note_comment WHERE id = {id}")).await;
     }
 
-    // 三篇文章。**只有第一行该被搜到**；另外两行是两条谓词的负控。
+    // 三篇文章。**只有第一行该被搜到**；另外两行都是 `is_public=false` 的负控
+    // （草稿那行见 `AGG_NOTE_DRAFT` 的头注：CHECK 之后"公开却是草稿"的行造不出来，
+    // 所以这条**不再**独立检验状态谓词 —— 别读成两条谓词各有一条负控）。
     // 正文都刻意不含关键词 ⇒ 分数只来自标题（100），排序可预期。
     // `is_public` 在 PG 侧是**真 boolean**（`src/entity/note.rs` 里也是 `bool`）⇒ 写
     // `true`/`false`，写 `1`/`0` 会被 PG 拒绝。
@@ -1176,7 +1185,7 @@ async fn test_聚合搜索的四类命中集合与可见性谓词() {
         &format!(
             "INSERT INTO note (id, title, content, created_at, updated_at, is_public, status) VALUES \
              ({AGG_NOTE_OK},     '{AGG_KW} 可见文章', '正文里没有那个词', NOW(), NOW(), true,  'published'), \
-             ({AGG_NOTE_DRAFT},  '{AGG_KW} 草稿',     '正文里没有那个词', NOW(), NOW(), true,  'draft'), \
+             ({AGG_NOTE_DRAFT},  '{AGG_KW} 草稿',     '正文里没有那个词', NOW(), NOW(), false, 'draft'), \
              ({AGG_NOTE_HIDDEN}, '{AGG_KW} 隐藏文章', '正文里没有那个词', NOW(), NOW(), false, 'published')"
         ),
     )
@@ -2038,8 +2047,11 @@ async fn update_note_refuses_public_flag_on_non_public_status() {
         Some(r#"{"is_public": true}"#),
     )
     .await;
-    assert_eq!(st, StatusCode::OK, "本仓的错误约定是 HTTP 200 + success:false：{j}");
-    assert_eq!(j["success"].as_bool(), Some(false), "必须如实报错：{j}");
+    // ⚠️ 信封是 `ApiResponse { code, message, data }`（`src/utils.rs:7`）—— **没有 `success`
+    // 字段**。业务失败 = **HTTP 仍 200 + 信封里 `code=500`**。我第一版四条断言全按
+    // `j["success"]` 写，CI 上四条一起红（`as_bool()` 在缺键上是 `None`）。
+    assert_eq!(st, StatusCode::OK, "业务失败也是 HTTP 200，靠信封说话：{j}");
+    assert_eq!(j["code"], 500, "必须如实报错：{j}");
     let (status_after, public_after) = one_text(
         &db,
         &format!("SELECT status || '|' || is_public::text FROM note WHERE id = {UPD_VIS_NOTE}"),
@@ -2063,7 +2075,7 @@ async fn update_note_refuses_public_flag_on_non_public_status() {
     )
     .await;
     assert_eq!(st, StatusCode::OK, "{j}");
-    assert_eq!(j["success"].as_bool(), Some(true), "状态词给对了就该成功：{j}");
+    assert_eq!(j["code"], 200, "状态词给对了就该成功：{j}");
     assert_eq!(
         one_text(&db, &format!("SELECT status FROM note WHERE id = {UPD_VIS_NOTE}")).await.as_deref(),
         Some("public"),
@@ -2081,7 +2093,7 @@ async fn update_note_refuses_public_flag_on_non_public_status() {
     )
     .await;
     assert_eq!(st, StatusCode::OK, "{j}");
-    assert_eq!(j["success"].as_bool(), Some(false), "未知状态词必须拒收：{j}");
+    assert_eq!(j["code"], 500, "未知状态词必须拒收：{j}");
     assert_eq!(
         one_text(&db, &format!("SELECT status FROM note WHERE id = {UPD_VIS_NOTE}")).await.as_deref(),
         Some("public"),
@@ -2174,7 +2186,7 @@ async fn deleting_a_temp_user_purges_all_six_chat_tables() {
     let admin = auth_jwt::create_token(CASCADE_ADMIN_UID, "admin", 0);
     let (st, j) = call(app, "DELETE", &format!("/api/temp-users/{CASCADE_UID}"), Some(&admin), None).await;
     assert_eq!(st, StatusCode::OK, "删账号请求该成功：{j}");
-    assert_eq!(j["success"].as_bool(), Some(true), "{j}");
+    assert_eq!(j["code"], 200, "{j}");
 
     for (label, sql) in [
         ("chat_history", format!("SELECT COUNT(*) FROM chat_history WHERE user_id = {CASCADE_UID}")),
