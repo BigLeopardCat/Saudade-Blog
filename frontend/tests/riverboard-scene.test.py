@@ -503,7 +503,10 @@ def main() -> int:
         raise SystemExit("缺 playwright(python)")
 
     SKY = f"{RB}/render/sky.ts"
-    HALO_ANCHOR = "export function drawMoonHalo(ctx: CanvasRenderingContext2D, geo: Geo, moon: MoonGeom): void {"
+    # 20261018：`drawMoonHalo` 的签名去掉了 `geo`（它一个字段都没用上，而月晕
+    # 现在只按 `moon` 的受光面掩膜画）。这里跟着改的是**注入点**、不是判据 ——
+    # 下面的断言「摘掉月晕 ⇒ 中景扇区亮度显著下降」一个字没动。
+    HALO_ANCHOR = "export function drawMoonHalo(ctx: CanvasRenderingContext2D, moon: MoonGeom): void {"
     MW_ANCHOR = "export function drawMilkyWay(ctx: CanvasRenderingContext2D, geo: Geo, seed = 7): void {"
     RIDGE_ANCHOR = "export function drawRidges(ctx: CanvasRenderingContext2D, geo: Geo, moon: MoonGeom): void {"
 

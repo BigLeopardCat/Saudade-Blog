@@ -2118,3 +2118,163 @@
     0 0 0 1px rgba(163, 63, 48, 0.3),
     0 0 10px rgba(163, 63, 48, 0.2);
 }
+
+/* ---------------- 20261018：可读性（气泡尺度 / 字号 / 窗口宽度） ----------------
+   用户原话：「还要页面字体看着费眼，看不清，很多窗口也偏小。」三处各有各的根因：
+
+   ① **气泡跟着河灯的透视缩放一起缩**。气泡是 `.rz-lantern` 的子节点，而后者带
+      `scale(scl)`（scl 由景深 d 推出来，0.02…1）。实测宿主 scale 0.60 时 16px 的
+      正文实际只有 9.6px；能悬停到的最远一档（d≥0.24 ⇒ scl≈0.24）是 3.9px ——
+      纸和字一起被缩成了邮票。修法是给气泡一个**反缩放**（`--rz-bsc`，由
+      index.tsx 逐帧只给打开中那一盏写），把它还原到屏幕尺度。
+   ② **字号**：正文 16px、落款 12px、底部提示 12px、四角按钮 11~13px —— 这些是按
+      "深色夜河底上的一点装饰字"调的；纸面弹窗里就偏小了。正文提到 17px、落款 13px，
+      UI 整体抬一档。
+   ③ **窗口宽度**：公告 480、心愿 560、灯影集 640、通用详情 440 —— 1440 宽的屏上
+      都在半幅以内，读起来局促。各自抬一档。
+
+   两条边界：
+   · 字号与宽度只在 `min-width: 621px` 生效。手机档（`max-width: 620px`）是另一套
+     已经调好的几何，而它在文件里**在前**、本块在后，不加媒体查询就会把它静默盖掉。
+   · 气泡那两条是**位置与尺度**、不是颜色，与 `riverboard-contrast.test.py` 无关，
+     所以不设媒体查询（手机上的气泡同样被缩坏，一样要治）。 */
+
+/* 反缩放：绕**下缘中点**做（`transform-origin: 50% 100%`），底边因此钉在原来的
+   锚点上（`bottom: calc(50% + 64px)` 落在灯顶），气泡只往上长。
+   反向旋转排在 scale **之后**：旋转与缩放本来可交换，但排在后面读起来才是
+   "先把纸摆正、再抵消灯体的晃"。未打开时两个变量都没定义 ⇒ 退化成原样。 */
+.rz-root .rz-lantern .rz-bubble {
+  transform-origin: 50% 100%;
+  transform: translateX(-50%) translateY(10px)
+             scale(var(--rz-bsc, 1)) rotate(var(--rz-brot, 0deg));
+}
+
+.rz-root .rz-lantern:hover .rz-bubble,
+.rz-root .rz-lantern:focus .rz-bubble,
+.rz-root .rz-lantern.rz-open .rz-bubble {
+  transform: translateX(-50%) translateY(0)
+             scale(var(--rz-bsc, 1)) rotate(var(--rz-brot, 0deg));
+}
+
+@media (min-width: 621px) {
+  /* ② 字号 —— 气泡与详情弹窗的正文同一套读数，一起抬 */
+  .rz-root .rz-lantern .rz-bubble .rz-msg,
+  .rz-root .rz-modal .rz-modal-box .rz-msg {
+    font-size: 17px;
+    line-height: 1.9;
+    letter-spacing: 0.08em;
+  }
+
+  .rz-root .rz-lantern .rz-bubble .rz-who,
+  .rz-root .rz-modal .rz-modal-box .rz-who {
+    font-size: 13px;
+  }
+
+  .rz-root .rz-lantern .rz-bubble .rz-seal,
+  .rz-root .rz-modal .rz-modal-box .rz-seal {
+    font-size: 12.5px;
+  }
+
+  /* 场景上的字（标题 / 对联 / 提示 / 四角按钮）：12~13px 在夜河底上确实费眼 */
+  .rz-root .rz-ui .rz-title {
+    font-size: 25px;
+  }
+
+  .rz-root .rz-ui .rz-title .rz-couplet > span {
+    font-size: 15px;
+  }
+
+  .rz-root .rz-ui .rz-title .rz-couplet > span b {
+    font-size: 17px;
+  }
+
+  .rz-root .rz-ui .rz-hint {
+    font-size: 13.5px;
+  }
+
+  .rz-root .rz-ui .rz-home-btn {
+    font-size: 13.5px;
+  }
+
+  .rz-root .rz-ui .rz-album-btn {
+    font-size: 12.5px;
+  }
+
+  .rz-root .rz-ui .rz-wish-btn {
+    font-size: 14px;
+  }
+
+  /* ③ 窗口宽度。通用详情（`.rz-modal-box`）是 `width: max-content` ——
+     短文本仍然贴合文本宽，只有长文本才会走到这个新上限。 */
+  .rz-root .rz-modal .rz-modal-box {
+    max-width: min(84vw, 620px);
+    min-width: 300px;
+  }
+
+  .rz-root .rz-notice-modal .rz-notice-box {
+    width: min(90vw, 600px);
+    max-width: min(90vw, 600px);
+  }
+
+  .rz-root .rz-album-modal .rz-album-box {
+    width: min(92vw, 780px);
+    max-width: min(92vw, 780px);
+  }
+
+  .rz-root .rz-wish-modal .rz-wish-box {
+    width: min(92vw, 720px);
+    max-width: min(92vw, 720px);
+  }
+}
+
+@media (min-width: 621px) {
+  /* 弹窗里的正文（上一节漏掉的一半）—— 纸面上的字比夜河上的字更需要尺寸：
+     夜河上 13px 是一行"装饰题字"，弹窗里 13px 是要**读**的正文。
+     灯影集条目尤其：`.rz-album-msg` 13px / `.rz-album-meta` 11px，
+     后者是全页最小的字（`letter-spacing: 0.12em` 还要再吃掉一点）。
+     `.rz-album-meta` 是 `white-space: nowrap`，所以只抬到 12.5px ——
+     它待在 `34px 1fr auto` 网格的 auto 列里，抬太狠会先把行挤破。 */
+  .rz-root .rz-album-modal .rz-album-box .rz-album-msg {
+    font-size: 15px;
+    line-height: 1.75;
+  }
+
+  .rz-root .rz-album-modal .rz-album-box .rz-album-meta {
+    font-size: 12.5px;
+  }
+
+  .rz-root .rz-album-modal .rz-album-box .rz-album-reason {
+    font-size: 13px;
+  }
+
+  .rz-root .rz-album-modal .rz-album-box .rz-album-find {
+    font-size: 13.5px;
+  }
+
+  .rz-root .rz-album-modal .rz-album-box .rz-album-tabs button {
+    font-size: 13.5px;
+    padding: 8px 0;
+  }
+
+  .rz-root .rz-album-modal .rz-album-box .rz-album-search input {
+    font-size: 14.5px;
+  }
+
+  .rz-root .rz-album-modal .rz-album-box .rz-album-title {
+    font-size: 24px;
+  }
+
+  .rz-root .rz-notice-modal .rz-notice-box .rz-notice-title {
+    font-size: 22px;
+  }
+
+  .rz-root .rz-notice-modal .rz-notice-box .rz-notice-body p {
+    font-size: 15px;
+    line-height: 1.9;
+  }
+
+  .rz-root .rz-notice-modal .rz-notice-box .rz-notice-foot .rz-wish-primary {
+    font-size: 15.5px;
+    padding: 9px 32px;
+  }
+}

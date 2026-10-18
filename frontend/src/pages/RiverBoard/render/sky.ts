@@ -253,40 +253,120 @@ export function drawHorizonGlow(ctx: CanvasRenderingContext2D, geo: Geo, moon: M
 
 /** 月晕：三层叠 —— 紧实的亮核、中景散射、很宽的一圈极淡的外晕。
  *  **只画光，不碰月盘**（月盘 sprite 在 index.tsx 里，由 riverboard-moon.test.mjs 锁死）。 */
-export function drawMoonHalo(ctx: CanvasRenderingContext2D, geo: Geo, moon: MoonGeom): void {
-    const { w } = geo;
+/* 月晕的**受光面掩膜**：一个半径 2.6r 的小画布，盘内每点按它自己的球面法线与
+ *  光方向点乘（Lambert）给不透明度，盘外全透明。之后把这个掩膜**模糊**着叠上去，
+ *  得到的光晕形状就**正好是受光面的形状**。
+ *
+ *  为什么必须走这条路（20261018 用户反馈「不是满月，光晕却还是圆环」）：
+ *    · 原来是绕盘心的**三个同心圆** —— 满月时对，不是满月时，亮面只有一半甚至
+ *      一弯细牙，却仍然套着一个完整的圆环；
+ *    · 第二版改成"在盘面内撒点、按 Lambert 加权、每点画一个柔光斑"。方向对，
+ *      但每个光斑的半径必须远大于盘半径才能把光晕铺开，于是**每个亮点的光都糊到
+ *      了暗面去**，实测受光侧/暗面侧在盘缘外 10px 处只差 6%（≈没有区别）。
+ *  模糊掩膜没有这个问题：模糊只会把边界**变软**，不会把亮部搬到暗面去。
+ *
+ *  掩膜按 (尺寸, 光方向) 缓存 —— 月相在页面开着的时候不会变，一份就够。 */
+let haloMask: { cv: HTMLCanvasElement; key: string } | null = null;
+
+/** 掩膜外沿（以月盘半径为单位）。
+ *
+ *  2.6 是**不够的**：模糊把盘缘抹开之后 ρ>2.6 就什么都不剩，而"月光照亮周围大气"
+ *  这件事恰恰是在外圈才看得见 —— `riverboard-scene.test.py` 的中景扇区取的就是
+ *  ρ∈[2.05, 3.9]，实测那一带只涨了 0.74/29.3 = 2.5%（判据要 12%）。
+ *  上一版（三个同心圆）够得着那么远，缺的只是"跟着月相走"；所以这里要的是
+ *  **把射程补回来、形状保持不变**，不是把光晕做大 —— 用户的原话是「不是满月，
+ *  光晕却还是圆环」，说的是**形状**，不是尺寸。 */
+const HALO_RATIO = 4.5;
+
+function haloMaskCanvas(moon: MoonGeom): HTMLCanvasElement {
+    const R = moon.r * HALO_RATIO;
+    const N = Math.max(96, Math.round(R * 2 * 0.5));
+    const key = N + "," + moon.lx.toFixed(4) + "," + moon.lz.toFixed(4);
+    if (haloMask && haloMask.key === key) return haloMask.cv;
+    const c = document.createElement("canvas");
+    c.width = c.height = N;
+    const g = c.getContext("2d")!;
+    const img = g.createImageData(N, N);
+    const d = img.data;
+    const half = N / 2;
+    const rp = (moon.r / R) * half; // 月盘半径在这张画布里的像素数
+    for (let y = 0; y < N; y++) {
+        const py = (y + 0.5 - half) / rp;
+        for (let x = 0; x < N; x++) {
+            const px = (x + 0.5 - half) / rp;
+            const rho = Math.hypot(px, py);
+            let v = 0;
+            if (rho < HALO_RATIO) {
+                if (rho <= 1) {
+                    /* 盘内：按**球面法线**点乘光方向。
+                       阈值**故意比月盘 sprite 宽得多**（sprite 用 -0.035/0.12，那是
+                       明暗交界线本身）。用同一条阈值试过：光晕在暗面侧断得干干净净，
+                       盘边立刻塌出一个"黑洞"，比原来的圆环还难看。物理上大气散射本来
+                       就把光**散进暗半球**，只是越往暗面越弱 —— 所以这里的半影一路铺到
+                       dot≈-0.75（暗面边缘）才落零，明暗交界处仍有约七成。 */
+                    const nz = Math.sqrt(1 - rho * rho);
+                    v = smoothstep(-0.75, 0.35, px * moon.lx + nz * moon.lz);
+                } else {
+                    /* 盘外：法线取**屏幕方向** `(px,py)/ρ`（球面法线在盘缘处正好
+                       等于它，nz→0 ⇒ ρ=1 处连续，不会在盘边留一道缝），再乘一条
+                       径向衰减 —— `ρ=1` 处为 1、`ρ=HALO_RATIO` 处为 0。
+                       `+0.55·lz` 是**满月项**：满月时光方向正对观察者（lx=0），
+                       只按 `(px/ρ)·lx` 算会得到一条均匀的暗环 —— 加上它之后满月
+                       拿到一圈完整的光晕，弦月仍是"亮面一侧一片、暗面一侧一线"。
+
+                       角向：`0.22 + 0.78·smoothstep(-1.0, 0.35, ·)`。
+                       底 0.22 而不是 0：大气散射不会在明暗界线处戛然而止，背光侧
+                       留两成（实测背光侧 2.6~4.0r 抬 +3.3，受光侧 +19）。
+                       过渡带故意铺得**很宽**（从 69° 一路到 180°）—— 收窄到
+                       42° 试过，明暗界线在画面上读成一道竖墙。 */
+                    const dot = (px / rho) * moon.lx + 0.55 * moon.lz;
+                    v =
+                        (0.22 + 0.78 * smoothstep(-1.0, 0.35, dot)) *
+                        Math.pow(1 - (rho - 1) / (HALO_RATIO - 1), 1.8);
+                }
+            }
+            const i = (y * N + x) * 4;
+            d[i] = d[i + 1] = d[i + 2] = 255;
+            d[i + 3] = Math.round(v * 255);
+        }
+    }
+    g.putImageData(img, 0, 0);
+    haloMask = { cv: c, key };
+    return c;
+}
+
+/** 把掩膜染成某个颜色（`source-in` 上色，形状不变）。 */
+function tinted(src: HTMLCanvasElement, rgb: string): HTMLCanvasElement {
+    const c = document.createElement("canvas");
+    c.width = src.width;
+    c.height = src.height;
+    const g = c.getContext("2d")!;
+    g.drawImage(src, 0, 0);
+    g.globalCompositeOperation = "source-in";
+    g.fillStyle = rgb;
+    g.fillRect(0, 0, c.width, c.height);
+    return c;
+}
+
+export function drawMoonHalo(ctx: CanvasRenderingContext2D, moon: MoonGeom): void {
     const k = moon.haloK;
+    const mask = haloMaskCanvas(moon);
+    const warm = tinted(mask, "rgb(255,244,214)");
+    const cool = tinted(mask, "rgb(202,216,250)");
+    /* **画多大 = 掩膜多大**（`HALO_RATIO`）。原来这里写死 2.6，而掩膜已经铺到
+       4.5 —— 掩膜外圈那截衰减被压进 2.6r 里、再往外直接切掉，射程白算了。 */
+    const R = moon.r * HALO_RATIO;
     ctx.save();
     ctx.globalCompositeOperation = "lighter";
-    // 光心在受光面一侧（暗面侧不该有亮核）
-    const hx = moon.x + moon.lx * moon.r * 0.5;
-    const hy = moon.y;
-
-    const ring = (radius: number, stops: Array<[number, string]>) => {
-        const g = ctx.createRadialGradient(hx, hy, 0, hx, hy, radius);
-        for (const [p, c] of stops) g.addColorStop(p, c);
-        ctx.fillStyle = g;
-        ctx.fillRect(hx - radius, hy - radius, radius * 2, radius * 2);
-    };
-    // ① 紧核：贴着月盘的散射，让月亮"发光"而不是"贴上去"
-    ring(Math.max(24, moon.r * 3.4), [
-        [0, `rgba(255,248,228,${0.26 * k})`],
-        [0.34, `rgba(255,238,200,${0.14 * k})`],
-        [1, "rgba(255,230,180,0)"],
-    ]);
-    // ② 中景：原来的那一层，稍加宽
-    ring(w * 0.22, [
-        [0, `rgba(255,244,216,${0.17 * k})`],
-        [0.26, `rgba(219,228,255,${0.058 * k})`],
-        [0.62, `rgba(200,214,250,${0.022 * k})`],
-        [1, "rgba(190,208,255,0)"],
-    ]);
-    // ③ 外晕：极淡极宽，给夜空一个"被照亮"的整体基底
-    ring(w * 0.46, [
-        [0, `rgba(196,210,246,${0.018 * k})`],
-        [0.5, `rgba(178,196,240,${0.007 * k})`],
-        [1, "rgba(170,190,238,0)"],
-    ]);
+    /* 两档模糊：紧的一档贴着月缘把月亮"点亮"，宽的一档给夜空被照亮的基底。
+       两档用的是**同一张掩膜**，所以两档都跟着月相走。 */
+    ctx.filter = `blur(${(moon.r * 0.18).toFixed(2)}px)`;
+    ctx.globalAlpha = Math.min(1, 0.35 * k);
+    ctx.drawImage(warm, moon.x - R, moon.y - R, R * 2, R * 2);
+    ctx.filter = `blur(${(moon.r * 0.9).toFixed(2)}px)`;
+    ctx.globalAlpha = Math.min(1, 0.7 * k);
+    ctx.drawImage(cool, moon.x - R, moon.y - R, R * 2, R * 2);
+    ctx.filter = "none";
     ctx.restore();
 }
 

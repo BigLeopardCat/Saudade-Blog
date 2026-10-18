@@ -154,7 +154,11 @@ export function buildReflection(
         const sBot = yH * Math.pow(e1, 1.35);
         const syCss = yH - sBot;
         const shCss = Math.max(0.5, sBot - sTop);
-        const dx = waveShift((y0 + y1) / 2, yH, h, phase, 0.55);
+        /* 位移量 20261018 从 0.55 抬到 1.6：0.55 时近处整行的摆幅只有 ±6.6px，
+           而这一屏有 1440px 宽 —— 镜子被"撕"得看不出来，倒影读成一张静态贴图。
+           1.6 ⇒ 近处 ±19px、远端仍趋近 0（`waveShift` 的 e² 权重自带透视）。
+           再大就开始把月盘倒影糊成一片，1.6 是"看得出在动"与"还认得出是什么"的交界。 */
+        const dx = waveShift((y0 + y1) / 2, yH, h, phase, 1.6);
         g.globalAlpha = reflRowAlpha((y0 + y1) / 2, yH, h, phase);
         /* 源矩形在 sky 的**图像像素**里：CSS x → (x + M) * kx。
            横向取满（含出血边），目标同样铺满 w+2M，位移后不会露出未覆盖的缝。 */
@@ -275,7 +279,14 @@ export function drawMoonColumn(
         const y1 = geo.riverY(d1);
         if (y1 < yH - 2 || y0 > h + 20) continue;
         const e = clamp01((y0 - yH) / (h - yH));
-        const cx = geo.riverX(u0, d0);
+        /* 整条月光路要**像一条蛇那样摆**，而不是钉死在一列上左右呼吸。
+           20261018 之前柱体的中心 `cx` 完全不动，只有宽度在呼吸 —— 用户原话
+           「河面的月光反光也接近静态开不出河面波动」。摆幅随 d² 张开（近处的水面
+           坡度分布宽、亮点滑得远），相位随 d 走 ⇒ 得到的是"弯"不是"整体平移"。
+           用一条**低频**正弦而不是 `waveShift`：柱体是几十条宽光带叠出来的，
+           逐条高频抖动只会让边缘毛掉，读不出"整条路在游"。 */
+        const sway = reduce ? 0 : Math.sin(t * 0.9 + d0 * 1.7) * (5 + 30 * d0 * d0);
+        const cx = geo.riverX(u0, d0) + sway;
         /* alpha 随 d 增：近处的水面坡度分布更宽 ⇒ 摊得更亮。
            再乘菲涅尔 —— 柱体的**底子**也遵守"远亮近暗"这条物理，只是斜率比
            镜面倒影平缓（它是漫射的散射光，不是镜面反射）。 */
@@ -310,8 +321,8 @@ export function glitterAt(i: number, n: number, t: number, seed = 71) {
        等距的虚线尺子（实测第一版）。抖到 ±2 个步长就散开了。 */
     const dj = (hash2(i, 61, seed) - 0.5) * (1.48 / Math.max(1, n)) * 2.2;
     const d = Math.min(0.97, Math.max(0.16, 0.93 - Math.pow(k, 1.16) * 0.74 + dj)); // 近 0.93 → 远 0.19
-    const f1 = 0.9 + hash2(i, 11, seed) * 2.6;
-    const f2 = 0.4 + hash2(i, 17, seed) * 1.3;
+    const f1 = 2.6 + hash2(i, 11, seed) * 5.4;
+    const f2 = 0.9 + hash2(i, 17, seed) * 2.6;
     const ph = hash2(i, 13, seed) * Math.PI * 2;
     const a1 = Math.pow(0.5 + 0.5 * Math.sin(t * f1 + ph), 3);
     const a2 = 0.35 + 0.65 * Math.pow(0.5 + 0.5 * Math.sin(t * f2 + ph * 1.7), 2);
@@ -323,6 +334,7 @@ export function glitterAt(i: number, n: number, t: number, seed = 71) {
     return {
         k,
         d,
+        ph,
         flick: a1 * a2,
         spread,
         hero: hash2(i, 29, seed) > 0.9,
@@ -354,14 +366,31 @@ export function drawMoonGlitter(
         if (g.flick < 0.03) continue;
         const u0 = geo.riverUAt(moon.x, g.d);
         if (u0 === null) continue;
-        const y = geo.riverY(g.d);
+        /* 碎光点必须**跟着波面走**。
+           20261018 之前 `d` 与 `spread` 都是静态的（只由 i 推出来），于是每个碎点
+           钉死在河面的一个位置上、只有亮度在闪 —— 整条月光路读成"一条固定在河面上
+           的虚线尺子"，用户原话「接近静态开不出河面波动」。
+           现在横向挂到**倒影用的同一条波场**上（`waveShift`），只是振幅放大：倒影
+           那点位移是"把镜子撕歪"，碎路这点位移是"亮点在波面上滑"。远近不同振幅，
+           所以近处摆得开、远处几乎不动 —— 那正是水面的透视。 */
+        const y0 = geo.riverY(g.d);
+        /* 相位与倒影、柱体的逐行破碎**用同一个**（`t * 3.3`）：三层的断口才会落在
+           同一批波谷上。各用各的相位时，亮点落在柱体的暗缝里、倒影却在别处断开 ——
+           三层各动各的，读出来是"三张独立的图在闪"，不是"一片水在动"。 */
+        const wob = reduce ? 0 : waveShift(y0, yH, h, t * 3.3) * 4.0;
+        const y =
+            y0 +
+            (reduce
+                ? 0
+                : Math.sin(y0 * 0.021 + t * 2.1 + g.ph) * (1.5 + 6 * g.d) +
+                  waveShift(y0, yH, h, t * 3.3 + 0.9) * 1.1);
         if (y < yH - 2 || y > h + 8) continue;
         /* 横向散开按**屏幕像素**给，不按 u 给：u 的半宽在近处被河道宽度放大到
            1500px，同一个 ±0.04u 在 d=0.9 处是 ±130px、在 d=0.2 处只有 ±22px，
            形状完全失控。真实月光路的宽度由水面坡度分布决定、随距离张开 ——
            直接用 `12 + 250·d²` 描述这条张开（d=0.2 时全宽 48px、d=0.93 时 470px）。 */
         const halfW = 12 + 250 * g.d * g.d;
-        const cx = geo.riverX(u0, g.d) + g.spread * halfW * (g.hero ? 0.55 : 1);
+        const cx = geo.riverX(u0, g.d) + g.spread * halfW * (g.hero ? 0.55 : 1) + wob;
         /* 聚散：真实月光路有亮团也有空档，均匀铺满只会得到一条等亮的带。 */
         const clump = fbm1(g.d * 9.0, 2, 91);
         if (clump < 0.18) continue;

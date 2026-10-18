@@ -197,28 +197,24 @@ function fiberPattern(ctx: CanvasRenderingContext2D): CanvasPattern | null {
     return fiberPat;
 }
 
-/* 纸的透光曲线：近焰暖白 → 远端深琥珀。三盏灯共用同一条（同一种纸）。 */
-function paperGrad(
+/** 纸纤维：叠在纸面上的一层丝缕。`overlay` 以中灰为恒等点，只推开明暗、
+ *  不动纸的整体亮度。 */
+function paperFiber(
     ctx: CanvasRenderingContext2D,
-    cx: number,
-    cy: number,
-    rIn: number,
-    rOut: number
-): CanvasGradient {
-    const g = ctx.createRadialGradient(cx, cy, rIn, cx, cy, rOut);
-    /* 值结构是这张精灵唯一真正重要的东西（屏幕上只有 60–118px）：
-       焰心过曝 → 一大片被照透的暖白 → 只有最外一圈沉到深琥珀。
-       中间段要是也压暗，整盏灯就成一颗橙色气球 —— 实测过。 */
-    g.addColorStop(0, "rgba(255,255,250,1)");
-    g.addColorStop(0.3, "rgba(255,244,214,1)");
-    g.addColorStop(0.6, "rgba(255,222,164,1)");
-    g.addColorStop(0.82, "rgba(246,188,112,1)");
-    g.addColorStop(0.94, "rgba(220,142,72,1)");
-    g.addColorStop(1, "rgba(174,88,36,1)");
-    return g;
+    box: [number, number, number, number]
+): void {
+    const pat = fiberPattern(ctx);
+    if (!pat) return;
+    ctx.save();
+    ctx.globalCompositeOperation = "overlay";
+    ctx.globalAlpha = 0.34;
+    ctx.fillStyle = pat;
+    ctx.fillRect(box[0], box[1], box[2], box[3]);
+    ctx.restore();
 }
 
-/** 在**已经 clip 好**的区域里铺纸：透光渐变 + 纤维。 */
+/** 在**已经 clip 好**的区域里铺纸：透光渐变 + 纤维。
+ *  给花瓣、灯碗这些有自己一条更陡曲线的部件用。 */
 function paperFill(
     ctx: CanvasRenderingContext2D,
     grad: CanvasGradient,
@@ -226,12 +222,44 @@ function paperFill(
 ): void {
     ctx.fillStyle = grad;
     ctx.fillRect(box[0], box[1], box[2], box[3]);
-    const pat = fiberPattern(ctx);
-    if (!pat) return;
+    paperFiber(ctx, box);
+}
+
+/** 灯身（笼身 / 桶身）的纸。`W`/`H` 是**形状自己**的半宽半高，不是 box 的。
+ *
+ *  20261018 重做。原来这里是「中心过曝白 → 外圈深琥珀」的**径向**渐变，那是一个
+ *  **球面光照**模型 —— 上屏读成"笼子里塞了一个光团、灯身是暗的"，用户原话
+ *  「中间一个光团，灯笼其他位置是暗的，哪有这样的圆灯笼」。真实纸灯笼是**漫透射**：
+ *  焰在纸里面，纸把光散开，所以**整张纸都在发亮**，只有三处更暗：
+ *    ① 上下两端（离焰最远）；
+ *    ② 贴着轮廓的那一圈（纸被看成掠射，视线穿过的料更厚）；
+ *    ③ 竹骨与金属箍本身（不透光，另画）。
+ *  于是这里改成**纵向为主 + 横向只压边缘**两个方向分开给，而不是一个球。 */
+function paperBody(
+    ctx: CanvasRenderingContext2D,
+    cx: number, cy: number,
+    W: number, H: number,
+    box: [number, number, number, number]
+): void {
+    const v = ctx.createLinearGradient(0, cy - H, 0, cy + H);
+    v.addColorStop(0, "rgba(212,158,98,1)");
+    v.addColorStop(0.14, "rgba(241,205,148,1)");
+    v.addColorStop(0.34, "rgba(252,232,190,1)");
+    v.addColorStop(0.5, "rgba(255,242,206,1)");
+    v.addColorStop(0.68, "rgba(252,230,188,1)");
+    v.addColorStop(0.86, "rgba(239,200,144,1)");
+    v.addColorStop(1, "rgba(206,152,94,1)");
+    paperFill(ctx, v, box);
+    /* 横向：**中段一点不动**，只在贴着轮廓的最后一小圈压下去。
+       这一笔是"圆"的来源 —— 但它的射程只有半宽的 17%，不是半个灯身。 */
+    const h = ctx.createLinearGradient(cx - W, 0, cx + W, 0);
+    h.addColorStop(0, "rgba(148,100,56,1)");
+    h.addColorStop(0.17, "rgba(255,255,255,1)");
+    h.addColorStop(0.83, "rgba(255,255,255,1)");
+    h.addColorStop(1, "rgba(148,100,56,1)");
     ctx.save();
-    ctx.globalCompositeOperation = "overlay";
-    ctx.globalAlpha = 0.34;
-    ctx.fillStyle = pat;
+    ctx.globalCompositeOperation = "multiply";
+    ctx.fillStyle = h;
     ctx.fillRect(box[0], box[1], box[2], box[3]);
     ctx.restore();
 }
@@ -291,21 +319,26 @@ function metalBand(
     ctx.fillRect(x, y, w, h);
 }
 
-/** 焰心：三盏灯共用。`r` 光晕半径，`tip` 火苗竖滴的半高。 */
+/** 焰心：三盏灯共用。`r` 光晕半径，`tip` 火苗竖滴的半高。
+ *
+ *  20261018 把峰值压下来（1.0 → 0.5）。纸灯笼的焰是**在纸里面**的：从外面看，
+ *  它只该把附近那一片纸再提亮一点点，而不是一个白到过曝的点。峰值给满的话，
+ *  就算纸面已经改成了漫透射，中心还是会重新聚成一个"光团"（用户原话
+ *  「中间一个光团」）。 */
 function paintFlame(
     ctx: CanvasRenderingContext2D,
     cx: number, cy: number, r: number, tip: number
 ): void {
     const fg = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
-    fg.addColorStop(0, "rgba(255,252,240,1)");
-    fg.addColorStop(0.38, "rgba(255,232,160,0.96)");
+    fg.addColorStop(0, "rgba(255,252,240,0.5)");
+    fg.addColorStop(0.38, "rgba(255,232,160,0.34)");
     fg.addColorStop(1, "rgba(255,178,80,0)");
     ctx.fillStyle = fg;
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.fill();
     const g = ctx.createLinearGradient(0, cy - tip, 0, cy + tip * 0.35);
-    g.addColorStop(0, "rgba(255,253,242,0.96)");
+    g.addColorStop(0, "rgba(255,253,242,0.5)");
     g.addColorStop(1, "rgba(255,196,96,0)");
     ctx.fillStyle = g;
     ctx.beginPath();
@@ -339,9 +372,9 @@ function drawLotus(ctx: CanvasRenderingContext2D, S: number) {
         /* 花瓣比笼身**暗一档、暖一档**：它们是斜着背光的纸，穿过的料比正对
            焰心的笼身厚。跟笼身一样亮的话，整朵花就糊成一块奶油。 */
         const g = ctx.createLinearGradient(0, 0, 0, -petalLen);
-        g.addColorStop(0, back ? "rgba(236,186,116,1)" : "rgba(255,226,168,1)");
-        g.addColorStop(0.5, back ? "rgba(212,142,66,1)" : "rgba(246,180,96,1)");
-        g.addColorStop(1, back ? "rgba(152,70,24,1)" : "rgba(190,96,34,1)");
+        g.addColorStop(0, back ? "rgba(232,188,126,1)" : "rgba(250,220,168,1)");
+        g.addColorStop(0.5, back ? "rgba(212,148,84,1)" : "rgba(244,192,120,1)");
+        g.addColorStop(1, back ? "rgba(166,94,44,1)" : "rgba(208,132,66,1)");
         paperFill(ctx, g, [-petalRim * 1.2, -petalLen * 1.1, petalRim * 2.4, petalLen * 1.4]);
         ctx.restore();
         // 瓣缘：暗线（纸的切口，不透光）
@@ -366,15 +399,15 @@ function drawLotus(ctx: CanvasRenderingContext2D, S: number) {
     ctx.save();
     bowl();
     ctx.clip();
-    /* 灯碗是全场最热的地方（焰就在碗里），所以它的曲线比笼身**更陡**：
-       中心过曝、到碗沿迅速沉下去。跟笼身共用一条曲线的话，碗会摊成一块
-       没有中心的奶油（实测）。 */
+    /* 灯碗是全场最热的地方（焰就在碗里），所以它比花瓣**亮一档**、并且带一点
+       中心。但曲线不能陡 —— 陡了就是同一顶"中间一个光团"的帽子，只是换到碗上。
+       碗沿也不再压到深琥珀：那圈暗边一给，整只碗就成了一张碟子。 */
     const bowlG = ctx.createRadialGradient(cx, cy, S * 0.015, cx, cy, S * 0.30);
-    bowlG.addColorStop(0, "rgba(255,254,246,1)");
-    bowlG.addColorStop(0.22, "rgba(255,238,190,1)");
-    bowlG.addColorStop(0.55, "rgba(250,198,118,1)");
-    bowlG.addColorStop(0.82, "rgba(226,146,68,1)");
-    bowlG.addColorStop(1, "rgba(170,82,32,1)");
+    bowlG.addColorStop(0, "rgba(255,252,238,1)");
+    bowlG.addColorStop(0.22, "rgba(255,244,206,1)");
+    bowlG.addColorStop(0.55, "rgba(253,220,160,1)");
+    bowlG.addColorStop(0.82, "rgba(244,186,112,1)");
+    bowlG.addColorStop(1, "rgba(214,140,74,1)");
     paperFill(ctx, bowlG, [cx - S * 0.31, cy - S * 0.16, S * 0.62, S * 0.32]);
     ctx.restore();
     // 灯碗骨线（向中心聚拢的竖肋）
@@ -420,7 +453,7 @@ function drawOct(ctx: CanvasRenderingContext2D, S: number) {
     ctx.save();
     shape();
     ctx.clip();
-    paperFill(ctx, paperGrad(ctx, cx, cy, 0, W), [cx - W * 1.1, cy - H * 1.1, W * 2.2, H * 2.2]);
+    paperBody(ctx, cx, cy, W, H, [cx - W * 1.1, cy - H * 1.1, W * 2.2, H * 2.2]);
     ctx.restore();
     /* 菱形编格（竹篾交叉）：两族**平行**斜线，各自的亮边朝向心——心是焰，纸的
        鼓起面朝着它。
@@ -472,7 +505,7 @@ function drawDrum(ctx: CanvasRenderingContext2D, S: number) {
     ctx.save();
     shape();
     ctx.clip();
-    paperFill(ctx, paperGrad(ctx, cx, cy, 0, W), [cx - W * 1.4, cy - H * 1.1, W * 2.8, H * 2.2]);
+    paperBody(ctx, cx, cy, W * 1.18, H, [cx - W * 1.4, cy - H * 1.1, W * 2.8, H * 2.2]);
     ctx.restore();
     /* 肋与箍都 clip 在笼身里：它们按"整条"画，不裁就会戳出轮廓
        （圆笼的横箍在桶腰以外的地方尤其明显）。 */
@@ -1139,13 +1172,14 @@ export default function RiverBoard() {
             ctx.clearRect(-MARGIN, -MARGIN, w + MARGIN * 2, h + MARGIN * 2);
         };
         const draw = (ctx: CanvasRenderingContext2D) => {
-            const { lx: lxHalo, haloK } = moonPhaseParams();
+            const { lx: lxHalo, lz: lzHalo, haloK } = moonPhaseParams();
             const moon: MoonGeom = {
                 x: w * MOON.x,
                 y: h * MOON.y,
                 r: Math.min(w, h) * MOON.r,
                 haloK,
                 lx: lxHalo,
+                lz: lzHalo,
             };
 
             /* 夜空（20261018 电影感重制，自远及近）：
@@ -1187,7 +1221,7 @@ export default function RiverBoard() {
                结论：暗面完全不画（透出背景），只留受光的那部分。
                月缘近场辉光同理（内半径 1.0·rMoon 的环形渐变，暗面侧会露出一段圆弧内边界——
                那正是"月亮的圆形轮廓"）；光晕统一由下面这道以亮面为圆心、多层衰减的软光晕承担。 */
-            drawMoonHalo(ctx, geo, moon);
+            drawMoonHalo(ctx, moon);
 
             /* 云（20261018）不再烤在这里 —— 旧的"云影"是三个径向渐变糊成的暗斑，
                既没有体积也没有月光。现在换成真云层：见 render/sky.ts 的 bakeCloudStrip，
@@ -1611,13 +1645,14 @@ export default function RiverBoard() {
             w, h, yH: v.yH, margin: MARGIN, dpr: v.dpr,
             riverX, riverY, riverUAt, traceRiver,
         };
-        const { lx: lxMoon, haloK: haloKMoon } = moonPhaseParams();
+        const { lx: lxMoon, lz: lzMoon, haloK: haloKMoon } = moonPhaseParams();
         const moon: MoonGeom = {
             x: w * MOON.x,
             y: h * MOON.y,
             r: Math.min(w, h) * MOON.r,
             haloK: haloKMoon,
             lx: lxMoon,
+            lz: lzMoon,
         };
         ctx.clearRect(0, 0, w, h);
 
@@ -1994,6 +2029,22 @@ export default function RiverBoard() {
             node.style.transform =
                 `translate3d(${li.x}px, ${li.y}px, 0) translate(-50%, -50%) scale(${scl}) rotate(${rot}deg)`;
             node.style.opacity = String(0.45 + 0.55 * Math.pow(d, 0.8));
+            /* 气泡的**反缩放**（20261018 可读性修复）。
+               气泡是 `.rz-lantern` 的子节点，于是它跟着河灯的透视缩放一起缩 ——
+               实测宿主 scale 0.60 时 16px 的字只剩 9.6px，能悬停到的最近档
+               （d≥0.24 ⇒ scale 0.24）也才 3.9px，用户原话「字体看着费眼，看不清」。
+               两个自定义属性把气泡还原到**屏幕尺度**（气泡的宽度、字号、行高因此
+               与河灯的远近完全无关）：
+                 --rz-bsc  1/scl（抵消宿主的 scale；CSS 那边绕**下缘中点**缩放，
+                           底边因此钉在原地、气泡只往上长）
+                 --rz-brot 反向旋转（灯体左右晃 ±3.2°，不抵掉整块纸是斜的）
+               只给**打开中的那一盏**写。`classList.contains` 是内存读、不触发布局；
+               而逐帧给 22 盏都写自定义属性会触发整棵子树的样式重算 —— 同一时刻
+               只可能开一个气泡，没必要为它付 22 份。 */
+            if (node.classList.contains("rz-open")) {
+                node.style.setProperty("--rz-bsc", (1 / Math.max(0.05, scl)).toFixed(4));
+                node.style.setProperty("--rz-brot", (-rot).toFixed(2) + "deg");
+            }
             // pointerEvents 只在真正换档时写（逐帧写一个几乎不变的属性会白白触发样式失效计算）
             const pe = d < 0.24 ? "none" : "auto";
             if (pe !== m._pe) {
