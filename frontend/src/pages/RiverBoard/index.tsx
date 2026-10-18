@@ -5,33 +5,6 @@ import { moonAlbedo, moonSpriteGeometry } from "./moon_surface.ts";
 import { useLiveRefresh } from "../../utils/liveRefresh";
 import { useNavigate } from "react-router-dom";
 import Live2dAgent from "../../components/Live2dAgent"; // 沉浸页也保留看板娘（顶层路由无 App 布局）
-import type { Geo, MoonGeom } from "./render/geo";
-import {
-    bakeCloudStrip,
-    CLOUD_HIGH,
-    CLOUD_LOW,
-    drawClouds,
-    drawHorizonGlow,
-    drawHorizonMist,
-    drawMilkyWay,
-    drawMoonHalo,
-    drawRidges,
-    paintSky,
-} from "./render/sky";
-import {
-    bandSprite,
-    buildReflection,
-    drawCaustics,
-    drawLanternReflections,
-    drawMoonColumn,
-    drawMoonGlitter,
-    drawReflection,
-    drawShoreFoam,
-    type ReflBuild,
-    type ReflLantern,
-} from "./render/water";
-import { beginGlow, blobSprite, bloom, drawGrain, drawRays, glowBlob, haloSprite } from "./render/post";
-import { hash2 } from "./render/noise";
 
 /* 河灯留言板 ── 一条只存在于路由之下的河。
    整页为独立顶层路由（/he），不挂博客的头部与底部。
@@ -149,242 +122,39 @@ type Wish = {
 };
 
 /* ------------------------- 灯笼精灵预渲染 -------------------------
-   三种花样：莲花灯 / 八角灯 / 圆笼灯，全部用 Canvas 手绘。**只烤一次**，
-   所以这里的逐像素成本可以放开用。
-
-   20261018（阶段 4）：从「平面径向渐变」改成**有材质**的灯笼 ——
-   ① 纸是**半透**的：光从焰心穿纸而出，越往外穿过的纸层越厚，于是
-      「近焰暖白 → 远端深琥珀」；蓝光被吸收得更快，所以远端同时偏暖偏深。
-   ② 纸有**纤维**：细颗粒（纸浆）+ 8px 粗斑（纤维结团）+ 整行同相的横纹
-      （抄纸时纤维的走向），三层叠。
-   ③ 竹骨**遮光**：骨线是暗的，而骨**朝光那一侧**的纸被骨撑起来、留一道亮边。
-   ④ 金属箍有**镜面亮带 + 上下暗边**，不是一块纯色。
-   ⑤ 轮廓内缘压暗（纸层最厚处）但保留暖光 ⇒ 读成「透光的纸」而不是
-      「涂成橙色的板」。 */
+   三种花样：莲花灯 / 八角灯 / 圆笼灯，全部用 Canvas 手绘，
+   比 CSS 拼装的灯笼精致得多，且只有一次离屏绘制成本。 */
 
 const SPRITE_SIZE = 288;
 
-/* 纸纤维贴图（确定性）。`hash2` 而不是 `Math.random` —— 出图与像素判据都要可复现。 */
-let fiberPat: CanvasPattern | null = null;
-function fiberPattern(ctx: CanvasRenderingContext2D): CanvasPattern | null {
-    if (fiberPat) return fiberPat;
-    const N = 128;
-    const c = document.createElement("canvas");
-    c.width = c.height = N;
-    const g = c.getContext("2d");
-    if (!g) return null;
-    const img = g.createImageData(N, N);
-    const d = img.data;
-    for (let y = 0; y < N; y++) {
-        /* 整行同相：抄纸的纤维是横着淌的，这一层给的是「丝缕」不是「颗粒」。
-           只有颗粒的话，缩到屏幕上就成了一张均匀的噪点。 */
-        const streak = (hash2(0, y, 5152) - 0.5) * 0.9;
-        for (let x = 0; x < N; x++) {
-            /* 幅度**不能大**：纸是细的，粗斑一大就成麻布/帆布（实测 8px 块 ×0.6
-               的叠加把灯面糊成一张编织袋）。4px 块、整体 alpha 0.34 才是纸。 */
-            const v =
-                128 +
-                (hash2(x, y, 5150) - 0.5) * 26 +
-                (hash2(x >> 2, y >> 2, 5151) - 0.5) * 22 +
-                streak * 18;
-            const i = (y * N + x) * 4;
-            d[i] = d[i + 1] = d[i + 2] = v < 0 ? 0 : v > 255 ? 255 : v;
-            d[i + 3] = 255;
-        }
-    }
-    g.putImageData(img, 0, 0);
-    fiberPat = ctx.createPattern(c, "repeat");
-    return fiberPat;
-}
-
-/** 纸纤维：叠在纸面上的一层丝缕。`overlay` 以中灰为恒等点，只推开明暗、
- *  不动纸的整体亮度。 */
-function paperFiber(
-    ctx: CanvasRenderingContext2D,
-    box: [number, number, number, number]
-): void {
-    const pat = fiberPattern(ctx);
-    if (!pat) return;
-    ctx.save();
-    ctx.globalCompositeOperation = "overlay";
-    ctx.globalAlpha = 0.34;
-    ctx.fillStyle = pat;
-    ctx.fillRect(box[0], box[1], box[2], box[3]);
-    ctx.restore();
-}
-
-/** 在**已经 clip 好**的区域里铺纸：透光渐变 + 纤维。
- *  给花瓣、灯碗这些有自己一条更陡曲线的部件用。 */
-function paperFill(
-    ctx: CanvasRenderingContext2D,
-    grad: CanvasGradient,
-    box: [number, number, number, number]
-): void {
-    ctx.fillStyle = grad;
-    ctx.fillRect(box[0], box[1], box[2], box[3]);
-    paperFiber(ctx, box);
-}
-
-/** 灯身（笼身 / 桶身）的纸。`W`/`H` 是**形状自己**的半宽半高，不是 box 的。
- *
- *  20261018 重做。原来这里是「中心过曝白 → 外圈深琥珀」的**径向**渐变，那是一个
- *  **球面光照**模型 —— 上屏读成"笼子里塞了一个光团、灯身是暗的"，用户原话
- *  「中间一个光团，灯笼其他位置是暗的，哪有这样的圆灯笼」。真实纸灯笼是**漫透射**：
- *  焰在纸里面，纸把光散开，所以**整张纸都在发亮**，只有三处更暗：
- *    ① 上下两端（离焰最远）；
- *    ② 贴着轮廓的那一圈（纸被看成掠射，视线穿过的料更厚）；
- *    ③ 竹骨与金属箍本身（不透光，另画）。
- *  于是这里改成**纵向为主 + 横向只压边缘**两个方向分开给，而不是一个球。 */
-function paperBody(
-    ctx: CanvasRenderingContext2D,
-    cx: number, cy: number,
-    W: number, H: number,
-    box: [number, number, number, number]
-): void {
-    const v = ctx.createLinearGradient(0, cy - H, 0, cy + H);
-    v.addColorStop(0, "rgba(212,158,98,1)");
-    v.addColorStop(0.14, "rgba(241,205,148,1)");
-    v.addColorStop(0.34, "rgba(252,232,190,1)");
-    v.addColorStop(0.5, "rgba(255,242,206,1)");
-    v.addColorStop(0.68, "rgba(252,230,188,1)");
-    v.addColorStop(0.86, "rgba(239,200,144,1)");
-    v.addColorStop(1, "rgba(206,152,94,1)");
-    paperFill(ctx, v, box);
-    /* 横向：**中段一点不动**，只在贴着轮廓的最后一小圈压下去。
-       这一笔是"圆"的来源 —— 但它的射程只有半宽的 17%，不是半个灯身。 */
-    const h = ctx.createLinearGradient(cx - W, 0, cx + W, 0);
-    h.addColorStop(0, "rgba(148,100,56,1)");
-    h.addColorStop(0.17, "rgba(255,255,255,1)");
-    h.addColorStop(0.83, "rgba(255,255,255,1)");
-    h.addColorStop(1, "rgba(148,100,56,1)");
-    ctx.save();
-    ctx.globalCompositeOperation = "multiply";
-    ctx.fillStyle = h;
-    ctx.fillRect(box[0], box[1], box[2], box[3]);
-    ctx.restore();
-}
-
-/** 轮廓内缘压暗：纸层最厚的地方在边上，光穿不透 —— 但只压一点点，
- *  压狠了就成「描边」，纸的透光感反而没了。 */
-function innerShade(ctx: CanvasRenderingContext2D, S: number, shape: () => void): void {
-    ctx.save();
-    shape();
-    ctx.clip();
-    ctx.lineWidth = S * 0.05;
-    ctx.strokeStyle = "rgba(120,48,14,0.28)";
-    shape();
-    ctx.stroke();
-    ctx.restore();
-}
-
-/** 竹骨：暗线 + **朝光侧**的亮边（纸被骨撑起来，那一侧离焰更近）。
- *  `toward` = 亮边偏哪一边（+1 右 / -1 左），按骨线方向算。 */
-function rib(
-    ctx: CanvasRenderingContext2D,
-    x1: number, y1: number, x2: number, y2: number,
-    w: number,
-    toward: number
-): void {
-    ctx.lineCap = "round";
-    ctx.strokeStyle = "rgba(126,58,20,0.42)";
-    ctx.lineWidth = w;
-    ctx.beginPath();
-    ctx.moveTo(x1, y1);
-    ctx.lineTo(x2, y2);
-    ctx.stroke();
-    const dx = x2 - x1, dy = y2 - y1;
-    const L = Math.hypot(dx, dy) || 1;
-    const nx = (-dy / L) * toward * w * 0.85;
-    const ny = (dx / L) * toward * w * 0.85;
-    ctx.strokeStyle = "rgba(255,244,214,0.30)";
-    ctx.lineWidth = w * 0.42;
-    ctx.beginPath();
-    ctx.moveTo(x1 + nx, y1 + ny);
-    ctx.lineTo(x2 + nx, y2 + ny);
-    ctx.stroke();
-}
-
-/** 金属箍：镜面亮带 + 上下暗边。纯色填充读成「贴了一条色纸」。 */
-function metalBand(
-    ctx: CanvasRenderingContext2D,
-    x: number, y: number, w: number, h: number
-): void {
-    const g = ctx.createLinearGradient(0, y, 0, y + h);
-    g.addColorStop(0, "rgba(88,52,22,0.95)");
-    g.addColorStop(0.16, "rgba(198,140,74,0.97)");
-    g.addColorStop(0.4, "rgba(255,236,190,0.98)");
-    g.addColorStop(0.58, "rgba(186,122,58,0.97)");
-    g.addColorStop(1, "rgba(84,44,16,0.95)");
-    ctx.fillStyle = g;
-    ctx.fillRect(x, y, w, h);
-}
-
-/** 焰心：三盏灯共用。`r` 光晕半径，`tip` 火苗竖滴的半高。
- *
- *  20261018 把峰值压下来（1.0 → 0.5）。纸灯笼的焰是**在纸里面**的：从外面看，
- *  它只该把附近那一片纸再提亮一点点，而不是一个白到过曝的点。峰值给满的话，
- *  就算纸面已经改成了漫透射，中心还是会重新聚成一个"光团"（用户原话
- *  「中间一个光团」）。 */
-function paintFlame(
-    ctx: CanvasRenderingContext2D,
-    cx: number, cy: number, r: number, tip: number
-): void {
-    const fg = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
-    fg.addColorStop(0, "rgba(255,252,240,0.5)");
-    fg.addColorStop(0.38, "rgba(255,232,160,0.34)");
-    fg.addColorStop(1, "rgba(255,178,80,0)");
-    ctx.fillStyle = fg;
-    ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, Math.PI * 2);
-    ctx.fill();
-    const g = ctx.createLinearGradient(0, cy - tip, 0, cy + tip * 0.35);
-    g.addColorStop(0, "rgba(255,253,242,0.5)");
-    g.addColorStop(1, "rgba(255,196,96,0)");
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.ellipse(cx, cy - tip * 0.35, tip * 0.55, tip, 0, 0, Math.PI * 2);
-    ctx.fill();
-}
-
 function drawLotus(ctx: CanvasRenderingContext2D, S: number) {
     const cx = S / 2, cy = S / 2;
+    // —— 外层花瓣环 ——
     const petalRim = S * 0.30, petalLen = S * 0.42;
     const petals = 7;
-    // —— 外层花瓣环 ——
     for (let i = 0; i < petals; i++) {
         const a = (i / petals) * Math.PI * 2 - Math.PI / 2;
-        const back = i % 2 === 0; // 奇偶交替 = 一前一后两层，后层压暗
+        const back = i % 2 === 0;
         ctx.save();
         ctx.translate(cx, cy);
         ctx.rotate(a);
-        const shape = () => {
-            ctx.beginPath();
-            ctx.moveTo(0, 0);
-            ctx.quadraticCurveTo(petalRim * 0.55, -petalLen * 0.30, 0, -petalLen); // 右缘
-            ctx.quadraticCurveTo(-petalRim * 0.55, -petalLen * 0.30, 0, 0);        // 左缘
-            ctx.closePath();
-        };
-        ctx.save();
-        shape();
-        ctx.clip();
-        /* 每片花瓣自己也是一片纸：靠花心的一端离焰近（亮），瓣尖远（深）。
-           后层再整体压一档 —— 前后两层不分开就成一朵平面贴花。 */
-        /* 花瓣比笼身**暗一档、暖一档**：它们是斜着背光的纸，穿过的料比正对
-           焰心的笼身厚。跟笼身一样亮的话，整朵花就糊成一块奶油。 */
-        const g = ctx.createLinearGradient(0, 0, 0, -petalLen);
-        g.addColorStop(0, back ? "rgba(232,188,126,1)" : "rgba(250,220,168,1)");
-        g.addColorStop(0.5, back ? "rgba(212,148,84,1)" : "rgba(244,192,120,1)");
-        g.addColorStop(1, back ? "rgba(166,94,44,1)" : "rgba(208,132,66,1)");
-        paperFill(ctx, g, [-petalRim * 1.2, -petalLen * 1.1, petalRim * 2.4, petalLen * 1.4]);
-        ctx.restore();
-        // 瓣缘：暗线（纸的切口，不透光）
-        ctx.strokeStyle = "rgba(146,68,22,0.42)";
-        ctx.lineWidth = S * 0.007;
-        shape();
+        const grad = ctx.createLinearGradient(0, 0, 0, -petalLen);
+        grad.addColorStop(0, back ? "rgba(214,130,58,0.95)" : "rgba(240,168,90,0.98)");
+        grad.addColorStop(0.6, back ? "rgba(250,196,120,0.9)" : "rgba(255,216,146,0.97)");
+        grad.addColorStop(1, "rgba(255,228,170,0.92)");
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.quadraticCurveTo(petalRim * 0.55, -petalLen * 0.30, 0, -petalLen); // 右缘
+        ctx.quadraticCurveTo(-petalRim * 0.55, -petalLen * 0.30, 0, 0);        // 左缘
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = "rgba(168,86,32,0.35)";
+        ctx.lineWidth = S * 0.008;
         ctx.stroke();
-        // 中脉：亮线（纸在脉上鼓起、离焰更近）
-        ctx.strokeStyle = "rgba(255,244,214,0.42)";
-        ctx.lineWidth = S * 0.010;
+        // 花瓣中脉
+        ctx.strokeStyle = "rgba(255,240,205,0.5)";
+        ctx.lineWidth = S * 0.008;
         ctx.beginPath();
         ctx.moveTo(0, -petalLen * 0.08);
         ctx.quadraticCurveTo(petalRim * 0.14, -petalLen * 0.55, 0, -petalLen * 0.94);
@@ -392,43 +162,53 @@ function drawLotus(ctx: CanvasRenderingContext2D, S: number) {
         ctx.restore();
     }
     // —— 灯碗 ——
-    const bowl = () => {
-        ctx.beginPath();
-        ctx.ellipse(cx, cy, S * 0.30, S * 0.145, 0, 0, Math.PI * 2);
-    };
-    ctx.save();
-    bowl();
-    ctx.clip();
-    /* 灯碗是全场最热的地方（焰就在碗里），所以它比花瓣**亮一档**、并且带一点
-       中心。但曲线不能陡 —— 陡了就是同一顶"中间一个光团"的帽子，只是换到碗上。
-       碗沿也不再压到深琥珀：那圈暗边一给，整只碗就成了一张碟子。 */
-    const bowlG = ctx.createRadialGradient(cx, cy, S * 0.015, cx, cy, S * 0.30);
-    bowlG.addColorStop(0, "rgba(255,252,238,1)");
-    bowlG.addColorStop(0.22, "rgba(255,244,206,1)");
-    bowlG.addColorStop(0.55, "rgba(253,220,160,1)");
-    bowlG.addColorStop(0.82, "rgba(244,186,112,1)");
-    bowlG.addColorStop(1, "rgba(214,140,74,1)");
-    paperFill(ctx, bowlG, [cx - S * 0.31, cy - S * 0.16, S * 0.62, S * 0.32]);
-    ctx.restore();
+    const bowl = ctx.createRadialGradient(cx, cy, S * 0.02, cx, cy, S * 0.30);
+    bowl.addColorStop(0, "rgba(255,238,196,0.98)");
+    bowl.addColorStop(0.55, "rgba(252,196,112,0.98)");
+    bowl.addColorStop(0.85, "rgba(226,138,62,0.98)");
+    bowl.addColorStop(1, "rgba(176,92,34,0.98)");
+    ctx.fillStyle = bowl;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, S * 0.30, S * 0.145, 0, 0, Math.PI * 2);
+    ctx.fill();
     // 灯碗骨线（向中心聚拢的竖肋）
+    ctx.strokeStyle = "rgba(150,74,22,0.30)";
+    ctx.lineWidth = S * 0.008;
     for (let i = 0; i < 9; i++) {
         const a = (i / 9) * Math.PI * 2;
-        rib(
-            ctx,
-            cx + Math.cos(a) * S * 0.015, cy + Math.sin(a) * S * 0.007,
-            cx + Math.cos(a) * S * 0.295, cy + Math.sin(a) * S * 0.143,
-            S * 0.008,
-            Math.cos(a) > 0 ? -1 : 1
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(a) * S * 0.015, cy + Math.sin(a) * S * 0.007);
+        ctx.quadraticCurveTo(
+            cx + Math.cos(a) * S * 0.16,
+            cy + S * 0.10 + Math.sin(a) * S * 0.05,
+            cx + Math.cos(a) * S * 0.295,
+            cy + Math.sin(a) * S * 0.143
         );
+        ctx.stroke();
     }
-    innerShade(ctx, S, bowl);
     // 碗沿
-    ctx.strokeStyle = "rgba(255,238,200,0.5)";
+    ctx.strokeStyle = "rgba(255,238,200,0.55)";
     ctx.lineWidth = S * 0.010;
-    bowl();
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, S * 0.30, S * 0.145, 0, 0, Math.PI * 2);
     ctx.stroke();
     // —— 火焰 ——
-    paintFlame(ctx, cx, cy - S * 0.01, S * 0.09, S * 0.052);
+    const fg = ctx.createRadialGradient(cx, cy - S * 0.01, 0, cx, cy - S * 0.01, S * 0.09);
+    fg.addColorStop(0, "rgba(255,250,224,1)");
+    fg.addColorStop(0.4, "rgba(255,228,150,0.95)");
+    fg.addColorStop(1, "rgba(255,180,80,0)");
+    ctx.fillStyle = fg;
+    ctx.beginPath();
+    ctx.arc(cx, cy - S * 0.01, S * 0.09, 0, Math.PI * 2);
+    ctx.fill();
+    // 焰心竖滴（火苗）
+    const tip = ctx.createLinearGradient(0, cy - S * 0.085, 0, cy + S * 0.015);
+    tip.addColorStop(0, "rgba(255,252,235,0.95)");
+    tip.addColorStop(1, "rgba(255,196,96,0)");
+    ctx.fillStyle = tip;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy - S * 0.035, S * 0.028, S * 0.052, 0, 0, Math.PI * 2);
+    ctx.fill();
 }
 
 function drawOct(ctx: CanvasRenderingContext2D, S: number) {
@@ -445,111 +225,116 @@ function drawOct(ctx: CanvasRenderingContext2D, S: number) {
         [cx - W, cy],
         [cx - W * 0.7, cy - H * 0.55],
     ];
-    const shape = () => {
-        ctx.beginPath();
-        pts.forEach((p, i) => (i === 0 ? ctx.moveTo(p[0], p[1]) : ctx.lineTo(p[0], p[1])));
-        ctx.closePath();
-    };
-    ctx.save();
-    shape();
-    ctx.clip();
-    paperBody(ctx, cx, cy, W, H, [cx - W * 1.1, cy - H * 1.1, W * 2.2, H * 2.2]);
-    ctx.restore();
-    /* 菱形编格（竹篾交叉）：两族**平行**斜线，各自的亮边朝向心——心是焰，纸的
-       鼓起面朝着它。
-       不能画成"八条过心的直线"（原来是那么画的）：那八条会在中心交成一点，纸面上
-       读成一颗星芒，而不是竹篾编格 —— 在 3× 放大下非常明显（实测）。平行族才是
-       "编"出来的菱形。
-       仍必须 clip 在笼身里：竹篾是按"整条直线"画的，不裁的话两端会**戳出轮廓**，
-       六角灯瞬间变成一只海胆（实测）。 */
-    ctx.save();
-    shape();
-    ctx.clip();
+    const body = ctx.createRadialGradient(cx, cy, 0, cx, cy, W);
+    body.addColorStop(0, "rgba(255,240,198,0.98)");
+    body.addColorStop(0.6, "rgba(250,196,120,0.97)");
+    body.addColorStop(1, "rgba(214,128,56,0.96)");
+    ctx.fillStyle = body;
+    ctx.beginPath();
+    pts.forEach((p, i) => (i === 0 ? ctx.moveTo(p[0], p[1]) : ctx.lineTo(p[0], p[1])));
+    ctx.closePath();
+    ctx.fill();
+    // 菱形编格
+    ctx.strokeStyle = "rgba(150,72,20,0.28)";
+    ctx.lineWidth = S * 0.008;
     for (let i = -2; i <= 2; i++) {
-        const o = i * H * 0.32;
-        /* 两族的法线同向（都大致朝下）⇒ `toward` 只用按"在心上方还是下方"翻一次。 */
-        const toward = o > 0 ? -1 : 1;
-        rib(ctx, cx - W * 1.05, cy - H * 0.18 + o, cx + W * 1.05, cy + H * 0.18 + o,
-            S * 0.008, toward);
-        rib(ctx, cx - W * 1.05, cy + H * 0.18 + o, cx + W * 1.05, cy - H * 0.18 + o,
-            S * 0.008, toward);
+        ctx.beginPath();
+        ctx.moveTo(cx - W * 1.05, cy + i * H * 0.18);
+        ctx.lineTo(cx + W * 1.05, cy - i * H * 0.18);
+        ctx.stroke();
     }
-    ctx.restore();
-    innerShade(ctx, S, shape);
+    for (let i = -2; i <= 2; i++) {
+        ctx.beginPath();
+        ctx.moveTo(cx - W * 1.05, cy - i * H * 0.18);
+        ctx.lineTo(cx + W * 1.05, cy + i * H * 0.18);
+        ctx.stroke();
+    }
     // 上下金箍
-    metalBand(ctx, cx - W * 0.78, cy - H * 0.60, W * 1.56, S * 0.035);
-    metalBand(ctx, cx - W * 0.78, cy + H * 0.60 - S * 0.035, W * 1.56, S * 0.035);
+    ctx.fillStyle = "rgba(196,124,52,0.95)";
+    ctx.fillRect(cx - W * 0.78, cy - H * 0.60, W * 1.56, S * 0.035);
+    ctx.fillRect(cx - W * 0.78, cy + H * 0.60 - S * 0.035, W * 1.56, S * 0.035);
     // 顶部提环（迷你）
-    ctx.strokeStyle = "rgba(214,158,92,0.92)";
+    ctx.strokeStyle = "rgba(200,140,70,0.9)";
     ctx.lineWidth = S * 0.014;
     ctx.beginPath();
     ctx.arc(cx, cy - H - S * 0.015, S * 0.03, Math.PI * 1.15, Math.PI * 1.85, true);
     ctx.stroke();
     // 火焰
-    paintFlame(ctx, cx, cy, S * 0.10, S * 0.055);
+    const fg = ctx.createRadialGradient(cx, cy, 0, cx, cy, S * 0.10);
+    fg.addColorStop(0, "rgba(255,250,230,1)");
+    fg.addColorStop(0.45, "rgba(255,226,148,0.95)");
+    fg.addColorStop(1, "rgba(255,176,80,0)");
+    ctx.fillStyle = fg;
+    ctx.beginPath();
+    ctx.arc(cx, cy, S * 0.10, 0, Math.PI * 2);
+    ctx.fill();
+    const tip = ctx.createLinearGradient(0, cy - S * 0.09, 0, cy + S * 0.02);
+    tip.addColorStop(0, "rgba(255,252,238,0.95)");
+    tip.addColorStop(1, "rgba(255,196,96,0)");
+    ctx.fillStyle = tip;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, S * 0.030, S * 0.055, 0, 0, Math.PI * 2);
+    ctx.fill();
 }
 
 function drawDrum(ctx: CanvasRenderingContext2D, S: number) {
     const cx = S / 2, cy = S / 2;
     const W = S * 0.25, H = S * 0.36; // 骨架略放大：把灯焰完整包进笼身
     // 圆笼灯笼身
-    const shape = () => {
-        ctx.beginPath();
-        ctx.moveTo(cx - W, cy - H * 0.8);
-        ctx.quadraticCurveTo(cx - W * 1.35, cy, cx - W, cy + H * 0.8);
-        ctx.quadraticCurveTo(cx, cy + H, cx + W, cy + H * 0.8);
-        ctx.quadraticCurveTo(cx + W * 1.35, cy, cx + W, cy - H * 0.8);
-        ctx.quadraticCurveTo(cx, cy - H, cx - W, cy - H * 0.8);
-        ctx.closePath();
-    };
-    ctx.save();
-    shape();
-    ctx.clip();
-    paperBody(ctx, cx, cy, W * 1.18, H, [cx - W * 1.4, cy - H * 1.1, W * 2.8, H * 2.2]);
-    ctx.restore();
-    /* 肋与箍都 clip 在笼身里：它们按"整条"画，不裁就会戳出轮廓
-       （圆笼的横箍在桶腰以外的地方尤其明显）。 */
-    ctx.save();
-    shape();
-    ctx.clip();
-    // 纵向肋：亮边一律朝心（朝焰）
+    const body = ctx.createRadialGradient(cx, cy, 0, cx, cy, W);
+    body.addColorStop(0, "rgba(255,238,192,0.98)");
+    body.addColorStop(0.55, "rgba(248,190,110,0.98)");
+    body.addColorStop(1, "rgba(208,124,54,0.98)");
+    ctx.fillStyle = body;
+    ctx.beginPath();
+    ctx.moveTo(cx - W, cy - H * 0.8);
+    ctx.quadraticCurveTo(cx - W * 1.35, cy, cx - W, cy + H * 0.8);
+    ctx.quadraticCurveTo(cx, cy + H, cx + W, cy + H * 0.8);
+    ctx.quadraticCurveTo(cx + W * 1.35, cy, cx + W, cy - H * 0.8);
+    ctx.quadraticCurveTo(cx, cy - H, cx - W, cy - H * 0.8);
+    ctx.closePath();
+    ctx.fill();
+    // 纵向肋
+    ctx.strokeStyle = "rgba(140,68,18,0.30)";
+    ctx.lineWidth = S * 0.008;
     for (let i = -2; i <= 2; i++) {
-        if (i === 0) continue;
-        const x = cx + i * W * 0.4;
-        rib(ctx, x, cy - H * 0.78, x + i * W * 0.12, cy + H * 0.78, S * 0.008, i > 0 ? -1 : 1);
-    }
-    // 横箍：暗线 + 上偏的亮边（箍的上缘朝天光，是金属最亮的一条）
-    ctx.lineCap = "round";
-    for (const t of [-0.5, 0, 0.5]) {
-        const y = cy + t * H * 0.9;
-        const hoop = (dy: number) => {
-            ctx.beginPath();
-            ctx.moveTo(cx - W * 1.04, y + dy);
-            ctx.quadraticCurveTo(cx, y + dy + H * 0.16, cx + W * 1.04, y + dy);
-            ctx.stroke();
-        };
-        ctx.strokeStyle = "rgba(140,70,24,0.5)";
-        ctx.lineWidth = S * 0.014;
-        hoop(0);
-        ctx.strokeStyle = "rgba(255,236,192,0.5)";
-        ctx.lineWidth = S * 0.005;
-        hoop(-S * 0.008);
-    }
-    ctx.restore();
-    innerShade(ctx, S, shape);
-    // 上下盖（木盖，比箍暗一档，别抢灯身的亮）
-    for (const dy of [-H * 0.90, H * 0.90]) {
-        const g = ctx.createLinearGradient(0, cy + dy - S * 0.038, 0, cy + dy + S * 0.038);
-        g.addColorStop(0, "rgba(226,178,116,0.98)");
-        g.addColorStop(0.42, "rgba(158,96,40,0.98)");
-        g.addColorStop(1, "rgba(74,38,12,0.98)");
-        ctx.fillStyle = g;
         ctx.beginPath();
-        ctx.ellipse(cx, cy + dy, W * 0.82, S * 0.038, 0, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.moveTo(cx + i * W * 0.4, cy - H * 0.78);
+        ctx.quadraticCurveTo(cx + i * W * 0.52, cy, cx + i * W * 0.4, cy + H * 0.78);
+        ctx.stroke();
     }
+    // 横箍
+    ctx.strokeStyle = "rgba(200,120,52,0.6)";
+    ctx.lineWidth = S * 0.012;
+    for (const t of [-0.5, 0, 0.5]) {
+        ctx.beginPath();
+        const y = cy + t * H * 0.9;
+        ctx.moveTo(cx - W * 1.04, y);
+        ctx.quadraticCurveTo(cx, y + H * 0.16, cx + W * 1.04, y);
+        ctx.stroke();
+    }
+    // 上下盖
+    ctx.fillStyle = "rgba(176,100,40,0.98)";
+    ctx.beginPath();
+    ctx.ellipse(cx, cy - H * 0.90, W * 0.9, S * 0.05, 0, 0, Math.PI * 2);
+    ctx.ellipse(cx, cy + H * 0.90, W * 0.9, S * 0.05, 0, 0, Math.PI * 2);
+    ctx.fill();
     // 火焰
-    paintFlame(ctx, cx, cy, S * 0.08, S * 0.05);
+    const fg = ctx.createRadialGradient(cx, cy, 0, cx, cy, S * 0.08);
+    fg.addColorStop(0, "rgba(255,251,232,1)");
+    fg.addColorStop(0.5, "rgba(255,228,152,0.95)");
+    fg.addColorStop(1, "rgba(255,178,80,0)");
+    ctx.fillStyle = fg;
+    ctx.beginPath();
+    ctx.arc(cx, cy, S * 0.08, 0, Math.PI * 2);
+    ctx.fill();
+    const tip = ctx.createLinearGradient(0, cy - S * 0.075, 0, cy + S * 0.02);
+    tip.addColorStop(0, "rgba(255,252,238,0.95)");
+    tip.addColorStop(1, "rgba(255,196,96,0)");
+    ctx.fillStyle = tip;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, S * 0.026, S * 0.05, 0, 0, Math.PI * 2);
+    ctx.fill();
 }
 
 function buildSprites(): string[] {
@@ -792,40 +577,6 @@ let lanternLightCv: HTMLCanvasElement | null = null;
 let slowCv: HTMLCanvasElement | null = null;
 let slowTick = 0;
 
-/* 静态背景层的当前画布（applyResize 里建/换；倒影要拿它当镜像源） */
-let baseBackCv: HTMLCanvasElement | null = null;
-/* 水面倒影（20261018 阶段 2）：
-   `reflSkyCv` = baseBack 的降采样副本 + 月盘（baseBack 里只有月晕、没有月盘，
-                 只镜 baseBack 会得到"有光晕没有月亮"的倒影）；
-   `reflCv`    = 把 reflSkyCv 按透视压缩镜像到水面、逐行横向撕开、乘菲涅尔斜坡。
-   每 `reflEvery` 帧重建一次，逐帧只多一次 drawImage。 */
-let reflSkyCv: HTMLCanvasElement | null = null;
-/* 发光缓冲（阶段 3 的泛光）：1/4 分辨率，只画**已知的发光体**（月盘/河灯/萤火虫/
-   水面月光柱）。不做阈值提取 —— 那要 getImageData 回读整屏，50ms 级。 */
-let glowCv: HTMLCanvasElement | null = null;
-let reflCv: ReflBuild | null = null;
-let reflTick = 0;
-let reflEvery = 3;
-let reflQuality = 0.5;
-
-/* 云层条带（20261018）：体积云烘成条带（宽度 = 视口 + 出血 + 一倍漂移余量），
-   逐帧在天空裁剪区内按视差与漂移各画一笔。**不烤进静态层**——它要有自己的
-   视差与漂移，烤进去就等于把云钉死在天空上。 */
-let cloudStrips: Array<{ cv: HTMLCanvasElement; par: number; speed: number }> | null = null;
-
-/** 烘云层。`soft` 档只烘一层（逐像素 fbm 是烘焙期唯一的重活）。 */
-const buildCloudStrips = (w: number, yH: number, margin: number, soft: boolean) => {
-    // 漂移是**有界振荡**（±0.25w），不是无界累加 —— 无界累加绕回时会"跳一下"，
-    // 而有界振荡看起来一样自然，且条带宽度可以精确算出来，边缘永远不会露馅。
-    const stripW = Math.round(w + 2 * margin + w * 0.5);
-    const stripH = Math.round(Math.max(80, yH * 1.16));
-    cloudStrips = [];
-    cloudStrips.push({ cv: bakeCloudStrip(stripW, stripH, CLOUD_HIGH), par: 0.16, speed: 0.34 });
-    if (!soft) {
-        cloudStrips.push({ cv: bakeCloudStrip(stripW, stripH, CLOUD_LOW), par: 0.24, speed: 0.62 });
-    }
-};
-
 /* ------------------------- 组件 ------------------------- */
 
 export default function RiverBoard() {
@@ -933,18 +684,6 @@ export default function RiverBoard() {
         const v = viewRef.current;
         // d 可能因重生为负数：pow 负数小数次幂是 NaN，会传染整帧绘制
         return v.yH + (v.h * 1.06 - v.yH) * Math.pow(Math.max(0, d), 1.42);
-    };
-    /* riverX 的反解（水面月光碎路要问"月亮那一列在这个深度落在哪条 u 上"）。
-       这是**同一条 bend/半宽公式的第二份拷贝** —— 两份一旦漂开，月光碎路就会
-       画到别列上去。守卫是一条像素判据而不是文本锁：riverboard-scene.test.py
-       的「月光碎路：月亮所在列比同行别处亮」量的就是 riverX(riverUAt(moon.x,d),d)
-       是否真的落在 moon.x 上。 */
-    const riverUAt = (x: number, d: number): number | null => {
-        const v = viewRef.current;
-        const c = v.w * (0.51 + 0.045 * Math.sin(0.6 + d * 2.2));
-        const hw = v.w * (0.15 + d * d * 1.08);
-        const u = 0.5 + (x - c) / (2 * hw);
-        return u < -0.02 || u > 1.02 ? null : u;
     };
 
     /* 灯笼像素坐标（与 DOM 写入完全同源：视差+晃摆+碰撞位移一次算齐，
@@ -1107,50 +846,10 @@ export default function RiverBoard() {
 
     const MARGIN = 40; // 静态层出血边，给鼠标视差留位移余地
 
-    /* ---- 水面倒影（阶段 2） ---- */
-
-    /** 重建倒影缓冲。`phase` 是波相位（由帧号推），同一 phase 必得同一张图。
-     *  分两步：先降采样出"天空 + 月盘"源图，再交给 render/water.ts 做镜像。 */
-    const refreshReflection = (geo: Geo, phase: number, soft: boolean) => {
-        const v = viewRef.current;
-        const q = reflQuality;
-        /* 源图**只要地平线以上那一条**：`buildReflection` 采样的天空行是
-           `s = yH·e^1.35 ∈ [0, yH]`，河面那一半一次都读不到。原来按 `v.h` 建整张，
-           等于每 3 帧白降采样 62% 的面积 —— 而这是整帧里最贵的一笔（全幅
-           2160×1350 缩到 740×490）。画布自己会把越界的部分裁掉，所以下面那条
-           `drawImage(back, …)` 一个字都不用改，缩到 `v.h` 也无所谓。
-           配套：`buildReflection` 的 `ky` 也按这条新高度算（见 render/water.ts）。 */
-        const sw = Math.max(4, Math.round((v.w + 2 * MARGIN) * q));
-        const sh = Math.max(4, Math.round((v.yH + 2 * MARGIN) * q));
-        if (!reflSkyCv) reflSkyCv = document.createElement("canvas");
-        if (reflSkyCv.width !== sw) reflSkyCv.width = sw;
-        if (reflSkyCv.height !== sh) reflSkyCv.height = sh;
-        const sg = reflSkyCv.getContext("2d")!;
-        sg.setTransform(q, 0, 0, q, 0, 0);
-        sg.clearRect(-MARGIN, -MARGIN, v.w + 2 * MARGIN, v.yH + 2 * MARGIN);
-        sg.translate(MARGIN, MARGIN);
-        const back = baseBackCv;
-        if (!back) return;
-        sg.drawImage(back, -MARGIN, -MARGIN, v.w + 2 * MARGIN, v.h + 2 * MARGIN);
-        /* 月盘：静态层里只有月晕，月盘 sprite 是逐帧单独落屏的 —— 不补这一笔，
-           倒影里就只剩一团没有月亮的晕。用**不带视差**的位置（与静态层同层）。
-           但**只给半透明度**：满不透明度的月盘经 `e^1.35` 的垂直压缩会被拉成
-           120×217 的实心椭圆，铺在河面上是一盏探照灯（实测）。月光路的形状由
-           `drawMoonColumn` 显式画，这里的盘只是镜面核。 */
-        if (moonSprite) {
-            const rD = Math.min(v.w, v.h) * MOON.r * 0.9;
-            sg.globalAlpha = 0.45;
-            sg.drawImage(moonSprite.cv, v.w * MOON.x - rD, v.h * MOON.y - rD, rD * 2, rD * 2);
-            sg.globalAlpha = 1;
-        }
-        reflCv = buildReflection(reflSkyCv, geo, q, phase, soft, reflCv?.cv);
-    };
-
     /* ---- 静态层（背景） ---- */
     const renderBase = (
         backCv: HTMLCanvasElement,
-        frontCv: HTMLCanvasElement,
-        soft: boolean
+        frontCv: HTMLCanvasElement
     ) => {
         const a = amb;
         if (!a) return;
@@ -1158,40 +857,26 @@ export default function RiverBoard() {
         const front = frontCv.getContext("2d")!;
         const v = viewRef.current;
         const { w, h } = v;
-        /* 新渲染模块（render/）的显式几何契约：riverX/riverY/traceRiver 的本体
-           留在组件里不动（它们是每帧上百次调用的热路径），只把这一个接口对象递出去。
-           在 renderBase 作用域上构建（不放进 draw）—— draw 会被 back/front 各调一次，
-           而 renderBase 末尾的倒影重建也要用同一份几何。 */
-        const geo: Geo = {
-            w, h, yH: v.yH, margin: MARGIN, dpr: v.dpr,
-            riverX, riverY, riverUAt, traceRiver,
-        };
         const prep = (ctx: CanvasRenderingContext2D) => {
             ctx.setTransform(v.dpr, 0, 0, v.dpr, 0, 0);
             ctx.translate(MARGIN, MARGIN);
             ctx.clearRect(-MARGIN, -MARGIN, w + MARGIN * 2, h + MARGIN * 2);
         };
         const draw = (ctx: CanvasRenderingContext2D) => {
-            const { lx: lxHalo, lz: lzHalo, haloK } = moonPhaseParams();
-            const moon: MoonGeom = {
-                x: w * MOON.x,
-                y: h * MOON.y,
-                r: Math.min(w, h) * MOON.r,
-                haloK,
-                lx: lxHalo,
-                lz: lzHalo,
-            };
 
-            /* 夜空（20261018 电影感重制，自远及近）：
-               渐变 → 银河 → 星辰 → 月晕 → 地平线辉光 → 三层远山（带大气透视）→ 近地平线薄雾。
-               云不在这里 —— 它要有自己的视差与漂移，见 drawScene 里那两笔。 */
-            paintSky(ctx, geo);
-            drawMilkyWay(ctx, geo);
+            // 夜空
+            const sky = ctx.createLinearGradient(0, 0, 0, v.yH * 1.25);
+            sky.addColorStop(0, "#02040c");
+            sky.addColorStop(0.42, "#081029");
+            sky.addColorStop(0.78, "#101a3c");
+            sky.addColorStop(1, "#1c2450");
+            ctx.fillStyle = sky;
+            ctx.fillRect(-MARGIN, -MARGIN, w + MARGIN * 2, v.yH * 1.25 + MARGIN * 2);
 
             // 月亮常量先行：星辰绘制需跳过月盘（星星不得透过月亮）
-            const mxMoon = moon.x;
-            const myMoon = moon.y;
-            const rMoon = moon.r;
+            const mxMoon = w * MOON.x;
+            const myMoon = h * MOON.y;
+            const rMoon = Math.min(w, h) * MOON.r;
 
             // 星辰（静态基色）；月盘内的星略过——月亮实心，星星不得透过
             for (const st of a.stars) {
@@ -1210,40 +895,71 @@ export default function RiverBoard() {
             // 静态层每帧按非整数视差偏移合成，月缘这种高频边缘会被反复重采样磨糊。
             // 这里只留**月晕**：它是极低频的软渐变，烘进静态层看不出重采样，
             // 也没必要每帧重建渐变。
-            /* 月晕（20261018 改成三层：紧核 / 中景散射 / 很宽的外晕，见 render/sky.ts）。
-               光晕以发光区域（亮月牙）中心为圆心向四周完整扩散（不再裁剪半圆）：
-               圆心随月相偏到亮面侧，暗面侧自然远离光心渐弱，不再有生硬的半圆边界。
-               注意：月晕的相位在**烘培时**定下（与改动前一致），页面开着跨过月相档
-               不会自己变——月盘 sprite 同此（两者同源同档，不会各飘一边）。
-               地球反照叠加层已下线（20260912 用户第二次反馈："我不希望看到他的底盘和边缘形状…
+            const { lx: lxHalo, haloK } = moonPhaseParams();
+            // 光晕以发光区域（亮月牙）中心为圆心向四周完整扩散（不再裁剪半圆）：
+            // 圆心随月相偏到亮面侧，暗面侧自然远离光心渐弱，不再有生硬的半圆边界。
+            // 注意：月晕的相位在**烘培时**定下（与改动前一致），页面开着跨过月相档
+            // 不会自己变——月盘 sprite 同此（两者同源同档，不会各飘一边）。
+            const hx = mxMoon + lxHalo * rMoon * 0.5, hy = myMoon;
+            const halo = ctx.createRadialGradient(hx, hy, 0, hx, hy, w * 0.19);
+            halo.addColorStop(0, `rgba(255,244,216,${0.22 * haloK})`);
+            halo.addColorStop(0.28, `rgba(219,228,255,${0.075 * haloK})`);
+            halo.addColorStop(1, "rgba(190,208,255,0)");
+            ctx.fillStyle = halo;
+            ctx.fillRect(hx - w * 0.28, hy - w * 0.28, w * 0.56, w * 0.56);
+            /* 地球反照叠加层已下线（20260912 用户第二次反馈："我不希望看到他的底盘和边缘形状…
                现在就能看到灰蒙蒙的月亮圆形轮廓"）。物理上地球反照是对的，但在这幅画里它表现为
                一个边缘可辨的灰盘：夜空背景不是纯黑而是带光晕的蓝，任何"整圆"都会读成虚假的底盘。
                结论：暗面完全不画（透出背景），只留受光的那部分。
                月缘近场辉光同理（内半径 1.0·rMoon 的环形渐变，暗面侧会露出一段圆弧内边界——
-               那正是"月亮的圆形轮廓"）；光晕统一由下面这道以亮面为圆心、多层衰减的软光晕承担。 */
-            drawMoonHalo(ctx, moon);
+               那正是"月亮的圆形轮廓"）；光晕统一由上面那道以亮面为圆心、半径 0.22w 的软光晕承担。 */
 
-            /* 云（20261018）不再烤在这里 —— 旧的"云影"是三个径向渐变糊成的暗斑，
-               既没有体积也没有月光。现在换成真云层：见 render/sky.ts 的 bakeCloudStrip，
-               逐帧在天空裁剪区内画（要有自己的视差与漂移，所以不能烤进静态层）。 */
+            // 云影（静态，随视差层缓慢移动）
+            ctx.fillStyle = "rgba(24,32,60,0.10)";
+            for (let c = 0; c < 3; c++) {
+                const cx = ((c * 431) % (w + 500)) * 0.6 + w * 0.1 + c * 120;
+                const cy = h * (0.08 + c * 0.09);
+                for (let b = 0; b < 5; b++) {
+                    const bx = cx + Math.sin(c * 7.3 + b * 1.9) * 90;
+                    const by = cy + Math.cos(c * 5.1 + b * 2.7) * 22;
+                    const br = 60 + b * 26;
+                    const g = ctx.createRadialGradient(bx, by, 0, bx, by, br);
+                    g.addColorStop(0, "rgba(23,31,58,0.10)");
+                    g.addColorStop(1, "rgba(23,31,58,0)");
+                    ctx.fillStyle = g;
+                    ctx.beginPath();
+                    ctx.arc(bx, by, br, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
 
-            // 地平线辉光：把光"锚"在月亮方位上，天空因此不是一条均匀的渐变
-            drawHorizonGlow(ctx, geo, moon);
-
-            // 远山三层 + 大气透视（render/sky.ts）：越远越被空气散射洗淡，最近那层带树线
-            drawRidges(ctx, geo, moon);
-
-            // 近地平线薄雾：水天过渡不是一条硬线
-            drawHorizonMist(ctx, geo, moon);
+            // 远山三层（纯剪影填充——不再画顶部波浪描边线，山体就是实的山）
+            const ridge = (base: number, seed: number, amp: number, c1: string) => {
+                ctx.beginPath();
+                ctx.moveTo(-MARGIN - 20, h + MARGIN);
+                ctx.lineTo(-MARGIN - 20, base);
+                for (let x = -MARGIN - 20; x <= w + MARGIN + 20; x += 9) {
+                    ctx.lineTo(
+                        x,
+                        base +
+                            Math.sin(x * 0.0042 + seed) * amp * 1.2 +
+                            Math.sin(x * 0.011 + seed * 2.7) * amp * 0.7 +
+                            Math.sin(x * 0.023 + seed * 5.1) * amp * 0.28
+                    );
+                }
+                ctx.lineTo(w + MARGIN + 20, h + MARGIN);
+                ctx.closePath();
+                ctx.fillStyle = c1;
+                ctx.fill();
+            };
+            ridge(v.yH * 0.82, 3.1, h * 0.045, "#0b1230");
+            ridge(v.yH * 0.92, 8.7, h * 0.062, "#070d22");
+            ridge(v.yH * 0.97, 1.7, h * 0.05, "#050a18");
 
             // 河水底色 + 河心天光带
             const riverBase = ctx.createLinearGradient(0, v.yH, 0, h);
             // 第 23 轮：整体调暗到接近背景（山体 #050a18-#0b1230），河面不再比远山更亮
-            /* 20261018：首端从**全透明**淡入。这一层以前被 baseFront 的不透明满铺
-               盖住（见下面那段修复），从没在屏幕上出现过；揭开之后，它的硬上缘
-               正好压在地平线上，把水天过渡拉成一道直线。 */
-            riverBase.addColorStop(0, "rgba(14,23,56,0)");
-            riverBase.addColorStop(0.07, "rgba(14,23,56,0.85)");
+            riverBase.addColorStop(0, "#0e1738");
             riverBase.addColorStop(0.3, "#081030");
             riverBase.addColorStop(0.62, "#050b22");
             riverBase.addColorStop(1, "#02040d");
@@ -1284,16 +1000,6 @@ export default function RiverBoard() {
                     ctx.fill();
                 }
             }
-
-            /* 岸线浪花 + 浅水焦散（20261018 阶段 2）：都烘在静态层，逐帧零成本。
-               浪花必须画在**岸线柔光之上**——柔光是"岸的倒影"，浪花是"水拍岸"，
-               后者更贴水线、更碎。 */
-            traceRiver(ctx, 0, 1.14, false);
-            ctx.save();
-            ctx.clip();
-            drawCaustics(ctx, geo);
-            drawShoreFoam(ctx, geo);
-            ctx.restore();
         };
 
         prep(back);
@@ -1311,23 +1017,14 @@ export default function RiverBoard() {
 
         prep(front);
         front.drawImage(backCv, -MARGIN, -MARGIN, w + MARGIN * 2, h + MARGIN * 2);
-        /* 前层打底：河流两侧不再铺大块暗坡——整幅夜色水面渐变（水天一色延伸），
-           河道由 backCv 的 riverBase 提亮出明暗层次，弧线边缘微光勾勒河道边界。
-
-           **20261018 修**：这一笔原先是不透明满铺矩形，把 backCv 里整条河道
-           （河水底色 / 河心天光带 / 岸线内侧柔光 / 新加的浪花与焦散）**全盖住了**
-           —— 上一段注释写的"河道由 backCv 的 riverBase 提亮"从写下那天起就没生效过，
-           河面能看见的形状其实只来自 drawScene 里那几层很淡的动态叠加。这就是
-           "水面是平的"最直接的原因。改成 evenodd：矩形挖掉河道，只填两岸。
-           （`traceRiver` 自己会 beginPath，所以必须**先**画河道子路径、再 append 矩形。） */
-        traceRiver(front, 0, 1.14, false);
-        front.rect(-MARGIN - 8, v.yH - 4, w + MARGIN * 2 + 16, h + 44);
+        // 前层打底：河流两侧不再铺大块暗坡——整幅夜色水面渐变（水天一色延伸），
+        // 河道由 backCv 的 riverBase 提亮出明暗层次，弧线边缘微光勾勒河道边界
         const shoreGrad = front.createLinearGradient(0, v.yH - 4, 0, h + 40);
         shoreGrad.addColorStop(0, "#0a132c");
         shoreGrad.addColorStop(0.55, "#061022");
         shoreGrad.addColorStop(1, "#040918");
         front.fillStyle = shoreGrad;
-        front.fill("evenodd");
+        front.fillRect(-MARGIN - 8, v.yH - 4, w + MARGIN * 2 + 16, h + 44);
 
         // 垂柳（右上空枝，加粗加密保证剪影清晰可见）
         front.strokeStyle = "#01030a";
@@ -1463,17 +1160,6 @@ export default function RiverBoard() {
         slowCv = slow;
         slowTick = 0;
         renderSlow(slow.getContext("2d")!);
-
-        // 云层条带（20261018）：与静态层同批烘，软渲染档只烘一层
-        buildCloudStrips(w, v.yH, MARGIN, soft);
-
-        /* 水面倒影（阶段 2）：软渲染档降到 1/8 分辨率、每 8 帧重建一次。
-           倒影块的成本 = 条数 × 条面积，1/8 分辨率下每帧摊销不到 0.1ms。 */
-        reflQuality = soft ? 0.125 : 0.5;
-        reflEvery = soft ? 8 : 3;
-        reflTick = 0;
-        reflCv = null; // 尺寸可能变了，下一帧重建
-        refreshReflection(geo, 0, soft);
     };
 
     /* 慢层（流向纹/碎光点/涟漪）：合并到离屏缓冲，每 3 帧重绘一次（≈20fps）。
@@ -1509,15 +1195,10 @@ export default function RiverBoard() {
                 : `rgba(198,216,255,${alpha * (dHead > 0.5 ? 0.85 : 1)})`;
             sc.lineWidth = 0.7 + dHead * 2.2;
             sc.lineCap = "round";
-            /* 断续：170 条**连续**长弧铺在河面上，读成一片玻璃划痕（阶段 2 把河面
-               压暗之后尤其明显）。真实的水面流向纹是被波纹切断的一节节，所以
-               给它加一段点划、走完立刻复位（同一个 sc 后面还要画碎光点/涟漪）。 */
-            sc.setLineDash([11, 9]);
             sc.beginPath();
             sc.moveTo(xT, yTl);
             sc.quadraticCurveTo(xm, (yH0 + yTl) / 2, xH, yH0);
             sc.stroke();
-            sc.setLineDash([]);
         }
 
         // 波面碎光点（随流向向远方游动）
@@ -1628,7 +1309,7 @@ export default function RiverBoard() {
     // 萤火虫/流星等"氛围装饰"只随系统偏好关（20260905 用户反馈：软渲染静态
     // 强制 reduced 把萤火虫也关了 → 装饰类改由 sysReduce 单独门控，性能降级
     // 不再剥夺它们）
-    const drawScene = (ctx: CanvasRenderingContext2D, t: number, reduce: boolean, sysReduce: boolean, baseBack: HTMLCanvasElement, baseFront: HTMLCanvasElement, soft: boolean) => {
+    const drawScene = (ctx: CanvasRenderingContext2D, t: number, reduce: boolean, sysReduce: boolean, baseBack: HTMLCanvasElement, baseFront: HTMLCanvasElement) => {
         if (!amb) return;
         const v = viewRef.current;
         const { w, h } = v;
@@ -1638,22 +1319,6 @@ export default function RiverBoard() {
             mouseRef.current.x = 0.5;
             mouseRef.current.y = 0.5;
         }
-        /* 水面层（阶段 2）要用的几何契约与月亮几何 —— 与 renderBase 里那份同源。
-           月亮取**不带视差**的位置：碎路与倒影都锚在"月亮在水面上的那一列"，
-           那一列属于静态层（视差 0.2 只作用在天空本身，水面的镜像列不动）。 */
-        const geo: Geo = {
-            w, h, yH: v.yH, margin: MARGIN, dpr: v.dpr,
-            riverX, riverY, riverUAt, traceRiver,
-        };
-        const { lx: lxMoon, lz: lzMoon, haloK: haloKMoon } = moonPhaseParams();
-        const moon: MoonGeom = {
-            x: w * MOON.x,
-            y: h * MOON.y,
-            r: Math.min(w, h) * MOON.r,
-            haloK: haloKMoon,
-            lx: lxMoon,
-            lz: lzMoon,
-        };
         ctx.clearRect(0, 0, w, h);
 
         // 静态层合成（带视差）
@@ -1674,35 +1339,10 @@ export default function RiverBoard() {
             ctx.restore();
         }
 
-        /* 云层（20261018）：画在月盘**之后**，所以云会从月亮前面飘过 —— 这是这幅夜景
-           唯一能读出来的"月亮在云后面"。裁剪用与星辰同一张天空路径（山脊之上），
-           山脊因此永远压住云；两层各自视差 + 有界漂移（±0.25w，无绕回跳变）。
-           性能降级时漂移冻结（云仍在，只是不动）。 */
-        if (cloudStrips) {
-            const drift = reduce ? 0 : (Math.sin(t * 0.017) * 0.5 + Math.sin(t * 0.0071 + 2.1) * 0.5) * w * 0.25;
-            ctx.save();
-            ctx.translate(px * 0.2, py * 0.1);
-            ctx.clip(buildSkyClip(w, h), "evenodd");
-            ctx.translate(-px * 0.2, -py * 0.1);
-            drawClouds(ctx, cloudStrips, px, py, drift, MARGIN, 0);
-            ctx.restore();
-        }
-
         // 水面动态（河流裁剪区内）
         ctx.save();
         traceRiver(ctx, 0, 1.14, false);
         ctx.clip();
-
-        /* ① 倒影（阶段 2 的地基）：天空 + 月盘 + 云 + 远山在水里的镜像。
-           整块每 reflEvery 帧重建一次（`phase` 由帧号推，波相位连续），
-           逐帧只这一笔 drawImage。菲涅尔权重已经烘在缓冲的 alpha 里。 */
-        if (reflTick++ % reflEvery === 0 || !reflCv) {
-            /* 相位由**动画时间 t** 推、不是由帧号推：帧号取决于跑到第几帧，
-               同一份代码两次渲染会停在不同的相位上（跨构建的像素对比因此全是噪声）。
-               t 由真实经过时间累加，生产上照样在动。 */
-            refreshReflection(geo, t * 3.3, soft);
-        }
-        if (reflCv) drawReflection(ctx, reflCv, geo);
 
         // 宽幅水光带（随流向向远方缓慢漂移的整体明暗，羽化边避免块状感）
         for (const bd of amb.bands) {
@@ -1712,49 +1352,63 @@ export default function RiverBoard() {
             const yT = riverY(dTop), yB = riverY(dBot);
             if (yB < v.yH - 4) continue;
             if (yT > h + 30) continue;
-            /* 竖直 alpha 斜坡改用**预烘贴图**（render/water.ts 的 bandSprite）：
-               原来是每条带每帧一次 createLinearGradient + 5 个 `rgba()` 模板串 ——
-               真正的开销是那 5 次颜色字符串解析，不是渐变对象本身。
-               代价：原来那条沿 u 的 ±4px 波浪上缘没了。那点起伏落在渐变本身
-               30% 高的羽化过渡里（≈10px），量不出来也看不出来；换来的是
-               每帧 60 次颜色解析变成 0 次。 */
+            const N = 22;
+            const wobAmp = 0.011 * (0.4 + 0.6 * bd.wd * 4);
+            ctx.beginPath();
+            for (let i = 0; i <= N; i++) {
+                const u = i / N;
+                const wob = Math.sin(u * 7.4 + t * 0.5 * (reduce ? 0.2 : 1) + bd.ph) * wobAmp;
+                ctx.lineTo(riverX(u, Math.min(1.09, dTop + wob * 0.3)), riverY(dTop + wob));
+            }
+            for (let i = N; i >= 0; i--) {
+                const u = i / N;
+                ctx.lineTo(riverX(u, dBot), riverY(dBot));
+            }
+            ctx.closePath();
+            const g = ctx.createLinearGradient(0, yT, 0, yB);
             // 远端渐隐：水光带只在中近段有（d 中点 < 0.2 完全淡出），
             // 河流尽头远端不保留反光
             const farFade = Math.min(1, Math.max(0, (dTop + dBot) / 2 - 0.2) / 0.3);
             const balpha = farFade * (bd.wd > 0.05 ? 0.042 : 0.03); // 第 22 轮：河面亮度略降
-            if (balpha < 0.002) continue;
-            ctx.globalAlpha = balpha;
-            ctx.drawImage(bandSprite(), 0, yT, w, yB - yT);
-            ctx.globalAlpha = 1;
+            g.addColorStop(0, "rgba(150,178,240,0)");
+            g.addColorStop(0.3, `rgba(150,178,240,${balpha * 0.7})`);
+            g.addColorStop(0.5, `rgba(150,178,240,${balpha})`);
+            g.addColorStop(0.7, `rgba(150,178,240,${balpha * 0.7})`);
+            g.addColorStop(1, "rgba(150,178,240,0)");
+            ctx.fillStyle = g;
+            ctx.fill();
         }
 
-        /* 月光碎影（"波光粼粼"）：静态光晕层 + 碎光点场，都在 bands 之上合成。
-           20261018 阶段 2 重做：原来那 46 道横线铺在**河道中线**（u=0.5）上，而月亮
-           在 0.7w —— 碎光带和光源不在同一列，读起来像"水面自己在发光"。现在
-           碎路锁在**月亮那一列**上（render/water.ts 的 drawMoonGlitter）：
-           由 riverUAt 反解出月亮的屏幕 x 落在该深度的哪条 u 上，河道装不下就跳过
-           —— 于是碎路自然成为"从河道右缘切入、越近越宽"的一条楔形。
-           闪烁不再是 `sin·sin` 的均匀抖动，而是每颗独立的双频生死周期。 */
+        // 月光碎影（"波光粼粼"）：贴水面的碎光横线列，自脚下向河心延伸
+        // （静态光晕为独立预渲染层，bands 之上合成）。第 24 轮细节优化：
+        // ① 透视修正——近景线粗长、远景线细短（旧版 lineWidth 随 k 变粗、spread 变宽，
+        //    反透视）；
+        // ② 每行带按 i 固定的伪随机横向错落（抖动仅水平、随波不随形），
+        //    碎感真实，不再是一条均匀的线列；
+        // ③ 范围收止 d≈0.19（第 25 轮加长，原 0.31）——河流尽头远端不保留反光；
+        // ④ 远段闪烁熄灭门槛更高、亮度衰减更陡，闪灭节奏越远越碎。
         if (moonGlowCv) ctx.drawImage(moonGlowCv, -MARGIN, -MARGIN, w + MARGIN * 2, h + MARGIN * 2);
+        const uM = 0.5;
         ctx.save();
-        /* 先铺柱体底、再撒碎光点：柱体是"月光洒在河上"那条路的**形状**，
-           碎光点是它上面断开的**细节**。少了柱体，碎点就是散落一地的亮点，
-           看不出是从月亮来的（倒影缓冲里那个椭圆已经压到半透明，撑不起形状）。 */
-        drawMoonColumn(ctx, geo, moon, t, reduce);
-        drawMoonGlitter(ctx, geo, moon, t, soft, reduce);
-        ctx.restore();
-
-        /* 河灯在水里的倒影：灯下一条随波左右摆的暖色拖影，分 3 段错开
-           （一整段会读成"灯下挂了根棍子"）。画在碎光之后 —— 灯比月光近。 */
-        const reflLamps: ReflLantern[] = [];
-        for (const m of metaRef.current) {
-            const scl = Math.min(1, Math.pow(Math.max(0, m.d), 1.15) * 1.25);
-            if (scl < 0.05) continue;
-            const li = lanternXY(m);
-            reflLamps.push({ x: li.x, y: li.y, scl, warm: m.v === 0 || m.v === 2 ? 1 : 0.55 });
+        for (let i = 0; i < 46; i++) {
+            const k = i / 46;
+            const d = 0.93 - Math.pow(k, 1.16) * 0.74; // 近景 0.93 → 远景 0.19（远端收止）
+            const flick = 0.06 + 0.52 * Math.abs(Math.sin(t * 2.6 + i * 7.7) * Math.sin(t * 1.1 + i * 3.3));
+            if (k > 0.45 && flick < 0.17) continue;
+            const jit = (Math.sin(i * 12.9898) * 0.5 + Math.sin(i * 78.233 + 3) * 0.5) * 0.006;
+            const u = uM + Math.pow(k, 1.5) * 0.05 * Math.sin(t * 1.4 + i * 2.1) + jit;
+            const spreadU = 0.022 - 0.012 * k; // 近宽远窄（透视）
+            const y = riverY(d);
+            const xl = riverX(u - spreadU, d);
+            const xr = riverX(u + spreadU, d);
+            ctx.strokeStyle = `rgba(255,232,178,${flick * (1 - k * 0.7)})`;
+            ctx.lineWidth = 1.6 - k * 1.05; // 近粗远细（透视）
+            ctx.lineCap = "round";
+            ctx.beginPath();
+            ctx.moveTo(xl, y);
+            ctx.lineTo(xr, y);
+            ctx.stroke();
         }
-        ctx.save();
-        drawLanternReflections(ctx, geo, reflLamps, t, reduce);
         ctx.restore();
 
         // 流向纹/碎光点/涟漪：慢层离屏缓冲每 3 帧重绘，主画布每帧一次合成
@@ -1864,68 +1518,6 @@ export default function RiverBoard() {
             };
         }
         ctx.restore();
-
-        /* ═══════════════ 阶段 3 · 后期处理 ═══════════════
-           顺序不能换：**先泛光 → 再光轴 → 最后颗粒**。
-           泛光要加在"画完的场景"上；光轴是光在**雾里**的散射，得在泛光之后（否则
-           被泛光糊掉）；颗粒是胶片乳剂，永远最后一层。
-           降级：`soft`（无 WebGL）整段关掉，回到阶段 2 的观感；`reduce`
-           （帧耗时超预算）只留紧光泛光 —— 柔光与光轴是氛围，紧光才是"光源还在发光"。
-           发光缓冲只画**已知的发光体**（月盘 / 每盏灯 / 萤火虫 / 水面月光柱）：
-           阈值提取要 getImageData 回读整屏（50ms 级），而且不可控 —— 想让谁发光就画谁。 */
-        if (!soft) {
-            if (!glowCv) glowCv = document.createElement("canvas");
-            const gg = beginGlow(glowCv, w, h, MARGIN);
-            gg.globalCompositeOperation = "lighter";
-            /* ① 月盘：**环**不是核 —— 月面是本页唯一"一字不许改"的资产，
-               软核叠上去会把月海暗斑一起提亮（实测漂成没有细节的白饼）。 */
-            glowBlob(gg, haloSprite(255, 238, 200), w * MOON.x, h * MOON.y,
-                     (Math.min(w, h) * MOON.r) / 0.3, 0.9);
-            /* ② 每盏河灯：DOM 河灯不在画布上，泛光只能靠这个**代理光斑** ——
-               这也是"美术指定 bloom"相对阈值提取的唯一不可替代之处。
-               半径贴着灯身（约 1.3 倍）：光斑铺到两三倍大就成了一团雾，灯是灯、
-               雾是雾，读者只会看到雾。 */
-            for (const m of metaRef.current) {
-                const scl = Math.min(1, Math.pow(Math.max(0, m.d), 1.15) * 1.25);
-                if (scl < 0.06) continue;
-                const li = lanternXY(m);
-                glowBlob(gg, blobSprite(255, 206, 138), li.x, li.y - 10 * scl,
-                         22 + 56 * scl, 0.12 + 0.28 * scl);
-            }
-            /* ③ 水面上的月光柱：沿月亮那一列放几个光斑（与场景里那条柱体同源）。
-               比灯还淡 —— 水面是**反光**，反光的泛光本来就该比光源弱一档。 */
-            for (let i = 0; i < 9; i++) {
-                const d = 0.3 + i * 0.075;
-                const u0 = riverUAt(moon.x, d);
-                if (u0 === null) continue;
-                const y = riverY(d);
-                if (y < v.yH - 4 || y > h + 20) continue;
-                glowBlob(gg, blobSprite(255, 226, 168), riverX(u0, d), y,
-                         12 + 62 * d, (0.06 + 0.12 * d) * (1 - 0.5 * i / 9));
-            }
-            /* ④ 萤火虫（低空巡游的荧光点）。 */
-            if (!sysReduce) {
-                for (const f of amb.fireflies) {
-                    if (f.d < 0.02 || f.d > 0.95) continue;
-                    glowBlob(gg, blobSprite(214, 255, 190), riverX(f.u, f.d) + px * 0.5,
-                             riverY(f.d) - 22, 9, 0.42);
-                }
-            }
-            bloom(ctx, glowCv, w, h, MARGIN, reduce);
-            if (!reduce) {
-                /* 光轴只出现在**地平线之上**：洒到河面上会读成"水里在发光"，
-                   而这条河的光源只有月亮。 */
-                ctx.save();
-                ctx.beginPath();
-                ctx.rect(-MARGIN, -MARGIN, w + MARGIN * 2, v.yH + MARGIN);
-                ctx.clip();
-                drawRays(ctx, w * MOON.x, h * MOON.y, Math.max(w, h) * 0.5, 0.16);
-                ctx.restore();
-            }
-            /* 颗粒：`sysReduce`（系统偏好）时钉死偏移 —— 它不是运动，但每 3 帧跳一次
-               偏移在"减少动态"的偏好下是多余的抖动。 */
-            drawGrain(ctx, w, h, MARGIN, sysReduce ? 0 : Math.floor(t * 60), reduce ? 0.12 : 0.22);
-        }
     };
 
     /* 灯笼逐帧驱动：与河水同向，向远方缓流。
@@ -2029,22 +1621,6 @@ export default function RiverBoard() {
             node.style.transform =
                 `translate3d(${li.x}px, ${li.y}px, 0) translate(-50%, -50%) scale(${scl}) rotate(${rot}deg)`;
             node.style.opacity = String(0.45 + 0.55 * Math.pow(d, 0.8));
-            /* 气泡的**反缩放**（20261018 可读性修复）。
-               气泡是 `.rz-lantern` 的子节点，于是它跟着河灯的透视缩放一起缩 ——
-               实测宿主 scale 0.60 时 16px 的字只剩 9.6px，能悬停到的最近档
-               （d≥0.24 ⇒ scale 0.24）也才 3.9px，用户原话「字体看着费眼，看不清」。
-               两个自定义属性把气泡还原到**屏幕尺度**（气泡的宽度、字号、行高因此
-               与河灯的远近完全无关）：
-                 --rz-bsc  1/scl（抵消宿主的 scale；CSS 那边绕**下缘中点**缩放，
-                           底边因此钉在原地、气泡只往上长）
-                 --rz-brot 反向旋转（灯体左右晃 ±3.2°，不抵掉整块纸是斜的）
-               只给**打开中的那一盏**写。`classList.contains` 是内存读、不触发布局；
-               而逐帧给 22 盏都写自定义属性会触发整棵子树的样式重算 —— 同一时刻
-               只可能开一个气泡，没必要为它付 22 份。 */
-            if (node.classList.contains("rz-open")) {
-                node.style.setProperty("--rz-bsc", (1 / Math.max(0.05, scl)).toFixed(4));
-                node.style.setProperty("--rz-brot", (-rot).toFixed(2) + "deg");
-            }
             // pointerEvents 只在真正换档时写（逐帧写一个几乎不变的属性会白白触发样式失效计算）
             const pe = d < 0.24 ? "none" : "auto";
             if (pe !== m._pe) {
@@ -2139,8 +1715,7 @@ export default function RiverBoard() {
             };
             baseBack = makeBase();
             baseFront = makeBase();
-            baseBackCv = baseBack; // 倒影的镜像源（refreshReflection 在 renderBase 末尾读它）
-            renderBase(baseBack, baseFront, softRender);
+            renderBase(baseBack, baseFront);
         };
 
         // resize 防抖（20260912）：下面这一趟会重建全部粒子 + 两张全屏画布 + renderBase
@@ -2209,8 +1784,7 @@ export default function RiverBoard() {
                 reduced() || perfDynReduce || softRender, // 性能降级（水流带减速等）
                 reduced(), // 系统级装饰门控：星光/萤火虫/流星只随系统偏好（20260905）
                 baseBack!,
-                baseFront!,
-                softRender // 水面层要按档位选倒影分辨率/碎光点数（阶段 2）
+                baseFront!
             );
             driveLanterns(dt);
             if (!reduced()) scrollTick(dt); // 气泡滚动是用户主动操作，不受动态降级影响
