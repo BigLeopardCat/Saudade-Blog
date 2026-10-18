@@ -84,13 +84,19 @@ const tickTimer = () => timers.forEach((t) => t.fn());
 
 const TOKEN = 'x.y.z';
 // ⚠️ 键序必须与 unread.ts `pick()` 的书写顺序一致（下面 `eq` 用 JSON.stringify 比字面量）。
-// `pendingQuota`（20260929 额度申请数）**必须跟着一起写**：pick() 现在恒产出它，
-// 而 `same()` 也拿它判等——漏在期望值里只会得到一串"读数对不上"的假红。
-const ROWS = { notifications: 2, messages: 1, total: 3, pendingReview: 0, pendingQuota: 0 };
-const ROWS2 = { notifications: 0, messages: 0, total: 0, pendingReview: 3, pendingQuota: 0 };
-const EMPTY_COUNTS = { notifications: 0, messages: 0, total: 0, pendingReview: 0, pendingQuota: 0 };
+// `pendingQuota`（20260929 额度申请数）与 `pendingComments`（20261019 文章评论待审数）
+// **必须跟着一起写**：pick() 现在恒产出它们，而 `same()` 也拿它们判等——漏在期望值里
+// 只会得到一串"读数对不上"的假红（同 `EMPTY` 那条注释说的"漏一个键不报错"的反面）。
+const ROWS = { notifications: 2, messages: 1, total: 3, pendingReview: 0, pendingQuota: 0,
+               pendingComments: 0 };
+const ROWS2 = { notifications: 0, messages: 0, total: 0, pendingReview: 3, pendingQuota: 0,
+                pendingComments: 0 };
+const EMPTY_COUNTS = { notifications: 0, messages: 0, total: 0, pendingReview: 0, pendingQuota: 0,
+                       pendingComments: 0 };
 /** **只有**额度申请数与 ROWS 不同的一份读数（第 ⑥ 节专门用它） */
 const ROWS_Q = { ...ROWS, pendingQuota: 2 };
+/** **只有**评论待审数与 ROWS 不同的一份读数（第 ⑥b 节专门用它） */
+const ROWS_C = { ...ROWS, pendingComments: 4 };
 
 let passed = 0, failed = 0;
 const ok = (cond, name, detail) => {
@@ -256,6 +262,33 @@ const logout = () => { delete store.tokenKey };
     winEvents['unread-change'].forEach((f) => f({ type: 'unread-change' }));
     await tick();
     ok(mod.unreadDebug().counts === after, '读数没变（含额度）⇒ 同一个引用');
+}
+
+// ── ⑤b 只有**评论待审数**变了，也必须算新事实（20261019）────────────────────
+// 与 ⑤ 逐条同构，理由也一样：后台首页第三行「N 条评论待人工审核」读的是这个 store 的
+// `pendingComments`，它能不能冒出来只靠 `same()` 判出"变了"。**这条是反控**——
+// 加字段时最容易漏的就是 `same()` 里那一项，而漏了不报错，只是那一行永远不出现。
+{
+    const { mod, ctl } = await fresh();
+    login();
+    mod.retainUnread();
+    await tick();
+    const before = mod.unreadDebug().counts;
+    eq(before.pendingComments, 0, '先是 0 条评论待审');
+
+    ctl.responder = () => ({ status: 200, data: { code: 200, message: 'ok', data: ROWS_C } });
+    winEvents['unread-change'].forEach((f) => f({ type: 'unread-change' }));
+    await tick();
+    const after = mod.unreadDebug().counts;
+    eq(after.pendingComments, 4, '评论待审数被读进来');
+    ok(after !== before,
+       '只有 pendingComments 变了 ⇒ **换引用**（否则后台首页第三行永远不冒出来）');
+    ok(after.pendingReview === before.pendingReview && after.pendingQuota === before.pendingQuota
+        && after.total === before.total && after.notifications === before.notifications
+        && after.messages === before.messages,
+       '其余字段一个没动（换引用只因为评论那一项）');
+    ok(after.pendingComments !== after.pendingReview,
+       '两格是**各自独立**的读数（把评论并进 pendingReview 是这条要挡的那件事）');
 }
 
 // ── ⑥ 没有新事实就不换引用（否则订阅者白渲染一轮）──────────────────────────

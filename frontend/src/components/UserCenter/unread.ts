@@ -64,6 +64,9 @@ const EMPTY: UnreadSummary = {
     // 比 undefined**（恒等）⇒ 那一项的变化永远看不见。三个地方必须同进同出：
     // EMPTY / same / pick。
     pendingQuota: 0,
+    // 20261019 加文章评论待审数。同上：漏一个键不会报错，只会让 `same()` 拿 undefined
+    // 比 undefined（恒等）⇒ 那一项的变化永远看不见。EMPTY / same / pick 三处同进同出。
+    pendingComments: 0,
 }
 
 /** 值相等？就比这几个数，不引深比较库。
@@ -75,6 +78,7 @@ function same(a: UnreadSummary, b: UnreadSummary): boolean {
     return a.notifications === b.notifications && a.messages === b.messages
         && a.total === b.total && a.pendingReview === b.pendingReview
         && a.pendingQuota === b.pendingQuota
+        && a.pendingComments === b.pendingComments
 }
 
 /** 当前未读数（NULL 语义的替代品是 EMPTY：红点是提示，读不到就不显示）。 */
@@ -121,6 +125,8 @@ function pick(d: UnreadSummary | null | undefined): UnreadSummary {
         pendingReview: d?.pendingReview ?? 0,
         // 同 pendingReview 的旧后端容忍（20260929）
         pendingQuota: d?.pendingQuota ?? 0,
+        // 同族旧后端容忍（20261019）：旧回包没有这一格 ⇒ 0，第三行不画
+        pendingComments: d?.pendingComments ?? 0,
     }
 }
 

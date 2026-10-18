@@ -59,12 +59,17 @@ export interface NotificationList {
 export interface UnreadSummary {
     notifications: number;
     messages: number;
-    /** 红点用的合计 = 通知 + 私信（**不含** pendingReview / pendingQuota，见后端 UnreadDto） */
+    /** 红点用的合计 = 通知 + 私信（**不含**下面那三格，见后端 UnreadDto） */
     total: number;
-    /** 等人工裁决的留言条数（后台首页那行提示用；非管理员恒 0） */
+    /** 等人工裁决的**河灯留言**条数（后台首页第一行提示用；非管理员恒 0）。
+     *  ⚠️ 数的是 `talk`（`/guestbook` 那套、后台 `?tab=review`），**不是文章评论**。 */
     pendingReview: number;
     /** 等处理的额度重置申请条数（20260929；同 pendingReview：只有能进后台的人算，恒不计进 total） */
     pendingQuota: number;
+    /** 等人工裁决的**文章评论**条数（20261019；同前两格：只有能进后台的人算，恒不计进 total）。
+     *  与 `pendingReview` **不是一件事**：评论数的是 `note_comment`、长在每篇文章下面、
+     *  后台 `?tab=comment`。两者合并不了——点进去是两个不同的页面。 */
+    pendingComments: number;
 }
 
 /** GET /api/protected/quota（个人中心「对话额度」页签）。

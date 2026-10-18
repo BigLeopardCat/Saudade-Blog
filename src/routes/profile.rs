@@ -30,7 +30,8 @@ use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 
 use crate::entity::{
-    note, talk, user, user_favorite, user_message, user_message_draft, user_notification,
+    note, note_comment, talk, user, user_favorite, user_message, user_message_draft,
+    user_notification,
 };
 use crate::routes::AppState;
 use crate::utils::{
@@ -548,9 +549,15 @@ pub struct UnreadDto {
     pub notifications: i64,
     pub messages: i64,
     pub total: i64,
-    /// 等人工裁决的留言条数（后台首页那行"N 条评论待人工审核"；非管理员恒 0）。
+    /// 等人工裁决的**河灯留言**条数（后台首页那行"N 条留言待人工审核"；非管理员恒 0）。
     /// **不计进 `total`**：红点是"你有事没看"，待审是"后台有事等你处理"，
     /// 两件不同的事——`total` 只服务红点（前端拿它决定亮不亮）。
+    ///
+    /// ⚠️ **这里数的是 `talk`（河灯留言），不是文章评论**（20261019 更正注释：原话写的是
+    /// "N 条评论待人工审核"，而它的实现一直是 `board_pending_count` 数 `talk` 行）。
+    /// 文章评论是**另一张表**（`note_comment`）、另一个后台页、另一套入口，计数在
+    /// `pending_comments`——**两者绝不能合并成一个数**：留言没有标题、评论长在某篇文章下，
+    /// 主人要点的页面都不是同一个（`?tab=review` vs `?tab=comment`）。
     #[serde(rename = "pendingReview")]
     pub pending_review: i64,
     /// 待处理的**额度重置申请**条数（20260929，后台首页那一行 + 红点数据；
@@ -559,6 +566,18 @@ pub struct UnreadDto {
     /// 而后台那一行靠这个字段自己决定冒不冒出来。
     #[serde(rename = "pendingQuota")]
     pub pending_quota: i64,
+    /// 等人工裁决的**文章评论**条数（20261019 加；非管理员恒 0）。与上面那两格逐条同族：
+    /// 它是后台的待办、**同样不计进 `total`**。
+    ///
+    /// 为什么**另开一格而不是并进 `pendingReview`**：留言与评论是两套东西（两张表、两个
+    /// 后台页、两套入口），合并之后主人点那一行只会跳到其中一个页面，而另一类永远点不到
+    /// ——「N 条待审核」这个数就再也说不清是哪个 N。前端 `Home/index.tsx` 里那条注释
+    /// 早就把这件事写明了，这里补的是后端那一半。
+    ///
+    /// 过滤条件与公开侧同口径再加一条：`approved = 0` **且 `is_deleted = 0`**
+    /// （软删的行后台还留着溯源，但它不是"等着你处理"的事）。
+    #[serde(rename = "pendingComments")]
+    pub pending_comments: i64,
 }
 
 /// uid 能不能进后台（角色**从库查**、不信 token 里那个可能是旧的 role——
@@ -578,6 +597,21 @@ async fn board_pending_count(db: &sea_orm::DatabaseConnection) -> i64 {
     talk::Entity::find()
         .filter(talk::Column::Src.eq("board"))
         .filter(talk::Column::Approved.eq(0))
+        .count(db)
+        .await
+        .unwrap_or(0) as i64
+}
+
+/// 等人工裁决的**文章评论**条数（`approved = 0` 且 `is_deleted = 0`）。
+///
+/// 与 `board_pending_count` 逐条同形，但**不是同一批数据**（那张数 `talk`、这张数
+/// `note_comment`）。`is_deleted = 0` 这一条是评论独有的：评论是**软删**（后台留着行
+/// 溯源、公开侧看不见），已删的行再审没有意义，`audit_comment` 也明确拒它 ⇒ 它不该
+/// 出现在"等着你处理"的计数里（否则主人会看见一个点进去办不了的数字）。
+async fn comment_pending_count(db: &sea_orm::DatabaseConnection) -> i64 {
+    note_comment::Entity::find()
+        .filter(note_comment::Column::Approved.eq(0))
+        .filter(note_comment::Column::IsDeleted.eq(0))
         .count(db)
         .await
         .unwrap_or(0) as i64
@@ -607,7 +641,15 @@ async fn unread_counts(db: &sea_orm::DatabaseConnection, uid: i32) -> UnreadDto 
     } else {
         0
     };
-    UnreadDto { notifications: n, messages: m, total: n + m, pending_review, pending_quota }
+    let pending_comments = if console_user { comment_pending_count(db).await } else { 0 };
+    UnreadDto {
+        notifications: n,
+        messages: m,
+        total: n + m,
+        pending_review,
+        pending_quota,
+        pending_comments,
+    }
 }
 
 /// GET /api/protected/notifications/summary：红点（未读数）。

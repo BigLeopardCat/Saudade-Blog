@@ -266,12 +266,46 @@ console.log('\n路由 —— 后台三条在 protected 域内，公开三条在 
         '作者自删与管理员删除是两个 handler，没并成一个');
 }
 
-// ── ⑧ 首页待办那一行的名字 ─────────────────────────────────────────────────
-console.log('\n后台首页待办卡 —— 数的是留言，就该说留言：');
-ok(home.includes('条留言待人工审核'), '写着「条留言待人工审核」');
-ok(!home.includes('条评论待人工审核'),
-    '没有出现「条评论待人工审核」（那个数来自 profile.rs::board_pending_count，是河灯留言的量；'
-    + '评论要有自己的一行 + 自己新加的 pendingComments 字段，别并进这一个数）');
+// ── ⑧ 首页待办那两行各自的数从哪来 ─────────────────────────────────────────
+// ⚠️ 这一节 20261019 **改窄过**（原来是整份文件级的一条 `!home.includes('条评论待人工审核')`）。
+// 那条写法在"评论真的有了自己的一行"之后就成了**恒红**，而它当初要挡的其实是**另一件事**：
+// 评论那个数被并进 `pendingReview`（那一个数来自 `profile.rs::board_pending_count`，是河灯
+// 留言的量）。恒红会被人删掉，删掉之后真正要挡的那件事就没人挡了 —— 所以改成**按块判**：
+// 每一行各自认自己的字段与文案。**没有放宽**：把评论那一行并回 `pendingReview` 仍然红。
+console.log('\n后台首页待办卡 —— 三行各自数各自的量，各自说各自的话：');
+
+/** 从 `home` 里切出某个 className 那一块的 JSX 源码。
+ *  ⚠️ 切点必须是**下一个顶层块**（`todo-review|todo-quota|todo-comments` 三者之一），
+ *  不能是随便一个 `className="todo-`：块内部还有 `todo-comments-n` / `-go` 这两个
+ *  子元素，按前缀切会把块腰斩在第一个子元素上（第一版就是这么错的）。 */
+function blockOf(cls) {
+    const start = home.search(new RegExp(`className="${cls}"`));
+    if (start < 0) return '';
+    const rest = home.slice(start + 1);
+    const next = rest.search(/className="todo-(review|quota|comments)"/);
+    return next < 0 ? rest : rest.slice(0, next);
+}
+
+const reviewBlock = blockOf('todo-review');
+const quotaBlock = blockOf('todo-quota');
+const commentBlock = blockOf('todo-comments');
+
+ok(reviewBlock.includes('条留言待人工审核'),
+    '留言那一行写着「条留言待人工审核」');
+ok(!reviewBlock.includes('条评论'),
+    '⭐ 留言那一行**不许**说成评论（那个数来自 profile.rs::board_pending_count，是河灯留言的量）',
+    reviewBlock.slice(0, 120));
+ok(reviewBlock.includes('pendingReview'),
+    '留言那一行读的是 `pendingReview`');
+ok(quotaBlock.includes('条额度重置申请待处理') && quotaBlock.includes('pendingQuota'),
+    '额度那一行写着「条额度重置申请待处理」、读的是 `pendingQuota`');
+ok(commentBlock.includes('条评论待人工审核'),
+    '⭐ 评论那一行**真的存在**，且写着「条评论待人工审核」');
+ok(commentBlock.includes('pendingComments') && !commentBlock.includes('pendingReview'),
+    '⭐ 评论那一行读的是**自己那一格** `pendingComments`（并进 pendingReview 就是这条要挡的事）',
+    commentBlock.slice(0, 160));
+ok(commentBlock.includes('tab=comment') && reviewBlock.includes('tab=review'),
+    '两行点去的是**两个不同的页签**（合并成一个数之后，另一个页面就永远点不到了）');
 
 console.log(`\ncomment-admin: ${passed} 通过, ${failed} 失败`);
 process.exit(failed ? 1 : 0);

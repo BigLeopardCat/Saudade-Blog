@@ -139,6 +139,14 @@ const Home = () => {
     // 等处理的额度重置申请（20260929）：与 pendingReview 完全同族——同一个汇总接口、
     // 同一份读数、同样**不进 total**，只是指向后台另一个页签（`?tab=quota`）。
     const pendingQuota = unread.pendingQuota;
+    // 等人工裁决的**文章评论**（20261019）：第三类，与上面两类逐条同族（同一个汇总接口、
+    // 同一份读数、同样不进 total），只是指向后台第三个页签（`?tab=comment`）。
+    //
+    // ⚠️ **它与 pendingReview 不是一件事**，别合并：`pendingReview` 数的是**河灯留言**
+    // （`talk` 表、`/guestbook` 那套、后台 `?tab=review`），这里数的是**文章评论**
+    // （`note_comment` 表、长在每篇文章下面、后台 `?tab=comment`）。两行同时冒出来时，
+    // 主人点的是两个完全不同的页面——合并成一个数就再也说不清是哪个 N。
+    const pendingComments = unread.pendingComments;
     const navigate = useNavigate();
 
     const today = dayjs().format('YYYY-MM-DD');
@@ -552,10 +560,10 @@ const Home = () => {
                             ——那时后台把留言管理叫「评论管理」，所以读起来没错。20261002 拆开之后
                             这个名字就变成了一句假话（点进去是留言管理，而页签叫评论管理的是另一页），
                             故改为「留言」。
-                            **文章评论的待审数不在这条汇总里**：要加就得新开一个字段
-                            （`pendingComments` + `unread.ts` + 本页第三行，照 `.todo-quota` 那样
-                            **另起类名**），**别把它并进 `pendingReview`**——两个数合在一句话下面，
-                            点进去只能落在其中一页，另一个数就成了永远对不上的账。 */}
+                            **文章评论的待审数不在这个字段里**：它 20261019 起是**另开的一格**
+                            （`pendingComments`，见下面第三行），**没有**并进 `pendingReview`
+                            ——两个数合在一句话下面，点进去只能落在其中一页，另一个数就成了
+                            永远对不上的账。 */}
                         {pendingReview > 0 &&
                             <div className="todo-review"
                                  onClick={() => navigate('/dashboard/users?tab=review')}>
@@ -573,6 +581,18 @@ const Home = () => {
                                 <span className="todo-quota-n">{pendingQuota}</span>
                                 <span>条额度重置申请待处理</span>
                                 <RightOutlined className="todo-quota-go" />
+                            </div>}
+                        {/* 第三行非待办提示（20261019）：等人工裁决的**文章评论**。与上面两行同构
+                            （不进 todos、不落库、不能拖不能删），**类名另起**（`.todo-comments`）
+                            ——`.todo-review` 在同一页里必须恒为一条（沙箱锁着），复用类名会把
+                            两种提示数成同一件事。指向的是评论管理页（`?tab=comment`），与第一行
+                            那个 `?tab=review`（留言管理）**不是同一个页面**。 */}
+                        {pendingComments > 0 &&
+                            <div className="todo-comments"
+                                 onClick={() => navigate('/dashboard/users?tab=comment')}>
+                                <span className="todo-comments-n">{pendingComments}</span>
+                                <span>条评论待人工审核</span>
+                                <RightOutlined className="todo-comments-go" />
                             </div>}
                         {/* 没读出来之前不显示"还没有待办"——那会把"读失败"说成"你没有待办" */}
                         {!loaded && !loadErr &&

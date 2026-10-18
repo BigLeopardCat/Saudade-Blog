@@ -29,9 +29,10 @@
 
 use std::sync::Arc;
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::Json;
+use sea_orm::sea_query::extension::postgres::PgExpr;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set};
 use serde::{Deserialize, Serialize};
 
@@ -522,15 +523,67 @@ pub struct CommentAdminDto {
     pub is_deleted: i16,
 }
 
-/// GET /api/protect/comments —— 评论管理列表（全部状态，倒序）。
+/// GET /api/protect/comments 的查询参数（20261019）。
+///
+/// **不传参数的行为与从前逐字节相同**（全部状态、倒序、上限 500）——这是刻意保留的：
+/// agent 那侧 `_comment_index` 读的就是这份全量（写操作前要拿它核对目标在不在），
+/// 给它悄悄收窄会让"读的是这一批、写的是另一行"这类错藏到线上。
+#[derive(Deserialize)]
+pub struct CommentAdminQuery {
+    /// 状态筛选：`pending`=待审 / `passed`=已通过 / `rejected`=未通过。
+    /// 缺省或认不出 = 不筛（与"没传"同一个行为——认不出的值把整页打成空不值得）。
+    #[serde(default)]
+    pub status: Option<String>,
+    /// 关键词（子串匹配）：评论正文 / 发布者用户名 / 昵称。
+    #[serde(default)]
+    pub q: Option<String>,
+}
+
+/// `status` 实参 → `approved` 值。与留言板 `BOARD_STATUS_FILTERS` 同表同义（两张表那
+/// 一列的语义逐字相同：0=待审 / 1=通过 / 2=未通过）。**只有三态、没有"全部"**：
+/// 不填就是不筛，多一个 `all` 就多一个会填错的值。
+fn comment_status_filter(raw: Option<&str>) -> Option<i16> {
+    match raw.map(str::trim) {
+        Some("pending") => Some(0),
+        Some("passed") => Some(1),
+        Some("rejected") => Some(2),
+        _ => None,
+    }
+}
+
+/// GET /api/protect/comments —— 评论管理列表（倒序；可按状态 / 关键词收窄）。
+///
+/// ⚠️ **筛选项收窄的是"看到哪些"，不是"哪些能被审"**：`audit_comment` 按主键认行，
+/// 与这里传了什么筛选无关。所以 `status=pending` 只是给"待审队列"用的一个视图，
+/// 它不是权限边界。
 pub async fn list_comments_admin(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    Query(q): Query<CommentAdminQuery>,
 ) -> Json<ApiResponse<Vec<CommentAdminDto>>> {
     let Some(_uid) = super::talks::current_uid(&state.db, &headers).await else {
         return Json(ApiResponse::error("请先登录"));
     };
-    let rows = match note_comment::Entity::find()
+    let mut finder = note_comment::Entity::find();
+    if let Some(v) = comment_status_filter(q.status.as_deref()) {
+        finder = finder.filter(note_comment::Column::Approved.eq(v));
+    }
+    if let Some(kw) = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        // `like_escape` 必须用：用户输入里的 % _ \ 不转义就是通配符（搜一个 `%` 会把整表
+        // 捞回来）。与留言板那条共用 `crate::search_core` 那一份实现。
+        //
+        // **用 `ilike` 不用 `like`**：PG 的 `LIKE` 区分大小写，而留言板那条在 MySQL 时代
+        // 靠 `utf8mb4_0900_ai_ci` 是不敏感的——切流后它已经悄悄变成敏感的了（20261019 已
+        // 一并修）。新写的这条没有理由把那个坑再挖一遍。
+        //
+        // ⚠️ **只搜评论正文，不搜作者名/昵称**（留言板那条搜四列，因为它 LEFT JOIN 了
+        // `user`）。这里刻意不 join：`note_comment` 没有现成的 `Relation::User`，而为了
+        // 一个"顺带搜作者"去补一条关系定义，收益远小于它带来的表面积。要按作者找，用
+        // 后台页的筛选（那边本来就有）。
+        let pat = format!("%{}%", crate::search_core::like_escape(kw));
+        finder = finder.filter(note_comment::Column::Content.into_expr().ilike(&pat));
+    }
+    let rows = match finder
         .order_by_desc(note_comment::Column::CreatedAt)
         .order_by_desc(note_comment::Column::Id)
         .limit(ADMIN_PAGE_LIMIT)
