@@ -54,9 +54,24 @@ pub enum Relation {
     TagTwo,
 }
 
+// ⚠️ `DeriveRelation` **只**生成 `RelationDef`，`Related` 那三个 impl 要手写（本仓
+// `entity/note.rs` 也是手写的）。少了它们，`inner_join(tag_one::Entity)` 编译不过 ——
+// 而报错是一句"expected `note::Entity`, found `tag_one::Entity`"，看不出真正缺的是什么。
 impl Related<super::note::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::Note.def()
+    }
+}
+
+impl Related<super::tag_one::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::TagOne.def()
+    }
+}
+
+impl Related<super::tag_two::Entity> for Entity {
+    fn to() -> RelationDef {
+        Relation::TagTwo.def()
     }
 }
 

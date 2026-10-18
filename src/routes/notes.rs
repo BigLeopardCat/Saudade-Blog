@@ -1,12 +1,14 @@
 use axum::{Json, extract::{State, Query, Path}, http::{HeaderMap, StatusCode}, response::{IntoResponse, Response}};
-use sea_orm::{EntityTrait, ColumnTrait, QueryFilter, QueryOrder, QuerySelect, Condition, ActiveModelTrait, Set, PaginatorTrait, ActiveValue::NotSet, DerivePartialModel, TransactionTrait};
+use sea_orm::{DatabaseConnection, EntityTrait, ColumnTrait, QueryFilter, QueryOrder, QuerySelect, Condition, ActiveModelTrait, Set, PaginatorTrait, ActiveValue::NotSet, DerivePartialModel, TransactionTrait};
+// `Expr` / `SimpleExpr` 只服务关键词预筛那几处（列表达式要带表名限定，见 `search_notes`）。
+use sea_orm::sea_query::{Expr, SimpleExpr};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use crate::entity::{note, category, user};
 use crate::routes::note_tags::{self, attach_tags};
 use crate::routes::AppState;
-use crate::search_core::{count_terms, keyword_given, score_term_sum, split_terms};
+use crate::search_core::{count_terms, keyword_given, keyword_prefilter, score_term_sum, split_terms};
 use crate::utils::ApiResponse;
 
 // ── 文章状态词表：唯一解析点（20261018）───────────────────────────────────────
@@ -488,6 +490,41 @@ fn search_score_terms(note: &note::Model, terms: &[String], tag_names: &[String]
     score_term_sum(terms, Some(&note.title), tag_names, &note.content)
 }
 
+/// 文章搜索的**关键词 SQL 预筛**（标题 / 正文 / 标签名）。`search_notes`、`search_all_notes`
+/// 与聚合搜索（`routes/search.rs`）**三处共用这一份** —— 这套规则抄三遍就是三份会各自漂的
+/// 实现，而漂的后果是"首页搜得到、聚合搜索搜不到"这种没人会去比对的差异。
+///
+/// 预筛**只保证超集**（`search_core::keyword_prefilter` 头注）：档位、权重、顺序全留在内存
+/// 那一遍，一个字没动。
+///
+/// 返回 `Ok(None)` = 没有可用 term（调用方**不许**拿它拼一个恒真条件）；
+/// `Err` = 标签那一维查不到 ⇒ **整个预筛都不能用** —— 少收一行是**静默的错误答案**，
+/// 调用方必须回退全量加载（并留一行 WARN 让"这轮为什么慢"有迹可循）。
+///
+/// 为什么标签要单独取一次：命中判定是 标题 / 正文 / **标签名字**，前两维在 `note` 表上，
+/// 第三维住在 `note_tag` 关联表里 —— SQL 主查询碰不到，只能先把"标签名命中"的文章 id
+/// 取回来 OR 进去。这正是关联表落地解锁的能力（此前标签是 id 串，SQL 侧搜标签名恒空、
+/// 搜数字恒假命中）。
+pub(crate) async fn note_keyword_prefilter(
+    db: &DatabaseConnection,
+    terms: &[String],
+) -> Result<Option<Condition>, sea_orm::DbErr> {
+    // 列表达式必须带表名限定（`note.title` 而不是裸 `title`）：主查询是单表，但预筛条件
+    // 会与别处拼在一起，裸列名在将来加 join 时会歧义。
+    let cols = [
+        SimpleExpr::from(Expr::col((note::Entity, note::Column::Title))),
+        SimpleExpr::from(Expr::col((note::Entity, note::Column::Content))),
+    ];
+    let Some(mut pre) = keyword_prefilter(&cols, terms) else {
+        return Ok(None);
+    };
+    let tag_ids = note_tags::note_ids_with_tag_name_hits(db, terms).await?;
+    if !tag_ids.is_empty() {
+        pre = pre.add(Expr::col((note::Entity, note::Column::Id)).is_in(tag_ids));
+    }
+    Ok(Some(pre))
+}
+
 pub async fn search_notes(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<SearchRequest>,
@@ -498,18 +535,39 @@ pub async fn search_notes(
     condition = condition.add(note::Column::IsPublic.eq(true));
     condition = condition.add(note::Column::Status.is_in(public_status_words()));
 
-    // 关键词**故意不做 SQL 侧过滤**（原来这里是 Title/Content/Tags 三个 LIKE 的 OR）。
-    // `note.tags` 存的是逗号分隔的标签 **id**，SQL 只能对 id 串做 `LIKE '%关键词%'`：
-    //   ① 搜标签名永远命中不到（库里根本没有名字）；
-    //   ② 搜纯数字（"1"）会假命中所有含 id 1 / 10 / 21 的文章。
-    // 标签名字必须先过字典才知道，只能在内存里判 —— 见下方命中+打分那一遍。
-    // 代价是关键词不再走 SQL 谓词、本端点全量加载；这个端点本来就没有分页
-    // （`list_public_notes` 同样 `.all()`），文章量小，不值得为此留着错谓词。
     if let Some(ref t) = payload.title {
         let t = t.trim();
         if !t.is_empty() {
             condition = condition.add(note::Column::Title.contains(t));
         }
+    }
+
+    // ── 关键词：先切词，再下 SQL 预筛（20261018）──────────────────────────────
+    // 预筛**只保证超集**（`search_core::keyword_prefilter` 头注），真判定与打分仍在
+    // 内存里那一遍（档位、权重、顺序一个字没动）。
+    //
+    // 为什么以前完全不下 SQL：那时"标签"是 `note.tags` 那一列**逗号分隔的 id 串**，
+    // SQL 只能对 id 串 LIKE —— 搜标签名永远 0 命中、搜纯数字（`1`）假命中所有含
+    // id 1/10/21 的文章。关联表落地之后标签名在 `tag_one`/`tag_two` 里，**这一维终于
+    // 能在 SQL 里判了**（先取回命中的文章 id 再 OR 进主查询），预筛因此是完整的。
+    let terms = payload
+        .keyword
+        .as_deref()
+        .map(split_terms)
+        .unwrap_or_default();
+    // 给了关键词却切不出任何可用 term（`第1章` / 纯标点）→ 回空，**不要**落到下面的
+    // "无关键词 → 返回整表"（那会把"站内没有这种东西"答成全站文章列表，见 keyword_given）。
+    // ⚠️ 这条短路从"查询之后"挪到了"查询之前"（20261018）：结论一样，但省一次全量查询。
+    if keyword_given(payload.keyword.as_deref()) && terms.is_empty() {
+        return Json(ApiResponse::success(vec![]));
+    }
+    match note_keyword_prefilter(&state.db, &terms).await {
+        Ok(Some(pre)) => condition = condition.add(pre),
+        // 没有可用 term（此时上面的短路已经放过去了 ⇒ 真的没给关键词）⇒ 不加条件。
+        Ok(None) => {}
+        // ⚠️ 标签那一维**读不到就不许用预筛**：少收一行是**静默的错误答案**，
+        // 多收几行只是慢一点。回退到全量加载 + 内存判定，并留一行 WARN。
+        Err(e) => tracing::warn!("[search_notes] 关键词预筛失败，本轮回退到全量加载: {e}"),
     }
 
      if let Some(ref cat_name) = payload.categories {
@@ -531,6 +589,12 @@ pub async fn search_notes(
 
     let notes = note::Entity::find()
         .filter(condition)
+        // ⚠️ **显式钉住行序**（20261018）。此前这里没有 ORDER BY，返回顺序是**存储顺序**
+        // （实测主键升序）—— 那不是一个契约，只是当时查询计划的产物。加预筛之后计划会变
+        // （顺序扫 → 位图索引扫），而下面的相关度排序对**同分**的行是稳定的（`sort_by` 稳定，
+        // 同分保持入参顺序）⇒ 行序一变，"同分的那几条谁在前"就跟着变。
+        // 这里把它钉成 id 升序 = **与今天实测的行为一致**，只是从"碰巧"变成"确定"。
+        .order_by_asc(note::Column::Id)
         .find_with_related(category::Entity)
         .all(&state.db)
         .await
@@ -541,25 +605,15 @@ pub async fn search_notes(
     // 排序的来由：本查询此前**无 ORDER BY**，返回顺序即存储顺序（实测主键升序）——于是搜索
     // 「架构」的第一条是《Git从入门到入土》（它只在正文表格里顺带出现过一次该词），而真正讲
     // 架构的那篇紧随其后。agent 侧 search_notes 取候选[0] 时因此读错文章（9/8 跑题事故的
-    // 供给端根因）。同分按 created_at 倒序（新的在前，与 list_public_notes 一致）。
+    // 供给端根因）。同分按 created_at 倒序（新的在前，与 list_public_notes 一致），
+    // 再同分落到上面那条 `ORDER BY id`。
     //
-    // 命中判定为什么搬到这里：见上面「关键词故意不做 SQL 侧过滤」的说明——标签是 id 串，
-    // 只有过一遍字典才知道名字。一遍遍历同时完成判定与打分（正文全量扫描不必做两次）。
+    // 命中判定为什么还在内存里：SQL 那一层只是**预筛**（超集），真判定要连标签名一起看、
+    // 还要算档位与权重（一遍遍历同时完成判定与打分，正文不必扫两次）。
     // 注：本端点同时服务博客前端搜索（NoteMethods.tsx）与 agent 的 search_notes，
     // 改动影响结果集（数字关键词不再假命中、标签名开始能搜到）与顺序，不影响 DTO。
     // 切成 terms 后逐词判定（20260920，见 split_terms：整串子串匹配对多词查询是假否定）；
     // 空关键词（缺省/全空白）走原来的整表返回。
-    let terms = payload
-        .keyword
-        .as_deref()
-        .map(split_terms)
-        .unwrap_or_default();
-    // 给了关键词却切不出任何可用 term（`第1章` / 纯标点）→ 回空，**不要**落到下面的
-    // "无关键词 → 返回整表"（那会把"站内没有这种东西"答成全站文章列表，见 keyword_given）。
-    if keyword_given(payload.keyword.as_deref()) && terms.is_empty() {
-        return Json(ApiResponse::success(vec![]));
-    }
-
     // 命中分档（20260920）：**全中优先**——多词查询先只留"每个词都命中"的文章（精度优先，
     // 与切词前的严格度同源，agent 不会因为降级候选读到跑题文章）；一篇全中的都没有时，
     // 才降级用"部分命中"（召回兜底：搜 "Docker 部署博客" 不该是一片空白）。
@@ -618,10 +672,9 @@ pub async fn search_all_notes(
 
     // NO PUBLIC SAFEGUARDS (Admin Route)
 
-    // 关键词与「文章标题」两个条件都不下 SQL：关键词的理由与 `search_notes` 完全相同
-    // （标签存的是 id 串，SQL 侧搜标签名恒空、搜数字恒假命中），命中判定统一放在下面
-    // 过完字典之后做。`title` 则是后台列表「文章标题」筛选的落地——这个字段以前压根不在
-    // `SearchRequest` 里，前端填了也白填。
+    // `title` 是后台列表「文章标题」筛选的落地——这个字段以前压根不在 `SearchRequest` 里，
+    // 前端填了也白填（结构体没开 `deny_unknown_fields`，所以是静默空操作）。
+    // 关键词这一路 20261018 起也下 SQL 了（预筛，见下），判定仍统一在内存里做一遍。
     if let Some(ref t) = payload.title {
         let t = t.trim();
         if !t.is_empty() {
@@ -684,6 +737,31 @@ pub async fn search_all_notes(
          }
     }
 
+    // ── 关键词：先切词，再下 SQL 预筛（20261018，与 `search_notes` 同一套）──────────
+    // 判定与前台同样先切词（20260920，见 split_terms）——否则后台搜"OBC 固件"是空、
+    // 前台却有结果，两边对不上。
+    let terms = payload
+        .keyword
+        .as_deref()
+        .map(split_terms)
+        .unwrap_or_default();
+    // 同 search_notes：给了关键词却切不出 term → 空结果（后台"没有匹配的文章"是正确答复）。
+    // ⚠️ 短路挪到查询之前（20261018）：结论一样，省一次全量查询。
+    if keyword_given(payload.keyword.as_deref()) && terms.is_empty() {
+        return Json(ApiResponse::success(vec![]));
+    }
+    // 预筛**只保证超集**（`search_core::keyword_prefilter` 头注），真判定仍在下面内存里那一遍。
+    // 后台这一路的可见性收窄全靠 `only_public` 那个可选条件，预筛不许把它顶掉 —— 它是
+    // `condition.add(...)`，与既有条件**与**在一起，收窄关系不变。
+    match note_keyword_prefilter(&state.db, &terms).await {
+        Ok(Some(pre)) => condition = condition.add(pre),
+        Ok(None) => {}
+        // 标签那一维读不到就不许用预筛（少收一行是静默的错误答案），回退全量加载。
+        Err(e) => {
+            tracing::warn!("[search_all_notes] 关键词预筛失败，本轮回退到全量加载: {e}")
+        }
+    }
+
     let notes = note::Entity::find()
         .filter(condition)
         // 后台列表要有确定顺序：本查询此前**无 ORDER BY**（返回顺序即存储顺序），而前端把
@@ -697,17 +775,7 @@ pub async fn search_all_notes(
 
     // 关键词命中：标题 / 正文 / 标签**名字**（标签名从 `note_tag` 关联表取）。后台列表不按
     // 相关度排序（它有自己的列排序/时间序），所以这里只做过滤，不打分。
-    // 判定与前台同样先切词（20260920，见 split_terms）——否则后台搜"OBC 固件"是空、
-    // 前台却有结果，两边对不上。
-    let terms = payload
-        .keyword
-        .as_deref()
-        .map(split_terms)
-        .unwrap_or_default();
-    // 同 search_notes：给了关键词却切不出 term → 空结果（后台"没有匹配的文章"是正确答复）
-    let notes = if keyword_given(payload.keyword.as_deref()) && terms.is_empty() {
-        vec![]
-    } else if terms.is_empty() {
+    let notes = if terms.is_empty() {
         notes
     } else {
         let ids: Vec<i32> = notes.iter().map(|(n, _)| n.id).collect();

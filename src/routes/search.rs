@@ -30,14 +30,20 @@
 //! 只数得出 10 行，会以为界面坏了。宁可全给。
 
 use axum::{extract::State, Json};
-use sea_orm::{ColumnTrait, Condition, EntityTrait, QueryFilter};
+use sea_orm::sea_query::extension::postgres::PgExpr;
+use sea_orm::sea_query::{Expr, SimpleExpr};
+use sea_orm::{
+    ColumnTrait, Condition, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Select,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::entity::{note, note_comment, talk};
 use crate::routes::{db_error, AppState};
-use crate::search_core::{count_terms, like_escape, rank_tiered, score_term_sum, snippet, split_terms};
+use crate::search_core::{
+    count_terms, like_escape, rank_tiered, score_term_sum, snippet, split_terms,
+};
 use crate::utils::ApiResponse;
 
 /// 每行摘要的字符上限（四类共用）。
@@ -99,6 +105,18 @@ pub struct SearchAllData {
     pub comments: Vec<SearchHit>,
 }
 
+/// 文章的**可见性谓词**（`is_public = true` 且 status 在 `notes::public_status_words()` 里）
+/// —— 本模块**唯一一处**，返回的是查询构造器，谁要谁在上面接条件。
+///
+/// 本模块有两个消费方：候选集合（判命中）与**全量可见集合**（评论能挂在哪些文章上、
+/// 评论行的行首标题）。两处各写一遍谓词，迟早会漂成"评论读得到、文章打不开"——
+/// 那正是本模块头注「口径是承重墙」那条要防的事。
+fn visible_notes_query() -> Select<note::Entity> {
+    note::Entity::find()
+        .filter(note::Column::IsPublic.eq(true))
+        .filter(note::Column::Status.is_in(super::notes::public_status_words()))
+}
+
 /// POST /api/public/search —— 站内聚合搜索（**无鉴权**，与 `/api/public/notes/search` 同档）。
 ///
 /// ⚠️ 只许挂 `public_routes`。`protected_routes` 域内由 `auth_guard` **全量要求管理员**，
@@ -124,15 +142,42 @@ pub async fn search_all(
     }
 
     // ── ① 文章 ────────────────────────────────────────────────────────
-    // 与 `notes::search_notes` **故意一致**地不做 SQL 侧关键词过滤：标签名住在
-    // `note_tag` 关联表里（20261018 之前是 `note.tags` 那个 id 串），要匹配标签名就得
-    // 先把名字取回来。代价是全量加载，理由同那边：本站文章量小、公开侧不分页。
-    let all_notes = match note::Entity::find()
-        .filter(note::Column::IsPublic.eq(true))
-        .filter(note::Column::Status.is_in(super::notes::public_status_words()))
+    // ⚠️ **两条查询，缺一不可**（20261018）：
+    //   · `visible` —— 全量可见集合，**不带关键词**。它同时是「评论能挂在哪些文章上」
+    //     的判据（下面 ④ 用）与行首标题的来源。**它绝不能被预筛收窄**：评论那一栏问的是
+    //     "这篇文章可见吗"，不是"这篇文章命中关键词吗" —— 拿预筛后的集合去喂，
+    //     搜一个词就会让**别的文章下的评论整片消失**（静默丢结果，没有任何东西会报错）。
+    //   · `all_notes` —— 候选集合，带关键词预筛，只用来判命中/打分。
+    let visible: Vec<(i32, String)> = match visible_notes_query()
+        .select_only()
+        .column(note::Column::Id)
+        .column(note::Column::Title)
+        .into_tuple::<(i32, String)>()
         .all(&state.db)
         .await
     {
+        Ok(v) => v,
+        Err(e) => return db_error("站内搜索-可见文章", &e),
+    };
+    let visible_ids: Vec<i32> = visible.iter().map(|(id, _)| *id).collect();
+    let title_by_id: HashMap<i32, String> = visible.into_iter().collect();
+
+    // 候选集合：可见性谓词 + 关键词预筛。预筛规则与文章搜索**同一份实现**
+    // （`notes::note_keyword_prefilter`）—— 抄两份的话，"首页搜得到、聚合搜索搜不到"
+    // 这种差异没有任何东西会去比对。
+    let mut cand = visible_notes_query();
+    match super::notes::note_keyword_prefilter(&state.db, &terms).await {
+        Ok(Some(pre)) => cand = cand.filter(pre),
+        // 没有可用 term —— 走不到这里（本函数开头就把空关键词返回了），留着只为穷尽。
+        Ok(None) => {}
+        // 标签那一维读不到 ⇒ **不许用预筛**（少收一行是静默的错误答案）：**不加条件**，
+        // 也就是回退到"全量可见集合 + 内存判定"。留一行 WARN 让"这轮为什么慢"有迹可循。
+        Err(e) => tracing::warn!("[search_all] 关键词预筛失败，文章一栏回退到全量加载: {e}"),
+    }
+    // ⚠️ **显式钉住行序**：`rank_tiered` 的排序不是全序（命中数 → 分数 → 时间），
+    // `sort_by` 稳定 ⇒ 同分的那几条继承 SQL 行序。加预筛会换查询计划（顺序扫 → 位图扫），
+    // 行序一变"同分的谁在前"就跟着变。钉成 id 升序 = 与加预筛前实测的行序一致。
+    let all_notes = match cand.order_by_asc(note::Column::Id).all(&state.db).await {
         Ok(v) => v,
         Err(e) => return db_error("站内搜索-文章", &e),
     };
@@ -142,11 +187,6 @@ pub async fn search_all(
         &all_notes.iter().map(|n| n.id).collect::<Vec<i32>>(),
     )
     .await;
-    // 这一批同时就是**评论能挂在哪些文章上**的可见集合（口径完全同源，省一次查询）：
-    // 文章可见性只有这一处判据，两边各写一遍迟早会漂成"评论读得到、文章打不开"。
-    let visible_ids: Vec<i32> = all_notes.iter().map(|n| n.id).collect();
-    let title_by_id: HashMap<i32, String> =
-        all_notes.iter().map(|n| (n.id, n.title.clone())).collect();
 
     let mut note_rows = Vec::new();
     for n in all_notes {
@@ -296,12 +336,20 @@ async fn talk_hits(
     terms: &[String],
 ) -> Result<Vec<talk::Model>, sea_orm::DbErr> {
     let is_talk = src == "talk";
+    // ⚠️ **必须是 `ILIKE` 不是 `LIKE`**（20261018 修）。PG 的 `LIKE` **区分大小写**，
+    // 而下面内存判定是 `content.to_lowercase().contains(term)` —— 正文里写 `ESP32`、
+    // 查询是 `esp32` 的那些行会被 SQL 这一层**静默丢掉**，而内存那一层永远看不见它们
+    // （它只能看见 SQL 交过来的行）。这是**少结果**，不是慢。
     let mut cond = Condition::any();
     for t in terms {
         let pat = format!("%{}%", like_escape(t));
-        cond = cond.add(talk::Column::Content.like(&pat));
+        cond = cond.add(
+            SimpleExpr::from(Expr::col((talk::Entity, talk::Column::Content))).ilike(pat.clone()),
+        );
         if is_talk {
-            cond = cond.add(talk::Column::Title.like(&pat));
+            cond = cond.add(
+                SimpleExpr::from(Expr::col((talk::Entity, talk::Column::Title))).ilike(pat.clone()),
+            );
         }
     }
     let rows = talk::Entity::find()
@@ -351,9 +399,14 @@ async fn comment_hits(
     if visible_ids.is_empty() {
         return Ok(Vec::new());
     }
+    // 同 `talk_hits`：`ILIKE` 而非 `LIKE` —— 大小写口径必须与内存里的
+    // `to_lowercase().contains` 一致，否则正文写 `ESP32` 的评论搜 `esp32` 时被静默丢掉。
     let mut cond = Condition::any();
     for t in terms {
-        cond = cond.add(note_comment::Column::Content.like(format!("%{}%", like_escape(t))));
+        cond = cond.add(
+            SimpleExpr::from(Expr::col((note_comment::Entity, note_comment::Column::Content)))
+                .ilike(format!("%{}%", like_escape(t))),
+        );
     }
     let rows = note_comment::Entity::find()
         .filter(note_comment::Column::NoteId.is_in(visible_ids.to_vec()))

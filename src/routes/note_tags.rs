@@ -280,6 +280,57 @@ pub(crate) async fn resync_tags_column<C: ConnectionTrait>(
     Ok(n)
 }
 
+/// 标签**名字**命中任一 term 的文章 id（两级各一次查询，都走 `note_tag` 的索引）。
+///
+/// 关键词预筛（`search_core::keyword_prefilter`）要用它：文章命中判定里"标签名"那一维
+/// 住在关联表里，SQL 主查询碰不到 —— 只能先把命中的文章 id 取回来 OR 进去。
+/// 返回**去重**后的 id（同一篇的一级与二级各命中一次也只算一次）；
+/// ⚠️ **空集时调用方不许再拼 `IN`**（空 `IN` 是语法错误，同 `search.rs::comment_hits` 那条短路）。
+///
+/// ⚠️ 它只保证**超集**（`ILIKE` 可能多收），真判定仍在内存里（与预筛同一个契约）。
+pub(crate) async fn note_ids_with_tag_name_hits<C: ConnectionTrait>(
+    db: &C,
+    terms: &[String],
+) -> Result<Vec<i32>, sea_orm::DbErr> {
+    use sea_orm::sea_query::{Expr, SimpleExpr};
+
+    let mut out: Vec<i32> = Vec::new();
+    // 两级各拼一次条件：列不同（`tag_one.name` / `tag_two.name`），查询也只能各发一条。
+    let one_cond = crate::search_core::keyword_prefilter(
+        &[SimpleExpr::from(Expr::col((tag_one::Entity, tag_one::Column::Name)))],
+        terms,
+    );
+    let two_cond = crate::search_core::keyword_prefilter(
+        &[SimpleExpr::from(Expr::col((tag_two::Entity, tag_two::Column::Name)))],
+        terms,
+    );
+    if let Some(cond) = one_cond {
+        let ids: Vec<i32> = note_tag::Entity::find()
+            .inner_join(tag_one::Entity)
+            .filter(cond)
+            .select_only()
+            .column(note_tag::Column::NoteId)
+            .into_tuple::<i32>()
+            .all(db)
+            .await?;
+        out.extend(ids);
+    }
+    if let Some(cond) = two_cond {
+        let ids: Vec<i32> = note_tag::Entity::find()
+            .inner_join(tag_two::Entity)
+            .filter(cond)
+            .select_only()
+            .column(note_tag::Column::NoteId)
+            .into_tuple::<i32>()
+            .all(db)
+            .await?;
+        out.extend(ids);
+    }
+    let mut seen: HashSet<i32> = HashSet::new();
+    out.retain(|i| seen.insert(*i));
+    Ok(out)
+}
+
 /// 一篇**当前**的标签串 —— 从关联表重建，**不是**读 `note.tags` 那一列。
 ///
 /// 用途：`notes.rs` 里那两处"沿用行里现有的标签"（克隆修改稿时把原行的标签复制过来、

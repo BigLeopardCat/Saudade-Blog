@@ -124,6 +124,45 @@ pub fn like_escape(s: &str) -> String {
     out
 }
 
+/// 关键词的 **SQL 侧预筛**：逐 term 的"包含"，大小写不敏感（`ILIKE`）。
+///
+/// ── 这一层只保证**超集** ───────────────────────────────────────────────────
+/// 它说"不命中"的行才是真不命中；它说"命中"的行还要在内存里用 `count_terms` /
+/// `score_term_sum` 重判一遍（档位与打分只住在内存里，见 `rank_tiered`）。
+/// 所以 `ILIKE` 的**大小写不敏感**是承重的：内存判定是
+/// `text.to_lowercase().contains(term_lower)`，而 PG 的 `LIKE` **区分大小写** ——
+/// 正文里写 `ESP32`、查询是 `esp32` 的那些行会被这一层**静默丢掉**，
+/// 而它丢掉的行内存那一层永远看不见（`talk_hits` / `comment_hits` 此前就是这样）。
+///
+/// ⚠️ 两边的大小写语义有极小差别（PG 按库的 collation，Rust 是全 Unicode）：理论上存在
+/// "预筛少收一行"的字符（如 `İ`）。本站语料是中文 + ASCII，两边一致；真要更保守，
+/// 只能把预筛整个去掉（回到全量加载）—— 那是这条路唯一的退路。
+///
+/// ── 为什么是 `ILIKE` + `like_escape` 而不是 `position(...)` ─────────────────
+/// `position(t IN ...)` 是**字面**匹配、不用转义，但它是**大小写敏感**的，上面那条超集
+/// 性质就没了。`ILIKE` 配 `like_escape`（转义 `%` / `_` / `\` 三个字符）与内存里
+/// `contains` 的语义**逐字对应**：`100%` 里的 `%` 是字面量，`aXb` 不会被 `a_b` 命中。
+///
+/// 返回 `None` = 没有可用 term 或没有列（调用方**不许**拿它拼一个恒真条件）。
+pub(crate) fn keyword_prefilter(
+    cols: &[sea_orm::sea_query::SimpleExpr],
+    terms: &[String],
+) -> Option<sea_orm::sea_query::Condition> {
+    use sea_orm::sea_query::extension::postgres::PgExpr;
+
+    if terms.is_empty() || cols.is_empty() {
+        return None;
+    }
+    let mut cond = sea_orm::sea_query::Condition::any();
+    for t in terms {
+        let pat = format!("%{}%", like_escape(t));
+        for col in cols {
+            cond = cond.add(col.clone().ilike(pat.clone()));
+        }
+    }
+    Some(cond)
+}
+
 /// 命中的 term 个数（0 = 不命中；`terms.len()` = **全中**）。**档位即这个词数**——
 /// 前台按「全中优先、无全中才降级到部分命中」分档（见 `routes/notes.rs::search_notes`）。
 ///
@@ -447,5 +486,87 @@ mod rank_and_snippet_tests {
         // 正好等于上限：不加省略号（否则"没截断"和"截断了"看起来一样）
         assert_eq!(snippet("中中中中", 4), "中中中中");
         assert_eq!(snippet("", 10), "");
+    }
+}
+
+#[cfg(test)]
+mod keyword_prefilter_tests {
+    use super::keyword_prefilter;
+    use sea_orm::sea_query::{
+        Alias, Expr, PostgresQueryBuilder, Query, SimpleExpr, Value,
+    };
+
+    fn col(name: &str) -> SimpleExpr {
+        SimpleExpr::from(Expr::col(Alias::new(name.to_string())))
+    }
+
+    /// 把预筛条件塞进一条真语句里渲染出来，回 `(SQL 文本, 绑定值)`。
+    fn render(cols: &[SimpleExpr], terms: &[String]) -> Option<(String, Value)> {
+        let cond = keyword_prefilter(cols, terms)?;
+        let (sql, values) = Query::select()
+            .column(Alias::new("id"))
+            .from(Alias::new("note"))
+            .cond_where(cond)
+            .build(PostgresQueryBuilder);
+        Some((sql, values.0.into_iter().next().expect("预筛至少该有一个绑定值")))
+    }
+
+    /// **必须是 `ILIKE`**：内存判定是 `to_lowercase().contains`，而 PG 的 `LIKE`
+    /// **区分大小写** ⇒ 用 `LIKE` 会把"正文写 `ESP32`、查询 `esp32`"的行静默丢掉，
+    /// 而内存那一遍永远看不见被丢掉的行（这是**少结果**，不是慢）。
+    ///
+    /// 判据写成"`LIKE` 出现次数 == `ILIKE` 出现次数"：裸 `LIKE` 是 `ILIKE` 的子串，
+    /// 单查 `contains("LIKE")` 对它**恒真**（那种写法看起来在测、其实什么都没测）。
+    #[test]
+    fn 预筛用_ilike_而不是_like() {
+        let (sql, _) = render(&[col("title")], &["esp32".to_string()]).unwrap();
+        assert!(sql.contains("ILIKE"), "预筛没生成 ILIKE：{sql}");
+        assert_eq!(
+            sql.matches("LIKE").count(),
+            sql.matches("ILIKE").count(),
+            "出现了一个裸 `LIKE`（区分大小写）—— 大小写不同的行会被静默丢掉：{sql}"
+        );
+    }
+
+    /// 模式串必须是 `%<like_escape(term)>%`：`%` / `_` / `\` 三个字符都要转义成字面量。
+    ///
+    /// ⚠️ 这条判的是**绑定值**，不是 SQL 文本 —— sea-query 默认把值渲染成占位符
+    /// （`$1`），文本里根本没有那个串。第一版写成 `sql.contains("100\\%")` 时它恒假，
+    /// 而那看起来像是"预筛坏了"。
+    #[test]
+    fn 模式串转义成字面量() {
+        let cases = [
+            ("100%", "%100\\%%"),
+            ("a_b", "%a\\_b%"),
+            ("c:\\path", "%c:\\\\path%"),
+        ];
+        for (term, want) in cases {
+            let (_, v) = render(&[col("title")], &[term.to_string()]).unwrap();
+            let Value::String(Some(pat)) = &v else {
+                panic!("预筛的模式串该是字符串，实得 {v:?}");
+            };
+            assert_eq!(pat.as_str(), want, "term={term:?}");
+        }
+    }
+
+    /// 多个 term / 多列 = 逐个组合成 `OR`（**超集**语义：任一 term 命中任一列即可）。
+    #[test]
+    fn 多词多列拼成_or() {
+        let terms = vec!["a".to_string(), "b".to_string()];
+        let (sql, _) = render(&[col("title"), col("content")], &terms).unwrap();
+        assert_eq!(sql.matches("ILIKE").count(), 4, "2 个 term × 2 列：{sql}");
+        assert!(
+            sql.contains(" OR "),
+            "term 之间必须是 OR（与 是超集的反面：会少收）：{sql}"
+        );
+    }
+
+    /// 没有 term / 没有列 ⇒ `None`。**调用方不许拿它拼一个恒真条件**：
+    /// `Condition::any()` 里一条都没有时渲染出来是**空**，但谁把它当成"匹配一切"去用，
+    /// 就会把整张表拉进候选（预筛的意义当场归零）。
+    #[test]
+    fn 空输入回_none() {
+        assert!(keyword_prefilter(&[], &["a".to_string()]).is_none());
+        assert!(keyword_prefilter(&[col("title")], &[]).is_none());
     }
 }

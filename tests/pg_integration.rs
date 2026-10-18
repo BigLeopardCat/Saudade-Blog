@@ -210,7 +210,19 @@ async fn connect() -> Option<DatabaseConnection> {
     // 上面那条前缀断言把最常见的一种畸形挡在了它前面。
     let mut opt = ConnectOptions::new(url);
     // 连不上时别等 30 秒——5 秒足够，且会让失败信息出现在 CI 日志里显眼的位置。
-    opt.connect_timeout(Duration::from_secs(5)).max_connections(4);
+    //
+    // ⚠️ `max_connections(1)` 是**算过账的**，不是随手填的小数（20261018）：
+    //   · 本机 PG `max_connections = 30`，而**生产常驻就占掉约 10 个**（`saudade-rust` /
+    //     `saudade-agent` 都连同一台）⇒ 本套件可用的只有二十来个；
+    //   · `cargo test` 默认并发 = `nproc`（本机 **4**），而**每条用例开两个池**
+    //     （`connect_pair`，`DatabaseConnection` 不是 `Clone`）⇒
+    //     并发连接数 ≈ `2 × nproc × max_connections`。
+    //   写 4 时是 `2 × 4 × 4 = 32 > 20`：**刚好压在边界上**，于是偶发
+    //   `pool timed out while waiting for an open connection` —— 红起来像"这次改动
+    //   把库弄坏了"，而根因与改动无关（20261018 实测复现：`--test-threads=32` 必红）。
+    //   写 1 之后是 8，留足了余量。**用例里的查询全是顺序 await**（handler 里没有
+    //   `join!` / `join_all`，`grep` 可验），所以一个池一条连接够用。
+    opt.connect_timeout(Duration::from_secs(5)).max_connections(1);
     let db = Database::connect(opt).await.unwrap_or_else(|e| {
         panic!(
             "TEST_PG_URL 在场但连不上库：{e}\n\
@@ -3199,4 +3211,276 @@ async fn note_tags_修改稿从原行复制标签() {
     exec(&db, &format!("DELETE FROM note WHERE id = {rev} OR id = {TAGAS_NOTE}")).await;
     exec(&db, &format!("DELETE FROM tag_one WHERE id = {TAGAS_TAGONE}")).await;
     exec(&db, &format!("DELETE FROM \"user\" WHERE id = {TAGAS_ADMIN_UID}")).await;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ⑳ 搜索的 SQL 预筛（20261018）：预筛不许**少收一行**
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// 预筛只保证**超集**（`search_core::keyword_prefilter` 头注）：真判定、打分、档位、顺序
+// 全留在内存那一遍。所以它唯一危险的坏法是**少收** —— SQL 没把某一行取回来，内存里那一遍
+// 再准也看不见它，结果是"搜不到"，而接口照旧 200、日志一个字都没有。⇒ 本节每条判据
+// 都是「**该出现的那一类必须出现**」，而不是"看着像对"。
+//
+// 四类命中各一条夹具：只命中标题 / 只命中正文 / **只命中标签名** / 必须不出现的隐藏稿。
+// 第三类是新解锁的那一格：标签名住在 `note_tag` 关联表里，SQL 主查询碰不到，只能先把
+// 命中的文章 id 取回来 OR 进去（`notes::note_keyword_prefilter`）。关联表落地之前
+// SQL 侧**根本判不了**这一维（那时标签是 id 串：搜名字恒空、搜数字恒假命中）。
+//
+// ⚠️ **`%` / `_` 的转义在本节里几乎观察不到**，别把它读成"测过了"：内存判定才是权威
+// （`to_lowercase().contains`），未转义的 `LIKE` 只会**多收**行，多收的那些到内存里照样
+// 被筛掉 ⇒ 最终答案一个字不差。真正会因转义坏掉的是**反斜杠**（模式里的 `\p` 被 PG 当成
+// "转义的 p" ⇒ **少收**），所以只有它有一条端到端判据（见 ⑳b）。`%` / `_` 的判据在
+// `search_core` 的 SQL 文本单测里（那里看的是生成出来的模式串本身）。
+
+/// 夹具关键词：**刻意是个真实内容里不可能出现的怪串**（同 `AGG_KW` 的理由 —— 断言里
+/// 有精确 id 集合，撞上库里任何一条真实内容就会红得像是"搜索坏了"）。
+const SRCH_KW: &str = "qzkw";
+
+const SRCH_TITLE_NOTE: i32 = 900000101; // 只命中**标题** ⇒ 该出现
+const SRCH_BODY_NOTE: i32 = 900000102; // 只命中**正文** ⇒ 该出现
+const SRCH_TAG_NOTE: i32 = 900000103; // 标题/正文都不含关键词，**只有标签名含** ⇒ 该出现
+const SRCH_HIDDEN_NOTE: i32 = 900000110; // 标题命中但 `is_public=false` ⇒ 不许出现
+const SRCH_TAGONE: i32 = 900000111; // 上面那篇挂的一级标签，名字里带关键词
+
+/// 取搜索结果里的 `noteKey`，**保持服务端给的顺序**（⑳a 要钉排序，不能排序后再比）。
+fn note_keys(j: &serde_json::Value) -> Vec<i32> {
+    j["data"]
+        .as_array()
+        .unwrap_or_else(|| panic!("data 不是数组：{j}"))
+        .iter()
+        .map(|r| r["noteKey"].as_i64().expect("文章行没有整数 noteKey") as i32)
+        .collect()
+}
+
+/// 发一条文章搜索（`/api/public/notes/search`，**无鉴权**）。
+async fn search_notes_of(app: axum::Router, keyword: &str) -> serde_json::Value {
+    let body = format!(r#"{{"keyword":"{keyword}"}}"#);
+    let (st, j) = call(app, "POST", "/api/public/notes/search", None, Some(&body)).await;
+    assert_eq!(st, StatusCode::OK, "文章搜索不该在 HTTP 层失败：{j}");
+    assert_eq!(j["code"], 200, "信封 code 必须是 200：{j}");
+    j
+}
+
+#[tokio::test]
+async fn test_搜索预筛的四类命中与档内顺序() {
+    let Some((db, db_app)) = connect_pair().await else { return };
+
+    // 先清自己的残留（上次跑挂了会留下行）。**先删文章、再删标签**（⑲ 头注那条不变量）。
+    exec(
+        &db,
+        &format!(
+            "DELETE FROM note WHERE id IN ({SRCH_TITLE_NOTE},{SRCH_BODY_NOTE},{SRCH_TAG_NOTE},{SRCH_HIDDEN_NOTE})"
+        ),
+    )
+    .await;
+    exec(&db, &format!("DELETE FROM tag_one WHERE id = {SRCH_TAGONE}")).await;
+
+    // 建：先标签、再文章（同 ⑲）。
+    make_tag_one(&db, SRCH_TAGONE, &format!("{SRCH_KW}标签名")).await;
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO note (id, title, content, created_at, updated_at, is_public, status) VALUES \
+             ({SRCH_TITLE_NOTE},  '{SRCH_KW} 标题命中', '正文里没有那个词', NOW(), NOW(), true,  'published'), \
+             ({SRCH_BODY_NOTE},   '无关标题',          '正文里出现 {SRCH_KW} 一次', NOW(), NOW(), true, 'published'), \
+             ({SRCH_TAG_NOTE},    '无关标题',          '正文里没有那个词', NOW(), NOW(), true, 'published'), \
+             ({SRCH_HIDDEN_NOTE}, '{SRCH_KW} 隐藏稿',  '正文里没有那个词', NOW(), NOW(), false, 'published')"
+        ),
+    )
+    .await;
+    // 第三篇只挂标签：标题、正文都不含关键词 ⇒ 它能被搜到**只能**因为标签那一维被 OR 进来。
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO note_tag (note_id, seq, tag_one_id, tag_two_id) \
+             VALUES ({SRCH_TAG_NOTE}, 0, {SRCH_TAGONE}, NULL)"
+        ),
+    )
+    .await;
+    exec(
+        &db,
+        &format!("UPDATE note SET tags = '{SRCH_TAGONE}' WHERE id = {SRCH_TAG_NOTE}"),
+    )
+    .await;
+
+    let j = search_notes_of(test_app(db_app), SRCH_KW).await;
+    // **精确有序列表**（多一行少一行、顺序换了都红）。
+    // 顺序 = 档内按分数倒序，而三篇的分数恰好各来自一个维度：
+    //   标题命中 +100 / **标签命中 +30** / 正文出现 1 次 +1
+    // ⇒ 这条同时钉住了「打分还在内存里跑」与「标签那一维真的接上了」两件事。
+    assert_eq!(
+        note_keys(&j),
+        vec![SRCH_TITLE_NOTE, SRCH_TAG_NOTE, SRCH_BODY_NOTE],
+        "四类命中：标题(+100) > 标签(+30) > 正文(+1)；隐藏稿不许出现。实得：{j}"
+    );
+
+    // 收尾：先文章、再标签。
+    exec(
+        &db,
+        &format!(
+            "DELETE FROM note WHERE id IN ({SRCH_TITLE_NOTE},{SRCH_BODY_NOTE},{SRCH_TAG_NOTE},{SRCH_HIDDEN_NOTE})"
+        ),
+    )
+    .await;
+    exec(&db, &format!("DELETE FROM tag_one WHERE id = {SRCH_TAGONE}")).await;
+}
+
+// ── ⑳b 大小写口径 / 可见集合不被收窄 / 反斜杠转义 ──────────────────────────────
+//
+// 三条判据各钉一个**会静默丢结果**的坏法，都不是"看着像对"：
+//
+//   ① **大小写**：预筛用 `ILIKE`，内存判定是 `to_lowercase().contains`。若预筛写成 `LIKE`
+//      （PG 的 `LIKE` **区分大小写**），正文里写 `ESP32`、查询是 `esp32` 的那些行会被
+//      SQL 这一层丢掉 —— 内存那一遍永远看不见它们。**同一处缺陷在 `search.rs` 的
+//      `talk_hits` / `comment_hits` 里是存量 bug**（那两处一直用 `Column::…like(...)`），
+//      20261018 一并修成 `ILIKE`。
+//   ② **可见集合不许被预筛收窄**：评论那一栏问的是"这篇**文章**可见吗"，不是"这篇**文章**
+//      命中关键词吗"。拿预筛后的文章集合去喂，搜一个词就会让**别的文章下的评论整片消失**
+//      —— 所以 `search_all` 里可见集合是一条**不带关键词**的独立查询（`visible_notes_query`）。
+//   ③ **反斜杠**：预筛的模式串过 `like_escape`。不转义的话 `%z:\srch%` 里的 `\s` 被 PG
+//      当成"转义的 s"（等价于搜 `z:srch`）⇒ **少收**。
+//      ⚠️ 路径**刻意不用 `c:\path`**：⑩ 那条用例搜 `c:\path` 时断言"文章/说说/评论
+//      三个计数都是 0"，而它自己的注释就写着"开发库上若有真实内容写着这个路径，这里会红"。
+//      两个用例是**并发**跑的 —— 用同一个串就是给 ⑩ 埋一条随机红（20261018 实测撞过）。
+//
+// ⚠️ ② 与 ③ 的夹具都刻意让"文章本身不命中关键词" —— 否则判据在坏掉的实现上**照样绿**。
+
+const SRCH_UPPER_NOTE: i32 = 900000104; // 正文写的是大写 `ESP32` ⇒ 搜 `esp32` 必须找得到
+const SRCH_BSLASH_NOTE: i32 = 900000105; // 正文含字面量 `c:\path` ⇒ 搜 `c:\path` 必须找得到
+const SRCH_CMT_HOST_NOTE: i32 = 900000106; // 标题/正文都与下面两个关键词无关
+const SRCH_PCT_NOTE: i32 = 900000107; // 正文含字面量 `100%`
+const SRCH_UNDER_NOTE: i32 = 900000108; // 正文含 `aXb` ⇒ 搜 `a_b` 不该找到它
+
+const SRCH_CMT_PLAIN: i32 = 900000121; // 挂在上面的宿主文章上，正文含小写 `zqx`
+const SRCH_CMT_UPPER: i32 = 900000122; // 同上，正文含大写 `QRW`
+const SRCH_TALK_UPPER: i32 = 900000131; // 说说，正文含大写 `VBN`
+
+#[tokio::test]
+async fn test_搜索预筛的大小写可见集合与转义() {
+    let Some((db, db_app)) = connect_pair().await else { return };
+
+    for id in [SRCH_UPPER_NOTE, SRCH_BSLASH_NOTE, SRCH_CMT_HOST_NOTE, SRCH_PCT_NOTE, SRCH_UNDER_NOTE] {
+        exec(&db, &format!("DELETE FROM note WHERE id = {id}")).await;
+    }
+    for id in [SRCH_CMT_PLAIN, SRCH_CMT_UPPER] {
+        exec(&db, &format!("DELETE FROM note_comment WHERE id = {id}")).await;
+    }
+    exec(&db, &format!("DELETE FROM talk WHERE id = {SRCH_TALK_UPPER}")).await;
+
+    // 正文里是**大写** `ESP32`（`ILIKE` 的判据）；`c:\path` 是**单个**反斜杠 ——
+    // PG 默认 `standard_conforming_strings = on`，字符串字面量里的反斜杠就是反斜杠，
+    // 写成 `\\` 会存进两个、这条判据当场失去意义（同 ⑱ 那条反斜杠夹具的 ⚠️）。
+    exec(
+        &db,
+        &format!(
+            // ⚠️ **普通字符串**（不是 `r"…"`）：`\` + 换行才是续行。写成原始字符串的话
+            // 那些续行的反斜杠会原样进 SQL，PG 直接报 `syntax error at or near "\"`。
+            // 而正文里的那一个反斜杠得写成 `\\`（Rust 层折成 `\`，PG 的
+            // `standard_conforming_strings = on` 再不吃一层 ⇒ 库里存的就是**一个**）。
+            "INSERT INTO note (id, title, content, created_at, updated_at, is_public, status) VALUES \
+             ({SRCH_UPPER_NOTE},     '固件笔记',  '正文里写的是 ESP32 大写', NOW(), NOW(), true, 'published'), \
+             ({SRCH_BSLASH_NOTE},    '路径笔记',  '路径 z:\\srch 结束',      NOW(), NOW(), true, 'published'), \
+             ({SRCH_CMT_HOST_NOTE},  '评论宿主',  '与这两个关键词都无关',    NOW(), NOW(), true, 'published'), \
+             ({SRCH_PCT_NOTE},       '百分比笔记', '完成度 100% 的夹具',     NOW(), NOW(), true, 'published'), \
+             ({SRCH_UNDER_NOTE},     '下划线笔记', '正文里写着 aXb 三个字符', NOW(), NOW(), true, 'published')"
+        ),
+    )
+    .await;
+
+    // 两条评论挂在**标题/正文都不含 `zqx`/`qrw`** 的文章上 ⇒ 它们能不能被搜到，
+    // 只取决于"可见集合有没有被预筛收窄"。
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO note_comment (id, note_id, user_id, content, approved, is_deleted, created_at, updated_at) VALUES \
+             ({SRCH_CMT_PLAIN}, {SRCH_CMT_HOST_NOTE}, 0, '评论正文 zqx', 1, 0, NOW(), NOW()), \
+             ({SRCH_CMT_UPPER}, {SRCH_CMT_HOST_NOTE}, 0, '评论正文 QRW', 1, 0, NOW(), NOW())"
+        ),
+    )
+    .await;
+    // 说说：正文大写。这一条**与可见集合无关**（说说那一栏不看文章），
+    // 所以它单独钉 `talk_hits` 的 `LIKE → ILIKE`。
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO talk (id, title, content, cat, v, author, user_id, src, approved, created_at, updated_at) VALUES \
+             ({SRCH_TALK_UPPER}, '无关标题', '说说正文 VBN 大写', '愿', 0, '', 0, 'talk', 1, NOW(), NOW())"
+        ),
+    )
+    .await;
+
+    // `Router` 是 `Clone`（`DatabaseConnection` **不是**，见 `connect_pair` 头注）⇒ 真链路
+    // 那条句柄建一次、每条请求克隆一份。
+    let app = test_app(db_app);
+
+    // ── ① 大小写（文章）────────────────────────────────────────────────
+    let j = search_notes_of(app.clone(), "esp32").await;
+    assert!(
+        note_keys(&j).contains(&SRCH_UPPER_NOTE),
+        "正文写 `ESP32`、查询是 `esp32` 的篇**必须**在结果里 —— 少了它说明预筛是区分\
+         大小写的 `LIKE`（内存那一遍永远看不见这一行）：{j}"
+    );
+
+    // ── ③ 反斜杠转义（文章）────────────────────────────────────────────
+    let j = search_notes_of(app.clone(), r"z:\\srch").await;
+    assert!(
+        note_keys(&j).contains(&SRCH_BSLASH_NOTE),
+        "正文含字面量 `z:\\srch` 的篇必须能被 `z:\\srch` 搜到（模式串没过 `like_escape` \
+         的话 `\\s` 会被当成转义的 s ⇒ 少收）：{j}"
+    );
+
+    // ── ② 可见集合不被收窄（评论）+ ① 的大小写（评论）────────────────────
+    let body = r#"{"keyword":"zqx"}"#;
+    let (st, j) = call(app.clone(), "POST", "/api/public/search", None, Some(body)).await;
+    assert_eq!(st, StatusCode::OK, "{j}");
+    assert!(
+        agg_keys(&j, "comments").contains(&SRCH_CMT_PLAIN),
+        "评论的宿主文章**自己不命中关键词**，但那条评论必须被搜到 —— 少了它说明\
+         `visible_ids` 是拿**预筛后的候选集合**当可见集合了（搜一个词就把别的文章下的\
+         评论整片抹掉）：{j}"
+    );
+
+    let body = r#"{"keyword":"qrw"}"#;
+    let (st, j) = call(app.clone(), "POST", "/api/public/search", None, Some(body)).await;
+    assert_eq!(st, StatusCode::OK, "{j}");
+    assert!(
+        agg_keys(&j, "comments").contains(&SRCH_CMT_UPPER),
+        "评论正文写 `QRW`、查询 `qrw` 必须命中（`comment_hits` 的 `LIKE` 是存量 bug，\
+         20261018 修成 `ILIKE`）：{j}"
+    );
+
+    let body = r#"{"keyword":"vbn"}"#;
+    let (st, j) = call(app.clone(), "POST", "/api/public/search", None, Some(body)).await;
+    assert_eq!(st, StatusCode::OK, "{j}");
+    assert!(
+        agg_keys(&j, "talks").contains(&SRCH_TALK_UPPER),
+        "说说正文写 `VBN`、查询 `vbn` 必须命中（同上，`talk_hits` 的 `LIKE`）：{j}"
+    );
+
+    // ── `%` / `_`：只钉"最终答案"，**钉不住转义**（见本节头注的 ⚠️）─────────
+    // 正面这一条仍然有意义：它是"含 `%` 的行必须**找得到**"，任何让预筛在 `%` 上炸掉的
+    // 实现（比如换成正则）都会在这里红。
+    let j = search_notes_of(app.clone(), "100%").await;
+    assert!(
+        note_keys(&j).contains(&SRCH_PCT_NOTE),
+        "正文含字面量 `100%` 的篇必须能被 `100%` 搜到：{j}"
+    );
+    // 负面这一条**对转义不敏感**（未转义的 `a_b` 会多收 `aXb`，但内存判定照样把它筛掉
+    // ⇒ 最终答案一样）。留着是因为它锁的是**最终答案**：哪天有人把判定搬进 SQL，
+    // 这条立刻变成真判据。
+    let j = search_notes_of(app.clone(), "a_b").await;
+    assert!(
+        !note_keys(&j).contains(&SRCH_UNDER_NOTE),
+        "搜 `a_b` 不该命中正文里的 `aXb`（`_` 是 LIKE 的单字符通配符）：{j}"
+    );
+
+    // 收尾：先文章、再评论/说说（评论与文章之间没有外键，得各自删）。
+    for id in [SRCH_UPPER_NOTE, SRCH_BSLASH_NOTE, SRCH_CMT_HOST_NOTE, SRCH_PCT_NOTE, SRCH_UNDER_NOTE] {
+        exec(&db, &format!("DELETE FROM note WHERE id = {id}")).await;
+    }
+    for id in [SRCH_CMT_PLAIN, SRCH_CMT_UPPER] {
+        exec(&db, &format!("DELETE FROM note_comment WHERE id = {id}")).await;
+    }
+    exec(&db, &format!("DELETE FROM talk WHERE id = {SRCH_TALK_UPPER}")).await;
 }
