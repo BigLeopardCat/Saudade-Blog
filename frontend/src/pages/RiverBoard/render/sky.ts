@@ -251,9 +251,9 @@ export function drawHorizonGlow(ctx: CanvasRenderingContext2D, geo: Geo, moon: M
     ctx.restore();
 }
 
-/** 月晕：三层叠 —— 紧实的亮核、中景散射、很宽的一圈极淡的外晕。
- *  **只画光，不碰月盘**（月盘 sprite 在 index.tsx 里，由 riverboard-moon.test.mjs 锁死）。 */
-/* 月晕的**受光面掩膜**：一个半径 2.6r 的小画布，盘内每点按它自己的球面法线与
+/** 月晕：**只画光，不碰月盘**（月盘 sprite 在 index.tsx 里，由
+ *  riverboard-moon.test.mjs 锁死）。做法是"受光面掩膜 + 两档模糊"，见下。 */
+/* 月晕的**受光面掩膜**：一张半径 `HALO_RATIO`·r 的画布，盘内每点按它自己的球面法线与
  *  光方向点乘（Lambert）给不透明度，盘外全透明。之后把这个掩膜**模糊**着叠上去，
  *  得到的光晕形状就**正好是受光面的形状**。
  *
