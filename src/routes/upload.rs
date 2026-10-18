@@ -104,19 +104,26 @@ async fn ensure_image_row(state: &Arc<AppState>, url: &str) {
 
 /// 这张图还有哪些文章在用（封面字段 / 正文文本）。返回 (文章 id, 标题)。
 async fn notes_using(state: &Arc<AppState>, url: &str) -> Vec<(i32, String)> {
+    // `content` 留在 WHERE 里（"这篇文章引用过这张图吗"必须按正文判），但**不必 select**
+    // —— 命中之后只用得上 id 与标题（20261018）。从前 `SELECT *` ⇒ 每查一次引用关系就把
+    // 所有命中文章的正文读回来，紧接着全部丢掉。
     note::Entity::find()
+        .select_only()
+        .column(note::Column::Id)
+        .column(note::Column::Title)
         .filter(
             Condition::any()
                 .add(note::Column::Cover.eq(url))
                 .add(note::Column::Content.like(format!("%{}%", like_escape(url)))),
         )
+        .into_tuple::<(i32, String)>()
         .all(&state.db)
         .await
         .map(|rows| {
             rows.into_iter()
-                .map(|n| {
-                    let title: String = n.title.chars().take(20).collect();
-                    (n.id, title)
+                .map(|(id, title)| {
+                    let title: String = title.chars().take(20).collect();
+                    (id, title)
                 })
                 .collect()
         })

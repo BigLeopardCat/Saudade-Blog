@@ -1,5 +1,5 @@
 use axum::{Json, extract::{State, Query, Path}, http::{HeaderMap, StatusCode}, response::{IntoResponse, Response}};
-use sea_orm::{EntityTrait, ColumnTrait, QueryFilter, QueryOrder, QuerySelect, Condition, ActiveModelTrait, Set, PaginatorTrait, ActiveValue::NotSet};
+use sea_orm::{EntityTrait, ColumnTrait, QueryFilter, QueryOrder, QuerySelect, Condition, ActiveModelTrait, Set, PaginatorTrait, ActiveValue::NotSet, DerivePartialModel};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -7,6 +7,40 @@ use crate::entity::{note, category, tag_one, tag_two, user};
 use crate::routes::AppState;
 use crate::search_core::{count_terms, keyword_given, score_term_sum, split_terms};
 use crate::utils::ApiResponse;
+
+// ── 文章状态词表：唯一解析点（20261018）───────────────────────────────────────
+//
+// `status` 与 `is_public` 是**两个字段描述同一件事**，此前四处写点各自手写 if 链去对齐，
+// 而公开侧的守卫是"排除 draft"（`status != 'draft'`）—— 那是**黑名单**：任何没见过的词
+// （以及 NULL）都不在"排除名单"里，于是**漏过去**。可触达的后果：一条
+// `status='private'` 而 `is_public=true` 的行会被公开列出（`update_note` 只带
+// `{"is_public":true}` 就能造出来）。今天没泄漏只是因为四处写点恰好对齐，**不是因为有约束**。
+//
+// 这里做两件事：读侧把黑名单翻成**白名单**（未知词/NULL 从"放行"变"拦截"），
+// 写侧把词表收敛到**一处**（未知词 400 拒绝，绝不原样写库）。
+
+/// 公开可见的 status 词。`published` 必须在里面：`0000_schema.sql` 的列缺省就是它，
+/// 集成测夹具也按它 INSERT。它是 `public` 的**兼容别名**，不是第二个真值。
+pub(crate) fn public_status_words() -> Vec<String> {
+    vec!["public".to_string(), "published".to_string()]
+}
+
+/// 状态词的**唯一解析点**：只认这三个（`published` 归一成 `public`），未知词返回 `None`
+/// —— 调用方必须拒绝，**不要**原样写库（原样写库正是"未知词留在库里且照旧公开"的来路）。
+fn normalize_status_word(raw: &str) -> Option<&'static str> {
+    match raw.trim() {
+        "public" | "published" => Some("public"),
+        "private" => Some("private"),
+        "draft" => Some("draft"),
+        _ => None,
+    }
+}
+
+/// 这个词是不是"公开可见"那一档（`normalize_status_word` 之后只剩 `public` 一个，
+/// 但这里照样认 `published`，好在归一之前也能问）。
+fn status_is_publicish(word: &str) -> bool {
+    matches!(word, "public" | "published")
+}
 
 #[derive(Deserialize)]
 pub struct NoteQuery {
@@ -118,10 +152,18 @@ fn clamp_zoom(v: f64) -> f64 {
     if v.is_finite() { v.clamp(1.0, 4.0) } else { 1.0 }
 }
 
-fn map_note(n: note::Model, cat: Option<category::Model>) -> NoteDto {
-    let cat_id = cat.as_ref().map(|c| c.id);
-    let cat_name = cat.map(|c| c.name);
-    
+/// `cat` 是**已经取出来的**（id, 名字）二元组，不是 `category::Model`。
+///
+/// 20261018 起刻意收窄：列表查询只 select 分类的这两列（见 `CategoryPartial`），
+/// 硬要收成 `Model` 就得给 `introduce`/`path_name`/`icon`/`color` 编一堆 `None` 填进去
+/// —— 而"哪天有人在 `map_note` 里读了 `cat.introduce`，它恒为 None 且没有任何东西会红"
+/// 正是本仓最忌讳的那类静默失效。收成二元组之后，**没取的东西在类型上就不存在**。
+fn map_note(n: note::Model, cat: Option<(i32, String)>) -> NoteDto {
+    let (cat_id, cat_name) = match cat {
+        Some((id, name)) => (Some(id), Some(name)),
+        None => (None, None),
+    };
+
     NoteDto {
         id: n.id,
         key: n.id,
@@ -159,6 +201,80 @@ fn map_note(n: note::Model, cat: Option<category::Model>) -> NoteDto {
     }
 }
 
+// ── 列表端点的 SELECT 形状（20261018）：**没有 `content` 列** ────────────────────────
+//
+// 三个列表端点（`list_public_notes` / `list_all_notes` / `get_top_notes`）此前走
+// `find_also_related` / `find_with_related` —— 那是 `SELECT note.*`，**整篇正文一起读回来**，
+// 而紧接着 `map_note_summary` 的第一件事就是把 `content` / `content_raw` 置空
+// （`description` 21/21 全非空，卡片摘要本来就不需要正文）。Times 归档页一次
+// `page_size=999` ⇒ 一次读回**全站正文**。这是本站唯一一处**随语料线性增长**的读放大。
+//
+// 用 partial model 而不是"记得别 select content"：正文列**根本不在 select 列表里**，
+// 没有纪律要守。两个方向都是编译强制 —— 给 `note::Entity` 加一列会让 `into_model()`
+// 编译不过（新列没处放），给 `NoteDto` 加字段会让 `map_note` 编译不过。
+#[derive(Debug, Clone, DerivePartialModel)]
+#[sea_orm(entity = "note::Entity", from_query_result)]
+pub struct NoteSummary {
+    pub id: i32,
+    pub title: String,
+    pub description: Option<String>,
+    pub cover: Option<String>,
+    pub cover_focus_x: Option<f64>,
+    pub cover_focus_y: Option<f64>,
+    pub cover_zoom: Option<f64>,
+    pub carousel_focus_x: Option<f64>,
+    pub carousel_focus_y: Option<f64>,
+    pub carousel_zoom: Option<f64>,
+    pub is_top: Option<i32>,
+    pub status: Option<String>,
+    pub draft_of: Option<i32>,
+    pub user_id: Option<i32>,
+    pub created_at: chrono::NaiveDateTime,
+    pub updated_at: chrono::NaiveDateTime,
+    pub is_public: bool,
+    pub tags: Option<String>,
+    pub category_id: Option<i32>,
+}
+
+impl NoteSummary {
+    /// 补齐成 `note::Model`，好让 `map_note` / `map_note_summary` 仍是**唯一**的字段映射器
+    /// （否则"摘要行怎么变成 DTO"就有了第二份实现）。
+    ///
+    /// `content` 恒空 —— 这不是"忘了填"，是「列表查询不读正文」这条事实在类型上的落地。
+    fn into_model(self) -> note::Model {
+        note::Model {
+            id: self.id,
+            title: self.title,
+            content: String::new(),
+            description: self.description,
+            cover: self.cover,
+            cover_focus_x: self.cover_focus_x,
+            cover_focus_y: self.cover_focus_y,
+            cover_zoom: self.cover_zoom,
+            carousel_focus_x: self.carousel_focus_x,
+            carousel_focus_y: self.carousel_focus_y,
+            carousel_zoom: self.carousel_zoom,
+            is_top: self.is_top,
+            status: self.status,
+            draft_of: self.draft_of,
+            user_id: self.user_id,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+            is_public: self.is_public,
+            tags: self.tags,
+            category_id: self.category_id,
+        }
+    }
+}
+
+/// 列表查询里跟着一起取的分类列：**只有 `map_note` 真正用到的那两列**。
+#[derive(Debug, Clone, DerivePartialModel)]
+#[sea_orm(entity = "category::Entity", from_query_result)]
+pub struct CategoryPartial {
+    pub id: i32,
+    pub name: String,
+}
+
 pub async fn list_public_notes(
     State(state): State<Arc<AppState>>,
     Query(query): Query<NoteQuery>,
@@ -171,7 +287,7 @@ pub async fn list_public_notes(
 
     // STRICT FILTER FOR PUBLIC API
     condition = condition.add(note::Column::IsPublic.eq(true));
-    condition = condition.add(note::Column::Status.ne("draft"));
+    condition = condition.add(note::Column::Status.is_in(public_status_words()));
 
     // PAGINATION LOGIC
     // page.max(1)：page=0 时 `page - 1` 会 u64 下溢（release 环绕成 u64::MAX → 静默空页）。
@@ -185,6 +301,9 @@ pub async fn list_public_notes(
         .filter(condition)
         .order_by_desc(note::Column::CreatedAt)
         .find_also_related(category::Entity)
+        // `into_partial_model` 把 select 列表换成两个 partial struct 的列 —— 正文不在其中
+        // （见 `NoteSummary` 头注）。分类那一半仍然是同一个 LEFT JOIN，不多一次查询。
+        .into_partial_model::<NoteSummary, CategoryPartial>()
         .paginate(&state.db, per_page);
 
     let notes = paginator
@@ -193,7 +312,7 @@ pub async fn list_public_notes(
         .unwrap_or(vec![]);
 
     let mut dtos: Vec<NoteDto> = notes.into_iter().map(|(n, cat)| {
-        map_note_summary(n, cat)
+        map_note_summary(n.into_model(), cat.map(|c| (c.id, c.name)))
     }).collect();
     attach_stats(&state.db, &mut dtos).await;
     attach_authors(&state.db, &mut dtos).await;
@@ -212,13 +331,17 @@ pub async fn list_all_notes(
     let notes = note::Entity::find()
         .filter(note::Column::DraftOf.is_null())
         .order_by_desc(note::Column::CreatedAt)
-        .find_with_related(category::Entity)
+        // `find_also_related`（不是 `find_with_related`）：`note.category_id` 是单值，
+        // LEFT JOIN 最多出一行，与"再查一遍分类"逐条等价；而只有 `SelectTwo` 才有
+        // `into_partial_model`，能把正文列一起摘掉（见 `NoteSummary` 头注）。
+        .find_also_related(category::Entity)
+        .into_partial_model::<NoteSummary, CategoryPartial>()
         .all(&state.db)
         .await
         .unwrap_or(vec![]);
 
-    let mut dtos: Vec<NoteDto> = notes.into_iter().map(|(n, cats)| {
-        map_note_summary(n, cats.into_iter().next())
+    let mut dtos: Vec<NoteDto> = notes.into_iter().map(|(n, cat)| {
+        map_note_summary(n.into_model(), cat.map(|c| (c.id, c.name)))
     }).collect();
     attach_authors(&state.db, &mut dtos).await;
 
@@ -247,21 +370,37 @@ pub struct SearchRequest {
 /// 读标签字典，返回 `id → 名字`。
 ///
 /// 一级/二级是**两张独立自增**的表，id 命名空间并不隔离（历史上还有过重号），
-/// 所以这里用一张 map 装两级、二级后写覆盖一级。**只用于搜索命中与 `note.tags` 的
-/// id→名字解析，不要拿它建树/判层级**——那是 `tags.rs` 的 `fatherKey` 的活。
+/// 所以这里用一张 map 装两级、**撞号时一级优先**（20261018 对齐前端 `flattenTagOptions`
+/// 的口径；此前是二级覆盖一级，两边对同一篇给出不同的标签名，见 `merge_tag_name_dict`）。
+/// **只用于搜索命中与 `note.tags` 的 id→名字解析，不要拿它建树/判层级**——那是
+/// `tags.rs` 的 `fatherKey` 的活。
 ///
 /// `pub(crate)`：20261006 聚合搜索（`routes/search.rs`）的文章那一栏共用这一份字典。
 pub(crate) async fn load_tag_names(db: &sea_orm::DatabaseConnection) -> HashMap<i32, String> {
-    let mut map: HashMap<i32, String> = HashMap::new();
-    if let Ok(rows) = tag_one::Entity::find().all(db).await {
-        for r in rows {
-            map.insert(r.id, r.name);
-        }
-    }
-    if let Ok(rows) = tag_two::Entity::find().all(db).await {
-        for r in rows {
-            map.insert(r.id, r.name);
-        }
+    let one: Vec<(i32, String)> = match tag_one::Entity::find().all(db).await {
+        Ok(rows) => rows.into_iter().map(|r| (r.id, r.name)).collect(),
+        Err(_) => Vec::new(),
+    };
+    let two: Vec<(i32, String)> = match tag_two::Entity::find().all(db).await {
+        Ok(rows) => rows.into_iter().map(|r| (r.id, r.name)).collect(),
+        Err(_) => Vec::new(),
+    };
+    merge_tag_name_dict(one, two)
+}
+
+/// 两级标签字典的合并规则：**一级优先**（先到先得，撞号时二级**不**覆盖一级）。
+///
+/// 20261018 之前是"一级先写、二级后写覆盖"⇒ 后端取**二级**的名字，而前端
+/// `TagMethods.tsx::flattenTagOptions` 是**一级优先** ⇒ 同一个 id、同一篇文章，两边显示
+/// 不同的标签名。今天库里零撞号，所以这条分歧是潜伏的 —— 但它是**两个实现各说各话**，
+/// 不是"其中一个对"，一旦撞号就会静默给出两种答案。对齐到一级优先（前端那份读法）。
+fn merge_tag_name_dict(
+    one: Vec<(i32, String)>,
+    two: Vec<(i32, String)>,
+) -> HashMap<i32, String> {
+    let mut map: HashMap<i32, String> = HashMap::with_capacity(one.len() + two.len());
+    for (id, name) in one.into_iter().chain(two) {
+        map.entry(id).or_insert(name);
     }
     map
 }
@@ -340,7 +479,7 @@ pub async fn search_notes(
 
     // PUBLIC SAFEGUARDS
     condition = condition.add(note::Column::IsPublic.eq(true));
-    condition = condition.add(note::Column::Status.ne("draft"));
+    condition = condition.add(note::Column::Status.is_in(public_status_words()));
 
     // 关键词**故意不做 SQL 侧过滤**（原来这里是 Title/Content/Tags 三个 LIKE 的 OR）。
     // `note.tags` 存的是逗号分隔的标签 **id**，SQL 只能对 id 串做 `LIKE '%关键词%'`：
@@ -439,7 +578,7 @@ pub async fn search_notes(
     };
 
     let mut dtos: Vec<NoteDto> = notes.into_iter().map(|(n, cats)| {
-        map_note_summary(n, cats.into_iter().next())
+        map_note_summary(n, cats.into_iter().next().map(|c| (c.id, c.name)))
     }).collect();
     attach_stats(&state.db, &mut dtos).await;
     attach_authors(&state.db, &mut dtos).await;
@@ -497,7 +636,7 @@ pub async fn search_all_notes(
     // 已随绿标一起删除。
     if let Some(true) = payload.only_public {
         condition = condition.add(note::Column::IsPublic.eq(true));
-        condition = condition.add(note::Column::Status.ne("draft"));
+        condition = condition.add(note::Column::Status.is_in(public_status_words()));
         condition = condition.add(note::Column::DraftOf.is_null());
     }
 
@@ -557,7 +696,7 @@ pub async fn search_all_notes(
     };
 
     let mut dtos: Vec<NoteDto> = notes.into_iter().map(|(n, cats)| {
-        map_note_summary(n, cats.into_iter().next())
+        map_note_summary(n, cats.into_iter().next().map(|c| (c.id, c.name)))
     }).collect();
     // 署名照挂（20261001）：本函数是后台列表的搜索入口，**与 `list_all_notes` 同一族**。
     // 这里不挂的话，同一篇文章在后台列表里署名是站点级、在公开首页上却是作者本人——
@@ -611,17 +750,18 @@ pub async fn get_top_notes(
     let mut condition = Condition::all();
     condition = condition.add(note::Column::IsTop.eq(1));
     condition = condition.add(note::Column::IsPublic.eq(true));
-    condition = condition.add(note::Column::Status.ne("draft"));
+    condition = condition.add(note::Column::Status.is_in(public_status_words()));
 
     let notes = note::Entity::find()
         .filter(condition)
-        .find_with_related(category::Entity)
+        .find_also_related(category::Entity)
+        .into_partial_model::<NoteSummary, CategoryPartial>()
         .all(&state.db)
         .await
         .unwrap_or(vec![]);
 
-     let mut dtos: Vec<NoteDto> = notes.into_iter().map(|(n, cats)| {
-        map_note_summary(n, cats.into_iter().next())
+     let mut dtos: Vec<NoteDto> = notes.into_iter().map(|(n, cat)| {
+        map_note_summary(n.into_model(), cat.map(|c| (c.id, c.name)))
     }).collect();
     attach_stats(&state.db, &mut dtos).await;
     attach_authors(&state.db, &mut dtos).await;
@@ -640,14 +780,20 @@ pub async fn create_note(
     // 解不出来就留 NULL（= 未记录）⇒ 展示端回退站点级署名，不编一个人名上去。
     let author = crate::auth_jwt::auth_uid(&state.db, &headers).await.ok();
     
-    // Determine is_public logic
-    let mut is_public = payload.is_public.unwrap_or(true);
-    let status_str = payload.status.clone().unwrap_or("published".to_string());
-    
-    if status_str == "draft" || status_str == "private" {
-        is_public = false;
-    }
-    
+    // 状态词与可见性：走**唯一解析点**（`normalize_status_word`）。
+    //
+    // 两处变化（20261018）：① 未知词不再**原样写库**（那正是"库里出现没见过的词、
+    // 而它照旧被公开列出"的来路），改为如实报错；② 缺省词从 `published` 改成 `public`
+    // —— 库里只该有一个"公开"词，`published` 只是兼容别名（老列缺省 + 集成测夹具）。
+    let status_word = match payload.status.as_deref() {
+        Some(raw) => match normalize_status_word(raw) {
+            Some(w) => w,
+            None => return Json(ApiResponse::error("文章状态不合法")),
+        },
+        None => "public",
+    };
+    let is_public = status_is_publicish(status_word) && payload.is_public.unwrap_or(true);
+
     let new_note = note::ActiveModel {
         title: Set(title),
         content: Set(content),
@@ -662,7 +808,7 @@ pub async fn create_note(
         carousel_focus_y: Set(payload.carousel_focus_y.map(clamp01)),
         carousel_zoom: Set(payload.carousel_zoom.map(clamp_zoom)),
         is_top: Set(payload.is_top),
-        status: Set(Some(status_str)),
+        status: Set(Some(status_word.to_string())),
         user_id: Set(author),
         created_at: Set(chrono::Local::now().naive_local()),
         updated_at: Set(chrono::Local::now().naive_local()),
@@ -734,6 +880,8 @@ pub async fn update_note(
         // 编辑器提交（title/content 至少带来一个）才是"发布"那一路 ⇒ 老文章第一次被编辑
         // 时照旧补上；纯元数据写一律不碰署名。
         let backfill_author = should_backfill_author(n.user_id.is_none(), from_editor);
+        // 行里当前的状态词：`n` 马上要被 move 进 active_model，而下面算"有效状态"要用它。
+        let current_status: Option<String> = n.status.clone();
         let mut active_model: note::ActiveModel = n.into();
 
         if backfill_author {
@@ -757,24 +905,36 @@ pub async fn update_note(
         if let Some(v) = payload.is_top { active_model.is_top = Set(Some(v)); }
         if let Some(v) = payload.tags { active_model.tags = Set(Some(v)); }
         
-        // Handle Status and Visibility logic
-        if let Some(v) = payload.status.clone() { 
-            active_model.status = Set(Some(v.clone()));
-            if v == "public" || v == "published" {
-                 active_model.is_public = Set(true);
-            } else if v == "private" || v == "draft" {
-                 active_model.is_public = Set(false);
-            }
+        // 状态与可见性：**一次推导**（20261018）。
+        //
+        // 此前这里是"派生 → 允许显式覆盖 → 再补一次"的补丁摞补丁：只带 `{"is_public":true}`
+        // 打在一条 `status='private'` 的行上时，第二次覆盖把 `is_public` 置回 true，而
+        // `status` 一个字节没动 ⇒ 库里落下 `('private', true)`。公开列表的守卫是
+        // "排除 draft"（黑名单），这种行**会被公开列出**。现在把这条路口封死：
+        // 显式要公开而有效状态词不公开 → **拒绝**，不落库。
+        let requested_word = match payload.status.as_deref() {
+            Some(raw) => match normalize_status_word(raw) {
+                Some(w) => Some(w),
+                None => return Json(ApiResponse::error("文章状态不合法")),
+            },
+            None => None,
+        };
+        if let Some(w) = requested_word {
+            active_model.status = Set(Some(w.to_string()));
         }
-        
-        // If explicit is_public is passed, it overrides (or cooperates)
-        if let Some(v) = payload.is_public { active_model.is_public = Set(v); }
-        
-        // Double check consistency if status was updated
-        if let Some(status_val) = payload.status {
-             if status_val == "draft" || status_val == "private" {
-                 active_model.is_public = Set(false);
-             }
+        // 只带 `{isTop}` 之类的纯元数据写不进这一支 —— 不动可见性。
+        if requested_word.is_some() || payload.is_public.is_some() {
+            // 有效状态词：这一笔给了就用它，没给就沿用行里现有的（NULL 视作 `private`，
+            // 与"没记录的可见性一律不可见"同取向）。
+            let eff_word = requested_word
+                .map(|w| w.to_string())
+                .or_else(|| current_status.clone())
+                .unwrap_or_else(|| "private".to_string());
+            let eff_public = payload.is_public.unwrap_or(status_is_publicish(&eff_word));
+            if eff_public && !status_is_publicish(&eff_word) {
+                return Json(ApiResponse::error("私密/草稿状态的文章不能设为公开"));
+            }
+            active_model.is_public = Set(eff_public);
         }
 
         active_model.updated_at = Set(chrono::Local::now().naive_local());
@@ -825,9 +985,11 @@ pub async fn get_note_detail(
     Path(id): Path<i32>,
 ) -> Response {
     // 公开详情仅返回已发布文章（A4 修复：与列表/搜索接口的过滤条件一致，防枚举自增 id 读取草稿/私密文章）
+    // 20261018：谓词从"排除 draft"翻成白名单，未知 status 由放行变拦截（口径只有一处，
+    // 见 `public_status_words`）。
     let res = note::Entity::find_by_id(id)
         .filter(note::Column::IsPublic.eq(true))
-        .filter(note::Column::Status.ne("draft"))
+        .filter(note::Column::Status.is_in(public_status_words()))
         .find_with_related(category::Entity)
         .all(&state.db)
         .await
@@ -835,7 +997,7 @@ pub async fn get_note_detail(
 
     // 详情页头部同样按**文章作者**渲染（与卡片同一份判据，不是站点主人）
     let mut dtos: Vec<NoteDto> = res.into_iter().next().map(|(n, cats)| {
-        map_note(n, cats.into_iter().next())
+        map_note(n, cats.into_iter().next().map(|c| (c.id, c.name)))
     }).into_iter().collect();
     attach_authors(&state.db, &mut dtos).await;
     let dto = dtos.into_iter().next();
@@ -852,7 +1014,7 @@ pub async fn get_note_detail(
             data: Option::<NoteDto>::None,
         })).into_response(),
     }
-}fn map_note_summary(n: note::Model, cat: Option<category::Model>) -> NoteDto {
+}fn map_note_summary(n: note::Model, cat: Option<(i32, String)>) -> NoteDto {
     let mut dto = map_note(n, cat);
     dto.content = String::new();
     dto.content_raw = String::new();
@@ -1195,8 +1357,8 @@ pub async fn get_note_for_edit(
     };
 
     let dto = EditorNoteDto {
-        note: map_note(note_row, note_cats.into_iter().next()),
-        draft: draft_row.map(|(d, cats)| map_note(d, cats.into_iter().next())),
+        note: map_note(note_row, note_cats.into_iter().next().map(|c| (c.id, c.name))),
+        draft: draft_row.map(|(d, cats)| map_note(d, cats.into_iter().next().map(|c| (c.id, c.name)))),
     };
 
     (StatusCode::OK, Json(ApiResponse::success(dto))).into_response()
@@ -1207,7 +1369,7 @@ pub async fn get_note_for_edit(
 
 #[cfg(test)]
 mod tests {
-    use super::should_backfill_author;
+    use super::*;
 
     /// 署名回填的四个组合（20261007 修的 bug 就在第一行之外的两个"false"上）。
     ///
@@ -1226,5 +1388,65 @@ mod tests {
             "已经有作者的行 ⇒ 后来的保存不许改写署名（谁发的≠最后保存的）"
         );
         assert!(!should_backfill_author(false, false));
+    }
+
+    /// 列表查询的 SELECT 列表里**没有 `content`**（20261018）。
+    ///
+    /// 这条判据红的样子：有人往 `NoteSummary` 里加回 `content`（或者干脆把
+    /// `into_partial_model` 换回 `into_model::<note::Model>`）—— 那时 Times 归档页
+    /// （`page_size=999`）又会一次把**全站正文**读回内存，而**没有任何别的东西会红**
+    /// （接口照常 200，`map_note_summary` 照旧把 content 置空，用户看不出区别）。
+    ///
+    /// ⚠️ **不能**用"端点返回 200 / content 是空串"当判据 —— 那是**空真**：
+    /// content 本来就会被 `map_note_summary` 置空，读不读回来都一样。
+    #[test]
+    fn 列表查询的_select_列表里没有正文() {
+        use sea_orm::{DbBackend, PartialModelTrait, QueryTrait};
+
+        let sql = <NoteSummary as PartialModelTrait>::select_cols(note::Entity::find())
+            .build(DbBackend::Postgres)
+            .sql;
+        assert!(sql.contains("\"title\""), "标题在（不然这条判据连自己都没在测）：{sql}");
+        assert!(
+            !sql.contains("\"content\""),
+            "列表查询又把正文读回来了 —— 见 NoteSummary 头注：这是唯一随语料线性增长的读放大。SQL={sql}"
+        );
+        // `content_raw` 不是列名（DTO 才叫这个），防的是有人误把它当列加进 partial。
+        assert!(!sql.contains("content_raw"), "SQL={sql}");
+    }
+
+    /// 两级标签撞号时**一级优先**（与前端 `flattenTagOptions` 同口径）。
+    ///
+    /// 红的样子：改回"二级后写覆盖一级"（20261018 之前后端就是那样）—— 那时同一个 id、
+    /// 同一篇文章，后端说二级的名字、前端说一级的名字，而**两边都不会报错**。
+    #[test]
+    fn 标签字典撞号取一级() {
+        let dict = merge_tag_name_dict(
+            vec![(7, "一级的名字".to_string()), (14, "只有一级有".to_string())],
+            vec![(7, "二级的名字".to_string()), (10006, "只有二级有".to_string())],
+        );
+        assert_eq!(dict.get(&7).map(String::as_str), Some("一级的名字"), "撞号时一级优先");
+        assert_eq!(dict.get(&14).map(String::as_str), Some("只有一级有"));
+        assert_eq!(dict.get(&10006).map(String::as_str), Some("只有二级有"));
+        assert_eq!(dict.len(), 3);
+    }
+
+    /// 状态词表的唯一解析点：只认三个词，`published` 归一成 `public`，其余一律 `None`。
+    #[test]
+    fn 状态词只认白名单() {
+        assert_eq!(normalize_status_word("public"), Some("public"));
+        assert_eq!(normalize_status_word("published"), Some("public"), "别名归一");
+        assert_eq!(normalize_status_word("private"), Some("private"));
+        assert_eq!(normalize_status_word("draft"), Some("draft"));
+        assert_eq!(normalize_status_word("  public  "), Some("public"), "两侧空白不算词的一部分");
+        // 这几个是"原样写库"的来路：必须 None（调用方据此拒绝），而不是 Some("随便什么")。
+        assert_eq!(normalize_status_word("archived"), None);
+        assert_eq!(normalize_status_word("Public"), None, "大小写敏感，不做模糊匹配");
+        assert_eq!(normalize_status_word(""), None);
+        // 公开档的判定：归一之后只剩 public，但 published 也得算公开（归一之前也会问）。
+        assert!(status_is_publicish("public") && status_is_publicish("published"));
+        assert!(!status_is_publicish("private") && !status_is_publicish("draft"));
+        // 白名单就是这两个词 —— 与上面 `is_in` 谓词喂的是同一份。
+        assert_eq!(public_status_words(), vec!["public".to_string(), "published".to_string()]);
     }
 }

@@ -44,6 +44,12 @@ HERE = pathlib.Path(__file__).resolve().parent
 LOAD = [
     "0000_schema.sql",
     "0003_chat_image.sql",
+    # 0004 只加一条 CHECK（约束），0005 只动数据 —— 两者都不建表，但**必须**在 CI 里跑：
+    # `tests/pg_integration.rs` 有判据要真去撞那条约束（种一行 `('private', true)` 看它
+    # 是不是真被拒）。不加载的话那条判据在 CI 上必红，且红在"库结构不全"这种与代码无关的
+    # 原因上（本机永远绿 —— 本机的库是完整的）。
+    "0004_note_visibility.sql",
+    "0005_orphan_cleanup.sql",
 ]
 
 # 不进 CI 的（理由见模块头注，改这个集合要把理由一起写进去）。

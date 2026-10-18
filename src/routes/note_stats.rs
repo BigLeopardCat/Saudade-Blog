@@ -134,7 +134,7 @@ pub struct LikeDto {
 async fn visible_note_id(db: &DatabaseConnection, id: i32) -> bool {
     note::Entity::find_by_id(id)
         .filter(note::Column::IsPublic.eq(true))
-        .filter(note::Column::Status.ne("draft"))
+        .filter(note::Column::Status.is_in(super::notes::public_status_words()))
         .select_only()
         .column(note::Column::Id)
         .into_tuple::<i32>()
@@ -729,7 +729,7 @@ async fn visible_notes(db: &DatabaseConnection) -> Result<Vec<(i32, String)>, Db
         .column(note::Column::Id)
         .column(note::Column::Title)
         .filter(note::Column::IsPublic.eq(true))
-        .filter(note::Column::Status.ne("draft"))
+        .filter(note::Column::Status.is_in(super::notes::public_status_words()))
         .into_tuple::<(i32, String)>()
         .all(db)
         .await

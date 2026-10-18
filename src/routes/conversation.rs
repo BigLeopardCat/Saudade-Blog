@@ -264,6 +264,87 @@ pub async fn create_conversation(
     }
 }
 
+/// 会话数据级联删的**范围**：按会话 id，还是按用户 id（删临时账号走这条）。
+pub(crate) enum ConvScope {
+    ConversationId(i32),
+    UserId(i32),
+}
+
+/// 会话数据级联删的**唯一清单**：5 张子表 + `conversation` 本体。
+///
+/// **为什么要有这个函数**（20261018）：这份清单此前在**两处各写一遍**，而两处写的不是同一份
+/// —— `delete_conversation` 删五张，`temp_user::delete_temp_user` 只删三张（漏
+/// `execution_log` / `pending_action` / `agent_task`）。于是删掉一个临时账号之后，那三张表里
+/// 按 `user_id` 挂着的行全部变成孤儿：它们都按 `conversation_id` 读，会话没了就**没有任何
+/// 读取路径**会碰到，也**没有任何东西会红**（`tests/pg_integration.rs` 里那条行为判据就是
+/// 为它立的，在改之前是红的）。
+///
+/// 修法刻意**不是**"给漏的那处补三行"——那只是把同一份清单再抄一遍、等下一次再漏；
+/// 是把清单收成**一处**，两处都调它。
+///
+/// ⚠️ 这里刻意**不加 DB 外键**：chat 家族按约定走应用层级联（`delete_conversation` 下面的
+/// 注释记着这条），且 `verify_parity.py` 会比对 PG 与 MySQL 的外键集合。防线是
+/// "清单唯一化 + 一条行为判据 + 一条源码锁"，三样都要。
+///
+/// 事务边界由调用方决定：`delete_conversation` 把它包在自己的事务里，
+/// `delete_temp_user` 不包（与它原本的形态一致）。
+pub(crate) async fn purge_conversation_data<C: sea_orm::ConnectionTrait>(
+    db: &C,
+    scope: ConvScope,
+) -> Result<(), sea_orm::DbErr> {
+    match scope {
+        ConvScope::ConversationId(id) => {
+            chat_history::Entity::delete_many()
+                .filter(chat_history::Column::ConversationId.eq(id))
+                .exec(db).await?;
+            chat_summary::Entity::delete_many()
+                .filter(chat_summary::Column::ConversationId.eq(id))
+                .exec(db).await?;
+            // 跨轮执行记忆（20260904 C5）：执行回执随会话删除级联清理——会话删了，
+            // 其 execution_log 行无任何读取路径（prepare_chat 按 conversation_id 注入），
+            // 不清理会永久占表
+            execution_log::Entity::delete_many()
+                .filter(execution_log::Column::ConversationId.eq(id))
+                .exec(db).await?;
+            // 跨轮待办（20260923）：同上——待办按会话读取，会话没了就无读取路径，
+            // 留着只会永久占表（待办不跨会话生效：确认令牌也绑会话）
+            pending_action::Entity::delete_many()
+                .filter(pending_action::Column::ConversationId.eq(id))
+                .exec(db).await?;
+            // 会话级任务状态（20260927）：同上——任务按会话读写（prepare_chat 注入 + agent
+            // 只发本会话的 task_id），会话没了就没有任何读取路径；与待办的区别只是它活得更久
+            // （分钟级 vs 最长 72 小时），**不清理会永久占表**这一条完全一样
+            agent_task::Entity::delete_many()
+                .filter(agent_task::Column::ConversationId.eq(id))
+                .exec(db).await?;
+            conversation::Entity::delete_by_id(id).exec(db).await?;
+        }
+        ConvScope::UserId(uid) => {
+            // 与上面**逐表同序**，只把过滤列从 conversation_id 换成 user_id。删账号时没有
+            // "会话 id"可依，只能按归属列扫——所以五张表都必须在 user_id 上有值（它们都有）。
+            chat_history::Entity::delete_many()
+                .filter(chat_history::Column::UserId.eq(uid))
+                .exec(db).await?;
+            chat_summary::Entity::delete_many()
+                .filter(chat_summary::Column::UserId.eq(uid))
+                .exec(db).await?;
+            execution_log::Entity::delete_many()
+                .filter(execution_log::Column::UserId.eq(uid))
+                .exec(db).await?;
+            pending_action::Entity::delete_many()
+                .filter(pending_action::Column::UserId.eq(uid))
+                .exec(db).await?;
+            agent_task::Entity::delete_many()
+                .filter(agent_task::Column::UserId.eq(uid))
+                .exec(db).await?;
+            conversation::Entity::delete_many()
+                .filter(conversation::Column::UserId.eq(uid))
+                .exec(db).await?;
+        }
+    }
+    Ok(())
+}
+
 /// DELETE /api/chat/conversations/:id：删除会话 + 级联删其历史与摘要（用户级清洗手段）。
 /// 归属校验合并为一个查询：不存在或非本人统一 404（防枚举）。
 pub async fn delete_conversation(
@@ -297,8 +378,14 @@ pub async fn delete_conversation(
         )
             .into_response();
     }
-    // 级联删除（应用层四条 delete，无 DB 外键——与全项目"实体零关系"惯例一致），
-    // 事务保证四步一致性（失败回滚，不出现孤儿消息/摘要/执行回执）
+    // 级联删除（应用层，无 DB 外键——与全项目"实体零关系"惯例一致），事务保证五步一致
+    // （失败回滚，不出现孤儿消息/摘要/执行回执）。清单**只有一份**：
+    // `purge_conversation_data`（20261018 收口，此前这里与 `temp_user.rs` 各写一份且不同）。
+    //
+    // ⚠️ 20261018 顺带修了一处**注释与代码不符**：原实现六条 `let _ = …` 把每个错误都吞掉，
+    // 于是 `txn` 从来不会因为子表删除失败而回滚 —— 上面那句"失败回滚"当时是**做不到的**。
+    // 现在错误会真的往上走：删不干净就整体回滚并如实报错（宁可"这次没删成"，不要
+    // "删了一半、剩下三张表的孤儿谁也不认识"）。
     let txn = match state.db.begin().await {
         Ok(t) => t,
         Err(_) => {
@@ -309,35 +396,15 @@ pub async fn delete_conversation(
                 .into_response()
         }
     };
-    let _ = chat_history::Entity::delete_many()
-        .filter(chat_history::Column::ConversationId.eq(id))
-        .exec(&txn)
-        .await;
-    let _ = chat_summary::Entity::delete_many()
-        .filter(chat_summary::Column::ConversationId.eq(id))
-        .exec(&txn)
-        .await;
-    // 跨轮执行记忆（20260904 C5）：执行回执随会话删除级联清理——会话删了，
-    // 其 execution_log 行无任何读取路径（prepare_chat 按 conversation_id 注入），
-    // 不清理会永久占表
-    let _ = execution_log::Entity::delete_many()
-        .filter(execution_log::Column::ConversationId.eq(id))
-        .exec(&txn)
-        .await;
-    // 跨轮待办（20260923）：同上——待办按会话读取，会话没了就无读取路径，
-    // 留着只会永久占表（待办不跨会话生效：确认令牌也绑会话）
-    let _ = pending_action::Entity::delete_many()
-        .filter(pending_action::Column::ConversationId.eq(id))
-        .exec(&txn)
-        .await;
-    // 会话级任务状态（20260927）：同上——任务按会话读写（prepare_chat 注入 + agent
-    // 只发本会话的 task_id），会话没了就没有任何读取路径；与待办的区别只是它活得更久
-    // （分钟级 vs 最长 72 小时），**不清理会永久占表**这一条完全一样
-    let _ = agent_task::Entity::delete_many()
-        .filter(agent_task::Column::ConversationId.eq(id))
-        .exec(&txn)
-        .await;
-    let _ = conversation::Entity::delete_by_id(id).exec(&txn).await;
+    if let Err(e) = purge_conversation_data(&txn, ConvScope::ConversationId(id)).await {
+        tracing::error!("[会话] 级联删除失败，回滚 conversation_id={id}: {e}");
+        let _ = txn.rollback().await;
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"success": false, "error": "删除失败"})),
+        )
+            .into_response();
+    }
     match txn.commit().await {
         Ok(_) => (StatusCode::OK, Json(json!({"success": true}))).into_response(),
         Err(_) => (

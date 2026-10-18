@@ -344,10 +344,18 @@ pub async fn upload_avatar(
 
 // ── 收藏的文章 ──────────────────────────────────────────────────────────────
 
-/// 公开可见判据（与 `notes.rs` 的列表/详情/搜索**逐字同源**：is_public 且非 draft）。
-/// 收藏只认公开可见的文章——否则收藏列表会把草稿标题漏给普通用户。
-fn visible_note(n: &note::Model) -> bool {
-    n.is_public && n.status.as_deref() != Some("draft")
+/// 公开可见判据（与 `notes.rs::public_status_words` **逐字同源**：`is_public` 且 status 是
+/// 白名单里的词）。收藏只认公开可见的文章——否则收藏列表会把草稿标题漏给普通用户。
+///
+/// 20261018 两处收窄：
+///   ① **黑名单 → 白名单**。此前是 `status != Some("draft")`，于是 **NULL status 在这里
+///      算可见、在 SQL 三值逻辑里算不可见** —— 同一个口径给出两种答案；未知词也一样漏过去。
+///      收成白名单之后两边一致，且未知词与 NULL 一律不可见。
+///   ② **收成两个字段**（不再是 `&note::Model`）。两个调用点（`list_favorites` /
+///      `add_favorite`）现在只 select 这几列、手里根本没有 `note::Model` ——
+///      从前它们为判一次可见性把整篇**正文**读回来。
+fn visible_flags(is_public: bool, status: Option<&str>) -> bool {
+    is_public && matches!(status, Some("public") | Some("published"))
 }
 
 #[derive(Serialize, Default)]
@@ -386,24 +394,35 @@ pub async fn list_favorites(
         return Json(ApiResponse::success(vec![]));
     }
     let ids: Vec<i32> = favs.iter().map(|f| f.note_id).collect();
-    let notes = note::Entity::find()
+    // 只取"判可见性 + 渲染标题/状态"真正用到的四列（20261018）。从前是 `SELECT *` ⇒
+    // 每打开一次收藏列表就把这些文章的**正文**整篇读回来，而这里一列正文都不用。
+    let notes: Vec<(i32, String, Option<String>, bool)> = note::Entity::find()
+        .select_only()
+        .column(note::Column::Id)
+        .column(note::Column::Title)
+        .column(note::Column::Status)
+        .column(note::Column::IsPublic)
         .filter(note::Column::Id.is_in(ids))
+        .into_tuple::<(i32, String, Option<String>, bool)>()
         .all(&state.db)
         .await
         .unwrap_or_default();
-    let mut by_id: HashMap<i32, note::Model> = notes.into_iter().map(|n| (n.id, n)).collect();
+    let mut by_id: HashMap<i32, (String, Option<String>, bool)> = notes
+        .into_iter()
+        .map(|(id, title, status, is_public)| (id, (title, status, is_public)))
+        .collect();
     let dtos = favs
         .into_iter()
         // 文章被隐藏/转草稿/删掉的不再列出（删掉的连行都没了，这里管的是"还在但不公开"）
         .filter_map(|f| {
-            let n = by_id.remove(&f.note_id)?;
-            if !visible_note(&n) {
+            let (title, status, is_public) = by_id.remove(&f.note_id)?;
+            if !visible_flags(is_public, status.as_deref()) {
                 return None;
             }
             Some(FavoriteDto {
-                note_id: n.id,
-                title: n.title.clone(),
-                status: n.status.unwrap_or_else(|| "published".to_string()),
+                note_id: f.note_id,
+                title,
+                status: status.unwrap_or_else(|| "published".to_string()),
                 created_at: f.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
             })
         })
@@ -428,10 +447,19 @@ pub async fn add_favorite(
         Ok(uid) => uid,
         Err(e) => return Json(ApiResponse::error(e.message())),
     };
-    let Some(n) = note::Entity::find_by_id(payload.note_id).one(&state.db).await.unwrap_or(None) else {
+    // 同样只取判可见性那两列（20261018）：收藏一次不该把整篇正文读回来。
+    let Some((is_public, status)) = note::Entity::find_by_id(payload.note_id)
+        .select_only()
+        .column(note::Column::IsPublic)
+        .column(note::Column::Status)
+        .into_tuple::<(bool, Option<String>)>()
+        .one(&state.db)
+        .await
+        .unwrap_or(None)
+    else {
         return Json(ApiResponse::error("这篇文章不存在"));
     };
-    if !visible_note(&n) {
+    if !visible_flags(is_public, status.as_deref()) {
         return Json(ApiResponse::error("这篇文章不可见，无法收藏"));
     }
     let existed = user_favorite::Entity::find()

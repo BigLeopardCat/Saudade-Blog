@@ -25,7 +25,7 @@ async fn public_note_tag_counts(db: &DatabaseConnection) -> HashMap<i32, i64> {
         .select_only()
         .column(note::Column::Tags)
         .filter(note::Column::IsPublic.eq(true))
-        .filter(note::Column::Status.ne("draft"))
+        .filter(note::Column::Status.is_in(super::notes::public_status_words()))
         .into_tuple::<Option<String>>()
         .all(db)
         .await
@@ -248,8 +248,15 @@ pub async fn prune_note_tags(state: &Arc<AppState>) -> usize {
         live.extend(rows.into_iter().map(|r| r.id));
     }
 
-    let notes = match note::Entity::find()
+    // 只取 id + tags 两列（20261018）。这一趟要遍历**全表**（每删一次标签就扫一次），
+    // 而它需要的只有这两列 —— 从前是 `SELECT *` ⇒ 每删一个标签就把**全站正文**读进
+    // 内存一遍。这是本站随语料增长的两处读放大之一（另一处是列表接口）。
+    let notes: Vec<(i32, Option<String>)> = match note::Entity::find()
+        .select_only()
+        .column(note::Column::Id)
+        .column(note::Column::Tags)
         .filter(note::Column::Tags.is_not_null())
+        .into_tuple::<(i32, Option<String>)>()
         .all(&state.db)
         .await
     {
@@ -261,8 +268,8 @@ pub async fn prune_note_tags(state: &Arc<AppState>) -> usize {
     };
 
     let mut changed = 0usize;
-    for n in notes {
-        let raw = n.tags.clone().unwrap_or_default();
+    for (nid, tags) in notes {
+        let raw = tags.unwrap_or_default();
         if raw.is_empty() {
             continue;
         }
@@ -278,11 +285,11 @@ pub async fn prune_note_tags(state: &Arc<AppState>) -> usize {
         if new == raw {
             continue;
         }
-        let mut am = note::ActiveModel { id: Set(n.id), ..Default::default() };
+        let mut am = note::ActiveModel { id: Set(nid), ..Default::default() };
         am.tags = Set(if new.is_empty() { None } else { Some(new) });
         match am.update(&state.db).await {
             Ok(_) => changed += 1,
-            Err(e) => tracing::error!("清理悬空标签：更新 note {} 失败: {e}", n.id),
+            Err(e) => tracing::error!("清理悬空标签：更新 note {} 失败: {e}", nid),
         }
     }
     changed

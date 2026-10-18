@@ -129,7 +129,7 @@ pub async fn search_all(
     let dict = super::notes::load_tag_names(&state.db).await;
     let all_notes = match note::Entity::find()
         .filter(note::Column::IsPublic.eq(true))
-        .filter(note::Column::Status.ne("draft"))
+        .filter(note::Column::Status.is_in(super::notes::public_status_words()))
         .all(&state.db)
         .await
     {

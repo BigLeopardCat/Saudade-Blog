@@ -964,17 +964,24 @@ pub async fn delete_temp_user(
     } else {
         format!("{}（{}）", target.nickname.trim(), target.username)
     };
-    // 删除临时用户时级联清理其全部会话数据（20260903 会话化补全：原实现漏删
-    // chat_summary，属存量 bug；conversation 随会话化新增）
-    let _ = crate::entity::chat_history::Entity::delete_many()
-        .filter(crate::entity::chat_history::Column::UserId.eq(user_id))
-        .exec(&state.db).await;
-    let _ = crate::entity::chat_summary::Entity::delete_many()
-        .filter(crate::entity::chat_summary::Column::UserId.eq(user_id))
-        .exec(&state.db).await;
-    let _ = crate::entity::conversation::Entity::delete_many()
-        .filter(crate::entity::conversation::Column::UserId.eq(user_id))
-        .exec(&state.db).await;
+    // 删除临时用户时级联清理其**全部**会话数据。清单**只有一份**：
+    // `conversation::purge_conversation_data`（20261018 收口，见它的头注）。
+    //
+    // 此前这里手写三张表，而 `delete_conversation` 删五张 —— 漏掉的
+    // `execution_log` / `pending_action` / `agent_task` 在账号删除后全部变成孤儿：三张表
+    // 都按 conversation_id 读，会话没了就再也没有任何读取路径，也**没有任何东西会红**。
+    // 现在两处共用同一份清单（`tests/pg_integration.rs` 有一条行为判据钉着六张表全空）。
+    //
+    // 这里**不吞错也不中断**：级联清理失败只记一行 error，账号本体照旧删（与原本
+    // "辅助清理失败不挡主流程"的取向一致）—— 但失败必须留痕，不能再是 `let _ =`。
+    if let Err(e) = crate::routes::conversation::purge_conversation_data(
+        &state.db,
+        crate::routes::conversation::ConvScope::UserId(user_id),
+    )
+    .await
+    {
+        tracing::error!("[账号管理] 级联清理会话数据失败 uid={user_id}: {e}（账号仍将删除）");
+    }
     // 删主行**这一次不再吞错**（20261001）：这三个 `let _ =` 的级联删是辅助清理，
     // 吞掉无所谓；但 `user` 行本身删失败时必须如实报——否则下面那条"账号已删除"
     // 的审计通知就是假的，而误删恰恰是这次要防的事。

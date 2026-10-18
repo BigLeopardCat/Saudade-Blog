@@ -364,6 +364,21 @@ pub async fn discard_handler(
     (StatusCode::OK, Json(serde_json::json!({"success": true}))).into_response()
 }
 
+/// 单会话历史保留上限（`CHAT_HISTORY_LIMIT`，缺省 500）。
+///
+/// **必须 ≥ 1**：下面那段清理算的是 `excess = total_count - history_limit`，再按
+/// `id <= 最旧多余行` 删。`limit = 0` 时 `excess = total_count` ⇒ `max_id` 落在**最后一行**
+/// ⇒ 把本会话**全部**行删掉，**包括刚刚入库、刚刚转发给 agent 的那条用户消息**
+/// （它的 id 最大，一定在 `id <= max_id` 里）。拨成负数同理。
+///
+/// 所以非法值（0 / 负数 / 解析失败）一律**退回缺省 500**，而不是"钳到 1"——把旋钮打错
+/// 一个字就把每个会话削成一条，是比"忽略这个值"坏得多的失败方式。
+fn resolve_history_limit(raw: Option<&str>) -> i64 {
+    raw.and_then(|v| v.parse::<i64>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(500)
+}
+
 /// 鉴权 + 请求体解析 + 会话解析 + 保存用户消息 + 加载历史/摘要 + 组装 agent 请求体。
 /// 错误形态：Err(OK, …) = 历史 200 语义的 JSON 错误（合规文案/解析失败，前端既有
 /// 分支不变）；Err(NOT_FOUND, …) = 会话不存在/非本人（404；前端按 body.error ==
@@ -757,8 +772,7 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
     // 保留策略（20260903 会话化后按会话）：单个会话最多保留 CHAT_HISTORY_LIMIT
     // （默认 500）条，超出删除该会话最旧的多余记录——清理不再跨会话删行；
     // 提示词窗口只看本会话最近 20 条 + 摘要，删头不影响连续性
-    let history_limit: i64 = std::env::var("CHAT_HISTORY_LIMIT")
-        .ok().and_then(|v| v.parse().ok()).unwrap_or(500);
+    let history_limit = resolve_history_limit(std::env::var("CHAT_HISTORY_LIMIT").ok().as_deref());
     let excess = total_count - history_limit;
     if excess > 0 {
         let oldest = chat_history::Entity::find()
@@ -3113,6 +3127,27 @@ mod tests {
             assert!(CHAT_STREAM_JS.contains(prefix),
                     "chat-stream.js 里找不到帧前缀 {prefix}：Rust 还在转发它，前端却不再认得了。\
                      见 classify_frame 头注的 SSE 帧协议三端同步约定。");
+        }
+    }
+
+    /// `CHAT_HISTORY_LIMIT` 的旋钮：**0 / 负数 / 脏值一律退回缺省 500，绝不落到清理分支**。
+    ///
+    /// 这条判据是给"填了不报错、后果很响"那一族立的：`limit = 0` 会让
+    /// `excess = total_count` ⇒ 按 `id <= max_id` 删掉本会话**全部**行，包括刚入库的那条
+    /// 用户消息。默认 500 碰不到，所以线上一直是绿的 —— 这正是它需要一个单测的理由。
+    #[test]
+    fn history_limit_falls_back_on_destructive_values() {
+        assert_eq!(resolve_history_limit(None), 500);
+        assert_eq!(resolve_history_limit(Some("3")), 3);
+        assert_eq!(resolve_history_limit(Some(" 3 ")), 500, "带空格的脏值也退回缺省，不猜");
+        // 下面这几个是"会真删东西"的：必须退到缺省，而不是钳成 1。
+        assert_eq!(resolve_history_limit(Some("0")), 500, "0 会把整个会话删空");
+        assert_eq!(resolve_history_limit(Some("-5")), 500, "负数同上");
+        assert_eq!(resolve_history_limit(Some("abc")), 500);
+        assert_eq!(resolve_history_limit(Some("")), 500);
+        // 任何退路都 ≥ 1 —— 这是"刚入库的那条用户消息一定活得下来"的形式化。
+        for raw in [None, Some("0"), Some("-5"), Some("abc"), Some(""), Some("1")] {
+            assert!(resolve_history_limit(raw) >= 1);
         }
     }
 }

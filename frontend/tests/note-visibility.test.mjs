@@ -11,13 +11,22 @@
 // 的 SQL 三值逻辑（NULL 行**不**满足 `!= 'draft'`）⇒ 两边对同一篇文章给出相反的答案。
 //
 // 现在只有一个口径，它有**两种写法**，本文件把两种都钉住：
-//   ① 函数式：`profile.rs::visible_note` 的 `n.is_public && n.status.as_deref() != Some("draft")`；
-//   ② sea-orm 谓词式：`IsPublic.eq(true)` + `Status.ne("draft")` **成对**出现（只写一半就是
-//      "草稿漏进公开列表"或"私密文章被当公开"）。判据取"同一个文件里两半的数量相等"，比钉
-//      具体行号稳（增删查询不会误红），又能在"新加一条公开查询却漏了 draft 那一半"时立刻红。
+//   ① 函数式：`profile.rs::visible_flags` 的
+//      `is_public && matches!(status, Some("public") | Some("published"))`；
+//   ② sea-orm 谓词式：`IsPublic.eq(true)` + `Status.is_in(public_status_words())` **成对**
+//      出现（只写一半就是"草稿漏进公开列表"或"私密文章被当公开"）。判据取"同一个文件里两半
+//      的数量相等"，比钉具体行号稳（增删查询不会误红），又能在"新加一条公开查询却漏了状态
+//      那一半"时立刻红。
 // 后台「公开文章」页签（`search_all_notes` 的 `only_public`）落地后，两种写法的计数各 +1，
 // 「成对相等」照旧成立 —— 这也是这条判据当初选"计数"而不是"钉行号"的收益。
-import { existsSync, readFileSync } from 'node:fs';
+//
+// ⚠️ **20261018 口径翻面**：此前第 ② 半是 `Status.ne("draft")` —— 那是**黑名单**，任何没
+// 见过的词（含 NULL）都不在排除名单里 ⇒ **漏过去**。一条 `status='private'` 而
+// `is_public=true` 的行会被公开列出（`update_note` 只带 `{"is_public":true}` 就能造出来）。
+// 现在翻成白名单 `Status.is_in(public_status_words())`：未知词与 NULL 从"放行"变"拦截"。
+// 本文件因此多一条**全局**判据（⑤ 节）：`src/routes/` 下**一个 `Status.ne("draft")` 都不许剩**
+// —— 那才是"翻面翻干净了"的判据；只查计数成对的话，漏掉一处反而会让计数一起变小、照样绿。
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -32,31 +41,35 @@ const ok = (cond, name, detail) => {
 
 const rust = (rel) => readFileSync(path.join(root, '..', rel), 'utf8');
 
-console.log('\n① 函数式那一处：`profile.rs::visible_note`');
+console.log('\n① 函数式那一处：`profile.rs::visible_flags`');
 {
     const profile = rust('src/routes/profile.rs');
-    ok(/fn visible_note/.test(profile), '`profile.rs::visible_note` 还在');
-    ok(/n\.is_public\s*&&\s*n\.status\.as_deref\(\)\s*!=\s*Some\("draft"\)/.test(profile),
-        '  判据还是 `n.is_public && n.status.as_deref() != Some("draft")`');
-    ok((profile.match(/visible_note\(/g) || []).length > 1, '  这个函数还被调用着（定义了没人用 = 白定义）');
+    ok(/fn visible_flags/.test(profile), '`profile.rs::visible_flags` 还在');
+    ok(/is_public\s*&&\s*matches!\(status,\s*Some\("public"\)\s*\|\s*Some\("published"\)\)/.test(profile),
+        '  判据是白名单 `is_public && matches!(status, Some("public") | Some("published"))`');
+    ok((profile.match(/visible_flags\(/g) || []).length > 1, '  这个函数还被调用着（定义了没人用 = 白定义）');
+    ok(!/fn visible_note/.test(profile),
+        '  旧的 `visible_note(&note::Model)` 已退休（两个调用点都改成只取两列了，留着就是死代码）');
 }
 
 console.log('\n② sea-orm 那几处：公开判据是两半，必须成对');
 {
+    // `search.rs` 20261018 补进来 —— 它一直在做公开文章过滤，此前**漏在这个名单外**。
     const sites = [
         'src/routes/notes.rs',
         'src/routes/tags.rs',
         'src/routes/comments.rs',
         'src/routes/note_stats.rs',
         'src/routes/sitemap.rs',
+        'src/routes/search.rs',
     ];
     for (const rel of sites) {
         const src = rust(rel);
         const pub = (src.match(/IsPublic\.eq\(true\)/g) || []).length;
-        const draft = (src.match(/Status\.ne\("draft"\)/g) || []).length;
-        ok(pub > 0 && pub === draft,
-            `  ${rel}：\`IsPublic.eq(true)\` ${pub} 处 / \`Status.ne("draft")\` ${draft} 处，成对`,
-            { pub, draft });
+        const vis = (src.match(/Status\.is_in\(/g) || []).length;
+        ok(pub > 0 && pub === vis,
+            `  ${rel}：\`IsPublic.eq(true)\` ${pub} 处 / \`Status.is_in(\` ${vis} 处，成对`,
+            { pub, vis });
     }
 }
 
@@ -70,7 +83,8 @@ console.log('\n③ 后台「公开文章」页签（`notes.rs` 的 `only_public`
     ok(!!m, '  `if let Some(true) = payload.only_public { … }` 这一支真落地了（不是只加了字段）');
     const blk = m ? m[1] : '';
     ok(/IsPublic\.eq\(true\)/.test(blk), '  块里有 `is_public = true`');
-    ok(/Status\.ne\("draft"\)/.test(blk), '  块里有 `status != \'draft\'`');
+    ok(/Status\.is_in\(public_status_words\(\)\)/.test(blk),
+        '  块里的状态谓词是**同一个白名单函数**（不是又抄一份词表）');
     // 前两条与 list_public_notes 同口径；这条与 list_all_notes 一致 —— 少了它「公开 ⊂ 全部文章」
     // 不成立（编辑修改稿的影子行会同时出现在两个页签里）。
     ok(/DraftOf\.is_null\(\)/.test(blk), '  块里有 `draft_of IS NULL`（排掉编辑修改稿的影子行）');
@@ -93,6 +107,45 @@ console.log('\n④ 前端不再自算口径（口径只有一处，删掉的别�
     // 但「公开文章」这四个字还必须在场 —— 它现在是**页签**（key '4'），不是标签。
     ok(/\{\s*\n\s*label: '公开文章',\s*\n\s*key: '4',/.test(allNotes),
         "  「公开文章」改由页签承载（label '公开文章' + key '4'）");
+}
+
+console.log('\n⑤ 黑名单翻面翻干净了：`src/routes/` 下一个 `Status.ne("draft")` 都不许剩');
+{
+    // 这一条是"翻面"的**唯一硬判据**：上面 ② 只查"两半计数成对"，而漏改一处会让
+    // 两个计数**一起变小**、照样绿。只有"一个都不许剩"才拦得住"改了一半"。
+    const dir = path.join(root, '..', 'src', 'routes');
+    const offenders = [];
+    for (const f of readdirSync(dir)) {
+        if (!f.endsWith('.rs')) continue;
+        const src = readFileSync(path.join(dir, f), 'utf8');
+        if (/Status\.ne\("draft"\)/.test(src)) offenders.push(f);
+    }
+    ok(offenders.length === 0,
+        '  src/routes/ 下没有 `Status.ne("draft")` 了（黑名单 = 未知词与 NULL 都会漏过去）',
+        offenders);
+}
+
+console.log('\n⑥ 口径只有一处：白名单词表不许有第二份定义');
+{
+    const notes = rust('src/routes/notes.rs');
+    ok(/pub\(crate\) fn public_status_words\(\)/.test(notes),
+        '`notes.rs::public_status_words` 是白名单词表的定义处');
+    // 定义只该在 `notes.rs`（`src/routes/` 下）；`src/` 顶层那份也一起扫，防有人把它搬走。
+    const rsFiles = [];
+    for (const rel of ['src', 'src/routes']) {
+        const dir = path.join(root, '..', rel);
+        for (const f of readdirSync(dir)) {
+            if (f.endsWith('.rs')) rsFiles.push({ rel, f, src: readFileSync(path.join(dir, f), 'utf8') });
+        }
+    }
+    const defs = rsFiles.filter((x) => /fn public_status_words\(/.test(x.src)).map((x) => `${x.rel}/${x.f}`);
+    ok(defs.length === 1, `全仓只有一份 \`public_status_words\`（现在 ${defs.length} 份：${defs.join(', ')}）`);
+    // 谁都可以调它，但**不许**在别处另写一份 `["public","published"]` 字面量。
+    const dupes = rsFiles
+        .filter((x) => !(x.rel === 'src/routes' && x.f === 'notes.rs'))
+        .filter((x) => /"public"\s*,\s*"published"/.test(x.src))
+        .map((x) => `${x.rel}/${x.f}`);
+    ok(dupes.length === 0, '  别的文件里没有另抄一份词表字面量', dupes);
 }
 
 console.log(`\n${fail === 0 ? '全部通过' : `失败 ${fail} 项`}（通过 ${pass}）`);

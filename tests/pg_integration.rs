@@ -1872,3 +1872,361 @@ async fn chat_image_unique_key_blocks_a_replayed_seq() {
     add_img(&db, mid, 1, "data:image/png;base64,BBB").await;
     assert_eq!(img_count(&db, mid).await, 2, "seq 不同就是不同的图");
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ⑭ 可见性不变量（20261018）：`note_status_visibility_ck`
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// 治的是"两个字段描述同一件事、而守卫是黑名单"：`status <> 'draft'` 会把**没见过的词**
+// 和 NULL 一起放过去，而 `update_note` 那条只带 `{"is_public":true}` 的写能造出
+// `('private', true)` —— 这种行**会被公开列出**。应用侧那一半（白名单谓词 + 写侧拒收未知词）
+// 在 `src/routes/notes.rs`，本节的这几条钉的是**库自己**不再允许那种组合存在。
+//
+// ⚠️ 只断言"约束存在"是**空真**（存在也可能写成恒真）。必须**种违规行**看它是不是真被拒 ——
+// 下面每一条都是"先试违规、再试合法"，两边都要有。
+
+const VIS_NOTE_BASE: i32 = 900000051;
+
+/// 约束在不在。不在就给出"该跑哪份迁移"的提示 —— 否则失败会退化成一条裸 SQL 报错
+/// （"new row … violates check constraint"根本不会出现，因为约束压根不在），
+/// 看不出"这个库还差一份迁移"这个前因后果。
+async fn constraint_exists(db: &DatabaseConnection, name: &str, table: &str) -> bool {
+    one_i64(
+        db,
+        &format!(
+            "SELECT COUNT(*) FROM pg_constraint \
+             WHERE conname = '{name}' AND conrelid = '{table}'::regclass AND contype = 'c'"
+        ),
+    )
+    .await
+    .unwrap_or(0)
+        > 0
+}
+
+/// 跑一条**预期失败**的语句，回错误文本；成功则回 `None`。
+///
+/// 每条都走 autocommit（不开事务）：一条被拒会把事务标脏，后面的语句全被
+/// `current transaction is aborted` 顶掉，红的原因就变成了"事务脏了"而不是"约束没拦住"。
+async fn exec_err(db: &DatabaseConnection, sql: &str) -> Option<String> {
+    db.execute(Statement::from_string(DbBackend::Postgres, sql.to_string()))
+        .await
+        .err()
+        .map(|e| e.to_string())
+}
+
+/// 种一行 `note`（只给约束关心的那两列 + 必填列）。
+fn note_sql(id: i32, is_public: bool, status: Option<&str>) -> String {
+    let st = match status {
+        Some(s) => format!("'{s}'"),
+        None => "NULL".to_string(),
+    };
+    format!(
+        "INSERT INTO note (id, title, content, created_at, updated_at, is_public, status) \
+         VALUES ({id}, '可见性夹具', 'x', NOW(), NOW(), {is_public}, {st})"
+    )
+}
+
+#[tokio::test]
+async fn note_status_visibility_check_rejects_and_accepts() {
+    let Some((db, _app)) = connect_pair().await else { return };
+    assert!(
+        constraint_exists(&db, "note_status_visibility_ck", "note").await,
+        "库上没有 `note_status_visibility_ck` —— 先跑 scripts/migration/pg/0004_note_visibility.sql。\
+         CI 的建库清单唯一事实源是 scripts/migration/pg/ci_schema_files.py（漏了它，CI 上这条判据\
+         会红在「库结构不全」这种与代码无关的原因上）。"
+    );
+    for i in 0..6 {
+        exec(&db, &format!("DELETE FROM note WHERE id = {}", VIS_NOTE_BASE + i)).await;
+    }
+
+    // ── 负控三条：都必须被拒 ──────────────────────────────────────────────
+    // ① 今天真能造出来的那一条（`update_note` 只带 {"is_public":true}）。
+    let e = exec_err(&db, &note_sql(VIS_NOTE_BASE, true, Some("private")))
+        .await
+        .expect("('private', true) 必须被拒 —— 这正是「公开列表会把它列出来」的那一行");
+    assert!(
+        e.contains("note_status_visibility_ck"),
+        "报错必须来自那条约束（拿到的是：{e}）"
+    );
+    // ② NULL 词。`IS NOT NULL` 写在 CHECK 里是**真的会拒**的（求值 FALSE 而不是 UNKNOWN）
+    //    —— 这条就是"没动列元数据也拿到了不变量"的判据。
+    let e = exec_err(&db, &note_sql(VIS_NOTE_BASE + 1, true, None))
+        .await
+        .expect("(NULL, true) 必须被拒（CHECK 里的 IS NOT NULL）");
+    assert!(e.contains("note_status_visibility_ck"), "{e}");
+    // ③ 没见过的词。黑名单时代它会被**放行**（不在排除名单里），白名单时代必须拦。
+    let e = exec_err(&db, &note_sql(VIS_NOTE_BASE + 2, true, Some("archived")))
+        .await
+        .expect("未知状态词必须被拒 —— 黑名单时代的漏洞就是它");
+    assert!(e.contains("note_status_visibility_ck"), "{e}");
+
+    // ── 正控三条：都必须被接受（只测"会拦"就变成了"把合法的也拦掉"也绿）──────
+    // ④ `('published', false)`：显式隐藏。`published` 是兼容别名（列缺省就是它），
+    //    而"公开词 + is_public=false"是**合法**状态 —— 约束不能把它一起禁掉。
+    exec(&db, &note_sql(VIS_NOTE_BASE + 3, false, Some("published"))).await;
+    // ⑤ `('public', true)`：常态。
+    exec(&db, &note_sql(VIS_NOTE_BASE + 4, true, Some("public"))).await;
+    // ⑥ **不带 status**（走列缺省 `'published'`）：集成测夹具与任何 status-less INSERT
+    //    都靠这条 —— 禁掉 `published` 会让一大堆既有夹具红。
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO note (id, title, content, created_at, updated_at, is_public) \
+             VALUES ({}, '可见性夹具', 'x', NOW(), NOW(), true)",
+            VIS_NOTE_BASE + 5
+        ),
+    )
+    .await;
+
+    assert_eq!(
+        count_of(
+            &db,
+            &format!("SELECT COUNT(*) FROM note WHERE id BETWEEN {VIS_NOTE_BASE} AND {}", VIS_NOTE_BASE + 5)
+        )
+        .await,
+        3,
+        "负控三条一条都不该落库，正控三条都该在"
+    );
+    for i in 0..6 {
+        exec(&db, &format!("DELETE FROM note WHERE id = {}", VIS_NOTE_BASE + i)).await;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ⑮ `update_note` 的可见性推导（20261018）：显式要公开而状态词不公开 ⇒ 拒收且不改行
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// 这是"黑名单漏洞"的**入口**：从前 `update_note` 是"派生 → 允许显式覆盖 → 再补一次"，
+// 只带 `{"is_public":true}` 打在一条 `status='private'` 的行上，第二次覆盖把 is_public 置回
+// true 而 status 一个字节没动 ⇒ 库里落下 `('private', true)`。
+//
+// ⚠️ 只跑 mock 是**空真**（MockDatabase 不解码行，也走不到真实推导）；这里走真链路 + 真库，
+// 并且**断言那一行没被改动** —— "报错了但已经写进去了"是这类修复最常见的假绿。
+
+const UPD_VIS_UID: i32 = 900000052;
+const UPD_VIS_NOTE: i32 = 900000052;
+
+#[tokio::test]
+async fn update_note_refuses_public_flag_on_non_public_status() {
+    let Some((db, db_app)) = connect_pair().await else { return };
+    make_user(&db, UPD_VIS_UID, "admin").await;
+    exec(&db, &format!("DELETE FROM note WHERE id = {UPD_VIS_NOTE}")).await;
+    exec(&db, &note_sql(UPD_VIS_NOTE, false, Some("private"))).await;
+
+    let app = test_app(db_app);
+    let admin = auth_jwt::create_token(UPD_VIS_UID, "admin", 0);
+
+    // ⚠️ 键名是 **`is_public`**（下划线），不是 `isPublic`：`UpsertNoteRequest.is_public` 是
+    // 全结构体里**唯一一个没有 serde rename 的字段**（`noteTitle` / `isTop` / `noteTags` 那些
+    // 都有）。写成 `isPublic` 会被 serde 静默忽略 ⇒ 这一笔变成"什么都没改"的空请求，
+    // 三条断言全绿而**判据根本没在测那条路**。`frontend/src/interface/NoteType.d.ts:25`
+    // 记着同一件事（那边是 DTO 侧）。
+    //
+    // ① 显式公开 + 状态词是 private ⇒ 必须被拒，且那一行**一个字节都不能动**。
+    let (st, j) = call(
+        app.clone(),
+        "POST",
+        &format!("/api/protected/notes/{UPD_VIS_NOTE}"),
+        Some(&admin),
+        Some(r#"{"is_public": true}"#),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "本仓的错误约定是 HTTP 200 + success:false：{j}");
+    assert_eq!(j["success"].as_bool(), Some(false), "必须如实报错：{j}");
+    let (status_after, public_after) = one_text(
+        &db,
+        &format!("SELECT status || '|' || is_public::text FROM note WHERE id = {UPD_VIS_NOTE}"),
+    )
+    .await
+    .map(|s| s.split_once('|').map(|(a, b)| (a.to_string(), b.to_string())).unwrap())
+    .expect("夹具行不见了");
+    assert_eq!(
+        (status_after.as_str(), public_after.as_str()),
+        ("private", "false"),
+        "被拒的那一笔不许把行改掉（报错了但已经写进去 = 这类修复最常见的假绿）"
+    );
+
+    // ② 同时给状态词（合法的那一个）⇒ 应当成功，且落库的是**归一后**的词。
+    let (st, j) = call(
+        app.clone(),
+        "POST",
+        &format!("/api/protected/notes/{UPD_VIS_NOTE}"),
+        Some(&admin),
+        Some(r#"{"status": "published", "is_public": true}"#),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{j}");
+    assert_eq!(j["success"].as_bool(), Some(true), "状态词给对了就该成功：{j}");
+    assert_eq!(
+        one_text(&db, &format!("SELECT status FROM note WHERE id = {UPD_VIS_NOTE}")).await.as_deref(),
+        Some("public"),
+        "`published` 是兼容别名，落库必须归一成 `public`（库里只该有一个「公开」词）"
+    );
+
+    // ③ 未知状态词 ⇒ 拒收，**不许原样写库**（原样写库正是"库里出现没见过的词、
+    //    而黑名单时代它照旧被公开列出"的来路）。
+    let (st, j) = call(
+        app,
+        "POST",
+        &format!("/api/protected/notes/{UPD_VIS_NOTE}"),
+        Some(&admin),
+        Some(r#"{"status": "archived"}"#),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{j}");
+    assert_eq!(j["success"].as_bool(), Some(false), "未知状态词必须拒收：{j}");
+    assert_eq!(
+        one_text(&db, &format!("SELECT status FROM note WHERE id = {UPD_VIS_NOTE}")).await.as_deref(),
+        Some("public"),
+        "被拒的未知词不许落库"
+    );
+
+    exec(&db, &format!("DELETE FROM note WHERE id = {UPD_VIS_NOTE}")).await;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ⑯ 删临时账号 ⇒ 六张会话相关表该 uid 的行全空（20261018）
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// **这条判据在收口之前是红的**：`delete_temp_user` 只手写了三张表
+// （`chat_history` / `chat_summary` / `conversation`），而 `delete_conversation` 删五张
+// —— 漏掉的 `execution_log` / `pending_action` / `agent_task` 在账号删除后全部成为孤儿，
+// 三张表都按 `conversation_id` 读 ⇒ 会话没了就再也没有任何读取路径，**也没有任何东西会红**。
+//
+// ⚠️ 这条是本节**唯一**能证明"清单是全的"的判据：配套的
+// `frontend/tests/chat-cascade-single-source.test.mjs` 只证明"清单只有一份"，
+// 一份漏了某张表的唯一清单照样能让它全绿。两者必须配对。
+//
+// 夹具**真的往六张表里都种行** —— 空表上跑删除恒绿，那是本仓最忌讳的空真。
+
+const CASCADE_UID: i32 = 900000053;
+/// 发起删除的那个管理员。**必须自己占一个 uid**：`ADMIN_UID`（900000014）被额度那条用例
+/// 用着，而 `make_user` 是先 DELETE 再 INSERT —— 共用一个 uid 时两边会互相把对方刚插的行
+/// 抽走，症状是随机红且只在并发时出现（20261018 CI 首跑踩过一次，见 IMG_* 那一族的注释）。
+const CASCADE_ADMIN_UID: i32 = 900000054;
+
+#[tokio::test]
+async fn deleting_a_temp_user_purges_all_six_chat_tables() {
+    let Some((db, db_app)) = connect_pair().await else { return };
+    // 发起人得是管理员（`/api/temp-users/*` 那一组在 auth_guard 后面），被删的那个是普通用户。
+    make_user(&db, CASCADE_ADMIN_UID, "admin").await;
+    make_user(&db, CASCADE_UID, "user").await;
+    clear_conversations(&db, CASCADE_UID).await;
+
+    let cid = make_conversation(&db, CASCADE_UID, Some("级联夹具")).await;
+    add_msg(&db, CASCADE_UID, cid, "一条消息").await;
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO chat_summary (user_id, conversation_id, summary, message_count, updated_at) \
+             VALUES ({CASCADE_UID}, {cid}, '摘要', 1, NOW())"
+        ),
+    )
+    .await;
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO execution_log (user_id, conversation_id, skill, detail, created_at) \
+             VALUES ({CASCADE_UID}, {cid}, 'navigate', '跳转「/」', NOW())"
+        ),
+    )
+    .await;
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO pending_action (conversation_id, user_id, task_id, skill, tool, created_at) \
+             VALUES ({cid}, {CASCADE_UID}, 'task-1', 'navigate', 'navigate_to', NOW())"
+        ),
+    )
+    .await;
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO agent_task (conversation_id, user_id, task_id, state, created_at, updated_at) \
+             VALUES ({cid}, {CASCADE_UID}, 'task-1', 'submitted', NOW(), NOW())"
+        ),
+    )
+    .await;
+
+    // 先确认夹具真种进去了 —— 否则下面的"全 0"是空真（表里本来就没行）。
+    let seeded = count_of(
+        &db,
+        &format!(
+            "SELECT (SELECT COUNT(*) FROM chat_history WHERE user_id = {CASCADE_UID}) \
+                  + (SELECT COUNT(*) FROM chat_summary WHERE user_id = {CASCADE_UID}) \
+                  + (SELECT COUNT(*) FROM execution_log WHERE user_id = {CASCADE_UID}) \
+                  + (SELECT COUNT(*) FROM pending_action WHERE user_id = {CASCADE_UID}) \
+                  + (SELECT COUNT(*) FROM agent_task WHERE user_id = {CASCADE_UID}) \
+                  + (SELECT COUNT(*) FROM conversation WHERE user_id = {CASCADE_UID})"
+        ),
+    )
+    .await;
+    assert_eq!(seeded, 6, "夹具六张表各该有一行，实际 {seeded} 行（没种进去 ⇒ 下面全 0 是空真）");
+
+    let app = test_app(db_app);
+    let admin = auth_jwt::create_token(CASCADE_ADMIN_UID, "admin", 0);
+    let (st, j) = call(app, "DELETE", &format!("/api/temp-users/{CASCADE_UID}"), Some(&admin), None).await;
+    assert_eq!(st, StatusCode::OK, "删账号请求该成功：{j}");
+    assert_eq!(j["success"].as_bool(), Some(true), "{j}");
+
+    for (label, sql) in [
+        ("chat_history", format!("SELECT COUNT(*) FROM chat_history WHERE user_id = {CASCADE_UID}")),
+        ("chat_summary", format!("SELECT COUNT(*) FROM chat_summary WHERE user_id = {CASCADE_UID}")),
+        ("execution_log", format!("SELECT COUNT(*) FROM execution_log WHERE user_id = {CASCADE_UID}")),
+        ("pending_action", format!("SELECT COUNT(*) FROM pending_action WHERE user_id = {CASCADE_UID}")),
+        ("agent_task", format!("SELECT COUNT(*) FROM agent_task WHERE user_id = {CASCADE_UID}")),
+        ("conversation", format!("SELECT COUNT(*) FROM conversation WHERE user_id = {CASCADE_UID}")),
+    ] {
+        assert_eq!(
+            count_of(&db, &sql).await,
+            0,
+            "删账号之后 `{label}` 还留着这个 uid 的行 —— 会话没了就没有任何读取路径会碰到它，\
+             也没有别的东西会红（20261018 之前 `delete_temp_user` 只清三张表）"
+        );
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ⑰ 夹具 uid 不许重复（20261018）
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// `cargo test` 默认**多线程并发**跑。两个用例共用一个 uid 时，`make_user`（先 DELETE 再
+// INSERT）会把对方正在用的那一行抽走 —— 症状是**随机红**，且只在并发时出现。
+// 20261018 CI 首跑就是这么红的：三条新用例共用一个 uid，报的是
+// `duplicate key value violates unique constraint "user_pkey"`，看着像夹具坏了、
+// 其实是并发，**本机 `cargo check` 全绿**（这是最难自己发现的一类）。
+//
+// 所以把"每个用例一个 uid"从注释里的一条约定，变成一条会红的判据：扫**自己的源码**，
+// 每个 `const …_UID: i32 = N;` 的 N 都必须唯一。
+//
+// ⚠️ 射程说明：只覆盖 `_UID` 后缀那一族（它们都往同一张 `user` 表里插，重复一定出事）。
+// `NOTE_*` / `AGG_*` 那一族的 id 也落在同一张 `note` 表里，但命名没有统一后缀，
+// 扫不出干净的一组 —— 那半边仍然只靠注释里的约定。
+#[test]
+fn fixture_uids_are_unique() {
+    let src = include_str!("pg_integration.rs");
+    let mut seen: std::collections::HashMap<i32, String> = std::collections::HashMap::new();
+    for line in src.lines() {
+        let line = line.trim();
+        if !line.starts_with("const ") || !line.contains("_UID") {
+            continue;
+        }
+        let Some((lhs, rhs)) = line.split_once(':') else { continue };
+        let name = lhs.trim_start_matches("const ").trim();
+        let Some(value) = rhs.split('=').nth(1) else { continue };
+        let Some(n) = value.trim().trim_end_matches(';').trim().parse::<i32>().ok() else {
+            continue;
+        };
+        if let Some(prev) = seen.insert(n, name.to_string()) {
+            panic!(
+                "夹具 uid {n} 被 `{prev}` 与 `{name}` 共用 —— 并发跑时 `make_user` 会互相删行，\
+                 症状是随机红（见本条注释）。给其中一个换一个没人用的 9000000xx。"
+            );
+        }
+    }
+    assert!(
+        seen.len() >= 10,
+        "一条 `_UID` 常量都没扫到（判据自己坏了，别当成通过）：{}",
+        seen.len()
+    );
+}

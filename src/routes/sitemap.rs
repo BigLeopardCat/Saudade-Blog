@@ -6,7 +6,7 @@ use axum::{
     http::header,
     response::Response,
 };
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
 use std::sync::Arc;
 
 use crate::entity::{category, note};
@@ -43,11 +43,17 @@ pub async fn sitemap_xml(State(st): State<Arc<AppState>>) -> Response {
     // 分类页
     let cats = category::Entity::find().all(&st.db).await.unwrap_or_default();
 
-    // 公开文章（含更新时间作为 lastmod）
-    let notes = note::Entity::find()
+    // 公开文章（含更新时间作为 lastmod）。
+    // 只取 id + updated_at（20261018）：这条路由是**公开且爬虫驱动**的（每次抓取都跑），
+    // 而它一个字节的正文都不用 —— 从前 `SELECT *` 会把全站正文跟着吐一遍。
+    let notes: Vec<(i32, chrono::NaiveDateTime)> = note::Entity::find()
+        .select_only()
+        .column(note::Column::Id)
+        .column(note::Column::UpdatedAt)
         .filter(note::Column::IsPublic.eq(true))
-        .filter(note::Column::Status.ne("draft"))
+        .filter(note::Column::Status.is_in(super::notes::public_status_words()))
         .order_by_desc(note::Column::Id)
+        .into_tuple::<(i32, chrono::NaiveDateTime)>()
         .all(&st.db)
         .await
         .unwrap_or_default();
@@ -72,11 +78,11 @@ pub async fn sitemap_xml(State(st): State<Arc<AppState>>) -> Response {
             ));
         }
     }
-    for n in &notes {
+    for (id, updated_at) in &notes {
         body.push_str(&format!(
             "  <url><loc>{site}/article/{}</loc><lastmod>{}</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>\n",
-            n.id,
-            lastmod(&n.updated_at)
+            id,
+            lastmod(updated_at)
         ));
     }
     body.push_str("</urlset>\n");

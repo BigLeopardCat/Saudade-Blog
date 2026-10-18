@@ -51,10 +51,15 @@ const ADMIN_PAGE_LIMIT: u64 = 500;
 /// （`is_public = 1` 且 `status <> 'draft'`）。两条读取路径**必须**同口径：否则会出现
 /// "评论读得到、文章打不开"（或反过来）这种自相矛盾的组合。
 pub(super) async fn note_visible(db: &sea_orm::DatabaseConnection, note_id: i32) -> bool {
+    // 只问"在不在"，那就只 select 主键（20261018）。这个函数在**每一次留言读写**上都会跑，
+    // 从前 `SELECT *` 每次都把整篇正文读回来。
     note::Entity::find()
+        .select_only()
+        .column(note::Column::Id)
         .filter(note::Column::Id.eq(note_id))
         .filter(note::Column::IsPublic.eq(true))
-        .filter(note::Column::Status.ne("draft"))
+        .filter(note::Column::Status.is_in(super::notes::public_status_words()))
+        .into_tuple::<i32>()
         .one(db)
         .await
         .ok()
