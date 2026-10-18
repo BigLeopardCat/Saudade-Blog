@@ -45,7 +45,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["chrono"] }
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }
-sha2 = "0.10"
+sha2 = "0.11"
 # 密码哈希（20260917 起）：Argon2id，纯 Rust 实现、无 C 依赖
 argon2 = { version = "0.5", features = ["std"] }
 hex = "0.4"
