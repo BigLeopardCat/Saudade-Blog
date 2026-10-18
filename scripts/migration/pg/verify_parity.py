@@ -69,6 +69,17 @@ def _owned_by_hand_written(key) -> bool:
     return key[0] in HAND_WRITTEN
 
 
+def is_stray_checkpoint(table: str) -> bool:
+    """业务库里**不该有**的那族表（langgraph 的 checkpoint 四张）。
+
+    ⚠️ 判据在下面 ⓪ 那条，这里只是**把同一个原因从别的 diff 里摘干净**：
+    索引集合（③）与外键集合（④）那两条 diff 拿的是未过滤的 PG 侧集合，不摘的话
+    同一个原因会报三次，而读的人会以为坏了三件事。**摘掉不等于放过** —— ⓪ 那一条
+    是点名的、恒会报的（只要表在）。
+    """
+    return table.startswith("checkpoint")
+
+
 def pg_query(sql: str) -> list[list[str]]:
     argv = PG_BIN.split() + ["-d", PG_DB, "-t", "-A", "-F", "\t", "-c", sql]
     r = subprocess.run(argv, capture_output=True, text=True)
@@ -192,8 +203,43 @@ def main() -> int:
         if want != got:
             bad.append("%s\n      MySQL/生成器: %r\n      PG         : %r" % (what, want, got))
 
-    # ① 表（手写的那两张先摘出去，见 HAND_WRITTEN）
-    diff("表集合", sorted(my["cols"]), sorted(t for t in pg["cols"] if t not in HAND_WRITTEN))
+    # ⓪ **业务库里不该有 langgraph 的 checkpoint 表**（20261019，点名判据）。
+    #
+    # 为什么值得单独一条：这四张表是**第三方库在运行时建的** ——
+    # `agent/checkpoint.py::build_checkpointer()` 在 agent **启动期** `saver.setup()`，
+    # 而它建在 **DSN 指向的那个库**里。某次把 `CHECKPOINT_DSN` 指到业务库起了一次 agent，
+    # 表就落这儿了（20261018 实测：三张数据表全 0 行，只有版本账那 6 行）。
+    #
+    # ⚠️ **它们的危害不是"多了几张表"，是"业务库的结构能在没有任何编号迁移的情况下变化"**
+    # —— 而本判据是唯一会因此转红的东西。所以它必须**指名道姓**地说出原因：
+    # 只说"表集合不一致"的话，读的人拿到的是两份长长的表名 diff，看不出该去改哪个旋钮。
+    #
+    # 顺手从下面那条表 diff 里摘掉：同一个原因报两次，只会把真红淹掉。
+    stray = sorted(t for t in pg["cols"] if is_stray_checkpoint(t))
+    if stray:
+        bad.append(
+            "业务库里出现了 langgraph 的 checkpoint 表：%s\n"
+            "      ⇒ 病根在 agent 仓 `.env` 的 `CHECKPOINT_DSN`：它现在**与 `DATABASE_URL` "
+            "逐字相同**\n"
+            "        （20261019 实测），而 `build_checkpointer()` 在 agent **启动期**对 DSN "
+            "那个库跑 `setup()`。\n"
+            "        于是**每次 agent 重启都会把它们建回来** —— `0008` 只是一次清理，"
+            "不是修复。\n"
+            "        要根治：把 `CHECKPOINT_DSN` 指向一个**业务库之外的库**，重启 agent，"
+            "再跑 0008。\n"
+            "        ⚠️ 别指 `agent_checkpoint`：那是**测试库**（`agent_ckpt`），里面躺着"
+            "并发建表那条用例的 thread。\n"
+            "        清理见 `scripts/migration/pg/0008_drop_stray_checkpoint_tables.sql`。"
+            % ", ".join(stray)
+        )
+
+    # ① 表（手写的那几张先摘出去，见 HAND_WRITTEN；checkpoint 残留由上面 ⓪ 单独报）
+    diff(
+        "表集合",
+        sorted(my["cols"]),
+        sorted(t for t in pg["cols"]
+               if t not in HAND_WRITTEN and not is_stray_checkpoint(t)),
+    )
 
     # ② 列 / 类型 / 可空 / 默认 / 自增 / 注释
     for t in sorted(my["cols"]):
@@ -219,8 +265,10 @@ def main() -> int:
         else:
             want_idx[(t, nm)] = {"unique": e["unique"],
                                  "cols": norm_cols(", ".join(x[1] for x in sorted(e["seq"])))}
-    # 手写表的索引不在这条 diff 的射程里（见 HAND_WRITTEN 那段注释）
-    got_idx = {k: v for k, v in pg["idx"].items() if not _owned_by_hand_written(k)}
+    # 手写表的索引不在这条 diff 的射程里（见 HAND_WRITTEN 那段注释）；
+    # checkpoint 那族的索引同理由 ⓪ 单独报（同一个原因不报三次）。
+    got_idx = {k: v for k, v in pg["idx"].items()
+               if not _owned_by_hand_written(k) and not is_stray_checkpoint(k[0])}
     diff("索引集合", sorted(want_idx), sorted(got_idx))
     for k in sorted(set(want_idx) & set(got_idx)):
         diff("索引 %s.%s 的唯一性" % k, want_idx[k]["unique"], pg["idx"][k]["unique"])
@@ -239,7 +287,8 @@ def main() -> int:
         want_fk[(t, n)] = {"type": "FOREIGN KEY", "cols": e["cols"], "ref": e["ref"],
                            "refcols": e["refcols"], "del": dele, "upd": upd}
     got_fk = {k: v for k, v in pg["cons"].items()
-              if v["type"] == "FOREIGN KEY" and not _owned_by_hand_written(k)}
+              if v["type"] == "FOREIGN KEY" and not _owned_by_hand_written(k)
+              and not is_stray_checkpoint(k[0])}
     diff("外键集合", sorted(want_fk), sorted(got_fk))
     for k in sorted(set(want_fk) & set(got_fk)):
         diff("外键 %s.%s" % k, want_fk[k], got_fk[k])
@@ -254,12 +303,17 @@ def main() -> int:
     # ⑥ 库级时区：`DEFAULT CURRENT_TIMESTAMP` 落在 timestamp 上要靠它才是 +08:00 钟面
     diff("库级 TimeZone", "Asia/Shanghai", pg["tz"])
 
-    print("MySQL %d 张表 / %d 列    PG %d 张表 / %d 列（另有手写 %d 张不在射程内）"
-          "    索引 %d   外键 %d   触发器 %d"
+    # 计数口径：手写表与 checkpoint 残留都从"PG 表数"里摘掉（各自单独一行说），
+    # 否则这里的 33 与上面 ① 那条 diff 里的 29 会看着像两回事。
+    print("MySQL %d 张表 / %d 列    PG %d 张表 / %d 列"
+          "（另有手写 %d 张%s不在射程内）    索引 %d   外键 %d   触发器 %d"
           % (len(my["cols"]), sum(len(v) for v in my["cols"].values()),
-             len(pg["cols"]) - len(HAND_WRITTEN & set(pg["cols"])),
-             sum(len(v) for k, v in pg["cols"].items() if k not in HAND_WRITTEN),
+             len([t for t in pg["cols"]
+                  if t not in HAND_WRITTEN and not is_stray_checkpoint(t)]),
+             sum(len(v) for k, v in pg["cols"].items()
+                 if k not in HAND_WRITTEN and not is_stray_checkpoint(k)),
              len(HAND_WRITTEN & set(pg["cols"])),
+             "、langgraph checkpoint 残留 %d 张" % len(stray) if stray else "",
              len(pg["idx"]), len(got_fk), len(pg["trig"])))
     if bad:
         print("\n✗ %d 处对不上：" % len(bad))
