@@ -173,7 +173,13 @@ const QUOTA_UID: i32 = 900000011;
 const QUOTA_UID2: i32 = 900000016;
 const CONV_SEARCH_UID: i32 = 900000012;
 const CONV_LIST_UID: i32 = 900000013;
-const IMG_UID: i32 = 900000017;
+// 聊天图片那一族（⑬）**三条用例各占一个 uid**：`cargo test` 默认多线程并发跑，
+// 共用同一个 uid 的话 `make_user` 会互相删对方刚插的行 —— 症状是
+// `duplicate key value violates unique constraint "user_pkey"`，
+// 看着像夹具坏了、其实是并发（20261018 CI 首跑就是这么红的）。
+const IMG_ROUNDTRIP_UID: i32 = 900000017;
+const IMG_CASCADE_UID: i32 = 900000018;
+const IMG_UNIQUE_UID: i32 = 900000019;
 const ADMIN_UID: i32 = 900000014;
 const APPLY_UID: i32 = 900000015;
 
@@ -1752,20 +1758,20 @@ async fn img_count(db: &DatabaseConnection, mid: i32) -> i64 {
 #[tokio::test]
 async fn chat_history_returns_images_byte_for_byte() {
     let Some((db, db_app)) = connect_pair().await else { return };
-    make_user(&db, IMG_UID, "user").await;
-    clear_conversations(&db, IMG_UID).await;
-    let cid = make_conversation(&db, IMG_UID, Some("带图的会话")).await;
+    make_user(&db, IMG_ROUNDTRIP_UID, "user").await;
+    clear_conversations(&db, IMG_ROUNDTRIP_UID).await;
+    let cid = make_conversation(&db, IMG_ROUNDTRIP_UID, Some("带图的会话")).await;
 
     // `+` `/` `=` 各出现，末尾还有 `==`（base64 填充）
     const IMG_A: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg+/x==";
     const IMG_B: &str = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ+AAA==";
-    let with_imgs = add_msg(&db, IMG_UID, cid, "看看这两张\n[图片×2]").await;
+    let with_imgs = add_msg(&db, IMG_ROUNDTRIP_UID, cid, "看看这两张\n[图片×2]").await;
     add_img(&db, with_imgs, 0, IMG_A).await;
     add_img(&db, with_imgs, 1, IMG_B).await;
-    let plain = add_msg(&db, IMG_UID, cid, "这条没有图").await;
+    let plain = add_msg(&db, IMG_ROUNDTRIP_UID, cid, "这条没有图").await;
 
     let app = test_app(db_app);
-    let token = auth_jwt::create_token(IMG_UID, "user", 0);
+    let token = auth_jwt::create_token(IMG_ROUNDTRIP_UID, "user", 0);
     let (st, j) = call(
         app,
         "GET",
@@ -1812,10 +1818,10 @@ async fn chat_history_returns_images_byte_for_byte() {
 #[tokio::test]
 async fn deleting_a_message_cascades_to_its_images() {
     let Some((db, _db_app)) = connect_pair().await else { return };
-    make_user(&db, IMG_UID, "user").await;
-    clear_conversations(&db, IMG_UID).await;
-    let cid = make_conversation(&db, IMG_UID, Some("级联")).await;
-    let mid = add_msg(&db, IMG_UID, cid, "两张\n[图片×2]").await;
+    make_user(&db, IMG_CASCADE_UID, "user").await;
+    clear_conversations(&db, IMG_CASCADE_UID).await;
+    let cid = make_conversation(&db, IMG_CASCADE_UID, Some("级联")).await;
+    let mid = add_msg(&db, IMG_CASCADE_UID, cid, "两张\n[图片×2]").await;
     add_img(&db, mid, 0, "data:image/png;base64,AAA").await;
     add_img(&db, mid, 1, "data:image/png;base64,BBB").await;
     assert_eq!(img_count(&db, mid).await, 2, "前提：两张图确实插进去了");
@@ -1838,10 +1844,10 @@ async fn deleting_a_message_cascades_to_its_images() {
 #[tokio::test]
 async fn chat_image_unique_key_blocks_a_replayed_seq() {
     let Some((db, _db_app)) = connect_pair().await else { return };
-    make_user(&db, IMG_UID, "user").await;
-    clear_conversations(&db, IMG_UID).await;
-    let cid = make_conversation(&db, IMG_UID, Some("唯一键")).await;
-    let mid = add_msg(&db, IMG_UID, cid, "一张\n[图片]").await;
+    make_user(&db, IMG_UNIQUE_UID, "user").await;
+    clear_conversations(&db, IMG_UNIQUE_UID).await;
+    let cid = make_conversation(&db, IMG_UNIQUE_UID, Some("唯一键")).await;
+    let mid = add_msg(&db, IMG_UNIQUE_UID, cid, "一张\n[图片]").await;
     add_img(&db, mid, 0, "data:image/png;base64,AAA").await;
 
     let dup = db
