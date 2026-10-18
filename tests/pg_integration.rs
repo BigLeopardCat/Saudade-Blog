@@ -1885,6 +1885,8 @@ async fn chat_image_unique_key_blocks_a_replayed_seq() {
 // ⚠️ 只断言"约束存在"是**空真**（存在也可能写成恒真）。必须**种违规行**看它是不是真被拒 ——
 // 下面每一条都是"先试违规、再试合法"，两边都要有。
 
+/// ⑭ 占的是一**段** id：`VIS_NOTE_BASE + 0..6`（三条被拒的 + 三条该落库的）。段长登记在
+/// `ID_BLOCKS` 里，⑰ 会拦"别的点常量落进这一段"。
 const VIS_NOTE_BASE: i32 = 900000051;
 
 /// 约束在不在。不在就给出"该跑哪份迁移"的提示 —— 否则失败会退化成一条裸 SQL 报错
@@ -2003,8 +2005,13 @@ async fn note_status_visibility_check_rejects_and_accepts() {
 // ⚠️ 只跑 mock 是**空真**（MockDatabase 不解码行，也走不到真实推导）；这里走真链路 + 真库，
 // 并且**断言那一行没被改动** —— "报错了但已经写进去了"是这类修复最常见的假绿。
 
-const UPD_VIS_UID: i32 = 900000052;
-const UPD_VIS_NOTE: i32 = 900000052;
+/// ⚠️ **`_UID` 与 `_NOTE` 各占一个号，且都不许落进别的用例的 id 段里。**
+/// 900000052 曾经同时被这里（`UPD_VIS_UID`）与 `BOARDQ_UID_B` 用着 —— 两个用例并发跑，
+/// `make_user`（先 DELETE 再 INSERT）会把对方正在用的那一行抽走。`UPD_VIS_NOTE` 更不能
+/// 取 900000052：那是 ⑭ 的 `VIS_NOTE_BASE + 1`，⑭ 收尾时会把它整段删掉。
+/// 两条都由 ⑰ 静态查（点对点 + 点对段），别只靠这句注释。
+const UPD_VIS_UID: i32 = 900000055;
+const UPD_VIS_NOTE: i32 = 900000057;
 
 #[tokio::test]
 async fn update_note_refuses_public_flag_on_non_public_status() {
@@ -2199,34 +2206,100 @@ async fn deleting_a_temp_user_purges_all_six_chat_tables() {
 // 所以把"每个用例一个 uid"从注释里的一条约定，变成一条会红的判据：扫**自己的源码**，
 // 每个 `const …_UID: i32 = N;` 的 N 都必须唯一。
 //
-// ⚠️ 射程说明：只覆盖 `_UID` 后缀那一族（它们都往同一张 `user` 表里插，重复一定出事）。
-// `NOTE_*` / `AGG_*` 那一族的 id 也落在同一张 `note` 表里，但命名没有统一后缀，
-// 扫不出干净的一组 —— 那半边仍然只靠注释里的约定。
+// ⚠️ 射程说明（20261018 扩过一次）：覆盖 `_UID` 那一族（都往同一张 `user` 表里插）**以及**
+// `_NOTE` 那一族（都往 `note` 表里插）。`NOTE_SUM` / `AGG_NOTE_OK` 那些**不**在这个射程里
+// —— 它们不以后缀命名，扫不出干净的一组，那半边仍然只靠注释里的约定。
+//
+// 除了点对点查重，还要**点对段**：有的用例一次占一段 id（`VIS_NOTE_BASE` 那 6 个），
+// 别的点常量落进去一样是并发互删。段登记在 `ID_BLOCKS` 里（只写名字与段长，起始值从
+// 源码里现取 —— 写死值就又是一份会漂的手抄表）。
+//
+// ⚠️ **对账必须在同一张表里做**：`user` 与 `note` 的 id 是两个独立序列，同号完全合法
+// （`BOARDQ_UID_A = 900000051` 与 `VIS_NOTE_BASE = 900000051` 就是这样，不是冲突）。
+// 表由**名字里的那个词**认：含 `UID` 的算 `user` 表、含 `NOTE` 的算 `note` 表。
+const ID_BLOCKS: &[(&str, i32)] = &[("VIS_NOTE_BASE", 6)];
+
+/// 名字里的那个词就是它的表（`UID` → user、其余按 `NOTE` → note）。见上面那段 ⚠️。
+fn fixture_ns(name: &str) -> &'static str {
+    if name.contains("UID") { "user" } else { "note" }
+}
+
 #[test]
 fn fixture_uids_are_unique() {
     let src = include_str!("pg_integration.rs");
-    let mut seen: std::collections::HashMap<i32, String> = std::collections::HashMap::new();
+    let mut all: std::collections::HashMap<String, i32> = std::collections::HashMap::new();
     for line in src.lines() {
         let line = line.trim();
-        if !line.starts_with("const ") || !line.contains("_UID") {
+        if !line.starts_with("const ") {
             continue;
         }
         let Some((lhs, rhs)) = line.split_once(':') else { continue };
-        let name = lhs.trim_start_matches("const ").trim();
+        let name = lhs.trim_start_matches("const ").trim().to_string();
         let Some(value) = rhs.split('=').nth(1) else { continue };
-        let Some(n) = value.trim().trim_end_matches(';').trim().parse::<i32>().ok() else {
-            continue;
-        };
-        if let Some(prev) = seen.insert(n, name.to_string()) {
+        // ⚠️ 先砍**行尾注释**再解析。此前只砍 `;` —— 而 `const AGG_NOTE_OK: i32 = 900000021; // …`
+        // 砍完还带着 `; // …`，parse 失败 ⇒ 整条被 `continue` 静默跳过。本文件 45 条 i32 常量里
+        // 有 24 条带注释，**这个 guard 当时只扫到 21 条**，而它看起来跟全扫一模一样。
+        let value = value.split("//").next().unwrap_or("").trim();
+        let value = value.trim_end_matches(';').trim();
+        if let Some(n) = value.parse::<i32>().ok() {
+            all.insert(name, n);
+        }
+    }
+
+    // 判据自己的正控：**一条都不许被静默跳过**。上面那个洞就是"少扫了一层而看不出来"，
+    // 所以这里不比一个手抄的阈值，而是拿"源码里有几行 `const …: i32 = …`"当分母 ——
+    // 少解析一条就红。（`ID_BLOCKS` 那种 `&[(&str, i32)]` 的常量不含 `: i32 = `，不在分母里。）
+    let expected = src
+        .lines()
+        .filter(|l| {
+            let t = l.trim();
+            t.starts_with("const ") && t.contains(": i32 = ")
+        })
+        .count();
+    assert_eq!(
+        all.len(),
+        expected,
+        "有 `const …: i32 = …` 没被解析出来（判据自己漏了射程 —— 十有八九是行尾注释没砍干净）"
+    );
+
+    // 点常量：一个常量 = 一个 id。
+    let points: Vec<(String, i32)> = all
+        .iter()
+        .filter(|(n, _)| n.contains("_UID") || n.ends_with("_NOTE"))
+        .map(|(n, v)| (n.clone(), *v))
+        .collect();
+    let mut seen: std::collections::HashMap<(&str, i32), String> = std::collections::HashMap::new();
+    for (name, n) in &points {
+        if let Some(prev) = seen.insert((fixture_ns(name), *n), name.clone()) {
             panic!(
-                "夹具 uid {n} 被 `{prev}` 与 `{name}` 共用 —— 并发跑时 `make_user` 会互相删行，\
-                 症状是随机红（见本条注释）。给其中一个换一个没人用的 9000000xx。"
+                "夹具 id {n} 被 `{prev}` 与 `{name}` 共用（同一张表）—— 并发跑时 `make_user` /\
+                 建行会互相删行，症状是随机红（见本条注释）。给其中一个换一个没人用的号。"
             );
         }
     }
+
+    // 段常量：一个常量 = 连续一段 id。起始值从 `all` 现取（改名 ⇒ 这里先红，不是静默少一层射程）。
+    for (bname, len) in ID_BLOCKS {
+        let Some(start) = all.get(*bname) else {
+            panic!("`ID_BLOCKS` 登记了 `{bname}`，但源码里没有这个 `const` —— 改名了就一起改");
+        };
+        for (name, n) in &points {
+            if fixture_ns(name) != fixture_ns(bname) {
+                continue;
+            }
+            if *n >= *start && *n < start + len {
+                panic!(
+                    "夹具 id {n}（`{name}`）落在 `{bname}` 占的 [{start}, {}) 里 —— 那个用例\
+                     收尾时会整段删掉，两个用例并发跑 ⇒ 随机红。给 `{name}` 换一个段外的号。",
+                    start + len
+                );
+            }
+        }
+    }
+
     assert!(
         seen.len() >= 10,
-        "一条 `_UID` 常量都没扫到（判据自己坏了，别当成通过）：{}",
+        "一条 `_UID` / `_NOTE` 常量都没扫到（判据自己坏了，别当成通过）：{}",
         seen.len()
     );
 }

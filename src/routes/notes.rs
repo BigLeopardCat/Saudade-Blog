@@ -1401,11 +1401,20 @@ mod tests {
     /// content 本来就会被 `map_note_summary` 置空，读不读回来都一样。
     #[test]
     fn 列表查询的_select_列表里没有正文() {
-        use sea_orm::{DbBackend, PartialModelTrait, QueryTrait};
+        use sea_orm::{DbBackend, PartialModelTrait, QuerySelect, QueryTrait};
 
-        let sql = <NoteSummary as PartialModelTrait>::select_cols(note::Entity::find())
-            .build(DbBackend::Postgres)
-            .sql;
+        // 组合方式必须与 sea-orm 的 `into_partial_model` **逐字一致**：
+        //   `M::select_cols(QuerySelect::select_only(self))`（`executor/select.rs:218`，
+        //   `SelectTwo` 那版在 `:500`，同样是先 `select_only` 再两个 `select_cols`）。
+        // ⚠️ `select_cols` 是**追加**，不是替换 —— 少写 `select_only()` 取到的是
+        // 「整实体列 + partial 列」的拼接，里面当然有 `content`，判据就会红在一个
+        // **它自己造出来的**假象上（20261018 CI 首跑就是这么红的：它报出来的 SQL 以
+        // `SELECT "note"."id", "note"."title", "note"."content", …` 开头）。
+        let sql = <NoteSummary as PartialModelTrait>::select_cols(
+            note::Entity::find().select_only(),
+        )
+        .build(DbBackend::Postgres)
+        .sql;
         assert!(sql.contains("\"title\""), "标题在（不然这条判据连自己都没在测）：{sql}");
         assert!(
             !sql.contains("\"content\""),
@@ -1413,6 +1422,17 @@ mod tests {
         );
         // `content_raw` 不是列名（DTO 才叫这个），防的是有人误把它当列加进 partial。
         assert!(!sql.contains("content_raw"), "SQL={sql}");
+
+        // 反控**写在测试里**，不靠人记得：不走 `into_partial_model` 那条组合时取到的
+        // SQL 必须**含** `content`。少了这一条，上面那句「没有 content」在
+        // 「`note` 表真的没有 content 列了」「`select_only` 语义变了」这类情形下
+        // 会**空真通过**，而它看起来跟真通过一模一样。
+        let naive = note::Entity::find().build(DbBackend::Postgres).sql;
+        assert!(
+            naive.contains("\"content\""),
+            "反控失败：整实体的 SELECT 里居然没有 content ⇒ 上面那句「没有正文」\
+             已经不是在测任何东西了。SQL={naive}"
+        );
     }
 
     /// 两级标签撞号时**一级优先**（与前端 `flattenTagOptions` 同口径）。
