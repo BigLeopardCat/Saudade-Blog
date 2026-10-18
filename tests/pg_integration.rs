@@ -2393,17 +2393,94 @@ async fn 公开文章列表里找得到自己刚种的那一篇() {
     exec(&db, &format!("DELETE FROM category WHERE id = {LIST_CAT}")).await;
 }
 
-/// `SelectTwo` 那版 `into_partial_model` **不许再出现**（见 ⑱ 头注）。
+/// 剥掉行注释与块注释（**跳过字符串字面量**）。
 ///
-/// 判据取"turbofish 里有逗号"——`into_partial_model::<A, B>` 就是 `SelectTwo` 那版，
-/// 单实体的 `into_partial_model::<A>` 没有逗号。按**整份文件文本**扫（不是逐行），
-/// 免得有人把 turbofish 折成两行就绕过去。
+/// 判据读的是**代码**，不是注释。本仓的注释里到处在**举例**写那些被禁的写法 ——
+/// 这一版第一次跑就栽在这：`notes.rs` 的头注逐字写着那条被禁的组合，锁当场把自己红掉
+/// （"不剥注释"与"真用了"在源码文本上长得一模一样）。
+fn strip_rust_comments(src: &str) -> String {
+    let b: Vec<char> = src.chars().collect();
+    let mut out = String::with_capacity(src.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == '"' {
+            // 字符串字面量整段搬过去（含 `\"` 转义），免得把 URL 里的 `//` 当注释起点。
+            out.push(b[i]);
+            i += 1;
+            while i < b.len() && b[i] != '"' {
+                if b[i] == '\\' && i + 1 < b.len() {
+                    out.push(b[i]);
+                    i += 1;
+                }
+                out.push(b[i]);
+                i += 1;
+            }
+            if i < b.len() {
+                out.push(b[i]);
+                i += 1;
+            }
+        } else if b[i] == '/' && i + 1 < b.len() && b[i + 1] == '/' {
+            while i < b.len() && b[i] != '\n' {
+                i += 1;
+            }
+        } else if b[i] == '/' && i + 1 < b.len() && b[i + 1] == '*' {
+            i += 2;
+            while i + 1 < b.len() && !(b[i] == '*' && b[i + 1] == '/') {
+                i += 1;
+            }
+            i = (i + 2).min(b.len());
+        } else {
+            out.push(b[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
+/// 在一段**代码文本**里找出 `SelectTwo` 那版 `into_partial_model` 的每一处。
+///
+/// 认法 = turbofish 里有逗号（`::<A, B>` 就是两实体那版；`::<A>` 是单实体那版）。
+/// 按**整份文本**扫、不逐行 —— 免得有人把 turbofish 折成两行就绕过去。
+fn partial_model_two_hits(code: &str) -> Vec<String> {
+    const NEEDLE: &str = "into_partial_model::<";
+    let mut hits = Vec::new();
+    let mut rest = code;
+    while let Some(i) = rest.find(NEEDLE) {
+        let after = &rest[i + NEEDLE.len()..];
+        let end = after.find('>').unwrap_or(after.len());
+        if after[..end].contains(',') {
+            hits.push(after[..end].replace('\n', " "));
+        }
+        rest = &rest[i + 1..];
+    }
+    hits
+}
+
+/// `SelectTwo` 那版 `into_partial_model` **不许再出现**（见 ⑱ 头注）。
 #[test]
 fn 不许用_select_two_那版_partial_model() {
-    const NEEDLE: &str = "into_partial_model::<";
-    let dir = std::path::Path::new("src");
+    // 判据自己的正控：剥注释**不能把代码也剥掉**。少了这一条，"strip 太狠 ⇒ 永远扫不到"
+    // 会静默变成全绿，而它看起来跟"确实没有"一模一样。
+    let sample = "let q = a.find_also_related(B).into_partial_model::<M, N>(); // 注释";
+    assert_eq!(
+        partial_model_two_hits(&strip_rust_comments(sample)).len(),
+        1,
+        "正控失败：真代码里的 `::<M, N>` 都没被抓到 ⇒ 下面那条扫不出东西不算数"
+    );
+    // 反控：注释里的、以及单实体那版，都不许报。
+    let comments = "// 以前是 into_partial_model::<M, N>()\n/* 也曾是 into_partial_model::<M, N>() */";
+    assert!(
+        partial_model_two_hits(&strip_rust_comments(comments)).is_empty(),
+        "反控失败：注释里的举例被当成真代码了"
+    );
+    let single = "let q = a.into_partial_model::<M>();";
+    assert!(
+        partial_model_two_hits(&strip_rust_comments(single)).is_empty(),
+        "反控失败：单实体那版（`::<M>`）被误报"
+    );
+
     let mut offenders: Vec<String> = Vec::new();
-    let mut stack = vec![dir.to_path_buf()];
+    let mut stack = vec![std::path::PathBuf::from("src")];
     while let Some(d) = stack.pop() {
         for e in std::fs::read_dir(&d).expect("src 读不动") {
             let p = e.unwrap().path();
@@ -2415,14 +2492,8 @@ fn 不许用_select_two_那版_partial_model() {
                 continue;
             }
             let text = std::fs::read_to_string(&p).unwrap();
-            let mut rest = text.as_str();
-            while let Some(i) = rest.find(NEEDLE) {
-                let after = &rest[i + NEEDLE.len()..];
-                let end = after.find('>').unwrap_or(after.len());
-                if after[..end].contains(',') {
-                    offenders.push(format!("{}: {}", p.display(), after[..end].replace('\n', " ")));
-                }
-                rest = &rest[i + 1..];
+            for h in partial_model_two_hits(&strip_rust_comments(&text)) {
+                offenders.push(format!("{}: {h}", p.display()));
             }
         }
     }
@@ -2430,7 +2501,6 @@ fn 不许用_select_two_那版_partial_model() {
         offenders.is_empty(),
         "`SelectTwo` 那版 `into_partial_model` 每行都会映射失败（`select_only` 清掉了 \
          `A_`/`B_` 别名），而调用点的 `.unwrap_or(vec![])` 会让它**静默变成空列表**。\
-         单实体那版没问题，用它 + 单独查一次关联表：{:?}",
-        offenders
+         单实体那版没问题，用它 + 单独查一次关联表：{offenders:?}"
     );
 }
