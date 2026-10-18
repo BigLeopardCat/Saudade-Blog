@@ -422,6 +422,44 @@ pub(crate) async fn drop_checkpoint_threads(ids: &[i32]) {
     }
 }
 
+/// 把「丢弃那一轮」告诉 agent（`POST /checkpoint/{id}/drop_turn`，**best-effort**）。
+///
+/// **为什么必须告诉它**：20261018 起 agent 的上下文**由图自持**（`server._graph_holds_context()`
+/// 把历史注入关了）⇒ `chat_history` 不再是上下文来源。删掉那一轮之后不说一声，agent 下一轮
+/// **照样记得**——主人点了"停止生成"、明确说不想要这条进记忆，而记忆里还有。
+///
+/// `text` = 刚删掉那行的 content（**必给**）：agent 侧拿它确认"state 里最后那条 user 是不是
+/// 这一轮"，对不上就不动手——摘错的代价不可逆（删掉主人还想留着的话）。
+///
+/// 失败/没生效**只 warn**（与 `drop_checkpoint_threads` 同口径：不挡业务删除，但必须留痕）。
+pub(crate) async fn drop_checkpoint_turn(conversation_id: i32, text: &str) {
+    let url = format!("{}/checkpoint/{conversation_id}/drop_turn",
+                      crate::routes::graph::agent_base_url());
+    let sent = reqwest::Client::new()
+        .post(&url)
+        .json(&serde_json::json!({ "text": text }))
+        .timeout(Duration::from_secs(3))
+        .send()
+        .await;
+    match sent {
+        Ok(r) => {
+            let ok = r.status().is_success();
+            let v = r.json::<serde_json::Value>().await
+                .unwrap_or_else(|_| serde_json::json!({}));
+            if !ok {
+                tracing::warn!("[会话] 丢弃那一轮的钩子非 2xx conv={conversation_id}");
+            } else if !v["dropped"].as_bool().unwrap_or(false) {
+                // `no_text` / `mismatch` 都落这里——它们是"没动手"，**不是成功**。
+                tracing::warn!(
+                    "[会话] 丢弃那一轮没生效 conv={} why={}（图里那条 user 还在，下一轮它还看得见）",
+                    conversation_id, v["why"].as_str().unwrap_or("?")
+                );
+            }
+        }
+        Err(e) => tracing::warn!("[会话] 丢弃那一轮的钩子失败 conv={conversation_id}: {e}"),
+    }
+}
+
 /// DELETE /api/chat/conversations/:id：删除会话 + 级联删其历史与摘要（用户级清洗手段）。
 /// 归属校验合并为一个查询：不存在或非本人统一 404（防枚举）。
 pub async fn delete_conversation(

@@ -361,6 +361,11 @@ pub async fn discard_handler(
         .filter(chat_history::Column::Id.gte(u.id))
         .exec(&state.db)
         .await;
+    // **图自己的 state 里那条 user 还在**（20261019 批 E）：20261018 起 agent 的上下文
+    // 由图自持（历史注入已关）⇒ `chat_history` 不再是上下文来源，「丢弃」对 agent 不再生效。
+    // 这里把**刚删掉那行的 content** 原样带上（agent 侧靠它确认摘的是哪一轮，对不上就不动手）。
+    // best-effort：失败只 warn，不挡这次响应——历史已经删了，这时候回一句"失败"是假话。
+    crate::routes::conversation::drop_checkpoint_turn(conv_id, &u.content).await;
     (StatusCode::OK, Json(serde_json::json!({"success": true}))).into_response()
 }
 
