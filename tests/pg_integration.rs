@@ -2315,3 +2315,122 @@ fn fixture_uids_are_unique() {
         seen.len()
     );
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ⑱ 公开文章列表读得出来（20261018 事故的回归锁）
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// 现场：三个列表端点原来写的是
+// `find_also_related(category::Entity).into_partial_model::<NoteSummary, CategoryPartial>()`
+// —— **每一行都映射失败**。`SelectTwo::into_partial_model` 的第一步是
+// `QuerySelect::select_only(self)`，而 `SelectTwoModel` 读行时按 `A_` / `B_` 前缀取列
+// （`from_query_result(res, "A_")`），那两个前缀**正是 `find_also_related` 写进 select
+// 列表的别名**（`apply_alias`）—— 被 `select_only` 清掉之后就再也对不上。
+// 而三个调用点都是 `.unwrap_or(vec![])` ⇒ **公网文章列表静默变空**：接口照旧 200、
+// 日志一个字都没有、本机 `cargo check` 全绿。这条判据钉的就是"列表里必须有自己刚种的那一篇"。
+//
+// ⚠️ **必须按自己的 id 找**：生产/CI 库里本来就有一批公开文章，只断言"data 非空"
+// 会被它们蒙混过去 —— 那样这条判据在事故当下**照样是绿的**。
+//
+// 配套的源码锁 `不许用_select_two_那版_partial_model` 管"别再写回去"；
+// 这一条管"写回去了会红"。两条配对，缺一条都不够。
+const LIST_NOTE: i32 = 900000058;
+/// 夹具分类。`category` 与 `note` 的 id 是两个独立序列，取同号无妨（⑰ 按表对账）。
+const LIST_CAT: i32 = 900000058;
+
+#[tokio::test]
+async fn 公开文章列表里找得到自己刚种的那一篇() {
+    let Some((db, db_app)) = connect_pair().await else { return };
+    exec(&db, &format!("DELETE FROM note WHERE id = {LIST_NOTE}")).await;
+    exec(&db, &format!("DELETE FROM category WHERE id = {LIST_CAT}")).await;
+    exec(
+        &db,
+        &format!("INSERT INTO category (id, name) VALUES ({LIST_CAT}, '列表夹具分类')"),
+    )
+    .await;
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO note (id, title, content, created_at, updated_at, is_public, status, category_id) \
+             VALUES ({LIST_NOTE}, '公开列表夹具', '正文不该出现在列表里', NOW(), NOW(), true, 'public', {LIST_CAT})"
+        ),
+    )
+    .await;
+
+    let app = test_app(db_app);
+    let (st, j) = call(app, "GET", "/api/public/notes?page=1&page_size=1000", None, None).await;
+    assert_eq!(st, StatusCode::OK, "{j}");
+    let rows = j["data"]
+        .as_array()
+        .unwrap_or_else(|| panic!("data 不是数组：{j}"));
+    let mine = rows
+        .iter()
+        .find(|r| r["noteKey"].as_i64() == Some(LIST_NOTE as i64))
+        .unwrap_or_else(|| {
+            panic!(
+                "自己刚种的那篇公开文章不在公开列表里（共 {} 行）—— 这正是 20261018 的事故形状：\
+                 每一行都映射失败，而 `.unwrap_or(vec![])` 把它变成「列表本来就是空的」。{j}",
+                rows.len()
+            )
+        });
+    // 列表**不给正文**（`map_note_summary` 本来就把两个正文键置空）—— 这条同时钉住
+    // "partial model 只摘了 content、没有把别的列一起摘掉"。
+    assert_eq!(mine["noteContent"].as_str(), Some(""), "列表不给正文：{j}");
+    assert_eq!(mine["content"].as_str(), Some(""), "列表不给正文（另一个键）：{j}");
+    assert_eq!(
+        mine["noteTitle"].as_str(),
+        Some("公开列表夹具"),
+        "标题必须真的读出来了（只摘 content、不摘别的列）：{j}"
+    );
+    // 分类名走 `category_names` 那一次单独查询 —— 新代码，同样要有人看着。
+    assert_eq!(
+        mine["categoryTitle"].as_str(),
+        Some("列表夹具分类"),
+        "分类名要挂上（分类从 LEFT JOIN 改成单独一次查询了）：{j}"
+    );
+
+    exec(&db, &format!("DELETE FROM note WHERE id = {LIST_NOTE}")).await;
+    exec(&db, &format!("DELETE FROM category WHERE id = {LIST_CAT}")).await;
+}
+
+/// `SelectTwo` 那版 `into_partial_model` **不许再出现**（见 ⑱ 头注）。
+///
+/// 判据取"turbofish 里有逗号"——`into_partial_model::<A, B>` 就是 `SelectTwo` 那版，
+/// 单实体的 `into_partial_model::<A>` 没有逗号。按**整份文件文本**扫（不是逐行），
+/// 免得有人把 turbofish 折成两行就绕过去。
+#[test]
+fn 不许用_select_two_那版_partial_model() {
+    const NEEDLE: &str = "into_partial_model::<";
+    let dir = std::path::Path::new("src");
+    let mut offenders: Vec<String> = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for e in std::fs::read_dir(&d).expect("src 读不动") {
+            let p = e.unwrap().path();
+            if p.is_dir() {
+                stack.push(p);
+                continue;
+            }
+            if p.extension().and_then(|s| s.to_str()) != Some("rs") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&p).unwrap();
+            let mut rest = text.as_str();
+            while let Some(i) = rest.find(NEEDLE) {
+                let after = &rest[i + NEEDLE.len()..];
+                let end = after.find('>').unwrap_or(after.len());
+                if after[..end].contains(',') {
+                    offenders.push(format!("{}: {}", p.display(), after[..end].replace('\n', " ")));
+                }
+                rest = &rest[i + 1..];
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "`SelectTwo` 那版 `into_partial_model` 每行都会映射失败（`select_only` 清掉了 \
+         `A_`/`B_` 别名），而调用点的 `.unwrap_or(vec![])` 会让它**静默变成空列表**。\
+         单实体那版没问题，用它 + 单独查一次关联表：{:?}",
+        offenders
+    );
+}

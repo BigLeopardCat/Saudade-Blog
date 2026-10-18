@@ -267,12 +267,68 @@ impl NoteSummary {
     }
 }
 
-/// 列表查询里跟着一起取的分类列：**只有 `map_note` 真正用到的那两列**。
-#[derive(Debug, Clone, DerivePartialModel)]
-#[sea_orm(entity = "category::Entity", from_query_result)]
-pub struct CategoryPartial {
-    pub id: i32,
-    pub name: String,
+/// 本页用到的分类名（键 = 分类 id）。
+///
+/// ⚠️ **分类走单独一次查询，不跟着 LEFT JOIN 一起取**（20261018 现场修正）。
+/// 原来那版是 `find_also_related(category::Entity).into_partial_model::<NoteSummary, CategoryPartial>()`
+/// —— **它不工作**：`SelectTwo::into_partial_model` 的第一步是 `QuerySelect::select_only(self)`，
+/// 而 `select_only` 会 `clear_selects()`；`SelectTwoModel` 读行时用的是 `from_query_result(res, "A_")`
+/// / `"B_"`，那两个前缀**正是 `find_also_related` 写进 select 列表的别名**（`apply_alias`），
+/// 被 `select_only` 清掉之后就再也对不上 ⇒ 每一行都 `Err(ColumnNotFound)`。
+/// 而三个调用点都是 `.unwrap_or(vec![])` ⇒ **公网文章列表静默变空**，没有任何东西报错。
+/// `Select<Entity>`（单实体）那条 `into_partial_model` 没这个问题（它按空前缀读）。
+///
+/// 失败 → 空表：卡片那一栏留空，列表本身照常返回（与 `attach_stats` / `attach_authors` 同一取向）。
+async fn category_names(
+    db: &sea_orm::DatabaseConnection,
+    ids: impl Iterator<Item = i32>,
+) -> HashMap<i32, String> {
+    let ids: Vec<i32> = ids.collect::<std::collections::HashSet<i32>>().into_iter().collect();
+    if ids.is_empty() {
+        return HashMap::new();
+    }
+    match category::Entity::find()
+        .select_only()
+        .column(category::Column::Id)
+        .column(category::Column::Name)
+        .filter(category::Column::Id.is_in(ids))
+        .into_tuple::<(i32, String)>()
+        .all(db)
+        .await
+    {
+        Ok(v) => v.into_iter().collect(),
+        Err(e) => {
+            tracing::warn!("[notes] 分类查询失败，本页不挂分类名: {e}");
+            HashMap::new()
+        }
+    }
+}
+
+/// `.unwrap_or(vec![])` 会把**查询出错**与**查询结果本来为空**合成同一个结果。
+///
+/// 20261018 的现场就是被这一句吃掉的：`SelectTwo` 那版 `into_partial_model` 每一行都
+/// 映射失败 ⇒ 公网文章列表**静默变空**，接口照旧 200、日志一个字都没有（`fetch_page`
+/// 的错误在 `unwrap_or` 里蒸发）。
+/// 列表端点一律走这里：**照旧返回空列表**（列表本身不能 500），但**留一行 WARN** ——
+/// "空"这件事至少要有迹可循。
+fn or_empty_warn<T>(r: Result<Vec<T>, sea_orm::DbErr>, what: &str) -> Vec<T> {
+    match r {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!("[notes] {what} 查询失败，已降级成空列表（接口仍 200）: {e}");
+            Vec::new()
+        }
+    }
+}
+
+/// 把 `NoteSummary` 那一行变成 DTO 的**唯一**入口（三个列表端点共用）。
+///
+/// 分类那半：`NoteSummary.category_id` 是 `note` 自己的列，`cats` 是 `category_names`
+/// 查回来的名字。**两边都对得上才给 `Some((id, name))`** —— 查不到分类行（分类被删、
+/// note 还指着它）时 `map_note` 收到的仍是 `None`，与 LEFT JOIN 出 `NULL` 的旧行为逐字一致。
+fn summary_to_dto(r: NoteSummary, cats: &HashMap<i32, String>) -> NoteDto {
+    let cat = r.category_id.and_then(|id| cats.get(&id).map(|n| (id, n.clone())));
+    map_note_summary(r.into_model(), cat)
 }
 
 pub async fn list_public_notes(
@@ -297,23 +353,20 @@ pub async fn list_public_notes(
     let page = query.page.unwrap_or(1).max(1);
     let per_page = query.page_size.unwrap_or(6).clamp(1, 1000) as u64;
 
-    let paginator = note::Entity::find()
+    let notes = note::Entity::find()
         .filter(condition)
         .order_by_desc(note::Column::CreatedAt)
-        .find_also_related(category::Entity)
-        // `into_partial_model` 把 select 列表换成两个 partial struct 的列 —— 正文不在其中
-        // （见 `NoteSummary` 头注）。分类那一半仍然是同一个 LEFT JOIN，不多一次查询。
-        .into_partial_model::<NoteSummary, CategoryPartial>()
-        .paginate(&state.db, per_page);
-
-    let notes = paginator
+        // `into_partial_model` 把 select 列表换成 `NoteSummary` 的列 —— 正文不在其中
+        // （见 `NoteSummary` 头注）。⚠️ **只用单实体这一版**：`SelectTwo` 那版不工作，
+        // 理由见 `category_names` 头注（分类因此走单独一次查询）。
+        .into_partial_model::<NoteSummary>()
+        .paginate(&state.db, per_page)
         .fetch_page(page - 1)
-        .await
-        .unwrap_or(vec![]);
+        .await;
+    let notes = or_empty_warn(notes, "公开文章列表");
 
-    let mut dtos: Vec<NoteDto> = notes.into_iter().map(|(n, cat)| {
-        map_note_summary(n.into_model(), cat.map(|c| (c.id, c.name)))
-    }).collect();
+    let cats = category_names(&state.db, notes.iter().filter_map(|r| r.category_id)).await;
+    let mut dtos: Vec<NoteDto> = notes.into_iter().map(|r| summary_to_dto(r, &cats)).collect();
     attach_stats(&state.db, &mut dtos).await;
     attach_authors(&state.db, &mut dtos).await;
 
@@ -331,18 +384,15 @@ pub async fn list_all_notes(
     let notes = note::Entity::find()
         .filter(note::Column::DraftOf.is_null())
         .order_by_desc(note::Column::CreatedAt)
-        // `find_also_related`（不是 `find_with_related`）：`note.category_id` 是单值，
-        // LEFT JOIN 最多出一行，与"再查一遍分类"逐条等价；而只有 `SelectTwo` 才有
-        // `into_partial_model`，能把正文列一起摘掉（见 `NoteSummary` 头注）。
-        .find_also_related(category::Entity)
-        .into_partial_model::<NoteSummary, CategoryPartial>()
+        // 正文列不进 select 列表（见 `NoteSummary` 头注）；分类走 `category_names`
+        // 单独一次查询，理由见那个函数的头注（`SelectTwo` 那版 `into_partial_model` 不工作）。
+        .into_partial_model::<NoteSummary>()
         .all(&state.db)
-        .await
-        .unwrap_or(vec![]);
+        .await;
+    let notes = or_empty_warn(notes, "全部文章列表");
 
-    let mut dtos: Vec<NoteDto> = notes.into_iter().map(|(n, cat)| {
-        map_note_summary(n.into_model(), cat.map(|c| (c.id, c.name)))
-    }).collect();
+    let cats = category_names(&state.db, notes.iter().filter_map(|r| r.category_id)).await;
+    let mut dtos: Vec<NoteDto> = notes.into_iter().map(|r| summary_to_dto(r, &cats)).collect();
     attach_authors(&state.db, &mut dtos).await;
 
     Json(ApiResponse::success(dtos))
@@ -754,15 +804,13 @@ pub async fn get_top_notes(
 
     let notes = note::Entity::find()
         .filter(condition)
-        .find_also_related(category::Entity)
-        .into_partial_model::<NoteSummary, CategoryPartial>()
+        .into_partial_model::<NoteSummary>()
         .all(&state.db)
-        .await
-        .unwrap_or(vec![]);
+        .await;
+    let notes = or_empty_warn(notes, "置顶文章列表");
 
-     let mut dtos: Vec<NoteDto> = notes.into_iter().map(|(n, cat)| {
-        map_note_summary(n.into_model(), cat.map(|c| (c.id, c.name)))
-    }).collect();
+    let cats = category_names(&state.db, notes.iter().filter_map(|r| r.category_id)).await;
+    let mut dtos: Vec<NoteDto> = notes.into_iter().map(|r| summary_to_dto(r, &cats)).collect();
     attach_stats(&state.db, &mut dtos).await;
     attach_authors(&state.db, &mut dtos).await;
 
