@@ -437,7 +437,11 @@ const NewNotes = () => {
         const image = new Image();
         image.src = src;
         const imgWindow = window.open(src);
-        imgWindow?.document.write(image.outerHTML);
+        // 20261019（安全审计 SAU-021，CWE-79）：这里原来走 `document.write(image.outerHTML)`
+        // ——把**字符串当 HTML 解析**。当前三重缓解（后台页 / 自建元素 / outerHTML 会转义引号）
+        // 使它没有实际注入路径，但这条 API 模式天然危险：任何一次把 `src` 换成非受控来源，
+        // 它就变成注入口。要的只是"在新窗口里显示这张图"，DOM API 不解析字符串 ⇒ 直接挂元素。
+        imgWindow?.document.body?.appendChild(image.cloneNode() as HTMLImageElement);
     };
     const handleCancel = () => {
         setOpen(false);

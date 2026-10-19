@@ -160,6 +160,22 @@ pub async fn list_my_boards(
     Json(ApiResponse::success(dtos))
 }
 
+/// 收回河灯的**准入判定**（纯函数，离线可测）：`None` = 放行。
+///
+/// `row` = 库里那一行的 `(src, user_id)`，查不到就是 `None`。
+///
+/// 三种拒绝——**不存在 / 不是河灯（是说说）/ 是别人放的**——共用同一句话，是有意的
+/// （20261019 安全审计 SAU-019，CWE-204）：区分它们等于给出一条**枚举通道**，
+/// 公开列表只返回已审的河灯，而"这句报的是哪一支"能问出别人那盏**待审/被驳回**的灯
+/// 存不存在。口径与 `comments.rs::delete_my_comment` 一致（"别人的评论一律只说'不存在'"）。
+/// 判据是库里的 `user_id`，不是请求里的任何东西。
+fn reclaim_refusal(row: Option<(&str, i32)>, uid: i32) -> Option<&'static str> {
+    match row {
+        Some((src, owner)) if src == "board" && owner == uid => None,
+        _ => Some("河灯不存在"),
+    }
+}
+
 /// DELETE /api/protect/board/mine/:id：收回自己的河灯（归属校验——只能删自己
 /// 放的灯；管理端全量删除走 delete_board）。20260905 issue8
 pub async fn delete_my_board(
@@ -170,15 +186,13 @@ pub async fn delete_my_board(
     let Some(uid) = current_uid(&state.db, &headers).await else {
         return Json(ApiResponse::error("请先登录"));
     };
-    let found = match talk::Entity::find_by_id(id).one(&state.db).await {
+    let row = match talk::Entity::find_by_id(id).one(&state.db).await {
         Ok(v) => v,
         Err(e) => return super::db_error("读取河灯", &e),
     };
-    let Some(t) = found else {
-        return Json(ApiResponse { code: 404, message: "Talk not found".to_string(), data: String::default() });
-    };
-    if t.src != "board" || t.user_id != uid {
-        return Json(ApiResponse::error("只能收回自己放的河灯"));
+    // 准入与删除**分开**：判定只看上面那个纯函数，删除按 id 走（不需要那一行本身）
+    if let Some(msg) = reclaim_refusal(row.as_ref().map(|t| (t.src.as_str(), t.user_id)), uid) {
+        return Json(ApiResponse::error(msg));
     }
     if let Err(e) = talk::Entity::delete_by_id(id).exec(&state.db).await {
         return super::db_error("收回河灯", &e);
@@ -995,6 +1009,23 @@ pub async fn audit_board(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 收回河灯：三种拒绝**逐字同一句话**（防枚举），只有"本人的河灯"才放行。
+    ///
+    /// 反控在最后两条：把口径改回"区分开"（比如给非本人那支单独一句话）⇒ 当场红。
+    #[test]
+    fn 收回河灯的三种拒绝共用同一句话() {
+        let mine = Some(("board", 7));
+        let someone_else = Some(("board", 8));
+        let not_a_lamp = Some(("talk", 7)); // 说说：id 空间同一张表
+        assert_eq!(reclaim_refusal(None, 7), Some("河灯不存在"));
+        assert_eq!(reclaim_refusal(someone_else, 7), Some("河灯不存在"));
+        assert_eq!(reclaim_refusal(not_a_lamp, 7), Some("河灯不存在"));
+        assert_eq!(reclaim_refusal(mine, 7), None, "本人的河灯必须放行");
+        // 三句话逐字相同（改回"只能收回自己放的河灯"这类区分口径就红）
+        assert_eq!(reclaim_refusal(None, 7), reclaim_refusal(someone_else, 7));
+        assert_eq!(reclaim_refusal(None, 7), reclaim_refusal(not_a_lamp, 7));
+    }
 
     /// 长留言压成一行 30 字（通知正文里的 `{brief}`）——通知与留言板的截断口径不同，
     /// 通知那边只有一行、且会被面板的 `-webkit-line-clamp: 4` 继续裁，所以更短。
