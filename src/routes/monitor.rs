@@ -32,7 +32,6 @@ use axum::{
 };
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::io::Write;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -60,9 +59,34 @@ pub struct ReportPayload {
     pub webgl: Option<serde_json::Value>,
 }
 
-/// 换行清洗：错误消息/堆栈可能含 \n，一行一记录保证 grep 语义
+/// 换行与控制字符清洗：错误消息/堆栈可能含 \n，一行一记录保证 grep 语义。
+///
+/// 20261019（安全审计 SAU-013，CWE-117）：此前只换 `\n`/`\r`，**ANSI 转义序列原样落盘**
+/// （`\x1b[2J` 清屏、`\x1b[31m` 红字）。这个端点匿名可写，而消费侧是人拿 `cat`/`less`
+/// 看日志 ⇒ 任何访客都能让管理员终端上冒出一行伪造的红色 ERROR、或者把屏幕清掉。
+/// 所以凡 `char::is_control()`（ESC、DEL、TAB 都在内）一律换成空格。
+///
+/// 顺带堵住同族的**零宽/双向控制字符**（U+202E 那类）：它们在终端里能重排已经打印出来
+/// 的文本，伪造出来的观感与真日志一模一样，而 `is_control()` 只管 Unicode `Cc`、够不着它们。
+///
+/// **换成一个空格、而不是删掉**：长度与"有没有内容"都不变 ⇒ 去重 key（按已清洗的字段拼）
+/// 与 `truncate` 的口径都不受影响；删字符会让同一条错误在两版清洗下算出两个 key。
 fn clean(s: &str) -> String {
-    s.replace(['\n', '\r'], " ")
+    s.chars()
+        .map(|c| if c.is_control() || is_invisible_format(c) { ' ' } else { c })
+        .collect()
+}
+
+/// 零宽 / 双向控制字符（Unicode `Cf` 里会改变终端观感的那一批）。
+///
+/// 只列"能在终端里把已打印文本重排/隐藏"的：ZWSP/ZWNJ/ZWJ、LRM/RLM、LRE…RLO、LRI…PDI、
+/// 以及 BOM。它们不是控制字符（`is_control()` 判不出来），但危害与 ANSI 转义同类。
+fn is_invisible_format(c: char) -> bool {
+    matches!(c,
+        '\u{200b}'..='\u{200f}'
+        | '\u{202a}'..='\u{202e}'
+        | '\u{2066}'..='\u{2069}'
+        | '\u{feff}')
 }
 
 /// 前端上报器实际会发的 type —— **这份清单是客户端清单的镜像，不是我们自己挑的子集**。
@@ -257,11 +281,75 @@ pub async fn report_log(State(state): State<Arc<AppState>>, req: Request<Body>) 
 
     // 20260830f 日志分组：前端组 logs/frontend/（agent 组 logs/agent/、后端 rust.log 不动）
     let path = std::env::var("SAUDADE_MONITOR_LOG").unwrap_or_else(|_| "logs/frontend/monitor.log".to_string());
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
-        let _ = f.write_all(line.as_bytes());
-    }
+    append_line(&path, &line).await;
 
     Json(serde_json::json!({"ok": true})).into_response()
+}
+
+/// 把一行追加到监控日志（开-写-关，见文件头注的取舍）。
+///
+/// 20261019（安全审计 SAU-022）两处收紧：
+///   ① **改用 `tokio::fs`**：同仓 `upload.rs` / `profile.rs` / `graph.rs` 都走它，
+///      而这里原本是 `std::fs` 的阻塞调用跑在 tokio worker 上——低流量下看不出，
+///      但磁盘一慢它就占住一个 worker（本仓只有 4 个 worker 的教训见 agent 侧文档）。
+///   ② **写失败必须留痕**：此前是 `if let Ok(..) { let _ = .. }`，磁盘满/权限错时
+///      监控数据**静默消失**，`monitor.log` 上什么也看不见——"看着在跑、其实没跑"
+///      正是本仓最贵的那类失效。现在失败落一条 WARNING。
+///
+/// ⚠️ 回执仍然是 `{"ok": true}`：上报端（`frontend/src/utils/report.ts`）本来就不看结果，
+/// 而"这条错误没记上"不是**访客**该知道的事——留痕的对象是运维（日志），不是上报者。
+/// 别顺手把失败改成 5xx：那会让前端把一次成功的上报当成失败重试，反而放大磁盘写。
+async fn append_line(path: &str, line: &str) {
+    use tokio::io::AsyncWriteExt;
+
+    match tokio::fs::OpenOptions::new().create(true).append(true).open(path).await {
+        Ok(mut f) => {
+            if let Err(e) = f.write_all(line.as_bytes()).await {
+                warn_write_failed(path, &e);
+            }
+        }
+        Err(e) => warn_write_failed(path, &e),
+    }
+}
+
+/// 落盘失败的 WARNING 间隔。
+///
+/// 限频是必需的：盘满时**每一条上报都会失败**，不限频就会用 WARNING 把 `rust.log`
+/// 也写满（次生灾害：真线索被淹没在同一个错误的重复里）。语义与 `dedupe_count` 同族——
+/// 固定窗口，窗口内只记第一条，被压掉的条数在下一个窗口的首条里报出来。
+const WRITE_WARN_WINDOW: Duration = Duration::from_secs(60);
+
+/// 限频决策（纯函数，`now` 注入 ⇒ 窗口行为可测，不用 sleep）。
+/// 返回 `(这次记不记, 新的 last, 新的被压条数)`。
+fn warn_decision(last: Option<Instant>, suppressed: u32, now: Instant)
+    -> (bool, Option<Instant>, u32) {
+    match last {
+        Some(t) if now.duration_since(t) < WRITE_WARN_WINDOW => (false, last, suppressed + 1),
+        _ => (true, Some(now), 0),
+    }
+}
+
+fn warn_write_failed(path: &str, err: &std::io::Error) {
+    static STATE: OnceLock<Mutex<(Option<Instant>, u32)>> = OnceLock::new();
+    let state = STATE.get_or_init(|| Mutex::new((None, 0)));
+    // 锁中毒（临界区里 panic）⇒ 退化成不限频地记一条，**绝不因为"限频器坏了"而不留痕**。
+    let Ok(mut g) = state.lock() else {
+        tracing::warn!("[monitor] 落盘失败 path={path} err={err}");
+        return;
+    };
+    let (report, new_last, suppressed) = warn_decision(g.0, g.1, Instant::now());
+    let carried = if report { g.1 } else { 0 };   // 上一窗口被压掉的条数
+    *g = (new_last, suppressed);
+    drop(g);
+    if report {
+        if carried > 0 {
+            tracing::warn!(
+                "[monitor] 落盘失败 path={path} err={err}（上一个窗口另有 {carried} 条同类失败未记）"
+            );
+        } else {
+            tracing::warn!("[monitor] 落盘失败 path={path} err={err}");
+        }
+    }
 }
 
 /// 多字节安全的截断（20260925 审计 A1）。
@@ -305,10 +393,57 @@ mod tests {
         assert_eq!(truncate("", 10), "");
     }
 
+    /// 审计 SAU-013：`clean` 必须把**控制字符**换成空格，而不只是换行。
+    ///
+    /// 三种输入对应三件事：ANSI 转义（清屏/伪造红字）、TAB 与 DEL（同族 Cc）、
+    /// 零宽/双向字符（`is_control()` 够不着，但同样能重排终端观感）。
+    /// 反控在最后两条：正常文本一个字符都不许动，且**长度不变**（换空格不删字符）。
+    #[test]
+    fn clean_strips_control_and_bidi() {
+        let ansi = "\x1b[31mERROR\x1b[0m 伪造的红字";
+        let cleaned = clean(ansi);
+        assert!(!cleaned.chars().any(|c| c.is_control()), "{cleaned:?}");
+        assert!(cleaned.contains("伪造的红字"));
+        assert!(cleaned.contains("[31m"), "只换控制字符，正文照旧：{cleaned:?}");
+
+        assert_eq!(clean("a\tb\x7fc"), "a b c");
+        assert_eq!(clean("a\u{202e}b\u{200b}c\u{feff}d"), "a b c d");
+
+        // 长度不变（去重 key 与截断口径都按清洗后的串算）
+        assert_eq!(clean(ansi).chars().count(), ansi.chars().count());
+
+        // 反控：正常中英数标点原样通过（换错就是"把真日志改花"）
+        let normal = "普通的一句「话」— 42% / path?a=1";
+        assert_eq!(clean(normal), normal);
+    }
+
+    /// 审计 SAU-022：落盘失败的限频决策。
+    ///
+    /// 窗口内只记第一条、被压掉的条数在下一条里报出来；窗口一过又能记。
+    /// 反控：把窗口判据去掉（永远记）⇒ 第三条断言当场红。
+    #[test]
+    fn write_warn_is_rate_limited() {
+        let t0 = Instant::now();
+        let (report, last, n) = warn_decision(None, 0, t0);
+        assert!(report, "第一条必须记");
+        assert_eq!(n, 0);
+
+        // 窗口内：不记，被压条数累加
+        let (report, last, n) = warn_decision(last, n, t0 + Duration::from_secs(1));
+        assert!(!report);
+        let (report, last, n) = warn_decision(last, n, t0 + Duration::from_secs(2));
+        assert!(!report);
+        assert_eq!(n, 2, "被压掉的两次要能被报出来");
+
+        // 窗口一到：又记一条，计数归零
+        let (report, _last, n) = warn_decision(last, n, t0 + WRITE_WARN_WINDOW);
+        assert!(report, "窗口过后必须再记一条（否则盘满会变成彻底无声）");
+        assert_eq!(n, 0);
+    }
+
     /// 审计 A2：`type` 是匿名可写字段，原样插值可被整行伪造。
     #[test]
-    fn kind_is_a_closed_enum() {
-        assert_eq!(normalize_kind(Some("js_error")), "js_error");
+    fn kind_is_a_closed_enum() {        assert_eq!(normalize_kind(Some("js_error")), "js_error");
         assert_eq!(normalize_kind(Some("http_status")), "http_status");
         assert_eq!(normalize_kind(None), "other");
         assert_eq!(normalize_kind(Some("SECAUDIT_FORGED")), "other");
