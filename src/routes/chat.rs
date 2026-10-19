@@ -365,7 +365,7 @@ pub async fn discard_handler(
     // 由图自持（历史注入已关）⇒ `chat_history` 不再是上下文来源，「丢弃」对 agent 不再生效。
     // 这里把**刚删掉那行的 content** 原样带上（agent 侧靠它确认摘的是哪一轮，对不上就不动手）。
     // best-effort：失败只 warn，不挡这次响应——历史已经删了，这时候回一句"失败"是假话。
-    crate::routes::conversation::drop_checkpoint_turn(conv_id, &u.content).await;
+    crate::routes::conversation::drop_checkpoint_turn(conv_id, &u.content, uid).await;
     (StatusCode::OK, Json(serde_json::json!({"success": true}))).into_response()
 }
 

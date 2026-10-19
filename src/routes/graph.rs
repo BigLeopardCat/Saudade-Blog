@@ -7,7 +7,9 @@
 //! 1. **挂 public_routes 但 handler 自己要求登录**。不能挂 protected_routes——那条
 //!    链路是给后台管理用的（auth_guard 全 admin），而这里任何登录用户都该能用；
 //!    也不能真的公开——查询每次要花一次 embedding 调用，匿名可刷就是费用敞口。
-//!    mentions 的 `current_uid` 惯用法（talks.rs）正好合适：无 token → 401。
+//!    取身份走 `assertion_actor`（uid + 角色），无 token → 401。20261020 起这一层
+//!    还多买了一样东西：同一次取到的 uid/角色**签进发往 agent 的断言**（SAU-018）
+//!    ——那道门只挡得住浏览器，挡不住本机进程。
 //! 2. **失败一律 HTTP 200 + `ok:false`**。这是个可降级端点：前端拿到非 ok 就退回
 //!    本地关键词匹配，用户照样能定位（只是邻居没那么准）。返回 5xx 只会让浏览器
 //!    控制台多一堆红字，还是一样的降级结果。
@@ -71,13 +73,6 @@ impl GraphQueryResp {
     }
 }
 
-/// 从请求头取用户 id。与 talks.rs 的 current_uid 同款（同样是 `auth_jwt::auth_uid`
-/// 的薄壳，20260926 起含**查库判冻结与令牌代次**）；这里 None 不是"游客"而是
-/// **拒绝**——查询只对登录用户开放。
-async fn current_uid(db: &sea_orm::DatabaseConnection, headers: &HeaderMap) -> Option<i32> {
-    crate::auth_jwt::auth_uid(db, headers).await.ok()
-}
-
 /// agent 基址：AGENT_URL 的语义是「非流式对话端点」（chat.rs 直接 post 它），
 /// 默认 `http://127.0.0.1:8010/chat`。这里要的是基址，所以把尾部的
 /// `/chat`、`/chat/stream` 剥掉。**不动那个环境变量、不动 chat.rs**——
@@ -126,15 +121,24 @@ fn cache_put(key: String, resp: GraphQueryResp) {
 
 /// `POST /api/public/graph/query` — 查询串 → 图谱里最近的词。
 /// 未登录 401（这是唯一一处会返回非 200 的情况）；其余一律 200 + ok=false。
+///
+/// **发给 agent 的那一程带身份断言**（20261020 安全审计 SAU-018）：这条此前是 agent 侧
+/// 唯一"匿名可信"的内部调用——agent 只监听回环，谁连得上就能白嫖一次 embedding（费用面）。
+/// 现在与 `call_agent` / `talks.rs::decide_review` 口径一致：以**发起人身份**现签一张
+/// 60 秒断言，Rust 不持有任何 agent 侧凭据。
 pub async fn graph_query(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(req): Json<GraphQueryReq>,
 ) -> impl IntoResponse {
-    if current_uid(&state.db, &headers).await.is_none() {
-        // 401 的响应体也保持 { ok:false, reason } 的形状，前端一个分支就能处理掉
-        return (StatusCode::UNAUTHORIZED, Json(GraphQueryResp::fail("login_required")));
-    }
+    let (uid, role) = match assertion_actor(&state, &headers).await {
+        Ok(v) => v,
+        // 401 的响应体也保持 { ok:false, reason } 的形状，前端一个分支就能处理掉。
+        // 拒因（没令牌 / 冻结 / 已收回）不细分：这条路径的前端行为是同一个降级分支。
+        Err(_) => {
+            return (StatusCode::UNAUTHORIZED, Json(GraphQueryResp::fail("login_required")));
+        }
+    };
 
     let q = req.q.trim();
     if q.is_empty() {
@@ -153,7 +157,8 @@ pub async fn graph_query(
     let url = format!("{}/graph/query", agent_base_url());
     let sent = reqwest::Client::new()
         .post(&url)
-        .json(&serde_json::json!({ "q": q }))
+        .header("X-Agent-Assertion", crate::auth_jwt::create_agent_assertion(uid, role.as_deref()))
+        .json(&serde_json::json!({ "q": q, "uid": uid }))
         .timeout(AGENT_TIMEOUT)
         .send()
         .await;
@@ -322,9 +327,15 @@ pub async fn graph_artifact(Path(file): Path<String>) -> Response {
 const REBUILD_TIMEOUT: Duration = Duration::from_secs(30);
 const STATUS_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// 取 uid 与角色。**角色查库、不信登录 token 里的**（与 chat.rs:323、
-/// middleware::auth_guard 同一条纪律）；查不到人时给 None ⇒ agent 侧按身份不明拒。
-async fn console_actor(state: &Arc<AppState>, headers: &HeaderMap) -> Result<(i32, Option<String>), String> {
+/// 取 uid 与角色——**给发往 agent 的请求签身份断言**用的那对值。
+/// **角色查库、不信登录 token 里的**（与 chat.rs:323、middleware::auth_guard 同一条
+/// 纪律）；查不到人时给 None ⇒ agent 侧按身份不明拒。
+///
+/// 两处消费方：后台重建那三个端点（`call_agent`，agent 侧判 `admin.console`）与
+/// `/graph/query`（20261020 安全审计 SAU-018：这条此前是 agent 侧**唯一匿名可信**的
+/// 内部调用，本机进程可白嫖 embedding 调用）。**别再各写一份"取 uid + 查角色"**
+/// ——`current_uid` 那个薄壳（只看 uid）20261020 随这次收口删掉了。
+async fn assertion_actor(state: &Arc<AppState>, headers: &HeaderMap) -> Result<(i32, Option<String>), String> {
     let uid = crate::auth_jwt::auth_uid(&state.db, headers)
         .await
         .map_err(|e| e.message().to_string())?;
@@ -345,7 +356,7 @@ async fn call_agent(
     body: Option<serde_json::Value>,
     timeout: Duration,
 ) -> Result<(StatusCode, serde_json::Value), String> {
-    let (uid, role) = console_actor(state, headers).await?;
+    let (uid, role) = assertion_actor(state, headers).await?;
     let url = format!("{}{}", agent_base_url(), path);
     let mut req = reqwest::Client::new()
         .request(method, &url)
@@ -380,7 +391,7 @@ pub async fn rebuild_start(
     Json(mut body): Json<serde_json::Value>,
 ) -> Json<ApiResponse<serde_json::Value>> {
     if let Some(obj) = body.as_object_mut() {
-        if let Ok((uid, _)) = console_actor(&state, &headers).await {
+        if let Ok((uid, _)) = assertion_actor(&state, &headers).await {
             obj.insert("uid".into(), serde_json::json!(uid));
         }
     }
