@@ -3251,7 +3251,9 @@ mod tests {
     /// 这条判据护的是"字段超限 = 每轮 422"那个硬边界（agent 侧 `max_length` 同值）。
     #[test]
     fn exec_rows_json_stays_within_budget_by_dropping_oldest_payloads() {
-        let big = |k: char| format!(r#"{{"digest":"{}"}}"#, k.to_string().repeat(4000));
+        // 每行约 3 KB（UTF-8 下 1000 个汉字 = 3000 字节）：三行超预算、降掉最旧那一行
+        // 就回到预算内。**别把单行做成超过预算**——那会把最近那行也一起降掉，见下一条。
+        let big = |k: char| format!(r#"{{"digest":"{}"}}"#, k.to_string().repeat(1000));
         let (p_new, p_mid, p_old) = (big('新'), big('中'), big('旧'));
         let rows: Vec<ExecRow> = vec![
             ("10-20 11:03".to_string(), "读取文章 19《架构文档》", 1, Some(p_new.as_str())),
@@ -3263,7 +3265,24 @@ mod tests {
         let out: serde_json::Value = serde_json::from_str(&text).unwrap();
         let arr = out.as_array().unwrap();
         assert!(arr[0]["payload"].is_null(), "最旧那行的 payload 先降");
+        assert!(!arr[1]["payload"].is_null(), "只降最旧那一行就够，别多降");
         assert!(!arr[2]["payload"].is_null(), "最近那行必须保住（判据用的就是它）");
         assert_eq!(arr.len(), 3, "降的是 payload，不是整行——at/n 一条不少");
+    }
+
+    /// 预算**硬**于"保住最近那行"：单行自己就超预算时，只能把它也降成 null
+    /// （否则每次对话 422，代价比丢一份结构大得多）。这条把取舍钉住。
+    #[test]
+    fn exec_rows_json_budget_beats_keeping_newest_payload() {
+        let huge = format!(r#"{{"digest":"{}"}}"#, "大".repeat(4000)); // ≈ 12 KB
+        let rows: Vec<ExecRow> = vec![
+            ("10-20 11:03".to_string(), "读取文章 19《架构文档》", 1, Some(huge.as_str())),
+        ];
+        let text = exec_rows_json(&rows);
+        assert!(text.len() <= EXEC_ROWS_MAX_CHARS, "单行超预算也必须回到预算内：{}", text.len());
+        let out: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let arr = out.as_array().unwrap();
+        assert_eq!(arr.len(), 1, "行还在（at/n 不丢）");
+        assert!(arr[0]["payload"].is_null(), "payload 降成 null 是唯一能保住预算的做法");
     }
 }
