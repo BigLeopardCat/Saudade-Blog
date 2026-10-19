@@ -5,14 +5,18 @@
 // 计数为 0 不显示、乐观更新、失败回滚、发出去的 value）。**本套件量的是它量不到的那一半**：
 // 那些"两边必须写成同一个值、写错了不会报错只会静默走错路"的地方。
 //
-// 三族静默失败，每一族都只有把两侧字面钉在一起才拦得住：
+// 四族静默失败，每一族都只有把两侧字面钉在一起才拦得住：
 //   · **端点/路由域**：`POST /api/public/comments/:id/vote` 落到 `protected_routes`，
 //     症状是"访客点不动、普通用户 403"，而根因在路由表里——评论区看上去一切正常；
 //   · **身份**：少带一个 `X-Visitor-Key`，游客就退化成"没有身份"⇒ 每次都被回「未登录」；
 //     而投票与发评论**在同一个文件里**有相反的要求（评论强制登录、票对访客开放），
 //     谁抄谁一句话就反了，且反了以后本地登录态测试全绿；
 //   · **键名/值域**：`myVote` 与 `up`/`down` 两头对不上 ⇒ 前端静默读到 undefined
-//     （高亮永不亮、数字恒 0）；`0` 被当成"缺省"而不是"撤回" ⇒ 想撤回反而投了一票。
+//     （高亮永不亮、数字恒 0）；`0` 被当成"缺省"而不是"撤回" ⇒ 想撤回反而投了一票；
+//   · **排序（20261020 新增，且是本套件里最容易"判据被架空"的一族）**：热度排序搬进了
+//     **内存**，于是"扫 SQL 的 `order_by_*` 参数"那条老判据**照常绿而语义已经没了**——
+//     把整个排序块删掉，SQL 一个字都不用改。所以这里改判"函数里到底有没有真的排序"
+//     （见 ⑤），并把跨语言的 `hot`/`new` 字面钉住。
 //
 // 另一半是**迁移**：本套件只钉"文件在不在、表名键名 flag 与 entity 张不张嘴一致"。
 // 跑没跑是另一回事——按本仓约定，迁移要用户点名（库名 + 文件）才执行，跑之前不 push。
@@ -57,6 +61,7 @@ const rustEntityVote = read('src/entity/note_comment_vote.rs');
 const tsApis = read('frontend/src/apis/CommentMethods.tsx');
 const tsTypes = read('frontend/src/interface/CommentType.d.ts');
 const tsVisitor = read('frontend/src/utils/visitorKey.ts');
+const tsComment = read('frontend/src/components/CommentSection/index.tsx');
 const MIGRATION = 'scripts/migration/note_comment_vote_20261003.sql';
 const sql = has(MIGRATION) ? read(MIGRATION) : '';
 
@@ -113,7 +118,6 @@ console.log('\n值域 —— ±1 是票，0 是撤回（不是缺省）：');
     // 20261018 切库到 PG：`tinyint(1)` 变成 `smallint`，`sqlx-postgres` 按 OID 精确匹配
     // ⇒ 实体这一格必须跟着从 i8 变 i16（i8 在 PG 侧映射的是 `"char"` oid 18，读不出来）。
     ok(/pub value: i16/.test(rustEntityVote), 'entity 的 value 是 i16（PG smallint，够放 ±1）');
-    const tsComment = read('frontend/src/components/CommentSection/index.tsx');
     ok(/const next: -1 \| 0 \| 1 = c\.myVote === dir \? 0 : dir/.test(bodyOf(tsComment, 'const vote = async')),
         '前端"再点一次已点亮的那一侧 = 撤回"发的是 0（不是再投一遍）');
     ok(/myVote: -1 \| 0 \| 1/.test(tsTypes),
@@ -140,15 +144,72 @@ console.log('\n键名 —— 列表行与投票回执是**同一种东西**（�
         '列表用**批量**计数（一次 GROUP BY），不是每行一次查询');
 }
 
-// ── ⑤ 「访客也能点、不改排序」在代码里成立 ────────────────────────────────
-console.log('\n排序 —— 讨论区仍是时间序（不是热榜）：');
+// ── ⑤ 排序：默认「最热」，公式在后端、前端一个字都不算 ─────────────────────
+console.log('\n排序 —— 默认热度（20261020 改口径），且判据不许被架空：');
 {
     const listBody = bodyOf(rustComments, 'pub async fn list_comments');
+    // ⚠️ **这一组 20261020 整组重写，原因是"判据被架空"**。旧版只扫 SQL 的
+    // `order_by_*(...)` 参数是不是 CreatedAt/Id——而热度排序是在**内存**里做的
+    // （`hot_key` + `sort_by`）。把整个排序块删掉，那些 ORDER BY 一个字都不变
+    // ⇒ 旧判据**照常全绿**。判据被架空比判据红了更坏：红了有人去查，绿了没人看。
+    // 现在判的是"这个函数里到底有没有真的排序"。
+    ok(/hot_score\(/.test(listBody),
+        'list_comments 真的**调用**了 hot_score（只在别处定义不调用 ⇒ 默认档静默退回时间序）');
+    ok(/\.sort_by\(/.test(listBody) && /hot_key\(/.test(listBody),
+        '内存排序那一步在（删掉 `sort_by` ⇒ hot 与 new 排出同一个顺序，而页签看起来是活的）');
+    ok(/let sort_hot = !matches!\(q\.sort\.as_deref\(\), Some\("new"\)\)/.test(listBody),
+        '口径：**缺省与未知值都当 hot**（`Option<String>` + matches，不是会 reject 的强类型枚举'
+        + '——枚举遇非法值回 HTTP 400 纯文本、不走信封，前端判 code===200 ⇒ 整段讨论区显示"读取失败"）');
+
+    // 「排序只看时间与 id」这条**收窄到 SQL**：它现在证明的是"票没有漏进 SQL 排序"，
+    // 而**不再是**"讨论区按时间序"（那句话已经作废）。顶层那两条 ORDER BY 也从契约降级为
+    // "内存排序的确定性前置"——所以它们**在不在都不影响用户看到的顺序**，别拿它当判据。
     const orders = [...listBody.matchAll(/order_by_\w+\(([^)]*)\)/g)].map((m) => m[1]);
-    ok(orders.length > 0, '列表确实带排序', orders);
+    ok(orders.length > 0, '列表仍带 SQL 前置排序', orders);
     ok(orders.every((o) => /CreatedAt|Id/.test(o)),
-        '排序只看时间与 id（把 up/down 掺进排序 = 一条新评论永远沉底，而这是讨论区不是热榜）',
+        'SQL 排序只看时间与 id（把 up/down 掺进 SQL 排序 = 又一条真相源，与内存那份迟早分叉）',
         orders);
+
+    // 回复**恒**时间正序：讨论串内部被打乱就没法读了，而且"谁先回谁后回"本身就是那串话的
+    // 一部分。热度只作用在顶层——这一条没有被本次改动动过，所以单独钉住（它最容易被
+    // "顺手统一一下"）。
+    const replyQuery = listBody.slice(listBody.indexOf('RootId.is_in'));
+    ok(/order_by_asc\(note_comment::Column::CreatedAt\)/.test(replyQuery.slice(0, 600)),
+        '回复子查询恒按 created_at 正序（热度只排顶层）');
+
+    // 旧口径的**字面**不许留在源码里：代码改了、注释还写着"不改排序"是本仓最忌的那种打架
+    // （注释是给人读的口径，它漂了没有任何东西会红）。这里挑的是旧句子里**最有辨识度的
+    // 那截**，改口径的新文字不会碰巧包含它。
+    ok(!rustVotes.includes('「访客也能点，不改排序」'),
+        'comment_votes.rs 头注那句「访客也能点，不改排序」已删');
+    ok(!rustVotes.includes('别把"排序还没做"当成本次的遗留项'),
+        'comment_votes.rs 头注那句"别把排序还没做当遗留项"已删（它现在正是做完了的那件事）');
+    ok(!tsComment.includes('不改排序**」是拍板过的形态'),
+        'CommentSection 头注 ⑤ 那句「不改排序」已改（改成 ⑥ 的新口径）');
+    // 反向：新口径**必须在场**。少了这三条，上面那三行"删掉了"可以靠"整段注释都删了"骗过去。
+    ok(/hot_score/.test(rustVotes),
+        'comment_votes.rs 头注指向了新公式（票参与排序的后果写在那里，别处不重抄）');
+    ok(/\*\*⑥ 排序/.test(tsComment), 'CommentSection 头注有 ⑥ 排序那一节');
+}
+
+// ── ⑤b 跨语言契约：`hot` / `new` 两边逐字相同，默认 hot ────────────────────
+console.log('\n排序契约 —— 字面量、默认值、传参：');
+{
+    const listApi = bodyOf(tsApis, 'function listComments');
+    ok(/params: \{ sort \}/.test(listApi),
+        '前端把 sort 发出去（漏了 ⇒ 服务端永远走缺省档，点「最新」页签**看起来有反应、列表不动**）');
+    ok(/sort: CommentSort/.test(tsApis),
+        'listComments 的形参带类型（`sort` 写成可选/any ⇒ 调用方传错值没人拦）');
+    ok(/export type CommentSort = "hot" \| "new"/.test(tsTypes),
+        'TS 值域就是 hot/new 两个字面量（与后端认的逐字相同）');
+    ok(/Some\("new"\)/.test(rustComments),
+        'Rust 那一侧认的也是 `new`（两边各写一份字面量，这是它们必须逐字相同的地方）');
+    ok(/useState<CommentSort>\('hot'\)/.test(tsComment),
+        '组件默认「最热」（默认翻成 new ⇒ 一进页面看到的顺序就变了，而"默认热度"是已拍板的口径）');
+    ok(!/localStorage[^\n]*sort|sort[^\n]*localStorage/i.test(tsComment),
+        '排序**不记忆**（写进 localStorage 会让"上次看的是最新"变成一个没有任何可见提示的持久态）');
+    ok(/aria-pressed=\{sort === v\}/.test(tsComment),
+        '选中态跟着 sort 走（写成"点了才亮"的本地态 ⇒ 刷新/切文章后页签与实际顺序对不上）');
 }
 
 // ── ⑥ 迁移与 entity 同源 ──────────────────────────────────────────────────

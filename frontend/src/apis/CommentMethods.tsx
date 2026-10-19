@@ -18,14 +18,24 @@
 import http from "./axios.tsx";
 import { getVisitorKey, VISITOR_HEADER } from "../utils/visitorKey";
 import type { Envelope } from "./ProfileMethods";
-import type { CommentItem, CommentVote, CreateCommentResult } from "../interface/CommentType";
+import type {
+    CommentItem,
+    CommentSort,
+    CommentVote,
+    CreateCommentResult,
+} from "../interface/CommentType";
 
 /** 某篇文章的全部公开评论（顶层 + 回复，扁平数组，前端按 rootId 分组）。
- *  只含已通过审核的：待审/未通过/已删除的评论在公开侧**不存在**。 */
-function listComments(noteId: number | string) {
+ *  只含已通过审核的：待审/未通过/已删除的评论在公开侧**不存在**。
+ *
+ *  `sort`：`'hot'`（缺省）/ `'new'`。**只影响顶层评论的顺序**，回复恒按时间升序
+ *  （讨论串内部打乱就没法读了）。服务端对**未知值一律当 `hot`**（见 `comments.rs` 的
+ *  `CommentListQuery`），所以这里传错值不会 400，只会静默回落——别把"没报错"当"生效了"。 */
+function listComments(noteId: number | string, sort: CommentSort) {
     return http<Envelope<CommentItem[]>>({
         url: `/api/public/notes/${noteId}/comments`,
         method: "GET",
+        params: { sort },
     });
 }
 

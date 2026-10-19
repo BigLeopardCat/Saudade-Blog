@@ -49,3 +49,11 @@ export interface CreateCommentResult {
     id: number;
     approved: number;
 }
+
+/** 讨论区顶层排序（20261020）。**跨语言契约**：这两个字面量必须与后端
+ *  `routes/comments.rs::CommentListQuery` 认的值逐字相同（`hot` / `new`）。
+ *
+ *  类型收窄只在前端成立：服务端拿到的是裸字符串，**未知值一律当 `hot`**
+ *  （不 reject、不 400）——所以 `as CommentSort` 这种硬转在运行时不会被任何人拦下，
+ *  改名字时两侧必须一起改，测试 `tests/comment-vote.test.mjs` 的 F2 条钉着这件事。 */
+export type CommentSort = "hot" | "new";
