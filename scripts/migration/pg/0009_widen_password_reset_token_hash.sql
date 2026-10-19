@@ -1,0 +1,48 @@
+-- `password_reset_token.token_hash` 加宽到 `varchar(255)`（20261020，安全审计 SAU-017）。
+--
+-- ⚠️⚠️ **这一份必须先跑，再部署带 Argon2id 的那一版代码。跑反了这条功能整段不可用。** ⚠️⚠️
+--
+-- ── 为什么必须加宽 ─────────────────────────────────────────────────────────
+-- 这一列存的是**恢复码的哈希**。原来 `char(64)` 正好放一张无盐单轮 SHA-256 的十六进制
+-- （`utils::encrypt_password`，64 个 hex 字符）。20261020 起改成 Argon2id 的 PHC 字符串：
+--
+--     $argon2id$v=19$m=19456,t=2,p=1$<22 位盐>$<43 位摘要>      ≈ 97 字符
+--
+-- `char(64)` 装不下 ⇒ `INSERT` 直接报 `value too long for type character(64)`
+-- （MySQL 侧同形：`Data too long for column`）。症状是**管理员点「生成恢复码」当场失败**
+-- （接口回 `恢复码生成失败`），于是无邮箱账号的找回这条路**整段不可用**——
+-- 而它平时没人走，坏了也不会有人报。
+--
+-- ── 顺序为什么只能是"迁移先" ────────────────────────────────────────────────
+-- 反过来（代码先上）不会有任何**响亮**的报错，只有"生成恢复码"这一个按钮 500。
+-- 本文件是**加宽**，不是删列 ⇒ 跑在旧代码前面**完全无害**：旧的 SHA-256 写入照样能落进
+-- 更宽的列，读侧也不用改（`auth.rs::reset_password` 同时认两种格式）。
+-- 所以正确的做法就是：**先跑本文件，再合并/部署那一笔代码**。
+--
+-- ── 存量行会不会被动到 ─────────────────────────────────────────────────────
+-- 不会。PG 的 `character(n)` → `varchar` 转换只做一件事：**去掉尾部填充的空格**。
+-- 库里每一行都是恰好 64 个非空格 hex 字符（`char(64)` 不会给满宽的值补空格）⇒ 逐字不变。
+-- 旧格式的码仍然验得过：读侧认两种格式（`utils::verify_password`）。
+--
+-- ── 为什么是 255 而不是 97 ─────────────────────────────────────────────────
+-- Argon2 的参数档（`m` / `t` / `p`）可调，PHC 串的长度随参数变；255 给参数调整留余量。
+-- 这一列**不进任何等值查询、也不参与排序**（查询改成 `user_id + used_at IS NULL`，
+-- 见 `auth.rs::reset_password_inner`）⇒ 宽度没有性能含义。
+-- `uq_password_reset_token_hash` 那条唯一索引**保留**：Argon2id 带随机盐，两条同值的码
+-- 本来就不会撞哈希，它从"防重码"退化成"防重复行"，留着不碍事。
+--
+-- ── 跑法 ───────────────────────────────────────────────────────────────────
+--   psql -h 127.0.0.1 -U saudade_app -d saudade_blog -X -v ON_ERROR_STOP=1 -f - < 本文件
+--
+-- 重跑是 no-op：对已经是 `varchar(255)` 的列再 `TYPE varchar(255)` 不报错。
+
+ALTER TABLE "password_reset_token"
+  ALTER COLUMN "token_hash" TYPE varchar(255);
+
+-- 跑完自查（**人工**跑一次）：
+--
+--   SELECT character_maximum_length FROM information_schema.columns
+--    WHERE table_name = 'password_reset_token' AND column_name = 'token_hash';   -- 期望 255
+--   SELECT count(*), min(length("token_hash")), max(length("token_hash"))
+--     FROM "password_reset_token";        -- 期望：老行一律 64（一个新码都还没签过）
+--   python3 scripts/migration/pg/ci_schema_files.py --self-test                     -- 期望 ✅
