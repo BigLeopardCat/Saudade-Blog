@@ -115,17 +115,23 @@ export function compileSass(sassFile: string): string {
 }
 
 export interface EsbuildSandboxOpts {
-  /** 入口文件相对沙箱根（如 "entry.tsx"），内容在 files 里给。 */
+  /** 入口文件相对构建根（如 "entry.tsx"），内容在 files 里给。 */
   entry: string;
   /** 要写进沙箱的源文件（入口 + 它 import 的本地桩/页面）。 */
   files?: Record<string, string>;
   /** 递归复制 frontend/src 到沙箱（需要真组件时）。先复制、后写 files ⇒ 桩可覆盖真文件。 */
   copySrc?: boolean;
+  /**
+   * 负控 fork 包：把构建放到沙箱根下的一个子目录（相对沙箱根，如 "nostop"）。
+   * copySrc 时从**主包已桩化的 sb/src** 复制（与原 *.py 的 fork 语义一致：
+   * 继承同一份桩 + 叠加本包的 mutate 覆写），entry/outfile/files 都相对该子目录。
+   */
+  subdir?: string;
   /** define 映射（如 import.meta.env 的整体替换）。 */
   define?: Record<string, string>;
   /** 按 IO 扩展名指定 loader（如 { ".sass": "text" }）。 */
   loaders?: Record<string, Loader>;
-  /** 产物名（相对沙箱根），默认 bundle.js。 */
+  /** 产物名（相对构建根），默认 bundle.js。 */
   outfile?: string;
 }
 
@@ -141,29 +147,36 @@ export async function esbuildInSandbox(
   opts: EsbuildSandboxOpts,
 ): Promise<void> {
   const fsp = await import("node:fs/promises");
+  const root = opts.subdir ? path.join(sb.dir, opts.subdir) : sb.dir;
   if (opts.copySrc) {
-    await fsp.cp(path.join(FE_DIR, "src"), path.join(sb.dir, "src"), {
-      recursive: true,
-    });
+    const srcFrom = opts.subdir
+      ? path.join(sb.dir, "src")
+      : path.join(FE_DIR, "src");
+    await fsp.cp(srcFrom, path.join(root, "src"), { recursive: true });
   }
   // 注意顺序：copySrc 先铺真源码，files 后写 ⇒ 桩/入口可覆盖同名真文件。
   for (const [rel, content] of Object.entries(opts.files ?? {})) {
-    await sb.write(rel, content);
+    await sb.write(
+      opts.subdir ? `${opts.subdir}/${rel}` : rel,
+      content,
+    );
   }
-  await fsp.symlink(
-    path.join(FE_DIR, "node_modules"),
-    path.join(sb.dir, "node_modules"),
-    "dir",
-  );
+  // 同一构建根只挂一次 node_modules（主包 + 各 fork 包各有一份）。
+  const nm = path.join(root, "node_modules");
+  try {
+    await fsp.stat(nm);
+  } catch {
+    await fsp.symlink(path.join(FE_DIR, "node_modules"), nm, "dir");
+  }
   await build({
     entryPoints: [opts.entry],
     bundle: true,
     format: "iife",
-    outfile: path.join(sb.dir, opts.outfile ?? "bundle.js"),
+    outfile: path.join(root, opts.outfile ?? "bundle.js"),
     jsx: "automatic",
     define: opts.define,
     loader: opts.loaders,
-    absWorkingDir: sb.dir,
+    absWorkingDir: root,
     logLevel: "silent",
   });
 }
