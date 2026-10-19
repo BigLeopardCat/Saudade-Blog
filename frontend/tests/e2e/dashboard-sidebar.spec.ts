@@ -1,0 +1,669 @@
+import { test, expect, type Page } from "@playwright/test";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import {
+  FE_DIR,
+  withSandbox,
+  collectPageErrors,
+  esbuildInSandbox,
+} from "./sandbox";
+
+/**
+ * 后台侧栏三处修复（20260923）的无头验收：真组件 + 真 CSS + 真几何
+ * （原 tests/dashboard-sidebar.test.py，20261019 迁移）。
+ *
+ * 为什么值得单起一个脚本：这三处**都只有真跑一遍才看得见**——
+ *   · 悬停配色是 CSS 层叠的结果：`Dashboard/index.css` 里 V13/V14/V16 三批 `!important`
+ *     互相打架（其中 V14/V16 那几条 `html[data-theme='dark']` 是**死规则**，全站没有
+ *     任何地方设过 data-theme），谁赢光读代码看不出来，得问浏览器要 computedStyle；
+ *   · 开关被裁是盒模型的差几个像素（`.toggle-switch` 的 translateX(8%) 顶出
+ *     `.menu-bar` 的 overflow-x:hidden）；
+ *   · 那颗按钮是"点下去到底删没删 token"——删了就是会把管理员踢出去。
+ *
+ * 沿用 user-center 那套既定手段（本机不能 vite build，见 CLAUDE.md §2）：
+ * esbuild 把**真组件**打成一个 bundle、只桩边界（axios / react-redux / react-router-dom），
+ * antd 与 react-dom 用真的；CSS 用**仓库里那份真文件**（link 进去，不复制样式）。
+ *
+ * （TS 迁移注：CLI 的 `--alias:` 在 node API 沙箱里换成了**沙箱根 tsconfig.json 的
+ * `paths`** —— esbuild 按最近 tsconfig 解析，效果与 alias 等价。）
+ */
+
+const DEFINE_ENV =
+  '{"VITE_HTTP_BASEURL":"","VITE_CDN_BASEURL":"","MODE":"production","DEV":false,"PROD":true,"BASE_URL":"/"}';
+
+// 边界①：假后端。侧栏这条链上真正会发请求的是 store 里那几个 thunk（fetchUserInfo 等），
+// 而本脚本把 react-redux 的 useDispatch 桩成了 no-op ⇒ 它们根本不会被派发。留一个
+// 不会失败的同形状对象，纯粹是"别让 import 期就把真 axios 建起来"。
+const FAKE_AXIOS = `const http: any = () => Promise.resolve({ status: 200, data: { code: 200, data: null } });
+export default http;
+`;
+
+// 边界②：路由。只记 navigate 的入参；Outlet 渲染空（后台各页不在本脚本关注面内）。
+//
+// ⚠️ 20261006：这个桩**必须是个会响应的迷你路由**，不能再返回写死的 pathname。
+// 侧栏高亮原来是「点一下才 setState」，那版桩能跑；改成**按 pathname 派生**之后，
+// 写死的桩会让所有"点击后高亮"停在原地——测试会以「假绿」的形式通过（永远停在主页）。
+// 于是这里维护一份真实 path + 订阅集合：navigate 与 window.__setPath 都改它并通知订阅者。
+// 初值取 URL 上的 `#/...`（本套件用 `URL + "#/dashboard/albums"` 模拟深链），
+// 这样"带路径打开就该亮对"也能测（老代码这里恒回落「主页」）。
+const STUB_ROUTER = `import * as React from 'react';
+
+let path: string = (window.location.hash || '').startsWith('#/')
+  ? window.location.hash.slice(1) : '/dashboard';
+const subs = new Set<(p: string) => void>();
+const setPath = (p: string) => { path = p; subs.forEach((fn) => fn(p)); };
+// 供测试模拟"不经侧栏的那次跳转"（图库页那颗「R2 配置」按钮就是这种）。
+(window as any).__setPath = setPath;
+
+export const useNavigate = () => (to: string, opts?: any) => {
+  const w = window as any;
+  w.__nav = (w.__nav || []).concat([{ to, opts }]);
+  if (typeof to === 'string') setPath(to);
+};
+export const Outlet = () => null;
+export const Link = ({ children }: any) => children;
+export const useLocation = () => {
+  const [p, setP] = React.useState(path);
+  React.useEffect(() => {
+    subs.add(setP);
+    setP(path);
+    return () => { subs.delete(setP); };
+  }, []);
+  return { pathname: p, search: '', hash: '', state: null };
+};
+`;
+
+// 边界③：redux。**只桩"读"**——状态对象每次返回同一个实例（返回新对象会让 useSelector
+// 判定"变了"而无限重渲染）。useDispatch 返回 no-op ⇒ 页面挂载时那几个 thunk 不发请求。
+const STUB_REDUX = `const state: any = {
+  categories: { categories: [] },
+  tags: { tags: [] },
+  note: { noteList: [] },
+  user: { avatar: '', name: '管理员', blogTitle: 'Saudade' },
+};
+export const useSelector = (fn: any) => fn(state);
+export const useDispatch = () => (_action: any) => undefined;
+export const Provider = ({ children }: any) => children;
+export const connect = () => (C: any) => C;
+`;
+
+const STUB_RUNTIME_API = `export const runtimeBaseURL = '';
+export const cdnBaseURL = '';
+export const resolveApiAssetUrl = (url?: string) => (url || '');
+`;
+
+// 沙箱根 tsconfig：esbuild 的 paths 解析（替代原 CLI --alias）。
+const TSCONFIG_PATHS = JSON.stringify({
+  compilerOptions: {
+    paths: {
+      "react-router-dom": ["./stub-router.tsx"],
+      "react-redux": ["./stub-redux.tsx"],
+    },
+  },
+});
+
+const ENTRY = `import * as React from 'react';
+import { createRoot } from 'react-dom/client';
+import Dashboard from './src/pages/Dashboard/index.tsx';
+(window as any).__mount = () => createRoot(document.getElementById('root')!).render(<Dashboard />);
+`;
+
+// CSS 用仓库里那两份真文件（都是纯 .css，不需要 sass 那一步）。
+const REAL_CSS: Array<[string, string]> = [
+  ["src/pages/Dashboard/index.css", "dash.css"],
+  ["src/components/Switch/index.css", "switch.css"],
+];
+
+/** 取 rgb()/rgba() 三通道均值（忽略 alpha）——只回答"白基还是黑基"。
+ * 比"亮度大小"更适合这个判据：antd 的半透明占位色在浅色下是 rgba(0,0,0,.25)、
+ * 夜间是 rgba(255,255,255,.25)，**极性翻转**而不是同一个色变深变浅。 */
+function rgbMean(cssColor: string | null): number {
+  const nums = (cssColor ?? "").match(/[\d.]+/g)?.map(Number) ?? [];
+  return nums.length >= 3 ? (nums[0] + nums[1] + nums[2]) / 3 : -1;
+}
+
+// 侧栏里的项（`.menu-links` 下按渲染顺序）：0 主页 / 1 笔记 / 2 说说 / …
+// 夹具不导航 ⇒ 路径就是 /dashboard ⇒ 选中的是 0（高亮按 pathname 派生，见第六节）。
+const UNSELECTED = 2; // 说说
+const SELECTED = 0; // 主页
+
+interface HoverProbe {
+  icon: string;
+  shadow: string;
+  text: string;
+  selected: boolean;
+}
+
+/** 把鼠标停在第 idx 个侧栏项上，等过渡（transition: all .3s）走完再读计算值。 */
+async function probeHover(page: Page, idx: number): Promise<HoverProbe> {
+  await page.locator(".menu-links .nav-links").nth(idx).hover();
+  await page.waitForTimeout(420);
+  return (await page.evaluate((i) => {
+    const li = document.querySelectorAll(".menu-links .nav-links")[i] as HTMLElement;
+    const ic = li.querySelector<HTMLElement>(".icon")!;
+    const tx = li.querySelector<HTMLElement>(".text")!;
+    const s = getComputedStyle(ic);
+    return {
+      icon: s.color,
+      shadow: s.textShadow,
+      text: getComputedStyle(tx).color,
+      selected: li.classList.contains("nav_select"),
+    };
+  }, idx)) as HoverProbe;
+}
+
+interface SwitchGeo {
+  bar: { left: number; right: number; width: number };
+  box: { left: number; right: number; width: number };
+  sw: { left: number; right: number; width: number };
+  barScroll: number;
+}
+
+/** 主题开关与它所在滚动容器（.menu-bar，overflow-x:hidden = 裁切边界）的几何。 */
+async function switchGeometry(page: Page): Promise<SwitchGeo> {
+  return (await page.evaluate(() => {
+    const mb = document.querySelector(".menu-bar")!;
+    const box = document.querySelector(".toggle-switch")!;
+    const sw = document.querySelector(".toggle-switch .theme-switch__container")!;
+    const r = (el: Element) => {
+      const b = el.getBoundingClientRect();
+      return { left: b.left, right: b.right, width: b.width };
+    };
+    return { bar: r(mb), box: r(box), sw: r(sw), barScroll: (mb as HTMLElement).scrollWidth };
+  })) as SwitchGeo;
+}
+
+interface TierProbe {
+  tier: string;
+  toggle: number | string;
+  collapse: number | string;
+  shellW: number;
+  barW: number;
+  shellLeft: number;
+  toggleBox: { left: number; width: number };
+  collapseBox: { left: number; width: number } | null;
+}
+
+/** 三档几何/朝向读数（三b 节用）。 */
+async function readTier(page: Page): Promise<TierProbe> {
+  return (await page.evaluate(() => {
+    const rot = (sel: string): number | string => {
+      const el = document.querySelector(sel);
+      if (!el) return "missing";
+      const cs = getComputedStyle(el);
+      if (cs.display === "none" || cs.visibility === "hidden") return "hidden";
+      const m = new DOMMatrix(cs.transform);
+      return Math.round((Math.atan2(m.b, m.a) * 180) / Math.PI);
+    };
+    const shell = document.querySelector("div.shell")!;
+    const bar = document.querySelector(".menu-bar")!;
+    const r = (el: Element) => {
+      const b = el.getBoundingClientRect();
+      return { left: b.left, width: b.width };
+    };
+    const toggleEl = document.querySelector(".toggle")!;
+    const collapseEl = document.querySelector(".toggle-collapse");
+    return {
+      tier: shell.className,
+      toggle: rot(".toggle"),
+      collapse: rot(".toggle-collapse"),
+      shellW: r(shell).width,
+      barW: r(bar).width,
+      shellLeft: r(shell).left,
+      toggleBox: r(toggleEl),
+      collapseBox: collapseEl ? r(collapseEl) : null,
+    };
+  })) as TierProbe;
+}
+
+interface HighProbe {
+  menu: string[];
+  bottom: string[];
+  total: number;
+}
+
+const HIGH = (): HighProbe => ({
+  menu: [...document.querySelectorAll(".menu-links .nav-links.nav_select")].map(
+    (el) => (el.textContent || "").trim(),
+  ),
+  bottom: [...document.querySelectorAll(".bottom-content .nav-links.nav_select")].map(
+    (el) => (el.textContent || "").trim(),
+  ),
+  total: document.querySelectorAll(".nav-links.nav_select").length,
+});
+
+test.describe("后台侧栏三处修复", () => {
+  test.setTimeout(180_000);
+
+  test("夜间/浅色悬停、开关几何、三档极简、返回首页、SVG、路径高亮、antd 夜间、墨迹尺寸", async ({
+    browser,
+  }) => {
+    await withSandbox(
+      {
+        "index.html":
+          '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">' +
+          '<link rel="stylesheet" href="switch.css">' +
+          '<link rel="stylesheet" href="dash.css"></head><body><div id="root"></div>' +
+          '<script src="bundle.js"></script>' +
+          "<script>window.__mount();</script>" +
+          "</body></html>",
+        ...Object.fromEntries(
+          REAL_CSS.map(([src, out]) => [
+            out,
+            readFileSync(path.join(FE_DIR, src), "utf-8"),
+          ]),
+        ),
+      },
+      async (sb) => {
+        // 20261001：公告卡那轮起，后台壳的依赖图里出现了 `import './index.sass'`
+        // （components/AnnouncementModal）——本套件只验侧栏 DOM，不看那份样式，
+        // 所以照全仓惯例收成 text 即可；缺这个 loader 是**打包直接失败**，不是样式缺失。
+        await esbuildInSandbox(sb, {
+          entry: "entry.tsx",
+          files: {
+            "entry.tsx": ENTRY,
+            "stub-router.tsx": STUB_ROUTER,
+            "stub-redux.tsx": STUB_REDUX,
+            "src/apis/axios.tsx": FAKE_AXIOS,
+            "src/utils/runtimeApi.ts": STUB_RUNTIME_API,
+            "tsconfig.json": TSCONFIG_PATHS,
+          },
+          copySrc: true,
+          define: { "import.meta.env": DEFINE_ENV },
+          loaders: { ".css": "text", ".sass": "text" },
+        });
+
+        const freshPage = async (dark: boolean) => {
+          const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+          const page = await ctx.newPage();
+          const errs = collectPageErrors(page);
+          let init =
+            "window.__nav = []; window.__auth = 0;" +
+            "window.addEventListener('auth-change', () => { window.__auth++; });" +
+            "localStorage.setItem('tokenKey', 'x.y.z');";
+          if (dark) {
+            // 主题源就是 localStorage.isDarkMode（theme.ts 两种历史格式都认）
+            init += "localStorage.setItem('isDarkMode', 'true');";
+          }
+          await page.addInitScript(init);
+          await page.goto(sb.url);
+          await page.waitForSelector(".menu-bar .nav-links", { timeout: 10_000 });
+          await page.waitForTimeout(400);
+          return { ctx, page, errs };
+        };
+
+        // ── 一、夜间悬停：从"变黑隐身"改成登录页那支河灯金 ─────────────────
+        const dk = await freshPage(true);
+        expect(
+          await dk.page.evaluate(() => !!document.querySelector(".shell.dark")),
+          "夜间模式真的生效（.shell 带上 dark 类）",
+        ).toBe(true);
+        let got = await probeHover(dk.page, UNSELECTED);
+        expect(got.icon, "悬停未选中项：图标变河灯金 #e8b866").toBe("rgb(232, 184, 102)");
+        expect(got.text, "悬停未选中项：文字同色").toBe("rgb(232, 184, 102)");
+        expect(got.shadow !== "none", "带光晕（text-shadow 不再是 none）").toBe(true);
+        const gotSel = await probeHover(dk.page, SELECTED);
+        expect(
+          gotSel.selected && gotSel.icon === "rgb(0, 0, 0)",
+          "悬停**选中项**保持黑（选中项自带浅蓝底，金压浅蓝看不清）",
+        ).toBe(true);
+        await dk.ctx.close();
+
+        // ── 二、浅色悬停：维持原样（黑，与选中态同色）──────────────────────
+        const lt = await freshPage(false);
+        got = await probeHover(lt.page, UNSELECTED);
+        expect(got.icon, "浅色下悬停仍是黑").toBe("rgb(0, 0, 0)");
+        expect(got.shadow, "浅色下没有光晕").toBe("none");
+        await lt.ctx.close();
+
+        // ── 三、主题开关右侧不再被裁 ──────────────────────────────────────
+        const geoPage = await freshPage(true);
+
+        const clipReport = async (tag: string) => {
+          const g = await switchGeometry(geoPage.page);
+          const over = g.sw.right - g.bar.right;
+          expect(
+            over <= 0.5,
+            `${tag}：开关右缘没越过 .menu-bar 的裁切边界（超出 ${over.toFixed(1)}px）` +
+              ` → switch.right=${g.sw.right.toFixed(1)} bar.right=${g.bar.right.toFixed(1)}`,
+          ).toBe(true);
+          expect(
+            g.sw.width > 40,
+            `${tag}：开关真渲染出来了（宽 ${g.sw.width.toFixed(1)}px）`,
+          ).toBe(true);
+          return g;
+        };
+
+        await clipReport("收起态（默认 88px 侧栏）");
+        // 展开：点侧栏头部那枚 toggle（∨），宽度 88 → 250，`.menu-bar` 跟着变宽
+        await geoPage.page.click(".toggle");
+        await geoPage.page.waitForTimeout(600);
+        // 量 `.menu-bar` 而不是 `nav.shell`：后者是 content-box（width:250 + 左右 padding 28
+        // ⇒ 量到 278），而裁切边界就是 `.menu-bar` 的右缘 —— 直接量它最不容易写错。
+        const barW = (await switchGeometry(geoPage.page)).bar.width;
+        expect(
+          Math.abs(barW - 250) < 1,
+          "点 toggle 后侧栏确实展开了（.menu-bar 88 → 250）",
+        ).toBe(true);
+        await clipReport("展开态（250px 侧栏）");
+
+        // 判据的**对照**：把当年那行 translateX(8%) 加回去，必须立刻测出"越界"——
+        // 否则上面两条"没越界"可能只是判据本身不敏感。
+        await geoPage.page.evaluate(() => {
+          (document.querySelector(".toggle-switch") as HTMLElement).style.transform =
+            "translateX(8%)";
+        });
+        await geoPage.page.waitForTimeout(60);
+        let g3 = await switchGeometry(geoPage.page);
+        expect(
+          g3.sw.right - g3.bar.right > 0.5,
+          "对照：把 translateX(8%) 加回去就会越界（说明判据有效）",
+        ).toBe(true);
+        await geoPage.page.evaluate(() => {
+          (document.querySelector(".toggle-switch") as HTMLElement).style.transform = "";
+        });
+
+        // ── 三b、第三档「极简」（20261006 用户第 3 条）────────────────────
+        //
+        // 三档 = 0 / 88 / 250，类名互斥（.mini / .close / 无）。判据全部只有真跑一遍才看得见：
+        //   · 收到 0 宽时**底色带留不留**取决于要不要连 padding 一起收（.shell 是 content-box）；
+        //   · 两颗圆钮是 position:absolute; right:-25px，只要有人顺手给 .shell 加一句
+        //     overflow:hidden，它们会当场消失 —— 而"钮不见了"光看代码是想不到的。
+        // 此刻 geoPage 停在**展开态（250）**（上一节刚点过 .toggle）。
+        let t = await readTier(geoPage.page);
+        expect(
+          t.toggle === 180 || t.toggle === -180,
+          "展开档（250）：那颗钮朝左（rotate 180 = 往下一档）",
+        ).toBe(true);
+        expect(t.collapse, "展开档（250）：没有第二颗钮（左向钮只在收起档出现）").toBe("hidden");
+
+        await geoPage.page.click(".toggle"); // 250 → 88
+        await geoPage.page.waitForTimeout(600);
+        t = await readTier(geoPage.page);
+        expect(
+          t.toggle === 0 && t.collapse === 180,
+          "收起档（88）：两颗钮都在（▶ 展开 / ◀ 再收一档）",
+        ).toBe(true);
+        expect(
+          t.collapseBox!.left === t.toggleBox.left && t.collapseBox!.width === t.toggleBox.width,
+          "收起档（88）：两颗钮不重叠（下面的那颗在下面）",
+        ).toBe(true);
+
+        await geoPage.page.click(".toggle-collapse"); // 88 → 0
+        await geoPage.page.waitForTimeout(600);
+        t = await readTier(geoPage.page);
+        expect((t.tier as string).includes("mini"), "极简档：shell 带上 mini 类").toBe(true);
+        expect(t.shellW <= 0.5, `极简档：宽度真的收到 0（实测 ${t.shellW.toFixed(1)}px，含 padding）`).toBe(true);
+        expect(
+          t.barW <= 0.5,
+          `极简档：内容区没有残留的底色带（.menu-bar 宽 ${t.barW.toFixed(1)}px）`,
+        ).toBe(true);
+        expect(t.collapse, "极简档：只剩那一颗钮（第二颗收起来了）").toBe("hidden");
+        expect(t.toggle, "极简档：那颗钮朝右（▶ = 往上一档）").toBe(0);
+        expect(
+          t.toggleBox.width > 20 && t.shellLeft <= 0,
+          "极简档：钮**没被裁掉**（.shell 不能有 overflow:hidden）",
+        ).toBe(true);
+
+        await geoPage.page.click(".toggle"); // 0 → 88
+        await geoPage.page.waitForTimeout(600);
+        t = await readTier(geoPage.page);
+        expect(
+          (t.tier as string).includes("close") && Math.abs(t.barW - 88) < 1,
+          "从极简档点那颗钮：回到收起档（88）而不是展开档",
+        ).toBe(true);
+
+        // ── 四、那颗按钮：返回外部首页，不再退出登录 ───────────────────────
+        const btn = geoPage.page
+          .locator(".bottom-content .nav-links")
+          .filter({ hasText: "返回首页" });
+        expect(await btn.count(), "侧栏里有一颗「返回首页」").toBe(1);
+        expect(
+          await geoPage.page
+            .locator(".bottom-content")
+            .getByText("退出登录")
+            .count(),
+          "侧栏里不再有「退出登录」",
+        ).toBe(0);
+        const before = await geoPage.page.evaluate(() => localStorage.getItem("tokenKey"));
+        await btn.first().click();
+        await geoPage.page.waitForTimeout(200);
+        const navs = await geoPage.page.evaluate(
+          () => (window as any).__nav.map((n: any) => n.to),
+        );
+        expect(navs, "点它导航到外部首页 /").toEqual(["/"]);
+        expect(
+          await geoPage.page.evaluate(() => localStorage.getItem("tokenKey")),
+          "点它**不**退出登录（tokenKey 还在）",
+        ).toBe(before);
+        expect(
+          await geoPage.page.evaluate(() => (window as any).__auth),
+          "点它不派发 auth-change（头部不会切成未登录态）",
+        ).toBe(0);
+        expect(geoPage.errs(), "全程无页面异常").toEqual([]);
+        await geoPage.ctx.close();
+
+        // ── 五、两枚填充型 SVG 图标（公告 / 用户管理）──────────────────────
+        // 换图标这件事的坑全在"看不到的那一半"：path 上留着原设计稿的 fill="#77808F" 时，
+        // 平时看着一切正常，只有夜间悬停**染色只变一半**——所以判据必须是 computedStyle 的
+        // svg.fill（继承自 .icon 的 color），外加"path 上没有写死 fill"。
+        const svgDk = await freshPage(true);
+
+        const probeSvg = async (page: Page, idx: number) => {
+          await page.locator(".menu-links .nav-links").nth(idx).hover();
+          await page.waitForTimeout(420);
+          return (await page.evaluate((i) => {
+            const li = document.querySelectorAll(".menu-links .nav-links")[i] as HTMLElement;
+            const svg = li.querySelector("svg");
+            const paths = li.querySelectorAll("svg path");
+            const s = svg ? getComputedStyle(svg) : null;
+            const b = svg ? svg.getBoundingClientRect() : null;
+            return {
+              has: !!svg,
+              cls: svg ? svg.getAttribute("class") : "",
+              fill: s ? s.fill : "",
+              stroke: s ? s.stroke : "",
+              paths: paths.length,
+              pathFills: Array.from(paths).map((p) => p.getAttribute("fill")),
+              fontIcon: !!li.querySelector(".icon .iconfont, .icon .fa"),
+              w: b ? b.width : 0,
+              h: b ? b.height : 0,
+            };
+          }, idx)) as {
+            has: boolean;
+            cls: string;
+            fill: string;
+            stroke: string;
+            paths: number;
+            pathFills: Array<string | null>;
+            fontIcon: boolean;
+            w: number;
+            h: number;
+          };
+        };
+
+        for (const [idx, label] of [
+          [4, "公告（喇叭）"],
+          [5, "用户管理（人+列表）"],
+        ] as const) {
+          const g = await probeSvg(svgDk.page, idx);
+          expect(g.has && !g.fontIcon, `${label}：是内联 SVG（不再是字体图标）`).toBe(true);
+          expect(
+            g.cls === "nav-svg" && g.w > 15 && g.w <= 22.5,
+            `${label}：由 .nav-svg 定尺寸、没撑成 300px → ${g.w.toFixed(1)}×${g.h.toFixed(1)}`,
+          ).toBe(true);
+          expect(g.stroke, `${label}：填充型（stroke 为 none，不是线框）`).toBe("none");
+          expect(g.fill, `${label}：夜间悬停填色 = 河灯金`).toBe("rgb(232, 184, 102)");
+          expect(
+            g.pathFills.every((f) => f === null),
+            `${label}：path 上没写死 fill（否则 currentColor 只染一半）`,
+          ).toBe(true);
+        }
+        await svgDk.ctx.close();
+
+        // ── 六、高亮**按路径派生**（点一下才亮那套是死的）──────────────────
+        //
+        // 20261006 改。老实现的病根：路由早就是 createBrowserRouter（真实 path），全仓没有
+        // 任何地方写 hash，而侧栏高亮读的是 location.hash ⇒ 那份 HASH_INDEX **在线上恒不
+        // 命中**，任何一次刷新/程序化跳转都回落成「主页」。
+        // ⚠️ 本节里**真正区分新旧实现的只有第 ① 条**（下面那条 __setPath）：本夹具的桩是
+        // 从 URL 上的 #/... 播种 path 的，而老实现恰好也认得那个 hash ⇒ 第 ② 条在老代码上
+        // 也能过，它是「路径没变时不回归」的锁，不是对照。②③ 的价值在于：改成按 pathname 派生
+        // 之后，"点一下才亮"这条老路被彻底删掉了，得有人钉住它别又退回去。
+        const scCtx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+        const sc = await scCtx.newPage();
+        const scErrs = collectPageErrors(sc);
+        await sc.addInitScript(
+          "window.__nav = []; localStorage.setItem('tokenKey', 'x.y.z');",
+        );
+        // ② 深链：带路径打开就该亮对
+        await sc.goto(sb.url + "#/dashboard/albums");
+        await sc.waitForSelector(".menu-links .nav-links", { timeout: 10_000 });
+        await sc.waitForTimeout(400);
+        let h = (await sc.evaluate(HIGH)) as HighProbe;
+        expect(h.menu, "带 #/dashboard/albums 打开：高亮落在「图库」").toEqual(["图库"]);
+        expect(
+          !h.menu.includes("主页"),
+          "反面：没有回落点亮「主页」（老实现脱掉 hash 后就是这个症状）",
+        ).toBe(true);
+
+        // ③ 旧用例（原来在新夹具下会假绿——它只是永远停在主页）：点一下就跟着走
+        await sc.locator(".menu-links .nav-links").first().click();
+        await sc.waitForTimeout(200);
+        h = (await sc.evaluate(HIGH)) as HighProbe;
+        expect(h.menu, "点「主页」后唯一高亮就是主页").toEqual(["主页"]);
+
+        // ① 不经侧栏的跳转：图库页那颗「R2 配置」navigate('/dashboard/usercontrol')，
+        //    点完高亮原来仍停在图库图标上（用户报的那条）。**本节的对照就是它**：
+        //    老实现（点一下才 setState）走这条路径时高亮不会动 ⇒ 这条必然红。
+        await sc.evaluate(() =>
+          (window as any).__setPath("/dashboard/usercontrol"),
+        );
+        await sc.waitForTimeout(200);
+        h = (await sc.evaluate(HIGH)) as HighProbe;
+        expect(
+          h.bottom.join() === "站点设置" && h.menu.length === 0 && h.total === 1,
+          "从图库跳设置：蓝容器跟着过来，且全场只有它一个高亮",
+        ).toBe(true);
+
+        // ③ 旧用例：点站点设置本身
+        await sc
+          .locator(".bottom-content .nav-links")
+          .filter({ hasText: "站点设置" })
+          .first()
+          .click();
+        await sc.waitForTimeout(200);
+        h = (await sc.evaluate(HIGH)) as HighProbe;
+        expect(
+          h.bottom.join() === "站点设置" && h.menu.length === 0 && h.total === 1,
+          "点站点设置：仍在它身上，且只有它一个",
+        ).toBe(true);
+        // 只认最后一条：上面那记对照点击已经往 __nav 里放过一条 /dashboard（探针自己的足迹）
+        const lastNav = await sc.evaluate(
+          () => (window as any).__nav[(window as any).__nav.length - 1].to,
+        );
+        expect(lastNav, "点站点设置：导航到 /dashboard/usercontrol").toBe(
+          "/dashboard/usercontrol",
+        );
+        expect(scErrs(), "第六节全程无页面异常").toEqual([]);
+        await scCtx.close();
+
+        // ── 七、后台夜间最小闭环：壳上那层 ConfigProvider(darkAlgorithm) 真的落地了 ──
+        //
+        // 锁的是 20260923 那条根因：/dashboard 与 / 是**兄弟顶层路由**，命中后台时 <App/>
+        // 不在树上 ⇒ App.tsx 的 frontDark 永远落不到后台，而 isDarkMode 只长在这个壳里。
+        // 不在壳上挂 ConfigProvider，antd 就恒为 defaultAlgorithm —— 面板、表格、日历全是浅色，
+        // 用户看到的就是"后台夜间一点不夜间"。判据只能问浏览器要 computedStyle：这个文件之外
+        // 还有一批 html[data-theme='dark'] 死规则和几条互相打架的 !important，读代码看不出谁赢。
+        const PROBE_ANTD = () => {
+          const el = document.querySelector(".image .ant-avatar") as HTMLElement | null;
+          if (!el) return null;
+          const cs = getComputedStyle(el);
+          return { bg: cs.backgroundColor, color: cs.color };
+        };
+        const lt7 = await freshPage(false);
+        const ltAv = (await lt7.page.evaluate(PROBE_ANTD)) as {
+          bg: string;
+          color: string;
+        } | null;
+        await lt7.ctx.close();
+        const dk7 = await freshPage(true);
+        const dkAv = (await dk7.page.evaluate(PROBE_ANTD)) as {
+          bg: string;
+          color: string;
+        } | null;
+        expect(
+          !!ltAv && !!dkAv && ltAv.bg !== dkAv.bg,
+          "壳内的 antd 组件（头像）两种主题下底色不同 —— 说明 token 真被换过",
+        ).toBe(true);
+        expect(
+          !!ltAv &&
+            !!dkAv &&
+            rgbMean(ltAv.bg) < 32 &&
+            rgbMean(dkAv.bg) > 223,
+          "极性真翻转了：浅色是黑基、夜间是白基（darkAlgorithm 生效，没被写死的浅色压住）",
+        ).toBe(true);
+        expect(
+          await dk7.page.evaluate(
+            () =>
+              !!document.querySelector(".contain.dark") &&
+              !!document.querySelector("nav.shell.dark"),
+          ),
+          "夜间：壳与外层容器都带 dark 类（.dark 才是被 CSS 认的那一支）",
+        ).toBe(true);
+        expect(dk7.errs(), "第七节全程无页面异常").toEqual([]);
+        await dk7.ctx.close();
+
+        // ── 八、两枚 SVG 的**墨迹尺寸**与相邻字体图标对齐 ───────────────────
+        //
+        // 为什么单起一节：.nav-svg 定的是**画布** 22×22，不是**画出来的那一块**。path 在
+        // 自己 viewBox 里画多大，光读代码看不出来 —— 旧稿的用户管理图标 viewBox 是
+        // `0 0 1097 1024`（横着多出 73 个单位），默认 preserveAspectRatio 居中后**纵向只有
+        // 20.5px**；换成 1024² 的新稿后纵横都吃满 22px。用户这次点名"大小要和侧边栏其他
+        // 图标保持一致"，而这一条只有量 getBBox 才知道有没有做到。
+        //
+        // 参照系是**同一侧栏里那七枚字体图标**在同一字号下的墨迹高度（本机实测，20261001）：
+        //   主页 20 / 笔记 22 / 说说 25 / 图库 23 / 数据板 20 / 站点设置 20 / 返回首页 22
+        // 即 20~25、主体落在 20~22。判据取这个带 —— 本脚本**不链 iconfont 的 CDN**
+        // （离线也要能跑），所以只能把实测值钉在这里当下界/上界，而不是当场量。
+        const inkPage = await freshPage(false);
+        const ink = (await inkPage.page.evaluate(() => {
+          return [4, 5].map((i) => {
+            const li = document.querySelectorAll(".menu-links .nav-links")[i] as HTMLElement;
+            const svg = li.querySelector("svg")!;
+            const vb = svg.getAttribute("viewBox")!.split(/\s+/).map(Number);
+            const b = svg.querySelector("path")!.getBBox();
+            const s = 22 / Math.max(vb[2], vb[3]);
+            return { name: (li.textContent || "").trim(), w: b.width * s, h: b.height * s };
+          });
+        })) as Array<{ name: string; w: number; h: number }>;
+        for (const g of ink) {
+          expect(
+            g.h >= 19.5 && g.h <= 23.5,
+            `${g.name}：墨迹落在字体图标那条带里（19.5~23.5px，实测 ${g.h.toFixed(2)}）`,
+          ).toBe(true);
+        }
+        expect(
+          Math.abs(ink[0].h - ink[1].h) <= 2.5,
+          "两枚之间也差不多大（高度差 ≤ 2.5px）",
+        ).toBe(true);
+        // 对照：把旧稿那个 1097 宽的 viewBox 假回去，必须当场测出"偏小"——否则上面那条
+        // "落在带里"可能只是判据本身不敏感（旧稿实测 20.5，落在带内，所以要挑更窄的带验证）。
+        const stale = (await inkPage.page.evaluate(() => {
+          const li = document.querySelectorAll(".menu-links .nav-links")[5];
+          const svg = li.querySelector("svg")!;
+          const b = svg.querySelector("path")!.getBBox();
+          // 复现旧稿：同一个 path，viewBox 横着撑到 1097
+          const s = 22 / 1097;
+          return { h: b.height * s, w: b.width * s };
+        })) as { h: number; w: number };
+        expect(
+          stale.h < ink[1].h - 0.5,
+          "对照：viewBox 横撑到 1097（旧稿形态）会量出偏小 ⇒ 判据对尺寸敏感",
+        ).toBe(true);
+        expect(inkPage.errs(), "第八节全程无页面异常").toEqual([]);
+        await inkPage.ctx.close();
+      },
+    );
+  });
+});
