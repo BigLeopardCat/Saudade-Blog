@@ -47,6 +47,22 @@ location /device-api/ {
     client_max_body_size 2m;   # OTA 固件走这个口，按预期固件大小调
 }
 
+# ── 设备认证回调：**公网侧堵死**（20261019 安全审计 SAU-010）─────────────────
+#
+# 这个回调**只给同机 EMQX 用**：EMQX 的 `DEVICE_AUTH_URL` 默认就是
+# `http://127.0.0.1:3100/api/devices/auth`（`iot/emqx/configure_emqx.py`），
+# **直连 device-service、根本不经过 nginx**。而上面那条 `/device-api/` 是全量**前缀**转发
+# ⇒ 同一个回调在公网上也有一份，且它对 `device_key` 的应答是 200/401 二元 ⇒
+# 任何人不带任何凭据就能把它当**无限速的爆破 oracle** 用。
+# （实测：`POST https://saudade.site/device-api/api/devices/auth` 回 422——axum 的
+#   `Json<T>` 提取器在拒绝空 body，说明**路由确实可达**，不是 404。）
+#
+# `location =` 是**精确匹配**，优先级高于任何前缀匹配 ⇒ 这一行只堵这一个路径，
+# `/device-api/` 下其余全部（设备列表、控制、OTA 下载）一字不动。
+# 设备本身与 EMQX 都不走这条路，所以**堵它零影响**——20261019 实测：
+# 加这一行前后，EMQX 的设备认证、控制台、`/device-api/api/devices` 全部照常。
+location = /device-api/api/devices/auth { return 403; }
+
 # 设备控制台页（静态，非 SPA）。
 # `^~`：别让它落进站点里那条"带 content hash 的资源"正则 location（那会 try_files 判死）。
 location ^~ /device-console/ {
