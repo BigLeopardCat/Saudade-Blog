@@ -72,17 +72,22 @@ def text_frame(s):
 
 
 def confirm_frame(q="要把《Python asyncio 异步并发》加进收藏吗？",
-                  token="FAKE_TOKEN_FOR_TEST_ONLY", with_token=True, exp=0):
+                  token="FAKE_TOKEN_FOR_TEST_ONLY", with_token=True, exp=0, opts=None):
     """exp = 令牌失效时刻（UTC 秒）。0 = 帧里不带 exp（旧服务端形态，前端按无倒计时处理）。
 
     opts 照抄 agent 侧 `adminops.confirm_opts(1)` 的**当前形态**（20261006 起是三枚：
     确定 / 其他（我来说）/ 取消）。夹具与生产同形是本沙箱的老规矩——两枚的夹具会让
     上游加了按钮之后这里仍然全绿（那样测的是线上不存在的形态）。
+
+    `opts` 可覆盖（20261020）：多件卡是**五枚**（`confirm_opts(n>1)`：全部处理 / 只处理
+    第 1..n 个 / 其他（我来说）/ 取消），⑭ 要按那个形状量排版。默认 None 时逐字等于
+    原来的三枚，既有各腿一个字节都没变。
     """
     ask = {"q": q, "id": "c1", "summary": "收藏文章 23",
-           "opts": [{"label": "确定", "value": "yes", "kind": "primary"},
-                    {"label": "其他（我来说）", "value": "other", "kind": "default"},
-                    {"label": "取消", "value": "no", "kind": "default"}]}
+           "opts": opts if opts is not None else
+           [{"label": "确定", "value": "yes", "kind": "primary"},
+            {"label": "其他（我来说）", "value": "other", "kind": "default"},
+            {"label": "取消", "value": "no", "kind": "default"}]}
     if with_token:
         ask["token"] = token
     if exp:
@@ -290,6 +295,30 @@ ASK_STATE = """() => {
     // .chat-msg.agent 那层结构；要断言"用户到底读到什么"，只有这一份是全的）
     allText: msgs ? msgs.textContent : '',
   };
+}"""
+
+BTN_GEO = """() => {
+  // ⑭ 腿（20261020）用：逐枚按钮量**文字盒**，判"标签是不是被压成了竖排字堆"。
+  // 判据取文字盒高度而不是"读一眼 CSS"：`.chat-nav-btns` 少了 `flex-wrap: wrap` 时，
+  // flex 会把按钮压窄，而按钮的 `min-width: auto` 在中文上等于"一个字一列"（CJK 处处
+  // 可断行）——源码文本一个字都没变，屏幕上却是 2–5 行的竖排。只有量才看得见。
+  const card = document.getElementById('chat-ask');
+  const row = document.getElementById('chat-ask-btns');
+  const cr = card.getBoundingClientRect(), rr = row.getBoundingClientRect();
+  const out = {labels: [], btns: [], overflowRight: Math.round(rr.right - cr.right),
+               cardW: Math.round(cr.width), rowW: Math.round(rr.width),
+               wrap: getComputedStyle(row).flexWrap};
+  for (const b of row.querySelectorAll('button[data-ask-value]')) {
+    const r = b.getBoundingClientRect(), cs = getComputedStyle(b);
+    const range = document.createRange();
+    range.selectNodeContents(b);
+    const tb = range.getBoundingClientRect();
+    out.labels.push(b.textContent);
+    out.btns.push({label: b.textContent, w: Math.round(r.width), h: Math.round(r.height),
+                   textH: +tb.height.toFixed(1), fontPx: parseFloat(cs.fontSize),
+                   textL: Math.round(tb.left - r.left), textR: Math.round(r.right - tb.right)});
+  }
+  return out;
 }"""
 
 ASK_OTHER = """() => {
@@ -1056,15 +1085,27 @@ def main():
             # 问句是 agent 写的正文（写工具的确认文案里就有 `**全部**`、`「」`、列表），
             # 纯 textContent 会把星号原样显示。判据两条：渲染器真的产出了强调标签，
             # 且屏幕上**看不到**井号星号（只判前者会被"渲染了但没生效"骗过）。
+            #
+            # ⚠️ **这一节验的不是线上那支渲染器**（20261020 如实记下来）：本 harness 页面
+            # 只引了 chat-render.js，**从来没注册 `window.__chatRenderMarkdown`**（grep
+            # 本文件零命中），所以下面跑的是 chat-render.js 自带的**迷你正则渲染器**
+            # （`/\*\*([^*]+)\*\*/g`）。正则不认 CommonMark 的 flanking 规则，**什么形状
+            # 都能出 `<strong>`** —— 于是 ⑪ 长期是**假绿**：线上跑 unified 管线、这里验正则，
+            # 20261020 那个"卡面把 `**` 原样印出来"的 bug 正是从这个缝里漏出去的。
+            # 真管线的判据在 **`tests/confirm-question-markdown.test.mjs`**（esbuild 摊平
+            # 生产模块 `src/utils/chatMarkdown.ts` 直接跑，进 `npm test` 与 CI）。
+            # ⑪ 留着只测它真正覆盖的那半：**帧 → 卡面 DOM → 问句进的是 markdown 渲染
+            # 而不是 textContent**（即"有没有调 applyMsg"这一跳）。
             print("\n⑪ 问句渲染 markdown（不再显示 ** 原样）")
             pg11, errs11 = open_page(b, url)
-            # 问句逐字取自生产（adminops.render_confirm_question 的 read_notifications
-            # ·全部那一支，20261019 卡面改版后：整条动作加粗 + 句尾动词「处理」）
-            # ——夹具与线上文案同字，改文案时这里跟着红，不会悄悄漂走。
+            # 问句逐字取自生产（adminops.render_confirm_question 单件那一支，20261020
+            # 改版后：问句 / 动作独占一段 / 按钮说明——旧的一行写法会让 `**` 漏出来，
+            # 理由见那支函数的注）。夹具与线上文案同字，改文案时这里跟着红。
             md_round = [text_frame("好的，我来帮你标记。"), "__PROCESS__:正在准备操作…",
-                        confirm_frame(q="要**把全部未读通知标记为已读（不可撤销：标的就"
-                                        "不再是未读，头顶的红点会消失）**吗？点「确定」"
-                                        "我就去处理。"),
+                        confirm_frame(q="要处理这个任务吗？\n\n"
+                                        "**把全部未读通知标记为已读（不可撤销：标的就"
+                                        "不再是未读，头顶的红点会消失）**\n\n"
+                                        "点「确定」我就去处理；点「取消」就当没说过。"),
                         "__END__"]
             run_round(pg11, md_round)
             st = pg11.evaluate(ASK_STATE)
@@ -1075,8 +1116,9 @@ def main():
             check("⑪a 屏幕上不再出现 ** 原文（渲染了但没生效的那种形态）",
                   "**" not in st["q"], repr(st["q"]))
             check("⑪a 问句其余文字逐字保留（渲染不许吃掉内容）",
-                  st["q"].startswith("要把全部未读通知标记为已读")
-                  and st["q"].endswith("点「确定」我就去处理。"), repr(st["q"]))
+                  st["q"].startswith("要处理这个任务吗？")
+                  and st["q"].endswith("点「确定」我就去处理；点「取消」就当没说过。"),
+                  repr(st["q"]))
             check("⑪腿页面无未捕获异常", errs11 == [], " | ".join(errs11[:4]))
 
             # ── ⑫ 待决定的卡片永远在末位（迟到的气泡不许压在它上面）────────────
@@ -1228,6 +1270,44 @@ def main():
             check("⑬d 无失败上报", by_fail(o["reports"]) == [], flow_message(o["reports"]))
             check("⑬腿页面无未捕获异常", errs13 == [], " | ".join(errs13[:4]))
             pg13.close()
+
+            # ── ⑭ 多件卡的按钮排版（20261020）────────────────────────────────
+            # 现场：多件卡是**五枚**按钮（全部处理 / 只处理第 1..n 个 / 其他（我来说）/
+            # 取消），而 `.chat-nav-btns` 默认 `flex-wrap: nowrap` ⇒ 一行放不下时 flex
+            # 把按钮**压窄**，按钮的 `min-width: auto` 在中文上又等于"一个字一列"
+            # （CJK 处处可断行）⇒ 标签被压成 2–5 行的**竖排字堆**。
+            # 线上真站实测（改前，卡片 376px）：桌面宽度下「取消」已断成 2 行、
+            # 「全部处理（2 个任务）」断成 3 行；375px 窄屏下「只处理第 1 个」断成 5 行
+            # （文字盒宽 7.6px = 一个字一列）。用户 20261020 报的"按钮文本没居中"就是这个。
+            # 判据 = 每枚按钮的**文字盒高度 ≈ 一行**（不读源码文本：CSS 里那一个
+            # `flex-wrap` 的字面变化看不出屏幕上成了什么样）。
+            print("\n⑭ 多件卡：按钮标签恒单行（不许被压成竖排字堆）")
+            pg14, errs14 = open_page(b, url)
+            multi_opts = ([{"label": "全部处理（2 个任务）", "value": "yes",
+                            "kind": "primary"}]
+                          + [{"label": f"只处理第 {i} 个", "value": f"pick:{i - 1}",
+                              "kind": "default"} for i in (1, 2)]
+                          + [{"label": "其他（我来说）", "value": "other",
+                              "kind": "default"},
+                             {"label": "取消", "value": "no", "kind": "default"}])
+            run_round(pg14, [text_frame("好的，我来办这两件。"),
+                             "__PROCESS__:正在准备操作…",
+                             confirm_frame(
+                                 q="要处理这几个任务吗？\n\n1. **甲**\n2. **乙**\n\n"
+                                   "点「全部处理」我就都处理；只想处理其中一个任务，"
+                                   "点「只处理第 N 个」（N 就是上面的编号）。",
+                                 opts=multi_opts),
+                             "__END__"])
+            geo = pg14.evaluate(BTN_GEO)
+            check("⑭a 前置：五枚按钮都在卡上、顺序与帧一致",
+                  geo["labels"] == [o["label"] for o in multi_opts], str(geo))
+            check("⑭b 每枚按钮的标签都是**单行**（多行 = 被压窄了）",
+                  all(b["textH"] <= b["fontPx"] * 1.6 for b in geo["btns"]),
+                  str(geo["btns"]))
+            check("⑭c 按钮不撑破卡片（按钮行右缘不越出卡片右缘）",
+                  geo["overflowRight"] <= 1, str(geo))
+            check("⑭腿页面无未捕获异常", errs14 == [], " | ".join(errs14[:4]))
+            pg14.close()
 
             check("①③腿页面无未捕获异常", errs == [], " | ".join(errs[:4]))
             b.close()
