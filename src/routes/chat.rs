@@ -679,7 +679,7 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
     //    叙及"刚刚/刚才那次"才有依据——无时序的 8 行分不清哪次是刚发生的。
     //  - 两处都在读侧 ⇒ DB 里的存量回执无需迁移/回填，旧会话回看即带时间。
     // 读取失败（表未建/DB 抖动）→ 空串，agent 端按"无记录"如实处理，不阻断对话。
-    let (executions_text, recent_tools): (String, Vec<String>) = {
+    let (executions_text, recent_tools, execution_rows): (String, Vec<String>, String) = {
         let recent = execution_log::Entity::find()
             .filter(execution_log::Column::UserId.eq(uid))
             .filter(execution_log::Column::ConversationId.eq(conversation_id))
@@ -690,7 +690,7 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
             .unwrap_or_default();
         // 由新到旧扫描：首次见到某动作 = 它最近的一次（记时间），之后同款只累加次数
         let mut seen: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
-        let mut rows: Vec<(String, &str, usize)> = Vec::new();
+        let mut rows: Vec<ExecRow> = Vec::new();
         for r in &recent {
             match seen.get(r.detail.as_str()) {
                 Some(i) => rows[*i].2 += 1,
@@ -700,6 +700,7 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
                         r.created_at.format("%m-%d %H:%M").to_string(),
                         r.detail.as_str(),
                         1,
+                        r.payload.as_deref(),
                     ));
                 }
             }
@@ -708,7 +709,7 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
         let text = rows
             .iter()
             .rev() // 新→旧取回 → 旧→新拼串
-            .map(|(at, detail, n)| {
+            .map(|(at, detail, n, _)| {
                 if *n > 1 {
                     format!("{at} {detail}（×{n}）")
                 } else {
@@ -736,7 +737,7 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
                 break;
             }
         }
-        (text, tools)
+        (text, tools, exec_rows_json(&rows))
     };
 
     // 跨轮待办（20260923）：本会话最新一条**仍 pending 且未超时效**的待办，渲染成
@@ -832,6 +833,12 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
         // "读不到就缺席"恰好相反，见那条注）；旧 agent 端不认这个键 ⇒ 忽略，
         // 快道退回散文判据（fail-open，零行为变更）。
         "recent_tools": recent_tools,
+        // 跨轮执行记忆的**结构那份**（20261020）：`[{at,n,payload}]` 的 JSON 数组串，
+        // 与上面 `executions` **同一批行、同一顺序**。那串是给人（模型）看的**渲染**，
+        // 这一份是给**判据**用的结构（agent 侧 `_doc_anchors` 读它取文档锚点，不再对
+        // 渲染文本跑正则）。payload = 回执原文；存量行 NULL ⇒ null——agent 按"拿不到
+        // 结构就不进锚点"处理，**不回落解析 detail**。`[]` = 本会话没有执行记录。
+        "execution_rows": execution_rows,
         "confirm_pick": payload.confirm_pick.as_deref().unwrap_or(""),
     });
 
@@ -1016,6 +1023,56 @@ fn render_exec_row(row: &serde_json::Value) -> String {
     } else {
         format!("{} — {}", detail, digest).chars().take(300).collect()
     }
+}
+
+/// 结构那份的字符预算（= agent 侧 `ChatRequest.execution_rows` 的 `max_length`）。
+/// **两处必须同值**：Rust 多给一个字符，agent 那侧就是每轮对话 422。
+const EXEC_ROWS_MAX_CHARS: usize = 8000;
+
+/// 去重后的一行执行回执：`(时间, 渲染好的动作行, 次数, 回执原文)`。
+/// 前三个字段喂 `executions` 那个拼串，第四个只喂结构那份（`exec_rows_json`）。
+type ExecRow<'a> = (String, &'a str, usize, Option<&'a str>);
+
+/// 跨轮执行记忆的**结构那份**（20261020）：`[{at, n, payload}]` 的 JSON 数组串。
+///
+/// 与同一批行渲染出的 `executions` **同源同序**；这里只做"取出来、限长、拼成合法
+/// JSON"，形状与语义的演化只动 agent 一侧（同 `agent_tasks` 的先例，见 `load_agent_tasks`
+/// 那条注）。`payload` = 回执原文（20260927 加列），存量行为 `NULL` ⇒ `null`——
+/// **agent 侧按"拿不到结构就不进锚点"处理**，不回落去解析渲染好的 detail：那正是
+/// "结构化事实先编码进人话、再正则抠回"这条路，这批拆的就是它。
+///
+/// **限长是硬要求**：agent 侧 `ChatRequest.execution_rows` 有 `max_length`（同值），
+/// 超了就是每轮对话 422。所以超预算时**从最旧的一行开始**把 payload 降成 `null`
+/// （最近的几行才是判据要用的），并记一条 WARNING —— 不许静默砍。
+fn exec_rows_json(rows: &[ExecRow<'_>]) -> String {
+    let mut out: Vec<serde_json::Value> = rows
+        .iter()
+        .rev() // 新→旧取回 → 旧→新输出（与 executions 同一顺序）
+        .map(|(at, _detail, n, payload)| {
+            serde_json::json!({
+                "at": at,
+                "n": n,
+                "payload": payload.and_then(|p| serde_json::from_str::<serde_json::Value>(p).ok()),
+            })
+        })
+        .collect();
+    let mut dropped = 0usize;
+    while serde_json::to_string(&out).map(|s| s.len()).unwrap_or(0) > EXEC_ROWS_MAX_CHARS {
+        let Some(obj) = out.iter_mut().find_map(|r| {
+            let o = r.as_object_mut()?;
+            (!o.get("payload")?.is_null()).then_some(o)
+        }) else {
+            break; // 已经没有可降的了：剩下的只有 at/n，本身就在预算内
+        };
+        obj.insert("payload".to_string(), serde_json::Value::Null);
+        dropped += 1;
+    }
+    if dropped > 0 {
+        tracing::warn!(
+            "[chat] execution_rows 超预算（上限 {EXEC_ROWS_MAX_CHARS} 字符），最旧 {dropped} 行的 payload 降为 null"
+        );
+    }
+    serde_json::to_string(&out).unwrap_or_else(|_| "[]".to_string())
 }
 
 /// 老表（20260904 起、逐轮补臂的那一张）：**只在 `render_exec_row` 认不出 `action` 时
@@ -3154,5 +3211,59 @@ mod tests {
         for raw in [None, Some("0"), Some("-5"), Some("abc"), Some(""), Some("1")] {
             assert!(resolve_history_limit(raw) >= 1);
         }
+    }
+
+    /// 结构那份：`payload` 原样解析成对象，`at`/`n` 照搬，顺序与 `executions` 一致
+    /// （输入是新→旧，输出是旧→新）。这三格是 agent 侧取文档锚点的全部依据。
+    #[test]
+    fn exec_rows_json_keeps_structure_and_order() {
+        let p_new = r#"{"tool":"get_article_detail","args":{"article_id":19}}"#.to_string();
+        let p_old = r#"{"tool":"rag_search","args":{"query":"x"}}"#.to_string();
+        let rows: Vec<ExecRow> = vec![
+            ("10-20 11:03".to_string(), "读取文章 19《架构文档》", 2, Some(p_new.as_str())),
+            ("10-20 10:00".to_string(), "站内检索「x」", 1, Some(p_old.as_str())),
+        ];
+        let out: serde_json::Value = serde_json::from_str(&exec_rows_json(&rows)).unwrap();
+        let arr = out.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0]["at"], "10-20 10:00", "输出是旧→新（与 executions 同序）");
+        assert_eq!(arr[1]["n"], 2, "重复次数照搬");
+        assert_eq!(arr[1]["payload"]["tool"], "get_article_detail", "payload 解析成对象");
+        assert_eq!(arr[1]["payload"]["args"]["article_id"], 19);
+    }
+
+    /// 存量行（`payload` 为 NULL）与坏 payload 都是 `null` —— **不回落去解析 detail**，
+    /// 也不 panic。agent 侧按"拿不到结构就不进锚点"处理（老行口径，主人拍板）。
+    #[test]
+    fn exec_rows_json_null_payload_stays_null() {
+        let broken = "{not json".to_string();
+        let rows: Vec<ExecRow> = vec![
+            ("10-20 11:03".to_string(), "读取文章 19《架构文档》", 1, None),
+            ("10-20 10:00".to_string(), "读取文章 20《另一篇》", 1, Some(broken.as_str())),
+        ];
+        let out: serde_json::Value = serde_json::from_str(&exec_rows_json(&rows)).unwrap();
+        for r in out.as_array().unwrap() {
+            assert!(r["payload"].is_null(), "NULL / 坏 payload ⇒ null：{r}");
+        }
+    }
+
+    /// 超预算时**从最旧的一行**开始把 payload 降成 null，且结果真的回到预算内。
+    /// 这条判据护的是"字段超限 = 每轮 422"那个硬边界（agent 侧 `max_length` 同值）。
+    #[test]
+    fn exec_rows_json_stays_within_budget_by_dropping_oldest_payloads() {
+        let big = |k: char| format!(r#"{{"digest":"{}"}}"#, k.to_string().repeat(4000));
+        let (p_new, p_mid, p_old) = (big('新'), big('中'), big('旧'));
+        let rows: Vec<ExecRow> = vec![
+            ("10-20 11:03".to_string(), "读取文章 19《架构文档》", 1, Some(p_new.as_str())),
+            ("10-20 10:30".to_string(), "读取文章 18《旧文》", 1, Some(p_mid.as_str())),
+            ("10-20 10:00".to_string(), "读取文章 17《更旧》", 1, Some(p_old.as_str())),
+        ];
+        let text = exec_rows_json(&rows);
+        assert!(text.len() <= EXEC_ROWS_MAX_CHARS, "超预算就是每轮 422：{}", text.len());
+        let out: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let arr = out.as_array().unwrap();
+        assert!(arr[0]["payload"].is_null(), "最旧那行的 payload 先降");
+        assert!(!arr[2]["payload"].is_null(), "最近那行必须保住（判据用的就是它）");
+        assert_eq!(arr.len(), 3, "降的是 payload，不是整行——at/n 一条不少");
     }
 }
