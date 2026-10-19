@@ -44,7 +44,8 @@ flowchart TB
 | `GET /api/protected/stats/notes` | Rust | `auth_guard`（仅管理员），与 `/api/protected/stats/users` 同族 | 401 |
 | agent `/chat`、`/chat/stream` | **无**（回环）＋ 身份断言 | 信任前提 = 回环（loopback）；Rust 另签一条 60s 断言声明"这个 uid 是认证过的" | 缺头 401（开关已开，实测） |
 | agent `/review`（同款） | **无**（回环）＋ 身份断言 ＋ 并发闸 4 | 同上；调用方是 Rust 的 `talks.rs`。**Rust 必须先发头**：开关在生产 .env 里已是 1 | 缺头 401（实测）；闸满 503 |
-| agent `/graph/query` | **无**（回环） | 信任前提 = 回环（loopback）；**没有**断言（它不涉及身份，失败一律降级 200 + ok=false） | 同机的任何进程都能调 |
+| agent `/graph/query` | **无**（回环）＋ 身份断言 | 信任前提 = 回环（loopback）＋ Rust 现签的 60s 断言（调用方是 `src/routes/graph.rs::graph_query`）。**20261020 起才有**（安全审计 SAU-018）：此前它是 agent 侧唯一"匿名可信"的内部端点——本机进程可白嫖一次 embedding 调用（费用面） | 缺头 401（`{"ok":false,...}` 形状照旧，Rust 侧走既有降级分支 ⇒ 展示柜退回本地关键词匹配，**不是白屏**） |
+| agent `/checkpoint/*`（`DELETE /checkpoint/{id}`、`POST /checkpoint/{id}/drop_turn`） | **无**（回环）＋ 身份断言 | 同上（调用方是 `src/routes/conversation.rs` 那两个钩子）。**20261020 起才有**（安全审计 SAU-006）：此前这一族一格鉴权都没有，而删 checkpoint 是**不可逆**的上下文丢失。⚠️ 钩子是 **best-effort**（失败只 warn）⇒ 断言对不上时**不报错、只留一行 warn**，残留由夜间保留期兜底 | 缺头 401（父仓未发头时表现为"删了会话、checkpoint 还躺在库里"，日志里一行 warn） |
 
 agent 侧可以没有鉴权的原因：它只听回环，公网到不了；能调它的只有同机的 Rust 与
 （理论上）同机的其他进程。这是单机部署下的取舍，代价是：
@@ -59,8 +60,10 @@ agent 侧可以没有鉴权的原因：它只听回环，公网到不了；能�
 - 判据在 agent `server.py::_verify_assertion_claims`（手写 HS256 校验，只依赖标准库）；
 - 开关 `AGENT_REQUIRE_ASSERTION` 在部署的 .env 里已经是 1：缺头/验签失败一律 401
   （实测：不带头的 `POST 127.0.0.1:8010/review` → `401 缺少有效的服务间身份断言`）。
-  代码默认值仍是 False（`config/settings.py`），所以"滚动上线"的老口径只在
-  "新增一个接断言的端点"时适用，且方向是先让 Rust 发头、再让 agent 核；
+  **代码默认值 20261019 起也是 True**（`config/settings.py`，安全审计 SAU-005）：旧默认
+  False 的理由是"滚动上线"——那个前提早就不成立，而它只在"克隆即部署"的人手里生效，
+  拿到的正是最不安全的那一档。要回退必须显式写 0。所以"滚动上线"的老口径只剩
+  "新增一个接断言的端点"时适用，方向仍是先让 Rust 发头、再让 agent 核；
 - 断言里还有一个 `role`（取自 DB 的 `user.role`，不信登录 token 里可能是
   7 天前的角色）：agent 侧据此做能力判据（见 `saudade-blog-agent/docs/identity-and-permissions.md`）。
   角色缺失/未知 = 零权限，由 agent 的 shadow 模式先观测不拦截。
@@ -343,7 +346,7 @@ QPS 量级在个位数，这个代价可以忽略；规模上去之后的下一�
 | **登录令牌在 `localStorage`**（不是 HttpOnly cookie） | XSS 能直接读走它；`HttpOnly` 能让脚本读不到（但仍能被"以你的身份发请求"） | 未改。改成 cookie 要同时动前端存取、CORS/CSRF（`SameSite` + 双提交令牌）、以及 device-console 那半边复用 `localStorage.tokenKey` 的链路（见 §1）：是一次跨三个前端的改造，当前未做 |
 | **对话链路**没有按用户/IP 的限流 | 单个已登录用户可以连续发起对话占满并发槽（槽位本身有闸，见 §4） | 对话这一路只有总并发闸。**不应推广成"Rust 侧没有限流"**：内容发布有按 uid 的限流（`src/risk.rs` 的 `PostRateLimiter` 间隔闸 + 窗口计数 ⇒ 超限转人工 / 自动禁言），登录有按 IP/账号的失败限流（`LoginRateLimiter`） |
 | **分块传输**（无 Content-Length）不过体积闸 | 构造性的大 body 能绕过 §4 的第一行 | 只靠字段级限额兜，已写在代码注释里 |
-| agent 端点**无服务间凭据** | 同机的任意进程可调（含 `/chat/stream`） | 依赖回环边界；跨机部署前必须补。**"我代表谁"已由 §2.1 的断言解决，这条说的是"谁在调我"**：`/chat`、`/review` 的**身份**都核了（缺头 401），`/graph/query` 连身份都不核（它不涉及身份，失败一律降级 200 + ok=false）；"谁在调我"这一维三者照旧 |
+| agent 端点**无服务间凭据** | 同机的任意进程可调（含 `/chat/stream`） | 依赖回环边界；跨机部署前必须补。**"我代表谁"已由 §2.1 的断言解决，这条说的是"谁在调我"**：`/chat`、`/review`、`/graph/query`、`/checkpoint/*` 的**身份**现在都核了（缺头 401，20261020 起补齐后两处）；"谁在调我"这一维照旧——**验的是"持有 `JWT_SECRET` 的那一方"**，同机能读 `.env` 的进程仍然伪造得出 |
 | **写操作的事前授权只覆盖了一半** | 设备屏显等"用户眼前"的写仍然只有"调用前查断连"这道防护；**代用户写站点内容**这一类已有人在回路闸（非命令措辞的意图 → 确认弹窗，一次点击代替一轮对话），但**还没有这样的工具**，所以闸今天空转 | 需确认的 scope（`CONSENT_SCOPES`）未获用户**本轮消息**明确确认 → 产 `__ERROR__: 待确认[consent_required]` 帧、**不调用工具**，且 gate 5a 让叙述侧无法把它说成"已完成"（`agent/authz.py` + `test_authz.py` ⑨，见 `saudade-blog-agent/docs/identity-and-permissions.md` §3.4）。后台写落在 `write.console`，闸在这里**真正承重**；"以谁的名义"由写回执带的 `principal_role` 记账（零迁移渲染进 `execution_log.detail`）。写面现覆盖十四件（含公告三件与留言复核/删除两件；删留言与公告写进 `_ALWAYS_CONFIRM_TOOLS`），"目标"可以是**名字**（工具对着实时字典解析，解不出即零写）。**剩下的**：① `uid=0`（无身份）时写命令约每 6 次有 1 次被 narrator 讲成"本轮没有执行任何工具"而撞上洞③判据 → 走 gate 打回（兜底文案已按原因码分）；② 目标预检（`_write_target_refusal`）在弹窗之前就零工具收尾，绝不弹一个"点了也只会被拒"的框 |
 | **阅读量可以被匿名刷** | `POST /api/public/notes/:id/view` 是匿名写、服务端无身份可依 ⇒ 换个浏览器/清掉 `localStorage`/直接 curl 就能重复 +1。**它统计的是"页面被打开的次数"，不是"多少个人读过"**：报表上的数字照这个口径读 | 不修（刻意）：要真去重就得给访客发一个设备指纹或 IP 计数，前者是隐私问题、后者在 nginx 后面还要取 `X-Forwarded-For`（可伪造），成本远高于收益 |
 | **点赞数也可以被匿名刷** | `POST/DELETE /api/public/notes/:id/like` 放开匿名之后，去重键是**客户端自己生成、自己上报**的 `X-Visitor-Key`（存在 `localStorage`）：清掉它、换个浏览器、或者直接 curl 换一个 key，同一个人就能重复点赞。**"点赞数"从此与阅读量同一档可信度**：它统计的是"有多少次点赞动作被发出来"，不是"多少个人点了赞"，报表上的数字照这个口径读 | 不修（刻意，与阅读量同一条取舍：真去重要么上设备指纹、要么上 IP 计数，前者是隐私问题、后者在 nginx 后面还要取可伪造的 `X-Forwarded-For`）。保住的是**幂等性**而非"一人一票"：`UNIQUE(note_id,visitor_key)`（匿名行）与 `UNIQUE(note_id,user_id)`（登录行）两条键分工，同一个 key 重复点仍然只落一行；登录态点赞会顺带清掉同一 `visitor_key` 的匿名行，所以"先匿名点、再登录点"不会投出两票。服务端只做格式校验（8–64 位、`[A-Za-z0-9_-]`），**不把 `visitor_key` 当身份凭据**：伪造它换不来任何权限，能拿到的与"没登录的访客"完全一样 |
@@ -515,6 +518,15 @@ cd saudade-blog-agent && SAUDADE_REQUIRE_PARENT=1 .venv/bin/python tests/test_ch
 #       ⚠️ 失效形态是"两个口径混着印"：卡面说"已用轮数清零"、括号里却印余额，读起来像
 #       "清掉的是一部分余额"。锁在 `frontend/tests/quota-balance.test.mjs`（含四个显示点的
 #       **源码锁**——数值断言抓不住"抄了第二份"）与 `tests/test_chat_quota.py`。
+
+# ⑭ /checkpoint/* 与 /graph/query 的身份链路（20261020，同 ⑪ 的签法）
+#      → 无头：DELETE 127.0.0.1:8010/checkpoint/1 → 401
+#               POST 127.0.0.1:8010/checkpoint/1/drop_turn → 401
+#               POST 127.0.0.1:8010/graph/query {"q":"月"} → 401
+#      → 带头：三条都进各自的机制分支（checkpoint 两条回 {"deleted"|"dropped":…}；
+#        graph/query 回 200 + ok 形状——它**任何失败都回 200**，只有身份这一条是 401）。
+#    离线判据：cd saudade-blog-agent && .venv/bin/python tests/test_hardening.py
+#    （`test_internal_endpoint_identity`：三处 × 无头/假签名/合法断言/回退档，另加接线锁）
 ```
 
 写通道不变量（写进代码、不在文档里承诺）：`uid <= 0` → 不发请求；非 admin →

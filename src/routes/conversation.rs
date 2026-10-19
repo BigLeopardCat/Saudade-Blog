@@ -393,12 +393,19 @@ pub(crate) async fn purge_conversation_data<C: sea_orm::ConnectionTrait>(
 ///   · **id 只从 `purge_conversation_data` 来**，这里不查库（清单只有一份）。
 ///   · **有总预算**：一次删账号可能带几十个会话，逐条 3 秒超时会把它拖成 N×3 秒
 ///     （agent 活着但不回话时每条都要等满）。超了就不再发，剩下的由保留期兜底。
-pub(crate) async fn drop_checkpoint_threads(ids: &[i32]) {
+///   · **带身份断言**（20261020 安全审计 SAU-006）：agent 侧那个端点现在要求
+///     `X-Agent-Assertion`（此前它一格鉴权都没有，而删 checkpoint 是**不可逆**的
+///     上下文丢失）⇒ 不带就是 401，而这条钩子 best-effort、失败只 warn ⇒ **断了不响**。
+///     断言**在循环外签一次**：它 60 秒有效，而本循环总预算 10 秒。
+///     `role` 传 `None`：这两条路不做角色判据（agent 侧只核"这一程来自持密钥的那一方"），
+///     而**编一个角色**比留空更坏——留空在 agent 侧就是"身份不明"，不做任何默认授予。
+pub(crate) async fn drop_checkpoint_threads(ids: &[i32], uid: i32) {
     if ids.is_empty() {
         return;
     }
     let deadline = Instant::now() + Duration::from_secs(10);
     let base = crate::routes::graph::agent_base_url();
+    let assertion = crate::auth_jwt::create_agent_assertion(uid, None);
     let client = reqwest::Client::new();
     for (done, id) in ids.iter().enumerate() {
         if Instant::now() >= deadline {
@@ -408,8 +415,10 @@ pub(crate) async fn drop_checkpoint_threads(ids: &[i32]) {
             );
             break;
         }
-        let url = format!("{base}/checkpoint/{id}");
-        match client.delete(&url).timeout(Duration::from_secs(3)).send().await {
+        let url = format!("{base}/checkpoint/{id}?uid={uid}");
+        match client.delete(&url)
+            .header("X-Agent-Assertion", &assertion)
+            .timeout(Duration::from_secs(3)).send().await {
             Ok(r) if r.status().is_success() => {}
             Ok(r) => tracing::warn!(
                 "[会话] checkpoint 钩子非 2xx（会话已删、agent 侧残留待保留期清）conv={id} status={}",
@@ -431,13 +440,17 @@ pub(crate) async fn drop_checkpoint_threads(ids: &[i32]) {
 /// `text` = 刚删掉那行的 content（**必给**）：agent 侧拿它确认"state 里最后那条 user 是不是
 /// 这一轮"，对不上就不动手——摘错的代价不可逆（删掉主人还想留着的话）。
 ///
+/// `uid` = 发起人（写进断言与 body）。**带身份断言**的理由与 `drop_checkpoint_threads`
+/// 同一条（SAU-006）：agent 侧那两处现在都要求 `X-Agent-Assertion`。
+///
 /// 失败/没生效**只 warn**（与 `drop_checkpoint_threads` 同口径：不挡业务删除，但必须留痕）。
-pub(crate) async fn drop_checkpoint_turn(conversation_id: i32, text: &str) {
+pub(crate) async fn drop_checkpoint_turn(conversation_id: i32, text: &str, uid: i32) {
     let url = format!("{}/checkpoint/{conversation_id}/drop_turn",
                       crate::routes::graph::agent_base_url());
     let sent = reqwest::Client::new()
         .post(&url)
-        .json(&serde_json::json!({ "text": text }))
+        .header("X-Agent-Assertion", crate::auth_jwt::create_agent_assertion(uid, None))
+        .json(&serde_json::json!({ "text": text, "uid": uid }))
         .timeout(Duration::from_secs(3))
         .send()
         .await;
@@ -528,7 +541,7 @@ pub async fn delete_conversation(
         // 失败只 warn、不改这次的响应：会话在业务库里已经删干净了，这时候回一句"删除失败"
         // 是假话——用户重试一次会得到 404。
         Ok(_) => {
-            drop_checkpoint_threads(&threads).await;
+            drop_checkpoint_threads(&threads, uid).await;
             (StatusCode::OK, Json(json!({"success": true}))).into_response()
         }
         Err(_) => (
