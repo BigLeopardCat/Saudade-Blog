@@ -1059,23 +1059,24 @@ def main():
             print("\n⑪ 问句渲染 markdown（不再显示 ** 原样）")
             pg11, errs11 = open_page(b, url)
             # 问句逐字取自生产（adminops.render_confirm_question 的 read_notifications
-            # ·全部那一支）——夹具与线上文案同字，改文案时这里跟着红，不会悄悄漂走。
+            # ·全部那一支，20261019 卡面改版后：整条动作加粗 + 句尾动词「处理」）
+            # ——夹具与线上文案同字，改文案时这里跟着红，不会悄悄漂走。
             md_round = [text_frame("好的，我来帮你标记。"), "__PROCESS__:正在准备操作…",
-                        confirm_frame(q="要把**全部**未读通知标记为已读（不可撤销：标的就"
-                                        "不再是未读，头顶的红点会消失）吗？点「确定」"
-                                        "我就去办。"),
+                        confirm_frame(q="要**把全部未读通知标记为已读（不可撤销：标的就"
+                                        "不再是未读，头顶的红点会消失）**吗？点「确定」"
+                                        "我就去处理。"),
                         "__END__"]
             run_round(pg11, md_round)
             st = pg11.evaluate(ASK_STATE)
             html = pg11.evaluate("() => document.getElementById('chat-ask-text').innerHTML")
             check("⑪a 前置：这一轮的卡片真的弹出来了", st["active"] and st["q"], str(st["q"]))
-            check("⑪a 渲染器产出了强调标签（<strong>全部</strong>）",
-                  "<strong>全部</strong>" in html, repr(html[:200]))
+            check("⑪a 渲染器产出了强调标签（整条动作被 <strong> 包住）",
+                  "<strong>把全部未读通知标记为已读" in html, repr(html[:200]))
             check("⑪a 屏幕上不再出现 ** 原文（渲染了但没生效的那种形态）",
                   "**" not in st["q"], repr(st["q"]))
             check("⑪a 问句其余文字逐字保留（渲染不许吃掉内容）",
                   st["q"].startswith("要把全部未读通知标记为已读")
-                  and st["q"].endswith("点「确定」我就去办。"), repr(st["q"]))
+                  and st["q"].endswith("点「确定」我就去处理。"), repr(st["q"]))
             check("⑪腿页面无未捕获异常", errs11 == [], " | ".join(errs11[:4]))
 
             # ── ⑫ 待决定的卡片永远在末位（迟到的气泡不许压在它上面）────────────
