@@ -14,6 +14,13 @@
 //! （见 [`create_comment`]）。这既是"不信任客户端"的一般纪律，也是"回复的回复仍挂在
 //! 同一个顶层评论下"的机械保证——客户端想造第三层都没有字段可填。
 //!
+//! ── 排序：默认**热度**（20261020 改口径）────────────────────────────────────
+//! `?sort=hot`（缺省）/ `?sort=new`，只作用在**顶层**；回复恒按时间正序。热度 =
+//! Wilson 下界（先验一赞一踩）+ `0.1·log2(1+回复数)`，见 [`hot_score`] 的读数对照表。
+//! **这条推翻了 20261003 拍过的"投票不影响排序"**：当时的理由（按票排会让新评论永远
+//! 沉底）由先验回答，"讨论区不是热榜"则由「最新」页签回答。代价——匿名票可刷的后果从
+//! "数字虚高"升级为"排名可操纵"——写在 `comment_votes.rs` 头注里，本次不做缓解。
+//!
 //! ── XSS：防线在**渲染侧**，不在这一侧 ─────────────────────────────────────
 //! 服务端只校验形状（trim、剥控制字符、限 300 字），**不做 HTML 转义**：转义会把
 //! "用户打的字"和"库里存的字"变成两份真相，还会与渲染端的 markdown 管线二次处理。
@@ -128,6 +135,83 @@ pub struct CommentDto {
     pub created_at: String,
 }
 
+// ── 热度排序（20261020）──────────────────────────────────────────────────────
+
+/// 公开列表的查询参数。
+///
+/// ⚠️ `sort` **故意是 `Option<String>` 而不是枚举**：`Query` 抽取器遇到反序列化失败会
+/// **直接回 HTTP 400 + 纯文本**、**不走 `ApiResponse` 信封**，而前端判的是 `code === 200`
+/// ⇒ 一个过期的分享链接（`?sort=xxx`）就能把整段讨论区变成"读取失败，请稍后再试"。
+/// 未知值一律回落默认（同 `comment_status_filter` 对未知 status 的处理）。
+#[derive(Deserialize)]
+pub struct CommentListQuery {
+    /// `hot`（缺省）/ `new`。**只有 `new` 会改变行为**，其余一律当 `hot`。
+    pub sort: Option<String>,
+}
+
+/// 先验票：每条评论**开局自带一赞一踩**。
+///
+/// 它不是装饰——没有它，0 票的新评论算出来恒为 0，永远沉在坟底；而"按票排会让新评论
+/// 永远沉底"正是 `comment_votes.rs` 头注当初反对按票排序的那条理由。加上之后
+/// 0 票 0 回复 ≈ 0.095，**高于**净负票（0 赞 1 踩 ≈ 0.061），新评论落在中下游而不是最底。
+///
+/// ⚠️ 它**不**保证新评论排得过有点赞的评论——那正是"最热"的定义，「最新」页签才是逃生口。
+const HOT_PRIOR_VOTES: f64 = 1.0;
+
+/// Wilson 区间的置信水平（1.96 = 95%）。**取的是下界**：样本少就往低了估，于是
+/// "1 赞 0 踩"压不过"20 赞 1 踩"——整套公式存在的理由就是这一条（Reddit 的 best 排序
+/// 用的就是它，出处 Evan Miller 2009《How Not To Sort By Average Rating》）。
+const HOT_Z: f64 = 1.96;
+
+/// 回复项的权重：`α · log2(1 + 回复数)`。log2 压缩之后**每翻一倍才加一个 α**
+/// （1→+0.10 / 3→+0.20 / 7→+0.30 / 15→+0.40 / 31→+0.50）。
+/// Wilson 下界的实际取值域约 [0.03, 1.0]，所以 31 条回复 ≈ 8 个赞。**这个量纲是拍的**。
+///
+/// ⚠️ **它没有上界**：`log2` 只是把增长压得很慢，不是封顶。实测兑换率约
+/// **178 条回复 ≈ 30 个赞**（内联单测钉了 100 / 300 两侧），也就是说一个吵到三百楼的帖子
+/// 能把 30 赞的评论顶下去。这是"讨论量也算热度"必然的代价，**已知且接受**（同族的取舍
+/// 写在 `comment_votes.rs` 头注的"不做的事"里）。
+///
+/// 真要封顶，正解是换成"回复折进 Wilson 样本"那一版（见 `hot_score` 的备选形态），
+/// **不是**在这里给回复项加个 `min()`：加了 min 就等于给吵架帖一个固定天花板，而那个
+/// 天花板同样是拍出来的数，只是更难解释——"为什么第 100 条回复还算数、第 101 条不算"。
+const HOT_REPLY_WEIGHT: f64 = 0.1;
+
+/// 热度分 = **讨论量 + 赞踩加权**。入参都是计数，恒 ≥ 0。
+///
+/// ```text
+/// up' = up + 1, down' = down + 1          ← 先验（见 HOT_PRIOR_VOTES）
+/// p̂   = up' / (up' + down')
+/// hot = Wilson下界(p̂, n = up'+down', z = 1.96) + 0.1 · log2(1 + replies)
+/// ```
+///
+/// 读数对照（改常量时按这张表对账，内联单测钉着其中几个点）：
+/// `0票0回复 0.095 ｜ 1赞0踩 0.208 ｜ 5赞1踩 0.409 ｜ 0票15回复 0.495 ｜ 20赞1踩 0.732
+///  ｜ 0赞5踩 0.026 ｜ 30赞0踩 0.843`
+///
+/// 备选形态（**本次不做**，写在这里免得下一个人重新发明）：把回复折成伪赞成票塞进
+/// Wilson 样本（`up' = up + 1 + replies`）——单一量纲、踩能自动抵消"吵出来的热度"，
+/// 代价是断言"一条回复 ≈ 一票赞"，而这对争论帖不成立。
+fn hot_score(up: i64, down: i64, replies: i64) -> f64 {
+    let (up_f, down_f) = (up as f64 + HOT_PRIOR_VOTES, down as f64 + HOT_PRIOR_VOTES);
+    let n = up_f + down_f;
+    let p = up_f / n;
+    let z2 = HOT_Z * HOT_Z;
+    let lower =
+        (p + z2 / (2.0 * n) - HOT_Z * (p * (1.0 - p) / n + z2 / (4.0 * n * n)).sqrt()) / (1.0 + z2 / n);
+    lower + HOT_REPLY_WEIGHT * (replies as f64 + 1.0).log2()
+}
+
+/// 排序键：热度**定点化成微单位整数**，再与 id 组成 `(i64, i32)`。
+///
+/// **为什么不直接比 `f64`**：`f64` 的比较器在 NaN 上不构成全序（`partial_cmp` 返回 None，
+/// 而 `sort_by` 对非全序**不 panic、顺序未定义**）；`i64` 天生 `Ord` ⇒ "排序稳定"由类型
+/// 保证，不靠纪律。id 进键 = 同分时按 id 降序，**排序是全序**（同一份数据每次排出同一个
+/// 顺序，无头断言与人工排查都能按"第 N 行"对账）。
+fn hot_key(score: f64, id: i32) -> (i64, i32) {
+    ((score * 1_000_000.0).round() as i64, id)
+}
+
 // ── 公开读 ─────────────────────────────────────────────────────────────────
 
 /// GET /api/public/notes/:id/comments —— 某篇文章的公开评论（顶层 + 全部回复）。
@@ -135,10 +219,15 @@ pub struct CommentDto {
 /// **未登录也能读**（文章详情页本身是公开的，讨论区跟着它）：此时 `mine` 恒 false。
 /// 只回 `approved = 1` 且未软删的行——待审/未通过/已删除的评论在公开侧**不存在**，
 /// 连"有一条被删了"都不透露。
+///
+/// **排序（20261020）**：`?sort=hot`（缺省）/ `?sort=new`。热度**只作用在顶层**，回复恒按
+/// 时间正序（对话要读得下去）。这一条改掉了 20261003 拍过的口径（"投票不影响排序"），
+/// 新口径与代价见 `comment_votes.rs` 头注。
 pub async fn list_comments(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(note_id): Path<i32>,
+    Query(q): Query<CommentListQuery>,
 ) -> Json<ApiResponse<Vec<CommentDto>>> {
     // 读路径的身份：令牌过期/收回/冻结一律当**没登录**（模块头注第 1 条），不整条请求失败。
     // 一次解析两个用途——`mine`（这条是不是我发的，只登录用户有）与 `myVote`
@@ -148,7 +237,12 @@ pub async fn list_comments(
     if !note_visible(&state.db, note_id).await {
         return Json(ApiResponse::error("文章不存在或不可见"));
     }
-    // 先取顶层（新→旧：讨论区把最新的话题放最上面），再一次性取它们名下**全部**回复。
+    // 排序口径：缺省与**未知值**都当 `hot`（未知值绝不能 reject，见 `CommentListQuery`）。
+    let sort_hot = !matches!(q.sort.as_deref(), Some("new"));
+    // 先取顶层，再一次性取它们名下**全部**回复。
+    // ⚠️ 这两条 `ORDER BY` 从 20261020 起**不再是列表顺序的契约**，只是"内存排序的确定性
+    // 前置"：默认档会在内存里按热度重排顶层（见下方 `hot_key`）。真正要保的顺序只有两条
+    // ——顶层热度/时间降序、回复时间升序。
     let tops = note_comment::Entity::find()
         .filter(note_comment::Column::NoteId.eq(note_id))
         .filter(note_comment::Column::RootId.is_null())
@@ -180,24 +274,51 @@ pub async fn list_comments(
             .await
             .unwrap_or_default()
     };
-    // 顶层在前、回复随其后：前端只按 rootId 分组，不依赖这个顺序，
-    // 但顺序稳定让无头断言与人工排查都能按"第 N 行"对账。
-    let mut rows = tops;
-    rows.extend(replies);
+    // 讨论量：按 `root_id` 分组数**整棵子树**（"回复的回复"也挂在同一个顶层下，见文件头注）
+    // ——不是直接回复数。**零新查询**：回复已经在内存里；而且它们本来就过滤了
+    // `approved = 1 AND is_deleted = 0`，所以数出来的天然只有公开可见的回复，
+    // 与列表口径一致（待审/已删的回复不算进热度）。
+    let mut reply_counts: std::collections::HashMap<i32, i64> = std::collections::HashMap::new();
+    for r in &replies {
+        if let Some(root) = r.root_id {
+            *reply_counts.entry(root).or_insert(0) += 1;
+        }
+    }
     // 展示名一次取全：作者与"被回复者"共用同一份 map（回复者可能不是本页任何一条的作者）
-    let mut uids: Vec<i32> = rows.iter().map(|c| c.user_id).collect();
-    uids.extend(rows.iter().filter_map(|c| c.reply_to_uid));
+    let mut uids: Vec<i32> = tops.iter().map(|c| c.user_id).collect();
+    uids.extend(tops.iter().filter_map(|c| c.reply_to_uid));
+    uids.extend(replies.iter().map(|c| c.user_id));
+    uids.extend(replies.iter().filter_map(|c| c.reply_to_uid));
     uids.sort_unstable();
     uids.dedup();
     let peers = super::profile::peer_map(&state.db, &uids).await;
     // 票数一次取全（**两条查询**，不是每条评论两条，见 `comment_votes` 的取舍）。
     // 取不到就当没有票：讨论区的正文必须照常显示——投票是附属信息，
     // 不该因为它读失败就让整页评论消失（同上面 `replies` 的 `unwrap_or_default`）。
-    let ids: Vec<i32> = rows.iter().map(|c| c.id).collect();
+    let ids: Vec<i32> = tops.iter().chain(replies.iter()).map(|c| c.id).collect();
     let counts = super::comment_votes::vote_counts_for(&state.db, &ids)
         .await
         .unwrap_or_default();
     let mine = super::comment_votes::my_votes(&state.db, &ids, who.as_ref()).await;
+    // 热度排序：**只排顶层**，回复保持上面那条 `ORDER BY created_at ASC`（对话要读得下去）。
+    // 键是 `(定点化热度, id)` 的全序 ⇒ 同一份数据每次排出同一个顺序。
+    let mut tops = tops;
+    if sort_hot {
+        let mut scored: Vec<((i64, i32), note_comment::Model)> = tops
+            .into_iter()
+            .map(|c| {
+                let (up, down) = counts.get(&c.id).copied().unwrap_or((0, 0));
+                let replies = reply_counts.get(&c.id).copied().unwrap_or(0);
+                (hot_key(hot_score(up, down, replies), c.id), c)
+            })
+            .collect();
+        scored.sort_by(|a, b| b.0.cmp(&a.0)); // 降序：热度高的在前；同分则 id 大的在前
+        tops = scored.into_iter().map(|(_, c)| c).collect();
+    }
+    // 顶层在前、回复随其后：前端只按 rootId 分组，不依赖这个顺序，
+    // 但顺序稳定让无头断言与人工排查都能按"第 N 行"对账。
+    let mut rows = tops;
+    rows.extend(replies);
     let dtos: Vec<CommentDto> = rows
         .into_iter()
         .map(|c| {
@@ -823,5 +944,84 @@ mod tests {
     fn 长度上限按字符算() {
         assert_eq!(clean_content(&"啊".repeat(MAX_COMMENT_CHARS)).chars().count(), MAX_COMMENT_CHARS);
         assert!("啊".repeat(MAX_COMMENT_CHARS + 1).chars().count() > MAX_COMMENT_CHARS);
+    }
+
+    // ── 热度公式（20261020）────────────────────────────────────────────────
+    // 四条不变量 + 两个交叉点。**不变量**是公式的形状（改符号/去先验/去掉 id 兜底必红），
+    // **交叉点**是产品口径（"多少条回复压得过几个赞"是拍出来的，改动必须是一次有意识的
+    // 测试修改，而不是顺手调个常量）。
+
+    /// 单调性：赞越多分越高、踩越多分越低、回复越多分越高。三条各挖一个反控。
+    #[test]
+    fn 热度分对三个信号都单调() {
+        assert!(hot_score(3, 0, 0) > hot_score(2, 0, 0), "赞多 ⇒ 分高");
+        assert!(hot_score(0, 3, 0) < hot_score(0, 2, 0), "踩多 ⇒ 分低");
+        assert!(hot_score(1, 0, 5) > hot_score(1, 0, 4), "回复多 ⇒ 分高");
+    }
+
+    /// ★ 先验的存在理由：**0 票 0 回复不许垫底**。
+    /// 没有先验时 Wilson(0,0) 恒等于 0，新评论永远沉在坟底——那正是当初反对按票排序的
+    /// 理由（见 `HOT_PRIOR_VOTES` 的注释）。这一条钉住它。
+    #[test]
+    fn 零票评论高于净负票评论_低于有一条赞的() {
+        assert!(hot_score(0, 0, 0) > hot_score(0, 1, 0), "0 票要高于净负票（先验的作用）");
+        assert!(hot_score(0, 0, 0) < hot_score(1, 0, 0), "但压不过真有一条赞的");
+    }
+
+    /// 回复项是**对数增长、没有上界**——这两件事必须一起钉住。
+    ///
+    /// 第一半（每翻一倍加一个 α）是公式的形状：把 `log2` 换成线性、或把系数写成 1.0
+    /// 之外的东西，这几条当场红。
+    ///
+    /// 第二半（**无上界**）是本条存在的真正理由：写这段代码时我第一版断言的是"再多回复
+    /// 也压不过 30 赞"，**那是错的**——`log2` 压得慢，不是封顶，实测约 178 条回复就追平
+    /// 30 个赞。错的不是公式，是那句注释。所以这里把兑换率的两侧都钉住：一百条还压不过、
+    /// 三百条压得过。**哪天有人给回复项加 `min()`，这两条会一起红**——那正是该发生的事，
+    /// 因为"吵架帖霸榜"是一个要拍板的产品取舍，不该由一个安静的 `min()` 悄悄改掉。
+    #[test]
+    fn 回复项是对数增长_没有上界() {
+        let d = |n: i64| hot_score(0, 0, n);
+        for n in [0_i64, 1, 3, 7, 15, 31] {
+            let step = d(2 * n + 1) - d(n);
+            assert!(
+                (step - HOT_REPLY_WEIGHT).abs() < 1e-12,
+                "回复数从 {n} 翻到 {} 该恰好加一个 α（{HOT_REPLY_WEIGHT}），实际 {step}",
+                2 * n + 1
+            );
+        }
+        assert!(d(100) < hot_score(30, 0, 0), "一百条回复还压不过 30 个赞");
+        assert!(d(300) > hot_score(30, 0, 0), "但三百条就压过了 —— 回复项**没有上界**");
+    }
+
+    /// 排序键是**全序**：同分不同 id 必须分得出先后（id 降序），且**同一份数据每次排出
+    /// 同一个顺序**——否则无头断言与人工排查都没法按"第 N 行"对账。
+    #[test]
+    fn 排序键是全序_同分按id降序() {
+        let a = hot_key(hot_score(2, 0, 0), 7);
+        let b = hot_key(hot_score(2, 0, 0), 9);
+        assert_ne!(a, b, "同分必须靠 id 分出先后");
+        assert!(b > a, "id 大的排前面（降序）");
+        assert_eq!(a, hot_key(hot_score(2, 0, 0), 7), "同一份输入 ⇒ 同一个键");
+    }
+
+    /// 两个交叉点（产品口径，不是数学性质）：**读代码注释里那张表的人应该能在这里看到
+    /// 同样的结论**。改常量会让这两条红——那正是"要改先想清楚"的意思。
+    #[test]
+    fn 交叉点_回复数与赞数的兑换率() {
+        // 15 条回复（+0.40）能越过 5 赞 1 踩（0.409）——讨论量是强信号。
+        assert!(hot_score(0, 0, 15) > hot_score(5, 1, 0));
+        // 但 3 条回复（+0.20）越不过 5 赞 1 踩——随手聊两句不算热度。
+        assert!(hot_score(0, 0, 3) < hot_score(5, 1, 0));
+    }
+
+    /// 读数对照表：注释里写的那几个数就是这几个数（改公式时这张表要么跟着改、要么红）。
+    #[test]
+    fn 读数对照表() {
+        let round = |v: f64| (v * 1000.0).round() / 1000.0;
+        assert_eq!(round(hot_score(0, 0, 0)), 0.095);
+        assert_eq!(round(hot_score(1, 0, 0)), 0.208);
+        assert_eq!(round(hot_score(5, 1, 0)), 0.409);
+        assert_eq!(round(hot_score(0, 0, 15)), 0.495);
+        assert_eq!(round(hot_score(0, 5, 0)), 0.026);
     }
 }

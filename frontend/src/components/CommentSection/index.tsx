@@ -44,9 +44,8 @@
  *   · **行内框按「哪一行」而不是「哪一条」开**：`openFor` 存的是评论 id，同时最多一个
  *     展开（换一行就把上一个收起），所以行内那份 state 是**单份**的，不是一行的副本。
  *
- * **⑤ 点赞 / 踩（用户 20261003 第 4 条）**：「访客也能点，**不改排序**」是拍板过的形态——
- * 讨论区仍是时间序（按票数排会让一条新评论永远沉底，而这是讨论区不是热榜）。
- * 三条纪律：
+ * **⑤ 点赞 / 踩（用户 20261003 第 4 条）**：访客也能点。**20261020 起票参与排序**（见 ⑥，
+ * 推翻了 20261003 那句"不改排序"）。三条纪律：
  *   · **高亮看 `myVote`，数字看 `up`/`down`**。把高亮挂在"票多的那一侧"上，
  *     读者会以为是自己投的（同族错法：首页点赞的心形）；
  *   · **乐观更新，失败回滚**。等一个来回再变色，手感就是"没点上"；但乐观值只是
@@ -57,6 +56,20 @@
  * 图标 20261005 起改用 `NoteStatIcons` 的 `ThumbUpIcon` / `ThumbDownIcon`（原来写的是
  * 彩色表情字形）。不是审美问题：emoji 的字形颜色由平台调色板决定、`color` 基本不参与，
  * 于是上面第一条「高亮」实际只剩 `.isOn` 的底色在起作用。详见该图标的注释。
+ *
+ * **⑥ 排序：默认「最热」（20261020 主人点名）**。两个页签「最热 / 最新」，**只排顶层评论**
+ * （回复恒时间升序——一串讨论内部被打乱就没法读了，而且"谁先回谁后回"本身就是那串话的
+ * 一部分）。三条纪律：
+ *   · **不记忆**：每次进页面都是「最热」（已拍板）。存 localStorage 会让"我上次看的是最新"
+ *     变成一个**没有任何可见提示**的持久态——同一篇文章两个人看到的顺序不同时，
+ *     没人能解释为什么，排查也会从"公式是不是坏了"开始；
+ *   · **切排序不清列表**：`items` 只在文章换 id 时清空（两个 effect 分开写就是这个目的）。
+ *     否则点一下「最新」整个讨论区闪回"正在读取讨论…"，而它明明只是换个顺序；
+ *   · **`?cid=` 深链只定位一次**：`locatedRef` 那道守卫让切排序**不重滚、不重闪**。
+ *     这是**有意为之**——用户刚点了一下排序，再把视口拽回他之前看的那条评论是反着来的。
+ *
+ * 热度公式**一个字都不在前端算**（后端 `comments.rs::hot_score`：Wilson 下界 + 一赞一踩
+ * 先验 + `0.1·log2(1+回复数)`）。算两份就会漂，而漂的是"顺序"这种没人会去对账的东西。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
@@ -64,7 +77,7 @@ import { Input, Modal, message } from 'antd'
 // 光标插入表情要拿到真正的 <textarea>：antd 的 TextArea 包了一层自动高度容器，
 // 引用类型自带 `resizableTextArea.textArea`（不要用 as 硬转，那层结构改名后会静默失效）
 import type { TextAreaRef } from 'antd/es/input/TextArea'
-import type { CommentItem, CommentVote } from '../../interface/CommentType'
+import type { CommentItem, CommentSort, CommentVote } from '../../interface/CommentType'
 import { createComment, deleteMyComment, listComments, voteComment } from '../../apis/CommentMethods'
 import { errMsg, ok } from '../../apis/ProfileMethods'
 import { renderBlogMarkdown } from '../../utils/chatMarkdown'
@@ -118,6 +131,9 @@ interface CommentSectionProps {
 const CommentSection = ({ noteId }: CommentSectionProps) => {
     const [items, setItems] = useState<CommentItem[] | null>(null)
     const [failed, setFailed] = useState(false)
+    /** 顶层排序（文件头注 ⑥）。**不记忆**：每次进页面都是「最热」，这里没有 localStorage
+     *  也**不要加**——理由（"没有可见提示的持久态"）写在头注里。 */
+    const [sort, setSort] = useState<CommentSort>('hot')
     const [content, setContent] = useState('')
     const [busy, setBusy] = useState(false)
     /** 行内回复框：**开在哪一行**（评论 id；null = 没开）。同时最多一个。
@@ -148,7 +164,7 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
     const load = useCallback(async () => {
         if (!key) return
         try {
-            const res = await listComments(key)
+            const res = await listComments(key, sort)
             if (!ok(res)) { setFailed(true); return }
             setItems(res.data.data || [])
             setFailed(false)
@@ -156,9 +172,13 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
             console.error('读取评论失败', e)
             setFailed(true)
         }
-    }, [key])
+    }, [key, sort])
 
-    useEffect(() => { setItems(null); setFailed(false); void load() }, [load])
+    // **两个 effect，不是一个**（文件头注 ⑥）。`setItems(null)` 是"这一页还没读到东西"，
+    // 只有**换文章**才成立；把清空和重拉写在一起的话，点一下「最新」也会先把列表清掉，
+    // 于是整个讨论区闪回"正在读取讨论…"再重新长出来。
+    useEffect(() => { setItems(null); setFailed(false) }, [key])
+    useEffect(() => { void load() }, [load])
 
     // 别人/另一个端写的新评论：聚焦或看板娘写完一轮时补一次。
     // **poll: false**——这是访客页面，不为我自己的编辑给访客加轮询流量（见 liveRefresh 头注）。
@@ -204,6 +224,24 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
         window.setTimeout(() => el.classList.remove('comment-hit'), 1800)
     }, [cid, items])
 
+    /** 滚到某条评论并闪一下（复用深链那套 `#c-<id>` + `.comment-hit`）。
+     *
+     *  **double-rAF**：调用点在 `await load()` 之后，那时 `setItems` 已经排队但 DOM 还没
+     *  重排，单帧里 `getElementById` 可能还是空的。与上面 `?cid=` 那条同一个理由、同一套写法。
+     *  **找不到就安静跳过**：待审/被驳回的评论在公开列表里**不存在**（这是常态，不是异常），
+     *  为它弹一句"没找到"只会让人以为出了错——所以调用方**不必**先判 `approved`。 */
+    const flashComment = (id: number) => {
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                const el = document.getElementById(`c-${id}`)
+                if (!el) return
+                el.scrollIntoView({ block: 'center', behavior: 'auto' })
+                el.classList.add('comment-hit')
+                window.setTimeout(() => el.classList.remove('comment-hit'), 1800)
+            })
+        })
+    }
+
     /** 把 `:名字:` 插到光标处（不是追加到末尾——插完把光标挪到表情之后继续打字）。
      *  **顶层框与行内回复框共用这一份**：草稿值由调用方给，函数只负责切/插/回光标。 */
     const insertSticker = (
@@ -235,8 +273,18 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
     const postComment = async (text: string, parentId: number | null) => {
         const res = await createComment(key, text, parentId)
         if (!ok(res)) { message.error(errMsg(res)); return false }
-        const { approved } = res.data.data
+        const { approved, id } = res.data.data
         await load()
+        // 落位（20261020，随默认热度排序一起引入）：默认档下，刚发的顶层评论是 0 票 0 回复，
+        // 会排在一堆有点赞的评论**后面**——整表重拉之后它很可能落在视口外，看起来就像
+        // "发出去了但没显示"（而它其实在，只是不在原地）。**不做"本地插到顶部"**：那是在
+        // 假装它最热，下次刷新就当面打脸。改为滚过去闪一下——事实照排，但人能找到它。
+        //
+        // **不在这里判 `approved`**：只有 approved=1 的评论在公开列表里，其余两种
+        // （0 待审 / 2 未通过）`flashComment` 找不到元素、自己安静跳过。
+        // 把判断写进来会让下面那三行"三种审核结果说三种话"变成嵌套块——那是**另一件事**
+        // （说给用户听的话），不该被"要不要滚过去"搅在一起。
+        flashComment(id)
         if (approved === 1) message.success('评论已发布')
         else if (approved === 0) message.info('评论已提交，通过人工复核后才会公开显示')
         else message.warning('评论未通过审核，不会公开展示')
@@ -479,6 +527,26 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
                 讨论区
                 {items && <span className="commentCount">{items.length} 条</span>}
             </h3>
+
+            {/* 排序页签（文件头注 ⑥）。**只有一条顶层评论时不渲染**——一个"排序"控件在
+                排不出差别的列表上是纯噪声（回复不参与排序，所以判据是 `tops` 不是 `items`）。
+                选中态读 `sort` 本身（`aria-pressed`），**不是**"点了才亮"——它是个状态显示，
+                和上面的赞/踩高亮是同一条纪律。 */}
+            {tops.length > 1 && (
+                <div className="commentSort" role="group" aria-label="讨论区排序">
+                    {([['hot', '最热'], ['new', '最新']] as const).map(([v, label]) => (
+                        <button
+                            key={v}
+                            type="button"
+                            className={sort === v ? 'isOn' : ''}
+                            aria-pressed={sort === v}
+                            onClick={() => setSort(v)}
+                        >
+                            {label}
+                        </button>
+                    ))}
+                </div>
+            )}
 
             {!loggedIn ? (
                 <p className="commentLoginTip">

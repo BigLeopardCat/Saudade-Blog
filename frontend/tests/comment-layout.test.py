@@ -116,8 +116,23 @@ STUB_COMMENTS = '''\
  */
 const env = (data: any) => ({ status: 200, data: { code: 200, message: 'ok', data } });
 
-export const listComments = () =>
-    Promise.resolve(env(((window as any).__comments || [])));
+export const listComments = (noteId: number, sort: string) => {
+    const w = window as any;
+    (w.__listSorts = w.__listSorts || []).push([noteId, sort]);
+    const rows = (w.__comments || []) as any[];
+    // **'new' 档把顶层倒过来**（夹具的顶层本来就是 id 升序）。桩必须让顺序**真的**变：
+    // 只记参数的话，"发了 sort 但列表没重排"（比如 `load` 的依赖数组里漏了 `sort`）
+    // 在界面上一个字都看不出来 —— 判据就退化成"我有没有把参数写进 URL"。
+    const tops = rows.filter((c) => c.rootId === null);
+    const replies = rows.filter((c) => c.rootId !== null);
+    const out = sort === 'new' ? [...tops].reverse().concat(replies) : rows;
+    // ⚠️ **必须异步、且慢到能跨一帧**（60ms）。同步 resolve 的话 React 18 会把
+    // "清空"与"填回"两次更新批在同一帧里，中间那一瞬**根本不会进 DOM** ——
+    // 于是 ⑬ 那条「切排序不闪空态」在**坏的实现上也照样绿**（⑬b 的红基线当场证明了
+    // 这件事：第一版桩是同步的，对照组一次都没观测到空态）。真网络请求本来就要几十
+    // 到几百毫秒，"闪一下"在线上是肉眼可见的，桩不该比线上快。
+    return new Promise((resolve) => setTimeout(() => resolve(env(out)), 60));
+};
 
 export const createComment = () => Promise.resolve(env({ id: 999, approved: 1 }));
 
@@ -251,6 +266,17 @@ TSX_POST_TOP = "await postComment(text, topReply?.id ?? null)"
 TSX_VOTE_ON = "                        const on = c.myVote === dir\n"
 TSX_VOTE_BY_COUNT = "                        const on = dir === 1 ? c.up > c.down : c.down > c.up\n"
 
+# ── 红基线 F（⑬b）：把"清空"与"重拉"两个 effect 合回一个（20261020 排序页签之前的样子）。
+# 合起来之后，切排序会先把列表清掉 ⇒ 整个讨论区闪一下「正在读取讨论…」再长回来。
+# **这条红基线是 ⑬ 里"不闪"那条判据的全部依据**：不闪是一个"没发生的事"，而"没发生的事"
+# 用断言是证不出来的（观测器没装好、或者根本没在跑，看起来一样是绿的）——只有让它在
+# 对照组里**真的发生一次**，那条绿才有牙。
+TSX_EFFECTS_SPLIT = (
+    "    useEffect(() => { setItems(null); setFailed(false) }, [key])\n"
+    "    useEffect(() => { void load() }, [load])\n"
+)
+TSX_EFFECTS_JOINED = "    useEffect(() => { setItems(null); setFailed(false); void load() }, [load])\n"
+
 
 def build(variant: str) -> pathlib.Path:
     """variant:
@@ -259,12 +285,13 @@ def build(variant: str) -> pathlib.Path:
     'bare'   只摘掉按进框内那条（= 20261003 早上用户报重叠时的样子）——红基线 B；
     'replyto-old' 「回复 @某人」退回身份行行首（20261003 用户第 3 条报的那一版）——红基线 C；
     'reply-top'  「回复」退回"只能开在页面顶部那个输入框"——红基线 D；
-    'vote-by-count' 高亮从 `myVote` 换成"票多的那一侧"——红基线 E。
-    五个红基线各自翻的是不同的那几条判据，所以五个都要跑：
+    'vote-by-count' 高亮从 `myVote` 换成"票多的那一侧"——红基线 E；
+    'sort-joined' 把"清空列表"与"重拉"两个 effect 合回一个——红基线 F。
+    六个红基线各自翻的是不同的那几条判据，所以六个都要跑：
     A 翻的是「缝隙」与「落在框内」，B 翻的是「计数与按钮不相交」（当年那 22px 就是为它加的），
     C 翻的是 ⑨ 里「回复标记另有自己的一行」，D 翻的是 ⑩ 里「回复框住在被回复的那一行里」，
     E 翻的是 ⑪ 里「高亮跟着 myVote 走」（夹具里 #1/#30 的票数与 myVote 方向**相反**，
-    就是为了让这一条分辨得出两种写法）。"""
+    就是为了让这一条分辨得出两种写法），F 翻的是 ⑬ 里「切排序不闪空态」。"""
     sb = pathlib.Path(tempfile.mkdtemp(prefix=f"comment-layout-{variant}-"))
     shutil.copytree(FE / "src", sb / "src")
     (sb / "node_modules").symlink_to(FE / "node_modules")
@@ -318,6 +345,12 @@ def build(variant: str) -> pathlib.Path:
         src = p.read_text(encoding="utf-8")
         assert src.count(TSX_VOTE_ON) == 1, "红基线 E 没找到「高亮看 myVote」那句"
         p.write_text(src.replace(TSX_VOTE_ON, TSX_VOTE_BY_COUNT, 1), encoding="utf-8")
+
+    if variant == "sort-joined":
+        p = sb / "src/components/CommentSection/index.tsx"
+        src = p.read_text(encoding="utf-8")
+        assert src.count(TSX_EFFECTS_SPLIT) == 1, "红基线 F 没找到那两个分开的 effect"
+        p.write_text(src.replace(TSX_EFFECTS_SPLIT, TSX_EFFECTS_JOINED, 1), encoding="utf-8")
 
     (sb / "entry.tsx").write_text(ENTRY, encoding="utf-8")
 
@@ -513,6 +546,7 @@ BARE = build("bare")
 REPLY_OLD = build("replyto-old")
 REPLY_TOP = build("reply-top")
 VOTE_BY_COUNT = build("vote-by-count")
+SORT_JOINED = build("sort-joined")
 
 print(f"沙箱：{FIXED}")
 
@@ -1139,6 +1173,112 @@ with sync_playwright() as p:
           bool(ou) and abs(ou["h"] - up["h"]) <= 0.2, f'{ou and ou["h"]} vs {up["h"]}')
     check("无 JS 运行时报错（第 ⑦ 节这一页）", not errs7, "; ".join(errs7[:2]))
     pg7.close()
+
+    # ══ 八、排序页签（20261020 主人点名：默认「最热」，可切「最新」）════════════════
+    # 这一组量三件事，缺一件就有一条静默的坏法：① 首屏发的是 `hot`（默认档 ——
+    # 发错了在界面上完全看不出来，页面照样渲染）；② 点「最新」**真的重拉并重排**
+    # （只发参数不重排 = 页签点了没反应，而它看起来是活的）；③ 切排序**不闪空态**。
+    print("\n⑬ 排序页签：默认发 hot、点「最新」发 new 且真的重拉、切排序不闪空态")
+    pg8 = br.new_page(viewport={"width": 1280, "height": 900})
+    errs8 = []
+    pg8.on("pageerror", lambda e: errs8.append(str(e)))
+    pg8.add_init_script("window.__BOOT = { path: '/article/1', token: 't' };")
+    pg8.goto(FIXED.as_uri() + "/index.html")
+    pg8.wait_for_selector(".commentThread", timeout=8000)
+    pg8.wait_for_timeout(300)
+
+    def sorts():
+        return pg8.evaluate("() => (window.__listSorts || []).map((r) => r[1])")
+
+    def pressed():
+        return pg8.evaluate(
+            "() => [...document.querySelectorAll('.commentSort button')]"
+            ".map((b) => b.getAttribute('aria-pressed'))")
+
+    def labels():
+        return pg8.evaluate(
+            "() => [...document.querySelectorAll('.commentSort button')]"
+            ".map((b) => b.textContent.trim())")
+
+    def tops():
+        return pg8.evaluate(
+            "() => [...document.querySelectorAll('.commentThread > .commentRow:not(.isReply)')]"
+            ".map((r) => r.getAttribute('data-cid'))")
+
+    check("★前提：页签渲染出来了（只有一条顶层评论时**不该**渲染——那时它在排空气）",
+          pg8.locator(".commentSort button").count() == 2,
+          pg8.locator(".commentSort button").count())
+    check("  两个页签就是「最热」「最新」（顺序即视觉顺序）",
+          labels() == ["最热", "最新"], labels())
+    check("★首屏发的是 `hot`（默认档；填成 new ⇒ 一进页面看到的顺序就不是「最热」了）",
+          sorts() == ["hot"], sorts())
+    check("★首屏选中态在「最热」上（aria-pressed 读 `sort` 本身，不是「点了才亮」）",
+          pressed() == ["true", "false"], pressed())
+
+    first = tops()
+    check("  前提：首屏顶层顺序就是桩给的顺序（id 1 在最前）", first[:2] == ["1", "2"], first[:2])
+    _t, _s, _l = box(pg8, ".commentTitle"), box(pg8, ".commentSort"), box(pg8, ".commentThread")
+    check("  前提：页签在标题之下、列表之上（否则它可能被当成某一行的动作）",
+          bool(_t) and bool(_s) and bool(_l) and _t["y"] < _s["y"] < _l["y"],
+          f'title={_t and round(_t["y"], 1)} sort={_s and round(_s["y"], 1)} '
+          f'list={_l and round(_l["y"], 1)}')
+
+    # 观测器盯着"空态文本有没有出现过"。**必须装在点击之前**：这条判据量的是
+    # "没发生过的事"，装晚了就是在量自己没看见。它的牙由 ⑬b 的红基线 F 提供。
+    pg8.evaluate("""() => {
+      window.__sawEmpty = 0;
+      const mo = new MutationObserver(() => {
+        if (document.querySelector('.commentEmpty')) window.__sawEmpty++;
+      });
+      mo.observe(document.querySelector('.commentSection'),
+                 { childList: true, subtree: true, characterData: true });
+    }""")
+
+    pg8.locator(".commentSort button").nth(1).click()
+    pg8.wait_for_timeout(400)
+
+    check("★点「最新」⇒ **又发了一次请求**，带的是 `new`", sorts() == ["hot", "new"], sorts())
+    check("★列表**真的重排了**（不是只发了个参数）：顶层顺序整段倒过来",
+          tops() == list(reversed(first)),
+          f"{tops()[:3]} vs {list(reversed(first))[:3]}")
+    check("★选中态跟着 `sort` 走（点完亮的是「最新」）",
+          pressed() == ["false", "true"], pressed())
+    check("★切排序**没有**闪「正在读取讨论…」（清空只在换文章时发生）",
+          pg8.evaluate("() => window.__sawEmpty") == 0,
+          pg8.evaluate("() => window.__sawEmpty"))
+    check("  切排序后顶层条数没变（没有把列表弄丢一部分）",
+          pg8.locator(".commentThread").count() == 30, pg8.locator(".commentThread").count())
+    check("无 JS 运行时报错（排序这一页）", not errs8, "; ".join(errs8[:2]))
+    pg8.close()
+
+    # ══ 九、红基线 F：把两个 effect 合回一个 ⇒ 切排序**真的**闪一次空态 ══════════════
+    print("\n⑬b 红基线 F（sort-joined 变体）：切排序闪一下「正在读取讨论…」")
+    pg9 = br.new_page(viewport={"width": 1280, "height": 900})
+    errs9 = []
+    pg9.on("pageerror", lambda e: errs9.append(str(e)))
+    pg9.add_init_script("window.__BOOT = { path: '/article/1', token: 't' };")
+    pg9.goto(SORT_JOINED.as_uri() + "/index.html")
+    pg9.wait_for_selector(".commentThread", timeout=8000)
+    pg9.wait_for_timeout(300)
+    check("对照组页面本身是好的（页签在、没有 JS 错误）",
+          not errs9 and pg9.locator(".commentSort button").count() == 2, "; ".join(errs9[:1]))
+    pg9.evaluate("""() => {
+      window.__sawEmpty = 0;
+      const mo = new MutationObserver(() => {
+        if (document.querySelector('.commentEmpty')) window.__sawEmpty++;
+      });
+      mo.observe(document.querySelector('.commentSection'),
+                 { childList: true, subtree: true, characterData: true });
+    }""")
+    pg9.locator(".commentSort button").nth(1).click()
+    pg9.wait_for_timeout(400)
+    check("★对照组里空态**真的闪了一次**（⇒ ⑬ 那条「不闪」有牙，不是永真）",
+          pg9.evaluate("() => window.__sawEmpty") > 0,
+          pg9.evaluate("() => window.__sawEmpty"))
+    check("  对照组最后也排好了（红的只该是「闪」那一条，不是排序本身坏了）",
+          pg9.evaluate("() => (window.__listSorts || []).map((r) => r[1])") == ["hot", "new"],
+          pg9.evaluate("() => (window.__listSorts || []).map((r) => r[1])"))
+    pg9.close()
     br.close()
 
 print(f"\ncomment-layout: {'全绿' if not FAILS else str(len(FAILS)) + ' 条红'}\n")

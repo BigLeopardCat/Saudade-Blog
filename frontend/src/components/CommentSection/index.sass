@@ -65,6 +65,40 @@
             color: var(--font-p-color)
             opacity: 0.8
 
+    // ── 排序页签（20261020）─────────────────────────────────────────────
+    //
+    // 视觉取意在留言板的 `.rz-album-tabs`（那是"两态页签"在本站已有的样子：胶囊底 +
+    // 选中变色），但**不复用它的类名**：那是 RiverBoard 命名空间下的选择器，
+    // 跨组件引用别人的类名等于把两个页面的样式焊在一起（改河灯就会动到讨论区）。
+    // 颜色一律走本组件的既有令牌（`--washi-*` / `--font-*`），**不写第二套深色值**。
+    .commentSort
+        display: flex
+        justify-content: flex-end
+        gap: 6px
+        // 标题自带 14px 下边距；页签就挂在它底下，把它收回来一档，
+        // 免得讨论区顶上凭空多出一块空白（同 `.commentPreviewBtn` 的尺寸感）
+        margin: -6px 0 10px
+        button
+            padding: 3px 14px
+            border: 1px solid var(--washi-line, rgba(198, 152, 192, 0.42))
+            border-radius: 14px
+            cursor: pointer
+            font-size: 0.82rem
+            font-family: inherit
+            color: var(--font-p-color)
+            background: transparent
+            transition: color 0.15s, border-color 0.15s, background 0.15s
+            &:hover
+                color: var(--washi-pink-deep, #d94f9a)
+                border-color: var(--washi-pink, #ff9ec9)
+            // 选中态与 `.commentPreviewBtn.isOpen` / `.commentVote.isOn` 同一套取意：
+            // **变的是颜色与一层极淡的底色，不是尺寸**——宽度一变，点一下整行会横跳
+            // （`.commentVote` 那条注释记的是同一个坑）。
+            &.isOn
+                color: var(--washi-pink-deep, #d94f9a)
+                border-color: var(--washi-pink, #ff9ec9)
+                background: rgba(217, 79, 154, 0.13)
+
     .commentLoginTip
         margin: 0 0 18px
         font-size: 0.9rem

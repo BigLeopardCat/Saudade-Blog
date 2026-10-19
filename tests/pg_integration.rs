@@ -3551,3 +3551,212 @@ async fn test_搜索预筛的大小写可见集合与转义() {
     }
     exec(&db, &format!("DELETE FROM talk WHERE id = {SRCH_TALK_UPPER}")).await;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ㉑ 评论排序（20261020）：`?sort=hot` 与 `?sort=new` 排出**不同的顺序**，且缺省 = hot
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// **为什么这条必须真连库**：热度公式本身是纯函数（`src/routes/comments.rs` 的内联单测
+// 把它的形状钉住了：单调性、先验、上界、全序）。纯函数测不到的是**它接没接上**：
+//   · `?sort=` 参数解没解析、未知值会不会把整个请求打成 400；
+//   · 回复数是**整棵子树**还是直接回复（"回复的回复"也挂在同一个顶层下）；
+//   · 回复数只数**公开可见**的那些；
+//   · **缺省档**——前端不发 `sort` 时服务端走哪一档。这是产品口径（默认热度），
+//     而它在纯函数里一个字都体现不出来。
+//
+// ⚠️ 夹具刻意让两个顺序**完全不同**（不是"差一条"）：只差一条时，"排序没生效"与
+// "生效了、恰好排出这样"看起来一模一样。这里 hot = TOP→REPLY→ONE→DOWN、
+// new = ONE→DOWN→TOP→REPLY，**没有任何一条位置相同**；而 SQL 那条前置排序本身就是
+// new 档的顺序 ⇒ 把内存排序删掉，hot 那几条断言当场红（这就是本条的反控）。
+
+/// 讨论区夹具的文章与作者（见 ⑰：每个用例一个 uid，`make_user` 先删后插）。
+const HOT_NOTE: i32 = 900000202;
+const HOT_UID: i32 = 900000201;
+/// 四条顶层评论。**id 与"哪条热"无关**（刻意的：若按 id 也能排对，就分不清判据在
+/// 读 id 还是在读热度）。
+const HOT_CMT_REPLY: i32 = 900000211; // 0 票 + 15 条回复（含 1 条"回复的回复"）⇒ 0.495，第 2
+const HOT_CMT_TOP: i32 = 900000212; // 20 赞 1 踩 ⇒ 0.732，第 1
+const HOT_CMT_DOWN: i32 = 900000213; // 0 赞 5 踩 ⇒ 0.026，第 4
+const HOT_CMT_ONE: i32 = 900000214; // 1 赞 ⇒ 0.208，第 3
+/// 回复 id 段：`900000221 + (g-1)`，g ∈ [1, 15]。另有两条**不该被数进去**的（见下）。
+const HOT_REPLY_BASE: i32 = 900000221;
+const HOT_REPLY_HIDDEN: i32 = 900000236; // approved = 0（待审）⇒ 公开侧不存在
+const HOT_REPLY_DELETED: i32 = 900000237; // is_deleted = 1（软删）⇒ 公开侧不存在
+
+/// 清自己的残留（上次跑挂了会留下行）。**顺序有讲究**：票没有外键指回评论，所以票要
+/// 按"文章下所有评论 id"先删——反过来（先删评论）票就成孤儿，下次跑时它们会挂在
+/// **新插的同号评论**上，症状是"票数比夹具写的多"，看着像公式坏了。
+async fn clear_hot_fixture(db: &DatabaseConnection) {
+    exec(
+        db,
+        &format!(
+            "DELETE FROM note_comment_vote WHERE comment_id IN \
+             (SELECT id FROM note_comment WHERE note_id = {HOT_NOTE})"
+        ),
+    )
+    .await;
+    exec(
+        db,
+        &format!("DELETE FROM note_comment WHERE note_id = {HOT_NOTE}"),
+    )
+    .await;
+    exec(db, &format!("DELETE FROM note WHERE id = {HOT_NOTE}")).await;
+    exec(db, &format!("DELETE FROM \"user\" WHERE id = {HOT_UID}")).await;
+}
+
+/// 拉一次公开评论列表，回 `(顶层 id 顺序, 该顶层名下的回复 id 顺序)`。
+///
+/// **保持服务端给的顺序**（要钉排序就不能在这边再排一遍——那会把判据变成"我自己排的
+/// 顺序对不对"）。顶层按 `rootId == null` 认，**不靠"数组前半段是顶层"**：那是个实现
+/// 细节，哪天它变了，这里应该红而不是跟着一起变。
+async fn comment_order_of(
+    app: axum::Router,
+    query: &str,
+    root: i32,
+) -> (Vec<i32>, Vec<i32>) {
+    let uri = format!("/api/public/notes/{HOT_NOTE}/comments{query}");
+    let (st, j) = call(app, "GET", &uri, None, None).await;
+    // 未知的 `sort` 值**绝不能在 HTTP 层失败**：`Query` 抽取器遇反序列化失败会回
+    // 400 + 纯文本、**不走信封**，而前端判的是 `code === 200` ⇒ 一个过期的分享链接
+    // 就能把整段讨论区变成"读取失败"。所以这里连状态码一起断言。
+    assert_eq!(st, StatusCode::OK, "公开评论列表不该在 HTTP 层失败（`{uri}`）：{j}");
+    assert_eq!(j["code"], 200, "信封 code 必须是 200（`{uri}`）：{j}");
+    let rows = j["data"]
+        .as_array()
+        .unwrap_or_else(|| panic!("data 不是数组（`{uri}`）：{j}"));
+    let id_of = |c: &serde_json::Value| c["id"].as_i64().expect("评论行没有整数 id") as i32;
+    let tops = rows.iter().filter(|c| c["rootId"].is_null()).map(id_of).collect();
+    let replies = rows
+        .iter()
+        .filter(|c| c["rootId"].as_i64() == Some(root as i64))
+        .map(id_of)
+        .collect();
+    (tops, replies)
+}
+
+#[tokio::test]
+async fn comment_sort_hot_default_and_new_differ() {
+    let Some((db, db_app)) = connect_pair().await else { return };
+    clear_hot_fixture(&db).await;
+    make_note(&db, HOT_NOTE).await;
+    make_user(&db, HOT_UID, "user").await;
+
+    // 四条顶层。`created_at` 刻意与"热度名次"**完全错开**（见本节的 ⚠️）：
+    //   REPLY 最老（40h 前）、TOP 30h、DOWN 20h、ONE 最新（10h）
+    // ⇒ new 档 = ONE, DOWN, TOP, REPLY；hot 档 = TOP, REPLY, ONE, DOWN。
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO note_comment (id, note_id, user_id, content, approved, is_deleted, created_at) VALUES \
+             ({HOT_CMT_REPLY}, {HOT_NOTE}, {HOT_UID}, '聊了十五条', 1, 0, NOW() - interval '40 hours'), \
+             ({HOT_CMT_TOP},   {HOT_NOTE}, {HOT_UID}, '二十个赞',   1, 0, NOW() - interval '30 hours'), \
+             ({HOT_CMT_DOWN},  {HOT_NOTE}, {HOT_UID}, '五个踩',     1, 0, NOW() - interval '20 hours'), \
+             ({HOT_CMT_ONE},   {HOT_NOTE}, {HOT_UID}, '一个赞',     1, 0, NOW() - interval '10 hours')"
+        ),
+    )
+    .await;
+
+    // 十五条回复，**倒着插**：id 越大 `created_at` 越老。于是"按时间正序"读出来必然是
+    // **id 严格降序**——若 ORDER BY 丢了（PG 通常按堆/插入序返回，即 id 升序），这条会红。
+    // g = 15 那条挂在**另一条回复**下（`parent_id` 是回复而不是顶层）⇒ 它仍是 REPLY 名下的
+    // 回复，用来钉"数的是整棵子树，不是直接回复数"。
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO note_comment \
+             (id, note_id, user_id, content, root_id, parent_id, approved, is_deleted, created_at) \
+             SELECT {HOT_REPLY_BASE} + g - 1, {HOT_NOTE}, {HOT_UID}, '回复 ' || g, {HOT_CMT_REPLY}, \
+                    CASE WHEN g = 15 THEN {HOT_REPLY_BASE} ELSE {HOT_CMT_REPLY} END, \
+                    1, 0, NOW() - (g || ' minutes')::interval \
+               FROM generate_series(1, 15) g"
+        ),
+    )
+    .await;
+    // 两条**不该被数进热度、也不该出现在列表里**的回复：待审 / 已软删。
+    exec(
+        &db,
+        &format!(
+            "INSERT INTO note_comment \
+             (id, note_id, user_id, content, root_id, parent_id, approved, is_deleted) VALUES \
+             ({HOT_REPLY_HIDDEN},  {HOT_NOTE}, {HOT_UID}, '待审的回复', {HOT_CMT_REPLY}, {HOT_CMT_REPLY}, 0, 0), \
+             ({HOT_REPLY_DELETED}, {HOT_NOTE}, {HOT_UID}, '已删的回复', {HOT_CMT_REPLY}, {HOT_CMT_REPLY}, 1, 1)"
+        ),
+    )
+    .await;
+
+    // 票：`user_id` 全留 NULL、靠 `visitor_key` 区分（两种身份并排，见迁移文件头注）——
+    // 顺带钉住"匿名票也参与热度"这个**已知且已拍板的取舍**（后果写在 comment_votes.rs 头注）。
+    for (comment, key, value, n) in [
+        (HOT_CMT_TOP, "hotfix-up", 1, 20),
+        (HOT_CMT_TOP, "hotfix-dn", -1, 1),
+        (HOT_CMT_DOWN, "hotfix-bad", -1, 5),
+        (HOT_CMT_ONE, "hotfix-one", 1, 1),
+    ] {
+        exec(
+            &db,
+            &format!(
+                "INSERT INTO note_comment_vote (comment_id, visitor_key, value) \
+                 SELECT {comment}, '{key}-' || g, {value} FROM generate_series(1, {n}) g"
+            ),
+        )
+        .await;
+    }
+
+    let app = test_app(db_app);
+
+    // ── ① 缺省档 = hot（产品口径：默认「最热」）──────────────────────────────
+    let (dflt, _) = comment_order_of(app.clone(), "", HOT_CMT_REPLY).await;
+    assert_eq!(
+        dflt,
+        vec![HOT_CMT_TOP, HOT_CMT_REPLY, HOT_CMT_ONE, HOT_CMT_DOWN],
+        "**不带参数**必须按热度排（0.732 / 0.495 / 0.208 / 0.026）——\
+         这是「默认最热」这条口径唯一的落点，纯函数测不到它"
+    );
+
+    // ── ② `?sort=hot` 与缺省逐字相同 ────────────────────────────────────────
+    let (explicit_hot, _) = comment_order_of(app.clone(), "?sort=hot", HOT_CMT_REPLY).await;
+    assert_eq!(explicit_hot, dflt, "显式写 `hot` 与不写必须是同一档");
+
+    // ── ③ ★ 未知值不 reject、不 500，**静默回落 hot** ────────────────────────
+    // 这条是"过期的分享链接 / 别人手打的参数"那道防线。它红了通常不是排序坏了，
+    // 而是有人把 `Option<String>` 改成了会 reject 的强类型枚举（见 `CommentListQuery`）。
+    let (garbage, _) = comment_order_of(app.clone(), "?sort=zzz", HOT_CMT_REPLY).await;
+    assert_eq!(garbage, dflt, "未知 sort 值必须回落 hot（且 HTTP 200 + code 200，不是 400）");
+
+    // ── ④ `?sort=new` 是**另一个顺序**（时间降序），且与 hot 无一条同位 ──────
+    let (new, replies) = comment_order_of(app.clone(), "?sort=new", HOT_CMT_REPLY).await;
+    assert_eq!(
+        new,
+        vec![HOT_CMT_ONE, HOT_CMT_DOWN, HOT_CMT_TOP, HOT_CMT_REPLY],
+        "`?sort=new` 必须按 created_at 降序（10h / 20h / 30h / 40h 前）"
+    );
+    for (i, (a, b)) in dflt.iter().zip(new.iter()).enumerate() {
+        assert_ne!(a, b, "第 {i} 位上 hot 与 new 排到了同一条 —— 夹具失去了分辨力，改夹具");
+    }
+
+    // ── ⑤ 回复：恒时间正序，且**只含公开可见的** ─────────────────────────────
+    let want_replies: Vec<i32> = (0..15).map(|i| HOT_REPLY_BASE + 14 - i).collect();
+    assert_eq!(
+        replies, want_replies,
+        "回复必须按 created_at **正序**（夹具倒着插的 ⇒ 正序就是 id 降序）；\
+         顺序不对时先看 ORDER BY 是不是被并进内存排序一起删了"
+    );
+    assert!(
+        !replies.contains(&HOT_REPLY_HIDDEN) && !replies.contains(&HOT_REPLY_DELETED),
+        "待审 / 已软删的回复在公开侧**不存在**（它们也不该进热度：数的是公开可见的回复）"
+    );
+
+    // ── ⑥ 回复确实进了热度（而不是"恰好按票排"）────────────────────────────
+    // REPLY 是**零票**的，却压在"一个赞"的 ONE 前面 —— 只可能来自回复项。
+    // 少了这一条，把 `hot_score` 的回复项删掉（只剩 Wilson）时，① 仍然会绿
+    // ——因为 0 票的 REPLY 与 ONE 只差在回复数上，而那正是本条要钉的东西。
+    let reply_pos = dflt.iter().position(|&x| x == HOT_CMT_REPLY).expect("REPLY 不在列表里");
+    let one_pos = dflt.iter().position(|&x| x == HOT_CMT_ONE).expect("ONE 不在列表里");
+    assert!(
+        reply_pos < one_pos,
+        "0 票 + 15 条回复必须压过 1 票 + 0 回复（0.495 vs 0.208）—— \
+         这条红了通常意味着热度里的回复项没了"
+    );
+
+    clear_hot_fixture(&db).await;
+}
