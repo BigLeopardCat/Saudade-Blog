@@ -129,6 +129,8 @@ export interface EsbuildSandboxOpts {
   subdir?: string;
   /** define 映射（如 import.meta.env 的整体替换）。 */
   define?: Record<string, string>;
+  /** esbuild alias（如把 react-redux 指到沙箱里的桩文件，替代原 *.py 的 --alias）。 */
+  alias?: Record<string, string>;
   /** 按 IO 扩展名指定 loader（如 { ".sass": "text" }）。 */
   loaders?: Record<string, Loader>;
   /** 产物名（相对构建根），默认 bundle.js。 */
@@ -175,6 +177,7 @@ export async function esbuildInSandbox(
     outfile: path.join(root, opts.outfile ?? "bundle.js"),
     jsx: "automatic",
     define: opts.define,
+    alias: opts.alias,
     loader: opts.loaders,
     absWorkingDir: root,
     logLevel: "silent",
