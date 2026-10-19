@@ -1,0 +1,1020 @@
+import { test, expect, type Page } from "@playwright/test";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import {
+  FE_DIR,
+  compileSass,
+  withSandbox,
+  esbuildInSandbox,
+  collectPageErrors,
+} from "./sandbox";
+
+/**
+ * 文章卡片：分类行↔封面空隙 + 页脚钉底 + 悬浮展开简介（20260930）。
+ * （原 tests/article-card-hover.test.py，20261019 迁移）
+ *
+ * 现场（用户原话，三问一次报上来）：
+ *   1. "把分类行和卡片的封面之间空隙缩小，确保卡片底部的作者署名头像和发布修改时间信息
+ *      位置定死在卡牌底部不动"；
+ *   2. "鼠标悬浮展开简介有问题，展开后最后一行只显示上半部分，还有如果卡片的简介滚动过
+ *      离开后简介展示行没有回到头部"；
+ *   3. "鼠标悬浮于置顶卡片标题和简介会抖动布局改掉，置顶卡片也没悬浮简介上方展开简介"。
+ *
+ * 四个症状的根因都是量出来的（改前/改中的探针实测），不是"看上去像"：
+ *   · 展开高度落在半行上（两个来源）：
+ *     ① `.ArticleContent` 是**定高 flex 列**，简介一带 `min-height: 0` 就被 flex 压成任意像素
+ *        ——实测压出过 250px（12.5 行）与 85px（4.25 行）⇒ 最后一行只露上半；
+ *     ② 文件末尾那条**裸写的** `.ArticleDescription:hover` 里的 `padding-bottom: 10px` 一直在
+ *        生效（它的 max-height/overflow 被嵌套规则压掉了，但 padding 谁也没声明过）⇒ 展开盒
+ *        高 = 内容 + 10，而 `box-sizing: border-box` 让 max-height 把 padding 也算进去 ⇒
+ *        上限 200px 里只剩 190px 给正文 = 9.5 行，第 10 行照样切一半。这条是本套件**量出来的**
+ *        （读数里 `padding-bottom` 非 0 才回头找到的），已连同那条裸规则一起删掉；
+ *   · 页脚跑出卡片：同一个溢出把内容区撑到 532px（卡只有 600px）⇒ 页脚底 813 > 卡底 689
+ *     ⇒ 被 `.ArticleCard{overflow:hidden}` 裁掉；
+ *   · 滚位不回头：`overflow: hidden` 的盒子**同样是滚动容器**（静置态下 scrollHeight 就是
+ *     全文高度）⇒ 悬浮展开滚下去再移开，静置态显示的是全文**中段**。CSS 里没有"回到顶部"
+ *     这件事，只有 `utils/descHover.ts` 抹滚位；
+ *   · 顶卡抖动：内容列是 `justify-content: center`，只要总占位变了整块就重新居中 ⇒
+ *     标题/简介 `:hover` 的一点点高度变化都让全列上下窜。
+ *
+ * 两张卡现在**共用同一套"定高槽"**（20260930 定稿）：简介住在 `.descSlot`（桌面 60px）里、
+ * **槽内绝对定位**，于是它长高/缩回**根本不参与布局** ⇒ 这个盒子占位恒等于静置态 ⇒ 页脚不可能
+ * 动、垂直居中的列不可能重新居中；高度只能取 `max-height`（行高整数倍）或全文自身高度 ⇒ 下沿不
+ * 可能落在半行上。两条都是**结构性**的，与"卡片还剩多少余量"无关（旧写法靠余量，余量随标题行数/
+ * 标签行数浮动）。
+ *
+ * 诚实备注（走过的弯路，别改回去）：中间试过"就地长高 + 等量负 margin 抵掉"。它只在简介**刚好
+ * 长到上限**时成立——负 margin 是定值、而高度是 `min(全文, 上限)`，两者不等时占位就变了
+ * （实测简介 5 行时页脚被抽上去 100px）；而且它要求 `margin-bottom` 与 `max-height` 同步过渡，
+ * 不同步时中途占位是负的、垂直居中的列会整块窜（探针实测 90px 位移）。第 ④′ 组就是钉这条的。
+ *
+ * 本套件量的是**布局真相**，所以一律用 `offsetTop/offsetHeight`（不受 CSS transform 影响）
+ * 而不是 `getBoundingClientRect`——普通卡有 `&:hover { transform: scale(1.03) }`，用 rect
+ * 比"静置 vs 悬浮"会把那 3% 的缩放读成"页脚移动了"。
+ *
+ * 悬浮一律不用 `pg.hover()`：Playwright 要求元素"位置/尺寸稳定"才敢下手，而展开动画有 0.8s，
+ * 它会一直重试到超时（实测卡死 60+ 次）。本套件自己移坐标 + 轮询到布局稳定（见 `hoverStable`）。
+ *
+ * 20260930 增补（用户第四报："在文章标签变成两行时，作者信息时间信息在卡片的位置还是没锁死，
+ * 跑出卡片了"）：普通卡从 `height: 600px` 改成 `min-height`（**下限**，20260930 二轮由 600 降
+ * 到 520）+ 网格项 `display: flex`（同排拉伸等高），内容多就长高。两条相关纪律：
+ *   · 桩里必须补上「更新于」那行——它 `position: absolute` 挂在页脚盒子**外面**，是溢出时
+ *     第一个被切的东西；旧桩只写「发布于」⇒ 这条缺陷在本套件里量不到（判据两边一样坏）。
+ *   · 移动档撤下限要写 `min-height: 0 !important`：`height: auto !important` 管不到 `min-height`
+ *     （两个是不同的属性，同族的坑）。判据写"矮于 520"而不是"≠ 520"。
+ * 置顶卡**仍是定高 640**（轮播：按内容长高会让各 slide 参差），它的余量够大（10 个标签两行
+ * 时仍余 111px，探针实测），不需要长高。
+ *
+ * 20260930 二轮（用户第五报："卡片比例有点不好看，重新调整卡片样式"）：封面 200 → 240、
+ * 下限 600 → 520、普通卡简介展开上限 200 → **140**。三个数是**联动的**——简介浮层是绝对定位、
+ * 向下长，卡片不跟着长高 ⇒ 它的可用高度 = 卡底 − 浮层顶，封面每加高 1px 就直接吃掉 1px。
+ * 第 ⑫ 组把这条锁死：逐个内容形状量「卡底 − 浮层顶」，最小的那个（3 行标题 + 无标签 = 150px）
+ * 决定展开上限。别只改其中一个数就交。
+ *
+ * 判据分两半（诚实备注）：
+ *   · 这里量几何（真 sass + 真 Chromium + 真事件）；
+ *   · `article-card-hover.test.mjs` 锁源码接线——**React 的 `onMouseLeave` 挂在哪个元素上、
+ *     有没有被人删掉**，无头沙箱里没有 React，测不到。本套件用真实原生的 mouseleave 调
+ *     **esbuild 打出来的真 `descHover.ts`**，验的是"这个函数在真事件下确实把滚位抹回 0"。
+ *
+ * （环境备注，20261019 TS 迁移时确认：本机 aarch64 无中文字体、行高度量与原开发机不同，
+ * Python 原版本机同跑 88 绿 / 3 红——红的正是「卡高 542」「③ 组中等长度展开 <140」（本机
+ * LONG_DESC 换行多出 2 行、顶到上限）「⑫ 组 1 行标题可用 170」三条（实量 547 / 140 / 165，
+ * 恰差一行文字的 5px）——判据本身按原值保留，这三条在本机属已知环境差异。）
+ */
+
+const SASS_FILE = path.join(
+  FE_DIR,
+  "src/frontHome/Content/ContentHome/index.sass",
+);
+const RESET_CSS = readFileSync(path.join(FE_DIR, "src/frontHome/main.css"), "utf-8");
+const DESC_HOVER = path.join(FE_DIR, "src/utils/descHover.ts");
+
+const LONG_TITLE = "从零把站内对话助手接进个人博客：规划器、执行器与质检闸的完整记录（下篇）";
+const LONG_DESC =
+  "这一段是摘要，按最坏情况写满：讲的是为什么把执行器做成确定性的、为什么叙述者不绑工具、" +
+  "以及验收为什么必须由回执驱动而不是由模型自述；再补上跨轮执行记忆为什么必须落库、" +
+  "而不是留在叙述文本里，最后是踩坑清单与取舍说明。";
+// 要验"滚过之后回顶部"就必须让全文**真的比展开态高**：普通卡展开上限 140px（7 行），
+// 所以这里给十几行往上。
+const HUGE_DESC = LONG_DESC.repeat(5);
+// ⚠️ `LONG_DESC` 本身刻意**够不到展开上限**（实测展开 100px = 5 行，上限 140px）——第 ③ 组
+// 就是拿它当"中等长度"用的：上限那一档由 HUGE_DESC 覆盖（第 ④ 组）。两档都要有，
+// 因为"负 margin"那套方案只在**刚好长到上限**时才成立（负 margin 定值 vs 高度取 min）：
+// 拿 LONG_DESC 去试就会看到页脚被抽上去 100px。别把这两个常量合并。
+
+// 读数（浏览/点赞/收藏）那一行：与 Article.tsx 同形。它挂在分类行上、尺寸小于 h4，
+// 所以那一行的高度仍由 h4 定（"零高度成本"那条归 article-card-stats 管）。
+const STATS =
+  '<div class="ArticleStats">' +
+  '<span class="ArticleStat" title="阅读量"><span class="ArticleStatNum">12</span></span>' +
+  '<span class="ArticleStat" title="点赞数"><span class="ArticleStatNum">3</span></span>' +
+  '<span class="ArticleStat" title="收藏数"><span class="ArticleStatNum">1</span></span>' +
+  "</div>";
+
+/** 标签：antd Tag 的实测几何（height 22 / margin 5 / padding 0 7）。沙箱里没有 antd 的
+ * CSS，所以按它的尺寸手写。 */
+function tags(n: number): string {
+  return (
+    '<div class="tags" id="tags" style="width:100%;margin-top:10px">' +
+    Array.from(
+      { length: n },
+      (_, i) =>
+        `<span style="display:inline-block;height:22px;line-height:22px;margin:5px;` +
+        `padding:0 7px;border:1px solid #d9d9d9;border-radius:4px;font-size:12px">标签${i}</span>`,
+    ).join("") +
+    "</div>"
+  );
+}
+
+// 普通卡：与 Article.tsx 同形。`.ContentContainer .allArticles .ArticleCard …` 这条选择器链
+// 一层都不能缺（缺一层整套规则失效、量出来全是 0——第 ⓪ 组就是防这个的自检）。
+function CARD_MARKUP(o: {
+  stats: string;
+  title: string;
+  desc: string;
+  tags: string;
+}): string {
+  return `
+<div class="ContentContainer" id="cc">
+<div class="allArticles" style="width:341px;grid-template-columns:repeat(1,1fr)">
+  <div class="article">
+    <div class="ArticleCard" id="card">
+      <div class="ArticleCover" id="cover"></div>
+      <div class="ArticleContent" id="content">
+        <div class="ArticleHead" id="head">
+          <h4 id="cat" style="color:#5a8fbf"># 编程随笔</h4>
+          ${o.stats}
+        </div>
+        <h3 class="ArticleTitle" id="title">${o.title}</h3>
+        <div class="descSlot" id="slot"><p class="ArticleDescription" id="desc">${o.desc}</p></div>
+        <div style="width:100%;margin-top:auto;flex-shrink:0">
+          ${o.tags}
+          <div class="ArticleFooter" id="footer" style="display:flex;align-items:center;paddingBottom:20px;marginTop:10px">
+            <span style="display:inline-block;width:40px;height:40px;border-radius:50%;background:#ccc;margin-right:10px"></span>
+            <span style="font-weight:bold;margin-right:10px;line-height:22px;font-size:14px">林陌青川</span>
+            <!-- ⚠️「更新于」那行**不能省**（20260930）：\`position: absolute; top: 100%\` 把它挂在
+                 这个列盒子**外面**，页脚盒子只有一行高 ⇒ 卡片一旦收支为负，被 \`overflow: hidden\`
+                 切掉的第一个就是它。旧桩只写「发布于」，于是"标签换到第二行、时间信息跑出卡片"
+                 这个现场在本套件里量不到（判据两边一样坏 ⇒ 照样全绿）。 -->
+            <div style="position:relative;display:flex;flex-direction:column">
+              <span class="post-date" id="pub" style="font-size:12px;color:#7f7e7e;line-height:22px">发布于 2026-09-30</span>
+              <span class="post-date" id="upd" style="position:absolute;top:100%;margin-top:6px;left:0;font-size:12px;color:#7f7e7e;line-height:22px;white-space:nowrap">更新于 2026-09-30</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+`;
+}
+
+// 置顶卡：与 ContentHome/index.tsx 的 `.TopArticle` 同形（`display:flex` 是那边的内联样式，
+// 会压掉 sass 里的 `display:grid`，所以这里也写成内联）。
+function TOP_MARKUP(o: { title: string; desc: string; tags: string }): string {
+  return `
+<div class="ContentContainer" id="cc">
+  <div class="TopArticle" id="card" style="display:flex;position:relative">
+    <!-- 置顶贴纸（20261001 六轮）：\`.Top\` 只剩定位（\`top\` 写进 sass，内联的
+         \`translateY(-40%)\` 已删），长相全在 \`.TopTape\` 那张胶带上。 -->
+    <div class="Top"><span class="TopTape">置顶</span></div>
+    <div style="width:100%;height:100%;border-radius:15px;overflow:hidden">
+      <div style="display:flex;width:100%;height:100%">
+        <div class="TopArticleInner" id="inner">
+          <div class="TopCover" id="cover"></div>
+          <div class="topContent" id="content">
+            <h4 id="cat"># 编程随笔</h4>
+            <h3 class="contentTitle" id="title">${o.title}</h3>
+            <div class="descSlot" id="slot"><div class="ArticleDescription" id="desc">${o.desc}</div></div>
+            ${o.tags}
+            <div class="topFooter" id="footer" style="display:flex;align-items:center;paddingBottom:20px">
+              <span style="display:inline-block;width:40px;height:40px;border-radius:50%;background:#ccc;margin-right:10px"></span>
+              <span style="font-weight:bold;margin-right:10px;line-height:22px;font-size:14px">林陌青川</span>
+              <!-- 同普通卡：顶卡页脚里也挂着「更新于」那行（JSX 里两份是同形的，含那个钟表图标——
+                   图标只影响行宽不影响行高，沙箱里没有 iconfont 就不放它）。 -->
+              <div style="position:relative;display:flex;flex-direction:column">
+                <span class="post-date" id="pub" style="font-size:12px;color:#7f7e7e;line-height:22px">发布于 2026-09-30</span>
+                <span class="post-date" id="upd" style="position:absolute;top:100%;margin-top:6px;left:0;font-size:12px;color:#7f7e7e;line-height:22px;white-space:nowrap">更新于 2026-09-30</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+`;
+}
+
+interface OffBox {
+  top: number;
+  h: number;
+}
+interface RectBox {
+  top: number;
+  bottom: number;
+  h: number;
+}
+interface DescInfo extends OffBox {
+  scrollH: number;
+  clientH: number;
+  scrollTop: number;
+  lineHeight: number;
+  overflowY: string;
+  maxHeight: string;
+  marginBottom: string;
+  paddingBottom: string;
+  position: string;
+  bg: string;
+  zIndex: string;
+}
+interface Paint {
+  desc: DescInfo;
+  slot: OffBox | null;
+  // 简介浮层的可用高度 = 卡底 − 浮层顶。**两级 offsetParent 相加**：`#slot` 的
+  // offsetParent 是 `.ArticleContent`（它自己 position: relative），而 `.ArticleContent`
+  // 的 offsetParent 才是卡片 ⇒ 混着减会得出"浮层悬在 300px 高处"这种假数
+  // （同第 ⑪ 组页脚那条注释踩过的坑）。
+  contentTop: number;
+  descAbs: number;
+  avail: number;
+  cover: RectBox;
+  head: OffBox | null;
+  footer: OffBox;
+  footerRect: RectBox;
+  upd: RectBox | null;
+  title: OffBox;
+  cat: OffBox;
+  tags: OffBox | null;
+  content: OffBox;
+  card: OffBox & {
+    rect: RectBox;
+    overflow: number;
+    clientH: number;
+    minHeight: string;
+  };
+  contentOverflow: number;
+  // ① 的判据：分类行上沿到封面图下沿的距离（普通卡）。置顶卡没有 .ArticleHead ⇒ null
+  headGap: number | null;
+  pageOverflow: boolean;
+}
+
+// 静置态的测量。量的全是**布局坐标**（offsetTop/offsetHeight）：transform 不影响它们，
+// 于是"静置 vs 悬浮"可以直接逐像素比，不会被卡片那 3% 的缩放骗到。
+const PAINT = (o: { markup: string }): Paint => {
+  document.getElementById("root")!.innerHTML = o.markup;
+  const el = (id: string) => document.getElementById(id);
+  const off = (id: string): OffBox | null => {
+    const e = el(id);
+    return e ? { top: (e as HTMLElement).offsetTop, h: e.offsetHeight } : null;
+  };
+  const rect = (id: string): RectBox | null => {
+    const e = el(id);
+    if (!e) return null;
+    const b = e.getBoundingClientRect();
+    return {
+      top: Math.round(b.top),
+      bottom: Math.round(b.bottom),
+      h: Math.round(b.height),
+    };
+  };
+  const desc = el("desc")!;
+  const card = el("card")!;
+  const content = el("content")!;
+  const cs = getComputedStyle(desc);
+  const head = el("head");
+  return {
+    desc: {
+      top: (desc as HTMLElement).offsetTop,
+      h: desc.offsetHeight,
+      scrollH: desc.scrollHeight,
+      clientH: desc.clientHeight,
+      scrollTop: desc.scrollTop,
+      lineHeight: parseFloat(cs.lineHeight),
+      overflowY: cs.overflowY,
+      maxHeight: cs.maxHeight,
+      marginBottom: cs.marginBottom,
+      paddingBottom: cs.paddingBottom,
+      position: cs.position,
+      bg: cs.backgroundColor,
+      zIndex: cs.zIndex,
+    },
+    slot: off("slot"),
+    contentTop: (content as HTMLElement).offsetTop,
+    descAbs:
+      (content as HTMLElement).offsetTop +
+      (el("slot") as HTMLElement).offsetTop,
+    avail:
+      card.offsetHeight -
+      ((content as HTMLElement).offsetTop +
+        (el("slot") as HTMLElement).offsetTop),
+    cover: rect("cover")!,
+    head: off("head"),
+    footer: off("footer")!,
+    footerRect: rect("footer")!,
+    upd: rect("upd"),
+    title: off("title")!,
+    cat: off("cat")!,
+    tags: off("tags"),
+    content: off("content")!,
+    card: {
+      top: (card as HTMLElement).offsetTop,
+      h: card.offsetHeight,
+      rect: rect("card")!,
+      overflow: card.scrollHeight - card.clientHeight,
+      clientH: card.clientHeight,
+      minHeight: getComputedStyle(card).minHeight,
+    },
+    contentOverflow: content.scrollHeight - content.clientHeight,
+    headGap:
+      head && el("cover")
+        ? rect("head")!.top - rect("cover")!.bottom
+        : null,
+    pageOverflow: document.documentElement.scrollWidth > window.innerWidth,
+  };
+};
+
+interface HoverRead {
+  descH: number;
+  descTop: number;
+  descScrollH: number;
+  descClientH: number;
+  descRectBottom: number;
+  cardRectBottom: number;
+  lineHeight: number;
+  maxHeight: string;
+  overflowY: string;
+  marginBottom: string;
+  paddingBottom: string;
+  position: string;
+  slotH: number;
+  slotTop: number;
+  bg: string;
+  zIndex: string;
+  footerTop: number;
+  titleTop: number;
+  catTop: number | null;
+  tagsTop: number | null;
+  contentOverflow: number;
+  cardOverflow: number;
+  cardH: number;
+}
+
+// 悬浮态：不能再用 PAINT（它会重写 innerHTML、把悬浮态丢掉），所以单独一段只读的 JS。
+const HOVER_READ = (): HoverRead => {
+  const el = (id: string) => document.getElementById(id)!;
+  const desc = el("desc");
+  const card = el("card");
+  const footer = el("footer");
+  const content = el("content");
+  const cs = getComputedStyle(desc);
+  const r = desc.getBoundingClientRect();
+  const cr = card.getBoundingClientRect();
+  return {
+    descH: desc.offsetHeight,
+    descTop: (desc as HTMLElement).offsetTop,
+    descScrollH: desc.scrollHeight,
+    descClientH: desc.clientHeight,
+    descRectBottom: Math.round(r.bottom),
+    cardRectBottom: Math.round(cr.bottom),
+    lineHeight: parseFloat(cs.lineHeight),
+    maxHeight: cs.maxHeight,
+    overflowY: cs.overflowY,
+    marginBottom: cs.marginBottom,
+    paddingBottom: cs.paddingBottom,
+    position: cs.position,
+    slotH: el("slot").offsetHeight,
+    slotTop: el("slot").offsetTop,
+    bg: cs.backgroundColor,
+    zIndex: cs.zIndex,
+    footerTop: footer.offsetTop,
+    titleTop: el("title").offsetTop,
+    catTop: el("cat") ? el("cat").offsetTop : null,
+    tagsTop: el("tags") ? el("tags").offsetTop : null,
+    contentOverflow: content.scrollHeight - content.clientHeight,
+    cardOverflow: card.scrollHeight - card.clientHeight,
+    cardH: card.offsetHeight,
+  };
+};
+
+// 把真的 `resetDescScroll` 接成 desc 的 mouseleave 处理器。React 那边是
+// `onMouseLeave={resetDescScroll}`（同一份实现、同一个元素），但沙箱里没有 React，
+// 所以这里手工接一根线，好让下一步是**真事件 + 真实现**，而不是我手搓的桩。
+const ATTACH = () => {
+  const el = document.getElementById("desc")!;
+  el.addEventListener("mouseleave", (e) =>
+    (window as unknown as Record<string, (ev: MouseEvent) => void>).__resetDescScroll(e),
+  );
+};
+
+// 稳定判据用的几个键：简介高度/顶部 + 它后面那一段的位置。四个都连续三次不动才算落定。
+const STABLE_KEYS = ["descH", "descTop", "footerTop", "titleTop"] as const;
+
+/**
+ * 把鼠标移到 `sel` 的中心，等布局落定后返回一份读数。
+ *
+ * 不用 `page.hover()`：它在元素位置/尺寸还在变的时候会一直重试（展开动画 0.8s），
+ * 实测卡死 60+ 次重试。这里自己算中心点、自己轮询。
+ * 先睡满一次过渡时长再判稳定，否则缓动尾部每 100ms 的变化量会小于 0.5px、
+ * 被误判成"已经落定"而采到一个 199px 这种半途值（`% 行高` 那条断言就是被它坑的）。
+ */
+async function hoverStable(
+  page: Page,
+  sel: string,
+  settleMs = 950,
+): Promise<HoverRead> {
+  const box = await page.evaluate((s: string) => {
+    const r = document.querySelector(s)!.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  }, sel);
+  await page.mouse.move(box.x, box.y);
+  await page.waitForTimeout(settleMs);
+  let last = await page.evaluate(HOVER_READ);
+  let stable = 0;
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    await page.waitForTimeout(100);
+    const cur = await page.evaluate(HOVER_READ);
+    stable = STABLE_KEYS.every(
+      (k) => Math.abs(cur[k] - last[k]) < 0.5,
+    )
+      ? stable + 1
+      : 0;
+    last = cur;
+    if (stable >= 3) break;
+  }
+  return last;
+}
+
+/** 把鼠标挪出所有卡片（并给 mouseleave 一点时间）。 */
+async function unhover(page: Page): Promise<void> {
+  await page.mouse.move(5, 5);
+  await page.waitForTimeout(150);
+}
+
+const paint = (page: Page, markup: string): Promise<Paint> =>
+  page.evaluate(PAINT, { markup });
+
+test.describe("文章卡片悬浮展开", () => {
+  test.setTimeout(240_000);
+
+  test("空隙/页脚钉底/展开整行/滚位回顶/顶卡不抖/浮层预算（91 条判据）", async ({
+    page,
+  }) => {
+    const homeCss = compileSass(SASS_FILE);
+    await withSandbox(
+      {
+        "index.html":
+          '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">' +
+          '<link rel="stylesheet" href="main.css"><link rel="stylesheet" href="home.css">' +
+          '</head><body><div id="root"></div><script src="bundle.js"></script></body></html>',
+        "main.css": RESET_CSS,
+        "home.css": homeCss,
+      },
+      async (sb) => {
+        // 真 `descHover.ts`（esbuild 打成 IIFE）。只拷这一个文件：它除了一个 type-only 的
+        // `import type {MouseEvent} from "react"`（编译期被抹掉）没有任何依赖。
+        await esbuildInSandbox(sb, {
+          entry: "entry.ts",
+          files: {
+            "entry.ts":
+              "import { resetDescScroll } from './src/utils/descHover';\n" +
+              "(window as any).__resetDescScroll = resetDescScroll;\n",
+            "src/utils/descHover.ts": readFileSync(DESC_HOVER, "utf-8"),
+          },
+        });
+
+        await page.setViewportSize({ width: 1280, height: 900 });
+        const errs = collectPageErrors(page);
+        await page.goto(sb.url);
+        await page.waitForTimeout(150);
+
+        const cardMk = CARD_MARKUP({
+          stats: STATS,
+          title: LONG_TITLE,
+          desc: LONG_DESC,
+          tags: tags(3),
+        });
+        const hugeMk = CARD_MARKUP({
+          stats: STATS,
+          title: LONG_TITLE,
+          desc: HUGE_DESC,
+          tags: tags(3),
+        });
+        const topMk = TOP_MARKUP({
+          title: LONG_TITLE,
+          desc: HUGE_DESC,
+          tags: tags(6),
+        });
+
+        // ── ⓪ 沙箱自检：卡片规则真的生效了（否则下面全是 0 与 0 比，怎么比都过） ──
+        const on = await paint(page, cardMk);
+        expect.soft(
+          Math.abs(on.cover.h - 200) < 1,
+          `封面图 200px（.ArticleCover 的规则生效；20261001 由 240 收回 200） → cover h=${on.cover.h}`,
+        ).toBe(true);
+        // 542 = 200（封面）+ 342（内容自然高：3 行标题 + 1 行标签的 LONG_TITLE/tags(3) 这一组）。
+        // ⚠️ 这个数是**量出来的**、不是算出来的：卡片按内容长高，下限 470 在这组内容下根本
+        // 不参与（内容自然高 542 > 470）。真要验"停在下限"看第 ⑪ 组。
+        // 20261001 由 596 变来：封面 −40、标题 30px→26px 每行 −4（3 行 −12）⇒ 合计 −54。
+        expect.soft(
+          Math.abs(on.card.h - 542) < 1,
+          `卡片 542px = 内容自然高（下限 470 不参与；内容多就长高） → card h=${on.card.h}` +
+            `（本机无中文字体，Python 原版同红 547，环境差异）`,
+        ).toBe(true);
+        expect.soft(
+          Math.abs(on.desc.lineHeight - 20) < 0.5,
+          `简介行高 20px（展开高度按它取整） → ${on.desc.lineHeight}`,
+        ).toBe(true);
+        expect.soft(
+          on.desc.h > 0,
+          `简介在内容区里（选择器链没断） → desc h=${on.desc.h}`,
+        ).toBe(true);
+        expect.soft(
+          !!on.tags && on.tags.h >= 30,
+          `标签行有高度（标签那一段也在场） → tags h=${on.tags ? on.tags.h : "—"}`,
+        ).toBe(true);
+        expect.soft(
+          !!on.slot && Math.abs(on.slot.h - 60) <= 1,
+          `简介槽在场且 60px（整个方案的支点，缺了它就退回 flex 流里） → slot=${JSON.stringify(on.slot)}`,
+        ).toBe(true);
+        expect.soft(
+          on.desc.position === "absolute",
+          `简介在槽内是绝对定位（它长高才不会撑动后面的标签/页脚） → ${on.desc.position}`,
+        ).toBe(true);
+
+        // ── ① 分类行与封面之间的空隙：收到 20px（用户点名的那一条） ──
+        expect.soft(
+          Math.abs(on.headGap! - 20) <= 1,
+          `空隙 = 内容区上内边距 20px（旧值 40px） → 实测 ${on.headGap}px`,
+        ).toBe(true);
+        expect.soft(
+          on.headGap! > 0,
+          `空隙确实在天花板之上（分类行没被封面盖住） → ${on.headGap}px`,
+        ).toBe(true);
+
+        // ── ② 静置态：简介恰好 3 行、页脚完整在卡内、卡片不溢出 ──
+        expect.soft(
+          Math.abs(on.desc.h - 60) <= 1,
+          `简介静置 60px = 3 × 20px → desc h=${on.desc.h}`,
+        ).toBe(true);
+        expect.soft(
+          on.desc.h % 20 === 0,
+          `简介没被 flex 压过（被压就会是 4.25 行这种半行值） → desc h=${on.desc.h}`,
+        ).toBe(true);
+        expect.soft(
+          on.desc.paddingBottom === "0px" || on.desc.paddingBottom === "",
+          `静置态没有 padding-bottom（正文高度 = 行高整数倍的前提） → ${on.desc.paddingBottom}`,
+        ).toBe(true);
+        expect.soft(
+          on.contentOverflow <= 1,
+          `内容区不溢出（scrollHeight ≤ clientHeight + 1） → 溢出 ${on.contentOverflow}px`,
+        ).toBe(true);
+        expect.soft(
+          on.footerRect.bottom <= on.card.rect.bottom + 1,
+          `★ 页脚完整在卡内（改前它会被 overflow:hidden 裁出卡外） → 页脚底 ${on.footerRect.bottom} / 卡底 ${on.card.rect.bottom}`,
+        ).toBe(true);
+        expect.soft(
+          on.card.overflow <= 1,
+          `卡片整体不溢出（长高后的卡没被撑破） → 溢出 ${on.card.overflow}px（卡高 ${on.card.h}，可视 ${on.card.clientH}）`,
+        ).toBe(true);
+        expect.soft(
+          !!on.upd && on.upd.bottom <= on.card.rect.bottom + 1,
+          `★ 页脚里「更新于」那行也在卡内（绝对定位挂在页脚盒子**外面**，最先被切的就是它） → 更新于底 ${on.upd ? on.upd.bottom : "—"} / 卡底 ${on.card.rect.bottom}`,
+        ).toBe(true);
+
+        // ⚠️ 这一组用的是**够不到上限**的 LONG_DESC（展开 5 行 = 100px，上限 140px）。
+        // 这正是"负 margin"方案唯一露馅的档位：负 margin 是定值、而高度是 min(全文, 上限)，
+        // 两者不等时占位就变了（当年那个定值取 −140px ⇒ 占位 = 100 − 140 = −40 ⇒ 页脚被
+        // 抽上去 100px）。探针实测过这个数，所以这一组不是"随便挑一段文字"，别换成 HUGE_DESC。
+        // ── ③ 悬浮展开（普通卡·中等长度简介 100px < 上限 140px）：页脚仍一个像素不动 ──
+        await paint(page, cardMk);
+        const hv = await hoverStable(page, "#desc");
+        expect.soft(
+          hv.descH > on.desc.h,
+          `展开后简介高于静置态（真的展开了，不是只换个 padding） → 悬浮 ${hv.descH} / 静置 ${on.desc.h}`,
+        ).toBe(true);
+        expect.soft(
+          60 < hv.descH &&
+            hv.descH < 140 &&
+            hv.descH % Math.trunc(hv.lineHeight) === 0 &&
+            (hv.paddingBottom === "0px" || hv.paddingBottom === ""),
+          `★ 展开高度严格落在 静置 60px 与上限 140px 之间，且是行高整数倍（实测 100px = 5 行；正文没被 padding 吃掉） → ` +
+            `h=${hv.descH} padding-bottom=${hv.paddingBottom} 行高=${hv.lineHeight}` +
+            `（本机无中文字体，LONG_DESC 换行多 2 行、顶到上限 140，Python 原版同红，环境差异）`,
+        ).toBe(true);
+        expect.soft(
+          hv.descScrollH <= hv.descClientH + 1,
+          `这一档够不到上限 ⇒ 不该出现内部滚动（真被切了才会滚） → 全文 ${hv.descScrollH} / 可视 ${hv.descClientH}`,
+        ).toBe(true);
+        expect.soft(
+          Math.abs(hv.footerTop - on.footer.top) < 0.5,
+          `★ 页脚 offsetTop 与静置态逐像素相同（用户要求「定死在卡底」） → 悬浮 ${hv.footerTop} / 静置 ${on.footer.top}`,
+        ).toBe(true);
+        expect.soft(
+          Math.abs(hv.titleTop - on.title.top) < 0.5 &&
+            Math.abs(hv.tagsTop! - on.tags!.top) < 0.5 &&
+            Math.abs(hv.catTop! - on.cat.top) < 0.5,
+          `  标题、标签行、分类行的位置也没被挤动 → title ${hv.titleTop}/${on.title.top} · tags ${hv.tagsTop}/${on.tags ? on.tags.top : "—"}`,
+        ).toBe(true);
+        expect.soft(
+          Math.abs(hv.slotH - 60) <= 1,
+          `简介槽高度没被撑开（60px：支点还在） → slot=${hv.slotH}`,
+        ).toBe(true);
+        expect.soft(
+          hv.cardOverflow <= 1,
+          `展开后卡片仍不溢出（页脚没被顶出卡外） → 溢出 ${hv.cardOverflow}px（卡高 ${hv.cardH}）`,
+        ).toBe(true);
+        expect.soft(
+          hv.descRectBottom <= hv.cardRectBottom + 1,
+          `展开后的浮层没被卡片下沿切掉（下沿仍在卡内） → 浮层底 ${hv.descRectBottom} / 卡底 ${hv.cardRectBottom}`,
+        ).toBe(true);
+        expect.soft(
+          hv.bg !== "rgba(0, 0, 0, 0)" &&
+            hv.bg !== "transparent" &&
+            hv.zIndex !== "auto",
+          `浮层压得住下面的标签/页脚：底色不透明 + z-index 抬起来 → background=${hv.bg} z-index=${hv.zIndex}`,
+        ).toBe(true);
+        await unhover(page);
+
+        // ── ④ 长简介：展开到上限（7 行）、可滚动、滚过之后离开能回到顶部 ──
+        const big = await paint(page, hugeMk);
+        const bh = await hoverStable(page, "#desc");
+        expect.soft(
+          bh.descH === 140 && bh.maxHeight === "140px",
+          `展开到底就是 140px = 7 行（不是「能塞多少塞多少」） → h=${bh.descH} max-height=${bh.maxHeight}`,
+        ).toBe(true);
+        expect.soft(
+          bh.paddingBottom === "0px" || bh.paddingBottom === "",
+          `★ 上限那 140px **全是正文**：padding-bottom=0（旧裸规则的 10px 混进来时，正文只剩 130px ⇒ 第 7 行被切一半，就是用户报的现象） → padding-bottom=${bh.paddingBottom}`,
+        ).toBe(true);
+        expect.soft(
+          bh.descScrollH > bh.descClientH + 1 &&
+            (bh.overflowY === "auto" || bh.overflowY === "scroll"),
+          `全文比展开态高 ⇒ 给出滚动（而不是裁掉） → 全文 ${bh.descScrollH} / 可视 ${bh.descClientH} / overflow-y=${bh.overflowY}`,
+        ).toBe(true);
+        expect.soft(
+          Math.abs(bh.footerTop - big.footer.top) < 0.5,
+          `  页脚同样一个像素没动 → 悬浮 ${bh.footerTop} / 静置 ${big.footer.top}`,
+        ).toBe(true);
+        expect.soft(
+          bh.descRectBottom <= bh.cardRectBottom + 1,
+          `  浮层仍在卡内（长简介下沿也没被切） → 浮层底 ${bh.descRectBottom} / 卡底 ${bh.cardRectBottom}`,
+        ).toBe(true);
+        expect.soft(
+          big.desc.scrollH > big.desc.clientH + 1,
+          `前提：静置态下简介**也是滚动容器**（滚动不是凭空多出来的） → ${big.desc.scrollH} vs ${big.desc.clientH}`,
+        ).toBe(true);
+        await page.evaluate(ATTACH);
+        const scrolled = await page.evaluate(() => {
+          const d = document.getElementById("desc")!;
+          d.scrollTop = 120;
+          return { top: d.scrollTop, sh: d.scrollHeight, ch: d.clientHeight };
+        });
+        expect.soft(
+          scrolled.top > 0,
+          `展开态真的能滚下去（滚位不为 0，否则下面那条是空断言） → scrollTop=${scrolled.top}`,
+        ).toBe(true);
+        await page.mouse.move(5, 5); // 真鼠标移出 → 浏览器派发真 mouseleave
+        await page.waitForTimeout(200);
+        const left = await page.evaluate(
+          () => document.getElementById("desc")!.scrollTop,
+        );
+        expect.soft(
+          left === 0,
+          `★ 鼠标离开后滚位 = 0（静置态显示的是全文开头，而不是中段；真事件 + esbuild 打出的真 descHover.ts） → scrollTop=${left}`,
+        ).toBe(true);
+
+        // ── ⑤ 置顶卡静置：简介 3 行，页脚在卡内 ──
+        // 顶卡**仍是定高 640**（与普通卡的"下限"不同，这是刻意的）：它是轮播，按内容长高会让
+        // 各 slide 高度参差、切换时整块跳。它的余量够大（实测 10 个标签两行时仍余 111px），
+        // 所以不需要普通卡那套"长高"。
+        const top = await paint(page, topMk);
+        expect.soft(
+          Math.abs(top.card.h - 640) < 1,
+          `置顶卡 640px 定高 → card h=${top.card.h}`,
+        ).toBe(true);
+        expect.soft(
+          !!top.upd && top.upd.bottom <= top.card.rect.bottom + 1,
+          `  顶卡页脚的「更新于」也在卡内 → 更新于底 ${top.upd ? top.upd.bottom : "—"} / 卡底 ${top.card.rect.bottom}`,
+        ).toBe(true);
+        expect.soft(
+          Math.abs(top.desc.h - 60) <= 1,
+          `简介 60px = 3 × 20px → desc h=${top.desc.h}`,
+        ).toBe(true);
+        expect.soft(
+          Math.abs(top.desc.lineHeight - 20) < 0.5,
+          `简介行高 20px（与普通卡同一套，展开高度才能取整） → ${top.desc.lineHeight}`,
+        ).toBe(true);
+        expect.soft(
+          Math.abs(top.slot!.h - 60) <= 1 && top.desc.position === "absolute",
+          `顶卡的简介槽也在场（60px + 原本那 20px 间距归槽管） → slot=${JSON.stringify(top.slot)} position=${top.desc.position}`,
+        ).toBe(true);
+        expect.soft(
+          top.footerRect.bottom <= top.card.rect.bottom + 1,
+          `页脚完整在卡内 → 页脚底 ${top.footerRect.bottom} / 卡底 ${top.card.rect.bottom}`,
+        ).toBe(true);
+
+        // ── ⑥ 悬浮置顶卡标题：全列一个像素都不许动（用户报的「抖动布局」） ──
+        await paint(page, topMk);
+        const tHv = await hoverStable(page, "#title");
+        expect.soft(
+          Math.abs(tHv.titleTop - top.title.top) < 0.5,
+          `★ 标题悬浮后标题自己没动 → 悬浮 ${tHv.titleTop} / 静置 ${top.title.top}`,
+        ).toBe(true);
+        expect.soft(
+          Math.abs(tHv.catTop! - top.cat.top) < 0.5,
+          `  分类行没动 → ${tHv.catTop} / ${top.cat.top}`,
+        ).toBe(true);
+        expect.soft(
+          Math.abs(tHv.descTop - top.desc.top) < 0.5,
+          `  简介没动（垂直居中列没被重新居中） → ${tHv.descTop} / ${top.desc.top}`,
+        ).toBe(true);
+        expect.soft(
+          Math.abs(tHv.tagsTop! - top.tags!.top) < 0.5,
+          `  标签行没动 → ${tHv.tagsTop} / ${top.tags ? top.tags.top : "—"}`,
+        ).toBe(true);
+        expect.soft(
+          Math.abs(tHv.footerTop - top.footer.top) < 0.5,
+          `  页脚没动 → ${tHv.footerTop} / ${top.footer.top}`,
+        ).toBe(true);
+        expect.soft(
+          Math.abs(tHv.descH - top.desc.h) < 0.5,
+          `  简介高度也没变（标题的 :hover 不再解除行数限制） → ${tHv.descH} / ${top.desc.h}`,
+        ).toBe(true);
+        await unhover(page);
+
+        // ── ⑦ 悬浮置顶卡简介：展开成浮层，占位不变 ⇒ 邻居全不动 ──
+        await paint(page, topMk);
+        const dHv = await hoverStable(page, "#desc");
+        expect.soft(
+          dHv.descH >= 200 && dHv.overflowY === "auto",
+          `★ 简介真的展开了（旧版这条被 0,3,0 的选择器压住：只改 max-height/padding ⇒ 10px 抖动） → h=${dHv.descH} overflow-y=${dHv.overflowY} max-height=${dHv.maxHeight}`,
+        ).toBe(true);
+        expect.soft(
+          dHv.descH % 20 === 0,
+          `展开高度能被行高整除（240px = 12 行） → ${dHv.descH}px`,
+        ).toBe(true);
+        expect.soft(
+          Math.abs(dHv.tagsTop! - top.tags!.top) < 0.5,
+          `★ 槽顶住了占位：标签行 offsetTop 与静置逐像素相同（垂直居中列没重新居中） → 悬浮 ${dHv.tagsTop} / 静置 ${top.tags ? top.tags.top : "—"}`,
+        ).toBe(true);
+        expect.soft(
+          Math.abs(dHv.footerTop - top.footer.top) < 0.5,
+          `  页脚没动 → ${dHv.footerTop} / ${top.footer.top}`,
+        ).toBe(true);
+        expect.soft(
+          Math.abs(dHv.titleTop - top.title.top) < 0.5,
+          `  标题没动 → ${dHv.titleTop} / ${top.title.top}`,
+        ).toBe(true);
+        expect.soft(
+          Math.abs(dHv.catTop! - top.cat.top) < 0.5,
+          `  分类行没动 → ${dHv.catTop} / ${top.cat.top}`,
+        ).toBe(true);
+        expect.soft(
+          Math.abs(dHv.slotH - 60) <= 1,
+          `  槽高度也没变（60px） → slot=${dHv.slotH}`,
+        ).toBe(true);
+        expect.soft(
+          dHv.bg !== "rgba(0, 0, 0, 0)" &&
+            dHv.bg !== "transparent" &&
+            dHv.zIndex !== "auto",
+          `浮层底色不透明 + z-index 抬起来（压得住下面的标签/页脚） → background=${dHv.bg} z-index=${dHv.zIndex}`,
+        ).toBe(true);
+        expect.soft(
+          dHv.descRectBottom <= dHv.cardRectBottom + 1,
+          `浮层没跑出卡片 → 浮层底 ${dHv.descRectBottom} / 卡底 ${dHv.cardRectBottom}`,
+        ).toBe(true);
+        await unhover(page);
+
+        // ⑦′ 顶卡的"中等长度"档：与第 ③ 组同一个道理（这一档才是负 margin 方案露馅的地方），
+        // 而顶卡是**垂直居中**列 ⇒ 占位一变整列都动，比普通卡更早暴露。
+        // ── ⑦′ 置顶卡 + 中等长度简介（展开 80px < 上限 240px）：整列仍不动 ──
+        const medTopMk = TOP_MARKUP({
+          title: LONG_TITLE,
+          desc: LONG_DESC,
+          tags: tags(6),
+        });
+        const topMed = await paint(page, medTopMk);
+        const dtHv = await hoverStable(page, "#desc");
+        expect.soft(
+          60 < dtHv.descH &&
+            dtHv.descH < 240 &&
+            dtHv.descH % Math.trunc(dtHv.lineHeight) === 0 &&
+            (dtHv.paddingBottom === "0px" || dtHv.paddingBottom === ""),
+          `展开高度严格落在 静置 60px 与上限 240px 之间、是行高整数倍、正文没被 padding 吃掉（同一段文字在顶卡里是 4 行 = 80px：这一列比普通卡宽 ≈70px，所以行数更少——两个卡的文字换行数不一样，别把普通卡那条数抄过来） → ` +
+            `h=${dtHv.descH} 行高=${dtHv.lineHeight} padding-bottom=${dtHv.paddingBottom}`,
+        ).toBe(true);
+        expect.soft(
+          Math.abs(dtHv.tagsTop! - topMed.tags!.top) < 0.5 &&
+            Math.abs(dtHv.footerTop - topMed.footer.top) < 0.5 &&
+            Math.abs(dtHv.titleTop - topMed.title.top) < 0.5 &&
+            Math.abs(dtHv.catTop! - topMed.cat.top) < 0.5,
+          `★ 标签行/页脚/标题/分类行与静置逐像素相同 → tags ${dtHv.tagsTop}/${topMed.tags ? topMed.tags.top : "—"} · footer ${dtHv.footerTop}/${topMed.footer.top} · title ${dtHv.titleTop}/${topMed.title.top}`,
+        ).toBe(true);
+        await unhover(page);
+
+        // ── ⑧ 置顶卡的简介也要能滚回顶部（与普通卡共用一份实现） ──
+        await paint(page, topMk);
+        await page.evaluate(ATTACH);
+        await hoverStable(page, "#desc");
+        const tScroll = await page.evaluate(() => {
+          const d = document.getElementById("desc")!;
+          d.scrollTop = 120;
+          return d.scrollTop;
+        });
+        expect.soft(
+          tScroll > 0,
+          `展开态能滚下去 → scrollTop=${tScroll}`,
+        ).toBe(true);
+        await unhover(page);
+        const tLeft = await page.evaluate(
+          () => document.getElementById("desc")!.scrollTop,
+        );
+        expect.soft(
+          tLeft === 0,
+          `鼠标离开后滚位 = 0 → scrollTop=${tLeft}`,
+        ).toBe(true);
+
+        // ── ⑨ 夜间：浮层底色取主题变量（不是写死的白） ──
+        await page.evaluate(() =>
+          document.documentElement.classList.add("frontDark"),
+        );
+        await paint(page, topMk);
+        await hoverStable(page, "#desc");
+        const darkBg = await page.evaluate(
+          () => getComputedStyle(document.getElementById("desc")!).backgroundColor,
+        );
+        expect.soft(
+          darkBg === "rgb(33, 33, 33)",
+          `夜间浮层底色 = --pic-background-cover 的夜间值 rgb(33, 33, 33) → ${darkBg}`,
+        ).toBe(true);
+        await page.evaluate(() =>
+          document.documentElement.classList.remove("frontDark"),
+        );
+
+        // ── ⑩ 窄屏 375px：移动档不被这套改动碰到 ──
+        await page.setViewportSize({ width: 375, height: 800 });
+        const mob = await paint(page, cardMk);
+        // ⚠️ 判据是"**矮于** 470"（= 桌面那条下限的当前值），不是"≠ 470"：桌面那条下限是
+        // `min-height`，而移动档只写了 `height: auto !important` 是**管不到它**的（两个是不同的
+        // 属性——"属性有没有第二处声明"那个家族坑）⇒ 漏了 `min-height: 0 !important` 时卡片会被
+        // 撑到恰好 470，`!= 470` 那种写法照样绿。顺带把计算值也读出来，红的时候一眼知道是哪条没生效。
+        expect.soft(
+          mob.card.h < 470,
+          `移动档卡片矮于 470（桌面那条下限被撤掉了） → card h=${mob.card.h}`,
+        ).toBe(true);
+        expect.soft(
+          mob.card.minHeight === "0px" || mob.card.minHeight === "",
+          `  \`min-height\` 计算值是 0（撤的是下限本身，不是被 height 覆盖） → ${mob.card.minHeight}`,
+        ).toBe(true);
+        expect.soft(
+          mob.desc.h < 60,
+          `移动档简介仍是钳制态（没被展开规则顶开） → desc h=${mob.desc.h}（移动档 clamp 2 行）`,
+        ).toBe(true);
+        expect.soft(
+          Math.abs(mob.slot!.h - mob.desc.h) <= 1,
+          `移动档槽高也跟着缩小（≈2 行；桌面那 60px 会让卡片白多一截空档） → slot=${mob.slot ? mob.slot.h : "—"} / desc=${mob.desc.h}`,
+        ).toBe(true);
+        expect.soft(
+          !mob.pageOverflow,
+          `移动档页面不出现横向滚动`,
+        ).toBe(true);
+        await page.setViewportSize({ width: 1280, height: 900 });
+
+        // ── ⑪ ★ 标签换行：卡片按内容长高，页脚与「更新于」都留在卡内（20260930 现场） ──
+        // 用户原话："在文章标签变成两行时，作者信息时间信息在卡片的位置还是没锁死，跑出卡片了"。
+        // 定高那版实测：3 行标题 + 标签第三行 ⇒ 「更新于」底 = 卡底 + 19（30px 的行只剩 11px 露在外面）。
+        // 现在卡片是 `min-height`（下限 470，20261001 由 520 再降 50）+ 网格项 flex ⇒ 内容多就长高。
+        // 逐档写死"该不该长"：**短标题 + 无标签**那种最空的卡（自然高 445）才停在下限 470；
+        // 3 行标题 + 无标签就已经自然高 510、不用下限兜了（20261001 实测）。
+        for (const [title, n, expectGrow] of [
+          ["面试复盘", 0, false],
+          [LONG_TITLE, 6, true],
+          [LONG_TITLE, 12, true],
+        ] as const) {
+          const r = await paint(
+            page,
+            CARD_MARKUP({
+              stats: STATS,
+              title,
+              desc: LONG_DESC,
+              tags: tags(n),
+            }),
+          );
+          if (expectGrow) {
+            expect.soft(
+              r.card.h > 470,
+              `${n} 个标签：内容超出下限 ⇒ 卡片长高到 470 以上 → card h=${r.card.h}`,
+            ).toBe(true);
+          } else {
+            expect.soft(
+              Math.abs(r.card.h - 470) < 1,
+              `最空的卡（短标题 + ${n} 个标签）：内容塞得下 ⇒ 停在下限 470 → card h=${r.card.h}`,
+            ).toBe(true);
+          }
+          expect.soft(
+            r.card.overflow <= 1,
+            `  卡片不溢出（overflow: hidden 没在裁东西） → 溢出 ${r.card.overflow}px`,
+          ).toBe(true);
+          expect.soft(
+            r.footerRect.bottom <= r.card.rect.bottom + 1,
+            `  页脚底 ≤ 卡底（作者署名没跑出去） → 页脚底 ${r.footerRect.bottom} / 卡底 ${r.card.rect.bottom}`,
+          ).toBe(true);
+          expect.soft(
+            !!r.upd && r.upd.bottom <= r.card.rect.bottom + 1,
+            `  「更新于」底 ≤ 卡底（时间信息也没跑出去） → 更新于底 ${r.upd ? r.upd.bottom : "—"} / 卡底 ${r.card.rect.bottom}`,
+          ).toBe(true);
+          // ⚠️ 这条只能用 rect 比：`.ArticleContent` 自己也是 `position: relative`，于是页脚的
+          // offsetParent 是**内容区**（不是卡片）⇒ `footer.offsetTop` 与 `content.offsetTop`
+          // 不在同一个坐标系里，混着减会得出"页脚悬在 232px 高处"这种假红。
+          expect.soft(
+            r.card.rect.bottom - r.footerRect.bottom < 40,
+            `  页脚仍被 margin-top:auto 钉在卡底（长高不是把页脚留在半空） → 卡底 ${r.card.rect.bottom} / 页脚底 ${r.footerRect.bottom}`,
+          ).toBe(true);
+        }
+
+        // ── ⑫ ★ 简介浮层的可用高度（封面 200 / 下限 470 / 上限 140 三个数联动，20261001） ──
+        // 浮层绝对定位、向下长，卡片不跟着长高 ⇒ 可用高度 = **卡底 − 浮层顶**，它**不是**恒定的：
+        // 只取决于浮层底下那一段（简介槽 60 + 间距 + 标签 + 页脚 + 内容下内边距）。
+        // 这张表就是"上限为什么是 140 而不是 200"的判据；改封面 / 改下限 / 改标签那一段，都要重看。
+        //
+        // 20261001 复核：封面 −40、标题 30→26px **同时**把"卡底"和"浮层顶"往上挪，两者相减互相
+        // 抵消 ⇒ 只有被 `min-height` 兜住的那一档（下数第二行）真的变了：下限 520→470 让"兜出来
+        // 的余量"从 25px 缩到 20px ⇒ 175 → 170。**最挤那档仍是 150px，上限 140 不动。**
+        const shapes = [
+          ["3 行标题 + 无标签", LONG_TITLE, 0, 150], // ← 最挤：没有标签那一行撑着
+          ["1 行标题 + 无标签", "面试复盘", 0, 170], // 被下限 470 兜住 ⇒ 多 20px 余量
+          ["3 行标题 + 1 行标签", LONG_TITLE, 3, 182],
+          ["3 行标题 + 2 行标签", LONG_TITLE, 6, 214],
+          ["3 行标题 + 3 行标签", LONG_TITLE, 12, 246],
+        ] as const;
+        const avails: Record<string, number> = {};
+        for (const [label, title, n, expectAvail] of shapes) {
+          const m = await paint(
+            page,
+            CARD_MARKUP({
+              stats: STATS,
+              title,
+              desc: LONG_DESC,
+              tags: tags(n),
+            }),
+          );
+          avails[label] = m.avail;
+          expect.soft(
+            Math.abs(m.avail - expectAvail) <= 1,
+            `${label}：可用 ${expectAvail}px（卡 ${m.card.h} − 浮层顶 ${m.descAbs}） → 实测 ${m.avail}px` +
+              (label === "1 行标题 + 无标签"
+                ? "（本机无中文字体，Python 原版同红 165，环境差异）"
+                : ""),
+          ).toBe(true);
+        }
+        const worst = Math.min(...Object.values(avails));
+        expect.soft(
+          worst >= 140,
+          `★ 每一档都装得下展开上限 140px（最挤的那档也要够） → 最挤 ${worst}px`,
+        ).toBe(true);
+        expect.soft(
+          worst < 200,
+          `★ 判据有牙：最挤那档 **< 200px** ⇒ 上一版的上限 200 就是会切行的（本组能把它抓红，不是套空断言） → 最挤 ${worst}px`,
+        ).toBe(true);
+        expect.soft(
+          Math.abs(
+            avails["3 行标题 + 1 行标签"] - avails["3 行标题 + 无标签"] - 32,
+          ) <= 1,
+          `  结构关系：标签每多一行 ⇒ 可用 +32px（标签就长在浮层底下） → ${avails["3 行标题 + 无标签"]} → ${avails["3 行标题 + 1 行标签"]}`,
+        ).toBe(true);
+        expect.soft(
+          avails["1 行标题 + 无标签"] > avails["3 行标题 + 无标签"],
+          `  结构关系：被下限兜住的卡反而**更宽裕**（兜出来的余量也落在浮层底下） → ${avails["1 行标题 + 无标签"]} vs ${avails["3 行标题 + 无标签"]}`,
+        ).toBe(true);
+
+        // 算术之外再走一遍真事件：把最挤那档展开到底，验它**真的**没被卡底切掉。
+        const tightMk = CARD_MARKUP({
+          stats: STATS,
+          title: LONG_TITLE,
+          desc: HUGE_DESC,
+          tags: tags(0),
+        });
+        await paint(page, tightMk);
+        const tightHv = await hoverStable(page, "#desc");
+        expect.soft(
+          tightHv.descRectBottom <= tightHv.cardRectBottom + 1,
+          `★ 最挤那档展开到底：浮层底仍在卡内（算术是 150 − 140 = 10px 余量） → 浮层底 ${tightHv.descRectBottom} / 卡底 ${tightHv.cardRectBottom}`,
+        ).toBe(true);
+        expect.soft(
+          tightHv.descH === 140,
+          `  展开高度仍是上限 140px（没有被「装不下」改成别的值） → h=${tightHv.descH}`,
+        ).toBe(true);
+        await unhover(page);
+
+        expect.soft(
+          errs().length === 0,
+          `无 JS 运行时报错 → ${errs().slice(0, 2).join("; ")}`,
+        ).toBe(true);
+      },
+    );
+  });
+});
