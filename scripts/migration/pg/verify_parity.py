@@ -54,14 +54,38 @@ HAND_WRITTEN = {"rag_vector", "rag_vector_space", "chat_image", "note_tag"}
 # 单列豁免：`(表, 列)` 点名，**不是**把整张表加进 `HAND_WRITTEN`（那会把它现有的
 # 索引 / 外键一起豁免掉，见上面那条 ⚠️）。
 #
-# 现在只有一条：`("note", "tags")` —— `0007_drop_note_tags_column.sql` 会在 soak 之后
-# 删掉它（内容已归一到 `note_tag` 关联表，`string_agg(tag_id, ',' ORDER BY seq)` 可无损重算）。
-# MySQL 侧那列**永远留着**（MySQL 已冻结），所以删完必然红在这条 diff 上。
+# 两条，**理由不同**：
+#
+# - `("note", "tags")`：`0007_drop_note_tags_column.sql` 会在 soak 之后删掉它
+#   （内容已归一到 `note_tag` 关联表，`string_agg(tag_id, ',' ORDER BY seq)` 可无损重算）。
+#   MySQL 侧那列**永远留着**（MySQL 已冻结），所以删完必然红在这条 diff 上。
+# - `("password_reset_token", "token_hash")`：**列两边都在，只是宽度有意不同**。
+#   MySQL 侧 `char(64)`（无盐单轮 SHA-256 的十六进制，正好 64 字符），PG 侧由
+#   `0009_widen_password_reset_token_hash.sql` 加宽到 `varchar(255)`，以容纳
+#   Argon2id 的 PHC 串（约 97 字符，见那份文件头注）。**MySQL 已冻结** ⇒ 这个差异
+#   是永久的、不是待补的差；要抹平只能回 MySQL 改列，而那等于动冻结面。
 #
 # ⚠️ 这条豁免是**双向**的：两侧都按它过滤 ⇒ 列还在的时候它**不生效**（两边都摘掉，
-# 那一列压根不比），列没了之后它才起作用。代价说清楚：`note.tags` 这一列的
-# 类型 / 可空 / 默认 / 注释**从此没有东西在核对**，只有这一列。
-COLUMN_EXCEPTIONS = {("note", "tags")}
+# 那一列压根不比），列没了之后它才起作用。代价说清楚：这两列的
+# 类型 / 可空 / 默认 / 注释**从此没有东西在核对**，只有这两列。
+#
+# （为什么 `token_hash` 不另开一条"类型豁免"通道去只放宽宽度：那会让下面那句
+# `MySQL/生成器: …` 印出一个 MySQL 侧根本不存在的类型 —— 报错信息说假话比少查一格更坏。）
+COLUMN_EXCEPTIONS = {("note", "tags"), ("password_reset_token", "token_hash")}
+
+# 类型豁免：`(表, 列) → PG 侧应有的类型`。
+#
+# 与上面那条**不是一回事**：那一列是"一边有、一边没有"，这一族是"**两边都在，
+# 只有类型有意不同**"。所以不塞进 `COLUMN_EXCEPTIONS`（那会把整列摘出判据），
+# 只改期望值 ⇒ 可空 / 默认 / 注释照旧比，而且**这里写死的那个值本身就是一条判据**：
+# 日后有人再动这一列的宽度，红的就是这一行。
+#
+# 现在只有一条：`password_reset_token.token_hash` —— MySQL 侧 `char(64)`
+# （无盐单轮 SHA-256 的十六进制，正好 64 字符），PG 侧由
+# `0009_widen_password_reset_token_hash.sql` 加宽到 `varchar(255)`，以容纳
+# Argon2id 的 PHC 串（约 97 字符，见那份文件头注）。**MySQL 已冻结** ⇒ 这个差异
+# 是永久的、不是待补的差；真要抹平就得回 MySQL 改列，而那等于动冻结面。
+COLUMN_TYPE_OVERRIDES = {("password_reset_token", "token_hash"): "varchar(255)"}
 
 
 def _owned_by_hand_written(key) -> bool:
@@ -331,7 +355,7 @@ def main() -> int:
     print("     · chat_image → `tests/pg_integration.rs`（往返逐字相等 + 外键级联删）")
     print("     · note_tag → `tests/pg_integration.rs`（回填往返、级联按列生效、撞号归属、移动改指向）")
     if COLUMN_EXCEPTIONS:
-        print("  ⚠️ 另有单列豁免 %s：那一列**两侧都不比**（列还在的时候这条不生效）。"
+        print("  ⚠️ 另有单列豁免 %s：那几列**两侧都不比**（理由见 `verify_parity.py` 里那份清单）。"
               % "/".join("%s.%s" % tc for tc in sorted(COLUMN_EXCEPTIONS)))
     print("     ⚠️ 它们的**列**没有任何东西在核对——这是手写表的既定代价，别读成「已验」。）")
     print("  ⚠️ 有两件事**本判据结构上验不了**，别读成「已验证」：")

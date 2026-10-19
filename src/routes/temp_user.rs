@@ -7,7 +7,6 @@ use std::sync::Arc;
 use crate::routes::AppState;
 use crate::entity::{password_reset_token, user};
 use crate::utils::hash_password;
-use crate::utils::encrypt_password;
 
 #[derive(Deserialize)]
 pub struct CreateTempUser {
@@ -1079,9 +1078,14 @@ pub async fn create_password_reset_token(
     let code = Uuid::new_v4().simple().to_string();
     let now = Utc::now().naive_utc();
     let expires_at = now + Duration::minutes(15);
+    // 恢复码的哈希 20261020 起是 **Argon2id**（安全审计 SAU-017）：此前与主密码的旧
+    // 存储同一个毛病——无盐单轮 SHA-256，库一泄就是彩虹表直接命中。恢复码本身有 122 位
+    // 熵（`Uuid::new_v4().simple()`）⇒ 现实里爆不开，但**存储算法不该靠"值够随机"兜**：
+    // 库泄漏之后，一条弱码就是一条明文。⚠️ **顺序**：`0009` 那份迁移（加宽
+    // `token_hash`）必须先在生产跑过——`char(64)` 装不下 ~97 字符的 PHC 串。
     let record = password_reset_token::ActiveModel {
         user_id: Set(user_id),
-        token_hash: Set(encrypt_password(&code)),
+        token_hash: Set(hash_password(&code)),
         expires_at: Set(expires_at),
         used_at: Set(None),
         created_at: Set(now),

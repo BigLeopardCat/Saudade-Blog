@@ -1,5 +1,5 @@
 use axum::{Json, extract::State, http::HeaderMap};
-use sea_orm::{ActiveModelTrait, EntityTrait, ColumnTrait, QueryFilter, Set};
+use sea_orm::{ActiveModelTrait, EntityTrait, ColumnTrait, QueryFilter, QueryOrder, QuerySelect, Set};
 use chrono::Utc;
 use std::sync::Arc;
 use crate::entity::{password_reset_token, user};
@@ -121,18 +121,49 @@ pub async fn login(
 /// 无邮箱账号的安全找回：恢复码由管理员签发，15 分钟内只能使用一次。
 pub async fn reset_password(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(payload): Json<ResetPasswordRequest>,
 ) -> Json<ApiResponse<String>> {
+    // 限流（20261020，安全审计 SAU-017 的伴生）：恢复码的哈希改成 **Argon2id** 之后，
+    // 一次错码就是一次 19MiB × 数十毫秒的运算——而这条路**没有任何身份**。这与登录 /
+    // 个人中心改密码是**同一份凭据**，所以按 IP+账号进同一个桶（同 `profile.rs` 那条：
+    // 「拿到令牌的人不该因为已登录就获得无上限的爆破配额」，反过来也一样：登录有闸、
+    // 换个入口猜恢复码没闸，那这道闸就等于没有）。
+    //
+    // 记账放在**外层**：`reset_password_inner` 只回 `Result`，于是"每一条失败路径都
+    // 记账"是结构性的——以后往里面加一个 `return` 不会漏账。
+    let ip = get_client_ip(&headers);
+    if let Err(msg) = state.rate_limiter.check(&ip, &payload.username) {
+        return Json(ApiResponse::error(&msg));
+    }
+    match reset_password_inner(&state, &payload).await {
+        Ok(msg) => {
+            state.rate_limiter.record_success(&ip, &payload.username);
+            Json(ApiResponse::success(msg))
+        }
+        Err(msg) => {
+            state.rate_limiter.record_failure(&ip, &payload.username);
+            Json(ApiResponse::error(&msg))
+        }
+    }
+}
+
+/// `reset_password` 的判据与写入。**错误文案就是返回给用户的文案**（都是"没成功、可以
+/// 再试"那一类，没有内部细节）；限流在外层（见上）。
+async fn reset_password_inner(
+    state: &Arc<AppState>,
+    payload: &ResetPasswordRequest,
+) -> Result<String, String> {
     let username = payload.username.trim();
     let code = payload.recovery_code.trim();
     // 口令那一段走共用判据（20261017）：此前是 `payload.new_password.len() < 8`，
     // 而 `len()` 是**字节数** ⇒ 3 个汉字（9 字节）就能过。账号名/恢复码的判据留在原地
     // ——它们不是口令，共用那一个函数会把这三种语义搅在一起。
     if username.is_empty() || code.len() < 16 {
-        return Json(ApiResponse::error("账号、恢复码或新密码格式不正确"));
+        return Err("账号、恢复码或新密码格式不正确".to_string());
     }
     if let Some(msg) = crate::utils::password_reject(&payload.new_password) {
-        return Json(ApiResponse::error(msg));
+        return Err(msg.to_string());
     }
 
     let names = [username.to_string(), encrypt_password(username)];
@@ -142,29 +173,47 @@ pub async fn reset_password(
         .await
         .unwrap_or(None)
     else {
-        return Json(ApiResponse::error("账号或恢复码无效"));
+        return Err("账号或恢复码无效".to_string());
     };
 
-    let token_hash = encrypt_password(code);
+    // 恢复码的哈希 20261020 起是 **Argon2id**（随机盐，安全审计 SAU-017）⇒ **不能再拿
+    // "哈希"当等值查询条件**（与主密码那次改造同一条理由）：按 `user_id` 取**未使用**的行，
+    // 在 Rust 里逐条校验。
+    //
+    // `limit(4)` 不是"相信不会发生"，而是这条路径的成本是 **N × 19MiB**：
+    // `create_password_reset_token` 每次签发都先删光该账号的全部旧行 ⇒ 正常只有 0 或 1 条；
+    // 有条以上时只校验最近 4 条并留一条 WARNING——宁可让一条异常旧行验不过，
+    // 也不让一个无身份请求把内存打满。
     let now = Utc::now().naive_utc();
-    let Some(token) = password_reset_token::Entity::find()
+    let candidates = password_reset_token::Entity::find()
         .filter(password_reset_token::Column::UserId.eq(account.id))
-        .filter(password_reset_token::Column::TokenHash.eq(token_hash))
         .filter(password_reset_token::Column::UsedAt.is_null())
-        .one(&state.db)
+        .order_by_desc(password_reset_token::Column::CreatedAt)
+        .limit(4)
+        .all(&state.db)
         .await
-        .unwrap_or(None)
+        .unwrap_or_default();
+    if candidates.len() > 1 {
+        tracing::warn!(
+            "[auth] uid={} 有 {} 条未使用的恢复码（正常 ≤1，只校验最近 4 条）",
+            account.id, candidates.len()
+        );
+    }
+    // 旧格式（无盐 SHA-256）由 `verify_password` 一并认。**刻意不做惰性升级**：
+    // 恢复码是**一次性**的（15 分钟、用过即废），升级一条马上要死的行只是多一次写。
+    // 主密码那条路要惰性升级，是因为那个哈希还要活很多年——两者的理由不同，别照抄。
+    let Some(token) = candidates.into_iter().find(|t| verify_password(code, &t.token_hash))
     else {
-        return Json(ApiResponse::error("账号或恢复码无效"));
+        return Err("账号或恢复码无效".to_string());
     };
     if token.expires_at <= now {
-        return Json(ApiResponse::error("恢复码已过期，请联系管理员重新生成"));
+        return Err("恢复码已过期，请联系管理员重新生成".to_string());
     }
     // 冻结账号不能靠恢复码把口令换掉再进来（20260926）：冻结是管理员按下的一刀，
     // 被冻的人手里有旧的恢复码也不该能自己解开。放在**口令写入之前**，
     // 于是这条路上不会留下任何"改了一半"的痕迹。
     if crate::authz::is_frozen(account.status) {
-        return Json(ApiResponse::error("账号已被冻结，请联系管理员"));
+        return Err("账号已被冻结，请联系管理员".to_string());
     }
 
     // 走这条路等于"凭据已经换了"（20260926）：令牌代次 +1，
@@ -176,15 +225,15 @@ pub async fn reset_password(
     user_active.password = Set(hash_password(&payload.new_password));
     user_active.token_version = Set(ver + 1);
     if user_active.update(&state.db).await.is_err() {
-        return Json(ApiResponse::error("密码修改失败，请稍后再试"));
+        return Err("密码修改失败，请稍后再试".to_string());
     }
 
     let mut token_active: password_reset_token::ActiveModel = token.into();
     token_active.used_at = Set(Some(now));
     if token_active.update(&state.db).await.is_err() {
-        return Json(ApiResponse::error("恢复码确认失败，请联系管理员检查账号状态"));
+        return Err("恢复码确认失败，请联系管理员检查账号状态".to_string());
     }
-    Json(ApiResponse::success("密码修改成功，请使用新密码登录".to_string()))
+    Ok("密码修改成功，请使用新密码登录".to_string())
 }
 
 /// 当前登录用户信息（任意角色，非仅 admin）：留言留名预填用
