@@ -11,7 +11,94 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
 .NoTop
   margin: 0
 
+// The public header owns its drawer styles; no lazy dashboard route is required.
 .phoneSide
+  display: none
+  @media only screen and (max-width: 1200px)
+    // 固定定位锚定视口左上角：不依赖 sticky（部分机型 html overflow-x:hidden 会破坏 sticky），
+    // 任何滚动位置打开抽屉都稳定显示在屏幕左侧
+    // 宽度与内容容器一致（250px）且关闭时平移 -260px 完全移出屏幕：
+    // 此前 290px 宽只移 251px，右侧露出 39px 透明命中区正好盖住汉堡按钮，导致菜单点不开
+    position: fixed
+    top: 0
+    left: 0
+    z-index: 999
+    width: 250px
+    height: 100%
+    display: flex
+    align-items: flex-start
+    transform: translateX(-260px)
+    visibility: hidden
+    pointer-events: none
+    transition: transform 0.5s, visibility 0.5s
+
+    .phoneBarContainer
+      width: 250px
+      height: 100vh
+      background: var(--phoneBar-bg)
+      position: absolute
+      transition: 0.5s
+      display: flex
+      flex-direction: column
+      align-items: center
+      overflow-y: scroll
+      &::-webkit-scrollbar
+        width: 0
+
+
+      .mSearchInput
+        border: 0
+        border-radius: 10px
+        padding: 10px 20px 10px 20px
+        margin-bottom: 20px
+        background: rgba(0,0,0,0.33)
+        color: #fff1eb
+        max-width: 90%
+        &:focus
+          outline: none
+
+      .barLogo
+        margin-top: 30px
+        margin-bottom: 30px
+
+      .barContent
+        height: 100%
+        .oneBar
+          height: 88%
+          display: flex
+          flex-direction: column
+          gap: 15px
+          list-style: none
+          li
+            &:hover
+              background: #b7c8da
+          .twoBar
+            gap: 5px
+            display: flex
+            flex-direction: column
+            list-style: none
+            li
+              margin-left: 10px
+        li
+          position: relative
+          font-size: 20px
+          color: var(--phoneBar-font-color)
+          cursor: pointer
+          display: flex
+          justify-content: center
+          align-items: center
+          border-radius: 10px
+          padding: 10px
+        i
+          margin-right: 10px
+
+
+.phoneSide.openBar
+  transform: translateX(0)
+  visibility: visible
+  pointer-events: auto
+
+
 .phoneSideOverlay
   display: block
   position: fixed

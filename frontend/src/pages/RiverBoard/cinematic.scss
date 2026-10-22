@@ -11,7 +11,7 @@
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
 
   .rz-landscape { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
-  .rz-canvas { inset: 44% 0 0; width: 100%; height: 56%; z-index: 1; pointer-events: none; }
+  .rz-canvas { inset: 54% 0 0; width: 100%; height: 46%; z-index: 1; pointer-events: none; }
   .rz-scene-shade {
     position: absolute; inset: 0; z-index: 3; pointer-events: none;
     background: linear-gradient(90deg, #030c13a8, transparent 52%),
@@ -63,7 +63,6 @@
     .rz-wish-btn { min-width: 195px; background: #ddc299; color: #243333; border-color: #ddc299; }
     .rz-wish-btn:hover, .rz-wish-btn:focus-visible { background: #f0d9b2; color: #162d31; }
     .rz-album-btn:hover, .rz-album-btn:focus-visible { background: #18303a; }
-    .rz-assistant-btn { position: absolute; bottom: 28px; right: 8vw; padding: 5px 0; border: 0; background: none; color: #b5c2c3; font-size: 10px; letter-spacing: .15em; cursor: pointer; pointer-events: auto; }
     button { transition: background .2s, color .2s, border-color .2s; backdrop-filter: none; -webkit-backdrop-filter: none; }
     button:focus-visible { outline: 2px solid #edd6ab; outline-offset: 5px; }
     button:disabled { cursor: default; opacity: .55; }
@@ -94,7 +93,6 @@
       .rz-album-btn, .rz-wish-btn { min-width: 0; padding: 15px 16px; font-size: 11px; }
       .rz-album-btn { flex: 1; }
       .rz-wish-btn { flex: 1.5; }
-      .rz-assistant-btn { bottom: calc(28px + env(safe-area-inset-bottom)); }
     }
   }
   @media (max-height: 580px) and (min-width: 761px) {
@@ -109,11 +107,11 @@
 }
 .rz-root.rz-cinematic {
   .rz-fog {
-    position: absolute; z-index: 3; left: -10%; width: 120%; height: 12%; top: 46%; pointer-events: none;
+    position: absolute; z-index: 3; left: -10%; width: 120%; height: 12%; top: 54%; pointer-events: none;
     background: radial-gradient(ellipse at 30% 50%, #b6d3dc18, transparent 54%), radial-gradient(ellipse at 74% 42%, #acc5d810, transparent 42%);
     animation: rz-fog-drift 38s ease-in-out infinite alternate;
   }
-  .rz-fog-near { top: 62%; height: 17%; opacity: .45; animation-duration: 52s; animation-direction: alternate-reverse; }
+  .rz-fog-near { top: 68%; height: 17%; opacity: .45; animation-duration: 52s; animation-direction: alternate-reverse; }
   &[data-scene-sleeping='true'] .rz-fog, &[data-scene-paused='true'] .rz-fog { animation-play-state: paused; }
   .rz-lantern .rz-sprite { transition: transform .45s ease; }
   .rz-lantern:hover .rz-sprite, .rz-lantern:focus-visible .rz-sprite { transform: translateY(-3px) scale(1.06); }
@@ -235,3 +233,103 @@
 .rz-root.rz-cinematic[data-scene-sleeping="true"] .rz-lanterns .rz-live-flame,
 .rz-root.rz-cinematic[data-scene-paused="true"] .rz-lanterns .rz-live-flame { animation-play-state: paused; }
 @media (prefers-reduced-motion: reduce) { .rz-root.rz-cinematic .rz-live-flame, .rz-root.rz-cinematic .rz-live-flame * { animation: none !important; } }
+
+/* Readable ink and stable book dimensions across search/filter/empty states. */
+.rz-root.rz-cinematic {
+  font-size: 16px;
+  font-weight: 500;
+  .rz-ui {
+    .rz-masthead { font-size: 18px; font-weight: 600; }
+    .rz-masthead small { font-size: 12px; line-height: 1.6; color: #d0cbbd; }
+    .rz-title h1 { font-weight: 600; }
+    .rz-title .rz-chapter { font-size: 14px; font-weight: 600; color: #e0cfb0; }
+    .rz-title p { font-size: 16px; line-height: 1.9; font-weight: 500; color: #e0e1d6; letter-spacing: .08em; }
+    .rz-home-btn { font-size: 15px; font-weight: 600; color: #e5dcc9; }
+    .rz-invitation { font-size: 16px; font-weight: 600; }
+    .rz-invitation small { font-size: 14px; line-height: 1.7; color: #cdd3c7; letter-spacing: .06em; }
+    .rz-album-btn, .rz-wish-btn { font-size: 16px; font-weight: 600; letter-spacing: .12em; }
+  }
+  .rz-fold { font-size: 14px; font-weight: 600; }
+  .rz-journey { font-size: 14px; font-weight: 600; gap: 16px; letter-spacing: .06em; padding-right: 76px; flex-wrap: wrap; }
+  .rz-paper-heading { font-size: 14px; font-weight: 600; }
+  .rz-modal .rz-modal-box {
+    .rz-msg { font-size: 18px; font-weight: 600; line-height: 1.9; letter-spacing: .06em; }
+    .rz-who { font-size: 14px; font-weight: 500; line-height: 1.8; }
+    .rz-modal-close span { font-size: 15px; font-weight: 600; }
+    .rz-minetag, .rz-reclaim, .rz-reclaim-err, .rz-reject-label { font-size: 14px; font-weight: 600; }
+    .rz-reject { font-size: 15px; }
+  }
+  .rz-wish-modal .rz-wish-box {
+    .rz-wish-title { font-size: 26px; font-weight: 600; }
+    .rz-wish-sub { font-size: 16px; line-height: 1.9; letter-spacing: .04em; }
+    .rz-lamp-grid .rz-lamp-card > span { font-size: 16px; font-weight: 600; letter-spacing: .08em; }
+    .rz-lamp-grid .rz-lamp-card.sel::after { font-size: 12px; }
+    .rz-cat-grid .rz-cat-card {
+      .rz-cat-name b { font-size: 16px; font-weight: 600; letter-spacing: .04em; }
+      .rz-cat-name i { font-size: 14px; line-height: 1.8; letter-spacing: 0; }
+      .rz-cat-seal { font-size: 18px; }
+    }
+    .rz-wish-input { font-size: 18px; font-weight: 500; line-height: 2; background-size: auto 36px; }
+    .rz-wish-author { font-size: 16px; font-weight: 500; }
+    .rz-wish-count, .rz-wish-error { font-size: 14px; font-weight: 600; }
+    .rz-wish-foot .rz-wish-primary, .rz-wish-foot .rz-wish-ghost, .rz-wish-anon { font-size: 16px; font-weight: 600; }
+  }
+  .rz-notice-modal .rz-notice-box {
+    .rz-notice-title { font-size: 26px; font-weight: 600; }
+    .rz-notice-body p { font-size: 16px; line-height: 1.9; font-weight: 500; }
+    .rz-notice-foot .rz-wish-primary { font-size: 16px; font-weight: 600; }
+  }
+  .rz-album-modal .rz-album-box {
+    width: min(92vw, 760px);
+    max-width: min(92vw, 760px);
+    height: min(82dvh, 720px);
+    max-height: min(82dvh, 720px);
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    flex: 0 0 auto;
+    .rz-album-title { flex: 0 0 auto; font-size: 28px; font-weight: 600; }
+    .rz-album-search, .rz-album-tabs, .rz-album-catf { flex: 0 0 auto; }
+    .rz-album-find { font-size: 14px; font-weight: 600; }
+    .rz-album-search input { font-size: 16px; font-weight: 500; }
+    .rz-album-tabs button { font-size: 16px; font-weight: 600; letter-spacing: .08em; min-height: 42px; }
+    .rz-album-catf .rz-album-catf-seal { font-size: 18px; font-weight: 600; }
+    .rz-album-list {
+      flex: 1 1 0;
+      min-height: 0;
+      max-height: none;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-gutter: stable;
+    }
+    .rz-album-item { flex: 0 0 auto; grid-template-columns: 34px minmax(0, 1fr); column-gap: 12px; row-gap: 6px; align-items: start; }
+    .rz-album-seal { grid-column: 1; grid-row: 1 / span 2; font-size: 16px; font-weight: 600; }
+    .rz-album-msg { grid-column: 2; font-size: 16px; font-weight: 600; line-height: 1.8; letter-spacing: .04em; }
+    .rz-album-meta { grid-column: 2; font-size: 14px; font-weight: 500; line-height: 1.7; white-space: normal; letter-spacing: .04em; overflow-wrap: anywhere; }
+    .rz-album-reason { font-size: 14px; font-weight: 600; line-height: 1.8; }
+    .rz-album-empty { margin: auto 0; padding: 24px 0; font-size: 16px; line-height: 1.8; font-weight: 500; letter-spacing: .08em; }
+  }
+  @media (max-width: 760px) {
+    .rz-ui {
+      .rz-masthead { font-size: 16px; }
+      .rz-masthead small { font-size: 11px; letter-spacing: .02em; }
+      .rz-home-btn { font-size: 14px; }
+      .rz-title .rz-chapter { font-size: 13px; }
+      .rz-title p { font-size: 15px; }
+      .rz-invitation { font-size: 15px; letter-spacing: .1em; }
+      .rz-album-btn, .rz-wish-btn { font-size: 16px; }
+    }
+  }
+  @media (max-width: 600px) {
+    .rz-journey { font-size: 13px; gap: 12px; }
+    .rz-wish-modal .rz-wish-box .rz-cat-grid { grid-template-columns: 1fr; }
+    .rz-wish-modal .rz-wish-box .rz-lamp-grid .rz-lamp-card > span { font-size: 14px; }
+    .rz-album-modal .rz-album-box { height: 84dvh; max-height: 84dvh; width: calc(100vw - 32px); }
+  }
+  @media (max-height: 580px) {
+    .rz-album-modal .rz-album-box { height: calc(100dvh - 40px); max-height: calc(100dvh - 40px); padding: 22px 16px 14px; }
+    .rz-album-modal .rz-album-box .rz-album-title { margin-bottom: 10px; }
+    .rz-album-modal .rz-album-box .rz-album-tabs { margin-bottom: 8px; padding-bottom: 4px; }
+  }
+}

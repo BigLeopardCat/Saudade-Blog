@@ -15,9 +15,9 @@ try {
         const b = sceneBudget(w,h,'cinematic');
         assert.ok(b.width <= 1600 && b.width*b.height <= 1600*900, '4K/retina cannot expand backing store without bounds');
         assert.equal(b.fps,45);
-        assert.equal(WATER_TOP,.44,'moving water reaches the middle distance, above the old lower-half strip layer');
+        assert.equal(WATER_TOP,.54,'dynamic water starts below the shoreline, leaving mountains untouched');
         assert.equal(b.width,Math.min(w,1600),'native resolution until the bounded wide-screen limit');
-        assert.equal(b.height,Math.round(h*.56*Math.min(1,1600/w)),'water backing geometry matches the 44% top / 56% surface');
+        assert.equal(b.height,Math.round(h*.46*Math.min(1,1600/w)),'water backing geometry matches the 54% top / 46% surface');
         assert.equal(sceneBudget(w,h,'still').fps,0);
         assert.equal(sceneBudget(w,h,'still').width,b.width,'reduced motion preserves surface detail');
         const crop = coverCrop(1672,941,w,h);

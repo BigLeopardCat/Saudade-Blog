@@ -10,7 +10,7 @@ import { build } from 'esbuild'
 import { compile } from 'sass'
 import { test as base, expect } from '@playwright/test'
 
-type Entry = 'axios' | 'announcement' | 'tags' | 'categories'
+type Entry = 'axios' | 'announcement' | 'tags' | 'categories' | 'public-header'
 const frontend = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const bundles = new Map<Entry, Promise<{ script: string; css: string }>>()
 
@@ -22,6 +22,7 @@ function bundle(entry: Entry): Promise<{ script: string; css: string }> {
     entryPoints: [`tests/browser/entries/${entry}.tsx`],
     bundle: true,
     format: 'iife',
+    loader: { '.gif': 'dataurl', '.png': 'dataurl', '.jpg': 'dataurl', '.jpeg': 'dataurl', '.webp': 'dataurl', '.svg': 'dataurl' },
     jsx: 'automatic',
     write: false,
     outfile: 'browser-bundle.js',
@@ -49,6 +50,12 @@ export const test = base.extend<{ entry: Entry; sandboxURL: string }>({
       '/bundle.js': { type: 'text/javascript', body: script },
       '/bundle.css': { type: 'text/css', body: css },
       '/login': { type: 'text/html', body: '<!doctype html><html lang="zh-CN"><title>登录落点</title><body>登录落点</body></html>' },
+    }
+    if (entry === 'public-header') {
+      // Inject the real lazy-route styles only after the public header has mounted.
+      files['/dashboard-overview.css'] = { type: 'text/css', body:
+        compile(path.join(frontend, 'src/pages/Dashboard/index.css')).css + '\n' +
+        compile(path.join(frontend, 'src/pages/Dashboard/Home/index.sass')).css }
     }
     const server = http.createServer((req, res) => {
       const key = req.url || ''
