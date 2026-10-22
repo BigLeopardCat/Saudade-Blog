@@ -11,6 +11,7 @@ const rows = Array.from({length:18},(_,i)=>({talkKey:i+1,content:['愿你三冬�
 const errors=[];
 try {
  const context=await browser.newContext({viewport:{width:1440,height:900}});
+ await context.addInitScript(()=>{let seed=74621;Math.random=()=>((seed=(Math.imul(seed,1664525)+1013904223)>>>0)/4294967296)});
  const page=await context.newPage();page.setDefaultTimeout(30000);page.on('pageerror',e=>errors.push(e.message));
  let failBoard=false, emptyBoard=false, failPost=true, posts=[];
  await page.route('**/api/**',async route=>{
@@ -32,7 +33,8 @@ try {
  const initial=await stats();assert.equal(initial.fpsLimit,30);assert.ok(initial.backingPixels<600000);
  await page.screenshot({path:out+'/desktop.png'});console.log('desktop captured');
  // Water responds to pointer input without installing another timer / render loop.
- await page.mouse.click(700,620);await page.waitForTimeout(250);await page.screenshot({path:out+'/ripple.png'});
+ const waterPoint=await page.evaluate(()=>{for(let y=540;y<730;y+=20)for(let x=450;x<1000;x+=20){const el=document.elementFromPoint(x,y);if(el&&!el.closest('.rz-lantern,button,[role=dialog]'))return{x,y}}throw Error('no exposed water in fixture')});
+ await page.mouse.click(waterPoint.x,waterPoint.y);assert.equal(await page.getByRole('dialog').count(),0);await page.waitForTimeout(250);await page.screenshot({path:out+'/ripple.png'});
  // Public reading, focus trap, Escape, and paused background.
  await page.getByRole('button',{name:'灯影集',exact:true}).click();
  await page.getByRole('dialog',{name:'灯影集',exact:true}).waitFor();await page.waitForTimeout(120);
