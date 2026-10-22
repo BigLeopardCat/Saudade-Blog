@@ -1,5 +1,5 @@
 import './index.sass'
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {useNavigate, useParams} from "react-router-dom";
 import { useSelector } from "react-redux";
 import { categoryList } from "../../../store/components/categories.tsx";
@@ -9,37 +9,41 @@ import dayjs from "dayjs";
 import scrollToTop from "../../../utils/scrollToTop.tsx";
 import {searchNotes} from "../../../apis/NoteMethods.tsx";
 import {useLiveRefresh} from "../../../utils/liveRefresh.ts";
-import {message} from "antd";
+import {ok} from "../../../apis/ProfileMethods";
+import {createRequestScope} from "../../../utils/requestScope";
 import LazyImage from "../../../components/LazyImage";
 import SeoHelmet from "../../../components/SeoHelmet";
-const Categories = () => {
-    const { id } = useParams();
-    const [categoryTitle, setCategoryTitle] = useState('');
-    const [articleList, setArticleList] = useState([]);
-    const categories = useSelector((state: { categories: categoryList }) => state.categories.categories);
-    const navigate = useNavigate()
+const CategoryResource = ({id, categoryTitle}: {id: string, categoryTitle?: string}) => {
+    const [articleList, setArticleList] = useState<NoteType[]>([]);
+    const [loading, setLoading] = useState(!!categoryTitle);
+    const [failed, setFailed] = useState(false);
+    const scope = useRef(createRequestScope()).current;
+    const navigate = useNavigate();
 
-    /** 拉这一分类下的公开文章。抽成函数是为了让"跨端同步"能复用同一条路径
-     *  （条件、错误提示都只有一份，不再长一条只在事件里走、换个分类就拉错的旁路）。 */
     const loadArticles = () => {
-        const title = categories.find(item => item.pathName === id);
-        if (!title) return;
-        setCategoryTitle(title.categoryTitle);
-        return searchNotes({
-            categories: title.categoryTitle,
+        if (!categoryTitle) return;
+        setFailed(false);
+        return scope.run('articles', signal => searchNotes({
+            categories: categoryTitle,
             status: 'public'
-        }).then((res) => {
-            setArticleList(res.data.data)
-        }).catch(() => {
-            message.error("获取失败")
+        }, signal), {
+            success: (res) => {
+                if (!ok(res) || !Array.isArray(res.data.data)) throw new Error('获取失败');
+                setArticleList(res.data.data);
+            },
+            error: () => setFailed(true),
+            settled: () => setLoading(false),
         });
     };
 
     useEffect(() => {
+        scope.activate();
         scrollToTop();
         loadArticles();
+        return () => scope.dispose();
+        // The keyed resource is replaced whenever id or title changes.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [id, categories]);
+    }, []);
 
     /* 跨端同步（20260926，**不轮询**）：看板娘刚改了站内数据（新建/删除文章、改状态）
        时，访客正看着的这份列表也该跟着变——但访客页面**不为我自己的编辑加流量**：
@@ -50,15 +54,19 @@ const Categories = () => {
     return (
         <div className="CategoriesContainer">
             <SeoHelmet title={categoryTitle ? `分类-${categoryTitle}` : '分类'} url={`/category/${id}`} />
-            <h2>分类-{categoryTitle}</h2>
-            <h3>共有{articleList.length}篇文章</h3>
+            <h2>分类{categoryTitle ? `-${categoryTitle}` : ''}</h2>
+            {!categoryTitle ? <p role="status">分类不存在或分类目录尚未加载，请稍后重试。</p>
+                : loading ? <p role="status">正在加载文章…</p>
+                : failed ? <p role="alert">文章列表加载失败，<button type="button" onClick={loadArticles}>重试</button></p>
+                : <h3>共有{articleList.length}篇文章</h3>}
+            {categoryTitle && !loading && !failed && articleList.length === 0 && <p>这个分类还没有公开文章。</p>}
             <ul className='ArticleList'>
                 {articleList.map((item: NoteType,index) =>
                     <motion.div
-                        key={index}
+                        key={item.noteKey}
                         initial={{ opacity: 0, y: -20 }}
                         animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.1, delay: index * 0.2 ,ease: "linear"}}
+                        transition={{ duration: 0.1, delay: Math.min(index, 6) * 0.06 ,ease: "linear"}}
                         className="article"
                         onClick={() => navigate(`/article/${item.noteKey}`)}
                     >
@@ -84,6 +92,13 @@ const Categories = () => {
             </ul>
         </div>
     );
+}
+
+const Categories = () => {
+    const {id = ''} = useParams();
+    const categories = useSelector((state: {categories: categoryList}) => state.categories.categories);
+    const title = categories.find(item => item.pathName === id)?.categoryTitle;
+    return <CategoryResource key={JSON.stringify([id, title])} id={id} categoryTitle={title} />;
 }
 
 export default Categories;

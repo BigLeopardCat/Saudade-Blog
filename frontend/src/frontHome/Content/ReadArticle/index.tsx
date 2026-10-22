@@ -28,6 +28,7 @@ import {addFavorite, errMsg, ok, removeFavorite} from "../../../apis/ProfileMeth
 import { applyLocalFavorite, useFavorites } from "../../../components/UserCenter/favorites.ts";
 import {useLiveRefresh} from "../../../utils/liveRefresh.ts";
 import CommentSection from "../../../components/CommentSection";
+import {createRequestScope} from "../../../utils/requestScope";
 
 // ByteMD imports
 import { Viewer } from '@bytemd/react'
@@ -115,10 +116,13 @@ const plugins = [
     bytemdStickers
 ]
 
-const ReadArticle = () => {
+const ArticleResource = ({id}: {id: string}) => {
     const avatar = useSelector((state:{user:UserState}) => state.user.avatar)
     const name = useSelector((state:{user:UserState}) => state.user.name)
-    const {id} = useParams()
+    const scope = useRef(createRequestScope()).current
+    const likeLock = useRef(false)
+    const favoriteLock = useRef(false)
+    const [loadError, setLoadError] = useState(false)
     const [isLoading, setLoading] = useState(true)
     const [article, setArticle] = useState<NoteType|null>(null)
     // 20260901：文章不存在（404）标记——agent 幻觉链接/死链直达时渲染
@@ -196,21 +200,25 @@ const ReadArticle = () => {
         // 非背景那一次：整篇换成加载页，并抹掉上一次的 404（不抹的话从死链跳到活文章
         // 会先闪一下"文章不存在"——渲染顺序是 notFound 优先于 isLoading）
         if (!opts?.silent) { setLoading(true); setNotFound(false); }
-        return getNoteById(id).then((res) => {
-            setArticle({ ...res.data.data });
-            setNotFound(false);
-            // 上报阅读量**只挂在这个成功分支里**：那正是"这篇文章真的存在且可见"的
-            // 唯一位置。放在别处（例如进页面就发）会让 `/article/17` 这类幻觉/死链
-            // 也在库里留下幽灵行。404 分支因此结构上不可能上报。
-            reportReadOnce(id);
-        }).catch((err) => {
-            console.error('获取失败', err)
-            if (err?.response?.status === 404) {
-                setNotFound(true)
-                setArticle(null)
-            }
-        }).finally(() => {
-            if (!opts?.silent) setLoading(false)
+        setLoadError(false);
+        return scope.run('body', signal => getNoteById(id, signal), {
+            success: (res) => {
+                if (!ok(res) || !res.data.data) throw new Error(errMsg(res));
+                setArticle({ ...res.data.data });
+                setNotFound(false);
+                reportReadOnce(id);
+            },
+            error: (err) => {
+                if ((err as {response?: {status?: number}})?.response?.status === 404) {
+                    setNotFound(true);
+                    setArticle(null);
+                } else {
+                    setLoadError(true);
+                }
+            },
+            // A foreground load may be superseded by a live refresh: the latest
+            // body response owns the spinner regardless of how it was triggered.
+            settled: () => setLoading(false),
         });
     };
 
@@ -218,16 +226,20 @@ const ReadArticle = () => {
      *  上报失败**静默**：它是个副作用，把读者的正文页面换成一句"上报失败"是本末倒置。
      *  `statsLoadedRef` 只挡住同一个 id 上的重复 GET；换 id 时由下面的 effect 复位。 */
     const reportReadOnce = (noteId: string) => {
+        // A pending pre-like stats snapshot must never overwrite the like result.
+        if (likeLock.current) return;
         if (!claimTodayRead(noteId)) {
             if (statsLoadedRef.current) return;
-            getNoteStats(noteId).then((res) => {
-                if (ok(res)) applyStats(res.data.data);
+            const token = scope.begin('stats');
+            getNoteStats(noteId, token.signal).then((res) => {
+                if (token.current() && ok(res)) applyStats(res.data.data);
             }).catch(() => { /* 读不到就不显示，见上面 views 的注释 */ });
             return;
         }
+        const token = scope.begin('stats');
         reportNoteView(noteId).then((res) => {
-            if (ok(res)) applyStats(res.data.data);
-            else releaseTodayRead(noteId);
+            if (!ok(res)) releaseTodayRead(noteId);
+            else if (token.current()) applyStats(res.data.data);
         }).catch(() => releaseTodayRead(noteId));
     };
 
@@ -236,29 +248,40 @@ const ReadArticle = () => {
     // （正常浏览器永远有标识，那条只对直接 curl 的人可见）。
     // 所以这里**刻意没有 `if (!getToken())` 那一道**——加回去就等于把功能关掉了。
     const toggleLike = async () => {
-        if (!id) return
+        if (!id || likeLock.current) return
+        likeLock.current = true
+        const token = scope.begin('like')
+        scope.cancel('stats')
         setLikeBusy(true)
         try {
             const res = liked ? await unlikeNote(id) : await likeNote(id)
+            if (!token.current()) return
             if (ok(res)) {
                 // 后端回的是权威值（计数与状态一起回来）⇒ 照抄，不在前端 ±1
                 // （前端自增在"另一处刚点过/被取消"时会算错，且重复请求会漂）
                 setLikes(res.data.data.likes)
                 setLiked(!!res.data.data.liked)
                 statsLoadedRef.current = true
+                // The initial stats read was invalidated before this mutation.
+                // Recover views/comments from a snapshot requested after the write.
+                const statsToken = scope.begin('stats')
+                getNoteStats(id, statsToken.signal).then(result => {
+                    if (statsToken.current() && ok(result)) applyStats(result.data.data)
+                }).catch(() => {})
             } else {
                 message.error(errMsg(res))
             }
         } catch {
-            message.error('网络异常，请稍后再试')
+            if (token.current()) message.error('网络异常，请稍后再试')
         } finally {
-            setLikeBusy(false)
+            if (token.current()) { likeLock.current = false; setLikeBusy(false) }
         }
     }
 
     useEffect(() => {
-        // 换文章（/article/A → /article/B）时本组件不重挂，统计必须跟着归零：
-        // 不归零的话 B 会先顶着 A 的阅读量渲染一帧，点赞态也是错的。
+        scope.activate();
+        // A keyed resource starts with independent state; StrictMode may replay
+        // this effect, so reset its read cache before starting the new request.
         setViews(null)
         setLikes(null)
         setComments(null)
@@ -266,6 +289,7 @@ const ReadArticle = () => {
         statsLoadedRef.current = false
         loadArticle();
         scrollToTop();
+        return () => scope.dispose();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [id]);
 
@@ -275,14 +299,18 @@ const ReadArticle = () => {
     useLiveRefresh(() => loadArticle({ silent: true }), { poll: false });
     
     const toggleFavorite = async () => {
-        if (!id) return
+        if (!id || favoriteLock.current) return
         if (!getToken()) {
             message.warning('登录后才能收藏')
             return
         }
+        const accountToken = getToken()
+        favoriteLock.current = true
+        const token = scope.begin('favorite')
         setFavBusy(true)
         try {
             const res = faved ? await removeFavorite(Number(id)) : await addFavorite(Number(id))
+            if (!token.current() || getToken() !== accountToken) return
             if (ok(res)) {
                 // 写入成功 ⇒ 把结果交给共享状态（它顺手拉一次全量对齐：个人中心那份列表
                 // 与这里的★立刻是同一个事实）。**不在这里改本地 boolean**——两份状态正是
@@ -293,9 +321,9 @@ const ReadArticle = () => {
                 message.error(errMsg(res))
             }
         } catch {
-            message.error('网络异常，请稍后再试')
+            if (token.current() && getToken() === accountToken) message.error('网络异常，请稍后再试')
         } finally {
-            setFavBusy(false)
+            if (token.current()) { favoriteLock.current = false; setFavBusy(false) }
         }
     }
 
@@ -523,12 +551,18 @@ const ReadArticle = () => {
                     <p style={{opacity:0.6}}>你访问的文章 <code>/article/{id}</code> 未找到——可能是链接有误，或文章已下架。</p>
                     <a href="/" style={{color:'#aec8c8'}}>← 返回首页</a>
                 </div>
+            ) : loadError && !article ? (
+                <div role="alert" style={{padding: '25vh 24px', textAlign: 'center'}}>
+                    <p>文章加载失败，请稍后重试</p>
+                    <button type="button" onClick={() => loadArticle()}>重新加载</button>
+                </div>
             ) : isLoading ? (
                 <div style={{width:'100vw',height:'100vh',display:'flex',justifyContent:'center',alignItems:'center'}}>
                     <Loading />
                 </div>
             ) : (
                 <>
+                    {loadError && <p role="alert">文章同步失败，当前显示上次加载的内容。<button type="button" onClick={() => loadArticle({silent: true})}>重试</button></p>}
                     <div className="readCover" ref={coverRef}>
                         {/* poster 层 = 文章封面（沿用卡片那套裁剪参数）。视频播起来之前、
                             素材缺失或访客要求减少动效时，这里就是画面，观感与改造前一致。
@@ -740,6 +774,13 @@ const ReadArticle = () => {
             )}
         </div>
     )
+}
+
+// React Router reuses the route element on parameter changes. A keyed resource
+// isolates state immediately, including A → B → A before the first A settles.
+const ReadArticle = () => {
+    const {id = ''} = useParams()
+    return <ArticleResource key={id} id={id} />
 }
 
 export default ReadArticle

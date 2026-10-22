@@ -196,20 +196,27 @@ async fn list_writes_lock_the_actor_row_and_missing_actors_fail_closed() {
 }
 
 #[tokio::test]
-async fn postgres_list_writes_serialize_on_actor_row_without_business_writes() {
+async fn postgres_list_writes_serialize_on_isolated_actor_fixture() {
     let Ok(url) = std::env::var("TEST_PG_URL") else {
         return;
     };
-    let db = Arc::new(Database::connect(url).await.unwrap());
-    let actor = db
-        .query_one(Statement::from_string(
-            DatabaseBackend::Postgres,
-            "SELECT id FROM \"user\" WHERE role IN ('admin','superadmin') ORDER BY id LIMIT 1",
-        ))
-        .await
-        .unwrap()
-        .unwrap();
-    let uid: i32 = actor.try_get("", "id").unwrap();
+    // CI has schema but intentionally no pre-existing admin. Never depend on a
+    // production account or hold locks on shared business rows during this test.
+    let admin = Database::connect(url.clone()).await.unwrap();
+    let schema = format!("todo_lock_{}", uuid::Uuid::new_v4().simple());
+    for sql in [
+        format!("CREATE SCHEMA {schema}"),
+        format!("CREATE TABLE {schema}.\"user\" (LIKE public.\"user\" INCLUDING ALL)"),
+        format!("INSERT INTO {schema}.\"user\" (id,username,nickname,password,role) VALUES (7,'lock_fixture','fixture','fixture','admin')"),
+    ] {
+        admin.execute(Statement::from_string(DatabaseBackend::Postgres, sql)).await.unwrap();
+    }
+    let mut options = sea_orm::ConnectOptions::new(url);
+    options
+        .max_connections(2)
+        .set_schema_search_path(schema.clone());
+    let db = Arc::new(Database::connect(options).await.unwrap());
+    let uid = 7;
     let first = begin_list_write(&db, uid).await.unwrap();
     let cloned = Arc::clone(&db);
     let mut second = tokio::spawn(async move { begin_list_write(&cloned, uid).await.unwrap() });
@@ -224,4 +231,12 @@ async fn postgres_list_writes_serialize_on_actor_row_without_business_writes() {
         .unwrap()
         .unwrap();
     second.rollback().await.unwrap();
+    drop(db);
+    admin
+        .execute(Statement::from_string(
+            DatabaseBackend::Postgres,
+            format!("DROP SCHEMA {schema} CASCADE"),
+        ))
+        .await
+        .unwrap();
 }

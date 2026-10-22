@@ -14,8 +14,10 @@ import dayjs from "dayjs";
 import {useDispatch, useSelector} from "react-redux";
 import {useNavigate, useParams} from "react-router-dom";
 import {fetchNoteList} from "../../../../store/components/note.tsx";
-import {createNote, updateNote, delNote, autosaveDraft, getNoteForEdit, type AutosaveDraftPayload} from "../../../../apis/NoteMethods.tsx";
+import {updateNote, delNote, autosaveDraft, getNoteForEdit, type AutosaveDraftPayload} from "../../../../apis/NoteMethods.tsx";
 import getToken from "../../../../apis/getToken.tsx";
+import {ok, errMsg} from "../../../../apis/ProfileMethods.tsx";
+import {postDraftKeepalive} from "./draftTransport";
 import ImageCompression from "../../../../apis/ImageCompression.tsx";
 import {uploadImages} from "../../../../apis/ImageMethods.tsx";
 import { resolveApiAssetUrl, runtimeBaseURL } from '../../../../utils/runtimeApi';
@@ -65,7 +67,6 @@ const NewNotes = () => {
     // 实际在编辑的文章 id：编辑页 = 路由 id；新建页首次自动保存建出草稿行后就地采纳它的 id。
     // 采纳后**不改 URL**——路由参数一变，下面 [id] 的 effect 会重跑 initNote，把编辑器内容整片
     // 覆盖成服务端值，正在敲的字会当场消失。
-    const [editId, setEditId] = useState<string | undefined>(id);
     const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
     const [savedAt, setSavedAt] = useState('');
     const [isRevision, setIsRevision] = useState(false); // 正在编辑的是原文章的修改稿
@@ -83,6 +84,8 @@ const NewNotes = () => {
     const queuedRef = useRef<string | null>(null);       // 在途期间攒下的最新快照（尾随补发）
     const retryRef = useRef(0);
     const mountedRef = useRef(true);
+    const sessionTokenRef = useRef(getToken());
+    const detachedPayloadRef = useRef<AutosaveDraftPayload | null>(null);
 
     // 空内容判定：编辑器空态是 <p></p> 这类空标签，去标签去空白后为空才算空
     const isBlank = (s: string) =>
@@ -113,29 +116,16 @@ const NewNotes = () => {
     const buildPayloadRef = useRef(buildPayload);
     buildPayloadRef.current = buildPayload;
 
-    // 关标签页/刷新：来不及走 axios，用小体积 keepalive fetch 尽力补一发
-    // （sendBeacon 不能带 Authorization 头，keepalive fetch 可以；上限 64KB，超了只能放弃）
-    const postKeepalive = (payload: AutosaveDraftPayload) => {
-        try {
-            const body = JSON.stringify(payload);
-            if (body.length > 60000) return;
-            const token = getToken();
-            fetch(`${runtimeBaseURL}/api/protected/draft/autosave`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...(token ? {Authorization: token.startsWith('Bearer ') ? token : 'Bearer ' + token} : {}),
-                },
-                body,
-                keepalive: true,
-            }).catch(() => { /* 尽力而为 */ });
-        } catch { /* ignore */ }
-    };
+    // 页面离开后的尾随保存使用卸载时的快照；不能再读取已卸载 Form 的值。
+    const latestPayload = (): AutosaveDraftPayload => ({
+        ...(detachedPayloadRef.current ?? buildPayloadRef.current()),
+        id: savedIdRef.current ? Number(savedIdRef.current) : null,
+    });
 
     const onAutosaveFail = () => {
         // 不碰 lastSavedRef（只有成功才认账）：失败后内容仍与基准不同，重试时自然重发
         if (mountedRef.current) setSaveState('error');
-        if (retryRef.current < 3) { // 断网/接口抖动：5s 后重试，最多 3 次
+        if (mountedRef.current && retryRef.current < 3) { // 断网/接口抖动：5s 后重试，最多 3 次
             retryRef.current += 1;
             if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
             autosaveTimer.current = setTimeout(() => flushAutosave(false), 5000);
@@ -143,42 +133,50 @@ const NewNotes = () => {
     };
 
     const flushAutosave = (beacon = false) => {
-        if (!hydratedRef.current || stopAutosaveRef.current || publishingRef.current) return;
+        if (!hydratedRef.current || stopAutosaveRef.current || publishingRef.current
+            || getToken() !== sessionTokenRef.current) return;
         if (autosaveTimer.current) { clearTimeout(autosaveTimer.current); autosaveTimer.current = null; }
 
-        const payload = buildPayloadRef.current();
+        const payload = latestPayload();
         const blank = isBlank(payload.noteTitle || '') && isBlank(payload.noteContent || '');
         if (!payload.id && blank) return;         // 新建且还没写进任何东西 → 不建空行
         const ser = JSON.stringify(payload);
         if (ser === lastSavedRef.current) return; // 没真变化 → 不发请求
 
-        if (beacon) {                             // 关标签页：最后一发，不等回执
-            lastSavedRef.current = ser;
-            postKeepalive(payload);
-            return;
-        }
         // 单飞：已有请求在途时只记下最新快照，等它回来再补发。
         // 不这样做的话，新建文章（id 还是 null）在首个请求回来前继续敲字会再发一发 id=null，
         // 服务端各建一行 —— 草稿箱里凭空多一行同内容草稿，正是这次要修的毛病。
         if (inFlightRef.current) { queuedRef.current = ser; return; }
 
-        setSaveState('saving');
-        inFlightRef.current = autosaveDraft(payload).then(res => {
+        if (mountedRef.current) setSaveState('saving');
+        // keepalive 与常规保存共用单飞和确认逻辑。pagehide 不再绕过在途的首次创建。
+        const request = beacon
+            ? postDraftKeepalive(payload, runtimeBaseURL, sessionTokenRef.current)
+            : autosaveDraft(payload);
+        inFlightRef.current = request.then(res => {
+            if (getToken() !== sessionTokenRef.current) return;
             const d = res?.data?.data;
-            if (res.status === 200 && d?.id) {
-                lastSavedRef.current = ser;
-                if (!savedIdRef.current) { setEditId(String(d.id)); createdHereRef.current = true; }
+            if (ok(res) && Number.isInteger(d?.id) && d.id > 0) {
+                // 新建成功后 id 也属于已确认快照，否则恢复页面会把同一内容再写一遍。
+                lastSavedRef.current = JSON.stringify({...payload, id: d.id});
+                if (!savedIdRef.current) createdHereRef.current = true;
                 savedIdRef.current = String(d.id);
-                setIsRevision(!!d.isRevision);
                 retryRef.current = 0;
                 if (mountedRef.current) {
+                    setIsRevision(!!d.isRevision);
                     setSaveState('saved');
                     setSavedAt((d.updateTime || '').slice(11));
                 }
+            } else if (beacon) {
+                if (mountedRef.current) setSaveState('error');
             } else {
                 onAutosaveFail();
             }
-        }).catch(() => onAutosaveFail()).finally(() => {
+        }).catch(() => {
+            if (beacon) {
+                if (mountedRef.current) setSaveState('error');
+            } else onAutosaveFail();
+        }).finally(() => {
             inFlightRef.current = null;
             if (queuedRef.current) { queuedRef.current = null; flushAutosave(false); }
         });
@@ -186,7 +184,8 @@ const NewNotes = () => {
 
     // 停止输入 2s 后落盘
     const scheduleAutosave = () => {
-        if (!hydratedRef.current || stopAutosaveRef.current || publishingRef.current) return;
+        if (!hydratedRef.current || stopAutosaveRef.current || publishingRef.current
+            || getToken() !== sessionTokenRef.current) return;
         if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
         autosaveTimer.current = setTimeout(() => flushAutosave(false), AUTOSAVE_DELAY);
     };
@@ -207,13 +206,16 @@ const NewNotes = () => {
 
     useEffect(() => {
         mountedRef.current = true;
+        detachedPayloadRef.current = null;
         return () => { mountedRef.current = false; };
     }, []);
 
     // 转跳 URL/切界面（组件卸载）：立刻补一次，别等防抖；本次会话新建且一直空白的行顺手删掉
     useEffect(() => () => {
-        if (stopAutosaveRef.current) return;
+        if (autosaveTimer.current) { clearTimeout(autosaveTimer.current); autosaveTimer.current = null; }
+        if (stopAutosaveRef.current || getToken() !== sessionTokenRef.current) return;
         const p = buildPayloadRef.current();
+        detachedPayloadRef.current = {...p};
         if (createdHereRef.current && savedIdRef.current
             && isBlank(p.noteTitle || '') && isBlank(p.noteContent || '')) {
             if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
@@ -223,11 +225,20 @@ const NewNotes = () => {
         flushAutosave(false);
     }, []);
 
-    // 关标签页/刷新/切到后台：尽力补一发
+    // bfcache 恢复/切回前台后重试未确认的快照，超出 keepalive 字节预算的正文走普通请求。
     useEffect(() => {
         const onHide = () => { if (!stopAutosaveRef.current) flushAutosave(true); };
+        const onResume = () => {
+            if (!document.hidden) { retryRef.current = 0; flushAutosave(false); }
+        };
         window.addEventListener('pagehide', onHide);
-        return () => window.removeEventListener('pagehide', onHide);
+        window.addEventListener('pageshow', onResume);
+        document.addEventListener('visibilitychange', onResume);
+        return () => {
+            window.removeEventListener('pagehide', onHide);
+            window.removeEventListener('pageshow', onResume);
+            document.removeEventListener('visibilitychange', onResume);
+        };
     }, []);
 
     // 标签字典现在由 NoteTagSelect 自己从 redux 取（编辑器不再直接读 tagList）
@@ -255,7 +266,6 @@ const NewNotes = () => {
     // 所以这里只在挂载时跑一次；保留重置是给「不经包装直接渲染本组件」留的后路。
     useEffect(() => {
         if (autosaveTimer.current) { clearTimeout(autosaveTimer.current); autosaveTimer.current = null; }
-        setEditId(id);
         savedIdRef.current = id;
         createdHereRef.current = false;
         stopAutosaveRef.current = false;
@@ -265,6 +275,7 @@ const NewNotes = () => {
         seededRef.current = false;
         hydratedRef.current = false;
         retryRef.current = 0;
+        detachedPayloadRef.current = null;
         setHydrated(false);
         setIsRevision(false);
         setSaveState('idle');
@@ -463,6 +474,8 @@ const NewNotes = () => {
     };
 
     const onFinish = async (formValues: any) => {
+        if (publishingRef.current) return;
+        publishingRef.current = true; // 同帧互斥，挡住重复点击/回车提交
         // Safe string conversion for tags
         const tagsData = formValues.noteTags;
         const tagsString = Array.isArray(tagsData) ? tagsData.join(',') : (tagsData || '');
@@ -489,34 +502,43 @@ const NewNotes = () => {
             updateTime: now
         }
 
-        // 提交目标：自动保存已经替我们把行建好了（新建时首次自动保存返回的 id 会就地采纳），
-        // 所以正常路径全是「更新」。只有自动保存一次都没成功（接口故障）时才回退到新建接口。
-        let targetId = editId;
-        if (!targetId) {
-            try {
-                const r = await autosaveDraft(buildPayload());
-                const newId = r?.data?.data?.id;
-                if (newId) {
-                    targetId = String(newId);
-                    savedIdRef.current = targetId;
-                    setEditId(targetId);
-                }
-            } catch { /* 落到 createNote 兜底 */ }
-        }
+        const submittedPayload = {...buildPayload(), noteCategory: Number(formValues.noteCategory),
+            noteTags: tagsString, isTop: Number(formValues.isTop)};
 
-        // 冻结自动保存，并等在途的那一发回来。两件事缺一不可：
-        // 在途请求带着发布前的内容，若落在「发布时删修改稿」之后，会按 draft_of 又克隆出一行
-        // 同内容修改稿（草稿箱凭空多一份）；冻结则挡住这 2s 窗口内新排的自动保存。
+        // 先冻结并等待现有首次创建，再决定目标 id。否则提交会与 id=null 的自动保存各建一行。
         publishingRef.current = true;
         if (autosaveTimer.current) { clearTimeout(autosaveTimer.current); autosaveTimer.current = null; }
-        if (inFlightRef.current) { try { await inFlightRef.current; } catch { /* 失败已由重试链兜 */ } }
+        if (inFlightRef.current) { try { await inFlightRef.current; } catch { /* 在途错误已记录 */ } }
+        if (getToken() !== sessionTokenRef.current) {
+            publishingRef.current = false;
+            message.error("登录状态已变化，请重新打开编辑页");
+            return;
+        }
+        let targetId = savedIdRef.current;
+        if (!targetId) {
+            try {
+                const r = await autosaveDraft(submittedPayload);
+                if (getToken() !== sessionTokenRef.current) throw new Error("登录状态已变化");
+                const newId = r?.data?.data?.id;
+                if (ok(r) && Number.isInteger(newId) && newId > 0) {
+                    targetId = String(newId);
+                    savedIdRef.current = targetId;
+                } else throw new Error(errMsg(r, "草稿创建失败"));
+            } catch (error) {
+                // 不再跨接口再发一次 create：丢失首个响应时服务端可能已经建好草稿。
+                publishingRef.current = false;
+                scheduleAutosave();
+                message.error("草稿尚未确认保存，请稍后重试：" + error);
+                return;
+            }
+        }
 
-        const snapBeforePublish = JSON.stringify(buildPayloadRef.current());
+        const snapBeforePublish = JSON.stringify({...submittedPayload, id: Number(targetId)});
 
         try {
             if (targetId) {
                 const res = await updateNote(targetId, data)
-                if (res.status === 200) {
+                if (ok(res)) {
                     dispatch<any>(fetchNoteList(true))
                     const stayInEditor = data.status === 'draft';
                     message.success(stayInEditor ? "已保存到草稿箱" : "文章更新成功")
@@ -539,21 +561,8 @@ const NewNotes = () => {
                         goBackToList()
                     }
                 } else {
-                    publishingRef.current = false; // 接口返回非 200：放开自动保存并把内容补写回去
-                    scheduleAutosave();
-                }
-            } else {
-                // 兜底：自动保存从未成功过 → 沿用老的新建接口，建完回列表（避免再点一次又建一行）
-                const res = await createNote({...data, createTime: now})
-                if (res.status === 200) {
-                    dispatch<any>(fetchNoteList(true))
-                    message.success("文章创建成功")
-                    stopAutosaveRef.current = true;
-                    if (autosaveTimer.current) { clearTimeout(autosaveTimer.current); autosaveTimer.current = null; }
-                    setOpen(false); // Close modal on create success
-                    goBackToList()
-                } else {
-                    publishingRef.current = false;
+                    message.error(errMsg(res, "文章保存失败"));
+                    publishingRef.current = false; // 业务失败：放开自动保存并把内容补写回去
                     scheduleAutosave();
                 }
             }
