@@ -25,6 +25,7 @@ pub struct ArticleQuery {
     pub id: Option<i32>,
     pub keyword: Option<String>,
     pub category: Option<String>,
+    pub category_id: Option<i32>,
 }
 
 #[derive(FromQueryResult, Serialize)]
@@ -66,6 +67,9 @@ pub(super) fn query(
     let mut query = note::Entity::find().filter(note::Column::DraftOf.is_null());
     if let Some(id) = params.id {
         query = query.filter(note::Column::Id.eq(id));
+    }
+    if let Some(id) = params.category_id {
+        query = query.filter(note::Column::CategoryId.eq(id));
     }
     if let Some(id) = category_id {
         query = query.filter(note::Column::CategoryId.eq(id));
@@ -136,11 +140,24 @@ async fn attach_tags<C: ConnectionTrait>(db: &C, articles: &mut [Article]) -> Re
     Ok(())
 }
 
-pub(super) async fn read<C: ConnectionTrait>(
+pub(super) async fn read<C: ConnectionTrait>(db: &C, params: &ArticleQuery, limit: u64, offset: u64)
+    -> Result<(Vec<Article>, i64), DbErr> {
+    read_view(db, params, limit, offset, false, false).await
+}
+
+pub(crate) async fn read_public<C: ConnectionTrait>(db: &C, params: &ArticleQuery,
+                                                   limit: u64, offset: u64, top_only: bool)
+    -> Result<(Vec<Article>, i64), DbErr> {
+    read_view(db, params, limit, offset, true, top_only).await
+}
+
+async fn read_view<C: ConnectionTrait>(
     db: &C,
     params: &ArticleQuery,
     limit: u64,
     offset: u64,
+    public_only: bool,
+    top_only: bool,
 ) -> Result<(Vec<Article>, i64), DbErr> {
     let cat_id = if let Some(name) = &params.category {
         let ids = category::Entity::find()
@@ -158,7 +175,9 @@ pub(super) async fn read<C: ConnectionTrait>(
     } else {
         None
     };
-    let query = query(params, cat_id);
+    let mut query = query(params, cat_id);
+    if public_only { query = query.filter(super::super::notes::public_condition()); }
+    if top_only { query = query.filter(note::Column::IsTop.eq(1)); }
     let total = query.clone().count(db).await? as i64;
     let mut items = query
         .limit(limit)
@@ -193,6 +212,7 @@ pub async fn list(
     if !super::valid_text(params.keyword.as_deref())
         || !super::valid_text(params.category.as_deref())
         || params.id.is_some_and(|id| id <= 0)
+        || params.category_id.is_some_and(|id| id <= 0)
     {
         return Json(ApiResponsePage::error("关键词、分类或编号无效"));
     }

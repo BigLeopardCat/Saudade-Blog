@@ -28,6 +28,13 @@ pub(crate) fn public_status_words() -> Vec<String> {
     vec!["public".to_string(), "published".to_string()]
 }
 
+/// Public articles are published roots, never editor shadow drafts.
+pub(crate) fn public_condition() -> Condition {
+    Condition::all().add(note::Column::IsPublic.eq(true))
+        .add(note::Column::Status.is_in(public_status_words()))
+        .add(note::Column::DraftOf.is_null())
+}
+
 /// 状态词的**唯一解析点**：只认这三个（`published` 归一成 `public`），未知词返回 `None`
 /// —— 调用方必须拒绝，**不要**原样写库（原样写库正是"未知词留在库里且照旧公开"的来路）。
 fn normalize_status_word(raw: &str) -> Option<&'static str> {
@@ -353,8 +360,7 @@ pub async fn list_public_notes(
     }
 
     // STRICT FILTER FOR PUBLIC API
-    condition = condition.add(note::Column::IsPublic.eq(true));
-    condition = condition.add(note::Column::Status.is_in(public_status_words()));
+    condition = condition.add(public_condition());
 
     // PAGINATION LOGIC
     // page.max(1)：page=0 时 `page - 1` 会 u64 下溢（release 环绕成 u64::MAX → 静默空页）。
@@ -532,8 +538,7 @@ pub async fn search_notes(
     let mut condition = Condition::all();
 
     // PUBLIC SAFEGUARDS
-    condition = condition.add(note::Column::IsPublic.eq(true));
-    condition = condition.add(note::Column::Status.is_in(public_status_words()));
+    condition = condition.add(public_condition());
 
     if let Some(ref t) = payload.title {
         let t = t.trim();
@@ -726,9 +731,7 @@ pub async fn search_all_notes(
     // 真实行为走。前端曾有一份 `noteVisibility.ts` 把 NULL 当公开，那是前端自己臆断的口径，
     // 已随绿标一起删除。
     if let Some(true) = payload.only_public {
-        condition = condition.add(note::Column::IsPublic.eq(true));
-        condition = condition.add(note::Column::Status.is_in(public_status_words()));
-        condition = condition.add(note::Column::DraftOf.is_null());
+        condition = condition.add(public_condition());
     }
 
 
@@ -864,8 +867,7 @@ pub async fn get_top_notes(
 ) -> Json<ApiResponse<Vec<NoteDto>>> {
     let mut condition = Condition::all();
     condition = condition.add(note::Column::IsTop.eq(1));
-    condition = condition.add(note::Column::IsPublic.eq(true));
-    condition = condition.add(note::Column::Status.is_in(public_status_words()));
+    condition = condition.add(public_condition());
 
     let notes = note::Entity::find()
         .filter(condition)
@@ -1160,8 +1162,7 @@ pub async fn get_note_detail(
     // 20261018：谓词从"排除 draft"翻成白名单，未知 status 由放行变拦截（口径只有一处，
     // 见 `public_status_words`）。
     let res = note::Entity::find_by_id(id)
-        .filter(note::Column::IsPublic.eq(true))
-        .filter(note::Column::Status.is_in(public_status_words()))
+        .filter(public_condition())
         .find_with_related(category::Entity)
         .all(&state.db)
         .await

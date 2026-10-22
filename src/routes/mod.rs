@@ -22,6 +22,8 @@ pub mod quota;
 mod pagination;
 pub mod catalog;
 pub mod own_reads;
+pub mod public_catalog;
+pub mod public_activity;
 pub mod note_stats; // 文章阅读量/点赞量（20260930；**绝不能记进 get_note_detail**，见模块头注）
 pub mod moderation;
 pub mod comments;   // 文章评论（20261002）：审核复用 talks::decide_review，存储走 note_comment 表
@@ -146,6 +148,12 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/protect/board/mine/{id}", delete(talks::delete_my_board))
         
         // Public Notes
+        .route("/api/public/activity/announcements", get(public_activity::announcements::list))
+        .route("/api/public/activity/guestbook", get(public_activity::messages::guestbook))
+        .route("/api/public/activity/talks", get(public_activity::messages::talks))
+        .route("/api/public/articles", get(public_catalog::articles))
+        .route("/api/public/categories", get(public_catalog::categories::list))
+        .route("/api/public/tags", get(public_catalog::tags::list))
         .route("/api/public/notes", get(notes::list_public_notes))
         .route("/api/public/notes/page", get(notes::list_public_notes)) 
         .route("/api/public/notes/search", post(notes::search_notes))
