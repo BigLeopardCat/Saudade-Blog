@@ -10,7 +10,6 @@ import {fetchCategories} from "../../store/components/categories.tsx";
 import {useDispatch, useSelector} from "react-redux";
 import {fetchTags} from "../../store/components/tags.tsx";
 import {fetchSocial, fetchUserInfo} from "../../store/components/user.tsx";
-import {fetchNoteList} from "../../store/components/note.tsx";
 import { searchAll } from "../../apis/SearchMethods.tsx";
 import {
     AggregateHit,
@@ -101,7 +100,6 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
         dispatch<any>(fetchCategories())
         dispatch<any>(fetchTags())
         dispatch<any>(fetchUserInfo())
-        dispatch<any>(fetchNoteList())
         dispatch<any>(fetchSocial())
         const status = localStorage.getItem('tokenKey')
         if (status !== null) {
