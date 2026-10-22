@@ -1,4 +1,4 @@
-//! 个人中心一期（20260922）：用户设置 / 收藏的文章 / 通知（红点）/ 站内信箱 / 我的留言记录。
+//! 个人中心：用户设置 / 收藏的文章 / 通知（红点）/ 站内信箱 / 我的留言记录。
 //!
 //! **为什么整个模块挂 `public_routes` 而不是 `protected_routes`**：后者的 `route_layer`
 //! 末尾挂了 `auth_guard`（域内全部接口仅管理员可用，见 `routes/mod.rs`），而本模块每一
@@ -19,7 +19,10 @@
 //! 共用一份 —— 两处各写一份的结局是"一处收紧了、另一处还是老样子"，而那正是漏洞
 //! 最常待的地方。
 
-use axum::{Json, extract::State, http::HeaderMap};
+use axum::{Json, extract::{Query, State}, http::HeaderMap};
+
+mod mailbox;
+pub use mailbox::{list_messages, MailboxQuery};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
     QuerySelect, Set,
@@ -776,6 +779,8 @@ pub struct MessageDto {
 
 #[derive(Serialize, Default)]
 pub struct MailboxDto {
+    #[serde(rename = "inboxComplete")]
+    pub inbox_complete: bool,
     pub inbox: Vec<MessageDto>,
     pub outbox: Vec<MessageDto>,
     pub unread: i64,
@@ -856,50 +861,6 @@ fn to_message_dto(
         is_read: m.is_read,
         created_at: m.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
     }
-}
-
-/// GET /api/protected/messages：我的信箱（收件箱 + 发件箱，各最近 100 条）。
-pub async fn list_messages(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-) -> Json<ApiResponse<MailboxDto>> {
-    let uid = match crate::auth_jwt::auth_uid(&state.db, &headers).await {
-        Ok(uid) => uid,
-        Err(e) => return Json(ApiResponse::error(e.message())),
-    };
-    let inbox = match user_message::Entity::find()
-        .filter(user_message::Column::ToUserId.eq(uid))
-        .order_by_desc(user_message::Column::CreatedAt)
-        .order_by_desc(user_message::Column::Id)
-        .limit(100)
-        .all(&state.db)
-        .await
-    {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::error!("[profile] 收件箱查询失败 uid={}: {}", uid, e);
-            return Json(ApiResponse::error("查询失败，请稍后再试"));
-        }
-    };
-    let outbox = user_message::Entity::find()
-        .filter(user_message::Column::FromUserId.eq(uid))
-        .order_by_desc(user_message::Column::CreatedAt)
-        .order_by_desc(user_message::Column::Id)
-        .limit(100)
-        .all(&state.db)
-        .await
-        .unwrap_or_default();
-    let unread = inbox.iter().filter(|m| !m.is_read).count() as i64;
-    let mut ids: Vec<i32> = inbox.iter().map(|m| m.from_user_id).collect();
-    ids.extend(outbox.iter().map(|m| m.to_user_id));
-    ids.sort_unstable();
-    ids.dedup();
-    let peers = peer_map(&state.db, &ids).await;
-    Json(ApiResponse::success(MailboxDto {
-        inbox: inbox.into_iter().map(|m| to_message_dto(m, uid, &peers)).collect(),
-        outbox: outbox.into_iter().map(|m| to_message_dto(m, uid, &peers)).collect(),
-        unread,
-    }))
 }
 
 #[derive(Deserialize)]
@@ -1022,7 +983,7 @@ pub async fn read_messages(
         .filter(user_message::Column::IsRead.eq(false));
     if !payload.all {
         if payload.ids.is_empty() {
-            return list_messages(State(state), headers).await;
+            return list_messages(State(state), headers, Query(MailboxQuery::default())).await;
         }
         q = q.filter(user_message::Column::Id.is_in(payload.ids.clone()));
     }
@@ -1030,7 +991,7 @@ pub async fn read_messages(
         tracing::error!("[profile] 私信标记已读失败 uid={}: {}", uid, e);
         return Json(ApiResponse::error("操作失败，请稍后再试"));
     }
-    list_messages(State(state), headers).await
+    list_messages(State(state), headers, Query(MailboxQuery::default())).await
 }
 
 // ── 我的留言记录 ────────────────────────────────────────────────────────────
