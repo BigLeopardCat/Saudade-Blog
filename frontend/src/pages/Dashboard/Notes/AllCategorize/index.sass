@@ -1,10 +1,92 @@
-// 分类列表外框（原来是 index.tsx 里的内联 `background:'white'`）
 .catListBox
-  // 20261001 批 E：白 / rgba(255,255,255,.06) 两档收成一张和纸内页（令牌自己分档）
   background: var(--washi-paper-2, #fff6fa)
 
+.categoryManager
+  max-width: 1200px
+  margin: 16px auto
+  padding: 24px
+  border-radius: 14px
+  color: var(--washi-ink, inherit)
+  .categoryHeading
+    display: flex
+    align-items: center
+    justify-content: space-between
+    gap: 16px
+    margin-bottom: 20px
+    h2
+      margin: 0 0 8px
+    p
+      margin: 0
+      opacity: .75
+      line-height: 1.6
+  .categoryToolbar, .categorySelection
+    display: flex
+    align-items: center
+    justify-content: space-between
+    flex-wrap: wrap
+    gap: 12px
+    margin-bottom: 16px
+    .ant-input-search
+      max-width: 360px
+  .categorySelection
+    padding: 12px
+    border: 1px solid var(--washi-line, #d9bdce)
+    border-radius: 8px
+  .ant-alert
+    margin-bottom: 16px
+  .categoryIdentity
+    display: flex
+    align-items: center
+    gap: 12px
+    min-width: 0
+    strong, small, .categoryPath
+      display: block
+      overflow-wrap: anywhere
+    small, .categoryPath
+      font-size: 12px
+      opacity: .65
+    .categorySymbol
+      flex-shrink: 0
+      font-size: 22px
+  .ant-table-cell
+    overflow-wrap: anywhere
 
-// 20261001 批 E：这里原有一整块 `// Dark Mode - Pagination`（第 8 行到文件末），
-// 与 AllNotes 那份是同一份逐字副本（"改一处必须同步另一处"的老毛病），内容是分页各项
-// 的深色覆盖、选中页底色写死 `#1677ff`。本轮主色换成手账粉后它成了唯一的蓝块 ⇒ 整块删。
-// 分页在夜间回到 antd token 通道（纸底/描边/主色都由 ConfigProvider 给对）。
+.categoryAppearance
+  display: flex
+  flex-wrap: wrap
+  gap: 16px
+  > .ant-form-item
+    flex: 1 1 180px
+.categoryPreview
+  display: flex
+  align-items: center
+  flex-wrap: wrap
+  gap: 12px
+  padding: 12px
+  border: 1px dashed var(--washi-line, #d9bdce)
+  border-radius: 8px
+  > span:first-child
+    font-size: 12px
+    opacity: .7
+.categoryDeleteNames
+  display: flex
+  flex-wrap: wrap
+  gap: 8px
+  max-height: 160px
+  overflow-y: auto
+
+@media screen and (max-width: 768px)
+  .categoryManager
+    margin: 8px
+    padding: 14px 10px
+    .categoryHeading
+      align-items: flex-start
+      flex-direction: column
+    .categoryToolbar .ant-input-search
+      max-width: none
+    .ant-table-cell
+      padding-inline: 6px !important
+    .categoryIdentity
+      gap: 6px
+      .categorySymbol
+        display: none

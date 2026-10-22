@@ -1,50 +1,76 @@
 .tag_card
-  line-height: 200px
-  text-allign: center
-  border-radius: 10px
-  // 20261001 批 E：白 / rgba(255,255,255,.06) 两档收成一张和纸内页（令牌自己分档，
-  // 原来那个 `.dark &` 覆盖随之删掉）
-  background-color: var(--washi-paper-2, #fff6fa)
-  margin-top: 10px
-  max-width: 98%
-  height: 90%
-  max-height: 90%
-  margin-left: 1%
-  .newTagForm
-    position: relative
-    height: 100%
-    // 20261001 批 E：3px 深灰竖线 → 一道纸线（原色压在粉紫纸上是一根黑杠）
-    border-right: 2px solid var(--washi-line, rgba(198, 152, 192, 0.42))
-    width: 50%
-    float: left
-    text-align: center
+  margin: 12px
+  padding: clamp(16px, 2.4vw, 28px)
+  border-radius: 16px
+  background: var(--washi-paper-2, #fff6fa)
+  line-height: 1.6
+  min-width: 0
+  .tag-header
     display: flex
-    flex-direction: column
-    justify-content: center
+    justify-content: space-between
+    align-items: flex-start
+    gap: 16px
+    flex-wrap: wrap
+    margin-bottom: 20px
+    h2
+      margin: 0 0 6px
+    p
+      margin: 0
+      opacity: .7
+      max-width: 54ch
+  .tag-workspace
+    display: grid
+    grid-template-columns: minmax(0, 1.1fr) minmax(280px, 1fr)
+    gap: 24px
+    margin-top: 18px
+  .tag-library, .newTagForm
+    min-width: 0
+  .newTagForm
+    padding: 0 0 12px 24px
+    border-left: 1px solid var(--washi-line, rgba(198, 152, 192, .42))
+    h3
+      margin: 0 0 18px
+      overflow-wrap: anywhere
+  .tag-selection
+    display: flex
+    justify-content: space-between
     align-items: center
+    flex-wrap: wrap
+    gap: 8px
+    margin: 12px 0
   .ant-tree
-    float: right
-    width: 40%
-    margin-left: 10%
-    margin-top: 50px
+    background: transparent
+    max-height: 65vh
+    overflow: auto
+  .tag-tree-title
+    display: inline-flex
+    align-items: center
+    flex-wrap: wrap
+    gap: 6px
+    padding: 4px 0
+    .ant-tag
+      white-space: normal
+      overflow-wrap: anywhere
+    small
+      opacity: .6
+      font-size: 11px
+  .tag-create-switch
+    margin-bottom: 20px
+  .tag-child-action
+    margin-top: 18px
+    max-width: 100%
+    white-space: normal
+    height: auto
+  .tag-help
+    font-size: 12px
+    opacity: .65
 
-/* ⚠️ **窄屏（20261006 用户第 6 条）**：这一页是左右分栏 —— 新建标签表单 `.newTagForm`
-   占 50% 左浮，它后面那个 div（里面是标签树）被浮动挤到剩下的 50%，树自己在里面再占 40%
-   （**不是**"两栏各占 50% + 40%"：实测 390 视口表单 178px、树 71px；1440 视口 634px / 254px，
-   两个宽度的比例对得上"树的 40% 是相对那一半算的"）。
-   手机上就是挤成一团：树名只装得下两三个字。⚠️ 它**不是溢出** —— 实测两个宽度下
-   `documentElement.scrollWidth` 都等于视口宽，量"跑出屏幕"的红是量不出来的，只能量宽度。
-   窄屏收成单列（各 100%、取消浮动，实测两栏都变成 357px），竖着排下来。 */
-@media only screen and (max-width: 1024px)
+@media (max-width: 760px)
   .tag_card
+    margin: 8px
+    .tag-workspace
+      grid-template-columns: minmax(0, 1fr)
     .newTagForm
-      width: 100%
-      float: none
-      height: auto
-      border-right: none
-      padding-bottom: 16px
-    .ant-tree
-      width: 100%
-      float: none
-      margin-left: 0
-      margin-top: 20px
+      border-left: 0
+      border-top: 1px solid var(--washi-line, rgba(198, 152, 192, .42))
+      padding: 20px 0 0

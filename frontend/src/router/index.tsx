@@ -1,30 +1,35 @@
 import { createBrowserRouter, Navigate, useParams } from "react-router-dom";
-import Login from "../pages/Login";
-import Dashboard from "../pages/Dashboard";
-import { lazy, Suspense } from "react";
-const RiverBoard = lazy(() => import("../pages/RiverBoard/index"));
+import { lazy, Suspense, type ReactNode } from "react";
 import { AuthRouter } from "../components/AuthRouter.tsx";
-import Home from "../pages/Dashboard/Home";
-import Notes from "../pages/Dashboard/Notes";
-import Comments from "../pages/Dashboard/Talks";
-import Albums from "../pages/Dashboard/Albums";
-import Users from "../pages/Dashboard/Users";
-import Analytics from "../pages/Dashboard/Analytics";
-import UserControl from "../pages/Dashboard/UserControl";
-import AllNotes from "../pages/Dashboard/Notes/AllNotes/index";
-import NewNotes from "../pages/Dashboard/Notes/NewNotes/index";
-import AllCategorize from "../pages/Dashboard/Notes/AllCategorize/index";
-import AllTag from "../pages/Dashboard/Notes/AllTag/index";
-import AnnouncementManagement from "../pages/Dashboard/Announcement";
 import ContentHome from "../frontHome/Content/ContentHome";
 import App from "../App.tsx";
-import AboutMe from "../frontHome/Content/AboutMe";
-import Categories from "../frontHome/Content/Categories";
-import Talk from "../frontHome/Content/Talk";
-import Times from "../frontHome/Content/Times";
 import NotFound from "../components/NotFound";
-import ReadArticle from "../frontHome/Content/ReadArticle";
 import { registerSpaNavigate } from "./spaNavigate.ts";
+
+const Login = lazy(() => import("../pages/Login"));
+const Dashboard = lazy(() => import("../pages/Dashboard"));
+const RiverBoard = lazy(() => import("../pages/RiverBoard/index"));
+const Home = lazy(() => import("../pages/Dashboard/Home"));
+const Notes = lazy(() => import("../pages/Dashboard/Notes"));
+const Comments = lazy(() => import("../pages/Dashboard/Talks"));
+const Albums = lazy(() => import("../pages/Dashboard/Albums"));
+const Users = lazy(() => import("../pages/Dashboard/Users"));
+const Analytics = lazy(() => import("../pages/Dashboard/Analytics"));
+const UserControl = lazy(() => import("../pages/Dashboard/UserControl"));
+const AllNotes = lazy(() => import("../pages/Dashboard/Notes/AllNotes/index"));
+const NewNotes = lazy(() => import("../pages/Dashboard/Notes/NewNotes/index"));
+const AllCategorize = lazy(() => import("../pages/Dashboard/Notes/AllCategorize/index"));
+const AllTag = lazy(() => import("../pages/Dashboard/Notes/AllTag/index"));
+const AnnouncementManagement = lazy(() => import("../pages/Dashboard/Announcement"));
+const AboutMe = lazy(() => import("../frontHome/Content/AboutMe"));
+const Categories = lazy(() => import("../frontHome/Content/Categories"));
+const Talk = lazy(() => import("../frontHome/Content/Talk"));
+const Times = lazy(() => import("../frontHome/Content/Times"));
+const ReadArticle = lazy(() => import("../frontHome/Content/ReadArticle"));
+
+const routePage = (page: ReactNode) => (
+    <Suspense fallback={<div role="status" style={{ minHeight: "40vh", padding: 32 }}>正在加载页面…</div>}>{page}</Suspense>
+);
 
 /**
  * 编辑器路由包装：`newnote/:id?` 换 id（编辑 30 → 点侧栏「编辑文章」变新建）时 React 不会重挂载，
@@ -47,7 +52,7 @@ const router = createBrowserRouter([
             },
             {
                 path: 'about',
-                element: <AboutMe />
+                element: routePage(<AboutMe />)
             },
             {
                 // 原友链页已废弃：/friends 重定向到留言板（河灯留言）
@@ -56,19 +61,19 @@ const router = createBrowserRouter([
             },
             {
                 path: "talk",
-                element: <Talk />
+                element: routePage(<Talk />)
             },
             {
                 path: 'category/:id',
-                element: <Categories />
+                element: routePage(<Categories />)
             },
             {
                 path: 'times',
-                element: <Times />
+                element: routePage(<Times />)
             },
             {
                 path: 'article/:id',
-                element: <ReadArticle />
+                element: routePage(<ReadArticle />)
             },
             // 兜底：未知路径渲染 NotFound，但保留 App 布局（头部/底部/看板娘聊天面板）。
             // 若作为顶层路由，agent 误跳转（如 /iot）后整站布局和聊天面板会全部丢失
@@ -80,7 +85,7 @@ const router = createBrowserRouter([
     },
     {
         path: 'login',
-        element: <Login />
+        element: routePage(<Login />)
     },
     // 留言板（河灯）：主页导航"留言板"入口
     {
@@ -94,46 +99,46 @@ const router = createBrowserRouter([
     },
     {
         path: '/dashboard',
-        element: <AuthRouter> <Dashboard /> </AuthRouter>,
+        element: <AuthRouter>{routePage(<Dashboard />)}</AuthRouter>,
         children: [
             {
                 index: true,
-                element: <Home />
+                element: routePage(<Home />)
             },
             {
                 path: 'notes',
-                element: <Notes />,
+                element: routePage(<Notes />),
                 children: [
                     {
                         index: true,
-                        element: <AllNotes />
+                        element: routePage(<AllNotes />)
                     },
                     {
                         path: 'newnote/:id?', // 在:id后面加上问号?表示id参数可选
-                        element: <NewNotesRoute />,
+                        element: routePage(<NewNotesRoute />),
                     },
                     {
                         path: 'allcategorize',
-                        element: <AllCategorize />
+                        element: routePage(<AllCategorize />)
                     },
                     {
                         path: 'alltags',
-                        element: <AllTag />
+                        element: routePage(<AllTag />)
                     }
                 ]
             },
             {
                 path: 'comments',
-                element: <Comments />
+                element: routePage(<Comments />)
             },
             {
                 path: 'albums',
-                element: <Albums />
+                element: routePage(<Albums />)
             },
             {
                 // 用户管理（20260905 拍板：账号管理 + 评论管理合并；原「留言管理」并入其评论管理 Tab）
                 path: 'users',
-                element: <Users />
+                element: routePage(<Users />)
             },
             {
                 // 旧「留言管理」地址 → 用户管理页（评论管理 Tab 内）
@@ -142,15 +147,15 @@ const router = createBrowserRouter([
             },
             {
                 path: 'analytics',
-                element: <Analytics />
+                element: routePage(<Analytics />)
             },
             {
                 path: 'announcement',
-                element: <AnnouncementManagement />
+                element: routePage(<AnnouncementManagement />)
             },
             {
                 path: 'usercontrol',
-                element: <UserControl />
+                element: routePage(<UserControl />)
             }
         ]
     }

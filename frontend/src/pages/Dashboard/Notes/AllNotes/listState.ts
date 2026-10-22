@@ -17,7 +17,7 @@
 //   3. 空值在 URL 里必须**删除**而不是 `set('')`（否则 URL 噪声、deps 误判为变化）。
 //
 // 这个文件单独存在（而不是写在组件里）是为了能在本机不 build 的前提下直接单测：
-// `frontend/tests/notes-list-state.test.mjs` 用 esbuild 把它打进临时目录再由 node 断言。
+// `frontend/tests/unit/notes-list-state.test.ts` 直接导入真实模块，以 Vitest 验证状态与请求契约。
 // ══════════════════════════════════════════════════════════════════════════
 
 import { parseNoteTags } from '../../../../utils/noteTags';

@@ -11,7 +11,7 @@
 | 目录 | 是什么 | 语言/栈 |
 |---|---|---|
 | `src/` | 博客后端：文章/分类/标签/留言板 API、登录鉴权、聊天链路中枢 | Rust（Axum + SeaORM） |
-| `frontend/` | 博客前端 SPA（**不含**看板娘与对话面板，见下） | React 18 + Vite 5 + antd + sass |
+| `frontend/` | 博客前端 SPA（**不含**看板娘与对话面板，见下） | React 18 + Vite 8 + antd + sass |
 | `saudade-blog-agent/` | 看板娘的"大脑" | Python（FastAPI + 手写 LangGraph） |
 | `scripts/` | 部署、迁移、巡检脚本 | bash / python |
 | `docs/` | 设计文档（安全边界、部署与运维、向量图谱、IoT 等） | Markdown |
@@ -37,7 +37,7 @@
 ### 2.0 前置
 
 - Rust stable（`cargo --version` 能跑就行）
-- Node.js ≥ 18
+- Node.js 20.19+（与 CI 的 Node 20 对齐）
 - PostgreSQL 16
 - Python 3.10+（只有要跑 agent 时才需要）
 
@@ -196,7 +196,9 @@ cargo test
 cd frontend
 npm run fetch:widget:check                        # 本地那份与 pin 逐字节相同吗
 npx --no-install tsc --noEmit -p tsconfig.json   # 类型检查
-npm test                                          # node tests/xxx.test.mjs 全套
+npm test                                          # legacy Node + Vitest TS 套件
+npm run typecheck:tests                           # TS 测试类型检查
+npm run test:browser                              # Playwright 浏览器回归（先安装 Chromium）
 npm run lint                                      # ESLint
 ```
 
@@ -265,7 +267,7 @@ python3 frontend/tests/某个.test.py
 
 目录就是判据：`tests/` 根下跟着 `cargo test` 跑（要外部依赖的用环境变量门控成"不设即跳过"），
 `tests/manual/` 下是要活服务或真凭据、只能手动跑的。前端那两批同理：
-`frontend/tests/*.test.mjs` 进 CI，`frontend/tests/*.test.py` 要无头 Chrome、走夜间沙箱。
+`frontend/tests/*.test.mjs` 与 `tests/unit` 的 TS 测试进 CI，`tests/browser` 由独立 Playwright job 运行并阻止失败版本部署；尚未迁移的 `*.test.py` 走夜间沙箱。新增用例和迁移要求见 [前端测试规范](docs/frontend-testing.md)。
 
 CI 到底跑哪几项：见 [.github/workflows/deploy.yml](.github/workflows/deploy.yml)。
 `check` job（上面那几条检查）任何 push 都跑；会被 `paths-filter` 跳过的是部署那一半：

@@ -27,6 +27,7 @@ import { resetDescScroll } from '../../../utils/descHover';
 import heroBg from '../../../assets/hero_bg.mp4';
 import heroPoster from '../../../assets/hero_poster.jpg';
 import Vitrine from './Vitrine';
+import { createArticleFeed, requireArticleRows } from './articleFeed';
 
 
 // 模块级缓存：只在同一次 SPA 会话内复用，离开 Dashboard 后自动失效
@@ -78,6 +79,14 @@ const pageSizeFor = (cols: number): number =>
         ? Math.min(cols * (cols <= NARROW_COLS ? NARROW_ROWS : DESKTOP_ROWS), MAX_PAGE_SIZE)
         : FALLBACK_PAGE_SIZE
 
+const mapRows = (rows: unknown[]): NoteType[] => rows.map(raw => {
+    if (!raw || typeof raw !== 'object' || !('noteKey' in raw) || !('noteTitle' in raw)) {
+        throw new Error('Invalid article row');
+    }
+    const item = raw as formatNote;
+    return { ...item, key: String(item.noteKey), noteTags: parseNoteTags(item.noteTags) } as unknown as NoteType;
+});
+
 const ContentHome = () => {
     const [currentTop,setCurrentTop] = useState(0);
     // slideDir 当前只被赋值、没人读（轮播方向动画没接上）：保留 setter 以免改动渲染时序
@@ -88,34 +97,57 @@ const ContentHome = () => {
     const [topInView, setTopInView] = useState(true);
     const topRef = useRef<HTMLDivElement>(null);
     const heroRef = useRef<HTMLDivElement>(null);
-    const [currentPage,setCurrentPage] = useState(cachedCurrentPage)
-    const [hasMoreArticles, setHasMoreArticles] = useState(cachedHasMoreArticles);
-    const [loading, setLoading] = useState(false);
+
     // 每页条数由栅格列数决定（满两行）。不放进 state：没有任何地方渲染它，
     // 用 ref 供 getMore / 测量回调读最新值（放进 state 反而会多一条「已声明未读取」的 tsc 报错）
     const pageSizeRef = useRef(cachedPageSize);
-    // 列表世代号：整表替换（首屏/列数变化）时 +1，用于丢弃迟到的旧响应——
-    // 只靠 loading state 挡不住跨 tick 的竞态
-    const genRef = useRef(0);
+    // 置顶与文章分页独立刷新，迟到的卸载响应不得回填会话缓存。
+    const topGenerationRef = useRef(0);
+    const topPendingRef = useRef<Promise<void> | null>(null);
+    const [topError, setTopError] = useState(false);
     const measureRef = useRef<HTMLDivElement>(null);
     const location = useLocation();
 
-    // 从 Dashboard 返回时清除缓存，确保数据最新
-    if (location.state?.fromDashboard) {
-        cachedOtherArticles = [];
-        cachedTopArticles = [];
-        cachedCurrentPage = 1;
-        cachedHasMoreArticles = true;
-        cachedPageSize = FALLBACK_PAGE_SIZE;
-        isCachedOther = false;
-    }
-    
     const avatar = useSelector((state:{user:UserState}) => state.user.avatar)
     const name = useSelector((state:{user:UserState}) => state.user.name)
     const oneSay = useSelector((state:{user:UserState}) => state.user.talk)
     const navigate = useNavigate()
-    const [otherArticles,setOtherArticles] = useState<NoteType[]>(cachedOtherArticles)
-    const [topArticles,setTopArticles] = useState<NoteType[]>(cachedTopArticles)
+    const [feed] = useState(() => {
+        if (location.state?.fromDashboard) {
+            cachedOtherArticles = [];
+            cachedTopArticles = [];
+            cachedCurrentPage = 1;
+            cachedHasMoreArticles = true;
+            cachedPageSize = FALLBACK_PAGE_SIZE;
+            isCachedOther = false;
+            pageSizeRef.current = FALLBACK_PAGE_SIZE;
+        }
+        return createArticleFeed<NoteType>(async (page, pageSize) => {
+            const response = await getNotePage({ page, pageSize });
+            return mapRows(requireArticleRows(response));
+        }, {
+            items: cachedOtherArticles, page: cachedCurrentPage, pageSize: cachedPageSize,
+            hasMore: cachedHasMoreArticles, loaded: isCachedOther,
+        }, state => {
+            cachedOtherArticles = state.items;
+            cachedCurrentPage = state.page;
+            cachedPageSize = state.pageSize;
+            cachedHasMoreArticles = state.hasMore;
+            isCachedOther = true;
+        });
+    });
+    const [feedState, setFeedState] = useState(feed.snapshot);
+    const { items: otherArticles, page: currentPage, hasMore: hasMoreArticles, loading } = feedState;
+    const [topArticles,setTopArticles] = useState<NoteType[]>(cachedTopArticles);
+    useEffect(() => {
+        const unsubscribe = feed.subscribe(setFeedState);
+        return () => {
+            unsubscribe();
+            feed.invalidate();
+            ++topGenerationRef.current;
+            topPendingRef.current = null;
+        };
+    }, [feed]);
     /**
      * 卡片要不要放入场动画（20261004 用户第十一报：「每次回到首页都有卡片一张张出来的
      * 动画，明明已经加载缓存好了吧，那过渡动画纯纯耗时影响体验」）。
@@ -186,39 +218,8 @@ const ContentHome = () => {
      * 页偏移 = (page-1)*per_page，之后 More 续翻必须沿用同一个 ps，否则会重复/漏项。
      */
     const fetchFirst = (ps: number, opts?: { silent?: boolean }) => {
-        // 立刻同步登记 ps：ResizeObserver 的首次回调（防抖 200ms 后）会拿它比对，
-        // 若等响应回来再写，慢网络下会被误判成「列数变了」而多发一次请求
         pageSizeRef.current = ps;
-        const g = ++genRef.current;
-        // `silent` = 背景重拉（跨端同步）：**不把 More 那颗按钮换成转圈**——首屏那一大片
-        // 转圈是"页还没好"的信号，后台核对一次不该借用它（同后台几页"背景重拉不亮 loading"）。
-        if (!opts?.silent) setLoading(true);
-        getNotePage({
-            page: 1,
-            pageSize: ps
-        }).then(res => {
-            if (g !== genRef.current) return; // 迟到的旧世代响应：已被更新的整表替换取代
-            const notePage = Array.isArray(res?.data?.data) ? res.data.data : [];
-            const mapped = notePage.map((item: formatNote) => {
-                return {
-                    ...item,
-                    key: item.noteKey,
-                    noteTags: parseNoteTags(item.noteTags),
-                }
-            });
-            setOtherArticles(mapped);
-            cachedOtherArticles = mapped;
-            isCachedOther = true;
-            setCurrentPage(1);
-            cachedCurrentPage = 1;
-            cachedPageSize = ps;
-            // 首屏也要更新 More 的可见性（此前只有 getMore 会更新，More 会一直在）
-            const more = mapped.length === ps;
-            setHasMoreArticles(more);
-            cachedHasMoreArticles = more;
-        }).finally(() => {
-            if (g === genRef.current && !opts?.silent) setLoading(false);
-        })
+        return feed.first(ps, opts?.silent);
     };
 
     // 首屏：**先测列数再请求**（同一个 effect 内同步读探针）——
@@ -248,18 +249,24 @@ const ContentHome = () => {
     }, []);
 
     /** 顶部轮播那几条（置顶推荐）。抽成函数是为了让背景重拉复用同一条路径。 */
-    const fetchTop = () => getTopNotes().then(res => {
-         const topNotes = Array.isArray(res?.data?.data) ? res.data.data : [];
-         const mapped = topNotes.map((item: formatNote) => {
-            return {
-                ...item,
-                key: item.noteKey,
-                noteTags: parseNoteTags(item.noteTags),
-            }
+    const fetchTop = () => {
+        if (topPendingRef.current) return topPendingRef.current;
+        const generation = ++topGenerationRef.current;
+        setTopError(false);
+        const promise = getTopNotes().then(res => {
+            const mapped = mapRows(requireArticleRows(res));
+            if (generation !== topGenerationRef.current) return;
+            setTopArticles(mapped);
+            setCurrentTop(current => Math.min(current, Math.max(0, mapped.length - 1)));
+            cachedTopArticles = mapped;
+        }).catch(() => {
+            if (generation === topGenerationRef.current) setTopError(true);
+        }).finally(() => {
+            if (generation === topGenerationRef.current) topPendingRef.current = null;
         });
-        setTopArticles(mapped);
-        cachedTopArticles = mapped;
-    });
+        topPendingRef.current = promise;
+        return promise;
+    };
 
     useEffect(() => {
         if (cachedTopArticles.length > 0) return;
@@ -274,52 +281,15 @@ const ContentHome = () => {
        还在第一页时没有任何可丢的东西，那时才换；翻过页之后要让内容变新，走的是既有的
        「从后台返回即清缓存」（见上面 `location.state.fromDashboard` 那一段）。 */
     useLiveRefresh(() => {
-        fetchTop();
-        fetchFirst(pageSizeRef.current, { silent: true });
-    }, { poll: false, skip: () => currentPage > 1 });
+        return Promise.all([fetchTop(), fetchFirst(pageSizeRef.current, { silent: true })]).then(() => {});
+    }, { poll: false, skip: () => currentPage > 1 || feed.snapshot().pending });
     const handleScrollDown = () => {
         window.scrollTo({
             top: window.innerHeight,
             behavior: 'smooth'
         });
     }
-    const getMore = () => {
-        // 续翻必须沿用当前整表的 per_page（页偏移 = (page-1)*per_page）；
-        // 世代号快照用于丢弃「列数变化已整表重拉」之后才到达的迟到响应
-        const ps = pageSizeRef.current;
-        const g = genRef.current;
-        const nextPageNum = currentPage + 1;
-        setLoading(true)
-        getNotePage({
-            page: nextPageNum,
-            pageSize: ps
-        }).then(res => {
-            if (g !== genRef.current) return;
-            const nextPage = Array.isArray(res?.data?.data) ? res.data.data : [];
-            if (nextPage.length === 0) {
-                setHasMoreArticles(false);
-                cachedHasMoreArticles = false;
-            } else {
-                setCurrentPage(nextPageNum);
-                cachedCurrentPage = nextPageNum;
-                setOtherArticles(prevArticles => {
-                    const newArts = [
-                        ...prevArticles,
-                        ...nextPage.map((item: formatNote) => ({
-                            ...item,
-                            key: item.noteKey,
-                            noteTags: parseNoteTags(item.noteTags),
-                        }))
-                    ];
-                    cachedOtherArticles = newArts;
-                    return newArts;
-                });
-                if(nextPage.length < ps) { setHasMoreArticles(false); cachedHasMoreArticles = false; }
-            }
-        }).finally(() => {
-            if (g === genRef.current) setLoading(false);
-        });
-    };
+    const getMore = () => feed.more();
 
     return <>
         <SeoHelmet title={SITE_TITLE} description={SITE_DESCRIPTION} url="/" suffix={false} />
@@ -410,6 +380,9 @@ const ContentHome = () => {
             </motion.div>
         </div>
         <div className="ContentContainer dark-pic">
+            {topError && <div role="status" className="homeLoadError">
+                置顶文章加载失败 <button type="button" onClick={() => { void fetchTop(); }}>重试</button>
+            </div>}
             {topArticles.length>0&&<div className="TopArticle" style={{ display: 'flex', position: 'relative' }} ref={topRef}
                 onMouseEnter={() => setHoverPaused(true)}
                 onMouseLeave={() => setHoverPaused(false)}
@@ -499,6 +472,10 @@ const ContentHome = () => {
                     <Article item={item} index={index} Categories={Categories} avatar={avatar} name={name} tagList={tagList} enter={enterAnimation} key={item.key}/>
                 ))}
             </div>
+            {feedState.error && <div role="status" className="homeLoadError">
+                {feedState.error} <button type="button" disabled={feedState.pending} onClick={() => { void feed.retry(); }}>重试</button>
+            </div>}
+            {feedState.loaded && !feedState.error && otherArticles.length === 0 && <p role="status">暂无公开文章</p>}
             {loading ? (
                 <div className="loadingio-spinner-spinner-69tfms83mg9">
                     <div className="ldio-se504dvlmh">
@@ -511,8 +488,8 @@ const ContentHome = () => {
                         + `fontSize: 20`），与 `.allContent` 的 `width: 80px` 一起把内容盒挤成 0
                         （全站 `* { box-sizing: border-box }`，实测元素被内边距撑成 100×40）。
                         现在身材与手感都归 sass 的 `.more`。 */}
-                    {hasMoreArticles ? (
-                        <div className='allContent more' onClick={getMore}>More</div>
+                    {feedState.loaded && !feedState.error && hasMoreArticles ? (
+                        <button type="button" className='allContent more' disabled={feedState.pending} onClick={() => { void getMore(); }}>More</button>
                     ) : null}
                 </div>
             )}

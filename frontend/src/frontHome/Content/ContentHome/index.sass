@@ -1208,6 +1208,7 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
   // 尺寸是内边距撑出来的 100×40**（字在 0 宽的内容盒里居中溢出，靠 `overflow: hidden`
   // 裁回来）。三条内联已删，尺寸改由这里说了算 —— **不要再把尺寸写回行内**。
   .more
+    font-family: inherit
     padding: 12px 30px 12px 26px
     font-size: 15px
     letter-spacing: 0.18em
@@ -1838,3 +1839,16 @@ html[data-theme='dark'] .SayWords h2
       transform: none
       &::after
         transform: rotate(45deg)
+
+.homeLoadError
+  margin: 1rem auto
+  padding: .75rem 1rem
+  text-align: center
+  button
+    margin-left: .5rem
+    padding: .35rem .8rem
+    cursor: pointer
+    border: 1px solid currentColor
+    border-radius: .5rem
+    color: inherit
+    background: transparent

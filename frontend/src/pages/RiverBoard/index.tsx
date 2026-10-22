@@ -3,7 +3,7 @@ import "./index.scss";
 import { runtimeBaseURL } from "../../utils/runtimeApi";
 import { LanternArt } from "./LanternArt";
 import { useRiverScene, riverImage } from "./useRiverScene";
-import { type RiverQuality, WATER_TOP } from "./sceneBudget";
+import { flameIntensity, WATER_TOP } from "./sceneBudget";
 import "./cinematic.scss";
 import { useDialogFocus } from "./useDialogFocus";
 import { useLiveRefresh } from "../../utils/liveRefresh";
@@ -118,10 +118,6 @@ export default function RiverBoard() {
     const mouseRef = useRef({ x: 0.5, y: 0.5, tx: 0.5, ty: 0.5 });
     const sceneTime = useRef({ now: 0 });
     const [assistantOpen, setAssistantOpen] = useState(false);
-    const [quality, setQuality] = useState<RiverQuality>(() => {
-        try { const q = localStorage.getItem("river-quality"); if (q === "balanced" || q === "still") return q; } catch { /* storage may be disabled */ }
-        return "cinematic";
-    });
 
     const [lanterns, setLanterns] = useState<Wish[]>([]);
     const [ready, setReady] = useState(false);
@@ -320,6 +316,9 @@ export default function RiverBoard() {
             node.style.transform =
                 `translate3d(${li.x}px, ${li.y}px, 0) translate(-50%, -50%) scale(${scl}) rotate(${rot}deg)`;
             node.style.opacity = String(0.52 + 0.48 * Math.pow(d, 0.8));
+            const flamePhase = sceneTime.current.now;
+            node.style.setProperty("--rz-flicker", String(flameIntensity(flamePhase, m.sway)));
+            node.style.setProperty("--rz-flame-lean", `${Math.sin(flamePhase * 4.1 + m.sway) * 7 + Math.sin(flamePhase * 9.7 + m.sway) * 3}deg`);
             // pointerEvents 只在真正换档时写（逐帧写一个几乎不变的属性会白白触发样式失效计算）
             const pe = d < 0.10 ? "none" : "auto";
             if (pe !== m._pe) {
@@ -488,7 +487,7 @@ export default function RiverBoard() {
     };
 
     useRiverScene({
-        canvas: canvasRef, quality,
+        canvas: canvasRef, quality: "cinematic",
         paused: !!modal || wishOpen || albumOpen || noticeOpen,
         revision: lanterns,
         resize: layout,
@@ -1078,7 +1077,7 @@ export default function RiverBoard() {
                         className={"rz-sprite" + (ln.v >= 1 ? " rz-oct" : "")}
                         style={ln.v >= 1 ? { width: 130, height: 130, margin: "-65px 0 0 -65px" } : undefined}
                     >
-                        <LanternArt variant={ln.v} />
+                        <LanternArt variant={ln.v} seed={ln.id} />
 
                     </div>
                     <div className="rz-bubble">
@@ -1108,14 +1107,13 @@ export default function RiverBoard() {
                 {lanternNodes}
             </div>
             <div className="rz-ui">
-                <div className="rz-masthead"><span className="rz-brand-seal">灯</span><span>河灯寄语<small>THE RIVER OF WISHES</small></span></div>
-                <button className="rz-home-btn" type="button" onClick={() => navigate("/")}><span aria-hidden>←</span> 返回博客</button>
+                <div className="rz-masthead"><span className="rz-brand-seal">灯</span><span>河灯寄语<small>一水明灯 · 千里同心</small></span></div>
+                <button className="rz-home-btn" type="button" onClick={() => navigate("/")}>返回博客</button>
                 <header className="rz-title"><span className="rz-chapter">夜渡 · 一方留白</span><h1>此心为灯<span>照见远方</span></h1><p>把未说的话，托付给一盏灯。<br />山河会记得，星月会听见。</p><span className="rz-title-rule" /></header>
                 <div className="rz-bottom-bar">
                     <div className="rz-invitation"><span className="rz-live-dot" />一盏灯，一段人间<small role="status">{boardStatus === "loading" ? "正在打捞留言 · 示意河灯" : boardStatus === "error" ? <>留言加载失败 · 当前为示意河灯 <button type="button" onClick={() => setBoardReload(n => n + 1)}>重试</button></> : lanterns.length ? "轻触河灯，读一段心事" : "河上尚无人留灯，愿你是第一位"}</small></div>
-                    <div className="rz-actions"><button className="rz-album-btn" type="button" onClick={openAlbum}><span aria-hidden>▤</span> 灯影集</button><button className="rz-wish-btn" type="button" onClick={openWishFlow}>点一盏河灯 <span aria-hidden>↗</span></button></div>
+                    <div className="rz-actions"><button className="rz-album-btn" type="button" onClick={openAlbum}>灯影集</button><button className="rz-wish-btn" type="button" onClick={openWishFlow}>点一盏河灯</button></div>
                 </div>
-                <fieldset className="rz-quality"><legend>画面</legend>{([['cinematic', '沉浸'], ['balanced', '节能'], ['still', '静谧']] as const).map(([value, label]) => <button type="button" key={value} aria-pressed={quality === value} onClick={() => { setQuality(value); try { localStorage.setItem('river-quality', value); } catch { /* optional preference */ } }}>{label}</button>)}</fieldset>
                 <button type="button" className="rz-assistant-btn" onClick={() => setAssistantOpen(true)} disabled={assistantOpen}>{assistantOpen ? '助手已唤起' : '唤起助手'}</button>
             </div>
             {/* 此心为灯 · 留言流程：选灯型 → 选印章 → 书写放下 */}
@@ -1125,6 +1123,8 @@ export default function RiverBoard() {
                         className="rz-modal-box rz-wish-box"
                         onClick={(e) => e.stopPropagation()}
                     >
+                        <button type="button" className="rz-fold" aria-label="关闭放灯窗口" disabled={wishBusy} onClick={closeWishFlow}>暂搁</button>
+                        {!wishDone && <p className="rz-journey" aria-label={`放灯进度：第${wishStep + 1}步，共三步`}>{["一 · 择灯", "二 · 钤印", "三 · 寄语"].map((text, step) => <span key={text} aria-current={wishStep === step ? "step" : undefined}>{text}</span>)}</p>}
                         {wishStep === 0 && (
                             <div className="rz-wish-step">
                                 <h3 className="rz-wish-title">点一盏河灯</h3>
@@ -1135,6 +1135,7 @@ export default function RiverBoard() {
                                             key={lv}
                                             type="button"
                                             className={"rz-lamp-card" + (wishV === lv ? " sel" : "")}
+                                            aria-pressed={wishV === lv}
                                             onClick={() => setWishV(lv)}
                                         >
                                             <LanternArt variant={lv} />
@@ -1162,6 +1163,7 @@ export default function RiverBoard() {
                                             key={c}
                                             type="button"
                                             className={"rz-cat-card" + (wishCat === c ? " sel" : "")}
+                                            aria-pressed={wishCat === c}
                                             onClick={() => setWishCat(c)}
                                         >
                                             <span className="rz-seal rz-cat-seal">{c}</span>
@@ -1190,6 +1192,7 @@ export default function RiverBoard() {
                                 <p className="rz-wish-sub">点亮的是灯，留下的是心</p>
                                 <textarea
                                     className="rz-wish-input"
+                                    aria-label="想寄出的心愿"
                                     value={wishText}
                                     onChange={(e) => setWishText(e.target.value.slice(0, 200))}
                                     placeholder="此刻想说的话…"
@@ -1201,6 +1204,7 @@ export default function RiverBoard() {
                                 <div className="rz-wish-author-row">
                                     <input
                                         className="rz-wish-author"
+                                        aria-label="留名"
                                         value={wishAuthor}
                                         onChange={(e) => setWishAuthor(e.target.value.slice(0, 20))}
                                         placeholder="留名（默认当前账号昵称）"
@@ -1283,6 +1287,7 @@ export default function RiverBoard() {
             {noticeOpen && (
                 <div className="rz-modal rz-notice-modal" onClick={() => setNoticeOpen(false)} role="dialog" aria-modal="true" aria-label="留言板公告">
                     <div className="rz-modal-box rz-notice-box" onClick={(e) => e.stopPropagation()}>
+                        <span className="rz-paper-heading" aria-hidden>渡口小笺</span>
                         <h3 className="rz-notice-title">留言板公告</h3>
                         <div className="rz-notice-body">
                             <p>尊敬的访客：</p>
@@ -1304,20 +1309,12 @@ export default function RiverBoard() {
             {albumOpen && (
                 <div className="rz-modal rz-album-modal" onClick={() => setAlbumOpen(false)} role="dialog" aria-modal="true" aria-label="灯影集">
                     <div className="rz-album-box" onClick={(e) => e.stopPropagation()}>
+                        <button type="button" className="rz-fold" aria-label="关闭灯影集" onClick={() => setAlbumOpen(false)}>合卷</button>
                         <button
                             className={"rz-album-find" + (albumSearch ? " on" : "")}
                             type="button"
                             onClick={() => setAlbumSearch((s) => !s)}
                         >
-                            <svg viewBox="0 0 1024 1024" width="20" height="20" aria-hidden>
-                                <path d="M898.3 420s-56.9 2.6-117.8 30.3c8.6-73.5-13.3-157.4-13.3-157.4s-53 14.6-104.1 43.3c-30.2-50.8-68.9-90.5-68.9-90.5s-38.7 39.7-68.9 90.5c-51-28.6-104.1-43.3-104.1-43.3s-20.9 80.6-13.7 153C351.3 424.5 302 423.3 302 423.3s19.5 107.4 98.8 175.1c34.6 29.5 70.1 52.2 101.2 65.9-30.7 5.8-50.3 14.5-50.3 24.2 0 17.7 65.1 32 145.4 32 80.3 0 145.4-14.3 145.4-32 0-8.6-15.5-16.4-40.6-22.2 31.3-14.4 67-38.1 101.6-69.1 77.8-69.5 94.8-177.2 94.8-177.2" fill="#FCC75B" />
-                                <path d="M525.5 627.4c-31.1 0-60.1-18.1-81.6-50.9-20.6-31.5-32-73.2-32-117.4 0-38.3 18.1-83.8 53.6-135.3 26.1-37.8 51.8-64.2 53-65.3 1.8-1.9 4.4-3 7-3s5.2 1 7 3c1.1 1.1 26.8 27.6 53 65.3 35.6 51.4 53.6 97 53.6 135.3 0 44.2-11.4 85.9-32 117.4-21.6 32.8-50.5 50.9-81.6 50.9z m0-347.5c-23 25.4-93.9 109.7-93.9 179.2 0 40.4 10.2 78.3 28.8 106.6 17.7 27 40.9 42 65.1 42 24.3 0 47.4-14.9 65.1-42 18.6-28.3 28.8-66.2 28.8-106.6 0-69.6-71-153.9-93.9-179.2z m2.8 470.1c-39.5 0-76.8-3.4-105-9.6-33.8-7.4-50.3-18-50.3-32.2 0-14.2 16.5-24.8 50.3-32.2 28.2-6.2 65.4-9.6 105-9.6 39.5 0 76.8 3.4 105 9.6 33.8 7.4 50.3 18 50.3 32.2 0 14.2-16.5 24.8-50.3 32.2-28.2 6.1-65.4 9.6-105 9.6z m-135.1-41.9c2.7 2.8 13.1 8.9 39.8 14.2 26.1 5.2 59.9 8 95.3 8s69.2-2.9 95.3-8c26.6-5.3 37-11.4 39.8-14.2-2.7-2.8-13.1-8.9-39.8-14.2-26.1-5.2-59.9-8-95.3-8s-69.2 2.9-95.3 8c-26.7 5.3-37.1 11.4-39.8 14.2z" fill="#ECB823" />
-                                <path d="M491.1 708.8c-13.6 0-29.8-3.4-48-10.2-36.6-13.7-78.4-39.6-117.6-73.1-42.4-36.2-67.9-83.4-81.8-116.6-15-35.8-20.1-63-20.2-64.2-0.6-2.9 0.3-5.9 2.2-8.2 1.9-2.2 4.7-3.5 7.7-3.4 1.1 0 28.8 0.7 66.6 10 35 8.6 85.5 26.3 127.9 62.6 39.2 33.5 71.4 70.6 90.6 104.7 20.8 37 24.2 66.8 9.3 84.2-8.1 9.5-20.6 14.2-36.7 14.2z m-245.3-255c2.9 11 8 28.2 16.3 48 13 31 36.9 75.1 76.2 108.7 37.5 32 77.1 56.7 111.7 69.6 30.5 11.4 54 12 62.8 1.7 8.8-10.3 4.6-33.4-11.4-61.8-18.1-32.1-48.7-67.4-86.2-99.4-60.2-51.2-138.9-63.8-169.4-66.8z" fill="#ECB823" />
-                                <path d="M488 637.2c-8.9 0-18.1-1.3-27.4-3.8-42.2-11.4-83.9-47-111.4-95.5-18.8-33.2-25.5-81.8-20-144.4 4.1-45.9 13.4-81.9 13.8-83.4 0.6-2.6 2.3-4.7 4.6-6.1 2.3-1.3 5-1.7 7.5-1 1.5 0.4 36.8 10.2 77.9 29.6 56.1 26.4 94.1 56.7 113 89.9 21.7 38.3 32.3 80.2 30 118-2.5 39.3-18.6 69.6-45.6 85.4-12.6 7.6-27 11.3-42.4 11.3zM359.8 325c-7.4 33.5-27.5 143 6.6 203.2 25 44 62.1 76.2 99.4 86.2 20.5 5.5 39.4 3.6 54.8-5.4 21.1-12.4 33.8-37.1 35.9-69.7 2.2-34-7.6-72-27.4-107-34.3-60.2-137.1-97-169.3-107.3z" fill="#ECB823" />
-                                <path d="M664.7 561c0 74.6-58.3 141.9-135 141.9-76.6 0-142.4-67.4-142.4-141.9s138.6-184.6 138.6-184.6S664.7 486.5 664.7 561z" fill="#FFFFFF" />
-                                <path d="M529.8 712.8c-81.1 0-152.2-70.9-152.2-151.8 0-33.5 24.2-76.2 72-127 34.7-37 69-64.2 70.4-65.3 3.6-2.9 8.6-2.9 12.2 0 1.4 1.1 35.6 28.4 70.4 65.3 47.8 50.8 72 93.5 72 127 0 38.6-15 77.1-41.4 105.5-27.5 29.9-64.2 46.3-103.4 46.3zM526 389.2c-11.4 9.5-37 31.6-62.3 58.6-43.5 46.2-66.5 85.4-66.5 113.3 0 70.3 61.9 132.1 132.6 132.1 67.8 0 125.1-60.5 125.1-132.1 0-27.9-23-67-66.5-113.4-25.3-26.9-50.9-49-62.4-58.5z" fill="#ECB823" />
-                                <path d="M558.6 419.6s-122 96.8-122 162.3c0 28.7 11.1 56.2 29.4 78.1 21.8 18.1 49.3 29.4 78.6 29.4 67.4 0 118.7-59.2 118.7-124.7 0-34.1-33-76.6-64.6-109.5-22.2-21.4-40.1-35.6-40.1-35.6z" fill="#FCC75B" />
-                            </svg>
                             寻灯
                         </button>
                         <h3 className="rz-album-title">灯影集</h3>
@@ -1326,7 +1323,8 @@ export default function RiverBoard() {
                                 <input
                                     value={albumQuery}
                                     onChange={(e) => setAlbumQuery(e.target.value)}
-                                    placeholder="检索心愿、留名或印章…"
+                                    placeholder="循心愿、留名或心印寻灯…"
+                                    aria-label="在灯影集中寻灯"
                                 />
                             </div>
                         )}
