@@ -375,45 +375,32 @@ fn to_dto(
     }
 }
 
-// ── 通知 ───────────────────────────────────────────────────────────────────
-
-/// 「有人回复了你的评论」——发给**直接父评论的作者**。
-///
-/// 三条判据，每条都对应一类噪声或一次"点进去什么都没有"的体验：
-///   · **只通知被直接回复的那个人**（`reply_to_uid`），不通知顶层作者。一条热评被三十人
-///     回复就是三十条通知，对顶层作者全是噪声——他本来就会在讨论区看到。
-///   · **自我回复不发**：自己回自己没有信息量，只会让个人中心多一条。
-///   · **只在评论已经公开（`approved = 1`）时发**。待审的回复别人根本看不见，
-///     通知他"有人回复了你"、点进去却找不到那一条，比不发更糟。
-///     于是有两条路径到达这里——创建即通过（`create_comment`）与人工复核 0→1
-///     （`audit_comment`）——**两处调的是这一个函数**，重复通知由"本次是否发生 0→1"挡住。
-///
-/// 通知失败绝不影响评论落库（`notice::push_notice` 内部吞错只记日志）。
-async fn notify_comment_reply(
-    db: &sea_orm::DatabaseConnection,
-    target_uid: i32,
-    note_id: i32,
-    comment_id: i32,
-    replier_uid: i32,
-    content: &str,
-) {
-    let peers = super::profile::peer_map(db, &[replier_uid]).await;
-    // 展示名取不到（账号已销）就说「有人」——**不编一个昵称**（同 `peer_map` 的纪律）
-    let who = peers
-        .get(&replier_uid)
-        .map(|p| p.name.clone())
+/// Persist a reply notice; errors propagate to the caller's transaction.
+pub(crate) async fn notify_comment_reply_checked<C: sea_orm::ConnectionTrait>(
+    db: &C, target_uid: i32, note_id: i32, comment_id: i32,
+    replier_uid: i32, content: &str,
+) -> Result<i32, String> {
+    let account = user::Entity::find_by_id(replier_uid).select_only()
+        .column(user::Column::Username).column(user::Column::Nickname)
+        .into_tuple::<(String, String)>().one(db).await.map_err(|error| error.to_string())?;
+    let who = account.map(|(username, nickname)|
+        if nickname.trim().is_empty() { username } else { nickname })
         .unwrap_or_else(|| "有人".to_string());
     let brief = super::talks::talk_brief(content);
-    super::notice::push_notice(
-        db,
-        target_uid,
-        "有人回复了你的评论",
+    super::notice::push_notice_checked(db, target_uid, "有人回复了你的评论",
         Some(format!("{who} 回复了你：{brief}")),
-        // 深链到那一条。**只在已公开时发**（见上），所以这个锚点必然存在：
-        // `?cid=<id>` 由前端 CommentSection 读出来，滚到 `#c-<id>` 并高亮
-        Some(format!("/article/{note_id}?cid={comment_id}")),
-    )
-    .await;
+        Some(format!("/article/{note_id}?cid={comment_id}"))).await
+}
+
+/// Best-effort adapter for existing comment creation and legacy moderation.
+async fn notify_comment_reply(
+    db: &sea_orm::DatabaseConnection, target_uid: i32, note_id: i32,
+    comment_id: i32, replier_uid: i32, content: &str,
+) {
+    if let Err(error) = notify_comment_reply_checked(db, target_uid, note_id, comment_id,
+                                                   replier_uid, content).await {
+        tracing::error!("comment reply notification failed target={target_uid}: {error}");
+    }
 }
 
 // ── 公开写 ─────────────────────────────────────────────────────────────────

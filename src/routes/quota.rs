@@ -7,9 +7,8 @@ use axum::{
 };
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
-    QuerySelect, Set, TransactionTrait,
+    QuerySelect, Set,
 };
-use sea_orm::sea_query::Expr;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -369,96 +368,13 @@ pub async fn review_quota_request(
     let Some(operator) = crate::auth_jwt::auth_uid(&state.db, &headers).await.ok() else {
         return Json(ApiResponse::error("请先登录"));
     };
-    let txn = match state.db.begin().await {
-        Ok(txn) => txn,
-        Err(e) => return super::db_error("开始额度审批", &e),
-    };
-    let row = match quota_request::Entity::find_by_id(id).one(&txn).await {
-        Ok(Some(r)) => r,
-        Ok(None) => return Json(ApiResponse::error("没有找到这条额度申请")),
-        Err(e) => {
-            tracing::error!("[额度] 读申请失败 id={}: {}", id, e);
-            return Json(ApiResponse::error("操作失败，请稍后再试"));
+    match super::quota_actions::service::review(&state.db, operator, id, payload, None).await {
+        Ok(out) => {
+            let approved = out.state.request.as_ref().is_some_and(|row| row.status == STATUS_APPROVED);
+            Json(ApiResponse::success(format!("已{}账号「{}」的额度重置申请",
+                if approved { "批准" } else { "驳回" }, out.state.name)))
         }
-    };
-    if row.status != STATUS_PENDING {
-        // 三值状态在这里第一次派上用场：已批准 / 已驳回都不能再处理（**不是**错误，
-        // 是并发或重复点击下的正常结局），措辞是跨语言契约，agent 逐字转述
-        return Json(ApiResponse::error("这条申请已经处理过了"));
-    }
-    let target = match user::Entity::find_by_id(row.user_id).one(&txn).await {
-        Ok(Some(u)) => u,
-        Ok(None) => return Json(ApiResponse::error("用户不存在")),
-        Err(e) => {
-            tracing::error!("[额度] 读申请人失败 uid={}: {}", row.user_id, e);
-            return Json(ApiResponse::error("操作失败，请稍后再试"));
-        }
-    };
-    let note: Option<String> = if payload.approved {
-        // 批准时那一列恒为 NULL——不留"已通过却带驳回理由"的矛盾行
-        // （同 `audit_board` 通过时清空 reject_reason）
-        None
-    } else {
-        let raw = payload.reason.unwrap_or_default().trim().to_string();
-        if raw.chars().count() > NOTE_MAX {
-            return Json(ApiResponse::error(&format!("驳回理由太长了（最多 {NOTE_MAX} 字）")));
-        }
-        if raw.is_empty() { None } else { Some(raw) }
-    };
-    let new_status = if payload.approved { STATUS_APPROVED } else { STATUS_REJECTED };
-    let claimed = quota_request::Entity::update_many()
-        .col_expr(quota_request::Column::Status, Expr::value(new_status).into())
-        .col_expr(quota_request::Column::Note, Expr::value(note.clone()).into())
-        .col_expr(
-            quota_request::Column::HandledAt,
-            Expr::value(chrono::Local::now().naive_local()).into(),
-        )
-        .col_expr(quota_request::Column::HandledBy, Expr::value(Some(operator)).into())
-        .filter(quota_request::Column::Id.eq(id))
-        // **这一行就是并发守卫**：两个人同时点通过，只有一个的 UPDATE 会匹配到行
-        .filter(quota_request::Column::Status.eq(STATUS_PENDING))
-        .exec(&txn)
-        .await;
-    match claimed {
-        Ok(r) if r.rows_affected == 0 => {
-            // 读校验之后、认领之前被别人抢先处理了。零副作用。
-            return Json(ApiResponse::error("这条申请已经处理过了"));
-        }
-        Ok(_) => {}
-        Err(e) => {
-            tracing::error!("[额度] 认领申请失败 id={}: {}", id, e);
-            return Json(ApiResponse::error("操作失败，请稍后再试"));
-        }
-    }
-
-    if payload.approved {
-        let result = user::Entity::update_many()
-            .col_expr(user::Column::ChatQuotaUsed, Expr::value(0).into())
-            .filter(user::Column::Id.eq(target.id))
-            .exec(&txn).await;
-        match result {
-            Ok(r) if r.rows_affected == 1 => {}
-            Ok(_) => return Json(ApiResponse::error("用户不存在")),
-            Err(e) => return super::db_error("恢复对话额度", &e),
-        }
-    }
-    if let Err(e) = txn.commit().await {
-        return super::db_error("提交额度审批", &e);
-    }
-    let limit = limit_of(&target.role);
-    if payload.approved {
-        let content = format!("管理员已批准你的对话额度重置申请，额度已恢复到 {} 轮。", limit);
-        notify(&state.db, target.id, NOTICE_APPROVED_TITLE, content).await;
-        tracing::info!("[额度] 批准申请 id={} uid={}（发起人 uid={}）", id, target.id, operator);
-        Json(ApiResponse::success(format!("已批准账号「{}」的额度重置申请", target.username)))
-    } else {
-        let content = format!(
-            "管理员驳回了你的对话额度重置申请。理由：{}",
-            note.as_deref().unwrap_or(NO_REASON_FALLBACK)
-        );
-        notify(&state.db, target.id, NOTICE_REJECTED_TITLE, content).await;
-        tracing::info!("[额度] 驳回申请 id={} uid={}（发起人 uid={}）", id, target.id, operator);
-        Json(ApiResponse::success(format!("已驳回账号「{}」的额度重置申请", target.username)))
+        Err(message) => Json(ApiResponse::error(&message)),
     }
 }
 
@@ -470,7 +386,7 @@ pub async fn review_quota_request(
 /// 失败只记日志、**绝不冒泡给调用方**：清零已经落库（那是事实），通知只是告知通道。
 ///
 /// 三句文案的 `link` 一律 None——个人中心是弹窗，**不编一个跳过去 404 的地址**。
-async fn notify(db: &sea_orm::DatabaseConnection, uid: i32, title: &str, content: String) {
+pub(super) async fn notify(db: &sea_orm::DatabaseConnection, uid: i32, title: &str, content: String) {
     if let Err(e) =
         crate::routes::notice::push_notice_checked(db, uid, title, Some(content), None).await
     {
@@ -491,46 +407,10 @@ pub async fn reset_user_quota(
     State(state): State<Arc<AppState>>,
     Path(user_id): Path<i32>,
 ) -> Json<ApiResponse<String>> {
-    let Some(target) = user::Entity::find_by_id(user_id).one(&state.db).await.unwrap_or(None)
-    else {
-        return Json(ApiResponse::error("用户不存在"));
-    };
-    if !crate::authz::is_listable_role(&target.role) {
-        return Json(ApiResponse::error("该账号不能重置额度"));
-    }
-    if crate::quota::is_unlimited(Some(target.role.as_str())) {
-        // 管理员档（`can_access_console`）的额度**从来就不增长**，所以"清零"既无事
-        // 可做、也说不通——「已把你的额度清零（0 轮）」是一句废话，而发一条站内通知
-        // 告诉他这件事更是噪声。如实拒：不是权限问题，是这件事对他来说不存在。
-        // （agent 侧走不到这里：它的"已达成"判据是 `used == 0`，而管理员的计数器
-        // 恒为 0 ⇒ 它压根不会发这一下，只会回一句"本来就没有额度需要重置"。）
-        return Json(ApiResponse::error("该账号不限额，无需重置额度"));
-    }
-    let limit = limit_of(&target.role);
-    match user::Entity::update_many()
-        .col_expr(user::Column::ChatQuotaUsed, Expr::value(0).into())
-        .filter(user::Column::Id.eq(target.id))
-        .exec(&state.db)
-        .await
-    {
-        Ok(_) => {
-            tracing::info!("[额度] 主动重置 uid={}", target.id);
-            let content = format!("管理员已把你的对话额度恢复到 {} 轮。", limit);
-            notify(&state.db, target.id, NOTICE_RESET_TITLE, content).await;
-            // 文案与账号族其余动作同形（「已把账号「X」的…」）。**不是**给 agent 读的
-            // 那一句——agent 侧自己读回复核（`_quota_readback`），比转述这里可靠。
-            // 措辞是「恢复到 N 轮」而**不是**「清零」：主人看到的是递减的余额，
-            // 他的心智模型是"额度用光了"，"计数器清零"描述的是库里的实现（`used = 0`），
-            // 不是他看到的那个东西（20260929 主人指出）。
-            Json(ApiResponse::success(format!(
-                "已把账号「{}」的对话额度恢复到 {} 轮",
-                target.username, limit
-            )))
-        }
-        Err(e) => {
-            tracing::error!("[额度] 主动重置失败 uid={}: {}", target.id, e);
-            Json(ApiResponse::error("操作失败，请稍后再试"))
-        }
+    match super::quota_actions::service::reset(&state.db, user_id, None).await {
+        Ok(out) => Json(ApiResponse::success(format!("已把账号「{}」的对话额度恢复到 {} 轮",
+            out.state.name, out.state.limit))),
+        Err(message) => Json(ApiResponse::error(&message)),
     }
 }
 

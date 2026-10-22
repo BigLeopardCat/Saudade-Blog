@@ -23,6 +23,9 @@ mod pagination;
 pub mod catalog;
 pub mod own_reads;
 pub mod public_catalog;
+pub mod article_actions;
+pub mod quota_actions;
+pub mod moderation_actions;
 pub mod public_activity;
 pub mod note_stats; // 文章阅读量/点赞量（20260930；**绝不能记进 get_note_detail**，见模块头注）
 pub mod moderation;
@@ -285,6 +288,13 @@ pub fn create_router(state: AppState) -> Router {
             post(notes::create_note)
             .delete(notes::delete_note)
         )
+        .route("/api/protected/moderation/{resource}/{id}/target", get(moderation_actions::target))
+        .route("/api/protected/moderation/{resource}/{id}/action", post(moderation_actions::apply))
+        .route("/api/protected/quota/actions/requests/{id}", get(quota_actions::request_target))
+        .route("/api/protected/quota/actions/accounts/{id}", get(quota_actions::account_target))
+        .route("/api/protected/quota/actions/requests/{id}/review", post(quota_actions::review))
+        .route("/api/protected/quota/actions/accounts/{id}/reset", post(quota_actions::reset))
+        .route("/api/protected/article-actions/{id}", get(article_actions::target).post(article_actions::change))
         .route("/api/protected/notes/{id}",
             post(notes::update_note)
         )
