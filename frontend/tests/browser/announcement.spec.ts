@@ -61,7 +61,9 @@ test('remount and visible focus refresh real rows, deduplicate events, and clean
     reads += 1
     return route.fulfill({ json: { code: 200, data: [{ id: 1, title, content: '正文', createdAt: '2026-10-23T12:00:00+08:00' }] } })
   })
-  await page.clock.install({ time: new Date('2026-10-23T04:00:00Z') })
+  // Only Date.now() drives this debounce; keep React/Ant timers native.
+  const epoch = Date.parse('2026-10-23T04:00:00Z')
+  await page.clock.setFixedTime(new Date(epoch))
   await page.goto(sandboxURL)
   await expect(page.getByRole('cell', { name: '旧公告', exact: true })).toBeVisible()
   expect(reads).toBe(1)
@@ -69,16 +71,18 @@ test('remount and visible focus refresh real rows, deduplicate events, and clean
   await expect(page.locator('.ant-message-warning')).toContainText('请选择')
   expect(reads).toBe(1)
   title = '外部发布后的公告'
-  await page.clock.fastForward(501)
+  await page.clock.setFixedTime(new Date(epoch + 1000))
   await page.evaluate(() => {
     window.dispatchEvent(new Event('focus'))
     document.dispatchEvent(new Event('visibilitychange'))
   })
   await expect(page.getByRole('cell', { name: title, exact: true })).toBeVisible()
   expect(reads).toBe(2)
-  await page.clock.fastForward(501)
   await page.evaluate(() => {
     Object.defineProperty(document, 'hidden', { configurable: true, get: () => true })
+  })
+  await page.clock.setFixedTime(new Date(epoch + 2000))
+  await page.evaluate(() => {
     document.dispatchEvent(new Event('visibilitychange'))
     window.dispatchEvent(new Event('focus'))
   })
@@ -90,7 +94,7 @@ test('remount and visible focus refresh real rows, deduplicate events, and clean
   await expect.poll(() => reads).toBe(3)
   await page.getByRole('button', { name: '切换挂载' }).click()
   await expect(page.locator('.ant-table')).toHaveCount(0)
-  await page.clock.fastForward(501)
+  await page.clock.setFixedTime(new Date(epoch + 3000))
   await page.evaluate(() => {
     window.dispatchEvent(new Event('focus'))
     document.dispatchEvent(new Event('visibilitychange'))
