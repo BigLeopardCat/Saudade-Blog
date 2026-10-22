@@ -21,6 +21,7 @@ pub mod todos;    // 后台首页待办（20260924；整份列表按用户落库
 pub mod quota;
 mod pagination;
 pub mod catalog;
+pub mod own_reads;
 pub mod note_stats; // 文章阅读量/点赞量（20260930；**绝不能记进 get_note_detail**，见模块头注）
 pub mod moderation;
 pub mod comments;   // 文章评论（20261002）：审核复用 talks::decide_review，存储走 note_comment 表
@@ -215,6 +216,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/chat", post(chat::chat_handler))
         .route("/api/chat/stream", post(chat::chat_stream_handler))
         // 对话历史（DB 权威源，前端转跳/多窗口恢复；handler 内手写鉴权）
+        .route("/api/chat/history/text", get(own_reads::history::list))
+        .route("/api/protected/my/board/page", get(own_reads::board::list))
         .route("/api/chat/history", get(chat::chat_history_handler))
         // 主动停止丢弃本轮（前端"停止生成"按钮显式调用，全删 user+残缺回复）
         .route("/api/chat/discard", post(chat::discard_handler))

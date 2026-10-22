@@ -6,10 +6,7 @@ pub mod articles;
 use crate::utils::ApiResponsePage;
 use axum::Json;
 
-pub fn window(page: Option<u64>, size: Option<u64>) -> Result<(u64, u64), &'static str> {
-    super::pagination::window(Some(page.unwrap_or(1)), Some(size.unwrap_or(5)))?
-        .ok_or("分页参数缺失")
-}
+pub use super::pagination::bounded_window as window;
 
 pub fn pattern(value: &str) -> String {
     format!(
