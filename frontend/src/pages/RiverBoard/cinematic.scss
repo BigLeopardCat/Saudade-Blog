@@ -1,0 +1,135 @@
+/* Static scenery, bounded water layer, and compositor-only lantern transforms. */
+.rz-root.rz-cinematic {
+  --rz-paper: #ece4d1;
+  --rz-ink: #242e2f;
+  --rz-ink-muted: #485656;
+  --rz-paper-dim: #d3d6d0;
+  --rz-moon: #eed6a8;
+  background: #081723;
+  touch-action: manipulation;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+
+  .rz-landscape { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+  .rz-canvas { inset: 52% 0 0; width: 100%; height: 48%; z-index: 1; pointer-events: none; }
+  .rz-scene-shade {
+    position: absolute; inset: 0; z-index: 3; pointer-events: none;
+    background: linear-gradient(90deg, #030c13a8, transparent 52%),
+      linear-gradient(0deg, #040d13f0, transparent 25%, transparent 82%, #040d1370);
+  }
+  .rz-lanterns { z-index: 2; perspective: none; }
+  .rz-lantern {
+    filter: none;
+    .rz-sprite { filter: none; }
+    .rz-bubble { border-radius: 3px; box-shadow: 0 8px 24px #03101966; }
+    .rz-sprite img { width: 100%; height: 100%; }
+    &:focus-visible { outline: 1px solid #efd4a2; outline-offset: 12px; border-radius: 50%; }
+  }
+  .rz-halo, .rz-pool, .rz-flame { display: none; }
+  &[data-scene-paused='true'] .rz-lanterns { pointer-events: none; }
+  .rz-ui {
+    z-index: 4;
+    .rz-masthead {
+      position: absolute; top: 34px; left: 5vw; display: flex; gap: 13px; align-items: center;
+      color: #e5e5d9; font-size: 15px; letter-spacing: .22em;
+      small { display: block; margin-top: 5px; font-size: 8px; letter-spacing: .24em; color: #aab7b9; }
+    }
+    .rz-brand-seal { display: grid; place-items: center; width: 33px; height: 39px; border: 1px solid #ba916570; color: #e7cda5; font-family: 'Songti SC', SimSun, serif; font-size: 20px; }
+    .rz-title {
+      position: absolute; top: clamp(130px, 19vh, 220px); left: 8vw;
+      color: #ede9dd; text-shadow: 0 2px 24px #03111b90; font-size: inherit; letter-spacing: normal;
+      .rz-chapter { display: block; font-size: 11px; letter-spacing: .45em; color: #c7b799; margin-bottom: 22px; }
+      h1 { margin: 0; font-family: 'Songti SC', 'Noto Serif CJK SC', SimSun, serif; font-weight: 400; font-size: clamp(38px, 4.5vw, 76px); line-height: 1.33; letter-spacing: .18em; }
+      h1 span { display: block; }
+      p { margin: 22px 0 0; color: #c9d1cf; font-size: 12px; letter-spacing: .15em; line-height: 2.2; }
+      .rz-title-rule { display: block; width: 44px; height: 1px; background: #bc9b696b; margin-top: 29px; }
+    }
+    .rz-home-btn {
+      inset: 38px 5vw auto auto; padding: 7px 0; display: flex; align-items: center; gap: 14px;
+      background: none; border: 0; box-shadow: none; border-radius: 0; color: #d7dcda; font-size: 11px; letter-spacing: .18em;
+      span { font-size: 19px; }
+    }
+    .rz-bottom-bar { position: absolute; bottom: 84px; left: 8vw; right: 8vw; display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+    .rz-invitation { color: #d7ddd8; font-size: 12px; letter-spacing: .2em; }
+    .rz-invitation small { display: block; color: #9eafb1; font-size: 10px; margin: 12px 0 0 14px; letter-spacing: .16em; }
+    .rz-live-dot { display: inline-block; width: 4px; height: 4px; background: #dbb980; border-radius: 50%; margin-right: 10px; vertical-align: middle; }
+    .rz-actions { display: flex; gap: 14px; pointer-events: auto; }
+    .rz-album-btn, .rz-wish-btn {
+      position: static; display: flex; flex-direction: row; justify-content: center; align-items: center; gap: 14px;
+      min-width: 128px; padding: 17px 24px; border: 1px solid #b9baa73d; border-radius: 2px;
+      background: #0c1b25e8; box-shadow: none; color: #e0e0d3; font-size: 12px; letter-spacing: .18em;
+      span { font-size: 16px; }
+    }
+    .rz-wish-btn { min-width: 195px; background: #ddc299; color: #243333; border-color: #ddc299; }
+    .rz-wish-btn:hover, .rz-wish-btn:focus-visible { background: #f0d9b2; color: #162d31; }
+    .rz-album-btn:hover, .rz-album-btn:focus-visible { background: #18303a; }
+    .rz-quality {
+      position: absolute; bottom: 27px; left: 8vw; margin: 0; padding: 0; border: 0; display: flex; align-items: center; gap: 2px; pointer-events: auto;
+      legend { float: left; color: #95a5a9; font-size: 9px; letter-spacing: .15em; margin-right: 10px; padding-top: 5px; }
+      button { border: 0; background: none; padding: 5px 9px; color: #b5c2c3; font-size: 10px; letter-spacing: .12em; cursor: pointer; border-radius: 1px; }
+      button[aria-pressed='true'] { color: #e7d6b6; background: #baa17a1a; }
+    }
+    .rz-assistant-btn { position: absolute; bottom: 28px; right: 8vw; padding: 5px 0; border: 0; background: none; color: #b5c2c3; font-size: 10px; letter-spacing: .15em; cursor: pointer; pointer-events: auto; }
+    button { transition: background .2s, color .2s, border-color .2s; backdrop-filter: none; -webkit-backdrop-filter: none; }
+    button:focus-visible { outline: 2px solid #edd6ab; outline-offset: 5px; }
+    button:disabled { cursor: default; opacity: .55; }
+  }
+  .rz-modal { z-index: 100; background: #061019c9; touch-action: pan-y; }
+  .rz-modal .rz-modal-box { border-radius: 5px; max-height: min(82dvh, 760px); overflow-y: auto; overscroll-behavior: contain; box-shadow: 0 24px 90px #01060999; }
+  .rz-wish-title { font-family: 'Songti SC', SimSun, serif; letter-spacing: .12em; }
+  .rz-wish-modal .rz-wish-box .rz-lamp-card { transition: background .2s, border-color .2s, transform .2s; }
+  .rz-wish-modal .rz-wish-box .rz-lamp-card:hover { filter: none; }
+  .rz-boot { background: #081723; transition: opacity .35s; }
+  .rz-boot-glow { animation: none; }
+
+  @media (max-width: 760px) {
+    .rz-scene-shade { background: linear-gradient(90deg, #03101c99, #03101c00), linear-gradient(0deg, #041018fa 0%, #04101800 34%); }
+    .rz-ui {
+      .rz-masthead { top: max(24px, env(safe-area-inset-top)); left: 24px; font-size: 12px; }
+      .rz-brand-seal { width: 26px; height: 32px; font-size: 17px; }
+      .rz-home-btn { top: max(26px, env(safe-area-inset-top)); right: 24px; font-size: 10px; gap: 8px; }
+      .rz-title { top: 17vh; left: 8vw; }
+      .rz-title .rz-chapter { margin-bottom: 16px; font-size: 10px; }
+      .rz-title h1 { font-size: clamp(38px, 8vw, 52px); }
+      .rz-title p { font-size: 11px; margin-top: 18px; }
+      .rz-title .rz-title-rule { margin-top: 20px; }
+      .rz-bottom-bar { bottom: calc(77px + env(safe-area-inset-bottom)); gap: 20px; flex-direction: column; align-items: stretch; }
+      .rz-invitation { font-size: 11px; }
+      .rz-invitation small { display: none; }
+      .rz-actions { gap: 10px; }
+      .rz-album-btn, .rz-wish-btn { min-width: 0; padding: 15px 16px; font-size: 11px; }
+      .rz-album-btn { flex: 1; }
+      .rz-wish-btn { flex: 1.5; }
+      .rz-quality { bottom: calc(27px + env(safe-area-inset-bottom)); }
+      .rz-assistant-btn { bottom: calc(28px + env(safe-area-inset-bottom)); }
+    }
+  }
+  @media (max-height: 580px) and (min-width: 761px) {
+    .rz-ui .rz-title { top: 100px; }
+    .rz-ui .rz-title h1 { font-size: 34px; }
+    .rz-ui .rz-title p, .rz-ui .rz-title-rule { display: none; }
+    .rz-ui .rz-bottom-bar { bottom: 65px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation: none !important; transition: none !important; }
+  }
+}
+.rz-root.rz-cinematic {
+  .rz-fog {
+    position: absolute; z-index: 3; left: -10%; width: 120%; height: 12%; top: 46%; pointer-events: none;
+    background: radial-gradient(ellipse at 30% 50%, #b6d3dc18, transparent 54%), radial-gradient(ellipse at 74% 42%, #acc5d810, transparent 42%);
+    animation: rz-fog-drift 38s ease-in-out infinite alternate;
+  }
+  .rz-fog-near { top: 62%; height: 17%; opacity: .45; animation-duration: 52s; animation-direction: alternate-reverse; }
+  &[data-scene-sleeping='true'] .rz-fog, &[data-scene-paused='true'] .rz-fog { animation-play-state: paused; }
+  .rz-lantern .rz-sprite { transition: transform .45s ease; }
+  .rz-lantern:hover .rz-sprite, .rz-lantern:focus-visible .rz-sprite { transform: translateY(-3px) scale(1.06); }
+  .rz-ui .rz-invitation small button { background: none; border: 0; color: #e7cda5; cursor: pointer; text-decoration: underline; margin-left: 6px; pointer-events: auto; }
+}
+@keyframes rz-fog-drift { from { transform: translate3d(-2%, 0, 0); opacity: .55; } to { transform: translate3d(3%, -4px, 0); opacity: .85; } }
+@media (prefers-reduced-motion: reduce) { .rz-root.rz-cinematic .rz-fog { animation: none; } }
+.rz-root.rz-cinematic {
+  .rz-lamp-art { display: block; width: 100%; height: 100%; background-size: 300% 100%; background-repeat: no-repeat; pointer-events: none; }
+  .rz-wish-modal .rz-wish-box .rz-lamp-card .rz-lamp-art { width: 92px; height: 92px; }
+  .rz-lantern.rz-unlit .rz-lamp-art { filter: brightness(.32) saturate(.5); }
+}
+.rz-root.rz-cinematic .rz-wish-error { color: #853630; font-size: 12px; line-height: 1.7; }
