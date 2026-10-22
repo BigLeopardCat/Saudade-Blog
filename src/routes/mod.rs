@@ -20,6 +20,7 @@ pub mod notice;   // 单用户站内通知（20260923；留言审核结果的首
 pub mod todos;    // 后台首页待办（20260924；整份列表按用户落库）
 pub mod quota;    // 用户对话额度（20260929；上限与算术在 crate::quota，本模块只管读写）
 pub mod note_stats; // 文章阅读量/点赞量（20260930；**绝不能记进 get_note_detail**，见模块头注）
+pub mod moderation;
 pub mod comments;   // 文章评论（20261002）：审核复用 talks::decide_review，存储走 note_comment 表
 pub mod comment_votes; // 评论点赞/踩（20261003）：一票一行、**访客可投**，身份复用 note_stats::{identify, Who}
 pub mod search; // 站内聚合搜索（20261006）：文章/说说/留言/评论一次搜，规则走 crate::search_core
@@ -347,6 +348,7 @@ pub fn create_router(state: AppState) -> Router {
 
         // 留言管理（后台）：河灯留言列表/删除/内容审核（审核机制预留，暂未启用）
         .route("/api/protect/board", get(talks::list_board_admin))
+        .route("/api/protected/moderation/summary", get(moderation::board_summary))
         .route("/api/protect/board/{id}", delete(talks::delete_board))
         .route("/api/protect/board/{id}/audit", put(talks::audit_board))
 

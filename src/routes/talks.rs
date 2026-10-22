@@ -1,6 +1,8 @@
 use axum::{Json, extract::{State, Path, Query}, http::HeaderMap};
 use sea_orm::{EntityTrait, Set, QueryOrder, QueryFilter, QuerySelect, ColumnTrait,
                Condition, JoinType, PaginatorTrait, RelationTrait, Select};
+use sea_orm::sea_query::extension::postgres::PgExpr;
+use super::moderation::{ReviewStatus, AiDecision, page_window};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use crate::entity::{talk, user};
@@ -737,75 +739,42 @@ pub struct BoardAdminDto {
     pub ai_reason: Option<String>,
 }
 
-/// GET /api/protect/board 的查询参数（20261014）。
-///
-/// 从前这一页是「接口回全量 + 前端过滤 + 前端切页」：留言攒到几百条时每开一次后台
-/// （以及每 20 秒那次背景重拉）就把整表连全部正文拉一遍，而筛选里的**用户名/昵称**
-/// 是 user 表的列 —— 前端这么做的前提正是"整份列表在手"。现在筛选、排序、分页都在
-/// 服务端做，判据只有一处（`board_admin_filter`）：前端搜到的 = 全库里符合条件的，
-/// 而不是"已加载的那一页里符合条件的"。
-///
-/// ⚠️ **不传 `page_size` 就是不分页**（返回全部，与 20261014 之前逐字节相同）。
-/// agent 的三个工具（`tools/base.py` 的 `_admin_get("/api/protect/board")`：
-/// 留言板实体摘要、复核那几处）与 `eval/golden_fixture_board.py` 读的就是这份全量 ——
-/// 给它们悄悄截断，会让"板上一共有多少条""第 N 条是谁写的"变成半截事实。
+/// Backend board filters; pagination is opt-in for existing consumers.
 #[derive(Deserialize)]
 pub struct BoardAdminQuery {
-    /// 印章类型（愿/寄/忆/诉）。缺省或空串 = 全部。
-    #[serde(default)]
+    pub id: Option<i32>,
+    pub status: Option<ReviewStatus>,
+    pub ai_result: Option<AiDecision>,
     pub cat: Option<String>,
-    /// 关键词（子串匹配）：留言正文 / 留名 / 发布者用户名 / 昵称。
-    #[serde(default)]
     pub q: Option<String>,
-    /// 时序：`asc` = 正序（旧在前）；缺省或其它值 = 倒序（新在前）。
-    ///
-    /// 写成字符串而不是 bool：查询串里的布尔各人写法不同（`true`/`1`），serde 只认
-    /// `true`/`false`，写 `asc=1` 会直接 400 —— 一个参数解析失败就把整页打成空，
-    /// 不值得。认不出的值退回缺省（倒序），与"没传"同一个行为。
-    #[serde(default)]
     pub order: Option<String>,
-    /// 页码（1 起）。**只在给了 `page_size` 时生效**（单独给 page 不触发分页）。
-    #[serde(default)]
     pub page: Option<u64>,
-    /// 每页条数。不传 = 不分页（见类型头注）。
-    #[serde(default)]
     pub page_size: Option<u64>,
 }
 
-/// 后台留言列表每页的**上界**。前端发的是 10，这个数管的是别的调用方：
-/// `page_size=100000000` 会把 LIMIT 原样写进 SQL、等于没分页（这条接口也就能被当整表拉使）。
-const BOARD_ADMIN_MAX_PAGE_SIZE: u64 = 200;
-
-/// 后台留言列表的**过滤 + 排序**（列表页与计数**共用这一条**）。
-///
-/// 分页最经典的错处是条件写两遍：列表那遍改了、计数那遍没改，于是「共 N 条」与实际翻得
-/// 出来的页数对不上，而两边各自都"看着对"。所以这里返回的是**没执行的查询**，由 handler
-/// 分别 .all() 与 .count()。
-///
-/// 关键词要能命中**用户名/昵称**（user 表的两列），所以这条查询带 `LEFT JOIN user`
-/// （关系定义在 `entity/talk.rs`）。用 join 而不是"先把匹配的用户 id 查出来再 IN(...)"：
-/// 后者要在两个查询里各写一遍"什么算命中"，且 q 命中半个用户表时会拼出几百个占位符。
-/// user_id → user.id 是多对一 ⇒ join 不让 talk 行翻倍（计数照旧正确）。
-fn board_admin_filter(q: &BoardAdminQuery) -> Select<talk::Entity> {
+/// Listing and total counts share the same filters and stable ordering.
+pub(super) fn board_admin_filter(q: &BoardAdminQuery) -> Select<talk::Entity> {
     let mut finder = talk::Entity::find()
         .join(JoinType::LeftJoin, talk::Relation::User.def())
         .filter(talk::Column::Src.eq("board"));
+    if let Some(id) = q.id { finder = finder.filter(talk::Column::Id.eq(id)); }
+    if let Some(status) = q.status { finder = finder.filter(talk::Column::Approved.eq(status.approved())); }
+    if let Some(ai) = q.ai_result { finder = match ai.value() {
+        Some(value) => finder.filter(talk::Column::AiResult.eq(value)),
+        None => finder.filter(talk::Column::AiResult.is_null()),
+    }; }
     if let Some(cat) = q.cat.as_deref().map(str::trim).filter(|c| !c.is_empty()) {
         finder = finder.filter(talk::Column::Cat.eq(cat));
     }
     if let Some(kw) = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        // `like_escape` 必须用：用户输入里的 % _ \ 不转义就是通配符（搜一个 `%` 会把整表
-        // 捞回来）。与站内搜索共用 `crate::search_core` 那一份实现。
-        //
-        // 大小写：JS 的 `includes` 是敏感的，这里随 MySQL 的 utf8mb4 排序规则是**不敏感**的
-        // ——差异只在 ASCII 且只在"前端从前搜不到、现在搜得到"这个方向，不是回归。
+        // Escape wildcard characters; PostgreSQL ILIKE preserves case-insensitive search.
         let pat = format!("%{}%", like_escape(kw));
         finder = finder.filter(
             Condition::any()
-                .add(talk::Column::Content.like(&pat))
-                .add(talk::Column::Author.like(&pat))
-                .add(user::Column::Username.like(&pat))
-                .add(user::Column::Nickname.like(&pat)),
+                .add(talk::Column::Content.into_expr().ilike(&pat))
+                .add(talk::Column::Author.into_expr().ilike(&pat))
+                .add(user::Column::Username.into_expr().ilike(&pat))
+                .add(user::Column::Nickname.into_expr().ilike(&pat)),
         );
     }
     // 排序与前端原来那三条断言逐条对齐：created_at 为主、id 为同秒内的次序。
@@ -835,10 +804,11 @@ pub async fn list_board_admin(
         return Json(ApiResponsePage::error("请先登录"));
     };
     // `page_size=0` 会让 `(page-1)*size` 与 sea-orm 的分页断言都出问题，夹到 ≥1
-    let page_size = q.page_size.map(|n| n.clamp(1, BOARD_ADMIN_MAX_PAGE_SIZE));
-    let page = q.page.unwrap_or(1).max(1);
+    let window = match page_window(q.page, q.page_size) {
+        Ok(value) => value, Err(message) => return Json(ApiResponsePage::error(message)),
+    };
     // 计数只在分页时做（不分页时它算出来的数没有地方用，白一次 COUNT）
-    let total = match page_size {
+    let total = match window {
         Some(_) => match board_admin_filter(&q).count(&state.db).await {
             Ok(n) => Some(n as i64),
             Err(e) => {
@@ -849,8 +819,8 @@ pub async fn list_board_admin(
         None => None,
     };
     let mut finder = board_admin_filter(&q);
-    if let Some(size) = page_size {
-        finder = finder.limit(size).offset((page - 1) * size);
+    if let Some((size, offset)) = window {
+        finder = finder.limit(size).offset(offset);
     }
     let talks = match finder.all(&state.db).await {
         Ok(v) => v,

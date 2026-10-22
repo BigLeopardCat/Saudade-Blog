@@ -40,11 +40,12 @@ use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::Json;
 use sea_orm::sea_query::extension::postgres::PgExpr;
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set};
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set, PaginatorTrait, Select, Condition, QueryTrait};
 use serde::{Deserialize, Serialize};
 
-use crate::entity::{note, note_comment};
-use crate::utils::ApiResponse;
+use crate::entity::{user, note, note_comment};
+use crate::utils::{ApiResponse, ApiResponsePage};
+use super::moderation::{ReviewStatus, page_window};
 
 use super::AppState;
 
@@ -142,7 +143,7 @@ pub struct CommentDto {
 /// ⚠️ `sort` **故意是 `Option<String>` 而不是枚举**：`Query` 抽取器遇到反序列化失败会
 /// **直接回 HTTP 400 + 纯文本**、**不走 `ApiResponse` 信封**，而前端判的是 `code === 200`
 /// ⇒ 一个过期的分享链接（`?sort=xxx`）就能把整段讨论区变成"读取失败，请稍后再试"。
-/// 未知值一律回落默认（同 `comment_status_filter` 对未知 status 的处理）。
+/// 未知值一律回落默认。
 #[derive(Deserialize)]
 pub struct CommentListQuery {
     /// `hot`（缺省）/ `new`。**只有 `new` 会改变行为**，其余一律当 `hot`。
@@ -644,32 +645,34 @@ pub struct CommentAdminDto {
     pub is_deleted: i16,
 }
 
-/// GET /api/protect/comments 的查询参数（20261019）。
-///
-/// **不传参数的行为与从前逐字节相同**（全部状态、倒序、上限 500）——这是刻意保留的：
-/// agent 那侧 `_comment_index` 读的就是这份全量（写操作前要拿它核对目标在不在），
-/// 给它悄悄收窄会让"读的是这一批、写的是另一行"这类错藏到线上。
+/// Comment review filters; pagination is opt-in and legacy reads retain their cap.
 #[derive(Deserialize)]
 pub struct CommentAdminQuery {
-    /// 状态筛选：`pending`=待审 / `passed`=已通过 / `rejected`=未通过。
-    /// 缺省或认不出 = 不筛（与"没传"同一个行为——认不出的值把整页打成空不值得）。
-    #[serde(default)]
-    pub status: Option<String>,
-    /// 关键词（子串匹配）：评论正文 / 发布者用户名 / 昵称。
-    #[serde(default)]
+    pub id: Option<i32>,
+    pub status: Option<ReviewStatus>,
     pub q: Option<String>,
+    pub note_id: Option<i32>,
+    pub page: Option<u64>,
+    pub page_size: Option<u64>,
 }
 
-/// `status` 实参 → `approved` 值。与留言板 `BOARD_STATUS_FILTERS` 同表同义（两张表那
-/// 一列的语义逐字相同：0=待审 / 1=通过 / 2=未通过）。**只有三态、没有"全部"**：
-/// 不填就是不筛，多一个 `all` 就多一个会填错的值。
-fn comment_status_filter(raw: Option<&str>) -> Option<i16> {
-    match raw.map(str::trim) {
-        Some("pending") => Some(0),
-        Some("passed") => Some(1),
-        Some("rejected") => Some(2),
-        _ => None,
+pub(super) fn comment_admin_filter(q: &CommentAdminQuery) -> Select<note_comment::Entity> {
+    let mut finder = note_comment::Entity::find();
+    if let Some(id) = q.id { finder = finder.filter(note_comment::Column::Id.eq(id)); }
+    if let Some(status) = q.status {
+        finder = finder.filter(note_comment::Column::Approved.eq(status.approved()));
     }
+    if let Some(id) = q.note_id { finder = finder.filter(note_comment::Column::NoteId.eq(id)); }
+    if let Some(kw) = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        let pat = format!("%{}%", crate::search_core::like_escape(kw));
+        let authors = user::Entity::find().select_only().column(user::Column::Id)
+            .filter(Condition::any().add(user::Column::Username.into_expr().ilike(&pat))
+                .add(user::Column::Nickname.into_expr().ilike(&pat))).into_query();
+        finder = finder.filter(Condition::any()
+            .add(note_comment::Column::Content.into_expr().ilike(&pat))
+            .add(note_comment::Column::UserId.in_subquery(authors)));
+    }
+    finder.order_by_desc(note_comment::Column::CreatedAt).order_by_desc(note_comment::Column::Id)
 }
 
 /// GET /api/protect/comments —— 评论管理列表（倒序；可按状态 / 关键词收窄）。
@@ -681,40 +684,33 @@ pub async fn list_comments_admin(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Query(q): Query<CommentAdminQuery>,
-) -> Json<ApiResponse<Vec<CommentAdminDto>>> {
+) -> Json<ApiResponsePage<Vec<CommentAdminDto>>> {
     let Some(_uid) = super::talks::current_uid(&state.db, &headers).await else {
-        return Json(ApiResponse::error("请先登录"));
+        return Json(ApiResponsePage::error("请先登录"));
     };
-    let mut finder = note_comment::Entity::find();
-    if let Some(v) = comment_status_filter(q.status.as_deref()) {
-        finder = finder.filter(note_comment::Column::Approved.eq(v));
-    }
-    if let Some(kw) = q.q.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        // `like_escape` 必须用：用户输入里的 % _ \ 不转义就是通配符（搜一个 `%` 会把整表
-        // 捞回来）。与留言板那条共用 `crate::search_core` 那一份实现。
-        //
-        // **用 `ilike` 不用 `like`**：PG 的 `LIKE` 区分大小写，而留言板那条在 MySQL 时代
-        // 靠 `utf8mb4_0900_ai_ci` 是不敏感的——切流后它已经悄悄变成敏感的了（20261019 已
-        // 一并修）。新写的这条没有理由把那个坑再挖一遍。
-        //
-        // ⚠️ **只搜评论正文，不搜作者名/昵称**（留言板那条搜四列，因为它 LEFT JOIN 了
-        // `user`）。这里刻意不 join：`note_comment` 没有现成的 `Relation::User`，而为了
-        // 一个"顺带搜作者"去补一条关系定义，收益远小于它带来的表面积。要按作者找，用
-        // 后台页的筛选（那边本来就有）。
-        let pat = format!("%{}%", crate::search_core::like_escape(kw));
-        finder = finder.filter(note_comment::Column::Content.into_expr().ilike(&pat));
-    }
+    let window = match page_window(q.page, q.page_size) {
+        Ok(value) => value, Err(message) => return Json(ApiResponsePage::error(message)),
+    };
+    let total = if window.is_some() {
+        match comment_admin_filter(&q).count(&state.db).await {
+            Ok(n) => Some(n as i64),
+            Err(error) => {
+                tracing::error!("[comment] count failed: {error}");
+                return Json(ApiResponsePage::error("查询失败，请稍后再试"));
+            }
+        }
+    } else { None };
+    let mut finder = comment_admin_filter(&q);
+    if let Some((size, offset)) = window { finder = finder.limit(size).offset(offset); }
+    else { finder = finder.limit(ADMIN_PAGE_LIMIT); }
     let rows = match finder
-        .order_by_desc(note_comment::Column::CreatedAt)
-        .order_by_desc(note_comment::Column::Id)
-        .limit(ADMIN_PAGE_LIMIT)
         .all(&state.db)
         .await
     {
         Ok(v) => v,
         Err(e) => {
             tracing::error!("[comment] list_comments_admin 查询失败: {e}");
-            return Json(ApiResponse::error("查询失败，请稍后再试"));
+            return Json(ApiResponsePage::error("查询失败，请稍后再试"));
         }
     };
     // 作者与"被回复者"共用一份（去重后 is_in，同 list_board_admin 的做法）
@@ -771,7 +767,7 @@ pub async fn list_comments_admin(
             }
         })
         .collect();
-    Json(ApiResponse::success(dtos))
+    Json(ApiResponsePage::success(dtos, total))
 }
 
 #[derive(Deserialize)]
