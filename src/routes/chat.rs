@@ -1,3 +1,5 @@
+mod pending;
+
 use axum::{
     Json,
     body::{Body, Bytes},
@@ -1500,72 +1502,6 @@ const PENDING_QUESTION_COL_MAX: usize = 500;
 /// （全部办 + 逐条只办第 i 件 + 取消），标签都很短，余量仍足。
 const PENDING_OPTIONS_COL_MAX: usize = 600;
 
-/// 待办落库（20260923）：agent 在弹确认框那一轮随 `__CONFIRM__` 发来的结构化提议。
-/// 先删本会话仍 pending 的旧行——**新的顶掉旧的**（"最新那次提议"才是主人心里那
-/// 件事），顺带让同一条待办的重发天然幂等。`let _ =` 吞错，与 execution_log 同
-/// 口径：辅助事实，落库失败不阻断对话主链路（确认本身走无状态令牌，不依赖本表）。
-async fn save_pending_action(
-    db: &sea_orm::DatabaseConnection,
-    uid: i32,
-    conversation_id: i32,
-    v: &serde_json::Value,
-) {
-    let tools: Vec<String> = v["specs"]
-        .as_array()
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|s| s["tool"].as_str())
-                .map(|t| t.to_string())
-                .collect()
-        })
-        .unwrap_or_default();
-    let args = v["specs"].to_string();
-    // 卡片素材（20260924）：问句是字符串、按钮是 JSON **数组**（`json_capped` 只认
-    // 字符串，数组走 to_string——类型不对一律空串，宁可卡片重建不出来，也不编一个
-    // 按钮出来）。两件都写时定稿：重建出来的卡片必须与主人当时看到的那张逐字一致。
-    let options = if v["options"].is_array() {
-        v["options"].to_string()
-    } else {
-        String::new()
-    };
-    // 到期时刻：agent 给的是令牌自身的 `exp`（UTC 秒）→ 库里的 +08:00 本地钟面
-    // （CLAUDE.md 时区约定：显式时间一律本地钟面，读侧不再二次偏移）。缺字段/非数字
-    // → NULL（"未知"，读侧如实不留卡片）。
-    let expires_at: Option<chrono::NaiveDateTime> = v["expires_at"].as_i64().and_then(|s| {
-        chrono::DateTime::from_timestamp(s, 0).map(|t| t.with_timezone(&chrono::Local).naive_local())
-    });
-    let _ = pending_action::Entity::delete_many()
-        .filter(pending_action::Column::ConversationId.eq(conversation_id))
-        .filter(pending_action::Column::Status.eq("pending"))
-        .exec(db)
-        .await;
-    let _ = pending_action::ActiveModel {
-        task_id: Set(json_capped(v, "task_id", 64)),
-        conversation_id: Set(conversation_id),
-        user_id: Set(uid),
-        skill: Set(json_capped(v, "skill", 32)),
-        tool: Set(tools.join(",").chars().take(255).collect()),
-        args: Set(Some(args.chars().take(PENDING_ARGS_COL_MAX).collect())),
-        target: Set(json_capped(v, "target", 300)),
-        // 卡片四件（20260924）：问句/按钮供重建，jti/到期时刻供一次性核销与时效过滤
-        question: Set(json_capped(v, "question", PENDING_QUESTION_COL_MAX)),
-        options: Set(options.chars().take(PENDING_OPTIONS_COL_MAX).collect()),
-        jti: Set(json_capped(v, "jti", 64)),
-        expires_at: Set(expires_at),
-        requested_by: Set(match json_capped(v, "requested_by", 32) {
-            s if s.is_empty() => "user".to_string(),
-            s => s,
-        }),
-        source_event: Set(json_capped(v, "source_event", 64)),
-        confirmation_required: Set(true),
-        confirmation_status: Set("awaiting".to_string()),
-        status: Set("pending".to_string()),
-        ..Default::default()
-    }
-    .save(db)
-    .await;
-}
-
 /// 令牌的一次性核销（20260924）：把 `jti` 对应的那一行置为"已被用掉"。
 ///
 /// 返回 `Some(理由)` = **这张令牌已经兑现过一次**，调用方零转发（如实拒绝）；
@@ -2421,11 +2357,8 @@ pub async fn chat_stream_handler(
                     Frame::Pending(body) => {
                         if let Ok(v) = serde_json::from_str::<serde_json::Value>(body) {
                             if uid > 0 && v.is_object() {
-                                let state = state.clone();
-                                let v = v.clone();
-                                tokio::spawn(async move {
-                                    save_pending_action(&state.db, uid, conversation_id, &v).await;
-                                });
+                                // Preserve cancel/replace order within this stream.
+                                pending::save_pending_action(&state.db, uid, conversation_id, &v).await;
                             }
                         }
                         continue;
