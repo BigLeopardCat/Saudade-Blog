@@ -3,7 +3,6 @@ import http from '../../apis/axios.tsx';
 import { Dispatch } from 'react';
 import UserState from "../../interface/UserState";
 import UserData from "../../interface/UserData";
-import deleteToken from "../../apis/deleteToken.tsx";
 import {SocialType} from "../../interface/SocialType";
 
 const initialState: UserState = {
@@ -74,6 +73,9 @@ const fetchUserInfo = () => {
                 url: '/api/public/user',
                 method: "GET"
             })
+            if (userinfo.status !== 200 || userinfo.data?.code !== 200
+                || !userinfo.data.data || typeof userinfo.data.data !== 'object'
+                || Array.isArray(userinfo.data.data)) return false;
             // 后端这些键是 `Option<String>`，没配过就是 **null**（不是空串）。
             // 统一归一成空串：消费者（页脚/首页）判的是"空 ⇒ 不渲染"，
             // 让 null 漏进去会让 `{v}` 渲染成空白但仍占位、`if (v)` 却又是假，两处判断打架。
@@ -88,8 +90,10 @@ const fetchUserInfo = () => {
                 blogCopyright: s(userinfo.data.data.blogCopyright),
             }
             dispatch(setUserInfo(res))
+            return true;
         }catch{
-            deleteToken()
+            // Public site metadata failing does not invalidate the visitor's credentials.
+            return false;
         }
     }
 }
