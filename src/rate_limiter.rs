@@ -120,29 +120,55 @@ impl LoginRateLimiter {
         }
     }
 
-    /// **计数式的闸门**：判一次、记一次，窗口内放行前 `max_attempts` 次（20261015）。
-    ///
-    /// 与登录那条路径（`check` + `record_failure`）的区别只在**语义**，状态机是同一个：
-    /// 登录是"先判后记、只有失败才记"，而匿名可写的端点（如前端错误上报）没有"失败"
-    /// 这个概念——**每一个被受理的请求就是一次计数**，所以把两拍并成一拍。
-    ///
-    /// 计数语义与 `check` 逐字一致：窗口内第 1..=max 次返回 `Ok`，第 max+1 次起返回
-    /// `Err` 并锁定 `lockout_duration`。措辞是**通用的**（不是"登录"），因为这条路径的
-    /// `subject` 不一定是账号名（调用方只该拿它做日志/回包，别拿去判断类型）。
+    /// 在同一临界区判定并计数，供凭据入口与匿名监控使用。
+    /// 第 1..=max 次通过，第 max+1 次起锁定；每个被受理请求都计数。
     pub fn hit(&self, ip: &str, subject: &str) -> Result<(), String> {
-        match self.check(ip, subject) {
-            Ok(()) => {
-                self.push(ip, subject);
-                Ok(())
+        let key = format!("{}:{}", ip, subject);
+        let now = Instant::now();
+        let mut map = self.inner.lock().map_err(|_| "服务暂时不可用，请稍后再试".to_string())?;
+        // 判定与计数持同一把锁，不能让并发请求在两者之间穿过。
+        if map.len() >= 10_000 {
+            map.retain(|_, entry| {
+                entry.attempts.retain(|t| now.duration_since(*t) < self.window_duration);
+                entry.locked_until.is_some_and(|t| t > now) || !entry.attempts.is_empty()
+            });
+            if map.len() >= 10_000 && !map.contains_key(&key) {
+                return Err("请求过于频繁，请稍后再试".to_string());
             }
-            // 首次触发的 Err 就是"整段锁定从现在开始"，所以报完整锁定时长是**上界**
-            // （后续请求再报也没错，只是偏保守）；不把 check 那句"登录尝试"的措辞
-            // 漏到非登录的调用方去。
-            Err(_) => Err(format!(
-                "请求过于频繁，请 {} 秒后再试",
-                self.lockout_duration.as_secs()
-            )),
         }
+        let entry = map.entry(key).or_insert(RateLimitEntry {
+            attempts: Vec::new(), locked_until: None,
+        });
+        if entry.locked_until.is_some_and(|t| t > now) {
+            return Err("请求过于频繁，请稍后再试".to_string());
+        }
+        if entry.locked_until.take().is_some() {
+            entry.attempts.clear();
+        }
+        entry.attempts.retain(|t| now.duration_since(*t) < self.window_duration);
+        if entry.attempts.len() >= self.max_attempts as usize {
+            entry.locked_until = Some(now + self.lockout_duration);
+            return Err("请求过于频繁，请稍后再试".to_string());
+        }
+        entry.attempts.push(now);
+        Ok(())
+    }
+
+    /// 凭据校验前预占；额外按 IP 总量限流，更换用户名不能获得无限配额。
+    /// 成功也占用请求窗口，避免成功请求清掉并发请求已经预占的次数。
+    pub fn admit_auth(&self, ip: &str, username: &str) -> Result<(), String> {
+        if username.len() > 512 || ip.len() > 128 {
+            return Err("账号或请求格式不正确".to_string());
+        }
+        // 独立命名空间 + 每 IP 较宽的窗口，避免与真实用户名碰撞。
+        let aggregate = Self {
+            inner: self.inner.clone(),
+            max_attempts: self.max_attempts.saturating_mul(10).max(20),
+            window_duration: self.window_duration,
+            lockout_duration: self.lockout_duration,
+        };
+        aggregate.hit(&format!("auth-ip/{ip}"), "")?;
+        self.hit(&format!("auth-account/{ip}"), username)
     }
 
     /// 成功登录时重置该组合的计数
@@ -158,6 +184,31 @@ impl LoginRateLimiter {
 mod tests {
     use super::*;
     use std::thread;
+
+    #[test]
+    fn auth_admission_reserves_exactly_five_slots_concurrently() {
+        let limiter = LoginRateLimiter::new(5, 300, 900);
+        let barrier = Arc::new(std::sync::Barrier::new(32));
+        let jobs: Vec<_> = (0..32).map(|_| {
+            let limiter = limiter.clone();
+            let barrier = barrier.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                limiter.admit_auth("192.0.2.1", "target").is_ok()
+            })
+        }).collect();
+        assert_eq!(jobs.into_iter().map(|job| job.join().unwrap() as usize).sum::<usize>(), 5);
+    }
+
+    #[test]
+    fn auth_ip_budget_cannot_be_reset_by_changing_usernames() {
+        let limiter = LoginRateLimiter::new(5, 300, 900);
+        for n in 0..50 {
+            assert!(limiter.admit_auth("192.0.2.2", &format!("user{n}")).is_ok());
+        }
+        assert!(limiter.admit_auth("192.0.2.2", "another-user").is_err());
+        assert!(limiter.admit_auth("192.0.2.3", "another-user").is_ok());
+    }
 
     #[test]
     fn allows_first_attempt() {

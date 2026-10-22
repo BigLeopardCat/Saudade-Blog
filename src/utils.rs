@@ -94,6 +94,28 @@ pub fn hash_password(input: &str) -> String {
         .to_string()
 }
 
+/// Argon2 是 CPU/内存密集操作：不占用 Tokio I/O 线程，也不允许无限排队。
+async fn password_work<T: Send + 'static>(
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, &'static str> {
+    static SLOTS: std::sync::LazyLock<std::sync::Arc<tokio::sync::Semaphore>> =
+        std::sync::LazyLock::new(|| std::sync::Arc::new(tokio::sync::Semaphore::new(4)));
+    let permit = SLOTS.clone().try_acquire_owned()
+        .map_err(|_| "密码服务繁忙，请稍后再试")?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        work()
+    }).await.map_err(|_| "密码服务暂时不可用，请稍后再试")
+}
+
+pub async fn hash_password_async(input: String) -> Result<String, &'static str> {
+    password_work(move || hash_password(&input)).await
+}
+
+pub async fn verify_password_async(input: String, stored: String) -> Result<bool, &'static str> {
+    password_work(move || verify_password(&input, &stored)).await
+}
+
 /// 校验密码：**同时认新格式与旧格式**（旧格式只在登录成功后被惰性升级，见 auth.rs）。
 pub fn verify_password(input: &str, stored: &str) -> bool {
     use argon2::password_hash::{PasswordHash, PasswordVerifier};

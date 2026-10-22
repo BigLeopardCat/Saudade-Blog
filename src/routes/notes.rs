@@ -587,6 +587,20 @@ pub async fn search_notes(
     // Public search likely doesn't need detailed time/top status filters, but no harm logic-wise. 
     // They are omitted here for simplicity and focus on keyword search.
 
+    // 分类/标题筛选不需要正文；旧实现全量读取 content 后又清空，浪费传输与内存。
+    if terms.is_empty() {
+        let rows = note::Entity::find().filter(condition)
+            .order_by_asc(note::Column::Id)
+            .into_partial_model::<NoteSummary>().all(&state.db).await;
+        let rows = or_empty_warn(rows, "公开文章筛选");
+        let cats = category_names(&state.db, rows.iter().filter_map(|r| r.category_id)).await;
+        let mut dtos: Vec<NoteDto> = rows.into_iter().map(|r| summary_to_dto(r, &cats)).collect();
+        attach_tags(&state.db, &mut dtos).await;
+        attach_stats(&state.db, &mut dtos).await;
+        attach_authors(&state.db, &mut dtos).await;
+        return Json(ApiResponse::success(dtos));
+    }
+
     let notes = note::Entity::find()
         .filter(condition)
         // ⚠️ **显式钉住行序**（20261018）。此前这里没有 ORDER BY，返回顺序是**存储顺序**

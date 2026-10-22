@@ -1,12 +1,12 @@
 use axum::{Json, extract::{State, Path}};
-use sea_orm::{EntityTrait, Set, QueryFilter, QuerySelect, ColumnTrait, ActiveModelTrait};
+use sea_orm::{EntityTrait, Set, QueryFilter, QuerySelect, ColumnTrait, ActiveModelTrait, TransactionTrait};
 use chrono::{Duration, Utc};
 use uuid::Uuid;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use crate::routes::AppState;
 use crate::entity::{password_reset_token, user};
-use crate::utils::hash_password;
+use crate::utils::hash_password_async;
 
 #[derive(Deserialize)]
 pub struct CreateTempUser {
@@ -907,7 +907,10 @@ pub async fn create_temp_user(
         return Json(crate::utils::ApiResponse::error(msg));
     }
 
-    let encrypted_password = hash_password(&payload.password);   // 20260917：Argon2id
+    let encrypted_password = match hash_password_async(payload.password.clone()).await {
+        Ok(v) => v,
+        Err(msg) => return Json(crate::utils::ApiResponse::error(msg)),
+    };
 
     let existing = user::Entity::find()
         .filter(user::Column::Username.eq(username))
@@ -1029,69 +1032,108 @@ pub async fn delete_temp_user(
 /// 这条路的典型场景就是"这个人的账号可能被人用了/设备丢了"，改完密码却让旧令牌
 /// 继续能用，等于什么也没做。与本人改密码（`profile::change_password`）同一条纪律，
 /// 区别只在于本人那台设备会拿到一枚新令牌、这里不签发（管理员不该拿到别人的令牌）。
+/// 两个凭据入口共用鉴权、锁与目标层级检查，不能只保护其中一个。
+async fn credential_change_transaction(
+    state: &AppState,
+    headers: &axum::http::HeaderMap,
+    target_id: i32,
+) -> Result<(sea_orm::DatabaseTransaction, user::Model), &'static str> {
+    let operator = crate::auth_jwt::auth_uid(&state.db, headers).await
+        .map_err(|_| "未登录")?;
+    if operator == target_id {
+        return Err("请在个人中心验证原密码后修改自己的密码");
+    }
+    let txn = state.db.begin().await.map_err(|e| {
+        tracing::error!("[账号管理] 开启凭据事务失败: {e}");
+        "服务暂时不可用，请稍后再试"
+    })?;
+    let actor = user::Entity::find_by_id(operator).lock_shared().one(&txn).await
+        .map_err(|_| "服务暂时不可用，请稍后再试")?
+        .ok_or("未登录")?;
+    let target = user::Entity::find_by_id(target_id).lock_exclusive().one(&txn).await
+        .map_err(|_| "服务暂时不可用，请稍后再试")?
+        .ok_or("用户不存在")?;
+    if crate::authz::is_frozen(actor.status)
+        || !crate::authz::can_manage_credentials(actor.id, &actor.role, target.id, &target.role)
+    {
+        return Err("无权管理该账号的密码或恢复码");
+    }
+    Ok((txn, target))
+}
+
 pub async fn change_password(
     State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
     Path(user_id): Path<i32>,
     Json(payload): Json<ChangePasswordReq>,
 ) -> Json<crate::utils::ApiResponse<String>> {
-    // 判据收敛到 `utils::password_reject`（20261017）。这里此前是 `payload.password.len() < 3`
-    // —— `len()` 是**字节数**，于是"至少 3 位"实际是"**1 个汉字就够**"（3 字节）。
-    // 三处入口（本人改密码 / 找回密码 / 这里）现在同一个函数，不会再各漂各的。
     if let Some(msg) = crate::utils::password_reject(&payload.password) {
         return Json(crate::utils::ApiResponse::error(msg));
     }
-    let user_opt = user::Entity::find_by_id(user_id)
-        .one(&state.db)
-        .await
-        .unwrap_or(None);
-    match user_opt {
-        Some(u) => {
-            let new_ver = u.token_version + 1;
-            let mut am: user::ActiveModel = u.into();
-            am.password = Set(hash_password(&payload.password));   // 20260917：Argon2id
-            am.token_version = Set(new_ver);
-            // 不再顺手把 role 改写成 "user"（20260926）：原来列表里只有 role="user"
-            // 的行，这一行是空转；现在管理员也会出现在列表里，留着它就意味着
-            // 「给管理员改个密码」会**悄悄把管理员降成普通账号**（改密码不该动角色）。
-            let _ = am.update(&state.db).await;
-            Json(crate::utils::ApiResponse::success(
-                "密码修改成功，该账号的登录状态已全部失效".to_string(),
-            ))
-        }
-        None => Json(crate::utils::ApiResponse::error("用户不存在")),
+    let (txn, target) = match credential_change_transaction(&state, &headers, user_id).await {
+        Ok(v) => v,
+        Err(msg) => return Json(crate::utils::ApiResponse::error(msg)),
+    };
+    let mut am: user::ActiveModel = target.clone().into();
+    am.password = Set(match hash_password_async(payload.password.clone()).await {
+        Ok(v) => v,
+        Err(msg) => return Json(crate::utils::ApiResponse::error(msg)),
+    });
+    am.token_version = Set(target.token_version + 1);
+    if let Err(e) = am.update(&txn).await {
+        tracing::error!("[账号管理] 修改密码失败 uid={user_id}: {e}");
+        return Json(crate::utils::ApiResponse::error("密码修改失败，请稍后再试"));
     }
+    // 修改凭据后，之前签发的恢复码也不再允许取回账号。
+    if let Err(e) = password_reset_token::Entity::delete_many()
+        .filter(password_reset_token::Column::UserId.eq(user_id)).exec(&txn).await
+    {
+        tracing::error!("[账号管理] 清理恢复码失败 uid={user_id}: {e}");
+        return Json(crate::utils::ApiResponse::error("密码修改失败，请稍后再试"));
+    }
+    if let Err(e) = txn.commit().await {
+        tracing::error!("[账号管理] 提交密码修改失败 uid={user_id}: {e}");
+        return Json(crate::utils::ApiResponse::error("密码修改失败，请稍后再试"));
+    }
+    Json(crate::utils::ApiResponse::success(
+        "密码修改成功，该账号的登录状态已全部失效".to_string(),
+    ))
 }
 
 pub async fn create_password_reset_token(
     State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
     Path(user_id): Path<i32>,
 ) -> Json<crate::utils::ApiResponse<String>> {
-    let Some(_) = user::Entity::find_by_id(user_id).one(&state.db).await.unwrap_or(None) else {
-        return Json(crate::utils::ApiResponse::error("用户不存在"));
+    let (txn, _) = match credential_change_transaction(&state, &headers, user_id).await {
+        Ok(v) => v,
+        Err(msg) => return Json(crate::utils::ApiResponse::error(msg)),
     };
-    password_reset_token::Entity::delete_many()
-        .filter(password_reset_token::Column::UserId.eq(user_id))
-        .exec(&state.db)
-        .await
-        .ok();
-
+    if let Err(e) = password_reset_token::Entity::delete_many()
+        .filter(password_reset_token::Column::UserId.eq(user_id)).exec(&txn).await
+    {
+        tracing::error!("[账号管理] 清理旧恢复码失败 uid={user_id}: {e}");
+        return Json(crate::utils::ApiResponse::error("恢复码生成失败"));
+    }
     let code = Uuid::new_v4().simple().to_string();
     let now = Utc::now().naive_utc();
-    let expires_at = now + Duration::minutes(15);
-    // 恢复码的哈希 20261020 起是 **Argon2id**（安全审计 SAU-017）：此前与主密码的旧
-    // 存储同一个毛病——无盐单轮 SHA-256，库一泄就是彩虹表直接命中。恢复码本身有 122 位
-    // 熵（`Uuid::new_v4().simple()`）⇒ 现实里爆不开，但**存储算法不该靠"值够随机"兜**：
-    // 库泄漏之后，一条弱码就是一条明文。⚠️ **顺序**：`0009` 那份迁移（加宽
-    // `token_hash`）必须先在生产跑过——`char(64)` 装不下 ~97 字符的 PHC 串。
     let record = password_reset_token::ActiveModel {
         user_id: Set(user_id),
-        token_hash: Set(hash_password(&code)),
-        expires_at: Set(expires_at),
+        token_hash: Set(match hash_password_async(code.clone()).await {
+            Ok(v) => v,
+            Err(msg) => return Json(crate::utils::ApiResponse::error(msg)),
+        }),
+        expires_at: Set(now + Duration::minutes(15)),
         used_at: Set(None),
         created_at: Set(now),
         ..Default::default()
     };
-    if record.insert(&state.db).await.is_err() {
+    if let Err(e) = record.insert(&txn).await {
+        tracing::error!("[账号管理] 保存恢复码失败 uid={user_id}: {e}");
+        return Json(crate::utils::ApiResponse::error("恢复码生成失败"));
+    }
+    if let Err(e) = txn.commit().await {
+        tracing::error!("[账号管理] 提交恢复码失败 uid={user_id}: {e}");
         return Json(crate::utils::ApiResponse::error("恢复码生成失败"));
     }
     Json(crate::utils::ApiResponse::success(code))

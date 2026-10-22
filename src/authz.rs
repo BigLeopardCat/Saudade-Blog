@@ -56,6 +56,12 @@ pub fn can_access_console(role: &str) -> bool {
     role == ROLE_ADMIN || role == ROLE_SUPERADMIN
 }
 
+/// 管理凭据与冻结共用账号层级；自己的密码必须走验证旧密码的个人中心入口。
+pub fn can_manage_credentials(op_uid: i32, op_role: &str, target_uid: i32, target_role: &str) -> bool {
+    is_known_role(target_role)
+        && check_freeze(op_uid, op_role, target_uid, target_role).is_ok()
+}
+
 /// 这个角色的账号能不能出现在**后台账号列表/报表**里。
 ///
 /// 这就是需求原话「超级管理员账号密码不显示在后台」的落点，抽成函数是为了让它
@@ -383,6 +389,23 @@ pub fn mute_span_text(until: chrono::NaiveDateTime, now: chrono::NaiveDateTime) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn credential_management_covers_both_privileged_tiers() {
+        for operator in KNOWN_ROLES {
+            for target in KNOWN_ROLES {
+                let expected = match operator {
+                    ROLE_SUPERADMIN => target != ROLE_SUPERADMIN,
+                    ROLE_ADMIN => matches!(target, ROLE_USER | ROLE_ZAKO),
+                    _ => false,
+                };
+                assert_eq!(can_manage_credentials(1, operator, 2, target), expected,
+                    "{operator} -> {target}");
+                assert!(!can_manage_credentials(1, operator, 1, target));
+            }
+        }
+        assert!(!can_manage_credentials(1, ROLE_SUPERADMIN, 2, "unknown"));
+    }
 
     #[test]
     fn 非管理员族不得进后台管理面() {

@@ -76,11 +76,6 @@ struct ChatCtx {
     total_count: i64,
     trace_id: String,
     body: serde_json::Value,
-    /// 中断清理边界（DiscardAbortedExchange）：删 id 大于它的残缺 assistant 回复。
-    /// 普通轮 = user_msg_id；**隐藏确认轮没有 user 消息**（user_msg_id 为 None），
-    /// 取会话当前最大 id（= 弹窗那条 assistant 消息）——不设边界的话，确认轮被
-    /// 中途停掉时半截回复会留在历史里（普通轮不会）。
-    boundary_id: Option<i32>,
     /// 用户角色（20260920，查 DB 得到；None = 查不到）。只用于签进身份断言交给
     /// agent 做权限判据（agent/src/authz.py），Rust 侧不用它做任何放行判断
     /// ——后台准入走 middleware::auth_guard（那里的纪律是"不信 token 里的 role"）。
@@ -143,6 +138,44 @@ fn fit_image_budget(newest_first: &[(i32, usize)]) -> std::collections::HashSet<
         out.insert(id);
     }
     out
+}
+
+/// 先读取 id 与字节数，在预算内才读取 TOAST 大字段。
+/// 第二次查询按第一步的图片 id 限定，避免两次查询之间新增图片突破预算。
+async fn load_history_images(
+    db: &sea_orm::DatabaseConnection,
+    recent: &[chat_history::Model],
+) -> Result<std::collections::HashMap<i32, Vec<String>>, sea_orm::DbErr> {
+    let mut out = std::collections::HashMap::new();
+    if recent.is_empty() { return Ok(out); }
+    let ids: Vec<i32> = recent.iter().map(|h| h.id).collect();
+    let sizes = chat_image::Entity::find()
+        .select_only()
+        .column(chat_image::Column::Id)
+        .column(chat_image::Column::MessageId)
+        .column_as(Expr::cust("octet_length(\"data\")"), "bytes")
+        .filter(chat_image::Column::MessageId.is_in(ids))
+        .into_tuple::<(i32, i32, i32)>()
+        .all(db).await?;
+    let mut totals = std::collections::HashMap::<i32, usize>::new();
+    for (_, mid, bytes) in &sizes {
+        *totals.entry(*mid).or_default() += (*bytes).max(0) as usize;
+    }
+    let budget_in: Vec<(i32, usize)> = recent.iter()
+        .map(|h| (h.id, totals.get(&h.id).copied().unwrap_or(0))).collect();
+    let allowed = fit_image_budget(&budget_in);
+    let image_ids: Vec<i32> = sizes.into_iter()
+        .filter(|(_, mid, _)| allowed.contains(mid)).map(|(id, _, _)| id).collect();
+    if image_ids.is_empty() { return Ok(out); }
+    let rows = chat_image::Entity::find()
+        .filter(chat_image::Column::Id.is_in(image_ids))
+        .order_by_asc(chat_image::Column::MessageId)
+        .order_by_asc(chat_image::Column::Seq)
+        .all(db).await?;
+    for row in rows {
+        out.entry(row.message_id).or_insert_with(Vec::new).push(row.data);
+    }
+    Ok(out)
 }
 
 /// GET /api/chat/history 查询参数（20260903 会话化）：conversation_id 可选——
@@ -211,49 +244,15 @@ pub async fn chat_history_handler(
         .all(&state.db)
         .await
         .unwrap_or_default();
-    // 聊天图片（20261018）：**多一次查询**把最近 50 条的图折进来。
-    // 另开一张表就是为了让热路径（这 50 条、发给 agent 的 21 条）**一个字节都不多读**
-    // ——加列的话"排除大字段"只能靠"记得在每个查询点写 select_only"这条纪律，
-    // 漏一处就是"历史接口变慢"而没人知道。
-    // 查询失败 → 空图集（历史本身照常返回；图是增强，不是这条接口的存在理由），
-    // 但**要留一行日志**（理由见下面那个 Err 分支）。
-    let ids: Vec<i32> = recent.iter().map(|h| h.id).collect();
-    let mut imgs_by_msg: std::collections::HashMap<i32, Vec<String>> =
-        std::collections::HashMap::new();
-    if !ids.is_empty() {
-        match chat_image::Entity::find()
-            .filter(chat_image::Column::MessageId.is_in(ids.iter().copied()))
-            .order_by_asc(chat_image::Column::MessageId)
-            .order_by_asc(chat_image::Column::Seq)
-            .all(&state.db)
-            .await
-        {
-            Ok(rows) => {
-                for r in rows {
-                    imgs_by_msg.entry(r.message_id).or_default().push(r.data);
-                }
-            }
-            // **不能 `.ok()` 式吞掉**：这一格失败的症状与"这条消息本来就没图"**长得一模一样**
-            // （都是空数组 ⇒ 前端照旧渲染占位块），而那个占位块的文案是"ⓘ图片已过期"
-            // ——用户会以为是图丢了。写一行日志，至少让这件事在 logs/rust.log 里留个痕。
-            Err(e) => warn!(
-                user_id = uid,
-                conversation_id = conv_id,
-                count = ids.len(),
-                "chat: 历史图片查询失败（本轮历史不带图）: {}",
-                e
-            ),
+    let imgs = load_history_images(&state.db, &recent).await;
+    let mut imgs_by_msg = match imgs {
+        Ok(v) => v,
+        Err(e) => {
+            warn!(user_id = uid, conversation_id = conv_id,
+                "chat: 历史图片查询失败（本轮历史不带图）: {}", e);
+            std::collections::HashMap::new()
         }
-    }
-    // 预算装填：`recent` 已是 id 降序 = 时间降序，正好是从新到旧
-    let budget_in: Vec<(i32, usize)> = recent
-        .iter()
-        .map(|h| {
-            let n = imgs_by_msg.get(&h.id).map_or(0, |v| v.iter().map(String::len).sum::<usize>());
-            (h.id, n)
-        })
-        .collect();
-    let allowed = fit_image_budget(&budget_in);
+    };
     let items: Vec<HistoryItem> = recent
         .iter()
         .rev() // 时间升序（聊天软件阅读序）
@@ -262,11 +261,7 @@ pub async fn chat_history_handler(
             role: h.role.clone(),
             content: h.content.clone(),
             time: h.created_at.and_local_timezone(chrono::Local).single().map(|dt| dt.timestamp_millis()).unwrap_or(0),
-            images: if allowed.contains(&h.id) {
-                imgs_by_msg.remove(&h.id).unwrap_or_default()
-            } else {
-                Vec::new()
-            },
+            images: imgs_by_msg.remove(&h.id).unwrap_or_default(),
         })
         .collect();
     (
@@ -284,7 +279,7 @@ pub async fn chat_history_handler(
 
 /// 丢弃本轮（POST /api/chat/discard，20260828b 新增）：用户点击"停止生成"时前端显式调用，
 /// 删除指定会话最后一条 user 消息及后续残缺回复（全删语义）——主动停止 = 用户明确
-/// 不想要这条进记忆，与连接中断清理（DiscardAbortedExchange 只删残缺、保留 user）互补。
+/// 不想要这条进记忆，与连接中断时仅丢弃内存回复的行为互补。
 /// 无/无效 token → 401。幂等：无 user 消息时无操作返回 success。
 /// 20260903 会话化：范围收敛到 conversation_id（显式 / None → 最新非空会话；
 /// 会话已被删 → 空操作 success，不阻断前端 abort 流程——恢复由其他端点的
@@ -622,22 +617,6 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
             .await;
     }
 
-    // 中断清理边界（见 ChatCtx::boundary_id）：确认轮没有本轮 user 消息，用会话
-    // 当前最大 id（= 弹窗那条 assistant 回复）当边界——它是这一轮的起点，删 id
-    // 大于它的 assistant 残缺回复即本轮半截话。查询走 idx(conversation_id) 倒序取一。
-    let boundary_id = if is_confirm {
-        chat_history::Entity::find()
-            .filter(chat_history::Column::UserId.eq(uid))
-            .filter(chat_history::Column::ConversationId.eq(conversation_id))
-            .order_by_desc(chat_history::Column::Id)
-            .one(&state.db)
-            .await
-            .unwrap_or(None)
-            .map(|r| r.id)
-    } else {
-        user_msg_id
-    };
-
     // 读取最近历史（20260828 修复：排除刚插入的当前消息 user_msg_id——此前 history
     // 含当前消息、agent 端又追加 last_msg，同一条消息注入 2 次，模型注意力被重复
     // 文本分散并形成"自己提问自己回答"的假象。limit 21 保证排除后仍有 20 条历史）
@@ -860,7 +839,7 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
     if std::env::var("CHAT_DEBUG_BODY").is_ok() {
         eprintln!("[chat-debug] body={}", body);
     }
-    Ok(ChatCtx { uid, conversation_id, total_count, trace_id, body, boundary_id, role })
+    Ok(ChatCtx { uid, conversation_id, total_count, trace_id, body, role })
 }
 
 
@@ -2077,58 +2056,8 @@ fn classify_frame(payload: &str) -> Frame<'_> {
     }
 }
 
-/// 流式对话中断清理（20260828b 语义修正）：客户端中途断开（页面转跳/关闭标签页/网络中断）时，
-/// 删除本轮 user 消息之后的残缺 assistant 回复，**保留 user 消息本身**——
-/// 用户"发完消息不等回复就转跳"是最常见使用模式，转跳导致连接中断后，
-/// 新页面应从 DB 权威历史看到"消息已发出"（聊天软件形态）；只有残缺回复不入记忆
-/// （history 上下文 / 摘要），避免半截命令/问答污染后续对话。
-///
-/// 与主动停止的区别：用户点击"停止生成"是明确不想要这条，前端会显式调用
-/// POST /api/chat/discard 全删（user + 残缺）；这里的连接中断无法区分"跳走"与
-/// "删除意图"，一律保守保留 user。
-///
-/// Drop 在 SSE 生成器（body_stream）被取消时同步执行；DB 删除是异步操作，用 tokio::spawn 异步完成。
-/// 20260903 会话化：删除范围带 conversation_id 快照——drop 可能延迟到用户已切到新会话
-/// 之后执行，不带会话过滤会误清新会话的残缺回复。
-/// 仅当流未正常收尾（未收到终止标记即被取消）时才清理；正常结束由 done 标记关闭清理，
-/// 保留既有行为（含上游异常时保存残缺回复的逻辑，见 chat_stream_handler 尾部）。
-struct DiscardAbortedExchange {
-    state: Arc<AppState>,
-    uid: i32,
-    /// 本轮消息所属会话快照（与 user_msg_id 同源于 prepare_chat）：
-    /// 清理双限（会话 + id 区间），drop 延迟执行时绝不越界误删其他会话
-    conversation_id: i32,
-    /// 本轮起点快照（prepare_chat 计算，见 ChatCtx::boundary_id）。
-    /// 只删 id 大于快照的 assistant 记录——即使清理延迟执行（期间新轮 user 已插入），
-    /// role=user 的新记录也不会被误删。
-    boundary_id: Option<i32>,
-    done: std::sync::Arc<std::sync::atomic::AtomicBool>,
-}
-
-impl Drop for DiscardAbortedExchange {
-    fn drop(&mut self) {
-        if self.done.load(std::sync::atomic::Ordering::SeqCst) {
-            return;
-        }
-        let Some(boundary_id) = self.boundary_id else { return };
-        let state = self.state.clone();
-        let uid = self.uid;
-        let conversation_id = self.conversation_id;
-        // 只删本轮 user 消息之后的残缺 assistant 回复（id 单调递增 + role + 会话三重限定）。
-        // 若 drop 延迟到新轮已插入：新轮 user（role=user）不受影响；新轮同会话尚未收尾，
-        // 其 assistant 记录不可能先于旧轮清理存在，不会误删；跨会话（用户已切走）
-        // 由 conversation_id 限定天然隔离
-        tokio::spawn(async move {
-            let _ = chat_history::Entity::delete_many()
-                .filter(chat_history::Column::UserId.eq(uid))
-                .filter(chat_history::Column::ConversationId.eq(conversation_id))
-                .filter(chat_history::Column::Id.gt(boundary_id))
-                .filter(chat_history::Column::Role.eq("assistant"))
-                .exec(&state.db)
-                .await;
-        });
-    }
-}
+// F5：中断流只丢弃本轮尚在内存中的回复。正文在终止帧前从未落库，
+// 因此不需要 Drop 时删除数据库；按 id 下界删除会误删同会话的其他完整轮次。
 
 /// 流式回合收尾的**分离式**落库（20260920 顺序契约）。
 ///
@@ -2141,8 +2070,6 @@ impl Drop for DiscardAbortedExchange {
 /// ② 用 `tokio::spawn` 把写入从生成器生命周期里摘出来：即便这一行之后 future 被
 ///    丢弃（断开正好落在 DB 写入的那几毫秒里），任务照常跑完。
 ///
-/// 调用方**先**置 `done`：`DiscardAbortedExchange` 以 done 判定本轮是否正常收尾，
-/// 不先置位的话，紧接着的断开会让中断清理把刚写的正常回复当"残缺回复"删掉。
 fn spawn_save_assistant_reply(
     state: Arc<AppState>,
     uid: i32,
@@ -2272,12 +2199,36 @@ pub async fn chat_stream_handler(
     let uid = ctx.uid;
     let conversation_id = ctx.conversation_id;
     let total_count = ctx.total_count;
-    let boundary_id = ctx.boundary_id;
     // 帧循环里的告警要用（stream! 生成器闭包不能借用 ctx——它后面还要用 ctx 写响应头）
     let trace_id = ctx.trace_id.clone();
 
-    let body_stream = stream! {
-        let mut upstream_stream = upstream.bytes_stream();
+    let body_stream = forward_agent_stream(state, uid, conversation_id, total_count, trace_id, upstream.bytes_stream());
+
+    (
+        [
+            (header::CONTENT_TYPE, "text/event-stream"),
+            (header::CACHE_CONTROL, "no-cache"),
+            (header::CONNECTION, "keep-alive"),
+            // 关键：告知 nginx 不要缓冲此响应，否则 SSE 会被攒到结束才一次性下发
+            (header::HeaderName::from_static("x-accel-buffering"), "no"),
+            // 链路追踪：透传 trace id 给前端（前端可在网络面板按此 id 关联全链路日志）
+            (header::HeaderName::from_static("x-request-id"), &ctx.trace_id),
+        ],
+        Body::from_stream(body_stream),
+    ).into_response()
+}
+
+/// 流生命周期内只持有本轮未完成正文；取消时丢弃内存，不删数据库行。
+fn forward_agent_stream(
+    state: Arc<AppState>,
+    uid: i32,
+    conversation_id: i32,
+    total_count: i64,
+    trace_id: String,
+    upstream_stream: impl futures::Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
+) -> impl futures::Stream<Item = Result<Bytes, axum::Error>> + Send {
+    stream! {
+        futures::pin_mut!(upstream_stream);
         let mut frame_buf: Vec<u8> = Vec::new();
         let mut reply = String::new();
         let mut terminal = false;
@@ -2285,11 +2236,6 @@ pub async fn chat_stream_handler(
         let mut summary_override: Option<String> = None;
         // 跨轮执行记忆（20260904 C5）：checker 验收回执（__EXEC__ 帧 → execution_log
         // 落库）在下方帧循环里收到即写，不留内存副本——断开也不丢
-
-        // 客户端中断清理（见 DiscardAbortedExchange）：流被取消时删除本轮 user 消息
-        // 之后的残缺回复（user 消息本体保留）；正常走完 while 循环后置位 done，关闭清理
-        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let _guard = DiscardAbortedExchange { state: state.clone(), uid, conversation_id, boundary_id, done: done.clone() };
 
         while let Some(chunk) = upstream_stream.next().await {
             let chunk = match chunk {
@@ -2311,11 +2257,9 @@ pub async fn chat_stream_handler(
                 // 那个函数的头注：顺序错一步就是静默丢帧，而那种故障三端都不留痕。
                 match classify_frame(&payload) {
                     // 终端/错误标记：**先落库（分离写入）、再原样转发给前端**
-                    // （20260920 顺序契约，见 spawn_save_assistant_reply：客户端见到
-                    // 终止帧即断开也不该丢回复；done 先置位防中断清理误删刚写的回复）
+                    // （见 spawn_save_assistant_reply：客户端见到终止帧即断开也不丢回复）
                     Frame::Terminal | Frame::Error => {
                         terminal = true;
-                        done.store(true, std::sync::atomic::Ordering::SeqCst);
                         spawn_save_assistant_reply(state.clone(), uid, conversation_id,
                                                    std::mem::take(&mut reply),
                                                    summary_override.take(), total_count);
@@ -2453,9 +2397,6 @@ pub async fn chat_stream_handler(
             if terminal { break; }
         }
 
-        // 正常收尾（无论是否收到终止标记）：不再触发中断清理
-        done.store(true, std::sync::atomic::Ordering::SeqCst);
-
         // 上游中断且未收到终止标记：显式告知前端（否则静默截断无法区分）
         if !terminal {
             yield Ok::<_, axum::Error>(Bytes::from(
@@ -2471,26 +2412,53 @@ pub async fn chat_stream_handler(
         }
         // 执行回执不在这里：收到 __EXEC__ 帧时就已落库（见上分支），
         // 因此客户端在任何时刻断开（哪怕收尾前）都不会丢执行记录
-    };
-
-    (
-        [
-            (header::CONTENT_TYPE, "text/event-stream"),
-            (header::CACHE_CONTROL, "no-cache"),
-            (header::CONNECTION, "keep-alive"),
-            // 关键：告知 nginx 不要缓冲此响应，否则 SSE 会被攒到结束才一次性下发
-            (header::HeaderName::from_static("x-accel-buffering"), "no"),
-            // 链路追踪：透传 trace id 给前端（前端可在网络面板按此 id 关联全链路日志）
-            (header::HeaderName::from_static("x-request-id"), &ctx.trace_id),
-        ],
-        Body::from_stream(body_stream),
-    ).into_response()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[tokio::test]
+    async fn cancelling_stream_does_not_delete_any_persisted_turn() {
+        let state = Arc::new(AppState {
+            db: sea_orm::MockDatabase::new(sea_orm::DatabaseBackend::Postgres).into_connection(),
+            rate_limiter: crate::rate_limiter::LoginRateLimiter::new(5, 300, 900),
+            post_limiter: crate::risk::PostRateLimiter::new(),
+            report_limiter: crate::rate_limiter::LoginRateLimiter::new(120, 60, 300),
+        });
+        let upstream = futures::stream::once(async {
+            Ok(Bytes::from_static(b"data: \"partial reply\"\n\n"))
+        }).chain(futures::stream::pending());
+        let mut response = Box::pin(forward_agent_stream(state.clone(), 7, 42, 1, "cancel-test".into(), upstream));
+        assert!(response.next().await.unwrap().is_ok());
+        drop(response);
+        tokio::task::yield_now().await;
+        let state = Arc::try_unwrap(state).ok().expect("取消后没有数据库清理任务持有状态");
+        assert!(state.db.into_transaction_log().is_empty(), "取消不能发出任何范围删除");
+    }
+
+    #[tokio::test]
+    async fn over_budget_history_images_are_not_loaded_from_database() {
+        use std::collections::BTreeMap;
+        let metadata: BTreeMap<&str, sea_orm::Value> = BTreeMap::from([
+            ("id", 99.into()), ("message_id", 42.into()),
+            ("bytes", ((CHAT_HISTORY_IMAGE_BUDGET + 1) as i32).into()),
+        ]);
+        let db = sea_orm::MockDatabase::new(sea_orm::DatabaseBackend::Postgres)
+            .append_query_results([vec![metadata]]).into_connection();
+        let recent = vec![chat_history::Model {
+            id: 42, user_id: 7, conversation_id: 1, role: "user".into(),
+            content: "image".into(), created_at: chrono::Local::now().naive_local(),
+        }];
+        let images = load_history_images(&db, &recent).await.unwrap();
+        assert!(images.is_empty());
+        let log = db.into_transaction_log();
+        assert_eq!(log.len(), 1, "超预算只查元数据，不发第二条大字段查询");
+        let query = format!("{:?}", log[0]);
+        assert!(query.contains("octet_length"));
+    }
 
     /// 历史图片的字节预算（20261018）。**为什么值得有这条判据**：`CHAT_HISTORY_IMAGE_BUDGET`
     /// 是一个"正常用法永远碰不到"的安全阀 —— 没有判据钉着，它会在某次重构里被顺手删掉

@@ -56,14 +56,14 @@ pub(crate) async fn resolve_conversation_id(
     }
     // 最新非空会话：用户最大 id 的消息必然落在最近活跃会话中（idx_user/idx_conv_id 单查）
     let last = chat_history::Entity::find()
+        .select_only()
+        .column(chat_history::Column::ConversationId)
         .filter(chat_history::Column::UserId.eq(uid))
         .order_by_desc(chat_history::Column::Id)
-        .one(db)
-        .await
-        .ok()
-        .flatten();
+        .into_tuple::<i32>()
+        .one(db).await.ok().flatten();
     match last {
-        Some(h) => Ok(Some(h.conversation_id)),
+        Some(id) => Ok(Some(id)),
         None if create_if_none => {
             // 结构体字面量不能直接作 match 判定式（{ 会被解析成 match 块），先绑变量
             let model = conversation::ActiveModel {
@@ -203,26 +203,21 @@ pub async fn list_conversations(
         .all(&state.db)
         .await
         .unwrap_or_default();
-    // 仅标题命中的行补定位锚：标题 = 首条用户消息截断（标题出处），点行应定位
-    // 到该会话首条消息而非停留在"最新消息"处——idx_conv_id (conversation_id, id)
-    // 前缀命中的单行索引查询，标题命中行数少（个位~几十），逐行可接受
+    // 标题命中的首条消息一次聚合取回，避免最多 200 次串行往返和重复读取正文。
     if q.is_some() {
-        // filter 闭包持 hit_by_conv 借用 → 先收集再逐行插入
-        let need: Vec<i32> = convs
-            .iter()
-            .filter(|c| !hit_by_conv.contains_key(&c.id))
-            .map(|c| c.id)
-            .collect();
-        for cid in need {
-            if let Some(h) = chat_history::Entity::find()
-                .filter(chat_history::Column::ConversationId.eq(cid))
-                .order_by_asc(chat_history::Column::Id)
-                .one(&state.db)
-                .await
-                .ok()
-                .flatten()
-            {
-                hit_by_conv.insert(cid, h.id);
+        let need: Vec<i32> = convs.iter().filter(|c| !hit_by_conv.contains_key(&c.id))
+            .map(|c| c.id).collect();
+        if !need.is_empty() {
+            let firsts = chat_history::Entity::find().select_only()
+                .column(chat_history::Column::ConversationId)
+                .column_as(Expr::col(chat_history::Column::Id).min(), "first_id")
+                .filter(chat_history::Column::UserId.eq(uid))
+                .filter(chat_history::Column::ConversationId.is_in(need))
+                .group_by(chat_history::Column::ConversationId)
+                .into_tuple::<(i32, i32)>().all(&state.db).await;
+            match firsts {
+                Ok(rows) => hit_by_conv.extend(rows),
+                Err(e) => tracing::warn!("[会话] 加载标题命中定位失败: {e}"),
             }
         }
     }
