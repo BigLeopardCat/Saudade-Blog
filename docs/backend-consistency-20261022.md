@@ -5,6 +5,6 @@
 - 公告使用 INSERT RETURNING 取得默认时间；插入失败不再返回 Created，也不触发通知。通知依然 best-effort，可靠投递和公告来源 ID 留待后续迁移。
 - 额度申请的校验、条件认领与额度恢复使用同一事务；失败可以重试。并发审批仅一个事务生效，提交后才通知。
 
-回归测试：`tests/backend_consistency.rs`，包含审核读取失败/非法值、两条设置写入路径的故障回滚、公告插入失败及恢复、额度审批失败回滚与并发重试。数据库测试各自建立独立 UUID schema 和连接池，触发器不修改共享表，不修改进程环境。未设置 TEST_PG_URL 时明确输出未执行 PostgreSQL 验证；CI 使用真实 PostgreSQL 执行。
+回归测试：`tests/backend_consistency.rs`，包含审核读取失败/非法值、两条设置写入路径的故障回滚、公告插入失败及恢复、额度审批失败回滚与并发重试。数据库测试各自建立独立 UUID schema 和连接池，触发器不修改共享表，不修改进程环境。未设置 TEST_PG_URL 时明确输出未执行 PostgreSQL 验证；CI 使用真实 PostgreSQL 执行，并在 Rust 测试步骤提供固定的测试专用 JWT_SECRET；单独运行该集成测试时也需显式设置测试密钥。
 
 本次不增加数据库迁移，不涉及 IoT。不改变现有响应信封；HTTP 状态码与业务 code 的统一另行改造。Agent 执行幂等协议、待办版本控制、通知 outbox、生产 readiness 与迁移门禁仍需独立设计及部署验证。
