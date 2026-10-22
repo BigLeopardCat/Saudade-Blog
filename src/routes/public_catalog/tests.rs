@@ -110,6 +110,21 @@ async fn postgres_public_counts_exclude_hidden_drafts_and_shadow_versions() {
             .unwrap();
         }
     }
+    for seq in 2i16..24 {
+        let tag = insert(
+            &txn,
+            "INSERT INTO tag_one (name) VALUES ($1) RETURNING id",
+            vec![format!("{name}_{seq}").into()],
+        )
+        .await;
+        txn.execute(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "INSERT INTO note_tag(note_id,seq,tag_one_id) VALUES($1,$2,$3)",
+            vec![root.into(), seq.into(), tag.into()],
+        ))
+        .await
+        .unwrap();
+    }
     let filter = ArticleQuery {
         category_id: Some(cid),
         ..Default::default()
@@ -123,6 +138,16 @@ async fn postgres_public_counts_exclude_hidden_drafts_and_shadow_versions() {
     assert_eq!((total, total2), (2, 2));
     assert_eq!((first.len(), second.len()), (1, 1));
     assert_ne!(first[0].id, second[0].id);
+    for row in [&first[0], &second[0]] {
+        if row.id == root {
+            assert_eq!(row.tags.len(), 20);
+            assert!(row.tags_truncated);
+        } else {
+            assert_eq!(row.tags.len(), 2);
+            assert!(!row.tags_truncated);
+        }
+    }
+
     assert!(!serde_json::to_string(&first)
         .unwrap()
         .contains("SECRET BODY"));

@@ -6,8 +6,8 @@ use axum::{
 };
 use sea_orm::{
     sea_query::{extension::postgres::PgExpr, Expr},
-    ColumnTrait, Condition, ConnectionTrait, DbErr, EntityTrait, FromQueryResult, PaginatorTrait,
-    QueryFilter, QueryOrder, QuerySelect, QueryTrait,
+    ColumnTrait, Condition, ConnectionTrait, DatabaseBackend, DbErr, EntityTrait, FromQueryResult,
+    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, QueryTrait, Statement,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -42,6 +42,8 @@ pub struct Article {
     pub updated_at: chrono::NaiveDateTime,
     #[sea_orm(skip)]
     pub tags: Vec<Tag>,
+    #[sea_orm(skip)]
+    pub tags_truncated: bool,
 }
 
 #[derive(Serialize)]
@@ -104,26 +106,26 @@ async fn attach_tags<C: ConnectionTrait>(db: &C, articles: &mut [Article]) -> Re
     if ids.is_empty() {
         return Ok(());
     }
-    let rows = note_tag::Entity::find()
-        .select_only()
-        .column(note_tag::Column::NoteId)
-        .column_as(note_tag::Column::TagOneId, "one_id")
-        .column_as(note_tag::Column::TagTwoId, "two_id")
-        .column_as(
-            Expr::col((tag_one::Entity, tag_one::Column::Name)),
-            "one_name",
-        )
-        .column_as(
-            Expr::col((tag_two::Entity, tag_two::Column::Name)),
-            "two_name",
-        )
-        .left_join(tag_one::Entity)
-        .left_join(tag_two::Entity)
-        .filter(note_tag::Column::NoteId.is_in(ids))
-        .order_by_asc(note_tag::Column::Seq)
-        .into_model::<TagRow>()
-        .all(db)
-        .await?;
+    let slots = (1..=ids.len())
+        .map(|index| format!("(${index}::integer)"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let rows = TagRow::find_by_statement(Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        format!(
+            "SELECT links.note_id, links.tag_one_id AS one_id, one_tag.name AS one_name, \
+                 links.tag_two_id AS two_id, two_tag.name AS two_name \
+                 FROM (VALUES {slots}) AS requested(note_id) \
+                 CROSS JOIN LATERAL (SELECT note_id,seq,tag_one_id,tag_two_id FROM note_tag \
+                    WHERE note_id=requested.note_id ORDER BY seq LIMIT 21) AS links \
+                 LEFT JOIN tag_one AS one_tag ON links.tag_one_id=one_tag.id \
+                 LEFT JOIN tag_two AS two_tag ON links.tag_two_id=two_tag.id \
+                 ORDER BY links.note_id,links.seq"
+        ),
+        ids.into_iter().map(Into::into).collect::<Vec<_>>(),
+    ))
+    .all(db)
+    .await?;
     for row in rows {
         let tag = match (row.one_id, row.one_name, row.two_id, row.two_name) {
             (Some(id), Some(name), None, None) => Tag { id, name, level: 1 },
@@ -134,20 +136,32 @@ async fn attach_tags<C: ConnectionTrait>(db: &C, articles: &mut [Article]) -> Re
             .iter_mut()
             .find(|article| article.id == row.note_id)
         {
-            article.tags.push(tag);
+            if article.tags.len() < 20 {
+                article.tags.push(tag);
+            } else {
+                article.tags_truncated = true;
+            }
         }
     }
     Ok(())
 }
 
-pub(super) async fn read<C: ConnectionTrait>(db: &C, params: &ArticleQuery, limit: u64, offset: u64)
-    -> Result<(Vec<Article>, i64), DbErr> {
+pub(super) async fn read<C: ConnectionTrait>(
+    db: &C,
+    params: &ArticleQuery,
+    limit: u64,
+    offset: u64,
+) -> Result<(Vec<Article>, i64), DbErr> {
     read_view(db, params, limit, offset, false, false).await
 }
 
-pub(crate) async fn read_public<C: ConnectionTrait>(db: &C, params: &ArticleQuery,
-                                                   limit: u64, offset: u64, top_only: bool)
-    -> Result<(Vec<Article>, i64), DbErr> {
+pub(crate) async fn read_public<C: ConnectionTrait>(
+    db: &C,
+    params: &ArticleQuery,
+    limit: u64,
+    offset: u64,
+    top_only: bool,
+) -> Result<(Vec<Article>, i64), DbErr> {
     read_view(db, params, limit, offset, true, top_only).await
 }
 
@@ -176,8 +190,12 @@ async fn read_view<C: ConnectionTrait>(
         None
     };
     let mut query = query(params, cat_id);
-    if public_only { query = query.filter(super::super::notes::public_condition()); }
-    if top_only { query = query.filter(note::Column::IsTop.eq(1)); }
+    if public_only {
+        query = query.filter(super::super::notes::public_condition());
+    }
+    if top_only {
+        query = query.filter(note::Column::IsTop.eq(1));
+    }
     let total = query.clone().count(db).await? as i64;
     let mut items = query
         .limit(limit)
