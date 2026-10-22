@@ -1,7 +1,8 @@
 import { createBrowserRouter, Navigate, useParams } from "react-router-dom";
 import Login from "../pages/Login";
 import Dashboard from "../pages/Dashboard";
-import RiverBoard from "../pages/RiverBoard/index";
+import { lazy, Suspense } from "react";
+const RiverBoard = lazy(() => import("../pages/RiverBoard/index"));
 import { AuthRouter } from "../components/AuthRouter.tsx";
 import Home from "../pages/Dashboard/Home";
 import Notes from "../pages/Dashboard/Notes";
@@ -84,7 +85,7 @@ const router = createBrowserRouter([
     // 留言板（河灯）：主页导航"留言板"入口
     {
         path: 'guestbook',
-        element: <RiverBoard />
+        element: <Suspense fallback={<div style={{ minHeight: "100dvh", background: "#081723" }} />}><RiverBoard /></Suspense>
     },
     // 兼容旧地址 /he（早期隐藏路由），重定向到留言板
     {
