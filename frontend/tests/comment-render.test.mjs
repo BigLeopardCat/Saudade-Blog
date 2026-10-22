@@ -1,18 +1,4 @@
-// ═ 文章评论：渲染安全 + 结构契约（20261002）══
-//   node tests/comment-render.test.mjs
-//
-// 讨论区是**第一个把访客输入原样存库、再原样渲染到别人浏览器里**的功能。
-// 所以这里分两半钉：
-//
-// ① **真跑一遍渲染管线**（把 `src/utils/chatMarkdown.ts` 用 esbuild 打成 ESM 再 import，
-//    同 `wordgraph-engine.test.mjs` 的既定做法——本机禁止 vite build）：喂 `<script>`、
-//    `<img onerror>`、`javascript:` 链接进去，断言出来的 HTML 里真的没有它们；
-//    再喂 `:头疼:` 与 `**粗体**`，断言表情包与 markdown 都还在（防线不能顺手把功能也剥了）。
-//    这一半是**行为**断言——注释写得再对也只是注释。
-//
-// ② **源码契约**：`dangerouslySetInnerHTML` 这个入口在全组件里只能有一处、且内容必须是
-//    `renderBlogMarkdown()` 的产物。第二处就是"哪天有人图省事直接塞原文"，而那时
-//    sanitize 已经被绕过去了——① 却照样是绿的（它测的是管线，不是调用点）。
+// 评论渲染安全、表情与前后端通知契约。
 import { execFileSync } from 'child_process';
 import { mkdtempSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
@@ -213,7 +199,12 @@ console.log('\n回复通知 —— 两条路径一个函数，判据都在函数
 const calls = count(rustComments, 'notify_comment_reply(');
 ok(calls === 3, 'notify_comment_reply 共 3 次出现：1 处定义 + 2 处调用（创建 / 复核）', calls);
 ok(/async fn notify_comment_reply\(/.test(rustComments), '函数定义在 comments.rs');
-ok(/super::notice::push_notice\(/.test(rustComments), '走现成的 push_notice，不另写一套通知落库');
+ok(bodyOf(rustComments, 'async fn notify_comment_reply(')
+    .includes('notify_comment_reply_checked('), '旧回复通知委托共用的可检查通知函数');
+ok(bodyOf(rustComments, 'pub(crate) async fn notify_comment_reply_checked')
+    .includes('super::notice::push_notice_checked('), '共用回复通知复用事务通知服务');
+ok(!/user_notification::Entity::insert/.test(strip(rustComments)),
+    '评论模块不自行插入通知，避免重复落库路径');
 ok(rustComments.includes('Some(format!("/article/{note_id}?cid={comment_id}"))'),
     '深链格式 = /article/<文章 id>?cid=<评论 id>');
 ok(rustComments.includes('super::talks::talk_brief('),
