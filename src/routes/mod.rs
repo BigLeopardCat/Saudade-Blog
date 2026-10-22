@@ -18,7 +18,8 @@ pub mod stats;
 pub mod profile;  // 个人中心一期（20260922）
 pub mod notice;   // 单用户站内通知（20260923；留言审核结果的首个生产者）
 pub mod todos;    // 后台首页待办（20260924；整份列表按用户落库）
-pub mod quota;    // 用户对话额度（20260929；上限与算术在 crate::quota，本模块只管读写）
+pub mod quota;
+mod queue_pages;    // 用户对话额度（20260929；上限与算术在 crate::quota，本模块只管读写）
 pub mod note_stats; // 文章阅读量/点赞量（20260930；**绝不能记进 get_note_detail**，见模块头注）
 pub mod moderation;
 pub mod comments;   // 文章评论（20261002）：审核复用 talks::decide_review，存储走 note_comment 表

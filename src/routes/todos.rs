@@ -1,51 +1,13 @@
-//! 后台首页待办（20260924）。
-//!
-//! 前端的待办卡手里只有**一个数组**（拖拽换位、空行回收、行文本就地编辑，改的都是它），
-//! 所以它用的两个接口就是"读整份 / 写整份"：
-//!
-//!   GET  /api/protected/todos      → 该用户按 sort_order 排好的整份列表
-//!   PUT  /api/protected/todos      → 整份覆盖（事务内先删该用户全部行、再逐条插入）
-//!   POST /api/protected/todos/item → **追加一条**（20260926：给 agent 用，见下）
-//!   POST /api/protected/todos/done → **按正文翻某一条的完成标记**（20260926：同上）
-//!   POST /api/protected/todos/date → **按正文改某一条的排期日**（20260929：同上）
-//!
-//! 为什么不按行做 CRUD、为什么前端不接服务端 id：见
-//! `scripts/migration/dashboard_todo_20260924.sql` 头注（那里写了取舍与代价）。
-//!
-//! 后三条通道（20260926 两条 / 20260929 一条）的来由：agent 要能"替主人安排一条日程"、
-//! "把某件事勾成做完了"、"把某件事挪到别的日子"，而它**手里没有**那份列表。让它复用 PUT
-//! 只有两种写法，两种都坏——先读再写（读到写之间主人可能刚改过，写完就把主人的改动抹了），
-//! 或者干脆发一份自己拼的（整份覆盖的语义下等于清空主人的待办）。所以给它的是三条
-//! **只动自己那一行、既有行一个字节都不动**的最小通道：一条只插入、一条只翻 `done` 列、
-//! 一条只改 `due_date` 列。三条共用同一个代价——**只能按正文定位**（线上从不回行 id），
-//! 所以"正文是唯一身份"这件事在 [pick_todo] 里被写成三条判据。
-//! 前端不消费这三条接口（页面上那几件事始终是整份读写），但前端**必须**在 agent 收尾后
-//! 重读一次列表——否则它手里的旧那份会在下一次自动保存时把 agent 改的覆盖掉
-//! （见 frontend/src/pages/Dashboard/Home/index.tsx 里 agent-turn-done 那一段）。
-//!
-//! 三条边界（写在这里，避免以后被"顺手放宽"）：
-//!   · **空文本的行不落库**：空行是前端"新增一行"的临时态（失焦就回收），
-//!     落库只会攒出一堆空壳；追加那条通道连空文本都不收（没有"临时态"这回事）；
-//!   · 条数上限 `MAX_TODOS`、正文上限 `MAX_TEXT_CHARS`（与列宽一致）——超了**拒绝**
-//!     而不是悄悄截断（截断会静默改主人的字）。拒绝的**粒度**两种通道不同：
-//!     PUT 是整单拒绝（改完再发一次整份），三条最小通道只拒绝这一条（没道理让主人重发整份）；
-//!   · 排期只收 `YYYY-MM-DD`（`due_date` 是 date 列，带时间的串在这里就挡掉，
-//!     不让它变成"存进去了但读出来少了一截"）；**清空排期必须是说出口的那一下**
-//!     （`null` / 空串 = 未排期，与前端 `DatePicker` 的 `allowClear` 同语义）——改排期那条
-//!     通道的 `date` 字段与 `done` 同一条纪律（不给默认值），漏传字段整单拒绝，
-//!     免得"漏传"被当成"清空"。
-//!
-//! 鉴权：本模块挂在 `protected_routes`（admin 守卫）之下，每个 handler 仍按 uid 过滤
-//! ——守卫管"能不能进后台"，uid 管"是谁的那份列表"，两者不互相替代。
+//! Administrator-owned dashboard todos and atomic single-item actions.
 
-use axum::{extract::State, http::HeaderMap, Json};
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, Set, TransactionTrait};
+use axum::{extract::{Query, State}, http::HeaderMap, Json};
+use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 use crate::entity::dashboard_todo;
 use crate::routes::AppState;
-use crate::utils::ApiResponse;
+use crate::utils::{ApiResponse, ApiResponsePage};
 
 /// 一份列表最多多少条（前端没有条数限制，这里给一个诚实的上限：够用，且 PUT 体积可控）
 const MAX_TODOS: usize = 200;
@@ -218,29 +180,61 @@ fn pick_todo<'a>(
     Ok(row)
 }
 
-/// GET /api/protected/todos：我的整份待办（按位次）。
+#[derive(Default, Deserialize)]
+pub struct TodoQuery {
+    pub done: Option<bool>,
+    pub page: Option<u64>,
+    pub page_size: Option<u64>,
+}
+
+pub(super) fn todo_query(uid: i32, done: Option<bool>) -> sea_orm::Select<dashboard_todo::Entity> {
+    let mut query = dashboard_todo::Entity::find()
+        .filter(dashboard_todo::Column::UserId.eq(uid));
+    if let Some(done) = done {
+        query = query.filter(dashboard_todo::Column::Done.eq(done));
+    }
+    query.order_by_asc(dashboard_todo::Column::SortOrder)
+        .order_by_asc(dashboard_todo::Column::Id)
+}
+
+/// GET todos: optional page and completion filter, always restricted to the actor.
 pub async fn list_todos(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-) -> Json<ApiResponse<Vec<TodoDto>>> {
+    Query(params): Query<TodoQuery>,
+) -> Json<ApiResponsePage<Vec<TodoDto>>> {
     let uid = match crate::auth_jwt::auth_uid(&state.db, &headers).await {
         Ok(uid) => uid,
-        Err(e) => return Json(ApiResponse::error(e.message())),
+        Err(e) => return Json(ApiResponsePage::error(e.message())),
     };
-    let rows = match dashboard_todo::Entity::find()
-        .filter(dashboard_todo::Column::UserId.eq(uid))
-        .order_by_asc(dashboard_todo::Column::SortOrder)
-        .order_by_asc(dashboard_todo::Column::Id)
+    let window = match super::queue_pages::window(params.page, params.page_size) {
+        Ok(window) => window,
+        Err(msg) => return Json(ApiResponsePage::error(msg)),
+    };
+    let mut query = todo_query(uid, params.done);
+    let total = if window.is_some() {
+        match query.clone().count(&state.db).await {
+            Ok(total) => Some(total as i64),
+            Err(e) => {
+                tracing::error!("todo count failed uid={uid}: {e}");
+                return Json(ApiResponsePage::error("读取失败，请稍后再试"));
+            }
+        }
+    } else { None };
+    if let Some((limit, offset)) = window {
+        query = query.limit(limit).offset(offset);
+    }
+    let rows = match query
         .all(&state.db)
         .await
     {
         Ok(v) => v,
         Err(e) => {
             tracing::error!("[todos] 读取失败 uid={}: {}", uid, e);
-            return Json(ApiResponse::error("读取失败，请稍后再试"));
+            return Json(ApiResponsePage::error("读取失败，请稍后再试"));
         }
     };
-    Json(ApiResponse::success(
+    Json(ApiResponsePage::success(
         rows.into_iter()
             .map(|r| TodoDto {
                 text: r.text,
@@ -248,6 +242,7 @@ pub async fn list_todos(
                 date: r.due_date.map(|d| d.format("%Y-%m-%d").to_string()),
             })
             .collect(),
+        total,
     ))
 }
 
@@ -325,7 +320,7 @@ pub async fn save_todos(
     }
     // 回读一次而不是回显入参：让前端拿到的是**库里此刻的样子**（含空行被剔除后的
     // 真实位次），省得前端本地状态与库悄悄分叉。
-    list_todos(State(state), headers).await
+    Json(list_todos(State(state), headers, Query(TodoQuery::default())).await.0.base)
 }
 
 /// POST /api/protected/todos/item：**追加一条**（agent 安排日程用的那条通道）。

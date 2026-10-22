@@ -1,37 +1,4 @@
-//! 用户对话额度（20260929）——用户侧两条 + 后台三条。
-//!
-//! **为什么这个模块存在**：上限是多少、剩多少、怎么原子扣一轮，全部住在
-//! `crate::quota`（那里的头注是本批的判据总纲）。本模块只做两件事——把事实读出来、
-//! 把管理员那三个动作做下去——**不重复实现任何判据**（`is_unlimited` / `view` /
-//! `try_consume` 一律调用 `crate::quota`）。五条路由挂在哪、为什么挂那儿见
-//! `routes/mod.rs`：用户侧两条在 `public_routes`（handler 自身鉴权，与 profile 同族），
-//! 管理员三条在 `protected_routes`（共用 `auth_guard`）。
-//!
-//! ── 三条承重纪律 ────────────────────────────────────────────────────────────
-//!
-//! ① **先原子认领，再产生副作用**（`review_quota_request`）：`UPDATE ... WHERE id=?
-//!    AND status=0` 认领到了才清零、才发通知。认领不到 ⇒ `这条申请已经处理过了`
-//!    且**零副作用**。这条是 `claim_confirm_token` 那条纪律的同族——没有它，管理员
-//!    重复点通过就会清两次零、发两条通知（第二条是假的："额度已清零"在他已经聊了
-//!    三十轮之后）。
-//!
-//! ② **驳回理由的"必填"留给调用方**：前端驳回弹窗必填、agent 工具必填，**后端不硬闸**
-//!    ——与 `audit_board` 逐条同形。后端只做两件事：长度**拒绝而不是截断**（截断会让
-//!    主人核对的是这一句、库里存的是另一句，同 `notice.rs` 头注）、空理由落 NULL
-//!    并让通知层回落成"管理员没有填写理由"。**不往库里塞一句编好的话**。
-//!
-//! ③ **通知发失败不改变动作的结果**：清零已经落库（那是事实），通知只是告知通道。
-//!    发失败只记 error 日志，接口照常回成功——反过来（因为通知发不出去就报失败）
-//!    会让管理员重试，而重试撞上"这条申请已经处理过了"，症状变成"点了通过但他说
-//!    处理过了、额度却是清的"。诚实的代价是本函数**不声称通知已送达**。
-//!
-//! ── C6：三句通知文案是跨语言契约 ───────────────────────────────────────────
-//! agent 的额度技能要求模型**逐字转述**这里给的原话（见 `docs/security-boundary.md`
-//! §7⑫ 与 `saudade-blog-agent/tools/base.py` 的额度节头注）。改措辞前先看 agent 侧
-//! 是否引用了它，两侧同改。
-//!
-//! 三条 `link` **一律 None**：个人中心是弹窗、没有可跳的地址——**不许编一个跳过去
-//! 404 的链接**（同 `send_user_notice` 的既有论证）。
+//! User quota reads, reset applications and administrator review actions.
 
 use axum::{
     Json,
@@ -48,7 +15,7 @@ use std::sync::Arc;
 
 use crate::entity::{quota_request, user};
 use crate::routes::AppState;
-use crate::utils::ApiResponse;
+use crate::utils::{ApiResponse, ApiResponsePage};
 
 // ── C6 通知文案（跨语言契约，见模块头注）─────────────────────────────────────
 
@@ -234,6 +201,8 @@ pub struct QuotaRequestDto {
     pub user_id: i32,
     pub username: String,
     pub nickname: String,
+    #[serde(rename = "accountExists")]
+    pub account_exists: bool,
     /// 申请人**当前**已用轮数（不是提交那一刻的快照——审核看的是"他现在还剩多少"）
     pub used: i32,
     /// 上限；`0` = 不限额（见 `limit_of`）。**两侧都不许把 500 写死**
@@ -248,58 +217,92 @@ pub struct QuotaRequestDto {
     pub handled_at: Option<String>,
 }
 
-#[derive(Deserialize)]
-pub struct ListQuotaQuery {
-    /// `pending` = 只看待处理（agent 的 `_quota_pending_index` 用的就是这一档，
-    /// 且它**假定**回来的每一行都是待处理）；其余任何值（含不传）= 全部。
-    #[serde(default)]
-    pub status: Option<String>,
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RequestStatus {
+    Pending,
+    Approved,
+    Rejected,
+    All,
 }
 
-/// GET /api/protected/quota/requests：申请队列（后台「额度管理」页签 + agent 的
-/// `list_quota_requests` 工具共用同一个接口）。
-///
-/// 用户名走 `.select_only().into_tuple()`（照 `list_board_admin`）——`find()` 是
-/// `SELECT *`，会把 `password` 哈希一起捞出来。
-///
-/// **不 JOIN**：两张表都很小、且 `user` 行可能已被删（迁移头注 ④ 无外键），
-/// 一次 `is_in` 批量查 + 内存里配对，删号之后申请行照样列得出来（用户名回空串
-/// 而不是整行消失——那正是"申请还在、人没了"这个事实该有的样子）。
+impl RequestStatus {
+    fn value(self) -> Option<i16> {
+        match self {
+            Self::Pending => Some(STATUS_PENDING),
+            Self::Approved => Some(STATUS_APPROVED),
+            Self::Rejected => Some(STATUS_REJECTED),
+            Self::All => None,
+        }
+    }
+}
+
+#[derive(Default, Deserialize)]
+pub struct ListQuotaQuery {
+    pub status: Option<RequestStatus>,
+    pub id: Option<i32>,
+    pub page: Option<u64>,
+    pub page_size: Option<u64>,
+}
+
+pub(super) fn request_query(params: &ListQuotaQuery) -> sea_orm::Select<quota_request::Entity> {
+    let mut query = quota_request::Entity::find();
+    if let Some(status) = params.status.and_then(RequestStatus::value) {
+        query = query.filter(quota_request::Column::Status.eq(status));
+    }
+    if let Some(id) = params.id {
+        query = query.filter(quota_request::Column::Id.eq(id));
+    }
+    query.order_by_desc(quota_request::Column::Id)
+}
+
+/// GET quota/requests: optional pagination; unpaged clients retain the 200-row limit.
 pub async fn list_quota_requests(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Query(params): Query<ListQuotaQuery>,
-) -> Json<ApiResponse<Vec<QuotaRequestDto>>> {
+) -> Json<ApiResponsePage<Vec<QuotaRequestDto>>> {
     let Some(_uid) = crate::auth_jwt::auth_uid(&state.db, &headers).await.ok() else {
-        return Json(ApiResponse::error("请先登录"));
+        return Json(ApiResponsePage::error("请先登录"));
     };
-    let pending_only = params.status.as_deref().map(str::trim) == Some("pending");
-    let mut q = quota_request::Entity::find();
-    if pending_only {
-        q = q.filter(quota_request::Column::Status.eq(STATUS_PENDING));
+    let window = match super::queue_pages::window(params.page, params.page_size) {
+        Ok(window) => window,
+        Err(msg) => return Json(ApiResponsePage::error(msg)),
+    };
+    if params.id.is_some_and(|id| id <= 0) {
+        return Json(ApiResponsePage::error("申请编号必须大于0"));
     }
-    let rows = match q
-        .order_by_desc(quota_request::Column::Id)
-        .limit(200)
+    let query = request_query(&params);
+    let total = if window.is_some() {
+        match query.clone().count(&state.db).await {
+            Ok(total) => Some(total as i64),
+            Err(e) => {
+                tracing::error!("quota count failed: {e}");
+                return Json(ApiResponsePage::error("查询失败，请稍后再试"));
+            }
+        }
+    } else { None };
+    let (limit, offset) = window.unwrap_or((200, 0));
+    let rows = match query
+        .limit(limit)
+        .offset(offset)
         .all(&state.db)
         .await
     {
         Ok(v) => v,
         Err(e) => {
             tracing::error!("[额度] 申请列表查询失败: {e}");
-            return Json(ApiResponse::error("查询失败，请稍后再试"));
+            return Json(ApiResponsePage::error("查询失败，请稍后再试"));
         }
     };
-    // 去重后再 is_in（同 `list_board_admin`：同一用户多行时会生成 IN (1,1,1,…)）
+    // Fetch only the page's accounts and no password columns.
     let mut ids: Vec<i32> = rows.iter().map(|r| r.user_id).collect();
     ids.sort_unstable();
     ids.dedup();
-    // 四列：id / username / nickname / chat_quota_used / role。role 也要——上限那一栏
-    // 要按"这个人限不限量"显示 0 或真实上限，判据不在这一层重写（见 `limit_of`）。
     let users: Vec<(i32, String, String, i32, String)> = if ids.is_empty() {
         vec![]
     } else {
-        user::Entity::find()
+        match user::Entity::find()
             .select_only()
             .column(user::Column::Id)
             .column(user::Column::Username)
@@ -309,8 +312,13 @@ pub async fn list_quota_requests(
             .filter(user::Column::Id.is_in(ids))
             .into_tuple::<(i32, String, String, i32, String)>()
             .all(&state.db)
-            .await
-            .unwrap_or_default()
+            .await {
+                Ok(users) => users,
+                Err(e) => {
+                    tracing::error!("quota account lookup failed: {e}");
+                    return Json(ApiResponsePage::error("账号信息读取失败，请稍后再试"));
+                }
+            }
     };
     let umap: std::collections::HashMap<i32, (String, String, i32, String)> = users
         .into_iter()
@@ -323,6 +331,7 @@ pub async fn list_quota_requests(
             QuotaRequestDto {
                 id: r.id,
                 user_id: r.user_id,
+                account_exists: u.is_some(),
                 username: u.map(|x| x.0.clone()).unwrap_or_default(),
                 nickname: u.map(|x| x.1.clone()).unwrap_or_default(),
                 used: u.map(|x| x.2).unwrap_or(0),
@@ -335,7 +344,7 @@ pub async fn list_quota_requests(
             }
         })
         .collect();
-    Json(ApiResponse::success(dtos))
+    Json(ApiResponsePage::success(dtos, total))
 }
 
 #[derive(Deserialize)]
