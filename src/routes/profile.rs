@@ -43,7 +43,7 @@ use crate::entity::{
 };
 use crate::routes::AppState;
 use crate::utils::{
-    hash_password, sniff_image_ext, upload_dir, verify_password, ApiResponse,
+    hash_password_async, sniff_image_ext, upload_dir, verify_password_async, ApiResponse,
     ALLOWED_IMAGE_EXTS_TEXT,
 };
 
@@ -224,29 +224,40 @@ pub async fn change_password(
     let Some(u) = user::Entity::find_by_id(uid).one(&state.db).await.unwrap_or(None) else {
         return Json(ApiResponse::error("账号不存在"));
     };
-    // 旧密码错误与登录失败同源记账（同一份凭据），按 **IP + 账号** 记——
+    // 旧密码校验与登录共用预占窗口（同一份凭据），按 **IP + 账号** 记——
     // 拿到令牌的人不该因为"已经登录"就获得无上限的旧密码爆破配额。
     let ip = super::auth::get_client_ip(&headers);
     let uname = u.username.clone();
-    if let Err(msg) = state.rate_limiter.check(&ip, &uname) {
+    if let Err(msg) = state.rate_limiter.admit_auth(&ip, &uname) {
         return Json(ApiResponse::error(&msg));
     }
-    if !verify_password(&payload.old_password, &u.password) {
-        state.rate_limiter.record_failure(&ip, &uname);
+    let verified = match verify_password_async(payload.old_password.clone(), u.password.clone()).await {
+        Ok(v) => v,
+        Err(msg) => return Json(ApiResponse::error(msg)),
+    };
+    if !verified {
         return Json(ApiResponse::error("原密码不正确"));
     }
     let new_ver = u.token_version + 1;
     let role = u.role.clone();
-    let mut am: user::ActiveModel = u.into();
-    am.password = Set(hash_password(&payload.new_password));
-    am.token_version = Set(new_ver);
-    match am.update(&state.db).await {
-        Ok(_) => {
-            state.rate_limiter.record_success(&ip, &uname);
-            // 令牌用**刚落库的那个代次**签发；用旧值签会立刻被自己收回。
+    let password_hash = match hash_password_async(payload.new_password.clone()).await {
+        Ok(v) => v,
+        Err(msg) => return Json(ApiResponse::error(msg)),
+    };
+    // 与管理员重置/找回并发时，只接受仍是刚校验过的那份凭据。
+    let updated = user::Entity::update_many()
+        .col_expr(user::Column::Password, sea_orm::sea_query::Expr::value(password_hash))
+        .col_expr(user::Column::TokenVersion, sea_orm::sea_query::Expr::value(new_ver))
+        .filter(user::Column::Id.eq(uid))
+        .filter(user::Column::Password.eq(u.password))
+        .filter(user::Column::TokenVersion.eq(u.token_version))
+        .exec(&state.db).await;
+    match updated {
+        Ok(result) if result.rows_affected == 1 => {
             let token = crate::auth_jwt::create_token(uid, &role, new_ver);
             Json(ApiResponse::success(PasswordChangedDto { token }))
         }
+        Ok(_) => Json(ApiResponse::error("账号凭据已改变，请重新登录后再试")),
         Err(e) => {
             tracing::error!("[profile] 改密码失败 uid={}: {}", uid, e);
             Json(ApiResponse::error("修改失败，请稍后再试"))
@@ -309,11 +320,11 @@ pub async fn upload_avatar(
         tracing::error!("[profile] 建头像目录失败 uid={}: {}", uid, e);
         return Json(ApiResponse::error("服务端存储不可用，请稍后再试"));
     }
-    // 文件名由服务端拼（uid 来自已验签的令牌、时间是本地钟面），客户端那串名字一个
+    // 文件名由服务端拼（uid 来自已验证的账号、后缀为随机 UUID），客户端那串名字一个
     // 字节都不参与——路径穿越在这里结构上不可能。
-    let fname = format!("{}_{}.{}", uid, chrono::Local::now().format("%Y%m%d%H%M%S"), ext);
+    let fname = format!("{}_{}.{}", uid, uuid::Uuid::new_v4().simple(), ext);
     let path = dir.join(&fname);
-    let mut f = match tokio::fs::File::create(&path).await {
+    let mut f = match tokio::fs::OpenOptions::new().write(true).create_new(true).open(&path).await {
         Ok(f) => f,
         Err(e) => {
             tracing::error!("[profile] 建头像文件失败 uid={}: {}", uid, e);
@@ -343,7 +354,7 @@ pub async fn upload_avatar(
     // 且必须是纯文件名），避免任何"删了别人文件"的可能。
     if let Some(old_url) = old {
         if let Some(name) = old_url.strip_prefix(AVATAR_URL_PREFIX) {
-            if !name.contains('/') && name.starts_with(&format!("{}_", uid)) {
+            if old_url != url && !name.contains('/') && name.starts_with(&format!("{}_", uid)) {
                 let _ = tokio::fs::remove_file(upload_dir().join("avatars").join(name)).await;
             }
         }

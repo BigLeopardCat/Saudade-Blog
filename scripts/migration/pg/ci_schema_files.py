@@ -69,6 +69,7 @@ LOAD = [
     # 与 0007 的区别：0007 是**删列**（contract 那一半，CI 跑它就等于比生产靠前），
     # 而这一份是**加宽**、跑在旧代码前面也完全无害（见文件头注）。
     "0009_widen_password_reset_token_hash.sql",
+    "0010_chat_latest_index.sql",
 ]
 
 # 不进 CI 的（理由见模块头注，改这个集合要把理由一起写进去）。

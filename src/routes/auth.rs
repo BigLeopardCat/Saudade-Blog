@@ -1,10 +1,10 @@
 use axum::{Json, extract::State, http::HeaderMap};
-use sea_orm::{ActiveModelTrait, EntityTrait, ColumnTrait, QueryFilter, QueryOrder, QuerySelect, Set};
+use sea_orm::{ActiveModelTrait, EntityTrait, ColumnTrait, QueryFilter, QueryOrder, QuerySelect, Set, TransactionTrait};
 use chrono::Utc;
 use std::sync::Arc;
 use crate::entity::{password_reset_token, user};
 use crate::routes::AppState;
-use crate::utils::{ApiResponse, encrypt_password, hash_password, needs_rehash, verify_password};
+use crate::utils::{ApiResponse, encrypt_password, hash_password_async, needs_rehash, verify_password_async};
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
@@ -62,9 +62,9 @@ pub async fn login(
     headers: HeaderMap,
     Json(payload): Json<LoginRequest>,
 ) -> Json<ApiResponse<String>> {
-    // H2 修复：按 IP+用户名 限流检查
+    // 在凭据验证前原子计数，包含在途请求和每 IP 总量。
     let ip = get_client_ip(&headers);
-    if let Err(msg) = state.rate_limiter.check(&ip, &payload.username) {
+    if let Err(msg) = state.rate_limiter.admit_auth(&ip, &payload.username) {
         return Json(ApiResponse::error(&msg));
     }
 
@@ -83,7 +83,11 @@ pub async fn login(
         else {
             continue;
         };
-        if !verify_password(&payload.password, &u.password) {
+        let verified = match verify_password_async(payload.password.clone(), u.password.clone()).await {
+            Ok(v) => v,
+            Err(msg) => return Json(ApiResponse::error(msg)),
+        };
+        if !verified {
             continue;
         }
         // 冻结账号（20260926）：口令对也进不来。判据放**口令校验之后**是有意的——
@@ -97,22 +101,27 @@ pub async fn login(
         // 失败只记日志不影响登录（下次登录再试）。
         if needs_rehash(&u.password) {
             let uid = u.id;
-            let mut am: user::ActiveModel = u.clone().into();
-            am.password = Set(hash_password(&payload.password));
-            match am.update(&state.db).await {
-                Ok(_) => tracing::info!("用户 {} 的密码哈希已升级为 Argon2id", uid),
-                Err(e) => tracing::warn!("用户 {} 的密码哈希升级失败（本次登录不受影响）: {}", uid, e),
+            let password_hash = match hash_password_async(payload.password.clone()).await {
+                Ok(v) => v,
+                Err(msg) => return Json(ApiResponse::error(msg)),
+            };
+            let upgraded = user::Entity::update_many()
+                .col_expr(user::Column::Password, sea_orm::sea_query::Expr::value(password_hash))
+                .filter(user::Column::Id.eq(uid))
+                .filter(user::Column::Password.eq(u.password.clone()))
+                .filter(user::Column::TokenVersion.eq(u.token_version))
+                .exec(&state.db).await;
+            match upgraded {
+                Ok(r) if r.rows_affected == 1 => tracing::info!("用户 {} 的密码哈希已升级为 Argon2id", uid),
+                Ok(_) => return Json(ApiResponse::error("账号凭据已改变，请重新登录")),
+                Err(e) => tracing::warn!("用户 {} 的密码哈希升级失败: {}", uid, e),
             }
         }
-        state.rate_limiter.record_success(&ip, &payload.username);
         // 令牌里带上当前的 `token_version`（20260926）：此后只要库里的值变大
         // （改密码 / 管理员重置 / 冻结），这枚令牌当场失效——收回能力就在这一行。
         let token = crate::auth_jwt::create_token(u.id, &u.role, u.token_version);
         return Json(ApiResponse::success(token));
     }
-
-    // H2 修复：记录失败尝试
-    state.rate_limiter.record_failure(&ip, &payload.username);
 
     // Return generic error if not found
     Json(ApiResponse::error("账号或密码错误"))
@@ -124,25 +133,16 @@ pub async fn reset_password(
     headers: HeaderMap,
     Json(payload): Json<ResetPasswordRequest>,
 ) -> Json<ApiResponse<String>> {
-    // 限流（20261020，安全审计 SAU-017 的伴生）：恢复码的哈希改成 **Argon2id** 之后，
-    // 一次错码就是一次 19MiB × 数十毫秒的运算——而这条路**没有任何身份**。这与登录 /
-    // 个人中心改密码是**同一份凭据**，所以按 IP+账号进同一个桶（同 `profile.rs` 那条：
-    // 「拿到令牌的人不该因为已登录就获得无上限的爆破配额」，反过来也一样：登录有闸、
-    // 换个入口猜恢复码没闸，那这道闸就等于没有）。
-    //
-    // 记账放在**外层**：`reset_password_inner` 只回 `Result`，于是"每一条失败路径都
-    // 记账"是结构性的——以后往里面加一个 `return` 不会漏账。
+    // 恢复码与登录共用预占窗口；按实际查询使用的 trim 后账号记账。
     let ip = get_client_ip(&headers);
-    if let Err(msg) = state.rate_limiter.check(&ip, &payload.username) {
+    if let Err(msg) = state.rate_limiter.admit_auth(&ip, payload.username.trim()) {
         return Json(ApiResponse::error(&msg));
     }
     match reset_password_inner(&state, &payload).await {
         Ok(msg) => {
-            state.rate_limiter.record_success(&ip, &payload.username);
             Json(ApiResponse::success(msg))
         }
         Err(msg) => {
-            state.rate_limiter.record_failure(&ip, &payload.username);
             Json(ApiResponse::error(&msg))
         }
     }
@@ -202,8 +202,15 @@ async fn reset_password_inner(
     // 旧格式（无盐 SHA-256）由 `verify_password` 一并认。**刻意不做惰性升级**：
     // 恢复码是**一次性**的（15 分钟、用过即废），升级一条马上要死的行只是多一次写。
     // 主密码那条路要惰性升级，是因为那个哈希还要活很多年——两者的理由不同，别照抄。
-    let Some(token) = candidates.into_iter().find(|t| verify_password(code, &t.token_hash))
-    else {
+    let mut matched = None;
+    for candidate in candidates {
+        if verify_password_async(code.to_string(), candidate.token_hash.clone()).await
+            .map_err(str::to_string)? {
+            matched = Some(candidate);
+            break;
+        }
+    }
+    let Some(token) = matched else {
         return Err("账号或恢复码无效".to_string());
     };
     if token.expires_at <= now {
@@ -216,23 +223,35 @@ async fn reset_password_inner(
         return Err("账号已被冻结，请联系管理员".to_string());
     }
 
-    // 走这条路等于"凭据已经换了"（20260926）：令牌代次 +1，
-    // 此前在**任何设备**上签发的令牌当场全部失效。找回密码本来就意味着
-    // "我怀疑旧凭据不安全了"，那就必须连旧会话一起收掉。
-    // 代次必须在 `into()` 之前抄下来——ActiveModel 里读不到"当前值"。
-    let ver = account.token_version;
-    let mut user_active: user::ActiveModel = account.into();
-    user_active.password = Set(hash_password(&payload.new_password));
-    user_active.token_version = Set(ver + 1);
-    if user_active.update(&state.db).await.is_err() {
-        return Err("密码修改失败，请稍后再试".to_string());
+    // 哈希在锁外计算；事务按“用户 → 恢复码”的顺序与签发入口保持一致。
+    let password_hash = hash_password_async(payload.new_password.clone()).await.map_err(str::to_string)?;
+    let txn = state.db.begin().await.map_err(|_| "密码修改失败，请稍后再试".to_string())?;
+    let current = user::Entity::find_by_id(account.id).lock_exclusive().one(&txn).await
+        .map_err(|_| "密码修改失败，请稍后再试".to_string())?
+        .ok_or_else(|| "账号或恢复码无效".to_string())?;
+    if crate::authz::is_frozen(current.status) {
+        return Err("账号已被冻结，请联系管理员".to_string());
     }
-
-    let mut token_active: password_reset_token::ActiveModel = token.into();
-    token_active.used_at = Set(Some(now));
-    if token_active.update(&state.db).await.is_err() {
-        return Err("恢复码确认失败，请联系管理员检查账号状态".to_string());
+    let claimed_at = Utc::now().naive_utc();
+    let claimed = password_reset_token::Entity::update_many()
+        .col_expr(password_reset_token::Column::UsedAt, sea_orm::sea_query::Expr::value(Some(claimed_at)))
+        .filter(password_reset_token::Column::Id.eq(token.id))
+        .filter(password_reset_token::Column::UserId.eq(current.id))
+        .filter(password_reset_token::Column::UsedAt.is_null())
+        .filter(password_reset_token::Column::ExpiresAt.gt(claimed_at))
+        .exec(&txn).await.map_err(|_| "密码修改失败，请稍后再试".to_string())?;
+    if claimed.rows_affected != 1 {
+        return Err("账号或恢复码无效".to_string());
     }
+    let new_ver = current.token_version + 1;
+    let mut user_active: user::ActiveModel = current.into();
+    user_active.password = Set(password_hash);
+    user_active.token_version = Set(new_ver);
+    user_active.update(&txn).await.map_err(|_| "密码修改失败，请稍后再试".to_string())?;
+    txn.commit().await.map_err(|e| {
+        tracing::error!("[auth] 提交密码找回失败: {e}");
+        "密码修改失败，请稍后再试".to_string()
+    })?;
     Ok("密码修改成功，请使用新密码登录".to_string())
 }
 
