@@ -207,7 +207,7 @@ pub async fn list_todos(
         Ok(uid) => uid,
         Err(e) => return Json(ApiResponsePage::error(e.message())),
     };
-    let window = match super::queue_pages::window(params.page, params.page_size) {
+    let window = match super::pagination::window(params.page, params.page_size) {
         Ok(window) => window,
         Err(msg) => return Json(ApiResponsePage::error(msg)),
     };

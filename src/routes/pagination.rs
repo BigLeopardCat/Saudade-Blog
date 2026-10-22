@@ -1,4 +1,4 @@
-//! Optional bounded page windows for dashboard queues.
+//! Optional bounded page windows for administrator lists.
 
 pub fn window(page: Option<u64>, size: Option<u64>) -> Result<Option<(u64, u64)>, &'static str> {
     match (page, size) {

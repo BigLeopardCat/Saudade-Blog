@@ -265,7 +265,7 @@ pub async fn list_quota_requests(
     let Some(_uid) = crate::auth_jwt::auth_uid(&state.db, &headers).await.ok() else {
         return Json(ApiResponsePage::error("请先登录"));
     };
-    let window = match super::queue_pages::window(params.page, params.page_size) {
+    let window = match super::pagination::window(params.page, params.page_size) {
         Ok(window) => window,
         Err(msg) => return Json(ApiResponsePage::error(msg)),
     };
