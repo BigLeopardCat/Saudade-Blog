@@ -15,3 +15,18 @@
 
 实现位于 `src/routes/profile/mailbox.rs`。模块的数据库契约测试在 `TEST_PG_URL` 配置时
 使用事务创建夹具并回滚，验证窗口外旧信、全局未读数与收件人隔离。
+
+## 小型读取视图
+
+`GET /api/protected/messages/recent?folder=inbox&limit=5` 返回近期摘要：
+
+- `folder` 可选 `inbox` 或 `outbox`，默认收件箱。
+- `limit` 默认 5，只接受 1 到 10；超出范围返回错误。
+- 响应为 `folder`、`items`、`hasMore`。条目包括编号、双方编号、对方名字、标题、时间和已读状态。
+- 正文列不参与数据库查询，也不进入响应。`hasMore=true` 时不能将窗口解释为整个信箱。
+
+`GET /api/protected/messages/{id}` 返回单封正文，仅收发双方可读取。不存在与不属于本人
+使用相同错误出口。列表及详情均不修改已读状态。
+
+`GET /api/protected/notifications/summary` 是独立计数聚合；读取内容由列表或详情接口承担。
+通知数或信件数查询失败时返回失败，不能以零未读代替未知结果。

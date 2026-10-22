@@ -22,6 +22,11 @@
 use axum::{Json, extract::{Query, State}, http::HeaderMap};
 
 mod mailbox;
+mod message_reads;
+mod unread;
+pub use unread::notification_summary;
+use unread::unread_response;
+pub use message_reads::{message_detail, recent_messages};
 pub use mailbox::{list_messages, MailboxQuery};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
@@ -620,55 +625,6 @@ async fn comment_pending_count(db: &sea_orm::DatabaseConnection) -> i64 {
         .unwrap_or(0) as i64
 }
 
-async fn unread_counts(db: &sea_orm::DatabaseConnection, uid: i32) -> UnreadDto {
-    let n = user_notification::Entity::find()
-        .filter(user_notification::Column::UserId.eq(uid))
-        .filter(user_notification::Column::IsRead.eq(false))
-        .count(db)
-        .await
-        .unwrap_or(0) as i64;
-    let m = user_message::Entity::find()
-        .filter(user_message::Column::ToUserId.eq(uid))
-        .filter(user_message::Column::IsRead.eq(false))
-        .count(db)
-        .await
-        .unwrap_or(0) as i64;
-    // 待审数只在"能进后台的人"这里算：它是后台的待办，不该出现在普通用户的红点数据里
-    // （角色的判据在 is_console_user，这里只是决定要不要发这一条 COUNT）。
-    // 20260929 起这一句**只查一次角色**给两个计数共用（额度申请那一行也要它）——
-    // 两个 `if is_console_user(...)` 就是两次 `find_by_id`，而它是同一个问题。
-    let console_user = is_console_user(db, uid).await;
-    let pending_review = if console_user { board_pending_count(db).await } else { 0 };
-    let pending_quota = if console_user {
-        crate::routes::quota::quota_pending_count(db).await
-    } else {
-        0
-    };
-    let pending_comments = if console_user { comment_pending_count(db).await } else { 0 };
-    UnreadDto {
-        notifications: n,
-        messages: m,
-        total: n + m,
-        pending_review,
-        pending_quota,
-        pending_comments,
-    }
-}
-
-/// GET /api/protected/notifications/summary：红点（未读数）。
-/// **红点 = 通知未读 + 私信未读**：公告在发布时按用户展开成 `type=announcement`
-/// 的通知行（见 announcements.rs），所以公告天然计入，不需要第二套计数。
-pub async fn notification_summary(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-) -> Json<ApiResponse<UnreadDto>> {
-    let uid = match crate::auth_jwt::auth_uid(&state.db, &headers).await {
-        Ok(uid) => uid,
-        Err(e) => return Json(ApiResponse::error(e.message())),
-    };
-    Json(ApiResponse::success(unread_counts(&state.db, uid).await))
-}
-
 /// GET /api/protected/notifications：通知列表（含公告类）。
 pub async fn list_notifications(
     State(state): State<Arc<AppState>>,
@@ -742,7 +698,7 @@ pub async fn read_notifications(
         .filter(user_notification::Column::IsRead.eq(false));
     if !payload.all {
         if payload.ids.is_empty() {
-            return Json(ApiResponse::success(unread_counts(&state.db, uid).await));
+            return unread_response(&state.db, uid).await;
         }
         q = q.filter(user_notification::Column::Id.is_in(payload.ids.clone()));
     }
@@ -750,7 +706,7 @@ pub async fn read_notifications(
         tracing::error!("[profile] 标记已读失败 uid={}: {}", uid, e);
         return Json(ApiResponse::error("操作失败，请稍后再试"));
     }
-    Json(ApiResponse::success(unread_counts(&state.db, uid).await))
+    unread_response(&state.db, uid).await
 }
 
 // ── 站内信箱 ────────────────────────────────────────────────────────────────

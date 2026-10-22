@@ -120,6 +120,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/protected/notifications/summary", get(profile::notification_summary))
         .route("/api/protected/notifications/read", post(profile::read_notifications))
         .route("/api/protected/messages", get(profile::list_messages).post(profile::send_message))
+        .route("/api/protected/messages/recent", get(profile::recent_messages))
+        .route("/api/protected/messages/{id}", get(profile::message_detail))
         .route("/api/protected/messages/read", post(profile::read_messages))
         // 草稿箱（20260923）：同一个 handler 按有无 id 决定新建/更新，所以 GET 与 POST 同路径
         .route(
