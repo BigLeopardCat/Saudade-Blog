@@ -291,8 +291,7 @@ console.log('\n③ 全仓扫描：`src/**/*.sass` 与 `src/**/*.css` 的编译�
     const skipped = [];
     for (const f of files.sort()) {
         let css;
-        // 逐文件静音 logger：全仓扫描会把每条 warning 都刷一遍（`.phoneSide` 那条空规则
-        // 之类），而这里要看的是命中清单
+        // 逐文件静音 logger：全仓扫描只报告顺序/特异度命中，不重复输出 Sass 的依赖告警。
         const silent = f.endsWith('.css') ? null : { logger: sass.Logger.silent };
         try {
             css = f.endsWith('.css')

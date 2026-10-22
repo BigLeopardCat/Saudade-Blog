@@ -9,6 +9,7 @@ const browser = await chromium.launch({headless:true,args:['--no-sandbox','--ena
 const url = process.env.RIVER_TEST_URL || 'http://127.0.0.1:5174/guestbook';
 const rows = Array.from({length:18},(_,i)=>({talkKey:i+1,content:['愿你三冬暖，愿你春不寒。','把今晚的月色，寄给远方的你。','愿世间美好，都与你我不期而遇。'][i%3],cat:['愿','寄','忆'][i%3],v:i%3,author:'渡河人',createTime:'2026-10-22 20:30:00',approved:1}));
 const errors=[];
+const isolateAssistant=page=>page.route('**/live2d-widgets/boot.js*',route=>route.fulfill({contentType:'text/javascript',body:'window.__riverAssistantLoaded=true;'}));
 try {
  const context=await browser.newContext({viewport:{width:1440,height:900},locale:'zh-CN',timezoneId:'Asia/Shanghai'});
  await context.addInitScript(()=>{if(location.protocol==='http:'||location.protocol==='https:')localStorage.setItem('river-quality','still');let seed=74621;Math.random=()=>((seed=(Math.imul(seed,1664525)+1013904223)>>>0)/4294967296)});
@@ -26,18 +27,21 @@ try {
   await route.fulfill({json:{code,data,message:code===200?'ok':'injected failure'}});
  };
  await page.route('**/api/**',routeAPI);
+ await isolateAssistant(page);
  if(process.env.RIVER_RECORD_ONLY!=='1') {
  await page.goto(url,{waitUntil:'networkidle',timeout:90000});
  assert.equal(await page.locator('vite-error-overlay').count(),0,'Vite must compile the actual route without an error overlay');
  console.log('page mounted', await page.locator('.rz-canvas').evaluate(c=>c.riverStats));
  await page.waitForFunction(()=>document.querySelector('.rz-landscape')?.complete && document.querySelector('.rz-canvas')?.riverStats?.frames>5, null, {timeout:45000});
  await page.waitForTimeout(1000);
- assert.equal(await page.locator('script[src*="boot.js"]').count(),0,'assistant does not start a second renderer on entry');
+ await page.waitForFunction(()=>window.__riverAssistantLoaded===true);
+ assert.equal(await page.locator('script[src*="boot.js"]').count(),1,'the real assistant component loads its isolated boot boundary on entry');
+ assert.equal(await page.getByRole('button',{name:'唤起助手',exact:true}).count(),0);
  const stats=()=>page.locator('.rz-canvas').evaluate(c=>({...c.riverStats}));
  const initial=await stats();assert.equal(initial.fpsLimit,45);assert.ok(initial.backingPixels>0 && initial.backingPixels<1440*900);assert.equal(initial.renderer,'river-refraction');
  assert.equal(await page.locator('.rz-quality').count(),0);assert.equal(await page.getByRole('button',{name:'返回博客',exact:true}).textContent(),'返回博客');
  await page.screenshot({path:out+'/desktop.png'});console.log('desktop captured');
- // Water responds to pointer input without installing another timer / render loop.
+ // A click on exposed water must not accidentally open a lantern dialog.
  const waterPoint=await page.evaluate(()=>{for(let y=540;y<730;y+=20)for(let x=450;x<1000;x+=20){const el=document.elementFromPoint(x,y);if(el&&!el.closest('.rz-lantern,button,[role=dialog]'))return{x,y}}throw Error('no exposed water in fixture')});
  await page.mouse.click(waterPoint.x,waterPoint.y);assert.equal(await page.getByRole('dialog').count(),0);await page.waitForTimeout(250);await page.screenshot({path:out+'/ripple.png'});
  // Public reading, focus trap, Escape, and paused background.
@@ -50,7 +54,13 @@ try {
  assert.ok(await page.evaluate(()=>!!document.activeElement?.closest('[role="dialog"]')),'Tab remains in dialog');
  assert.equal(await page.locator('.rz-root').evaluate(root=>root.scrollTop),0,'focus scroll must stay inside the album list');
  const albumBounds=await page.locator('.rz-album-box').boundingBox();assert.ok(albumBounds && albumBounds.y>=0 && albumBounds.y+albumBounds.height<=901,'album dialog stays in viewport after keyboard navigation');
- await page.screenshot({path:out+'/album.png'});console.log('album keyboard and viewport checked');
+ const stableAlbum=async()=>{const next=await page.locator('.rz-album-box').boundingBox();assert.ok(next&&Math.abs(next.width-albumBounds.width)<1&&Math.abs(next.height-albumBounds.height)<1,'album frame stays fixed across filter/search/empty states')};
+ await page.getByRole('button',{name:'类型',exact:true}).click();await page.locator('.rz-album-catf').waitFor();await stableAlbum();
+ await page.getByRole('button',{name:'我的河灯',exact:true}).click();await page.locator('.rz-album-empty').waitFor();await stableAlbum();
+ await page.getByRole('button',{name:'寻灯',exact:true}).click();await page.getByRole('textbox',{name:'在灯影集中寻灯'}).waitFor();await stableAlbum();
+ await page.getByRole('button',{name:'寻灯',exact:true}).click();await page.getByRole('button',{name:/^时序/}).click();await page.locator('.rz-album-item').first().waitFor();await stableAlbum();
+ assert.ok(await page.locator('.rz-album-msg').first().evaluate(el=>parseFloat(getComputedStyle(el).fontSize)>=16),'album body text stays readable');
+ await page.screenshot({path:out+'/album.png'});console.log('album keyboard, viewport and stable dimensions checked');
  await page.keyboard.press('Escape');await page.waitForTimeout(160);assert.equal(await page.getByRole('dialog').count(),0);assert.equal((await stats()).paused,false);
  // Logged-out gate is still enforced.
  await page.getByRole('button',{name:'点一盏河灯',exact:false}).click();await page.getByRole('dialog',{name:'留言板公告'}).waitFor();await page.keyboard.press('Escape');assert.equal(posts.length,0);console.log('logged-out gate checked');
@@ -81,7 +91,7 @@ try {
  failBoard=true;await page.reload({waitUntil:'networkidle'});await page.getByText(/留言加载失败/).waitFor();assert.ok(await page.getByRole('button',{name:'重试',exact:true}).isVisible());
  failBoard=false;emptyBoard=true;await page.getByRole('button',{name:'重试',exact:true}).click();await page.getByText('河上尚无人留灯，愿你是第一位',{exact:true}).waitFor();assert.equal(await page.locator('.rz-lantern').count(),0);
  assert.deepEqual(errors,[]);
- console.log(JSON.stringify({passed:['desktop/portrait/landscape','pointer ripple','public reading','dialog pause/focus/Escape','logged-out gate','failed submit preserves input and retry returns pending','single atmosphere mode ignores old quality preferences; reduced-motion/hidden pause and resume','business failure/retry/empty state','no eager assistant','no page errors'],initial},null,2));
+ console.log(JSON.stringify({passed:['desktop/portrait/landscape','water click does not open dialogs','public reading','dialog pause/focus/Escape','logged-out gate','failed submit preserves input and retry returns pending','single atmosphere mode ignores old quality preferences; reduced-motion/hidden pause and resume','business failure/retry/empty state','assistant loads on entry with no wake button (boot boundary isolated)','no page errors'],initial},null,2));
  }
  // A short real-browser recording documents the movement; it is not a GPU benchmark.
  if(process.env.RIVER_RECORD==='1') {
@@ -89,7 +99,7 @@ try {
   failBoard=false;emptyBoard=false;
   const videoContext=await browser.newContext({viewport:{width:1280,height:800},locale:'zh-CN',timezoneId:'Asia/Shanghai',recordVideo:{dir:out+'/recordings',size:{width:1280,height:800}}});
   await videoContext.route('**/*',route=>new URL(route.request().url()).origin===new URL(url).origin?route.continue():route.abort('blockedbyclient'));
-  const videoPage=await videoContext.newPage();videoPage.on('pageerror',error=>errors.push(error.message));await videoPage.route('**/api/**',routeAPI);
+  const videoPage=await videoContext.newPage();videoPage.on('pageerror',error=>errors.push(error.message));await videoPage.route('**/api/**',routeAPI);await isolateAssistant(videoPage);
   await videoPage.goto(url,{waitUntil:'networkidle'});
   await videoPage.waitForFunction(()=>document.querySelector('.rz-canvas')?.riverStats?.frames>10);
   await videoPage.waitForTimeout(1800);

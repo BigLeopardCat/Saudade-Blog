@@ -149,6 +149,16 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
         };
     }, [phoneBarShow]);
 
+    // A drawer opened on mobile must not leave its overlay/scroll lock on desktop.
+    useEffect(() => {
+        const narrow = window.matchMedia('(max-width: 1200px)');
+        const closeOnDesktop = () => {
+            if (!narrow.matches) { setPhoneBarShow(false); setShowMobileCategory(false); }
+        };
+        narrow.addEventListener('change', closeOnDesktop);
+        return () => narrow.removeEventListener('change', closeOnDesktop);
+    }, []);
+
     // 关闭抽屉菜单（同时收起分类子菜单），所有导航入口共用
     const closePhoneBar = () => { setPhoneBarShow(false); setShowMobileCategory(false); };
 
@@ -382,7 +392,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
         <>
             {phoneBarShow && <div className="phoneSideOverlay" onClick={() => setPhoneBarShow(false)} />}
         <header style={{display: 'flex', flexDirection: 'row', position: 'sticky', width: '100%', top: 0, zIndex: '999'}} className={isDark ? 'frontDark' : ''} onClick={() => { if (phoneBarShow) setPhoneBarShow(false); }}>
-            <div className={`${phoneBarShow ? 'openBar' : ''} phoneSide`} onClick={(e) => e.stopPropagation()}>
+            <div id="public-navigation-drawer" aria-hidden={!phoneBarShow} className={`${phoneBarShow ? 'openBar' : ''} phoneSide`} onClick={(e) => e.stopPropagation()}>
                 <div className="phoneBarContainer">
                     <div className="barLogo" onDoubleClick={admin ? openDashboard : undefined}>
                         {avatarWithDot(<Avatar src={viewerAvatar} size={100} />, 100)}
@@ -445,16 +455,17 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                 （只换字色，不加底色——底下的封面渐变已经把这一带压暗了）。 */}
             <div className={`headContainer${scrollHeight ? ' is-stuck' : ''}${overDarkBanner ? ' over-dark' : ''}`}>
                 <div className="phoneBar">
-                    {phoneBarShow ? <i className="iconfont icon-guanbi2" style={{
+                    {phoneBarShow ? <button type="button" aria-label="关闭导航菜单" aria-expanded="true" aria-controls="public-navigation-drawer" className="iconfont icon-guanbi2" style={{
+                            background: 'transparent', border: 0, padding: 0, minWidth: 36, minHeight: 44,
                             fontSize: 35,
                             marginLeft: 260,
                             cursor: 'pointer',
                             transition: '0.5s',
                             color: 'rgba(255,0,0,0.7)'
-                        }} onClick={() => setPhoneBarShow(false)}></i> :
-                        <i className="iconfont icon-bars"
-                           style={{fontSize: 35, marginLeft: 10, cursor: 'pointer', transition: '0.5s'}}
-                           onClick={() => setPhoneBarShow(true)}></i>}
+                        }} onClick={() => setPhoneBarShow(false)} /> :
+                        <button type="button" aria-label="打开导航菜单" aria-expanded="false" aria-controls="public-navigation-drawer" className="iconfont icon-bars"
+                           style={{background: 'transparent', border: 0, padding: 0, minWidth: 36, minHeight: 44, fontSize: 35, marginLeft: 10, cursor: 'pointer', transition: '0.5s'}}
+                           onClick={() => setPhoneBarShow(true)} />}
                 </div>
                 <div className="webTitle" onClick={()=>navigate('/')}>
                     <h2><span className="firstTitle">{blogTitle}</span>Blog</h2>

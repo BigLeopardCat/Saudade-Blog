@@ -1,6 +1,6 @@
 /** Render budgets are independent of devicePixelRatio and monitor refresh rate. */
 export type RiverQuality = 'cinematic' | 'still';
-export const WATER_TOP = 0.44;
+export const WATER_TOP = 0.54;
 export function sceneBudget(width: number, height: number, quality: RiverQuality) {
     const scale = Math.min(1, 1600 / Math.max(1, width));
     return {

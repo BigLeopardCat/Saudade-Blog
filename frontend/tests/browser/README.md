@@ -56,3 +56,11 @@ delete retaining row selection, confirmed retry, and in-flight duplicate clicks.
 Register per-test API routes in the test body after requesting `sandboxURL` so
 they override the sandbox's default network-deny handler. A `beforeEach` must
 explicitly depend on `sandboxURL` if it needs to register network routes.
+
+`public-header.spec.ts` mounts the real public header with its production Sass,
+App layout, and Redux reducers. It checks direct-load and refresh geometry at
+1440px and 390px before any dashboard route is loaded, then injects the real
+Dashboard/overview CSS to verify that visiting a lazy route cannot restyle the
+public header. It also checks drawer open/close, scroll locking, and cleanup when
+crossing back to the desktop breakpoint. The homepage content placeholder only
+measures header flow; the header and drawer implementations are never copied.

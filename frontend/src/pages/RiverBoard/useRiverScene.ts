@@ -37,7 +37,6 @@ export function useRiverScene(options: Options) {
         gradient.addColorStop(0.35, 'rgba(220,139,57,0.13)');
         gradient.addColorStop(1, 'rgba(189,116,46,0)');
         g.fillStyle = gradient; g.fillRect(0, 0, 128, 64);
-        const ripples: { x: number; y: number; born: number; strength?: number }[] = [];
         const image = new Image();
         let alive = true, loaded = false, failed = false, w = 1, h = 1, time = 0;
         let budget = sceneBudget(1, 1, latest.current.quality);
@@ -50,8 +49,7 @@ export function useRiverScene(options: Options) {
             const cw = canvas.width, ch = canvas.height;
             if (gpu) {
                 if (loaded) {
-                    for (let i = ripples.length - 1; i >= 0; i--) if (time - ripples[i].born > 3.2) ripples.splice(i, 1);
-                    gpu.draw(image, w, h, time, latest.current.lights(), ripples);
+                    gpu.draw(image, w, h, time, latest.current.lights());
                     if (dt > 0) stats.frames++;
                 }
                 return;
@@ -83,19 +81,6 @@ export function useRiverScene(options: Options) {
                     ctx.globalAlpha = flameIntensity(time, light.phase) * (0.2 + light.depth * 0.3) * spread;
                     ctx.drawImage(glow, x - size * sx * spread * 0.35 + drift,
                         y + (7 + j * 7) * sy, size * sx * spread * 0.7, 3 * sy);
-                }
-            }
-            // Pointer ripples share the water surface and expire in scene time (no independent timers).
-            for (let i = ripples.length - 1; i >= 0; i--) {
-                const ripple = ripples[i], age = time - ripple.born;
-                if (age > 2.4) { ripples.splice(i, 1); continue; }
-                ctx.strokeStyle = '#c1dbd4'; ctx.lineWidth = 0.6;
-                for (let ring = 0; ring < 3; ring++) {
-                    const radius = Math.max(0, age * 42 - ring * 9);
-                    if (radius < 1) continue;
-                    ctx.globalAlpha = (1 - age / 2.4) * (0.35 - ring * 0.07);
-                    ctx.beginPath(); ctx.ellipse(ripple.x * sx, (ripple.y - h * WATER_TOP) * sy,
-                        radius * sx, radius * sy * 0.24, 0, 0, Math.PI * 2); ctx.stroke();
                 }
             }
             // Sparse fireflies are baked radial sprites, not live blur/filter layers.
@@ -144,30 +129,14 @@ export function useRiverScene(options: Options) {
         // A failed asset must not leave a blank river or an endless animation loop.
         image.onerror = () => { if (alive) { failed = true; sync(); canvas.style.opacity = '0'; } };
         image.src = riverImage;
-        let resizeTimer = 0, lastTrailTime = -1, trailX = -100, trailY = -100;
+        let resizeTimer = 0;
         const onResize = () => {
             window.clearTimeout(resizeTimer);
             resizeTimer = window.setTimeout(() => { if (alive) { resize(); sync(); } }, 120);
         };
-        const onPointer = (event: PointerEvent) => {
-            if (stats.paused || event.clientY < h * WATER_TOP) return;
-            if ((event.target as Element)?.closest('button, [role="dialog"], .rz-lantern')) return;
-            if (ripples.length >= 8) ripples.shift();
-            ripples.push({ x: event.clientX, y: event.clientY, born: time });
-        };
-        const onPointerMove = (event: PointerEvent) => {
-            if (event.pointerType === 'touch' || stats.paused || event.clientY < h * WATER_TOP || time - lastTrailTime < .13) return;
-            if ((event.target as Element)?.closest('button, input, textarea, [role="dialog"], .rz-lantern')) return;
-            if (Math.hypot(event.clientX - trailX, event.clientY - trailY) < 20) return;
-            lastTrailTime = time; trailX = event.clientX; trailY = event.clientY;
-            if (ripples.length >= 8) ripples.shift();
-            ripples.push({ x: trailX, y: trailY, born: time, strength: .45 });
-        };
         const onContextLost = () => { failed = true; canvas.style.opacity = '0'; sync(); };
         resize(); sync();
         canvas.addEventListener('webglcontextlost', onContextLost);
-        window.addEventListener('pointerdown', onPointer, { passive: true });
-        window.addEventListener('pointermove', onPointerMove, { passive: true });
         window.addEventListener('resize', onResize);
         document.addEventListener('visibilitychange', sync);
         reduced.addEventListener('change', sync);
@@ -175,8 +144,6 @@ export function useRiverScene(options: Options) {
             alive = false; syncRef.current = null; loop.dispose(); window.clearTimeout(resizeTimer);
             canvas.removeEventListener('webglcontextlost', onContextLost);
             window.removeEventListener('resize', onResize);
-            window.removeEventListener('pointerdown', onPointer);
-            window.removeEventListener('pointermove', onPointerMove);
             document.removeEventListener('visibilitychange', sync);
             reduced.removeEventListener('change', sync);
             image.onload = image.onerror = null;
@@ -188,7 +155,7 @@ export function useRiverScene(options: Options) {
     useEffect(() => { syncRef.current?.(); }, [options.quality, options.paused, options.revision]);
 }
 
-/** Surface normals, local wavefronts and reflected light are evaluated together on the GPU. */
+/** Surface normals and reflected light are evaluated together on the GPU. */
 function createWaterRenderer(canvas: HTMLCanvasElement) {
     const gl = canvas.getContext('webgl', { alpha: false, antialias: false, depth: false, powerPreference: 'high-performance' });
     if (!gl) return null;
@@ -215,22 +182,12 @@ function createWaterRenderer(canvas: HTMLCanvasElement) {
             uniform float time;
             uniform int lightCount;
             uniform vec4 lights[24];
-            uniform int rippleCount;
-            uniform vec4 ripples[8];
-            const float waterFraction=.56;
+            const float waterFraction=.46;
             vec2 normalAt(vec2 p){
                 vec2 n=vec2(cos(p.x*17.+p.y*28.-time*1.1)*.12,
                             cos(p.x*6.-p.y*45.+time*.8)*.18);
                 n+=vec2(cos(p.x*39.-p.y*61.+time*1.9)*.055,
                         cos(p.x*63.+p.y*83.-time*1.4)*.07);
-                for(int i=0;i<8;i++){
-                    if(i>=rippleCount)break;
-                    vec2 d=p-ripples[i].xy;
-                    float r=length(d), age=ripples[i].z;
-                    float front=r-age*.16;
-                    float envelope=exp(-front*front*900.)*exp(-age*.8)*ripples[i].w;
-                    n+=d/max(r,.002)*cos(front*160.)*envelope*.55;
-                }
                 return n;
             }
             void main(){
@@ -238,12 +195,12 @@ function createWaterRenderer(canvas: HTMLCanvasElement) {
                 vec2 p=vec2(uv.x*aspect,uv.y*waterFraction);
                 vec2 normal=normalAt(p);
                 float depth=smoothstep(0.,.25,uv.y);
-                vec2 bent=clamp(uv+normal*vec2(.016,.012)*depth,vec2(.001),vec2(.999));
+                vec2 bent=clamp(uv+normal*vec2(.003,.002)*depth,vec2(.001),vec2(.999));
                 vec3 color=texture2D(scenery,crop.xy+bent*crop.zw).rgb;
                 // Directional sky reflection catches moving wave crests, rather than painted stripes.
                 float crest=pow(max(0.,normal.y*.9+normal.x*.4+.48),5.);
                 float moonPath=exp(-pow((uv.x-.65-normal.x*.07)/(.025+uv.y*.12),2.));
-                color+=vec3(.17,.23,.25)*crest*depth*(.12+moonPath*.8);
+                color+=vec3(.08,.11,.12)*crest*depth*(.12+moonPath*.8);
                 for(int i=0;i<24;i++){
                     if(i>=lightCount)break;
                     vec4 light=lights[i];
@@ -253,7 +210,7 @@ function createWaterRenderer(canvas: HTMLCanvasElement) {
                     float dx=uv.x-light.x-normal.x*(.018+max(below,0.)*.12);
                     float path=exp(-dx*dx/(spread*spread));
                     float tail=exp(-max(below,0.)/reflectionLength)*smoothstep(-.012,.012,below);
-                    float broken=.22+.78*pow(.5+.5*sin(p.y*420.+normal.y*15.+time*.9),3.);
+                    float broken=.3+.7*smoothstep(-.4,.8,sin(p.y*173.+normal.y*8.+time*.7)*sin(p.y*317.-time*.4));
                     float spec=pow(max(0.,normal.y+.55),4.);
                     color+=vec3(1.,.47,.13)*path*tail*light.w*(.18+broken*.55+spec*.3);
                     float pool=exp(-pow(dx/(spread*3.),2.)-pow(below/.018,2.));
@@ -279,11 +236,11 @@ function createWaterRenderer(canvas: HTMLCanvasElement) {
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
         const at = (name: string) => gl.getUniformLocation(program, name);
         const locations = { time: at('time'), crop: at('crop'), viewport: at('viewport'),
-            lights: at('lights[0]'), lightCount: at('lightCount'), ripples: at('ripples[0]'), rippleCount: at('rippleCount') };
-        const lightValues = new Float32Array(24 * 4), rippleValues = new Float32Array(8 * 4);
+            lights: at('lights[0]'), lightCount: at('lightCount') };
+        const lightValues = new Float32Array(24 * 4);
         return {
             upload(image: HTMLImageElement) { gl.bindTexture(gl.TEXTURE_2D, texture); gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,gl.RGBA,gl.UNSIGNED_BYTE,image); },
-            draw(image: HTMLImageElement, width: number, height: number, time: number, lights: Light[], ripples: { x: number; y: number; born: number; strength?: number }[]) {
+            draw(image: HTMLImageElement, width: number, height: number, time: number, lights: Light[]) {
                 gl.viewport(0,0,canvas.width,canvas.height); gl.useProgram(program);
                 const rect=coverCrop(image.naturalWidth,image.naturalHeight,width,height);
                 gl.uniform4f(locations.crop,rect.x/image.naturalWidth,(rect.y+rect.height*WATER_TOP)/image.naturalHeight,rect.width/image.naturalWidth,rect.height*(1-WATER_TOP)/image.naturalHeight);
@@ -291,8 +248,6 @@ function createWaterRenderer(canvas: HTMLCanvasElement) {
                 const visible=reflectionLights(lights);
                 visible.forEach((light,i)=>lightValues.set([light.x/width,(light.y/height-WATER_TOP)/(1-WATER_TOP),light.depth,flameIntensity(time,light.phase)*(light.active?1.25:1)],i*4));
                 gl.uniform1i(locations.lightCount,visible.length); gl.uniform4fv(locations.lights,lightValues);
-                ripples.slice(-8).forEach((ripple,i)=>rippleValues.set([ripple.x/height,(ripple.y-height*WATER_TOP)/height,time-ripple.born,ripple.strength??1],i*4));
-                gl.uniform1i(locations.rippleCount,Math.min(8,ripples.length)); gl.uniform4fv(locations.ripples,rippleValues);
                 gl.drawArrays(gl.TRIANGLES,0,6);
             },
             dispose() { shaders.forEach(shader=>gl.deleteShader(shader)); gl.deleteProgram(program); gl.deleteBuffer(buffer); gl.deleteTexture(texture); },

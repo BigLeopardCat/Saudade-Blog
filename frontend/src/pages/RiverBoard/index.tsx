@@ -4,6 +4,7 @@ import { runtimeBaseURL } from "../../utils/runtimeApi";
 import { LanternArt } from "./LanternArt";
 import { useRiverScene, riverImage } from "./useRiverScene";
 import { flameIntensity, WATER_TOP } from "./sceneBudget";
+import { clampDriftOffset, projectLantern, riverChannel } from "./riverGeometry";
 import "./cinematic.scss";
 import { useDialogFocus } from "./useDialogFocus";
 import { useLiveRefresh } from "../../utils/liveRefresh";
@@ -117,7 +118,6 @@ export default function RiverBoard() {
     const viewRef = useRef({ w: window.innerWidth, h: window.innerHeight, yH: window.innerHeight * WATER_TOP });
     const mouseRef = useRef({ x: 0.5, y: 0.5, tx: 0.5, ty: 0.5 });
     const sceneTime = useRef({ now: 0 });
-    const [assistantOpen, setAssistantOpen] = useState(false);
 
     const [lanterns, setLanterns] = useState<Wish[]>([]);
     const [ready, setReady] = useState(false);
@@ -205,37 +205,15 @@ export default function RiverBoard() {
         v.yH = h * WATER_TOP;
     };
 
-    const riverX = (u: number, d: number) => {
-        const v = viewRef.current;
-        const bend = Math.sin(0.6 + d * 2.2);
-        const c = v.w * (0.51 + 0.045 * bend);
-        const hw = v.w * (0.15 + d * d * 1.08); // 远处收窄、近处展开（第 23 轮：0.12 → 0.15 远端再加宽，前端基本不变）
-        return c + (u - 0.5) * 2 * hw;
-    };
-    const riverY = (d: number) => {
-        const v = viewRef.current;
-        // d 可能因重生为负数：pow 负数小数次幂是 NaN，会传染整帧绘制
-        return v.yH + (v.h * 1.06 - v.yH) * Math.pow(Math.max(0, d), 1.42);
-    };
-
-    /* 灯笼像素坐标（与 DOM 写入完全同源：视差+晃摆+碰撞位移一次算齐，
-       涟漪与灯笼本体再不会错位） */
-    const lanternXY = (m: LanternMeta) => {
-        const px = (mouseRef.current.x - 0.5) * 14;
-        const d = Math.max(0, m.d);
-        const bobY = Math.sin(sceneTime.current.now * 1.2 + m.sway) * 1.6 * (0.3 + d);
-        return {
-            x: riverX(m.u + Math.sin(sceneTime.current.now * 0.2 + m.sway) * 0.012, d) - px * 0.28 + m.oX,
-            y: riverY(d) - bobY + m.oY,
-        };
-    };
+    // Collision response and DOM/reflection rendering use exactly the same bounded projection.
+    const lanternXY = (m: LanternMeta) => projectLantern(viewRef.current, m, sceneTime.current.now, mouseRef.current.x);
 
     /* 灯笼逐帧驱动：与河水同向，向远方缓流。
    速度按 d^1.35 递减：眼前出发快，中后段渐慢，最后一段接近远山时最慢，
    与视觉"渐行渐远（河面在远处收窄）"一致。 */
     const driveLanterns = (dt: number) => {
         const ms = metaRef.current;
-        const pos: { m: LanternMeta; x: number; y: number; r: number }[] = [];
+        const pos: { m: LanternMeta; r: number }[] = [];
         for (const m of ms) {
             // 流速持续放缓（第 11 轮：系数 0.21/0.63 → 0.15/0.44，再降约 30%）
             m.d -= dt * m.w * (0.15 + 0.44 * Math.pow(Math.max(0.03, m.d), 1.35));
@@ -250,8 +228,7 @@ export default function RiverBoard() {
             }
             const d = Math.max(0, m.d);
             const scl = Math.min(1, Math.pow(d, 1.15) * 1.25); // 整体等比放大（保原透视形状）
-            const li = lanternXY(m);
-            pos.push({ m, x: li.x - m.oX, y: li.y - m.oY, r: scl * 53 });
+            pos.push({ m, r: scl * 53 });
         }
         /* 水面漂浮物软排斥（PBD 式松弛，无余量）：只在真实重叠（dist < rr）时推挤——
            相切对（dist === rr）零受力，刚接触的灯不会抖；每帧只消解重叠的一小部分
@@ -271,8 +248,9 @@ export default function RiverBoard() {
         for (let i = 0; i < pos.length; i++) {
             for (let j = i + 1; j < pos.length; j++) {
                 const A = pos[i], B = pos[j];
-                const dx = B.x + B.m.oX - A.x - A.m.oX;
-                const dy = B.y + B.m.oY - A.y - A.m.oY;
+                const a = lanternXY(A.m), b = lanternXY(B.m);
+                const dx = b.x - a.x;
+                const dy = b.y - a.y;
                 const d2 = dx * dx + dy * dy;
                 const rr = A.r + B.r;
                 if (d2 >= rr * rr || d2 < 0.001) continue;
@@ -285,25 +263,25 @@ export default function RiverBoard() {
                 const wa = Math.pow(da, 0.9) + 0.25;        // 景深加权：浅灯让位更多
                 const wb = Math.pow(db, 0.9) + 0.25;
                 const sa = push * (wb / (wa + wb)), sb = push * (wa / (wa + wb));
-                A.m.oX -= nx * sa; A.m.oY -= ny * sa;
-                B.m.oX += nx * sb; B.m.oY += ny * sb;
+                A.m.oX = clampDriftOffset(A.m.oX - nx * sa); A.m.oY = clampDriftOffset(A.m.oY - ny * sa);
+                B.m.oX = clampDriftOffset(B.m.oX + nx * sb); B.m.oY = clampDriftOffset(B.m.oY + ny * sb);
                 // 横向让行：约一半推力转入 u 空间（u 不衰减，clamp 在河道内）
-                const hwA = vNow.w * (0.15 + da * da * 1.08);
-                const hwB = vNow.w * (0.15 + db * db * 1.08);
+                const hwA = riverChannel(vNow, da).halfWidth;
+                const hwB = riverChannel(vNow, db).halfWidth;
                 A.m.u = Math.max(0.13, Math.min(0.87, A.m.u - nx * ((sa * 0.5) / (2 * hwA))));
                 B.m.u = Math.max(0.13, Math.min(0.87, B.m.u + nx * ((sb * 0.5) / (2 * hwB))));
                 // 近垂直对（法线水平分量弱，u 让行无力）：纵向让行转入 d 空间
                 if (Math.abs(nx) < 0.25) {
-                    const kA = (vNow.h * 1.06 - vNow.yH) * 1.42 * Math.pow(da, 0.42);
-                    const kB = (vNow.h * 1.06 - vNow.yH) * 1.42 * Math.pow(db, 0.42);
+                    const kA = riverChannel(vNow, da).depthDerivative;
+                    const kB = riverChannel(vNow, db).depthDerivative;
                     A.m.d = Math.max(0.02, Math.min(1, A.m.d - ny * ((sa * 0.5) / kA)));
                     B.m.d = Math.max(0.02, Math.min(1, B.m.d + ny * ((sb * 0.5) / kB)));
                 }
             }
         }
         for (const m of ms) {
-            m.oX *= Math.pow(0.975, dt * 60);
-            m.oY *= Math.pow(0.975, dt * 60);
+            m.oX = clampDriftOffset(m.oX * Math.pow(0.975, dt * 60));
+            m.oY = clampDriftOffset(m.oY * Math.pow(0.975, dt * 60));
             const node = nodesRef.current.get(m.id);
             if (!node) continue;
             const d = Math.max(0, m.d);
@@ -1114,7 +1092,6 @@ export default function RiverBoard() {
                     <div className="rz-invitation"><span className="rz-live-dot" />一盏灯，一段人间<small role="status">{boardStatus === "loading" ? "正在打捞留言 · 示意河灯" : boardStatus === "error" ? <>留言加载失败 · 当前为示意河灯 <button type="button" onClick={() => setBoardReload(n => n + 1)}>重试</button></> : lanterns.length ? "轻触河灯，读一段心事" : "河上尚无人留灯，愿你是第一位"}</small></div>
                     <div className="rz-actions"><button className="rz-album-btn" type="button" onClick={openAlbum}>灯影集</button><button className="rz-wish-btn" type="button" onClick={openWishFlow}>点一盏河灯</button></div>
                 </div>
-                <button type="button" className="rz-assistant-btn" onClick={() => setAssistantOpen(true)} disabled={assistantOpen}>{assistantOpen ? '助手已唤起' : '唤起助手'}</button>
             </div>
             {/* 此心为灯 · 留言流程：选灯型 → 选印章 → 书写放下 */}
             {wishOpen && (
@@ -1479,7 +1456,7 @@ export default function RiverBoard() {
                 <p>河灯将明 · 稍候</p>
             </div>}
             </div>
-            {assistantOpen && <Suspense fallback={null}><Live2dAgent /></Suspense>}
+            <Suspense fallback={null}><Live2dAgent /></Suspense>
         </>
     );
 }

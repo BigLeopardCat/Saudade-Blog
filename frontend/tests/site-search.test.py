@@ -236,11 +236,8 @@ def open_modal(page, init=None, w=1280, h=900):
     ⚠️ 两个入口，按视口分：`.homeRight` 在 ≤1200px 是 `display: none`（窄屏走抽屉），
     照抄桌面那套会在 `.homeRight > div` 上一直等到超时（这不是页面缺陷，是两套入口本来的分工）。
 
-    窄屏这里**直接点抽屉里的 `.mSearchInput`**，跳过"先点汉堡钮拉开抽屉"那一步：
-    汉堡钮是个 iconfont 字形（`<i class="iconfont icon-bars">`），沙箱引不到那套字体
-    ⇒ 它是 0×0 的盒子，点不到；抽屉本身的几何又长在 `pages/Dashboard/Home/index.sass`
-    （本沙箱没编译它）。跳过的只是"拉开抽屉"这个动画，`.mSearchInput` 的 onClick
-    （`closePhoneBar(); showModal();`）与线上是**同一个**，弹窗那部分不经过任何简化。
+    窄屏通过真实「打开导航菜单」按钮展开，再点抽屉内搜索框。抽屉样式随 Head
+    自身加载，不依赖 Dashboard 首页；按钮即使没有 iconfont 字体也有可点击尺寸。
     """
     p = page.new_page(viewport={"width": w, "height": h})
     errs = []
@@ -253,9 +250,9 @@ def open_modal(page, init=None, w=1280, h=900):
         p.wait_for_timeout(500)
         p.locator(".homeRight > div").first.click()
     else:
-        p.wait_for_selector(".mSearchInput", timeout=15000)
-        p.wait_for_timeout(500)
-        p.locator(".mSearchInput").click()   # 抽屉里那个只读搜索框 = 窄屏入口（见上面的说明）
+        p.get_by_role("button", name="打开导航菜单").click()
+        p.wait_for_selector(".phoneSide.openBar", state="visible", timeout=15000)
+        p.locator(".mSearchInput").click()
     p.wait_for_selector(".searchModalInput", timeout=10000)
     p.wait_for_timeout(300)
     return p, errs
