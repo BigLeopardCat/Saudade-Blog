@@ -24,3 +24,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Playwright runtime output (intentional baselines belong with their spec)
+playwright-report/
+test-results/
+.artifacts/

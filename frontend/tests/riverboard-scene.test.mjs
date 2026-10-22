@@ -10,13 +10,16 @@ const dir = mkdtempSync(path.join(tmpdir(), 'river-scene-'));
 try {
     const outfile = path.join(dir, 'budget.mjs');
     await build({ entryPoints: [path.join(root, 'src/pages/RiverBoard/sceneBudget.ts')], outfile, bundle: true, platform: 'node', format: 'esm' });
-    const { sceneBudget, coverCrop, createSceneLoop } = await import(pathToFileURL(outfile));
+    const { sceneBudget, coverCrop, createSceneLoop, WATER_TOP } = await import(pathToFileURL(outfile));
     for (const [w,h] of [[390,844],[1440,900],[1920,1080],[3840,2160]]) {
-        const b = sceneBudget(w,h,'balanced');
-        assert.ok(b.width <= 960 && b.width*b.height <= 960*960, '4K/retina cannot expand backing store without bounds');
-        assert.equal(b.fps,24);
+        const b = sceneBudget(w,h,'cinematic');
+        assert.ok(b.width <= 1600 && b.width*b.height <= 1600*900, '4K/retina cannot expand backing store without bounds');
+        assert.equal(b.fps,45);
+        assert.equal(WATER_TOP,.44,'moving water reaches the middle distance, above the old lower-half strip layer');
+        assert.equal(b.width,Math.min(w,1600),'native resolution until the bounded wide-screen limit');
+        assert.equal(b.height,Math.round(h*.56*Math.min(1,1600/w)),'water backing geometry matches the 44% top / 56% surface');
         assert.equal(sceneBudget(w,h,'still').fps,0);
-        assert.ok(sceneBudget(w,h,'cinematic').width <= 1440);
+        assert.equal(sceneBudget(w,h,'still').width,b.width,'reduced motion preserves surface detail');
         const crop = coverCrop(1672,941,w,h);
         assert.ok(crop.x >= 0 && crop.y >= 0);
         assert.ok(crop.x+crop.width <= 1672.001 && crop.y+crop.height <= 941.001);
@@ -26,13 +29,14 @@ try {
     const host={ now:()=>time, request:fn=>{pending.set(++id,{at:time+1000/144, fn});return id}, cancel:i=>pending.delete(i), delay:(fn,ms)=>{pending.set(++id,{at:time+ms,fn});return id}, clearDelay:i=>pending.delete(i) };
     const advance=ms=>{const end=time+ms;while(pending.size){const [key,event]=[...pending].sort((a,b)=>a[1].at-b[1].at)[0];if(event.at>end)break;time=event.at;pending.delete(key);event.fn(time)}time=end};
     const loop=createSceneLoop(host,dt=>deltas.push(dt));
-    loop.setRunning(true,24);advance(1000);
-    assert.ok(deltas.length>=23 && deltas.length<=25, '144Hz host does not draw 144 times a second');
+    loop.setRunning(true,45);advance(1000);
+    assert.ok(deltas.length>=44 && deltas.length<=46, '144Hz host does not draw 144 times a second');
     assert.equal(pending.size,1,'single timer/rAF chain');
-    const frames=deltas.length;loop.setRunning(false,24);assert.equal(pending.size,0);advance(60000);assert.equal(deltas.length,frames,'hidden/dialog pause draws nothing');
-    loop.setRunning(true,24);advance(30);assert.ok(deltas.at(-1)<0.05,'resume does not integrate a minute of hidden time');
+    const frames=deltas.length;loop.setRunning(false,45);assert.equal(pending.size,0);advance(60000);assert.equal(deltas.length,frames,'hidden/dialog pause draws nothing');
+    loop.setRunning(true,45);advance(30);assert.ok(deltas.at(-1)<0.05,'resume does not integrate a minute of hidden time');
     loop.setRunning(true,0);assert.equal(pending.size,0,'still quality has no timer');
-    loop.setRunning(true,30);loop.setRunning(true,30);assert.equal(pending.size,1,'repeated start cannot double the loop');
+    loop.setRunning(true,45);loop.setRunning(true,45);assert.equal(pending.size,1,'repeated start cannot double the loop');
     loop.dispose();assert.equal(pending.size,0,'unmount cancels all pending work');
+    const disposedFrames=deltas.length;advance(60000);assert.equal(deltas.length,disposedFrames,'disposed renderer never restarts itself');
     console.log('riverboard scene: geometry, pixel budgets, 144Hz pacing, pause/resume, still mode and disposal passed');
 } finally { await rm(dir,{recursive:true,force:true}); }

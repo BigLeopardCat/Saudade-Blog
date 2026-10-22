@@ -1,29 +1,4 @@
-/**
- * 跑 tests/ 下所有 *.test.mjs 套件（20260923）。
- *
- * 本仓库没有 jest：tests/ 下的套件都是 `node tests/xxx.test.mjs` 直接执行 + `node:assert`。
- * **数量不写死在这里**（此前写死过一次，加一个套件就变成新的陈旧注释）：实际条数以
- * 下面的 glob 为准，末尾那行汇总会报 N/N。
- * 此前 package.json 里那句 `"test": "jest"` 是个死脚本——既没有 jest 配置也没有这个依赖，
- * 于是"跑测试"这件事对人和 CI 都不可执行（CI 里干脆一项检查都没有）。
- *
- * 用法：`npm test`（= node tests/run-suites.mjs），CI 的 check job 走同一条路。
- *
- * 不进这里的：`*.test.py`（要 Playwright + 无头 Chrome，CI 的秒级 job 上跑不了；由
- * `scripts/nightly_sandboxes.sh` 每天 04:40 串行跑，结果在 ~/sandbox_regression.log）
- * 与 `eval/*.py`（要真服务与真语料，本机按需跑）。
- * 20260927 变更：`repro-timegap.mjs` / `smoke-harness.mjs` 两支**已修好并升格进 CI**
- * （现名 `chat-time-divider.test.mjs` / `chat-boot-smoke.test.mjs`）——它们当时
- * 各自都跑不到自己声称在测的地方（缺 `document.querySelector`、缺会话桩、时钟没钉死，
- * 详见 `stubs/dom.mjs` 头注），修好后每条断言都确定可判。
- *
- * 20261006 变更（**临时目录隔离**，与 `scripts/nightly_sandboxes.sh` 同一套约定）：
- * 24 个套件用 `mkdtempSync(path.join(tmpdir(), '…'))` 建临时目录，此前一个都不删
- * （只有 `wordgraph-artifact.test.mjs` 有 `finally`）——本机 `npm test` 跑几遍就往
- * /tmp 撒几十个目录，`cmt-` 那一族攒到 60 个 / 588MB。现在每个套件拿到**专属 TMPDIR**，
- * 通过才删、失败留下并打印路径。手跑单个套件（`node tests/xxx.test.mjs`）没人给它
- * TMPDIR，仍旧落在 /tmp，由夜间清扫收掉。
- */
+/** Legacy Node/VM and cross-language contracts only. New application tests belong to tests/unit/*.test.ts. */
 import { readdirSync, mkdirSync, rmSync, rmdirSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
@@ -46,6 +21,9 @@ if (suites.length === 0) {
     process.exit(1)
 }
 
+const timeoutMs = Number(process.env.LEGACY_SUITE_TIMEOUT_MS || 90_000)
+if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) throw new Error('Invalid LEGACY_SUITE_TIMEOUT_MS')
+
 const failed = []
 for (const f of suites) {
     console.log(`\n──── ${f} ────`)
@@ -58,8 +36,11 @@ for (const f of suites) {
     }
     const r = spawnSync(process.execPath, [path.join(dir, f)], {
         stdio: 'inherit',
+        timeout: timeoutMs,
+        killSignal: 'SIGKILL',
         env: { ...process.env, TMPDIR: suiteTmp },
     })
+    if (r.error) console.error(`${f}: ${r.error.message}`)
     if (r.status !== 0) {
         // 失败现场**不删**：那是排障材料。路径写进失败列表里（末尾会汇总打印）。
         failed.push(`${f}（退出码 ${r.status}，现场留在 ${suiteTmp}）`)

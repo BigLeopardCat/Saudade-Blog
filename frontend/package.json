@@ -6,14 +6,21 @@
   "homepage": "./",
   "scripts": {
     "dev": "vite",
-    "test": "node tests/run-suites.mjs",
+    "test": "npm run test:legacy && npm run test:unit",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
     "fetch:widget": "node scripts/fetch-widget.mjs",
     "fetch:widget:check": "node scripts/fetch-widget.mjs --check",
     "vendor:live2d": "node scripts/vendor-live2d.mjs",
-    "vendor:live2d:check": "node scripts/vendor-live2d.mjs --check"
+    "vendor:live2d:check": "node scripts/vendor-live2d.mjs --check",
+    "test:legacy": "node tests/run-suites.mjs",
+    "test:unit": "vitest run",
+    "test:unit:watch": "vitest",
+    "test:browser": "playwright test",
+    "typecheck:unit": "tsc -p tsconfig.test.json --noEmit",
+    "typecheck:browser": "tsc -p tsconfig.browser.json --noEmit",
+    "typecheck:tests": "npm run typecheck:unit && npm run typecheck:browser"
   },
   "dependencies": {
     "@ant-design/charts": "^2.0.3",
@@ -68,8 +75,14 @@
     "unified": "^10.1.2"
   },
   "devDependencies": {
+    "@ant-design/cssinjs": "1.24.0",
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "1.56.1",
+    "@testing-library/dom": "10.4.1",
+    "@testing-library/react": "16.3.0",
+    "@testing-library/user-event": "14.6.1",
     "@types/markdown-navbar": "^1.4.4",
+    "@types/node": "20.19.43",
     "@types/react": "^18.2.55",
     "@types/react-dom": "^18.2.19",
     "@types/react-syntax-highlighter": "^15.5.11",
@@ -80,10 +93,12 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.7",
     "globals": "^17.13.0",
+    "jsdom": "26.1.0",
     "sass": "^1.70.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.71.2",
-    "vite": "^8.3.4"
+    "vite": "^8.3.4",
+    "vitest": "4.1.0"
   },
   "overrides": {
     "gh-pages": "^5.0.0"

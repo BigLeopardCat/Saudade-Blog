@@ -71,9 +71,12 @@ console.log('== 时间标签 shouldShowTime（5 分钟间隔阈值）==');
   assert.falsy(core.shouldShowTime(valid, null), 'cur 为 null → 不显示');
   assert.falsy(core.shouldShowTime(valid, undefined), 'cur 为 undefined → 不显示');
   // 跨日界但间隔小：昨天 23:59 → 今天 00:01（2 分钟）→ 不显示（间隔制，非日界制）
-  const prev2339 = { ...valid, time: atToday(23, 59) };
+  const yesterday = new Date(atToday(23, 59));
+  yesterday.setDate(yesterday.getDate() - 1);
+  const prev2359 = { ...valid, time: yesterday.getTime() };
   const cur0001 = { ...valid, time: atToday(0, 1) };
-  assert.falsy(core.shouldShowTime(prev2339, cur0001), '23:59→00:01 间隔 2 分钟 → 不显示');
+  assert.eq(cur0001.time - prev2359.time, 2 * 60 * 1000, '跨日夹具真实相隔两分钟');
+  assert.falsy(core.shouldShowTime(prev2359, cur0001), '23:59→00:01 间隔 2 分钟 → 不显示');
 }
 
 console.log('== matchText（命令帧拼接差异归一）==');

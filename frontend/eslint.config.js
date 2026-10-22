@@ -119,4 +119,13 @@ export default defineConfig([
       // 位置、同一条规则。级别与选项都没动：仍是 `warn` + `allowConstantExport`。
     },
   },
+  {
+    files: ['tests/**/*.{test,spec}.{ts,tsx}'],
+    rules: {
+      'no-restricted-syntax': ['error', {
+        selector: "CallExpression[callee.property.name='only'][callee.object.name=/^(test|it|describe)$/]",
+        message: 'Do not commit focused tests; run a filtered command instead.',
+      }],
+    },
+  },
 ])

@@ -14,7 +14,9 @@ cd frontend && npm run fetch:widget && cd ..   # cargo test 的编译期前提�
 cargo test
 cd frontend
 npx --no-install tsc --noEmit -p tsconfig.json
+npm run typecheck:tests
 npm test
+npm run test:browser
 npm run lint
 ```
 
@@ -22,14 +24,16 @@ npm run lint
       `include_str!` 是编译期读看板娘那个 `chat-stream.js` 的，没取回来会在这里报一个
       看不出前因后果的编译错）
 - [ ] `tsc --noEmit` —— 干净
+- [ ] `typecheck:tests` —— 单元/浏览器 TS 类型检查通过
+- [ ] `test:browser` —— 浏览器行为与河灯路由检查通过（失败产物只作为 CI artifact）
 - [ ] `npm test` —— 绿（它**不包含** ESLint，两者是分开的两道门）
 - [ ] `npm run lint` —— 干净（脚本自带 `--report-unused-disable-directives`：
       一条**多余的** `eslint-disable-next-line` 在这里判 error，而它会让 CI 红——
       **CI 红就意味着这次 push 什么都没部署**）
 - [ ] 提交信息过了闸门（首行 ≤60 字符、type 在白名单里、首行后有空行、没有 `Co-Authored-By`）
 
-> CI 在 push 到 `cn_sora_blog` 时会跑上面这些（`deploy.yml` 的 `check` job），
-> 但**PR 上不跑**（见 ROADMAP 的待办）。所以这里"过了"是你自己跑出来的，不是机器给的。
+> PR 与主分支 push 都运行 `check`、独立 `browser` job；任一失败阻止部署。
+> PR 还在 GitHub runner 验证前端生产构建，不执行部署。共享生产主机禁止本地生产构建。
 
 ## 需要同步的另一头
 
