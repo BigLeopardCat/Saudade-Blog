@@ -509,8 +509,11 @@ pub async fn create_comment(
     };
     // 审核：与留言板**同一份裁决实现**，开关是评论自己那对键
     let (ai_key, manual_key) = super::web_info::COMMENT_REVIEW_KEYS;
-    let (ai_on, manual_on) =
-        super::web_info::review_switches_of(&state.db, ai_key, manual_key).await;
+    let (ai_on, manual_on) = match
+        super::web_info::review_switches_of(&state.db, ai_key, manual_key).await {
+            Ok(switches) => switches,
+            Err(e) => return super::db_error("读取评论审核设置", &e),
+        };
     let (approved, ai_result, ai_reason, reject_reason) =
         super::talks::decide_review("comment", uid, &content, ai_on, manual_on).await;
     // 风控档位只在"本来会直接公开"时改判成待审：**只把 1 压成 0，绝不把 2 松成 0**

@@ -1,5 +1,5 @@
 use axum::{Json, extract::State};
-use sea_orm::{EntityTrait, ColumnTrait, QueryFilter, ActiveModelTrait, Set};
+use sea_orm::{EntityTrait, ColumnTrait, QueryFilter, DbErr, Set};
 use std::sync::Arc;
 use crate::entity::{web_info, user};
 use crate::routes::AppState;
@@ -135,7 +135,10 @@ pub struct WebSettingPayload {
 pub async fn get_web_settings(
     State(state): State<Arc<AppState>>,
 ) -> Json<ApiResponse<WebSettingPayload>> {
-    let infos = web_info::Entity::find().all(&state.db).await.unwrap_or(vec![]);
+    let infos = match web_info::Entity::find().all(&state.db).await {
+        Ok(rows) => rows,
+        Err(e) => return super::db_error("读取站点设置", &e),
+    };
     
     let get_val = |target_db_key: &str| -> Option<String> {
          infos.iter().find(|i| i.key_name == target_db_key).map(|i| i.value.clone())
@@ -401,28 +404,8 @@ pub async fn update_web_info(
         if let Some(v) = val { map.insert(key, v.to_string()); }
     }
 
-    for (k, v) in map {
-        let entry = web_info::Entity::find()
-            .filter(web_info::Column::KeyName.eq(k))
-            .one(&state.db)
-            .await;
-
-        match entry {
-            Ok(Some(e)) => {
-                let mut active: web_info::ActiveModel = e.into();
-                active.value = Set(v);
-                let _ = active.update(&state.db).await;
-            },
-            Ok(None) => {
-                 let new_entry = web_info::ActiveModel {
-                    key_name: Set(k.to_string()),
-                    value: Set(v),
-                    ..Default::default()
-                };
-                let _ = web_info::Entity::insert(new_entry).exec(&state.db).await;
-            },
-            Err(_) => {}
-        }
+    if let Err(e) = save_settings(&state.db, map).await {
+        return super::db_error("保存站点设置", &e);
     }
 
     Json(ApiResponse::success("Settings updated".to_string()))
@@ -452,31 +435,29 @@ pub async fn update_social_info(
         params.insert(short_key, v);
     }
 
-    for (k, v) in params {
-        let entry = web_info::Entity::find()
-            .filter(web_info::Column::KeyName.eq(k))
-            .one(&state.db)
-            .await;
-        
-         match entry {
-            Ok(Some(e)) => {
-                 let mut active: web_info::ActiveModel = e.into();
-                active.value = Set(v);
-                let _ = active.update(&state.db).await;
-            },
-            Ok(None) => {
-                 let new_entry = web_info::ActiveModel {
-                    key_name: Set(k.to_string()),
-                    value: Set(v),
-                    ..Default::default()
-                };
-                let _ = web_info::Entity::insert(new_entry).exec(&state.db).await;
-            },
-             _ => {}
-         }
+    if let Err(e) = save_settings(&state.db, params).await {
+        return super::db_error("保存社交信息", &e);
     }
 
     Json(ApiResponse::success("Social info updated".to_string()))
+}
+
+/// 一条 UPSERT 保存整份变更；任一键失败则整条语句回滚。排序避免并发批次锁顺序相反。
+async fn save_settings(
+    db: &sea_orm::DatabaseConnection,
+    params: std::collections::HashMap<&str, String>,
+) -> Result<(), DbErr> {
+    if params.is_empty() { return Ok(()); }
+    let mut params: Vec<_> = params.into_iter().collect();
+    params.sort_unstable_by(|a, b| a.0.cmp(b.0));
+    let rows = params.into_iter().map(|(key, value)| web_info::ActiveModel {
+        key_name: Set(key.to_string()), value: Set(value), ..Default::default()
+    });
+    web_info::Entity::insert_many(rows)
+        .on_conflict(sea_orm::sea_query::OnConflict::column(web_info::Column::KeyName)
+            .update_column(web_info::Column::Value).to_owned())
+        .exec(db).await?;
+    Ok(())
 }
 
 /// 留言板（`src=board`）那两个审核开关的键名。
@@ -499,30 +480,28 @@ pub const BOARD_REVIEW_KEYS: (&str, &str) = ("aiReviewEnabled", "manualReviewEna
 pub const COMMENT_REVIEW_KEYS: (&str, &str) =
     ("commentAiReviewEnabled", "commentManualReviewEnabled");
 
-/// 审核开关读取的**通用形**（20260905，talks.rs 入库前调用）：(AI 审核, 人工复核) 二元组，
-/// 值存 "true"/"false"，缺 key/解析失败一律视为关（不影响既有默认全通过的现状）。
-///
-/// 键名由调用方给：留言板与评论各两个键，规则同一条（见两个 `_KEYS` 常量）。
+/// 缺键保留首次安装时的关闭默认值；查询失败或非法值必须阻止内容提交。
+/// 两个键在一次查询中读取，避免混合两次查询之间的配置版本。
 pub async fn review_switches_of(
     db: &sea_orm::DatabaseConnection,
     ai_key: &str,
     manual_key: &str,
-) -> (bool, bool) {
-    async fn get_bool(db: &sea_orm::DatabaseConnection, key: &str) -> bool {
-        web_info::Entity::find()
-            .filter(web_info::Column::KeyName.eq(key))
-            .one(db)
-            .await
-            .ok()
-            .flatten()
-            .map(|i| i.value == "true")
-            .unwrap_or(false)
-    }
-    (get_bool(db, ai_key).await, get_bool(db, manual_key).await)
+) -> Result<(bool, bool), DbErr> {
+    let rows = web_info::Entity::find()
+        .filter(web_info::Column::KeyName.is_in([ai_key, manual_key]))
+        .all(db).await?;
+    let read = |key: &str| -> Result<bool, DbErr> {
+        match rows.iter().find(|row| row.key_name == key).map(|row| row.value.as_str()) {
+            None | Some("false") => Ok(false),
+            Some("true") => Ok(true),
+            Some(_) => Err(DbErr::Custom(format!("审核开关 {key} 的值非法"))),
+        }
+    };
+    Ok((read(ai_key)?, read(manual_key)?))
 }
 
 /// 留言板的两个开关（`BOARD_REVIEW_KEYS` 的薄包装）。
-pub async fn review_switches(db: &sea_orm::DatabaseConnection) -> (bool, bool) {
+pub async fn review_switches(db: &sea_orm::DatabaseConnection) -> Result<(bool, bool), DbErr> {
     let (ai_key, manual_key) = BOARD_REVIEW_KEYS;
     review_switches_of(db, ai_key, manual_key).await
 }

@@ -7,7 +7,7 @@ use axum::{
 };
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
-    QuerySelect, Set,
+    QuerySelect, Set, TransactionTrait,
 };
 use sea_orm::sea_query::Expr;
 use serde::{Deserialize, Serialize};
@@ -358,15 +358,8 @@ pub struct ReviewQuotaReq {
 
 /// POST /api/protected/quota/requests/:id/review：批准 / 驳回一份申请。
 ///
-/// 顺序是**读校验 → 原子认领 → 副作用 → 通知**（模块头注 ①）：
-///   · 读校验（无副作用）只为把话说准——"没有找到这条申请" / "用户不存在" 与
-///     "这条申请已经处理过了"是三件不同的事，合成一句会让管理员按错误的方向去查；
-///   · **真正的并发守卫是认领那一条 `WHERE id=? AND status=0`**，不是读校验；
-///   · 认领后清零失败（DB 抖动）是唯一会留下"已通过但没清零"的分支：**如实报错**
-///     并记 error，恢复路径是账号管理页那枚「重置额度」按钮（重试这个接口会撞上
-///     "已经处理过了"）。绝不回一句"已通过"了事——那会让额度没清零而主人以为清了。
-///
-/// 驳回理由为空的处置见模块头注 ②（落 NULL + 通知层回落，不塞编好的话）。
+/// 读校验、条件认领与额度清零在同一事务中；失败回滚后可以重试。
+/// `WHERE id=? AND status=0` 保证并发审批仅一次生效；通知只在提交成功后发送。
 pub async fn review_quota_request(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -376,7 +369,11 @@ pub async fn review_quota_request(
     let Some(operator) = crate::auth_jwt::auth_uid(&state.db, &headers).await.ok() else {
         return Json(ApiResponse::error("请先登录"));
     };
-    let row = match quota_request::Entity::find_by_id(id).one(&state.db).await {
+    let txn = match state.db.begin().await {
+        Ok(txn) => txn,
+        Err(e) => return super::db_error("开始额度审批", &e),
+    };
+    let row = match quota_request::Entity::find_by_id(id).one(&txn).await {
         Ok(Some(r)) => r,
         Ok(None) => return Json(ApiResponse::error("没有找到这条额度申请")),
         Err(e) => {
@@ -389,7 +386,7 @@ pub async fn review_quota_request(
         // 是并发或重复点击下的正常结局），措辞是跨语言契约，agent 逐字转述
         return Json(ApiResponse::error("这条申请已经处理过了"));
     }
-    let target = match user::Entity::find_by_id(row.user_id).one(&state.db).await {
+    let target = match user::Entity::find_by_id(row.user_id).one(&txn).await {
         Ok(Some(u)) => u,
         Ok(None) => return Json(ApiResponse::error("用户不存在")),
         Err(e) => {
@@ -420,7 +417,7 @@ pub async fn review_quota_request(
         .filter(quota_request::Column::Id.eq(id))
         // **这一行就是并发守卫**：两个人同时点通过，只有一个的 UPDATE 会匹配到行
         .filter(quota_request::Column::Status.eq(STATUS_PENDING))
-        .exec(&state.db)
+        .exec(&txn)
         .await;
     match claimed {
         Ok(r) if r.rows_affected == 0 => {
@@ -434,28 +431,22 @@ pub async fn review_quota_request(
         }
     }
 
-    let limit = limit_of(&target.role);
     if payload.approved {
-        // 清零：唯一把「请求」与「事实」连起来的动作（entity 头注）
-        match user::Entity::update_many()
+        let result = user::Entity::update_many()
             .col_expr(user::Column::ChatQuotaUsed, Expr::value(0).into())
             .filter(user::Column::Id.eq(target.id))
-            .exec(&state.db)
-            .await
-        {
-            Ok(_) => {}
-            Err(e) => {
-                tracing::error!(
-                    "[额度] 申请已通过但清零失败 request_id={} uid={}: {} —— 恢复路径：账号管理页重置额度",
-                    id,
-                    target.id,
-                    e
-                );
-                return Json(ApiResponse::error(
-                    "申请已标记为通过，但额度清零失败，请到账号管理页用「重置额度」再试一次",
-                ));
-            }
+            .exec(&txn).await;
+        match result {
+            Ok(r) if r.rows_affected == 1 => {}
+            Ok(_) => return Json(ApiResponse::error("用户不存在")),
+            Err(e) => return super::db_error("恢复对话额度", &e),
         }
+    }
+    if let Err(e) = txn.commit().await {
+        return super::db_error("提交额度审批", &e);
+    }
+    let limit = limit_of(&target.role);
+    if payload.approved {
         let content = format!("管理员已批准你的对话额度重置申请，额度已恢复到 {} 轮。", limit);
         notify(&state.db, target.id, NOTICE_APPROVED_TITLE, content).await;
         tracing::info!("[额度] 批准申请 id={} uid={}（发起人 uid={}）", id, target.id, operator);
