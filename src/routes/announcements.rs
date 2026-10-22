@@ -1,5 +1,5 @@
 use axum::{Json, extract::State};
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set};
+use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use crate::entity::{announcement, user, user_notification};
@@ -98,20 +98,13 @@ pub async fn create_announcement(
         content: Set(payload.content),
         ..Default::default()
     };
-    // 插入后**回读一次**：`created_at` 由 DB 默认值生成，展开出来的通知行要写同一个
-    // 时刻（它是"这条通知来自哪条公告"的匹配键，见文件头注释）。
-    let saved = match announcement::Entity::insert(a).exec(&state.db).await {
-        Ok(r) => announcement::Entity::find_by_id(r.last_insert_id).one(&state.db).await.unwrap_or(None),
-        Err(e) => {
-            tracing::error!("[announcement] 新建失败: {}", e);
-            None
-        }
+    // PostgreSQL INSERT RETURNING 同时拿到默认时间；插入失败必须向调用方报错。
+    let saved = match a.insert(&state.db).await {
+        Ok(saved) => saved,
+        Err(e) => return super::db_error("新建公告", &e),
     };
-    // 展开失败**不回滚公告**：公告本身已经发出去了（管理员在后台看得见），
-    // 少的是通知行——如实记日志，不假装整体成功也不把已经发出去的公告吞掉。
-    if let Some(a) = saved {
-        fan_out(&state, &a).await;
-    }
+    // 通知是 best-effort：失败记日志，核心公告已经成功提交。
+    fan_out(&state, &saved).await;
     Json(ApiResponse::success("Created".to_string()))
 }
 

@@ -317,7 +317,10 @@ async fn insert_talk(
         }
     }
     let (approved, ai_result, ai_reason, reject_reason) = if src == "board" {
-        board_approved(state, uid, content).await
+        match board_approved(state, uid, content).await {
+            Ok(result) => result,
+            Err(e) => return super::db_error("读取留言审核设置", &e),
+        }
     } else {
         (1, None, None, None)
     };
@@ -638,9 +641,9 @@ pub(crate) async fn decide_review(
 /// 留言板的裁决入口（`decide_review` 的薄包装，20261002 抽出）：读留言板的两个审核开关
 /// —— `aiReviewEnabled` / `manualReviewEnabled`（见 `web_info::BOARD_REVIEW_KEYS`）。
 async fn board_approved(state: &Arc<AppState>, uid: i32, content: &str)
-    -> (i16, Option<String>, Option<String>, Option<String>) {
-    let (ai_on, manual_on) = super::web_info::review_switches(&state.db).await;
-    decide_review("board", uid, content, ai_on, manual_on).await
+    -> Result<(i16, Option<String>, Option<String>, Option<String>), sea_orm::DbErr> {
+    let (ai_on, manual_on) = super::web_info::review_switches(&state.db).await?;
+    Ok(decide_review("board", uid, content, ai_on, manual_on).await)
 }
 
 /// POST /api/public/board：河灯留言板放灯（强制登录）

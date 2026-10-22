@@ -333,6 +333,7 @@ jobs:
         # 见那个文件的头注。
         env:
           TEST_PG_URL: postgres://postgres:ci-root-pw@127.0.0.1:5432/saudade_blog
+          JWT_SECRET: isolated-ci-consistency-test-secret
         run: cargo test
 
       - name: Install frontend deps
