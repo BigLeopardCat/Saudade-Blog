@@ -83,16 +83,18 @@ console.log('\n③ 后台「公开文章」页签（`notes.rs` 的 `only_public`
     const notes = rust('src/routes/notes.rs');
     ok(/pub only_public: Option<bool>/.test(notes),
         '`SearchRequest` 里有 `only_public`（前端页签的入参）');
-    // 只看那一支自己的块，不看全文 —— 否则"别处有这三个谓词"也能把它蒙混过去。
+    // 后端把共享公开判据提取为 public_condition；既验证调用点使用它，
+    // 也验证函数体的三项谓词，不能用“全文里碰巧有这些字段”蒙混过去。
     const m = notes.match(/if let Some\(true\) = payload\.only_public \{([\s\S]*?)\n    \}/);
-    ok(!!m, '  `if let Some(true) = payload.only_public { … }` 这一支真落地了（不是只加了字段）');
-    const blk = m ? m[1] : '';
-    ok(/IsPublic\.eq\(true\)/.test(blk), '  块里有 `is_public = true`');
-    ok(/Status\.is_in\(public_status_words\(\)\)/.test(blk),
-        '  块里的状态谓词是**同一个白名单函数**（不是又抄一份词表）');
-    // 前两条与 list_public_notes 同口径；这条与 list_all_notes 一致 —— 少了它「公开 ⊂ 全部文章」
-    // 不成立（编辑修改稿的影子行会同时出现在两个页签里）。
-    ok(/DraftOf\.is_null\(\)/.test(blk), '  块里有 `draft_of IS NULL`（排掉编辑修改稿的影子行）');
+    ok(!!m, '  `only_public` 分支存在');
+    ok(/condition\s*=\s*condition\.add\(public_condition\(\)\)/.test(m?.[1] || ''),
+        '  分支把共享公开判据与既有条件 AND 组合');
+    const predicate = notes.match(/fn public_condition\(\) -> Condition \{([\s\S]*?)\n\}/)?.[1] || '';
+    ok(/Condition::all\(\)/.test(predicate), '  共享判据的各项是 AND 组合');
+    ok(/IsPublic\.eq\(true\)/.test(predicate), '  共享判据有 `is_public = true`');
+    ok(/Status\.is_in\(public_status_words\(\)\)/.test(predicate),
+        '  共享判据调用唯一状态白名单函数');
+    ok(/DraftOf\.is_null\(\)/.test(predicate), '  共享判据排除编辑修改稿');
 }
 
 console.log('\n④ 前端不再自算口径（口径只有一处，删掉的别再回来）');

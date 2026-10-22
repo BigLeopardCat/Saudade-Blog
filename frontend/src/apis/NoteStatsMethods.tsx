@@ -35,9 +35,10 @@ import type {
 const visitorHeader = () => ({ [VISITOR_HEADER]: getVisitorKey() });
 
 /** 单篇统计（公开，不需要登录）。带上标识 ⇒ 匿名访客也能拿到自己的 `liked`。 */
-function getNoteStats(id: number | string) {
+function getNoteStats(id: number | string, signal?: AbortSignal) {
     return http<Envelope<NoteStats>>({
         url: `/api/public/notes/${id}/stats`,
+        signal,
         method: "GET",
         headers: visitorHeader(),
     });

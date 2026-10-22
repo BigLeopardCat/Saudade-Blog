@@ -10,7 +10,7 @@ import {
     TableProps,
     Tag,
 } from "antd";
-import React, {useEffect, useState} from "react";
+import React, {useEffect, useRef, useState} from "react";
 import {FolderOpenOutlined, QuestionCircleOutlined, ReloadOutlined} from '@ant-design/icons';
 import {CategoriesType} from "../../../../interface/CategoriesType";
 import {fetchCategories} from "../../../../store/components/categories.tsx";
@@ -29,6 +29,8 @@ import {
 } from "../../../../apis/CategoryMethods.tsx";
 import {useLiveRefresh} from "../../../../utils/liveRefresh.ts";
 import {cjsDefault} from "../../../../utils/cjsDefault";
+
+import {runAdminMutation} from "../../../../utils/adminMutation";
 
 // @mui 的图标包是 CJS，Vite 8 之后默认 import 拿到的是名字空间对象而不是组件
 // （症状是 `Element type is invalid … got: object` ＝ React #130；判据与三种形态见
@@ -50,6 +52,7 @@ const  AllCategorize = () => {    //hooks区域
     const [staticDate,setStaticDate] = useState<CategoriesType[]>([])
     const [open, setOpen] = useState(false);
     const [confirmLoading, setConfirmLoading] = useState(false);
+    const mutationLock = useRef(false);
     const [isEdit,setEdit] = useState(0)
     const [form] = Form.useForm();
     const dispatch = useDispatch()
@@ -67,54 +70,46 @@ const  AllCategorize = () => {    //hooks区域
     useLiveRefresh(initCategoryList, { skip: () => isModalOpen || open });
 
     async function initCategoryList(){
-        const res = await getCategories()
-        if(res.status===200){
-            setStaticDate(res.data.data.map((item: { categoryKey: number; categoryTitle: string; color: string; icon: string; introduce: string; noteCount: number; pathName:string}) => {
-                // // const matchedNotes = noteList.filter((note: { noteCategory: string; }) => note.noteCategory === item.categoryTitle);
-                return {
-                    key: item.categoryKey,
-                    categoryTitle: item.categoryTitle,
-                    pathName: item.pathName,
-                    color: item.color,
-                    icon: item.icon,
-                    introduce: item.introduce,
-                    noteCount: item.noteCount
-                }
-            }))
-        }
-    }
-
-    //回调函数区域
-    //删除逻辑
-    const Delete = async (key:number) => {
-        const res = await delCategory(key)
-        if(res.status === 200){
-            await initCategoryList()
-            dispatch<any>(fetchCategories())
-            message.success('删除成功')
-        }
-    }
-
-    const DeleteAll = async () => {
-        if (selectedRowKeys.length === 0) {
-            message.warning('待选中')
-        } else {
-            const res = await delAllCategory(selectedRowKeys)
-            try {
-                if (res.status === 200) {
-                    await initCategoryList()
-                    dispatch<any>(fetchCategories())
-                    message.success('删除成功')
-                }
-            } catch (error) {
-                console.log(error)
+        try {
+            const res = await getCategories()
+            if (res.status === 200 && res.data?.code === 200 && Array.isArray(res.data.data)) {
+                setStaticDate(res.data.data.map((item: { categoryKey: number; categoryTitle: string; color: string; icon: string; introduce: string; noteCount: number; pathName: string }) => ({
+                    ...item, key: item.categoryKey,
+                })))
+            } else {
+                message.error(res.data?.message || '分类加载失败，请重试')
             }
-            setSelectedRowKeys([])
+        } catch {
+            message.error('分类加载失败，请检查网络后重试')
         }
+    }
+
+    const refreshCategories = () => {
+        void initCategoryList()
+        dispatch<any>(fetchCategories())
+    }
+
+    const Delete = (key: number) => runAdminMutation(mutationLock, setConfirmLoading,
+        () => delCategory(key), () => {
+            setSelectedRowKeys((keys) => keys.filter((value) => value !== key))
+            message.success('删除成功')
+            refreshCategories()
+        }, (reason) => { message.error(reason) })
+
+    const DeleteAll = () => {
+        if (selectedRowKeys.length === 0) { message.warning('待选中'); return }
+        return runAdminMutation(mutationLock, setConfirmLoading,
+            () => delAllCategory(selectedRowKeys), () => {
+                setSelectedRowKeys([])
+                setIsModalOpen(false)
+                message.success('删除成功')
+                refreshCategories()
+            }, (reason) => { message.error(reason) })
     }
 
     //编辑逻辑
     const Change_Categories = (value:CategoriesType) => {
+        if (mutationLock.current) return
         setEdit(value.key)
         showModal()
         form.setFieldsValue({
@@ -126,66 +121,30 @@ const  AllCategorize = () => {    //hooks区域
         });
     }
 
-    //表单提交
-    const onfinish = async () => {
-        // 获取整个表单的值
-        const {categorie,introduce,categorie_icon,categorie_color} = form.getFieldsValue();
-        const colorValue = typeof categorie_color === "string" ? categorie_color : (categorie_color?.toHexString ? categorie_color.toHexString() : "#000000");
-        const data:{ color: string; introduce: string;categoryTitle: string; icon: string,pathName:string } = {
-            categoryTitle: categorie,
-            icon:categorie_icon,
-            color: colorValue,
-            introduce:introduce,
-            pathName: form.getFieldsValue().pathName
+    const handleOk = () => runAdminMutation(mutationLock, setConfirmLoading, async () => {
+        const values = await form.validateFields()
+        const color = values.categorie_color
+        const data = {
+            categoryTitle: values.categorie,
+            introduce: values.introduce,
+            icon: values.categorie_icon,
+            color: typeof color === 'string' ? color : (color?.toHexString?.() || '#000000'),
+            pathName: values.pathName,
         }
-        try {
-            const res = await addCategory(data)
-            if(res.status === 200){
-                await initCategoryList()
-                dispatch<any>(fetchCategories())
-                message.success('添加成功')
-            }
-        }catch (error){
-            console.log(error)
-        }
-    }
-
-    const handleOk = async () => {
-        if (isEdit !== 0) {
-            const update = {
-                categoryTitle: form.getFieldsValue().categorie,
-                introduce: form.getFieldsValue().introduce,
-                icon: form.getFieldsValue().categorie_icon,
-                color: form.getFieldsValue().categorie_color.toHexString(),
-                pathName: form.getFieldsValue().pathName
-            }
-            try {
-                const res = await updateCategory(update, isEdit)
-                if (res.status === 200) {
-                    await initCategoryList()
-                    message.success('更新成功')
-                }
-            } catch (error) {
-                console.log(error)
-            }
-            setEdit(0);
-            form.resetFields();
-            setOpen(false);
-        } else {
-            form.validateFields().then(() => {
-                setConfirmLoading(true);
-                onfinish();
-                setConfirmLoading(false);
-                form.resetFields();
-                setOpen(false);
-            });
-        }
-    };
+        return isEdit !== 0 ? updateCategory(data, isEdit) : addCategory(data)
+    }, () => {
+        message.success(isEdit !== 0 ? '更新成功' : '添加成功')
+        setEdit(0)
+        form.resetFields()
+        setOpen(false)
+        refreshCategories()
+    }, (reason) => { message.error(reason) });
 
     const handleCancel = () => {
+        if (mutationLock.current) return
         form.resetFields()
         setEdit(0)
-        setOpen(false);
+        setOpen(false)
     };
 
     //表单选中
@@ -195,11 +154,12 @@ const  AllCategorize = () => {    //hooks区域
     const rowSelection = {
         selectedRowKeys,
         onChange: onSelectChange,
+        getCheckboxProps: () => ({ disabled: confirmLoading }),
     };
     const hasSelected = selectedRowKeys.length > 0;
     //添加框打开
     const showModal = () => {
-        setOpen(true);
+        if (!mutationLock.current) setOpen(true);
     };
 
     //Tab数据
@@ -261,7 +221,7 @@ const  AllCategorize = () => {    //hooks区域
             width: isNarrow ? '28%' : undefined,
             render: (item) => (
                 <Space size="middle">
-                    <Fab color="info" aria-label="edit" size='small' onClick={() => Change_Categories(item)}>
+                    <Fab disabled={confirmLoading} color="info" aria-label="edit" size='small' onClick={() => Change_Categories(item)}>
                         <EditIcon />
                     </Fab>
                     <Popconfirm
@@ -272,7 +232,7 @@ const  AllCategorize = () => {    //hooks区域
                         onConfirm={() => Delete(item.key)}
                         cancelText='取消'
                     >
-                        <Fab color="error" aria-label="delete" size='small'>
+                        <Fab disabled={confirmLoading} color="error" aria-label="delete" size='small'>
                             <DeleteIcon />
                         </Fab>
                     </Popconfirm>
@@ -307,16 +267,13 @@ const  AllCategorize = () => {    //hooks区域
     };
 
     const showdelModal = () => {
-        setIsModalOpen(true);
+        if (!mutationLock.current) setIsModalOpen(true);
     };
 
-    const handledelOk = () => {
-        DeleteAll()
-        setIsModalOpen(false);
-    };
+    const handledelOk = () => DeleteAll();
 
     const handledelCancel = () => {
-        setIsModalOpen(false);
+        if (!mutationLock.current) setIsModalOpen(false);
     };
     /* 窄屏去掉 `x`（那是"整张表写死 1000px 宽"的横向拖，手机上毫无意义；裁掉三列之后
        剩下的本来就装得下）。`y`（480 竖向滚动）两档都留着。 */
@@ -356,11 +313,12 @@ const  AllCategorize = () => {    //hooks区域
             onOk={handleOk}
             confirmLoading={confirmLoading}
             onCancel={handleCancel}
+            cancelButtonProps={{ disabled: confirmLoading }}
             okText={isEdit=== 0? '添加' : '保存'}
             cancelText='取消'
             getContainer={false}
         >
-            <Form {...formItemLayout} variant="filled" style={{ maxWidth: 600 }} form={form} onFinish={onfinish}>
+            <Form {...formItemLayout} variant="filled" style={{ maxWidth: 600 }} form={form} onFinish={handleOk}>
                 <Form.Item label="分类名称" name="categorie" >
                     <Input/>
                 </Form.Item>
@@ -390,7 +348,7 @@ const  AllCategorize = () => {    //hooks区域
             </Form>
         </Modal>
 
-        <Modal title="删除确认" open={isModalOpen} onOk={handledelOk} onCancel={handledelCancel} okText="确定" cancelText="取消" getContainer={false}>
+        <Modal title="删除确认" confirmLoading={confirmLoading} cancelButtonProps={{ disabled: confirmLoading }} open={isModalOpen} onOk={handledelOk} onCancel={handledelCancel} okText="确定" cancelText="取消" getContainer={false}>
             是否删除选中所有分类?
         </Modal>
     </>

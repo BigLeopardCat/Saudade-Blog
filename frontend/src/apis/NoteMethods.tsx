@@ -97,9 +97,10 @@ function updateNoteStatus(data: status,isEdit:string){
     })
 }
 
-function getNoteById(id: string){
+function getNoteById(id: string, signal?: AbortSignal){
     return http({
         url: `/api/public/notes/${id}`,
+        signal,
         method: 'GET'
     })
 }
@@ -120,9 +121,10 @@ function createNote(data: newNote){
     })
 }
 
-function searchNotes(data:any){
+function searchNotes(data:any, signal?: AbortSignal){
     return http({
         url: '/api/public/notes/search',
+        signal,
         method: 'POST',
         data: data
     })
