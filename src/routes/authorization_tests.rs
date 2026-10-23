@@ -8,7 +8,7 @@ use sea_orm::{DatabaseBackend, MockDatabase};
 use tower::ServiceExt;
 
 #[tokio::test]
-async fn category_actions_require_authentication_before_reading_or_writing() {
+async fn native_actions_require_authentication_before_reading_or_writing() {
     let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
     let app = create_router(AppState {
         db,
@@ -23,6 +23,8 @@ async fn category_actions_require_authentication_before_reading_or_writing() {
         "/api/protected/tag-actions",
         "/api/protected/announcement-actions/prepare",
         "/api/protected/announcement-actions",
+        "/api/protected/notice-actions/prepare",
+        "/api/protected/notice-actions",
     ] {
         let response = app
             .clone()

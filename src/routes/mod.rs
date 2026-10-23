@@ -30,6 +30,7 @@ pub mod category_actions;
 pub mod account_actions;
 pub mod tag_actions;
 pub mod announcement_actions;
+pub mod notice_actions;
 pub mod quota_actions;
 pub mod moderation_actions;
 pub mod public_activity;
@@ -343,6 +344,8 @@ pub fn create_router(state: AppState) -> Router {
 
         .route("/api/protected/tag-actions/prepare", post(tag_actions::prepare))
         .route("/api/protected/tag-actions", post(tag_actions::change))
+        .route("/api/protected/notice-actions/prepare", post(notice_actions::prepare))
+        .route("/api/protected/notice-actions", post(notice_actions::change))
         .route("/api/protected/announcement-actions/prepare", post(announcement_actions::prepare))
         .route("/api/protected/announcement-actions", post(announcement_actions::change))
         .route("/api/protected/account-actions/prepare", post(account_actions::prepare))

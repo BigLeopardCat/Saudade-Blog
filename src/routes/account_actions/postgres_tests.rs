@@ -13,11 +13,8 @@ struct PgContext {
     url: String,
 }
 impl PgContext {
-    async fn new() -> Self {
+    async fn new(url: String) -> Self {
         use sea_orm::Database;
-        let url = std::env::var("TEST_ACCOUNT_PG_URL").expect(
-            "requires a disposable database via TEST_ACCOUNT_PG_URL; production URLs are forbidden",
-        );
         let admin = Database::connect(url.clone())
             .await
             .expect("explicit test PostgreSQL must connect");
@@ -104,11 +101,14 @@ async fn prepared(ctx: &PgContext, id: i32, intent: &Intent) -> Prepared {
 }
 
 #[tokio::test]
-#[ignore = "requires disposable TEST_ACCOUNT_PG_URL"]
 async fn postgres_plans_conflicts_policies_and_legacy_effects_are_atomic() {
     use sea_orm::{ConnectionTrait, EntityTrait};
+    let Ok(url) = std::env::var("TEST_PG_URL") else {
+        eprintln!("account-actions PostgreSQL test skipped: TEST_PG_URL is not set");
+        return;
+    };
     std::env::set_var("JWT_SECRET", "test-secret-not-used-for-anything-real");
-    let ctx = PgContext::new().await;
+    let ctx = PgContext::new(url).await;
     let db = &ctx.state.db;
     let mut freeze = intent("freeze");
     freeze.target = Target {

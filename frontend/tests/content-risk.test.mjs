@@ -198,17 +198,7 @@ ok(count(risk, 'UNION') === 0, '不写 UNION（两条独立 COUNT，注释里解
 // ── ③ 禁言 ≠ 冻结：绝不碰 status / token_version / middleware ───────────────
 console.log('\n③ 禁言与冻结的分野');
 
-const setMuted = bodyOf(tempUser, 'pub async fn set_user_muted');
-ok(setMuted.length > 0, 'set_user_muted 存在');
-ok(/muted_until = Set\(/.test(setMuted), '只写 muted_until 一列');
-// ⚠️ 用剥注释后的文本判"没有"：这个函数体里**刻意**写着一条注释
-// 「**不碰 status / token_version**（见头注）」——不剥的话本条断言恒红，
-// 而它恰好是本套件最该留下的那一条。
-ok(count(strip(setMuted), 'token_version') === 0, '绝不 bump token_version（与冻结正相反）');
-ok(!/\.status\s*=/.test(strip(setMuted)), '绝不改 status（那是冻结的地盘）');
-ok(/crate::authz::check_freeze/.test(setMuted),
-    '权限判据复用 check_freeze（规则一份、话术两份，不复制规则表）');
-ok(/mute_denial_message/.test(setMuted), '拒绝话术走禁言自己那份（动词是"禁言"）');
+// 管理员禁言的权限、状态隔离及 no-op 行为由 Rust account_actions PostgreSQL 测试验证。
 
 // 拒绝话术四分支，动词参数化
 const denial = bodyOf(tempUser, 'fn mute_denial_message');
@@ -253,10 +243,6 @@ const forever = (authz.match(/pub const MUTE_FOREVER: &str = "([^"]+)"/) || [])[
 ok(!!forever, 'authz.rs 定义了 MUTE_FOREVER 常量', forever);
 eq(count(codeOnly(authz), '"9999-12-31 23:59:59"'), 1, '哨兵字面量在 Rust 侧只出现一处');
 eq(count(codeOnly(tempUser), '"9999'), 0, 'temp_user.rs 的代码里没有哨兵字面量（走常量）');
-// 解禁方向的 no-op 判据必须是 NULL 而不是 is_muted：对"禁言已过期但列里还留着旧值"
-// 的账号点解禁，是在清残留值，**应当写下去**（写完后台那一列才真是空的）
-ok(/if !muted && target\.muted_until\.is_none\(\)/.test(setMuted), '解禁的 no-op 判据是 NULL');
-
 // 前端镜像：账号列表是裸数组的跨语言契约，显示用的哨兵必须与后端同字面
 const frontForever = (usersPage.match(/const MUTE_FOREVER = '([^']+)'/) || [])[1];
 eq(frontForever, forever, '前端账号页的哨兵与 authz::MUTE_FOREVER 同字面');
