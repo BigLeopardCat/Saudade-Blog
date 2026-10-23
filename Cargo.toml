@@ -96,7 +96,7 @@ hmac = "0.13"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "stream", "charset"] }
 futures = "0.3"
 async-stream = "0.3"
-jieba-rs = { version = "=0.10.3", default-features = false, features = ["default-dict"] }
+jieba-rs = { version = "=0.10.4", default-features = false, features = ["default-dict"] }
 
 [dev-dependencies]
 # 与上面那条依赖逐字相同（charset 与 TLS 那一族的理由见上）
