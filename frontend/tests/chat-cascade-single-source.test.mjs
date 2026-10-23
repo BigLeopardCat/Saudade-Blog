@@ -57,20 +57,26 @@ const TABLES = [
     'conversation',
 ];
 
-console.log('\n① 唯一清单存在，且六张表一张不少');
+console.log('\n① 共用删除入口与数据库级联覆盖全部聊天表');
 {
     const conv = rust('src/routes/conversation.rs');
     const body = fnBody(conv, 'purge_conversation_data');
     ok(body !== null, '`conversation.rs::purge_conversation_data` 还在');
     if (body) {
-        const missing = TABLES.filter((t) => !new RegExp(`${t}::Entity::delete`).test(body));
-        ok(missing.length === 0, `  清单里六张表都有（缺：${missing.join(', ') || '无'}）`, missing);
+        const migration = rust('scripts/migration/pg/0013_conversation_foreign_keys.sql');
+        const missing = TABLES.filter((t) => t !== 'conversation' && !migration.includes(`'${t}'`));
+        ok(missing.length === 0, `  外键级联覆盖五张派生表（缺：${missing.join(', ') || '无'}）`, missing);
+        ok(/FOREIGN KEY \(conversation_id\) REFERENCES conversation\(id\) ON DELETE CASCADE/.test(migration),
+            '  数据库按会话编号级联，拒绝孤儿记录');
+        ok(/conversation::Entity::delete/.test(body), '  共用入口实际删除会话本体');
+        ok(/checkpoint_cleanup::enqueue\(db, row\.id, row\.user_id\)/.test(body),
+            '  删除前登记跨服务持久清理任务');
         // 两个范围（按会话 / 按用户）都必须落地：只写一个的话，另一条调用路会静默空转。
         ok(/ConvScope::ConversationId/.test(body), '  按会话那一支在');
         ok(/ConvScope::UserId/.test(body), '  按用户那一支在（删账号走这条）');
         // 按用户那一支必须真的按 user_id 过滤（`ConversationId` 那支的过滤列是另一种）。
-        ok((body.match(/Column::UserId\.eq/g) || []).length >= TABLES.length,
-            `  按用户那一支对六张表都用了 \`Column::UserId.eq\`（现在 ${(body.match(/Column::UserId\.eq/g) || []).length} 处）`);
+        ok(/conversation::Column::UserId\.eq\(uid\)/.test(body),
+            '  按用户范围删除会话，派生记录通过外键级联');
     }
 }
 
