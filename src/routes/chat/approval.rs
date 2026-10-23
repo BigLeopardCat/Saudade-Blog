@@ -12,6 +12,10 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use base64::{
+    engine::general_purpose::{URL_SAFE, URL_SAFE_NO_PAD},
+    Engine,
+};
 use sea_orm::sea_query::Expr;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use serde::Deserialize;
@@ -20,11 +24,7 @@ use std::{sync::Arc, time::Duration};
 
 // A transport hint, never authorization. Forged hints fail Agent signature checks.
 fn agent_owned(token: &str) -> bool {
-    let Some((body, _)) = token.split_once('.') else {
-        return false;
-    };
-    b64url_decode(body)
-        .and_then(|raw| serde_json::from_slice::<Value>(&raw).ok())
+    token_payload(token)
         .and_then(|v| v["executor"].as_str().map(|s| !s.is_empty()))
         .unwrap_or(false)
 }
@@ -167,49 +167,40 @@ pub(super) async fn claim_confirm_token(
 /// 解出确认令牌 payload 里的 `jti`（**不验签**，理由见 `claim_confirm_token`）。
 /// 解不出（格式坏 / 没有点号 / 早期无 jti 的令牌）→ 空串，调用方据此不核销。
 pub(super) fn token_jti(token: &str) -> String {
-    let parts: Vec<&str> = token.split('.').collect();
-    if parts.len() != 2 {
-        return String::new();
-    }
-    let Some(raw) = b64url_decode(parts[0]) else {
-        return String::new();
-    };
-    let Ok(v) = serde_json::from_slice::<serde_json::Value>(&raw) else {
-        return String::new();
-    };
-    v["jti"].as_str().unwrap_or("").chars().take(64).collect()
+    token_payload(token)
+        .and_then(|value| value["jti"].as_str().map(|s| s.chars().take(64).collect()))
+        .unwrap_or_default()
 }
 
-/// Decode the Agent payload for transport routing; this does not verify a signature.
-pub(super) fn b64url_decode(s: &str) -> Option<Vec<u8>> {
-    let mut out = Vec::with_capacity(s.len() * 3 / 4 + 3);
-    let mut acc: u32 = 0;
-    let mut bits: u32 = 0;
-    for c in s.bytes() {
-        let v = match c {
-            b'A'..=b'Z' => c - b'A',
-            b'a'..=b'z' => c - b'a' + 26,
-            b'0'..=b'9' => c - b'0' + 52,
-            b'-' => 62,
-            b'_' => 63,
-            // agent 侧签发的令牌不带填充；容忍带 '=' 的变体（不改变结果）
-            b'=' => continue,
-            _ => return None,
-        } as u32;
-        acc = ((acc << 6) | v) & 0x3FFF;
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push(((acc >> bits) & 0xFF) as u8);
-        }
+fn token_payload(token: &str) -> Option<Value> {
+    let (body, signature) = token.split_once('.')?;
+    if signature.contains('.') {
+        return None;
     }
-    Some(out)
+    serde_json::from_slice(&b64url_decode(body)?).ok()
+}
+
+/// Standard Base64 decoding for transport hints; this does not verify signatures.
+pub(super) fn b64url_decode(s: &str) -> Option<Vec<u8>> {
+    URL_SAFE_NO_PAD
+        .decode(s)
+        .or_else(|_| URL_SAFE.decode(s))
+        .ok()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult};
+
+    #[test]
+    fn transport_decoder_rejects_noncanonical_base64() {
+        assert_eq!(b64url_decode("Zg"), Some(b"f".to_vec()));
+        assert_eq!(b64url_decode("Zg=="), Some(b"f".to_vec()));
+        assert!(b64url_decode("Zh").is_none());
+        assert!(b64url_decode("Zg===").is_none());
+        assert!(token_payload("body.signature.extra").is_none());
+    }
 
     #[tokio::test]
     async fn native_retries_never_consume_host_claims() {

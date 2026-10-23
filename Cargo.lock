@@ -2292,6 +2292,7 @@ dependencies = [
  "argon2",
  "async-stream",
  "axum",
+ "base64 0.22.1",
  "chrono",
  "dotenvy",
  "futures",

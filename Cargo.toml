@@ -13,6 +13,7 @@ rust-version = "1.92"
 resolver = "3"
 
 [dependencies]
+base64 = "0.22.1"
 # 0.7 → 0.8（20261013）。**破坏面只有路径参数写法**：0.8 起 `:id` 不再是合法路径、要写
 # `{id}`（0.7 里那种写法在 0.8 里是**启动期 panic**，不是编译错误 ⇒ 离线套件与 `cargo check`
 # 都拦不住，得靠 `cargo test`）。全仓 35 处已改，全在 `src/routes/mod.rs` 一个文件里。
