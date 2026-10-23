@@ -188,9 +188,6 @@ pub fn create_router(state: AppState) -> Router {
             post(note_stats::like_note).delete(note_stats::unlike_note),
         )
         
-        .route("/api/protected/category-actions/prepare", post(category_actions::prepare))
-        .route("/api/protected/category-actions", post(category_actions::change))
-
         // Categories
         .route("/api/category", get(categories::list_categories)) 
         .route("/api/public/category", get(categories::list_categories)) 
@@ -341,6 +338,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/protected/draft/autosave", post(notes::autosave_note))
         .route("/api/protected/draft/editor/{id}", get(notes::get_note_for_edit))
 
+        .route("/api/protected/category-actions/prepare", post(category_actions::prepare))
+        .route("/api/protected/category-actions", post(category_actions::change))
+
         // Categories
         .route("/api/protected/category", 
              post(categories::create_category)
@@ -470,3 +470,6 @@ pub fn create_router(state: AppState) -> Router {
         .layer(middleware::from_fn(crate::middleware::access_log))
         .with_state(state_arc)
 }
+
+#[cfg(test)]
+mod authorization_tests;
