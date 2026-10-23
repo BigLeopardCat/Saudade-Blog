@@ -1,26 +1,26 @@
 /**
- * 博客同款 Markdown 渲染器（与文章页 bytemd <Viewer> 同一套 unified 管线）
+ * 评论/看板娘共享 Markdown 渲染器（与文章页保持共同格式和清洗约定）
  *
  * 看板娘对话框是 public/ 下的原生脚本，无法直接 import npm 包，
  * 因此由 React 应用在启动时注册两个全局供 public/live2d-widgets/boot.js 复用：
  *  - window.__chatRenderMarkdown(text) => HTML 字符串
  *  - window.__chatEnhance(root)        => 渲染后增强：代码高亮 + KaTeX 公式（懒加载）
  *
- * 管线与 bytemd Viewer 保持一致：remark-parse + gfm/breaks/gemoji/math 插件
+ * 语法沿用文章页的 gfm/breaks/gemoji/math 组合，独立采用 unified 11 插件：remark-parse
  * + remark-rehype(allowDangerousHtml) + rehype-raw + rehype-sanitize(默认 schema + className)
- * + rehype-stringify，输出与博客文章渲染完全一致。
+ * + rehype-stringify，通过行为测试保持文章/评论/对话的共同格式与安全约定。
  */
-import { unified, type Processor } from 'unified'
+import { unified } from 'unified'
 import remarkParse from 'remark-parse'
 import remarkRehype from 'remark-rehype'
 import rehypeRaw from 'rehype-raw'
 import rehypeSanitize from 'rehype-sanitize'
 import rehypeStringify from 'rehype-stringify'
 import { defaultSchema } from 'hast-util-sanitize'
-import gfm from '@bytemd/plugin-gfm'
-import breaks from '@bytemd/plugin-breaks'
-import gemoji from '@bytemd/plugin-gemoji'
-import math from '@bytemd/plugin-math'
+import gfm from 'remark-gfm'
+import breaks from 'remark-breaks'
+import gemoji from 'remark-gemoji'
+import math from 'remark-math'
 import mermaid from '@bytemd/plugin-mermaid'
 import { MERMAID_CONFIG } from './mermaidTheme'
 import { remarkStickers } from './stickers'
@@ -30,15 +30,16 @@ const schema = JSON.parse(JSON.stringify(defaultSchema)) as { attributes: Record
 schema.attributes['*'].push('className')
 
 // 渲染管线（gfm 删除线/表格/任务列表、breaks 硬换行、gemoji 表情、内置表情包 :名字:、math 公式、raw HTML 白名单过滤）
-let processor: Processor = unified().use(remarkParse)
-// singleTilde: false——remark-gfm 默认允许单 ~ 成对作删除线，中文范围写法
-// （"30~50""10~15"）会被误渲染成 <del>（20260831 对话框实测，文章页/编辑器同步）
-for (const plugin of [gfm({ singleTilde: false }), breaks(), gemoji(), math()]) {
-  if (plugin.remark) processor = plugin.remark(processor)
-}
-// 内置表情包在 gemoji 之后执行：:中文名: 与 :smile: 互不冲突（gemoji 只动 ASCII 名）
-processor = processor.use(remarkStickers)
-processor = processor
+// 直接使用 unified 11 的插件，避免把 Bytemd 自有的旧 Processor/VFile 类型跨代拼接。
+// 文章编辑器仍由 Bytemd 管理依赖；两条管线通过渲染行为测试核对，而非强制覆盖传递依赖。
+const processor = unified()
+  .use(remarkParse)
+  // 中文范围 “30~50”“10~15” 不应被单波浪线识别为删除线。
+  .use(gfm, { singleTilde: false })
+  .use(breaks)
+  .use(gemoji)
+  .use(math)
+  .use(remarkStickers)
   .use(remarkRehype, { allowDangerousHtml: true })
   .use(rehypeRaw)
   .use(rehypeSanitize, schema)

@@ -1,16 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { unified } from 'unified';
 import remarkParse from 'remark-parse';
-import type { Root, Content } from 'mdast';
 import { encodeAssetUrl } from '../../src/utils/assetUrl';
 
+// Derive the AST from the actual parser instead of an undeclared transitive @types/mdast version.
+const parser = unified().use(remarkParse);
+type MarkdownNode = ReturnType<typeof parser.parse> | ReturnType<typeof parser.parse>['children'][number];
 function imageCount(markdown: string): number {
-    function count(node: Root | Content): number {
+    function count(node: MarkdownNode): number {
         let total = node.type === 'image' ? 1 : 0;
         if ('children' in node) for (const child of node.children) total += count(child);
         return total;
     }
-    return count(unified().use(remarkParse).parse(markdown));
+    return count(parser.parse(markdown));
 }
 
 describe('uploaded asset URLs', () => {
