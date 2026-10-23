@@ -24,6 +24,7 @@ import math from 'remark-math'
 import mermaid from '@bytemd/plugin-mermaid'
 import { MERMAID_CONFIG } from './mermaidTheme'
 import { remarkStickers } from './stickers'
+import { remarkMathElements } from './remarkMathElements'
 
 // 与 bytemd Viewer 相同：克隆默认 schema 并允许 className（供高亮等插件使用）
 const schema = JSON.parse(JSON.stringify(defaultSchema)) as { attributes: Record<string, string[]> }
@@ -39,6 +40,7 @@ const processor = unified()
   .use(breaks)
   .use(gemoji)
   .use(math)
+  .use(remarkMathElements)
   .use(remarkStickers)
   .use(remarkRehype, { allowDangerousHtml: true })
   .use(rehypeRaw)
