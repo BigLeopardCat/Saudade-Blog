@@ -34,6 +34,18 @@ pub async fn push_notice_checked<C: ConnectionTrait>(
     content: Option<String>,
     link: Option<String>,
 ) -> Result<i32, String> {
+    push_notice_checked_at(db, uid, title, content, link, chrono::Local::now().naive_local()).await
+}
+
+/// Checked transaction callers can supply the database wall clock explicitly.
+pub async fn push_notice_checked_at<C: ConnectionTrait>(
+    db: &C,
+    uid: i32,
+    title: &str,
+    content: Option<String>,
+    link: Option<String>,
+    created_at: chrono::NaiveDateTime,
+) -> Result<i32, String> {
     if uid <= 0 {
         // `user_id` 有外键，0 没有对应行，插进去必失败——先在这里挡一道，
         // 报的是"收件人无效"而不是数据库的外键报错
@@ -45,7 +57,7 @@ pub async fn push_notice_checked<C: ConnectionTrait>(
         title: Set(title.to_string()),
         content: Set(content),
         link: Set(link),
-        created_at: Set(chrono::Local::now().naive_local()),
+        created_at: Set(created_at),
         ..Default::default()
     };
     match user_notification::Entity::insert(am).exec(db).await {

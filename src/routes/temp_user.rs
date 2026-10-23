@@ -14,21 +14,7 @@ pub struct CreateTempUser {
     pub password: String,
 }
 
-// ── 账号变更通知（20261001，用户要求「账号权限身份变更系统也发通知」）────────────
-//
-// 冻结 / 解冻 / 变更身份三件事**都会让当事人手里的登录状态当场失效**（代次 +1），
-// 而此前它们只写 `tracing` 日志——服务端有记录，当事人那边一片安静。人忽然被踢下线
-// 却不知道为什么，只能来问博主；通知就是给当事人的那句解释。
-//
-// 三条纪律与留言审核通知同源（见 `notice.rs` 头注）：
-//   · **best-effort**：走 `push_notice`，它永不放回错误。账号已经冻结了，这时候为了
-//     "通知没发出去"回一句"操作失败"是假话（库里明明已经改完了）。
-//   · **正文由系统写死模板**，不采集任何用户输入，因此不受注入影响。
-//   · **时间戳同库钟面**（`chrono::Local`，+08:00，见 CLAUDE.md §时区约定），
-//     与后台列表、执行台账对得上，不做二次偏移。
-//
-// 注意冻结方向的通知**当事人当时看不到**：`authz::is_frozen` 会挡住他登录，
-// 这条要等他被解冻后才读得到。它仍要发——那正是"回来之后知道发生过什么"的唯一来源。
+// 账号状态、身份与禁言的变更及通知由 account_actions 在同一事务提交。
 
 /// 发起人在通知正文里的称呼：`{身份中文}「{昵称}」（uid=N）`。20261002 主人点名改的。
 ///
@@ -42,7 +28,7 @@ pub struct CreateTempUser {
 /// **uid**（昵称可改、可重名，uid 才是唯一标识）。昵称为空回退账号名
 /// （与 `delete_temp_user` 里那句 `who`、`profile.rs` 的展示口径同源：
 /// 库里的 `nickname` 允许是空串，不能因此拼出一个空引号）。
-fn actor_label(row: &user::Model) -> String {
+pub(super) fn actor_label(row: &user::Model) -> String {
     let name = if row.nickname.trim().is_empty() {
         row.username.clone()
     } else {
@@ -53,7 +39,7 @@ fn actor_label(row: &user::Model) -> String {
 
 /// 账号变更通知的正文模板。**写在这里一处**，三个调用点各自只给"变了什么"
 /// （"谁干的"由 `actor_label` 拼好，是 `action` 的开头一段）。
-fn account_change_body(action: &str, when: &str) -> String {
+pub(super) fn account_change_body(action: &str, when: &str) -> String {
     format!(
         "{when}，{action}。你此前登录的全部设备已失效，需要重新登录才能继续访问。\
 如有疑问请联系博主。",
@@ -172,111 +158,54 @@ pub struct SetStatusReq {
     pub frozen: bool,
 }
 
-/// POST /api/temp-users/:id/status：冻结 / 解冻一个账号（20260926）。
-///
-/// 冻结的效果（判据都在 `crate::authz::check_token`，这里只是改那个数字）：
-///   · 立刻拒登录（`auth.rs::login`）、拒改密码与恢复码（`profile` / `auth`）；
-///   · **已经登录的设备当场全部下线**——`auth_jwt::auth_uid` 每个请求查一次库，
-///     这就是无状态 JWT 补上"紧急收回"的那半；
-///   · 顺带 `token_version + 1` ⇒ **解冻不会把冻结前的登录态还回来**。
-///     冻结是"踢下线"，不是"暂停一下"；这条要是不做，解冻就等于把被收回的
-///     令牌原样复活——而冻结的常见动机恰恰是"这台设备/这个人不能再进来了"。
-///
-/// 拒绝的话术（20260926 起由 `crate::authz::check_freeze` 给原因，这里只翻译）：
-///   ① **不许冻结自己**：冻了自己就再也解不开了（冻结账号正是改不动自己状态的那种
-///      账号），唯一的管理员这么做等于把后台锁死，只能进库手改。
-///   ② **不许冻结超级管理员**：谁都不行，含另一个超管。
-///   ③ **管理员之间不可互相冻结**（解冻同理）：两个同级的人互相封，最后只能靠超管
-///      或进库解，而"谁先动手谁赢"不该是后台的规则。
-///   ④ 目标账号必须存在。
-///   ⑤ 目标角色必须是已知角色：与 `list_temp_users` 同一个取值域判据，
-///      不让一个"列表里根本看不见"的账号从这里被改状态。
-///
-/// **冻结方向恒 `token_version + 1`**（20260926 收口）：连"已经是冻结状态"时也 +1。
-/// 原来的幂等分支在这里返回、不动代次，留下一个静默的鉴权洞——若 `status` 是被
-/// 迁移/手工改成 1 的（没有走过这个接口），那个账号手里已经签发的令牌**还活着**，
-/// 而"再点一下冻结"本该是最自然的补救动作。对被冻账号也没有额外代价：它本来就
-/// 登不进来，+1 只是让旧令牌彻底作废。解冻方向照旧只在真变化时动（解冻是放宽，
-/// 没有对应的洞，无谓地 +1 会让"这一下做了什么"变得不可解释）。
+/// Legacy admin UI entry; shares the native transaction service and authoritative policies.
 pub async fn set_user_status(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
     Path(user_id): Path<i32>,
     Json(payload): Json<SetStatusReq>,
 ) -> Json<crate::utils::ApiResponse<String>> {
-    // 谁在操作 + 他是什么角色。**角色从库里现查**（不信任何令牌里的快照）：
-    // 冻结判据要用到"我是不是管理员/超管"，而 `auth_uid` 只给 uid。
-    let Some(operator) = crate::auth_jwt::auth_uid(&state.db, &headers).await.ok() else {
-        return Json(crate::utils::ApiResponse::error("未登录"));
-    };
-    let Some(operator_row) = user::Entity::find_by_id(operator).one(&state.db).await.unwrap_or(None)
-    else {
-        return Json(crate::utils::ApiResponse::error("未登录"));
-    };
-    let Some(target) = user::Entity::find_by_id(user_id).one(&state.db).await.unwrap_or(None) else {
-        return Json(crate::utils::ApiResponse::error("用户不存在"));
-    };
-    if !crate::authz::is_known_role(&target.role) {
-        return Json(crate::utils::ApiResponse::error("该账号角色未登记，不能改状态"));
-    }
-    let frozen = payload.frozen;
-    if let Err(denial) = crate::authz::check_freeze(
-        operator,
-        &operator_row.role,
-        user_id,
-        &target.role,
-    ) {
-        return Json(crate::utils::ApiResponse::error(&freeze_denial_message(
-            denial, frozen,
-        )));
-    }
-    let new_status = if frozen { crate::authz::STATUS_FROZEN } else { crate::authz::STATUS_ACTIVE };
-    // 解冻方向的真 no-op（状态已经是正常）：不写库、不动代次
-    if !frozen && target.status == new_status {
-        return Json(crate::utils::ApiResponse::success(
-            "该账号已经是正常状态".to_string(),
-        ));
-    }
-    let new_ver = if frozen { target.token_version + 1 } else { target.token_version };
-    let mut am: user::ActiveModel = target.into();
-    am.status = Set(new_status);
-    am.token_version = Set(new_ver);
-    match am.update(&state.db).await {
-        Ok(_) => {
-            tracing::info!(
-                "[账号管理] {} 账号 uid={}（发起人 uid={} role={}）",
-                if frozen { "冻结" } else { "解冻" },
-                user_id,
-                operator,
-                operator_row.role
-            );
-            // 通知当事人（20261001）：必须**在 update 成功之后**发——先发后写会让
-            // 写失败时留下一条"你已被冻结"的假通知。best-effort，失败只记一行日志。
-            let when = chrono::Local::now().format("%Y年%m月%d日 %H:%M").to_string();
-            crate::routes::notice::push_notice(
-                &state.db,
-                user_id,
-                if frozen { "账号已被冻结" } else { "账号已解冻" },
-                Some(account_change_body(
-                    // 落名（20261002）：`operator_row` 就是发起人那一行，身份/昵称/uid 都从它来
-                    &format!(
-                        "{}{}",
-                        actor_label(&operator_row),
-                        if frozen { "冻结了你的账号" } else { "解冻了你的账号" },
-                    ),
-                    &when,
-                )),
-                None,
-            )
-            .await;
-            Json(crate::utils::ApiResponse::success(
-                if frozen { "账号已冻结，其登录状态已全部失效" } else { "账号已解冻，请让对方重新登录" }
-                    .to_string(),
-            ))
-        }
-        Err(e) => {
-            tracing::error!("[账号管理] 改状态失败 uid={}: {}", user_id, e);
-            Json(crate::utils::ApiResponse::error("操作失败，请稍后再试"))
+    use super::account_actions::{Action, Intent, Target};
+    legacy_account_action(
+        &state,
+        &headers,
+        Intent {
+            action: if payload.frozen {
+                Action::Freeze
+            } else {
+                Action::Unfreeze
+            },
+            target: Target {
+                id: Some(user_id),
+                username: None,
+            },
+            role: None,
+            muted_until: None,
+        },
+    )
+    .await
+}
+
+async fn legacy_account_action(
+    state: &AppState,
+    headers: &axum::http::HeaderMap,
+    intent: super::account_actions::Intent,
+) -> Json<crate::utils::ApiResponse<String>> {
+    match super::account_actions::execute(state, headers, &intent, None).await {
+        Ok(outcome) => Json(crate::utils::ApiResponse::success(if outcome.changed {
+            "账号操作已完成".to_owned()
+        } else {
+            "账号已是目标状态，无需变更".to_owned()
+        })),
+        Err(error) => {
+            let message = match error {
+                sea_orm::DbErr::Custom(message) => message,
+                other => {
+                    tracing::warn!(%other, "legacy account transaction failed");
+                    "账号操作失败或结果未知，请重新查询".to_owned()
+                }
+            };
+            Json(crate::utils::ApiResponse::error(&message))
         }
     }
 }
@@ -286,7 +215,7 @@ pub async fn set_user_status(
 ///
 /// ⚠️ 这四句是**跨语言契约**：agent 的冻结/解冻技能要求模型**逐字转述**这里给的原话
 /// （见 `docs/security-boundary.md` §7⑫），所以措辞不是随手可改的文案。
-fn freeze_denial_message(denial: crate::authz::FreezeDenial, frozen: bool) -> String {
+pub(super) fn freeze_denial_message(denial: crate::authz::FreezeDenial, frozen: bool) -> String {
     use crate::authz::FreezeDenial as D;
     let verb = if frozen { "冻结" } else { "解冻" };
     match denial {
@@ -305,7 +234,7 @@ fn freeze_denial_message(denial: crate::authz::FreezeDenial, frozen: bool) -> St
 ///
 /// ⚠️ 这四句同 `freeze_denial_message` 一样是不可随手改的措辞
 /// （见 `docs/security-boundary.md` §7⑫）。
-fn mute_denial_message(denial: crate::authz::FreezeDenial, muted: bool) -> String {
+pub(super) fn mute_denial_message(denial: crate::authz::FreezeDenial, muted: bool) -> String {
     use crate::authz::FreezeDenial as D;
     let verb = if muted { "禁言" } else { "解除禁言" };
     match denial {
@@ -319,7 +248,7 @@ fn mute_denial_message(denial: crate::authz::FreezeDenial, muted: bool) -> Strin
 /// 禁言/解禁通知正文。**绝不复用 `account_change_body`**：那一份写着"你此前登录的
 /// 全部设备已失效，需要重新登录"，而禁言**从不 bump `token_version`**——照抄过来的
 /// 那句是彻头彻尾的假话，当事人会以为被踢下线了（这正是"消息壳架空判据"那一族坑）。
-fn mute_change_body(muted: bool, action: &str, when: &str) -> String {
+pub(super) fn mute_change_body(muted: bool, action: &str, when: &str) -> String {
     if muted {
         format!(
             "{when}，{action}。你的登录状态不受影响——仍可正常登录、浏览文章、与泠月喵对话，\
@@ -342,117 +271,47 @@ pub struct SetMuteReq {
     pub hours: Option<i32>,
 }
 
-/// POST /api/temp-users/:id/mute：禁言 / 解除禁言一个账号（20261002 内容风控）。
-///
-/// **禁言不是冻结**（这是本接口存在的全部理由）：被禁言的人**照常登录、照常浏览、
-/// 照常跟 agent 对话**——他只是发不出评论与留言。所以这里：
-///   · **绝不改 `status`**（那是冻结的地盘）；
-///   · **绝不 bump `token_version`**（与冻结正相反：禁言必须让当事人留在登录态里，
-///     否则通知他都读不到——而通知恰恰是这个功能对当事人唯一可见的那一面）；
-///   · 只写 `muted_until` 一列，判据由 `authz::is_muted` 在**两个写入入口**读。
-///
-/// 判据复用 `authz::check_freeze`（四条规则对两件事是同一条），话术各出一份
-/// （见 `mute_denial_message`）。目标角色同样要求已知角色——与 `list_temp_users`
-/// 同一个取值域：不让一个"列表里根本看不见"的账号从这里被改状态。
-///
-/// **解禁方向的真 no-op**（本来就是 NULL）：不写库、不发通知。禁言方向不做 no-op
-/// ——对一个已在禁言期的账号再禁一次是**有意义的操作**（改时长/转永久），
-/// "现在就是禁言中"那条幂等判定属于**发起方**（agent 的弹卡逻辑），不属于这里。
+/// Legacy hours input is converted once into an absolute Shanghai deadline.
 pub async fn set_user_muted(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
     Path(user_id): Path<i32>,
     Json(payload): Json<SetMuteReq>,
 ) -> Json<crate::utils::ApiResponse<String>> {
-    let Some(operator) = crate::auth_jwt::auth_uid(&state.db, &headers).await.ok() else {
-        return Json(crate::utils::ApiResponse::error("未登录"));
-    };
-    let Some(operator_row) = user::Entity::find_by_id(operator).one(&state.db).await.unwrap_or(None)
-    else {
-        return Json(crate::utils::ApiResponse::error("未登录"));
-    };
-    let Some(target) = user::Entity::find_by_id(user_id).one(&state.db).await.unwrap_or(None) else {
-        return Json(crate::utils::ApiResponse::error("用户不存在"));
-    };
-    if !crate::authz::is_known_role(&target.role) {
-        return Json(crate::utils::ApiResponse::error("该账号角色未登记，不能改状态"));
-    }
-    let muted = payload.muted;
-    if let Err(denial) =
-        crate::authz::check_freeze(operator, &operator_row.role, user_id, &target.role)
-    {
-        return Json(crate::utils::ApiResponse::error(&mute_denial_message(
-            denial, muted,
-        )));
-    }
-    // 到期时刻：永久走常量、限时走 `Local::now() + N 小时`（+08:00 钟面，同库钟面约定）。
-    let until = if !muted {
-        None
-    } else {
-        match payload.hours {
-            Some(h) if h > 0 => Some(chrono::Local::now().naive_local() + Duration::hours(h as i64)),
+    use super::account_actions::{Action, Intent, Target};
+    let until = if payload.muted {
+        let now = chrono::Utc::now()
+            .with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).unwrap())
+            .naive_local();
+        let value = match payload.hours {
+            Some(hours) if hours > 0 => now.checked_add_signed(Duration::hours(i64::from(hours))),
             _ => Some(crate::authz::mute_forever_at()),
-        }
+        };
+        let Some(value) = value else {
+            return Json(crate::utils::ApiResponse::error("禁言时长超出范围"));
+        };
+        Some(value.format("%Y-%m-%dT%H:%M:%S").to_string())
+    } else {
+        None
     };
-    // 解禁方向的真 no-op：本来就是"从未禁言"（NULL）⇒ 不写库、不发通知。
-    // **判据是 NULL 而不是 `is_muted`**：对"禁言已过期、但那列还留着旧值"的账号点解禁，
-    // 是在清理一个残留值，应当写下去（写完之后后台那一列才真正是空的）。
-    if !muted && target.muted_until.is_none() {
-        return Json(crate::utils::ApiResponse::success(
-            "该账号当前没有被禁言".to_string(),
-        ));
-    }
-    let mut am: user::ActiveModel = target.into();
-    am.muted_until = Set(until);
-    // **不碰 status / token_version**（见头注）。更新 `updated_at` 也没有必要——
-    // 这张表没有 updated_at 列。
-    match am.update(&state.db).await {
-        Ok(_) => {
-            let label = match until {
-                Some(u) => crate::authz::mute_until_text(u),
-                None => "解禁".to_string(),
-            };
-            tracing::info!(
-                "[账号管理] {}账号 uid={}（{label}，发起人 uid={} role={}）",
-                if muted { "禁言" } else { "解除禁言" },
-                user_id,
-                operator,
-                operator_row.role
-            );
-            // 通知当事人（best-effort、**必须写在 update 成功之后**，同冻结那一条纪律）。
-            // 这条通知是禁言功能对当事人唯一可见的一面 —— 没有它，人只会发现自己
-            // "评论发不出去了"而不知道为什么。
-            let when = chrono::Local::now().format("%Y年%m月%d日 %H:%M").to_string();
-            let action = format!(
-                "{}{}",
-                actor_label(&operator_row),
-                if muted {
-                    format!("禁言了你的账号（{label}）")
-                } else {
-                    "解除了你的禁言".to_string()
-                },
-            );
-            crate::routes::notice::push_notice(
-                &state.db,
-                user_id,
-                if muted { "账号已被禁言" } else { "账号已解除禁言" },
-                Some(mute_change_body(muted, &action, &when)),
-                None,
-            )
-            .await;
-            Json(crate::utils::ApiResponse::success(
-                if muted {
-                    format!("账号已禁言（{label}），其登录与浏览不受影响")
-                } else {
-                    "账号已解除禁言，对方现在可以正常发布评论与留言".to_string()
-                },
-            ))
-        }
-        Err(e) => {
-            tracing::error!("[账号管理] 禁言写库失败 uid={}: {}", user_id, e);
-            Json(crate::utils::ApiResponse::error("操作失败，请稍后再试"))
-        }
-    }
+    legacy_account_action(
+        &state,
+        &headers,
+        Intent {
+            action: if payload.muted {
+                Action::Mute
+            } else {
+                Action::Unmute
+            },
+            target: Target {
+                id: Some(user_id),
+                username: None,
+            },
+            role: None,
+            muted_until: until,
+        },
+    )
+    .await
 }
 
 #[derive(Deserialize)]
@@ -544,96 +403,28 @@ pub struct SetRoleReq {
     pub role: String,
 }
 
-/// POST /api/temp-users/:id/role：变更一个账号的权限身份（20260926）。
-///
-/// **谁能发起**（20261002 下放）：`authz::check_role_change` 的第一条判据是
-/// `can_access_console`（管理员或超管），再按发起人分档——超管除超管外四档随便搬；
-/// 管理员**只能在普通用户与杂鱼之间搬**（不动更高的账号，也不往更高档指派）。
-/// 下放的理由：把一个人设成杂鱼 / 解除杂鱼是日常运营动作，不该每次都去叫超管；
-/// 而"谁能当管理员"这类事仍然只有超管说了算（提权路径没有跟着下放）。
-///
-/// 成功时 `token_version + 1`：令牌里带 `role` 快照（`auth_jwt::Claims.role`，前端
-/// `AuthRouter` 就认它），不 +1 的话被降级的人手里的旧令牌还能进后台直到过期——
-/// "降级"这个动作必须当场生效，否则它只是给人看的一行字。
+/// Legacy role input shares the same atomic account service.
 pub async fn set_user_role(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
     Path(user_id): Path<i32>,
     Json(payload): Json<SetRoleReq>,
 ) -> Json<crate::utils::ApiResponse<String>> {
-    let Some(operator) = crate::auth_jwt::auth_uid(&state.db, &headers).await.ok() else {
-        return Json(crate::utils::ApiResponse::error("未登录"));
-    };
-    let Some(operator_row) = user::Entity::find_by_id(operator).one(&state.db).await.unwrap_or(None)
-    else {
-        return Json(crate::utils::ApiResponse::error("未登录"));
-    };
-    let Some(target) = user::Entity::find_by_id(user_id).one(&state.db).await.unwrap_or(None) else {
-        return Json(crate::utils::ApiResponse::error("用户不存在"));
-    };
-    let new_role = payload.role.trim().to_string();
-    if let Err(denial) = crate::authz::check_role_change(
-        operator,
-        &operator_row.role,
-        user_id,
-        &target.role,
-        &new_role,
-    ) {
-        return Json(crate::utils::ApiResponse::error(&role_change_denial_message(
-            denial,
-        )));
-    }
-    // 已经是这个身份 ⇒ 幂等成功，且**不动代次**（同 `/status` 的解冻那一支：
-    // 没有真变化就没有理由把人踢下线）
-    if target.role == new_role {
-        return Json(crate::utils::ApiResponse::success(format!(
-            "该账号的身份已经是{}，无需变更",
-            crate::authz::role_label(&new_role)
-        )));
-    }
-    let new_ver = target.token_version + 1;
-    // 旧身份要先取出来：`target` 下面立刻被 `into()` move 走，而通知正文里
-    // "从什么变成什么"两个都得有（只说结果的通知读起来像是本来就该如此）。
-    let old_role = target.role.clone();
-    let mut am: user::ActiveModel = target.into();
-    am.role = Set(new_role.clone());
-    am.token_version = Set(new_ver);
-    match am.update(&state.db).await {
-        Ok(_) => {
-            tracing::info!(
-                "[账号管理] 变更身份 uid={} → {}（发起人 uid={} role={}）",
-                user_id,
-                new_role,
-                operator,
-                operator_row.role
-            );
-            let when = chrono::Local::now().format("%Y年%m月%d日 %H:%M").to_string();
-            crate::routes::notice::push_notice(
-                &state.db,
-                user_id,
-                "账号身份已变更",
-                Some(account_change_body(
-                    &format!(
-                        "{}把你的身份从「{}」改为「{}」",
-                        actor_label(&operator_row),
-                        crate::authz::role_label(&old_role),
-                        crate::authz::role_label(&new_role),
-                    ),
-                    &when,
-                )),
-                None,
-            )
-            .await;
-            Json(crate::utils::ApiResponse::success(format!(
-                "身份已改为{}，该账号的登录状态已失效，请让对方重新登录",
-                crate::authz::role_label(&new_role)
-            )))
-        }
-        Err(e) => {
-            tracing::error!("[账号管理] 变更身份失败 uid={}: {}", user_id, e);
-            Json(crate::utils::ApiResponse::error("操作失败，请稍后再试"))
-        }
-    }
+    use super::account_actions::{Action, Intent, Target};
+    legacy_account_action(
+        &state,
+        &headers,
+        Intent {
+            action: Action::SetRole,
+            target: Target {
+                id: Some(user_id),
+                username: None,
+            },
+            role: Some(payload.role.trim().to_owned()),
+            muted_until: None,
+        },
+    )
+    .await
 }
 
 /// 变更身份被拒的中文话术。同样是**跨语言契约**（agent 的 `account_set_role` 技能
@@ -648,7 +439,7 @@ pub async fn set_user_role(
 ///   · 新增两句讲清管理员的**边界**：先讲目标（"这个账号不归你管"），
 ///     再讲新身份（"你不能把人提到那个档"）。两句分开而不是共用一句：
 ///     当事人下一步该做的事不同（换账号 vs 换目标身份）。
-fn role_change_denial_message(denial: crate::authz::RoleChangeDenial) -> String {
+pub(super) fn role_change_denial_message(denial: crate::authz::RoleChangeDenial) -> String {
     use crate::authz::RoleChangeDenial as D;
     match denial {
         D::NotPermitted => "只有管理员可以变更账号身份".to_string(),

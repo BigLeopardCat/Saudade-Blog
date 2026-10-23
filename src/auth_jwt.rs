@@ -24,6 +24,13 @@ pub struct Claims {
     pub ver: Option<i32>,
 }
 
+/// Parse a validated login token for transaction services that recheck the locked actor row.
+/// This does not replace the subsequent database token-generation and role checks.
+pub fn claims_from_headers(headers: &HeaderMap) -> Option<Claims> {
+    let value = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
+    verify_token(value.strip_prefix("Bearer ").unwrap_or(value))
+}
+
 pub fn create_token(user_id: i32, role: &str, token_version: i32) -> String {
     let secret = env::var("JWT_SECRET").expect("JWT_SECRET must be set in environment");
     let expiration = chrono::Utc::now()
