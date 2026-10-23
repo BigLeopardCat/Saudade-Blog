@@ -89,7 +89,7 @@ async fn chinese_paging_counts_excerpts_and_visibility_share_one_policy() {
     };
     let db = &ctx.state.db;
     sql(db, "INSERT INTO note(id,title,content,status,is_public,created_at,updated_at) SELECT id,'博客手册',repeat('前言',100)||'部署步骤','published',true,'2026-01-01','2026-01-01' FROM generate_series(1,23) id").await;
-    sql(db, "INSERT INTO note(id,title,content,status,is_public,draft_of,created_at,updated_at) VALUES (30,'博客部署','禁止泄漏','draft',true,NULL,now(),now()),(31,'博客部署','禁止泄漏','published',false,NULL,now(),now()),(32,'博客部署','禁止泄漏','published',true,1,now(),now())").await;
+    sql(db, "INSERT INTO note(id,title,content,status,is_public,draft_of,created_at,updated_at) VALUES (30,'博客部署','禁止泄漏','draft',false,NULL,now(),now()),(31,'博客部署','禁止泄漏','published',false,NULL,now(),now()),(32,'博客部署','禁止泄漏','published',true,1,now(),now())").await;
     sql(db, "INSERT INTO talk(id,title,content,src,approved,author,created_at,updated_at) VALUES (1,'博客部署','无关正文','board',1,'署名',now(),now()),(2,'博客部署','博客部署','talk',0,'署名',now(),now()),(3,'','博客部署','board',1,'河灯署名',now(),now())").await;
     sql(db, "INSERT INTO note_comment(id,note_id,user_id,content,approved,is_deleted) VALUES (1,1,1,'无关评论',1,0),(2,30,1,'博客部署',1,0),(3,1,1,'博客部署',0,0),(4,1,1,'博客部署',1,1),(5,1,1,'博客部署',1,0)").await;
     sql(db, "INSERT INTO note(id,title,content,created_at,updated_at) VALUES (24,'博客博客博客博客','只有部分命中',now(),now())").await;
