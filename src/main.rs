@@ -43,7 +43,7 @@ async fn main() {
         .connect_with(conn_opt)
         .await
         .expect("Failed to connect to DB");
-    let db = SqlxPostgresConnector::from_sqlx_postgres_pool(pool);
+    let db = SqlxPostgresConnector::from_sqlx_postgres_pool(pool.clone());
 
     // H2 修复：登录限流器 —— 密码错误 5 次/5 分钟窗口，锁定 15 分钟
     let max_attempts = env::var("LOGIN_MAX_ATTEMPTS")
@@ -75,7 +75,7 @@ async fn main() {
         report_max, report_window_secs, report_lockout_secs,
     );
 
-    saudade_blog::checkpoint_cleanup::start(db.clone());
+    saudade_blog::checkpoint_cleanup::start(SqlxPostgresConnector::from_sqlx_postgres_pool(pool));
     let app_state = AppState { db, rate_limiter, post_limiter, report_limiter };
     let app = create_router(app_state);
 
