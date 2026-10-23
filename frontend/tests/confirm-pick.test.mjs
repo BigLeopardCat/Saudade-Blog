@@ -38,10 +38,15 @@ const ok = (cond, name, extra) => {
     ok(!/value !== 'yes'/.test(code), '  旧判据「不等于 yes 就算取消」已不在代码里',
        '它会把「只办第 i 件」当成取消：卡片写已取消、系统一件都不办');
     ok(!/value != 'yes'/.test(code), '  同一条的宽松写法也没留下');
-    // 取消分支必须**早退**且在结算文案之前——否则挑选按钮会先被写成"已取消"
-    const iNo = code.indexOf("if (value === 'no')");
-    const iSettle = code.indexOf("askSettle('已取消'", iNo);
-    ok(iNo > 0 && iSettle > iNo, '  取消分支里结算成「已取消」（且在这一支之内）');
+    ok(/if \(value === 'no'\) \{ cancelAsk\(ask\); return; \}/.test(code),
+       '取消分支请求服务端撤销后早退，不进入确认执行');
+    const start = code.indexOf('const cancelAsk = async');
+    const end = code.indexOf('const handleAskChoice', start);
+    const cancellation = code.slice(start, end);
+    ok(cancellation.includes("fetch('/api/chat/confirmation/cancel'"), '撤销必须请求服务端');
+    ok(cancellation.indexOf('body.cancelled !== true') < cancellation.indexOf("askSettle('已撤销"),
+       '服务端确认撤销后才能显示已撤销');
+
 }
 
 // ── ② 挑选值进隐藏请求 ───────────────────────────────────────────────────────

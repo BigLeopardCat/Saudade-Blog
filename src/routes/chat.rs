@@ -1,4 +1,9 @@
 mod pending;
+mod approval;
+pub use approval::cancel_handler;
+use approval::claim_confirm_token;
+#[cfg(test)]
+use approval::{b64url_decode, token_jti};
 
 use axum::{
     Json,
@@ -508,11 +513,7 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
         }
     };
 
-    // 一次性核销（20260924）：**转发之前**认领这张令牌，认领不到就直接如实拒绝。
-    // 位置是刻意的——核销必须发生在写操作可能发生**之前**，否则两个并发请求会双双
-    // 通过（"先查、再执行、最后标记"之间的窗口就是第二次写）。这也是全链路唯一
-    // 能拿到令牌原文的地方（agent 侧验签、Rust 侧核销，各管一段）。
-    // 拒绝走 409 + 错误码：前端按它把卡片如实结算成"已经用过一次"，不当网络错误。
+    // Legacy cards retain the host claim; signed native executors own replay.
     if is_confirm {
         if let Some(tok) = payload.confirm_token.as_deref() {
             if let Some(reason) = claim_confirm_token(&state.db, uid, tok).await {
@@ -1466,108 +1467,6 @@ const PENDING_QUESTION_COL_MAX: usize = 500;
 /// 选项 JSON 列上限（= 迁移里 `options` varchar(600)）。20260929 批 F 起最多七枚
 /// （全部办 + 逐条只办第 i 件 + 取消），标签都很短，余量仍足。
 const PENDING_OPTIONS_COL_MAX: usize = 600;
-
-/// 令牌的一次性核销（20260924）：把 `jti` 对应的那一行置为"已被用掉"。
-///
-/// 返回 `Some(理由)` = **这张令牌已经兑现过一次**，调用方零转发（如实拒绝）；
-/// `None` = 放行。判据只有一条 SQL 的 `rows_affected`：只有第一个把
-/// `claimed_at` 从 NULL 改成值的人拿到 1，重放/两个标签页同点都拿到 0。
-///
-/// **为什么是"尽力而为"**：认领表里没有这张令牌（老客户端、落库失败、签发那一轮
-/// DB 抖动、20260924 之前签发的 v1 令牌根本没有 jti）时一律放行——**验签始终是
-/// 唯一凭据**，本函数只负责"同一张令牌不兑现两次"。反过来把"查不到"当成拒绝，
-/// 会打死所有无状态确认（那正是 20260921 上线时唯一的通道）。同理，DB 出错也放行：
-/// 可用性优先，且失去的只是"重复提交的护栏"，不是授权判据。
-///
-/// **认领键取自令牌原文**（Rust 侧只解 payload，不验签）：认领是**自伤型**的——
-/// `WHERE jti=? AND user_id=?` 只动本人那一行，伪造者最多烧掉自己的一次机会；
-/// 真凭据仍在 agent 侧的验签（Rust 没有那把密钥，也不该有）。
-async fn claim_confirm_token(
-    db: &sea_orm::DatabaseConnection,
-    uid: i32,
-    token: &str,
-) -> Option<String> {
-    let jti = token_jti(token);
-    if jti.is_empty() {
-        return None;
-    }
-    let claimed = pending_action::Entity::update_many()
-        .col_expr(
-            pending_action::Column::ClaimedAt,
-            Expr::value(Some(chrono::Local::now().naive_local())),
-        )
-        .filter(pending_action::Column::Jti.eq(jti.as_str()))
-        .filter(pending_action::Column::UserId.eq(uid))
-        .filter(pending_action::Column::ClaimedAt.is_null())
-        .exec(db)
-        .await;
-    match claimed {
-        Ok(r) if r.rows_affected == 1 => None,
-        Ok(_) => {
-            // 没抢到：**必须区分**"已经被用掉"与"表里根本没有这一行"——前者如实
-            // 拒绝，后者照常放行（无状态路径）。少了这一步，所有查不到的令牌都会
-            // 被当成重放而拒绝。
-            let exists = pending_action::Entity::find()
-                .filter(pending_action::Column::Jti.eq(jti.as_str()))
-                .filter(pending_action::Column::UserId.eq(uid))
-                .one(db)
-                .await
-                .ok()
-                .flatten()
-                .is_some();
-            if exists {
-                Some("这次确认已经用过了（同一张确认卡片只兑现一次），没有重复执行。".to_string())
-            } else {
-                None
-            }
-        }
-        Err(_) => None,
-    }
-}
-
-/// 解出确认令牌 payload 里的 `jti`（**不验签**，理由见 `claim_confirm_token`）。
-/// 解不出（格式坏 / 没有点号 / 早期无 jti 的令牌）→ 空串，调用方据此不核销。
-fn token_jti(token: &str) -> String {
-    let parts: Vec<&str> = token.split('.').collect();
-    if parts.len() != 2 {
-        return String::new();
-    }
-    let Some(raw) = b64url_decode(parts[0]) else {
-        return String::new();
-    };
-    let Ok(v) = serde_json::from_slice::<serde_json::Value>(&raw) else {
-        return String::new();
-    };
-    v["jti"].as_str().unwrap_or("").chars().take(64).collect()
-}
-
-/// base64url（无填充）解码——只为解令牌 payload 的 `jti`（见 `token_jti`）。
-/// 不引新依赖：本仓库没有 base64 crate，而这段是二十行以内、可单测的纯函数，
-/// 为了一个字段拉一个依赖（连带 Cargo.lock 与 CI 全量重编）不划算。
-fn b64url_decode(s: &str) -> Option<Vec<u8>> {
-    let mut out = Vec::with_capacity(s.len() * 3 / 4 + 3);
-    let mut acc: u32 = 0;
-    let mut bits: u32 = 0;
-    for c in s.bytes() {
-        let v = match c {
-            b'A'..=b'Z' => c - b'A',
-            b'a'..=b'z' => c - b'a' + 26,
-            b'0'..=b'9' => c - b'0' + 52,
-            b'-' => 62,
-            b'_' => 63,
-            // agent 侧签发的令牌不带填充；容忍带 '=' 的变体（不改变结果）
-            b'=' => continue,
-            _ => return None,
-        } as u32;
-        acc = ((acc << 6) | v) & 0x3FFF;
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push(((acc >> bits) & 0xFF) as u8);
-        }
-    }
-    Some(out)
-}
 
 /// 关闭已执行的待办：回执里出现的工具名 ∈ 待办行 `tool`（逗号分隔）⇒ done/confirmed。
 async fn close_pending_actions(

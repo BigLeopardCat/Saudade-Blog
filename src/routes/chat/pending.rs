@@ -5,9 +5,14 @@ use crate::entity::pending_action;
 use sea_orm::sea_query::Expr;
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
 
-async fn cancel(db: &sea_orm::DatabaseConnection, uid: i32, cid: i32, value: &serde_json::Value) {
+pub(super) async fn cancel(
+    db: &sea_orm::DatabaseConnection,
+    uid: i32,
+    cid: i32,
+    value: &serde_json::Value,
+) -> bool {
     let Some((task_id, jti)) = cancellation(value) else {
-        return;
+        return false;
     };
     if let Err(error) = pending_action::Entity::update_many()
         .col_expr(pending_action::Column::Status, Expr::value("cancelled"))
@@ -28,7 +33,9 @@ async fn cancel(db: &sea_orm::DatabaseConnection, uid: i32, cid: i32, value: &se
         .await
     {
         tracing::warn!(error = %error, "failed to persist pending cancellation");
+        return false;
     }
+    true
 }
 
 fn cancellation(value: &serde_json::Value) -> Option<(&str, &str)> {

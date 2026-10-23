@@ -230,6 +230,7 @@ pub fn create_router(state: AppState) -> Router {
         // Agent Chat
         .route("/api/chat", post(chat::chat_handler))
         .route("/api/chat/stream", post(chat::chat_stream_handler))
+        .route("/api/chat/confirmation/cancel", post(chat::cancel_handler))
         // 对话历史（DB 权威源，前端转跳/多窗口恢复；handler 内手写鉴权）
         .route("/api/chat/history/text", get(own_reads::history::list))
         .route("/api/protected/my/board/page", get(own_reads::board::list))

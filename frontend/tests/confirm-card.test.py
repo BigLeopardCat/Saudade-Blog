@@ -141,7 +141,7 @@ HARNESS = """<!DOCTYPE html>
   window.__stub = { historyDelay: 0, historyCalls: 0, frameDelay: 0,
                     cardShownAt: null, historyResolvedAt: null, pendingAtTrigger: false,
                     lastBody: null, streamCalls: 0, streamStatus: 0, streamBody: null,
-                    historyItems: null };
+                    historyItems: null, cancelCalls: 0, cancelStatus: 200, cancelDelay: 0, cancelBody: null };
   (function () {
     var enc = new TextEncoder();
     var j = function (obj) {
@@ -151,6 +151,14 @@ HARNESS = """<!DOCTYPE html>
     var wait = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
     window.fetch = function (url, init) {
       var u = String((url && url.url) || url);
+      if (u.indexOf('/api/chat/confirmation/cancel') >= 0) {
+        window.__stub.cancelCalls++;
+        window.__stub.cancelRequest = JSON.parse(init.body);
+        return wait(window.__stub.cancelDelay).then(function () {
+          return new Response(JSON.stringify(window.__stub.cancelBody || {cancelled: true}),
+            {status: window.__stub.cancelStatus, headers: {'Content-Type': 'application/json'}});
+        });
+      }
       if (u.indexOf('/api/chat/stream') >= 0) {
         window.__stub.streamCalls++;
         // body 原样留一份：⑥ 腿据此断言"隐藏确认请求真的发出去了，且带着令牌"
@@ -616,7 +624,7 @@ def main():
             check("忙时点击：没有发出任何请求", pg6.evaluate("() => window.__stub.streamCalls") == 0,
                   str(pg6.evaluate("() => window.__stub.lastBody")))
             check("忙时点击：留痕（上报点名'有轮次在跑'）",
-                  any("轮次在跑" in r.get("message", "") for r in st["reports"]),
+                  any("请求在处理" in r.get("message", "") for r in st["reports"]),
                   json.dumps(st["reports"], ensure_ascii=False))
             pg6.evaluate("() => { window.__ctx.state.remoteRounds = {}; }")
 
@@ -801,10 +809,11 @@ def main():
             st = pg8.evaluate(ASK_STATE)
             seq = flow_stages(st["reports"], ASK_ID)
             check("⑧b 取消 = frame→card→click→settle(cancel)，**没有 sent**",
-                  [s for s, _ in seq] == ["frame", "card", "click", "settle"]
-                  and seq[3][1].get("result") == "cancel", str(seq))
-            check("⑧b 取消之后请求数没变（零请求）",
-                  st["streamCalls"] == calls_before,
+                  [s for s, _ in seq] == ["frame", "card", "click", "settle", "settle"]
+                  and seq[3][1].get("result") == "cancelling"
+                  and seq[4][1].get("result") == "cancel", str(seq))
+            check("⑧b 撤销不创建聊天轮，但发出一次撤销请求",
+                  st["streamCalls"] == calls_before and pg8.evaluate("() => window.__stub.cancelCalls") == 1,
                   f"{calls_before} → {st['streamCalls']}")
 
             # ⑧c 忙守卫挡下：click 在案、**没有 sent**——对账正是按这个不配对找现场
@@ -884,10 +893,10 @@ def main():
             st = pg8.evaluate(ASK_STATE)
             seq = flow_stages(st["reports"], ASK_ID)
             check("⑧g 改口打字：卡片按 settle(cancel) 作废、**没有 click**（用户没点它）",
-                  bool(seq) and seq[0][0] == "settle" and seq[0][1].get("result") == "cancel"
+                  bool(seq) and seq[0][0] == "settle" and seq[0][1].get("result") == "dismiss"
                   and "click" not in [s for s, _ in seq], str(seq))
             check("⑧g 卡片上写着「已取消」、待办已清",
-                  st["note"] == "已取消" and st["pending"] is None, repr(st["note"]))
+                  st["note"] == "已收起卡片；这不会撤销操作。" and st["pending"] is None, repr(st["note"]))
             check("⑧g 那一跳是用户新打的那句话，不是确认请求（请求体里没有令牌）",
                   "confirm_token" not in (st["lastBody"] or ""), str(st["lastBody"])[:200])
             # 整节下来**一条都不许被真链的去重规则吃掉**（替身照抄了 boot.js 的
@@ -1070,12 +1079,11 @@ def main():
             st = pg11.evaluate(ASK_STATE)
             html = pg11.evaluate("() => document.getElementById('chat-ask-text').innerHTML")
             check("⑪a 前置：这一轮的卡片真的弹出来了", st["active"] and st["q"], str(st["q"]))
-            check("⑪a 渲染器产出了强调标签（整条动作被 <strong> 包住）",
-                  "<strong>把全部未读通知标记为已读" in html, repr(html[:200]))
-            check("⑪a 屏幕上不再出现 ** 原文（渲染了但没生效的那种形态）",
-                  "**" not in st["q"], repr(st["q"]))
-            check("⑪a 问句其余文字逐字保留（渲染不许吃掉内容）",
-                  st["q"].startswith("要把全部未读通知标记为已读")
+            # This standalone harness has no host Markdown sanitizer. It must
+            # preserve the complete question as escaped text, including markers.
+            check("⑪a 缺少宿主渲染器时安全显示原文", "<strong>" not in html and "**" in st["q"], repr(html[:200]))
+            check("⑪a 完整展示动作范围与不可撤销说明",
+                  st["q"].startswith("要**把全部未读通知标记为已读（不可撤销")
                   and st["q"].endswith("点「确定」我就去处理。"), repr(st["q"]))
             check("⑪腿页面无未捕获异常", errs11 == [], " | ".join(errs11[:4]))
 
@@ -1230,6 +1238,34 @@ def main():
             pg13.close()
 
             check("①③腿页面无未捕获异常", errs == [], " | ".join(errs[:4]))
+            print("\n⑭ 服务端撤销与原生操作重取")
+            pg14, errs14 = open_page(b, url)
+            ask = json.loads(confirm_frame().removeprefix("__CONFIRM__:"))
+            ask["opts"] = [{"label": "确认执行", "value": "yes"}, {"label": "取消操作", "value": "no"}]
+            ask["replay_safe"] = True
+            native_round = [text_frame("请核对确认卡"), "__CONFIRM__:" + json.dumps(ask), "__END__"]
+            run_round(pg14, native_round)
+            check("⑭a 原生卡只有两个操作", pg14.evaluate(ASK_STATE)["btns"] == ["确认执行", "取消操作"])
+            pg14.evaluate("() => { window.__stub.cancelStatus = 503; window.__stub.cancelDelay = 150; }")
+            clicked = pg14.evaluate(CLICK, "no")
+            check("⑭b 服务端返回前只显示撤销中", clicked["note"] == "撤销中…")
+            pg14.wait_for_function("() => !window.__ctx.state.approvalBusy")
+            state = pg14.evaluate(ASK_STATE)
+            check("⑭c 撤销失败不能假称已取消，卡片可重试", state["pending"] == "SET" and len(state["btns"]) == 2)
+            pg14.evaluate("() => { window.__stub.cancelStatus = 200; }")
+            pg14.evaluate(CLICK, "no")
+            pg14.wait_for_function("() => !window.__ctx.state.approvalBusy")
+            check("⑭d 重试成功才显示已撤销", pg14.evaluate(ASK_STATE)["note"] == "已撤销，未执行改动")
+            run_round(pg14, native_round)
+            pg14.evaluate("() => { window.__stub.streamStatus = 503; }")
+            pg14.evaluate(CLICK, "yes")
+            pg14.wait_for_function("() => !window.__ctx.state.isSending")
+            state = pg14.evaluate(ASK_STATE)
+            check("⑭e 原生确认失败保留安全重取入口", state["pending"] == "SET" and len(state["btns"]) == 2)
+            check("⑭f 重取卡仍持久保存", pg14.evaluate(ASK_STORE)["parsed"]["replay_safe"] is True)
+            check("⑭g 浏览器没有未处理异常", not errs14, str(errs14))
+            pg14.close()
+
             b.close()
     finally:
         httpd.shutdown()
