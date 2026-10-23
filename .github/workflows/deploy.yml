@@ -403,7 +403,7 @@ jobs:
       - run: npm ci
       - run: npm run fetch:widget
       # apt 的默认下载等待可能耗尽整个 job；限制网络超时且有限重试，失败仍拦截。
-      - name: Install browser system dependencies and CJK fonts
+      - name: Install browser system dependencies
         timeout-minutes: 6
         run: |
           sudo tee /etc/apt/apt.conf.d/80-saudade-ci-network >/dev/null <<'EOF'
@@ -411,9 +411,10 @@ jobs:
           Acquire::http::Timeout "30";
           Acquire::https::Timeout "30";
           EOF
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends fonts-noto-cjk
           npx --no-install playwright install-deps chromium
+      - name: Install pinned CJK font
+        timeout-minutes: 4
+        run: bash ../scripts/ci/install-cjk-font.sh
       - name: Install Chromium
         timeout-minutes: 4
         env:
