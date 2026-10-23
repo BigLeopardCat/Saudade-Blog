@@ -66,7 +66,7 @@ ok(/import\s*\{[^}]*\bfetchSocial\b[^}]*\}\s*from\s*["'][^"']*store\/components\
 console.log('② 前台壳那一句仍在（两条入口各拉各的，不许二选一）');
 // 标记要取在 useEffect **之前**的那一行：`effectBodyAfter` 是从标记往后找 useEffect，
 // 拿 effect 体内的东西当标记会滑到下一段去（第一版就在这儿假红过）。
-const headEffect = effectBodyAfter(head, 'const [isSearching, setIsSearching]');
+const headEffect = effectBodyAfter(head, 'const blogTitle = useSelector');
 ok(headEffect !== null, '取到了前台壳的挂载 effect 函数体', headEffect);
 ok(headEffect && /dispatch<any>\(fetchSocial\(\)\)/.test(headEffect),
     '前台壳挂载 effect 里仍派发 fetchSocial');

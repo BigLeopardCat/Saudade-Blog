@@ -1,4 +1,4 @@
-import {Avatar, Card, ConfigProvider, Modal} from 'antd'
+import {Avatar, ConfigProvider, Modal, theme as antTheme} from 'antd'
 import './index.sass'
 import {Key, ReactElement, ReactNode, ReactPortal, useEffect, useRef, useState} from "react";
 import {useLocation, useNavigate} from "react-router-dom";
@@ -10,17 +10,9 @@ import {fetchCategories} from "../../store/components/categories.tsx";
 import {useDispatch, useSelector} from "react-redux";
 import {fetchTags} from "../../store/components/tags.tsx";
 import {fetchSocial, fetchUserInfo} from "../../store/components/user.tsx";
-import { searchAll } from "../../apis/SearchMethods.tsx";
-import {
-    AggregateHit,
-    AggregateResult,
-    SearchType,
-    TYPE_LABEL,
-    TYPE_ORDER,
-    allHits,
-    hitsOf,
-    hitTarget,
-} from "./aggregate";
+import AggregateSearch from '../../components/AggregateSearch';
+import { hitTarget } from './aggregate';
+import type { AggregateHit } from './aggregate';
 import '../main.css'
 import MoonToSun from "../MoonToSun";
 import { recordUserChoice } from "../../theme";
@@ -82,19 +74,6 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
     // 文章页的作者署名处。三态的选择与缓存见 components/UserCenter/identity.ts。
     const viewerAvatar = useViewerAvatar()
     const blogTitle = useSelector((state:{user:{blogTitle: string}}) => state.user.blogTitle)
-
-    // Search Logic
-    const [searchKeyword, setSearchKeyword] = useState('');
-    /* 聚合搜索（20261006）：一次搜文章 / 说说 / 留言 / 评论。
-     * `null` = 还没搜过——与"搜了但一条都没命中"（total 为 0 的对象）是**两回事**，
-     * 前者不该显示"未找到相关内容"。 */
-    const [agg, setAgg] = useState<AggregateResult | null>(null);
-    /** 单选筛选：`'all'` = 四类都显示；点某一枚计数只看那一类（**再点它一次回到全部**）。 */
-    const [activeType, setActiveType] = useState<SearchType | 'all'>('all');
-    /* 读失败与"确实没命中"必须分开（同 Talk 页 20261005 那条纪律）。
-     * 接口故障时渲染成"未找到相关内容"，等于替站内声明"没有这条内容"——而事实是没读到。 */
-    const [searchFailed, setSearchFailed] = useState(false);
-    const [isSearching, setIsSearching] = useState(false);
 
     useEffect(() => {
         dispatch<any>(fetchCategories())
@@ -213,136 +192,10 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
         try { window.dispatchEvent(new CustomEvent('darkmode-change', { detail: !isDark })); } catch {/* ignore */}
     };
 
-    // 序号闸（只认最后一次查询）——下面那段注释里解释。⚠️ 它必须**声明在
-    // `performSearch` 之前**（函数体里读它），而 `useRef` 的求值顺序就是声明顺序。
-    const searchSeq = useRef(0);
-
-    // Debounced search function
-    const performSearch = async (keyword: string) => {
-        // 序号闸在**最前面**：连"清空输入"也算一次查询（否则清空之后，先前在途的回包
-        // 会把结果面又填回来）。下面每个出口都要对得上号，尤其 `finally` 里那个
-        // `setIsSearching(false)`——不作废的话，旧回包会把新查询的"搜索中"提前灭掉。
-        const seq = ++searchSeq.current;
-        if(!keyword.trim()) {
-            setAgg(null);
-            setSearchFailed(false);
-            setActiveType('all');
-            // 清空 = 这一轮没有查询在跑。不置这一下的话，在途回包被序号闸作废后
-            // 就再没人把「搜索中...」灭掉了（它会一直挂着）。
-            setIsSearching(false);
-            return;
-        }
-        setSearchFailed(false);
-        setIsSearching(true);
-        try {
-            const res = await searchAll({ keyword: keyword });
-            if (seq !== searchSeq.current) return;          // 已经发起了更新的查询 → 这次作废
-            // **两层都要判**：HTTP 200 不代表业务成功（本站的信封是 `code`）。
-            // 只看 `res.status === 200` 的话，`code: 500` 时会把 `data`（可能是空数组）
-            // 当成结果——那正是 Talk 页 20261005 修过的那类"读不到被渲染成没有"。
-            if(res.status === 200 && res.data?.code === 200) {
-                setAgg(res.data.data);
-                // 换了一次查询 ⇒ 筛选回到"全部"。否则上一次点的"只看说说"会留在原地，
-                // 而用户看到的是"搜索框里换了词却什么都没有"。
-                setActiveType('all');
-            } else {
-                setSearchFailed(true);
-            }
-        } catch {
-            if (seq !== searchSeq.current) return;
-            setSearchFailed(true);
-        } finally {
-            if (seq === searchSeq.current) setIsSearching(false);
-        }
-    };
-
-    // ── 搜索的防抖与竞态（20261013 修「输入时结果面抖动」）────────────────────
-    // 防抖器从前写成 `const debouncedSearch = debounce(performSearch, 500)`，就在**组件体**里
-    // ——每次 render 都是一个**新实例**，而上一次挂起的定时器再没有人去 cancel 它。
-    // 逐字符输入的实测（`tests/site-search.test.py` 的「逐字符」那一节）：敲 5 个字发出
-    // **5 次**请求，关键词依次是 `河`/`河灯`/`河灯留`/`河灯留言`/`河灯留言板` —— 防抖等于
-    // 没有，而每个回包都要 `setAgg` 一次，结果面就随着回包的先后反复重画（用户报的"抖动"）。
-    // 既有套件量不出来，是因为它一直用 `fill()`：一次 input 事件，永远只有一个实例。
-    //
-    // 修法两头都要，缺一条都还抖：
-    //   ① 挂着的那一次请求必须**能被顶掉**（`searchTimer` 一个定时器 + 下面两个函数）；
-    //   ② 回包只认**最后一次**查询（`searchSeq` 序号闸）——网络乱序时旧关键词的结果会盖在
-    //      新结果上，那已经不只是抖，是**显示错的搜索结果**（本地假后端是同步返回的，
-    //      所以只有真网络才看得见，判据因此要在沙箱里手造乱序，见那个套件的「乱序回包」节）。
-    //
-    // ⚠️ ①不用 lodash 的 `debounce`（第一版就是它）：`debounce(...)` 得建在组件体里，
-    //    而"每次 render 建一个新实例"正是这个 bug 本身；改成 `useMemo(…, [])` 包一层能过
-    //    tsc 与本机套件，却被 CI 的 React Compiler 闸判死
-    //    （`react-hooks/preserve-manual-memoization`：这个 `useMemo` 编译器复现不出来 ⇒
-    //    整个组件被跳过优化）。而"清掉上一个定时器、再排一个"本来就不需要库——
-    //    这里用文件里已有的那个 timed-ref 写法（见上面的 `hoverLeaveTimer`），
-    //    组件里一处手写记忆化都不留，编译器没有可判错的东西。
-    const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-    /** 撤掉挂着的那一次防抖查询（清空输入 / 回车立即查 / 卸载三处都要它）。 */
-    const cancelScheduledSearch = () => {
-        if (searchTimer.current !== null) {
-            clearTimeout(searchTimer.current);
-            searchTimer.current = null;
-        }
-    };
-
-    /** 把这一次查询排在 500ms 之后（trailing）；期间再敲一个字就被顶掉，只发最后一次。
-     *  取当前 render 的 `performSearch` 闭包**是对的**：它只碰状态 setter、序号闸与
-     *  模块级 API，读不到任何会变旧的东西。 */
-    const scheduleSearch = (kw: string) => {
-        cancelScheduledSearch();
-        searchTimer.current = setTimeout(() => {
-            searchTimer.current = null;
-            void performSearch(kw);
-        }, 500);
-    };
-
-    // 卸载（或换页）时把挂着的那一次清掉：否则它会在这张页面已经走了之后再 setIsSearching。
-    // 清理体**内联**在这里、不调 `cancelScheduledSearch`：那样会让 exhaustive-deps 要求
-    // 把它列进依赖，而依赖一变这个 effect 就会重跑、每次都把挂着的定时器清掉——防抖直接失效。
-    useEffect(() => () => {
-        if (searchTimer.current !== null) {
-            clearTimeout(searchTimer.current);
-            searchTimer.current = null;
-        }
-    }, []);
-
-    const onSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const val = e.target.value;
-        setSearchKeyword(val);
-        if (!val.trim()) {
-            // 清空走**同一条**路径（`performSearch('')`）：它要顶掉序号闸、还要顺手把
-            // 「搜索中…」灭掉。从前这里自己抄了一遍清空逻辑，漏了这两件事——于是
-            // 清空输入框之后，先前在途的那次回包还会把结果面**填回来**（用户看到
-            // "框已经空了，底下还挂着一堆上一次的结果"）；挂着的防抖 timer 也会在
-            // 清空之后到点，用一个已经不在框里的旧关键词再发一次。
-            cancelScheduledSearch();
-            void performSearch('');
-            return;
-        }
-        scheduleSearch(val);
-    };
-
-    const handleSearch = async (e: any) => {
-         if (e.key === 'Enter') {
-             cancelScheduledSearch(); // 回车立即查 ⇒ 先顶掉挂着的那一次，别查两遍
-             performSearch(searchKeyword);
-         }
-    }
-
-    /** 点一枚计数：选中它只看这一类；**再点已选中的那枚回到全部**（单选，用户拍板）。 */
-    const toggleType = (t: SearchType) => {
-        setActiveType((cur) => (cur === t ? 'all' : t));
-    };
-
-    /** 点一条结果：关掉弹窗，跳到那一条自己（四类的目标见 `aggregate.ts::hitTarget`）。 */
     const openHit = (item: AggregateHit) => {
         setIsModalOpen(false);
-        // ⚠️ 绝对路径。原来这里是 `navigate('article/' + id)`（相对），而搜索框在**每一页**
-        // 都有：在 `/article/3` 上再搜再点会拼成 `/article/article/5`。
         navigate(hitTarget(item));
-    }
+    };
 
     /** 头像菜单里的「设置」= 打开那个大窗口（20260922）——**所有登录用户同一入口**。
      *  此前这个钮叫「心境」且一律 navigate('dashboard')，而 /dashboard 被 AuthRouter
@@ -382,9 +235,6 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
     /* 结果列表：`'all'` 时四类按 `TYPE_ORDER` 拼成一条（同类相邻、组内仍是后端的相关度序）；
      * 选了某一类就只剩那一组。**筛选在渲染处做、不重新请求**——四类是一次搜回来的，
      * 点一枚计数再打一次网络，除了慢还会让"计数"与"列表"有机会对不上。 */
-    const visibleHits: AggregateHit[] = agg
-        ? (activeType === 'all' ? allHits(agg) : hitsOf(agg, activeType))
-        : [];
 
     return (
         <>
@@ -525,6 +375,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
 
             <ConfigProvider
                 theme={{
+                    algorithm: isDark ? antTheme.darkAlgorithm : antTheme.defaultAlgorithm,
                     token: {
                         boxShadow: 'none'
                     },
@@ -555,111 +406,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                        rootClassName={isDark ? 'washiDark' : undefined}
                        classNames={{ mask: 'search-mask' }} >
                     <div style={{height:'80vh'}} className='searchModal'>
-                        <div style={{
-                                position: 'relative', 
-                                width: '80%', 
-                                margin: '0 auto',
-                                display: 'flex',
-                                alignItems: 'center'
-                            }}>
-                            <input 
-                                type="search" 
-                                className='searchModalInput' 
-                                placeholder={'输入内容自动搜索...'}
-                                value={searchKeyword}
-                                onChange={onSearchChange}
-                                onKeyDown={handleSearch}
-                                style={{
-                                    width: '100%',
-                                    paddingRight: '40px',
-                                    flex: 1
-                                }}
-                            />
-                            <i className="iconfont icon-sousuo1" 
-                               style={{
-                                   position: 'absolute',
-                                   right: '15px',
-                                   
-                                   top: '40%', transform: 'translateY(-50%)', marginBottom: '2px',
-                                   fontSize: '25px',
-                                   color: '#999',
-                                   cursor: 'pointer',
-                                   lineHeight: '1',
-                                   display: 'flex',
-                                   alignItems: 'center'
-                               }}
-                               onClick={() => performSearch(searchKeyword)}
-                            ></i>
-                        </div>
-                        
-                        <Card
-                            style={{
-                                width:'80%',
-                                margin: '20px auto 0',
-                                height: '85%',
-                                overflowY:'auto',
-                                background: 'transparent',
-                                display: searchKeyword ? 'block' : 'none'
-                            }}
-                            title={
-                                <div className='searchTitleRow'>
-                                    {/* 用户原话里的写法：`搜索结果（命中数量）` 后面跟四类计数。
-                                        括号用**全角**（与计数那几枚一致）。 */}
-                                    <span className='searchTotal'>搜索结果（{agg?.total ?? 0}）</span>
-                                    <span className='searchChips'>
-                                        {TYPE_ORDER.map((t) => (
-                                            <button
-                                                key={t}
-                                                type='button'
-                                                className={'search-chip' + (activeType === t ? ' is-active' : '')}
-                                                onClick={() => toggleType(t)}
-                                            >
-                                                {TYPE_LABEL[t]}（{agg?.counts?.[t] ?? 0}）
-                                            </button>
-                                        ))}
-                                    </span>
-                                    {isSearching && <span className='searchBusy'>搜索中...</span>}
-                                </div>
-                            }
-                            bordered={false}
-                        >
-                             <div className="search-results-list">
-                                {visibleHits.map((item: AggregateHit) => (
-                                    <div
-                                        // 四类混排，key 必须带上类型：文章 5 与评论 5 是两条东西
-                                        key={`${item.type}-${item.key}`}
-                                        onClick={() => openHit(item)}
-                                        className="search-item"
-                                    >
-                                        <span className={'search-badge search-badge-' + item.type}>
-                                            {TYPE_LABEL[item.type]}
-                                        </span>
-                                        <div className='search-item-main'>
-                                            {/* 留言那一条**没有标题**（它那一列的 title 是印章，
-                                                后端给的是空串）——空就别占一行 */}
-                                            {item.title && <div className='search-item-title'>{item.title}</div>}
-                                            <div className='search-item-snippet'>{item.snippet}</div>
-                                            <div className='search-item-meta'>
-                                                {[item.author, item.createTime].filter(Boolean).join(' · ')}
-                                            </div>
-                                        </div>
-                                    </div>
-                                ))}
-                                {/* 空态。三条互斥的说法，**别合并**：
-                                    · 读失败 ≠ 没命中（故障不能说成"站内没有"）；
-                                    · 选了某一类而那一类 0 命中，与"四类全空"也不是一回事。 */}
-                                {!isSearching && searchFailed && (
-                                    <div className='searchEmpty'>搜索失败，请稍后再试</div>
-                                )}
-                                {!isSearching && !searchFailed && agg && visibleHits.length === 0 && (
-                                    <div className='searchEmpty'>
-                                        {agg.total === 0
-                                            ? '未找到相关内容'
-                                            : `「${TYPE_LABEL[activeType as SearchType]}」里没有命中的内容`}
-                                    </div>
-                                )}
-                             </div>
-                        </Card>
+                        {isModalOpen && <AggregateSearch onOpen={openHit} />}
                     </div>
                 </Modal>
             </ConfigProvider>

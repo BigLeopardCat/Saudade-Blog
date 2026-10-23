@@ -6,7 +6,7 @@ import { loadTags } from '../apis/catalogReads';
 
 type CatalogError = { message: string };
 
-// These endpoints contain public taxonomy only, never account-specific data.
+// This API contains public reads, including injected aggregate search; no account-specific data.
 // RTK Query owns request deduplication, cache lifetime and polling. Existing
 // Redux selectors temporarily consume read models updated on fulfilled actions.
 export const catalogApi = createApi({

@@ -26,6 +26,10 @@ export interface AggregateHit {
 
 export interface AggregateResult {
     total: number
+    page?: number
+    pageSize?: number
+    hasMore?: boolean
+    terms?: string[]
     counts: Record<SearchType, number>
     notes: AggregateHit[]
     talks: AggregateHit[]
