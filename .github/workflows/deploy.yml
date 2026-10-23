@@ -3,14 +3,7 @@ name: Deploy Blog
 on:
   push:
     branches: [cn_sora_blog]
-  # 手动补一次部署（20261003 加）。**不是"随手重跑"的便利按钮，而是补一条会丢部署的路**：
-  # 部署与否由 `check-changes` 看**这次 push 的 diff** 决定（`base: github.event.before`），
-  # 于是"修一条只让 CI 变绿、本身不进产物的路"（典型：只改 `frontend/tests/**`）那次 push
-  # 会被合法地判成"没有东西要部署"——而它前面那次 push 正是因为这条测试红着才没部署成。
-  # 两次一叠加，**该落地的提交再没有下一次机会**：线上的 build-info 停在旧 sha，而这边一路绿灯。
-  # 本仓 20261003 真踩过（评论投票那批 `src/**` 就卡在这儿）。补的时候：
-  #   gh workflow run "Deploy Blog" --ref cn_sora_blog
-  # 它会按**当前 HEAD** 重新走一遍完整构建与部署，不依赖 diff。
+  # 手动补发当前 HEAD；常规主分支 push 也发布完整快照，见 check-changes.deploy。
   workflow_dispatch:
   # PR 上**只跑 check**（20261006 加）。动机：本仓已经是 public 仓库，而此前 PR 上
   # **一个检查都不跑**——PR 页面"没有红灯"的含义是"没跑过"。外部贡献者提交后得不到任何反馈，
@@ -58,14 +51,11 @@ jobs:
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
-      # 要不要跑这次部署：手动触发**恒跑**（那时没有 diff 可比，见上面 workflow_dispatch 那段），
-      # 否则任一半变了、或改到了部署管线本身（infra）就跑。
-      # `!= 'pull_request'` 这一条不是冗余（20261006 加）：PR 上 paths-filter 那一步**不跑**
-      # ⇒ 三个 output 都是空串 ⇒ 整条式子本来就为 false。但那是**靠缺席算出来的假**，
-      # 而"部署在 PR 上被条件挡住"这件事必须一眼看得出来——哪天有人往 filter 前面加一步、
-      # 或者换成别的 action 把 output 初始化成 true，这条链就断了，而断掉的症状是
-      # **PR 触发一次真部署**（要 secret、要 SSH、会换线上的二进制）。
-      deploy: "${{ (github.event_name == 'workflow_dispatch' || steps.filter.outputs.backend == 'true' || steps.filter.outputs.frontend == 'true' || steps.filter.outputs.infra == 'true') && github.event_name != 'pull_request' }}"
+      # concurrency 只保留一个等待中的 run，后来的文档/配置提交可能替换应用更新。
+      # 若仅看本次 diff，最新 run 会跳过部署，应用更新便永远不发布。
+      # 因此所有主分支 push 都发布当前完整快照；代价是文档提交也构建，换取不漏发。
+      # PR 明确不部署；backend/frontend 输出仅用于查看变更分类。
+      deploy: "${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
