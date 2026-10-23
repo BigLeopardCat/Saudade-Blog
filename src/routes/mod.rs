@@ -35,6 +35,8 @@ pub mod comment_votes; // 评论点赞/踩（20261003）：一票一行、**访�
 pub mod search; // 站内聚合搜索（20261006）：文章/说说/留言/评论一次搜，规则走 crate::search_core
 pub mod note_tags; // 文章↔标签关联表（20261018）：`note.tags` 那一列逗号串的**唯一**读写出口
 
+pub mod rag_corpus;
+
 use axum::{
     routing::{get, post, delete, put},
     Router,
@@ -159,6 +161,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/public/categories", get(public_catalog::categories::list))
         .route("/api/public/tags", get(public_catalog::tags::list))
         .route("/api/public/notes", get(notes::list_public_notes))
+        .route("/api/public/rag/corpus", get(rag_corpus::export))
         .route("/api/public/notes/page", get(notes::list_public_notes)) 
         .route("/api/public/notes/search", post(notes::search_notes))
         // 站内聚合搜索（20261006）：文章 / 说说 / 留言 / 评论四类一次搜，供首页搜索框。
