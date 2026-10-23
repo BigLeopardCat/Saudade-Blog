@@ -428,7 +428,7 @@ const ContentHome = () => {
                                     ⚠️ 子标签**找父色**那条旧行为一并消失：标签自己的颜色由
                                     `flattenTagOptions` 给（二级标签早就有自己的色了，管理页也是这么显示的）。 */}
                                 <div className='tags' style={{ width: '100%', marginTop: '10px' }}>
-                                    {renderNoteTags(item.noteTags, tagList)}
+                                    {renderNoteTags(item.noteTags, tagList, item.noteTagRefs)}
                                 </div>
                                 <div className="topFooter" style={{ display: 'flex', alignItems: 'center', paddingBottom: '20px' }}>
                                     {/* 头像 + 署名 + 两个日期（20261001）：与文章卡片那份逐字相同，

@@ -1,3 +1,10 @@
+export interface NoteTagRef {
+    id: number;
+    level: 1 | 2;
+    name: string;
+    color: string | null;
+}
+
 export interface NoteType {
     noteCategory?: string;
     categoryTitle?: string;
@@ -5,6 +12,7 @@ export interface NoteType {
     noteTitle: string;
     description: string;
     noteTags: number[];
+    noteTagRefs?: NoteTagRef[];
     key: string;
     cover: string;
     // 封面裁剪参数（焦点归一化坐标 + 额外缩放倍数），null/缺省 = 未设置（按居中 cover 渲染）
@@ -57,6 +65,7 @@ export interface formatNote {
     cover: string;
     noteCategory: string;
     noteTags: string;
+    noteTagRefs?: NoteTagRef[];
     isTop: number;
     status: string;
     createTime: Date;

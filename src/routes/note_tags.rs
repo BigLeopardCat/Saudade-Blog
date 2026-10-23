@@ -1,31 +1,7 @@
-//! 文章 ↔ 标签：**读写都只从这里走**（20261018，`note.tags` 归一那一刀）。
-//!
-//! ── 这个模块存在的理由 ─────────────────────────────────────────────────────
-//! 在此之前「这一篇挂了哪些标签」住在一列**逗号分隔的 id 字符串**里（`note.tags`），
-//! 而"那个 id 是哪一级"要靠去 `tag_one` / `tag_two` 挨个查、两边都查到就只能猜。
-//! 结构化之后这件事由 `note_tag` 表回答（一行自己知道指向哪张表，见
-//! `entity/note_tag.rs`），本模块是**唯一**碰那张表的地方 ——
-//! 写只有 `replace_note_tags` 一个出口，读只有 `load_note_tags` / `attach_tags`。
-//!
-//! ── 线格式逐字不变 ─────────────────────────────────────────────────────────
-//! `noteTags` 对外的形状**仍然是逗号分隔的 id 串**（`NoteDto.tags`），只是内容改由
-//! join 表重建。所以 agent 仓与前端**一个字节都不用改**，
-//! `saudade-blog-agent/tests/test_note_tags_codec.py` 继续绿。
-//!
-//! ── soak 期两处同源（**这是刻意的，不是忘了删**）────────────────────────────
-//! `replace_note_tags` 同时写 `note_tag` 与 `note.tags` 那列。
-//! 理由：列还没删（`0007` 才删），而**回滚必须是一次 `git revert` 就能做完的事**——
-//! 如果 soak 期只写新表，回滚时那列对 soak 期间写过的文章就是**陈旧的**，
-//! 得先跑一遍回填才能回滚（"回滚要先修数据"是最不该有的形状）。
-//! 两处由**同一个函数**写、且写的是**同一份解析结果**（`parse_tag_ids` 一遍），
-//! 所以不是"两个实现"，是"一个实现写两个落脚点"。`0007` 落地时删掉这一半即可。
-//!
-//! ── 解析口径只有一份 ───────────────────────────────────────────────────────
-//! `parse_tag_ids` 是那一份：**只认 ASCII 数字**（`[0-9]`，不是 `\d` —— Python 的 `\d`
-//! 认全角数字而前端 `Number()` 不认，那一族"说得出画不出"的账记在
-//! `test_note_tags_codec.py` ④）、`> 0`、**保序去重**。
-//! 前端 `utils/noteTags.ts::toTagId`、agent `adminops_tags.py::parse_tag_ids`、
-//! 迁移 `0006_note_tag.sql` 的回填 SQL 三处同口径。
+//! Ordered article/tag references. Typed writes preserve level/id identity.
+//! Legacy editor requests still accept an id list and prefer level one on collisions.
+//! Both write paths share one transaction-bound writer and update the legacy
+//! `note.tags` column until its schema migration is complete.
 
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, QueryFilter,
@@ -37,9 +13,11 @@ use crate::entity::{note, note_tag, tag_one, tag_two};
 use crate::routes::notes::NoteDto;
 
 /// 一个标签引用：id + 名字（**保序**由调用方按 `seq` 排好）。
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct TagRef {
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct TagRef {
     pub id: i32,
+    pub level: i16,
+    pub color: Option<String>,
     pub name: String,
 }
 
@@ -80,7 +58,12 @@ pub(crate) fn canonical_tags(ids: &[i32]) -> Option<String> {
     if ids.is_empty() {
         return None;
     }
-    Some(ids.iter().map(|i| i.to_string()).collect::<Vec<_>>().join(","))
+    Some(
+        ids.iter()
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join(","),
+    )
 }
 
 /// 这一批 id 里，哪些在 `tag_one`、哪些在 `tag_two`（各一次查询，不做逐 id 往返）。
@@ -130,30 +113,61 @@ pub(crate) async fn replace_note_tags<C: ConnectionTrait>(
     let ids = parse_tag_ids(tags);
     let (one, two) = classify(db, &ids).await?;
 
-    let mut rows: Vec<note_tag::ActiveModel> = Vec::with_capacity(ids.len());
-    let mut kept: Vec<i32> = Vec::with_capacity(ids.len());
-    for (seq, id) in ids.iter().enumerate() {
-        let in_one = one.contains(id);
-        let in_two = two.contains(id);
-        if !in_one && !in_two {
-            tracing::warn!("[note_tags] 文章 {note_id} 的标签 id {id} 在两张表里都查不到（悬空），已丢弃");
-            continue;
+    let existing_rows = note_tag_rows(db, &[note_id]).await?;
+    let existing: Vec<(i16, i32)> = existing_rows
+        .into_iter()
+        .filter_map(|(_, a, b)| a.map(|id| (1, id)).or_else(|| b.map(|id| (2, id))))
+        .collect();
+    let current_ids: Vec<i32> = existing.iter().map(|(_, id)| *id).collect();
+    if parse_tag_ids(canonical_tags(&current_ids).as_deref()) == ids {
+        return replace_typed_note_tags(db, note_id, &existing).await;
+    }
+    let mut refs = Vec::with_capacity(ids.len());
+    for id in ids {
+        let retained: Vec<_> = existing
+            .iter()
+            .copied()
+            .filter(|(_, value)| *value == id)
+            .collect();
+        if !retained.is_empty() {
+            refs.extend(retained);
+        } else if one.contains(&id) {
+            refs.push((1, id));
+        } else if two.contains(&id) {
+            refs.push((2, id));
+        } else {
+            tracing::warn!("[note_tags] missing tag id={id}; omitted from article {note_id}");
         }
-        if in_one && in_two {
-            tracing::warn!(
-                "[note_tags] 文章 {note_id} 的标签 id {id} 在 tag_one 与 tag_two 里都存在（撞号），按一级处理"
-            );
+    }
+    replace_typed_note_tags(db, note_id, &refs).await
+}
+
+/// Replace exact level/id references inside the caller's transaction.
+/// The legacy id column is updated from the same ordered references.
+pub(crate) async fn replace_typed_note_tags<C: ConnectionTrait>(
+    db: &C,
+    note_id: i32,
+    refs: &[(i16, i32)],
+) -> Result<(), sea_orm::DbErr> {
+    let mut seen = HashSet::new();
+    let mut rows = Vec::with_capacity(refs.len());
+    let mut kept = Vec::with_capacity(refs.len());
+    for (seq, &(level, id)) in refs.iter().enumerate() {
+        if id <= 0
+            || !matches!(level, 1 | 2)
+            || seq > i16::MAX as usize
+            || !seen.insert((level, id))
+        {
+            return Err(sea_orm::DbErr::Custom("invalid typed tag reference".into()));
         }
-        let (a, b) = if in_one { (Some(*id), None) } else { (None, Some(*id)) };
         rows.push(note_tag::ActiveModel {
             note_id: sea_orm::Set(note_id),
             seq: sea_orm::Set(seq as i16),
-            tag_one_id: sea_orm::Set(a),
-            tag_two_id: sea_orm::Set(b),
+            tag_one_id: sea_orm::Set((level == 1).then_some(id)),
+            tag_two_id: sea_orm::Set((level == 2).then_some(id)),
         });
-        kept.push(*id);
+        kept.push(id);
     }
-
     note_tag::Entity::delete_many()
         .filter(note_tag::Column::NoteId.eq(note_id))
         .exec(db)
@@ -164,7 +178,10 @@ pub(crate) async fn replace_note_tags<C: ConnectionTrait>(
 
     // ③ 同步那一列。`update` 只写 `Set` 过的列 ⇒ `updated_at` 一个字节不动
     // （与旧行为一致：改标签不该让文章在列表里跳到最前）。
-    let mut am = note::ActiveModel { id: sea_orm::Set(note_id), ..Default::default() };
+    let mut am = note::ActiveModel {
+        id: sea_orm::Set(note_id),
+        ..Default::default()
+    };
     am.tags = sea_orm::Set(canonical_tags(&kept));
     am.update(db).await?;
     Ok(())
@@ -231,8 +248,14 @@ pub(crate) async fn load_note_tags<C: ConnectionTrait>(
     for (nid, a, b) in rows {
         let id = a.or(b);
         let Some(id) = id else { continue };
-        let name = names.get(&id).cloned().unwrap_or_default();
-        out.entry(nid).or_default().push(TagRef { id, name });
+        let level = if a.is_some() { 1 } else { 2 };
+        let (name, color) = names.get(&(level, id)).cloned().unwrap_or_default();
+        out.entry(nid).or_default().push(TagRef {
+            id,
+            level,
+            name,
+            color,
+        });
     }
     out
 }
@@ -263,10 +286,13 @@ pub(crate) async fn resync_tags_column<C: ConnectionTrait>(
         return Ok(0);
     }
     let rows = note_tag_rows(db, note_ids).await?;
-    let mut by_note: HashMap<i32, Vec<i32>> = HashMap::new();
+    let mut by_note: HashMap<i32, Vec<(i16, i32)>> = HashMap::new();
     for (nid, a, b) in rows {
         if let Some(t) = a.or(b) {
-            by_note.entry(nid).or_default().push(t);
+            by_note
+                .entry(nid)
+                .or_default()
+                .push((if a.is_some() { 1 } else { 2 }, t));
         }
     }
     let mut n = 0u64;
@@ -274,7 +300,7 @@ pub(crate) async fn resync_tags_column<C: ConnectionTrait>(
         // 关联表里一行都没有的篇 → 空列表 → `canonical_tags` 给 `None` → 那一列落成 NULL
         // （不是空串，见 `canonical_tags` 的 ⚠️）。这正是"标签被删光了"该有的样子。
         let ids = by_note.remove(id).unwrap_or_default();
-        replace_note_tags(db, *id, canonical_tags(&ids).as_deref()).await?;
+        replace_typed_note_tags(db, *id, &ids).await?;
         n += 1;
     }
     Ok(n)
@@ -297,11 +323,17 @@ pub(crate) async fn note_ids_with_tag_name_hits<C: ConnectionTrait>(
     let mut out: Vec<i32> = Vec::new();
     // 两级各拼一次条件：列不同（`tag_one.name` / `tag_two.name`），查询也只能各发一条。
     let one_cond = crate::search_core::keyword_prefilter(
-        &[SimpleExpr::from(Expr::col((tag_one::Entity, tag_one::Column::Name)))],
+        &[SimpleExpr::from(Expr::col((
+            tag_one::Entity,
+            tag_one::Column::Name,
+        )))],
         terms,
     );
     let two_cond = crate::search_core::keyword_prefilter(
-        &[SimpleExpr::from(Expr::col((tag_two::Entity, tag_two::Column::Name)))],
+        &[SimpleExpr::from(Expr::col((
+            tag_two::Entity,
+            tag_two::Column::Name,
+        )))],
         terms,
     );
     if let Some(cond) = one_cond {
@@ -347,33 +379,44 @@ pub(crate) async fn current_tags<C: ConnectionTrait>(
     Ok(canonical_tags(&ids))
 }
 
+/// Copy level/id references without a legacy serialization round trip.
+pub(crate) async fn copy_note_tags<C: ConnectionTrait>(
+    db: &C,
+    source: i32,
+    target: i32,
+) -> Result<(), sea_orm::DbErr> {
+    let rows = note_tag_rows(db, &[source]).await?;
+    let refs: Vec<_> = rows
+        .into_iter()
+        .filter_map(|(_, a, b)| a.map(|id| (1, id)).or_else(|| b.map(|id| (2, id))))
+        .collect();
+    replace_typed_note_tags(db, target, &refs).await
+}
+
 /// 两级标签的 `id → 名字`（一次查两张表）。查不到的名字是空串 —— 外键在，理论上查不到
 /// 只会发生在"这一批里没有那个 id"，而那种情况调用方也不会来问。
-async fn tag_names<C: ConnectionTrait>(db: &C, one_ids: &[i32], two_ids: &[i32]) -> HashMap<i32, String> {
-    let mut out: HashMap<i32, String> = HashMap::new();
+async fn tag_names<C: ConnectionTrait>(
+    db: &C,
+    one_ids: &[i32],
+    two_ids: &[i32],
+) -> HashMap<(i16, i32), (String, Option<String>)> {
+    let mut out = HashMap::new();
     if !one_ids.is_empty() {
         if let Ok(rows) = tag_one::Entity::find()
-            .select_only()
-            .column(tag_one::Column::Id)
-            .column(tag_one::Column::Name)
             .filter(tag_one::Column::Id.is_in(one_ids.to_vec()))
-            .into_tuple::<(i32, String)>()
             .all(db)
             .await
         {
-            out.extend(rows);
+            out.extend(rows.into_iter().map(|r| ((1, r.id), (r.name, r.color))));
         }
     }
     if !two_ids.is_empty() {
         if let Ok(rows) = tag_two::Entity::find()
-            .select_only()
-            .column(tag_two::Column::Id)
-            .column(tag_two::Column::Name)
             .filter(tag_two::Column::Id.is_in(two_ids.to_vec()))
             .all(db)
             .await
         {
-            out.extend(rows.into_iter().map(|r| (r.id, r.name)));
+            out.extend(rows.into_iter().map(|r| ((2, r.id), (r.name, r.color))));
         }
     }
     out
@@ -395,8 +438,11 @@ pub(crate) async fn attach_tags(db: &DatabaseConnection, dtos: &mut [NoteDto]) {
     let map = load_note_tags(db, &ids).await;
     for dto in dtos.iter_mut() {
         let refs = map.get(&dto.id);
-        let ids: Vec<i32> = refs.map(|v| v.iter().map(|t| t.id).collect()).unwrap_or_default();
+        let ids: Vec<i32> = refs
+            .map(|v| v.iter().map(|t| t.id).collect())
+            .unwrap_or_default();
         dto.tags = canonical_tags(&ids).unwrap_or_default();
+        dto.tag_refs = refs.cloned().unwrap_or_default();
     }
 }
 
@@ -477,7 +523,11 @@ pub(crate) async fn note_ids_with_tags<C: ConnectionTrait>(
     if tag_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let col = if in_two { note_tag::Column::TagTwoId } else { note_tag::Column::TagOneId };
+    let col = if in_two {
+        note_tag::Column::TagTwoId
+    } else {
+        note_tag::Column::TagOneId
+    };
     let ids: Vec<i32> = note_tag::Entity::find()
         .select_only()
         .column(note_tag::Column::NoteId)
@@ -534,11 +584,27 @@ mod tests {
         // 脏值：空片、空白、非数字、零、负数、全角数字
         assert_eq!(parse_tag_ids(Some("1,1,,")), vec![1]);
         assert_eq!(parse_tag_ids(Some(" 1 , 2 ")), vec![1, 2]);
-        assert_eq!(parse_tag_ids(Some("12abc,13")), vec![13], "parseInt 式的脏值不许当 id");
+        assert_eq!(
+            parse_tag_ids(Some("12abc,13")),
+            vec![13],
+            "parseInt 式的脏值不许当 id"
+        );
         assert_eq!(parse_tag_ids(Some("0,-3,abc,")), Vec::<i32>::new());
-        assert_eq!(parse_tag_ids(Some("１２")), Vec::<i32>::new(), "全角数字不认（前端也不认）");
-        assert_eq!(parse_tag_ids(Some("+5")), Vec::<i32>::new(), "符号不是数字的一部分");
-        assert_eq!(parse_tag_ids(Some("99999999999")), Vec::<i32>::new(), "超出 id 值域");
+        assert_eq!(
+            parse_tag_ids(Some("１２")),
+            Vec::<i32>::new(),
+            "全角数字不认（前端也不认）"
+        );
+        assert_eq!(
+            parse_tag_ids(Some("+5")),
+            Vec::<i32>::new(),
+            "符号不是数字的一部分"
+        );
+        assert_eq!(
+            parse_tag_ids(Some("99999999999")),
+            Vec::<i32>::new(),
+            "超出 id 值域"
+        );
         assert_eq!(parse_tag_ids(None), Vec::<i32>::new());
         assert_eq!(parse_tag_ids(Some("")), Vec::<i32>::new());
         // 保序（不是排序）：`5,3` 必须原样是 [5,3]

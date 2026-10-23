@@ -1,6 +1,7 @@
 import http from "./axios.tsx";
 import {TagLevelOne, TagLevelTwo} from "../interface/TagType";
 import React from "react";
+import type {NoteTagRef} from "../interface/NoteType";
 import {Popover, Tag} from "antd";
 
 interface addNewTagOne{
@@ -167,84 +168,46 @@ function tagLabelMap(tagList: any): Map<number, TagOption> {
     return map;
 }
 
-/**
- * 渲染一篇文章的标签（公开页/卡片用）。
- *
- * 20260919 加固：**查不到的 id 直接不渲染**（旧版渲染 `<Tag>{undefined}</Tag>`，
- * 在列表上就是一个个空白标签小块 —— 线上 18 篇有标签的文章里 12 篇有这种悬空 id），
- * 并按 id 去重。签名保持不变（ContentHome/Article.tsx、articleRecord 都在用）。
- *
- * 20261001：**样式回到标签管理页那一套**（用户原话「标签在文章卡片的样式回到标签管理页的
- * 样式」）—— 就是 antd `<Tag color={标签自己的色}>`。20260930 那轮曾换成手账 chip
- * （纯 span + `--tg` 变量 + `.tagChip` 皮），理由是 `Tag` 的 `color` 会落成内联样式、
- * 换皮得 `!important`；现在既然要的就是管理页那副样子，那层皮整个撤掉：
- * 管理页树上的 `titleRender` 渲染的就是 `<Tag color={node.color}>{node.title}</Tag>`，
- * 与其把 chip 调到"像"它，不如直接用同一个组件 —— 这也是**同一份样式只有一处定义**。
- * `.tagChip` / `.tagChipDot` 两条 sass 规则随之删除（ContentHome/index.sass 文件尾）。
- */
-function renderNoteTags(noteTags: number[],tagList: any){
+/** Prefer level/id identities supplied by the article API; older rows use the catalog. */
+function noteTagOptions(noteTags: number[], tagList: any, refs?: NoteTagRef[]) {
+    if (Array.isArray(refs)) {
+        const seen = new Set<string>();
+        return refs.flatMap(ref => {
+            const key = `${ref.level}:${ref.id}`;
+            if (!Number.isInteger(ref.id) || ref.id <= 0 || ![1, 2].includes(ref.level)
+                || !ref.name || seen.has(key)) return [];
+            seen.add(key);
+            return [{key, label: ref.name, color: ref.color ?? undefined}];
+        });
+    }
     const labels = tagLabelMap(tagList);
-    const seen = new Set<number>();
-    const nodes: React.ReactNode[] = [];
-    (Array.isArray(noteTags) ? noteTags : []).forEach(noteTag => {
-        if (seen.has(noteTag)) return;
-        seen.add(noteTag);
-        const opt = labels.get(noteTag);
-        if (!opt) return;   // 悬空 id：不渲染空白块
-        nodes.push(
-            // 与标签管理页树上那颗一模一样（没有 color 时不传，落回 antd 的默认灰）
-            <Tag color={opt.color} key={noteTag}>
-                {opt.label}
-            </Tag>
-        );
+    return [...new Set(Array.isArray(noteTags) ? noteTags : [])].flatMap(id => {
+        const opt = labels.get(id);
+        return opt ? [{key: String(id), label: opt.label, color: opt.color}] : [];
     });
-    return nodes;
 }
 
-/**
- * 折叠渲染（后台列表的「文章标签」列用）：只显示前 `max` 个，其余收进 Popover。
- * 列宽只有 22%，不折叠的话三四个长标签名就能把这列挤爆（Tag 自带 margin 又加一层）。
- */
-function renderNoteTagsCollapsed(noteTags: number[], tagList: any, max: number = 3){
-    const labels = tagLabelMap(tagList);
-    const ids: number[] = [];
-    (Array.isArray(noteTags) ? noteTags : []).forEach(id => {
-        if (!labels.has(id) || ids.includes(id)) return;   // 悬空 id 不计入、也不占名额
-        ids.push(id);
-    });
-    if (ids.length === 0) return <span style={{opacity: .45}}>—</span>;
-    const shown = ids.slice(0, max);
-    const rest = ids.slice(max);
-    return (
-        <span style={{display: 'inline-flex', alignItems: 'center', flexWrap: 'nowrap', maxWidth: '100%', overflow: 'hidden'}}>
-            {shown.map(id => {
-                const opt = labels.get(id)!;
-                return (
-                    // margin 内联收窄：Tag 默认 8px inline-end，3 个标签光外边距就吃掉 24px
-                    <Tag color={opt.color} key={id} style={{marginInlineEnd: 4, marginBottom: 0, maxWidth: 90, overflow: 'hidden', textOverflow: 'ellipsis'}}>
-                        {opt.label}
-                    </Tag>
-                );
-            })}
-            {rest.length > 0 && (
-                <Popover
-                    title="全部标签"
-                    content={
-                        <div style={{maxWidth: 260, display: 'flex', flexWrap: 'wrap', gap: 4}}>
-                            {ids.map(id => {
-                                const opt = labels.get(id)!;
-                                return <Tag color={opt.color} key={id} style={{margin: 0}}>{opt.label}</Tag>;
-                            })}
-                        </div>
-                    }
-                >
-                    <Tag style={{marginInlineEnd: 0, marginBottom: 0, cursor: 'pointer'}}>+{rest.length}</Tag>
-                </Popover>
-            )}
-        </span>
-    );
+function renderNoteTags(noteTags: number[], tagList: any, refs?: NoteTagRef[]) {
+    return noteTagOptions(noteTags, tagList, refs).map(opt =>
+        <Tag color={opt.color} key={opt.key}>{opt.label}</Tag>);
 }
 
+/** Keep article lists compact while preserving the complete ordered tag list. */
+function renderNoteTagsCollapsed(noteTags: number[], tagList: any, max: number = 3, refs?: NoteTagRef[]) {
+    const options = noteTagOptions(noteTags, tagList, refs);
+    if (options.length === 0) return <span style={{opacity: .45}}>—</span>;
+    const shown = options.slice(0, max);
+    const rest = options.slice(max);
+    return <span style={{display: 'inline-flex', alignItems: 'center', flexWrap: 'nowrap', maxWidth: '100%', overflow: 'hidden'}}>
+        {shown.map(opt => <Tag color={opt.color} key={opt.key} style={{marginInlineEnd: 4, marginBottom: 0}}>{opt.label}</Tag>)}
+        {rest.length > 0 && <Popover placement="top" content={
+            <div style={{maxWidth: 260, display: 'flex', flexWrap: 'wrap', gap: 4}}>
+                {options.map(opt => <Tag color={opt.color} key={opt.key} style={{margin: 0}}>{opt.label}</Tag>)}
+            </div>}>
+            <Tag style={{marginInlineEnd: 0, marginBottom: 0, cursor: 'pointer'}}>+{rest.length}</Tag>
+        </Popover>}
+    </span>;
+}
 
 // 更新一级标签
 function updateTagOne(id: number, data: { title: string; color: string }) {

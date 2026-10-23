@@ -92,7 +92,7 @@ const ArticleRecord = ({isDark}: ArticleRecordProps) => {
 
                         <div className="tags">
                             <Space size={[0, 8]} wrap>
-                            {renderNoteTags(item.noteTags,tagList)}
+                            {renderNoteTags(item.noteTags,tagList,item.noteTagRefs)}
                             </Space>
                         </div>
                     </div>

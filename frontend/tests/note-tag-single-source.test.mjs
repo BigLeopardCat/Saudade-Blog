@@ -1,31 +1,5 @@
-// ═ 文章↔标签只有一条写路径（20261018，note.tags 归一那一刀）══
-//   node tests/note-tag-single-source.test.mjs
-//
-// ## 盯的是什么
-//
-// `note.tags` 原来是**一列逗号分隔的 id 字符串**，引用关系住在一个字符串里 ⇒ 谁都能顺手
-// 拼一个、谁都能顺手改一处，而"某条路径忘了同步"的症状只是**标签少了一块**（不报错）。
-// 20261018 起引用关系搬进了 `note_tag` 关联表，写入收口到**一个函数**
-// （`routes/note_tags.rs::replace_note_tags`：一次写关联表 + 那一列）。
-//
-// 本文件锁住"收口"这件事：四条写路径都得调它、没有第二条路能碰那张表或那一列。
-//
-// 还有一条**必须一起钉住**的：关联行有两条改动路径**不经过** `replace_note_tags`（删标签走
-// 外键 CASCADE、跨表移动走 `move_tag_refs`），它们各自得把 `note.tags` 那一列重算回来
-// （`resync_tags_column`）—— 漏了的话那一列**静默陈旧**，而陈旧会让 `0007` 的预检
-// 把"删列"拦下来，报的却是"两边漂了"（见 ⑤）。
-//
-// ## ⚠️ 源码锁**单独不算数**
-//
-// 它证明不了"标签真的存对了、读回来一样" —— 那要靠行为判据：
-// `tests/pg_integration.rs` 里那一族（回填往返逐字相等、外键级联按列生效、撞号归属、
-// 移动改指向）。只留源码锁 = 把"函数被调用了"当成"数据是对的"。
-//
-// ## ⚠️ 判据读的是**代码**，不是注释
-//
-// 本仓的注释里到处在**举例**写被禁的写法（这一刀的注释尤其多，因为要解释"为什么不是
-// 那么写"）。`notes.rs` 里 `note.tags` 这几个字出现在注释里十几次 —— 不剥注释的话，
-// 判据会红在自己写的说明上（20261018 CI 上真的这么红过一次）。
+// Both legacy and typed article tag inputs share one transactional writer.
+
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -94,11 +68,11 @@ const FILES = walkSrc();
 const nt = FILES.find(([p]) => p === NT)?.[1];
 const notes = FILES.find(([p]) => p === 'src/routes/notes.rs')?.[1];
 
-console.log('\n① 唯一写点 `replace_note_tags` 还在，且三件事一起做');
+console.log('\n① 两种输入共用一个类型明确的事务写点');
 {
     ok(!!nt, `${NT} 在`);
-    const body = nt ? fnBody(nt, 'replace_note_tags') : null;
-    ok(body !== null, '  `replace_note_tags` 还在');
+    const body = nt ? fnBody(nt, 'replace_typed_note_tags') : null;
+    ok(body !== null, '  类型明确的公共写点还在');
     if (body) {
         ok(/note_tag::Entity::delete_many/.test(body), '  它先删这一篇现有的关联行');
         ok(/note_tag::Entity::insert_many/.test(body), '  再按解析结果整批插回去');
@@ -174,7 +148,7 @@ console.log('\n② 没有第二条路能写那张表 / 那一列');
 console.log('\n③ 四条写路径都调它（漏一条 = 那条路上标签不再被保存）');
 {
     // 三条在 `notes.rs`，一条是自动保存的"克隆原行"那一支。
-    for (const fn of ['create_note', 'update_note', 'autosave_note', 'resolve_autosave_target']) {
+    for (const fn of ['create_note', 'update_note', 'autosave_note']) {
         const body = notes ? fnBody(notes, fn) : null;
         ok(body !== null, `  \`notes.rs::${fn}\` 还在`);
         ok(!!body && /replace_note_tags\(/.test(body), `  ${fn} 调了 \`replace_note_tags\``);
@@ -185,13 +159,16 @@ console.log('\n③ 四条写路径都调它（漏一条 = 那条路上标签不�
     ok(!!upd && /new_tags\.is_some\(\)/.test(upd),
         '  `update_note` 只在带了 `noteTags` 时才动标签（否则快速改状态会把标签清光）');
 
-    // 那两处"沿用行里现有的标签"必须**从关联表读**（`current_tags`），不是读那一列 ——
-    // 读侧那一半由 ② 的源码锁管，这里管的是"它们确实换成了关联表那条路"。
-    for (const fn of ['resolve_autosave_target', 'autosave_note']) {
-        const body = notes ? fnBody(notes, fn) : null;
-        ok(!!body && /note_tags::current_tags\(/.test(body),
-            `  ${fn} 用 \`note_tags::current_tags\` 取现有标签（不是读「note.tags」那一列）`);
-    }
+    const revision = notes ? fnBody(notes, 'resolve_autosave_target') : null;
+    ok(!!revision && /note_tags::copy_note_tags\(/.test(revision),
+        '  修改稿直接复制有层级的标签引用');
+    const copy = nt ? fnBody(nt, 'copy_note_tags') : null;
+    ok(!!copy && /note_tag_rows\(/.test(copy) && /replace_typed_note_tags\(/.test(copy),
+        '  复制读取关联表并复用同一个类型明确的写点');
+    const autosave = notes ? fnBody(notes, 'autosave_note') : null;
+    ok(!!autosave && /note_tags::current_tags\(/.test(autosave),
+        '  自动保存的兼容输入从关联表派生');
+
 }
 
 console.log('\n④ 移动标签：**先改指向、再删旧标签行**（顺序反了会被外键静默带走）');
@@ -237,11 +214,11 @@ console.log('\n⑤ 改动关联表的另外两条路，都要把 `note.tags` 那
         ok(!!body && /resync_tags_column\(/.test(body),
             `  ${fn} 调了 \`resync_tags_column\`（否则那一列会静默陈旧、0007 的预检会莫名其妙地红）`);
     }
-    // 这一列只在 `note_tags.rs` 里写（与 ② 同一条纪律），`resync` 也必须走 `replace_note_tags`
+    // 这一列只在 `note_tags.rs` 里写（与 ② 同一条纪律），`resync` 也必须走 `replace_typed_note_tags`
     // 而不是自己另开一条 `UPDATE note SET tags = …`。
     const rs = nt ? fnBody(nt, 'resync_tags_column') : null;
-    ok(!!rs && /replace_note_tags\(/.test(rs) && !/note::Entity|update_many/.test(rs),
-        '  `resync_tags_column` 自己不开写路径，走 `replace_note_tags`');
+    ok(!!rs && /replace_typed_note_tags\(/.test(rs) && !/note::Entity|update_many/.test(rs),
+        '  `resync_tags_column` 自己不开写路径，走 `replace_typed_note_tags`');
 }
 
 console.log(`\n${fail === 0 ? '全部通过' : `失败 ${fail} 项`}（通过 ${pass}）`);

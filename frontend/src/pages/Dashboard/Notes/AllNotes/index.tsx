@@ -506,7 +506,7 @@ const AllNotes = () => {
             // 20261006 用户第 5 条：「公开文章」那颗绿标**撤了** —— 文章状态字段本来就有，
             // 在这列再画一遍是重复（而且它跟标签挤同一格，谁多谁少还看心情）。要看公开的
             // 走列表上方的「公开文章」页签，筛选由后端做（见 `listState.ts` 的 `only_public`）。
-            render: (_, record) => renderNoteTagsCollapsed(record.noteTags, tagList, 3),
+            render: (_, record) => renderNoteTagsCollapsed(record.noteTags, tagList, 3, record.noteTagRefs),
         },
         {
             title: '是否置顶',

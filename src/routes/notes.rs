@@ -118,6 +118,8 @@ pub struct NoteDto {
     pub is_public: bool,
     #[serde(rename = "noteTags")]
     pub tags: String,
+    #[serde(rename = "noteTagRefs")]
+    pub tag_refs: Vec<note_tags::TagRef>,
 
     // ── 卡片上的四个数（20260930，20261003 补讨论数；见 `note_stats::counts_for`）──
     // **`None` 时整个键不出现在 JSON 里**（不是 `null`）：这是刻意的，因为只有列表接口
@@ -203,6 +205,7 @@ fn map_note(n: note::Model, cat: Option<(i32, String)>) -> NoteDto {
         // `routes/note_tags.rs` 头注），但读路径已经不再看它 —— 所以这里刻意不读 `n.tags`，
         // 免得"某一篇的列陈旧了"与"某一篇真的没标签"在连线上长得一样。
         tags: String::new(),
+        tag_refs: Vec::new(),
         // 作者只搬 id 过来，名字/头像由 `attach_authors` 批量解析（`map_note` 是纯函数，
         // 不查库——与 `attach_stats` 同一个分工）。
         author_id: n.user_id,
@@ -1406,16 +1409,7 @@ async fn resolve_autosave_target(
         return Ok(rev);
     }
 
-    // 克隆原行做修改稿（id 交给自增），内容随后由 payload 覆盖。
-    // ⚠️ 关联表**不会**跟着列克隆走（20261018）：`note_tag` 的行得显式复制一份，
-    // 否则"继续编辑"打开修改稿时标签栏是空的，用户一保存就把标签清光。
-    let src_tags = match note_tags::current_tags(&state.db, id).await {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::error!("[notes] 建修改稿：读源行标签失败: {e}");
-            return Err("Create revision failed".to_string());
-        }
-    };
+    // Clone content and typed tag references into one revision transaction.
     let mut am: note::ActiveModel = n.into();
     am.id = NotSet;
     am.draft_of = Set(Some(id));
@@ -1432,7 +1426,7 @@ async fn resolve_autosave_target(
         .insert(&txn)
         .await
         .map_err(|e| format!("Create revision failed: {}", e))?;
-    note_tags::replace_note_tags(&txn, rev.id, src_tags.as_deref())
+    note_tags::copy_note_tags(&txn, id, rev.id)
         .await
         .map_err(|e| format!("Create revision failed: {}", e))?;
     txn.commit()

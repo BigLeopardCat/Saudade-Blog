@@ -145,7 +145,7 @@ const Article:React.FC<ArticleOption> = ({ item, index, Categories, avatar, name
                     </div>
                     <div style={{ width: '100%', marginTop: 'auto', flexShrink: 0 }}>
                         <div className='tags' style={{ width: '100%', marginTop: '10px' }}>
-                            {renderNoteTags(item.noteTags,tagList)}
+                            {renderNoteTags(item.noteTags,tagList,item.noteTagRefs)}
                         </div>
                         <div className="ArticleFooter" style={{ display: 'flex', alignItems: 'center', paddingBottom: '20px', marginTop: '10px' }}>
                         {/* 头像 + 署名 + 两个日期（20261001）：这段标记与置顶轮播那份逐字相同，

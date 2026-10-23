@@ -25,6 +25,7 @@ pub mod catalog;
 pub mod own_reads;
 pub mod public_catalog;
 pub mod article_actions;
+pub mod article_tag_actions;
 pub mod quota_actions;
 pub mod moderation_actions;
 pub mod public_activity;
@@ -299,6 +300,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/protected/quota/actions/accounts/{id}", get(quota_actions::account_target))
         .route("/api/protected/quota/actions/requests/{id}/review", post(quota_actions::review))
         .route("/api/protected/quota/actions/accounts/{id}/reset", post(quota_actions::reset))
+        .route("/api/protected/article-tag-actions/{id}/prepare", post(article_tag_actions::prepare))
+        .route("/api/protected/article-tag-actions/{id}", post(article_tag_actions::change))
         .route("/api/protected/article-actions/{id}", get(article_actions::target).post(article_actions::change))
         .route("/api/protected/notes/{id}",
             post(notes::update_note)
