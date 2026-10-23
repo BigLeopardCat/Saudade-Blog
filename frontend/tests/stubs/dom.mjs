@@ -75,6 +75,11 @@ class Element {
   get firstChild() { return this.children[0] || null; }
   get previousSibling() { return this.parentNode ? this.parentNode.children[this.parentNode.children.indexOf(this) - 1] || null : null; }
   get nextSibling() { return this.parentNode ? this.parentNode.children[this.parentNode.children.indexOf(this) + 1] || null : null; }
+  prepend(...nodes) {
+    for (const node of nodes.reverse()) {
+      if (node !== this.firstChild) this.insertBefore(node, this.firstChild);
+    }
+  }
   appendChild(c) {
     // 真机语义：已挂载的元素先摘再插（不然同一个节点会在两个父节点里各挂一份）
     if (c.parentNode && c.parentNode !== this) {
@@ -100,7 +105,12 @@ class Element {
   addEventListener(t, fn) { (this._listeners[t] = this._listeners[t] || []).push(fn); }
   removeEventListener(t, fn) { const a = this._listeners[t]; if (a) this._listeners[t] = a.filter(f => f !== fn); }
   focus() {}
-  contains() { return false; }
+  contains(node) {
+    for (let current = node; current; current = current.parentNode) {
+      if (current === this) return true;
+    }
+    return false;
+  }
   animate() {}
   matches(sel) { return matchesSel(this, sel); }
   closest(sel) {

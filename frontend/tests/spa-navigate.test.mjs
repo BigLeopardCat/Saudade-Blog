@@ -189,77 +189,8 @@ console.log('\n⑥ 版本号：改了 widget 脚本必须 bump（nginx 对 live2
     const widget = readFileSync(path.join(root, 'public/live2d-widgets/boot.js'), 'utf8');
     const ver = (widget.match(/const VER = '([^']+)'/) || [])[1];
     ok(!!ver, '能读到 boot.js 的 VER');
-    // 这个字面量**就是刻意钉死的**：改了 widget 脚本却没 bump 时，这里会红（20261001b
-    // 是对话面板去胶带 + 标题进签 + 四条边框收成一个那一轮——widget.css 与
-    // chat-render.js / chat-session.js 都改了，必须换版本号才能越过 nginx 那
-    // 1 年 immutable 缓存）。bump 时同步改这一行。
-    //
-    // 20261001c = 「待决定的确认卡片被迟到的历史气泡压在下面」那一轮（chat-stream.js 改了
-    // 就位判据）。那次 bump 时漏了本行 ⇒ 套件一直红；注意**漏改本行不会让 bump 失效**
-    // （版本号照样换新、缓存照样越过），红的只是这道纪律本身——所以它红的时候先看
-    // boot.js 的 VER 是不是已经走在前面了，别当成"bump 没做"再 bump 一次。
-    //
-    // 20261001d = 「主动打断的一轮不丢」那一轮（chat-stream.js / chat-engine.js 都改了：
-    // 保留语义、补删时机与顺序、提示条措辞按 kind 分家）。改这两支必须 bump——nginx 对
-    // live2d-widgets 是 1 年 immutable。
-    //
-    // 20261001e = 「开源前准备：私人域名外移」那一轮（chat-stream.js 的导航命令补全
-    // 从写死 `https://saudade.site` 改成 `location.origin` —— 写死会让**别人部署**上
-    // agent 的跳转命令一律被判跨域取消）。同样必须 bump。
-    //
-    // 20261001f = 「开源前准备：上游文件名清场」那一轮（autoload.js→boot.js、
-    // live2d-widget.js→stage.js、waifu.css→widget.css）。改名本身就让入口与样式表
-    // 变成新 URL，bump 是为了让**子模块**（chat-*.js / stage.js）也一起换 URL——
-    // 它们内容也改了（loader 里那份子模块名单、CSS 路径），不 bump 就吃 1 年缓存。
-    // 20261001g = 「开源前准备：看板娘渲染层换自研」那一轮（waifu-tips.20260905.js +
-    // chunk/* 整块剔除，换成 renderer.js）。子模块名单里 stage→renderer 直接体现在
-    // boot.js 正文里，样式表与子模块 URL 都跟着 VER 走——不 bump 就吃 1 年缓存，
-    // 浏览器会拿旧 renderer 配新 boot.js。
-    // 20261001h = 「命令到达即执行」那一轮（chat-stream.js 改了命令的处置时机：
-    // `__CMD__` 到达就跑一次能当场做的，流尾那一趟只捞整页目标）。改 chat-stream.js
-    // 必须 bump——nginx 对 live2d-widgets 是 1 年 immutable。
-    // 20261001i = 「看板娘图标错位 / 拖动反向 / 代码芯片两档都读不出」那一轮
-    // （renderer.js 的 ICONS 与 setupDrag、widget.css 的代码芯片令牌）。三者都改了
-    // live2d-widgets 下的文件 ⇒ 必须 bump，否则访客吃 1 年缓存看到的是旧图标与旧拖动。
-    // 20261002a = 「工具条 tooltip 补齐 + 挂载改有界重试」那一轮（renderer.js 的 TITLES、
-    // chat-stream.js 的 bindTool）。按钮 4.8–6.2s 才建出来，旧的一次性 1s 定时器在慢机上
-    // **必然踩空**（CPU 节流 ×6 实测两条 title 从未挂上），photo/info/quit 则一直没有提示。
-    // 20261002b = 「看板娘层级交给宿主页面的阶梯」那一轮（widget.css 的 #waifu 与
-    // #waifu-toggle 从写死的 2147483000 / 9999 改成 var(--z-agent, 1000)）。改的是
-    // live2d-widgets 下的样式表 ⇒ 同样必须 bump。
-    // 20261002c = 「流式早退不再用 200+JSON 装成成功」那一轮（chat-stream.js 加了
-    // content-type 兜底：不是 text/event-stream 就如实报错）。改 chat-stream.js 必须
-    // bump——nginx 对 live2d-widgets 是 1 年 immutable，不 bump 访客吃的是旧脚本，
-    // 而**旧脚本没有这道兜底**（也正是那次事故里前端一声不吭的原因）。
-    // 20261002d = 「看板娘初始位置右移半个板块宽」那一轮（widget.css 的 #waifu
-    // left: 15px → 165px = #live2d 板块 300px 的一半，并补一条 <480px 的回落）。
-    // 20261003a = 「初始位置再左移 20px、下移 10px」那一轮（#waifu 的 left 145px、
-    // transform translateY(-5px)）。
-    // 位置写在样式表里 ⇒ 同样必须 bump，否则访客吃 1 年缓存仍看到贴左的旧位置。
-    // 20261005a = 「选图按钮的图标夜间看不见」那一轮（widget.css 把 .chat-img-btn 加进
-    // .chat-rail-btn / .conv-head-btn 那两组 color 名单）。改的是 live2d-widgets 下的
-    // 样式表 ⇒ 同样必须 bump。
-    // 20261005b = 「手机档看板娘盖住正文」那一轮（widget.css 的 <480px 块：整块缩到半尺寸、
-    // 贴住左缘、空白处放行命中）。同上——样式表在 live2d-widgets 下，不 bump 访客吃
-    // 1 年 immutable 缓存，手机上看到的还是那个占半个屏的旧盒子。
-    // 20261006a = 「确认卡多一枚『其他（我来说）』」那一轮（chat-stream.js 的改口支、
-    // chat-render.js 的输入行模板、widget.css 的三态样式）。三个文件都在
-    // live2d-widgets 下 ⇒ 必须 bump；不 bump 访客吃 1 年缓存，卡上永远只有两枚按钮。
-    // 20261008a = 「新增四枚表情包」那一轮（chat-render.js 的 fallback 内联清单从 8 名
-    // 加到 12 名：困困/躺平/嫌弃/比心）。同样在 live2d-widgets 下 ⇒ 必须 bump，否则
-    // 看板娘对话里这四枚一年内只显示成文本。
-    // 20261008b = 「新消息来了窗口不跟着往下滚」那一轮（chat-engine.js 的滚动语义：程序化
-    // 回底那一跳不再被读成"主人翻上去了"，且历史区有新内容时亮提示条）。同上 ⇒ 必须 bump，
-    // 不 bump 访客一年内还是那个滚到一半就停住的对话面板。
-    // 20261011a = 「看板娘默认位置回退」那一轮（widget.css：#waifu 的 left 145px → 15px、
-    // transform translateY(-5px) → -15px，即撤销 20261003 那两次位移）。同上 ⇒ 必须 bump，
-    // 不 bump 访客一年内看到的还是右移 130px、少抬 10px 的那一版。
-    // 20261015a = 「欢迎语里填进去的值先转义」那一轮（renderer.js 的 subst）。同上 ⇒ 必须
-    // bump，不 bump 访客一年内拿到的还是"标题被当 HTML 解析"的那一版。
-    // 20261018a = 「聊天图片落库」那一轮（chat-core.js 新增 dbRowToItem、chat-engine.js 的
-    // mapDbItems 改调它——DB 行的 images 以前被一个手写白名单吃掉）。同上 ⇒ 必须 bump，
-    // 不 bump 的话**图在库里、界面还是"ⓘ图片已过期"占位块**，而且没有任何东西会红。
-    ok(ver === '20261023a', 'VER 已 bump 到本轮（20261023a）', { ver });
+    // 与本次静态资源版本同步，防止 immutable 缓存继续加载旧脚本。
+    ok(ver === '20261024b', 'VER 与当前组件发布版本一致', { ver });
     const tsx = readFileSync(path.join(root, 'src/components/Live2dAgent/loader.ts'), 'utf8');
     ok(tsx.includes('boot.js?v=' + ver), 'Live2dAgent 的 ?v= 与 VER 一致');
 }

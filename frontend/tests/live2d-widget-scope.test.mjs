@@ -15,6 +15,7 @@
 import { readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { JSDOM } from 'jsdom';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const W = (f) => readFileSync(path.join(here, '../public/live2d-widgets/', f), 'utf8');
@@ -110,13 +111,15 @@ for (const f of ['chat-stream.js', 'chat-engine.js', 'chat-render.js', 'chat-ses
 // ── ② 卡片位置与清空联动 ────────────────────────────────────────────────────
 {
   const r = W('chat-render.js');
-  const mIdx = r.indexOf('<div class="chat-messages" id="chat-messages">');
-  const aIdx = r.indexOf('id="chat-ask"');
-  ok(mIdx > 0 && aIdx > mIdx, 'chat-render.js：确认卡片在 .chat-messages 内部');
-  // 卡片是 messages 的**直接子节点**：两者之间只应有 messages 自己的开标签与卡片
-  // 自己的开标签（2 个 <div），多一个就意味着中间又套了一层容器
-  const between = r.slice(mIdx, aIdx);
-  eq((between.match(/<div/g) || []).length, 2, '卡片是 messages 的直接子节点（中间不再套容器）');
+  const template = r.match(/const chatHTML = `([\s\S]*?)`;/)?.[1];
+  ok(!!template, 'chat-render.js：能够解析实际面板模板');
+  const dom = new JSDOM(template || '');
+  const messages = dom.window.document.querySelector('#chat-messages.chat-messages');
+  const card = dom.window.document.getElementById('chat-ask');
+  ok(!!messages && !!card && messages.contains(card), 'chat-render.js：确认卡片在消息区域内部');
+  ok(!!card && card.parentElement === messages, '卡片是 messages 的直接子节点');
+  ok(!!card && card.classList.contains('chat-keep'), '模板卡片具有孤儿清理豁免标记');
+  dom.window.close();
   ok(!/chat-new-msg-note[\s\S]{0,400}id="chat-ask"/.test(r), '卡片不再挂在输入区上方那一族兄弟节点里');
   // 定位覆盖：conv-open/conv-out 给 .chat-nav-confirm 加的 margin-left 位移必须被压过
   const css = W('widget.css');
@@ -252,8 +255,7 @@ for (const f of ['chat-stream.js', 'chat-engine.js', 'chat-render.js', 'chat-ses
 //   ③ 收尾只 syncAsk 不 hideAsk + reconcile 收尾调自愈钩子（双保险）。
 {
   const r = W('chat-render.js');
-  ok(/<div class="chat-nav-confirm chat-ask chat-keep" id="chat-ask">/.test(r),
-     'chat-render.js：模板卡片带 chat-keep（孤儿清理豁免标记，就写在卡片那一个 div 上）');
+  // The template's chat-keep marker is checked on the parsed DOM above.
   const e = W('chat-engine.js');
   // 20260925：豁免判据从删除循环里挪到了 items 循环**之前**预计算的 `doomed`
   // 集合（位置对齐的插入点也要跳过同一批节点，两处不能各判一份）。所以这里锁两半：
