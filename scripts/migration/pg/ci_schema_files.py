@@ -21,6 +21,7 @@ LOAD = [
     "0014_category_identity.sql",
     "0015_announcement_notifications.sql",
     "0016_confirmation_question.sql",
+    "0017_account_action_version.sql",
 ]
 
 EXCLUDED = {
