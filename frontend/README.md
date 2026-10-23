@@ -147,7 +147,7 @@ nginx 对 `/live2d-widgets/` 目录设了 **1 年 immutable 缓存**，不换 UR
 **这张表是唯一事实源**，其他文档只链接到这里、不各抄一份：
 
 1. `frontend/public/live2d-widgets/boot.js` 的 `VER` 常量（源头，其余都是跟着它）
-2. `frontend/src/components/Live2dAgent/index.tsx` 里 `boot.js?v=` 的查询串
+2. `frontend/src/components/Live2dAgent/loader.ts` 里 `boot.js?v=` 的查询串
 3. `frontend/tests/spa-navigate.test.mjs` 里手抄的那份字面量（有断言钉着，漏了会红）
 4. IoT 设备控制台的 `index.html` 直接引 `boot.js?v=`（它没有 React 打包，是 nginx 直服的
    静态页）。文件在 [`../iot/device-console/index.html`](../iot/device-console/index.html)

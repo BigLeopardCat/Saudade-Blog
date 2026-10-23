@@ -30,11 +30,14 @@ const fetchCategories = () => {
     return async (dispatch:Dispatch<PayloadAction<CategoriesType[]>>) => {
         try {
             const res = await getCategories()
-            const categories = Array.isArray(res?.data?.data) ? res.data.data : []
+            if (res?.data?.code !== 200 || !Array.isArray(res.data.data)) return false
+            const categories = res.data.data
             dispatch(setCategories(categories))
             dispatch(setCategoryCount(categories.length))
+            return true
         }catch (error) {
-            console.log(error)
+            console.error('分类加载失败', error)
+            return false
         }
     }
 }

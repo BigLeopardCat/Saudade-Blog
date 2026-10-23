@@ -90,3 +90,13 @@ export function roleLabel(role?: string | null): string {
 // `roleTagColor` 已删（20261002）：身份标签换成了 `components/RoleBadge`（整枚内联 SVG，
 // 每档自带图形/形状/配色，见那个组件的头注）。这函数留着就是**第二套颜色表**——
 // 哪天有人加个角色，改一处不改另一处不会有任何东西报红。
+
+/** Mirrors authz::can_manage_credentials for UI affordances only. Unknown identities fail closed. */
+export function canManageCredentials(token: string | null, target: {id: number; role?: string | null}): boolean {
+    const claims = getTokenClaims(token);
+    if (!claims || !Number.isSafeInteger(claims.sub) || Number(claims.sub) <= 0
+        || !Number.isSafeInteger(target.id) || target.id <= 0 || claims.sub === target.id
+        || typeof claims.exp !== 'number' || !Number.isFinite(claims.exp) || claims.exp * 1000 <= Date.now()) return false;
+    if (!['admin', 'superadmin'].includes(claims.role || '') || !['admin', 'user', 'zako'].includes(target.role || '')) return false;
+    return claims.role === 'superadmin' || target.role !== 'admin';
+}
