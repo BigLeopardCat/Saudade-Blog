@@ -1,28 +1,4 @@
-// ═ 公告弹窗的判据／已读落点／复查时机回归（20260926）══
-//   node tests/announcement-popup.test.mjs
-//
-// 用户报的两条：①「公告是只有刷新才能弹出」——弹窗原来挂在首页 ContentHome 里，
-// 一次页面生命周期只查一次；②「公告修改弹窗会出现一次，并且认定用户没读吧」——
-// 已读记在 localStorage 水位 `announcement_seen_id`，与个人中心那份**按账号**记的
-// 已读是两本互不通气的账（那里标了已读，这里照弹；换浏览器，同一批又弹一遍）。
-//
-// 判据现在收口在 src/components/AnnouncementModal/pending.ts，本套件锁它：
-//   · 登录用户读**服务端通知行**（公告发布时逐用户展开的那行）的 isRead，关窗 POST 已读
-//     ⇒ "弹过的公告"与"红点里的未读公告"变成同一件事的两种显示
-//   · 只弹"最新的那条公告且它未读"——多条未读时**不连环弹**（关掉 #5 不再弹 #4、#3）
-//   · 游客没有账号可挂 ⇒ 仍走本机水位（键名沿用，老访客不因这次改动重弹一遍）
-//   · **读不到 ≠ 没有**：接口失败一律不弹（旧实现"换个浏览器重弹一遍"正是这里演出来的）
-//   · 复查时机：挂载即查 + 四类事件 + 可见时 60 秒一拍 + 卸载全撤（"发出来当场收到"的落点）
-// 外加三条**接线锁**（判据再对，没接上也白搭）：
-//   · 后台公告页发/改后确实调了 notifyAnnouncementPublished
-//   · 两处挂载（App 壳 + 后台壳）在位，首页那个旧挂载点已摘
-//   · Rust update_announcement 只同步标题/正文——不插通知行、不碰 is_read（编辑必不重弹）
-//
-// pending.ts 是 TS 且 import 了 axios 单例与 unread.ts：本机不能 vite build（3.7GB 内存，
-// 见 CLAUDE.md §2），用 esbuild JS API 把 axios 换成受测可控的假后端。
-// setInterval 也换成受测自己触发的假实现：不换的话"每 60 秒那一拍"要么真等一分钟、
-// 要么根本验不出到底挂没挂、撤没撤。Node 18 没有 CustomEvent 全局，得自己补一个
-// ——少了它 pending.ts 的 dispatch 会被 try/catch 静默吞掉，事件那条腿就成了空跑。
+// Announcement selection, read acknowledgements and refresh lifecycle.
 import * as esbuild from 'esbuild';
 import { mkdtempSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
@@ -311,14 +287,9 @@ console.log('\n── 接线与机制锁（源码层）──');
        && /我知道了/.test(modal),
         '遮罩/Esc/× 走 handleClose、「我知道了」按钮走 handleRead（接线别接反）');
 
-    // 编辑不重弹的机制保证在 Rust 那半：只同步标题/正文，不插行、不碰 is_read
-    const rs = readFileSync(path.join(repo, 'src/routes/announcements.rs'), 'utf8');
-    const upd = rs.slice(rs.indexOf('pub async fn update_announcement'), rs.indexOf('pub async fn delete_announcement'));
-    ok(upd.length > 0 && !/IsRead/.test(upd) && !/\.insert\(/.test(upd) && /update_many\(\)/.test(upd),
-        'Rust update_announcement：只 update_many 标题/正文——不插通知行、不碰 is_read ⇒ 改过的公告不会重弹',
-        { hasIsRead: /IsRead/.test(upd), hasInsert: /\.insert\(/.test(upd) });
-    ok(/ANN_ROW_KIND|KIND_ANNOUNCEMENT/.test(rs) && /user_notification::ActiveModel/.test(rs.slice(rs.indexOf('async fn fan_out'), rs.indexOf('pub async fn list_announcements'))),
-        '公告发布时逐用户展开成通知行（登录用户的弹窗与红点读的是同一批行）');
+    // Database fanout and read-state preservation are exercised against PostgreSQL by
+    // src/routes/announcement_actions/tests.rs, shared by native and legacy writes.
+
 }
 
 console.log(`\n${passed}/${passed + failed} 通过`);

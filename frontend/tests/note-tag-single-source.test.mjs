@@ -47,7 +47,7 @@ const fnBody = (src, name) => {
     return j < 0 ? null : src.slice(i, j);
 };
 
-/** `src/` 下所有 .rs 的 `[相对路径, 剥注释后的源码]`。 */
+/** Production Rust modules; dedicated tests are verified by cargo test. */
 const walkSrc = () => {
     const out = [];
     const stack = [path.join(root, 'src')];
@@ -56,7 +56,8 @@ const walkSrc = () => {
         for (const e of readdirSync(d)) {
             const p = path.join(d, e);
             if (statSync(p).isDirectory()) { stack.push(p); continue; }
-            if (!p.endsWith('.rs')) continue;
+            if (!p.endsWith('.rs') || path.basename(p) === 'tests.rs' ||
+                path.basename(p).endsWith('_tests.rs')) continue;
             out.push([path.relative(root, p), stripComments(readFileSync(p, 'utf8'))]);
         }
     }
