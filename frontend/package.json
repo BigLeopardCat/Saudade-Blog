@@ -41,7 +41,7 @@
     "@mui/icons-material": "^5.15.10",
     "@mui/material": "^5.15.10",
     "@reduxjs/toolkit": "^2.13.0",
-    "antd": "^5.14.1",
+    "antd": "^6.6.7",
     "axios": "^1.6.7",
     "bytemd": "^1.21.0",
     "dayjs": "^1.11.23",
