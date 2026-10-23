@@ -67,15 +67,16 @@ jobs:
       # **PR 触发一次真部署**（要 secret、要 SSH、会换线上的二进制）。
       deploy: "${{ (github.event_name == 'workflow_dispatch' || steps.filter.outputs.backend == 'true' || steps.filter.outputs.frontend == 'true' || steps.filter.outputs.infra == 'true') && github.event_name != 'pull_request' }}"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
       # 手动触发时 `github.event.before` 是空的（不是 push 事件就没有"上一个提交"），
       # 喂给 paths-filter 会拿一个空 base 去比 —— 所以这一步**只在 push 时跑**，
       # 手动那次直接由上面的 `deploy` 短路成 true，不看过滤器。
       # PR 上同理不跑（它不是 push），而且 PR 上本来就不部署（见上面的 `deploy`）。
       - if: github.event_name == 'push'
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
         with:
           base: ${{ github.event.before }}
@@ -157,11 +158,15 @@ jobs:
           --health-retries=10
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           # 提交信息闸门（下面那一步）要 `git log <before>..<sha>` ⇒ 必须真拿到 `before`
           # 那个对象；默认的浅克隆（depth=1）里只有这次 push 的 tip。
           fetch-depth: 0
+
+      - name: Workflow syntax and expressions
+        run: bash scripts/ci/lint-workflows.sh
 
       - name: 锁文件不许带本机镜像源
         # 排在最前面：这条 5 秒就能判，而它挡住的那类坏法会在 3 分钟后（npm ci）才炸，
@@ -233,12 +238,15 @@ jobs:
           exit "$fail"
 
       - name: Setup Rust
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:
           toolchain: 1.92.0
+          # v2 默认改用 Cargo 1.97 才支持的 build.warnings；1.92 必须保留原告警拦截。
+          rustflags: "-D warnings"
+          cache: false
 
       - name: Cache cargo (test profile)
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           # 与下面那个 release 构建分开缓存：测试跑的是 debug profile，
           # 混用同一个 target 缓存会把两种产物搅在一起
@@ -248,12 +256,13 @@ jobs:
       # 仓），而 `cargo test` 里那条 `include_str!("../../frontend/public/live2d-widgets/
       # chat-stream.js")` 是**编译期**读入 ⇒ 必须先把它取到那条路径下，Rust 这一半才编得过。
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           # 20261013：`20` 取的是 20.x 最新（≥ 20.19），正好卡在 `vite@8` 的
           # `engines.node`（`^20.19.0 || >=22.12.0`）之上。**别再往回钉 20.18 之类**
           # ——npm 只会 warning，退化到运行期才炸。
           node-version: 20
+          package-manager-cache: false
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -375,25 +384,43 @@ jobs:
 
   browser:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     env:
       TZ: Asia/Shanghai
     defaults:
       run:
         working-directory: ./frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 20
+          package-manager-cache: false
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
       - run: npm run fetch:widget
-      - run: npx --no-install playwright install --with-deps chromium
-      - run: sudo apt-get update && sudo apt-get install -y fonts-noto-cjk
+      # apt 的默认下载等待可能耗尽整个 job；限制网络超时且有限重试，失败仍拦截。
+      - name: Install browser system dependencies and CJK fonts
+        timeout-minutes: 6
+        run: |
+          sudo tee /etc/apt/apt.conf.d/80-saudade-ci-network >/dev/null <<'EOF'
+          Acquire::Retries "3";
+          Acquire::http::Timeout "30";
+          Acquire::https::Timeout "30";
+          EOF
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+          npx --no-install playwright install-deps chromium
+      - name: Install Chromium
+        timeout-minutes: 4
+        env:
+          PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT: 45000
+        run: npx --no-install playwright install chromium
       - run: npm run test:browser
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
           name: browser-failures
@@ -407,7 +434,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       # 20260923：只要跑这次部署，就**两半都构建**（不再按 paths-filter 只构建变化的那一半）。
       # 只装一半的包会让"部署某个提交"不再等于"线上就是那个提交的状态"——实测过一次：
@@ -415,9 +444,11 @@ jobs:
       # 「部署 sha X ⇒ 线上 = 状态 X」这条可核对的性质。
       - name: Setup Rust
         if: needs.check-changes.outputs.deploy == 'true'
-        uses: actions-rust-lang/setup-rust-toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:
           toolchain: 1.92.0
+          # v2 默认改用 Cargo 1.97 才支持的 build.warnings；1.92 必须保留原告警拦截。
+          rustflags: "-D warnings"
 
       - name: Build Backend
         if: needs.check-changes.outputs.deploy == 'true'
@@ -425,9 +456,10 @@ jobs:
 
       - name: Setup Node.js
         if: needs.check-changes.outputs.deploy == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 20
+          package-manager-cache: false
 
       - name: Build Frontend
         if: needs.check-changes.outputs.deploy == 'true'

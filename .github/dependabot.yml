@@ -1,30 +1,7 @@
-# 依赖更新的自动化（20261006）。三件事各自解决一个具体问题：
-#
-#   ① 安全更新此前**没开**（vulnerability alerts 与 security updates 都是 disabled）。
-#      Rust 依赖是**编译进生产二进制**的那一半，一条 RUSTSEC 公告就是线上的洞，
-#      没人盯着就等于永远不知道。仓库设置那一侧 20261006 已打开，这个文件管的是版本更新。
-#   ② 版本更新**分批成组**：不分组的话一周能开出十几个 PR，最后必然是被全部无视——
-#      "开着没人看的告警"和没开是一回事。
-#   ③ `github-actions` 这一条是给 `.github/workflows/deploy.yml` 里那 5 个 action 准备的。
-#      那个文件里配着 SSH 私钥与 R2 凭据，而这些 action 现在都是按 `@v4` 这种**可变 tag**
-#      引用的 ⇒ tag 被上游改动一次，下一次 push 的 run 就带着凭据执行任意代码。
-#      钉成 40 位提交号才是唯一稳的写法，钉了之后靠这个生态自动提 bump PR，不必人肉维护。
-#
-# ⚠️ 本仓的默认分支 `cn_sora_blog` **就是部署分支**（push 即部署）⇒ dependabot 的 PR
-# 默认指向它，merge 一次就真上线一次。闸门在 CI：`build-and-deploy` 被 `check` needs 住，
-# 检查不过不构建不上传不部署；PR 上一次部署都不会发生。所以看 dependabot 的 PR 时
-# **看 check 的红绿**，别当成"机器人提的，直接合"。
-#
-# ⚠️ 提交信息：CI 的 check job 对 PR 带上来的**每一条提交**都跑 `.githooks/commit-msg`，
-# 而那个钩子要求首行是 `type: 描述`（type 在白名单里）。dependabot 默认写的是
-# `Bump x from a to b`——**没有 type**，那会让每一个 dependabot PR 都红在提交信息闸上。
-# 下面的 `commit-message.prefix` 就是为了过这道闸，别删。副作用要知道：
-# 摘要正文是 dependabot 生成的英文（改不成中文，它只认 prefix），所以这几个 PR 的
-# 首行形如 `chore: Bump serde from 1.0.100 to 1.0.110`——**过机器闸，但不是中文摘要**。
-
+# 默认分支即生产分支：所有更新须经过当前 CI 和人工审阅，不自动合并。
+# 仅在兼容更新组中聚合 minor/patch。0.x minor、密码学和 Markdown 管线单独评审。
 version: 2
 updates:
-  # ── Rust 后端：编译进生产二进制的那一半 ────────────────────────────────
   - package-ecosystem: cargo
     directory: "/"
     schedule:
@@ -32,25 +9,19 @@ updates:
       day: monday
       time: "07:00"
       timezone: Asia/Shanghai
-    # 3 太窄：major 与 minor/patch 共用这几个槽位，而 major 常常没人合（要读 changelog）
-    # ⇒ 槽位被长期占着，**补丁级的安全更新反而开不出来**。20261006 实测：`bytes` 与
-    # `rand` 早就有可用补丁（各一条告警），PR 列表里却一条都没有，原因是 cargo 的 3 个
-    # 槽全被 sea-orm / tower-http / minor-patch 组占满。放宽到 10 不是鼓励都合，
-    # 是让"该出现的那几条"能出现——合不合由 CI 红绿与 changelog 决定。
-    # （security update 不受这个上限约束，所以它只影响版本更新。）
     open-pull-requests-limit: 10
     commit-message:
       prefix: chore
       prefix-development: chore
     groups:
-      # 只把 minor/patch 合成一个 PR；major **单独开**——它可能真的需要人读一遍
-      # changelog（serde、sea-orm 这种大版本会带破坏性改动，而本仓的 CI 只跑
-      # `cargo test` + tsc，类型之外的行为回归它测不出来）。
+      # RustCrypto 的 digest/traits 需要一起迁移，0.x minor 也可能破坏兼容性。
+      cargo-crypto:
+        patterns: ["hmac", "sha2", "digest", "crypto-common", "block-buffer"]
       cargo-minor-patch:
         patterns: ["*"]
+        exclude-patterns: ["hmac", "sha2", "digest", "crypto-common", "block-buffer", "jsonwebtoken"]
         update-types: ["minor", "patch"]
 
-  # ── 前端：构建进 dist，nginx 直接服务 ──────────────────────────────────
   - package-ecosystem: npm
     directory: "/frontend"
     schedule:
@@ -58,18 +29,30 @@ updates:
       day: monday
       time: "07:00"
       timezone: Asia/Shanghai
-    # 同 cargo：槽位被 major（vite 5→6、react-router 6→7 这类）占满时，
-    # 纯补丁的传递依赖更新（browserslist 这种）连 PR 都开不出来。
     open-pull-requests-limit: 10
     commit-message:
       prefix: chore
       prefix-development: chore
     groups:
-      npm-minor-patch:
-        patterns: ["*"]
+      # 必须配套验证的解析/清洗管线。minor/major 留为独立迁移，不混入普通运行依赖。
+      npm-markdown-patches:
+        patterns: ["unified", "remark-*", "rehype-*", "hast-*", "mdast-*", "micromark*", "bytemd", "@bytemd/*", "katex", "react-markdown", "react-syntax-highlighter", "prismjs", "refractor", "mermaid", "dompurify"]
+        update-types: ["patch"]
+      npm-router:
+        patterns: ["react-router", "react-router-dom"]
+      npm-testing:
+        patterns: ["@playwright/*", "playwright*", "@testing-library/*", "vitest", "@vitest/*", "jsdom", "@ant-design/cssinjs"]
         update-types: ["minor", "patch"]
+      npm-tooling:
+        patterns: ["vite", "@vitejs/*", "esbuild", "typescript", "typescript-eslint", "@typescript-eslint/*", "eslint", "@eslint/*", "eslint-plugin-*", "globals", "sass", "@types/*"]
+        update-types: ["minor", "patch"]
+      npm-runtime:
+        dependency-type: production
+        patterns: ["*"]
+        exclude-patterns: ["unified", "remark-*", "rehype-*", "hast-*", "mdast-*", "micromark*", "bytemd", "@bytemd/*", "katex", "react-markdown", "react-syntax-highlighter", "prismjs", "refractor", "mermaid", "dompurify", "react-router", "react-router-dom"]
+        update-types: ["minor", "patch"]
+    # 不屏蔽版本或安全更新；未匹配的更新独立提 PR。
 
-  # ── 工作流自己用的 action（见文件头 ③）────────────────────────────────
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
@@ -77,7 +60,11 @@ updates:
       day: monday
       time: "07:00"
       timezone: Asia/Shanghai
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 5
     commit-message:
       prefix: chore
       prefix-development: chore
+    groups:
+      actions-compatible:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
