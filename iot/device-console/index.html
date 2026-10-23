@@ -750,11 +750,7 @@ if (!TOKEN || !claims) {
   $('cmd-json').value = JSON.stringify({"type":"display","text":"今天也要加油！"}, null, 2);
 }
 </script>
-<!-- 看板娘（与博客同款，nginx 直服 dist 下的 live2d-widgets）。
-     ⚠️ 这个 `?v=` 是 VER 的同步点 4（清单在 frontend/README.md 的《改这里的文件要 bump
-     版本号》，那张表是唯一事实源）。它 20261015 那轮漏改了、一直停在 20261011a：
-     后果不是"页面坏了"，而是这个页面**一年内都可能拿缓存的旧 boot.js**（immutable 缓存
-     按 URL 分桶），而博客主站已经换了新的。20261018 顺手对齐。 -->
-<script src="/live2d-widgets/boot.js?v=20261019a" defer></script>
+<!-- 看板娘入口版本与 frontend/README.md 的缓存同步点保持一致。 -->
+<script src="/live2d-widgets/boot.js?v=20261024b" defer></script>
 </body>
 </html>
