@@ -1,37 +1,12 @@
-import { useEffect, useRef } from 'react';
-// 注册 window.__chatRenderMarkdown / __chatHighlight，供看板娘对话框复用博客同款 markdown 渲染
+import {useEffect} from 'react';
 import '../../utils/chatMarkdown';
+import {loadAgent} from './loader';
 
-/**
- * 使用 live2d-widgets 的 boot 方式加载看板娘
- * 通过 script 标签直接加载 boot.js（20261001 由 autoload.js 改名）
- */
 const Live2dAgent: React.FC = () => {
-  const loaded = useRef(false);
-
   useEffect(() => {
-    if (loaded.current) return;
-    loaded.current = true;
-
-    // 20260828g：window 级防重入——SPA 路由切换导致组件实例重建时 useRef 会重置，
-    // 重复注入 loader 会形成双实例竞态（双套监听器交替操作同一 DOM → 记录乱、
-    // 滚动对抗）。window 标记跨组件实例存活，刷新页面自然重置。
-    if ((window as any).__agentChatInjected) return;
-    (window as any).__agentChatInjected = true;
-
-    // 注入 loader 脚本，让 live2d-widgets 自己管理一切
-    const s = document.createElement('script');
-    s.src = '/live2d-widgets/boot.js?v=20261019a';
-    s.async = true;
-    document.head.appendChild(s);
-
-    return () => {
-      // cleanup not possible with script approach
-    };
+    void loadAgent().catch(error => console.error('[Live2dAgent]', error));
   }, []);
-
   return null;
 };
-
 Live2dAgent.displayName = 'Live2dAgent';
 export default Live2dAgent;

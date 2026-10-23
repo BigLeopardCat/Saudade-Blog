@@ -2,7 +2,7 @@ import './index.sass'
 import { Button, Dropdown, Input, message, Modal, Radio, Tabs, Tag, Tooltip } from 'antd';
 import { ReloadOutlined } from '@ant-design/icons';
 import type { TabsProps } from 'antd';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import BoardManage from '../BoardManage';
 import CommentManage from '../CommentManage';
@@ -14,7 +14,6 @@ import QuotaManage from '../QuotaManage';
 // 报错而不是登录页；②请求头里 token 的 `Bearer ` 前缀归一（后端 strip_prefix）。
 // 同页的评论管理（BoardManage）本来就走共享客户端，两半行为不一致本身就是坑。
 import http from "../../../apis/axios.tsx";
-import getToken from "../../../apis/getToken.tsx";
 import { useLiveRefresh } from "../../../utils/liveRefresh.ts";
 // 账号列表的**单一真源**住在同目录的 ./tempUsers.ts（模块级缓存，20261002）。
 // 这一页从"自己拿着数组、挂载时拉一次"改成"订阅那份缓存"——见该文件头注的四条纪律。
@@ -22,7 +21,8 @@ import { useLiveRefresh } from "../../../utils/liveRefresh.ts";
 // 同义词：前者会**作废在途读数**再重拉，后者与在途请求去重。别顺手换着用。
 import { invalidateTempUsers, refreshTempUsers, useTempUsers, type TempUser } from "./tempUsers.ts";
 import { quotaChipText, quotaLevel, type QuotaLevel } from "../../../utils/quota.ts";
-import { ROLE_LABEL, roleLabel, getRoleFromToken, getUidFromToken } from "../../../utils/auth.ts";
+import { ROLE_LABEL, roleLabel, getRoleFromToken, getUidFromToken, canManageCredentials } from "../../../utils/auth.ts";
+import {useAuthToken, getLiveAuthToken} from "../../../utils/useAuthToken";
 import { RoleBadge } from "../../../components/RoleBadge";
 
 /** 用户管理 = 账号管理（临时访客账号）+ 留言管理（河灯审核）+ 评论管理（文章讨论区审核）
@@ -367,17 +367,15 @@ const Users = () => {
         if (t) await handleSetMute(t, false, 0)
     }
 
-    /** 我自己的角色（20260926）。**只用于界面分流**——这一页此前刻意不读令牌
-     *  （权限判据全在后端），这次为了"哪个按钮该不该亮"破例：管理员之间不能互相
-     *  冻结、只有超管能改身份，这两个判据后端都有一份，这里的副本只是别让人白点
-     *  一下再吃一句拒绝。
-     *
-     *  读的是**本地令牌里的快照**，所以它可能是旧的（刚被降级/刚被提权，令牌还没
-     *  换）——按钮亮着但后端拒绝，是这一处的正常失败模式，界面不会因此做出任何
-     *  "假装成功"的事（那要等接口回话）。 */
-    const myRole = useMemo(() => getRoleFromToken(getToken()), [])
+    // 登录态变化和到期立即更新入口；提交时再读取当前令牌，后端最终授权。
+    const authToken = useAuthToken()
+    const myRole = getRoleFromToken(authToken)
     /** 我自己的 uid：判"这一行是我自己"（后端不许冻自己），同一次解析里一起取。 */
-    const myUid = useMemo(() => getUidFromToken(getToken()), [])
+    const myUid = getUidFromToken(authToken)
+    const [credentialOwner, setCredentialOwner] = useState<string | null>(null)
+    const credentialsBusy = useRef(false)
+    const [credentialPending, setCredentialPending] = useState(false)
+    const canManage = (user: TempUser) => canManageCredentials(getLiveAuthToken(), user)
 
     /** 变更身份（20260926）：受控 Modal 二次确认，同页其它确认框一套纪律。 */
     const [roleTarget, setRoleTarget] = useState<any>(null)
@@ -478,31 +476,45 @@ const Users = () => {
         } catch { message.error('请求失败') }
     }
 
-    const openPwModal = (user: any) => {
+    const openPwModal = (user: TempUser) => {
+        if (!canManage(user)) return
+        setCredentialOwner(getLiveAuthToken())
         setPwTarget(user)
         setPwNewPassword('')
         setPwModalOpen(true)
     }
 
     const handleChangePassword = async () => {
+        if (credentialOwner !== getLiveAuthToken() || !pwTarget || !canManage(pwTarget)) { message.error('当前无权修改该账号凭证'); return }
+        if (credentialsBusy.current) return
         // 判据与后端 `utils::password_reject` 同口径（20261017）。此前这里是 `< 3`
         // —— 与后端那条 `len() < 3`（字节）配套，于是"至少 3 位"实际是 1 个汉字。
         if ([...pwNewPassword].length < 8) { message.warning('密码至少 8 位'); return }
         if ([...pwNewPassword].length > 128) { message.warning('密码最多 128 位'); return }
+        credentialsBusy.current = true
+        setCredentialPending(true)
         try {
             const res = await http.post('/api/temp-users/' + pwTarget.id + '/password',
                 { password: pwNewPassword })
             if (res.data?.code === 200) { message.success('密码已修改'); setPwModalOpen(false) }
             else { message.error(res.data?.message) }
         } catch { message.error('请求失败') }
+        finally { credentialsBusy.current = false; setCredentialPending(false) }
     }
 
-    const handleCreateRecoveryCode = async (user: any) => {
+    const handleCreateRecoveryCode = async (user: TempUser) => {
+        if (!canManage(user)) { message.error('当前无权修改该账号凭证'); return }
+        if (credentialsBusy.current) return
+        const requestOwner = getLiveAuthToken()
+        credentialsBusy.current = true
+        setCredentialPending(true)
         try {
             // 这个接口**没有请求体**（恢复码由后端生成，handler 只有 State + Path
             // 两个提取器，没有 Json）——所以 post 的第二参省略，别顺手补个 `{}`。
             const res = await http.post('/api/temp-users/' + user.id + '/password-reset-token')
+            if (requestOwner !== getLiveAuthToken()) return
             if (res.data?.code === 200) {
+                setCredentialOwner(requestOwner)
                 setRecoveryTarget(user)
                 setRecoveryCode(res.data.data)
                 setRecoveryModalOpen(true)
@@ -510,6 +522,7 @@ const Users = () => {
                 message.error(res.data?.message || '恢复码生成失败')
             }
         } catch { message.error('请求失败') }
+        finally { credentialsBusy.current = false; setCredentialPending(false) }
     }
 
     /* 跨端同步（20260926；20261002 改接缓存 store）：看板娘收尾事件 / 切回可见 /
@@ -723,8 +736,10 @@ const Users = () => {
                                                 </span>
                                             </div>
                                             <div className="tu-actions">
-                                                <Button size="small" onClick={() => openPwModal(u)}>修改密码</Button>
-                                                <Button size="small" onClick={() => handleCreateRecoveryCode(u)}>生成恢复码</Button>
+                                                {canManageCredentials(authToken, u) && <>
+                                                    <Button size="small" disabled={credentialPending} onClick={() => openPwModal(u)}>修改密码</Button>
+                                                    <Button size="small" disabled={credentialPending} onClick={() => handleCreateRecoveryCode(u)}>生成恢复码</Button>
+                                                </>}
                                                 {/* 发通知（20260926）：对**单个**账号发一条站内通知，
                                                     与"公告"（粉丝/全体可见）是两件事——所以它在这一行上，
                                                     而不是页面顶部一个"发公告"按钮。 */}
@@ -978,7 +993,8 @@ const Users = () => {
 
                     <Modal
                         title={'修改密码 - ' + (pwTarget?.username || '')}
-                        open={pwModalOpen}
+                        open={pwModalOpen && credentialOwner === authToken && !!pwTarget && canManageCredentials(authToken, pwTarget)}
+                        confirmLoading={credentialPending}
                         onOk={handleChangePassword}
                         onCancel={() => setPwModalOpen(false)}
                         okText="确认修改"
@@ -1075,7 +1091,7 @@ const Users = () => {
 
                     <Modal
                         title={'一次性恢复码 - ' + (recoveryTarget?.username || '')}
-                        open={recoveryModalOpen}
+                        open={recoveryModalOpen && credentialOwner === authToken && !!recoveryTarget && canManageCredentials(authToken, recoveryTarget)}
                         footer={null}
                         onCancel={() => setRecoveryModalOpen(false)}
                     >
