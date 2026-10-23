@@ -1,4 +1,4 @@
-import {Avatar, ConfigProvider, Modal} from 'antd'
+import {Avatar, ConfigProvider, Modal, theme as antTheme} from 'antd'
 import './index.sass'
 import {Key, ReactElement, ReactNode, ReactPortal, useEffect, useRef, useState} from "react";
 import {useLocation, useNavigate} from "react-router-dom";
@@ -375,6 +375,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
 
             <ConfigProvider
                 theme={{
+                    algorithm: isDark ? antTheme.darkAlgorithm : antTheme.defaultAlgorithm,
                     token: {
                         boxShadow: 'none'
                     },

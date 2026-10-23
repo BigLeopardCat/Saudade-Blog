@@ -52,6 +52,7 @@ for (const width of [375, 390, 1440]) {
       await page.locator('.homeSwitch .theme-switch').click()
       await open()
       await expect(page.locator('.washiDark .search-item').first()).toHaveCSS('color', 'rgb(243, 232, 246)')
+      await expect(page.getByRole('button', { name: /搜\s*索/, exact: true })).toHaveCSS('color', 'rgba(255, 255, 255, 0.85)')
       await page.screenshot({ path: test.info().outputPath('aggregate-search-dark.png') })
     }
   })
