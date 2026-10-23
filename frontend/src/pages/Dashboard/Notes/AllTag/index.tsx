@@ -1,14 +1,13 @@
 import './inedx.sass';
 import { Alert, Button, ColorPicker, Empty, Form, Input, Modal, Select, Space, Spin, Tag, Tree, message } from 'antd';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { Key } from 'react';
 import { PlusOutlined, ReloadOutlined, TagsOutlined } from '@ant-design/icons';
 import { useDispatch } from 'react-redux';
-import { fetchTags } from '../../../../store/components/tags';
+import { catalogApi, useTagsQuery } from '../../../../store/catalogApi';
+import { useCatalogRefresh } from '../../../../store/useCatalogRefresh';
 import { addTagOne, addTagTwo, delTag, updateTagOne, updateTagTwo } from '../../../../apis/TagMethods';
 import { ok, errMsg } from '../../../../apis/ProfileMethods';
-import { useLiveRefresh } from '../../../../utils/liveRefresh';
-import { loadTags } from './loadTags';
 import type { TagLevelOne } from '../../../../interface/TagType';
 
 type Node = { key: string; id: number; level: 'one' | 'two'; title: string; color: string; parentId?: number; children?: Node[] };
@@ -23,39 +22,29 @@ const nodesFrom = (list: TagLevelOne[]): Node[] => list.map(one => ({
 export default function AllTag() {
     const [form] = Form.useForm<Fields>();
     const dispatch = useDispatch();
-    const [data, setData] = useState<Node[]>([]);
     const [mode, setMode] = useState<Mode>({ kind: 'create', level: 'one' });
     const [checked, setChecked] = useState<Key[]>([]);
     const [search, setSearch] = useState('');
-    const [loading, setLoading] = useState(true);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState('');
-    const [loadError, setLoadError] = useState('');
     const [deleteOpen, setDeleteOpen] = useState(false);
     const busyRef = useRef(false);
-    const generation = useRef(0);
+    const { data: tree, isLoading: loading, isError: loadError, refetch } = useTagsQuery(undefined, {
+        pollingInterval: busy ? 0 : 20_000,
+        skipPollingIfUnfocused: true,
+        refetchOnFocus: !busy,
+        refetchOnReconnect: !busy,
+        refetchOnMountOrArgChange: 20,
+    });
+    useCatalogRefresh(refetch, busy);
+    const data = useMemo(() => nodesFrom(tree || []), [tree]);
     const allNodes = useMemo(() => data.flatMap(one => [one, ...(one.children || [])]), [data]);
     const selected = mode.kind === 'edit' ? allNodes.find(node => node.key === mode.node.key) : undefined;
     const missing = mode.kind === 'edit' && !selected;
     const level = mode.kind === 'edit' ? mode.node.level : mode.level;
     const parentId = Form.useWatch('fatherTag', form);
 
-    async function refresh() {
-        const request = ++generation.current;
-        try {
-            const tree = await loadTags();
-            if (request === generation.current) { setData(nodesFrom(tree)); setLoadError(''); }
-        } catch {
-            if (request === generation.current) setLoadError('标签加载失败，请刷新重试');
-        } finally {
-            if (request === generation.current) setLoading(false);
-        }
-    }
-    useEffect(() => {
-        void refresh();
-        return () => { generation.current += 1; };
-    }, []);
-    useLiveRefresh(refresh, { skip: () => busyRef.current });
+    const refresh = () => { void refetch(); };
 
     function create(level: 'one' | 'two', fatherTag?: number) {
         if (busyRef.current) return;
@@ -73,8 +62,7 @@ export default function AllTag() {
         form.setFieldsValue({ title: node.title, fatherTag: node.parentId, color: node.color || DEFAULT_COLOR });
     }
     function syncGlobal() {
-        // Redux's copy is used by article tag pickers. A refresh failure must not turn a confirmed write into a retryable write.
-        Promise.resolve(dispatch(fetchTags() as never)).catch(() => message.warning('标签已保存，其他列表暂未刷新'));
+        dispatch(catalogApi.util.invalidateTags(['Tags']));
     }
     async function save(values: Fields) {
         if (busyRef.current) return;
@@ -95,7 +83,6 @@ export default function AllTag() {
             if (!ok(res)) { setError(errMsg(res, '保存失败，请重试')); return; }
             message.success(mode.kind === 'edit' ? '标签已更新' : '标签已创建');
             if (mode.kind === 'create') form.setFieldsValue({ title: '' });
-            await refresh();
             syncGlobal();
         } catch {
             setError('保存失败，请检查网络后重试，填写内容已保留');
@@ -130,7 +117,6 @@ export default function AllTag() {
             setError(`${completed ? '部分标签已删除；剩余选择已保留。' : ''}${reason instanceof Error ? reason.message : '删除失败，请重试'}`);
             setDeleteOpen(false);
         } finally {
-            await refresh();
             syncGlobal();
             busyRef.current = false;
             setBusy(false);
@@ -151,7 +137,7 @@ export default function AllTag() {
             <Space wrap><Button icon={<ReloadOutlined aria-hidden="true" />} disabled={busy || loading} onClick={() => void refresh()}>刷新标签</Button><Button type="primary" icon={<PlusOutlined aria-hidden="true" />} disabled={busy} onClick={() => create('one')}>新建主标签</Button></Space>
         </header>
         {error && <Alert type="error" showIcon message={error} />}
-        {loadError && <Alert type="error" showIcon message={loadError} />}
+        {loadError && <Alert type="error" showIcon message="标签加载失败，请刷新重试" />}
         <div className="tag-workspace">
             <div className="tag-library">
                 <Input.Search aria-label="搜索标签" placeholder="搜索主标签或子标签" allowClear value={search} onChange={event => setSearch(event.target.value)} />

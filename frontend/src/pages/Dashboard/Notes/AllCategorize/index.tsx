@@ -5,13 +5,14 @@ import { useEffect, useRef, useState } from 'react';
 import type { Key } from 'react';
 import { FolderOpenOutlined, PlusOutlined, ReloadOutlined } from '@ant-design/icons';
 import type { CategoriesType } from '../../../../interface/CategoriesType';
-import { fetchCategories } from '../../../../store/components/categories';
+import { catalogApi, useCategoriesQuery } from '../../../../store/catalogApi';
+import { useCatalogRefresh } from '../../../../store/useCatalogRefresh';
 import { useDispatch } from 'react-redux';
-import { addCategory, delAllCategory, getCategories, updateCategory } from '../../../../apis/CategoryMethods';
-import { useLiveRefresh } from '../../../../utils/liveRefresh';
+import { addCategory, delAllCategory, updateCategory } from '../../../../apis/CategoryMethods';
 import { runAdminMutation } from '../../../../utils/adminMutation';
 
 const DEFAULT_COLOR = '#d94f9a';
+const EMPTY_CATEGORIES: CategoriesType[] = [];
 const ICONS = [
     { value: 'fa-folder-open', name: '文件夹' }, { value: 'fa-book', name: '书籍' },
     { value: 'fa-code', name: '代码' }, { value: 'fa-camera', name: '摄影' },
@@ -23,58 +24,35 @@ const suggestedPath = (name: string) => name.trim().toLocaleLowerCase().replace(
 export default function AllCategorize() {
     const screens = Grid.useBreakpoint();
     const dispatch = useDispatch();
-    const [rows, setRows] = useState<CategoriesType[]>([]);
     const [selectedKeys, setSelectedKeys] = useState<Key[]>([]);
     const [query, setQuery] = useState('');
-    const [loading, setLoading] = useState(false);
-    const [loadError, setLoadError] = useState(false);
     const [open, setOpen] = useState(false);
     const [editing, setEditing] = useState<CategoriesType | null>(null);
     const [deleting, setDeleting] = useState<CategoriesType[] | null>(null);
     const [busy, setBusy] = useState(false);
     const lock = useRef(false);
     const pathEdited = useRef(false);
-    const generation = useRef(0);
-    const readInFlight = useRef<Promise<void> | null>(null);
     const [form] = Form.useForm();
     const watchedName = Form.useWatch('categoryTitle', form);
     const watchedIcon = Form.useWatch('icon', form);
     const watchedColor = Form.useWatch('color', form);
     const colorPreview = typeof watchedColor === 'string' ? watchedColor : watchedColor?.toHexString?.();
 
-    function loadCategories() {
-        if (readInFlight.current) return readInFlight.current;
-        const current = ++generation.current;
-        setLoading(true);
-        setLoadError(false);
-        const promise = getCategories().then(response => {
-            if (current !== generation.current) return;
-            if (response.status !== 200 || response.data?.code !== 200 || !Array.isArray(response.data.data)) throw new Error('Invalid categories');
-            const next: CategoriesType[] = response.data.data.map((item: Omit<CategoriesType, 'categoryKey'> & { categoryKey: number }) => ({ ...item, key: item.categoryKey }));
-            setRows(next);
-            setSelectedKeys(keys => keys.filter(key => next.some(row => row.key === key)));
-        }).catch(() => {
-            if (current === generation.current) setLoadError(true);
-        }).finally(() => {
-            if (current === generation.current) {
-                setLoading(false);
-                readInFlight.current = null;
-            }
-        });
-        readInFlight.current = promise;
-        return promise;
-    }
+    const paused = open || deleting !== null || busy;
+    const { data: rows = EMPTY_CATEGORIES, isLoading: loading, isError: loadError, refetch } = useCategoriesQuery(undefined, {
+        pollingInterval: paused ? 0 : 20_000,
+        skipPollingIfUnfocused: true,
+        refetchOnFocus: !paused,
+        refetchOnReconnect: !paused,
+        refetchOnMountOrArgChange: 20,
+    });
+    useCatalogRefresh(refetch, paused);
     useEffect(() => {
-        void loadCategories();
-        return () => { ++generation.current; readInFlight.current = null; };
-    }, []);
-    useLiveRefresh(loadCategories, { skip: () => open || deleting !== null || busy });
-
+        setSelectedKeys(keys => keys.filter(key => rows.some(row => row.key === key)));
+    }, [rows]);
+    const loadCategories = () => { void refetch(); };
     function refreshAfterWrite() {
-        // A list requested before the mutation cannot become its confirmed refreshed state.
-        readInFlight.current = null;
-        void loadCategories();
-        dispatch<any>(fetchCategories());
+        dispatch(catalogApi.util.invalidateTags(['Categories']));
     }
     function showForm(row: CategoriesType | null = null) {
         if (lock.current) return;

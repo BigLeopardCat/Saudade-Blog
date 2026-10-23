@@ -9,9 +9,10 @@ interface newCategory{
     pathName: string
 }
 
-function getCategories(){
+function getCategories(signal?: AbortSignal){
     return http({
         url: '/api/public/category',
+        signal,
         method: 'GET'
     })
 }

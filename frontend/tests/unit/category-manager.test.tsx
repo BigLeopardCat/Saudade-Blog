@@ -2,14 +2,13 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { configure, getConfig, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { message } from 'antd';
+import { Provider } from 'react-redux';
+import { createCatalogStore } from '../helpers/catalogStore';
 import { StyleProvider } from '@ant-design/cssinjs/lib/index.js';
 import AllCategorize from '../../src/pages/Dashboard/Notes/AllCategorize';
 import { addCategory, delAllCategory, getCategories, updateCategory } from '../../src/apis/CategoryMethods';
 import { deferred } from '../helpers/deferred';
 vi.mock('../../src/apis/CategoryMethods', () => ({ addCategory: vi.fn(), delAllCategory: vi.fn(), getCategories: vi.fn(), updateCategory: vi.fn() }));
-vi.mock('react-redux', () => ({ useDispatch: () => vi.fn() }));
-vi.mock('../../src/store/components/categories', () => ({ fetchCategories: vi.fn() }));
-vi.mock('../../src/utils/liveRefresh', () => ({ useLiveRefresh: vi.fn() }));
 const originalAsyncTimeout = getConfig().asyncUtilTimeout;
 // Scope the larger DOM-query budget to real Ant Design tests on the shared host.
 beforeAll(() => configure({ asyncUtilTimeout: 5_000 }));
@@ -40,7 +39,7 @@ afterEach(async () => {
     await waitFor(() => expect(document.querySelectorAll('.ant-message-notice')).toHaveLength(0));
     message.config({ duration: 3 });
 });
-async function show() { render(<StyleProvider mock="server" container={document.createElement('div')}><AllCategorize /></StyleProvider>); await screen.findByRole('button', { name: '编辑分类 技术札记' }); }
+async function show() { render(<Provider store={createCatalogStore()}><StyleProvider mock="server" container={document.createElement('div')}><AllCategorize /></StyleProvider></Provider>); await screen.findByRole('button', { name: '编辑分类 技术札记' }); }
 async function readyDialog() {
     // Feedback can commit before the parent's busy=false render. Await the actual
     // cancel control, whose disabled state reflects the shared mutation lock.

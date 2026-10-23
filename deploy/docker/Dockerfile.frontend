@@ -13,7 +13,7 @@
 #     聊天面板全正常，只有角色不渲染 —— 这是本仓唯一会静默出错的地方，所以最后有两条
 #     `test -f` 做产物级断言（照抄 CI 的兜底，不看中间步骤的自述）。
 # ═══════════════════════════════════════════════════════════════════════════════
-FROM node:20-slim AS build
+FROM node:24.22.1-slim AS build
 
 # git：fetch:widget 是按 widget.lock.json 钉的 sha 稀疏检出 agent 仓（只用 Node 内建 + git，
 # 不需要 node_modules）。ca-certificates：npm 与那几处 HTTPS 取件都要。

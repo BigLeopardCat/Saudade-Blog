@@ -1,5 +1,5 @@
 export interface CategoriesType {
-    categoryKey: string | undefined;
+    categoryKey: number;
     key: number;
     categoryTitle: string;
     pathName: string;
