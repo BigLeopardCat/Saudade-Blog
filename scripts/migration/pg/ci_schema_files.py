@@ -1,40 +1,5 @@
 #!/usr/bin/env python3
-"""CI 建库要按序加载哪几个编号迁移 —— **这份清单是唯一事实源**（20261018）。
-
-## 为什么要有这么一份
-
-`.github/workflows/deploy.yml` 的「Bootstrap PostgreSQL schema」此前**只加载
-`0000_schema.sql`**，而 `tests/pg_integration.rs` 带着 `TEST_PG_URL` 会真跑
-（CI 有服务容器）。于是任何"依赖某个编号迁移建出来的表"的判据，在 CI 上都会红在
-**库结构不全** —— 红得与本刀代码无关，而**本机全绿**（本机的库是完整的）。
-这是最难自己发现的一类：本机怎么跑都是绿的。
-
-这个洞**在 20261018 之前就有**（`rag_vector` 也没进 CI），只是那时没有任何 CI 判据
-碰过那些表，所以没人看见。加了 `chat_image` 之后它第一次会咬人。
-
-## 为什么不是"在 CI 里再抄一份文件清单"
-
-那就又是"同一件事写两处"。CI 那一步改成**遍历本脚本打印出来的清单**，
-清单与排除集都只住在这里；`--self-test` 断言**磁盘上每一个 `00*.sql` 都被归过类**
-—— 下次有人加 `0004` 却忘了说它进不进 CI，红的是这条自检，而不是三个月后
-某个集成测的假红。
-
-## 排除集里那两份为什么排除
-
-- `0001_rag_vectors.sql`：要 `vector` 类型，而 CI 的服务容器是**纯 `postgres:16`**
-  （`deploy.yml` 的 `services.postgres`，没有 pgvector）⇒ 加进去 CI 直接红在建库那一步。
-  向量那半边本来就有自己的判据（`verify_vectors.py`，逐位对账）。
-- `0002_owner_to_app.sql`：把 owner 改成 `saudade_app`，而 CI 那个**一次性容器里
-  没有这个角色**（角色是生产上手工建的，见 `CONTRIBUTING.md` §2.1）。
-
-⚠️ 因为 `0002` 不在 CI 里，**CI 的 owner 语义与生产不同**（CI 是 `postgres`）：
-CI 绿**不代表** owner 对。生产上以应用角色跑那一份，见 `0003_chat_image.sql` 头注。
-
-## 跑法
-
-    python3 scripts/migration/pg/ci_schema_files.py             # 按序打印要加载的文件
-    python3 scripts/migration/pg/ci_schema_files.py --self-test # 自检（判据自己）
-"""
+"""Print ordered CI schema migrations; self-test checks every migration is classified."""
 import pathlib
 import sys
 
@@ -70,6 +35,7 @@ LOAD = [
     # 而这一份是**加宽**、跑在旧代码前面也完全无害（见文件头注）。
     "0009_widen_password_reset_token_hash.sql",
     "0010_chat_latest_index.sql",
+    "0011_chat_summary_watermark.sql",
 ]
 
 # 不进 CI 的（理由见模块头注，改这个集合要把理由一起写进去）。

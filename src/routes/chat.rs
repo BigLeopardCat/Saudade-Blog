@@ -65,6 +65,7 @@ use crate::entity::{
     agent_task, chat_history, chat_image, chat_summary, conversation, execution_log, pending_action,
 };
 use crate::routes::conversation::resolve_conversation_id;
+use super::chat_memory::{self, Revision};
 use futures::StreamExt;
 use async_stream::stream;
 
@@ -74,6 +75,7 @@ struct ChatCtx {
     /// 本轮消息所属会话（prepare_chat 内解析，用户消息入库前确定）
     conversation_id: i32,
     total_count: i64,
+    summary_revision: Revision,
     trace_id: String,
     body: serde_json::Value,
     /// 用户角色（20260920，查 DB 得到；None = 查不到）。只用于签进身份断言交给
@@ -745,16 +747,19 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
     // 几件事"（跨多轮）。读失败 → `[]`（agent 按"没有任务"如实处理）。
     let agent_tasks = load_agent_tasks(&state.db, conversation_id).await;
 
-    // 统计本会话消息数，决定是否触发压缩。needs_summary 补懒生成条款：会话 >20 条
-    // 且尚无摘要行（存量旧会话回访）也触发一次——摘要落库后条件自然关闭；
-    // %10∈{0,1} 为历史双触发节奏（summary 与回复并行生成，不阻塞对话）
+    // 摘要进度独立于历史保留数量。
     let total_count: i64 = chat_history::Entity::find()
         .filter(chat_history::Column::UserId.eq(uid))
         .filter(chat_history::Column::ConversationId.eq(conversation_id))
         .count(&state.db)
         .await.unwrap_or(0) as i64;
-    let needs_summary = total_count > 20
-        && (total_count % 10 == 0 || total_count % 10 == 1 || summary_row.is_none());
+    let summary_revision = Revision { message_count: total_count, through_id: user_msg_id };
+    let needs_summary = chat_memory::due(
+        &state.db, uid, conversation_id, summary_revision, summary_row.as_ref(),
+    ).await.unwrap_or_else(|error| {
+        tracing::warn!(%error, conversation_id, "摘要调度失败，保留旧摘要");
+        false
+    });
 
     // 保留策略（20260903 会话化后按会话）：单个会话最多保留 CHAT_HISTORY_LIMIT
     // （默认 500）条，超出删除该会话最旧的多余记录——清理不再跨会话删行；
@@ -839,7 +844,7 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
     if std::env::var("CHAT_DEBUG_BODY").is_ok() {
         eprintln!("[chat-debug] body={}", body);
     }
-    Ok(ChatCtx { uid, conversation_id, total_count, trace_id, body, role })
+    Ok(ChatCtx { uid, conversation_id, total_count, summary_revision, trace_id, body, role })
 }
 
 
@@ -889,7 +894,7 @@ async fn save_assistant_reply(
     conversation_id: i32,
     reply: String,
     new_summary: Option<String>,
-    total_count: i64,
+    revision: Revision,
 ) {
     let _ = chat_history::ActiveModel {
         user_id: Set(uid),
@@ -899,28 +904,9 @@ async fn save_assistant_reply(
         ..Default::default()
     }.save(db).await;
 
-    if let Some(new_summary) = new_summary {
-        if !new_summary.is_empty() {
-            // 20260903 会话化：摘要按会话独立存取（权威键 conversation_id）
-            let existing = chat_summary::Entity::find()
-                .filter(chat_summary::Column::UserId.eq(uid))
-                .filter(chat_summary::Column::ConversationId.eq(conversation_id))
-                .one(db)
-                .await.unwrap_or_default();
-            if let Some(rec) = existing {
-                let mut am: chat_summary::ActiveModel = rec.into();
-                am.summary = Set(new_summary);
-                am.message_count = Set(total_count as i32);
-                let _ = am.update(db).await;
-            } else {
-                let _ = chat_summary::ActiveModel {
-                    user_id: Set(uid),
-                    conversation_id: Set(conversation_id),
-                    summary: Set(new_summary),
-                    message_count: Set(total_count as i32),
-                    ..Default::default()
-                }.save(db).await;
-            }
+    if let Some(summary) = new_summary {
+        if let Err(error) = chat_memory::save(db, uid, conversation_id, &summary, revision).await {
+            tracing::warn!(%error, conversation_id, "摘要保存失败，保留旧摘要");
         }
     }
 }
@@ -1871,7 +1857,7 @@ pub async fn chat_handler(
                         // 非流式：agent 独立生成摘要并返回 new_summary（needs_summary 轮才有值）
                         let agent_summary = data["new_summary"].as_str().map(|s| s.to_string());
                         if ctx.uid > 0 {
-                            save_assistant_reply(&state.db, ctx.uid, ctx.conversation_id, reply.clone(), agent_summary, ctx.total_count).await;
+                            save_assistant_reply(&state.db, ctx.uid, ctx.conversation_id, reply.clone(), agent_summary, ctx.summary_revision).await;
                             // 跨轮执行记忆（20260904 C5）：同步路径的回执在响应体 executions
                             // （agent ChatResponse 新字段；agent 无回执时为 Null → 空数组跳过）
                             let exec_rows: Vec<serde_json::Value> = data["executions"].as_array()
@@ -2076,13 +2062,13 @@ fn spawn_save_assistant_reply(
     conversation_id: i32,
     reply: String,
     new_summary: Option<String>,
-    total_count: i64,
+    revision: Revision,
 ) {
     if uid <= 0 || reply.is_empty() {
         return;
     }
     tokio::spawn(async move {
-        save_assistant_reply(&state.db, uid, conversation_id, reply, new_summary, total_count).await;
+        save_assistant_reply(&state.db, uid, conversation_id, reply, new_summary, revision).await;
     });
 }
 
@@ -2198,11 +2184,11 @@ pub async fn chat_stream_handler(
     let state = state.clone();
     let uid = ctx.uid;
     let conversation_id = ctx.conversation_id;
-    let total_count = ctx.total_count;
+    let revision = ctx.summary_revision;
     // 帧循环里的告警要用（stream! 生成器闭包不能借用 ctx——它后面还要用 ctx 写响应头）
     let trace_id = ctx.trace_id.clone();
 
-    let body_stream = forward_agent_stream(state, uid, conversation_id, total_count, trace_id, upstream.bytes_stream());
+    let body_stream = forward_agent_stream(state, uid, conversation_id, revision, trace_id, upstream.bytes_stream());
 
     (
         [
@@ -2223,7 +2209,7 @@ fn forward_agent_stream(
     state: Arc<AppState>,
     uid: i32,
     conversation_id: i32,
-    total_count: i64,
+    revision: Revision,
     trace_id: String,
     upstream_stream: impl futures::Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
 ) -> impl futures::Stream<Item = Result<Bytes, axum::Error>> + Send {
@@ -2262,7 +2248,7 @@ fn forward_agent_stream(
                         terminal = true;
                         spawn_save_assistant_reply(state.clone(), uid, conversation_id,
                                                    std::mem::take(&mut reply),
-                                                   summary_override.take(), total_count);
+                                                   summary_override.take(), revision);
                         yield Ok::<_, axum::Error>(Bytes::from(format!("data: {}\n\n", payload)));
                         break;
                     }
@@ -2408,7 +2394,7 @@ fn forward_agent_stream(
         // 已被 take 空，这里自然跳过；剩下的只有"上游中断、没收到终止帧"的收尾
         // （保持既有行为：保存残缺回复 + 独立摘要）
         if !reply.is_empty() && uid > 0 {
-            save_assistant_reply(&state.db, uid, conversation_id, reply, summary_override, total_count).await;
+            save_assistant_reply(&state.db, uid, conversation_id, reply, summary_override, revision).await;
         }
         // 执行回执不在这里：收到 __EXEC__ 帧时就已落库（见上分支），
         // 因此客户端在任何时刻断开（哪怕收尾前）都不会丢执行记录
@@ -2431,7 +2417,7 @@ mod tests {
         let upstream = futures::stream::once(async {
             Ok(Bytes::from_static(b"data: \"partial reply\"\n\n"))
         }).chain(futures::stream::pending());
-        let mut response = Box::pin(forward_agent_stream(state.clone(), 7, 42, 1, "cancel-test".into(), upstream));
+        let mut response = Box::pin(forward_agent_stream(state.clone(), 7, 42, Revision { message_count: 1, through_id: Some(1) }, "cancel-test".into(), upstream));
         assert!(response.next().await.unwrap().is_ok());
         drop(response);
         tokio::task::yield_now().await;
