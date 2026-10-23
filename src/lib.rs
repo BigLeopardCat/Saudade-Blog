@@ -21,3 +21,4 @@ pub mod search_core;
 
 pub use routes::{create_router, AppState};
 pub mod auth_jwt;
+pub mod checkpoint_cleanup;

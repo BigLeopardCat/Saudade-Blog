@@ -11,13 +11,13 @@ use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use crate::routes::AppState;
 use crate::auth_jwt;
 // LIKE 转义（% _ \ → 字面量）：20261006 起唯一实现在 search_core（聚合搜索也用它）。
 use crate::search_core::like_escape;
 use crate::entity::{
-    agent_task, chat_history, chat_summary, conversation, execution_log, pending_action,
+    chat_history, conversation,
 };
 
 /// 会话 API（20260903 会话化）：新建/列表/删除 + 会话解析（chat 系端点共用）。
@@ -279,151 +279,31 @@ pub(crate) enum ConvScope {
     UserId(i32),
 }
 
-/// 会话数据级联删的**唯一清单**：5 张子表 + `conversation` 本体。
-///
-/// **为什么要有这个函数**（20261018）：这份清单此前在**两处各写一遍**，而两处写的不是同一份
-/// —— `delete_conversation` 删五张，`temp_user::delete_temp_user` 只删三张（漏
-/// `execution_log` / `pending_action` / `agent_task`）。于是删掉一个临时账号之后，那三张表里
-/// 按 `user_id` 挂着的行全部变成孤儿：它们都按 `conversation_id` 读，会话没了就**没有任何
-/// 读取路径**会碰到，也**没有任何东西会红**（`tests/pg_integration.rs` 里那条行为判据就是
-/// 为它立的，在改之前是红的）。
-///
-/// 修法刻意**不是**"给漏的那处补三行"——那只是把同一份清单再抄一遍、等下一次再漏；
-/// 是把清单收成**一处**，两处都调它。
-///
-/// ⚠️ 这里刻意**不加 DB 外键**：chat 家族按约定走应用层级联（`delete_conversation` 下面的
-/// 注释记着这条），且 `verify_parity.py` 会比对 PG 与 MySQL 的外键集合。防线是
-/// "清单唯一化 + 一条行为判据 + 一条源码锁"，三样都要。
-///
-/// 事务边界由调用方决定：`delete_conversation` 把它包在自己的事务里，
-/// `delete_temp_user` 不包（与它原本的形态一致）。
-///
-/// **返回值 = 这批被清掉的会话 id**（20261019 批 D）：agent 的上下文住在 checkpoint 库里
-/// （20261018 起挂 saver，20261019 起是**另一个 database**），那张表不归本进程管、也没有
-/// DB 外键可依 ⇒ 级联只能跨进程请 agent 删。**id 清单仍只有这一处**（同上面那条纪律：
-/// 谁要清 checkpoint，问这个函数要 id，别自己再查一遍——两处各查一遍就是上次那个 bug
-/// 的形状）。钩子本身在 `drop_checkpoint_threads`，**调用点在事务之外**（见它头注）。
+/// 删除会话业务数据，并在同一事务登记跨服务清理；调用方负责事务。
 pub(crate) async fn purge_conversation_data<C: sea_orm::ConnectionTrait>(
     db: &C,
     scope: ConvScope,
 ) -> Result<Vec<i32>, sea_orm::DbErr> {
+    let finder = conversation::Entity::find();
+    let finder = match scope {
+        ConvScope::ConversationId(id) => finder.filter(conversation::Column::Id.eq(id)),
+        ConvScope::UserId(uid) => finder.filter(conversation::Column::UserId.eq(uid)),
+    };
+    let conversations = finder.lock(sea_orm::sea_query::LockType::Update).all(db).await?;
+    for row in &conversations {
+        crate::checkpoint_cleanup::enqueue(db, row.id, row.user_id).await?;
+    }
+    let ids: Vec<i32> = conversations.into_iter().map(|row| row.id).collect();
     match scope {
         ConvScope::ConversationId(id) => {
-            chat_history::Entity::delete_many()
-                .filter(chat_history::Column::ConversationId.eq(id))
-                .exec(db).await?;
-            chat_summary::Entity::delete_many()
-                .filter(chat_summary::Column::ConversationId.eq(id))
-                .exec(db).await?;
-            // 跨轮执行记忆（20260904 C5）：执行回执随会话删除级联清理——会话删了，
-            // 其 execution_log 行无任何读取路径（prepare_chat 按 conversation_id 注入），
-            // 不清理会永久占表
-            execution_log::Entity::delete_many()
-                .filter(execution_log::Column::ConversationId.eq(id))
-                .exec(db).await?;
-            // 跨轮待办（20260923）：同上——待办按会话读取，会话没了就无读取路径，
-            // 留着只会永久占表（待办不跨会话生效：确认令牌也绑会话）
-            pending_action::Entity::delete_many()
-                .filter(pending_action::Column::ConversationId.eq(id))
-                .exec(db).await?;
-            // 会话级任务状态（20260927）：同上——任务按会话读写（prepare_chat 注入 + agent
-            // 只发本会话的 task_id），会话没了就没有任何读取路径；与待办的区别只是它活得更久
-            // （分钟级 vs 最长 72 小时），**不清理会永久占表**这一条完全一样
-            agent_task::Entity::delete_many()
-                .filter(agent_task::Column::ConversationId.eq(id))
-                .exec(db).await?;
             conversation::Entity::delete_by_id(id).exec(db).await?;
-            Ok(vec![id])
         }
         ConvScope::UserId(uid) => {
-            // 与上面**逐表同序**，只把过滤列从 conversation_id 换成 user_id。删账号时没有
-            // "会话 id"可依，只能按归属列扫——所以五张表都必须在 user_id 上有值（它们都有）。
-            //
-            // 这一臂的会话 id 要在**删之前**取：下面最后一步把 `conversation` 行本身删掉，
-            // 删完就再也问不出"这个 uid 有过哪几个会话"了（`conv_<id>` 线程坐标也随之下落不明）。
-            let conv_ids: Vec<i32> = conversation::Entity::find()
-                .filter(conversation::Column::UserId.eq(uid))
-                .all(db)
-                .await?
-                .into_iter()
-                .map(|c| c.id)
-                .collect();
-            chat_history::Entity::delete_many()
-                .filter(chat_history::Column::UserId.eq(uid))
-                .exec(db).await?;
-            chat_summary::Entity::delete_many()
-                .filter(chat_summary::Column::UserId.eq(uid))
-                .exec(db).await?;
-            execution_log::Entity::delete_many()
-                .filter(execution_log::Column::UserId.eq(uid))
-                .exec(db).await?;
-            pending_action::Entity::delete_many()
-                .filter(pending_action::Column::UserId.eq(uid))
-                .exec(db).await?;
-            agent_task::Entity::delete_many()
-                .filter(agent_task::Column::UserId.eq(uid))
-                .exec(db).await?;
             conversation::Entity::delete_many()
-                .filter(conversation::Column::UserId.eq(uid))
-                .exec(db).await?;
-            Ok(conv_ids)
+                .filter(conversation::Column::UserId.eq(uid)).exec(db).await?;
         }
     }
-}
-
-/// 把 checkpoint 库里的 `conv_<id>` 线程删掉（**best-effort**）。
-///
-/// **为什么是 HTTP 钩子而不是一条 DELETE**：agent 的上下文住在 checkpoint 库里，那张表
-/// 不归本进程管（20261019 起更是**另一个 database**）⇒ 级联只能跨进程请 agent 删
-/// （本仓 `DELETE /checkpoint/{conversation_id}`）。不删的后果与上面那五张表同形：会话没了，
-/// 那份正文**没有任何读取路径**，也**没有任何东西会红**。
-///
-/// 三条纪律：
-///   · **不进 DB 事务**：HTTP 不能挂在 `txn` 里（一次超时会把六张表的行锁攥住几秒），
-///     所以两个调用点都在事务之外——`delete_conversation` 在 `commit()` **之后**，
-///     `delete_temp_user` 本来就没有事务。
-///   · **失败不让业务删除失败**：checkpoint 是派生数据，钩子挂了照样删会话；残留由夜间
-///     `eval/pg_retention.py` 的保留期兜底。但**必须留痕**（warn）——「点了没反应」在本仓
-///     是禁止的。
-///   · **id 只从 `purge_conversation_data` 来**，这里不查库（清单只有一份）。
-///   · **有总预算**：一次删账号可能带几十个会话，逐条 3 秒超时会把它拖成 N×3 秒
-///     （agent 活着但不回话时每条都要等满）。超了就不再发，剩下的由保留期兜底。
-///   · **带身份断言**（20261020 安全审计 SAU-006）：agent 侧那个端点现在要求
-///     `X-Agent-Assertion`（此前它一格鉴权都没有，而删 checkpoint 是**不可逆**的
-///     上下文丢失）⇒ 不带就是 401，而这条钩子 best-effort、失败只 warn ⇒ **断了不响**。
-///     断言**在循环外签一次**：它 60 秒有效，而本循环总预算 10 秒。
-///     `role` 传 `None`：这两条路不做角色判据（agent 侧只核"这一程来自持密钥的那一方"），
-///     而**编一个角色**比留空更坏——留空在 agent 侧就是"身份不明"，不做任何默认授予。
-pub(crate) async fn drop_checkpoint_threads(ids: &[i32], uid: i32) {
-    if ids.is_empty() {
-        return;
-    }
-    let deadline = Instant::now() + Duration::from_secs(10);
-    let base = crate::routes::graph::agent_base_url();
-    let assertion = crate::auth_jwt::create_agent_assertion(uid, None);
-    let client = reqwest::Client::new();
-    for (done, id) in ids.iter().enumerate() {
-        if Instant::now() >= deadline {
-            tracing::warn!(
-                "[会话] checkpoint 钩子超出总预算 10s，剩 {} 条交给夜间保留期清（会话已删）",
-                ids.len() - done
-            );
-            break;
-        }
-        let url = format!("{base}/checkpoint/{id}?uid={uid}");
-        match client.delete(&url)
-            .header("X-Agent-Assertion", &assertion)
-            .timeout(Duration::from_secs(3)).send().await {
-            Ok(r) if r.status().is_success() => {}
-            Ok(r) => tracing::warn!(
-                "[会话] checkpoint 钩子非 2xx（会话已删、agent 侧残留待保留期清）conv={id} status={}",
-                r.status()
-            ),
-            Err(e) => tracing::warn!(
-                "[会话] checkpoint 钩子失败（会话已删、agent 侧残留待保留期清）conv={id}: {e}"
-            ),
-        }
-    }
+    Ok(ids)
 }
 
 /// 把「丢弃那一轮」告诉 agent（`POST /checkpoint/{id}/drop_turn`，**best-effort**）。
@@ -501,14 +381,7 @@ pub async fn delete_conversation(
         )
             .into_response();
     }
-    // 级联删除（应用层，无 DB 外键——与全项目"实体零关系"惯例一致），事务保证五步一致
-    // （失败回滚，不出现孤儿消息/摘要/执行回执）。清单**只有一份**：
-    // `purge_conversation_data`（20261018 收口，此前这里与 `temp_user.rs` 各写一份且不同）。
-    //
-    // ⚠️ 20261018 顺带修了一处**注释与代码不符**：原实现六条 `let _ = …` 把每个错误都吞掉，
-    // 于是 `txn` 从来不会因为子表删除失败而回滚 —— 上面那句"失败回滚"当时是**做不到的**。
-    // 现在错误会真的往上走：删不干净就整体回滚并如实报错（宁可"这次没删成"，不要
-    // "删了一半、剩下三张表的孤儿谁也不认识"）。
+    // 业务删除与清理任务原子提交，HTTP 交付在提交后执行。
     let txn = match state.db.begin().await {
         Ok(t) => t,
         Err(_) => {
@@ -532,11 +405,8 @@ pub async fn delete_conversation(
         }
     };
     match txn.commit().await {
-        // checkpoint 钩子**在 commit 之后**（HTTP 不进事务，见 `drop_checkpoint_threads`）。
-        // 失败只 warn、不改这次的响应：会话在业务库里已经删干净了，这时候回一句"删除失败"
-        // 是假话——用户重试一次会得到 404。
         Ok(_) => {
-            drop_checkpoint_threads(&threads, uid).await;
+            crate::checkpoint_cleanup::dispatch(&state.db, &threads).await;
             (StatusCode::OK, Json(json!({"success": true}))).into_response()
         }
         Err(_) => (

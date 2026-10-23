@@ -75,6 +75,7 @@ async fn main() {
         report_max, report_window_secs, report_lockout_secs,
     );
 
+    saudade_blog::checkpoint_cleanup::start(db.clone());
     let app_state = AppState { db, rate_limiter, post_limiter, report_limiter };
     let app = create_router(app_state);
 

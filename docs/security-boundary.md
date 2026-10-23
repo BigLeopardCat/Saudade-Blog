@@ -45,7 +45,7 @@ flowchart TB
 | agent `/chat`、`/chat/stream` | **无**（回环）＋ 身份断言 | 信任前提 = 回环（loopback）；Rust 另签一条 60s 断言声明"这个 uid 是认证过的" | 缺头 401（开关已开，实测） |
 | agent `/review`（同款） | **无**（回环）＋ 身份断言 ＋ 并发闸 4 | 同上；调用方是 Rust 的 `talks.rs`。**Rust 必须先发头**：开关在生产 .env 里已是 1 | 缺头 401（实测）；闸满 503 |
 | agent `/graph/query` | **无**（回环）＋ 身份断言 | 信任前提 = 回环（loopback）＋ Rust 现签的 60s 断言（调用方是 `src/routes/graph.rs::graph_query`）。**20261020 起才有**（安全审计 SAU-018）：此前它是 agent 侧唯一"匿名可信"的内部端点——本机进程可白嫖一次 embedding 调用（费用面） | 缺头 401（`{"ok":false,...}` 形状照旧，Rust 侧走既有降级分支 ⇒ 展示柜退回本地关键词匹配，**不是白屏**） |
-| agent `/checkpoint/*`（`DELETE /checkpoint/{id}`、`POST /checkpoint/{id}/drop_turn`） | **无**（回环）＋ 身份断言 | 同上（调用方是 `src/routes/conversation.rs` 那两个钩子）。**20261020 起才有**（安全审计 SAU-006）：此前这一族一格鉴权都没有，而删 checkpoint 是**不可逆**的上下文丢失。⚠️ 钩子是 **best-effort**（失败只 warn）⇒ 断言对不上时**不报错、只留一行 warn**，残留由夜间保留期兜底 | 缺头 401（父仓未发头时表现为"删了会话、checkpoint 还躺在库里"，日志里一行 warn） |
+| agent `/checkpoint/*`（`DELETE /checkpoint/{id}`、`POST /checkpoint/{id}/drop_turn`） | 回环＋服务身份断言 | 会话删除通过事务清理队列交付，仅核对 `deleted=true` 后确认；失败持久重试。Agent登记删除屏障，拒绝迟到请求。单轮丢弃仍通过同步钩子核对 `dropped` | 缺头401；会话清理失败保留任务并记录原因 |
 
 agent 侧可以没有鉴权的原因：它只听回环，公网到不了；能调它的只有同机的 Rust 与
 （理论上）同机的其他进程。这是单机部署下的取舍，代价是：

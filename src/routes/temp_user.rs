@@ -966,40 +966,33 @@ pub async fn delete_temp_user(
     } else {
         format!("{}（{}）", target.nickname.trim(), target.username)
     };
-    // 删除临时用户时级联清理其**全部**会话数据。清单**只有一份**：
-    // `conversation::purge_conversation_data`（20261018 收口，见它的头注）。
-    //
-    // 此前这里手写三张表，而 `delete_conversation` 删五张 —— 漏掉的
-    // `execution_log` / `pending_action` / `agent_task` 在账号删除后全部变成孤儿：三张表
-    // 都按 conversation_id 读，会话没了就再也没有任何读取路径，也**没有任何东西会红**。
-    // 现在两处共用同一份清单（`tests/pg_integration.rs` 有一条行为判据钉着六张表全空）。
-    //
-    // 这里**不吞错也不中断**：级联清理失败只记一行 error，账号本体照旧删（与原本
-    // "辅助清理失败不挡主流程"的取向一致）—— 但失败必须留痕，不能再是 `let _ =`。
-    let threads = match crate::routes::conversation::purge_conversation_data(
-        &state.db,
-        crate::routes::conversation::ConvScope::UserId(user_id),
-    )
-    .await
-    {
-        Ok(t) => t,
-        Err(e) => {
-            tracing::error!("[账号管理] 级联清理会话数据失败 uid={user_id}: {e}（账号仍将删除）");
-            Vec::new()
+    let txn = match state.db.begin().await {
+        Ok(txn) => txn,
+        Err(error) => {
+            tracing::error!(%error, "账号删除事务启动失败");
+            return Json(crate::utils::ApiResponse::error("删除失败，请稍后再试"));
         }
     };
-    // agent 的 checkpoint 线程（20261019 批 D）：这一臂**必须由它自己**逐个删——那个
-    // `ConvScope::UserId` 臂删的是"这个 uid 名下的会话"，删完就再也问不出是哪几个了，
-    // 所以 id 由上面那个函数在删之前取好、原样带回来。失败只 warn（与上面同口径：
-    // 级联清理不挡主流程，但必须留痕）。
-    crate::routes::conversation::drop_checkpoint_threads(&threads, user_id).await;
-    // 删主行**这一次不再吞错**（20261001）：这三个 `let _ =` 的级联删是辅助清理，
-    // 吞掉无所谓；但 `user` 行本身删失败时必须如实报——否则下面那条"账号已删除"
-    // 的审计通知就是假的，而误删恰恰是这次要防的事。
-    if let Err(e) = user::Entity::delete_by_id(user_id).exec(&state.db).await {
-        tracing::error!("[账号管理] 删除账号失败 uid={user_id}: {e}");
+    let deletion = async {
+        let threads = crate::routes::conversation::purge_conversation_data(
+            &txn, crate::routes::conversation::ConvScope::UserId(user_id),
+        ).await?;
+        user::Entity::delete_by_id(user_id).exec(&txn).await?;
+        Ok::<_, sea_orm::DbErr>(threads)
+    }.await;
+    let threads = match deletion {
+        Ok(threads) => threads,
+        Err(error) => {
+            tracing::error!(%error, user_id, "账号与会话删除失败，事务回滚");
+            let _ = txn.rollback().await;
+            return Json(crate::utils::ApiResponse::error("删除失败，请稍后再试"));
+        }
+    };
+    if let Err(error) = txn.commit().await {
+        tracing::error!(%error, user_id, "账号删除提交失败");
         return Json(crate::utils::ApiResponse::error("删除失败，请稍后再试"));
     }
+    crate::checkpoint_cleanup::dispatch(&state.db, &threads).await;
     // 审计留痕（20261001）：此前这一支**全函数没有一行 tracing**，误删之后再想查
     // "谁在什么时候删了谁"只剩一条不含操作人的 access log。与冻结/改身份对齐。
     tracing::info!(

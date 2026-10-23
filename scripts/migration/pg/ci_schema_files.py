@@ -36,6 +36,8 @@ LOAD = [
     "0009_widen_password_reset_token_hash.sql",
     "0010_chat_latest_index.sql",
     "0011_chat_summary_watermark.sql",
+    "0012_agent_checkpoint_cleanup.sql",
+    "0013_conversation_foreign_keys.sql",
 ]
 
 # 不进 CI 的（理由见模块头注，改这个集合要把理由一起写进去）。
