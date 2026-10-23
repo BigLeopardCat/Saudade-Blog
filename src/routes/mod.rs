@@ -26,6 +26,7 @@ pub mod own_reads;
 pub mod public_catalog;
 pub mod article_actions;
 pub mod article_tag_actions;
+pub mod category_actions;
 pub mod quota_actions;
 pub mod moderation_actions;
 pub mod public_activity;
@@ -187,6 +188,9 @@ pub fn create_router(state: AppState) -> Router {
             post(note_stats::like_note).delete(note_stats::unlike_note),
         )
         
+        .route("/api/protected/category-actions/prepare", post(category_actions::prepare))
+        .route("/api/protected/category-actions", post(category_actions::change))
+
         // Categories
         .route("/api/category", get(categories::list_categories)) 
         .route("/api/public/category", get(categories::list_categories)) 
