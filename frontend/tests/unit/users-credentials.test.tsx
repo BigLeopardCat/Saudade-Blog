@@ -1,5 +1,5 @@
 import {beforeAll, describe, expect, it, vi} from 'vitest';
-import {act, fireEvent, render, screen} from '@testing-library/react';
+import {act, fireEvent, render, screen, waitFor} from '@testing-library/react';
 import {StyleProvider} from '@ant-design/cssinjs/lib/index.js';
 import Users from '../../src/pages/Dashboard/Users';
 const {post} = vi.hoisted(() => ({post: vi.fn()}));
@@ -26,6 +26,21 @@ beforeAll(() => {
     globalThis.ResizeObserver = class {observe() {} unobserve() {} disconnect() {}};
 });
 describe('account credential controls', () => {
+    it('does not duplicate recovery requests or reveal a late result after identity changes', async () => {
+        localStorage.setItem('tokenKey', token('admin'));
+        let resolve!: (value: unknown) => void;
+        post.mockReturnValueOnce(new Promise(done => {resolve = done;}));
+        render(<StyleProvider mock="server" container={document.createElement('div')}><Users /></StyleProvider>);
+        const generate = screen.getByRole('button', {name: '生成恢复码'});
+        fireEvent.click(generate);
+        fireEvent.click(generate);
+        expect(post).toHaveBeenCalledTimes(1);
+        expect(post).toHaveBeenCalledWith('/api/temp-users/3/password-reset-token');
+        act(() => {localStorage.setItem('tokenKey', token('admin', 4)); window.dispatchEvent(new Event('auth-change'));});
+        await act(async () => resolve({data: {code: 200, data: 'SECRET-RECOVERY'}}));
+        await waitFor(() => expect(screen.queryByText('SECRET-RECOVERY')).toBeNull());
+        expect(screen.queryByRole('dialog')).toBeNull();
+    });
     it('hides forbidden actions, allows managed users, and revokes an already open password dialog', async () => {
         localStorage.setItem('tokenKey', token('admin'));
         render(<StyleProvider mock="server" container={document.createElement('div')}><Users /></StyleProvider>);
