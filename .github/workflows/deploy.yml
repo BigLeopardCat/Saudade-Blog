@@ -383,7 +383,7 @@ jobs:
         working-directory: ./frontend
 
   browser:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       TZ: Asia/Shanghai
@@ -406,7 +406,15 @@ jobs:
       - name: Install browser system dependencies
         timeout-minutes: 6
         run: |
+          # hosted runner 的 HTTP Azure 镜像多次仅几十 KB/s；使用 Ubuntu 官方 HTTPS 源。
+          sudo tee /etc/apt/saudade-ci.sources.list >/dev/null <<'EOF'
+          deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://archive.ubuntu.com/ubuntu noble main universe restricted multiverse
+          deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://archive.ubuntu.com/ubuntu noble-updates main universe restricted multiverse
+          deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://security.ubuntu.com/ubuntu noble-security main universe restricted multiverse
+          EOF
           sudo tee /etc/apt/apt.conf.d/80-saudade-ci-network >/dev/null <<'EOF'
+          Dir::Etc::sourcelist "/etc/apt/saudade-ci.sources.list";
+          Dir::Etc::sourceparts "-";
           Acquire::Retries "3";
           Acquire::http::Timeout "30";
           Acquire::https::Timeout "30";
