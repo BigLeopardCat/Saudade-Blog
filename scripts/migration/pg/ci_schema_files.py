@@ -19,6 +19,8 @@ LOAD = [
     "0012_agent_checkpoint_cleanup.sql",
     "0013_conversation_foreign_keys.sql",
     "0014_category_identity.sql",
+    "0015_announcement_notifications.sql",
+    "0016_confirmation_question.sql",
 ]
 
 EXCLUDED = {

@@ -27,6 +27,8 @@ pub mod public_catalog;
 pub mod article_actions;
 pub mod article_tag_actions;
 pub mod category_actions;
+pub mod tag_actions;
+pub mod announcement_actions;
 pub mod quota_actions;
 pub mod moderation_actions;
 pub mod public_activity;
@@ -338,6 +340,10 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/protected/draft/autosave", post(notes::autosave_note))
         .route("/api/protected/draft/editor/{id}", get(notes::get_note_for_edit))
 
+        .route("/api/protected/tag-actions/prepare", post(tag_actions::prepare))
+        .route("/api/protected/tag-actions", post(tag_actions::change))
+        .route("/api/protected/announcement-actions/prepare", post(announcement_actions::prepare))
+        .route("/api/protected/announcement-actions", post(announcement_actions::change))
         .route("/api/protected/category-actions/prepare", post(category_actions::prepare))
         .route("/api/protected/category-actions", post(category_actions::change))
 

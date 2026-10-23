@@ -1,60 +1,12 @@
-use axum::{Json, extract::State};
-use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set};
+use super::announcement_actions::{self, Action, Fields, Intent, Target};
+use crate::{entity::announcement, routes::AppState, utils::ApiResponse};
+use axum::{
+    extract::{Path, State},
+    Json,
+};
+use sea_orm::{EntityTrait, IsolationLevel, QueryOrder, TransactionTrait};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use crate::entity::{announcement, user, user_notification};
-use crate::routes::AppState;
-use crate::utils::ApiResponse;
-
-// ── 公告 → 个人中心通知的展开（20260922）────────────────────────────────────
-//
-// 个人中心的红点与「公告和通知」面板读的是 `user_notification`；公告表本身没有
-// "谁读过"这一列，而 `user_notification.user_id` 又不许用 `0=全体` 广播哨兵
-// （0 没有对应 user 行，与外键 ON DELETE CASCADE 打架——建表注释里写了这条）。
-// 所以公告在**发布时按用户逐行展开**（本站用户是个位数，展开最省心，也天然回答
-// "谁读过"），改与删同步到已展开的行。
-//
-// 行的身份 = `(user_id, type='announcement', title, created_at)`：`created_at`
-// 写的是**公告自己的 created_at**（不是展开时刻），这样"找出某条公告展开出来的行"
-// 是一次精确匹配，不需要给表加 announcement_id 列（本期不做迁移）。
-// 标题改过之后旧的匹配键就没了 ⇒ 改之前必须先读一次原行、按旧键匹配再更新。
-const KIND_ANNOUNCEMENT: &str = "announcement";
-
-/// 给**所有用户**展开一条公告通知（新用户不会错过历史公告这件事本期不做——
-/// 没有回溯补发，见 migration 头注"只建结构，不含数据回填"）。
-async fn fan_out(state: &Arc<AppState>, a: &announcement::Model) {
-    // 只取 id（20261014）。从前是 `user::Entity::find().all(…)` —— `find()` 是 `SELECT *`，
-    // 于是每存一次公告就把**整张 user 表**（含 password 那列的哈希）拉进内存，再逐行
-    // 只读一个 `u.id` 去插通知。这里整条链只需要 id：`select_only` + `into_tuple::<i32>()`
-    // （仓里同族的写法见 `talks.rs:756`、`stats.rs:219`，都是"只取用到的列 + into_tuple"）。
-    let users: Vec<i32> = match user::Entity::find()
-        .select_only()
-        .column(user::Column::Id)
-        .into_tuple::<i32>()
-        .all(&state.db)
-        .await
-    {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::error!("[announcement] 展开公告失败，读用户列表出错 id={}: {}", a.id, e);
-            return;
-        }
-    };
-    for uid in users {
-        let am = user_notification::ActiveModel {
-            user_id: Set(uid),
-            kind: Set(KIND_ANNOUNCEMENT.to_string()),
-            title: Set(a.title.clone()),
-            content: Set(Some(a.content.clone())),
-            link: Set(None), // 公告没有详情页，纯文本通知
-            created_at: Set(a.created_at.unwrap_or_else(|| chrono::Local::now().naive_local())),
-            ..Default::default()
-        };
-        if let Err(e) = user_notification::Entity::insert(am).exec(&state.db).await {
-            tracing::error!("[announcement] 展开公告失败 id={} uid={}: {}", a.id, uid, e);
-        }
-    }
-}
 
 #[derive(Serialize)]
 pub struct AnnouncementDto {
@@ -70,16 +22,30 @@ pub struct AnnouncementDto {
 pub async fn list_announcements(
     State(state): State<Arc<AppState>>,
 ) -> Json<ApiResponse<Vec<AnnouncementDto>>> {
-    let items = announcement::Entity::find()
+    let items = match announcement::Entity::find()
         .order_by_desc(announcement::Column::Id)
-        .all(&state.db).await.unwrap_or(vec![]);
-    let dtos = items.into_iter().map(|a| AnnouncementDto {
-        id: a.id,
-        title: a.title,
-        content: a.content,
-        created_at: a.created_at.map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string()).unwrap_or_default(),
-        updated_at: a.updated_at.map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string()).unwrap_or_default(),
-    }).collect();
+        .all(&state.db)
+        .await
+    {
+        Ok(rows) => rows,
+        Err(error) => return super::db_error("查询公告", &error),
+    };
+    let dtos = items
+        .into_iter()
+        .map(|a| AnnouncementDto {
+            id: a.id,
+            title: a.title,
+            content: a.content,
+            created_at: a
+                .created_at
+                .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
+                .unwrap_or_default(),
+            updated_at: a
+                .updated_at
+                .map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string())
+                .unwrap_or_default(),
+        })
+        .collect();
     Json(ApiResponse::success(dtos))
 }
 
@@ -89,96 +55,87 @@ pub struct UpsertAnnouncement {
     pub content: String,
 }
 
+async fn apply_legacy(state: &AppState, intents: Vec<Intent>) -> Result<String, sea_orm::DbErr> {
+    let txn = state
+        .db
+        .begin_with_config(Some(IsolationLevel::Serializable), None)
+        .await?;
+    for intent in intents {
+        announcement_actions::apply_current(&txn, intent).await?;
+    }
+    txn.commit().await?;
+    Ok("Completed".to_owned())
+}
+
 pub async fn create_announcement(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<UpsertAnnouncement>,
 ) -> Json<ApiResponse<String>> {
-    let a = announcement::ActiveModel {
-        title: Set(payload.title),
-        content: Set(payload.content),
-        ..Default::default()
-    };
-    // PostgreSQL INSERT RETURNING 同时拿到默认时间；插入失败必须向调用方报错。
-    let saved = match a.insert(&state.db).await {
-        Ok(saved) => saved,
-        Err(e) => return super::db_error("新建公告", &e),
-    };
-    // 通知是 best-effort：失败记日志，核心公告已经成功提交。
-    fan_out(&state, &saved).await;
-    Json(ApiResponse::success("Created".to_string()))
+    announcement_actions::response(
+        apply_legacy(
+            &state,
+            vec![Intent {
+                action: Action::Create,
+                target: None,
+                fields: Fields {
+                    title: Some(payload.title),
+                    content: Some(payload.content),
+                },
+            }],
+        )
+        .await,
+    )
 }
 
 pub async fn update_announcement(
     State(state): State<Arc<AppState>>,
-    axum::extract::Path(id): axum::extract::Path<i32>,
+    Path(id): Path<i32>,
     Json(payload): Json<UpsertAnnouncement>,
 ) -> Json<ApiResponse<String>> {
-    // 改之前先读原行：标题是匹配键的一部分，改完就找不到自己展开出去的那些行了
-    let old = announcement::Entity::find_by_id(id).one(&state.db).await.unwrap_or(None);
-    let new_title = payload.title.clone();
-    let new_content = payload.content.clone();
-    let a = announcement::ActiveModel {
-        id: Set(id),
-        title: Set(payload.title),
-        content: Set(payload.content),
-        ..Default::default()
-    };
-    if let Err(e) = announcement::Entity::update(a).exec(&state.db).await {
-        return super::db_error("更新公告", &e);
-    }
-    if let Some(old) = old {
-        // 已展开的通知行跟随更新（标题/正文）。`created_at` 不动：通知的时间语义是
-        // "公告什么时候发布的"，不是"什么时候被编辑"——它还是匹配键。
-        let mut q = user_notification::Entity::update_many()
-            .col_expr(user_notification::Column::Title, sea_orm::sea_query::Expr::value(new_title))
-            .col_expr(
-                user_notification::Column::Content,
-                sea_orm::sea_query::Expr::value(Some(new_content)),
-            )
-            .filter(user_notification::Column::Kind.eq(KIND_ANNOUNCEMENT))
-            .filter(user_notification::Column::Title.eq(&old.title));
-        q = match old.created_at {
-            Some(t) => q.filter(user_notification::Column::CreatedAt.eq(t)),
-            None => q.filter(user_notification::Column::CreatedAt.is_null()),
-        };
-        if let Err(e) = q.exec(&state.db).await {
-            tracing::error!("[announcement] 同步通知行失败 id={}: {}", id, e);
-        }
-    }
-    Json(ApiResponse::success("Updated".to_string()))
+    announcement_actions::response(
+        apply_legacy(
+            &state,
+            vec![Intent {
+                action: Action::Update,
+                target: Some(Target {
+                    id: Some(id),
+                    title: None,
+                }),
+                fields: Fields {
+                    title: Some(payload.title),
+                    content: Some(payload.content),
+                },
+            }],
+        )
+        .await,
+    )
 }
 
 pub async fn delete_announcement(
     State(state): State<Arc<AppState>>,
     Json(ids): Json<Vec<i32>>,
 ) -> Json<ApiResponse<String>> {
-    // 先读再删：展开出去的通知行要一起清掉（删了公告还留着"你有一条未读公告"
-    // 就是一条永远点不开、只能靠"全部已读"消掉的红点）
-    let rows = announcement::Entity::find()
-        .filter(announcement::Column::Id.is_in(ids.clone()))
-        .all(&state.db)
-        .await
-        .unwrap_or_default();
-    if let Err(e) = announcement::Entity::delete_many()
-        .filter(announcement::Column::Id.is_in(ids))
-        .exec(&state.db)
-        .await
-    {
-        return super::db_error("删除公告", &e);
+    if ids.is_empty() || ids.len() > 100 {
+        return Json(ApiResponse::error("每次需指定1至100个公告编号"));
     }
-    for a in rows {
-        if let Err(e) = user_notification::Entity::delete_many()
-            .filter(user_notification::Column::Kind.eq(KIND_ANNOUNCEMENT))
-            .filter(user_notification::Column::Title.eq(&a.title))
-            .filter(match a.created_at {
-                Some(t) => user_notification::Column::CreatedAt.eq(t),
-                None => user_notification::Column::CreatedAt.is_null(),
-            })
-            .exec(&state.db)
-            .await
-        {
-            tracing::error!("[announcement] 清理通知行失败 id={}: {}", a.id, e);
-        }
+    let mut unique = std::collections::HashSet::new();
+    if ids.iter().any(|id| !unique.insert(*id)) {
+        return Json(ApiResponse::error("公告编号不能重复"));
     }
-    Json(ApiResponse::success("Deleted".to_string()))
+    announcement_actions::response(
+        apply_legacy(
+            &state,
+            ids.into_iter()
+                .map(|id| Intent {
+                    action: Action::Delete,
+                    target: Some(Target {
+                        id: Some(id),
+                        title: None,
+                    }),
+                    fields: Fields::default(),
+                })
+                .collect(),
+        )
+        .await,
+    )
 }

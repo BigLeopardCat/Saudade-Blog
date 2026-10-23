@@ -1,16 +1,7 @@
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
-/// 跨轮待办（20260923）：写操作"已经提出、还没被确认"的结构化载体。
-/// 迁移 `scripts/migration/pending_action_20260923.sql`（建表 + flag），
-/// 读写链路与三条状态规则见该文件头注（改一处必须同步 agent 侧
-/// server.py 的 `__PENDING__` 帧与 `agent/confirm.py` 的令牌语义）。
-///
-/// 20260924 加 5 列（迁移 `pending_action_card_20260924.sql`）：这张卡片此前只活在
-/// 当轮的 SSE 帧里，刷新/断流就再也回不来，而令牌其实还在有效期内。同一行现在既是
-/// planner 的待办、也是**重建卡片**的素材（question/options/token）与**一次性核销**的
-/// 凭据（jti/claimed_at）。为什么合表不合新建一张 confirm_request：它们是同一次提议的
-/// 两个面，分表必然出现"待办还在、卡片没了"这类不一致状态。
+/// Pending approval identity, display fields, and lifecycle state scoped to a conversation.
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Deserialize, Serialize)]
 #[sea_orm(table_name = "pending_action")]
 pub struct Model {
@@ -26,13 +17,14 @@ pub struct Model {
     pub skill: String,
     /// 工具体（逗号分隔）——`__EXEC__` 回执命中其中任一 ⇒ 该待办已真被执行
     pub tool: String,
-    /// 结构化参数（specs 的 JSON，审计线索；>4000 字符只存前缀）
+    /// Complete specs JSON for audit, bounded to 32768 characters by the writer.
     #[sea_orm(column_type = "Text", nullable)]
     pub args: Option<String>,
     /// 写时定稿的人读目标+动作（与确认弹窗问句同源，读时零映射）
     pub target: String,
-    /// 确认卡片问句（与弹窗同源，写时定稿）。空串 = 这张卡片无法重建
-    /// （存量行 / 令牌签发失败那一轮），读取端据此**如实不留卡片**，不编一个问句出来
+    /// Complete frozen confirmation text, bounded to 32768 characters without truncation.
+    /// Empty legacy values cannot reconstruct a confirmation card.
+    #[sea_orm(column_type = "Text")]
     pub question: String,
     /// 选项 JSON（`[{"label","value","kind"}]`）——按钮的文字/取值/样式都在里面，
     /// 前端不自己造按钮（改了问句却不改按钮，就会变成一张"点确定做另一件事"的卡）

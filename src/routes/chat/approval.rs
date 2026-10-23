@@ -22,6 +22,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{sync::Arc, time::Duration};
 
+pub(super) const MAX_CONFIRM_TOKEN_CHARS: usize = 16_384;
+
 // A transport hint, never authorization. Forged hints fail Agent signature checks.
 fn agent_owned(token: &str) -> bool {
     token_payload(token)
@@ -56,7 +58,7 @@ pub async fn cancel_handler(
         )
             .into_response();
     }
-    if req.token.is_empty() || req.token.len() > 4000 {
+    if req.token.is_empty() || req.token.len() > MAX_CONFIRM_TOKEN_CHARS {
         return (StatusCode::BAD_REQUEST, Json(json!({"cancelled": false}))).into_response();
     }
     let role = user::Entity::find_by_id(uid)
@@ -124,6 +126,9 @@ pub(super) async fn claim_confirm_token(
     uid: i32,
     token: &str,
 ) -> Option<String> {
+    if token.len() > MAX_CONFIRM_TOKEN_CHARS {
+        return Some("确认令牌超出长度限制，请重新生成确认卡。".to_owned());
+    }
     // The signed executor owns durable replay; the Agent verifies the token.
     if agent_owned(token) {
         return None;
@@ -173,6 +178,9 @@ pub(super) fn token_jti(token: &str) -> String {
 }
 
 fn token_payload(token: &str) -> Option<Value> {
+    if token.len() > MAX_CONFIRM_TOKEN_CHARS {
+        return None;
+    }
     let (body, signature) = token.split_once('.')?;
     if signature.contains('.') {
         return None;

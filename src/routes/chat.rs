@@ -1453,19 +1453,10 @@ const PENDING_READ_TTL_MINUTES: i64 = 60;
 const PENDING_ARGS_INLINE_MAX: usize = 200;
 /// 注入行整体上限（与 recent_executions 同一量级）。
 const PENDING_INLINE_MAX: usize = 600;
-/// `args` 列上限：它是**审计线索**不是执行依据（真正的执行参数在签名的确认令牌
-/// 里），超限只存前缀，绝不为了"看起来是合法 JSON"去改写内容。
-const PENDING_ARGS_COL_MAX: usize = 4000;
-/// 卡片问句列上限（= 迁移里 `question` varchar(500)）。超限只存前缀：问句是给人读的，
-/// 截断顶多少看几个字，而**丢掉整张卡片**（下面那条"空串=不可重建"的规则）更坏。
-/// ⚠️ 20260929 批 F 起问句可能是**多件编号列表**（一次点头办 N 件，N ≤ 5，每件一行
-/// 且逐条印系统事实）⇒ 4–5 件时整句可能超过这一列。影响面**只在将来那条"跨刷新重建
-/// 卡片"的读链上**（`question`/`options` 至今没有读方）：真接上前必须在这里做二选一
-/// ——放宽列宽（要迁移）或者**问句超限时存空串**（读侧如实不留卡片），**绝不能让重建
-/// 出来的卡少印几件而按钮仍然签着 5 件**（那正是"盲签"本身）。
-const PENDING_QUESTION_COL_MAX: usize = 500;
-/// 选项 JSON 列上限（= 迁移里 `options` varchar(600)）。20260929 批 F 起最多七枚
-/// （全部办 + 逐条只办第 i 件 + 取消），标签都很短，余量仍足。
+/// Complete proposal JSON and display text are rejected above these bounds, never truncated.
+const PENDING_ARGS_COL_MAX: usize = 32_768;
+const PENDING_QUESTION_COL_MAX: usize = 32_768;
+/// Legacy choice lists and native confirmation/cancellation buttons share this bound.
 const PENDING_OPTIONS_COL_MAX: usize = 600;
 
 /// 关闭已执行的待办：回执里出现的工具名 ∈ 待办行 `tool`（逗号分隔）⇒ done/confirmed。
