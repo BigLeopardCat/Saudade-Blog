@@ -168,7 +168,7 @@ pub fn create_router(state: AppState) -> Router {
         // **必须留在这里**（public_routes）——protected_routes 域内 auth_guard 全量要求
         // 管理员，而搜索框是给未登录访客用的。它不取代上面那条：`notes/search` 还背着
         // agent 的 `search_notes` 工具与前台分类页。
-        .route("/api/public/search", post(search::search_all))
+        .route("/api/public/search", post(search::search_all).layer(DefaultBodyLimit::max(2048)))
         .route("/api/public/notes/{id}", get(notes::get_note_detail))
         .route("/api/public/topnotes", get(notes::get_top_notes))
 

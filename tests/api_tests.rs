@@ -537,3 +537,20 @@ async fn test_聚合搜索空关键词与不可用关键词都回空且不查库
         }
     }
 }
+
+#[tokio::test]
+async fn aggregate_search_rejects_unbounded_input_before_database() {
+    for body in [
+        serde_json::json!({"keyword":"博".repeat(129)}),
+        serde_json::json!({"page":0}), serde_json::json!({"page":101}),
+        serde_json::json!({"pageSize":0}), serde_json::json!({"pageSize":51}),
+        serde_json::json!({"keyword":(0..17).map(|n|format!("word{n}")).collect::<Vec<_>>().join(" ")}),
+    ] {
+        let (status, _) = req_api_json(mock_app(), &body.to_string()).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    }
+    let (status, _) = req_api_json(mock_app(), &serde_json::json!({"keyword":"x".repeat(3000)}).to_string()).await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    let (status, _) = req_api_json(mock_app(), r#"{"type":"private"}"#).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+}

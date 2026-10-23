@@ -10,7 +10,7 @@
 //!   · `split_terms` / `script_runs` / `keyword_given` 从 `notes.rs` **原样搬来**（逐字未改）；
 //!   · `like_escape` 原来是 `conversation.rs` 与 `upload.rs` **各一份**私有实现，
 //!     第三处要用时一并收到这里（三处一份）；
-//!   · `count_terms` / `score_term` / `score_term_sum` / `rank_tiered` 是把 `notes.rs` 里
+//!   · `count_terms` / `score_term` / `score_term_sum` 是把 `notes.rs` 里
 //!     已有的做法**泛化**（标题 +100 / 标签 +30 / 正文次数封顶 10；全中优先的分档），
 //!     **不引入新语义** —— 文章那一栏的判定与排序因此与改动前逐条一致；
 //!   · `snippet`（结果行摘要）是新写的，只服务聚合搜索的展示面。
@@ -128,7 +128,7 @@ pub fn like_escape(s: &str) -> String {
 ///
 /// ── 这一层只保证**超集** ───────────────────────────────────────────────────
 /// 它说"不命中"的行才是真不命中；它说"命中"的行还要在内存里用 `count_terms` /
-/// `score_term_sum` 重判一遍（档位与打分只住在内存里，见 `rank_tiered`）。
+/// `score_term_sum` 重判一遍（文章搜索的档位与打分在内存里复核）。
 /// 所以 `ILIKE` 的**大小写不敏感**是承重的：内存判定是
 /// `text.to_lowercase().contains(term_lower)`，而 PG 的 `LIKE` **区分大小写** ——
 /// 正文里写 `ESP32`、查询是 `esp32` 的那些行会被这一层**静默丢掉**，
@@ -206,39 +206,6 @@ pub(crate) fn score_term_sum(
     body: &str,
 ) -> i64 {
     terms.iter().map(|t| score_term(t, title, tags, body)).sum()
-}
-
-/// 多词命中后**分档 + 排序**（20260920 引入，20261006 抽成公共件）：
-///
-/// **全中优先**——多词查询先只留"每个词都命中"的那些（精度优先）；一条全中的都没有时，
-/// 才降级用"部分命中"（召回兜底：搜 "Docker 部署博客" 不该是一片空白）。
-/// 档内按各词分项求和（+ `created_at` 兜底）排序；单词查询只有一档，等价于旧行为。
-///
-/// 入参每行 = `(命中词数, 分数, 时间, 载荷)`；返回载荷（调用方自己装 DTO）。
-/// 文章那一栏的排序与 `search_notes` **同一条规则** —— 抽件前后逐条一致。
-pub(crate) fn rank_tiered<T>(
-    terms_len: usize,
-    rows: Vec<(usize, i64, chrono::NaiveDateTime, T)>,
-) -> Vec<T> {
-    let mut all: Vec<(usize, i64, chrono::NaiveDateTime, T)> = Vec::new();
-    let mut part: Vec<(usize, i64, chrono::NaiveDateTime, T)> = Vec::new();
-    for row in rows {
-        if row.0 == 0 {
-            continue;
-        }
-        if row.0 == terms_len {
-            all.push(row);
-        } else {
-            part.push(row);
-        }
-    }
-    let mut scored = if all.is_empty() { part } else { all };
-    scored.sort_by(|a, b| {
-        b.0.cmp(&a.0)
-            .then_with(|| b.1.cmp(&a.1))
-            .then_with(|| b.2.cmp(&a.2))
-    });
-    scored.into_iter().map(|(_, _, _, t)| t).collect()
 }
 
 /// 结果行摘要：空白折平（换行/多空格折叠成一个空格）后按**字符**截断。
@@ -412,71 +379,8 @@ mod score_tests {
 }
 
 #[cfg(test)]
-mod rank_and_snippet_tests {
-    use super::{rank_tiered, snippet};
-    use chrono::{NaiveDate, NaiveDateTime};
-
-    fn at(y: i32, m: u32, d: u32) -> NaiveDateTime {
-        NaiveDate::from_ymd_opt(y, m, d).unwrap().and_hms_opt(0, 0, 0).unwrap()
-    }
-
-    /// **"全中优先"的本体**：只要有一条全中，部分命中那一档就**整档不出现**——
-    /// 这不是"全中排在前面"的排序，而是**先过滤再排**（见 `rank_tiered` 里那句
-    /// `if all.is_empty() { part } else { all }`，与 `search_notes` 逐字同款）。
-    /// 这条写错的话，"分数更高的部分命中"会跟着全中的结果一起冒出来——精度优先退化成了
-    /// 分数优先，而列表看起来仍然很正常（多出几行而已）。
-    #[test]
-    fn 全中档非空时部分命中整档不出现() {
-        let rows = vec![
-            // 命中 1 个词，但分数高得多、时间也新得多
-            (1usize, 999i64, at(2026, 10, 1), "部分命中"),
-            // 命中全部 2 个词，分数低、时间旧
-            (2usize, 5i64, at(2020, 1, 1), "全中"),
-        ];
-        assert_eq!(rank_tiered(2, rows), vec!["全中"]);
-    }
-
-    /// 全中档里按（命中词数、分数、时间）倒序——**单词查询（`terms_len == 1`）只有这一档**，
-    /// 所以这条同时是"单词查询与旧行为一致"的兜底。
-    #[test]
-    fn 全中档内按分数与时间倒序() {
-        let rows = vec![
-            (2usize, 5i64, at(2026, 10, 1), "分低但新"),
-            (2usize, 50i64, at(2020, 1, 1), "分高但旧"),
-            (2usize, 50i64, at(2026, 9, 1), "分高且新"),
-        ];
-        assert_eq!(rank_tiered(2, rows), vec!["分高且新", "分高但旧", "分低但新"]);
-    }
-
-    /// 一条全中都没有时才降级：此时按分数、再按时间倒序。
-    #[test]
-    fn 没有全中时降级并按分数与时间倒序() {
-        let rows = vec![
-            (1usize, 10i64, at(2026, 1, 1), "分低但新"),
-            (1usize, 50i64, at(2020, 1, 1), "分高但旧"),
-            (1usize, 50i64, at(2026, 9, 9), "分高且新"),
-        ];
-        assert_eq!(rank_tiered(2, rows), vec!["分高且新", "分高但旧", "分低但新"]);
-    }
-
-    #[test]
-    fn 零命中的行被丢弃() {
-        let rows = vec![
-            (0usize, 100i64, at(2026, 1, 1), "没命中"),
-            (1usize, 1i64, at(2020, 1, 1), "命中"),
-        ];
-        assert_eq!(rank_tiered(1, rows), vec!["命中"]);
-    }
-
-    /// 单词查询只有一档：保住"切词前"的老行为（分数 + 时间倒序）。
-    #[test]
-    fn 单词查询与旧行为一致() {
-        let rows = vec![
-            (1usize, 0i64, at(2026, 5, 5), "同分新"),
-            (1usize, 0i64, at(2026, 1, 1), "同分旧"),
-        ];
-        assert_eq!(rank_tiered(1, rows), vec!["同分新", "同分旧"]);
-    }
+mod snippet_tests {
+    use super::snippet;
 
     /// 摘要：折平空白 + 按**字符**截断（中文不被劈成 U+FFFD）。
     #[test]

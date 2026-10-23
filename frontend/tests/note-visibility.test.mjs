@@ -66,7 +66,6 @@ console.log('\n② sea-orm 那几处：公开判据是两半，必须成对');
         'src/routes/comments.rs',
         'src/routes/note_stats.rs',
         'src/routes/sitemap.rs',
-        'src/routes/search.rs',
     ];
     for (const rel of sites) {
         const src = rust(rel);
@@ -77,6 +76,8 @@ console.log('\n② sea-orm 那几处：公开判据是两半，必须成对');
             { pub, vis });
     }
 }
+
+ok(/\.filter\(super::notes::public_condition\(\)\)/.test(rust('src/routes/search.rs')), '聚合搜索复用共享公开判据');
 
 console.log('\n③ 后台「公开文章」页签（`notes.rs` 的 `only_public`）用的是同一口径');
 {

@@ -1,22 +1,35 @@
-import http from "./axios.tsx";
-import type {AggregateResult} from "../frontHome/Head/aggregate";
+import http from './axios';
+import { catalogApi } from '../store/catalogApi';
+import type { AggregateResult, SearchType } from '../frontHome/Head/aggregate';
+export type SearchQuery = { keyword: string; page?: number; pageSize?: number; type?: SearchType };
 
-/** 站内**聚合搜索**（20261006）：一次搜文章 / 说说 / 留言 / 评论。
- *
- *  ⚠️ 与 `NoteMethods.searchNotes`（只搜文章）**并存**，不是替代关系：分类页
- *  （`frontHome/Content/Categories`）与后台仍在用那一个，后端 `/api/public/notes/search`
- *  还同时是 agent 的 `search_notes` 工具。首页那个搜索框改用本函数。
- *
- *  `keyword` 缺席 / 空白时后端回**空结果**（不是整个列表），所以调用方不必自己挡。 */
-function searchAll(data: {keyword?: string}){
-    return http({
-        url: '/api/public/search',
-        method: 'POST',
-        data: data
-    })
+/** Aggregate-only endpoint; article and Agent search keep their contract. */
+function searchAll(data: SearchQuery, signal?: AbortSignal) {
+    return http<{ code: number; message: string; data: AggregateResult }>({
+        url: '/api/public/search', method: 'POST', data, signal,
+    });
 }
-
-/** 只给类型用：`res.data.data` 的形状（axios 那条链是 any，这里手动标一下）。
- *  **不影响运行时**，纯粹是让 `agg` 那个 state 有类型可依。 */
-export type {AggregateResult}
-export {searchAll}
+const searchApi = catalogApi.injectEndpoints({
+    endpoints: build => ({
+        aggregateSearch: build.query<AggregateResult, SearchQuery>({
+            async queryFn(query, { signal }) {
+                try {
+                    const response = await searchAll(query, signal);
+                    const data = response.data?.data;
+                    if (response.status !== 200 || response.data?.code !== 200 || !data ||
+                        ![data.notes, data.talks, data.board, data.comments].every(Array.isArray) || !Number.isFinite(data.total)) {
+                        return { error: { message: response.data?.message || '搜索失败，请稍后重试' } };
+                    }
+                    return { data };
+                } catch (error) {
+                    const message = (error as { response?: { data?: { message?: string } } }).response?.data?.message;
+                    return { error: { message: message || '搜索失败，请稍后重试' } };
+                }
+            },
+            keepUnusedDataFor: 0,
+        }),
+    }),
+});
+export const { useLazyAggregateSearchQuery } = searchApi;
+export { searchAll };
+export type { AggregateResult };
