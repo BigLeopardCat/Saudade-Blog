@@ -10,6 +10,10 @@ updates:
       time: "07:00"
       timezone: Asia/Shanghai
     open-pull-requests-limit: 10
+    # allow.update-types 仅限制常规版本更新；GitHub 的安全更新不受其限制。
+    # 大版本按计划迁移，避免工具链/UI/渲染器升级占满例行维护名额。
+    allow:
+      - update-types: ["version-update:semver-minor", "version-update:semver-patch"]
     commit-message:
       prefix: chore
       prefix-development: chore
@@ -31,6 +35,10 @@ updates:
       time: "07:00"
       timezone: Asia/Shanghai
     open-pull-requests-limit: 10
+    # allow.update-types 仅限制常规版本更新；GitHub 的安全更新不受其限制。
+    # 大版本按计划迁移，避免工具链/UI/渲染器升级占满例行维护名额。
+    allow:
+      - update-types: ["version-update:semver-minor", "version-update:semver-patch"]
     commit-message:
       prefix: chore
       prefix-development: chore
@@ -66,6 +74,10 @@ updates:
       time: "07:00"
       timezone: Asia/Shanghai
     open-pull-requests-limit: 5
+    # allow.update-types 仅限制常规版本更新；GitHub 的安全更新不受其限制。
+    # 大版本按计划迁移，避免工具链/UI/渲染器升级占满例行维护名额。
+    allow:
+      - update-types: ["version-update:semver-minor", "version-update:semver-patch"]
     commit-message:
       prefix: chore
       prefix-development: chore
