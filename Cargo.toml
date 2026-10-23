@@ -45,15 +45,13 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["chrono"] }
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }
-sha2 = "0.10"
+sha2 = "0.11"
 # 密码哈希（20260917 起）：Argon2id，纯 Rust 实现、无 C 依赖
 argon2 = { version = "0.5", features = ["std"] }
 hex = "0.4"
 jsonwebtoken = { version = "10.3.0", features = ["rust_crypto"] }
-# R2 图床（20261006）：SigV4 的 HMAC-SHA256。**没有新增下载**——jsonwebtoken 早就把它
-# 带进依赖树（Cargo.lock 里本来就有 0.12.1），这一行只是把传递依赖提成直接依赖。
-# 引 aws-sdk-s3 要拉几十个 crate，而这里只需要一个 HMAC。
-hmac = "0.12"
+# R2 SigV4：hmac 0.13 / sha2 0.11 共享 digest 0.11，须成对迁移；0.x minor 不保证兼容。
+hmac = "0.13"
 
 # ⚠️ 这一行在 0.11 / 0.12 / 0.13 里**都不等价**（20261007 与 20261013 两次升级各踩到一次
 # "同一行 `default-features = false` 悄悄换了行为"）。每升一次都要重读一遍那一版 crates.io

@@ -53,7 +53,7 @@ pub(super) async fn account<C: ConnectionTrait>(
 }
 
 fn digest(value: serde_json::Value) -> String {
-    format!("{:x}", Sha256::digest(value.to_string().as_bytes()))
+    hex::encode(Sha256::digest(value.to_string().as_bytes()))
 }
 
 pub(super) fn account_version(account: &Account) -> String {
