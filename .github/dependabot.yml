@@ -17,10 +17,11 @@ updates:
       # RustCrypto 的 digest/traits 需要一起迁移，0.x minor 也可能破坏兼容性。
       cargo-crypto:
         patterns: ["hmac", "sha2", "digest", "crypto-common", "block-buffer"]
-      cargo-minor-patch:
+      # 通用组只聚合 patch；0.x minor 可能破坏兼容，和其他 minor 一样独立评审。
+      cargo-patches:
         patterns: ["*"]
         exclude-patterns: ["hmac", "sha2", "digest", "crypto-common", "block-buffer", "jsonwebtoken"]
-        update-types: ["minor", "patch"]
+        update-types: ["patch"]
 
   - package-ecosystem: npm
     directory: "/frontend"
@@ -40,16 +41,20 @@ updates:
         update-types: ["patch"]
       npm-router:
         patterns: ["react-router", "react-router-dom"]
+      npm-pre-one-patches:
+        patterns: ["esbuild", "pixi-live2d-display", "eslint-plugin-react-refresh"]
+        update-types: ["patch"]
       npm-testing:
         patterns: ["@playwright/*", "playwright*", "@testing-library/*", "vitest", "@vitest/*", "jsdom", "@ant-design/cssinjs"]
         update-types: ["minor", "patch"]
       npm-tooling:
+        exclude-patterns: ["esbuild", "eslint-plugin-react-refresh"]
         patterns: ["vite", "@vitejs/*", "esbuild", "typescript", "typescript-eslint", "@typescript-eslint/*", "eslint", "@eslint/*", "eslint-plugin-*", "globals", "sass", "@types/*"]
         update-types: ["minor", "patch"]
       npm-runtime:
         dependency-type: production
         patterns: ["*"]
-        exclude-patterns: ["unified", "remark-*", "rehype-*", "hast-*", "mdast-*", "micromark*", "bytemd", "@bytemd/*", "katex", "react-markdown", "react-syntax-highlighter", "prismjs", "refractor", "mermaid", "dompurify", "react-router", "react-router-dom"]
+        exclude-patterns: ["unified", "remark-*", "rehype-*", "hast-*", "mdast-*", "micromark*", "bytemd", "@bytemd/*", "katex", "react-markdown", "react-syntax-highlighter", "prismjs", "refractor", "mermaid", "dompurify", "react-router", "react-router-dom", "pixi-live2d-display"]
         update-types: ["minor", "patch"]
     # 不屏蔽版本或安全更新；未匹配的更新独立提 PR。
 
