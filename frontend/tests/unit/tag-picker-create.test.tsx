@@ -5,6 +5,7 @@ import { StyleProvider } from '@ant-design/cssinjs/lib/index.js';
 import NoteTagSelect from '../../src/components/NoteTagSelect';
 import { createCatalogStore } from '../helpers/catalogStore';
 import { deferred } from '../helpers/deferred';
+import { catalogApi } from '../../src/store/catalogApi';
 const api = vi.hoisted(() => ({ create: vi.fn(), http: vi.fn() }));
 vi.mock('../../src/apis/axios', () => ({ default: api.http }));
 vi.mock('../../src/apis/TagMethods', async original => ({ ...await original<typeof import('../../src/apis/TagMethods')>(), addTagOne: api.create }));
@@ -16,9 +17,9 @@ beforeEach(() => {
     vi.stubGlobal('matchMedia', () => ({ matches: false, addListener() {}, removeListener() {} }));
     vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
 });
-async function show() {
+async function show(store = createCatalogStore()) {
     const onChange = vi.fn();
-    render(<Provider store={createCatalogStore()}><StyleProvider mock="server" container={document.createElement('div')}><NoteTagSelect value={[]} onChange={onChange} /></StyleProvider></Provider>);
+    render(<Provider store={store}><StyleProvider mock="server" container={document.createElement('div')}><NoteTagSelect value={[]} onChange={onChange} /></StyleProvider></Provider>);
     fireEvent.mouseDown(screen.getByRole('combobox').closest('.ant-select-selector')!);
     const input = await screen.findByPlaceholderText('新建一级标签，如「后端」');
     fireEvent.change(input, { target: { value: '新标签' } });
@@ -47,6 +48,23 @@ describe('inline tag creation distinguishes writes from following reads', () => 
         expect(api.create).toHaveBeenCalledTimes(1);
         expect(onChange).not.toHaveBeenCalled();
         expect(screen.queryByText('新建失败（标签名可能已存在）')).toBeNull();
+    });
+    it('waits out a pre-write read before loading the new tag dictionary', async () => {
+        const store = createCatalogStore();
+        const oldParents = deferred<ReturnType<typeof reply>>();
+        api.http.mockReturnValueOnce(oldParents.promise).mockResolvedValueOnce(reply(200, []))
+            .mockResolvedValueOnce(reply(200, [{ tagKey: 8, title: '新标签', color: '#1677ff', level: 1 }])).mockResolvedValueOnce(reply(200, []));
+        const oldRead = store.dispatch(catalogApi.endpoints.tags.initiate(undefined, { subscribe: false }));
+        api.create.mockResolvedValueOnce(reply(200, 8));
+        const { button, onChange } = await show(store);
+        fireEvent.click(button);
+        await waitFor(() => expect(api.create).toHaveBeenCalledTimes(1));
+        expect(onChange).not.toHaveBeenCalled();
+        oldParents.resolve(reply(200, []));
+        await oldRead.unwrap();
+        await waitFor(() => expect(onChange).toHaveBeenCalledWith([8]));
+        expect(api.http).toHaveBeenCalledTimes(4);
+        expect(store.getState().tags.tag[0].key).toBe(8);
     });
     it('refreshes the shared dictionary and selects the confirmed new ID', async () => {
         api.create.mockResolvedValueOnce(reply(200, 8));

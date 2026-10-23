@@ -85,3 +85,18 @@ updates:
       actions-compatible:
         patterns: ["*"]
         update-types: ["minor", "patch"]
+
+  # Legacy image tests still consume Python packages until their TS migration.
+  - package-ecosystem: pip
+    directory: "/frontend/tests"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 3
+    allow:
+      - update-types: ["version-update:semver-minor", "version-update:semver-patch"]
+    commit-message:
+      prefix: chore
+      prefix-development: chore

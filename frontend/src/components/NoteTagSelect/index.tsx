@@ -3,6 +3,7 @@ import {Button, Divider, Input, Select, Space, Tag, message} from "antd";
 import {useDispatch, useSelector} from "react-redux";
 import {addTagOne, flattenTagOptions} from "../../apis/TagMethods.tsx";
 import {fetchTags} from "../../store/components/tags.tsx";
+import {catalogApi} from "../../store/catalogApi";
 import {ok, errMsg} from "../../apis/ProfileMethods";
 
 /**
@@ -91,6 +92,10 @@ const NoteTagSelect: React.FC<NoteTagSelectProps> = ({
             if (!ok(res)) { message.error(errMsg(res, '新建失败，请重试')); return; }
             const newId = Number(res?.data?.data);
             try {
+                // A pre-write read must finish before requesting the dictionary
+                // that contains the newly created ID (forceRefetch still dedupes).
+                const pending = dispatch<any>(catalogApi.util.getRunningQueryThunk('tags', undefined));
+                if (pending) await pending;
                 await dispatch<any>(fetchTags(true)).unwrap();
             } catch {
                 // The write is already confirmed. Never offer to repeat it just
