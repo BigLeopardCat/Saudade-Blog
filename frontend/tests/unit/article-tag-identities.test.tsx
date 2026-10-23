@@ -1,4 +1,3 @@
-import React from 'react';
 import { render, screen, cleanup } from '@testing-library/react';
 import { afterEach, expect, it } from 'vitest';
 import { renderNoteTags } from '../../src/apis/TagMethods';
