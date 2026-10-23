@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const { http } = vi.hoisted(() => ({ http: vi.fn() }));
 vi.mock('../../src/apis/axios', () => ({ default: http }));
-import { loadTags } from '../../src/pages/Dashboard/Notes/AllTag/loadTags';
+import { loadTags } from '../../src/apis/catalogReads';
 const wrap = (data: unknown, code = 200) => ({ status: 200, data: { code, message: '', data } });
 beforeEach(() => http.mockReset());
 describe('strict tag tree loading', () => {

@@ -1,15 +1,15 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { message } from 'antd';
+import { Provider } from 'react-redux';
+import { createCatalogStore } from '../helpers/catalogStore';
 import { StyleProvider } from '@ant-design/cssinjs/lib/index.js';
 import AllTag from '../../src/pages/Dashboard/Notes/AllTag';
 import { deferred } from '../helpers/deferred';
 
 const api = vi.hoisted(() => ({ load: vi.fn(), addOne: vi.fn(), addTwo: vi.fn(), updateOne: vi.fn(), updateTwo: vi.fn(), del: vi.fn(), dispatch: vi.fn() }));
-vi.mock('../../src/pages/Dashboard/Notes/AllTag/loadTags', () => ({ loadTags: api.load }));
+vi.mock('../../src/apis/catalogReads', () => ({ loadTags: api.load }));
 vi.mock('../../src/apis/TagMethods', () => ({ addTagOne: api.addOne, addTagTwo: api.addTwo, updateTagOne: api.updateOne, updateTagTwo: api.updateTwo, delTag: api.del }));
-vi.mock('react-redux', () => ({ useDispatch: () => api.dispatch }));
-vi.mock('../../src/utils/liveRefresh', () => ({ useLiveRefresh: () => undefined }));
 const initial = [{ key: 7, title: '编程', level: 1, color: '#1677ff', children: [{ key: 7, title: 'TypeScript', level: 2, fatherKey: 7, fatherTag: '编程', color: '#52c41a' }] }];
 const success = { status: 200, data: { code: 200, message: 'ok', data: '' } };
 
@@ -25,7 +25,7 @@ beforeEach(() => {
     for (const write of [api.addOne, api.addTwo, api.updateOne, api.updateTwo, api.del]) write.mockResolvedValue(success);
 });
 async function loaded() {
-    render(<StyleProvider mock="server" container={document.createElement('div')}><AllTag /></StyleProvider>);
+    render(<Provider store={createCatalogStore()}><StyleProvider mock="server" container={document.createElement('div')}><AllTag /></StyleProvider></Provider>);
     await screen.findByText('TypeScript');
 }
 

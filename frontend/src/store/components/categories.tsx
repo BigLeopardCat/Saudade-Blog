@@ -1,51 +1,31 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
-import { Dispatch } from 'react';
-import {CategoriesType} from "../../interface/CategoriesType";
-import {getCategories} from "../../apis/CategoryMethods.tsx";
+import type { CategoriesType } from '../../interface/CategoriesType';
+import { catalogApi } from '../catalogApi';
+
 interface categoryList {
-    categories: CategoriesType[],
-    categoryCount: number
+    categories: CategoriesType[];
+    categoryCount: number;
 }
-
-const init: categoryList = {
-    categories: [],
-    categoryCount: 0
-}
-
-
+const initialState: categoryList = { categories: [], categoryCount: 0 };
 const categoriesSlice = createSlice({
-    name: "categories",
-    initialState: init,
+    name: 'categories',
+    initialState,
     reducers: {
-        setCategories: (state,action:PayloadAction<CategoriesType[]>) => {
-            state.categories = action.payload
+        setCategories(state, action: PayloadAction<CategoriesType[]>) {
+            state.categories = action.payload;
+            state.categoryCount = action.payload.length;
         },
-        setCategoryCount: (state,action) => {
-            state.categoryCount = action.payload
-        }
-    }
-})
+    },
+    extraReducers: builder => builder.addMatcher(catalogApi.endpoints.categories.matchFulfilled, (state, { payload }) => {
+        state.categories = payload;
+        state.categoryCount = payload.length;
+    }),
+});
 
-const fetchCategories = () => {
-    return async (dispatch:Dispatch<PayloadAction<CategoriesType[]>>) => {
-        try {
-            const res = await getCategories()
-            if (res?.data?.code !== 200 || !Array.isArray(res.data.data)) return false
-            const categories = res.data.data
-            dispatch(setCategories(categories))
-            dispatch(setCategoryCount(categories.length))
-            return true
-        }catch (error) {
-            console.error('分类加载失败', error)
-            return false
-        }
-    }
-}
-
-const {setCategories,setCategoryCount} = categoriesSlice.actions
-const categoriesReducer = categoriesSlice.reducer
-
-
-export {setCategories, fetchCategories};
+// Compatibility entry for existing public-site consumers; all reads now share
+// the same RTK Query request. Failed refreshes never replace the last good data.
+const fetchCategories = (forceRefetch = false) => catalogApi.endpoints.categories.initiate(undefined, { subscribe: false, forceRefetch });
+const { setCategories } = categoriesSlice.actions;
+export { setCategories, fetchCategories };
 export type { categoryList };
-export default categoriesReducer
+export default categoriesSlice.reducer;

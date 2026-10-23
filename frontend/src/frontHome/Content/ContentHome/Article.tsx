@@ -128,7 +128,7 @@ const Article:React.FC<ArticleOption> = ({ item, index, Categories, avatar, name
                         高低不齐。挂在这一行上则零高度成本，桌面/移动两套布局都不用改。 */}
                     <div className="ArticleHead">
                         <h4 style={{ color: Categories.find(category => category.categoryTitle === item.noteCategory)?.color }}>
-                            # {Categories.find(category => category.categoryKey === item.noteCategory)?.categoryTitle ?? ''}
+                            # {Categories.find(category => category.categoryKey === Number(item.noteCategory))?.categoryTitle ?? ''}
                         </h4>
                         <NoteStats item={item} />
                     </div>

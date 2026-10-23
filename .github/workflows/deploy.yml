@@ -248,10 +248,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          # 20261013：`20` 取的是 20.x 最新（≥ 20.19），正好卡在 `vite@8` 的
-          # `engines.node`（`^20.19.0 || >=22.12.0`）之上。**别再往回钉 20.18 之类**
-          # ——npm 只会 warning，退化到运行期才炸。
-          node-version: 20
+          # 开发、测试和发布统一使用受支持的 Node 24 LTS。
+          node-version-file: .node-version
           package-manager-cache: false
           cache: npm
           cache-dependency-path: frontend/package-lock.json
@@ -386,7 +384,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 20
+          node-version-file: .node-version
           package-manager-cache: false
           cache: npm
           cache-dependency-path: frontend/package-lock.json
@@ -457,7 +455,7 @@ jobs:
         if: needs.check-changes.outputs.deploy == 'true'
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 20
+          node-version-file: .node-version
           package-manager-cache: false
 
       - name: Build Frontend

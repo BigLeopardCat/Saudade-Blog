@@ -1,8 +1,10 @@
-import React, {useMemo, useState} from "react";
+import React, {useMemo, useRef, useState} from "react";
 import {Button, Divider, Input, Select, Space, Tag, message} from "antd";
 import {useDispatch, useSelector} from "react-redux";
 import {addTagOne, flattenTagOptions} from "../../apis/TagMethods.tsx";
 import {fetchTags} from "../../store/components/tags.tsx";
+import {catalogApi} from "../../store/catalogApi";
+import {ok, errMsg} from "../../apis/ProfileMethods";
 
 /**
  * 文章标签选择控件（编辑器 / 后台列表行内弹窗 / 搜索表单 三处共用）。
@@ -75,17 +77,33 @@ const NoteTagSelect: React.FC<NoteTagSelectProps> = ({
         [value, colorOf],
     );
 
+    const createLock = useRef(false);
     const handleCreate = async () => {
+        if (createLock.current) return;
         const title = newTagName.trim();
         if (!title) {
             message.warning('请输入标签名');
             return;
         }
+        createLock.current = true;
         setCreating(true);
         try {
             const res = await addTagOne({title, color: colorForName(title)});
+            if (!ok(res)) { message.error(errMsg(res, '新建失败，请重试')); return; }
             const newId = Number(res?.data?.data);
-            await dispatch<any>(fetchTags());
+            try {
+                // A pre-write read must finish before requesting the dictionary
+                // that contains the newly created ID (forceRefetch still dedupes).
+                const pending = dispatch<any>(catalogApi.util.getRunningQueryThunk('tags', undefined));
+                if (pending) await pending;
+                await dispatch<any>(fetchTags(true)).unwrap();
+            } catch {
+                // The write is already confirmed. Never offer to repeat it just
+                // because the following read failed.
+                setNewTagName('');
+                message.warning(`标签「${title}」已创建，列表刷新失败，请刷新后选择`);
+                return;
+            }
             if (Number.isInteger(newId) && newId > 0) {
                 onChange?.([...safeValue, newId]);
             } else {
@@ -98,6 +116,7 @@ const NoteTagSelect: React.FC<NoteTagSelectProps> = ({
         } catch {
             message.error('新建失败（标签名可能已存在）');
         } finally {
+            createLock.current = false;
             setCreating(false);
         }
     };

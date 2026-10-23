@@ -85,7 +85,7 @@
     "@testing-library/react": "16.3.3",
     "@testing-library/user-event": "14.6.8",
     "@types/markdown-navbar": "^1.4.4",
-    "@types/node": "20.19.43",
+    "@types/node": "24.19.2",
     "@types/react": "^18.2.55",
     "@types/react-dom": "^18.2.19",
     "@types/react-syntax-highlighter": "^15.5.11",
@@ -101,9 +101,13 @@
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.72.0",
     "vite": "^8.3.4",
-    "vitest": "4.1.0"
+    "vitest": "4.1.12"
   },
   "overrides": {
     "gh-pages": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=24.22.1 <25",
+    "npm": ">=11 <12"
   }
 }

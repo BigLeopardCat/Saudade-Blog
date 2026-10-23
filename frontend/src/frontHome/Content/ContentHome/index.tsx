@@ -408,7 +408,7 @@ const ContentHome = () => {
                                 )}
                             </div>
                             <div className="topContent">
-                                <h4># {Categories.find(c => c.categoryKey === item.noteCategory)?.categoryTitle}</h4>
+                                <h4># {Categories.find(c => c.categoryKey === Number(item.noteCategory))?.categoryTitle}</h4>
                                 <h3 className="contentTitle">{item.noteTitle}</h3>
                                 {/* 简介的展开/收回在 `.TopArticle .topContent .ArticleDescription`
                                     里（定高槽 + 槽内绝对定位 ⇒ 它长高不参与布局）。
