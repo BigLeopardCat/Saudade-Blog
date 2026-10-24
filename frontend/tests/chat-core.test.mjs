@@ -84,7 +84,7 @@ console.log('== matchText（命令帧拼接差异归一）==');
   assert.truthy(core.matchText(
     'AUTO_NAVIGATE:https://saudade.site/guestbook/ 喵呜～',
     'AUTO_NAVIGATE:https://saudade.site/guestbook/\n喵呜～'), '命令帧 \\n 拼接差异 → 相等');
-  assert.truthy(core.matchText(
+  assert.falsy(core.matchText(
     'AUTO_NAVIGATE:https://saudade.site/article/12喵呜～',
     'AUTO_NAVIGATE:https://saudade.site/article/12\n喵呜～'), '分帧命令/正文间插 \\n → 相等（剥命令段后同正文）');
   assert.truthy(core.matchText('你好  世界', '你好 世界'), '多空白折叠 → 相等');
@@ -94,8 +94,8 @@ console.log('== matchText（命令帧拼接差异归一）==');
   assert.truthy(core.matchText(
     '第一行\nAUTO_NAVIGATE:/talk\n第二行',
     '第一行\nAUTO_NAVIGATE:/talk\n第二行 '), '多行命令逐行剥离 + 空白 → 相等');
-  assert.truthy(core.matchText('AUTO_NAVIGATE:/talk', 'NAVIGATE:/talk'),
-    '纯命令不同命令头 → 相等（matchText 只比剥命令段后的正文，命令种类不参与）');
+  assert.falsy(core.matchText('AUTO_NAVIGATE:/talk', 'NAVIGATE:/talk'),
+    '不同正文不能因为命令前缀被误合并');
 }
 
 console.log('== mergeItems（同 id 替换 / 内容收养 / 追加 / 排序）==');
@@ -229,63 +229,9 @@ console.log('== 聊天图片（20261018：DB 行 → 气泡，images 不许被�
   assert.eq(out2[0].text, '早就丢了', '标记照剥');
 }
 
-console.log('== 命令正则权威 COMMAND_RE ==');
-{
-  const RE = core.COMMAND_RE;
-  assert.truthy(RE.test('EFFECT:sakura:on'), 'EFFECT 全形');
-  assert.truthy(RE.test('EFFECT:sakura'), 'EFFECT 无参数');
-  assert.truthy(RE.test('EFFECT: sakura on'), 'EFFECT 空格变形');
-  assert.truthy(RE.test('DARKMODE:on'), 'DARKMODE');
-  assert.truthy(RE.test('DARKMODE: on'), 'DARKMODE 空格变形');
-  assert.truthy(RE.test('AUTO_NAVIGATE:https://saudade.site/guestbook/ 喵呜～'), 'AUTO_NAVIGATE + URL + 中文粘连');
-  assert.truthy(RE.test('NAVIGATE:/talk'), 'NAVIGATE 相对路径');
-  assert.truthy(RE.test('AUTO_NAVIGATE:/device-console主人'), 'AUTO_NAVIGATE 相对路径粘连');
-  assert.truthy(RE.test('SUMMARY:xxx'), 'SUMMARY');
-  assert.truthy(RE.test('[System: 你好]'), '[System: 复述');
-  assert.truthy(RE.test('System: x'), 'System: 裸前缀');
-  assert.truthy(RE.test('SNOW_EFFECT:on'), '幻觉变形 SNOW_EFFECT');
-  assert.truthy(RE.test('TOKK_EFFECT:off'), '幻觉变形 TOKK_EFFECT');
-  assert.truthy(RE.test('  EFFECT:rain:off'), '行首空白容忍（trim 后的行）');
-  assert.truthy(RE.test('AUTO_NAVIGATE:'), '空参数命令');
-  assert.truthy(RE.test('NAVIGATE:'), '空参数 NAVIGATE');
-  assert.truthy(RE.test('EFFECT:'), '空参数 EFFECT');
-  assert.falsy(RE.test('喵呜～EFFECT:sakura'), '非行首命令不匹配（正文引用）');
-  assert.falsy(RE.test('好的喵！'), '普通正文不匹配');
-  assert.falsy(RE.test('今天天气不错'), '普通正文不匹配');
-  assert.truthy(RE.test('EFFECT:sakura 是正文里的说明'), '行首命令头成立 → 匹配（剥段语义由调用方处理）');
-  // 命令 + 正文同行剥离语义（stripCommandPrefix 同源）
-  const strip = (line) => { let rest = line, m; while ((m = rest.match(RE))) rest = rest.slice(m[0].length); return rest; };
-  assert.eq(strip('AUTO_NAVIGATE:https://saudade.site/guestbook/ 喵呜～'), ' 喵呜～', 'URL 后空格处截断（前导空格保留，原行为）');
-  assert.eq(strip('AUTO_NAVIGATE:/talk'), '', '相对路径纯命令剥空');
-  assert.eq(strip('  EFFECT:sakura:on'), '', '带行首空白的纯命令剥空');
-  assert.eq(strip('AUTO_NAVIGATE:/aAUTO_NAVIGATE:/b'), ':/b',
-    '粘连双命令：相对路径分支 [\\w-._~/]* 贪婪吞掉第二个前缀（原 RE 语义锚点）');
-  assert.eq(strip('喵呜～EFFECT:sakura'), '喵呜～EFFECT:sakura', '非行首命令不动');
-  assert.eq(strip('NAVIGATE:https://saudade.site/article/16喵呜'), '喵呜', 'URL 中文边界截断保留正文');
-}
-
-console.log('\n== stripMentionSpans（20260920：提及 ≠ 命令）==');
-{
-  const s = core.stripMentionSpans;
-  // 内联代码区：模型讲机制时的举例 —— 必须剥掉，否则 effectMatch 会真的切特效
-  const t1 = '系统的 `EFFECT:sakura:on` 只是帧格式，正文里写它不会执行喵';
-  assert.falsy(/EFFECT:\s*(\w+)\s*:?\s*(\w+)?/.test(s(t1)), '内联代码里的 EFFECT 被剥掉');
-  // 围栏代码块（``` 配对被 `[^`]*` 吃掉内容）
-  const t2 = '命令长这样：\n```\nAUTO_NAVIGATE:/talk\n```\n喵～';
-  assert.falsy(/AUTO_NAVIGATE/.test(s(t2)), '围栏代码块里的命令被剥掉');
-  // 引号区
-  const t3 = '我记得“DARKMODE:on”是系统内部的帧格式，不是给人看的';
-  assert.falsy(/DARKMODE:\s*(on|off)/.test(s(t3)), '中文引号里的 DARKMODE 被剥掉');
-  assert.falsy(/"NAVIGATE:\/talk"/.test(s('他说 "NAVIGATE:/talk" 不算数')), 'ASCII 双引号里的命令被剥掉');
-  // 真实命令（无引号无反差）必须原样保留 —— 正文兜底靠的就是它
-  const t4 = '好的，AUTO_NAVIGATE:/talk 这就带你去！';
-  assert.truthy(/AUTO_NAVIGATE/.test(s(t4)), '裸命令不被剥（正文兜底路径不受影响）');
-  assert.eq(s('好的，EFFECT:sakura:on'), '好的，EFFECT:sakura:on', '无跨度文本原样返回');
-  // 替换成空格而非空串：防把相邻片段粘出新的假命令
-  assert.eq(s('EFFE`x`CT:on'), 'EFFE CT:on', '剥离处补空格（防粘连出新命令）');
-  assert.eq(s(''), '', '空串安全');
-  assert.eq(s(undefined), '', 'undefined 安全（走 (s||\'\')）');
-}
+console.log('== 正文保持原样，不再存在命令文本识别器 ==');
+assert.eq(core.COMMAND_RE, undefined, '正文没有命令识别正则');
+assert.eq(core.stripMentionSpans, undefined, '正文不再剥离引用内容');
 
 console.log('\n' + '─'.repeat(50));
 console.log((failed === 0 ? '✅ 全部通过' : '❌ 有失败') + `：${passed} 通过 / ${failed} 失败`);

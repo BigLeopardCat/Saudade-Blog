@@ -112,7 +112,7 @@ if (thrown) {
 
 // ── ④ 判据自检：正常的 SSE 响应**不**被误伤（否则这条守卫会把全部对话打死）───
 thrown = null;
-try { await guardOf('text/event-stream; charset=utf-8', 'data: __END__\n\n'); }
+try { await guardOf('text/event-stream; charset=utf-8', 'event: done\ndata: {}\n\n'); }
 catch (e) { thrown = e; }
 eq(thrown, null, '④ text/event-stream（带 charset 参数）照常放行 —— 守卫不误伤正常流');
 

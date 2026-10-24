@@ -295,14 +295,15 @@ for (const f of ['chat-stream.js', 'chat-engine.js', 'chat-render.js', 'chat-ses
   ok(!/hideAsk\(\)/.test(finSeg.split('\n').map(stripComment).join('\n')),
      'chat-stream.js：收尾段没有 hideAsk 暗门（注释里提到不算）');
   // 上报替换掉的静默 return（缺字段的确认帧 / 终止帧之后的帧）
-  ok(/__CONFIRM__ 帧不可用/.test(s) && /终止帧之后又收到一帧/.test(s),
-     'chat-stream.js：确认帧与终止帧两处静默失败改为上报');
+  const protocol = W('chat-protocol.js');
+  ok(/throw new Error/.test(protocol) && /if \(terminal\)/.test(protocol),
+     '非法或迟到事件必须显式失败');
 }
 
 {
   // 帧协议与版本：__CONFIRM__ 解析仍在，autoload/loader.ts 的 ?v= 与 VER 一致
   const s = W('chat-stream.js');
-  ok(/text\.startsWith\('__CONFIRM__:'\)/.test(s), 'chat-stream.js 仍解析 __CONFIRM__ 帧');
+  ok(s.includes("type === 'confirmation'"), '确认卡只由具名事件产生');
   ok(/confirm_token: opts\.confirmToken/.test(s), '请求体带 confirm_token');
   const ver = (W('boot.js').match(/const VER = '([^']+)'/) || [])[1];
   const idx = readFileSync(path.join(here, '../src/components/Live2dAgent/loader.ts'), 'utf8');

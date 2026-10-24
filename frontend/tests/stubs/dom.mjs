@@ -25,6 +25,7 @@
  */
 import { readFileSync, existsSync } from 'node:fs';
 import vm from 'node:vm';
+import { pathToFileURL } from 'node:url';
 
 class Style {
   constructor() { this._p = {}; }
@@ -248,11 +249,12 @@ export function installDom() {
  */
 export function installScriptLoader(dir) {
   document.head.appendChild = (el) => {
-    setTimeout(() => {
-      if (el.tagName === 'SCRIPT' && el.src && el.src.includes('/live2d-widgets/') && el.type !== 'module') {
+    setTimeout(async () => {
+      if (el.tagName === 'SCRIPT' && el.src && el.src.includes('/live2d-widgets/')) {
         const name = el.src.split('/').pop().split('?')[0];
         const p = dir + '/' + name;
-        if (existsSync(p)) vm.runInThisContext(readFileSync(p, 'utf8'), { filename: name });
+        if (existsSync(p) && el.type === 'module') await import(pathToFileURL(p).href);
+        else if (existsSync(p)) vm.runInThisContext(readFileSync(p, 'utf8'), { filename: name });
       }
       if (el.onload) el.onload(); else if (el.onerror) el.onerror();
     }, 0);

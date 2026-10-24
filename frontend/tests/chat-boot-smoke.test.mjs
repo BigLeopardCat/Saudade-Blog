@@ -65,9 +65,9 @@ globalThis.__chatEnhance = () => {};
 // 照建、waifu-active 照加）——这正是本 harness 要覆盖的形状，别再加桩把它盖回假绿。
 // fetch 桩：history 空 + 一次 SSE 流（过程帧 + 正文帧 + 结束标记）
 const FRAMES = [
-  'data: ' + JSON.stringify('__PROCESS__:🧭 计划') + '\n\n',
-  'data: ' + JSON.stringify('喵呜～测试回复') + '\n\n',
-  'data: __END__\n\n',
+  'event: progress\ndata: ' + JSON.stringify('🧭 计划') + '\n\n',
+  'event: text\ndata: ' + JSON.stringify('喵呜～测试回复') + '\n\n',
+  'event: done\ndata: {}\n\n',
 ];
 let streamCount = 0;
 globalThis.fetch = async (url, opts) => {

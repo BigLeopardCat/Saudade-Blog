@@ -18,6 +18,7 @@
 // 两处切片锚点都做非空校验：找不到就退出，否则正则漂了会变成"零断言通过"，
 // 那种绿比红更坏。
 import { readFileSync } from 'fs';
+import '../public/live2d-widgets/chat-protocol.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -46,8 +47,8 @@ const sliceBetween = (startAnchor, endAnchor, label, withEnd = false) => {
 
 // ── 切出真源码：① 帧分支（抛异常那一段） ② catch 里的 errMsg 取值 ──────────────
 const branchSrc = sliceBetween(
-    "if (payload.startsWith('__ERROR__:'))",
-    "if (payload === '__END__' || payload === '__NAV_END__')",
+    "if (type === 'error')",
+    "if (type === 'done')",
     '帧分支',
 );
 const errMsgSrc = sliceBetween(
@@ -58,7 +59,11 @@ const errMsgSrc = sliceBetween(
 );
 
 /** 在桩环境里跑一遍真帧分支：给载荷，返回它抛出来的那个 error。 */
-const handleFrame = new Function('payload', branchSrc + '\nreturn null;');
+const branch = new Function('type', 'data', branchSrc + '\nreturn null;');
+const handleFrame = (wire) => {
+  const parser = globalThis.__waifuChatProtocol.createStream(({type, data}) => branch(type, data));
+  parser.feed(wire);
+};
 /** 在桩环境里跑一遍真 errMsg 取值。 */
 const errMsgOf = new Function('e', errMsgSrc + "\nreturn errMsg;");
 
@@ -66,7 +71,7 @@ const errMsgOf = new Function('e', errMsgSrc + "\nreturn errMsg;");
 const SERVER_TEXT = '服务这边出了点问题，这一轮没能生成回复，请再说一次。';
 
 // ── ① JSON 编码的载荷：解出来 → userText 原样，不套前缀 ──────────────────────
-const frameOf = (text) => '__ERROR__:' + JSON.stringify(text);
+const frameOf = (text) => 'event: error\ndata: ' + JSON.stringify(text) + '\n\n';
 
 let thrown = null;
 try { handleFrame(frameOf(SERVER_TEXT)); } catch (e) { thrown = e; }
@@ -87,15 +92,13 @@ ok(errMsgOf(oldShape) !== errMsgOf(thrown || oldShape),
    '② 判据自检：加了 userText 与没加**取值不同**（这一格真被测到了）');
 
 // ── ③ 载荷不是合法 JSON 时按原文兜底（别把载荷吃了）──────────────────────────
-let rawThrown = null;
-try { handleFrame('__ERROR__:服务响应超时，请稍后重试'); } catch (e) { rawThrown = e; }
-ok(rawThrown !== null, '③ 裸文本载荷也抛异常');
-if (rawThrown) {
-    eq(rawThrown.userText, '服务响应超时，请稍后重试', '③ JSON.parse 失败时保留原文（超时话术照常展示）');
-    ok(!errMsgOf(rawThrown).startsWith('网络错误'), '③ 超时话术同样不带「网络错误: 」前缀');
+okThrowsMalformed();
+function okThrowsMalformed() {
+  let error;
+  try { handleFrame('event: error\ndata: unstructured\n\n'); } catch (e) { error = e; }
+  ok(!!error && !error.userText, '③ 非 JSON 错误不能冒充合法服务端文案');
 }
 
-// ── ④ 带引号/换行的载荷不被撕坏（JSON 编码就是为这个）────────────────────────
 const nasty = 'line1\n\nline2 "quoted" \\ tail';
 let nastyThrown = null;
 try { handleFrame(frameOf(nasty)); } catch (e) { nastyThrown = e; }

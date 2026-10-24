@@ -190,7 +190,7 @@ console.log('\n⑥ 版本号：改了 widget 脚本必须 bump（nginx 对 live2
     const ver = (widget.match(/const VER = '([^']+)'/) || [])[1];
     ok(!!ver, '能读到 boot.js 的 VER');
     // 与本次静态资源版本同步，防止 immutable 缓存继续加载旧脚本。
-    ok(ver === '20261024b', 'VER 与当前组件发布版本一致', { ver });
+    ok(ver === '20261025a', 'VER 与当前组件发布版本一致', { ver });
     const tsx = readFileSync(path.join(root, 'src/components/Live2dAgent/loader.ts'), 'utf8');
     ok(tsx.includes('boot.js?v=' + ver), 'Live2dAgent 的 ?v= 与 VER 一致');
 }

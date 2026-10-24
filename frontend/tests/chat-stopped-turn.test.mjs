@@ -134,7 +134,7 @@ globalThis.fetch = async (url, opts) => {
     const mode = nextMode;
     nextMode = 'abortable';
     const enc = new TextEncoder();
-    const frames = ['data: ' + JSON.stringify('正在读这篇') + '\n\n'];
+    const frames = ['event: text\ndata: ' + JSON.stringify('正在读这篇') + '\n\n'];
     let i = 0;
     // 只有 abort 能结束这一条（真实的 SSE 就是这样一直挂着）；'ignore' = 模拟
     // "浏览器对已开始读取的流 abort 不触发 AbortError"那个边界（3s 保险的用武之地）
