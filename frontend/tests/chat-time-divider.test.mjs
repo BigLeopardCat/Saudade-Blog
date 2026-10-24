@@ -182,12 +182,12 @@ globalThis.fetch = async (url, opts) => {
     if (streamMode === 'error-frame') {
       // agent 重启：Rust 上游断开 → 发 __ERROR__ 帧（chat.rs:546 真实格式：裸前缀 + JSON 字符串）
       const enc = new TextEncoder();
-      const FRAMES = ['data: __ERROR__:"与 Agent 的连接中断，回复可能不完整"\n\n'];
+      const FRAMES = ['event: error\ndata: "与 Agent 的连接中断，回复可能不完整"\n\n'];
       let i = 0;
       return { ok: true, ...sseHeaders(), body: { getReader: () => ({ read: async () => (i < FRAMES.length ? { done: false, value: enc.encode(FRAMES[i++]) } : { done: true, value: undefined }) }) } };
     }
     const enc = new TextEncoder();
-    const FRAMES = ['data: ' + JSON.stringify('喵呜测试') + '\n\n', 'data: __END__\n\n'];
+    const FRAMES = ['event: text\ndata: ' + JSON.stringify('喵呜测试') + '\n\n', 'event: done\ndata: {}\n\n'];
     let i = 0;
     return { ok: true, ...sseHeaders(), body: { getReader: () => ({ read: async () => (i < FRAMES.length ? { done: false, value: enc.encode(FRAMES[i++]) } : { done: true, value: undefined }) }) } };
   }

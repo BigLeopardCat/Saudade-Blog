@@ -10,7 +10,7 @@ export function loadAgent(): Promise<void> {
             try {
                 await new Promise<void>((resolve, reject) => {
                     const script = document.createElement('script');
-                    script.src = '/live2d-widgets/boot.js?v=20261024b';
+                    script.src = '/live2d-widgets/boot.js?v=20261025a';
                     script.async = true;
                     const fail = () => {
                         window.clearTimeout(timer);

@@ -38,50 +38,14 @@ const ok = (cond, name, extra) => {
   console.log('  ✗ ' + name + (extra ? '\n      ' + extra : ''));
 };
 
-// ── ① 只认程序帧 ─────────────────────────────────────────────────────────────
+// Only named command events enter the action buffer.
 {
-  ok(/let programCmds = \[\];/.test(s), 'chat-stream.js 有独立的程序命令缓冲 programCmds');
-  ok(/text\.startsWith\('__CMD__:'\)/.test(s), '解析 `__CMD__:` 帧');
-  ok(/JSON\.parse\(text\.slice\('__CMD__:'\.length\)\)/.test(s),
-     '  帧体按 JSON 解（结构化命令，不是文本前缀）');
-  const iCmd = s.indexOf("text.startsWith('__CMD__:')");
-  const iPush = s.indexOf('programCmds.push(cmd)');
-  ok(iCmd > 0 && iPush > iCmd, '  解析后进 programCmds 缓冲');
-  // 分支必须在 COMMAND_RE 分流之前——晚于它，帧体会落进 displayText（渲染出一坨
-  // JSON）或落进 cmdText（等于正文命令照样执行）
-  const iSplit = s.indexOf('ctx.core.COMMAND_RE.test(text)');
-  ok(iCmd > 0 && iSplit > iCmd, '  `__CMD__` 分支在正文/命令行分流**之前**');
-  const seg = s.slice(iCmd, iPush + 340);
-  ok(/continue;/.test(seg), '  处理完就 continue（不进正文/命令行两条路）');
-  ok(!/displayText/.test(seg) && !/cmdText/.test(seg),
-     '  这个分支碰都不碰 displayText/cmdText');
-  // 20261002：进缓冲之后**立刻处置一次**（到达即执行），且传 false = 不许走
-  // 整页跳转那一支——整页装载掐断 SSE，本轮回复随之丢失，它只能等流尾。
-  ok(/applyCmd\(cmd, contentSpan, false\)/.test(seg),
-     '  进缓冲后当场处置一次（applyCmd(..., false)：只做能当场做的）');
-}
-
-// ── ② 打回时按 scope 决定清不清命令缓冲 ──────────────────────────────────────
-{
-  const i = s.indexOf("text === '__RESET__'");
-  const seg = i >= 0 ? s.slice(i, s.indexOf('continue;', i)) : '';
-  ok(i >= 0, '找到 `__RESET__` 分支');
-  ok(/const scope = mScope \? mScope\[1\] : 'all';/.test(seg),
-     '帧形 `__RESET__:<scope>:<理由>`，缺 scope 段按 all（= 旧行为，保守那一侧）');
-  ok(/if \(scope !== 'text'\) programCmds = \[\];/.test(seg),
-     '只有 scope=all（决策被推翻）才清 programCmds',
-     'scope=text 是终局 fallback：execute 跑过、checker PASS 过，命令是已发生的事实'
-     + '——清掉它，气泡最前面那块系统印的"页面已跳转：…"就成了系统说它没做的事');
-  // 反向锁：这一段里 `programCmds = []` 只许出现一次（就是上面那条带 scope 的）。
-  // 多出来的一处必然是"又写了个无条件清"——而它长得完全正常，只靠上面两条正则
-  // 抓不住（两条都在时，无条件那条会躲在 scoped 那条后面）。
-  const clears = (seg.match(/programCmds = \[\]/g) || []).length;
-  ok(clears === 1, `这个分支里清缓冲只出现一次（实得 ${clears}）`);
-
-  // 另一半：Rust / golden 读的是同一个 scope。跨语言对账放在 agent 仓
-  // （tests/test_reset_scope.py），这里只确认前端没有把它读成别的东西。
-  ok(!/__RESET__:replan|__RESET__:fallback/.test(s),
-     'scope 只有 all/text 两个取值（不另造同义词）');
+  const i = s.indexOf("if (type === 'command')");
+  const seg = s.slice(i, s.indexOf('displayText += data', i));
+  ok(i >= 0 && /programCmds.push\(data\)/.test(seg), '具名命令进入独立缓冲');
+  ok(/applyCmd\(data, contentSpan, false\)/.test(seg), '允许 SPA 动作到达即执行');
+  ok(!/text.startsWith\('__CMD__:/.test(s), '正文不识别控制前缀');
+  ok((s.match(/programCmds = \[\]/g) || []).length === 1, '没有重置帧能清除命令缓冲');
 }
 
 // ── ③ 执行只吃这个缓冲，三处调用点都换过来了 ─────────────────────────────────
@@ -119,7 +83,7 @@ const ok = (cond, name, extra) => {
   }
   // 反向哨兵：命令前缀仍然**隐藏**（不渲染），只是不再执行——删伪装会把命令行
   // 当正文渲染给用户看（历史 bug：strip_command_lines 留下的空行/裸命令）
-  ok(/COMMAND_RE\.test\(text\)/.test(body), '  命令行仍然照旧不进正文（只隐藏、不执行）');
+  ok(!/COMMAND_RE/.test(body), '正文不会按命令前缀隐藏');
 }
 
 console.log(`\n${fail ? '✗' : '✓'} agent-cmd-program-only：${pass} 通过 / ${fail} 失败`);

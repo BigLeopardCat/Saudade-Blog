@@ -94,6 +94,7 @@ hmac = "0.13"
 # 真要退回"根证书编进二进制"，0.13 里没有这条路（要换 native-tls，或自己装 CryptoProvider），
 # 得单独立项，别顺手带上。
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "stream", "charset"] }
+eventsource-stream = "=0.2.3"
 futures = "0.3"
 async-stream = "0.3"
 jieba-rs = { version = "=0.10.3", default-features = false, features = ["default-dict"] }

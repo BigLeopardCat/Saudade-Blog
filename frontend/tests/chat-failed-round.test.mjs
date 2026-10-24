@@ -104,7 +104,7 @@ globalThis.fetch = async (url, opts) => {
   if (u.includes('/api/chat/stream')) {
     streamCalls++;
     const enc = new TextEncoder();
-    const FRAMES = ['data: ' + JSON.stringify('喵') + '\n\n', 'data: __END__\n\n'];
+    const FRAMES = ['event: text\ndata: ' + JSON.stringify('喵') + '\n\n', 'event: done\ndata: {}\n\n'];
     let i = 0;
     return { ok: true, ...sseHeaders(), body: { getReader: () => ({ read: async () => (i < FRAMES.length ? { done: false, value: enc.encode(FRAMES[i++]) } : { done: true, value: undefined }) }) } };
   }

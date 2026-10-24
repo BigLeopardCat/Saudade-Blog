@@ -1,4 +1,10 @@
 mod pending;
+mod protocol;
+#[cfg(test)]
+mod stream_tests;
+use protocol::{Frame, event as stream_event};
+use eventsource_stream::Eventsource;
+use axum::response::sse::Sse;
 mod approval;
 pub use approval::cancel_handler;
 use approval::claim_confirm_token;
@@ -7,7 +13,7 @@ use approval::{b64url_decode, token_jti};
 
 use axum::{
     Json,
-    body::{Body, Bytes},
+    body::Bytes,
     extract::{Query, Request, State},
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
@@ -872,23 +878,7 @@ fn derive_conv_title(content: &str) -> Option<String> {
 /// 剥离命令帧行（AUTO_NAVIGATE:/NAVIGATE:/EFFECT:/DARKMODE: 前缀行）。
 /// 帧是执行指令不是对话内容——前端已从流式帧/命令帧单独收到命令；存进
 /// chat_history 的带帧文本会污染 few-shot：历史 AI 消息全是帧开头，模型学到
-/// "回复要写帧"（自强化循环，12:30 轮最终回复即带 AUTO_NAVIGATE: 前缀）。
-/// 存库只留干净正文。
-fn strip_command_lines(reply: &str) -> String {
-    reply
-        .lines()
-        .filter(|l| {
-            !(l.starts_with("AUTO_NAVIGATE:")
-                || l.starts_with("NAVIGATE:")
-                || l.starts_with("EFFECT:")
-                || l.starts_with("DARKMODE:"))
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-        .trim()
-        .to_string()
-}
-
+/// Save visible assistant text verbatim; control events never enter this value.
 async fn save_assistant_reply(
     db: &sea_orm::DatabaseConnection,
     uid: i32,
@@ -901,7 +891,7 @@ async fn save_assistant_reply(
         user_id: Set(uid),
         conversation_id: Set(conversation_id),
         role: Set("assistant".into()),
-        content: Set(strip_command_lines(&reply)),
+        content: Set(reply),
         ..Default::default()
     }.save(db).await;
 
@@ -1548,7 +1538,6 @@ const TASK_OPEN_STATES: [&str; 3] = ["submitted", "running", "input_required"];
 /// 同样有害（三天前没做完的事突然被翻出来重问，比忘掉更糟），所以给一个宽但有限的口子。
 const TASK_READ_TTL_HOURS: i64 = 72;
 /// `goal` / `pending_question` 列上限（= 迁移里的 varchar(300)）
-const TASK_TEXT_COL_MAX: usize = 300;
 /// `steps` 列上限（审计线索，非执行依据；超出只存前缀，绝不为了"看起来是合法 JSON"
 /// 去改写内容——解不出来时读侧会如实给 Null）
 ///
@@ -1561,9 +1550,7 @@ const TASK_TEXT_COL_MAX: usize = 300;
 /// `.chars().take()` 数的是**字符**。utf8mb4 下 1 字符 ≤ 4 字节 ⇒
 /// 16000 × 4 = 64000 < 65535，最坏情况下也顶不到列宽（超过列宽在严格模式下是
 /// 1406，那一行会整个落不进去）。再往上调之前，先把这条不等式重算一遍。
-const TASK_STEPS_COL_MAX: usize = 16000;
 /// 幂等键列上限（= 迁移里的 varchar(80)）
-const TASK_IDEM_COL_MAX: usize = 80;
 
 /// 任务落库（20260927）：agent 在 planner 认定"这一轮做不完"时随 `__TASK__` 发来的
 /// 结构化声明。**按 `task_id` upsert，不做"新的顶掉旧的"**——这是与 `pending_action`
@@ -1571,90 +1558,6 @@ const TASK_IDEM_COL_MAX: usize = 80;
 /// 这张表装**可以同时存在的多件事**（跨技能排队正是靠这一点）。
 /// `let _ =` 吞错，与 execution_log / pending_action 同口径：辅助事实，落库失败不阻断
 /// 对话主链路（下一轮少一条线索，而不是这一轮报错）。
-async fn save_agent_task(
-    db: &sea_orm::DatabaseConnection,
-    uid: i32,
-    conversation_id: i32,
-    v: &serde_json::Value,
-) {
-    // 没有 task_id 就没有可对齐的键（重发会变成新行、幂等键也就无从谈起）⇒ 宁可不落库
-    let task_id = json_capped(v, "task_id", 64);
-    if task_id.is_empty() {
-        return;
-    }
-    let steps: String = if v["steps"].is_array() {
-        v["steps"].to_string().chars().take(TASK_STEPS_COL_MAX).collect()
-    } else {
-        String::new()
-    };
-    let state = match json_capped(v, "state", 24) {
-        s if s.is_empty() => "submitted".to_string(),
-        s => s,
-    };
-    // 幂等键：空 ⇒ NULL。MySQL 唯一索引允许多个 NULL，而空串只能存在一行——
-    // 列上那条 UNIQUE 靠这一点同时做到"挡得住重复"与"不把没有键的行互相顶掉"。
-    let idem: Option<String> = match json_capped(v, "idempotency_key", TASK_IDEM_COL_MAX) {
-        k if k.is_empty() => None,
-        k => Some(k),
-    };
-    // 找行同时按**会话**过滤（不只是 uid）：`task_id` 是 agent 按"会话 + 目标指纹"
-    // 派生的（见 agent/tasks.py），正常不会跨会话重复；万一重复，只按 uid 找会把
-    // 另一个会话的行改掉（任务状态串到别的会话里——最坏的一种静默串台）。
-    // 加了这道，跨会话撞 id 时是**插入撞唯一键**（`uk_at_task`）⇒ 记一行 WARNING，
-    // 而不是悄悄改走别人的行。
-    let existing = agent_task::Entity::find()
-        .filter(agent_task::Column::TaskId.eq(task_id.as_str()))
-        .filter(agent_task::Column::UserId.eq(uid))
-        .filter(agent_task::Column::ConversationId.eq(conversation_id))
-        .one(db)
-        .await
-        .ok()
-        .flatten();
-    match existing {
-        // 已有行 = 同一件事的后续回合：只更新 agent 有权改的那几格。
-        // `goal` 与 `total_steps` **写时定稿、后续回合不许改写**——否则进度会变成
-        // "分母也在动"，1/2 与 3/5 说的是两件不同的事，事后对不上账。
-        Some(row) => {
-            let attempts = row.attempts + 1;
-            let mut am: agent_task::ActiveModel = row.into();
-            am.steps = Set(Some(steps));
-            am.cursor = Set(v["cursor"].as_i64().unwrap_or(0) as i32);
-            am.state = Set(state);
-            am.pending_question = Set(json_capped(v, "pending_question", TASK_TEXT_COL_MAX));
-            am.attempts = Set(attempts);
-            am.updated_at = Set(chrono::Local::now().naive_local());
-            let _ = am.update(db).await;
-        }
-        None => {
-            let _ = agent_task::ActiveModel {
-                task_id: Set(task_id),
-                conversation_id: Set(conversation_id),
-                user_id: Set(uid),
-                goal: Set(json_capped(v, "goal", TASK_TEXT_COL_MAX)),
-                steps: Set(Some(steps)),
-                total_steps: Set(v["total_steps"].as_i64().unwrap_or(0) as i32),
-                cursor: Set(v["cursor"].as_i64().unwrap_or(0) as i32),
-                state: Set(state),
-                pending_question: Set(json_capped(v, "pending_question", TASK_TEXT_COL_MAX)),
-                idempotency_key: Set(idem),
-                attempts: Set(1),
-                ..Default::default()
-            }
-            .save(db)
-            .await;
-        }
-    }
-}
-
-/// 读侧：本会话未完结任务 → 交给 agent 的 JSON 数组串（`[]` = 没有）。
-///
-/// **为什么交 JSON 而不是像 `pending_action` / `executions` 那样交一行渲染好的文本**
-/// （刻意偏离既往两处先例）：`steps` 是 Python 产的结构（每步带 label/tool），
-/// 要渲染成提示词就得看它内部，而它的形状正是本批次会继续演进的东西。让 Rust 只做
-/// "取出来、限长、拼成合法 JSON"，形状演化就只动 Python 一侧——与 `execution_log.digest`
-/// 的同一条纪律（键名与语义见 agent/tasks.py 头注，**改一侧必须同步另一侧** + 两侧各一条测试）。
-///
-/// 读失败（表未建 / DB 抖动）→ `[]`，agent 按"没有任务"如实处理，绝不阻断对话。
 async fn load_agent_tasks(db: &sea_orm::DatabaseConnection, conversation_id: i32) -> String {
     let cutoff =
         chrono::Local::now().naive_local() - chrono::Duration::hours(TASK_READ_TTL_HOURS);
@@ -1816,136 +1719,6 @@ fn agent_reply_of(data: &serde_json::Value) -> Result<String, String> {
     }
 }
 
-/// 在帧缓冲中查找 SSE 帧结束位置（\n\n 之后），返回消费长度
-fn find_frame_end(buf: &[u8]) -> Option<usize> {
-    buf.windows(2).position(|w| w == b"\n\n").map(|i| i + 2)
-}
-
-/// SSE 帧的协议分类 —— [`classify_frame`] 的返回值。
-///
-/// 这些变体**就是** SSE 帧协议本身：`__CMD__` / `__EXEC__` 这一族前缀由 Python
-/// agent 生产、Rust 这一层转发或落库、浏览器 `chat-stream.js` 消费，**三端共用**。
-/// 动任何一个前缀或新增一种帧，三处必须一起改 —— 见本模块 `mod tests` 里那条
-/// 跨文件守卫（`frame_prefixes_match_frontend`）。
-///
-/// 变体只描述"这一帧是什么"，**不含任何动作**：落库/转发/清空 reply 全留在调用方。
-#[derive(Debug, PartialEq, Eq)]
-enum Frame<'a> {
-    /// `__END__` / `__NAV_END__`：正常终止。先落库、再原样转发、然后结束流。
-    Terminal,
-    /// `__ERROR__:…`：错误终止（也是终止：同样先落库再转发）。
-    Error,
-    /// `__SUMMARY__:<JSON 字符串>`：独立摘要。**不转发**（前端无此帧协议），
-    /// 解出来的摘要攒在内存里，随终止帧一起落库。
-    Summary(&'a str),
-    /// `__EXEC__:<JSON 数组>`：checker 验收回执。**不转发**，收到即落库
-    /// （断连是执行后最常见的事，攒到收尾等于丢记录）。
-    Exec(&'a str),
-    /// `__PENDING__:<JSON 对象>`：确认弹窗那一轮的结构化提议。**不转发**，收到即落库。
-    Pending(&'a str),
-    /// `__TASK__:<JSON 对象>`：会话级任务状态。**不转发**，收到即落库
-    /// （同一 `task_id` 重复发是 upsert 更新而非替换）。
-    Task(&'a str),
-    /// `__CMD__:<JSON>`：连线命令。**原样转发**给前端执行 —— 帧体只有
-    /// kind/url/effect 这类公开的执行动作，不含确认凭据（这正是它与
-    /// `__CONFIRM__`/`__PENDING__` 的区别，也是这里敢原样 yield 的理由）。
-    Cmd,
-    /// `__RESET__` 或 `__RESET__:<scope>:<理由>`：质检重置。转发 + 作废本轮
-    /// 已累积的叙述文本（`reply.clear()`）。scope（`all` / `text`）只决定前端
-    /// 要不要连 `__CMD__` 缓冲一起清；两种 scope 下**叙述都被否定**，所以
-    /// Rust 这一侧不必区分。
-    Reset,
-    /// `__PROCESS__:…`：过程步骤行。转发但不进历史。
-    Process,
-    /// `__CONFIRM__:…`：确认弹窗帧（帧体带待办令牌）。转发但不进历史、不落库。
-    Confirm,
-    /// `NAVIGATE:` / `AUTO_NAVIGATE:` / `EFFECT:` / `DARKMODE:`：**老版 agent**
-    /// 的连线形命令。保留只为兼容期（新版一律走 `__CMD__` 程序帧），删了会回归
-    /// 20260903 那个"命令行与叙述同帧拼接 ⇒ 保存时整行剥空 ⇒ 转跳后回复丢失"的 bug。
-    LegacyCommand,
-    /// 普通正文（`Text` 里是 JSON 解码后的文本）。
-    Text(String),
-    /// 既不是已知前缀帧、也不是 JSON 编码的文本 ⇒ 解不出来（调用方记一行 WARN）。
-    Unknown,
-}
-
-/// 判定一帧属于协议里的哪一种。**纯函数**：不碰 state、不落库、不转发、不改 `reply`
-/// —— 所有副作用都留在调用方（`chat_stream_handler` 的帧循环）。
-///
-/// 抽出来不是为了整洁，而是因为**这里顺序错一步就是静默丢帧**，而在此之前全仓
-/// 零断言、只靠注释和人的记忆。有两条次序不能动：
-///
-/// ① **带令牌的那一族（`__EXEC__` / `__PENDING__` / `__TASK__` / `__CMD__`）
-///    必须先于 JSON 文本解析**：它们的帧体是 `{…}` 而不是 JSON **字符串**，
-///    晚一步就会落进"解不出来"那一支被静默丢弃 —— 症状是"点了没反应"，
-///    Python / Rust / 前端三端都不留痕，是这一族最难查的故障形态。
-/// ② **`__RESET__` / `__PROCESS__` / `__CONFIRM__` 只在 JSON 解码之后才认得出**：
-///    它们是正文层的前缀，帧体本身是个 JSON 字符串（裸写的前缀会被判 `Unknown`，
-///    这是刻意的——免得正文里出现 `__RESET__` 四个字就被当成控制帧）。
-///
-/// 判定一律用 `starts_with` / `strip_prefix`，别改成"先 split 再比较"的形状：
-/// 帧体里允许出现任意字符（含 `:`，`__RESET__:<scope>:<理由>` 就有两个），
-/// 只有前缀匹配是安全的。
-fn classify_frame(payload: &str) -> Frame<'_> {
-    // ① 原始层：帧体不是 JSON 字符串，必须在 JSON 解码之前拦
-    if payload.starts_with("__END__") || payload.starts_with("__NAV_END__") {
-        return Frame::Terminal;
-    }
-    if payload.starts_with("__ERROR__:") {
-        return Frame::Error;
-    }
-    if let Some(s) = payload.strip_prefix("__SUMMARY__:") {
-        return Frame::Summary(s);
-    }
-    if let Some(rows) = payload.strip_prefix("__EXEC__:") {
-        return Frame::Exec(rows);
-    }
-    if let Some(body) = payload.strip_prefix("__PENDING__:") {
-        return Frame::Pending(body);
-    }
-    if let Some(body) = payload.strip_prefix("__TASK__:") {
-        return Frame::Task(body);
-    }
-    if payload.starts_with("__CMD__:") {
-        return Frame::Cmd;
-    }
-    // ② 正文层：帧体是 JSON 编码的字符串，解出来再认前缀
-    match serde_json::from_str::<String>(payload) {
-        Ok(text) => {
-            if text.starts_with("__RESET__") {
-                Frame::Reset
-            } else if text.starts_with("__PROCESS__") {
-                Frame::Process
-            } else if text.starts_with("__CONFIRM__") {
-                Frame::Confirm
-            } else if text.starts_with("AUTO_NAVIGATE:")
-                || text.starts_with("NAVIGATE:")
-                || text.starts_with("EFFECT:")
-                || text.starts_with("DARKMODE:")
-            {
-                Frame::LegacyCommand
-            } else {
-                Frame::Text(text)
-            }
-        }
-        Err(_) => Frame::Unknown,
-    }
-}
-
-// F5：中断流只丢弃本轮尚在内存中的回复。正文在终止帧前从未落库，
-// 因此不需要 Drop 时删除数据库；按 id 下界删除会误删同会话的其他完整轮次。
-
-/// 流式回合收尾的**分离式**落库（20260920 顺序契约）。
-///
-/// 两个要点：
-/// ① **先落库、再转发终止帧**。此前顺序相反（先 yield `__END__`，流收尾才写库）：
-///    客户端一见到 `__END__` 就断开时（流式探针实测；真实浏览器读连接关闭不受
-///    影响，见 chat-stream.js），响应体 future 被丢弃 ⇒ 尾部 await 跑不完 ⇒ 本轮
-///    回复与执行回执双双丢失。语义上"发出终止帧"就是本轮交换完成，落库不该依赖
-///    客户端还开着连接。
-/// ② 用 `tokio::spawn` 把写入从生成器生命周期里摘出来：即便这一行之后 future 被
-///    丢弃（断开正好落在 DB 写入的那几毫秒里），任务照常跑完。
-///
 fn spawn_save_assistant_reply(
     state: Arc<AppState>,
     uid: i32,
@@ -1962,67 +1735,36 @@ fn spawn_save_assistant_reply(
     });
 }
 
-/// 流式早退的**协议**：`/api/chat/stream` 的失败必须走 SSE 帧，不能走 JSON body。
-///
-/// 20261002 事故（主人报"agent 炸了不断重启，前端一行异常都没有，用户那句话直接进了对话框"）：
-/// `prepare_chat` 的各种拒绝与 agent 连接失败都在这里返回 `Json(ChatResponse)`，而 axum 的
-/// `Json` 默认 **HTTP 200** ⇒ 前端唯一的失败判据 `if (!resp.ok)` 全部漏过：它照常建气泡、
-/// 读到一个不含 `\n\n` 的 JSON body（切不出任何帧）、按"空回复"静默收场、把气泡删掉。
-/// 结果就是**用户只看到自己那句话，没有任何错误提示**；服务端 rust.log 里它长得和一次成功
-/// 一模一样（`status=200 ms=44`，而真实回答 p50 是 9.6s）。生产实证：08:37:54 与 08:39:30
-/// 两次请求 rust.log 记 200，agent 侧**没有对应 trace**（请求根本没到 agent）。
-///
-/// 两条**必须保持 JSON + 状态码**的例外（前端按状态码特判，见 `chat-stream.js`）：
-/// `404 conversation_not_found`、`409 confirm_already_used`——改它们等于把前端那两段
-/// 特判（还原输入/结算确认卡）打成死代码。
+/// Preserve business status codes and emit all other early outcomes as named SSE.
 fn early_exit_response(status: StatusCode, body: ChatResponse, from: &str) -> Response {
     if status == StatusCode::NOT_FOUND || status == StatusCode::CONFLICT {
-        // 这两条是**预期内**的用户动作（会话已删 / 确认卡重复点），前端按状态码特判，
-        // 记 INFO 不记 WARN——WARN 只留给"没人预期会失败却失败了"
-        info!(stage = from, status = %status, error = body.error.as_deref().unwrap_or(""), "chat: 流式请求按状态码早退");
         return (status, Json(body)).into_response();
     }
-    // 可观测性（事故里第二个缺口）：这条路径此前在 rust.log 里与一次成功**完全同形**
-    // （都是 status=200），agent 侧连 trace 都没有 ⇒ 谁都没发现。这里留一条 WARN。
-    warn!(
-        stage = from,
-        status = %status,
-        error = body.error.as_deref().unwrap_or(""),
-        "chat: 流式请求早退，已转 SSE 错误帧（此前会以 200+JSON 静默丢弃）"
-    );
-    // 走 SSE 的两支：① 有正文的早退（访客合规告知，success=true + reply）——当一条普通
-    // 回复发出去再正常终止，前端渲染成正常气泡；② 其余（含冻结/令牌收回/agent 不可用）
-    // ——发 `__ERROR__` 终止帧，前端据此渲染错误气泡 + 失败标记（已有现成路径）。
-    let payload = if body.success && !body.reply.is_empty() {
-        let text = serde_json::to_string(&body.reply).unwrap_or_else(|_| "\"\"".into());
-        format!("data: {text}\n\ndata: __END__\n\n")
+    info!(stage = from, status = %status, "chat: early stream outcome");
+    let events = if body.success && !body.reply.is_empty() {
+        vec![stream_event("text", body.reply), stream_event("done", serde_json::json!({}))]
     } else {
-        let msg = body
-            .error
-            .filter(|s| !s.trim().is_empty())
+        let message = body.error.filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| "服务暂时不可用，这一轮没有生成回复，请稍后再试。".to_string());
-        let detail = serde_json::to_string(&msg).unwrap_or_else(|_| "\"服务暂时不可用\"".into());
-        format!("data: __ERROR__:{detail}\n\n")
+        vec![stream_event("error", message)]
     };
-    (
-        [
-            (header::CONTENT_TYPE, "text/event-stream"),
-            (header::CACHE_CONTROL, "no-cache"),
-            (header::CONNECTION, "keep-alive"),
-            // 与正常路径同口径：nginx 不缓冲，否则这唯一一帧也会被攒着
-            (header::HeaderName::from_static("x-accel-buffering"), "no"),
-        ],
-        Body::from(payload),
-    )
-        .into_response()
+    let stream = futures::stream::iter(events.into_iter().map(Ok::<_, std::convert::Infallible>));
+    ([(header::HeaderName::from_static("x-accel-buffering"), "no"),
+      (header::HeaderName::from_static("x-agent-stream-version"), "2")],
+     Sse::new(stream)).into_response()
 }
 
-/// SSE 流式对话：转发 agent /chat/stream，边转发边累积文本，
-/// 流结束后保存历史与摘要（agent 端 payload 为 JSON 编码，避免 \n\n 破坏帧边界）
 pub async fn chat_stream_handler(
     State(state): State<Arc<AppState>>,
     req: Request,
 ) -> Response {
+    // Reject cached v1 clients before creating messages or consuming confirmation grants.
+    if req.headers().get("x-agent-stream-version").and_then(|v| v.to_str().ok()) != Some("2") {
+        return (StatusCode::CONFLICT, Json(ChatResponse {
+            reply: String::new(), success: false,
+            error: Some("聊天版本已更新，请刷新页面后重试。".to_string()),
+        })).into_response();
+    }
     let ctx = match prepare_chat(&state, req).await {
         Ok(c) => c,
         // 早退一律转成 SSE 帧（见 early_exit_response 的头注）：这里原本是
@@ -2030,7 +1772,7 @@ pub async fn chat_stream_handler(
         Err((status, Json(body))) => return early_exit_response(status, body, "prepare_chat"),
     };
 
-    let stream_url = agent_chat_url().strip_suffix("/chat").unwrap_or("").to_string() + "/chat/stream";
+    let stream_url = agent_chat_url().strip_suffix("/chat").unwrap_or("").to_string() + "/chat/stream/v2";
     info!(trace_id = %ctx.trace_id, user_id = ctx.uid, total_count = ctx.total_count, "chat: 转发 agent 流式");
     // 流式连接不设整体超时（长回答可达数分钟），connect/首字节由 reqwest 默认处理
     let upstream = match reqwest::Client::new()
@@ -2090,7 +1832,7 @@ pub async fn chat_stream_handler(
             // 链路追踪：透传 trace id 给前端（前端可在网络面板按此 id 关联全链路日志）
             (header::HeaderName::from_static("x-request-id"), &ctx.trace_id),
         ],
-        Body::from_stream(body_stream),
+        Sse::new(body_stream),
     ).into_response()
 }
 
@@ -2102,192 +1844,63 @@ fn forward_agent_stream(
     revision: Revision,
     trace_id: String,
     upstream_stream: impl futures::Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
-) -> impl futures::Stream<Item = Result<Bytes, axum::Error>> + Send {
+) -> impl futures::Stream<Item = Result<axum::response::sse::Event, axum::Error>> + Send {
     stream! {
-        futures::pin_mut!(upstream_stream);
-        let mut frame_buf: Vec<u8> = Vec::new();
+        let upstream = upstream_stream.eventsource();
+        futures::pin_mut!(upstream);
         let mut reply = String::new();
         let mut terminal = false;
-        // 独立摘要（agent 侧 needs_summary 轮后端总结的返回值，随 __SUMMARY__ 帧到达）
-        let mut summary_override: Option<String> = None;
-        // 跨轮执行记忆（20260904 C5）：checker 验收回执（__EXEC__ 帧 → execution_log
-        // 落库）在下方帧循环里收到即写，不留内存副本——断开也不丢
-
-        while let Some(chunk) = upstream_stream.next().await {
-            let chunk = match chunk {
-                Ok(c) => c,
-                Err(_) => break, // 上游中断：以已累积文本收尾
+        let mut summary_override = None;
+        while let Some(incoming) = upstream.next().await {
+            let incoming = match incoming {
+                Ok(value) => value,
+                Err(_) => break,
             };
-            frame_buf.extend_from_slice(&chunk);
-            loop {
-                let Some(end) = find_frame_end(&frame_buf) else { break };
-                // drain 到分隔符之后，再把帧尾的 \n\n 去掉，避免转发时出现双分隔符
-                let mut frame: Vec<u8> = frame_buf.drain(..end).collect();
-                frame.truncate(frame.len().saturating_sub(2));
-                let payload = frame.strip_prefix(b"data: ")
-                    .map(|p| String::from_utf8_lossy(p).to_string())
-                    .unwrap_or_default();
-                if payload.is_empty() { continue; }
-                // 帧分类是**纯函数**（`classify_frame`，与 `find_frame_end` 相邻）——
-                // 这一支只管副作用：落库、转发、累积 reply。判定与动作分开的动机见
-                // 那个函数的头注：顺序错一步就是静默丢帧，而那种故障三端都不留痕。
-                match classify_frame(&payload) {
-                    // 终端/错误标记：**先落库（分离写入）、再原样转发给前端**
-                    // （见 spawn_save_assistant_reply：客户端见到终止帧即断开也不丢回复）
-                    Frame::Terminal | Frame::Error => {
-                        terminal = true;
-                        spawn_save_assistant_reply(state.clone(), uid, conversation_id,
-                                                   std::mem::take(&mut reply),
-                                                   summary_override.take(), revision);
-                        yield Ok::<_, axum::Error>(Bytes::from(format!("data: {}\n\n", payload)));
-                        break;
-                    }
-                    // 独立摘要结果帧：不终止流、不进回复（agent 在 __END__ 之前发出），
-                    // 内容记入内存供流结束后写入 chat_summary
-                    Frame::Summary(s) => {
-                        if let Ok(s) = serde_json::from_str::<String>(s) {
-                            summary_override = Some(s);
-                        }
-                        continue;
-                    }
-                    // 跨轮执行记忆（20260904 C5）：checker 验收回执帧。只收进落库、
-                    // **绝不 yield 转发**——前端无此帧协议，透传会被当作正文渲染。
-                    // 20260920：**收到即写**（此前攒到流收尾），执行回执是执行事实的
-                    // 唯一载体，攒到尾部意味着"客户端在收尾前断开 ⇒ 执行记录丢"——
-                    // 而断连恰恰是执行后最常见的事（用户等不及关页面/转跳）。
-                    // 收到即写则之后任何时刻断开都已持久化；断连/discard 不清
-                    // execution_log（执行是已发生事实）
-                    Frame::Exec(rows) => {
-                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(rows) {
-                            if let Some(arr) = v.as_array() {
-                                if uid > 0 && !arr.is_empty() {
-                                    let state = state.clone();
-                                    let rows = arr.clone();
-                                    tokio::spawn(async move {
-                                        save_execution_log(&state.db, uid, conversation_id, &rows).await;
-                                    });
-                                }
-                            }
-                        }
-                        continue;
-                    }
-                    // 跨轮待办（20260923）：确认弹窗那一轮的结构化提议。与 __EXEC__ 同族
-                    // ——只收进落库、**绝不 yield 转发**（前端无此帧协议，透传会被当正文
-                    // 渲染）。收到即写：弹窗那一轮主人可能立刻切走，晚写就等于没写。
-                    Frame::Pending(body) => {
-                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(body) {
-                            if uid > 0 && v.is_object() {
-                                // Preserve cancel/replace order within this stream.
-                                pending::save_pending_action(&state.db, uid, conversation_id, &v).await;
-                            }
-                        }
-                        continue;
-                    }
-                    // 会话级任务状态（20260927）：planner 认定"这一轮做不完"时的结构化声明
-                    // （还剩哪几步 / 缺哪个参数要问主人）。与 `__PENDING__` 同一族的三个
-                    // 理由逐条相同：只收进落库、**绝不 yield 转发**（前端无此帧协议，透传
-                    // 会被当正文渲染）；收到即写（这一轮说完话主人可能立刻切走）。
-                    // 与待办的差别只有一条：**同一 task_id 重复发是更新而非替换**
-                    // （`save_agent_task` 里的 upsert），并发任务因此能共存。
-                    Frame::Task(body) => {
-                        if let Ok(v) = serde_json::from_str::<serde_json::Value>(body) {
-                            if uid > 0 && v.is_object() {
-                                let state = state.clone();
-                                let v = v.clone();
-                                tokio::spawn(async move {
-                                    save_agent_task(&state.db, uid, conversation_id, &v).await;
-                                });
-                            }
-                        }
-                        continue;
-                    }
-                    // 连线命令帧（20260926 批 2）：命令从"工具返回的字符串"搬到了执行
-                    // 回执的 `cmd` 字段（见 agent/graph.py 的 _cmd_wire 与 execute_node），
-                    // Python 侧用这一族帧单独发给浏览器。三件事缺一不可：
-                    //   ① **必须在 JSON 文本解析之前拦**——帧体 `__CMD__:{"kind":…}`
-                    //      不是合法 JSON 字符串（`classify_frame` 里那条分支的次序就是
-                    //      这件事的化身），晚拦了会**静默丢弃**（前端收不到命令，
-                    //      症状是"点了没反应"、三端都不留痕）；
-                    //   ② **绝不累积进 `reply`**（与 __PROCESS__/__CONFIRM__ 同族）：
-                    //      漏了这条，帧体会被拼进 assistant 回复并持久化（用户看到
-                    //      一坨 JSON，还会注入下一轮上下文）；
-                    //   ③ **原样转发**给前端执行。帧体只有 kind/url/effect/action/mode
-                    //      这类**公开的执行动作**，不含任何确认凭据——这正是它与
-                    //      __CONFIRM__/__PENDING__（带令牌、只落库不转发）的区别所在，
-                    //      所以这里可以安全地原样 yield。
-                    // 旧的文本前缀分支（下面 `Frame::LegacyCommand` 那一支）**保留**：
-                    // 兼容期里老版 agent 仍在发它们，且删了会回归 20260903 那个
-                    // strip_command_lines 整行剥空导致"转跳后回复丢失"的 bug。
-                    Frame::Cmd => {
-                        yield Ok(Bytes::from(format!("data: {}\n\n", payload)));
-                        continue;
-                    }
-                    // 质检重置帧：原样转发给前端清空重绘，但已累积的回复作废——
-                    // 被否定的轮次不入历史（否则 __RESET__ 标记与废轮文本
-                    // 会污染 chat_history，进而注入后续对话上下文，形成坏 few-shot）
-                    Frame::Reset => {
-                        reply.clear();
-                        yield Ok(Bytes::from(format!("data: {}\n\n", payload)));
-                        continue;
-                    }
-                    // 过程步骤帧（计划/工具调用/质检打回，前端灰色过程行展示）：
-                    // 属于"执行过程"而非最终回复，转发但不累积进历史
-                    Frame::Process => {
-                        yield Ok(Bytes::from(format!("data: {}\n\n", payload)));
-                        continue;
-                    }
-                    // 确认弹窗帧（20260921）：前端据此弹「泠月喵」同款确认框。
-                    // 与 __PROCESS__ 同族——**只转发、不累积进 reply 不落库**：
-                    // 漏了这条分支，帧体（含待办令牌）会被拼进 assistant 回复
-                    // 并持久化（用户看到一坨 JSON，令牌还会进下一轮上下文）
-                    Frame::Confirm => {
-                        yield Ok(Bytes::from(format!("data: {}\n\n", payload)));
-                        continue;
-                    }
-                    // 命令帧（NAVIGATE:/AUTO_NAVIGATE:/EFFECT:/DARKMODE:）：执行指令
-                    // 不是对话内容，前端已单独收到命令并执行。不累积进 reply——
-                    // 命令帧先于叙述帧到达且无换行分隔时，单行拼接会让保存时的
-                    // strip_command_lines 整行剥空（20260903 实证 chat_history
-                    // 空行 3465 → 转跳后回复丢失）。转发仍照常（前端执行命令用）
-                    Frame::LegacyCommand => {
-                        yield Ok(Bytes::from(format!("data: {}\n\n", payload)));
-                        continue;
-                    }
-                    // 普通正文块：解码后累积（用于历史保存），原样转发
-                    Frame::Text(text) => {
-                        reply.push_str(&text);
-                        yield Ok(Bytes::from(format!("data: {}\n\n", payload)));
-                    }
-                    // 20260923：帧体既不是已知前缀帧、也不是 JSON 编码的文本 ⇒ 解码不了。
-                    // 旧行为是静默丢弃：前端只是"少了一段回复"，Python/Rust/前端三端都
-                    // 不留痕（三端语义漂移时最难查的那类）。**只记前 24 字符**——
-                    // __CONFIRM__/__PENDING__ 族的帧体带确认令牌，整帧入日志等于把令牌
-                    // 写进日志文件。
-                    Frame::Unknown => {
-                        let head: String = payload.chars().take(24).collect();
-                        warn!(trace_id = %trace_id, user_id = uid, len = payload.len(), head = %head,
-                              "chat: 收到无法解析的 SSE 帧，已丢弃（既非已知前缀帧也不是 JSON 文本）");
+            let frame = match protocol::decode(&incoming) {
+                Ok(frame) => frame,
+                Err(_) => {
+                    warn!(trace_id = %trace_id, user_id = uid, "chat: invalid upstream SSE event");
+                    break;
+                }
+            };
+            match frame {
+                Frame::Done(_) | Frame::Error(_) => {
+                    terminal = true;
+                    spawn_save_assistant_reply(state.clone(), uid, conversation_id,
+                        std::mem::take(&mut reply), summary_override.take(), revision);
+                    yield Ok(axum::response::sse::Event::default().event(incoming.event).data(incoming.data));
+                    break;
+                }
+                Frame::Summary(value) => { summary_override = Some(value); }
+                Frame::Receipts(rows) => {
+                    // Receipts are durable execution facts, independent of the connection's lifetime.
+                    if uid > 0 && !rows.is_empty() {
+                        let state = state.clone();
+                        tokio::spawn(async move {
+                            save_execution_log(&state.db, uid, conversation_id, &rows).await;
+                        });
                     }
                 }
+                Frame::Pending(value) => {
+                    if uid > 0 {
+                        pending::save_pending_action(&state.db, uid, conversation_id, &value.into()).await;
+                    }
+                }
+                Frame::Text(text) => {
+                    reply.push_str(&text);
+                    yield Ok(axum::response::sse::Event::default().event(incoming.event).data(incoming.data));
+                }
+                Frame::Progress(_) | Frame::Confirmation(_) | Frame::Command(_) => {
+                    yield Ok(axum::response::sse::Event::default().event(incoming.event).data(incoming.data));
+                }
             }
-            if terminal { break; }
         }
-
-        // 上游中断且未收到终止标记：显式告知前端（否则静默截断无法区分）
         if !terminal {
-            yield Ok::<_, axum::Error>(Bytes::from(
-                "data: __ERROR__:\"与 Agent 的连接中断，回复可能不完整\"\n\n",
-            ));
+            yield Ok::<_, axum::Error>(stream_event("error", "与 Agent 的连接中断，回复可能不完整"));
         }
-
-        // 兜底落库：正常路径（收到终止帧）已在转发终止帧之前落库——reply/summary
-        // 已被 take 空，这里自然跳过；剩下的只有"上游中断、没收到终止帧"的收尾
-        // （保持既有行为：保存残缺回复 + 独立摘要）
         if !reply.is_empty() && uid > 0 {
             save_assistant_reply(&state.db, uid, conversation_id, reply, summary_override, revision).await;
         }
-        // 执行回执不在这里：收到 __EXEC__ 帧时就已落库（见上分支），
-        // 因此客户端在任何时刻断开（哪怕收尾前）都不会丢执行记录
     }
 }
 
@@ -2305,7 +1918,7 @@ mod tests {
             report_limiter: crate::rate_limiter::LoginRateLimiter::new(120, 60, 300),
         });
         let upstream = futures::stream::once(async {
-            Ok(Bytes::from_static(b"data: \"partial reply\"\n\n"))
+            Ok(Bytes::from_static(b"event: text\ndata: \"partial reply\"\n\n"))
         }).chain(futures::stream::pending());
         let mut response = Box::pin(forward_agent_stream(state.clone(), 7, 42, Revision { message_count: 1, through_id: Some(1) }, "cancel-test".into(), upstream));
         assert!(response.next().await.unwrap().is_ok());
@@ -2803,86 +2416,6 @@ mod tests {
         assert_eq!(json_capped(&json!({"t": "标签名"}), "t", 2), "标签");
     }
 
-    // ── SSE 帧协议（`classify_frame`）───────────────────────────────────────
-    //
-    // 这一族断言此前**一条都没有**：帧前缀判定内联在 155 行的 if/else 链里，
-    // 而它是 Python agent / Rust / 浏览器三端共用的协议 —— 改一处忘另一处
-    // 只会表现为"点了没反应"或"回复少了一段"，三端都不留痕。
-
-    /// 协议分类表。**这张表就是协议本身**：改前缀先改这里，再同步
-    /// Python `server.py` 的 producer 与 `frontend/public/live2d-widgets/chat-stream.js`。
-    #[test]
-    fn classify_frame_protocol_table() {
-        // 原始层：帧体不是 JSON 字符串
-        assert_eq!(classify_frame("__END__"), Frame::Terminal);
-        assert_eq!(classify_frame("__NAV_END__"), Frame::Terminal);
-        assert_eq!(classify_frame("__ERROR__:\"炸了\""), Frame::Error);
-        assert_eq!(classify_frame("__SUMMARY__:\"摘要\""), Frame::Summary("\"摘要\""));
-        assert_eq!(classify_frame("__EXEC__:[{\"tool\":\"x\"}]"), Frame::Exec("[{\"tool\":\"x\"}]"));
-        assert_eq!(classify_frame("__PENDING__:{\"q\":\"?\"}"), Frame::Pending("{\"q\":\"?\"}"));
-        assert_eq!(classify_frame("__TASK__:{\"id\":1}"), Frame::Task("{\"id\":1}"));
-        assert_eq!(classify_frame("__CMD__:{\"kind\":\"navigate\"}"), Frame::Cmd);
-
-        // 正文层：帧体是 JSON 编码的字符串（含 `__RESET__:<scope>:<理由>` 三段形）
-        assert_eq!(classify_frame("\"__RESET__\""), Frame::Reset);
-        assert_eq!(classify_frame("\"__RESET__:all:质检打回\""), Frame::Reset);
-        assert_eq!(classify_frame("\"__RESET__:text:换个说法\""), Frame::Reset);
-        assert_eq!(classify_frame("\"__PROCESS__:🛠 正在调用工具…\""), Frame::Process);
-        assert_eq!(classify_frame("\"__CONFIRM__:{\\\"q\\\":\\\"?\\\"}\""), Frame::Confirm);
-        for legacy in ["NAVIGATE:/talk", "AUTO_NAVIGATE:/talk", "EFFECT:sakura:on", "DARKMODE:on"] {
-            let payload = serde_json::to_string(legacy).unwrap();
-            assert_eq!(classify_frame(&payload), Frame::LegacyCommand, "{legacy}");
-        }
-
-        // 普通正文（含空串）与彻底解不出来的
-        assert_eq!(classify_frame("\"你好呀\""), Frame::Text("你好呀".to_string()));
-        assert_eq!(classify_frame("\"\""), Frame::Text(String::new()));
-        assert_eq!(classify_frame("ABCD"), Frame::Unknown);
-    }
-
-    /// 次序守卫 ①：带令牌的那一族帧体是 `{…}` 而**不是** JSON 字符串，
-    /// 必须在 JSON 解码那一步之前拦下。若有人把 `classify_frame` 的两层调换，
-    /// 它们会齐齐落进 `Unknown` —— 前端收不到命令、执行回执也不落库，
-    /// 而 Python/Rust/前端三端都不留痕（症状只有"点了没反应"）。
-    #[test]
-    fn classify_frame_token_frames_survive_json_layer() {
-        for payload in ["__EXEC__:[]", "__PENDING__:{}", "__TASK__:{}",
-                        "__CMD__:{\"kind\":\"navigate\",\"url\":\"/talk\"}"] {
-            assert_ne!(classify_frame(payload), Frame::Unknown,
-                       "{payload} 被判成解析失败 = 静默丢帧");
-        }
-    }
-
-    /// 次序守卫 ②：`__RESET__` 一族是**正文层**前缀，只有 JSON 解码之后才认得出。
-    /// 裸写的前缀必须落到 `Unknown` —— 否则正文里出现这四个字就会被当控制帧，
-    /// 把主人正在看的一段回复凭空清掉。
-    #[test]
-    fn classify_frame_reset_only_after_json_decode() {
-        assert_eq!(classify_frame("__RESET__"), Frame::Unknown);
-        assert_eq!(classify_frame("\"__RESET__\""), Frame::Reset);
-    }
-
-    /// Rust 会**原样转发给前端**的帧前缀。`__SUMMARY__` / `__EXEC__` / `__PENDING__` /
-    /// `__TASK__` 不在此列 —— 它们是 Rust 独占消费、刻意不转发的（前端无此协议，
-    /// 透传会被当正文渲染）。**新增一种转发帧时，这里要同步加一项。**
-    const FORWARDED_FRAME_PREFIXES: [&str; 7] = [
-        "__END__", "__NAV_END__", "__ERROR__:", "__CMD__:", "__RESET__", "__PROCESS__:", "__CONFIRM__:",
-    ];
-
-    /// 三端同步守卫：**Rust 转发的每一种帧，`chat-stream.js` 都必须认得**。
-    ///
-    /// 只钉"名字没被单方面改掉"，不检查语义（那要靠人）。改前端时若把某个前缀
-    /// 换成变量或改了名，这里会红 —— 那不是误报，是在问"Rust 这一半同步了吗"。
-    /// 反向不成立：前端多认一种帧是无害的（Rust 不发它而已），所以不查。
-    // ── 流式早退协议（`early_exit_response`，20261002 事故）────────────────
-    //
-    // 事故形状：早退路径返回 `200 + application/json`，而流式客户端的失败判据只有
-    // `!resp.ok` ⇒ 全部被当作成功：照常建气泡、读一个切不出任何帧的 body、按"空回复"
-    // 静默收场（气泡删掉、只留用户自己那句话、**零提示**）。生产实证：20261002
-    // 08:37:54 / 08:39:30 两次请求 rust.log 记 `status=200`，agent 侧无对应 trace。
-    //
-    // 这里的判据是**响应形态**（内容类型 + 载荷能不能切出终止帧），不是文案：
-    // 文案会改，形态是协议。
     async fn body_of(r: Response) -> String {
         let bytes = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
         String::from_utf8(bytes.to_vec()).unwrap()
@@ -2903,7 +2436,7 @@ mod tests {
         assert_eq!(r.headers().get(header::CONTENT_TYPE).unwrap(), "text/event-stream");
         // 与正常路径同口径：不告知 nginx 就会把这唯一一帧也攒着
         assert_eq!(r.headers().get("x-accel-buffering").unwrap(), "no");
-        assert_eq!(body_of(r).await, "data: __ERROR__:\"服务这边暂时联系不上\"\n\n");
+        assert_eq!(body_of(r).await, "event: error\ndata: \"服务这边暂时联系不上\"\n\n");
     }
 
     /// 有正文的早退（访客合规告知）：**当一条普通回复发出去**再正常终止，
@@ -2912,7 +2445,7 @@ mod tests {
     async fn early_exit_with_reply_becomes_a_normal_answer() {
         let r = early(StatusCode::OK, "尊敬的访客：…", true, None);
         let body = body_of(r).await;
-        assert_eq!(body, "data: \"尊敬的访客：…\"\n\ndata: __END__\n\n");
+        assert_eq!(body, "event: text\ndata: \"尊敬的访客：…\"\n\nevent: done\ndata: {}\n\n");
     }
 
     /// 没有原因（旧版/空串）也不能发出一个空载荷的 `__ERROR__` 帧——
@@ -2920,8 +2453,8 @@ mod tests {
     #[tokio::test]
     async fn early_exit_never_sends_an_empty_error_frame() {
         let body = body_of(early(StatusCode::OK, "", false, Some("   "))).await;
-        assert!(body.starts_with("data: __ERROR__:\""), "{body}");
-        assert!(body.len() > "data: __ERROR__:\"\"\n\n".len(), "兜底话术不得为空：{body}");
+        assert!(body.starts_with("event: error\ndata: \""), "{body}");
+        assert!(body.len() > "event: error\ndata: \"\"\n\n".len(), "兜底话术不得为空：{body}");
     }
 
     /// **两条例外必须原地不动**：前端按状态码特判它们（还原输入 / 结算确认卡），
@@ -2947,33 +2480,11 @@ mod tests {
         let frames: Vec<&str> = body.trim_end_matches("\n\n").split("\n\n").collect();
         assert!(!frames.is_empty());
         for f in &frames {
-            assert!(f.starts_with("data: "), "帧不以 data: 开头：{f:?}");
+            assert!(f.starts_with("event: "), "帧不以 data: 开头：{f:?}");
         }
-        assert_eq!(frames.last(), Some(&"data: __END__"), "最后一帧必须是终止帧");
+        assert_eq!(frames.last(), Some(&"event: done\ndata: {}"), "最后一帧必须是终止帧");
     }
 
-    #[test]
-    fn frame_prefixes_match_frontend() {
-        // 路径相对于本文件；`include_str!` 是编译期读入 ⇒ 前端动了这个文件会重编本测试
-        //
-        // ⚠️ 这个文件**不在本仓的 git 里**（20261002 前端搬家：看板娘前端随 MIT 分发搬进了
-        // agent 仓）。构建/测试前先跑 `npm run fetch:widget` 把它按
-        // frontend/widget.lock.json 钉的 sha 取到这条路径下——否则 `cargo test` 会在这里
-        // 报一个"文件找不到"的编译错，看不出前因后果。见 CONTRIBUTING §3.1。
-        const CHAT_STREAM_JS: &str =
-            include_str!("../../frontend/public/live2d-widgets/chat-stream.js");
-        for prefix in FORWARDED_FRAME_PREFIXES {
-            assert!(CHAT_STREAM_JS.contains(prefix),
-                    "chat-stream.js 里找不到帧前缀 {prefix}：Rust 还在转发它，前端却不再认得了。\
-                     见 classify_frame 头注的 SSE 帧协议三端同步约定。");
-        }
-    }
-
-    /// `CHAT_HISTORY_LIMIT` 的旋钮：**0 / 负数 / 脏值一律退回缺省 500，绝不落到清理分支**。
-    ///
-    /// 这条判据是给"填了不报错、后果很响"那一族立的：`limit = 0` 会让
-    /// `excess = total_count` ⇒ 按 `id <= max_id` 删掉本会话**全部**行，包括刚入库的那条
-    /// 用户消息。默认 500 碰不到，所以线上一直是绿的 —— 这正是它需要一个单测的理由。
     #[test]
     fn history_limit_falls_back_on_destructive_values() {
         assert_eq!(resolve_history_limit(None), 500);
