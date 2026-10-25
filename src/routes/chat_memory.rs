@@ -2,7 +2,7 @@
 
 use sea_orm::{
     ColumnTrait, ConnectionTrait, DbBackend, DbErr, EntityTrait, QueryFilter, QueryOrder,
-    QuerySelect, Statement,
+    QuerySelect, Statement, TransactionTrait,
 };
 use serde::{Deserialize, Serialize};
 
@@ -49,7 +49,15 @@ pub(super) struct Revision {
     base_id: i32,
     through_id: i32,
     message_count: i32,
-    expected: Option<(Option<String>, i32, String)>,
+    expected: Option<ExpectedSummary>,
+}
+
+#[derive(Clone, Debug)]
+struct ExpectedSummary {
+    source_role: Option<String>,
+    through_id: i32,
+    text: String,
+    lock_version: i64,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -159,12 +167,11 @@ pub(super) async fn load<C: ConnectionTrait>(
         message_count: matching
             .map_or(0, |row| row.message_count)
             .saturating_add(prefix.len() as i32),
-        expected: stored.as_ref().map(|row| {
-            (
-                row.source_role.clone(),
-                row.covered_through_id,
-                row.summary.clone(),
-            )
+        expected: stored.as_ref().map(|row| ExpectedSummary {
+            source_role: row.source_role.clone(),
+            through_id: row.covered_through_id,
+            text: row.summary.clone(),
+            lock_version: row.lock_version,
         }),
     });
     context.summary_batch = Some(SummaryBatch {
@@ -226,24 +233,59 @@ pub(super) async fn save<C: ConnectionTrait>(
              VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (conversation_id) DO NOTHING",
             values,
         ),
-        Some((role, through_id, summary)) => {
+        Some(expected) => {
             let mut values = values;
             values.extend([
-                role.clone().into(),
-                (*through_id).into(),
-                summary.clone().into(),
+                expected.source_role.clone().into(),
+                expected.through_id.into(),
+                expected.text.clone().into(),
+                expected.lock_version.into(),
             ]);
             Statement::from_sql_and_values(
                 DbBackend::Postgres,
                 "UPDATE chat_summary SET summary=$3,message_count=$4,covered_through_id=$5, \
-                 source_role=$6,updated_at=localtimestamp WHERE user_id=$1 AND conversation_id=$2 \
+                 source_role=$6,updated_at=localtimestamp,lock_version=lock_version+1 \
+                 WHERE user_id=$1 AND conversation_id=$2 \
                  AND source_role IS NOT DISTINCT FROM $7 AND covered_through_id=$8 \
-                 AND summary=$9",
+                 AND summary=$9 AND lock_version=$10",
                 values,
             )
         }
     };
     Ok(db.execute(statement).await?.rows_affected() == 1)
+}
+
+/// Delete a turn and invalidate in-flight summaries in the same short transaction.
+pub(super) async fn discard<C: ConnectionTrait + TransactionTrait>(
+    db: &C,
+    uid: i32,
+    conversation_id: i32,
+    from_id: i32,
+) -> Result<(), DbErr> {
+    if from_id <= 0 {
+        return Err(DbErr::Custom("invalid discard boundary".into()));
+    }
+    let txn = db.begin().await?;
+    chat_history::Entity::delete_many()
+        .filter(chat_history::Column::UserId.eq(uid))
+        .filter(chat_history::Column::ConversationId.eq(conversation_id))
+        .filter(chat_history::Column::Id.gte(from_id))
+        .exec(&txn)
+        .await?;
+    // The empty row also fences first-time summaries whose old snapshot had no row.
+    txn.execute(Statement::from_sql_and_values(DbBackend::Postgres,
+        "INSERT INTO chat_summary \
+         (user_id,conversation_id,summary,message_count,covered_through_id,source_role) \
+         VALUES ($1,$2,'',0,0,NULL) ON CONFLICT (conversation_id) DO UPDATE SET \
+         summary=CASE WHEN chat_summary.covered_through_id >= $3 THEN '' ELSE chat_summary.summary END, \
+         message_count=CASE WHEN chat_summary.covered_through_id >= $3 THEN 0 ELSE chat_summary.message_count END, \
+         source_role=CASE WHEN chat_summary.covered_through_id >= $3 THEN NULL ELSE chat_summary.source_role END, \
+         covered_through_id=CASE WHEN chat_summary.covered_through_id >= $3 THEN 0 ELSE chat_summary.covered_through_id END, \
+         updated_at=localtimestamp,lock_version=chat_summary.lock_version+1 \
+         WHERE chat_summary.user_id=EXCLUDED.user_id",
+        vec![uid.into(), conversation_id.into(), from_id.into()],
+    )).await?;
+    txn.commit().await
 }
 
 /// Never delete raw history that has not been summarized under its own source.

@@ -41,7 +41,19 @@ async fn provenance_migration_is_repeatable_and_preserves_unknown_sources() {
     )
     .await;
     let migration = include_str!("../scripts/migration/pg/0018_chat_memory_source_role.sql");
+    // Upgrade databases that already applied the source-role-only form of 0018.
+    let original = migration.replace(
+        "ALTER TABLE chat_summary ADD COLUMN IF NOT EXISTS lock_version bigint NOT NULL DEFAULT 0;\n",
+        "",
+    );
+    sql(&db, &original).await;
     sql(&db, migration).await;
+    assert_eq!(
+        count(&db, "SELECT lock_version FROM chat_summary WHERE id=1").await,
+        0,
+        "existing summaries receive the initial optimistic-lock version"
+    );
+    sql(&db, "UPDATE chat_summary SET lock_version=7 WHERE id=1").await;
     for (index, role) in saudade_blog::authz::KNOWN_ROLES.iter().enumerate() {
         for table in ["chat_history", "chat_summary"] {
             sql(
@@ -55,6 +67,20 @@ async fn provenance_migration_is_repeatable_and_preserves_unknown_sources() {
         }
     }
     sql(&db, migration).await;
+    assert_eq!(
+        count(&db, "SELECT lock_version FROM chat_summary WHERE id=1").await,
+        7,
+        "reapplying the migration must not reset an active lock version"
+    );
+    assert_eq!(
+        count(
+            &db,
+            "SELECT count(*) FROM chat_summary WHERE id<>1 AND lock_version=0"
+        )
+        .await,
+        4,
+        "new summaries receive the initial version by default"
+    );
     for table in ["chat_history", "chat_summary"] {
         assert_eq!(
             count(

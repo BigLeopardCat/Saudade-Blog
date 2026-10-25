@@ -26,6 +26,7 @@ fn stored(role: Option<&str>, through_id: i32) -> chat_summary::Model {
         conversation_id: 42,
         summary: "existing private summary".into(),
         message_count: 20,
+        lock_version: 0,
         covered_through_id: through_id,
         source_role: role.map(str::to_owned),
         updated_at: chrono::Local::now().naive_local(),
@@ -227,6 +228,7 @@ async fn old_unknown_and_changed_role_summaries_do_not_supply_text_or_coverage()
             log.contains("IS NOT DISTINCT FROM")
                 && log.contains("covered_through_id=$8")
                 && log.contains("summary=$9")
+                && log.contains("lock_version=$10")
         );
         assert!(log.contains("Int(Some(500))"));
         assert!(log.contains("String(None)") || log.contains("admin"));
@@ -458,5 +460,203 @@ async fn postgres_scope_and_cas_survive_retention_without_deleting_uncovered_sou
     assert!(remaining.iter().any(|row| row.source_role.is_none()));
     assert!(remaining.iter().any(|row| row.id == ids[35]));
     assert!(remaining.iter().any(|row| row.id == admin_ids[10]));
+    txn.rollback().await.unwrap();
+}
+
+#[tokio::test]
+async fn discard_deletes_and_fences_summary_writes_in_one_transaction() {
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_exec_results([exec(2), exec(1)])
+        .into_connection();
+    discard(&db, 7, 42, 15).await.unwrap();
+    let log = format!("{:?}", db.into_transaction_log());
+    assert!(log.contains("BEGIN") && log.contains("COMMIT"));
+    assert!(log.contains("DELETE FROM") && log.contains("INSERT INTO chat_summary"));
+    assert!(log.contains("covered_through_id >= $3"));
+    assert!(log.contains("lock_version=chat_summary.lock_version+1"));
+}
+
+#[tokio::test]
+async fn a_failed_summary_fence_rolls_back_history_deletion() {
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_exec_results([exec(2)])
+        .into_connection();
+    assert!(discard(&db, 7, 42, 15).await.is_err());
+    let log = format!("{:?}", db.into_transaction_log());
+    assert!(log.contains("ROLLBACK") && !log.contains("COMMIT"));
+}
+
+#[tokio::test]
+async fn invalid_discard_boundaries_do_not_delete_any_history() {
+    let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
+    for boundary in [0, -1] {
+        assert!(discard(&db, 7, 42, boundary).await.is_err());
+    }
+    assert!(db.into_transaction_log().is_empty());
+}
+
+async fn insert_probe_messages<C: ConnectionTrait>(
+    db: &C,
+    uid: i32,
+    cid: i32,
+    count: i32,
+) -> Vec<i32> {
+    let mut ids = Vec::new();
+    for index in 0..count {
+        let row = db
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "INSERT INTO chat_history(user_id,conversation_id,role,content,source_role) \
+             VALUES($1,$2,$3,'discard rollback probe','user') RETURNING id",
+                vec![
+                    uid.into(),
+                    cid.into(),
+                    (if index % 2 == 0 { "user" } else { "assistant" }).into(),
+                ],
+            ))
+            .await
+            .unwrap()
+            .unwrap();
+        ids.push(row.try_get::<i32>("", "id").unwrap());
+    }
+    ids
+}
+
+async fn stored_probe<C: ConnectionTrait>(db: &C, cid: i32) -> chat_summary::Model {
+    chat_summary::Entity::find()
+        .filter(chat_summary::Column::ConversationId.eq(cid))
+        .one(db)
+        .await
+        .unwrap()
+        .unwrap()
+}
+
+#[tokio::test]
+async fn postgres_discard_fences_first_and_existing_summaries_and_invalidates_deleted_coverage() {
+    let Ok(url) = std::env::var("TEST_PG_URL") else {
+        return;
+    };
+    let db = Database::connect(url).await.unwrap();
+    let txn = db.begin().await.unwrap();
+    // No synthetic rows outlive the outer rollback; discard uses a nested savepoint.
+    let row = txn.query_one(Statement::from_sql_and_values(DbBackend::Postgres,
+        "INSERT INTO conversation(user_id,title) VALUES(2147483647,'discard rollback probe') RETURNING id",
+        [])).await.unwrap().unwrap();
+    let cid: i32 = row.try_get("", "id").unwrap();
+    let uid = i32::MAX;
+    let ids = insert_probe_messages(&txn, uid, cid, 41).await;
+    let initial = load(&txn, uid, cid, Some("user"), ids.last().copied())
+        .await
+        .unwrap();
+    let initial_batch = initial.summary_batch.unwrap();
+    let stale_first = update(
+        initial_batch.base_id,
+        initial_batch.messages.last().unwrap().id,
+    );
+    discard(&txn, uid, cid, ids[29]).await.unwrap();
+    assert!(
+        !save(&txn, uid, cid, &stale_first, &initial.revision.unwrap())
+            .await
+            .unwrap()
+    );
+    let empty = stored_probe(&txn, cid).await;
+    assert!(empty.summary.is_empty() && empty.source_role.is_none());
+    assert_eq!(empty.covered_through_id, 0);
+    assert_eq!(empty.lock_version, 0);
+
+    // A fresh request can summarize the surviving prefix using the new empty row.
+    let fresh = load(&txn, uid, cid, Some("user"), Some(ids[28]))
+        .await
+        .unwrap();
+    let first_update = update(0, ids[27]);
+    assert!(
+        save(&txn, uid, cid, &first_update, &fresh.revision.unwrap())
+            .await
+            .unwrap()
+    );
+    let before = stored_probe(&txn, cid).await;
+    let appended = insert_probe_messages(&txn, uid, cid, 11).await;
+    let inflight = load(&txn, uid, cid, Some("user"), appended.last().copied())
+        .await
+        .unwrap();
+    let inflight_batch = inflight.summary_batch.unwrap();
+    let inflight_update = update(
+        inflight_batch.base_id,
+        inflight_batch.messages.last().unwrap().id,
+    );
+
+    // Deleting an uncovered current turn preserves old text but still rejects
+    // every revision read before the deletion, even if role/text/watermark match.
+    discard(&txn, uid, cid, appended[10]).await.unwrap();
+    let preserved = stored_probe(&txn, cid).await;
+    assert_eq!(preserved.summary, before.summary);
+    assert_eq!(preserved.source_role, before.source_role);
+    assert_eq!(preserved.covered_through_id, before.covered_through_id);
+    assert_eq!(preserved.message_count, before.message_count);
+    assert_eq!(preserved.lock_version, before.lock_version + 1);
+    assert!(
+        !save(
+            &txn,
+            uid,
+            cid,
+            &inflight_update,
+            &inflight.revision.unwrap()
+        )
+        .await
+        .unwrap()
+    );
+
+    let current = insert_probe_messages(&txn, uid, cid, 1).await;
+    let reread = load(&txn, uid, cid, Some("user"), current.last().copied())
+        .await
+        .unwrap();
+    assert!(
+        save(&txn, uid, cid, &inflight_update, &reread.revision.unwrap())
+            .await
+            .unwrap()
+    );
+    let more = insert_probe_messages(&txn, uid, cid, 11).await;
+    let inflight = load(&txn, uid, cid, Some("user"), more.last().copied())
+        .await
+        .unwrap();
+    let batch = inflight.summary_batch.unwrap();
+    let stale = update(batch.base_id, batch.messages.last().unwrap().id);
+    let before = stored_probe(&txn, cid).await;
+
+    // Once a deletion intersects covered messages, the entire derived summary
+    // is invalidated rather than retaining text derived from removed content.
+    discard(&txn, uid, cid, ids[19]).await.unwrap();
+    let invalidated = stored_probe(&txn, cid).await;
+    assert!(invalidated.summary.is_empty() && invalidated.source_role.is_none());
+    assert_eq!(invalidated.covered_through_id, 0);
+    assert_eq!(invalidated.message_count, 0);
+    assert_eq!(invalidated.lock_version, before.lock_version + 1);
+    assert!(
+        !save(&txn, uid, cid, &stale, &inflight.revision.unwrap())
+            .await
+            .unwrap()
+    );
+    let remaining = chat_history::Entity::find()
+        .filter(chat_history::Column::ConversationId.eq(cid))
+        .all(&txn)
+        .await
+        .unwrap();
+    assert_eq!(remaining.len(), 19);
+    assert!(remaining.iter().all(|row| row.id < ids[19]));
+    let current = insert_probe_messages(&txn, uid, cid, 1).await;
+    let rebuilt = load(&txn, uid, cid, Some("user"), current.last().copied())
+        .await
+        .unwrap();
+    assert!(
+        save(
+            &txn,
+            uid,
+            cid,
+            &update(0, ids[18]),
+            &rebuilt.revision.unwrap()
+        )
+        .await
+        .unwrap()
+    );
     txn.rollback().await.unwrap();
 }

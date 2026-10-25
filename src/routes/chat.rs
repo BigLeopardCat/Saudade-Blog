@@ -365,16 +365,13 @@ pub async fn discard_handler(
                 .into_response();
         }
     }
-    let _ = chat_history::Entity::delete_many()
-        .filter(chat_history::Column::UserId.eq(uid))
-        .filter(chat_history::Column::ConversationId.eq(conv_id))
-        .filter(chat_history::Column::Id.gte(u.id))
-        .exec(&state.db)
-        .await;
-    // **图自己的 state 里那条 user 还在**（20261019 批 E）：20261018 起 agent 的上下文
-    // 由图自持（历史注入已关）⇒ `chat_history` 不再是上下文来源，「丢弃」对 agent 不再生效。
-    // 这里把**刚删掉那行的 content** 原样带上（agent 侧靠它确认摘的是哪一轮，对不上就不动手）。
-    // best-effort：失败只 warn，不挡这次响应——历史已经删了，这时候回一句"失败"是假话。
+    if let Err(error) = chat_memory::discard(&state.db, uid, conv_id, u.id).await {
+        warn!(%error, user_id=uid, conversation_id=conv_id, "chat discard failed");
+        return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
+            "success": false, "error": "未能保存本次丢弃，请稍后重试"
+        }))).into_response();
+    }
+    // 历史提交后同步清理执行内核上下文；带原文防止误删较新的轮次。
     crate::routes::conversation::drop_checkpoint_turn(conv_id, &u.content, uid).await;
     (StatusCode::OK, Json(serde_json::json!({"success": true}))).into_response()
 }

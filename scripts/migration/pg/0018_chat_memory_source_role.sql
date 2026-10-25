@@ -3,6 +3,7 @@ BEGIN;
 
 ALTER TABLE chat_history ADD COLUMN IF NOT EXISTS source_role varchar(32);
 ALTER TABLE chat_summary ADD COLUMN IF NOT EXISTS source_role varchar(32);
+ALTER TABLE chat_summary ADD COLUMN IF NOT EXISTS lock_version bigint NOT NULL DEFAULT 0;
 
 DO $$
 DECLARE relation_name text;
