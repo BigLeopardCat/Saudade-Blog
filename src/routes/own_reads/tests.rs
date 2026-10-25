@@ -132,3 +132,86 @@ async fn postgres_owned_pages_history_cursor_and_foreign_denial() {
     assert_eq!(detail["items"][0]["contentTruncated"], true);
     txn.rollback().await.unwrap();
 }
+
+#[tokio::test]
+async fn invalid_history_content_offsets_do_not_access_the_database() {
+    let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
+    for value in [
+        json!({"conversation_id":9,"content_offset":1}),
+        json!({"conversation_id":9,"message_id":1,"content_offset":-1}),
+        json!({"conversation_id":9,"message_id":1,"content_offset":2147483647}),
+        json!({"conversation_id":9,"message_id":1,"before_id":2,"content_offset":0}),
+    ] {
+        let params = serde_json::from_value(value).unwrap();
+        assert!(history::read(&db, 7, &params, 1).await.is_err());
+    }
+    assert!(db.into_transaction_log().is_empty());
+}
+
+#[tokio::test]
+async fn postgres_history_content_ranges_preserve_unicode_and_do_not_cross_conversations() {
+    use sea_orm::{ConnectionTrait, Database, Statement, TransactionTrait};
+    let Ok(url) = std::env::var("TEST_PG_URL") else {
+        return;
+    };
+    let db = Database::connect(url).await.unwrap();
+    let txn = db.begin().await.unwrap();
+    let row = txn.query_one(Statement::from_sql_and_values(DatabaseBackend::Postgres,
+        "INSERT INTO conversation(user_id,title) VALUES(2147483647,'text range probe') RETURNING id", []))
+        .await.unwrap().unwrap();
+    let cid: i32 = row.try_get("", "id").unwrap();
+    let text = format!(
+        "{}\n```rust\nlet value = 42;\n```\n正文末尾_🦀TAIL_CANARY",
+        "长🙂文\n".repeat(1100)
+    );
+    let row = txn.query_one(Statement::from_sql_and_values(DatabaseBackend::Postgres,
+        "INSERT INTO chat_history(user_id,conversation_id,role,content) VALUES($1,$2,'user',$3) RETURNING id",
+        [i32::MAX.into(),cid.into(),text.clone().into()])).await.unwrap().unwrap();
+    let mid: i32 = row.try_get("", "id").unwrap();
+    let mut offset = 0;
+    let mut reconstructed = String::new();
+    loop {
+        let params = serde_json::from_value(
+            json!({"conversation_id":cid,"message_id":mid,"content_offset":offset}),
+        )
+        .unwrap();
+        let result = history::read(&txn, i32::MAX, &params, 1).await.unwrap();
+        assert_eq!(result["hasMore"], false);
+        let item = &result["items"][0];
+        assert_eq!(item["contentOffset"], offset);
+        assert_eq!(item["contentLength"], text.chars().count());
+        let part = item["content"].as_str().unwrap();
+        assert!(part.chars().count() <= 2000);
+        reconstructed.push_str(part);
+        if item["nextContentOffset"].is_null() {
+            break;
+        }
+        let next = item["nextContentOffset"].as_i64().unwrap();
+        assert_eq!(next, offset + part.chars().count() as i64);
+        offset = next;
+    }
+    assert_eq!(reconstructed, text);
+    for value in [
+        json!({"conversation_id":cid+1,"message_id":mid,"content_offset":2000}),
+        json!({"conversation_id":cid,"message_id":mid,"content_offset":text.chars().count()+1}),
+    ] {
+        let params = serde_json::from_value(value).unwrap();
+        assert!(history::read(&txn, i32::MAX, &params, 1).await.is_err());
+    }
+    let params = serde_json::from_value(
+        json!({"conversation_id":cid,"message_id":mid,"content_offset":2000}),
+    )
+    .unwrap();
+    assert!(history::read(&txn, i32::MAX - 1, &params, 1).await.is_err());
+    let params = serde_json::from_value(
+        json!({"conversation_id":cid,"message_id":mid+1,"content_offset":2000}),
+    )
+    .unwrap();
+    assert!(
+        history::read(&txn, i32::MAX, &params, 1).await.unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    txn.rollback().await.unwrap();
+}

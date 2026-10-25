@@ -21,6 +21,7 @@ pub struct HistoryQuery {
     pub conversation_id: i32,
     pub before_id: Option<i32>,
     pub message_id: Option<i32>,
+    pub content_offset: Option<i32>,
     pub limit: Option<u64>,
 }
 
@@ -52,6 +53,10 @@ pub(super) async fn read<C: ConnectionTrait>(
     params: &HistoryQuery,
     limit: u64,
 ) -> Result<Value, DbErr> {
+    if !valid(params, limit) {
+        return Err(DbErr::Custom("invalid history range".into()));
+    }
+    let offset = params.content_offset.unwrap_or(0);
     let owned = conversation::Entity::find()
         .select_only()
         .column(conversation::Column::Id)
@@ -77,7 +82,10 @@ pub(super) async fn read<C: ConnectionTrait>(
             chat_history::Column::CreatedAt,
         ])
         .column_as(
-            Expr::cust(format!("LEFT(\"chat_history\".\"content\", {cap})")),
+            Expr::cust_with_values(
+                "SUBSTRING(\"chat_history\".\"content\" FROM $1 FOR $2)",
+                [offset + 1, cap],
+            ),
             "content",
         )
         .column_as(
@@ -99,13 +107,33 @@ pub(super) async fn read<C: ConnectionTrait>(
         if row.role != "user" && row.role != "assistant" {
             return Err(DbErr::Custom("unknown message role".into()));
         }
+        if offset > row.content_length {
+            return Err(DbErr::Custom(
+                "history offset exceeds content length".into(),
+            ));
+        }
+        let end = offset + row.content.chars().count() as i32;
+        let next_offset = (end < row.content_length).then_some(end);
         items.push(json!({"id":row.id,"role":row.role,"content":row.content,
-                         "contentTruncated":row.content_length>cap,"createdAt":row.created_at}));
+                         "contentTruncated":offset>0 || next_offset.is_some(),
+                         "contentOffset":offset,"contentLength":row.content_length,
+                         "nextContentOffset":next_offset,"createdAt":row.created_at}));
     }
     Ok(
         json!({"ownerId":uid,"conversationId":params.conversation_id,"items":items,
               "hasMore":has_more,"nextBeforeId":next,"includesImages":false}),
     )
+}
+
+fn valid(params: &HistoryQuery, limit: u64) -> bool {
+    params.conversation_id > 0
+        && (1..=10).contains(&limit)
+        && params.before_id.is_none_or(|id| id > 0)
+        && params.message_id.is_none_or(|id| id > 0)
+        && !(params.before_id.is_some() && params.message_id.is_some())
+        && params
+            .content_offset
+            .is_none_or(|offset| params.message_id.is_some() && (0..i32::MAX).contains(&offset))
 }
 
 pub async fn list(
@@ -118,12 +146,7 @@ pub async fn list(
         Err(e) => return Json(ApiResponse::error(e.message())),
     };
     let limit = params.limit.unwrap_or(5);
-    if params.conversation_id <= 0
-        || !(1..=10).contains(&limit)
-        || params.before_id.is_some_and(|id| id <= 0)
-        || params.message_id.is_some_and(|id| id <= 0)
-        || (params.before_id.is_some() && params.message_id.is_some())
-    {
+    if !valid(&params, limit) {
         return Json(ApiResponse::error("会话、消息或读取范围无效"));
     }
     let limit = if params.message_id.is_some() {
