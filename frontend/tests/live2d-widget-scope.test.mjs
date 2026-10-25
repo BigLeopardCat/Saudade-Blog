@@ -301,13 +301,13 @@ for (const f of ['chat-stream.js', 'chat-engine.js', 'chat-render.js', 'chat-ses
 }
 
 {
-  // 帧协议与版本：__CONFIRM__ 解析仍在，autoload/loader.ts 的 ?v= 与 VER 一致
+  // Typed confirmation transport and host-provided asset revision.
   const s = W('chat-stream.js');
   ok(s.includes("type === 'confirmation'"), '确认卡只由具名事件产生');
   ok(/confirm_token: opts\.confirmToken/.test(s), '请求体带 confirm_token');
-  const ver = (W('boot.js').match(/const VER = '([^']+)'/) || [])[1];
   const idx = readFileSync(path.join(here, '../src/components/Live2dAgent/loader.ts'), 'utf8');
-  ok(ver && idx.includes(`boot.js?v=${ver}`), `boot.js VER 与 loader.ts 的 ?v= 一致（${ver}）`);
+  ok(W('boot.js').includes("entry.searchParams.get('v')")
+      && idx.includes('boot.js?v=${widgetLock.sha}'), '组件子资源沿用宿主锁定的版本');
 }
 
 // ── ④ 工具条：图标 ↔ 功能（20261002 修「图标对不上功能」）─────────────────────

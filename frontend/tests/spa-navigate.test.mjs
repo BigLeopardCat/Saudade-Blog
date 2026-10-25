@@ -184,15 +184,14 @@ console.log('\n⑤ 源码契约：导航卡停用、直达走桥、气泡链接�
     ok(/registerSpaNavigate\(router\)/.test(router), '  并且在 createBrowserRouter 之后调用了一次');
 }
 
-console.log('\n⑥ 版本号：改了 widget 脚本必须 bump（nginx 对 live2d-widgets 是 1 年 immutable 缓存）');
+console.log('\n⑥ 组件缓存版本来自锁文件并传播给子资源');
 {
     const widget = readFileSync(path.join(root, 'public/live2d-widgets/boot.js'), 'utf8');
-    const ver = (widget.match(/const VER = '([^']+)'/) || [])[1];
-    ok(!!ver, '能读到 boot.js 的 VER');
-    // 与本次静态资源版本同步，防止 immutable 缓存继续加载旧脚本。
-    ok(ver === '20261025a', 'VER 与当前组件发布版本一致', { ver });
+    ok(widget.includes('document.currentScript?.src'), '入口读取宿主提供的脚本版本');
+    ok(widget.includes("entry.searchParams.get('v')"), '子资源版本使用入口缓存键');
     const tsx = readFileSync(path.join(root, 'src/components/Live2dAgent/loader.ts'), 'utf8');
-    ok(tsx.includes('boot.js?v=' + ver), 'Live2dAgent 的 ?v= 与 VER 一致');
+    ok(tsx.includes("import widgetLock from '../../../widget.lock.json'"), '宿主导入组件锁文件');
+    ok(tsx.includes('boot.js?v=${widgetLock.sha}'), '入口 URL 直接使用锁定提交版本');
 }
 
 console.log(`\n${fail === 0 ? '全部通过' : `失败 ${fail} 项`}（通过 ${pass}）`);

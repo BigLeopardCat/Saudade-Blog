@@ -1,3 +1,5 @@
+import widgetLock from '../../../widget.lock.json';
+
 type AgentWindow = Window & {__agentChatInjected?: boolean};
 let pending: Promise<void> | undefined;
 /** Shared across SPA mounts. Only script load success commits the loaded flag. */
@@ -10,7 +12,7 @@ export function loadAgent(): Promise<void> {
             try {
                 await new Promise<void>((resolve, reject) => {
                     const script = document.createElement('script');
-                    script.src = '/live2d-widgets/boot.js?v=20261025a';
+                    script.src = `/live2d-widgets/boot.js?v=${widgetLock.sha}`;
                     script.async = true;
                     const fail = () => {
                         window.clearTimeout(timer);
