@@ -1,12 +1,12 @@
 {
-  "//": "看板娘 + 对话面板的源码住在 agent 仓（MIT）。本文件是它在本仓的**唯一**版本凭据：构建前由 frontend/scripts/fetch-widget.mjs 按 sha 稀疏检出，落到 frontend/public/ 下与从前完全相同的路径。改 agent 仓那半边之后**必须**回来把 sha 与两棵 tree 一起换掉，否则新代码永远不上线、且没有任何东西会变红。",
-  "//repo": "fork 的人把自己的 agent 仓地址填进环境变量 WIDGET_REPO 即可，不用改这个被 git 跟踪的文件。",
+  "//": "看板娘源码位于 Agent 仓库（MIT）；更新组件时同步 sha 与 trees，构建由 fetch-widget.mjs 拉取。",
+  "//repo": "Fork 可用 WIDGET_REPO 覆盖源仓地址。",
   "repo": "https://github.com/BigLeopardCat/saudade-blog-agent.git",
-  "sha": "64205c38f93fbcf52dd4d1bbae708eaaf1a980a4",
+  "sha": "a64e12691ff645c54019cdbe76946e90450ec8fb",
   "base": "frontend/public",
-  "//trees": "强判据：检出后逐条比对 `git rev-parse HEAD:<path>`，不一致即退 1。它一次抓住三件事——pin 挪了、稀疏锥配错了、agent 仓那侧被改写了历史。",
+  "//trees": "构建逐项验证检出提交与子树哈希。",
   "trees": {
-    "frontend/public/live2d-widgets": "8028721bc2992ca3efced1bda9979413d795f7fb",
+    "frontend/public/live2d-widgets": "e112209d3630fd7215f74daaf5a0ba95ffcaf36c",
     "frontend/public/live2d_model": "556f5ea9c844018ebf8b1a4ea847694aebfca794"
   }
 }

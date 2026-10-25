@@ -1,4 +1,5 @@
 import {beforeEach, describe, expect, it, vi} from 'vitest';
+import widgetLock from '../../widget.lock.json';
 beforeEach(() => {vi.resetModules(); vi.useFakeTimers(); document.head.querySelectorAll('script').forEach(s => s.remove()); delete (window as Window & {__agentChatInjected?: boolean}).__agentChatInjected;});
 describe('agent script loading', () => {
     it('shares an in-flight script and commits success only on load', async () => {
@@ -6,6 +7,9 @@ describe('agent script loading', () => {
         const first = loadAgent();
         expect(loadAgent()).toBe(first);
         expect(document.head.querySelectorAll('script')).toHaveLength(1);
+        const entry = new URL(document.head.querySelector('script')!.src);
+        expect(entry.pathname).toBe('/live2d-widgets/boot.js');
+        expect(entry.searchParams.get('v')).toBe(widgetLock.sha);
         expect((window as Window & {__agentChatInjected?: boolean}).__agentChatInjected).toBeUndefined();
         document.head.querySelector('script')!.dispatchEvent(new Event('load'));
         await first;

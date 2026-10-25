@@ -34,6 +34,7 @@ chunk）与自研实现（pixi-live2d-display）都必须全绿，替换前后�
 import functools
 import http.server
 import io
+import json
 import pathlib
 import socketserver
 import statistics
@@ -121,13 +122,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         path = self.path.split("?")[0]
         if path in ("/", PAGE_PATH, EVIL_PATH):
-            # 版本号照抄 boot.js 的 VER：入口改版后这里跟着换，测试永远加载"本代"入口
-            ver = ""
-            try:
-                src = (WIDGET / "boot.js").read_text(encoding="utf-8")
-                ver = src.split("const VER = '")[1].split("'")[0]
-            except Exception:
-                pass
+            # Match the production loader's lock-derived cache key.
+            ver = json.loads((ROOT / "frontend/widget.lock.json").read_text())["sha"]
             # 标题按路径给：⑩ 那条路径喂的是带标签的载荷（同一份 harness，只换 title）
             title = EVIL_TITLE if path == EVIL_PATH else TITLE
             body = HARNESS.replace("%TITLE%", title).replace("__VER__", ver).encode("utf-8")
