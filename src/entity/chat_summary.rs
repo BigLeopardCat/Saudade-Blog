@@ -9,6 +9,10 @@ pub struct Model {
     pub user_id: i32,
     /// 每会话独立摘要，唯一键为 conversation_id。
     pub conversation_id: i32,
+    /// 摘要来源的调用者角色；未知来源的旧摘要为 None。
+    pub source_role: Option<String>,
+    /// 摘要更新与丢弃操作共享的乐观锁版本。
+    pub lock_version: i64,
     #[sea_orm(column_type = "Text")]
     pub summary: String,
     pub message_count: i32,
