@@ -1,118 +1,462 @@
 use super::*;
-use sea_orm::{Database, DatabaseBackend, MockDatabase, TransactionTrait};
+use sea_orm::{Database, DatabaseBackend, MockDatabase, MockExecResult, TransactionTrait};
 
-fn revision(count: i64, through_id: Option<i32>) -> Revision {
-    Revision {
-        message_count: count,
+fn message(id: i32, role: &str) -> chat_history::Model {
+    chat_history::Model {
+        id,
+        user_id: 7,
+        conversation_id: 42,
+        role: role.into(),
+        source_role: Some("user".into()),
+        content: format!("message {id}"),
+        created_at: chrono::Local::now().naive_local(),
+    }
+}
+
+fn messages(start: i32, end: i32) -> Vec<chat_history::Model> {
+    (start..=end)
+        .map(|id| message(id, if id % 2 == 0 { "user" } else { "assistant" }))
+        .collect()
+}
+
+fn stored(role: Option<&str>, through_id: i32) -> chat_summary::Model {
+    chat_summary::Model {
+        id: 1,
+        user_id: 7,
+        conversation_id: 42,
+        summary: "existing private summary".into(),
+        message_count: 20,
+        covered_through_id: through_id,
+        source_role: role.map(str::to_owned),
+        updated_at: chrono::Local::now().naive_local(),
+    }
+}
+
+fn exec(rows_affected: u64) -> MockExecResult {
+    MockExecResult {
+        last_insert_id: 0,
+        rows_affected,
+    }
+}
+
+fn update(base_id: i32, through_id: i32) -> SummaryUpdate {
+    SummaryUpdate {
+        text: "updated summary".into(),
+        base_id,
         through_id,
     }
 }
 
 #[tokio::test]
-async fn confirmations_and_short_threads_never_schedule_or_save_summaries() {
+async fn unknown_sources_are_not_relabelled_and_do_not_query_memory() {
     let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
-    assert!(!due(&db, 7, 42, revision(502, None), None).await.unwrap());
-    assert!(!due(&db, 7, 42, revision(20, Some(20)), None).await.unwrap());
-    assert!(due(&db, 7, 42, revision(502, Some(1000)), None)
-        .await
-        .unwrap());
-    save(&db, 7, 42, "ignored", revision(502, None))
-        .await
-        .unwrap();
-    save(&db, 7, 42, "  ", revision(502, Some(1000)))
-        .await
-        .unwrap();
+    for role in [None, Some(""), Some("unknown")] {
+        let memory = load(&db, 7, 42, role, Some(90)).await.unwrap();
+        assert!(memory.history.is_empty() && memory.summary.is_empty());
+        assert!(memory.history_scope.is_none() && memory.summary_scope.is_none());
+        assert!(memory.summary_batch.is_none() && memory.revision.is_none());
+    }
     assert!(db.into_transaction_log().is_empty());
 }
 
 #[tokio::test]
-async fn postgres_summary_progress_survives_retention_and_rejects_stale_writes() {
+async fn confirmations_read_scoped_context_without_scheduling_summaries() {
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_results([vec![stored(Some("user"), 35)]])
+        .append_query_results([messages(36, 55).into_iter().rev().collect::<Vec<_>>()])
+        .into_connection();
+    let memory = load(&db, 7, 42, Some("user"), None).await.unwrap();
+    assert_eq!(memory.history.len(), 20);
+    assert_eq!(memory.summary, "existing private summary");
+    assert!(memory.summary_scope.is_some());
+    assert!(!memory.needs_summary && memory.revision.is_none());
+    assert_eq!(db.into_transaction_log().len(), 2);
+}
+
+#[tokio::test]
+async fn backlog_uses_the_oldest_full_prefix_and_keeps_recent_context_separate() {
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_results([Vec::<chat_summary::Model>::new()])
+        .append_query_results([messages(16, 35).into_iter().rev().collect::<Vec<_>>()])
+        .append_query_results([messages(1, 35)])
+        .into_connection();
+    let memory = load(&db, 7, 42, Some("user"), Some(36)).await.unwrap();
+    assert!(memory.needs_summary);
+    assert_eq!(memory.history.len(), 20);
+    assert_eq!(memory.history[0].content, "message 16");
+    let batch = memory.summary_batch.unwrap();
+    assert_eq!(batch.base_id, 0);
+    assert_eq!(batch.messages.len(), 35);
+    assert_eq!(batch.messages.first().unwrap().id, 1);
+    assert_eq!(batch.messages.last().unwrap().id, 35);
+    let log = format!("{:?}", db.into_transaction_log());
+    assert!(log.contains("source_role") && log.contains("ORDER BY"));
+    assert!(log.contains("LIMIT") && log.contains("Int(Some(36))"));
+}
+
+#[tokio::test]
+async fn small_backlogs_never_advance_a_boundary() {
+    let prefix = messages(1, 9);
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_results([Vec::<chat_summary::Model>::new()])
+        .append_query_results([prefix.clone().into_iter().rev().collect::<Vec<_>>()])
+        .append_query_results([prefix])
+        .into_connection();
+    let memory = load(&db, 7, 42, Some("user"), Some(10)).await.unwrap();
+    assert!(!memory.needs_summary);
+    assert!(memory.summary_batch.is_none() && memory.revision.is_none());
+}
+
+#[tokio::test]
+async fn a_long_message_is_deferred_whole_then_offered_without_clipping() {
+    let mut prefix = messages(1, 60);
+    prefix[58].content = format!("{}TAIL_CANARY", "长".repeat(12_000));
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_results([Vec::<chat_summary::Model>::new()])
+        .append_query_results([prefix[40..].iter().rev().cloned().collect::<Vec<_>>()])
+        .append_query_results([prefix.clone()])
+        .into_connection();
+    let memory = load(&db, 7, 42, Some("user"), Some(99)).await.unwrap();
+    let batch = memory.summary_batch.unwrap();
+    assert_eq!(batch.messages.len(), 58);
+    assert_eq!(batch.messages.last().unwrap().id, 58);
+    assert!(memory.history[18].content.ends_with("TAIL_CANARY"));
+    let next_db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_results([vec![stored(Some("user"), 58)]])
+        .append_query_results([messages(59, 78).into_iter().rev().collect::<Vec<_>>()])
+        .append_query_results([{
+            let mut next = messages(59, 70);
+            next[0] = prefix[58].clone();
+            next
+        }])
+        .into_connection();
+    let next = load(&next_db, 7, 42, Some("user"), Some(79)).await.unwrap();
+    let next_batch = next.summary_batch.unwrap();
+    assert_eq!(next_batch.base_id, 58);
+    assert_eq!(next_batch.messages.len(), 1);
+    assert_eq!(next_batch.messages[0].id, 59);
+    assert!(next_batch.messages[0].content.ends_with("TAIL_CANARY"));
+    assert_eq!(next_batch.messages[0].content.chars().count(), 12_011);
+    assert!(next.needs_summary && next.revision.is_some());
+}
+
+#[tokio::test]
+async fn a_short_complete_prefix_advances_coverage_and_keeps_the_tail_for_the_next_batch() {
+    let mut prefix = messages(1, 35);
+    for row in &mut prefix {
+        row.content = "长".repeat(4_000);
+    }
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_results([Vec::<chat_summary::Model>::new()])
+        .append_query_results([prefix[15..].iter().rev().cloned().collect::<Vec<_>>()])
+        .append_query_results([prefix.clone()])
+        .append_exec_results([exec(1)])
+        .into_connection();
+    let first = load(&db, 7, 42, Some("user"), Some(36)).await.unwrap();
+    let batch = first.summary_batch.unwrap();
+    assert_eq!(
+        batch.messages.iter().map(|row| row.id).collect::<Vec<_>>(),
+        [1, 2, 3]
+    );
+    assert!(
+        save(&db, 7, 42, &update(0, 3), &first.revision.unwrap())
+            .await
+            .unwrap()
+    );
+    let next_db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_results([vec![stored(Some("user"), 3)]])
+        .append_query_results([prefix[15..].iter().rev().cloned().collect::<Vec<_>>()])
+        .append_query_results([prefix[3..].to_vec()])
+        .into_connection();
+    let next = load(&next_db, 7, 42, Some("user"), Some(36)).await.unwrap();
+    let next_batch = next.summary_batch.unwrap();
+    assert_eq!(next_batch.base_id, 3);
+    assert_eq!(
+        next_batch
+            .messages
+            .iter()
+            .map(|row| row.id)
+            .collect::<Vec<_>>(),
+        [4, 5, 6]
+    );
+    assert!(
+        next_batch
+            .messages
+            .iter()
+            .all(|row| row.content.chars().count() == 4_000)
+    );
+}
+
+#[tokio::test]
+async fn interrupted_requests_still_allow_the_oldest_prefix_to_advance() {
+    let mut prefix = messages(1, 60);
+    for row in &mut prefix {
+        row.role = "user".into();
+    }
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_results([Vec::<chat_summary::Model>::new()])
+        .append_query_results([prefix[40..].iter().rev().cloned().collect::<Vec<_>>()])
+        .append_query_results([prefix])
+        .into_connection();
+    let memory = load(&db, 7, 42, Some("user"), Some(61)).await.unwrap();
+    let batch = memory.summary_batch.unwrap();
+    assert_eq!(batch.messages.len(), 60);
+    assert_eq!(batch.messages.last().unwrap().id, 60);
+    assert!(memory.revision.is_some());
+}
+
+#[tokio::test]
+async fn old_unknown_and_changed_role_summaries_do_not_supply_text_or_coverage() {
+    for role in [None, Some("admin")] {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![stored(role, 500)]])
+            .append_query_results([messages(1, 11).into_iter().rev().collect::<Vec<_>>()])
+            .append_query_results([messages(1, 11)])
+            .append_exec_results([exec(1)])
+            .into_connection();
+        let memory = load(&db, 7, 42, Some("user"), Some(12)).await.unwrap();
+        assert!(memory.summary.is_empty() && memory.summary_scope.is_none());
+        assert_eq!(memory.summary_batch.as_ref().unwrap().base_id, 0);
+        assert!(
+            save(&db, 7, 42, &update(0, 11), &memory.revision.unwrap())
+                .await
+                .unwrap()
+        );
+        let log = format!("{:?}", db.into_transaction_log());
+        assert!(
+            log.contains("IS NOT DISTINCT FROM")
+                && log.contains("covered_through_id=$8")
+                && log.contains("summary=$9")
+        );
+        assert!(log.contains("Int(Some(500))"));
+        assert!(log.contains("String(None)") || log.contains("admin"));
+    }
+}
+
+#[tokio::test]
+async fn matching_summary_advances_from_its_real_boundary_and_uses_compare_and_swap() {
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_results([vec![stored(Some("user"), 35)]])
+        .append_query_results([messages(36, 55).into_iter().rev().collect::<Vec<_>>()])
+        .append_query_results([messages(36, 55)])
+        .append_exec_results([exec(0)])
+        .into_connection();
+    let memory = load(&db, 7, 42, Some("user"), Some(56)).await.unwrap();
+    let revision = memory.revision.unwrap();
+    assert_eq!(memory.summary_batch.unwrap().base_id, 35);
+    assert!(!save(&db, 7, 42, &update(35, 55), &revision).await.unwrap());
+    let log = format!("{:?}", db.into_transaction_log());
+    assert!(log.contains("Int(Some(35))") && log.contains("Int(Some(40))"));
+}
+
+#[tokio::test]
+async fn invalid_updates_and_cross_conversation_revisions_do_not_write() {
+    let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
+    let revision = test_revision(7, 42, "user", 10, 25);
+    for invalid in [
+        update(0, 25),
+        update(10, 24),
+        SummaryUpdate {
+            text: "  ".into(),
+            ..update(10, 25)
+        },
+        SummaryUpdate {
+            text: "长".repeat(8_001),
+            ..update(10, 25)
+        },
+    ] {
+        assert!(!save(&db, 7, 42, &invalid, &revision).await.unwrap());
+    }
+    assert!(!save(&db, 8, 42, &update(10, 25), &revision).await.unwrap());
+    assert!(!save(&db, 7, 43, &update(10, 25), &revision).await.unwrap());
+    assert!(db.into_transaction_log().is_empty());
+}
+
+#[tokio::test]
+async fn a_first_summary_does_not_overwrite_a_concurrent_insert() {
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_exec_results([exec(0)])
+        .into_connection();
+    let revision = test_revision(7, 42, "user", 0, 35);
+    assert!(!save(&db, 7, 42, &update(0, 35), &revision).await.unwrap());
+    let log = format!("{:?}", db.into_transaction_log());
+    assert!(log.contains("ON CONFLICT (conversation_id) DO NOTHING"));
+    assert!(!log.contains("DO UPDATE"));
+}
+
+#[tokio::test]
+async fn retention_deletes_only_covered_records_from_the_matching_source() {
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_exec_results([exec(4)])
+        .into_connection();
+    assert_eq!(prune(&db, 7, 42, 500).await.unwrap(), 4);
+    let log = format!("{:?}", db.into_transaction_log());
+    assert!(
+        log.contains("s.source_role=h.source_role") && log.contains("h.id<=s.covered_through_id")
+    );
+    assert!(log.contains("s.source_role IS NOT NULL") && log.contains("GREATEST"));
+}
+
+#[test]
+fn summary_updates_require_the_versioned_object_and_integer_boundaries() {
+    for value in [
+        r#""legacy summary""#,
+        r#"{"text":"s","base_id":0}"#,
+        r#"{"text":"s","base_id":0.5,"through_id":35}"#,
+        r#"{"text":"s","base_id":0,"through_id":35,"extra":true}"#,
+    ] {
+        assert!(serde_json::from_str::<SummaryUpdate>(value).is_err());
+    }
+    assert_eq!(
+        serde_json::from_str::<SummaryUpdate>(
+            r#"{"text":"updated summary","base_id":0,"through_id":35}"#
+        )
+        .unwrap(),
+        update(0, 35)
+    );
+}
+
+#[tokio::test]
+async fn postgres_scope_and_cas_survive_retention_without_deleting_uncovered_sources() {
     let Ok(url) = std::env::var("TEST_PG_URL") else {
         return;
     };
     let db = Database::connect(url).await.unwrap();
     let txn = db.begin().await.unwrap();
-    // Fixtures and every mutation remain in this transaction and roll back.
+    // All synthetic rows live in one rollback-only transaction.
     let row = txn.query_one(Statement::from_sql_and_values(DbBackend::Postgres,
         "INSERT INTO conversation(user_id,title) VALUES(2147483647,'summary rollback probe') RETURNING id",
         [])).await.unwrap().unwrap();
     let cid: i32 = row.try_get("", "id").unwrap();
     let uid = i32::MAX;
     let mut ids = Vec::new();
-    for _ in 0..22 {
+    for index in 1..=36 {
         let row = txn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Postgres,
-                "INSERT INTO chat_history(user_id,conversation_id,role,content) \
-             VALUES($1,$2,'user','memory rollback probe') RETURNING id",
-                vec![uid.into(), cid.into()],
+                "INSERT INTO chat_history(user_id,conversation_id,role,content,source_role) \
+             VALUES($1,$2,$3,'memory rollback probe','user') RETURNING id",
+                vec![
+                    uid.into(),
+                    cid.into(),
+                    (if index % 2 == 0 { "user" } else { "assistant" }).into(),
+                ],
             ))
             .await
             .unwrap()
             .unwrap();
         ids.push(row.try_get::<i32>("", "id").unwrap());
     }
-    save(&txn, uid, cid, "newer", revision(502, Some(ids[11])))
+    let first = load(&txn, uid, cid, Some("user"), Some(ids[35]))
         .await
         .unwrap();
-    save(&txn, uid, cid, "older", revision(502, Some(ids[1])))
-        .await
-        .unwrap();
-    save(&txn, uid, cid, "duplicate", revision(502, Some(ids[11])))
-        .await
-        .unwrap();
-    save(
-        &txn,
-        uid - 1,
-        cid,
-        "wrong owner",
-        revision(502, Some(ids[21])),
-    )
-    .await
-    .unwrap();
-    let stored = chat_summary::Entity::find()
-        .filter(chat_summary::Column::ConversationId.eq(cid))
-        .one(&txn)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(stored.summary, "newer");
-    assert_eq!(stored.covered_through_id, ids[11]);
+    assert_eq!(first.summary_batch.as_ref().unwrap().messages.len(), 35);
+    let revision = first.revision.unwrap();
+    let initial = update(0, ids[34]);
+    assert!(save(&txn, uid, cid, &initial, &revision).await.unwrap());
+    assert!(!save(&txn, uid, cid, &initial, &revision).await.unwrap());
     assert!(
-        !due(&txn, uid, cid, revision(502, Some(ids[20])), Some(&stored))
+        !save(&txn, uid, cid, &update(0, ids[35]), &revision)
             .await
             .unwrap()
     );
-    assert!(
-        due(&txn, uid, cid, revision(502, Some(ids[21])), Some(&stored))
+    // A different source has no right to reuse either text or its boundary.
+    let isolated = load(&txn, uid, cid, Some("admin"), Some(ids[35]))
+        .await
+        .unwrap();
+    assert!(isolated.summary.is_empty() && isolated.history.is_empty());
+    // Unproven legacy rows must survive even when retention is below the thread size.
+    txn.execute(Statement::from_sql_and_values(DbBackend::Postgres,
+        "INSERT INTO chat_history(user_id,conversation_id,role,content) VALUES($1,$2,'assistant','unknown source')",
+        vec![uid.into(), cid.into()])).await.unwrap();
+    assert_eq!(prune(&txn, uid, cid, 2).await.unwrap(), 35);
+    let remaining = chat_history::Entity::find()
+        .filter(chat_history::Column::ConversationId.eq(cid))
+        .all(&txn)
+        .await
+        .unwrap();
+    assert_eq!(remaining.len(), 2);
+    assert!(remaining.iter().any(|row| row.source_role.is_none()));
+    assert!(remaining.iter().any(|row| row.id == ids[35]));
+    let reloaded = load(&txn, uid, cid, Some("user"), Some(ids[35]))
+        .await
+        .unwrap();
+    assert_eq!(reloaded.summary, initial.text);
+    assert!(!reloaded.needs_summary);
+    let mut admin_ids = Vec::new();
+    for index in 1..=11 {
+        let row = txn
+            .query_one(Statement::from_sql_and_values(
+                DbBackend::Postgres,
+                "INSERT INTO chat_history(user_id,conversation_id,role,content,source_role) \
+             VALUES($1,$2,$3,'admin rollback probe','admin') RETURNING id",
+                vec![
+                    uid.into(),
+                    cid.into(),
+                    (if index % 2 == 0 { "assistant" } else { "user" }).into(),
+                ],
+            ))
             .await
             .unwrap()
-    );
+            .unwrap();
+        admin_ids.push(row.try_get::<i32>("", "id").unwrap());
+    }
+    let admin = load(&txn, uid, cid, Some("admin"), Some(admin_ids[10]))
+        .await
+        .unwrap();
+    assert!(admin.summary.is_empty());
+    let admin_revision = admin.revision.unwrap();
+    assert_eq!(admin.summary_batch.unwrap().base_id, 0);
+    // A concurrent source change invalidates the exact baseline that was read.
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "DELETE FROM chat_history WHERE conversation_id=$1 AND id<=$2",
-        vec![cid.into(), ids[11].into()],
+        "UPDATE chat_summary SET source_role='superadmin' WHERE conversation_id=$1",
+        vec![cid.into()],
     ))
     .await
     .unwrap();
+    let admin_update = update(0, admin_ids[9]);
     assert!(
-        due(&txn, uid, cid, revision(502, Some(ids[21])), Some(&stored))
+        !save(&txn, uid, cid, &admin_update, &admin_revision)
             .await
             .unwrap()
     );
-    save(&txn, uid, cid, "latest", revision(502, Some(ids[21])))
+    let latest = load(&txn, uid, cid, Some("admin"), Some(admin_ids[10]))
         .await
         .unwrap();
-    let latest = chat_summary::Entity::find_by_id(stored.id)
-        .one(&txn)
+    let latest_revision = latest.revision.unwrap();
+    txn.execute(Statement::from_sql_and_values(DbBackend::Postgres,
+        "UPDATE chat_summary SET summary='concurrent same-boundary update' WHERE conversation_id=$1",
+        vec![cid.into()])).await.unwrap();
+    assert!(
+        !save(&txn, uid, cid, &admin_update, &latest_revision)
+            .await
+            .unwrap()
+    );
+    let latest_revision = load(&txn, uid, cid, Some("admin"), Some(admin_ids[10]))
         .await
         .unwrap()
+        .revision
         .unwrap();
-    assert_eq!(latest.summary, "latest");
     assert!(
-        !due(&txn, uid, cid, revision(502, Some(ids[21])), Some(&latest))
+        save(&txn, uid, cid, &admin_update, &latest_revision)
             .await
             .unwrap()
     );
+    assert!(
+        !save(&txn, uid, cid, &admin_update, &latest_revision)
+            .await
+            .unwrap()
+    );
+    assert_eq!(prune(&txn, uid, cid, 1).await.unwrap(), 10);
+    let remaining = chat_history::Entity::find()
+        .filter(chat_history::Column::ConversationId.eq(cid))
+        .all(&txn)
+        .await
+        .unwrap();
+    assert_eq!(remaining.len(), 3);
+    assert!(remaining.iter().any(|row| row.source_role.is_none()));
+    assert!(remaining.iter().any(|row| row.id == ids[35]));
+    assert!(remaining.iter().any(|row| row.id == admin_ids[10]));
     txn.rollback().await.unwrap();
 }

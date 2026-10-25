@@ -22,6 +22,7 @@ LOAD = [
     "0015_announcement_notifications.sql",
     "0016_confirmation_question.sql",
     "0017_account_action_version.sql",
+    "0018_chat_memory_source_role.sql",
 ]
 
 EXCLUDED = {
