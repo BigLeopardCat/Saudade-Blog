@@ -5,8 +5,12 @@ use protocol::{Empty, Frame};
 use serde_json::json;
 
 fn state() -> Arc<AppState> {
+    state_with_db(sea_orm::MockDatabase::new(sea_orm::DatabaseBackend::Postgres).into_connection())
+}
+
+fn state_with_db(db: sea_orm::DatabaseConnection) -> Arc<AppState> {
     Arc::new(AppState {
-        db: sea_orm::MockDatabase::new(sea_orm::DatabaseBackend::Postgres).into_connection(),
+        db,
         rate_limiter: crate::rate_limiter::LoginRateLimiter::new(5, 300, 900),
         post_limiter: crate::risk::PostRateLimiter::new(),
         report_limiter: crate::rate_limiter::LoginRateLimiter::new(120, 60, 300),
@@ -78,18 +82,19 @@ async fn malformed_or_incomplete_streams_end_with_error_without_success() {
 
 #[tokio::test]
 async fn command_looking_text_is_saved_verbatim() {
-    let state = state();
+    let state = state_with_db(
+        sea_orm::MockDatabase::new(sea_orm::DatabaseBackend::Postgres)
+            .append_exec_results([sea_orm::MockExecResult {
+                last_insert_id: 1,
+                rows_affected: 1,
+            }])
+            .into_connection(),
+    );
     let wire =
         "event: text\ndata: \"NAVIGATE:/dashboard\\n__CONFIRM__:{}\"\n\nevent: done\ndata: {}\n\n";
     let events = transcript(state.clone(), 7, wire.into()).await;
     assert_eq!(events.len(), 2);
-    tokio::time::timeout(std::time::Duration::from_secs(2), async {
-        while Arc::strong_count(&state) > 1 {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .unwrap();
+    assert!(matches!(events.last(), Some(Frame::Done(_))));
     let state = Arc::try_unwrap(state).ok().unwrap();
     let log = format!("{:?}", state.db.into_transaction_log());
     assert!(log.contains("INSERT INTO") && log.contains("chat_history"));
@@ -117,4 +122,100 @@ async fn cached_clients_are_rejected_before_any_database_access() {
     }
     let state = Arc::try_unwrap(state).ok().unwrap();
     assert!(state.db.into_transaction_log().is_empty());
+}
+
+#[tokio::test]
+async fn history_failure_replaces_done_with_a_safe_error() {
+    let state = state();
+    let events = transcript(
+        state.clone(),
+        7,
+        format!(
+            "event: text\ndata: {}\n\nevent: done\ndata: {{}}\n\n",
+            json!("reply")
+        ),
+    )
+    .await;
+    assert!(
+        matches!(events.as_slice(), [Frame::Text(_), Frame::Error(message)]
+        if message == PERSISTENCE_ERROR)
+    );
+    let state = Arc::try_unwrap(state).ok().unwrap();
+    assert!(format!("{:?}", state.db.into_transaction_log()).contains("chat_history"));
+}
+
+#[tokio::test]
+async fn interrupted_replies_never_become_completed_history() {
+    for tail in [
+        "",
+        "event: error\ndata: \"upstream failed\"\n\n",
+        "event: command\ndata: []\n\n",
+    ] {
+        let state = state();
+        let wire = format!("event: text\ndata: {}\n\n{tail}", json!("partial"));
+        let events = transcript(state.clone(), 7, wire).await;
+        assert!(matches!(
+            events.as_slice(),
+            [Frame::Text(_), Frame::Error(_)]
+        ));
+        let state = Arc::try_unwrap(state).ok().unwrap();
+        assert!(state.db.into_transaction_log().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn receipt_failure_prevents_success_and_reply_persistence() {
+    let state = state();
+    let wire = format!(
+        "event: text\ndata: {}\n\nevent: receipts\ndata: [{}]\n\nevent: done\ndata: {{}}\n\n",
+        json!("reply"),
+        json!({"tool":"fixture"})
+    );
+    let events = transcript(state.clone(), 7, wire).await;
+    assert!(
+        matches!(events.as_slice(), [Frame::Text(_), Frame::Error(message)]
+        if message == PERSISTENCE_ERROR)
+    );
+    let state = Arc::try_unwrap(state).ok().unwrap();
+    let log = format!("{:?}", state.db.into_transaction_log());
+    assert!(log.contains("execution_log") && log.contains("ROLLBACK"));
+    assert!(!log.contains("chat_history"));
+}
+
+#[tokio::test]
+async fn committed_receipts_survive_upstream_error_without_saving_partial_text() {
+    let db = sea_orm::MockDatabase::new(sea_orm::DatabaseBackend::Postgres)
+        .append_exec_results([sea_orm::MockExecResult {
+            last_insert_id: 1,
+            rows_affected: 1,
+        }])
+        .append_query_results([Vec::<pending_action::Model>::new()])
+        .into_connection();
+    let state = state_with_db(db);
+    let wire = format!(
+        "event: receipts\ndata: [{}]\n\nevent: text\ndata: {}\n\nevent: error\ndata: {}\n\n",
+        json!({"tool":"fixture", "action":"executed"}),
+        json!("partial"),
+        json!("upstream failed")
+    );
+    let events = transcript(state.clone(), 7, wire).await;
+    assert!(
+        matches!(events.as_slice(), [Frame::Text(_), Frame::Error(message)]
+        if message == "upstream failed")
+    );
+    let state = Arc::try_unwrap(state).ok().unwrap();
+    let log = format!("{:?}", state.db.into_transaction_log());
+    assert!(log.contains("execution_log") && log.contains("COMMIT"));
+    assert!(!log.contains("chat_history"));
+}
+
+#[tokio::test]
+async fn pending_write_failure_never_reports_done() {
+    let state = state();
+    let wire = format!(
+        "event: pending\ndata: {}\n\nevent: done\ndata: {{}}\n\n",
+        json!({"question":"confirm", "specs":[]})
+    );
+    let events = transcript(state.clone(), 7, wire).await;
+    assert!(matches!(events.as_slice(), [Frame::Error(message)] if message == PERSISTENCE_ERROR));
 }

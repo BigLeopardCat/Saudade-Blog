@@ -1,4 +1,6 @@
 mod pending;
+mod persistence;
+use persistence::{save_assistant_reply, save_execution_log, PERSISTENCE_ERROR};
 mod protocol;
 #[cfg(test)]
 mod stream_tests;
@@ -871,37 +873,6 @@ fn derive_conv_title(content: &str) -> Option<String> {
     Some(text.chars().take(40).collect())
 }
 
-/// 对话结束后保存 assistant 消息 + 摘要（/chat 与 /chat/stream 共用）。
-/// 摘要由 agent 侧独立生成（needs_summary 轮的后端总结调用，与回复解耦），
-/// 经 new_summary（非流式响应字段 / 流式 __SUMMARY__ 帧）传入；
-/// None 表示本轮无摘要，不写入 chat_summary（旧摘要保留）。
-/// 剥离命令帧行（AUTO_NAVIGATE:/NAVIGATE:/EFFECT:/DARKMODE: 前缀行）。
-/// 帧是执行指令不是对话内容——前端已从流式帧/命令帧单独收到命令；存进
-/// chat_history 的带帧文本会污染 few-shot：历史 AI 消息全是帧开头，模型学到
-/// Save visible assistant text verbatim; control events never enter this value.
-async fn save_assistant_reply(
-    db: &sea_orm::DatabaseConnection,
-    uid: i32,
-    conversation_id: i32,
-    reply: String,
-    new_summary: Option<String>,
-    revision: Revision,
-) {
-    let _ = chat_history::ActiveModel {
-        user_id: Set(uid),
-        conversation_id: Set(conversation_id),
-        role: Set("assistant".into()),
-        content: Set(reply),
-        ..Default::default()
-    }.save(db).await;
-
-    if let Some(summary) = new_summary {
-        if let Err(error) = chat_memory::save(db, uid, conversation_id, &summary, revision).await {
-            tracing::warn!(%error, conversation_id, "摘要保存失败，保留旧摘要");
-        }
-    }
-}
-
 /// 写操作行的执行身份前缀（20260921 第二轮，管理助手）。
 ///
 /// detail 进生产库、之后又被注入回 narrator 的上下文，写操作**必须**留得下
@@ -1399,41 +1370,6 @@ fn legacy_exec_row(row: &serde_json::Value) -> String {
     }
 }
 
-/// 跨轮执行记忆落库（20260904）：批量插入 checker 验收回执（渲染后存储）。
-/// 流式在 save_assistant_reply 后、同步在响应解析后调用；`let _ =` 吞错——
-/// 执行记忆是辅助事实，落库失败不影响回复主链路。断连/discard 刻意不清
-/// execution_log（执行是已发生事实，中断只弃残缺叙述不否定已验收执行）。
-async fn save_execution_log(
-    db: &sea_orm::DatabaseConnection,
-    uid: i32,
-    conversation_id: i32,
-    rows: &[serde_json::Value],
-) {
-    for row in rows {
-        // 双写（20260927，D2 第一批）：渲染行照旧进 `detail`（**读侧今天仍只认它**，
-        // 向后兼容），结构列同步落库——目的是让"切读侧"那一天，历史数据已经在库里
-        // 攒好了（迁移文件头注讲了为什么必须先写后读）。结构列全是机械搬运，
-        // 不新增键名、不改跨语言契约（键名是 Python 写 / Rust 读的既有约定）。
-        //  `tool`：与 `skill` 同样 [:64] 截断（列宽，形态上够用）；
-        //  `payload`：整行原样序列化。**序列化失败只能写 NULL**——回执行来自
-        //   serde_json 解析过的帧，理论上不会失败，但这里不 unwrap：落库是辅助事实，
-        //   `let _ =` 吞错是既有纪律，panic 会把整轮 SSE 带走。
-        let _ = execution_log::ActiveModel {
-            user_id: Set(uid),
-            conversation_id: Set(conversation_id),
-            skill: Set(row["skill"].as_str().unwrap_or("").chars().take(32).collect()),
-            tool: Set(row["tool"].as_str().map(|s| s.chars().take(64).collect())),
-            detail: Set(render_exec_row(row)),
-            payload: Set(serde_json::to_string(row).ok()),
-            ..Default::default()
-        }.save(db).await;
-    }
-    // 跨轮待办收口（20260923）：回执命中待办的工具体 ⇒ 那件事真被执行了 ⇒ 关闭它。
-    // "系统事实优先于结构化状态"落在这一行里：不靠模型回报、不靠叙述。确认轮的
-    // 隐藏请求也走同一条路（写成功 → checker PASS → 回执 ⇒ 待办关闭）。
-    close_pending_actions(db, conversation_id, rows).await;
-}
-
 // ── 跨轮待办（20260923；表与语义见 entity/pending_action.rs 与迁移文件头注）────
 /// 读侧时效：超过这个时长的 pending 行不再注入 planner（确认令牌自身 10 分钟
 /// 即失效，更旧的行只会让下一轮把一件早凉的事重新规划一遍）。
@@ -1448,33 +1384,6 @@ const PENDING_ARGS_COL_MAX: usize = 32_768;
 const PENDING_QUESTION_COL_MAX: usize = 32_768;
 /// Legacy choice lists and native confirmation/cancellation buttons share this bound.
 const PENDING_OPTIONS_COL_MAX: usize = 600;
-
-/// 关闭已执行的待办：回执里出现的工具名 ∈ 待办行 `tool`（逗号分隔）⇒ done/confirmed。
-async fn close_pending_actions(
-    db: &sea_orm::DatabaseConnection,
-    conversation_id: i32,
-    receipts: &[serde_json::Value],
-) {
-    let done: Vec<&str> = receipts.iter().filter_map(|r| r["tool"].as_str()).collect();
-    if done.is_empty() {
-        return;
-    }
-    let pending = pending_action::Entity::find()
-        .filter(pending_action::Column::ConversationId.eq(conversation_id))
-        .filter(pending_action::Column::Status.eq("pending"))
-        .all(db)
-        .await
-        .unwrap_or_default();
-    for row in pending {
-        if row.tool.split(',').any(|t| !t.is_empty() && done.contains(&t)) {
-            let mut am: pending_action::ActiveModel = row.into();
-            am.status = Set("done".to_string());
-            am.confirmation_status = Set("confirmed".to_string());
-            am.updated_at = Set(chrono::Local::now().naive_local());
-            let _ = am.update(db).await;
-        }
-    }
-}
 
 /// 待办行 → 注入 planner 的那一行：主人看得懂的目标（写时定稿的 target）＋
 /// 重建动作需要的工具与参数＋时间与状态。**参数在这里给出是刻意的**——短应答/
@@ -1645,35 +1554,35 @@ pub async fn chat_handler(
         Some(r) => {
             if r.status().is_success() {
                 let data: serde_json::Value = r.json().await.unwrap_or_default();
+                let exec_rows = data["executions"].as_array().cloned().unwrap_or_default();
+                if ctx.uid > 0 && !exec_rows.is_empty() {
+                    let state = state.clone();
+                    let (uid, cid) = (ctx.uid, ctx.conversation_id);
+                    if persistence::run(&ctx.trace_id, async move {
+                        save_execution_log(&state.db, uid, cid, &exec_rows).await
+                    }).await.is_err() {
+                        return Json(ChatResponse { reply: String::new(), success: false,
+                            error: Some(PERSISTENCE_ERROR.into()) }).into_response();
+                    }
+                }
                 match agent_reply_of(&data) {
                     Ok(reply) => {
-                        // 非流式：agent 独立生成摘要并返回 new_summary（needs_summary 轮才有值）
-                        let agent_summary = data["new_summary"].as_str().map(|s| s.to_string());
+                        let agent_summary = data["new_summary"].as_str().map(str::to_owned);
                         if ctx.uid > 0 {
-                            save_assistant_reply(&state.db, ctx.uid, ctx.conversation_id, reply.clone(), agent_summary, ctx.summary_revision).await;
-                            // 跨轮执行记忆（20260904 C5）：同步路径的回执在响应体 executions
-                            // （agent ChatResponse 新字段；agent 无回执时为 Null → 空数组跳过）
-                            let exec_rows: Vec<serde_json::Value> = data["executions"].as_array()
-                                .cloned().unwrap_or_default();
-                            if !exec_rows.is_empty() {
-                                save_execution_log(&state.db, ctx.uid, ctx.conversation_id, &exec_rows).await;
+                            let state = state.clone();
+                            let saved_reply = reply.clone();
+                            if persistence::run(&ctx.trace_id, async move {
+                                save_assistant_reply(&state.db, ctx.uid, ctx.conversation_id,
+                                    saved_reply, agent_summary, ctx.summary_revision).await
+                            }).await.is_err() {
+                                return Json(ChatResponse { reply, success: false,
+                                    error: Some(PERSISTENCE_ERROR.into()) }).into_response();
                             }
                         }
                         Json(ChatResponse { reply, success: true, error: None }).into_response()
                     }
                     Err(msg) => {
-                        // agent 自报这一轮没生成出回复（或回了空串）：**不落库、不装作成功**
-                        // —— 空 assistant 行会被下一轮的 20 条窗口原样注入，模型读到的是
-                        // 自己"说过一句话但一个字都没有"。执行回执照落（它是已发生的事实，
-                        // 与回复生成失败无关，同流式路径的 `__EXEC__` 语义）。
-                        warn!(trace_id = %ctx.trace_id, "chat: agent 回 HTTP 200 但没生成出回复：{}", msg);
-                        if ctx.uid > 0 {
-                            let exec_rows: Vec<serde_json::Value> = data["executions"].as_array()
-                                .cloned().unwrap_or_default();
-                            if !exec_rows.is_empty() {
-                                save_execution_log(&state.db, ctx.uid, ctx.conversation_id, &exec_rows).await;
-                            }
-                        }
+                        warn!(trace_id = %ctx.trace_id, "chat: agent did not complete a reply: {}", msg);
                         Json(ChatResponse {
                             reply: String::new(),
                             success: false,
@@ -1717,22 +1626,6 @@ fn agent_reply_of(data: &serde_json::Value) -> Result<String, String> {
         _ if reply.is_empty() => Err("agent 返回了空回复".to_string()),
         _ => Ok(reply),
     }
-}
-
-fn spawn_save_assistant_reply(
-    state: Arc<AppState>,
-    uid: i32,
-    conversation_id: i32,
-    reply: String,
-    new_summary: Option<String>,
-    revision: Revision,
-) {
-    if uid <= 0 || reply.is_empty() {
-        return;
-    }
-    tokio::spawn(async move {
-        save_assistant_reply(&state.db, uid, conversation_id, reply, new_summary, revision).await;
-    });
 }
 
 /// Preserve business status codes and emit all other early outcomes as named SSE.
@@ -1864,26 +1757,53 @@ fn forward_agent_stream(
                 }
             };
             match frame {
-                Frame::Done(_) | Frame::Error(_) => {
+                Frame::Done(_) => {
                     terminal = true;
-                    spawn_save_assistant_reply(state.clone(), uid, conversation_id,
-                        std::mem::take(&mut reply), summary_override.take(), revision);
+                    if uid > 0 && !reply.is_empty() {
+                        let state = state.clone();
+                        if persistence::run(&trace_id, async move {
+                            save_assistant_reply(&state.db, uid, conversation_id, reply,
+                                summary_override, revision).await
+                        }).await.is_err() {
+                            yield Ok(stream_event("error", PERSISTENCE_ERROR));
+                            break;
+                        }
+                    }
+                    yield Ok(axum::response::sse::Event::default().event(incoming.event).data(incoming.data));
+                    break;
+                }
+                Frame::Error(_) => {
+                    terminal = true;
                     yield Ok(axum::response::sse::Event::default().event(incoming.event).data(incoming.data));
                     break;
                 }
                 Frame::Summary(value) => { summary_override = Some(value); }
                 Frame::Receipts(rows) => {
-                    // Receipts are durable execution facts, independent of the connection's lifetime.
                     if uid > 0 && !rows.is_empty() {
                         let state = state.clone();
-                        tokio::spawn(async move {
-                            save_execution_log(&state.db, uid, conversation_id, &rows).await;
-                        });
+                        if persistence::run(&trace_id, async move {
+                            save_execution_log(&state.db, uid, conversation_id, &rows).await
+                        }).await.is_err() {
+                            terminal = true;
+                            yield Ok(stream_event("error", PERSISTENCE_ERROR));
+                            break;
+                        }
                     }
                 }
                 Frame::Pending(value) => {
                     if uid > 0 {
-                        pending::save_pending_action(&state.db, uid, conversation_id, &value.into()).await;
+                        let state = state.clone();
+                        if persistence::run(&trace_id, async move {
+                            if pending::save_pending_action(&state.db, uid, conversation_id, &value.into()).await {
+                                Ok(())
+                            } else {
+                                Err(sea_orm::DbErr::Custom("pending state was not saved".into()))
+                            }
+                        }).await.is_err() {
+                            terminal = true;
+                            yield Ok(stream_event("error", PERSISTENCE_ERROR));
+                            break;
+                        }
                     }
                 }
                 Frame::Text(text) => {
@@ -1897,9 +1817,6 @@ fn forward_agent_stream(
         }
         if !terminal {
             yield Ok::<_, axum::Error>(stream_event("error", "与 Agent 的连接中断，回复可能不完整"));
-        }
-        if !reply.is_empty() && uid > 0 {
-            save_assistant_reply(&state.db, uid, conversation_id, reply, summary_override, revision).await;
         }
     }
 }
