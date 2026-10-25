@@ -97,10 +97,10 @@
     "eslint-plugin-react-refresh": "^0.5.7",
     "globals": "^17.13.0",
     "jsdom": "26.1.0",
-    "sass": "^1.105.2",
+    "sass": "^1.106.1",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.72.0",
-    "vite": "^8.3.4",
+    "vite": "^8.3.5",
     "vitest": "4.1.12"
   },
   "overrides": {
