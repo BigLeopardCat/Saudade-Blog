@@ -72,12 +72,13 @@ export function spaNavTarget(url: string, base?: string, host?: string): string 
 
 /** 桥要用的最小 router 形状（`createBrowserRouter` 的返回值满足它） */
 export interface SpaRouterLike {
-    navigate(to: string): void;
+    navigate(to: string): void | Promise<void>;
 }
 
 /** 桥挂在哪里（就是 `window`；这个形状只为测试能塞一个假 window） */
 export interface SpaNavSink {
     __spaNavigate?: (url: string) => boolean;
+    __spaNavigationComplete?: Promise<void>;
 }
 
 /** 把桥挂到 `window.__spaNavigate`（幂等：重复调用只是覆盖同一个函数）。
@@ -87,7 +88,9 @@ export function registerSpaNavigate(router: SpaRouterLike, sink: SpaNavSink = wi
         const to = spaNavTarget(url);
         if (!to) return false;
         try {
-            router.navigate(to);
+            sink.__spaNavigationComplete = Promise.resolve(router.navigate(to));
+            // Legacy clients do not await the promise; new clients inspect its result.
+            void sink.__spaNavigationComplete.catch(() => {});
         } catch (e) {
             // 路由跳失败（不该发生）就当没接管过：调用方会回落整页跳转，绝不静默吞掉一次跳转
             console.warn('[spa-nav] router.navigate 失败，回落整页跳转: ' + to, e);
@@ -102,5 +105,6 @@ declare global {
         /** 站内跳转桥（`registerSpaNavigate` 挂上）。命中 true = 已换路由；
          *  false/缺席 = 调用方回落 `window.location.href`。 */
         __spaNavigate?: (url: string) => boolean;
+        __spaNavigationComplete?: Promise<void>;
     }
 }
