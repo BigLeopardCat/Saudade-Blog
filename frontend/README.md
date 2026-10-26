@@ -137,27 +137,17 @@ npm run vendor:live2d:check    # 只校验不写盘
 > `tests/live2d-render.test.py`，两侧全绿，且同一机位截图的差异 < 0.1%（只剩呼吸/尾巴
 > 动画的相位差）。改 `fitModel()` 的取景公式前请先跑那个套件。
 
-### ⚠️ 改这里的文件要 bump 版本号
+### 静态资源版本与缓存
 
-nginx 对 `/live2d-widgets/` 目录设了 **1 年 immutable 缓存**，不换 URL 访客永远拿旧的。
-`boot.js` 里有个 `VER` 常量，所有子模块 URL 都拼 `?v=VER` —— **改任何子模块都要
-把 `VER` 加一档**。
+nginx 对组件资源使用长期 immutable 缓存。主博客入口从 `frontend/widget.lock.json`
+读取固定提交，`Live2dAgent/loader.ts` 将其放入 `boot.js?v=`；boot 再将同一版本传给
+全部子脚本、样式和 vendor 资源。更新组件时同步锁文件的提交号与两棵子树哈希，
+无需维护另一份日期版本。
 
-`VER` 有**五个同步点**（改漏一个就会出现"脚本是新的、入口是旧的"或反之）。
-**这张表是唯一事实源**，其他文档只链接到这里、不各抄一份：
+设备控制台是独立静态页，更新组件时同步
+[`../iot/device-console/index.html`](../iot/device-console/index.html) 的入口查询串。
+版本属于部署细节，不写进提交摘要。
 
-1. `frontend/public/live2d-widgets/boot.js` 的 `VER` 常量（源头，其余都是跟着它）
-2. `frontend/src/components/Live2dAgent/loader.ts` 里 `boot.js?v=` 的查询串
-3. `frontend/tests/spa-navigate.test.mjs` 里手抄的那份字面量（有断言钉着，漏了会红）
-4. IoT 设备控制台的 `index.html` 直接引 `boot.js?v=`（它没有 React 打包，是 nginx 直服的
-   静态页）。文件在 [`../iot/device-console/index.html`](../iot/device-console/index.html)
-5. **agent 仓** `frontend/README.md` 里记录的「当前值」（纯文档，写的是哪一档）
-
-其中 1–4 漏了会真的出问题（功能面）；5 只是文档与代码对不上。
-
-> 版本号是部署细节，**不写进 commit message**。
-
-`widget.css` 与 `vendor/*` 的缓存也走 `?v=VER`（由 `boot.js` 自动拼接，不用手改）。
 但 `public/cubism5/` 与 `public/live2d_model/` 是**裸路径**加载的（没有 `?v=`）——换模型文件
 或换 Cubism Core 只能改文件名 / 改路径，`?v=` 帮不上忙，immutable 一年。
 

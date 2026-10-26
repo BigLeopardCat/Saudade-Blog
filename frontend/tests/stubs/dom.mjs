@@ -233,6 +233,8 @@ const document = {
 
 /** 装上 DOM 全局。返回 `{ document, Element }`，调用方一般用不到返回值。 */
 export function installDom() {
+  // Layout and resize delivery are checked in Playwright; this harness wires events only.
+  globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
   globalThis.document = document;
   globalThis.Element = Element;   // stage.js 的 animate 检测引用全局 Element
   globalThis.addEventListener = (t, fn) => { (document._listeners[t] = document._listeners[t] || []).push(fn); };
