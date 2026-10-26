@@ -1,4 +1,5 @@
 pub mod entity;
+pub mod database;
 pub mod routes;
 pub mod utils;
 pub mod middleware;
