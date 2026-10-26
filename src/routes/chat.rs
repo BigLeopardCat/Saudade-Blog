@@ -28,6 +28,13 @@ use crate::auth_jwt;
 use crate::entity::user;
 use tracing::{info, warn};
 
+#[derive(Deserialize, Serialize)]
+pub struct BrowserResult {
+    pub command_id: String,
+    pub status: String,
+    pub path: String,
+}
+
 #[derive(Deserialize)]
 pub struct ChatRequest {
     pub message: String,
@@ -35,6 +42,10 @@ pub struct ChatRequest {
     pub task_id: String,
     #[serde(default)]
     pub resume_task: String,
+    #[serde(default)]
+    pub browser_feedback: bool,
+    #[serde(default)]
+    pub browser_result: Option<BrowserResult>,
     #[serde(default)]
     pub current_url: Option<String>,
     #[serde(default)]
@@ -728,6 +739,8 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
         "message": payload.message,
         "task_id": payload.task_id,
         "resume_task": payload.resume_task,
+        "browser_feedback": payload.browser_feedback,
+        "browser_result": payload.browser_result,
         "conversation_id": conversation_id,
         "current_url": payload.current_url.as_deref().unwrap_or(""),
         "page_title": payload.page_title.as_deref().unwrap_or(""),
