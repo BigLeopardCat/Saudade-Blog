@@ -1,3 +1,4 @@
+mod control;
 mod pending;
 mod persistence;
 use persistence::{save_assistant_reply, save_execution_log, PERSISTENCE_ERROR};
@@ -30,6 +31,10 @@ use tracing::{info, warn};
 #[derive(Deserialize)]
 pub struct ChatRequest {
     pub message: String,
+    #[serde(default)]
+    pub task_id: String,
+    #[serde(default)]
+    pub resume_task: String,
     #[serde(default)]
     pub current_url: Option<String>,
     #[serde(default)]
@@ -404,6 +409,12 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
         Ok(p) => p,
         Err(e) => return Err((StatusCode::OK, Json(ChatResponse { reply: String::new(), success: false, error: Some(format!("JSON解析失败: {}", e)) }))),
     };
+    if !control::valid(&payload) {
+        return Err((StatusCode::BAD_REQUEST, Json(ChatResponse {
+            reply: String::new(), success: false,
+            error: Some("继续任务请求包含无效标识或新的操作内容".into()),
+        })));
+    }
 
     let uid = match auth {
         Ok(id) => id,
@@ -531,7 +542,7 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
         Some(_) => format!("{}\n[图片]", payload.message),
         None => payload.message.clone(),
     };
-    let user_msg_id = if is_confirm {
+    let user_msg_id = if is_confirm || !payload.resume_task.is_empty() {
         None
     } else {
         chat_history::ActiveModel {
@@ -591,9 +602,8 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
                 .await;
         }
     }
-    // 最后活动时间：**确认轮也要 bump**（20260921）——点确认是一次真实交互，
-    // 会话列表该按活动时间浮上来；它与"标题派生"是两件事，故不共用上面那个守卫
-    if user_msg_id.is_some() || is_confirm {
+    // Confirmation and continuation are activity without new user messages.
+    if user_msg_id.is_some() || is_confirm || !payload.resume_task.is_empty() {
         let _ = conversation::Entity::update_many()
             .col_expr(conversation::Column::UpdatedAt, Expr::current_timestamp().into())
             .filter(conversation::Column::Id.eq(conversation_id))
@@ -716,6 +726,8 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
 
     let mut body = serde_json::json!({
         "message": payload.message,
+        "task_id": payload.task_id,
+        "resume_task": payload.resume_task,
         "conversation_id": conversation_id,
         "current_url": payload.current_url.as_deref().unwrap_or(""),
         "page_title": payload.page_title.as_deref().unwrap_or(""),
