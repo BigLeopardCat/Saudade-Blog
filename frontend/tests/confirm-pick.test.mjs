@@ -54,8 +54,9 @@ const ok = (cond, name, extra) => {
     ok(/confirmPick: \(value === 'yes' \? '' : String\(value\)\)/.test(code),
        "挑选值原样带进 sendMessage（`confirmPick`），「全部办」传空串");
     const iPick = code.indexOf('confirmPick:');
-    const iMsg = code.indexOf('message: ask.msg ||', iPick);
-    ok(iPick > 0 && iMsg > iPick, '  它挂在同一个隐藏请求上（confirmToken 那条通路旁）');
+    const hidden = code.slice(code.lastIndexOf('sendMessage({', iPick), code.indexOf('});', iPick));
+    ok(hidden.includes('confirmToken: ask.token') && hidden.includes("message: ''"),
+       '隐藏批准携带凭据与选择，不添加合成用户发言');
     ok(/opts\.confirmPick/.test(code), '  请求体按 `opts.confirmPick` 透传（空串不传字段）');
     ok(/'confirm_pick'|confirm_pick:/.test(code), '  字段名与 Python/Rust 侧一致：`confirm_pick`');
     // 只在那条隐藏请求上带：普通发言绝不能带这个字段

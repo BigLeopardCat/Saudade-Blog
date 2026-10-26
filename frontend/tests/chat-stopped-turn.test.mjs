@@ -1,36 +1,5 @@
-// ═ 主动打断的一轮"不丢"：CI 断言套件（20261001）══
-//   node tests/chat-stopped-turn.test.mjs
-//
-// 缘起（用户拍板的口径）：主人按了「停止生成」之后，那条消息**不再从对话框里消失**。
-// 旧行为是当场三件一起做——删本地条目与缓存、摘掉气泡、发 discard 让 Rust 把 DB 里的
-// user 消息与残缺回复一起删。于是"手滑按错了 / 想改个措辞"时消息已经没了，只能重新
-// 打一遍。新规矩：**留在原处可二次编辑/重发**；既不编辑也不重发、**直接说下一句** ⇒
-// 到那一刻才丢（discard 推迟到下一次发言）。
-//
-// 本套件钉住的五件事（每一件都是"改坏了没人知道"的类型）：
-//   ① 刷新后 `kind:'stopped'` 渲染「⏹ 被你停止了」而不是「⏳ 未收到回复」——
-//      措辞必须分开：混成一句，刷新一次就被读成"agent 挂了"；缺 `kind` 的旧记录
-//      照旧走 ⏳（反向对照）；
-//   ② 打断那一刻：消息还在原地、半截回复标着「已停止生成」、重发/编辑立刻挂上，
-//      且**一个字节的 discard 都没发**；
-//   ③ 打断后点「✎ 编辑」= 明确表示"这条不要了" ⇒ 当场删、原文回填输入框、不再发一轮；
-//   ④ 补删的时机与**顺序**：主人直接说下一句时才删，且 discard 必须**先于**新消息
-//      落库——反过来时"同文重发"（主人重发同一句话是最自然的动作）会让后端那句
-//      原文校验通过、删掉的是**刚发出去的那条**；
-//   ⑤ 3s 保险那条腿（浏览器对已开始读取的流 abort 不触发 AbortError 时）同样是保留语义
-//      ——这一段与正常收尾**共用一份实现**（`retainStoppedTurn`），此前是两份拷贝，
-//      而且已经漂了（一份转正半截回复、一份没有）。
-//
-// **①为什么排在文件最前**：它模拟的是"刷新"——面板刚起来、`items` 里只有 DB 视图。
-// 中断轮跑过之后再换一份 DB 去"模拟刷新"是**假的**：保留语义会在内存里留下那条 'l'
-// 用户项（`retainStoppedTurn` 转正的那条，60s 内不被 DB 视图收走），引擎的锚点落到
-// 它身上、原文匹配自然对不上新标记，于是"提示条没渲染"会变成一个假红。真刷新会把
-// 内存整个丢掉，这里用"开机时就把标记与那行 DB 记录摆好"等价地表达同一个前提。
-//
-// 为什么用真 boot（而不是切片求值）：这些行为横跨三层接线——查流循环的 catch 分支、
-// `finally` 之后的收尾块、以及 reconcile 末尾的 `onFailedResync` 钩子（按钮是那一趟
-// 重建提示条时挂上去的）。切片只能证明"函数写得对"，证明不了"这条线接上了"。
-// 本仓已有两次"能力有测试、接线没人测"的前科。
+// Stop retains the original request and draft. Continue resumes its task;
+// only explicit edit or regeneration discards the old turn.
 import { readFileSync } from 'fs';
 import vm from 'vm';
 import { fileURLToPath } from 'url';
@@ -96,7 +65,7 @@ let nextMode = 'abortable';       // 下一条流的收尾形态：'abortable' |
 let pullCount = 0;
 let discardCalls = [];
 let streamCalls = 0;
-let seq = [];                     // 请求先后（补删必须**先于**新消息落库）
+let seq = [];                     // 请求顺序与继续控制的请求体
 let wantSnapshot = false;         // 下一次拉历史时先抓一份现场（= 停下那一刻的屏幕）
 let atStopSnapshot = null;
 
@@ -128,13 +97,20 @@ globalThis.fetch = async (url, opts) => {
   if (u.includes('/api/chat/stream')) {
     streamCalls++;
     const body = JSON.parse(opts.body);
-    seq.push(['stream', body.message]);
-    dbSeq++;
-    DB = DB.concat([{ id: dbSeq, role: 'user', content: body.message, time: Date.now() }]);
+    seq.push(['stream', body.message, body]);
+    if (!body.resume_task) {
+      dbSeq++;
+      DB = DB.concat([{ id: dbSeq, role: 'user', content: body.message, time: Date.now() }]);
+    }
     const mode = nextMode;
     nextMode = 'abortable';
     const enc = new TextEncoder();
-    const frames = ['event: text\ndata: ' + JSON.stringify('正在读这篇') + '\n\n'];
+    const frames = ['event: text\ndata: ' + JSON.stringify(
+      body.resume_task ? '已继续完成。' : '正在读这篇') + '\n\n'];
+    if (body.resume_task) {
+      frames.push('event: done\ndata: {}\n\n');
+      DB.push({ id: ++dbSeq, role: 'assistant', content: '已继续完成。', time: Date.now() });
+    }
     let i = 0;
     // 只有 abort 能结束这一条（真实的 SSE 就是这样一直挂着）；'ignore' = 模拟
     // "浏览器对已开始读取的流 abort 不触发 AbortError"那个边界（3s 保险的用武之地）
@@ -147,7 +123,7 @@ globalThis.fetch = async (url, opts) => {
         }));
     return { ok: true, ...sseHeaders(), body: { getReader: () => ({ read: () => (i < frames.length
       ? Promise.resolve({ done: false, value: enc.encode(frames[i++]) })
-      : pendingRead()) }) } };
+      : body.resume_task ? Promise.resolve({ done: true }) : pendingRead()) }) } };
   }
   throw new Error('unexpected fetch: ' + url);
 };
@@ -237,21 +213,21 @@ console.log('\n== 场景 2：按停止 → 消息留在原处、半截回复与�
   await waitFor(() => !!atStopSnapshot);
   const s = atStopSnapshot || {};
   assert(s.users === 1, '**停下那一刻消息还在原地**（旧行为：当场被删）', s);
-  assert(s.retryBtns === 2, '重发/编辑立刻挂上（不是等刷新、也不是等下一趟 reconcile）', s.retryBtns);
+  assert(s.retryBtns === 3, '继续、重发、编辑立刻可用', s.retryBtns);
   assert((s.errNotes || []).includes('已停止生成'), '半截回复旁标出「已停止生成」', s.errNotes);
 
   // 落定：DB 拉取回来（DB 里只有那条 user 消息——残缺回复本来就没落库）
-  await waitFor(() => failedNotes().length === 1 && btnsIn(failedNotes()[0]).length === 2);
+  await waitFor(() => failedNotes().length === 1 && btnsIn(failedNotes()[0]).length === 3);
   assert(discardCalls.length === 0, '**一个字节的 discard 都没发**（这一轮不丢）', discardCalls);
   assert(DB.some(r => r.role === 'user' && r.content === M1), 'DB 里那条 user 消息也还在', DB.map(r => r.content));
   assert(userBubbles(M1).length === 1, 'DB 视图回来之后它仍在屏幕上（不是"拉一次历史就没了"）', midEls().map(e => e.dataset.mtext));
   const m = marker();
   assert(!!m && m.kind === 'stopped' && m.text === M1, '标记带 kind=stopped（刷新后的措辞靠它）', m);
   assert(failedText() === '⏹ 这条消息被你停止了，这一轮不会再回答（可重发或编辑）', '提示条说的是「被你停止了」而不是「未收到回复」', failedText());
-  assert(btnsIn(failedNotes()[0]).length === 2, '拉取重建之后按钮仍只有一组（钩子幂等）', btnsIn(failedNotes()[0]).map(b => b.textContent));
+  assert(btnsIn(failedNotes()[0]).length === 3, '拉取重建之后按钮仍只有一组（钩子幂等）', btnsIn(failedNotes()[0]).map(b => b.textContent));
   // 半截回复的 'l' 项 60s 内不被 DB 视图收走 ⇒ 气泡上那份按钮与提示条这份会同时在场。
   // 屏幕上只该有**一组**（去重以提示条为准——它才是刷新后唯一活下来的那份）
-  assert(btnsIn(msgsRoot()).length === 2, '屏幕上只有一组重发/编辑，没有沿气泡再挂一份', btnsIn(msgsRoot()).map(b => b.textContent));
+  assert(btnsIn(msgsRoot()).length === 3, '屏幕上只有一组继续、重发、编辑，没有沿气泡再挂一份', btnsIn(msgsRoot()).map(b => b.textContent));
   assert(midEls().some(el => String(el.dataset.mid || '').startsWith('l')), '半截回复仍留在它自己的气泡里（断流别吞半截）', midEls().map(e => e.dataset.mid));
 }
 
@@ -273,20 +249,17 @@ console.log('\n== 场景 3：点「✎ 编辑」= 明确表示这条不要了 �
   inputEl().value = '';   // 输入框里那行是"待编辑"的，不属于后面的场景
 }
 
-console.log('\n== 场景 4：不重发也不编辑，直接说下一句 ⇒ 到那一刻才补删（且先于新消息） ==');
+console.log('\n== 场景 4：直接说下一句，保留原问题与部分回复，零 discard ==');
 {
   say(M2);
   await waitFor(() => streamCalls === 2 && streamingCount() === 1);
   stop();
   await waitFor(() => failedNotes().length === 1 && marker() && marker().text === M2);
-  // 半截回复的 mid（'l' 项）：下面要断言"补删时连它一起收走"。**别用"屏幕上有
-  // 没有 'l' 项"当判据**——主人刚说的 M3 也是本地项、id 同样是 'l' 开头（genId
-  // 对用户项一样发 'l'），那条本来就该在屏幕上；判据要落到**它自己那个 mid**上。
-  // （也别按 `mtype==='agent'` 找：那个 dataset 只有用户气泡在写。）
+  // Track this draft independently of the next request's local message IDs.
   const partialEl = midEls().find(el => el.classList.contains('agent')
     && String(el.dataset.mid || '').startsWith('l'));
   const orphanMid = partialEl ? partialEl.dataset.mid : '';
-  assert(!!orphanMid, '停下后那条半截回复有了自己的 mid（下面靠它验"一并收走"）', midEls().map(e => e.dataset.mid));
+  assert(!!orphanMid, '停下后那条部分回复有稳定标识', midEls().map(e => e.dataset.mid));
   assert(marker().kind === 'stopped', '第二条打断同样记 stopped', marker());
   assert(discardCalls.length === 1, '停下时仍然不发 discard', discardCalls.length);
 
@@ -294,13 +267,13 @@ console.log('\n== 场景 4：不重发也不编辑，直接说下一句 ⇒ 到�
   say(M3);
   await waitFor(() => streamCalls === 3 && userBubbles(M3).length === 1);
   const lastTwo = seq.slice(-2);
-  assert(lastTwo.length === 2 && lastTwo[0][0] === 'discard' && lastTwo[0][1] === M2, '补删发的是被打断那条的原文', lastTwo);
-  assert(lastTwo[1][0] === 'stream' && lastTwo[1][1] === M3, '**新消息随后才发出去**（顺序反了就会删掉刚发的那条）', lastTwo);
-  assert(userBubbles(M2).length === 0, '被打断的那条此刻才从屏幕上消失', midEls().map(e => e.dataset.mtext));
-  assert(!midEls().some(el => el.dataset.mid === orphanMid), '它的半截回复也一并收走（不留在新消息旁边当孤儿）', midEls().map(e => e.dataset.mid));
-  assert(!DB.some(r => r.content === M2), 'DB 里那条也真删了（不是只抹屏幕）', DB.map(r => r.content));
-  assert(!marker(), '标记一并清掉', marker());
-  assert(failedNotes().length === 0, '提示条也收走（别在下一轮回复期间还挂着上一条的话）', failedText());
+  assert(lastTwo.every(entry => entry[0] === 'stream'), '新指令不自动 discard 原问题', lastTwo);
+  assert(lastTwo[1][1] === M3, '新指令照常发送', lastTwo);
+  assert(userBubbles(M2).length === 1, '原问题仍在屏幕上', midEls().map(e => e.dataset.mtext));
+  assert(midEls().some(el => el.dataset.mid === orphanMid), '部分回复仍跟随原问题', midEls().map(e => e.dataset.mid));
+  assert(DB.some(r => r.content === M2), '数据库中保留原问题', DB.map(r => r.content));
+  assert(discardCalls.length === 1, '另发新指令没有发 discard', discardCalls);
+  assert(!marker(), '旧任务的本地停止标记清除', marker());
 }
 
 console.log('\n== 场景 5：abort 没触发 AbortError（3s 保险那条腿）⇒ 同样的保留语义 ==');
@@ -316,7 +289,54 @@ console.log('\n== 场景 5：abort 没触发 AbortError（3s 保险那条腿）�
   assert(!!m && m.kind === 'stopped' && m.text === M3, '同样记 stopped 标记（刷新后仍看得到）', m);
   assert(userBubbles(M3).length === 1, '消息同样留在原地', midEls().map(e => e.dataset.mtext));
   assert(errNotes().some(n => n.textContent === '已停止生成'), '半截回复与「已停止生成」同样留在气泡里（与正常收尾同形）', errNotes().map(n => n.textContent));
-  assert(btnsIn(msgsRoot()).length === 2, '重发/编辑同样挂上', btnsIn(msgsRoot()).map(b => b.textContent));
+  await fireStorage();
+  assert(btnsIn(msgsRoot()).length === 3, '保险路径提供继续、重发、编辑', btnsIn(msgsRoot()).map(b => b.textContent));
+}
+
+console.log('\n== 场景 6：继续发送原任务控制，不新增用户消息或 discard ==');
+{
+  const saved = marker();
+  const userCount = DB.filter(r => r.role === 'user').length;
+  const streamsBefore = streamCalls;
+  const discardsBefore = discardCalls.length;
+  const resume = btnByText('继续任务');
+  assert(!!resume && !!saved.task_id, '停止记录保留可继续的任务标识', saved);
+  if (resume) resume.click();
+  await waitFor(() => streamCalls === streamsBefore + 1 && sendEl().title === '发送');
+  const body = seq.at(-1)[2];
+  assert(body.resume_task === saved.task_id, '继续请求引用原任务标识', body);
+  assert(body.conversation_id === CONV_ID && body.message === '', '继续是定向的空消息控制请求', body);
+  assert(!body.task_id && !body.confirm_token, '继续既不新建任务也不附加确认授权', body);
+  assert(discardCalls.length === discardsBefore, '继续不 discard 原问题', discardCalls);
+  assert(DB.filter(r => r.role === 'user').length === userCount, '继续不在数据库追加用户行', DB);
+  assert(userBubbles(M3).length === 1, '原用户气泡仅保留一份', midEls().map(e => e.dataset.mtext));
+  assert(await waitFor(() => !marker()), '继续成功后清除停止标记', marker());
+}
+
+console.log('\n== 场景 7：显式重发先丢弃旧轮，再新建任务 ==');
+{
+  const text = '重发这个问题';
+  const before = streamCalls;
+  say(text);
+  await waitFor(() => streamCalls === before + 1 && streamingCount() === 1);
+  stop();
+  await waitFor(() => marker()?.text === text && sendEl().title === '发送');
+  const task = marker().task_id;
+  const discardsBefore = discardCalls.length;
+  const retry = btnByText('↻ 重发');
+  assert(!!retry, '停止后可显式重发');
+  if (retry) retry.click();
+  await waitFor(() => streamCalls === before + 2);
+  const lastTwo = seq.slice(-2);
+  assert(discardCalls.length === discardsBefore + 1 && lastTwo[0][0] === 'discard',
+    '重发先 discard 旧轮', lastTwo);
+  assert(lastTwo[0][1] === text && lastTwo[1][1] === text, 'discard 与重发都绑定原问题', lastTwo);
+  assert(lastTwo[1][2].task_id !== task && !lastTwo[1][2].resume_task,
+    '重发分配新任务，不复用继续控制', lastTwo[1][2]);
+  assert(DB.filter(r => r.role === 'user' && r.content === text).length === 1,
+    '重发后数据库只有一条该问题', DB);
+  stop();
+  await waitFor(() => sendEl().title === '发送');
 }
 
 assert(unhandled.length === 0, '无未捕获异常', unhandled.slice(0, 2));
