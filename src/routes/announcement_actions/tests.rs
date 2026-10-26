@@ -131,7 +131,10 @@ async fn postgres_announcement_changes_preserve_identity_and_rollback_fanout_fai
             assert!(row.is_read);
         }
     }
-    assert!(!execute(&txn, modify).await.changed);
+    assert!(targets::prepare(&txn, &modify, false).await.is_err());
+    let mut current = modify;
+    current.target.as_mut().unwrap().title = Some(format!("{prefix}_new"));
+    assert!(!execute(&txn, current).await.changed);
     for row in user_notification::Entity::find()
         .filter(user_notification::Column::AnnouncementId.eq(other_id))
         .all(&txn)
