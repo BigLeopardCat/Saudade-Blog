@@ -9,7 +9,7 @@ fn intent(v: serde_json::Value) -> Intent {
 fn notice_requests_require_exact_target_and_complete_bounded_text() {
     for value in [
         json!({"target":{},"content":"x"}),
-        json!({"target":{"id":1,"username":"x"},"content":"x"}),
+        json!({"target":{"id":0,"username":"x"},"content":"x"}),
         json!({"target":{"id":1},"content":" "}),
         json!({"target":{"id":1},"content":"x".repeat(1001)}),
         json!({"target":{"id":1},"title":"x".repeat(129),"content":"x"}),
@@ -49,12 +49,17 @@ async fn postgres_notice_targets_permissions_text_and_delivery_are_atomic() {
     let recipient = fixture(&txn, crate::authz::ROLE_USER, &format!("{prefix}_r")).await;
     let superadmin = fixture(&txn, crate::authz::ROLE_SUPERADMIN, &format!("{prefix}_s")).await;
     let request = intent(
-        json!({"target":{"username":recipient.username},"content":" 原文\n保持😀\t ","title":null}),
+        json!({"target":{"id":recipient.id,"username":recipient.username},"content":" 原文\n保持😀\t ","title":null}),
     );
     let plan = targets::prepare(&txn, actor.id, &request, false)
         .await
         .unwrap();
     assert_eq!(plan.title, crate::routes::notice::DEFAULT_TITLE);
+    let mut mismatch = request.clone();
+    mismatch.target.username = Some(superadmin.username.clone());
+    assert!(targets::prepare(&txn, actor.id, &mismatch, false)
+        .await
+        .is_err());
     assert!(user_notification::Entity::find()
         .filter(user_notification::Column::UserId.eq(recipient.id))
         .one(&txn)

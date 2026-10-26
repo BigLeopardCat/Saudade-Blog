@@ -11,12 +11,11 @@ pub(super) fn failure(message: &str) -> DbErr {
 
 pub(super) fn validate(intent: &Intent) -> Result<(), DbErr> {
     let valid_target = intent.target.as_ref().is_some_and(|target| {
-        target.id.is_some_and(|id| id > 0) && target.title.is_none()
-            || target.id.is_none()
-                && target
-                    .title
-                    .as_ref()
-                    .is_some_and(|v| !v.trim().is_empty() && v.chars().count() <= 80)
+        (target.id.is_some() || target.title.is_some())
+            && target.id.is_none_or(|id| id > 0)
+            && target.title.as_ref().is_none_or(|v| {
+                !v.trim().is_empty() && v.chars().count() <= 80 && !v.chars().any(char::is_control)
+            })
     });
     if intent.action == Action::Create
         && (intent.target.is_some()
@@ -91,7 +90,15 @@ pub(super) async fn prepare<C: ConnectionTrait>(
                 "公告不存在或标题不唯一，请查询公告清单并指定唯一编号",
             ));
         }
-        Some(rows.into_iter().next().unwrap())
+        let row = rows.into_iter().next().unwrap();
+        if target
+            .title
+            .as_ref()
+            .is_some_and(|title| title != &row.title)
+        {
+            return Err(failure("公告id与title不一致，请重新查询公告"));
+        }
+        Some(row)
     } else {
         None
     };

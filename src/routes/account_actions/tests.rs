@@ -28,7 +28,7 @@ fn exact_identity_and_action_fields_are_required() {
     let clock = NaiveDateTime::parse_from_str("2026-10-24T10:00:00", "%Y-%m-%dT%H:%M:%S").unwrap();
     for value in [
         json!({"action":"freeze","target":{}}),
-        json!({"action":"freeze","target":{"id":2,"username":"u2"}}),
+        json!({"action":"freeze","target":{"id":2,"username":" "}}),
         json!({"action":"freeze","target":{"id":0}}),
         json!({"action":"freeze","target":{"username":" "}}),
         json!({"action":"freeze","target":{"id":2},"role":"user"}),

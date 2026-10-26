@@ -12,7 +12,7 @@ fn announcement_changes_require_exact_target_and_nonempty_text() {
     for value in [
         json!({"action":"create","fields":{"title":"x"}}),
         json!({"action":"update","target":{"id":1}}),
-        json!({"action":"delete","target":{"id":1,"title":"x"}}),
+        json!({"action":"delete","target":{"id":0,"title":"x"}}),
         json!({"action":"delete","target":{"id":1},"fields":{"content":"x"}}),
         json!({"action":"create","fields":{"title":"x","content":" "}}),
         json!({"action":"create","fields":{"title":"x".repeat(81),"content":"x"}}),
@@ -72,6 +72,14 @@ async fn postgres_announcement_changes_preserve_identity_and_rollback_fanout_fai
     .await
     .unwrap();
     let aid = first.state.after.as_ref().unwrap().id.unwrap();
+    assert!(targets::prepare(
+        &txn,
+        &intent(json!({"action":"delete",
+        "target":{"id":aid,"title":"different"}})),
+        false
+    )
+    .await
+    .is_err());
     let copies = targets::notifications(&txn, aid).await.unwrap();
     assert_eq!(copies.len() as u64, first.state.notification_count);
     assert_eq!(copies.len(), targets::recipients(&txn).await.unwrap().len());
@@ -86,7 +94,7 @@ async fn postgres_announcement_changes_preserve_identity_and_rollback_fanout_fai
     .await
     .is_err());
     let modify = intent(
-        json!({"action":"update","target":{"id":aid},"fields":{"title":format!("{prefix}_new"),"content":"修订正文"}}),
+        json!({"action":"update","target":{"id":aid,"title":prefix},"fields":{"title":format!("{prefix}_new"),"content":"修订正文"}}),
     );
     let frozen = targets::prepare(&txn, &modify, false).await.unwrap();
     // Read state changes do not invalidate approval or get reset during synchronization.

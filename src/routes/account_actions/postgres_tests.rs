@@ -112,7 +112,7 @@ async fn postgres_plans_conflicts_policies_and_legacy_effects_are_atomic() {
     let db = &ctx.state.db;
     let mut freeze = intent("freeze");
     freeze.target = Target {
-        id: None,
+        id: Some(2),
         username: Some("exact_user".into()),
     };
     let plan = prepared(&ctx, 1, &freeze).await;
@@ -123,6 +123,11 @@ async fn postgres_plans_conflicts_policies_and_legacy_effects_are_atomic() {
     assert!(plan.changed && plan.revoke_sessions && plan.notification_count == 1);
     assert_eq!(read(db, 2).await.status, 0, "prepare must not write");
     assert_eq!(notice_count(db, 2).await, 0);
+    let mut mismatch = freeze.clone();
+    mismatch.target.username = Some("another_account".into());
+    assert!(targets::prepare(db, 1, Some(0), &mismatch, false)
+        .await
+        .is_err());
     assert_eq!(
         read(db, 3).await.status,
         0,
