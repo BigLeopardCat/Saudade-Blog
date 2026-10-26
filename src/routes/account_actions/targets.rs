@@ -21,14 +21,14 @@ pub(super) fn validate(
     now: NaiveDateTime,
 ) -> Result<Option<NaiveDateTime>, DbErr> {
     let target = &intent.target;
-    if !((target.id.is_some_and(|v| v > 0) && target.username.is_none())
-        || (target.id.is_none()
-            && target.username.as_ref().is_some_and(|v| {
-                !v.is_empty()
-                    && v.trim() == v
-                    && v.chars().count() <= 255
-                    && !v.chars().any(char::is_control)
-            })))
+    if (target.id.is_none() && target.username.is_none())
+        || target.id.is_some_and(|id| id <= 0)
+        || target.username.as_ref().is_some_and(|v| {
+            v.is_empty()
+                || v.trim() != v
+                || v.chars().count() > 255
+                || v.chars().any(char::is_control)
+        })
     {
         return Err(failure("请指定唯一编号或完整账号名，不接受昵称或模糊匹配"));
     }

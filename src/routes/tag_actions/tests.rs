@@ -11,7 +11,7 @@ fn requests_require_typed_identity_and_explicit_fields() {
         json!({"action":"create"}),
         json!({"action":"delete","target":{"id":1}}),
         json!({"action":"update","target":{"id":1,"level":1}}),
-        json!({"action":"delete","target":{"id":1,"level":1,"name":"x"}}),
+        json!({"action":"delete","target":{"id":0,"level":1,"name":"x"}}),
         json!({"action":"create","fields":{"name":"x","color":"red"}}),
         json!({"action":"update","target":{"name":"x"},"fields":{"level":3}}),
     ] {
@@ -48,6 +48,14 @@ async fn postgres_tag_dictionary_changes_preserve_typed_references() {
     )
     .await;
     let source = created.state.after.unwrap().id.unwrap();
+    assert!(targets::snapshot(
+        &txn,
+        &intent(json!({"action":"delete",
+        "target":{"id":source,"level":1,"name":"different"}})),
+        false
+    )
+    .await
+    .is_err());
     let parent=prepare_apply(&txn,intent(json!({"action":"create","fields":{"name":format!("p_{}",uuid::Uuid::new_v4().simple())}}))).await.state.after.unwrap().id.unwrap();
     let nid:i32=txn.query_one(Statement::from_sql_and_values(DatabaseBackend::Postgres,
         "INSERT INTO note(title,content,status,is_public,created_at,updated_at) VALUES($1,'retain me','private',false,localtimestamp,localtimestamp) RETURNING id",vec![prefix.clone().into()])).await.unwrap().unwrap().try_get("","id").unwrap();
@@ -55,7 +63,7 @@ async fn postgres_tag_dictionary_changes_preserve_typed_references() {
         .await
         .unwrap();
     let move_intent = intent(
-        json!({"action":"update","target":{"id":source,"level":1},"fields":{"parent":{"id":parent,"level":1},"color":"#abcdef"}}),
+        json!({"action":"update","target":{"id":source,"level":1,"name":prefix},"fields":{"parent":{"id":parent,"level":1},"color":"#abcdef"}}),
     );
     let stale = targets::snapshot(&txn, &move_intent, false)
         .await

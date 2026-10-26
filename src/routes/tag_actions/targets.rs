@@ -18,8 +18,9 @@ fn valid_name(value: &str, limit: usize) -> bool {
         && !value.chars().any(char::is_control)
 }
 fn valid_target(t: &Target) -> bool {
-    ((t.id.is_some_and(|id| id > 0) && t.name.is_none() && t.level.is_some())
+    ((t.id.is_some_and(|id| id > 0) && t.level.is_some())
         || (t.id.is_none() && t.name.as_ref().is_some_and(|n| valid_name(n, 255))))
+        && t.name.as_ref().is_none_or(|n| valid_name(n, 255))
         && t.level.is_none_or(|l| matches!(l, 1 | 2))
         && t.parent_id.is_none_or(|id| id > 0)
         && !(t.level == Some(1) && t.parent_id.is_some())

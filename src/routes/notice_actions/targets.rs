@@ -25,20 +25,24 @@ fn clean(value: &str, limit: usize, multiline: bool) -> bool {
 }
 pub(super) fn validate(i: &Intent) -> Result<(), DbErr> {
     let t = &i.target;
-    let exact = (t.id.is_some_and(|n| n > 0) && t.username.is_none())
-        || (t.id.is_none()
-            && t.username
-                .as_ref()
-                .is_some_and(|s| clean(s, 255, false) && s.trim() == s));
-    if !exact
-        || !clean(&i.content, notice::CONTENT_MAX, true)
-        || i.title.as_ref().is_some_and(|s| {
-            s.chars().count() > notice::TITLE_MAX || s.chars().any(char::is_control)
-        })
+    if (t.id.is_none() && t.username.is_none())
+        || t.id.is_some_and(|id| id <= 0)
+        || t.username
+            .as_ref()
+            .is_some_and(|s| !clean(s, 255, false) || s.trim() != s)
     {
         return Err(failure(
-            "需唯一账号编号或完整账号名；标题最多128字，正文需非空且最多1000字",
+            "收件人需正数id或完整username；同时填写时必须指向同一账号",
         ));
+    }
+    if !clean(&i.content, notice::CONTENT_MAX, true) {
+        return Err(failure("content正文需非空且最多1000字，不接受非法控制字符"));
+    }
+    if i.title
+        .as_ref()
+        .is_some_and(|s| s.chars().count() > notice::TITLE_MAX || s.chars().any(char::is_control))
+    {
+        return Err(failure("title标题最多128字，不接受控制字符"));
     }
     Ok(())
 }
@@ -84,6 +88,14 @@ pub(super) async fn prepare<C: ConnectionTrait>(
         return Err(failure("收件人不存在或账号名不唯一，请指定唯一账号编号"));
     }
     let target = rows.pop().unwrap();
+    if intent
+        .target
+        .username
+        .as_ref()
+        .is_some_and(|name| name != &target.username)
+    {
+        return Err(failure("收件人id与username不一致，请重新查询账号"));
+    }
     if !authz::is_listable_role(&target.role) {
         return Err(failure("该账号不能接收通知"));
     }

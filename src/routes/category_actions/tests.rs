@@ -12,7 +12,7 @@ fn category_mutations_require_exact_targets_and_bounded_fields() {
         json!({"action":"create"}),
         json!({"action":"delete"}),
         json!({"action":"update","target":{"id":1}}),
-        json!({"action":"delete","target":{"id":1,"name":"x"}}),
+        json!({"action":"delete","target":{"id":0,"name":"x"}}),
         json!({"action":"delete","target":{"id":1},"fields":{"name":"x"}}),
         json!({"action":"create","fields":{"name":" "}}),
         json!({"action":"create","fields":{"name":"x","pathName":"../x"}}),
@@ -68,6 +68,14 @@ async fn postgres_category_changes_are_atomic_and_preserve_articles() {
     .await
     .unwrap();
     let cid = created.state.after.as_ref().unwrap().id.unwrap();
+    assert!(targets::prepare(
+        &txn,
+        &intent(json!({"action":"delete",
+        "target":{"id":cid,"name":"different"}})),
+        false
+    )
+    .await
+    .is_err());
     assert_eq!(
         created.state.after.as_ref().unwrap().path_name.as_deref(),
         Some(prefix.as_str())
@@ -103,7 +111,7 @@ async fn postgres_category_changes_are_atomic_and_preserve_articles() {
         vec![prefix.clone().into(),cid.into(),nid.into()])).await.unwrap().unwrap();
     let revision: i32 = row.try_get("", "id").unwrap();
     let modify = intent(
-        json!({"action":"update","target":{"name":prefix},"fields":{"introduce":"","icon":"","color":""}}),
+        json!({"action":"update","target":{"id":cid,"name":prefix},"fields":{"introduce":"","icon":"","color":""}}),
     );
     let prepared = targets::prepare(&txn, &modify, false).await.unwrap();
     assert_eq!((prepared.article_count, prepared.revision_count), (1, 1));

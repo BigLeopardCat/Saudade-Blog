@@ -28,8 +28,9 @@ fn path_valid(value: &str) -> bool {
 pub(super) fn validate(intent: &Intent) -> Result<(), DbErr> {
     let fields = &intent.fields;
     let valid_target = intent.target.as_ref().is_some_and(|t| {
-        (t.id.is_some_and(|id| id > 0) && t.name.is_none())
-            || (t.id.is_none() && t.name.as_ref().is_some_and(|v| name_valid(v, 255)))
+        (t.id.is_some() || t.name.is_some())
+            && t.id.is_none_or(|id| id > 0)
+            && t.name.as_ref().is_none_or(|v| name_valid(v, 255))
     });
     if (intent.action == Action::Create && (intent.target.is_some() || fields.name.is_none()))
         || (intent.action != Action::Create && !valid_target)
@@ -95,7 +96,11 @@ pub(super) async fn prepare<C: ConnectionTrait>(
                 "分类不存在或名字不唯一，请查询分类清单并指定唯一编号",
             ));
         }
-        Some(Category::from(rows.into_iter().next().unwrap()))
+        let row = rows.into_iter().next().unwrap();
+        if target.name.as_ref().is_some_and(|name| name != &row.name) {
+            return Err(failure("分类id与name不一致，请重新查询分类"));
+        }
+        Some(Category::from(row))
     } else {
         None
     };
