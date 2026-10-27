@@ -1,4 +1,6 @@
 mod control;
+mod task_inputs;
+pub use task_inputs::{submit_handler as task_input_handler, status_handler as task_input_status_handler};
 mod pending;
 mod persistence;
 use persistence::{save_assistant_reply, save_execution_log, PERSISTENCE_ERROR};
@@ -40,6 +42,8 @@ pub struct ChatRequest {
     pub message: String,
     #[serde(default)]
     pub task_id: String,
+    #[serde(default)]
+    pub task_inputs: bool,
     #[serde(default)]
     pub resume_task: String,
     #[serde(default)]
@@ -738,6 +742,7 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
     let mut body = serde_json::json!({
         "message": payload.message,
         "task_id": payload.task_id,
+        "task_inputs": payload.task_inputs,
         "resume_task": payload.resume_task,
         "browser_feedback": payload.browser_feedback,
         "browser_result": payload.browser_result,
@@ -1752,6 +1757,18 @@ fn forward_agent_stream(
                 Frame::Text(text) => {
                     reply.push_str(&text);
                     yield Ok(axum::response::sse::Event::default().event(incoming.event).data(incoming.data));
+                }
+                Frame::TaskInput(value) => {
+                    match task_inputs::persist_event(&state.db, uid, conversation_id,
+                        source_role.as_deref().unwrap_or(""), value).await {
+                        Ok(value) => yield Ok(stream_event("task_input", value)),
+                        Err(error) => {
+                            warn!(%error, "task input stream persistence failed");
+                            terminal = true;
+                            yield Ok(stream_event("error", PERSISTENCE_ERROR));
+                            break;
+                        }
+                    }
                 }
                 Frame::Progress(_) | Frame::Confirmation(_) | Frame::Command(_) => {
                     yield Ok(axum::response::sse::Event::default().event(incoming.event).data(incoming.data));

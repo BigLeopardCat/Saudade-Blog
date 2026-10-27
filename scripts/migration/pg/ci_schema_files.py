@@ -23,6 +23,7 @@ LOAD = [
     "0016_confirmation_question.sql",
     "0017_account_action_version.sql",
     "0018_chat_memory_source_role.sql",
+    "0019_chat_task_input.sql",
 ]
 
 EXCLUDED = {
