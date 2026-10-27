@@ -10,3 +10,4 @@ CREATE TABLE IF NOT EXISTS chat_task_input (
     message_id integer REFERENCES chat_history(id) ON DELETE CASCADE,
     PRIMARY KEY (user_id, conversation_id, input_id)
 );
+CREATE INDEX IF NOT EXISTS idx_chat_task_input_conversation ON chat_task_input(conversation_id);
