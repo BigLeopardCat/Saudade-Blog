@@ -9,6 +9,7 @@ use serde_json::{json, Map, Value};
 pub(super) enum Frame {
     Text(String),
     Progress(String),
+    TaskInput(Map<String, Value>),
     Confirmation(Map<String, Value>),
     Command(Map<String, Value>),
     Pending(Map<String, Value>),

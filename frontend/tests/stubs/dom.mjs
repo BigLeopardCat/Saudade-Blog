@@ -61,6 +61,13 @@ class Element {
       if (node !== this.firstChild) this.insertBefore(node, this.firstChild);
     }
   }
+  replaceChildren(...nodes) {
+    for (const child of [...this.children]) this.removeChild(child);
+    this.textContent = ''; this._html = '';
+    for (const node of nodes) {
+      this.appendChild(typeof node === 'string' ? document.createTextNode(node) : node);
+    }
+  }
   appendChild(c) {
     // 真机语义：已挂载的元素先摘再插（不然同一个节点会在两个父节点里各挂一份）
     if (c.parentNode && c.parentNode !== this) {

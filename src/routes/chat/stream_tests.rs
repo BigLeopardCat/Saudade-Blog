@@ -17,6 +17,17 @@ fn state_with_db(db: sea_orm::DatabaseConnection) -> Arc<AppState> {
     })
 }
 
+#[tokio::test]
+async fn task_ready_is_structured_and_invalid_input_cannot_become_a_success() {
+    let ready = "event: task_input\ndata: {\"task_id\":\"one\",\"ready\":true}\n\nevent: done\ndata: {}\n\n";
+    let events = transcript(state(), 7, ready.into()).await;
+    assert!(matches!(&events[0], Frame::TaskInput(value) if value["ready"] == true));
+    assert_eq!(events[1], Frame::Done(Empty {}));
+    let invalid = "event: task_input\ndata: {\"task_id\":\"one\",\"input\":{\"id\":\"x\",\"status\":\"applied\"}}\n\nevent: done\ndata: {}\n\n";
+    let failed = transcript(state(), 7, invalid.into()).await;
+    assert!(matches!(failed.as_slice(), [Frame::Error(_)]));
+}
+
 async fn transcript(state: Arc<AppState>, uid: i32, wire: String) -> Vec<Frame> {
     let upstream = futures::stream::iter(vec![Ok(Bytes::from(wire))]);
     let stream = forward_agent_stream(
