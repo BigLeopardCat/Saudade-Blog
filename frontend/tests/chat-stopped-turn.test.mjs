@@ -182,9 +182,9 @@ vm.runInThisContext(readFileSync(path.join(W, 'boot.js'), 'utf8'), { filename: '
 if (!await waitFor(() => !!globalThis.__waifuChatCore)) { console.error('chat-core 未注册（子模块加载失败）'); process.exit(1); }
 await waitFor(() => midEls().length === 2);
 
-console.log('== 场景 1：刷新后 stopped 说「被你停止了」；缺 kind 的旧记录照旧说「未收到回复」 ==');
+console.log('== 场景 1：旧暂停记录提供重发/编辑；缺 kind 的记录保留错误提示 ==');
 {
-  assert(failedText() === '⏹ 这条消息被你停止了，这一轮不会再回答（可重发或编辑）', '刷新后说的是「被你停止了」', failedText());
+  assert(failedText() === '可以重新发送或编辑这条消息。', '旧记录明确可以重发或编辑', failedText());
   assert(btnsIn(failedNotes()[0]).length === 2, '按钮挂回来（刷新不是死路）', btnsIn(failedNotes()[0]).map(b => b.textContent));
   assert(slotOf(failedNotes()[0]) && slotOf(failedNotes()[0]).dataset.failedText === REFRESH_TEXT, '槽位带原文（补删/重发都要拿它去走原文校验）', slotOf(failedNotes()[0]) && slotOf(failedNotes()[0]).dataset.failedText);
 
@@ -192,7 +192,7 @@ console.log('== 场景 1：刷新后 stopped 说「被你停止了」；缺 kind
   store.set('saudade-chat-failed', JSON.stringify([
     { text: REFRESH_TEXT, ts: NOW, reason: '网络错误: Failed to fetch' }]));
   await fireStorage();
-  assert(failedText() === '⏳ 该条消息未收到回复：网络错误: Failed to fetch', '缺 kind ⇒ 回退「未收到回复」（不是「被你停止」）', failedText());
+  assert(failedText() === '⏳ 该条消息未收到回复：网络错误: Failed to fetch', '缺 kind 的记录保留未收到回复提示', failedText());
 
   // 复位：后面几个场景从"干净的一页"（只有开场白）开始
   store.delete('saudade-chat-failed');
@@ -223,7 +223,7 @@ console.log('\n== 场景 2：按停止 → 消息留在原处、半截回复与�
   assert(userBubbles(M1).length === 1, 'DB 视图回来之后它仍在屏幕上（不是"拉一次历史就没了"）', midEls().map(e => e.dataset.mtext));
   const m = marker();
   assert(!!m && m.kind === 'stopped' && m.text === M1, '标记带 kind=stopped（刷新后的措辞靠它）', m);
-  assert(failedText() === '⏹ 这条消息被你停止了，这一轮不会再回答（可重发或编辑）', '提示条说的是「被你停止了」而不是「未收到回复」', failedText());
+  assert(failedText() === '可以继续任务，也可以输入新的要求。', '暂停提示明确支持继续任务', failedText());
   assert(btnsIn(failedNotes()[0]).length === 3, '拉取重建之后按钮仍只有一组（钩子幂等）', btnsIn(failedNotes()[0]).map(b => b.textContent));
   // 半截回复的 'l' 项 60s 内不被 DB 视图收走 ⇒ 气泡上那份按钮与提示条这份会同时在场。
   // 屏幕上只该有**一组**（去重以提示条为准——它才是刷新后唯一活下来的那份）
