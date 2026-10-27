@@ -1,27 +1,7 @@
 /**
- * 看板娘对话脚本的最小 DOM stub（20260927 从 chat-autoload-smoke.test.mjs 与
- * chat-time-divider.test.mjs 抽出——两者当时还叫 smoke-harness.mjs / repro-timegap.mjs）。
- *
- * **为什么抽出来**：那两个 harness 各自复制了一份，注释写着"与 … 同构"——同构靠人记，
- * 漂了就各自出各自的结论。20260927 实测：**两份都没有 `document.querySelector`**，
- * 于是两支都在 `chat-stream.js:1896`（拖拽图片入输入栏）抛 TypeError，谁也没跑到自己
- * 声称在测的地方；冒烟那支还因为 `/api/chat/conversations` 没有桩，在
- * `ensureConversation` 的 catch 里被吞成 false，**每一轮都停在「创建新会话失败」气泡上**
- * ——自称在测 SSE 往返，其实一次都没发出去。
- *
- * 三处刻意按真机语义写（都是有原因才写成这样的，别顺手简化）：
- *   ① `appendChild` / `insertBefore` **移动**节点（已挂载的先摘再插）。不移动的话同一个
- *      节点会同时挂在两个父节点的 children 里，reconcile 的重排断言就永远是假的。
- *   ② `insertAdjacentHTML` 按**栈**还原嵌套。真机上 `#chat-ask`（常驻确认卡）就在
- *      `#chat-messages` 里，把 `id="…"` 一律摊平成直接子节点会让 `children` 语义整体失真
- *      （"初始无消息"数 `children.length` 正是那个形状才成立）。
- *   ③ `style` 是 CSSStyleDeclaration（要 `setProperty`），不是裸 `{}`
- *      （chat-session.js:607 用它覆写面板几何，裸对象上会抛）。
- *   ④ 选择器（含属性选择器与 `closest`）按**值**匹配，见 `matchesSel` 头注——
- *      "属性选择器恒真"曾让两条断言各自假绿（20260927）。
- *
- * 顺带一提：真机 `element.style.width = '10px'` 这类直接赋值在本 stub 上照常可用
- * （Style 就是个普通对象 + 三个方法）；只有"读回来"这件事是近似的。
+ * 聊天脚本接线测试的共享 DOM 桩，不计算 CSS 布局；几何与滚动由 Playwright 验证。
+ * 节点插入会移动原节点，HTML 保留嵌套，选择器按值匹配。
+ * style 支持直接赋值和 setProperty；computed style 仅返回已设置的行内值及必要默认值。
  */
 import { readFileSync, existsSync } from 'node:fs';
 import vm from 'node:vm';
@@ -235,6 +215,7 @@ const document = {
 export function installDom() {
   // Layout and resize delivery are checked in Playwright; this harness wires events only.
   globalThis.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
+  globalThis.getComputedStyle = el => Object.assign({ maxHeight: 'none' }, el.style);
   globalThis.document = document;
   globalThis.Element = Element;   // stage.js 的 animate 检测引用全局 Element
   globalThis.addEventListener = (t, fn) => { (document._listeners[t] = document._listeners[t] || []).push(fn); };
