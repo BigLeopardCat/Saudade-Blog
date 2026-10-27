@@ -14,6 +14,7 @@
 //      收尾会把它重新冒出来）。
 import { readFileSync } from 'fs';
 import path from 'path';
+import vm from 'node:vm';
 import { fileURLToPath } from 'url';
 import { JSDOM } from 'jsdom';
 
@@ -284,8 +285,19 @@ for (const f of ['chat-stream.js', 'chat-engine.js', 'chat-render.js', 'chat-ses
   // 两半缺一就是"刷新后按钮没了"（20260927 用户报的那个缺口）。
   ok(/onFailedResync/.test(e) && /ui\.onFailedResync\(\)/.test(e),
      'chat-engine.js：reconcileDOM 收尾调用 onFailedResync（提示条重建后按钮自愈）');
-  ok(/onFailedResync: \(\) => \{ attachHistoryFailedRetry\(\); \}/.test(s),
-     'chat-stream.js：onFailedResync 钩子 = 重挂失败轮重发/编辑按钮');
+  const failedHook = /onFailedResync:\s*\(\)\s*=>\s*\{([^}]+)\}/.exec(s)?.[1];
+  ok(!!failedHook, 'chat-stream.js：失败轮恢复钩子存在');
+  if (failedHook) {
+    let repaired = 0, restored = 0;
+    vm.runInNewContext(failedHook, { attachHistoryFailedRetry: () => repaired++,
+      steering: { restore: () => restored++ } });
+    eq(repaired, 1, '失败轮恢复实际重挂一次重发/编辑按钮');
+    eq(restored, 1, '失败轮恢复同时核对任务补充状态');
+    let missing = 0;
+    vm.runInNewContext(failedHook.replace('attachHistoryFailedRetry();', ''), {
+      attachHistoryFailedRetry: () => missing++, steering: { restore() {} } });
+    eq(missing, 0, '负控：移除重挂调用后不会误判为已恢复');
+  }
   // 收尾那段：唯一允许出现的 hideAsk 是"用户改口打字"那条（sendMessage 里），
   // 收尾的 setTimeout 里不许再有 hideAsk（它会把待办当成"用户改口"销毁掉）
   const fin = s.slice(s.indexOf("if (ctx.state.pendingPull) { ctx.state.pendingPull = false;"));
