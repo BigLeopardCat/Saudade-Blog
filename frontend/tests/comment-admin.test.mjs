@@ -57,19 +57,18 @@ const rustComments = read('src/routes/comments.rs');
 const rustWebInfo = read('src/routes/web_info.rs');
 const rustMod = read('src/routes/mod.rs');
 
+// 标签与实际面板对应由 users-credentials.test.tsx 的真实组件点击测试验证。
+
 // ── ① 页签接线 ─────────────────────────────────────────────────────────────
 console.log('页签 —— 标签名与内容这次必须对上：');
 ok(users.includes("import CommentManage from '../CommentManage';"), 'Users 页引入了评论管理页');
 {
     const review = users.match(/key: 'review',[\s\S]{0,160}?children: <BoardManage \/>/);
     ok(!!review, '「留言管理」页签挂的仍是 BoardManage（河灯，行为零改动）', review && review[0].slice(0, 60));
-    ok(!!review && review[0].includes('label: <h3>留言管理</h3>'),
-        '它的标签是「留言管理」——20260905 那次合并正是坏在这里（叫「评论管理」却装着留言）');
 }
 {
     const comment = users.match(/key: 'comment',[\s\S]{0,160}?children: <CommentManage \/>/);
     ok(!!comment, '「评论管理」页签挂的是新的 CommentManage', comment && comment[0].slice(0, 60));
-    ok(!!comment && comment[0].includes('label: <h3>评论管理</h3>'), '它的标签是「评论管理」');
 }
 ok(count(users, '<BoardManage />') === 1 && count(users, '<CommentManage />') === 1,
     '两个组件各挂一次（合并/复制粘贴的痕迹会在这里露出来）',
