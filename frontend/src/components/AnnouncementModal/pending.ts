@@ -51,7 +51,9 @@ export async function fetchPendingAnnouncement(): Promise<PendingAnnouncement | 
         const res = await getPendingAnnouncement()
         if (!ok(res)) return null            // 读不到 ≠ 没有（见文件头，不弹）
         const newest = res.data.data
-        if (!newest || newest.isRead) return null
+        if (!newest || !Number.isSafeInteger(newest.id) || newest.id <= 0
+            || newest.type !== 'announcement' || newest.isRead !== false
+            || typeof newest.title !== 'string' || typeof newest.content !== 'string') return null
         return {
             id: newest.id,
             source: 'server',

@@ -175,6 +175,14 @@ console.log('\n── 登录用户（有 token）──');
     reset({ token: 'x.y.z', responder: (c) => (c.url === '/api/protected/notifications/announcement' ? notifRes([annRow(9)]) : failRes) });
     store[ANNOUNCEMENT_SEEN_KEY] = '99999';
     ok((await fetchPendingAnnouncement()) !== null, '登录：本机水位再高也不影响（换浏览器不再重弹、本机标过也不冒充已读）');
+
+    for (const data of [[], {}, { unread: 1, items: [annRow(9)] },
+        { ...annRow(9), id: 0 }, { ...annRow(9), isRead: undefined },
+        { ...annRow(9), content: undefined }]) {
+        reset({ token: 'x.y.z', responder: () => ({ status: 200, data: { code: 200, data } }) });
+        eq(await fetchPendingAnnouncement(), null,
+            '异常或不完整的公告响应不能弹出空窗口，也不能把未知状态当成未读');
+    }
 }
 
 console.log('\n── 登录用户关窗 = 标服务端已读 ──');
