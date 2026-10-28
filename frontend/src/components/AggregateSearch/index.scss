@@ -1,12 +1,23 @@
 .aggregateSearch {
   width: min(92%, 820px); margin: 0 auto; height: 100%; min-height: 0; display: flex; flex-direction: column;
-  .aggregateSearchInput { display: flex; align-items: center; gap: 12px; }
-  .searchModalInput { min-width: 0; width: 100%; flex: 1; margin-bottom: 0; }
-  .aggregateSearchCard { background: var(--washi-paper, #fffdfa); margin-top: 20px; min-height: 0; overflow-y: auto; color: var(--washi-ink, #4a3550); }
+  .aggregateSearchInput { position: relative; display: flex; align-items: center; gap: 12px; }
+  .searchModalInput { padding-inline-end: 48px; min-width: 0; width: 100%; flex: 1; margin-bottom: 0; }
+  .aggregateSearchCard { background: var(--washi-paper, #fffdfa); margin-top: 20px; min-height: 0; overflow: hidden; flex: 1; display: flex; flex-direction: column; color: var(--washi-ink, #4a3550); }
   button.search-item { width: 100%; border: 1px solid var(--washi-line-2, transparent); background: var(--washi-paper-2, #fff6fa); text-align: left; color: var(--washi-ink, #4a3550); font: inherit; cursor: pointer; }
   .search-item[aria-selected='true'] { outline: 2px solid var(--washi-pink-deep, #a94f83); outline-offset: -2px; }
   .search-item-title, .search-item-snippet, .search-item-meta { display: block; }
   mark { background: #f5dba3; color: #493018; border-radius: 3px; padding: 0 1px; }
   .searchPagination { margin-top: 16px; color: var(--washi-ink-2, #7c6584); }
   @media (max-width: 600px) { width: 100%; .ant-card-body { padding: 12px 0; } }
+}
+
+.aggregateSearch {
+  .searchClear { position: absolute; inset-inline-end: 12px; width: 30px; height: 30px; display: grid; place-items: center; border: 0; border-radius: 50%; background: var(--washi-paper-2, #fff6fa); color: var(--washi-ink-2, #7c6584); cursor: pointer; }
+  .searchClear:hover { color: var(--washi-pink-deep, #d94f9a); background: var(--washi-tape, #ffdeee); }
+  .searchClear:focus-visible { outline: 2px solid var(--washi-pink-deep, #d94f9a); outline-offset: 2px; }
+  .aggregateSearchCard .ant-card-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+  .search-results-list { min-height: 180px; flex: 1; overflow-y: auto; scrollbar-gutter: stable; }
+  .searchStatus { min-height: 24px; flex: 0 0 auto; }
+  .searchBusy { min-height: 24px; margin: 0; color: var(--washi-ink-2, #7c6584); }
+  .searchPagination { flex: 0 0 auto; }
 }

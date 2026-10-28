@@ -1,3 +1,4 @@
+import {clearAuthToken} from '../utils/authSession';
 import axios from "axios";
 import type { AxiosError } from "axios";
 import getToken from "./getToken.tsx"
@@ -26,16 +27,7 @@ http.interceptors.request.use(
     }
 );
 
-/**
- * 把一次 axios 失败送进前端日志（20261004）。
- *
- * axios 是 SPA 唯一的 HTTP 客户端，而它走 **XHR** 适配器 —— `boot.js` 那个
- * `window.fetch` 包装看不见它的失败。没有这一段，"博客自身"（除看板娘之外的全部
- * 请求）接口失败在 `logs/frontend/monitor.log` 里是**完全不存在**的：日志里只有
- * 看板娘的声音，这也是那份日志长期"无效"的一大半原因。
- *
- * 主动取消（路由切换 / 停止生成时 abort）不是故障，与 boot.js 对 AbortError 的取向一致。
- */
+/** Report failed XHR requests while excluding cancellations and report recursion. */
 function reportApiFailure(error: AxiosError) {
     if (error.code === 'ERR_CANCELED') return;
     const config = error.config;
@@ -71,16 +63,15 @@ http.interceptors.response.use(
     function (error) {
         if (error.response && error.response.status === 401) {
             // 清除本地过期的 token
-            localStorage.removeItem("tokenKey");
+            const sent = error.config?.headers?.Authorization;
+            if (typeof sent !== 'string' || !clearAuthToken(sent)) return Promise.reject(error);
             // 提示用户
             message.error("登录状态已过期，请重新登录");
             // 延时 1 秒后跳转，让用户看得到提示
             setTimeout(() => {
-                window.location.href = "/login";
+                if (!getToken()) window.location.href = "/login";
             }, 1000);
-        // 注意：403（token 有效但角色非 admin，AuthRouter 已提示"无权限访问后台"并跳回首页）
-        // 不在此处理——token 本身有效，清 token/强制登出会让普通用户陷入
-        // "登录→被踢→重新登录"循环，且与 AuthRouter 的提示重复
+        // 403 is a permission failure; keep the authenticated session.
         }
         reportApiFailure(error);
         return Promise.reject(error);

@@ -12,7 +12,7 @@ type CatalogError = { message: string };
 export const catalogApi = createApi({
     reducerPath: 'catalogApi',
     baseQuery: fakeBaseQuery<CatalogError>(),
-    tagTypes: ['Categories', 'Tags'],
+    tagTypes: ['Categories', 'Tags', 'Search'],
     keepUnusedDataFor: 60,
     invalidationBehavior: 'delayed',
     endpoints: build => ({

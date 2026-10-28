@@ -70,7 +70,7 @@ async fn confirmations_read_scoped_context_without_scheduling_summaries() {
     assert_eq!(memory.history.len(), 20);
     assert_eq!(memory.summary, "existing private summary");
     assert!(memory.summary_scope.is_some());
-    assert!(!memory.needs_summary && memory.revision.is_none());
+    assert!(!memory.summary_batch.is_some() && memory.revision.is_none());
     assert_eq!(db.into_transaction_log().len(), 2);
 }
 
@@ -82,7 +82,7 @@ async fn backlog_uses_the_oldest_full_prefix_and_keeps_recent_context_separate()
         .append_query_results([messages(1, 35)])
         .into_connection();
     let memory = load(&db, 7, 42, Some("user"), Some(36)).await.unwrap();
-    assert!(memory.needs_summary);
+    assert!(memory.summary_batch.is_some());
     assert_eq!(memory.history.len(), 20);
     assert_eq!(memory.history[0].content, "message 16");
     let batch = memory.summary_batch.unwrap();
@@ -96,45 +96,19 @@ async fn backlog_uses_the_oldest_full_prefix_and_keeps_recent_context_separate()
 }
 
 #[tokio::test]
-async fn small_backlogs_never_advance_a_boundary() {
-    for size in [9, 10, 19] {
-        let prefix = messages(1, size);
-        let db = MockDatabase::new(DatabaseBackend::Postgres)
+async fn short_prefixes_are_offered_without_a_host_frequency_policy() {
+    for size in [1, 10, 19] {
+        let prefix=messages(1,size);
+        let db=MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([Vec::<chat_summary::Model>::new()])
             .append_query_results([prefix.clone().into_iter().rev().collect::<Vec<_>>()])
-            .append_query_results([prefix])
-            .into_connection();
-        let memory = load(&db, 7, 42, Some("user"), Some(size + 1))
-            .await
-            .unwrap();
-        assert!(!memory.needs_summary);
-        assert!(memory.summary_batch.is_none() && memory.revision.is_none());
+            .append_query_results([prefix]).into_connection();
+        let memory=load(&db,7,42,Some("user"),Some(size+1)).await.unwrap();
+        let batch=memory.summary_batch.unwrap();
+        assert_eq!(batch.messages.len(),size as usize);
+        assert_eq!(batch.messages.last().unwrap().id,size);
+        assert!(memory.revision.is_some());
     }
-}
-
-#[tokio::test]
-async fn volume_triggers_before_the_message_ceiling_and_coverage_resets_it() {
-    let mut prefix = messages(1, 4);
-    for row in &mut prefix {
-        row.content = "文".repeat(1_500);
-    }
-    let db = MockDatabase::new(DatabaseBackend::Postgres)
-        .append_query_results([Vec::<chat_summary::Model>::new()])
-        .append_query_results([prefix.iter().rev().cloned().collect::<Vec<_>>()])
-        .append_query_results([prefix])
-        .into_connection();
-    let first = load(&db, 7, 42, Some("user"), Some(5)).await.unwrap();
-    assert!(first.needs_summary);
-    let batch = first.summary_batch.unwrap();
-    assert_eq!((batch.base_id, batch.messages.last().unwrap().id), (0, 4));
-    let db = MockDatabase::new(DatabaseBackend::Postgres)
-        .append_query_results([vec![stored(Some("user"), 4)]])
-        .append_query_results([messages(1, 10).into_iter().rev().collect::<Vec<_>>()])
-        .append_query_results([messages(5, 10)])
-        .into_connection();
-    let next = load(&db, 7, 42, Some("user"), Some(11)).await.unwrap();
-    assert!(!next.needs_summary && next.summary_batch.is_none());
-    assert_eq!(next.history.len(), 10);
 }
 
 #[tokio::test]
@@ -167,7 +141,7 @@ async fn a_long_message_is_deferred_whole_then_offered_without_clipping() {
     assert_eq!(next_batch.messages[0].id, 59);
     assert!(next_batch.messages[0].content.ends_with("TAIL_CANARY"));
     assert_eq!(next_batch.messages[0].content.chars().count(), 12_011);
-    assert!(next.needs_summary && next.revision.is_some());
+    assert!(next.revision.is_some());
 }
 
 #[tokio::test]
@@ -405,7 +379,7 @@ async fn postgres_scope_and_cas_survive_retention_without_deleting_uncovered_sou
         .await
         .unwrap();
     assert_eq!(reloaded.summary, initial.text);
-    assert!(!reloaded.needs_summary);
+    assert!(!reloaded.summary_batch.is_some());
     let mut admin_ids = Vec::new();
     for index in 1..=21 {
         let row = txn

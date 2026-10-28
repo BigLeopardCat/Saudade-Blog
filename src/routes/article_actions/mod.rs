@@ -1,5 +1,7 @@
 //! Guarded article state changes; content editing stays in the editor API.
 
+pub mod batch;
+
 use crate::{entity::note, routes::AppState, utils::ApiResponse};
 use axum::{
     extract::{Path, State},
@@ -60,8 +62,8 @@ pub struct Outcome {
 
 const VERSION:&str="encode(sha256(convert_to(jsonb_build_array(id,title,status,is_public,is_top,draft_of,user_id,category_id,content,updated_at)::text,'UTF8')),'hex')";
 
-pub(super) async fn read<C: ConnectionTrait>(db: &C, id: i32, lock: bool) -> Result<Target, DbErr> {
-    let mut query = note::Entity::find_by_id(id)
+pub(super) fn target_query() -> sea_orm::Select<note::Entity> {
+    note::Entity::find()
         .filter(note::Column::DraftOf.is_null())
         .select_only()
         .columns([
@@ -71,7 +73,11 @@ pub(super) async fn read<C: ConnectionTrait>(db: &C, id: i32, lock: bool) -> Res
             note::Column::IsPublic,
             note::Column::IsTop,
         ])
-        .column_as(Expr::cust(VERSION), "version");
+        .column_as(Expr::cust(VERSION), "version")
+}
+
+pub(super) async fn read<C: ConnectionTrait>(db: &C, id: i32, lock: bool) -> Result<Target, DbErr> {
+    let mut query = target_query().filter(note::Column::Id.eq(id));
     if lock {
         query = query.lock_exclusive();
     }
@@ -101,6 +107,15 @@ pub(super) async fn apply<C: ConnectionTrait>(
 ) -> Result<Outcome, DbErr> {
     validate(id, change)?;
     let before = read(db, id, true).await?;
+    apply_locked(db, before, change).await
+}
+
+pub(super) async fn apply_locked<C: ConnectionTrait>(
+    db: &C,
+    before: Target,
+    change: &Change,
+) -> Result<Outcome, DbErr> {
+    let id = before.id;
     if before.version != change.version {
         return Err(DbErr::Custom(
             "article changed; read and confirm again".into(),

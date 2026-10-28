@@ -5,6 +5,10 @@ use std::sync::OnceLock;
 /// Keep code identifiers intact; unknown Chinese runs retain a literal fallback.
 pub(super) fn tokenize(keyword: &str) -> Result<Vec<String>, &'static str> {
     static JIEBA: OnceLock<Jieba> = OnceLock::new();
+    let literal = keyword.trim().to_lowercase();
+    if literal.chars().count() == 1 && literal.chars().all(char::is_alphanumeric) {
+        return Ok(vec![literal]);
+    }
     let mut terms = Vec::new();
     for term in crate::search_core::split_terms(keyword) {
         let words: Vec<String> = if term.chars().all(|c| ('\u{3400}'..='\u{9fff}').contains(&c)) {
@@ -43,6 +47,11 @@ mod tests {
             tokenize("React博客部署").unwrap(),
             vec!["react", "博客", "部署"]
         );
+    }
+    #[test]
+    fn explicit_single_characters_are_searchable() {
+        assert_eq!(tokenize("猫").unwrap(), vec!["猫"]);
+        assert!(tokenize("。").unwrap().is_empty());
     }
     #[test]
     fn preserves_identifiers_and_rejects_excess_terms() {

@@ -5,6 +5,7 @@ import categoriesReducer from "./components/categories.tsx";
 import tagReducer from "./components/tags.tsx";
 import NoteReducer from "./components/note.tsx";
 import { setupListeners } from '@reduxjs/toolkit/query';
+import { AGENT_TURN_DONE_EVENT } from '../components/UserCenter/agentTurn';
 import { catalogApi } from './catalogApi';
 
 const store = configureStore({
@@ -20,5 +21,8 @@ const store = configureStore({
 })
 
 setupListeners(store.dispatch);
+window.addEventListener(AGENT_TURN_DONE_EVENT, () => {
+    store.dispatch(catalogApi.util.invalidateTags(['Search']));
+});
 
 export default store

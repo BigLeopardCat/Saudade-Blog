@@ -1184,7 +1184,8 @@ async fn quota_review_claims_once_and_touches_nothing_on_the_second_call() {
 /// 夹具关键词：**刻意是个真实内容里不可能出现的怪串**。
 /// 本用例断言的是精确 id 集合——关键词一旦撞上库里任何一条真实内容
 ///（开发库上尤其容易），断言会莫名其妙地红，而根因看着像"搜索坏了"。
-const AGG_KW: &str = "qqzz聚合夹具";
+// Keep this visibility fixture distinct from concurrent partial-match fixtures.
+const AGG_KW: &str = "qqzzaggregatevisibility";
 
 const AGG_NOTE_OK: i32 = 900000021; // 公开 + 已发布 + 标题命中 ⇒ 该出现
 /// ⚠️ 这一行**原来是 `is_public=true` + `status='draft'`** —— 那正是「黑名单漏洞」的现场
@@ -1390,7 +1391,7 @@ async fn test_聚合搜索的四类命中集合与可见性谓词() {
     let b0 = &j["data"]["board"][0];
     assert_eq!(b0["type"], "board");
     assert_eq!(b0["title"], "", "留言行的标题必须留空");
-    assert_eq!(b0["snippet"], "河灯正文里也有 qqzz聚合夹具", "摘要该是正文（折平空白后）");
+    assert_eq!(b0["snippet"], format!("河灯正文里也有 {AGG_KW}"), "摘要该是正文（折平空白后）");
     // 留言的作者是**自由留名**，不是账号身份
     assert_eq!(b0["author"], "留名甲");
 

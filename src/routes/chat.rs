@@ -758,7 +758,6 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
         "summary": memory.summary,
         "summary_scope": memory.summary_scope,
         "summary_batch": memory.summary_batch,
-        "needs_summary": memory.needs_summary,
         "executions": executions_text,
         "pending_action": pending_text,
         "agent_tasks": agent_tasks,
@@ -1281,6 +1280,7 @@ fn legacy_exec_row(row: &serde_json::Value) -> String {
                 }
             }
         }
+        "set_article_status_batch" => format!("批量修改文章状态：{}", row.get("result").and_then(|value| value.as_str()).unwrap_or("批量操作已回执")),
         "set_article_status" => format!("修改文章 {}：{}", arg("article_id"), arrow(row)),
         "set_article_tags" => format!("修改文章 {} 标签：{}", arg("article_id"), arrow(row)),
         _ => format!("操作记录({})", tool),

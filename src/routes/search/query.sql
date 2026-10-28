@@ -29,21 +29,18 @@ scored AS (
                CASE WHEN char_length(d.body) > GREATEST(m.first_hit - 24, 1) + 159 THEN '…' ELSE '' END
            ELSE left(COALESCE(NULLIF(d.description, ''), d.body), 160) END AS excerpt
     FROM documents d CROSS JOIN LATERAL (
-        SELECT count(*) FILTER (WHERE title_hit OR tag_hit OR body_pos > 0) AS hits,
-               COALESCE(sum(CASE WHEN title_hit THEN 100 ELSE 0 END + CASE WHEN tag_hit THEN 30 ELSE 0 END +
+        SELECT count(*) FILTER (WHERE title_hit OR tag_hit OR description_hit OR body_pos > 0) AS hits,
+               COALESCE(sum(CASE WHEN title_hit THEN 100 ELSE 0 END + CASE WHEN tag_hit THEN 30 ELSE 0 END + CASE WHEN description_hit THEN 20 ELSE 0 END +
                    LEAST((char_length(lower(d.body)) - char_length(replace(lower(d.body), term, ''))) / char_length(term), 10)), 0) AS score,
                COALESCE(min(NULLIF(body_pos, 0)), 0) AS first_hit
         FROM (SELECT term, strpos(lower(d.search_title), term) > 0 AS title_hit,
                      EXISTS (SELECT 1 FROM unnest(d.tags) tag WHERE strpos(lower(tag), term) > 0) AS tag_hit,
-                     strpos(lower(d.body), term) AS body_pos FROM terms) matches
+                     strpos(lower(d.body), term) AS body_pos,
+                     strpos(lower(d.description), term) > 0 AS description_hit FROM terms) matches
     ) m WHERE m.hits > 0
 ),
-tiered AS (
-    SELECT *, bool_or(hits = (SELECT count(*) FROM terms)) OVER (PARTITION BY kind) AS has_full_match
-    FROM scored
-),
 ranked AS MATERIALIZED (
-    SELECT * FROM tiered WHERE NOT has_full_match OR hits = (SELECT count(*) FROM terms)
+    SELECT * FROM scored
 ),
 counts AS (
     SELECT count(*) FILTER (WHERE kind = 'note') AS notes,

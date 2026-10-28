@@ -98,9 +98,9 @@ async fn chinese_paging_counts_excerpts_and_visibility_share_one_policy() {
     let data = &first["data"];
     assert_eq!(
         data["counts"],
-        json!({"note":23,"talk":0,"board":1,"comment":1})
+        json!({"note":24,"talk":0,"board":1,"comment":1})
     );
-    assert_eq!(data["total"], 25);
+    assert_eq!(data["total"], 26);
     assert_eq!(data["hasMore"], true);
     let rows = data["notes"].as_array().unwrap();
     assert_eq!(rows.len(), 5);
@@ -115,13 +115,20 @@ async fn chinese_paging_counts_excerpts_and_visibility_share_one_policy() {
         .iter()
         .all(|row| !rows.iter().any(|old| old["key"] == row["key"])));
     let last = search(&ctx, json!({"keyword":"博客部署","pageSize":5,"page":6})).await;
-    assert_eq!(last["data"]["total"], 25);
+    assert_eq!(last["data"]["total"], 26);
     assert_eq!(last["data"]["hasMore"], false);
     assert_eq!(last["data"]["notes"], json!([]));
+    let all = search(&ctx, json!({"keyword":"博客部署","pageSize":50})).await;
+    let all_notes = all["data"]["notes"].as_array().unwrap();
+    assert_eq!(
+        all_notes.last().unwrap()["key"],
+        24,
+        "partial match stays visible behind complete matches"
+    );
     let board = search(&ctx, json!({"keyword":"博客部署","type":"board"})).await;
     assert_eq!(board["data"]["board"][0]["author"], "河灯署名");
     assert_eq!(board["data"]["board"][0]["title"], "");
-    assert_eq!(board["data"]["total"], 25);
+    assert_eq!(board["data"]["total"], 26);
     let comment = search(&ctx, json!({"keyword":"博客部署","type":"comment"})).await;
     assert_eq!(comment["data"]["comments"].as_array().unwrap().len(), 1);
     assert_eq!(comment["data"]["comments"][0]["key"], 5);
@@ -132,6 +139,17 @@ async fn chinese_paging_counts_excerpts_and_visibility_share_one_policy() {
     let partial = search(&ctx, json!({"keyword":"博客 数据库","pageSize":50})).await;
     assert_eq!(partial["data"]["counts"]["note"], 24);
     assert_eq!(partial["data"]["notes"][0]["key"], 24);
+    sql(db, "INSERT INTO note(id,title,content,description,created_at,updated_at) VALUES (50,'说明目录','没有目标正文','独角兽配置指南',now(),now()),(51,'猫','普通正文',NULL,now(),now())").await;
+    let description = search(&ctx, json!({"keyword":"独角兽"})).await;
+    assert_eq!(description["data"]["counts"]["note"], 1, "{description}");
+    assert_eq!(description["data"]["notes"][0]["key"], 50);
+    assert!(description["data"]["notes"][0]["snippet"]
+        .as_str()
+        .unwrap()
+        .contains("独角兽"));
+    let single = search(&ctx, json!({"keyword":"猫"})).await;
+    assert_eq!(single["data"]["counts"]["note"], 1, "{single}");
+    assert_eq!(single["data"]["notes"][0]["key"], 51);
     let lock = db.begin().await.unwrap();
     lock.execute_unprepared("LOCK TABLE note IN ACCESS EXCLUSIVE MODE")
         .await

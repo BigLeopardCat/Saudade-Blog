@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button, Card, Space } from 'antd';
-import { useLazyAggregateSearchQuery } from '../../apis/SearchMethods';
+import { CloseOutlined } from '@ant-design/icons';
+import { useAggregateSearchQueryState, useLazyAggregateSearchQuery } from '../../apis/SearchMethods';
 import { allHits, hitsOf, TYPE_LABEL, TYPE_ORDER } from '../../frontHome/Head/aggregate';
 import type { AggregateHit, SearchType } from '../../frontHome/Head/aggregate';
 import { highlightParts } from './highlight';
@@ -12,27 +13,31 @@ export default function AggregateSearch({ onOpen }: { onOpen: (hit: AggregateHit
     const [page, setPage] = useState(1);
     const [activeIndex, setActiveIndex] = useState(0);
     const [composing, setComposing] = useState(false);
-    const [trigger, result] = useLazyAggregateSearchQuery();
+    const [trigger] = useLazyAggregateSearchQuery();
+    const lastQuery = useRef('');
     const request = useRef<ReturnType<typeof trigger> | null>(null);
     const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const query = keyword.trim();
     const args = { keyword: query, page, pageSize: 20, ...(type !== 'all' ? { type } : {}) };
-    const current = result.originalArgs?.keyword === query && (result.originalArgs?.page || 1) === page &&
-        (result.originalArgs?.type || 'all') === type;
-    // Input changes hide stale rows synchronously, including the debounce window.
-    const pending = !!query && (!current || result.isFetching || composing);
-    const data = current && !pending && !result.isError ? result.data : undefined;
-    const rows = data ? (type === 'all' ? allHits(data) : hitsOf(data, type)) : [];
+    const selectedState = useAggregateSearchQueryState(args, { skip: !query });
+    const overview = useAggregateSearchQueryState({ keyword: query, page: 1, pageSize: 20 }, { skip: !query });
+    const data = selectedState.currentData;
+    const preview = page === 1 ? overview.currentData : undefined;
+    const info = data || preview;
+    const pending = !!query && (composing || selectedState.isFetching || (!data && !selectedState.isError));
+    const rows = data ? (type === 'all' ? allHits(data) : hitsOf(data, type)) :
+        preview && type !== 'all' ? hitsOf(preview, type) : [];
     const selected = Math.min(activeIndex, rows.length - 1);
-    const marks = data?.terms || query.split(/\s+/);
+    const marks = info?.terms || query.split(/\s+/);
     const highlight = (text: string) => highlightParts(text, marks).map((part, index) => part.match ? <mark key={index}>{part.text}</mark> : part.text);
 
     useEffect(() => {
         if (!query || composing) return;
         timer.current = setTimeout(() => {
             timer.current = null;
-            request.current = trigger({ keyword: query, page, pageSize: 20, ...(type !== 'all' ? { type } : {}) });
-        }, 300);
+            lastQuery.current = query;
+            request.current = trigger({ keyword: query, page, pageSize: 20, ...(type !== 'all' ? { type } : {}) }, true);
+        }, lastQuery.current === query ? 0 : 300);
         return () => {
             if (timer.current !== null) clearTimeout(timer.current);
             timer.current = null;
@@ -47,17 +52,18 @@ export default function AggregateSearch({ onOpen }: { onOpen: (hit: AggregateHit
         if (timer.current !== null) clearTimeout(timer.current);
         timer.current = null;
         request.current?.abort();
-        request.current = trigger(args);
+        lastQuery.current = query;
+        request.current = trigger(args, true);
     };
-    const changeType = (next: SearchType) => {
-        setType(previous => previous === next ? 'all' : next);
+    const changeType = (next: SearchType | 'all') => {
+        setType(next);
         setPage(1); setActiveIndex(0);
     };
-    const error = current && result.isError && !pending ? result.error : undefined;
+    const error = selectedState.isError && !pending ? selectedState.error : undefined;
     const errorMessage = error && 'message' in error ? error.message : '搜索失败，请稍后重试';
     return <section className="aggregateSearch" aria-label="站内聚合搜索">
         <div className="aggregateSearchInput">
-            <input autoFocus type="search" role="combobox" aria-label="搜索站内内容"
+            <input autoFocus type="text" inputMode="search" role="combobox" aria-label="搜索站内内容"
                 aria-autocomplete="list" aria-expanded={rows.length > 0} aria-controls="aggregate-search-results"
                 aria-activedescendant={rows.length ? `aggregate-hit-${selected}` : undefined}
                 className="searchModalInput" placeholder="搜索文章、说说、留言和评论" maxLength={128} value={keyword}
@@ -69,15 +75,17 @@ export default function AggregateSearch({ onOpen }: { onOpen: (hit: AggregateHit
                     if (event.key === 'ArrowUp' && rows.length) { event.preventDefault(); setActiveIndex((selected + rows.length - 1) % rows.length); }
                     if (event.key === 'Enter') { event.preventDefault(); if (rows[selected]) onOpen(rows[selected]); else submit(); }
                 }} />
-            <Button onClick={submit} disabled={!query || composing}>搜索</Button>
+            {keyword && <button type="button" className="searchClear" aria-label="清空搜索"
+                onClick={() => { setKeyword(''); setPage(1); setType('all'); setActiveIndex(0); }}><CloseOutlined /></button>}
         </div>
         {query && <Card variant="borderless" className="aggregateSearchCard" title={<div className="searchTitleRow">
-            <span className="searchTotal">搜索结果{data ? `（${data.total}）` : ''}</span>
-            <span className="searchChips">{TYPE_ORDER.map(kind => <button key={kind} type="button"
+            <span className="searchTotal">搜索结果{info ? `（${info.total}）` : ''}</span>
+            <span className="searchChips"><button type="button" className={`search-chip${type === 'all' ? ' is-active' : ''}`}
+                aria-pressed={type === 'all'} onClick={() => changeType('all')}>全部</button>{TYPE_ORDER.map(kind => <button key={kind} type="button"
                 className={`search-chip${type === kind ? ' is-active' : ''}`} aria-pressed={type === kind}
-                onClick={() => changeType(kind)}>{TYPE_LABEL[kind]}（{data?.counts?.[kind] ?? '…'}）</button>)}</span>
+                onClick={() => changeType(kind)}>{TYPE_LABEL[kind]}（{info?.counts?.[kind] ?? '…'}）</button>)}</span>
         </div>}>
-            {pending && <p role="status" className="searchBusy">搜索中...</p>}
+            <div className="searchStatus">{pending && <p role="status" className="searchBusy">正在读取结果…</p>}</div>
             {error && <div role="alert" className="searchEmpty">{errorMessage}<Button onClick={submit}>重试</Button></div>}
             <div id="aggregate-search-results" role="listbox" aria-label="搜索结果" aria-busy={pending} className="search-results-list">
                 {rows.map((hit, index) => <button key={`${hit.type}-${hit.key}`} type="button" role="option"
