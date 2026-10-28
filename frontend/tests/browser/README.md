@@ -64,3 +64,8 @@ Dashboard/overview CSS to verify that visiting a lazy route cannot restyle the
 public header. It also checks drawer open/close, scroll locking, and cleanup when
 crossing back to the desktop breakpoint. The homepage content placeholder only
 measures header flow; the header and drawer implementations are never copied.
+
+`reading-controls.spec.ts` mounts the real account page and announcement popup. It
+checks tab edge clicks and panel switching, pointer behavior, long-content scroll
+spacing, keyboard scrolling, and the existing acknowledgment exit. All HTTP calls
+use explicit fixtures; no production credentials or backend are required.

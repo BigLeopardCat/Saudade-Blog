@@ -25,31 +25,7 @@ import { ROLE_LABEL, roleLabel, getRoleFromToken, getUidFromToken, canManageCred
 import {useAuthToken, getLiveAuthToken} from "../../../utils/useAuthToken";
 import { RoleBadge } from "../../../components/RoleBadge";
 
-/** 用户管理 = 账号管理（临时访客账号）+ 留言管理（河灯审核）+ 评论管理（文章讨论区审核）
- *  + 额度管理（重置申请裁决）。
- *  20260905 拍板：原 Announcement 内嵌临时用户段迁入「账号管理」；
- *  原独立「留言管理」页并入「评论管理」。设置类（站点信息等）拆独立侧栏入口 UserControl。
- *
- *  ⚠️ **20261002 把那次合并拆回来了**（用户原话：「后台管理的"评论管理"改成'留言管理'，
- *  文章详情页下面才是评论，新建评论管理」）：合并之后那个 Tab 的**标签名与内容对不上**
- *  ——叫「评论管理」、里面挂的一直是 `BoardManage`（管的是河灯留言）。现在：
- *  `留言管理` → `BoardManage`（河灯，行为零改动），`评论管理` → `CommentManage`（文章评论）。
- *
- *  `?tab=` 是**深链**（20260924 起一个、20260929 起两个、20261002 起三个）：后台首页待办卡
- *  上那两行提示（"N 条评论待人工审核" / "N 条额度重置申请待处理"）点过来就该直接看见那几条，
- *  而不是先看见账号列表再自己找 Tab。取值走**白名单** `review | comment | quota`，认不出的
- *  落回账号管理。只在**进页那一下**当初始值——之后切 Tab 不再回写 URL（这一页没有
- *  "当前 Tab 是哪一页"的可分享语义，URL 也不是它的真源）。
- *  ⚠️ 首页待办卡那行数的是**河灯留言**（`profile.rs::board_pending_count`），所以它
- *  20261002 跟着改叫「条留言待人工审核」、**继续指 `?tab=review`**（落点与数值一致）。
- *  **文章评论的待审数不在这条汇总里**：要加就得新开一个 `pendingComments` 字段 + 本页
- *  第三行，并且指向 `?tab=comment`——两个数合成一行的话，点进去只能落在其中一页，
- *  另一个数就成了永远对不上的账（同一段说明也在 `Dashboard/Home/index.tsx` 里）。
- *
- *  账号筛选（20260926）：列表从"只列普通账号"扩到全部已知角色，于是要能按
- *  角色筛、按用户名检索；这一块与评论管理同款——**筛选与检索的头固定，只有
- *  下面的账号列表在窗口内滚**（原来整页滚，翻到后面想换个关键词得先滚回顶上）。
- */
+// The initial tab accepts review/comment/quota deep links; account filters stay above the scroll area.
 
 /** 账号是否已冻结。判据与后端 `crate::authz::is_frozen` **同一条**：
  *  `user.status` 里不是 0 的一律算冻结（未登记的取值也按冻结处理，不默认放行）。
@@ -548,7 +524,7 @@ const Users = () => {
     const items: TabsProps['items'] = [
         {
             key: 'accounts',
-            label: <h3>账号管理</h3>,
+            label: '账号管理',
             children: (
                 <>
                     {/* 三段式（20260926）：上面这一截（新建 + 说明 + 筛选检索）固定，
@@ -1108,14 +1084,14 @@ const Users = () => {
             // 而它从 20260905 起叫「评论管理」——名字与内容对不上。现在评论有自己的
             // 页签（下一个），这一页叫回它本来的名字，**行为零改动**。
             key: 'review',
-            label: <h3>留言管理</h3>,
+            label: '留言管理',
             children: <BoardManage />,
         },
         {
             // 文章评论（20261002）：文章详情页底部讨论区的裁决队列，与留言管理同构。
             // 数据来自 /api/protect/comments（**另一张表**：note_comment，不是 talk）。
             key: 'comment',
-            label: <h3>评论管理</h3>,
+            label: '评论管理',
             children: <CommentManage />,
         },
         {
@@ -1123,7 +1099,7 @@ const Users = () => {
             // 与账号管理行上那枚「重置额度」按钮分工明确——按账号的动作住在行上，
             // 按申请的裁决住在这里（与评论管理只管裁决队列同构）。
             key: 'quota',
-            label: <h3>额度管理</h3>,
+            label: '额度管理',
             children: <QuotaManage />,
         },
     ];
