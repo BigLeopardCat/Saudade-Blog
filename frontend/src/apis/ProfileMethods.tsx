@@ -18,6 +18,7 @@ import type {
     MessageDraft,
     MessageItem,
     MyTalk,
+    NotificationItem,
     NotificationList,
     ProfileInfo,
     QuotaInfo,
@@ -123,6 +124,24 @@ function getNotifications() {
 }
 
 /** 标记已读：传 ids 或 all=true（两者都传时后端按 ids 处理） */
+function getPendingAnnouncement() {
+    return http<Envelope<NotificationItem | null>>({
+        url: "/api/protected/notifications/announcement", method: "GET",
+    });
+}
+
+function deleteNotification(id: number) {
+    return http<Envelope<UnreadSummary>>({
+        url: `/api/protected/notifications/${id}`, method: "DELETE",
+    });
+}
+
+function deleteMessage(id: number, folder: 'inbox' | 'outbox') {
+    return http<Envelope<UnreadSummary>>({
+        url: `/api/protected/messages/${id}`, method: "DELETE", params: { folder },
+    });
+}
+
 function readNotifications(payload: { ids?: number[]; all?: boolean }) {
     return http<Envelope<UnreadSummary>>({
         url: "/api/protected/notifications/read",
@@ -250,6 +269,9 @@ export {
     removeFavorite,
     getUnreadSummary,
     getNotifications,
+    getPendingAnnouncement,
+    deleteNotification,
+    deleteMessage,
     readNotifications,
     getMailbox,
     sendMessage,

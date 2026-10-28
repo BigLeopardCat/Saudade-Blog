@@ -9,6 +9,7 @@ import {
     watchAnnouncements,
     type PendingAnnouncement,
 } from './pending.ts'
+import DeleteInboxItem from '../UserCenter/DeleteInboxItem'
 import './index.sass'
 
 // The API returns an Asia/Shanghai wall-clock value; do not apply another time-zone conversion.
@@ -89,17 +90,17 @@ const AnnouncementModal = () => {
                     lineHeight: 1.5,
                     letterSpacing: 1,
                     textAlign: 'center',
-                    padding: '0 32px',
+                    padding: 0,
                 }}>
                     {pending.title}
                 </div>
             ) : null}
             styles={{
                 header: {
-                    padding: '8px 28px 6px',
+                    padding: '26px 48px 10px',
                     marginBottom: 0,
                 },
-                body: { padding: '12px 28px 22px' },
+                body: { padding: '0 10px 18px' },
             }}
         >
 
@@ -112,22 +113,25 @@ const AnnouncementModal = () => {
                     {fmtCnTime(pending?.time || '')}
                 </div>
 
-                <div style={{ marginTop: 22, textAlign: 'center' }}>
+            </div>
+            <div className="washiActions">
+                {pending?.source === 'server' && <DeleteInboxItem
+                    item={{ kind: 'notification', id: pending.id }}
+                    onRemoved={handleClose} />}
 
-                    <button
-                        type="button"
-                        className="washiOk"
-                        onClick={handleRead}
-                        style={{
-                            minWidth: 148,
-                            height: 40,
-                            padding: '0 26px',
-                            fontSize: 15,
-                        }}
-                    >
-                        我知道了
-                    </button>
-                </div>
+                <button
+                    type="button"
+                    className="washiOk"
+                    onClick={handleRead}
+                    style={{
+                        minWidth: 148,
+                        height: 40,
+                        padding: '0 26px',
+                        fontSize: 15,
+                    }}
+                >
+                    我知道了
+                </button>
             </div>
         </Modal>
     )

@@ -16,12 +16,12 @@ async fn unread_counts(
     uid: i32,
 ) -> Result<UnreadDto, sea_orm::DbErr> {
     let n = user_notification::Entity::find()
-        .filter(user_notification::Column::UserId.eq(uid))
+        .filter(super::visibility::notifications(uid))
         .filter(user_notification::Column::IsRead.eq(false))
         .count(db)
         .await? as i64;
     let m = user_message::Entity::find()
-        .filter(user_message::Column::ToUserId.eq(uid))
+        .filter(super::visibility::inbox(uid))
         .filter(user_message::Column::IsRead.eq(false))
         .count(db)
         .await? as i64;

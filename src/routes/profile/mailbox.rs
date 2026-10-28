@@ -47,7 +47,7 @@ async fn received<C: ConnectionTrait>(
     uid: i32,
     query: &MailboxQuery,
 ) -> Result<(Vec<user_message::Model>, i64, bool), sea_orm::DbErr> {
-    let mut inbox = user_message::Entity::find().filter(user_message::Column::ToUserId.eq(uid));
+    let mut inbox = user_message::Entity::find().filter(super::visibility::inbox(uid));
     if let Some(ids) = query
         .selected_ids()
         .map_err(|e| sea_orm::DbErr::Custom(e.into()))?
@@ -67,7 +67,7 @@ async fn received<C: ConnectionTrait>(
     rows.truncate(100);
     // Count the entire inbox, independently of the visible window or ID selection.
     let unread = user_message::Entity::find()
-        .filter(user_message::Column::ToUserId.eq(uid))
+        .filter(super::visibility::inbox(uid))
         .filter(user_message::Column::IsRead.eq(false))
         .count(db)
         .await? as i64;
@@ -96,7 +96,7 @@ pub async fn list_messages(
         }
     };
     let outbox = match user_message::Entity::find()
-        .filter(user_message::Column::FromUserId.eq(uid))
+        .filter(super::visibility::outbox(uid))
         .order_by_desc(user_message::Column::CreatedAt)
         .order_by_desc(user_message::Column::Id)
         .limit(100)

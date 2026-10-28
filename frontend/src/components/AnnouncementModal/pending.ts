@@ -1,57 +1,12 @@
-/**
- * 「此刻该不该弹公告」的唯一判据 + 已读落在哪里 + 什么时候复查（20260926）。
- *
- * ── 为什么从 localStorage 水位搬到服务端 ──────────────────────────────────
- * 旧实现把"看过哪条公告"记在 `localStorage['announcement_seen_id']`（关窗时写最大 id）。
- * 那是**按浏览器**记的：换一台机器、换个浏览器、清一次缓存，同一批公告又弹一遍；
- * 反过来，用户在个人中心里把公告标成已读，弹窗并不知道，照样在首页弹。同一件事
- * （这条公告这个人看过没有）散成了两份互不通气的账。
- *
- * 现在：**登录用户读服务端的 `user_notification` 行**——公告在发布时按用户逐行展开
- * （src/routes/announcements.rs 的 fan_out），行上有 `type='announcement'`、`isRead`，
- * 个人中心的通知面板读的是同一批行、红点（`notifications/summary`）也是同一批行。
- * 于是"弹过的公告"与"红点里的未读公告"**是同一件事的两种显示**，不会再打架。
- * 点「我知道了」= 把那行标已读（`POST /api/protected/notifications/read`）⇒ 红点当场跟着掉。
- * **从弹窗外关掉（遮罩/Esc/×）不算读过**（20260926 用户拍板）：那只是收起卡片，
- * 那行照旧未读、红点照旧亮、个人中心照旧未读、下次刷新照旧会弹——"读"必须由人
- * 明确说了才算（同"弹窗出现时不标记"的取向：替用户表态是这个族最容易犯的错）。
- *
- * 游客（没有 token）没有账号可挂，只能继续用本机水位 `announcement_seen_id`
- * （键名沿用，老访客的水位照旧生效、不会因为这次改动重弹一遍）。这是**有意保留的
- * 边界**，不是遗漏：游客在服务端根本没有身份。
- *
- * ── 弹哪一条：只弹"最新的那条公告"，且它未被读过 ──────────────────────────
- * 判据是 `type==='announcement'` 的**第一行**（列表按 createdAt desc 给），再看它的
- * `isRead`——不是"找第一条未读的公告"。两者的差别在多条未读时：
- *   · 「第一条未读」会一条接一条地弹（关掉 #5 再弹 #4、#3…），这正是用户受不了的形态；
- *   · 「最新那条未被读过才弹」与旧水位语义完全一致（水位 = 见过的最大 id ⇒ 更旧的
- *     永不弹），而且**不把更旧的标成已读**：它们照旧在个人中心里是未读，红点照旧亮着，
- *     只是不再用弹窗打扰。关窗只标**弹过的那一行**就够了——它一变成已读，"最新那条
- *     未被读过"这个条件对更旧的那些就不再成立。
- * 编辑公告不产生新行（update_announcement 只同步标题正文），所以**改过的公告不会重弹**；
- * 没读过的人看到的仍是改后的正文（同步过）——改前改后都对。
- *
- * ── 什么时候复查（"只有刷新才弹"的那个毛病）────────────────────────────
- * `watchAnnouncements` 把触发源收在一处：挂载即查、标签页切回可见、`agent-turn-done`
- * （看板娘刚可能发过公告／标过已读）、`unread-change`（用户刚在个人中心点了全部已读）、
- * `announcement-published`（后台公告管理页刚发/改/删，见 Dashboard/Announcement）、
- * 以及**可见时每 60 秒一次**（跨浏览器/跨设备唯一能靠的就是这条：本站没有全站推送通道，
- * 60 秒是既有未读轮询的同一档节奏）。代价是每个开着的标签页每分钟一个小 GET，
- * 与 unread.ts 的轮询同量级。
- *
- * ── 读不到 ≠ 没有 ──────────────────────────────────────────────────────
- * 通知接口失败时**不弹**（返回 null）。这与 unread.ts 的"读失败保留上一次读数"不同：
- * 红点那边保的是**已经显示过的读数**，而这里失败时既不知道有没有新公告、也不知道
- * 这个人读过没有——此时弹出来就是把"读不到"演成"你没读过"（旧实现的换浏览器重弹
- * 正是这个后果）。宁可晚一步（下一次复查或切回标签页），也不误弹。
- */
 import getToken from '../../apis/getToken.tsx'
 import { getAnnouncements } from '../../apis/AnnouncementMethods.tsx'
-import { getNotifications, readNotifications, ok } from '../../apis/ProfileMethods.tsx'
+import { getPendingAnnouncement, readNotifications, ok } from '../../apis/ProfileMethods.tsx'
 import { AGENT_TURN_DONE_EVENT } from '../UserCenter/agentTurn.ts'
 import { UNREAD_CHANGED_EVENT, notifyUnreadChanged } from '../UserCenter/unread.ts'
 
-/** 游客的已读水位键（按本机记，只服务没有账号的人；键名沿用 20260925 之前的那个） */
+/** Per-account latest-announcement state; guests use a local seen watermark.
+ * The server retains removed announcements as a barrier against older popups.
+ */
 export const ANNOUNCEMENT_SEEN_KEY = 'announcement_seen_id'
 /** 后台公告管理页发布/编辑/删除成功后派发：同浏览器当场复查，不必等下一拍轮询 */
 export const ANNOUNCEMENT_PUBLISHED_EVENT = 'announcement-published'
@@ -93,10 +48,9 @@ function readSeenId(): number {
 /** 拉一次"此刻该弹的那条公告"；没有 → null（未登录走本机水位，见文件头） */
 export async function fetchPendingAnnouncement(): Promise<PendingAnnouncement | null> {
     if (getToken()) {
-        const res = await getNotifications()
+        const res = await getPendingAnnouncement()
         if (!ok(res)) return null            // 读不到 ≠ 没有（见文件头，不弹）
-        const items = res.data?.data?.items ?? []
-        const newest = items.find((n) => n.type === 'announcement')
+        const newest = res.data.data
         if (!newest || newest.isRead) return null
         return {
             id: newest.id,

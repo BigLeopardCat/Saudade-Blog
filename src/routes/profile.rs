@@ -21,11 +21,15 @@
 
 use axum::{Json, extract::{Query, State}, http::HeaderMap};
 
+mod deletion;
 mod mailbox;
 mod message_reads;
+mod notifications;
 mod unread;
+mod visibility;
+pub use deletion::{delete_message, delete_notification};
+pub use notifications::{list_notifications, pending_announcement, read_notifications};
 pub use unread::notification_summary;
-use unread::unread_response;
 pub use message_reads::{message_detail, recent_messages};
 pub use mailbox::{list_messages, MailboxQuery};
 use sea_orm::{
@@ -39,7 +43,6 @@ use tokio::io::AsyncWriteExt;
 
 use crate::entity::{
     note, note_comment, talk, user, user_favorite, user_message, user_message_draft,
-    user_notification,
 };
 use crate::routes::AppState;
 use crate::utils::{
@@ -636,45 +639,6 @@ async fn comment_pending_count(db: &sea_orm::DatabaseConnection) -> i64 {
         .unwrap_or(0) as i64
 }
 
-/// GET /api/protected/notifications：通知列表（含公告类）。
-pub async fn list_notifications(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-) -> Json<ApiResponse<NotificationListDto>> {
-    let uid = match crate::auth_jwt::auth_uid(&state.db, &headers).await {
-        Ok(uid) => uid,
-        Err(e) => return Json(ApiResponse::error(e.message())),
-    };
-    let rows = match user_notification::Entity::find()
-        .filter(user_notification::Column::UserId.eq(uid))
-        .order_by_desc(user_notification::Column::CreatedAt)
-        .order_by_desc(user_notification::Column::Id)
-        .limit(100)
-        .all(&state.db)
-        .await
-    {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::error!("[profile] 通知列表查询失败 uid={}: {}", uid, e);
-            return Json(ApiResponse::error("查询失败，请稍后再试"));
-        }
-    };
-    let unread = rows.iter().filter(|r| !r.is_read).count() as i64;
-    let items = rows
-        .into_iter()
-        .map(|r| NotificationDto {
-            id: r.id,
-            kind: r.kind,
-            title: r.title,
-            content: r.content.unwrap_or_default(),
-            link: r.link,
-            is_read: r.is_read,
-            created_at: r.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
-        })
-        .collect();
-    Json(ApiResponse::success(NotificationListDto { unread, items }))
-}
-
 #[derive(Deserialize)]
 pub struct ReadRequest {
     #[serde(default)]
@@ -684,41 +648,6 @@ pub struct ReadRequest {
     pub all: bool,
 }
 
-/// POST /api/protected/notifications/read：标记已读（按 id 或全部）。
-/// 返回标记后的未读汇总，前端拿它直接刷新红点，省一次往返。
-pub async fn read_notifications(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Json(payload): Json<ReadRequest>,
-) -> Json<ApiResponse<UnreadDto>> {
-    let uid = match crate::auth_jwt::auth_uid(&state.db, &headers).await {
-        Ok(uid) => uid,
-        Err(e) => return Json(ApiResponse::error(e.message())),
-    };
-    let now = chrono::Local::now().naive_local();
-    let mut q = user_notification::Entity::update_many()
-        .col_expr(
-            user_notification::Column::IsRead,
-            sea_orm::sea_query::Expr::value(true),
-        )
-        .col_expr(
-            user_notification::Column::ReadAt,
-            sea_orm::sea_query::Expr::value(Some(now)),
-        )
-        .filter(user_notification::Column::UserId.eq(uid))
-        .filter(user_notification::Column::IsRead.eq(false));
-    if !payload.all {
-        if payload.ids.is_empty() {
-            return unread_response(&state.db, uid).await;
-        }
-        q = q.filter(user_notification::Column::Id.is_in(payload.ids.clone()));
-    }
-    if let Err(e) = q.exec(&state.db).await {
-        tracing::error!("[profile] 标记已读失败 uid={}: {}", uid, e);
-        return Json(ApiResponse::error("操作失败，请稍后再试"));
-    }
-    unread_response(&state.db, uid).await
-}
 
 // ── 站内信箱 ────────────────────────────────────────────────────────────────
 
@@ -946,7 +875,7 @@ pub async fn read_messages(
             user_message::Column::ReadAt,
             sea_orm::sea_query::Expr::value(Some(now)),
         )
-        .filter(user_message::Column::ToUserId.eq(uid))
+        .filter(visibility::inbox(uid))
         .filter(user_message::Column::IsRead.eq(false));
     if !payload.all {
         if payload.ids.is_empty() {

@@ -72,7 +72,7 @@ const ctl = { calls: [], responder: null };
 globalThis.__apCtl = ctl;
 
 const summary = { notifications: 0, messages: 0, total: 0, pendingReview: 0 };
-const notifRes = (items) => ({ status: 200, data: { code: 200, data: { unread: items.filter((i) => !i.isRead).length, items } } });
+const notifRes = (items) => ({ status: 200, data: { code: 200, data: items.find(item => item.type === 'announcement') ?? null } });
 const annRes = (list) => ({ status: 200, data: { code: 200, data: list } });
 const failRes = { status: 200, data: { code: 500, message: '未登录' } };
 /**
@@ -99,7 +99,7 @@ function reset({ token = null, responder = null } = {}) {
     intervals.length = 0;
     ctl.responder = responder || ((cfg) => {
         if (cfg.url === '/api/public/announcements') return annRes([]);
-        if (cfg.url === '/api/protected/notifications') return notifRes([]);
+        if (cfg.url === '/api/protected/notifications/announcement') return notifRes([]);
         if (cfg.url === '/api/protected/notifications/read') return { status: 200, data: { code: 200, data: summary } };
         return { status: 404, data: { code: 404, message: '没有这个接口' } };
     });
@@ -149,20 +149,20 @@ console.log('\n── 游客（无 token）──');
 console.log('\n── 登录用户（有 token）──');
 {
     const items = [noticeRow(20), annRow(9, { title: 'T9', content: 'C9' }), annRow(4)];
-    reset({ token: 'x.y.z', responder: (c) => (c.url === '/api/protected/notifications' ? notifRes(items) : failRes) });
+    reset({ token: 'x.y.z', responder: (c) => (c.url === '/api/protected/notifications/announcement' ? notifRes(items) : failRes) });
     const p = await fetchPendingAnnouncement();
     eq(p && { id: p.id, source: p.source, title: p.title, content: p.content, time: p.time },
         { id: 9, source: 'server', title: 'T9', content: 'C9', time: '2026-09-26 10:00:00' },
         '登录：取最新那条公告行，id 是**通知行 id**（已读要 POST 的就是它）');
-    eq(urls(), ['GET /api/protected/notifications'], '登录用户走通知接口，不打公开公告接口');
+    eq(urls(), ['GET /api/protected/notifications/announcement'], '登录用户只读取单条最新公告，不拉完整通知列表');
 
     // 多条未读：只弹最新的那条，且**不把更旧的标成已读**——它们照旧在个人中心里未读
     eq(ctl.calls[0].data, undefined, '登录：列表是 GET，没有请求体');
 
-    reset({ token: 'x.y.z', responder: (c) => (c.url === '/api/protected/notifications' ? notifRes([annRow(9, { isRead: true }), annRow(4)]) : failRes) });
+    reset({ token: 'x.y.z', responder: (c) => (c.url === '/api/protected/notifications/announcement' ? notifRes([annRow(9, { isRead: true }), annRow(4)]) : failRes) });
     eq(await fetchPendingAnnouncement(), null, '最新那条已读 ⇒ 不弹（更旧的未读也不连环弹——这就是"关掉 #5 不再弹 #4"）');
 
-    reset({ token: 'x.y.z', responder: (c) => (c.url === '/api/protected/notifications' ? notifRes([noticeRow(20)]) : failRes) });
+    reset({ token: 'x.y.z', responder: (c) => (c.url === '/api/protected/notifications/announcement' ? notifRes([noticeRow(20)]) : failRes) });
     eq(await fetchPendingAnnouncement(), null, '通知里没有公告行（只有站内通知）⇒ 不弹');
 
     reset({ token: 'x.y.z', responder: () => failRes });
@@ -172,7 +172,7 @@ console.log('\n── 登录用户（有 token）──');
         '登录：失败信封里带着未读公告行也不弹（token 过期时就长这样——照弹等于把"读不到"演成"你没读过"）');
 
     // 本机水位对登录用户不再作数：判据在服务端按账号
-    reset({ token: 'x.y.z', responder: (c) => (c.url === '/api/protected/notifications' ? notifRes([annRow(9)]) : failRes) });
+    reset({ token: 'x.y.z', responder: (c) => (c.url === '/api/protected/notifications/announcement' ? notifRes([annRow(9)]) : failRes) });
     store[ANNOUNCEMENT_SEEN_KEY] = '99999';
     ok((await fetchPendingAnnouncement()) !== null, '登录：本机水位再高也不影响（换浏览器不再重弹、本机标过也不冒充已读）');
 }

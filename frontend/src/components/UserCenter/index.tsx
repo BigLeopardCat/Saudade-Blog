@@ -65,6 +65,7 @@ import { DEFAULT_AVATAR_URL } from './identity'
 import { notifyUnreadChanged, useUnread } from './unread'
 import { applyLocalFavorite, useFavorites } from './favorites'
 import { AGENT_TURN_DONE_EVENT } from './agentTurn'
+import DeleteInboxItem from './DeleteInboxItem'
 import './index.sass'
 
 /** 后端时间是 "YYYY-MM-DD HH:MM:SS"（已是 +08:00 钟面）——截到分钟，不做任何换算 */
@@ -441,6 +442,23 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
     }
 
     // ── 通知 ────────────────────────────────────────────────────────────────
+
+    const removeNoticeButton = (id: number) => <DeleteInboxItem item={{ kind: 'notification', id }}
+        onRemoved={counts => {
+            setNotices(list => (list || []).filter(item => item.id !== id))
+            setNoticeUnread(counts.notifications)
+            setNoticeOpenId(current => current === id ? null : current)
+        }} />
+
+    const removeMailButton = (id: number, outgoing: boolean) => <DeleteInboxItem
+        item={{ kind: 'message', id, folder: outgoing ? 'outbox' : 'inbox' }}
+        onRemoved={counts => {
+            setMailbox(current => current ? { ...current, unread: counts.messages,
+                [outgoing ? 'outbox' : 'inbox']: current[outgoing ? 'outbox' : 'inbox']
+                    .filter(item => item.id !== id) } : current)
+            setOpened(current => current?.msg.id === id && current.outgoing === outgoing
+                ? null : current)
+        }} />
 
     const markNoticesRead = async (ids?: number[]) => {
         try {
@@ -904,6 +922,7 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                 <Button size="small" onClick={() => setNoticeOpenId(null)}>
                     返回公告和通知
                 </Button>
+                {removeNoticeButton(n.id)}
             </div>
             <div className="ucNoticeDetailHead">
                 <Tag color={n.type === 'announcement' ? 'geekblue' : 'cyan'}>
@@ -959,6 +978,7 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                         className="ucNoticeRow"
                         onClick={() => setNoticeOpenId(n.id)}
                         actions={[
+                            <span key="delete">{removeNoticeButton(n.id)}</span>,
                             // 有 link 的通知给一颗直达按钮（20260923 起：留言审核结果通知）
                             ...(n.link
                                 ? [
@@ -1133,7 +1153,8 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
      *  ② 标题；③ 一行正文（以「…」结尾）。整行可点 → 打开占满窗口的详情。
      *  20260927 起行首补对方头像（发件箱是收件人的头像）——一列信扫下来先认脸。 */
     const mailRow = (m: MessageItem, outgoing: boolean) => (
-        <List.Item className="ucMailRow" onClick={() => openMail(m, outgoing)}>
+        <List.Item className="ucMailRow" onClick={() => openMail(m, outgoing)}
+            actions={[<span key="delete">{removeMailButton(m.id, outgoing)}</span>]}>
             {peerAvatar(m)}
             <div className="ucMailRowBox">
                 <div className="ucMailHead">
@@ -1160,6 +1181,7 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                 <Button size="small" onClick={() => setOpened(null)}>
                     返回{outgoing ? '发件箱' : '收件箱'}
                 </Button>
+                {removeMailButton(m.id, outgoing)}
             </div>
             <div className="ucMailDetailHead">
                 {peerAvatar(m)}
