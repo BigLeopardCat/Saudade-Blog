@@ -10,7 +10,7 @@ import { build } from 'esbuild'
 import { compile } from 'sass'
 import { test as base, expect } from '@playwright/test'
 
-type Entry = 'axios' | 'announcement' | 'tags' | 'categories' | 'public-header' | 'users' | 'announcement-popup'
+type Entry = 'axios' | 'announcement' | 'tags' | 'categories' | 'public-header' | 'users' | 'announcement-popup' | 'dashboard-users'
 const frontend = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const bundles = new Map<Entry, Promise<{ script: string; css: string }>>()
 
@@ -22,7 +22,7 @@ function bundle(entry: Entry): Promise<{ script: string; css: string }> {
     entryPoints: [`tests/browser/entries/${entry}.tsx`],
     bundle: true,
     format: 'iife',
-    loader: { '.gif': 'dataurl', '.png': 'dataurl', '.jpg': 'dataurl', '.jpeg': 'dataurl', '.webp': 'dataurl', '.svg': 'dataurl' },
+    loader: { '.woff': 'dataurl', '.woff2': 'dataurl', '.gif': 'dataurl', '.png': 'dataurl', '.jpg': 'dataurl', '.jpeg': 'dataurl', '.webp': 'dataurl', '.svg': 'dataurl' },
     jsx: 'automatic',
     write: false,
     outfile: 'browser-bundle.js',

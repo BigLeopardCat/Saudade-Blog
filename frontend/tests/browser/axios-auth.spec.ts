@@ -51,3 +51,27 @@ test('403 rejects without logging out a valid lower-privilege account', async ({
   expect(page.url()).toBe(sandboxURL)
   await expect(page.locator('.ant-message-notice-content')).toHaveCount(0)
 })
+
+
+test('a late 401 from the previous session preserves a new login', async ({ page, sandboxURL }) => {
+  await page.addInitScript(() => localStorage.setItem('tokenKey', 'old-session'))
+  let release!: () => void
+  const pending = new Promise<void>(resolve => { release = resolve })
+  await page.route('**/api/check', async route => {
+    await pending
+    await route.fulfill({ status: 401, json: { code: 401 } })
+  })
+  await page.goto(sandboxURL)
+  const request = page.waitForRequest('**/api/check')
+  await page.getByRole('button', { name: '请求', exact: true }).click()
+  await request
+  await page.evaluate(() => {
+    localStorage.setItem('tokenKey', 'new-session')
+    window.dispatchEvent(new Event('auth-change'))
+  })
+  release()
+  await expect(page.getByLabel('请求结果')).toHaveText('failure:401')
+  expect(await page.evaluate(() => localStorage.getItem('tokenKey'))).toBe('new-session')
+  await expect(page.locator('.ant-message-notice-content')).toHaveCount(0)
+  expect(page.url()).toBe(sandboxURL)
+})

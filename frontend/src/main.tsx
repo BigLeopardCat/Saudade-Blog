@@ -1,3 +1,4 @@
+import {startAuthExpiry} from './utils/authSession';
 import ReactDOM from 'react-dom/client'
 import './index.css'
 // 副作用：注册 SPA 侧的错误上报（资源加载失败的捕获监听 + `reportError`）。
@@ -22,6 +23,9 @@ import { recoverFromStaleChunk } from "./utils/staleChunk";
 window.addEventListener('vite:preloadError', (e) => {
     if (recoverFromStaleChunk()) e.preventDefault()
 })
+
+const stopAuthExpiry = startAuthExpiry();
+if (import.meta.hot) import.meta.hot.dispose(stopAuthExpiry);
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
         // 最外层兜底（20261004）：App.tsx 那层只包内容区，而**后台是另一颗壳**

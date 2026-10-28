@@ -38,7 +38,7 @@ for (const width of [375, 390, 1440]) {
     await page.getByRole('button', { name: '说说（1）' }).click()
     await expect(page.getByRole('option')).toHaveCount(1)
     expect(queries[queries.length - 1]).toEqual({ keyword: '河灯部署', page: 1, pageSize: 20, type: 'talk' })
-    await page.getByRole('button', { name: '说说（1）' }).click()
+    await page.getByRole('button', { name: '全部', exact: true }).click()
     await expect(page.getByRole('option')).toHaveCount(4)
     await expect(page.locator('.aggregateSearchCard')).toHaveCSS('background-color', 'rgb(255, 253, 250)')
     const targets = ['/article/5', '/talk?tk=9', '/guestbook?lid=8', '/article/5?cid=41']
@@ -52,7 +52,7 @@ for (const width of [375, 390, 1440]) {
       await page.locator('.homeSwitch .theme-switch').click()
       await open()
       await expect(page.locator('.washiDark .search-item').first()).toHaveCSS('color', 'rgb(243, 232, 246)')
-      await expect(page.getByRole('button', { name: /搜\s*索/, exact: true })).toHaveCSS('color', 'rgba(255, 255, 255, 0.85)')
+      await expect(page.getByRole('button', { name: '清空搜索', exact: true })).toHaveCSS('color', 'rgb(201, 184, 211)')
       await page.screenshot({ path: test.info().outputPath('aggregate-search-dark.png') })
     }
   })

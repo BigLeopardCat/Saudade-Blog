@@ -93,3 +93,72 @@ async fn postgres_changes_are_guarded_and_never_edit_content_or_author() {
     assert!(apply(&txn, id, &stale).await.is_err());
     txn.rollback().await.unwrap();
 }
+
+#[tokio::test]
+async fn postgres_batch_freezes_all_versions_before_the_first_write() {
+    let Ok(url) = std::env::var("TEST_PG_URL") else {
+        return;
+    };
+    let db = Database::connect(url).await.unwrap();
+    let tx = db.begin().await.unwrap();
+    let mut ids = Vec::new();
+    for _ in 0..2 {
+        let row=tx.query_one(Statement::from_string(DatabaseBackend::Postgres,
+            "INSERT INTO note(title,content,status,is_public,created_at,updated_at) VALUES('batch fixture','must survive','public',true,localtimestamp,localtimestamp) RETURNING id".to_string())).await.unwrap().unwrap();
+        ids.push(row.try_get::<i32>("", "id").unwrap());
+    }
+    let rows = batch::select(
+        &tx,
+        &batch::Selection {
+            article_ids: Some(ids.clone()),
+            category: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 2);
+    let request = |stale: bool| batch::BatchChange {
+        items: rows
+            .iter()
+            .enumerate()
+            .map(|(index, row)| batch::Item {
+                id: row.id,
+                version: if stale && index == 1 {
+                    "a".repeat(64)
+                } else {
+                    row.version.clone()
+                },
+            })
+            .collect(),
+        status: Some(Status::Private),
+        is_top: None,
+    };
+    assert!(batch::apply(&tx, &request(true)).await.is_err());
+    for id in &ids {
+        assert!(read(&tx, *id, false).await.unwrap().is_public);
+    }
+    let applied = batch::apply(&tx, &request(false)).await.unwrap();
+    assert_eq!(applied.len(), 2);
+    assert!(applied
+        .iter()
+        .all(|row| row.changed && !row.state.is_public));
+    for id in &ids {
+        let row = note::Entity::find_by_id(*id)
+            .one(&tx)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.content, "must survive");
+    }
+    assert!(batch::apply(&tx, &request(false)).await.is_err());
+    assert!(batch::select(
+        &tx,
+        &batch::Selection {
+            article_ids: Some(vec![ids[0], i32::MAX]),
+            category: None
+        }
+    )
+    .await
+    .is_err());
+    tx.rollback().await.unwrap();
+}

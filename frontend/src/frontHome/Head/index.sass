@@ -126,21 +126,7 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
   font-size: 18px
   font-weight: 600
   transition: 0.6s
-  // ★ 回到原来的显示逻辑（20261001 六轮，用户第 6 条）
-  //
-  // 20260930 五轮曾把这里改成"常驻手账纸底"，用来盖住"首屏未滚动时白字压淡彩纸"
-  // 的问题。主人这次要的是**恢复原来的显示逻辑**：默认完全透明，只有"悬停"与
-  // "页面已滚动"（`.is-stuck`，由 TSX 按 scrollHeight 挂）两态才落深底
-  // `rgba(0,0,0,0.66)`。字读不出来的问题**改从字色解决**，不再靠常驻底色遮。
-  //
-  // 字色分两档（见下面 `.webTitle` / `.headBar li` 与深底那组覆盖）：
-  //   · 透明态 · 白天 = `--washi-ink`（深墨紫，压淡彩首屏 7:1 上下）
-  //   · 透明态 · 夜间 = `--washi-ink` 自动切浅色（深色档令牌），压深色页底同样够
-  //   · 深底态（悬停/已滚动，两档主题共用一层黑）= 字面量浅色，不吃令牌
-  //
-  // `backdrop-filter: blur(10px)` 不恢复（原内联有）：全站禁令——大面积模糊是
-  // GPU 成本，而首屏正是看板娘所在的那一屏（见 memory「后台 GPU 高于首页」）。
-  // 深底用 0.66 的实色，观感等价、代价为零。
+  // Transparent until hovered or scrolled; text colors follow the theme.
   background: transparent
   // 「文章详情页的顶部栏」那一面深色横幅（20261001，用户第 3 条，详见下方字色那一段）。
   // ⚠️ 这条**必须写在 `:hover` 之前**：两者同特异性（0,2,0），写在后面的话
@@ -431,7 +417,6 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
     .ant-card-head
       text-align: center
     .ant-card-body
-      height: 90%
       padding-top: 12px
   .search-results-list
     text-align: left
@@ -693,3 +678,13 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
 
 // 20260923：管理员的「后台」直达钮（`.theme-btn.admin-btn` + `.homeRight .homeAdminBtn`）
 // 已随"改成双击头像"一并删除——两枚按钮都没了，这两条选择器不会再命中任何元素。
+
+.aggregateSearchModal .ant-modal-close
+  width: 32px
+  height: 32px
+  border-radius: 50%
+  background: var(--washi-paper-2, #fff6fa)
+  color: var(--washi-ink-2, #7c6584)
+  &:hover
+    background: var(--washi-tape, #ffdeee)
+    color: var(--washi-pink-deep, #d94f9a)

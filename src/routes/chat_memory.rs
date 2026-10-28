@@ -11,8 +11,6 @@ use crate::entity::{chat_history, chat_summary};
 const HISTORY_MESSAGES: u64 = 20;
 const SUMMARY_MESSAGES: u64 = 60;
 const SUMMARY_BATCH_CHARS: usize = 12_000;
-const SUMMARY_TRIGGER_MESSAGES: usize = HISTORY_MESSAGES as usize;
-const SUMMARY_TRIGGER_CHARS: usize = 6_000;
 const MAX_SUMMARY_CHARS: usize = 8_000;
 
 #[derive(Clone, Debug, Serialize)]
@@ -76,7 +74,6 @@ pub(super) struct MemoryContext {
     pub history_scope: Option<MemoryScope>,
     pub summary_scope: Option<MemoryScope>,
     pub summary_batch: Option<SummaryBatch>,
-    pub needs_summary: bool,
     #[serde(skip)]
     pub revision: Option<Revision>,
 }
@@ -140,18 +137,8 @@ pub(super) async fn load<C: ConnectionTrait>(
         .limit(SUMMARY_MESSAGES)
         .all(db)
         .await?;
-    // Compact by volume, with a message ceiling aligned to the recovery window.
-    // Advancing the saved boundary resets both counters, so brief exchanges do
-    // not rewrite the summary every few turns. Interrupted messages still count.
-    let pending_chars = prefix
-        .iter()
-        .map(|row| row.content.chars().count())
-        .sum::<usize>();
-    if prefix.is_empty()
-        || (prefix.len() < SUMMARY_TRIGGER_MESSAGES && pending_chars < SUMMARY_TRIGGER_CHARS)
-    {
-        return Ok(context);
-    }
+    // Offer the next complete prefix; the Agent owns summarization frequency.
+    if prefix.is_empty() { return Ok(context); }
     // Bound host batch size without estimating tokens or clipping a message.
     // The first oversized record is still offered whole to the Agent budget.
     let mut chars = 0usize;
@@ -193,15 +180,6 @@ pub(super) async fn load<C: ConnectionTrait>(
             })
             .collect(),
     });
-    tracing::debug!(
-        conversation_id,
-        base_id,
-        through_id,
-        messages = count,
-        pending_chars,
-        "conversation summary scheduled"
-    );
-    context.needs_summary = true;
     Ok(context)
 }
 

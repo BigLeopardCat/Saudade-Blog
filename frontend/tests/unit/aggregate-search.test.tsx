@@ -54,7 +54,7 @@ describe('real React and RTK Query search', () => {
     });
     it('supports keyboard selection, safe markup and synchronous invalidation', async () => {
         api.mockResolvedValue(response([hit(1, '部署一'), hit(2, '部署二')]));
-        const { onOpen } = mount(); input('部署'); fireEvent.click(screen.getByRole('button', { name: /搜\s*索/ }));
+        const { onOpen } = mount(); input('部署'); fireEvent.keyDown(screen.getByRole('combobox'), { key: 'Enter' });
         await screen.findByRole('option', { name: /部署\s*一/ }); expect(document.querySelector('.search-item img')).toBeNull();
         expect(document.querySelectorAll('.search-item mark').length).toBeGreaterThan(0);
         fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' }); fireEvent.keyDown(screen.getByRole('combobox'), { key: 'Enter' });
@@ -67,7 +67,7 @@ describe('real React and RTK Query search', () => {
     });
     it('paginates on server and resets page for type filters', async () => {
         api.mockResolvedValue(response([hit(1, '部署')], { total: 42, counts: { note: 42, talk: 0, board: 0, comment: 0 }, hasMore: true }));
-        mount(); input('博客'); fireEvent.click(screen.getByRole('button', { name: /搜\s*索/ }));
+        mount(); input('博客'); fireEvent.keyDown(screen.getByRole('combobox'), { key: 'Enter' });
         await screen.findByText('第 1 页，本页 1 条，共 42 条'); fireEvent.click(screen.getByRole('button', { name: '下一页' }));
         await waitFor(() => expect(api.mock.calls[api.mock.calls.length - 1]?.[0].data.page).toBe(2)); await screen.findByText('第 2 页，本页 1 条，共 42 条');
         fireEvent.click(screen.getByRole('button', { name: /评论（/ }));
@@ -75,8 +75,27 @@ describe('real React and RTK Query search', () => {
     });
     it('distinguishes business failure from no matches and retries', async () => {
         api.mockResolvedValueOnce({ status: 200, data: { code: 500, message: '搜索暂时不可用' } }).mockResolvedValue(response());
-        mount(); input('博客'); fireEvent.click(screen.getByRole('button', { name: /搜\s*索/ }));
+        mount(); input('博客'); fireEvent.keyDown(screen.getByRole('combobox'), { key: 'Enter' });
         expect((await screen.findByRole('alert')).textContent).toMatch(/搜索暂时不可用重\s*试/); expect(screen.queryByText('未找到相关内容')).toBeNull();
         fireEvent.click(screen.getByRole('button', { name: /重\s*试/ })); await screen.findByText('未找到相关内容');
     });
+});
+
+
+it('reuses visited type pages without clearing the overview or searching again', async () => {
+    api.mockResolvedValue(response([hit(1, '部署文章')], {talks: [hit(2, '部署说说', 'talk')], counts:{note:1,talk:1,board:0,comment:0},total:2}));
+    mount(); input('部署'); fireEvent.keyDown(screen.getByRole('combobox'), {key:'Enter'});
+    await screen.findByRole('option', {name:/部署\s*说说/});
+    fireEvent.click(screen.getByRole('button', {name:/说说（/}));
+    await waitFor(() => expect(api).toHaveBeenCalledTimes(2));
+    await screen.findByRole('option', {name:/部署\s*说说/});
+    fireEvent.click(screen.getByRole('button', {name:'全部'}));
+    await screen.findByRole('option', {name:/部署\s*文章/});
+    expect(api).toHaveBeenCalledTimes(2);
+    fireEvent.click(screen.getByRole('button', {name:/说说（/}));
+    await screen.findByRole('option', {name:/部署\s*说说/});
+    expect(api).toHaveBeenCalledTimes(2);
+    fireEvent.click(screen.getByRole('button', {name:'清空搜索'}));
+    expect((screen.getByRole('combobox') as HTMLInputElement).value).toBe('');
+    expect(screen.queryByRole('option')).toBeNull();
 });

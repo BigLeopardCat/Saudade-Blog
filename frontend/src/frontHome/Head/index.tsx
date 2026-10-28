@@ -403,7 +403,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                     它的必要性和「模糊图」那件事见 sass 里那段注释：这一段内容**没有自己的底**，
                     遮罩就是它的全部背景。 */}
                 <Modal open={isModalOpen} onCancel={handleCancel} footer={null} width={'100vh'}
-                       rootClassName={isDark ? 'washiDark' : undefined}
+                       rootClassName={isDark ? 'aggregateSearchModal washiDark' : 'aggregateSearchModal'}
                        classNames={{ mask: 'search-mask' }} >
                     <div style={{height:'80vh'}} className='searchModal'>
                         {isModalOpen && <AggregateSearch onOpen={openHit} />}

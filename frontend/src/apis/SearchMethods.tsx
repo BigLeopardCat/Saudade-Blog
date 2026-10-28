@@ -26,10 +26,12 @@ const searchApi = catalogApi.injectEndpoints({
                     return { error: { message: message || '搜索失败，请稍后重试' } };
                 }
             },
-            keepUnusedDataFor: 0,
+            providesTags: ['Search'],
+            keepUnusedDataFor: 60,
         }),
     }),
 });
 export const { useLazyAggregateSearchQuery } = searchApi;
+export const useAggregateSearchQueryState = searchApi.endpoints.aggregateSearch.useQueryState;
 export { searchAll };
 export type { AggregateResult };

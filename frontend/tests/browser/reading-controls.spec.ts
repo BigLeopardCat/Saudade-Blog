@@ -39,7 +39,7 @@ test.describe('announcement reading', () => {
       gap: parseFloat(getComputedStyle(el).paddingInlineEnd), gutter: getComputedStyle(el).scrollbarGutter}))
     expect(geometry.overflow).toBe(true)
     expect(geometry.gap).toBeGreaterThanOrEqual(12)
-    expect(geometry.gutter).toBe('stable')
+    expect(geometry.gutter).toBe('stable both-edges')
     await region.focus()
     await page.keyboard.press('End')
     await expect.poll(() => region.evaluate(el => el.scrollTop)).toBeGreaterThan(0)

@@ -115,7 +115,7 @@ pub async fn search_all(
     if keyword.chars().count() > 128 || keyword.len() > 512 {
         return failure(StatusCode::BAD_REQUEST, "搜索词最多 128 个字符");
     }
-    if crate::search_core::split_terms(keyword).is_empty() {
+    if keyword.is_empty() {
         return Json(ApiResponse::success(SearchAllData {
             page,
             page_size: size,
