@@ -463,7 +463,7 @@ async fn postgres_scope_and_cas_survive_retention_without_deleting_uncovered_sou
     assert!(!save(&txn, uid, cid, &admin_update, &latest_revision)
         .await
         .unwrap());
-    assert_eq!(prune(&txn, uid, cid, 1).await.unwrap(), 10);
+    assert_eq!(prune(&txn, uid, cid, 1).await.unwrap(), 20);
     let remaining = chat_history::Entity::find()
         .filter(chat_history::Column::ConversationId.eq(cid))
         .all(&txn)
@@ -600,7 +600,7 @@ async fn postgres_discard_fences_first_and_existing_summaries_and_invalidates_de
 
     // Deleting an uncovered current turn preserves old text but still rejects
     // every revision read before the deletion, even if role/text/watermark match.
-    discard(&txn, uid, cid, appended[10]).await.unwrap();
+    discard(&txn, uid, cid, appended[20]).await.unwrap();
     let preserved = stored_probe(&txn, cid).await;
     assert_eq!(preserved.summary, before.summary);
     assert_eq!(preserved.source_role, before.source_role);
@@ -652,7 +652,8 @@ async fn postgres_discard_fences_first_and_existing_summaries_and_invalidates_de
         .unwrap();
     assert_eq!(remaining.len(), 19);
     assert!(remaining.iter().all(|row| row.id < ids[19]));
-    let current = insert_probe_messages(&txn, uid, cid, 1).await;
+    // Keep the surviving nineteen messages plus one newly completed message.
+    let current = insert_probe_messages(&txn, uid, cid, 2).await;
     let rebuilt = load(&txn, uid, cid, Some("user"), current.last().copied())
         .await
         .unwrap();
@@ -660,7 +661,7 @@ async fn postgres_discard_fences_first_and_existing_summaries_and_invalidates_de
         &txn,
         uid,
         cid,
-        &update(0, ids[18]),
+        &update(0, current[0]),
         &rebuilt.revision.unwrap()
     )
     .await
