@@ -135,7 +135,7 @@ from playwright.sync_api import sync_playwright  # noqa: E402
 
 URL = f"http://127.0.0.1:{_server.server_address[1]}/index.html"
 
-NOTIF = "/api/protected/notifications"
+NOTIF = "/api/protected/notifications/announcement"
 READ = "/api/protected/notifications/read"
 PUBLIC = "/api/public/announcements"
 
@@ -149,9 +149,8 @@ def ann_row(rid, title, content, is_read=False, created="2026-09-26 10:00:00"):
 
 
 def notif_body(items):
-    return {"status": 200, "data": {"code": 200,
-                                    "data": {"unread": len([i for i in items if not i["isRead"]]),
-                                             "items": items}}}
+    latest = next((item for item in items if item['type'] == 'announcement'), None)
+    return {"status": 200, "data": {"code": 200, "data": latest}}
 
 
 def ann_body(rows):

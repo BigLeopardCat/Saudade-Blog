@@ -39,11 +39,43 @@ test.describe('announcement reading', () => {
       gap: parseFloat(getComputedStyle(el).paddingInlineEnd), gutter: getComputedStyle(el).scrollbarGutter}))
     expect(geometry.overflow).toBe(true)
     expect(geometry.gap).toBeGreaterThanOrEqual(12)
-    expect(geometry.gutter).toBe('stable both-edges')
+    expect(geometry.gutter).toBe('stable')
+    const edgeGap = await region.evaluate(el =>
+      el.closest('.ant-modal-content')!.getBoundingClientRect().right - el.getBoundingClientRect().right)
+    expect(edgeGap).toBeLessThanOrEqual(16)
+    await expect(page.getByRole('button', { name: '我知道了', exact: true })).toBeVisible()
     await region.focus()
     await page.keyboard.press('End')
     await expect.poll(() => region.evaluate(el => el.scrollTop)).toBeGreaterThan(0)
     await page.getByRole('button', { name: '我知道了', exact: true }).click()
     await expect(page.getByRole('dialog')).toBeHidden()
+  })
+
+  test('removing an announcement updates only its personal record and survives refresh', async ({ page, sandboxURL }) => {
+    let removed = false
+    let deletes = 0
+    await page.addInitScript(() => localStorage.setItem('tokenKey', 'fixture-token'))
+    await page.route('**/api/protected/notifications/announcement', route => route.fulfill({ json: {
+      code: 200, data: removed ? null : { id: 42, type: 'announcement', title: '可移除的公告',
+        content: '正文内容', isRead: false, createdAt: '2026-10-29 01:00:00' },
+    } }))
+    await page.route('**/api/protected/notifications/42', route => {
+      expect(route.request().method()).toBe('DELETE')
+      removed = true
+      deletes += 1
+      return route.fulfill({ json: { code: 200, data: { notifications: 0, messages: 0, total: 0 } } })
+    })
+    await page.goto(sandboxURL)
+    await expect(page.getByRole('dialog')).toBeVisible()
+    await page.getByRole('button', { name: /删\s*除/ }).click()
+    expect(deletes).toBe(0)
+    const confirm = page.locator('.ant-popconfirm')
+    await expect(confirm).toContainText('只移除本人的记录')
+    await confirm.getByRole('button', { name: /删\s*除/ }).click()
+    await expect(page.getByRole('dialog')).toBeHidden()
+    expect(deletes).toBe(1)
+    await page.reload()
+    await expect(page.getByRole('dialog')).toBeHidden()
+    expect(deletes).toBe(1)
   })
 })

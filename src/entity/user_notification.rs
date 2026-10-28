@@ -18,6 +18,7 @@ pub struct Model {
     pub link: Option<String>,
     pub is_read: bool,
     pub read_at: Option<DateTime>,
+    pub deleted_at: Option<DateTime>,
     pub created_at: DateTime,
 }
 

@@ -6,7 +6,7 @@ use axum::{
     Json,
 };
 use sea_orm::{
-    ColumnTrait, Condition, ConnectionTrait, DerivePartialModel, EntityTrait, QueryFilter,
+    ConnectionTrait, DerivePartialModel, EntityTrait, QueryFilter,
     QueryOrder, QuerySelect,
 };
 use serde::{Deserialize, Serialize};
@@ -73,12 +73,12 @@ async fn recent<C: ConnectionTrait>(
     folder: Folder,
     limit: u64,
 ) -> Result<(Vec<Brief>, bool), sea_orm::DbErr> {
-    let column = match folder {
-        Folder::Inbox => user_message::Column::ToUserId,
-        Folder::Outbox => user_message::Column::FromUserId,
+    let scope = match folder {
+        Folder::Inbox => super::visibility::inbox(uid),
+        Folder::Outbox => super::visibility::outbox(uid),
     };
     let mut rows = user_message::Entity::find()
-        .filter(column.eq(uid))
+        .filter(scope)
         .order_by_desc(user_message::Column::CreatedAt)
         .order_by_desc(user_message::Column::Id)
         .limit(limit + 1)
@@ -155,11 +155,7 @@ async fn owned<C: ConnectionTrait>(
     id: i32,
 ) -> Result<Option<user_message::Model>, sea_orm::DbErr> {
     user_message::Entity::find_by_id(id)
-        .filter(
-            Condition::any()
-                .add(user_message::Column::ToUserId.eq(uid))
-                .add(user_message::Column::FromUserId.eq(uid)),
-        )
+        .filter(super::visibility::message(uid))
         .one(db)
         .await
 }

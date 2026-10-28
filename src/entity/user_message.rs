@@ -19,6 +19,8 @@ pub struct Model {
     pub content: String,
     pub is_read: bool,
     pub read_at: Option<DateTime>,
+    pub sender_deleted_at: Option<DateTime>,
+    pub recipient_deleted_at: Option<DateTime>,
     pub created_at: DateTime,
 }
 
