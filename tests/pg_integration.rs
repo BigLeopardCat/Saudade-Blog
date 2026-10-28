@@ -1184,7 +1184,8 @@ async fn quota_review_claims_once_and_touches_nothing_on_the_second_call() {
 /// 夹具关键词：**刻意是个真实内容里不可能出现的怪串**。
 /// 本用例断言的是精确 id 集合——关键词一旦撞上库里任何一条真实内容
 ///（开发库上尤其容易），断言会莫名其妙地红，而根因看着像"搜索坏了"。
-const AGG_KW: &str = "qqzz聚合夹具";
+// Keep this visibility fixture distinct from concurrent partial-match fixtures.
+const AGG_KW: &str = "qqzzaggregatevisibility";
 
 const AGG_NOTE_OK: i32 = 900000021; // 公开 + 已发布 + 标题命中 ⇒ 该出现
 /// ⚠️ 这一行**原来是 `is_public=true` + `status='draft'`** —— 那正是「黑名单漏洞」的现场

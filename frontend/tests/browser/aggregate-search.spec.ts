@@ -37,7 +37,7 @@ for (const width of [375, 390, 1440]) {
     await page.screenshot({ path: test.info().outputPath('aggregate-search.png') })
     await page.getByRole('button', { name: '说说（1）' }).click()
     await expect(page.getByRole('option')).toHaveCount(1)
-    expect(queries[queries.length - 1]).toEqual({ keyword: '河灯部署', page: 1, pageSize: 20, type: 'talk' })
+    await expect.poll(() => queries[queries.length - 1]).toEqual({ keyword: '河灯部署', page: 1, pageSize: 20, type: 'talk' })
     await page.getByRole('button', { name: '全部', exact: true }).click()
     await expect(page.getByRole('option')).toHaveCount(4)
     await expect(page.locator('.aggregateSearchCard')).toHaveCSS('background-color', 'rgb(255, 253, 250)')
