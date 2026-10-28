@@ -1,24 +1,8 @@
-//! 用户对话额度（20260929）——**判据的唯一落点**。
+//! Shared chat quota policy and atomic usage accounting.
 //!
-//! 口径（用户逐条拍板，实现不许再改）：**普通用户终身 500 轮**、含检索轮；确认轮不计；
-//! 管理员不设限；用尽 = 硬拦（零 LLM、零工具、不计数，但照常进对话记录）；唯一恢复
-//! 途径 = 管理员清零。列与表的语义、四段承重论证见
-//! `scripts/migration/user_chat_quota_20260929.sql` 头注。
-//!
-//! **为什么住在这里而不是 `routes/` 下**：上限与角色判据有两个消费方——`chat.rs` 的
-//! 闸门与 `routes/quota.rs` / `routes/temp_user.rs` 的展示与重置。放进 routes 会让
-//! "每轮 1 轮"这条算术被两处各写一遍，而两份判据的漂移表现是静默多算/少算。
-//!
-//! **与 `authz.rs` 的分工**：谁不限量归 `authz`（`can_access_console`），限量是多少、
-//! 怎么算剩余、怎么原子扣一轮归这里。所以 `is_unlimited` 是**委托**而不是内联第二个
-//! 角色比较——20260926 加超管那次正是因为判据只有 `can_access_console` 一处，
-//! 超管才自动跟着走；内联一份 `role == "admin" || role == "superadmin"` 就会在
-//! 下一次加角色时漏掉（漏的表现同样是静默：那个人每轮都被扣，或者反过来不扣）。
-//!
-//! 上限**不存库**，走环境变量（`CHAT_QUOTA_LIMIT`，默认 500）——上限是策略、用量是
-//! 事实，两者生命周期不同：改上限不该需要一次迁移。与 `chat.rs` 的
-//! `CHAT_HISTORY_LIMIT` 同一形态（那是**每会话** 500 条，与"这辈子能用多少轮"
-//! 毫无关系，两者不许混）。
+//! Ordinary users have a configurable lifetime quota; confirmation does not consume
+//! another turn. Console administrators are unlimited through the central authz policy.
+//! Limits are configuration, while consumption is persisted usage.
 
 use sea_orm::sea_query::Expr;
 use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};

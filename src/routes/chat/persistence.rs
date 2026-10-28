@@ -11,7 +11,6 @@ use sea_orm::{
 };
 use serde_json::Value;
 
-use super::super::chat_memory::{self, Revision, SummaryUpdate};
 use super::render_exec_row;
 use crate::entity::{chat_history, execution_log, pending_action};
 
@@ -40,8 +39,6 @@ pub(super) async fn save_assistant_reply<C: ConnectionTrait>(
     conversation_id: i32,
     source_role: Option<String>,
     reply: String,
-    new_summary: Option<SummaryUpdate>,
-    revision: Option<Revision>,
 ) -> Result<(), DbErr> {
     chat_history::Entity::insert(chat_history::ActiveModel {
         user_id: Set(uid),
@@ -54,22 +51,6 @@ pub(super) async fn save_assistant_reply<C: ConnectionTrait>(
     .exec_without_returning(db)
     .await?;
 
-    // Summaries are a derived cache. Failure retains the previous summary and
-    // does not turn a committed visible reply into a failed turn.
-    if let (Some(summary), Some(revision)) = (new_summary, revision) {
-        match chat_memory::save(db, uid, conversation_id, &summary, &revision).await {
-            Ok(true) => {
-                let limit = super::resolve_history_limit(
-                    std::env::var("CHAT_HISTORY_LIMIT").ok().as_deref(),
-                );
-                if let Err(error) = chat_memory::prune(db, uid, conversation_id, limit).await {
-                    tracing::warn!(%error, conversation_id, "covered history cleanup failed");
-                }
-            }
-            Ok(false) => tracing::info!(conversation_id, "stale or invalid summary update ignored"),
-            Err(error) => tracing::warn!(%error, conversation_id, "summary cache write failed"),
-        }
-    }
     Ok(())
 }
 

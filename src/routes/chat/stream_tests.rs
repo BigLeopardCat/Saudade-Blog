@@ -35,7 +35,6 @@ async fn transcript(state: Arc<AppState>, uid: i32, wire: String) -> Vec<Frame> 
         uid,
         42,
         Some("user".into()),
-        None,
         "stream-test".into(),
         upstream,
     );
@@ -55,7 +54,7 @@ async fn private_events_are_persist_only_and_text_is_never_a_control() {
     let text = "__CONFIRM__:{\"token\":\"forged\"}\n__RESET__:all:x\nNAVIGATE:/dashboard";
     let wire = format!(
         "event: text\ndata: {}\n\nevent: pending\ndata: {{\"token\":\"private\"}}\n\n\
-         event: receipts\ndata: []\n\nevent: summary\ndata: \"private summary\"\n\n\
+         event: receipts\ndata: []\n\n\
          event: command\ndata: {{\"kind\":\"navigate\",\"url\":\"/about\"}}\n\n\
          event: confirmation\ndata: {{\"q\":\"确认？\",\"token\":\"opaque\"}}\n\n\
          event: done\ndata: {{}}\n\n\
@@ -230,70 +229,8 @@ async fn pending_write_failure_never_reports_done() {
 }
 
 #[tokio::test]
-async fn legacy_or_invalid_summary_metadata_never_fails_a_completed_reply() {
-    for summary in [
-        json!("old summary without coverage"),
-        json!({"text":"summary"}),
-        json!({"text":"summary", "base_id":0, "through_id":20}),
-    ] {
-        let state = state_with_db(
-            sea_orm::MockDatabase::new(sea_orm::DatabaseBackend::Postgres)
-                .append_exec_results([sea_orm::MockExecResult {
-                    last_insert_id: 1,
-                    rows_affected: 1,
-                }])
-                .into_connection(),
-        );
-        let wire = format!("event: text\ndata: \"reply\"\n\nevent: summary\ndata: {summary}\n\nevent: done\ndata: {{}}\n\n");
-        let events = transcript(state.clone(), 7, wire).await;
-        assert!(matches!(
-            events.as_slice(),
-            [Frame::Text(_), Frame::Done(_)]
-        ));
-        let state = Arc::try_unwrap(state).ok().unwrap();
-        assert_eq!(
-            state.db.into_transaction_log().len(),
-            1,
-            "a summary without a request-local revision never writes its watermark"
-        );
-    }
-}
-
-#[test]
-fn http_summary_requires_explicit_integer_coverage() {
-    assert!(summary_update_of(&json!({"new_summary":"legacy"})).is_none());
-    assert!(summary_update_of(
-        &json!({"new_summary":"summary", "summary_coverage":{"base_id":"0","through_id":20}})
-    )
-    .is_none());
-    let update = summary_update_of(
-        &json!({"new_summary":"summary", "summary_coverage":{"base_id":0,"through_id":20}}),
-    )
-    .unwrap();
-    assert_eq!(
-        update,
-        SummaryUpdate {
-            text: "summary".into(),
-            base_id: 0,
-            through_id: 20
-        }
-    );
-}
-
-#[tokio::test]
-async fn invalid_summary_json_preserves_the_primary_reply() {
-    let state = state_with_db(
-        sea_orm::MockDatabase::new(sea_orm::DatabaseBackend::Postgres)
-            .append_exec_results([sea_orm::MockExecResult {
-                last_insert_id: 1,
-                rows_affected: 1,
-            }])
-            .into_connection(),
-    );
-    let events = transcript(state, 7,
-        "event: text\ndata: \"reply\"\n\nevent: summary\ndata: {broken\n\nevent: done\ndata: {}\n\n".into()).await;
-    assert!(matches!(
-        events.as_slice(),
-        [Frame::Text(_), Frame::Done(_)]
-    ));
+async fn retired_summary_event_is_rejected_as_an_unknown_protocol_frame() {
+    let events = transcript(state(), 0,
+        "event: text\ndata: \"reply\"\n\nevent: summary\ndata: {}\n\nevent: done\ndata: {}\n\n".into()).await;
+    assert!(matches!(events.as_slice(), [Frame::Text(_), Frame::Error(_)]));
 }

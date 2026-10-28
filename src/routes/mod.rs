@@ -10,7 +10,7 @@ pub mod upload;
 pub mod temp_user;
 pub mod knowledge;
 pub mod chat;
-mod chat_memory;
+mod chat_context;
 pub mod conversation;
 pub mod monitor;
 pub mod sitemap;

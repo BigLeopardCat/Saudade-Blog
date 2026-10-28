@@ -92,13 +92,13 @@ pub struct ChatResponse {
     pub error: Option<String>,
 }
 
-use sea_orm::{EntityTrait, Set, QueryOrder, QueryFilter, ColumnTrait, QuerySelect, ActiveModelTrait, PaginatorTrait};
+use sea_orm::{EntityTrait, Set, QueryOrder, QueryFilter, ColumnTrait, QuerySelect, ActiveModelTrait};
 use sea_orm::sea_query::Expr; // Expr 不在 sea-orm 根（0.12.15 仅 pub use sea_query 全名）
 use crate::entity::{
     agent_task, chat_history, chat_image, conversation, execution_log, pending_action,
 };
 use crate::routes::conversation::resolve_conversation_id;
-use super::chat_memory::{self, MemoryContext, Revision, SummaryUpdate};
+use super::chat_context::{self, BootstrapContext};
 use futures::StreamExt;
 use async_stream::stream;
 
@@ -107,8 +107,6 @@ struct ChatCtx {
     uid: i32,
     /// 本轮消息所属会话（prepare_chat 内解析，用户消息入库前确定）
     conversation_id: i32,
-    total_count: i64,
-    summary_revision: Option<Revision>,
     trace_id: String,
     body: serde_json::Value,
     /// 当前数据库核实的角色，同时记录为本轮历史的来源；未知时保留为空。
@@ -385,7 +383,7 @@ pub async fn discard_handler(
                 .into_response();
         }
     }
-    if let Err(error) = chat_memory::discard(&state.db, uid, conv_id, u.id).await {
+    if let Err(error) = chat_context::discard(&state.db, uid, conv_id, u.id).await {
         warn!(%error, user_id=uid, conversation_id=conv_id, "chat discard failed");
         return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
             "success": false, "error": "未能保存本次丢弃，请稍后重试"
@@ -394,13 +392,6 @@ pub async fn discard_handler(
     // 历史提交后同步清理执行内核上下文；带原文防止误删较新的轮次。
     crate::routes::conversation::drop_checkpoint_turn(conv_id, &u.content, uid).await;
     (StatusCode::OK, Json(serde_json::json!({"success": true}))).into_response()
-}
-
-/// 历史保留目标；未被摘要覆盖的记录不因超额而删除。
-fn resolve_history_limit(raw: Option<&str>) -> i64 {
-    raw.and_then(|v| v.parse::<i64>().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or(500)
 }
 
 /// 鉴权 + 请求体解析 + 会话解析 + 保存用户消息 + 加载历史/摘要 + 组装 agent 请求体。
@@ -626,11 +617,11 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
             .await;
     }
 
-    let memory = chat_memory::load(
+    let memory = chat_context::load_bootstrap(
         &state.db, uid, conversation_id, role.as_deref(), user_msg_id,
     ).await.unwrap_or_else(|error| {
         warn!(%error, conversation_id, "chat memory unavailable; continuing without imported context");
-        MemoryContext::default()
+        BootstrapContext::default()
     });
 
     // 跨轮执行记忆（20260904 C5；20260920 批次 c 补时间戳 + 去重）：读本会话最近
@@ -731,14 +722,6 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
     // 几件事"（跨多轮）。读失败 → `[]`（agent 按"没有任务"如实处理）。
     let agent_tasks = load_agent_tasks(&state.db, conversation_id).await;
 
-    // 摘要进度独立于历史保留数量。
-    let total_count: i64 = chat_history::Entity::find()
-        .filter(chat_history::Column::UserId.eq(uid))
-        .filter(chat_history::Column::ConversationId.eq(conversation_id))
-        .count(&state.db)
-        .await.unwrap_or(0) as i64;
-    let summary_revision = memory.revision.clone();
-
     let mut body = serde_json::json!({
         "message": payload.message,
         "task_id": payload.task_id,
@@ -757,7 +740,6 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
         "history_scope": memory.history_scope,
         "summary": memory.summary,
         "summary_scope": memory.summary_scope,
-        "summary_batch": memory.summary_batch,
         "executions": executions_text,
         "pending_action": pending_text,
         "agent_tasks": agent_tasks,
@@ -783,7 +765,7 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
     if std::env::var("CHAT_DEBUG_BODY").is_ok() {
         eprintln!("[chat-debug] body={}", body);
     }
-    Ok(ChatCtx { uid, conversation_id, total_count, summary_revision, trace_id, body, role })
+    Ok(ChatCtx { uid, conversation_id, trace_id, body, role })
 }
 
 
@@ -1455,7 +1437,7 @@ pub async fn chat_handler(
     };
 
     let agent_url = agent_chat_url();
-    info!(trace_id = %ctx.trace_id, user_id = ctx.uid, total_count = ctx.total_count, "chat: 转发 agent 非流式");
+    info!(trace_id = %ctx.trace_id, user_id = ctx.uid, "chat: 转发 agent 非流式");
     // 传输层偶发失败（agent worker 重启、瞬时断连等）自动重试最多 3 次，
     // 避免对话偶发 "connection closed before message completed" 报错。
     // 超时不重试：长回答（公式推导等）单次生成可长达 180s，超时重试只会从头再生成一遍
@@ -1498,13 +1480,12 @@ pub async fn chat_handler(
                 }
                 match agent_reply_of(&data) {
                     Ok(reply) => {
-                        let agent_summary = summary_update_of(&data);
                         if ctx.uid > 0 {
                             let state = state.clone();
                             let saved_reply = reply.clone();
                             if persistence::run(&ctx.trace_id, async move {
                                 save_assistant_reply(&state.db, ctx.uid, ctx.conversation_id,
-                                    ctx.role, saved_reply, agent_summary, ctx.summary_revision).await
+                                    ctx.role, saved_reply).await
                             }).await.is_err() {
                                 return Json(ChatResponse { reply, success: false,
                                     error: Some(PERSISTENCE_ERROR.into()) }).into_response();
@@ -1531,15 +1512,6 @@ pub async fn chat_handler(
     }
 }
 
-fn summary_update_of(data: &serde_json::Value) -> Option<SummaryUpdate> {
-    let text = data.get("new_summary")?.as_str()?;
-    let coverage = data.get("summary_coverage")?.as_object()?;
-    serde_json::from_value(serde_json::json!({
-        "text": text,
-        "base_id": coverage.get("base_id")?,
-        "through_id": coverage.get("through_id")?,
-    })).ok()
-}
 
 /// agent 非流式响应体 → 这一轮的回复文本；**没生成出回复**时给 Err(原因)。
 ///
@@ -1607,7 +1579,7 @@ pub async fn chat_stream_handler(
     };
 
     let stream_url = agent_chat_url().strip_suffix("/chat").unwrap_or("").to_string() + "/chat/stream/v2";
-    info!(trace_id = %ctx.trace_id, user_id = ctx.uid, total_count = ctx.total_count, "chat: 转发 agent 流式");
+    info!(trace_id = %ctx.trace_id, user_id = ctx.uid, "chat: 转发 agent 流式");
     // 流式连接不设整体超时（长回答可达数分钟），connect/首字节由 reqwest 默认处理
     let upstream = match reqwest::Client::new()
         .post(&stream_url)
@@ -1650,11 +1622,10 @@ pub async fn chat_stream_handler(
     let state = state.clone();
     let uid = ctx.uid;
     let conversation_id = ctx.conversation_id;
-    let revision = ctx.summary_revision;
     // 帧循环里的告警要用（stream! 生成器闭包不能借用 ctx——它后面还要用 ctx 写响应头）
     let trace_id = ctx.trace_id.clone();
 
-    let body_stream = forward_agent_stream(state, uid, conversation_id, ctx.role, revision, trace_id, upstream.bytes_stream());
+    let body_stream = forward_agent_stream(state, uid, conversation_id, ctx.role, trace_id, upstream.bytes_stream());
 
     (
         [
@@ -1676,7 +1647,6 @@ fn forward_agent_stream(
     uid: i32,
     conversation_id: i32,
     source_role: Option<String>,
-    revision: Option<Revision>,
     trace_id: String,
     upstream_stream: impl futures::Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
 ) -> impl futures::Stream<Item = Result<axum::response::sse::Event, axum::Error>> + Send {
@@ -1685,7 +1655,6 @@ fn forward_agent_stream(
         futures::pin_mut!(upstream);
         let mut reply = String::new();
         let mut terminal = false;
-        let mut summary_override = None;
         while let Some(incoming) = upstream.next().await {
             let incoming = match incoming {
                 Ok(value) => value,
@@ -1693,10 +1662,6 @@ fn forward_agent_stream(
             };
             let frame = match protocol::decode(&incoming) {
                 Ok(frame) => frame,
-                Err(_) if incoming.event == "summary" => {
-                    warn!(trace_id = %trace_id, "chat: invalid summary cache metadata ignored");
-                    continue;
-                }
                 Err(_) => {
                     warn!(trace_id = %trace_id, user_id = uid, "chat: invalid upstream SSE event");
                     break;
@@ -1708,8 +1673,7 @@ fn forward_agent_stream(
                     if uid > 0 && !reply.is_empty() {
                         let state = state.clone();
                         if persistence::run(&trace_id, async move {
-                            save_assistant_reply(&state.db, uid, conversation_id, source_role, reply,
-                                summary_override, revision).await
+                            save_assistant_reply(&state.db, uid, conversation_id, source_role, reply).await
                         }).await.is_err() {
                             yield Ok(stream_event("error", PERSISTENCE_ERROR));
                             break;
@@ -1722,9 +1686,6 @@ fn forward_agent_stream(
                     terminal = true;
                     yield Ok(axum::response::sse::Event::default().event(incoming.event).data(incoming.data));
                     break;
-                }
-                Frame::Summary(value) => {
-                    summary_override = serde_json::from_value::<SummaryUpdate>(value).ok();
                 }
                 Frame::Receipts(rows) => {
                     if uid > 0 && !rows.is_empty() {
@@ -1797,7 +1758,7 @@ mod tests {
         let upstream = futures::stream::once(async {
             Ok(Bytes::from_static(b"event: text\ndata: \"partial reply\"\n\n"))
         }).chain(futures::stream::pending());
-        let mut response = Box::pin(forward_agent_stream(state.clone(), 7, 42, Some("user".into()), None, "cancel-test".into(), upstream));
+        let mut response = Box::pin(forward_agent_stream(state.clone(), 7, 42, Some("user".into()), "cancel-test".into(), upstream));
         assert!(response.next().await.unwrap().is_ok());
         drop(response);
         tokio::task::yield_now().await;
@@ -2362,21 +2323,7 @@ mod tests {
         assert_eq!(frames.last(), Some(&"event: done\ndata: {}"), "最后一帧必须是终止帧");
     }
 
-    #[test]
-    fn history_limit_falls_back_on_destructive_values() {
-        assert_eq!(resolve_history_limit(None), 500);
-        assert_eq!(resolve_history_limit(Some("3")), 3);
-        assert_eq!(resolve_history_limit(Some(" 3 ")), 500, "带空格的脏值也退回缺省，不猜");
-        // 下面这几个是"会真删东西"的：必须退到缺省，而不是钳成 1。
-        assert_eq!(resolve_history_limit(Some("0")), 500, "0 会把整个会话删空");
-        assert_eq!(resolve_history_limit(Some("-5")), 500, "负数同上");
-        assert_eq!(resolve_history_limit(Some("abc")), 500);
-        assert_eq!(resolve_history_limit(Some("")), 500);
-        // 任何退路都 ≥ 1 —— 这是"刚入库的那条用户消息一定活得下来"的形式化。
-        for raw in [None, Some("0"), Some("-5"), Some("abc"), Some(""), Some("1")] {
-            assert!(resolve_history_limit(raw) >= 1);
-        }
-    }
+
 
     /// 结构那份：`payload` 原样解析成对象，`at`/`n` 照搬，顺序与 `executions` 一致
     /// （输入是新→旧，输出是旧→新）。这三格是 agent 侧取文档锚点的全部依据。
