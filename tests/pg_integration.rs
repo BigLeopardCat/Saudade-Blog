@@ -1391,7 +1391,7 @@ async fn test_聚合搜索的四类命中集合与可见性谓词() {
     let b0 = &j["data"]["board"][0];
     assert_eq!(b0["type"], "board");
     assert_eq!(b0["title"], "", "留言行的标题必须留空");
-    assert_eq!(b0["snippet"], "河灯正文里也有 qqzz聚合夹具", "摘要该是正文（折平空白后）");
+    assert_eq!(b0["snippet"], format!("河灯正文里也有 {AGG_KW}"), "摘要该是正文（折平空白后）");
     // 留言的作者是**自由留名**，不是账号身份
     assert_eq!(b0["author"], "留名甲");
 
