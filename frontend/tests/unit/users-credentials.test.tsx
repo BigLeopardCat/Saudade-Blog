@@ -5,9 +5,9 @@ import Users from '../../src/pages/Dashboard/Users';
 const {post} = vi.hoisted(() => ({post: vi.fn()}));
 vi.mock('../../src/apis/axios.tsx', () => ({default: {post}}));
 vi.mock('react-router-dom', () => ({useSearchParams: () => [new URLSearchParams()]}));
-vi.mock('../../src/pages/Dashboard/BoardManage', () => ({default: () => null}));
-vi.mock('../../src/pages/Dashboard/CommentManage', () => ({default: () => null}));
-vi.mock('../../src/pages/Dashboard/QuotaManage', () => ({default: () => null}));
+vi.mock('../../src/pages/Dashboard/BoardManage', () => ({default: () => <div>河灯审核面板</div>}));
+vi.mock('../../src/pages/Dashboard/CommentManage', () => ({default: () => <div>文章评论审核面板</div>}));
+vi.mock('../../src/pages/Dashboard/QuotaManage', () => ({default: () => <div>额度审批面板</div>}));
 vi.mock('../../src/utils/liveRefresh.ts', () => ({useLiveRefresh: () => undefined}));
 vi.mock('../../src/pages/Dashboard/Users/tempUsers.ts', () => ({
     useTempUsers: () => ({users: [
@@ -52,4 +52,21 @@ describe('account credential controls', () => {
         expect(screen.queryByRole('dialog', {name: '修改密码 - 普通账号'})).toBeNull();
         expect(post).not.toHaveBeenCalled();
     });
+});
+
+
+it('tab labels open their corresponding account, guestbook, comment, and quota panels', async () => {
+    localStorage.setItem('tokenKey', token('admin'));
+    render(<StyleProvider mock="server" container={document.createElement('div')}><Users /></StyleProvider>);
+    expect(screen.getAllByRole('tab').map(tab => tab.textContent)).toEqual([
+        '账号管理', '留言管理', '评论管理', '额度管理',
+    ]);
+    for (const [label, contents] of [['留言管理', '河灯审核面板'], ['评论管理', '文章评论审核面板'], ['额度管理', '额度审批面板']]) {
+        const tab = screen.getByRole('tab', {name: label});
+        fireEvent.click(tab);
+        await waitFor(() => expect(tab.getAttribute('aria-selected')).toBe('true'));
+        expect(screen.getByRole('tabpanel', {name: label}).textContent).toContain(contents);
+    }
+    fireEvent.click(screen.getByRole('tab', {name: '账号管理'}));
+    expect(screen.getByRole('tabpanel', {name: '账号管理'}).textContent).toContain('普通账号');
 });

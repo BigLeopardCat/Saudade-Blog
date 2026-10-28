@@ -97,15 +97,44 @@ async fn backlog_uses_the_oldest_full_prefix_and_keeps_recent_context_separate()
 
 #[tokio::test]
 async fn small_backlogs_never_advance_a_boundary() {
-    let prefix = messages(1, 9);
+    for size in [9, 10, 19] {
+        let prefix = messages(1, size);
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([Vec::<chat_summary::Model>::new()])
+            .append_query_results([prefix.clone().into_iter().rev().collect::<Vec<_>>()])
+            .append_query_results([prefix])
+            .into_connection();
+        let memory = load(&db, 7, 42, Some("user"), Some(size + 1))
+            .await
+            .unwrap();
+        assert!(!memory.needs_summary);
+        assert!(memory.summary_batch.is_none() && memory.revision.is_none());
+    }
+}
+
+#[tokio::test]
+async fn volume_triggers_before_the_message_ceiling_and_coverage_resets_it() {
+    let mut prefix = messages(1, 4);
+    for row in &mut prefix {
+        row.content = "文".repeat(1_500);
+    }
     let db = MockDatabase::new(DatabaseBackend::Postgres)
         .append_query_results([Vec::<chat_summary::Model>::new()])
-        .append_query_results([prefix.clone().into_iter().rev().collect::<Vec<_>>()])
+        .append_query_results([prefix.iter().rev().cloned().collect::<Vec<_>>()])
         .append_query_results([prefix])
         .into_connection();
-    let memory = load(&db, 7, 42, Some("user"), Some(10)).await.unwrap();
-    assert!(!memory.needs_summary);
-    assert!(memory.summary_batch.is_none() && memory.revision.is_none());
+    let first = load(&db, 7, 42, Some("user"), Some(5)).await.unwrap();
+    assert!(first.needs_summary);
+    let batch = first.summary_batch.unwrap();
+    assert_eq!((batch.base_id, batch.messages.last().unwrap().id), (0, 4));
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_results([vec![stored(Some("user"), 4)]])
+        .append_query_results([messages(1, 10).into_iter().rev().collect::<Vec<_>>()])
+        .append_query_results([messages(5, 10)])
+        .into_connection();
+    let next = load(&db, 7, 42, Some("user"), Some(11)).await.unwrap();
+    assert!(!next.needs_summary && next.summary_batch.is_none());
+    assert_eq!(next.history.len(), 10);
 }
 
 #[tokio::test]
@@ -159,11 +188,9 @@ async fn a_short_complete_prefix_advances_coverage_and_keeps_the_tail_for_the_ne
         batch.messages.iter().map(|row| row.id).collect::<Vec<_>>(),
         [1, 2, 3]
     );
-    assert!(
-        save(&db, 7, 42, &update(0, 3), &first.revision.unwrap())
-            .await
-            .unwrap()
-    );
+    assert!(save(&db, 7, 42, &update(0, 3), &first.revision.unwrap())
+        .await
+        .unwrap());
     let next_db = MockDatabase::new(DatabaseBackend::Postgres)
         .append_query_results([vec![stored(Some("user"), 3)]])
         .append_query_results([prefix[15..].iter().rev().cloned().collect::<Vec<_>>()])
@@ -180,12 +207,10 @@ async fn a_short_complete_prefix_advances_coverage_and_keeps_the_tail_for_the_ne
             .collect::<Vec<_>>(),
         [4, 5, 6]
     );
-    assert!(
-        next_batch
-            .messages
-            .iter()
-            .all(|row| row.content.chars().count() == 4_000)
-    );
+    assert!(next_batch
+        .messages
+        .iter()
+        .all(|row| row.content.chars().count() == 4_000));
 }
 
 #[tokio::test]
@@ -211,18 +236,16 @@ async fn old_unknown_and_changed_role_summaries_do_not_supply_text_or_coverage()
     for role in [None, Some("admin")] {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
             .append_query_results([vec![stored(role, 500)]])
-            .append_query_results([messages(1, 11).into_iter().rev().collect::<Vec<_>>()])
-            .append_query_results([messages(1, 11)])
+            .append_query_results([messages(1, 20).into_iter().rev().collect::<Vec<_>>()])
+            .append_query_results([messages(1, 20)])
             .append_exec_results([exec(1)])
             .into_connection();
-        let memory = load(&db, 7, 42, Some("user"), Some(12)).await.unwrap();
+        let memory = load(&db, 7, 42, Some("user"), Some(21)).await.unwrap();
         assert!(memory.summary.is_empty() && memory.summary_scope.is_none());
         assert_eq!(memory.summary_batch.as_ref().unwrap().base_id, 0);
-        assert!(
-            save(&db, 7, 42, &update(0, 11), &memory.revision.unwrap())
-                .await
-                .unwrap()
-        );
+        assert!(save(&db, 7, 42, &update(0, 20), &memory.revision.unwrap())
+            .await
+            .unwrap());
         let log = format!("{:?}", db.into_transaction_log());
         assert!(
             log.contains("IS NOT DISTINCT FROM")
@@ -357,11 +380,9 @@ async fn postgres_scope_and_cas_survive_retention_without_deleting_uncovered_sou
     let initial = update(0, ids[34]);
     assert!(save(&txn, uid, cid, &initial, &revision).await.unwrap());
     assert!(!save(&txn, uid, cid, &initial, &revision).await.unwrap());
-    assert!(
-        !save(&txn, uid, cid, &update(0, ids[35]), &revision)
-            .await
-            .unwrap()
-    );
+    assert!(!save(&txn, uid, cid, &update(0, ids[35]), &revision)
+        .await
+        .unwrap());
     // A different source has no right to reuse either text or its boundary.
     let isolated = load(&txn, uid, cid, Some("admin"), Some(ids[35]))
         .await
@@ -386,7 +407,7 @@ async fn postgres_scope_and_cas_survive_retention_without_deleting_uncovered_sou
     assert_eq!(reloaded.summary, initial.text);
     assert!(!reloaded.needs_summary);
     let mut admin_ids = Vec::new();
-    for index in 1..=11 {
+    for index in 1..=21 {
         let row = txn
             .query_one(Statement::from_sql_and_values(
                 DbBackend::Postgres,
@@ -403,7 +424,7 @@ async fn postgres_scope_and_cas_survive_retention_without_deleting_uncovered_sou
             .unwrap();
         admin_ids.push(row.try_get::<i32>("", "id").unwrap());
     }
-    let admin = load(&txn, uid, cid, Some("admin"), Some(admin_ids[10]))
+    let admin = load(&txn, uid, cid, Some("admin"), Some(admin_ids[20]))
         .await
         .unwrap();
     assert!(admin.summary.is_empty());
@@ -417,40 +438,32 @@ async fn postgres_scope_and_cas_survive_retention_without_deleting_uncovered_sou
     ))
     .await
     .unwrap();
-    let admin_update = update(0, admin_ids[9]);
-    assert!(
-        !save(&txn, uid, cid, &admin_update, &admin_revision)
-            .await
-            .unwrap()
-    );
-    let latest = load(&txn, uid, cid, Some("admin"), Some(admin_ids[10]))
+    let admin_update = update(0, admin_ids[19]);
+    assert!(!save(&txn, uid, cid, &admin_update, &admin_revision)
+        .await
+        .unwrap());
+    let latest = load(&txn, uid, cid, Some("admin"), Some(admin_ids[20]))
         .await
         .unwrap();
     let latest_revision = latest.revision.unwrap();
     txn.execute(Statement::from_sql_and_values(DbBackend::Postgres,
         "UPDATE chat_summary SET summary='concurrent same-boundary update' WHERE conversation_id=$1",
         vec![cid.into()])).await.unwrap();
-    assert!(
-        !save(&txn, uid, cid, &admin_update, &latest_revision)
-            .await
-            .unwrap()
-    );
-    let latest_revision = load(&txn, uid, cid, Some("admin"), Some(admin_ids[10]))
+    assert!(!save(&txn, uid, cid, &admin_update, &latest_revision)
+        .await
+        .unwrap());
+    let latest_revision = load(&txn, uid, cid, Some("admin"), Some(admin_ids[20]))
         .await
         .unwrap()
         .revision
         .unwrap();
-    assert!(
-        save(&txn, uid, cid, &admin_update, &latest_revision)
-            .await
-            .unwrap()
-    );
-    assert!(
-        !save(&txn, uid, cid, &admin_update, &latest_revision)
-            .await
-            .unwrap()
-    );
-    assert_eq!(prune(&txn, uid, cid, 1).await.unwrap(), 10);
+    assert!(save(&txn, uid, cid, &admin_update, &latest_revision)
+        .await
+        .unwrap());
+    assert!(!save(&txn, uid, cid, &admin_update, &latest_revision)
+        .await
+        .unwrap());
+    assert_eq!(prune(&txn, uid, cid, 1).await.unwrap(), 20);
     let remaining = chat_history::Entity::find()
         .filter(chat_history::Column::ConversationId.eq(cid))
         .all(&txn)
@@ -459,7 +472,7 @@ async fn postgres_scope_and_cas_survive_retention_without_deleting_uncovered_sou
     assert_eq!(remaining.len(), 3);
     assert!(remaining.iter().any(|row| row.source_role.is_none()));
     assert!(remaining.iter().any(|row| row.id == ids[35]));
-    assert!(remaining.iter().any(|row| row.id == admin_ids[10]));
+    assert!(remaining.iter().any(|row| row.id == admin_ids[20]));
     txn.rollback().await.unwrap();
 }
 
@@ -575,7 +588,7 @@ async fn postgres_discard_fences_first_and_existing_summaries_and_invalidates_de
             .unwrap()
     );
     let before = stored_probe(&txn, cid).await;
-    let appended = insert_probe_messages(&txn, uid, cid, 11).await;
+    let appended = insert_probe_messages(&txn, uid, cid, 21).await;
     let inflight = load(&txn, uid, cid, Some("user"), appended.last().copied())
         .await
         .unwrap();
@@ -587,24 +600,22 @@ async fn postgres_discard_fences_first_and_existing_summaries_and_invalidates_de
 
     // Deleting an uncovered current turn preserves old text but still rejects
     // every revision read before the deletion, even if role/text/watermark match.
-    discard(&txn, uid, cid, appended[10]).await.unwrap();
+    discard(&txn, uid, cid, appended[20]).await.unwrap();
     let preserved = stored_probe(&txn, cid).await;
     assert_eq!(preserved.summary, before.summary);
     assert_eq!(preserved.source_role, before.source_role);
     assert_eq!(preserved.covered_through_id, before.covered_through_id);
     assert_eq!(preserved.message_count, before.message_count);
     assert_eq!(preserved.lock_version, before.lock_version + 1);
-    assert!(
-        !save(
-            &txn,
-            uid,
-            cid,
-            &inflight_update,
-            &inflight.revision.unwrap()
-        )
-        .await
-        .unwrap()
-    );
+    assert!(!save(
+        &txn,
+        uid,
+        cid,
+        &inflight_update,
+        &inflight.revision.unwrap()
+    )
+    .await
+    .unwrap());
 
     let current = insert_probe_messages(&txn, uid, cid, 1).await;
     let reread = load(&txn, uid, cid, Some("user"), current.last().copied())
@@ -615,7 +626,7 @@ async fn postgres_discard_fences_first_and_existing_summaries_and_invalidates_de
             .await
             .unwrap()
     );
-    let more = insert_probe_messages(&txn, uid, cid, 11).await;
+    let more = insert_probe_messages(&txn, uid, cid, 21).await;
     let inflight = load(&txn, uid, cid, Some("user"), more.last().copied())
         .await
         .unwrap();
@@ -631,11 +642,9 @@ async fn postgres_discard_fences_first_and_existing_summaries_and_invalidates_de
     assert_eq!(invalidated.covered_through_id, 0);
     assert_eq!(invalidated.message_count, 0);
     assert_eq!(invalidated.lock_version, before.lock_version + 1);
-    assert!(
-        !save(&txn, uid, cid, &stale, &inflight.revision.unwrap())
-            .await
-            .unwrap()
-    );
+    assert!(!save(&txn, uid, cid, &stale, &inflight.revision.unwrap())
+        .await
+        .unwrap());
     let remaining = chat_history::Entity::find()
         .filter(chat_history::Column::ConversationId.eq(cid))
         .all(&txn)
@@ -643,20 +652,19 @@ async fn postgres_discard_fences_first_and_existing_summaries_and_invalidates_de
         .unwrap();
     assert_eq!(remaining.len(), 19);
     assert!(remaining.iter().all(|row| row.id < ids[19]));
-    let current = insert_probe_messages(&txn, uid, cid, 1).await;
+    // Keep the surviving nineteen messages plus one newly completed message.
+    let current = insert_probe_messages(&txn, uid, cid, 2).await;
     let rebuilt = load(&txn, uid, cid, Some("user"), current.last().copied())
         .await
         .unwrap();
-    assert!(
-        save(
-            &txn,
-            uid,
-            cid,
-            &update(0, ids[18]),
-            &rebuilt.revision.unwrap()
-        )
-        .await
-        .unwrap()
-    );
+    assert!(save(
+        &txn,
+        uid,
+        cid,
+        &update(0, current[0]),
+        &rebuilt.revision.unwrap()
+    )
+    .await
+    .unwrap());
     txn.rollback().await.unwrap();
 }

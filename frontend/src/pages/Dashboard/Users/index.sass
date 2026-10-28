@@ -1,5 +1,3 @@
-// 用户管理页：账号管理 / 评论管理 双 Tab
-// Tabs 需要占满可用高度并把滚动交给各 Tab 内容（BoardManage 自身 padding+overflow 负责内边距与滚动）
 .users-page
   height: 100%
   padding: 0 8px
@@ -15,6 +13,14 @@
     .ant-tabs-nav
       margin-bottom: 8px
 
+    .ant-tabs-tab
+      user-select: none
+
+    .ant-tabs-tab-btn
+      font-size: 16px
+      font-weight: 600
+      cursor: pointer
+
     .ant-tabs-content-holder
       flex: 1
       min-height: 0
@@ -23,14 +29,8 @@
       .ant-tabs-tabpane
         height: 100%
 
-// ── 账号管理：账号列表 ──
 .tu-section
   height: 100%
-  // 20260926：整块自己不再滚（原来是 overflow-y: auto）——那样"新建 + 说明 + 筛选检索"
-  // 这一截会跟着账号列表一起滚走，翻到下面想换个关键词得先滚回顶上。现在这一块是
-  // **固定壳**：.tu-head（新建/说明/筛选）+ .tu-list-wrap（列表）两段，只有后者滚。
-  // height 链是通的：Dashboard 的 .Card 95% → .ant-card-body 100% → .users-page 100%
-  // → .ant-tabs-content-holder/.tabpane 100% → 这里 100%（少一环就退化成内容高度、内滚动失效）。
   overflow: hidden
   min-height: 0
   display: flex
@@ -38,7 +38,6 @@
   padding: 12px 4px
 
   .tu-head
-    // 固定段：矮窗时不许被 flex 压扁（列表才该缩）
     flex: 0 0 auto
 
   .tu-create
@@ -51,7 +50,6 @@
     color: #999
     font-size: 12px
 
-  // 筛选 + 检索 + 计数（20260926）：与评论管理那条工具栏同构
   .tu-filter
     display: flex
     align-items: center
@@ -59,10 +57,6 @@
     flex-wrap: wrap
     margin-bottom: 10px
 
-    // 与 BoardManage 的 .bm-tabs 同一套观感（两处各自成块是既有状态，先不为它抽公共类）
-    // 20261001 批 E：改为手账的三态 —— 未选=纸片、悬停=粉、选中=和纸紫（与侧栏
-    // `.nav_select` 同一支 lav）。原来那支砖红 #a33f30 是改造前的旧主色。
-    // 深浅两档由令牌自己分，所以下面 `.contentDark` 里那份**逐条覆盖已删**（见文件末）。
     .tu-tabs
       display: flex
       gap: 8px
@@ -81,7 +75,6 @@
         &.sel
           background: var(--washi-lav, #b9a7f5)
           border-color: transparent
-          // 深墨压在浅紫上：浅色档 #b9a7f5 与夜间档 #cbb6ff 分别是 6.7:1 与 11:1
           color: #241f2e
           font-weight: 600
 
@@ -90,12 +83,6 @@
       color: #888
       font-size: 13px
 
-  // 只有这一块滚。
-  // `min-height: 0` 在这里其实是**冗余**的：CSS Sizing 规定，某个抽向上是滚动容器的
-  // 盒子（`overflow: auto|hidden|scroll`），它的自动最小尺寸就是 0——`overflow: auto`
-  // 已经把它办掉了（20260926 用变异探针验过：单独删掉这一行，几何一条都不变）。
-  // 留着是因为"flex 子项要能缩到比内容矮"这件事写出来比靠这条规范隐式生效好读，
-  // 但**别把它当成内滚动生效的原因**：真正的原因就是下面那行 overflow。
   .tu-list-wrap
     flex: 1 1 auto
     min-height: 0
@@ -114,39 +101,17 @@
       display: flex
       align-items: center
       justify-content: space-between
-      // 20261017：**允许换行**。窄屏下这一行要塞「账号名 + 徽章 + 状态标签 + ID +
-      // 额度」再加最多 8 颗按钮，两者最小宽度加起来约 550px，而手机上整行只有约
-      // 268px ⇒ 原先右侧一大截按钮落在 `.tu-list` 的 `overflow: hidden` 之外，
-      // **DOM 里都在、`offsetParent` 也非空、控制台一个字不报**，只是看不见也点不着
-      // （用户报的"操作展示不全，右侧被截断"）。裁它的正是下面那条 overflow。
-      //
-      // 不挂媒体查询是有意的：排得下时这一行与从前**逐像素相同**（宽屏一个字没变），
-      // 排不下时才换行 —— 写死断点反而要在"1024 三处同源"那一族里再养一个同步点，
-      // 而真正需要它的宽度是随"这一行有几颗按钮、账号名多长"变的，不是一个数。
       flex-wrap: wrap
-      // 行距只在换行后看得见；列距给信息栏与动作组之间一个下限（宽屏由
-      // `space-between` 撑开，量不出差别）。
       gap: 6px 12px
       padding: 10px 12px
       border-bottom: 1px solid #f0f0f0
       &:last-child
         border-bottom: none
 
-      // 两栏（20261017）：左 = 账号信息，右 = 动作按钮。
-      // 右栏那组 `display:flex; gap:8` 原先挂在**内联** style 上 —— 内联压过一切
-      // 普通声明，于是这个文件里对它写的规则全是**静默失效**（同 `.Card` 20261006
-      // 踩过的那条："宽/高/左距 已从内联搬到基础规则"）。搬进类里不是为了整齐，
-      // 是"下面这两条覆盖得生效"的前提。
-      // `min-width: 0` 让左栏能缩到比它的内容更窄（flex 项的自动最小尺寸默认是
-      // **min-content**，不给这一条，长账号名会把整行撑住、换行也救不回来）；
-      // `overflow-wrap: anywhere` 再给长账号名一条断点 —— 32 字上限的账号名在中文字体下
-      // 不隔空白，不换行的话它自己就比手机整行还宽。
       .tu-info
         min-width: 0
         overflow-wrap: anywhere
 
-      // 动作组自己也**允许换行**：它在窄屏会被挤到约 268px 宽，8 颗按钮排不下，
-      // 不换行的话它内部照样溢出（只是从"整组溢出"变成"组内溢出"）。
       .tu-actions
         display: flex
         flex-wrap: wrap
@@ -156,14 +121,6 @@
         color: #999
         margin-left: 12px
 
-      // 额度那一小截（20260929，20260929b 改口径）：与 `ID: N` 同一条弱提示的量级
-      // （它是**读数**，不是状态标签——状态标签是彩色 Tag 那一族）。等宽数字让一列
-      // 账号扫下来各位对齐。
-      //
-      // 余额口径那一批起**上色**（此前刻意不上色："不拿颜色暗示多少，用完了在个人中心
-      // 才有结论"）——换成「剩 N/上限」之后那句话不成立了：`剩 3/500` 本身就是结论，
-      // 管理员扫这一列本来就该看出谁快没了。三档取个人中心那套的同族色（金/琥珀/朱红），
-      // 阈值只有 `utils/quota.ts` 一个来源。
       .tu-quota
         color: #999
         margin-left: 12px
@@ -176,13 +133,9 @@
           color: #c0392b
           font-weight: 600
 
-      // 冻结账号的账号名（20260926）：只做"这个人现在不能用"的弱提示，
-      // 真正的状态说明是行上那枚「已冻结」标签——名字本身不删除线，
-      // 划掉会读成"这个账号已经没了"，而它是**还在、只是被冻住**。
       .tu-frozen-name
         color: #b0b0b0
 
-// 暗色适配（后台 .contentDark 容器内）
 .contentDark
   .tu-list
     border-color: rgba(255, 255, 255, 0.12)
@@ -191,18 +144,12 @@
   .tu-hint
     color: #888
   .tu-section
-    // 20261001 批 E：`.tu-tabs button` 那一整段深色覆盖已删 —— 上面那份现在走
-    // `var(--washi-*)` 令牌，深浅两档自动分（旧覆盖里的砖红 #a33f30 是改造前的主色，
-    // 留着会把选中态按回砖红）
     .tu-count
       color: #888
     .tu-empty
       color: #888
   .tu-frozen-name
     color: #777
-  // 额度 chip 的三档各亮一档（20260929b）：浅色那几个暗金/朱红压在后台夜间的墨蓝底上
-  // 只有 2 点几的对比度（20260922 那批后台夜间的实测教训）。朱红取 `.rz-no` 同族的
-  // `#ff9d8a`——"这一块是告警"在夜间全站只有这一套色。
   .tu-list .tu-row .tu-quota
     &.is-low
       color: #e3a94f
