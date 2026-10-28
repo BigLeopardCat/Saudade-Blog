@@ -11,7 +11,8 @@ use crate::entity::{chat_history, chat_summary};
 const HISTORY_MESSAGES: u64 = 20;
 const SUMMARY_MESSAGES: u64 = 60;
 const SUMMARY_BATCH_CHARS: usize = 12_000;
-const SUMMARY_MIN_MESSAGES: usize = 10;
+const SUMMARY_TRIGGER_MESSAGES: usize = HISTORY_MESSAGES as usize;
+const SUMMARY_TRIGGER_CHARS: usize = 6_000;
 const MAX_SUMMARY_CHARS: usize = 8_000;
 
 #[derive(Clone, Debug, Serialize)]
@@ -139,9 +140,16 @@ pub(super) async fn load<C: ConnectionTrait>(
         .limit(SUMMARY_MESSAGES)
         .all(db)
         .await?;
-    // Every stored message before this turn is included intact, including past
-    // interrupted requests. Requiring alternating pairs would stall that backlog.
-    if prefix.len() < SUMMARY_MIN_MESSAGES {
+    // Compact by volume, with a message ceiling aligned to the recovery window.
+    // Advancing the saved boundary resets both counters, so brief exchanges do
+    // not rewrite the summary every few turns. Interrupted messages still count.
+    let pending_chars = prefix
+        .iter()
+        .map(|row| row.content.chars().count())
+        .sum::<usize>();
+    if prefix.is_empty()
+        || (prefix.len() < SUMMARY_TRIGGER_MESSAGES && pending_chars < SUMMARY_TRIGGER_CHARS)
+    {
         return Ok(context);
     }
     // Bound host batch size without estimating tokens or clipping a message.
@@ -185,6 +193,14 @@ pub(super) async fn load<C: ConnectionTrait>(
             })
             .collect(),
     });
+    tracing::debug!(
+        conversation_id,
+        base_id,
+        through_id,
+        messages = count,
+        pending_chars,
+        "conversation summary scheduled"
+    );
     context.needs_summary = true;
     Ok(context)
 }
