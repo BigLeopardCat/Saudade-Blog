@@ -14,7 +14,6 @@ pub(super) enum Frame {
     Command(Map<String, Value>),
     Pending(Map<String, Value>),
     Receipts(Vec<Value>),
-    Summary(Value),
     Done(Empty),
     Error(String),
 }
@@ -89,11 +88,6 @@ mod tests {
             ("confirmation", json!({"q": "确认？", "token": "opaque"})),
             ("pending", json!({"jti": "private"})),
             ("receipts", json!([])),
-            ("summary", json!("私有摘要")),
-            (
-                "summary",
-                json!({"text":"私有摘要", "base_id":10, "through_id":20}),
-            ),
             ("progress", json!("读取中")),
             ("error", json!("不可用")),
         ] {

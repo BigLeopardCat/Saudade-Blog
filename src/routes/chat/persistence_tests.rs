@@ -8,43 +8,12 @@ use tokio::sync::{oneshot, Notify};
 async fn visible_reply_requires_a_successful_insert() {
     let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
     assert!(
-        save_assistant_reply(&db, 7, 42, Some("user".into()), "reply".into(), None, None)
+        save_assistant_reply(&db, 7, 42, Some("user".into()), "reply".into())
             .await
             .is_err()
     );
     let log = format!("{:?}", db.into_transaction_log());
     assert!(log.contains("INSERT INTO") && log.contains("chat_history"));
-}
-
-#[tokio::test]
-async fn summary_failure_does_not_erase_a_committed_reply() {
-    let db = MockDatabase::new(DatabaseBackend::Postgres)
-        .append_exec_results([MockExecResult {
-            last_insert_id: 1,
-            rows_affected: 1,
-        }])
-        .into_connection();
-    let revision = chat_memory::test_revision(7, 42, "user", 0, 20);
-    let update = SummaryUpdate {
-        text: "summary".into(),
-        base_id: 0,
-        through_id: 20,
-    };
-    save_assistant_reply(
-        &db,
-        7,
-        42,
-        Some("user".into()),
-        "reply".into(),
-        Some(update),
-        Some(revision),
-    )
-    .await
-    .unwrap();
-    let log = db.into_transaction_log();
-    assert_eq!(log.len(), 2);
-    assert!(format!("{:?}", log[0]).contains("chat_history"));
-    assert!(format!("{:?}", log[1]).contains("chat_summary"));
 }
 
 #[tokio::test]
@@ -135,9 +104,7 @@ async fn postgres_receipt_batches_are_atomic_and_survive_reply_failure() {
         uid,
         cid,
         Some("user".into()),
-        "invalid\0reply".into(),
-        None,
-        None
+        "invalid\0reply".into()
     )
     .await
     .is_err());
@@ -170,8 +137,6 @@ async fn reply_records_its_verified_source_even_without_summary() {
             42,
             role.map(str::to_owned),
             "reply".into(),
-            None,
-            None,
         )
         .await
         .unwrap();
@@ -184,39 +149,14 @@ async fn reply_records_its_verified_source_even_without_summary() {
 }
 
 #[tokio::test]
-async fn stale_summary_does_not_trigger_retention() {
+async fn storing_a_reply_never_writes_summary_or_deletes_history() {
     let db = MockDatabase::new(DatabaseBackend::Postgres)
-        .append_exec_results([
-            MockExecResult {
-                last_insert_id: 1,
-                rows_affected: 1,
-            },
-            MockExecResult {
-                last_insert_id: 0,
-                rows_affected: 0,
-            },
-        ])
+        .append_exec_results([MockExecResult { last_insert_id: 1, rows_affected: 1 }])
         .into_connection();
-    let update = SummaryUpdate {
-        text: "summary".into(),
-        base_id: 0,
-        through_id: 20,
-    };
-    save_assistant_reply(
-        &db,
-        7,
-        42,
-        Some("user".into()),
-        "reply".into(),
-        Some(update),
-        Some(chat_memory::test_revision(7, 42, "user", 0, 20)),
-    )
-    .await
-    .unwrap();
+    save_assistant_reply(&db, 7, 42, Some("user".into()), "reply".into()).await.unwrap();
     let log = db.into_transaction_log();
-    assert_eq!(
-        log.len(),
-        2,
-        "CAS failure must not attempt raw history deletion"
-    );
+    assert_eq!(log.len(), 1);
+    let sql = format!("{log:?}");
+    assert!(sql.contains("chat_history") && !sql.contains("chat_summary"));
+    assert!(!sql.contains("DELETE"));
 }
