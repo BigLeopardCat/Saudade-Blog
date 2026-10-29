@@ -5,8 +5,9 @@ use axum::{
     Json,
 };
 use sea_orm::{
-    ColumnTrait, ConnectionTrait, DbErr, DerivePartialModel, EntityTrait, FromQueryResult,
-    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
+    sea_query::{extension::postgres::PgExpr, Expr},
+    ColumnTrait, Condition, ConnectionTrait, DbErr, DerivePartialModel, EntityTrait,
+    FromQueryResult, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -14,11 +15,26 @@ use std::sync::Arc;
 use crate::{authz, entity::user, routes::AppState, utils::ApiResponsePage};
 
 #[derive(Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AccountQuery {
     pub page: Option<u64>,
     pub page_size: Option<u64>,
     pub username: Option<String>,
+    pub query: Option<String>,
     pub id: Option<i32>,
+}
+
+impl AccountQuery {
+    pub(super) fn valid(&self) -> bool {
+        self.id.is_none_or(|id| id > 0)
+            && super::valid_text(self.query.as_deref())
+            && self.username.as_deref().is_none_or(|name| {
+                !name.is_empty()
+                    && name.trim() == name
+                    && name.chars().count() <= 255
+                    && !name.chars().any(char::is_control)
+            })
+    }
 }
 
 #[derive(DerivePartialModel, FromQueryResult)]
@@ -26,6 +42,7 @@ pub struct AccountQuery {
 pub struct AccountRow {
     pub id: i32,
     pub username: String,
+    pub nickname: String,
     pub role: String,
     pub status: i16,
     pub chat_quota_used: i32,
@@ -37,6 +54,7 @@ pub struct AccountRow {
 pub struct Account {
     pub id: i32,
     pub username: String,
+    pub nickname: String,
     pub role: String,
     pub frozen: bool,
     pub quota_used: i32,
@@ -53,6 +71,14 @@ pub(super) fn query(params: &AccountQuery) -> sea_orm::Select<user::Entity> {
     let mut query = user::Entity::find().filter(user::Column::Role.is_in(roles));
     if let Some(name) = &params.username {
         query = query.filter(user::Column::Username.eq(name));
+    }
+    if let Some(term) = &params.query {
+        let pattern = super::pattern(term);
+        query = query.filter(
+            Condition::any()
+                .add(Expr::col(user::Column::Username).ilike(&pattern))
+                .add(Expr::col(user::Column::Nickname).ilike(&pattern)),
+        );
     }
     if let Some(id) = params.id {
         query = query.filter(user::Column::Id.eq(id));
@@ -80,6 +106,7 @@ pub(super) async fn read<C: ConnectionTrait>(
         .map(|row| Account {
             id: row.id,
             username: row.username,
+            nickname: row.nickname,
             frozen: row.status != 0,
             quota_used: row.chat_quota_used,
             quota_limit: super::super::quota::limit_of(&row.role),
@@ -97,8 +124,8 @@ pub async fn list(
     State(state): State<Arc<AppState>>,
     Query(params): Query<AccountQuery>,
 ) -> Json<ApiResponsePage<Vec<Account>>> {
-    if !super::valid_text(params.username.as_deref()) || params.id.is_some_and(|id| id <= 0) {
-        return Json(ApiResponsePage::error("账号名或编号无效"));
+    if !params.valid() {
+        return Json(ApiResponsePage::error("账号名、检索词或编号无效"));
     }
     let (limit, offset) = match super::window(params.page, params.page_size) {
         Ok(value) => value,

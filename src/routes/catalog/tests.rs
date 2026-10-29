@@ -140,3 +140,74 @@ async fn postgres_catalog_pages_and_metadata_are_bounded_and_filtered() {
     assert!(articles::read(&txn, &params, 5, 0).await.is_err());
     txn.rollback().await.unwrap();
 }
+
+#[test]
+fn account_candidate_search_is_bound_literal_and_validated() {
+    let params: accounts::AccountQuery = serde_json::from_value(json!({"query":"_%'"})).unwrap();
+    assert!(params.valid());
+    let statement = accounts::query(&params)
+        .into_partial_model::<accounts::AccountRow>()
+        .into_statement(DatabaseBackend::Postgres);
+    assert!(statement.sql.contains("nickname") && statement.sql.contains("ILIKE"));
+    assert!(!statement.sql.contains("password") && !statement.sql.contains("email"));
+    let values = statement.values.unwrap().0;
+    assert!(values.contains(&"%\\_\\%'%".to_string().into()));
+    assert!(!values.contains(&crate::authz::ROLE_SUPERADMIN.into()));
+    for params in [
+        json!({"query":" "}),
+        json!({"query":"x".repeat(101)}),
+        json!({"username":" x"}),
+        json!({"username":"x".repeat(256)}),
+        json!({"username":"x\n"}),
+        json!({"id":0}),
+    ] {
+        let parsed: accounts::AccountQuery = serde_json::from_value(params).unwrap();
+        assert!(!parsed.valid());
+    }
+    let long: accounts::AccountQuery =
+        serde_json::from_value(json!({"username":"x".repeat(255)})).unwrap();
+    assert!(long.valid());
+    assert!(serde_json::from_value::<accounts::AccountQuery>(json!({"nickname":"name"})).is_err());
+}
+
+#[tokio::test]
+async fn postgres_account_candidates_match_names_without_expanding_scope() {
+    use sea_orm::{ConnectionTrait, Database, Statement, TransactionTrait};
+    let Ok(url) = std::env::var("TEST_PG_URL") else {
+        return;
+    };
+    let db = Database::connect(url).await.unwrap();
+    let txn = db.begin().await.unwrap();
+    let prefix = format!("candidate_{}", uuid::Uuid::new_v4().simple());
+    for (suffix, nickname, role) in [
+        ("login_one", format!("{prefix} Display_%"), "user"),
+        ("login_two", format!("{prefix} Display_AX"), "user"),
+        ("operator", format!("{prefix} Other"), "admin"),
+        ("root", format!("{prefix} Display_% secret"), "superadmin"),
+    ] {
+        txn.execute(Statement::from_sql_and_values(DatabaseBackend::Postgres,
+            "INSERT INTO \"user\" (username,nickname,password,role) VALUES ($1,$2,'not-selected',$3)",
+            vec![format!("{prefix}_{suffix}").into(), nickname.into(), role.into()]))
+            .await.unwrap();
+    }
+    let literal = serde_json::from_value(json!({"query":format!("{prefix} DISPLAY_%")})).unwrap();
+    let (rows, total) = accounts::read(&txn, &literal, 5, 0).await.unwrap();
+    assert_eq!(total, 1);
+    assert_eq!(rows[0].username, format!("{prefix}_login_one"));
+    assert_eq!(rows[0].nickname, format!("{prefix} Display_%"));
+    let exact = serde_json::from_value(json!({"username":rows[0].nickname})).unwrap();
+    assert_eq!(accounts::read(&txn, &exact, 5, 0).await.unwrap().1, 0);
+    let broad = serde_json::from_value(json!({"query":prefix.to_uppercase()})).unwrap();
+    let (first, total) = accounts::read(&txn, &broad, 2, 0).await.unwrap();
+    let (last, tail_total) = accounts::read(&txn, &broad, 2, 2).await.unwrap();
+    assert_eq!((total, tail_total, first.len(), last.len()), (3, 3, 2, 1));
+    assert!(first.iter().all(|a| last.iter().all(|b| a.id != b.id)));
+    assert!(first[0].id < first[1].id && first[1].id < last[0].id);
+    let narrow = serde_json::from_value(json!({"query":format!("{prefix} Display_%"),
+                                             "id":last[0].id}))
+    .unwrap();
+    assert_eq!(accounts::read(&txn, &narrow, 5, 0).await.unwrap().1, 0);
+    let output = serde_json::to_string(&first).unwrap();
+    assert!(!output.contains("password") && !output.contains("not-selected"));
+    txn.rollback().await.unwrap();
+}
