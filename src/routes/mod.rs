@@ -309,6 +309,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/protected/quota/actions/accounts/{id}", get(quota_actions::account_target))
         .route("/api/protected/quota/actions/requests/{id}/review", post(quota_actions::review))
         .route("/api/protected/quota/actions/accounts/{id}/reset", post(quota_actions::reset))
+        .route("/api/protected/article-tag-actions/batch/prepare", post(article_tag_actions::batch::prepare))
+        .route("/api/protected/article-tag-actions/batch", post(article_tag_actions::batch::change))
         .route("/api/protected/article-tag-actions/{id}/prepare", post(article_tag_actions::prepare))
         .route("/api/protected/article-tag-actions/{id}", post(article_tag_actions::change))
         .route("/api/protected/article-actions/batch/prepare", post(article_actions::batch::prepare))

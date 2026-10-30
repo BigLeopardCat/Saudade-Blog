@@ -1,5 +1,8 @@
 //! One transaction creates missing tags and applies an approved article change.
 
+pub mod batch;
+#[cfg(test)]
+mod batch_tests;
 mod targets;
 #[cfg(test)]
 mod tests;
@@ -114,16 +117,32 @@ async fn apply<C: ConnectionTrait>(db: &C, id: i32, change: &Change) -> Result<O
     if change.version.len() != 64 || !change.version.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(targets::failure("确认版本无效，请重新准备操作"));
     }
-    let mut plan = targets::prepare(db, id, &change.intent, true).await?;
+    let plan = targets::prepare(db, id, &change.intent, true).await?;
     if plan.version != change.version {
         return Err(targets::failure("文章或标签已变化，请重新核对并确认"));
     }
+    apply_prepared(db, plan, &change.version).await
+}
+
+async fn apply_prepared<C: ConnectionTrait>(
+    db: &C,
+    mut plan: Prepared,
+    version: &str,
+) -> Result<Outcome, DbErr> {
+    let id = plan.id;
     let changed = plan.before != plan.after;
     if changed {
         let mut refs = Vec::with_capacity(plan.after.len());
         for tag in &mut plan.after {
             let id = if let Some(id) = tag.id {
                 id
+            } else if let Some(existing) =
+                targets::named(db, &tag.name, Some(tag.level), tag.parent_id, true).await?
+            {
+                if existing.color != tag.color {
+                    return Err(targets::failure("新标签属性已变化，请重新准备操作"));
+                }
+                existing.id.unwrap()
             } else if tag.level == 1 {
                 tag_one::ActiveModel {
                     name: Set(tag.name.clone()),
@@ -167,7 +186,7 @@ async fn apply<C: ConnectionTrait>(db: &C, id: i32, change: &Change) -> Result<O
     }
     Ok(Outcome {
         changed,
-        before_version: change.version.clone(),
+        before_version: version.to_owned(),
         state: plan,
     })
 }
