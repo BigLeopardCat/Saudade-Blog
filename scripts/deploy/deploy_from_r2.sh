@@ -96,59 +96,39 @@ SHA="$(cat logs/.last_deploy_sha)"
 [ -f frontend/dist/index.html ] || { echo "❌ 部署包里没有 frontend/dist/index.html"; exit 1; }
 echo "✅ $(date '+%H:%M:%S') 前端已更新"
 
-# ── 清上一代的前端死块（20260925 补）─────────────────────────────────────
-# 为什么必须有这一节：解包是 `tar.extractall` 直接覆盖，**从不清理上一代**，于是每次
-# 部署都把自己那一代内容寻址的哈希块留在 js/ 与 vendor/ 里，而 index.html 只指向最新
-# 一代 ⇒ 只增不减。实测 20260925：5362 个文件里当前页面只够得到 44 个，累积 1.15G、
-# 一天涨约 100MB（同族坑第五次的形态：前四次是"策略写了没人执行"，这次是**连清理
-# 这一环都不存在**）。
-#
-# 判据 = **上一节记下的本代清单**（包里有什么就是本代），dist 下不在清单里的就是上一代的
-# 残留。CI 每次全新构建 ⇒ 包里那份 frontend/dist 就是本代全集，所以这是精确的集合差，
-# 不依赖"文件名看着旧"这种猜测（20260925 实测：最近那个包的 44 个 js/vendor 成员与盘上
-# 集合逐条一致）。四道闸：
-#   ① 清单读不到、或条数 < 50 ⇒ 直接放弃（判据可疑时宁可留旧块）；
-#   ② 清单里**必须有 frontend/dist/index.html** ⇒ 否则它就不是"整棵 dist"的清单，
-#      拿它扫整棵等于把站点删空（这是 20261002 把范围扩到全 dist 之后新增的闸）；
-#   ③ 只删**普通文件**（`os.path.islink` 的先跳过，不碰符号链接；os.walk 默认不跟软链目录）；
-#   ④ 读不到 size 或 unlink 失败只跳过那一个（`OSError`）。
-# 清不掉**不影响部署结果**（只记一行警告退出码 0）：线上正确性不依赖这一步。
-#
-# 20261001：改成**递归**遍历——`chunk/` 是子目录，`os.listdir` 只看得到目录项、
-# `os.path.isfile` 判 false，所以旧版的平铺写法对 live2d-widgets 无效。
-# 清完顺手删掉因此变空的目录（自底向上 `rmdir`，非空会抛 OSError 被跳过）。
-#
-# 20261002：范围从三个目录（js/ vendor/ live2d-widgets/）扩到 **frontend/dist/ 整棵**。
-# 此前只扫那三个 ⇒ css/（92 个残留）、mp4/、graph/、woff2/、icons/ 与顶层从来没被清过。
-# 顶层要单独留一个例外：**build-info.json 不在包里**（它是本脚本落地后自己写的，
-# 见文件末尾），一起扫会在写下一版之前先删掉上一版记录，而它是"只信 build-info 的 sha"
-# 这条判据的唯一来源 ⇒ 进 KEEP。
+# ── 清理不再使用的前端资源 ───────────────────────────────────────────
+# 内容哈希 JS/CSS 保留 24 小时，供部署前已打开的页面加载懒模块。
+# 本代清单、build-info 与符号链接受保护；其他过期文件按清单清理。
+# 清单缺失、过小或缺少 index.html 时中止清理。
 python3 - <<'PYEOF3' || echo "⚠️ $(date '+%H:%M:%S') 前端死块清理失败（不影响本次部署，下次部署再清）"
-import os
+import os, re, time
 ROOT = 'frontend/dist'
-# 本代清单之外、但必须留的（见上面 20261002 那条）
+GRACE_SECONDS = 24 * 3600
+HASHED_CHUNK = re.compile(r'-[A-Za-z0-9_-]{8,}\.(?:js|css)$')
+cutoff = time.time() - GRACE_SECONDS
+# build-info is written after extraction, so it is not part of the artifact manifest.
 KEEP = {os.path.join(ROOT, 'build-info.json')}
 try:
     with open('logs/.deploy_manifest.txt', encoding='utf-8') as fh:
         current = {ln.strip() for ln in fh if ln.strip()}
 except OSError as exc:
     raise SystemExit(f'⚠️ 读不到本代清单 logs/.deploy_manifest.txt（{exc}）⇒ 不清（宁可留旧块也不冒险）')
-# 真实整棵 dist 约 230 条（20261002 实测 337 个文件里 233 个属于本代）。门槛定 50 是
-# 让"被截断/半截的清单"够不到删除这一步——范围扩到全 dist 之后，一个太小的清单
-# 意味着把站点删空，而宁可留旧块。
 if len(current) < 50:
     raise SystemExit(f'⚠️ 本代清单只有 {len(current)} 条，太小 ⇒ 不清（判据可疑时宁可留旧块）')
 if os.path.join(ROOT, 'index.html') not in current:
     raise SystemExit('⚠️ 本代清单里没有 frontend/dist/index.html ⇒ 它不像"整棵 dist"的清单，不清')
 if not os.path.isdir(ROOT) or os.path.islink(ROOT):
     raise SystemExit(f'⚠️ {ROOT} 不是普通目录（软链或不存在）⇒ 不清')
-dead = []
+dead, retained = [], 0
 for root, _subdirs, files in os.walk(ROOT):
     for name in files:
         p = os.path.join(root, name)
         if p in current or p in KEEP:
             continue
         if os.path.isfile(p) and not os.path.islink(p):
+            if HASHED_CHUNK.search(name) and os.stat(p).st_mtime >= cutoff:
+                retained += 1
+                continue
             dead.append(p)
 freed = 0
 for p in dead:
@@ -167,7 +147,7 @@ for root, _subdirs, _files in os.walk(ROOT, topdown=False):
     except OSError:
         pass   # 非空（还有本代文件）或权限问题 ⇒ 留着
 print(f'🧹 前端死块：清掉上一代 {len(dead)} 个 / {freed / 1048576:.1f}MB'
-      f'（本代 {len(current)} 个全部保留；顺带删掉 {empty} 个空目录）')
+      f'（本代 {len(current)} 个保留；宽限期旧块 {retained} 个；删除 {empty} 个空目录）')
 if dead:
     print('   ' + '、'.join(os.path.basename(p) for p in dead[:5]) + ('…' if len(dead) > 5 else ''))
 PYEOF3
