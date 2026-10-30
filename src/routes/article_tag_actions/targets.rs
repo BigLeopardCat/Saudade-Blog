@@ -35,7 +35,7 @@ pub(super) async fn current<C: ConnectionTrait>(db: &C, id: i32) -> Result<Vec<T
         .collect()
 }
 
-async fn named<C: ConnectionTrait>(
+pub(super) async fn named<C: ConnectionTrait>(
     db: &C,
     name: &str,
     level: Option<i16>,
