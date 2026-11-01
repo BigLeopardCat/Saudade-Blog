@@ -25,6 +25,7 @@ LOAD = [
     "0018_chat_memory_source_role.sql",
     "0019_chat_task_input.sql",
     "0020_personal_message_deletion.sql",
+    "0021_automation_results.sql",
 ]
 
 EXCLUDED = {
