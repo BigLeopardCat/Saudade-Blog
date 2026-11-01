@@ -6,17 +6,17 @@ use crate::{
     routes::AppState,
 };
 use axum::{
-    Json,
     extract::State,
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
+    Json,
 };
 use sea_orm::{
     ActiveModelTrait, ConnectionTrait, DatabaseConnection, DbBackend, DbErr, EntityTrait, Set,
     Statement, TransactionTrait,
 };
 use serde::Deserialize;
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 use std::{sync::Arc, time::Duration};
 
 #[derive(Deserialize)]
@@ -25,6 +25,29 @@ pub struct Control {
     task_id: String,
     input_id: Option<String>,
     text: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct ConfirmationControl {
+    conversation_id: i32,
+    task_id: Option<String>,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Action {
+    Submit,
+    Inputs,
+    Confirmation,
+}
+
+impl Action {
+    fn endpoint(self) -> &'static str {
+        match self {
+            Self::Submit => "tasks/input",
+            Self::Inputs => "tasks/inputs/status",
+            Self::Confirmation => "tasks/confirmation",
+        }
+    }
 }
 
 fn identifier(text: &str) -> bool {
@@ -44,7 +67,7 @@ pub async fn submit_handler(
     headers: HeaderMap,
     Json(req): Json<Control>,
 ) -> Response {
-    control(state, headers, req, true).await
+    control(state, headers, req, Action::Submit).await
 }
 
 pub async fn status_handler(
@@ -52,15 +75,40 @@ pub async fn status_handler(
     headers: HeaderMap,
     Json(req): Json<Control>,
 ) -> Response {
-    control(state, headers, req, false).await
+    control(state, headers, req, Action::Inputs).await
 }
 
-async fn control(state: Arc<AppState>, headers: HeaderMap, req: Control, submit: bool) -> Response {
+pub async fn confirmation_handler(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(req): Json<ConfirmationControl>,
+) -> Response {
+    control(
+        state,
+        headers,
+        Control {
+            conversation_id: req.conversation_id,
+            task_id: req.task_id.unwrap_or_default(),
+            input_id: None,
+            text: None,
+        },
+        Action::Confirmation,
+    )
+    .await
+}
+
+async fn control(
+    state: Arc<AppState>,
+    headers: HeaderMap,
+    req: Control,
+    action: Action,
+) -> Response {
+    let submit = action == Action::Submit;
     let uid = match auth_jwt::auth_uid(&state.db, &headers).await {
         Ok(uid) => uid,
         Err(_) => return failure(StatusCode::UNAUTHORIZED, "unauthorized"),
     };
-    if !identifier(&req.task_id)
+    if (!(action == Action::Confirmation && req.task_id.is_empty()) && !identifier(&req.task_id))
         || (submit
             && (!req.input_id.as_deref().is_some_and(identifier)
                 || !req
@@ -80,13 +128,12 @@ async fn control(state: Arc<AppState>, headers: HeaderMap, req: Control, submit:
         Ok(Some(row)) if crate::authz::is_known_role(&row.role) => row.role,
         _ => return failure(StatusCode::SERVICE_UNAVAILABLE, "identity_unavailable"),
     };
-    let endpoint = if submit {
-        "tasks/input"
-    } else {
-        "tasks/inputs/status"
-    };
+    let endpoint = action.endpoint();
     let mut payload =
         json!({"user_id":uid,"conversation_id":req.conversation_id,"task_id":req.task_id});
+    if action == Action::Confirmation && req.task_id.is_empty() {
+        payload.as_object_mut().unwrap().remove("task_id");
+    }
     if submit {
         payload["input_id"] = json!(req.input_id);
         payload["text"] = json!(req.text.as_deref().unwrap_or("").trim());
@@ -118,8 +165,16 @@ async fn control(state: Arc<AppState>, headers: HeaderMap, req: Control, submit:
         Err(_) => return failure(StatusCode::BAD_GATEWAY, "invalid_agent_response"),
     };
     if status.is_success() {
-        if body["task_id"].as_str() != Some(&req.task_id) {
+        if !req.task_id.is_empty() && body["task_id"].as_str() != Some(&req.task_id) {
             return failure(StatusCode::BAD_GATEWAY, "task_mismatch");
+        }
+        if action == Action::Confirmation {
+            let mut response = (status, Json(body)).into_response();
+            response.headers_mut().insert(
+                axum::http::header::CACHE_CONTROL,
+                "no-store".parse().unwrap(),
+            );
+            return response;
         }
         // Every applied snapshot contains its ordered prefix. Replayed HTTP
         // responses cannot insert a later supplemental message ahead of it.
@@ -332,17 +387,13 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(stale["status"], "applied");
-        assert!(
-            save(&db, actor.id, conv.id, "admin", "task", &applied)
-                .await
-                .is_err()
-        );
+        assert!(save(&db, actor.id, conv.id, "admin", "task", &applied)
+            .await
+            .is_err());
         let changed = json!({"id":"one","text":"另一个正文","status":"applied"});
-        assert!(
-            save(&db, actor.id, conv.id, "user", "task", &changed)
-                .await
-                .is_err()
-        );
+        assert!(save(&db, actor.id, conv.id, "user", "task", &changed)
+            .await
+            .is_err());
         assert_eq!(
             chat_history::Entity::find()
                 .filter(chat_history::Column::ConversationId.eq(conv.id))

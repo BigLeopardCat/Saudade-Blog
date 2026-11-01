@@ -12,7 +12,7 @@
 |---|---|---|
 | `src/` | 博客后端：文章/分类/标签/留言板 API、登录鉴权、聊天链路中枢 | Rust（Axum + SeaORM） |
 | `frontend/` | 博客前端 SPA（**不含**看板娘与对话面板，见下） | React 18 + Vite 8 + antd + sass |
-| `saudade-blog-agent/` | 看板娘的"大脑" | Python（FastAPI + 手写 LangGraph） |
+| `saudade-blog-agent/` | 看板娘的"大脑" | Python（FastAPI + LangChain Agent / LangGraph checkpoint） |
 | `scripts/` | 部署、迁移、巡检脚本 | bash / python |
 | `docs/` | 设计文档（安全边界、部署与运维、向量图谱、IoT 等） | Markdown |
 
