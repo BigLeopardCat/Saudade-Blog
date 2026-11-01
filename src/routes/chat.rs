@@ -1,6 +1,7 @@
 mod control;
 mod task_inputs;
 pub use task_inputs::{submit_handler as task_input_handler, status_handler as task_input_status_handler};
+pub use task_inputs::confirmation_handler as task_confirmation_handler;
 mod pending;
 mod persistence;
 use persistence::{save_assistant_reply, save_execution_log, PERSISTENCE_ERROR};

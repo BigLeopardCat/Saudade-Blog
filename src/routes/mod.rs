@@ -240,6 +240,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/chat/stream", post(chat::chat_stream_handler))
         .route("/api/chat/task/input", post(chat::task_input_handler))
         .route("/api/chat/task/inputs/status", post(chat::task_input_status_handler))
+        .route("/api/chat/task/confirmation", post(chat::task_confirmation_handler))
         .route("/api/chat/confirmation/cancel", post(chat::cancel_handler))
         // 对话历史（DB 权威源，前端转跳/多窗口恢复；handler 内手写鉴权）
         .route("/api/chat/history/text", get(own_reads::history::list))

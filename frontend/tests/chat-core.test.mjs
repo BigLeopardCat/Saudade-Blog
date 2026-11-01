@@ -98,7 +98,7 @@ console.log('== matchText（命令帧拼接差异归一）==');
     '不同正文不能因为命令前缀被误合并');
 }
 
-console.log('== mergeItems（同 id 替换 / 内容收养 / 追加 / 排序）==');
+console.log('== mergeItems（按 id 去重 / 重复正文独立 / 追加 / 排序）==');
 {
   const nowT = atToday(10, 0);
   const m1 = { id: 'd1', type: 'user', text: '你好', time: nowT };
@@ -107,18 +107,19 @@ console.log('== mergeItems（同 id 替换 / 内容收养 / 追加 / 排序）==
   const r1 = core.mergeItems([m1, m2], [{ id: 'd2', type: 'agent', text: '喵呜～（改）', time: nowT + 1000 }]);
   assert.eq(r1.length, 2, '同 id 替换不新增');
   assert.eq(r1[1].text, '喵呜～（改）', '同 id 内容被替换');
-  // 内容收养：id 不同但 type+text 碰撞 → 原位换 id（position 不动）
+  // 不同消息即使正文相同也不能合并，否则确认卡会丢失来源。
   const r2 = core.mergeItems([m1, m2], [{ id: 'd9', type: 'user', text: '你好 ', time: nowT }]);
-  assert.eq(r2.length, 2, '内容收养不重复');
-  assert.eq(r2[0].id, 'd9', '收养后条目换成 incoming 的 id');
+  assert.eq(r2.length, 3, '相同正文的不同消息都保留');
+  assert.eq(r2.some(item => item.id === 'd1') && r2.some(item => item.id === 'd9'), true, '不替换来源消息身份');
   // 无碰撞 → 追加并按 time 排序
   const r3 = core.mergeItems([m2], [m1]);
   assert.eq(r3.length, 2, '追加');
   assert.eq(r3[0].id, 'd1', '按 time 升序排前');
-  // 双收养不重复消费（两条相同内容只收养一次）
+  // 多条重复正文按独立身份追加。
   const dup = { id: 'd10', type: 'agent', text: '喵呜～', time: nowT + 1000 };
   const r4 = core.mergeItems([m1, m2], [dup, { id: 'd11', type: 'agent', text: '喵呜～', time: nowT + 2000 }]);
-  assert.eq(r4.length, 3, '重复内容只收养一条，另一条追加');
+  assert.eq(r4.length, 4, '重复正文不吞消息');
+  assert.eq(core.mergeItems(r4, [dup]).length, 4, '同一消息重复广播不重复追加');
 }
 
 console.log('== replaceWithIncoming（服务器权威 + 60s 乐观窗口）==');
