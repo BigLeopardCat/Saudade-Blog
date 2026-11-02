@@ -691,6 +691,9 @@ pub struct DailyRow {
     pub comments: i64,
 }
 
+mod window;
+pub use window::DailyWindow;
+
 #[derive(Serialize, Default)]
 pub struct NoteStatsReportDto {
     #[serde(rename = "generatedAt")]
@@ -719,6 +722,8 @@ pub struct NoteStatsReportDto {
     pub top_commented: Vec<NoteRankRow>,
     /// 最近 30 天，**定长 30 行、缺日补零**（见下）
     pub daily: Vec<DailyRow>,
+    #[serde(rename = "dailyWindow")]
+    pub daily_window: DailyWindow,
 }
 
 /// 当前可见的文章：`id → title`。**只取两列**，绝不 `SELECT *`
@@ -1011,6 +1016,7 @@ pub async fn note_report(
         .map(|(_, v)| *v)
         .sum();
 
+    let daily_window = window::summarize(&daily, start, today);
     let mut daily: Vec<DailyRow> = daily.into_values().collect();
     daily.sort_by(|a, b| a.date.cmp(&b.date));
 
@@ -1025,6 +1031,7 @@ pub async fn note_report(
         top_favorited,
         top_commented,
         daily,
+        daily_window,
     }))
 }
 
