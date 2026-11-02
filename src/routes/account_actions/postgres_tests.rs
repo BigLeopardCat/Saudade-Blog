@@ -94,11 +94,12 @@ async fn prepared(ctx: &PgContext, id: i32, intent: &Intent) -> Prepared {
     let Json(response) = prepare(
         State(ctx.state.clone()),
         headers(id, actor.token_version),
-        Json(intent.clone()),
+        Json(intent.clone().into()),
     )
     .await;
     assert_eq!(response.code, 200, "{}", response.message);
-    response.data
+    assert_eq!(response.data.intent.as_ref(), Some(intent));
+    response.data.plan
 }
 
 #[tokio::test]

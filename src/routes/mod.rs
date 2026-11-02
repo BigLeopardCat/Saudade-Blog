@@ -322,15 +322,13 @@ pub fn create_router(state: AppState) -> Router {
             post(notes::update_note)
         )
 
-        // 后台首页待办（20260924）：待办卡此前只存浏览器 localStorage，现按用户落库。
-        // 前端那张卡 = 整份列表覆盖（GET 读 / PUT 写），取舍见 routes/todos.rs 头注。
+        // Administrator-owned todo lists and version-bound single-item actions.
         .route(
             "/api/protected/todos",
             get(todos::list_todos).put(todos::save_todos),
         )
-        // 追加一条（20260926）：agent 安排日程用的通道——它手里没有那份列表，
-        // 整份覆盖会抹掉主人的改动，所以单独给一条"只加不覆盖"的接口。
         .route("/api/protected/todos/item", post(todos::add_todo))
+        .route("/api/protected/todos/item/{id}", get(todos::get_todo).delete(todos::delete_todo))
 
         // 评论管理（20261002）：文章详情页讨论区的裁决队列，挂在 admin 守卫域内（后台页面用）。
         // 公开那三条在 public_routes（见上方注），**这里的三条与它们不是一回事**：
@@ -338,11 +336,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/protect/comments", get(comments::list_comments_admin))
         .route("/api/protect/comments/{id}/audit", put(comments::audit_comment))
         .route("/api/protect/comments/{id}", delete(comments::delete_comment_admin))
-        // 翻完成标记（20260926）：同一族的第二条最小通道——按**正文**认出唯一那一行、
-        // 只翻它的 done（查无此条/有多条一律零写，判据见 todos.rs 的 pick_todo）。
         .route("/api/protected/todos/done", post(todos::set_todo_done))
-        // 改排期（20260929）：同一族的第三条最小通道——按**正文**认出唯一那一行、
-        // 只改它的 due_date（传 null/空串 = 清空排期；判据同 pick_todo）。
         .route("/api/protected/todos/date", post(todos::set_todo_date))
 
         // 编辑草稿（20260912c）：自动保存 + 编辑器专用读入口

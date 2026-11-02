@@ -1,5 +1,7 @@
 //! Exact account actions: read-only plans and independently authorized, atomic changes.
 mod model;
+mod preparation;
+pub use preparation::{Preparation, PrepareRequest};
 #[cfg(test)]
 mod postgres_tests;
 mod targets;
@@ -31,18 +33,22 @@ fn response<T: Default>(result: Result<T, DbErr>) -> Json<ApiResponse<T>> {
 pub async fn prepare(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Json(intent): Json<Intent>,
-) -> Json<ApiResponse<Prepared>> {
+    Json(request): Json<PrepareRequest>,
+) -> Json<ApiResponse<Preparation>> {
     let result = async {
         let actor = crate::auth_jwt::claims_from_headers(&headers)
             .ok_or_else(|| targets::failure("未登录"))?;
+        let intent = request.normalize(targets::now())?;
         let txn = state
             .db
             .begin_with_config(Some(IsolationLevel::RepeatableRead), None)
             .await?;
         let (plan, _, _) = targets::prepare(&txn, actor.sub, actor.ver, &intent, false).await?;
         txn.commit().await?;
-        Ok(plan)
+        Ok(Preparation {
+            plan,
+            intent: Some(intent),
+        })
     }
     .await;
     response(result)
