@@ -234,3 +234,84 @@ async fn retired_summary_event_is_rejected_as_an_unknown_protocol_frame() {
         "event: text\ndata: \"reply\"\n\nevent: summary\ndata: {}\n\nevent: done\ndata: {}\n\n".into()).await;
     assert!(matches!(events.as_slice(), [Frame::Text(_), Frame::Error(_)]));
 }
+
+#[tokio::test]
+async fn text_reset_replaces_prose_without_erasing_receipts_or_other_events() {
+    let db = sea_orm::MockDatabase::new(sea_orm::DatabaseBackend::Postgres)
+        .append_exec_results([
+            sea_orm::MockExecResult { last_insert_id: 1, rows_affected: 1 },
+            sea_orm::MockExecResult { last_insert_id: 2, rows_affected: 1 },
+        ])
+        .append_query_results([Vec::<pending_action::Model>::new()])
+        .into_connection();
+    let state = state_with_db(db);
+    let wire = concat!(
+        "event: text\ndata: \"discarded-provisional-canary\"\n\n",
+        "event: progress\ndata: \"核对中\"\n\n",
+        "event: receipts\ndata: [{\"tool\":\"fixture\",\"action\":\"executed\"}]\n\n",
+        "event: confirmation\ndata: {\"q\":\"确认？\",\"token\":\"opaque\"}\n\n",
+        "event: command\ndata: {\"kind\":\"navigate\",\"url\":\"/about\"}\n\n",
+        "event: text_reset\ndata: {}\n\n",
+        "event: text\ndata: \"corrected-answer-canary\"\n\n",
+        "event: done\ndata: {}\n\n",
+        "event: text_reset\ndata: {}\n\n",
+        "event: text\ndata: \"late-canary\"\n\n",
+    );
+    let events = transcript(state.clone(), 7, wire.into()).await;
+    assert!(matches!(events.as_slice(), [
+        Frame::Text(_), Frame::Progress(_), Frame::Confirmation(_), Frame::Command(_),
+        Frame::TextReset(_), Frame::Text(text), Frame::Done(_)
+    ] if text == "corrected-answer-canary"));
+    let state = Arc::try_unwrap(state).ok().unwrap();
+    let log = format!("{:?}", state.db.into_transaction_log());
+    assert!(log.contains("execution_log") && log.contains("COMMIT"));
+    assert!(log.contains("chat_history") && log.contains("corrected-answer-canary"));
+    assert!(!log.contains("discarded-provisional-canary") && !log.contains("late-canary"));
+    assert!(!log.contains("DELETE") && !log.contains("ROLLBACK"));
+}
+
+#[tokio::test]
+async fn reset_without_replacement_never_persists_retracted_text() {
+    let state = state();
+    let wire = concat!(
+        "event: text\ndata: \"discarded\"\n\n",
+        "event: text_reset\ndata: {}\n\n",
+        "event: done\ndata: {}\n\n",
+    );
+    let events = transcript(state.clone(), 7, wire.into()).await;
+    assert!(matches!(events.as_slice(), [Frame::Text(_), Frame::TextReset(_), Frame::Done(_)]));
+    let state = Arc::try_unwrap(state).ok().unwrap();
+    assert!(state.db.into_transaction_log().is_empty());
+}
+
+#[tokio::test]
+async fn invalid_reset_data_is_rejected_without_committing_partial_prose() {
+    for payload in [json!({"clear": true}), json!([]), json!(null), json!(""), json!(0)] {
+        let state = state();
+        let wire = format!(
+            "event: text\ndata: \"partial\"\n\nevent: text_reset\ndata: {payload}\n\n\
+             event: done\ndata: {{}}\n\n",
+        );
+        let events = transcript(state.clone(), 7, wire).await;
+        assert!(matches!(events.as_slice(), [Frame::Text(_), Frame::Error(_)]));
+        let state = Arc::try_unwrap(state).ok().unwrap();
+        assert!(state.db.into_transaction_log().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn reset_after_error_is_neither_forwarded_nor_persisted() {
+    let state = state();
+    let wire = concat!(
+        "event: text\ndata: \"partial\"\n\n",
+        "event: error\ndata: \"failed\"\n\n",
+        "event: text_reset\ndata: {}\n\n",
+        "event: text\ndata: \"late\"\n\n",
+        "event: done\ndata: {}\n\n",
+    );
+    let events = transcript(state.clone(), 7, wire.into()).await;
+    assert!(matches!(events.as_slice(), [Frame::Text(_), Frame::Error(message)]
+        if message == "failed"));
+    let state = Arc::try_unwrap(state).ok().unwrap();
+    assert!(state.db.into_transaction_log().is_empty());
+}

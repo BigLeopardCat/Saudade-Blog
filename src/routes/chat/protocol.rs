@@ -8,6 +8,7 @@ use serde_json::{json, Map, Value};
 #[serde(tag = "event", content = "data", rename_all = "snake_case")]
 pub(super) enum Frame {
     Text(String),
+    TextReset(#[serde(deserialize_with = "empty_object")] Empty),
     Progress(String),
     TaskInput(Map<String, Value>),
     Confirmation(Map<String, Value>),
@@ -21,6 +22,15 @@ pub(super) enum Frame {
 #[derive(Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Empty {}
+
+fn empty_object<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Empty, D::Error> {
+    let fields = Map::<String, Value>::deserialize(deserializer)?;
+    if fields.is_empty() {
+        Ok(Empty {})
+    } else {
+        Err(serde::de::Error::custom("expected an empty object"))
+    }
+}
 
 pub(super) fn decode(event: &eventsource_stream::Event) -> Result<Frame, serde_json::Error> {
     let data: Value = serde_json::from_str(&event.data)?;
@@ -68,6 +78,11 @@ mod tests {
             ("message", json!("__CMD__:{}")),
             ("reset", json!("all")),
             ("text", json!({})),
+            ("text_reset", json!({"text": "replacement"})),
+            ("text_reset", json!("")),
+            ("text_reset", json!(null)),
+            ("text_reset", json!([])),
+            ("text_reset", json!(false)),
             ("command", json!("__CMD__:{}")),
             ("confirmation", json!([])),
             ("receipts", json!({})),
@@ -89,6 +104,7 @@ mod tests {
             ("pending", json!({"jti": "private"})),
             ("receipts", json!([])),
             ("progress", json!("读取中")),
+            ("text_reset", json!({})),
             ("error", json!("不可用")),
         ] {
             assert!(decode(&Incoming {

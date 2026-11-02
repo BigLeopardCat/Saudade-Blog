@@ -1549,6 +1549,11 @@ fn forward_agent_stream(
                     reply.push_str(&text);
                     yield Ok(axum::response::sse::Event::default().event(incoming.event).data(incoming.data));
                 }
+                Frame::TextReset(_) => {
+                    // Retract this turn's provisional prose, never execution facts or cards.
+                    reply.clear();
+                    yield Ok(axum::response::sse::Event::default().event(incoming.event).data(incoming.data));
+                }
                 Frame::TaskInput(value) => {
                     match task_inputs::persist_event(&state.db, uid, conversation_id,
                         source_role.as_deref().unwrap_or(""), value).await {
