@@ -56,19 +56,28 @@ export interface NoteStatsReport {
     generatedAt: string;
     totalViews: number;
     totalLikes: number;
-    /** 收藏量合计与收藏榜（20260930 后端已回；20261001 起本页三榜齐上）。
-     *  可空只表示"老前端还没消费它"，后端一定会回这两个键。 */
-    totalFavorites?: number;
-    topFavorited?: NoteRankRow[];
-    /** 讨论量合计与讨论榜（20261003 补）。与卡片/详情页同一个口径：
+    /** 当前可见文章的收藏量及对应榜单。 */
+    totalFavorites: number;
+    topFavorited: NoteRankRow[];
+    /** 讨论量与讨论榜，使用文章详情页的公开评论口径：
      *  只算**公开看得见**的评论（`approved = 1 AND is_deleted = 0`）。 */
-    totalComments?: number;
-    topCommented?: NoteRankRow[];
+    totalComments: number;
+    topCommented: NoteRankRow[];
     /** 四个榜**数组顺序即名次**（下标 0 = 第 1 名），没有单独的 rank 字段 */
     topViewed: NoteRankRow[];
     topLiked: NoteRankRow[];
     /** 最近 30 天，**已补零**、日期连续（后端展开） */
     daily: DailyRow[];
+    /** 服务端统计窗口；月份小计仅覆盖该窗口，不代表自然月全量。 */
+    dailyWindow: {
+        scope: "rolling_window";
+        start: string;
+        end: string;
+        monthlySubtotals: Array<{
+            month: string; start: string; end: string;
+            views: number; likes: number; favorites: number; comments: number;
+        }>;
+    };
 }
 
 /** 期报粒度（`?kind=`）。**白名单**，别处不要再写一份字符串字面量 */
@@ -138,7 +147,7 @@ export interface UserStatsReport {
     totalMessages: number;
     totalExecutions: number;
     /** 全站讨论总量（20261003 补）。口径见 `UserActivityRow.comments` */
-    totalComments?: number;
+    totalComments: number;
     /** 活跃 = 最近一条会话/消息/讨论落在窗口内 */
     activeUsers7d: number;
     activeUsers30d: number;
