@@ -1,6 +1,33 @@
 //! Continuation is a control request, never a new user message or an approval.
 
 use super::ChatRequest;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+
+#[derive(Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum AppearanceSetting {
+    DarkMode,
+    Sakura,
+    Rain,
+    Snow,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AppearanceMode {
+    On,
+    Off,
+}
+
+#[derive(Deserialize, Serialize)]
+pub struct BrowserResult {
+    pub command_id: String,
+    pub status: String,
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settings: Option<BTreeMap<AppearanceSetting, AppearanceMode>>,
+}
 
 pub(super) fn valid(payload: &ChatRequest) -> bool {
     let identifier = |value: &str| {
@@ -13,7 +40,7 @@ pub(super) fn valid(payload: &ChatRequest) -> bool {
         && identifier(&payload.resume_task)
         && payload.browser_result.as_ref().is_none_or(|result| {
             !payload.resume_task.is_empty() && !result.command_id.is_empty()
-                && identifier(&result.command_id) && result.path.len() <= 2048
+                && identifier(&result.command_id) && result.path.len() <= 512
                 && matches!(result.status.as_str(), "completed" | "timeout" | "failed")
         })
         && (payload.resume_task.is_empty()
@@ -41,6 +68,22 @@ mod tests {
         request["resume_task"] = json!("task-123");
         request["browser_result"]["status"] = json!("approved");
         assert!(!valid(&serde_json::from_value(request).unwrap()));
+    }
+
+    #[test]
+    fn appearance_reports_preserve_closed_settings_without_authorizing_operations() {
+        let request = json!({"message":"", "resume_task":"look", "conversation_id":42,
+            "browser_result":{"command_id":"look-1", "status":"completed", "path":"/",
+                              "settings":{"dark_mode":"on", "rain":"off"}}});
+        let parsed: ChatRequest = serde_json::from_value(request.clone()).unwrap();
+        assert!(valid(&parsed));
+        let report = serde_json::to_value(parsed.browser_result.unwrap()).unwrap();
+        assert_eq!(report["settings"], request["browser_result"]["settings"]);
+        for bad in [json!({"permission":"on"}), json!({"snow":"toggle"}), json!({"rain":true})] {
+            let mut changed = request.clone();
+            changed["browser_result"]["settings"] = bad;
+            assert!(serde_json::from_value::<ChatRequest>(changed).is_err());
+        }
     }
 
     #[test]
