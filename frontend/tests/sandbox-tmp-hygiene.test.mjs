@@ -72,7 +72,7 @@ if (SH) {
         '★ `mkdir -p` 在 `TMPDIR=` 之前（TMPDIR 不存在 ⇒ tempfile 静默回落到 /tmp）',
         { mkIdx, envIdx });
 
-    ok(f.includes('if TMPDIR="$suite_tmp" timeout -k 30 480 python3 "$t" >>"$LOG" 2>&1; then rm -rf "$suite_tmp"'),
+    ok(f.includes('if TMPDIR="$suite_tmp" timeout -k 30 480 "${SANDBOX_PYTHON[@]}" "$t" >>"$LOG" 2>&1; then rm -rf "$suite_tmp"'),
         '★ 通过那一支才删（then 紧跟 rm -rf）');
     ok(f.includes('现场留在 $suite_tmp'), '★ 失败那一支把现场路径写进日志');
     ok(count(f, 'rm -rf "$suite_tmp"') === 1,
@@ -81,7 +81,7 @@ if (SH) {
     ok(f.includes('rmdir "$RUN" 2>/dev/null'), '轮次目录只收空的（rmdir 对非空自然失败 ⇒ 留着失败现场）');
 
     // 清扫：必须 --apply（默认只列不删），且**不能**影响沙箱结果
-    ok(f.includes('python3 scripts/prune_sandbox_tmp.py --apply'), '末尾调清扫脚本，且显式 --apply');
+    ok(f.includes('"${SANDBOX_PYTHON[@]}" scripts/prune_sandbox_tmp.py --apply'), '末尾调清扫脚本，且显式 --apply');
     ok(f.includes('scripts/prune_sandbox_tmp.py --apply >>"$LOG" 2>&1')
         && f.includes('|| say "[$TS] 清扫运行异常'),
         '★ 清扫失败只记一行、不改沙箱结果（同 agent 仓 nightly 调 trace_retention.py 的做法）');

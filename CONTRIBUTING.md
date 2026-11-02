@@ -244,10 +244,15 @@ CI 会起一个 `mysql:8.0` 服务容器跑它（见 `deploy.yml` 的 `check` jo
 （**那一班默认不装**——`deploy/install.sh` 只装心跳探针；要开就自己加
 `40 4 * * * <本仓>/scripts/nightly_sandboxes.sh >/dev/null 2>&1`，加之前先手跑一次）。
 
-手动跑单个：
+夜间运行器使用 uv 的独立 Python 3.12 环境，按
+`frontend/tests/requirements.txt` 固定的版本加载依赖，不使用系统或用户目录中的 Pillow。
+需先安装 uv，并在同一环境中准备 Chromium。手动跑单个也使用相同命令：
 
 ```bash
-python3 frontend/tests/某个.test.py
+uv run --no-project --isolated --python 3.12 --with-requirements frontend/tests/requirements.txt \
+  python -m playwright install chromium
+uv run --no-project --isolated --python 3.12 --with-requirements frontend/tests/requirements.txt \
+  python -I frontend/tests/某个.test.py
 ```
 
 > ⚠️ 这套要点无头 Chrome，内存开销大：在低内存机器上**必须串行**，不要并发起第二个 chromium。
