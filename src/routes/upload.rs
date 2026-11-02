@@ -18,29 +18,14 @@ use crate::r2;
 use crate::search_core::like_escape;
 use sha2::{Digest, Sha256};
 
-// ── 同一份字节重复上传 ⇒ 复用已有文件（20260924，用户拍板的 A 方案）─────────────
-// 事故现象：博主在文章里"用一张图库里已有的图"，图库里就多出一张重复的图。
-// 根因有两条，缺一不可：
-//   ① 正文插图只有一条通道 = bytemd 的 uploadImages → 本接口（前端有"从图库选图"
-//      的入口，但只接了封面，见 NewNotes 的 selectGalleryImage）；
-//   ② 本接口对任何一次 POST 都**无条件**落新文件 + 无条件 INSERT 一行，因为文件名
-//      带了秒级时间戳前缀，同一张图重传永不重名、也永远查不出重复。
-// 于是"复用"实际变成"再上传一份"。取证：uploads/ 里 EMQX.png 有 4 份、agent_2.png
-// 有 2 份，md5 逐字节相同、只有时间戳前缀不同。
-//
-// 现在的判据 = **字节相同就复用**（sha256 比对已有文件），不写盘、不新增行，
-// 直接把已有 URL 还回去 —— 前端零改动、表结构零改动，一次覆盖正文/封面/图库页
-// 三条上传路径。
-//
-// 已知盲区（不要当 bug 报）：
-//   · 只按**原始文件名**筛候选（`{14位时间戳}_原名` 去掉前缀后同名）再比内容。
-//     这是为了避免每次上传都把整个 uploads/ 读一遍算哈希（文件数会一直涨）；
-//     代价是"同一张图改了文件名再传"仍会存两份。要连那种也去掉，把
-//     `strip_timestamp_prefix` 那道 continue 删掉即可（当前目录规模下开销可忽略）。
-//   · 封面/图库页上传会先经前端 `ImageCompression` 压成 800×600 q0.7（有损），
-//     同一张原图走"正文（不压缩）"与"封面（压缩）"两条路会得到**不同字节**，
-//     哈希不同 ⇒ 去不掉，这是有损编码的固有结果，不是判据漏洞。
-//   · 历史重复行不清理（要清得先读库看引用，本批不动存量）。
+// Reuse identical uploads; local candidates are selected by original filename.
+// Different encodings have different hashes and remain separate assets.
+pub const IMAGE_MAX_BYTES: usize = 20 * 1024 * 1024;
+
+pub fn route() -> axum::routing::MethodRouter<Arc<AppState>> {
+    axum::routing::post(upload_image)
+        .layer(axum::extract::DefaultBodyLimit::max(IMAGE_MAX_BYTES + 64 * 1024))
+}
 
 /// 一次上传的候选筛选用：把 `20260912013218_EMQX.png` 还原成 `EMQX.png`。
 /// 不是"时间戳_原名"形状的原样返回（手工放进 uploads/ 的文件也算候选）。
@@ -400,6 +385,10 @@ pub async fn upload_image(
             "上传目标只认 local（本站服务器）或 r2（R2 图床）。这次没有上传任何文件。",
         ));
     };
+
+    if data.len() > IMAGE_MAX_BYTES {
+        return Json(ApiResponse::error("单张图片不能超过 20 MiB，本次未上传。"));
+    }
 
     // ① 只收图片：**后缀**在名单里。名单住在 `utils`（与头像那扇门共用一把尺子）。
     if !image_ext_ok(&raw_name) {

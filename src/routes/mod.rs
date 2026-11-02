@@ -286,7 +286,7 @@ pub fn create_router(state: AppState) -> Router {
 
     let protected_routes = Router::new()
         // Images
-        .route("/api/protect/upload", post(upload::upload_image))
+        .route("/api/protect/upload", upload::route())
         .route("/api/protect/images", get(upload::list_images))
         .route("/api/protect/delImg", delete(upload::delete_images))
         // R2 图床的用量读数（20261006）：挂在这一组里 ⇒ 自动只要管理员
