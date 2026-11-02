@@ -1,42 +1,37 @@
-/**
- * 博客内置表情包（自定义 markdown 表情语法 :名字: → <img>）
- *
- * 设计：
- * - 语法为 :中文名:（如 :头疼:），名字均为中文/数字，天然与 gemoji 插件的
- *   GitHub ASCII 表情（:smile: 等）无冲突；
- * - 仅当名字命中 STICKERS 映射时才转换，未知名字原样保留为文本；
- * - 表情以纯文本形式存储（文章正文/对话历史/摘要），渲染时按需转换，
- *   无协议/DB 改动，全端（文章/编辑器/对话）共用同一插件；
- * - 20260903 素材换为泠月喵 PNG 贴纸（public/stickers/ 下，原始大图压缩至
- *   长边 128px，透明底原样保留），语法不变；暂不做输入框选择按钮（纯渲染）。
- *   注意：chat-render.js（看板娘对话 fallback 渲染器）内联了一份同源清单，
- *   增删表情需两处同步。
- */
+/** Shared site sticker aliases for Markdown and plain-text rendering. */
 import type { Root } from 'mdast'
 
-/** 一段文本拆出来的片段：普通文本，或一个**命中的**表情（未知名字不是片段，是普通文本）。
- *  给**纯文本宿主**用（个人中心的通知、公告弹窗、`.ucBodyText` 这类不跑 markdown 的地方）：
- *  React 直接把片段渲染成文本节点与 `<img>`，全程不产生 HTML 字符串 ——
- *  于是也不必碰 `dangerouslySetInnerHTML`（那条路的纪律是"只许喂 renderBlogMarkdown 的产物"，
- *  见 CommentSection/index.tsx 头注）。markdown 宿主仍走 `renderBlogMarkdown`（同一条 remarkStickers）。 */
+/** Render-safe pieces for hosts that do not use Markdown. */
 export type StickerPiece =
   | { kind: 'text'; text: string }
   | { kind: 'sticker'; name: string; url: string }
 
 /** 名字（中文）→ 素材路径（public/stickers/ 下） */
 export const STICKERS: Record<string, string> = {
-  头疼: '/stickers/touteng.png',
-  委屈: '/stickers/weiqu.png',
-  害羞: '/stickers/haixiu.png',
-  比耶: '/stickers/biye.png',
-  犯错: '/stickers/fancuo.png',
-  生气: '/stickers/shengqi.png',
-  贴贴: '/stickers/tietie.png',
-  震惊: '/stickers/zhenjing.png',
-  困困: '/stickers/kunkun.png',
-  躺平: '/stickers/tangping.png',
-  嫌弃: '/stickers/xianqi.png',
-  比心: '/stickers/bixin.png',
+  头疼: '/stickers/v2/touteng-cardigan.webp',
+  委屈: '/stickers/v2/weiqu-hoodie.webp',
+  害羞: '/stickers/v2/haixiu-cardigan.webp',
+  比耶: '/stickers/v2/biye-cardigan.webp',
+  犯错: '/stickers/v2/fancuo-jacket.webp',
+  生气: '/stickers/v2/shengqi-jacket.webp',
+  贴贴: '/stickers/v2/tietie-hoodie.webp',
+  震惊: '/stickers/v2/zhenjing-jacket.webp',
+  困困: '/stickers/v2/kunkun-hoodie.webp',
+  躺平: '/stickers/v2/tangping-hoodie.webp',
+  嫌弃: '/stickers/v2/xianqi-jacket.webp',
+  比心: '/stickers/v2/bixin-cardigan.webp',
+  期待: '/stickers/v2/qidai-hoodie.webp',
+  疑惑: '/stickers/v2/yihuo-hoodie.webp',
+  喝茶: '/stickers/v2/hecha-hoodie.webp',
+  晚安: '/stickers/v2/wanan-hoodie.webp',
+  收到: '/stickers/v2/shoudao-cardigan.webp',
+  思考: '/stickers/v2/sikao-cardigan.webp',
+  加油: '/stickers/v2/jiayou-cardigan.webp',
+  早安: '/stickers/v2/zaoan-cardigan.webp',
+  得意: '/stickers/v2/deyi-jacket.webp',
+  略略: '/stickers/v2/luelue-jacket.webp',
+  偷笑: '/stickers/v2/touxiao-jacket.webp',
+  无语: '/stickers/v2/wuyu-jacket.webp',
 }
 
 export const STICKER_NAMES: string[] = Object.keys(STICKERS)
@@ -59,10 +54,7 @@ export function remarkStickers(this: unknown) {
         const child = children[i]
         if (child && child.type === 'text' && typeof child.value === 'string' && child.value.includes(':')) {
           const pieces = splitStickerText(child.value)
-          // 判据是「拆出来的不是原来那一个文本节点」，**不能写成 `pieces.length > 1`**
-          // （20261002 修）：整段**只有一个**表情时（`:头疼:` 独占一行/整条评论只有表情），
-          // 拆出来恰好是长度 1 的 `[image]`，旧判据会跳过替换 ⇒ "只发表情"反而渲染成字面文本。
-          // 无命中时 splitStickerText 返回 `[value]`（同一个字符串），这里按值比对即可。
+          // A single sticker replaces one text node too; unmatched text stays unchanged.
           if (pieces.length !== 1 || pieces[0] !== child.value) children.splice(i, 1, ...pieces)
         }
         // 非文本节点继续下钻（inlineCode/code 是叶子，无 children 自动跳过）

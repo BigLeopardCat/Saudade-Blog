@@ -1,22 +1,6 @@
-// ═ 纯文本宿主的表情渲染：两个渲染器必须认出同一批表情（20261008）══
-//   node tests/sticker-text.test.mjs
-//
-// 现场（用户原话）：「给个人中心的公告通知面板也提供表情包渲染，现在 agent 发过去的
-// 通知带的表情包没有渲染」。个人中心的通知正文与公告弹窗是**纯文本宿主**（不跑 markdown，
-// 换行靠 `white-space: pre-wrap`），此前直接 `{n.content}` ⇒ `:头疼:` 以字面量示人。
-//
-// 修法不是给它们接一整套 markdown（`.ucBodyText` 的 4 行夹取按行数算，塞个块级 `<p>`
-// 进去就判不准了），而是**同一条清单、同一遍扫描、两种产物形状**：
-//   · `splitStickerText`（私有）→ mdast 节点，喂 remark-rehype（文章/评论区那条路）；
-//   · `splitStickers`（公开）→ 数据片段，喂 React（纯文本宿主那条路）。
-//
-// 本套件的中心判据是**两条路一致**：同一段文本，mdast 侧产出的 image 节点数必须等于
-// 片段侧产出的 sticker 数。少了这条，改匹配规则只会改到一条路——而症状是"某个宿主里
-// 表情时灵时不灵"，最难看出来的那种。
-//
-// 另一条判据是 20261002 那个已修缺陷的回归锁：**整段只有一个表情**时也必须替换
-// （当时 mdast 侧用了 `pieces.length > 1` 当判据，于是"只发表情"渲染成字面文本）。
+/** Shared sticker rendering, aliases and deployed asset integrity. */
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
@@ -62,12 +46,12 @@ console.log('\n── splitStickers ──');
         '名字超过 12 字 ⇒ 正则不认（长度上限就是为此设的：别把正文里的普通冒号对吃进来）');
 
     // 整段只有一个表情：**没有空文本片段**（20261002 那个缺陷的形状）
-    eq(splitStickers(':头疼:'), [{ kind: 'sticker', name: '头疼', url: '/stickers/touteng.png' }],
+    eq(splitStickers(':头疼:'), [{ kind: 'sticker', name: '头疼', url: STICKERS.头疼 }],
         '整段只有一个表情 ⇒ 恰好一个 sticker 片段，不留空文本（此前正是这条渲染成了字面文本）');
 
     eq(splitStickers('晚安 :头疼: 好梦'), [
         { kind: 'text', text: '晚安 ' },
-        { kind: 'sticker', name: '头疼', url: '/stickers/touteng.png' },
+        { kind: 'sticker', name: '头疼', url: STICKERS.头疼 },
         { kind: 'text', text: ' 好梦' },
     ], '文本/表情/文本三段：**空格原样切在文本里**（不 trim，靠 pre-wrap 排版）');
 
@@ -82,17 +66,27 @@ console.log('\n── splitStickers ──');
 // ═══ 二、清单本身：每个名字都能双向命中 ═══
 console.log('\n── 清单 ──');
 {
-    ok(STICKER_NAMES.length === 12, `清单 12 个（20261008 口径），实测 ${STICKER_NAMES.length}`,
+    ok(STICKER_NAMES.length === 24, `清单 24 个，实测 ${STICKER_NAMES.length}`,
        { names: STICKER_NAMES });
     const bad = STICKER_NAMES.filter((n) => {
         const p = splitStickers(`:${n}:`);
         return p.length !== 1 || p[0].kind !== 'sticker' || p[0].url !== STICKERS[n];
     });
     eq(bad, [], '每个名字单独出现都命中自己那条素材路径');
-    ok(STICKER_NAMES.every((n) => STICKERS[n].startsWith('/stickers/') && STICKERS[n].endsWith('.png')),
-        '素材路径同族（/stickers/*.png —— index.css 的全局 img.sticker 与它同一族约定）');
+    ok(STICKER_NAMES.every((n) => STICKERS[n].startsWith('/stickers/') && STICKERS[n].endsWith('.webp')),
+        '素材路径同族（/stickers/v2/*.webp —— index.css 的全局 img.sticker 与它同一族约定）');
     const dupes = STICKER_NAMES.filter((n, i) => STICKER_NAMES.indexOf(n) !== i);
     eq(dupes, [], '清单无重名');
+}
+
+const manifest = JSON.parse(readFileSync(path.join(root, 'public/stickers/v2/manifest.json'), 'utf8'));
+const originals = ['头疼', '委屈', '害羞', '比耶', '犯错', '生气', '贴贴', '震惊', '困困', '躺平', '嫌弃', '比心'];
+ok(originals.every(name => STICKER_NAMES.includes(name)), '旧文章和对话的十二个表情别名仍可用');
+eq(manifest.assets.map(asset => asset.name), STICKER_NAMES, '生成素材与渲染目录一一对应');
+for (const asset of manifest.assets) {
+    const bytes = readFileSync(path.join(root, 'public', STICKERS[asset.name]));
+    eq(createHash('sha256').update(bytes).digest('hex'), asset.sha256, `${asset.name}：图片内容与清单一致`);
+    ok(bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP', `${asset.name}：有效WebP文件头`);
 }
 
 // ═══ 三、两条路一致（本套件的中心判据）═══
@@ -108,7 +102,7 @@ console.log('\n── mdast 侧 ⇄ 片段侧 ──');
 
     // mdast 侧的产物形状（片段侧没有 class 这一层，那条走 React 的 className）
     const imgs = mdastImages('晚安 :头疼: 好梦');
-    ok(imgs.length === 1 && imgs[0].url === '/stickers/touteng.png' && imgs[0].alt === '头疼',
+    ok(imgs.length === 1 && imgs[0].url === STICKERS.头疼 && imgs[0].alt === '头疼',
         'mdast 侧：url 与 alt 都对（alt 是名字）');
     ok(imgs[0].data?.hProperties?.className?.[0] === 'sticker',
         'mdast 侧：<img> 带 class="sticker"（index.css 的全局尺寸规则认的就是它）');

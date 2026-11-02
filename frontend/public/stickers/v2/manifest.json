@@ -1,0 +1,281 @@
+{
+  "mode": "built-in image_gen",
+  "common_prompt": "Create ONE standalone transparent chat sticker of the same mascot as the reference. Preserve her recognizable silver-white long hair, fluffy white cat ears, blue eyes, face, chibi proportions and polished Japanese anime cel-shaded drawing style. Use the specified expression and outfit instead of copying the reference pose. Bust-to-waist framing except explicitly reclining, expressive readable face, crisp soft line art, light outline, generous padding around ears and hands. Compact icon intended for 128px display, clean transparent alpha background. No text, captions, letters, watermark, grid, collage, or extra characters. No maid clothes, apron, maid headdress, head bows or ribbons, and no separate or held white cat. Fully clothed casual look. ",
+  "outfits": {
+    "cardigan": "Light blue knitted cardigan over a plain white crew-neck shirt, navy casual skirt if visible; no tie or bows.",
+    "hoodie": "Cozy cream-colored hoodie with the hood DOWN and casual dark trousers if visible; ears fully visible.",
+    "jacket": "Black casual cropped jacket and pale lavender crew-neck T-shirt."
+  },
+  "encoding": {
+    "format": "webp",
+    "size": 256,
+    "quality": 88,
+    "alphaQuality": 100
+  },
+  "assets": [
+    {
+      "name": "头疼",
+      "file": "touteng-cardigan.webp",
+      "outfit": "cardigan",
+      "pose": "Exasperated headache, one hand rubbing her temple, weary knitted brows, small tired frown.",
+      "source_sha256": "3cab26a0fffc07d4725785a0510cff3d69c10c9a8cafa6dbfe6e22529240ad53",
+      "sha256": "69ab65ba0652d0de156442da22bcc07110c400c3f7f5d8f19d75f4837b07ad72",
+      "bytes": 26856,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "name": "委屈",
+      "file": "weiqu-hoodie.webp",
+      "outfit": "hoodie",
+      "pose": "Feeling wronged, watery blue eyes, soft pout, hands close to her cheeks, tiny tear, sympathetic rather than dramatic.",
+      "source_sha256": "2f80a60bf971881c16dc274bbf042cb0f22ad1aa7152fabbd74e16837ca7ccaf",
+      "sha256": "12622e97dd991ac4974b8c8ba3a8dc9bab0489c072a0925b955450c7a3047d2d",
+      "bytes": 27350,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "name": "害羞",
+      "file": "haixiu-cardigan.webp",
+      "outfit": "cardigan",
+      "pose": "Shy happy blush, bashful smile, gaze a little to the side, fingertips touching in front.",
+      "source_sha256": "4e80411d1361dc124064c0f0335b3c88f2f68985ed3c97c0ed4fff63f9e53464",
+      "sha256": "2b9d16492f00aff8e38e59c6af1f2c0a4ecd5ef9fed439b5f633025a31a9ced9",
+      "bytes": 27828,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "name": "比耶",
+      "file": "biye-cardigan.webp",
+      "outfit": "cardigan",
+      "pose": "Cheerful wink and one V-sign hand near her face, bright friendly blue eye.",
+      "source_sha256": "8877957e16b5e655e406ba13e55affffe6f8bdddc235ff43665139c71f369621",
+      "sha256": "d3877345c90304b8ef3771993274fa557ae56f15b7be1cf69ca2029ac3ac3a29",
+      "bytes": 28424,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "name": "犯错",
+      "file": "fancuo-jacket.webp",
+      "outfit": "jacket",
+      "pose": "Oops, sheepish apologetic smile, one hand scratching her cheek, raised worried eyebrow and a tiny sweat drop.",
+      "source_sha256": "f06d392e1c359e170d160a1e0e6aea7d1043edbb5d4fb4715152110a0311a820",
+      "sha256": "2096ed5782996678d701caed77dcac7c4902a32515e3a3930d39708b357df667",
+      "bytes": 26960,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "name": "生气",
+      "file": "shengqi-jacket.webp",
+      "outfit": "jacket",
+      "pose": "Cute annoyed puffed cheeks, brows furrowed, arms crossed, mild playful anger.",
+      "source_sha256": "a7561e6db1671dd02dc5b332914011ac2f9be610613d6e458caf6760ab08dc3e",
+      "sha256": "94e40c3a801a08b467ae08b92d2784b98439ec8523115fba33205cea1e8df929",
+      "bytes": 28134,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "name": "贴贴",
+      "file": "tietie-hoodie.webp",
+      "outfit": "hoodie",
+      "pose": "Affectionate cozy lean toward the viewer, cheek resting in her hands, gentle closed-eye smile, a tiny floating heart.",
+      "source_sha256": "f29f8969ce3cbf083e94769bcbb7ebd5658bc3a814453934f4707fa95b92a0ea",
+      "sha256": "ef71528c613fecb9dc436f5dfa03c2628f0563d4c67d8350d6b401223cfcf5f7",
+      "bytes": 28524,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "name": "震惊",
+      "file": "zhenjing-jacket.webp",
+      "outfit": "jacket",
+      "pose": "Very surprised wide blue eyes and small open mouth, hands raised near face.",
+      "source_sha256": "41b7ec061544392f5e72d7dc6b56b62491845e951692fb4cc02ca4e05e435783",
+      "sha256": "8533c1ee96f700541bac72d7afa3cc8e5083de4f732d468bb33196ff4cc4ad5f",
+      "bytes": 29374,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "name": "困困",
+      "file": "kunkun-hoodie.webp",
+      "outfit": "hoodie",
+      "pose": "Sleepy half-closed eyes, yawning into one hand, relaxed shoulders. No letters or sleeping text.",
+      "source_sha256": "ae4f769684b1a36c6f876d3c76671da1225a47352e9afc7bbcd2e4f453395b85",
+      "sha256": "380b5d22b884ee0f2f3eb2bf38764d39d15795095af0869e911c49edd535643d",
+      "bytes": 26998,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "name": "躺平",
+      "file": "tangping-hoodie.webp",
+      "outfit": "hoodie",
+      "pose": "Tiny chibi full body reclining lazily diagonally with arms relaxed, peaceful eyes, dark casual trousers, all ears and feet visible. No furniture or background.",
+      "source_sha256": "9398b82ec48b241750714770abec405c80ab0a611974abeae53dfa2d72b2fb7e",
+      "sha256": "12ca2865609b0b3f317ff15bacc9d3472d58c3a3efb26edd0aa6e34c85003788",
+      "bytes": 26676,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "name": "嫌弃",
+      "file": "xianqi-jacket.webp",
+      "outfit": "jacket",
+      "pose": "Unimpressed sideways glance, one eyebrow raised, slight pout, arms crossed, playful teasing displeasure.",
+      "source_sha256": "149bd53e2d05bb536cf16fc0414e869c065e3f15dfb20044cf1dcedc1e4bc685",
+      "sha256": "3946ea6baf749d97b49512fab04c9d6956a098d56f62f357127b98fa1888583f",
+      "bytes": 27606,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "name": "比心",
+      "file": "bixin-cardigan.webp",
+      "outfit": "cardigan",
+      "pose": "Warm smile with both hands forming a clear heart gesture in front of her chest, bright blue eyes.",
+      "source_sha256": "1843e315eead53310d8c5de6aa06eb4fa3234daf64c97cc4596d09d4ca26b48c",
+      "sha256": "a952936e566d79897a1a61eef065ecca0309816a614f6f6358db429f56e0f08a",
+      "bytes": 27932,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "name": "期待",
+      "file": "qidai-hoodie.webp",
+      "outfit": "hoodie",
+      "pose": "Eager anticipation, sparkling blue eyes, little fists tucked below chin, hopeful sweet smile.",
+      "source_sha256": "614cb37bfa008bb21a8d5ed23d81cead7bfc03db45392432f8a848dce216b93c",
+      "sha256": "9eabf58160090efa724e801c35e7274692596e27f56a3c03e7890fcd4d5f722a",
+      "bytes": 26750,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "name": "疑惑",
+      "file": "yihuo-hoodie.webp",
+      "outfit": "hoodie",
+      "pose": "Puzzled head tilt, slightly raised brows, tiny uncertain mouth, one palm turned up. No question-mark text.",
+      "source_sha256": "f4298ce94a5d968e4fed40c65a45cd2135923f5867d17931593714195e0a514e",
+      "sha256": "887117a27a08c1899ab359f6f963763a7ca4458e544807530945aa7eb690190b",
+      "bytes": 27046,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "name": "喝茶",
+      "file": "hecha-hoodie.webp",
+      "outfit": "hoodie",
+      "pose": "Contentedly sipping tea from one simple small ceramic cup, relaxed blue eyes, calm smile. No animals.",
+      "source_sha256": "7c0c0a765c2619b88615e8d0de960458409dd4a8534fdc5489459a4b453625cc",
+      "sha256": "b334d59243b73aa0d136255f270f275afa58ee70bf37791cc0322e52dbc40f1e",
+      "bytes": 27426,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "name": "晚安",
+      "file": "wanan-hoodie.webp",
+      "outfit": "hoodie",
+      "pose": "Gentle goodnight expression, peaceful closed eyes, cheek resting on joined hands, soft smile.",
+      "source_sha256": "da5375fa55a2d403d347e6afc816392d0998d99c8191637d6be09aacc9c4a069",
+      "sha256": "28795dc4fea0c177c478b0e959d674764868150e5575b30f2621de632ed8e1c6",
+      "bytes": 26786,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "name": "收到",
+      "file": "shoudao-cardigan.webp",
+      "outfit": "cardigan",
+      "pose": "Confident cheerful acknowledgement, friendly nod and a thumbs-up gesture, alert blue eyes.",
+      "source_sha256": "cba90064b14653ab8e63d46129c5ab518b993598ba5a2eab1ef5bc348d7a0698",
+      "sha256": "e42a94faba0e2b270048da842453e7410cbadec31db8aaf6f95b8e5911fb4c01",
+      "bytes": 28690,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "name": "思考",
+      "file": "sikao-cardigan.webp",
+      "outfit": "cardigan",
+      "pose": "Thoughtful finger on chin, eyes looking a little upward, concentrated curious expression.",
+      "source_sha256": "598ce0069f40ea188f2790372403f61f5eab12f45d60c230d58b37da925d914f",
+      "sha256": "35ba99b95dcbde07cae721d1a787bb5896f91c83d245e4b1d52b7f1e225544d6",
+      "bytes": 26780,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "name": "加油",
+      "file": "jiayou-cardigan.webp",
+      "outfit": "cardigan",
+      "pose": "Encouraging energetic grin, both little fists raised near shoulders, bright determined blue eyes.",
+      "source_sha256": "a67a90820be832664e3430b8d514d008c76a4331510f37d31bfd736cd8834def",
+      "sha256": "b306808d07ab16511456feb179a8596248e0d04a8dadaa80c1abd1fa930337d2",
+      "bytes": 28564,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "name": "早安",
+      "file": "zaoan-cardigan.webp",
+      "outfit": "cardigan",
+      "pose": "Fresh cheerful morning greeting, open friendly smile and one enthusiastic wave.",
+      "source_sha256": "552dc3070d31ca1495989b2f5fec88add7e5f5f82e93b1b32f129d7baf58e267",
+      "sha256": "951ac7223f18b871b0e8503e422f385c1120fa5d8e2f35d2044978dce5171834",
+      "bytes": 29458,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "name": "得意",
+      "file": "deyi-jacket.webp",
+      "outfit": "jacket",
+      "pose": "Confident playful half-lidded blue eyes, small smug satisfied smile, hands on hips.",
+      "source_sha256": "4e477cb9265e45464921e2ca6de271d7357eb9943f25b8d24fca3072897d7497",
+      "sha256": "7abe23a09644bb9ce5cb49ce40f10a5da5b9767089c25157f3c52c3865e0635d",
+      "bytes": 26024,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "name": "略略",
+      "file": "luelue-jacket.webp",
+      "outfit": "jacket",
+      "pose": "Playful teasing, tiny tongue sticking out, cheeky wink, one finger lightly pulling down the lower eyelid. No rude gesture.",
+      "source_sha256": "16d6fc44cb0ae738c2863ccd80cf00ef63a9b3b24e903d8631378ade732c55fb",
+      "sha256": "e412dfe1249cc66deecaa3d0de0e78c4a6cd2aba39e851e8f876a703c66b3b44",
+      "bytes": 27610,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "name": "偷笑",
+      "file": "touxiao-jacket.webp",
+      "outfit": "jacket",
+      "pose": "Mischievous quiet giggle, one hand covering her little smile, amused narrowed blue eyes.",
+      "source_sha256": "854858c0f8fbc6a58d12fc1b451c209ebe3260bbad8ec7830fe751527e158659",
+      "sha256": "23473cb6ed04ad85b636ea4ff29cddcfa0cebee7ae6ab81257c84fb389d5c23a",
+      "bytes": 28276,
+      "width": 256,
+      "height": 256
+    },
+    {
+      "name": "无语",
+      "file": "wuyu-jacket.webp",
+      "outfit": "jacket",
+      "pose": "Deadpan speechless shrug, half-lidded blue eyes, flat little mouth, palms turned up.",
+      "source_sha256": "1badb4b024023addac041fc608926f3f9c6001af150247ea328fe846c2f6ef42",
+      "sha256": "029d8760e72cc8076323411171193af33c01bac7ac7f9a4d4bd484ecee693bf4",
+      "bytes": 28046,
+      "width": 256,
+      "height": 256
+    }
+  ]
+}
