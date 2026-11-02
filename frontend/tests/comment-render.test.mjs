@@ -86,15 +86,15 @@ console.log('渲染管线 —— 危险输入被剥掉：');
     // **整条评论只有一个表情**——用表情回一句"贴贴"是最常见的用法，
     // 也正是 20261002 修掉的那个判据洞（旧代码 `pieces.length > 1` 会跳过替换）
     const s = renderBlogMarkdown(':头疼:');
-    ok(/<img[^>]*src="\/stickers\/touteng\.png"/.test(s), '单独一个 :名字: 也渲染成 <img>（不留字面文本）', s);
+    ok(/<img[^>]*src="\/stickers\/v2\/touteng-cardigan\.webp"/.test(s), '单独一个 :名字: 也渲染成 <img>（不留字面文本）', s);
     ok(/class="sticker"/.test(s), '表情 img 带 class="sticker"（尺寸样式靠它）', s);
     const s2 = renderBlogMarkdown('贴贴 :贴贴: 啦');
-    ok(/<img[^>]*src="\/stickers\/tietie\.png"/.test(s2) && /贴贴\s/.test(s2),
+    ok(/<img[^>]*src="\/stickers\/v2\/tietie-hoodie\.webp"/.test(s2) && /贴贴\s/.test(s2),
         '句子中间的表情同样转换，前后文字保留', s2);
     // 20261008 新增那四枚：名字在清单里、素材路径也接上了（只加名字忘了放图会在这里露）
     const s3 = renderBlogMarkdown(':比心: :困困: :躺平: :嫌弃:');
-    ok(['bixin', 'kunkun', 'tangping', 'xianqi'].every((f) => s3.includes(`/stickers/${f}.png`)),
-        '20261008 新增的四枚（比心/困困/躺平/嫌弃）都渲染成图', s3);
+    ok(['bixin-cardigan', 'kunkun-hoodie', 'tangping-hoodie', 'xianqi-jacket'].every((f) => s3.includes(`/stickers/v2/${f}.webp`)),
+        '比心、困困、躺平、嫌弃均使用新版图片', s3);
 }
 {
     // 未知的 :xx: 原样保留（stickers.ts 的既定语义），不该被当成表情
