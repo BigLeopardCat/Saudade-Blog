@@ -171,6 +171,7 @@ const NoteData = () => {
                 topFavorited: asRows(d?.topFavorited),
                 topCommented: asRows(d?.topCommented),
                 daily: asDaily(d?.daily),
+                dailyWindow: d.dailyWindow,
             })
         }).catch(() => {
             setErr('网络异常，请稍后再试')
@@ -283,7 +284,9 @@ const NoteData = () => {
                     </div>
 
                     <div className="akPanel akPanelWide">
-                        <h3>最近 30 天趋势</h3>
+                        <h3>最近 30 天趋势{report?.dailyWindow && (
+                            <small>（{report.dailyWindow.start} 至 {report.dailyWindow.end}）</small>
+                        )}</h3>
                         <div className="akChart">
                             {trendData.length === 0
                                 ? <Empty description="还没有数据" image={Empty.PRESENTED_IMAGE_SIMPLE}/>
