@@ -31,12 +31,7 @@ use crate::auth_jwt;
 use crate::entity::user;
 use tracing::{info, warn};
 
-#[derive(Deserialize, Serialize)]
-pub struct BrowserResult {
-    pub command_id: String,
-    pub status: String,
-    pub path: String,
-}
+pub use control::BrowserResult;
 
 #[derive(Deserialize)]
 pub struct ChatRequest {
