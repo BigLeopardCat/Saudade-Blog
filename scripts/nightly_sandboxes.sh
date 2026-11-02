@@ -6,7 +6,7 @@
 # DRY=1 prints planned work without resolving packages or starting browsers.
 set -u
 
-REPO="${PROJECT_DIR:-/home/ubuntu/Saudade-Blog}"
+REPO="${PROJECT_DIR:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}"
 LOG=${LOG:-"$HOME/sandbox_regression.log"}
 MARK=${MARK:-"$HOME/sandbox_regression.failed"}
 TS=$(date '+%Y-%m-%d %H:%M:%S')

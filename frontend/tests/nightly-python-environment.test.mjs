@@ -52,12 +52,14 @@ import { spawnSync } from 'node:child_process'
 const args = process.argv.slice(2)
 appendFileSync(process.env.UV_CALLS, JSON.stringify(args) + '\\n')
 if (process.env.FAIL_UV === '1') process.exit(23)
+if (args[args.indexOf('--with-requirements') + 1] !== process.env.EXPECT_REQUIREMENTS) process.exit(26)
 const at = args.indexOf('python')
 if (at < 0) process.exit(24)
 const result = spawnSync(process.env.ISOLATED_PYTHON, args.slice(at + 1), { stdio: 'inherit' })
 process.exit(result.status ?? 25)
 `, { mode: 0o755 })
         const env = { ...process.env, PROJECT_DIR: fixture, UV_BIN: executable,
+            EXPECT_REQUIREMENTS: path.join(suites, 'requirements.txt'),
             ISOLATED_PYTHON: python, UV_CALLS: path.join(fixture, 'uv-calls'),
             BASH_ENV: shellEnvironment, PYTHONPATH: poison,
             LOG: path.join(fixture, 'nightly.log'), MARK: path.join(fixture, 'failed'),
@@ -81,6 +83,15 @@ process.exit(result.status ?? 25)
             assert.equal(args[args.indexOf('python') + 1], '-I')
         }
         assert.equal(existsSync(env.MARK), false)
+        const portableScript = path.join(fixture, 'scripts/nightly_sandboxes.sh')
+        writeFileSync(portableScript, readFileSync(path.join(repo, 'scripts/nightly_sandboxes.sh')))
+        const portableEnvironment = { ...env }
+        delete portableEnvironment.PROJECT_DIR
+        const portable = run('bash', [portableScript], {
+            cwd: tmpdir(), env: portableEnvironment,
+        })
+        assert.equal(portable.status, 0, readFileSync(env.LOG, 'utf8') + portable.stderr)
+        assert.equal(JSON.parse(readFileSync(path.join(fixture, 'suite.json'), 'utf8')).prefix, virtual)
         rmSync(path.join(fixture, 'suite.json'))
         const failed = invoke({ FAIL_UV: '1' })
         assert.equal(failed.status, 1)
