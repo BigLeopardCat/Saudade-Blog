@@ -14,6 +14,7 @@ for (const dark of [false,true]) test(`sticker picker stays readable and inside 
   await trigger.click()
   const panel = page.getByRole('dialog',{name:'选择站内表情'})
   await expect(panel).toBeVisible()
+  await expect.poll(() => panel.locator('img').first().evaluate(image => image.getBoundingClientRect().height)).toBeGreaterThanOrEqual(60)
   const bounds = await panel.evaluate(element => {
     const popup = element.closest('.ant-popover')!, r=popup.getBoundingClientRect()
     const image=element.querySelector('img')!.getBoundingClientRect()

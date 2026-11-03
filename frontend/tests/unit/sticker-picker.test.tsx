@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { StyleProvider } from '@ant-design/cssinjs/lib/index.js'
 import { expect, it, vi } from 'vitest'
+import { STICKER_NAMES } from '../../src/utils/stickers'
 import StickerPicker from '../../src/components/CommentSection/StickerPicker'
 
 it('opens outside the composer, inserts one sticker and restores keyboard focus', async () => {
@@ -15,6 +16,7 @@ it('opens outside the composer, inserts one sticker and restores keyboard focus'
     const item = within(panel).getAllByRole('button')[0]
     fireEvent.click(item)
     expect(pick).toHaveBeenCalledTimes(1)
+    expect(pick).toHaveBeenCalledWith(STICKER_NAMES[0])
     expect(submit).not.toHaveBeenCalled()
     expect(document.activeElement).toBe(trigger)
     await waitFor(() => expect(trigger.getAttribute('aria-expanded')).toBe('false'))

@@ -137,8 +137,8 @@ console.log('\n── 接线 ──');
 
     ok(/img\.sticker \{/.test(css) && !/img\[src\^="\/stickers\/"\]/.test(css),
         '全局尺寸规则只认 class（带 src 前缀那条会把评论区表情选择器的 <img> 拖进同优先级的平局）');
-    ok(/height: 1\.8em/.test(css) && !/height/.test(comp),
-        '四个值仍在 index.css 那一份里（组件只管结构，不写尺寸）');
+    ok(/--sticker-size: 5rem/.test(css) && /height: var\(--sticker-size\)/.test(css) && !/height/.test(comp),
+        '尺寸由 index.css 共享变量统一提供（组件只管结构）');
 
     // 整行可点 + 两颗按钮必须拦住冒泡（不拦就是"点一下既标已读又展开详情"）
     ok(/className="ucNoticeRow"/.test(uc) && /onClick=\{\(\) => setNoticeOpenId\(n\.id\)\}/.test(uc),
