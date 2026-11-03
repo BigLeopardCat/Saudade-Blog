@@ -10,12 +10,13 @@ import { build } from 'esbuild'
 import { compile } from 'sass'
 import { test as base, expect } from '@playwright/test'
 
-type Entry = 'axios' | 'announcement' | 'tags' | 'categories' | 'public-header' | 'users' | 'announcement-popup' | 'dashboard-users' | 'sticker-picker' | 'note-editor' | 'article-collaboration' | 'cover-display' | 'article-grid'
+type Entry = 'axios' | 'announcement' | 'tags' | 'categories' | 'public-header' | 'users' | 'announcement-popup' | 'dashboard-users' | 'sticker-picker' | 'note-editor' | 'article-collaboration' | 'cover-display' | 'article-grid' | 'editor-images'
 const frontend = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
-const bundles = new Map<Entry, Promise<{ script: string; css: string }>>()
+const bundles = new Map<string, Promise<{ script: string; css: string }>>()
 
-function bundle(entry: Entry): Promise<{ script: string; css: string }> {
-  const cached = bundles.get(entry)
+function bundle(entry: Entry, cdnBaseURL: string): Promise<{ script: string; css: string }> {
+  const key = JSON.stringify([entry, cdnBaseURL])
+  const cached = bundles.get(key)
   if (cached) return cached
   const result = build({
     absWorkingDir: frontend,
@@ -31,20 +32,21 @@ function bundle(entry: Entry): Promise<{ script: string; css: string }> {
     } }],
     define: {
       'import.meta.env': JSON.stringify({
-        VITE_HTTP_BASEURL: '', VITE_CDN_BASEURL: '', MODE: 'production',
+        VITE_HTTP_BASEURL: '', VITE_CDN_BASEURL: cdnBaseURL, MODE: 'production',
         DEV: false, PROD: true, BASE_URL: '/',
       }),
       'process.env.NODE_ENV': '"production"',
     },
   }).then(result => ({ script: result.outputFiles.find(file => file.path.endsWith('.js'))!.text, css: result.outputFiles.find(file => file.path.endsWith('.css'))?.text || '' }))
-  bundles.set(entry, result)
+  bundles.set(key, result)
   return result
 }
 
-export const test = base.extend<{ entry: Entry; sandboxURL: string }>({
+export const test = base.extend<{ entry: Entry; cdnBaseURL: string; sandboxURL: string }>({
   entry: ['axios', { option: true }],
-  sandboxURL: async ({ entry, page }, provide) => {
-    const { script, css } = await bundle(entry)
+  cdnBaseURL: ['', { option: true }],
+  sandboxURL: async ({ entry, cdnBaseURL, page }, provide) => {
+    const { script, css } = await bundle(entry, cdnBaseURL)
     const files: Record<string, { type: string; body: string }> = {
       '/': { type: 'text/html', body: '<!doctype html><html lang="zh-CN"><meta charset="utf-8"><link rel="stylesheet" href="/bundle.css"><style>body{margin:0;font-family:"Noto Sans CJK SC",sans-serif}</style><div id="root"></div><script src="/bundle.js"></script></html>' },
       '/bundle.js': { type: 'text/javascript', body: script },
