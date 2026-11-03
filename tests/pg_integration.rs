@@ -3762,3 +3762,6 @@ async fn comment_sort_hot_default_and_new_differ() {
 
 #[path = "pg/editor_drafts.rs"]
 mod editor_drafts;
+
+#[path = "pg/confirmation_batches.rs"]
+mod confirmation_batches;
