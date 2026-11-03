@@ -2,8 +2,8 @@ import {test, expect} from './sandbox'
 import type {Page} from '@playwright/test'
 
 test.use({entry: 'article-grid'})
-test.beforeEach(async ({page}) => {
-    await page.route('**/api/monitor/log', route => {
+test.beforeEach(async ({page, sandboxURL}) => {
+    await page.route(new URL('/api/monitor/log', sandboxURL).href, route => {
         expect(route.request().method()).toBe('POST')
         return route.fulfill({json: {code: 200}})
     })

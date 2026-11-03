@@ -20,31 +20,22 @@ interface Props {
     onConfirm: (result: CoverCropResult) => void
 }
 
-function CropStage({src, aspect, value, onChange}: {
+function CropStage({src, aspect, value, onChange, natural}: {
     src: string; aspect: number; value: CoverCrop; onChange: (value: CoverCrop) => void
+    natural: {width: number; height: number}
 }) {
     const [position, setPosition] = useState({x: 0, y: 0})
     const [zoom, setZoom] = useState(value.z)
-    const [natural, setNatural] = useState<{width: number; height: number} | null>(null)
-    const [failed, setFailed] = useState(false)
     const interacting = useRef(false)
     const initial = useRef(value)
-    useEffect(() => {
-        let active = true
-        const image = new Image()
-        image.onload = () => {if (active) setNatural({width: image.naturalWidth, height: image.naturalHeight})}
-        image.onerror = () => {if (active) setFailed(true)}
-        image.src = src
-        return () => {active = false}
-    }, [src])
-    const win = natural ? cropWindowInImage(natural.width, natural.height, aspect, initial.current) : null
-    const area: Area | undefined = natural && win ? {
+    const win = cropWindowInImage(natural.width, natural.height, aspect, initial.current)
+    const area: Area = {
         x: win.x / natural.width * 100, y: win.y / natural.height * 100,
         width: win.w / natural.width * 100, height: win.h / natural.height * 100,
-    } : undefined
+    }
     return <>
         <div className="ccStage" style={{aspectRatio: aspect}}>
-            {natural && <Cropper image={src} crop={position} zoom={zoom} aspect={aspect}
+            <Cropper image={src} crop={position} zoom={zoom} aspect={aspect}
                 objectFit="cover" maxZoom={MAX_ZOOM} onCropChange={setPosition}
                 onZoomChange={setZoom} initialCroppedAreaPercentages={area}
                 onInteractionStart={() => {interacting.current = true}}
@@ -53,8 +44,7 @@ function CropStage({src, aspect, value, onChange}: {
                     onChange({x: next.width < 99.999 ? next.x / (100 - next.width) : 0.5,
                         y: next.height < 99.999 ? next.y / (100 - next.height) : 0.5,
                         z: zoom, fit: 'cover'})
-                }}/>}
-            {!natural && <span>{failed ? '图片加载失败，请重新选择' : '正在加载图片…'}</span>}
+                }}/>
         </div>
         <div className="ccHint">拖动调整主体位置，滚轮或滑块缩放</div>
         <Slider aria-label="封面缩放" min={1} max={MAX_ZOOM} step={0.01} value={zoom}
@@ -79,6 +69,8 @@ const CoverCropModal: React.FC<Props> = ({open, src, initialCarousel, initialCar
     const [carousel, setCarousel] = useState<CoverCrop>(COMPLETE_COVER)
     const [dirty, setDirty] = useState({card: false, carousel: false})
     const [revision, setRevision] = useState(0)
+    const [natural, setNatural] = useState<{width: number; height: number} | null>(null)
+    const [failed, setFailed] = useState(false)
     const initial = useRef({card: initialCard, carousel: initialCarousel})
     initial.current = {card: initialCard, carousel: initialCarousel}
     useEffect(() => {
@@ -88,6 +80,18 @@ const CoverCropModal: React.FC<Props> = ({open, src, initialCarousel, initialCar
         setDirty({card: false, carousel: false})
         setTab('card')
         setRevision(n => n + 1)
+        setNatural(null)
+        setFailed(false)
+        let active = true
+        const image = new Image()
+        image.onload = () => {
+            if (active && image.naturalWidth > 0 && image.naturalHeight > 0)
+                setNatural({width: image.naturalWidth, height: image.naturalHeight})
+            else if (active) setFailed(true)
+        }
+        image.onerror = () => {if (active) setFailed(true)}
+        image.src = resolveApiAssetUrl(src)
+        return () => {active = false}
     }, [open, src])
     const source = resolveApiAssetUrl(src)
     const update = (key: 'carousel' | 'card', value: CoverCrop) => {
@@ -105,8 +109,8 @@ const CoverCropModal: React.FC<Props> = ({open, src, initialCarousel, initialCar
             <div className="ccEditor">
                 {value.fit === 'contain'
                     ? <Preview src={source} value={value} aspect={aspect} label="完整图片，不裁切"/>
-                    : <CropStage key={`${src}-${key}-${revision}`} src={source} aspect={aspect}
-                        value={value} onChange={next => update(key, next)}/>}
+                    : natural && <CropStage key={`${src}-${key}-${revision}`} src={source} aspect={aspect}
+                        value={value} natural={natural} onChange={next => update(key, next)}/>}
             </div>
             <div className="ccPreviews">
                 <Preview src={source} value={value} aspect={aspect}
@@ -120,9 +124,10 @@ const CoverCropModal: React.FC<Props> = ({open, src, initialCarousel, initialCar
             <Button key="reset" onClick={() => {update(tab, {...COMPLETE_COVER})
                 setRevision(n => n + 1)}}>完整显示</Button>,
             <Button key="cancel" onClick={onCancel}>取消</Button>,
-            <Button key="ok" type="primary" disabled={!src}
+            <Button key="ok" type="primary" disabled={!natural}
                 onClick={() => onConfirm({card, carousel, dirty})}>确定</Button>,
         ]}>
+        {!natural && <p role="status">{failed ? '图片加载失败，请重新选择' : '正在加载图片…'}</p>}
         <Tabs activeKey={tab} onChange={key => setTab(key as typeof tab)} items={[
             {key: 'card', label: '文章卡片 / 详情页', children: pane('card', card, CARD_ASPECT)},
             {key: 'carousel', label: '首页置顶轮播', children: pane('carousel', carousel, CAROUSEL_ASPECT)},

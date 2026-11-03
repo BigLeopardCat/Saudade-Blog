@@ -36,3 +36,13 @@ test('portrait covers retain the full image after selection and reopening', asyn
         return Math.max(...actual.map((value, index) => Math.abs(value - transform[index])))
     }).toBeLessThan(0.2)
 })
+
+
+test('an unreadable image cannot be confirmed', async ({page, sandboxURL}) => {
+    await page.goto(sandboxURL)
+    await page.getByRole('dialog').locator('.ant-modal-close').click()
+    await page.getByRole('button', {name: '使用损坏图片'}).click()
+    const dialog = page.getByRole('dialog')
+    await expect(dialog.getByRole('status')).toHaveText('图片加载失败，请重新选择')
+    await expect(dialog.getByRole('button', {name: /确\s*定/})).toBeDisabled()
+})
