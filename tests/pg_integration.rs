@@ -3757,3 +3757,6 @@ async fn comment_sort_hot_default_and_new_differ() {
 
     clear_hot_fixture(&db).await;
 }
+
+#[path = "pg/confirmation_batches.rs"]
+mod confirmation_batches;
