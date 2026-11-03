@@ -1,4 +1,5 @@
-import Editor_ from "../../../../components/Editor";
+import Editor_, {type EditorHandle} from "../../../../components/Editor";
+import ArticleCollaboration from '../../../../components/ArticleCollaboration';
 import './index.sass'
 import {
     Button,
@@ -67,7 +68,7 @@ const NewNotes = () => {
     // 实际在编辑的文章 id：编辑页 = 路由 id；新建页首次自动保存建出草稿行后就地采纳它的 id。
     // 采纳后**不改 URL**——路由参数一变，下面 [id] 的 effect 会重跑 initNote，把编辑器内容整片
     // 覆盖成服务端值，正在敲的字会当场消失。
-    const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+    const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error' | 'conflict'>('idle');
     const [savedAt, setSavedAt] = useState('');
     const [isRevision, setIsRevision] = useState(false); // 正在编辑的是原文章的修改稿
     const [hydrated, setHydrated] = useState(false);     // 服务端内容已回填完（此前禁止自动保存）
@@ -86,6 +87,9 @@ const NewNotes = () => {
     const mountedRef = useRef(true);
     const sessionTokenRef = useRef(getToken());
     const detachedPayloadRef = useRef<AutosaveDraftPayload | null>(null);
+    const versionRef = useRef<string | undefined>(undefined);
+    const conflictedRef = useRef(false);
+    const editorRef = useRef<EditorHandle>(null);
 
     // 空内容判定：编辑器空态是 <p></p> 这类空标签，去标签去空白后为空才算空
     const isBlank = (s: string) =>
@@ -133,12 +137,12 @@ const NewNotes = () => {
     };
 
     const flushAutosave = (beacon = false) => {
-        if (!hydratedRef.current || stopAutosaveRef.current || publishingRef.current
+        if (!hydratedRef.current || stopAutosaveRef.current || publishingRef.current || conflictedRef.current
             || getToken() !== sessionTokenRef.current) return;
         if (autosaveTimer.current) { clearTimeout(autosaveTimer.current); autosaveTimer.current = null; }
 
         const payload = latestPayload();
-        const blank = isBlank(payload.noteTitle || '') && isBlank(payload.noteContent || '');
+        const blank = isBlank(payload.noteTitle || '') && isBlank(payload.noteContent || '') && isBlank(payload.description || '');
         if (!payload.id && blank) return;         // 新建且还没写进任何东西 → 不建空行
         const ser = JSON.stringify(payload);
         if (ser === lastSavedRef.current) return; // 没真变化 → 不发请求
@@ -150,13 +154,21 @@ const NewNotes = () => {
 
         if (mountedRef.current) setSaveState('saving');
         // keepalive 与常规保存共用单飞和确认逻辑。pagehide 不再绕过在途的首次创建。
+        const requestPayload = {...payload, expectedVersion: versionRef.current};
         const request = beacon
-            ? postDraftKeepalive(payload, runtimeBaseURL, sessionTokenRef.current)
-            : autosaveDraft(payload);
+            ? postDraftKeepalive(requestPayload, runtimeBaseURL, sessionTokenRef.current)
+            : autosaveDraft(requestPayload);
         inFlightRef.current = request.then(res => {
             if (getToken() !== sessionTokenRef.current) return;
             const d = res?.data?.data;
-            if (ok(res) && Number.isInteger(d?.id) && d.id > 0) {
+            if (res?.data?.code === 409) {
+                conflictedRef.current = true;
+                queuedRef.current = null;
+                if (mountedRef.current) setSaveState('conflict');
+                return;
+            }
+            if (ok(res) && Number.isInteger(d?.id) && d.id > 0 && typeof d.version === 'string') {
+                versionRef.current = d.version;
                 // 新建成功后 id 也属于已确认快照，否则恢复页面会把同一内容再写一遍。
                 lastSavedRef.current = JSON.stringify({...payload, id: d.id});
                 if (!savedIdRef.current) createdHereRef.current = true;
@@ -184,7 +196,7 @@ const NewNotes = () => {
 
     // 停止输入 2s 后落盘
     const scheduleAutosave = () => {
-        if (!hydratedRef.current || stopAutosaveRef.current || publishingRef.current
+        if (!hydratedRef.current || stopAutosaveRef.current || publishingRef.current || conflictedRef.current
             || getToken() !== sessionTokenRef.current) return;
         if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
         autosaveTimer.current = setTimeout(() => flushAutosave(false), AUTOSAVE_DELAY);
@@ -217,7 +229,7 @@ const NewNotes = () => {
         const p = buildPayloadRef.current();
         detachedPayloadRef.current = {...p};
         if (createdHereRef.current && savedIdRef.current
-            && isBlank(p.noteTitle || '') && isBlank(p.noteContent || '')) {
+            && isBlank(p.noteTitle || '') && isBlank(p.noteContent || '') && isBlank(p.description || '')) {
             if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
             delNote(Number(savedIdRef.current));
             return;
@@ -298,6 +310,8 @@ const NewNotes = () => {
                 // 返回 { note, draft }，有未发布的修改稿就用它回填（它才是最新内容）。
                 const res = await getNoteForEdit(id)
                 const data = res.data.data
+                if (!ok(res) || typeof data?.version !== 'string') throw new Error('无效草稿版本')
+                versionRef.current = data.version
                 const row = data.draft ?? data.note
                 setIsRevision(!!data.draft)
                 form.setFieldsValue({
@@ -309,7 +323,7 @@ const NewNotes = () => {
                     status: data.note.status,
                     description: row.description,
                 })
-                setAiContent(row.description)
+                setAiContent(row.description || '')
                 setTitle(row.noteTitle)
                 setNoteContent(row.noteContent)
 
@@ -474,6 +488,10 @@ const NewNotes = () => {
     };
 
     const onFinish = async (formValues: any) => {
+        if (conflictedRef.current) {
+            message.error('草稿存在版本冲突，请保留当前内容并重新打开文章后合并');
+            return;
+        }
         if (publishingRef.current) return;
         publishingRef.current = true; // 同帧互斥，挡住重复点击/回车提交
         // Safe string conversion for tags
@@ -521,6 +539,7 @@ const NewNotes = () => {
                 if (getToken() !== sessionTokenRef.current) throw new Error("登录状态已变化");
                 const newId = r?.data?.data?.id;
                 if (ok(r) && Number.isInteger(newId) && newId > 0) {
+                    versionRef.current = r.data.data.version;
                     targetId = String(newId);
                     savedIdRef.current = targetId;
                 } else throw new Error(errMsg(r, "草稿创建失败"));
@@ -537,13 +556,17 @@ const NewNotes = () => {
 
         try {
             if (targetId) {
-                const res = await updateNote(targetId, data)
+                const res = await updateNote(targetId, {...data, expectedVersion: versionRef.current})
                 if (ok(res)) {
                     dispatch<any>(fetchNoteList(true))
                     const stayInEditor = data.status === 'draft';
                     message.success(stayInEditor ? "已保存到草稿箱" : "文章更新成功")
                     setOpen(false); // Close modal
                     if (stayInEditor) {
+                        const refreshed = await getNoteForEdit(targetId);
+                        if (!ok(refreshed) || typeof refreshed.data.data?.version !== 'string')
+                            throw new Error('保存成功，但无法读取最新草稿版本，请重新打开文章');
+                        versionRef.current = refreshed.data.data.version;
                         // 留在编辑器接着写：草稿箱里已经有这一行，跳走反而打断写作。
                         // 把「已保存」基准对齐到当前内容，卸载时就不会再白发一次；
                         // 若提交期间内容又变了（弹窗里还能改描述），则不对齐、再排一发把最新全文写回去
@@ -561,6 +584,10 @@ const NewNotes = () => {
                         goBackToList()
                     }
                 } else {
+                    if (res.data?.code === 409) {
+                        conflictedRef.current = true;
+                        setSaveState('conflict');
+                    }
                     message.error(errMsg(res, "文章保存失败"));
                     publishingRef.current = false; // 业务失败：放开自动保存并把内容补写回去
                     scheduleAutosave();
@@ -618,9 +645,10 @@ const NewNotes = () => {
                     marginRight: 12,
                     lineHeight: '32px',
                     fontSize: 12,
-                    color: saveState === 'error' ? '#ff4d4f' : '#999',
+                    color: saveState === 'error' || saveState === 'conflict' ? '#c43868' : '#999',
                 }}>
                     {saveState === 'saving' ? '草稿保存中…'
+                        : saveState === 'conflict' ? '草稿已在其他位置更新，已停止覆盖；请保留当前内容并重新打开后合并'
                         : saveState === 'error' ? '草稿保存失败，稍后自动重试'
                         : saveState === 'saved' ? `草稿已自动保存 ${savedAt}`
                         : ''}
@@ -631,8 +659,13 @@ const NewNotes = () => {
                     正在编辑修改稿：原文章线上内容保持不变，点「提交」发布后才覆盖
                 </div>
             )}
+            <ArticleCollaboration title={noteTitle} content={noteContent} description={aiContent}
+                ready={hydrated} blocked={saveState === 'conflict' || confirmLoading}
+                readBody={() => editorRef.current?.read() ?? noteContent}
+                onBody={content => editorRef.current?.apply(content)}
+                onSummary={description => {setAiContent(description); form.setFieldValue('description', description)}}/>
             <div className="new_article">
-                <Editor_  setNoteContent={setNoteContent} noteContent={noteContent}/>
+                <Editor_ editorRef={editorRef} setNoteContent={setNoteContent} noteContent={noteContent}/>
             </div>
 
             {/* Gallery Modal */}

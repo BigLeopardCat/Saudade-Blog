@@ -9,6 +9,7 @@ interface status{
 }
 
 interface updateNote{
+    expectedVersion?: string;
     noteTitle: any;
     noteContent: string;
     cover: string;
@@ -50,6 +51,7 @@ interface newNote{
 // 自动保存（草稿）：只带编辑器里有的字段，后端按 id 决定写到哪一行
 // （新建→建一行草稿；编辑草稿→原地更新；编辑已发布/私密→落到它的「修改稿」行）
 export interface AutosaveDraftPayload{
+    expectedVersion?: string;
     id?: number | null;
     noteTitle?: string;
     noteContent?: string;

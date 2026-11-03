@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from 'react'
 import gfm from '@bytemd/plugin-gfm'
 import math from "@bytemd/plugin-math";
 import 'katex/dist/katex.css';
@@ -63,15 +63,37 @@ async function postUpload(file: File) {
 
 interface Editor_Props {
     setNoteContent: (content: string) => void,
-    noteContent: string
+    noteContent: string,
+    editorRef?: Ref<EditorHandle>
 }
 
-const Editor_ = ({ setNoteContent, noteContent }: Editor_Props) => {
+export interface EditorHandle {
+    read: () => string;
+    apply: (content: string) => void;
+}
+
+const Editor_ = ({ setNoteContent, noteContent, editorRef }: Editor_Props) => {
 
     const wrapRef = useRef<HTMLDivElement | null>(null)
     /** bytemd 的编辑器上下文（插件钩子给的，见 ctxPlugin）——插入正文要用它。 */
     const ctxRef = useRef<BytemdEditorContext | null>(null)
     const [pickerOpen, setPickerOpen] = useState(false)
+    useImperativeHandle(editorRef, () => ({
+        read: () => ctxRef.current?.editor.getValue() ?? noteContent,
+        apply: content => {
+            const editor = ctxRef.current?.editor
+            if (!editor) throw new Error('编辑器尚未就绪')
+            const selections = editor.listSelections()
+            const scroll = editor.getScrollInfo()
+            editor.operation(() => {
+                editor.replaceRange(content, {line: 0, ch: 0},
+                    {line: editor.lastLine(), ch: editor.getLine(editor.lastLine()).length}, 'agent-proposal')
+                editor.setSelections(selections)
+            })
+            editor.scrollTo(scroll.left, scroll.top)
+            setNoteContent(content)
+        },
+    }), [noteContent, setNoteContent])
 
     /**
      * 把 bytemd 的编辑器上下文留下来给图库弹窗用。
@@ -155,9 +177,6 @@ const Editor_ = ({ setNoteContent, noteContent }: Editor_Props) => {
     }
 
     return (
-        // 这里原本是 `className='markdown-body"'`（多一个引号 ⇒ 这个 class 谁也没匹配上，
-        // 而本文件里 `.markdown-body` 那几条规则真正的作用对象是 bytemd 预览区的内层 div）。
-        // 换成一个真名字，行为不变，顺带给测试一个抓手。
         <div className='saudade-note-editor' ref={wrapRef}>
             <Editor
                 value={noteContent}

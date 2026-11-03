@@ -21,12 +21,56 @@ pub enum AppearanceMode {
 }
 
 #[derive(Deserialize, Serialize)]
+pub struct EditorObservation {
+    pub editor_id: String,
+    pub revision: u64,
+    pub outcome: String,
+    pub title: Option<String>,
+    pub content: Option<String>,
+    pub description: Option<String>,
+    pub offset: Option<usize>,
+    pub next_offset: Option<usize>,
+    pub total_chars: Option<usize>,
+    pub proposal_id: Option<String>,
+}
+
+impl EditorObservation {
+    fn valid(&self) -> bool {
+        !self.editor_id.is_empty()
+            && self.editor_id.len() <= 64
+            && self.revision <= 9_007_199_254_740_991
+            && matches!(self.outcome.as_str(), "read" | "proposed" | "updated")
+            && self
+                .title
+                .as_ref()
+                .is_none_or(|v| v.chars().count() <= 1000)
+            && self
+                .content
+                .as_ref()
+                .is_none_or(|v| v.chars().count() <= 24000)
+            && self
+                .description
+                .as_ref()
+                .is_none_or(|v| v.chars().count() <= 16000)
+            && [self.offset, self.next_offset, self.total_chars]
+                .into_iter()
+                .flatten()
+                .all(|v| v <= 1_000_000)
+            && self.proposal_id.as_ref().is_none_or(|v| v.len() <= 64)
+    }
+}
+
+#[derive(Deserialize, Serialize)]
 pub struct BrowserResult {
     pub command_id: String,
     pub status: String,
     pub path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub settings: Option<BTreeMap<AppearanceSetting, AppearanceMode>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub document: Option<EditorObservation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 pub(super) fn valid(payload: &ChatRequest) -> bool {
@@ -39,9 +83,19 @@ pub(super) fn valid(payload: &ChatRequest) -> bool {
     identifier(&payload.task_id)
         && identifier(&payload.resume_task)
         && payload.browser_result.as_ref().is_none_or(|result| {
-            !payload.resume_task.is_empty() && !result.command_id.is_empty()
-                && identifier(&result.command_id) && result.path.len() <= 512
+            !payload.resume_task.is_empty()
+                && !result.command_id.is_empty()
+                && identifier(&result.command_id)
+                && result.path.len() <= 512
                 && matches!(result.status.as_str(), "completed" | "timeout" | "failed")
+                && result
+                    .document
+                    .as_ref()
+                    .is_none_or(EditorObservation::valid)
+                && result
+                    .error
+                    .as_ref()
+                    .is_none_or(|v| v.chars().count() <= 500)
         })
         && (payload.resume_task.is_empty()
             || (payload.task_id.is_empty()
@@ -79,7 +133,11 @@ mod tests {
         assert!(valid(&parsed));
         let report = serde_json::to_value(parsed.browser_result.unwrap()).unwrap();
         assert_eq!(report["settings"], request["browser_result"]["settings"]);
-        for bad in [json!({"permission":"on"}), json!({"snow":"toggle"}), json!({"rain":true})] {
+        for bad in [
+            json!({"permission":"on"}),
+            json!({"snow":"toggle"}),
+            json!({"rain":true}),
+        ] {
             let mut changed = request.clone();
             changed["browser_result"]["settings"] = bad;
             assert!(serde_json::from_value::<ChatRequest>(changed).is_err());

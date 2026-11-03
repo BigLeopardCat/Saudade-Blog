@@ -1,0 +1,97 @@
+import {describe, expect, it} from 'vitest'
+import {createEditorSession, type EditorCommand, type Proposal} from '../../src/components/ArticleCollaboration/session'
+
+function fixture(content = '第一节旧正文\n\n第二节旧正文') {
+  let value = {title: '草稿标题', content, description: '原摘要'}, enabled = true
+  let proposal: Proposal | null = null
+  const writes: string[] = []
+  const session = createEditorSession({read: () => value, enabled: () => enabled,
+    applyBody: content => {value = {...value, content}; writes.push(content)},
+    applySummary: description => {value = {...value, description}}, onProposal: p => {proposal = p}})
+  let count = 0
+  const read = () => session.execute({kind: 'article_editor', operation: 'read', command_id: `read-${count++}`})
+  const propose = (edits = [{old_text: '第一节旧正文', new_text: '第一节新正文'}]) => {
+    const snapshot = read()
+    const cmd: EditorCommand = {kind: 'article_editor', operation: 'propose', command_id: `edit-${count++}`,
+      editor_id: snapshot.editor_id, revision: snapshot.revision, edits}
+    return {cmd, result: session.execute(cmd)}
+  }
+  return {session, read, propose, writes, value: () => value, proposal: () => proposal,
+    type: (content: string) => {value = {...value, content}}, disable: () => {enabled = false}}
+}
+
+describe('current draft collaboration', () => {
+  it('reads the live working copy in bounded slices without writing', () => {
+    const f = fixture('a'.repeat(24001))
+    f.type('b'.repeat(24001))
+    const snapshot = f.read()
+    expect(snapshot.content).toBe('b'.repeat(12000))
+    expect(snapshot.next_offset).toBe(12000)
+    expect(snapshot.total_chars).toBe(24001)
+    expect(f.writes).toEqual([])
+  })
+  it('body proposals do not modify the draft until accepted; replay is idempotent', () => {
+    const f = fixture(), {cmd, result} = f.propose()
+    expect(f.writes).toEqual([])
+    expect(result.outcome).toBe('proposed')
+    expect(f.session.execute(cmd)).toEqual(result)
+    f.session.accept()
+    expect(f.value().content).toContain('第一节新正文')
+    f.session.execute(cmd)
+    expect(f.writes).toHaveLength(1)
+    expect(f.proposal()).toBeNull()
+  })
+  it('supports out-of-order partial accepts even when a replacement creates another anchor', () => {
+    const f = fixture('aaa\n\nbbb')
+    f.propose([{old_text: 'aaa', new_text: 'ccc'}, {old_text: 'bbb', new_text: 'aaa'}])
+    f.session.accept(1)
+    f.session.accept(0)
+    expect(f.value().content).toBe('ccc\n\naaa')
+  })
+  it('refuses stale body and summary writes without losing new user input', () => {
+    const f = fixture(), snapshot = f.read()
+    f.propose()
+    f.type('用户新写的正文')
+    expect(() => f.session.accept()).toThrow(/草稿已变化/)
+    expect(() => f.session.execute({kind:'article_editor',operation:'summary',command_id:'summary',
+      editor_id:snapshot.editor_id,revision:snapshot.revision,description:'新摘要'})).toThrow(/草稿已变化/)
+    expect(f.value()).toMatchObject({content:'用户新写的正文',description:'原摘要'})
+  })
+  it('creates and directly replaces a summary without generating a body review', () => {
+    const f = fixture(), snapshot = f.read()
+    f.session.execute({kind:'article_editor',operation:'summary',command_id:'summary',
+      editor_id:snapshot.editor_id,revision:snapshot.revision,description:'从正文生成的摘要'})
+    expect(f.value().description).toBe('从正文生成的摘要')
+    expect(f.writes).toEqual([])
+    expect(f.proposal()).toBeNull()
+  })
+  it('a summary update preserves an independent pending body review', () => {
+    const f = fixture()
+    f.propose()
+    const snapshot = f.read()
+    f.session.execute({kind:'article_editor',operation:'summary',command_id:'summary',
+      editor_id:snapshot.editor_id,revision:snapshot.revision,description:'新摘要'})
+    f.session.accept()
+    expect(f.value()).toMatchObject({content:'第一节新正文\n\n第二节旧正文',description:'新摘要'})
+  })
+  it('supports creating a blank document and rejecting changes without writes', () => {
+    const f = fixture('')
+    f.propose([{old_text:'',new_text:'# 新文章\n\n正文'}])
+    f.session.reject()
+    expect(f.value().content).toBe('')
+    f.propose([{old_text:'',new_text:'# 新文章\n\n正文'}])
+    f.session.accept()
+    expect(f.value().content).toContain('# 新文章')
+  })
+  it('rejects ambiguous, overlapping, wrong-document and disabled edits', () => {
+    const f = fixture('aaa aaa bbb')
+    expect(() => f.propose([{old_text:'aaa',new_text:'c'}])).toThrow(/多处匹配/)
+    expect(() => f.propose([{old_text:'aaa aaa',new_text:'c'},{old_text:'aaa bbb',new_text:'d'}])).toThrow(/重叠/)
+    const snapshot = f.read()
+    expect(() => f.session.execute({kind:'article_editor',operation:'summary',command_id:'wrong',
+      editor_id:'other',revision:snapshot.revision,description:'x'})).toThrow(/切换文章/)
+    f.disable()
+    expect(() => f.read()).toThrow(/尚未就绪/)
+    expect(f.writes).toEqual([])
+  })
+})

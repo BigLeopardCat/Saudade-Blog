@@ -1,5 +1,5 @@
 use axum::{Json, extract::{State, Query, Path}, http::{HeaderMap, StatusCode}, response::{IntoResponse, Response}};
-use sea_orm::{DatabaseConnection, EntityTrait, ColumnTrait, QueryFilter, QueryOrder, QuerySelect, Condition, ActiveModelTrait, Set, PaginatorTrait, ActiveValue::NotSet, DerivePartialModel, TransactionTrait};
+use sea_orm::{DatabaseConnection, EntityTrait, ColumnTrait, QueryFilter, QueryOrder, QuerySelect, Condition, ActiveModelTrait, Set, PaginatorTrait, DerivePartialModel, TransactionTrait};
 // `Expr` / `SimpleExpr` 只服务关键词预筛那几处（列表达式要带表名限定，见 `search_notes`）。
 use sea_orm::sea_query::{Expr, SimpleExpr};
 use serde::{Deserialize, Serialize};
@@ -830,6 +830,8 @@ pub async fn search_all_notes(
 
 #[derive(Deserialize)]
 pub struct UpsertNoteRequest {
+    #[serde(rename = "expectedVersion")]
+    pub expected_version: Option<String>,
     #[serde(rename = "noteTitle")]
     pub title: Option<String>, 
     #[serde(rename = "noteContent")]
@@ -996,24 +998,24 @@ pub async fn update_note(
     // 把它们当成"清空标签"会让那些操作顺手把标签删光。
     let new_tags = payload.tags.clone();
 
-    let note_data = note::Entity::find_by_id(id).one(&state.db).await.unwrap_or(None);
-
-    // 被点的行本身是「修改稿」（草稿箱里直接点开修改稿再提交）→ 内容得落到它的原文章行上，
-    // 否则线上会凭空多出一篇同内容的新文章、原文章永远停在旧内容。
-    // 只对编辑器提交（from_editor）重定向：只发 {isTop,status} 的快速改状态仍作用于被点的那行。
-    let target = match note_data {
-        Some(n) if from_editor && n.draft_of.is_some() => {
-            let parent_id = n.draft_of.unwrap_or_default();
-            match note::Entity::find_by_id(parent_id).one(&state.db).await.unwrap_or(None) {
-                Some(p) => Some(p),
-                // 原文章已不存在（孤儿修改稿）→ 不重定向，当普通草稿原地保存
-                None => Some(n),
-            }
-        }
-        other => other,
+    let txn = match state.db.begin().await {
+        Ok(t) => t,
+        Err(e) => return Json(ApiResponse::error(&e.to_string())),
     };
+    let (root, draft) = match drafts::locked_document(&txn, id).await {
+        Ok(rows) => rows,
+        Err(e) => return Json(ApiResponse::error(&e.to_string())),
+    };
+    if from_editor {
+        match drafts::document_version(&txn, &root, draft.as_ref()).await {
+            Ok(version) if payload.expected_version.as_deref() == Some(&version) => {},
+            Ok(_) => return drafts::conflict(),
+            Err(e) => return Json(ApiResponse::error(&e.to_string())),
+        }
+    }
+    let note_data = if from_editor || id == root.id { Some(root) } else { draft };
 
-    if let Some(n) = target {
+    if let Some(n) = note_data {
         let target_id = n.id;
         // 作者只在**为空**时补写：「谁发的」是发布那一刻的事实，别人后来编辑这篇文章
         // （改标题/改状态/换个管理员接手）都不该把署名改成最后保存的那个人。
@@ -1091,15 +1093,6 @@ pub async fn update_note(
 
         active_model.updated_at = Set(chrono::Local::now().naive_local());
 
-        // 文章行与标签行同一个事务（20261018）：`replace_note_tags` 自己写两张表，
-        // 而"内容存进去了、标签没存"是最难被发现的一类半截状态（用户看到保存成功）。
-        let txn = match state.db.begin().await {
-            Ok(t) => t,
-            Err(e) => {
-                tracing::error!("[notes] 更新文章 {target_id}：开启事务失败: {e}");
-                return Json(ApiResponse::error("Error: 数据库不可用"));
-            }
-        };
         if let Err(e) = active_model.update(&txn).await {
             let _ = txn.rollback().await;
             return Json(ApiResponse::error(&format!("Error: {}", e)));
@@ -1113,18 +1106,14 @@ pub async fn update_note(
                 return Json(ApiResponse::error(&format!("Error: {}", e)));
             }
         }
+        if from_editor {
+            if let Err(e) = note::Entity::delete_many()
+                .filter(note::Column::DraftOf.eq(target_id)).exec(&txn).await {
+                return Json(ApiResponse::error(&e.to_string()));
+            }
+        }
         match txn.commit().await {
             Ok(_) => {
-                // 发布即消费掉修改稿：编辑器提交（from_editor）时原文章行已拿到最新内容，
-                // 挂在它下面的修改稿就没有存在意义了，删掉免得草稿箱里留过期副本。
-                // 只发 {isTop, status} 的快速改状态（updateNoteStatus）不清——那不是发布内容，
-                // 清了会把用户编辑中的修改稿误删。
-                if from_editor {
-                    let _ = note::Entity::delete_many()
-                        .filter(note::Column::DraftOf.eq(target_id))
-                        .exec(&state.db)
-                        .await;
-                }
                 Json(ApiResponse::success("Note updated successfully".to_string()))
             }
             Err(e) => {
@@ -1313,293 +1302,8 @@ async fn attach_stats(db: &sea_orm::DatabaseConnection, dtos: &mut [NoteDto]) {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 编辑草稿（自动保存，20260912c）：编辑器每 2s 把正在写的内容落到草稿箱里的一行。
-// 与 update_note 分开是刻意的——update_note 是「发布」语义（会改 status/is_public、
-// 会消费掉修改稿），自动保存绝不能碰这些。
-// ─────────────────────────────────────────────────────────────────────────────
-
-#[derive(Deserialize)]
-pub struct AutosaveDraftRequest {
-    /// 正在编辑的文章 id；None/缺省 = 新建文章（还没落过库）→ 新建一行独立草稿
-    pub id: Option<i32>,
-    #[serde(rename = "noteTitle")]
-    pub title: Option<String>,
-    #[serde(rename = "noteContent")]
-    pub content: Option<String>,
-    #[serde(rename = "noteCategory")]
-    pub category_id: Option<i32>,
-    #[serde(rename = "isTop")]
-    pub is_top: Option<i32>,
-    pub description: Option<String>,
-    pub cover: Option<String>,
-    #[serde(rename = "coverFocusX")]
-    pub cover_focus_x: Option<f64>,
-    #[serde(rename = "coverFocusY")]
-    pub cover_focus_y: Option<f64>,
-    #[serde(rename = "coverZoom")]
-    pub cover_zoom: Option<f64>,
-    #[serde(rename = "carouselFocusX")]
-    pub carousel_focus_x: Option<f64>,
-    #[serde(rename = "carouselFocusY")]
-    pub carousel_focus_y: Option<f64>,
-    #[serde(rename = "carouselZoom")]
-    pub carousel_zoom: Option<f64>,
-    #[serde(rename = "noteTags")]
-    pub tags: Option<String>,
-}
-
-#[derive(Serialize, Default)]
-pub struct AutosaveDraftResult {
-    /// 客户端此后继续沿用的文章 id（新建时 = 刚建出来的草稿行 id）
-    pub id: i32,
-    /// 本次实际写入了哪一行（原文章行 / 独立草稿行 / 修改稿行）
-    #[serde(rename = "draftId")]
-    pub draft_id: i32,
-    /// true = 写的是「原文章的修改稿」，原文章线上内容一个字没动
-    #[serde(rename = "isRevision")]
-    pub is_revision: bool,
-    #[serde(rename = "updateTime")]
-    pub update_time: String,
-}
-
-/// 解析这次自动保存该写哪一行：
-/// - `id = None`            → 新建一行独立草稿（status='draft'，进草稿箱）
-/// - 目标行 status='draft'  → 原地更新（它本来就是草稿箱里的一行）
-/// - 其他（public/private） → 取它的修改稿行（draft_of = id）；没有就克隆原行建一行。
-///   原行在此期间**一个列都不动**，线上访客看到的仍是旧内容。
-async fn resolve_autosave_target(
-    state: &Arc<AppState>,
-    id: Option<i32>,
-) -> Result<note::Model, String> {
-    let now = chrono::Local::now().naive_local();
-
-    let Some(id) = id else {
-        let row = note::ActiveModel {
-            title: Set(String::new()),
-            content: Set(String::new()),
-            status: Set(Some("draft".to_string())),
-            is_public: Set(false),
-            created_at: Set(now),
-            updated_at: Set(now),
-            ..Default::default()
-        };
-        return row
-            .insert(&state.db)
-            .await
-            .map_err(|e| format!("Create draft failed: {}", e));
-    };
-
-    let Some(n) = note::Entity::find_by_id(id).one(&state.db).await.unwrap_or(None) else {
-        return Err("Note not found".to_string());
-    };
-
-    // 草稿（含新建时落下的那行）原地更新，不再套一层修改稿
-    if n.status.as_deref() == Some("draft") {
-        return Ok(n);
-    }
-
-    if let Some(rev) = note::Entity::find()
-        .filter(note::Column::DraftOf.eq(id))
-        .order_by_desc(note::Column::Id)
-        .one(&state.db)
-        .await
-        .unwrap_or(None)
-    {
-        return Ok(rev);
-    }
-
-    // Clone content and typed tag references into one revision transaction.
-    let mut am: note::ActiveModel = n.into();
-    am.id = NotSet;
-    am.draft_of = Set(Some(id));
-    am.status = Set(Some("draft".to_string()));
-    am.is_public = Set(false);
-    am.created_at = Set(now);
-    am.updated_at = Set(now);
-    let txn = state
-        .db
-        .begin()
-        .await
-        .map_err(|e| format!("Create revision failed: {}", e))?;
-    let rev = am
-        .insert(&txn)
-        .await
-        .map_err(|e| format!("Create revision failed: {}", e))?;
-    note_tags::copy_note_tags(&txn, id, rev.id)
-        .await
-        .map_err(|e| format!("Create revision failed: {}", e))?;
-    txn.commit()
-        .await
-        .map_err(|e| format!("Create revision failed: {}", e))?;
-    Ok(rev)
-}
-
-pub async fn autosave_note(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Json(payload): Json<AutosaveDraftRequest>,
-) -> Json<ApiResponse<AutosaveDraftResult>> {
-    let client_id = payload.id;
-
-    let target = match resolve_autosave_target(&state, payload.id).await {
-        Ok(t) => t,
-        Err(e) => return Json(ApiResponse::error(&e)),
-    };
-
-    let is_revision = target.draft_of.is_some();
-    // 草稿也要记作者：它是"这篇文章是谁开写的"的第一现场，比发布更早。
-    // 与 update_note 同规矩——只在为空时写（新建的那行草稿在建行的第一次自动保存
-    // 就补上；修改稿是从原行克隆的，user_id 已经带过来了）。
-    let author_missing = target.user_id.is_none();
-    // 这一笔没带 `noteTags` 就沿用行里现有的（`replace_note_tags` 下面**总会**调一次：
-    // 新建出来的草稿行也要把关联表落到"空"，克隆出来的修改稿要复制一份）。
-    // ⚠️ 沿用的是**关联表里的现状**（`note_tags::current_tags`），不是 `note.tags` 那一列
-    // —— 读那一列等于把"它可能已经陈旧"请进读路径，而陈旧是看不见的。
-    // 读失败**不许**退化成"没有标签"：那会让下一次自动保存把标签清光。
-    let eff_tags = match payload.tags.clone() {
-        Some(v) => Some(v),
-        None => match note_tags::current_tags(&state.db, target.id).await {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::error!("[notes] 自动保存 {}：读现有标签失败: {e}", target.id);
-                return Json(ApiResponse::error("Error: 读现有标签失败"));
-            }
-        },
-    };
-    let mut am: note::ActiveModel = target.into();
-
-    if author_missing {
-        if let Ok(uid) = crate::auth_jwt::auth_uid(&state.db, &headers).await {
-            am.user_id = Set(Some(uid));
-        }
-    }
-
-    if let Some(v) = payload.title { am.title = Set(v); }
-    if let Some(v) = payload.content { am.content = Set(v); }
-    if let Some(v) = payload.category_id { am.category_id = Set(Some(v)); }
-    if let Some(v) = payload.description { am.description = Set(Some(v)); }
-    if let Some(v) = payload.cover { am.cover = Set(Some(v)); }
-    if let Some(v) = payload.cover_focus_x { am.cover_focus_x = Set(Some(clamp01(v))); }
-    if let Some(v) = payload.cover_focus_y { am.cover_focus_y = Set(Some(clamp01(v))); }
-    if let Some(v) = payload.cover_zoom { am.cover_zoom = Set(Some(clamp_zoom(v))); }
-    if let Some(v) = payload.carousel_focus_x { am.carousel_focus_x = Set(Some(clamp01(v))); }
-    if let Some(v) = payload.carousel_focus_y { am.carousel_focus_y = Set(Some(clamp01(v))); }
-    if let Some(v) = payload.carousel_zoom { am.carousel_zoom = Set(Some(clamp_zoom(v))); }
-    if let Some(v) = payload.is_top { am.is_top = Set(Some(v)); }
-    // 标签不在这里写（唯一写点是 `replace_note_tags`，见下）。
-    // status / is_public 一律不动：写的一定是草稿（原行是草稿，克隆出来的修改稿也是草稿），
-    // 发布是 update_note 的事。
-    am.updated_at = Set(chrono::Local::now().naive_local());
-
-    let txn = match state.db.begin().await {
-        Ok(t) => t,
-        Err(e) => {
-            tracing::error!("[notes] 自动保存：开启事务失败: {e}");
-            return Json(ApiResponse::error("Error: 数据库不可用"));
-        }
-    };
-    let saved = match am.update(&txn).await {
-        Ok(s) => s,
-        Err(e) => {
-            let _ = txn.rollback().await;
-            return Json(ApiResponse::error(&format!("Error: {}", e)));
-        }
-    };
-    if let Err(e) = note_tags::replace_note_tags(&txn, saved.id, eff_tags.as_deref()).await {
-        tracing::error!("[notes] 自动保存 {}：写标签失败: {e}", saved.id);
-        let _ = txn.rollback().await;
-        return Json(ApiResponse::error(&format!("Error: {}", e)));
-    }
-    match txn.commit().await {
-        Ok(_) => Json(ApiResponse::success(AutosaveDraftResult {
-            id: client_id.unwrap_or(saved.id),
-            draft_id: saved.id,
-            is_revision,
-            update_time: saved.updated_at.format("%Y-%m-%d %H:%M:%S").to_string(),
-        })),
-        Err(e) => {
-            tracing::error!("[notes] 自动保存：提交失败: {e}");
-            Json(ApiResponse::error(&format!("Error: {}", e)))
-        }
-    }
-}
-
-#[derive(Serialize)]
-pub struct EditorNoteDto {
-    /// 原文章行（id 就是 URL 里那个 id）
-    pub note: NoteDto,
-    /// 待继续编辑的修改稿；null = 没有未发布的修改稿，编辑器直接用 note 回填
-    pub draft: Option<NoteDto>,
-}
-
-/// 编辑器专用的读入口：公开的 `GET /api/public/notes/:id` 会挡掉草稿/私密文章（A4），
-/// 导致草稿箱点进去 404、编辑器打不开自己的草稿。这里不做可见性过滤（protected 组已限 admin）。
-pub async fn get_note_for_edit(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<i32>,
-) -> Response {
-    let rows = note::Entity::find_by_id(id)
-        .find_with_related(category::Entity)
-        .all(&state.db)
-        .await
-        .unwrap_or(vec![]);
-
-    let Some((n, cats)) = rows.into_iter().next() else {
-        return (StatusCode::NOT_FOUND, Json(ApiResponse {
-            code: 404,
-            message: "文章不存在".to_string(),
-            data: Option::<EditorNoteDto>::None,
-        })).into_response();
-    };
-
-    // 三行：(原文章, 原文章分类, 待继续编辑的修改稿)
-    let (note_row, note_cats, draft_row) = match n.draft_of {
-        // URL 里的 id 本身就是一行「修改稿」（草稿箱直接点开修改稿、或旧链接）：
-        // 得把它的**原文章**当 note 返回——编辑器用 note 的状态回填弹窗，
-        // 拿修改稿自己的 status（恒为 draft）回填会让弹窗默认「草稿」，用户不改直接提交
-        // 就什么都没发布。内容仍用这行修改稿回填。发布时 update_note 做同样的重定向。
-        Some(parent_id) => {
-            let parents = note::Entity::find_by_id(parent_id)
-                .find_with_related(category::Entity)
-                .all(&state.db)
-                .await
-                .unwrap_or(vec![]);
-            match parents.into_iter().next() {
-                Some((p, pcats)) => (p, pcats, Some((n, cats))),
-                // 原文章已被删（孤儿修改稿）→ 当普通草稿，至少内容还在
-                None => (n, cats, None),
-            }
-        }
-        None => {
-            let drafts = note::Entity::find()
-                .filter(note::Column::DraftOf.eq(id))
-                .order_by_desc(note::Column::Id)
-                .find_with_related(category::Entity)
-                .all(&state.db)
-                .await
-                .unwrap_or(vec![]);
-            (n, cats, drafts.into_iter().next())
-        }
-    };
-
-    let (note_dto, draft_dto) = (
-        map_note(note_row, note_cats.into_iter().next().map(|c| (c.id, c.name))),
-        draft_row.map(|(d, cats)| map_note(d, cats.into_iter().next().map(|c| (c.id, c.name)))),
-    );
-    // 原文章与修改稿**一起**挂标签（一次查询 —— `attach_tags` 收的是一批 DTO）。
-    // 两行都得挂：编辑器靠 `noteTags` 回填标签选择器，漏了修改稿那一行，
-    // 用户打开"继续编辑"会发现标签全没了、一保存就把标签清空。
-    let mut rows: Vec<NoteDto> = std::iter::once(note_dto).chain(draft_dto).collect();
-    attach_tags(&state.db, &mut rows).await;
-    let mut rows = rows.into_iter();
-    let dto = EditorNoteDto {
-        note: rows.next().expect("上面刚放进去的原文章那一行"),
-        draft: rows.next(),
-    };
-
-    (StatusCode::OK, Json(ApiResponse::success(dto))).into_response()
-}
+mod drafts;
+pub use drafts::{autosave_note, get_note_for_edit};
 
 // `#[cfg(test)] mod split_terms_tests` 随 `split_terms` 一起搬到了 `crate::search_core`
 // （20261006）：测试跟着实现走，否则改一份、另一份假绿。

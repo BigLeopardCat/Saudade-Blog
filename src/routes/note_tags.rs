@@ -430,7 +430,7 @@ async fn tag_names<C: ConnectionTrait>(
 /// ⚠️ **查不到时把 `tags` 置成空串**（不是留着旧值）：`NoteDto.tags` 默认是 `String::new()`，
 /// 而"这一篇真的没有标签"与"这一路没挂"在连线上本来就同形（都是 `""`）——
 /// 前端 `parseNoteTags("")` 得空数组，两者行为一致。
-pub(crate) async fn attach_tags(db: &DatabaseConnection, dtos: &mut [NoteDto]) {
+pub(crate) async fn attach_tags<C: ConnectionTrait>(db: &C, dtos: &mut [NoteDto]) {
     let ids: Vec<i32> = dtos.iter().map(|d| d.id).collect();
     if ids.is_empty() {
         return;

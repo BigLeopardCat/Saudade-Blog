@@ -67,7 +67,7 @@ const walkSrc = () => {
 const NT = 'src/routes/note_tags.rs';
 const FILES = walkSrc();
 const nt = FILES.find(([p]) => p === NT)?.[1];
-const notes = FILES.find(([p]) => p === 'src/routes/notes.rs')?.[1];
+const notes = FILES.filter(([p]) => ['src/routes/notes.rs', 'src/routes/notes/drafts.rs'].includes(p)).map(([, source]) => source).join('\n');
 
 console.log('\n① 两种输入共用一个类型明确的事务写点');
 {
