@@ -44,7 +44,7 @@ test('removing card flex growth reproduces the old narrow-card defect', async ({
             return cards.some(card => tracks.every(track => Math.abs(card.width - track) > 1))
         }, `negative control reproduces narrow cards at ${width}px`).toBe(true)
     }
-    await undo.evaluate(el => el.remove())
+    await undo.evaluate(el => (el as HTMLStyleElement).remove())
     await expect.poll(async () => {
         const {tracks, cards} = await geometry(page)
         return cards.every(card => tracks.some(track => Math.abs(card.width - track) <= 1))
