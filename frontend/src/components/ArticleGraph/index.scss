@@ -3,6 +3,7 @@
   color: var(--washi-ink, #4a3550); background: var(--washi-paper, #fffdfa);
   border: 1px solid var(--washi-line-2, #e8d5e2); border-radius: 14px; overflow: hidden;
   button { font: inherit; cursor: pointer; color: inherit; border: 1px solid var(--washi-line-2, #e8d5e2); border-radius: 8px; background: var(--washi-paper-2, #fff6fa); padding: 5px 10px; }
+  small { display: block; margin-top: 4px; opacity: .75; }
   a { color: var(--washi-pink-deep, #a94f83); }
   button:focus-visible, a:focus-visible { outline: 2px solid var(--washi-pink-deep, #a94f83); outline-offset: 2px; }
   .articleGraphHeader { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 14px; font-size: 12px; }

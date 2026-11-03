@@ -106,7 +106,10 @@ export default function ArticleGraph({ query, composing = false }: { query: stri
     }) : [];
     return <section className="articleGraph" aria-label="文章向量图谱">
         <div className="articleGraphHeader">
-            <span>拖动旋转 · 滚轮缩放 · 双击节点阅读文章</span>
+            <span>拖动旋转 · 滚轮缩放 · 双击节点阅读文章
+                {data && <small>收录 {data.articles.length} 篇文章{data.built && !Number.isNaN(Date.parse(data.built))
+                    ? ` · 更新于 ${new Date(data.built).toLocaleString('zh-CN', {timeZone:'Asia/Shanghai',hour12:false})}` : ''}</small>}
+            </span>
             <button type="button" onClick={() => engine.current?.home()}>重置视角</button>
         </div>
         <div className="articleGraphViewport">
