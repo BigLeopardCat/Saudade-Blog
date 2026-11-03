@@ -137,18 +137,14 @@ fn pick_todo<'a>(
 async fn begin_list_write(
     db: &sea_orm::DatabaseConnection,
     uid: i32,
-) -> Result<sea_orm::DatabaseTransaction, sea_orm::DbErr> {
+) -> Result<(sea_orm::DatabaseTransaction, user::Model), sea_orm::DbErr> {
     let txn = db.begin().await?;
     let actor = user::Entity::find_by_id(uid)
         .lock_exclusive()
         .one(&txn)
         .await?;
-    if actor.is_none() {
-        return Err(sea_orm::DbErr::RecordNotFound(
-            "actor no longer exists".into(),
-        ));
-    }
-    Ok(txn)
+    let actor = actor.ok_or_else(|| sea_orm::DbErr::RecordNotFound("actor no longer exists".into()))?;
+    Ok((txn, actor))
 }
 
 fn conditional_update(
@@ -286,7 +282,7 @@ pub async fn save_todos(
         });
     }
 
-    let txn = match begin_list_write(&state.db, uid).await {
+    let (txn, _) = match begin_list_write(&state.db, uid).await {
         Ok(t) => t,
         Err(e) => {
             tracing::error!("[todos] 开事务失败 uid={}: {}", uid, e);
@@ -339,7 +335,7 @@ pub async fn add_todo(
         Ok(d) => d,
         Err(msg) => return Json(ApiResponse::error(msg)),
     };
-    let txn = match begin_list_write(&state.db, uid).await {
+    let (txn, _) = match begin_list_write(&state.db, uid).await {
         Ok(txn) => txn,
         Err(e) => {
             tracing::error!("todo append transaction failed uid={uid}: {e}");

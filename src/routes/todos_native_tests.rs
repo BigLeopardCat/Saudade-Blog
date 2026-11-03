@@ -217,7 +217,7 @@ async fn postgres_list_writes_serialize_on_isolated_actor_fixture() {
         .set_schema_search_path(schema.clone());
     let db = Arc::new(Database::connect(options).await.unwrap());
     let uid = 7;
-    let first = begin_list_write(&db, uid).await.unwrap();
+    let (first, _) = begin_list_write(&db, uid).await.unwrap();
     let cloned = Arc::clone(&db);
     let mut second = tokio::spawn(async move { begin_list_write(&cloned, uid).await.unwrap() });
     assert!(
@@ -225,11 +225,14 @@ async fn postgres_list_writes_serialize_on_isolated_actor_fixture() {
             .await
             .is_err()
     );
-    first.rollback().await.unwrap();
-    let second = tokio::time::timeout(std::time::Duration::from_secs(5), second)
+    first.execute(Statement::from_string(DatabaseBackend::Postgres,
+        "UPDATE \"user\" SET token_version=1 WHERE id=7")).await.unwrap();
+    first.commit().await.unwrap();
+    let (second, refreshed_actor) = tokio::time::timeout(std::time::Duration::from_secs(5), second)
         .await
         .unwrap()
         .unwrap();
+    assert_eq!(refreshed_actor.token_version, 1, "lock waiter must see the committed revocation");
     second.rollback().await.unwrap();
     drop(db);
     admin
