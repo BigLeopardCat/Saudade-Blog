@@ -76,7 +76,7 @@ export function locateLocal(q: string, g: GraphData): LocateHit[] {
     for (const node of g.nodes) {
         const k = keyOf(node.w);
         vocab.set(k, { w: node.w, n: node.n });
-        if (!/^[\x00-\x7f]*$/.test(k)) maxCjk = Math.max(maxCjk, k.length);
+        if ([...k].some(char => char.charCodeAt(0) > 127)) maxCjk = Math.max(maxCjk, k.length);
     }
 
     const hits: LocateHit[] = [];
