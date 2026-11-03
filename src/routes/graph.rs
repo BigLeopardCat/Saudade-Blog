@@ -97,6 +97,10 @@ pub(crate) fn agent_base_url() -> String {
 static CACHE: LazyLock<Mutex<HashMap<String, (Instant, GraphQueryResp)>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+fn cache_key(query: &str, version: &str) -> String {
+    format!("{version}:{}", query.to_lowercase())
+}
+
 fn cache_get(key: &str) -> Option<GraphQueryResp> {
     let mut g = CACHE.lock().ok()?;
     match g.get(key) {
@@ -147,9 +151,14 @@ pub async fn graph_query(
     if q.chars().count() > QUERY_MAX {
         return (StatusCode::OK, Json(GraphQueryResp::fail("query_too_long")));
     }
-    let key = q.to_lowercase();
-    if let Some(hit) = cache_get(&key) {
-        info!(q = %key, "graph: 命中查询缓存");
+    // A rebuild changes the embedding space and vocabulary together. Cache only
+    // when its published manifest identifies the current snapshot.
+    let version = tokio::fs::read(artifact_dir().join("manifest.json")).await.ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .and_then(|value| value.get("v").and_then(|v| v.as_str()).map(str::to_owned));
+    let key = version.as_deref().map(|version| cache_key(q, version));
+    if let Some(hit) = key.as_deref().and_then(cache_get) {
+        info!(q = %q, "graph: 命中查询缓存");
         return (StatusCode::OK, Json(hit));
     }
 
@@ -205,7 +214,7 @@ pub async fn graph_query(
 
     // 只缓存成功结果：把一次瞬时故障钉成 10 分钟的"不可用"毫无道理
     if resp.ok {
-        cache_put(key, resp.clone());
+        if let Some(key) = key { cache_put(key, resp.clone()); }
     }
     (StatusCode::OK, Json(resp))
 }
@@ -476,5 +485,20 @@ mod artifact_name_tests {
         assert!(valid_artifact_name("graph-1d1323374540.js"));
         assert!(valid_artifact_name("graph-ABCDEFGH.js"));
         assert!(valid_artifact_name("graph-ab_cd-ef12.js"));
+    }
+}
+
+#[cfg(test)]
+mod snapshot_cache_tests {
+    use super::{cache_get, cache_key, cache_put, GraphQueryResp, Hit};
+
+    #[test]
+    fn rebuilds_cannot_reuse_previous_snapshot_results() {
+        let query = "snapshot-cache-test";
+        cache_put(cache_key(query, "build-a"), GraphQueryResp {
+            ok: true, reason: None, words: vec![Hit { w: "word".into(), s: 0.9 }],
+        });
+        assert!(cache_get(&cache_key(&query.to_uppercase(), "build-a")).is_some());
+        assert!(cache_get(&cache_key(query, "build-b")).is_none());
     }
 }
