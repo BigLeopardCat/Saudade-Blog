@@ -27,3 +27,22 @@ for (const colorScheme of ['light', 'dark'] as const) {
     await expect(preview).toContainText('新增草稿段落')
   })
 }
+
+test('editor math renders with shared KaTeX and rejects untrusted links', async ({page, sandboxURL}) => {
+  await page.goto(sandboxURL)
+  const source = page.locator('.CodeMirror textarea')
+  await source.focus()
+  await page.keyboard.press('Control+End')
+  await page.keyboard.insertText(String.raw`
+
+公式 $E=mc^2$
+
+$$\frac{1}{2}$$
+
+$\href{javascript:alert(1)}{unsafe}$`)
+  const preview = page.locator('.saudade-note-editor .markdown-body')
+  await expect(preview.locator('.katex').first()).toBeVisible()
+  await expect(preview.locator('.katex-display')).toBeVisible()
+  await expect(preview.locator('a[href^="javascript:"]')).toHaveCount(0)
+  await expect(preview).toContainText('unsafe')
+})
