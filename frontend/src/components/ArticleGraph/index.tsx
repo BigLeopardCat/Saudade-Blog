@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSelector } from 'react-redux';
-import { useNavigate } from 'react-router-dom';
 import type UserState from '../../interface/UserState';
 import { loadGraph, resetGraphCache, SiteMismatchError } from './loader';
 import { locate, type LocateResult } from './locate';
@@ -9,7 +8,7 @@ import type { GraphData, LocateHit } from './types';
 import './index.scss';
 
 /** A keyword graph for exploring related articles; 3D distances are not relevance scores. */
-export default function ArticleGraph({ query, composing = false }: { query: string; composing?: boolean }) {
+export default function ArticleGraph({ query, composing = false, onOpenArticle }: { query: string; composing?: boolean; onOpenArticle: (id: number) => void }) {
     const canvas = useRef<HTMLCanvasElement>(null);
     const engine = useRef<WordGraphEngine | null>(null);
     const [data, setData] = useState<GraphData | null>(null);
@@ -19,7 +18,8 @@ export default function ArticleGraph({ query, composing = false }: { query: stri
     const [busy, setBusy] = useState(false);
     const [selected, setSelected] = useState<number | null>(null);
     const token = useSelector((state: { user: UserState }) => state.user.token);
-    const nav = useNavigate();
+    const openArticle = useRef(onOpenArticle);
+    useEffect(() => { openArticle.current = onOpenArticle; }, [onOpenArticle]);
 
     useEffect(() => {
         let active = true;
@@ -39,7 +39,7 @@ export default function ArticleGraph({ query, composing = false }: { query: stri
             onSelect: setSelected,
             onActivate: index => {
                 const article = data.articles[data.nodes[index].a];
-                if (article) nav(`/article/${article.id}`);
+                if (article) openArticle.current(article.id);
             },
         });
         engine.current = graph;
@@ -53,7 +53,7 @@ export default function ArticleGraph({ query, composing = false }: { query: stri
             graph.dispose();
             engine.current = null;
         };
-    }, [data, nav]);
+    }, [data]);
 
     useEffect(() => {
         if (!data || composing) return;
@@ -119,7 +119,7 @@ export default function ArticleGraph({ query, composing = false }: { query: stri
                 <button type="button" onClick={() => { resetGraphCache(); setAttempt(value => value + 1); }}>重试</button>
             </div>}
             {article && <a className="articleGraphSelection" href={`/article/${article.id}`} onClick={event => {
-                event.preventDefault(); nav(`/article/${article.id}`);
+                event.preventDefault(); onOpenArticle(article.id);
             }}>阅读：{article.t}</a>}
         </div>
         <div className="articleGraphStatus" role="status">
@@ -133,7 +133,7 @@ export default function ArticleGraph({ query, composing = false }: { query: stri
         </div>}
         {!!articles.length && <nav className="articleGraphArticles" aria-label="相关文章">
             {articles.map(row => <a key={row.id} href={`/article/${row.id}`} onClick={event => {
-                event.preventDefault(); nav(`/article/${row.id}`);
+                event.preventDefault(); onOpenArticle(row.id);
             }}>{row.t}</a>)}
         </nav>}
     </section>;

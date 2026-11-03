@@ -46,5 +46,6 @@ for (const {width, signedIn, available} of [
     await mode.click()
     await page.getByLabel('相关文章', {exact:true}).getByRole('link', {name:'Python 入门'}).click()
     await expect(page.getByTestId('location')).toHaveText('/article/5')
+    await expect(page.getByRole('combobox')).toHaveCount(0)
   })
 }

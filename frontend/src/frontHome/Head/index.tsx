@@ -12,7 +12,7 @@ import {fetchTags} from "../../store/components/tags.tsx";
 import {fetchSocial, fetchUserInfo} from "../../store/components/user.tsx";
 import AggregateSearch from '../../components/AggregateSearch';
 import { hitTarget } from './aggregate';
-import type { AggregateHit } from './aggregate';
+import type { AggregateTarget } from './aggregate';
 import '../main.css'
 import MoonToSun from "../MoonToSun";
 import { recordUserChoice } from "../../theme";
@@ -192,7 +192,7 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
         try { window.dispatchEvent(new CustomEvent('darkmode-change', { detail: !isDark })); } catch {/* ignore */}
     };
 
-    const openHit = (item: AggregateHit) => {
+    const openHit = (item: AggregateTarget) => {
         setIsModalOpen(false);
         navigate(hitTarget(item));
     };

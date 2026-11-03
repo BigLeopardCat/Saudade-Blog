@@ -1,14 +1,15 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Card, Space } from 'antd';
 import { CloseOutlined } from '@ant-design/icons';
 import { useAggregateSearchQueryState, useLazyAggregateSearchQuery } from '../../apis/SearchMethods';
 import { allHits, hitsOf, TYPE_LABEL, TYPE_ORDER } from '../../frontHome/Head/aggregate';
-import type { AggregateHit, SearchType } from '../../frontHome/Head/aggregate';
+import type { AggregateTarget, SearchType } from '../../frontHome/Head/aggregate';
 import { highlightParts } from './highlight';
 import './index.scss';
 const ArticleGraph = lazy(() => import('../ArticleGraph'));
 
-export default function AggregateSearch({ onOpen }: { onOpen: (hit: AggregateHit) => void }) {
+export default function AggregateSearch({ onOpen }: { onOpen: (hit: AggregateTarget) => void }) {
+    const openGraphArticle = useCallback((id: number) => onOpen({type: 'note', key: id, noteId: null}), [onOpen]);
     const [keyword, setKeyword] = useState('');
     const [mode, setMode] = useState<'content' | 'graph'>('content');
     const [type, setType] = useState<SearchType | 'all'>('all');
@@ -86,7 +87,7 @@ export default function AggregateSearch({ onOpen }: { onOpen: (hit: AggregateHit
             </button>
         </div>
         {mode === 'graph' && <Suspense fallback={<p role="status">正在加载文章图谱…</p>}>
-            <ArticleGraph query={query} composing={composing} />
+            <ArticleGraph query={query} composing={composing} onOpenArticle={openGraphArticle} />
         </Suspense>}
         {mode === 'content' && query && <Card variant="borderless" className="aggregateSearchCard" title={<div className="searchTitleRow">
             <span className="searchTotal">搜索结果{info ? `（${info.total}）` : ''}</span>

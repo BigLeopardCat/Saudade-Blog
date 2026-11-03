@@ -24,6 +24,8 @@ export interface AggregateHit {
     createTime: string
 }
 
+export type AggregateTarget = Pick<AggregateHit, 'type' | 'key' | 'noteId'>
+
 export interface AggregateResult {
     total: number
     page?: number
@@ -77,7 +79,7 @@ export function allHits(r: AggregateResult): AggregateHit[] {
  *  `/article/3` 这类页面上会拼成 `/article/article/5`——首页搜索框在每一页都在，
  *  不能假定当前路径只有一段。
  */
-export function hitTarget(h: AggregateHit): string {
+export function hitTarget(h: AggregateTarget): string {
     switch (h.type) {
         case 'note': return `/article/${h.key}`
         case 'talk': return `/talk?tk=${h.key}`
