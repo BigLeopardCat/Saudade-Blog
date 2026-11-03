@@ -2,6 +2,7 @@
 import { readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { JSDOM } from 'jsdom';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const raw = ['chat-stream.js', 'chat-approval.js'].map(file =>
@@ -10,6 +11,38 @@ const strip = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').split('\n')
     .map((l) => { const i = l.indexOf('//'); return i >= 0 ? l.slice(0, i) : l; })
     .join('\n');
 const code = strip(raw);
+
+function verifySelectableRestoration() {
+    const dom = new JSDOM('<main><section id="ask"><div id="question"></div><div id="buttons"></div></section></main>',
+        { url: 'https://fixture.invalid', runScripts: 'outside-only' });
+    const win = dom.window, doc = win.document;
+    try {
+        win.localStorage.setItem('tokenKey', 'a.' + win.btoa(JSON.stringify({sub: 1})) + '.b');
+        win.eval(readFileSync(path.join(here, '../public/live2d-widgets/chat-approval.js'), 'utf8'));
+        const ctx = {dom: {messages: doc.querySelector('main'), askBox: doc.querySelector('#ask'),
+            askQuestion: doc.querySelector('#question'), askBtns: doc.querySelector('#buttons')},
+            state: {conv: 42, isSending: false, remoteRounds: {}},
+            render: {applyMsg: (node, text) => { node.textContent = text; }}};
+        const approval = win.__waifuApproval(ctx, {scrollToBottom: () => {}});
+        const card = {id: 'batch', token: 'fixture-only', q: '选择待办', opts: [
+            {value:'yes',label:'确认'}, ...[0,1,2].map(i => ({value:'pick:'+i,label:'待办 '+i})),
+            {value:'no',label:'取消'}]};
+        approval.receive(card, 42, null); approval.syncAsk();
+        const inputs = () => [...ctx.dom.askBtns.querySelectorAll('input[type="checkbox"]')];
+        ok(inputs().length === 4, '批次渲染全选与三项真实勾选控件');
+        inputs()[2].click();
+        ok(ctx.dom.askBtns.querySelector('[data-ask-submit]').dataset.askValue === 'pick:0,2',
+            '取消勾选中间项只提交两项的明确选择');
+        ctx.dom.askBox.dataset.askState = ''; approval.syncAsk();
+        ok(inputs().slice(1).map(input => input.checked).join(',') === 'true,false,true',
+            '强制重建后保留部分选择，不退回全选');
+        inputs()[0].click(); inputs()[0].click();
+        ok(ctx.dom.askBtns.querySelector('[data-ask-submit]').disabled,
+            '全不选时禁止确认执行');
+        ok(!win.localStorage.getItem('saudade-chat-approvals:1:42').includes('fixture-only'),
+            '选项恢复缓存不保存确认凭据');
+    } finally { win.close(); }
+}
 
 let pass = 0, fail = 0;
 const ok = (cond, name, extra) => {
@@ -51,8 +84,7 @@ const ok = (cond, name, extra) => {
 {
     ok(/b\.setAttribute\('data-ask-value', op\.value \|\| 'yes'\)/.test(code),
        '按钮的 data-ask-value 取自帧里的 opts（不是写死两枚）');
-    ok(/\(ask\.opts \|\| \[\]\)\.forEach/.test(code),
-       '  重建时逐个渲染 opts（N 枚按钮的自愈路径与首渲染同源）');
+    verifySelectableRestoration();
 }
 
 {
