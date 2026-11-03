@@ -19,7 +19,7 @@
 // 对象字面量，或者延迟那条 `Math.min` 被拿掉，这里必须当场红。
 //
 // ⚠️ 不测"缓存里到底存了什么"：那是 `ContentHome` 的运行期行为，桩一份 `location`/`redux`
-// 进来只会测到桩自己。这里只锁**接线**，与 `article-grid.test.mjs` / `article-card-hover.test.mjs`
+// 进来只会测到桩自己。这里只锁**接线**，与 `browser/article-grid.spec.ts` / `article-card-hover.test.mjs`
 // 的分工一致。
 import { readFileSync } from 'fs';
 import path from 'path';

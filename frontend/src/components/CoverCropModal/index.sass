@@ -1,5 +1,3 @@
-// 封面裁剪弹窗（20260912）
-// 深色编辑区 + 浅色预览区：用固定颜色而非主题变量，避免明暗主题下裁剪判断受环境影响。
 
 .CoverCropModal
   .ant-modal-body
@@ -8,9 +6,9 @@
   .ccBody
     display: flex
     gap: 24px
+    margin-top: 16px
     align-items: flex-start
 
-  // 页签：置顶轮播 / 文章卡片各一套参数，各占一页
   .ccTabs
     .ant-tabs-nav
       margin-bottom: 12px
@@ -19,8 +17,6 @@
     flex-shrink: 0
     width: 360px
 
-  // 舞台就是裁剪窗本身：宽度撑满编辑列，**高度由行内 aspectRatio 决定**
-  // （1:1 轮播 360px 高、16:9 卡片窗 202.5px 高），不能再写死高度
   .ccStage
     position: relative
     width: 100%
@@ -34,50 +30,11 @@
     &:active
       cursor: grabbing
 
-    .ccStageImg
-      position: absolute
-      display: block
-      pointer-events: none
-
-    .ccGrid
-      position: absolute
-      inset: 0
-      pointer-events: none
-      background-image: linear-gradient(to right, rgba(255, 255, 255, .35) 1px, transparent 1px), linear-gradient(to bottom, rgba(255, 255, 255, .35) 1px, transparent 1px)
-      background-size: 33.333% 33.333%
-      background-position: -1px -1px
-      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .55)
-
-    .ccStageTip
-      position: absolute
-      inset: 0
-      display: flex
-      align-items: center
-      justify-content: center
-      color: #ddd
-      font-size: 14px
-
   .ccHint
     margin-top: 8px
     color: #888
     font-size: 12px
     text-align: center
-
-  .ccZoom
-    display: flex
-    align-items: center
-    gap: 10px
-    margin-top: 4px
-
-    .ant-slider
-      flex: 1
-      margin: 6px 0
-
-    .ccZoomVal
-      width: 46px
-      color: #888
-      font-size: 12px
-      text-align: right
 
   .ccNote
     margin-top: 2px
@@ -104,11 +61,6 @@
     border-radius: 10px
     background: #e9e9e9
 
-  .ccPreviewNote
-    color: #aaa
-    font-size: 12px
-    line-height: 1.6
-
   @media only screen and (max-width: 700px)
     .ccBody
       flex-direction: column
@@ -118,7 +70,7 @@
       width: 100%
 
     .ccStage
-      width: 280px
+      width: min(100%, 360px)
       margin: 0 auto
 
     .ccPreviews

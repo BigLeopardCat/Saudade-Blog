@@ -89,6 +89,8 @@ pub struct NoteDto {
     pub cover_focus_y: Option<f64>,
     #[serde(rename = "coverZoom")]
     pub cover_zoom: Option<f64>,
+    #[serde(rename = "coverFit")]
+    pub cover_fit: Option<String>,
     // 置顶轮播专用裁剪参数，null = 未设置（前端渲染时回退跟随 cover_* 那套）
     #[serde(rename = "carouselFocusX")]
     pub carousel_focus_x: Option<f64>,
@@ -96,6 +98,8 @@ pub struct NoteDto {
     pub carousel_focus_y: Option<f64>,
     #[serde(rename = "carouselZoom")]
     pub carousel_zoom: Option<f64>,
+    #[serde(rename = "carouselFit")]
+    pub carousel_fit: Option<String>,
 
     #[serde(rename = "createTime")]
     pub created_at: String,
@@ -187,9 +191,11 @@ fn map_note(n: note::Model, cat: Option<(i32, String)>) -> NoteDto {
         cover_focus_x: n.cover_focus_x,
         cover_focus_y: n.cover_focus_y,
         cover_zoom: n.cover_zoom,
+        cover_fit: n.cover_fit,
         carousel_focus_x: n.carousel_focus_x,
         carousel_focus_y: n.carousel_focus_y,
         carousel_zoom: n.carousel_zoom,
+        carousel_fit: n.carousel_fit,
         created_at: n.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
         updated_at: n.updated_at.format("%Y-%m-%d %H:%M:%S").to_string(),
         is_top: n.is_top.unwrap_or(0),
@@ -241,9 +247,11 @@ pub struct NoteSummary {
     pub cover_focus_x: Option<f64>,
     pub cover_focus_y: Option<f64>,
     pub cover_zoom: Option<f64>,
+    pub cover_fit: Option<String>,
     pub carousel_focus_x: Option<f64>,
     pub carousel_focus_y: Option<f64>,
     pub carousel_zoom: Option<f64>,
+    pub carousel_fit: Option<String>,
     pub is_top: Option<i32>,
     pub status: Option<String>,
     pub draft_of: Option<i32>,
@@ -269,9 +277,11 @@ impl NoteSummary {
             cover_focus_x: self.cover_focus_x,
             cover_focus_y: self.cover_focus_y,
             cover_zoom: self.cover_zoom,
+            cover_fit: self.cover_fit,
             carousel_focus_x: self.carousel_focus_x,
             carousel_focus_y: self.carousel_focus_y,
             carousel_zoom: self.carousel_zoom,
+            carousel_fit: self.carousel_fit,
             is_top: self.is_top,
             status: self.status,
             draft_of: self.draft_of,
@@ -828,6 +838,22 @@ pub async fn search_all_notes(
     Json(ApiResponse::success(dtos))
 }
 
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CoverFit {
+    Cover,
+    Contain,
+}
+
+impl CoverFit {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Cover => "cover",
+            Self::Contain => "contain",
+        }
+    }
+}
+
 #[derive(Deserialize)]
 pub struct UpsertNoteRequest {
     #[serde(rename = "expectedVersion")]
@@ -852,6 +878,8 @@ pub struct UpsertNoteRequest {
     pub cover_focus_y: Option<f64>,
     #[serde(rename = "coverZoom")]
     pub cover_zoom: Option<f64>,
+    #[serde(rename = "coverFit")]
+    pub cover_fit: Option<CoverFit>,
     // 置顶轮播专用裁剪参数：同样不传则不改动该列；三列必须同进同出（渲染端按三元组原子判定，
     // 只写其中一列会让整组失效 ⇒ 写入静默不生效）
     #[serde(rename = "carouselFocusX")]
@@ -860,6 +888,8 @@ pub struct UpsertNoteRequest {
     pub carousel_focus_y: Option<f64>,
     #[serde(rename = "carouselZoom")]
     pub carousel_zoom: Option<f64>,
+    #[serde(rename = "carouselFit")]
+    pub carousel_fit: Option<CoverFit>,
 
     #[serde(rename = "noteTags")]
     pub tags: Option<String>,
@@ -929,9 +959,11 @@ pub async fn create_note(
         cover_focus_x: Set(payload.cover_focus_x.map(clamp01)),
         cover_focus_y: Set(payload.cover_focus_y.map(clamp01)),
         cover_zoom: Set(payload.cover_zoom.map(clamp_zoom)),
+        cover_fit: Set(Some(payload.cover_fit.unwrap_or(CoverFit::Contain).as_str().into())),
         carousel_focus_x: Set(payload.carousel_focus_x.map(clamp01)),
         carousel_focus_y: Set(payload.carousel_focus_y.map(clamp01)),
         carousel_zoom: Set(payload.carousel_zoom.map(clamp_zoom)),
+        carousel_fit: Set(payload.carousel_fit.map(|v| v.as_str().into())),
         is_top: Set(payload.is_top),
         status: Set(Some(status_word.to_string())),
         user_id: Set(author),
@@ -1050,6 +1082,8 @@ pub async fn update_note(
         if let Some(v) = payload.cover { active_model.cover = Set(Some(v)); }
         if let Some(v) = payload.cover_focus_x { active_model.cover_focus_x = Set(Some(clamp01(v))); }
         if let Some(v) = payload.cover_focus_y { active_model.cover_focus_y = Set(Some(clamp01(v))); }
+        if let Some(v) = payload.cover_fit { active_model.cover_fit = Set(Some(v.as_str().into())); }
+        if let Some(v) = payload.carousel_fit { active_model.carousel_fit = Set(Some(v.as_str().into())); }
         if let Some(v) = payload.cover_zoom { active_model.cover_zoom = Set(Some(clamp_zoom(v))); }
         if let Some(v) = payload.carousel_focus_x { active_model.carousel_focus_x = Set(Some(clamp01(v))); }
         if let Some(v) = payload.carousel_focus_y { active_model.carousel_focus_y = Set(Some(clamp01(v))); }
