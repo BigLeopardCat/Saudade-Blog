@@ -65,12 +65,15 @@ describe('current draft collaboration', () => {
     expect(f.writes).toEqual([])
     expect(f.proposal()).toBeNull()
   })
-  it('a summary update preserves an independent pending body review', () => {
+  it('a summary update preserves and reports the pending body review', () => {
     const f = fixture()
     f.propose()
     const snapshot = f.read()
-    f.session.execute({kind:'article_editor',operation:'summary',command_id:'summary',
+    expect(snapshot.proposal_id).toBe(f.proposal()?.id)
+    const applied = f.session.execute({kind:'article_editor',operation:'summary',command_id:'summary',
       editor_id:snapshot.editor_id,revision:snapshot.revision,description:'新摘要'})
+    expect(applied.proposal_id).toBe(snapshot.proposal_id)
+    expect(f.read().proposal_id).toBe(snapshot.proposal_id)
     f.session.accept()
     expect(f.value()).toMatchObject({content:'第一节新正文\n\n第二节旧正文',description:'新摘要'})
   })

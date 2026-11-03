@@ -69,14 +69,16 @@ export function createEditorSession(options: {
       const end = Math.min(value.content.length, offset + limit)
       result = {editor_id: id, revision, outcome: 'read', title: value.title.slice(0, 1000),
         content: value.content.slice(offset, end), description: value.description.slice(0, 16000),
-        offset, next_offset: end < value.content.length ? end : null, total_chars: value.content.length}
+        offset, next_offset: end < value.content.length ? end : null, total_chars: value.content.length,
+        ...(proposal ? {proposal_id: proposal.id} : {})}
     } else {
       check(command.editor_id, command.revision)
       if (command.operation === 'summary') {
         if (typeof command.description !== 'string' || command.description.length > 16000) throw new Error('摘要长度不合法。')
         options.applySummary(command.description)
         current()
-        result = {editor_id: id, revision, outcome: 'updated'}
+        result = {editor_id: id, revision, outcome: 'updated',
+          ...(proposal ? {proposal_id: proposal.id} : {})}
       } else if (command.operation === 'propose') {
         if (!Array.isArray(command.edits) || !command.edits.length || command.edits.length > 20)
           throw new Error('修改提案需包含 1 至 20 个修改。')
