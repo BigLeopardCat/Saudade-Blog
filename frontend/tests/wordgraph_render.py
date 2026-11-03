@@ -42,7 +42,7 @@ from playwright.sync_api import sync_playwright
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 GRAPH_DIR = ROOT / "public" / "graph"
-WG_SRC = ROOT / "src" / "frontHome" / "Content" / "ContentHome" / "Vitrine" / "wordgraph"
+WG_SRC = ROOT / "src" / "components" / "ArticleGraph"
 
 CANVAS_W, CANVAS_H = 620, 460
 DEFINE = ('import.meta.env={"VITE_HTTP_BASEURL":"","VITE_CDN_BASEURL":"",'

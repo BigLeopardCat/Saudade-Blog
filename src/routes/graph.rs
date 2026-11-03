@@ -154,8 +154,11 @@ pub async fn graph_query(
     }
 
     // 不传 trace_id：这条路径与对话无关，硬塞一个会让日志里出现无对话的 trace 目录
-    let url = format!("{}/graph/query", agent_base_url());
-    let sent = reqwest::Client::new()
+    let Some(url) = crate::ai_services::graph_endpoint("/graph/query") else {
+        return (StatusCode::OK, Json(GraphQueryResp::fail("service_unavailable")));
+    };
+    static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(reqwest::Client::new);
+    let sent = CLIENT
         .post(&url)
         .header("X-Agent-Assertion", crate::auth_jwt::create_agent_assertion(uid, role.as_deref()))
         .json(&serde_json::json!({ "q": q, "uid": uid }))
@@ -227,13 +230,12 @@ pub async fn graph_query(
 // ⚠️ 日后若有人加一条能匹配 `/api/...js` 的正则 location，它会抢在 `^~ /api/` 之前
 // ——那时这里设的头全部失效（症状是产物被 no-store、或类型变成 text/html）。
 
-/// 展示产物目录。默认指向 agent 那个目录（重建任务写的就是它）；
-/// 换机器/换布局时用 `GRAPH_ARTIFACT_DIR` 覆盖。
+/// 博客持有展示产物；构建服务通过 GRAPH_ARTIFACT_DIR 共享目录发布。
 fn artifact_dir() -> std::path::PathBuf {
     std::env::var("GRAPH_ARTIFACT_DIR")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| {
-            std::path::PathBuf::from("/home/ubuntu/Saudade-Blog/saudade-blog-agent/data/word_graph/web")
+            std::path::PathBuf::from("data/article-graph")
         })
 }
 
@@ -357,7 +359,8 @@ async fn call_agent(
     timeout: Duration,
 ) -> Result<(StatusCode, serde_json::Value), String> {
     let (uid, role) = assertion_actor(state, headers).await?;
-    let url = format!("{}{}", agent_base_url(), path);
+    let url = crate::ai_services::graph_endpoint(path)
+        .ok_or_else(|| "图谱服务未配置".to_string())?;
     let mut req = reqwest::Client::new()
         .request(method, &url)
         .header("X-Agent-Assertion", crate::auth_jwt::create_agent_assertion(uid, role.as_deref()))

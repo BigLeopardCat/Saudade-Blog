@@ -58,7 +58,7 @@ async function fillRatio(page: Page) {
 test('gallery navigation state opens storage settings, restores saved values and shows actual usage', async ({page, sandboxURL}) => {
   const server = await backend(page)
   await page.goto(sandboxURL)
-  await expect(page.getByRole('tab')).toHaveText(['站点信息', '社交媒体', '向量图谱', '图库存储'])
+  await expect(page.getByRole('tab')).toHaveText(['站点信息', '社交媒体', '图库存储'])
   await expect(page.getByRole('tab', {name: '图库存储'})).toHaveAttribute('aria-selected', 'true')
   await expect(panel(page).locator('.ant-input-group-addon')).toHaveText(['桶名', '前缀', '公开域名'])
   // Saved form fields differ from effective usage metadata; the sources cannot be interchanged.

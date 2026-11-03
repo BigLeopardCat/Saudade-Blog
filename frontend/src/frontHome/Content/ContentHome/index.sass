@@ -1,13 +1,10 @@
-//全局变量
 $darkMode: true
-// light
 $pic-cover-color: linear-gradient(90deg,hsla(0,0%,98%,0) 0,hsla(0,0%,98%,.013) 8.1%,hsla(0,0%,98%,.049) 15.5%,hsla(0,0%,98%,.104) 22.5%,hsla(0,0%,98%,.175) 29%,hsla(0,0%,98%,.259) 35.3%,hsla(0,0%,98%,.352) 41.2%,hsla(0,0%,98%,.45) 47.1%,hsla(0,0%,98%,.55) 52.9%,hsla(0,0%,98%,.648) 58.8%,hsla(0,0%,98%,.741) 64.7%,hsla(0,0%,98%,.825) 71%,hsla(0,0%,98%,.896) 77.5%,hsla(0,0%,98%,.951) 84.5%,hsla(0,0%,98%,.987) 91.9%,#fff)
 $pic-background-cover: #fafafa
 $pic-cover-color-m: linear-gradient(180deg, hsla(0, 0%, 98%, 0) 0, hsla(0, 0%, 98%, .013) 8.1%, hsla(0, 0%, 98%, .049) 15.5%, hsla(0, 0%, 98%, .104) 22.5%, hsla(0, 0%, 98%, .175) 29%, hsla(0, 0%, 98%, .259) 35.3%, hsla(0, 0%, 98%, .352) 41.2%, hsla(0, 0%, 98%, .45) 47.1%, hsla(0, 0%, 98%, .55) 52.9%, hsla(0, 0%, 98%, .648) 58.8%, hsla(0, 0%, 98%, .741) 64.7%, hsla(0, 0%, 98%, .825) 71%, hsla(0, 0%, 98%, .896) 77.5%, hsla(0, 0%, 98%, .951) 84.5%, hsla(0, 0%, 98%, .987) 91.9%, #fff)
 $font-p-color: #898989
 $box-shadow-color: 0 1px 35px -8px rgba(26, 26, 26, 0.6)
 $container-background-color: linear-gradient(to left, rgba(255, 255, 255,0.6), rgba(255, 255, 255,0.6))
-// dark
 $pic-cover-color-dark: linear-gradient(90deg, rgba(33, 33, 33, 0) 0, rgba(33, 33, 33, .013) 8.1%, rgba(33, 33, 33, .049) 15.5%, rgba(33, 33, 33, .104) 22.5%, rgba(33, 33, 33, .175) 29%, rgba(33, 33, 33, .259) 35.3%, rgba(33, 33, 33, .352) 41.2%, rgba(33, 33, 33, .45) 47.1%, rgba(33, 33, 33, .55) 52.9%, rgba(33, 33, 33, .648) 58.8%, rgba(33, 33, 33, .741) 64.7%, rgba(33, 33, 33, .825) 71%, rgba(33, 33, 33, .896) 77.5%, rgba(33, 33, 33, .951) 84.5%, rgba(33, 33, 33, .987) 91.9%, #212121)
 $pic-background-cover-dark: #212121
 $font-title-color-dark: white
@@ -15,8 +12,6 @@ $font-p-color-dark: #cccccc
 $pic-cover-color-dark-m: linear-gradient(180deg, rgba(33, 33, 33, 0) 0, rgba(33, 33, 33, .013) 8.1%, rgba(33, 33, 33, .049) 15.5%, rgba(33, 33, 33, .104) 22.5%, rgba(33, 33, 33, .175) 29%, rgba(33, 33, 33, .259) 35.3%, rgba(33, 33, 33, .352) 41.2%, rgba(33, 33, 33, .45) 47.1%, rgba(33, 33, 33, .55) 52.9%, rgba(33, 33, 33, .648) 58.8%, rgba(33, 33, 33, .741) 64.7%, rgba(33, 33, 33, .825) 71%, rgba(33, 33, 33, .896) 77.5%, rgba(33, 33, 33, .951) 84.5%, rgba(33, 33, 33, .987) 91.9%, #212121)
 $box-shadow-color-dark: 0 1px 35px -8px rgba(229, 229, 229, 0.6)
 $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rgba(0, 0, 0,0.6))
-
-// 动画
 .fade-in-out
   opacity: 0
   transition: all 0.5s ease-in-out
@@ -58,11 +53,6 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
   100%
     transform: translateX(0)
     opacity: 1
-
-
-// 樱花飘落：只动 transform / opacity（合成器属性）——7 片 12px 的小元素，帧内零布局、
-// 零重绘，与后台那次 `backdrop-filter` 事故不是一类东西。`--dx` 是中途横向漂移量
-// （未注册的自定义属性会在计算值阶段先替换成 token，再做插值，所以能用）。
 @keyframes petal-fall
   0%
     transform: translate3d(0, 0, 0) rotate(0deg)
@@ -76,118 +66,42 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
   100%
     transform: translate3d(0, 116vh, 0) rotate(360deg)
     opacity: 0
-
-// 光标闪烁（只动 opacity）
 @keyframes caret-blink
   0%, 45%
     opacity: 1
   55%, 100%
     opacity: 0
-
-// 标签条上那颗小星（`.heroTagStar` 引用它）。只有 opacity：合成器就能跑完，
-// 不碰布局、不碰前景重绘——这一屏和看板娘同屏，任何会重绘前景的动效都在抢同一份预算。
 @keyframes tag-twinkle
   0%, 100%
     opacity: 1
   50%
     opacity: 0.4
-
-// ⚠️ 20261001 八轮：`ribbon-float`（置顶缎带的慢浮）与 `more-nudge`（More 箭头的横移）
-// **两条常驻循环动效都删了**，不是换参数、是整条撤掉。用户原话：「动效上下晃动给人
-// 不稳定失去掌控的心理感觉」。这句话是这一轮的总纲 —— 一块**常驻在动**的牌子，无论
-// 动得多慢，读到的都是"它自己在抖"，而不是"我能让它动"。
-//
-// 取而代之的纪律：**三块牌子静置时一律不动，动效只在指针接触时发生**（见各自的
-// `:hover`）。悬停响应是"我按的"，常驻循环是"它自己抖的" —— 前者给掌控感，后者拿走它。
-// 顺带两个收益：① 页面上少两条永久运行的合成器动画；② 悬停态原来要靠 `animation: none`
-// 把常驻动画"停住"才能生效（动画恒压声明），现在没有那一层，`transform` 直接说了算。
-//
-// 唯一保留的常驻动效是置顶缎带尾尖那枚 **✦ 的呼吸**（`tag-twinkle`，只动 opacity）——
-// 它不产生位移，读起来是"记号在发光"而不是"牌子在晃"。这一条是被用户点名认可的
-// （「其中置顶的标签还可以」），其余两个记号（`.allContent` 的 ✦、图标徽章）都已撤掉。
-
-// ── 首屏 hero（20260930 四轮重做：用户「主页也想要这种图片的风格」）────────────────
-// 参考图 = 粉紫淡彩的日系手账封面。落地成四层，**全部是静态渐变 + 位移/透明度动画**：
-//   ① `.collageBg` 柔和色块 + 方格纸    ② `.petals` 七片樱花
-//   ③ `.SayWords`  窗贴标签 / 描边渐变标题 / 命令条 / 社交按钮（文字列）
-//   ④ `.heroRight` 右列 = `.heroPanel`（视频，手账内页）+ 它下面的 Vitrine（展示柜贴图）
-// ⚠️ 布局契约（20260930 五轮改写，读之前先忘掉旧版）：
-//   · **文字列与右列现在是"居中的一对"**（`justify-content: center`），不再
-//     `space-between` 顶到两端——用户要的是"左侧那一堆文本和组件往中间移动"。
-//     左内边距同时从 8% 提到 10%：居中只把**组**摆正，不改变"文字列贴左"这个观感，
-//     两条一起给才是"往中间去"。
-//   · **旧的"12px 缝"约束已作废**：那是给 `left: calc(8vw + 450px)` 的展示柜窗口算的，
-//     而展示柜现在住到视频下面去了（见 Vitrine/index.sass 头注）。标题字号因此可以
-//     自由放大（用户这次就要"文本放大"）——但**别再往回改小**：`clamp()` 的下限 2.5rem
-//     是"窄桌面不挤爆右列"的那条线，右列宽度与 gap 都跟着它配平（见下面 `.heroRight`）。
-//   · **夜里不再隐藏 `.heroPanel`**（20261001 六轮，用户第 1 条）——两档主题同一张手账纸，
-//     右列永远是"内页 + 展示柜"两张卡上下叠着。
 .SelfDescription
   position: relative
-  // 色块的负偏移（`left: -12vw` 那类）会溢出到视口外，而页根没有 overflow-x 兜底
-  // ⇒ 不给 hidden 就凭空多出一条横向滚动条。
   overflow: hidden
   min-height: 100vh
   display: flex
   align-items: center
-  // 文字列在左、右列（视频 + 展示柜）在右。**居中而不是 space-between**（20260930 五轮，
-  // 用户「左侧那一堆文本和组件往中间移动」）——两组内容当成一对摆到内容区正中。
   justify-content: center
   gap: clamp(32px, 4vw, 80px)
-  // 首屏高度预算（20261003 用户第 1 条「个性签名和下翻按钮必须下滚才能看见」）。
-  //
-  // hero 的高度是**内容撑出来的**，`min-height: 100vh` 只兜下限：112 + 右列 + 148。
-  // 而右列高度 = 1.1875 × 列宽 + 24px（推导线埋在 `.heroRight` 那一处）——**严格正比
-  // 于宽度**。于是"矮视口下整屏装不下"这件事只有一个结构性解法：按**剩下的高度**
-  // 反过来算列宽。两个留白值因此必须能被那条公式读到，写在这里当变量。
-  // ⚠️ 手机档会把它们改成 104 / 128（见下面那条 media），别在那里写死 padding。
   --hero-pad-t: 112px
   --hero-pad-b: 148px
-  // 左内边距 8% → 10%：居中只管"组"的位置，文字列相对左缘仍需再让一截
   padding: var(--hero-pad-t) 6% var(--hero-pad-b) 10%
   background: var(--container-background-color)
-
-  // ⚠️ 手机档这一段**必须写在上面那批声明之后**——sass 按源码位置原样吐进编译产物，
-  // 而它选择器就是 `.SelfDescription` 本身、特异度与父规则**一模一样**，谁在后面谁赢。
-  // 写在前面时 `padding` / `gap` / `justify-content` 全被父规则静默压掉，只剩
-  // `flex-direction`（父规则没声明过）真的生效——20260930 出图核对时抓到的：375px 下
-  // padding 实测仍是桌面的 `112px 6% 148px 8%`、文字与内页的间距是 48px 不是 28px。
-  // 同族坑在本文件出现过三次（另两处是 `.petal` 与 `.heroTagStar` 的 reduced-motion 档
-  // ——后者 20260930 被 `home-hero.test.py` 第 ⑧ 组抓出：基规则住在 `.heroTag` 块里，
-  // 覆写少写一层就少一档特异度）。**形状扫描**（全仓 52 个样式文件找"同选择器被后写者
-  // 静默压掉"）住在 `tests/sass-media-shadow.test.mjs`，进 CI 的秒级 job；
-  // `home-hero.test.py` 第 ⑤ 组那两条数值断言是同一件事的几何侧（这一档到底有没有生效）。
   @media screen and (max-width: 768px)
-    // 手机上一列到底：文字在上、内页在下。原来是 `column-reverse`，那时内页要么是
-    // 绝对定位的满屏视频、要么是注释掉的头像（都不占流），反向等于没写；现在内页真占位了，
-    // 反向就会把视频顶到标题上面，所以显式改回 `column`。
     flex-direction: column
     align-items: stretch
-    // 居中而不是 `space-between`：`min-height: 100vh` 留出的余量摊在上下两边，
-    // 不会变成"文字与内页之间一道随视口高度变化的沟"
     justify-content: center
     gap: 28px
-    // ⚠️ 下留白必须 ≥ `.heroBottom` 那一行自己占的高度：签名 `bottom: 86px` + 行高
-    // **29px**（字号 24.5 那档的行盒；上一档 23px 时是 27px）⇒ 它顶边在离 hero 下缘
-    // 115px 处，留 56px 的话右列（内页 + 展示柜）的下缘会压在签名上（实测 768×900：
-    // 展示柜底 1177 vs 签名 1120..1147；414×800：798 vs 741..768，连下翻按钮一起被压）
-    // —— 用户第 1 条「个性签名，下翻按钮……盖在上面了」的另一半。
-    // 132 在 115 之上再留 17px 呼吸（上一档字号是 128/15px）。桌面档是 148px
-    // （本来就不冲突，见上面那条）。
     --hero-pad-t: 104px
     --hero-pad-b: 132px
     padding: var(--hero-pad-t) 5% var(--hero-pad-b)
-
-  // ① 拼贴底：色块用 radial-gradient 自带羽化——**不用 `filter: blur()`** 做柔化，
-  // 大面积模糊是后台那次 GPU 事故的放大器。色块本身**不动**（大图层做位移动画得不偿失，
-  // 动感交给樱花）。方格纸用一层 repeating 线性渐变。
   .collageBg
     position: absolute
     inset: 0
     z-index: 0
     pointer-events: none
     overflow: hidden
-    // 值走 `--washi-theme-bg`（src/index.css）：登录页底与文章页阅读面也用这一张
     background: var(--washi-theme-bg)
     &::after
       content: ''
@@ -216,8 +130,6 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
       right: 4vw
       bottom: -16vw
       background: radial-gradient(circle at 50% 50%, rgba(168, 224, 236, 0.5), rgba(168, 224, 236, 0) 70%)
-
-  // ② 樱花：七片，各自靠 `left` / 时长 / 负延迟 / `--dx` 错开，看起来是连续飘落
   .petals
     position: absolute
     inset: 0
@@ -229,7 +141,6 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
       top: -6vh
       width: 12px
       height: 12px
-      // 一片花瓣的形状：两个对角圆角 + 两个直角，转起来像个叶片
       border-radius: 100% 0 100% 0
       background: linear-gradient(135deg, #ffd8ea 0%, #ff9ec9 100%)
       opacity: 0
@@ -287,54 +198,20 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
       --o: 0.6
       animation-duration: 22s
       animation-delay: -11s
-
-  // ④ 右列 = 手账内页（视频）+ 它下面的展示柜贴图（20260930 五轮）。
-  // 列宽收在这一层，两张卡都吃 `100%`（原来宽度写在 `.heroPanel` 上，现在它只是
-  // 列里的第一张卡）。38vw / 520px 是配平出来的：左列标题在 `clamp()` 上限时约 534px，
-  // 加上 gap 与这一列，在 1366 那档刚好落在内容区（1440 × 0.84）之内 —— 不会再挤标题。
+  // 右侧仅保留 4:3 视频，按可用视口高度限制宽度。
   .heroRight
     position: relative
-    // 3 > `.heroBottom` 的 2（原先这里是 1，被压在下面）。两者本来靠留白不重叠，但
-    // 展示柜**放大态**是这一列里的一个 `position: fixed` 弹层（`.vitrine.is-zoomed`）：
-    // 列的 z-index 比 `.heroBottom` 低 ⇒ 签名与下翻按钮会**穿透压暗层画在弹层上面**
-    // （用户第 1 条「个性签名，下翻按钮……盖在上面了」的另一半）。整列抬到 2 之上
-    // 一并解决；`z-index: 3` 仍在 `body` 上那张掉落克隆纸（900）与头部（998）之下。
     z-index: 3
     flex: 0 0 auto
-    // 宽度同时受三条约束（20261003 用户第 1 条「签名和下翻按钮必须下滚才能看见」）：
-    //
-    //  ① `38vw` / `520px` —— 原来的"窄桌面不挤爆右列"那条线（见本块头注），不动；
-    //  ② **剩下的高度** —— 右列高度 = 0.75w（手账内页 4:3）+ 24px（展示柜的
-    //     `margin-top`）+ 0.4375w（`.vit-3d` 的 16:7）= **1.1875w + 24**，严格正比于
-    //     宽度。所以"让 hero 装进一屏"唯一的结构性办法就是按可用高度反算宽度：
-    //     `(100vh − 上留白 − 下留白 − 24 − 8) ÷ 1.1875`。末尾那 8px 是留给下翻
-    //     按钮的呼吸（实测 1440×900 的 hero 高 901.5px，正好差这一点）。
-    //     ⚠️ `1.1875` 是**推导线**，不是随手一填：改内页的 aspect-ratio 或展示柜的
-    //     高度比，必须回来重算它（`home-hero.test.py` 第 ① 组按同一条式子算期望值）。
-    //  ③ `300px` 地板 —— 视口极矮时宁可溢出，也不要一张挤成条的内页。
-    //
-    // 手机档那条 `width: 100%` 覆盖它：手机上**没有任何宽度能救**（375×667 要装下
-    // 一屏得把内页压到 ~180px），所以手机档不吃这条，右列照旧满宽。
-    width: min(38vw, 520px, max(300px, calc((100vh - var(--hero-pad-t) - var(--hero-pad-b) - 24px - 8px) / 1.1875)))
+    width: min(38vw, 520px, max(300px, calc((100vh - var(--hero-pad-t) - var(--hero-pad-b) - 8px) / .75)))
     display: flex
     flex-direction: column
-    // 展示柜放大态（`body.exhibit-zoomed`，见 Vitrine/index.tsx:181）：**整列必须抬起来**。
-    // 这不是"高一点更好看"——`.heroRight` 自己带 z-index ⇒ 它就是一个层叠上下文，
-    // 里面 `.vitrine.is-zoomed` 的 1200 只在**本列内**比大小；外面的 `.Top`（置顶缎带，
-    // 10）与 `sections.sass` 那条粉/薄荷交界胶带（3）跟它根本不在一个平面上，于是两条都
-    // 画在放大出来的窗口之上（用户第 6 条）。200 的取法：高于整页前台内容（最高 99）、
-    // 低于头部 998；这条只在放大那一下生效（平时 body 上没有这个类）。
-    body.exhibit-zoomed &
-      z-index: 200
     @media screen and (max-width: 768px)
       width: 100%
-
-  // 手账内页：视频住进来（白边 + 两角胶带 + 一点点歪）
   .heroPanel
     position: relative
     z-index: 1
     flex: 0 0 auto
-    // 不用 overflow: hidden（会把探出去的胶带一起剪掉），圆角直接给 video
     width: 100%
     aspect-ratio: 4 / 3
     margin: 0
@@ -342,15 +219,9 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
     background: #fffdfa
     border-radius: 14px
     box-shadow: 0 18px 44px rgba(120, 90, 140, 0.18)
-    // 歪一点点。⚠️ 现在下面接的是展示柜那张卡，`rotate` 会让四角纵向探出 ±5.4px
-    //（520px 宽 × sin1.2°）——`Vitrine` 的 `margin-top: 24px` 就是给它留的余量，
-    // 别把那个数往下压。
     transform: rotate(1.2deg)
     @media screen and (max-width: 768px)
       transform: none
-    // 视频（20260902 起是静态合成层，无滤镜/无 backdrop）：帧变化在图层内部完成，
-    // 不触发页面重栅格；离屏暂停见组件里的 IntersectionObserver（它找的就是 hero 里
-    // 第一个 video，换成内页后选择器依然命中）。
     .heroVideo
       display: block
       width: 100%
@@ -359,7 +230,6 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
       border-radius: 7px
       background: #f4eef6
       pointer-events: none
-      // ping-pong 循环无需任何透明度变化：视频始终全不透明，接缝靠倒放消除
     .heroPanelTape
       position: absolute
       top: -13px
@@ -367,7 +237,6 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
       height: 26px
       background: rgba(255, 226, 240, 0.82)
       box-shadow: 0 2px 6px rgba(150, 110, 150, 0.12)
-      // 胶带边的锯齿感：两侧各一条半透明白虚线已经够用，不再加伪元素
       border-left: 2px dotted rgba(255, 255, 255, 0.55)
       border-right: 2px dotted rgba(255, 255, 255, 0.55)
       pointer-events: none
@@ -377,31 +246,17 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
     .tapeR
       right: 26px
       transform: rotate(4deg)
-
-  // hero 内容须位于底纹/内页之上（底纹是 positioned，缺 z-index 会被盖住）
   .SayWords, .frontAvatar
     position: relative
     z-index: 1
 
   .SayWords
     animation: left-in 1s forwards
-    // 整列上移 16px（20261003 用户第 1 条「社交按钮和文本上移」）。
-    // ⚠️ 用 `top` 而**不是** `transform`：上面那条 `animation: left-in` 的 keyframes 动的
-    // 就是 `transform`，动画在层叠里压过普通声明 ⇒ 写 `transform: translateY(-16px)`
-    // 会被入场动画静默盖掉（`forwards` 之后仍停在 keyframes 的终值上）。
-    // `position: relative` 住在上面那条共享规则（`.SayWords, .frontAvatar`）里。
     top: -16px
-    // ⚠️ 这三行原来**多缩进了一级**，编译出来是 `animation-display: flex` /
-    // `animation-flex-direction` / `animation-align-items`（三行全废），于是 `.SayWords`
-    // 一直是个普通块级盒——`align-items: flex-start` 从来没生效过。原来的样子碰巧不难看
-    // （块级子元素本来就上下堆叠），但新的标签条/命令条要按内容收窄、标题要按文字宽度定位
-    // （Vitrine 的锚点就是这么算的），必须真的是 flex 列。
     display: flex
     flex-direction: column
     align-items: flex-start
     flex: 0 1 auto
-
-    // 窗贴式小标签（参考图封面上那张手账标签）：歪 1.5 度是刻意的
     .heroTag
       display: inline-flex
       align-items: center
@@ -411,9 +266,6 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
       background: rgba(255, 255, 255, 0.72)
       border: 1px solid rgba(214, 160, 200, 0.55)
       box-shadow: 0 6px 16px rgba(186, 120, 170, 0.16)
-      // 20261003 用户第 7 条「主页社交组件和文本再放大一些」：15 → 16.5px；
-      // 本轮「社交按钮和文本上移放大一点文本」：16.5 → 17.5px。放大是**成组**的
-      // （标签/标题/命令条/签名一起），只放大一件会让那一列看着散。
       font-size: 17.5px
       letter-spacing: 0.06em
       color: #a4508b
@@ -421,32 +273,14 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
       .heroTagStar
         color: #e58ec4
         font-size: 16.5px
-        // 只有透明度动画：合成器就能跑完，不碰布局也不碰前景重绘
-        //（这块地皮紧挨着看板娘，任何会重绘前景的动效都在同一屏上抢 GPU）
         animation: tag-twinkle 3.4s ease-in-out infinite
-      // 常驻动画**故意不挂在这条标签上**：它已经歪了 -1.5°，再让它持续摆动就是
-      // "一直在抖的控件"。要动只在鼠标上来时动一下。
       transition: transform 0.35s ease, box-shadow 0.35s ease
       &:hover
         transform: rotate(-1.5deg) translateY(-3px)
         box-shadow: 0 12px 24px rgba(186, 120, 170, 0.26)
-
-    // 标题：**只加绘制层**（描边/渐变/投影），字号字距字重一个没动 —— 动一个都会改盒宽，
-    // 夜里就会撞上展示柜窗口的那道 12px 缝（见本块头注）。`-webkit-text-stroke` 是纯绘制，
-    // 不参与度量：3px 白描边 + 粉紫渐变填充 = 参考图那种厚描边标题。
-    // 渐变文字自带兜底：不支持 `background-clip: text` 的浏览器走 `color`（深粉），
-    // 不会掉进"透明填充 + 无背景 = 标题消失"。
     .home-title-h3
       margin: 0
       margin-top: 16px
-      // 放大（20260930 五轮，用户「文本放大」），20261003 第 7 条再放大一档
-      // （2.5/3.6vw/3.2rem → 2.75/4vw/3.5rem），本轮再把上限抬到 3.75rem
-      // （用户「社交按钮和文本上移放大一点文本」）。旧值 2.5rem 是"缝"约束下的产物，
-      // 那条约束已随展示柜搬家作废（见本块头注）。上限定在"1440 那档文字列 + gap +
-      // 右列仍落在内容盒（0.84 × 视口）之内"的位置——再往上 `.SayWords`
-      // （`flex: 0 1 auto`）会被迫收缩、标题折成两行。
-      // ⚠️ 4vw 要到 1500px 视口才够 60px ⇒ 这个上限只在 ≥1500px 生效，1366/1440
-      // 两档量到的仍是 4vw 的值（判据在 `home-hero.test.py` 第 ① 组那三档）。
       font-size: clamp(2.75rem, 4vw, 3.75rem)
       line-height: 1.18
       color: #b3175e
@@ -459,9 +293,6 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
         background-clip: text
         -webkit-text-fill-color: transparent
         color: transparent
-
-    // 命令条：纯装饰（JSX 上已 `aria-hidden`，不让读屏念一句假的 shell 提示）。
-    // 光标只有 opacity 动画，盒子不动——不做打字机，那要改宽度、会引发布局回流。
     .heroTerminal
       display: inline-flex
       align-items: center
@@ -472,8 +303,6 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
       background: rgba(40, 32, 54, 0.88)
       box-shadow: 0 10px 24px rgba(90, 60, 110, 0.18)
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace
-      // 14.5 → 16（20261003 第 7 条）→ 17（本轮「文本再放大一点」）：与标签、标题、
-      // 签名同一批放大（它是那一列里唯一的等宽字，字号不改会明显矮一档）。
       font-size: 17px
       line-height: 1.2
       white-space: nowrap
@@ -487,15 +316,9 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
         color: rgba(255, 255, 255, 0.45)
       .termCaret
         width: 8px
-        // 15 → 16：命令条字号 16 → 17（行高 1.2 ⇒ 20.4px）之后，光标太矮会像缺了一截
         height: 16px
         background: #ffd9ec
         animation: caret-blink 1.1s steps(1, end) infinite
-
-    // 336 → 384（20261003 第 7 条「社交组件再放大一些」）：四颗按钮 45 → 54px
-    // 之后按钮总宽 216px，这个盒子把它们摊开到与原来同档的间距（(384−216)/3 = 56px）。
-    // ⚠️ 这个数是**按钮尺寸的函数**：改 `.SocialBtn` 的边长必须一起回来核（宽度不改
-    // 就会变成"四颗挤在左边剩一大截空白"）。
     .Social
       width: 384px
       display: flex
@@ -511,11 +334,6 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
     transition: transform 0.3s ease
     &:hover
       transform: rotate(45deg)
-
-  // 底部那行：签名 + 下滚箭头。**必须是"全宽 + 绝对定位 + justify-content: center"
-  // 的 flex 行**：`.home-one-say` 自己也是绝对定位的，横向居中靠的就是"绝对定位子元素
-  // 取 flex 静态位"这条规则，而它的 `bottom: 86px` 又是相对这一行算的（这一行贴着 hero
-  // 下缘、自身高度为 0）。这三条原来写在 JSX 的内联 style 里，20260930 收进这里。
   .heroBottom
     position: absolute
     left: 0
@@ -524,10 +342,6 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
     z-index: 2
     display: flex
     justify-content: center
-
-  // 下翻按钮（20260930 五轮）：从一枚裸的浅蓝大箭头改成手账贴纸钮。
-  // ⚠️ `transform` 归 `.upAndDown` 那条无限 `up-down` 动画所有 —— 动画声明压过
-  // 普通声明，所以这里**不要再写 hover transform**（写了也不生效，且会让人以为生效了）。
   .heroScroll
     position: absolute
     bottom: 20px
@@ -546,15 +360,9 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
     &:hover
       background: var(--washi-tape, rgba(255, 222, 238, 0.86))
       box-shadow: 0 16px 32px -14px rgba(120, 90, 140, 0.9)
-
-  // 手机档：`.SayWords` 已被上面那条 media 拉满整行，标题就可以按行宽排。
-  // 2.5rem 在 375px 上要折两行还贴着边，降到 2rem；描边同时收细（3px 描边在 32px 的字上
-  // 会把字形吃瘦）。**桌面档一个字都不许动**——那是 Vitrine 的 12px 缝（见本块头注）；
-  // 展示柜窗口 ≤1100px 就 `display: none`（Vitrine/index.sass），手机上不受这条约束。
   @media screen and (max-width: 768px)
     .SayWords
       .home-title-h3
-        // 2 → 2.2rem（20261003 第 7 条）。下限仍是"375px 上不折两行还贴边"那条线。
         font-size: 2.2rem
         -webkit-text-stroke-width: 2px
       .heroTerminal
@@ -562,14 +370,7 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
         font-size: 13.5px
       .Social
         width: 100%
-        // 300 → 340：桌面档按钮放大到 54px 之后，300px 会把四颗挤成一条
         max-width: 340px
-
-  // 减少动效：樱花整片不出现（停在地上之外反而像碎屑），光标常亮。
-  // ⚠️ 两条选择器都必须写**全链**（`.petals .petal` / `.SayWords .heroTerminal .termCaret`）：
-  // 只写 `.petal` 那种短写法编译出来比基规则少一个类，特异度输一档 ⇒ `animation: none`
-  // 会被上面那条 `animation: petal-fall …` 直接压掉，媒体查询也不会救（同族坑在本文件
-  // 的 mobile 档里已经踩过一次，见 `.ArticleHead` 那三条 `!important` 的说明）。
   @media (prefers-reduced-motion: reduce)
     .petals .petal
       animation: none
@@ -577,19 +378,11 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
     .SayWords .heroTerminal .termCaret
       animation: none
       opacity: 1
-    // 20260930 五轮新增的两处：标签条上那颗星、签名底下那道"手写画线"。
-    // ⚠️ 星那条必须补到 `.heroTag`（全链 4 类）：基规则住在 `.heroTag` 块里，
-    // 少写一层就少一档特异度，`animation: none` 会被基规则静默压掉 —— 与上面
-    // `.petal` / `.termCaret` 那两条是同一个坑的第三次（20260930 由新套件抓出）。
     .SayWords .heroTag .heroTagStar
       animation: none
       opacity: 1
     .SayWords .home-one-say::after
       animation: none
-      // 手写动画是 `both` 填充，`animation: none` 后会退回"未动画"状态 —— 那条线宽 62%
-      // 却停在 transform 的初始值上（`translateX(-50%) scaleX(?)` 由 keyframe 给，
-      // 取消动画后没有 transform ⇒ 变成从 left:50% 起画 62% 宽、右偏出容器）。
-      // 直接给它终态。
       transform: translateX(-50%)
 
 .upAndDown
@@ -610,8 +403,6 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
     cursor: pointer
     width: 80%
     height: 640px
-    //background: #212121
-    //background: $pic-background-cover
     background: var(--pic-background-cover)
     --tw-shadow: 0 10px 15px -3px rgba(0, 0, 0, .1), 0 4px 6px -2px rgba(0, 0, 0, .05)
     border-radius: 15px
@@ -619,44 +410,12 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
 
     grid-template-rows: none
     display: grid
-
-    // ⚠️ 手机档**必须写在上面那批声明之后**（与文件开头 `.SelfDescription` 那条同一个坑：
-    // sass 按源码位置原样吐进产物，同选择器同特异度下后写者赢）。原来写在前面的结果是
-    // `width: 95%` 被父规则的 `width: 80%` 静默压掉 ⇒ 手机上置顶卡比普通卡
-    // （后段 `.allArticles` 那条 95%）窄一圈，两边对不齐。
-    // 同时删掉原来的 `display: flex` / `flex-direction: column`：它们**本来就进不了场**
-    // ——文件后段那条手机档写了 `display: block !important`（列布局由 `.TopArticleInner`
-    // 承担），`!important` 加源序两道都赢，留着只会让人以为顶卡在手机上是 flex 容器。
-    // `height: auto !important` 留着（`!important` 不受源序影响，覆盖 640px 是它的职责）。
     @media screen and (max-width: 768px)
       width: 95%
       height: auto !important
-
-    // ⚠️ 悬停位移的落点是 `top: -38px`（相对基态 −14px 仍是抬 20px，与五轮同一个幅度）。
     &:hover
       .Top
         top: -38px
-
-    // 置顶缎带（七轮：用户第 3 条「继续优化形态符合当前主题的日式动漫风格组件」）。
-    //
-    // 六轮做成了**一片和纸胶带**（半透明粉、四角手撕边、慢飘）——材料对了，但**形状**
-    // 仍是"一张小纸片"，跟旁边那些真正的胶带（`.vit-tape` / `.heroPanelTape`）长得
-    // 一模一样 ⇒ 只有读出那两个字才知道这是"置顶"。七轮换成漫画里那块**見出しリボン**：
-    // 右端切成箭头尾尖（缎带的签名），左端留**直边**（那一头是贴在卡片上的），
-    // 纸面走粉→白的斜向渐变，尾尖后跟一枚跟着呼吸的 ✦。材料与配色仍归和纸令牌管，
-    // 只有**轮廓**换成了缎带——这是"形态"，不是"换皮"。
-    //
-    // 动效：**缎带自己不再动**（八轮撤掉 `ribbon-float` 的慢浮，见文件头那条总纲），
-    // 只剩尾尖那枚 ✦ 在呼吸（`tag-twinkle`，只动 opacity、不产生位移）。
-    //
-    // 结构拆成两层（`.Top` 管定位、`.TopTape` 管长相）**不要合并**：
-    //   · 悬停位移走 `.Top` 的 `top`（transition）、常驻的浮走 `.TopTape` 的
-    //     transform（animation）——同一条属性上两者会打架（animation 恒赢），分层才各管各的；
-    //   · 五轮把 `translateY(-40%)` **内联**在 `.Top` 上（内联特异性最高、CSS 改不动），
-    //     那条内联已删。位移不折进 `top` 里"补回来"，而是骑在卡片顶边上（−14px，
-    //     压在卡片上 13px、占它自身 27px 高的将近一半）——缎带要贴在什么东西上才叫缎带。
-    //     盒宽由 `.TopTape` 的内容撑开（`.Top` 不给尺寸），缎带贴着自己的字，
-    //     不再拖着一段空缎带。
     .Top
       position: absolute
       top: -14px
@@ -669,33 +428,21 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
         display: inline-flex
         align-items: center
         gap: 4px
-        // 右边那 19px 是留给尾尖的（尾尖在 `calc(100% - 10px)` 处收成一个点，
-        // 文字离它太近会被箭头"咬"到）
         padding: 5px 19px 5px 11px
         font-size: 13px
         font-weight: 700
         letter-spacing: 0.08em
         white-space: nowrap
         color: var(--washi-ink, #4a3550)
-        // 斜向渐变而不是平涂：近粘贴处浓、往尾尖淡，缎带因此有"从卡片上长出去"的方向感
         background: linear-gradient(100deg, var(--washi-tape, rgba(255, 222, 238, 0.86)) 0%, #ffe6f2 62%, #fff6fb 100%)
-        // 右端收成箭头尾尖 —— 缎带的签名；左端直边，那一头贴在卡片上。
-        // `clip-path` 会把 box-shadow 一并裁掉，所以投影改用 `drop-shadow`
-        // （跟着切出来的形状走）——小面积 drop-shadow 不属于"大面积模糊"那条禁令
-        // （同 `Vitrine/index.sass` 里 `.vit-ear` 的折角阴影：同一类用法）
         clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 50%, calc(100% - 10px) 100%, 0 100%)
         filter: drop-shadow(0 6px 11px rgba(120, 90, 140, 0.45))
-        // 斜贴的角度。八轮起这是**唯一的** transform（慢浮已撤，见文件头总纲）——
-        // 缎带停在这个角度上不动，跟真的贴在卡片上一样。
         transform: rotate(-3.6deg)
 
         .iconfont
           font-size: 15px
           line-height: 1
           color: var(--washi-pink-deep, #d94f9a)
-
-        // 尾尖那枚 ✦。它是 `.TopTape` 的**行内**末子（flex 项），所以不用定位、
-        // 天然落在文字右边；呼吸只动 opacity。
         &::after
           content: '✦'
           margin-left: 1px
@@ -710,11 +457,6 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
       height: 100%
       overflow: hidden
       overflow: hidden
-      // ⚠️ 这一整块（`.TopCover .topDots`）**在标记里没有对应物**：轮播圆点渲染出来的是
-      // `.topDotsContainer`（见 index.tsx，以及文件下方那份同形规则），这里的选择器一个
-      // 都命中不了。留着没删是因为"删死代码"是另一件事，但**别把它当成现行规则**：改圆点
-      // 要看下面 `.topDotsContainer` 那份。（也留个心眼：哪天有人把标记改回 `.topDots`，
-      // 两份会同时命中，而下面那份后写者赢。）
       .topDots
         position: absolute
         bottom: 20px
@@ -729,12 +471,8 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
           border-radius: 50%
           margin-left: 10px
         .dotCurrent
-          // 20261014：与下面那份一起改走令牌 —— 原来写死 #7880d1（蓝紫，深浅同值）。
-          // 它眼下不生效，但留着旧色等于给"哪天复活"埋雷。
           background: var(--washi-pink-deep, #d94f9a)
       img
-        // 20260912 圆角由 .TopCover（border-radius + overflow hidden）裁剪，img 自己不再设，
-        // 否则封面裁剪的 transform: scale 会把圆角一起放大
         background-repeat: no-repeat
         background-size: cover
         display: block
@@ -742,9 +480,6 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
         height: 100%
         width: 100%
         transition: opacity 0.5s ease-in-out
-      // 20260902：删除 .thumbnail-screen 的 mix-blend-mode: screen——该 span 无任何背景
-      // 样式（完全透明、无视觉效果），但 blend-mode 迫使合成器在每次轮播滑动动画中
-      // 对整页背景（fixed 背景+所有下层内容）逐帧重新混合，是轮播区 GPU 30%+ 的第二主因。
       &:after
         pointer-events: none
         content: ''
@@ -786,15 +521,10 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
         -webkit-line-clamp: 2
         -webkit-box-orient: vertical
         transition: all 0.3s ease
-        // 20260930：这里的 :hover（解除行数限制 + 字号 40→35 + margin 60→40）已删——
-        // 悬浮标题时整块内容的高度与字号都会变，而内容是垂直居中的 ⇒ 全列上下窜。
-        // 顶卡标题固定两行（另一处同族规则见文件后段 `.TopArticle .topContent h3`）。
       p
-        //color: #cccccc
         color: var(--font-p-color)
         text-indent: 1em
       .topFooter
-        //color: #cccccc
         margin-top: 60px
         .post-date
           background-color: #1e73be26
@@ -805,40 +535,16 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
           white-space: nowrap
           transition: all 0.8s ease!important
           line-height: 20px
-  // 「文章」段落签（第八轮**大改**：用户「那三个标签丑死了，大改，其中置顶的标签还可以」）。
-  //
-  // 七轮那版的形态是"**胶囊 + 圆盘徽章 + 呼吸的 ✦**"，三件套各自都说得通，凑在一起
-  // 读出来是三件事在抢一枚 20px 高的牌子：
-  //   ① `border-radius: 999px` 是**软糖**的语言，而里面嵌着一根方角的竖脊（`overflow:
-  //      hidden` 把它两头修圆）—— 一颗糖里插了根书脊，两种材料不是一回事；
-  //   ② 图标被装进 20px 的**渐变圆盘**，盘里的字缩到 11px —— 徽章比字还重，等于把
-  //      "一个图标"做成了"一枚按钮"，而这行需要的只是"这里开始是文章"；
-  //   ③ 右端那枚 ✦ 与置顶缎带尾尖那颗**是同一个记号**。同一个母题出现在两块不同的
-  //      牌子上，就不再是记号、只是噪音（用户认可的那个是置顶那颗）。
-  //
-  // 八轮回到**一张和纸条**：左端直边（贴纸的那一头，与置顶缎带同款）、右端圆角
-  // （翘起来的那一头）、左缘一道平涂的装订边、图标回到**墨色线性**（不装盘）。
-  // 记号只留一个：这一块**没有 ✦** —— 母题归置顶独占。
-  //
-  // ⚠️ 竖脊从 `::before`（渐变、5px）改成 `border-left`（平涂、4px）：5px 宽的一条上
-  // 写 180° 渐变，浏览器根本插不进几个色阶，读出来只是一道脏边 —— 平涂反而干净。
-  // 顺带把 `overflow: hidden` 与 `position: relative` 一起删了（不再有要裁的东西）。
-  //
-  // `.more` 是它的**修饰类**（DOM 上同一个类名），只有尺寸、手感与右端那枚记号不同
-  // —— 见文件后段 `.ContentContainer > .more`。
   .allContent
     display: inline-flex
     align-items: center
     justify-content: center
     gap: 8px
-    // `width: max-content` 而不是旧版那个写死的 80px：中文两字 + 图标刚好比 80 宽一点，
-    // 钉死宽度会把它压得贴边。
     width: max-content
     height: auto
     margin-top: 20px
     margin-bottom: 20px
     padding: 6px 18px 6px 14px
-    // 左直右圆：左端是贴在纸上的那一头，右端是翘起来的那一头（同置顶缎带的读法）
     border-radius: 0 10px 10px 0
     font-size: 13px
     font-weight: 700
@@ -846,19 +552,12 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
     color: var(--washi-ink, #4a3550)
     background: var(--washi-paper-2, #fff6fa)
     border: 1px solid var(--washi-line, rgba(198, 152, 192, 0.42))
-    // 装订边：贴着左缘的一道平涂色条（见上面第 2 条注：这里不能写渐变）
     border-left: 4px solid var(--washi-pink-deep, #d94f9a)
     box-shadow: 0 8px 18px -12px rgba(120, 90, 140, 0.85)
     transition: background 0.25s ease, box-shadow 0.25s ease
-
-    // 悬停：纸面泛上胶带色 + 影子加深。**不位移** —— 牌子在页面流里是"段落的门牌"，
-    // 抽动它会让下面整段文章跟着抖一下（用户这一轮要的正是"稳"）。
     &:hover
       background: var(--washi-tape, rgba(255, 222, 238, 0.86))
       box-shadow: 0 12px 22px -12px rgba(120, 90, 140, 1)
-
-    // 图标：回到**墨色线性**，与文字同色系、比文字稍深一档。
-    // 七轮那个 20px 渐变圆盘的形状与配色都撤了（见上面第 ② 条注）。
     .iconfont
       flex: none
       font-size: 16px
@@ -866,76 +565,17 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
       color: var(--washi-pink-deep, #d94f9a)
 
   .allArticles
-    // 20261001（用户第七报："文章卡片尺寸优化，现在太细高了，不协调美观"）：80% → 90%。
-    // **加宽是这一轮的主刀**——卡片高度由内容决定（封面 + 标题行数 + 简介槽 + 页脚），
-    // 压矮只能挤出几十像素，而宽度直接改比例。与下面 `minmax` 那条是**一对**，
-    // 两个数一起改才有意义（只改一个等于把列数往边界上推）。
     width: 90%
     display: grid
-    // 20261001：`minmax(300px, 1fr)` → `minmax(340px, 1fr)`。
-    // 列数基本不变（1440 屏仍是 3 列，1920 仍是 4 列），但每列从 364px 涨到约 400px；
-    // 卡片一宽，长标题就少折一行 ⇒ 卡片自己还会矮 35–67px，"细高"是这两件事一起治的。
-    // ⚠️ 这个数**不能只按比例放大**：`auto-fit` 的列数是 floor((W+gap)/(min+gap)) 的
-    // 阶跃函数，min 每加一点都可能在某档视口上掉一列（如 1280 屏 min=400 时会从 3 列
-    // 掉到 2 列、卡片突然跳到 535px）——所以留了余量、取 340。改它之前先按视口逐档算一遍。
     grid-template-columns: repeat(auto-fit, minmax(340px, 1fr))
     grid-gap: 30px
     justify-content: space-between
-    // 网格项（framer-motion 那个 `.article`）自己得是 flex：卡片才能被拉伸到**整行高**。
-    // 网格只拉网格项、不拉它的子元素 —— 少了这一层，同一排里内容少的卡片会停在 470px、
-    // 与邻居底部参差（页脚定死在卡底就名存实亡）。
     > .article
       display: flex
-      // ⚠️ `min-width: 0` **不是**可有可无的（20260930 二轮实测）：网格轨道是
-      // `minmax(340px, 1fr)`（20261001 由 300 加宽），`1fr` 的 `auto` 下限取**网格项的最小内容宽度**，
-      // 而最小内容宽度里包含着分类名（`.ArticleHead h4` 现在是 `white-space: nowrap`）。
-      // 不给 0：一个长分类名会把这个轨道的下限顶上去、**轨道比邻居宽**——沙箱实测
-      // 容器 341px 时，短名卡 341、长名卡 **396**（而线上真站 321/364px 是齐的，
-      // 因为改动前 h4 是 `white-space: normal`，换行让最小内容只剩最长的一个词）。
-      // 给了 0：轨道恒等于它的 1fr 份额 ⇒ 卡片宽度只由列数决定，与分类名长短无关；
-      // 分类名太长就在自己那一格里走省略号（`.ArticleHead h4` 的 ellipsis）。
       min-width: 0
     .ArticleCard
-      // 同上（卡是 `.article` 这个 flex 容器的子项）：不给 0 的话，卡的最小内容宽度
-      // （≈ 分类名整行 + 读数 105px + 左右内边距）会顶住不缩、溢出网格格子，
-      // 上一行的轨道的 0 也就白给了。
       min-width: 0
-      // ★ **填满主轴**（九轮，用户第六报："某些分辨率下会出现文章卡片大小不一"）。
-      // 上面那条 `display: flex` 只为**纵轴**而写（同行等高）；横轴上谁也没说话，于是
-      // 卡按 `flex-basis: auto` 取**内容宽度**——只有内容比格子宽的那些卡才被压回格子宽，
-      // 内容短的卡就停在原地。沙箱实测（真 sass + 真 Chromium，逐档扫 375→2560）：
-      //   · 1440 屏三列、格子 412px：短标题 + 无标签那张只有 **265px**，邻居 412px；
-      //   · 1280 屏同一排里出现过 **三个**宽度：265 / 344 / 364；
-      //   · 375 屏（手机两列、格子 172px）也一样：112 / 124 vs 172。
-      // 所以它不是"某些分辨率"的问题、是**每一档**都有，只是格子越宽、内容撑不满的卡越多、
-      // 越扎眼（这正是用户在大屏上看出来的原因）。补上这条之后宽度只由列数决定。
-      // ⚠️ 与旁边 `.ArticleContent` 那条 `flex: 1 1 auto` 是同一个写法，别照着
-      // `.ArticleCover` 在手机档写 `width: 100% !important` 那套改过来。
-      // 判据在 `tests/article-grid.test.py`（逐档量同排宽度是否只有一种）。
       flex: 1 1 auto
-      // **470px 是下限**，不是定高。三轮演化，别把任何一轮的理由丢掉：
-      //
-      // 20260930 一轮（`height: 600px` → `min-height: 600px`）：定高时内容一超就被
-      // `overflow: hidden` 裁掉，而页脚那行「更新于」是**绝对定位挂在页脚盒子外面**的
-      // （页脚只有 40px 高，那行靠内容区 32px 下内边距兜着）⇒ 最先被切掉的正是它。
-      // 实测（三列 341px 宽）：3 行标题 + 标签换三行时它跑到卡底下方 19px。
-      //
-      // 20260930 二轮（600 → 520，封面 200 → 240）：用户说「卡片比例不好看」。量出来的是
-      // **死白带**：下限 600 + 封面 200 ⇒ 正文区恒 400px，而内容的自然高只有 320（1 行标题
-      // + 1 行标签）到 356（3 行标题 + 1 行标签）⇒ 简介与标签之间白空 80px / 44px（无标签
-      // 的卡更是空掉一百多）。封面当时只占卡的 1/3。
-      //
-      // 20261001（520 → 470，封面 240 → 200，标题 30 → 26px）：用户说「卡片太细高了，不协调
-      // 美观」。这轮的主刀是**加宽**（`.allArticles` 80% → 90%、网格最小列 300 → 340px）——
-      // 高度压不出多少，宽度直接改比例；这条下限再让 50px 是为了让最空的卡不至于"细高"。
-      // 沙箱实测（341px 卡宽）自然高 = 470（1 行标题 + 无标签，正好停在下限）/ 510（3 行标题）
-      // / 542（+1 行标签）/ 574（+2 行）/ 606（+3 行）。**死白带 ≈ 0 仍成立**：下限只兜最空的
-      // 那一种，其余全按内容长高。
-      //
-      // ⚠️ 三个数联动，别各调各的：封面高度、这条下限、还有下面
-      // `.ArticleDescription:hover` 的展开上限（= 卡底 − 简介顶）。20261001 复核：封面与标题
-      // 一起改时**卡底与浮层顶同向移动、相减抵消**，只有"被下限兜住"的那一档真变（余量
-      // 25 → 20px）⇒ 最挤那档仍是 150px，上限 140 因此没动（判据在 `.test.py` 第 ⑫ 组）。
       min-height: 470px
       background: var(--pic-background-cover)
       --tw-shadow: 0 10px 15px -3px rgba(0, 0, 0, .1), 0 4px 6px -2px rgba(0, 0, 0, .05)
@@ -952,16 +592,8 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
 
       .ArticleCover
         position: relative
-        // 20260930 二轮：200 → 240（用户拍板「封面加高」）；20261001 又收回 200（用户第七报
-        // 「太细高」）。这一轮连同标题 30→26px 一起把卡高从 564/596/628/660 压到
-        // 510/542/574/606，**封面那 −40 与标题那 −12 各占一半**。
-        // ⚠️ 改封面高度会**等量吃掉**简介浮层的可用高度（见 `.ArticleDescription:hover`），
-        // 但若卡底也跟着动（内容自然高那一档），两者相减抵消——只有"被下限兜住"的卡净损失。
         height: 200px
         flex-shrink: 0
-        // 20260912 封面裁剪参数：焦点缩放会让图片放大溢出，必须在这里裁掉；
-        // 圆角也挪到被裁的容器上——放在 img 上会被 transform 一起放大。
-        // （原 img height:120% + 缺 width 的 :after 渐隐是失效的旧写法，一并清掉）
         overflow: hidden
         border-radius: 1rem 1rem 0 0
         img
@@ -979,10 +611,6 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
         flex-direction: column
         justify-content: flex-start
         align-items: flex-start
-        // 20260912 的那套"收支平衡"（gap 12→8、padding 48→40/32 共收回 36px）现在只是
-        // **下限档**的排版取值：卡片已改成"520px 起、按内容长高"（见 .ArticleCard 的注释），
-        // 收支不再需要卡在 7px 余量上。20260930 保留的那条仍是刻意取值：上内边距 20px
-        // 是用户点名要缩的"分类行与封面之间的空隙"（这一行是内容区第一行）。
         gap: 8px
         position: relative
         z-index: 40
@@ -991,44 +619,13 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
         border: none
         z-index: 99
         border-radius: 0 15px 15px 0
-        // 内容区**长高填满卡片**（原来是 `height: 100%`，趁 card 定高 600 时靠 flex 收缩
-        // 恰好收到 400）。改成 600 下限后卡片高度可能大于内容、多出来的那段必须有人接住，
-        // 否则它落在卡片底部、`margin-top: auto` 就钉不住页脚了。
-        // `flex: 1 1 auto`：basis 取自身高度、可长；min-height 仍是 auto ⇒ 内容更多时
-        // 它撑开卡片（卡片是 min-height，长高无障碍），永远不会把内容压出去。
         flex: 1 1 auto
         h4
           font-size: 20px
-
-        // 分类 + 卡片读数（20260930）。**这一行就是封面图正下方那一行**，读数不另开一行：
-        // 当时是为了省那 20px（定高卡的收支只剩 7px 余量），现在卡片已能按内容长高、
-        // 高度不再紧张，但**这一行仍然保留** —— 分类与三个数本来就该并排一行
-        // （读数换行会白占一行高度、且与分类行对不齐）。
-        // 注意 h4 仍是 `.ArticleContent h4` 的后代 ⇒ 上面那条 font-size: 20px 照常生效。
         .ArticleHead
           display: flex
           align-items: center
           justify-content: space-between
-          // 20260930 二轮：**永远一行**（用户报「读数位置怎么不统一，有的在分类行下，
-          // 有的在分类行同一行」）。
-          //
-          // 上一版这里是 `flex-wrap: wrap`，理由是"容不下就让读数整块换行"。它是**按卡片
-          // 各自判定**的，而同一屏里分类名长短不一 ⇒ 换行与否逐卡不同。线上实测（真站，
-          // 逐档视口）：430–490px 宽时同一屏就混排——`# 编程`(33px) 的读数留在分类行，
-          // `# 本项目介绍`(59px) 的读数被挤到第二行；卡片高度也跟着 296 → 317/321 参差。
-          // 宽屏（≥520px）从不换行，所以这个缺陷只在窄窗口/手机上现形。
-          //
-          // 现在统一为不换行：**分类名是唯一可压缩的那一个**（读数 `flex-shrink: 0` 在下面），
-          // 极窄卡片上分类名以省略号收尾（hover 有 title 也补不出全名，取舍就是"宁可截断
-          // 也不参差"）。`min-width: 0` 是必需的：`white-space: nowrap` 让 h4 的 min-content
-          // 等于整行宽度，不给 0 它根本压不下去（省略号也不会出现）。
-          //
-          // ⚠️ 这条只负责**桌面档**（卡片 ≥300px、头一行 ≥276px）。手机上不适用，见下面
-          // `@media (max-width: 768px)` 里那条 `flex-direction: column` —— 真机实测
-          // （20260930，真站真 CSS）：375px 视口下卡片只有 144px、头 120px，而**读数块
-          // 自己就要 105px** ⇒ 同一行里分类名只剩 5px（430px 下 27px，490px 下 51px）。
-          // 线上现场正是这么来的：490px 时 `# 编程`(33px) 留得下、`# 本项目介绍`(59px)
-          // 换行，同屏混排且卡高 317/313 参差。
           flex-wrap: nowrap
           gap: 4px 10px
           width: 100%
@@ -1045,20 +642,12 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
             flex-shrink: 0
             font-size: 12px
             line-height: 1
-            // 主题变量：`#898989` / 夜间 `#cccccc`（frontHome/main.css）。**不写死灰色**——
-            // 站内既有那两处 `#7f7e7e` 是行内 style，在深色卡片上偏暗，不跟着抄
             color: var(--font-p-color)
-
-            // 三个数是"有多少"，不是按钮：**不加 hover 高亮、不设 cursor: pointer**。
-            // 整张卡片可点是"打开文章"，这里给交互暗示会被读成"点这个能点赞"
             .ArticleStat
               display: inline-flex
               align-items: center
               gap: 3px
               white-space: nowrap
-
-              // 数字定宽：一位数变两位数时右边那个数不跟着左右抖
-              // （同详情页 `.readViewsNum` 的取舍）
               .ArticleStatNum
                 min-width: 1.6ch
                 text-align: center
@@ -1066,11 +655,6 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
         .ArticleTitle
           font-weight: 900
           font-size: 26px
-          // 显式行高：3 行标题的高度必须确定（26px × 1.15 × 3 = 89.7px），否则
-          // `line-height: normal` 会随访客浏览器默认中文字体的度量漂移——2 行与 3 行标题的
-          // 卡片会差出十几像素，同一排卡片的高矮就不再只由"内容多少"决定（简介浮层那 140px
-          // 上限也是按这个高度算出来的，见下面 .ArticleDescription 的注释）
-          // 20261001：字号 30 → 26px（用户第七报「太细高」）；行高倍数未动。
           line-height: 1.15
           margin-bottom: 10px
           overflow: hidden
@@ -1079,26 +663,10 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
           -webkit-line-clamp: 3
           -webkit-box-orient: vertical
           transition: all 0.3s ease
-          // 20260912：原来的 :hover 解除行数限制已删——定高卡片里它是溢出源
-          // （标题内滚动条 + 顶掉页脚），3 行足以覆盖绝大多数标题
-
-        // 简介槽（20260930）。**它是"页脚定死在卡底"的全部机关**，别拆：
-        // 简介本体在槽内是**绝对定位**的，所以它长高/缩回**完全不参与布局**——flex 列
-        // 从头到尾看到的都只是这个恒高 60px 的槽。此前试过"就地长高 + 等量负 margin 抵掉"，
-        // 那个做法只在简介刚好长到上限时才成立：负 margin 是定值，而高度是
-        // `min(全文, 上限)`，两者不等时占位就变了（实测简介 6 行时页脚会往上跳 80px，
-        // 悬浮还把整块高度变化传到 flex 列、被压出过 250px/85px 这种半行值）。
-        // 槽的做法把"变高的部分"整个移出布局，两条保证就都成了结构性的：
-        //   · 标签/页脚那一段（`margin-top: auto` 钉在卡底）一个像素都不会动；
-        //   · 简介高度只会是 `max-height`（行高整数倍）或全文自身高度 ⇒ 下沿不可能落在半行上。
         .descSlot
           position: relative
           width: 100%
           height: 60px
-          // 槽自己绝不许被 flex 压缩：槽位一变压的就是简介的顶（它会跟着槽顶走）。
-          // 曾经的理由是"余量不够时宁可让标签/页脚溢出"（那时卡片定高 600、溢出的代价是
-          // 页脚被裁）；现在卡片按内容长高、溢出这条路径已经不存在，但这条仍然要留着——
-          // 谁把槽改成可压缩的，简介立刻回到"被压成 250px/85px 这种半行"的老路上。
           flex-shrink: 0
         .ArticleDescription
           color: var(--font-p-color)
@@ -1111,35 +679,8 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
           word-break: break-all
           width: 100%
           transition: max-height 0.8s ease
-          // 行高与上限都写死：3 行 = 60px（clamp 3 与实际高度严格一致），
-          // 不再依赖默认字体度量（原 4.5em=72px 在部分字体下会多留一行的高度出来）
           line-height: 20px
           max-height: 60px
-          // 贴住槽顶向下长。展开时它会盖住标签与页脚，所以展开态必须给底色与投影
-          // （底色取的就是卡自己的 `--pic-background-cover` ⇒ 夜间跟着变，不写死颜色）。
-          //
-          // 展开上限 7 行 = 140px。**这个数是量出来的**：浮层绝对定位、向下长，不参与
-          // 布局 ⇒ 卡片不会跟着长高，可用高度只有「卡片下沿 − 浮层顶」这一段。
-          // 20261001 沙箱实测（真 sass + 真 Chromium，341px 卡宽，八种内容组合）：
-          //   3 行标题 + **无标签**（卡 510） = 150px ← **最坏**
-          //   1 行标题 + 无标签（卡 470，被下限兜住）= 170px（兜出来的 20px 全是余量）
-          //   3 行标题 + 1 行标签（卡 542） = 182px ／ + 2 行标签（卡 574） = 214px
-          //   3 行标题 + 3 行标签（卡 606） = 246px
-          // （20260930 二轮那组是 564/520/596/628/660 → 150/175/182/214/246。这一轮只动了
-          //  **被下限兜住**的那一档：封面与标题一起改，其余各档卡底与浮层顶同向移动、相减抵消。）
-          // 三条反直觉的地方，别按"内容越多越挤"去推：
-          //   · 标题越长**不会**更挤——卡片按内容长高（下限只是兜底），标题多一行卡就高
-          //     一行、浮层顶与卡底**同步下移** ⇒ 可用高度只取决于「浮层底下那一段」；
-          //   · 那一**多一行标签就多 32px**（标签就长在浮层下面），所以最挤的是**没有标签**
-          //     的卡——不是标签最多的卡（站内有这种文章，note 46 就没有标签）；
-          //   · 卡片被下限 470 兜住的**反而更宽裕**（多出来的那段被 `margin-top: auto`
-          //     推给页脚、落在浮层下面）。**下限每抬高 1px，兜住的卡 +1px**。
-          // 取 140 留 10px（旧值 200 只有 6px）。160 就会把最坏那档的第 8 行切掉 10px ——
-          // 正是用户报过的"最后一行只显示上半部分"。
-          // ⚠️ 上一版是 200px：那是封面 200 / 下限 600 的年代测到的 206px 可用，而当时的
-          // 余量是**下限撑出来的**（卡片恒 600、内容区恒 400，无标签卡更有 295px）。现在
-          // 卡片按内容高，那段余量没有了。**封面高度、下限、标签行数，这里都要重新量**
-          // （第 ⑫ 组锁的就是这条）。20261001 逐档量过：最坏那档仍是 150px ⇒ 140 不动。
           position: absolute
           top: 0
           left: 0
@@ -1173,51 +714,18 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
             white-space: nowrap
             transition: all 0.8s ease!important
             line-height: 20px
-
-  // 列数探针（20260912）：复刻 .allArticles 的宽度/断点/gap（直接复用 class，不复制 CSS），
-  // 外加一个跨全轨的单格——`grid-column: 1/-1` 阻止 auto-fit 折叠空轨，
-  // 于是 computed `grid-template-columns` 恒等于容器的真实轨道数，与**已渲染条目数无关**。
-  // 单行零高，不占位、不可见、不参与命中测试。别当死代码删：删了列数会随条目数变化。
   .allArticlesMeasure
     height: 0
     overflow: hidden
     visibility: hidden
     pointer-events: none
-
-  // 「More」按钮（`.allContent` 的修饰类：**同一块牌子**，只差尺寸与右端那枚记号）
-  //
-  // 八轮：右端那枚 chevron 保留（它把"继续往下看"这个意思指了出来，是这块牌子上
-  // 唯一有信息量的装饰），但**不再常驻横移** —— 原 `more-nudge` 的 3px 来回摆被撤掉
-  // （八轮总纲：静置不动，动效只在悬停时发生，见文件头）。箭头现在**静态就是斜的**，
-  // 悬停时才顺着它指的方向走一点。
-  //
-  // ⚠️ 角度是 `rotate(45deg)` = **指向下**（20261004 用户第十报：「刷新卡片是向下展示，
-  // 按钮箭头向右不合适」）。这一枚的方向**只能由几何推**，别照着"两条边 + 转个 45°"
-  // 顺手写个负号：`border-right` + `border-bottom` 静止时是**右下角那个直角**
-  // （顶点在右下 ⇒ 读起来指 ↘），CSS 的正角是**顺时针** ⇒ −45° 把它转成 **→**（这正是
-  // 用户看到的那枚向右的箭头），**+45° 才是 ↓**。判据就是"按下去页面往哪边动"。
-  //
-  // ⚠️ 撤掉动画之后 `::after` 的 `transform` 必须**写在基规则里**：
-  // 原来是 keyframe 给的，动画一没、这里又不写的话，箭头会摊平成两条正交的边
-  // （`border-right` + `border-bottom` 就是一个直角，不是箭头）。减少动效档里那条
-  // "停住并保持角度"的补丁也是为同一件事写的，现在基规则里有了，补丁可以撤。
-  //
-  // ⚠️ 旧版把尺寸写成了**行内样式**（`padding: 20px 50px` + `borderRadius: 20` +
-  // `fontSize: 20`），而 `frontHome/main.css` 有一条全站 `* { box-sizing: border-box }`
-  // ⇒ 左右各 50px 的内边距落在 `width: 80px` 的盒子里，内容盒被挤成 0，元素的**实际
-  // 尺寸是内边距撑出来的 100×40**（字在 0 宽的内容盒里居中溢出，靠 `overflow: hidden`
-  // 裁回来）。三条内联已删，尺寸改由这里说了算 —— **不要再把尺寸写回行内**。
   .more
     font-family: inherit
     padding: 12px 30px 12px 26px
     font-size: 15px
     letter-spacing: 0.18em
     cursor: pointer
-    // `.allContent` 基规则里那条 `border-left: 4px solid` 就是它的装订边（同一块牌子）
     transition: transform 0.25s ease, box-shadow 0.25s ease, background 0.25s ease
-
-    // 右端那枚 chevron：两条边 + 转 **+45°** = 指向**下**的箭头（纯 CSS，不引图标字体）。
-    // 角度的推导见上面那段注释——**是 +45 不是 −45**。
     &::after
       content: ''
       width: 8px
@@ -1230,13 +738,8 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
       transform: translateY(-2px)
       background: var(--washi-tape, rgba(255, 222, 238, 0.86))
       box-shadow: 0 14px 26px -14px rgba(120, 90, 140, 1)
-      // 箭头顺着它指的方向送一点（原来是 `translateX(4px)` 往右）—— 新卡片是从下面
-      // 长出来的，往下的那一下才是"更多在下面"。没有动画压着 transform，这条直接生效。
       &::after
         transform: translateY(3px) rotate(45deg)
-
-
-// 加载动画
 .loadingio-spinner-spinner-69tfms83mg9
   width: 200px
   height: 200px
@@ -1328,9 +831,6 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
     opacity: 1
   100%
     opacity: 0
-
-
-// Manual Fix for Dark Mode Colors
 .allArticles .ArticleCard .ArticleContent
   h4
     color: var(--font-title-color) !important
@@ -1349,36 +849,21 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
     -webkit-line-clamp: 2
     -webkit-box-orient: vertical
     transition: all 0.3s ease
-    // 20260930：标题的 :hover 解除行数限制**已删**（这一处与上面 `.contentTitle` 里
-    // 那一处都要删）。顶卡 640px 里它是纯溢出源：解除后标题自己变高（另一处还顺手把
-    // font-size 40→35、margin 60→40），而内容列是 `justify-content: center` ⇒
-    // 整块重新居中，标题/简介/页脚一起上下窜——用户报的"悬浮置顶卡片标题会抖动布局"。
   h4
     color: var(--font-title-color) !important
-  // 与普通卡同一套槽位机制（见 `.ArticleContent .descSlot` 那段注释，这里是它的顶卡版）。
-  // 顶卡对它的依赖**更硬**：内容列是 `justify-content: center`，任何占位变化都会让整列
-  // 重新居中 ⇒ 悬浮简介时标题/分类/页脚一起上下窜。槽位把简介的伸缩整个移出布局，
-  // 是"这一列在悬浮期间一个像素都不许动"的唯一结构性保证。
-  // 槽高 60px 直接写死（不写 flex-shrink——顶卡这一列没有余量压力）。
   .descSlot
     position: relative
     width: 100%
     height: 60px
-    // 20px 是这一列原来给简介留的间距（曾被写在 index.tsx 的 inline style 里）。
-    // 挪进槽位：间距必须由**槽**占，简介本体是绝对定位的、它的 margin 不再参与布局。
     margin-bottom: 20px
   .ArticleDescription
     display: -webkit-box
     -webkit-line-clamp: 3
     -webkit-box-orient: vertical
     overflow: hidden
-    // 与普通卡同一套行高：展开高度必须能被行高整除，否则最后一行被切半个
     line-height: 20px
     transition: max-height 0.8s ease
     max-height: 60px
-    // 绝对定位：贴在槽顶向下长，占位恒为槽的 60px。展开时它压住标签/页脚，
-    // 所以展开态给底色与投影（底色取卡自己的变量，夜间跟着变，不写死颜色）。
-    // 顶卡上限取 12 行 = 240px：这一列是居中的、上下都有余量，比普通卡的 7 行（140px）可以更长。
     position: absolute
     top: 0
     left: 0
@@ -1392,18 +877,7 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
       box-shadow: 0 12px 28px rgba(0, 0, 0, .18)
   .topFooter
     color: var(--font-title-color)
-
-// 20261001 六轮（用户第 1 条：「夜间模式和白天模式展示的手账纸一样，不要夜间隐藏视频的
-// 手账」）：这里原来有一条 `.frontDark .SelfDescription .heroPanel { display: none }`
-// ——20260902 的"视频仅白天显示"以及五轮"夜里右半屏归展示柜"（当时展示柜只在场于夜间）
-// 都已作废：展示柜现在常驻这一列的**下面**（见 Vitrine/index.sass 头注），两者不再抢位。
-// 手账纸在两档主题下**是同一张**（`.heroPanel` 的底色本来就是字面量 `#fffdfa`，不吃
-// `--washi-*` 令牌）——这正是用户这次要的，别顺手把它换成令牌：夜里那边是深色档。
-
-// 夜间档的拼贴底：靛紫天色 + 三块压暗的色块 + 更淡的方格纸（粉白那套只用于白天）
 .frontDark .SelfDescription .collageBg
-  // 20261014：值搬进 `--washi-page-bg` 的夜间臂（src/index.css）——归档/说说/分类/关于
-  // 四页的整页底用的是**同一张夜纸**，各写各的就是"改一处必须同步另一处"。
   background: var(--washi-page-bg)
   &::after
     background-image: linear-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, 0.045) 1px, transparent 1px)
@@ -1413,13 +887,8 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
     background: radial-gradient(circle at 50% 50%, rgba(150, 120, 255, 0.22), rgba(150, 120, 255, 0) 70%)
   .blobC
     background: radial-gradient(circle at 50% 50%, rgba(110, 190, 220, 0.16), rgba(110, 190, 220, 0) 70%)
-
-// 夜间档的樱花**留着**（夜里也是一片粉色，是这块唯一的动），只把颜色压深一档——
-// 深底上要亮粉才看得见（浅粉的深色花瓣会糊进夜色里）
 .frontDark .SelfDescription .petals .petal
   background: linear-gradient(135deg, #ffb3d9 0%, #e0679f 100%)
-
-// 夜间档标题：粉白渐变（用户 20260930 对这套动漫配色的原话）+ 白描边
 .frontDark .SelfDescription .home-title-h3
   -webkit-text-stroke-color: rgba(255, 255, 255, 0.9)
   text-shadow: 0 6px 20px rgba(0, 0, 0, 0.35)
@@ -1429,8 +898,6 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
     background-clip: text
     -webkit-text-fill-color: transparent
     color: transparent
-
-// 夜间档的标签条与命令条
 .frontDark .SelfDescription .heroTag
   background: rgba(255, 255, 255, 0.1)
   border-color: rgba(255, 179, 217, 0.32)
@@ -1454,15 +921,9 @@ html[data-theme='dark'] .SayWords h2
 
 :global(html[data-theme='dark']) .SayWords h2
   color: #ffffff !important
-
-// Mobile Fixes V6
 @media screen and (max-width: 768px)
   .allArticles .ArticleCard
     height: auto !important
-    // 手机档卡片本来就是"按内容自适应"的紧凑版（封面 90px、约 240px 高）：
-    // 桌面那条 `min-height: 470px` 下限必须在这里撤掉，否则每张卡都被撑到 470px。
-    // （同特异性下 `height: auto !important` 管不到 min-height —— 两个是不同的属性，
-    // 这正是"属性有没有第二处声明"那个家族坑，得单独写一条。）
     min-height: 0 !important
     display: flex !important
     flex-direction: column !important
@@ -1477,33 +938,16 @@ html[data-theme='dark'] .SayWords h2
     .ArticleContent
       height: auto !important
       padding: 1.5rem !important
-      // 桌面为容纳 3 行标题把 gap 收到 8px（见 .ArticleContent）；移动端卡片高度自适应、无收支压力，保持原间距
       gap: 12px !important
 
-/* V7 Final SpecFix */
 :global(html:not([data-theme='light']) .SayWords h2)
 
-/* V13 Real Fix for frontDark Text */
 .frontDark .home-title-h3,
 .frontDark .home-one-say,
 .frontDark .SayWords h2,
 .frontDark .SayWords h3,
 .frontDark .SayWords p
   color: #ffffff !important
-
-// 简介的**共用底座**（两张卡都有的那部分排版）。
-// 这里**只放两卡一致的声明**：展开/收回的行为两卡不同（上限 200 vs 240、槽高不同），
-// 一律留在各自嵌套的那条规则里。改这一块前先想清楚"另一张卡是不是也这么想"。
-//
-// 20260930 删掉了这里原来的 `&:hover { max-height: 300px; padding-bottom: 10px;
-// overflow: auto }`。它不是"没用的老规则"——**它的 padding-bottom: 10px 一直在生效**，
-// 而且正是用户报的"展开后最后一行只显示上半"的第二个来源：那条 hover 规则的
-// specificity 比两条嵌套 hover 低，所以 max-height/overflow 被压掉了，可
-// **padding 谁也没声明过** ⇒ 只有它生效。于是展开盒高 = 内容 + 10，而
-// `box-sizing: border-box`（main.css 的全局 reset）让 max-height 把 padding 也算进去：
-// 上限 200px 的盒子里只剩 190px 给正文 = 9.5 行 ⇒ 第 10 行被切一半。
-// 底座的 `max-height: 4.5em` 一并改成 60px：4.5em 是字体度量（16px 下 = 72px），
-// 与"3 行 × 行高 20px"不等，留着就是第二个"上限从哪来"的答案。
 .ArticleDescription
   color: var(--font-p-color)
   text-indent: 1em
@@ -1526,7 +970,6 @@ html[data-theme='dark'] .SayWords h2
     display: flex
     flex-direction: column
 
-
 @media screen and (max-width: 768px)
   .TopCover
     height: 200px !important
@@ -1550,10 +993,6 @@ html[data-theme='dark'] .SayWords h2
   .TopArticle
     height: auto !important
     display: block !important
-
-// 轮播圆点（**这一份才是现行规则**：标记里渲染的是 `.topDotsContainer`，上面 `.TopCover
-// `.topDots`` 那份一个选择器都命中不了）。未选中的点是白的（压在封面图上，白色才读得出），
-// 当前那颗走站里的强调色。
 .topDotsContainer
   position: absolute
   bottom: 20px
@@ -1570,19 +1009,8 @@ html[data-theme='dark'] .SayWords h2
     border-radius: 50%
     margin-left: 10px
   .dotCurrent
-    // 20261014：原来写死 #7880d1（蓝紫）—— 与说说那个圆点同一个色值，深浅两档同一个
-    // 颜色，而站里的强调色是 --washi-pink-deep。改走令牌后与归档/说说的点同源。
     background: var(--washi-pink-deep, #d94f9a)
-
-// ── Mobile (≤768px)：卡片瘦身，置顶卡与普通卡等高（V14）──
 @media screen and (max-width: 768px)
-  // ⚠️ `!important` 不是可选的（20261001）：裸 `.allArticles`（0,1,0）**输给**上面那条
-  // `.ContentContainer .allArticles`（0,2,0）——媒体查询不改特异性，`width: 95%` 从写下那天
-  // 起就没生效过（手机档一直用的是桌面那个百分比）。**别改成加父类选择器**：那会把这一块
-  // 里所有嵌套规则的特异性一起抬到 0,5,0，反而压死后面 V15 那一档同名的 `.descSlot`/行高
-  // 覆盖（实测：槽会从 42px 掉回 40px）。`!important` 只动这一条、不牵连任何后代——本文件
-  // 手机档其余声明用的也都是这个写法。（这个形状自 20261001 起由 `sass-media-shadow.test.mjs`
-  // 的**特异性档**全仓盯着——它会把"被谁压的、两边取值"一起报出来；这条注释留作就地说明。）
   .allArticles
     width: 95% !important
     gap: 20px
@@ -1591,18 +1019,10 @@ html[data-theme='dark'] .SayWords h2
         height: 150px !important
       .ArticleContent
         padding: 1rem !important
-        // 同上：这两条也在 `.ContentContainer .allArticles .ArticleCard .ArticleContent[.ArticleTitle]`
-        // （0,5,0／0,6,0）底下，不写 `!important` 就是同特异度的哑弹——`margin-bottom` 尤其：
-        // 桌面那条是 10px，这一档想收成 6px，实际拿到的一直是 10px（正文实测卡片比设计高 4px）
         gap: 8px !important
         .ArticleTitle
           font-size: 22px !important
           margin-bottom: 6px !important
-        // 简介槽在手机档必须跟着缩小：桌面那 60px 是给 3 行（行高 20px）留的，
-        // 这一档把简介 clamp 到 2 行 ⇒ 槽只该占 2 行，否则卡片白白多 20px 空档
-        // （移动端卡片是 `height: auto`，会真的体现在高度上）。下面 V15 那一档还会
-        // 再把行高改成 1.5 并覆盖成 42px，两条按源序后者生效——每一档的数值就是
-        // 「该档的行高 × 2 行」，别改成同一个数。
         .descSlot
           height: 40px !important
         .ArticleDescription
@@ -1624,7 +1044,6 @@ html[data-theme='dark'] .SayWords h2
       .contentTitle
         font-size: 22px !important
         margin-bottom: 8px !important
-      // 顶卡手机档同普通卡：简介 clamp 2 行、行高仍是 20px ⇒ 槽 40px
       .descSlot
         height: 40px !important
       .ArticleDescription
@@ -1638,9 +1057,6 @@ html[data-theme='dark'] .SayWords h2
           font-size: 11px !important
           line-height: 18px !important
           padding: 3px 8px !important
-
-// ── Mobile (≤768px)：文章卡片两列、约 1/4 尺寸（V15）──
-// 卡片面积约缩到原来的 1/4（封面 90px + 紧凑内容 ≈ 240px 高、约半屏宽），一页信息量翻倍
 @media screen and (max-width: 768px)
   .allArticles
     grid-template-columns: repeat(2, 1fr) !important
@@ -1651,28 +1067,8 @@ html[data-theme='dark'] .SayWords h2
       .ArticleContent
         padding: 0.75rem !important
         gap: 6px !important
-        // 手机档的「分类行 + 读数」**改成上下两行**（20260930 二轮）。这不是回到
-        // `flex-wrap: wrap` 那条老路——**是按档位一刀切，两张卡走同一条规则**，
-        // 所以同屏里不会再有"有的在分类行下、有的在分类行同一行"。
-        //
-        // 为什么手机必须分行（真机实测，375/430/490px 视口，真站真 CSS）：
-        // 卡片 144 / 166 / 190px，内容区去掉 0.75rem×2 后**头只有 120 / 142 / 166px**，
-        // 而读数块自己就要 **105px**（三个 13px 图标 + 三个数 + 两处 10px 间隔）⇒
-        // 同一行留给分类名的是 5 / 27 / 51px：`# 编程`(33px) 勉强、`# 本项目介绍`(59px)
-        // 不够。硬挤一行的结果是分类名退化成一个省略号点，那等于把分类信息删掉。
-        // 上下两行则两样都完整：分类名拿满头宽（59px 绰绰有余），读数整块在自己那行。
-        //
-        // 顺序上**分类在前、读数在后**（DOM 顺序就是 h4 在前）——与桌面档"读数在分类右边"
-        // 同一套语序，"这一行的读数"在哪儿都指同一件事。
-        // ⚠️ 三条都必须 `!important`：这一块编译出来是 `.allArticles .ArticleCard
-        // .ArticleContent .ArticleHead`（4 个类），而桌面那条链是 `.ContentContainer
-        // .allArticles … .ArticleHead`（5 个类）—— 同属性上桌面**永远赢**，媒体查询也救不了
-        // （这条坑在本文件里反复出现，手机档其余的 padding/font-size 也全是 `!important`）。
         .ArticleHead
           flex-direction: column !important
-          // 交叉轴撑满：h4 拿满头宽才能在自己那一行里正常（超长才省略号）。
-          // 读数**不许跟撑**（下面 align-self: flex-start），否则它那 105px 会变成整行宽、
-          // 左侧看似对齐、实际悬停热区铺满整张卡。
           align-items: stretch !important
           gap: 4px !important
           .ArticleStats
@@ -1685,8 +1081,6 @@ html[data-theme='dark'] .SayWords h2
           font-size: 16px !important
           margin-bottom: 4px !important
           line-height: 1.3 !important
-        // 这一档把简介行高改成了 1.5（14px × 1.5 = 21px）⇒ 槽 = 2 行 = 42px，
-        // 覆盖上一条手机档的 40px（同特异性、源序在后）。
         .descSlot
           height: 42px !important
         .ArticleDescription
@@ -1704,59 +1098,27 @@ html[data-theme='dark'] .SayWords h2
             font-size: 12px !important
           .post-date
             display: none !important
-
-// ── Tablet 窄档（769~820px）：补 auto-fit 的单列死区（20260912）──
-// 桌面档 `minmax(340px,1fr)` 排两列需容器宽 ≥ 2×340+30 = 710px（= 0.9·W，20261001 改宽后），
-// 即 W ≥ 788.9；再算上滚动条占掉的十几像素，两列门线仍在 ≈804px —— 于是 769~804 这段
-// 只排得出 1 列，反而比 ≤768 的手机档（2 列）还挤。这里补一条二列。
-// （本块 769~820 比死区略宽：多出来的部分是"本来就该 2 列"的档，写进去无害。）
-// 注意别改成 minmax(280px)：1920px 视口会从 4 列变 5 列（轨道数 = ⌊(0.9W+30)/(min+30)⌋
-// 的分界落在 1900~2025px），卡片窄到 283px 比手机还挤。
-// 20261001 逐档实测（真 sass + 真 Chromium，6 张卡）：360/430/600/768 → 2 列（手机档），
-// 769~1180 → 2 列，1280~1600 → 3 列，1920 → 4 列，2200 → 5 列；换档门线 788.9 / 1200 /
-// 1611 / 2022（旧档 0.8·W+300 的门线是 787.5 / 1237.5 / 1687.5 / 2137.5 ⇒ 1200~1237
-// 与 1611~1687 这两段各多得一列，宽度是净赚的）。
 @media screen and (min-width: 769px) and (max-width: 820px)
   .allArticles
     grid-template-columns: repeat(2, 1fr) !important
 
-/* ===== 20260905g 签名一行：hero 底部水平居中 · 明暗自适应 =====
-   20260912 换字：站酷快乐体没有「變」（U+8B8A）与「顔」（U+9854）两个繁体/日文写法，
-   签名里这两个字一直回退到系统楷体、风格突兀；纯日系手写体（Hachi Maru Pop / Yomogi /
-   Klee One / Mochiy Pop One / Zen Kurenaido）则缺「呐」（中文特有字，JIS 没有），
-   混排回退更明显。改用霞鹜文楷 LXGW WenKai TC —— 设计源头是日本的 Klee One（日系手写楷），
-   覆盖完整简繁，这句签名逐字验证过无缺字。
-   子集是 Google Fonts 按 text= 生成的（4.8KB，只含签名用到的字）：
-     https://fonts.googleapis.com/css2?family=LXGW+WenKai+TC&text=<URL 编码后的签名文本>
-   换签名文案后若出现缺字回退，用上面这条 URL 重新下一份覆盖到同名文件即可。
-   （zcool-kuaile-sig.woff2 保留在 assets/fonts 里以便一键回退） */
 @font-face
   font-family: 'LXGW WenKai TC'
   src: url('../../../assets/fonts/lxgw-wenkai-tc-sig.woff2') format('woff2')
   font-weight: 400
   font-display: swap
-
-// 签名：横向居中靠 flex 容器（motion.div 全宽 justify-content:center，
-// 绝对定位子元素按"唯一 flex 项"取静态位 → 居中）；垂直在滚动箭头之上
 .home-one-say
   position: absolute
   bottom: 86px
   margin: 0
   white-space: nowrap
   font-family: 'LXGW WenKai TC', 'Kaiti SC', 'STKaiti', 'KaiTi', serif
-  // 20 → 23px（20261003 第 7 条「文本再放大一些」）→ 24.5px（本轮「文本再放大一点」）。
-  // 签名是绝对定位的，放大只影响它自己的盒宽（居中靠 `.heroBottom` 的 flex），
-  // 不动 `.heroBottom` 那 86/20px 的定位。⚠️ 它同时是手机档 `--hero-pad-b` 的输入：
-  // 行高随之 27 → 29px，那条留白两边一起核过（见 `.SelfDescription` 手机档注释）。
   font-size: 24.5px
   font-weight: 400
   letter-spacing: 3px
-  // 兜底实体色（不吃 background-clip 的环境走它），渐变在 @supports 里替换
   color: #b3175e
   text-shadow: 0 1px 3px rgba(255, 255, 255, 0.7)
   cursor: default
-  // 底下一道"手写画线"：一次性从左画到右，之后不再动（不做常驻动画——
-  // 这条签名紧挨着看板娘，没理由让一层像素永远在重绘）
   &::after
     content: ''
     position: absolute
@@ -1769,9 +1131,6 @@ html[data-theme='dark'] .SayWords h2
     opacity: 0.55
     transform-origin: center
     animation: sig-draw 1.1s 0.45s cubic-bezier(0.22, 0.68, 0.24, 1) both
-// 暗色模式：白字（上方 V13 .frontDark 规则已 !important 覆盖颜色），补暗色投影。
-// ⚠️ 这条必须**写在下面那个 `@supports` 之前**：渐变档里要用同选择器把投影关掉，
-// 同特异性下靠源序取胜（`@supports` 是条件组规则，不改变特异性，只按位置算先后）。
 .frontDark .home-one-say
   text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6)
 
@@ -1786,53 +1145,19 @@ html[data-theme='dark'] .SayWords h2
     background-image: var(--washi-grad, linear-gradient(100deg, #ff7fc0 0%, #b06ee8 52%, #63b8e8 100%))
     -webkit-background-clip: text
     background-clip: text
-    // ⚠️ 夜间档那条 V13 规则是 `color: #ffffff !important`，它压不掉这里的渐变——
-    // `-webkit-text-fill-color` 是**另一个属性**，渲染时盖过 `color`。删掉这一行
-    // 就会变成"夜里一整条白字"，别删。
     -webkit-text-fill-color: transparent
-    // ⚠️ 上面那两条 text-shadow 在渐变档里**必须关掉**：`background-clip: text` 的背景下，
-    // 投影画在字形**里面**（填充透明 ⇒ 投影从笔画里透出来），3px 的白晕会把渐变洗淡、
-    // 夜里那道黑晕会把亮渐变压脏。投影本来只是"糊在背景上时的可读性垫片"，
-    // 而渐变本身就是对比度，两者不该同时存在。
     text-shadow: none
 
   .frontDark .home-one-say
     text-shadow: none
-
-// ── 文章标签：**不再在这里定皮**（20261001）──────────────────────────────────
-// 20260930 那一轮把公开面的标签换成了手账 chip（`.tagChip` 纯 span + `--tg` 变量 +
-// `.tagChipDot` 色点），理由是 antd `<Tag color=…>` 的 `color` 会落成内联样式、换皮得
-// `!important`。这一轮用户的要求正好相反：「标签在文章卡片的样式**回到标签管理页的样式**」
-// —— 那就直接用管理页树上那颗组件 `<Tag color={标签自己的色}>`，chip 这层皮连同两条规则
-// 一起删掉。**"一样"的最省事实现就是同一个组件**，不要再"把 chip 调到像它"。
-
-// 减少动效（顶层一条，与 `.SelfDescription` 里那条分开写——`.TopArticle` 不在它的作用域里，
-// 而且这里的选择器本来就够长，不需要像那边一样补全链）
 @media (prefers-reduced-motion: reduce)
-  // ⚠️ **这里每一条都必须写全链**。七轮初版写的是裸 `.TopTape` / `.allContent::after`
-  // ——`@media` 不改特异性，而基规则住在 `.ContentContainer .TopArticle .Top .TopTape`
-  // 那四层里（0,4,0）：裸选择器（0,1,0）**一条都没生效**，减少动效档下三块标签照旧
-  // 又浮又闪。同族坑在本文件已记过一次（`SectionBar` 那条注释、`.heroTag` 那条），
-  // 这是第三次 —— 只有 headless 真跑 reduce 档才看得见（`tests/home-labels.test.py` 第四节）。
-  //
-  // 八轮起这三块牌子**静置时本来就不动**（常驻循环已全撤，见文件头总纲），所以这一段
-  // 从"关动画"缩成两件事：① 缎带的斜贴角度是基规则给的、不在动画里 ⇒ 这里不用补；
-  // ② 还剩**一条**常驻动效 —— 置顶尾尖那枚 ✦ 的呼吸，它只动 opacity，照样要关。
-  // ⚠️ 尾尖那枚 ✦ **只关动画、不隐藏**（六轮这里是 `opacity: 0`——那会儿 `::after`
-  // 是高光，藏着才对；七轮它换成了 ✦，藏掉等于把缎带的尾尖记号删了）。
   .ContentContainer .TopArticle .Top .TopTape
     &::after
       animation: none
-  // `.Top` 的悬停位移走的是 `top` 的 transition，不吃 transform ⇒ 这里要单独关
   .ContentContainer .TopArticle .Top
     transition: none
-  // 「文章」牌子只剩一条颜色/影子的过渡，一起关掉（悬停态本身仍在，只是瞬间到位）
   .ContentContainer .allContent
     transition: none
-  // More：悬停的位移与箭头前送一起停（箭头本身的角度在基规则里，撤了动画也不会摊平）。
-  // ⚠️ 这里那个角度**必须与基规则逐字相同**（`+45deg`）——它覆盖的是悬停态那条
-  // `translateY(3px) rotate(45deg)`，少写一个负号这条就从"撤掉位移"变成"把箭头转回向右"
-  // （20261004 之前这里正是 `rotate(-45deg)`，对应当时基规则的指向右）。
   .ContentContainer .more
     transition: none
     &:hover

@@ -10,7 +10,7 @@ import { build } from 'esbuild'
 import { compile } from 'sass'
 import { test as base, expect } from '@playwright/test'
 
-type Entry = 'axios' | 'announcement' | 'tags' | 'categories' | 'public-header' | 'users' | 'announcement-popup' | 'dashboard-users' | 'sticker-picker' | 'note-editor' | 'article-collaboration' | 'cover-display' | 'article-grid' | 'editor-images' | 'r2-settings'
+type Entry = 'home-hero' | 'user-center' | 'axios' | 'announcement' | 'tags' | 'categories' | 'public-header' | 'users' | 'announcement-popup' | 'dashboard-users' | 'sticker-picker' | 'note-editor' | 'article-collaboration' | 'cover-display' | 'article-grid' | 'editor-images' | 'r2-settings'
 const frontend = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const bundles = new Map<string, Promise<{ script: string; css: string }>>()
 
@@ -23,11 +23,12 @@ function bundle(entry: Entry, cdnBaseURL: string): Promise<{ script: string; css
     entryPoints: [`tests/browser/entries/${entry}.tsx`],
     bundle: true,
     format: 'iife',
-    loader: { '.woff': 'dataurl', '.woff2': 'dataurl', '.ttf': 'dataurl', '.gif': 'dataurl', '.png': 'dataurl', '.jpg': 'dataurl', '.jpeg': 'dataurl', '.webp': 'dataurl', '.svg': 'dataurl' },
+    loader: { '.mp4': 'empty', '.woff': 'dataurl', '.woff2': 'dataurl', '.ttf': 'dataurl', '.gif': 'dataurl', '.png': 'dataurl', '.jpg': 'dataurl', '.jpeg': 'dataurl', '.webp': 'dataurl', '.svg': 'dataurl' },
     jsx: 'automatic',
     write: false,
     outfile: 'browser-bundle.js',
     plugins: [{ name: 'real-sass', setup(builder) {
+      builder.onLoad({filter: /\.mp4$/}, () => ({contents: 'export default undefined', loader: 'js'}))
       builder.onLoad({ filter: /\.(sass|scss)$/ }, args => ({ contents: compile(args.path).css, loader: 'css', resolveDir: path.dirname(args.path) }))
     } }],
     define: {
@@ -36,6 +37,11 @@ function bundle(entry: Entry, cdnBaseURL: string): Promise<{ script: string; css
         DEV: false, PROD: true, BASE_URL: '/',
       }),
       'process.env.NODE_ENV': '"production"',
+      '__SITE_URL__': '"https://example.test"',
+      '__SITE_TITLE__': '"示例博客"',
+      '__SITE_DESCRIPTION__': '"博客简介"',
+      '__SITE_AUTHOR__': '"示例作者"',
+      '__SITE_KEYWORDS__': '""',
     },
   }).then(result => ({ script: result.outputFiles.find(file => file.path.endsWith('.js'))!.text, css: result.outputFiles.find(file => file.path.endsWith('.css'))?.text || '' }))
   bundles.set(key, result)

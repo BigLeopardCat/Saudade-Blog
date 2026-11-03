@@ -28,7 +28,7 @@ function bundle(rel, name) {
 
 globalThis.window ??= { location: { port: '', protocol: 'http:', hostname: 'localhost' } };
 
-const W = 'src/frontHome/Content/ContentHome/Vitrine/wordgraph/';
+const W = 'src/components/ArticleGraph/';
 const engine = await import(bundle(W + 'engine.ts', 'engine.mjs'));
 const locate = await import(bundle(W + 'locate.ts', 'locate.mjs'));
 

@@ -26,7 +26,6 @@ import { renderNoteTags } from '../../../apis/TagMethods.tsx';
 import { resetDescScroll } from '../../../utils/descHover';
 import heroBg from '../../../assets/hero_bg.mp4';
 import heroPoster from '../../../assets/hero_poster.jpg';
-import Vitrine from './Vitrine';
 import { createArticleFeed, requireArticleRows } from './articleFeed';
 
 
@@ -337,11 +336,7 @@ const ContentHome = () => {
                 </div>
             </div>
 
-            {/* 右列 = 手账内页（视频）+ 它下面的展示柜（20260930 五轮）。
-                两个原来各自绝对定位/各自占位的东西，现在是一列里的两张胶带贴图。
-                ⚠️ 夜间档 `.frontDark` 仍然把 `.heroPanel` 整块 `display: none`（视频仅白天
-                显示是 20260902 的用户要求；只藏 video 会留一张空白的白卡片）——于是夜里这
-                一列只剩展示柜那张卡，位置正好还是原来那个视觉落点。 */}
+            {/* 手账视频封面。 */}
             <div className="heroRight">
                 {/* 背景视频（20260902 起，20260930 四轮搬家）：从满屏底变成拼贴里的一张
                     "手账内页"——白边 + 两角胶带 + 歪 1.2 度。muted+playsInline 是自动播放的
@@ -364,7 +359,6 @@ const ContentHome = () => {
                     <span className="heroPanelTape tapeR"/>
                 </figure>
 
-                <Vitrine/>
             </div>
             {/* 20260902 暂时注释掉大圆头像窗口 */}
             {/* <Avatar src={avatar} size={320} className='frontAvatar'/> */}
