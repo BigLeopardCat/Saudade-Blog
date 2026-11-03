@@ -2,6 +2,12 @@ import {test, expect} from './sandbox'
 import type {Page} from '@playwright/test'
 
 test.use({entry: 'article-grid'})
+test.beforeEach(async ({page}) => {
+    await page.route('**/api/monitor/log', route => {
+        expect(route.request().method()).toBe('POST')
+        return route.fulfill({json: {code: 200}})
+    })
+})
 const widths = [375, 414, 640, 768, 800, 1024, 1280, 1366, 1440, 1680, 1920, 2560]
 async function geometry(page: Page) {
     return page.locator('.allArticles').evaluate(grid => {
