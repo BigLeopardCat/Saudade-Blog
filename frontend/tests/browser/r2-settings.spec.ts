@@ -90,6 +90,7 @@ test('saving submits exactly five storage fields and reloads saved settings and 
   const server = await backend(page)
   await page.goto(sandboxURL)
   await expect(bucket(page)).toHaveValue('saved-image-bucket')
+  await expect(usageFeedback(page)).toContainText('4.75 GB')
   await bucket(page).fill('new-image-bucket')
   await prefix(page).fill('new-gallery')
   await publicBase(page).fill('https://new-images.example.test')
@@ -136,6 +137,7 @@ for (const failure of ['business', 'http'] as const) {
     server.saveStatus = failure === 'http' ? 503 : 200
     await page.goto(sandboxURL)
     await expect(bucket(page)).toHaveValue('saved-image-bucket')
+    await expect(usageFeedback(page)).toContainText('4.75 GB')
     await publicBase(page).fill('https://draft-images.example.test')
     const settingsBefore = server.settingsReads, usageBefore = server.usageReads
     await save(page).click()
