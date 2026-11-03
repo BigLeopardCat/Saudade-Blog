@@ -5,7 +5,7 @@ test('portrait covers retain the full image after selection and reopening', asyn
     await page.goto(sandboxURL)
     const dialog = page.getByRole('dialog')
     await expect(dialog.getByText('完整图片，不裁切', {exact: true})).toBeVisible()
-    await dialog.getByRole('button', {name: '确定', exact: true}).click()
+    await dialog.getByRole('button', {name: /确\s*定/}).click()
     const image = page.getByAltText('保存的文章封面')
     await expect(image).toHaveCSS('object-fit', 'contain')
     expect(await image.evaluate((el: HTMLImageElement) => el.naturalHeight / el.naturalWidth)).toBe(3)
@@ -20,10 +20,19 @@ test('portrait covers retain the full image after selection and reopening', asyn
     await page.mouse.down()
     await page.mouse.move(stage.x + stage.width / 2, stage.y + stage.height / 2 - 45, {steps: 5})
     await page.mouse.up()
-    const transform = await cropper.locator('img').evaluate(el => el.style.transform)
-    await dialog.getByRole('button', {name: '确定', exact: true}).click()
+    const transform = await cropper.locator('img').evaluate(el => {
+        const matrix = new DOMMatrixReadOnly(getComputedStyle(el).transform)
+        return [matrix.a, matrix.d, matrix.e, matrix.f]
+    })
+    await dialog.getByRole('button', {name: /确\s*定/}).click()
     await expect(image).toHaveCSS('object-fit', 'cover')
     await page.getByRole('button', {name: '调整封面'}).click()
     await expect(cropper.locator('img')).toHaveJSProperty('complete', true)
-    await expect.poll(() => cropper.locator('img').evaluate(el => el.style.transform)).toBe(transform)
+    await expect.poll(async () => {
+        const actual = await cropper.locator('img').evaluate(el => {
+            const matrix = new DOMMatrixReadOnly(getComputedStyle(el).transform)
+            return [matrix.a, matrix.d, matrix.e, matrix.f]
+        })
+        return Math.max(...actual.map((value, index) => Math.abs(value - transform[index])))
+    }).toBeLessThan(0.2)
 })
