@@ -20,7 +20,18 @@ const StickerPicker = ({ onPick, disabled }: StickerPickerProps) => {
     useEffect(() => {
         if (!open) return
         const frame = requestAnimationFrame(() => panel.current?.querySelector('button')?.focus())
-        return () => cancelAnimationFrame(frame)
+        const escape = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') {
+                event.stopPropagation()
+                setOpen(false)
+                trigger.current?.focus()
+            }
+        }
+        document.addEventListener('keydown', escape)
+        return () => {
+            cancelAnimationFrame(frame)
+            document.removeEventListener('keydown', escape)
+        }
     }, [open])
     useEffect(() => { if (disabled) setOpen(false) }, [disabled])
 
@@ -28,9 +39,7 @@ const StickerPicker = ({ onPick, disabled }: StickerPickerProps) => {
         open={open && !disabled} onOpenChange={setOpen}
         classNames={{ root: `comment-sticker-popover${dark ? ' washiDark' : ''}` }}
         content={<div ref={panel} className="commentStickerPanel" role="dialog"
-            aria-label="选择站内表情" onKeyDown={event => {
-                if (event.key === 'Escape') { event.stopPropagation(); close() }
-            }}>
+            aria-label="选择站内表情">
             {STICKER_NAMES.map(name => <button key={name} type="button"
                 className="commentStickerItem" aria-label={`插入${name}`} title={name}
                 onClick={() => { onPick(name); close() }}>
