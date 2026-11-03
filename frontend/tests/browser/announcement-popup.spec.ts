@@ -189,20 +189,23 @@ test('popup geometry, scroll spacing and theme remain readable without covering 
       buttonHeight: br.height, buttonWidth: br.width, radius: parseFloat(bs.borderRadius), gradient: bs.backgroundImage,
       cardLuminance: lum(cs.backgroundColor), titleLuminance: lum(ts.color) }
   })
-  // Measure final geometry after Ant's scale animation has finished.
-  await expect.poll(() => dialog.evaluate(el => getComputedStyle(el).transform)).toBe('none')
-  const light = await measure()
-  expect(light.top).toBeGreaterThanOrEqual(24)
-  expect(light.top).toBeLessThanOrEqual(32)
-  expect(light.symmetric).toBeLessThanOrEqual(2)
-  expect(light.titleHeight).toBeGreaterThanOrEqual(27)
-  expect(light.titleHeight).toBeLessThanOrEqual(34)
-  expect(light.titleAbove && light.scrollAbove && light.scrollable).toBe(true)
-  expect(light.gutter).toBeGreaterThanOrEqual(20)
-  expect(light.buttonHeight).toBeGreaterThanOrEqual(40)
-  expect(light.buttonWidth).toBeGreaterThanOrEqual(140)
-  expect(light.radius).toBeGreaterThanOrEqual(20)
-  expect(light.gradient).toContain('linear-gradient')
+  // Assert a single geometry snapshot; rc-motion can start after the first visible frame.
+  let light: Awaited<ReturnType<typeof measure>> | undefined
+  await expect(async () => {
+    const actual = await measure()
+    expect(actual.top).toBeGreaterThanOrEqual(24)
+    expect(actual.top).toBeLessThanOrEqual(32)
+    expect(actual.symmetric).toBeLessThanOrEqual(2)
+    expect(actual.titleHeight).toBeGreaterThanOrEqual(27)
+    expect(actual.titleHeight).toBeLessThanOrEqual(34)
+    expect(actual.titleAbove && actual.scrollAbove && actual.scrollable).toBe(true)
+    expect(actual.gutter).toBeGreaterThanOrEqual(20)
+    expect(actual.buttonHeight).toBeGreaterThanOrEqual(40)
+    expect(actual.buttonWidth).toBeGreaterThanOrEqual(140)
+    expect(actual.radius).toBeGreaterThanOrEqual(20)
+    expect(actual.gradient).toContain('linear-gradient')
+    light = actual
+  }).toPass({ timeout: 7000 })
   await page.evaluate(() => {
     localStorage.setItem('isDarkMode', JSON.stringify('true'))
     window.dispatchEvent(new CustomEvent('darkmode-change', { detail: true }))
@@ -211,5 +214,5 @@ test('popup geometry, scroll spacing and theme remain readable without covering 
   const dark = await measure()
   expect(dark.cardLuminance).toBeLessThan(0.35)
   expect(dark.titleLuminance).toBeGreaterThan(0.5)
-  expect(dark.gradient).not.toBe(light.gradient)
+  expect(dark.gradient).not.toBe(light!.gradient)
 })
