@@ -19,6 +19,7 @@ export interface NoteType {
     coverFocusX?: number | null;
     coverFocusY?: number | null;
     coverZoom?: number | null;
+    coverFit?: 'cover' | 'contain' | null;
     categories: string;
     isTop: boolean | number;
     createTime: Date;

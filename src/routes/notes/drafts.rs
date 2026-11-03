@@ -42,12 +42,16 @@ pub struct AutosaveDraftRequest {
     pub cover_focus_y: Option<f64>,
     #[serde(rename = "coverZoom")]
     pub cover_zoom: Option<f64>,
+    #[serde(rename = "coverFit")]
+    pub cover_fit: Option<super::CoverFit>,
     #[serde(rename = "carouselFocusX")]
     pub carousel_focus_x: Option<f64>,
     #[serde(rename = "carouselFocusY")]
     pub carousel_focus_y: Option<f64>,
     #[serde(rename = "carouselZoom")]
     pub carousel_zoom: Option<f64>,
+    #[serde(rename = "carouselFit")]
+    pub carousel_fit: Option<super::CoverFit>,
     #[serde(rename = "noteTags")]
     pub tags: Option<String>,
 }
@@ -237,6 +241,12 @@ pub async fn autosave_note(
     }
     if let Some(v) = payload.cover_focus_y {
         am.cover_focus_y = Set(Some(clamp01(v)));
+    }
+    if let Some(v) = payload.cover_fit {
+        am.cover_fit = Set(Some(v.as_str().into()));
+    }
+    if let Some(v) = payload.carousel_fit {
+        am.carousel_fit = Set(Some(v.as_str().into()));
     }
     if let Some(v) = payload.cover_zoom {
         am.cover_zoom = Set(Some(clamp_zoom(v)));

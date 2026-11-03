@@ -9,18 +9,18 @@ pub struct Model {
     pub title: String,
     #[sea_orm(column_type = "Text")]
     pub content: String,
-    // New fields
     #[sea_orm(column_type = "Text", nullable)]
     pub description: Option<String>,
     pub cover: Option<String>,
-    // 封面裁剪参数（0..1 归一化焦点 + 1..4 额外缩放），NULL = 未设置，展示端按居中 cover 渲染。
-    // cover_* = 文章卡片那套；carousel_* = 置顶轮播那套（NULL = 回退跟随 cover_*）
+    // Display mode and focal point refer to the original image.
     pub cover_focus_x: Option<f64>,
     pub cover_focus_y: Option<f64>,
     pub cover_zoom: Option<f64>,
+    pub cover_fit: Option<String>,
     pub carousel_focus_x: Option<f64>,
     pub carousel_focus_y: Option<f64>,
     pub carousel_zoom: Option<f64>,
+    pub carousel_fit: Option<String>,
     pub is_top: Option<i32>, // 0 or 1
     pub status: Option<String>, // 'published', etc
     // 编辑修改稿链接（20260912c）：本行是「哪篇文章的修改稿」。

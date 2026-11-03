@@ -20,8 +20,8 @@ async fn editor_versions_serialize_autosaves_and_publication_without_losing_draf
     let version = initial["data"]["version"].as_str().unwrap();
     assert_eq!(version.len(), 64);
     let old_body = initial["data"]["note"]["noteContent"].clone();
-    let first = json!({"id":ARTICLE,"expectedVersion":version,"noteContent":"first draft","description":"first summary"}).to_string();
-    let second = json!({"id":ARTICLE,"expectedVersion":version,"noteContent":"second draft","description":"second summary"}).to_string();
+    let first = json!({"id":ARTICLE,"expectedVersion":version,"noteContent":"first draft","description":"first summary","coverFit":"contain","carouselFit":"cover"}).to_string();
+    let second = json!({"id":ARTICLE,"expectedVersion":version,"noteContent":"second draft","description":"second summary","coverFit":"contain","carouselFit":"cover"}).to_string();
     let ((_, a), (_, b)) = tokio::join!(
         call(
             app.clone(),
@@ -68,6 +68,9 @@ async fn editor_versions_serialize_autosaves_and_publication_without_losing_draf
         .unwrap()
         .ends_with("summary"));
 
+    assert_eq!(opened["data"]["draft"]["coverFit"], "contain");
+    assert_eq!(opened["data"]["draft"]["carouselFit"], "cover");
+
     let missing = json!({"id":ARTICLE,"noteContent":"missing version"}).to_string();
     let (_, missing) = call(
         app.clone(),
@@ -99,7 +102,7 @@ async fn editor_versions_serialize_autosaves_and_publication_without_losing_draf
     );
 
     let publish = json!({"expectedVersion":next_version,"noteTitle":"reviewed title","noteContent":"reviewed body",
-        "description":"reviewed summary","status":"public"}).to_string();
+        "description":"reviewed summary","status":"public","coverFit":"contain","carouselFit":"cover"}).to_string();
     let (_, published) = call(
         app.clone(),
         "POST",
@@ -135,6 +138,8 @@ async fn editor_versions_serialize_autosaves_and_publication_without_losing_draf
         "reviewed summary"
     );
     assert!(final_copy["data"]["draft"].is_null());
+    assert_eq!(final_copy["data"]["note"]["coverFit"], "contain");
+    assert_eq!(final_copy["data"]["note"]["carouselFit"], "cover");
     let (unauthorized, _) = call(app, "GET", &uri, None, None).await;
     assert_eq!(unauthorized, StatusCode::UNAUTHORIZED);
     exec(

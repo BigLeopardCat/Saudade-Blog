@@ -26,7 +26,7 @@ import {useGalleryPager} from "../../../../utils/galleryPager.ts";
 import CoverCropModal from '../../../../components/CoverCropModal';
 import NoteTagSelect from '../../../../components/NoteTagSelect/index.tsx';
 import {readListReturn} from '../AllNotes/listState';
-import { DEFAULT_CROP, carouselCropFromRow, cropFromRow, isDefaultCrop, type CoverCrop } from '../../../../utils/coverCrop';
+import { COMPLETE_COVER, DEFAULT_CROP, carouselCropFromRow, cropFromRow, type CoverCrop } from '../../../../utils/coverCrop';
 
 type FileType = Parameters<GetProp<UploadProps, 'beforeUpload'>>[0];
 
@@ -42,8 +42,8 @@ const NewNotes = () => {
     // 两套参数：coverCrop = 文章卡片那套（详情页横幅同用，有封面就总是回传）；
     // coverCropCarousel = 置顶轮播那套（只在用户动过/换过图时才回传，
     // 否则后端保持 NULL → 轮播继续跟随卡片那套，存量文章零回归）
-    const [coverCrop, setCoverCrop] = useState<CoverCrop>({...DEFAULT_CROP})
-    const [coverCropCarousel, setCoverCropCarousel] = useState<CoverCrop>({...DEFAULT_CROP})
+    const [coverCrop, setCoverCrop] = useState<CoverCrop>({...COMPLETE_COVER})
+    const [coverCropCarousel, setCoverCropCarousel] = useState<CoverCrop>({...COMPLETE_COVER})
     const [cropDirty, setCropDirty] = useState({carousel: false, card: false})
     const [cropOpen, setCropOpen] = useState(false)
     const cropSnap = useRef<{carousel: CoverCrop; card: CoverCrop}>({carousel: {...DEFAULT_CROP}, card: {...DEFAULT_CROP}})
@@ -107,10 +107,12 @@ const NewNotes = () => {
             coverFocusX: coverImg ? coverCrop.x : null,
             coverFocusY: coverImg ? coverCrop.y : null,
             coverZoom: coverImg ? coverCrop.z : null,
+            coverFit: coverImg ? (coverCrop.fit ?? 'cover') : null,
             // 轮播那套与提交时同规则：动过才回传（三列同进同出），否则保持 NULL 走回退链
             carouselFocusX: coverImg && cropDirty.carousel ? coverCropCarousel.x : null,
             carouselFocusY: coverImg && cropDirty.carousel ? coverCropCarousel.y : null,
             carouselZoom: coverImg && cropDirty.carousel ? coverCropCarousel.z : null,
+            carouselFit: coverImg && cropDirty.carousel ? (coverCropCarousel.fit ?? 'cover') : null,
             description: aiContent,
             noteCategory: cat === undefined || cat === null ? null : Number(cat),
             noteTags: noteTag.join(','),
@@ -370,15 +372,17 @@ const NewNotes = () => {
      * false = 点「调整裁剪」沿用当前参数。快照用于取消时还原（两套一起）。
      */
     const openCropper = (fresh: boolean) => {
-        cropSnap.current = {carousel: coverCropCarousel, card: coverCrop};
+        cropSnap.current = fresh
+            ? {carousel: {...COMPLETE_COVER}, card: {...COMPLETE_COVER}}
+            : {carousel: coverCropCarousel, card: coverCrop};
         if (fresh) {
             // 换新图：旧图上的焦点对新图没有意义，两套都退回默认居中。
             // 但只有「原来确实存过值」的那套才需要回传这套默认值 —— 否则会把该行固化成
             // 0.5/0.5/1，让轮播从此不再跟随卡片那套（从未设过的应保持 NULL 走回退链）。
-            const hadCarousel = !isDefaultCrop(coverCropCarousel);
-            const hadCard = !isDefaultCrop(coverCrop);
-            setCoverCrop({...DEFAULT_CROP});
-            setCoverCropCarousel({...DEFAULT_CROP});
+            const hadCarousel = true;
+            const hadCard = true;
+            setCoverCrop({...COMPLETE_COVER});
+            setCoverCropCarousel({...COMPLETE_COVER});
             // 用 or 合并而非覆盖：中途「删掉封面又选回新图」时，删封面那一步已经把两套标脏
             // （旧值看不见了，只能靠标脏保证重新选图后一定覆盖写入）
             setCropDirty(d => ({carousel: d.carousel || hadCarousel, card: d.card || hadCard}));
@@ -502,11 +506,13 @@ const NewNotes = () => {
             coverFocusX: coverImg ? coverCrop.x : null,
             coverFocusY: coverImg ? coverCrop.y : null,
             coverZoom: coverImg ? coverCrop.z : null,
+            coverFit: coverImg ? (coverCrop.fit ?? 'cover') : null,
             // 轮播那套只在用户动过时才回传：三列同进同出（后端按原子三元组判定，
             // 只发一列会让整组被渲染端忽略 = 写入静默失效），未动则发 null 保持回退链
             carouselFocusX: coverImg && cropDirty.carousel ? coverCropCarousel.x : null,
             carouselFocusY: coverImg && cropDirty.carousel ? coverCropCarousel.y : null,
             carouselZoom: coverImg && cropDirty.carousel ? coverCropCarousel.z : null,
+            carouselFit: coverImg && cropDirty.carousel ? (coverCropCarousel.fit ?? 'cover') : null,
             description: aiContent,
             noteCategory: formValues.noteCategory,
             noteTags: tagsString,

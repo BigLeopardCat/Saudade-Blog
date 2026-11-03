@@ -17,10 +17,12 @@ interface updateNote{
     coverFocusX?: number | null;
     coverFocusY?: number | null;
     coverZoom?: number | null;
+    coverFit?: 'cover' | 'contain' | null;
     // 置顶轮播那套（与 cover_* 分立，三列同进同出）
     carouselFocusX?: number | null;
     carouselFocusY?: number | null;
     carouselZoom?: number | null;
+    carouselFit?: 'cover' | 'contain' | null;
     description: string;
     noteCategory: any;
     noteTags: string;
@@ -36,9 +38,11 @@ interface newNote{
     coverFocusX?: number | null;
     coverFocusY?: number | null;
     coverZoom?: number | null;
+    coverFit?: 'cover' | 'contain' | null;
     carouselFocusX?: number | null;
     carouselFocusY?: number | null;
     carouselZoom?: number | null;
+    carouselFit?: 'cover' | 'contain' | null;
     description: string;
     noteCategory: any;
     noteTags: string;
@@ -59,9 +63,11 @@ export interface AutosaveDraftPayload{
     coverFocusX?: number | null;
     coverFocusY?: number | null;
     coverZoom?: number | null;
+    coverFit?: 'cover' | 'contain' | null;
     carouselFocusX?: number | null;
     carouselFocusY?: number | null;
     carouselZoom?: number | null;
+    carouselFit?: 'cover' | 'contain' | null;
     description?: string;
     noteCategory?: number | null;
     noteTags?: string;
