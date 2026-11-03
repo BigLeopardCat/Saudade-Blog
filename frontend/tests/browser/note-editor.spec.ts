@@ -37,7 +37,9 @@ test('editor math renders with shared KaTeX and rejects untrusted links', async 
 
 公式 $E=mc^2$
 
-$$\frac{1}{2}$$
+$$
+\frac{1}{2}
+$$
 
 $\href{javascript:alert(1)}{unsafe}$`)
   const preview = page.locator('.saudade-note-editor .markdown-body')
