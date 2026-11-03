@@ -11,7 +11,7 @@ import type { BytemdEditorContext, BytemdPlugin } from 'bytemd'
 import mediumZoom from '@bytemd/plugin-medium-zoom'
 import 'bytemd/dist/index.css'
 import zhCN from 'bytemd/locales/zh_Hans.json'
-import 'github-markdown-css/github-markdown-dark.css'
+import 'github-markdown-css/github-markdown-light.css'
 import './index.css'
 import http from "../../apis/axios.tsx";
 import { message } from "antd";

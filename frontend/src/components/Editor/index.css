@@ -1,4 +1,8 @@
-.markdown-body {
+.saudade-note-editor .markdown-body {
+    /* 预览与源码区共用浅色画布，不随操作系统或外层页面切换。 */
+    color-scheme: light;
+    color: #1f2328;
+    background-color: #ffffff;
     box-sizing: border-box;
     min-width: 200px;
     max-width: 980px;
@@ -6,8 +10,8 @@
     padding: 45px;
 }
 
-/* 编辑器预览里的内置表情包尺寸（:名字: → <img class="sticker">，class 与 src 前缀双保险） */
-.markdown-body img.sticker, .markdown-body img[src^="/stickers/"] {
+.saudade-note-editor .markdown-body img.sticker,
+.saudade-note-editor .markdown-body img[src^="/stickers/"] {
     height: var(--sticker-size);
     vertical-align: middle;
     display: inline-block;
@@ -15,18 +19,16 @@
 }
 
 @media (max-width: 767px) {
-    .markdown-body {
+    .saudade-note-editor .markdown-body {
         padding: 15px;
     }
 }
 
-.bytemd {
+.saudade-note-editor .bytemd {
     height: calc(100vh - 200px);
 }
 
-/* ── 编辑器里那个图库弹窗（ImagePicker） ────────────────────────────────────────
-   antd 的弹窗走 portal 挂到 body 下，不在包裹元素里 ⇒ 这几个类名只能是全局的
-   （别试图用 `.saudade-note-editor .xxx` 去作用域它，那样一条都匹配不上）。 */
+/* 图库弹窗通过 portal 挂到 body，保留独立类名。 */
 .editor-image-picker-scroll {
     max-height: 60vh;
     overflow-y: auto;
@@ -38,14 +40,11 @@
     padding: 32px 0;
 }
 
-/* 「载入更多」那一行（图库分页，20261014）——它住在**滚动容器里**，所以居中靠这一句，
-   不能像外面那些块一样用 flex 居中父元素。 */
 .editor-image-picker-more {
     text-align: center;
     padding: 8px 0 4px;
 }
 
-/* 图库里那张图的原名（已经剥掉 14 位时间戳前缀，见 utils/assetName.ts） */
 .editor-gallery-name {
     font-size: 12px;
     line-height: 18px;
