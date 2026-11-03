@@ -27,7 +27,7 @@ try {
     const body = (await transform(`${saveSource}\n${resumeSource}\n${publishSource}\nreturn {flushAutosave, onFinish};`, {loader: 'ts'})).code;
     const ref = current => ({current});
     const deferred = () => { let resolve, reject; const promise = new Promise((a,b) => {resolve=a; reject=b}); return {promise, resolve, reject}; };
-    const response = (id, code = 200) => ({status: 200, data: {code, data: {id, updateTime: '2026-10-23 12:00:00'}}});
+    const response = (id, code = 200) => ({status: 200, data: {code, data: {id, version: 'draft-version', updateTime: '2026-10-23 12:00:00'}}});
     function scenario() {
         let payload = {id: null, noteTitle: '标题', noteContent: '旧正文'};
         let token = 'same-account';
@@ -39,6 +39,7 @@ try {
             savedIdRef: ref(undefined), lastSavedRef: ref('baseline'), autosaveTimer: ref(null),
             retryRef: ref(0), inFlightRef: ref(null), queuedRef: ref(null), createdHereRef: ref(false),
             buildPayloadRef: ref(() => payload),
+            versionRef: ref(undefined), conflictedRef: ref(false),
         };
         const send = (data, kind) => {const d = deferred(); saves.push({data, kind, ...d}); return d.promise;};
         const env = {
@@ -114,6 +115,19 @@ try {
         assert.equal(s.saves[1].data.noteContent, '卸载快照', '卸载后的尾随保存冻结旧会话内容');
         assert.equal(s.saves[1].data.id, 22);
         s.saves[1].resolve(response(22)); await s.refs.inFlightRef.current;
+    }
+    {
+        const s = scenario(); s.flushAutosave();
+        const pending = s.refs.inFlightRef.current;
+        s.saves[0].resolve(response(31)); await pending;
+        s.edit('新正文'); s.flushAutosave();
+        assert.equal(s.saves[1].data.expectedVersion,'draft-version','后续保存使用最近确认的版本');
+        const conflict=s.refs.inFlightRef.current;
+        s.saves[1].resolve(response(31,409)); await conflict;
+        s.events.pageshow();
+        assert.equal(s.saves.length,2,'版本冲突不自动重试覆盖服务器新内容');
+        assert.equal(s.states.at(-1),'conflict');
+        assert.equal(s.refs.lastSavedRef.current.includes('新正文'),false,'冲突仍保留本地未保存状态');
     }
     {
         const s = scenario(); s.flushAutosave();

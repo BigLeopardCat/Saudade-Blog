@@ -3228,6 +3228,8 @@ async fn note_tags_修改稿从原行复制标签() {
     assert_eq!(st, StatusCode::OK, "{j}");
     assert_eq!(j["code"], 200, "{j}");
 
+    let (_, editor) = call(app.clone(), "GET", &format!("/api/protected/draft/editor/{TAGAS_NOTE}"), Some(&admin), None).await;
+    let version = editor["data"]["version"].as_str().expect("草稿读取必须提供版本");
     // 自动保存一个**非草稿**的源行 ⇒ `resolve_autosave_target` 克隆出一行修改稿。
     // 这一笔**不带** `noteTags`（编辑器平时就是这么发的），所以修改稿的标签只能来自
     // "从源行复制"那条路 —— 漏了的话"继续编辑"打开时标签栏是空的，用户一保存就把标签清光。
@@ -3236,7 +3238,7 @@ async fn note_tags_修改稿从原行复制标签() {
         "POST",
         "/api/protected/draft/autosave",
         Some(&admin),
-        Some(&format!(r#"{{"id":{TAGAS_NOTE},"noteTitle":"自动保存夹具"}}"#)),
+        Some(&format!(r#"{{"id":{TAGAS_NOTE},"expectedVersion":"{version}","noteTitle":"自动保存夹具"}}"#)),
     )
     .await;
     assert_eq!(st, StatusCode::OK, "{j}");
@@ -3757,6 +3759,9 @@ async fn comment_sort_hot_default_and_new_differ() {
 
     clear_hot_fixture(&db).await;
 }
+
+#[path = "pg/editor_drafts.rs"]
+mod editor_drafts;
 
 #[path = "pg/confirmation_batches.rs"]
 mod confirmation_batches;
