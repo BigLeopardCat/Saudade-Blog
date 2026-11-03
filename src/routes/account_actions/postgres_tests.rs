@@ -94,11 +94,12 @@ async fn prepared(ctx: &PgContext, id: i32, intent: &Intent) -> Prepared {
     let Json(response) = prepare(
         State(ctx.state.clone()),
         headers(id, actor.token_version),
-        Json(intent.clone()),
+        Json(intent.clone().into()),
     )
     .await;
     assert_eq!(response.code, 200, "{}", response.message);
-    response.data
+    assert_eq!(response.data.intent.as_ref(), Some(intent));
+    response.data.plan
 }
 
 #[tokio::test]
@@ -427,7 +428,8 @@ async fn postgres_plans_conflicts_policies_and_legacy_effects_are_atomic() {
     let result: serde_json::Value =
         serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap();
     assert_eq!(result["code"], 200);
-    let version = result["data"]["version"].as_str().unwrap();
+    let version = result["data"]["plan"]["version"].as_str().unwrap();
+    assert_eq!(result["data"]["intent"], serde_json::to_value(&unfreeze).unwrap());
     let app = crate::routes::create_router(state(scoped_db(&ctx.url, &ctx.schema).await));
     let response = app
         .oneshot(

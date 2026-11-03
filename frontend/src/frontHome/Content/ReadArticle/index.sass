@@ -575,16 +575,10 @@ html
       color: var(--font-title-color)
       margin: 2rem 0 2rem 0
 
-    // 20261005：正文 16 → 17px（用户「也有点小」，见 .readContainer 那段白天底色的注释）。
-    // 行高跟着字号走（1.85 ⇒ 31.45px，原来写死 30px，字号一动就偏）。`1.0625rem` 是**故意**
-    // 写成 rem 的：访客改浏览器默认字号时它是可缩放的，写死 `17px` 就不跟了。
-    // ⚠️ 别用 `font-weight` 去救"太细"：Windows 的 CJK 回退是微软雅黑，只有 Light/Regular/Bold
-    // 三档，`font-weight: 500` 在 Chrome/Windows 上渲染结果**等于 400**（本机实测无差异）。
-    // 笔画那半由 `.readBody > .markdown-body > .markdown-body` 上的
-    // `-webkit-text-stroke: 0.2px currentColor` 负责（20261005 第二轮加的，含实测口径）。
+    // Relative typography follows the browser reading size.
     p
-      font-size: 1.0625rem
-      max-width: 90rem
+      font-size: 1.125rem
+      max-width: 100%
       color: var(--font-title-color)
       line-height: 1.85
       margin: 1rem 0 1rem 0
@@ -763,56 +757,40 @@ html
           overflow-x: auto !important
           font-size: 13px
 
-// ── mermaid 图独立框(第 38 轮):边界清晰 + 单击放大提示 ──
+// Preserve diagram text size; wide diagrams scroll independently and support zoom.
 .readContent .markdown-body .bytemd-mermaid
   position: relative
-  margin: 22px 0
-  padding: 16px
-  background: #fff
-  border: 1px solid rgba(90, 102, 120, 0.4)
-  border-radius: 10px
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.07)
+  max-width: 100%
+  margin: 24px 0
+  padding: 22px 16px 16px
+  overflow-x: auto
+  overscroll-behavior-x: contain
+  scrollbar-gutter: stable
+  background: #fffdfa
+  border: 1px solid var(--washi-line)
+  border-radius: 14px
   cursor: zoom-in
-  transition: border-color 0.2s, box-shadow 0.2s
-  &:hover
-    border-color: rgba(26, 86, 255, 0.6)
-    box-shadow: 0 2px 14px rgba(0, 0, 0, 0.12)
+  &:focus-visible
+    outline: 2px solid var(--washi-pink-deep)
+    outline-offset: 3px
+  svg
+    display: block
+    max-width: none
+    margin: 0 auto
   &::after
-    content: '🔍 点击放大'
+    content: '点击放大'
     position: absolute
-    top: 10px
-    right: 12px
-    font-size: 12px
-    line-height: 1
-    color: #57606a
-    background: rgba(255, 255, 255, 0.88)
-    border: 1px solid rgba(90, 102, 120, 0.25)
-    border-radius: 6px
-    padding: 4px 8px
-    opacity: 0
-    transition: opacity 0.2s
+    top: 5px
+    left: 12px
+    color: #6c5275
+    font-size: 11px
     pointer-events: none
+    opacity: 0
   &:hover::after
     opacity: 1
-  // 触屏没有 hover ⇒ 上面那条角标在手机上**等于不存在**（功能没有入口），而手机上这张图
-  // 本来就被压得极小：/article/19 那张流程图 viewBox 1112×598，390px 视口里只渲染成
-  // 276px 宽、图上标签 ~5px 高（20261005 实测）——"点开放大"是唯一的读法，提示必须先看得见。
-  // 同族理由与写法见 `Vitrine/index.sass` 那条 `@media (hover: none)`
-  //（「触屏没有 hover：直接常亮，否则这个功能等于不存在」）。
-  // ⚠️ 这条必须写在 `&::after`（opacity: 0）**之后**：同特异度靠源序赢，sass 按源码位置
-  // 吐产物（这类"同选择器、同特异度"的媒体档正是 `tests/sass-media-shadow.test.mjs` 判据 ①
-  // 盯的形状）。也不要改成给 `&::after` 加 `!important` —— 那会把 `:hover` 那条一起吃掉。
   @media (hover: none)
     &::after
       opacity: 1
-  svg
-    display: block
-    margin: 0 auto
-
-// 暗色模式下:画布保持白色(mermaid 默认浅色主题),仅边框/阴影微调
-.frontDark .readContent .markdown-body .bytemd-mermaid
-  border-color: rgba(148, 163, 184, 0.55)
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.45)
 
 // ── 夜间代码块对比度修复（20260914，用户实测「文章详情页夜间高亮看不清」）──
 // 夜间页面底色实测 rgb(18,26,39)，代码块底色 #0f172a——两者对比度仅 1.02:1，
@@ -831,7 +809,7 @@ html
 // 内置表情包（:名字: → <img class="sticker">）行内尺寸（class 与 src 前缀双保险，
 // 20260903 泠月喵 PNG 贴纸素材；与 utils/stickers.ts 清单同步）
 .readContent .markdown-body img.sticker, .readContent .markdown-body img[src^="/stickers/"]
-  height: 1.8em
+  height: var(--sticker-size)
   vertical-align: middle
   display: inline-block
   margin: 0 2px

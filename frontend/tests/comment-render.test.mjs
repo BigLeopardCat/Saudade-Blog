@@ -161,7 +161,7 @@ ok(picker.includes('STICKER_NAMES') && picker.includes('STICKERS'),
     '选择器遍历 utils/stickers.ts 的清单（新增表情只改那一处）');
 ok(!/头疼|委屈|害羞|比耶|犯错|生气|贴贴|震惊|困困|躺平|嫌弃|比心/.test(strip(picker)),
     '选择器里没有硬编码的表情名');
-ok(picker.includes('onPick(name)') && /`:\$\{name\}:`/.test(strip(picker)),
+ok(picker.includes('onPick(name)') && /`:\$\{name\}:`/.test(strip(comp)),
     '选中只回名字，由调用方拼成 :名字: 文本');
 ok(!/dangerouslySetInnerHTML|innerHTML/.test(strip(picker)),
     '选择器不碰 HTML（插标签就等于从侧门绕过 sanitize）');

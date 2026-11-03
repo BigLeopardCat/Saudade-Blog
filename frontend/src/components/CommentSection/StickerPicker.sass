@@ -1,0 +1,38 @@
+.comment-sticker-popover
+  max-width: calc(100vw - 24px)
+  .ant-popover-inner
+    padding: 10px
+    border: 1px solid var(--washi-line)
+    background: var(--washi-paper-2, #fff6fa)
+    border-radius: 16px
+  .commentStickerPanel
+    display: grid
+    grid-template-columns: repeat(4, minmax(0, 1fr))
+    width: min(336px, calc(100vw - 64px))
+    max-height: min(360px, 55dvh)
+    overflow-y: auto
+    overscroll-behavior: contain
+    scrollbar-gutter: stable
+    gap: 6px
+  .commentStickerItem
+    display: flex
+    flex-direction: column
+    align-items: center
+    gap: 4px
+    padding: 6px 2px
+    border: 0
+    border-radius: 10px
+    color: var(--washi-ink)
+    background: transparent
+    cursor: pointer
+    font: inherit
+    font-size: 12px
+    &:hover, &:focus-visible
+      background: var(--washi-tape)
+      outline: 2px solid var(--washi-pink-deep)
+      outline-offset: -2px
+    img
+      width: 68px
+      height: 68px
+      max-width: 100%
+      object-fit: contain

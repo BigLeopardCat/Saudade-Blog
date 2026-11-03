@@ -1,4 +1,6 @@
 //! Administrator-owned dashboard todos and atomic single-item actions.
+mod items;
+pub use items::{delete_todo, get_todo};
 
 use axum::{
     extract::{Query, State},

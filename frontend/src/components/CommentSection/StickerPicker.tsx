@@ -1,65 +1,56 @@
-/** Insert a known :name: token; the shared renderer resolves its image. */
+/** Accessible sticker popover; positioning and viewport collision use Ant Design. */
 import { useEffect, useRef, useState } from 'react'
+import { Popover } from 'antd'
 import { STICKERS, STICKER_NAMES } from '../../utils/stickers'
 import { resolveApiAssetUrl } from '../../utils/runtimeApi'
+import { useIsDarkMode } from '../../theme'
+import './StickerPicker.sass'
 
 interface StickerPickerProps {
-    /** 选中一个表情：回名字（中文），调用方拼成 `:名字:` 插进输入框 */
     onPick: (name: string) => void
     disabled?: boolean
 }
 
 const StickerPicker = ({ onPick, disabled }: StickerPickerProps) => {
     const [open, setOpen] = useState(false)
-    const boxRef = useRef<HTMLDivElement>(null)
-
+    const dark = useIsDarkMode()
+    const trigger = useRef<HTMLButtonElement>(null)
+    const panel = useRef<HTMLDivElement>(null)
+    const close = () => { setOpen(false); trigger.current?.focus() }
     useEffect(() => {
         if (!open) return
-        const onDown = (e: MouseEvent) => {
-            // 点在面板**或其触发按钮**上都算内部（触发按钮自己 toggle，不在这里关）
-            if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false)
+        const frame = requestAnimationFrame(() => panel.current?.querySelector('button')?.focus())
+        const escape = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') {
+                event.stopPropagation()
+                setOpen(false)
+                trigger.current?.focus()
+            }
         }
-        const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
-        document.addEventListener('mousedown', onDown)
-        document.addEventListener('keydown', onKey)
+        document.addEventListener('keydown', escape)
         return () => {
-            document.removeEventListener('mousedown', onDown)
-            document.removeEventListener('keydown', onKey)
+            cancelAnimationFrame(frame)
+            document.removeEventListener('keydown', escape)
         }
     }, [open])
+    useEffect(() => { if (disabled) setOpen(false) }, [disabled])
 
-    return (
-        <div className="commentSticker" ref={boxRef}>
-            <button
-                type="button"
-                className={`commentStickerBtn${open ? ' isOpen' : ''}`}
-                disabled={disabled}
-                aria-expanded={open}
-                aria-haspopup="true"
-                title="插入表情"
-                onClick={() => setOpen((v) => !v)}
-            >
-                😊 表情
-            </button>
-            {open && (
-                <div className="commentStickerPanel" role="menu" aria-label="站内表情包">
-                    {STICKER_NAMES.map((name) => (
-                        <button
-                            key={name}
-                            type="button"
-                            className="commentStickerItem"
-                            role="menuitem"
-                            title={`:${name}:`}
-                            onClick={() => { onPick(name); setOpen(false) }}
-                        >
-                            <img src={resolveApiAssetUrl(STICKERS[name])} alt={name} loading="lazy" decoding="async" />
-                            <span>{name}</span>
-                        </button>
-                    ))}
-                </div>
-            )}
-        </div>
-    )
+    return <Popover trigger="click" placement="topLeft" autoAdjustOverflow
+        open={open && !disabled} onOpenChange={setOpen}
+        classNames={{ root: `comment-sticker-popover${dark ? ' washiDark' : ''}` }}
+        content={<div ref={panel} className="commentStickerPanel" role="dialog"
+            aria-label="选择站内表情">
+            {STICKER_NAMES.map(name => <button key={name} type="button"
+                className="commentStickerItem" aria-label={`插入${name}`} title={name}
+                onClick={() => { onPick(name); close() }}>
+                <img src={resolveApiAssetUrl(STICKERS[name])} alt="" loading="lazy" decoding="async" />
+                <span>{name}</span>
+            </button>)}
+        </div>}>
+        <button ref={trigger} type="button" className="commentStickerBtn"
+            disabled={disabled} aria-expanded={open && !disabled} aria-haspopup="dialog"
+            title="插入表情">😊 表情</button>
+    </Popover>
 }
 
 export default StickerPicker

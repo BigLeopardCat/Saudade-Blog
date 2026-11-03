@@ -306,6 +306,23 @@ export const openZoomOverlay = (source: HTMLElement): void => {
  * 返回清理函数。委托方式兼容 mermaid 异步渲染完成后的节点。
  */
 export const initZoomDelegation = (root: HTMLElement): (() => void) => {
+  const prepareDiagrams = () => {
+    root.querySelectorAll<HTMLElement>('.bytemd-mermaid').forEach(diagram => {
+      diagram.tabIndex = 0
+      diagram.setAttribute('role', 'button')
+      diagram.setAttribute('aria-label', '放大图表')
+    })
+  }
+  prepareDiagrams()
+  const observer = new MutationObserver(prepareDiagrams)
+  observer.observe(root, { childList: true, subtree: true })
+  const onKey = (event: KeyboardEvent) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return
+    const diagram = (event.target as HTMLElement).closest('.bytemd-mermaid')
+    if (!diagram || overlay) return
+    event.preventDefault()
+    openZoomOverlay(diagram as HTMLElement)
+  }
   const onClick = (e: MouseEvent): void => {
     if (overlay) return // 查看器已打开
     if (!root.contains(e.target as Node)) return
@@ -324,7 +341,10 @@ export const initZoomDelegation = (root: HTMLElement): (() => void) => {
     }
   }
   root.addEventListener("click", onClick)
+  root.addEventListener('keydown', onKey)
   return () => {
+    observer.disconnect()
+    root.removeEventListener('keydown', onKey)
     root.removeEventListener("click", onClick)
     closeZoomOverlay() // 组件卸载时关闭浮层,防止残留
   }
