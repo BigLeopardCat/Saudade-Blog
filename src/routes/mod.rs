@@ -329,6 +329,8 @@ pub fn create_router(state: AppState) -> Router {
         )
         .route("/api/protected/todos/item", post(todos::add_todo))
         .route("/api/protected/todos/item/{id}", get(todos::get_todo).delete(todos::delete_todo))
+        .route("/api/protected/todos/batch/prepare", post(todos::prepare_deletions))
+        .route("/api/protected/todos/batch", delete(todos::delete_todos))
 
         // 评论管理（20261002）：文章详情页讨论区的裁决队列，挂在 admin 守卫域内（后台页面用）。
         // 公开那三条在 public_routes（见上方注），**这里的三条与它们不是一回事**：

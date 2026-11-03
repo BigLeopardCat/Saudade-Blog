@@ -1,4 +1,6 @@
 //! Actor-owned detail and version-bound deletion without transferring the whole list.
+mod batch;
+pub use batch::{delete_todos, prepare_deletions};
 use super::{begin_list_write, TodoDto};
 use crate::{entity::dashboard_todo, routes::AppState, utils::ApiResponse};
 use axum::{
