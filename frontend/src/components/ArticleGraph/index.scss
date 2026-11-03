@@ -1,0 +1,16 @@
+.articleGraph {
+  flex: 1; min-height: 0; margin-top: 16px; display: flex; flex-direction: column;
+  color: var(--washi-ink, #4a3550); background: var(--washi-paper, #fffdfa);
+  border: 1px solid var(--washi-line-2, #e8d5e2); border-radius: 14px; overflow: hidden;
+  button { font: inherit; cursor: pointer; color: inherit; border: 1px solid var(--washi-line-2, #e8d5e2); border-radius: 8px; background: var(--washi-paper-2, #fff6fa); padding: 5px 10px; }
+  a { color: var(--washi-pink-deep, #a94f83); }
+  button:focus-visible, a:focus-visible { outline: 2px solid var(--washi-pink-deep, #a94f83); outline-offset: 2px; }
+  .articleGraphHeader { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 14px; font-size: 12px; }
+  .articleGraphViewport { flex: 1; position: relative; min-height: 200px; background: #171c2a; }
+  canvas { display: block; width: 100%; height: 100%; position: absolute; inset: 0; touch-action: none; cursor: grab; }
+  .articleGraphPlaceholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 12px; color: #e8dfed; text-align: center; padding: 20px; }
+  .articleGraphSelection { position: absolute; left: 12px; bottom: 12px; right: 12px; background: #171c2ae8; color: #ffe9a8; padding: 8px 12px; border-radius: 8px; }
+  .articleGraphStatus { padding: 10px 14px; min-height: 38px; font-size: 12px; }
+  .articleGraphKeywords { display: flex; gap: 6px; flex-wrap: wrap; padding: 0 14px 10px; }
+  .articleGraphArticles { display: flex; flex-direction: column; gap: 8px; max-height: 120px; overflow-y: auto; padding: 0 14px 14px; scrollbar-gutter: stable; }
+}

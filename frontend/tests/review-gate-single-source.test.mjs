@@ -1,17 +1,4 @@
-// ═ 审核闸只有一份实现（20261002）══
-//   node tests/review-gate-single-source.test.mjs
-//
-// 背景：文章评论要复用留言板那条审核链路（AI 闸 + 人工闸 + 四路回落）。**复用**与
-// **照抄一份**在当时的代码里长得一模一样——都是"评论也走了一遍同样的判断"。区别要等到
-// 将来：照抄的那份必然只改一处，而这条链路是全仓最敏感的（宁可多一次人工复核，
-// 也绝不放行一条未经审核的公开内容）。
-//
-// 所以这里钉的不是"评论能审核"，而是**结构**：裁决只有 `decide_review` 一份，
-// `board_approved` 退化成一个读开关的薄壳；四路异常回落一条不少（每一条都倒向转人工）；
-// 会直接放行内容的出口只有两处、放到"未通过"的只有一处——**数目**变了就说明有人加了
-// 分支，那正是该有人来看一眼的时候。
-//
-// 同 `nickname-unique.test.mjs` 的形态：不跑 DB、不跑浏览器，只读父仓源码做契约断言。
+// Shared content-review boundaries; behavioral outcomes are tested in Rust.
 import { readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -48,7 +35,7 @@ function bodyOf(src, marker) {
 const talks = read('src/routes/talks.rs');
 const webInfo = read('src/routes/web_info.rs');
 
-const decide = bodyOf(talks, 'pub(crate) async fn decide_review');
+const decide = bodyOf(talks, 'async fn decide_review_at');
 const boardApproved = bodyOf(talks, 'async fn board_approved');
 
 console.log('裁决本体 —— 只有一份：');
@@ -63,8 +50,8 @@ ok(!decide.includes('state.db'), 'decide_review 不碰库（签名里也没有 s
 ok(!/fn decide_review[\s\S]{0,120}state: &Arc<AppState>/.test(talks), 'decide_review 不收 AppState');
 
 console.log('\n裁决本体 —— 出口的数目就是安全边界：');
-ok(count(decide, '(0, None, None, None)') === 4,
-    '**四路回落**（AI 未开+人工开 / 响应解析失败 / 非 2xx / 请求失败）各回一次转人工',
+ok(count(decide, '(0, None, None, None)') === 5,
+    '五路回落（人工审核 / 未配置服务 / 响应解析失败 / 非 2xx / 请求失败）均转人工',
     count(decide, '(0, None, None, None)'));
 ok(count(decide, '(0, Some("flag"') === 1, '存疑（flag）也倒向转人工，且只有一处');
 ok(count(decide, 'Some("pass".to_string())') === 2, 'AI 说 pass 只有两处出口（人工闸开→待审 / 关→放行）');
@@ -91,9 +78,11 @@ for (const [needle, why] of [
 }
 
 console.log('\n全仓 —— 只有一处能调 agent 的 /review：');
-const aiReviewUrl = 'http://127.0.0.1:8010/review';
-ok(talks.includes(aiReviewUrl), '兜底地址写在 talks.rs');
-ok(count(talks, aiReviewUrl) === 1, '整个 talks.rs 里只出现一次', count(talks, aiReviewUrl));
+const routing = read('src/ai_services.rs');
+ok(routing.includes('AI_REVIEW_URL'), '审核服务可以独立配置');
+ok(bodyOf(talks, 'pub(crate) async fn decide_review').includes('review_endpoint()'), '审核入口统一解析可选服务端点');
+ok(decide.includes('let Some(url) = endpoint else'), '服务未配置时不发网络请求');
+ok(!talks.includes('http://127.0.0.1:8010/review'), '审核实现不硬编码部署地址');
 ok(!webInfo.includes('review_http') && !webInfo.includes('verdict'), 'web_info.rs 不掺和裁决');
 
 console.log('\n通知文案 —— 参数化后老句子一字不改：');

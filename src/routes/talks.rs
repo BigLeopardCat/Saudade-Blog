@@ -538,36 +538,7 @@ async fn notify_review_result(
     .await;
 }
 
-/// AI 审核（20260925 审计 A5）：调 agent 时**带上服务间身份断言**。
-///
-/// 此前这一发只有 `{content}`，agent 侧 `/review` 因此没有任何身份可核——它是不是
-/// "匿名可调用"完全押在"8010 只听回环"这一个部署事实上。现在与 `/chat` 同款签一条
-/// 短时效断言（aud=agent，60s）。
-///
-/// **部署顺序是硬要求**：agent 的 .env 里 `AGENT_REQUIRE_ASSERTION` **已经是 1**
-/// （不是"以后再打开"）⇒ 这一半必须先上线，agent 侧才允许把 `/review` 接上
-/// `_resolve_principal`；顺序反了留言审核会成片 401，每一条都转人工待审。
-/// `uid` 同时进 body：agent 用它核对断言、并在审核日志里留痕。
-/// **公共裁决**：给定两个开关，算出这条内容该以什么状态入库
-/// —— `(approved, ai_result, ai_reason, reject_reason)`。
-///
-/// 20261002 从 `board_approved` 里**逐字节搬**出来（评论要复用同一条闸，见
-/// `src/routes/comments.rs`），搬移时只做两件事：把 `review_switches` 那一行提到调用方、
-/// 把两个布尔收成参数。**判定逻辑、四路回落、话术一字未改**。
-///
-/// `tag` 只进日志（`[board]` / `[comment]`）：四路回落的告警是排查"为什么这条转人工了"
-/// 的第一落点，两种内容共用一个实现之后，日志里分不出是谁在失败就等于白记。
-///
-/// 为什么值得单独抽：这是全仓最敏感的一条链路——宁可多一次人工复核，
-/// 也绝不放行一条未经审核的公开内容。它的兜底有四路（AI 说 pass/reject/存疑、
-/// 超时、非 2xx、响应解析失败），**每一路都倒向"转人工"**；抽成可复用函数是为了让
-/// 评论**用同一份实现**，而不是照抄一份——照抄的那份将来必然只改一处。
-///
-/// 调用方负责先读开关（留言板用 `web_info::review_switches`，评论用
-/// `web_info::review_switches_of(COMMENT_REVIEW_KEYS)`）。
-///
-/// 不收 `state`：这条链路**不碰库也不碰 `AppState`**——agent 端点从 `AGENT_URL`
-/// 环境变量取（见下），断言现签。所以评论那条路复用它的成本是零依赖。
+/// AI 不可用时进入人工待审；博客负责审核开关、状态和通知。
 pub(crate) async fn decide_review(
     tag: &str,
     uid: i32,
@@ -575,18 +546,30 @@ pub(crate) async fn decide_review(
     ai_on: bool,
     manual_on: bool,
 ) -> (i16, Option<String>, Option<String>, Option<String>) {
+    let endpoint = crate::ai_services::review_endpoint();
+    decide_review_at(tag, uid, content, ai_on, manual_on, endpoint.as_deref()).await
+}
+
+async fn decide_review_at(
+    tag: &str,
+    uid: i32,
+    content: &str,
+    ai_on: bool,
+    manual_on: bool,
+    endpoint: Option<&str>,
+) -> (i16, Option<String>, Option<String>, Option<String>) {
     if !ai_on {
         if manual_on {
             return (0, None, None, None);
         }
         return (1, None, None, None);
     }
-    // 仅 AI 闸：同步调 agent（模型裁决上限 25s，这里网络超时 20s 先兜住）
-    let url = std::env::var("AGENT_URL")
-        .map(|u| u.trim_end_matches('/').trim_end_matches("/chat").to_string() + "/review")
-        .unwrap_or_else(|_| "http://127.0.0.1:8010/review".to_string());
+    let Some(url) = endpoint else {
+        tracing::info!("[{tag}] AI 审核未配置，进入人工复核");
+        return (0, None, None, None);
+    };
     let result = review_http()
-        .post(&url)
+        .post(url)
         .header(
             "X-Agent-Assertion",
             crate::auth_jwt::create_agent_assertion(uid, None),
@@ -600,11 +583,6 @@ pub(crate) async fn decide_review(
             match r.json::<serde_json::Value>().await {
                 Ok(v) => {
                     let verdict = v.get("verdict").and_then(|x| x.as_str()).unwrap_or("");
-                    // 20260926 更正一处**自相矛盾的注释**（它让后来人以为"AI 说明已经有人展示了"）：
-                    // 此前这里写着"flag 的说明是给管理员的存疑注记、后台另有 ai_result 段展示它"
-                    // ——后半句是假的：`ai_result` 那一列存的是**裁决词**（pass/flag/reject 三个
-                    // 字面量），从来没有一列展示过说明；说明全文只活在这一个 HTTP 响应里，
-                    // 响应一关就没了。现在它落 `ai_reason`，后台「评论管理」页展示它。
                     let ai_reason = clip_reject_reason(v.get("reason").and_then(|x| x.as_str()).unwrap_or(""));
                     match verdict {
                         "pass" if manual_on => (0, Some("pass".to_string()), ai_reason, None),
@@ -1057,5 +1035,22 @@ mod tests {
     fn 未知裁决值不发通知() {
         assert!(review_notice_text(3, "河灯很好看", None).is_none());
         assert!(review_notice_text(-1, "河灯很好看", None).is_none());
+    }
+}
+
+#[cfg(test)]
+mod optional_review_tests {
+    use super::decide_review_at;
+
+    #[tokio::test]
+    async fn no_ai_service_keeps_content_in_manual_review() {
+        for manual_on in [false, true] {
+            assert_eq!(decide_review_at("test", 1, "content", true, manual_on, None).await,
+                (0, None, None, None));
+        }
+        assert_eq!(decide_review_at("test", 1, "content", false, true, None).await,
+            (0, None, None, None));
+        assert_eq!(decide_review_at("test", 1, "content", false, false, None).await,
+            (1, None, None, None));
     }
 }

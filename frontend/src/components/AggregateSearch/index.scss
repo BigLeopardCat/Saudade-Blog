@@ -12,7 +12,7 @@
 }
 
 .aggregateSearch {
-  .searchClear { position: absolute; inset-inline-end: 12px; width: 30px; height: 30px; display: grid; place-items: center; border: 0; border-radius: 50%; background: var(--washi-paper-2, #fff6fa); color: var(--washi-ink-2, #7c6584); cursor: pointer; }
+  .searchClear { position: absolute; inset-inline-end: 116px; width: 30px; height: 30px; display: grid; place-items: center; border: 0; border-radius: 50%; background: var(--washi-paper-2, #fff6fa); color: var(--washi-ink-2, #7c6584); cursor: pointer; }
   .searchClear:hover { color: var(--washi-pink-deep, #d94f9a); background: var(--washi-tape, #ffdeee); }
   .searchClear:focus-visible { outline: 2px solid var(--washi-pink-deep, #d94f9a); outline-offset: 2px; }
   .aggregateSearchCard .ant-card-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
@@ -20,4 +20,10 @@
   .searchStatus { min-height: 24px; flex: 0 0 auto; }
   .searchBusy { min-height: 24px; margin: 0; color: var(--washi-ink-2, #7c6584); }
   .searchPagination { flex: 0 0 auto; }
+}
+
+.aggregateSearch {
+  .searchMode { flex: 0 0 92px; min-height: 40px; padding: 8px; border: 1px solid var(--washi-line-2, #e8d5e2); border-radius: 12px; color: var(--washi-ink, #4a3550); background: var(--washi-paper-2, #fff6fa); font: inherit; font-size: 13px; cursor: pointer; }
+  .searchMode[aria-pressed='true'] { background: var(--washi-tape, #ffdeee); }
+  .searchMode:focus-visible { outline: 2px solid var(--washi-pink-deep, #a94f83); outline-offset: 2px; }
 }

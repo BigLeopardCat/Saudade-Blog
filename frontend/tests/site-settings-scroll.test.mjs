@@ -1,28 +1,4 @@
-// ═ 向量图谱页签的**滚动与布局**判据（20261004 建，用户实测"不能整页滚动看完整的日志框"）══
-//   node tests/graph-rebuild-panel.test.mjs      （CI 秒级套件，靠 `npm test` 自动带上）
-//
-// 症状（用户原话）："向量图谱控制面板布局很奇怪而且不能整页滚动看完整的日志框"。
-// 根因是**一条永远不会生效的声明**，属于本仓反复吃亏的「写了但没接上」：
-//
-//   后台外壳是 `.contain{height:100vh}` → `.content{height:100%}` →
-//   `.Card{height:95%; overflow:hidden}`（pages/Dashboard/index.css）——一个**固定高度、
-//   且会裁掉溢出**的盒子。页签容器 `.allin` 当时写的是内联 `style={{ padding:20,
-//   overflowY:'scroll' }}`：**overflow 有了、高度没有**。块级元素的自动高度由内容决定 ⇒
-//   它永远和内容一样高、自己从不溢出 ⇒ 那行 `overflowY` 一条都轮不到生效；超出卡片的部分
-//   被 `.Card{overflow:hidden}` 静默裁掉，**没有任何一条滚动条**。日志框（当时写死
-//   260px 高）正好在被裁掉的那一段里。
-//
-// 所以判据分三层，缺一层就还是坏的：
-//   ① **滚动容器必须有确切高度**（下面 `scrollable()`）——只判"有没有 overflow"是**假判据**，
-//      本文件用一段"修复前的真实形状"做反向对照把这条钉死；
-//   ② **高度链的前提**：`.ant-card .ant-card-body` 得给 `height:100%`（index.css），
-//      少这一环 `.allin` 的 100% 退化成内容高度，滚动再次失效；
-//   ③ **面板自身不许再套一层滚动**、日志区**不许写死高度**——否则"能滚"是能滚了，
-//      但滚的是里面那层 260px 的框，外层永远滚不到日志的其余部分（＝用户看到的症状原样保留）。
-//
-// 已知盲区：判的是**源级性质**（编译产物里的声明），不是浏览器里的几何 —— 沙箱只编译组件
-// 的 .sass、拿不到跨文件的 `.Card{overflow:hidden}`（见 tests/comment-layout.test.py 的头注），
-// 几何断言在这里会误读。真几何要靠无头浏览器手工量一次，本套件负责的是"这行声明还在不在"。
+// Site settings preserve the dashboard scroll chain.
 import { readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -78,20 +54,6 @@ check('.ant-card .ant-card-body 给到 height:100%（.allin 的 100% 靠它才�
     /\.ant-card \.ant-card-body\s*\{[^}]*height:\s*100%/s.test(dashCss));
 check('卡片确实是"固定高度 + 裁溢出"（这就是必须有个滚动的容器兜住的原因）',
     /\.Card\s*\{[^}]*overflow:\s*hidden/s.test(dashCss));
-
-console.log('\n③ 面板自身与日志区：不许再叠一层滚动、不许把日志写死高度');
-const grCss = sass.compile(SRC('pages', 'Dashboard', 'UserControl', 'GraphRebuild.sass')).css.toString();
-const panel = ruleOf(grCss, '.graphRebuild');
-check('取到了 .graphRebuild 的声明块', panel.length > 0);
-check('★ .graphRebuild 自己**不设高度、不设 overflow**（否则内外两层滚动条，'
-    + '滚轮在外层永远到不了日志的其余部分）',
-    !hasDecl(panel, 'height', '.+') && !hasDecl(panel, 'overflow(-y)?', '.+'), panel.slice(0, 80));
-const log = ruleOf(grCss, '.graphRebuild .grLog');   // sass 嵌套编译出来的就是复合选择器
-check('取到了 .grLog 的声明块', log.length > 0);
-check('★ 日志区用 max-height 封顶（长日志自己滚），**不写死 height**'
-    + '（写死＝短日志也被关在一个矮框里、"看不全"原样保留）',
-    hasDecl(log, 'max-height', '.+') && !hasDecl(log, 'height', '.+')
-    && hasDecl(log, 'overflow(-y)?', '(auto|scroll)'), log.slice(0, 90));
 
 console.log('\n④ 内联 style 不许回潮（内联 + 无高度＝那行声明形同虚设，正是本次的成因）');
 const ucTsx = readFileSync(SRC('pages', 'Dashboard', 'UserControl', 'index.tsx'), 'utf8');

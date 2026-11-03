@@ -922,7 +922,6 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                 <Button size="small" onClick={() => setNoticeOpenId(null)}>
                     返回公告和通知
                 </Button>
-                {removeNoticeButton(n.id)}
             </div>
             <div className="ucNoticeDetailHead">
                 <Tag color={n.type === 'announcement' ? 'geekblue' : 'cyan'}>
@@ -950,6 +949,7 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                         标记为已读
                     </Button>
                 )}
+                {removeNoticeButton(n.id)}
             </div>
         </div>
     )
@@ -978,7 +978,6 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                         className="ucNoticeRow"
                         onClick={() => setNoticeOpenId(n.id)}
                         actions={[
-                            <span key="delete">{removeNoticeButton(n.id)}</span>,
                             // 有 link 的通知给一颗直达按钮（20260923 起：留言审核结果通知）
                             ...(n.link
                                 ? [
@@ -1009,6 +1008,7 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                                           标记已读
                                       </Button>,
                                   ]),
+                            <span key="delete">{removeNoticeButton(n.id)}</span>,
                         ]}
                     >
                         <List.Item.Meta
@@ -1154,7 +1154,10 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
      *  20260927 起行首补对方头像（发件箱是收件人的头像）——一列信扫下来先认脸。 */
     const mailRow = (m: MessageItem, outgoing: boolean) => (
         <List.Item className="ucMailRow" onClick={() => openMail(m, outgoing)}
-            actions={[<span key="delete">{removeMailButton(m.id, outgoing)}</span>]}>
+            actions={[
+                <Button type="link" key="open" onClick={event => { event.stopPropagation(); void openMail(m, outgoing) }}>阅读</Button>,
+                <span key="delete">{removeMailButton(m.id, outgoing)}</span>,
+            ]}>
             {peerAvatar(m)}
             <div className="ucMailRowBox">
                 <div className="ucMailHead">
@@ -1181,7 +1184,6 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
                 <Button size="small" onClick={() => setOpened(null)}>
                     返回{outgoing ? '发件箱' : '收件箱'}
                 </Button>
-                {removeMailButton(m.id, outgoing)}
             </div>
             <div className="ucMailDetailHead">
                 {peerAvatar(m)}
@@ -1192,6 +1194,7 @@ const UserCenter = ({ open, onClose }: UserCenterProps) => {
             </div>
             <div className={`ucMailDetailTitle${m.title ? '' : ' isNone'}`}>{m.title || '（无标题）'}</div>
             <div className="ucMailDetailBody">{m.content}</div>
+            <div className="ucNoticeDetailFoot">{removeMailButton(m.id, outgoing)}</div>
         </div>
     )
 

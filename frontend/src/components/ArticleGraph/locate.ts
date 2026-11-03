@@ -1,57 +1,46 @@
 import type { GraphData, LocateHit } from './types';
 import { wordKey } from './engine';
-import { runtimeBaseURL } from '../../../../../utils/runtimeApi';
+import { runtimeBaseURL } from '../../utils/runtimeApi';
 
 export interface LocateResult {
     hits: LocateHit[];
-    /** vector = 走了后端真 embedding 检索；local = 客户端关键词兜底 */
     source: 'vector' | 'local';
+    reason?: 'login_required' | 'service_unavailable';
 }
 
 const QUERY_MAX = 64;
-/** 超时必须比后端每一层都长，否则先 abort 就永远拿不到后端已经判定好的失败原因：
- *  7s > Rust 代理 6s > agent embedding 5s。**改任何一层都要一起看这三个数。**
- *  稳态 ~200ms，所以这只是兜底；真触发时用户等 7s 换回本地匹配，好过一直转圈。 */
+
+// Allow the service proxy to finish its six-second timeout before local fallback.
 const TIMEOUT_MS = 7000;
-/** 兜底 Jaccard 取前几名。太多会让"没命中"变成"命中一片"，反而没有定位感 */
+
 const FALLBACK_TOP = 8;
 
-/**
- * 查询词 → 图谱节点。**A 路（默认）走后端真 embedding**；只要有任何一步不成立
- * （未登录 / 网络失败 / 超时 / 后端 503 / 空结果）就静默退到 B 路本地关键词匹配。
- * 两条路产出同一种 LocateHit[]，所以下游的相机运动与高亮逻辑完全一致，
- * 降级对用户不可见（只是"找到的邻居没那么准"）。
- *
- * 降级判据只有一条：**服务这条路通不通**。20260916e 拆掉服务端 BM25 弃权闸后，
- * 后端不再有"我判定图里没有这句话"这种结论态——能不能答交回给访客自己看
- * （拆闸的理由见 rag/wordgraph.py 模块顶部：闸用的是展示层词表，`物联网`/`单片机`
- * 这类显然在域内的查询被拦成空返回，而向量侧本来给的是正确节点）。
- */
-export async function locate(raw: string, g: GraphData): Promise<LocateResult> {
+export async function locate(raw: string, g: GraphData, signal?: AbortSignal): Promise<LocateResult> {
     const q = raw.trim().slice(0, QUERY_MAX);
     if (!q) return { hits: [], source: 'local' };
-
-    // 未登录直接走本地：查询端点要求登录（防匿名刷 embedding 费用），
-    // 没有 token 时那个请求必然 401，没必要先花一个往返。
     if (hasToken()) {
-        const hits = await queryVector(q);
-        // 空数组不再有"结论"含义（拆闸后它只可能是产物为空这种故障），照旧退本地。
-        if (hits && hits.length) return { hits, source: 'vector' };
+        const hits = await queryVector(q, signal);
+        if (hits) {
+            const words = new Set(g.nodes.map(node => wordKey(node.w)));
+            const valid = hits.filter(hit => words.has(wordKey(hit.w)));
+            if (!hits.length || valid.length) return { hits: valid, source: 'vector' };
+        }
     }
-    return { hits: locateLocal(q, g), source: 'local' };
+    signal?.throwIfAborted();
+    return { hits: locateLocal(q, g), source: 'local', reason: hasToken() ? 'service_unavailable' : 'login_required' };
 }
 
 function hasToken(): boolean {
     try { return !!localStorage.getItem('tokenKey'); } catch { return false; }
 }
 
-/** A 路：真 embedding。返回命中数组；失败一律返回 null（调用方退本地），绝不抛。 */
-async function queryVector(q: string): Promise<LocateHit[] | null> {
+async function queryVector(q: string, signal?: AbortSignal): Promise<LocateHit[] | null> {
+    signal?.throwIfAborted();
     const ac = new AbortController();
+    const cancel = () => ac.abort();
+    signal?.addEventListener('abort', cancel, { once: true });
     const timer = setTimeout(() => ac.abort(), TIMEOUT_MS);
     try {
-        // 裸 fetch，不走 apis/axios.tsx：那边有 15s 超时 + 401 清 token 跳 /login 的
-        // 拦截器——图谱查询失败不该把用户踢出首页。
         const res = await fetch(`${runtimeBaseURL}/api/public/graph/query`, {
             method: 'POST',
             headers: {
@@ -63,12 +52,10 @@ async function queryVector(q: string): Promise<LocateHit[] | null> {
         });
         if (!res.ok) return null;
         const j = await res.json();
-        // ok=false 一律当故障（拆闸后 reason 只剩 empty_query/artifact_missing/
-        // embed_failed/dim_mismatch/space_mismatch 五种故障语义），退本地兜底。
         if (!j || j.ok !== true || !Array.isArray(j.words)) return null;
         const out: LocateHit[] = [];
         for (const it of j.words) {
-            if (it && typeof it.w === 'string' && typeof it.s === 'number') {
+            if (it && typeof it.w === 'string' && typeof it.s === 'number' && Number.isFinite(it.s)) {
                 out.push({ w: it.w, s: it.s });
             }
         }
@@ -77,32 +64,18 @@ async function queryVector(q: string): Promise<LocateHit[] | null> {
         return null;
     } finally {
         clearTimeout(timer);
+        signal?.removeEventListener('abort', cancel);
     }
 }
 
-// ---------------------------------------------------------------- B 路：本地兜底
-
-/** 词的查询键。**统一用 engine 的 wordKey**——本地兜底路原来自己实现了一份大小写
- *  不敏感的键，而向量路用精确匹配，于是"检索服务可用时反而不如降级准"（20260916 定位）。
- *  两份实现合并成一个函数，两侧不可能再分叉。 */
 const keyOf = wordKey;
 
-/**
- * 纯前端关键词匹配。图谱自带的 300+ 个领域词就是现成词典——
- * 对 query 从左到右做最长匹配（4→3→2 字），命中即跳过，避免"异步"与"步编"重叠命中。
- * 零命中时退回字符 bigram Jaccard 取 top N，**保证任何输入都有落点**（哪怕落点是错的，
- * 也好过按了回车什么都没发生）。
- */
 export function locateLocal(q: string, g: GraphData): LocateHit[] {
     const vocab = new Map<string, { w: string; n: number }>();
     let maxCjk = 2;   // 中文最长匹配的上界，**从词表算**（见下）
     for (const node of g.nodes) {
         const k = keyOf(node.w);
         vocab.set(k, { w: node.w, n: node.n });
-        // 上界写死 4 会漏掉更长的词：产物里已有的「兼容性问题」是 5 字，
-        // 写死 4 时连它自己当查询都匹配不到。
-        // 这里的 \x00 是**故意的**：判据是"整串都是 ASCII 可打印区"（见上），不是转义失误。
-        // eslint-disable-next-line no-control-regex
         if (!/^[\x00-\x7f]*$/.test(k)) maxCjk = Math.max(maxCjk, k.length);
     }
 
@@ -117,7 +90,6 @@ export function locateLocal(q: string, g: GraphData): LocateHit[] {
     const s = q.toLowerCase();
     let i = 0;
     while (i < s.length) {
-        // ASCII 段整词处理（"vector space" 不该被切成 "ve"/"ct"）
         if (/[a-z0-9]/.test(s[i])) {
             let j = i;
             while (j < s.length && /[a-z0-9]/.test(s[j])) j++;
@@ -126,7 +98,6 @@ export function locateLocal(q: string, g: GraphData): LocateHit[] {
             if (tok.length < 2) continue;
             const exact = vocab.get(tok);
             if (exact) { push(exact.w, scoreOf(exact.n, tok.length, 1)); continue; }
-            // 词形差：只认"一个是另一个的前缀"且短的那个 ≥3 字（防 "in" 命中一片）
             for (const [k, v] of vocab) {
                 if (k.length < 3 || tok.length < 3) continue;
                 if (k.startsWith(tok) || tok.startsWith(k)) {
@@ -135,7 +106,6 @@ export function locateLocal(q: string, g: GraphData): LocateHit[] {
             }
             continue;
         }
-        // 中文段：最长匹配（上界 = 词表里最长的中文词，与服务端 match_terms 同一规则）
         let matched = 0;
         for (let len = maxCjk; len >= 2; len--) {
             if (i + len > s.length) continue;
@@ -151,8 +121,6 @@ export function locateLocal(q: string, g: GraphData): LocateHit[] {
         hits.sort((a, b) => b.s - a.s);
         return hits.slice(0, 12);
     }
-
-    // 零命中兜底：字符 bigram Jaccard
     const probes = bigrams(s);
     if (!probes.size) return [];
     const scored: LocateHit[] = [];
@@ -169,14 +137,12 @@ export function locateLocal(q: string, g: GraphData): LocateHit[] {
     return scored.slice(0, FALLBACK_TOP);
 }
 
-/** 词长参与打分：同一个 query 里，"异步编程→异步" 这种长命中比撞上一个二字词更可信 */
 function scoreOf(importance: number, len: number, factor: number): number {
     return importance * Math.min(1.5, 0.5 + len / 6) * factor;
 }
 
 function bigrams(s: string): Set<string> {
     const out = new Set<string>();
-    // ASCII 先整词化，避免 "ai" 这种跨词 bigram
     const norm = s.replace(/[^a-z0-9一-鿿]+/g, ' ');
     for (const tok of norm.split(' ')) {
         if (!tok) continue;

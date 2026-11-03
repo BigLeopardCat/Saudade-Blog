@@ -9,7 +9,6 @@ import {
     watchAnnouncements,
     type PendingAnnouncement,
 } from './pending.ts'
-import DeleteInboxItem from '../UserCenter/DeleteInboxItem'
 import './index.sass'
 
 // The API returns an Asia/Shanghai wall-clock value; do not apply another time-zone conversion.
@@ -115,9 +114,6 @@ const AnnouncementModal = () => {
 
             </div>
             <div className="washiActions">
-                {pending?.source === 'server' && <DeleteInboxItem
-                    item={{ kind: 'notification', id: pending.id }}
-                    onRemoved={handleClose} />}
 
                 <button
                     type="button"
