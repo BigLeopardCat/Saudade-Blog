@@ -229,53 +229,16 @@
             // 收一档字号：它是这一行的附属物，不该在视觉上盖过它回复的那条评论
             font-size: 0.95em
 
-    // ── 表情选择器 ──────────────────────────────────────────
-    .commentSticker
-        position: relative
-        .commentStickerBtn
-            padding: 4px 12px
-            border: 1px solid var(--washi-line, rgba(198, 152, 192, 0.42))
-            border-radius: 14px
-            cursor: pointer
-            font-size: 0.84rem
-            color: var(--font-p-color)
-            background: transparent
-            &:hover
-                color: var(--washi-pink-deep, #d94f9a)
-                border-color: var(--washi-pink, #ff9ec9)
-        .commentStickerPanel
-            position: absolute
-            left: 0
-            bottom: calc(100% + 8px)   // 往上弹：输入框常贴页面底部，往下会顶出视口
-            z-index: 20
-            display: grid
-            grid-template-columns: repeat(4, 64px)
-            gap: 6px
-            padding: 10px
-            border-radius: 10px
-            border: 1px solid var(--washi-line, rgba(198, 152, 192, 0.42))
-            background: var(--washi-paper-2, #fff6fa)
-            box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18)
-            .frontDark &
-                background: #2a2438
-            .commentStickerItem
-                display: flex
-                flex-direction: column
-                align-items: center
-                gap: 2px
-                padding: 4px 2px
-                border: none
-                border-radius: 8px
-                cursor: pointer
-                font-size: 0.7rem
-                color: var(--font-p-color)
-                background: transparent
-                &:hover
-                    background: rgba(174, 200, 200, 0.25)
-                img
-                    width: 40px
-                    height: 40px
-                    object-fit: contain
+    .commentStickerBtn
+        padding: 7px 12px
+        border: 1px solid var(--washi-line)
+        border-radius: 12px
+        cursor: pointer
+        font-size: 0.9rem
+        color: var(--font-p-color)
+        background: var(--washi-paper-2)
+        &:hover, &[aria-expanded="true"]
+            border-color: var(--washi-pink-deep)
 
     // ── 列表 ────────────────────────────────────────────────
     .commentEmpty
@@ -415,13 +378,13 @@
     100%
         box-shadow: inset 0 0 0 2px transparent, 0 0 0 transparent
 
-// 表情包行内尺寸：与 `.readContent .markdown-body img.sticker`（ReadArticle/index.sass
-// :576）**同四个属性**。那条选择器以 `.readContent` 打头，够不到讨论区；而
-// `components/Editor/index.css` 里那份是全站的、但那个 CSS 只在编辑器路由被加载时才进
-// 文档——**不能指望它**。所以这里必须各写一份（三处同源，改尺寸时一起改）。
+// Match the shared sticker size while overriding Markdown image defaults.
 .commentSection .commentBody img.sticker,
 .commentSection .commentBody img[src^="/stickers/"]
-    height: 1.8em
+    height: var(--sticker-size)
+    width: auto
+    max-width: 100%
+    object-fit: contain
     vertical-align: middle
     display: inline-block
-    margin: 0 2px
+    margin: 0 3px

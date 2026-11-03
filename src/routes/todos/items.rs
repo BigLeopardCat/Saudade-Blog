@@ -6,7 +6,7 @@ use axum::{
     http::HeaderMap,
     Json,
 };
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, TransactionTrait};
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -126,7 +126,7 @@ fn deletion(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sea_orm::{ConnectionTrait, DatabaseBackend, MockDatabase};
+    use sea_orm::{ConnectionTrait, DatabaseBackend, MockDatabase, TransactionTrait};
 
     #[tokio::test]
     async fn deletion_binds_owner_id_text_and_version_in_one_statement() {
