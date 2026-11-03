@@ -35,7 +35,9 @@ pub async fn get_todo(
         .await
     {
         Ok(Some(row)) => Json(ApiResponse::success(dto(row))),
-        Ok(None) => Json(ApiResponse::error("待办已变化或不在本人清单中，请重新读取后确认")),
+        Ok(None) => Json(ApiResponse::error(
+            "待办已变化或不在本人清单中，请重新读取后确认",
+        )),
         Err(error) => {
             tracing::error!(%error, uid, id, "todo detail query failed");
             Json(ApiResponse::error("待办读取失败，请稍后重试"))
@@ -77,7 +79,10 @@ pub async fn delete_todo(
             _ => return Json(ApiResponse::error("待办编号、正文或版本无效")),
         };
     let result = async {
-        let txn = begin_list_write(&state.db, uid).await?;
+        let (txn, actor) = begin_list_write(&state.db, uid).await?;
+        let claims = crate::auth_jwt::claims_from_headers(&headers)
+            .ok_or_else(|| sea_orm::DbErr::Custom("登录状态已变化，请重新登录".into()))?;
+        verify_actor(&actor, claims.sub, claims.ver)?;
         let removed = deletion(uid, id, &request.text, version).exec(&txn).await?;
         if removed.rows_affected != 1 {
             return Err(sea_orm::DbErr::Custom(
@@ -123,10 +128,51 @@ fn deletion(
         .filter(dashboard_todo::Column::UpdatedAt.eq(version))
 }
 
+fn verify_actor(
+    actor: &crate::entity::user::Model,
+    uid: i32,
+    version: Option<i32>,
+) -> Result<(), sea_orm::DbErr> {
+    if actor.id != uid
+        || !crate::authz::can_access_console(&actor.role)
+        || crate::authz::check_token(actor.status, actor.token_version, version).is_err()
+    {
+        return Err(sea_orm::DbErr::Custom(
+            "操作权限或登录状态已变化，本次未删除待办".into(),
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use sea_orm::{ConnectionTrait, DatabaseBackend, MockDatabase, TransactionTrait};
+
+    #[test]
+    fn locked_actor_refuses_revoked_credentials_frozen_accounts_and_changed_roles() {
+        let mut actor = crate::entity::user::Model {
+            id: 7,
+            username: "fixture".into(),
+            nickname: String::new(),
+            nickname_auto_renamed: 0,
+            avatar: None,
+            password: "fixture".into(),
+            role: "admin".into(),
+            status: 0,
+            token_version: 1,
+            chat_quota_used: 0,
+            muted_until: None,
+        };
+        assert!(verify_actor(&actor, 7, Some(1)).is_ok());
+        assert!(verify_actor(&actor, 7, Some(0)).is_err());
+        assert!(verify_actor(&actor, 8, Some(1)).is_err());
+        actor.status = 1;
+        assert!(verify_actor(&actor, 7, Some(1)).is_err());
+        actor.status = 0;
+        actor.role = "user".into();
+        assert!(verify_actor(&actor, 7, Some(1)).is_err());
+    }
 
     #[tokio::test]
     async fn deletion_binds_owner_id_text_and_version_in_one_statement() {
