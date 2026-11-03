@@ -25,29 +25,36 @@ function CropStage({src, aspect, value, onChange}: {
 }) {
     const [position, setPosition] = useState({x: 0, y: 0})
     const [zoom, setZoom] = useState(value.z)
-    const [area, setArea] = useState<Area>()
+    const [natural, setNatural] = useState<{width: number; height: number} | null>(null)
+    const [failed, setFailed] = useState(false)
     const interacting = useRef(false)
     const initial = useRef(value)
+    useEffect(() => {
+        let active = true
+        const image = new Image()
+        image.onload = () => {if (active) setNatural({width: image.naturalWidth, height: image.naturalHeight})}
+        image.onerror = () => {if (active) setFailed(true)}
+        image.src = src
+        return () => {active = false}
+    }, [src])
+    const win = natural ? cropWindowInImage(natural.width, natural.height, aspect, initial.current) : null
+    const area: Area | undefined = natural && win ? {
+        x: win.x / natural.width * 100, y: win.y / natural.height * 100,
+        width: win.w / natural.width * 100, height: win.h / natural.height * 100,
+    } : undefined
     return <>
         <div className="ccStage" style={{aspectRatio: aspect}}>
-            <Cropper image={src} crop={position} zoom={zoom} aspect={aspect}
+            {natural && <Cropper image={src} crop={position} zoom={zoom} aspect={aspect}
                 objectFit="cover" maxZoom={MAX_ZOOM} onCropChange={setPosition}
                 onZoomChange={setZoom} initialCroppedAreaPercentages={area}
                 onInteractionStart={() => {interacting.current = true}}
-                onMediaLoaded={media => {
-                    const win = cropWindowInImage(media.naturalWidth, media.naturalHeight,
-                        aspect, initial.current)
-                    setArea({x: win.x / media.naturalWidth * 100,
-                        y: win.y / media.naturalHeight * 100,
-                        width: win.w / media.naturalWidth * 100,
-                        height: win.h / media.naturalHeight * 100})
-                }}
                 onCropAreaChange={next => {
                     if (!interacting.current) return
                     onChange({x: next.width < 99.999 ? next.x / (100 - next.width) : 0.5,
                         y: next.height < 99.999 ? next.y / (100 - next.height) : 0.5,
                         z: zoom, fit: 'cover'})
-                }}/>
+                }}/>}
+            {!natural && <span>{failed ? '图片加载失败，请重新选择' : '正在加载图片…'}</span>}
         </div>
         <div className="ccHint">拖动调整主体位置，滚轮或滑块缩放</div>
         <Slider aria-label="封面缩放" min={1} max={MAX_ZOOM} step={0.01} value={zoom}

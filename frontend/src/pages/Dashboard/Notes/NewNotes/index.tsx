@@ -38,10 +38,7 @@ const NewNotes = () => {
     const [noteTitle,setTitle] = useState('')
     const [noteContent, setNoteContent] = useState('')
     const [coverImg,setCoverImg] = useState('')
-    // 封面裁剪参数（焦点+缩放）：上传/选图后弹裁剪窗，确认才写回；取消还原打开前的快照。
-    // 两套参数：coverCrop = 文章卡片那套（详情页横幅同用，有封面就总是回传）；
-    // coverCropCarousel = 置顶轮播那套（只在用户动过/换过图时才回传，
-    // 否则后端保持 NULL → 轮播继续跟随卡片那套，存量文章零回归）
+    // 两个展示位分别保存显示方式与裁切参数。
     const [coverCrop, setCoverCrop] = useState<CoverCrop>({...COMPLETE_COVER})
     const [coverCropCarousel, setCoverCropCarousel] = useState<CoverCrop>({...COMPLETE_COVER})
     const [cropDirty, setCropDirty] = useState({carousel: false, card: false})
@@ -367,25 +364,14 @@ const NewNotes = () => {
 
     //回调函数区域
 
-    /**
-     * 打开封面裁剪窗。fresh = 换了新图（从默认居中开始，父组件已重置过参数），
-     * false = 点「调整裁剪」沿用当前参数。快照用于取消时还原（两套一起）。
-     */
     const openCropper = (fresh: boolean) => {
         cropSnap.current = fresh
             ? {carousel: {...COMPLETE_COVER}, card: {...COMPLETE_COVER}}
             : {carousel: coverCropCarousel, card: coverCrop};
         if (fresh) {
-            // 换新图：旧图上的焦点对新图没有意义，两套都退回默认居中。
-            // 但只有「原来确实存过值」的那套才需要回传这套默认值 —— 否则会把该行固化成
-            // 0.5/0.5/1，让轮播从此不再跟随卡片那套（从未设过的应保持 NULL 走回退链）。
-            const hadCarousel = true;
-            const hadCard = true;
             setCoverCrop({...COMPLETE_COVER});
             setCoverCropCarousel({...COMPLETE_COVER});
-            // 用 or 合并而非覆盖：中途「删掉封面又选回新图」时，删封面那一步已经把两套标脏
-            // （旧值看不见了，只能靠标脏保证重新选图后一定覆盖写入）
-            setCropDirty(d => ({carousel: d.carousel || hadCarousel, card: d.card || hadCard}));
+            setCropDirty({carousel: true, card: true});
         }
         setCropOpen(true);
     };
