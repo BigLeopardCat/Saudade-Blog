@@ -196,15 +196,9 @@ pub async fn autosave_note(
     };
 
     let is_revision = target.draft_of.is_some();
-    // 草稿也要记作者：它是"这篇文章是谁开写的"的第一现场，比发布更早。
-    // 与 update_note 同规矩——只在为空时写（新建的那行草稿在建行的第一次自动保存
-    // 就补上；修改稿是从原行克隆的，user_id 已经带过来了）。
+    // Preserve an existing author; assign the authenticated author to a new draft.
     let author_missing = target.user_id.is_none();
-    // 这一笔没带 `noteTags` 就沿用行里现有的（`replace_note_tags` 下面**总会**调一次：
-    // 新建出来的草稿行也要把关联表落到"空"，克隆出来的修改稿要复制一份）。
-    // ⚠️ 沿用的是**关联表里的现状**（`note_tags::current_tags`），不是 `note.tags` 那一列
-    // —— 读那一列等于把"它可能已经陈旧"请进读路径，而陈旧是看不见的。
-    // 读失败**不许**退化成"没有标签"：那会让下一次自动保存把标签清光。
+    // Omitted tags retain authoritative associations. A failed read must not clear them.
     let eff_tags = match payload.tags.clone() {
         Some(v) => Some(v),
         None => match note_tags::current_tags(&txn, target.id).await {
@@ -259,9 +253,7 @@ pub async fn autosave_note(
     if let Some(v) = payload.is_top {
         am.is_top = Set(Some(v));
     }
-    // 标签不在这里写（唯一写点是 `replace_note_tags`，见下）。
-    // status / is_public 一律不动：写的一定是草稿（原行是草稿，克隆出来的修改稿也是草稿），
-    // 发布是 update_note 的事。
+    // Draft saves preserve publication state; typed tag associations are written below.
     am.updated_at = Set(chrono::Local::now().naive_local());
 
     let saved = match am.update(&txn).await {
@@ -308,8 +300,7 @@ pub struct EditorNoteDto {
     pub draft: Option<NoteDto>,
 }
 
-/// 编辑器专用的读入口：公开的 `GET /api/public/notes/:id` 会挡掉草稿/私密文章（A4），
-/// 导致草稿箱点进去 404、编辑器打不开自己的草稿。这里不做可见性过滤（protected 组已限 admin）。
+/// Administrator editor snapshot, including unpublished drafts and its concurrency version.
 pub async fn get_note_for_edit(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i32>,

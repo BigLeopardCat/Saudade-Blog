@@ -147,9 +147,7 @@ const NewNotes = () => {
         const ser = JSON.stringify(payload);
         if (ser === lastSavedRef.current) return; // 没真变化 → 不发请求
 
-        // 单飞：已有请求在途时只记下最新快照，等它回来再补发。
-        // 不这样做的话，新建文章（id 还是 null）在首个请求回来前继续敲字会再发一发 id=null，
-        // 服务端各建一行 —— 草稿箱里凭空多一行同内容草稿，正是这次要修的毛病。
+        // Serialize saves and retain the latest queued snapshot to avoid duplicate drafts.
         if (inFlightRef.current) { queuedRef.current = ser; return; }
 
         if (mountedRef.current) setSaveState('saving');
@@ -272,10 +270,7 @@ const NewNotes = () => {
         },
     };
 
-    // 换文章（首次进入 / 从草稿箱点另一篇）：先把自动保存的身份与守卫重置回未回填态，
-    // 否则上一篇待发的自动保存会带着旧内容写到新文章上；新建页没有服务端内容要回填，直接放行。
-    // 路由在 :id? 上换文章时包装组件（router/index.tsx NewNotesRoute）已用 key 换掉整个实例，
-    // 所以这里只在挂载时跑一次；保留重置是给「不经包装直接渲染本组件」留的后路。
+    // Each article route mounts a new editor; reset saving state before hydration.
     useEffect(() => {
         if (autosaveTimer.current) { clearTimeout(autosaveTimer.current); autosaveTimer.current = null; }
         savedIdRef.current = id;
