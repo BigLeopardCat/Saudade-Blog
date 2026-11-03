@@ -46,7 +46,7 @@ const prefix = (page: Page) => page.getByPlaceholder('gallery（对象键的命�
 const publicBase = (page: Page) => page.getByPlaceholder('https://img.example.com（桶要开公开读）')
 const panel = (page: Page) => page.locator('.r2_storage')
 const usageFeedback = (page: Page) => panel(page).locator(':scope > div').first()
-const save = (page: Page) => panel(page).getByRole('button', {name: /^保\s*存$/})
+const save = (page: Page) => panel(page).getByRole('button', {name: /保\s*存/})
 
 async function fillRatio(page: Page) {
   return panel(page).locator('.ant-progress-inner').evaluate(el => {
@@ -147,6 +147,9 @@ for (const failure of ['business', 'http'] as const) {
     expect(server.usageReads).toBe(usageBefore)
     server.saveError = ''
     server.saveStatus = 200
+    // Ant's hidden exit icon can remain in the accessible name after loading ends.
+    await expect(save(page)).not.toHaveClass(/\bant-btn-loading\b/)
+    await expect(save(page)).toBeEnabled()
     await save(page).click()
     await expect(page.locator('.ant-message-success')).toContainText('图库存储设置已保存')
     expect(server.writes).toHaveLength(2)
