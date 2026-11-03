@@ -11,6 +11,8 @@ describe('cover display metadata', () => {
         expect(carouselCropOf({coverFit: 'contain'})).toMatchObject({fit: 'contain'})
         expect(coverCropStyle(carouselCropOf({coverFit: 'contain', carouselFit: 'cover'}))).toEqual({})
         expect(carouselCropOf({coverFit: 'cover', carouselFit: 'contain'})).toMatchObject({fit: 'contain'})
+        expect(coverCropStyle(carouselCropOf({coverFit: 'contain', carouselFit: 'cover',
+            carouselZoom: 2, carouselFocusX: NaN}))).toEqual({})
     })
     it('preserves existing crops and clamps invalid numbers without altering image URLs', () => {
         const value = cropFromRow({coverFit: 'cover', coverFocusX: -1, coverFocusY: 2, coverZoom: 8})

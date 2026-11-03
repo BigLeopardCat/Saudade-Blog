@@ -49,10 +49,10 @@ export const cropFromRow = (row?: CoverCropRow | null): CoverCrop | null => {
 export const carouselCropFromRow = (row?: CoverCropRow | null): CoverCrop | null => {
     if (!row) return null
     if (row.carouselFit === 'contain') return { ...COMPLETE_COVER }
-    if (row.carouselFit === 'cover' && row.carouselZoom == null) return { ...DEFAULT_CROP }
+    const fallback = row.carouselFit === 'cover' ? { ...DEFAULT_CROP } : null
     const { carouselFocusX: x, carouselFocusY: y, carouselZoom: z } = row
-    if (typeof x !== 'number' || typeof y !== 'number' || typeof z !== 'number') return null
-    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return null
+    if (typeof x !== 'number' || typeof y !== 'number' || typeof z !== 'number') return fallback
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return fallback
     return { x: clamp01(x), y: clamp01(y), z: clampZoom(z) }
 }
 
