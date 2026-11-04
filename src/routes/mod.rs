@@ -7,6 +7,7 @@ pub mod web_info;
 pub mod announcements;
 pub mod talks;
 pub mod upload;
+pub mod gallery;
 pub mod temp_user;
 pub mod knowledge;
 pub mod chat;
@@ -223,6 +224,11 @@ pub fn create_router(state: AppState) -> Router {
         // Images
         .route("/api/protect/upload", upload::route())
         .route("/api/protect/images", get(upload::list_images))
+        .route("/api/protect/gallery/images", get(gallery::list))
+        .route("/api/protect/gallery/images/{id}", get(gallery::detail).put(gallery::metadata::change))
+        .route("/api/protect/gallery/folders", get(gallery::folders::list).post(gallery::folders::create))
+        .route("/api/protect/gallery/folders/{id}", delete(gallery::folders::remove))
+        .route("/api/protect/gallery/articles/{id}/cover", get(gallery::covers::target).put(gallery::covers::change))
         .route("/api/protect/delImg", delete(upload::delete_images))
         .route("/api/protect/images/r2", get(upload::r2_usage))
 

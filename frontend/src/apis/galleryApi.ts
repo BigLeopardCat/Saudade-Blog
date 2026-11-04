@@ -1,0 +1,60 @@
+import {createApi, fetchBaseQuery, type FetchArgs, type BaseQueryFn} from '@reduxjs/toolkit/query/react'
+import {runtimeBaseURL} from '../utils/runtimeApi'
+import getToken from './getToken'
+import {clearAuthToken} from '../utils/authSession'
+
+export interface GalleryImage {
+  imageKey:number; imageUrl:string; displayName:string|null; description:string;
+  folderId:number; isFavorite:boolean; version:string
+}
+export interface GalleryFolder {id:number; parentId:number; name:string; imageCount:number}
+export interface GalleryFilters {folderId?:number; search?:string; favorite?:boolean}
+export interface GalleryPage {items:GalleryImage[]; nextCursor:number|null}
+export type GalleryPatch = Partial<Pick<GalleryImage,'displayName'|'description'|'folderId'|'isFavorite'>>
+
+const request=fetchBaseQuery({baseUrl:runtimeBaseURL,timeout:15000,prepareHeaders:headers=>{
+  const token=getToken()
+  if(token) headers.set('Authorization',token.startsWith('Bearer ')?token:`Bearer ${token}`)
+  return headers
+}})
+const baseQuery:BaseQueryFn<string|FetchArgs,unknown,{status:string|number;error:string}>=async(args,api,extra)=>{
+  const token=getToken()
+  const result=await request(args,api,extra)
+  if(result.error?.status===401) clearAuthToken(token)
+  if(result.error) return {error:{status:result.error.status,error:'图库请求失败，请稍后重试'}}
+  const body=result.data as {code?:number;message?:string;data?:unknown}
+  if(body?.code!==200) return {error:{status:body?.code??500,error:body?.message||'图库请求失败'}}
+  return {data:body.data}
+}
+
+export const galleryApi=createApi({
+  reducerPath:'galleryApi',baseQuery,tagTypes:['Images','Folders'],keepUnusedDataFor:60,
+  endpoints:builder=>({
+    images:builder.infiniteQuery<GalleryPage,GalleryFilters,number|undefined>({
+      infiniteQueryOptions:{initialPageParam:undefined,getNextPageParam:page=>page.nextCursor??undefined},
+      query:({queryArg,pageParam})=>({url:'/api/protect/gallery/images',params:{...queryArg,before:pageParam,limit:30}}),
+      providesTags:['Images'],
+    }),
+    folders:builder.query<GalleryFolder[],void>({query:()=>'/api/protect/gallery/folders',providesTags:['Folders']}),
+    updateImage:builder.mutation<{changed:boolean;state:GalleryImage},{id:number;version:string;patch:GalleryPatch}>({
+      query:({id,version,patch})=>({url:`/api/protect/gallery/images/${id}`,method:'PUT',body:{version,...patch}}),
+      invalidatesTags:['Images','Folders'],
+    }),
+    createFolder:builder.mutation<GalleryFolder,{parentId:number;name:string}>({
+      query:body=>({url:'/api/protect/gallery/folders',method:'POST',body}),invalidatesTags:['Folders'],
+    }),
+    deleteFolder:builder.mutation<boolean,number>({
+      query:id=>({url:`/api/protect/gallery/folders/${id}`,method:'DELETE'}),invalidatesTags:['Folders'],
+    }),
+    resolveImage:builder.query<GalleryImage,string>({
+      query:url=>({url:'/api/protect/gallery/images',params:{url,limit:1}}),
+      transformResponse:(page:GalleryPage)=>{
+        if(!page.items[0]) throw new Error('上传已完成，但未找到图库记录')
+        return page.items[0]
+      },
+    }),
+  }),
+})
+
+export const galleryError=(error:unknown)=>
+  error && typeof error==='object' && 'error' in error ? String(error.error) : '图库操作失败，请刷新后重试'

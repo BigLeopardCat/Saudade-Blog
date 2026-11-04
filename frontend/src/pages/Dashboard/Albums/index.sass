@@ -1,98 +1,127 @@
-.imgShade
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2)
-  transition: 0.3s
-  &:hover
-    transform: scale(1.2)
-
-
-.allin
-  opacity: 0
-  transform: translateY(-25px)
-  animation: fadeallin 0.6s forwards
-
-
-@keyframes fadeallin
-  from
-    opacity: 0
-    transform: translateX(-25px)
-  to
-    opacity: 1
-    transform: translateX(0)
-
-.action_img
-  position: relative
-  padding-bottom: 12px
-  border-bottom: 3px solid var(--washi-line, rgba(198, 152, 192, 0.42))
-  border-radius: 5px
-
-
-.albumList
-  display: flex
-  flex-direction: column
-  gap: 6px
-  padding: 0 4px 20px
-
-.albumRow
-  display: flex
-  align-items: center
-  gap: 12px
-  padding: 6px 12px
-  border: 1px solid var(--washi-line-2, rgba(198, 152, 192, 0.22))
-  border-radius: 10px
-  cursor: pointer
-  transition: background 0.2s, border-color 0.2s
-
-  &:hover
-    background: var(--washi-paper-3, #f6f0ff)
-
-  &.is-checked
-    border-color: var(--washi-lav, #b9a7f5)
-    background: var(--washi-paper-2, #fff6fa)
-
-.albumThumb
-  flex: 0 0 auto
-  width: 56px
-  height: 56px
-  object-fit: cover
-  border-radius: 8px
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12)
-
-.albumName
-  flex: 1 1 auto
-  // 不给 `min-width: 0` 的话，长文件名会把这一行顶宽（flex 项的自动最小尺寸是内容宽）
-  min-width: 0
-  overflow: hidden
-  white-space: nowrap
-  text-overflow: ellipsis
+.albumLibrary
+  padding: 16px
   color: var(--washi-ink, #4a3550)
 
-.albumCheck
-  flex: 0 0 auto
-  display: inline-flex
+.albumToolbar, .albumFilters, .albumFolders, .albumDetailEdit
+  display: flex
+  align-items: center
+  flex-wrap: wrap
+  gap: 12px
+  margin-bottom: 16px
 
-  // ⚠️ 字号必须写在**组件自己那一层**：`.Check_container` 自带 `font-size: 1.5rem`
-  // （勾标 ≈31px，在 56px 的行里太大），写在 `.albumCheck` 上只是继承值、会被它盖掉。
-  .Check_container
-    font-size: 1.1rem
+.albumToolbar
+  justify-content: space-between
+  h2
+    margin: 0
 
-.albumActions
+.albumFilters
+  .ant-select
+    min-width: 180px
+  .ant-input-search
+    flex: 1
+    min-width: 180px
+    max-width: 360px
+
+.albumFolders
+  margin-top: 16px
+
+.albumLibrary .ant-breadcrumb button
+  border: 0
+  background: none
+  color: inherit
+  cursor: pointer
+
+.albumList, .albumGrid
+  display: grid
   gap: 14px
 
-@media only screen and (max-width: 1024px)
-  .albumScrollCard
-    height: auto !important
-    overflow-y: visible !important
-  /* 顶部那一行（`.action_img`：左边"R2 存储不可用"角标 + 中间「图库」标题 + 右边一排动作钮）
-     是 `display:flex; flex-direction:row; justify-content:space-between`，**三组谁都不许折行**。
-     窄屏卡内只有 ~324px，三组加起来 ~341px ⇒ 中间那组（「图库」+ 相册图标）被挤到 x=394，
-     整块**跑到屏幕外面**去了（`.allin` 是 `overflow:hidden`，连横向拖都够不着它）——
-     无头 Chromium 实测 390 视口：`h2` 的 left = 394、视口宽 390。
-     修法 = 允许折行：装不下的组整组掉到下一行；再给各组 `min-width:0` + 自身也能折行，
-     否则 flex 项的自动最小尺寸（内容宽）会让它拒绝缩、折行照样顶出去。 */
-  .action_img
-    flex-wrap: wrap
-    row-gap: 10px
-  .action_img > div
-    flex-wrap: wrap
-    min-width: 0
-    row-gap: 8px
+.albumList
+  grid-template-columns: repeat(2, minmax(0, 1fr))
+
+.albumGrid
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr))
+  .albumOpen
+    flex-direction: column
+    align-items: stretch
+  .albumThumb
+    width: 100%
+    height: 160px
+
+.albumTile
+  min-width: 0
+  background: var(--washi-paper-2, #fff6fa)
+  &.is-checked
+    border-color: var(--washi-lav, #b9a7f5)
+  .ant-card-body
+    display: flex
+    align-items: center
+    gap: 10px
+
+.albumOpen
+  display: flex
+  flex: 1
+  align-items: center
+  gap: 12px
+  min-width: 0
+  padding: 0
+  border: 0
+  text-align: left
+  background: none
+  color: inherit
+  cursor: zoom-in
+  &:focus-visible
+    outline: 2px solid var(--washi-lav, #b9a7f5)
+    outline-offset: 3px
+
+.albumThumb
+  width: 76px
+  height: 76px
+  object-fit: contain
+  flex: 0 0 auto
+  border-radius: 8px
+
+.albumText
+  display: flex
+  flex-direction: column
+  gap: 4px
+  min-width: 0
+
+.albumName, .albumCaption
+  display: block
+  overflow: hidden
+  text-overflow: ellipsis
+  white-space: nowrap
+
+.albumCaption
+  opacity: .7
+  font-size: 12px
+
+.albumMore
+  text-align: center
+  margin-top: 20px
+
+.albumDetailImage
+  display: block
+  width: 100%
+  max-height: 60dvh
+  object-fit: contain
+  border-radius: 12px
+  margin-bottom: 16px
+
+.albumDetailEdit
+  .ant-input, .ant-select
+    flex: 1
+    min-width: 140px
+
+.albumDescriptionLabel
+  display: block
+  margin-bottom: 8px
+
+.albumDescriptionSave
+  margin-top: 14px
+
+@media (max-width: 680px)
+  .albumList
+    grid-template-columns: minmax(0, 1fr)
+  .albumLibrary
+    padding: 8px

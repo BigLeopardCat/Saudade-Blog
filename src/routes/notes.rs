@@ -1058,7 +1058,7 @@ async fn attach_stats(db: &sea_orm::DatabaseConnection, dtos: &mut [NoteDto]) {
     }
 }
 
-mod drafts;
+pub(crate) mod drafts;
 pub use drafts::{autosave_note, get_note_for_edit};
 
 
