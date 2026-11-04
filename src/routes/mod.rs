@@ -30,6 +30,7 @@ pub mod category_actions;
 pub mod account_actions;
 pub mod tag_actions;
 pub mod announcement_actions;
+pub mod removal_actions;
 pub mod notice_actions;
 pub mod automation_results;
 pub mod quota_actions;
@@ -135,6 +136,8 @@ pub fn create_router(state: AppState) -> Router {
             get(profile::list_favorites).post(profile::add_favorite),
         )
         .route("/api/protected/favorites/{note_id}", delete(profile::remove_favorite))
+        .route("/api/protected/notification-deletions/prepare", post(removal_actions::prepare_notifications))
+        .route("/api/protected/notification-deletions", post(removal_actions::change_notifications))
         .route("/api/protected/notifications", get(profile::list_notifications))
         .route("/api/protected/notifications/{id}", delete(profile::delete_notification))
         .route("/api/protected/notifications/announcement", get(profile::pending_announcement))
@@ -354,6 +357,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/protected/automation-results", post(automation_results::deliver))
         .route("/api/protected/notice-actions/prepare", post(notice_actions::prepare))
         .route("/api/protected/notice-actions", post(notice_actions::change))
+        .route("/api/protected/announcement-deletions/prepare", post(removal_actions::prepare_announcements))
+        .route("/api/protected/announcement-deletions", post(removal_actions::change_announcements))
         .route("/api/protected/announcement-actions/prepare", post(announcement_actions::prepare))
         .route("/api/protected/announcement-actions", post(announcement_actions::change))
         .route("/api/protected/account-actions/prepare", post(account_actions::prepare))

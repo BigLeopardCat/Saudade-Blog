@@ -87,6 +87,17 @@ pub struct Outcome {
     pub state: Prepared,
 }
 
+pub(super) async fn prepare_deletion<C: ConnectionTrait>(db: &C, id: i32, lock: bool)
+    -> Result<Prepared, sea_orm::DbErr> {
+    targets::prepare(db, &Intent { action: Action::Delete, target: Some(Target { id: Some(id), title: None }), fields: Fields::default() }, lock).await
+}
+
+pub(super) async fn apply_deletion<C: ConnectionTrait>(db: &C, id: i32, version: String)
+    -> Result<Outcome, sea_orm::DbErr> {
+    apply(db, &Change { version, intent: Intent { action: Action::Delete,
+        target: Some(Target { id: Some(id), title: None }), fields: Fields::default() } }).await
+}
+
 /// Direct administrator forms use the same transaction logic without a separate proposal.
 pub(super) async fn apply_current<C: ConnectionTrait>(
     db: &C,
