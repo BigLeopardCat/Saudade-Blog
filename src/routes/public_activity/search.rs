@@ -30,6 +30,7 @@ pub struct Counts {
 pub struct SearchData {
     pub keyword: String,
     pub match_mode: &'static str,
+    pub sources: [&'static str; 3],
     pub counts: Counts,
     pub total: i64,
     pub items: Vec<Value>,
@@ -76,6 +77,7 @@ pub(super) async fn read<C: ConnectionTrait>(
     let mut data = SearchData {
         keyword: keyword.into(),
         match_mode: "literal_case_insensitive",
+        sources: ["announcements", "board", "talk"],
         page: offset / limit + 1,
         page_size: limit,
         ..Default::default()
