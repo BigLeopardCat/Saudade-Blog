@@ -11,6 +11,7 @@ function Fixture() {
     return <>
         <button onClick={() => setOpen(true)}>调整封面</button>
         <button onClick={() => {setSource('data:image/png;base64,AA=='); setOpen(true)}}>使用损坏图片</button>
+        <button onClick={() => {setSource(decodeURIComponent(location.hash.slice(1))); setOpen(true)}}>使用 R2 图片</button>
         <div style={{width: 'min(100%, 600px)', aspectRatio: '16/9', background: '#eee'}}>
             <img alt="保存的文章封面" src={source} style={{width: '100%', height: '100%', objectFit: 'cover', ...coverCropStyle(value)}}/>
         </div>

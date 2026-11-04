@@ -83,7 +83,8 @@ const CoverCropModal: React.FC<Props> = ({open, src, initialCarousel, initialCar
         setNatural(null)
         setFailed(false)
         let active = true
-        const image = new Image()
+        // 只读取尺寸，不读画布像素；原生元素避开组件脚本对 window.Image 的 CORS 包装。
+        const image = document.createElement('img')
         image.onload = () => {
             if (active && image.naturalWidth > 0 && image.naturalHeight > 0)
                 setNatural({width: image.naturalWidth, height: image.naturalHeight})
