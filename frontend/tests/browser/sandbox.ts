@@ -98,7 +98,7 @@ export const test = base.extend<{ entry: Entry; cdnBaseURL: string; sandboxURL: 
         const url = new URL(route.request().url())
         if (url.href === 'https://get.geojs.io/v1/ip/geo.json' && route.request().method() === 'GET') {
           // Layout fixtures have no IP location; weather-specific tests supply a city.
-          await route.fulfill({json: {country_code: 'CN'}})
+          await route.fulfill({headers: {'Access-Control-Allow-Origin': '*'}, json: {country_code: 'CN'}})
         } else if (url.origin === origin && Object.prototype.hasOwnProperty.call(files, url.pathname)) {
           await route.continue()
         } else {

@@ -6,7 +6,7 @@ function Weather() {
   const [snapshot, setSnapshot] = useState('');
   useEffect(() => {
     const cleanup = installWeatherContext();
-    void warmWeather().then(() => setSnapshot(JSON.stringify(getCurrentWeather())));
+    void Promise.resolve(warmWeather()).then(() => setSnapshot(JSON.stringify(getCurrentWeather())));
     return cleanup;
   }, []);
   return <><output aria-label="城市天气">{snapshot}</output><button onClick={() =>

@@ -8,14 +8,14 @@ test('浏览器获取天气但不把原始定位信息放进快照或缓存', as
     expect(route.request().headers()).not.toHaveProperty('authorization');
     expect(route.request().headers()).not.toHaveProperty('cookie');
     expect(route.request().headers()).not.toHaveProperty('referer');
-    await route.fulfill({json:{city:'Hangzhou',country_code:'CN',latitude:'30.2731',longitude:'120.1594',ip:'RAW_IP_CANARY'}});
+    await route.fulfill({headers:{'Access-Control-Allow-Origin':'*'},json:{city:'Hangzhou',country_code:'CN',latitude:'30.2731',longitude:'120.1594',ip:'RAW_IP_CANARY'}});
   });
   await page.route('https://api.open-meteo.com/v1/forecast?*', async route => {
     requests.push(route.request().url());
     const url = new URL(route.request().url());
     expect(url.searchParams.get('latitude')).toBe('30.3');
     expect(url.searchParams.get('longitude')).toBe('120.2');
-    await route.fulfill({json:{current:{time:Math.floor(Date.now()/1000)-300,temperature_2m:12,
+    await route.fulfill({headers:{'Access-Control-Allow-Origin':'*'},json:{current:{time:Math.floor(Date.now()/1000)-300,temperature_2m:12,
       relative_humidity_2m:67,weather_code:0,wind_speed_10m:9},
       current_units:{time:'unixtime',temperature_2m:'°C',relative_humidity_2m:'%',wind_speed_10m:'km/h'}}});
   });
