@@ -276,9 +276,6 @@ mod tests {
         assert!(limiter.check(ip, "other_user").is_ok());
     }
 
-    /// `hit` 的计数语义（20261015）：窗口内放行 max 次，第 max+1 次起锁定。
-    /// 与登录那组的差别是**受理的每一次都算数**（登录只有失败才算），所以这里
-    /// 连续 `hit` 三次就该满额——判据同时钉住"不早锁一次、也不晚锁一次"。
     #[test]
     fn hit_allows_exactly_max_per_window() {
         let limiter = LoginRateLimiter::new(3, 60, 300);

@@ -48,10 +48,6 @@ fn fmt_dt(t: &chrono::NaiveDateTime) -> String {
     t.format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
-/// 某个账号这一轮的额度上限：**不限量的账号回 0**（0 在后端与前端都读作"不限额"，
-/// 见 `temp_user::TempUserInfo` 与 agent 的 `quota_limit`）。判据只有
-/// `crate::quota::is_unlimited` 一处——**账号名录那一列也走这里**（`temp_user.rs`），
-/// 否则"这个人限不限量"就会有两份判断，而它们会各自演化。
 pub(crate) fn limit_of(role: &str) -> i32 {
     if crate::quota::is_unlimited(Some(role)) {
         0

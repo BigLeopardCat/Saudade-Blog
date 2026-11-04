@@ -39,7 +39,6 @@ let isCachedOther = false;
 // 否则「列数变化后重拉」与「More 续翻」会用到两个不同的 per_page（页偏移错位 → 重复/漏项）
 let cachedPageSize = 6;
 
-/** 量不到列数时回退的每页条数 = 改造前的固定值（真正的公式在下面 `pageSizeFor`） */
 const FALLBACK_PAGE_SIZE = 6;
 /** 每页条数上限（后端 `pageSize` 是 `clamp(1, 1000)`，这个 48 只是前端的自律） */
 const MAX_PAGE_SIZE = 48;
@@ -47,11 +46,6 @@ const MAX_PAGE_SIZE = 48;
 const DESKTOP_ROWS = 2;
 /** 列数 ≤ 这个数就算窄屏（手机档的 `.allArticles` 是 `repeat(2, 1fr)`，见 index.sass 手机档） */
 const NARROW_COLS = 2;
-/**
- * 窄屏一页几行（20261006 用户第 5 条）：「在移动端点 MORE 按钮文章卡片只多加载两行，
- * 让人很容易失去耐心，一次加载卡片数量太少」⇒ 手机档从两行提到**四行**（2 列 × 4 = 8 张）。
- * 桌面各档不受影响（仍是两行）—— 一屏能看几张跟屏宽是同一件事，桌面上两行就填满了。
- */
 const NARROW_ROWS = 4;
 
 /**
@@ -147,19 +141,6 @@ const ContentHome = () => {
             topPendingRef.current = null;
         };
     }, [feed]);
-    /**
-     * 卡片要不要放入场动画（20261004 用户第十一报：「每次回到首页都有卡片一张张出来的
-     * 动画，明明已经加载缓存好了吧，那过渡动画纯纯耗时影响体验」）。
-     *
-     * 判据就是**这一屏的文章是不是现拉的**：`isCachedOther` 为真（本会话已经拉过一次）
-     * 且缓存里真有条目 ⇒ 数据是同步拿到的，动画除了拖时间什么都不做 ⇒ 关掉。
-     * 上面那段 `fromDashboard` 清缓存的代码在这行**之前**跑，所以从后台回来时
-     * 缓存已经空了、这里自然算出 true —— 那一趟确实要等网络，动画是它的进度反馈。
-     *
-     * ⚠️ 用 `useState(初始化函数)` 在**挂载时冻结**，不要写成每次渲染都算的表达式：
-     * framer-motion 的 `initial` 只在挂载那一次读，值中途翻转的话已渲染的卡片会换掉
-     * 动画语义（一半有 initial 一半没有），而且 `Article` 里那份 `isVisible` 初值也跟着错。
-     */
     const [enterAnimation] = useState(() => !(isCachedOther && cachedOtherArticles.length > 0))
     const Categories = useSelector((state: { categories: categoryList }) => state.categories.categories);
     const tagList = useSelector((state: {tags: any}) => state.tags.tag)
@@ -186,20 +167,11 @@ const ContentHome = () => {
         return () => observer.disconnect();
     }, []);
 
-    // 顶部背景视频无缝循环（20260902 四修）：素材已裁为花瓣运动的 1s 周期循环
-    // （25fps 下取末秒 26 帧 [t=4.96s, 5.96s]，首尾帧为同一相位，接缝帧差
-    // ≈0.22 mean / >30 阈值 0.0000%——比素材自身逐帧步进（0.1~0.5）还小，
-    // 重播即续播，无"回到第 0 帧"的内容复位）。此前三版均靠 JS 掩盖 6s 素材的
-    // 接缝内容跳变，各有副作用：单视频淡化=蒙灰；双视频交叉淡化=闪+灰+重播感；
-    // ping-pong 倒带 playbackRate=-1 在 Chrome 抛 NotSupportedError 直接全站
-    // 崩溃（React Error Boundary）。现素材自对齐 + 原生 loop 属性，零 JS 干预。
-    // hero 滚出视口即暂停（视频解码是持续 GPU 成本，离屏不再浪费），回视口恢复
     useEffect(() => {
         const hero = heroRef.current;
         if (!hero) return;
         const video = hero.querySelector('video');
         if (!video) return;
-        // 20260902: 花瓣运动 2.25 倍速（正值 playbackRate，无负速崩溃风险）
         video.playbackRate = 2.25;
         const observer = new IntersectionObserver(([entry]) => {
             if (entry.isIntersecting) {
@@ -272,13 +244,6 @@ const ContentHome = () => {
         fetchTop();
     }, []);
 
-    /* 跨端同步（20260926，**不轮询**）：看板娘刚改了站内文章（新建/删除/改状态/改置顶）
-       时访客手上这一页也该跟上——但访客页面**不为我自己的编辑加流量**：只吃"看板娘一轮
-       收尾"与"切回可见/重新聚焦"，不挂定时器（同分类页/详情页；成本关在后台那几页）。
-       `skip`（已经点过 More 就不动）：`fetchFirst` 是**整表替换**且把页号打回第 1 页——
-       主人翻了五页正看着，后台核对一次就把卷轴收回到开头，那是比"旧一点"坏得多的体验。
-       还在第一页时没有任何可丢的东西，那时才换；翻过页之后要让内容变新，走的是既有的
-       「从后台返回即清缓存」（见上面 `location.state.fromDashboard` 那一段）。 */
     useLiveRefresh(() => {
         return Promise.all([fetchTop(), fetchFirst(pageSizeRef.current, { silent: true })]).then(() => {});
     }, { poll: false, skip: () => currentPage > 1 || feed.snapshot().pending });
@@ -293,11 +258,6 @@ const ContentHome = () => {
     return <>
         <SeoHelmet title={SITE_TITLE} description={SITE_DESCRIPTION} url="/" suffix={false} />
         <div className="SelfDescription" ref={heroRef}>
-            {/* 拼贴底（20260930 四轮，用户：「主页也想要这种图片的风格」——参考图是
-                粉紫淡彩的日系手账封面）。三层柔和色块 + 一层方格纸 + 撒几片樱花，
-                **全部是静态渐变与 transform 动画**：不用 `filter: blur()` 做柔化
-                （大面积模糊 + 视频解码会把 GPU 压住，后台那次事故的放大器就是它）。
-                纯装饰，`aria-hidden`。 */}
             <div className="collageBg" aria-hidden="true">
                 <span className="blob blobA"/>
                 <span className="blob blobB"/>
@@ -308,15 +268,11 @@ const ContentHome = () => {
             </div>
 
             <div className="SayWords">
-                {/* 窗贴式小标签：参考图上那张手账的封面标签 */}
                 <div className="heroTag">
                     <span className="heroTagStar">✦</span>
                     <span>{author} の 记录室</span>
                 </div>
                 <h1 className="home-title-h3">Sereno da Saudade</h1>
-                {/* 命令条：纯装饰（`aria-hidden`，别让读屏软件念一句假的 shell 提示）。
-                    文字是死的、只有光标在闪——不做打字机：那要动宽度，小盒子的布局动画
-                    一样会引发布局回流，收益只有一个"动"。 */}
                 <div className="heroTerminal" aria-hidden="true">
                     <span className="termUser">saudade@blog</span>
                     <span className="termSep">:</span>
@@ -325,9 +281,6 @@ const ContentHome = () => {
                     <span className="termCmd">cat ./about.md</span>
                     <span className="termCaret"/>
                 </div>
-                {/* 四个按钮**全部**读站点设置（20260930）。此前只有 Github 读了，
-                    B 站 UID 与邮箱写死、QQ 用仓库里带的加好友二维码 —— 那几张图含真名与真号，
-                    仓库一公开就是泄漏。**没填的按钮整个不渲染**（传 undefined 会渲染一个点不动的死按钮）。 */}
                 <div className="Social">
                     {social?.socialQQ && <SocialButton SocialName='QQ' copyText={social.socialQQ}/>}
                     {social?.socialGithub && <SocialButton SocialName='Github' url={social.socialGithub}/>}
@@ -336,12 +289,7 @@ const ContentHome = () => {
                 </div>
             </div>
 
-            {/* 手账视频封面。 */}
             <div className="heroRight">
-                {/* 背景视频（20260902 起，20260930 四轮搬家）：从满屏底变成拼贴里的一张
-                    "手账内页"——白边 + 两角胶带 + 歪 1.2 度。muted+playsInline 是自动播放的
-                    前提；poster 兜加载期；离屏暂停由上面的 IO 处理（它取的是 hero 里第一个
-                    video，选择器照旧命中）。 */}
                 <figure className="heroPanel">
                     <video
                         className="heroVideo"
@@ -360,8 +308,6 @@ const ContentHome = () => {
                 </figure>
 
             </div>
-            {/* 20260902 暂时注释掉大圆头像窗口 */}
-            {/* <Avatar src={avatar} size={320} className='frontAvatar'/> */}
             <motion.div
                 initial={{ opacity: 0, y: 30 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -381,19 +327,11 @@ const ContentHome = () => {
                 onMouseEnter={() => setHoverPaused(true)}
                 onMouseLeave={() => setHoverPaused(false)}
             >
-                {/* 置顶贴纸（20261001 六轮）：`.Top` 只管定位、`.TopTape` 才是那张胶带。
-                    原来这里内联了 `transform: translateY(-40%)` 与 `zIndex: 10` —— 前者是
-                    **常驻动效写不进去**的根因（内联特异性最高），已删；位置改由 sass 的
-                    `top` 说了算（顺带从"悬在卡片上方"挪到"骑在卡片顶边上"），
-                    `zIndex` 也挪进了 `.Top` 规则。字与图标的大小/颜色一并交给 sass。 */}
                 <div className="Top"><span className="TopTape"><i className="iconfont icon-sticky1" aria-hidden="true"></i>置顶</span></div>
                 <div style={{ width: '100%', height: '100%', borderRadius: '15px', overflow: 'hidden' }}><div style={{ display: 'flex', width: '100%', height: '100%', transition: 'transform 0.8s cubic-bezier(0.25, 1, 0.5, 1)', transform: `translateX(-${currentTop * 100}%)` }}>
                     {topArticles.map((item) => (
                         <div className="TopArticleInner" key={item.key} onClick={() => navigate(`/article/${item.key}`)} style={{ width: '100%', flexShrink: 0, height: '100%' }}>
                             <div className="TopCover">
-                                {/* 没封面就不渲染 <img>：空 `src` 会按当前文档地址解析，
-                                    每个无封面条目都朝首页本身再发一次必然失败的请求并画成
-                                    破图（与 `LazyImage` 同一族，见那边的注释）。 */}
                                 {resolveApiAssetUrl(item.cover) && (
                                     <img
                                         src={resolveApiAssetUrl(item.cover)}
@@ -404,30 +342,13 @@ const ContentHome = () => {
                             <div className="topContent">
                                 <h4># {Categories.find(c => c.categoryKey === Number(item.noteCategory))?.categoryTitle}</h4>
                                 <h3 className="contentTitle">{item.noteTitle}</h3>
-                                {/* 简介的展开/收回在 `.TopArticle .topContent .ArticleDescription`
-                                    里（定高槽 + 槽内绝对定位 ⇒ 它长高不参与布局）。
-                                    这一列是 `justify-content: center`，任何占位变化都会让
-                                    整列重新居中 ⇒ 槽是"悬浮期间这一列一个像素都不动"的唯一
-                                    保证。这里只负责离开时把滚位抹回顶部。
-                                    ⚠️ 间距（原来写成行内 `marginBottom: 20`）现在归**槽**管，
-                                    所以**不要**再往简介上写行内 margin——内联样式特异性最高，
-                                    会跟槽的定位打架。 */}
                                 <div className="descSlot">
                                     <div className="ArticleDescription" onMouseLeave={resetDescScroll}> {item.description}</div>
                                 </div>
-                                {/* 20261001：这一排原来自己手搓了一遍"按 id 找标签名"（一级/二级两分支
-                                    各查一次），与 `apis/TagMethods.tsx::renderNoteTags` 是同一件事的
-                                    第二份实现 —— 两份实现必然分叉（这轮的由头正是"普通卡改了样式、
-                                    置顶卡没跟上"）。现在统一走那一份。
-                                    ⚠️ 子标签**找父色**那条旧行为一并消失：标签自己的颜色由
-                                    `flattenTagOptions` 给（二级标签早就有自己的色了，管理页也是这么显示的）。 */}
                                 <div className='tags' style={{ width: '100%', marginTop: '10px' }}>
                                     {renderNoteTags(item.noteTags, tagList, item.noteTagRefs)}
                                 </div>
                                 <div className="topFooter" style={{ display: 'flex', alignItems: 'center', paddingBottom: '20px' }}>
-                                    {/* 头像 + 署名 + 两个日期（20261001）：与文章卡片那份逐字相同，
-                                        已抽到 `components/NoteByline`。传进去的 `avatar`/`name`
-                                        是**站点级兜底**，文章自己有作者记录时用文章那份。 */}
                                     <NoteByline item={item} siteAvatar={avatar} siteName={name} />
                                 </div>
                             </div>
@@ -446,16 +367,10 @@ const ContentHome = () => {
             </div>}
 
 
-        {/*  其他文章  */}
             <div style={{width:'80%', display: 'flex', marginBottom: '20px'}}>
-                {/* 「文章」段落签：图标的大小/颜色原本内联写死（25px 灰 `#7f7e7e`），
-                    现在归 `ContentHome/index.sass` 的 `.allContent .iconfont` 管。 */}
                 <div className='allContent'><i className="iconfont icon-wenzhang2" aria-hidden="true"></i>文章</div>
             </div>
 
-            {/* 列数探针：量容器的真实轨道数决定「满两行」的每页条数。
-                不能直接量 .allArticles —— auto-fit 折叠空轨会让列数变成「已渲染条目数」的函数
-                （首屏 0 条 → 0 列），且它的空轨在 computed 值里序列化成 0px。 */}
             <div className="allArticles allArticlesMeasure" aria-hidden="true" ref={measureRef}>
                 <div style={{ gridColumn: '1 / -1' }} />
             </div>
@@ -478,10 +393,6 @@ const ContentHome = () => {
                 </div>
             ) : (
                 <div>
-                    {/* 「More」按钮：尺寸原本是行内样式（`padding: 20px 50px` + `borderRadius: 20`
-                        + `fontSize: 20`），与 `.allContent` 的 `width: 80px` 一起把内容盒挤成 0
-                        （全站 `* { box-sizing: border-box }`，实测元素被内边距撑成 100×40）。
-                        现在身材与手感都归 sass 的 `.more`。 */}
                     {feedState.loaded && !feedState.error && hasMoreArticles ? (
                         <button type="button" className='allContent more' disabled={feedState.pending} onClick={() => { void getMore(); }}>More</button>
                     ) : null}

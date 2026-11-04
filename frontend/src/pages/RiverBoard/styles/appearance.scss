@@ -1,0 +1,607 @@
+
+
+/* 标签基形：细线药丸，随上下文缩字号 */
+.rz-root .rz-minetag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
+  border: 1px solid rgba(214, 172, 106, 0.4);
+  border-radius: 999px;
+  background: rgba(214, 172, 106, 0.06);
+  color: rgba(240, 222, 188, 0.62);
+  font-family: inherit;
+  font-style: normal;
+  font-size: 11px;
+  line-height: 1.6;
+  letter-spacing: 0.2em;
+  text-indent: 0.2em;
+  white-space: nowrap;
+}
+
+/* 灯影集条目内：贴住留名行，字号随 meta 收小 */
+.rz-root .rz-album-item .rz-minetag {
+  margin-left: 8px;
+  font-size: 10px;
+  vertical-align: 1px;
+}
+
+/* 待审：金——灯入河待点亮 */
+.rz-root .rz-minetag.rz-wait {
+  color: #f0c987;
+  border-color: rgba(240, 196, 110, 0.6);
+  background: rgba(240, 196, 110, 0.1);
+}
+
+/* 未通过：朱——与印章红同族 */
+.rz-root .rz-minetag.rz-no {
+  color: #ff9d8a;
+  border-color: rgba(231, 76, 60, 0.55);
+  background: rgba(231, 76, 60, 0.12);
+}
+
+/* 已点亮：灰金，弱于前两者（仅弹窗内出现） */
+.rz-root .rz-minetag.rz-ok {
+  color: rgba(240, 222, 188, 0.48);
+  border-color: rgba(214, 172, 106, 0.3);
+  background: transparent;
+}
+
+/* 心愿弹窗 · 状态行：与正文间一道虚金线分隔，收回钮靠右 */
+.rz-root .rz-modal-box .rz-mine-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin: 4px 2px 0;
+  padding: 9px 0 5px;
+  border-top: 1px dashed rgba(214, 172, 106, 0.22);
+}
+
+.rz-root .rz-modal-box .rz-reclaim {
+  margin-left: auto;
+
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
+  background: rgba(255, 205, 140, 0.07);
+  border: 1px solid rgba(255, 205, 140, 0.28);
+  border-radius: 999px;
+  cursor: pointer;
+  color: rgba(242, 226, 194, 0.72);
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.6;
+  letter-spacing: 0.2em;
+  text-indent: 0.2em;
+  white-space: nowrap;
+  transition: color 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+
+  &:hover,
+  &:focus-visible {
+    color: #ffe9c4;
+    background: rgba(255, 205, 140, 0.15);
+    outline: none;
+  }
+
+  &:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+
+  /* 第二击确认态：警示朱红，防误删的最后一道醒目 */
+  &.armed {
+    color: #ff9d8a;
+    border-color: rgba(231, 76, 60, 0.62);
+    background: rgba(231, 76, 60, 0.16);
+  }
+}
+
+.rz-root .rz-modal-box .rz-reclaim-err {
+  flex-basis: 100%;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: #ff9d8a;
+}
+
+
+.rz-root .rz-modal-box .rz-reject {
+  margin: 10px 2px 0;
+  padding: 7px 10px;
+  border-left: 3px solid rgba(231, 76, 60, 0.55);
+  border-radius: 0 4px 4px 0;
+  background: rgba(231, 76, 60, 0.1);
+  color: #ff9d8a;
+  font-size: 12px;
+  line-height: 1.7;
+  letter-spacing: 0.05em;
+  word-break: break-word;
+}
+
+.rz-root .rz-modal-box .rz-reject-label {
+  margin-right: 8px;
+  padding-right: 8px;
+  border-right: 1px solid rgba(231, 76, 60, 0.35);
+  color: rgba(255, 157, 138, 0.72);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  white-space: nowrap;
+}
+
+
+.rz-root {
+  --rz-ink: #10232b;
+  --rz-ink-deep: #07151c;
+  --rz-paper: rgba(238, 226, 197, 0.96);
+  --rz-paper-dim: rgba(221, 211, 186, 0.82);
+  --rz-paper-line: rgba(238, 226, 197, 0.28);
+  --rz-vermilion: #b84f43;
+  --rz-vermilion-bright: #e18a6c;
+
+  --rz-vermilion-ink: #853630;
+  --rz-moon: #f5dca9;
+  --rz-shadow: 0 20px 60px rgba(2, 10, 14, 0.45);
+  background: #03050c;
+
+  .rz-veg {
+    background:
+      radial-gradient(ellipse at 50% 42%, transparent 56%, rgba(3, 5, 12, 0.42) 100%),
+      linear-gradient(to bottom, rgba(3, 5, 12, 0.55) 0%, transparent 13%, transparent 76%, rgba(2, 3, 8, 0.62) 100%);
+  }
+
+  .rz-ui {
+    .rz-title {
+      top: 30px;
+      left: 36px;
+      color: var(--rz-paper);
+      font-size: 21px;
+      letter-spacing: 0.28em;
+      text-shadow: 0 2px 20px rgba(245, 220, 169, 0.2);
+
+      i {
+        width: 8px;
+        height: 8px;
+        margin-right: 10px;
+        background: var(--rz-moon);
+        box-shadow: 0 0 16px rgba(245, 220, 169, 0.8);
+      }
+
+      .rz-couplet {
+        top: calc(100% + 16px);
+        gap: 13px;
+
+        > span {
+          color: rgba(238, 226, 197, 0.72);
+          font-size: 13px;
+          letter-spacing: 0.18em;
+
+          b {
+            color: var(--rz-vermilion-bright);
+            font-size: 15px;
+          }
+        }
+      }
+    }
+
+
+    .rz-hint {
+      bottom: 28px;
+      color: rgba(238, 226, 197, 0.78);
+      font-size: 12px;
+      letter-spacing: 0.2em;
+    }
+
+    .rz-home-btn,
+    .rz-album-btn,
+    .rz-wish-btn {
+      background: rgba(7, 21, 28, 0.72);
+      border: 1px solid var(--rz-paper-line);
+      border-radius: 6px;
+      box-shadow: 0 10px 28px rgba(2, 10, 14, 0.25);
+      color: var(--rz-paper-dim);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      transition: transform 0.2s ease, color 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+
+      &:hover,
+      &:focus-visible {
+        transform: translateY(-2px);
+        background: rgba(16, 39, 47, 0.88);
+        border-color: rgba(245, 220, 169, 0.64);
+        color: var(--rz-paper);
+      }
+    }
+
+    .rz-home-btn {
+      bottom: 184px;
+      padding: 9px 16px;
+      font-size: 12px;
+      letter-spacing: 0.18em;
+    }
+
+    .rz-album-btn {
+      bottom: 108px;
+      padding: 9px 10px;
+      font-size: 11px;
+      letter-spacing: 0.16em;
+    }
+
+    .rz-wish-btn {
+      bottom: 30px;
+      padding: 10px 17px;
+      color: var(--rz-paper);
+      font-size: 13px;
+      letter-spacing: 0.2em;
+
+      i {
+        background: var(--rz-vermilion-bright);
+        box-shadow: 0 0 12px rgba(225, 138, 108, 0.8);
+      }
+    }
+  }
+
+  .rz-lantern .rz-bubble,
+  .rz-modal .rz-modal-box {
+    background: var(--rz-paper);
+    border: 0;
+    border-radius: 4px;
+    box-shadow: var(--rz-shadow);
+    color: var(--rz-ink);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+
+    &::after {
+      background: var(--rz-paper);
+      border: 0;
+    }
+
+    .rz-msg {
+      color: var(--rz-ink);
+      text-shadow: none;
+      letter-spacing: 0.08em;
+    }
+
+
+    .rz-who {
+      color: rgba(16, 35, 43, 0.78);
+      text-shadow: none;
+    }
+
+
+    .rz-seal {
+      background: #a33f30;
+      color: #fff0d7;
+      box-shadow: none;
+    }
+  }
+
+  .rz-lantern .rz-bubble {
+    border-left: 4px solid var(--rz-vermilion);
+  }
+
+  .rz-modal {
+    background: rgba(3, 14, 19, 0.66);
+
+    .rz-modal-box {
+      .rz-modal-close {
+        background: transparent;
+        border: 1px solid rgba(16, 35, 43, 0.28);
+        border-radius: 3px;
+        color: rgba(16, 35, 43, 0.78);
+
+        &:hover,
+        &:focus-visible {
+          background: rgba(16, 35, 43, 0.08);
+          border-color: rgba(16, 35, 43, 0.55);
+          color: var(--rz-ink);
+        }
+      }
+    }
+  }
+
+  .rz-notice-modal .rz-notice-box,
+  .rz-album-modal .rz-album-box,
+  .rz-wish-modal .rz-wish-box {
+    background: var(--rz-paper);
+    border: 0;
+    outline: 1px solid rgba(238, 226, 197, 0.45);
+    outline-offset: 5px;
+    box-shadow: var(--rz-shadow);
+    color: var(--rz-ink);
+
+    .rz-notice-title,
+    .rz-album-title,
+    .rz-wish-title {
+      color: var(--rz-ink);
+      text-shadow: none;
+      letter-spacing: 0.28em;
+    }
+
+
+    .rz-notice-body p,
+    .rz-wish-sub {
+      color: rgba(16, 35, 43, 0.78);
+    }
+
+    .rz-album-search input,
+    .rz-wish-input,
+    .rz-wish-author {
+      background: rgba(16, 35, 43, 0.06);
+      border-color: rgba(16, 35, 43, 0.2);
+      color: var(--rz-ink);
+
+
+      &::placeholder {
+        color: rgba(16, 35, 43, 0.68);
+      }
+
+      &:focus {
+        border-color: var(--rz-vermilion);
+      }
+    }
+
+    .rz-lamp-card,
+    .rz-cat-card,
+    .rz-album-tabs button {
+      background: rgba(16, 35, 43, 0.045);
+      border-color: rgba(16, 35, 43, 0.16);
+      color: rgba(16, 35, 43, 0.72);
+
+      &:hover,
+      &:focus-visible,
+      &.sel {
+        background: rgba(184, 79, 67, 0.09);
+        border-color: rgba(184, 79, 67, 0.58);
+        box-shadow: none;
+      }
+    }
+
+    .rz-wish-foot .rz-wish-ghost {
+      color: rgba(16, 35, 43, 0.78);
+      border-color: rgba(16, 35, 43, 0.24);
+      border-radius: 3px;
+    }
+
+    /* 主按钮同印面：底压深一档（`#b84f43` 配米色字 4.41:1，差一点） */
+    .rz-wish-foot .rz-wish-primary,
+    .rz-notice-foot .rz-wish-primary {
+      background: #a33f30;
+      border: 0;
+      border-radius: 3px;
+      color: #fff0d7;
+      box-shadow: none;
+
+      &:hover:not(:disabled),
+      &:focus-visible:not(:disabled) {
+        background: #963c36;
+      }
+    }
+  }
+}
+
+
+
+/* 卷首朱印「雅集」 */
+.rz-root .rz-album-modal .rz-album-box::before {
+  color: var(--rz-vermilion-ink);
+  border-color: rgba(133, 54, 48, 0.55);
+}
+
+.rz-root .rz-album-modal .rz-album-box .rz-album-find {
+  background: rgba(16, 35, 43, 0.045);
+  border-color: rgba(16, 35, 43, 0.16);
+  color: rgba(16, 35, 43, 0.78);
+
+  &.on,
+  &:hover,
+  &:focus-visible {
+    background: rgba(184, 79, 67, 0.09);
+    border-color: rgba(184, 79, 67, 0.5);
+    color: var(--rz-ink);
+  }
+}
+
+.rz-root .rz-album-modal .rz-album-box .rz-album-tabs button:hover,
+.rz-root .rz-album-modal .rz-album-box .rz-album-tabs button:focus-visible,
+.rz-root .rz-album-modal .rz-album-box .rz-album-tabs button.sel {
+  color: var(--rz-ink);
+}
+
+/* 类型筛选印章：未选 = 浅绛底 + 朱砂字，选中 = 实心朱砂 + 米色字 */
+.rz-root .rz-album-modal .rz-album-box .rz-album-catf .rz-album-catf-seal {
+  background: rgba(184, 79, 67, 0.1);
+  border-color: rgba(184, 79, 67, 0.45);
+  color: var(--rz-vermilion-ink);
+
+  &:hover,
+  &:focus-visible {
+    background: rgba(184, 79, 67, 0.16);
+    border-color: rgba(184, 79, 67, 0.6);
+    color: var(--rz-ink);
+  }
+
+  &.sel {
+    background: #a33f30;
+    border-color: rgba(255, 214, 170, 0.6);
+    color: #ffe8c8;
+  }
+}
+
+.rz-root .rz-album-modal .rz-album-box .rz-album-item {
+  background: rgba(16, 35, 43, 0.045);
+  border-color: rgba(16, 35, 43, 0.16);
+
+  &:hover,
+  &:focus-visible {
+    background: rgba(184, 79, 67, 0.09);
+    border-color: rgba(184, 79, 67, 0.5);
+  }
+}
+
+.rz-root .rz-album-modal .rz-album-box .rz-album-msg {   /* 10.7:1（条目底） */
+  color: var(--rz-ink);
+}
+
+.rz-root .rz-album-modal .rz-album-box .rz-album-meta {  /* 6.2:1（条目底） */
+  color: rgba(16, 35, 43, 0.78);
+}
+
+.rz-root .rz-album-modal .rz-album-box .rz-album-reason { /* 4.8:1（条目底） */
+  border-left-color: rgba(133, 54, 48, 0.55);
+  color: var(--rz-vermilion-ink);
+}
+
+.rz-root .rz-album-modal .rz-album-box .rz-album-empty { /* 5.1:1（纸面） */
+  color: rgba(16, 35, 43, 0.7);
+}
+
+/* 条目列表的滚动条：金线在纸面上看不见 */
+.rz-root .rz-album-modal .rz-album-box .rz-album-list {
+  scrollbar-color: rgba(16, 35, 43, 0.28) transparent;
+
+  &::-webkit-scrollbar-thumb {
+    background: rgba(16, 35, 43, 0.28);
+  }
+}
+
+/* 状态标签：两处复用（灯影集条目内、细读弹窗状态行） */
+.rz-root .rz-album-modal .rz-album-box .rz-minetag,
+.rz-root .rz-modal .rz-modal-box .rz-minetag,
+.rz-root .rz-wish-modal .rz-wish-box .rz-minetag {
+  background: rgba(16, 35, 43, 0.05);
+  border-color: rgba(16, 35, 43, 0.28);
+  color: rgba(16, 35, 43, 0.78);
+
+  &.rz-wait {                 /* 待审：金 → 纸面上的深金褐（金在纸上够不着 AA，5.1:1） */
+    color: #6b4e16;
+    border-color: rgba(140, 110, 40, 0.5);
+    background: rgba(200, 150, 60, 0.12);
+  }
+
+  &.rz-no {                   /* 未通过：朱 */
+    color: var(--rz-vermilion-ink);
+    border-color: rgba(133, 54, 48, 0.5);
+    background: rgba(231, 76, 60, 0.12);
+  }
+
+  &.rz-ok {                   /* 已点亮：最弱的一档 */
+    color: rgba(16, 35, 43, 0.7);
+    border-color: rgba(16, 35, 43, 0.24);
+    background: transparent;
+  }
+}
+
+/* 细读弹窗：「自己的河灯」那一簇 */
+.rz-root .rz-modal .rz-modal-box .rz-reject {
+  border-left-color: rgba(133, 54, 48, 0.55);
+  color: var(--rz-vermilion-ink);
+}
+
+.rz-root .rz-modal .rz-modal-box .rz-reject-label {
+  border-right-color: rgba(133, 54, 48, 0.35);
+  color: var(--rz-vermilion-ink);
+}
+
+.rz-root .rz-modal .rz-modal-box .rz-reclaim {
+  background: rgba(16, 35, 43, 0.05);
+  border-color: rgba(16, 35, 43, 0.28);
+  color: rgba(16, 35, 43, 0.78);
+
+  &:hover,
+  &:focus-visible {
+    background: rgba(184, 79, 67, 0.09);
+    border-color: rgba(184, 79, 67, 0.5);
+    color: var(--rz-ink);
+  }
+
+  &.armed {                   /* 第二击确认态：纸面上的朱 */
+    background: rgba(231, 76, 60, 0.12);
+    border-color: rgba(133, 54, 48, 0.62);
+    color: var(--rz-vermilion-ink);
+  }
+}
+
+.rz-root .rz-modal .rz-modal-box .rz-reclaim-err {
+  color: var(--rz-vermilion-ink);
+}
+
+/* 心愿弹窗：字数 / 匿名钮 / 选灯卡 / 心印卡 */
+.rz-root .rz-wish-modal .rz-wish-box .rz-wish-count {
+  color: rgba(16, 35, 43, 0.7);
+}
+
+.rz-root .rz-wish-modal .rz-wish-box .rz-wish-author-row .rz-wish-anon {
+  background: rgba(16, 35, 43, 0.05);
+  border-color: rgba(16, 35, 43, 0.2);
+  color: rgba(16, 35, 43, 0.78);
+
+  &:hover,
+  &:focus-visible {
+    border-color: rgba(184, 79, 67, 0.5);
+    color: var(--rz-ink);
+  }
+
+  &.on {                      /* 匿名态：浅绛底 + 朱砂字 */
+    background: rgba(184, 79, 67, 0.12);
+    border-color: rgba(184, 79, 67, 0.5);
+    color: var(--rz-vermilion-ink);
+  }
+}
+
+.rz-root .rz-wish-modal .rz-wish-box .rz-lamp-grid .rz-lamp-card,
+.rz-root .rz-wish-modal .rz-wish-box .rz-cat-grid .rz-cat-card {
+  background: rgba(16, 35, 43, 0.045);
+  border-color: rgba(16, 35, 43, 0.16);
+  color: rgba(16, 35, 43, 0.78);
+
+  &:hover,
+  &:focus-visible,
+  &.sel {
+    background: rgba(184, 79, 67, 0.09);
+    border-color: rgba(184, 79, 67, 0.58);
+    box-shadow: none;
+  }
+}
+
+.rz-root .rz-wish-modal .rz-wish-box .rz-cat-grid .rz-cat-card .rz-cat-name b {
+  color: var(--rz-ink);
+}
+
+.rz-root .rz-wish-modal .rz-wish-box .rz-cat-grid .rz-cat-card .rz-cat-name i {
+  color: rgba(16, 35, 43, 0.78);
+}
+
+/* 次按钮的悬停：基形的 `#ffe9c4` 一悬停就消失在纸里 */
+.rz-root .rz-wish-modal .rz-wish-box .rz-wish-foot .rz-wish-ghost:hover,
+.rz-root .rz-wish-modal .rz-wish-box .rz-wish-foot .rz-wish-ghost:focus-visible {
+  color: var(--rz-ink);
+}
+
+@media (max-width: 620px) {
+  .rz-root .rz-ui {
+    .rz-title {
+      top: 20px;
+      left: 20px;
+      font-size: 17px;
+    }
+
+    .rz-home-btn {
+      left: 18px;
+      bottom: 164px;
+    }
+
+    .rz-album-btn {
+      left: 18px;
+      bottom: 94px;
+    }
+
+    .rz-wish-btn {
+      left: 18px;
+      bottom: 26px;
+    }
+  }
+
+  .rz-root .rz-wish-modal .rz-wish-box {
+    width: min(90vw, 520px);
+    max-width: min(90vw, 520px);
+  }
+}

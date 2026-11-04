@@ -1,14 +1,3 @@
-// 评论管理 Tab（20261002）：文章详情页讨论区的裁决队列。
-// 结构与留言管理（.BoardManage）/ 额度管理（.QuotaManage）同构 —— 工具栏 + 审核开关 +
-// 表格区 + 页脚四段，**只有中间那段滚**；高度链靠 Users/index.sass 那套 100% 传递
-// （Dashboard 的 .Card 95% → .ant-card-body 100% → .users-page 100% → Tabs 内容区
-// 100% → 这里 100%，少一环就退化成内容高度、内滚动失效）。
-//
-// 配色与前两页**故意不同**：这一页 20261002 新写，直接走 `var(--washi-*)` 令牌
-// （与 `.tu-tabs` 同一支），深浅两档由令牌自己分 ⇒ 下面**没有 `.contentDark` 覆盖块**
-// （Batch E 之后那是既有状态，见 Users/index.sass 文件末那条注记）。
-// `.BoardManage` / `.QuotaManage` 里那份砖红 #a33f30 是改造前的主色，本轮不动它们
-// ——两页自己的观感改造是另一件事，别在这一笔里顺手改（改了就没有"和改前一样"的证据）。
 .CommentManage
   padding: 20px
   height: 100%
@@ -86,9 +75,6 @@
       color: var(--washi-ink-2, #7c6584)
       background: var(--washi-paper-2, #fff6fa)
 
-  // 风控设置行（20261002）：与 `.cm-review` 同族的一段固定行，默认收起
-  // （工具栏那个「风控设置」开关控制渲染）。配色走 washi 令牌，深浅两档自动跟随，
-  // 所以下面**不写 `.contentDark` 覆盖块**（同本文件头注那条）。
   .cm-risk
     display: flex
     align-items: center

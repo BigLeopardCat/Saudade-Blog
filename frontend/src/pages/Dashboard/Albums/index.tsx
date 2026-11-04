@@ -20,7 +20,6 @@ import {useNavigate} from "react-router-dom";
 import {useGalleryPager} from "../../../utils/galleryPager.ts";
 
 
-/** 图库的两种展示方式（用户要求：一种当前的直接展开，一种列表——行首缩略图 + 图片名）。 */
 type AlbumView = 'grid' | 'list';
 
 /** 上次选的那一种。读了就记住（与站内其它 localStorage 键一样整体包 try：
@@ -32,7 +31,6 @@ const Albums = () => {
     const [uploadedFiles, setUploadedFiles] = useState<UploadFile[]>([]);
     const [SelectDelete,setSelectDelete] = useState(0)
     const [checkStatus, setCheckStatus] = useState<Record<string, boolean>>({});
-    // 图库列表（20261014 起是游标分页，逻辑在 utils/galleryPager.ts，三个消费方共用一份）
     const { images: staticDate, reload: reloadImages, loadMore, hasMore } = useGalleryPager();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isModaldelOpen, setIsDelModalOpen] = useState(false);
@@ -44,24 +42,9 @@ const Albums = () => {
         }
     });
 
-    // ── R2 图床（20261006，用户第 3 条）────────────────────────────────────
-    // 用量是**服务端从 R2 自己列出来的**（不是本页算的），所以每次上传/删除完都要重拉：
-    // 这一页显示的数字与真正拦人的那条判据必须同源，否则会出现"条子 30% 却被拒"。
-    //
-    // **配置不在这里**（20261006 用户拍板「挪到站点设置，单一入口」）：桶名/前缀/公开域名/
-    // 配额/开关四个半字段都搬到 `#/dashboard/usercontrol` 的「图库存储」页签，本页只留
-    // 「用量多少」与「现在能不能传」这两件跟"防账单"直接相关的事，以及一个跳过去的入口。
-    // 本页因此**一个 R2 配置键都不该出现**（`frontend/tests/r2-quota.test.mjs` 钉着这条，
-    // 连注释里写一遍它也会红——这条守卫是要"想加回表单"的人先撞一次墙）。
     const navigate = useNavigate();
     const [r2, setR2] = useState<R2Usage | null>(null);
 
-    // ── 这次上传存哪儿（20261006，用户第 1 条：两颗按钮分别上传）──────────────
-    // 起因：图库切到 R2 之后，那颗**唯一**的上传钮被 `uploadBlocked()` 灰掉了
-    // （配额满、或用量读不出来——而读不出来正是令牌没配好时的常态），
-    // 于是"存本机盘"这条明明还好的路**点不动了**。服务端那头当时也没有入口：
-    // `try_r2_upload` 在面板开着 R2 时永不返回 `None`（静默改道，不报错）。
-    // 现在两颗钮各带一个显式 target，服务端按它办。
     const [uploadTarget, setUploadTarget] = useState<UploadTarget>('local');
 
     const changeView = (v: AlbumView) => {
@@ -107,9 +90,6 @@ const Albums = () => {
         navigate('/dashboard/usercontrol', { state: { tab: '4' } });
     };
 
-    // 回调函数区域。`fetchData` 从前是个**空函数**（壳搭好了、没人接）：`InfiniteScroll`
-    // 一直挂着 `hasMore={true}` 在滚到底时调它，而它什么都不做 ⇒ 滚到底只是"看起来
-    // 没反应"。20261014 起它接的是真分页：游标 = 已加载的最后一张（见 galleryPager.ts）。
     const fetchData = () => {
         void loadMore();
     };
@@ -120,8 +100,6 @@ const Albums = () => {
         const keysToDelete = Object.keys(checkStatus).filter(key => checkStatus[key]);
 
         delImages(keysToDelete).then((res) => {
-            // 20260924：后端现在会**整体拒绝**还在被文章使用的图（本仓契约是 HTTP 200 + code 500），
-            // 只看 res.status 会把"一张都没删"显示成"删除成功" ⇒ 改判业务码并如实报出原因
             if (res.data?.code === 200) {
                 initImageList()
                 loadR2({ silent: true });   // R2 上的对象没了 ⇒ 用量条要跟上
@@ -183,11 +161,6 @@ const Albums = () => {
             formData.append('file', compressedFile);
             // 显式 target：**这次点的是哪颗钮，就传到哪儿**（不再由面板开关替用户决定）
             uploadImages(formData, uploadTarget).then((res) => {
-                // ⚠️ 判**业务码**而不是 `res.status`（20261006 修）。本仓的失败一律是
-                // HTTP 200 + `code: 500`（服务端从不靠状态码表达业务失败），所以原先那句
-                // `res.status === 200` 恒真 —— 配额拒绝、R2 凭据缺失、PUT 失败**全都被
-                // 显示成"上传成功"**，而图库里什么都不会多出来。用户要防的正是配额那件事，
-                // 这类"假成功"会让它看起来像功能坏了。
                 if (res.data?.code === 200) {
                     initImageList();
                     // @ts-ignore antd 的 req.file 是 `string | RcFile`，取名字要窄化
@@ -259,23 +232,17 @@ const Albums = () => {
         loader={null}
         endMessage={
             <p style={{ textAlign: 'center' }}>
-                {/* 有分页之后"到底了"是常态：`hasMore` 为假时 InfiniteScroll 就渲染这一句。
-                    原来是句英文（"Yay! You have seen it all"）——全站中文，换成同一句人话。 */}
                 <b>没有更多了</b>
             </p>
         }
     >
             <div style={{display: "flex",flexDirection: 'row',alignItems:'center',justifyContent: 'space-between',marginTop: 30,marginLeft: 20,marginRight: 20}} className={"action_img"}>
                 <div style={{display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 12}}>
-                    {/* ① 存本站服务器：**永不被 R2 的状态灰掉** —— 这正是本轮要修的那件事。
-                        R2 开着、用量又读不出来的时候，本机盘这条路明明是好的，
-                        从前那颗唯一的按钮却会被灰掉，于是整页一个能传的地方都没有。 */}
                     <UpLoadButton
                         onClick={() => showModal('local')}
                         label="传到本站"
                         title="上传到本站服务器（文件存在这台机器上）"
                     />
-                    {/* ② 存 R2 图床：没配全 / 配额满 / 读数不可信时灰掉（判据同源于 utils/r2Quota） */}
                     <UpLoadButton
                         onClick={() => showModal('r2')}
                         label="传到 R2"
@@ -283,9 +250,6 @@ const Albums = () => {
                         disabled={r2Disabled}
                         title={r2DisabledReason || '上传到 R2 图床（文件存在对象存储上）'}
                     />
-                    {/* 不能点就必须说出为什么（只藏在 title 里，触屏上根本看不到）。
-                        这一行只跟 R2 那颗走 —— 服务器那颗永远能点，没有理由要说。
-                        平时它不占位、不改变工具栏几何。 */}
                     {r2Disabled && (
                         <span
                             className="albumR2Blocked"
@@ -299,12 +263,7 @@ const Albums = () => {
                     <h2 style={{display: "flex", flexDirection: 'row', alignItems: 'center'}}> <i className="iconfont icon-xiangce icon" style={{ fontWeight: '80', fontSize: 50, color: 'var(--washi-lav, #b9a7f5)' }} /> 图库  </h2>
                 </div>
                 <div className={"albumActions"} style={{display: "flex",alignItems:'center'}}>
-                    {/* 「已选中 N 张」原来绝对定位在 right:180 —— 现在它是流内的一员
-                        （`opacity` 到 0 时**照旧占位**，切换器与删除钮不会因为选没选中而左右跳） */}
                     <h2 className={"albumSelCount"} style={{opacity: SelectDelete !== 0 ? 1 : 0, transition: '0.3s'}}>已选中{SelectDelete}张图片</h2>
-                    {/* R2 图床（20261006）：这颗按钮**只报用量 + 跳去配置**（配置本身在
-                        站点设置的「图库存储」页签）。它同时是这一页唯一的"会不会产生账单"
-                        的常驻读数——灰态与拦人的那条判据同源（`utils/r2Quota.ts`）。 */}
                     <Button
                         onClick={goR2Settings}
                         title={r2Configured ? 'R2 图床用量（点开改配置）' : 'R2 图床未启用，当前存本机磁盘（点开可配置）'}
@@ -324,8 +283,6 @@ const Albums = () => {
                     </div>
                 </div>
             </div>
-            {/* `albumScrollCard` 只给窄屏那条媒体规则当抓手：`height:86vh` + 内滚动写在内联上，
-                普通 CSS 声明够不着它（内联优先级最高），窄屏只能用 `!important` 翻过来。 */}
             <Card className="albumScrollCard" style={{ width: '100%', height: '86vh', marginLeft: '0%', marginTop: '0%', overflowY: 'scroll', backgroundColor: 'transparent', border: "none" }}>
                 {view === 'list' ? (
                     <div className={"albumList"}>
@@ -347,8 +304,6 @@ const Albums = () => {
                                         loading={"lazy"}
                                     />
                                     <span className={"albumName"} title={name}>{name}</span>
-                                    {/* 勾选框自己也要能点：不拦冒泡的话这一下会被行接走再翻一次，
-                                        净效果是"点勾选框没反应" */}
                                     <span className={"albumCheck"} onClick={(e) => e.stopPropagation()}>
                                         <CheckButton
                                             checked={checked}
@@ -395,8 +350,6 @@ const Albums = () => {
                     <p className="ant-upload-hint">
                         支持单个或批量上传
                     </p>
-                    {/* 两档的差异必须写在弹窗里：拖进去的图是落到本机盘还是进桶，
-                        决定了它以后"搬机器/换域名会不会失效"，而这一眼看得出来最省事。 */}
                     <p className="ant-upload-hint">
                         {uploadTarget === 'r2'
                             ? `这次传到 R2 图床${r2?.publicBase ? `（公开域 ${r2.publicBase}）` : ''}，不占本机磁盘。`
@@ -412,9 +365,6 @@ const Albums = () => {
             是否删除选中所有图片?
         </Modal>
 
-        {/* R2 的设置弹窗 20261006 搬到站点设置（`UserControl/R2Storage.tsx`）：
-            那颗「R2 存储 · N%」按钮改成那边的一个入口，本页只留用量与灰态。
-            同一个字段两个表单，是"改了一处、另一处还是旧值"的经典来源。 */}
     </div>
 }
 

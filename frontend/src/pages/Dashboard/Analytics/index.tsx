@@ -25,39 +25,6 @@ import {useIsDarkMode} from "../../../theme";
 // **不要改回 `import CountUp from "react-countup"`。**
 const CountUp = cjsDefault(CountUpDefault)
 
-/**
- * 数据统计（20260930 整页重写；20261001 加页签、收藏量、周月年报）。**此前这一页是写死的
- * 假数据**：一张 2022-2024 的月更折线 + 一张七个假分类的饼图，跟本站的真实内容没有任何关系。
- *
- * 两个页签（形制照「用户管理」那一页，`label` 用 `<h3>`）：
- *
- *   · **文章数据** —— 阅读量 / 点赞量 / 收藏量 / 讨论量，四个汇总卡 + 四个全局榜 + 30 天趋势，
- *     外加**周报 / 月报 / 年报**（按期一张可展开的列表）。数据源
- *     `GET /api/protected/stats/notes`（当下快照）与 `.../notes/periods`（分期）。
- *   · **用户活跃** —— 直接渲染 `GET /api/protected/stats/users`（`src/routes/stats.rs`）。
- *     那份端点的**第一个后台消费方**就是本页；它同时还在给看板娘的用户报表供数，
- *     所以这里只排版、不加工口径。
- *
- * 口径三条（与后端模块头注同源，改的时候一起看）：
- *
- * 1. **只统计"当前可见"的文章**。已转草稿/私密的文章连同它的历史阅读量一起排除——
- *    报表的四个数字（总量、排行、趋势）用同一个可见集，不然它们会自己跟自己打架。
- *    注意这与"删文章"不同：删文章走外键 CASCADE，那些行是真的没了，
- *    所以**总阅读量会变小**，"只增不减"在本页不成立（页面上有一枚 Tag 说明口径）。
- * 2. **`daily` 已经由后端补零**（最近 30 天天天有一条），前端不要再自己拼日期，
- *    否则就是第二份"哪几天该有数据"的真相源。
- * 3. **读不到 ≠ 0**。请求失败时显示错误与重试，**绝不显示 0**——一个假的 0
- *    会让人以为网站真的没人看（仓内纪律，同 components/UserCenter/favorites.ts 头注）。
- *    分期列表还多一层：**期界早于统计起点的整期已被后端剔除**，`since` 为 null 表示
- *    "一行记录都还没有"，与"统计了但都是 0"是两件事，界面上要分开说。
- *
- * 图表只用了 `@ant-design/plots` 一条通路（`Bar`/`Column`/`Pie` 都在这个包里；
- * 本页此前是 `Pie` 取自 `@ant-design/charts`、`Line` 取自 plots——同一套 G2v2 包装的
- * 两条版本线，同时引会把 G2 运行时打进两份）。**排行榜刻意不用图表库**：
- * 标题长短差得远，图表里必然要截断，而这一页的价值恰恰是"哪几篇"——
- * 所以排行是 HTML 列表（完整标题 + 一条按比例的背景条），
- * 只有趋势那一张用真图表（30 个点连成的四条线是 HTML 拼不出来的东西）。
- */
 
 /** 后端字段逐个过一道类型闸。`GET` 回来的是运行时数据，直接 `.map()`
  *  会在形状不对时把整棵子树炸掉（后台页面宁可少渲染一块，也不能白屏）。 */
@@ -209,15 +176,10 @@ const NoteData = () => {
         }).finally(() => setPLoading(false))
     }, [kind, pTick])
 
-    // G2 不吃 antd 的 darkAlgorithm（两套主题系统互不相干），要**显式**告诉图表
-    // 现在是哪一档——这正是本页此前挂在 dark-mode-contrast 探针 KNOWN 里的那条。
     const trendData = (report?.daily ?? []).flatMap((d) => [
         {date: d.date, type: '阅读量', value: num(d.views)},
         {date: d.date, type: '点赞量', value: num(d.likes)},
         {date: d.date, type: '收藏量', value: num(d.favorites)},
-        // 讨论量的日趋势（20261003）。**量级差一大截**（阅读是三位数、讨论个位数），
-        // 同一条 y 轴下这条线会贴着 0 走——这是刻意接受的：四张汇总卡与四个榜给了
-        // 各自独立的尺度，趋势图的价值在"形状"（哪天有人聊起来），不在绝对值比大小。
         {date: d.date, type: '讨论量', value: num(d.comments)},
     ])
     const trendConfig = {
@@ -237,7 +199,6 @@ const NoteData = () => {
             <div className="akHead">
                 <div className="akHeadMeta">
                     {report?.generatedAt && <span>统计时间：{report.generatedAt}</span>}
-                    {/* 口径写在页面上：数字变小（删了文章）时，看的人要知道为什么 */}
                     <Tag color="blue">只统计当前可见文章</Tag>
                     <Button size="small" onClick={load} loading={loading}>刷新</Button>
                 </div>
@@ -252,9 +213,6 @@ const NoteData = () => {
                 <div className="akLoading"><Spin/></div>
             ) : (
                 <>
-                    {/* 卡面颜色走 CSS 变量、由 .akCard 的类规则落地，**不写内联色**：
-                        内联样式特异性最高，颜色写死在那里 `.dark &` 就永远赢不了它
-                        （20260923 后台接 antd 深色 token 时就栽在这上面，白字压浅底 1.26:1）。 */}
                     <div className="akSummary">
                         <Card className="akCard" style={{"--ak-bg": '#dbe7f5', "--ak-bg-dark": 'rgba(120, 170, 230, 0.16)'} as React.CSSProperties}>
                             <Statistic title="总阅读量" value={report?.totalViews ?? 0}
@@ -268,8 +226,6 @@ const NoteData = () => {
                             <Statistic title="总收藏量" value={report?.totalFavorites ?? 0}
                                        formatter={(v) => <CountUp end={Number(v)} separator=","/>}/>
                         </Card>
-                        {/* 第四张卡（20261003）：与卡片/详情页同一个口径——只算公开看得见的
-                            评论，所以这里的数字一定等于各处点进去数出来的条数。 */}
                         <Card className="akCard" style={{"--ak-bg": '#d9ecec', "--ak-bg-dark": 'rgba(140, 215, 215, 0.16)'} as React.CSSProperties}>
                             <Statistic title="总讨论量" value={report?.totalComments ?? 0}
                                        formatter={(v) => <CountUp end={Number(v)} separator=","/>}/>
@@ -294,10 +250,6 @@ const NoteData = () => {
                         </div>
                     </div>
 
-                    {/* ── 周报 / 月报 / 年报 ─────────────────────────────────────────
-                        形制是**一张可展开的期列表**：折叠态给出"哪一期、四个数"，
-                        展开才是这一期的正文（阅读量前 5 名）。这样十二期能一屏扫完，
-                        想深看哪一期就点哪一期。 */}
                     <div className="akPanel akPanelWide akPeriods">
                         <div className="akPeriodsHead">
                             <h3>周报 / 月报 / 年报</h3>
@@ -333,7 +285,6 @@ const NoteData = () => {
                                         <span className="akPeriodRow">
                                             <span className="akPeriodLabel">
                                                 {p.label}
-                                                {/* 上线那一期只有半截数据 —— 不标出来会被读成"那期流量掉了" */}
                                                 {p.partial && <Tag color="orange" className="akPartial">部分统计</Tag>}
                                             </span>
                                             <span className="akPeriodNums">
@@ -385,9 +336,6 @@ const USER_COLUMNS: ColumnsType<UserActivityRow> = [
     {title: '角色', dataIndex: 'role', width: 110},
     {title: '会话数', dataIndex: 'conversations', width: 100, align: 'right', render: (v: number) => fmt(num(v))},
     {title: '消息数', dataIndex: 'messages', width: 100, align: 'right', render: (v: number) => fmt(num(v))},
-    // 讨论数（20261003）：**与文章报表那个「讨论数」口径不同**（这里含待审/驳回，
-    // 只排除软删——本页问的是"这个账号做过什么"）。列名边上不加注解，口径写在
-    // 类型文件与后端模块头注里，页面上一条 Tag 说不清两个口径。
     {title: '讨论数', dataIndex: 'comments', width: 100, align: 'right', render: (v: number) => fmt(num(v))},
     {
         title: '最近活动', dataIndex: 'lastActiveAt', width: 170,
@@ -441,8 +389,6 @@ const UserActivity = () => {
         {title: '总会话数', value: data?.totalConversations ?? 0, bg: '#e9dcf5', bgDark: 'rgba(190, 150, 240, 0.16)'},
         {title: '总消息数', value: data?.totalMessages ?? 0, bg: '#e6e0c4', bgDark: 'rgba(226, 214, 160, 0.16)'},
         {title: '总执行数', value: data?.totalExecutions ?? 0, bg: '#d5ecf0', bgDark: 'rgba(130, 210, 225, 0.16)'},
-        // 第七张卡（20261003）。口径见 `UserActivityRow.comments`：全站讨论量，
-        // 含待审/驳回（本页问的是"账号做过什么"，风控视角下这才是要看的数）。
         {title: '总讨论数', value: data?.totalComments ?? 0, bg: '#d9ecec', bgDark: 'rgba(140, 215, 215, 0.16)'},
     ]
 
@@ -451,7 +397,6 @@ const UserActivity = () => {
             <div className="akHead">
                 <div className="akHeadMeta">
                     {data?.generatedAt && <span>统计时间：{data.generatedAt}</span>}
-                    {/* "活跃"的口径不写出来就会被读成"登录过"——见 stats.rs 模块头注 */}
                     <Tag color="blue">活跃 = 最近有会话或消息</Tag>
                     <Button size="small" onClick={load} loading={loading}>刷新</Button>
                 </div>

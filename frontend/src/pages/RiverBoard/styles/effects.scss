@@ -1,0 +1,236 @@
+.rz-root {
+.rz-veg {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    pointer-events: none;
+    background:
+      radial-gradient(ellipse at 50% 42%, transparent 56%, rgba(3, 5, 12, 0.42) 100%),
+      linear-gradient(to bottom, rgba(3, 5, 12, 0.55) 0%, transparent 13%, transparent 76%, rgba(2, 3, 8, 0.62) 100%);
+  }
+
+  /* ---------------- 居中弹窗（细读心愿）：与河灯气泡完全同款，仅在底部箭头上方加关闭按钮 ---------------- */
+  .rz-modal {
+    position: absolute;
+    inset: 0;
+    z-index: 8;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(2, 3, 10, 0.44);
+    animation: rz-fade 0.25s ease;
+
+    .rz-modal-box {
+      position: relative;
+      /* 宽度随内容自适应：短文本贴合文本宽度，长文本封顶 440px 保持可读行距 */
+      width: max-content;
+      min-width: 240px;
+      max-width: min(84vw, 440px);
+      background: rgba(14, 12, 26, 0.74);
+      border: 1px solid rgba(255, 205, 140, 0.3);
+      border-radius: 13px;
+      box-shadow:
+        0 14px 40px rgba(0, 0, 0, 0.55),
+        inset 0 0 22px rgba(255, 180, 100, 0.07);
+      backdrop-filter: blur(7px) saturate(1.25);
+      -webkit-backdrop-filter: blur(7px) saturate(1.25);
+      animation: rz-modal-in 0.3s cubic-bezier(0.2, 0.7, 0.3, 1.05);
+
+      /* 滚动区与气泡同款：只把高度交给内容（最长留 52vh 可读）；左右等距 34px；
+         关闭钮跟随内容流，底部留少许呼吸即可 */
+      .rz-scroll {
+        height: auto;
+        max-height: 52vh;
+        overflow-y: auto;
+        padding: 16px 34px 6px 34px;
+      }
+
+      .rz-msg {
+        font-size: 16px;
+        line-height: 1.95;
+        letter-spacing: 0.14em;
+        color: #f2e2c2;
+        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+        padding: 0 2px 16px 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      .rz-who {
+        font-size: 12px;
+        line-height: 1.6;
+        letter-spacing: 0.12em;
+        color: rgba(242, 226, 194, 0.55);
+        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+        padding: 0 2px 16px 0;
+        white-space: nowrap;
+      }
+
+      .rz-seal {
+        position: absolute;
+        top: 8px;
+        right: 9px;
+        font-size: 11px;
+        line-height: 1.7;
+        padding: 0 5px;
+        color: #ffe8c8;
+        background: #a33f30;
+        border-radius: 3px;
+        letter-spacing: 0.22em;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+        font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "SimSun", serif;
+      }
+
+      /* 关闭钮：内容流末尾居中（滚动到底才见，不遮挡文本）；无任何箭头元素 */
+      .rz-modal-close {
+        display: block;
+        margin: 16px auto 4px;
+        padding: 4px 18px;
+        background: rgba(255, 205, 140, 0.08);
+        border: 1px solid rgba(255, 205, 140, 0.24);
+        border-radius: 999px;
+        cursor: pointer;
+        color: rgba(242, 226, 194, 0.78);
+        font-family: inherit;
+
+        span {
+          font-size: 12px;
+          letter-spacing: 0.34em;
+          text-indent: 0.34em;
+        }
+
+        &:hover,
+        &:focus-visible {
+          color: #ffe9c4;
+          background: rgba(255, 205, 140, 0.14);
+          outline: none;
+        }
+      }
+    }
+  }
+
+  /* 载入幕 */
+  .rz-boot {
+    position: absolute;
+    inset: 0;
+    z-index: 9;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(to bottom, #02040c 0%, #081029 100%);
+    transition: opacity 1.4s ease;
+
+    .rz-boot-glow {
+      width: 54px;
+      height: 54px;
+      border-radius: 50%;
+      background: radial-gradient(circle, #ffe9b8 0%, rgba(255, 201, 121, 0.55) 40%, rgba(255, 180, 90, 0) 72%);
+      box-shadow: 0 0 46px 12px rgba(255, 196, 118, 0.35);
+      animation: rz-boot-pulse 1.6s ease-in-out infinite;
+    }
+
+    p {
+      margin-top: 26px;
+      font-size: 13px;
+      letter-spacing: 0.5em;
+
+      color: rgba(240, 226, 200, 0.62);
+      text-indent: 0.5em;
+    }
+  }
+
+  .rz-boot-off {
+    opacity: 0;
+    pointer-events: none;
+
+
+    .rz-boot-glow {
+      animation-play-state: paused;
+    }
+  }
+}
+
+/* ---------------- 动画 ---------------- */
+
+@keyframes rz-halo-breathe {
+  0%, 100% { transform: scale(1); opacity: 0.85; }
+  50% { transform: scale(1.09); opacity: 1; }
+}
+
+@keyframes rz-pool-pulse {
+  0%, 100% { opacity: 0.75; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.12); }
+}
+
+@keyframes rz-ring-out {
+  0% { transform: scale(0.3, 0.3) translateY(2px); opacity: 0.55; }
+  100% { transform: scale(1.55, 0.55) translateY(-4px); opacity: 0; }
+}
+
+@keyframes rz-flame-flick {
+  0%, 100% { transform: scale(1, 1) rotate(-1deg); opacity: 0.92; }
+  20% { transform: scale(0.94, 0.82) rotate(1.4deg); opacity: 0.78; }
+  40% { transform: scale(1.04, 0.9) rotate(-1.8deg); opacity: 0.95; }
+  60% { transform: scale(0.97, 1.04) rotate(0.6deg); opacity: 0.74; }
+  80% { transform: scale(1.02, 0.87) rotate(-0.4deg); opacity: 0.9; }
+}
+
+@keyframes rz-flame-sway {
+  0%, 100% { margin-left: -26px; }
+  50% { margin-left: -22px; }
+}
+
+@keyframes rz-hint-out {
+  to { opacity: 0; }
+}
+
+@keyframes rz-fade {
+  from { opacity: 0; }
+}
+
+@keyframes rz-modal-in {
+  from { opacity: 0; transform: scale(0.95) translateY(10px); }
+}
+
+@keyframes rz-boot-pulse {
+  0%, 100% { transform: scale(1); opacity: 0.7; }
+  50% { transform: scale(1.22); opacity: 1; }
+}
+
+/* ---------------- 减弱动效 ---------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .rz-root .rz-lantern .rz-halo,
+  .rz-root .rz-lantern .rz-pool .rz-pool-light,
+  .rz-root .rz-lantern .rz-sprite .rz-flame,
+  .rz-root .rz-boot-glow {
+    animation: none;
+  }
+  .rz-root .rz-lantern .rz-pool .rz-ring {
+    animation-duration: 9s;
+  }
+  .rz-root .rz-hint {
+    animation: none;
+  }
+  .rz-root .rz-modal,
+  .rz-root .rz-modal-box {
+    animation: none;
+  }
+}
+/* 弹窗宽度最终覆盖：.rz-modal .rz-modal-box（位置靠后）会以同特异性压过
+   上方各弹窗自身的 width/max-width，须置于文件尾重新声明才生效 */
+.rz-root .rz-wish-modal .rz-wish-box {
+  width: min(92vw, 560px);
+  max-width: min(92vw, 560px);
+}
+
+.rz-root .rz-album-modal .rz-album-box {
+  width: min(92vw, 640px);
+  max-width: min(92vw, 640px);
+}
+
+.rz-root .rz-notice-modal .rz-notice-box {
+  width: min(90vw, 480px);
+  max-width: min(90vw, 480px);
+}

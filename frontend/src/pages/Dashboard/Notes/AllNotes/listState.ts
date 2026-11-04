@@ -23,11 +23,6 @@
 import { parseNoteTags } from '../../../../utils/noteTags';
 import type { NoteType } from '../../../../interface/NoteType';
 
-/**
- * 页签编号。'4' = **公开文章**（20261006 用户第 5 条新加），它在页签条上排在**最前面**，
- * 但编号刻意取 4 —— 编号是 URL 里的既有契约（`?tab=2/3` 的深链、默认 `'1'`、
- * 「默认值不落 URL」的 `buildListQuery` 全都按 '1' 写死），拿它当数组下标用会把这些一起搅动。
- */
 export type ListTab = '1' | '2' | '3' | '4';
 
 export interface ListQuery {
@@ -35,7 +30,6 @@ export interface ListQuery {
     tab: ListTab;
     /** 页码，从 1 开始 */
     page: number;
-    /** 每页条数（20260924 起可调，见 `PAGE_SIZE_OPTIONS`） */
     size: number;
     /** 关键词（命中标题/正文/标签名），对应后端 `keyword` */
     kw: string;
@@ -52,12 +46,6 @@ export interface ListQuery {
     tags: number[];
 }
 
-/**
- * 默认每页条数（20260924：8 → 10）。
- * 原来是 8，而列表区被 `scroll={{y:'56vh'}}` 固定在 504px 高（900 高的窗口）——
- * 一行 73px，**第 8 行恰好被藏进滚动区**，屏幕下方却空着 150px。现在列表区铺满卡片、
- * 分页条钉在卡片底部，条数改由用户自己选（见 `PAGE_SIZE_OPTIONS`）。
- */
 export const LIST_PAGE_SIZE = 10;
 
 /** 每页条数的可选项（URL 里 `size=` 只认这几个值，别的一律回落到默认） */
@@ -170,7 +158,6 @@ export function pageSlice<T>(rows: T[], page: number, pageSize: number = LIST_PA
     return rows.slice(start, start + pageSize);
 }
 
-/** 后端返回的原始行 → 组件内部行（收敛掉此前散落 5 份的 map + split 复制粘贴） */
 export function normalizeNoteRows(raw: unknown): NoteType[] {
     if (!Array.isArray(raw)) return [];
     return raw.map((item: any) => ({
@@ -238,9 +225,6 @@ export function listRequest(query: ListQuery): ListRequest {
     if (query.to) body.end_date = query.to;
     if (query.tab === '2') body.status = 'private';
     if (query.tab === '3') body.status = 'draft';
-    // 「公开文章」页签（20261006）：口径由**后端**给（`is_public=true` 且 `status != 'draft'`
-    // 且非影子行），前端不自己算 —— 站上真正能读到的那套判据有 6 处同源，前端再抄一份
-    // 就会各自漂（这就是被删掉的 `utils/noteVisibility.ts` 干过的事）。
     if (query.tab === '4') body.only_public = true;
 
     return { mode: 'search', body };

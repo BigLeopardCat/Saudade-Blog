@@ -13,7 +13,6 @@
       position: absolute
       width: 98%
       height: 3px
-      // 20261001 批 E：深灰 #3a3a48 → 纸线
       background-color: var(--washi-line, rgba(198, 152, 192, 0.42))
       top: 90px
       z-index: 3
@@ -30,25 +29,12 @@
     .ant-card-body
       padding: 10px
 
-  // 发布者展示名（20261005）：说说卡上"谁发的"。与前台那张卡同一语义，
-  // 只是这里靠右、更淡。颜色走后台的和纸令牌（`--washi-ink-3` 浅/深各一档），
-  // 不写死色值 —— 后台有夜间档，写死的字在深色底下会消失。
   .talkCard__who
     margin-top: 6px
     font-size: 12px
     font-weight: 400
     text-align: right
     color: var(--washi-ink-3, #a08ba8)
-/* ⚠️ **窄屏（20261006 用户第 6 条）**：卡片里写死 `width:300`、容器写死 `height:100vh`
-   + 内滚动，两样在手机上都成立不了 —— 300px 的卡放在 ~330px 的正文里左右各贴边，
-   而 100vh 的滚动容器套在"整页滚动"模型里会变成一个**内嵌的**滚动区（滚到一半
-   手指一停就卡在它里面）。窄屏全部放开：卡片吃满一列、容器回归内容高。
-   两条都带 `!important`：宽度是**内联**的（内联压过一切普通声明，只有 `!important` 能翻盘）。
-   ⚠️ 单列写的是 **`1fr`**，不是 `repeat(auto-fit, minmax(0, 1fr))` —— 后者看着像"自动单列"，
-   实测（无头 Chromium，390 视口，同一批 5 张卡）**它按卡片数量把一行铺满**：
-   `minmax(0,1fr)` 的最小值是 0 ⇒ auto-fit 数得出"能塞 5 条"，轨道各 55px、卡片只剩 **39px 宽**
-   （`width:100%` 也救不了：轨道的 1fr 只有 55，卡片的 `min-width:auto` 又托着 min-content
-   不让它溢出轨道）。`1fr` = 一行，实测卡片 324px = 整幅正文宽。 */
 @media only screen and (max-width: 1024px)
   .Comments_Body
     height: auto

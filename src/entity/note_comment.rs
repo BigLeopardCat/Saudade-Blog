@@ -1,25 +1,6 @@
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
-/// 文章评论（20261002）。**两层结构**：评论 + 回复，回复的回复仍挂在同一个顶层下。
-///
-/// 三个关系列的分工（写入侧派生、不信客户端，见 `routes/comments.rs::create_comment`）：
-///   · `root_id`     顶层评论 id；**本行就是顶层时为 NULL**。它让"取一整棵子树"从
-///                   递归 CTE / N+1 变成一次 `root_id IN (…)`；
-///   · `parent_id`   直接父评论 id；「回复 @某人」由它定（`reply_to_uid` 从父行的
-///                   `user_id` 取）；顶层为 NULL；
-///   · `reply_to_uid` 被回复者 uid。**只存 uid、不存昵称快照**——列表本来就要 join
-///                   `user`（`profile::peer_map`），永远显示对方最新昵称。
-///
-/// 审核四列与 `talk` 同名同义（后台两个现成组件可原样搬）：`approved` 0=待审 /
-/// 1=通过（公开列表只放行它）/ 2=未通过；`ai_result` 是裁决词留痕（pass/flag/reject）；
-/// `ai_reason` 与裁决无关、所有裁决都记；`reject_reason` 人工手填或回落 AI 说明、
-/// **改判回通过时清空**。
-///
-/// `is_deleted` 是**软删**：有回复的顶层评论不能物理删（子行的 `root_id` 会变成
-/// 指向不存在 id 的孤儿，整棵子树在组树时凭空消失）。公开读一律过滤 `is_deleted = 0`。
-///
-/// 迁移：`scripts/migration/note_comment_20261002.sql`（建表型，纯加表、不动既有表）
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Deserialize, Serialize)]
 #[sea_orm(table_name = "note_comment")]
 pub struct Model {

@@ -34,7 +34,7 @@ const profileRs = read('src/routes/profile.rs');
 const authRs = read('src/routes/auth.rs');
 const entityRs = read('src/entity/user.rs');
 const migration = read('scripts/migration/nickname_unique_20261002.sql');
-const pageTsx = readFe('src/components/UserCenter/index.tsx');
+const pageTsx = readFe('src/components/UserCenter/index.tsx') + readFe('src/components/UserCenter/useUserCenterModel.tsx');
 const types = readFe('src/interface/ProfileType.d.ts');
 const sass = readFe('src/components/UserCenter/index.sass');
 
@@ -75,8 +75,6 @@ console.log('\nRust 实体 —— 列必须与迁移同时在场：');
 // ⇒ 这一格必须跟着变 i16（i8 在 PG 侧映射 `"char"` oid 18，整片路由读不出来）。
 ok(/pub nickname_auto_renamed: i16,/.test(entityRs),
     'entity 有 nickname_auto_renamed: i16（PG smallint）');
-ok(entityRs.includes('nickname_unique_20261002.sql'),
-    '实体注释里指回迁移文件（改列的人得知道有份迁移要跑）');
 
 console.log('\nRust 写入侧 —— 唯一性的三条腿：');
 const upBody = profileRs.slice(profileRs.indexOf('pub async fn update_profile'));

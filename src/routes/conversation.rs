@@ -14,14 +14,11 @@ use std::sync::Arc;
 use std::time::Duration;
 use crate::routes::AppState;
 use crate::auth_jwt;
-// LIKE 转义（% _ \ → 字面量）：20261006 起唯一实现在 search_core（聚合搜索也用它）。
 use crate::search_core::like_escape;
 use crate::entity::{
     chat_history, conversation,
 };
 
-/// 会话 API（20260903 会话化）：新建/列表/删除 + 会话解析（chat 系端点共用）。
-/// 全部照 chat 系惯例：public_routes 组 + handler 内 auth_jwt::auth_uid 手写鉴权。
 
 /// DB 时间戳（+08:00 本地钟面，NaiveDateTime）→ 毫秒时间戳（与 HistoryItem.time 同约定）
 fn naive_ms(dt: chrono::NaiveDateTime) -> i64 {
@@ -83,21 +80,11 @@ pub(crate) async fn resolve_conversation_id(
 /// GET /api/chat/conversations 查询参数
 #[derive(Deserialize)]
 pub struct ListQuery {
-    /// 20260903e 会话搜索：非空时列表收窄为"标题 LIKE（库 collation 不区分大小写）
-    /// 或 会话内有消息内容命中"的会话，响应行带 hit_id = 点行后应定位的消息：
-    /// 内容命中 → 该会话最新命中消息 id（消息 id 全局自增，desc 首见即最新）；
-    /// 仅标题命中 → 会话首条消息 id（标题 = 首条用户消息截断，定位到标题出处）。
-    /// null = 未搜索。
     #[serde(default)]
     q: Option<String>,
 }
 
-// `like_escape` 已搬到 `crate::search_core`（20261006）：这里原来有一份私有实现，
-// `routes/upload.rs` 还有一份，聚合搜索要用第三处 ⇒ 三处一份（语义逐字不变，见模块头注）。
-// 名字走文件顶部那条 `use crate::search_core::like_escape;`（`mod tests` 靠 `use super::*` 取到）。
 
-/// GET /api/chat/conversations：当前用户会话列表（最后活动倒序）。
-/// q 参数（20260903e）：标题 LIKE OR 会话内消息内容命中过滤，并带 hit_id 供前端定位。
 pub async fn list_conversations(
     State(state): State<Arc<AppState>>,
     Query(query): Query<ListQuery>,
@@ -105,9 +92,6 @@ pub async fn list_conversations(
 ) -> Response {
     let uid = match auth_jwt::auth_uid(&state.db, &headers).await {
         Ok(uid) => uid,
-        // 401 是这里**本就正确**的状态码（前端按 unauthorized 走登录态恢复），
-        // 20260926 起多带一句 message：冻结与"令牌被收回"要能说清是哪种，
-        // 否则当事人重登一次仍然进不来，却只看到一句"未登录"。
         Err(e) => {
             return (
                 StatusCode::UNAUTHORIZED,
@@ -117,34 +101,8 @@ pub async fn list_conversations(
         }
     };
     let q = query.q.as_deref().map(str::trim).filter(|s| !s.is_empty());
-    // 内容命中（搜索时）：用户全历史消息内容 LIKE 扫描（带 % _ \ 转义），
-    // hit_by_conv 既作列表过滤条件，也随行回传作定位锚点（每会话取**最大** id 那条）。
-    //
-    // 20261014：折叠从 Rust 搬进 SQL。从前是 `…order_by_desc(Id).all(&db)` 把**每一条**
-    // 命中消息的**整行**拉进内存、再逐行 `entry().or_insert()` 折成"每会话一条"——
-    // 除了 id / conversation_id 之外那些列没人看，而命中行数随用户历史线性涨
-    // （同文件 `search_chat_messages` 是同一条查询 + `limit(100)`，可见这里当初漏了）。
-    // 现在 `GROUP BY conversation_id` + `MAX(id)`：**结果与从前逐字等价**
-    //（`id` 全局自增 ⇒ 会话内也单调，故"降序首见"就是这个 MAX），传回的行数却从
-    // "命中消息数"降到"命中会话数"。过滤/聚合留在 SQL 里，别拉进 Rust 再筛（行业常规做法，
-    // 仓里 `note_stats.rs:577` 那批计数查询是同一个写法）。
-    // ⚠️ 这里刻意**不加** `limit`：hit_by_conv 是下面那张列表的**过滤条件**，砍掉几条
-    // 就会让"明明聊过这个词"的会话从搜索结果里静默消失——比多查几行坏得多。
-    // 上界本来就由用户自己的会话数兜着（紧跟其后的列表查询另有 `limit(200)`）。
     let mut hit_by_conv: HashMap<i32, i32> = HashMap::new();
     if let Some(q) = q {
-        // ⚠️ **`ILIKE` 不是 `LIKE`**（20261019）。PG 的 `LIKE` **区分大小写**，而切流之前
-        // MySQL 的排序规则是 `utf8mb4_0900_ai_ci`（大小写不敏感）⇒ **会话搜索在切流那天
-        // 静默变敏感了**。产线实测：`chat_history` 里 `LIKE '%esp32%'` 命中 **0** 行、
-        // `ILIKE` 命中 **34** 行 —— 用户搜一个自己明明打过的词，结果是"没聊过"。
-        //
-        // 这一处与 `notes::search_notes` 那类**不同**：那边 SQL 只是**预筛**，真判定在内存里
-        // （`to_lowercase().contains`），所以大小写口径必须与内存一致；这里**没有第二层**
-        // ⇒ `ILIKE` 就是这条搜索的全部语义。改它等于改搜索行为，而目标是**回到切流前
-        // 用户看到的样子**（本仓在 `pg-business-schema` 里记的"排序规则对不上"那一格）。
-        //
-        // 本文件共四处：两处正文（这里 + `search_chat_messages`）、两处会话标题
-        // （`conversation.title` 是首条用户消息派生的，同一口径）。四处同源。
         let pat = format!("%{}%", like_escape(q));
         let rows = chat_history::Entity::find()
             .select_only()
@@ -156,19 +114,6 @@ pub async fn list_conversations(
             .filter(chat_history::Column::UserId.eq(uid))
             .filter(chat_history::Column::Content.into_expr().ilike(&pat))
             .group_by(chat_history::Column::ConversationId)
-            // 聚合列必须按 **i64** 收（`id` 本身是 i32），照 `id` 的类型去解会解不出来
-            // ——而 `unwrap_or_default()` 会把"解不出来"咽成**空命中集**
-            // （症状 = 内容搜索静默只剩标题命中，且不报任何错）。
-            //
-            // ⚠️ **20261018 切库到 PG 时补的那一手 `CAST(... AS BIGINT)`**：从前的理由是
-            // "MySQL 的 MAX/COUNT 一律以 64 位返回"，那句**在 PG 上不成立** ——
-            // `MAX(int4)` 在 PG 里就是 `int4`，按 `Option<i64>` 解同样失败。
-            // `SUM` 是反过来的（PG 的 `SUM(integer)` 返回 `bigint`、MySQL 返回 DECIMAL，
-            // 见 `note_stats.rs::sum_views`）；**只有 `COUNT(*)` 两边都是 64 位**，
-            // 所以 `stats.rs` 那三处不用动。
-            // 判据在 `tests/pg_integration.rs::conversation_list_pins_first_and_anchors_hits`
-            // ——它抓的正是这条：内容命中那条会话会整个从搜索结果里消失。
-            // `Option` 是给"整组 NULL"留的余量（GROUP BY 的组非空，正常取不到 None）。
             .into_tuple::<(i32, Option<i64>)>()
             .all(&state.db)
             .await
@@ -179,7 +124,6 @@ pub async fn list_conversations(
             }
         }
     }
-    // 20260903b：置顶会话 pinned 优先（组内仍按最后活动倒序）
     let mut finder = conversation::Entity::find()
         .filter(conversation::Column::UserId.eq(uid))
         .order_by_desc(conversation::Column::Pinned)
@@ -231,8 +175,6 @@ pub async fn list_conversations(
                 "created_at": naive_ms(c.created_at),
                 "updated_at": naive_ms(c.updated_at),
                 "pinned": c.pinned,
-                // 20260903e 点行定位锚：内容命中 = 最新命中消息；仅标题命中 =
-                // 会话首条消息（标题出处）；未搜索 = null
                 "hit_id": hit_by_conv.get(&c.id).copied(),
             })
         })
@@ -248,9 +190,6 @@ pub async fn create_conversation(
 ) -> Response {
     let uid = match auth_jwt::auth_uid(&state.db, &headers).await {
         Ok(uid) => uid,
-        // 401 是这里**本就正确**的状态码（前端按 unauthorized 走登录态恢复），
-        // 20260926 起多带一句 message：冻结与"令牌被收回"要能说清是哪种，
-        // 否则当事人重登一次仍然进不来，却只看到一句"未登录"。
         Err(e) => {
             return (
                 StatusCode::UNAUTHORIZED,
@@ -306,19 +245,6 @@ pub(crate) async fn purge_conversation_data<C: sea_orm::ConnectionTrait>(
     Ok(ids)
 }
 
-/// 把「丢弃那一轮」告诉 agent（`POST /checkpoint/{id}/drop_turn`，**best-effort**）。
-///
-/// **为什么必须告诉它**：20261018 起 agent 的上下文**由图自持**（`server._graph_holds_context()`
-/// 把历史注入关了）⇒ `chat_history` 不再是上下文来源。删掉那一轮之后不说一声，agent 下一轮
-/// **照样记得**——主人点了"停止生成"、明确说不想要这条进记忆，而记忆里还有。
-///
-/// `text` = 刚删掉那行的 content（**必给**）：agent 侧拿它确认"state 里最后那条 user 是不是
-/// 这一轮"，对不上就不动手——摘错的代价不可逆（删掉主人还想留着的话）。
-///
-/// `uid` = 发起人（写进断言与 body）。**带身份断言**的理由与 `drop_checkpoint_threads`
-/// 同一条（SAU-006）：agent 侧那两处现在都要求 `X-Agent-Assertion`。
-///
-/// 失败/没生效**只 warn**（与 `drop_checkpoint_threads` 同口径：不挡业务删除，但必须留痕）。
 pub(crate) async fn drop_checkpoint_turn(conversation_id: i32, text: &str, uid: i32) {
     let url = format!("{}/checkpoint/{conversation_id}/drop_turn",
                       crate::routes::graph::agent_base_url());
@@ -357,9 +283,6 @@ pub async fn delete_conversation(
 ) -> Response {
     let uid = match auth_jwt::auth_uid(&state.db, &headers).await {
         Ok(uid) => uid,
-        // 401 是这里**本就正确**的状态码（前端按 unauthorized 走登录态恢复），
-        // 20260926 起多带一句 message：冻结与"令牌被收回"要能说清是哪种，
-        // 否则当事人重登一次仍然进不来，却只看到一句"未登录"。
         Err(e) => {
             return (
                 StatusCode::UNAUTHORIZED,
@@ -435,9 +358,6 @@ pub async fn update_conversation(
 ) -> Response {
     let uid = match auth_jwt::auth_uid(&state.db, &headers).await {
         Ok(uid) => uid,
-        // 401 是这里**本就正确**的状态码（前端按 unauthorized 走登录态恢复），
-        // 20260926 起多带一句 message：冻结与"令牌被收回"要能说清是哪种，
-        // 否则当事人重登一次仍然进不来，却只看到一句"未登录"。
         Err(e) => {
             return (
                 StatusCode::UNAUTHORIZED,
@@ -499,18 +419,10 @@ pub async fn update_conversation(
 /// GET /api/chat/search 查询参数
 #[derive(Deserialize)]
 pub struct SearchQuery {
-    /// 20260903f 消息级检索词：trim 后非空必填，空 → 400 q_required。
     #[serde(default)]
     q: Option<String>,
 }
 
-/// GET /api/chat/search?q=：会话历史**消息级**内容检索（20260903f 用户拍板形态——
-/// 检索结果列表 = 命中的对话轮次（消息行）而非会话行；点行 → 切会话并定位到该
-/// 消息）。只按 content LIKE（标题 = 首条用户消息截断，搜标题词自然命中首条轮次，
-/// 无需单独标题匹配）；取候选池 = id desc limit 100，再**按会话活动时间倒序**重排
-/// （20260919 用户拍板：与会话历史列表同序，行上时间 = 会话最后活动时间）；每行带
-/// 会话标题 + conv_updated_at + 命中轮次自身时间。like_escape 同 list_conversations
-/// （防 % _ \ 通配注入）。
 pub async fn search_chat_messages(
     State(state): State<Arc<AppState>>,
     Query(query): Query<SearchQuery>,
@@ -518,9 +430,6 @@ pub async fn search_chat_messages(
 ) -> Response {
     let uid = match auth_jwt::auth_uid(&state.db, &headers).await {
         Ok(uid) => uid,
-        // 401 是这里**本就正确**的状态码（前端按 unauthorized 走登录态恢复），
-        // 20260926 起多带一句 message：冻结与"令牌被收回"要能说清是哪种，
-        // 否则当事人重登一次仍然进不来，却只看到一句"未登录"。
         Err(e) => {
             return (
                 StatusCode::UNAUTHORIZED,
@@ -563,10 +472,6 @@ pub async fn search_chat_messages(
             }
         }
     }
-    // 20260919（用户拍板）：与会话历史列表**同序**——会话活动时间倒序，同会话内命中
-    // 消息 id 倒序。此前按消息 id 排 = 消息插入序：候选池里最旧会话的消息 id 也远大于
-    // 最新会话的消息 id，于是一条 9 天前说的命中照样顶在列表最前，把"真正刚聊过的
-    // 会话"压到下面。会话缺失（理论不可能：删会话在事务内级联删消息）记 0 排最后。
     let act_of = |id: i32| meta_by_conv.get(&id).map(|m| m.1).unwrap_or(0);
     rows.sort_by(|a, b| {
         act_of(b.conversation_id)
@@ -602,9 +507,6 @@ pub async fn search_chat_messages(
 mod tests {
     use super::*;
 
-    // `like_escape` 的五条测试随实现一起搬到了 `crate::search_core::like_escape_tests`
-    // （20261006）。这里不再留一份：同一份规则两份测试，改一份另一份开始假绿。
-    // 会话搜索自己的那半（真库真的按字面匹配）仍在 `tests/pg_integration.rs`。
 
     // ── DB 时间戳 → 毫秒 ───────────────────────────────────────────────────
     #[test]

@@ -1,28 +1,3 @@
-// 前端错误上报端点（20260830，监控补齐 B）：
-// POST /api/monitor/log —— 浏览器侧 JS 异常 / 未捕获 Promise / API 失败（fetch 包装）
-// 经 keepalive fetch 上报，落盘 logs/frontend/monitor.log（20260830f 日志分组：前端组），
-// 纳入统一日志体系（logrotate 同规则轮转）。
-//
-// 设计取舍：
-//   - 匿名可写：访客错误上报最有价值，不要求登录（带 token 时解析出 uid 标记来源）；
-//   - 防刷：body 上限 8KB（超限 413）+ logrotate 兜底磁盘；**20261015 起补 per-IP 计数闸**
-//     （`AppState::report_limiter`：默认 120 条/60 秒，超限 429 并锁 300 秒，可用
-//     `MONITOR_REPORT_*` 环境变量调）。此前那句「不做 per-IP 限流」的理由是"60 秒去重
-//     已经在合并同 key 的行"——去重合并的是**显示**，写入照旧一次不落，所以它挡不住
-//     "把上报端点当免费磁盘写入放大器"（实测口径：单 IP 每秒几百条各自不同的 key）；
-//   - 落盘方式：每条开-写-关（低流量无碍），copytruncate 轮转安全（不持 fd）；
-//     手动拼行与 rust.log 视觉对齐（%Y-%m-%d %H:%M:%S%.3f + key=value）。
-//
-// 20261004 复核（前端日志「无效状态」那一轮）：
-//   - `type` 白名单补到与客户端实际清单一一对应（见 MONITOR_KINDS 头注）；
-//   - 载荷新增 `ua`（服务端从请求头取，客户端伪造不了）与 `webgl` 标记——今天那批
-//     `Texture loading error` 究竟是真实访客还是无 GPU 的爬虫，原来从落盘行里分不出来；
-//   - 服务端按 `type|msg 前 80 字|url` 做 60 秒窗口计数（`dup=N`），跨访客生效：
-//     同一个 bug 被一百个访客各报一次，落盘仍是一行 + 计数，而不是一百行把真线索冲掉。
-//
-// 落盘行的字段顺序**是对账侧的契约**（`saudade-blog-agent/eval/trace_reconcile.py` 按
-// 位置解析 `type=`/`uid=`）。新增字段一律**追加在行尾**，旧解析器因此不受影响。
-
 use axum::{
     Json,
     body::Body,
@@ -59,18 +34,6 @@ pub struct ReportPayload {
     pub webgl: Option<serde_json::Value>,
 }
 
-/// 换行与控制字符清洗：错误消息/堆栈可能含 \n，一行一记录保证 grep 语义。
-///
-/// 20261019（安全审计 SAU-013，CWE-117）：此前只换 `\n`/`\r`，**ANSI 转义序列原样落盘**
-/// （`\x1b[2J` 清屏、`\x1b[31m` 红字）。这个端点匿名可写，而消费侧是人拿 `cat`/`less`
-/// 看日志 ⇒ 任何访客都能让管理员终端上冒出一行伪造的红色 ERROR、或者把屏幕清掉。
-/// 所以凡 `char::is_control()`（ESC、DEL、TAB 都在内）一律换成空格。
-///
-/// 顺带堵住同族的**零宽/双向控制字符**（U+202E 那类）：它们在终端里能重排已经打印出来
-/// 的文本，伪造出来的观感与真日志一模一样，而 `is_control()` 只管 Unicode `Cc`、够不着它们。
-///
-/// **换成一个空格、而不是删掉**：长度与"有没有内容"都不变 ⇒ 去重 key（按已清洗的字段拼）
-/// 与 `truncate` 的口径都不受影响；删字符会让同一条错误在两版清洗下算出两个 key。
 fn clean(s: &str) -> String {
     s.chars()
         .map(|c| if c.is_control() || is_invisible_format(c) { ' ' } else { c })
@@ -89,24 +52,6 @@ fn is_invisible_format(c: char) -> bool {
         | '\u{feff}')
 }
 
-/// 前端上报器实际会发的 type —— **这份清单是客户端清单的镜像，不是我们自己挑的子集**。
-///
-/// `type` 必须收敛成可枚举值（20260925 审计 A2）：这里原先把 `payload.kind` 原样拼进
-/// 落盘行，而它是**匿名可写**的字段 ⇒ 任何访客能整行伪造（自定时间戳/级别/`uid=`），
-/// 且伪造行会把真实那条记录的 uid/url/msg/stack 全冲到伪造行末尾（真线索被毁）。
-/// 白名单比清洗彻底：清洗只挡换行，白名单让 `type=` 变成可枚举字段——对账侧
-/// （`eval/trace_reconcile.py` 按 `type=` 分类）因此能把"未知 type"直接标成可疑。
-///
-/// ⚠️ 关键在于清单要**跟得上**：审计当时只登记了 `boot.js` 那五种，而客户端随后
-/// （20260924–20261003）又加了七种（`chat-stream.js` / `chat-engine.js` / `renderer.js`），
-/// 白名单没跟着涨 ⇒ 生产 `monitor.log` 里 `type=other` 占了 66%（193/292 行），
-/// 那些行**看不出是哪一类故障**。「可枚举」这个前提就是这么无声失效的：白名单把
-/// 未知值收敛成 other，于是"漏登记"看起来和一个真·未知类型一模一样。
-/// 防漂由 `frontend/tests/monitor-report.test.mjs` 钉住（扫客户端源码里的上报点
-/// 与这份数组逐字比对），改客户端 type 而没改这里会**当场变红**。
-///
-/// 顺序 = 客户端文件序，便于人工对照：
-/// `boot.js`（前六）→ `chat-stream.js` → `chat-engine.js` → `renderer.js` → SPA 侧。
 const MONITOR_KINDS: [&str; 14] = [
     // boot.js 全局捕获
     "js_error",
@@ -124,7 +69,6 @@ const MONITOR_KINDS: [&str; 14] = [
     // renderer.js（渲染层：工具执行失败、Live2D 加载失败）
     "widget_tool_fail",
     "live2d_load_fail",
-    // SPA（src/utils/report.ts / components/ErrorBoundary）—— 20261004 补
     "react_error",
     "resource_error",
 ];
@@ -203,12 +147,6 @@ fn dedupe_count(key: &str) -> u32 {
 }
 
 pub async fn report_log(State(state): State<Arc<AppState>>, req: Request<Body>) -> Response {
-    // 每 IP 计数闸（20261015）。放在**最前面**，在解析身份之前：`auth_uid` 要查一次库，
-    // 而被限流的洪水不该连库都碰到。取 IP 用登录那套出口（只信 nginx 覆写的头，
-    // 见 `auth::get_client_ip` 头注）——这里同样**不能**读 XFF 第一段，否则换个假 IP
-    // 就换了配额，闸门等于没有。
-    // 回 429 而不是静默吞：静默会让人以为是"上报成功但日志没写"（那是另一个更坏的故障）。
-    // 3xx/4xx 都不影响前端的 report.ts（它本来就不看结果）。
     let ip = super::auth::get_client_ip(req.headers());
     if let Err(msg) = state.report_limiter.hit(&ip, "report") {
         return (
@@ -218,10 +156,6 @@ pub async fn report_log(State(state): State<Arc<AppState>>, req: Request<Body>) 
             .into_response();
     }
 
-    // 带 token 时解析 uid，无则 guest（访客错误同样值得记录）——headers 须在 into_body 前读。
-    // 20260926：身份走同一个出口 ⇒ 冻结/令牌被收回的账号在这里也归 guest（它确实已经
-    // 不是"登录中的用户"了）。这条端点本就匿名可写，**uid 只是日志归属**、不授予任何能力；
-    // 之所以仍然走查库那一版，是不给"绕过身份出口"留第二个先例（见 auth_jwt::auth_uid 头注）。
     let uid = match auth_jwt::auth_uid(&state.db, req.headers()).await {
         Ok(u) => u.to_string(),
         Err(_) => "guest".to_string(),
@@ -257,10 +191,8 @@ pub async fn report_log(State(state): State<Arc<AppState>>, req: Request<Body>) 
     };
 
     let kind = normalize_kind(payload.kind.as_deref());
-    // 20260830f：全量——截断放宽（message 2000/stack 4000，用户要求全量追踪 agent 问题）
     let msg = truncate(&clean(payload.message.as_deref().unwrap_or("")), 2000);
     let stack = truncate(&clean(payload.stack.as_deref().unwrap_or("")), 4000);
-    // 20260925 审计：`url` 此前只清换行不截断 ⇒ 8KB body 内能占满整行（与 msg/stack 同一口径）
     let url = truncate(&clean(payload.url.as_deref().unwrap_or("")), 500);
 
     // 去重 key：只由**已清洗截断**的三个字段拼成（原始载荷进不来）⇒ 访客没法用超长
@@ -279,26 +211,12 @@ pub async fn report_log(State(state): State<Arc<AppState>>, req: Request<Body>) 
         "{ts} {level} [monitor] type={kind} uid={uid} url={url} msg={msg} stack={stack} ua={ua} webgl={webgl} dup={dup}\n"
     );
 
-    // 20260830f 日志分组：前端组 logs/frontend/（agent 组 logs/agent/、后端 rust.log 不动）
     let path = std::env::var("SAUDADE_MONITOR_LOG").unwrap_or_else(|_| "logs/frontend/monitor.log".to_string());
     append_line(&path, &line).await;
 
     Json(serde_json::json!({"ok": true})).into_response()
 }
 
-/// 把一行追加到监控日志（开-写-关，见文件头注的取舍）。
-///
-/// 20261019（安全审计 SAU-022）两处收紧：
-///   ① **改用 `tokio::fs`**：同仓 `upload.rs` / `profile.rs` / `graph.rs` 都走它，
-///      而这里原本是 `std::fs` 的阻塞调用跑在 tokio worker 上——低流量下看不出，
-///      但磁盘一慢它就占住一个 worker（本仓只有 4 个 worker 的教训见 agent 侧文档）。
-///   ② **写失败必须留痕**：此前是 `if let Ok(..) { let _ = .. }`，磁盘满/权限错时
-///      监控数据**静默消失**，`monitor.log` 上什么也看不见——"看着在跑、其实没跑"
-///      正是本仓最贵的那类失效。现在失败落一条 WARNING。
-///
-/// ⚠️ 回执仍然是 `{"ok": true}`：上报端（`frontend/src/utils/report.ts`）本来就不看结果，
-/// 而"这条错误没记上"不是**访客**该知道的事——留痕的对象是运维（日志），不是上报者。
-/// 别顺手把失败改成 5xx：那会让前端把一次成功的上报当成失败重试，反而放大磁盘写。
 async fn append_line(path: &str, line: &str) {
     use tokio::io::AsyncWriteExt;
 
@@ -352,14 +270,6 @@ fn warn_write_failed(path: &str, err: &std::io::Error) {
     }
 }
 
-/// 多字节安全的截断（20260925 审计 A1）。
-///
-/// `s.len()` 是**字节**长度、`s[..max]` 是**字节**索引切片——落在多字节字符中间时
-/// Rust 直接 panic（实测：`{"message": "汉"×700}` 恰好让 2000 落在第 667 个汉字中间）。
-/// 影响不是"进程崩了"（tokio 在任务边界接住 panic，服务 `NRestarts=0`），而是两件事：
-/// ① 匿名、公网可达的一发就能刷 `rust.log`（panic 回溯把整个载荷写进去）；
-/// ② **它在静默丢真实数据**——前端错误正文超 2000 字节的中文很常见（3 字节/字，667 字
-///    就够），这一条上报直接消失，而调用方收到的是断连、不是任何错误码。
 fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
         return s.to_string();
@@ -453,8 +363,6 @@ mod tests {
         assert_eq!(normalize_kind(Some("JS_ERROR")), "other");
     }
 
-    /// 白名单补全后，原来落成 `other` 的那七种必须能原样通过——这是 20261004 那次
-    /// 「前端日志 66% 是 other」的直接回归锁（少一个就少一类故障的可见性）。
     #[test]
     fn every_client_kind_passes_the_whitelist() {
         for k in [

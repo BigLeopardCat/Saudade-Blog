@@ -1,11 +1,3 @@
-/** 一条评论的票数 + **我**投的那一票（20261003 用户第 4 条）。
- *
- *  与后端 `routes/comment_votes.rs::CommentVoteDto` 逐字对应，而且**两处用的是同一个
- *  形状**：讨论区列表里每一行的这三个字段，与投票接口 `POST /api/public/comments/:id/vote`
- *  的回执是同一种东西——前端因此只写一份解析（见 CommentSection 的 `vote`）。
- *
- *  `myVote` 与 `up`/`down` 是**两件事**：前者是"我"，决定按钮亮不亮；后者是"所有人"，
- *  决定显示几。把高亮挂在 `up > 0` 上就等于"票多的那一侧看起来像我投的"。 */
 export interface CommentVote {
     up: number;
     down: number;
@@ -14,9 +6,6 @@ export interface CommentVote {
     myVote: -1 | 0 | 1;
 }
 
-/** 文章评论（20261002）。后端 DTO 见 `src/routes/comments.rs::CommentDto`，
- *  字段名一一对应（后端 serde camelCase）——**不要在这里另起一套名字**，
- *  名字对不上时 tsc 不会报错，只会在运行时读到 undefined。 */
 export interface CommentItem extends CommentVote {
     id: number;
     noteId: number;
@@ -50,10 +39,4 @@ export interface CreateCommentResult {
     approved: number;
 }
 
-/** 讨论区顶层排序（20261020）。**跨语言契约**：这两个字面量必须与后端
- *  `routes/comments.rs::CommentListQuery` 认的值逐字相同（`hot` / `new`）。
- *
- *  类型收窄只在前端成立：服务端拿到的是裸字符串，**未知值一律当 `hot`**
- *  （不 reject、不 400）——所以 `as CommentSort` 这种硬转在运行时不会被任何人拦下，
- *  改名字时两侧必须一起改，测试 `tests/comment-vote.test.mjs` 的 F2 条钉着这件事。 */
 export type CommentSort = "hot" | "new";

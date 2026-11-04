@@ -15,10 +15,6 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
 .phoneSide
   display: none
   @media only screen and (max-width: 1200px)
-    // 固定定位锚定视口左上角：不依赖 sticky（部分机型 html overflow-x:hidden 会破坏 sticky），
-    // 任何滚动位置打开抽屉都稳定显示在屏幕左侧
-    // 宽度与内容容器一致（250px）且关闭时平移 -260px 完全移出屏幕：
-    // 此前 290px 宽只移 251px，右侧露出 39px 透明命中区正好盖住汉堡按钮，导致菜单点不开
     position: fixed
     top: 0
     left: 0
@@ -128,9 +124,6 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
   transition: 0.6s
   // Transparent until hovered or scrolled; text colors follow the theme.
   background: transparent
-  // 「文章详情页的顶部栏」那一面深色横幅（20261001，用户第 3 条，详见下方字色那一段）。
-  // ⚠️ 这条**必须写在 `:hover` 之前**：两者同特异性（0,2,0），写在后面的话
-  // 悬停反而把深底从 0.66 冲淡成 0.30（字色没问题、底反而变浅了）。
   &.over-dark
     background: rgba(0, 0, 0, 0.30)
   // 悬停整条落深底（原逻辑）
@@ -155,23 +148,6 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
       background: var(--washi-grad, linear-gradient(100deg, #ff7fc0, #b06ee8))
       opacity: 0.5
       pointer-events: none
-  // 深底态（悬停 / 已滚动 / 文章详情页那面深色横幅）下的字一律换浅。这里必须是字面量
-  // 而不是 `--washi-ink`：后者在白天档是深墨紫，压在 0.66 的黑底上等于没有。
-  // 位置在 `.headBar li:hover` 之前是**故意的**——两者同特异性（0,3,1），
-  // 后写者赢，悬停某一项时该让 `li:hover` 的和纸胶带 chip 说了算。
-  //
-  // `.over-dark`（20261001，用户第 3 条「文章详情页的顶部栏字体看不清」）：首屏那面
-  // 横幅（`.readCover` + 顶缘 `rgba(0,0,0,.5)` 渐变）本身就是深底，实测背景中位
-  // 亮度 ≈ 58/255，白天档的深墨紫 `#4a3550` 压上去只有 **1.0:1** —— 字与底完全分不开。
-  // 它与"悬停/滚动"的区别是**不随交互变**：由路由（`/article/*`）判定的常驻态。
-  //
-  // 光换字色还不够：横幅是**视频**，最亮那 1% 的像素亮到 119/255，浅字压上去只剩 3.8:1。
-  // 所以上面那条黑纱要与这里的字色配对出现：0.30 把最亮的一档压到 5.4:1
-  // （实测口径见 `tests/read-topbar-contrast.test.py`，那条测试就是按这两个数写的判据）。
-  //
-  // 三态共用同一组字色：悬停 / 已滚动本来就是深底，`.over-dark` 只是把这件事
-  // 提前钉死在路由上。合成一条选择器列表是为了**不让后来者以为它们是三套值**
-  // （改一处必须同步另一处的写法在这里根本不存在）。
   &:hover, &.is-stuck, &.over-dark
     .webTitle, .headBar li
       color: #f3e8f6
@@ -337,12 +313,6 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
       &.BigAvatar
         transform: scale(2) translateY(15px) translateX(-10px)
 
-  // ⚠️ 下面这个 .loginCard 的缩进是**契约**，别在它上面插顶格（第 0 列）的规则块。
-  // Sass 靠缩进定嵌套、不看空行：20260922 把 `.avatarDotWrap` 顶格写在它前面，
-  // 编译器就把 `.loginCard` 从 `.homeRight` 子树里拽出来挂到 `.avatarDotWrap` 下了
-  // （选择器变成 `.avatarDotWrap .loginCard`，而 DOM 里两者是**兄弟**关系 ⇒ 一条都不命中）
-  // ⇒ 登录卡丢掉 `position: absolute` 掉回文档流，把头像和登录/退出按钮整片挤歪。
-  // 红点那套样式见本文件末尾的 `.avatarDotWrap`（放那儿同样是为了不挡住这里）。
   .loginCard
     position: absolute
     // Center against the avatar ring instead of transform-specific pixel offsets.
@@ -364,26 +334,6 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
 
     
 
-// ── 搜索弹窗的遮罩：压暗 + 模糊（20261013 用户报「检索框把背景暗度和迷糊度压得不够低，
-//    导致看不清检索框部分文本」）────────────────────────────────────────────────
-// 这个弹窗的**全部内容都没有自己的底**：`ConfigProvider` 把 `Modal.contentBg` 设成
-// transparent、`boxShadow` 设成 none，`.searchModal` 也是 transparent——遮罩就是结果的背景。
-// 而遮罩一直是 antd 的出厂值 `rgba(0, 0, 0, 0.45)`、`backdrop-filter: none`：底下那屏
-// （首页的卡片/封面/看板娘）从 55% 的透明里透上来，字压在**高频的图案**上、明暗一直在变
-// ⇒ 药丸里那行字读起来费劲。注意这**不是**平均对比度不够——实测黑字压在 0.7 的白药丸上
-// 有 9.9:1；是背景在忽明忽暗地动。消掉高频只有一条路：模糊。
-//
-// 下面 `.searchModalInput` 的注释里"压在模态遮罩的模糊图上"那句一直写着，但模糊**从来没有过**
-// ——20261001 全站摘 `backdrop-filter` 时（见 file 顶上顶栏那段"全站禁令"）漏掉了这一处，
-// 而这段内容正是照"有模糊"设计的。这里把它补回来。
-//
-// ⚠️ 与顶栏那条全站禁令不冲突：禁的是**常驻**的大面积模糊（首屏顶栏，那一屏还住着看板娘，
-//    见 memory「后台 GPU 高于首页」）。这一块跟着弹窗一起挂/卸，只在访客自己按开搜索时
-//    存在，是瞬时浮层，不是首屏常驻成本。
-//
-// 选择器写成 `.ant-modal-mask.search-mask`（两段）：`.search-mask` 由 Head/index.tsx 的
-// `classNames={{mask: …}}` 挂上，而 antd 自己的遮罩色是 CSS-in-JS 运行时注入 `<style>` 的，
-// 单个类与它权重相同、**看注入顺序分胜负**（不可靠）⇒ 用两段把权重压过去。
 .ant-modal-mask.search-mask
   background: rgba(0, 0, 0, 0.62)
   backdrop-filter: blur(10px)
@@ -394,18 +344,7 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
   align-items: center
   padding: 50px
   .searchModalInput
-    // 0.7 → 0.82（20261013 同上一条）：药丸自己这一层 alpha 对"字底下的明暗跳动"影响
-    // 比遮罩那一层还大。极端样板（药丸正后方的纯黑白 8px 棋盘，即最坏情况）实测药丸内
-    // 的亮度带宽：遮罩出厂值 0.45+药丸 0.7 = 42/255；遮罩 0.62+药丸 0.7 = 29；
-    // 遮罩 0.62+药丸 0.82 = **17**；字/底对比 9.9:1 → 13.5:1。
-    // 仍是半透明（18% 的模糊背景透上来），观感还是"压在模糊图上"，不是换了张白纸。
     background: rgba(255, 255, 255, 0.82)
-    // 必须显式给边框：这个文件此前只写了 border-radius/outline，没写 border ⇒ 吃到
-    // 浏览器对 <input> 的默认值 `2px inset rgb(118,118,118)`（实测 computed style），
-    // 而 inset 的斜角让**上边缘/左边缘更暗** —— 访客看到的就是"搜索框上边缘一圈黑线"。
-    // 换成一条细的实心边：去掉斜角发黑，同时保住药丸在模糊背景上的轮廓
-    //（.ant-modal-content 底色是透明的，这个输入框直接压在模态遮罩上；遮罩的模糊与压暗
-    // 见文件里上面那段 `.ant-modal-mask.search-mask`）。
     border: 1px solid rgba(0, 0, 0, 0.12)
     width: 80%
     padding: 12px 24px
@@ -423,10 +362,6 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
     .search-item:first-child
       margin-top: 4px
 
-// ── 聚合搜索的结果面（20261006）──────────────────────────────────────────────
-// 颜色统一走 `--washi-*` 令牌：这个弹窗是 portal 到 body 的，夜间档靠 Modal 的
-// `rootClassName="… washiDark"` 把令牌重挂一份（见 Head/index.tsx 里那句注释）。
-// 所以这里**不要**写 `.frontDark` 前缀——那个类够不到浮层，写了就是静默不生效。
 .searchModal
   .searchTitleRow
     display: flex
@@ -529,8 +464,6 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
     color: var(--washi-ink-3, #999)
     padding: 20px
 
-// 窄屏（375 起的用户拍板"一并适配"）：计数栏已经 flex-wrap，这里只收一收纵向留白
-// 与字号——`.searchModal` 自身 padding 50px 在 375 视口里等于吃掉 27% 的宽度。
 @media only screen and (max-width: 768px)
   .searchModal
     padding: 16px 10px
@@ -586,14 +519,6 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
     display: inline-block
     transform: rotate(270deg)
 
-/* 20260924：这里曾有一整块**过期的** `.home {...}`（140 行：日历 / 右栏 / 待办卡 / 三个
-   表盘的老版本，与 pages/Dashboard/Home/index.sass 逐字重复）。它没有任何消费方
-   ——全站只有后台首页那一个 <div className="home">（pages/Dashboard/Home/index.tsx:302），
-   而这块是它没搬过去之前的旧样式。留在全局 CSS 里的后果不是"没用"而是**顶着用**：
-   同选择器、同特异性、在 bundle 里排在后面（线上实证：.home .cardInfo 出现在字节
-   100983 与 203888 两处，后者把新的盖掉），于是后台待办卡被它的 margin:30px 右移 30px、
-   padding:10px 收窄 10px、height:13% + overflow-y:scroll 换掉滚动容器——主人报的
-   "待办列表没有和日历对齐也没有加高"就是它。已整块删除，改由 dashboard 那份说了算。 */
 
 /* Fix BarLogo Shape and frontDark Text */
 .barLogo .ant-avatar, 
@@ -648,13 +573,6 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
 .frontDark .hb-icon
   filter: brightness(1.65) saturate(0.9)
 
-// 头像 + 未读红点（20260922 个人中心）：红点在头像**右上角**，桌面头部的 40px 与
-// 移动抽屉的 100px 共用同一套（包一层 inline-flex，尺寸由 JS 传进来对齐头像本身）。
-// pointer-events: none —— 红点是提示，不该抢走头像的 hover（桌面端靠 hover 出登录卡）。
-//
-// 放在**文件末尾**不是随手一摆：这几个类是顶格的（第 0 列），Sass 用缩进定嵌套，
-// 一个顶格块会把紧跟其后那条规则从原父级里拽出来。写在中段时它就把 `.loginCard`
-// 拽离了 `.homeRight`（见那边 168 行附近的警告注释）——放最后则不影响任何东西。
 .avatarDotWrap
   position: relative
   display: inline-flex
@@ -676,8 +594,6 @@ $darkMode-mode-color: linear-gradient(to left, rgba(7, 7, 7, 0.33), rgba(7, 7, 7
     box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.85)
     pointer-events: none
 
-// 20260923：管理员的「后台」直达钮（`.theme-btn.admin-btn` + `.homeRight .homeAdminBtn`）
-// 已随"改成双击头像"一并删除——两枚按钮都没了，这两条选择器不会再命中任何元素。
 
 .aggregateSearchModal .ant-modal-close
   width: 32px

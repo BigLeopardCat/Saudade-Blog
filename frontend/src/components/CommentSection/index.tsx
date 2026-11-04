@@ -1,76 +1,3 @@
-/**
- * 文章讨论区（20261002）。挂在 `frontHome/Content/ReadArticle` 的正文之后。
- *
- * ## 两件事必须先读
- *
- * **① XSS：渲染只走 `renderBlogMarkdown`，没有第二份 sanitizer。**
- * 评论正文在库里是**不转义存储**的（服务端只校验形状：trim、长度、剥控制字符，
- * 见 `src/routes/comments.rs::clean_content`）。防线在渲染侧，就是文章页 bytemd
- * `<Viewer>`、看板娘对话框共用的那一条 unified 管线：
- * `remark-parse → gfm/breaks/gemoji/math → remarkStickers → rehype-raw →
- * rehype-sanitize(默认 schema + className)`。于是 `<script>` / `<img onerror>`
- * 在这一步被剥掉，而表情包、换行、代码块、gemoji 全部免费拿到。
- *
- * 由此两条硬纪律：
- *   · `dangerouslySetInnerHTML` 的 `__html` **只允许**是 `renderBlogMarkdown()` 的产物
- *     （本文件里唯一一处，见 `CommentBody`）。**输入框下方那个预览（`.commentPreview`）
- *     复用的也正是 `CommentBody`**——预览必须与已发布逐字相同，另写一份就是第二份真相；
- *   · **任何地方都不许对评论原文直接 `innerHTML`**，也不许在这里另写一份 escapeHtml。
- *     自己拼一份"安全 HTML"就是把同一条链路的第二个实现引进来——两处必然会漂。
- *
- * **② 两层结构：回复的回复挂在同一个顶层下，服务端已经保证，前端不"假装缩进"。**
- * 一条评论的 `rootId` 为 null 即顶层；其余的 `rootId` 指向它所属的顶层——
- * 这是服务端从父行派生的（客户端只传 `parentId`，见 `create_comment`），
- * 所以对一条回复的回复，`rootId` 仍是那条顶层。这里只按 `rootId` 分组，
- * 缩进层级天然只有两层，与数据一致（不是靠 CSS 假装出来的）。
- *
- * **③ 昵称后面跟的是作者的 `UID`，不是评论 id**（主人 20261003 点名）。原先那里写的是
- * `#C<评论 id>`，主人要的是"这条是谁发的"——即 `userId`（留言板 `talk.id` 与评论 `id`
- * 是两个命名空间，拿评论 id 出来对人没有任何用）。评论 id 仍然在 `data-cid` 上，
- * 深链 `?cid=` 与定位高亮照旧按它走。
- *
- * **④ 回复框就地展开，顶层那个输入框只发顶层评论**（用户 20261003 第 3 条）。
- * 原话：「讨论区回复的时候，如果评论很靠下，每次回复都要滚到顶部输入框才能回复好麻烦」。
- * 根因不是"没滚动"，而是**回复框根本只有顶部那一个**：点某行的「回复」只是把 `replyTo`
- * 设上，框还在页面顶端——于是他要么往回滚，要么压根没发现自己点中了（症状 = "点了没反应"）。
- *
- * 现在的形态：点「回复」→ **那一行自己的 `.commentMain` 里**展开一个输入框（`.isInline`
- * 修饰符），焦点落进去、`scrollIntoView({block:'nearest'})` 只在需要时滚最小距离。
- * 读到哪里就在哪里回，视线不离开那行。
- *
- * 由此两条纪律：
- *   · **顶层框不再有"正在回复 @xx"那条**（`.commentReplyBar` 现在只出现在行内框里）。
- *     留一条通往顶部的回复路径 = 那个坑原样还在，只是多了一个更好的入口；
- *   · **行内框按「哪一行」而不是「哪一条」开**：`openFor` 存的是评论 id，同时最多一个
- *     展开（换一行就把上一个收起），所以行内那份 state 是**单份**的，不是一行的副本。
- *
- * **⑤ 点赞 / 踩（用户 20261003 第 4 条）**：访客也能点。**20261020 起票参与排序**（见 ⑥，
- * 推翻了 20261003 那句"不改排序"）。三条纪律：
- *   · **高亮看 `myVote`，数字看 `up`/`down`**。把高亮挂在"票多的那一侧"上，
- *     读者会以为是自己投的（同族错法：首页点赞的心形）；
- *   · **乐观更新，失败回滚**。等一个来回再变色，手感就是"没点上"；但乐观值只是
- *     占位，服务端回执（它才看得见别人的票）一到就**整组覆盖**；
- *   · **数字为 0 不显示**（只留图标）——一排「图标 0  图标 0」是噪声，而"没人投过"这件事
- *     本来就是空的。**踩在赞右边**：与多数站点一致，也让"先看总赞数"这条阅读习惯成立。
- *
- * 图标 20261005 起改用 `NoteStatIcons` 的 `ThumbUpIcon` / `ThumbDownIcon`（原来写的是
- * 彩色表情字形）。不是审美问题：emoji 的字形颜色由平台调色板决定、`color` 基本不参与，
- * 于是上面第一条「高亮」实际只剩 `.isOn` 的底色在起作用。详见该图标的注释。
- *
- * **⑥ 排序：默认「最热」（20261020 主人点名）**。两个页签「最热 / 最新」，**只排顶层评论**
- * （回复恒时间升序——一串讨论内部被打乱就没法读了，而且"谁先回谁后回"本身就是那串话的
- * 一部分）。三条纪律：
- *   · **不记忆**：每次进页面都是「最热」（已拍板）。存 localStorage 会让"我上次看的是最新"
- *     变成一个**没有任何可见提示**的持久态——同一篇文章两个人看到的顺序不同时，
- *     没人能解释为什么，排查也会从"公式是不是坏了"开始；
- *   · **切排序不清列表**：`items` 只在文章换 id 时清空（两个 effect 分开写就是这个目的）。
- *     否则点一下「最新」整个讨论区闪回"正在读取讨论…"，而它明明只是换个顺序；
- *   · **`?cid=` 深链只定位一次**：`locatedRef` 那道守卫让切排序**不重滚、不重闪**。
- *     这是**有意为之**——用户刚点了一下排序，再把视口拽回他之前看的那条评论是反着来的。
- *
- * 热度公式**一个字都不在前端算**（后端 `comments.rs::hot_score`：Wilson 下界 + 一赞一踩
- * 先验 + `0.1·log2(1+回复数)`）。算两份就会漂，而漂的是"顺序"这种没人会去对账的东西。
- */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Input, Modal, message } from 'antd'
@@ -141,10 +68,6 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
     const [openFor, setOpenFor] = useState<number | null>(null)
     const [replyContent, setReplyContent] = useState('')
     const [replyBusy, setReplyBusy] = useState(false)
-    /** 「预览」开关（20261003）。**不是可选项**：评论区整段按 markdown 渲染，而站上多数人
-     *  并不认识 markdown——`_下划线_` 会被吃成斜体、`2*3*4` 会变成 `2<em>3</em>4`、行首
-     *  `#`/`>`/`- ` 会变成标题/引用/列表。写的人看不见这件事，读的人才看得见（那时已经发出去了）。
-     *  预览就是把"读的人看到的样子"提前搬到写的人眼前，**用的是同一条渲染路径**（`CommentBody`）。 */
     const [preview, setPreview] = useState(false)
     const [pendingDelete, setPendingDelete] = useState<CommentItem | null>(null)
     const [deleting, setDeleting] = useState(false)
@@ -275,15 +198,6 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
         if (!ok(res)) { message.error(errMsg(res)); return false }
         const { approved, id } = res.data.data
         await load()
-        // 落位（20261020，随默认热度排序一起引入）：默认档下，刚发的顶层评论是 0 票 0 回复，
-        // 会排在一堆有点赞的评论**后面**——整表重拉之后它很可能落在视口外，看起来就像
-        // "发出去了但没显示"（而它其实在，只是不在原地）。**不做"本地插到顶部"**：那是在
-        // 假装它最热，下次刷新就当面打脸。改为滚过去闪一下——事实照排，但人能找到它。
-        //
-        // **不在这里判 `approved`**：只有 approved=1 的评论在公开列表里，其余两种
-        // （0 待审 / 2 未通过）`flashComment` 找不到元素、自己安静跳过。
-        // 把判断写进来会让下面那三行"三种审核结果说三种话"变成嵌套块——那是**另一件事**
-        // （说给用户听的话），不该被"要不要滚过去"搅在一起。
         flashComment(id)
         if (approved === 1) message.success('评论已发布')
         else if (approved === 0) message.info('评论已提交，通过人工复核后才会公开显示')
@@ -311,7 +225,6 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
         }
     }
 
-    /** 展开某一行的回复框，并把焦点与视线都留在那一行（用户 20261003 第 3 条）。 */
     const openReply = (comment: CommentItem) => {
         setOpenFor(comment.id)
         setReplyContent('')
@@ -424,22 +337,11 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
             />
             <div className="commentMain">
                 <div className="commentMeta">
-                    {/* 身份行：昵称 + 徽章 + UID + 时间。**顺序 = 阅读顺序**，别往这行里
-                        塞别的东西 —— 20261003 用户第 3 条报的正是「回复 @xx 直接把头像和
-                        昵称隔断了」：当年「回复 @某人」挂在这一行的**行首**，它左边就是
-                        头像 ⇒ 头像与昵称之间插着一句「回复 @…」。它现在另起一行，见下。 */}
                     <span className="commentName">{c.nickname}</span>
                     <RoleBadge role={c.role} size={20} />
-                    {/* 作者 uid：极小一号、淡一档——它是"这条是谁发的"的身份锚，
-                        不该抢昵称的视线。**别再退回评论 id**：那是另一个命名空间，
-                        对人没有意义（深链定位仍走本行外层那个 data-cid）。 */}
                     <span className="commentUid">UID:{c.userId}</span>
                     <span className="commentTime">{c.createdAt}</span>
                 </div>
-                {/* 「回复 @某人」**另起一行**，紧贴正文（20261003 用户第 3 条：「另起一行
-                    回复 @xxx」）。只有回复才有（顶层的 replyToUid 恒 null）。
-                    它是块级元素、住在 `.commentMeta` 与 `<CommentBody>` 之间 ⇒ 读法是
-                    「谁 → 回复谁 → 正文」，头像一个都不隔断。 */}
                 {isReply && (
                     <div className="commentReplyTo">
                         回复 @{c.replyToNickname || '已注销用户'}
@@ -448,9 +350,6 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
                 <CommentBody content={c.content} />
                 <div className="commentActions">
                     <button type="button" onClick={() => openReply(c)}>回复</button>
-                    {/* 赞 / 踩（文件头注 ⑤）。位置：**「回复」之后、「删除」之前**——
-                        回复是讨论区的主要动作（行内回复框就开在它底下），删除是破坏性的、
-                        照旧排最后。`aria-pressed` 读的是 `myVote`（我投的），不是票多的那一侧。 */}
                     {([1, -1] as const).map((dir) => {
                         const on = c.myVote === dir
                         const n = dir === 1 ? c.up : c.down
@@ -465,11 +364,6 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
                                 onClick={() => void vote(c, dir)}
                             >
                                 {dir === 1 ? <ThumbUpIcon /> : <ThumbDownIcon />}
-                                {/* 0 不显示（文件头注 ⑤）：一排「图标 0 图标 0」只是噪声。
-                                    为 0 时按钮宽度靠图标撑着，位置不跳（见 index.sass 的 padding 抵消）。
-                                    图标取自 `NoteStatIcons`（20261005 起，替掉原来那两个彩色表情
-                                    字形——它们在 `.isOn` 那一态里颜色是失效的，理由写在
-                                    `ThumbUpIcon` 的注释里）。 */}
                                 {n > 0 && <span className="commentVoteNum">{n}</span>}
                             </button>
                         )
@@ -480,11 +374,6 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
                         </button>
                     )}
                 </div>
-                {/* 行内回复框：**住在这行的 `.commentMain` 里**，就在刚点的那颗「回复」
-                    底下（见文件头注 ④）。样式整个复用 `.commentComposer`（`.isInline`
-                    只是几条覆盖），所以计数按进框内、按钮字号那几条修复它一并吃到。
-                    **不带预览按钮**：这里回的是别人已经写出来的一句话，写的人不用先
-                    猜 markdown 会把它吃成什么样。 */}
                 {openFor === c.id && (
                     <div className="commentComposer isInline">
                         <div className="commentReplyBar">
@@ -528,10 +417,6 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
                 {items && <span className="commentCount">{items.length} 条</span>}
             </h3>
 
-            {/* 排序页签（文件头注 ⑥）。**只有一条顶层评论时不渲染**——一个"排序"控件在
-                排不出差别的列表上是纯噪声（回复不参与排序，所以判据是 `tops` 不是 `items`）。
-                选中态读 `sort` 本身（`aria-pressed`），**不是**"点了才亮"——它是个状态显示，
-                和上面的赞/踩高亮是同一条纪律。 */}
             {tops.length > 1 && (
                 <div className="commentSort" role="group" aria-label="讨论区排序">
                     {([['hot', '最热'], ['new', '最新']] as const).map(([v, label]) => (
@@ -554,14 +439,6 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
                 </p>
             ) : (
                 <div className="commentComposer">
-                    {/* **这里没有"正在回复 @xx"那条**：回复一律在那一行就地展开
-                        （文件头注 ④）。留一条通往顶部的回复路径 = 那个坑原样还在。 */}
-                    {/* **计数已搬进输入框内**（20261003 用户第 3 条），所以这里不再挂全站的
-                        `counter-room`（那 22px 是给"计数吊在框下方"腾的地方，也正是
-                        「按钮离输入框太远」的来源）。计数元素是 `span.ant-input-data-count`
-                        （rc-textarea 渲染的真实元素，**不是** `[data-count]` 那个属性），
-                        现在由 `index.sass` 的 `.commentComposer .ant-input-textarea-show-count`
-                        把它按在框内的右下角，并给最后一行让出宽度。 */}
                     <Input.TextArea
                         ref={taRef}
                         value={content}
@@ -574,9 +451,6 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
                     <div className="commentComposerFoot">
                         <div className="commentComposerTools">
                             <StickerPicker onPick={pickSticker} disabled={busy} />
-                            {/* 预览开关。**始终可点**（空草稿也点得开）——空着的时候那一栏
-                                会写明"这里就是发出去之后的样子"，这本身就是给不认识 markdown
-                                的人的一句提示，比把按钮置灰更有用。 */}
                             <button
                                 type="button"
                                 className={`commentPreviewBtn${preview ? ' isOpen' : ''}`}
@@ -599,11 +473,6 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
                     {preview && (
                         <div className="commentPreview" id="comment-preview">
                             <div className="commentPreviewLabel">预览 · 发出去之后就是这个样子</div>
-                            {/* **复用 `CommentBody`**：预览与已发布评论走的是同一条
-                                `renderBlogMarkdown` 管线，不是第二份渲染器。所以表情在预览里
-                                就已经是图了（`:头疼:` → `img.sticker`），而且预览里看到的
-                                排版与发出去之后**逐字相同**——预览要是有自己的一套样式，
-                                它就只是在骗人。 */}
                             {content.trim() ? (
                                 <CommentBody content={content} />
                             ) : (
@@ -635,7 +504,6 @@ const CommentSection = ({ noteId }: CommentSectionProps) => {
                 </div>
             )}
 
-            {/* 删除确认：**受控 Modal**，按钮写动作词（不是"确定/取消"） */}
             <Modal
                 open={!!pendingDelete}
                 title="删除这条评论？"

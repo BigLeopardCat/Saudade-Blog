@@ -1,24 +1,3 @@
-/**
- * 头像裁剪弹窗（20260922 个人中心一期）。
- *
- * 「按 GitHub 来」= 选图 → **圆形取景**（拖动/滚轮缩放）→ 确认 → 上传**裁切后的成品**。
- * 20260922 二次返工：初版取景框是方的（四角标），而头像处处都是圆着显示的，用户的
- * 原话是「方形框裁出来圆形算什么」⇒ 界面改成圆形遮罩（圆外压暗，见 .acCircle）。
- * 注意**烘焙仍是方图**：后端下发一个 URL、各处用 `border-radius` 显示成圆，方图保留
- * 四个角在裁剪时多留的一点余量；改成"烘成 PNG 圆图"反而会让非圆形展示位（如后端缩略、
- * 未来可能的方头像位）出现透明缺口。
- * 所以这里与封面裁剪弹窗（CoverCropModal）的取向不同：封面存的是**参数**（同一组参数要在
- * 1:1 轮播 / 16:9 卡片 / 横幅三处自适应，见 utils/coverCrop.ts 头注），头像只有一个展示位、
- * 且要落到 `user.avatar` 一个 URL 上，所以这里**烘焙成方图**再上传。
- *
- * 复用 utils/coverCrop 的那套几何——它是比例无关的，方形只是一个 aspect=1 的实例：
- *   · 编辑区 = 正方形舞台里的 `<img>` + coverCropStyle(crop)：**预览即所得**（与导出同一套公式）
- *   · 导出   = cropWindowInImage(W, H, 1, crop) 取方形窗在图片里的像素框，drawImage 到方画布
- * 二者同源，不存在"看着在中间、导出来偏了"。
- *
- * 输出固定 JPEG（画布烘焙天然是静态图——GIF 会丢掉动画，这是有意的：头像不需要动图，
- * 后端也只当普通图片下发）。后端仍会按字节头校验类型与 2MiB 上限（见 routes/profile.rs）。
- */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button, Modal, Slider } from 'antd'
 import {
@@ -52,19 +31,6 @@ interface AvatarCropModalProps {
     uploading?: boolean
     /** 夜间：弹窗挂在 body 下拿不到 .frontDark 祖先，主题类名要由 rootClassName 自带 */
     dark?: boolean
-    /**
-     * 本弹窗在**全站层级阶梯**里的档位（`src/zIndex.ts` 的 `Z`）。
-     *
-     * ⚠️ 必填，不是可选：**调用方必须自报层级**。它是从个人中心的窗口里开出来的，而那个
-     * 窗口现在有明确的层级（`Z.panel`）。不给值就落回 antd 的默认 `zIndexPopupBase=1000`
-     * —— **比它父亲还低**。表现极具迷惑性：弹窗好端端地出来了、什么都看得见，但**点不动**
-     * （父亲那层遮罩/pane 拦在前面把指针事件吃掉了）。20261002 实测：拖动、滚轮缩放、
-     * 「确定」全部失灵，`tests/user-center.test.py` 第 ② 节当场抓红。
-     *
-     * 为什么不是 antd 自己叠：`useZIndex` 只在**同一个 React 子树**里继承父级（Modal 会
-     * provide `zIndexContext`），而本组件是那个 Modal 的**兄弟节点**（见 UserCenter 的
-     * 渲染树）⇒ 继承链断了，只能由调用方写明。
-     */
     zIndex: number
 }
 
@@ -246,13 +212,6 @@ const AvatarCropModal = ({ open, file, onPickFile, onConfirm, onCancel, uploadin
                             onError={() => setLoadErr('图片加载失败，请换一张')}
                         />
                     )}
-                    {/* 圆形遮罩（20260922 用户要求「原汁原味 GitHub 风格」）：
-                        头像最终是**圆形**展示的，所以取景框也得是圆的——此前用方框 + 四角标，
-                        用户的原话是「方形框裁出来圆形算什么」。
-                        做法 = 一个内切圆元素 + 超大外扩 box-shadow 把圆外压暗（"聚光灯"），
-                        舞台的 overflow:hidden 会把外扩的阴影裁掉，只剩四个角被压暗。
-                        **几何一个字节没动**：裁剪窗仍是整个方舞台（cropWindowInImage 用的是
-                        整幅图里的方框），圆恰好是这个方框的内切圆 = 头像的展示形状 ⇒ 所见即所得。 */}
                     <span className="acCircle" aria-hidden />
                 </div>
 

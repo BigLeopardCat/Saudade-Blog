@@ -114,9 +114,6 @@ const Editor_ = ({ setNoteContent, noteContent, editorRef }: Editor_Props) => {
 
     const handleImageUpload = async (files: File[]): Promise<UploadedImage[]> => {
         const response = await postUpload(files[0]);
-        // ⚠️ 判**业务码**而不是 `response.status`（20261006 修）：本仓的失败一律是
-        // HTTP 200 + `code: 500`，原先那句 `status === 200` 恒真 —— 配额拒绝 / R2 凭据缺失
-        // 全都会被显示成「添加成功」，还把 `![]()` 插进正文（失败时 `data` 是空串）。
         if (response.data?.code !== 200) {
             message.error(response.data?.message || '上传失败');
             // **抛**而不是 `return []`：bytemd 会对返回值 `map/join` 后 `appendBlock`
@@ -133,13 +130,6 @@ const Editor_ = ({ setNoteContent, noteContent, editorRef }: Editor_Props) => {
         return [{ alt: '', url: encodeAssetUrl(response.data.data), title: '' }];
     };
 
-    /**
-     * 拦下内置图片按钮的点击（20261006 用户要求：那颗按钮改为优先展示图库）。
-     *
-     * 不换按钮、不藏按钮：工具栏的 DOM 与几何一行不动，改在**捕获阶段**把事件掐掉，
-     * 让 `.bytemd-toolbar` 上 svelte 的那个 `on:click`（内置 handler = 弹系统文件选择框）
-     * 根本收不到 —— 换成开我们自己的图库弹窗。
-     */
     useEffect(() => {
         const wrap = wrapRef.current
         if (!wrap) return

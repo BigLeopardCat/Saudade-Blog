@@ -1,0 +1,664 @@
+.rz-root {
+.rz-notice-modal {
+    .rz-notice-box {
+      width: min(90vw, 480px);
+      max-width: min(90vw, 480px);
+      background:
+        radial-gradient(ellipse at 20% 8%, rgba(120, 84, 48, 0.24), transparent 55%),
+        linear-gradient(170deg, #33241756 0%, #2e2114ee 60%, #261a10f2 100%);
+      border: 1px solid rgba(214, 172, 106, 0.45);
+      outline: 1px solid rgba(214, 172, 106, 0.18);
+      outline-offset: 3px;
+      box-shadow:
+        inset 0 0 40px rgba(20, 12, 4, 0.5),
+        0 14px 44px rgba(0, 0, 0, 0.5);
+      padding: 28px 30px 22px;
+
+      .rz-notice-title {
+        margin: 0 0 16px;
+        text-align: center;
+        font-size: 19px;
+        font-weight: normal;
+        letter-spacing: 0.5em;
+        text-indent: 0.5em;
+        color: rgba(244, 226, 196, 0.95);
+        text-shadow: 0 0 16px rgba(255, 186, 104, 0.25);
+      }
+
+      .rz-notice-body {
+        p {
+          margin: 0 0 12px;
+          font-size: 13px;
+          line-height: 1.95;
+          letter-spacing: 0.1em;
+          color: rgba(242, 226, 194, 0.82);
+          text-indent: 0;
+        }
+
+        p:first-child {
+          margin-bottom: 14px;
+        }
+      }
+
+      .rz-notice-foot {
+        display: flex;
+        justify-content: center;
+        margin-top: 6px;
+
+        /* 公告按钮：古籍朱砂印风格（覆盖通用 .rz-wish-primary 的现代胶囊） */
+        .rz-wish-primary {
+          padding: 7px 28px;
+          background: rgba(163, 63, 48, 0.68);
+          border: 1px solid rgba(228, 172, 106, 0.6);
+          border-radius: 4px;
+          color: #ffe8c8;
+          font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "SimSun", serif;
+          font-size: 14px;
+          letter-spacing: 0.42em;
+          text-indent: 0.42em;
+          box-shadow: inset 0 0 14px rgba(30, 12, 4, 0.45), 0 2px 10px rgba(0, 0, 0, 0.4);
+
+          &:hover:not(:disabled),
+          &:focus-visible:not(:disabled) {
+            background: #a33f30;
+            border-color: rgba(255, 214, 170, 0.7);
+          }
+        }
+      }
+    }
+  }
+
+  /* ---------------- 灯影集 · 古籍卷册弹窗 ---------------- */
+  .rz-album-modal {
+    .rz-album-box {
+      width: min(92vw, 640px);
+      max-width: min(92vw, 640px);
+      background:
+        radial-gradient(ellipse at 20% 8%, rgba(120, 84, 48, 0.28), transparent 55%),
+        radial-gradient(ellipse at 85% 90%, rgba(90, 60, 34, 0.3), transparent 55%),
+        linear-gradient(170deg, #3a2a1a 0%, #2e2114 55%, #261a10 100%);
+      border: 1px solid rgba(214, 172, 106, 0.5);
+      outline: 1px solid rgba(214, 172, 106, 0.2);
+      outline-offset: 4px;
+      box-shadow:
+        inset 0 0 44px rgba(20, 12, 4, 0.55),
+        0 14px 44px rgba(0, 0, 0, 0.5);
+      padding: 26px 26px 22px;
+      position: relative;
+
+      /* 卷首朱印 */
+      &::before {
+        content: "雅集";
+        position: absolute;
+        top: 18px;
+        right: 22px;
+        writing-mode: vertical-rl;
+        font-size: 12px;
+        letter-spacing: 0.28em;
+        color: rgba(198, 64, 44, 0.72);
+        border: 1.5px solid rgba(198, 64, 44, 0.55);
+        padding: 4px 2px;
+        border-radius: 3px;
+        transform: rotate(-4deg);
+      }
+
+      .rz-album-find {
+        position: absolute;
+        top: 16px;
+        left: 18px;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 5px 10px;
+        background: rgba(20, 12, 4, 0.4);
+        border: 1px solid rgba(214, 172, 106, 0.4);
+        border-radius: 999px;
+        color: rgba(240, 222, 188, 0.85);
+        font-family: inherit;
+        font-size: 12px;
+        letter-spacing: 0.18em;
+        cursor: pointer;
+        transition: border-color 0.25s ease, background 0.25s ease;
+
+        &.on {
+          border-color: rgba(244, 196, 92, 0.75);
+          background: rgba(60, 40, 16, 0.6);
+        }
+
+        &:hover {
+          border-color: rgba(244, 196, 92, 0.75);
+        }
+      }
+
+      .rz-album-title {
+        margin: 0 0 14px;
+        text-align: center;
+        font-size: 22px;
+        font-weight: normal;
+        letter-spacing: 0.55em;
+        text-indent: 0.55em;
+        color: rgba(244, 226, 196, 0.95);
+        text-shadow: 0 0 18px rgba(255, 186, 104, 0.28);
+      }
+
+      .rz-album-search {
+        margin: 0 0 10px;
+
+        input {
+          width: 100%;
+          padding: 9px 14px;
+          background: rgba(16, 10, 4, 0.5);
+          border: 1px solid rgba(214, 172, 106, 0.4);
+          border-radius: 6px;
+          color: rgba(244, 226, 196, 0.92);
+          font-family: inherit;
+          font-size: 13px;
+          letter-spacing: 0.1em;
+          outline: none;
+          transition: border-color 0.25s ease;
+
+          &::placeholder {
+            color: rgba(240, 222, 188, 0.35);
+          }
+
+          &:focus {
+            border-color: rgba(244, 196, 92, 0.7);
+          }
+        }
+      }
+
+      .rz-album-tabs {
+        display: flex;
+        gap: 8px;
+        margin: 0 0 12px;
+
+        button {
+          flex: 1;
+          padding: 6px 0;
+          background: rgba(20, 12, 4, 0.35);
+          border: 1px solid rgba(214, 172, 106, 0.3);
+          border-radius: 4px;
+          color: rgba(240, 222, 188, 0.6);
+          font-family: inherit;
+          font-size: 12px;
+          letter-spacing: 0.24em;
+          text-indent: 0.24em;
+          cursor: pointer;
+          transition: border-color 0.25s ease, color 0.25s ease, background 0.25s ease;
+
+          &:hover {
+            color: rgba(244, 226, 196, 0.9);
+          }
+
+          &.sel {
+            color: #ffe4ae;
+            border-color: rgba(244, 196, 92, 0.65);
+            background: rgba(72, 48, 18, 0.55);
+          }
+        }
+      }
+
+      /* 类型页签下的印章筛选行（四枚摆正的朱砂印章，可多选） */
+      .rz-album-catf {
+        display: flex;
+        justify-content: center;
+        gap: 10px;
+        margin: 0 0 12px;
+
+        .rz-album-catf-seal {
+          position: static;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 36px;
+          height: 36px;
+          font-size: 15px;
+          background: rgba(163, 63, 48, 0.4);
+          border: 1px solid rgba(255, 214, 170, 0.28);
+          border-radius: 5px;
+          color: rgba(255, 232, 200, 0.78);
+          font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "SimSun", serif;
+          letter-spacing: 0.1em;
+          text-indent: 0.1em;
+          cursor: pointer;
+          box-shadow: inset 0 0 10px rgba(30, 12, 4, 0.35), 0 1px 3px rgba(0, 0, 0, 0.35);
+          transition: border-color 0.25s ease, color 0.25s ease, background 0.25s ease;
+
+          &:hover {
+            border-color: rgba(255, 214, 170, 0.55);
+            color: #ffe8c8;
+            background: rgba(163, 63, 48, 0.62);
+          }
+
+          &.sel {
+            background: #a33f30;
+            border-color: rgba(255, 214, 170, 0.6);
+            color: #ffe8c8;
+            box-shadow: inset 0 0 0 1px rgba(255, 214, 170, 0.35), 0 1px 4px rgba(0, 0, 0, 0.45);
+          }
+        }
+      }
+
+      .rz-album-list {
+        max-height: min(46vh, 420px);
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding-right: 4px;
+        scrollbar-width: thin;
+        scrollbar-color: rgba(214, 172, 106, 0.35) transparent;
+
+        &::-webkit-scrollbar {
+          width: 6px;
+        }
+
+        &::-webkit-scrollbar-thumb {
+          background: rgba(214, 172, 106, 0.35);
+          border-radius: 3px;
+        }
+      }
+
+      .rz-album-item {
+        display: grid;
+        grid-template-columns: 34px 1fr auto;
+        align-items: center;
+        gap: 10px;
+        padding: 9px 12px;
+        background: rgba(16, 10, 4, 0.38);
+        border: 1px solid rgba(214, 172, 106, 0.24);
+        border-radius: 5px;
+        text-align: left;
+        cursor: pointer;
+        transition: border-color 0.25s ease, background 0.25s ease;
+
+        &:hover {
+          border-color: rgba(244, 196, 92, 0.55);
+          background: rgba(52, 36, 16, 0.5);
+        }
+      }
+
+      .rz-album-seal {
+        position: static;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 30px;
+        height: 30px;
+        font-size: 13px;
+        background: #a33f30;
+        border-radius: 3px;
+        color: #ffe8c8;
+        font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "SimSun", serif;
+        box-shadow: inset 0 0 0 1px rgba(255, 214, 170, 0.35), 0 1px 3px rgba(0, 0, 0, 0.4);
+        letter-spacing: 0.1em;
+        text-indent: 0.1em;
+      }
+
+      .rz-album-msg {
+        color: rgba(244, 228, 200, 0.9);
+        font-size: 13px;
+        letter-spacing: 0.06em;
+        line-height: 1.7;
+        overflow: hidden;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+      }
+
+      .rz-album-meta {
+        color: rgba(240, 222, 188, 0.42);
+        font-size: 11px;
+        letter-spacing: 0.12em;
+        white-space: nowrap;
+      }
+
+
+      .rz-album-reason {
+        grid-column: 1 / -1;
+        padding: 3px 8px;
+        border-left: 3px solid rgba(231, 76, 60, 0.55);
+        border-radius: 0 4px 4px 0;
+        background: rgba(231, 76, 60, 0.1);
+        color: #ff9d8a;
+        font-size: 12px;
+        line-height: 1.6;
+        letter-spacing: 0.04em;
+        word-break: break-word;
+        overflow: hidden;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+      }
+
+      .rz-album-empty {
+        margin: 22px 0;
+        text-align: center;
+        font-size: 13px;
+        letter-spacing: 0.3em;
+        color: rgba(240, 222, 188, 0.4);
+      }
+    }
+  }
+
+  /* ---------------- 此心为灯 · 留言流程弹窗 ---------------- */
+  .rz-wish-modal {
+    .rz-wish-box {
+      width: min(94vw, 800px);
+      max-width: min(94vw, 800px);
+
+      .rz-wish-step {
+        /* 第 28 轮（585919b 基础上）：子容器距窗口边缘留出适当距离（原 6/4/2px 几乎贴边） */
+        padding: 22px 24px 18px;
+      }
+
+      .rz-wish-title {
+        margin: 0;
+        font-size: 19px;
+        font-weight: normal;
+        letter-spacing: 0.4em;
+        text-indent: 0.4em;
+        color: rgba(244, 230, 205, 0.92);
+        text-shadow: 0 1px 10px rgba(255, 190, 110, 0.2);
+      }
+
+      .rz-wish-sub {
+        margin: 10px 0 0;
+        font-size: 12px;
+        letter-spacing: 0.22em;
+        color: rgba(240, 226, 200, 0.45);
+      }
+
+      /* 选灯型：三张灯卡 */
+      .rz-lamp-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 14px; /* 第 28 轮：卡间 12→14 */
+        margin-top: 18px;
+
+        .rz-lamp-card {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 8px; /* 第 28 轮：图与文字间距 4→8，卡内透气 */
+          padding: 18px 14px 16px; /* 第 28 轮：横向 6→14，内容不再贴卡边 */
+          background: rgba(10, 9, 22, 0.5);
+          border: 1px solid rgba(255, 205, 140, 0.16);
+          border-radius: 12px;
+          cursor: pointer;
+          color: rgba(240, 226, 200, 0.72);
+          font-family: inherit;
+          transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
+
+          img {
+            width: 92px; /* 第 28 轮：84→92，与加大后的卡片比例更协调 */
+            height: 92px;
+            filter: brightness(1.08) drop-shadow(0 4px 14px rgba(255, 180, 100, 0.25));
+            pointer-events: none;
+          }
+
+          span {
+            font-size: 13px;
+            letter-spacing: 0.24em;
+            text-indent: 0.24em;
+          }
+
+          &:hover,
+          &:focus-visible {
+            border-color: rgba(255, 205, 140, 0.45);
+            background: rgba(20, 17, 36, 0.65);
+            outline: none;
+          }
+
+          &.sel {
+            border-color: rgba(255, 200, 130, 0.75);
+            background: rgba(34, 26, 48, 0.75);
+            box-shadow: 0 0 0 1px rgba(255, 200, 130, 0.25), 0 0 22px rgba(255, 180, 100, 0.12);
+            transform: translateY(-2px);
+          }
+        }
+      }
+
+      /* 选印章：四枚心印卡 */
+      .rz-cat-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+        margin-top: 18px;
+
+        .rz-cat-card {
+          display: flex;
+          align-items: flex-start;
+          gap: 10px;
+          padding: 12px 12px 11px;
+          text-align: left;
+          background: rgba(10, 9, 22, 0.5);
+          border: 1px solid rgba(255, 205, 140, 0.16);
+          border-radius: 12px;
+          cursor: pointer;
+          color: rgba(240, 226, 200, 0.8);
+          font-family: inherit;
+          transition: border-color 0.2s ease, background 0.2s ease;
+
+          .rz-cat-seal {
+            position: static;
+            flex: none;
+            margin-top: 1px;
+            font-size: 15px;
+            line-height: 1.6;
+            padding: 2px 9px;
+          }
+
+          .rz-cat-name {
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+
+            b {
+              font-size: 14px;
+              font-weight: normal;
+              letter-spacing: 0.16em;
+              color: rgba(244, 230, 205, 0.92);
+            }
+
+            i {
+              font-style: normal;
+              font-size: 12px;
+              line-height: 1.7;
+              letter-spacing: 0.05em;
+              color: rgba(240, 226, 200, 0.5);
+              white-space: pre-line; /* 诗句逗号后换行 */
+            }
+          }
+
+          &:hover,
+          &:focus-visible {
+            border-color: rgba(255, 205, 140, 0.45);
+            background: rgba(20, 17, 36, 0.65);
+            outline: none;
+          }
+
+          &.sel {
+            border-color: rgba(255, 200, 130, 0.75);
+            background: rgba(34, 26, 48, 0.75);
+            box-shadow: 0 0 0 1px rgba(255, 200, 130, 0.25), 0 0 22px rgba(255, 180, 100, 0.12);
+          }
+        }
+      }
+
+      /* 书写心愿 */
+      .rz-wish-input {
+        display: block;
+        width: 100%;
+        box-sizing: border-box;
+        margin-top: 18px;
+        padding: 12px 14px;
+        background: rgba(8, 7, 18, 0.66);
+        border: 1px solid rgba(255, 205, 140, 0.22);
+        border-radius: 10px;
+        color: #f2e2c2;
+        font-family: inherit;
+        font-size: 14px;
+        line-height: 1.9;
+        letter-spacing: 0.08em;
+        resize: none;
+        outline: none;
+        transition: border-color 0.2s ease;
+
+        &::placeholder {
+          color: rgba(240, 226, 200, 0.32);
+        }
+
+        &:focus {
+          border-color: rgba(255, 205, 140, 0.5);
+        }
+      }
+
+      .rz-wish-count {
+        margin-top: 6px;
+        text-align: right;
+        font-size: 11px;
+        letter-spacing: 0.12em;
+        color: rgba(240, 226, 200, 0.35);
+      }
+
+      /* 留名行（默认预填账号昵称，可一键匿名归入无名） */
+      .rz-wish-author-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-top: 10px;
+
+        .rz-wish-author {
+          flex: 1;
+          min-width: 0;
+          box-sizing: border-box;
+          padding: 9px 14px;
+          background: rgba(8, 7, 18, 0.5);
+          border: 1px solid rgba(255, 205, 140, 0.18);
+          border-radius: 8px;
+          color: #f2e2c2;
+          font-family: inherit;
+          font-size: 13px;
+          letter-spacing: 0.1em;
+          outline: none;
+          transition: border-color 0.2s ease;
+
+          &::placeholder {
+            color: rgba(240, 226, 200, 0.3);
+          }
+
+          &:focus {
+            border-color: rgba(255, 205, 140, 0.45);
+          }
+        }
+
+        .rz-wish-anon {
+          flex: none;
+          padding: 9px 16px;
+          background: rgba(8, 7, 18, 0.5);
+          border: 1px solid rgba(255, 205, 140, 0.18);
+          border-radius: 8px;
+          color: rgba(240, 226, 200, 0.55);
+          font-family: inherit;
+          font-size: 13px;
+          letter-spacing: 0.2em;
+          text-indent: 0.2em;
+          cursor: pointer;
+          transition: border-color 0.2s ease, color 0.2s ease, background 0.2s ease;
+
+          &:hover {
+            border-color: rgba(255, 205, 140, 0.4);
+            color: rgba(244, 228, 200, 0.9);
+          }
+
+          &.on {
+            color: #ffe8c8;
+            background: rgba(90, 40, 28, 0.6);
+            border-color: rgba(214, 110, 80, 0.55);
+          }
+        }
+      }
+
+      /* 底部按钮 */
+      .rz-wish-foot {
+        display: flex;
+        justify-content: flex-end;
+        gap: 12px;
+        margin-top: 18px;
+
+        .rz-wish-ghost {
+          padding: 8px 18px;
+          background: transparent;
+          border: 1px solid rgba(255, 205, 140, 0.2);
+          border-radius: 999px;
+          cursor: pointer;
+          color: rgba(240, 226, 200, 0.6);
+          font-family: inherit;
+          font-size: 13px;
+          letter-spacing: 0.24em;
+          text-indent: 0.24em;
+          transition: color 0.2s ease, border-color 0.2s ease;
+
+          &:hover,
+          &:focus-visible {
+            color: #ffe9c4;
+            border-color: rgba(255, 205, 140, 0.45);
+            outline: none;
+          }
+        }
+
+        .rz-wish-primary {
+          padding: 8px 22px;
+          background: rgba(255, 205, 140, 0.12);
+          border: 1px solid rgba(255, 205, 140, 0.4);
+          border-radius: 999px;
+          cursor: pointer;
+          color: #ffe9c4;
+          font-family: inherit;
+          font-size: 13px;
+          letter-spacing: 0.26em;
+          text-indent: 0.26em;
+          box-shadow: 0 0 18px rgba(255, 190, 110, 0.12);
+          transition: background 0.2s ease, border-color 0.2s ease, opacity 0.2s ease;
+
+          &:hover:not(:disabled),
+          &:focus-visible:not(:disabled) {
+            background: rgba(255, 205, 140, 0.2);
+            border-color: rgba(255, 205, 140, 0.6);
+            outline: none;
+          }
+
+          &:disabled {
+            opacity: 0.4;
+            cursor: default;
+          }
+        }
+      }
+
+      /* 放下成功 */
+      .rz-wish-done {
+        text-align: center;
+        padding: 22px 4px 12px;
+
+        .rz-wish-done-glow {
+          width: 46px;
+          height: 46px;
+          margin: 0 auto 16px;
+          border-radius: 50%;
+          background: radial-gradient(circle, #ffe9b8 0%, rgba(255, 201, 121, 0.55) 42%, rgba(255, 180, 90, 0) 74%);
+          box-shadow: 0 0 40px 10px rgba(255, 196, 118, 0.3);
+          animation: rz-boot-pulse 1.6s ease-in-out infinite;
+        }
+
+        .rz-wish-foot {
+          justify-content: center;
+          margin-top: 22px;
+        }
+      }
+    }
+  }
+
+  /* 暗角 */
+
+}

@@ -1,22 +1,3 @@
-/**
- * SPA 侧的错误上报（20261004）。
- *
- * 为什么要有这一层：`boot.js`（看板娘入口，住在 agent 仓，按 pin 取来）里那套全局捕获
- * 只覆盖它自己那半边，而且有三处结构性缺口：
- *   ① 它包的是 `window.fetch`，而 **SPA 唯一的 HTTP 客户端是 axios（走 XHR 适配器）**
- *      ⇒ 博客自身的接口失败在日志里一个字都没有（日志里只有看板娘的声音）；
- *   ② 它的 `error` 监听**没带 capture**，而资源加载失败的事件**不冒泡**
- *      ⇒ `<img>`/`<script>`/`<link>` 挂掉从来没进过日志；
- *   ③ 它是 `<script>` 挂进页面才注册的，React 渲染期抛错它抓不到（View 崩了但
- *      路由还活着，用户看到的是一片空白，日志里是干净的）。
- *
- * 这一层补的就是这三处，全部走同一个后端端点 `/api/monitor/log`。
- * 真源与副作用分开：纯函数在 `./reportCore`（可单测），这里只放碰 DOM / 网络的部分。
- *
- * ⚠️ `type` 是**闭集**：后端 `src/routes/monitor.rs` 的 `MONITOR_KINDS` 之外的取值
- * 会被收敛成 `other`（防匿名访客伪造整行）。这里新加一个 type，就要同步那边——
- * `tests/monitor-report.test.mjs` 会扫这份文件与 `MONITOR_KINDS` 逐字比对，漏了会红。
- */
 import { runtimeBaseURL } from './runtimeApi'
 import {
     REPORT_URL,
@@ -31,14 +12,6 @@ import type { ReportPayload } from './reportCore'
 const seen = new Set<string>()
 const SEEN_MAX = 200
 
-/**
- * WebGL 可用性探针：一辈子只探一次。
- *
- * 为什么要它：`20261004` 那天 `monitor.log` 里 8 条 `Texture loading error` 究竟是
- * 真实访客还是无 GPU 的爬虫（同一时段还有一条来自裸 IP 的
- * `Unable to auto-detect a suitable renderer`），从落盘行里**分不出来** ——
- * 两类故障在日志里长得一模一样。带上这个标记就能一眼分开。
- */
 let webglCache: boolean | null | undefined
 
 function webglAvailable(): boolean | null {

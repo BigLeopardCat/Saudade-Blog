@@ -127,8 +127,6 @@ const UserControl = () => {
             children: <>
                 <form className='web_setting' onSubmit={handleSubmit}>
                     {field('blogTitle', '博客标题')}
-                    {/* 署名优先用个人中心的昵称（20260930）：这一项是**回退值**，
-                        昵称非空时它不参与显示。不写在这会让"改完没反应"看起来像 bug。 */}
                     {field('blogAuthor', '博客作者', { hint: '署名优先取个人中心的昵称；昵称为空时才用这里' })}
                     {field('userTalk', '个性签名')}
                     {field('blogIcp', 'ICP 备案号')}
@@ -164,9 +162,6 @@ const UserControl = () => {
         },
     ];
 
-    // 内联 style 搬进 index.sass 的 `.allin`（20261004）：原来只有 `padding` 与
-    // `overflowY:'scroll'`，**没有高度** ⇒ 块级自动高度让那行 overflow 从未生效，
-    // 整页超出的部分被 `.Card{overflow:hidden}` 裁掉且无处可滚。高度写在类里。
     return (
         <div className='allin'>
             <Fab variant="circular" size='small' style={{ position: 'absolute', cursor: 'pointer' }} onClick={comeBack}>

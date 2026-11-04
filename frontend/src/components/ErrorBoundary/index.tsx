@@ -1,17 +1,3 @@
-/**
- * React 渲染期错误的兜底（20261004）。
- *
- * 为什么需要它：`boot.js` 的全局捕获与 `utils/report.ts` 只管**事件与网络**，
- * 渲染期抛错两者都收不到——React 18 在无人接住时会把整棵子树卸载，用户看到的是一片
- * 空白，而日志里是干净的。这一层把那一片空白换成"看得见的故障 + 一条日志"。
- *
- * 两个挂载点、用 `scope` 区分（同一条日志要能看出崩在哪一层）：
- *   - `App.tsx` 的 `<Outlet/>` 外：**页面内容**崩了，头/尾/看板娘都还在（scope="page"）；
- *   - `main.tsx` 的 RouterProvider 外：**整个壳**崩了，包括后台那颗壳（scope="app"）。
- *
- * 只接渲染期错误，不接异步/事件回调里的（那些由 `utils/report.ts` 与 boot.js 管）——
- * 这是 React error boundary 本身的能力边界，不是这里的选择。
- */
 import { Component } from 'react'
 import type { ErrorInfo, ReactNode } from 'react'
 import { reportError } from '../../utils/report'
@@ -37,11 +23,6 @@ class ErrorBoundary extends Component<Props, State> {
     }
 
     componentDidCatch(error: Error, info: ErrorInfo) {
-        // 换代后的悬空 chunk（20261005，A 案）：这一页还停在上一版，它 `import()` 出去的
-        // 分块名带老哈希，而部署时 dist 差集已经把那个文件删了。**这类错误重试永远不会
-        // 成功**（重新挂载子树拿的还是同一个 URL），唯一的出路是整页刷新 —— 交给带闸的
-        // 自愈函数（一分钟内只刷一次，闸拦下时就靠下面那张卡请用户手动刷）。
-        // 这一支**不报 react_error**：日志由自愈入口落一条 module_load_fail，一次事故一行。
         if (isStaleChunkError(error)) {
             recoverFromStaleChunk(error)
             return
@@ -96,8 +77,6 @@ class ErrorBoundary extends Component<Props, State> {
                         >
                             {stale ? '刷新页面' : '重试'}
                         </button>
-                        {/* 用 <a href> 而不是路由跳转：这层边界可能整个在 Router 之外，
-                            拿不到 useNavigate 的上下文 */}
                         <a className="errorBoundary__btn" href="/">回到首页</a>
                     </div>
                 </div>

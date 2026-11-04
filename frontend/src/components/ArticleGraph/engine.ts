@@ -6,21 +6,10 @@ import { artColor, PALETTE, LABEL_FONT } from './palette';
  *  继续前进（而不是无限缩小 dist），这样能真的钻进点云再穿出去。 */
 export interface Camera { yaw: number; pitch: number; dist: number; target: [number, number, number] }
 
-/** 首页默认机位。**dist 是量出来定的**（20260917 用户报"太远了"）：
- *  在 620×460 画布上量"有内容的像素包围盒占画布比例"——
- *    dist 4.3 → 29%×25%（旧值，太小：点云缩在画面中间一小块）
- *    dist 3.0 → 41%×37%   dist 2.6 → 46%×43%   dist 2.2 → 54%×53%
- *  取 2.6（≈旧值的 1.6 倍视觉面积，四周仍留得出标签的余地）。
- *  ⚠️ 调这里之后要跑 `python3 tests/wordgraph_render.py`：里面"定位后推近了"那条
- *  断言以 HOME_CAM.dist 为基准（别再往测试里写死数字，换一次就要跟着改一次）。 */
 export const HOME_CAM: Camera = { yaw: 0.55, pitch: 0.16, dist: 2.6, target: [0, 0, 0] };
 
 const FOV = (50 * Math.PI) / 180;
 const PITCH_LIMIT = 1.35;
-/** 滚轮缩放区间。点云半径实测：max 1.066 / p90 0.937 / p50 0.751（当前 400 词产物）——原来
- *  DIST_MIN=1.7 连最外层点都够不到（相机永远在球外），所以"还没放大多数就到极限了"
- *  （20260915 用户报）。放到 0.4 才能真的钻进簇内部看单个词，仍远大于 NEAR=0.05，
- *  贴脸裁切逻辑不受影响。 */
 const DIST_MIN = 0.4;
 const DIST_MAX = 9;
 /** 定位飞行时的最近距离。仍比 DIST_MIN 远（滚轮从这里还能继续往两边退），但 1.9 太保守：
@@ -38,45 +27,9 @@ const FLIGHT_MAX = 3;
 /** 边按相似度分 4 档透明度，每档一次 stroke：778 条边 → 4 次绘制调用。
  *  逐条 stroke 在低端机上就是掉帧主因。 */
 const EDGE_BUCKETS = 4;
-/** 标签预算：Z 层（贴脸）+ A 层（热度常驻）+ N 层（邻居）+ B 层（按深度补）总上限。
- *  C 层（悬停/选中/查询命中）不受限。34 → 40（20260915b）→ **50（20260917 用户要求）**：
- *  窗口放大后画布更宽，50 个 11px 标签仍没到糊的程度，而"放大到脸上却没名字"体验上更不能接受。
- *  注意 40 个时实测已经会挤掉个别邻居标签（线上 21 个邻居里 3 个没画上）。 */
 const LABEL_A = 22;
 const LABEL_MAX = 50;
-/** Z 层（贴脸）阈值：相机离这个点 ≤ 这个深度就给它上标签。
- *
- *  **不能**用"投影半径 ≥ N px"当判据：点半径公式 `(1.7+3.1√heat)*(dist/depth)` 在 target
- *  平面上恰好等于括号里的值（≤4.8px）——放大只是把点摊开，并不会让点变大
- *  （20260915b 无头实测：Z 层从未命中）。
- *
- *  ⚠️ 20260917 用户报"接近后标签出现的触发距离太短了"：阈值 1.0 时，用真产物数过——
- *  机位要推到 **dist ≈ 1.9** 才有第一批标签（默认机位 2.6 处落进阈值的点是 0 个）。
- *  改成 1.5 后 dist≈2.2 就出片，1.8 时候选 107 个（Z 层只取最近 LABEL_NEAR=10 个，
- *  所以不会一拥而上）。实测候选数（真产物，默认视角方向）：
- *      dist \ 阈值   1.0    1.5    2.0    2.5
- *        2.6        0      0     36    172
- *        2.2        0     24    140    295
- *        1.8       10    107    259    374
- *        1.4       81    236    362    400
- *  ⇒ 取 1.5：比原来早一档出标签，又不像 2.0 那样在默认机位就常年占满 10 个名额
- *  （Z 层优先级高于 A 层"重要词常驻"）。要更早改 2.0，代价是近距离时标签更容易被
- *  "离相机最近的"占满而不是"最重要的"。 */
 const NEAR_LABEL_D = 1.5;
-/** 点半径的透视缩放带：`dist/depth`（target 平面上 = 1）夹在 [0.62, 1.4]。
- *  **上界当初是贴着团外观测到的最坏值定的**（**旧**默认机位 dist=4.3、点云半径 1.11 ⇒
- *  最近的点 ratio≈1.24），下界 0.62（−38%）是给"飞进去"留的余量。
- *  ⚠️ **20260917 默认机位拉近到 2.6 之后，"团外完全不生效"不再成立**：最近的点 ratio 越过
- *  上界，约 3% 的点被上界夹、约 2% 被 alpha 下限抬起。**这组占比跟着产物与机位走**——
- *  成因拆解、复算方式与判据见 docs/word-graph.md §8.11（判据是"占比不超过某个比例"，不是 0），
- *  别把某个产物的定值抄成这里的一句话。
- *  这是既定行为、不是回归——夹的方向是"变大变清楚"，且只涉及离相机最近的一小撮点。
- *  ⚠️ 为什么必须有下界（20260916b 用户报「明明在外面看得见的向量点，视角飞进去反而变小
- *  看不见了」）：ratio 里带着**当前机位**的 dist，而 dist 一路能滚到 0.4（DIST_MIN）——
- *  target 平面上的点在 ratio 里恒定，远处（depth≈dist+点云半径）的点却按 dist/depth 一起塌：
- *  dist 0.4 时 depth 1.5 的点 ratio≈0.27 ⇒ 4.8px 的大词点缩成 1.3px，再叠上 alpha 下限
- *  （0.3）就成了背景里的暗点。夹住下界后同样的点在 3px 上下、alpha 0.5 ⇒ 还看得见，
- *  同时"远的暗一点小一点"这层纵深提示保留。 */
 const POINT_SCALE_MIN = 0.62;
 const POINT_SCALE_MAX = 1.4;
 /** 点透明度的下限。**旧**默认机位 4.3 下最远的点算出来 ≈0.57 > 0.5 ⇒ 那时团外视角不变；
@@ -90,15 +43,6 @@ const DRAG_DBL_GUARD = 300;
  *  会直接违反"空闲零 rAF"这条硬要求。 */
 const PULSE_MS = 1800;
 
-/** 词条匹配键（**唯一来源**，只此一处折小写）：ASCII 折小写，中文原样。
- *
- *  ⚠️ 别改回精确匹配：agent 侧索引 `index.json` 存的是**小写原形**（建图脚本写入
- *  `words`），前端产物节点 `w` 存的是**显示形**（Python / asyncio / MQTT …）。400 词里
- *  有 45 个含大写（= 只差大小写），精确匹配时向量检索返回的小写词会被静默丢弃 → 不飞
- *  （cameraFor 里查不到点，直接 return 原机位）、不亮（hits 为空）、不选中
- *  （组件 findIndex 返回 −1）——用户 20260916 报的「有些标签点击后不会在图谱里定位到
- *  向量」就是它，而本地兜底路（locate.ts）一直大小写不敏感，于是"检索服务可用时反而
- *  不如降级时准"。两侧同一个键 ⇒ 这个问题在结构上不会再回来。 */
 export function wordKey(w: string): string { return w.toLowerCase(); }
 
 /** 某个节点的直接邻居（按边权=相似度降序）。读数卡片用它列出"这个词连着谁"——
@@ -115,21 +59,6 @@ export function neighborsOf(g: GraphData, idx: number): { w: string; s: number }
     return [...best].map(([w, s]) => ({ w, s })).sort((a, b) => b.s - a.s);
 }
 
-/** 点的大小 / 标签字号 / 常显标签优先级**统一**用的取值：文章热度（20261003 起）。
- *
- *  以前这三处都用 `n`（tf-idf 归一化重要度）。用户的原话是"不按那个没有意义的重要度
- *  画大小"——`n` 说的是"这个词在语料里多有代表性"，跟**访客想看什么**没关系：一个
- *  没人读的文章里的生僻词可以比爆款标题里的词更大。现在按文章热度画（阅读/点赞/
- *  收藏/评论的 log1p 加权，口径见建图脚本），大小就变成"有多少人真的读过它"。
- *
- *  ⚠️ `n` 仍留在产物里、仍归 `locate.ts` 的检索相关性用——**热度不该影响搜索排序**，
- *  否则查什么都是那几个爆款文章的词。
- *
- *  地板：`h` 全为 0 时（新站还没流量）所有点会缩成同一个模子，图就不成图了。
- *  0.15 让"零热度"仍有可见体积，同时仍明显小于有热度的词（半径下限 2.9px vs 上限 4.8px）。
- *
- *  老产物（没有 `h`）原样退回 `n`：产物是内容寻址的，改了前端不代表浏览器手里的那份
- *  已经换了，回退是必须的，不是"兼容旧版"的客气话。 */
 const HEAT_FLOOR = 0.15;
 export function heatOf(n: GraphNode): number {
     const h = n.h;
@@ -188,9 +117,6 @@ export class WordGraphEngine {
     private labelW = new Map<string, number>();
     private placed: number[] = [];
     private zlist: number[] = [];               // 贴脸层候选（每帧复用，避免分配）
-    /** 本帧已经画过标签的节点。分层（C→N→Z→A→B）各层独立调 take()，没有这张表时
-     *  同一个词会被后一层**再画一次**（20260915b 给 hard 加四向候选位后，第二次调用
-     *  换个位置就放下了 ⇒ 一个词两个名字；用户 20260916 报的正是这个）。 */
     private labeled = new Set<number>();
 
     // 交互状态
@@ -468,10 +394,6 @@ export class WordGraphEngine {
         const pk = Math.max(0, 1 - (performance.now() - this.pulseT0) / PULSE_MS);
         const glow = 0.45 + 0.55 * Math.sin(pk * Math.PI * 3) * pk;
 
-        // ---- 边：按透明度分档，每档一次 stroke
-        // ⚠️ 热边（命中/悬停/选中点连着的）必须**单独一遍** stroke：一个 path 只有最后
-        // 设的那个 strokeStyle 生效，混在同一条 path 里画等于"按桶整片染色"——高亮邻边
-        // 会变成随机整片变色（20260915b 修的就是这个，原来 hover 高亮其实是坏的）。
         const edges = data.edges;
         const hot = this.hotKeys;
         hot.clear();
@@ -485,16 +407,6 @@ export class WordGraphEngine {
         }
         for (let b = 0; b < EDGE_BUCKETS; b++) {
             const t = (b + 0.5) / EDGE_BUCKETS;
-            // 未选中时的连线基线。四版演进（20260916c 收敛）：
-            //   ① 0.06 + 0.42t  → 0.113/0.218/0.323/0.428（用户："太不明显"）
-            //   ② 0.10 + 0.46t  → 0.158/0.273/0.388/0.503（最弱档 +40%，用户："又太亮了"）
-            //   ③ 0.048 + 0.52t → 0.113/0.243/0.373/0.503（只退最弱档，其余保持）
-            //   ④ 0.045 + 0.45t → 0.101/0.214/0.326/0.439（本版：整体再压 ~11%）
-            // 第 ④ 版按用户"默认的线条亮度再低一点"**整体下调**，四档等比（−11%），
-            // 形状与档间比例不变 —— 前三版证明了这条曲线不该改形状、只该改高度：
-            // 单独压某一档（②→③）会把曲线掰弯，用户接着就会对另一档提意见。
-            // ⇒ **以后要调亮度就整体乘一个系数，别只动 A 或只动 B。**
-            // 聚焦时的 0.22 压暗系数与热边那一路不动。
             const base = 0.045 + 0.45 * t;
             ctx.lineWidth = 0.5 + 1.1 * t;
             // 聚焦时把无关的边整片压暗，让热点跳出来
@@ -504,7 +416,6 @@ export class WordGraphEngine {
                 if (this.edgeBucket[k] !== b) continue;
                 if (hi && hot.has(k)) continue;                 // 热边交给下面那遍
                 const e = edges[k];
-                // 近平面裁剪（20260917）：整条都在相机后方才丢，否则画到近平面为止
                 const seg = clipEdge(this.proj, data.nodes, e[0], e[1]);
                 if (!seg) continue;
                 ctx.moveTo(seg[0], seg[1]);
@@ -518,7 +429,6 @@ export class WordGraphEngine {
             ctx.beginPath();
             for (const k of hot) {
                 const e = edges[k];
-                // 热边同样要裁：**这条曾经让"顺着高亮线飞过去"的高亮整个消失**
                 const seg = clipEdge(this.proj, data.nodes, e[0], e[1]);
                 if (!seg) continue;
                 ctx.moveTo(seg[0], seg[1]);
@@ -570,14 +480,6 @@ export class WordGraphEngine {
             }
             return false;
         };
-        /** hard = 被显式关注的词（选中/邻居/贴脸/常驻热度前 N）：一个位置放不下就换个位置，
-         *  实在无处可放才放弃。false = 补位层，撞了就让开，免得满屏乱飘。
-         *  force = 当前焦点（悬停/选中/查询命中）：连一个空位都没有时也照画——它是用户此刻
-         *  正在看的东西，被别人的名字挤掉比压在一起更糟（有描边光晕，压着也读得出）。
-         *
-         *  ⚠️ 20260917 删掉了一档 `dim`（邻居层与补位层原本 alpha 0.55 + 灰色 labelDim）：
-         *  用户看到灰标签以为是"重要度低"——它是**层级**不是重要度，而且既然要看邻居的名字，
-         *  就该看得清。现在只有两档：焦点（force，1.0 + 高亮色）与其余（0.9 + 常色）。 */
         const take = (i: number, force: boolean, hard: boolean): boolean => {
             const depth = this.proj.d[i];
             if (depth <= 0.05) return false;
@@ -591,9 +493,6 @@ export class WordGraphEngine {
             let tw = this.labelW.get(key);
             if (tw === undefined) { ctx.font = font; tw = ctx.measureText(n.w).width; this.labelW.set(key, tw); }
             if (!force && placed.length >= cap) return false;
-            // 候选位：右 → 左 → 上 → 下。原来只试"右，放不下就改左，再不行就放弃"——
-            // 于是 `device` 这种前排词会被旁边 `git` 的名字顶掉（20260915b 无头实测），
-            // 而用户要的正是"热度高的向量一直显式展示向量名"。
             const nx = this.proj.x[i], ny = this.proj.y[i], nr = this.proj.r[i];
             const ty = ny - size * 0.55;
             const cands: number[][] = hard
@@ -632,14 +531,6 @@ export class WordGraphEngine {
         for (const i of this.hits.keys()) take(i, true, true);
         if (this.hover !== null && !this.hits.has(this.hover)) take(this.hover, true, true);
         if (sel !== null && !this.hits.has(sel) && sel !== this.hover) take(sel, true, true);
-        // N 层：焦点词的邻居——连线亮了，名字也该跟上。
-        // 20260917：**悬停也算焦点**（用户："悬浮时在向量边上也要显示直接相连的名字"）。
-        // 此前只有 sel 触发，于是"悬浮有名字、它连着的点没名字"，得先点一下才看得到。
-        // 用并集而不是"悬停覆盖选中"：光标扫过画布时不该把刚选好那一片的名字擦掉。
-        // 每个焦点要把**它全部的边**过一遍：真实产物的度数是 max 9 / 均值 3.9
-        // （建图脚本那个 `[:3]` 是每点各自取前三再取并集，不是"每点只有 3 条"，
-        // 见 docs/word-graph.md 的《建图管线》那条注），两个焦点的并集最多几十个，
-        // 预算 LABEL_MAX = 50 由 take 自己兜。
         for (const f of new Set([this.hover, sel])) {
             if (f === null) continue;
             for (const e of data.edges) {
@@ -660,12 +551,8 @@ export class WordGraphEngine {
         if (zl.length > 1) zl.sort((a, b) => this.proj.d[a] - this.proj.d[b]);   // 最近的先占位
         for (let k = 0; k < zl.length && k < LABEL_NEAR; k++) take(zl[k], false, true);
         // A 层：全局热度前 N 名常驻（hard——"热度高的向量一直显式展示名字"）
-        const ranked = this.byHeat;   // 20261003 起是**热度**序，不是重要度序（见 heatOf 的头注）
+        const ranked = this.byHeat;
         for (let k = 0; k < ranked.length && k < LABEL_A; k++) take(ranked[k], false, true);
-        // B 层：其余按"离相机近"补位（拉近自然揭示更多）。只在查询聚焦时让位——
-        // 悬停/选中一个词不该让别的名字全消失（那会让"选中看邻居"这件事没法看）。
-        // ⚠️ 必须从**最近**的点往回补：this.order 是远→近排的（画家算法），照它正序走
-        // 等于把名字发给背景深处那几个小点，眼前的大点反而没名字（20260915b 实测）。
         if (!this.hits.size) {
             for (let oi = this.order.length - 1; oi >= 0 && placed.length < cap; oi--) {
                 const i = this.order[oi];
@@ -744,10 +631,6 @@ export class WordGraphEngine {
     };
 
     private onWheel = (e: WheelEvent) => {
-        // 20261002 起展示柜**没有锁定态**了（用户："不需要锁定功能和按钮了"）：画布吃到滚轮
-        // 就是缩放图谱，页面滚动交给外壳——内联态 `.vit-body` 挂着 `pointer-events: none`
-        // （见 Vitrine/index.sass），滚轮压根到不了这里；放大态页面本来就 `overflow: hidden`。
-        // 换句话说，"滚轮穿透到页面"当初设锁的唯一理由，现在由外壳那条规则承担了。
         e.preventDefault();
         this.anim = null;
         const r = wheelStep(this.cam.dist, this.flightLen(), e.deltaY);
@@ -776,15 +659,6 @@ export function dollyBy(deltaY: number): number {
     return DOLLY_SCALE * Math.sign(t) * (1 - Math.exp(-Math.abs(t)));
 }
 
-/**
- * 滚轮一格之后相机该怎么动。三种情况，顺序就是优先级：
- *  1. 想拉近（前进）且 dist 已经到底 → **穿云前进**（dist 不再变，target 沿视线走）；
- *  2. 想拉远而后退且还有穿云位移 → 先退回锚点（退回多少由位移长度夹住，不会退过头）；
- *  3. 其余 → 老规矩，缩 dist。
- * 之所以要 1/2 两条：只缩 dist 的话相机永远在锚点周围 0.4 处打转，团中央的词只能靠
- * 旋转到正面才看得见（20260915 用户报"滚轮不能穿出向量空间"）。抽成纯函数是为了
- * 能在 node 里断言这三条分支——手感就是功能本身，见 tests/wordgraph-engine.test.mjs。
- */
 export function wheelStep(dist: number, flightLen: number, deltaY: number): {
     dist: number;
     advance: number;
@@ -915,16 +789,6 @@ function projectWorld(x: number, y: number, z: number,
             bz.hh - (vx * bz.yx + vy * bz.yy + vz * bz.yz) * inv];
 }
 
-/** 近平面裁剪：把一条边裁到相机前方，返回 `[x1, y1, x2, y2]`（屏幕像素）；
- *  整条都在相机后方才返回 null。
- *
- *  为什么需要它（20260917 用户实测）：两处边通道此前都是"**任一端点 depth ≤ NEAR 就整条
- *  丢掉**"——选中一个词、顺着高亮线飞过去看邻居时，相机一旦贴到或越过那个端点，线当场
- *  消失，只能把视角拉远才回来。正确做法是把线段裁到近平面为止：线仍然朝着邻居的方向指着
- *  （邻居在视野外时表现为线冲向屏幕边缘），而不是整条凭空不见。
- *
- *  depth 是世界坐标的**线性**函数，所以交点按 depth 线性插值即可；但屏幕坐标是透视除法
- *  的结果（非线性），交点必须回世界系取出来再投影——插值屏幕坐标会得到一个错误的位置。 */
 export function clipEdge(p: Projection, nodes: GraphNode[], a: number, b: number):
     [number, number, number, number] | null {
     const da = p.d[a], db = p.d[b];

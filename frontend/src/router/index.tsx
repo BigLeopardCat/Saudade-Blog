@@ -136,7 +136,6 @@ const router = createBrowserRouter([
                 element: routePage(<Albums />)
             },
             {
-                // 用户管理（20260905 拍板：账号管理 + 评论管理合并；原「留言管理」并入其评论管理 Tab）
                 path: 'users',
                 element: routePage(<Users />)
             },

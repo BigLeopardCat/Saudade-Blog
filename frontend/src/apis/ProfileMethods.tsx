@@ -1,16 +1,3 @@
-/**
- * 个人中心一期（20260922）接口层。
- *
- * 全部走 `public_routes` 里那族**自身鉴权**的接口（任意登录用户可用，见
- * src/routes/profile.rs 头注）。两个口径上的坑写在下面，改动时别踩回去：
- *
- * 1. **失败不是 HTTP 4xx**：这族接口无 token 也返回 HTTP 200 + `code=500` +
- *    `message=中文原因`（与 /api/protected/profile 一致）。所以判成功必须看
- *    `code === 200`，只判 `res.status === 200` 会把"未登录/收藏失败"当成功。
- *    这里统一用 `ok(res)` 收口，调用点不必各写一遍。
- * 2. **错误提示由调用方决定**：本层只把 message 原样带着，不弹 toast——
- *    同一个失败在不同窗口里的措辞不一样（表单要留在原地，列表要刷新）。
- */
 import http from "./axios.tsx";
 import type {
     FavoriteItem,
@@ -58,10 +45,6 @@ function updateNickname(nickname: string) {
     });
 }
 
-/** 改密码。20260926 起后端返回 `{ token }` —— **必须接住并写回 tokenKey**：
- *  改密码会把令牌代次 +1，于是此前签发的全部令牌失效（这就是"其他设备下线"），
- *  本机手里那枚也包含在内；后端顺手签发了一枚带新代次的还给本机，
- *  语义正是「本机保持登录、其他设备全部下线」。忘了写回 ⇒ 本机下一个请求就掉线。 */
 function changePassword(oldPassword: string, newPassword: string) {
     return http<Envelope<{ token: string }>>({
         url: "/api/protected/profile/password",
@@ -159,8 +142,6 @@ function getMailbox() {
     });
 }
 
-/** 发站内信。title 选填（20260922 起）——空串按"没填"处理，后端存 NULL。
- *  `toUsername` 里填**对方账号或 UID**（20260923 起；昵称通道已撤，昵称不保证唯一）。 */
 function sendMessage(toUsername: string, title: string, content: string) {
     return http<Envelope<MessageItem>>({
         url: "/api/protected/messages",
@@ -177,7 +158,6 @@ function readMessages(payload: { ids?: number[]; all?: boolean }) {
     });
 }
 
-// ── 草稿箱（20260923）───────────────────────────────────────────────────────
 
 function getDrafts() {
     return http<Envelope<MessageDraft[]>>({
@@ -218,7 +198,6 @@ function getMyTalks() {
     });
 }
 
-// ── 对话额度（20260929）─────────────────────────────────────────────────────
 
 /** 我的额度现状（个人中心「对话额度」页签）。`used/limit/remaining` 与 `/chat` body 里的
  *  `chat_quota` 同源；`pendingRequest` 是我最新一份待处理申请（null = 没有）。 */

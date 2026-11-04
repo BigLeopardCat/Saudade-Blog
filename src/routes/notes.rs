@@ -11,16 +11,6 @@ use crate::routes::AppState;
 use crate::search_core::{count_terms, keyword_given, keyword_prefilter, score_term_sum, split_terms};
 use crate::utils::ApiResponse;
 
-// ── 文章状态词表：唯一解析点（20261018）───────────────────────────────────────
-//
-// `status` 与 `is_public` 是**两个字段描述同一件事**，此前四处写点各自手写 if 链去对齐，
-// 而公开侧的守卫是"排除 draft"（`status != 'draft'`）—— 那是**黑名单**：任何没见过的词
-// （以及 NULL）都不在"排除名单"里，于是**漏过去**。可触达的后果：一条
-// `status='private'` 而 `is_public=true` 的行会被公开列出（`update_note` 只带
-// `{"is_public":true}` 就能造出来）。今天没泄漏只是因为四处写点恰好对齐，**不是因为有约束**。
-//
-// 这里做两件事：读侧把黑名单翻成**白名单**（未知词/NULL 从"放行"变"拦截"），
-// 写侧把词表收敛到**一处**（未知词 400 拒绝，绝不原样写库）。
 
 /// 公开可见的 status 词。`published` 必须在里面：`0000_schema.sql` 的列缺省就是它，
 /// 集成测夹具也按它 INSERT。它是 `public` 的**兼容别名**，不是第二个真值。
@@ -125,22 +115,8 @@ pub struct NoteDto {
     #[serde(rename = "noteTagRefs")]
     pub tag_refs: Vec<note_tags::TagRef>,
 
-    // ── 卡片上的四个数（20260930，20261003 补讨论数；见 `note_stats::counts_for`）──
-    // **`None` 时整个键不出现在 JSON 里**（不是 `null`）：这是刻意的，因为只有列表接口
-    // 会挂数，详情接口不挂——`get_article_detail`（看板娘读文章详情）那条路因此**一个
-    // 字节都没变**，跨仓契约不受影响。
-    //
-    // `None` = 这一路没有（或取不到）计数 ⇒ 卡片不渲染那一排；`Some(0)` = 挂了数且真的是
-    // 0 ⇒ 显示 0。**"读不到"与"真的是 0"必须分得开**，否则统计接口一挂，站上每篇文章
-    // 都会谎报"0 阅读"。
-    // ── 谁发的（20261001，见 `attach_authors`）──────────────────────────────
-    // **不留 id**（`skip`）：uid 是内部编号，公开接口没有理由印出去；它只在本模块内
-    // 走一趟（`map_note` 填 ⇒ `attach_authors` 读），用来把 user 行批量取回来。
     #[serde(skip)]
     pub author_id: Option<i32>,
-    // `None` = 这一路没解析（或解析失败）⇒ **键不出现**，前端回退站点级署名
-    // （与改造前逐字相同）。`Some` = 已经判定了是谁 ⇒ 卡片按它渲染。
-    // 「取不到」与「真的是站点主人发的」必须分得开：后者是事实，前者是没查着。
     #[serde(rename = "authorName", skip_serializing_if = "Option::is_none")]
     pub author_name: Option<String>,
     #[serde(rename = "authorAvatar", skip_serializing_if = "Option::is_none")]
@@ -152,9 +128,6 @@ pub struct NoteDto {
     pub likes: Option<i64>,
     #[serde(rename = "favorites", skip_serializing_if = "Option::is_none")]
     pub favorites: Option<i64>,
-    /// 讨论数（20261003）。**与上面三个数同一条纪律**（`None` ⇒ 键不出现 ⇒ 卡片不渲染
-    /// 这一格）。数量口径 = 公开讨论区看得见的那些（`approved = 1 AND is_deleted = 0`，
-    /// 见 `note_stats::comments_of`）——点一下卡片进去数得出来的就是这个数。
     #[serde(rename = "comments", skip_serializing_if = "Option::is_none")]
     pub comments: Option<i64>,
 }
@@ -168,12 +141,6 @@ fn clamp_zoom(v: f64) -> f64 {
     if v.is_finite() { v.clamp(1.0, 4.0) } else { 1.0 }
 }
 
-/// `cat` 是**已经取出来的**（id, 名字）二元组，不是 `category::Model`。
-///
-/// 20261018 起刻意收窄：列表查询只 select 分类的这两列（见 `CategoryPartial`），
-/// 硬要收成 `Model` 就得给 `introduce`/`path_name`/`icon`/`color` 编一堆 `None` 填进去
-/// —— 而"哪天有人在 `map_note` 里读了 `cat.introduce`，它恒为 None 且没有任何东西会红"
-/// 正是本仓最忌讳的那类静默失效。收成二元组之后，**没取的东西在类型上就不存在**。
 fn map_note(n: note::Model, cat: Option<(i32, String)>) -> NoteDto {
     let (cat_id, cat_name) = match cat {
         Some((id, name)) => (Some(id), Some(name)),
@@ -204,12 +171,6 @@ fn map_note(n: note::Model, cat: Option<(i32, String)>) -> NoteDto {
         category_id: cat_id,
         category_title: cat_name,
         is_public: n.is_public,
-        // ⚠️ **恒空串**（20261018）：标签的 id 串从 `note_tag` 关联表重建，由
-        // `note_tags::attach_tags` 在 handler 里挂上去 —— 与 `attach_authors` /
-        // `attach_stats` 同一个分工（`map_note` 是纯函数，不查库）。
-        // 这一行**不是**"忘了填"：`note.tags` 那列仍在写（soak 期两处同源，见
-        // `routes/note_tags.rs` 头注），但读路径已经不再看它 —— 所以这里刻意不读 `n.tags`，
-        // 免得"某一篇的列陈旧了"与"某一篇真的没标签"在连线上长得一样。
         tags: String::new(),
         tag_refs: Vec::new(),
         // 作者只搬 id 过来，名字/头像由 `attach_authors` 批量解析（`map_note` 是纯函数，
@@ -226,17 +187,6 @@ fn map_note(n: note::Model, cat: Option<(i32, String)>) -> NoteDto {
     }
 }
 
-// ── 列表端点的 SELECT 形状（20261018）：**没有 `content` 列** ────────────────────────
-//
-// 三个列表端点（`list_public_notes` / `list_all_notes` / `get_top_notes`）此前走
-// `find_also_related` / `find_with_related` —— 那是 `SELECT note.*`，**整篇正文一起读回来**，
-// 而紧接着 `map_note_summary` 的第一件事就是把 `content` / `content_raw` 置空
-// （`description` 21/21 全非空，卡片摘要本来就不需要正文）。Times 归档页一次
-// `page_size=999` ⇒ 一次读回**全站正文**。这是本站唯一一处**随语料线性增长**的读放大。
-//
-// 用 partial model 而不是"记得别 select content"：正文列**根本不在 select 列表里**，
-// 没有纪律要守。两个方向都是编译强制 —— 给 `note::Entity` 加一列会让 `into_model()`
-// 编译不过（新列没处放），给 `NoteDto` 加字段会让 `map_note` 编译不过。
 #[derive(Debug, Clone, DerivePartialModel)]
 #[sea_orm(entity = "note::Entity", from_query_result)]
 pub struct NoteSummary {
@@ -289,27 +239,12 @@ impl NoteSummary {
             created_at: self.created_at,
             updated_at: self.updated_at,
             is_public: self.is_public,
-            // `tags` 那一列**不在 `NoteSummary` 的列里**（20261018）：标签的 id 串改由
-            // `note_tag` 关联表重建（`note_tags::attach_tags`），列表查询因此连这一列也不读。
-            // 填 `None` 不是"读到了空" —— `map_note` 本来就不看它（见那边的注释）。
             tags: None,
             category_id: self.category_id,
         }
     }
 }
 
-/// 本页用到的分类名（键 = 分类 id）。
-///
-/// ⚠️ **分类走单独一次查询，不跟着 LEFT JOIN 一起取**（20261018 现场修正）。
-/// 原来那版是 `find_also_related(category::Entity).into_partial_model::<NoteSummary, CategoryPartial>()`
-/// —— **它不工作**：`SelectTwo::into_partial_model` 的第一步是 `QuerySelect::select_only(self)`，
-/// 而 `select_only` 会 `clear_selects()`；`SelectTwoModel` 读行时用的是 `from_query_result(res, "A_")`
-/// / `"B_"`，那两个前缀**正是 `find_also_related` 写进 select 列表的别名**（`apply_alias`），
-/// 被 `select_only` 清掉之后就再也对不上 ⇒ 每一行都 `Err(ColumnNotFound)`。
-/// 而三个调用点都是 `.unwrap_or(vec![])` ⇒ **公网文章列表静默变空**，没有任何东西报错。
-/// `Select<Entity>`（单实体）那条 `into_partial_model` 没这个问题（它按空前缀读）。
-///
-/// 失败 → 空表：卡片那一栏留空，列表本身照常返回（与 `attach_stats` / `attach_authors` 同一取向）。
 async fn category_names(
     db: &sea_orm::DatabaseConnection,
     ids: impl Iterator<Item = i32>,
@@ -335,13 +270,6 @@ async fn category_names(
     }
 }
 
-/// `.unwrap_or(vec![])` 会把**查询出错**与**查询结果本来为空**合成同一个结果。
-///
-/// 20261018 的现场就是被这一句吃掉的：`SelectTwo` 那版 `into_partial_model` 每一行都
-/// 映射失败 ⇒ 公网文章列表**静默变空**，接口照旧 200、日志一个字都没有（`fetch_page`
-/// 的错误在 `unwrap_or` 里蒸发）。
-/// 列表端点一律走这里：**照旧返回空列表**（列表本身不能 500），但**留一行 WARN** ——
-/// "空"这件事至少要有迹可循。
 fn or_empty_warn<T>(r: Result<Vec<T>, sea_orm::DbErr>, what: &str) -> Vec<T> {
     match r {
         Ok(v) => v,
@@ -433,9 +361,6 @@ pub async fn list_all_notes(
 #[derive(Deserialize)]
 pub struct SearchRequest {
     pub keyword: Option<String>,
-    /// 后台列表的「文章标题」筛选。**这个字段此前根本不存在**，而结构体又没开
-    /// `deny_unknown_fields` → 前端表单里的「文章标题」一直是静默空操作（填了也没用，
-    /// 也不报错）。见 `search_all_notes`。
     pub title: Option<String>,
     pub categories: Option<String>,
     pub status: Option<String>,
@@ -443,44 +368,16 @@ pub struct SearchRequest {
     pub is_top: Option<i32>,
     pub start_date: Option<String>,
     pub end_date: Option<String>,
-    /// 后台列表「公开文章」页签（20261006 用户第 5 条）。`true` = 只要**站上真能读到**的那些。
-    ///
-    /// 口径不新造，用既有的那一份（见 `search_all_notes` 里的落地处）。
     pub only_public: Option<bool>,
 }
 
-// ── 标签字典（20261018 改道）───────────────────────────────────────────────
-//
-// 这里原来有 `load_tag_names` / `merge_tag_name_dict` / `note_tag_names` 三件：
-// 把两级标签读成一张 `id → 名字` 的字典，再把 `note.tags` 那个 id 串过一遍字典翻成名字。
-// 「撞号取一级」那条规则就是在这张扁平字典上打的补丁（两级 id 命名空间不隔离，
-// 一个数字可能两张表都有）。
-//
-// 关联表落地之后这三件**整体退休**：`note_tag` 的一行自己知道指向哪张表，
-// 「这个 id 是哪一级」不再是需要猜的事 —— 读路径改为
-// `note_tags::load_note_tags`（一次取回整批的 `(id, 名字)`，按 `seq` 排好），
-// 撞号在**写入侧**就已经不可能（`replace_note_tags` 按列归属，不按数字大小）。
 
-/// 关键词是否命中这篇文章：标题 / 正文 / **标签名字**。`kw` 必须已小写化。
-///
-/// `pub(crate)`：20261006 聚合搜索的文章那一栏走**同一套命中判定**（不能各写一份，
-/// 否则"首页搜得到的文章"与"分类页搜得到的"会开始漂）。
 pub(crate) fn note_hits_keyword(n: &note::Model, kw: &str, tag_names: &[String]) -> bool {
     n.title.to_lowercase().contains(kw)
         || n.content.to_lowercase().contains(kw)
         || tag_names.iter().any(|t| t.to_lowercase().contains(kw))
 }
 
-// ── 切词 / 命中 / 打分：实现已搬到 `search_core`（20261006） ────────────────────────
-//
-// `split_terms` / `script_runs` / `keyword_given` 三件**原样**搬进了 `crate::search_core`，
-// 连同它们的单测。搬家的理由只有一个：聚合搜索（`routes/search.rs`）是第二个消费方，
-// 「怎么切词」这条规则不能有第二份 —— 本仓在这上面栽过太多次（同一套规则抄两份、后来各漂各的）。
-// 这里保留的几个 `note_*` 助手是**转调**：权重、判定、大小写口径逐字不变，
-// 所以文章那一栏的结果与改动前**逐条一致**。
-//
-// ⚠️ `search_notes` 的 handler 本身（下面那个函数，含它的分档循环）**一个字没改**：
-// 它同时服务 agent 的 `search_notes` 工具，不趟这摊水。
 
 /// 命中的 term 个数（0 = 不命中；`terms.len()` = 全中）。**档位即这个词数**——
 /// 前台按「全中优先、无全中才降级到部分命中」分档（见 search_notes）。
@@ -493,37 +390,10 @@ fn note_hits_terms(n: &note::Model, terms: &[String], tag_names: &[String]) -> b
     term_hit_count(n, terms, tag_names) > 0
 }
 
-/// 多词打分（20260920）：每个 term 各按同一套权重计分后**求和**（档内排序用）。
-///
-/// 权重（标题命中 +100 / 标签命中 +30 / 正文出现次数、上限 10，防长文堆词刷分）与
-/// 大小写口径住在 `search_core::score_term`——聚合搜索共用同一套，这里只把文章的
-/// 标题/标签/正文喂进去。
-///
-/// `tag_names` 是该文标签的**名字**（由 `note_tag_names` 过字典得到）。旧版这里直接拿
-/// `note.tags` 的 id 串 `contains(kw)`：搜标签名永远 0 分，搜纯数字（"1"）却被
-/// id 1/10/21 全部加成 +30 —— 这就是「按相关度排序」里那部分假信号。
-///
-/// 不再额外加"多词全中"奖励——命中词数由调用方的**档位**承担（全中优先），
-/// 档内只比"每个词命中的位置有多好"。单词查询时与旧分数完全一致。
 fn search_score_terms(note: &note::Model, terms: &[String], tag_names: &[String]) -> i64 {
     score_term_sum(terms, Some(&note.title), tag_names, &note.content)
 }
 
-/// 文章搜索的**关键词 SQL 预筛**（标题 / 正文 / 标签名）。`search_notes`、`search_all_notes`
-/// 与聚合搜索（`routes/search.rs`）**三处共用这一份** —— 这套规则抄三遍就是三份会各自漂的
-/// 实现，而漂的后果是"首页搜得到、聚合搜索搜不到"这种没人会去比对的差异。
-///
-/// 预筛**只保证超集**（`search_core::keyword_prefilter` 头注）：档位、权重、顺序全留在内存
-/// 那一遍，一个字没动。
-///
-/// 返回 `Ok(None)` = 没有可用 term（调用方**不许**拿它拼一个恒真条件）；
-/// `Err` = 标签那一维查不到 ⇒ **整个预筛都不能用** —— 少收一行是**静默的错误答案**，
-/// 调用方必须回退全量加载（并留一行 WARN 让"这轮为什么慢"有迹可循）。
-///
-/// 为什么标签要单独取一次：命中判定是 标题 / 正文 / **标签名字**，前两维在 `note` 表上，
-/// 第三维住在 `note_tag` 关联表里 —— SQL 主查询碰不到，只能先把"标签名命中"的文章 id
-/// 取回来 OR 进去。这正是关联表落地解锁的能力（此前标签是 id 串，SQL 侧搜标签名恒空、
-/// 搜数字恒假命中）。
 pub(crate) async fn note_keyword_prefilter(
     db: &DatabaseConnection,
     terms: &[String],
@@ -560,22 +430,11 @@ pub async fn search_notes(
         }
     }
 
-    // ── 关键词：先切词，再下 SQL 预筛（20261018）──────────────────────────────
-    // 预筛**只保证超集**（`search_core::keyword_prefilter` 头注），真判定与打分仍在
-    // 内存里那一遍（档位、权重、顺序一个字没动）。
-    //
-    // 为什么以前完全不下 SQL：那时"标签"是 `note.tags` 那一列**逗号分隔的 id 串**，
-    // SQL 只能对 id 串 LIKE —— 搜标签名永远 0 命中、搜纯数字（`1`）假命中所有含
-    // id 1/10/21 的文章。关联表落地之后标签名在 `tag_one`/`tag_two` 里，**这一维终于
-    // 能在 SQL 里判了**（先取回命中的文章 id 再 OR 进主查询），预筛因此是完整的。
     let terms = payload
         .keyword
         .as_deref()
         .map(split_terms)
         .unwrap_or_default();
-    // 给了关键词却切不出任何可用 term（`第1章` / 纯标点）→ 回空，**不要**落到下面的
-    // "无关键词 → 返回整表"（那会把"站内没有这种东西"答成全站文章列表，见 keyword_given）。
-    // ⚠️ 这条短路从"查询之后"挪到了"查询之前"（20261018）：结论一样，但省一次全量查询。
     if keyword_given(payload.keyword.as_deref()) && terms.is_empty() {
         return Json(ApiResponse::success(vec![]));
     }
@@ -621,40 +480,15 @@ pub async fn search_notes(
 
     let notes = note::Entity::find()
         .filter(condition)
-        // ⚠️ **显式钉住行序**（20261018）。此前这里没有 ORDER BY，返回顺序是**存储顺序**
-        // （实测主键升序）—— 那不是一个契约，只是当时查询计划的产物。加预筛之后计划会变
-        // （顺序扫 → 位图索引扫），而下面的相关度排序对**同分**的行是稳定的（`sort_by` 稳定，
-        // 同分保持入参顺序）⇒ 行序一变，"同分的那几条谁在前"就跟着变。
-        // 这里把它钉成 id 升序 = **与今天实测的行为一致**，只是从"碰巧"变成"确定"。
         .order_by_asc(note::Column::Id)
         .find_with_related(category::Entity)
         .all(&state.db)
         .await
         .unwrap_or(vec![]);
 
-    // 关键词命中筛选 + 相关度排序（20260912 引入排序 / 20260919 把命中判定也收进来）。
-    //
-    // 排序的来由：本查询此前**无 ORDER BY**，返回顺序即存储顺序（实测主键升序）——于是搜索
-    // 「架构」的第一条是《Git从入门到入土》（它只在正文表格里顺带出现过一次该词），而真正讲
-    // 架构的那篇紧随其后。agent 侧 search_notes 取候选[0] 时因此读错文章（9/8 跑题事故的
-    // 供给端根因）。同分按 created_at 倒序（新的在前，与 list_public_notes 一致），
-    // 再同分落到上面那条 `ORDER BY id`。
-    //
-    // 命中判定为什么还在内存里：SQL 那一层只是**预筛**（超集），真判定要连标签名一起看、
-    // 还要算档位与权重（一遍遍历同时完成判定与打分，正文不必扫两次）。
-    // 注：本端点同时服务博客前端搜索（NoteMethods.tsx）与 agent 的 search_notes，
-    // 改动影响结果集（数字关键词不再假命中、标签名开始能搜到）与顺序，不影响 DTO。
-    // 切成 terms 后逐词判定（20260920，见 split_terms：整串子串匹配对多词查询是假否定）；
-    // 空关键词（缺省/全空白）走原来的整表返回。
-    // 命中分档（20260920）：**全中优先**——多词查询先只留"每个词都命中"的文章（精度优先，
-    // 与切词前的严格度同源，agent 不会因为降级候选读到跑题文章）；一篇全中的都没有时，
-    // 才降级用"部分命中"（召回兜底：搜 "Docker 部署博客" 不该是一片空白）。
-    // 档内按各词分项求和（+ created_at 兜底）排序；单词查询只有一档，等价于旧行为。
     let notes = if terms.is_empty() {
         notes
     } else {
-        // 这一批文章的标签名一次取回（20261018 起走 `note_tag`，见 `note_tags` 模块头注）。
-        // **不再**是"先读全站字典、再拿 id 串去查"：关联表自己带归属，读的也就是这一批。
         let ids: Vec<i32> = notes.iter().map(|r| r.0.id).collect();
         let tag_map = note_tags::load_note_tags(&state.db, &ids).await;
         let mut all: Vec<(usize, i64, (note::Model, Vec<category::Model>))> = Vec::new();
@@ -704,9 +538,6 @@ pub async fn search_all_notes(
 
     // NO PUBLIC SAFEGUARDS (Admin Route)
 
-    // `title` 是后台列表「文章标题」筛选的落地——这个字段以前压根不在 `SearchRequest` 里，
-    // 前端填了也白填（结构体没开 `deny_unknown_fields`，所以是静默空操作）。
-    // 关键词这一路 20261018 起也下 SQL 了（预筛，见下），判定仍统一在内存里做一遍。
     if let Some(ref t) = payload.title {
         let t = t.trim();
         if !t.is_empty() {
@@ -733,16 +564,6 @@ pub async fn search_all_notes(
          condition = condition.add(note::Column::Status.eq(s));
     }
 
-    // 「公开文章」页签（20261006 用户第 5 条）：把 `/notes/search` 收窄成**站上真能读到的
-    // 那些**。三条判据各有出处，别各自发明：
-    //   ① `is_public = true` + ② `status != 'draft'` —— 与 `list_public_notes`（:172-173）
-    //      一字不差，那才是 nginx 后面访客看得见的集合；
-    //   ③ `draft_of IS NULL` —— 与 `list_all_notes`（:212）一致：`shot` 出来的编辑修改稿是
-    //      影子行，不排掉的话「公开 ⊂ 全部文章」不成立（同一篇会在两个页签里各出现一次）。
-    // ⚠️ ② 对 `status IS NULL` 的老行是 **NULL 判定**（SQL 三值逻辑），那些行**不进**本页签。
-    // 这是**有意的**：它们也确实进不了 `list_public_notes`（同一条 `ne` 谓词），页面跟着后端的
-    // 真实行为走。前端曾有一份 `noteVisibility.ts` 把 NULL 当公开，那是前端自己臆断的口径，
-    // 已随绿标一起删除。
     if let Some(true) = payload.only_public {
         condition = condition.add(public_condition());
     }
@@ -767,16 +588,11 @@ pub async fn search_all_notes(
          }
     }
 
-    // ── 关键词：先切词，再下 SQL 预筛（20261018，与 `search_notes` 同一套）──────────
-    // 判定与前台同样先切词（20260920，见 split_terms）——否则后台搜"OBC 固件"是空、
-    // 前台却有结果，两边对不上。
     let terms = payload
         .keyword
         .as_deref()
         .map(split_terms)
         .unwrap_or_default();
-    // 同 search_notes：给了关键词却切不出 term → 空结果（后台"没有匹配的文章"是正确答复）。
-    // ⚠️ 短路挪到查询之前（20261018）：结论一样，省一次全量查询。
     if keyword_given(payload.keyword.as_deref()) && terms.is_empty() {
         return Json(ApiResponse::success(vec![]));
     }
@@ -794,9 +610,6 @@ pub async fn search_all_notes(
 
     let notes = note::Entity::find()
         .filter(condition)
-        // 后台列表要有确定顺序：本查询此前**无 ORDER BY**（返回顺序即存储顺序），而前端把
-        // 它整份装进 antd Table 做本地分页 —— 顺序不稳意味着同一篇文章可能在第 2 页和第 3 页
-        // 各出现一次、另一篇谁也没见过。与 `list_all_notes` 保持同序（新的在前）。
         .order_by_desc(note::Column::CreatedAt)
         .find_with_related(category::Entity)
         .all(&state.db)
@@ -825,14 +638,7 @@ pub async fn search_all_notes(
     let mut dtos: Vec<NoteDto> = notes.into_iter().map(|(n, cats)| {
         map_note_summary(n, cats.into_iter().next().map(|c| (c.id, c.name)))
     }).collect();
-    // 标签照挂（20261018）：`map_note` 不再从 `note.tags` 那列取 id 串，改由关联表重建 ——
-    // **每一路都要显式挂**，而"某条路径忘了挂"的症状是"这篇文章的标签在列表里显示成空"。
-    // 与署名同族，见下面那段。
     attach_tags(&state.db, &mut dtos).await;
-    // 署名照挂（20261001）：本函数是后台列表的搜索入口，**与 `list_all_notes` 同一族**。
-    // 这里不挂的话，同一篇文章在后台列表里署名是站点级、在公开首页上却是作者本人——
-    // 而"某条路径忘了挂"正是这个 bug 的复发形状（见 `attach_authors` 头注）。
-    // 统计（`attach_stats`）**刻意不挂**：后台列表不显示三个数，见 `NoteDto` 里那段。
     attach_authors(&state.db, &mut dtos).await;
 
     Json(ApiResponse::success(dtos))
@@ -931,11 +737,6 @@ pub async fn create_note(
     // 解不出来就留 NULL（= 未记录）⇒ 展示端回退站点级署名，不编一个人名上去。
     let author = crate::auth_jwt::auth_uid(&state.db, &headers).await.ok();
     
-    // 状态词与可见性：走**唯一解析点**（`normalize_status_word`）。
-    //
-    // 两处变化（20261018）：① 未知词不再**原样写库**（那正是"库里出现没见过的词、
-    // 而它照旧被公开列出"的来路），改为如实报错；② 缺省词从 `published` 改成 `public`
-    // —— 库里只该有一个"公开"词，`published` 只是兼容别名（老列缺省 + 集成测夹具）。
     let status_word = match payload.status.as_deref() {
         Some(raw) => match normalize_status_word(raw) {
             Some(w) => w,
@@ -1002,16 +803,6 @@ pub async fn create_note(
     }
 }
 
-/// 署名回填的判据（纯函数，便于单测）：**两条同时成立**才把当前操作者记成作者。
-///
-/// · `author_missing`：这一行的 `user_id` 还空着（老文章从没记过作者 / 失败的写入重试）；
-/// · `from_editor`：这一笔是**编辑器提交**（`title`/`content` 至少带来一个，见
-///   `update_note` 开头那行）——也就是"发布"这一路。
-///
-/// 缺第二条时，只改标签（`noteTags`）或只改状态（`{status,isTop}`）的写会把**写的人**
-/// 记成作者。这两条路的调用方都不是在发布文章（后台列表的快速改状态、agent 的
-/// `set_article_tags`/`set_article_status`），而"只在为空时补写"这条规矩会让错误署名
-/// **再也改不回来**——20261007 文章 23 被评测身份 uid 721 这样记名的现场见函数内注释。
 fn should_backfill_author(author_missing: bool, from_editor: bool) -> bool {
     author_missing && from_editor
 }
@@ -1049,20 +840,6 @@ pub async fn update_note(
 
     if let Some(n) = note_data {
         let target_id = n.id;
-        // 作者只在**为空**时补写：「谁发的」是发布那一刻的事实，别人后来编辑这篇文章
-        // （改标题/改状态/换个管理员接手）都不该把署名改成最后保存的那个人。
-        // 为空的两条路：老文章第一次被编辑时补上、以及失败的写入重试。
-        //
-        // 20261007 补第二道判据 `from_editor`：**纯元数据写不算"发布"，写它的人也不因此
-        // 成为作者**。此前只要 `user_id` 为空，任何一次写（只带 noteTags 的标签写、只带
-        // {status,isTop} 的状态写）都会把**写的人**记成作者——而这两条路的调用方（后台列表
-        // 的快速改状态、agent 的 set_article_tags / set_article_status）都不是在发布文章。
-        // 生产实证：20261007 08:26 评测跑的 `set_article_tags` 以评测管理员身份（uid 721）
-        // 写文章 23 的标签，那一行当时 `user_id` 为 NULL ⇒ 站点上这篇老文章的作者被记成了
-        // `agent_test_admin_721`；而"只在为空时补写"这条规矩反过来让它**再也改不回来**
-        // ——主人自己反复在后台编辑器里保存都不动它（20261007 20:11 两次）。
-        // 编辑器提交（title/content 至少带来一个）才是"发布"那一路 ⇒ 老文章第一次被编辑
-        // 时照旧补上；纯元数据写一律不碰署名。
         let backfill_author = should_backfill_author(n.user_id.is_none(), from_editor);
         // 行里当前的状态词：`n` 马上要被 move 进 active_model，而下面算"有效状态"要用它。
         let current_status: Option<String> = n.status.clone();
@@ -1089,17 +866,7 @@ pub async fn update_note(
         if let Some(v) = payload.carousel_focus_y { active_model.carousel_focus_y = Set(Some(clamp01(v))); }
         if let Some(v) = payload.carousel_zoom { active_model.carousel_zoom = Set(Some(clamp_zoom(v))); }
         if let Some(v) = payload.is_top { active_model.is_top = Set(Some(v)); }
-        // ⚠️ `payload.tags` **不在这里写**（20261018）：标签的唯一写点是
-        // `replace_note_tags`，它在下面那个事务里跟这一笔一起提交。
-        // 在这里写列、在别处写关联表 = 两个落脚点各写一半，失败时留下半截状态。
 
-        // 状态与可见性：**一次推导**（20261018）。
-        //
-        // 此前这里是"派生 → 允许显式覆盖 → 再补一次"的补丁摞补丁：只带 `{"is_public":true}`
-        // 打在一条 `status='private'` 的行上时，第二次覆盖把 `is_public` 置回 true，而
-        // `status` 一个字节没动 ⇒ 库里落下 `('private', true)`。公开列表的守卫是
-        // "排除 draft"（黑名单），这种行**会被公开列出**。现在把这条路口封死：
-        // 显式要公开而有效状态词不公开 → **拒绝**，不落库。
         let requested_word = match payload.status.as_deref() {
             Some(raw) => match normalize_status_word(raw) {
                 Some(w) => Some(w),
@@ -1184,9 +951,6 @@ pub async fn get_note_detail(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i32>,
 ) -> Response {
-    // 公开详情仅返回已发布文章（A4 修复：与列表/搜索接口的过滤条件一致，防枚举自增 id 读取草稿/私密文章）
-    // 20261018：谓词从"排除 draft"翻成白名单，未知 status 由放行变拦截（口径只有一处，
-    // 见 `public_status_words`）。
     let res = note::Entity::find_by_id(id)
         .filter(public_condition())
         .find_with_related(category::Entity)
@@ -1202,10 +966,6 @@ pub async fn get_note_detail(
     attach_authors(&state.db, &mut dtos).await;
     let dto = dtos.into_iter().next();
 
-    // 20260902：文章不存在/不可见时返回 HTTP 404（此前 200+data:null）——前端
-    // ReadArticle 的 notFound 判定依赖 err.response.status===404，200+null 会让
-    // 编造的文章链接（如 agent 幻觉输出的 /article/17）显示成"文章加载中"而非
-    // "文章不存在"，幻觉无法被用户戳穿。
     match dto {
         Some(dto) => (StatusCode::OK, Json(ApiResponse::success(dto))).into_response(),
         None => (StatusCode::NOT_FOUND, Json(ApiResponse {
@@ -1221,40 +981,6 @@ pub async fn get_note_detail(
     dto
 }
 
-/// 给一批列表行挂上卡片要的四个数（阅读 / 点赞 / 收藏 / 讨论，查询在
-/// `note_stats::counts_for`）。
-///
-/// **失败只降级、不报错**：统计查询挂了就四列留 `None`（卡片那一排不渲染），列表本身照常
-/// 返回——四个数是装饰，不是"列表能不能看"的前提。这也正是 `Option` 而非 `i64` 的理由：
-/// 一次查询失败绝不能变成"站上每篇文章都 0 阅读"。
-///
-/// 只挂在**公开列表**（首页/分类页的卡片、搜索、置顶）上；后台那两个列表不挂——那里一次
-/// 可能拉上千行（Times 归档页 `page_size=999`），而这四个数的消费者只有卡片。
-/// 给这一批文章挂上「谁发的」（`note.user_id` → 那个账号的 `nickname`/`avatar`）。
-///
-/// **回退链**（与 `web_info::site_author` 共用站点级那一份，口径只有一处）：
-///   行里的 uid 有、且那个账号还在 → **署名就是这个账号**：昵称空则用账号名，
-///   头像空则**留空**（前端画 antd 默认头像）；
-///   uid 为 NULL（本列之前发布的老文章 / 发布者账号已销）→ **站点级署名**，
-///   也就是改造前卡片上显示的那一份 ⇒ 存量文章的外观一个像素都不变。
-///
-/// **有作者记录时，一个字段都不借站长的身份**（20261001 实测修）。此前那两个
-/// `.unwrap_or_else(站点级)` 是"这个字段空就退到站点级"，退到的是**站长自己**——
-/// 于是 jingbao 发的文章（昵称有、头像没上传过）在卡片上是「jingbao 的名字 + Sora
-/// Saudade 的脸」。用户报的正是这个（"作者头像不对，还是硬编码的？"：不是硬编码，
-/// 是回退链把别人的文章安到了站长头上）。脸指向另一个人比没有脸更糟：名字留空还能看出
-/// "这里没记录"，顶着别人的照片则是**看起来有据的错信息**。名字那条同理退到账号名
-/// （这个人另一个真名），不是站长名。
-///
-/// 两个键**成对写**：都在（= 这一路的作者信息定过稿）或都不在（= 这一路没挂作者）——
-/// 前端 `utils/noteAuthor.ts` 按"键在不在场"判，就是靠这条。只写一个会让前端把
-/// "另一个字段留空"读成"没有作者信息"。
-///
-/// **失败时一个键都不写**（`return` 而不是回退）：查库失败意味着"没查着"，
-/// 与"这个人没有昵称"是两件事。键缺席 ⇒ 前端照旧用站点级署名渲染，屏幕上没有假的
-/// 人名；写一个站点级署名冒充"查着了"才是错的。
-///
-/// 一次查询取回整批（同一页最多几十个不同作者，实际上通常只有一个）。
 async fn attach_authors(db: &sea_orm::DatabaseConnection, dtos: &mut [NoteDto]) {
     let ids: Vec<i32> = dtos.iter().filter_map(|d| d.author_id)
         .collect::<std::collections::HashSet<i32>>().into_iter().collect();
@@ -1262,10 +988,6 @@ async fn attach_authors(db: &sea_orm::DatabaseConnection, dtos: &mut [NoteDto]) 
         return;
     }
 
-    // 只取署名真正用到的四列（20261014）。从前是整行 `user::Model`——`SELECT *`
-    // 把每个作者的 **password 哈希** 也捞进内存，而这里只用 username / nickname / avatar。
-    // ⚠️ `match` 保留：**失败**与**查着了但一个都没匹配上**必须分开（前者一个键都不写，
-    // 见函数头注），所以不能省成 `unwrap_or_default()`。
     struct AuthorRow {
         username: String,
         nickname: String,
@@ -1339,18 +1061,11 @@ async fn attach_stats(db: &sea_orm::DatabaseConnection, dtos: &mut [NoteDto]) {
 mod drafts;
 pub use drafts::{autosave_note, get_note_for_edit};
 
-// `#[cfg(test)] mod split_terms_tests` 随 `split_terms` 一起搬到了 `crate::search_core`
-// （20261006）：测试跟着实现走，否则改一份、另一份假绿。
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// 署名回填的四个组合（20261007 修的 bug 就在第一行之外的两个"false"上）。
-    ///
-    /// 这条判据红过的样子：文章 23 的 `user_id` 为空，agent 以评测管理员身份只写了一次
-    /// `noteTags` ⇒ 那一行被记成 `agent_test_admin_721`，而"只在为空时补写"让主人自己
-    /// 反复保存也改不回来。所以第二、三条不是"顺手也断言一下"，它们是这个 bug 的两半。
     #[test]
     fn 署名只认编辑器提交且只补空行() {
         assert!(should_backfill_author(true, true), "老文章第一次被编辑器保存 ⇒ 补上作者");
@@ -1365,26 +1080,10 @@ mod tests {
         assert!(!should_backfill_author(false, false));
     }
 
-    /// 列表查询的 SELECT 列表里**没有 `content`**（20261018）。
-    ///
-    /// 这条判据红的样子：有人往 `NoteSummary` 里加回 `content`（或者干脆把
-    /// `into_partial_model` 换回 `into_model::<note::Model>`）—— 那时 Times 归档页
-    /// （`page_size=999`）又会一次把**全站正文**读回内存，而**没有任何别的东西会红**
-    /// （接口照常 200，`map_note_summary` 照旧把 content 置空，用户看不出区别）。
-    ///
-    /// ⚠️ **不能**用"端点返回 200 / content 是空串"当判据 —— 那是**空真**：
-    /// content 本来就会被 `map_note_summary` 置空，读不读回来都一样。
     #[test]
     fn 列表查询的_select_列表里没有正文() {
         use sea_orm::{DbBackend, PartialModelTrait, QuerySelect, QueryTrait};
 
-        // 组合方式必须与 sea-orm 的 `into_partial_model` **逐字一致**：
-        //   `M::select_cols(QuerySelect::select_only(self))`（`executor/select.rs:218`，
-        //   `SelectTwo` 那版在 `:500`，同样是先 `select_only` 再两个 `select_cols`）。
-        // ⚠️ `select_cols` 是**追加**，不是替换 —— 少写 `select_only()` 取到的是
-        // 「整实体列 + partial 列」的拼接，里面当然有 `content`，判据就会红在一个
-        // **它自己造出来的**假象上（20261018 CI 首跑就是这么红的：它报出来的 SQL 以
-        // `SELECT "note"."id", "note"."title", "note"."content", …` 开头）。
         let sql = <NoteSummary as PartialModelTrait>::select_cols(
             note::Entity::find().select_only(),
         )

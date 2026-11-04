@@ -1,13 +1,3 @@
-/**
- * 换代后的悬空 chunk：识别 + **带闸的一次性自愈**（20261005，A 案）。
- *
- * 纯逻辑在 `staleChunkCore.ts`（含"认哪些措辞""闸怎么算"两件事），这里只放副作用
- * （读 `sessionStorage`、`location.reload`）。两个触发点共用这一份实现：
- *   · `components/ErrorBoundary` —— 生产里**真正**会走的那条（React.lazy 的 import 被拒
- *     ⇒ 边界接住，`monitor.log` 里那行 react_error 就是它）；
- *   · `main.tsx` 的 `vite:preloadError` 监听 —— Vite 预载那条路的兜底（原生 `import()`
- *     不经过它，所以两者都得接）。
- */
 import { reportError } from './report'
 import { isStaleChunkMessage, messageOf, shouldAutoReload } from './staleChunkCore'
 

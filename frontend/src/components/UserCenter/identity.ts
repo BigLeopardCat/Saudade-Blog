@@ -1,27 +1,3 @@
-/**
- * 「这个浏览器上现在是哪个账号」——头部头像三态的唯一判据（20260922 用户要求）。
- *
- * 用户原话：「右上角头像若过期登录，或者退出登录有账号挂着等待输入密码，以及正常登录状态
- * 显示用户头像。没有账号登录记录，未上传头像使用默认头像显示」。
- *
- * 三种状态与各自的头像来源：
- *   ① 正常登录          → 自己的头像（`GET /api/protected/profile` 的 avatar）
- *   ② 过期登录 / 退出登录但本机有过账号 → **上次那个账号的头像**（localStorage 记住的）
- *   ③ 从没有过账号记录，或本人没上传过头像 → 默认头像 `/default-avatar.png`
- *
- * 为什么需要 ②：令牌是自包含的（无服务端会话），"过期"和"退出"在浏览器这一侧长得一样——
- * `tokenKey` 没了或被清掉了，但那个人明明还挂在这台机器上等输密码。头像不该跟着一起失忆。
- *
- * 两条纪律：
- *   · **这里只记展示身份（账号/昵称/头像地址），绝不记令牌**——令牌只有 `tokenKey` 一处，
- *     多存一份就多一个泄露面。退出登录**不清**这份缓存（清了就等于状态 ② 不存在）。
- *   · 缓存只用于**显示**，任何一次请求的身份都由 `tokenKey` 决定；先写进 localStorage
- *     再补一个 `useViewerAvatar` 的纯函数选择——没有账号记录时永远回默认头像，不猜。
- *
- * 20261001 补：身份是**跨标签页**的事实（localStorage 同源共享），所以"换账号"的感知
- * 通道必须包含 `storage` 事件——`auth-change` 只在本 document 里跑，光靠它会出现"另一个
- * 标签页换了账号、这里还顶着旧头像，刷新才变"。实现见下面那段 store 说明。
- */
 import { useEffect, useState } from 'react'
 import getToken from '../../apis/getToken.tsx'
 import { getProfile, ok } from '../../apis/ProfileMethods.tsx'
@@ -33,8 +9,6 @@ export const DEFAULT_AVATAR_URL = '/default-avatar.png'
 
 /** localStorage 键。`saudade.` 前缀与 isDarkMode/announcement_seen_id 那几个自建键同族。 */
 const LAST_USER_KEY = 'saudade.lastUser'
-/** 本机登录过的**账号清单**（20260924 补）。`lastUser` 只留了最近一个，而"换账号输入"
- *  要认的是**这台机器上用过的每一个**——只留最近一个时，输上一个用过的账号会掉回默认头像。 */
 const KNOWN_USERS_KEY = 'saudade.knownUsers'
 /** 清单上限。这台机器上登录过的账号本来就是个位数；封顶是防脏数据把它们堆成无限列表。 */
 const KNOWN_USERS_MAX = 8
@@ -68,13 +42,6 @@ export function readRememberedUser(): RememberedUser | null {
     }
 }
 
-/**
- * 读取本机登录过的**账号清单**（最近的在前）。
- *
- * **兼容旧数据**：`knownUsers` 是 20260924 才有的键，此前只写过 `lastUser`。清单缺失/坏掉时
- * 用 `lastUser` 合成一条——否则升级那一刻，所有老访客会连"最近那个账号"都认不出来。
- * **这里只读不写**（读取方不该有副作用），迁移靠读时兜底，不需要改历史数据。
- */
 export function readKnownUsers(): RememberedUser[] {
     try {
         const raw = localStorage.getItem(KNOWN_USERS_KEY)
@@ -132,27 +99,6 @@ export function selectAvatar(myAvatar: string | null, rememberedAvatar: string |
     return resolveApiAssetUrl(myAvatar || rememberedAvatar || '') || DEFAULT_AVATAR_URL
 }
 
-/**
- * **登录页**那一格头像（20260924 用户拍板）。与头部不同的唯一一点：它还要看**账号输入框**。
- *
- * 规则（纯本地比较，零请求）：
- *   · 输入框空着 ⇒ 上面那句算出来的头像（= 头部第②态那个"本机挂着的账号"，语义保持一致）
- *   · 填的账号在**本机登录过的清单**里 ⇒ 那个账号自己缓存的头像（**不是**最近那个人的）
- *   · 其余 ⇒ 默认头像
- *
- * 为什么不能"按输入的用户名去问后端要头像"：那等于给所有人一个**账号枚举 oracle**——输 `sora`
- * 出猫头像、输 `soraa` 出默认头像，一次请求就把"这个账号存不存在"吐出来。企业侧的通行做法是
- * 认证前不回显任何按用户名查到的资料：要么走"先输账号、下一页才显示欢迎语"的两步流，要么
- * **只认本机登录过的账号**（Windows/macOS 的账号选择器），要么登录页干脆不放个人头像。这里取
- * 第二条：头像只来自 localStorage（`saudade.knownUsers` 清单 + `saudade.lastUser`），
- * 输入框一偏离这份清单就回默认。
- *
- * **认不出来的那些账号**：清单只收"在这台机器上登录过、且当时拿到过资料"的账号——从没在本机
- * 登录过的、或本机登录它时还没这个清单的（20260924 之前的记录），都只能回默认头像。这是这条
- * 方案的固有代价，不是 bug：想认全，只能问后端，而那条路正是上面那个 oracle。
- *
- * 比较做 trim + 忽略大小写：这只是**展示层**的宽容匹配，真正的账号大小写语义在后端。
- */
 export function selectLoginAvatar(
     viewerAvatar: string,
     knownUsers: RememberedUser[],
@@ -176,24 +122,6 @@ export interface ViewerProfile {
     nickname: string
 }
 
-// ══ 展示身份的**单一真源**（20261001，与 favorites.ts / unread.ts 同一套 store 形态）══
-//
-// 此前 `useViewerProfile` 是普通 hook：四个调用点（首页头部 / 登录页 / 后台侧栏 /
-// 后台首页）各持一份 useState、各挂一组监听。两个后果：
-//
-//   ① **换账号只在"本标签页"里同步**（用户 20261001 报的那条）。`auth-change` 是挂在
-//      `window` 上的自定义事件，只在本 document 里跑。用户在**另一个标签页**登录/退出
-//      之后，本标签页唯一能知道这件事的通道是 `storage` 事件（同源 localStorage 是
-//      共享的；改动的那个 document 自己不收事件、其余同源 document 才收）——而全仓
-//      没有任何一处听过它（`grep -rn "'storage'" src/` 为空）。于是头像停在旧账号，
-//      **必须刷新网页**才换。用户原话：「切换登录帐号了还显示着上次账号的头像，
-//      必须刷新网页才同步」。
-//   ② 同一份事实有 N 个各自计时的副本：后台一页同时挂着侧栏与首页两个消费者，
-//      `/api/protected/profile` 被同一个浏览器打两次——unread.ts 记过同一条账。
-//
-// 现在身份只有一份（下面的 `mine` / `remembered` 与由它们派生的 `snap`），监听只在
-// **模块加载时**挂一次，谁要显示就来订阅；`useViewerProfile` 只是薄薄一层 React 绑定。
-// 顺带一个好处：快照是模块级的 ⇒ 换页（`/` → `/dashboard`）不再闪一下默认头像。
 
 /** 本人资料（`null` = 未登录 / 令牌失效 / 还没拉回来）——store 内部状态，组件别直接读 */
 let mine: { avatar: string; nickname: string } | null = null
@@ -310,18 +238,6 @@ export function retainViewer(): () => void {
     return () => { active = Math.max(0, active - 1) }
 }
 
-/**
- * 头部 / 后台侧栏 / 登录页（以及任何要知道"当前访客是谁"的地方）用的展示身份。
- *
- * 拉取时机（五个，20261001 起）——都收敛到上面那一个 `refreshViewer`：
- *   1. 有人开始看时（`retainViewer` 登记）；2. `auth-change`；3. `profile-change`；
- *   4. **`storage`**（别的标签页动了 localStorage，**换账号**走这条）；
- *   5. `visibilitychange`（切回本标签页补一次）。
- * 未登录**不发请求**——访客的头部不该为了一张头像打后端。
- *
- * 返回的是 store 里那个快照对象本身：**同一个值不会换引用**，调用方可以安心把它
- * 放进依赖数组（别改成每次返回新对象——那会让 effect 每帧重跑）。
- */
 export function useViewerProfile(): ViewerProfile {
     const [seen, setSeen] = useState<ViewerProfile>(() => snap)
 

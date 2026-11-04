@@ -263,7 +263,7 @@ const logout = () => { delete store.tokenKey };
     const unreadSrc = readFileSync(path.join(root, 'src/components/UserCenter/unread.ts'), 'utf8');
     ok(unreadSrc.includes('window.addEventListener(AGENT_TURN_DONE_EVENT'),
         '未读红点也订阅了（只靠 60 秒轮询 = 用户盯着看一分钟不变，等于没生效）');
-    const ucSrc = readFileSync(path.join(root, 'src/components/UserCenter/index.tsx'), 'utf8');
+    const ucSrc = readFileSync(path.join(root, 'src/components/UserCenter/useUserCenterModel.tsx'), 'utf8');
     ok(ucSrc.includes('window.addEventListener(AGENT_TURN_DONE_EVENT')
         && ucSrc.includes("loadTab('notices', true)"),
         '个人中心各页签在收尾后重拉（force 走 loadTab，不是另写一条拉取路径）');
@@ -273,7 +273,7 @@ const logout = () => { delete store.tokenKey };
     ok(!read.includes('getFavorites(') && read.includes('useFavorites'),
         '详情页不再自己拉收藏列表（两份状态正是这轮修的洞）');
     ok(read.includes('applyLocalFavorite'), '详情页写成功后把结果交给共享状态');
-    const uc = readFileSync(path.join(root, 'src/components/UserCenter/index.tsx'), 'utf8');
+    const uc = readFileSync(path.join(root, 'src/components/UserCenter/useUserCenterModel.tsx'), 'utf8');
     ok(!uc.includes('getFavorites(') && uc.includes('useFavorites'),
         '个人中心也不再自己拉收藏列表');
     ok(uc.includes("key === 'favorites') return"),

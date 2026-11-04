@@ -6,27 +6,6 @@ import { useGalleryPager } from '../../utils/galleryPager.ts'
 import { assetDisplayName } from '../../utils/assetName'
 import { resolveApiAssetUrl } from '../../utils/runtimeApi'
 
-/**
- * 编辑器工具栏那颗图片按钮点开的东西（20261006 用户要求）：
- * **优先展示服务器上的图库**（`GET /api/protect/images`），本地上传留在第二个页签。
- *
- * ## 为什么这颗按钮是"拦点击"换来的
- *
- * 那颗按钮是 bytemd 的**内置 action**（`getBuiltinActions` 里 `leftActions` 的第 6 项），
- * 点下去直接开系统文件选择框。bytemd 的工具栏没有定制口子：插件的 action 只能
- * `leftActions.push(...)` 追加到末尾，**不能插位、不能覆盖、不能删**；而不传 `uploadImages`
- * 虽然能让那颗图标消失（工具栏只渲染 `{#if item.handler}`），同一个 prop 还闸着拖拽与粘贴
- * 上传。所以那颗按钮原样留着，改由 `Editor_` 在捕获阶段拦下它的点击、开这个弹窗 ——
- * 工具栏的 DOM 与几何一行不动。详见 `./index.tsx`。
- *
- * ## 两件容易写错的事
- *
- * - **写进正文的是库里那个原始串**（本地是 `/api/protect/download/…`、R2 是绝对地址），
- *   `resolveApiAssetUrl` 只用于这里的缩略图 `src`。把 CDN 化后的地址写进正文，
- *   换公开域名时就再也认不出这张图属于哪个桶了（`src/routes/upload.rs` 的删除判据）。
- * - **上传不压缩**：bytemd 自己的拖拽/粘贴路径就是原图直传，压缩会让同一张图产生
- *   两份字节 ⇒ 撞掉"同字节复用"那条判据。这里走的是**同一个** `upload` 回调。
- */
 
 /** bytemd `uploadImages` 的返回元素（mdast 的 Image；**不是** DOM 的 Image）。 */
 export type UploadedImage = Awaited<ReturnType<NonNullable<EditorProps['uploadImages']>>>[number]
@@ -43,8 +22,6 @@ interface ImagePickerProps {
 const ImagePicker = ({ open, onCancel, onPick, upload }: ImagePickerProps) => {
     const [tab, setTab] = useState('gallery')
     const [uploading, setUploading] = useState(false)
-    // 列表与分页（20261014）：`loadMore` 是"从图库选图"里那一页之后的续拉，
-    // 判据（游标 / hasMore / 取数闸）全在 `utils/galleryPager.ts`——三处消费方共用一份。
     const { images, loading, loadingMore, error, hasMore, reload, loadMore } = useGalleryPager()
 
     // 每次打开都回到「图库」页签并重拉一次列表：图库是主入口，别让上一次的选择粘住，
@@ -108,9 +85,6 @@ const ImagePicker = ({ open, onCancel, onPick, upload }: ImagePickerProps) => {
                             </Col>
                         ))}
                     </Row>
-                    {/* 「载入更多」是**手动**的（与图库页那条滚动自动续不同）：这是一个弹窗，
-                        没有"滚到底"这个动作可听，按钮是这里唯一能表达"还有下一页"的地方。
-                        只在一页真的取满（`hasMore`）时出现——凑不满一页就是到底了。 */}
                     {hasMore && (
                         <div className="editor-image-picker-more">
                             <Button

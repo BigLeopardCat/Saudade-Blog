@@ -1,8 +1,6 @@
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
-/// 会话（20260903 会话化）：上下文隔离的最小单位。
-/// 历史注入 = 本会话最近 20 条 + 本会话摘要；删除会话 = 用户级清洗。
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Deserialize, Serialize)]
 #[sea_orm(table_name = "conversation")]
 pub struct Model {
@@ -15,7 +13,6 @@ pub struct Model {
     pub created_at: DateTime,
     /// 最后用户发言时间（用户消息入库时 touch；列表按它倒序，不用 assistant 收尾）
     pub updated_at: DateTime,
-    /// 置顶标记（20260903b：会话菜单置顶；列表 pinned 优先倒序）
     pub pinned: bool,
 }
 

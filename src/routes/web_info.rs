@@ -18,12 +18,8 @@ pub struct UserInfoResponse {
     title: String,
     #[serde(rename = "blogIcp")]
     icp: String,
-    /// 公安网安备案号（20260930）。**为空是合法状态**——不是每个站都有，也不该由
-    /// 仓库凭空带一个。前端为空则整块不渲染，链接里的数字 code 从这串里正则抽。
     #[serde(rename = "blogPublicIcp")]
     public_icp: String,
-    /// 版权署名（20260930）。为空时前端回退到 `blogAuthor`——署名总得有，但**具体是谁**
-    /// 属于部署者自己的信息，不进仓库。
     #[serde(rename = "blogCopyright")]
     copyright: String,
 }
@@ -42,15 +38,6 @@ pub struct SocialInfo {
     email: String,
 }
 
-/// 站点设置面板的读写载荷（20260930 瘦身）。
-///
-/// 删掉的字段与理由（**别再捡回来**）：
-///   · `blogDomain` / `blogDescription` —— 全仓只有"写"没有"读"，从没有任何消费方；
-///   · `openAiToken` / `neteaseCookies` / `githubToken` —— 同样是死配置，且本质是
-///     **凭据**。它们的活已被 agent 的 `.env` 取代（`web_info` 里那几行如果曾填过，
-///     等于把第三方 token 明文存在业务库里、还经由面板接口明文回传）；
-///   · `userAccount` / `userPassword` / `userNickname` —— 账号密码的修改入口
-///     是登录页与个人中心，不在这里（见 `update_web_info` 的头注）。
 #[derive(Serialize, Deserialize, Default)]
 pub struct WebSettingPayload {
     #[serde(rename = "blogTitle")]
@@ -59,14 +46,10 @@ pub struct WebSettingPayload {
     pub blog_author: Option<String>,
     #[serde(rename = "blogIcp")]
     pub blog_icp: Option<String>,
-    /// 公安网安备案号（20260930，见 `UserInfoResponse::public_icp`）
     #[serde(rename = "blogPublicIcp")]
     pub blog_public_icp: Option<String>,
-    /// 版权署名（20260930）
     #[serde(rename = "blogCopyright")]
     pub blog_copyright: Option<String>,
-    /// 个性签名（20260930 从"用户信息"页签迁到"站点信息"）。
-    /// 存的是 `web_info` 的 `talk` 键——字段没搬家，只是入口换了地方。
     #[serde(rename = "userTalk")]
     pub user_talk: Option<String>,
 
@@ -79,28 +62,16 @@ pub struct WebSettingPayload {
     #[serde(rename = "socialQQ")]
     pub social_qq: Option<String>,
 
-    // 留言审核开关（20260905：AI 审核 + 人工复核，web_info key-value 零迁移存储，
-    // 值存 "true"/"false"；缺省 None = 关。读取方 = talks.rs 入库判定 + 面板开关）
     #[serde(rename = "aiReviewEnabled")]
     pub ai_review_enabled: Option<bool>,
     #[serde(rename = "manualReviewEnabled")]
     pub manual_review_enabled: Option<bool>,
 
-    // 文章评论的审核开关（20261002）。**与留言板那两个是两对键**——键名定义在
-    // `COMMENT_REVIEW_KEYS`（本文件下半段），这里是它的读写面。
-    // 缺省 None 与"键不存在"同义：`web_info` 是 KV 表，没配过就是关，与入库判定
-    // 的默认态一致 ⇒ **这个特性不需要迁移**。
     #[serde(rename = "commentAiReviewEnabled")]
     pub comment_ai_review_enabled: Option<bool>,
     #[serde(rename = "commentManualReviewEnabled")]
     pub comment_manual_review_enabled: Option<bool>,
 
-    // 内容风控阈值（20261002 分级禁言）。同样是 KV 表、零迁移。**五个键名与
-    // `crate::risk::RISK_KEYS` 逐字相同**（那边是读取侧的唯一实现，这里只做透传）。
-    //
-    // **缺键回 `None` 而不是 `0`**：两者含义完全不同——`None` = "没配过、用出厂默认"，
-    // `0` = "管理员显式关掉了这一档"。合成一个值之后，设置卡第一次打开就会把闸门
-    // 全部显示成"已关闭"，而库里其实什么配置都没有。
     #[serde(rename = "contentRateWindowSecs")]
     pub content_rate_window_secs: Option<i64>,
     #[serde(rename = "contentMinIntervalSecs")]
@@ -112,13 +83,6 @@ pub struct WebSettingPayload {
     #[serde(rename = "contentMuteHours")]
     pub content_mute_hours: Option<i64>,
 
-    // 图库 R2 图床（20261006，用户第 3 条）。键名与 `crate::r2::R2_KEYS` 逐字相同
-    // （那边是读取侧与上传判定侧的唯一实现，这里只做透传）。
-    //
-    // ⚠️ **凭据绝不进这里**：`R2_ENDPOINT` / `R2_ACCESS_KEY` / `R2_SECRET_KEY` 只从
-    // `.env` 读（`r2::load_creds`）。这正是本节头注里 `openAiToken`/`githubToken` 被删掉的
-    // 同一条理由——`web_info` 是业务库，而这个接口会把每一行**明文回传**给面板。
-    // 桶名/前缀/公开域名不是凭据：知道桶名也写不进去任何东西。
     #[serde(rename = "r2ImageBucket")]
     pub r2_image_bucket: Option<String>,
     #[serde(rename = "r2ImagePrefix")]
@@ -203,28 +167,6 @@ pub async fn get_web_settings(
     Json(ApiResponse::success(payload))
 }
 
-/// GET /api/public/user —— 站点公开展示信息（首页头部、文章卡片/详情页的署名、
-/// 页脚备案号）。**跨仓契约**：agent 的 `get_blog_info` 工具读它（`tools/base.py`），
-/// 所以既有键名与含义不许改，只许加。
-///
-/// **头像只有一个入口**（20260930）：`user.avatar`（个人中心上传的那张），
-/// `web_info.avatar` 只作回退——站点设置里的头像输入框已随"用户信息"页签一起删除，
-/// 再留一个"改这里"的入口就是两处改同一份数据。回退是给**老数据**留的路：
-/// 在个人中心上传过头像之前，`user.avatar` 是 NULL，此时照旧显示 `web_info.avatar`
-/// （改造前存的那张），不会突然变空白。
-///
-/// **署名同一条规矩**（20260930 用户点名"卡片上的 Sora 换成真正发布作者的昵称"）：
-/// `blogAuthor` 优先取 **uid=1 的 `nickname`**（个人中心改的那一个），只有它为空时才
-/// 回退到站点设置的 `author` 键。改之前署名有两个真相源——个人中心改了昵称，
-/// 首页头部与文章卡片却还显示站点设置里那个旧值。**刻意不回退到 `username`**：
-/// 那是登录账号，公开接口没有理由把它印在全站每一张卡片上（`user.nickname` 为空时
-/// 站点设置那个值更合适）。
-/// 站点级署名（`(author, avatar)`）：**站点主人**是谁——uid=1 的 `nickname`/`avatar`，
-/// 为空才回退站点设置（`web_info.author` / `web_info.avatar`，老数据那条路）。
-///
-/// **两个调用方共用这一份实现**（20261001）：`GET /api/public/user`（头部/页脚/首页大
-/// 标题）与文章卡片的**作者回退**（`routes/notes.rs::attach_authors`——文章没有作者记录时
-/// 回退到它）。两处口径必须逐字相同，否则同一篇文章在卡片上与页脚上会是两个人名。
 pub(crate) async fn site_author(db: &sea_orm::DatabaseConnection) -> (String, String) {
     let infos = web_info::Entity::find().all(db).await.unwrap_or(vec![]);
 
@@ -293,28 +235,12 @@ pub async fn get_social_info(
      Json(ApiResponse::success(data))
 }
 
-/// POST /api/protected/websetting —— 站点设置面板的保存。
-///
-/// **本函数不再碰 `user` 表，这是刻意的**（20260930）：改造前它会顺手把
-/// `userAccount`/`userPassword` 写成 uid=1 的账号与密码，也就是**一条绕过登录页的
-/// 改凭据后门**——而"账号不可改"本来就是设计（个人中心界面直接这么写）。
-/// 现在账号密码只走登录页/个人中心那两条路（`profile.rs::change_password` 会记
-/// 令牌代次、会校验旧密码、会有频率限制；这里那条全都没有）。
-/// 昵称同理：`PUT /api/protected/profile` 是唯一入口。
 pub async fn update_web_info(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<WebSettingPayload>,
 ) -> Json<ApiResponse<String>> {
     let mut map = std::collections::HashMap::new();
 
-    // ── R2 图床的五个键（20261006）─────────────────────────────────────────
-    // **先校验、再落任何一笔**：这个接口是"一次点头办 N 件"，写到一半发现域名填错了
-    // 再回滚是做不到的；而"存进去了、却因为格式不对永远不生效"正是最难查的一类
-    // （面板上看值好端端在那儿）。所以在进写循环之前就把不合格的挡下来。
-    //
-    // 读取侧（`r2::parse_config`）是**宽容**的：脏值回落默认、认不出的当未配置。
-    // 两侧口径不同是刻意的——读侧要防"库里躺着一行坏数据把整站卡住"，
-    // 写侧面对的是**正在打字的人**，此刻能解释清楚，就没有理由把问题存下来。
     let [r2_bucket_key, r2_prefix_key, r2_base_key, r2_quota_key, r2_enabled_key] =
         crate::r2::R2_KEYS;
     if let Some(v) = payload.r2_image_bucket.as_ref() {
@@ -411,14 +337,6 @@ pub async fn update_web_info(
     Json(ApiResponse::success("Settings updated".to_string()))
 }
 
-/// PUT /api/protected/social —— 社交媒体信息的**整份替换**（与 `update_web_info` 的
-/// 部分更新不同：这里没有 Option，五个键一律照写，空串就是"清空"）。
-///
-/// 与 `/api/protected/websetting` 的取舍差异（20260930 对齐）：两条路写的是同一份数据，
-/// 而**存两份键**是历史遗留——`socialGithub`… 供后台设置页读、`github`… 供前台
-/// `/api/public/social` 读。此前这里只写短键，于是经这条路改完，后台设置页仍显示旧值。
-/// 现在两条路都写两份，键名不再分叉。（这个端点在全仓没有调用方，属"修好它，别拆掉它"
-/// ——拆路由要同步改前端的 API 约定，收益与风险不成比例。）
 pub async fn update_social_info(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<SocialInfo>,
@@ -460,23 +378,8 @@ async fn save_settings(
     Ok(())
 }
 
-/// 留言板（`src=board`）那两个审核开关的键名。
-///
-/// **不要改名**：它们是存量数据的键，`web_info` 里已经躺着 "true"/"false"，
-/// 改名等于让已经打开的闸静默变成"关"（20260905 起的既有线上配置）。评论用的
-/// 是另外两个键（见 `COMMENT_REVIEW_KEYS`），两套开关互不影响。
 pub const BOARD_REVIEW_KEYS: (&str, &str) = ("aiReviewEnabled", "manualReviewEnabled");
 
-/// 文章评论那两个审核开关的键名（20261002 评论管理）。
-///
-/// **不复用留言板那两个**：留言板与评论是两种内容，管理员完全可能只想审其中一种；
-/// 共用一个开关之后，"我只想给评论开人工审核"就表达不出来了。
-/// 不需要迁移——`web_info` 是 KV 表，缺键的取值天然是"关"，与默认态一致。
-///
-/// **三个消费方都从这两个常量取，谁都不许手抄字面量**：入库判定
-/// （`review_switches_of`）、设置接口的读（`get_web_settings`）、设置接口的写
-/// （`update_web_info`）。前端那面按同名 JSON 字段读（`commentAiReviewEnabled` /
-/// `commentManualReviewEnabled`，见 `WebSettingPayload`）——改键名一共四处要一起改。
 pub const COMMENT_REVIEW_KEYS: (&str, &str) =
     ("commentAiReviewEnabled", "commentManualReviewEnabled");
 

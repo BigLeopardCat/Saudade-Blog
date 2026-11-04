@@ -101,13 +101,6 @@ body {
     pointer-events: none;
 }
 
-/* ⚠️ 这条规则必须限定在 .shell 内（20260916 收作用域）。它原本是裸标签选择器
-   `header{position:relative;top:20px}`（给后台侧栏 logo 垂直位置用的），但本文件会进
-   首页 bundle ⇒ **全局匹配任何 `<header>`**：展示柜标题栏就因此被顶下去 20px（当时靠把
-   `<header>` 改成 `<div>` 绕开，见 Vitrine/index.tsx）。同类地雷别再加裸标签规则。
-   实测**未**受影响的同类：RiverBoard 的 `<header class="rz-title">`——它的类选择器自带
-   `position:absolute; top:28px`，优先级压过裸标签规则。
-   DOM 结构：div.shell > nav.shell > header。 */
 .shell header{
     position: relative;
     top: 20px;
@@ -178,19 +171,6 @@ body {
     transform: translateY(-50%) rotate(0deg);
 }
 
-/* ── 第三档「极简」（20261006 用户第 3 条）：只剩那颗圆钮 ──────────────────────
-   三档宽度 = 0 / 88 / 250，类名互斥（`.mini` / `.close` / 无），见 index.tsx 的 tier。
-
-   ⚠️ 宽度必须**连 padding 一起收**：`.shell` 是 content-box（`width:250px` + 左右 14px
-      padding ⇒ 实测 278px 宽），只把 width 写成 0 会在原地留下一条 28px 的底色带。
-
-   ⚠️ **绝不能给 `.shell` 加 `overflow:hidden`**：两颗圆钮都是
-      `position:absolute; right:-25px`（包含块是 `.shell header`），加了就把钮自己裁掉。
-
-   `.icon` / `.image` 带 `min-width:60px`，收到 0 宽后它们仍按原尺寸参与布局、会画到
-   内容区上 ⇒ 用 `visibility:hidden` 把两块内容藏掉（**不是** display:none：那会让
-   `.menu-bar` 的高度塌掉，圆钮的垂直参照跟着变）。圆钮是 `.image-text` 的**兄弟**，
-   不受这条影响。 */
 .shell.mini{
     width: 0;
     padding-left: 0;
@@ -321,9 +301,6 @@ li.search-box input {
 .toggle-switch{
     position: absolute;
     right: 0;
-    /* 20260923：原先还有个 `transform: translateX(8%)`（= 盒子再往右推 4.8px），
-       而 `.menu-bar` 是 overflow-x:hidden —— 开关居中在这个盒子里，右侧被裁掉约 3px，
-       用户实测「主题模式按钮右边被遮挡了一点、显示不完整」。贴右缘即可，不必再推。 */
     transform: none;
     height: 100%;
     min-width: 60px;
@@ -396,23 +373,9 @@ li.search-box input {
 
 .Card {
     background-color: transparent;
-    /* 20260924 删掉 backdrop-filter: blur(10px)（用户实测拍板"用 B 试试"）：
-       这一块与看板娘画布在 x≈104..315 处重叠约 211px，是全站唯一一处"常驻毛玻璃 × 看板娘"
-       的组合；前台同因已删三处（App.sass:10-11、ReadArticle/index.sass:12-13、Vitrine 文件头），
-       留在这里的观感差异也极小——卡片自身底色是 transparent，模糊样本就是身后的页面渐变
-       （一层平滑渐变，模糊它本来就看不出来），毛玻璃的质感实际由 .CardDark/.outDark 的
-       rgba 底色与页面径向渐变承担。改的是"后台 GPU 高于首页"的实测，不是观感。
-       注意：删掉它同时也删掉了顺带建起的**层叠上下文**——后台各页有 z-index 999/1000 的浮层
-       （Home/index.sass），不重建的话它们会跑到看板娘（z-index:1）之上；与 App.sass:13-15
-       同款处理，用 isolation 重建（只建上下文，不触发任何逐帧重算）。 */
     isolation: isolate;
     box-sizing: border-box;
     overflow: hidden;
-    /* ── 这三个数原先挂在 index.tsx 的**内联 style** 上（20261006 搬来）───────────────
-       取值逐字节不变：宽 90%、高 95%、左边距 80px。
-       搬家的原因：内联样式压过一切普通 CSS 声明 ⇒ 只要它们还在内联上，窄屏那条
-       `@media` 里对 .Card 写的宽与左距就全是**静默失效**（本仓反复吃亏的"半死"）。
-       ⚠️ 这一条原来那个 `margin-left:20px` 是**被内联盖死的死值**，顺手收口掉了。 */
     width: 90%;
     height: 95%;
     margin-left: 80px;
@@ -463,15 +426,8 @@ li.search-box input {
 /*    opacity: 0;*/
 
 /*}*/
-/* 20261001 批 E：值从「0.85 白」换成手账墨色（夜间档 #c9b8d3，压在 #2a2338 上约 8:1）。
-   浅色档那一半由文件末尾的手账块补（原来这里只管夜间）。 */
 .dark .ant-form-item-label > label { color: var(--washi-ink-2, #c9b8d3) !important; }
-/* RangePicker 已从全仓撤掉（笔记页「发布时间」那轮），随它一起死的那条分隔符
-   颜色规则 20260923 删。上面 `.ant-form-item-label > label` 那条仍是活的，保留。 */
 
-/* Dark Mode Tabs Fix —— 20261001 批 E 换色：三处写死的 `#1677ff` 是改造前那支出厂蓝，
-   在粉紫纸上是一块异物。改成手账令牌（夜间档的粉），`!important` 保留——它们要压的是
-   antd 那套 `:where()` 之外还有内联 token 的写法，抬特异度不如直接沿用原来的写法。 */
 .dark .ant-tabs-tab-btn { color: var(--washi-ink-2, #c9b8d3) !important; }
 .dark .ant-tabs-tab.ant-tabs-tab-active .ant-tabs-tab-btn { color: var(--washi-pink-deep, #ff8ec7) !important; text-shadow: none !important; }
 .dark .ant-tabs-ink-bar { background: var(--washi-grad-soft, linear-gradient(100deg, #ffb3d9 0%, #cbb6ff 100%)) !important; }
@@ -480,11 +436,6 @@ li.search-box input {
 .MuiFab-root { flex-shrink: 0 !important; min-width: 40px !important; min-height: 40px !important; }
 
 
-/* Dark Mode Calendar Fixes —— **两整块都删（20260923）**。
-   这两块同名、互相同向却互相矛盾（前一块 `background: transparent`、后一块 `#1f1f1f`），
-   再叠上文件后面那批把日历钉成白底的规则，谁赢只能靠数 `!important` —— 日历的夜间形态
-   就是这么变成一块白砖的。全部交给壳上的 darkAlgorithm（Calendar 走 colorBgContainer）。
-   ⚠️ 只删其中一块 = "两半都留"，是这次要修掉的那个形状本身。 */
 
 /* Fix Avatar Shape */
 .image .ant-avatar, .image .ant-avatar img {
@@ -512,31 +463,23 @@ li.search-box input {
 ::-webkit-scrollbar-thumb:hover {
     background: #555; 
 }
-/* 20260923：这两条原先写的是不存在的主题开关（全站没有任何地方设过 data-theme），等于
-   从来没有深色滚动条 —— 深色页拖着一根亮轨。改成实际生效的 `.dark` 分支；
-   thumb 带 !important 是必须的：下面 V7 那条无条件 + important 的 thumb 规则会压过它。 */
 .dark ::-webkit-scrollbar-track {
     background: #222;
 }
 .dark ::-webkit-scrollbar-thumb {
     background: #666 !important;
 }
-/* 20260923 删：选择器全挂在不生效的主题开关上（data-theme / html.dark 全站从不设）。 */
 
-/* 20260923 删：选择器全挂在不生效的主题开关上（data-theme / html.dark 全站从不设）。 */
 
 
 /* Fixes V6 */
 
 /* Force Calendar Text Black in Dark Mode */
-/* 20260923 删：选择器全挂在不生效的主题开关上（data-theme / html.dark 全站从不设）。 */
 
 
-/* 20260923 删：选择器全挂在不生效的主题开关上（data-theme / html.dark 全站从不设）。 */
 
 
 /* Ensure Home Text is white in dark mode (Global override) */
-/* 20260923 删：选择器全挂在不生效的主题开关上（data-theme / html.dark 全站从不设）。 */
 
 
 /* Scrollbar Fixes */
@@ -567,9 +510,7 @@ li.search-box input {
 }
 
 /* Force Calendar Text */
-/* 20260923 删：选择器全挂在不生效的主题开关上（data-theme / html.dark 全站从不设）。 */
 
-/* 20260923 删：选择器全挂在不生效的主题开关上（data-theme / html.dark 全站从不设）。 */
 
 
 /* V8 Fixes */
@@ -592,7 +533,6 @@ li.search-box input {
 /* 3. Global Home Text Fix (Ultra Specific) */
 /* Trying to target the structure in Home more aggressively */
 /* .SelfDescription .SayWords h2 */
-/* 20260923 删：选择器全挂在不生效的主题开关上（data-theme / html.dark 全站从不设）。 */
 
 
 /* 4. Remove Global Scrollbar Force (It broke sidebar) */
@@ -620,11 +560,6 @@ li.search-box input {
 
 /* V9 Fixes */
 
-/* 1. Calendar Dark Mode Text Visibility —— **20260923 整块删**（这条规则在文件里重复了两遍）。
-   它标题写着"Dark Mode Text Visibility"，干的却是把**黑字**钉死在日历上
-   （`color: #000000 !important`）；配合后面那条 `.ant-picker-calendar{background:#ffffff
-   !important}`，删之前的效果 = 夜间一块纯白日历砖 —— 正是用户说的"后台的夜间模式一点不
-   夜间模式"，一条既有活 bug。现在交给壳上的 darkAlgorithm 接管。 */
 /* 2. Sidebar Hover State */
 .menu-bar .menu-links .nav-link:hover {
     background-color: #b7dcfa !important;
@@ -641,11 +576,6 @@ li.search-box input {
 
 /* V9 Fixes */
 
-/* 1. Calendar Dark Mode Text Visibility —— **20260923 整块删**（这条规则在文件里重复了两遍）。
-   它标题写着"Dark Mode Text Visibility"，干的却是把**黑字**钉死在日历上
-   （`color: #000000 !important`）；配合后面那条 `.ant-picker-calendar{background:#ffffff
-   !important}`，删之前的效果 = 夜间一块纯白日历砖 —— 正是用户说的"后台的夜间模式一点不
-   夜间模式"，一条既有活 bug。现在交给壳上的 darkAlgorithm 接管。 */
 /* 2. Sidebar Hover State */
 .menu-bar .menu-links .nav-link:hover {
     background-color: #b7dcfa !important;
@@ -684,19 +614,8 @@ li.search-box input {
     color: #ffffff !important;
 }
 
-/* 2. Calendar: Force Light Theme Styles ALWAYS —— **20260923 整块删**。
-   原注释："User said: Style exactly like light mode, except 'keep going' text" ——
-   那是一次**当时的**取舍（只把"今天也要加油呀"那行字留在深色里），代价是日历永远是白砖。
-   现在壳上有 darkAlgorithm 了，整块（含下面那条"覆盖任何试图把它变暗的选择器"）一起删，
-   深色交给 token —— 只删一半 = 今天这个 bug 的形状原样复现。 */
 
 
-/* 3. Sidebar Hover Fix —— **悬停配色已收口到文件末尾「20260923 收口」那一节**。
-   这里原先那两条 `.shell li:hover .icon/.text { color:#000000 !important }` 已删：
-   夜间它们把图标染成黑压在 #171717 的侧栏上，等于隐身（用户实测）。
-   另注：`.shell li a:hover` 这几条**一条都命中不了**——侧栏的 li 里没有 <a>，图标与文字
-   是直挂 li 的（见 index.tsx），所以 V13/V14/V16 那几批"悬停背景"改动从未生效过。
-   留着只是不扩大改动面，不是它们有用。 */
 
 
 /* V13 Adjustments */
@@ -714,27 +633,14 @@ li.search-box input {
     opacity: 1 !important;
 }
 
-/* V14 / V16 那两条 `html[data-theme='dark'] .shell li:hover .icon`（把悬停染色写成白色）
-   **是死规则，20260923 删**：全站没有任何地方给 html/body 设过 data-theme（实际主题靠
-   `.dark` 类，见 App.tsx / theme.ts）；留着只会让人以为夜间悬停是白的。 */
 .ArticleFooter { align-items: center !important; }
 
-/* 20260905：用户管理那枚内联 SVG——svg 无 width/height 时按默认 300px 渲染
-   （"图标比其他大"根因），置入 .icon 槽与 23px 字体图标同视觉尺寸。
-   20260923 起这枚与公告的喇叭共用（两枚 viewBox 不同，由默认 preserveAspectRatio 居中）。 */
 .nav-svg {
   width: 22px;
   height: 22px;
   display: block;
 }
 
-/* ── 20260923 收口：侧栏悬停配色**只有这一处说了算** ────────────────────────────
-   背景：V13/V14/V16 三批各自 !important 打补丁，最后真正生效的是 V13 的 `color:#000000`
-   （V14/V16 那几条 `html[data-theme='dark']` 是不存在的主题开关，从没生效过）。于是
-   夜间悬停 = 黑图标压在 #171717 的侧栏上，直接隐身（用户实测「鼠标悬上去变黑」）。
-
-   现在：浅色照旧黑（与选中态 .nav_select 同色），夜间换成登录页那支**河灯金**+ 光晕。
-   ⚠️ `.nav_select` 必须排除——选中项自带 #b7dcfa 浅蓝底，金压浅蓝几乎看不清，保持黑。 */
 .shell li:hover .icon,
 .shell li:hover .text {
     color: #000000 !important;
@@ -742,8 +648,7 @@ li.search-box input {
 
 .dark .shell li:not(.nav_select):hover .icon,
 .dark .shell li:not(.nav_select):hover .text {
-    color: #e8b866 !important;   /* 与 .ucPrimaryBtn / .login-submit 同族的河灯金
-                                    （.ucPrimaryBtn 在 20261001 那轮从 ucGoldBtn 改名） */
+    color: #e8b866 !important;
     text-shadow: 0 0 10px rgba(240, 196, 110, 0.55), 0 0 22px rgba(240, 196, 110, 0.25);
 }
 
@@ -753,38 +658,10 @@ li.search-box input {
     filter: drop-shadow(0 0 5px rgba(240, 196, 110, 0.85));
 }
 
-/* ══════════════════ 20260930 日系动漫风（用户点名）══════════════════════════
-   范围**只有三处**：后台侧栏的身份块（本文件）＋ 后台首页欢迎卡的签名与头像
-   （`Home/index.sass` 的 `.about_me`）。别顺手铺到全站——前后台是两套气质。
-
-   令牌定义在这里，两处 var() 引用。三条踩过的坑写在下面，改之前先读：
-
-   ① **字体只用系统字体栈**，不下载 webfont：本机（=生产）只有几张极小的子集字体
-      （`lxgw-wenkai-tc-sig.woff2` 4.8KB 之类，只够首页签名那几个字），中文圆体整份
-      动辄 5-10MB，引进来是缺字不是好看。日文圆体 `Hiragino Maru Gothic ProN` 在
-      macOS/iOS 上自带（这就是"动漫感"的主要来源），Windows 退到幼圆/苹方圆体，
-      都没有才落到系统默认——**降级链上每一档都是"没有就下一个"，不是"没有就报错"**。
-
-   ② **渐变字必须自带实色 `color`**：渐变走的是 `background-clip: text` +
-      `-webkit-text-fill-color: transparent`，而 `getComputedStyle().color` 正是
-      `tests/dark-mode-contrast.test.py` 的唯一判据（3:1 门槛，`.dark` 与浅色两侧都算）。
-      只写透明填充不写实色 = 夜间哨兵把两处渐变字全判成缺陷。所以每个渐变块里都有一行
-      实色 `color`，取值就是渐变里**最暗那一段**（浅色 #b3175e 对 #eeeeee 约 6:1、
-      夜间 #ffb3d9 对 #171717 约 11:1，两侧都过线）——渐变可以花，回退色必须自己就能读。
-
-   ③ **两处 var() 都写了兜底字面量**（`var(--anime-grad-light, linear-gradient(…))`）。
-      这不是冗余：无头沙箱（`tests/dashboard-*.test.py`）有的只链自己那份 CSS，
-      缺了定义时 `background-image` 会退成 `none`，而 `-webkit-text-fill-color` 仍是
-      transparent ⇒ **字直接看不见**（不是变丑，是消失）。字面量就是那道保险。
-   ─────────────────────────────────────────────────────────────────────────── */
 :root {
     --anime-font: '站酷快乐体', 'ZCOOL KuaiLe', '幼圆', 'YouYuan', '苹方圆体',
         'Hiragino Maru Gothic ProN', 'Yuanti SC', 'Quicksand', 'PingFang SC',
         'Microsoft YaHei', system-ui, sans-serif;
-    /* 20260930 二轮：用户点名「字体颜色换成粉白」。**浅色档不能真的是粉白**——
-       白字压后台那层 #eeeeee/#E4E9F7 是 1.2:1，等于看不见；所以浅色档取粉系
-       （亮粉 → 深粉，两端的对 #eeeeee 都在 3:1 以上），粉白只出现在夜间档
-       （#ffb3d9 → #ffe3f1 压 #171717，最暗那端也有 11:1）。 */
     --anime-grad-light: linear-gradient(100deg, #e0409a 0%, #b3175e 100%);
     --anime-ink-light: #b3175e;
     --anime-aura: conic-gradient(from 0deg, #ffb3d9, #ffe3f1, #d9b8ff, #ffd6ea, #ffb3d9);
@@ -849,24 +726,6 @@ li.search-box input {
 }
 
 
-/* ══════════════════ 20261001 手账皮（后台控制面板）═══════════════════════════
-   用户第 2 条：「公告卡片，个人中心卡片，看板娘对话框卡片换成同风格的，控制面板也是」，
-   澄清「控制面板」= 后台管理面板 /dashboard。前三处已各自落地，这里是最后一块。
-
-   做法与前几处同源：色值一律取自 `src/index.css` 的 `--washi-*` 令牌（那一份是唯一真相
-   源），本块只写"哪块用哪个令牌"。**后台壳上的 `.dark` 本来就在令牌的深色档选择器列表
-   里**（`.frontDark, .dark, .washiDark`）⇒ 深浅两档自动分，不需要另挂类名。
-
-   ⚠️ 三条纪律，动之前先读：
-   ① 本块必须在文件**最末**：同选择器同特异度后写者赢。文件里 `.nav_select`（第 374 与
-      513 行两份）、`.shell li:hover .icon/.text`（第 218 与 667 行两份）都有历史补丁层层
-      叠着，不压在最后不算数。（sass 那边 `@media` 被后写规则掀翻是同一个坑。）
-   ② 本文件**也进首页 bundle**（`router/index.tsx` 是静态 import，不是懒加载）⇒ 只写类
-      选择器，绝不新增裸标签选择器（第 100 行 `header{}` 把展示柜标题顶下去 20px 那次的教训）。
-   ③ 令牌**间接引用要在深浅两档各写一份**：`--shell-color: var(--washi-paper)` 若只写在
-      `:root` 上，`var()` 在 html 那一层就替换成定值了，后代继承到的是**浅色档的实色**
-      ——`.dark` 之后再怎么改 `--washi-paper` 也追不回来。所以下面 `:root{}` / `.dark{}` 成对。
-   ─────────────────────────────────────────────────────────────────────────── */
 
 /* ① 壳上的两个令牌改由手账接管。
       `--shell-color`（侧栏底 ＋ 头像圈缝 ＋ 开关钮）与 `--text-color`（侧栏文字与搜索框
@@ -893,9 +752,6 @@ li.search-box input {
                 6px 0 26px -14px rgba(120, 90, 140, 0.30);
 }
 
-/* ③ 页面底：原先浅色 #F5F5F5、夜间 #373434→#321e5d 的径向渐变，换成纸底 ＋ 淡彩。
-      `.contentDark` 与 `.content` 是两个类同时挂着（index.tsx），同特异度后写者赢
-      ⇒ 夜间那条写在后面即可，不需要抬特异度。 */
 .content {
     background-color: var(--washi-paper-3, #f6f0ff);
     background-image:
@@ -909,10 +765,6 @@ li.search-box input {
         radial-gradient(54% 42% at 100% 100%, rgba(255, 179, 217, 0.11), rgba(255, 179, 217, 0) 68%);
 }
 
-/* ④ 内容卡：`.Card` 全仓只有后台这一处用（index.tsx:350），原先是**透明**的 ——
-      桌面就是页面底本身。现在把它变成桌上的一张纸：外框 / 圆角 / 投影与公告卡、
-      对话面板同一套配方。`.CardDark` 那条 `background-color: transparent` 在文件靠前
-      的位置，被这里按"后写者赢"盖掉，不必再改它。 */
 .Card {
     background-color: var(--washi-paper, #fffdfa);
     border: 1px solid var(--washi-line-2, rgba(198, 152, 192, 0.22));
@@ -920,11 +772,6 @@ li.search-box input {
     box-shadow: var(--washi-shadow, 0 14px 34px rgba(120, 90, 140, 0.16));
 }
 
-/* ⑤ 选中项：原先 #b7dcfa 浅蓝，换成和纸紫。底下那行 `color:#000000 !important`（V8）
-      保持不动 —— 黑字压 #b9a7f5（浅）/ #cbb6ff（夜）是 6.7:1 与 11:1，两档都过线，
-      所以只换底、不碰字。
-      ⚠️ 必须是**实色 background-color**：夜间哨兵按 getComputedStyle 的底色链算对比度，
-      渐变（background-image）它看不见 —— 写成渐变会一路落到深色纸底上，黑字当场 1.1:1。 */
 .nav_select {
     background-color: var(--washi-lav, #b9a7f5) !important;
     box-shadow: 0 4px 12px -6px rgba(124, 58, 237, 0.55);
@@ -953,8 +800,6 @@ li.search-box input::placeholder {
     color: var(--washi-ink-3, #a08ba8);
 }
 
-/* ⑧ 主题开关：原先轨道 #DDD、钮跟侧栏同色（#eeeeee）—— 钮压在轨道上几乎看不出边界。
-      换成纸线轨道 ＋ 粉钮，深浅两档都读得出"这是可以拨的"。 */
 .switch {
     background-color: var(--washi-line, rgba(198, 152, 192, 0.42));
 }
@@ -962,45 +807,12 @@ li.search-box input::placeholder {
     background-color: var(--washi-pink-deep, #d94f9a);
 }
 
-/* ⑨ 收起/展开侧栏的圆钮：原先 `--primary-color`（#695CFE / #3a3b3c）配 `#ccc` 字。
-      改成手账粉圆钮配深墨箭头 —— 一条规则管两档（粉在浅色是 #ff9ec9、夜间是 #ffb3d9，
-      两档都压得住 #40263f，约 8.6:1 与 10:1）。 */
 .toggle, .toggle-collapse {
     background-color: var(--washi-pink, #ff9ec9);
     color: #40263f;
     box-shadow: 0 4px 12px -4px rgba(217, 79, 154, 0.55);
 }
 
-/* ══════════════════ 20261001 手账皮（后台**内部页**）══════════════════════════
-   用户第 5 条：「dashboard 内部页也做同样风格化设计」。
-
-   上面那块（「手账皮（后台控制面板）」）做的是**壳** —— 侧栏、页面底、外壳大卡、
-   导航选中态。壳里那些页面本身当时一个字没动，还是出厂 antd：蓝主色、灰表头、
-   白输入框，压在粉紫纸上像贴了一张别人的截图。
-
-   本块 = 壳里那一层的皮。分两半，缺一不可：
-   · **色**（主色 / 纸底 / 墨色 / 描边）走 antd token，写在 `index.tsx` 的 `WASHI_THEME`
-     —— 一句 `colorPrimary` 波及按钮、开关、勾选框、分页选中、Select、链接、Spin、
-     Upload……，而且能跟上 hover / active / disabled 那套**派生色**（CSS 逐条追是长尾，
-     漏掉的那处就还是出厂蓝）；
-   · **形**（表头那条淡带、游标渐变、行悬停的胶带色）走本文件 —— 这些 token 表达不了。
-
-   范围根 = `body.dash-skin`，配 `body.washiDark` 管夜间档，两个类名都由
-   `index.tsx` 在挂载/切档时挂上、卸载时摘掉。**为什么是 body 而不是 `.Card`**：
-   antd 的 Modal / Select / Dropdown / Tooltip / Popconfirm 全部走 Portal 挂到
-   `document.body` 下，`.Card` 在它们身上够不着（写成 `.Card …` 等于这些浮层一条
-   样式都吃不到）。**为什么不是裸 `.ant-*`**：本文件**也进首页 bundle**（见上方注记 ②），
-   挂上 `dash-skin` 之前下面每一条都是死规则。
-
-   ⚠️ 动之前先读三条：
-   ① 本块必须在文件**最末**：同选择器同特异度后写者赢。
-   ② 要跟 antd 抢的那些，前缀写全 `body.dash-skin .ant-table-wrapper …`。antd 的
-      `.ant-table-wrapper .ant-table-thead >tr >th` 是 (0,3,1)，省成 `.ant-table-thead
-      > tr > th` 是 (0,2,1) —— **输**，改了看不出变化就是栽在这里。
-   ③ 深浅两档**只写一条**：值全走 `var(--washi-*)`，令牌自己分档（半透明的
-      `--washi-line-2` 当填充色是最省事的一例：压在白纸上是一层淡粉、压在深纸上
-      是一层淡白，两档都不用另写）。
-   ─────────────────────────────────────────────────────────────────────────── */
 
 /* ① 页里那些 antd 小卡（友链 / 说说 / 新建文章 / 主页）＝ 叠在外壳大卡上的一张内页。
       `body.dash-skin .ant-card` 会把**外壳大卡自己**也套进来（它就是 `<Card className="Card">`），
@@ -1014,20 +826,6 @@ body.dash-skin .Card .ant-card-head {
     color: var(--washi-ink, #4a3550);
 }
 
-/* ② 表格 —— 后台最重的一块面（文章 / 分类 / 标签 / 留言 / 额度 / 公告都用它）。
-
-      原先表头是 `#fafafa`（出厂灰），在粉紫纸上是一块"灰补丁"；行悬停是 `#fafafa`
-      的加深版，同样与纸无关。这里两处都换成和纸自己的颜色：
-      · 表头 = `--washi-head`（**不透明**纸粉色，见 index.css 里那一支的注）；
-      · 行悬停 = `--washi-tape-2`（第二种胶带色），与侧栏悬停同一支。
-
-      ⚠️ 表头这一格**曾经用的是半透明的 `--washi-line-2`**（批 E 那一轮），20261001
-      被用户抓出来：「后台笔记页面的封面图、文章标题等表头背景不要透明，会透过下方列表
-      干扰视觉」。成因是这一条**盖掉了 antd 自己那个不透明表头底**，而 AllNotes /
-      QuotaManage / BoardManage 三张表的表头都是 `position: sticky` 吸顶的 ——
-      行滚到表头底下就从表头里透出来。BoardManage 的 sass 里当时还写着"th 自带背景色
-      （antd token），行不会透过来"，那句话在这一轮之后就不成立了。
-      **改这一条之前先确认这三张表还在不在吸顶**（`position: sticky` 的 th 必须有实体底）。 */
 body.dash-skin .ant-table-wrapper .ant-table-thead > tr > th {
     background-color: var(--washi-head, #f2e7ed);
     color: var(--washi-ink-2, #7c6584);
@@ -1056,10 +854,6 @@ body.dash-skin .ant-table-wrapper .ant-table-column-sorter {
     color: var(--washi-ink-3, #a08ba8);
 }
 
-/* ③ 分页：未选中的页是"一张小纸片"，选中的那页交给主色（token 已经是手账粉）。
-      两根 `!important` 也不需要 —— 原来 `.dark .AllCard` 那两批（AllNotes /
-      AllCategorize 各一份逐字副本，选中页底色写死 `#1677ff`）本轮已整块删，
-      见那两个 .sass 文件末尾的注记。 */
 body.dash-skin .ant-pagination .ant-pagination-item:not(.ant-pagination-item-active) {
     background-color: var(--washi-paper-2, #fff6fa);
     border-color: var(--washi-line-2, rgba(198, 152, 192, 0.22));
@@ -1104,24 +898,6 @@ body.dash-skin .Card .ant-upload-drag {
     border-color: var(--washi-line, rgba(198, 152, 192, 0.42));
 }
 
-/* ⑧ MUI 那几枚圆钮（新增 / 编辑 / 配置 / 删除 / 刷新）与站点设置的「保存」按钮。
-      MUI 是**第二套设计系统**：自带一套默认调色板（primary #1976d2、info #0288d1、
-      secondary #9c27b0），完全不吃 antd 的 token —— 上面的 `WASHI_THEME` 对它一个字节
-      都不生效。全站引用 `@mui/material` 的地方只在 `pages/Dashboard` 下，所以这一小片
-      写在后台皮里最合适。
-
-      为什么不用 `ThemeProvider` 包一层：那得给 MUI 配一整套 palette，等于把同一份手账色
-      再抄进第二个体系（第三份副本）。这里只有五枚圆钮 + 一个按钮，CSS 几句话就够。
-
-      特异度：MUI 用 emotion 在**运行时**插样式，选择器是一个生成的类
-      （`.css-qize55-MuiButtonBase-root-MuiFab-root` = (0,1,0)），比 antd 那套好压。
-      但**必须带上语义类**（`.MuiFab-root.MuiFab-primary`）—— 生成的那串哈希每次构建
-      都变，钉不住。
-
-      色相取舍同 ⑥：删除钮（`.MuiFab-error`，MUI 红）**不动**，红=删除是语义色。
-      「编辑」原先跟着 MUI 的 info 是蓝的，一并收进手账的紫与天青。两枚浅底钮上的字用
-      深墨 `#241f2e`（与 `.tu-tabs button.sel` 同一支）：浅色档的 `--washi-ink` 到夜间
-      会翻成浅色，压在浅紫上就糊了。 */
 body.dash-skin .MuiFab-root.MuiFab-primary {
     background-color: var(--washi-pink-deep, #d94f9a);
     color: var(--washi-paper-3, #f6f0ff);
@@ -1160,15 +936,6 @@ body.dash-skin .MuiButton-root.MuiButton-contained.MuiButton-colorPrimary:hover 
     background-color: var(--washi-pink, #ff9ec9);
 }
 
-/* ⑨ MUI 输入框（站点设置那一列）。这一处原先在夜间是**真缺陷**：MUI 的字色写死
-      `rgba(0, 0, 0, .87)`，压在手账深纸上实测 1.6:1 —— 黑字压在 #2a2338 上，
-      `dark-mode-contrast.test.py` 的 KNOWN 里记的就是这七处。outlined 输入框是
-      **三件套**，缺一条就还是出厂样：
-        · `.MuiInputLabel-root` —— 浮起来的那行标签（原先蓝 #1976d2）
-        · `.MuiInputBase-input` —— 真正输入的字（原先写死黑）
-        · `.MuiOutlinedInput-notchedOutline` —— 那圈 `<fieldset>` 描边（原先蓝）
-      hover / focus 两态 MUI 各有一条自带规则在后面顶，一并写掉（带 `body.dash-skin`
-      前缀后是 (0,4,0)，压得住）。 */
 body.dash-skin .MuiInputLabel-root {
     color: var(--washi-ink-2, #7c6584);
 }
@@ -1207,11 +974,6 @@ body.dash-skin .mainbox .search_icon {
     fill: var(--washi-paper-3, #f6f0ff);
 }
 
-/* ══ 窄屏外壳的两个新件（20261006 用户第 6 条）══════════════════════════════════════
-
-   默认值**必须写在这里、不能只写在下面那个媒体块里**：媒体块不命中时这两件会退回
-   浏览器默认外观（一颗裸 button 与一个空 div），会明晃晃地出现在桌面上。
-   媒体块里只翻 `display`。 */
 
 .pad-menu-btn {
     display: none;
@@ -1251,35 +1013,6 @@ body.dash-skin .mainbox .search_icon {
     background-color: rgba(24, 16, 32, 0.42);
 }
 
-/* ══ 窄屏（≤1024px）：离屏抽屉 + 整页滚动（20261006 用户第 6 条）══════════════════
-
-   用户原话："左侧边栏完全收起却没有腾出空间，每个选项菜单展开后，具体页面直接被屏幕
-   截断，文章页面移动端尤为严重"。三条根因：
-
-     ① 侧栏是 `position:fixed` 的浮动层，**从设计上就不占布局空间**；而 .content 恒
-        width:100%、.Card 的宽 90% 与左距 80px 全是常量、从不跟 tier 联动 ⇒ 390px 视口
-        下卡片外框 = 351+80 再被父级居中，两侧一起溢出、右侧被裁。**每一档都这样**，
-        不是"收起了才坏"。
-     ② .Card 是固定高 + overflow:hidden ⇒ 每个子页面必须自己接 100% 高度链。没接的
-        七个（公告 / 新文章 / 标签 / 分类 / 说说 / 相册 / 友链）内容被静默裁掉且无处可滚。
-     ③ 一批写死的横向尺寸（表格 scroll.x:1000、卡片 width:300/270…）。
-
-   已拍板的三条：断点 **1024 单档**、窄屏侧栏 **离屏抽屉**、窄屏内容 **整页滚动**。
-
-   ⚠️ **本块必须待在文件最末尾**：文件里 `.Card` 有两条普通规则、`.shell.slider` 有一条，
-      都会被后写的普通规则掀翻（第 851 行那条成文约定说的就是这个）。
-   ⚠️ `frontend/tests/sass-media-shadow.test.mjs` 是**进 CI 的**，它扫 `src` 下所有样式文件：
-      判据① 找"媒体块之后还有没有同选择器的普通规则"（压在末尾 ⇒ 候选恒空）；
-      判据② 找"媒体选择器是不是某条**更长**的普通选择器的后缀"（下面逐条核过，无靶子）。
-      【写这条注释时踩的坑，留个记号】这一行原先是那个带通配符的路径原文。
-      CSS 注释**不认嵌套、也不认星号**：通配符里"星号紧跟斜杠"的那两个字，
-      正好就是注释的结束标志 ⇒ 注释在那儿当场关掉，后面半截注释连同下一行的
-      `@media` 一起被当成选择器吃掉。症状极隐蔽：样式表里仍能读到 158 条规则、
-      `.pad-menu-btn` 的 `display:none` 照样生效，**只有这一整块静静消失**，
-      浏览器一个字都不报。所以本文件里写路径一律不带通配符。
-   ⚠️ 本文件也进首页 bundle ⇒ **只写类选择器**（同第 853 行的纪律）。
-   ⚠️ **断点 1024 三处同源**：这里、index.tsx 里那条 matchMedia、以及
-      `WASHI_THEME.common.screenLG`（antd 表格列 responsive:['lg'] 的门槛）。改一处三处同改。 */
 
 @media only screen and (max-width: 1024px) {
 

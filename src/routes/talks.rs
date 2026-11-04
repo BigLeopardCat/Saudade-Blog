@@ -10,12 +10,6 @@ use crate::routes::AppState;
 use crate::search_core::like_escape;
 use crate::utils::{ApiResponse, ApiResponsePage};
 
-/// 从请求头提取用户 id（无 token / 令牌无效 / **账号被冻结或令牌已收回** → None）。
-///
-/// 20260926 起**改走 `auth_jwt::auth_uid`（签名 + 查库）**，不再只验签：这里此前是
-/// 一处"自己解 token"的旁路——冻结一个账号之后，它照旧能放河灯、能看"我的河灯"。
-/// 河灯是访客内容，正是冻结该停掉的东西。判据回到唯一出口上，这个函数只剩"取个
-/// `Option` 方便 let-else"的形。
 pub(crate) async fn current_uid(db: &sea_orm::DatabaseConnection, headers: &HeaderMap) -> Option<i32> {
     crate::auth_jwt::auth_uid(db, headers).await.ok()
 }
@@ -41,8 +35,6 @@ pub struct TalkDto {
     /// 审核状态：1=通过（公开列表可见）/ 0=待审 / 2=未通过（驳回）。
     /// 公开列表已过滤 approved=1 恒 1；我的河灯接口返回本人全部状态
     pub approved: i16,
-    /// 驳回理由（20260923）：仅 approved=2 时可能有值（AI 判定说明或管理员手填），
-    /// 其余状态恒 null——改判通过时会清空。公开列表里恒 null（那里只有 approved=1）。
     #[serde(rename = "rejectReason")]
     pub reject_reason: Option<String>,
     #[serde(rename = "createTime")]
@@ -62,8 +54,6 @@ async fn list_by_src(
     if src != "all" {
         query = query.filter(talk::Column::Src.eq(src));
     }
-    // 20260905：公开列表只放行 approved=1 的留言（审核开关开启后拦下的 0 不展示；
-    // 存量行全为 1，对现状零影响。管理视图 list_board_admin 不受此过滤）
     query = query.filter(talk::Column::Approved.eq(1));
     // created_at 是秒级精度，同秒多行时排序不稳定（加索引后返回顺序可能变）；
     // 补 id 兜底让结果确定 —— 前端灯影集本来就用 id 做次级比较，语义一致
@@ -82,12 +72,6 @@ async fn list_by_src(
             return Json(ApiResponse::error("查询失败，请稍后再试"));
         }
     };
-    // 发布者身份：**只给说说查**（20261005）。取舍两头：
-    //   · 要给 —— 说说卡片原来只有 `author`（自由留名，说说这条路上恒空），前端拿不到
-    //     "是谁发的"，只好退而用**看的人自己**的头像（历史实现就是这么错的）；
-    //   · 只给说说 —— 河灯留言的公开面刻意不带账号身份（留名是自由文本，见
-    //     `_board_text_keys`），而 agent 的 `list_talks` 就是打这个接口、整行进模型的
-    //     帧：给每条都挂昵称+头像 URL 会让每轮的说说帧凭空变大。两点都只要 talk 这一档。
     let peers = if src == "talk" {
         let mut uids: Vec<i32> = talks.iter().map(|t| t.user_id).collect();
         uids.sort_unstable();
@@ -117,9 +101,6 @@ async fn list_by_src(
     Json(ApiResponse::success(dtos))
 }
 
-/// GET /api/protect/board/mine：我的河灯（当前登录用户所放全部，含待审/未通过）。
-/// 灯影集「我的河灯」页签数据源——公开列表只放行 approved=1，本人待审(0)/
-/// 未通过(2)的河灯需要本接口才能查看状态与收回（20260905 issue8）
 pub async fn list_my_boards(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -162,15 +143,6 @@ pub async fn list_my_boards(
     Json(ApiResponse::success(dtos))
 }
 
-/// 收回河灯的**准入判定**（纯函数，离线可测）：`None` = 放行。
-///
-/// `row` = 库里那一行的 `(src, user_id)`，查不到就是 `None`。
-///
-/// 三种拒绝——**不存在 / 不是河灯（是说说）/ 是别人放的**——共用同一句话，是有意的
-/// （20261019 安全审计 SAU-019，CWE-204）：区分它们等于给出一条**枚举通道**，
-/// 公开列表只返回已审的河灯，而"这句报的是哪一支"能问出别人那盏**待审/被驳回**的灯
-/// 存不存在。口径与 `comments.rs::delete_my_comment` 一致（"别人的评论一律只说'不存在'"）。
-/// 判据是库里的 `user_id`，不是请求里的任何东西。
 fn reclaim_refusal(row: Option<(&str, i32)>, uid: i32) -> Option<&'static str> {
     match row {
         Some((src, owner)) if src == "board" && owner == uid => None,
@@ -178,8 +150,6 @@ fn reclaim_refusal(row: Option<(&str, i32)>, uid: i32) -> Option<&'static str> {
     }
 }
 
-/// DELETE /api/protect/board/mine/:id：收回自己的河灯（归属校验——只能删自己
-/// 放的灯；管理端全量删除走 delete_board）。20260905 issue8
 pub async fn delete_my_board(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -262,15 +232,6 @@ async fn insert_talk(
         0..=2 => payload.v,
         _ => 0,
     };
-    // `title` 这一列上**挤着两套语义**，按来源分派（20261005 修）：
-    //   · 说说（src=talk）——自有标题，就是后台表单里"标题"那一栏（`talkTitle`）。
-    //   · 河灯留言（src=board）——没有独立标题，这一列存的是**印章**（愿/寄/忆/诉），
-    //     也就是上面的 `cat`；留言板的公开行/后台行都不读它，但 agent 的
-    //     `list_guestbook` 摘要与存量数据都是按这个形状读的，**保持原样**（改它会静默
-    //     改变它们的视野）。
-    // 此前的实现是**两个来源共用一行 `title = cat`**：写说说时标题被印章覆盖，默认
-    // 落成「愿」——用户报的"说说标题取 1 变成愿了"就是这一行。留意 `update_talk`
-    // 一直是按 `payload.title` 写的，于是同一篇说说"新建时叫愿、编辑一次才对"。
     let title = if src == "talk" {
         let t = payload.title.trim();
         // 上限 100 字：DB 列是 varchar(255)，留足余量；换行/控制字符不在这里处理，
@@ -295,17 +256,6 @@ async fn insert_talk(
     } else {
         author.to_string()
     };
-    // 20260905 留言审核：河灯留言（src=board）按 web_info 开关组合定 approved
-    // （说说 src=talk 恒 1 直接展示，不纳入审核——审核只针对公开访客留言）。
-    // issue9：AI 判定同步落库 ai_result——后台按「AI 审核 + 人工审核」两段展示，
-    // 判定是 pass/flag 即时生效后不回溯，留痕供管理端溯源。
-    // 20260923：同时接住 AI 给的驳回理由（reject_reason），供审核结果通知与后台展示
-    // 20260926：AI 的说明对所有裁决都留痕（ai_reason）——存疑那一支此前把说明丢掉了，
-    // 而后台「评论管理」显示的"驳回理由：未填写"绝大多数就是这一支来的（13/18 实测）。
-    //
-    // 内容风控（20261002）：**河灯留言才过闸**（src=talk 是后台管理员自己发的说说，
-    // 对他限流没有意义——同 `decide_review` 那条界线）。闸门的三种拒绝在这里就地返回，
-    // 判定结果（forced）留到审核裁决之后再施加：见下方 `if forced && approved == 1`。
     let mut forced = false;
     if src == "board" {
         let cfg = crate::risk::load_config(&state.db).await;
@@ -350,14 +300,6 @@ async fn insert_talk(
         Ok(r) => r,
         Err(e) => return super::db_error("发布留言", &e),
     };
-    // 审核结果通知（20260923，20260926 补待审那条）。
-    //
-    // 发的判据分两半，**合起来 = "这行留言的审核状态值得告诉作者"**：
-    // ① `approved == 0`（待审）**无条件发**——待审不是"没有结果"，它就是这条留言当下的
-    //    状态；一进待审就静默，作者那一侧与"没提交成功"完全同形（20260926 用户报的困惑
-    //    正是这个：分不清哪条在等人工、哪条已经放行）。src=talk 的说说恒为 1，走不到这儿。
-    // ② 终态（1 通过 / 2 未通过）仍然**只有审核真的跑过才算数**（ai_judged）——两个开关
-    //    都关时 approved=1 只是"默认放行"，那不是审核通过，发通知就是假消息。
     if approved == 0 || (ai_judged && (approved == 1 || approved == 2)) {
         notify_review_result(
             state,
@@ -377,27 +319,6 @@ async fn insert_talk(
     }
 }
 
-/// 河灯留言入库审核判定（20260905 上线，issue9 起带 AI 留痕，20260923 起带驳回理由，
-/// 20260926 起带 AI 说明）：
-/// 返回 (approved, ai_result, ai_reason, reject_reason)——approved：1 直接展示 / 0 进待审 /
-/// 2 直接驳回；
-/// ai_result：Some("pass")=AI 通过 / Some("reject")=AI 驳回 / Some("flag")=AI 存疑转人工 /
-///            None=未走 AI（AI 关、人工全审模式、或审核服务不可用转人工——**不可用不等于 AI
-///            判过**，不留 pass 假证）；
-/// ai_reason：**AI 那一次给的说明**，与裁决无关（pass/flag/reject 都带出来，截 200 字）；
-///            None = 没走 AI 或 AI 没给说明。**它是留痕，不是驳回理由**。
-/// reject_reason：**只有 AI 判 reject 时才有值**（就是同一段说明），其余一律 None——
-///            它是"驳回理由"这一语义的落点，与 ai_reason 是两个出口、同一个来源。
-/// 开关组合（两闸可叠加、可单独作用，用户拍板）：
-///   · 人工复核开 → 一律 0 待审（人工同意才放行；AI 若同开仅作入队前过滤）
-///   · 仅 AI 开    → 同步调 agent /review：flag → (0,"flag")；pass → (1,"pass")；reject → (2,"reject")
-///   · 都关        → (1, None)（维持 20260905 前全通过的现状）
-/// agent 不可用/超时/解析失败 → **(0, None) 转人工待审**（兜底方向 = 宁可多一次人工，
-/// 绝不放行未审内容）。⚠️ 此处此前写的是"降级放行"，与代码相反——b3c4d83 就已经改成了
-/// 转人工（那一版把改动裹在"找回密码"的提交里，注释没同步），20260923 一并更正。
-/// 审核用 HTTP 客户端（进程内单例）：原来每条留言都 `reqwest::Client::new()`，
-/// 等于每次重建连接池、放弃 keep-alive；连接池闲置 90s 由 reqwest 自行回收。
-/// 注意 .timeout 仍留在每请求上（挪进 builder 会变成全局默认值，语义不同）。
 fn review_http() -> &'static reqwest::Client {
     static C: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
     C.get_or_init(|| {
@@ -420,27 +341,10 @@ pub(crate) fn clip_reject_reason(raw: &str) -> Option<String> {
     Some(t.chars().take(200).collect::<String>())
 }
 
-/// 驳回时**两列都没有理由**（存量行 / AI 判驳回但没给 reason 且管理员手填留空）——
-/// 通知总得说点什么，就用这句固定文案（**只写进通知正文，不落库**：库里 NULL 代表
-/// "没人写过理由"，是事实，不编）。
-///
-/// 20260926 改文案（用户原话：「『不符合留言板的留言规范』不足以让用户知道问题具体
-/// 是什么」）：旧句是循环定义的——它既没说清问题，也没给出路，读起来像一句套话。
-/// 新句只做两件**真的做得到**的事：① 如实说"没有人写下具体理由"（不糊弄成"你违规了
-/// 但我不告诉你"）② 告诉他去哪儿能看自己的原文（「我的河灯」，`link` 也指向那里）。
-/// **不许**在这里编造违规类型——库里没有的东西，通知里不能有。
 const REJECT_FALLBACK_REASON: &str = "管理员复核后未通过，但没有留下具体理由；\
 你可以在「我的河灯」看到这条留言的原文";
 
-/// 内容摘要（通知里引用作者原话的片段）：换行折成空格 + 截 30 字。
-/// 留言与评论都可以是多行，原样拼进通知正文会把面板行高撑开。
-///
-/// 名字里的 `talk` 是历史（20260923 留言板那一版）；20261002 起文章评论的回复通知
-/// 也调它——**同一个"摘要"语义，不抄第二份**（两份必然在截断长度上先漂）。
 pub(crate) fn talk_brief(content: &str) -> String {
-    // 折行与**连续空白**一律拍成一个空格（20260926 改）：留言里 `\r\n` 与空行都很常见，
-    // 逐字符换行符会让正文冒出双空格——通知只有一行、面板又压着 `line-clamp: 4`，
-    // 看上去像排版坏了。`split_whitespace` 顺带把制表符与全角空格也收掉。
     let flat = content.split_whitespace().collect::<Vec<_>>().join(" ");
     let t = flat.as_str();
     if t.chars().count() <= 30 {
@@ -450,16 +354,6 @@ pub(crate) fn talk_brief(content: &str) -> String {
     }
 }
 
-/// 审核结果通知的**文案映射**（纯函数，无 IO——20260926 抽出来加回归锁）。
-///
-/// 三个结局各一句，返回 `None` 表示"这个值不该发通知"（调用方据此跳过）。
-/// 抽出来的理由：这段文案此前埋在 `push_notice` 调用的前一屏，**没有任何测试**，
-/// 而它恰好是作者唯一能看到的那句话（20260926 用户报「通知说的是不是假的」那一轮，
-/// 三句话逐字对账全靠人工读库）。
-///
-/// 20261002 参数化出 `_for`（评论也要发通知，见 `decide_review` 那一批改动）：
-/// 文案里的对象名词（留言/评论）与去处（留言板/文章评论区）各多一处，**留一个壳**
-/// 给留言板，`review_notice_text` 的老签名与三句话**一字不改**（既有单测零改动）。
 pub fn review_notice_text_for(
     noun: &str,
     venue: &str,
@@ -481,10 +375,6 @@ pub fn review_notice_text_for(
                 .map(|s| s.trim())
                 .filter(|s| !s.is_empty())
                 .unwrap_or(REJECT_FALLBACK_REASON);
-            // 单行拼：理由接在同一句里，不另起一行。面板 `.ucBodyText` 其实是
-            // `white-space: pre-wrap`（换行留得住，20260923 复核更正——此前这里写的是
-            // "没有 pre-line"，写错了），但同一个块还压着 `-webkit-line-clamp: 4`：
-            // 留言一长，另起一行的理由恰好是最先被截掉的那段，而它正是收件人唯一要看的。
             Some((
                 format!("{noun}未通过审核"),
                 format!("你的{noun}「{brief}」未通过审核，理由：{reason}"),
@@ -503,16 +393,6 @@ pub fn review_notice_text(
     review_notice_text_for("留言", "留言板", approved, brief, reject_reason)
 }
 
-/// 审核**结果**发一条站内通知（20260923，用户要求；20260926 补待审那一条）。
-///
-/// 发哪三条：**待审（0）、通过（1）、未通过（2）各一条**；不认识的 approved 值不发。
-///
-/// 20260926 推翻 20260923「进待审不打扰」那条取舍（用户报「存疑待审的河灯，通知却说
-/// 已通过审核」那一轮）：当时的顾虑是"双闸全开时每条都先进待审，改了再发一次，用户会
-/// 收到两条自相矛盾的通知"。**那个顾虑在今天这一版里不成立**——待审 →（未通过|已通过）
-/// 是**同一方向**的两条（"在等人工"→"人工裁完了"），互相不打脸；而"一条通知都不发"
-/// 与"留言没提交成功"在作者那一侧**同形**，这正是那次困惑的机械成因：他分不清自己哪条
-/// 留言在等人工、哪条已经放行。人工改判（audit_board）仍然每次裁决都发。
 async fn notify_review_result(
     state: &Arc<AppState>,
     uid: i32,
@@ -525,9 +405,6 @@ async fn notify_review_result(
     let Some((title, body)) = review_notice_text(approved, &brief, reject_reason) else {
         return;
     };
-    // `link` 定位到那盏灯（`/guestbook?lid=<id>`，20260923 用户拍板）；灯若是待审/驳回态、
-    // 公开池里没有，河灯页会去「我的河灯」里找（见前端 RiverBoard 的定位逻辑）。
-    // 通知失败**绝不影响留言落库**：push_notice 内部吞错只记日志。
     super::notice::push_notice(
         &state.db,
         uid,
@@ -616,8 +493,6 @@ async fn decide_review_at(
     }
 }
 
-/// 留言板的裁决入口（`decide_review` 的薄包装，20261002 抽出）：读留言板的两个审核开关
-/// —— `aiReviewEnabled` / `manualReviewEnabled`（见 `web_info::BOARD_REVIEW_KEYS`）。
 async fn board_approved(state: &Arc<AppState>, uid: i32, content: &str)
     -> Result<(i16, Option<String>, Option<String>, Option<String>), sea_orm::DbErr> {
     let (ai_on, manual_on) = super::web_info::review_switches(&state.db).await?;
@@ -704,18 +579,9 @@ pub struct BoardAdminDto {
     pub username: String,
     pub nickname: String,
     pub approved: i16,
-    /// AI 审核判定留痕（20260905 issue9）："pass"=AI通过 / "flag"=AI拦截转人工 /
-    /// null=未审（AI 关、人工全审、审核服务不可用转人工，或存量历史行）
     pub ai_result: Option<String>,
-    /// 驳回理由（20260923）：管理员驳回时至多填 200 字；null = 未驳回或没人写过理由
-    /// （把「没人写」和「写了空」都归一成 null，后台列表据此显示「未填写」）
     #[serde(rename = "rejectReason")]
     pub reject_reason: Option<String>,
-    /// AI 审核说明（20260926）：**与裁决无关**（pass/flag/reject 都可能有），null =
-    /// 没走 AI、AI 没给说明、或本次上线前的存量行。后台「评论管理」展示它、驳回弹窗
-    /// 可一键采用它——管理员先看得到 AI 的判断，才写得出具体理由。
-    /// **只给后台**：公开河灯列表与「我的河灯」共用的 `TalkDto` 不带这个字段
-    /// （AI 的内部注记不该发给全体访客）。
     #[serde(rename = "aiReason")]
     pub ai_reason: Option<String>,
 }
@@ -772,10 +638,6 @@ pub(super) fn board_admin_filter(q: &BoardAdminQuery) -> Select<talk::Entity> {
     }
 }
 
-/// GET /api/protect/board：留言管理列表（河灯留言 + 发布用户信息，倒序）。
-///
-/// 20261014 起支持服务端筛选与分页（参数见 [`BoardAdminQuery`]，判据见
-/// [`board_admin_filter`]）；**不带参数的调用行为与从前逐字节相同**。
 pub async fn list_board_admin(
     State(state): State<Arc<AppState>>,
     Query(q): Query<BoardAdminQuery>,
@@ -874,26 +736,11 @@ pub async fn delete_board(
 
 #[derive(Deserialize)]
 pub struct AuditBody {
-    /// 1=通过（放行展示）；0=驳回——写 approved=2「未通过」，与待审(0)区分
-    /// （20260905 issue8：本人「我的河灯」按 0 显示待审标签、2 显示未通过标签）
     approved: i16,
-    /// 驳回理由（20260923 加，可空）：管理员手填，落 `talk.reject_reason`，
-    /// 审核结果通知会带上它。**通过时请求里带什么都不生效**（改判即清空该列）。
-    /// `serde(default)` 保证老前端（只发 approved）照常工作。
     #[serde(default)]
     reason: Option<String>,
 }
 
-/// PUT /api/protect/board/:id/audit：留言人工复核（20260905 启用——面板开关
-/// manualReviewEnabled 开启后新留言一律 approved=0 待审，管理端本接口 通过(1)
-/// 放行 / 驳回(2) 隐藏；AI 拦截进待审的留言同样走这里人工裁决）。
-/// issue9：人工裁决只写 approved，不改写 ai_result——AI 判定作为历史留痕保留，
-/// 后台「AI 拦截 → 人工放行/驳回」双段状态由此完整呈现；驳回(2) 可改判回通过(1)。
-/// 20260923 起驳回可带 reason：手填的 > 已存的 AI 理由（insert_talk 落的 reject_reason）
-/// > AI 存疑说明（ai_reason，20260926 补的第三级）；三级都没有就保持 NULL，**不往库里
-/// 塞编好的话**——通知层的固定文案在通知那一层兜（那里是"怎么说"，这里只管"记什么"）。
-/// 通过时清空 `reject_reason`（不留"已通过却带驳回理由"的矛盾行），**`ai_reason` 不动**
-/// ——它是 AI 判定那一侧的留痕，与 `ai_result` 同一纪律（AI 的判定不回溯）。
 pub async fn audit_board(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -924,11 +771,6 @@ pub async fn audit_board(
     let saved_ai_reason = t.ai_reason.clone();
     let mut active_model: talk::ActiveModel = t.into();
     active_model.approved = Set(if reject { 2 } else { 1 });
-    // 理由的回落链（20260926 补齐第三级）：**人工手填 > reject_reason（AI 判 reject 的
-    // 说明）> ai_reason（AI 存疑说明）**。第三级是这次补的——存疑占实测的 13/18，此前
-    // 这一支的说明在 board_approved 就被丢了 ⇒ 人工直接点「驳回」时理由落 NULL ⇒
-    // 后台显示"未填写"、通知只能说那句套话。**优先级仍是人工第一**：管理员写下的字
-    // 永远盖过 AI 的推断。
     let final_reason = if reject {
         payload.reason.as_deref().and_then(clip_reject_reason)
             .or(saved_reason)
@@ -942,14 +784,6 @@ pub async fn audit_board(
     if let Err(e) = talk::Entity::update(active_model).exec(&state.db).await {
         return super::db_error("保存人工复核结果", &e);
     }
-    // 人工裁决的每一步都是终态（通过 / 驳回 / 改判），发通知——用户拍板「改判再发」。
-    // 20260926 注释更正：此前这里写着"与 insert_talk 的『只在 AI 终态发』不冲突"，那句话
-    // 已经不成立——insert_talk 现在入库时就发一条「等待人工复核」，人工裁完**必然**再发一条。
-    // 两条同向（"在等人工" → "人工裁完了"），不是自相矛盾；真要避免的只是"人工手滑点两下
-    // 收两条一样的"，那条由下面的 `was_approved != new_approved` 挡着。
-    //
-    // 但**状态真变了才发**：后台重复点同一个按钮（双击/刷新后手滑）不该又收一条
-    // 一模一样的通知——"改判"的语义是 1↔2 的翻转，同态重复不叫改判。
     let new_approved = if reject { 2 } else { 1 };
     if was_approved != new_approved {
         notify_review_result(&state, owner, id, &brief_src, new_approved, final_reason.as_deref()).await;
@@ -994,8 +828,6 @@ mod tests {
         assert!(brief.ends_with('…'));
     }
 
-    /// 三个结局各一句；**待审这条是 20260926 新加的**（此前 approved=0 直接 return，
-    /// 作者的留言进了待审却什么都收不到、与"没提交成功"同形）。
     #[test]
     fn 待审也有一条通知且不替人下结论() {
         let (title, body) = review_notice_text(0, "河灯很好看", None).unwrap();

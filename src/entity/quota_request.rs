@@ -1,22 +1,6 @@
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
-/// 额度重置申请（20260929）：用户提交 → 管理员批准/驳回。
-///
-/// 与 `user.chat_quota_used` 是一对：这张表装的是「**请求**」（谁、为什么、处理了没有），
-/// 那个列装的是「**事实**」（还剩多少轮）。**批准是唯一把两者连起来的动作**——
-/// 它先原子认领这一行（`WHERE id=? AND status=0`），认领到了才清零、才发通知；
-/// 所以重复点通过的第二下不会清第二次零、也不会发第二条通知。
-///
-/// 三件必须知道的事（承重，细节与代价见迁移文件头注）：
-/// ① `status` 是**三值**：`0` = 待处理 / `1` = 已批准 / `2` = 已驳回。只有 `0 → 1`
-///    才清零，`0 → 2` 一个字节的额度都不动——压成布尔就没有"已驳回"这个态了；
-/// ② "**一人同时一份申请**"由代码保证、**不由索引保证**（`UNIQUE(user_id, status)`
-///    是错的约束：它会让人永远只能有一行终态）。提交接口插入前先查有没有 pending 行；
-/// ③ **无外键**：`user_id` / `handled_by` 只是过滤列与审计列（同 `dashboard_todo`、
-///    `user_message_draft` 的既有形态），销号不会带走这里的行，不假装有级联。
-///
-/// 管理员**主动**重置不产生本表的行（没有申请这回事），但会给当事人发一条站内通知。
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Deserialize, Serialize)]
 #[sea_orm(table_name = "quota_request")]
 pub struct Model {

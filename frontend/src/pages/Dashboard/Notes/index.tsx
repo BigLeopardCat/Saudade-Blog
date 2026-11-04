@@ -1,4 +1,3 @@
-
 import './index.sass'
 import {Breadcrumb, ConfigProvider, Menu, MenuProps} from "antd";
 import {AppstoreOutlined} from "@ant-design/icons";
@@ -33,11 +32,6 @@ const items: MenuItem[] = [
     ]),
 ];
 
-/* 子页 ←→ 路径段 ←→ 子菜单 key 的**唯一**一份映射（20261006 修）。
-   原来这段读的是 `location.hash`，而路由是 `createBrowserRouter`（真实 path、
-   全仓无人写 hash）⇒ 恒不命中，面包屑**永远**显示「未知页面」。
-   现在按 pathname 派生；顺带把带参路径也覆盖了（`/dashboard/notes/newnote/123`
-   原来只认精确串，同样落进「未知页面」）。 */
 const NOTE_PAGES: Record<string, { key: string; label: string }> = {
     '':            { key: '1', label: '全部文章' },
     'newnote':     { key: '2', label: '编辑文章' },

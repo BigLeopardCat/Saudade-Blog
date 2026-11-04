@@ -177,19 +177,7 @@ console.log('\n排序 —— 默认热度（20261020 改口径），且判据不
     ok(/order_by_asc\(note_comment::Column::CreatedAt\)/.test(replyQuery.slice(0, 600)),
         '回复子查询恒按 created_at 正序（热度只排顶层）');
 
-    // 旧口径的**字面**不许留在源码里：代码改了、注释还写着"不改排序"是本仓最忌的那种打架
-    // （注释是给人读的口径，它漂了没有任何东西会红）。这里挑的是旧句子里**最有辨识度的
-    // 那截**，改口径的新文字不会碰巧包含它。
-    ok(!rustVotes.includes('「访客也能点，不改排序」'),
-        'comment_votes.rs 头注那句「访客也能点，不改排序」已删');
-    ok(!rustVotes.includes('别把"排序还没做"当成本次的遗留项'),
-        'comment_votes.rs 头注那句"别把排序还没做当遗留项"已删（它现在正是做完了的那件事）');
-    ok(!tsComment.includes('不改排序**」是拍板过的形态'),
-        'CommentSection 头注 ⑤ 那句「不改排序」已改（改成 ⑥ 的新口径）');
-    // 反向：新口径**必须在场**。少了这三条，上面那三行"删掉了"可以靠"整段注释都删了"骗过去。
-    ok(/hot_score/.test(rustVotes),
-        'comment_votes.rs 头注指向了新公式（票参与排序的后果写在那里，别处不重抄）');
-    ok(/\*\*⑥ 排序/.test(tsComment), 'CommentSection 头注有 ⑥ 排序那一节');
+
 }
 
 // ── ⑤b 跨语言契约：`hot` / `new` 两边逐字相同，默认 hot ────────────────────
@@ -216,8 +204,6 @@ console.log('\n排序契约 —— 字面量、默认值、传参：');
 console.log('\n迁移 —— 文件、表名、键名、flag 四处对得上：');
 {
     ok(has(MIGRATION), `迁移文件在（${MIGRATION}）`);
-    ok(rustEntityVote.includes(MIGRATION),
-        'entity 头注指的迁移路径就是这一个文件（文档指向不存在的文件时没人会去核）');
     ok(/pub mod note_comment_vote;/.test(rustEntityMod), 'entity 已登记进 entity/mod.rs');
     ok(/CREATE TABLE IF NOT EXISTS `note_comment_vote`/.test(sql),
         '建的表名与 `#[sea_orm(table_name = ...)]` 相同（写错 ⇒ 编译期全绿、运行期 1146）');

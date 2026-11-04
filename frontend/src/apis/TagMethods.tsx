@@ -66,9 +66,6 @@ async function getTagTwo() {
             level: item.level,
             color: item.color,
             fatherTag: item.fatherTag,
-            // 父标签 **id**（20260919 后端新增）。建树用这个，**不要**用 fatherTag（父标签名字）
-            // —— 按名字建树的后果是「一级标签一改名，其下所有二级标签集体从树里消失」，
-            // 两个同名一级标签还会共享子标签。
             fatherKey: item.fatherKey
         }));
     } catch (error) {
@@ -119,23 +116,6 @@ function delTag(level: 'one' | 'two', ids: React.Key[]) {
     })
 }
 
-/**
- * 标签树（redux 里那一棵）→ 扁平选项表。
- *
- * 两级拍平成一层，**名字就是标签自己的名字**：一级 `编程`、二级 `Python`。
- * 20261001 改版前二级显示成 `编程 / Python`（父名 / 子名），用户原话「二级标签和一级
- * 标签一样显示，不需要一级标签/二级标签这样显示二级标签」—— 标签挂在文章卡片上时，
- * 读者看到的是标签本身，层级是**管理页**的事，不该跟着上卡片。
- *
- * ⚠️ 但"搜父名也能搜到子标签"这条能力要留着（原来靠 `编程 / Python` 这个拼接串白捡）。
- * 所以显示名与搜索词**分成两个字段**：`label` = 自己的名字，`keywords` = 自己的名字
- * + 父名。`NoteTagSelect` 的 `optionFilterProp` 因此指到 `keywords` 上，
- * 而不是像以前那样指 `label`（指错了等于"搜父名搜不到任何子标签"）。
- *
- * id 重号时**后面的条目会被丢掉**（antd Select 不允许两个 option 同 value——
- * 点一个会同时选中两个），并打一条 warn 留痕。现有数据两级无交集，迁移
- * `tag_autoincrement_20260919` 之后新标签也不会再撞。
- */
 function flattenTagOptions(tagList: any): TagOption[] {
     const out: TagOption[] = [];
     const seen = new Set<number>();

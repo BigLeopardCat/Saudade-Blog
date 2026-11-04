@@ -1,19 +1,3 @@
-// 文章讨论区（20261002）。挂在 ReadArticle 的 .readContent 之后——
-// 宽度/居中对齐沿用文章正文那套（80% / max-width 880px），于是讨论区与正文左右对齐。
-//
-// 日夜两态：颜色走站内既有令牌（`--font-title-color` / `--font-p-color` 在
-// frontHome/main.css 的 :root 与 .frontDark 里成对定义），**不另写一套深色值**——
-// 自己拍一个"看起来差不多的深灰"就是第二份真相源（改主题时它不会跟着变）。
-
-// 评论正文的排版（**一处实现，两个消费方**：已发布的评论行、输入框下方的预览）。
-//
-// 为什么是 mixin 而不是把两条选择器并排写平：两个消费方在 DOM 里的嵌套位置不同
-// （一个在 `.commentRow` 下、一个在 `.commentComposer` 下），mixin 各自展开后
-// **两边都保持同样的三段式优先级**；搬平成一串会有一边掉一档，哪天撞上
-// `.markdown-body` 那套全局规则，谁赢就变了。
-//
-// 预览那一边必须吃这一份：预览要是另有一套字号行距，它就只是在骗人——写的人看到的
-// 与读的人看到的必须是同一套（20261003 主人为"不认识 markdown 的人"加的那个预览）。
 @mixin comment-body-typography
     margin-top: 4px
     font-size: 0.92rem
@@ -65,12 +49,6 @@
             color: var(--font-p-color)
             opacity: 0.8
 
-    // ── 排序页签（20261020）─────────────────────────────────────────────
-    //
-    // 视觉取意在留言板的 `.rz-album-tabs`（那是"两态页签"在本站已有的样子：胶囊底 +
-    // 选中变色），但**不复用它的类名**：那是 RiverBoard 命名空间下的选择器，
-    // 跨组件引用别人的类名等于把两个页面的样式焊在一起（改河灯就会动到讨论区）。
-    // 颜色一律走本组件的既有令牌（`--washi-*` / `--font-*`），**不写第二套深色值**。
     .commentSort
         display: flex
         justify-content: flex-end
@@ -110,19 +88,6 @@
     .commentComposer
         margin-bottom: 22px
 
-        // ── 字数计数搬进输入框内（20261003 用户第 3 条）────────────────────
-        //
-        // 用户原话：「把字数统计文本移入输入框就能腾出空间，减小按钮到输入框的缝隙了」。
-        // antd 的契约是把它**吊在输入框下方 22px 处**（`antd/es/input/style/textarea.js`：
-        // `position:absolute; bottom: -(fontSize × lineHeight) = -22px; inset-inline-end:0`，
-        // `pointer-events:none`）——它不占布局空间，所以以前必须给输入框挂全站那 22px 的
-        // `.counter-room`（`src/index.css`，另外五个消费方共用），**那一整行空白正是
-        // 「发表评论按钮离输入框太远」的来源**。搬进来之后那 22px 就不再需要了。
-        //
-        // 优先级：antd 的规则是 `.ant-input-textarea-show-count .ant-input-data-count`（0,2,0），
-        // 这里的 `.commentComposer ... .ant-input-data-count` 是（0,3,0）⇒ 稳胜。
-        // **只作用于本组件**：全站 `.counter-room` 与其余五个消费方一字未动。
-        // 哪天线把 antd 的 bottom 改成非负（占位布局），这几条就该删（同 index.css 的复核点）。
         .ant-input-textarea-show-count
             .ant-input-data-count
                 bottom: 4px
@@ -216,13 +181,6 @@
                 cursor: not-allowed
                 opacity: 0.45
 
-        // ── 行内回复框（20261003 用户第 3 条）──────────────────────────────
-        //
-        // 「回复很靠下的评论时每次都要滚回顶部输入框」。它**不是另一个输入框**，
-        // 而是上面那一整套搬进某一行里——计数按进框内、按钮字号、表情面板往上弹，
-        // 全部原样吃到（`.isInline` 只覆盖"住在哪一行"这几条）。
-        // 正因为它住在 `.commentRow .commentMain` 里，`tests/comment-layout.test.py`
-        // 的 ⑩ 组才能按几何判"框就在刚点的那条评论底下"。
         &.isInline
             // 顶层那条 22px 是给"输入区与列表之间"留的；住进行里只会把下一行顶开
             margin: 8px 0 2px
@@ -284,11 +242,6 @@
             flex-wrap: wrap
             gap: 6px
             line-height: 1.4
-        // 「回复 @某人」**自成一行**（20261003 用户第 3 条）。它原来挂在 `.commentMeta`
-        // 的行首，于是排在最前面——左边紧挨头像 ⇒ 头像与昵称之间被这句话隔断。
-        // 现在它在 `.commentMeta` 与 `.commentBody` 之间，块级、紧贴正文。
-        // ⚠️ 保持块级：改回行内（或把它挪回 `.commentMeta` 里）就等于把这一条退回去
-        // （判据在 `tests/comment-layout.test.py` 的 ⑧ 组）。
         .commentReplyTo
             display: block
             margin: 2px 0 4px
@@ -297,8 +250,6 @@
         .commentName
             font-size: 0.9rem
             font-weight: 600
-        // 作者 uid 与时间都是**次要信息**：更小、更淡，不抢昵称的视线
-        // （主人点名："ID 号可以小一点" → 20261003 再点名："这行字可以非常小"）
         .commentUid
             font-size: 0.62rem
             letter-spacing: 0.2px
@@ -335,10 +286,6 @@
                 &.isDanger:hover
                     color: #e04b4b
 
-            // ── 赞 / 踩（20261003 用户第 4 条）────────────────────────────
-            // 它们与「回复/删除」同住这一行（同为 0.78rem 的次要动作），多出来的是
-            // 一个居中图标 + 一个计数，以及"我投过"的高亮。**高亮看 `myVote`
-            // （我投的），不是票多的那一侧**——按票数高亮会让人以为是自己投的。
             .commentVote
                 display: inline-flex
                 align-items: center
@@ -355,19 +302,9 @@
                     // 边框，单独给一颗钮描边会让它显得比旁边两个"高一档"。
                     // 13% 的透明度在日夜两态都读得出来（浅底上是压暗、深底上是提亮）。
                     background: rgba(217, 79, 154, 0.13)
-                    // **刻意不加粗**：加粗会改变按钮宽度，上面那条"位置不动"就白写了。
-                    // 两态的区别只有颜色与底色。
-                    //
-                    // 上面这行 `color` 在 20261005 之前是**空头支票**：图标当时是彩色表情
-                    // 字形，颜色由平台调色板决定、`color` 基本不参与，真正看得见的只有这个
-                    // 底色。换成吃 `currentColor` 的 SVG 之后它才真的生效——所以**这条声明
-                    // 别删**（删了在 emoji 时代看不出差别，现在一眼就能看出来）。
                 &:disabled
                     cursor: default
                     opacity: 0.55
-                // 图标（svg）是这颗钮的 flex item，靠上面的 `align-items: center` 对齐，
-                // 不需要 `.commentVoteIcon` 那层 span 早先给 emoji 字框压平用的
-                // font-size / line-height——那一层已随 emoji 一起删掉（20261005）。
                 .commentVoteNum
                     // 等宽数字：票数从 9 涨到 10 时按钮不会因为多一位而挪一下
                     font-variant-numeric: tabular-nums

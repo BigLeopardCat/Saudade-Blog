@@ -1,45 +1,7 @@
-//! 文章阅读量 / 点赞量 / 收藏量（20260930）。
-//!
-//! ## ★ 阅读量**绝不能**记在 `get_note_detail` 里（新模块头一条纪律）
-//!
-//! 那个端点被 agent 的 `get_article_detail` 工具**频繁读取**——把它接上计数，等于
-//! 看板娘每"看"一次文章就给自己刷一次阅读量，报表立刻变成"agent 的调用次数分布"。
-//! 正确做法就是本模块：**独立端点 + 前端在确认文章真的存在之后上报**
-//! （见 `ReadArticle` 的 `loadArticle` 成功分支）。将来若有人想"顺手合并回详情端点"，
-//! 请先读完这段。
-//!
-//! ## 三条既有约定（这三条与模块一起看才成立）
-//!
-//! 1. **公开端点绝不返回 HTTP 401**。`frontend/src/apis/axios.tsx` 的响应拦截器对
-//!    **任何** 401 都会清 token 并跳 `/login`——按阅读量的访客会被一脚踢去登录页。
-//!    所以：
-//!      · 读（`GET stats` / `POST view`）**不需要登录**：拿得到身份就填 `liked`，
-//!        拿不到就 `liked: false`——这是**正常成功**，不是降级、不是错误；
-//!      · 写（`POST/DELETE like`）失败走**信封错误**（HTTP 200 + code=500 + 中文原因），
-//!        与 `/api/protected/quota`、`profile.rs` 那一族完全一致。20261001 起写也
-//!        **不再要求登录**（用户第 2 条「点赞改为非登录用户也可以点赞」）：身份 = 登录
-//!        账号，或浏览器自报的访客标识（`X-Visitor-Key`）；**两者都没有才回「未登录」**。
-//!        匿名点赞把"点赞数"拉到了与阅读量同一档可信度（key 是客户端自己生成、能刷）
-//!        ——代价与取舍写在 `scripts/migration/note_like_anon_20261001.sql` 头注
-//!        与 `docs/security-boundary.md`，改这一族之前先读那两处。
-//! 2. **写端点挂 `public_routes` + handler 内自己鉴权**（`crate::auth_jwt::auth_uid`）。
-//!    挂进 `protected_routes` 会被 `auth_guard` 按 `authz::can_access_console` 把
-//!    普通用户全部 403 掉——那是后台守卫，不是"登录守卫"。
-//! 3. **文章可见性判据与 `notes.rs::get_note_detail` 逐字同源**（`is_public = true`
-//!    且 `status <> 'draft'`）。阅读量只记在"读者真的能打开的文章"上：前端只在详情页
-//!    加载成功后上报，而这里再做一次同样的判定，幻觉 id（`/article/17`）因此连行都建不出来。
-//!    注意这是**查询级**判据（NULL status 会被 SQL 的 `<>` 滤掉），与 `profile.rs`
-//!    那个模型级 `visible_note`（NULL 视为可见）**不是同一个东西**，别互相替换。
-//!
-//! ## 报表口径
-//!
-//! `GET /api/protected/stats/notes` 挂在 `protected_routes` 下 ⇒ 自动只有 admin 进得来
-//! （与 `stats.rs::user_stats` 同一条纪律；agent 以发起人身份代调）。
-//! 总量、排行榜、日趋势**三者同一口径：只算当前可见的文章**——否则报表自己跟自己打架
-//! （总量把已转草稿的文章算进去、排行榜却列不出它）。
-//! 注意"可见"是**当下**的可见性，与迁移头注的语义 ② 呼应：文章转草稿不会让 `note_view`
-//! 的行消失，但会立刻从报表里消失。
-
+mod periods;
+pub use periods::{note_period_report, PeriodReportDto, PeriodRow};
+#[cfg(test)]
+use periods::{Granularity, last_day_of_month, period_at};
 use axum::{
     extract::{Path, State},
     http::HeaderMap,
@@ -67,23 +29,7 @@ const TOP_N: usize = 10;
 /// 样子；期报里这块是折叠面板展开后的内容，5 行能一屏看完，再多就该去全局榜看）。
 const PERIOD_TOP_N: usize = 5;
 
-/// 阅读总量的求和表达式——**所有 `SUM(cnt)` 都必须从这里出去**。
-///
-/// 为什么需要这一手 `CAST`：**MySQL 的 `SUM(<整数列>)` 返回的是 `DECIMAL`
-/// 而不是 `BIGINT`**，于是 sea-orm 按 `Option<i64>` 解码时当场报
-/// `mismatched types; Rust type Option<i64> (as SQL type BIGINT) is not compatible
-/// with SQL type DECIMAL`。这不是编译期能发现的（`cargo check`/`cargo test` 全绿，
-/// 仓里的 api_tests 走 MockDatabase 不经过真解码），20260930 一部署就现形：
-/// 列表卡片三个数一个都不显示、`GET .../stats` 直接 500。
-/// 丢给 `COUNT(*)` 没有这个问题（它本来就是 BIGINT）——**只有求和要过这一手**。
-///
-/// ⚠️ **20261018 切库到 PG 时，这里的目标类型名必须跟着换**：MySQL 只认
-/// `SIGNED`/`UNSIGNED`，PG 只认 `BIGINT`（`CAST(x AS SIGNED)` 在 PG 上是语法错，
-/// 而 `CAST(x AS BIGINT)` 在 MySQL 上是语法错）——**没有两边都认的写法**。
-/// 换成 `BIGINT` 之后这一手在 PG 上是**冗余但无害**的（PG 的 `SUM(integer)` 本来就返回
-/// `bigint`），保留它的理由是不让这条"所有 `SUM(cnt)` 都必须从这里出去"的收口出现一个
-/// 只在 MySQL 上才需要的例外分支；`tests/api_tests.rs` 的源码锁也只断言这一行含
-/// `cast_as`、不锁类型名。
+// Fix the SQL result type so every view-total query decodes as i64.
 fn sum_views() -> SimpleExpr {
     Expr::col(note_view::Column::Cnt).sum().cast_as(Alias::new("BIGINT"))
 }
@@ -95,23 +41,11 @@ const TREND_DAYS: i64 = 30;
 // 出参
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// 单篇文章的读数。`views`/`likes`/`favorites` 是**计数**，`liked` 是**"当前这位访客
-/// 点过没有"**。
-///
-/// `favorites`（20260930 补）与卡片上那一排是同一个数（`counts_for` 的第三张表）：
-/// 卡片（列表）早就有它了，单篇读数此前只有两个数——**看板娘读文章详情时因此答不出
-/// "这篇有多少人收藏"**，而列表帧里同一个数又是有的（自相矛盾的两份事实）。
-/// 它是**计数**、不是"我收藏了没有"（那个状态在 `user_favorite` 里按 uid 存，
-/// 此处刻意不做成 `favorited: bool`：读接口拿不到身份时按 `liked` 的成例会恒 false，
-/// 那是个假事实）。
 #[derive(Serialize, Default)]
 pub struct NoteStatsDto {
     pub views: i64,
     pub likes: i64,
     pub favorites: i64,
-    /// 讨论数（20261003）。**口径必须与公开讨论区逐字相同**：`approved = 1 AND
-    /// is_deleted = 0`（同 `comment_counts` 的注释）——否则详情页胶囊上的数会比点进去
-    /// 看到的条数多，那是最容易被当成"数错了"的一类不一致。
     pub comments: i64,
     /// 未登录 / 令牌已收回 / 账号被冻结 ⇒ false。**这不表示"请求失败"**（见模块头注 1）。
     pub liked: bool,
@@ -175,10 +109,6 @@ async fn favorites_of(db: &DatabaseConnection, note_id: i32) -> Result<i64, DbEr
         .map(|n| n as i64)
 }
 
-/// 讨论数（20261003）。**两个 filter 缺一不可，且必须与公开列表同源**：
-/// `approved = 1`（待审/驳回的不算，读者根本看不到）`AND is_deleted = 0`（软删的不算）
-/// —— `routes/comments.rs::list_comments` 读的正是这两条。数多一条会让详情页胶囊
-/// 与点进去的条数对不上（"数错了"是这类计数最容易被报上来的一种）。
 async fn comments_of(db: &DatabaseConnection, note_id: i32) -> Result<i64, DbErr> {
     note_comment::Entity::find()
         .filter(note_comment::Column::NoteId.eq(note_id))
@@ -213,14 +143,7 @@ fn visitor_key(headers: &HeaderMap) -> Option<String> {
     Some(k.to_string())
 }
 
-/// 这次请求**是谁**（20261001 起有两种身份）。
-///
-/// `pub(super)`：`comment_votes.rs`（评论点赞/踩，20261003）与这里共用同一套身份解析
-/// ——**它必须是同一份**。登录态要顺带认下"同一台浏览器此前匿名投的那一行"，
-/// 这条规则抄成第二份就迟早会分叉（两处对"我是谁"的回答不一样）。
 pub(super) enum Who {
-    /// 登录用户。`key` 是同一请求里带的访客标识——登录态下它**不参与"我是谁"**，
-    /// 只用于把"这台浏览器此前匿名投的那一票"一并认下来（见 `like_note` 的说明）。
     User { uid: i32, key: Option<String> },
     /// 匿名访客：只有浏览器自报的标识。
     Visitor(String),
@@ -246,13 +169,6 @@ impl Who {
         }
     }
 
-    /// 这个身份在**一张"两种身份并排"的表**上的过滤条件（读与删共用一份，
-    /// 免得两处写歪）。
-    ///
-    /// 列由调用方传进来，因为每张表有自己的 `Column` 枚举（`note_like` 的与
-    /// `note_comment_vote` 的不是同一个类型），但**语义只有这一份**：登录态要顺带
-    /// 认下"同一台浏览器此前匿名投的那一行"——不认的话，先匿名投、再登录，
-    /// 高亮会当场变空，而计数里明明有那一票。
     pub(super) fn cond_on<UC, VC>(&self, user_col: UC, visitor_col: VC) -> Condition
     where
         UC: ColumnTrait + Copy,
@@ -428,14 +344,6 @@ pub async fn report_view(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 点赞 / 取消点赞（20261001 起**匿名也可以**；失败走信封错误，**不是 401**）
-//
-// 身份按"登录优先、其次浏览器自报的访客标识"解析（`identify`）。两者都没有时
-// 回「未登录」的信封错误——**这是唯一还需要拦的一档**，而不是从前那种"必须登录"。
-// 匿名点赞为什么可以接受（以及它的代价），写在迁移文件头注的语义 ① 与
-// `docs/security-boundary.md` 的"可被匿名刷"一节里，改这里之前先读那两处。
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// 点赞与取消点赞共用的一段：先认身份，再确认文章可见。
 /// 返回 `Err(响应)` 表示已经可以原样返回给前端了。
@@ -555,9 +463,6 @@ pub async fn unlike_note(
 // 批量计数（文章卡片上的三个数：阅读 / 点赞 / 收藏）
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// 一篇文章的公共计数。四个数**不同源**：阅读来自 `note_view`、点赞来自 `note_like`、
-/// 收藏来自 `user_favorite`（20260922 收藏功能）、讨论来自 `note_comment`（20261003）
-/// ——但对卡片来说它们是一排四个数，所以一次取齐、不拆成四个接口。
 #[derive(Clone, Copy, Default)]
 pub struct NoteCounts {
     pub views: i64,
@@ -621,8 +526,6 @@ pub async fn counts_for(
             .all(db)
             .await,
     )?;
-    // 讨论数（20261003）。两条 filter 与 `comments_of` 逐字相同——卡片的数必须等于
-    // 点进去看到的条数，否则读者第一眼就发现对不上。
     let comments = collect(
         note_comment::Entity::find()
             .select_only()
@@ -671,9 +574,6 @@ pub struct NoteRankRow {
     pub views: i64,
     pub likes: i64,
     pub favorites: i64,
-    /// 讨论数（20261003 补）。**口径 = 公开讨论区看得见的那些**
-    /// （`approved = 1 AND is_deleted = 0`，同 `comments_of`）——与文章卡片/详情页上
-    /// 那个数逐字同源，后台看到的数一定等于点进去数出来的条数。
     pub comments: i64,
 }
 
@@ -683,11 +583,7 @@ pub struct DailyRow {
     pub date: String,
     pub views: i64,
     pub likes: i64,
-    /// 与 `likes` 同一条路（`user_favorite.created_at` 的日期分桶）。20261001 补：
-    /// 汇总卡与排行榜都三个数了，趋势图只有两条线，读的人第一眼就会问"收藏呢"。
     pub favorites: i64,
-    /// 讨论量的日趋势（20261003 补，`note_comment.created_at` 的日期分桶）。
-    /// 同一条"补零"纪律：没有讨论的日子是 0，不是缺席。
     pub comments: i64,
 }
 
@@ -1035,600 +931,7 @@ pub async fn note_report(
     }))
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 周报 / 月报 / 年报（20261001）
-// ─────────────────────────────────────────────────────────────────────────────
 
 /// 期粒度。**白名单**：`kind` 是查询参数，认不出的一律报错，不做"猜一个最像的"。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Granularity {
-    Week,
-    Month,
-    Year,
-}
-
-impl Granularity {
-    fn parse(s: &str) -> Option<Self> {
-        match s {
-            "week" => Some(Self::Week),
-            "month" => Some(Self::Month),
-            "year" => Some(Self::Year),
-            _ => None,
-        }
-    }
-
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Week => "week",
-            Self::Month => "month",
-            Self::Year => "year",
-        }
-    }
-
-    /// 默认期数。**一周一期看一年、一月一期看一年、一年一期看五年**——
-    /// 都是"列表一屏能扫完"的量级。上限同理（`limit` 是外部入参，不设上限
-    /// 等于让人一次拉十年）。
-    fn default_limit(self) -> usize {
-        match self {
-            Self::Week => 12,
-            Self::Month => 12,
-            Self::Year => 5,
-        }
-    }
-
-    fn max_limit(self) -> usize {
-        match self {
-            Self::Week => 26,
-            Self::Month => 24,
-            Self::Year => 10,
-        }
-    }
-}
-
-/// 一期的边界（闭区间，都是本地日期）。
-struct Period {
-    key: String,
-    label: String,
-    start: chrono::NaiveDate,
-    end: chrono::NaiveDate,
-}
-
-/// 往回数第 `back` 期的边界。
-///
-/// 期界一律在 Rust 里算（ISO 周、自然月、自然年），**不用 SQL 的日期函数**：
-/// 那是方言相关的表达式（`YEARWEEK` / `DATE_FORMAT`），而本仓的 api_tests 走
-/// MockDatabase——写错了本机全绿、一部署就现形（`SUM` 那个 DECIMAL 的坑同族）。
-/// 取回原始日期列在本地分桶，与本模块其余部分保持同一种做法。
-fn period_at(g: Granularity, today: chrono::NaiveDate, back: usize) -> Period {
-    use chrono::Datelike;
-    let back = back as i64;
-    match g {
-        Granularity::Week => {
-            // ISO 周：周一是第一天（`num_days_from_monday`）。
-            let start = today
-                - chrono::Duration::days(today.weekday().num_days_from_monday() as i64)
-                - chrono::Duration::days(7 * back);
-            let end = start + chrono::Duration::days(6);
-            let iso = start.iso_week();
-            Period {
-                key: format!("{}-W{:02}", iso.year(), iso.week()),
-                label: format!("{} 年第 {} 周", iso.year(), iso.week()),
-                start,
-                end,
-            }
-        }
-        Granularity::Month => {
-            // 先把"今天"退到本月的 1 号，再往回退 back 个月（手动进退位，
-            // 不引 chrono 的 Months——那要处理 NaiveDate 溢出的 Option）。
-            let mut y = today.year();
-            let mut m = today.month() as i64;
-            m -= back;
-            while m <= 0 {
-                m += 12;
-                y -= 1;
-            }
-            let start = chrono::NaiveDate::from_ymd_opt(y, m as u32, 1).unwrap_or(today);
-            let end = last_day_of_month(y, m as u32);
-            Period {
-                key: format!("{y}-{m:02}"),
-                label: format!("{y} 年 {m} 月"),
-                start,
-                end,
-            }
-        }
-        Granularity::Year => {
-            let y = today.year() - back as i32;
-            Period {
-                key: format!("{y}"),
-                label: format!("{y} 年"),
-                start: chrono::NaiveDate::from_ymd_opt(y, 1, 1).unwrap_or(today),
-                end: chrono::NaiveDate::from_ymd_opt(y, 12, 31).unwrap_or(today),
-            }
-        }
-    }
-}
-
-/// 某年某月的最后一天：下个月 1 号往前退一天。闰年由 chrono 自己算，
-/// **不要写 `[31,28,31,…]` 那张表**（2 月会常年差一天）。
-fn last_day_of_month(y: i32, m: u32) -> chrono::NaiveDate {
-    let (ny, nm) = if m == 12 { (y + 1, 1) } else { (y, m + 1) };
-    chrono::NaiveDate::from_ymd_opt(ny, nm, 1)
-        .and_then(|d| d.pred_opt())
-        .unwrap_or_else(|| chrono::NaiveDate::from_ymd_opt(y, 12, 31).unwrap_or_default())
-}
-
-#[derive(Serialize, Default)]
-pub struct PeriodRow {
-    /// `2026-W40` / `2026-10` / `2026`（前端做 React key 用，也是人眼可读的编号）
-    pub key: String,
-    pub label: String,
-    /// 期界，`YYYY-MM-DD`（闭区间）
-    pub start: String,
-    pub end: String,
-    /// **本期不是整期统计**：起始日早于 `since`（统计功能上线那天）。
-    /// 前端据此把数字标成"部分"，否则"上线那一周只有两天数据"会被读成
-    /// "那周流量掉了"——这正是本模块反复强调的"缺数 ≠ 零"。
-    pub partial: bool,
-    pub views: i64,
-    pub likes: i64,
-    pub favorites: i64,
-    /// 本期讨论量（20261003 补）。口径同全局：只算**公开可见**的评论
-    /// （`approved = 1 AND is_deleted = 0`），且只算当前可见文章上的。
-    pub comments: i64,
-    /// 本期**阅读量**前 5（名次口径是本期内，与全局榜无关）。
-    /// 每行四个数都带——看榜的人下一个问题必然是"那篇的赞/收藏/讨论呢"。
-    #[serde(rename = "topNotes")]
-    pub top_notes: Vec<NoteRankRow>,
-}
-
-#[derive(Serialize, Default)]
-pub struct PeriodReportDto {
-    #[serde(rename = "generatedAt")]
-    pub generated_at: String,
-    /// 回显粒度（前端切了档之后要能对得上）
-    pub kind: String,
-    /// 最早有统计记录的一天；`None` = 一行记录都还没有
-    pub since: Option<String>,
-    /// 期列表，**倒序**（最新在前）；期界早于 `since` 的整期已被剔除
-    pub periods: Vec<PeriodRow>,
-}
-
-/// GET /api/protected/stats/notes/periods?kind=week|month|year&limit=N
-pub async fn note_period_report(
-    State(state): State<Arc<AppState>>,
-    axum::extract::Query(q): axum::extract::Query<HashMap<String, String>>,
-) -> Json<ApiResponse<PeriodReportDto>> {
-    let db = &state.db;
-
-    let g = match Granularity::parse(q.get("kind").map(String::as_str).unwrap_or("week")) {
-        Some(g) => g,
-        None => return Json(ApiResponse::error("报表粒度只支持 week / month / year")),
-    };
-    // `limit` 认不出就当没给（默认值），**不是**报错：它是分页参数，
-    // 拼错一个 `limit=` 不该让整个报表打不开。
-    let limit = q
-        .get("limit")
-        .and_then(|s| s.parse::<usize>().ok())
-        .filter(|n| *n > 0)
-        .unwrap_or_else(|| g.default_limit())
-        .min(g.max_limit());
-
-    let notes = match visible_notes(db).await {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::error!("[stats] note 可见性查询失败: {e}");
-            return Json(ApiResponse::error("统计查询失败，请稍后再试"));
-        }
-    };
-    let titles: HashMap<i32, String> = notes.iter().cloned().collect();
-    let ids: Vec<i32> = notes.iter().map(|(id, _)| *id).collect();
-
-    let today = chrono::Local::now().date_naive();
-    let wanted: Vec<Period> = (0..limit).map(|i| period_at(g, today, i)).collect();
-    let oldest_start = wanted.last().map(|p| p.start).unwrap_or(today);
-
-    let dto = |periods: Vec<PeriodRow>, since: Option<String>| PeriodReportDto {
-        generated_at: crate::routes::stats::format_ts(chrono::Local::now().naive_local()),
-        kind: g.as_str().to_string(),
-        since,
-        periods,
-    };
-
-    // 统计的起点 = `note_view` 最早那一行。**这是"这几期到底统没统计过"的唯一判据**：
-    // 期界落在它之前的那些期，数字恒为 0，但那个 0 的意思是"功能还没上线"，
-    // 不是"那几天没人看"。所以整期剔除、跨界的标 partial。
-    let since: Option<chrono::NaiveDate> = match note_view::Entity::find()
-        .select_only()
-        .column_as(Expr::col(note_view::Column::ViewDate).min(), "d")
-        .into_tuple::<Option<chrono::NaiveDate>>()
-        .one(db)
-        .await
-    {
-        Ok(v) => v.flatten(),
-        Err(e) => {
-            tracing::error!("[stats] note_view 起点查询失败: {e}");
-            return Json(ApiResponse::error("统计查询失败，请稍后再试"));
-        }
-    };
-    let Some(since) = since else {
-        // 一行记录都没有：如实回空列表，不回一堆 0 期
-        return Json(ApiResponse::success(dto(Vec::new(), None)));
-    };
-
-    let kept: Vec<Period> = wanted.into_iter().filter(|p| p.end >= since).collect();
-    if kept.is_empty() {
-        return Json(ApiResponse::success(dto(
-            Vec::new(),
-            Some(since.format("%Y-%m-%d").to_string()),
-        )));
-    }
-
-    // 一篇文章在某一期里的四个数：`(期 key, note_id) → [views, likes, favorites, comments]`
-    // ⚠️ 下标是**位置**约定的（0 阅读 / 1 点赞 / 2 收藏 / 3 讨论），下面累加处的
-    // `[0]` / `[1usize]` / `[2usize]` / `[3usize]` 与 `or_insert([0; 4])` 必须一起看。
-    type Acc = HashMap<(String, i32), [i64; 4]>;
-    let mut acc: Acc = HashMap::new();
-    // 期 key 的归属：日期 → 期。kept 是倒序的，构建顺序无所谓（期界互不重叠）
-    let period_of = |d: chrono::NaiveDate| -> Option<String> {
-        kept.iter().find(|p| d >= p.start && d <= p.end).map(|p| p.key.clone())
-    };
-
-    if !ids.is_empty() {
-        // 阅读量：一篇文章一天一行，直接把 cnt 累进所属期
-        match note_view::Entity::find()
-            .select_only()
-            .column(note_view::Column::NoteId)
-            .column(note_view::Column::ViewDate)
-            .column(note_view::Column::Cnt)
-            .filter(note_view::Column::NoteId.is_in(ids.clone()))
-            .filter(note_view::Column::ViewDate.gte(oldest_start))
-            .into_tuple::<(i32, chrono::NaiveDate, i32)>()
-            .all(db)
-            .await
-        {
-            Ok(rows) => {
-                for (id, d, c) in rows {
-                    if let Some(k) = period_of(d) {
-                        acc.entry((k, id)).or_insert([0; 4])[0] += c as i64;
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::error!("[stats] note_view 分期失败: {e}");
-                return Json(ApiResponse::error("统计查询失败，请稍后再试"));
-            }
-        }
-
-        let from = oldest_start.and_hms_opt(0, 0, 0).unwrap_or_default();
-        // 点赞与收藏：同一条路（`created_at` 取日期），逐行累加
-        let likes: Result<Vec<(i32, chrono::NaiveDateTime)>, DbErr> = note_like::Entity::find()
-            .select_only()
-            .column(note_like::Column::NoteId)
-            .column(note_like::Column::CreatedAt)
-            .filter(note_like::Column::NoteId.is_in(ids.clone()))
-            .filter(note_like::Column::CreatedAt.gte(from))
-            .into_tuple::<(i32, chrono::NaiveDateTime)>()
-            .all(db)
-            .await;
-        let favs: Result<Vec<(i32, chrono::NaiveDateTime)>, DbErr> = user_favorite::Entity::find()
-            .select_only()
-            .column(user_favorite::Column::NoteId)
-            .column(user_favorite::Column::CreatedAt)
-            .filter(user_favorite::Column::NoteId.is_in(ids.clone()))
-            .filter(user_favorite::Column::CreatedAt.gte(from))
-            .into_tuple::<(i32, chrono::NaiveDateTime)>()
-            .all(db)
-            .await;
-        // 讨论：与点赞/收藏同一条路（`created_at` 取日期），但**多两条过滤**
-        // （公开可见的那些才算——与全局报表的 totalComments 同一口径）。
-        let cmts: Result<Vec<(i32, chrono::NaiveDateTime)>, DbErr> = note_comment::Entity::find()
-            .select_only()
-            .column(note_comment::Column::NoteId)
-            .column(note_comment::Column::CreatedAt)
-            .filter(note_comment::Column::NoteId.is_in(ids.clone()))
-            .filter(note_comment::Column::CreatedAt.gte(from))
-            .filter(note_comment::Column::Approved.eq(1))
-            .filter(note_comment::Column::IsDeleted.eq(0))
-            .into_tuple::<(i32, chrono::NaiveDateTime)>()
-            .all(db)
-            .await;
-        for (rows, slot) in [(likes, 1usize), (favs, 2usize), (cmts, 3usize)] {
-            match rows {
-                Ok(rows) => {
-                    for (id, t) in rows {
-                        if let Some(k) = period_of(t.date()) {
-                            acc.entry((k, id)).or_insert([0; 4])[slot] += 1;
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("[stats] 分期点赞/收藏/讨论失败: {e}");
-                    return Json(ApiResponse::error("统计查询失败，请稍后再试"));
-                }
-            }
-        }
-    }
-
-    // 定稿：逐期算总量与榜。
-    // ⚠️ 总量**不是** `top_notes` 的和——榜截断到 5 条，那一和只等于前 5 篇。
-    // 总量从 `acc` 全量累加（口径与全局报表的 totalViews 一致：当前可见文章）。
-    let mut periods: Vec<PeriodRow> = Vec::with_capacity(kept.len());
-    for p in &kept {
-        let mut rows: Vec<NoteRankRow> = Vec::new();
-        let (mut tv, mut tl, mut tf, mut tc) = (0i64, 0i64, 0i64, 0i64);
-        for (id, title) in titles.iter() {
-            let Some(v) = acc.get(&(p.key.clone(), *id)) else { continue };
-            // 「本期一行没有」= **四个数**全是 0。判据必须随下标表一起加长：
-            // 只判前三个的话，"这期只被讨论、没被阅读"的文章会进榜、且在榜上显示一串 0。
-            if v == &[0, 0, 0, 0] {
-                continue;
-            }
-            tv += v[0];
-            tl += v[1];
-            tf += v[2];
-            tc += v[3];
-            rows.push(NoteRankRow {
-                note_id: *id,
-                title: title.clone(),
-                views: v[0],
-                likes: v[1],
-                favorites: v[2],
-                comments: v[3],
-            });
-        }
-        // 名次口径 = **本期阅读量**（与全局榜同一把尺子，只是范围收到这一期）；
-        // 截断 5 条——展开一块能一屏看完，再多就该去全局榜看
-        rows.sort_by(|a, b| b.views.cmp(&a.views).then(a.note_id.cmp(&b.note_id)));
-        rows.truncate(PERIOD_TOP_N);
-        periods.push(PeriodRow {
-            key: p.key.clone(),
-            label: p.label.clone(),
-            start: p.start.format("%Y-%m-%d").to_string(),
-            end: p.end.format("%Y-%m-%d").to_string(),
-            partial: p.start < since,
-            views: tv,
-            likes: tl,
-            favorites: tf,
-            comments: tc,
-            top_notes: rows,
-        });
-    }
-
-    Json(ApiResponse::success(dto(
-        periods,
-        Some(since.format("%Y-%m-%d").to_string()),
-    )))
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use chrono::{Datelike, NaiveDate, NaiveDateTime};
-
-    fn d(y: i32, m: u32, day: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(y, m, day).expect("夹具日期本身写错了")
-    }
-
-    fn dt(y: i32, m: u32, day: u32, h: u32) -> NaiveDateTime {
-        d(y, m, day).and_hms_opt(h, 0, 0).expect("夹具时刻写错了")
-    }
-
-    // ── 月末：闰年不许靠查表 ────────────────────────────────────────────────
-    #[test]
-    fn 月末由_chrono_算闰年不查表() {
-        assert_eq!(last_day_of_month(2024, 2), d(2024, 2, 29), "2024 是闰年");
-        assert_eq!(last_day_of_month(2026, 2), d(2026, 2, 28), "2026 不是");
-        assert_eq!(last_day_of_month(2000, 2), d(2000, 2, 29), "能被 400 整除是闰年");
-        assert_eq!(last_day_of_month(1900, 2), d(1900, 2, 28), "能被 100 整除非闰年");
-        assert_eq!(last_day_of_month(2026, 4), d(2026, 4, 30));
-        assert_eq!(last_day_of_month(2026, 11), d(2026, 11, 30));
-    }
-
-    #[test]
-    fn 十二月跨年不回卷成十三月() {
-        assert_eq!(last_day_of_month(2026, 12), d(2026, 12, 31));
-    }
-
-    // ── 期界：连续、无缝、无重叠 ────────────────────────────────────────────
-    //
-    // 「往回数第 i+1 期的最后一天 + 1 天 == 第 i 期的第一天」这一条对三种粒度同时成立，
-    // 且不需要我知道"2026-10-04 属于第几周"——把不该靠人脑算的东西交给不变量。
-    #[test]
-    fn 相邻两期严丝合缝() {
-        let today = d(2026, 10, 4);
-        for g in [Granularity::Week, Granularity::Month, Granularity::Year] {
-            for back in 0..4 {
-                let newer = period_at(g, today, back);
-                let older = period_at(g, today, back + 1);
-                assert_eq!(
-                    older.end.succ_opt().expect("日期溢出"),
-                    newer.start,
-                    "{g:?} 的第 {back}/{} 期之间断了或叠了（{} 的末日在 {}，{} 的首日在 {}）",
-                    back + 1,
-                    older.key,
-                    older.end,
-                    newer.key,
-                    newer.start
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn 周期是一整周从周一到周日() {
-        let today = d(2026, 10, 4);
-        for back in 0..3 {
-            let p = period_at(Granularity::Week, today, back);
-            assert_eq!(
-                p.start.weekday(),
-                chrono::Weekday::Mon,
-                "第 {back} 期的首日 {} 不是周一（key={}）",
-                p.start,
-                p.key
-            );
-            assert_eq!(p.end.weekday(), chrono::Weekday::Sun, "第 {back} 期");
-            assert_eq!((p.end - p.start).num_days(), 6);
-            // key 与 label 都取自**周一那天**的 ISO 周 —— 跨年那一周边界上，
-            // "周的年份"与"日期的年份"会不一样，这一条就是防有人改成 `start.year()`
-            let iso = p.start.iso_week();
-            assert_eq!(p.key, format!("{}-W{:02}", iso.year(), iso.week()));
-        }
-    }
-
-    // 2026-01-01 是周四 ⇒ ISO 上它属于 **2026 年第 1 周**，而那一周的周一落在
-    // **2025-12-29**。这是"周的年份 ≠ 日历年"最容易写错的那一格。
-    #[test]
-    fn 跨年那一周按_iso_归属前一年() {
-        let p = period_at(Granularity::Week, d(2026, 1, 1), 0);
-        assert_eq!(p.start, d(2025, 12, 29), "2026-W01 的周一是 2025-12-29");
-        assert_eq!(p.end, d(2026, 1, 4));
-        assert_eq!(p.key, "2026-W01");
-    }
-
-    #[test]
-    fn 月期跨年要借位而不是回卷() {
-        let p = period_at(Granularity::Month, d(2026, 1, 15), 1);
-        assert_eq!((p.key.as_str(), p.start, p.end), ("2025-12", d(2025, 12, 1), d(2025, 12, 31)));
-        // 往回 13 个月 = 上一年同月（借位要连年一起动）
-        let p13 = period_at(Granularity::Month, d(2026, 1, 15), 13);
-        assert_eq!(p13.key, "2024-12");
-        assert_eq!(p13.start, d(2024, 12, 1));
-    }
-
-    #[test]
-    fn 月期不把三月三十一号当二月末() {
-        // `today - 1 个月` 那种写法在 3/31 上会滚成 3/3；这里必须退到 1 号再进月
-        let p = period_at(Granularity::Month, d(2026, 3, 31), 1);
-        assert_eq!(p.start, d(2026, 2, 1));
-        assert_eq!(p.end, d(2026, 2, 28), "2026 年 2 月只有 28 天");
-        assert_eq!(period_at(Granularity::Month, d(2026, 3, 31), 0).end, d(2026, 3, 31));
-    }
-
-    #[test]
-    fn 年期是整年() {
-        let p = period_at(Granularity::Year, d(2026, 10, 4), 1);
-        assert_eq!((p.key.as_str(), p.start, p.end), ("2025", d(2025, 1, 1), d(2025, 12, 31)));
-    }
-
-    // ── collect：NULL 折零，错误原样透传 ────────────────────────────────────
-    #[test]
-    fn 零行折成零而不是丢掉这个_id() {
-        let m = collect(Ok(vec![(1, Some(5)), (2, None)])).expect("不该报错");
-        assert_eq!(m[&1], 5);
-        assert_eq!(
-            m[&2], 0,
-            "SQL 在零行时回 NULL ⇒ 折成 0。**丢掉这个 key 是错的**：调用方靠它在场\
-             区分「这篇没人看过」与「这篇的计数没查出来」"
-        );
-    }
-
-    #[test]
-    fn collect_把错误原样透传() {
-        let e = collect(Err(DbErr::Custom("boom".into())));
-        assert!(
-            e.is_err(),
-            "查询失败不许折成空表——那会让报表显示成「全站零流量」"
-        );
-    }
-
-    // ── rank：数值倒序、并列按 id 升序、截断到 TOP_N ────────────────────────
-    fn row(id: i32, views: i64, likes: i64) -> NoteRankRow {
-        NoteRankRow {
-            note_id: id,
-            title: format!("t{id}"),
-            views,
-            likes,
-            favorites: 0,
-            comments: 0,
-        }
-    }
-
-    #[test]
-    fn 排行榜并列时按_id_升序且读数不改() {
-        let metric: HashMap<i32, i64> = [(7, 1), (3, 1), (5, 9)].into_iter().collect();
-
-        let r = rank(vec![row(7, 1, 99), row(3, 1, 0), row(5, 9, 0)], &metric);
-        assert_eq!(
-            r.iter().map(|x| x.note_id).collect::<Vec<_>>(),
-            vec![5, 3, 7],
-            "5 分最高；3 与 7 并列 ⇒ 按 id 升序（两次报表可比对）"
-        );
-        // 排序只按 metric 那一列，**不改行上其余的读数**
-        let r7 = r.iter().find(|x| x.note_id == 7).expect("7 不在榜上");
-        assert_eq!((r7.views, r7.likes), (1, 99));
-    }
-
-    #[test]
-    fn 排行榜缺项按零参与排序() {
-        let rows = vec![row(1, 0, 0), row(2, 0, 0)];
-        let r = rank(rows, &HashMap::new());
-        assert_eq!(
-            r.iter().map(|x| x.note_id).collect::<Vec<_>>(),
-            vec![1, 2],
-            "一个读数都没有 ⇒ 全并列 ⇒ 退回 id 升序（不是随机序）"
-        );
-    }
-
-    #[test]
-    fn 排行榜截断到_top_n() {
-        let rows: Vec<NoteRankRow> = (1..=25).map(|i| row(i, i as i64, 0)).collect();
-        let metric: HashMap<i32, i64> = (1..=25).map(|i| (i, i as i64)).collect();
-        let r = rank(rows, &metric);
-        assert_eq!(r.len(), TOP_N);
-        assert_eq!(r[0].note_id, 25, "最高分在最前");
-        assert_eq!(r[TOP_N - 1].note_id, 16);
-    }
-
-    // ── bucket_by_day：只往窗口里已有的日子累加 ─────────────────────────────
-    #[test]
-    fn 分桶只落进窗口内的日子() {
-        let mut daily: HashMap<NaiveDate, DailyRow> = HashMap::new();
-        daily.insert(
-            d(2026, 10, 1),
-            DailyRow { date: "2026-10-01".into(), views: 0, likes: 0, favorites: 0, comments: 0 },
-        );
-        // 三条落在窗口内（同一天两条），一条落在窗口外
-        let rows = vec![dt(2026, 10, 1, 9), dt(2026, 10, 1, 21), d(2026, 9, 30).and_hms_opt(23, 0, 0).unwrap()];
-        bucket_by_day(&mut daily, rows, |r| &mut r.likes);
-
-        assert_eq!(daily[&d(2026, 10, 1)].likes, 2, "同一天的两条要累加");
-        assert_eq!(daily.len(), 1, "窗口外的日期**不新建行**——窗口是调用方给的定长 30 格");
-    }
-
-    // ── 访客标识：白名单字符集与长度 ────────────────────────────────────────
-    fn key_of(raw: &str) -> Option<String> {
-        let mut h = HeaderMap::new();
-        h.insert(VISITOR_HEADER, raw.parse().expect("头值不合规"));
-        visitor_key(&h)
-    }
-
-    #[test]
-    fn 访客标识不合规一律当没有() {
-        assert_eq!(visitor_key(&HeaderMap::new()), None, "头缺失");
-        assert_eq!(key_of("short12"), None, "短于 8 个字符");
-        assert_eq!(key_of(&"a".repeat(65)), None, "长于 64 个字符");
-        assert_eq!(key_of("abcdefg;hij"), None, "分号不在白名单里");
-        assert_eq!(key_of("abcdefg hij"), None, "空格不在白名单里（内部）");
-        assert_eq!(key_of("abcdefg中文hij"), None, "非 ASCII 一律不收");
-    }
-
-    #[test]
-    fn 访客标识合规时原样收下并去掉首尾空白() {
-        assert_eq!(key_of("abc-DEF_123"), Some("abc-DEF_123".to_string()));
-        assert_eq!(
-            key_of("  abcdefgh  "),
-            Some("abcdefgh".to_string()),
-            "先 trim 再判长度：这个标识刚够 8 位，不该被判短"
-        );
-        assert_eq!(key_of(&"a".repeat(64)), Some("a".repeat(64)), "64 位是含在内的上界");
-    }
-
-    // 秒级截断：`Who::tag()` 只取前 8 位，而标识是纯 ASCII ⇒ 切片不会劈开多字节字符。
-    // 这条不是在测那个函数，是在钉住"它凭什么可以切片"这个前提。
-    #[test]
-    fn 访客标识必定是纯_ascii_因此可以按字节切() {
-        let k = key_of("abcdefgh").expect("合规");
-        assert!(k.is_ascii());
-        assert_eq!(&k[..k.len().min(8)], "abcdefgh");
-    }
-}
+mod tests;

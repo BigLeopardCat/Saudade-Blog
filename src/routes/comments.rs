@@ -1,39 +1,3 @@
-//! 文章评论（20261002）：文章详情页底部的讨论区。
-//!
-//! 用户原话：「文章详情页底部增加讨论区，用户可以发布评论或者讨论，提供站内的表情包
-//! 使用，注意防止 XSS 攻击，用户之间也可以在评论下面评论，相互回复。」
-//!
-//! ── 与河灯留言板的**关系**：审核链共用，存储各一张表 ──────────────────────
-//! 审核走 `talks::decide_review`——留言板那条闸的**同一份实现**（不是照抄一份）；
-//! 开关是**另一对键**（`web_info::COMMENT_REVIEW_KEYS`），两类内容可以分别开关。
-//! 存储是 `note_comment` 表：评论挂文章、留言挂留言板，要展示的列完全不同
-//! （理由见迁移文件头注）。
-//!
-//! ── 两层结构：回复的回复不另起一层 ────────────────────────────────────────
-//! 请求体**只收 `parentId`**；`root_id` / `reply_to_uid` 全部由服务端从父行派生
-//! （见 [`create_comment`]）。这既是"不信任客户端"的一般纪律，也是"回复的回复仍挂在
-//! 同一个顶层评论下"的机械保证——客户端想造第三层都没有字段可填。
-//!
-//! ── 排序：默认**热度**（20261020 改口径）────────────────────────────────────
-//! `?sort=hot`（缺省）/ `?sort=new`，只作用在**顶层**；回复恒按时间正序。热度 =
-//! Wilson 下界（先验一赞一踩）+ `0.1·log2(1+回复数)`，见 [`hot_score`] 的读数对照表。
-//! **这条推翻了 20261003 拍过的"投票不影响排序"**：当时的理由（按票排会让新评论永远
-//! 沉底）由先验回答，"讨论区不是热榜"则由「最新」页签回答。代价——匿名票可刷的后果从
-//! "数字虚高"升级为"排名可操纵"——写在 `comment_votes.rs` 头注里，本次不做缓解。
-//!
-//! ── XSS：防线在**渲染侧**，不在这一侧 ─────────────────────────────────────
-//! 服务端只校验形状（trim、剥控制字符、限 300 字），**不做 HTML 转义**：转义会把
-//! "用户打的字"和"库里存的字"变成两份真相，还会与渲染端的 markdown 管线二次处理。
-//! 真正的防线是前端那条完整管线
-//! （`frontend/src/utils/chatMarkdown.ts::renderBlogMarkdown` ——
-//! remark-parse → gfm/breaks/gemoji/math → remarkStickers → rehype-raw → rehype-sanitize），
-//! 评论、文章、看板娘对话框共用它。**任何地方都不许对评论原文直接 innerHTML。**
-//!
-//! ── 域：公开三条挂 `public_routes` ─────────────────────────────────────────
-//! 评论要对全体登录用户（乃至未登录访客）开放，而 `protected_routes` 域内由
-//! `auth_guard` 全量要求管理员——挂错了就是普通用户 403。所以公开读写挂
-//! `public_routes`、后台管理挂 `protected_routes`，路由见 `routes/mod.rs`。
-
 use std::sync::Arc;
 
 use axum::extract::{Path, Query, State};
@@ -60,8 +24,6 @@ const ADMIN_PAGE_LIMIT: u64 = 500;
 /// （`is_public = 1` 且 `status <> 'draft'`）。两条读取路径**必须**同口径：否则会出现
 /// "评论读得到、文章打不开"（或反过来）这种自相矛盾的组合。
 pub(super) async fn note_visible(db: &sea_orm::DatabaseConnection, note_id: i32) -> bool {
-    // 只问"在不在"，那就只 select 主键（20261018）。这个函数在**每一次留言读写**上都会跑，
-    // 从前 `SELECT *` 每次都把整篇正文读回来。
     note::Entity::find()
         .select_only()
         .column(note::Column::Id)
@@ -125,9 +87,6 @@ pub struct CommentDto {
     pub role: String,
     /// 是否当前登录用户所发（删按钮的门控）。未登录恒 false
     pub mine: bool,
-    /// 赞 / 踩 / **我投的那一票**（20261003 用户第 4 条）。三个数与投票接口的回执
-    /// （`comment_votes::CommentVoteDto`）**同名同义**，前端也共用同一个类型。
-    /// `myVote` 恒 -1/0/1（0 = 我没投），它决定按钮点亮，`up`/`down` 决定数字。
     pub up: i64,
     pub down: i64,
     #[serde(rename = "myVote")]
@@ -136,7 +95,6 @@ pub struct CommentDto {
     pub created_at: String,
 }
 
-// ── 热度排序（20261020）──────────────────────────────────────────────────────
 
 /// 公开列表的查询参数。
 ///
@@ -215,15 +173,6 @@ fn hot_key(score: f64, id: i32) -> (i64, i32) {
 
 // ── 公开读 ─────────────────────────────────────────────────────────────────
 
-/// GET /api/public/notes/:id/comments —— 某篇文章的公开评论（顶层 + 全部回复）。
-///
-/// **未登录也能读**（文章详情页本身是公开的，讨论区跟着它）：此时 `mine` 恒 false。
-/// 只回 `approved = 1` 且未软删的行——待审/未通过/已删除的评论在公开侧**不存在**，
-/// 连"有一条被删了"都不透露。
-///
-/// **排序（20261020）**：`?sort=hot`（缺省）/ `?sort=new`。热度**只作用在顶层**，回复恒按
-/// 时间正序（对话要读得下去）。这一条改掉了 20261003 拍过的口径（"投票不影响排序"），
-/// 新口径与代价见 `comment_votes.rs` 头注。
 pub async fn list_comments(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -240,10 +189,6 @@ pub async fn list_comments(
     }
     // 排序口径：缺省与**未知值**都当 `hot`（未知值绝不能 reject，见 `CommentListQuery`）。
     let sort_hot = !matches!(q.sort.as_deref(), Some("new"));
-    // 先取顶层，再一次性取它们名下**全部**回复。
-    // ⚠️ 这两条 `ORDER BY` 从 20261020 起**不再是列表顺序的契约**，只是"内存排序的确定性
-    // 前置"：默认档会在内存里按热度重排顶层（见下方 `hot_key`）。真正要保的顺序只有两条
-    // ——顶层热度/时间降序、回复时间升序。
     let tops = note_comment::Entity::find()
         .filter(note_comment::Column::NoteId.eq(note_id))
         .filter(note_comment::Column::RootId.is_null())
@@ -452,10 +397,6 @@ pub async fn create_comment(
     if content.chars().count() > MAX_COMMENT_CHARS {
         return Json(ApiResponse::error("评论过长（最多 300 字）"));
     }
-    // 内容风控（20261002）：与河灯留言**同一道闸、同一份实现**（`risk::screen`
-    // 把评论与留言合起来数——需求原文是"短期内大量留言评论"）。
-    // 位置：在形状校验之后、读父行之前——被禁言的人不该靠"回复一条不存在的评论"
-    // 绕过这条判据，而形状校验是纯本地的、失败时也不占间隔。
     let cfg = crate::risk::load_config(&state.db).await;
     let forced = match crate::risk::screen(&state, uid, &cfg).await {
         // 变量叫 `risk_verdict` 而不是 `verdict`：这个文件里"裁决"另有其主
@@ -610,15 +551,6 @@ pub struct CommentAdminDto {
     pub created_at: String,
     /// 0=待审 / 1=通过 / 2=未通过（与留言板同口径，后台两个现成组件可直接复用）
     pub approved: i16,
-    /// AI 判定留痕：pass / flag / reject；null = 没走 AI
-    ///
-    /// ⚠️ **键名是 `aiResult`，不是 `ai_result`**（20261002 与评论管理页一起定）：
-    /// 这个 DTO 其余字段全是 camelCase，而 `ai_result`/`is_deleted` 是顺着实体列名抄
-    /// 下来的（留言板那个 `BoardAdminDto` 也是这两处例外——它有已上线的消费者，
-    /// 不动它）。评论这个 DTO 只被评论管理页一个消费者读、还没上线，此时统一比
-    /// "两页在同一个概念上键名不同"更值——所以这里补上 rename。
-    /// **别对照留言板那个 DTO 抄字段名**：`ai_result` 与 `aiResult` 只差一个下划线，
-    /// 前端读错时拿到的是 `undefined`（不报错、只是那一列永远显示「未审」）。
     #[serde(rename = "aiResult")]
     pub ai_result: Option<String>,
     /// 驳回理由；null = 未驳回或没人写过理由（后台显示「未填写」）
@@ -771,24 +703,6 @@ pub struct AuditCommentBody {
     reason: Option<String>,
 }
 
-/// PUT /api/protect/comments/:id/audit —— 评论人工复核。
-///
-/// 规则与 `talks::audit_board` **逐条对齐**（两条链路两个 handler、一套语义）：
-///   · 裁决只写 `approved`，**不改写 `ai_result`**——AI 判定是历史留痕；
-///   · 驳回理由走三级回落：**人工手填 > `reject_reason`（AI 判 reject 的说明）>
-///     `ai_reason`（AI 存疑说明）**，三级都没有就保持 NULL，不往库里塞编好的话
-///     （通知层的固定文案在通知那一层兜）；
-///   · **改判回通过时清空 `reject_reason`**（不留"已通过却带驳回理由"的矛盾行），
-///     `ai_reason` 不动（它是 AI 那一侧的留痕，不回溯）；
-///   · **已软删的行不可审**（20261002）：公开侧看不见它，改判只会在后台造出一行
-///     "看起来已通过"的假象（判据见下面那段）。
-///
-/// 通知：这里发的是「你的回复被放行了」那条**回复通知**（发给被回复者），不是
-/// 「你的评论已通过审核」（发给作者）。后者**故意不做**——留言板那边发它是因为作者有
-/// 「我的河灯」可去，而评论没有对应的「我的评论」入口：待审/未通过的通知会把作者送到
-/// 一个**看不到自己那条**的页面上。作者那一侧的即时反馈已经由发评论接口的返回给了
-/// （`CreateCommentResult.approved`，前端当场说清三种结局）。
-/// 将来若加了「我的评论」，这条通知要在**这里**接上（不要另起一条链路）。
 pub async fn audit_comment(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -812,11 +726,6 @@ pub async fn audit_comment(
             data: String::default(),
         });
     };
-    // 已软删的评论**不可再审**（20261002 与评论管理页一起加）：公开侧按
-    // `is_deleted = 0` 过滤，所以给一条已删评论改判"通过"是**看不见效果**的，
-    // 而后台会弹一句「已通过」并把它标成绿色「通过」——界面因此说了一件没发生的事。
-    // 前端那一侧的操作列也不给按钮（**两处都要有**：那里是正常路径的界面判据，
-    // 这里是脚本 / 老前端 / 直接打接口也走得到的最终防线）。
     if c.is_deleted != 0 {
         return Json(ApiResponse::error("这条评论已删除，无法审核"));
     }
@@ -932,10 +841,6 @@ mod tests {
         assert!("啊".repeat(MAX_COMMENT_CHARS + 1).chars().count() > MAX_COMMENT_CHARS);
     }
 
-    // ── 热度公式（20261020）────────────────────────────────────────────────
-    // 四条不变量 + 两个交叉点。**不变量**是公式的形状（改符号/去先验/去掉 id 兜底必红），
-    // **交叉点**是产品口径（"多少条回复压得过几个赞"是拍出来的，改动必须是一次有意识的
-    // 测试修改，而不是顺手调个常量）。
 
     /// 单调性：赞越多分越高、踩越多分越低、回复越多分越高。三条各挖一个反控。
     #[test]
@@ -954,16 +859,6 @@ mod tests {
         assert!(hot_score(0, 0, 0) < hot_score(1, 0, 0), "但压不过真有一条赞的");
     }
 
-    /// 回复项是**对数增长、没有上界**——这两件事必须一起钉住。
-    ///
-    /// 第一半（每翻一倍加一个 α）是公式的形状：把 `log2` 换成线性、或把系数写成 1.0
-    /// 之外的东西，这几条当场红。
-    ///
-    /// 第二半（**无上界**）是本条存在的真正理由：写这段代码时我第一版断言的是"再多回复
-    /// 也压不过 30 赞"，**那是错的**——`log2` 压得慢，不是封顶，实测约 178 条回复就追平
-    /// 30 个赞。错的不是公式，是那句注释。所以这里把兑换率的两侧都钉住：一百条还压不过、
-    /// 三百条压得过。**哪天有人给回复项加 `min()`，这两条会一起红**——那正是该发生的事，
-    /// 因为"吵架帖霸榜"是一个要拍板的产品取舍，不该由一个安静的 `min()` 悄悄改掉。
     #[test]
     fn 回复项是对数增长_没有上界() {
         let d = |n: i64| hot_score(0, 0, n);

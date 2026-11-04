@@ -45,10 +45,6 @@ const CategoryResource = ({id, categoryTitle}: {id: string, categoryTitle?: stri
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    /* 跨端同步（20260926，**不轮询**）：看板娘刚改了站内数据（新建/删除文章、改状态）
-       时，访客正看着的这份列表也该跟着变——但访客页面**不为我自己的编辑加流量**：
-       只吃"看板娘一轮收尾"这个事件与"切回可见/重新聚焦"，不挂定时器（同首页/详情页）。
-       这就是本轮选择"事件 + 可见性 + 轻轮询"而不是 SSE/WS 的那条边界：成本只在后台。 */
     useLiveRefresh(loadArticles, { poll: false });
 
     return (
@@ -79,10 +75,6 @@ const CategoryResource = ({id, categoryTitle}: {id: string, categoryTitle?: stri
                                     className="iconfont icon-tuding" style={{fontSize: 23,color:'var(--washi-pink-deep)'}}></i></span>}
                             </div>
                             <p>{item.description}</p>
-                            {/* 两处行内色 20261014 改走令牌（原来写死 #7f7e7e / #ed5f96，
-                                深浅两档一个值；#ed5f96 那个粉与站里的 --washi-pink-deep
-                                本来就几乎同色，索性统一）。行内色在**子元素**上，权重上压过
-                                `.articleFooter` 自己那条，所以这两处不改的话父级改了也看不见。 */}
                             <div className='articleFooter'><span style={{fontSize:13,color:'var(--font-p-color)'}} className='post-date'><i className="iconfont icon-naozhong icon" style={{fontSize: 22, display: 'inline',verticalAlign: 'sub'}}></i>发布于 {dayjs(item.updateTime).format('YYYY-MM-DD')}</span>
                                 <span style={{color:'var(--washi-pink-deep)',float:'right'}}>阅读全文→</span>
                             </div>

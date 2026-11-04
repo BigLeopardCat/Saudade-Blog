@@ -7,8 +7,6 @@ import './index.sass';
 import {useCallback, useContext, useEffect, useMemo, useRef, useState} from "react";
 import {Dayjs} from "dayjs";
 import 'dayjs/locale/zh-cn';
-// 只 import 不会把中文设为默认语言：日历头那个月份下拉读的是 dayjs 的全局语言，
-// 不设就一直是英文缩写（Sep / Oct）。全站只有中文，直接设成默认（20260924）。
 dayjs.locale('zh-cn');
 import zhCNDefault from "antd/lib/locale/zh_CN";
 import {cjsDefault} from "../../../utils/cjsDefault";
@@ -26,8 +24,6 @@ import type {DashboardTodo} from "../../../interface/DashboardType";
 import {fetchCategories} from "../../../store/components/categories.tsx";
 import {fetchTags} from "../../../store/components/tags.tsx";
 import {useUnread} from "../../../components/UserCenter/unread";
-// 「看板娘一轮对话收尾」信号（20260926 起也用在这张卡上）：agent 可能刚往这份列表里
-// 追加过一条——常量的定义与派发点见 components/UserCenter/agentTurn.ts。
 import {AGENT_TURN_DONE_EVENT} from "../../../components/UserCenter/agentTurn";
 
 // antd 的 locale 包是 CJS，Vite 8 之后默认 import 拿到的是名字空间对象而不是那份 locale
@@ -39,8 +35,6 @@ type Todo = {id: number, text: string, done: boolean, date?: string};
 
 // 逾期 = 有日期、还没做完、且日期在今天之前
 const isOverdue = (t: Todo, today: string) => !!t.date && !t.done && t.date < today;
-// （原先还有个 todoClass：给日历格子里那两行待办文字拼 class 用的。格子改成小圆点
-// 之后没有消费方了，随「格子里写文字」那条路一起删掉——留着就是死代码。）
 
 // 本地列表 → 发往服务端的那份（线上口径 {text, done, date}）：
 // 空行是前端的临时态（「新建日程」里还没写字），**不发也不存**——服务端同样会跳过。
@@ -79,9 +73,6 @@ const mergeServerRows = (server: DashboardTodo[], local: Todo[],
     }))];
 };
 
-/** HTML 转义。点名要它是因为签名走的是 typed 的 `contentType: 'html'`（innerHTML 通道），
- *  而签名是站点设置里填的**自由文本** —— 直接把 `<` 递进去等于把它当标签解析。
- *  （同一条教训：20260930 之前看板娘 hitokoto 因 innerHTML 直插未转义被移出 tools 数组。） */
 const escapeHtml = (s: string): string =>
     s.replace(/[&<>"']/g, (c) => ({
         '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -90,8 +81,6 @@ const escapeHtml = (s: string): string =>
 const Home = () => {
     //hooks区域
     const typedRef = useRef(null);
-    // 欢迎卡那格头像 = **登录用户自己的**（20260930 用户点名"头像不硬编码"）。
-    // 原先读的 `state.user.avatar` 是站点设置里那张（谁看都一样）。
     const avatar = useViewerProfile().avatar;
     // 个性签名：站点设置 → `web_info.userTalk` → `GET /api/public/user` → redux `talk`。
     // 以前这里写死「遇事不决可问春风 / 春风不语即随本心」——那是某一位部署者的口味，
@@ -110,55 +99,22 @@ const Home = () => {
     // 卡片标题仍存在本机（`dashboard_list_title`）——它是这块面板的显示名，
     // 不跟着账号走；待办本身已落库（见下）。
     const [listTitle, setListTitle] = useState(() => localStorage.getItem('dashboard_list_title') || '开发进度');
-    // 待办落库（20260924）：整份列表存服务端（GET/PUT /api/protected/todos），
-    // 不再存 localStorage——之前换浏览器/换设备就看不见了。
-    // `loaded` 是**安全闸**：列表没读出来之前绝不出网（PUT 发的是整份列表，
-    // 空数组的含义就是"清空"，一读失败就写回去等于把主人的待办抹了）。
     const [todos, setTodos] = useState<Todo[]>([]);
     const [loaded, setLoaded] = useState(false);
     const [loadErr, setLoadErr] = useState('');
     // 库里"此刻的样子"的指纹：与它一致的本地状态不触发写（读一次不会立刻写回去）
     const lastSaved = useRef('');
-    // 日历下方那条"给某一天加一条"的快添栏。原来点日期弹的是英文 Modal.confirm
-    // （「Select Date: 2026-09-24」「添加日程到便签?」），且加出来的是一条
-    // 文案被写死成「[日期] 新日程」的待办——20260924 改成直接在日历里输入。
     const [pendingDate, setPendingDate] = useState<string | null>(null);
     const [draft, setDraft] = useState('');
     const [focusId, setFocusId] = useState<number | null>(null);   // 刚新增的空行，挂载后自动聚焦
     const [dragId, setDragId] = useState<number | null>(null);
-    // 还有几条留言等着人工裁决（20260924 三轮）。它不是待办：不进 todos、不落库、
-    // 不能拖也不能删，只在列表顶上当一个"去处理"的入口。
-    // 20260924 四轮：数字改从**未读汇总**（GET /api/protected/notifications/summary）拿。
-    // 原来这里自己每 60 秒拉一次整张留言表再数 `approved===0`——为了界面上一行提示
-    // 把整张表拉进内存、还多起一条轮询，而那条汇总接口本来就在以同样的节奏被头部
-    // 头像的红点读着。现在这一页只是那个 store 的**消费者之一**（`useUnread`），
-    // 与红点共用一份读数、一个定时器；切回标签页与 agent 收尾那两条立即刷新的通道
-    // 也一并继承（原来这里各写了一遍）。没登录时 store 不发请求、这一行也不画。
     const { counts: unread } = useUnread(true);
     const pendingReview = unread.pendingReview;
-    // 等处理的额度重置申请（20260929）：与 pendingReview 完全同族——同一个汇总接口、
-    // 同一份读数、同样**不进 total**，只是指向后台另一个页签（`?tab=quota`）。
     const pendingQuota = unread.pendingQuota;
-    // 等人工裁决的**文章评论**（20261019）：第三类，与上面两类逐条同族（同一个汇总接口、
-    // 同一份读数、同样不进 total），只是指向后台第三个页签（`?tab=comment`）。
-    //
-    // ⚠️ **它与 pendingReview 不是一件事**，别合并：`pendingReview` 数的是**河灯留言**
-    // （`talk` 表、`/guestbook` 那套、后台 `?tab=review`），这里数的是**文章评论**
-    // （`note_comment` 表、长在每篇文章下面、后台 `?tab=comment`）。两行同时冒出来时，
-    // 主人点的是两个完全不同的页面——合并成一个数就再也说不清是哪个 N。
     const pendingComments = unread.pendingComments;
     const navigate = useNavigate();
 
     const today = dayjs().format('YYYY-MM-DD');
-    // agent 也能往这份列表里加一条（20260926）：服务端给它开了一条**只追加**的通道
-    // （POST /api/protected/todos/item，见 apis/DashboardMethods.tsx 头注）。麻烦在于
-    // 这份界面是**整份**读写：库里多了一条而本地不知道时，下一次自动保存（PUT）就会
-    // 把它抹掉。所以 agent 收尾那一刻要重读一次——两个 ref 就是为此：
-    //   · `todosRef` 让事件回调读到**此刻**的列表（回调是异步的，闭包里的 todos 是旧值）；
-    //   · `pendingReload` 是"本地还有没落库的改动、先别读"的记号（见下面两处消费点）。
-    // 在**渲染期**给 ref 赋值而不是放进 effect：effect 要等提交+绘制之后才跑，那个空档
-    // 里收到 agent-turn-done 会读到上一版列表——那一版若恰好"干净"，它会当场重读，把主人
-    // 刚敲进去的字丢掉（判断错最坏的那一侧）。
     const todosRef = useRef<Todo[]>(todos);
     todosRef.current = todos;
     const pendingReload = useRef(false);
@@ -263,13 +219,9 @@ const Home = () => {
     const updateTodo = (id: number, text: string) => {
         setTodos(prev => prev.map(t => t.id === id ? {...t, text} : t));
     };
-    // 给某一行排期（或撤掉它的日期）。原先一条待办的日期只有两个来路：日历上点那天
-    // 再在快添栏里写、或者一开始就没日期——已经在列表里的那行**改不了**，"新增的任务
-    // 不能绑定期限"就是这么来的。现在每行自带一个排期按钮，新建的与已有的都能改。
     const setTodoDate = (id: number, date?: string) => {
         setTodos(prev => prev.map(t => t.id === id ? {...t, date} : t));
     };
-    // 删除不可逆，先问一句（原先点一下红垃圾桶就没了）
     const confirmDelete = (todo: Todo) => {
         Modal.confirm({
             title: '删掉这条待办？',
@@ -366,14 +318,6 @@ const Home = () => {
         el?.scrollIntoView({ block: 'nearest' });
     }, [pendingDate, today]);
 
-    // 日历格子：只画小圆点，不写待办文字（20260924 二轮）。
-    //
-    // 上一轮把待办文字塞进格子，代价是格子必须撑到 46px 以上（整块日历 383px），
-    // 而 antd 的「今天」标记是挂在格子上的 1px 描边环（`.ant-picker-cell-inner::before`）——
-    // 格子一变成大方块，那圈环就跟着放大成 57×58 的方框、日期数字缩到左上角，
-    // 于是"今天"既看不出是几号、标记看着也偏了。现在格子回到 26px 的小圆、
-    // 数字居中，标记重新贴着数字；待办改成格子下沿的点：最多 3 个，
-    // 未完成紫 / 逾期红 / 已完成灰，鼠标停上去给出那天的待办清单。
     const dateDotRender = (value: Dayjs) => {
         const dateStr = value.format('YYYY-MM-DD');
         const list = todos.filter(t => t.date === dateStr);
@@ -417,38 +361,22 @@ const Home = () => {
         return (
         <div className="home">
 
-            {/* ⚠️ 这里原先挂着内联 `{height:'100%',width:'25%',display:'flex',flexDirection:'column'}`。
-                宽度搬进 `Home/index.sass` 的 `.home .left`（20261006，用户第 6 条）：内联压过一切
-                普通声明，窄屏那条媒体规则够不着它 —— 而 `width:25%` 正是窄屏必须改掉的那一个
-                （`<768` 时 `.right` 已经 `display:none`、`.center` 也 `display:none`，
-                只剩 `.left` 一个人占 25% ⇒ 头像和签名挤在 ~97px 里）。 */}
             <div className='left'>
                <div className="about_logo">
                    <div className="about_me">
-                       {/* 头像外圈不再写内联 `border`（内联 style 特异性最高，会把 CSS 里
-                           那圈动漫风光环压掉）——环与光晕都归 index.sass 管。 */}
                        <Avatar src={avatar} size={130} className="animeAvatar" />
                        {signature && <div ref={typedRef} className="typed"></div>}
                    </div>
-                   {/* 三个 CPU/内存/磁盘 表盘已删（20260923）：percent 是写死的常量，
-                       不接任何真实指标 —— 假仪表比没有仪表更误导。 */}
                </div>
-               {/* Updated to include WordCloud inside ArticleAnalytics */}
                <ArticleAnalytics />
            </div>
 
-            {/* 宽度同理搬进 sass（内联 `width:'60%'` 窄屏要改成 100%）；两个 padding 留着 ——
-                它们不参与窄屏的槽位计算。 */}
             <div className='center' style={{paddingRight:30, paddingTop: 50}}>
                 <ArticleRecord isDark={isDark}/>
             </div>
 
 
             <div className='right'>
-               {/* 每日箴言卡已撤（20260924）：文案取自第三方接口 api.xygeng.cn，
-                   既不可控也不属于本站，且它占着右栏最高的那一段（30%）——
-                   撤掉正好把日历顶上来。随之删掉的还有 .oneSay 与 .dot 两组
-                   只服务这张卡的样式。 */}
                <ConfigProvider locale={zhCN}>
                    <div className="calWrap">
                        <Calendar
@@ -473,11 +401,6 @@ const Home = () => {
                                         </Select.Option>,
                                     );
                                 }
-                                // 头部改成一行装得下的紧凑版（20260924 二轮）：‹ 年月 › 今天。
-                                // 原先是「年下拉 + 月下拉 + 今天也要加油呀😀 + 月/年切换」四项挤一行、
-                                // 且**没有翻月按钮**（自定义 headerRender 会把 antd 自带的 ‹ › 顶掉，
-                                // 只能靠下拉跳月）。现在补上 ‹ ›、加一个「今天」，腾出的位置去掉
-                                // 那句鸡汤与 月/年 切换——年视图是另一套 12 格面板，与这套紧凑样式不搭。
                                 return (
                                     <div className="calHead">
                                         <div className="calHead-left">
@@ -521,7 +444,6 @@ const Home = () => {
                                 );
                             }}
                        />
-                       {/* 点某一天之后，快添栏就贴在日历下沿出现（中文、就地输入） */}
                        {pendingDate &&
                            <div className="calQuick">
                                <span className="calQuick-label">
@@ -542,8 +464,6 @@ const Home = () => {
                        }
                    </div>
 
-               {/* 这个 locale 现在罩住整个右栏（20260924 三轮）：原来是只包日历，
-                   待办行里的排期小月历在它外面 ⇒ 面板会是英文的。 */}
                <Card className="cardInfo">
                    <Input
                         className="todoTitle"
@@ -552,18 +472,6 @@ const Home = () => {
                         bordered={false}
                    />
                    <div className="todoBody">
-                        {/* 顶上这一行不是待办（不进 todos、不落库、不能拖不能删）：
-                            它是"留言管理那边还有几条等我裁决"的入口，审完自然消失。
-
-                            ⚠️ 文案 20260905–20261002 写的是「条**评论**待人工审核」，而后端这个
-                            `pendingReview` 数的一直是**河灯留言**（`profile.rs::board_pending_count`）
-                            ——那时后台把留言管理叫「评论管理」，所以读起来没错。20261002 拆开之后
-                            这个名字就变成了一句假话（点进去是留言管理，而页签叫评论管理的是另一页），
-                            故改为「留言」。
-                            **文章评论的待审数不在这个字段里**：它 20261019 起是**另开的一格**
-                            （`pendingComments`，见下面第三行），**没有**并进 `pendingReview`
-                            ——两个数合在一句话下面，点进去只能落在其中一页，另一个数就成了
-                            永远对不上的账。 */}
                         {pendingReview > 0 &&
                             <div className="todo-review"
                                  onClick={() => navigate('/dashboard/users?tab=review')}>
@@ -571,10 +479,6 @@ const Home = () => {
                                 <span>条留言待人工审核</span>
                                 <RightOutlined className="todo-review-go" />
                             </div>}
-                        {/* 第二行非待办提示（20260929）：等处理的额度重置申请。与上一行同构
-                            （不进 todos、不落库、不能拖不能删），但**类名另起**（`.todo-quota`）
-                            ——`.todo-review` 在同一页里必须恒为一条，沙箱那条断言锁着它
-                            （dashboard-home.test.py），复用类名会把两种提示数成同一件事。 */}
                         {pendingQuota > 0 &&
                             <div className="todo-quota"
                                  onClick={() => navigate('/dashboard/users?tab=quota')}>
@@ -582,11 +486,6 @@ const Home = () => {
                                 <span>条额度重置申请待处理</span>
                                 <RightOutlined className="todo-quota-go" />
                             </div>}
-                        {/* 第三行非待办提示（20261019）：等人工裁决的**文章评论**。与上面两行同构
-                            （不进 todos、不落库、不能拖不能删），**类名另起**（`.todo-comments`）
-                            ——`.todo-review` 在同一页里必须恒为一条（沙箱锁着），复用类名会把
-                            两种提示数成同一件事。指向的是评论管理页（`?tab=comment`），与第一行
-                            那个 `?tab=review`（留言管理）**不是同一个页面**。 */}
                         {pendingComments > 0 &&
                             <div className="todo-comments"
                                  onClick={() => navigate('/dashboard/users?tab=comment')}>
@@ -594,7 +493,6 @@ const Home = () => {
                                 <span>条评论待人工审核</span>
                                 <RightOutlined className="todo-comments-go" />
                             </div>}
-                        {/* 没读出来之前不显示"还没有待办"——那会把"读失败"说成"你没有待办" */}
                         {!loaded && !loadErr &&
                             <div className="todo-empty">正在读待办…</div>}
                         {loadErr &&
@@ -603,8 +501,6 @@ const Home = () => {
                                 <Button type="link" size="small"
                                         onClick={() => void loadTodos()}>重试</Button>
                             </div>}
-                        {/* 这一句里点名的按钮名要和下面那颗按钮一字不差（沙箱锁着：
-                            空列表那一节断言这句里的名字就是按钮上那个） */}
                         {loaded && groups.length === 0 &&
                             <div className="todo-empty">还没有待办，点下面的「新建日程」</div>}
                         {groups.map(g => (
@@ -626,8 +522,6 @@ const Home = () => {
                                             setDragId(null);
                                         }}
                                     >
-                                        {/* 拖拽把手单独拿（不给整行挂 draggable）：行里是输入框，
-                                            整行可拖会跟"选中一段文字"抢同一个右键手势 */}
                                         <HolderOutlined
                                             className="todo-grip"
                                             draggable
@@ -644,15 +538,6 @@ const Home = () => {
                                             onDragEnd={() => setDragId(null)}
                                         />
                                         <Checkbox checked={todo.done} onChange={() => toggleTodo(todo.id)} />
-                                        {/* 待办文字（20261007 从单行 `<Input>` 换成自增高的 `TextArea`）。
-                                            单行输入框按定义**不换行**：长待办只在框里露出前十几字，
-                                            剩下的要聚焦后拿方向键一个个挪才看得见 —— 实测 68 字的一条
-                                            在 287px 宽的框里 scrollWidth 是 571px，也就是说**一半多的
-                                            内容根本不在视野里**（症状就是"看不到这条待办是什么"）。
-                                            `autoSize` 让它随内容折行、行高自己涨，整条都读得到。
-                                            回车**仍然什么都不做**（与换之前那个单行框一致）：待办是一条
-                                            一件事，让它凭空多出一个换行只是往库里塞一个脏字符，跟"看得见"
-                                            这件事无关（要换行，文字自己会折）。 */}
                                         <Input.TextArea
                                             className={'todo-text' + (todo.done ? ' done' : '')}
                                             value={todo.text}
@@ -666,10 +551,6 @@ const Home = () => {
                                             variant="borderless"
                                             placeholder="写点什么…"
                                         />
-                                        {/* 每行自己的排期按钮：没排期只露一枚淡日历图标，
-                                            有日期就直接写 M/D；点开是小月历，想改就改、
-                                            想撤就按清除。逾期行的日期标红（原来那个只读的
-                                            红字 span 就是被它替掉的）。 */}
                                         <DatePicker
                                             className={'todo-due' + (g.overdue ? ' is-overdue' : '')}
                                             value={todo.date ? dayjs(todo.date) : null}
@@ -689,8 +570,6 @@ const Home = () => {
                                 ))}
                             </div>
                         ))}
-                        {/* 列表没读出来时不让新增：那一刻加的行不在服务端那份里，
-                            之后重试读回来就把它冲掉了（比"按钮点了没反应"更让人困惑） */}
                         <Button className="todo-add" type="dashed" block size="small"
                                 disabled={!loaded}
                                 onClick={addBlankRow}>新建日程</Button>

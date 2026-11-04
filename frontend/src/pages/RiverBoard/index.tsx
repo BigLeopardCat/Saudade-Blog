@@ -51,11 +51,6 @@ const CAT_INFO: Record<string, { name: string; desc: string }> = {
 };
 /* 三种灯型名称（与精灵 v 对应） */
 const LAMP_NAMES = ["莲花灯", "八角灯", "圆笼灯"];
-/* 河灯 id 的分界（20260926 起在代码里具名，此前只在三处写成字面量 `10000 +`）：
-  判据是**灯的来历**，不是大小——`id < USER_LANTERN_BASE` 是开场铺在河面上的那批（id = 0..n-1，
-   内容来自公开留言池）；`id ≥ USER_LANTERN_BASE` 是**用户自己弄起来的**（刚放下的灯、灯影集里
-   点亮的灯）。两者数据源不同：后者的内容可能是待审的、根本不在公开池里 ⇒ 任何"跟着公开池
-   调整河面"的逻辑都必须放过它们（见 syncPublicBoard）。 */
 const USER_LANTERN_BASE = 10000;
 /* 河灯上的简短时刻（月-日 时:分），与灯影集完整时间区分 */
 const shortTime = (d: Date) => {
@@ -73,7 +68,7 @@ type AlbumItem = {
     time: string;
     mine: boolean;
     approved: number; // 1=通过 / 0=待审 / 2=未通过（仅"我的河灯"接口返回非 1）
-    reason?: string | null; // 驳回理由（20260923，仅 approved=2 可能有值）
+    reason?: string | null;
 };
 
 type Wish = {
@@ -83,12 +78,10 @@ type Wish = {
     cat: string;
     author?: string;
     time?: string;
-    /* 灯影集条目点开的灯（20260905 issue8 收回/状态用）：
-       talkKey=留言 id；mine/approved 供弹窗显示状态标签与收回按钮 */
     talkKey?: number;
     mine?: boolean;
     approved?: number;
-    reason?: string | null; // 驳回理由（20260923，仅 approved=2 可能有值）
+    reason?: string | null;
 };
 
 interface LanternMeta {
@@ -124,7 +117,6 @@ export default function RiverBoard() {
     const [boardStatus, setBoardStatus] = useState<"loading" | "ready" | "error">("loading");
     const [boardReload, setBoardReload] = useState(0);
     const [modal, setModal] = useState<Wish | null>(null); // 正中弹窗内的心愿
-    /* 收回河灯（20260905 issue8）：两步确认——先点「收回河灯」武装成「确认收回」再执行 */
     const [reclaimArm, setReclaimArm] = useState(false);
     const [reclaimBusy, setReclaimBusy] = useState(false);
     const [reclaimErr, setReclaimErr] = useState("");
@@ -138,7 +130,6 @@ export default function RiverBoard() {
     const [wishBusy, setWishBusy] = useState(false);
     const [wishError, setWishError] = useState("");
     const [wishDone, setWishDone] = useState(false);
-    // 放下结果进待审（后端人工复核开时 data="Pending"，20260905）：完成页提示
     const [wishPending, setWishPending] = useState(false);
     const wishSeq = useRef(0); // 新河灯自增 id（避开现有 0..n）
     /* 刚放下的灯快照："再看一眼"按同一盏灯重新点放（复用其留名/灯型/内容） */
@@ -179,8 +170,6 @@ export default function RiverBoard() {
     /* 灯影集：收录全部留言的古籍卷册 */
     const [albumOpen, setAlbumOpen] = useState(false);
     const [albumItems, setAlbumItems] = useState<AlbumItem[]>([]);
-    // "我的河灯"数据源（20260905 issue8）：本人全部河灯含待审(0)/未通过(2)——
-    // 公开列表只放行通过态，看不到自己的待审/被驳回的灯
     const [albumMine, setAlbumMine] = useState<AlbumItem[]>([]);
     const [albumTabs, setAlbumTabs] = useState<"time" | "mine" | "cat">("time");
     const [albumTimeAsc, setAlbumTimeAsc] = useState(false); // 时序正序/倒序
@@ -286,9 +275,7 @@ export default function RiverBoard() {
             if (!node) continue;
             const d = Math.max(0, m.d);
             const rot = Math.sin(sceneTime.current.now * 0.55 + m.sway) * 3.2;
-            const scl = Math.min(1, Math.pow(d, 1.15) * 1.25); // 与 pos 同一缩放（整体等比放大）
-            // P1-3（20260831）：远景灯停内部动画层（halo/光斑/涟漪/火焰动画 none），
-            // 合成层数随远景灯比例大幅下降——老内核软渲染逐层合成的主成本来源
+            const scl = Math.min(1, Math.pow(d, 1.15) * 1.25);
             node.classList.toggle("rz-far", d < 0.15);
             const li = lanternXY(m);
             node.style.transform =
@@ -315,12 +302,6 @@ export default function RiverBoard() {
     };
 
     /* 留言获取 + 点灯 */
-    /* `?lid=<id>` 定位（20260923）：审核结果通知里的「去看看」跳到 `/guestbook?lid=<id>`，
-       要把那盏灯找出来给用户看。lid 在挂载时从地址栏读一次（不跟 URL 变化走：这个页面
-       自身不产生 lid，只有外部链接带进来）。
-       `locateFromLidRef` 是"给上面的挂载 effect 用的句柄"——真正的实现定义在下面
-       （要用 openWish / fetchMyAlbum），而 effect 的依赖数组是空的，只认第一次渲染的闭包；
-       用 ref 传一份最新的，公开池加载完调一次。 */
     const [lid] = useState(() => {
         const n = Number(new URLSearchParams(window.location.search).get("lid"));
         return Number.isFinite(n) && n > 0 ? n : 0;
@@ -432,8 +413,6 @@ export default function RiverBoard() {
     }, [boardReload]);
 
     /* 气泡长文滚动：JS 逐帧显式推进（CSS animation 偶发卡死不滚，改为可控的 transform） */
-    /* 气泡节点表已删除（20260912）：bubbleRefs 只写不读，每次河灯列表重建都白写 22 次；
-       气泡滚动走的是 scrollState + restartScroll(handle)，不需要这张表 */
     const scrollState = useRef<{ msg: HTMLElement; max: number; pos: number } | null>(null);
     const restartScroll = (handle: HTMLElement) => {
         const box = handle.querySelector(".rz-scroll") as HTMLElement | null;
@@ -554,11 +533,6 @@ export default function RiverBoard() {
             if (!res.ok) throw new Error("放灯暂时未能完成，请稍后重试");
             const jj = (await res.json()) as { code?: number; message?: string; data?: unknown };
             if (jj?.code !== 200) throw new Error(jj?.message || "留言失败");
-            // 人工复核开启时新灯进待审（后端 approved=0 → data="Pending"）：
-            // 灯仍放上河面漂流但处于"未点亮"态（20260905 #4b：河面不给亮灯
-            // 光效——无光晕/水面光斑/烛火，见 .rz-lantern.rz-unlit），不入
-            // 公开列表；灯影集「我的河灯」页签可见，状态标签「待审」，
-            // 审核通过后自动入册点亮
             const pending = jj?.data === "Pending";
             setWishPending(pending);
             const metas = metaRef.current;
@@ -636,8 +610,6 @@ export default function RiverBoard() {
         }
     };
 
-    /* 我的河灯（20260905 issue8）：本人全部河灯（含待审 0/未通过 2）。
-       公开列表只放行通过态——被审核拦下的灯只有这里能看到状态并收回 */
     const fetchMyAlbum = async (): Promise<AlbumItem[] | null> => {
         const token = localStorage.getItem("tokenKey");
         if (!token) return null;
@@ -658,7 +630,6 @@ export default function RiverBoard() {
                 time: String(x?.createTime ?? "").slice(0, 16),
                 mine: true,
                 approved: [0, 1, 2].includes(Number(x?.approved)) ? Number(x.approved) : 1,
-                // 驳回理由（20260923）：空串/缺失都归 null（后端也是这个口径）
                 reason: String(x?.rejectReason ?? "").trim() || null,
             }));
             setAlbumMine(mine);
@@ -669,12 +640,6 @@ export default function RiverBoard() {
         }
     };
 
-    /* `?lid=` 定位的实现（20260923，句柄注册在文件上方的挂载 effect 里）。
-       两级查找：① **我的河灯**——审核结果通知只有登录用户收得到，而待审/未通过的灯
-       在公开池里根本不存在（驳回通知点进来必然走这一支）；顺带把 mine 标记带上，
-       弹窗里才有「收回河灯」。② 公开池兜底（别人的灯、或未登录点进来）。
-       都找不到就**安静兜底**：页面本身已经打开，不再弹提示（用户拍板"定不到就安静
-       兜底回页面"）。 */
     const locateFromLid = useCallback(async () => {
         if (!lid || locatedRef.current) return;
         let hit: AlbumItem | null = null;
@@ -735,12 +700,6 @@ export default function RiverBoard() {
         void locateFromLid();
     }, [locateFromLid]);
 
-    /* 收回河灯（20260905 issue8）：删除自己放的河灯。
-       两步确认防误删：第一击武装（按钮变「确认收回？」），第二击执行 DELETE。
-       成功 → 从灯影集两数据源 + 河流轮播池剔除，撤下弹窗 */
-    /* 灯影集数据缓存（20260912）：打开灯影集原来每次都全量重拉两个接口——
-       挂载时已经拉过一次全量公开列表，同一次会话里同一份数据被拉 3 次。
-       TTL 内直接复用；放灯/收回会作废缓存（见 dropLantern）。 */
     const BOARD_CACHE_TTL = 20000;
     const albumSeqRef = useRef(0);           // 竞态守卫：只认最后一次请求的响应
     const albumMineLoadedRef = useRef(false); // 「我的河灯」按需拉取的一次性标记
@@ -767,9 +726,6 @@ export default function RiverBoard() {
             setAlbumItems((prev) => prev.filter((x) => x.id !== tk));
             setAlbumMine((prev) => prev.filter((x) => x.id !== tk));
             if (allTalksRef.current.length) {
-                // 两个写入点的结构不同：挂载时入池的条目只有 id（无 talkKey），
-                // 开灯影集时入池的条目两者都有。只比 talkKey 会让「没开过灯影集就收回」
-                // 变成空操作——被收回的留言仍留在轮播池里继续漂（20260912 修）
                 allTalksRef.current = allTalksRef.current.filter((t) => t.talkKey !== tk && t.id !== tk);
             }
             // 河面这盏灯（灯影集点起的实例）一并撤走
@@ -782,12 +738,6 @@ export default function RiverBoard() {
         }
     };
 
-    /* 灯影集：打开时拉取全部留言。
-       20260912：数据在 TTL 内复用（挂载时已拉过一次全量）+ 竞态守卫（连点/快速开关时
-       只认最后一次请求的响应，旧数据后到不再覆盖新数据）；「我的河灯」改为切到该页签
-       时才拉（原来看时序页签也会多拉一次 /api/protect/board/mine）。
-       放灯后会作废缓存（见 dropLantern），所以"刚放的灯要重开一次灯影集才看到"的
-       旧体验不变，但同一次浏览里反复开关灯影集不再重复打后端 */
     const openAlbum = async () => {
         setAlbumOpen(true);
         setAlbumSearch(false);
@@ -846,19 +796,6 @@ export default function RiverBoard() {
         }
     };
 
-    /* 跨端同步（20260926，用户报「评论状态变更前端跟不上 agent，也要刷新网页」）：
-       留言板上的可见性是**服务端**说了算——看板娘驳回一条、或主人自己在后台通过一条，
-       河面此前只在挂载时拉过那一次，于是"被驳回的灯还在河上漂、新通过的灯一直不出现"。
-
-       这份重拉**只做合并**（不重建灯、不动镜头、不重挂 canvas、不重置轮播指针）：
-         · 池子换新 + 指针夹回新长度内（**不重置**：重置会让整条河的留言成片跳一次）；
-         · 只动"当前漂着的那句话已经不在池子里"的灯（刚被驳回/删除）——还在池子里的
-           一个字都不改：正漂在眼前的那句话无故换掉，比旧一点更让人困惑；
-         · `id ≥ USER_LANTERN_BASE` 的灯（主人自己放的、灯影集里点亮的）**一个都不碰**：
-           它们的出处不是这个公开池（待审的灯压根不在里面），按池子去"纠正"会把主人
-           刚放下的灯当场换成别人的留言；
-         · 灯影集那份（`albumItems`：还带 mine/approved 两个公开池没有的字段）不在这里拼，
-           只把 TTL 缓存作废——下次打开灯影集自然重拉，也省得在主人翻卷册时把列表换掉。 */
     const syncPublicBoard = async () => {
         const token = localStorage.getItem("tokenKey");
         const res = await fetch(`${runtimeBaseURL}/api/public/board`, {
@@ -935,8 +872,6 @@ export default function RiverBoard() {
 
         });
         metaRef.current = metas;
-        // talkKey/mine/approved 随 Wish 带到弹窗（20260905 issue8）：自己点开的河灯
-        // 弹窗可显示审核状态标签 + 收回按钮（收回按 talkKey 调 DELETE）
         const wish: Wish = {
             id,
             v: it.v,
@@ -947,7 +882,7 @@ export default function RiverBoard() {
             talkKey: it.id,
             mine: it.mine,
             approved: it.approved,
-            reason: it.reason ?? null, // 驳回理由（20260923）随行带到弹窗
+            reason: it.reason ?? null,
         };
         setLanterns((prev) => [...prev, wish]);
         // 详情弹窗打开期间隐藏灯影集（避免两个浮层重叠），关闭后恢复到原浏览位置
@@ -965,13 +900,6 @@ export default function RiverBoard() {
         (window as unknown as { __qaBoard?: { advanceMsg: (id: number) => void } }).__qaBoard = { advanceMsg };
     }, [advanceMsg]);
 
-    /* 灯影集：按当前页签排序 + 类型筛选 + 按检索词过滤
-       "我的河灯"数据源 = albumMine（本人全部河灯，含待审 0 / 未通过 2——公开列表
-       只放行通过态，看不到自己的待审/被驳回的灯，20260905 issue8）；
-       其余页签 = 公开列表 albumItems。
-       useMemo：这段要复制数组三遍 + 中文 localeCompare 排序，而河面主循环每 2.5-4s
-       就有一次 setLanterns 触发的整组件重渲染、输入框每敲一个字也重渲染一次——
-       没必要跟着跑；卷册没打开时（下面 {albumOpen && ...} 之外无人消费）直接给空数组 */
     const albumSorted = useMemo(() => {
         if (!albumOpen) return [] as typeof albumItems;
         const q = albumQuery.trim();
@@ -1013,8 +941,6 @@ export default function RiverBoard() {
                     }}
                     className={
                         "rz-lantern" +
-                        // 20260905 #4b：approved 0(待审)/2(未通过) = 未点亮——
-                        // 河面只放暗灯笼轮廓，不渲染亮灯光效；undefined/1 = 已点亮
                         (ln.approved === undefined || ln.approved === 1 ? "" : " rz-unlit")
                     }
                     role="button"
@@ -1093,7 +1019,6 @@ export default function RiverBoard() {
                     <div className="rz-actions"><button className="rz-album-btn" type="button" onClick={openAlbum}>灯影集</button><button className="rz-wish-btn" type="button" onClick={openWishFlow}>点一盏河灯</button></div>
                 </div>
             </div>
-            {/* 此心为灯 · 留言流程：选灯型 → 选印章 → 书写放下 */}
             {wishOpen && (
                 <div className="rz-modal rz-wish-modal" onClick={closeWishFlow} role="dialog" aria-modal="true" aria-label="点一盏河灯">
                     <div
@@ -1260,7 +1185,6 @@ export default function RiverBoard() {
                     </div>
                 </div>
             )}
-            {/* 未登录留言门禁：留言板公告 */}
             {noticeOpen && (
                 <div className="rz-modal rz-notice-modal" onClick={() => setNoticeOpen(false)} role="dialog" aria-modal="true" aria-label="留言板公告">
                     <div className="rz-modal-box rz-notice-box" onClick={(e) => e.stopPropagation()}>
@@ -1282,7 +1206,6 @@ export default function RiverBoard() {
                     </div>
                 </div>
             )}
-            {/* 灯影集：收录全部留言的古籍卷册 */}
             {albumOpen && (
                 <div className="rz-modal rz-album-modal" onClick={() => setAlbumOpen(false)} role="dialog" aria-modal="true" aria-label="灯影集">
                     <div className="rz-album-box" onClick={(e) => e.stopPropagation()}>
@@ -1338,7 +1261,6 @@ export default function RiverBoard() {
                                 类型
                             </button>
                         </div>
-                        {/* 类型页签：四枚印章手动筛选（可多选） */}
                         {albumTabs === "cat" && (
                             <div className="rz-album-catf">
                                 {CATS.map((c) => (
@@ -1364,8 +1286,6 @@ export default function RiverBoard() {
                                     <span className="rz-album-msg">{it.msg}</span>
                                     <span className="rz-album-meta">
                                         {it.author || "无名"} · {it.time}
-                                        {/* 我的河灯：待审(0)/未通过(2)状态标签（20260905 issue8）——
-                                           点进详情可收回；通过态无标签 */}
                                         {albumTabs === "mine" && it.approved === 0 && (
                                             <i className="rz-minetag rz-wait" title="等待审核，通过后才在河面公开点亮">待审</i>
                                         )}
@@ -1373,8 +1293,6 @@ export default function RiverBoard() {
                                             <i className="rz-minetag rz-no" title="审核未通过，仅在「我的河灯」可见">未通过</i>
                                         )}
                                     </span>
-                                    {/* 驳回理由（20260923）：跨满整行（grid 三列之外的
-                                        第四个子项自动落到第二行），逐条能看到"为什么没通过" */}
                                     {albumTabs === "mine" && it.approved === 2 && (
                                         <span className="rz-album-reason">
                                             驳回理由：{it.reason || "未填写"}
@@ -1404,17 +1322,12 @@ export default function RiverBoard() {
                                     {modal.author || "无名"} · {modal.time || ""}
                                 </div>
                             )}
-                            {/* 驳回理由（20260923）：只有未通过才有。与「我的河灯」列表、
-                                个人中心「留言记录」同源（都读 talk.reject_reason）——
-                                没写理由时如实说「未填写」，不编一句替代 */}
                             {modal.approved === 2 && (
                                 <div className="rz-reject">
                                     <span className="rz-reject-label">驳回理由</span>
                                     {modal.reason || "未填写"}
                                 </div>
                             )}
-                            {/* 自己的河灯（灯影集点开，20260905 issue8）：
-                               待审/未通过状态 + 收回河灯（两步确认） */}
                             {modal.mine && modal.talkKey && (
                                 <div className="rz-mine-row">
                                     {modal.approved === 0 && (
@@ -1442,7 +1355,6 @@ export default function RiverBoard() {
                                     {reclaimErr && <span className="rz-reclaim-err">{reclaimErr}</span>}
                                 </div>
                             )}
-                            {/* 关闭钮放进内容流：滚动到文本末尾才能看到，不再是悬浮在框底压住文本 */}
                             <button className="rz-modal-close" type="button" onClick={closeModal}>
                                 <span>关闭</span>
                             </button>

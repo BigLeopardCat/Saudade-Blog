@@ -19,9 +19,6 @@ function App() {
     const [scrollHeight, setScrollHeight] = useState(0);
     useEffect(() => {
         setDark(readDarkMode());
-        // 看板娘 agent 的 DARKMODE: 命令 / 夜间自动切换通过自定义事件同步暗色状态。
-        // 落盘点不在这里——`useAutoThemeSwitch()` 是任何页面上的**唯一**写入者
-        // （20261013 挪过去，登录页这类 App 壳之外的路由才能一起被覆盖）。
         const handleDarkModeChange = (e: Event) => {
             const on = !!(e as CustomEvent).detail;
             setDark(on);
@@ -39,32 +36,17 @@ function App() {
         };
     }, []);
 
-    // 夜间/日间时段自动切换（前端默认行为，不依赖 agent/看板娘脚本）：
-    // 23:00 进窗自动切夜一次、06:00 出窗自动切回日间，其余时间**完全遵循访客选择**。
-    // 判据全在 theme.ts 的 autoThemeDecision（闩式，见那里的注释）；ticker 与"落盘"
-    // 都在 useAutoThemeSwitch 里（20261013 抽出去共用，登录页也要挂它）。
-    // ⚠️ 那个 ticker 仍然每分钟跑：它**不是**状态收敛（那会让白天开的夜间模式
-    //    60 秒后被顶回去），而是"边界探测"——23:00/06:00 这两条线靠它发现。
-    //    页面可能整夜开着，也可能整夜关着：`visibilitychange` + 每分钟一次，
-    //    保证"关机一晚再打开"也能在下一次 tick 补上出窗动作。
     useAutoThemeSwitch();
 
     return (
         <div className={isDark ? 'frontDark frontRoot' : 'frontRoot'}>
             <Head setDark={setDark} isDark={isDark} scrollHeight={scrollHeight}/>
-            {/* 兜底只包内容区（20261004）：页面崩了的时候头、尾、菜单、看板娘都还在，
-                刷新/换页就能离开故障页。整个壳崩了由 main.tsx 那层接（scope 不同，
-                日志里分得开）。 */}
             <ErrorBoundary scope="page">
                 <Outlet />
             </ErrorBoundary>
             <Footer />
             <BottomMenu scrollHeight={scrollHeight} isDark={isDark} setDark={setDark}/>
             <Live2dAgent />
-            {/* 公告弹窗挂在**壳**上而不是某个页面上（20260926）：它原来挂在首页 ContentHome 里，
-                于是"发出来当场收到"这件事从结构上做不到——只有刷新/回到首页才查一次。
-                挂在壳上后它在所有公共页都活着，复查由 AnnouncementModal/pending.ts 收口
-                （事件 + 可见时轮询）。后台是另一颗壳，单独挂（见 pages/Dashboard/index.tsx）。 */}
             <AnnouncementModal />
         </div>
     );
