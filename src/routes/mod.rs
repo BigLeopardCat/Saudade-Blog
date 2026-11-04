@@ -488,12 +488,11 @@ pub fn create_router(state: AppState) -> Router {
         
         .route_layer(middleware::from_fn_with_state(state_arc.clone(), crate::middleware::auth_guard));
 
-    public_routes
+    let app = public_routes
         .merge(protected_routes)
         .layer(cors)
-        // 20260830：全局 access 日志（后调用的 layer 最外层，先处理请求）；见 middleware.rs
-        .layer(middleware::from_fn(crate::middleware::access_log))
-        .with_state(state_arc)
+        .with_state(state_arc);
+    crate::observability::http(app)
 }
 
 #[cfg(test)]

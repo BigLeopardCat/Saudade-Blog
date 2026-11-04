@@ -2,24 +2,13 @@ use dotenvy::dotenv;
 use sea_orm::SqlxPostgresConnector;
 use std::env;
 use std::net::SocketAddr;
-use tracing_subscriber;
 
 use saudade_blog::{create_router, AppState};
 
 #[tokio::main]
 async fn main() {
     dotenv().ok();
-    // 日志时间统一本地 +08:00 钟面（CLAUDE.md 时区约定）——tracing 默认 UTC，
-    // 与 agent 日志（systemd append 本地时间）混查时差 8 小时难对账。
-    // with_ansi(false)：文件日志不输出 ANSI 转义（[2m/[32m/[0m 着色序列）——
-    // fmt 默认开启，落文件是噪音（干扰 grep、降低 logrotate 压缩率）
-    tracing_subscriber::fmt()
-        // 20260830：rfc_3339（纳秒精度 + T 分隔 + +08:00 后缀）在文件里与长字段
-        // 混排显得"糊"——改自定义格式：空格分隔 + 毫秒，与 agent 日志
-        // （2026-08-30 11:48:39 | server | INFO）视觉对齐、易 grep 对账
-        .with_timer(tracing_subscriber::fmt::time::ChronoLocal::new("%Y-%m-%d %H:%M:%S%.3f".to_string()))
-        .with_ansi(false)
-        .init();
+    saudade_blog::observability::init();
 
     let db_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let pool = saudade_blog::database::connect(&db_url)
@@ -61,15 +50,9 @@ async fn main() {
     let app_state = AppState { db, rate_limiter, post_limiter, report_limiter };
     let app = create_router(app_state);
 
-    let items = vec![
-        "Public Notes", "Search", "Categories", "Tag1", "Tag2", "Friends", 
-        "WebInfo", "UserInfo", "SocialInfo", "Talks"
-    ];
-    println!("Server starting... exposing endpoints for: {:?}", items);
-
-    // 仅监听本机回环（A9 修复）：nginx 已 proxy_pass 127.0.0.1:3000，公网一律走 443 反代，避免明文 JWT 被嗅探
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
-    println!("listening on {}", addr);
+    tracing::info!(service = "saudade-blog", pid = std::process::id(), address = %addr,
+        event = "service_started", "HTTP server ready");
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }

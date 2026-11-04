@@ -1421,6 +1421,8 @@ pub async fn chat_stream_handler(
         .await {
         Ok(r) => r,
         Err(e) => {
+            warn!(trace_id = %ctx.trace_id, error = %e, phase = "agent_connect",
+                "Agent connection failed");
             return early_exit_response(
                 StatusCode::OK,
                 ChatResponse {
@@ -1428,13 +1430,15 @@ pub async fn chat_stream_handler(
                     success: false,
                     // 这句话现在**会显示给用户**（此前只进 JSON body，客户端不解析）⇒
                     // 说人话，不把 reqwest 的英文错误串摆给用户；细节留在上一条 WARN 里
-                    error: Some(format!("服务这边暂时联系不上（{}），这一轮没有生成回复，请稍后再说一次。", e)),
+                    error: Some("服务暂时无法连接，这一轮没有生成回复，请稍后重试。".into()),
                 },
                 "agent_connect",
             );
         }
     };
     if !upstream.status().is_success() {
+        warn!(trace_id = %ctx.trace_id, status = upstream.status().as_u16(),
+            phase = "agent_status", "Agent returned an unsuccessful response");
         return early_exit_response(
             StatusCode::OK,
             ChatResponse {
@@ -1488,7 +1492,11 @@ fn forward_agent_stream(
         while let Some(incoming) = upstream.next().await {
             let incoming = match incoming {
                 Ok(value) => value,
-                Err(_) => break,
+                Err(error) => {
+                    warn!(trace_id = %trace_id, user_id = uid, conversation_id,
+                        error = %error, phase = "upstream_stream", "Agent SSE transport failed");
+                    break;
+                },
             };
             let frame = match protocol::decode(&incoming) {
                 Ok(frame) => frame,
@@ -1572,6 +1580,8 @@ fn forward_agent_stream(
             }
         }
         if !terminal {
+            warn!(trace_id = %trace_id, user_id = uid, conversation_id,
+                phase = "upstream_eof", "Agent SSE ended without a terminal event");
             yield Ok::<_, axum::Error>(stream_event("error", "与 Agent 的连接中断，回复可能不完整"));
         }
     }
