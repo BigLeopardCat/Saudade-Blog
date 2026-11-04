@@ -1,7 +1,7 @@
 .mascot-error
   --error-ink: var(--washi-ink, #514253)
   --error-accent: var(--washi-accent, #9b689d)
-  min-height: min(860px, 100dvh)
+  min-height: 100dvh
   padding: 48px 20px 64px
   box-sizing: border-box
   display: flex
@@ -9,6 +9,8 @@
   align-items: center
   justify-content: center
   color: var(--error-ink)
+  background: var(--washi-paper-2, #fbf6fa)
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif
   text-align: center
 
   &__scene
@@ -47,7 +49,7 @@
   &__digit
     --digit-rest-x: -40%
     position: absolute
-    top: 19%
+    top: 11%
     left: 26%
     z-index: 3
     font: 800 clamp(52px, 15vw, 110px)/1 ui-rounded, system-ui, sans-serif
@@ -72,35 +74,31 @@
     z-index: 2
     // The roots overlap the cream bangs below the headband. Neighbouring
     // silhouettes touch and follow the curve of the head instead of floating.
-    bottom: 54.5%
+    bottom: 60.5%
     left: 26.5%
     width: 8.5%
     height: 5.5%
     opacity: 0
     background-repeat: no-repeat
-    // Scale both axes from the PNG's visible alpha bounds so no dome is clipped.
-    background-position: 49.4% 55%
-    background-size: 304% 333%
+    // WebP overlays are cropped to the visible silhouette before compression.
+    background-position: center
+    background-size: 100% 100%
     mask-image: linear-gradient(#000 78%, transparent)
     -webkit-mask-image: linear-gradient(#000 78%, transparent)
     transform-origin: center bottom
     transform: rotate(var(--bump-angle))
     &--medium
       --bump-angle: -3deg
-      bottom: 58.5%
+      bottom: 64.5%
       left: 33%
       width: 9.5%
       height: 7%
-      background-size: 187% 190%
-      background-position: 49.2% 63%
     &--large
       --bump-angle: 14deg
-      bottom: 55.2%
+      bottom: 61.2%
       left: 39.7%
       width: 10%
       height: 8.3%
-      background-size: 113% 125%
-      background-position: 44.2% 54%
     &.is-visible
       opacity: 1
       animation: mascotBumpGrow 480ms cubic-bezier(.2, 1.6, .45, 1) both
@@ -180,11 +178,11 @@
   0%
     transform: translateY(0)
   35%
-    transform: translate(var(--digit-rest-x), -108%) rotate(5deg)
+    transform: translate(var(--digit-rest-x), -76%) rotate(5deg)
   70%
-    transform: translate(var(--digit-rest-x), -76%) rotate(-3deg)
+    transform: translate(var(--digit-rest-x), -44%) rotate(-3deg)
   100%
-    transform: translate(var(--digit-rest-x), -85%)
+    transform: translate(var(--digit-rest-x), -53%)
 
 @keyframes mascotBumpGrow
   from
@@ -207,4 +205,11 @@
     &__digit
       opacity: 1
       > span
-        transform: translate(var(--digit-rest-x), -85%)
+        transform: translate(var(--digit-rest-x), -53%)
+
+// A previously loaded widget is owned by the SPA and survives App unmounting.
+// Hide its existing DOM on 404; leaving the route restores it without losing chat.
+body:has(.mascot-error)
+  margin: 0
+  #waifu, #waifu-toggle, #waifu-chat
+    display: none !important

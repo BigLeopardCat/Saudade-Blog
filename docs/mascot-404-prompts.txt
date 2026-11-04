@@ -1,7 +1,10 @@
 404 sprite generation — built-in image_gen, 2026-11-04
 Reference: saudade-blog-agent/frontend/public/live2d-widgets/lingyue-toggle.png
-Final assets: frontend/public/mascot-404/{neutral,pain,cry,bump-small,bump-medium,bump-large}.png
-All six requests used transparent_background=true. Original generated PNGs were copied intact.
+Final assets: frontend/public/mascot-404/{neutral,pain,cry,bump-small,bump-medium,bump-large}.webp
+All six original requests used transparent_background=true. Source PNGs remain in Git history (PR #148).
+Web delivery: Pillow WebP, quality=82, alpha_quality=90, method=6; character frames resized proportionally to 960x640.
+Bump overlays: crop to alpha>32 bounds plus 2px margin, then fit within 180x150 before WebP encoding.
+Six originals: 7,833,814 bytes. Six delivery assets: 235,244 bytes (97.0% smaller).
 
 NEUTRAL / PRONE BODY
 Use case: illustration-story. Asset type: production transparent 404-page character sprite. Reference image: character identity only. Draw the SAME cute chibi cat-eared girl: cream silver fluffy hair, blue eyes, pale pink inner cat ears, small black ribbon on right, white frilled maid headband, modest black and white maid outfit. Full body lying prone on her stomach, body extends to viewer right, head centered slightly left of canvas center facing directly toward viewer, chin on folded hands, feet gently bent up behind her. Camera mostly frontal slightly above ground; oversized cute round head. Calm slightly puzzled neutral expression. Crisp polished anime 2D game sprite, delicate warm gray outlines, soft shading. Keep TOP OF HEAD clear for three cartoon bumps later. Entire character visible with transparent margin. Wide landscape composition approximately 3:2. TRUE transparent background. No floor, no wall, no text, no digits, no props, no bumps yet. Face easily readable and forward-facing. Intended for expression swaps; stable head and pose.
