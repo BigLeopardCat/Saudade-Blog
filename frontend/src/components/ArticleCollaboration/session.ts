@@ -9,7 +9,7 @@ export type EditorCommand = {
   edits?: Edit[]; description?: string;
 }
 export type Observation = {
-  editor_id: string; revision: number; outcome: 'read' | 'proposed' | 'updated';
+  editor_id: string; revision: number; outcome: 'read' | 'proposed' | 'updated' | 'unchanged';
   title?: string; content?: string; description?: string; offset?: number;
   next_offset?: number | null; total_chars?: number; proposal_id?: string;
 }
@@ -64,20 +64,25 @@ export function createEditorSession(options: {
     let result: Observation
     if (command.operation === 'read') {
       const offset = command.offset ?? 0, limit = command.limit ?? 12000
-      if (!Number.isSafeInteger(offset) || offset < 0 || offset > value.content.length
+      // Wire offsets count Unicode code points, including emoji as single points.
+      const points = Array.from(value.content)
+      if (!Number.isSafeInteger(offset) || offset < 0 || offset > points.length
           || !Number.isSafeInteger(limit) || limit < 1 || limit > 24000) throw new Error('正文读取范围不合法。')
-      const end = Math.min(value.content.length, offset + limit)
-      result = {editor_id: id, revision, outcome: 'read', title: value.title.slice(0, 1000),
-        content: value.content.slice(offset, end), description: value.description.slice(0, 16000),
-        offset, next_offset: end < value.content.length ? end : null, total_chars: value.content.length,
+      const end = Math.min(points.length, offset + limit)
+      result = {editor_id: id, revision, outcome: 'read', title: Array.from(value.title).slice(0, 1000).join(''),
+        content: points.slice(offset, end).join(''), description: Array.from(value.description).slice(0, 16000).join(''),
+        offset, next_offset: end < points.length ? end : null, total_chars: points.length,
         ...(proposal ? {proposal_id: proposal.id} : {})}
     } else {
       check(command.editor_id, command.revision)
       if (command.operation === 'summary') {
-        if (typeof command.description !== 'string' || command.description.length > 16000) throw new Error('摘要长度不合法。')
-        options.applySummary(command.description)
-        current()
-        result = {editor_id: id, revision, outcome: 'updated',
+        if (typeof command.description !== 'string' || Array.from(command.description).length > 16000) throw new Error('摘要长度不合法。')
+        const changed = value.description !== command.description
+        if (changed) options.applySummary(command.description)
+        const applied = current()
+        if (applied.description !== command.description) throw new Error('摘要未能应用，请重新读取草稿。')
+        result = {editor_id: id, revision, outcome: changed ? 'updated' : 'unchanged',
+          description: applied.description,
           ...(proposal ? {proposal_id: proposal.id} : {})}
       } else if (command.operation === 'propose') {
         if (!Array.isArray(command.edits) || !command.edits.length || command.edits.length > 20)
@@ -95,7 +100,7 @@ export function createEditorSession(options: {
             || (edits.length > 1 && edits.some(edit => !edit.old_text)))
           throw new Error('修改范围重叠，请将同一段的改写合并为一处修改。')
         const candidate = applyRanges(value.content, edits)
-        if (candidate.length > 1_000_000) throw new Error('草稿超过编辑范围。')
+        if (Array.from(candidate).length > 1_000_000) throw new Error('草稿超过编辑范围。')
         const next = {id: crypto.randomUUID(), base: value, revision, edits}
         publish(next)
         result = {editor_id: id, revision, outcome: 'proposed', proposal_id: next.id}
