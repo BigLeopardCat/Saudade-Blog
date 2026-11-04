@@ -99,7 +99,7 @@ const NewNotes = () => {
         return {
             id: savedIdRef.current ? Number(savedIdRef.current) : null,
             noteTitle: noteTitle,
-            noteContent: noteContent,
+            noteContent: editorRef.current?.read() ?? noteContent,
             cover: coverImg,
             coverFocusX: coverImg ? coverCrop.x : null,
             coverFocusY: coverImg ? coverCrop.y : null,
@@ -401,6 +401,13 @@ const NewNotes = () => {
         form.setFieldsValue({noteTitle: noteTitle});
     };
 
+    const preparePublication = () => {
+        if (!hydratedRef.current || conflictedRef.current || publishingRef.current)
+            throw new Error('草稿未就绪、存在冲突或正在提交，请稍后重试。');
+        form.setFieldsValue({noteTitle, description: aiContent, status: 'public'});
+        setOpen(true);
+    };
+
     const handleOk = async () => {
         try {
             // Validate first
@@ -481,7 +488,7 @@ const NewNotes = () => {
         const now = dayjs(new Date()).format('YYYY-MM-DD hh:mm:ss');
         const data = {
             noteTitle: formValues.noteTitle,
-            noteContent: noteContent,
+            noteContent: editorRef.current?.read() ?? noteContent,
             cover: coverImg,
             // 有封面就总是回传数值参数（没调过即默认），保证线上渲染与裁剪预览一致
             coverFocusX: coverImg ? coverCrop.x : null,
@@ -509,6 +516,11 @@ const NewNotes = () => {
         publishingRef.current = true;
         if (autosaveTimer.current) { clearTimeout(autosaveTimer.current); autosaveTimer.current = null; }
         if (inFlightRef.current) { try { await inFlightRef.current; } catch { /* 在途错误已记录 */ } }
+        if (conflictedRef.current) {
+            publishingRef.current = false;
+            message.error('草稿已在其他位置更新，本次没有发布。请先核对并合并。');
+            return;
+        }
         if (getToken() !== sessionTokenRef.current) {
             publishingRef.current = false;
             message.error("登录状态已变化，请重新打开编辑页");
@@ -617,7 +629,7 @@ const NewNotes = () => {
         <div className="notes-container">
             <div className="article_title">
                 <label style={{width:115,fontSize:18,fontWeight:600}}>文章标题</label>
-                <Input style={{background: 'transparent', width: '95%', marginRight: 10}} onChange={handleInputChange} value={noteTitle}/>
+                <Input maxLength={255} style={{background: 'transparent', width: '95%', marginRight: 10}} onChange={handleInputChange} value={noteTitle}/>
                 <Button type="primary" onClick={showModal} style={{float: "right"}}>
                     提交
                 </Button>
@@ -644,6 +656,8 @@ const NewNotes = () => {
                 ready={hydrated} blocked={saveState === 'conflict' || confirmLoading}
                 readBody={() => editorRef.current?.read() ?? noteContent}
                 onBody={content => editorRef.current?.apply(content)}
+                onTitle={title => {setTitle(title); form.setFieldValue('noteTitle', title)}}
+                onPreparePublish={preparePublication}
                 onSummary={description => {setAiContent(description); form.setFieldValue('description', description)}}/>
             <div className="new_article">
                 <Editor_ editorRef={editorRef} setNoteContent={setNoteContent} noteContent={noteContent}/>

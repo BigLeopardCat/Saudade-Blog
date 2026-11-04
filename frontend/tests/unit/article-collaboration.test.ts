@@ -4,10 +4,12 @@ import {createEditorSession, type EditorCommand, type Proposal} from '../../src/
 function fixture(content = '第一节旧正文\n\n第二节旧正文') {
   let value = {title: '草稿标题', content, description: '原摘要'}, enabled = true
   let proposal: Proposal | null = null
-  const writes: string[] = []
+  const writes: string[] = [], publications: string[] = []
   const session = createEditorSession({read: () => value, enabled: () => enabled,
     applyBody: content => {value = {...value, content}; writes.push(content)},
-    applySummary: description => {value = {...value, description}}, onProposal: p => {proposal = p}})
+    applySummary: description => {value = {...value, description}},
+    applyTitle: title => {value = {...value, title}},
+    preparePublish: () => {publications.push(value.content)}, onProposal: p => {proposal = p}})
   let count = 0
   const read = () => session.execute({kind: 'article_editor', operation: 'read', command_id: `read-${count++}`})
   const propose = (edits = [{old_text: '第一节旧正文', new_text: '第一节新正文'}]) => {
@@ -16,11 +18,65 @@ function fixture(content = '第一节旧正文\n\n第二节旧正文') {
       editor_id: snapshot.editor_id, revision: snapshot.revision, edits}
     return {cmd, result: session.execute(cmd)}
   }
-  return {session, read, propose, writes, value: () => value, proposal: () => proposal,
+  return {session, read, propose, writes, publications, value: () => value, proposal: () => proposal,
     type: (content: string) => {value = {...value, content}}, disable: () => {enabled = false}}
 }
 
 describe('current draft collaboration', () => {
+  it('reviews a title without applying it and independently accepts title and body', () => {
+    const f = fixture(), snapshot = f.read()
+    f.session.execute({kind:'article_editor',operation:'propose',command_id:'title-body',
+      editor_id:snapshot.editor_id,revision:snapshot.revision,title:'更好的标题',
+      edits:[{old_text:'第一节旧正文',new_text:'第一节新正文'}]})
+    expect(f.value().title).toBe('草稿标题')
+    f.session.accept('title')
+    expect(f.value().title).toBe('更好的标题')
+    expect(f.proposal()?.edits).toHaveLength(1)
+    f.session.accept(0)
+    expect(f.value().content).toContain('第一节新正文')
+    expect(f.proposal()).toBeNull()
+  })
+  it('retains a title suggestion when the body is accepted or rejected independently', () => {
+    for (const action of ['accept','reject'] as const) {
+      const f=fixture(), snapshot=f.read()
+      f.session.execute({kind:'article_editor',operation:'propose',command_id:action,
+        editor_id:snapshot.editor_id,revision:snapshot.revision,title:'新标题',
+        edits:[{old_text:'第一节旧正文',new_text:'第一节新正文'}]})
+      f.session[action](0)
+      expect(f.proposal()?.title).toBe('新标题')
+      f.session.accept('title')
+      expect(f.value().title).toBe('新标题')
+      expect(f.proposal()).toBeNull()
+    }
+  })
+  it('supports title-only review and rejects blank or unchanged titles', () => {
+    const f=fixture(), snapshot=f.read()
+    for (const title of [' ', '草稿标题', '字'.repeat(256)]) {
+      expect(() => f.session.execute({kind:'article_editor',operation:'propose',command_id:title,
+        editor_id:snapshot.editor_id,revision:snapshot.revision,title})).toThrow()
+    }
+    f.session.execute({kind:'article_editor',operation:'propose',command_id:'title',
+      editor_id:snapshot.editor_id,revision:snapshot.revision,title:'新标题'})
+    f.session.accept()
+    expect(f.value().title).toBe('新标题')
+    expect(f.writes).toEqual([])
+  })
+  it('opens publication once for the current draft, without publishing or applying suggestions', () => {
+    const f=fixture(), snapshot=f.read()
+    const command: EditorCommand={kind:'article_editor',operation:'prepare_publish',command_id:'publish',
+      editor_id:snapshot.editor_id,revision:snapshot.revision}
+    expect(f.session.execute(command).outcome).toBe('publication_ready')
+    f.session.execute(command)
+    expect(f.publications).toHaveLength(1)
+    expect(f.writes).toEqual([])
+    f.type('新输入')
+    expect(() => f.session.execute({...command,command_id:'stale'})).toThrow(/草稿已变化/)
+    const g=fixture(), before=g.read()
+    g.propose()
+    expect(() => g.session.execute({...command,command_id:'pending',
+      editor_id:before.editor_id,revision:before.revision})).toThrow(/未处理的修改建议/)
+    expect(g.publications).toEqual([])
+  })
   it('reads the live working copy in bounded slices without writing', () => {
     const f = fixture('a'.repeat(24001))
     f.type('b'.repeat(24001))

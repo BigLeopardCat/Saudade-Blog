@@ -13,7 +13,8 @@ declare global {
 
 type Props = WorkingCopy & {ready: boolean; blocked: boolean;
   readBody: () => string;
-  onBody: (content: string) => void; onSummary: (summary: string) => void}
+  onBody: (content: string) => void; onSummary: (summary: string) => void;
+  onTitle?: (title: string) => void; onPreparePublish?: () => void}
 
 export default function ArticleCollaboration(props: Props) {
   const latest = useRef(props)
@@ -33,6 +34,15 @@ export default function ArticleCollaboration(props: Props) {
       applySummary: description => {
         latest.current.onSummary(description)
         latest.current = {...latest.current, description}
+      },
+      applyTitle: title => {
+        if (!latest.current.onTitle) throw new Error('当前编辑器不支持标题修改')
+        latest.current.onTitle(title)
+        latest.current = {...latest.current, title}
+      },
+      preparePublish: () => {
+        if (!latest.current.onPreparePublish) throw new Error('当前编辑器不支持发布确认')
+        latest.current.onPreparePublish()
       },
       onProposal: setProposal,
     })
@@ -56,13 +66,22 @@ export default function ArticleCollaboration(props: Props) {
       disabled={!props.ready || props.blocked} onChange={e => props.onSummary(e.target.value)}/>
     {proposal && <section className="article-review" aria-label="正文修改建议">
       <div className="article-review-toolbar">
-        <strong>正文修改建议 · {proposal.edits.length} 处</strong>
+        <strong>{proposal.title !== undefined ? '文章修改建议' : '正文修改建议'} · {proposal.edits.length + Number(proposal.title !== undefined)} 处</strong>
         <span><Button disabled={!!stale || props.blocked} type="primary"
           onClick={() => review(() => session.current?.accept())}>全部采纳</Button>
           <Button onClick={() => session.current?.reject()}>全部放弃</Button></span>
       </div>
       {stale && <Alert type="warning" showIcon message="草稿已变化，请让助手读取当前内容后重新修改。你的输入已保留。"/>}
       <p className="article-review-legend"><del>删除</del> <ins>新增</ins> · 采纳后保存到草稿，发布由你决定</p>
+      {proposal.title !== undefined && <article className="article-review-edit">
+        <strong>文章标题</strong>
+        <pre aria-label="标题修改"><del>{proposal.base.title}</del><ins>{proposal.title}</ins></pre>
+        <div className="article-review-actions">
+          <Button size="small" disabled={!!stale || props.blocked}
+            onClick={() => review(() => session.current?.accept('title'))}>采纳标题</Button>
+          <Button size="small" onClick={() => session.current?.reject('title')}>放弃标题</Button>
+        </div>
+      </article>}
       {proposal.edits.map((edit, index) => <article className="article-review-edit" key={`${proposal.id}-${index}`}>
         <pre aria-label={`第 ${index + 1} 处修改`}>
           {diffLines(edit.old_text, edit.new_text, {timeout: 100, maxEditLength: 2000})?.map((part, i) => {
