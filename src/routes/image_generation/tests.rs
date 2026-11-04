@@ -32,6 +32,7 @@ fn validates_price_and_reference_parameters_before_any_network() {
 fn provider_receives_exact_approved_prompt_and_only_frozen_references() {
     let input = draft();
     let request = Request {
+        provider: "https://api.openai.com/v1".into(),
         prompt: input.prompt.clone(),
         model: input.model,
         size: input.size,
@@ -105,6 +106,7 @@ async fn paid_provider_request_is_single_attempt_and_exact() {
     let base = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     let request = Request {
+        provider: "https://api.openai.com/v1".into(),
         prompt: "approved prompt".into(),
         model: "fixture".into(),
         size: "1024x1024".into(),

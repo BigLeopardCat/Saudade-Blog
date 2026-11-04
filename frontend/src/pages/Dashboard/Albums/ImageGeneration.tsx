@@ -80,6 +80,7 @@ export default function ImageGeneration({onClose}:{onClose:()=>void}){
         </Space>:<Space direction="vertical" style={{width:'100%'}} size="middle">
           <Typography.Title level={5}>{statusNames[job.status]||job.status}</Typography.Title>
           <Card size="small" title="本次请求">
+            <Typography.Paragraph>{job.request.provider}</Typography.Paragraph>
             <Typography.Paragraph>{job.request.model} · {job.request.size} · {job.request.quality} · 1 张</Typography.Paragraph>
             <pre className="generationPrompt">{job.request.prompt}</pre>
             <Typography.Paragraph>{job.request.references.length?'参考图（批准时将发送这些固定快照）':'未使用参考图'}</Typography.Paragraph>

@@ -72,6 +72,7 @@ pub struct Reference {
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Request {
+    pub provider: String,
     pub prompt: String,
     pub model: String,
     pub size: String,

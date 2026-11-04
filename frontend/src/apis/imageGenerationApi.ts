@@ -3,7 +3,7 @@ import {galleryApi} from './galleryApi'
 export interface GenerationDraft {prompt:string; model:string; size:string; quality:string; referenceIds:number[]}
 export interface GenerationReference {imageId:number; name:string; digest:string; previewUrl:string}
 export interface GenerationJob {
-  id:string;request:{prompt:string; model:string; size:string; quality:string;references:GenerationReference[]};
+  id:string;request:{provider:string;prompt:string; model:string; size:string; quality:string;references:GenerationReference[]};
   requestHash:string;status:string;previewUrl:string|null;outputHash:string|null;imageId:number|null;
   error:string|null;usage:Record<string,unknown>|null;createdAt:string
 }

@@ -71,6 +71,7 @@ pub async fn create(state: &AppState, uid: i32, input: Draft) -> Result<Job, DbE
         snapshots.push((mime, bytes));
     }
     let request = Request {
+        provider: settings.base.clone(),
         prompt: input.prompt,
         model: input.model,
         size: input.size,
@@ -126,7 +127,7 @@ pub async fn approve(
     let request = current
         .request
         .ok_or_else(|| error("request unavailable"))?;
-    if !settings.models.contains(&request.model) {
+    if request.provider != settings.base || !settings.models.contains(&request.model) {
         return Err(error("approved model is no longer configured"));
     }
     let rows=txn.query_all(stmt("SELECT mime,bytes FROM image_generation_reference WHERE job_id::text=$1 ORDER BY ordinal",vec![id.into()])).await?;
