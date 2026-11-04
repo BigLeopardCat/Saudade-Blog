@@ -662,3 +662,24 @@ mod tests {
         assert_eq!(guess_content_type("a"), "application/octet-stream");
     }
 }
+
+/// Persist an explicitly accepted generation through the existing storage policy.
+pub(crate) async fn persist_generated(state: &Arc<AppState>, name: &str, bytes: &[u8]) -> Result<String,sea_orm::DbErr> {
+    let digest=sha256_hex(bytes);
+    if let Some(response)=try_r2_upload(state,name,bytes,&digest,false).await {
+        if response.code!=200 {return Err(sea_orm::DbErr::Custom("图库上传失败，请检查存储配置".into()));}
+        let url=response.data;
+        let exists=image::Entity::find().filter(image::Column::ImageUrl.eq(&url)).one(&state.db).await?;
+        if exists.is_none(){return Err(sea_orm::DbErr::Custom("图库登记失败".into()));}
+        return Ok(url);
+    }
+    let dir=upload_dir();
+    fs::create_dir_all(&dir).await.map_err(|_|sea_orm::DbErr::Custom("图库目录不可用".into()))?;
+    let path=dir.join(name);
+    fs::write(&path,bytes).await.map_err(|_|sea_orm::DbErr::Custom("图片保存失败".into()))?;
+    let url=format!("/api/protect/download/{name}");
+    if image::Entity::find().filter(image::Column::ImageUrl.eq(&url)).one(&state.db).await?.is_none(){
+        image::ActiveModel{image_url:Set(url.clone()),..Default::default()}.insert(&state.db).await?;
+    }
+    Ok(url)
+}
