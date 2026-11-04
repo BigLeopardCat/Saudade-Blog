@@ -7,32 +7,6 @@ import http from "../../../apis/axios.tsx";
 import { useLiveRefresh } from "../../../utils/liveRefresh.ts";
 import { COMMENT_REJECT_PRESETS, REJECT_REASON_MAX, aiTip } from "../ContentManage/shared";
 
-/** 评论管理（20261002）：**文章详情页底部讨论区**的查询/筛选/裁决/删除。
- *
- *  ── 与「留言管理」的分工（这一页存在的全部理由）────────────────────────────
- *  20260905 曾把"留言管理"并进「评论管理」这个 Tab，而那个 Tab 里挂的一直是
- *  `BoardManage`（管的是河灯留言）——**标签名与内容对不上**：用户本轮的原话就是
- *  「后台管理的"评论管理"改成'留言管理'，文章详情页下面才是评论，新建评论管理」。
- *  所以现在两页各归各：`留言管理` → `BoardManage`（河灯，`/api/protect/board`），
- *  本页 → 文章评论（`/api/protect/comments`）。两张表、两套数据、**两对审核开关**。
- *
- *  ── 三条承重取舍 ──────────────────────────────────────────────────────────
- *  ① **两个开关是评论自己的那对键**（`commentAiReviewEnabled` / `commentManualReviewEnabled`，
- *     后端常量 `web_info::COMMENT_REVIEW_KEYS`），**不复用留言板那两个**：两种内容可以
- *     分别开关。提示语里点明这一点——管理员看到"两边都开着"才不会以为自己点重了。
- *     开关存 `web_info`（KV 表），**不需要迁移**：缺键的取值天然是"关"。
- *  ② **已删除的行留着、但不可再审**。评论是**软删**（`is_deleted`，作者自删与管理员删除
- *     共用同一位），所以后台列表里会出现已删的行——留着是为了溯源（谁删了什么）。
- *     但它们的操作列**没有按钮**：公开侧按 `is_deleted = 0` 过滤，给一条已删评论改判
- *     "通过"是**看不见效果**的，而后台会弹一句「已通过」并把它标绿——界面因此说了一件
- *     没发生的事。后端同一个判据也有一道（`comments.rs::audit_comment` 直接拒），
- *     前端这道是正常路径的界面判据，那道兜脚本/老前端。
- *  ③ **裁决后只改本地那一行**（不重拉全量列表）。⚠️ **入参值 ≠ 落库值**：入参 0 =
- *     「驳回」这个动作，后端落库的是 2（未通过）——直接把入参写回本地会让那一行停在
- *     「待审」（`BoardManage` 记过这个坑，`QuotaManage` 也引过它）。
- *
- *  列表接口一次回最新 500 条（后端 `ADMIN_PAGE_LIMIT`），与留言板同量级、不分页请求。
- */
 interface CommentAdminItem {
     id: number;
     noteId: number;
@@ -118,10 +92,6 @@ const CommentManage = () => {
     // 审核开关（web_info key-value，缺省关）
     const [aiOn, setAiOn] = useState(false);
     const [manualOn, setManualOn] = useState(false);
-    // 内容风控阈值（20261002）：**空串 = 这个键库里没有**，不是一个数值。
-    // 与 `aiOn` 那种布尔开关不同，这里必须能表达"没配过"——后端缺键回落出厂默认，
-    // 而填 0 是"管理员显式关掉这一档"（见 `risk::parse_config` 的三条取值规则）。
-    // 用字符串而不是 number 就是为了留住这个区别：`Number('') === 0` 会把两者合并。
     const [riskOpen, setRiskOpen] = useState(false);
     const [riskForm, setRiskForm] = useState<Record<string, string>>({});
     const [riskBusy, setRiskBusy] = useState(false);
@@ -337,16 +307,6 @@ const CommentManage = () => {
         }
     };
 
-    /* ⚠️ **窄屏裁列 + 收窄（20261006 用户第 6 条）**：视口 < `screenLG`（本仓在
-       `WASHI_THEME.common` 里把它抬到 1024）时，低信息量的列挂 `responsive: ['lg']`
-       直接筛掉，窄屏只留 **评论内容 + 人工审核 + 操作** 这三列 —— 正好是裁决一条评论需要的全部信息。
-       剩下那几列里写死 px 的还要**收窄**（下面 `isNarrow` 那几处三元）：这不是可选的 ——
-       这些表是 `table-layout: fixed`（antd 见到 `ellipsis` 就会加），定宽列先把自己拿满、
-       剩下的才轮到没写宽的正文列，实测 390 屏上**只裁列不收宽**正文列只剩 66px。
-       断点用 antd 自己的 `useBreakpoint`：它读的正是 `WASHI_THEME.common.screenLG`
-       那颗令牌 ⇒ 与 CSS 那条 `@media`、壳里那条 matchMedia 同一处事实源，不会漂开
-       （它是 `useLayoutEffect`，首帧那个空的 `{}` 上不了屏 ⇒ 宽屏不会闪一下窄屏形态）。
-       宽屏（≥1024）逐像素不变。 */
     const screens = Grid.useBreakpoint();
     const isNarrow = !screens.lg;
     const columns: ColumnsType<CommentAdminItem> = [
@@ -498,7 +458,6 @@ const CommentManage = () => {
                 <Button icon={<ReloadOutlined />} onClick={() => refresh()} loading={loading}>
                     刷新
                 </Button>
-                {/* 风控设置默认收起：它是一组"配一次就不动"的阈值，常驻会白占一行高度 */}
                 <Button className="cm-risk-toggle" onClick={() => setRiskOpen((v) => !v)}>
                     风控设置{riskOpen ? ' ▲' : ' ▼'}
                 </Button>
@@ -524,10 +483,6 @@ const CommentManage = () => {
                     这对开关只管评论，与「留言管理」那对互不影响
                 </span>
             </div>
-            {/* 内容风控阈值（20261002）。默认收起（见工具栏那个开关）——它是一组
-                "配一次就不动"的数，而这一页的高度链是固定的（多一个常驻行就少一行表格）。
-                **标题里点明"与留言一起计数"**：那两个阈值管的是评论 + 留言的合计条数，
-                只盯着本页读会以为只数评论，于是把阈值调得偏小、留言板跟着被误伤。 */}
             {riskOpen && (
                 <div className="cm-risk">
                     <span className="cm-risk-title">内容风控（评论与留言一起计数）</span>
@@ -555,9 +510,6 @@ const CommentManage = () => {
                     </span>
                 </div>
             )}
-            {/* 滚动从整页挪进这一块（同 BoardManage）：上面两行是固定的，**只有这张表在
-                窗口内滚**，表头用 CSS sticky 吸在这一块的顶沿（见 index.sass）；
-                分页条也移出滚动区、钉在底部。 */}
             <div className="cm-scroll">
                 <Table
                     rowKey="id"
@@ -588,7 +540,6 @@ const CommentManage = () => {
                     showTotal={(t) => `共 ${t} 条评论`}
                 />
             </div>
-            {/* 驳回理由弹窗：理由随通知发给被回复者，**必填** */}
             <Modal
                 title="驳回这条评论？"
                 open={!!rejecting}
@@ -635,8 +586,6 @@ const CommentManage = () => {
                         >采用 AI 说明</Button>
                     )}
                 </div>
-                {/* `counter-room`：给 showCount 的计数腾 22px（它不占布局空间，
-                    Modal footer 只留了 12px）。见 src/index.css 那条规则。 */}
                 <Input.TextArea
                     className="counter-room"
                     value={rejectReason}

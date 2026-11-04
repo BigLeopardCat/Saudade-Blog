@@ -34,10 +34,6 @@ interface ArticleOption {
     enter?: boolean
 }
 
-/** 入场延迟的步长与上限（20261004）。原来是 `delay: index * 0.2` 且**不封顶**：
- *  第一行看着是好看的 0/0.2/0.4 阶梯，但延迟是按下标线性长的 —— 第 20 张卡要等 **4 秒**
- *  才淡入，而它的 `isVisible` 是由 IntersectionObserver 在**滚到它跟前**才置位的，
- *  于是"滚到哪儿等几秒"完全由一个跟可见性无关的序号决定。封顶之后最坏 0.5s。 */
 const ENTER_DELAY_STEP = 0.1
 const ENTER_DELAY_MAX_STEPS = 5
 
@@ -49,17 +45,9 @@ const STAT_ICON: Record<string, React.ReactNode> = {
     views: <EyeIcon size={13} />,
     likes: <HeartIcon size={13} />,
     favorites: <StarIcon size={13} />,
-    // 讨论数（20261003 用户第 4 条）。与详情页那一列同源同尺寸，只是卡片档小一号（13）
     comments: <CommentIcon size={13} />,
 }
 
-/**
- * 卡片上的几个数：阅读 / 点赞 / 收藏 / 讨论（20260930，20261003 补讨论）。
- *
- * 显示哪几个由 `statCells()` 定（后端三条聚合查询可能只挂了一条，"读不到"绝不显示成 0，
- * 见 `utils/noteStats.ts`）；一个数都没有时**整个容器不渲染**，不留一条空白行
- * （父级是 flex，空 div 也会吃掉 gap）。
- */
 const NoteStats: React.FC<{ item: NoteType }> = ({ item }) => {
     const cells = statCells(item)
     if (cells.length === 0) return null
@@ -121,11 +109,6 @@ const Article:React.FC<ArticleOption> = ({ item, index, Categories, avatar, name
                 </div>
 
                 <div className="ArticleContent">
-                    {/* 分类与读数**同一行**：这一行就是封面图正下方那一行。
-                        刻意不给读数单开一行——`.ArticleCard` 是定高 600px，内容区的高度
-                        收支在 20260912 已经调到只剩约 7px 余量（见 index.sass 里那段注释），
-                        再加一行 20px 会把 `margin-top: auto` 顶掉，同一排卡片的页脚就会
-                        高低不齐。挂在这一行上则零高度成本，桌面/移动两套布局都不用改。 */}
                     <div className="ArticleHead">
                         <h4 style={{ color: Categories.find(category => category.categoryTitle === item.noteCategory)?.color }}>
                             # {Categories.find(category => category.categoryKey === Number(item.noteCategory))?.categoryTitle ?? ''}
@@ -133,13 +116,6 @@ const Article:React.FC<ArticleOption> = ({ item, index, Categories, avatar, name
                         <NoteStats item={item} />
                     </div>
                     <h3 className='ArticleTitle'>{item.noteTitle}</h3>
-                    {/* `.descSlot` 是定高槽（桌面 60px = 3 行），简介在槽内绝对定位 ⇒
-                        展开/收回整个不参与布局，标签与页脚（`margin-top: auto` 钉在卡底）
-                        悬浮期间一个像素都不动。槽本身不能省——去掉它简介就会回到 flex 流里，
-                        又会被压出半行（见 index.sass 里 `.descSlot` 那段注释）。
-                        展开/收回全靠 CSS（`.ArticleDescription:hover`），只有"离开时把滚位抹回
-                        顶部"这一件事 CSS 做不到——`overflow: hidden` 的盒子也是滚动容器，滚过之后
-                        静置态会停在全文中段。判据与理由见 `utils/descHover.ts`。 */}
                     <div className="descSlot">
                         <p className="ArticleDescription" onMouseLeave={resetDescScroll}>{item.description}</p>
                     </div>
@@ -148,9 +124,6 @@ const Article:React.FC<ArticleOption> = ({ item, index, Categories, avatar, name
                             {renderNoteTags(item.noteTags,tagList,item.noteTagRefs)}
                         </div>
                         <div className="ArticleFooter" style={{ display: 'flex', alignItems: 'center', paddingBottom: '20px', marginTop: '10px' }}>
-                        {/* 头像 + 署名 + 两个日期（20261001）：这段标记与置顶轮播那份逐字相同，
-                            已抽到 `components/NoteByline`。这里传进去的 `avatar`/`name` 是
-                            **站点级兜底**（redux `state.user`），文章自己有作者记录时用文章那份。 */}
                         <NoteByline item={item} siteAvatar={avatar} siteName={name} />
                     </div>
                     </div>

@@ -68,7 +68,7 @@ const NewNotes = () => {
     const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error' | 'conflict'>('idle');
     const [savedAt, setSavedAt] = useState('');
     const [isRevision, setIsRevision] = useState(false); // 正在编辑的是原文章的修改稿
-    const [hydrated, setHydrated] = useState(false);     // 服务端内容已回填完（此前禁止自动保存）
+    const [hydrated, setHydrated] = useState(false);
 
     const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const savedIdRef = useRef<string | undefined>(id);   // 最新 id（绕开闭包过期）
@@ -253,7 +253,6 @@ const NewNotes = () => {
     // 标签字典现在由 NoteTagSelect 自己从 redux 取（编辑器不再直接读 tagList）
     const categories = useSelector((state: {categories: any}) => state.categories.categories);
 
-    // Gallery Modal State（20261014 起列表由 utils/galleryPager.ts 管：游标分页 + `hasMore`）
     const [galleryOpen, setGalleryOpen] = useState(false);
     const { images: galleryImages, loading: galleryLoading, loadingMore: galleryLoadingMore,
             error: galleryError, hasMore: galleryHasMore, reload: reloadGallery, loadMore: loadMoreGallery } = useGalleryPager();
@@ -447,10 +446,6 @@ const NewNotes = () => {
         const image = new Image();
         image.src = src;
         const imgWindow = window.open(src);
-        // 20261019（安全审计 SAU-021，CWE-79）：这里原来走 `document.write(image.outerHTML)`
-        // ——把**字符串当 HTML 解析**。当前三重缓解（后台页 / 自建元素 / outerHTML 会转义引号）
-        // 使它没有实际注入路径，但这条 API 模式天然危险：任何一次把 `src` 换成非受控来源，
-        // 它就变成注入口。要的只是"在新窗口里显示这张图"，DOM API 不解析字符串 ⇒ 直接挂元素。
         imgWindow?.document.body?.appendChild(image.cloneNode() as HTMLImageElement);
     };
     const handleCancel = () => {
@@ -626,7 +621,6 @@ const NewNotes = () => {
                 <Button type="primary" onClick={showModal} style={{float: "right"}}>
                     提交
                 </Button>
-                {/* 自动保存状态：不用弹窗打扰，只在这里显示一行淡淡的字 */}
                 <span style={{
                     float: 'right',
                     marginRight: 12,
@@ -655,7 +649,6 @@ const NewNotes = () => {
                 <Editor_ editorRef={editorRef} setNoteContent={setNoteContent} noteContent={noteContent}/>
             </div>
 
-            {/* Gallery Modal */}
             <Modal
                 title="选择图库图片"
                 open={galleryOpen}
@@ -684,7 +677,6 @@ const NewNotes = () => {
                                     </Col>
                                 ))}
                             </Row>
-                            {/* 与编辑器那颗「从图库选图」一样：弹窗里没有"滚到底"可听，按页手动续 */}
                             {galleryHasMore && (
                                 <div style={{ textAlign: 'center', marginTop: 12 }}>
                                     <Button type="link" loading={galleryLoadingMore} onClick={() => { void loadMoreGallery() }}>
@@ -697,7 +689,6 @@ const NewNotes = () => {
                 </div>
             </Modal>
 
-            {/*文章创建*/}
             <Modal
                 title="发布文章"
                 open={open}
@@ -734,9 +725,6 @@ const NewNotes = () => {
                         </Select>
                     </Form.Item>
 
-                    {/* 20260919：原来的两级 TreeSelect 只能从既有字典里挑、不能就地新建，
-                        还带 required 强制必填（用户反馈"非常难用而且有错误"）。换成扁平多选，
-                        下拉底部可就地新建；不再强制必填 —— 标签是可选的元数据。 */}
                     <Form.Item
                         label="文章标签"
                         name="noteTags"
@@ -752,7 +740,7 @@ const NewNotes = () => {
                                 }
                                 return e && e.fileList.slice(-1);
                             }} noStyle>
-                                {/*@ts-ignore*/}
+                                {/* @ts-ignore */}
                                 <Upload action={upload} listType="picture-card" fileList={fileList}
                                         onPreview={handlePreview}
                                         onChange={handleChange}>
@@ -788,8 +776,6 @@ const NewNotes = () => {
                 </Form>
             </Modal>
 
-            {/*封面裁剪：两个页签各一套参数；确认写回，取消还原打开前的快照（图片保留）。
-               弹窗只上报「这次打开里动过哪套」，与父组件已有的 dirty 合并后决定回传哪些字段*/}
             <CoverCropModal
                 open={cropOpen}
                 src={coverImg}

@@ -1,457 +1,106 @@
 # 参与开发
 
-面向想在本地把它跑起来、或者想提 PR 的人。项目整体见 [README.md](README.md)，本文讲具体步骤。
+项目概览见 [README.md](README.md)。运行和接口文档与代码不一致时，以代码为准并同步修正文档。
 
-> 遇到文档与代码不一致时，以代码为准，然后顺手把文档改掉。
+## 1. 仓库边界
 
----
+- `src/`：Rust / Axum / SeaORM 后端，数据库为 PostgreSQL。
+- `frontend/`：React / Vite 前端；Node 版本与 `.node-version`、`frontend/package.json` 保持一致。
+- `scripts/`：迁移、部署、巡检；`deploy/`：部署模板；`docs/`：当前契约与操作说明。
+- `iot/`：可选设备集成，默认关闭，安装与配置见 [iot/README.md](iot/README.md)。
+- `saudade-blog-agent/` 是独立仓库，不随本仓部署。看板娘前端也在该仓维护；本仓通过
+  `frontend/widget.lock.json` 的提交和子树哈希固定版本，修改组件必须同步此锁文件。
 
-## 1. 仓库里有什么
+## 2. 本地运行
 
-| 目录 | 是什么 | 语言/栈 |
-|---|---|---|
-| `src/` | 博客后端：文章/分类/标签/留言板 API、登录鉴权、聊天链路中枢 | Rust（Axum + SeaORM） |
-| `frontend/` | 博客前端 SPA（**不含**看板娘与对话面板，见下） | React 18 + Vite 8 + antd + sass |
-| `saudade-blog-agent/` | 看板娘的"大脑" | Python（FastAPI + LangChain Agent / LangGraph checkpoint） |
-| `scripts/` | 部署、迁移、巡检脚本 | bash / python |
-| `docs/` | 设计文档（安全边界、部署与运维、向量图谱、IoT 等） | Markdown |
+需要 Rust（最低版本见 `Cargo.toml`）、Node（版本见 `.node-version`）和 PostgreSQL。
+数据库必须使用专用开发实例，不要用测试或初始化命令操作生产数据库。
 
-`saudade-blog-agent/` 是一个独立的 git 仓库，被本仓 `.gitignore` 忽略。它的改动不在本仓的 CI 里，
-也不随本仓部署。只有要改"看板娘怎么答话"时才需要它。
+### 数据库与配置
 
-看板娘前端（`live2d-widgets/` 与 `live2d_model/`）也住在那个仓里（20261002 起），
-代码以 MIT 分发、美术资源以 CC BY-NC-SA 4.0 分发（见 §5）。本仓不跟踪它们，只在
-`frontend/widget.lock.json` 里钉一个提交号，构建前由 `npm run fetch:widget` 取回到
-`frontend/public/` 下与从前完全相同的路径。要改看板娘的渲染或面板代码，去
-`saudade-blog-agent` 仓改，再回来把那个 sha 换掉。**忘记换，改动永远不会上线，
-而且没有任何东西会变红**（`frontend/widget.lock.json` 里有同一句提醒）。
+复制 `.env.example` 到 `.env`，填写数据库连接、JWT 和本机服务配置，不提交密钥。
+数据库名称使用 `saudade_blog`，字符排序规则按基线文件要求设置。
 
-还有一件不在本仓的东西（README 的架构图里有）：IoT 设备服务 `device-service`，源码未公开，
-本仓 [iot/device-service/](iot/device-service/) 有单元模板与接口契约。它是可选件，
-不装不影响其余部分；设备控制台 `iot/device-console/` 已经收进本仓。
-
----
-
-## 2. 跑起来
-
-### 2.0 前置
-
-- Rust stable（`cargo --version` 能跑就行）
-- Node.js 20.19+（与 CI 的 Node 20 对齐）
-- PostgreSQL 16
-- Python 3.10+（只有要跑 agent 时才需要）
-
-### 2.1 建库与账号
-
-20261018 起生产库是 **PostgreSQL**（此前是 MySQL，那一套已经冻结，见本节的末尾）。
-库名**必须叫 `saudade_blog`**：`scripts/migration/pg/0000_schema.sql` 里那条
-`ALTER DATABASE "saudade_blog" SET timezone …` 把名字写死了，换个名字跑它会在
-`ON_ERROR_STOP=1` 下当场中止。
-
-三步建出来（与 `0000_schema.sql` 头注里那份命令同源）：
+使用 `scripts/migration/pg/0000_schema.sql` 建立基线，再按下面命令打印的顺序执行编号迁移：
 
 ```bash
-# ① 角色。口令**不在 CREATE ROLE 里设**，建完再 ALTER —— 免得口令落进 shell 历史。
-sudo -u postgres psql -c "CREATE ROLE saudade_app LOGIN"
-sudo -u postgres psql -c "ALTER ROLE saudade_app PASSWORD '换成你自己的密码'"
-
-# ② 库。COLLATE 必须是 en_US.UTF-8：**登录与唯一键的大小写敏感性由它决定**
-#    （20261017 拍板「登录按大小写」⇒ 敏感就是目标行为，别换成 *_ci 的排序规则）。
-sudo -u postgres psql -c "CREATE DATABASE saudade_blog OWNER saudade_app ENCODING 'UTF8' \
-  LC_COLLATE 'en_US.UTF-8' LC_CTYPE 'en_US.UTF-8' TEMPLATE template0"
-
-# ③ 结构。`0000_schema.sql` 建**基线**（PG 这一侧没有"快照 + 按日期补增量"那套），
-#    编号迁移再往上加东西。要喂哪几份、按什么序，**唯一事实源**是
-#    `scripts/migration/pg/ci_schema_files.py`（它打印的就是清单，CI 也照它建库；
-#    `--self-test` 保证磁盘上每个编号迁移都归过类）—— 别在这儿另抄一份文件名。
-sudo -u postgres psql -d saudade_blog -v ON_ERROR_STOP=1 -f scripts/migration/pg/0000_schema.sql
-for f in $(python3 scripts/migration/pg/ci_schema_files.py); do
-  sudo -u postgres psql -d saudade_blog -v ON_ERROR_STOP=1 -f "$f" || exit 1
-done
+python3 scripts/migration/pg/ci_schema_files.py
 ```
 
-⚠️ 上面这条循环是**给从零建库用的**（owner 会是 `postgres`）。生产上新增表要以**应用角色**
-跑，表与它的 identity 序列才天生归 `saudade_app`（`0002_owner_to_app.sql` 头注里那个
-"连得上却 0 张表"的坏法就是 owner 没对）：
-`psql -h 127.0.0.1 -U saudade_app -d saudade_blog -v ON_ERROR_STOP=1 -f - < <该文件>`。
-判据 = 跑完 `0002_owner_to_app.sql` 的差集为空。
+执行迁移时启用 `psql -v ON_ERROR_STOP=1`。新增表使用应用角色执行，以保持表和序列所有权一致。
+新结构直接编写幂等的 PostgreSQL 迁移，不重新生成基线，也不执行 `scripts/migration/` 下的旧 MySQL SQL。
+具体部署步骤见 [部署手册](deploy/README.md) 与 [运维手册](docs/deployment-and-ops.md)。
 
-`ON_ERROR_STOP=1` 不能省：没有它 psql 会把每条报错打完还**退出 0**，
-"建库成功"就成了一句空话。
-
-用户名要与 `.env` 里 `DATABASE_URL` 的那一段一致（`.env.example` 的样例就是这个）。
-库里没有任何地方写死它：库名在 `0000_schema.sql` 里写死了，用户名没有；
-想换用户名，建号之后改 `.env` 就行。
-
-⚠️ **`0000_schema.sql` 今天是"生成物"，而它的生成器已经断粮**（20261018 切库）：
-那份文件由 `mysql2pg.py` 从**活 MySQL** 的 `information_schema` + `src/entity/*.rs` 生成，
-切流之后 MySQL 不再演进 ⇒ 那条"重跑生成器"的路作废。**新的结构变更要直接写成 PG 的迁移**
-（`scripts/migration/pg/` 下新起一个编号文件，像 `0001_rag_vectors.sql`、`0002_owner_to_app.sql` 那样），
-别再走生成器。这是本批留下的欠账，已记进 [ROADMAP.md](ROADMAP.md)。
-
-⚠️ `scripts/migration/*.sql`（MySQL 那一套）现在是**历史文件**：不再参与建库，
-也**不要**在 PG 上跑 —— 它们是 MySQL 方言（`USE` / `ENGINE` / 反引号 / `AUTO_INCREMENT`），
-跑不动，而它们的净效果已经全部体现在 `0000_schema.sql` 里。那个目录里还混着评测夹具与
-一次性脚本（`golden_*.sql` / `test_accounts_*.sql` / `user_rename_sora_*.sql` /
-`superadmin_role_*.sql` 等）—— 判断依据是文件名里的主题，不是日期。
-
-### 2.2 环境变量
+### 后端与前端
 
 ```bash
-cp .env.example .env
-# 然后至少改 DATABASE_URL 和 JWT_SECRET
+cargo run
 ```
 
-`.env.example` 里每一项都有注释说明用途与默认值。要点：
-
-- `DATABASE_URL` 和 `JWT_SECRET` 不配就起不来（前者 `main.rs` 直接 panic，后者登录时 panic）
-- `SITE_URL` **别人部署必须改成自己的域名**：它在后端决定 sitemap 里的链接与 CORS 默认白名单。
-  缺省值是中性占位 `http://localhost:3000`（见 `src/utils.rs::site_url`），爬虫会忽略它
-- 前端那一半的站点地址走 `VITE_SITE_URL`（构建期变量，同名不同前缀，`.env` 里那份 `SITE_URL`
-  管不着它）：`frontend/index.html` 的 canonical / og:url 占位符由 vite 在构建时替换。
-  两个都要设，不能只设一个
-- 站点的名字与描述也全走构建期变量（20261007 起）：`VITE_SITE_TITLE`、
-  `VITE_SITE_DESCRIPTION`，另有 `VITE_SITE_KEYWORDS`（不设就整行删掉）与 `VITE_SITE_AUTHOR`
-  （不设就整行删掉）。它们决定 `<title>`、`<meta name="description">`、og/twitter 卡片与
-  各页标题的后缀。仓库里一处都没有写死，所以 fork 出去的人不设这些，得到的是中性占位
-  （`个人博客` / `本站开发地址，尚未配置站点描述。`）而不是上游作者的站名与文案。
-  默认值只写在 [frontend/vite.config.ts](frontend/vite.config.ts) 一处，HTML 与 TS 两侧同源
-
-### 2.3 起后端
-
-```bash
-cargo run          # 监听 127.0.0.1:3000（只回环，靠 nginx 反代对外）
-```
-
-第一次编译要几分钟。改完代码可以用更快的检查：
-
-```bash
-cargo check
-RUSTFLAGS="-D warnings" cargo check   # 严格自检（CI 没开这个，属本地纪律）
-```
-
-### 2.4 起前端
+另开终端：
 
 ```bash
 cd frontend
 npm ci
-npm run fetch:widget    # 看板娘前端的两棵树：源码在 agent 仓，按 pin 取回来
-npm run vendor:live2d   # 看板娘运行时的三份第三方产物不入库，必须单独就位（见 5. 许可）
-npm run dev             # Vite 开发服务器
+npm run fetch:widget
+npm run vendor:live2d
+npm run dev
 ```
 
-两个 `npm run` 顺序不能换：`fetch:widget` 整树替换 `public/live2d-widgets/`，
-而 `vendor:live2d` 往它的 `vendor/` 子目录里写；反过来的话刚取到的 `vendor/` 会被抹掉。
-
-漏掉 `fetch:widget` 的话，`npm run dev` 打得开、聊天面板也在，只有看板娘一帧不画，
-控制台报 `chat-stream.js` 之类 404（`vendor:live2d` 也会因为找不到目录而失败）。
-漏掉 `vendor:live2d` 则是同一个症状、报 `/live2d-widgets/vendor/pixi.min.js` 加载失败；
-那几份第三方产物不入库（见 §5），必须显式取一次，否则不渲染。
-
-开发模式下不需要配代理：`src/utils/runtimeApi.ts` 检测到端口是 **5173（`npm run dev`）
-或 4173（`npm run preview`）**时会自动把 API 指到 `http://<当前主机>:3000`。但跨源了，
-所以后端的 CORS 白名单要放开（下面两种端口都列上，用哪个都不至于当场 404）：
-
-```bash
-# .env
-CORS_ALLOWED_ORIGINS=http://localhost:5173,https://你的域名
-```
-
-### 2.5 起 agent（可选）
-
-agent 在独立仓库里，有自己的 README 与 `.env.example`。它默认跑 `127.0.0.1:8010`，
-后端的 `AGENT_URL` 默认就指着那里，所以不配也能对上。
-
-不跑 agent 的话，博客本身（文章、留言板、后台）一切正常，只有看板娘不会答话。
-
-### 2.6 真要部署到服务器上
-
-上面 2.1 到 2.5 是本地把它跑起来（`cargo run` + `npm run dev`），够开发用了。
-要真的对外提供服务（nginx 站点配置与 TLS、两个 systemd 单元、目录布局与权限、
-logrotate、关掉开发用的宽松档），走 [deploy/README.md](deploy/README.md)：
-那一份是"从一台空 VPS 到跑着的站点"的可复制步骤，模板都在 [deploy/](deploy/) 里。
-只想装起来的话，那份文档开头有一条命令：`bash deploy/install.sh`
-（向导会问要不要连 IoT 可选件一起装，`-y` 下默认不装；`--dry-run` 只渲染不落地）。
-
----
-
-## 3. 测试
-
-### 3.1 秒级套件（push 与 PR 上都会跑）
-
-> CI 在 PR 上只跑下面这几项，不跑部署（20261006 起）。它在 PR 上不需要任何 secret，
-> 所以 fork 来的 PR 一样有反馈；部署那一半要 R2 与 SSH 凭据，PR 上恒不触发。
-> 即便如此，提交前自己跑一遍仍然值得：CI 要排几分钟，而这几条在本机是秒级的。
-
-```bash
-# 看板娘前端两棵树不在 git 里（源码在 agent 仓）⇒ cargo test **之前**必须先取
-# （src/routes/chat.rs 有一条 include_str! 是**编译期**读那个 chat-stream.js 的，
-#  没取到的话 cargo test 会在这里报一个看不出前因后果的编译错）
-cd frontend && npm run fetch:widget && cd ..
-
-# 后端：MockDatabase（不连库）+ 真 MySQL 那一层（见下）
-cargo test
-
-# 前端
-cd frontend
-npm run fetch:widget:check                        # 本地那份与 pin 逐字节相同吗
-npx --no-install tsc --noEmit -p tsconfig.json   # 类型检查
-npm test                                          # legacy Node + Vitest TS 套件
-npm run typecheck:tests                           # TS 测试类型检查
-npm run test:browser                              # Playwright 浏览器回归（先安装 Chromium）
-npm run lint                                      # ESLint
-```
-
-> ⚠️ 本地复核 lint 时**必须**带 `--report-unused-disable-directives`（`npm run lint`
-> 脚本里已经带了）：一条多余的 `eslint-disable-next-line` 在这里判 error，
-> 而它会让 CI 红；CI 红就意味着这次 push 什么都没部署。
->
-> 另一条：`npm test` 不包含 ESLint，两者是分开的两道门。
-
-`cargo test` 里还挂着一层真 PostgreSQL 的集成测（`tests/pg_integration.rs`），它由
-环境变量 `TEST_PG_URL` 门控：
-
-```bash
-# 不设 ⇒ 那几条自己跳过（本地默认如此，不需要任何准备）。
-# 设了 ⇒ 真连库跑；**连不上是失败不是跳过**（静默跳过会让这道闸变成装饰）。
-# 先备一个空库（名字自取；`0000_schema.sql` 里那条 ALTER DATABASE 写死了库名，
-# 换库名跑要先把那一句去掉，见那个文件的头注）。
-sudo -u postgres psql -c "CREATE DATABASE saudade_it OWNER saudade_app ENCODING 'UTF8' LC_COLLATE 'en_US.UTF-8' LC_CTYPE 'en_US.UTF-8' TEMPLATE template0"
-sudo -u postgres psql -d saudade_it -v ON_ERROR_STOP=1 -f scripts/migration/pg/0000_schema.sql
-TEST_PG_URL="postgres://saudade_app:密码@127.0.0.1:5432/saudade_it" cargo test --test pg_integration
-```
-
-它验的是 MockDatabase 结构上验不了的那一类：
-
-- 真库类型往返：`SUM` 的返回类型、零行时 NULL 折零、空 id 列表必须短路、几条外键真的
-  插得进去。**这一层在 PG 上比在 MySQL 上更值钱**：`sqlx-postgres` 的整数解码按 OID
-  **精确匹配**（`i64` 读不了 `int4`、`i8` 读不了 `smallint`），不像 `sqlx-mysql` 那样
-  一个宽度通吃 —— `cargo check` 与 mock 都验不出它，只有真库能；
-- 额度扣减的边界（`quota::try_consume`）：`WHERE used < limit` 的最后一格恰好扣一次、
-  被挡住的那一轮一个数都不许动；`rows_affected == 1` 这个判据是真的 UPDATE 语义；
-- 会话搜索的 LIKE 转义（`%`/`_` 要按字面匹配）与列表的置顶/倒序/命中锚；
-- 额度申请的原子认领：重复点"通过"第二刀必须零副作用（清零没再发生、通知没多出第二条）。
-
-后三组要真 JWT 走完 `create_router` 的中间件，所以它们自己把 `JWT_SECRET` 设上
-（`create_token` 从进程环境读密钥）。
-
-CI 会起一个 `mysql:8.0` 服务容器跑它（见 `deploy.yml` 的 `check` job），它门住部署。
-
-### 3.2 沙箱套件（要 Playwright + 无头 Chrome，不进 CI）
-
-`frontend/tests/*.test.py` 是一批"真组件 + 无头 Chrome + 数值断言"的渲染沙箱。它们要
-真浏览器，CI 的秒级 job 装不下，所以由 `scripts/nightly_sandboxes.sh` 夜间串行跑
-（**那一班默认不装**——`deploy/install.sh` 只装心跳探针；要开就自己加
-`40 4 * * * <本仓>/scripts/nightly_sandboxes.sh >/dev/null 2>&1`，加之前先手跑一次）。
-
-夜间运行器使用 uv 的独立 Python 3.12 环境，按
-`frontend/tests/requirements.txt` 固定的版本加载依赖，不使用系统或用户目录中的 Pillow。
-需先安装 uv，并在同一环境中准备 Chromium。手动跑单个也使用相同命令：
-
-```bash
-uv run --no-project --isolated --python 3.12 --with-requirements frontend/tests/requirements.txt \
-  python -m playwright install chromium
-uv run --no-project --isolated --python 3.12 --with-requirements frontend/tests/requirements.txt \
-  python -I frontend/tests/某个.test.py
-```
-
-> ⚠️ 这套要点无头 Chrome，内存开销大：在低内存机器上**必须串行**，不要并发起第二个 chromium。
->
-> ⚠️ 判据经常依赖环境特有的前提（某个端口空着、某个目录存在）。跑不通时先看它自己的头注，
-> 好几个套件在开头写清了它假设什么、以及为什么。
-
-### 3.3 其它
-
-| 套件 | 在哪 | 说明 |
-|---|---|---|
-| `tests/api_tests.rs` | 本仓 | 走 MockDatabase，跟着 `cargo test` 跑（无需任何外部依赖） |
-| `tests/pg_integration.rs` | 本仓 | **真 PostgreSQL**，跟着 `cargo test` 跑，但要 `TEST_PG_URL`（不设即跳过，见 §3.1）。CI 有服务容器 |
-| `tests/manual/test_api.py` | 本仓 | **手动跑**（Python，`requests`）：要一个**活着的** `localhost:3000`，登录类用例还要你自己给凭据：`BLOG_TEST_USER=... BLOG_TEST_PASSWORD=... python3 tests/manual/test_api.py`。不给凭据也能跑，登录相关用例自动跳过。**它不在 `cargo test` 里**，也不进 CI |
-| `eval/`（agent 仓） | `saudade-blog-agent/eval/` | golden set 端到端，要真服务与真语料，按需跑 |
-| `scripts/*.py` | 本仓 `scripts/` | 部署与巡检脚本（`deploy/` 下几个）**没有对应套件**，不进 CI。本仓 `scripts/` 下**没有 `eval/` 目录**，评测全在 agent 仓 |
-
-目录就是判据：`tests/` 根下跟着 `cargo test` 跑（要外部依赖的用环境变量门控成"不设即跳过"），
-`tests/manual/` 下是要活服务或真凭据、只能手动跑的。前端那两批同理：
-`frontend/tests/*.test.mjs` 与 `tests/unit` 的 TS 测试进 CI，`tests/browser` 由独立 Playwright job 运行并阻止失败版本部署；尚未迁移的 `*.test.py` 走夜间沙箱。新增用例和迁移要求见 [前端测试规范](docs/frontend-testing.md)。
-
-CI 到底跑哪几项：见 [.github/workflows/deploy.yml](.github/workflows/deploy.yml)。
-`check` job（上面那几条检查）任何 push 都跑；会被 `paths-filter` 跳过的是部署那一半：
-只改 `tests/**`、文档或根目录治理文件的 push，`build-and-deploy` 的每一步都被条件跳过，
-而 run 仍然全绿。看绿灯时要意识到它可能什么都没部署，
-真正的判据是线上 `build-info.json` 里的 sha，不是 CI 的颜色。
-
----
-
-## 4. 提交约定
-
-> **这一节是提交规范的唯一事实源**，别的文档只指过来、不另存一份。
-
-- 分支：从 `cn_sora_blog` 切出来（默认工作分支）
-
-### 4.1 格式
-
-首行（subject）形如 `type: 一句中文摘要`，然后空一行，再写正文的 `- ` 列表：
-
-```
-fix: 留言板驳回理由一直显示未填写
-
-- AI 裁决的说明文案在 flag 分支里丢了
-- 兜底文案改成按原因码取
-- 驳回理由改为必填
-```
-
-- 首行 ≤ 60 字符（中文按 1 个字算，不是字节数），只写"改了什么"。
-  `git log --oneline`、GitHub 提交标题、`gh run list` 都会截断显示；
-  首行写成整段话的提交，事后用 `--grep` 捞不出来。
-- 多项改动一律写成正文的 `- ` 列表，不塞进首行。首行只放能概括全部的那一句；
-  日期戳（`20260922`）之类的考古锚点可以留，但那是正文的东西，不该把首行撑长。
-- type 白名单：`feat`（新功能）/ `fix`（修缺陷）/ `refactor`（不改行为的重构）/
-  `docs` / `test` / `chore`（杂务、依赖、构建配置）/ `perf` / `style` / `build` / `ci`。
-  CI 里跑的就是这一串（`.githooks/commit-msg`），列表外的 type 会被拒。
-- `type(scope):` 里的 scope 是**可选**的，闸门放行、但**没有白名单**：改动只落在一个
-  子系统里时多写一个词更省事（历史上出现过 `fix(frontend)` / `fix(auth)` /
-  `style(dashboard)` / `fix(nginx)`）。取"改动落在哪儿"的那一个词，小写、不加空格；
-  写不写都行，写就别给同一个地方自创两个同义词。
-  ⚠️ **它不是一个索引**——带 scope 的提交在本仓是少数（20261017 复核：一千余笔里
-  二十余笔），所以 `git log --grep frontend` 几乎什么都捞不到。想知道"这次改了哪一半"，
-  看 CI 里那条 `git diff <上一版 sha> <本次 sha> -- src Cargo.*`，或者
-  `git log --oneline -- frontend/`，那两处是真的。
-- 提交信息里不要出现 `Co-Authored-By` / 共同作者署名这类 trailer，提交前删掉。
-- 版本号同步（`?v=` bump）不写进提交信息：版本号是部署细节，不是这次改动的内容。
-- 改动的"为什么"写在代码注释里，不要只写在提交信息里：提交信息会随历史沉底，
-  注释会跟着那行代码走。
-
-两类反例：
-
-```
-✗ fix: 修复标题不居中、读数改 2×2、看板娘左移 20px、讨论区回复另起一行
-      ↑ 四件事塞进首行：60 字符塞不下，而且 `--grep 看板娘` 一件都捞不出来
-✗ fix: 讨论区回复标记另起一行
-  - 回复标记从身份行首位挪到正文之前，不再隔断头像与昵称
-      ↑ 首行与正文之间少了空行（写第二段时最容易漏）
-```
-
-### 4.2 机械闸门（跑一次就装上）
-
-```bash
-bash scripts/dev/install-hooks.sh     # = git config core.hooksPath .githooks，每台机器跑一次
-```
-
-装上后每次 `git commit` 都会校验上面那几条可机械判定的（首行长度、type 白名单、
-首行后空行、`Co-Authored-By`），不合规直接拒绝提交。`merge` / `revert` / `fixup!` /
-`squash!` 打头的提交自动豁免。
-
-钩子文件（`.githooks/commit-msg`）会跟着 clone 走，但"去哪里找钩子"是 git 的本地配置，
-不会被 clone 带走，所以新机器不跑这一行就什么都不会校验。CI 的 `check` job 对
-本次 push 带来的每条提交跑同一个文件，那一层不依赖任何人的本地配置。
-
-判不了的那些（"为什么"该写进注释、版本号不进提交信息）留在上面当人工纪律；
-**正文该怎么写**见 4.3 —— 那几条比闸门拦下的更值钱。
-
-### 4.3 正文写什么（闸门判不了，读的人最需要）
-
-首行只说"改了什么"，正文回答两件闸门看不见的事：
-
-- **为什么**（见 4.1 末条：能跟着代码走的写进注释，提交信息里留一句指过去）。
-- **判据在哪儿**：这条改动**怎么知道它真的生效了**——写上判据住在哪个文件、
-  它抓的是什么形状的坏法。这一条对本仓格外值钱，因为本仓最贵的失效模式是
-  「看着在跑、其实没跑」：命令帧发了没人执行、`add_header` 写了不继承、
-  断言恒真所以永远绿、配置读到了但代码路径没走到。一句"新增 `x.test.py`，
-  主判据是每颗按钮的左右缘都落在列表盒子内"能让下一个人知道该改哪儿、
-  以及**那条断言红了算不算数**。
-
-另外两条是纪律，不是格式：
-
-- **一条提交只做一件事**。同一个文件里不同批次的改动要**拆成多个提交**，
-  而且按**语义**拆——`git diff -U0` 拆不了（它按行号切，只有"每个 `+` 都等于
-  某个 `-` 改名后"那种机械改名才可自动分类）。实在拆不开时，宁可在正文里
-  分段写清楚，也别让一笔提交同时改行为和改注释。
-- **内部编号要展开成人话**。「批 E」「洞⑪」这类批次号与清单序号是仓库内部的账，
-  公开仓库的读者（以及半年后的你自己）没有那张表。编号可以留着当考古锚点
-  （日期戳 `20261017` 这类本身就是自明的，见 4.1），但同一句里要说清它指什么。
+开发服务器将 `/api` 代理到本机后端。`fetch:widget` 必须先于 `vendor:live2d`，避免覆盖第三方渲染运行时。
+Python Agent 是可选服务，配置和启动方式见其独立仓库的 README。
 
 ### 改代码时的几条硬约束
 
-> ⚠️ 第 1、2 条是维护者那一侧的纪律，不是对贡献者的要求：维护者跑这套东西的那台机器
-> 同时是生产服务器（`cargo build --release` 与 `vite build` 的内存开销会把整机拖垮，
-> 真发生过）。把仓库 clone 到自己机器上之后，构建方式与 `cargo clean` 都不受这两条约束；
-> 但下面第 3 条对谁都成立。
+1. 维护者的工作机同时是生产服务器：不在该机运行 `vite build`、`cargo build --release` 或 `cargo clean`。
+   生产构建交给 CI；开发检查使用 `cargo test`、TypeScript、单元测试与隔离浏览器测试。
+2. 提交前逐文件核对，不用 `git add -A` 或 `git commit -a`，避免带入其他会话的改动。
+3. SSE、执行回执字段或工具契约改变时，同时核对 Rust、Python Agent 和浏览器端。
+4. 迁移必须幂等；权限、事务、并发和兼容性约束用简短注释说明，不在源码保留修改流水账。
+5. 浏览器测试拦截 API，不向生产环境写入。临时产物放系统临时目录，不提交日志、截图或构建产物。
 
-1. （维护者）本地不编译大产物。`vite build` 和 `cargo build --release` 内存开销很大，
-   低内存机器上会 OOM 甚至拖垮整机。那台机器上只跑 `cargo check`、`tsc`、`npm test`，构建交给 CI。
-2. （维护者）永远不要 `cargo clean`（那台机器上 `target/release/` 里是线上正在跑的二进制）。
-3. 动 git 前逐文件核对，别用 `git add -A` / `git commit -a`：工作区里可能挂着
-   别的分支或会话的改动。
-4. 改协议/契约要三端同步。SSE 帧协议（Python ↔ Rust ↔ 前端）、执行回执的字段名、
-   提示词里的工具清单，这几处都是"改一处必须同步另一处"的地方，改完在注释里写清
-   另一头在哪。
-5. 迁移脚本要幂等，并且把"这条约束为什么存在"写进头注：迁移是一次性的，
-   但它定下的语义（比如某个 CASCADE 行为）会跟项目一辈子。
+## 3. 提交约定
 
----
+提交使用 `type(scope): 描述`，首行不超过 60 字符，正文与首行空一行。
+允许 `feat`、`fix`、`refactor`、`docs`、`test`、`chore`、`perf`、`ci`，不加共同作者署名。
+正文写清最终行为、必要取舍和验证范围，省略讨论过程和废弃方案。
+
+```bash
+git config core.hooksPath .githooks
+```
+
+前端与协议变更提交 PR，填写仓库模板中的验证结果。没有运行的检查保持未勾选；
+涉及另一仓库时附上配套 PR 和固定版本。部署链路见 [运维手册](docs/deployment-and-ops.md)。
+
+## 4. 验证
+
+```bash
+cd frontend
+npm run fetch:widget
+cd ..
+cargo test
+cd frontend
+npx --no-install tsc --noEmit -p tsconfig.json
+npm run typecheck:tests
+npm test
+npm run test:browser
+npm run lint
+```
+
+PostgreSQL 集成测试需要独立的 `TEST_PG_URL` 和测试专用 `JWT_SECRET`。
+单独运行时缺少环境配置不代表已验证数据库行为；CI 使用独立数据库服务。
+前端测试分层、超时和夹具要求见 [前端测试规范](docs/frontend-testing.md)。
 
 ## 5. 许可
 
-本仓库以 GPL-2.0 分发（见 [LICENSE](LICENSE) 全文）。
+本仓代码按 [GPL-2.0](LICENSE) 分发；第三方依赖与资源声明见 [THIRD-PARTY.md](THIRD-PARTY.md)。
+看板娘代码的 MIT 许可与美术资源的 CC BY-NC-SA 4.0 分开适用，完整声明保留在项目 README 和 Agent 仓。
+Cubism Core 为专有运行时，不提交到源码树，由 `vendor:live2d` 从官方源取得。
+引入依赖、字体或图片前核对相应许可，不用代码许可替代资源授权。
 
-引入新依赖前先确认它的许可与本仓兼容：
+## 6. 文档入口
 
-| 依赖的许可 | 能不能进本仓 |
-|---|---|
-| MIT / BSD / ISC / Zlib | ✅ 可以 |
-| Apache-2.0 | ⚠️ 与 GPL-2.0 **不兼容**（专利条款）、与 GPL-3.0 兼容，别直接并进本仓的源码树 |
-| GPL-3.0-only | ❌ 不行 |
-| 专有 / 未声明许可 | ❌ 不行 |
-
-看板娘的渲染层是自研代码，基于 MIT 的 pixi.js + pixi-live2d-display
-（见 [frontend/README.md](frontend/README.md)）。
-图片、字体、模型文件同样适用：从某个 CDN 引一张图，也可能是在分发别人的作品。
-
-还有一类可以进构建产物、但不能进源码树的：Live2D 的 Cubism Core 运行时是专有许可，
-本仓不跟踪它，由 `npm run vendor:live2d` 在构建前从官方地址取（CI 会自动跑）。判据是
-这段字节是不是从本仓发出去的：从官方源直取没问题，放进 git 就等于本仓在分发它。
-
-看板娘前端（`live2d-widgets/` + `live2d_model/`）的源码住在 `saudade-blog-agent` 仓
-（20261002 起；没有并进本仓的源码树，只是构建时按 pin 取产物）。那边以 MIT 分发
-（`frontend/LICENSE`），与本仓的 GPL-2.0 兼容，这条链是通的。代价要记住：
-MIT 要求把版权与许可声明随分发一起带上，所以那段的全文抄在本仓
-[README.md](README.md) 的《许可》一节里；动那里之前先想清楚这一条。
-其余第三方组件、版本与许可以及兼容性判据，统一见 [THIRD-PARTY.md](THIRD-PARTY.md)。
-
-⚠️ 但那一半许可只覆盖代码。同目录里的美术资源（`live2d_model/agent_2.*` 模型与贴图、
-`lingyue-toggle.png` 面板图标，以及「泠月喵」形象设计本身）按 CC BY-NC-SA 4.0 分发
-（agent 仓 `frontend/ASSETS-LICENSE.md`）：可自用、可改，不可商用，改作须同样协议。
-带 NC 的许可不是 OSI 开源许可，那一部分属于"源码可用"。它与 GPL-2.0 的关系是
-"同一介质上的聚合"（构建时取来一起打包，不是并进本仓源码树），所以不冲突；
-但上面那条兼容性结论只对代码那一半成立，往本仓引进美术资源时不能拿它当通行证。
-
----
-
-## 6. 已知缺口
-
-如实列出，免得按文档走到一半撞墙：
-
-- `scripts/migration/0000_base_schema.sql` 与 `fresh_install.sh`（MySQL 那套从零建库的路）
-  已随 20261018 切库**冻结**：CI 不再走它们，PG 那侧用的是
-  `scripts/migration/pg/0000_schema.sql`（一份文件建全库，没有"快照 + 按日期补增量"）。
-  它们留在树里是历史，不是可执行的安装路径。
-- `scripts/migration/` 目录混着夹具与作者一次性脚本（见 2.1 的两条提示）：
-  没有按用途分目录，只能靠文件名前缀辨认。想改成分目录的话，先确认没人按路径引用它们。
-- 六处路径的默认值写的是维护者那台机器的位置（`healthcheck.sh` / `nightly_sandboxes.sh` /
-  `deploy/*.sh` 四个脚本、`deploy.yml` 里那次 ssh、`src/routes/graph.rs` 的产物目录），
-  但每一处都能在不改被跟踪文件的前提下覆盖：`PROJECT_DIR`、`DEPLOY_REPO_DIR`（仓库 Variable）、
-  `GRAPH_ARTIFACT_DIR`。fork 时设这些就行，没设才会落到那个默认值上；这不是
-  "你得改源码"，只是默认值对你没意义。
-
----
-
-## 7. 相关文件
-
-| 文件 | 什么时候看它 |
-|---|---|
-| [ROADMAP.md](ROADMAP.md) | 现在在做什么、什么在等条件、什么**明确不做**（提提议前先看，尤其是那几张表） |
-| [SECURITY.md](SECURITY.md) | 发现安全问题、或者想确认某件事算不算（里面有一份《已知且已经接受的取舍》） |
-| [docs/security-boundary.md](docs/security-boundary.md) | 想弄清"谁信谁"：各条防线在哪、限额是多少、已知缺口 |
-| [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) | 参与本仓的言行规范 |
-| [THIRD-PARTY.md](THIRD-PARTY.md) | 引入新依赖前查许可 |
-| [docs/deployment-and-ops.md](docs/deployment-and-ops.md) | 部署与运维（资源画像、服务管理、回滚） |
+- [安全边界](docs/security-boundary.md)：身份、权限、限额与信任边界。
+- [部署与运维](docs/deployment-and-ops.md)：拓扑、服务管理、日志、回滚与备份。
+- [路线图](ROADMAP.md)：当前工作、待办和约束。
+- 各接口契约保留在 `docs/`；一次性审计、修复记录和生成过程可从 Git 历史查阅，不另留副本。

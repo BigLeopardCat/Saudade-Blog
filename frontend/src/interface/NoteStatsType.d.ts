@@ -1,19 +1,9 @@
-/** 文章阅读量 / 点赞量 / 收藏量（20260930）。字段名与 `src/routes/note_stats.rs` 的 DTO 一一对应
- *  —— 那边是 `snake_case` 加 `#[serde(rename)]`，这里用后端吐出来的键名。 */
-
 /** 单篇统计（`GET /api/public/notes/:id/stats` 与 `POST .../view` 的返回） */
 export interface NoteStats {
     /** 累计阅读数。**读不到时是 undefined 而不是 0** —— 见 apis/NoteStatsMethods.tsx 头注 */
     views: number;
     likes: number;
-    /** 累计收藏数（20260930 补）。是**计数**，不是"我收藏了没有"——后者按 uid 存在
-     *  个人中心的收藏列表里（单篇读接口没有身份可依赖，那不是它该答的问题）。
-     *  **可空只表示"这一版前端还没消费它"**：后端一定会回这个键（`views`/`likes`
-     *  那两个非可空的字段同理，别把可空读成"可能没有"）。 */
     favorites?: number;
-    /** 累计讨论数（20261003 补）。口径 = **公开讨论区看得见的那些**
-     *  （`approved = 1 AND is_deleted = 0`）——所以详情页胶囊上的数一定等于
-     *  点进去数出来的条数。可空只表示"老前端还没消费它"，后端一定会回这个键。 */
     comments?: number;
     /** 当前访客点过赞没有。未登录恒 false（不是错误） */
     liked: boolean;
@@ -34,7 +24,6 @@ export interface NoteRankRow {
     likes: number;
     /** 后端每一行都会带（四个榜共用一套行），本页只用其中一个画条宽 */
     favorites?: number;
-    /** 讨论数（20261003 补）。口径 = 公开看得见的那些，与文章卡片上的数同源 */
     comments?: number;
 }
 
@@ -43,11 +32,7 @@ export interface DailyRow {
     date: string;
     views: number;
     likes: number;
-    /** 20261001 补：三个汇总数、三个榜都全了，趋势只画两条线读的人会问"收藏呢"。
-     *  与 `likes` 同源（`user_favorite.created_at` 的日期分桶）。 */
     favorites?: number;
-    /** 讨论量的日趋势（20261003 补，`note_comment.created_at` 的日期分桶，
-     *  且只算公开看得见的那些）。 */
     comments?: number;
 }
 
@@ -99,7 +84,6 @@ export interface PeriodRow {
     views: number;
     likes: number;
     favorites: number;
-    /** 本期讨论量（20261003 补），口径同全局：只算公开看得见的评论 */
     comments: number;
     /** 本期阅读量前 5。四个数都带，按 `views` 排——名次是**期内**的，与全局榜无关 */
     topNotes: NoteRankRow[];
@@ -125,10 +109,6 @@ export interface UserActivityRow {
     role: string;
     conversations: number;
     messages: number;
-    /** 该账号发过的讨论数（20261003 补）。**注意它和文章报表里那个「讨论数」口径不同**：
-     *  这里只排除软删（待审/驳回的也算——这一页问的是"这个账号做过什么"），
-     *  文章报表那边是 `approved = 1`（只算公开看得见的）。两处各自与自己那一页的邻居对齐：
-     *  本页的会话数/消息数同样是全量的。 */
     comments: number;
     /** `YYYY-MM-DD HH:MM` 本地钟面；**null = 该用户既无会话/消息，也没发过讨论** */
     lastActiveAt: string | null;
@@ -146,7 +126,6 @@ export interface UserStatsReport {
     totalConversations: number;
     totalMessages: number;
     totalExecutions: number;
-    /** 全站讨论总量（20261003 补）。口径见 `UserActivityRow.comments` */
     totalComments: number;
     /** 活跃 = 最近一条会话/消息/讨论落在窗口内 */
     activeUsers7d: number;

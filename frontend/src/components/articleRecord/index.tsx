@@ -29,10 +29,6 @@ const ArticleRecord = ({isDark}: ArticleRecordProps) => {
     const navigate = useNavigate();
     const [newNotes,setNewNotes] = useState<NoteType[]>([]);
     const tagList = useSelector((state: {tags: any}) => state.tags.tag)
-    // 20261001 开源前准备：贡献图此前是**写死自己用户名的**外链
-    // （`ghchart.rshah.org/409ba5/BigLeopardCat`）—— 仓库一公开，别人部署的后台首页
-    // 就顶着一张你的贡献图，和 20260930 清掉的那几个写死的社媒按钮是同一类残留。
-    // 现在用户名从**站点设置**的 Github 链接里现取，没配就不渲染。
     const socialGithub = useSelector((state: {user: {social: SocialType}}) => state.user.social?.socialGithub)
     const githubUser = githubUserOf(socialGithub)
 
@@ -48,9 +44,6 @@ const ArticleRecord = ({isDark}: ArticleRecordProps) => {
     }, []);
 
     return <div className="articleRecord">
-        {/* 这个卡片**始终渲染**（哪怕没有图）：它是 `.articleRecord` 纵向布局里的定高一块
-            （19%），整个摘掉会让下面的文章列表少占一块、多出一段空白。没配 Github 时留一个
-            空框，与页脚备案图标那里是同一个取舍。 */}
         <div className="articleRecordImg">
             {githubUser && (
                 <img src={`https://ghchart.rshah.org/409ba5/${githubUser}`} alt={`${githubUser} 的 GitHub 贡献图`} />

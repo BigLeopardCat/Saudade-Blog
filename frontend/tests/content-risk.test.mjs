@@ -75,7 +75,7 @@ const authRs = read('src/routes/auth.rs');
 const profileRs = read('src/routes/profile.rs');
 const usersPage = read('frontend/src/pages/Dashboard/Users/index.tsx');
 const cmPage = read('frontend/src/pages/Dashboard/CommentManage/index.tsx');
-const ucPage = read('frontend/src/components/UserCenter/index.tsx');
+const ucPage = read('frontend/src/components/UserCenter/index.tsx') + read('frontend/src/components/UserCenter/useUserCenterModel.tsx');
 const profileType = read('frontend/src/interface/ProfileType.d.ts');
 const migration = read('scripts/migration/user_mute_20261002.sql');
 

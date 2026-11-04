@@ -27,15 +27,8 @@ async fn main() {
         max_attempts, window_secs, lockout_secs,
     );
 
-    // 内容风控的最小间隔刹车（20261002）：阈值不在启动期读——它住 `web_info`，
-    // 每个发帖请求现读现用，管理员改了不必重启（见 `risk::load_config`）。
-    // 这里只把计数器建出来。
     let post_limiter = saudade_blog::risk::PostRateLimiter::new();
 
-    // 错误上报的计数闸（20261015）：`/api/monitor/log` 匿名可写、每条都开-写-关一次日志
-    // 文件，此前只有"body ≤ 8KB"与"60 秒同 key 去重"两道——**去重只合并显示，不挡写入**，
-    // 于是同一个 IP 能无限刷真实落盘的行。阈值刻意比登录宽得多（正常访客一页报几十条
-    // 是常事，宁漏勿误伤真实报错），且可经环境变量调，误伤了不必改代码重部署。
     let report_max = env::var("MONITOR_REPORT_MAX")
         .ok().and_then(|v| v.parse().ok()).unwrap_or(120);
     let report_window_secs = env::var("MONITOR_REPORT_WINDOW_SECS")

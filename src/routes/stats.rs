@@ -1,31 +1,3 @@
-//! 只读统计端点（20260921）：给 agent 的「用户数据报表」供数据。
-//!
-//! `GET /api/protected/stats/users` —— 挂在 `protected_routes` 下，自动吃 `middleware::auth_guard`
-//! （唯一准入判据 = `authz::can_access_console`，即只有 admin 进得来；非 admin 403、
-//! 无/坏 token 401）。agent 侧以**发起人的身份**代调（`.agent_admin_base` + 局部 JWT），
-//! 所以"谁问的"就决定了能不能拿到——agent 自己不持有任何后台凭据。
-//!
-//! ## 口径（重要，读的人容易误读成"注册统计"）
-//!
-//! `user` 表**没有** `created_at` / `last_login` 列，所以这里给不出"注册趋势"或"上次登录"。
-//! 本端点给的是**活动口径**：一个人的活动 = `max(该用户 conversation.updated_at,
-//! 该用户 chat_history.created_at, 该用户 note_comment.created_at)`。三者都没有的用户，
-//! 活动时间恒为 NULL（报表侧显示"无活动"而不是拿注册时间冒充）。
-//!
-//! 第三路（文章讨论）是 20261003 加的，**它的过滤口径与另外两路刻意不同**：只排除软删
-//! （`is_deleted = 0`），不看 `approved`——这一页问的是"这个账号做过什么"，一条待审或
-//! 被驳回的评论同样是这个账号做过的事。文章报表里那个「讨论数」才是公开口径
-//! （`approved = 1`，与文章卡片上的数逐字同源，见 `note_stats::comments_of`）。
-//! **两个词同形不同义**：各自与自己那一页的邻居对齐（本页的会话数/消息数也是全量的）。
-//!
-//! ## 隐私
-//!
-//! 出参**不含** `user.password`，也不含 `user.username`：`username` 在改造前是
-//! **无盐单轮 SHA-256**（见 `utils::encrypt_password` 的注释），早期用户的 `nickname`
-//! 又"默认取账号"⇒ 可能整串就是那个哈希。所以展示名走 [`display_name`]：
-//! 像哈希的一律不显示，回落 `用户#<id>`。这条不是洁癖——报表文本会进 LLM 的 prompt、
-//! 落进对话 trace、并被 narrator 复述给用户看，任何一环沾上口令派生物都不好收场。
-
 use axum::{extract::State, Json};
 use sea_orm::{
     sea_query::Expr, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
@@ -63,9 +35,6 @@ pub struct UserStatsDto {
     pub total_messages: i64,
     #[serde(rename = "totalExecutions")]
     pub total_executions: i64,
-    /// 全站讨论总量（20261003 补）。**口径见 `comments_of`**：与 `totalMessages` 一样是
-    /// "全站总量"，只按评论自身过滤（未软删），不按文章当下可见性再筛一道
-    /// —— 这里问的是"站上发生了多少讨论"，不是"可见文章的讨论量"（后者是文章报表那一份）。
     #[serde(rename = "totalComments")]
     pub total_comments: i64,
     /// 活跃 = 最近一条会话/消息/讨论的时间落在窗口内
@@ -94,11 +63,6 @@ pub struct UserRowDto {
     pub role: String,
     pub conversations: i64,
     pub messages: i64,
-    /// 该用户发过的讨论数（20261003 补）。**口径与 `totalComments` 一致**：
-    /// 只按评论自身过滤（未软删），待审/驳回的也算——这一页问的是"这个账号做过什么"，
-    /// 一条待审评论同样是"他做了这件事"，而且风控视角下恰恰是这个数最该看得见。
-    /// ⚠️ 因此它**不等于**文章报表里那个「讨论数」（那边是 `approved = 1`，只算公开看得见的）。
-    /// 两个词同形不同义是刻意的：各自与自己那一页的邻居口径一致。
     pub comments: i64,
     /// `YYYY-MM-DD HH:MM` 本地钟面；NULL = 该用户既无会话、无消息，也没发过讨论
     #[serde(rename = "lastActiveAt")]
@@ -117,7 +81,6 @@ pub struct Activity {
     pub last_active: Option<chrono::NaiveDateTime>,
 }
 
-/// 64 位十六进制 = 改造前的 SHA-256 口令哈希形态（`encrypt_password` 无盐单轮）。
 fn looks_like_hash(s: &str) -> bool {
     s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
@@ -175,9 +138,6 @@ pub fn build_rows(
         b.messages
             .cmp(&a.messages)
             .then(b.conversations.cmp(&a.conversations))
-            // 讨论数只做**末位**tiebreaker（在 id 之前、在两个聊天口径之后）：
-            // 它是 20261003 才进来的第三个数，摆在前面会把既有报表的排序整个掀翻，
-            // 而两处"聊天量相同"的用户之间按讨论数排一下正是想要的那点增量。
             .then(b.comments.cmp(&a.comments))
             .then(a.id.cmp(&b.id))
     });
@@ -194,9 +154,6 @@ pub fn active_since(rows: &[Activity], cutoff: chrono::NaiveDateTime) -> i64 {
 /// 只列出"有活动"的人（见 `MAX_LISTED_USERS` 上方的注释）。
 pub fn listed(rows: &[Activity]) -> Vec<UserRowDto> {
     rows.iter()
-        // 第三种活动：**只发过讨论、没聊过天**的用户也在这一页有一席之地
-        // （20261003）。不收进来的话，他的那一行会在表里凭空消失——而"谁在文章底下
-        // 说话"恰恰是这一页要看的东西之一。
         .filter(|r| r.messages > 0 || r.conversations > 0 || r.comments > 0)
         .take(MAX_LISTED_USERS)
         .map(|r| UserRowDto {
@@ -232,16 +189,6 @@ pub async fn user_stats(State(state): State<Arc<AppState>>) -> Json<ApiResponse<
             return Json(ApiResponse::error("统计查询失败，请稍后再试"));
         }
     };
-    // **超级管理员不进报表**（20260926，与后台账号列表同一条要求：超管账号不露脸）。
-    // 在这里过滤是**一处生效**的：下面 `build_rows` 之后的逐人活动表、`role_counts`、
-    // `total_users`、7/30 天活跃、`listed_users` 全都从 `rows` 派生。
-    // 刻意**不动** `total_conversations` / `total_messages`：那是全站总量（按 user_id
-    // 聚合后再求和），不是"某个人那一行"——超管自己跟看板娘的对话当然是站内活动的一部分，
-    // 把它从总量里扣掉才是错的。
-    //
-    // 也刻意**不用** `authz::is_listable_role`（它多一条"已知角色"）：那张表是给
-    // 账号列表按角色分档用的，而这里是**普查**——角色是历史脏值的账号照样有会话，
-    // 把它从报表里抹掉会让逐人表对不上总量。两处的判据不一样是各自的要求不同。
     let users: Vec<(i32, String, String)> = users
         .into_iter()
         .filter(|(_, _, role)| !crate::authz::is_superadmin(role))
@@ -417,7 +364,6 @@ mod tests {
         assert_eq!(u3.last_active, None); // 三者皆无 ⇒ None，不编造时间
     }
 
-    /// 讨论是**第三路活动**（20261003）：它既进"最近活动"的时刻比较，也进明细的入选判据。
     #[test]
     fn 讨论算第三种活动() {
         let mut cmt = HashMap::new();

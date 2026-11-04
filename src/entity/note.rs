@@ -22,14 +22,8 @@ pub struct Model {
     pub carousel_zoom: Option<f64>,
     pub carousel_fit: Option<String>,
     pub is_top: Option<i32>, // 0 or 1
-    pub status: Option<String>, // 'published', etc
-    // 编辑修改稿链接（20260912c）：本行是「哪篇文章的修改稿」。
-    // NULL = 普通文章/独立草稿；Some(原文章 id) = 编辑那篇文章时自动保存落下的独立行，
-    // 原文章行在编辑期间完全不动（线上仍是旧内容），发布时用它覆盖原文章行并删掉本行。
+    pub status: Option<String>,
     pub draft_of: Option<i32>,
-    // 发布者 user.id（20261001）。NULL = **未记录**（本列之前发布的老文章，或发布者账号
-    // 已销）——展示端回退站点级署名（见 `routes/notes.rs::attach_authors`），不是"无作者"。
-    // 只在为空时写入：第一个把文章落库的人即作者，之后谁来编辑都不改署名。
     pub user_id: Option<i32>,
 
     pub created_at: DateTime,

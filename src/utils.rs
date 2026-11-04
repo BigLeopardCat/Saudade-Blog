@@ -28,23 +28,6 @@ impl<T> ApiResponse<T> {
     }
 }
 
-/// 分页版信封（20261014）：**全站信封的形状没变**（`code` / `message` / `data` 还是那三个，
-/// 由 `flatten` 直接嵌 [`ApiResponse`] —— 不是另抄一份，两处不会各漂各的），只多一个
-/// `total`。
-///
-/// ## 为什么需要一个新类型，而不是给 `ApiResponse` 加一个字段
-/// `ApiResponse` 被**每一个** handler 用着（还有七八处直接写结构体字面量的），加字段是一次
-/// 全站改动。而分页只有少数几页需要——`flatten` + 这个类型是把改动关在这次要用它的 handler 里。
-///
-/// ## 为什么是"多一个字段"而不是"把 data 换成 {rows, total}"
-/// **`data` 必须还是原来那个形状**：同一条接口往往既有分页调用方、也有老调用方
-/// （实例：`GET /api/protect/board`，前端列表要分页，agent 的三个工具与 golden 夹具
-/// 按**数组**读它）。把 `data` 从数组改成对象，那些调用方读出来的是 `undefined`/空——
-/// 不报错，只是永远没有数据。多出来的键对它们不可见，这才是能加的。
-///
-/// ## `total` 缺席时不出现在 JSON 里
-/// `skip_serializing_if` 让不分页的响应**逐字节**与从前相同（`total: null` 也是一处不同，
-/// 而老调用方里多的是按字段数/按位置看的）。
 #[derive(Serialize)]
 pub struct ApiResponsePage<T> {
     #[serde(flatten)]
@@ -68,11 +51,6 @@ impl<T> ApiResponsePage<T> {
     }
 }
 
-/// ⚠️ **旧格式密码哈希（SHA-256，无盐、单轮）**——20260917 起密码已改用
-/// [`hash_password`]（Argon2id）。这个函数现在只留给两类历史用途：
-///   ① 兼容旧用户名的哈希存储（`web_info` 把用户名也哈希过，登录的兼容分支按它查）；
-///   ② 校验 20260917 之前写入的密码哈希（见 [`verify_password`]）。
-/// **新代码不要再用它存密码。**
 pub fn encrypt_password(input: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(input);
@@ -136,19 +114,6 @@ pub fn needs_rehash(stored: &str) -> bool {
     !stored.starts_with("$argon2")
 }
 
-// ── 账号与口令的判据（20261017 收敛）────────────────────────────────────────
-//
-// **此前这套判据有三份，而且两份是错的。** 三处入口各写各的：
-//   · `profile::change_password`   `payload.new_password.chars().count() < 8`   ← 唯一写对的
-//   · `auth::reset_password`       `payload.new_password.len() < 8`
-//   · `temp_user::change_password` `payload.password.len() < 3`
-//
-// 错在 **`String::len()` 是字节数，不是字符数**：一个汉字 3 字节，于是「至少 8 位」
-// 在中文口令上实际是「至少 3 个字」，而「至少 3 位」是「**1 个汉字就够**」。
-// 用户心里的「位」是字符 ⇒ 判据一律走 `chars().count()`。
-//
-// 上限 128 不是 Argon2 的要求（它按内存参数计价，与输入长度无关），而是不让这个
-// 字段变成无界的带宽/内存入口；128 字符对任何真口令都够宽。
 pub const PASSWORD_MIN_CHARS: usize = 8;
 pub const PASSWORD_MAX_CHARS: usize = 128;
 
@@ -197,10 +162,6 @@ pub fn upload_dir() -> PathBuf {
     }
 }
 
-// ── 上传件只收图片（20261006，用户第 2 条：静态目录加固）───────────────────────
-// 这一组常量与三个纯函数是**入口校验**与**出图中间件**共用的同一把尺子，
-// 分家的表现是"写上拒收却从出图那条路漏出去"，所以只写一次（`routes/upload.rs`
-// 的入口、`routes/mod.rs` 的 `/api/protect/download/` 中间件都引这里）。
 
 /// 允许的图片后缀。**`svg` 故意不在里面**：SVG 能携带脚本，而
 /// `/api/protect/download/` 是**同源公开直出** —— 一张"图"就成了一条同源 XSS 的入口
@@ -232,12 +193,6 @@ pub fn is_image_path(path: &str) -> bool {
     image_ext_ok(path.rsplit('/').next().unwrap_or(path))
 }
 
-/// 按**字节头**认图片类型。客户端给的 content-type 与文件名都是客户端说了算的，
-/// 不参与判定。认不出即拒绝（SVG/HTML 都在"认不出"这一侧）。
-///
-/// 20261006 从 `routes/profile.rs` 搬到这里（判据一字未改，只补了 bmp/ico/avif 三种
-/// 认出方式），调用方从"头像一处"变成"头像 + 图库上传"两处。**"认得出"不等于"放行"**：
-/// 放行那一步另有后缀白名单（[`image_ext_ok`]）。
 pub fn sniff_image_ext(data: &[u8]) -> Option<&'static str> {
     if data.len() >= 3 && data[0..3] == [0xFF, 0xD8, 0xFF] {
         return Some("jpg");
@@ -265,19 +220,6 @@ pub fn sniff_image_ext(data: &[u8]) -> Option<&'static str> {
     None
 }
 
-/// 本站地址，形如 `https://example.com`，**无尾斜杠**（调用方直接 `{site}/article/1` 拼）。
-///
-/// 20261001 开源前准备：此前两处各自写死 `https://saudade.site` ——
-/// sitemap 的 `<loc>` 前缀（[`crate::routes::sitemap`]）与 CORS 默认白名单
-/// （[`crate::routes::create_router`]）。别人部署时一个会把爬虫指向别人的站、
-/// 一个会让自己的前端跨域被拒。现在统一读 `SITE_URL`。
-///
-/// **缺省值是中性占位 `http://localhost:3000`，不是任何真实域名**：没配时宁可产出一个
-/// 明显没配好的地址（爬虫会忽略它），也不要静默指向项目作者的站点——那种错很难被发现，
-/// 而它会把别人的文章挂到作者域名下。线上在 `.env` 里显式设 `SITE_URL`。
-///
-/// 不缓存：调用点只有"进程启动一次"和"每次抓 sitemap"两种，一次 getenv 的开销可忽略，
-/// 而缓存（`OnceLock`）会让测试里改环境变量失效。
 pub fn site_url() -> String {
     env::var("SITE_URL")
         .unwrap_or_else(|_| "http://localhost:3000".to_string())
@@ -332,9 +274,6 @@ mod tests {
         assert!(!image_ext_ok(""), "空串");
     }
 
-    /// 口令判据的边界，**重点是中文那几条**——三处入口此前各写各的，错的两处都是
-    /// 把 `len()`（字节）当成了字符数，而中文一个字 3 字节 ⇒ 判据在中文口令上
-    /// 悄悄放宽到 1/3。这几条断言就是钉住"按字符算"。
     #[test]
     fn password_reject_counts_chars_not_bytes() {
         // 英文：8 个 ASCII 恰好合格

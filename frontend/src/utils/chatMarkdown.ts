@@ -67,26 +67,11 @@ export const renderBlogMarkdown = (text: string): string => {
   try {
     return String(processor.processSync(text))
   } catch (e) {
-    // 管线挂了要**降级成纯文本**，不能把原文原样交回去（20261015）：
-    // 产物有两个消费点都是 `dangerouslySetInnerHTML`（CommentSection 与看板娘对话框），
-    // 交回原文等于"因为渲染失败，所以这次不消毒"——**失败反倒放宽**，方向正好是反的。
-    // 触发条件是有的（实测：`<div>` 深嵌套会让 rehype-raw 的树遍历爆栈，但门槛
-    // **不单调**——400/2000/3000 层都不抛、1600/4000/6000 层抛，取值见
-    // `frontend/tests/comment-render.test.mjs` 的 ①b 段；`String()` 顺带兜住非字符串入参）。
-    // 现状够不到真实攻击面——评论正文两侧都卡 300 字（`MAX_COMMENT_CHARS`），
-    // 这个长度内没找到能触发爆栈的形状（20261015 逐形状实测）；所以这是纵深防御里
-    // 最便宜的一条：**错误分支的默认动作也是"安全的那个"**。
     console.error('[chatMarkdown] render failed:', e)
     return escapeHtmlText(String(text))
   }
 }
 
-// ── 代码块标签栏 + 复制按钮（20260914）──
-// 文章页 bytemd <Viewer> 与对话框都只渲染 markdown（高亮插件只往 token 上套 span），
-// 没有语言标签栏与复制按钮（bytemd 的工具栏只存在于 Editor）——渲染后统一装饰：
-// 读 <code class="language-x"> 显示语言名，最右侧挂复制按钮（复制原始代码文本）。
-// 文章页在 ReadArticle 的 effect 里对 #content 调用，对话框走 __chatEnhance
-// （applyMsg 每次 innerHTML 渲染后必调），两条路径共用本函数。
 const LANG_LABELS: Record<string, string> = {
   js: 'JavaScript', javascript: 'JavaScript', mjs: 'JavaScript', jsx: 'JSX',
   ts: 'TypeScript', typescript: 'TypeScript', tsx: 'TSX',
@@ -174,25 +159,6 @@ export const decorateCodeBlocks = (root: HTMLElement | null): void => {
   })
 }
 
-/**
- * 渲染后装饰：给正文里出现的**色值（#rrggbb）**加一个色块预览（20260921 颜色预览）。
- *
- * 「agent 在决定颜色时回复颜色描述和颜色编码以及对应色块预览」——文字（色名）
- * 与编码（#eb2f96）由 narrator 写在正文里，色块由这里渲染：**不让模型自己画符号**
- * （模型画不出色块，只会写 🟥 或 ![img]，两边都不可控）。
- *
- * 三条约束：
- *  ① 认**任意 6 位色值**（20260921 放宽：此前只认站内 8 色板内的色值，理由是"防
- *     正文里随手一个 #fff 也冒色块"）。实测那个担心不成立——真正的噪声源是色值本身
- *     出现在**代码块/链接**里，已由约束②挡住；而白名单的代价是 agent 答"配色建议"
- *     这类**站外**色值时色块全都不渲染（用户实测反馈"色板没出来"）。**认得出就画**
- *     比"只画我们自己的色"更贴合"编码旁边有色块"这一用途。站内 8 色板的**单一事实源**
- *     仍是 `chatColorPalette`（与 `agent/adminops.py::NEW_TAG_COLORS`、`NoteTagSelect`
- *     同源）——它管的是 agent 建标签能用哪些色，**不再兼作这里的前端白名单**；
- *  ② 跳过 `pre`/`code`/`a` 内部的文本节点：代码块里的 #1677ff 不该被装饰；
- *  ③ 幂等：色块与编码一起包进 `.chat-swatch-wrap`，再调用时整段被跳过
- *     （装饰后的编码文本仍是文本，不包起来第二次就会再加一个色块）。
- */
 export const chatColorPalette = ['#1677ff', '#52c41a', '#fa8c16', '#eb2f96',
                                  '#722ed1', '#13c2c2', '#f5222d', '#a0d911'] as const
 
@@ -247,7 +213,6 @@ export const enhanceChatContent = (root: HTMLElement): void => {
   try {
     decorateCodeBlocks(root)
   } catch { /* 装饰失败不影响正文 */ }
-  // 色块预览（20260921）：站内色板色值 → 色块 + 编码并列
   try {
     decorateColorSwatches(root)
   } catch { /* 装饰失败不影响正文 */ }
@@ -284,8 +249,6 @@ declare global {
   interface Window {
     __chatRenderMarkdown?: (text: string) => string
     __chatEnhance?: (root: HTMLElement) => void
-    /** 色块装饰单独暴露（20260921）：chat-render.js 的迷你渲染器路径没有
-     *  __chatEnhance 时也能画色块（该函数幂等，重复调用安全） */
     __chatDecorateColors?: (root: HTMLElement) => void
   }
 }

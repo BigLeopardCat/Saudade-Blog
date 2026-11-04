@@ -38,14 +38,6 @@ const AnnouncementPage = () => {
         }
     }
 
-    /* 挂载时拉一次；**这个标签页重新可见 / 窗口重新获得焦点时再拉一次**（20260925）。
-       —— 路由切进本页 = 重新挂载，所以"从别的页进来"这条已经由上面那句覆盖；漏掉的是
-       **本页一直开着、agent 在别处发了公告**：名单就停在旧的那一版上。
-       —— 为什么不订阅 `agent-turn-done`：**不是**收不到（20260926 更正——后台自己挂了一份
-       看板娘，见 `pages/Dashboard/index.tsx` 末尾那段注释，"收不到"是当时对它的误读），
-       而是这个页面要的是"**最新名单**"：用户在别处（agent 对话/另一个标签页）发过公告后回到本页，
-       该重拉的时刻就是"回来看"这一刻；事件在别处到不了这一页的意图上。
-       —— 两个信号切回来时会一起到（visibilitychange + focus），所以带去抖。 */
     useEffect(() => {
         void load()
         const refresh = () => {
@@ -86,13 +78,6 @@ const AnnouncementPage = () => {
             }, (reason) => { message.error(reason) })
     }
 
-    /* ⚠️ **窄屏裁列（20261006 用户第 6 条）**：`ID` 与 `时间` 挂 `responsive: ['lg']`
-       （视口 < `screenLG`，本仓在 `WASHI_THEME.common` 里抬到 1024），窄屏只留
-       标题 / 内容 / 操作。这两列是本页唯一写死 px 的（60 + 180），而 `内容` 带
-       `ellipsis` ⇒ 表格是 `table-layout: fixed`、定宽列先把自己拿满 —— 390 屏上不裁列
-       的话，两条正文列一共只剩 26px（量于无头 Chromium），等于什么都看不见。
-       这里不需要 `useBreakpoint` 收窄：裁掉那两列后剩下的全是"没写宽"的列，
-       固定布局会把富余摊给它们，不会溢出。 */
     const columns: ColumnsType<AnnouncementRow> = [
         { title: 'ID', dataIndex: 'id', width: 60, responsive: ['lg'] },
         { title: '标题', dataIndex: 'title' },

@@ -1,18 +1,6 @@
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
-/// 会话级任务状态（20260927）：agent 缺的那个「**要做完什么**」的结构化载体。
-/// 迁移 `scripts/migration/agent_task_20260927.sql`（建表 + flag），三端链路、
-/// 六态状态机、与 `pending_action` 分表的理由见该文件头注（改一处必须同步 agent 侧
-/// `agent/tasks.py` 与 `server.py` 的 `__TASK__` 帧）。
-///
-/// 与 `pending_action` 的关系是一句话能说清的：那张表装**一个等你点头的动作**
-/// （分钟级、点头即关），这张表装**一件还没做完的事**（跨多轮、缺参时挂着等）。
-/// 与 `execution_log` 的关系同样是一句话：那张答"**做了什么**"（checker 回执认定），
-/// 这张答"**还剩什么**"（planner 声明，由后续回执证实或证伪）。
-///
-/// 为什么"意图"可以由 agent 自报而"事实"不行：一件事还差哪几步只有 planner 的决策里
-/// 有，没有任何下游能推导出来；而"是否真的做了"由 checker 回执认定，模型说了不算。
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Deserialize, Serialize)]
 #[sea_orm(table_name = "agent_task")]
 pub struct Model {

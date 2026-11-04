@@ -17,28 +17,6 @@
 
 ---
 
-## 刚做完（20261006）
-
-- CI 在 PR 上也运行 `check`。此前 `deploy.yml` 只挂 `push: [cn_sora_blog]` 与手动触发，
-  PR 上不运行任何检查，因此 PR 页面没有红灯只说明没有跑过。现已加入 `pull_request` 触发：
-  `check`（提交信息闸门、`cargo test` + `mysql:8.0` 服务容器、`tsc --noEmit`、`npm test`、eslint）
-  不需要任何 secret，fork 来的 PR 也能得到完整反馈；部署那一半需要 R2 凭据与 SSH 私钥，
-  在 PR 上恒不触发（`check-changes` 的 `deploy` 输出在 PR 上恒为 false，
-  `build-and-deploy` 的每一步本就带 `if` 条件，因此自然空转）。
-- 删除 `/christmas` 死路由。它把一个静态目录挂在本机并不存在的绝对路径上，
-  而要服务的页面（`static/christmas/`，一个带音乐与雪花脚本的圣诞主题静态页）
-  已于 20260418 从仓库删除，全仓零引用。页面本体仍可从 git 历史取回（删除它那次提交的上一版）。
-- 沙箱套件不再在 `/tmp` 中累积目录（搁置表中那条的触发信号已出现：`/tmp` 因它涨到需要人工清理）。
-  `frontend/tests/` 下的套件用 `mkdtemp` 建临时目录，此前跑完基本不删，
-  两侧合计在 `/tmp` 积到 4.5G（占整个 `/tmp` 的八成；最大一族 141 个目录 / 2.5G）。
-  现在两个运行器（`scripts/nightly_sandboxes.sh` 与 `frontend/tests/run-suites.mjs`）为每个套件
-  指定专属 `TMPDIR`：通过则删除，失败则保留并把路径写进日志（失败现场是排障材料）。
-  其余情况（手跑单个套件、被 kill 的轮次）由 `scripts/prune_sandbox_tmp.py` 在夜跑末尾清理，
-  其前缀从套件源码推导，不是手写名单（手写版本遗漏六族、700M 以上，且遗漏不会报错）。
-  未修改 61 个套件文件的源码；残余是手跑那次仍落在 `/tmp`，等当晚的清扫。
-
----
-
 ## 待办
 
 | 待办的事 | 现在什么状态 | 为什么还没做 |

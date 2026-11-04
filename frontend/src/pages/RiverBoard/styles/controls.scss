@@ -1,0 +1,185 @@
+.rz-root {
+.rz-ui {
+    position: absolute;
+    inset: 0;
+    z-index: 4;
+    pointer-events: none;
+
+    .rz-title {
+      position: absolute;
+      top: 28px;
+      left: 34px;
+      font-size: 20px;
+      letter-spacing: 0.42em;
+      color: rgba(242, 230, 205, 0.55);
+      text-shadow: 0 2px 14px rgba(255, 190, 110, 0.18);
+      margin: 0;
+
+      i {
+        display: inline-block;
+        width: 7px;
+        height: 7px;
+        margin-right: 12px;
+        border-radius: 50%;
+        background: radial-gradient(circle, #ffe9b8 0%, rgba(255, 200, 120, 0.35) 60%, transparent 100%);
+        vertical-align: 3px;
+        box-shadow: 0 0 14px rgba(255, 205, 130, 0.75);
+      }
+
+      /* 对联：位于"河灯寄语"标题正下方、相对标题水平居中；
+         从右到左古文顺序（上联"醉后"在右） */
+      .rz-couplet {
+        position: absolute;
+        left: 50%;
+        top: calc(100% + 10px);
+        transform: translateX(-50%);
+        display: flex;
+        flex-direction: row-reverse;
+        gap: 18px;
+        white-space: nowrap;
+
+        > span {
+          writing-mode: vertical-rl;
+          text-orientation: upright;
+          font-size: 15px;
+          letter-spacing: 0.24em;
+          color: rgba(242, 230, 205, 0.72);
+          text-shadow: 0 1px 12px rgba(255, 190, 110, 0.24);
+
+          b {
+            font-weight: normal;
+            font-size: 16px;
+            color: rgba(255, 205, 140, 0.92);
+          }
+        }
+      }
+    }
+
+    .rz-hint {
+      position: absolute;
+      bottom: 32px;
+      left: 50%;
+      transform: translateX(-50%);
+      margin: 0;
+      font-size: 13px;
+      letter-spacing: 0.36em;
+      color: rgba(240, 226, 200, 0.38);
+      white-space: nowrap;
+      animation: rz-hint-out 1.4s ease 8s forwards;
+    }
+
+    /* 左下角留言入口：此心为灯 */
+    .rz-wish-btn {
+      position: absolute;
+      left: 34px;
+      bottom: 32px;
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      padding: 10px 20px;
+      background: rgba(14, 12, 26, 0.6);
+      border: 1px solid rgba(255, 205, 140, 0.28);
+      border-radius: 999px;
+      cursor: pointer;
+      pointer-events: auto;
+      color: rgba(244, 228, 200, 0.85);
+      font-family: inherit;
+      font-size: 14px;
+      letter-spacing: 0.3em;
+      text-indent: 0.3em;
+      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+      transition: color 0.25s ease, border-color 0.25s ease, background 0.25s ease;
+
+      i {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: radial-gradient(circle, #ffe9b8 0%, rgba(255, 200, 120, 0.4) 60%, transparent 100%);
+        box-shadow: 0 0 12px rgba(255, 205, 130, 0.8);
+      }
+
+      &:hover,
+      &:focus-visible {
+        color: #ffe9c4;
+        border-color: rgba(255, 205, 140, 0.5);
+        background: rgba(24, 20, 40, 0.72);
+        outline: none;
+      }
+    }
+
+    /* 左下角返回首页：与「此心为灯」同一套样式，只是位置在灯影集之上 */
+    .rz-home-btn {
+      position: absolute;
+      left: 34px;
+      bottom: 200px;
+      display: inline-flex;
+      align-items: center;
+      padding: 10px 20px;
+      background: rgba(14, 12, 26, 0.6);
+      border: 1px solid rgba(255, 205, 140, 0.28);
+      border-radius: 999px;
+      cursor: pointer;
+      pointer-events: auto;
+      color: rgba(244, 228, 200, 0.85);
+      font-family: inherit;
+      font-size: 14px;
+      letter-spacing: 0.3em;
+      text-indent: 0.3em;
+      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+      transition: color 0.25s ease, border-color 0.25s ease, background 0.25s ease;
+
+      &:hover,
+      &:focus-visible {
+        color: #ffe9c4;
+        border-color: rgba(255, 205, 140, 0.5);
+        background: rgba(24, 20, 40, 0.72);
+        outline: none;
+      }
+    }
+
+    /* 左下角灯影集入口：灯架图标 + 竖排文字 */
+    .rz-album-btn {
+      position: absolute;
+      left: 34px;
+      bottom: 116px;
+      display: inline-flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      padding: 10px 8px;
+      background: rgba(14, 12, 26, 0.55);
+      border: 1px solid rgba(255, 205, 140, 0.26);
+      border-radius: 8px;
+      cursor: pointer;
+      pointer-events: auto;
+      color: rgba(244, 228, 200, 0.8);
+      font-family: inherit;
+      font-size: 12px;
+      letter-spacing: 0.24em;
+      text-indent: 0.24em;
+      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+      transition: color 0.25s ease, border-color 0.25s ease, background 0.25s ease;
+
+      svg {
+        display: block;
+      }
+
+      &:hover,
+      &:focus-visible {
+        color: #ffe9c4;
+        border-color: rgba(255, 205, 140, 0.5);
+        background: rgba(24, 20, 40, 0.72);
+        outline: none;
+      }
+    }
+  }
+
+  /* ---------------- 留言板公告（未登录门禁） ---------------- */
+
+}

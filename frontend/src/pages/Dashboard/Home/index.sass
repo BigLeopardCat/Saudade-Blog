@@ -15,9 +15,6 @@
 
   .right
     display: flex
-    // 20260924：原来是 space-between —— 三段（每日箴言 / 日历 / 待办）靠它撑满整栏。
-    // 箴言卡撤掉后只剩两段，space-between 会把日历顶到最上、待办压到最下、中间空出
-    // 近 300px（实测）。改成顶对齐 + 固定间距，日历就自然上移；纵向余量交给待办卡。
     justify-content: flex-start
     flex-direction: column
     gap: 20px
@@ -27,8 +24,6 @@
     @media only screen and (max-width: 1530px)
       display: none
 
-  // 日历的外壳。原先是 tsx 里的 wrapperStyle 内联对象——
-  // 内联样式夜间模式覆盖不到（`.dark &` 永远赢不了），静态样式一律落到这里。
   .calWrap
     flex: 0 0 auto
     width: 100%
@@ -40,8 +35,6 @@
     .ant-picker-calendar
       box-shadow: 0 1px 22px -8px rgba(26, 26, 26, .6)
 
-    // 日历头部（20260924 二轮）：‹ 年 月 › 在左、「今天」在右。
-    // 竖向内边距从 8px 收到 4px —— 这行本身不装信息，省下来的都给待办。
     .calHead
       padding: 4px 6px 6px
       display: flex
@@ -113,26 +106,6 @@
       display: flex
       flex-direction: row
       align-items: center
-      // 20260930 二轮：**头像不许被签名挤扁**（用户报「dashboard 头像被挤压扁了」）。
-      //
-      // `.about_me` 是 flex 行，两侧默认 `flex-shrink: 1`；而 `.typed`（Typed.js 的打字机
-      // 容器）的 `flex-basis` 是 auto ⇒ **它的基准尺寸 = 签名不换行时的整行宽度**。个性签名
-      // 本来就是一句话，于是一超出容器，亏空就按基准尺寸加权分摊到两个子项上——头像跟着被
-      // 按比例压窄。沙箱实测（真 Dashboard 壳 + 真 CSS，签名 30 字）：
-      //   1600px 视口 → `.about_me .ant-avatar` 量到 **60×130**（`.ant-avatar` 是 130×130）
-      //   1280px 视口 → 57×130（外层 `.about_logo` 的 scale(1.4) 放大后显示成 80×182）
-      // 即盒子变成一个竖着的窄椭圆，头像被裁成一条竖缝——就是用户看到的那张"扁"脸。
-      //
-      // 修法两头各一句，缺一不可：
-      //   · 头像 `flex: 0 0 auto` —— 尺寸不再参与收缩（宽高都由 antd 的 size={130} 定）；
-      //   · 签名 `min-width: 0` —— 默认的 `min-width: auto` 让它拒绝缩到 min-content 以下，
-      //     这正是"压力被转嫁给头像"的机制；给了 0 它才会自己换行。
-      // 这一对**不是**保险起见多写的：只写头像那一句，签名仍会把容器撑宽（溢出 40px+）。
-      //
-      // 顺带删掉原来的 `img { height: 8rem; width: 8rem }`（含 ≤1500px 的 5rem 档）：
-      // 生产里它一条都不生效——`Dashboard/index.css` 的 `.ant-avatar > img` 带 !important，
-      // 宽高恒是 100%/100%；留着它只是"头像到底多大"的**第二个答案**（128 vs 130），
-      // 而沙箱不链 dash.css 时量到的就是那个 128。尺寸唯一来源 = JSX 上的 `size={130}`。
       .animeAvatar
         flex: 0 0 auto
         position: relative
@@ -185,7 +158,6 @@
         @media only screen and (max-width: 768px)
           display: none
 
-    // .p_hidden（<=1530px 隐藏表盘的响应式规则）随三个假表盘一起删除（20260923）。
 
   .ant-picker-calendar-mini
     border-radius: 10px
@@ -195,15 +167,6 @@
       // display: none
       padding: 0 10px 10px 10px
 
-    // 紧凑格子（20260924 二轮）。
-    //
-    // 上一轮把待办文字塞进格子，于是格子被撑到 min-height:46px（整块日历 383px、
-    // 一屏六行全是空格子）；更要命的是 antd 的「今天」标记是挂在**格子**上的
-    // 1px 描边环（`.ant-picker-cell-inner::before`，inset:0）——格子一大，那圈环
-    // 就跟着放大成 57×58 的方框，日期数字反而缩在左上角，看着就像"标记跑了"。
-    //
-    // 现在格子回到 26px：数字居中在一枚小圆里（环贴着它 = 又是个圆），
-    // 待办改成圆点画在格子下沿（下面 `.calDots`）。一天最多三个点。
     .ant-picker-cell
       height: 32px
       padding: 0
@@ -312,10 +275,6 @@
     min-height: 0
     margin: 0
     width: 100%
-    // 20260924 三轮：左右内边距收到 0 —— 待办行与上面的日历网格共用同一条左右边。
-    // 原先「卡片 10px + 卡体 14px」让待办从比日历窄 25px 的地方起笔（实测：日历网格
-    // 1168.3，待办行 1193.3），两块内容看着各写各的。纵向那 10px 留着，卡片阴影才
-    // 有呼吸的余地；只有左右要跟日历对齐。
     padding: 10px 0
     font-weight: 600
     // 卡片自己不再滚——滚动交给下面的 .todoBody，这样「新建日程」能钉在卡片底部
@@ -325,11 +284,6 @@
       display: flex
       flex-direction: column
       height: 100%
-      // 20260926：上边距 12px → 0。卡片的 10px 纵向内边距（给阴影留的那点呼吸）之上
-      // 原本还叠着这一层 12px 和标题自己的 5px ⇒ 标题输入框离卡片顶沿 28px（文字 ~37px），
-      // 而上面那张日历卡的内容离它自己的顶沿只有 4px（文字 ~12px），两张卡的内容看着
-      // 各写各的。现在标题框落在 11px（文字 ~20px）、整份待办列表跟着上提 ~19px
-      // （实测第一条待办 96.6px → 77.6px；这组数字由沙箱锁着，别只靠眼睛）。
       padding: 0 0 12px
 
     .todoTitle
@@ -351,12 +305,6 @@
       overflow-y: auto
       padding: 0 6px 0 0
 
-      // 顶上那一行"有几条**留言**等你人工审核"（20260924 三轮）。它不是待办：不进 todos、
-      // 不落库、不能拖不能删，点它就是跳去留言管理（`?tab=review`）。
-      // 用日历头部那颗"今天"按钮的同一个紫，右栏里两处强调色是同一个人。
-      // ⚠️ 这条数的是**河灯留言**不是文章评论（20261019 更正：原注释写的是"评论"，
-      // 而后端一直是 `board_pending_count` 数 `talk` 行）；文章评论是下面第三行
-      // `.todo-comments`，指向另一个页签。
       .todo-review
         display: flex
         align-items: center
@@ -383,11 +331,6 @@
           margin-left: auto
           opacity: .55
 
-      // 第二行非待办提示：等处理的额度重置申请（20260929）。**与 `.todo-review` 同形
-      // 但不同色**——两行同时出现时必须一眼看出是两件事（紫色那行是评论裁决、金色这行
-      // 是额度申请），点去的是后台两个不同的页签。金色取的还是本站"夜/河灯"那套
-      // rgba(240,196,110,·) 家族（与个人中心额度条、`.ucPrimaryBtn` 同源）。
-      // ⚠️ 别把两行合成一个选择器：`.todo-review` 在这一页里必须恒为一条（沙箱锁着）。
       .todo-quota
         display: flex
         align-items: center
@@ -414,12 +357,6 @@
           margin-left: auto
           opacity: .55
 
-      // 第三行非待办提示：等人工裁决的**文章评论**（20261019）。与上面两行同形但**第三种
-      // 颜色**——三行可能同时出现，各自指向后台三个不同的页签（留言 `?tab=review`、
-      // 额度 `?tab=quota`、评论 `?tab=comment`），同色会让人以为是同一件事的两种说法。
-      // 这一行取的是本站链接蓝那一族（与文章标题链接、`.todo-*` 之外的既有蓝同源）。
-      // ⚠️ 同样**不许与上面两个选择器合并**：`.todo-review` 在这一页里必须恒为一条
-      // （沙箱 `dashboard-home.test.py` 锁着），三个类名各自数各自的。
       .todo-comments
         display: flex
         align-items: center
@@ -488,10 +425,6 @@
           gap: 4px
           border-radius: 6px
           transition: .2s
-          // 20260924 三轮：行高从 22px（跟着里面的勾选框走）放到 30px。
-          // 待办是这一栏真正要读的东西，密到 22px 一行时几行挤在一起分不清谁是谁；
-          // 高度给够之后每行有独立的落点，勾选框/文字/删除按钮也不再贴在一起。
-          // 用 min-height 而不是 height：里面是输入框，行高得跟着内容涨。
           min-height: 30px
           &.dragging
             opacity: .4
@@ -507,10 +440,6 @@
             &:hover
               opacity: 1
 
-          // 待办文字（20261007 起是**多行**的 `Input.TextArea`，见 index.tsx 那段注释）。
-          // `flex: 1` + `min-width: 0` 与换之前同义：文字自己吃掉余下的宽度。多出来的一条是
-          // `resize: none` —— 这是个自增高的 textarea，右下角那枚拖拽手柄既没用（高度由内容
-          // 决定），又会正好压在后面那颗删除图标上。
           .todo-text
             flex: 1
             min-width: 0
@@ -522,9 +451,6 @@
               text-decoration: line-through
               color: gray
 
-          // 每行自己的排期按钮（20260924 三轮）。替掉了原来那个只在逾期组里
-          // 出现的只读红字 .todo-date —— 日期从此是可改的：没排期时这里只露一枚
-          // 很淡的日历图标，有日期时写 M/D，点开是小月历。
           .todo-due
             flex: 0 0 auto
             width: 48px
@@ -577,7 +503,6 @@
         background: linear-gradient(to bottom right, #4d7fff 0%, #1a56ff 100%) !important
 
 /* Scrollbar Fix Overrides */
-/* 20260924：滚动容器由卡片本身换成 .todoBody（新增按钮改为钉在卡片底部） */
 .home .cardInfo .todoBody::-webkit-scrollbar
   width: 5px
   height: 10px
@@ -590,19 +515,12 @@
   &:hover
     background: linear-gradient(to bottom right, #4d7fff 0%, #1a56ff 100%) !important
 
-/* 欢迎卡头像的浮动关键帧（20260930）。`animeAura` 是侧栏与这里**共用**的，
-   定义在 `Dashboard/index.css` 末尾——同一份 CSS 一起进 dashboard bundle，
-   别在这儿再定义一遍（两份同名 keyframes：后定义的那份赢，改一处等于没改）。 */
 @keyframes animeFloat
   0%, 100%
     transform: translateY(0)
   50%
     transform: translateY(-5px)
 
-/* 这两块原先的宽度/高度/`display` 挂在 JSX 的**内联** style 上（20261006 搬进来）。
-   照原值抄，桌面上逐像素不变：`.left`(25%) 是头像+签名那一栏，`.center`(60%) 是日历。
-   ⚠️ 必须排在下面那条窄屏媒体**之前** —— 本仓 `sass-media-shadow` 套件判的就是
-   "媒体档声明的属性被后面的普通规则压死"，顺序反了会直接判红。 */
 .home .left
   width: 25%
   height: 100%
@@ -613,13 +531,6 @@
   width: 60%
   height: 100%
 
-/* ⚠️ **窄屏（20261006 用户第 6 条）**：`.left`(25%) 与 `.center`(60%) 的宽度原本挂在**内联**
-   style 上（本轮搬到这里，见 `index.tsx` 那两段注释）：内联压过普通声明，媒体档够不着。
-   两处一起说清：
-     · `<1024`：`flex-direction: column`，两块各吃满一行。此前 768~1024 之间两块并排，
-       日历那一栏只剩 ~60% 还要塞一整个月历。
-     · `<768` 的 `.center` 本来就 `display:none`（见上面那条 768 媒体），只剩 `.left` 独占一行 ——
-       它按 25% 算的话（97px @390）头像和签名挤成一团，正是用户报的"页面被截断"的一处。 */
 @media only screen and (max-width: 1024px)
   .home
     flex-direction: column

@@ -1,12 +1,3 @@
-/**
- * 前端错误上报的**纯逻辑内核**（20261004）。
- *
- * 与 `report.ts` 的分工：这里只放不碰 DOM / 网络的纯函数（能被打包后直接单测，
- * 见 `tests/monitor-report.test.mjs`），副作用（监听器、fetch、WebGL 探针）全在
- * `report.ts`。日志侧的字段名与截断上限**必须**与 Rust 那头对齐：
- * `src/routes/monitor.rs`（`size 上限 8KB ⇒ 这里先截，免得整条被 413 掉）。
- */
-
 /** 上报端点的相对路径（与后端 `src/routes/monitor.rs` 的路由、`boot.js` 的 REPORT_URL 同源）。 */
 export const REPORT_URL = '/api/monitor/log'
 

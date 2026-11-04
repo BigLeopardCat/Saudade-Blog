@@ -64,14 +64,6 @@ const ArticleAnalytics = () => {
             path: '/dashboard/notes/alltags'
         }
     ]
-    // 颜色改用 CSS 变量传递、由 .akCard/.akBadge 的类规则落地，**不再写进内联 style**：
-    // 内联样式特异性最高，颜色一旦写死在那里，`.dark &` 变体就永远赢不了它。
-    // 这正是 20260923 后台接上 antd 深色 token 时踩的坑——卡里 Statistic 的文字
-    // 转成了白色，白字压在写死的浅色卡面上只有 1.26:1（见
-    // frontend/tests/dark-mode-contrast.test.py 的实测），浅底浅字等同看不见。
-    // 布局（尺寸/间距/对齐）**一律不进内联 style**，全在 index.sass 里——那是 20260930
-    // 这一轮要修的东西本身：原先 bodyStyle 内联了 padding/height/flex，sass 那边再用
-    // 百分比高度去凑，两边谁也说不清最终高度是谁定的。
     const akVars = (item: {bgColor: string, bgColorDark: string, badgeColor: string}) => ({
         "--ak-bg": item.bgColor,
         "--ak-bg-dark": item.bgColorDark,

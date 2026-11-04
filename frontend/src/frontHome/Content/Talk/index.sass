@@ -1,23 +1,11 @@
 .TalkContainer
   min-height: calc(100vh - 172.4px)
   width: 100%
-  // 20261014：整页底改走 `--washi-page-bg`（日 = 主题纸、夜 = 墨紫近黑，见 src/index.css）。
-  // 原来是 `--container-background-color`（半透明白叠在浅灰上 ⇒ 白天近白、夜间平灰）。
   background: var(--washi-page-bg)
   display: flex
   flex-direction: column
   align-items: center
   padding-top: 100px
-  // 日期链条上的日期（20260924 三轮：年份挪到月日**前面**，两者同一行——
-  // 原来是年份小字一行压在月.日大字上面，占了两行的高度）。
-  // 一行之后仍然是"中线对齐 + 自身上移一半"：竖线上的圆点（.talk:after）就在
-  // 50% 处，这样日期块与圆点、卡片中线三者对齐。
-  // baseline 对齐（不是 center）：小字年份和大字月日坐在同一条基线上，
-  // 才像"2026 09.24"一句话，而不是两个各自居中的字块。
-  // 靠 `right` 而不是 `left` 定位（20260924 三轮实测）：一行之后内容比原来宽
-  // （多出年份那一段），若仍钉住左缘就向右长、月日会压到竖线与圆点上
-  // （实测右缘 423 vs 竖线 391）。改成钉住**右缘**：日期贴在竖线左侧、年份往左长，
-  // 间距不再随内容宽度变化（同时不再写死 -120px 这个跟文案长度绑定的魔数）。
   .talkTime
     position: absolute
     right: calc(100% + 55px)
@@ -27,16 +15,9 @@
     flex-direction: row
     align-items: baseline
     gap: 4px
-    // 注：这个块的包含块是外层 .article（含卡片的 marginTop/marginBottom），不是卡片本身，
-    // 所以 `top:50%` 落在卡片中线上方约 8px（h3 自带的 1em 默认外边距又往下压回一部分）。
-    // 已知的旧偏差，本轮不动——要正对圆点得把日期挂进卡片或改 .article 的盒模型。
     line-height: 1.15
     color: var(--font-p-color)
     .talkTime-year
-      // 20260924 四轮：12px 主人嫌小（同屏渲染 12/14/16/18 四档对比后定的 16px）。
-      // 16 与月日 20 仍是主次关系（比 18 那种"两个数字一样大、读成平铺的一串"清楚），
-      // 同时是这一档里最省眼力的；不透明度一起从 .65 提到 .8——12px 时压那么淡还有
-      // "退到后面"的作用，字号上来之后再压就只是发灰了。
       font-size: 16px
       letter-spacing: .04em
       opacity: .8
@@ -45,8 +26,6 @@
   h2
     color:  var(--font-title-color)
     font-size: 30px
-  // 空态与读失败态（20261005）：以前两者都是"页面空白"，现在各有各的话。
-  // 颜色走令牌，夜间同一套。
   .talkEmpty
     display: flex
     align-items: center
@@ -76,12 +55,6 @@
     max-width: 400px
     padding: 20px
     margin-bottom: 10px
-    // 20261014：原来是 `--pic-background-cover`（#fafafa / #212121 —— 中性灰，是给图片
-    // 占位块和输入框用的那一支）。说说卡片是这一页的主面，走和纸。
-    // 同日第二轮：先选的 `--washi-paper`（#fffdfa 暖白）被用户读成"米白"——
-    // 那是压在**换成主题纸之前的灰底**上的观感；现在底色已是主题纸，
-    // 卡片该跟首页文章卡片同源 ⇒ `--washi-paper-2`（#fff6fa 粉白 / #2a2338，
-    // 与 ContentHome 的文章卡同一个值）。用户 20261014 拍板。
     background-color: var(--washi-paper-2, #fff6fa)
     color: var(--font-title-color)
     color: var(--font-title-color)
@@ -89,9 +62,6 @@
     transition: 0.3s
     @media only screen and (max-width: 800px)
       max-width: 300px
-    // 20261014：这条竖线与下面那个圆点原来各写死一个色（#b1cee3 淡钢蓝、#7880d1 蓝紫），
-    // 深浅两档同一个值，与和纸的粉紫天青不是一套。改走令牌后与归档页的时间轴同源：
-    // 线 = `--washi-line`（那里也是这根线），点 = `--washi-pink-deep`（那里也是这个点）。
     &:before
       content: ""
       position: absolute
@@ -116,11 +86,6 @@
       color: var(--font-title-color)
       padding: 10px
 
-    // 第一行：署名（左）＋精确时刻（右），20261006 用户第 4 条起就是**卡片首行**了——
-    // 上一版这是卡片底部单独一行（`.talk-foot`，署名 20261005 才加进来），现在整块撤了、
-    // 时刻上移到这里（用户按预览拍的板）。
-    // 三行都在 `Card.Meta` 的 description 槽里（见 index.tsx 的注释：title 槽弃用），
-    // 所以这里的选择器是 `.talk-head` 的子元素、不是 `.ant-card-meta-*`。
     .talk-head
       display: flex
       // 名字在左、时刻在右，两端对齐。名字缺省时（后端没带 `nickname`）它是空跨度，
@@ -142,9 +107,6 @@
       white-space: nowrap
 
     .talk-clock
-      // 自己顶到右端：只靠父级的 `space-between` 的话，这一行的位置就绑死在
-      // "左边那个跨度存在"上——它哪天被删掉/条件隐藏，时刻会静默滑到左边
-      // （20261005 红基线实测：老组件没有 `.talk-who`，时刻从右缘 809 滑到 538）。
       margin-left: auto
       font-size: 12px
       letter-spacing: .08em
@@ -153,11 +115,6 @@
       color: var(--font-p-color)
       opacity: .75
 
-    // 标题：另起一行（20261006 用户第 4 条）。
-    // 必须自己写 `color` —— 下面 `.ant-card-meta-description` 那条把整个 description
-    // 染成正文色（`--font-p-color !important`），而三行都在 description 里，
-    // 标题不反制就与正文一个颜色了。这条**不需要** `!important`：`!important` 定的是
-    // 父元素自身的颜色，本元素自己匹配到的声明永远压过继承来的值。
     .talk-title
       font-size: 16px
       font-weight: 600
@@ -170,10 +127,6 @@
   cursor: pointer
 .TalkContainer
   .talk
-    // 20261006：`.ant-card-meta-title` 那条撤了 —— `Card.Meta` 的 `title` 槽已弃用
-    // （署名不能进那个槽：它会把这行染成标题色），三行（署名行／标题／正文）**全在
-    // description 里**，标题的标题色由上面的 `.talk-title` 自己认领。
-    // 留这条注释是为了下次别再把它加回来：那条规则现在的匹配面是 0。
     .ant-card-meta-description
       color: var(--font-p-color) !important
 

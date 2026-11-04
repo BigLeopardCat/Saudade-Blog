@@ -68,6 +68,7 @@ const ok = (cond, name, detail) => {
 
 /** 把编译产物拆成 [是否在 @media 里, 选择器, 声明体, 在 css 里的下标]；@media 展开一层 */
 function flatBlocks(css) {
+    css = css.replace(/\/\*[\s\S]*?\*\//g, '');
     const out = [];
     let i = 0;
     for (;;) {

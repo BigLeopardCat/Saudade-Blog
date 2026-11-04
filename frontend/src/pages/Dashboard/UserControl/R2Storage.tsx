@@ -5,30 +5,6 @@ import { getR2Usage } from '../../../apis/ImageMethods.tsx'
 import type { R2Usage } from '../../../interface/Setting.d'
 import { DEFAULT_QUOTA_GB, usagePercent, usageText } from '../../../utils/r2Quota'
 
-/**
- * 「图库存储」页签（20261006，用户第 3 条：图库图片可以传到 R2 桶，但**严格控量**，
- * 超过 9.5G 就停用上传，防止产生账单）。
- *
- * ## 为什么配置住在这里
- *
- * 用户 20261006 拍板「挪到站点设置，单一入口」：这一页本来就是"站点自己的东西怎么配"
- * 的去处（见 index.tsx 头注），而**一个字段只有一处入口**是本仓付过学费的一条纪律
- * ——同一份数据挂两个表单，迟早各改各的。图库那边因此只留用量与灰态，不再有表单。
- *
- * ## 凭据不在这里 —— 这一条不是洁癖，是接口形状决定的
- *
- * `R2_ENDPOINT` / `R2_ACCESS_KEY` / `R2_SECRET_KEY` 只从服务端 `.env` 读
- * （`src/r2.rs::load_creds`），**永远不经这个接口**：`GET /api/protected/websetting`
- * 会把 `web_info` 的每一行**明文回传**给面板（`openAiToken`/`githubToken` 当年被删掉
- * 就是这个理由），而那道门是 `authz::can_access_console`（**admin ‖ superadmin**）。
- * 也就是说「站点设置只有超管能打开」在今天并不成立 —— 藏在这一页提供不了任何保护。
- * 桶名/前缀/公开域名不算凭据：知道桶名也写不进任何东西。
- *
- * ## 判定一律走 `utils/r2Quota.ts`
- *
- * 这条用量条的百分比与图库那颗上传按钮的灰态必须同源。这里**不许**自己再写一份
- * "超没超"的判据——分家的表现是"条子显示 30%、上传却被拒"，没人能解释。
- */
 
 /** 表单草稿。读的是服务端**存着的**值，不是生效值（生效值在 `/api/protect/images/r2`）。 */
 interface R2Form {
@@ -147,9 +123,6 @@ const R2Storage = () => {
                     strokeColor={pct === null ? '#bfbfbf' : undefined}
                     showInfo={false}
                 />
-                {/* 凭据来源（20261006 晚）。R2 令牌**按桶授权**：拿部署那枚去列图片桶
-                    会得 403 AccessDenied，而那个症状与"代码写错了"长得一模一样 ——
-                    这行是分辨它俩最快的判据（服务端只报来源，不含任何密钥）。 */}
                 <span style={{ fontSize: 12, color: text.ok ? '#999' : '#c88' }}>
                     凭据来源：{usage?.credsSource || '未配置（图库走本机磁盘）'}
                 </span>

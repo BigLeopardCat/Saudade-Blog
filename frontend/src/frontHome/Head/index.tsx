@@ -49,29 +49,14 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
     const [phoneBarShow, setPhoneBarShow] = useState(false);
     const [isHovered, setIsHovered] = useState(false);
     const [isLogin, setLogin] = useState(0)
-    // 个人中心（20260922）：点「设置」打开的大窗口 + 头像右上角的未读红点
     const [centerOpen, setCenterOpen] = useState(false)
     const { counts: unreadCounts } = useUnread(isLogin === 1)
     const [showMobileCategory, setShowMobileCategory] = useState(false);
     const dispatch = useDispatch()
     const navigate = useNavigate();
-    /* 头顶压着一块**深色**横幅的页面（20261001，用户第 3 条「文章详情页的顶部栏字体看不清」）。
-     *
-     * 透明态的导航字吃 `--washi-ink`：白天档是深墨紫 `#4a3550`，压在淡彩首屏上约 7:1 ——
-     * 那正是它当初被选成令牌值的原因。但文章详情页的首屏不是淡彩纸，是 `.readCover`
-     * 那张封面（视频/大图 + 顶缘那条 `rgba(0,0,0,.5)` 渐变）：实测背景 ≈ `#3e3e3f`，
-     * 深墨紫压上去是 **1.0:1**，字与底完全分不开。夜间档本来就吃浅色令牌，只有白天中招。
-     *
-     * 判据用**路由**而不是"测量底下是不是深色"：站点只有这一处横幅是深底，
-     * 它是既定的页面形态、不是运行期运气（同族教训见 memory「判据的前提住在别人手里」——
-     * 判据依赖运行期取值时，换一篇文章、换一帧视频就会换一个结果）。
-     * 与 `.is-stuck`（滚动）/`:hover` 共用同一套浅字 + 投影，见 index.sass。 */
     const overDarkBanner = useLocation().pathname.startsWith('/article/');
     const [animation,setAnimation] = useState('');
     const categoryList = useSelector((state: any) => state.categories.categories)
-    // 头部头像 = **当前访客**的头像（20260922 用户要求的三态：正常登录 / 退出登录但本机挂着
-    // 账号 / 从没有过账号记录），不再是站点主人那张 `state.user.avatar`——那张图现在只用在
-    // 文章页的作者署名处。三态的选择与缓存见 components/UserCenter/identity.ts。
     const viewerAvatar = useViewerAvatar()
     const blogTitle = useSelector((state:{user:{blogTitle: string}}) => state.user.blogTitle)
 
@@ -85,9 +70,6 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
             setLogin(1)
         }
 
-        // 登录/退出都会派发 auth-change（登录成功 → Login 页派发；退出 → 下面那个按钮派发）
-        // 20260922：头部是常驻组件、路由切换不重挂载，只靠挂载时读一次 localStorage 会出现
-        // "刚登录完，头像菜单里还是「登录」、红点不出现"，得刷新才正常。
         const onAuthChange = () => {
             const loggedIn = !!getToken()
             setLogin(loggedIn ? 1 : 0)
@@ -180,12 +162,6 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
         setDark(!isDark)
         setAnimation(isDark === true ? "sun" : "moon");
         localStorage.setItem("isDarkMode", JSON.stringify(!isDark));
-        // 20260902：手动切换 = 访客意愿，写入 darkModeUserChoice 让 App.tsx 的
-        // 自动夜间（23:00-6:00 分针检查）不再覆盖。此前只写 isDarkMode——夜间手动
-        // 切浅色后 1 分钟内被自动逻辑顶回深色（用户报"突然变成夜间模式"）。
-        // 20260908：choice 带主题日（06:00 为界）——让位跨日自动失效，防一次手动永久失去自动。
-        // 20260914：只在夜间窗口内的切换才记意愿（见 theme.recordUserChoice）——白天切浅色
-        // 不再否掉当晚自动夜间；白天切换会顺手清掉残留标记
         recordUserChoice(!isDark ? 'dark' : 'light');
         // 同步看板娘 agent 的全局状态：boot.js 监听 darkmode-change 更新 __darkMode，
         // 否则页面内手动切换后 current_darkmode 上报陈旧值，agent 感知只能靠对话记忆
@@ -197,22 +173,11 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
         navigate(hitTarget(item));
     };
 
-    /** 头像菜单里的「设置」= 打开那个大窗口（20260922）——**所有登录用户同一入口**。
-     *  此前这个钮叫「心境」且一律 navigate('dashboard')，而 /dashboard 被 AuthRouter
-     *  收成管理员专属：普通用户点它只会被弹回首页 + 一句"无权限访问后台"。
-     *  20260922 第一轮改名「个人中心」（原名看不懂），第二轮用户要求改成**「设置」**
-     *  （原话「右上角头像按钮个人中心文本改成设置」）——窗口标题仍是「个人中心」，
-     *  因为它装的是收藏/留言/通知/信箱，不只是设置。 */
     const openUserCenter = () => {
         closePhoneBar();
         setCenterOpen(true);
     }
 
-    /** 管理员的「后台」入口 = **双击头像**（20260923 用户要求：不要显式按钮）。
-     *  上一版是头部一枚常驻「后台」钮 + 窄屏抽屉里一枚（20260922），用户改口要双击头像，
-     *  两枚都撤了。入口藏起来不影响可达性：头像卡里的「设置」→ 窗口标题栏的「后台管理」还在。
-     *  角色取自 JWT 自带的 role（`isAdminToken`，本地解码不请求后端）——它只决定"双击有没有反应"，
-     *  真正的权限判定在 AuthRouter 与后端，前端不挂这个 handler 从来不是权限本身。 */
     const admin = isAdminToken(getToken());
 
     /** 双击头像进后台（非管理员不挂这个 handler，前台看不出任何差别） */
@@ -285,22 +250,6 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                     </div>
                 </div>
             </div>
-            {/* 滚动态从**内联 style** 搬进了 sass 的 `.is-stuck`（20260930 五轮，
-                `d85311e`）——20261001 六轮按主人第 6 条**做回原来的显示逻辑**：
-                默认完全透明，悬停 / 已滚动两态才落 `rgba(0,0,0,0.66)` 深底
-                （见 index.sass 里 `.headContainer` 之上那段说明）。
-
-                「首屏未滚动时导航字压在淡彩纸上读不出来」这个老问题改从**字色**
-                解决（透明态吃 `--washi-ink`，白天深墨紫、夜间浅色；落深底再统一
-                换回浅色），不再靠一层常驻底色遮。
-
-                原来的内联 `backdropFilter: blur(10px)` 不恢复：大面积模糊是
-                GPU 成本，而首屏正是看板娘所在的那一屏（见 memory「后台 GPU 高于
-                首页」）。深底用 0.66 的实色，观感等价、代价为零。
-
-                第三条态 `.over-dark`（20261001，用户第 3 条）：文章详情页的横幅本身
-                就是深的，透明态也读不出字 ⇒ 由路由判定，**永远**用深底那套浅字
-                （只换字色，不加底色——底下的封面渐变已经把这一带压暗了）。 */}
             <div className={`headContainer${scrollHeight ? ' is-stuck' : ''}${overDarkBanner ? ' over-dark' : ''}`}>
                 <div className="phoneBar">
                     {phoneBarShow ? <button type="button" aria-label="关闭导航菜单" aria-expanded="true" aria-controls="public-navigation-drawer" className="iconfont icon-guanbi2" style={{
@@ -386,22 +335,6 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                     },
                 }}
             >
-                {/* `rootClassName` 是**必须的**：Modal 是 portal 到 body 的浮层，
-                    不继承页面上的 `.frontDark` —— 结果行/计数栏这些新写的样式走
-                    `var(--washi-*)`，夜间档只有挂上 `.washiDark` 才拿得到（见 index.css
-                    里那三个类的注释）。不加的话夜间会白纸压白字。
-
-                    ⚠️ 只加 `.washiDark`，**没有** `.washiModal`（本仓别处的浮层是
-                    `washiModal washiDark` 两个一起加）。`.washiModal` 不是"主题开关"，
-                    它是**公告弹窗那套皮**：不透明和纸底 + 顶上探出半截的胶带
-                    （见 `AnnouncementModal/index.sass`）。这个搜索弹窗是刻意要透明的
-                    （`ConfigProvider` 里把 `Modal.contentBg` 设成了 transparent，
-                    内容直接压在遮罩上），套上那层皮等于换了个弹窗。
-
-                    `classNames.mask` 是**遮罩那一层的钩子**（rc-dialog 的
-                    `classNames.mask`，antd Modal 原样透传）——`.search-mask` 见 index.sass。
-                    它的必要性和「模糊图」那件事见 sass 里那段注释：这一段内容**没有自己的底**，
-                    遮罩就是它的全部背景。 */}
                 <Modal open={isModalOpen} onCancel={handleCancel} footer={null} width={'100vh'}
                        rootClassName={isDark ? 'aggregateSearchModal washiDark' : 'aggregateSearchModal'}
                        classNames={{ mask: 'search-mask' }} >
@@ -411,15 +344,8 @@ const Head = ({ setDark, isDark, scrollHeight }: HeadProps) => {
                 </Modal>
             </ConfigProvider>
             {animation !== '' && <MoonToSun status={animation} />}
-            {/* 个人中心（20260922）：点「个人中心」打开的大窗口。挂在 header 里但门是 Modal
-                portal 到 body 的，不受 header 的 sticky/transform 影响 */}
             <UserCenter open={centerOpen} onClose={() => setCenterOpen(false)} />
         </header>
-        {/* 猫必须渲染在 header 之外(frontRoot 内、header 的兄弟节点):
-            transform 动画在 sticky header 内时每帧迫使 header 图层子树重新栅格化(GPU 30%+);
-            移到 header 外后为独立合成层,摆动成本趋近于零(实测 60fps 满帧)。
-            且 frontRoot(isolation: isolate)上下文内 z-index 500 介于内容(≤100)与 header(999)之间,
-            不再遮挡导航栏登录按钮。见 components/TopMao/index.sass 注释。 */}
         <TopMao currentScrollHeight={scrollHeight}/>
         </>
     );

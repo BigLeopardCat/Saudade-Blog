@@ -1,22 +1,6 @@
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
-/// 评论点赞/踩（20261003，用户第 4 条）。一票一行，**与 `note_like` 同形**——
-/// 两种身份并排住在一张表里，去重全靠唯一键：
-///   · 登录 ⇒ `user_id = Some(uid)`、`visitor_key = None`
-///   · 匿名 ⇒ `user_id = None`、`visitor_key = Some(key)`
-/// `uq_comment_vote_user` 管登录行、`uq_comment_vote_visitor` 管匿名行
-/// （MySQL 的唯一索引不约束 NULL，两边天然互不干扰）。
-///
-/// `value` 只有 `+1` / `-1`，**没有 0**：撤回 = 删掉这一行，改主意 = 改 `value`。
-/// 计数**不落库**，读取时按 `comment_id` 一次 GROUP BY 现算
-/// （`routes/comment_votes.rs::vote_counts_for`）——写路径因此零争用。
-///
-/// `visitor_key` 的信任等级与 `note_like` 那一列**逐字相同**（客户端自报、可清可换、
-/// 能刷）：完整说明在 `scripts/migration/note_like_anon_20261001.sql` 头注的语义 ①，
-/// 改动前先读它，别在这里另立一套说法。
-///
-/// 迁移：`scripts/migration/note_comment_vote_20261003.sql`（建表型，纯加表）
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Deserialize, Serialize)]
 #[sea_orm(table_name = "note_comment_vote")]
 pub struct Model {

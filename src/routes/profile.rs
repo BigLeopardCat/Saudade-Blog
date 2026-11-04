@@ -1,24 +1,3 @@
-//! 个人中心：用户设置 / 收藏的文章 / 通知（红点）/ 站内信箱 / 我的留言记录。
-//!
-//! **为什么整个模块挂 `public_routes` 而不是 `protected_routes`**：后者的 `route_layer`
-//! 末尾挂了 `auth_guard`（域内全部接口仅管理员可用，见 `routes/mod.rs`），而本模块每一
-//! 个接口都面向**任意登录用户**。先例是 `/api/protected/profile`（auth.rs）与
-//! `/api/protect/board/mine`（talks.rs）：挂公开路由、**handler 内部自身鉴权**。
-//!
-//! 三条纪律（本模块每一处都照它写）：
-//!   1. handler 第一行取 uid，取不到就返回「未登录」——**没有任何 uid 缺省值**；
-//!   2. 所有查询都带 `user_id = uid` 条件（越权靠 SQL 堵住，不靠前端"不传别人的 id"）；
-//!   3. 时间列一律 +08:00 本地钟面（`chrono::Local::now().naive_local()`），与全库一致。
-//!
-//! 头像上传是本站**唯一**面向普通用户的文件写入面，因此校验写在这里：
-//! 类型按**字节头**判（不认客户端给的 content-type/扩展名），SVG 这类能带脚本的格式
-//! 一律拒绝（它由本站同源下发，内联渲染即 XSS）；大小显式拦 2MiB（nginx 是 20m，
-//! 路由上单独放开到 4MiB 好让我们自己给出中文错误）。
-//!
-//! 20261006 起"哪把尺子"搬到 `utils`（`sniff_image_ext` + 后缀白名单），与图库上传
-//! 共用一份 —— 两处各写一份的结局是"一处收紧了、另一处还是老样子"，而那正是漏洞
-//! 最常待的地方。
-
 use axum::{Json, extract::{Query, State}, http::HeaderMap};
 
 mod deletion;
@@ -62,28 +41,8 @@ pub struct UpdateProfileRequest {
     pub nickname: String,
 }
 
-/// 昵称重复的**唯一**话术（20261002 昵称唯一）。
-///
-/// 两处都回这一句：① 写之前的预检（正常路径）；② 预检通过之后**仍被唯一索引拦下**
-/// （同一个昵称两个请求同时提交的竞态）。**不泄漏数据库报错**——索引名、
-/// `Duplicate entry 'x' for key 'uk_user_nickname'` 这些都不该到用户眼前。
-/// 「大小写/重音不敏感」是库里那个函数索引继承的排序规则（utf8mb4_0900_ai_ci）决定的，
-/// 提示语照这个口径写，别说成"完全相同"。
 const NICKNAME_TAKEN: &str = "这个昵称已经有人用了，换一个吧";
 
-/// 这个 sea-orm 错误是不是**唯一索引拦下的重复键**。
-///
-/// ⚠️ 20261018 切库到 PostgreSQL 时**必须把 SQLSTATE 一起换**：MySQL 的重复键是
-/// `1062`（ER_DUP_ENTRY），PG 的是 `23505`（unique_violation）——两个值**互不相通**。
-/// 漏了这一处的症状是**静默**的：并发提交同一昵称时这条分支认不出来，用户拿到的是
-/// 泛化的"保存失败"而不是"这个昵称已经有人用了"；正常路径（一次只提交一个）永远测不到。
-/// `23000` 是 SQL 标准的完整性约束**类**码，PG 侧也会出现（驱动没给具体子码时）⇒ 保留。
-/// MySQL 那两个码留着不删：它们现在不可达，但删掉会让下一个人以为"这个判断从来只针对 PG"。
-///
-/// 逐层解包而不是 `to_string().contains("Duplicate entry")`：后者会把任何一句恰好含这
-/// 几个字的报错（上游代理、连接器）也算成重复键。代价是写法绑在 sea-orm/sqlx 的枚举
-/// 形状上——所以**兜底一律是"保存失败"**：判错只会少给一句友好提示，绝不会把库的
-/// 错误原文透出去（原文只进 tracing，见调用处）。
 fn is_duplicate_key(e: &sea_orm::DbErr) -> bool {
     use sea_orm::error::RuntimeErr;
     let rt = match e {
@@ -99,16 +58,6 @@ fn is_duplicate_key(e: &sea_orm::DbErr) -> bool {
         .unwrap_or(false)
 }
 
-/// PUT /api/protected/profile：改昵称（个人中心「用户设置」）。
-/// 昵称是**展示名**（留言/说说/信箱里显示的那个），不是登录账号——账号不可改。
-///
-/// 昵称唯一（20261002）：库里那条函数索引 `uk_user_nickname ((NULLIF(TRIM(nickname),'')))`
-/// 是**最终防线**，这里的三件事顺序是刻意的：
-///   1. 预检（同昵称且 id 不是我）→ 友好提示（正常路径，绝大多数重复走这一支）；
-///   2. 预检通过 → 照常 UPDATE，**同时把 `nickname_auto_renamed` 清 0**
-///      （本人改过名字 ⇒ 迁移那条横幅撤掉，这是那个状态的唯一出口）；
-///   3. `Err` 里再认一次 1062 → 同一句话术（兜住两个请求同时提交的竞态）。
-/// 只有 1 的话，竞态下用户会拿到一句"保存失败，请稍后再试"，明明换个名字就能过。
 pub async fn update_profile(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -150,10 +99,6 @@ pub async fn update_profile(
     am.nickname_auto_renamed = Set(0);
     match am.update(&state.db).await {
         Ok(u) => {
-            // 禁言两列（20261002）：改昵称与禁言是两件事，但回执是同一个 DTO
-            // ——**口径必须与 `auth::profile` 逐字相同**（那边有一处同形的计算）。
-            // 被禁言的人当然也能改昵称（禁言只挡发评论/发留言两个入口），
-            // 所以这里不能写死 false。
             let muted = crate::authz::is_muted(u.muted_until, chrono::Local::now().naive_local());
             let muted_until = if muted {
                 u.muted_until.map(crate::authz::mute_until_text)
@@ -190,26 +135,12 @@ pub struct ChangePasswordRequest {
     pub new_password: String,
 }
 
-/// 改密码的返回：**新令牌**。
-///
-/// 为什么要把令牌回给前端（20260926）：改密码会把 `token_version` +1 ⇒ 此前签发的
-/// **全部**令牌当场失效，包括发起这次请求的这台设备手里的那枚。这是"其他设备下线"
-/// 的必然代价，但让本人也跟着被踢出去是没必要的——服务端在这一刻顺手签发一枚
-/// 带新代次的令牌还给本机，语义正好是「本机保持登录，其他设备全部下线」。
 #[derive(Serialize, Default)]
 pub struct PasswordChangedDto {
     /// 新令牌（与登录返回值同形：裸 JWT，不带 Bearer 前缀）
     pub token: String,
 }
 
-/// PUT /api/protected/profile/password：改密码（必须验旧的）。
-///
-/// 新密码下限 8 位与「忘记密码」那条路（auth.rs `reset_password`）保持一致。
-///
-/// **改密码会让其他设备立刻下线**（20260926 起；此前这里是如实写着的"做不到"——
-/// 令牌无状态、无服务端会话表，改密码收不回旧令牌。现在 `user.token_version` 就是
-/// 那份服务端状态，判据在 `authz::check_token`，不再是无状态的）。
-/// 顺序是：密码与代次在**同一次 UPDATE** 里落库 ⇒ 不存在"密码换了但令牌没收回"的窗口。
 pub async fn change_password(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -219,8 +150,6 @@ pub async fn change_password(
         Ok(uid) => uid,
         Err(e) => return Json(ApiResponse::error(e.message())),
     };
-    // 这一处**本来就是对的**（`chars().count()`），现在只是把判据挪到共用函数里
-    // （20261017）——三处入口同一个口径，顺带补上了此前一处都没有的长度上限。
     if let Some(msg) = crate::utils::password_reject(&payload.new_password) {
         return Json(ApiResponse::error(msg));
     }
@@ -306,8 +235,6 @@ pub async fn upload_avatar(
     if data.len() > AVATAR_MAX_BYTES {
         return Json(ApiResponse::error("头像不能超过 2MB"));
     }
-    // 判据住在 `utils::sniff_image_ext`（20261006 从本文件搬过去，与图库上传共用
-    // 同一把尺子）。认不出即拒绝 —— 客户端给的 content-type 与文件名都不参与判定。
     let Some(ext) = sniff_image_ext(&data) else {
         return Json(ApiResponse::error(&format!("只支持这些图片格式：{ALLOWED_IMAGE_EXTS_TEXT}")));
     };
@@ -367,16 +294,6 @@ pub async fn upload_avatar(
 
 // ── 收藏的文章 ──────────────────────────────────────────────────────────────
 
-/// 公开可见判据（与 `notes.rs::public_status_words` **逐字同源**：`is_public` 且 status 是
-/// 白名单里的词）。收藏只认公开可见的文章——否则收藏列表会把草稿标题漏给普通用户。
-///
-/// 20261018 两处收窄：
-///   ① **黑名单 → 白名单**。此前是 `status != Some("draft")`，于是 **NULL status 在这里
-///      算可见、在 SQL 三值逻辑里算不可见** —— 同一个口径给出两种答案；未知词也一样漏过去。
-///      收成白名单之后两边一致，且未知词与 NULL 一律不可见。
-///   ② **收成两个字段**（不再是 `&note::Model`）。两个调用点（`list_favorites` /
-///      `add_favorite`）现在只 select 这几列、手里根本没有 `note::Model` ——
-///      从前它们为判一次可见性把整篇**正文**读回来。
 fn visible_flags(is_public: bool, status: Option<&str>) -> bool {
     is_public && matches!(status, Some("public") | Some("published"))
 }
@@ -417,8 +334,6 @@ pub async fn list_favorites(
         return Json(ApiResponse::success(vec![]));
     }
     let ids: Vec<i32> = favs.iter().map(|f| f.note_id).collect();
-    // 只取"判可见性 + 渲染标题/状态"真正用到的四列（20261018）。从前是 `SELECT *` ⇒
-    // 每打开一次收藏列表就把这些文章的**正文**整篇读回来，而这里一列正文都不用。
     let notes: Vec<(i32, String, Option<String>, bool)> = note::Entity::find()
         .select_only()
         .column(note::Column::Id)
@@ -470,7 +385,6 @@ pub async fn add_favorite(
         Ok(uid) => uid,
         Err(e) => return Json(ApiResponse::error(e.message())),
     };
-    // 同样只取判可见性那两列（20261018）：收藏一次不该把整篇正文读回来。
     let Some((is_public, status)) = note::Entity::find_by_id(payload.note_id)
         .select_only()
         .column(note::Column::IsPublic)
@@ -571,33 +485,10 @@ pub struct UnreadDto {
     pub notifications: i64,
     pub messages: i64,
     pub total: i64,
-    /// 等人工裁决的**河灯留言**条数（后台首页那行"N 条留言待人工审核"；非管理员恒 0）。
-    /// **不计进 `total`**：红点是"你有事没看"，待审是"后台有事等你处理"，
-    /// 两件不同的事——`total` 只服务红点（前端拿它决定亮不亮）。
-    ///
-    /// ⚠️ **这里数的是 `talk`（河灯留言），不是文章评论**（20261019 更正注释：原话写的是
-    /// "N 条评论待人工审核"，而它的实现一直是 `board_pending_count` 数 `talk` 行）。
-    /// 文章评论是**另一张表**（`note_comment`）、另一个后台页、另一套入口，计数在
-    /// `pending_comments`——**两者绝不能合并成一个数**：留言没有标题、评论长在某篇文章下，
-    /// 主人要点的页面都不是同一个（`?tab=review` vs `?tab=comment`）。
     #[serde(rename = "pendingReview")]
     pub pending_review: i64,
-    /// 待处理的**额度重置申请**条数（20260929，后台首页那一行 + 红点数据；
-    /// 非管理员恒 0）。与 `pending_review` 逐条同族：它是后台的待办，
-    /// **同样不计进 `total`**——`total` 只服务红点（前端拿它决定亮不亮），
-    /// 而后台那一行靠这个字段自己决定冒不冒出来。
     #[serde(rename = "pendingQuota")]
     pub pending_quota: i64,
-    /// 等人工裁决的**文章评论**条数（20261019 加；非管理员恒 0）。与上面那两格逐条同族：
-    /// 它是后台的待办、**同样不计进 `total`**。
-    ///
-    /// 为什么**另开一格而不是并进 `pendingReview`**：留言与评论是两套东西（两张表、两个
-    /// 后台页、两套入口），合并之后主人点那一行只会跳到其中一个页面，而另一类永远点不到
-    /// ——「N 条待审核」这个数就再也说不清是哪个 N。前端 `Home/index.tsx` 里那条注释
-    /// 早就把这件事写明了，这里补的是后端那一半。
-    ///
-    /// 过滤条件与公开侧同口径再加一条：`approved = 0` **且 `is_deleted = 0`**
-    /// （软删的行后台还留着溯源，但它不是"等着你处理"的事）。
     #[serde(rename = "pendingComments")]
     pub pending_comments: i64,
 }
@@ -663,8 +554,6 @@ pub struct MessageDto {
     pub peer_name: String,
     #[serde(rename = "peerAvatar")]
     pub peer_avatar: Option<String>,
-    /// 信件标题（20260922 起）。null = 对方没填标题（含所有历史信件）——
-    /// 前端据此显示「（无标题）」，不拿正文首行顶替。
     pub title: Option<String>,
     pub content: String,
     #[serde(rename = "isRead")]
@@ -683,18 +572,8 @@ pub struct MailboxDto {
 }
 
 const MESSAGE_MAX_CHARS: usize = 500;
-/// 信件标题上限（20260922 起）。比正文短得多——标题是列表里一行扫过去的东西，
-/// 前端输入框 maxLength 也是 60，两处同值。
 const MESSAGE_TITLE_MAX_CHARS: usize = 60;
 
-/// 一个 uid 的展示材料——**全站"给别的用户起名字"的唯一口径**。
-///
-/// 展示名（`name`）的规则：昵称优先，空串（没设过）退回账号；取不到用户行
-/// （账号已销）由调用方兜 `用户#<id>`——宁可显示得笨，也不编一个名字出来。
-/// 20261002 起评论也走这一份（`role` 是权限身份徽章要的），所以**别在别处再写
-/// 一份 `if nickname.is_empty()`**。
-///
-/// 别在这里加"最后一次活跃"之类的派生数据——它是身份，不是统计（统计走 `stats.rs`）。
 pub(crate) struct PeerInfo {
     /// **展示名**：昵称优先，空串（没设过）退回账号。见 [`peer_map`]
     pub name: String,
@@ -713,9 +592,6 @@ pub(crate) async fn peer_map(
     if ids.is_empty() {
         return HashMap::new();
     }
-    // 只取 PeerInfo 真正用到的五列（20261014）：从前整行 `user::Model`，`SELECT *`
-    // 把这批人的 **password 哈希** 也捞进内存，而私信列表只读 username / nickname /
-    // avatar / role。与 `notes.rs::attach_authors` 同一族的修法。
     user::Entity::find()
         .select_only()
         .column(user::Column::Id)
@@ -763,23 +639,11 @@ fn to_message_dto(
 pub struct SendMessageRequest {
     #[serde(rename = "toUsername")]
     pub to_username: String,
-    /// 信件标题（20260922 起，**选填**）：`default` 是刻意的——旧版前端不带这个字段，
-    /// 缺字段要按"没填标题"处理，不能整个请求反序列化失败。
     #[serde(default)]
     pub title: Option<String>,
     pub content: String,
 }
 
-/// POST /api/protected/messages：发一条站内信。
-///
-/// 收件人**按账号或 UID 精确匹配**（20260923 用户要求：「收件逻辑按收件人账号或者 UID，
-/// 昵称不能保证唯一性」——原昵称通道整条撤掉，它最多只能做到"唯一命中才认"，
-/// 而唯一性本身不该由发信人赌）。
-///
-/// 顺序 = 先账号、后 UID：账号是这个站唯一且不可改的标识，先认它不会认错；
-/// **只在账号没命中且输入是纯数字时才退回 UID 通道**（账号允许含数字，反过来先认 UID
-/// 就会让一个叫 "7" 的账号永远收不到信）。
-/// 本站不提供用户名录接口——收件人要自己填，避免把全站用户暴露成可枚举的资源。
 pub async fn send_message(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -895,8 +759,6 @@ pub async fn read_messages(
 #[derive(Serialize, Default)]
 pub struct MyTalkDto {
     pub id: i32,
-    /// 来源。**20260922 起本接口只回河灯留言（`board`）**，所以恒等于 "board"；
-    /// 字段保留不删是为了 JSON 契约稳定（前端按它做显示侧兜底，见 UserCenter 的 boardTalks）。
     pub src: String,
     pub title: String,
     pub content: String,
@@ -905,23 +767,12 @@ pub struct MyTalkDto {
     pub author: String,
     /// 1=通过（公开可见）/ 0=待审 / 2=未通过（驳回）——**如实回传**，本人的记录自己看得到状态
     pub approved: i32,
-    /// 驳回理由（20260923）：仅 approved=2 时可能有值，其余恒 null。与灯影集「我的河灯」
-    /// 同源（都读 `talk.reject_reason`），个人中心这张表在未通过行里显示它。
     #[serde(rename = "rejectReason")]
     pub reject_reason: Option<String>,
     #[serde(rename = "createdAt")]
     pub created_at: String,
 }
 
-/// GET /api/protected/my/talks：我的留言记录（**只含河灯留言**，按时间倒序）。
-///
-/// 20260922 用户反馈「说说不是留言，为什么还出现在这里并且有审核状态」——
-/// 说说（`src='talk'`）是站内随笔，发布时恒 `approved=1`、**不进审核**（见 talks.rs
-/// `insert_talk`），混进这张名为"留言记录"的表里既名不副实、又让人读成"说说也要审核"。
-/// ⇒ 本接口加 `src='board'` 过滤；说说本人内容仍可在「说说」页看到，入口没有丢。
-///
-/// 与灯影集「我的河灯」（`/api/protect/board/mine`）并行存在：那个接口含收回操作、
-/// 是灯影集页签的数据源；这里是个人中心的一览，只读。
 pub async fn list_my_talks(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -963,14 +814,6 @@ pub async fn list_my_talks(
     Json(ApiResponse::success(dtos))
 }
 
-// ── 站内信草稿箱（20260923）─────────────────────────────────────────────────
-//
-// 用户原话：「收件箱，发件箱和写站内信在一个层级，再加上草稿箱，这四个作为站内信箱的
-// 二级签页」。草稿要有地方存 ⇒ 新表 `user_message_draft`（**迁移没跑之前这三个端点会
-// 报「查询失败」**——表不存在。flag `user_message_draft_20260923`）。
-//
-// 三条纪律与站内信本身一致：uid 取自 handler 首行（无缺省值）、每个查询都带
-// `user_id = uid`、时间列是 +08:00 本地钟面。
 
 /// 每人草稿上限。够用即可——这个数只为挡住"把草稿箱当网盘"的写法，
 /// 不是产品限制（真正想存东西的人 100 条以内也该发出去了）。

@@ -7,29 +7,11 @@
 .frontRoot
   background: var(--front-body-color) center
   background-size: cover
-  // 20261001 开源前准备：这行原先还挂着第二个图层 —— 自己 picgo 图床上的一张背景图
-  // （`img.picgo.net/...`，早已 404）。它就是"别人部署主页没有背景"的来源；图 404 后
-  // 浏览器只丢弃该图层、渐变层照常渲染 ⇒ 删掉 `url()` 与留着它**视觉完全一致**。
-  // `--front-body-color` 是 linear-gradient（不是颜色值），所以这行仍是一层有效背景。
-  // 整页 backdrop-filter 是性能杀手，且背后已无图可模糊，暂时注释
-  // backdrop-filter: blur(5px)
-  // 原 backdrop-filter 会创建层叠上下文，把内部元素的 z-index 关在根容器内；
-  // 注释后卡片 z-index(99) 会直接压过看板娘(z-index:1)，用 isolation 重建层叠上下文保持层级
   isolation: isolate
-  // 20260902：移除 background-attachment: fixed——fixed 背景锚定视口，任何滚动帧/任何
-  // 内容失效（轮播动画、卡片入场、hover）都会触发整页背景重栅格化，GPU 占用 30%+ 的主因。
-  // 背景图已 404，剩一层水平渐变纵向恒定，去掉 fixed 视觉零差异。
-  // 日后若恢复背景图并要视差效果，改用独立 position: fixed 图层（只栅格化一次，不随帧重绘）。
 
-// ── 单击放大查看器浮层（20260901 从 ReadArticle/index.sass 移入全局）──
-// 文章页（mermaid 图/正文图片）与看板娘对话框（markdown 图片）共用同一套浮层样式；
-// 对话框是原生脚本只能复用 window.__openZoomOverlay，样式必须全局可达。
 .md-zoom-overlay
   position: fixed
   inset: 0
-  // 20261002 起走阶梯（src/index.css 的 :root）。原先写死 100000：那时它要压过
-  // 看板娘的 2147483000 是压不过的，只是"比站内别的东西都大"而已。现在看板娘降到
-  // 1000，查看器排在它之上、公告之下——用户点开文章的图时，头顶不该还浮着一个面板。
   z-index: var(--z-lightbox)
   background: rgba(8, 10, 16, 0.85)
   backdrop-filter: blur(3px)

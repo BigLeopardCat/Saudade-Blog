@@ -2,27 +2,6 @@ import { useCallback, useRef, useState } from "react";
 import { GALLERY_PAGE_SIZE, getImageList } from "../apis/ImageMethods.tsx";
 import type { ImgUrl } from "../interface/ImgTypes";
 
-/**
- * 图库分页的取数逻辑（20261014）。三处消费方共用**这一份**：
- *   · `components/Editor/ImagePicker.tsx`（编辑器「从图库选图」）
- *   · `pages/Dashboard/Notes/NewNotes/index.tsx`（文章封面选图）
- *   · `pages/Dashboard/Albums/index.tsx`（图库页，滚动到底自动续）
- *
- * 为什么要抽出来：判据只有两条，而它们必须**三处一致**——
- *   · 下一页的游标 = 已加载的**最后一张**的 `imageKey`（服务端认 `image_key < before`）；
- *   · `hasMore` = 这一次回来的行数 **等于**页大小（服务端不报总数，见下）。
- * 抄成三份的话，"页大小改了"或者"某处把游标写成了第一张"这类错会在三处各自漂，
- * 而页面上的症状（点「载入更多」没反应 / 列表出现重复行）都不好倒推回这里。
- *
- * ⚠️ `hasMore` 是**保守**判据：回来的行数正好等于页大小时它会说"还有"，
- * 而真实情况可能刚好取完 —— 那一次点下去会拿到 0 行、`hasMore` 随之变假，
- * 界面显示「没有更多了」。多一次空请求，换掉的是"要不要给接口加一个 total 字段"
- * （那要改响应信封，三个消费方与两个沙箱套件都认 `data` 是数组）。
- *
- * ⚠️ 取数闸（`busy`）：`InfiniteScroll` 在滚动里会连续触发 `next`，而一次请求要等
- * 一个来回 —— 没有闸就是同一页发两遍，列表里出现**重复行**（同游标、同结果）。
- * `reload` 与 `loadMore` 共用这一个闸：翻页途中来一次背景重拉会打乱已加载的页。
- */
 export function useGalleryPager() {
     const [images, setImages] = useState<ImgUrl[]>([]);
     const [loading, setLoading] = useState(false);

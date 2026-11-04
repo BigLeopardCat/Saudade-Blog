@@ -35,7 +35,6 @@ pub struct Model {
     pub expires_at: Option<DateTime>,
     /// 被认领时刻；NULL = 还没被用掉（一次性核销的判据）
     pub claimed_at: Option<DateTime>,
-    /// user=主人本轮提出 / system=系统事件自我提出
     pub requested_by: String,
     /// 具体来源（confirm_popup…）
     pub source_event: String,

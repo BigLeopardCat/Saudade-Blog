@@ -1,6 +1,3 @@
-/* 20261001 批 E：勾选色原来写死出厂蓝 #7f9ef3（含选中后的脉冲光晕），
-   换成手账的薰衣草紫。消费方只有后台（图库 / 友链）。 */
-
 /* Hide the default checkbox */
 .Check_container input {
     position: absolute;

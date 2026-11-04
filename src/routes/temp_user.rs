@@ -16,18 +16,6 @@ pub struct CreateTempUser {
 
 // 账号状态、身份与禁言的变更及通知由 account_actions 在同一事务提交。
 
-/// 发起人在通知正文里的称呼：`{身份中文}「{昵称}」（uid=N）`。20261002 主人点名改的。
-///
-/// **为什么从写死的「博主」改成落名**：原来三条通知一律写"博主把…"，是"后台只有
-/// 博主一个人会操作"那个年代的写法（`20260926` 起管理员与超管都能冻账号，
-/// `20261002` 起管理员还能改身份）。当事人被踢下线时读到一句"博主冻结了你的账号"，
-/// 而真正动手的是另一个管理员——他拿着这句话去问博主，博主一头雾水。落名之后
-/// 这句话本身就能对得上人。
-///
-/// 三样都要写：**身份**（他为什么有权做这件事）、**昵称**（人认得的是这个）、
-/// **uid**（昵称可改、可重名，uid 才是唯一标识）。昵称为空回退账号名
-/// （与 `delete_temp_user` 里那句 `who`、`profile.rs` 的展示口径同源：
-/// 库里的 `nickname` 允许是空串，不能因此拼出一个空引号）。
 pub(super) fn actor_label(row: &user::Model) -> String {
     let name = if row.nickname.trim().is_empty() {
         row.username.clone()
@@ -55,27 +43,12 @@ pub struct ChangePasswordReq {
 pub struct TempUserInfo {
     pub id: i32,
     pub username: String,
-    /// 角色（20260926）：后台账号列表要能按「管理员账号 / 普通用户账号」分流，
-    /// 前端拿不到 role 就只能靠猜。取值域见 `crate::authz`。
     pub role: String,
-    /// 账号状态（20260926 冻结账号）：原样回传 `user.status` 的数值，
-    /// **不在后端翻译成字符串**——前端按 `crate::authz` 的同一套取值域自己判
-    /// （冻结账号筛选项就是 `status !== 0`）。两边都对同一个数字做判断，
-    /// 而不是一边翻译、另一边再反解。
     pub status: i16,
-    /// 终身对话额度已用轮数（20260929）。**这是跨语言契约**：agent 的额度工具
-    /// （`tools/base.py` 的额度节）靠这个字段做写前预检与写后复核，
-    /// 字段名与语义改一处要同步另一侧（见该文件头注与 `docs/security-boundary.md`）。
     #[serde(rename = "chatQuotaUsed")]
     pub chat_quota_used: i32,
-    /// 额度上限（20260929）；**`0` = 不限额**（管理员档，判据在 `crate::quota`）。
-    /// 两侧都不许把 500 写死——它是 `CHAT_QUOTA_LIMIT`，改上限不该需要一次迁移。
     #[serde(rename = "chatQuotaLimit")]
     pub chat_quota_limit: i32,
-    /// **现在是否处于禁言期**（20261002 内容风控）。判据是 `crate::authz::is_muted`
-    /// （"现在 < 到期时刻"），**不是"这一列非空"**——到期之后那一列还留着旧值，
-    /// 而那时人已经能正常发言了。给它算好布尔值，是因为这是 agent 侧
-    /// `_account_muted` 幂等判定（"现在就是禁言中 ⇒ 不重复弹卡"）唯一需要的那个事实。
     pub muted: bool,
     /// 禁言到期时刻（原始库值，`%Y-%m-%d %H:%M:%S`）。
     /// **`null` = 从未禁言，`9999-12-31 23:59:59` = 永久**（`authz::MUTE_FOREVER`）
@@ -86,32 +59,9 @@ pub struct TempUserInfo {
     pub muted_until: Option<String>,
 }
 
-/// 账号列表（20260926）：原来只回 `role="user"` 的临时账号，博主因此**在后台
-/// 看不见管理员账号**，也就无从按角色筛。现在回全部**已知角色**的账号。
-///
-/// 列表判据是 `authz::is_listable_role`：**已知角色 且 不是超管**。两半各有理由：
-/// 历史脏值或将来新增但未登记的角色，前端判不出该归到哪一类筛选项下——宁可不显示，
-/// 也不给一行"哪一类都不是"的账号；超管见下。
-///
-/// **超级管理员不出现**（20260926，需求原文"超级管理员账号密码不显示在后台"）：
-/// 超管是博主自己的账号，它既不需要在"后台有谁"里被点名，也不是这个页面的操作对象
-/// （谁都不能冻它/改它的身份）。⚠️ 这条过滤**不只是界面上的隐藏**，它是三道防线里
-/// 的第一道，改它之前先读完这三条：
-///   · 界面：超管行不进列表 ⇒ 前端不渲染它 ⇒ 也不会有那一行的按钮；
-///   · 路由：`check_freeze` / `check_role_change` 里 "目标是超管 ⇒ 拒"；
-///   · **agent**：账号名录走的就是这个接口（`tools/base.py::_user_directory`）⇒
-///     名录里根本没有超管 ⇒ 按名字解析必然零写——超管在结构上就冻不了，不是靠判据拦。
 pub async fn list_temp_users(
     State(state): State<Arc<AppState>>,
 ) -> Json<Vec<TempUserInfo>> {
-    // 只取列表真正用到的六列（20261014）。从前是 `user::Entity::find().all(…)`——
-    // `find()` 是 `SELECT *`，于是这个接口把**每个账号的 password 哈希**都拉进内存、
-    // 再在下面的 map 里丢掉。返回面从来只有这六个字段，多拉的一列也没人读。
-    // 与公告展开（`announcements.rs::fan_out`）是同一族的修法：需要的列写清楚。
-    //
-    // ⚠️ 角色过滤**故意留在 Rust 里**（下面那个 `filter`）：已知角色的表住在
-    // `crate::authz`，把它搬进 SQL 就等于在第二处手抄一份角色清单——本仓最贵的那类漂移
-    // （见 memory「手抄表上锁六站」）。列表规模是个位到几十行，过滤留在哪一侧都一样快。
     let rows = user::Entity::find()
         .select_only()
         .column(user::Column::Id)
@@ -135,15 +85,8 @@ pub async fn list_temp_users(
             username,
             role: role.clone(),
             status,
-            // 额度两列（20260929）：已用照抄库里那个数；上限**不查库**（走
-            // `crate::quota::limit()`），不限量的角色回 0（见 `routes::quota::limit_of`）。
-            // **信封一个字节不动**：这是裸数组而不是 `ApiResponse`，三个消费方
-            // （前端账号页、`scripts/probe_token_revoke.py`、agent 的 `_user_directory`）
-            // 都认这个形状——agent 那边甚至写明了"不要包信封"。**只加字段。**
             chat_quota_used,
             chat_quota_limit: crate::routes::quota::limit_of(&role),
-            // 禁言两列（20261002）：`muted` 是**现算的**（到期即自动为假，没有定时任务
-            // 去清那一列）；`muted_until` 原样回库值，供显示"到几号 / 永久"。
             muted: crate::authz::is_muted(muted_until, chrono::Local::now().naive_local()),
             muted_until: muted_until.map(|t| t.format("%Y-%m-%d %H:%M:%S").to_string()),
         })
@@ -226,14 +169,6 @@ pub(super) fn freeze_denial_message(denial: crate::authz::FreezeDenial, frozen: 
     }
 }
 
-/// 禁言 / 解禁被拒的中文话术（`freeze_denial_message` 的**姊妹函数**，20261002）。
-///
-/// **规则一份、话术两份**（见 `authz::check_freeze` 头注）：四条判据对"冻结"与"禁言"
-/// 是同一件事，所以判据函数共用；而话术必须各出一份——它们是**跨语言契约**，
-/// agent 要逐字转述，把"不能冻结超级管理员"说成"不能禁言超级管理员"得由这里产出。
-///
-/// ⚠️ 这四句同 `freeze_denial_message` 一样是不可随手改的措辞
-/// （见 `docs/security-boundary.md` §7⑫）。
 pub(super) fn mute_denial_message(denial: crate::authz::FreezeDenial, muted: bool) -> String {
     use crate::authz::FreezeDenial as D;
     let verb = if muted { "禁言" } else { "解除禁言" };
@@ -245,9 +180,6 @@ pub(super) fn mute_denial_message(denial: crate::authz::FreezeDenial, muted: boo
     }
 }
 
-/// 禁言/解禁通知正文。**绝不复用 `account_change_body`**：那一份写着"你此前登录的
-/// 全部设备已失效，需要重新登录"，而禁言**从不 bump `token_version`**——照抄过来的
-/// 那句是彻头彻尾的假话，当事人会以为被踢下线了（这正是"消息壳架空判据"那一族坑）。
 pub(super) fn mute_change_body(muted: bool, action: &str, when: &str) -> String {
     if muted {
         format!(
@@ -370,18 +302,6 @@ pub async fn set_user_role(
     .await
 }
 
-/// 变更身份被拒的中文话术。同样是**跨语言契约**（agent 的 `account_set_role` 技能
-/// 要求模型逐字转述这里的原话，见 `docs/security-boundary.md` §7），
-/// 所以七句分开写、不共用兜底。
-///
-/// 20261002 下放时的三处措辞改动：
-///   · `NotPermitted` 的口径从"只有超管"改成"**只有管理员**"——它现在的触发条件
-///     是发起人连后台都进不去（普通用户/杂鱼），而管理员已经能改了，
-///     照旧印"只有超级管理员可以变更"就是一句**过期的政策**（当事人会拿这句话
-///     去问超管，而超管会告诉他管理员本来就能改）。
-///   · 新增两句讲清管理员的**边界**：先讲目标（"这个账号不归你管"），
-///     再讲新身份（"你不能把人提到那个档"）。两句分开而不是共用一句：
-///     当事人下一步该做的事不同（换账号 vs 换目标身份）。
 pub(super) fn role_change_denial_message(denial: crate::authz::RoleChangeDenial) -> String {
     use crate::authz::RoleChangeDenial as D;
     match denial {
@@ -442,9 +362,6 @@ mod tests {
         );
     }
 
-    /// 禁言话术（20261002）：四条判据与冻结**共用一份规则表**，但话术必须自己出一份
-    /// ——同样是跨语言契约（agent 逐字转述），把"不能冻结超管"说成"不能禁言超管"
-    /// 必须由这里产出。所以这条测试的重点是：**动词换对了，且与冻结那四句不同形**。
     #[test]
     fn 禁言话术与冻结同规则但各说各的动词() {
         use FreezeDenial as D;
@@ -496,9 +413,6 @@ mod tests {
         assert!(!forever.contains("9999"), "{forever}");
     }
 
-    /// 禁言通知正文**绝不复用 `account_change_body`**：那一份写着"你此前登录的全部
-    /// 设备已失效，需要重新登录"，而禁言从不 bump `token_version`——照抄就是一句假话。
-    /// 这条测试钉住的就是那半句不许出现。
     #[test]
     fn 禁言通知不说登录失效() {
         let muted = super::mute_change_body(true, "管理员「心关」（uid=7）禁言了你的账号（至 2026-10-04 12:00）", "2026年10月03日 12:00");
@@ -517,14 +431,6 @@ mod tests {
         assert!(frozen.contains("需要重新登录"), "{frozen}");
     }
 
-    /// 变更身份的七句：六句拒绝 + 一句"超管只能走迁移"。
-    /// `NotAssignable` 的措辞必须点出**替代路径**（数据库迁移），否则主人被拒之后
-    /// 不知道该去哪儿加第二个超管。
-    ///
-    /// `NotPermitted` 那句 20261002 改了口径（超管 → 管理员）：**它必须与
-    /// `authz::check_role_change` 的第一关同一天改**——发起人判据下放了而话术还写着
-    /// "只有超级管理员"，就是在把一句过期的政策逐字转述给当事人（agent 侧那份
-    /// 转述是逐字的）。
     #[test]
     fn 变更身份话术逐句锁死() {
         use RoleChangeDenial as D;
@@ -548,8 +454,6 @@ mod tests {
             super::role_change_denial_message(D::NotAssignable),
             "超级管理员身份不能在这里指派，要增加请走数据库迁移"
         );
-        // 20261002 管理员边界那两句：一句讲目标、一句讲新身份，**不共用**——
-        // 当事人下一步该做的事不同（换个账号 vs 换个目标身份）
         assert_eq!(
             super::role_change_denial_message(D::AdminTargetTier),
             "管理员只能变更普通用户或杂鱼的身份"
@@ -560,14 +464,11 @@ mod tests {
         );
     }
 
-    /// 发起人的称呼（20261002 主人点名：三条账号变更通知都要写明是谁干的）。
-    /// 三个面各锁一条：身份用中文、昵称带引号、uid 在场（昵称可改可重名，uid 才是标识）。
     fn row(id: i32, username: &str, nickname: &str, role: &str) -> crate::entity::user::Model {
         crate::entity::user::Model {
             id,
             username: username.to_string(),
             nickname: nickname.to_string(),
-            // 迁移自动改名标记（20261002 昵称唯一）。这个测试行不是迁移改出来的 ⇒ 0。
             nickname_auto_renamed: 0,
             avatar: None,
             password: String::new(),
@@ -575,8 +476,6 @@ mod tests {
             status: 0,
             token_version: 0,
             chat_quota_used: 0,
-            // 禁言到期时间（20261002 内容风控）。这个测试行没被禁过 ⇒ NULL = 从未禁言
-            // （**不是** `9999-…`：那表示永久，见 `authz::MUTE_FOREVER`）。
             muted_until: None,
         }
     }
@@ -624,15 +523,6 @@ pub async fn create_temp_user(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<CreateTempUser>,
 ) -> Json<crate::utils::ApiResponse<String>> {
-    // ── 判据（20261017 补）──────────────────────────────────────────────────
-    // 这个函数此前**一条校验都没有**：没有长度、没有字符集、连空串都不挡
-    // （`username` 在库里是 `NOT NULL`，但空串是合法值 ⇒ 能建出一个空账号名的账号，
-    // 而登录侧 `Username.eq("")` 查得到它 ⇒ 那是个能登进去的账号）。
-    // 唯一挡着的是 DB 的 `varchar(255)`。前端那两个框当时也没有 `maxLength`。
-    //
-    // 判据与落库必须看**同一个串**：先 `trim()` 再校验、再拿这个值去查重和写库。
-    // 否则「'   ' 通过检查、被存成三个空格」或者「查重用未 trim 的值、写库用 trim 的」
-    // 这类事就会出现。字符集白名单本批刻意不做（建号是管理员专用入口，不是公开注册）。
     let username = payload.username.trim();
     if let Some(msg) = crate::utils::username_reject(username) {
         return Json(crate::utils::ApiResponse::error(msg));
@@ -656,10 +546,6 @@ pub async fn create_temp_user(
         return Json(crate::utils::ApiResponse::error("用户名已存在"));
     }
 
-    // ⚠️ **这里此前是 `let _ = …save()`，于是写失败也报"创建成功"。** 会实际发生的
-    // 有两条路：① 超长（本函数现在自己挡了，但 DB 那一层仍是最后一道）；② 并发同名
-    // ——查重在插入之前，两个请求可以同时通过查重、其中一个撞 UNIQUE 失败。
-    // 操作者看到"创建成功"而库里没有，是**操作者被骗**，不是"少建了一个账号"。
     let created = (user::ActiveModel {
         username: Set(username.to_string()),
         password: Set(encrypted_password),
@@ -679,14 +565,7 @@ pub async fn delete_temp_user(
     headers: axum::http::HeaderMap,
     Path(user_id): Path<i32>,
 ) -> Json<crate::utils::ApiResponse<String>> {
-    // 谁在操作（20261001）：这一支此前是**全页唯一的黑箱**——没有 tracing、没有通知，
-    // 删完只剩一行不含操作人与账号名的 access log。误删之后查不出是谁、什么时候删的。
-    // 取不到发起人只是少一行日志，**不阻断删除**（与 `let _ =` 的辅助事实同口径）。
     let operator = crate::auth_jwt::auth_uid(&state.db, &headers).await.ok();
-    // 只允许删普通账号（20260926）：列表现在把管理员也列出来了，那是为了让博主
-    // 看得见"后台有谁"，**不是**给这个入口一条删管理员的通道——删号会连带清空
-    // 那个人的全部会话数据（见下面三行级联），误点一次不可逆。管理员账号要在
-    // 别处处理就另开一条明确命名的通道，而不是让它从这个入口漏过去。
     let Some(target) = user::Entity::find_by_id(user_id).one(&state.db).await.unwrap_or(None) else {
         return Json(crate::utils::ApiResponse::error("用户不存在"));
     };
@@ -727,18 +606,11 @@ pub async fn delete_temp_user(
         return Json(crate::utils::ApiResponse::error("删除失败，请稍后再试"));
     }
     crate::checkpoint_cleanup::dispatch(&state.db, &threads).await;
-    // 审计留痕（20261001）：此前这一支**全函数没有一行 tracing**，误删之后再想查
-    // "谁在什么时候删了谁"只剩一条不含操作人的 access log。与冻结/改身份对齐。
     tracing::info!(
         "[账号管理] 删除账号 uid={}（{who}）（发起人 uid={:?}）",
         user_id,
         operator
     );
-    // 给**博主本人**（uid=1）留一条通知（20261001）：被删的人已经没有收件箱了
-    // （通知行也随外键 CASCADE 一起没），所以这条不是"告知当事人"，而是给误删
-    // 留一个看得见的痕迹——用户这次正是误删了几个账号、事后才发现。
-    // 放在删除**成功之后**：删失败就没有这条，不留"已删除"的假记录。
-    // uid<=0（起始账号不在库）时 `push_notice` 自己会跳过，不必在这里分支。
     crate::routes::notice::push_notice(
         &state.db,
         1,
@@ -753,13 +625,6 @@ pub async fn delete_temp_user(
     Json(crate::utils::ApiResponse::success("用户已删除".to_string()))
 }
 
-/// 管理员替某个账号改密码。
-///
-/// 20260926：**代次 +1 ⇒ 那个人在全部设备上的登录状态当场失效**。
-/// 这条路的典型场景就是"这个人的账号可能被人用了/设备丢了"，改完密码却让旧令牌
-/// 继续能用，等于什么也没做。与本人改密码（`profile::change_password`）同一条纪律，
-/// 区别只在于本人那台设备会拿到一枚新令牌、这里不签发（管理员不该拿到别人的令牌）。
-/// 两个凭据入口共用鉴权、锁与目标层级检查，不能只保护其中一个。
 async fn credential_change_transaction(
     state: &AppState,
     headers: &axum::http::HeaderMap,

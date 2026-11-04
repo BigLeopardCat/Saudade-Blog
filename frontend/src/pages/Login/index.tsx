@@ -15,14 +15,6 @@ import { useIsDarkMode, useAutoThemeSwitch } from '../../theme';
 
 type NoticeKind = 'register' | 'forgot' | null;
 
-// ── 弹窗主题（两档，20261006 起跟着这一页的昼夜走）──────────────────────────
-// 弹窗挂在 body 上（antd Portal），所以**页面自己的背景色管不着它**：主题得显式给。
-// 走官方途径（algorithm + token）而不是覆写 `.ant-modal-*` 的 CSS：antd v5 是 CSS-in-JS
-// 注入，手写选择器得跟它拼特异性，且标题/关闭图标吃的是 token 而非一条 background ——
-// 改一条治不了全身。
-//
-// 夜间档 = 20260922 那一套原样（墨蓝底 + 河灯金主色），当时登录页恒深色、不套深色算法
-// 时弹窗正文的浅色字全落在白底上（实测）。
 const DARK_MODAL_THEME = {
     algorithm: antdTheme.darkAlgorithm,
     token: {
@@ -56,25 +48,7 @@ const Login: React.FC = () => {
     const [messageApi, contextHolder] = message.useMessage();
     const dispatch = useDispatch();
     const navigate = useNavigate();
-    // 20260924：品牌区那行小字「登录后体验完整服务」换成**访客自己的三态头像**（与头部
-    // 同一个 hook，不是另写一套）：正常登录=自己的头像；退出登录/令牌过期但本机挂过账号
-    // =上次那个账号的头像；从没登录过=默认头像。登录页正是"退出后落回"的地方——令牌没了，
-    // 展示身份不该跟着失忆（三态的选择与缓存见 components/UserCenter/identity.ts）。
     const viewerAvatar = useViewerAvatar();
-    // ── 昼夜（20261006 用户第 3 条）──────────────────────────────────────────
-    // 这一页从前**恒深色**：色值全写死在 index.sass 里，也不读 `isDarkMode`。原因是它在
-    // App 壳之外（`router/index.tsx` 里 `login` 是**顶层路由**，不在那层 `.frontDark` 底下），
-    // 于是全站切昼夜它一动不动。现在跟随全站：白天 = 主页那套和纸配色，夜间 = 原来的墨蓝。
-    //
-    // 复用 `useIsDarkMode()`（src/theme.ts，全仓唯一在 React 里跟随主题的写法，含
-    // 挂载补读 + 听 `darkmode-change`）——不在这里另写一套读法。
-    //
-    // ⚠️ 20261013：「跟随」有两半，只读不算——**半个**。`useIsDarkMode` 只会读，而
-    // 23:00/06:00 那两条边界动作原来只长在 App.tsx 里，这一页在 App 壳之外，于是它在
-    // 夜窗内永远收不到切换通知：冷启动直达 `/login` 整晚浅色、停在页上跨 23:00 也不切
-    // （实测留白亮度 234/228/243，同刻首页 26/26/12）。挂上 `useAutoThemeSwitch()`
-    // 这一页才真的自己会切（它同时负责把结果写回 `isDarkMode`——此前这一页连落盘都没有）。
-    // 判据：tests/login-page.test.py 的「跨 23:00」那一节。
     useAutoThemeSwitch();
     const isDark = useIsDarkMode();
 
@@ -99,15 +73,10 @@ const Login: React.FC = () => {
     useEffect(() => {
         const token = getToken();
         if (token) {
-            // 20260922：普通用户登录后不再往 /dashboard 送——那条路由被 AuthRouter 收成
-            // 管理员专属，普通用户只会看到"无权限访问后台"再被弹回首页（个人中心一期之前
-            // 没有别的地方可去）。管理员仍然直达后台。
             navigate(isAdminToken(token) ? '/dashboard' : '/');
         }
     }, [navigate]);
 
-    // 关窗一律走这里：顺带清掉恢复表单的残留。恢复码是一次性的——留着上一次的码再提交
-    // 只会得到"账号或恢复码无效"，用户不知道为什么（20260922 修）。
     const closeNotice = () => {
         setNotice(null);
         setResetUsername('');
@@ -214,17 +183,10 @@ const Login: React.FC = () => {
         <>
             <SeoHelmet title="登录" url="/login" />
             {contextHolder}
-            {/* `frontDark` 借给这一页：`--washi-*` 在 `:root` 是浅色档、在这个类下才是夜间档
-                （src/index.css 那两段），白天零成本。 */}
             <div className={isDark ? 'login-page frontDark' : 'login-page'}>
                 <div className="login-box">
                     <header className="login-brand">
                         <h2>Saudade Blog</h2>
-                        {/* 这一格原来是小字「登录后体验完整服务」，20260924 起换成访客自己的
-                            三态头像（同一个 useViewerAvatar，尺寸比头部那个大一号）。
-                            再叠一层"跟着输入框走"：换账号输入时立刻退回默认头像——头像只认
-                            **本机登录过的那些账号**各自缓存在本地的头像，绝不按输入的名字去问
-                            后端（那是账号枚举 oracle，见 identity.ts 的 selectLoginAvatar）。 */}
                         <Avatar className="login-avatar" src={avatar} size={84} alt="访客头像" />
                     </header>
 
@@ -279,7 +241,6 @@ const Login: React.FC = () => {
                         </button>
 
                         <div className="login-links">
-                            {/* 打开时把上面填的账号带过去：多数人是先输账号、再想起忘了密码 */}
                             <button type="button" onClick={() => { setResetUsername(account); setNotice('forgot'); }}>
                                 忘记密码？
                             </button>
@@ -299,7 +260,6 @@ const Login: React.FC = () => {
                 </div>
 
                 <ConfigProvider theme={isDark ? DARK_MODAL_THEME : LIGHT_MODAL_THEME}>
-                    {/* 注册：本站不开自助注册，这里只做声明，不给任何"去注册"的出口 */}
                     <Modal
                         open={notice === 'register'}
                         title="注册账号"
@@ -323,9 +283,6 @@ const Login: React.FC = () => {
                         </div>
                     </Modal>
 
-                    {/* 忘记密码：无邮箱账号，只能靠管理员签发的一次性恢复码。
-                        不开页脚——一条表单下面再放"取消"是多余的（右上角 X / 遮罩 / Esc 都能关）；
-                        关窗后的表单清理由 closeNotice 统一负责。 */}
                     <Modal
                         open={notice === 'forgot'}
                         title="重置密码"

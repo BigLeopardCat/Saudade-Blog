@@ -285,6 +285,11 @@ STUB_ROUTER = (
 # 真正的请求在 stub 掉的 axios 里）。状态对象每次都返回**同一个数组实例**——返回新数组
 # 会让 useSelector 判定"变了"而无限重渲染。
 STUB_REDUX = """\
+import {createContext} from 'react';
+export const ReactReduxContext = createContext(null);
+export const batch = (callback: any) => callback();
+export const shallowEqual = (a: any, b: any) => a === b;
+export const useStore = () => ({getState: () => state, subscribe: () => () => {}, dispatch: () => {}});
 const state: any = {
   categories: { categories: [] },
   tags: { tags: [] },
@@ -362,7 +367,7 @@ def build_sandbox() -> pathlib.Path:
         # 排查时等于没有信息）⇒ 失败时把 stderr 原样打出来再抛。
         r = subprocess.run([str(FE / "node_modules/.bin/esbuild"), entry,
                             "--bundle", "--format=iife", f"--outfile={outfile}",
-                            "--loader:.sass=text", "--jsx=automatic",
+                            "--loader:.sass=text", "--loader:.scss=text", "--loader:.svg=dataurl", "--loader:.png=dataurl", "--loader:.woff=dataurl", "--loader:.woff2=dataurl", "--loader:.ttf=dataurl", "--jsx=automatic",
                             f"--define:{DEFINE}",
                             f"--alias:react-router-dom={sb}/stub-router.tsx"],
                            cwd=str(sb), capture_output=True)
@@ -376,7 +381,7 @@ def build_sandbox() -> pathlib.Path:
     # 头部那一包多桩一个 react-redux（它是全站 store 的连接点）
     subprocess.run([str(FE / "node_modules/.bin/esbuild"), "head-entry.tsx",
                     "--bundle", "--format=iife", "--outfile=head-bundle.js",
-                    "--loader:.sass=text", "--jsx=automatic",
+                    "--loader:.sass=text", "--loader:.scss=text", "--loader:.svg=dataurl", "--loader:.png=dataurl", "--loader:.woff=dataurl", "--loader:.woff2=dataurl", "--loader:.ttf=dataurl", "--jsx=automatic",
                     f"--define:{DEFINE}",
                     f"--alias:react-router-dom={sb}/stub-router.tsx",
                     f"--alias:react-redux={sb}/stub-redux.tsx"],
@@ -421,6 +426,7 @@ make_png(SANDBOX / "owner.png", 120, 120, (110, 150, 210))
 # 默认头像：**直接拷仓库里那张真图**（frontend/public/default-avatar.png）——
 # 不自己造一张，测的就是"线上那个文件真的能加载、地址真的写对了"。
 shutil.copyfile(FE / "public/default-avatar.png", SANDBOX / "default-avatar.png")
+shutil.copytree(FE / "public/stickers", SANDBOX / "stickers")
 make_png(SANDBOX / "api/protect/download/avatars/7_abc.jpg", 512, 512, (120, 200, 160))
 
 # 必须走 HTTP 而不是 file://：应用里图片是**根相对路径**（/owner.png、
@@ -944,21 +950,20 @@ with sync_playwright() as p:
     check("列表里不再出现字面量「:头疼:」（渲染了、原文也没被吃掉两头）",
           ":头疼:" not in list_txt and "今晚 23:00 维护" in list_txt and "请提前保存草稿" in list_txt,
           list_txt.replace("\n", " ")[:140])
-    # 几何判据（不读 CSS 文本）：全局 `img.sticker { height: 1.8em }` 真的作用到了这里。
-    # 少了它，"class 写对了但那条全局规则没进这一页"照样全绿——`.ucBodyText` 的
-    # font-size 是 13px ⇒ 期望高度 23.4px；图片撑成原始尺寸（>40px）或塌成 0 都算红。
+    # Shared sticker size is 5rem, independent of the notification's text size.
     sgeo = pg.evaluate("""() => {
       const img = document.querySelector('.ucNoticeRow img.sticker');
       const box = img.closest('.ucBodyText');
       return { h: img.getBoundingClientRect().height,
                w: img.getBoundingClientRect().width,
                fs: parseFloat(getComputedStyle(box).fontSize),
+               loaded: img.complete && img.naturalWidth > 0,
                src: img.getAttribute('src'), alt: img.getAttribute('alt') };
     }""")
-    check("表情按所在行的字号缩放（height ≈ 1.8×13px，四个属性来自 src/index.css 那条全局规则）",
-          abs(sgeo["h"] - sgeo["fs"] * 1.8) < 1.5, f"h={sgeo['h']:.1f} fs={sgeo['fs']} {sgeo}")
+    check("通知表情使用共享的80px尺寸",
+          abs(sgeo["h"] - 80) < 1.5, str(sgeo))
     check("表情取的是本尊素材、alt 是名字（不是裂图/占位）",
-          sgeo["src"].endswith("/stickers/touteng.png") and sgeo["alt"] == "头疼", str(sgeo))
+          sgeo["loaded"] and sgeo["src"].endswith("/stickers/v2/touteng-cardigan.webp") and sgeo["alt"] == "头疼", str(sgeo))
 
     # ── 整行可点 ⇒ 占满窗口的详情 ──
     lgeo = pg.evaluate("""() => {
@@ -979,7 +984,8 @@ with sync_playwright() as p:
       const db = d.getBoundingClientRect();
       // "居中"要量**按钮**、不能量页脚容器：页脚是块级 flex 子项，不管左对齐还是居中，
       // 它自己的 rect 都撑满整宽（中心恒等于容器中心）⇒ 拿容器量等于恒真。
-      const bb = btns.length ? btns[0].getBoundingClientRect() : null;
+      const boxes = btns.map(button => button.getBoundingClientRect());
+      const bb = boxes.length ? {left:Math.min(...boxes.map(b=>b.left)),right:Math.max(...boxes.map(b=>b.right))} : null;
       return { detail: db.height, pane: d.closest('.ucPane').clientHeight,
                body: body.getBoundingClientRect().height,
                bodyFs: parseFloat(getComputedStyle(body).fontSize),
@@ -997,7 +1003,7 @@ with sync_playwright() as p:
           dgeo["bodyFs"] > lgeo["fs"], f"detail={dgeo['bodyFs']} list={lgeo['fs']}")
     check("详情里的表情也渲染了（放大后不许退回字面量）",
           dgeo["sticker"] >= 1 and ":头疼:" not in dgeo["text"], str(dgeo["text"])[:120])
-    check("页脚那颗按钮**居中**（按钮中心对齐详情中心，容差 2px）",
+    check("详情操作按钮组居中（容差2px）",
           0 <= dgeo["off"] <= 2, f"off={dgeo['off']:.2f}")
     check("页脚贴在正文下方（长正文在 body 里自己滚，页脚不被顶出窗口）",
           dgeo["footTop"] >= dgeo["bodyBottom"] - 1, f"foot={dgeo['footTop']:.0f} bodyEnd={dgeo['bodyBottom']:.0f}")

@@ -9,30 +9,6 @@ import { errMsg, getQuotaRequests, ok, reviewQuotaRequest } from "../../../apis/
 import { useLiveRefresh } from "../../../utils/liveRefresh.ts";
 import { quotaBalanceText, quotaLevel } from "../../../utils/quota.ts";
 
-/** 额度管理（20260929）：普通用户「对话额度用完了、申请重置」的**裁决队列**。
- *
- *  数据来自 `GET /api/protected/quota/requests`（挂后台守卫域，与 agent 的
- *  `list_quota_requests` 工具**共用同一条接口**——所以这一页与看板娘看到的是同一份队列）。
- *  两个动作：批准（`approved: true`，会把对方计数器清零）与驳回（`approved: false` + 理由）。
- *
- *  ── 与账号管理页的分工（别把两件事混起来）──
- *  按**账号**的动作（含"主动重置，不管他有没有申请过"）住在账号管理那一行的「重置额度」
- *  按钮上；本页只放**按申请**的裁决。与评论管理（BoardManage）只管裁决队列同构。
- *
- *  ── 三条承重取舍 ──────────────────────────────────────────────────────────
- *  ① **回包只有一句中文，所以成功之后重拉列表**（不做"就地更新那一行"）。
- *     就地更新在这里做不到诚实：批准改的是**两个**事实——这一行的 status，以及
- *     **那个账号的 `used`（清零了）**——而回包一个值都没带回来。自己拼一个 status=1
- *     写回本地，正是 `BoardManage` 记下的那个坑（「入参值 ≠ 落库值」，那里入参 0 而
- *     库落 2，界面于是停在待审）。列表上限 200 行、裁决是低频动作，重拉一次最省事也最诚实。
- *  ② **驳回理由必填**（空理由时「确认驳回」禁用）＋常见类型预设。后端**不硬闸**
- *     （理由为空时它回落成「管理员没有填写理由」，见 routes/quota.rs 头注②）——
- *     留空的结果是申请人收到一句什么也没说的通知，等于白发一条。必填在这一层保证，
- *     与评论管理逐条同形。上限 255 是本页与后端 `NOTE_MAX`、`quota_request.note` 的
- *     **列宽**三处对齐的数（后端超限是拒绝而不是截断）。
- *  ③ **`status` 是三值不是布尔**：0 待处理 / 1 已批准 / 2 已驳回。已处理的行不再有动作
- *     （后端也只是"这条申请已经处理过了"，不是错误），所以「全部」视图里那两态只读。
- */
 interface QuotaRow {
     id: number;
     userId: number;
@@ -63,15 +39,6 @@ const NOTE_MAX = 255;
 /** 每页条数（分页由外面那一条承担，见下面 `.qm-scroll` 的说明） */
 const PAGE_SIZE = 10;
 
-/** 用量那一列：**余额口径**（20260929b 与个人中心/账号行统一）。
- *
- *  `limit === 0` ⇒ 不限额（与后端 `quota::limit_of` 的口径一致）。不限额的人**不会**
- *  出现在这个队列里（他的计数器从来不增长），所以这一支只是防御——真出现时也不能
- *  显示成 `0/0`（那会被读成"用完了"）。
- *
- *  **裁决看的就是余额**：这个页面唯一的问题"该不该再给他 500 轮"，答案取决于他此刻
- *  还剩多少——`已用 363/500` 要心算一步，`剩 137/500` 直接就是结论。减法与档位色都
- *  来自 `utils/quota.ts`（同一套在四处显示共用），这里不许自己再算一遍。 */
 const usageText = (r: QuotaRow): string => quotaBalanceText(r.limit - r.used, r.limit)
 
 /** 用量那一列的档位（决定染不染色）。与文案同一个减法——两处都走 util，不各算一遍。 */
@@ -122,11 +89,6 @@ const QuotaManage = () => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [onlyPending]);
 
-    /* 跨端同步（20260929）：看板娘可以替主人批准/驳回申请（agent 的
-       `approve_quota_request` / `reject_quota_request`），也可以主动重置某个账号的额度。
-       本页若只在挂载时拉一次，主人开着这一页让 agent 去批，界面就永远停在待处理。
-       `skip`（裁决弹窗开着就不拉）：弹窗认的是**那一行对象**，底下列表在它开着的时候
-       被换掉/重排，主人按下去的那一下就可能落到已经变样的队列上（同 BoardManage）。 */
     useLiveRefresh(() => load({ silent: true }), { skip: () => !!rejecting || !!approving });
 
     /** 当前页那几条。**只切显示、不改 rows**：上面那个「共 N 条」与页脚的总数都读全量。 */
@@ -143,8 +105,6 @@ const QuotaManage = () => {
         try {
             const res = await reviewQuotaRequest(row.id, approved, reason);
             if (ok(res)) {
-                // 人话在 **`data`** 里（`ApiResponse::success` 的 message 恒为字面量 "ok"，
-                // 见 src/utils.rs——后台这几页踩过不止一次）
                 message.success(res.data.data || '已处理');
                 await load({ silent: true });
                 return true;
@@ -177,21 +137,6 @@ const QuotaManage = () => {
         if (okDone) setApproving(null);
     };
 
-    /* ⚠️ **窄屏裁列 + 收窄（20261006 用户第 6 条）**：视口 < `screenLG`（本仓在
-       `WASHI_THEME.common` 里把它抬到 1024）时，低信息量的列挂 `responsive: ['lg']`
-       直接筛掉，窄屏只留 **申请人 + 申请理由 + 操作**。
-       —— 这里**没留「状态」而留了「申请人」**（与计划里那句「留标题+状态+操作」是故意
-       不同的取舍）：本页默认就停在「待处理」页签上，`状态` 列在窄屏几乎是个常量；而
-       「批准」把对方的额度恢复到上限、**不可逆**（没有「改回原值」这个入口），所以
-       「这一行是谁」比「这一行什么状态」更要紧。余额/上限、申请时间同样挂 `lg`：
-       余额在批准确认弹窗里有，申请时间对「要不要批」没有影响。。
-       剩下那几列里写死 px 的还要**收窄**（下面 `isNarrow` 那几处三元）：这不是可选的 ——
-       这些表是 `table-layout: fixed`（antd 见到 `ellipsis` 就会加），定宽列先把自己拿满、
-       剩下的才轮到没写宽的正文列，实测 390 屏上**只裁列不收宽**正文列只剩 66px。
-       断点用 antd 自己的 `useBreakpoint`：它读的正是 `WASHI_THEME.common.screenLG`
-       那颗令牌 ⇒ 与 CSS 那条 `@media`、壳里那条 matchMedia 同一处事实源，不会漂开
-       （它是 `useLayoutEffect`，首帧那个空的 `{}` 上不了屏 ⇒ 宽屏不会闪一下窄屏形态）。
-       宽屏（≥1024）逐像素不变。 */
     const screens = Grid.useBreakpoint();
     const isNarrow = !screens.lg;
     const columns: ColumnsType<QuotaRow> = [
@@ -207,8 +152,6 @@ const QuotaManage = () => {
             ),
         },
         {
-            // 标题也跟着改口径（20260929b）：这一列现在给的是**余额**，标题写「已用 / 上限」
-            // 就与格子里的字对不上了。
             title: '剩余 / 上限', key: 'usage', width: 130, responsive: ['lg'],
             // **数字来自服务端**（`limit` 由 env 决定、`used` 是他此刻的真实值），
             // 前端不把 500 写死——上限是可以调的，写死的那一刻这一列就在说谎。
@@ -225,8 +168,6 @@ const QuotaManage = () => {
                     <div className="qm-reason">
                         {v ? v : <i className="qm-none">（没填理由）</i>}
                     </div>
-                    {/* 驳回理由跟在下面（同评论管理那条纪律：翻列表时要一眼看到
-                        "这条为什么被驳回"，不必逐行悬停猜） */}
                     {r.status === 2 && (
                         <div className="qm-note">
                             驳回理由：{r.note || <i className="qm-none">未填写</i>}
@@ -245,7 +186,6 @@ const QuotaManage = () => {
                         <Tooltip title={st.tip}>
                             <Tag color={st.color}>{st.text}</Tag>
                         </Tooltip>
-                        {/* 处理时间只在已处理的行上出现（两列都空时整块不画） */}
                         {r.handledAt && <div className="qm-handled">处理于 {r.handledAt}</div>}
                     </>
                 );
@@ -282,8 +222,6 @@ const QuotaManage = () => {
                 </Button>
                 <span className="qm-count">共 {rows.length} 条申请</span>
             </div>
-            {/* 上面那一行固定、只有这张表在窗口内滚（表头 sticky，见 index.sass）——
-                同评论管理那套：筛选头跟着表格一起滚走，翻到第 30 条想换筛选得先滚回顶上。 */}
             <div className="qm-scroll">
                 <Table
                     rowKey="id"
@@ -313,14 +251,6 @@ const QuotaManage = () => {
                 />
             </div>
 
-            {/* 批准确认（受控 Modal：命令式弹窗沙箱测不到）。按钮写**动作词**而不是
-                「确定」、「批准」是这一下唯一不可逆的那半边——恢复满额之后没有"改回原值"
-                这个入口（同意闸与风险说明同后台冻结那套）。
-                标题里的身份用**账号名**而不是昵称：昵称可空、可重名、可随时自己改，
-                而这一下是不可逆的（同页「发通知」那个弹窗也只用账号名）。申请人是谁
-                在列表里已经写全了（`@账号名 · 用户 #id` + 昵称）。
-                **按钮与正文都写「恢复到上限」而不是「清零」**（20260929 用户指出）：
-                主人看到的那个数是递减的余额，"计数器清零"是库里的实现。 */}
             <Modal
                 title={`批准 ${approving?.username || ''} 的额度重置申请？`}
                 open={!!approving}
@@ -337,9 +267,6 @@ const QuotaManage = () => {
                 width={460}
             >
                 <div className="qm-confirm">
-                    {/* 括号里为什么印**已用**而不是列表那列的余额：这一句要回答"他要被
-                        退掉多少"，那个数就是已用的这一截（余额是"还剩多少"，读了会以为
-                        恢复的是余额）。余额口径的单一来源仍是 `utils/quota.ts`（列表列用它）。 */}
                     <div>
                         批准后：该账号的额度<b>恢复到上限</b>（当前已用
                         {approving ? approving.used : ''} 轮，这一截不再计入），
@@ -351,9 +278,6 @@ const QuotaManage = () => {
                 </div>
             </Modal>
 
-            {/* 驳回弹窗：**理由必填**（空理由时按钮禁用）——留空的结果是申请人收到一句
-                什么也没说的通知，等于白发一条。后端不加硬闸（那是脚本/agent 也在用的
-                兼容面），必填在这一层保证（同评论管理的驳回弹窗）。 */}
             <Modal
                 title={`驳回 ${rejecting?.username || ''} 的额度重置申请？`}
                 open={!!rejecting}
@@ -382,8 +306,6 @@ const QuotaManage = () => {
                                 onClick={() => setRejectReason(p)}>{p}</Button>
                     ))}
                 </div>
-                {/* `counter-room`：给 showCount 的计数腾 22px（它不占布局空间，
-                    Modal footer 只留了 12px）。见 src/index.css 那条规则。 */}
                 <Input.TextArea
                     className="counter-room"
                     value={rejectReason}

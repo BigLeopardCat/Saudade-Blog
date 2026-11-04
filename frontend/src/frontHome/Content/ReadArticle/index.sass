@@ -5,11 +5,6 @@ html
 .readContainer
   min-height: calc(100vh - 172.4px)
   width: 100%
-  // 20260830：readBackground/homeBg 图床图已删除（picgo），404 不再渲染——
-  // 背景改用 CSS 变量体系，不依赖图床图；无 background-attachment: fixed
-  // （整页重绘，滚动卡顿主因）
-  // 下面这两档（见本节末尾）才是真正上屏的那两支；这里是**兜底**：万一哪天少了
-  // `.frontRoot` 祖先（正常渲染链路里不会），透明也比留一块黑/白强。
   background: transparent
   // 整页级 backdrop-filter 性能开销大（与主页 frontRoot 同类），注释
   // backdrop-filter: blur(10px)
@@ -17,40 +12,6 @@ html
   flex-direction: column
   align-items: center
   font-size: 1rem
-  // ── 阅读面底色：两档都**自给自足**（20261008 拍的；之前是靠"透出去看别处"）──
-  // 白天 = **博客主题底** = `--washi-theme-bg`（粉紫天青那一张：160deg #fff6fa→#ffe9f4→
-  // #f2ecff→#e9f4ff）。它是首页首屏拼贴底与登录页底那张纸，值住在 src/index.css。
-  // 这一档换过两次，两次都是用户拿眼睛投的票，别合并：
-  //   · 20261005「白色背景有点刺眼」⇒ 换米白 #f7f1e7（`--washi-paper-warm`，那支 20261008 已删）；
-  //   · 20261008「白天模式背景也改成博客主题背景」⇒ 我先给了站内内容页那支
-  //     `--container-background-color`（半透明白 ⇒ 叠出来是 rgb(246,248,251) 的近白，
-  //     与 /about 逐像素同档），用户第二轮当场否掉：「白天怎么文章详情页是纯白，不是
-  //     博客主题色系背景」——那支铺在别的页上是一张卡片、铺在这里是**一整幅白**。
-  //   ⇒ 现在这一支是**不透明的主题渐变**：整页由粉缓缓转天青（长文就是滚动时慢慢变色），
-  //     深色正文直接压在上面，与渐变两端实测对比度 ≈ 10:1 / 12:1。
-  // ⚠️ 别给它加 `background-attachment: fixed`（想让渐变钉在视口上）：本页 20260830 为
-  // GPU 占用（整页重绘 30%+）专门去掉过 fixed，见 App.sass。
-  // 夜间 = 不透明深墨蓝 **#121a27**：值就是 20261006 之前屏幕上的那一档（当时实测
-  // rgb(18,26,39)）。**刻意不透明**——这一支从此盖在谁身上都成立。
-  //
-  // 为什么两档都不许再写 transparent（20261008 修的病灶）：
-  // 这条规则从前是「白天 = 半透明白遮罩 / 夜间 = transparent」，而**夜间那支的底色根本
-  // 不在本页里**：透明的下面是 `.frontRoot` 的 33% 黑，再下面才是 `body`。改动前 `body`
-  // 身上挂着 `pages/Login/index.sass` 里**一条裸 `body` 规则**的深色渐变（#0d1319→#1d2634）
-  // —— 登录页是顶层路由、被 `router/index.tsx` 静态 import ⇒ 那份 CSS 全站加载 ⇒ 整站的
-  // body 都是它。于是"透明的阅读面"看到的其实是**别的页面漏出来的一张底**（20260830 那句
-  // 「暗色透明透 body 深蓝渐变（原视觉）」描述的正是这个来历，只是当时没人知道它是漏的）。
-  // ca6b9b0（20261006，登录页跟昼夜）把那支收成了 `body.login-route` ⇒ 泄漏断了，`body`
-  // 退回 `pages/Dashboard/index.css` 的 `body{background-color:#E4E9F7}`（后台模板的浅紫蓝，
-  // **不跟昼夜**；同样因为 router 静态 import 而全站生效）⇒ 夜间阅读面变成 33% 黑压在
-  // #E4E9F7 上 = **rgb(153,156,165) 浅灰**，而正文是白字 ⇒ 对比度 **2.76:1**
-  // （20261008 用户原话「文本都看不清了」；线上实测就是这个值）。
-  // 同一根病 20261005 白天也犯过一次：那时 body 还是深色，半透明白遮罩叠出来是一整幅
-  // #c1c3c6 的灰，被读成"字体太细、累眼"。
-  // ⚠️ 一句话教训：**底色写成 transparent，等于把这一页的观感抵押给了别的页面的 CSS**。
-  // 判据在 `tests/read-mobile.test.py` ⑧（量的是"那两档各自算不算数"——夜间要不透明且是那个
-  // 色、白天要是主题底那条渐变，不是量"源码里写没写 transparent"：那样写出来的判据在泄漏
-  // 断开时照样绿）。
   .frontRoot:not(.frontDark) &
     background: var(--washi-theme-bg)
   .frontDark &
@@ -61,8 +22,6 @@ html
     height: 400px
     border-radius: 0 0 20px 20px
     overflow: hidden
-    // 层序（20260912 加背景视频后显式排定）：封面 poster / 视频 0 → 渐变遮罩 1 → 文字 2。
-    // 此前 img 没有 z-index、遮罩 99 压在 .readInfo（auto）之上，加视频后必须显式排开。
     .readCoverPoster, .readCoverVideo
       position: absolute
       top: 0
@@ -113,27 +72,6 @@ html
       bottom: 45px
       transform: translate(-50%,-50%)
       color: #fff1eb
-      // 20261001：原来是 `space-between` —— 五个子项平分余量，于是**日期的位置全看标题
-      // 多长**（短标题 572px、中标题 657px、长标题 869px、超长 902px，实测），整条卡片
-      // 每篇都长得不一样。用户第 4 条「布局没有锁死，会被标题长度影响」说的就是这个。
-      // 20261001 改成三区 flex 行，20261003 用户第 2 条再改成**三列车格**：
-      //
-      //   [ 作者 + 两个时间 ] [ 标题（居中） ] [ 读数 2×2 ]
-      //        180px             minmax(0,1fr)        180px
-      //
-      // ★ **两侧轨道同宽是中区结构性居中的唯一来源**。理由看这条：flex 行里中区吃余量 ⇒
-      //   中区中线 = 卡片中线 + (左区宽 − 右区宽)/2。上一版能看着居中，是因为"竖排读数簇
-      //   ≈77px ≈ 作者簇 ≈90px"这两个宽度**碰巧接近**（还差 ~6px）；改成 2×2 之后右区必然
-      //   比左区宽一个数量级，那个巧合当场失效（偏 ≈ −38px）。所以不能靠"两边差不多"，
-      //   必须让两侧**结构上就相等**：两条定宽轨道，中区永远落在正中间。
-      // ⚠️ 改 `--read-side` 就同时改了左区与右区 —— 这正是它该有的形状（旋钮只有一个）。
-      //   180px 由左区里最长的那行文本定：「发布于 2026-10-01」13 个字符 @12px ≈ 168px，
-      //   取 180 留 12px 余量（`.readTimes` 是 `white-space: nowrap`，定了宽就不再重排）。
-      // ⚠️ 中区轨道写 `minmax(0, 1fr)` 而**不是** `1fr`：`1fr` 等价于 `minmax(auto, 1fr)`，
-      //   下限是这一格的 min-content。本仓 `h1` 那条 `word-break: break-word` 实测已经把
-      //   min-content 压到"一个字"（无头探针：一个 135 字符不折行的长 token 下，两种写法
-      //   都得到 424px，看不出差别）——所以这一条今天是**不依赖 word-break** 的显式形式：
-      //   哪天有人把 `word-break` 改回 `normal`，`1fr` 当场被那个长词顶宽、clamp 失效。
       display: grid
       --read-side: 180px
       grid-template-columns: var(--read-side) minmax(0, 1fr) var(--read-side)
@@ -187,14 +125,10 @@ html
           line-height: 1.25
           white-space: nowrap
 
-      // 中区：只剩标题，且**居中**（20261003 用户第 2 条）。它吃满中间那条轨道，
-      // 轨道两侧等宽 ⇒ 它的中线就是卡片中线（见 `.readInfo` 那段）。
       .readMain
         min-width: 0
 
         h1
-          // 标题居中（20261003 用户第 2 条）。居中得起来的前提是**这一格自己定宽**
-          // ——上一条 `minmax(0, 1fr)` 给的就是这个。
           text-align: center
           // 两行封顶：再长就截断（`.readInfo` 的高度由左区那个"头像 + 两个时间"的
           // 竖列决定，标题一旦超过两行就把整张卡拉高 —— 实测三行时卡片 124 → 146px，
@@ -215,22 +149,6 @@ html
         // `font-size: 1.4rem` 永久盖掉（媒体查询不改特异性，见文件末尾那段头注）。
         // `min-height` 是 em 的，跟着手机档的字号一起缩，正好。
 
-      // 右区：四件读数（收藏 / 浏览 / 点赞 / 评论）合成**一个簇**，20261003 起排成 2×2。
-      //
-      // 沿革：20261001 用户第 1 条「详情页三图标样式和布局太丑了，大小不一，排列奇怪」
-      // ⇒ 三件共用一份几何 `.readStat`（同高、同内边距、同字号、同描边），**排成一行**，
-      // 两个按钮再挂 `.readFavBtn` / `.readLikeBtn` 拿交互态。那一版治的是"大小不一"。
-      // 20261003 第 5 条把它改成**竖排一列**（治的是"横排 260px 把标题挤偏"）；
-      // 20261003 第 2 条（本轮）再改成 **2×2** —— 因为左区现在要装下"作者 + 两个时间"，
-      // 左右两条轨道被定成等宽，挤偏那件事已经由**结构**（等宽轨道）解决，不再靠
-      // "把簇压窄"。2×2 让这四件在同样的 180px 里只占两行（66px）而不是四行（138px）。
-      //
-      // ⚠️ 四件的**几何那一份仍然原样不动**（同高/同内边距/同字号/同描边只在
-      // `.readStat` 里写一次，见下面），这里改的只是它们落在哪一格。
-      // ⚠️ 每件的宽 = (180 − 6) / 2 = 87px，**由轨道算出来、与内容无关**——两件 30px 高
-      // 的胶囊、圆角 999px，文案最长「已收藏」3 字（3em）+ 图标 14 + gap 4 + 内边距 20
-      // ≈ 77px < 87 ✓。哪天某一件的自然宽超过 87px 就会画出格子（判据在
-      // `read-stats-cluster.test.py` 的 ②b）。
       .readStats
         display: grid
         grid-template-columns: 1fr 1fr
@@ -265,11 +183,6 @@ html
         min-width: 3em
         text-align: center
 
-      // 数字定宽 **4ch**：读数每跳一位，内容就宽一点；格子宽是定死的，多出来的宽度
-      // 只能从描边两侧溢出去。无头实测（`read-stats-cluster.test.py`）：3ch 时
-      // `999 → 1000` 这一步内容就宽 16px —— 而那恰恰是读数最常跨过的那道坎。
-      // 4ch 覆盖到 9999（本博客的量级）；再往上就会长（`min-width` 只兜底不封顶），
-      // 那是刻意的：真到五位数，宁可让它长一点，也不为极少数情况把几个胶囊常年撑空。
       .readViewsNum, .readLikeNum, .readCommentNum
         min-width: 4ch
         text-align: center
@@ -327,9 +240,6 @@ html
     max-width: 880px
     width: 80%
     height: auto
-    // 20261010：横向内边距 20px → 22px，与讨论区 `.commentSection`（`padding: 20px 22px 26px`）
-    // 取同一个值。配合下面 `.readBody > .markdown-body` 的 padding 归零，正文列撑到
-    // 880 − 2×22 = 836px，与讨论区正文列左右边缘重合（算式见 `.readBody` 那一段注释）。
     padding: 20px 22px
     margin: 0 auto 0
     border-radius: 8px
@@ -339,59 +249,14 @@ html
     align-items: center
     position: relative
 
-    // 正文包裹层（index.tsx 里那个 motion.div）**必须自己钉住宽度**。
-    // 本块是 `display:flex; flex-direction:column; align-items:center` ⇒ 子项在**交叉轴**上
-    // 按 fit-content 定尺，而 fit-content 的下限是 min-content。正文里只要出现一个宽原子
-    // （表格 / 一整行长代码 / mermaid），这一层就被顶到那个 min-content 那么宽、**左右对称
-    // 溢出**。手机档实测（20261005）：390px 视口里这一层 659px、左缘 −134px，而
-    // `html { overflow-x: hidden }` 把溢出部分裁掉 ⇒ 症状是"正文被切了"而不是"能左右滑"
-    // （报告人看到的正是这个）。桌面档 659 < 880 所以看不出来——那是**没触发**，不是没问题：
-    // 换一篇表格更宽的文章一样会顶出去。
-    // 钉成 100% 之后，宽原子由它们各自的机制收进盒内（下面 `table` 的 `table-layout: fixed`
-    // 与 `pre` 的 `overflow-x: auto` 就是干这个的）。`min-width: 0` 是配套的一条：交叉轴上
-    // 的自动最小尺寸同样会兜住 min-content，写着比"知道它今天不生效"可靠。
     .readBody
       width: 100%
       min-width: 0
-      // 20261005：正文列的内边距只留**这一处**（下面这个数字），两层 `.markdown-body` 里层清零。
-      // 起因：编辑器样式表（components/Editor/index.css，被 router 静态引入 ⇒ 全局生效）那两条
-      // `.markdown-body{padding:45px}` 与 `@media(max-width:767px){padding:15px}` 是打在**每一个**
-      // `.markdown-body` 上的，而文章正文是两层嵌套（`#content.markdown-body` + bytemd Viewer
-      // 自己那层）⇒ 桌面 45+45、手机 15+15 **全叠起来**：线上实测 390px 视口左右各
-      // `10(.readContent) + 15 + 15 = 40px` 空白，正文列只剩 310px —— 用户报的「左右两侧空白还多」。
-      // 特异性 (0,3,0) > 编辑器的 (0,1,0)：不看谁先加载、不靠源序。
-      // ⚠️ 20261010：这一处横向内边距由 `0 90px` 收到 `0`，正文列 660px → 836px。
-      // 起因是主人对着页面说「文章一行是不是太短了，改成和讨论区一样的长度」。讨论区
-      // `.commentSection` 与这里同口径（80% / max 880），但左右各吃到 22px 内边距 ⇒
-      // 它的正文列是 836px；而这里那 90px 是 20261005 特意留的旧有效宽（660 原是 45+45
-      // 两层编辑器内边距"碰巧"叠出来的，当时的目标是"桌面观感零变化"）。收掉之后两处
-      // 正文列等宽：`.readContent` 22px + 本层 0 ⇒ 880 − 2×22 = 836px。
-      // 讨论区那张卡另有 1px 边框、在 border-box 下再吃掉内容宽 ⇒ 严格算它是 834px，
-      // 左右各差 1px，肉眼不可见，不为它去凑一个 23px 的怪值。
-      // 手机档不吃这一条：媒体档里同名选择器写的是 `0 12px`（"正文列 346px"那个算式），
-      // 本行只影响桌面档。
       > .markdown-body
         padding: 0
         // bytemd Viewer 自己那层（`#content.markdown-body > .markdown-body`）
         > .markdown-body
           padding: 0
-          // 20261005 第二轮的「文章页字体还是看起来比讨论区细」——
-          // 正文与讨论区正文本来就是**同一条字体栈、同一个字重(400)、同一种颜色**，
-          // 差别只有字号（17px vs 14.72px）。细的是**相对笔画**：DPR2 下量中心扫描线上的
-          // 墨迹宽，两者都是 2 物理像素（= 1 CSS px），可 CJK 的笔画在小字号被格点吸附、
-          // 大字号不吸附 ⇒ 除以各自 em 之后 **0.0588 vs 0.0679**，大字号反而显得更细。
-          // `font-weight` 救不了（微软雅黑只有 Light/Regular/Bold，500 ≡ 400），
-          // 唯一可用的杠杆是描边：0.2px 按 `w/2` 各补一边 ⇒ 1.0 → 1.2 CSS px，
-          // 相对笔画 0.0706，与讨论区的 0.0679 齐平。
-          // 实测量到的是"墨量"（截一段正文，累加 `255 − 灰度`）而不是 50% 阈值下的游程宽：
-          // 0.2px 补上去的是**字缘的抗锯齿覆盖率**，不是一整像素，所以游程宽不变
-          // （DPR2 下都是 2 物理像素）而墨量涨。DPR2 **+22.5%**、DPR1 **+13.7%**
-          //（＝0.2/1.0 的量级，与上面的换算一致）。**DPR1 才是 Windows 用户的常态**，
-          // 那一档涨得最少但确实在画——这条杠杆的"下限"就长这样，别指望它像加粗一档。
-          // ✅ **它不改字形前进宽度**（描边是画上去的，不参与排版）⇒ 不重排、行数不变、
-          //    段落几何逐像素不变（`frontend/tests/read-mobile.test.py` 第 ⑧ 节拿"带规则/
-          //    摘掉规则"两臂量同一段落的宽高，必须完全相等）。
-          // `currentColor`：正文是 `var(--font-title-color)`，日间近黑、夜间近白，一支通吃。
           -webkit-text-stroke: 0.2px currentColor
           // 代码不描边：等宽字形笔画本来就细而密，再补边会糊成一团；而且代码块是
           // **深底浅字**，描边会让字重看着失衡（正文是浅底深字，方向相反）。
@@ -426,9 +291,6 @@ html
         background: transparent
         padding: 0
         border-radius: 0
-      // 代码块标签栏 + 复制按钮（20260914）：由 utils/chatMarkdown.ts 的
-      // decorateCodeBlocks 渲染后注入（bytemd Viewer 自身没有标签栏/复制按钮）。
-      // 代码块底色两模式都是深色，故标签栏统一走深色，与块体连成一体。
       .code-block-head
         display: flex
         align-items: center
@@ -623,7 +485,6 @@ html
   border-radius: 4px
 
 .frontRoot:not(.frontDark) .readContainer .readContent .navigation .markdown-navigation .title-anchor.active
-  // 20260830：蓝 #1a56ff 在背景图上辨识度低，换站点 accent 珊瑚红 #fc625d（Head 同款）
   color: #fc625d !important
   background-color: transparent !important
   border-left: 3px solid #fc625d !important
@@ -647,16 +508,6 @@ html
   border-left: 3px solid #569cfa !important
   font-weight: 700
 
-// ── Mobile (≤768px)：屏幕利用率优化 ──
-// ⚠️ 这一块的 `!important` 不是可选的（20261001 实测修）：媒体查询**不改特异性**，而桌面那几条
-// 都写在 `.readContainer` 里（`.readContainer .readContent` 0,2,0），这里裸写 `.readContent`
-// （0,1,0）**永远输**——从 f207b6d 写下那天起，这一块的 width/padding/height/bottom/max-width
-// **一条都没生效过**。375px 手机上真量（无头 Chromium）：正文 300px 宽（＝80%，不是这里的 100%）、
-// 封面 400px 高（不是 200）、正文内边距 20px（不是 12px 10px）。
-// 之所以看着"像生效了"，是因为同一块里 `.readInfo h1` 的 font-size 没有任何桌面规则跟它抢
-// ——**半死不是没死**，这是这一族最难自查的地方。判据见 `tests/sass-media-shadow.test.mjs` 的特异性档。
-// 别改成加 `.readContainer` 父类选择器：那会把下面 h1/p/pre 那几条一起抬到 0,3,x，
-// 而它们现在是干净的（没有同名更高特异性规则），抬上去只会招惹新的覆盖。
 @media only screen and (max-width: 768px)
   .readContent
     width: 100% !important
@@ -665,26 +516,10 @@ html
     width: 100% !important
     padding: 12px !important
   .readCover
-    // 20261003：240 → **260px**。手机档的 `.readInfo` 这一版改成了**单列**（作者+时间 /
-    // 标题 / 读数 2×2 竖着排），盒高随之变化，而 `.readCover` 是 `overflow: hidden`
-    // ⇒ 上沿一旦为负，最上面那几行就被整块裁掉（不是"挤一点"，是缺一块）。
-    // 上沿的算式这一版也变了：基础规则里 `.readInfo` 是 `bottom: B` + `translateY(-50%)`
-    // （上沿 = 封面高 − B − 1.5×盒高），本档把它改成只保留横向居中
-    // ⇒ **上沿 = 封面高 − B − 盒高**。实测（无头 375px）：盒高 226px、B = 12
-    // ⇒ 260 − 12 − 226 = 22 ✓。封面高与下面那三条是一组数，改一个要重算。
     height: 260px !important
     .readInfo
-      // ── 手机档改单列（20261003 用户第 2 条那条三列在 375px 上放不下）──
-      // 三列的两条侧轨各 180px + 间距 = 384px > 375px 的视口，硬留着只会互相挤。
       grid-template-columns: 1fr !important
       row-gap: 10px !important
-      // ★ **宽度必须在这里点明**：基础规则写死 `width: 880px`，而 `.readInfo` 是
-      // `left: 50%` + 横向 −50% 的绝对定位盒 ⇒ 它比视口宽得多、两边被 `overflow: hidden`
-      // 裁掉。三列时看不出来（屏幕上剩的正好是中间那条标题），**改成单列就全露馅**：
-      // 单列只有一个格子，作者块与读数簇会贴在 880px 盒子的左缘、跑到屏幕外。
-      // 实测（改前，375px）：`.readAuthor` left = −236px、读数簇 left = 540px ——
-      // 也就是**这两个区在手机上本来就在屏幕外**，与本次改动无关，这次顺手修掉。
-      // `calc(100% - 32px)` = 左右各留 16px，`left: 50%` + `translateX(-50%)` 居中之。
       width: calc(100% - 32px) !important
       max-width: calc(100% - 32px) !important
       // 纵向只留 `bottom`：去掉那条 `translateY(-50%)`（它把盒子再上推半高，算式里
@@ -716,14 +551,6 @@ html
         // 卡住的内容也一并缩到 12px——写第二份值只会成为"改一处必须同步另一处"。
   .markdown-body
     max-width: 100% !important
-  // 20261005：下面这一组**原来是"一条都没生效"的**——`.markdown-body h1`、`.markdown-body p`、
-  // `.markdown-body pre` 的特异性是 (0,1,x)，而基础层那几条挂在 `.readContainer .readContent`
-  // 之下（p/h1 是 (0,2,1)、pre 是 (0,3,1)），媒体查询**不改特异性** ⇒ 全被压死。
-  // 线上实测（390px 视口）：正文 p 行高仍是基础值、`pre` 字号也是基础值——这一块的头注
-  // 曾写着「它们现在是干净的（没有同名更高特异性规则）」，**那句话是错的**。
-  // 现在把选择器写足到比基础层高一层，不靠 `!important`：这一档的 `!important` 条数被
-  // `tests/read-mobile.test.py` 钉着（14 条），能用特异性解决的就别去动那个数。
-  // 判据读的是**渲染后的 computed 值**（同套件第 ⑦ 节），不再是"源码里写着"。
   .readContainer
     .readContent
       .readBody
@@ -743,17 +570,6 @@ html
           // 桌面是 `margin: 2rem 0`（上下各 32px）；手机档收一档，别让标题前后各空半屏
           margin: 1.5rem 0 0.9rem
         pre
-          // 20261005：`hidden` → `auto`。这一条原来是 `hidden`（想把长行"折起来"），
-          // 但真正排版的文本节点在 `<pre><code>` 里，而 `code` 的 `white-space` 被
-          // bytemd/hljs 顶成 `pre`（线上实测 computed `pre` = pre-wrap、`code` = pre）
-          // ⇒ **折行从来没发生过**，长行只是被裁掉了尾巴、还没有任何办法看到
-          // （`hidden` 不给滚动条）。改成 `auto` 后超长代码行可以横向滑——与基础样式里
-          // `pre` 的那条 `overflow-x: auto` 同行为（桌面一直是滑的）。
-          // ⚠️ 别改回 `hidden`：能整行放下的代码从 ~65 字符缩到 ~36 字符，
-          // `hidden` = 把超出的部分直接吃掉。
-          // ⚠️ 同处原来那两条 `white-space: pre-wrap` / `word-break: break-all` **已删除**：
-          // 它们和本条的 (0,1,1) 一样被压死过、一次都没生效，而"长行可横向滑"已经拍板
-          // （活着的那条是下面的 `overflow-x`）。留着只会让下一个人以为折行是既定行为。
           overflow-x: auto !important
           font-size: 13px
 
@@ -792,11 +608,6 @@ html
     &::after
       opacity: 1
 
-// ── 夜间代码块对比度修复（20260914，用户实测「文章详情页夜间高亮看不清」）──
-// 夜间页面底色实测 rgb(18,26,39)，代码块底色 #0f172a——两者对比度仅 1.02:1，
-// 原 8% 白描边在深底上约等于看不见：块体与页面糊成一片。加白色轮廓（用户指定
-// 方案）+ 轻微外阴影让块体重成形；白天页面是浅色底、深色块本就跳得出来，故只
-// 改 .frontDark。阴影/box-shadow 不占布局，不引起重排。
 .frontDark .readContainer .readContent .markdown-body
   pre, .code-block-head
     border-color: rgba(255, 255, 255, 0.35)
@@ -806,8 +617,6 @@ html
   :not(pre) > code
     box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18)
 
-// 内置表情包（:名字: → <img class="sticker">）行内尺寸（class 与 src 前缀双保险，
-// 20260903 泠月喵 PNG 贴纸素材；与 utils/stickers.ts 清单同步）
 .readContent .markdown-body img.sticker, .readContent .markdown-body img[src^="/stickers/"]
   height: var(--sticker-size)
   vertical-align: middle

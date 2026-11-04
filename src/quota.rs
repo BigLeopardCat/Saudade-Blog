@@ -43,9 +43,7 @@ pub fn is_unlimited(role: Option<&str>) -> bool {
 /// `Exhausted`（真的用完了）**正好相反**，压成 bool 就是把"读不到"当成"用完了"。
 #[derive(Debug, PartialEq, Eq)]
 pub enum ConsumeOutcome {
-    /// 抢到了这一轮（`rows_affected == 1`）
     Consumed,
-    /// 额度已满，这一轮**没有**被计数
     Exhausted,
     /// DB 故障：**fail-open**，放行且不计数
     Degraded,

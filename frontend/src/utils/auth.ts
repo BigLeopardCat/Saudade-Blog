@@ -1,15 +1,3 @@
-/**
- * 登录态与令牌解析（20260922 个人中心一期）。
- *
- * 令牌是无状态的 HS256 JWT，claims 里带 `role`——前端判"是不是管理员"就从这里读，
- * 不额外加一个"我是谁"的接口（后台守卫 AuthRouter 一直是这么做的，这里把那段抽出来
- * 给第二、第三个调用点共用，避免三份实现各自漂移）。
- *
- * **前端只拿它做界面分流（显示哪个入口/哪个窗口），不是权限判据**：真正的授权在
- * Rust 侧 `auth_guard`（后台接口）与各 handler 的 `auth_uid`（个人中心接口）。
- * 伪造 role 只能骗到自己的界面，骗不到任何一个接口。
- */
-
 export interface TokenClaims {
     /** 用户 id（后端 auth_uid 用的就是它） */
     sub?: number
@@ -71,10 +59,6 @@ export function isAdminToken(token?: string | null): boolean {
  *  未知角色**不在这里编名字**：调用方回退显示原值（`roleLabel` 就是干这个的）。 */
 export const ROLE_LABEL: Record<string, string> = {
     admin: '管理员',
-    // 键名仍是 `superadmin`（后端 `authz::KNOWN_ROLES` 的取值域，改它是一次迁移），
-    // 但**站上叫它「站长」**（20261003 主人点名）。这一档不是"超级管理员"这种权限描述，
-    // 就是站点主人本人，徽章上也就只印这两个字（`RoleBadge` 的头注：文案只从这张表取，
-    // 不许在组件里另抄一份——所以改文案只改这一行，徽章、个人中心、账号页一起变）。
     superadmin: '站长',
     user: '普通用户',
     zako: '杂鱼',
@@ -87,9 +71,6 @@ export function roleLabel(role?: string | null): string {
     return ROLE_LABEL[role] || role
 }
 
-// `roleTagColor` 已删（20261002）：身份标签换成了 `components/RoleBadge`（整枚内联 SVG，
-// 每档自带图形/形状/配色，见那个组件的头注）。这函数留着就是**第二套颜色表**——
-// 哪天有人加个角色，改一处不改另一处不会有任何东西报红。
 
 /** Mirrors authz::can_manage_credentials for UI affordances only. Unknown identities fail closed. */
 export function canManageCredentials(token: string | null, target: {id: number; role?: string | null}): boolean {

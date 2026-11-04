@@ -14,7 +14,6 @@ use sea_orm::{ActiveModelTrait, EntityTrait, Set, QueryOrder, QuerySelect, Colum
 use crate::entity::image;
 use crate::entity::note;
 use crate::r2;
-// LIKE 通配符转义：20261006 起唯一实现在 search_core（原先本文件与 conversation.rs 各一份）。
 use crate::search_core::like_escape;
 use sha2::{Digest, Sha256};
 
@@ -27,8 +26,6 @@ pub fn route() -> axum::routing::MethodRouter<Arc<AppState>> {
         .layer(axum::extract::DefaultBodyLimit::max(IMAGE_MAX_BYTES + 64 * 1024))
 }
 
-/// 一次上传的候选筛选用：把 `20260912013218_EMQX.png` 还原成 `EMQX.png`。
-/// 不是"时间戳_原名"形状的原样返回（手工放进 uploads/ 的文件也算候选）。
 fn strip_timestamp_prefix(name: &str) -> &str {
     let bytes = name.as_bytes();
     // 14 位数字 + 下划线；前 15 字节全是 ASCII ⇒ 这里一定是字符边界
@@ -81,17 +78,9 @@ async fn ensure_image_row(state: &Arc<AppState>, url: &str) {
     }
 }
 
-// LIKE 的通配符转义：图库 URL 里几乎每张图都带 `_`（`20260912013218_EMQX.png`），
-// 而 `_` 在 LIKE 里是"任意单字符"——不转义的话 `a_b.png` 会命中 `axb.png`。
-// 这里原先有一份私有实现（与 `routes/conversation.rs` 的同名函数同款，注释写着"没合并到
-// 一处是为了不动那条链路"）。20261006 聚合搜索要用第三处 ⇒ 三处一份，实现在
-// `crate::search_core::like_escape`。两份旧实现语义逐字等价（链式 replace 与逐字符遍历同结果）。
 
 /// 这张图还有哪些文章在用（封面字段 / 正文文本）。返回 (文章 id, 标题)。
 async fn notes_using(state: &Arc<AppState>, url: &str) -> Vec<(i32, String)> {
-    // `content` 留在 WHERE 里（"这篇文章引用过这张图吗"必须按正文判），但**不必 select**
-    // —— 命中之后只用得上 id 与标题（20261018）。从前 `SELECT *` ⇒ 每查一次引用关系就把
-    // 所有命中文章的正文读回来，紧接着全部丢掉。
     note::Entity::find()
         .select_only()
         .column(note::Column::Id)
@@ -115,18 +104,10 @@ async fn notes_using(state: &Arc<AppState>, url: &str) -> Vec<(i32, String)> {
         .unwrap_or_default()
 }
 
-/// `/api/protect/download/20260912013218_EMQX.png` → `20260912013218_EMQX.png`
-/// （报错信息里给人看的短名）。
 fn image_short_name(url: &str) -> String {
     url.rsplit('/').next().unwrap_or(url).to_string()
 }
 
-// ── 这次上传落到哪儿（20261006，用户第 1 条：图库页两颗按钮）───────────────────
-// 事故形状：图库页只有一颗上传钮，而它被 `uploadBlocked()` 按 R2 的状态灰掉 ——
-// R2 一开、用量又读不出来（令牌没配好时的常态），**本机盘那条路明明是好的却点不动**。
-// 根因不是前端那一颗钮，是**后端没有任何"这次走哪条"的显式入口**：`try_r2_upload`
-// 在 `cfg.active()` 为真时永不返回 `None`，于是"存本机盘"这件事在 R2 开着的时候就
-// 没有一条能走的路（静默改道，不是报错）。这个枚举就是把那个入口补出来。
 
 /// 一次上传的目标。**缺省 = 跟面板开关走**，所以编辑器插图 / 文章封面 / bytemd 拖拽
 /// 粘贴（都不传 `target`）的行为与从前逐字节相同。
@@ -167,11 +148,6 @@ fn ext_matches_content(name: &str, sniffed: &str) -> bool {
     jpeg(ext) && jpeg(sniffed)
 }
 
-/// 落盘 / 进桶用的名字：原名（已取 basename）在**后缀与内容相容**时原样保留，
-/// 否则把后缀换成认出来的那个。名字为空则退回 `image`。
-///
-/// 为什么不是无条件改名：`find_duplicate_url` 是按**去掉时间戳前缀后的原名**筛候选的
-/// （20260924 那条去重判据），改名的范围越宽，同一张图重传时越容易筛不中而存成两份。
 fn normalize_file_name(raw: &str, sniffed: &str) -> String {
     let stem = match raw.rsplit_once('.') {
         Some((s, _)) => s,
@@ -185,17 +161,6 @@ fn normalize_file_name(raw: &str, sniffed: &str) -> String {
     }
 }
 
-// ── R2 图床路径（20261006，用户第 3 条）─────────────────────────────────────
-// 目标不是"存得下"，是**出图带宽离开这台 3M 上行的机器**（`/api/protect/download/`
-// 是上行大头）；用户另有一条硬要求：用量超 9.5G 就停传，防止产生账单。
-//
-// 一条铁律贯穿这个文件：**面板上写着存 R2 的时候，图绝不许悄悄落回本地盘**。
-// 所以这里只有"走 R2"和"这不是 R2 的活（`None`）"两种返回，没有"R2 失败就回落"——
-// 回落的后果是图库页面显示着一堆 `https://…` 地址、文件却躺在服务器上，
-// 而这件事没有任何人会看出来（直到盘满）。
-//
-// 本地那条路径**一行都没改**：`try_r2_upload` 返回 `None` 时控制流原样继续。
-// 这样"没配 R2 的部署行为与今天逐字节相同"是由结构保证的，不是靠人记住。
 
 /// 上传临界区：`列桶 → 判定 → PUT` 三步必须**串行**。两个并发上传各自读到
 /// "还剩 1MB"，就会一起写进去、一起超限 —— 配额判定读的是一个共享的外部状态，
@@ -207,13 +172,6 @@ fn gib(bytes: u64) -> f64 {
     bytes as f64 / (1024.0 * 1024.0 * 1024.0)
 }
 
-/// 按扩展名给 content-type。**不能省**：R2 会把上传时存的类型原样回给浏览器，
-/// 给错了就是"图能下、但浏览器当文件下载"或者不显示。
-///
-/// 20261006 起 `svg` 的分支删掉了：上传口只收白名单里的后缀（`utils::ALLOWED_IMAGE_EXTS`，
-/// SVG 故意不在里面 —— 它由本站同源直出时会带脚本），所以 `.svg` 到不了这里；
-/// 留着那条分支等于给"哪天白名单松了"预备一条同源 XSS 的出图口。
-/// 末尾那个 `_` 分支同理：正常路径下不可达，兜底给 `octet-stream` 是"宁可下载不可内联"。
 fn guess_content_type(name: &str) -> &'static str {
     let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
     match ext.as_str() {
@@ -265,9 +223,6 @@ async fn try_r2_upload(
     let key = r2::object_key(&cfg.prefix, digest, file_name);
     let url = r2::public_url(&cfg.public_base, &key);
 
-    // ① 同一份字节传过没有。对象键是内容寻址的（`<前缀>/<sha256 前 16 位>/<原名>`），
-    //    所以"同一个键"就是"同一份字节 + 同一个名字"——与本地那条
-    //    「同一份字节重复上传 ⇒ 复用」（20260924 用户拍板）判据逐字同形。
     match r2::head_object(&creds, &cfg.bucket, &key).await {
         Ok(true) => {
             ensure_image_row(state, &url).await;
@@ -409,8 +364,6 @@ pub async fn upload_image(
     // 命中已有文件 = 这次上传根本不需要发生：不写盘、不新增行
     let digest = sha256_hex(&data);
 
-    // R2 图床。`Local` 整段跳过（**即使面板开着 R2** —— 这正是本轮补上的那条路）；
-    // 缺省/`r2` 才问 `try_r2_upload`，它返回 `None` 时才继续往下走本机盘。
     if target != UploadTarget::Local {
         let required = target == UploadTarget::R2;
         if let Some(resp) = try_r2_upload(&state, &file_name, &data, &digest, required).await {
@@ -459,23 +412,6 @@ pub async fn upload_image(
     Json(ApiResponse::success(url))
 }
 
-// GET /api/protect/images
-/// 图库列表的查询参数（20261014 加分页）。
-///
-/// 从前这里是 `SELECT * ORDER BY image_key DESC` **整表返回**：三处消费方
-/// （编辑器插图弹窗 `components/Editor/ImagePicker.tsx`、文章封面弹窗
-/// `pages/Dashboard/Notes/NewNotes/index.tsx`、图库页 `pages/Dashboard/Albums/index.tsx`）
-/// 各自把全站图片一次性渲染出来。行数只会涨（同一张图去重后仍然一张一行），
-/// 而"打开一个选图弹窗"要拉全站图这条路径没有任何上界。
-///
-/// **游标分页，不是 offset**：排序键是自增主键、新图插在**头部**，用 offset 的话
-/// "翻页期间有人上传了一张图"会让第二页重复第一页的尾巴（也就漏掉一行）；
-/// `image_key < before` 不会——游标是一条**钉在数据上**的位置。
-///
-/// ⚠️ **不传 `limit` = 全量与从前一字不差**：分页是加法。老调用方（别人的脚本、
-/// 探针、浏览器里那份还没换版的 dist）不会因为这次改动突然只看到半张图库；
-/// 本仓的三个消费方都传 `before`/`limit`，页大小与"还有没有下一页"的判据在
-/// `frontend/src/utils/galleryPager.ts`（唯一一份）。
 #[derive(serde::Deserialize)]
 pub struct ImageListQuery {
     /// 只回 `image_key < before` 的行；首页不传。取的是**上一页最后一张**的 key。
@@ -510,14 +446,6 @@ pub async fn delete_images(
     State(state): State<Arc<AppState>>,
     Json(urls): Json<Vec<String>>,
 ) -> Json<ApiResponse<String>> {
-    // ── 引用检查（20260924）────────────────────────────────────────────────
-    // 上传去重之后，"同一张图被多篇文章共用"会成为常态，而删除一直是**裸删**：
-    // 直接 remove_file + delete_by_id，不看还有谁在用它 —— 那意味着在图库里删一次，
-    // 可能同时把好几篇文章的正文/封面删成裂图，且不可逆（文件是真删）。
-    // 判据：note.cover 等于该 URL，或 note.content 里出现该 URL（封面与正文都是字符串）。
-    //
-    // 有任一被引用就**整体不删**：批量勾选时"删一半留一半"既难解释也难回滚，
-    // 宁可让博主先去文章里换掉那张图，再回来删。message 里报清是哪几张、被谁用。
     let mut blockers: Vec<String> = Vec::new();
     for url in &urls {
         let users = notes_using(&state, url).await;
@@ -551,11 +479,6 @@ pub async fn delete_images(
             .one(&state.db)
             .await
         {
-            // ── R2 的图（20261006）──────────────────────────────────────────
-            // **必须走这里**：R2 的 URL 是绝对地址，下面的本地分支既找不到
-            // `/upload/` 也找不到 `/download/`，会直接跳过删文件那步、把库里的行删掉
-            // —— 对象于是永远留在桶里，没有任何入口能再看见它（盘看不见、账单看得见）。
-            // 顺序也与本地相反：**先删对象，成功才删行**（404 也算成功：本来就没了）。
             if let Some(key) = r2::r2_key_of(&url, &r2cfg) {
                 match r2creds.as_ref() {
                     None => r2_failed.push(format!(

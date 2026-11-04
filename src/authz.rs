@@ -1,36 +1,11 @@
-//! 权限模型（角色 / scope）——Rust 侧的声明表（20260920，身份与权限地基）。
-//!
-//! **这是跨语言契约的一端**：角色名与 scope 名必须与 agent 侧
-//! `saudade-blog-agent/agent/authz.py` 一致（改一侧须同步另一侧 + 两侧单测）。
-//! 这里放 Rust 侧真正需要判断的那部分——`user.role` 的取值域与后台准入，
-//! 以及给 agent 的身份断言里携带的角色；工具级的 scope 判据在 agent 侧
-//! （工具都在那边执行），Rust 侧不重复实现一份判据。
-//!
-//! 为什么要有这个模块（而不是继续散落的字面量）：
-//! `middleware.rs` 里 `u.role == "admin"`、`temp_user.rs` 里 `"user"` 是**同一
-//! 个取值域的两处硬编码**——取值域每变一次，这种散落就是漂移的来源。
-//! 现在取值域只在本模块声明，判据点引用常量。
-
 /// 博主本人（uid=1）：后台全权。
 pub const ROLE_ADMIN: &str = "admin";
 
-/// 超级管理员：比 `ROLE_ADMIN` 多三件事——① 账号列表/报表里**不露脸**；
-/// ② 谁都不能冻结它（含另一个超管）；③ 只有它能变更别人的身份。
-/// 提权走迁移 `scripts/migration/superadmin_role_20260926.sql`（库里只有一个，且
-/// **界面上加不出第二个**：`is_assignable_role` 把 superadmin 排除在可指派范围外）。
 pub const ROLE_SUPERADMIN: &str = "superadmin";
 
 /// 普通访客 / 体验账号：只读公开内容、操作自己的设备与自己的页面。
 pub const ROLE_USER: &str = "user";
 
-/// 杂鱼（20261002）：**零工具**身份，和它对话时 agent 拒绝调用任何工具、只用
-/// 「雌小鬼」的口吻闲聊。它进不了后台（`can_access_console` 只认管理员族），
-/// 但**会出现在后台账号列表里**（`is_listable_role` 的判据是"已知角色且非超管"）
-/// ——这正是设计：博主看得见它、能冻它、能改它的身份。
-///
-/// 能力边界**不在这里表达**：Rust 侧只认"这是个已登记的角色"。真正的收口在 agent 侧
-/// （`agent/principal.py` 的 `CHAT_ONLY_ROLES` 与其三条派生），其中"结构上不可能调用
-/// 工具"的那一条是 planner 的短路，不是这张表能表达的东西。
 pub const ROLE_ZAKO: &str = "zako";
 
 /// `user.role` 的取值域（DB 列无 ENUM/CHECK 约束，这里就是唯一声明）。
@@ -48,10 +23,6 @@ pub fn is_superadmin(role: &str) -> bool {
     role == ROLE_SUPERADMIN
 }
 
-/// 能不能进后台管理面（`middleware::auth_guard` 的唯一判据）。
-///
-/// 刻意做成函数而不是 `role == ROLE_ADMIN` 内联：20260926 加超管时正是只改了这里
-/// 一处（外加调用它的 `profile.rs` 自动跟着走），单测锁住"非管理员族不得进后台"。
 pub fn can_access_console(role: &str) -> bool {
     role == ROLE_ADMIN || role == ROLE_SUPERADMIN
 }
@@ -74,15 +45,6 @@ pub fn is_listable_role(role: &str) -> bool {
     is_known_role(role) && !is_superadmin(role)
 }
 
-// ── 账号管理策略（20260926）────────────────────────────────────────────────
-//
-// **这两个函数是"谁能冻谁、谁能改谁的身份"的唯一实现**——agent 侧不复制判据，
-// 只把这里的话术原样转述（见 `docs/security-boundary.md` §7 的文案契约）。
-// 这么做是因为判据一旦有两份，两份就会在"加一种角色"那天漂移，而漂移的表现是
-// 静默放行。
-//
-// 两个函数都**自足**：不假设调用方已经过了某个闸（路由确实在 `auth_guard` 后面，
-// 但判据不该依赖"调用顺序"这种隐式前提）。发起人不可进后台管理面 ⇒ 直接拒。
 
 /// 冻结/解冻被拒的原因。变体对应**不同的话术**，所以不做成 bool。
 /// 解冻与冻结**共用**这一组判据（不分方向）：把一个被超管冻结的管理员解冻，等于
@@ -99,13 +61,6 @@ pub enum FreezeDenial {
     PeerAdmin,
 }
 
-/// 冻结 / 解冻一个账号的判据（解冻同规则）。
-///
-/// **禁言（`temp_user::set_user_muted`）也走这一张规则表**（20261002）：四条判据
-/// （谁有资格 / 不许动自己 / 不许动超管 / 管理员之间不许互相动手）对"冻结"与"禁言"
-/// 是**同一件事**——都是"一个管理员对另一个账号动手"。做法因此是**规则一份、话术两份**
-/// （`temp_user::freeze_denial_message` 与 `temp_user::mute_denial_message`，动词参数化），
-/// 而不是复制一张规则表：两张表迟早会在"加一种角色"那天漂移，而漂移的表现是静默放行。
 pub fn check_freeze(
     op_uid: i32,
     op_role: &str,
@@ -140,21 +95,10 @@ pub enum RoleChangeDenial {
     UnknownRole,
     /// 目标身份是 superadmin：界面上**加不出第二个超管**，要加走迁移
     NotAssignable,
-    /// 发起人是管理员（非超管）而**目标不在低两档里**（20261002 下放时加）
     AdminTargetTier,
-    /// 发起人是管理员（非超管）而要指派的新身份**不在低两档里**（20261002 下放时加）
     AdminAssignTier,
 }
 
-/// 管理员（非超管）能动的那两档：普通用户 与 杂鱼（20261002 主人拍板）。
-///
-/// **这是一条"两档之间搬"的规则，不是"能往低处改"的规则**：`{user, zako}` 两个
-/// 方向都放行（普通用户 ⇄ 杂鱼），而**目标是**这两档之外的任何人（管理员、超管）
-/// 一律拒。写成"目标与新身份**都**要在这一档里"是刻意的对称——
-/// 只判方向（`rank` 大小）会漏掉"管理员去改另一个管理员的身份"（那是往下改，
-/// 但它动的是别人的权限档位，不在授权范围内）。
-///
-/// 超管不受这条约束（除超管外四档随便搬，与从前逐字相同）。
 const ADMIN_TIERS: [&str; 2] = [ROLE_USER, ROLE_ZAKO];
 
 /// 这个身份在不在管理员能动的那两档里。**判据只此一处**：
@@ -163,15 +107,6 @@ pub fn is_admin_tier(role: &str) -> bool {
     ADMIN_TIERS.contains(&role)
 }
 
-/// 变更一个账号的身份的判据。20261002 起**下放给管理员**（此前只有超管能发起）。
-///
-/// 下放的边界（主人拍板）：管理员只能在 `{普通用户, 杂鱼}` 这两档之间搬，
-/// **不动权限更高的账号，也不往更高的档位指派**——加管理员/提权仍然只有超管
-/// 能做。超管的行为一个字没变（除超管外四档）。
-///
-/// 判据顺序里 **`NotPermitted` 仍然是第一关**（自足，不依赖路由先过闸），
-/// 而两条"档位"判据排在**已知性与可指派性之后**：`new_role` 根本不存在的日子，
-/// "站内没有这个身份"比"管理员只能改成普通用户或杂鱼"更接近事实。
 pub fn check_role_change(
     op_uid: i32,
     op_role: &str,
@@ -228,14 +163,7 @@ pub fn role_label(role: &str) -> &'static str {
     }
 }
 
-// ── 账号状态与令牌有效性（20260926）─────────────────────────────────────────
-//
-// 这一节回答的是**与角色无关**的另一问：这个账号还能不能用、手里这个令牌还算不算数。
-// 与角色判定分开是因为两者的失败取向与后果都不同——角色不够是 403（人还在，事不许做），
-// 令牌作废是 401（人已经不在线了）。混在一起会让前端分不清"该提示没权限"还是"该登出"。
 
-/// `user.status` 取值域（DB 列无 ENUM/CHECK 约束，这里是唯一声明）。
-/// 迁移：`scripts/migration/user_status_token_version_20260926.sql`
 pub const STATUS_ACTIVE: i16 = 0;
 /// 冻结：拒登录、拒改密码与恢复码、已签发令牌全部失效。
 pub const STATUS_FROZEN: i16 = 1;
@@ -256,24 +184,6 @@ pub enum TokenDenial {
     Revoked,
 }
 
-/// **令牌有效性的唯一判据点**（20260926）。两处调用：`auth_jwt::auth_uid`（面向所有
-/// 登录用户的公开路由）与 `middleware::auth_guard`（后台管理面）。
-///
-/// 判据顺序是先状态后代次：冻结期间无论代次对不对都不放行，这样"冻结时顺手 +1"
-/// 里的那个 +1 只是为了让解冻不复活旧会话，不承担主判据的角色。
-///
-/// **`claims_ver: Option<i32>` 的第三态不是随手加的**（20260926 当天补）：`None`
-/// 表示这枚令牌**根本没有代次声明**。谁没有？两类，都是**服务端自己签的**——
-/// ① 部署那一刻还活着的旧令牌（`ver` 是后加的声明，见 `auth_jwt::Claims` 的注释）；
-/// ② agent 的 60 秒代调令牌（`saudade-blog-agent/tools/base.py::_sign_local_jwt`，
-/// `{sub, exp, role}` 三字段，不带 `ver`）——它代表的是 Rust **本次请求刚认证过**
-/// 的身份，比任何代次都新鲜。
-/// 不做成 `i32 + serde default`（那样 `None` 会退化成 `0`）的理由正在这里：**代理令牌
-/// 会被误判成"代次 0 的旧令牌"**，于是管理员改过密码之后，agent 以他的名义读后台
-/// 一律 401——一个只在"改过密码的管理员用管理助手"时才现形的缺陷。
-/// 失败取向没有被放宽：能签出"不带 `ver`"的令牌的人必须持有 `JWT_SECRET`，而拿到密钥
-/// 的人本来就能签任意 `ver`；`None` 这一支少掉的只是一次**无意义的比对**，冻结判定
-/// 照旧对它生效。
 pub fn check_token(status: i16, token_version: i32, claims_ver: Option<i32>) -> Result<(), TokenDenial> {
     if is_frozen(status) {
         return Err(TokenDenial::Frozen);
@@ -286,16 +196,6 @@ pub fn check_token(status: i16, token_version: i32, claims_ver: Option<i32>) -> 
     Ok(())
 }
 
-// ── 禁言（20261002 内容风控）───────────────────────────────────────────────
-//
-// 与上一节的分界（写一遍，因为这两件事最容易混）：`check_token` 回答的是**"这个令牌
-// 还算不算数"**，而禁言**不改变**那个答案。被禁言的人照常登录、照常浏览、照常跟 agent
-// 对话——他只是发不出评论与留言。
-//
-// 所以这一节没有任何函数被 `middleware` / `check_token` 调用，调用点只有两处写入
-// handler 的入口（`comments::create_comment`、`talks::insert_talk` 的 src=board 那一支）。
-// **禁言的常见误修法是在中间件里拦"禁言用户的一切请求"**——那等于把禁言做成冻结，
-// 而冻结已经存在、语义也完全不同（踢下线 + 作废令牌）。
 
 /// 「永久禁言」在 `user.muted_until` 里的字面量。
 ///
@@ -355,12 +255,6 @@ pub fn mute_remain_text(until: chrono::NaiveDateTime, now: chrono::NaiveDateTime
     }
 }
 
-/// 禁言到期时刻的人话：`永久` 或 `至 2026-10-04 12:00`。
-///
-/// **「永久」那一支直说永久、不念哨兵值**（`mute_denial_message` 同一条纪律——
-/// 当事人不该在界面上读到 `9999-12-31`）。做成共享函数是因为**三个地方要说同一句话**：
-/// 后台账号页的成功回执、账号变更通知的正文、个人中心的横幅；
-/// 三处各判一次 `>= mute_forever_at()` 的话，改哨兵值时必然只改到其中一两处。
 pub fn mute_until_text(until: chrono::NaiveDateTime) -> String {
     if until >= mute_forever_at() {
         "永久".to_string()
@@ -369,15 +263,6 @@ pub fn mute_until_text(until: chrono::NaiveDateTime) -> String {
     }
 }
 
-/// 嵌在句子中间的期限短语：`至 2026-10-04 12:00（还剩约 3 小时）` / `（永久）`。
-///
-/// 与 [`mute_until_text`] 只差一副括号：那一份是三个地方共用的**标签**
-/// （后台回执、账号通知正文、个人中心横幅），这一份是自动禁言通知里**夹在句子中间**
-/// 的短语——硬把两者合成一个字符串，就得让其中一句读起来别扭。
-/// **但哨兵判据与日期格式都只有一份**（都从 [`mute_forever_at`] 与
-/// [`mute_until_text`] 来）：`risk::mute_notice_body` 此前自己判了一次
-/// `>= mute_forever_at()` 并自己 `format!` 了日期，是整个仓库里第三份"至 X"的实现，
-/// 改哨兵值时必然漏掉它。
 pub fn mute_span_text(until: chrono::NaiveDateTime, now: chrono::NaiveDateTime) -> String {
     if until >= mute_forever_at() {
         "（永久）".to_string()
@@ -410,10 +295,8 @@ mod tests {
     #[test]
     fn 非管理员族不得进后台管理面() {
         assert!(can_access_console(ROLE_ADMIN));
-        // 20260926：超管也要能进——漏了这一条，uid=1 提权当天就进不了后台
         assert!(can_access_console(ROLE_SUPERADMIN));
         assert!(!can_access_console(ROLE_USER));
-        // 20261002：杂鱼也进不了后台（它是"零工具"角色，不是管理员族的一员）
         assert!(!can_access_console(ROLE_ZAKO));
         assert!(!can_access_console("root"));
         assert!(!can_access_console(""));
@@ -423,7 +306,7 @@ mod tests {
     fn 取值域就是这四个() {
         assert_eq!(KNOWN_ROLES.len(), 4);
         assert!(is_known_role("superadmin"));
-        assert!(is_known_role(ROLE_ZAKO)); // 20261002 杂鱼
+        assert!(is_known_role(ROLE_ZAKO));
         assert!(!is_known_role("Admin")); // 大小写敏感：角色名不收模糊匹配
         assert!(!is_known_role("administrator")); // 旧别名不认（曾散落在文档里）
         assert!(!is_known_role("SuperAdmin"));
@@ -445,8 +328,6 @@ mod tests {
         assert!(!is_listable_role(ROLE_SUPERADMIN));
         assert!(is_listable_role(ROLE_ADMIN));
         assert!(is_listable_role(ROLE_USER));
-        // 20261002：杂鱼**要**列出来——博主得看得见它、能冻它、能改它的身份
-        // （这正是"后台可指派的正经角色"这条设计的一部分）。
         assert!(is_listable_role(ROLE_ZAKO));
         // 未知角色也不列（前端判不出它该归到哪一档筛选项下）
         assert!(!is_listable_role(""));
@@ -473,8 +354,6 @@ mod tests {
             (2, sup, 1, sup, Err(FreezeDenial::TargetSuperadmin)),
             // 管理员之间 → 拒（两个方向都是同一句）
             (7, admin, 8, admin, Err(FreezeDenial::PeerAdmin)),
-            // 管理员冻普通用户 / 杂鱼 → 放行（20261002 起低两档同档——
-            // 它们既不是管理员，也不是超管）
             (7, admin, 10, usr, Ok(())),
             (7, admin, 12, ROLE_ZAKO, Ok(())),
             // 超管冻管理员 / 普通用户 / 杂鱼 → 放行
@@ -485,7 +364,6 @@ mod tests {
             (10, usr, 11, usr, Err(FreezeDenial::NotPermitted)),
             (0, "", 10, usr, Err(FreezeDenial::NotPermitted)),
             (0, "root", 10, usr, Err(FreezeDenial::NotPermitted)),
-            // 20261002：杂鱼当发起人同样过不了第一关（零工具身份没有后台准入）
             (12, ROLE_ZAKO, 10, usr, Err(FreezeDenial::NotPermitted)),
             // 目标角色未知 ⇒ 不特殊对待（admin 冻未知角色放行——**未知不等于超管**；
             // 幂等与"存在的账号"由路由查库保证，policy 不猜）
@@ -502,20 +380,12 @@ mod tests {
         }
     }
 
-    /// 变更身份策略表逐格。**超管：除超管外四档随便搬；管理员：只在低两档之间搬。**
-    ///
-    /// 20261002 这一格发生了**语义反转**：`(7, admin, 8, admin, usr)` 原先拒的理由是
-    /// "发起人不是超管"，现在发起人这一关过了，拒的理由变成"管理员不归管理员管"
-    /// （`AdminTargetTier`）。表里留着它、并写明理由，正是为了让这次反转看得见——
-    /// 策略一旦松动，回归锁必须**在表里**说明白松动的是哪一格。
     #[test]
     fn 改角色策略表() {
         let admin = ROLE_ADMIN;
         let sup = ROLE_SUPERADMIN;
         let usr = ROLE_USER;
         let cases: &[(i32, &str, i32, &str, &str, Result<(), RoleChangeDenial>)] = &[
-            // ── 发起人没有后台管理面权限 → 拒（这是唯一一条与"发起人是谁"有关的判据；
-            //    20261002 起判据是 can_access_console，不再是"必须超管"）──
             (10, usr, 11, usr, ROLE_ZAKO, Err(RoleChangeDenial::NotPermitted)),
             (12, ROLE_ZAKO, 10, usr, usr, Err(RoleChangeDenial::NotPermitted)),
             (0, "", 10, usr, usr, Err(RoleChangeDenial::NotPermitted)),
@@ -542,12 +412,9 @@ mod tests {
             (1, sup, 10, usr, admin, Ok(())),
             (1, sup, 7, admin, usr, Ok(())),
             (1, sup, 7, admin, ROLE_ZAKO, Ok(())),
-            // 20261002 杂鱼：可被指派（进可指派范围 = 后台下拉里选得到）、也可被改出去。
-            // 「能进后台指派」是这条设计的一半，另一半在 agent 侧的 CHAT_ONLY_ROLES。
             (1, sup, 10, usr, ROLE_ZAKO, Ok(())),
             (1, sup, 7, admin, ROLE_ZAKO, Ok(())),
             (1, sup, 12, ROLE_ZAKO, usr, Ok(())),
-            // ── 管理员（20261002 下放）：低两档之间**双向**放行 ──
             (7, admin, 10, usr, ROLE_ZAKO, Ok(())),
             (7, admin, 12, ROLE_ZAKO, usr, Ok(())),
             (7, admin, 12, ROLE_ZAKO, ROLE_ZAKO, Ok(())), // 幂等（路由层会先短路，判据本身放行）
@@ -585,7 +452,7 @@ mod tests {
     fn 可指派范围不含超管() {
         assert!(is_assignable_role(ROLE_ADMIN));
         assert!(is_assignable_role(ROLE_USER));
-        assert!(is_assignable_role(ROLE_ZAKO)); // 20261002：杂鱼是正经角色，后台可指派
+        assert!(is_assignable_role(ROLE_ZAKO));
         assert!(!is_assignable_role(ROLE_SUPERADMIN));
         assert!(!is_assignable_role("root"));
     }
@@ -619,17 +486,6 @@ mod tests {
         assert_eq!(check_token(9, 0, Some(0)), Err(TokenDenial::Frozen));
     }
 
-    /// **结构锁**：不许再有"自己解 token"的旁路。
-    ///
-    /// 写这条测试的原因是它抓到了真实缺陷（20260926 当天）：`graph.rs` 与 `talks.rs`
-    /// 各有一个手写的 `current_uid`，只验签不查库 ⇒ 冻结一个账号之后它照旧能刷
-    /// embedding 查询、照旧能放河灯。收回判据长在 `auth_uid` 这个唯一出口上，
-    /// 而这个"唯一"必须**可被验证**，否则下一个接口又会顺手写一份 (见文档里
-    /// "结构上不存在"那句承诺)。修法是让它们都变成 `auth_uid` 的薄壳，本条把
-    /// "只有两处能碰那个解析函数"钉死（名字从 `["verify","_token"].concat()` 拼出，
-    /// 好让本文件——含本注释——不含完整字面量；写在注释里也会自命中，20260926 实测）：
-    ///   · `auth_jwt.rs` —— 定义它与 `auth_uid`（唯一出口）
-    ///   · `middleware.rs` —— 后台管理面那条闸（它必须另起一份，因为要区分 401/403）
     #[test]
     fn 解析令牌的入口只有两处() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");

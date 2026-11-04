@@ -98,8 +98,6 @@ const AdvancedSearchForm = ({search, query, onSearch, onReset}: AdvancedSearchFo
     const [form] = Form.useForm();
     const categories = useSelector((state: {categories: any}) => state.categories.categories);
 
-    // URL → 表单（单向回填）。从 `?keyword=` / `?title=` 深链进来时，输入框里要看得见这些词。
-    // `time`（发布时间）20260923 起不再回填 —— 那个控件已删，见 onFinish 的说明。
     useEffect(() => {
         form.setFieldsValue({
             title: query.title || undefined,
@@ -116,10 +114,6 @@ const AdvancedSearchForm = ({search, query, onSearch, onReset}: AdvancedSearchFo
             title: typeof values.title === 'string' ? values.title.trim() : '',
             cat: values.categories ?? '',
             top: (values.top === undefined || values.top === null) ? '' : String(values.top),
-            // 「发布时间」RangePicker 已按用户要求撤掉，但 `?from=&to=` **仍留在 URL 契约里**
-            //（老深链要能进来、listState 的测试也锁着它）。所以这里显式清空：
-            // setParam 是合并语义，不清的话从带日期的深链进来再点搜索，旧日期条件会
-            // **隐形地继续生效**，而页面上已经没有任何控件能看见或清掉它。
             from: '',
             to: '',
             tags: parseNoteTags(values.tagsLab),
@@ -143,10 +137,7 @@ const AdvancedSearchForm = ({search, query, onSearch, onReset}: AdvancedSearchFo
                 <Input placeholder="请输入文章标题" allowClear style={{width: 180}} />
             </Form.Item>
             <Form.Item name='categories' label='文章分类'>
-                {/* inline 布局下控件没有默认宽度（会缩成内容宽），所以逐个给固定宽 */}
                 <Select allowClear placeholder="请选择文章分类" style={{width: 160}}>
-                    {/* key 用 categoryKey：分类 DTO 里没有 `key` 字段，原来 key={category.key}
-                        恒为 undefined，React 每次渲染都报 unique key 警告 */}
                     {categories.map((category: { categoryKey?: React.Key; key?: React.Key; categoryTitle: string }) => (
                         <Select.Option key={category.categoryKey ?? category.key} value={category.categoryTitle}>
                             {category.categoryTitle}
@@ -155,8 +146,6 @@ const AdvancedSearchForm = ({search, query, onSearch, onReset}: AdvancedSearchFo
                 </Select>
             </Form.Item>
             <Form.Item name='tagsLab' label='文章标签'>
-                {/* 扁平多选（原来这里是两级 TreeSelect，选择器只认字典、不能就地新建）。
-                    标签筛选在**前端**做：列表数据本来就全量在内存，不必为它改后端查询。 */}
                 <NoteTagSelect allowCreate={false} placeholder="请选择文章标签" style={{width: 220}} />
             </Form.Item>
             <Form.Item name='top' label='是否置顶'>
@@ -210,9 +199,6 @@ const AllNotes = () => {
         setSearchParams(buildListQuery(next), {replace: options?.replace});
     }, [location.search, setSearchParams]);
 
-    // ── 票据与取数**分成两个 effect**（20260923：翻页不再重新请求）────────────────
-    // ① 票据必须跟**整个** location.search（含页码）：从第 3 页进编辑器再返回，得回第 3 页；
-    //    挪进取数 effect 会让翻页不再更新票据，"返回列表还在第 3 页"会静默退化成第 1 页。
     useEffect(() => {
         saveListReturn(location.search);
     }, [location.search]);
@@ -271,14 +257,6 @@ const AllNotes = () => {
         });
     }, [rows]);
 
-    /* 跨端同步（20260926）：这一页此前只在「筛选条件/tab 变了」或重挂载时取数——看板娘
-       在别处改了文章（新建/删除/改状态）它一概不知道，得手动刷新才看得见。
-       现在接 `utils/liveRefresh.ts`（看板娘收尾事件 / 切回可见 / 20 秒轮询）。
-       `skip`（文章配置弹窗开着就不重拉）：那个弹窗里是**主人正在编辑**的一份配置，
-       而它回的是一份服务端快照 + 本地表单——底下的列表在它开着的时候换掉，主人按「确定」
-       时心里那一行和自己填的值就不是同一份了（同评论管理那一页的纪律）。
-       背景重拉**不亮 loading**、也不改当前页：它走的是同一条取数 effect（见 `reloadSeq`），
-       拉回来的是**当前筛选条件下的当前页**，翻页/勾选/滚动位置都不动。 */
     /** 重拉一次。`bg` = 背景式（不亮表格 loading，见取数 effect 里的 `bgReloadRef`）：
      *  自动重拉传 true，主人手动点「刷新」传 false——那一下要有"在转"的反馈。 */
     const reloadList = (bg: boolean) => {
@@ -299,10 +277,6 @@ const AllNotes = () => {
         [tagFiltered, current, query.size],
     );
 
-    // 翻页回顶：滚动容器就是 `.custom-scroll-container` 本身，**不是 window**
-    // —— 这个页面的 `window.scrollY` 恒为 0，用 window.scrollTo 等于什么都没做。
-    //（20260924 之前 Table 带 `scroll={{y:'56vh'}}`，真正的滚动者是它内部生成的
-    // `.ant-table-body`；现在列表区改为铺满卡片、由外层容器滚，这里跟着改）
     const tableBoxRef = useRef<HTMLDivElement>(null);
     useEffect(() => {
         const box = tableBoxRef.current;
@@ -416,24 +390,6 @@ const AllNotes = () => {
         setIsModalOpen(false);
     };
 
-    // 列宽一律用**百分比且合计 < 100%**：表格是 `table-layout: fixed` + `width:100%`，
-    // 固定 px 宽在容器更宽时会留空档、更窄时又把表撑出去（横向滚动条就是这么回来的）。
-    // 合计留 5% 的余量给最左边那列由 rowSelection 自动插入的勾选列（32px）。
-    //
-    // ⚠️ **窄屏裁列 + 重排列宽（20261006 用户第 6 条）**：下面六列挂了 `responsive: ['lg']`
-    // —— 视口 < `screenLG`（本仓在 `WASHI_THEME.common` 里抬到 1024）时 antd 直接把它们
-    // 从列定义里筛掉。**这是本页唯一能走的路**：这里明确禁止加 `scroll.x`（列宽是百分比 +
-    // `table-layout: fixed`，加了等于把表宽写死），所以横向溢出只能靠"少几列"来治。
-    //
-    // ⚠️⚠️ 裁完**必须同时重排剩下的列宽**（`isNarrow` 那两处）：一开始我按"剩下三列合计
-    // 40%，固定布局会把那 60% 富余摊回它们"来收尾 —— **那是错的**。实测（无头 Chromium，
-    // 390 视口）：百分比是**照字面算**的，富余全给了**没写宽**的那一列 ——
-    // 也就是 rowSelection 那个勾选列，它被撑到 234px，而 标题/状态/操作 照旧是
-    // 78 / 31 / 47px（操作那一格要塞三颗 40px 的圆钮 ⇒ 直接糊成一团）。
-    // 现在的窄屏口径：勾选列留 13%（≈44px），剩下一律给"标题 + 操作"两列，
-    // **`状态` 也一并挂 `lg`** —— 勾选格 / 标题 / 三颗圆钮这三样在 335px 里就是塞不下
-    // 第四格：`操作` 光三颗圆钮就要 ~128px，加上单元格左右内边距，占满 42% 才刚好。
-    // 状态那个图标本来也冗余（`操作` 里的配置钮打开的就是它）。宽屏（≥1024）**逐像素不变**。
     const screens = Grid.useBreakpoint();
     const isNarrow = !screens.lg;
     const columns: TableProps<NoteType>['columns'] = [
@@ -461,7 +417,6 @@ const AllNotes = () => {
             render: (title: string, record: NoteType) => (
                 <div className="note-title-cell">
                     <span className="note-title-txt" title={title}>{title}</span>
-                    {/* 自动保存的「修改稿」是独立一行（draft_of 指向原文章），标出来免得看着像重复文章 */}
                     {record?.draftOf ? <Tag color="orange" style={{marginInlineStart: 0, flex: '0 0 auto'}}>修改稿</Tag> : null}
                 </div>
             )
@@ -500,12 +455,6 @@ const AllNotes = () => {
             align: "center",
             className: 'note-tags-col',
             responsive: ['lg'],
-            // 折叠渲染：只显示前 3 个，其余收进 Popover（列宽只有 20%，三四个长标签名
-            // 就能把它挤爆）。悬空 id（标签已删、文章还引用着）不再渲染成空白小块。
-            //
-            // 20261006 用户第 5 条：「公开文章」那颗绿标**撤了** —— 文章状态字段本来就有，
-            // 在这列再画一遍是重复（而且它跟标签挤同一格，谁多谁少还看心情）。要看公开的
-            // 走列表上方的「公开文章」页签，筛选由后端做（见 `listState.ts` 的 `only_public`）。
             render: (_, record) => renderNoteTagsCollapsed(record.noteTags, tagList, 3, record.noteTagRefs),
         },
         {
@@ -543,8 +492,6 @@ const AllNotes = () => {
             align: "center",
             render: (item) => (
                 <div style={{display: "flex",flexDirection:'row',alignItems:'center',justifyContent:'center'}}>
-                    {/* 草稿箱里点开一篇「修改稿」时，要编辑的是它的原文章（draftOf），
-                        否则保存会落到修改稿自己身上、发布后线上凭空多一篇同内容文章 */}
                     <Fab color="info" aria-label="edit" size='small' style={{marginRight:4}} onClick={() => navigate(`/dashboard/notes/newnote/${item.draftOf ?? item.key}`)}>
                         <EditIcon />
                     </Fab>
@@ -560,7 +507,6 @@ const AllNotes = () => {
                             <DeleteIcon />
                         </Fab>
                     </Popconfirm>
-                    {/* 文章配置（状态 / 置顶 / 标签）就地改：不用进编辑器，也不用整表重拉 */}
                     <Fab color="secondary" aria-label="config" size='small' onClick={() => showModal(item)}>
                         <ChangeCircleIcon />
                     </Fab>
@@ -580,10 +526,6 @@ const AllNotes = () => {
     };
     const hasSelected = selectedRowKeys.length > 0;
 
-    // 20261006 用户第 5 条：「公开文章」排在最前（他要的是"在『全部文章』前面加一个页签"）。
-    // key 仍是 '4' 而不是把它改成 '0' 或重排编号 —— 数组顺序只决定**显示顺序**，key 是 URL
-    // 契约（`?tab=2/3` 的深链、默认 '1'、「默认值不落 URL」的 `buildListQuery` 都按这些字面量
-    // 写死），把编号跟着显示顺序挪一遍等于让所有已存在的链接指到别的页签。
     const items: TabsProps['items'] = [
         {
             label: '公开文章',
@@ -624,26 +566,14 @@ const AllNotes = () => {
                     activeKey={query.tab}
                     items={items}
                     style={{marginLeft: 10}}
-                    // 「新增文章」从原来的 40px 圆形悬浮按钮收成一颗 small 主色钮，挂在
-                    // tab 条左侧（用户要求"缩小放到全部文章标签按钮前"）。不选"保留 Fab +
-                    // 覆盖样式"：40px 地板是 Dashboard/index.css 的 `!important`，内联样式
-                    // 打不过它，只能再写一条 `!important` 去和 MUI emotion 对撞。
                     tabBarExtraContent={{
                         left: (
-                            /* 20260924：去掉按钮上的「+」图标（用户要求）——文案本身就写着
-                               "新增文章"，前面再顶一个加号是同一件事说两遍。 */
                             <>
                                 <Button type="primary" size="small"
                                         style={{marginRight: 12}}
                                         onClick={() => navigate('/dashboard/notes/newnote')}>
                                     新增文章
                                 </Button>
-                                {/* 手动重拉这一份列表（20260926 与跨端同步一起加的）：自动重拉
-                                    有 20 秒的窗口，也可能被"弹窗开着"挡下——那时主人要的是
-                                    **现在就看一眼**，而不是去琢磨为什么没动。 */}
-                                {/* 这个 marginRight 不是装饰：tabBarExtraContent 挨着 tab 列表
-                                    渲染（antd 的 Tabs 把它当作左侧额外内容），少这一格时实测
-                                    刷新按钮右缘与第一个页签左缘的距离是 **0px** —— 就是"太挤了"。 */}
                                 <Button size="small" icon={<ReloadOutlined />}
                                         style={{marginRight: 12}}
                                         onClick={() => reloadList(false)}>
@@ -657,18 +587,6 @@ const AllNotes = () => {
                     onChange={(value) => setParam({tab: value as ListTab, page: 1})}
                 />
                 <div className='custom-scroll-container' ref={tableBoxRef}>
-                    {/* 20260924 重排：`scroll={{y:'56vh'}}` 撤掉，改成**外层容器滚**。
-                        原来那个定高滚动区在 900 高的窗口上只有 504px，一行 73px ⇒
-                        只放得下 6 行多一点，**每页最后一条整条藏在滚动区里**，而卡片
-                        下方还空着 150px —— 用户说的"换页和显示逻辑不舒服"就是这个。
-                        现在：表体高度由 flex 撑满卡片，表头用 CSS `position: sticky` 吸顶
-                        （见 index.sass），分页条**移出滚动区**钉在卡片底部（永远不会被滚走）。
-                        三个配套改动，少一个都会破相：
-                          · `tableLayout="fixed"` —— 列宽是百分比，此前靠 `scroll.y` 顺带
-                            拿到的 `table-layout:fixed`，撤了 y 就必须显式声明，否则百分比列宽失效；
-                          · `pagination={false}` —— 分页改由下方独立的 `<Pagination>` 承担；
-                          · **不要**再给 `scroll={{x}}`：`x:'max-content'` 会把表宽写死成
-                            内容宽（实测 1314px，与视口无关），那才是"文本长就得左右拖"的真凶。 */}
                     <Table
                         columns={columns}
                         dataSource={pageRows}
@@ -685,8 +603,6 @@ const AllNotes = () => {
                         }}
                     />
                 </div>
-                {/* 分页条：**在滚动区之外**，钉在卡片底部（滚到第 50 行也不用回头找它）。
-                    总数、每页条数、跳页都收在这一条里，取代原来挂在表格下方那条。 */}
                 <div className="listFooter">
                     <ConfigProvider locale={zhCN}>
                         <Pagination

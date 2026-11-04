@@ -1,38 +1,3 @@
-/**
- * 头像红点的未读数（20260922 个人中心一期；20260924 四轮改成模块级单例）。
- *
- * 红点 = **未读通知（含公告）+ 未读站内信**，唯一数据源是
- * `GET /api/protected/notifications/summary`（后端一次算全，前端不并发几次）。
- * 20260924 四轮起这条接口还带 `pendingReview`（等人工裁决的留言条数，非管理员恒 0），
- * 供后台首页那行提示用——它**不计进 `total`**（红点是"你有事没看"，待审是"后台有事等你
- * 处理"，两件事），只是同一个消费者的另一项读数：后台那一页也登记成这个 store 的消费者。
- * 20260929 起再加 `pendingQuota`（等处理的额度重置申请条数），与 pendingReview 逐条同构：
- * 同一个 `is_console_user` 才算、不计进 `total`、后台首页另起一行提示。
- *
- * 刷新时机（四个都要有，少一个就会"点了已读红点还在"或"别人发来消息十分钟不亮"）：
- *   1. 有人开始看时挂上定时轮询（60 秒——本站是个人博客，没必要做长连接）；
- *   2. `unread-change` 自定义事件（个人中心里点"全部已读"当场归零，不等下一次轮询）；
- *   3. `visibilitychange`（标签页切回来时补一次——后台标签页里定时器会被浏览器降频）；
- *   4. `agent-turn-done`（20260924 补）：看板娘那边刚把通知/站内信标成已读 ⇒ 当场重算。
- *      **只靠 60 秒轮询是不够的**：用户让 agent 标已读之后盯着红点看，一分钟不变就等于
- *      "没生效"（实测反馈：要刷新网页才掉）——红点是提示，提示晚一分钟没有意义。
- *
- * 未登录**按 0 处理**（红点是提示不是状态，拿不到账号时宁可不显示，也不编一个数字）；
- * 但**读失败保留上一次的读数**——"读不到"与"确实没有"是两件事，见 `refreshUnread`。
- * 后端那族接口在没做成时返回 HTTP 200 + code=500，所以这里既看 HTTP 状态也看 code。
- *
- * ── 为什么是**单例 store**（20260924 四轮，与 favorites.ts 同一套形态）──
- * 此前 `useUnread` 是普通 hook：每个调用点各持一份 `useState` + 各挂一个 `setInterval`。
- * 而红点有**两处**显示位置——头部头像（常驻）与个人中心页签角标（开窗时）——
- * 于是开着个人中心时，同一张表每分钟被同一个浏览器打两次（实测：站内真轮询只有两条
- * 接口，一天约 1300 次请求，99.4% 来自主人自己那一个 IP）。这不是"多花点流量"的问题，
- * 而是同一份事实有两个各自计时的副本：一处先拿到新值、另一处还停在旧值，红点自己跟
- * 自己不一致。
- * 现在：**未读数只有一份**（本模块的 `snap`），谁要显示就来订阅；`setInterval` 只在
- * **第一个消费者**出现时挂、**最后一个**离开时撤（`active` 计数）；事件驱动的刷新也只在
- * 真的有人在看时才发（`refreshUnread` 里的 active 判据），在途请求去重（`inflight`）。
- * 想知道此刻有几个消费者：`unreadDebug()`（测试与排障用）。
- */
 import { useCallback, useEffect, useState } from 'react'
 import getToken from '../../apis/getToken.tsx'
 import { getUnreadSummary, ok } from '../../apis/ProfileMethods.tsx'
@@ -60,12 +25,7 @@ const EMPTY: UnreadSummary = {
     messages: 0,
     total: 0,
     pendingReview: 0,
-    // 20260929 加额度申请数。**EMPTY 漏一个键不会报错、只会让 `same()` 拿 undefined
-    // 比 undefined**（恒等）⇒ 那一项的变化永远看不见。三个地方必须同进同出：
-    // EMPTY / same / pick。
     pendingQuota: 0,
-    // 20261019 加文章评论待审数。同上：漏一个键不会报错，只会让 `same()` 拿 undefined
-    // 比 undefined（恒等）⇒ 那一项的变化永远看不见。EMPTY / same / pick 三处同进同出。
     pendingComments: 0,
 }
 
@@ -121,11 +81,8 @@ function pick(d: UnreadSummary | null | undefined): UnreadSummary {
         notifications: d?.notifications ?? 0,
         messages: d?.messages ?? 0,
         total: d?.total ?? 0,
-        // 旧后端（20260924 四轮之前的回包）没有这个字段 ⇒ 0，界面那一行不画
         pendingReview: d?.pendingReview ?? 0,
-        // 同 pendingReview 的旧后端容忍（20260929）
         pendingQuota: d?.pendingQuota ?? 0,
-        // 同族旧后端容忍（20261019）：旧回包没有这一格 ⇒ 0，第三行不画
         pendingComments: d?.pendingComments ?? 0,
     }
 }

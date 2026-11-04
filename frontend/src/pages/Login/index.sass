@@ -1,28 +1,3 @@
-// 登录页（20260921 改版；20261006 起**跟随全站昼夜**）
-//
-// 这一页从前**恒深色**：下面所有色值都是写死的深色字面量，也不读 `isDarkMode`。原因是
-// 它在 App 壳之外（`router/index.tsx` 里 `login` 是顶层路由，不在那层 `.frontDark` 底下），
-// 全站切昼夜它一动不动。20261006 用户第 3 条：「登录页的白天模式页面风格做成博客主页白天
-// 模式同风格，但是不要加胶带什么的，只做颜色配色纹路变化」。
-//
-// 两档的分工：
-//   · **白天** = 主页首屏（`ContentHome/index.sass` 的 `.collageBg`）那套和纸配色 ——
-//     粉紫拼贴底 + 28px 方格纸 + 纸白卡片 + 墨紫字。页面里的东西一律走 `--washi-*`
-//     令牌（`:root` 就是浅色档）。
-//   · **夜间** = 20260921 那套墨蓝 + 河灯金，**原样搬过来**（不是重新调）——视觉不变的
-//     保证来自"搬家"而不是"重新配"。
-//   ⚠️ 明确**不加**任何胶带/贴纸/缎带（`.heroPanelTape` / `.vit-tape` / `.TopTape` /
-//      `.ContentContainer::before` 那族一个都不引）：用户点掉了。
-//
-// 两档挂在哪儿（都在 index.tsx 的 effect 里，见那里注释）：`.login-page` 自己挂
-// `frontDark`（于是 `--washi-*` 自动切夜间档）；`body` 挂 `login-route` +
-// `login-dark`（页面底；后者还管**弹窗**——modal 走 Portal 挂在 body 上，
-// `.login-page.frontDark` 够不着它）。
-//
-// 两档主按钮的"面"与字色共用一份：登录卡片那颗与弹窗里那两颗是同一套观感，别各写各的。
-// 白天档刻意用**浅粉渐变 + 墨字**（与夜间的浅金 + 深褐是同一种收法）：白字压在深粉
-// `#d94f9a` 上只有 3.8:1，压紫 `#8e63e0` 上 4.2:1 —— 都过不了 4.5:1（15px/600 不算
-// 大字号），`tests/login-modal-theme.test.py` 会当场判红。浅粉那两端分别是 6.5:1 / 6.6:1。
 $cta-day: linear-gradient(135deg, #ffd7ea 0%, #f0b9dd 100%)
 $cta-night: linear-gradient(135deg, #f7dcae 0%, #e8b866 100%)
 $cta-ink-day: #4a3550      // == --washi-ink 白天那一档
@@ -36,11 +11,6 @@ body
   padding: 0
   font-family: sans-serif
 
-// 页面底：与 `.login-page` 同一张（这里是"卡片外/回弹露出"的那部分）。
-// 默认白天档 —— `body` 上的类由 index.tsx 在挂载时加上（同时也就不会有"整站别处也吃到
-// 这张底"的问题：类一卸，规则就不生效）。
-// 值走 `--washi-theme-bg`（src/index.css）：这张粉紫天青底首页首屏与文章页阅读面也在用，
-// 20261008 收成一支令牌，改主题底只改那一处。
 body.login-route
   background: var(--washi-theme-bg)
 
@@ -111,8 +81,6 @@ body.login-route.login-dark
     box-shadow: 0 24px 64px rgba(0,0,0,.55)
 
 .login-brand
-  // 30px（原 26px）：头像是这一块的下缘，它到下面「账号」的距离就是这一条 —— 20260924 把
-  // 头像调大后，与上方标题 16px 对下方 30px 形成近 1:2 的呼吸感，块内不显贴。
   margin-bottom: 30px
   text-align: center
 
@@ -123,13 +91,8 @@ body.login-route.login-dark
     font-weight: 600
     letter-spacing: .04em
 
-  // 20260924：原来是 `.login-sub` 那行「登录后体验完整服务」小字，换成访客自己的三态头像。
-  // 一圈细边 + 投影，把默认头像那张浅底方图与卡片分开（antd Avatar 默认是 inline-block，
-  // display:block + margin auto 才在 .login-brand 的 text-align:center 里居中）。
   .login-avatar
     display: block
-    // 16px（原 14px）：标题 23px 那行与头像之间的呼吸；尺寸由 antd 的 size=84 给
-    // （20260924 用户反馈"有点小"，64 → 84；比头部那个 64 明显大一号）。
     margin: 16px auto 0
     border: 1px solid var(--washi-line, rgba(198, 152, 192, 0.42))
     box-shadow: 0 6px 18px rgba(120, 90, 140, 0.2)
@@ -215,10 +178,6 @@ body.login-route.login-dark
       caret-color: #fff
       box-shadow: 0 0 0 1000px #191f28 inset
 
-// 密码框右侧的显隐按钮：绝对定位在输入框内，不吃 Tab 焦点。
-// 20260922 起是眼睛图标（与后台"修改密码"的 Input.Password 同一套 Eye/EyeInvisible），
-// 不再是「显示/隐藏」两个字——文字按钮既要比图标占更多横向空间，也和页面其它图标控件
-// 不是一套语言。字号即图标尺寸（antd 图标走 font-size），故按钮是 26×26 的方框。
 .field-pwd
   .pwd-toggle
     position: absolute
@@ -356,12 +315,6 @@ body.login-route.login-dark
       &:hover
         color: #f0c987
 
-// ── 提示弹窗（注册 / 忘记密码）─────────────────────────────
-// 弹窗挂在 body 上（antd Portal），不继承 .login-page 的样式，所以这里用顶层选择器；
-// 深浅两档也因此挂在 **body 的那颗类**上（`body.login-dark`，见 index.tsx）。
-// 底色不是这里定的：两个 Modal 都跟着 ConfigProvider 的主题走（见 index.tsx 那两套
-// theme），否则浅色算法下正文的浅色字会落在白底上（20260922 实测）。
-// 这里只管排版与自绘的页脚/表单控件 —— 白天档一律走 `--washi-*` 令牌（`:root` 就是浅色档）。
 .login-modal-body
   text-align: center
   color: var(--washi-ink-2, #7c6584)
@@ -422,8 +375,6 @@ body.login-route.login-dark
   p
     margin: 0 0 4px
 
-  // 宽度与盒模型必须显式写：这几个 input 是 flex 列的直接子项，默认 content-box 时
-  // padding 会加到等宽之外，整排输入框会横向溢出弹窗（20260922 用户实测的布局错位）。
   input
     width: 100%
     padding: 10px 12px
@@ -470,8 +421,6 @@ body.login-route.login-dark
       opacity: .62
       cursor: not-allowed
 
-// 夜间档：20260921 那套原样（浅字 + 河灯金），一字未改地搬到 `body.login-dark` 底下。
-// 为什么不是 `.login-page.frontDark`：弹窗在 body 下，够不着页面里的那个类。
 body.login-dark
   .login-modal-body
     color: rgba(255,255,255,.75)

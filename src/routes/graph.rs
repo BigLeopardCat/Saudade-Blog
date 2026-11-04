@@ -1,19 +1,3 @@
-//! 首页展示柜「文章向量空间」的查询代理（20260915）。
-//!
-//! 浏览器 → `POST /api/public/graph/query` → 本模块 → agent `127.0.0.1:8010/graph/query`
-//!
-//! 两件事和别的公开接口不一样：
-//!
-//! 1. **挂 public_routes 但 handler 自己要求登录**。不能挂 protected_routes——那条
-//!    链路是给后台管理用的（auth_guard 全 admin），而这里任何登录用户都该能用；
-//!    也不能真的公开——查询每次要花一次 embedding 调用，匿名可刷就是费用敞口。
-//!    取身份走 `assertion_actor`（uid + 角色），无 token → 401。20261020 起这一层
-//!    还多买了一样东西：同一次取到的 uid/角色**签进发往 agent 的断言**（SAU-018）
-//!    ——那道门只挡得住浏览器，挡不住本机进程。
-//! 2. **失败一律 HTTP 200 + `ok:false`**。这是个可降级端点：前端拿到非 ok 就退回
-//!    本地关键词匹配，用户照样能定位（只是邻居没那么准）。返回 5xx 只会让浏览器
-//!    控制台多一堆红字，还是一样的降级结果。
-
 use axum::{
     Json,
     body::Body,
@@ -73,13 +57,6 @@ impl GraphQueryResp {
     }
 }
 
-/// agent 基址：AGENT_URL 的语义是「非流式对话端点」（chat.rs 直接 post 它），
-/// 默认 `http://127.0.0.1:8010/chat`。这里要的是基址，所以把尾部的
-/// `/chat`、`/chat/stream` 剥掉。**不动那个环境变量、不动 chat.rs**——
-/// 改语义会波及对话主链路，风险远大于这里省几行。
-///
-/// 20261019 提为 `pub(crate)`：删会话时那条 checkpoint 钩子（`conversation.rs`）也要发
-/// 到同一个基址，**再抄一份解析逻辑就是又一处会漂的坐标**。
 pub(crate) fn agent_base_url() -> String {
     let raw = std::env::var("AGENT_URL")
         .unwrap_or_else(|_| "http://127.0.0.1:8010/chat".to_string());
@@ -123,13 +100,6 @@ fn cache_put(key: String, resp: GraphQueryResp) {
     g.insert(key, (Instant::now(), resp));
 }
 
-/// `POST /api/public/graph/query` — 查询串 → 图谱里最近的词。
-/// 未登录 401（这是唯一一处会返回非 200 的情况）；其余一律 200 + ok=false。
-///
-/// **发给 agent 的那一程带身份断言**（20261020 安全审计 SAU-018）：这条此前是 agent 侧
-/// 唯一"匿名可信"的内部调用——agent 只监听回环，谁连得上就能白嫖一次 embedding（费用面）。
-/// 现在与 `call_agent` / `talks.rs::decide_review` 口径一致：以**发起人身份**现签一张
-/// 60 秒断言，Rust 不持有任何 agent 侧凭据。
 pub async fn graph_query(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -220,24 +190,6 @@ pub async fn graph_query(
 }
 
 
-// ═══════════════════════════════════════════════════════════════════════════
-// 图谱产物的供给与后台重建（20261003 用户第 2 条）
-// ═══════════════════════════════════════════════════════════════════════════
-//
-// **要解决的问题**：产物原本写在 `frontend/public/graph/`，而 nginx 直服的是
-// `frontend/dist` —— 中间隔着一次 `vite build`。于是"在后台点一下重建"这件事
-// 走不通：服务端写的文件到不了浏览器，而且下一次 CI 部署的 dist 差集清理还会把
-// `dist/graph` 换回仓库里的旧版（**静默回退成旧图**）。
-//
-// **现在的分工**：重建任务把产物写进 agent 自己的 `data/word_graph/web/`，由这两个
-// 公开端点供出去；committed 的 `frontend/public/graph/*` 退化为"从没重建过的站点"
-// 的种子（前端拿不到 manifest 就回落静态那份，见 `loader.ts`）。
-//
-// **为什么 nginx 不用改**：两个 443 块里都是 `location ^~ /api/`（`^~` ⇒ 跳过所有
-// 正则 location），所以 `/api/public/graph/artifact/graph-xxx.js` 的 Content-Type 与
-// Cache-Control **完全由这里决定**，不会被 `\.(js|css|json)$` 那条抢走。
-// ⚠️ 日后若有人加一条能匹配 `/api/...js` 的正则 location，它会抢在 `^~ /api/` 之前
-// ——那时这里设的头全部失效（症状是产物被 no-store、或类型变成 text/html）。
 
 /// 博客持有展示产物；构建服务通过 GRAPH_ARTIFACT_DIR 共享目录发布。
 fn artifact_dir() -> std::path::PathBuf {
@@ -338,14 +290,6 @@ pub async fn graph_artifact(Path(file): Path<String>) -> Response {
 const REBUILD_TIMEOUT: Duration = Duration::from_secs(30);
 const STATUS_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// 取 uid 与角色——**给发往 agent 的请求签身份断言**用的那对值。
-/// **角色查库、不信登录 token 里的**（与 chat.rs:323、middleware::auth_guard 同一条
-/// 纪律）；查不到人时给 None ⇒ agent 侧按身份不明拒。
-///
-/// 两处消费方：后台重建那三个端点（`call_agent`，agent 侧判 `admin.console`）与
-/// `/graph/query`（20261020 安全审计 SAU-018：这条此前是 agent 侧**唯一匿名可信**的
-/// 内部调用，本机进程可白嫖 embedding 调用）。**别再各写一份"取 uid + 查角色"**
-/// ——`current_uid` 那个薄壳（只看 uid）20261020 随这次收口删掉了。
 async fn assertion_actor(state: &Arc<AppState>, headers: &HeaderMap) -> Result<(i32, Option<String>), String> {
     let uid = crate::auth_jwt::auth_uid(&state.db, headers)
         .await

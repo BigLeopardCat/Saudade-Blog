@@ -19,7 +19,6 @@ export interface TagLevelTwo {
     color: string;
     /** 父标签**名字**（只作展示/兼容；建树一律用 fatherKey） */
     fatherTag: string;
-    /** 父标签 **id**（20260919 起后端返回），建树的正确键 */
     fatherKey?: number;
 }
 

@@ -1,20 +1,6 @@
 use sea_orm::entity::prelude::*;
 use serde::{Deserialize, Serialize};
 
-/// 文章点赞（20260930）。与 `user_favorite` 同形：唯一约束让重复点赞天然幂等，
-/// 两个外键都 ON DELETE CASCADE（销号/删文章时点赞行自动消失，不留孤儿）。
-///
-/// 与收藏的区别只有一处：收藏是"我私人的清单"（要有列表页），点赞是**公开计数**
-/// （只需聚合），所以这里没有任何"列出我点过赞的文章"的端点。
-///
-/// 20261001 起**匿名也能点赞**（用户第 2 条），于是有了两种身份，一行只可能是其中之一：
-///   · 登录 ⇒ `user_id = Some(uid)`、`visitor_key = None`
-///   · 匿名 ⇒ `user_id = None`、`visitor_key = Some(key)`
-/// 去重由两条唯一键分工负责（`uq_like_note_user` 管登录行、`uq_like_note_visitor`
-/// 管匿名行；MySQL 的唯一索引不约束 NULL，两边天然互不干扰）。
-/// 两条身份纪律写在迁移文件 `scripts/migration/note_like_anon_20261001.sql` 的头注里
-/// ——**`visitor_key` 是客户端自己生成自己上报的，它把"点赞数"拉到了与"阅读量"
-/// 同一档可信度**（能刷，只是每次要换一个 key）。改这里的读写之前先读那段。
 #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Deserialize, Serialize)]
 #[sea_orm(table_name = "note_like")]
 pub struct Model {

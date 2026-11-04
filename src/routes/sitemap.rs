@@ -22,8 +22,6 @@ fn lastmod(dt: &chrono::NaiveDateTime) -> String {
 }
 
 pub async fn sitemap_xml(State(st): State<Arc<AppState>>) -> Response {
-    // 本站地址不再写死：别人部署时 `<loc>` 必须指向自己的域名，否则爬虫被引到别人的站
-    // （20261001 开源前准备）。默认值仍是本站，见 `utils::site_url`。
     let site = crate::utils::site_url();
 
     // 固定页面（优先级高）。物联网控制台是**可选件**（源码收在仓库 `iot/`，装不装由
@@ -43,9 +41,6 @@ pub async fn sitemap_xml(State(st): State<Arc<AppState>>) -> Response {
     // 分类页
     let cats = category::Entity::find().all(&st.db).await.unwrap_or_default();
 
-    // 公开文章（含更新时间作为 lastmod）。
-    // 只取 id + updated_at（20261018）：这条路由是**公开且爬虫驱动**的（每次抓取都跑），
-    // 而它一个字节的正文都不用 —— 从前 `SELECT *` 会把全站正文跟着吐一遍。
     let notes: Vec<(i32, chrono::NaiveDateTime)> = note::Entity::find()
         .select_only()
         .column(note::Column::Id)

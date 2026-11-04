@@ -1,0 +1,256 @@
+/* ────────────────────────────────────────────────────────────────
+   河灯留言板 · 夜河场景
+   ──────────────────────────────────────────────────────────────── */
+
+.rz-root {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background: #03050c;
+  font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "STSong", "SimSun", serif;
+  color: #f2e2c2;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: none;
+
+  .rz-canvas {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    display: block;
+  }
+
+  /* ---------------- 河灯 ---------------- */
+  .rz-lanterns {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    pointer-events: none;
+    perspective: 1200px;
+  }
+
+  .rz-lantern {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 0;
+    height: 0;
+    margin: 0;
+    /* 只保 transform 常驻合成层：opacity 是合成器属性无需分层；
+       filter 已降频为换档写入（不逐帧变），无需预分层 */
+    will-change: transform;
+    cursor: default;
+    outline: none;
+
+    /* 光晕 */
+    .rz-halo {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 300px;
+      height: 300px;
+      margin: -150px 0 0 -150px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(255, 190, 110, 0.34) 0%, rgba(255, 180, 96, 0.12) 34%, rgba(255, 175, 92, 0) 68%);
+      animation: rz-halo-breathe 3.6s ease-in-out infinite;
+      pointer-events: none;
+    }
+
+    /* 水面光斑与涟漪 */
+    .rz-pool {
+      position: absolute;
+      left: 50%;
+      top: calc(50% + 16px);
+      width: 230px;
+      height: 52px;
+      margin: -26px 0 0 -115px;
+      pointer-events: none;
+      opacity: 0.5;
+
+      .rz-pool-light {
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(ellipse at 50% 30%, rgba(255, 205, 130, 0.34) 0%, rgba(255, 190, 110, 0.1) 46%, rgba(255, 185, 105, 0) 74%);
+        animation: rz-pool-pulse 4.1s ease-in-out infinite;
+      }
+
+      .rz-ring {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 110px;
+        height: 24px;
+        margin: -12px 0 0 -55px;
+        border: 1.5px solid rgba(255, 208, 138, 0.5);
+        border-radius: 50%;
+        opacity: 0;
+        animation: rz-ring-out 3.4s cubic-bezier(0.22, 0.6, 0.35, 1) infinite;
+      }
+      .rz-ring.r2 {
+        animation-delay: -1.7s;
+      }
+    }
+
+    /* 灯笼本体（预渲染精灵） */
+    .rz-sprite {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 118px;
+      height: 118px;
+      margin: -59px 0 0 -59px;
+
+      img {
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+
+
+      &.rz-far .rz-halo,
+      &.rz-far .rz-pool-light,
+      &.rz-far .rz-ring,
+      &.rz-far .rz-flame {
+        animation: none;
+      }
+
+      /* 灯焰（f056f800 版）：单元素，flick（scale/rotate）与 sway 走不同属性——
+         flick 动画 transform，sway 动画 margin-left，互不覆盖 */
+      .rz-flame {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 52px;
+        height: 60px;
+        margin: -52px 0 0 -26px;
+        border-radius: 50%;
+        background: radial-gradient(ellipse at 50% 62%, rgba(255, 248, 214, 1) 0%, rgba(255, 216, 122, 0.7) 42%, rgba(255, 182, 82, 0) 70%);
+        mix-blend-mode: screen;
+        transform-origin: 50% 84%;
+        animation: rz-flame-flick 1.15s steps(5, end) infinite, rz-flame-sway 3.2s ease-in-out infinite;
+      }
+
+      /* 八角灯/圆笼灯（骨架更大）：火焰光晕整体收进笼身内，不再冒出灯顶 */
+      &.rz-oct .rz-flame {
+        width: 44px;
+        height: 52px;
+        margin: -40px 0 0 -22px;
+        background: radial-gradient(ellipse at 50% 64%, rgba(255, 248, 214, 0.95) 0%, rgba(255, 216, 122, 0.6) 40%, rgba(255, 182, 82, 0) 66%);
+        pointer-events: none;
+      }
+    }
+
+
+    &.rz-unlit .rz-halo,
+    &.rz-unlit .rz-pool-light,
+    &.rz-unlit .rz-flame {
+      display: none;
+    }
+    &.rz-unlit .rz-sprite img {
+      filter: brightness(0.6) saturate(0.7);
+    }
+
+    /* 心愿气泡 */
+    .rz-bubble {
+      position: absolute;
+      left: 50%;
+      bottom: calc(50% + 64px);
+      width: 320px;
+      max-width: min(78vw, 360px);
+      transform: translateX(-50%) translateY(10px);
+      background: rgba(14, 12, 26, 0.74);
+      border: 1px solid rgba(255, 205, 140, 0.3);
+      border-radius: 13px;
+      box-shadow:
+        0 14px 40px rgba(0, 0, 0, 0.55),
+        inset 0 0 22px rgba(255, 180, 100, 0.07);
+      backdrop-filter: blur(7px) saturate(1.25);
+      -webkit-backdrop-filter: blur(7px) saturate(1.25);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s ease, transform 0.3s ease;
+      z-index: 5;
+
+      /* 小箭头 */
+      &::after {
+        content: "";
+        position: absolute;
+        bottom: -6px;
+        left: 50%;
+        width: 11px;
+        height: 11px;
+        margin-left: -5.5px;
+        background: rgba(14, 12, 26, 0.74);
+        border-right: 1px solid rgba(255, 205, 140, 0.3);
+        border-bottom: 1px solid rgba(255, 205, 140, 0.3);
+        transform: rotate(45deg);
+        border-radius: 0 0 3px 0;
+      }
+
+      .rz-scroll {
+        height: 126px;
+        overflow: hidden;
+        padding: 20px 34px 14px 34px; /* 上下留出容器边缘距离（第 25 轮：子容器距边更和谐） */
+      }
+
+      .rz-msg {
+        font-size: 16px;
+        line-height: 1.95;
+        letter-spacing: 0.14em;
+        color: #f2e2c2;
+        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+        padding: 0 2px 16px 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        /* will-change 不写在这里：见文件下方 .rz-lantern:hover/:focus/.rz-open 那条 ——
+           22 个默认 opacity:0 的气泡全常驻合成层是白占图层成本，只有真正打开的那个需要 */
+      }
+
+      /* 文本末尾的 留名 · 时刻（气泡与详情弹窗共用） */
+      .rz-who {
+        font-size: 12px;
+        line-height: 1.6;
+        letter-spacing: 0.12em;
+        color: rgba(242, 226, 194, 0.55);
+        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+        padding: 0 2px 16px 0;
+        white-space: nowrap;
+      }
+
+      .rz-seal {
+        position: absolute;
+        top: 14px;   /* 第 25 轮：印章离开容器角部，与文本区边距更和谐 */
+        right: 16px;
+        font-size: 11px;
+        line-height: 1.7;
+        padding: 0 5px;
+        color: #ffe8c8;
+        background: #a33f30;
+        border-radius: 3px;
+        letter-spacing: 0.22em;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+        font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "SimSun", serif;
+      }
+    }
+  }
+
+  .rz-lantern:hover .rz-bubble,
+  .rz-lantern:focus .rz-bubble,
+  .rz-lantern.rz-open .rz-bubble {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  /* 气泡滚动（scrollTick 往 .rz-msg 写 translateY）才需要会变形的合成层。
+     收窄到「打开/悬停中」这一种状态：屏幕上同一时刻至多 1 个气泡在滚动，
+     旧写法让 22 个常驻层空占（老内核软渲染逐层合成的主成本来源之一）。 */
+  .rz-lantern:hover .rz-msg,
+  .rz-lantern:focus .rz-msg,
+  .rz-lantern.rz-open .rz-msg {
+    will-change: transform;
+  }
+
+  /* ---------------- 界面浮层 ---------------- */
+
+}
