@@ -5,6 +5,8 @@
   //height: 100%
   flex-direction: column
   margin-top: 28px
+  min-width: 0
+  padding-bottom: 24px
 
   .article_title
     vertical-align: center
@@ -12,8 +14,22 @@
     display: flex
     flex-direction: row
     margin-right: 10px
+    flex-wrap: wrap
+    gap: 8px
   .new_article
     width: 100%
     padding: 20px
     box-sizing: border-box
+
+// The dashboard card has a fixed desktop height. Review diffs can add arbitrary
+// height above the editor, so this route needs an outer scroll container.
+@media (min-width: 1025px)
+  .Card:has(.notes-container)
+    overflow-y: auto
+    overflow-x: hidden
+    scrollbar-gutter: stable
+
+    > .ant-card-body
+      height: auto
+      min-height: 100%
 

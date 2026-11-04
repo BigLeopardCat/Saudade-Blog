@@ -1,0 +1,18 @@
+404 sprite generation — built-in image_gen, 2026-11-04
+Reference: saudade-blog-agent/frontend/public/live2d-widgets/lingyue-toggle.png
+Final assets: frontend/public/mascot-404/{neutral,pain,cry,bump-small,bump-medium,bump-large}.png
+All six requests used transparent_background=true. Original generated PNGs were copied intact.
+
+NEUTRAL / PRONE BODY
+Use case: illustration-story. Asset type: production transparent 404-page character sprite. Reference image: character identity only. Draw the SAME cute chibi cat-eared girl: cream silver fluffy hair, blue eyes, pale pink inner cat ears, small black ribbon on right, white frilled maid headband, modest black and white maid outfit. Full body lying prone on her stomach, body extends to viewer right, head centered slightly left of canvas center facing directly toward viewer, chin on folded hands, feet gently bent up behind her. Camera mostly frontal slightly above ground; oversized cute round head. Calm slightly puzzled neutral expression. Crisp polished anime 2D game sprite, delicate warm gray outlines, soft shading. Keep TOP OF HEAD clear for three cartoon bumps later. Entire character visible with transparent margin. Wide landscape composition approximately 3:2. TRUE transparent background. No floor, no wall, no text, no digits, no props, no bumps yet. Face easily readable and forward-facing. Intended for expression swaps; stable head and pose.
+
+EXPRESSION TEMPLATE (reference: generated neutral sprite)
+Use case: identity-preserve. Edit target: the supplied prone chibi cat-maid sprite. Create the {EXPRESSION}. Change ONLY eyes, eyebrows and mouth and tears. EXACT same canvas size 1536x1024, same character position, head shape, hair, ears, ribbon, clothes, hands, body, feet, framing and scale. Do not move or redraw anything outside the face. No bumps, no numbers, no text, no props. True TRANSPARENT background with clean edges, absolutely NO backdrop, NO halo, NO vignette, NO glow. This is an aligned animation expression replacement sprite.
+PAIN EXPRESSION: brief cartoon OUCH expression: eyes squeezed into tight > < shapes, eyebrows pinched upward, small open pained mouth; cute comic discomfort
+CRY EXPRESSION: final crying expression: large watery blue eyes with clear tears streaming down both cheeks, worried eyebrows and small wobbly downturned mouth; adorable melodramatic sobbing
+
+BUMP TEMPLATE (three independent generated assets)
+Use case: illustration-story. Asset type: one isolated transparent game overlay sprite, cartoon bump number {INDEX} of three sizes. A single {SIZE} rounded oval cartoon goose-egg swelling bump to sit on top of an anime cat-maid girl's head. Cute harmless comic style, soft ivory-to-blush pink gradient, delicate warm brown outline, a little pink blush and simple highlight. {SHAPE}. The flat curved lower edge blends into pale cream hair. Single object centered with generous clear transparent padding, tightly readable at 40px. TRUE transparent background. No head, no person, no text, no label, no numbers, no shadow or glow outside the bump. Crisp clean 2D anime sprite.
+1 / small / Low wide little dome
+2 / medium / Medium tall round dome
+3 / large / Tall plump rounded dome, slightly larger than the previous two
