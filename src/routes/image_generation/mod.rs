@@ -238,6 +238,17 @@ fn preview_url(uid: i32, id: &str, slot: i16, digest: &str) -> Result<String, Db
         "/api/public/image-generation/{id}/preview?token={token}"
     ))
 }
+fn decode_preview(token: &str, key: &str) -> Result<PreviewClaims, ()> {
+    let mut validation = jsonwebtoken::Validation::default();
+    validation.set_audience(&["gallery-image-preview"]);
+    jsonwebtoken::decode::<PreviewClaims>(
+        token,
+        &jsonwebtoken::DecodingKey::from_secret(key.as_bytes()),
+        &validation,
+    )
+    .map(|data| data.claims)
+    .map_err(|_| ())
+}
 #[derive(Deserialize)]
 pub struct PreviewQuery {
     token: String,
@@ -250,7 +261,7 @@ pub async fn preview(
     let read=async {
         let key=std::env::var("JWT_SECRET").map_err(|_|())?;
         if key.is_empty(){return Err(());}
-        let claims=jsonwebtoken::decode::<PreviewClaims>(&q.token,&jsonwebtoken::DecodingKey::from_secret(key.as_bytes()),&jsonwebtoken::Validation::default()).map_err(|_|())?.claims;
+        let claims=decode_preview(&q.token,&key)?;
         if claims.job!=id{return Err(());}
         let uid=claims.sub.parse::<i32>().map_err(|_|())?;
         let query=if claims.slot<0 {

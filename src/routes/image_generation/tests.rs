@@ -215,3 +215,38 @@ async fn pg_review_ownership_stale_result_and_replay() {
         .await
         .unwrap();
 }
+
+#[test]
+fn preview_token_is_audience_scoped_and_cannot_be_used_to_login() {
+    let key = "isolated-test-only-preview-signing-key";
+    let mut claims = PreviewClaims {
+        sub: "7".into(),
+        aud: "gallery-image-preview".into(),
+        job: "test-job".into(),
+        slot: -1,
+        digest: "a".repeat(64),
+        exp: (chrono::Utc::now().timestamp() + 900) as usize,
+    };
+    let token = jsonwebtoken::encode(
+        &jsonwebtoken::Header::default(),
+        &claims,
+        &jsonwebtoken::EncodingKey::from_secret(key.as_bytes()),
+    )
+    .unwrap();
+    assert_eq!(decode_preview(&token, key).unwrap().job, "test-job");
+    assert!(jsonwebtoken::decode::<crate::auth_jwt::Claims>(
+        &token,
+        &jsonwebtoken::DecodingKey::from_secret(key.as_bytes()),
+        &jsonwebtoken::Validation::default()
+    )
+    .is_err());
+    claims.aud = "login".into();
+    let wrong = jsonwebtoken::encode(
+        &jsonwebtoken::Header::default(),
+        &claims,
+        &jsonwebtoken::EncodingKey::from_secret(key.as_bytes()),
+    )
+    .unwrap();
+    assert!(decode_preview(&wrong, key).is_err());
+    assert!(decode_preview(&token, "another-key").is_err());
+}
