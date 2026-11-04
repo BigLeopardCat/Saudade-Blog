@@ -10,7 +10,7 @@ import { build } from 'esbuild'
 import { compile } from 'sass'
 import { test as base, expect } from '@playwright/test'
 
-type Entry = 'home-hero' | 'user-center' | 'axios' | 'announcement' | 'tags' | 'categories' | 'public-header' | 'users' | 'announcement-popup' | 'dashboard-users' | 'sticker-picker' | 'note-editor' | 'article-collaboration' | 'cover-display' | 'article-grid' | 'editor-images' | 'r2-settings'
+type Entry = 'home-hero' | 'user-center' | 'axios' | 'announcement' | 'tags' | 'categories' | 'public-header' | 'users' | 'announcement-popup' | 'dashboard-users' | 'sticker-picker' | 'note-editor' | 'article-collaboration' | 'article-publication' | 'cover-display' | 'article-grid' | 'editor-images' | 'r2-settings'
 const frontend = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const bundles = new Map<string, Promise<{ script: string; css: string }>>()
 

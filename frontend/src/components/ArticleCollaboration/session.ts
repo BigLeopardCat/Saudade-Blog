@@ -2,14 +2,14 @@
 export type Edit = {old_text: string; new_text: string}
 export type WorkingCopy = {title: string; content: string; description: string}
 type ReviewEdit = Edit & {start: number}
-export type Proposal = {id: string; base: WorkingCopy; revision: number; edits: ReviewEdit[]}
+export type Proposal = {id: string; base: WorkingCopy; revision: number; edits: ReviewEdit[]; title?: string}
 export type EditorCommand = {
-  kind: 'article_editor'; operation: 'read' | 'propose' | 'summary'; command_id: string;
+  kind: 'article_editor'; operation: 'read' | 'propose' | 'summary' | 'prepare_publish'; command_id: string;
   editor_id?: string; revision?: number; offset?: number; limit?: number;
-  edits?: Edit[]; description?: string;
+  edits?: Edit[]; description?: string; title?: string;
 }
 export type Observation = {
-  editor_id: string; revision: number; outcome: 'read' | 'proposed' | 'updated' | 'unchanged';
+  editor_id: string; revision: number; outcome: 'read' | 'proposed' | 'updated' | 'unchanged' | 'publication_ready';
   title?: string; content?: string; description?: string; offset?: number;
   next_offset?: number | null; total_chars?: number; proposal_id?: string;
 }
@@ -36,6 +36,8 @@ function applyRanges(content: string, edits: ReviewEdit[]) {
 export function createEditorSession(options: {
   read: () => WorkingCopy; enabled: () => boolean;
   applyBody: (content: string) => void; applySummary: (content: string) => void;
+  applyTitle?: (title: string) => void;
+  preparePublish?: () => void;
   onProposal: (proposal: Proposal | null) => void;
 }) {
   const id = crypto.randomUUID()
@@ -75,7 +77,12 @@ export function createEditorSession(options: {
         ...(proposal ? {proposal_id: proposal.id} : {})}
     } else {
       check(command.editor_id, command.revision)
-      if (command.operation === 'summary') {
+      if (command.operation === 'prepare_publish') {
+        if (proposal) throw new Error('还有未处理的修改建议，请先采纳或放弃，再确认发布。')
+        if (!options.preparePublish) throw new Error('当前编辑器不支持发布确认。')
+        options.preparePublish()
+        result = {editor_id: id, revision, outcome: 'publication_ready', title: value.title}
+      } else if (command.operation === 'summary') {
         if (typeof command.description !== 'string' || Array.from(command.description).length > 16000) throw new Error('摘要长度不合法。')
         const changed = value.description !== command.description
         if (changed) options.applySummary(command.description)
@@ -85,9 +92,16 @@ export function createEditorSession(options: {
           description: applied.description,
           ...(proposal ? {proposal_id: proposal.id} : {})}
       } else if (command.operation === 'propose') {
-        if (!Array.isArray(command.edits) || !command.edits.length || command.edits.length > 20)
-          throw new Error('修改提案需包含 1 至 20 个修改。')
-        const edits = command.edits.map(edit => {
+        const requested = command.edits ?? []
+        if (!Array.isArray(requested) || requested.length > 20
+            || (!requested.length && command.title === undefined))
+          throw new Error('请提供标题或 1 至 20 处正文修改。')
+        if (command.title !== undefined && (typeof command.title !== 'string'
+            || !command.title.trim() || Array.from(command.title).length > 255
+            || !options.applyTitle)) throw new Error('标题不合法或当前编辑器不支持标题修改。')
+        const title = command.title !== value.title ? command.title : undefined
+        if (!requested.length && title === undefined) throw new Error('标题没有变化。')
+        const edits = requested.map(edit => {
           if (typeof edit.old_text !== 'string' || typeof edit.new_text !== 'string'
               || edit.old_text.length + edit.new_text.length > 48000 || edit.old_text === edit.new_text)
             throw new Error('修改内容不合法或没有变化。')
@@ -101,7 +115,7 @@ export function createEditorSession(options: {
           throw new Error('修改范围重叠，请将同一段的改写合并为一处修改。')
         const candidate = applyRanges(value.content, edits)
         if (Array.from(candidate).length > 1_000_000) throw new Error('草稿超过编辑范围。')
-        const next = {id: crypto.randomUUID(), base: value, revision, edits}
+        const next = {id: crypto.randomUUID(), base: value, revision, edits, ...(title !== undefined ? {title} : {})}
         publish(next)
         result = {editor_id: id, revision, outcome: 'proposed', proposal_id: next.id}
       } else throw new Error('未知编辑操作。')
@@ -110,26 +124,33 @@ export function createEditorSession(options: {
     if (replies.size > 64) replies.delete(replies.keys().next().value!)
     return result
   }
-  const accept = (index?: number) => {
+  const accept = (index?: number | 'title') => {
     if (!proposal) return
     ready()
     const before = current()
     if (before.content !== proposal.base.content || before.title !== proposal.base.title)
       throw new Error('草稿已变化，请重新生成提案。')
-    const selected = index === undefined ? proposal.edits : [proposal.edits[index]]
+    const selected = index === 'title' ? [] : index === undefined ? proposal.edits : [proposal.edits[index]]
     if (selected.some(edit => !edit)) throw new Error('修改提案已变化。')
     const after = applyRanges(before.content, selected)
-    options.applyBody(after)
+    if (after !== before.content) options.applyBody(after)
+    const acceptsTitle = proposal.title !== undefined && (index === undefined || index === 'title')
+    if (acceptsTitle) options.applyTitle!(proposal.title!)
     const next = current()
+    if (next.content !== after || (acceptsTitle && next.title !== proposal.title))
+      throw new Error('修改未能应用，请重新读取草稿。')
     const remaining = proposal.edits.filter((_, i) => index !== undefined && i !== index)
       .map(edit => ({...edit, start: edit.start + selected.filter(item => item.start < edit.start)
         .reduce((delta, item) => delta + item.new_text.length - item.old_text.length, 0)}))
-    publish(remaining.length ? {...proposal, base: next, revision, edits: remaining} : null)
+    const pendingTitle = acceptsTitle ? undefined : proposal.title
+    publish(remaining.length || pendingTitle !== undefined
+      ? {...proposal, base: next, revision, edits: remaining, title: pendingTitle} : null)
   }
-  const reject = (index?: number) => {
+  const reject = (index?: number | 'title') => {
     if (!proposal) return
     const remaining = proposal.edits.filter((_, i) => index !== undefined && i !== index)
-    publish(remaining.length ? {...proposal, edits: remaining} : null)
+    const pendingTitle = index !== undefined && index !== 'title' ? proposal.title : undefined
+    publish(remaining.length || pendingTitle !== undefined ? {...proposal, edits: remaining, title: pendingTitle} : null)
   }
   return {execute, accept, reject}
 }
