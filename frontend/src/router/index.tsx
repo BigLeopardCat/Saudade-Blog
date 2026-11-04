@@ -1,12 +1,13 @@
 import { createBrowserRouter, Navigate, useParams } from "react-router-dom";
 import { lazy, Suspense, type ReactNode } from "react";
 import { AuthRouter } from "../components/AuthRouter.tsx";
-import ContentHome from "../frontHome/Content/ContentHome";
-import App from "../App.tsx";
 import NotFound from "../components/NotFound";
 import { registerSpaNavigate } from "./spaNavigate.ts";
 
 const Login = lazy(() => import("../pages/Login"));
+// A cold 404 must not download the home layout and its media/widgets.
+const App = lazy(() => import("../App.tsx"));
+const ContentHome = lazy(() => import("../frontHome/Content/ContentHome"));
 const Dashboard = lazy(() => import("../pages/Dashboard"));
 const RiverBoard = lazy(() => import("../pages/RiverBoard/index"));
 const Home = lazy(() => import("../pages/Dashboard/Home"));
@@ -44,11 +45,11 @@ const NewNotesRoute = () => {
 const router = createBrowserRouter([
     {
         path: '/',
-        element: <App />,
+        element: routePage(<App />),
         children: [
             {
                 index: true,
-                element: <ContentHome />
+                element: routePage(<ContentHome />)
             },
             {
                 path: 'about',
@@ -74,14 +75,13 @@ const router = createBrowserRouter([
             {
                 path: 'article/:id',
                 element: routePage(<ReadArticle />)
-            },
-            // 兜底：未知路径渲染 NotFound，但保留 App 布局（头部/底部/看板娘聊天面板）。
-            // 若作为顶层路由，agent 误跳转（如 /iot）后整站布局和聊天面板会全部丢失
-            {
-                path: '*',
-                element: <NotFound />
             }
         ]
+    },
+    // Standalone full-screen page: no public header, footer, menus or widget boot.
+    {
+        path: '*',
+        element: <NotFound />
     },
     {
         path: 'login',

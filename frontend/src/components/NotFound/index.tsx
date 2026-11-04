@@ -1,12 +1,15 @@
 import {useEffect, useRef, useState, type CSSProperties} from 'react'
 import {Link} from 'react-router-dom'
+import {useAutoThemeSwitch, useIsDarkMode} from '../../theme'
 import './index.sass'
 
-const asset = (name: string) => `/mascot-404/${name}.png`
+const asset = (name: string) => `/mascot-404/${name}.webp`
 const bumps = ['small', 'medium', 'large']
 const sprites = ['neutral', 'pain', 'cry', ...bumps.map(size => `bump-${size}`)]
 
 const NotFound = () => {
+    useAutoThemeSwitch()
+    const isDark = useIsDarkMode()
     const [run, setRun] = useState(0)
     const [ready, setReady] = useState(false)
     const [reduced, setReduced] = useState(false)
@@ -45,13 +48,13 @@ const NotFound = () => {
         timer.current = setTimeout(() => setExpression(index === 2 ? 'cry' : 'neutral'), 360)
     }
 
-    return <main className="mascot-error" aria-labelledby="mascot-error-title">
+    return <main className={`mascot-error${isDark ? ' frontDark' : ''}`} aria-labelledby="mascot-error-title">
         <div className="mascot-error__scene" data-ready={ready} data-reduced={reduced}
              data-expression={expression} aria-hidden="true">
             <div className="mascot-error__shadow" />
             <div className="mascot-error__character">
                 {['neutral', 'pain', 'cry'].map(face => <img key={face} src={asset(face)} alt=""
-                    width="1536" height="1024" draggable={false}
+                    width="960" height="640" decoding="async" draggable={false}
                     className={`mascot-error__sprite${expression === face ? ' is-visible' : ''}`} />)}
                 {bumps.map((size, index) => <span key={`${run}-${size}`}
                     className={`mascot-error__bump mascot-error__bump--${size}${hits > index ? ' is-visible' : ''}`}
