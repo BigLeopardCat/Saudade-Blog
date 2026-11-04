@@ -30,6 +30,19 @@ describe('current draft collaboration', () => {
     expect(snapshot.total_chars).toBe(24001)
     expect(f.writes).toEqual([])
   })
+  it('pages Unicode code points without splitting emoji or skipping the next slice', () => {
+    const f = fixture('a😀中🐱'), results = []
+    for (let offset = 0; offset < 4; offset += 2) {
+      results.push(f.session.execute({kind:'article_editor',operation:'read',
+        command_id:`unicode-${offset}`,offset,limit:2}))
+    }
+    expect(results.map(row => row.content)).toEqual(['a😀','中🐱'])
+    expect(results.map(row => row.total_chars)).toEqual([4,4])
+    expect(results.map(row => row.next_offset)).toEqual([2,null])
+    expect(results.map(row => row.content).join('')).toBe(f.value().content)
+    expect(() => f.session.execute({kind:'article_editor',operation:'read',
+      command_id:'beyond',offset:5,limit:2})).toThrow(/范围不合法/)
+  })
   it('body proposals do not modify the draft until accepted; replay is idempotent', () => {
     const f = fixture(), {cmd, result} = f.propose()
     expect(f.writes).toEqual([])
@@ -59,11 +72,36 @@ describe('current draft collaboration', () => {
   })
   it('creates and directly replaces a summary without generating a body review', () => {
     const f = fixture(), snapshot = f.read()
-    f.session.execute({kind:'article_editor',operation:'summary',command_id:'summary',
+    const applied = f.session.execute({kind:'article_editor',operation:'summary',command_id:'summary',
       editor_id:snapshot.editor_id,revision:snapshot.revision,description:'从正文生成的摘要'})
+    expect(applied).toMatchObject({description:'从正文生成的摘要',outcome:'updated',
+      revision:snapshot.revision+1})
     expect(f.value().description).toBe('从正文生成的摘要')
     expect(f.writes).toEqual([])
     expect(f.proposal()).toBeNull()
+  })
+  it('reports unchanged summaries explicitly and replays the original applied receipt', () => {
+    const f = fixture(), snapshot = f.read()
+    const noop = f.session.execute({kind:'article_editor',operation:'summary',command_id:'noop',
+      editor_id:snapshot.editor_id,revision:snapshot.revision,description:'原摘要'})
+    expect(noop).toMatchObject({description:'原摘要',outcome:'unchanged',revision:snapshot.revision})
+    const command: EditorCommand = {kind:'article_editor',operation:'summary',command_id:'apply',
+      editor_id:snapshot.editor_id,revision:snapshot.revision,description:'新摘要😀'}
+    const applied = f.session.execute(command)
+    expect(applied).toMatchObject({outcome:'updated',description:'新摘要😀',revision:snapshot.revision+1})
+    expect(f.session.execute(command)).toEqual(applied)
+    expect(f.read().revision).toBe(applied.revision)
+  })
+  it('does not report an ignored or altered summary write as completed', () => {
+    for (const altered of ['原摘要','写成了其他内容']) {
+      let value = {title:'草稿',content:'正文',description:'原摘要'}
+      const session = createEditorSession({read:() => value, enabled:() => true,
+        applyBody:() => {},onProposal:() => {},
+        applySummary:() => {value = {...value,description:altered}}})
+      const snapshot = session.execute({kind:'article_editor',operation:'read',command_id:'read'})
+      expect(() => session.execute({kind:'article_editor',operation:'summary',command_id:'write',
+        editor_id:snapshot.editor_id,revision:snapshot.revision,description:'新摘要'})).toThrow(/未能应用/)
+    }
   })
   it('a summary update preserves and reports the pending body review', () => {
     const f = fixture()

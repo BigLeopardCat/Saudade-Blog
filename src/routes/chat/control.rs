@@ -39,7 +39,10 @@ impl EditorObservation {
         !self.editor_id.is_empty()
             && self.editor_id.len() <= 64
             && self.revision <= 9_007_199_254_740_991
-            && matches!(self.outcome.as_str(), "read" | "proposed" | "updated")
+            && matches!(
+                self.outcome.as_str(),
+                "read" | "proposed" | "updated" | "unchanged"
+            )
             && self
                 .title
                 .as_ref()
@@ -141,6 +144,30 @@ mod tests {
             let mut changed = request.clone();
             changed["browser_result"]["settings"] = bad;
             assert!(serde_json::from_value::<ChatRequest>(changed).is_err());
+        }
+    }
+
+    #[test]
+    fn editor_receipts_preserve_content_and_unicode_offsets() {
+        for document in [
+            json!({"editor_id":"editor", "revision":5, "outcome":"read",
+                "content":"中😀", "description":"概述🐱", "offset":0,
+                "next_offset":2, "total_chars":4}),
+            json!({"editor_id":"editor", "revision":6, "outcome":"updated",
+                "description":"已应用摘要😀"}),
+            json!({"editor_id":"editor", "revision":5, "outcome":"unchanged",
+                "description":"已应用摘要😀"}),
+        ] {
+            let request = json!({"message":"", "resume_task":"editor-task",
+                "conversation_id":42, "browser_result":{"command_id":"editor-result",
+                    "status":"completed", "path":"/dashboard/notes/new",
+                    "document":document}});
+            let parsed: ChatRequest = serde_json::from_value(request).unwrap();
+            assert!(valid(&parsed));
+            let forwarded = serde_json::to_value(parsed.browser_result.unwrap()).unwrap();
+            for (key, value) in document.as_object().unwrap() {
+                assert_eq!(&forwarded["document"][key], value);
+            }
         }
     }
 

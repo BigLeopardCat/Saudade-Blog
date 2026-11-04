@@ -11,8 +11,10 @@ test('real editor reviews body, updates summary directly and preserves undo', as
     editor.execute({kind:'article_editor',operation:'propose',command_id:'propose',
       editor_id:snapshot.editor_id,revision:snapshot.revision,
       edits:[{old_text:'原始正文。',new_text:'精简后的正文。'},{old_text:'第二节正文。',new_text:'改写的第二节。'}]})
-    editor.execute({kind:'article_editor',operation:'summary',command_id:'summary',
+    const summary = editor.execute({kind:'article_editor',operation:'summary',command_id:'summary',
       editor_id:snapshot.editor_id,revision:snapshot.revision,description:'新生成的文章概述'})
+    if (summary.description !== '新生成的文章概述' || summary.revision !== snapshot.revision + 1)
+      throw new Error('编辑器未返回实际应用的摘要与版本。')
   })
   const review = page.getByRole('region',{name:'正文修改建议'})
   await expect(review).toBeVisible()
