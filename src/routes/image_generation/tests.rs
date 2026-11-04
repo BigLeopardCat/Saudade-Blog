@@ -123,3 +123,95 @@ async fn paid_provider_request_is_single_attempt_and_exact() {
     assert!(!error.contains("not copied to UI"));
     server.abort();
 }
+
+#[tokio::test]
+async fn pg_review_ownership_stale_result_and_replay() {
+    use crate::rate_limiter::LoginRateLimiter;
+    use sea_orm::Database;
+    let Ok(url) = std::env::var("TEST_PG_URL") else {
+        return;
+    };
+    let db = Database::connect(url).await.unwrap();
+    let name = format!("gen_{}", uuid::Uuid::new_v4().simple());
+    let uid=db.query_one(stmt("INSERT INTO \"user\"(username,nickname,password,role,status) VALUES($1,$1,'test','admin',0) RETURNING id",vec![name.clone().into()])).await.unwrap().unwrap().try_get::<i32>("","id").unwrap();
+    let state = Arc::new(AppState {
+        db,
+        rate_limiter: LoginRateLimiter::new(1, 60, 60),
+        post_limiter: crate::risk::PostRateLimiter::default(),
+        report_limiter: LoginRateLimiter::new(1, 60, 60),
+    });
+    let id = uuid::Uuid::new_v4().to_string();
+    let request = json!({"provider":"https://api.openai.com/v1","prompt":"exact approved prompt","model":"fixture","size":"1024x1024","quality":"high","references":[]});
+    state.db.execute(stmt("INSERT INTO image_generation(id,owner_id,request,request_hash) VALUES($1::uuid,$2,$3,$4)",vec![id.clone().into(),uid.into(),request.into(),"a".repeat(64).into()])).await.unwrap();
+    state.db.execute(stmt("INSERT INTO image_generation_reference(job_id,ordinal,mime,bytes) VALUES($1::uuid,0,'image/png',$2)",vec![id.clone().into(),vec![1u8,2,3].into()])).await.unwrap();
+    assert!(jobs::read(&state, uid + 1, &id).await.is_err());
+    assert!(jobs::reject(&state, uid + 1, &id).await.is_err());
+    let before = jobs::read(&state, uid, &id).await.unwrap();
+    assert_eq!(before.status, "pending");
+    assert!(jobs::accept(
+        &state,
+        uid,
+        &id,
+        Approval {
+            version: "b".repeat(64)
+        }
+    )
+    .await
+    .is_err());
+    let result = jobs::reject(&state, uid, &id).await.unwrap();
+    assert_eq!(result.status, "rejected");
+    assert_eq!(
+        jobs::reject(&state, uid, &id).await.unwrap().status,
+        "rejected"
+    );
+    let refs = state
+        .db
+        .query_one(stmt(
+            "SELECT count(*)::bigint AS n FROM image_generation_reference WHERE job_id::text=$1",
+            vec![id.clone().into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(refs.try_get::<i64>("", "n").unwrap(), 0);
+    let image_url = format!("https://example.test/{name}.png");
+    let image_id = state
+        .db
+        .query_one(stmt(
+            "INSERT INTO images(image_url) VALUES($1) RETURNING image_key",
+            vec![image_url.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get::<i32>("", "image_key")
+        .unwrap();
+    state.db.execute(stmt("UPDATE image_generation SET status='accepted',output_hash=$2,image_id=$3 WHERE id::text=$1",vec![id.clone().into(),"b".repeat(64).into(),image_id.into()])).await.unwrap();
+    for _ in 0..2 {
+        let result = jobs::accept(
+            &state,
+            uid,
+            &id,
+            Approval {
+                version: "b".repeat(64),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.image_id, Some(image_id));
+        assert_eq!(result.status, "accepted");
+    }
+    state
+        .db
+        .execute(stmt("DELETE FROM \"user\" WHERE id=$1", vec![uid.into()]))
+        .await
+        .unwrap();
+    state
+        .db
+        .execute(stmt(
+            "DELETE FROM images WHERE image_key=$1",
+            vec![image_id.into()],
+        ))
+        .await
+        .unwrap();
+}
