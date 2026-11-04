@@ -66,7 +66,7 @@ impl WeatherSnapshot {
                 .checked_sub(self.valid_at)
                 .is_some_and(|age| (-300..=3600).contains(&age))
             && self.source == "Open-Meteo"
-            && matches!(self.location_source.as_str(), "GeoJS IP" | "Cloudflare IP")
+            && self.location_source == "GeoJS IP"
     }
 }
 
