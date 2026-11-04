@@ -2,6 +2,7 @@
 
 pub mod announcements;
 pub mod messages;
+pub mod search;
 
 use crate::utils::ApiResponsePage;
 use axum::Json;

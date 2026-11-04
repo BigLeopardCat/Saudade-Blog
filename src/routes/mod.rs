@@ -136,6 +136,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/public/activity/announcements", get(public_activity::announcements::list))
         .route("/api/public/activity/guestbook", get(public_activity::messages::guestbook))
         .route("/api/public/activity/talks", get(public_activity::messages::talks))
+        .route("/api/public/activity/search", get(public_activity::search::search))
         .route("/api/public/articles", get(public_catalog::articles))
         .route("/api/public/categories", get(public_catalog::categories::list))
         .route("/api/public/tags", get(public_catalog::tags::list))
