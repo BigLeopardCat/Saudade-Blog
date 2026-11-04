@@ -1,371 +1,160 @@
-import InfiniteScroll from 'react-infinite-scroll-component';
+import {useEffect, useMemo, useState} from 'react'
+import {useDispatch} from 'react-redux'
+import {Alert, Breadcrumb, Button, Card, Checkbox, Empty, Input, Modal, Segmented, Space, Spin, TreeSelect, Upload, message} from 'antd'
+import type {UploadProps, UploadFile} from 'antd'
+import {AppstoreOutlined, FolderAddOutlined, InboxOutlined, StarFilled, UnorderedListOutlined} from '@ant-design/icons'
+import {useNavigate} from 'react-router-dom'
+import type {AppDispatch} from '../../../store'
+import {galleryApi, galleryError, type GalleryImage} from '../../../apis/galleryApi'
+import {delImages, getR2Usage, uploadImages, type UploadTarget} from '../../../apis/ImageMethods'
+import ImageCompression from '../../../apis/ImageCompression'
+import type {R2Usage} from '../../../interface/Setting'
+import {uploadBlocked, usagePercent} from '../../../utils/r2Quota'
+import {resolveApiAssetUrl} from '../../../utils/runtimeApi'
+import {assetDisplayName} from '../../../utils/assetName'
+import ImageDetail, {folderOptions} from './ImageDetail'
 import './index.sass'
-import {Button, Card, Modal, Segmented, UploadFile} from "antd";
-import DeleteButton from "../../../components/Buttons/DeleteButton";
-import UpLoadButton from "../../../components/Buttons/UpLoadButton";
-import {useCallback, useEffect, useState} from "react";
-import { AppstoreOutlined, InboxOutlined, UnorderedListOutlined } from '@ant-design/icons';
-import type { UploadProps } from 'antd';
-import { message, Upload } from 'antd';
-import CheckButton from "../../../components/Buttons/CheckButton";
-import {ImgUrl} from "../../../interface/ImgTypes";
-import {delImages, getR2Usage, uploadImages} from "../../../apis/ImageMethods.tsx";
-import type {UploadTarget} from "../../../apis/ImageMethods.tsx";
-import ImageCompression from "../../../apis/ImageCompression.tsx";
-import { resolveApiAssetUrl } from '../../../utils/runtimeApi';
-import { assetDisplayName } from '../../../utils/assetName';
-import type {R2Usage} from "../../../interface/Setting.d";
-import {usagePercent, uploadBlocked} from "../../../utils/r2Quota";
-import {useNavigate} from "react-router-dom";
-import {useGalleryPager} from "../../../utils/galleryPager.ts";
 
-
-type AlbumView = 'grid' | 'list';
-
-/** 上次选的那一种。读了就记住（与站内其它 localStorage 键一样整体包 try：
- *  Safari 无痕下 `localStorage` 本身就可能抛）。 */
-const ALBUM_VIEW_KEY = 'albumViewMode';
-
-const Albums = () => {
-    //状态变量区
-    const [uploadedFiles, setUploadedFiles] = useState<UploadFile[]>([]);
-    const [SelectDelete,setSelectDelete] = useState(0)
-    const [checkStatus, setCheckStatus] = useState<Record<string, boolean>>({});
-    const { images: staticDate, reload: reloadImages, loadMore, hasMore } = useGalleryPager();
-    const [isModalOpen, setIsModalOpen] = useState(false);
-    const [isModaldelOpen, setIsDelModalOpen] = useState(false);
-    const [view, setView] = useState<AlbumView>(() => {
-        try {
-            return localStorage.getItem(ALBUM_VIEW_KEY) === 'list' ? 'list' : 'grid';
-        } catch {
-            return 'grid';
+export default function Albums() {
+  const dispatch=useDispatch<AppDispatch>()
+  const navigate=useNavigate()
+  const [folderId,setFolderId]=useState<number|undefined>()
+  const [search,setSearch]=useState('')
+  const [favorite,setFavorite]=useState(false)
+  const [view,setView]=useState<'grid'|'list'>(()=>{
+    try {return localStorage.getItem('albumViewMode')==='list'?'list':'grid'} catch {return 'grid'}
+  })
+  const [selected,setSelected]=useState<Set<number>>(new Set())
+  const [detail,setDetail]=useState<GalleryImage|null>(null)
+  const [deleteItems,setDeleteItems]=useState<GalleryImage[]>([])
+  const [deleting,setDeleting]=useState(false)
+  const [newFolder,setNewFolder]=useState(false)
+  const [folderName,setFolderName]=useState('')
+  const [uploadTarget,setUploadTarget]=useState<UploadTarget|null>(null)
+  const [uploadedFiles,setUploadedFiles]=useState<UploadFile[]>([])
+  const [r2,setR2]=useState<R2Usage|null>(null)
+  const query=galleryApi.useImagesInfiniteQuery({folderId,search:search||undefined,favorite:favorite||undefined})
+  const foldersQuery=galleryApi.useFoldersQuery()
+  const folders=foldersQuery.data??[]
+  const [createFolder,{isLoading:creating}]=galleryApi.useCreateFolderMutation()
+  const [deleteFolder]=galleryApi.useDeleteFolderMutation()
+  const [updateImage]=galleryApi.useUpdateImageMutation()
+  const images=useMemo(()=>query.data?.pages.flatMap(page=>page.items)??[],[query.data])
+  const paths=useMemo(()=>{
+    const result=[]; let current=folders.find(f=>f.id===folderId)
+    while(current){result.unshift(current);current=folders.find(f=>f.id===current?.parentId)}
+    return result
+  },[folders,folderId])
+  useEffect(()=>{setSelected(new Set())},[folderId,search,favorite])
+  const loadR2=()=>getR2Usage().then(res=>{if(res.data?.code===200)setR2(res.data.data)}).catch(()=>{})
+  useEffect(()=>{void loadR2()},[])
+  const blocked=uploadBlocked(r2)
+  const canUploadR2=!!r2?.configured&&!blocked.blocked
+  const chooseView=(value:'grid'|'list')=>{
+    setView(value);try {localStorage.setItem('albumViewMode',value)} catch { /* Optional preference. */ }
+  }
+  const toggle=(id:number,checked:boolean)=>setSelected(before=>{
+    const next=new Set(before);if(checked)next.add(id);else next.delete(id);return next
+  })
+  const remove=async()=>{
+    setDeleting(true)
+    try {
+      const res=await delImages(deleteItems.map(image=>image.imageUrl))
+      if(res.data?.code!==200) throw new Error(res.data?.message||'删除失败')
+      if(deleteItems.some(item=>item.imageKey===detail?.imageKey))setDetail(null)
+      setDeleteItems([]);setSelected(new Set())
+      dispatch(galleryApi.util.invalidateTags(['Images','Folders']))
+      void loadR2();void message.success('图片已删除')
+    } catch(error){void message.error(error instanceof Error?error.message:'删除失败')}
+    finally {setDeleting(false)}
+  }
+  const addFolder=async()=>{
+    try {
+      await createFolder({parentId:folderId??0,name:folderName}).unwrap()
+      setNewFolder(false);setFolderName('');void message.success('文件夹已创建')
+    } catch(error){void message.error(galleryError(error))}
+  }
+  const removeFolder=async()=>{
+    if(!folderId)return
+    try {await deleteFolder(folderId).unwrap();setFolderId(undefined)}
+    catch(error){void message.error(galleryError(error))}
+  }
+  const upload:UploadProps={multiple:true,fileList:uploadedFiles,onChange:info=>setUploadedFiles(info.fileList),
+    customRequest:async req=>{
+      try {
+        if(!uploadTarget) throw new Error('请选择上传目标')
+        const file=await ImageCompression(req.file as UploadFile)
+        const formData=new FormData();formData.append('file',file)
+        const response=await uploadImages(formData, uploadTarget)
+        if(response.data?.code!==200||typeof response.data.data!=='string')throw new Error(response.data?.message||'上传失败')
+        if(folderId!==undefined||favorite){
+          const image=await dispatch(galleryApi.endpoints.resolveImage.initiate(response.data.data,{subscribe:false,forceRefetch:true})).unwrap()
+          await updateImage({id:image.imageKey,version:image.version,patch:{
+            ...(folderId!==undefined?{folderId}:{}),...(favorite?{isFavorite:true}:{})}}).unwrap()
         }
-    });
+        req.onSuccess?.(response.data);dispatch(galleryApi.util.invalidateTags(['Images','Folders']))
+        void loadR2()
+      } catch(error){req.onError?.(error instanceof Error?error:new Error(galleryError(error)));void message.error(galleryError(error))}
+    }}
 
-    const navigate = useNavigate();
-    const [r2, setR2] = useState<R2Usage | null>(null);
-
-    const [uploadTarget, setUploadTarget] = useState<UploadTarget>('local');
-
-    const changeView = (v: AlbumView) => {
-        setView(v);
-        try {
-            localStorage.setItem(ALBUM_VIEW_KEY, v);
-        } catch {
-            // 存不下就只当次生效——切展示方式这种偏好不值得弹窗打扰
-        }
-    };
-
-
-    useEffect(() => {
-        initImageList()
-        loadR2()
-    },[])
-
-
-    /** 重拉第一页（挂载 / 删完 / 传完）。名字保留：三处调用点说的都是"从头来一次"。 */
-    const initImageList = () => {
-        void reloadImages()
-    }
-
-    // ── R2 用量 ────────────────────────────────────────────────────────────
-    /** 拉一次用量读数。**失败不清空已有读数**（清空会让条子跳回"读取中"，
-     *  而下一次成功时又跳回来——用旧值比用空白诚实，`listError` 会说明它只是暂不可信）。 */
-    const loadR2 = async (opts?: { silent?: boolean }) => {
-        try {
-            const res = await getR2Usage();
-            if (res.data?.code === 200) {
-                setR2(res.data.data);
-            } else if (!opts?.silent) {
-                message.error(res.data?.message || '读取 R2 用量失败');
-            }
-        } catch {
-            if (!opts?.silent) message.error('读取 R2 用量失败');
-        }
-    };
-
-    /** 去站点设置的「图库存储」页签改配置。`{tab:'4'}` 让它直接落在那一页
-     *  （见 `UserControl/index.tsx` 的 `initialTab`），否则用户点完还得自己找页签。 */
-    const goR2Settings = () => {
-        navigate('/dashboard/usercontrol', { state: { tab: '4' } });
-    };
-
-    const fetchData = () => {
-        void loadMore();
-    };
-
-    const Delete = useCallback(() => {
-        // @ts-ignore
-        //拿出所有的键
-        const keysToDelete = Object.keys(checkStatus).filter(key => checkStatus[key]);
-
-        delImages(keysToDelete).then((res) => {
-            if (res.data?.code === 200) {
-                initImageList()
-                loadR2({ silent: true });   // R2 上的对象没了 ⇒ 用量条要跟上
-                message.success("删除成功");
-            } else {
-                message.error(res.data?.message || "删除失败：这些图片还有文章在用");
-            }
-            // 两种情况都清空勾选（留着勾选会让人以为"点了没生效"）
-            setCheckStatus({});
-            setSelectDelete(0);
-        }).catch((error) => {
-            message.error("删除失败：" + error)
-            // 删除完毕后清空 checkStatus
-            setCheckStatus({});
-            setSelectDelete(0);
-        })
-    }, [SelectDelete, checkStatus]);
-
-    // 触发选择框和图片点击
-    const handleItemClick = (img: ImgUrl) => {
-        // 检查当前图片对应的复选框状态
-        const isChecked = checkStatus[img.imageUrl] || false;
-
-        // 更新复选框状态
-        setCheckStatus(prevState => ({
-            ...prevState,
-            [img.imageUrl]: !isChecked // 切换复选框状态
-        }));
-
-        // 更新选择的数量
-        setSelectDelete(prevCount => isChecked ? prevCount - 1 : prevCount + 1);
-    };
-    //上传悬浮框（`target` 决定这次传到哪儿，弹窗标题与提示都跟着它变）
-    const showModal = (target: UploadTarget) => {
-        setUploadTarget(target);
-        setIsModalOpen(true);
-    };
-
-    const handleOk = () => {
-        setUploadedFiles([])
-        setIsModalOpen(false);
-    };
-
-    const handleCancel = () => {
-        setUploadedFiles([])
-        setIsModalOpen(false);
-    };
-
-    //推拽上传
-    const { Dragger } = Upload;
-    const props: UploadProps = {
-        name: 'file',
-        fileList: uploadedFiles,
-        multiple: true,
-        customRequest: async (req) => {
-            // @ts-ignore
-            const compressedFile = await ImageCompression(req.file);
-            const formData = new FormData();
-            formData.append('file', compressedFile);
-            // 显式 target：**这次点的是哪颗钮，就传到哪儿**（不再由面板开关替用户决定）
-            uploadImages(formData, uploadTarget).then((res) => {
-                if (res.data?.code === 200) {
-                    initImageList();
-                    // @ts-ignore antd 的 req.file 是 `string | RcFile`，取名字要窄化
-                    const uploadedName: string = req.file.name;
-                    // 服务端给了话就以它为准（HEAD 命中复用时会说"已存在，已复用"）
-                    message.success(res.data?.message && res.data.message !== 'ok'
-                        ? `${uploadedName}：${res.data.message}`
-                        : `${uploadedName} 图片上传成功`);
-                    loadR2({ silent: true });   // 用量变了，条子要跟上
-                } else {
-                    message.error(res.data?.message || '上传失败');
-                }
-            }).catch((error) => {
-                message.error('上传失败' + error);
-            });
-
-        },
-        onDrop(e) {
-            console.log('Dropped files', e.dataTransfer.files);
-        },
-        progress: {
-            strokeColor: {
-                '0%': '#108ee9',
-                '100%': '#87d068',
-            },
-            strokeWidth: 3,
-            format: (percent) => percent && `${parseFloat(percent.toFixed(2))}%`,
-        },
-    };
-
-    const showdelModal = () => {
-        if(SelectDelete === 0){
-            message.warning("待选中")
-            return
-        }else {
-            setIsDelModalOpen(true);
-        }
-    };
-
-    const handledelOk = () => {
-        Delete()
-        setIsDelModalOpen(false);
-    };
-
-    const handledelCancel = () => {
-        setIsDelModalOpen(false);
-    };
-
-    // 派生量（全是纯函数，判据住在 `utils/r2Quota.ts` 一处）
-    const r2Blocked = uploadBlocked(r2);
-    const r2Configured = !!r2?.configured;
-    // 读数不可信时**不显示百分比**（`usagePercent` 对 limit<=0 返回的是 100 ——
-    // 那是"算不出来"的表达，印在按钮上会变成一句假话："R2 存储 · 100%"）
-    const r2Pct = r2 && !r2.listError ? usagePercent(r2.usedBytes, r2.limitBytes) : null;
-    // R2 那颗钮能不能点。**两种原因分开关**：没配全（去配置）与配额/读数（去清理）。
-    // 顺序不能反：没配全时 `uploadBlocked` 按契约是"不拦"（它只管配额那件事），
-    // 只有这里才知道"压根没启用"。
-    const r2Disabled = !r2Configured || r2Blocked.blocked;
-    const r2DisabledReason = !r2Configured
-        ? '图库没启用 R2 图床（去「站点设置 → 图库存储」配置）'
-        : r2Blocked.reason;
-
-
-    return <div style={{height: '100%'}} className='allin'>
-        <InfiniteScroll
-        dataLength={staticDate.length}
-        next={fetchData}
-        hasMore={hasMore}
-        loader={null}
-        endMessage={
-            <p style={{ textAlign: 'center' }}>
-                <b>没有更多了</b>
-            </p>
-        }
-    >
-            <div style={{display: "flex",flexDirection: 'row',alignItems:'center',justifyContent: 'space-between',marginTop: 30,marginLeft: 20,marginRight: 20}} className={"action_img"}>
-                <div style={{display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 12}}>
-                    <UpLoadButton
-                        onClick={() => showModal('local')}
-                        label="传到本站"
-                        title="上传到本站服务器（文件存在这台机器上）"
-                    />
-                    <UpLoadButton
-                        onClick={() => showModal('r2')}
-                        label="传到 R2"
-                        tone="alt"
-                        disabled={r2Disabled}
-                        title={r2DisabledReason || '上传到 R2 图床（文件存在对象存储上）'}
-                    />
-                    {r2Disabled && (
-                        <span
-                            className="albumR2Blocked"
-                            style={{color: 'var(--washi-pink-deep, #d94f9a)', fontSize: 13, maxWidth: 260}}
-                        >
-                            {r2DisabledReason}
-                        </span>
-                    )}
-                </div>
-                <div style={{ display: "flex", flexDirection: 'row', alignItems: 'center' }}>
-                    <h2 style={{display: "flex", flexDirection: 'row', alignItems: 'center'}}> <i className="iconfont icon-xiangce icon" style={{ fontWeight: '80', fontSize: 50, color: 'var(--washi-lav, #b9a7f5)' }} /> 图库  </h2>
-                </div>
-                <div className={"albumActions"} style={{display: "flex",alignItems:'center'}}>
-                    <h2 className={"albumSelCount"} style={{opacity: SelectDelete !== 0 ? 1 : 0, transition: '0.3s'}}>已选中{SelectDelete}张图片</h2>
-                    <Button
-                        onClick={goR2Settings}
-                        title={r2Configured ? 'R2 图床用量（点开改配置）' : 'R2 图床未启用，当前存本机磁盘（点开可配置）'}
-                    >
-                        {r2Pct === null ? 'R2 存储' : `R2 存储 · ${r2Pct}%`}
-                    </Button>
-                    <Segmented
-                        value={view}
-                        onChange={(v) => changeView(v as AlbumView)}
-                        options={[
-                            { value: 'grid', label: '平铺', icon: <AppstoreOutlined /> },
-                            { value: 'list', label: '列表', icon: <UnorderedListOutlined /> },
-                        ]}
-                    />
-                    <div onClick={showdelModal}>
-                        <DeleteButton />
-                    </div>
-                </div>
-            </div>
-            <Card className="albumScrollCard" style={{ width: '100%', height: '86vh', marginLeft: '0%', marginTop: '0%', overflowY: 'scroll', backgroundColor: 'transparent', border: "none" }}>
-                {view === 'list' ? (
-                    <div className={"albumList"}>
-                        {staticDate.map(item => {
-                            const checked = checkStatus[item.imageUrl] || false;
-                            // 展示名走 `utils/assetName.ts`（去掉上传时压的那串时间戳前缀，
-                            // 与 Rust `strip_timestamp_prefix` 同一条规则）
-                            const name = assetDisplayName(item.imageUrl);
-                            return (
-                                <div
-                                    key={item.imageKey}
-                                    className={`albumRow${checked ? ' is-checked' : ''}`}
-                                    onClick={() => handleItemClick(item)}
-                                >
-                                    <img
-                                        className={"albumThumb"}
-                                        src={resolveApiAssetUrl(item.imageUrl)}
-                                        alt={name}
-                                        loading={"lazy"}
-                                    />
-                                    <span className={"albumName"} title={name}>{name}</span>
-                                    <span className={"albumCheck"} onClick={(e) => e.stopPropagation()}>
-                                        <CheckButton
-                                            checked={checked}
-                                            handleCheckBoxChange={() => handleItemClick(item)}
-                                        />
-                                    </span>
-                                </div>
-                            );
-                        })}
-                    </div>
-                ) : (
-                    staticDate.map(item => (
-                        <div key={item.imageKey} style={{ position: 'relative', display: 'inline-block' }}>
-                            <div style={{ position: 'absolute', top: 30, right: 40, transform: 'scale(0.8)',zIndex: 3 }}>
-                                <CheckButton
-                                    checked={checkStatus[item.imageUrl] || false}
-                                    handleCheckBoxChange={() => handleItemClick(item)}
-                                />
-                            </div>
-                            <img
-                                src={resolveApiAssetUrl(item.imageUrl)}
-                                onClick={() => handleItemClick(item)}
-                                style={{ maxWidth: 250, maxHeight: 250, margin: 40, marginLeft: 45, marginTop: 30, borderRadius: 10 }}
-                                className='imgShade'
-                            />
-                        </div>
-                    ))
-                )}
-            </Card>
-
-            <Modal
-                   open={isModalOpen}
-                   onOk={handleOk}
-                   onCancel={handleCancel}
-                   okText='完成'
-                   cancelText='取消'
-                   title={uploadTarget === 'r2' ? '上传到 R2 图床' : '上传到本站服务器'}
-            >
-                <Dragger {...props} listType='picture'>
-                    <p className="ant-upload-drag-icon">
-                        <InboxOutlined />
-                    </p>
-                    <p className="ant-upload-text">点击或拖动文件到此区域进行上传</p>
-                    <p className="ant-upload-hint">
-                        支持单个或批量上传
-                    </p>
-                    <p className="ant-upload-hint">
-                        {uploadTarget === 'r2'
-                            ? `这次传到 R2 图床${r2?.publicBase ? `（公开域 ${r2.publicBase}）` : ''}，不占本机磁盘。`
-                            : '这次传到本站服务器（存在这台机器的磁盘上），地址是站内相对路径。'}
-                    </p>
-                </Dragger>
-
-
-            </Modal>
-    </InfiniteScroll>
-
-        <Modal title="删除确认" open={isModaldelOpen} onOk={handledelOk} onCancel={handledelCancel}  okText="确定" cancelText="取消">
-            是否删除选中所有图片?
-        </Modal>
-
+  return <section className="albumLibrary" aria-label="图库">
+    <div className="albumToolbar">
+      <h2>图库</h2>
+      <Space wrap>
+        <Button onClick={()=>setUploadTarget('local')}>传到本站</Button>
+        <Button disabled={!canUploadR2} title={!r2?.configured?'请先配置 R2 存储':blocked.reason}
+          onClick={()=>setUploadTarget('r2')}>传到 R2</Button>
+        <Button onClick={()=>setNewFolder(true)} icon={<FolderAddOutlined/>}>新建文件夹</Button>
+        <Button danger disabled={!selected.size} onClick={()=>setDeleteItems(images.filter(i=>selected.has(i.imageKey)))}>删除选中（{selected.size}）</Button>
+      </Space>
     </div>
+    <div className="albumFilters">
+      <TreeSelect aria-label="图库文件夹" placeholder="全部图片" allowClear value={folderId}
+        treeData={folderOptions(folders)} treeDefaultExpandAll onChange={setFolderId}/>
+      <Input.Search aria-label="搜索图库" placeholder="搜索文件名或描述" allowClear onSearch={setSearch}/>
+      <Checkbox checked={favorite} onChange={e=>setFavorite(e.target.checked)}>只看收藏</Checkbox>
+      <Segmented value={view} onChange={value=>chooseView(value as 'grid'|'list')}
+        options={[{value:'grid',label:'平铺',icon:<AppstoreOutlined/>},{value:'list',label:'列表',icon:<UnorderedListOutlined/>}]}/>
+      <Button onClick={()=>navigate('/dashboard/usercontrol',{state:{tab:'4'}})}>
+        {r2&&!r2.listError?'R2 存储 · '+usagePercent(r2.usedBytes,r2.limitBytes)+'%':'R2 存储'}
+      </Button>
+    </div>
+    <Breadcrumb items={[{title:<button type="button" onClick={()=>setFolderId(undefined)}>全部图片</button>},
+      ...(folderId===0?[{title:'未分类'}]:paths.map(folder=>({title:<button type="button" onClick={()=>setFolderId(folder.id)}>{folder.name}</button>})))]}/>
+    <div className="albumFolders">
+      {folders.filter(f=>f.parentId===(folderId??0)).map(folder=><Button key={folder.id}
+        onClick={()=>setFolderId(folder.id)}>📁 {folder.name}（{folder.imageCount}）</Button>)}
+      {folderId!==undefined&&folderId>0&&<Button danger size="small" onClick={()=>void removeFolder()}>删除空文件夹</Button>}
+    </div>
+    {(query.isError||foldersQuery.isError)&&<Alert type="error" showIcon message={galleryError(query.error||foldersQuery.error)}
+      action={<Button onClick={()=>{void query.refetch();void foldersQuery.refetch()}}>重试</Button>}/>}
+    {query.isLoading?<Spin/>:!images.length?<Empty description="这里还没有图片"/>:
+      <div className={view==='list'?'albumList':'albumGrid'}>
+        {images.map(image=>{
+          const name=image.displayName||assetDisplayName(image.imageUrl)
+          return <Card key={image.imageKey} size="small" className={'albumTile '+(selected.has(image.imageKey)?'is-checked':'')}>
+            <button type="button" className="albumOpen" aria-label={'查看图片 '+name} onClick={()=>setDetail(image)}>
+              <img className="albumThumb" src={resolveApiAssetUrl(image.imageUrl)} alt={name} loading="lazy"/>
+              <span className="albumText"><span className="albumName">{image.isFavorite&&<StarFilled/>}{name}</span>
+                {image.description&&<span className="albumCaption">{image.description}</span>}</span>
+            </button>
+            <Checkbox aria-label={'选择图片 '+name} checked={selected.has(image.imageKey)} onChange={e=>toggle(image.imageKey,e.target.checked)}/>
+          </Card>
+        })}
+      </div>}
+    {query.hasNextPage&&<div className="albumMore"><Button loading={query.isFetchingNextPage} onClick={()=>void query.fetchNextPage()}>加载更多</Button></div>}
+    {detail&&<ImageDetail key={detail.imageKey} image={detail} folders={folders} onClose={()=>setDetail(null)} onDelete={image=>setDeleteItems([image])}/>}
+    <Modal title="删除图片" open={!!deleteItems.length} confirmLoading={deleting} okButtonProps={{danger:true}} okText="删除" cancelText="取消"
+      onOk={()=>void remove()} onCancel={()=>{if(!deleting)setDeleteItems([])}}>
+      确认删除这 {deleteItems.length} 张图片？如有图片仍被文章使用，本次删除将全部取消。
+    </Modal>
+    <Modal title="新建文件夹" open={newFolder} onOk={()=>void addFolder()} confirmLoading={creating}
+      okButtonProps={{disabled:!folderName.trim()}} onCancel={()=>setNewFolder(false)} okText="创建" cancelText="取消">
+      <Input aria-label="文件夹名称" value={folderName} maxLength={80} onChange={e=>setFolderName(e.target.value)} onPressEnter={()=>void addFolder()}/>
+    </Modal>
+    <Modal title={uploadTarget==='r2'?'上传到 R2 图床':'上传到本站服务器'} open={!!uploadTarget} footer={<Button onClick={()=>setUploadTarget(null)}>完成</Button>}
+      onCancel={()=>setUploadTarget(null)}>
+      <Upload.Dragger {...upload}><p><InboxOutlined/></p><p>点击或拖动图片上传</p><p>图片会加入当前文件夹</p></Upload.Dragger>
+    </Modal>
+  </section>
 }
-
-export default Albums

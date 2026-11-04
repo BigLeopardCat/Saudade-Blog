@@ -127,7 +127,7 @@ async fn resolve_autosave_target(
     Ok(rev)
 }
 
-pub(super) async fn locked_document(
+pub(crate) async fn locked_document(
     db: &DatabaseTransaction,
     id: i32,
 ) -> Result<(note::Model, Option<note::Model>), sea_orm::DbErr> {
@@ -149,7 +149,7 @@ pub(super) async fn locked_document(
     Ok((root, draft))
 }
 
-pub(super) async fn document_version<C: ConnectionTrait>(
+pub(crate) async fn document_version<C: ConnectionTrait>(
     db: &C,
     root: &note::Model,
     draft: Option<&note::Model>,

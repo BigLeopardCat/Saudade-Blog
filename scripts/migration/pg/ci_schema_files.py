@@ -27,6 +27,7 @@ LOAD = [
     "0020_personal_message_deletion.sql",
     "0021_automation_results.sql",
     "0022_note_cover_fit.sql",
+    "0023_gallery_library.sql",
 ]
 
 EXCLUDED = {
