@@ -311,6 +311,7 @@ pub(super) async fn prepare_chat(
         "page_title": payload.page_title.as_deref().unwrap_or(""),
         "current_effects": payload.current_effects.as_deref().unwrap_or(""),
         "current_darkmode": payload.current_darkmode.as_deref().unwrap_or(""),
+        "current_weather": payload.current_weather,
         "image": payload.image.clone().unwrap_or_default(),
         "user_id": uid,
         "history": memory.history,
