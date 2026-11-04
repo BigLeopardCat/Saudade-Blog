@@ -79,7 +79,7 @@ pub(super) async fn apply(
         vec![image.image_url.into(),fit.into(),id.into()])).await?;
     let state = read_target(db, id).await?;
     Ok(Outcome {
-        changed: result.rows_affected > 0,
+        changed: result.rows_affected() > 0,
         before_version: input.version,
         image_id: input.image_id,
         state,

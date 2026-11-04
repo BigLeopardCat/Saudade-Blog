@@ -105,7 +105,7 @@ pub async fn remove(
                 vec![id.into()],
             ))
             .await?;
-        if result.rows_affected != 1 {
+        if result.rows_affected() != 1 {
             return Err(DbErr::Custom("folder missing or not empty".into()));
         }
         txn.commit().await?;
