@@ -1,3 +1,8 @@
+.dashboardShell { box-sizing: border-box; }
+.dashboardShell *, .dashboardShell *::before, .dashboardShell *::after { box-sizing: inherit; }
+.shell .menu-links { margin: 0; padding: 0; list-style: none; }
+.shell .icon { flex: 0 0 60px; }
+
 .contain{
     height: 100vh;
 }
@@ -396,9 +401,39 @@ li.search-box input {
 .ant-card .ant-card-body{
     padding: 0;
     width: 100%;
-    height: 100%;
 }
 
+.Card > .ant-card-body {
+    height: 100%;
+    min-height: 0;
+}
+
+.dashboardPage {
+    height: 100%;
+    min-height: 0;
+    min-width: 0;
+    overflow: auto;
+    scrollbar-gutter: stable;
+}
+.dashboardPage:focus-visible {
+    outline: 2px solid var(--washi-lav, #b9a7f5);
+    outline-offset: -2px;
+}
+
+.dashboard-dialog-content {
+    display: flex;
+    flex-direction: column;
+    max-height: calc(100dvh - 32px);
+}
+.dashboard-dialog-body {
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+}
+.dashboard-dialog-header, .dashboard-dialog-footer {
+    flex: 0 0 auto;
+}
 
 /*选中状态*/
 .nav_select{
@@ -1045,7 +1080,7 @@ body.dash-skin .mainbox .search_icon {
        宽 / 高 / 左距 已从内联搬到基础规则（内联压过一切普通声明；不搬的话下面这几条
        是**静默失效**的，这正是本条改动的第一个前提）。
        `overflow:visible` 覆盖基础规则那条 overflow:hidden —— 基础规则一个字没动，
-       CI 的 graph-rebuild-panel.test.mjs 那两条正则要的正是"基础规则里留着它"。 */
+       子页面的自然高度由文档滚动接管。 */
     .Card {
         width: 100%;
         height: auto;
@@ -1055,8 +1090,11 @@ body.dash-skin .mainbox .search_icon {
 
     /* 放开高度链：子页面写死的 height:100% / 90% 在 auto 父级下退化成内容高，
        整页滚动接管 —— 七个没接管高度链的页面就此一并修好。 */
-    .ant-card .ant-card-body {
+    .Card > .ant-card-body, .dashboardPage {
         height: auto;
+    }
+    .dashboardPage {
+        overflow: visible;
     }
 
     /* ── ③ 侧栏：离屏抽屉 ───────────────────────────────────────────────────────
@@ -1100,6 +1138,8 @@ body.dash-skin .mainbox .search_icon {
 
     .shell.close .text {
         opacity: 1;
+        visibility: visible;
+        pointer-events: auto;
     }
 
     /* 两颗圆钮（展开 / 收起箭头）在抽屉语义下没有意义，且 right:-25px 会露到屏外。

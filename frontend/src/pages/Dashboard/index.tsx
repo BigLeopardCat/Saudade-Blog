@@ -305,14 +305,17 @@ const Dashboard = () => {
            个壳里，它已经是 `<Outlet/>` 的父节点，所以这里是唯一能罩住全部子页的位置。
            页内那几处 ConfigProvider（Home 的 locale / Notes / Talks / AllNotes）在 antd v5 里
            与父层**合并**，不用动它们。 */
-        <ConfigProvider theme={{
+        <ConfigProvider modal={{centered:true, classNames:{
+            content:"dashboard-dialog-content", body:"dashboard-dialog-body",
+            header:"dashboard-dialog-header", footer:"dashboard-dialog-footer",
+        }}} theme={{
             algorithm: isDarkMode ? antdTheme.darkAlgorithm : antdTheme.defaultAlgorithm,
             token: {
                 ...(isDarkMode ? WASHI_THEME.dark : WASHI_THEME.light),
                 ...WASHI_THEME.common,
             },
         }}>
-        <div className={`contain ${isDarkMode ? 'dark' : ''}`}>
+        <div className={`contain dashboardShell ${isDarkMode ? 'dark' : ''}`}>
             {!loading ? (
                 <div className="loading-overlay">
                     <Spin tip="Loading..." className="loading">
@@ -413,7 +416,9 @@ const Dashboard = () => {
                         </div>
                         <Card className={`Card ${isDarkMode ? 'CardDark' : ''}`}>
                             <MainContext.Provider value={isDarkMode.toString()}>
-                                <Outlet />
+                                <main className="dashboardPage" aria-label="后台内容" tabIndex={0}>
+                                    <Outlet />
+                                </main>
                             </MainContext.Provider>
                         </Card>
 
