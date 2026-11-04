@@ -22,11 +22,11 @@ const sources = {
     localStorage.setItem('tokenKey','offline-test');
     function Preview(){const [body,setBody]=useState(Array.from({length:12},(_,i)=>'原始段落 '+i+'。').join('\\n\\n'));
     const ref=useRef(null);return <div className="contain"><div className="content"><Card className="Card"><div className="header">笔记 / 新建文章</div>
-    <div className="notes-container"><div className="article_title">文章标题：离线长差异测试</div>
+    <main className="dashboardPage" aria-label="后台内容"><div className="notes-container"><div className="article_title">文章标题：离线长差异测试</div>
     <Collaboration title="离线测试" content={body} description="" ready blocked={false} readBody={()=>ref.current?.read()??body}
     onBody={value=>ref.current?.apply(value)} onSummary={()=>{}}/>
     <div className="new_article"><Editor editorRef={ref} noteContent={body} setNoteContent={setBody}/></div>
-    <output id="editor-bottom">编辑器底部</output></div></Card></div></div>}
+    <output id="editor-bottom">编辑器底部</output></div></main></Card></div></div>}
     createRoot(document.getElementById('root')).render(<Preview/>);`,
 };
 const files = {};
@@ -124,12 +124,12 @@ try {
     editor.execute({kind:'article_editor',operation:'propose',command_id:'propose',editor_id:snap.editor_id,revision:snap.revision,
       edits:Array.from({length:12},(_,i)=>({old_text:'原始段落 '+i+'。',new_text:('润色后的段落 '+i+'。\n').repeat(20)}))})});
   assert.equal(await page.locator('.article-review-edit').count(),12);
-  assert.ok(await page.locator('.Card > .ant-card-body').evaluate(el=>getComputedStyle(el).overflowY==='auto'&&el.scrollHeight>el.clientHeight));
-  await page.locator('.Card > .ant-card-body').evaluate(el=>el.scrollTop=el.scrollHeight);
-  assert.ok(await page.locator('#editor-bottom').evaluate(el=>{const r=el.getBoundingClientRect();const c=el.closest('.ant-card-body').getBoundingClientRect();return r.top>=c.top&&r.bottom<=c.bottom}));
+  assert.ok(await page.locator('.dashboardPage').evaluate(el=>getComputedStyle(el).overflowY==='auto'&&el.scrollHeight>el.clientHeight));
+  await page.locator('.dashboardPage').evaluate(el=>el.scrollTop=el.scrollHeight);
+  assert.ok(await page.locator('#editor-bottom').evaluate(el=>{const r=el.getBoundingClientRect();const c=el.closest('.dashboardPage').getBoundingClientRect();return r.top>=c.top&&r.bottom<=c.bottom}));
   await page.screenshot({path:path.join(output,'editor-scroll-bottom.png')});
   await page.setViewportSize({width:375,height:900});
-  assert.equal(await page.locator('.Card > .ant-card-body').evaluate(el=>getComputedStyle(el).overflowY),'visible');
+  assert.equal(await page.locator('.dashboardPage').evaluate(el=>getComputedStyle(el).overflowY),'visible');
   assert.deepEqual(errors,[]);
   console.log(JSON.stringify({passed:['real router: standalone 404, no header/footer, return home and SPA back','404 ordered impacts and crying ending at desktop/mobile sizes','404 replay and reduced motion','3Mbps cold cache: six WebP assets under 256KiB','long review scroll reaches editor bottom','mobile document flow'],imageBytes,coldImageMs,screenshots:output},null,2));
 } finally {await browser?.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve))}
