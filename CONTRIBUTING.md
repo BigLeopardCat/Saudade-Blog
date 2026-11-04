@@ -53,6 +53,7 @@ Python Agent 是可选服务，配置和启动方式见其独立仓库的 README
 ### 改代码时的几条硬约束
 
 1. 维护者的工作机同时是生产服务器：不在该机运行 `vite build`、`cargo build --release` 或 `cargo clean`。
+   全量 Rust 编译、链接、测试及批量依赖安装交给 CI；该机只执行有资源边界的定向检查。
    生产构建交给 CI；开发检查使用 `cargo test`、TypeScript、单元测试与隔离浏览器测试。
 2. 提交前逐文件核对，不用 `git add -A` 或 `git commit -a`，避免带入其他会话的改动。
 3. SSE、执行回执字段或工具契约改变时，同时核对 Rust、Python Agent 和浏览器端。
