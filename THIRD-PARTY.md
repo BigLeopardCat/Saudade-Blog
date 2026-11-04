@@ -14,14 +14,11 @@
 | `Copyright (C) 2024 林陌青川 (LinMo)` | 上游 [Memory-Blog](https://github.com/LinMoQC/Memory-Blog)（GPL-2.0）；本站把它的代码克隆到本地当基座重写成 Rust + Axum，本仓库因此是**独立仓库**，不是它的 fork |
 | `Copyright (C) 2026 BigLeopardCat` | 本仓库：Rust + Axum 重写与后续扩展 |
 
-两条都写在 [LICENSE](LICENSE) 头部；本仓库以 GPL-2.0 分发，与上游一致。站点页脚那一行
-（`Based on Memory-Blog by 林陌青川 (LinMo). Refactored, extended and optimized in Rust & Axum
-by Sora Saudade.`）是这条链在页面上的呈现，不是本站的许可声明，许可一律以 LICENSE 为准。
+两条声明保留在 [LICENSE](LICENSE) 头部，本仓库以 GPL-2.0 分发。
+页脚分别展示部署者署名、项目链接与原作署名；部署者名称读取 `blogCopyright`，为空时回退到博客作者。
+页面署名不改变源码许可，也不为第三方内容或美术资源授予新许可。
 
-在本仓库基础上二次开发时：上面两条版权声明一条都不能删（GPL-2.0 要求保留既有声明），
-把自己的追加在后面即可。页脚同理，但它多一层：来源那一行（页脚第一行）原样保留，
-署部署者自己的名字的是它下面那一行；那行走后台的站点设置（`blogCopyright`，
-没填回退到博客作者名），不需要改代码。
+二次分发时保留既有版权与许可声明，自己的修改可追加署名。
 
 ## 1. 构建前自取、不进版本库的运行时
 

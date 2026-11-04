@@ -482,7 +482,7 @@ const ArticleResource = ({id}: {id: string}) => {
 
     return (
         <div className='readContainer'>
-            <SeoHelmet title={notFound ? '文章不存在' : (article ? article.noteTitle : '文章加载中')} description={article?.description || undefined} image={article?.cover || undefined} url={`/article/${id}`} type="article" />
+            <SeoHelmet title={notFound ? '文章不存在' : (article ? article.noteTitle : '文章加载中')} description={article?.description || undefined} image={article?.cover || undefined} url={`/article/${id}`} type="article" noindex={notFound} />
             {notFound ? (
                 <div style={{width:'100vw',height:'100vh',display:'flex',flexDirection:'column',justifyContent:'center',alignItems:'center',gap:16}}>
                     <h1 style={{fontSize:28}}>文章不存在或已删除</h1>

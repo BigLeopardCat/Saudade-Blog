@@ -1,3 +1,4 @@
+import SeoHelmet from '../../components/SeoHelmet';
 import {useEffect, useRef, useState, type ReactNode} from 'react';
 import './index.css';
 // import '../../assets/font/iconfont.js';
@@ -315,6 +316,7 @@ const Dashboard = () => {
                 ...WASHI_THEME.common,
             },
         }}>
+        <SeoHelmet title="后台管理" noindex />
         <div className={`contain dashboardShell ${isDarkMode ? 'dark' : ''}`}>
             {!loading ? (
                 <div className="loading-overlay">

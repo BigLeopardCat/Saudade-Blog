@@ -1,3 +1,4 @@
+import SeoHelmet from '../../components/SeoHelmet';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./index.scss";
 import { runtimeBaseURL } from "../../utils/runtimeApi";
@@ -1002,6 +1003,7 @@ export default function RiverBoard() {
 
     return (
         <>
+            <SeoHelmet title="留言板" url="/guestbook" />
             <div className="rz-root rz-cinematic" data-scene-paused={!!modal || wishOpen || albumOpen || noticeOpen}>
             <img className="rz-landscape" src={riverImage} alt="" aria-hidden loading="eager" decoding="async" />
             <div className="rz-fog rz-fog-far" aria-hidden /><div className="rz-fog rz-fog-near" aria-hidden />

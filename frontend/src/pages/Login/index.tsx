@@ -181,7 +181,7 @@ const Login: React.FC = () => {
 
     return (
         <>
-            <SeoHelmet title="登录" url="/login" />
+            <SeoHelmet title="登录" url="/login" noindex />
             {contextHolder}
             <div className={isDark ? 'login-page frontDark' : 'login-page'}>
                 <div className="login-box">
