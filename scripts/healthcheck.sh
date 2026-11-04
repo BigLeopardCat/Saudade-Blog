@@ -36,7 +36,7 @@ printf 'saudade_rust_restarts=%s\nsaudade_agent_restarts=%s\n' "${saudade_rust_r
 # （/var/log/nginx，发行版 logrotate 管轮转），探针盯增量——记录上次字节数，
 # tail -c 增量段 grep 错误级别（error/crit/alert/emerg），发现即 WARN。
 # 文件变小（轮转/截断）时重置基线。
-NGX_ERR=/var/log/nginx/error.log
+NGX_ERR="${NGX_ERR_LOG:-/var/log/nginx/error.log}"
 ngx_size=$(stat -c %s "$NGX_ERR" 2>/dev/null || echo 0)
 [ "$ngx_size" -lt "${NGX_ERR_SIZE:-0}" ] && NGX_ERR_SIZE=0
 if [ "$ngx_size" -gt "${NGX_ERR_SIZE:-0}" ]; then
@@ -140,7 +140,7 @@ fi
 #    但**仓库口径改成了"默认不装"**（开关在 agent 仓 scripts/enable_nightly.sh）。上面写的
 #    "挂起"是 20261016 那天的**事实**，留着不改；要读的是这条推论——**在默认部署里夜间不在场
 #    ⇒ 这一项（第 9 项）就是那个部署下唯一的自动观测通道**，它坏了就真的没有别的了。
-METRICS_DAY=/tmp/health_metrics_day
+METRICS_DAY="$PROJECT_DIR/logs/.health_metrics_day"
 TODAY=$(date +%Y%m%d)
 if [ "$(cat "$METRICS_DAY" 2>/dev/null)" != "$TODAY" ]; then
   echo "$TODAY" > "$METRICS_DAY"     # 先落印再跑：跑挂了也不重试（理由见上）

@@ -62,6 +62,7 @@ class CapacityTests(unittest.TestCase):
                 path.chmod(0o700)
             result = subprocess.run(["bash", str(ROOT / "scripts/healthcheck.sh")],
                                     env={**os.environ, "PROJECT_DIR": temp,
+                                         "HOME": temp, "NGX_ERR_LOG": str(root / "nginx.log"),
                                          "PATH": f"{binary}:{os.environ['PATH']}"},
                                     capture_output=True, text=True, timeout=10)
             self.assertEqual(result.returncode, 0, result.stderr)
