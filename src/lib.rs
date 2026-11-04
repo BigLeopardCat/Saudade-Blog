@@ -3,6 +3,7 @@ pub mod database;
 pub mod routes;
 pub mod utils;
 pub mod middleware;
+pub mod observability;
 pub mod rate_limiter;
 pub mod authz;
 // 用户对话额度（20260929）：上限与「每轮扣一轮」的唯一落点，chat.rs 与 routes/quota.rs 共用
