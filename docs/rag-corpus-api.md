@@ -33,23 +33,6 @@ total, monotonic unique IDs, forward cursors, and final count before publishing 
 Empty is valid only after a successful complete snapshot. Never interpret an error
 or a partial page as an empty corpus.
 
-Deployment order: deploy this additive host route before the Agent refactor.
-Existing frontend article endpoints are unchanged; no database migration or new
-dependency is required. Agent vector schema 2 will rebuild old vectors once if
-hybrid retrieval is enabled. Budget that embedding cost before enabling it.
-For rollback, restore the previous Agent first and keep hybrid retrieval disabled
-until its cache format is verified; this additive route can remain available.
-
-Verification:
-
-- cargo test --lib rag_corpus checks malformed cursors, service failures and revisions.
-- TEST_PG_URL points only to a disposable PostgreSQL database with the CI migrations.
-  cargo test --test rag_corpus_pg verifies real decoding, complete paging, exclusion of
-  private/draft/hidden/shadow records, same-timestamp edits and immediate revocation.
-- CI's existing cargo test step supplies PostgreSQL and runs this target automatically.
-- For local cross-language verification, RAG_CORPUS_CONTRACT_OUT writes the final API
-  response from that integration test for the Agent corpus parser. It is a test artifact,
-  not a server setting.
-
-The index has a bounded refresh window for metadata. Public detail reads still check
-visibility on every read; the export protocol does not claim instantaneous client cache invalidation.
+The host owns the public corpus contract. The Agent owns index publication,
+embedding configuration and retrieval. See the Agent's current RAG documentation:
+https://github.com/BigLeopardCat/saudade-blog-agent/blob/main/docs/rag-design.md
