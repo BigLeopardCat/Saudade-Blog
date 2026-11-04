@@ -48,7 +48,7 @@ async fn main() {
         event = "service_started", "HTTP server ready");
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     saudade_blog::lifecycle::serve(listener, app,
-        saudade_blog::routes::image_generation::task_tracker(), async {
+        saudade_blog::lifecycle::task_tracker(), async {
             saudade_blog::lifecycle::shutdown_signal().await;
             saudade_blog::routes::image_generation::stop_accepting();
         }).await.unwrap();

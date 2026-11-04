@@ -29,7 +29,7 @@ Agent 服务独立发布，操作见 [Agent 部署](https://github.com/BigLeopar
 
 ## 停机与任务
 
-Rust 接收 SIGTERM 后停止接受 HTTP 请求，拒绝新的付费生图，排空已有 HTTP handler，并通过 Tokio TaskTracker 等待已接受任务持久化。服务模板预留 `TimeoutStopSec=360`，大于图片提供商请求超时及结果保存时间。已有安装升级时也要更新该服务配置。
+Rust 接收 SIGTERM 后停止接受 HTTP 请求，拒绝新的付费生图，排空已有 HTTP handler，并通过 Tokio TaskTracker 等待已接受的生图和聊天写入任务持久化。服务模板预留 `TimeoutStopSec=360`，大于图片提供商请求超时及结果保存时间。已有安装升级时也要更新该服务配置。
 
 强制终止、断电或远端成功但本地未记账仍可能形成未知结果。未知付费请求不能自动重试；先核实提供商和本地记录。聊天暂停和后台持久计划由 Agent 的 LangGraph 与 DBOS 分别管理，不能用 Web 连接存活判断任务存活。
 

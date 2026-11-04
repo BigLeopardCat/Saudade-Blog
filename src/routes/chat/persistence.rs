@@ -21,9 +21,20 @@ pub(super) async fn run<F>(trace_id: &str, write: F) -> Result<(), ()>
 where
     F: Future<Output = Result<(), DbErr>> + Send + 'static,
 {
+    run_tracked(crate::lifecycle::task_tracker(), trace_id, write).await
+}
+
+async fn run_tracked<F>(
+    tasks: tokio_util::task::TaskTracker,
+    trace_id: &str,
+    write: F,
+) -> Result<(), ()>
+where
+    F: Future<Output = Result<(), DbErr>> + Send + 'static,
+{
     let trace_id = trace_id.to_owned();
     let write_trace = trace_id.clone();
-    let task = tokio::spawn(async move {
+    let task = tasks.spawn(async move {
         write.await.map_err(|error| {
             tracing::warn!(%error, trace_id = %write_trace, "chat persistence failed");
         })

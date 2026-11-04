@@ -303,7 +303,5 @@ pub async fn article_context(
     response(ArticleContext::find_by_statement(stmt("SELECT title,COALESCE(description,'') AS description,left(content,12000) AS content FROM note WHERE id=$1",vec![id.into()])).one(&state.db).await.and_then(|row|row.ok_or_else(||error("article missing"))))
 }
 
-static TASKS: std::sync::LazyLock<tokio_util::task::TaskTracker> = std::sync::LazyLock::new(tokio_util::task::TaskTracker::new);
 static STOPPING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-pub fn task_tracker() -> tokio_util::task::TaskTracker { TASKS.clone() }
 pub fn stop_accepting() { STOPPING.store(true, std::sync::atomic::Ordering::SeqCst); }

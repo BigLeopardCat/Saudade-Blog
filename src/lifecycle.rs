@@ -1,8 +1,15 @@
 //! HTTP shutdown and completion of already accepted background work.
 use axum::Router;
+use std::sync::LazyLock;
 use std::{future::Future, io};
 use tokio::net::TcpListener;
 use tokio_util::task::TaskTracker;
+
+static TASKS: LazyLock<TaskTracker> = LazyLock::new(TaskTracker::new);
+
+pub fn task_tracker() -> TaskTracker {
+    TASKS.clone()
+}
 
 pub async fn serve(
     listener: TcpListener,
