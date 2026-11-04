@@ -50,8 +50,9 @@ check('★ 反向对照：只写 overflow、没有高度的那个旧形状会被
 
 console.log('\n② 高度链的前提住在 index.css 里（少一环，上面那条当场退化）');
 const dashCss = readFileSync(SRC('pages', 'Dashboard', 'index.css'), 'utf8');
-check('.ant-card .ant-card-body 给到 height:100%（.allin 的 100% 靠它才有意义）',
-    /\.ant-card \.ant-card-body\s*\{[^}]*height:\s*100%/s.test(dashCss));
+check('后台外层卡片与共享内容区延续高度链，不把 100% 强加给所有嵌套卡片',
+    /\.Card > \.ant-card-body\s*\{[^}]*height:\s*100%/s.test(dashCss)
+    && scrollable(ruleOf(dashCss, '.dashboardPage')).ok);
 check('卡片确实是"固定高度 + 裁溢出"（这就是必须有个滚动的容器兜住的原因）',
     /\.Card\s*\{[^}]*overflow:\s*hidden/s.test(dashCss));
 

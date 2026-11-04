@@ -82,22 +82,10 @@ const Friends = () => {
         setSelectDelete(prevCount => isChecked ? prevCount - 1 : prevCount + 1);
     };
     const renderFriendList = () => {
-        const friendsChunks = staticDate.reduce((result, friend, index) => {
-            const chunkIndex = Math.floor(index / 5);
-            if (!result[chunkIndex]) {
-                // @ts-ignore
-                result[chunkIndex] = [];
-            }
-            // @ts-ignore
-            result[chunkIndex].push(friend);
-            return result;
-        }, []);
-
-
-        return friendsChunks.map((friends, chunkIndex) => (
-            <ul className='link-items' key={chunkIndex}>
+        return (
+            <ul className='link-items'>
                 {/*// @ts-ignore*/}
-                {friends.map((item) => (
+                {staticDate.map((item) => (
                     <li className='link-item' key={item.friendKey} onClick={() => handleItemClick(item.friendKey)}>
                         <div style={{ position: 'absolute', right: 5, top: 5 }} onClick={(event) => {
                             event.stopPropagation()
@@ -121,7 +109,7 @@ const Friends = () => {
                     </li>
                 ))}
             </ul>
-        ));
+        );
     };
     //申请处理函数
     const agree = (key: number) => {
@@ -153,7 +141,7 @@ const Friends = () => {
     }
 
     return (
-        <div style={{ height: '100%', padding: 20, overflowY: 'scroll' }} className='link allin'>
+        <div className='friendsPage'>
             <Tabs
                 defaultActiveKey="1"
                 centered

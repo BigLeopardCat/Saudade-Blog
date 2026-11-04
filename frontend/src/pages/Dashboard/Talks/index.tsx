@@ -150,7 +150,7 @@ const Comments = () => {
 
 
 
-    return <div className='Comments_Body allin'>
+    return <div className='Comments_Body'>
         <ConfigProvider
             theme={{
                 components: {

@@ -79,6 +79,7 @@ const escapeHtml = (s: string): string =>
     }[c] as string));
 
 const Home = () => {
+    const [modal, modalContext] = Modal.useModal();
     //hooks区域
     const typedRef = useRef(null);
     const avatar = useViewerProfile().avatar;
@@ -223,7 +224,7 @@ const Home = () => {
         setTodos(prev => prev.map(t => t.id === id ? {...t, date} : t));
     };
     const confirmDelete = (todo: Todo) => {
-        Modal.confirm({
+        modal.confirm({
             title: '删掉这条待办？',
             content: todo.text || '（空行）',
             okText: '删除',
@@ -360,6 +361,7 @@ const Home = () => {
     const isDark = useContext(MainContext) === 'true'
         return (
         <div className="home">
+            {modalContext}
 
             <div className='left'>
                <div className="about_logo">

@@ -165,3 +165,14 @@
     grid-template-columns: minmax(0, 1fr)
   .generationHistory
     max-height: 150px
+
+.albumGrid .albumTile
+  position: relative
+  > .ant-card-body > .ant-checkbox-wrapper
+    position: absolute
+    inset-block-start: 10px
+    inset-inline-end: 10px
+    z-index: 1
+    padding: 4px
+    border-radius: 6px
+    background: var(--washi-paper, #fffdfa)
