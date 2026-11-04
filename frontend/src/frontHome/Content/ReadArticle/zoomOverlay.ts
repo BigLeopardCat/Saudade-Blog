@@ -1,13 +1,5 @@
-/**
- * 文章页统一"单击放大"查看器(mermaid 图 / 正文图片)
- *
- * - 单击打开,初始按视口适配;mermaid 连同图框(白底/边框)一起放大
- * - 滚轮 / 双指捏合缩放(以光标/触点为中心)
- * - 拖拽平移、双击在"适配 ↔ 2.5×适配"间切换
- * - Esc / × / 单击图框外的空白关闭;单击图片本体不关闭(可直接拖动)
- *
- * 纯原生 DOM 实现,不引入新依赖;克隆节点进浮层,关闭即销毁。
- */
+/** Shared image and Mermaid viewer; imported together with its styles. */
+import "./zoomOverlay.sass"
 
 type ZoomPoint = { id: number; x: number; y: number }
 
@@ -137,16 +129,16 @@ export const openZoomOverlay = (source: HTMLElement): void => {
   }
   const fitScale = (): number => {
     const r = stage.getBoundingClientRect()
-    return clamp(Math.min((r.width - 56) / (w0 + padX), (r.height - 72) / (h0 + padY)), 0.1, 1)
+    return clamp(Math.min((r.width - 56) / (w0 + padX), (r.height - 72) / (h0 + padY)), 0.001, 1)
   }
   const readableScale = (): number => {
     const fit = fitScale()
     if (!isFrame || stage.getBoundingClientRect().width > 768) return fit
     const natural = w0 + padX
-    return clamp(Math.max(fit, Math.min(1, 720 / natural)), 0.1, 1)
+    return clamp(Math.max(fit, Math.min(1, 720 / natural)), 0.001, 1)
   }
   const zoomAt = (factor: number, px: number, py: number): void => {
-    const ns = clamp(scale * factor, 0.4, 16)
+    const ns = clamp(scale * factor, Math.min(fitScale(), 0.4), 16)
     const [cx, cy] = center()
     tx = px - cx - ((px - cx - tx) * ns) / scale
     ty = py - cy - ((py - cy - ty) * ns) / scale
