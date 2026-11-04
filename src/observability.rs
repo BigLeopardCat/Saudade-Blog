@@ -54,6 +54,30 @@ pub fn http(router: Router) -> Router {
         .layer(middleware::from_fn(normalize_request_id))
 }
 
+pub fn agent_stream_failed(
+    request_id: &str,
+    user_id: i32,
+    conversation_id: i32,
+    error: &eventsource_stream::EventStreamError<reqwest::Error>,
+) {
+    use eventsource_stream::EventStreamError;
+    let (error_kind, timeout, body) = match error {
+        EventStreamError::Transport(error) => ("transport", error.is_timeout(), error.is_body()),
+        EventStreamError::Utf8(_) => ("invalid_utf8", false, false),
+        EventStreamError::Parser(_) => ("invalid_event_stream", false, false),
+    };
+    tracing::warn!(
+        request_id,
+        user_id,
+        conversation_id,
+        error_kind,
+        timeout,
+        body,
+        phase = "upstream_stream",
+        "Agent SSE transport failed"
+    );
+}
+
 fn valid_request_id(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
@@ -160,5 +184,41 @@ mod tests {
         assert!(output.contains("r-log-fixture") && output.contains("/items/{id}"));
         assert!(output.contains("status=200") && output.contains("end of stream"));
         assert!(!output.contains("CANARY"));
+    }
+
+    #[tokio::test]
+    async fn stream_diagnostics_classify_failures_without_formatting_private_error_content() {
+        let error = reqwest::Client::new()
+            .get("file:///STREAM_URL_CANARY")
+            .send()
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("STREAM_URL_CANARY"));
+        let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let writer = captured.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .without_time()
+            .with_writer(move || LogWriter(writer.clone()))
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            agent_stream_failed(
+                "r-stream-fixture",
+                7,
+                42,
+                &eventsource_stream::EventStreamError::Transport(error),
+            );
+            let invalid = String::from_utf8(vec![b'x', 0xff]).unwrap_err();
+            agent_stream_failed(
+                "r-stream-fixture",
+                7,
+                42,
+                &eventsource_stream::EventStreamError::Utf8(invalid),
+            );
+        });
+        let output = String::from_utf8(captured.lock().unwrap().clone()).unwrap();
+        assert!(output.contains("r-stream-fixture") && output.contains("upstream_stream"));
+        assert!(output.contains("transport") && output.contains("invalid_utf8"));
+        assert!(!output.contains("STREAM_URL_CANARY"));
     }
 }

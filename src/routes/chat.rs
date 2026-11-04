@@ -1493,8 +1493,8 @@ fn forward_agent_stream(
             let incoming = match incoming {
                 Ok(value) => value,
                 Err(error) => {
-                    warn!(trace_id = %trace_id, user_id = uid, conversation_id,
-                        error = %error, phase = "upstream_stream", "Agent SSE transport failed");
+                    crate::observability::agent_stream_failed(
+                        &trace_id, uid, conversation_id, &error);
                     break;
                 },
             };
