@@ -1,3 +1,5 @@
+mod weather;
+pub use weather::WeatherSnapshot;
 mod context;
 mod execution_history;
 use context::prepare_chat;
@@ -58,6 +60,8 @@ pub struct ChatRequest {
     pub current_effects: Option<String>,
     #[serde(default)]
     pub current_darkmode: Option<String>,
+    #[serde(default, deserialize_with="weather::optional")]
+    pub current_weather: Option<WeatherSnapshot>,
     #[serde(default)]
     pub image: Option<Vec<String>>,
     #[serde(default)]
