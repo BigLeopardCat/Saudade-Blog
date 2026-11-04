@@ -16,7 +16,7 @@ async fn main() {
         .expect("Failed to connect to DB");
     let db = SqlxPostgresConnector::from_sqlx_postgres_pool(pool.clone());
 
-    // H2 修复：登录限流器 —— 密码错误 5 次/5 分钟窗口，锁定 15 分钟
+    // Login rate limits apply before password verification.
     let max_attempts = env::var("LOGIN_MAX_ATTEMPTS")
         .ok().and_then(|v| v.parse().ok()).unwrap_or(5);
     let window_secs = env::var("LOGIN_WINDOW_SECS")
@@ -47,5 +47,9 @@ async fn main() {
     tracing::info!(service = "saudade-blog", pid = std::process::id(), address = %addr,
         event = "service_started", "HTTP server ready");
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    saudade_blog::lifecycle::serve(listener, app,
+        saudade_blog::routes::image_generation::task_tracker(), async {
+            saudade_blog::lifecycle::shutdown_signal().await;
+            saudade_blog::routes::image_generation::stop_accepting();
+        }).await.unwrap();
 }

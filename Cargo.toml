@@ -9,6 +9,7 @@ resolver = "3"
 base64 = "0.22.1"
 axum = { version = "0.8", features = ["macros", "multipart"] }
 tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "=0.7.20", features = ["rt"] }
 sea-orm = { version = "1.1", features = [ "sqlx-postgres", "runtime-tokio-rustls", "macros", "mock" ] }
 sqlx = { version = "0.8", features = ["postgres", "runtime-tokio-rustls"] }
 serde = { version = "1", features = ["derive"] }
