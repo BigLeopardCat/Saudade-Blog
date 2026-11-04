@@ -8,6 +8,7 @@ pub mod announcements;
 pub mod talks;
 pub mod upload;
 pub mod gallery;
+pub mod image_generation;
 pub mod temp_user;
 pub mod knowledge;
 pub mod chat;
@@ -138,6 +139,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/public/articles", get(public_catalog::articles))
         .route("/api/public/categories", get(public_catalog::categories::list))
         .route("/api/public/tags", get(public_catalog::tags::list))
+        .route("/api/public/image-generation/{id}/preview", get(image_generation::preview))
         .route("/api/public/notes", get(notes::list_public_notes))
         .route("/api/public/rag/corpus", get(rag_corpus::export))
         .route("/api/public/notes/page", get(notes::list_public_notes)) 
@@ -224,6 +226,13 @@ pub fn create_router(state: AppState) -> Router {
         // Images
         .route("/api/protect/upload", upload::route())
         .route("/api/protect/images", get(upload::list_images))
+        .route("/api/protect/image-generation/articles/{id}", get(image_generation::article_context))
+        .route("/api/protect/image-generation/options", get(image_generation::options))
+        .route("/api/protect/image-generation/jobs", get(image_generation::list).post(image_generation::create))
+        .route("/api/protect/image-generation/jobs/{id}", get(image_generation::detail))
+        .route("/api/protect/image-generation/jobs/{id}/approve", post(image_generation::approve))
+        .route("/api/protect/image-generation/jobs/{id}/accept", post(image_generation::accept))
+        .route("/api/protect/image-generation/jobs/{id}/reject", post(image_generation::reject))
         .route("/api/protect/gallery/images", get(gallery::list))
         .route("/api/protect/gallery/images/{id}", get(gallery::detail).put(gallery::metadata::change))
         .route("/api/protect/gallery/folders", get(gallery::folders::list).post(gallery::folders::create))

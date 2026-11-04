@@ -10,7 +10,7 @@ type FolderOption={value:number;title:string;children?:FolderOption[]}
 export function folderOptions(folders:GalleryFolder[]) {
   const children=(parent:number):FolderOption[]=>
     folders.filter(f=>f.parentId===parent).map(f=>({value:f.id,title:f.name,children:children(f.id)}))
-  return [{value:0,title:'未分类',children:children(0)}]
+  return [{value:0,title:'未分类'},...children(0)]
 }
 
 export default function ImageDetail({image,folders,onClose,onDelete}:{

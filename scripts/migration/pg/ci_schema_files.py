@@ -28,6 +28,7 @@ LOAD = [
     "0021_automation_results.sql",
     "0022_note_cover_fit.sql",
     "0023_gallery_library.sql",
+    "0024_image_generation.sql",
 ]
 
 EXCLUDED = {

@@ -13,9 +13,11 @@ import {uploadBlocked, usagePercent} from '../../../utils/r2Quota'
 import {resolveApiAssetUrl} from '../../../utils/runtimeApi'
 import {assetDisplayName} from '../../../utils/assetName'
 import ImageDetail, {folderOptions} from './ImageDetail'
+import ImageGeneration from './ImageGeneration'
 import './index.sass'
 
 export default function Albums() {
+  const [generation,setGeneration]=useState(false)
   const dispatch=useDispatch<AppDispatch>()
   const navigate=useNavigate()
   const [folderId,setFolderId]=useState<number|undefined>()
@@ -101,6 +103,7 @@ export default function Albums() {
     <div className="albumToolbar">
       <h2>图库</h2>
       <Space wrap>
+        <Button onClick={()=>setGeneration(true)}>AI 生图</Button>
         <Button onClick={()=>setUploadTarget('local')}>传到本站</Button>
         <Button disabled={!canUploadR2} title={!r2?.configured?'请先配置 R2 存储':blocked.reason}
           onClick={()=>setUploadTarget('r2')}>传到 R2</Button>
@@ -143,6 +146,7 @@ export default function Albums() {
         })}
       </div>}
     {query.hasNextPage&&<div className="albumMore"><Button loading={query.isFetchingNextPage} onClick={()=>void query.fetchNextPage()}>加载更多</Button></div>}
+    {generation&&<ImageGeneration onClose={()=>setGeneration(false)}/>}
     {detail&&<ImageDetail key={detail.imageKey} image={detail} folders={folders} onClose={()=>setDetail(null)} onDelete={image=>setDeleteItems([image])}/>}
     <Modal title="删除图片" open={!!deleteItems.length} confirmLoading={deleting} okButtonProps={{danger:true}} okText="删除" cancelText="取消"
       onOk={()=>void remove()} onCancel={()=>{if(!deleting)setDeleteItems([])}}>

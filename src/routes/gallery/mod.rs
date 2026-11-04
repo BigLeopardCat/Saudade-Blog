@@ -34,7 +34,7 @@ const SELECT: &str = "SELECT i.image_key,i.image_url,m.display_name, \
     FROM images i LEFT JOIN image_metadata m ON m.image_id=i.image_key \
     LEFT JOIN image_favorite f ON f.image_id=i.image_key AND f.user_id=$1";
 
-pub(super) async fn actor(state: &AppState, headers: &HeaderMap) -> Result<i32, DbErr> {
+pub(crate) async fn actor(state: &AppState, headers: &HeaderMap) -> Result<i32, DbErr> {
     auth_jwt::auth_uid(&state.db, headers)
         .await
         .map_err(|_| DbErr::Custom("authentication required".into()))
@@ -56,7 +56,7 @@ pub(super) fn valid_version(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-pub(super) async fn read<C: ConnectionTrait>(db: &C, uid: i32, id: i32) -> Result<Image, DbErr> {
+pub(crate) async fn read<C: ConnectionTrait>(db: &C, uid: i32, id: i32) -> Result<Image, DbErr> {
     Image::find_by_statement(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
         format!("{SELECT} WHERE i.image_key=$2"),
