@@ -147,7 +147,7 @@ pub async fn approve(
     txn.commit().await?;
     let job_id = id.to_owned();
     let worker = state.clone();
-    task_tracker().spawn(async move {
+    crate::lifecycle::task_tracker().spawn(async move {
         let _permit = permit;
         tracing::info!(job_id=%job_id,owner_id=uid,model=%request.model,"approved image generation started");
         let result = provider::generate(settings, &request, &refs).await;

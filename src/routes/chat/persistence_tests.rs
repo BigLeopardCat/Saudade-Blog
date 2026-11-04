@@ -22,8 +22,10 @@ async fn persistence_waits_for_commit_but_survives_waiter_cancellation() {
     let (release, released) = oneshot::channel();
     let (completed, committed) = oneshot::channel();
     let signal = started.clone();
+    let tasks = tokio_util::task::TaskTracker::new();
+    let worker_tasks = tasks.clone();
     let waiter = tokio::spawn(async move {
-        run("cancelled-client", async move {
+        run_tracked(worker_tasks, "cancelled-client", async move {
             signal.notify_one();
             released.await.unwrap();
             completed.send(()).unwrap();
@@ -38,7 +40,16 @@ async fn persistence_waits_for_commit_but_survives_waiter_cancellation() {
     );
     waiter.abort();
     assert!(waiter.await.unwrap_err().is_cancelled());
+    tasks.close();
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(50), tasks.wait())
+            .await
+            .is_err()
+    );
     release.send(()).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(2), tasks.wait())
+        .await
+        .unwrap();
     tokio::time::timeout(std::time::Duration::from_secs(2), committed)
         .await
         .unwrap()
@@ -131,15 +142,9 @@ async fn reply_records_its_verified_source_even_without_summary() {
                 rows_affected: 1,
             }])
             .into_connection();
-        save_assistant_reply(
-            &db,
-            7,
-            42,
-            role.map(str::to_owned),
-            "reply".into(),
-        )
-        .await
-        .unwrap();
+        save_assistant_reply(&db, 7, 42, role.map(str::to_owned), "reply".into())
+            .await
+            .unwrap();
         let log = format!("{:?}", db.into_transaction_log());
         assert!(log.contains("source_role"));
         if let Some(role) = role {
@@ -151,9 +156,14 @@ async fn reply_records_its_verified_source_even_without_summary() {
 #[tokio::test]
 async fn storing_a_reply_never_writes_summary_or_deletes_history() {
     let db = MockDatabase::new(DatabaseBackend::Postgres)
-        .append_exec_results([MockExecResult { last_insert_id: 1, rows_affected: 1 }])
+        .append_exec_results([MockExecResult {
+            last_insert_id: 1,
+            rows_affected: 1,
+        }])
         .into_connection();
-    save_assistant_reply(&db, 7, 42, Some("user".into()), "reply".into()).await.unwrap();
+    save_assistant_reply(&db, 7, 42, Some("user".into()), "reply".into())
+        .await
+        .unwrap();
     let log = db.into_transaction_log();
     assert_eq!(log.len(), 1);
     let sql = format!("{log:?}");
