@@ -148,14 +148,20 @@ pub async fn detail(
         .await,
     )
 }
+#[derive(Default, Serialize, FromQueryResult)]
+#[serde(rename_all = "camelCase")]
+pub struct Summary {
+    pub id: String,
+    pub title: String,
+    pub status: String,
+}
 pub async fn list(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-) -> Json<ApiResponse<Vec<Job>>> {
+) -> Json<ApiResponse<Vec<Summary>>> {
     response(async {
         let uid=crate::routes::gallery::actor(&state,&headers).await?;
-        let rows=state.db.query_all(stmt("SELECT id::text AS id FROM image_generation WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 30",vec![uid.into()])).await?;
-        let mut result=Vec::new();for row in rows {result.push(jobs::read(&state,uid,&row.try_get::<String>("","id")?).await?);}Ok(result)
+        Summary::find_by_statement(stmt("SELECT id::text AS id,left(request->>'prompt',80) AS title,CASE WHEN status='generating' AND approved_at<now()-interval '5 minutes' THEN 'unknown' WHEN status='pending' AND created_at<now()-interval '1 hour' THEN 'expired' ELSE status END AS status FROM image_generation WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 30",vec![uid.into()])).all(&state.db).await
     }.await)
 }
 pub async fn approve(
@@ -203,6 +209,7 @@ pub async fn reject(
 #[derive(Serialize, Deserialize)]
 struct PreviewClaims {
     sub: String,
+    aud: String,
     job: String,
     slot: i16,
     digest: String,
@@ -215,6 +222,7 @@ fn preview_url(uid: i32, id: &str, slot: i16, digest: &str) -> Result<String, Db
     }
     let claims = PreviewClaims {
         sub: uid.to_string(),
+        aud: "gallery-image-preview".into(),
         job: id.into(),
         slot,
         digest: digest.into(),

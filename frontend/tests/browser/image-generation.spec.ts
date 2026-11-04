@@ -29,7 +29,7 @@ test('image generation requires request approval and a separate visible-result a
           outputHash:null,previewUrl:null,imageId:null,error:null,usage:null,createdAt:'2026-11-04T12:00:00Z'}
       }
       await route.fulfill({json:{code:200,data:job}})
-    }else await route.fulfill({json:{code:200,data:path.endsWith('/jobs')?(job?[job]:[]):job}})
+    }else await route.fulfill({json:{code:200,data:path.endsWith('/jobs')?(job?[{id:job.id,title:job.request.prompt,status:job.status}]:[]):job}})
   })
   await page.route('**/fixture/generated.svg',route=>route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200"><rect width="300" height="200" fill="pink"/></svg>'}))
   await page.goto(sandboxURL)

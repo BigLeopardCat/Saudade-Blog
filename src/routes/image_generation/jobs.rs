@@ -187,6 +187,9 @@ pub async fn accept(
         return Err(error("job has no reviewable result"));
     }
     let bytes: Vec<u8> = row.try_get("", "output")?;
+    if digest(&bytes) != input.version {
+        return Err(error("result bytes changed after approval"));
+    }
     let request: Request = serde_json::from_value(row.try_get("", "request")?)
         .map_err(|_| error("request invalid"))?;
     let name = format!("ai-{id}.png");

@@ -1,4 +1,4 @@
-import {useState} from 'react'
+import {useEffect,useState} from 'react'
 import {Alert,Button,Card,Input,InputNumber,Modal,Select,Space,Spin,Typography,message} from 'antd'
 import {useDispatch} from 'react-redux'
 import type {AppDispatch} from '../../../store'
@@ -12,9 +12,10 @@ export default function ImageGeneration({onClose}:{onClose:()=>void}){
   const dispatch=useDispatch<AppDispatch>()
   const options=api.useGenerationOptionsQuery()
   const jobs=api.useGenerationJobsQuery(undefined,{pollingInterval:15000})
-  const [active,setActive]=useState<GenerationJob|null>(null)
+  const [active,setActive]=useState<Pick<GenerationJob,'id'|'status'>|null>(null)
   const current=api.useGenerationJobQuery(active?.id??'',{skip:!active,pollingInterval:active?.status==='generating'?3000:0})
-  const job=current.data?.id===active?.id?current.data:active
+  const job=current.data?.id===active?.id?current.data:null
+  useEffect(()=>{if(job&&active?.status!==job.status)setActive({id:job.id,status:job.status})},[job,active?.status])
   const images=galleryApi.useImagesInfiniteQuery({})
   const [prompt,setPrompt]=useState('')
   const [model,setModel]=useState<string>()
@@ -55,13 +56,13 @@ export default function ImageGeneration({onClose}:{onClose:()=>void}){
         <Button block onClick={()=>setActive(null)}>新建图片</Button>
         {jobs.isError&&<Alert type="error" message="任务列表加载失败" action={<Button onClick={()=>void jobs.refetch()}>重试</Button>}/>}
         {jobs.data?.map(item=><Button key={item.id} block type={job?.id===item.id?'primary':'default'} onClick={()=>setActive(item)}>
-          {statusNames[item.status]||item.status} · {item.request.prompt.slice(0,14)}
+          {statusNames[item.status]||item.status} · {item.title.slice(0,14)}
         </Button>)}
       </Space></aside>
       <main className="generationMain">
         {!options.data?.configured&&<Alert type="info" showIcon message="请先在服务器配置生图 API 密钥和可用模型列表"/>}
         {options.isError&&<Alert type="error" message="生图配置读取失败"/>}
-        {!job?<Space direction="vertical" style={{width:'100%'}} size="middle">
+        {!active?<Space direction="vertical" style={{width:'100%'}} size="middle">
           <Typography.Paragraph>先编辑提示词和参考图，下一步会完整展示请求供你确认；确认前不会调用生图 API。</Typography.Paragraph>
           <Space wrap><InputNumber aria-label="参考文章编号" min={1} value={articleId} onChange={setArticleId} placeholder="文章编号"/>
             <Button disabled={!articleId} loading={loadingArticle} onClick={()=>void fromArticle()}>根据文章填写提示词</Button></Space>
@@ -77,7 +78,7 @@ export default function ImageGeneration({onClose}:{onClose:()=>void}){
             options={rows.map(row=>({value:row.imageKey,label:row.displayName||assetDisplayName(row.imageUrl)}))}/>
           {images.hasNextPage&&<Button loading={images.isFetchingNextPage} onClick={()=>void images.fetchNextPage()}>加载更多图库图片</Button>}
           <Button type="primary" loading={creating} disabled={!options.data?.configured||!prompt.trim()||loadingArticle} onClick={()=>void prepare()}>预览请求</Button>
-        </Space>:<Space direction="vertical" style={{width:'100%'}} size="middle">
+        </Space>:job?<Space direction="vertical" style={{width:'100%'}} size="middle">
           <Typography.Title level={5}>{statusNames[job.status]||job.status}</Typography.Title>
           <Card size="small" title="本次请求">
             <Typography.Paragraph>{job.request.provider}</Typography.Paragraph>
@@ -99,7 +100,7 @@ export default function ImageGeneration({onClose}:{onClose:()=>void}){
           {job.error&&<Alert type="warning" message={job.error}/>}
           {job.status==='unknown'&&<Alert type="warning" message="请求结果尚未核实，不会自动重试扣费。请检查服务商调用记录。"/>}
           {job.status==='accepted'&&<Alert type="success" message={`已存入图库，图片编号 ${job.imageId}。可在文章编辑页选择封面，或请助手设置。`}/>}
-        </Space>}
+        </Space>:<Spin/>}
       </main>
     </div>
   </Modal>

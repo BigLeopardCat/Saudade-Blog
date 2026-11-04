@@ -11,7 +11,7 @@ export const imageGenerationApi=galleryApi.injectEndpoints({endpoints:builder=>(
   generationOptions:builder.query<{configured:boolean;models:string[];defaultModel:string},void>({
     query:()=>'/api/protect/image-generation/options',
   }),
-  generationJobs:builder.query<GenerationJob[],void>({query:()=>'/api/protect/image-generation/jobs'}),
+  generationJobs:builder.query<{id:string;status:string;title:string}[],void>({query:()=>'/api/protect/image-generation/jobs'}),
   generationJob:builder.query<GenerationJob,string>({query:id=>`/api/protect/image-generation/jobs/${id}`}),
   createGeneration:builder.mutation<GenerationJob,GenerationDraft>({
     query:body=>({url:'/api/protect/image-generation/jobs',method:'POST',body}),
