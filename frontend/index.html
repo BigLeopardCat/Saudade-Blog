@@ -3,17 +3,11 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="__SITE_DESCRIPTION__" />
+    <meta data-rh="true" name="description" content="__SITE_DESCRIPTION__" />
     <meta name="keywords" content="__SITE_KEYWORDS__" />
-    <!-- 站点身份（域名 / 署名 / 站名 / 描述 / keywords）全部由 vite.config.ts 的 siteIdentity
-         插件注入（默认值写在配置里而不是 .env，理由见那里的注释）。**这几项一个都不许在这里
-         写死**：仓库是公开的，写死等于把自己的站名与描述交给每一个 clone 它的人。
-         改自己部署的，设 VITE_SITE_URL / VITE_SITE_AUTHOR / VITE_SITE_TITLE /
-         VITE_SITE_DESCRIPTION / VITE_SITE_KEYWORDS 即可，不用动这个文件。
-         keywords 与署名没设时，插件会把**整行**删掉。 -->
+    <!-- Site identity is injected at build time; Helmet replaces managed fallback tags. -->
     <meta name="author" content="__SITE_AUTHOR__" />
-    <meta name="robots" content="index, follow" />
-    <link rel="canonical" href="__SITE_URL__/" />
+    <meta data-rh="true" name="robots" content="index, follow" />
     <!-- 站点图标 = 默认头像那张图（`public/default-avatar.png` 缩出来的）。
          `?v=` 是给 nginx 那条 7 天短缓存用的换版键：这三个文件名都**不带 content hash**，
          只换字节不换 URL 的话老访客最多 7 天看不到新图标。**换图必须同步 bump 这里。** -->
@@ -21,21 +15,15 @@
     <link rel="shortcut icon" href="/favicon.ico?v=4" />
     <link rel="apple-touch-icon" href="/favicon.png?v=4" />
     <!-- Open Graph -->
-    <meta property="og:title" content="__SITE_TITLE__" />
-    <meta property="og:description" content="__SITE_DESCRIPTION__" />
-    <meta property="og:url" content="__SITE_URL__/" />
-    <meta property="og:type" content="website" />
-    <meta property="og:image" content="__SITE_URL__/logo.png" />
+    <meta data-rh="true" property="og:title" content="__SITE_TITLE__" />
+    <meta data-rh="true" property="og:description" content="__SITE_DESCRIPTION__" />
+    <meta data-rh="true" property="og:url" content="__SITE_URL__/" />
+    <meta data-rh="true" property="og:type" content="website" />
+    <meta data-rh="true" property="og:image" content="__SITE_URL__/logo.png" />
     <!-- Twitter Card -->
-    <meta name="twitter:card" content="summary" />
-    <meta name="twitter:title" content="__SITE_TITLE__" />
-    <meta name="twitter:description" content="__SITE_DESCRIPTION__" />
-    <!-- 图标字体**自托管**（20261001 开源前准备）：原先引 at.alicdn.com 的两套阿里图标库
-         与自己账号下的字体文件，以及 staticfile CDN 的 Font Awesome —— 前两者是私人
-         资源（停用/删项目即全站图标消失），后者是第三方 CDN。字体文件与 CSS 现在都在
-         /fonts/ 下，CSS 内的 src 已改为同目录相对路径。
-         **两套图标库都得留着**：`category.icon` 存的是数据库里的值，两种前缀都在用
-         （见 pages/Dashboard/index.tsx 的 `item.icon.startsWith("fa-")`），FA 也自托管。 -->
+    <meta data-rh="true" name="twitter:card" content="summary" />
+    <meta data-rh="true" name="twitter:title" content="__SITE_TITLE__" />
+    <meta data-rh="true" name="twitter:description" content="__SITE_DESCRIPTION__" />
     <link rel="stylesheet" href="/fonts/font_4335817_6gqxzh34cy.css">
     <link rel="stylesheet" href="/fonts/font_4466999_8sifudyyiw.css">
     <link rel="stylesheet" href="/fonts/font-awesome.min.css">

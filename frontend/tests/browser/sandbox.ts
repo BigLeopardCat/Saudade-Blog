@@ -7,10 +7,11 @@ import http from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
+import { readFileSync } from 'node:fs'
 import { compile } from 'sass'
 import { test as base, expect } from '@playwright/test'
 
-type Entry = 'image-viewer' | 'dashboard-pages' | 'gallery' | 'home-hero' | 'user-center' | 'axios' | 'announcement' | 'tags' | 'categories' | 'public-header' | 'users' | 'announcement-popup' | 'dashboard-users' | 'sticker-picker' | 'note-editor' | 'article-collaboration' | 'article-publication' | 'cover-display' | 'article-grid' | 'editor-images' | 'r2-settings'
+type Entry = 'seo' | 'image-viewer' | 'dashboard-pages' | 'gallery' | 'home-hero' | 'user-center' | 'axios' | 'announcement' | 'tags' | 'categories' | 'public-header' | 'users' | 'announcement-popup' | 'dashboard-users' | 'sticker-picker' | 'note-editor' | 'article-collaboration' | 'article-publication' | 'cover-display' | 'article-grid' | 'editor-images' | 'r2-settings'
 const frontend = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const bundles = new Map<string, Promise<{ script: string; css: string }>>()
 
@@ -58,6 +59,17 @@ export const test = base.extend<{ entry: Entry; cdnBaseURL: string; sandboxURL: 
       '/bundle.js': { type: 'text/javascript', body: script },
       '/bundle.css': { type: 'text/css', body: css },
       '/login': { type: 'text/html', body: '<!doctype html><html lang="zh-CN"><title>登录落点</title><body>登录落点</body></html>' },
+    }
+    if (entry === 'seo') {
+      // Preserve the real static head to catch duplicate fallback metadata.
+      files['/'].body = readFileSync(path.join(frontend, 'index.html'), 'utf8')
+        .replace(/<script type="module"[^>]*><\/script>/, '<script src="/bundle.js"></script>')
+        .replace(/<link[^>]+(?:rel="(?:stylesheet|icon|shortcut icon|apple-touch-icon)")[^>]*>/g, '')
+        .replaceAll('__SITE_URL__', 'https://example.test')
+        .replaceAll('__SITE_TITLE__', '示例博客')
+        .replaceAll('__SITE_DESCRIPTION__', '博客简介')
+        .replaceAll('__SITE_AUTHOR__', '示例作者')
+        .replaceAll('__SITE_KEYWORDS__', '');
     }
     if (entry === 'public-header') {
       // Inject the real lazy-route styles only after the public header has mounted.

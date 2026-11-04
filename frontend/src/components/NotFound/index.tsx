@@ -1,3 +1,4 @@
+import SeoHelmet from '../SeoHelmet'
 import {useEffect, useRef, useState, type CSSProperties} from 'react'
 import {Link} from 'react-router-dom'
 import {useAutoThemeSwitch, useIsDarkMode} from '../../theme'
@@ -49,6 +50,7 @@ const NotFound = () => {
     }
 
     return <main className={`mascot-error${isDark ? ' frontDark' : ''}`} aria-labelledby="mascot-error-title">
+        <SeoHelmet title="页面不存在" noindex />
         <div className="mascot-error__scene" data-ready={ready} data-reduced={reduced}
              data-expression={expression} aria-hidden="true">
             <div className="mascot-error__shadow" />

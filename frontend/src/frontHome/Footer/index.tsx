@@ -16,21 +16,29 @@ const Footer = () => {
     const blogPublicIcp = useSelector((state:{user:{blogPublicIcp: string}}) => state.user.blogPublicIcp)
     const blogCopyright = useSelector((state:{user:{blogCopyright: string}}) => state.user.blogCopyright)
     const blogAuthor = useSelector((state:{user:{name: string}}) => state.user.name)
-    // 署名总得有，但"具体写谁"归部署者 —— 没单独填就回退到博客作者。
-    const copyright = blogCopyright || blogAuthor
+    const copyright = blogCopyright.trim() || blogAuthor.trim()
     const code = mpsCode(blogPublicIcp)
     useEffect(() => {
-        axios.get('https://v1.jinrishici.com/all').then((res) => {
-            setOnsay(res.data.content)
-        })
+        const controller = new AbortController()
+        axios.get('https://v1.jinrishici.com/all', {signal: controller.signal, timeout: 5000})
+            .then(res => setOnsay(typeof res.data.content === 'string' ? res.data.content : ''))
+            .catch(() => {})
+        return () => controller.abort()
     }, []);
     return <>
         <footer className='footerContainer'>
-            <p className="footLine">Based on Memory-Blog by 林陌青川 (LinMo). Refactored, extended and optimized in <span className="footTech footTechRust">Rust</span> &amp; <span className="footTech footTechAxum">Axum</span> by Sora Saudade.</p>
             {copyright && (
-                <p className="footNote">Copyright &copy; {new Date().getFullYear()} {copyright}.</p>
+                <p className="footLine">&copy; {new Date().getFullYear()} {copyright}</p>
             )}
-            <em className="footPoem"><p>{onySay}</p></em>
+            <p className="footNote">
+                Powered by <a className="link" href="https://github.com/BigLeopardCat/Saudade-Blog" target="_blank" rel="noreferrer">Saudade Blog</a>
+                {' · '}<span className="footTech footTechRust">Rust</span> &amp; <span className="footTech footTechAxum">Axum</span>
+            </p>
+            <p className="footNote">
+                Based on <a className="link" href="https://github.com/LinMoQC/Memory-Blog" target="_blank" rel="noreferrer">Memory-Blog</a> by 林陌青川 (LinMo)
+                {' · '}Maintained by Sora Saudade
+            </p>
+            {onySay && <em className="footPoem"><p>{onySay}</p></em>}
             {(blogIcp || blogPublicIcp) && (
                 <p className="footBeian">
                     {blogIcp && (

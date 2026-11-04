@@ -11,29 +11,29 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const {chromium} = await import(process.env.PLAYWRIGHT_MODULE ? pathToFileURL(process.env.PLAYWRIGHT_MODULE) : 'playwright');
 const output = process.env.MASCOT_PREVIEW_DIR || '/tmp/saudade-mascot-experience';
 const sources = {
-  mascot: `import {createRoot} from 'react-dom/client'; import {RouterProvider} from 'react-router-dom';
+  mascot: `import {createRoot} from 'react-dom/client'; import {RouterProvider} from 'react-router-dom'; import {HelmetProvider} from 'react-helmet-async';
     import router from './src/router';
     import './src/index.css';
     document.body.insertAdjacentHTML('beforeend','<div id="waifu">已加载看板娘</div><div id="waifu-toggle">唤回看板娘</div><section id="waifu-chat">已加载聊天</section>');
-    createRoot(document.getElementById('root')).render(<RouterProvider router={router}/>);`,
+    createRoot(document.getElementById('root')).render(<HelmetProvider><RouterProvider router={router}/></HelmetProvider>);`,
   editor: `import {createRoot} from 'react-dom/client'; import {useRef,useState} from 'react'; import {Card} from 'antd';
     import Editor from './src/components/Editor'; import Collaboration from './src/components/ArticleCollaboration';
     import './src/pages/Dashboard/index.css'; import './src/pages/Dashboard/Notes/NewNotes/index.sass';
     localStorage.setItem('tokenKey','offline-test');
     function Preview(){const [body,setBody]=useState(Array.from({length:12},(_,i)=>'原始段落 '+i+'。').join('\\n\\n'));
     const ref=useRef(null);return <div className="contain"><div className="content"><Card className="Card"><div className="header">笔记 / 新建文章</div>
-    <div className="notes-container"><div className="article_title">文章标题：离线长差异测试</div>
+    <main className="dashboardPage" aria-label="后台内容"><div className="notes-container"><div className="article_title">文章标题：离线长差异测试</div>
     <Collaboration title="离线测试" content={body} description="" ready blocked={false} readBody={()=>ref.current?.read()??body}
     onBody={value=>ref.current?.apply(value)} onSummary={()=>{}}/>
     <div className="new_article"><Editor editorRef={ref} noteContent={body} setNoteContent={setBody}/></div>
-    <output id="editor-bottom">编辑器底部</output></div></Card></div></div>}
+    <output id="editor-bottom">编辑器底部</output></div></main></Card></div></div>}
     createRoot(document.getElementById('root')).render(<Preview/>);`,
 };
 const files = {};
 for (const [name, contents] of Object.entries(sources)) {
   const result = await build({stdin:{contents,resolveDir:root,loader:'tsx'},bundle:true,write:false,
     outfile:'bundle.js',jsx:'automatic',loader:{'.svg':'dataurl','.png':'dataurl','.woff':'dataurl','.woff2':'dataurl','.ttf':'dataurl','.jpg':'dataurl','.gif':'dataurl','.mp4':'empty'},
-    define:{'process.env.NODE_ENV':'"production"','import.meta.env':JSON.stringify({BASE_URL:'/',VITE_HTTP_BASEURL:'',MODE:'production'})},
+    define:{'__SITE_AUTHOR__':'"示例作者"','__SITE_KEYWORDS__':'""','__SITE_URL__':'"https://example.test"','__SITE_TITLE__':'"示例博客"','__SITE_DESCRIPTION__':'"博客简介"','process.env.NODE_ENV':'"production"','import.meta.env':JSON.stringify({BASE_URL:'/',VITE_HTTP_BASEURL:'',MODE:'production'})},
     plugins:[
       // Keep the real route hierarchy and NotFound. Stub only unrelated destinations
       // so this routing regression does not bundle dashboard charts/home media.
@@ -124,12 +124,12 @@ try {
     editor.execute({kind:'article_editor',operation:'propose',command_id:'propose',editor_id:snap.editor_id,revision:snap.revision,
       edits:Array.from({length:12},(_,i)=>({old_text:'原始段落 '+i+'。',new_text:('润色后的段落 '+i+'。\n').repeat(20)}))})});
   assert.equal(await page.locator('.article-review-edit').count(),12);
-  assert.ok(await page.locator('.Card').evaluate(el=>getComputedStyle(el).overflowY==='auto'&&el.scrollHeight>el.clientHeight));
-  await page.locator('.Card').evaluate(el=>el.scrollTop=el.scrollHeight);
-  assert.ok(await page.locator('#editor-bottom').evaluate(el=>{const r=el.getBoundingClientRect();const c=el.closest('.Card').getBoundingClientRect();return r.top>=c.top&&r.bottom<=c.bottom}));
+  assert.ok(await page.locator('.dashboardPage').evaluate(el=>getComputedStyle(el).overflowY==='auto'&&el.scrollHeight>el.clientHeight));
+  await page.locator('.dashboardPage').evaluate(el=>el.scrollTop=el.scrollHeight);
+  assert.ok(await page.locator('#editor-bottom').evaluate(el=>{const r=el.getBoundingClientRect();const c=el.closest('.dashboardPage').getBoundingClientRect();return r.top>=c.top&&r.bottom<=c.bottom}));
   await page.screenshot({path:path.join(output,'editor-scroll-bottom.png')});
   await page.setViewportSize({width:375,height:900});
-  assert.equal(await page.locator('.Card').evaluate(el=>getComputedStyle(el).overflowY),'visible');
+  assert.equal(await page.locator('.dashboardPage').evaluate(el=>getComputedStyle(el).overflowY),'visible');
   assert.deepEqual(errors,[]);
   console.log(JSON.stringify({passed:['real router: standalone 404, no header/footer, return home and SPA back','404 ordered impacts and crying ending at desktop/mobile sizes','404 replay and reduced motion','3Mbps cold cache: six WebP assets under 256KiB','long review scroll reaches editor bottom','mobile document flow'],imageBytes,coldImageMs,screenshots:output},null,2));
 } finally {await browser?.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve))}

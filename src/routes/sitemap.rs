@@ -1,9 +1,8 @@
-//! sitemap.xml 动态生成（SEO）：固定页面 + 分类 + 公开文章。
-//! 挂载于 /sitemap.xml（nginx 放行到 3000），文章/分类变化时爬虫自动重新抓取。
+//! Public, canonical route locations for search engines.
 
 use axum::{
     extract::State,
-    http::header,
+    http::{header, StatusCode},
     response::Response,
 };
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
@@ -13,78 +12,141 @@ use crate::entity::{category, note};
 use crate::routes::AppState;
 
 fn xml_escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
-/// 日期转 sitemap lastmod 格式（YYYY-MM-DD，UTC 与本地一致即可——仅用于爬虫提示）
-fn lastmod(dt: &chrono::NaiveDateTime) -> String {
-    dt.format("%Y-%m-%d").to_string()
+fn page_url(site: &reqwest::Url, segments: &[&str]) -> String {
+    let mut url = site.clone();
+    url.set_query(None);
+    url.set_fragment(None);
+    // The caller validates that site is an HTTP(S) base URL.
+    url.path_segments_mut()
+        .expect("validated site URL")
+        .clear()
+        .extend(segments);
+    url.to_string()
 }
 
-pub async fn sitemap_xml(State(st): State<Arc<AppState>>) -> Response {
-    let site = crate::utils::site_url();
-
-    // 固定页面（优先级高）。物联网控制台是**可选件**（源码收在仓库 `iot/`，装不装由
-    // 部署者决定，见 `utils::iot_enabled`）：没装时列出来就是给爬虫一个 404，而那正是
-    // 本站"开源后别人照着部署"最容易踩的一处——所以按开关收，不写死在表里。
-    let mut static_urls: Vec<(&str, &str)> = vec![
-        ("/", "1.0"),
-        ("/times", "0.9"),
-        ("/talk", "0.8"),
-        ("/guestbook", "0.8"),
-        ("/about", "0.8"),
-    ];
-    if crate::utils::iot_enabled() {
-        static_urls.push(("/device-console/", "0.7"));
+async fn entries(
+    db: &sea_orm::DatabaseConnection,
+    site: &reqwest::Url,
+) -> Result<Vec<(String, Option<String>)>, sea_orm::DbErr> {
+    let mut rows = vec![(page_url(site, &[]), None)];
+    for path in ["times", "talk", "guestbook", "about"] {
+        rows.push((page_url(site, &[path]), None));
     }
-
-    // 分类页
-    let cats = category::Entity::find().all(&st.db).await.unwrap_or_default();
-
-    let notes: Vec<(i32, chrono::NaiveDateTime)> = note::Entity::find()
+    if crate::utils::iot_enabled() {
+        rows.push((page_url(site, &["device-console", ""]), None));
+    }
+    let cats = category::Entity::find().all(db).await?;
+    for cat in cats {
+        if let Some(slug) = cat.path_name.filter(|value| !value.trim().is_empty()) {
+            rows.push((page_url(site, &["category", &slug]), None));
+        }
+    }
+    let notes = note::Entity::find()
         .select_only()
         .column(note::Column::Id)
         .column(note::Column::UpdatedAt)
         .filter(note::Column::IsPublic.eq(true))
         .filter(note::Column::Status.is_in(super::notes::public_status_words()))
+        .filter(note::Column::DraftOf.is_null())
         .order_by_desc(note::Column::Id)
         .into_tuple::<(i32, chrono::NaiveDateTime)>()
-        .all(&st.db)
-        .await
-        .unwrap_or_default();
+        .all(db)
+        .await?;
+    for (id, updated_at) in notes {
+        rows.push((
+            page_url(site, &["article", &id.to_string()]),
+            Some(updated_at.format("%Y-%m-%d").to_string()),
+        ));
+    }
+    Ok(rows)
+}
 
+pub async fn sitemap_xml(State(st): State<Arc<AppState>>) -> Result<Response, StatusCode> {
+    let site = reqwest::Url::parse(&crate::utils::site_url())
+        .ok()
+        .filter(|url| matches!(url.scheme(), "http" | "https") && url.has_host())
+        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let rows = entries(&st.db, &site).await.map_err(|error| {
+        tracing::error!(event = "sitemap_query_failed", %error, "Could not read public sitemap entries");
+        StatusCode::SERVICE_UNAVAILABLE
+    })?;
     let mut body = String::from(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
          <urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n",
     );
-
-    for (path, prio) in static_urls {
-        body.push_str(&format!(
-            "  <url><loc>{site}{}</loc><changefreq>daily</changefreq><priority>{}</priority></url>\n",
-            xml_escape(path),
-            prio
-        ));
-    }
-    for c in &cats {
-        if !c.name.is_empty() {
-            body.push_str(&format!(
-                "  <url><loc>{site}/category/{}</loc><changefreq>weekly</changefreq><priority>0.6</priority></url>\n",
-                xml_escape(&c.name)
-            ));
+    for (location, lastmod) in rows {
+        body.push_str(&format!("  <url><loc>{}</loc>", xml_escape(&location)));
+        if let Some(date) = lastmod {
+            body.push_str(&format!("<lastmod>{date}</lastmod>"));
         }
-    }
-    for (id, updated_at) in &notes {
-        body.push_str(&format!(
-            "  <url><loc>{site}/article/{}</loc><lastmod>{}</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>\n",
-            id,
-            lastmod(updated_at)
-        ));
+        body.push_str("</url>\n");
     }
     body.push_str("</urlset>\n");
-
-    // 搜索引擎要求 XML 媒体类型（text/html 会被拒绝收录）
-    Response::builder()
+    Ok(Response::builder()
         .header(header::CONTENT_TYPE, "application/xml; charset=utf-8")
         .body(axum::body::Body::from(body))
-        .unwrap()
+        .unwrap())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sea_orm::{DatabaseBackend, DbErr, MockDatabase};
+
+    #[test]
+    fn locations_encode_one_slug_segment_and_discard_query_or_fragment() {
+        let site = reqwest::Url::parse("https://example.test/?source=x#top").unwrap();
+        assert_eq!(
+            page_url(&site, &["category", "Rust & Web/中文"]),
+            "https://example.test/category/Rust%20&%20Web%2F%E4%B8%AD%E6%96%87"
+        );
+        assert_eq!(
+            xml_escape(&page_url(&site, &["category", "a&b"])),
+            "https://example.test/category/a&amp;b"
+        );
+        assert_eq!(page_url(&site, &[]), "https://example.test/");
+    }
+
+    #[tokio::test]
+    async fn uses_route_slug_and_excludes_shadow_drafts_in_query() {
+        let category = category::Model {
+            id: 3,
+            name: "显示名称".into(),
+            path_name: Some("rust-web".into()),
+            introduce: None,
+            icon: None,
+            color: None,
+        };
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![category]])
+            .append_query_results([Vec::<note::Model>::new()])
+            .into_connection();
+        let rows = entries(&db, &reqwest::Url::parse("https://example.test").unwrap())
+            .await
+            .unwrap();
+        assert!(rows
+            .iter()
+            .any(|(url, _)| url == "https://example.test/category/rust-web"));
+        assert!(!rows.iter().any(|(url, _)| url.contains("显示名称")));
+        let statements = format!("{:?}", db.into_transaction_log());
+        assert!(statements.contains("draft_of") && statements.contains("IS NULL"));
+        assert!(statements.contains("is_public") && statements.contains("published"));
+    }
+
+    #[tokio::test]
+    async fn database_failure_is_not_an_empty_successful_sitemap() {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_errors([DbErr::Custom("offline".into())])
+            .into_connection();
+        assert!(
+            entries(&db, &reqwest::Url::parse("https://example.test").unwrap())
+                .await
+                .is_err()
+        );
+    }
 }
