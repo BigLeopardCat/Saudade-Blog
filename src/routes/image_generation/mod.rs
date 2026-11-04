@@ -265,7 +265,7 @@ pub async fn preview(
         if claims.job!=id{return Err(());}
         let uid=claims.sub.parse::<i32>().map_err(|_|())?;
         let query=if claims.slot<0 {
-            stmt("SELECT output AS bytes,'image/png' AS mime FROM image_generation WHERE id::text=$1 AND owner_id=$2 AND output_hash=$3 AND status='review'",vec![id.into(),uid.into(),claims.digest.into()])
+            stmt("SELECT output AS bytes,'image/png' AS mime FROM image_generation WHERE id::text=$1 AND owner_id=$2 AND output_hash=$3 AND status='review'",vec![id.into(),uid.into(),claims.digest.clone().into()])
         }else{
             stmt("SELECT r.bytes,r.mime FROM image_generation_reference r JOIN image_generation j ON j.id=r.job_id WHERE j.id::text=$1 AND j.owner_id=$2 AND r.ordinal=$3 AND j.status IN ('pending','generating','review')",vec![id.into(),uid.into(),claims.slot.into()])
         };
