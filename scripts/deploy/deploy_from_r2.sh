@@ -21,6 +21,8 @@ set -e
 # 下面的 `git diff` 判据、logs/ 与 frontend/dist/ 都相对于这个目录。
 cd "${PROJECT_DIR:-/home/ubuntu/Saudade-Blog}"
 
+python3 scripts/check_disk_capacity.py .
+
 mkdir -p logs
 exec 9>logs/.deploy.lock
 flock -w 300 9 || { echo "❌ $(date '+%H:%M:%S') 等了 300 秒仍拿不到部署锁（有另一个部署在跑）"; exit 1; }
@@ -36,6 +38,8 @@ echo "=== $(date '+%Y-%m-%d %H:%M:%S') 从 R2 拉取更新（DEPLOY_SHA=${DEPLOY
 DEPLOY_SHA="${DEPLOY_SHA:-}" python3 <<'PYEOF2'
 import os, re, sys
 import boto3, tarfile
+sys.path.insert(0, "scripts")
+from check_disk_capacity import require_capacity
 from botocore.config import Config
 
 s3 = boto3.client('s3',
@@ -58,6 +62,8 @@ if not re.fullmatch(r'[0-9a-f]{40}', sha):
 
 key = f'deploy/{sha}/deploy.tar.gz'
 try:
+    size = s3.head_object(Bucket=bucket, Key=key)["ContentLength"]
+    require_capacity("/tmp", extra_bytes=size)
     s3.download_file(bucket, key, '/tmp/deploy.tar.gz')
 except Exception as exc:
     sys.exit(f'❌ 取不到部署包 {key}：{exc}（该提交没有产物？或上传还没完成）')
@@ -81,6 +87,7 @@ with tarfile.open('/tmp/deploy.tar.gz') as tar:
     # 只会让人以为自己数错了。
     members = [m.name for m in tar.getmembers()
                if m.name.startswith('frontend/dist/') and not m.isdir()]
+    require_capacity('.', extra_bytes=sum(m.size for m in tar.getmembers() if m.isfile()))
     tar.extractall(filter='data')
 os.remove('/tmp/deploy.tar.gz')
 with open('logs/.deploy_manifest.txt', 'w', encoding='utf-8') as fh:

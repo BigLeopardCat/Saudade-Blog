@@ -1,74 +1,36 @@
 #!/bin/bash
-# 心跳探针（cron 每分钟）——20260829 事故后补的可观测性缺口：
-# uvicorn worker 静默崩溃时 systemd/uvicorn 都不留痕（无 traceback、无 OOM 日志），
-# 此脚本对比 worker 进程 pid 集合，发现"新 pid 顶替旧 pid"即判定发生过崩溃重启。
-# （worker 集的正确取法与"主动重启 vs 崩溃自愈"的区分见第 3 节的 20260923 修正注释）
-# 20260830 增第 4 项：nginx error.log 增量扫描（监控补齐 C）。
-# 异常只追加 logs/health.log（轻量、不打扰），未来可接告警通道。
-#
-# PROJECT_DIR 可覆盖：默认值是**本机（生产服务器）上的仓库落点**，所以线上 cron 零配置。
-# 别人克隆到别处跑时 `PROJECT_DIR=... bash scripts/healthcheck.sh`。
+# Read-only service and capacity monitoring, run once per minute.
+umask 077
 PROJECT_DIR="${PROJECT_DIR:-/home/ubuntu/Saudade-Blog}"
 LOG="$PROJECT_DIR/logs/health.log"
-STAMP=/tmp/health_state
-TS=$(date "+%Y-%m-%d %H:%M:%S")
+STAMP="$PROJECT_DIR/logs/.health_state"
+TS=$(date "+%Y-%m-%d %H:%M:%S%z")
 fail() { echo "$TS $*" >> "$LOG"; }
-
-# 1. Rust 后端存活（3000）：/api/login 是 POST 路由，GET 返回 405 = 服务活着
-code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://127.0.0.1:3000/api/login)
-[ "$code" = "000" ] && fail "FAIL Rust 3000 无响应"
-[ "$code" != "405" ] && [ "$code" != "200" ] && fail "WARN Rust 3000 异常响应 HTTP $code"
-
-# 2. Agent 存活（8010）
-ready=$(curl -s --max-time 5 http://127.0.0.1:8010/health | grep -o '"agent_ready":true')
-[ -z "$ready" ] && fail "FAIL agent 8010 /health 异常（${ready:-无响应}）"
-
-# 3. uvicorn worker 崩溃检测
-# master 按命令行匹配（[u]vicorn 技巧防匹配自身命令行）；
-# workers 按 master 子进程找（uvicorn --workers 的 worker 是 multiprocessing
-# spawn 子进程，cmdline 是 python3 -c spawn_main，按命令行匹配不到）。
-# ⚠️ 20260923 修正三处（此前每次重启都刷 3 行假"崩溃 respawn"，全量 15 行里真阳性 0）：
-#   ① 子进程里有一个 `multiprocessing.resource_tracker`，它**不是 worker** ⇒ 按 cmdline
-#      里的 `multiprocessing-fork` 过滤（uvicorn --workers N 的真 worker 就是那 N 个，
-#      N 见下面的 EXPECT_WORKERS）。
-#   ② master 换了的时候**不再逐个报子进程**：master 换 ⇒ 子进程 pid 必然全新，逐个报
-#      等于"必然全中"。原代码把 `LAST_PIDS=""` 当"上次没有 worker"用，方向正好写反了。
-#   ③ 主动重启 vs 崩溃自愈用 systemd 的 NRestarts 区分（实测：`systemctl restart` 不增这个
-#      计数——13:56 那次主动重启前后都是 0；Restart=always 拉起来才会涨）⇒ 涨了才是崩溃。
-#      另加"worker 数 ≠ 期望"的判据：静默死掉一个是 12:29 事故的形状，旧版反而看不出来。
-# 20261002：2 → 4（unit 里 --workers 4）。**这个数必须与 unit 同步**，否则探针每分钟
-# 报一次 `WARN uvicorn worker 数 4 ≠ 2` —— 一条恒亮的假警告会把真事故淹掉。
-EXPECT_WORKERS=4
-master=$(pgrep -f "[u]vicorn server:app" | sort -n | head -1)
-[ -z "$master" ] && { fail "FAIL uvicorn 进程组不存在"; exit 0; }
-workers=""
-for p in $(pgrep -P "$master" | sort -n); do
-  tr -d '\0' < "/proc/$p/cmdline" 2>/dev/null | grep -q 'multiprocessing-fork' && workers="$workers $p"
-done
-
-# 加载上次状态（首次运行初始化基线）
+mkdir -p "$PROJECT_DIR/logs"
+exec 8>"$PROJECT_DIR/logs/.health.lock"
+flock -n 8 || exit 0
 if [ -f "$STAMP" ]; then . "$STAMP"; fi
-nrestarts=$(systemctl show saudade-agent -p NRestarts --value 2>/dev/null | tr -d ' ')
-master_changed=0
-if [ "${MASTER_PID:-}" != "$master" ]; then
-  master_changed=1
-  if [ -n "$nrestarts" ] && [ -n "${LAST_NRESTARTS:-}" ] && [ "$nrestarts" -gt "${LAST_NRESTARTS:-0}" ] 2>/dev/null; then
-    fail "WARN uvicorn master 更换 ${MASTER_PID:-无} → $master（systemd 崩溃自愈第 $nrestarts 次——12:29 事故同类）"
-  else
-    # 主动重启（部署后 restart）是预期操作，记 INFO 不记 WARN——WARN 只留给"没人动它却变了"
-    echo "$TS INFO uvicorn master 更换 ${MASTER_PID:-无} → $master（主动重启：NRestarts=${nrestarts:-未知} 未增）" >> "$LOG"
+capacity=$(python3 "$PROJECT_DIR/scripts/check_disk_capacity.py" "$PROJECT_DIR" --max-used-percent 90 2>&1) ||
+  { fail "WARN $capacity"; logger -t saudade-health -- "$capacity"; }
+
+# GET on the POST-only login route verifies that the router is reachable.
+code=$(curl --noproxy '*' -s -o /dev/null -w "%{http_code}" --max-time 5 http://127.0.0.1:3000/api/login)
+[ "$code" != "405" ] && [ "$code" != "200" ] && fail "FAIL Rust 3000 HTTP $code"
+agent_code=$(curl --noproxy '*' -s -o /dev/null -w "%{http_code}" --max-time 5 http://127.0.0.1:8010/ready)
+[ "$agent_code" != "200" ] && fail "FAIL agent 8010 /ready HTTP $agent_code"
+
+# systemd tracks the service independently of entrypoint names and worker counts.
+for service in saudade-rust saudade-agent; do
+  restarts=$(systemctl show "$service" -p NRestarts --value 2>/dev/null)
+  case "$restarts" in ''|*[!0-9]*) fail "WARN 无法读取 $service 重启计数"; continue ;; esac
+  key=${service//-/_}_restarts
+  previous=${!key:-}
+  if [ -n "$previous" ] && [ "$restarts" -gt "$previous" ]; then
+    fail "WARN $service 自动重启计数 $previous → $restarts"
   fi
-fi
-if [ "$master_changed" = "0" ]; then
-  for p in $workers; do
-    echo " ${LAST_PIDS:-} " | grep -qw "$p" || fail "WARN 新 worker pid=$p 出现（worker 崩溃 respawn——12:29 事故同类）"
-  done
-fi
-wcount=$(echo $workers | wc -w)
-[ "$wcount" != "$EXPECT_WORKERS" ] && fail "WARN uvicorn worker 数 $wcount ≠ $EXPECT_WORKERS（pids:$(echo $workers | tr ' ' ',')）"
-echo "MASTER_PID=$master" > "$STAMP"
-echo "LAST_PIDS='$workers'" >> "$STAMP"
-echo "LAST_NRESTARTS=${nrestarts:-}" >> "$STAMP"
+  printf -v "$key" '%s' "$restarts"
+done
+printf 'saudade_rust_restarts=%s\nsaudade_agent_restarts=%s\n' "${saudade_rust_restarts:-0}" "${saudade_agent_restarts:-0}" > "$STAMP"
 
 # 4. nginx error.log 增量扫描（20260830，监控补齐 C）：nginx 日志保持 distro 位置
 # （/var/log/nginx，发行版 logrotate 管轮转），探针盯增量——记录上次字节数，
