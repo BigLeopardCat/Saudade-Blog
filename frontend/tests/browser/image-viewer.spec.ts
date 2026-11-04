@@ -8,8 +8,12 @@ for (const viewport of [{width:1280,height:900},{width:375,height:812},{width:81
     for (let index=0;index<3;index++) {
       const source=page.getByAltText(`图片${index}`,{exact:true})
       await expect.poll(() => source.evaluate((image:HTMLImageElement)=>image.naturalWidth)).toBeGreaterThan(0)
+      await page.evaluate(()=>{document.body.style.overflow='hidden'})
       await source.click()
+      await expect(page.getByRole('dialog',{name:'图片放大视图'})).toBeVisible()
       await expect(page.getByRole('button',{name:'关闭放大视图'})).toBeVisible()
+      await page.keyboard.press('Tab')
+      await expect(page.getByRole('button',{name:'关闭放大视图'})).toBeFocused()
       const bounds=await page.locator('.md-zoom-content img').evaluate(image=>{
         const box=image.getBoundingClientRect()
         return {width:box.width,height:box.height,left:box.left,top:box.top,right:box.right,bottom:box.bottom}
@@ -28,6 +32,7 @@ for (const viewport of [{width:1280,height:900},{width:375,height:812},{width:81
       }
       await page.keyboard.press('Escape')
       await expect(page.locator('.md-zoom-overlay')).toHaveCount(0)
+      expect(await page.evaluate(()=>document.body.style.overflow)).toBe('hidden')
     }
   })
 }

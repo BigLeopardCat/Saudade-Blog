@@ -5,6 +5,8 @@ type ZoomPoint = { id: number; x: number; y: number }
 
 let overlay: HTMLDivElement | null = null
 let keydownHandler: ((e: KeyboardEvent) => void) | null = null
+let previousOverflow = {root:"",body:""}
+let previousFocus: HTMLElement | null = null
 let closeTimer: ReturnType<typeof setTimeout> | null = null
 
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v))
@@ -47,8 +49,10 @@ export const closeZoomOverlay = (): void => {
   if (!overlay) return
   const el = overlay
   overlay = null
-  document.documentElement.style.overflow = ""
-  document.body.style.overflow = ""
+  document.documentElement.style.overflow = previousOverflow.root
+  document.body.style.overflow = previousOverflow.body
+  if (previousFocus?.isConnected) previousFocus.focus({preventScroll:true})
+  previousFocus = null
   el.style.opacity = "0"
   el.addEventListener("transitionend", () => el.remove(), { once: true })
   setTimeout(() => el.remove(), 200) // 兜底(transition 被中断时)
@@ -86,6 +90,11 @@ export const openZoomOverlay = (source: HTMLElement): void => {
   // ── 浮层骨架 ──
   overlay = document.createElement("div")
   overlay.className = "md-zoom-overlay"
+  overlay.setAttribute("role", "dialog")
+  overlay.setAttribute("aria-modal", "true")
+  overlay.setAttribute("aria-label", "图片放大视图")
+  previousOverflow = {root:document.documentElement.style.overflow,body:document.body.style.overflow}
+  previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
   const stage = document.createElement("div")
   stage.className = "md-zoom-stage"
   const content = document.createElement("div")
@@ -111,6 +120,7 @@ export const openZoomOverlay = (source: HTMLElement): void => {
   overlay.appendChild(stage)
   overlay.appendChild(closeBtn)
   document.body.appendChild(overlay)
+  closeBtn.focus({preventScroll:true})
 
   // ── 变换状态:content 居中,translate+scale(transform-origin: center) ──
   let scale = 1
@@ -264,6 +274,7 @@ export const openZoomOverlay = (source: HTMLElement): void => {
   // ── 关闭:Escape / × ──
   keydownHandler = (e: KeyboardEvent) => {
     if (e.key === "Escape") closeZoomOverlay()
+    if (e.key === "Tab") { e.preventDefault(); closeBtn.focus() }
   }
   document.addEventListener("keydown", keydownHandler)
   closeBtn.addEventListener("click", closeZoomOverlay)
