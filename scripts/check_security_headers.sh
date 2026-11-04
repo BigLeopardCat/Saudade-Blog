@@ -41,7 +41,7 @@ REQUIRED+=("strict-transport-security: max-age=31536000")
 
 missing=0
 for p in "${PATHS[@]}"; do
-  hdr=$(curl -sI -k --max-time 5 -H "Host: $HOST" "https://127.0.0.1$p" | tr -d '\r')
+  hdr=$(curl --noproxy '*' -sI -k --max-time 5 -H "Host: $HOST" "https://127.0.0.1$p" | tr -d '\r')
   if [ -z "$hdr" ]; then
     echo "拿不到响应头：$p（nginx 没在跑？）" >&2
     missing=$((missing + 1))

@@ -333,6 +333,9 @@ jobs:
           JWT_SECRET: isolated-ci-consistency-test-secret
         run: cargo test
 
+      - name: Operations regression tests
+        run: python3 -m unittest discover -s tests/ops -v
+
       - name: Install frontend deps
         run: npm ci
         working-directory: ./frontend
