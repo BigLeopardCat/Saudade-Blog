@@ -731,9 +731,6 @@ async fn prepare_chat(state: &Arc<AppState>, req: Request) -> Result<ChatCtx, (S
         }
     }
 
-    if std::env::var("CHAT_DEBUG_BODY").is_ok() {
-        eprintln!("[chat-debug] body={}", body);
-    }
     Ok(ChatCtx { uid, conversation_id, trace_id, body, role })
 }
 
