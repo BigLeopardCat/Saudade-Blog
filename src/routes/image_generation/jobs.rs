@@ -100,6 +100,7 @@ pub async fn approve(
     id: &str,
     input: Approval,
 ) -> Result<Job, DbErr> {
+    if STOPPING.load(std::sync::atomic::Ordering::SeqCst) {return Err(error("service is draining"));}
     let settings = settings::Settings::load().map_err(error)?;
     let current = read(&state, uid, id).await?;
     if current.request_hash != input.version {
@@ -146,7 +147,7 @@ pub async fn approve(
     txn.commit().await?;
     let job_id = id.to_owned();
     let worker = state.clone();
-    tokio::spawn(async move {
+    task_tracker().spawn(async move {
         let _permit = permit;
         tracing::info!(job_id=%job_id,owner_id=uid,model=%request.model,"approved image generation started");
         let result = provider::generate(settings, &request, &refs).await;

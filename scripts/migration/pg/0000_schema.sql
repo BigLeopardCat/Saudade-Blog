@@ -1,28 +1,7 @@
--- ⚠️ 本文件由 `scripts/migration/pg/mysql2pg.py` 生成，别手改。
---    改结构 = 先改 MySQL 那边（`scripts/migration/` 的增量迁移），再重跑生成器。
-
--- 重跑生成：
---   python3 scripts/migration/pg/mysql2pg.py > scripts/migration/pg/0000_schema.sql
--- 从零建库（库是全新的，所以直接 DROP 重来比「补跑」干净）：
---   psql -c "DROP DATABASE IF EXISTS saudade_blog"
---   psql -c "CREATE ROLE saudade_app LOGIN"            # 一次性；口令**不在这里设**
---   psql -c "CREATE DATABASE saudade_blog OWNER saudade_app ENCODING 'UTF8' \
---             LC_COLLATE 'en_US.UTF-8' LC_CTYPE 'en_US.UTF-8' TEMPLATE template0"
---   psql -d saudade_blog -v ON_ERROR_STOP=1 -f scripts/migration/pg/0000_schema.sql
--- 判据（把 PG 目录读回来跟 MySQL 目录逐列对账；改坏任何一项都会红）：
---   python3 scripts/migration/pg/verify_parity.py
-
--- 只建**结构**，一行数据都不搬 —— 搬数据是下一步的事，且那一步要先 `setval` 自增序列。
-
--- 幂等性（20261017 实测，不是推测）：在已建好的库上重跑一遍 ⇒ **74 条 NOTICE + 12 条 ERROR**。
---   · NOTICE 全来自 `IF NOT EXISTS`（29 张表 + 45 个索引），是设计如此；
---   · 12 条 ERROR 全是 `ALTER TABLE … ADD CONSTRAINT … already exists`（外键那一节），
---     那是**唯一**不幂等的一节；触发器走 `CREATE OR REPLACE`、索引与表走 `IF NOT EXISTS`。
---   结构不受影响（重跑后判据照绿）。要干净就 DROP 重建 —— 与 MySQL 那边的
---   `fresh_install.sh` 同一立场（它也是显式不幂等、要求先 DROP）。
-
--- 时区：库级钉成 Asia/Shanghai。`timestamp` 无时区，`DEFAULT CURRENT_TIMESTAMP`
--- 按**会话** TimeZone 折算 —— 不钉的话这台机器的 UTC 缺省会把每个默认值偏 8 小时。
+-- Frozen PostgreSQL baseline for a new, empty saudade_blog database.
+-- Apply once, then the ordered numbered PostgreSQL migrations.
+-- New schema changes belong in a new migration; do not regenerate this baseline.
+-- Timestamp defaults use the application's Asia/Shanghai database timezone.
 ALTER DATABASE "saudade_blog" SET timezone TO 'Asia/Shanghai';
 
 -- ── agent_task（14 列）

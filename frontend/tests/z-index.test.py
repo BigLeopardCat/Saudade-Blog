@@ -89,16 +89,15 @@ check("effects.js 三个特效容器都不再写死 99999",
       f'99999×{_eff.count("z-index:99999")} / EFFECT_Z×{_eff.count("${EFFECT_Z}")}')
 
 # ── ②③ 真实堆叠（无头 Chrome）──────────────────────────────────────────────
-# 编译真 App.sass（`.frontRoot` 的 isolation、`body.exhibit-zoomed` 的抬升、
-# `.md-zoom-overlay` 的层级都在里面）。sass CLI 在本机是坏的（chokidar 的
-# ERR_REQUIRE_ESM），走 node API —— 与其他沙箱同一条通路。
+# Compile the real application and shared image-viewer styles.
 SB = pathlib.Path(tempfile.mkdtemp(prefix="z-index-"))
 out_css = SB / "app.css"
 r = subprocess.run(
     ["node", "-e",
-     "const s=require('sass');const r=s.compile(process.argv[1],{style:'expanded'});"
+     "const s=require('sass');const r=s.compile(process.argv[1],{style:'expanded'});r.css += s.compile(process.argv[3]).css;"
      "require('fs').writeFileSync(process.argv[2],r.css);",
-     str(FE / "src/App.sass"), str(out_css)],
+     str(FE / "src/App.sass"), str(out_css),
+     str(FE / "src/frontHome/Content/ReadArticle/zoomOverlay.sass")],
     cwd=str(FE), capture_output=True)
 if r.returncode != 0:
     raise SystemExit("sass 编译失败：\n%s" % r.stderr.decode("utf-8", "replace"))

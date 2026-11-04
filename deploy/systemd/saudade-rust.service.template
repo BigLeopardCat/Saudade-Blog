@@ -13,6 +13,7 @@ WorkingDirectory=__APP_DIR__
 ExecStart=__APP_DIR__/target/release/saudade_blog_bin
 Restart=always
 RestartSec=5
+TimeoutStopSec=360
 StandardOutput=append:__APP_DIR__/logs/rust.log
 StandardError=append:__APP_DIR__/logs/rust.log
 

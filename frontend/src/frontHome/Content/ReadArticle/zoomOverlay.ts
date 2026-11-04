@@ -1,18 +1,12 @@
-/**
- * 文章页统一"单击放大"查看器(mermaid 图 / 正文图片)
- *
- * - 单击打开,初始按视口适配;mermaid 连同图框(白底/边框)一起放大
- * - 滚轮 / 双指捏合缩放(以光标/触点为中心)
- * - 拖拽平移、双击在"适配 ↔ 2.5×适配"间切换
- * - Esc / × / 单击图框外的空白关闭;单击图片本体不关闭(可直接拖动)
- *
- * 纯原生 DOM 实现,不引入新依赖;克隆节点进浮层,关闭即销毁。
- */
+/** Shared image and Mermaid viewer; imported together with its styles. */
+import "./zoomOverlay.sass"
 
 type ZoomPoint = { id: number; x: number; y: number }
 
 let overlay: HTMLDivElement | null = null
 let keydownHandler: ((e: KeyboardEvent) => void) | null = null
+let previousOverflow = {root:"",body:""}
+let previousFocus: HTMLElement | null = null
 let closeTimer: ReturnType<typeof setTimeout> | null = null
 
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v))
@@ -55,8 +49,10 @@ export const closeZoomOverlay = (): void => {
   if (!overlay) return
   const el = overlay
   overlay = null
-  document.documentElement.style.overflow = ""
-  document.body.style.overflow = ""
+  document.documentElement.style.overflow = previousOverflow.root
+  document.body.style.overflow = previousOverflow.body
+  if (previousFocus?.isConnected) previousFocus.focus({preventScroll:true})
+  previousFocus = null
   el.style.opacity = "0"
   el.addEventListener("transitionend", () => el.remove(), { once: true })
   setTimeout(() => el.remove(), 200) // 兜底(transition 被中断时)
@@ -94,6 +90,11 @@ export const openZoomOverlay = (source: HTMLElement): void => {
   // ── 浮层骨架 ──
   overlay = document.createElement("div")
   overlay.className = "md-zoom-overlay"
+  overlay.setAttribute("role", "dialog")
+  overlay.setAttribute("aria-modal", "true")
+  overlay.setAttribute("aria-label", "图片放大视图")
+  previousOverflow = {root:document.documentElement.style.overflow,body:document.body.style.overflow}
+  previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
   const stage = document.createElement("div")
   stage.className = "md-zoom-stage"
   const content = document.createElement("div")
@@ -119,6 +120,7 @@ export const openZoomOverlay = (source: HTMLElement): void => {
   overlay.appendChild(stage)
   overlay.appendChild(closeBtn)
   document.body.appendChild(overlay)
+  closeBtn.focus({preventScroll:true})
 
   // ── 变换状态:content 居中,translate+scale(transform-origin: center) ──
   let scale = 1
@@ -137,16 +139,16 @@ export const openZoomOverlay = (source: HTMLElement): void => {
   }
   const fitScale = (): number => {
     const r = stage.getBoundingClientRect()
-    return clamp(Math.min((r.width - 56) / (w0 + padX), (r.height - 72) / (h0 + padY)), 0.1, 1)
+    return clamp(Math.min((r.width - 56) / (w0 + padX), (r.height - 72) / (h0 + padY)), 0.001, 1)
   }
   const readableScale = (): number => {
     const fit = fitScale()
     if (!isFrame || stage.getBoundingClientRect().width > 768) return fit
     const natural = w0 + padX
-    return clamp(Math.max(fit, Math.min(1, 720 / natural)), 0.1, 1)
+    return clamp(Math.max(fit, Math.min(1, 720 / natural)), 0.001, 1)
   }
   const zoomAt = (factor: number, px: number, py: number): void => {
-    const ns = clamp(scale * factor, 0.4, 16)
+    const ns = clamp(scale * factor, Math.min(fitScale(), 0.4), 16)
     const [cx, cy] = center()
     tx = px - cx - ((px - cx - tx) * ns) / scale
     ty = py - cy - ((py - cy - ty) * ns) / scale
@@ -272,6 +274,7 @@ export const openZoomOverlay = (source: HTMLElement): void => {
   // ── 关闭:Escape / × ──
   keydownHandler = (e: KeyboardEvent) => {
     if (e.key === "Escape") closeZoomOverlay()
+    if (e.key === "Tab") { e.preventDefault(); closeBtn.focus() }
   }
   document.addEventListener("keydown", keydownHandler)
   closeBtn.addEventListener("click", closeZoomOverlay)

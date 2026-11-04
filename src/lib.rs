@@ -16,3 +16,5 @@ pub mod auth_jwt;
 pub mod checkpoint_cleanup;
 
 mod ai_services;
+
+pub mod lifecycle;

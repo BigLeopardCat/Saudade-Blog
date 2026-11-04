@@ -1,5 +1,6 @@
 import {useEffect} from 'react';
 import '../../utils/chatMarkdown';
+import '../../frontHome/Content/ReadArticle/zoomOverlay';
 import {loadAgent} from './loader';
 
 const Live2dAgent: React.FC = () => {

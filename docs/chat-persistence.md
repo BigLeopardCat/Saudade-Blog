@@ -21,7 +21,7 @@ Agent 的 LangGraph checkpoint 管理活动上下文、框架摘要和执行恢�
 
 丢弃轮次在一个短事务中删除指定范围的原文，并使覆盖该范围的归档摘要失效；失败整批回滚。用户删除与 Agent 的删除屏障保持独立协调，摘要不能重新导入已经删除的会话。
 
-## 接口与部署
+## 接口
 
 `POST /api/chat/task/confirmation` 读取当前待确认卡，要求登录和本人会话；可选
 `task_id` 用于拒绝其他任务的结果。宿主从数据库读取当前角色签名断言，转发到
@@ -33,7 +33,6 @@ Agent `/tasks/confirmation` 并返回 `Cache-Control: no-store`。此查询不�
 本地缓存读取确认凭据；历史消息未加载时，当前有效卡单独展示。发布本接口时同步
 `widget.lock.json`，使查询适配和对话组件随同一博客版本上线，无新增数据库迁移。
 
-本次联动先发布 Agent，再发布博客。两仓共同移除 `summary_batch`、`new_summary`、`summary_coverage` 和私有 summary SSE。标准正文、确认、浏览器控制、进度和终止事件保持各自契约。
 
 新装仍需应用来源列迁移 `scripts/migration/pg/0018_chat_memory_source_role.sql`。迁移不回填未知来源；本轮没有新增数据库迁移。
 

@@ -57,11 +57,8 @@ def check(desc: str, cond: bool, detail: str = "") -> None:
 
 SASS_JS = 'const sass=require("sass");process.stdout.write(sass.compile(process.argv[1]).css.toString());'
 SASS_FILE = FE / "src/frontHome/Content/ReadArticle/index.sass"
-# `.md-zoom-*` 那一套**不住在文章页的 sass 里**（20260901 搬去了全局 App.sass，因为看板娘
-# 对话框也要复用）。夹具少了这一份，浮层就是一串没样式的 div：舞台塌成内容高、`fitScale`
-# 里的 (r.height−72) 直接算出 0.886 ⇒ 桌面档"整图适配"看起来也对，判据却量在一个假舞台上
-#（20261005 踩过：两条臂都是 0.886，双击也全无反应）。所以这份必须一起编译、一起加载。
-OVERLAY_SASS = FE / "src/App.sass"
+# The shared viewer owns its styles on both article and dashboard routes.
+OVERLAY_SASS = FE / "src/frontHome/Content/ReadArticle/zoomOverlay.sass"
 RESET_CSS = FE / "src/frontHome/main.css"
 ZOOM_TS = FE / "src/frontHome/Content/ReadArticle/zoomOverlay.ts"
 MARDOWN_TSX = FE / "src/frontHome/Content/ReadArticle/index.tsx"
@@ -109,7 +106,7 @@ def compile_css(path: pathlib.Path) -> str:
 def bundle(ts: pathlib.Path, out: pathlib.Path) -> None:
     """把 TS 模块打包成 IIFE（模块自己在加载时把 openZoomOverlay 挂到 window 上）。"""
     r = subprocess.run([str(FE / "node_modules/.bin/esbuild"), str(ts),
-                        "--bundle", "--format=iife", f"--outfile={out}", "--log-level=error"],
+                        "--bundle", "--format=iife", "--loader:.sass=empty", f"--outfile={out}", "--log-level=error"],
                        cwd=str(FE), capture_output=True)
     if r.returncode != 0:
         raise SystemExit("esbuild 打包失败：\n" + r.stderr.decode("utf-8", "replace"))
@@ -261,7 +258,7 @@ with sync_playwright() as p:
     check(f'夹具自检：行内那张 svg 只有 {m["inlineSvgW"]}px 宽（图确实被压小了，否则下面判据是空的）',
           m["inlineSvgW"] < 400, str(m["inlineSvgW"]))
     check(f'★夹具自检：浮层舞台铺满视口（{m["stageW"]}×{m["stageH"]}）——不是一串没样式的 div'
-          f'（`.md-zoom-*` 住在 App.sass 里，漏加载时舞台塌成内容高、fitScale 跟着算错，'
+          f'（`.md-zoom-*` 由 zoomOverlay.sass 提供，漏加载时舞台塌成内容高、fitScale 跟着算错，'
           f'桌面档会"看起来也对"）', m["stageW"] == 390 and m["stageH"] == 844,
           f'{m["stageW"]}×{m["stageH"]}')
     check(f'★窄屏点开后图上标签 {m["zoomTextH"]}px 高（≥10px；行内是 5px 量级）',
