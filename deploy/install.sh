@@ -1,51 +1,7 @@
 #!/usr/bin/env bash
-# ═══════════════════════════════════════════════════════════════════════════════
-# 从零部署 Saudade Blog —— 一台空机器 → 一个跑着的站点
-#
-#   bash deploy/install.sh                       # 交互向导，一路问下来
-#   bash deploy/install.sh --domain blog.me -y   # 也可以全部用参数预填（--help）
-#
-# ⛔ **20261018 切库后本脚本暂时不可用**：`src/` 与 `Cargo.toml` 已经只认
-#    `postgres://`（`sqlx-mysql` 从依赖里摘掉了），而本脚本建的是 MySQL 库、
-#    写的是 `DATABASE_URL=mysql://…` ⇒ 照它装完站点起不来。
-#    转换它要处理 `sudo -u postgres` 的建号/建库、`pg_hba` 与口令文件那一套
-#    （30+ 处），值得单独一批做、单独验。**在那之前请按 CONTRIBUTING.md §2.1
-#    手建 PG 库，或者等这一条从 ROADMAP 的《待办》里划掉。**
-#    别删这个警告：它挡住的是"照着跑一遍、装完发现起不来、还不知道为什么"。
-#
-# 它做的每一步都对应 deploy/README.md 的 §3–§10（IoT 那一段对应 iot/README.md）：
-#   前置检查 → 目录与权限 → 建库/应用账号/第一个管理员 → 两份 .env → agent 的 .venv
-#   → 构建（cargo + vite）→ TLS 证书 → nginx → systemd ×2 → logrotate + 心跳 cron
-#   → 起服务 → 验收；选了装 IoT 就再往下走 iot/ 那一套。
-#
-# 先读这三条；改脚本前也先认这三条：
-#
-#   1. **幂等**。重跑安全，但"安全"的含义要说准（20261007 修订，此前这里写的是
-#      "已有 .env 只补缺键、绝不覆盖"，那半句就是下面那条 bug 的温床）：
-#        · `.env` 分两种情况：**这次刚由本脚本从 `.env.example` 创建** ⇒ 生成的值
-#          一律**顶掉**模板里那些占位说明（`DATABASE_URL=…改成你的密码…` 之类）；
-#          **本来就在** ⇒ 只补缺键、绝不覆盖你改过的值。
-#        · 口令与 `JWT_SECRET` **从 `.credentials` 沿用**，不再每次重掷 —— 库里那份
-#          口令不会被 `ALTER USER` 改走、`.env` 里的 `DATABASE_URL` 也不会与它错位
-#          （重掷 = 把一台跑着的机器锁在门外，而凭据文件还写着新口令）。
-#        · 库里已经有表 ⇒ 跳过建库，但**把迁移台账摆出来**（见 setup_database / db_state_report）：
-#          表数、`migration_flags` 里有多少行标记、最新一条是什么。**这个脚本刻意不判"建全了没有"**
-#          —— 判据（哪些文件该跑、快照日期）住在 scripts/migration/fresh_install.sh 里，在
-#          这里另抄一份就等于造一台假红机器；它只保证"你**看得见**自己接手的是个什么样的库"。
-#      配置一律"渲染 → 语法自检 → 替换"。
-#   2. **口令不进 stdout / argv**。MySQL root 口令走 0600 临时 defaults 文件（`ps` 上看不见）；
-#      管理员口令从 stdin 喂 SQL；随机生成的口令与 `JWT_SECRET` 落在 `deploy/.credentials`
-#      （0600，已 gitignore）——**脚本只打印那个路径，不打印值**。
-#   3. **不猜**。缺依赖就停下并给出安装命令（不替你装系统包）；没法确定的事（比如 EMQX 的
-#      下载地址在非 Ubuntu 上长什么样）就明说"这一步要你自己来"，而不是硬跑一遍装错。
-#
-# ⚠️ 这份脚本**不改任何模板**，它只把 deploy/ 下那几份模板渲染出来。模板与线上配置的
-#    一致性判据在 deploy/README.md §7–§9；改渲染逻辑时别绕过模板直接写配置文件。
-#
-# ⚠️ 想先看看它会做什么：`bash deploy/install.sh --dry-run` —— 渲染产物落到一个临时目录，
-#    系统一个字节都不改。比对：
-#      diff -u /etc/nginx/sites-enabled/blog <那个目录>/etc/nginx/sites-available/blog
-# ═══════════════════════════════════════════════════════════════════════════════
+# Legacy MySQL installer: unsupported for PostgreSQL. Use CONTRIBUTING.md and deploy/README.md.
+# Existing credentials must be preserved; configuration writes are atomic and validated.
+
 set -euo pipefail
 
 # ── 路径基准 ──────────────────────────────────────────────────────────────────
@@ -135,13 +91,7 @@ put_root() {   # 需要 root 的文件写入，内容从 stdin 来 → put_root 
         cat >"$staged"
         note "[dry-run] $dest → $staged"
     else
-        # **同目录临时文件 + mv**，不是 `tee` 就地写（20261007）：
-        # 就地写的窗口里目标文件是半截内容 —— 而这里的读者是**另一个进程**（nginx 收到
-        # reload 就去 parse、systemd 起来就去读单元），一次读取撞进那个窗口是什么样全看
-        # 运气：`nginx -t` 报一个莫名其妙的行号、或者 `logrotate` 少一条规则。
-        # 同目录是必须的（跨文件系统 rename 会退化成复制，又变回非原子）；临时文件带点号
-        # 前缀，所以即使这脚本半途被杀留下一个，nginx 的 `conf.d/*.conf`、systemd 的
-        # `*.service`、logrotate 的目录扫描都不会认它。
+
         local tmp="$dest.tmp.$$"
         $SUDO mkdir -p "$(dirname "$dest")"
         if ! $SUDO tee "$tmp" >/dev/null; then
@@ -176,9 +126,7 @@ ask() {   # ask <变量名> <提示> [默认值] —— 已经有值（flag/env�
 ask_secret() {   # ask_secret <变量名> <提示> [默认值] [生成器命令] —— 不回显
     local var=$1 prompt=$2 def=${3:-} gen=${4:-} val hint
     val="${!var}"
-    # 回车的后果有三种，**必须分开说**（此前一律写"留空 = 随机生成"）：
-    # 对 `LLM_API_KEY` 那样的可选密钥，回车是"先不配"，不是"给我生成一个假的"——
-    # 写错的后果是有人以为随便按了回车就配好了。
+
     if   [ -n "$gen" ]; then hint="留空 = 随机生成"
     elif [ -n "$def" ]; then hint="留空 = 用默认值"
     else                     hint="留空 = 先不配"; fi
@@ -245,16 +193,7 @@ add_env_if_missing() {
     if grep -qE "^[[:space:]]*${key}=" "$file"; then return 0; fi
     set_env "$file" "$key" "$val"
 }
-# ⚠️ `add_env_if_missing` 的语义是"**完全没有这个键**才写"，它挡不住本仓模板里那一类
-#    占位值：`.env.example` 里 `DATABASE_URL=mysql://saudade_blog:改成你的密码@…` 是
-#    **未注释**的（为了让照着 example 手改的人一眼看见要改哪一行），于是键在、值是中文
-#    占位说明 —— 安装器生成的真口令被它挡在门外，而 `verify()` 照样全绿（20261007 实测：
-#    后端连不上库、JWT_SECRET 是公开模板里那句话、agent 的只读工具全指着 `<你的域名>`）。
-#    修法是把"这份 .env 是不是**这次刚由我们从模板复制出来的**"这个事实带进写入：
-#      fresh = 刚 cp 出来的 ⇒ 生成的值**顶掉**模板里的占位（set_env）
-#      keep  = 本来就在     ⇒ 只补缺键（add_env_if_missing）
-#    判据（deploy/docker/check.sh 的第 ⑧ 节会真跑一遍）：全新 clone 下 setup_env 的产物里
-#    不许留下任何一份 `.env.example` 的占位值。
+
 put_env() {   # put_env <fresh|keep> <文件> <键> <值>
     case "$1" in
         fresh) set_env "$2" "$3" "$4" ;;
@@ -285,12 +224,7 @@ urlenc() {
     printf '%s' "$out"
 }
 
-# ── 从 .credentials 取回上一次生成的值 ────────────────────────────────────────
-# 这是**口令的唯一记录**（库里那份是单向哈希，取不回来）。重跑时靠它沿用口令与
-# JWT_SECRET：重新掷一次的话，`ALTER USER` 会把库里那份改成新值、而已经写好的
-# `.env` 里的 `DATABASE_URL` 还指着旧的（只补缺键、不覆盖）⇒ 一台本来跑得好好的
-# 机器被自己的安装脚本锁在门外，且凭据文件上写着的是一个当时还没生效的新口令。
-# 取不到（首次部署 / 文件被删）就返回空 ⇒ 上层照旧随机生成。
+
 read_cred() {
     [ -f "$CRED_FILE" ] || return 0
     awk -v k="$1" '{ if ($1 == k) { sub(/^[^ \t]+[ \t]+/, ""); print; exit } }' "$CRED_FILE"
@@ -364,10 +298,7 @@ EOF
     exit 0
 }
 
-# ── 参数解析**之前**的那几个值（20261007 加）────────────────────────────────────
-# 用来区分"用户这次显式给的值"与"代码里的默认值"：`LLM_PROVIDER` / `ADMIN_USER` 这类
-# 键**两者都非空**，光看当前值是分不出来的，而重跑时这个区分决定"要不要沿用上一趟的
-# `.credentials`"。默认值变了（或用户给了 flag/env）就说明是显式的。
+
 ORIG_LLM_PROVIDER="$LLM_PROVIDER"
 ORIG_ADMIN_USER="$ADMIN_USER"
 
@@ -446,15 +377,7 @@ preflight() {
 
     if [ "$APP_USER" = "root" ]; then die "别用 root 跑服务，换一个普通用户再来。"; fi
 
-    # **跑这个脚本的人**与**跑服务的用户**必须是同一个（20261007 加）。
-    # 这一条看起来像洁癖，其实是下面四处权限的同一个根：`.env` 落成 0600、`logs/` 落成
-    # 0700、上传件目录、logrotate 模板里的 `su $APP_USER` —— 它们都只写"谁属主"，不 chown。
-    # 于是"以 A 跑安装、以 B 跑服务"这件事的后果是**四处的静默失败**，而且一处都不报错：
-    #   · Rust 的 dotenv() 读不到 0600 的 .env ⇒ 起来了但连不上库，登录一路 500；
-    #   · `logs/rust.log` / `logs/agent/agent.log` 写不进去（systemd 的 append 会失败）；
-    #   · logrotate 的 `su` 一行不匹配 ⇒ 日志**静默地不轮转**（配置看着没问题）；
-    #   · 上传接口能 200 但文件是别人写的，下一次安装建目录时撞权限。
-    # 修法只有"换个人跑"，或者把 --app-user 给成当前用户 —— 两条路都写在这儿。
+
     if [ "$DRY_RUN" != 1 ] && [ "$APP_USER" != "$(id -un)" ]; then
         die "跑这个脚本的是 $(id -un)，而服务要用的用户是 $APP_USER。二者不一致时
     .env(0600)/logs(0700)/上传件目录的属主都是 $(id -un)，服务那边读不到、写不进，
@@ -539,13 +462,7 @@ preflight() {
 collect() {
     step "收集参数（回车用默认值；口令不回显，留空 = 随机生成）"
 
-    # ══ 先把上一趟的值取回来，再问 ══════════════════════════════════════════════
-    # 判据一律是"**这次显式给了就听你的，没给就沿用 `.credentials`**"（20261007）。
-    # 在此之前这里是从头掷一遍：`ALTER USER` 把库里那份口令改成新的，而 `.env` 里
-    # （只补缺键、不覆盖）的 `DATABASE_URL` 还指着旧的 ⇒ 一台跑得好好的机器被自己的
-    # 安装脚本锁在门外；`write_creds` 又把凭据文件**截断重写**，于是连"旧口令是多少"
-    # 这个唯一的记录也没了。首次部署没有 `.credentials` ⇒ 取到的全是空 ⇒ 行为与从前
-    # 逐字相同。
+
     local cred_url cred_domain cred_prov cred_v
     cred_url="$(read_cred 站点地址)"
     case "$cred_url" in
@@ -590,8 +507,7 @@ collect() {
         say "提供方沿用上一趟的：$LLM_PROVIDER（要换：--provider X 加 --llm-key Y）"
     fi
     ask LLM_PROVIDER "提供方（deepseek|qwen|openai）"
-    # **不回显**：API Key 与口令是同一类东西，此前它是用 `ask` 问的（明文打在屏幕上，
-    # 而且有人会把屏幕截图贴进 issue）。
+
     ask_secret LLM_API_KEY "API Key（留空 = 先不配：其余功能都正常，只有看板娘不会答话）"
     if [ "$LLM_PROVIDER" = "qwen" ]; then
         ask LLM_BASE_URL "QWEN_BASE_URL（**必须显式给**：代码里的默认值绑的是上游维护者的接入点）" \
@@ -720,12 +636,7 @@ setup_database() {
         ok "建库完成"
     fi
 
-    # 应用账号建在**两个 host** 上（20261007）。连接串写的是 `127.0.0.1`，而 MySQL 认不认
-    # 得上 `@'localhost'`，取决于它有没有做反向名字解析：`skip_name_resolve` 关着（默认）
-    # 时 127.0.0.1 会被解析成 localhost，打开时就不会 —— 而打开它是很多"MySQL 加固清单"
-    # 的第一条，关我什么事都不问就把一个跑得好好的站点打死（症状：
-    # `Access denied for user 'saudade_blog'@'127.0.0.1'`，而账号在库里明明有）。
-    # 两条都建、都授权，就不依赖那个开关了：多一行记录，换掉一整类"改了配置就登不上"。
+
     local host
     for host in localhost 127.0.0.1; do
         printf "CREATE USER IF NOT EXISTS '%s'@'%s' IDENTIFIED BY '%s';\n\
@@ -742,12 +653,7 @@ GRANT ALL PRIVILEGES ON \`%s\`.* TO '%s'@'%s';\nFLUSH PRIVILEGES;\n" \
     admin_account
 }
 
-# 库里"已经有表"**不等于**"建全了"：这一步把能看见的都摆出来（20261007）。
-# ⚠️ 它**不下结论**，这是刻意的 —— 一个"完整性判据"需要知道"从零建库会跑哪些迁移"，
-#    而那套筛选规则（快照日 + 夹具名单 + 强制补跑名单）住在 `scripts/migration/
-#    fresh_install.sh` 里。在这里抄一份过来就会各漂各的，抄不准的版本则会把快照日之前
-#    的几十份迁移全判成"缺失"（它们的标记本来就不在库里）—— 那是一条**假红机器**。
-#    所以这里只报事实：库里有几个标记、最长的那个叫什么、有没有那张表。
+
 db_state_report() {
     local flags
     flags="$(printf 'SELECT flag_name FROM migration_flags ORDER BY applied_at;\n' \
@@ -758,7 +664,7 @@ db_state_report() {
     else
         say "迁移标记 $(printf '%s\n' "$flags" | wc -l | tr -d ' ') 个，最近的是 $(printf '%s\n' "$flags" | tail -1)"
         note "对照 scripts/migration/：文件名带 _YYYYMMDD 的那些里，日期**晚于**快照日"
-        note "（fresh_install.sh 头注的 SNAPSHOT）的都该有对应标记。少一个就是那次迁移没跑成。"
+        note "（fresh_install.sh 的 SNAPSHOT）应有对应迁移标记；缺失项需单独核实。"
         note "本脚本不做迁移 —— 缺的那几份要手工补（剥掉文件开头的 USE 行再执行）。"
     fi
 }
@@ -798,11 +704,7 @@ VALUES ('%s', '%s', SHA2('%s', 256), 'admin');\n" \
     note "口令在 $CRED_FILE 里；首次登录成功后库里那一行会自动升级成 Argon2id。"
 }
 
-# 凭据文件里那份管理员口令**真的能登进去吗**。
-# 库里存的是单向哈希，所以只对两种情形能给出确定答案：
-#   · 旧格式（无盐单轮 SHA-256）⇒ 当场算一遍对得上就是对的；
-#   · Argon2id（20260917 起的格式，随机盐）⇒ **判不了**，如实说判不了。
-# 判不了就说判不了 —— 这一条的失败样式是"用户照着文件登录、失败，然后去怀疑脚本"。
+
 cred_honesty_check() {
     local pw want
     pw="$(printf 'SELECT password FROM `user` WHERE username=%s LIMIT 1;\n' \
@@ -813,7 +715,7 @@ cred_honesty_check() {
     fi
     case "$pw" in
         '$argon2'*)
-            note "库里那份是 Argon2id（20260917 起；随机盐，没法在 SQL 里对）⇒"
+            note "数据库使用 Argon2id 随机盐，不能用 SQL 直接比较哈希 ⇒"
             note "$CRED_FILE 里这一行是「这次想用的口令」，**不是**从库里读出来的；"
             note "它是不是能登进去的口令，只有登录那一下才知道。"
             ;;
@@ -902,9 +804,7 @@ setup_env() {
             warn "没配模型 API Key —— 站点一切正常，只有看板娘不会答话"
             note "补法：改 $aenv 里的 $prov_key，或重跑并给 --llm-key"
         fi
-        # Base URL 写在**当前提供方自己的键**上（20261007 修）：此前无论选了谁都写
-        # `QWEN_BASE_URL`，于是在 deepseek 上给的那个自定义地址落进一个没人读的键里，
-        # 而 agent 继续用它自己那份默认端点 —— 症状是"我明明改了地址，怎么还打那个端点"。
+
         if [ -n "$LLM_BASE_URL" ]; then
             # 这里**故意用 set_env 而不是 put_env**（同 IOT_ENABLED 的理由）：`--llm-base-url`
             # 是显式表态，而 keep 分支"有键就不写"会让重跑时的这个参数变成一个静默空操作
@@ -940,11 +840,7 @@ setup_venv() {
         warn "没有 $AGENT_DIR —— 跳过。它必须克隆在部署根目录下、且就叫这个名字。"
         return 0
     fi
-    # ⚠️ **已有 .venv 就不再 sync**。uv sync 会按 uv.lock 重装依赖，而正在跑的那个
-    #    uvicorn 用的是这个目录里的解释器 —— 在已经跑着的机器上重装，轻则白等几分钟，
-    #    重则把 .venv/bin/* 的 shebang 换掉，服务下一次重启就起不来（这条踩过）。
-    #    依赖真的变了（git pull 拉动了 uv.lock）时，明说再动：
-    #        rm -rf .venv && bash deploy/install.sh --iot-only   # 或直接 uv sync
+
     if [ -x "$AGENT_DIR/.venv/bin/uvicorn" ]; then
         say ".venv 已就位 —— 跳过（依赖变了的话：rm -rf .venv 之后重跑这一步）"
         return 0
@@ -974,7 +870,7 @@ build() {
         if [ "$miss" = 1 ]; then
             # 从前这两条只是两行 ⚠️，而最后一步验收不看它们、脚本退出码恒 0 ⇒ 「缺产物」
             # 这件事在 CI/脚本里拦不住（--no-build 就成了一个能静默产出一个起不来的站点的开关）。
-            note "这两条在**最后一步验收**里也会判红（20261007 起退出码会传出来，不再恒 0）。"
+            note "这两项会在最终验收中返回非零退出码。"
             note "--no-build 的正经用法是「在别的机器上编好再拷过来」，不是「跳过不管」。"
         else
             ok "两份产物都在 —— --no-build 的前提成立"
@@ -1155,14 +1051,7 @@ setup_logrotate() {
     note "trace 刻意不在 logrotate 里：它是「一次会话一个文件」的一次性产物，"
     note "而 rotate N 靠同名文件后缀计数 —— 对它无效。保留期由 agent 仓的 trace_retention.py 执行。"
 
-    # 20261017：这里**刻意不装**夜间两班（04:00 的 agent 回归、04:40 的前端渲染沙箱）。
-    # 它们是公开仓库里"默认关、按需开"的档：agent 那班一次全量要真调 LLM 跑 golden
-    # （≈10M tok / ¥2.4，且跑的是维护者那台机器的语料与夹具），沙箱那班要 Playwright +
-    # 无头 Chrome。一键部署的人多半没有这些前置，装了只会得到两个每晚静默失败的 cron
-    # （`>/dev/null 2>&1` 把话全吃了）。这段在 dry-run 里也打，因为"没装什么"同样是结果。
-    # ⚠️ 这几行里**不许出现反引号**：note 的参数是双引号字符串，反引号会当场做命令替换
-    # ——本机实测过，写成 `bash …` 真的去执行了那支脚本（cwd 恰好在 agent 仓时后果是真改
-    # crontab）。本文件的既有惯例是拿「」当引号，照它写。
+
     note "**夜间两班没有装**（刻意的，不是漏了）："
     note "  · agent 回归：装法 = agent 仓的 bash scripts/enable_nightly.sh --apply（默认只干跑）"
     note "  · 前端沙箱：见 scripts/nightly_sandboxes.sh 头部那一行 crontab，加之前先手跑一次"
@@ -1190,10 +1079,7 @@ setup_logrotate() {
 start_services() {
     step "起服务"
     if [ "$DRY_RUN" = 1 ]; then note "[dry-run] 不做 enable / restart"; return 0; fi
-    # `enable` 不许被 `|| true` 吞掉（20261007）：它失败的样子是**开机不自启** —— 平时
-    # 一点看不出来，只有机器重启后才暴露（服务全不在了），而那正是最不想排查的时刻。
-    # 它会失败的情形是真实的：单元文件里引用了不存在的用户、`systemctl` 在容器里、
-    # D-Bus 不可达……每一种都该当场说一句。
+
     if ! run_sudo systemctl enable saudade-rust saudade-agent; then
         warn "systemctl enable 失败 —— **这台机器重启后两个服务不会自己起来**"
         note "现在站点是好的（下面 restart 会拉起来），但重启之后要手工 start。"
@@ -1256,7 +1142,7 @@ verify() {
         say "口令在 $CRED_FILE。对话没反应时按 docs/deployment-and-ops.md §6 的排查表走。"
     else
         warn "有几项没通过（上面标了 ⚠️）。脚本没有回滚，配置都在原地，改完重跑即可。"
-        note "**本次以非 0 退出**（20261007 起；在此之前这里恒返回 0，脚本化调用看不出失败）。"
+        note "本次验收以非零状态退出。"
         note "按症状先看 logs/rust.log、logs/agent/agent.log、systemctl status <单元>。"
         note "agent 若是「导入期崩溃循环」（/health 空、worker 反复 respawn），"
         note "日志在 logs/agent/agent.log 而**不是** journalctl；F821 之类未定义名一眼可见。"
@@ -1279,7 +1165,7 @@ iot_emqx_install() {
         say "EMQX 已经装着了${v:+（包版本 $v）}"
         return 0
     fi
-    say "EMQX 没装。官方两条路：加 apt 源，或下 .deb。加源那条在 Ubuntu 24.04 上实测 404"
+    say "EMQX 未安装；请按当前发行版的官方安装说明配置。"
     say "（repos.emqx.io 上没有 noble 的 Release 文件），所以这里走 deb。"
 
     local os_id="" os_ver="" url
@@ -1401,7 +1287,7 @@ setup_iot() {
        · 还要能读到博客 .env 里的 JWT_SECRET（路径走 BLOG_ENV，别写死）
        · 对外提供 POST /api/devices/auth，{"username","device_id",…,"password"} → 200 放行
      有了源码之后：构建 → 落地 → systemctl enable --now saudade-device
-     设备侧固件骨架在 iot/firmware/（真相源在另一个仓 BigLeopardCat/ESP32-S3-OBC）。
+     设备侧固件由独立仓库 BigLeopardCat/ESP32-S3-OBC 维护。
 
    ${C_Y}⚠️ 公网面${C_0}：多了一个 TCP **8883** 要放行（设备直连，不经 nginx）。
      其余三个端口（1883 / 8083 / 18083）一律绑回环，公网入口只走 nginx 一处。
@@ -1409,12 +1295,7 @@ setup_iot() {
 EOF
 }
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# main
-# ═══════════════════════════════════════════════════════════════════════════════
-# 这台机器上的代码钉在哪个提交上（20261007 加）。排障时这是**第一个要问的问题**，
-# 而它此前只存在于跑脚本那个人的 shell 历史里（多跑几次、换个人来，就没人说得清了）。
-# 脏工作区也照记 —— 记的是"当时盘上是什么"，那正是"线上跑的是哪一版"的答案。
+
 record_versions() {
     local pr ar pd ad
     pr="$(git -C "$APP_DIR" rev-parse --short HEAD 2>/dev/null || true)"
@@ -1457,10 +1338,7 @@ main() {
         setup_systemd
         setup_logrotate
         start_services
-        # 验收的退出码**必须传出来**（20261007）：它从前是 `return 0` 恒真，于是
-        # 「后端没起来」「dist 不在」「两个单元没 enable」这些结论一个都传不到调用方 ——
-        # 在 CI / 脚本 / 别人写的 runbook 里，这个脚本永远是"成功"。`|| rc=$?` 这一写法
-        # 同时把 errexit 挡在门外：验收失败是**结论**，不是脚本本身的错误。
+
         verify || rc=$?
     fi
 

@@ -31,24 +31,7 @@ from mysql2pg import (DB_NAME, NO_DEFAULT, colliding_indexes,  # noqa: E402
 PG_BIN = os.environ.get("PG_BIN", "sudo -n -u postgres psql")
 PG_DB = os.environ.get("PG_DB", DB_NAME)
 
-# **手写的、MySQL 那边没有对应物的表**（见 `0001_rag_vectors.sql` 头注：向量从来没进过
-# MySQL；`chat_image` 同理，图片从来没进过任何库）。它们不进本判据的射程 ——
-# 向量那边逐位对账在 `verify_vectors.py`；`chat_image` 的判据在
-# `tests/pg_integration.rs`（往返逐字相等 + 级联删）。
-# 不加这个豁免的话，本判据从"搬完向量"那一刻起**永久红**，而红在一个正确的事实上；
-# 判据一旦有恒红的项，真红就没人看了。
-#
-# ⚠️ **豁免要覆盖三类对象，不只是表**（20261018 修）：`pg["idx"]`（索引）与
-# `pg["cons"]`（外键）那两条 diff 拿的是**未过滤**的 PG 侧集合。今天之前一直绿，
-# 只是因为 `rag_vector`/`rag_vector_space` **既没有二级索引也没有外键** ——
-# 也就是说，这份豁免以前只是"碰巧够用"。`chat_image` 两样都有，第一条就能撞上。
-# （触发器那条 diff 不受影响：它取的是全库触发器，而 `chat_image` 没有触发器。）
-#
-# ⚠️ 还有一件事要说清楚，别读成"已验"：**手写表的列没有任何东西在核对**
-# （列 diff 只遍历 MySQL 那侧的表）。这是手写表的既定代价。
-# 20261018 再加 `note_tag`（`0006_note_tag.sql`）：`note.tags` 那一列逗号串归一出来的
-# 关联表，MySQL 侧没有对应物。它的**列同样没有东西在核对** —— 判据在
-# `tests/pg_integration.rs`（回填往返逐字相等、外键级联按列生效、撞号归属、移动改指向）。
+
 HAND_WRITTEN = {"rag_vector", "rag_vector_space", "chat_image", "note_tag"}
 
 # 单列豁免：`(表, 列)` 点名，**不是**把整张表加进 `HAND_WRITTEN`（那会把它现有的
@@ -227,18 +210,7 @@ def main() -> int:
         if want != got:
             bad.append("%s\n      MySQL/生成器: %r\n      PG         : %r" % (what, want, got))
 
-    # ⓪ **业务库里不该有 langgraph 的 checkpoint 表**（20261019，点名判据）。
-    #
-    # 为什么值得单独一条：这四张表是**第三方库在运行时建的** ——
-    # `agent/checkpoint.py::build_checkpointer()` 在 agent **启动期** `saver.setup()`，
-    # 而它建在 **DSN 指向的那个库**里。某次把 `CHECKPOINT_DSN` 指到业务库起了一次 agent，
-    # 表就落这儿了（20261018 实测：三张数据表全 0 行，只有版本账那 6 行）。
-    #
-    # ⚠️ **它们的危害不是"多了几张表"，是"业务库的结构能在没有任何编号迁移的情况下变化"**
-    # —— 而本判据是唯一会因此转红的东西。所以它必须**指名道姓**地说出原因：
-    # 只说"表集合不一致"的话，读的人拿到的是两份长长的表名 diff，看不出该去改哪个旋钮。
-    #
-    # 顺手从下面那条表 diff 里摘掉：同一个原因报两次，只会把真红淹掉。
+
     stray = sorted(t for t in pg["cols"] if is_stray_checkpoint(t))
     if stray:
         bad.append(

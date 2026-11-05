@@ -1,36 +1,5 @@
 #!/usr/bin/env bash
-# ═══════════════════════════════════════════════════════════════════════════════
-#  Docker 安装路的**离线判据**：本机没装 docker 也能跑，一个命令看完全部结论。
-#
-#    bash deploy/docker/check.sh
-#
-#  它判的都是"错了就静默"的那几件事，每一条都能判死：
-#   ① 所有脚本 `bash -n` 过；prepare.sh 的 `--dry-run` / `--print` **一个字都不写**
-#      （并且它 stderr 里不许出现 `command not found` —— 不带引号的 heredoc 正文里
-#       一个反引号就会被当命令执行掉，那是最容易漏的一种自伤）
-#   ② compose.yaml 解析得过、host 网络的服务没有 ports、healthcheck / depends_on 语义对得上、
-#      引用的文件与插值键都齐（后两档要先跑过 prepare.sh；没跑过就是"跳过"，不是"红"）
-#   ③ **渲染字节比对**：docker 侧的 nginx 配置 == 裸机 install.sh 的产物（同输入）
-#      —— 这条是这一整套里最值钱的判据（本机无 docker 也能跑）
-#   ④ 键集合不漂：prepare.sh 会写进两份 .env 的键，全都在两份 `.env.example` ∪
-#      install.sh ∪ Rust `env::var` 那张名单里；且 **IOT_ENABLED 不在 agent 那份里**
-#      （空串给 bool 字段 ⇒ pydantic ValidationError ⇒ agent 导入期崩，见 CONTRIBUTING）
-#   ⑤ 三个镜像里那几条"不写就会静默出错"的指令都在（构建顺序、产物断言、tzdata…），
-#      外加**后端那条 `find … touch`**：cargo 按 mtime 判新鲜度，而 BuildKit 的 COPY 保留
-#      clone 时的旧 mtime ⇒ 不刷新就等于"真源码一个字都没编、空桩上线"（20261007 实测）；
-#      有 cargo 的机器上还会把这条机制**可执行地复刻**一遍（⑤.1）
-#   ⑥ prepare.sh 写进 agent.env 的键，agent 那边真的有读取路径（Settings 字段 or os.environ）
-#   ⑦ db-init.sh 的控制流：拿一个**桩 mysql**（只录不连）跑五种场景 —— 空库/已有表/
-#      已有管理员/建库假成功/同名非管理员账号。这是它在上线前的唯一一次被执行。
-#   ⑧ **裸机安装器 `deploy/install.sh` 的 `setup_env` 真跑一遍**（把脚本复制到 scratch、
-#      摘掉末尾的 `main "$@"` 再 source）：全新 `.env` 里不许留下 `.env.example` 的占位值
-#      （那正是 20261007 之前那条 bug：占位值未被覆盖 ⇒ 后端连不上库、而安装器全绿），
-#      已有的 `.env` 一个键都不许被改；顺带钉住**两份 urlenc 实现输出逐字相同**（那份
-#      连接串拼装现在有两个消费者：dotenvy 与 compose/env_file 两条解析路）。
-#
-#  **不判**（要靠真 docker 机器）：镜像能构建、容器能起来、证书受信、对话能调工具 ——
-#  那些在 README 的《验收清单》里，每条都给了能判死的命令。
-# ═══════════════════════════════════════════════════════════════════════════════
+
 set -uo pipefail     # 故意**不用 -e**：要把每条判据都跑完再报总账（每条自己判）
 
 cd "$(dirname "${BASH_SOURCE[0]}")" || exit 1
@@ -248,20 +217,9 @@ l_vendor="$(grep -n 'npm run vendor:live2d' Dockerfile.frontend | cut -d: -f1 | 
 assert_has Dockerfile.backend 'mkdir -p /srv/logs/frontend' "后端镜像预建监控日志目录（打不开也返回 200 ⇒ 只能靠预建）"
 [ "$(grep -c 'cargo build --release --locked' Dockerfile.backend)" = 2 ] && pass "后端两次 --locked（桩层缓存 + 真源码）" \
     || fail "后端 cargo build 不是两次 --locked"
-# ⚠️ 桩层缓存有一处"删掉就静默"的前提（20261007 用户那台机器实测）：cargo 按 **mtime**
-# 判目标新不新，而 BuildKit 的 COPY **保留 clone 时的旧 mtime** ⇒ 真源码反比刚编出来的桩
-# 产物更旧 ⇒ cargo 报 `Finished` 一个字节都不编，`cp` 复制的还是 `fn main() {}`。
-# 症状：镜像构建全绿、容器退出码 0、无限 Restarting，二进制里没有一句启动日志。
+
 assert_has Dockerfile.backend 'find src -type f -exec touch' "真源码 COPY 进来后刷新 mtime（不刷新 ⇒ cargo 拿空桩当已最新）"
-# 上面那条 `find … touch` 的**工具依赖**，以及 C 工具链：逐包判，**不写整串**（20261015）。
-# 原写法是整串精确匹配 `install -y --no-install-recommends gcc libc6-dev findutils`，
-# 而 Dockerfile 那行后来加了 `cmake`（它上面的注释写明 aws-lc-sys 要用 CMake 配那棵 C 源树）
-# ⇒ 整串再也匹配不上：**恒红，而红的原因跟它想守的东西无关**（它守的 findutils 好好的）。
-# 两条讲究：
-#   ① 只在**那条 apt 行**里找包名，不全文 grep —— 文件上方那段注释里也出现 gcc / findutils
-#      这些词，全文匹配会拿注释当证据（同族的坑本仓记过：判据要读程序、别读文本）；
-#   ② 取"触到 find 那条**之前**的最后一条 apt 行" = 它俩同在那个构建阶段，
-#      不靠"文件里第一条 apt 行"这种巧合（runtime 阶段还有一条装 tzdata 的）。
+
 l_find_apt="$(grep -n 'find src -type f -exec touch' Dockerfile.backend | cut -d: -f1 | head -1)"
 l_apt="$(grep -n 'apt-get install -y --no-install-recommends' Dockerfile.backend | cut -d: -f1 \
     | awk -v f="${l_find_apt:-0}" '$1 < f { last = $1 } END { print last }')"
@@ -491,7 +449,7 @@ setup_env_section() {
         fail "fresh：两份 .env 没建出来 —— 本节后面几条判不了"
         return 0
     fi
-    # ① 模板占位必须被顶掉（这条就是 20261007 之前那个 bug 的判据）
+
     bad="$(grep -hvE '^[[:space:]]*#' "$BE8" "$AE8" \
            | grep -E '改成你的密码|请换成一串随机字符|<你的域名>|your-api-key-here|^[A-Z_]+=https?://example\.com')"
     if [ -n "$bad" ]; then
@@ -587,12 +545,7 @@ EOF
 
 # ═══ ⑧ install.sh 的 setup_env：全新 .env 不留占位 / 已有的一个键都不动 ═══════════
 sec "⑧ install.sh 的 setup_env（裸机安装路）"
-# 这一节判的是 20261007 修掉的那条 bug 本身：`.env.example` 里那些**未注释的中文占位**
-# （`DATABASE_URL=…改成你的密码…` / `JWT_SECRET=请换成一串随机字符` / `SITE_URL=https://example.com`）
-# 曾经被"只补缺键"的语义挡在门外 ⇒ 安装器生成的真值一个都没落盘，而后端连不上库、
-# agent 指着一个不存在的域名，**安装脚本还全绿**。
-# 做法：把 install.sh 复制进 scratch、摘掉末尾那句 `main "$@"`，再 source 进来直接跑
-# `setup_env`（顶层的参数循环没有参数时一次都不转 ⇒ source 进来只会定义函数，不装任何东西）。
+
 E8="$SCRATCH/e8"; rm -rf "$E8"; mkdir -p "$E8/deploy/nginx" "$E8/app/saudade-blog-agent"
 cp ../../deploy/install.sh      "$E8/deploy/install.sh"
 cp ../../deploy/nginx/render.sh "$E8/deploy/nginx/render.sh"

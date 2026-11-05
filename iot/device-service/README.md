@@ -1,7 +1,8 @@
 # device-service（设备服务，Rust, :3100）
 
 设备注册表、`device_key` 校验、参数配置下发、遥测缓存。它连同机的 EMQX（内部账号），
-对外只经 nginx 的 `/device-api/`，与博客共用同一套 JWT（`JWT_SECRET`）。
+浏览器与 Agent 的管理请求经 nginx `/device-api/` 转到 Rust 鉴权网关，再交换设备专用短期令牌。
+设备 OTA 的 Basic 认证和 broker 的同机 HTTP 回调仍直达设备服务。
 
 ## ⚠️ 服务本体**不在本仓**
 
@@ -21,7 +22,7 @@
 
 ## 它要满足的接口契约
 
-`gen_svc_env.py` 生成的那份 `svc.env` 就是它的全部配置输入：
+`gen_svc_env.py` 提供设备运行参数；独立账号部署时合入私有 `device-runtime.env`：
 
 | 变量 | 用途 |
 |---|---|
@@ -29,10 +30,11 @@
 | `DEVICE_LISTEN` | 监听地址，默认 `127.0.0.1:3100` |
 | `DEVICE_DB_PATH` | SQLite 落盘路径（设备表、配置历史、遥测） |
 | `DEVICE_LOG_FILE` | 额外追加写的日志文件（systemd 下 journald 另有一份） |
+| `DEVICE_FW_DIR` | 固件与版本目录 |
 
-另外它**必须能读到博客的 `.env`**（取 `JWT_SECRET` 验来访的博客令牌）。别把这个路径写死：
-博客仓库换个目录名或换台机器，写死的那条引用**不会报错，只会静默失效**（拿不到 secret ⇒
-所有设备令牌都验不过）。读环境变量（`BLOG_ENV`）并给一个相对推导的默认值。
+设备服务只读取与 Rust `DEVICE_SIGNING_SECRET` 对应的设备专用密钥，不读取真实博客 `.env`。
+旧二进制的固定读取路径可通过只读挂载映射到专用 `device-jwt.env`，其中的 `JWT_SECRET`
+只是旧解析器的字段名。账号、状态目录和挂载模板见[独立服务账号](../../deploy/service-isolation.md)。
 
 对外要提供的一个关键端点：
 

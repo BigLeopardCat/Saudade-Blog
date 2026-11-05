@@ -1,26 +1,15 @@
 #!/bin/bash
-# CI 的部署触发入口（服务器侧）。用法：bash scripts/deploy/trigger_deploy.sh <完整提交号>
-#
-# 为什么要有它：原先 CI 那步是
-#   ssh ... "nohup bash deploy_from_r2.sh > logs/deploy.log 2>&1 &"
-# 挂到后台就立刻返回，**部署崩了 CI 照样是绿的**。20260923 实测：两个 run 互相覆盖产物、
-# 后端那一半根本没落地，而两次 CI 都是 success——CI 的绿灯对部署结果没有任何含义。
-#
-# 这里同样把部署放进 nohup（ssh 断线不会让部署半路夭折），但**在同一个 ssh 会话里等它结束**，
-# 于是 ssh 的退出码 = 部署结果，CI 的绿灯才真的代表"部署成功"。
+# Run deployment independently of SSH lifetime and propagate its result to CI.
+
 set -e
-# PROJECT_DIR 可覆盖（20261001 开源前准备）：默认仍是原开发机的绝对路径，CI 那条 ssh 调用
-# 不带这个变量 ⇒ 线上行为零变化；别人把仓库克隆到别处时才需要 `PROJECT_DIR=... bash ...`。
+
 cd "${PROJECT_DIR:-/home/ubuntu/Saudade-Blog}"
 
 SHA="${1:-}"
 mkdir -p logs
 LOG="logs/deploy.log"
 
-# 20260925：每次部署之间画分割线。日志是**追加**的（永不换文件），一天跑几次之后
-# `tail -50` 看到的是好几摊混在一起的输出，而"这次部署从哪一行开始、到哪一行结束"
-# 只能靠肉眼找 `触发部署` 那一行——部署中途失败时，后半截日志属于哪一次全靠猜。
-# 判分线成对写：开始（触发时）+ 结束（trigger 自己等到 wait 返回，所以它知道成败）。
+
 RULE="================================================================================"
 banner() {
   echo "" >> "$LOG"

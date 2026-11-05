@@ -143,15 +143,7 @@ def main():
         sys.exit("请用 --admin-uid 指定一个管理员 uid（探针不会替你猜哪个是管理员）")
 
     admin_uid = args.admin_uid
-    # **不带 `ver` 声明**（20260929 修）：这里的令牌是**仪器**不是被测对象，它不该对
-    # "这个账号今天的代次是几"做任何假设——原写法写死 `ver=0`，而 20260924 那轮测试账号
-    # 轮换把 721 的代次 +1 了 ⇒ 【零】恒 401 ⇒ 连续三夜红，而夜间把它读成「冻结/改密码/
-    # 旁路收口有回归」（一句会把人带去查安全闸的假警报）。
-    # 不带 `ver` 正是**代调/旧令牌的形状**（`authz::check_token`：`claims_ver` 缺席 ⇒
-    # 跳过代次比对、**冻结检查照旧**），golden 侧的 `eval/identity_preflight.py` 用的就是
-    # 这条形状（它的头注写着"连不带 ver 这条都一致"）——两个仪器从今天起同形。
-    # 代次比对本身**没有因此少验**：它验在**靶子账号**身上（那边是真登录令牌、带 ver，
-    # 冻结 / 改密码之后必须被拒），本探针【二】【三】就是那两节。
+
     admin = sign(admin_uid, ver=None)
     stamp = time.strftime("%Y%m%d%H%M%S")
     name = f"probe_revoke_{stamp}"
@@ -162,10 +154,7 @@ def main():
     st, r = call("GET", "/api/protected/stats/users", admin)
     check("管理员令牌打得开后端（不是 401/403）", st == 200, f"http={st}")
     if st != 200:
-        # **退出码 3 = 前置不可用 = 这一夜"没验"**，不是"验出来有回归"（20260929）。
-        # 与 golden 的 `identity_preflight` 三态同义（那里 UNUSABLE ⇒ 退出码 3）：管理员
-        # 身份不通时，下面每一条结论都没有意义，读日志的人不该看到一句"有回归"。
-        # 夜间脚本按退出码分开措辞（见 `scripts/nightly_regression.sh` 那一节）。
+
         print(f"\n⚠ 前置不可用：管理员 uid={admin_uid} 的令牌打不开后台（http={st}）"
               "——这一夜**没有评估**收回语义，不是「有回归」。"
               "换一个角色相符、未被冻结的 uid 后重跑（先看 eval/identity_preflight.py 的判据）。")
@@ -207,9 +196,7 @@ def main():
         check("冻结账号连登录都进不来（口令正确也一样）",
               st == 200 and r.get("code") == 500 and "冻结" in (r.get("message") or ""),
               f"http={st} msg={r.get('message') if isinstance(r, dict) else r}")
-        # 下面两条锁的是当天同时收口的两处旁路：graph.rs（向量图谱）与 talks.rs（河灯）
-        # 此前各自手写「只验签不查库」的 current_uid ⇒ 冻结账号照旧能刷 embedding、放河灯。
-        # 它们现在走 auth_uid，冻结即解析不出身份 ⇒ 在这两条路径上表现为"像没登录"。
+
         st, r = call("POST", "/api/public/graph/query", tok, {"q": "冻结旁路"})
         check("冻结令牌打向量图谱查询 → 401（旁路一已收口）",
               st == 401 and isinstance(r, dict) and r.get("reason") == "login_required",

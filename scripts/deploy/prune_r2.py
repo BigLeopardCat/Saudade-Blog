@@ -1,38 +1,9 @@
 #!/usr/bin/env python3
-"""R2 产物清理：只保留最近 N 个提交的部署包，其余 deploy/ 下的对象一律删掉。
+"""列出或清理 R2 deploy/ 下的旧产物，默认只列清单。
 
-为什么要有它（20260924，用户报"R2 会被写爆产生账单"）：实测桶内 `deploy/` 前缀下
-11323 个对象 / 2735MB，构成是——
-
-  · 11299 个 `deploy/frontend/dist/**`（2432MB）：CI 的「for CDN」那一步把构建产物
-    **逐文件**上传（每次部署约 4986 次 PUT ⇒ 一个月 8 次/天就超过 R2 免费档的
-    100 万次 Class A 写入）。这一步**没有任何消费方**：nginx 服务的是本机
-    `frontend/dist`，`VITE_CDN_BASEURL` 重写的是 `/api/protect/download/` 图片接口、
-    与这些静态对象无关；内容与 `deploy/<sha>/deploy.tar.gz` 里的 frontend/dist 完全
-    重复。⇒ 那一步已从工作流里删掉，本脚本负责把存量清掉。
-  · 21 个 `deploy/<sha>/deploy.tar.gz`（289MB）：真正的部署产物，按提交号归档。
-  · 2 个 20260923 改造前的遗留单文件键（`deploy/frontend.tar.gz`、`deploy/saudade_blog_bin`）。
-
-保留策略（用户 20260924 拍板）：**最近 3 个提交的包**——留一条约 3 次部署的回滚窗口
-（手动回滚 = `DEPLOY_SHA=<旧提交> bash scripts/deploy/deploy_from_r2.sh`，见 CLAUDE.md §6）。
-被删掉的包就取不回来了，只能重跑 CI 用那个提交号重新构建（所以窗口别设成 0）。
-
-判据是**白名单**，不是"删得干净"：只留 `deploy/latest.txt` 与最近 N 个
-`deploy/<40 位提交号>/deploy.tar.gz`，`deploy/` 下其余任何键都算残留（含前端那一棵树、
-遗留单文件键、以及将来误传的散键）。
-
-用法（默认**只列不删**，要真删得显式加 `--apply`）：
-    python3 scripts/deploy/prune_r2.py                  # 看会删掉什么
-    python3 scripts/deploy/prune_r2.py --apply          # 真删（保留最近 3 个包）
-    python3 scripts/deploy/prune_r2.py --apply --keep 5
-    python3 scripts/deploy/prune_r2.py --apply --keep-sha "$(git rev-parse HEAD)"
-
-`deploy_from_r2.sh` 在一次部署**落地成功之后**调用它（`--keep-sha` = 本次部署的提交），
-所以每次部署结束 R2 都会回到"latest.txt + 最近 N 个包"这个不变量上。清理失败**不影响**
-部署结果（账单卫生不该把一次成功的部署标红）。
-
-凭据只从环境变量读（与 upload_to_r2.py / deploy_from_r2.sh 同一套：
-R2_ENDPOINT / R2_ACCESS_KEY / R2_SECRET_KEY / R2_BUCKET），本脚本不打印任何凭据。
+保留 latest.txt 和最近 N 个完整提交包；其余 deploy/ 对象属于清理候选。
+默认保留三个提交，删除后的包需要重新构建才能恢复。
+使用 --keep 调整窗口，确认后加 --apply；不处理 deploy/ 之外的数据。
 """
 import argparse
 import os
@@ -58,7 +29,7 @@ def main() -> int:
 
     for k in ("R2_ENDPOINT", "R2_ACCESS_KEY", "R2_SECRET_KEY", "R2_BUCKET"):
         if not os.environ.get(k):
-            sys.exit(f"❌ 缺环境变量 {k}（照 README/CLAUDE.md §6：先在 shell 里 export .env 那几行）")
+            sys.exit(f"❌ 缺环境变量 {k}，请按 docs/deployment-and-ops.md 配置私有发布环境")
 
     s3 = boto3.client("s3",
                       endpoint_url=os.environ["R2_ENDPOINT"],

@@ -1,3 +1,4 @@
+# PRs run isolated checks; every mainline push or manual release deploys a complete snapshot.
 name: Deploy Blog
 
 on:
@@ -5,43 +6,20 @@ on:
     branches: [cn_sora_blog]
   # 手动补发当前 HEAD；常规主分支 push 也发布完整快照，见 check-changes.deploy。
   workflow_dispatch:
-  # PR 上**只跑 check**（20261006 加）。动机：本仓已经是 public 仓库，而此前 PR 上
-  # **一个检查都不跑**——PR 页面"没有红灯"的含义是"没跑过"。外部贡献者提交后得不到任何反馈，
-  # 而他们本机多半跑不了 `cargo test` 里的真 MySQL 那一层。
-  #
-  # 能不能跑：`check` job **一个 secret 都不需要**（提交信息闸 + cargo test + mysql:8.0
-  # 服务容器 + tsc + npm test + eslint），所以**连 fork 来的 PR 也跑得起来**——
-  # 而部署那一半要 R2 凭据与 SSH 私钥，GitHub 不向 fork PR 传 secret，**那一半在 PR 上必须不跑**。
-  # 做法不是加 job 级 if，而是让 `check-changes` 的 `deploy` 输出在 PR 上恒为 false：
-  # `build-and-deploy` 的每一步本来就带 `if: ...deploy == 'true'`，于是它自然空转。
+
   pull_request:
     branches: [cn_sora_blog]
 
-# 并发闸（20260923）：同一分支连着推两次会起两个 run，此前两者**并行**，而部署的先后
-# 由"谁构建得快 / 谁上传得晚"决定——实测较新那个（只改前端、包更小）先跑完，较旧那个后
-# 触发部署时拉到的已是前者覆盖过的产物，于是它自己的后端那一半从未落地。
-# 这里只串行化、不打断正在跑的（cancel-in-progress: false）：后来的 run 排队等前一个
-# 跑完，最终落地的必然是较新那次的产物。
+
 concurrency:
   group: deploy-${{ github.ref }}
-  # PR 上可以打断（20261006）：那里一次部署都不会发生，排队等前一个只是让人白等一分钟。
-  # push 上**不能**——那一次串行化是 20260923 那次"较新的包覆盖较旧的包、导致某次后端
-  # 从未落地"事故的修复，见上面那段。
+
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
 
-# 令牌权限写死在文件里（20261006）。此前**一条都没写**，靠仓库设置里的
-# `default_workflow_permissions: read` 兜着——那个值现在是对的，但它住在仓库设置里、
-# 不在仓库里：谁能改仓库设置，谁就能悄悄把这里放宽成 `write`，而 workflow 文件上
-# **一个字都不会变**，评审时看不出来。
-#
-# 本仓的部署链不需要 GitHub API 的写权限：产物上传到 R2（用自己的密钥）、
-# 部署靠 ssh 触发服务器上的脚本。所以 `contents: read` 就是全部所需。
-# ⚠️ 哪天真想让 `dorny/paths-filter` 在 **PR** 上也跑，得再加 `pull-requests: read`
-# ——它走 API 列 PR 的改动文件（现在那一步带 `if: github.event_name == 'push'`，
-# 所以不需要）。
+
 permissions:
   contents: read
 
@@ -51,30 +29,21 @@ jobs:
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
-      # concurrency 只保留一个等待中的 run，后来的文档/配置提交可能替换应用更新。
-      # 若仅看本次 diff，最新 run 会跳过部署，应用更新便永远不发布。
-      # 因此所有主分支 push 都发布当前完整快照；代价是文档提交也构建，换取不漏发。
-      # PR 明确不部署；backend/frontend 输出仅用于查看变更分类。
+
       deploy: "${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
-      # 手动触发时 `github.event.before` 是空的（不是 push 事件就没有"上一个提交"），
-      # 喂给 paths-filter 会拿一个空 base 去比 —— 所以这一步**只在 push 时跑**，
-      # 手动那次直接由上面的 `deploy` 短路成 true，不看过滤器。
-      # PR 上同理不跑（它不是 push），而且 PR 上本来就不部署（见上面的 `deploy`）。
+
       - if: github.event_name == 'push'
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
         with:
           base: ${{ github.event.before }}
           ref: ${{ github.sha }}
-          # 过滤器只认"**会改变产物**"的路径。`tests/**`（Rust 集成测试）**故意不在 backend 里**
-          # ——它由 check job 编译执行、不进 release 二进制，所以只改测试的 push 合法地不部署
-          # 任何东西。代价要知道：这种 push 的 run 也是**全绿**（build-and-deploy 的每一步都被
-          # `if: deploy == 'true'` 跳过，job 仍 success），看绿灯时要意识到它可能什么都没做。
+          # 仅分类变更；所有主线 push 都发布完整快照，不由这些分类决定是否部署。
           filters: |
             backend:
               - 'src/**'
@@ -85,54 +54,21 @@ jobs:
               - 'frontend/public/**'
               - 'frontend/package.json'
               - 'frontend/package-lock.json'
-              # 构建输入不止 src/public（20260923 补）：`npm run build` 还吃 index.html
-              # （Vite 的入口，标题/挂载点在这里）与 vite/tsconfig 三件（base、define、alias、
-              # 路径解析）。它们此前不在过滤器里 ⇒ 那种 push 被判成"前端没变"，CI 绿灯、
-              # 线上照旧——与 base 曾经来回改过的那段历史正好撞在同一处。
+
               - 'frontend/index.html'
               - 'frontend/vite.config.ts'
               - 'frontend/tsconfig.json'
               - 'frontend/tsconfig.node.json'
-              # 看板娘前端（20261002 前端搬家）：它的源码与那两棵树都在 agent 仓，本仓只留
-              # `frontend/widget.lock.json` 里的 sha 与取它的脚本。**这两条必须在**：
-              # 「只把 pin 挪一格」的 push 是最典型的"前端变了"——漏了它就会被判成前端没变，
-              # CI 全绿而线上照旧，正是上面 :50-53 那条注释记着的同一类事故。
+
               - 'frontend/widget.lock.json'
               - 'frontend/scripts/**'
             # 部署管线本身：改了它就跑一次完整部署，顺带把新管线真跑一遍（别让改动只躺在仓库里）
             infra:
               - '.github/workflows/**'
               - 'scripts/deploy/**'
-
-  # 质量闸（20260923）：此前 CI **零测试零类型检查**——`npm run build` 走 esbuild 只转译不查
-  # 类型（存量 14 条类型错一路畅通到线上），`cargo build` 也只验"编译得过"，lint 从未跑过。
-  # 这个 job 把四样检查挡在部署前面：
-  #   ① `cargo test` —— tests/api_tests.rs 用 MockDatabase（不连库）+ 6 个文件里的内嵌单测，
-  #      CI 上跑得起来（此前 CI 只 `cargo build --release`，等于只验编译）；
-  #   ② `tsc --noEmit` —— 前端真类型检查（存量 14 条已于同日清零，故可直接设闸）；
-  #   ③ `npm test` —— tests/ 下全部 node 套件（条数以 tests/run-suites.mjs 的 glob 为准，
-  #      这里不写死数字：20260924 加一个套件就让"11 个"这句注释过期了一次）。
-  #      此前 package.json 里那句 "test": "jest" 是死脚本：没配置也没依赖，谁都跑不了；
-  #   ④ 真 PostgreSQL（20261003 起是 MySQL，20261018 切库时跟着换）—— 同一个 `cargo test`
-  #      里还跑着 tests/pg_integration.rs，由一个 postgres:16 服务容器供库。它验的是 mock
-  #      结构上验不了的那一类（`SUM` 的返回类型、NULL 折零、`IN ()` 短路、外键约束），
-  #      代价是每次 push 多十几秒容器启动。**换到 PG 之后这一层更值钱**：`sqlx-postgres`
-  #      的整数解码按 OID 精确匹配（`i64` 读不了 `int4`、`i8` 读不了 `smallint`），
-  #      mock 与 `cargo check` 都验不出它，只有真库能。
-  # 它与"要不要部署"无关：**任何 push 都跑**（改了测试/tsconfig 也算），而部署被它 needs 住
-  # ——检查不过就不构建、不上传、不部署。`*.test.py` 那几套要 Playwright，故意不进 CI。
   check:
     runs-on: ubuntu-latest
-    # 真 PostgreSQL（20261018 切库）：`tests/pg_integration.rs` 要一个**真的库**才验得了
-    # 那几件 MockDatabase 结构上证明不了的事——它既不执行 SQL 也不解码返回行，而真库类型
-    # 往返（`SUM` 的返回类型、零行时的 NULL、`rows_affected` 的语义、唯一键冲突的 SQLSTATE）
-    # 全在那一层。**它门住部署**（build-and-deploy 的 needs 里有本 job）：真库这条闸红掉，
-    # 那一版就不上线。口令是**一次性的容器口令**，与生产库无关（容器随 runner 消亡）。
-    #
-    # 库名取 `saudade_blog` 而不是 `saudade_blog_it`：`scripts/migration/pg/0000_schema.sql`
-    # 里那条 `ALTER DATABASE "saudade_blog" SET timezone …` **写死了库名**，换个库名跑它
-    # 会在 `ON_ERROR_STOP=1` 下当场中止。容器是随 runner 消亡的一次性实例，
-    # "别指向生产库"这件事由 `TEST_PG_URL` 这个变量保证，不由库名保证。
+
     services:
       postgres:
         image: postgres:16
@@ -159,14 +95,7 @@ jobs:
         run: bash scripts/ci/lint-workflows.sh
 
       - name: 锁文件不许带本机镜像源
-        # 排在最前面：这条 5 秒就能判，而它挡住的那类坏法会在 3 分钟后（npm ci）才炸，
-        # 且炸出来的是一句 `getaddrinfo ENOTFOUND mirrors.…`，看不出跟锁文件有关。
-        # 本质：本机 npm 走 `~/.npmrc` 里配的镜像，**任何一次在本机重新生成锁文件**
-        # 都会把新条目的 `resolved` 写成镜像地址。本机一切正常（npm 认得那个源），
-        # runner 上却连不上 —— 20261006 真踩过一次：3 个条目把整个 check 打红。
-        # 只查一件事：每条 resolved 的主机名必须是 registry.npmjs.org。
-        # 将来若真的引入 git/`file:` 依赖（它们的 resolved 本来就不是 http 源），
-        # 这条会**响亮地**变红 —— 那时按提示放宽白名单，别把这条删了。
+
         run: |
           set -euo pipefail
           bad="$(grep -o '"resolved": "[^"]*"' frontend/package-lock.json \
@@ -201,14 +130,7 @@ jobs:
           MSGFILE="$(mktemp)"
           while read -r sha; do
             [ -n "$sha" ] || continue
-            # dependabot 生成的提交豁免。首行由机器人按 `Bump <包> from <旧> to <新>` 拼，
-            # 包名一长就必然超过 60 字符——20261006 实测：16 个 PR 里 6 个红在这条上，
-            # 一条都不是代码问题，而红的是机器人没法自己改的那种。dependabot 自己有时会
-            # 缩短首行（丢掉版本区间）来碰运气，所以是"有时绿、有时红"，更难判读。
-            # 规则本体一个字没动，`.githooks/commit-msg` 仍是唯一事实源——这里只是按
-            # **作者**把它本来就不适用的一类摘出去。
-            # 这不是安全闸（是格式闸）：谁真想绕，把提交邮箱里塞个 dependabot 就行，
-            # 后果也只是格式不合规。
+
             case "$(git log -1 --format=%ae "$sha")" in
               *dependabot*)
                 echo "跳过 ${sha:0:9}：dependabot 生成的提交（首行长度不由人控制，**不是**通过）"
@@ -226,7 +148,6 @@ jobs:
             echo "本次跳过 ${skipped} 条 dependabot 提交（**不是**通过）"
           fi
           exit "$fail"
-
       - name: Setup Rust
         uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:
@@ -242,9 +163,7 @@ jobs:
           # 混用同一个 target 缓存会把两种产物搅在一起
           key: cargo-test
 
-      # ⚠️ 顺序要紧（20261002 前端搬家）：看板娘前端**不在本仓的 git 里**（随 MIT 分发搬进了 agent
-      # 仓），而 `cargo test` 里那条 `include_str!("../../frontend/public/live2d-widgets/
-      # chat-stream.js")` 是**编译期**读入 ⇒ 必须先把它取到那条路径下，Rust 这一半才编得过。
+
       - name: Setup Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -276,21 +195,10 @@ jobs:
           echo "PostgreSQL 服务容器 60 秒内没起来" >&2; exit 1
 
       - name: Bootstrap PostgreSQL schema（真库集成测的库）
-        # 建库走**仓库里那份脚本**，不在 CI 里另抄一份 recipe —— 顺带让"从零建库"
-        # 这条路每次 push 都真跑一遍。`docker exec -i` 省掉在 runner 上装
-        # postgresql-client 的那一步；**`-i` 不能少**（脚本从 stdin 喂 SQL，
-        # `docker exec` 默认不接 stdin ⇒ 拿到空输入、**每次都"成功"**、
-        # 建出来的库一张表都没有，然后集成测才在"库结构不全"上红）。
-        # `ON_ERROR_STOP=1` 同理由：没有它 psql 会把每条报错打完还退出 0。
+        # -i 传递 SQL 标准输入；ON_ERROR_STOP 确保迁移错误使检查失败。
         run: |
           set -euo pipefail
-          # ⚠️ 20261018 起**不是只加载 `0000`**：清单的唯一事实源是
-          # `scripts/migration/pg/ci_schema_files.py`（它同时持有"哪些进 CI、哪些不进、
-          # 为什么不进"，`--self-test` 断言磁盘上每个编号迁移都归过类）。
-          # 此前只喂 0000 ⇒ 任何"依赖某个编号迁移建出来的表"的集成测在这里红在
-          # **库结构不全**上，红得与代码无关，而**本机全绿**（本机库是完整的）。
-          # 加 `chat_image` 时第一次撞上这个洞（`rag_vector` 早就没进 CI，
-          # 只是那时没有任何 CI 判据碰过它）。
+
           for f in $(python3 scripts/migration/pg/ci_schema_files.py); do
             echo "── 加载 $(basename "$f")"
             docker exec -i ${{ job.services.postgres.id }} \
@@ -301,7 +209,6 @@ jobs:
           echo "✓ 结构就绪：$(docker exec ${{ job.services.postgres.id }} \
             psql -U postgres -d saudade_blog -X -q -t -A \
             -c "SELECT count(*) FROM pg_tables WHERE schemaname='public'") 张表"
-
       - name: 迁移清单自检（磁盘上每个编号迁移都归过类）
         # 与上一步同一份事实源。放在这里是为了让"加了 0004 却没说它进不进 CI"
         # 变成一条**当场可读的红**，而不是三个月后某个集成测的假红。
@@ -355,14 +262,7 @@ jobs:
         working-directory: ./frontend
 
       - name: ESLint
-        # 20260923 起是真闸（退出码非 0 就拦构建/部署）。判据 = **error 数为 0**。
-        # 20261013：配置文件从 `.eslintrc.cjs` 换成 `eslint.config.js`（flat config，
-        # eslint 8→10 之后没有第二条路）。降级口径**原样搬过去**：no-explicit-any 与
-        # ban-ts-comment（存量 114 + 27）仍是 warning，所以 `npm run lint` 里**不能加
-        # `--max-warnings 0`**（加了就等于没降级）——代价是新增的 warning 不拦，收益是
-        # 这 141 条能一直看得见、清完删掉那两行即可收紧。
-        # 同一轮里多出来的两族 warning（react-hooks 的 React Compiler 规则 67 条、
-        # react-refresh 文案变更）也按这个口径压着，逐条记在 eslint.config.js 里。
+
         run: npm run lint
         working-directory: ./frontend
 
@@ -478,10 +378,7 @@ jobs:
         with:
           persist-credentials: false
 
-      # 20260923：只要跑这次部署，就**两半都构建**（不再按 paths-filter 只构建变化的那一半）。
-      # 只装一半的包会让"部署某个提交"不再等于"线上就是那个提交的状态"——实测过一次：
-      # 只构建前端的包把含二进制的包覆盖掉，后端那一半永远没落地。整包构建换来的是
-      # 「部署 sha X ⇒ 线上 = 状态 X」这条可核对的性质。
+
       - name: Setup Rust
         if: needs.check-changes.outputs.deploy == 'true'
         uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
@@ -516,11 +413,7 @@ jobs:
           # 代码侧的缺省是**空串**（fork 不该继承本项目作者的署名），没配时构建会把那一行
           # 整条删掉。⚠️ **这个 Variable 必须设**，否则线上的署名会消失。
           VITE_SITE_AUTHOR: ${{ vars.VITE_SITE_AUTHOR }}
-          # 站名与描述（20261007 起也走 Variable）：<title> / og:title / og:description /
-          # twitter:* / 各页标题后缀 / 首页 SeoHelmet 全部取自这两项。**代码里不再写死**——
-          # 仓库是公开的，写死等于把本站的品牌与描述交给每个 clone 它的人。
-          # 未设时用中性占位（"个人博客" / "本站开发地址，尚未配置站点描述。"），构建日志会
-          # 打一行 [site-identity] 警告；线上要自己的文案就必须设。
+
           VITE_SITE_TITLE: ${{ vars.VITE_SITE_TITLE }}
           VITE_SITE_DESCRIPTION: ${{ vars.VITE_SITE_DESCRIPTION }}
           # keywords（<meta name="keywords">）。**缺省空串 ⇒ 构建时整行删掉**：主流搜索
@@ -528,33 +421,20 @@ jobs:
           VITE_SITE_KEYWORDS: ${{ vars.VITE_SITE_KEYWORDS }}
         run: |
           npm ci
-          # 看板娘前端**两棵树**（live2d-widgets/、live2d_model/）的源码：20261002 前端搬家起
-          # 住在 agent 仓（MIT），本仓按 frontend/widget.lock.json 钉的 sha 稀疏检出、
-          # 落到与从前**完全相同**的路径。⚠️ **必须在 vendor:live2d 之前**——后者往
-          # live2d-widgets/vendor/ 里写，而这一步整树替换 live2d-widgets/，顺序反了
-          # 刚取到的 vendor/ 就被抹掉（参考脚本会保留已存在的 vendor/ 兜底，但那不是契约）。
+
           npm run fetch:widget
-          # 看板娘运行时的三份第三方产物（vendor/pixi.min.js、vendor/cubism4.min.js、
-          # cubism5/live2dcubismcore.min.js）**故意不进 git**（体积 + Live2D 专有许可），
-          # 但 vite 只拷贝 public/ 下真实存在的文件 ⇒ 不在 build 之前就位，打出来的包里
-          # 就没有它们，而部署是覆盖式解压 + 按本代清单清理旧块 ⇒ 线上那三份会被**删掉**，
-          # 看板娘整个不渲染（静默：聊天面板照常工作）。三者都要，缺一不可。
-          # 第三份从官方 CDN 取并按 sha256 校验：官方换版本会红在构建这一步（预期的）。
+          # fetch 后再准备第三方运行时；校验通过后才能构建，避免发布缺失的资源。
           npm run vendor:live2d
           npm run build
-          # 最后一道兜底（20261002 前端搬家）：上面任何一步如果"静默地"什么都没做，
-          # vite 会若无其事地打出一个**没有看板娘**的包，而部署的集合差会把线上那棵树清掉。
-          # 这两条断言是"包真拿到了那两棵树"的**产物级**证据（不看中间步骤的自述）。
+
           test -f dist/live2d-widgets/chat-stream.js
           test -f dist/live2d_model/agent_2.model3.json
         working-directory: ./frontend
 
       - name: Package & Upload to R2
-        # 必须带 if：无变更的 run 里工作区既没有 dist 也没有二进制，打包脚本会"没有文件可打包"退 1，
-        # 把本来该跳过的 run 变成红的（原来这个判断在 step 内部的 shell if 里）
+
         if: needs.check-changes.outputs.deploy == 'true'
-        # DEPLOY_SHA 决定产物落在哪个键：deploy/<sha>/deploy.tar.gz（此前是所有人共用一个
-        # deploy/deploy.tar.gz，部署哪一版由上传时序决定）
+
         env:
           DEPLOY_SHA: ${{ github.sha }}
           R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
@@ -565,13 +445,7 @@ jobs:
           pip3 install boto3 -q
           python3 scripts/deploy/upload_to_r2.py
 
-      # 20260924 删掉「Upload frontend dist to R2 (for CDN)」那一节：它把 dist **逐文件**
-      # 上传（每次部署约 4986 次 PUT ⇒ 一天 8 次部署就超过 R2 免费档的 100 万次 Class A
-      # 写入），而它没有任何消费方——nginx 服务的是本机 frontend/dist，
-      # VITE_CDN_BASEURL 重写的是 /api/protect/download/ 图片接口、与这些静态对象无关；
-      # 内容与 deploy/<sha>/deploy.tar.gz 里的 frontend/dist 完全重复。
-      # 存量已用 scripts/deploy/prune_r2.py 清掉（11319 个对象 / 2694MB），此后每次部署
-      # 只写 1 个包 + latest.txt；保留最近 3 个包的清理在 deploy_from_r2.sh 落地成功后做。
+
       - name: Trigger server deploy
         if: needs.check-changes.outputs.deploy == 'true'
         env:
@@ -580,15 +454,7 @@ jobs:
           SSH_HOST: ${{ secrets.SERVER_HOST }}
           SSH_USER: ${{ secrets.SERVER_USER }}
           SSH_PORT: ${{ secrets.SSH_PORT }}
-          # 服务器上这份仓的落点。默认值就是本站那一个（下面 `${DEPLOY_REPO_DIR:-…}`
-          # 兜底），所以本站一行都不用配；fork 的人在自己的仓里加一个 Variable 就能指到
-          # 别处，不必改这个被跟踪的文件。Variable 没设时是**空串**（不是缺席），
-          # `:-` 正好把"空"和"未设"一并兜住。
-          #
-          # 本仓**同时**设了这个 Variable（20261002 目录改名时设的）：服务器上的仓
-          # 从 `memory_blog_rust` 改成了 `Saudade-Blog`，改名期间靠一条过渡软链兜着，
-          # 软链删掉后 CI 必须走对路径 —— Variable 与下面的兜底值**都得是新路径**，
-          # Variables 与兜底的关系不是"哪个对"，而是"两个都要对"。
+
           DEPLOY_REPO_DIR: ${{ vars.DEPLOY_REPO_DIR }}
         run: |
           echo "$SSH_KEY" > /tmp/deploy_key

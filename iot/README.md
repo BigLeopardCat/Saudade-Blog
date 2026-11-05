@@ -62,12 +62,12 @@ sudo systemctl restart saudade-agent && sleep 8
 # 装 EMQX 5.x（发行版方式，见官方文档）
 sudo cp iot/emqx/emqx.conf.template /etc/emqx/emqx.conf   # 先把 <...> 占位改掉
 sudo systemctl restart emqx
-python3 iot/emqx/configure_emqx.py                        # 幂等：认证链 / ACL / API Key
+# 单独核对设备 HTTP 认证回调和 ACL，勿直接沿用旧 JWT 安装流程。
 ```
 
-`configure_emqx.py` 需要两个东西：博客 `.env` 的 `JWT_SECRET`（复用同一套令牌体系）与
-EMQX Dashboard 管理员口令。它会把 API Key 与轮换后的口令落盘到本目录 0600 文件里，
-**不会打印任何密钥**。细节见 [emqx/README.md](emqx/README.md)。
+`configure_emqx.py` 仍配置旧的博客 JWT 认证链，不是新隔离鉴权的安装入口。
+维护旧模式时需理解其密钥共享和撤销边界，见 [emqx/README.md](emqx/README.md)。
+设备 HTTP 网关的独立密钥与账号部署见[独立服务账号](../deploy/service-isolation.md)。
 
 ### 2. device-service
 
@@ -100,28 +100,16 @@ sudo systemctl restart saudade-agent && sleep 8
 
 ### 5. 设备
 
-固件模板与移植说明在 [firmware/](firmware/)。**真相源是另一个仓**
-（`BigLeopardCat/ESP32-S3-OBC`），本目录这两份是让新设备照着接的参考实现，会滞后于那边。
+设备侧固件由独立的 [ESP32-S3-OBC](https://github.com/BigLeopardCat/ESP32-S3-OBC) 仓库维护。
 
 ---
 
-## 代价（要不要装 / 要不要留）
+## 运行要求
 
-**结论：在用/偶尔用 ⇒ 建议保留**（20261004 实测，细节与复现命令见
-[docs/iot-device-integration.md](../docs/iot-device-integration.md) §7）：
-
-| 代价 | 量级 |
-|---|---|
-| 常驻内存 | EMQX ~60 MiB + device-service ~3.1 MiB ≈ **63 MiB**（对比 agent 每 worker ~130 MiB） |
-| 磁盘 | `/usr/lib/emqx` 89 MB + `/var/lib/emqx` 1.4 MB ≈ 90 MB |
-| 公网面 | 多一个 **8883** 端口（MQTTS）要放行、要盯证书 |
-| 运维面 | **两个不经 CI 的 systemd unit** + device-service 源码不在本仓（手动 `cargo build --release`） |
-| 证书 | MQTTS 与 HTTPS 同源，**续期要两处同步**（漏一处 = 设备全掉线而网页正常） |
-| 内存上限 | EMQX 的 `MemoryHigh/MemoryMax` 只写在 systemd drop-in 里，**仓库看不见** ⇒ 已在运维手册 §3 记一份 |
-
-**相对收益（设备接入/远程 OTA/遥测面板）对得上这点代价**：CPU 几乎零占用，内存只占生产总
-用量的 **10%~15%**（分母在 **~420 MiB（agent 刚重启）↔ ~640 MiB（worker 跑过重活）** 之间摆，
-见运维手册 §8.2；引用"≈0.5 个 worker"那个说法更稳，它不受这个摆动影响）。
+EMQX 和设备服务独立运行，按当前版本及负载测量内存、磁盘和连接数，不套用旧样本。
+设备 MQTTS 需要开放 8883；broker 管理和服务 HTTP 端口只在内部使用。
+HTTPS 与 MQTTS 证书续期须分别验证，服务限额以实际 systemd 配置为准。
+设备服务源码不在本仓，其构建与发布需要独立验证；共享生产主机不执行 release 编译。
 
 ## 卸
 
@@ -150,13 +138,11 @@ sudo systemctl restart saudade-agent && sleep 8
 | `device-console/` | 控制台静态页（`index.html` + `mqtt.min.js`） |
 | `emqx/` | broker 配置模板 + 幂等的认证链/ACL 配置脚本 |
 | `device-service/` | 服务单元模板 + `svc.env` 生成脚本 + 说明（**服务本体不在本仓**） |
-| `firmware/` | ESP32 侧模板两份 + 移植指南（真相源在 `ESP32-S3-OBC`） |
 
 ## 安全边界
 
-- 三块共用的身份是**博客签发的那个 JWT**（`localStorage.tokenKey`）。`device-service` 与
-  EMQX 各自验签一次，**都不查库** ⇒ 冻结账号 / 收回令牌**管不到这两个入口**，在令牌过期前
-  它仍是一枚合法身份。这条是已知缺口，见
-  [docs/security-boundary.md](../docs/security-boundary.md)，别再默认"冻结 = 全站下线"。
+- HTTP 管理请求在 Rust 网关查询当前账号及令牌代次，再交换设备短期令牌；设备服务不持有博客登录密钥。
+- MQTT 认证是独立链路。若沿用旧 EMQX JWT 模式，broker 仍共享登录密钥且只校验签名/过期，
+  不查询冻结或撤销状态；HTTP 网关的迁移不代表该模式已经迁移。见 [EMQX 说明](emqx/README.md)。
 - `configure_emqx.py` 的 API Key、`svc.env` 的设备服务口令、`/etc/emqx/certs/` 下的证书
   都是凭据：本目录的 `.gitignore` 挡住了本地生成的落盘文件，**别手工提交**。

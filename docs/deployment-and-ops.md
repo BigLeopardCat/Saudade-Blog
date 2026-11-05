@@ -4,6 +4,11 @@
 
 后端读取工作目录 `.env` 和进程环境。必需 `DATABASE_URL`、随机 `JWT_SECRET`；公开部署设置 `SITE_URL`，前端构建设置对应 `VITE_SITE_URL`。完整配置样例见[环境模板](../.env.example)。配置文件不入库，前端不得持有模型或对象存储密钥。
 
+启用 Agent 时另配 `BLOG_DELEGATION_SECRET`、`AGENT_ASSERTION_SECRET`；设备网关另配
+`DEVICE_SIGNING_SECRET`。密钥用途见[安全边界](security-boundary.md)，不复制整份博客 .env 给 Agent。
+独立运行账号使用 `/etc/saudade/*-runtime.env`，由 systemd 注入；路径和账号要求见
+[独立服务账号](../deploy/service-isolation.md)。
+
 Rust 默认监听 loopback 3000，前端静态文件由 nginx 提供。Agent、模型服务和设备演示仅在启用时安装；不要将内部管理端口直接暴露公网。
 
 ## PostgreSQL
@@ -23,9 +28,9 @@ Agent 的 `CHECKPOINT_DSN` 指向独立数据库；不要把框架 schema 建到
 
 服务模板位于 `deploy/systemd/`，nginx 和安装入口位于 `deploy/`。先审阅模板中的账号、路径、站点及可选能力，再安装。辅助脚本不能替代运行环境核对，特别是已有数据库和远程对象存储。
 
-主线 `cn_sora_blog` 的发布工作流先运行 Rust、PostgreSQL、前端及浏览器检查，再构建固定提交产物、上传 R2 并通知服务器部署。PR 不部署，也不读取生产 secret。发布后检查 `/build-info.json`、后端探针、静态资源和服务日志，不能仅依据 CI 成功推断浏览器已更新。
+主线 `cn_sora_blog` 的发布工作流先运行 Rust、PostgreSQL、前端及浏览器检查，再构建固定提交产物、上传 R2 并通知服务器部署。PR 不部署，也不读取生产 secret。主线文档提交同样触发完整快照发布。发布后分别核对 `/build-info.json`、Rust 二进制产物来源及校验值、Agent `/version`，再查探针、静态资源和服务日志；本地 HEAD、组件 pin 和 CI 绿灯不能代替实际运行版本。
 
-Agent 服务独立发布，操作见 [Agent 部署](https://github.com/BigLeopardCat/saudade-blog-agent/blob/main/docs/deployment.md)。组件更新同时修改 `frontend/widget.lock.json` 的提交和子树哈希；构建前执行 `fetch:widget`、`vendor:live2d`。
+Agent 服务独立发布，操作见 [Agent 部署](https://github.com/BigLeopardCat/saudade-blog-agent/blob/main/docs/deployment.md)。只有采用组件子树更新时才修改 `frontend/widget.lock.json` 的提交和子树哈希；构建前执行 `fetch:widget`、`vendor:live2d`。
 
 ## 停机与任务
 

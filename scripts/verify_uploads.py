@@ -169,12 +169,7 @@ def pg_rows(conn, sql):
     """
     user, password, host, port, db = conn
     prefix = shlex.split(os.environ.get("PSQL_BIN", "psql"))
-    # ⚠️ **必须包一层 `COPY … TO STDOUT (FORMAT csv)`，不能直接 `-c <SELECT>`。**
-    # psql 的 `-t -A` 输出**不转义字段里的换行**，而文章正文是多行的 ⇒ 一行正文会被
-    # 拆成好几"行"，轻则 `row[1]` IndexError，重则**静默少读到图**（正是本脚本要防的
-    # 那种假绿）。MySQL 那版的 `--batch` 会把 `\n`/`\t` 转义掉，所以这一条在切库时
-    # 从"客户端替我们做"变成了"我们得自己做"——实测踩到，不是推测。
-    # CSV 是标准做法：字段里的换行、制表符、引号都由它引起来，Python 的 `csv` 原样还回来。
+
     out = subprocess.run(
         # ⚠️ 端口是**小写 `-p`**。大写 `-P` 在 psql 里是 `\pset`（打印选项），
         # 传个端口号进去会报 `\pset: unknown option: 5432` —— 与 mysql 客户端的

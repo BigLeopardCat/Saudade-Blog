@@ -1,33 +1,7 @@
-# ═══════════════════════════════════════════════════════════════════════════════
-#  Rust 后端（axum + sea-orm + MySQL）
-#
-#  构建上下文 = **仓库根**（compose 里 `context: ../..`）。三个 Dockerfile 共用同一个
-#  上下文，是为了少一类"dockerfile / COPY 到底相对谁解析"的坑；排重物靠根目录的
-#  `.dockerignore`（target/ 4.6G、frontend/node_modules 1.1G 全在里面）。
-#
-#  工具链钉 **1.92.0**：与 CI 逐字同一个版本（deploy.yml 里 setup-rust-toolchain 的那个）。
-#  不钉的话，自己部署的人装出来的二进制与线上不是同一个编译器产的，出了问题没法对照。
-#
-#  ⚠️ 这里跑的是 `cargo build --release`，**不是 cargo test**。两者的区别在这个仓不是
-#     形式上的：`src/routes/chat.rs` 的 `frame_prefixes_match_frontend` 用
-#     `include_str!("../../frontend/public/live2d-widgets/chat-stream.js")`，而那个文件
-#     不在 git 里（要靠 `npm run fetch:widget` 从 agent 仓取）。它是 `#[cfg(test)]` 里的
-#     编译期读入 ⇒ 构建不用它、测试离不了它。**别顺手往这里加 `cargo test`**：
-#     那会让镜像构建依赖一棵现在没被 COPY 进来的树。
-# ═══════════════════════════════════════════════════════════════════════════════
+# Unsupported container draft; see deploy/README.md before use.
+# Keep dependency-cache invalidation, binary validation, certificates and timezone data.
 FROM rust:1.92-slim AS build
 
-# 密码学内核需要一个 C 编译器。rust:*-slim 自己就装了 gcc / libc6-dev，
-# 这一行是幂等保险：装了就是 no-op，哪天官方镜像改了构成也不至于卡在这里。
-# 本仓没有 native-tls / openssl-sys（reqwest 与 sea-orm 都走 rustls）⇒ 不需要 libssl-dev。
-# ⚠️ cmake（20261013 加，reqwest 0.12→0.13 的连带项）：0.12 的 `rustls-tls` 用 **ring**，
-# 只要一个 C 编译器；0.13 把 TLS 那支换成 `rustls` = **aws-lc-rs**，而 aws-lc-sys 的构建
-# 脚本是**用 CMake 配 AWS-LC 那棵 C 源树**的 ⇒ 少了 cmake 这一层直接失败
-# （`aws-lc-sys` 的 README「Build Prerequisites」）。Go / Perl **不需要**
-# （同 README：AWS-LC 自带生成好的构建文件）；NASM 只在 Windows 上要。
-# 别把 cmake 删了以为"gcc 就够"——那是 ring 时代的结论。
-# findutils 同理是保险：下面那条"刷新 mtime"用的就是 `find`，而它缺席时的报错
-# （`find: not found`）会发生在**中间那一层**，读起来像"构建环境坏了"而不是"少个工具"。
 RUN apt-get update \
  && apt-get install -y --no-install-recommends gcc libc6-dev cmake findutils \
  && rm -rf /var/lib/apt/lists/*
@@ -35,10 +9,6 @@ RUN apt-get update \
 WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
 
-# 先在**只有依赖**的状态下编一遍：Cargo.toml 里 lib 与 bin 都在（src/lib.rs + src/main.rs），
-# 所以两个桩文件都得给 —— 少一个这里就报 "couldn't read src/lib.rs"。
-# 收益在增量：改 src/ 之后重建时，下面那一层只重编本仓那两个目标，axum/sea-orm 那一整棵
-# 十几分钟的编译直接复用。
 RUN mkdir -p src \
  && printf '\n' > src/lib.rs \
  && printf 'fn main() {}\n' > src/main.rs \
@@ -46,71 +16,29 @@ RUN mkdir -p src \
 
 COPY src ./src
 
-# ⚠️⚠️ 这一行 `find … touch` 是**承重**的，删掉它会静默产出一个空桩镜像（20261007 实测）。
-#
-# cargo 判"要不要重编"用的是 **mtime**：所有输入都比产物旧 ⇒ 认定已是最新，直接
-# `Finished … in 0.02s`、一个字节都不编。而 BuildKit 的 COPY **保留源文件的 mtime**
-# （= 构建者 `git clone` 那一刻），比上面几秒前刚编出来的桩产物**更旧** ⇒ 真源码 COPY
-# 进来之后 cargo 认为两个目标都还是新的，下面 `cp` 复制的仍然是那个 `fn main() {}`。
-#
-# 症状是本仓最警惕的那一类**静默**：`docker compose build` 全绿，容器退出码 0，然后无限
-# Restarting —— 二进制里没有一句启动日志、也没有 DATABASE_URL。本机没有 docker，是拿一个
-# 同形状的小 crate 复现的：不 touch ⇒ `Finished` + 空桩；只 touch（内容一个字不改）⇒ 真二进制。
-#
-# 用 `find src -type f` 而不是点名那两个文件：将来 src/ 里多了被 `include_str!` 读进去的
-# 非 .rs 文件，它同样是构建输入、同样要刷新 mtime。
 RUN find src -type f -exec touch {} +
 
-# --locked = 只认 Cargo.lock 里钉的版本，构建期偷偷升级依赖是硬失败。
-# 与 CI 同一条纪律：依赖变了要显式改 Cargo.toml + 重新 lock。
-#
-# 末尾那段是**空桩的出口判据**：上面那行 touch 万一哪天被删掉，构建必须在这里响亮地失败，
-# 而不是产出一个"构建得过、容器起得来、退 0、然后重启循环"的镜像。两条判据各自独立：
-#   · 体积：CI 产出的真二进制 19189784 字节（18.3 MiB，20261007 实测）；空桩差一个数量级，
-#     4 MiB 这条线离两边都够远。
-#   · `DATABASE_URL`：main.rs 缺它就 panic ⇒ 这个字面量在真二进制里是**结构上**必然存在的
-#     （实测真二进制里 'Server starting' / 'listening on' / 'JWT_SECRET' 也都在，但那几句
-#     是日志与别处的措辞，改字就假红，所以判据不取它们）。
 RUN cargo build --release --locked \
  && size="$(stat -c %s target/release/saudade_blog_bin)" \
  && if [ "$size" -lt 4194304 ] || ! grep -aq 'DATABASE_URL' target/release/saudade_blog_bin; then \
-        printf '\n✗ 编出来的 target/release/saudade_blog_bin 只有 %s 字节、里面没有 DATABASE_URL。\n  这是上面那次桩构建留下的 `fn main() {}` —— 真源码一个字都没参与编译（cargo 按 mtime 判"已是最新"）。\n  先看那条 find…touch 还在不在。\n' "$size" >&2; \
+        printf '\n✗ 编出来的 target/release/saudade_blog_bin 只有 %s 字节、里面没有 DATABASE_URL。\n  未生成有效的后端二进制，请检查源码复制与构建缓存。\n  先看那条 find…touch 还在不在。\n' "$size" >&2; \
         exit 1; \
     fi \
  && cp target/release/saudade_blog_bin /usr/local/bin/saudade_blog_bin
 
-# strip 只影响体积（约 -30%）；镜像里没有 binutils 时跳过，**别让它挡构建**
 RUN strip /usr/local/bin/saudade_blog_bin || true
 
 
-# ── 运行期：debian + 一个二进制 ────────────────────────────────────────────────
 FROM debian:bookworm-slim AS runtime
 
-# tzdata 不是装饰：没有 /usr/share/zoneinfo 时 `TZ=Asia/Shanghai` 是**空操作**，日志与
-# 落库时间戳会静默差 8 小时（本仓的时区约定是 +08:00 钟面，见 docs/deployment-and-ops.md）。
-# ⚠️ ca-certificates 从"备着"变成了**承重**（20261013，reqwest 0.12→0.13 的连带项）：
-# 0.12 的 `rustls-tls` 用的是 **webpki-roots**（一捆编进二进制的 Mozilla 根证书，**不读
-# 系统信任库**）；0.13 把 TLS 那支换成 `rustls` = **rustls-platform-verifier** ⇒ 根证书
-# 改从**平台信任库**读，Linux 上就是 /etc/ssl/certs（由 ca-certificates 提供）。
-# 这一条装着的就没动了，但那句"其实不读它"已经不成立 —— 删了它，R2 图床的 HTTPS 会
-# 在**运行期**握手失败（而不是构建期报错），是典型"改了依赖、坏在证书"的那种静默。
-# 顺带留一句：bash/openssl 之类排障仍然用得着它。
 RUN apt-get update \
  && apt-get install -y --no-install-recommends tzdata ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 ENV TZ=Asia/Shanghai
 
 WORKDIR /srv
-# 这一条对应一个**静默失败**：src/routes/monitor.rs 打不开日志文件的父目录时仍然返回 200，
-# 只是**一行都不写**（前端上报看着一切正常，日志里什么都没有）。所以父目录在镜像里就建好，
-# 并且 compose 里显式给 `SAUDADE_MONITOR_LOG` 绝对路径 —— 那句才是真正决定落到哪儿的。
-# （正常路径下 /srv/logs 会被宿主目录挂载覆盖，这一条是"没挂时也别静默"的兜底。）
 RUN mkdir -p /srv/logs/frontend
 
 COPY --from=build /usr/local/bin/saudade_blog_bin /usr/local/bin/saudade_blog_bin
 
-# 监听地址是代码里硬编码的 **127.0.0.1:3000**（src/main.rs:65-68，A9 那次安全加固）⇒
-# 这个容器必须走 host 网络（compose 里 `network_mode: host`），端口映射对它无效：
-# 映射只在容器有自己的网络命名空间时才有意义。**故意不写 EXPOSE** —— 它在这儿既不
-# 生效又会让人以为"改 port 就行"。
 ENTRYPOINT ["/usr/local/bin/saudade_blog_bin"]

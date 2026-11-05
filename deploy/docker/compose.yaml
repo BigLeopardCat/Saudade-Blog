@@ -30,10 +30,7 @@ services:
     image: mysql:8.0
     restart: unless-stopped
     command:
-      # 时区：镜像里没有 tzdata 时 `TZ` 是空操作，而 mysql 自己的默认时区是 SYSTEM
-      # （容器里 = UTC）⇒ `DEFAULT CURRENT_TIMESTAMP` 会存成 UTC 钟面，与全站 +08:00 的
-      # 约定（main.rs 那条 `timezone(Some("+08:00"))`、tz_cn_20260827 迁移）不一致。
-      # 用偏移量形式（`+08:00`）而不是 `Asia/Shanghai`：后者要求 mysql 里导入过时区表。
+
       - --default-time-zone=+08:00
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?先跑 bash prepare.sh 生成 deploy/docker/.env}
@@ -146,8 +143,7 @@ services:
       - ./generated/agent.env
     environment:
       TZ: ${TZ:-Asia/Shanghai}
-      # uvicorn 的 worker 数（入口脚本读它，默认 4）。小内存机器降到 2 也行；
-      # 实测每 worker 常驻 135–150MB（docs/deployment-and-ops.md 的《资源画像》）。
+
       AGENT_WORKERS: ${AGENT_WORKERS:-4}
       # ── 下面四个是**只读进程环境**的旋钮（server.py 走 os.environ，不读 .env）──────
       #    写进 generated/agent.env 是**无效的**（pydantic 那套根本不管它们，而 os.environ
