@@ -1,10 +1,10 @@
 //! Typed application messages over standard SSE framing.
 
 use axum::response::sse::Event;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
 #[serde(tag = "event", content = "data", rename_all = "snake_case")]
 pub(super) enum Frame {
     Text(String),
@@ -19,7 +19,7 @@ pub(super) enum Frame {
     Error(String),
 }
 
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Debug, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Empty {}
 

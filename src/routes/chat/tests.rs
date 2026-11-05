@@ -100,44 +100,6 @@ fn image_budget_skips_imageless_without_breaking_the_fill() {
 }
 
 #[test]
-fn agent_reply_rejects_reported_failure() {
-    let body = json!({"reply": "", "success": false,
-                          "error": "服务这边出了点问题，这一轮没能生成回复，请再说一次。"});
-    let err = agent_reply_of(&body).unwrap_err();
-    assert_eq!(err, "服务这边出了点问题，这一轮没能生成回复，请再说一次。");
-}
-
-/// `success: false` 但没给原因（旧版 agent / 字段为空串）⇒ 也要判失败，
-/// 用一句兜底说明，而不是回落成"成功"。
-#[test]
-fn agent_reply_reported_failure_without_reason() {
-    assert!(agent_reply_of(&json!({"reply": "x", "success": false})).is_err());
-    assert!(agent_reply_of(&json!({"reply": "x", "success": false, "error": "  "})).is_err());
-}
-
-/// **空回复不算成功**（哪怕 agent 说 success:true）：落库那一格前面必须有这道闸。
-#[test]
-fn agent_reply_rejects_empty_reply() {
-    assert!(agent_reply_of(&json!({"reply": "", "success": true})).is_err());
-    assert!(agent_reply_of(&json!({"reply": "   \n", "success": true})).is_err());
-    assert!(agent_reply_of(&json!({"success": true})).is_err());
-}
-
-/// `success` 字段**缺失**时按"回复非空"判（兼容不带这个字段的旧版 agent）；
-/// 正常回复原样返回，并去掉首尾空白。
-#[test]
-fn agent_reply_accepts_plain_reply() {
-    assert_eq!(
-        agent_reply_of(&json!({"reply": "喵呜～"})).unwrap(),
-        "喵呜～"
-    );
-    assert_eq!(
-        agent_reply_of(&json!({"reply": " 喵呜～ ", "success": true})).unwrap(),
-        "喵呜～"
-    );
-}
-
-#[test]
 fn exec_row_prefers_python_action() {
     let row = json!({
         "tool": "create_tag",

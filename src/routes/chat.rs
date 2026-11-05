@@ -14,6 +14,8 @@ mod pending;
 mod persistence;
 use persistence::{save_assistant_reply, save_execution_log, PERSISTENCE_ERROR};
 mod protocol;
+mod synchronous;
+pub use synchronous::chat_handler;
 #[cfg(test)]
 mod stream_tests;
 use protocol::{Frame, event as stream_event};
@@ -373,107 +375,6 @@ fn json_capped(v: &serde_json::Value, key: &str, cap: usize) -> String {
 
 fn agent_chat_url() -> String {
     std::env::var("AGENT_URL").unwrap_or_else(|_| "http://127.0.0.1:8010/chat".to_string())
-}
-
-pub async fn chat_handler(
-    State(state): State<Arc<AppState>>,
-    req: Request,
-) -> Response {
-    let expected_version = crate::auth_jwt::claims_from_headers(req.headers()).and_then(|c| c.ver).unwrap_or(-1);
-    let ctx = match prepare_chat(&state, req).await {
-        Ok(c) => c,
-        // 404/200 错误按原样透传（含 conversation_not_found 与合规文案等）
-        Err(e) => return e.into_response(),
-    };
-
-    let agent_url = agent_chat_url();
-    info!(trace_id = %ctx.trace_id, user_id = ctx.uid, "chat: 转发 agent 非流式");
-    // 传输层偶发失败（agent worker 重启、瞬时断连等）自动重试最多 3 次，
-    // 避免对话偶发 "connection closed before message completed" 报错。
-    // 超时不重试：长回答（公式推导等）单次生成可长达 180s，超时重试只会从头再生成一遍
-    let mut resp_opt: Option<reqwest::Response> = None;
-    let mut last_err = String::new();
-    for attempt in 0..3 {
-        match reqwest::Client::new().post(&agent_url)
-            // 身份断言：agent 验签后据此覆盖请求体里的 user_id（见 auth_jwt.rs）
-            .header("X-Agent-Assertion", crate::auth_jwt::create_chat_assertion(&state.db, ctx.uid, ctx.role.as_deref(), expected_version).await)
-            .header("X-Request-ID", &ctx.trace_id)
-            .json(&ctx.body)
-            .timeout(std::time::Duration::from_secs(180))
-            .send()
-            .await {
-            Ok(r) => { resp_opt = Some(r); break; }
-            Err(e) => {
-                last_err = e.to_string();
-                if e.is_timeout() { break; } // 超时说明生成确实很慢，重试无意义
-                if attempt < 2 {
-                    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
-                }
-            }
-        }
-    }
-
-    match resp_opt {
-        Some(r) => {
-            if r.status().is_success() {
-                let data: serde_json::Value = r.json().await.unwrap_or_default();
-                let exec_rows = data["executions"].as_array().cloned().unwrap_or_default();
-                if ctx.uid > 0 && !exec_rows.is_empty() {
-                    let state = state.clone();
-                    let (uid, cid) = (ctx.uid, ctx.conversation_id);
-                    if persistence::run(&ctx.trace_id, async move {
-                        save_execution_log(&state.db, uid, cid, &exec_rows).await
-                    }).await.is_err() {
-                        return Json(ChatResponse { reply: String::new(), success: false,
-                            error: Some(PERSISTENCE_ERROR.into()) }).into_response();
-                    }
-                }
-                match agent_reply_of(&data) {
-                    Ok(reply) => {
-                        if ctx.uid > 0 {
-                            let state = state.clone();
-                            let saved_reply = reply.clone();
-                            if persistence::run(&ctx.trace_id, async move {
-                                save_assistant_reply(&state.db, ctx.uid, ctx.conversation_id,
-                                    ctx.role, saved_reply).await
-                            }).await.is_err() {
-                                return Json(ChatResponse { reply, success: false,
-                                    error: Some(PERSISTENCE_ERROR.into()) }).into_response();
-                            }
-                        }
-                        Json(ChatResponse { reply, success: true, error: None }).into_response()
-                    }
-                    Err(msg) => {
-                        warn!(trace_id = %ctx.trace_id, "chat: agent did not complete a reply: {}", msg);
-                        Json(ChatResponse {
-                            reply: String::new(),
-                            success: false,
-                            error: Some(format!("Agent error: {}", msg)),
-                        }).into_response()
-                    }
-                }
-            } else {
-                Json(ChatResponse { reply: String::new(), success: false, error: Some(format!("Agent error: {}", r.status())) }).into_response()
-            }
-        }
-        None => {
-            Json(ChatResponse { reply: String::new(), success: false, error: Some(format!("Agent unavailable: {}", last_err)) }).into_response()
-        }
-    }
-}
-
-
-fn agent_reply_of(data: &serde_json::Value) -> Result<String, String> {
-    let reply = data["reply"].as_str().unwrap_or("").trim().to_string();
-    match data.get("success").and_then(|v| v.as_bool()) {
-        Some(false) => Err(data["error"]
-            .as_str()
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or("agent 报告这一轮没能生成回复（未给出原因）")
-            .to_string()),
-        _ if reply.is_empty() => Err("agent 返回了空回复".to_string()),
-        _ => Ok(reply),
-    }
 }
 
 /// Preserve business status codes and emit all other early outcomes as named SSE.
