@@ -27,7 +27,7 @@ pub struct Actor {
     role: String,
 }
 
-async fn authorized<C: ConnectionTrait>(
+pub(super) async fn authorized<C: ConnectionTrait>(
     db: &C,
     owner: i32,
     lock: bool,
