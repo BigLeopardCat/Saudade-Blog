@@ -27,6 +27,8 @@ pub mod catalog;
 pub mod own_reads;
 pub mod public_catalog;
 pub mod article_actions;
+pub mod article_deletions;
+pub mod talk_actions;
 pub mod article_tag_actions;
 pub mod category_actions;
 pub mod account_actions;
@@ -269,6 +271,12 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/protected/article-tag-actions/batch", post(article_tag_actions::batch::change))
         .route("/api/protected/article-tag-actions/{id}/prepare", post(article_tag_actions::prepare))
         .route("/api/protected/article-tag-actions/{id}", post(article_tag_actions::change))
+        .route("/api/protected/article-deletions/prepare", post(article_deletions::prepare))
+        .route("/api/protected/article-deletions", post(article_deletions::change))
+        .route("/api/protected/talk-actions/prepare", post(talk_actions::prepare))
+        .route("/api/protected/talk-actions", get(talk_actions::list).post(talk_actions::change))
+        .route("/api/protect/gallery/folder-actions/prepare", post(gallery::folder_actions::prepare))
+        .route("/api/protect/gallery/folder-actions", post(gallery::folder_actions::change))
         .route("/api/protected/article-actions/batch/prepare", post(article_actions::batch::prepare))
         .route("/api/protected/article-actions/batch", post(article_actions::batch::change))
         .route("/api/protected/article-actions/{id}", get(article_actions::target).post(article_actions::change))

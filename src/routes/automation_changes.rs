@@ -40,6 +40,9 @@ fn storage(error: DbErr) -> Failure {
 )]
 pub enum Change {
     Categories(super::category_actions::Change),
+    Talks(super::talk_actions::Change),
+    GalleryFolders(super::gallery::folder_actions::Change),
+    ArticleDeletions(super::article_deletions::Change),
     AccountActions(super::account_actions::Change),
     Notices(super::notice_actions::Change),
     ArticleState(super::article_actions::batch::BatchChange),
@@ -61,6 +64,15 @@ async fn execute(
     value: Change,
 ) -> Result<Value, DbErr> {
     let result = match value {
+        Change::Talks(change) => {
+            serde_json::to_value(super::talk_actions::apply(db, owner, &change).await?)
+        }
+        Change::GalleryFolders(change) => {
+            serde_json::to_value(super::gallery::folder_actions::apply(db, &change).await?)
+        }
+        Change::ArticleDeletions(change) => {
+            serde_json::to_value(super::article_deletions::apply(db, &change).await?)
+        }
         Change::AccountActions(change) => serde_json::to_value(
             super::account_actions::apply_in(db, owner, Some(actor_version), &change).await?,
         ),

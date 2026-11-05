@@ -31,6 +31,7 @@ LOAD = [
     "0024_image_generation.sql",
     "0025_automation_announcements.sql",
     "0026_automation_changes.sql",
+    "0027_article_reference_integrity.sql",
 ]
 
 EXCLUDED = {

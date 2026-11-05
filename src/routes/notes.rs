@@ -931,19 +931,15 @@ pub async fn delete_note(
     State(state): State<Arc<AppState>>,
     Json(keys): Json<Vec<i32>>,
 ) -> Json<ApiResponse<String>> {
-    // 级联删修改稿：文章删了，挂它的修改稿（draft_of = 该 id）就是孤儿——草稿箱里会留一行
-    // 指向不存在文章的行，点进去编辑器还会 404。先删修改稿再删本体。
-    let _ = note::Entity::delete_many()
-        .filter(note::Column::DraftOf.is_in(keys.clone()))
-        .exec(&state.db)
-        .await;
-
-    match note::Entity::delete_many()
-        .filter(note::Column::Id.is_in(keys))
-        .exec(&state.db)
-        .await {
-        Ok(_) => Json(ApiResponse::success("Deleted".to_string())),
-        Err(e) => Json(ApiResponse::error(&format!("Error: {}", e))),
+    let result=async {
+        let txn=state.db.begin().await?;
+        super::article_deletions::delete_current(&txn,&keys).await?;
+        txn.commit().await?;
+        Ok::<_,sea_orm::DbErr>("Deleted".to_owned())
+    }.await;
+    match result {
+        Ok(value)=>Json(ApiResponse::success(value)),
+        Err(error)=>super::db_error("删除文章",&error),
     }
 }
 
