@@ -90,7 +90,7 @@ pub struct Outcome {
     pub state: Prepared,
 }
 
-async fn apply<C: sea_orm::ConnectionTrait>(
+pub(super) async fn apply<C: sea_orm::ConnectionTrait>(
     db: &C,
     change: &Change,
 ) -> Result<Outcome, sea_orm::DbErr> {

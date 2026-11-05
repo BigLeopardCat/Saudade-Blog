@@ -415,6 +415,12 @@ li.search-box input {
     overflow: auto;
     scrollbar-gutter: stable;
 }
+.dashboardPage:has(> .notes-container) {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+.dashboardPage:has(> .notes-container) > .header { flex: none; }
 .dashboardPage:focus-visible {
     outline: 2px solid var(--washi-lav, #b9a7f5);
     outline-offset: -2px;
@@ -849,7 +855,7 @@ li.search-box input::placeholder {
 }
 
 
-/* ① 页里那些 antd 小卡（友链 / 说说 / 新建文章 / 主页）＝ 叠在外壳大卡上的一张内页。
+/* ① 页里那些 antd 小卡（说说 / 新建文章 / 主页）＝ 叠在外壳大卡上的一张内页。
       `body.dash-skin .ant-card` 会把**外壳大卡自己**也套进来（它就是 `<Card className="Card">`），
       所以必须带 `.Card` 当父级 —— 只匹配"大卡里面的卡"。 */
 body.dash-skin .Card .ant-card {

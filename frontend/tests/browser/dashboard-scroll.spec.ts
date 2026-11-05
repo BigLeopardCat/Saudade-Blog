@@ -11,7 +11,6 @@ async function mock(page:import('@playwright/test').Page){
     if(path.endsWith('/profile'))data={id:7,username:'tester',nickname:'Tester',role:'admin'}
     if(path.endsWith('/gallery/images'))data={items:Array.from({length:30},(_,i)=>({imageKey:30-i,imageUrl:'/fixture/picture.png',displayName:'图片'+(30-i),description:'山景封面',folderId:0,isFavorite:false,version:'a'.repeat(64)})),nextCursor:null}
     if(path.endsWith('/images/r2'))data={enabled:false,configured:false,usedBytes:0,limitBytes:100,publicBase:''}
-    if(path==='/api/friends')data=Array.from({length:30},(_,i)=>({id:i+1,friendKey:i+1,siteName:'友链'+i,description:'山景博客',siteUrl:'https://example.test',avatar:'/fixture/picture.png',status:1}))
     if(path==='/api/public/talk')data=Array.from({length:30},(_,i)=>({talkKey:i+1,talkTitle:'说说'+i,content:'长列表测试',createdAt:'2026-11-04 12:00:00',createdTime:'2026-11-04 12:00:00'}))
     return route.fulfill({json:{code:200,data}})
   })
@@ -65,7 +64,7 @@ test('future long routes inherit a keyboard-accessible scroll container',async({
   expect(await page.evaluate(()=>window.scrollY)).toBeGreaterThan(0)
 })
 
-for(const route of ['friends','talks']){
+for(const route of ['talks']){
   test(`${route} content can reach its bottom without a viewport-height child trap`,async({page,sandboxURL})=>{
     await mock(page);await page.goto(sandboxURL+'#'+route)
     const main=page.getByRole('main',{name:'后台内容'})

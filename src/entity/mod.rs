@@ -4,7 +4,6 @@ pub mod category;
 pub mod tag_one;
 pub mod tag_two;
 pub mod note_tag;
-pub mod friend;
 pub mod talk;
 pub mod web_info;
 pub mod announcement;

@@ -2,7 +2,7 @@
  *  device-console 那一条——归 SPA 管不了，见 `SPA_NAV_DENY`）。改这里必须同步那边，
  *  否则 `tests/spa-navigate.test.mjs` 的比对照会红。 */
 export const BLOG_PATH_PATTERNS: RegExp[] = [
-    /^\/$/, /^\/about\/?$/, /^\/friends\/?$/, /^\/guestbook\/?$/, /^\/talk\/?$/, /^\/times\/?$/, /^\/login\/?$/,
+    /^\/$/, /^\/about\/?$/, /^\/guestbook\/?$/, /^\/talk\/?$/, /^\/times\/?$/, /^\/login\/?$/,
     /^\/dashboard/, /^\/category\//, /^\/article\//,
 ];
 

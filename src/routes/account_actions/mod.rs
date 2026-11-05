@@ -81,3 +81,12 @@ pub(super) async fn execute(
         revoke_sessions = outcome.state.revoke_sessions, "account action committed");
     Ok(outcome)
 }
+
+pub(super) async fn apply_in<C: sea_orm::ConnectionTrait>(
+    db: &C,
+    owner: i32,
+    version: Option<i32>,
+    change: &Change,
+) -> Result<Outcome, DbErr> {
+    transaction::apply(db, owner, version, &change.intent, Some(&change.version)).await
+}

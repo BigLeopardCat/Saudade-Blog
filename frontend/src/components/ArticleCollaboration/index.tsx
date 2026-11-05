@@ -1,5 +1,5 @@
 import {useEffect, useRef, useState} from 'react'
-import {Alert, Button, Input, message} from 'antd'
+import {Alert, Button, message} from 'antd'
 import {diffLines} from 'diff'
 import getToken from '../../apis/getToken'
 import {createEditorSession, type EditorCommand, type Proposal, type WorkingCopy} from './session'
@@ -59,11 +59,7 @@ export default function ArticleCollaboration(props: Props) {
   }
   const stale = proposal && (proposal.base.content !== props.content
     || proposal.base.title !== props.title)
-  return <section className="article-collaboration" aria-label="文章协作编辑">
-    <label htmlFor="article-summary">文章摘要概述</label>
-    <Input.TextArea id="article-summary" value={props.description} maxLength={16000}
-      autoSize={{minRows: 2, maxRows: 8}} placeholder="可手写，也可让助手根据正文生成或改写"
-      disabled={!props.ready || props.blocked} onChange={e => props.onSummary(e.target.value)}/>
+  return <section hidden={!proposal} className="article-collaboration" aria-label="文章协作编辑">
     {proposal && <section className="article-review" aria-label="正文修改建议">
       <div className="article-review-toolbar">
         <strong>{proposal.title !== undefined ? '文章修改建议' : '正文修改建议'} · {proposal.edits.length + Number(proposal.title !== undefined)} 处</strong>
