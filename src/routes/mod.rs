@@ -36,6 +36,7 @@ pub mod announcement_actions;
 pub mod removal_actions;
 pub mod notice_actions;
 pub mod automation_results;
+pub mod automation_announcements;
 pub mod quota_actions;
 pub mod moderation_actions;
 pub mod public_activity;
@@ -302,6 +303,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/protected/tag-actions", post(tag_actions::change))
         .route("/api/protected/automation-actor", get(automation_results::actor))
         .route("/api/protected/automation-results", post(automation_results::deliver))
+        .route("/api/protected/automation-announcements", post(automation_announcements::publish))
         .route("/api/protected/notice-actions/prepare", post(notice_actions::prepare))
         .route("/api/protected/notice-actions", post(notice_actions::change))
         .route("/api/protected/announcement-deletions/prepare", post(removal_actions::prepare_announcements))
