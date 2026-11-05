@@ -116,7 +116,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/protected/notifications/{id}", delete(profile::delete_notification))
         .route("/api/protected/notifications/announcement", get(profile::pending_announcement))
         .route("/api/protected/notifications/summary", get(profile::notification_summary))
-        .route("/api/protected/inbox/overview", get(profile::inbox_overview))
+        .route("/api/protected/inbox/overview", get(profile::get_inbox_overview))
         .route("/api/protected/notifications/read", post(profile::read_notifications))
         .route("/api/protected/messages", get(profile::list_messages).post(profile::send_message))
         .route("/api/protected/messages/recent", get(profile::recent_messages))

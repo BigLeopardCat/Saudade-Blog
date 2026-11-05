@@ -24,6 +24,7 @@ fn default_limit() -> u64 {
 #[derive(Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Overview {
+    pub user_id: i32,
     pub notifications: i64,
     pub messages: i64,
     pub total: i64,
@@ -48,6 +49,7 @@ pub(super) async fn read<C: ConnectionTrait>(
         ))
         .await?;
     let mut result = Overview {
+        user_id: uid,
         limit,
         unread_only: true,
         ..Default::default()
@@ -82,7 +84,7 @@ pub(super) async fn read<C: ConnectionTrait>(
     Ok(result)
 }
 
-pub async fn overview(
+pub async fn get_inbox_overview(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Query(query): Query<OverviewQuery>,
