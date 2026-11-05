@@ -1,9 +1,9 @@
 WITH notifications AS MATERIALIZED (
-    SELECT id, type, left(title, 160) AS title, char_length(title)>160 AS title_truncated, created_at
+    SELECT id, type, left(title, 64) AS title, char_length(title)>64 AS title_truncated, created_at
     FROM user_notification WHERE user_id=$1 AND deleted_at IS NULL AND NOT is_read
 ), messages AS MATERIALIZED (
-    SELECT m.id, left(coalesce(m.title,''), 160) AS title,
-           char_length(coalesce(m.title,''))>160 AS title_truncated,
+    SELECT m.id, left(coalesce(m.title,''), 64) AS title,
+           char_length(coalesce(m.title,''))>64 AS title_truncated,
            m.from_user_id, left(coalesce(nullif(btrim(u.nickname),''),u.username,
                       '用户#'||m.from_user_id::text),80) AS peer_name, m.created_at
     FROM user_message m LEFT JOIN "user" u ON u.id=m.from_user_id
