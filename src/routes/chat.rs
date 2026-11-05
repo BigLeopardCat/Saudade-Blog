@@ -406,6 +406,7 @@ pub async fn chat_handler(
     State(state): State<Arc<AppState>>,
     req: Request,
 ) -> Response {
+    let expected_version = crate::auth_jwt::claims_from_headers(req.headers()).and_then(|c| c.ver).unwrap_or(-1);
     let ctx = match prepare_chat(&state, req).await {
         Ok(c) => c,
         // 404/200 错误按原样透传（含 conversation_not_found 与合规文案等）
@@ -422,7 +423,7 @@ pub async fn chat_handler(
     for attempt in 0..3 {
         match reqwest::Client::new().post(&agent_url)
             // 身份断言：agent 验签后据此覆盖请求体里的 user_id（见 auth_jwt.rs）
-            .header("X-Agent-Assertion", crate::auth_jwt::create_agent_assertion(ctx.uid, ctx.role.as_deref()))
+            .header("X-Agent-Assertion", crate::auth_jwt::create_chat_assertion(&state.db, ctx.uid, ctx.role.as_deref(), expected_version).await)
             .header("X-Request-ID", &ctx.trace_id)
             .json(&ctx.body)
             .timeout(std::time::Duration::from_secs(180))
@@ -532,6 +533,7 @@ pub async fn chat_stream_handler(
             error: Some("聊天版本已更新，请刷新页面后重试。".to_string()),
         })).into_response();
     }
+    let expected_version = crate::auth_jwt::claims_from_headers(req.headers()).and_then(|c| c.ver).unwrap_or(-1);
     let ctx = match prepare_chat(&state, req).await {
         Ok(c) => c,
         // 早退一律转成 SSE 帧（见 early_exit_response 的头注）：这里原本是
@@ -545,7 +547,7 @@ pub async fn chat_stream_handler(
     let upstream = match reqwest::Client::new()
         .post(&stream_url)
         // 身份断言（同上）：流式这条路同样要带，否则 agent 打开强制校验后它会 401
-        .header("X-Agent-Assertion", crate::auth_jwt::create_agent_assertion(ctx.uid, ctx.role.as_deref()))
+        .header("X-Agent-Assertion", crate::auth_jwt::create_chat_assertion(&state.db, ctx.uid, ctx.role.as_deref(), expected_version).await)
         .header("X-Request-ID", &ctx.trace_id)
         .json(&ctx.body)
         .send()
