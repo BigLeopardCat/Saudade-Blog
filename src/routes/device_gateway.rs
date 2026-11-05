@@ -82,7 +82,10 @@ pub async fn proxy(
     }
     let claims = DeviceClaims {
         sub: uid,
-        role: if authz::can_access_console(&actor.role) {
+        // Agent device tools retain account ownership scope, including for administrators.
+        role: if authz::can_access_console(&actor.role)
+            && (claims.aud.as_deref() != Some("blog-tools") || path.starts_with("api/ota/"))
+        {
             "admin".into()
         } else {
             "user".into()

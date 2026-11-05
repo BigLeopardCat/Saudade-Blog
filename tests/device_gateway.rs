@@ -11,7 +11,7 @@ use sea_orm::{DatabaseBackend, MockDatabase};
 use serde_json::{json, Value};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
-    Arc,
+    Arc, Mutex,
 };
 use tower::ServiceExt;
 
@@ -53,10 +53,13 @@ async fn gateway_uses_current_actor_and_device_key_after_revocation_check() {
     std::env::set_var("DEVICE_SIGNING_SECRET", key);
     let calls = Arc::new(AtomicUsize::new(0));
     let received = calls.clone();
+    let roles = Arc::new(Mutex::new(Vec::<String>::new()));
+    let observed_roles = roles.clone();
     let device = Router::new().route(
         "/api/devices",
         get(move |headers: HeaderMap| {
             let calls = received.clone();
+            let roles = observed_roles.clone();
             async move {
                 let claims = jsonwebtoken::decode::<Value>(
                     headers["authorization"]
@@ -70,7 +73,10 @@ async fn gateway_uses_current_actor_and_device_key_after_revocation_check() {
                 .unwrap()
                 .claims;
                 assert_eq!(claims["sub"], 7);
-                assert_eq!(claims["role"], "user");
+                roles
+                    .lock()
+                    .unwrap()
+                    .push(claims["role"].as_str().unwrap().into());
                 assert!(claims.get("aud").is_none());
                 assert_eq!(headers["x-request-id"], "gateway-fixture-request");
                 calls.fetch_add(1, Ordering::SeqCst);
@@ -93,13 +99,15 @@ async fn gateway_uses_current_actor_and_device_key_after_revocation_check() {
         chrono::Utc::now().timestamp() as usize,
     )
     .unwrap();
-    for (token, status, version, expected) in [
-        (&session, 0, 4, StatusCode::OK),
-        (&grant, 0, 4, StatusCode::OK),
-        (&grant, 1, 4, StatusCode::UNAUTHORIZED),
-        (&grant, 0, 5, StatusCode::UNAUTHORIZED),
+    for (token, status, version, role, expected) in [
+        (&session, 0, 4, "user", StatusCode::OK),
+        (&grant, 0, 4, "user", StatusCode::OK),
+        (&session, 0, 4, "admin", StatusCode::OK),
+        (&grant, 0, 4, "admin", StatusCode::OK),
+        (&grant, 1, 4, "user", StatusCode::UNAUTHORIZED),
+        (&grant, 0, 5, "user", StatusCode::UNAUTHORIZED),
     ] {
-        let response = application(status, version, "user")
+        let response = application(status, version, role)
             .oneshot(
                 Request::builder()
                     .uri("/api/device-gateway/api/devices")
@@ -115,6 +123,7 @@ async fn gateway_uses_current_actor_and_device_key_after_revocation_check() {
             assert_eq!(to_bytes(response.into_body(), 1024).await.unwrap(), "[]");
         }
     }
-    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(calls.load(Ordering::SeqCst), 4);
+    assert_eq!(*roles.lock().unwrap(), ["user", "user", "admin", "user"]);
     server.abort();
 }
