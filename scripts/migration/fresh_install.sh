@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Legacy MySQL archive helper; not an installation path for the PostgreSQL application.
+# Current schema and migration steps: CONTRIBUTING.md, database configuration.
 
 set -euo pipefail
 
