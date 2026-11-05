@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Saudade Agent trace retention
+
+[Timer]
+OnCalendar=*-*-* 04:45:00
+RandomizedDelaySec=300
+Persistent=yes
+Unit=saudade-agent-maintenance.service
+
+[Install]
+WantedBy=timers.target

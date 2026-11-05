@@ -1,0 +1,15 @@
+[Service]
+User=saudade-blog
+Group=saudade-blog
+SupplementaryGroups=
+EnvironmentFile=
+EnvironmentFile=/etc/saudade/blog-runtime.env
+WorkingDirectory=/var/lib/saudade-blog
+ExecStart=
+ExecStart=/srv/saudade-blog/saudade_blog_bin
+BindReadOnlyPaths=__APP_DIR__/target/release/saudade_blog_bin:/srv/saudade-blog/saudade_blog_bin
+BindReadOnlyPaths=/var/lib/saudade-agent/data/word_graph/web:/var/lib/saudade-blog/article-graph
+StateDirectory=saudade-blog
+StateDirectoryMode=0750
+ReadWritePaths=/var/lib/saudade-blog/uploads
+InaccessiblePaths=-/etc/saudade/agent-runtime.env -/etc/saudade/agent.env -/etc/saudade/agent-embedding.env
