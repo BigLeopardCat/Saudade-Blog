@@ -13,6 +13,7 @@ function Preview() {
       readBody={() => editor.current?.read() ?? content}
       onBody={next => editor.current?.apply(next)} onSummary={setDescription}/>
     <Editor editorRef={editor} noteContent={content} setNoteContent={setContent}/>
+    <output aria-label="文章摘要概述">{description}</output>
     <output aria-label="草稿正文">{content}</output>
   </>
 }

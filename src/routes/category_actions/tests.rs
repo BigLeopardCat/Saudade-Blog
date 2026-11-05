@@ -216,3 +216,111 @@ async fn postgres_category_changes_are_atomic_and_preserve_articles() {
         .unwrap()
         .is_none());
 }
+
+#[tokio::test]
+async fn postgres_scheduled_change_replays_atomically_and_rejects_stale_or_revoked_owner() {
+    use crate::routes::automation_changes::{apply as scheduled, Request};
+    let Ok(url) = std::env::var("TEST_PG_URL") else {
+        return;
+    };
+    let db = Database::connect(url).await.unwrap();
+    let txn = db.begin().await.unwrap();
+    let name = format!("sc_{}", uuid::Uuid::new_v4().simple());
+    let owner:i32=txn.query_one(Statement::from_sql_and_values(DatabaseBackend::Postgres,
+        "INSERT INTO \"user\"(username,password,role) VALUES($1,'fixture','admin') RETURNING id",[name.clone().into()]))
+        .await.unwrap().unwrap().try_get("","id").unwrap();
+    let request_intent = json!({"action":"create","target":null,"fields":{"name":name}});
+    let create = intent(request_intent.clone());
+    let prepared = targets::prepare(&txn, &create, false).await.unwrap();
+    let request = Request {
+        run_id: name.clone(),
+        write: json!({"kind":"categories","change":{"version":prepared.version,"intent":request_intent}}),
+    };
+    let first = scheduled(&txn, owner, &request)
+        .await
+        .unwrap_or_else(|e| panic!("{}", e.1 .0.message));
+    let replay = scheduled(&txn, owner, &request)
+        .await
+        .unwrap_or_else(|e| panic!("{}", e.1 .0.message));
+    assert_eq!(first["replayed"], false);
+    assert_eq!(replay["replayed"], true);
+    assert_eq!(first["outcome"], replay["outcome"]);
+    let id = first["outcome"]["state"]["after"]["id"].as_i64().unwrap() as i32;
+    let update = intent(
+        json!({"action":"update","target":{"id":id},"fields":{"name":format!("next_{name}")}}),
+    );
+    let prepared_update = targets::prepare(&txn, &update, false).await.unwrap();
+    txn.execute(Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        "UPDATE category SET introduce='changed before execution' WHERE id=$1",
+        [id.into()],
+    ))
+    .await
+    .unwrap();
+    let stale_run = format!("{name}_stale");
+    let stale = Request {
+        run_id: stale_run.clone(),
+        write: json!({"kind":"categories","change":{
+        "version":prepared_update.version,"intent":update}}),
+    };
+    let attempt = txn.begin().await.unwrap();
+    assert_eq!(
+        scheduled(&attempt, owner, &stale).await.unwrap_err().0,
+        axum::http::StatusCode::CONFLICT
+    );
+    attempt.rollback().await.unwrap();
+    let count: i64 = txn
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "SELECT count(*) AS n FROM automation_change_delivery WHERE owner_id=$1 AND run_id=$2",
+            [owner.into(), stale_run.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "n")
+        .unwrap();
+    assert_eq!(count, 0);
+    assert_eq!(
+        category::Entity::find_by_id(id)
+            .one(&txn)
+            .await
+            .unwrap()
+            .unwrap()
+            .name,
+        name
+    );
+    category::Entity::delete_by_id(id).exec(&txn).await.unwrap();
+    assert_eq!(
+        scheduled(&txn, owner, &request)
+            .await
+            .unwrap_or_else(|e| panic!("{}", e.1 .0.message))["replayed"],
+        true
+    );
+    assert!(category::Entity::find_by_id(id)
+        .one(&txn)
+        .await
+        .unwrap()
+        .is_none());
+    let mut changed = Request {
+        run_id: name.clone(),
+        write: request.write.clone(),
+    };
+    changed.write["change"]["intent"]["fields"]["name"] = json!("different");
+    assert_eq!(
+        scheduled(&txn, owner, &changed).await.unwrap_err().0,
+        axum::http::StatusCode::CONFLICT
+    );
+    txn.execute(Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        "UPDATE \"user\" SET role='user' WHERE id=$1",
+        [owner.into()],
+    ))
+    .await
+    .unwrap();
+    assert_eq!(
+        scheduled(&txn, owner, &request).await.unwrap_err().0,
+        axum::http::StatusCode::FORBIDDEN
+    );
+    txn.rollback().await.unwrap();
+}

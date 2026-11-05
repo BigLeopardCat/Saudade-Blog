@@ -22,7 +22,7 @@ const sources = {
     localStorage.setItem('tokenKey','offline-test');
     function Preview(){const [body,setBody]=useState(Array.from({length:12},(_,i)=>'原始段落 '+i+'。').join('\\n\\n'));
     const ref=useRef(null);return <div className="contain"><div className="content"><Card className="Card"><div className="header">笔记 / 新建文章</div>
-    <main className="dashboardPage" aria-label="后台内容"><div className="notes-container"><div className="article_title">文章标题：离线长差异测试</div>
+    <main className="dashboardPage" aria-label="后台内容"><div className="notes-container"><div className="article-toolbar">离线长差异测试</div>
     <Collaboration title="离线测试" content={body} description="" ready blocked={false} readBody={()=>ref.current?.read()??body}
     onBody={value=>ref.current?.apply(value)} onSummary={()=>{}}/>
     <div className="new_article"><Editor editorRef={ref} noteContent={body} setNoteContent={setBody}/></div>

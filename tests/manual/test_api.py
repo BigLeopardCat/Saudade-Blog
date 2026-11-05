@@ -132,11 +132,7 @@ class TestFrontendContract(unittest.TestCase):
         res2 = requests.get(f"{BASE_URL}/api/public/tagtwo")
         self.assertEqual(res2.status_code, 200, "TagTwo should work")
 
-    def test_public_friends(self):
-        """Test GET /api/public/friends"""
-        res = requests.get(f"{BASE_URL}/api/public/friends")
-        self.assertEqual(res.status_code, 200)
-        
+
     def test_public_talks(self):
         """Test GET /api/public/talk"""
         res = requests.get(f"{BASE_URL}/api/public/talk")

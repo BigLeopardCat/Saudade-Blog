@@ -20,7 +20,7 @@ test('real editor reviews body, updates summary directly and preserves undo', as
   await expect(review).toBeVisible()
   await expect(review.locator('pre del').first()).toContainText('原始正文。')
   await expect(review.locator('pre ins').first()).toContainText('精简后的正文。')
-  await expect(page.getByLabel('文章摘要概述')).toHaveValue('新生成的文章概述')
+  await expect(page.getByLabel('文章摘要概述')).toHaveText('新生成的文章概述')
   await expect(page.getByLabel('草稿正文')).toContainText('原始正文。')
   await review.getByRole('button',{name:'采纳此处'}).last().click()
   await expect(page.getByLabel('草稿正文')).toContainText('改写的第二节。')
@@ -30,7 +30,7 @@ test('real editor reviews body, updates summary directly and preserves undo', as
   await page.locator('.CodeMirror textarea').focus()
   await page.keyboard.press('Control+z')
   await expect(page.getByLabel('草稿正文')).toContainText('原始正文。')
-  await expect(page.getByLabel('文章摘要概述')).toHaveValue('新生成的文章概述')
+  await expect(page.getByLabel('文章摘要概述')).toHaveText('新生成的文章概述')
 })
 
 test('live typing and account changes invalidate writes; suggestions render as text', async ({page,sandboxURL}) => {
