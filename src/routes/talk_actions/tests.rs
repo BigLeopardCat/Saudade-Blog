@@ -14,6 +14,7 @@ fn invalid_targets_and_content_fail_without_database_access() {
         json!({"action":"create","fields":{"content":" ","title":"x"}}),
         json!({"action":"create","fields":{"content":"x".repeat(501)}}),
         json!({"action":"create","fields":{"content":"x","title":"x\n"}}),
+        json!({"action":"create","fields":{"content":"x","title":"x".repeat(101)}}),
     ] {
         assert!(validate(&intent(value)).is_err());
     }
