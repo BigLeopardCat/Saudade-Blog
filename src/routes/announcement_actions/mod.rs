@@ -98,6 +98,10 @@ pub(super) async fn apply_deletion<C: ConnectionTrait>(db: &C, id: i32, version:
         target: Some(Target { id: Some(id), title: None }), fields: Fields::default() } }).await
 }
 
+pub(super) fn validate_creation(intent: &Intent) -> Result<(), sea_orm::DbErr> {
+    targets::validate(intent)
+}
+
 /// Direct administrator forms use the same transaction logic without a separate proposal.
 pub(super) async fn apply_current<C: ConnectionTrait>(
     db: &C,

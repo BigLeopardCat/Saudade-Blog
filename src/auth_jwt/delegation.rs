@@ -108,7 +108,9 @@ pub fn allows(scope: Scope, method: &Method, path: &str) -> bool {
             || (method == Method::POST
                 && matches!(
                     path,
-                    "/api/protected/automation-results" | "/api/protected/catalog/search"
+                    "/api/protected/automation-results"
+                        | "/api/protected/automation-announcements"
+                        | "/api/protected/catalog/search"
                 ));
     }
     // Authentication, proxy transport and credential issuance are never tool APIs.
@@ -160,7 +162,7 @@ pub async fn exchange(
 mod tests {
     use super::*;
     #[test]
-    fn background_is_read_only_except_owner_result_delivery() {
+    fn background_only_writes_bounded_automation_effects() {
         assert!(allows(
             Scope::Background,
             &Method::GET,
@@ -170,6 +172,16 @@ mod tests {
             Scope::Background,
             &Method::POST,
             "/api/protected/automation-results"
+        ));
+        assert!(allows(
+            Scope::Background,
+            &Method::POST,
+            "/api/protected/automation-announcements"
+        ));
+        assert!(!allows(
+            Scope::Background,
+            &Method::POST,
+            "/api/protected/announcements"
         ));
         assert!(!allows(
             Scope::Background,
