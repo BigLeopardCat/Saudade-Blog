@@ -79,33 +79,32 @@ pub async fn create_chat_assertion(
     else {
         return String::new();
     };
+    create_tool_assertion(
+        user_id,
+        role.map(|_| actor.role.as_str()),
+        actor.token_version,
+    )
+}
+
+/// Only call after validating a real browser session against the current actor row.
+/// Delegated credentials cannot reach chat/task proxy routes to renew themselves.
+pub(crate) fn create_tool_assertion(user_id: i32, role: Option<&str>, version: i32) -> String {
     let now = chrono::Utc::now().timestamp() as usize;
     let Some(token) = delegation::issue(
         user_id,
-        &actor.role,
-        actor.token_version,
+        role.unwrap_or("user"),
+        version,
         delegation::Scope::Tools,
         now,
     ) else {
         return String::new();
     };
-    let background = if role.is_some() && crate::authz::can_access_console(&actor.role) {
-        delegation::issue(
-            user_id,
-            &actor.role,
-            actor.token_version,
-            delegation::Scope::Background,
-            now,
-        )
-    } else {
-        None
-    };
-    sign_assertion(
-        user_id,
-        role.map(|_| actor.role.as_str()),
-        token,
-        background,
-    )
+    let background = role
+        .filter(|role| crate::authz::can_access_console(role))
+        .and_then(|role| {
+            delegation::issue(user_id, role, version, delegation::Scope::Background, now)
+        });
+    sign_assertion(user_id, role, token, background)
 }
 
 fn sign_assertion(

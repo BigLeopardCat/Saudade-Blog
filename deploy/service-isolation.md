@@ -97,7 +97,7 @@ Agent 诊断只挂载已授权的 health/rust 日志，不暴露整个工作区�
 [RFC 8725](https://www.rfc-editor.org/rfc/rfc8725.html#section-3.12) 使用独立密钥和互斥校验规则。
 新登录态带 `aud=blog-session` 和 ver；既有带 ver 的七天登录态自然过期，无 ver 令牌拒绝。
 
-仅真实登录聊天签发五分钟 tools 委托，包含当前 uid、ver、scope 和 `aud=blog-tools`。
+真实登录的聊天与任务面板请求签发五分钟 tools 委托，包含当前 uid、ver、scope 和 `aud=blog-tools`。
 宿主每次检查当前账号冻结、代次和角色。工具委托不能进入登录、密码、聊天、图谱代理或
 委托交换接口。管理员后台授权最长三十天，只读及投递自己的自动化结果，后续真实聊天刷新；
 过期或改密需要重新认证。切换前为已有批准计划的当前拥有者迁移有限后台授权，不重新批准计划。
