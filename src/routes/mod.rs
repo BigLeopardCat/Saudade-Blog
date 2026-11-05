@@ -144,6 +144,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/public/tags", get(public_catalog::tags::list))
         .route("/api/public/image-generation/{id}/preview", get(image_generation::preview))
         .route("/api/public/notes", get(notes::list_public_notes))
+        .route("/api/protected/agent/delegation", get(crate::auth_jwt::delegation::exchange))
         .route("/api/device-gateway/{*path}", axum::routing::any(device_gateway::proxy)
             .layer(axum::extract::DefaultBodyLimit::max(16 * 1024 * 1024)))
         .route("/api/public/rag/corpus", get(rag_corpus::export))

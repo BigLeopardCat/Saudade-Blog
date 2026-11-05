@@ -95,6 +95,7 @@ pub fn allows(scope: Scope, method: &Method, path: &str) -> bool {
         || path.contains("/chat")
         || path.contains("/conversation")
         || path.starts_with("/api/protected/graph/")
+        || path.starts_with("/api/protected/agent/")
     {
         return false;
     }
@@ -126,6 +127,32 @@ pub async fn boundary(request: Request, next: Next) -> Result<Response, StatusCo
         }
     }
     Ok(next.run(request).await)
+}
+
+pub async fn exchange(
+    axum::extract::State(state): axum::extract::State<std::sync::Arc<crate::routes::AppState>>,
+    headers: axum::http::HeaderMap,
+) -> Result<axum::Json<crate::utils::ApiResponse<serde_json::Value>>, StatusCode> {
+    use sea_orm::EntityTrait;
+    let claims = super::claims_from_headers(&headers).ok_or(StatusCode::UNAUTHORIZED)?;
+    let actor = crate::entity::user::Entity::find_by_id(claims.sub)
+        .one(&state.db)
+        .await
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+    crate::authz::check_token(actor.status, actor.token_version, claims.ver)
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+    let token = issue(
+        actor.id,
+        &actor.role,
+        actor.token_version,
+        Scope::Tools,
+        chrono::Utc::now().timestamp() as usize,
+    )
+    .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    Ok(axum::Json(crate::utils::ApiResponse::success(
+        serde_json::json!({"uid": actor.id, "token": token, "expiresIn": 300}),
+    )))
 }
 
 #[cfg(test)]
