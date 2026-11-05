@@ -1,40 +1,8 @@
 #!/usr/bin/env python3
-"""沙箱临时目录清扫：把 `frontend/tests/` 那批套件撒在 /tmp 上的残留收掉。
+"""列出或清理过期的前端测试临时目录，默认只列清单。
 
-为什么要有它（20261006，用户报"/tmp 该清一次了"）：实测 /tmp 5.6G，其中
-**2265 个目录 / 4.76G** 能归因到套件里的 `mkdtemp(prefix=…)`——占整个 /tmp 的 85%。
-最大一族 `comment-layout-` 141 个 / 2.5G；次大 `cmt-` 60 个 / 588M（来自 **.mjs** 侧的
-`comment-render.test.mjs`，而 `nightly_sandboxes.sh` 只枚举 `*.py` ⇒ 那条路漏出来的
-目录此前**从来没有东西管**）。
-
-同一天在两个运行器里各加了 **TMPDIR 隔离**（每个套件一个专属临时目录，通过即删、
-失败留现场），所以本脚本处理的是**隔离盖不住的那些**：
-
-  · **手跑单个套件**（`python3 frontend/tests/xxx.test.py`）——没人给它 TMPDIR，
-    仍旧落在 /tmp 根上；
-  · **中途被 kill 的轮次**（`timeout -k` 或整机重启）留下的轮次目录。
-
-判据是**白名单 + 年龄闸 + 路径必须在根之下**：
-
-  · **前缀从套件源码现场推出，不是手写名单**——本轮手写的第一个版本就漏了六族
-    （`ann-verify-` / `comment-layout-` / `mmzoom-` / `readcol-` / `readmob-` /
-    `uc-verify-`，合计 700M+），而"漏一族"的后果是**它再也不会被扫，且没有任何东西
-    会变红**。同族教训：R2 的 `--keep 3`、logrotate 的 `rotate 14` 都吃过"靠人手同步"的亏。
-  · **年龄闸**：只动够老的东西，绝不碰正在跑的套件（默认 6h，远大于单套件 480s 的超时上限）。
-  · **未知一律不删**：根上还住着 `health_state`、`claude-1000`、`systemd-private-*`、
-    `verify-clone-*.git`、`bundle5` 等别人的东西，一个都不在判据里。
-
-用法（默认**只列不删**，要真删得显式加 `--apply`）：
-
-    python3 scripts/prune_sandbox_tmp.py                                # 看会删什么
-    python3 scripts/prune_sandbox_tmp.py --apply                        # 真删
-    python3 scripts/prune_sandbox_tmp.py --list-prefixes                # 只打印推出来的前缀
-    python3 scripts/prune_sandbox_tmp.py --root /tmp/fixture --apply    # 指向夹具（测试用）
-    python3 scripts/prune_sandbox_tmp.py --min-age-hours 0 --apply      # 手清刚漏出来的
-
-`nightly_sandboxes.sh` 在跑完所有套件、判完哨兵**之后**调它（带 `--apply`），所以每天
-04:40 之后 /tmp 会回到"只有够老才能被收"这个不变量上。清理失败**不影响**沙箱结果
-（调用方只记一行日志），与 agent 仓 nightly 调 `eval/trace_retention.py` 同一套做法。
+允许前缀由测试源码动态提取；仅处理达到年龄阈值的已知目录。
+不处理未知前缀、非目录或仍在运行中的测试。使用 --apply 才执行清理。
 """
 import argparse
 import os

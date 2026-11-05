@@ -1,25 +1,6 @@
 #!/usr/bin/env bash
-# 全站安全响应头的机器判据（20261015 审计落地）。
-#
-# 为什么需要它：这五条头**只活在 /etc/nginx** 里（Rust 侧只在下载路由补 nosniff，
-# 见 src/middleware.rs），而那份配置**不在仓库里、不经 CI、不受任何测试覆盖**。
-# 也就是说：改坏它不会有任何东西变红——正是本仓反复吃过的那类"配置漂移无人喊"。
-# 落点因此有两处，都用这一个脚本（判据只有一份）：
-#   · `scripts/healthcheck.sh` 第 8 项：每分钟探针，缺了就写 logs/health.log 的 WARN；
-#   · `scripts/deploy/deploy_from_r2.sh` 末尾：每次部署顺带复核一次（非致命，
-#     与同处的 prune_r2 一个待遇）——nginx 与部署包一起变，这个组合是"改了配置
-#     忘了 include"最可能发生的时刻。
-#
-# ★ 判据是**逐路径**要齐五条，不是"首页有就行"：
-#   nginx 的 `add_header` 不继承——某个 location 里有任何一条 add_header，server 块里
-#   的整片失效。所以"首页 5/5"完全可能与"静态资源 0/5"并存（本站每个 location 都有
-#   Cache-Control）。下面三条路径分别落在 `location /`（SPA 入口）、`location ~* \.(js|css)$`
-#   （静态资源）与 `location ^~ /api/`（反代）三块上，覆盖三种 include 位置。
-#
-# 用法： bash scripts/check_security_headers.sh [Host 头]
-# 退出码：0 = 三条路径都齐；1 = 有缺失（逐条打到 stderr）。
-# 本机跑（127.0.0.1 + Host 头），不走公网、不依赖 DNS——探针要能在"公网不通"时也说话。
-# `-k` 是必须的：https://127.0.0.1 命中的是自签证书那个 default_server 块。
+# Verify public security headers for the configured routes.
+
 set -u
 
 HOST="${1:-${SITE_HOST:-saudade.site}}"

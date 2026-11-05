@@ -15,14 +15,12 @@ saudade_blog_bin
 __pycache__/
 *.pyc
 
-# 备份/临时产物（20260930）。此前只有 /saudade-blog-agent.bak.*/ 这一条（只盖住 agent
-# 目录），于是 frontend/ 下两个 `.bak` 一路被跟踪着——它们是编辑中途的手工备份，
-# 既不是源码也没人读，留在公开仓库里只会让人以为那是"另一份实现"。
+
 *.bak
 *.bak.*
 *.orig
 
-# 死文件（20260830 清理，git rm --cached 后不再跟踪；磁盘文件保留）
+
 frontend/screenshots/
 frontend/stats.html
 static/
@@ -32,35 +30,16 @@ frontend/nginx.conf
 frontend/.npmrc
 frontend/LICENSE
 
-# 看板娘前端的两棵树（20261002 前端搬家：前端随 MIT 分发搬进 agent 仓）——**本仓不再跟踪**。
-# 构建前由 `npm run fetch:widget`（frontend/scripts/fetch-widget.mjs）按
-# frontend/widget.lock.json 里钉死的 sha 从 agent 仓稀疏检出，落到**和以前完全一样的路径**。
-# 路径不变是**有意的**：nginx 那两个 1 年 immutable 的 location 块、仓库外的设备控制台、
-# 一批按路径读文件的测试、以及 src/routes/chat.rs 的 include_str! 全都因此零改动。
-#
-# 看板娘运行时的第三方产物（20261001 开源前准备）：也**故意不进 git**
-#   live2d-widgets/vendor/pixi.min.js / cubism4.min.js —— MIT，但 576KB 且与 node_modules 重复
-#   cubism5/live2dcubismcore.min.js                  —— Live2D 专有许可，**不属于本仓 GPL-2.0 的覆盖范围**
-# 三者由 `npm run vendor:live2d`（frontend/scripts/vendor-live2d.mjs）就位：
-# 前两份从 node_modules 拷，第三份从官方 CDN 取并按 sha256 校验（换版本会响亮地红）。
-#
-# ⚠️ 顺序：fetch:widget **必须在 vendor:live2d 之前**——后者往 live2d-widgets/vendor/ 里写，
-# 而前者整树替换 live2d-widgets/，顺序反了刚取到的 vendor/ 就被抹掉（脚本会保留**已存在**的
-# vendor/ 并打印出来，但那是兜底，不是契约）。新克隆后依次跑：
-#   npm ci && npm run fetch:widget && npm run vendor:live2d
+
 frontend/public/live2d-widgets/
 frontend/public/live2d_model/
 frontend/public/cubism5/
 
-# 环境变量：**任何 .env* 变体都不进库**（20260917 修——原来只写了 /.env 与
-# /frontend/.env 两个精确名，于是 frontend/.env.production 被漏进来跟了好几个提交；
-# 它内容只是一个空的 VITE_CDN_BASEURL，不是密钥，但环境文件按约定不入库）。
-# 示例文件例外。CI 侧要注入构建期变量请用仓库 Variables（见 deploy.yml 的 Build Frontend）。
+
 .env*
 !.env.example
 !**/.env.example
 
-# 项目说明（给 Coding Agent 用的开发/运维手册）：20260917 起**不进库**——
-# 里面是服务器坐标（nginx/systemd/logrotate/cron/部署流程/后台路由），
-# 保留在本地工作区即可（agent 会话照常读它）。
-/CLAUDE.md
+# Machine-local assistant notes and permissions; shared entry points are tracked.
+/CLAUDE.local.md
+/.claude/settings.local.json

@@ -1,23 +1,10 @@
 #!/usr/bin/env python3
-"""EMQX 生产级配置（幂等，纯 REST API）—— schema 依据 EMQX 5.8.9 实测校准：
-   1. Dashboard 登录 → 轮换管理员口令 → 创建 API Key（5.8 起 REST 仅接受 API Key）
-   2. JWT 认证：mechanism=jwt, algorithm=hmac-based, 复用博客 JWT_SECRET, 校验 exp
-   3. 授权：no_match=deny + built-in database 规则（PUT 全量替换）
-   4. 验证（不打印任何密钥）
+"""通过 REST 管理旧 EMQX JWT/HTTP 双认证模式及 ACL。
 
-用法：
-    EMQX_ADMIN_PASS='<dashboard 管理员口令>' python3 iot/emqx/configure_emqx.py
-
-环境变量（都有可推导的默认值，一般不用配）：
-    EMQX_ADMIN_USER   默认 admin
-    EMQX_ADMIN_PASS   **没有默认值**，必填（见下）
-    EMQX_API          REST 根，默认 http://127.0.0.1:18083/api/v5
-    BLOG_ENV          博客 .env 的路径，默认本脚本上溯两级（= 仓库根）的 .env
-    DEVICE_AUTH_URL   设备认证回调，默认 http://127.0.0.1:3100/api/devices/auth
-
-⚠️ `EMQX_ADMIN_PASS` 刻意**不给默认值**：它只能来自 EMQX 初次安装时那个口令，而
-"猜一个常见默认口令试着登录"在别人的机器上既是错的、也是不该有的行为。没设就退出，
-并把该做什么打出来。
+本脚本会共享博客登录密钥，不是独立设备密钥方案的安装入口。
+首次配置需显式设置 EMQX_ADMIN_PASS；后续复用本机私有 API Key。
+EMQX_API、BLOG_ENV、DEVICE_AUTH_URL 可覆盖对应服务地址和配置路径。
+API Key 与轮换口令只写入私有文件，不打印密钥。
 """
 import base64, json, os, re, secrets, urllib.error, urllib.request
 
@@ -32,12 +19,7 @@ ADMIN_USER = os.environ.get("EMQX_ADMIN_USER", "admin")
 ADMIN_PASS = os.environ.get("EMQX_ADMIN_PASS")
 
 def read_jwt_secret():
-    """从博客 .env 取 JWT_SECRET —— EMQX 用**同一个密钥**验博客签发的令牌。
-
-    这也是这套东西的信任边界所在：broker 只验签与 exp，**不查库** ⇒ 冻结账号/收回令牌
-    管不到设备侧（见仓库 docs/security-boundary.md）。换 JWT_SECRET 时两边一起换，
-    漏了这里表现为"网页能开、设备与控制台全连不上"。
-    """
+    """读取旧模式的共享登录密钥；broker 不查询账号冻结或令牌代次。"""
     path = os.path.abspath(BLOG_ENV)
     try:
         with open(path) as f:
@@ -148,8 +130,7 @@ def main():
                   {"cache": {"enable": True, "max_size": 32, "ttl": "1m"},
                    "deny_action": "ignore", "no_match": "deny"}, headers=H)
     print(f"[3] 默认权限 no_match=deny (HTTP {code})")
-    # 5.8 schema：/rules/all 的 POST 为【替换式写入】而非追加（实测：只发缺失规则会把
-    # 未包含的旧规则清掉，导致设备发布被静默拒绝）。幂等策略：全量对齐——先清空再写入全部。
+
     needed = [
         {"permission": "allow", "action": "all", "topic": "broadcast/#"},
         {"permission": "allow", "action": "all", "topic": "users/${username}/#"},

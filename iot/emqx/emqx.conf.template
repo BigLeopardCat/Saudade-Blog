@@ -52,9 +52,9 @@ listeners.ssl.default {
   }
 }
 
-## 认证链与 ACL **不写在这里**：由 emqx/configure_emqx.py 经 REST API 配置
-## （幂等，可重复跑）。写在文件里的话，Dashboard 上一改就与文件不一致，两边打架。
-## 那个脚本配置的是：
+## 认证链与 ACL 通过 REST API 管理；不要同时在文件与 Dashboard 维护两份配置。
+## emqx/configure_emqx.py 维护旧 JWT 模式，不是独立设备密钥方案的安装入口。
+## 旧模式包括：
 ##   · 认证链 1：jwt（复用博客 JWT_SECRET）—— 网页控制台与设备共用同一套令牌
 ##   · 认证链 2：password_based + http backend → device-service 的 /api/devices/auth
 ##               （设备用 device_id + device_key 认证，由 device-service 查 SQLite 决定）

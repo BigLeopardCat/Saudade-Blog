@@ -85,10 +85,7 @@ n="$(mysql_root -N -B -e \
     "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='$(sql_quote "$DB")';")"
 if [ "$n" != "0" ]; then
     log "库里已有 $n 张表 ⇒ 跳过建库（脚本绝不 DROP 已有数据）"
-    # "有表"不等于"建全了"。这里只把**看得见的**摆出来（20261007），**不下结论**：
-    # 判"该跑的迁移跑全了没有"需要知道完整的筛选规则（快照日 + 夹具名单 + 强制补跑名单），
-    # 那套规则住在 scripts/migration/fresh_install.sh 里；在这里抄一份就会各漂各的，而抄不准
-    # 的版本会把快照日之前的几十份迁移全判成缺失（它们的标记本来就不在库里）—— 那是假红。
+
     flags="$(mysql_root -N -B "$DB" -e 'SELECT flag_name FROM migration_flags ORDER BY applied_at;' 2>/dev/null || true)"
     if [ -n "$flags" ]; then
         log "迁移标记 $(printf '%s\n' "$flags" | wc -l | tr -d ' ') 个，最近一条：$(printf '%s\n' "$flags" | tail -1)"
@@ -100,13 +97,7 @@ if [ "$n" != "0" ]; then
 else
     [ -d "$MIG_DIR" ] || die "找不到迁移目录 $MIG_DIR —— 宿主仓库根没挂进来？"
     log "从零建库（基架快照 + 快照之后的增量迁移），这会跑一会儿…"
-    # 建库只有这一个入口（= 裸机 install.sh 用的同一个脚本），免得两份"从零建库"哪天各漂各的。
-    #   ALLOW_PRODUCTION_NAME=1：脚本默认拒收 `saudade_blog` 这个名字（防在生产机上打错字）。
-    #     而迁移文件里绝大多数写死了 `USE saudade_blog;` ⇒ 自建部署的库名**必须**是它。
-    #   MYSQL_BIN 多词前缀把 --defaults-extra-file 顶到第一个位置参数 ⇒ root 口令不进 argv。
-    #   `-i` 的教训写在 fresh_install.sh 头注里：SQL 是从 stdin 喂进去的，少了它 mysql
-    #     收到空输入、**每一步都"成功"**，最后建出一个空库。这里没有 docker exec，不涉及；
-    #     但管道那头的 exit code 必须真的传回来（下面用 if ! 捕，不用 $?）。
+
     if ! MYSQL_BIN="mysql --defaults-extra-file=$CNF" ALLOW_PRODUCTION_NAME=1 \
          bash "$MIG_DIR/fresh_install.sh" "$DB" 2>&1 | sed 's/^/          /'; then
         die "建库失败（上面那些 SQL 报错就是原因；库停在这一步，没有半途而废的假成功）。
@@ -137,9 +128,7 @@ if [ "$cnt" != "0" ]; then
         log "  管理员用户名：$(mysql_root -N -B "$DB" -e "SELECT username FROM \`user\` WHERE role='admin' LIMIT 1;")"
     fi
 else
-    # 先看一眼**同名账号**（20261007 加）：`user.username` 上有唯一键，撞上去的话 MySQL 甩一句
-    # `Duplicate entry` 然后脚本带着一个指向 SQL 的报错退出 —— 读起来像是脚本坏了，实际是
-    # "你换了个管理员用户名，而库里早就有一个同名（非 admin）账号"。说清楚，并给出两条出路。
+
     dupe="$(mysql_root -N -B "$DB" -e \
         "SELECT id, username, role FROM \`user\` WHERE username='$(sql_quote "$ADMIN_USER")' LIMIT 1;" 2>/dev/null || true)"
     [ -z "$dupe" ] || die "库里已经有同名账号（id 账号 角色 = $dupe），而它不是 role=admin。

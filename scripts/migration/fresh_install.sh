@@ -1,61 +1,14 @@
 #!/usr/bin/env bash
-# =============================================================================
-# ⛔ **20261018 起本脚本已冻结，别再照它建库。**
-# 那天生产库从 MySQL 切到了 PostgreSQL，后端只认 `postgres://`；本脚本建出来的是
-# MySQL 库，装完起不来（`.env` 指过去只会得到 `28P01 password authentication failed
-# for user …` 或连不上 5432——`PgConnectOptions` 不校验 scheme，不会说"不认这种串"）。
-# PG 那侧的从零建库只有一份文件、三步，见 CONTRIBUTING.md §2.1。
-# 本脚本留在树里是历史，不是可执行的安装路径。
-# =============================================================================
-# 从零建库（20261003）：基架快照 + **快照之后**的增量迁移
-#
-#   bash scripts/migration/fresh_install.sh <库名> [mysql 的位置参数…]
-#   bash scripts/migration/fresh_install.sh saudade_dev -uroot -p
-#
-# CI 里 `mysql` 不在 runner 上，走服务容器（`$MYSQL_BIN` 允许带前缀、按空格拆词）：
-#   MYSQL_BIN="docker exec -i $CID mysql" bash scripts/migration/fresh_install.sh \
-#       saudade_blog_it -h127.0.0.1 -P3306 -uroot -proot
-# ⚠️ `docker exec` 那个 **`-i` 不能少**：SQL 是从 stdin 喂进去的，而 docker exec 默认不接
-# stdin —— 少了它 mysql 收到空输入、**每一步都"成功"**，最后建出一个空库。
-#
-# ── 为什么不能"按文件名顺序把 *.sql 全跑一遍" ────────────────────────────────
-# CONTRIBUTING §2.1 在 20261003 之前教的正是那一版，**它跑不通**：
-# `0000_base_schema.sql` 是 **20261001 的生产库快照**，里面已经含有那天之前所有增量
-# 迁移的效果；而 20261001 之前的迁移大多是无保护的 `ALTER TABLE … ADD COLUMN`
-# （没有 `IF NOT EXISTS` 守卫）。照单全跑必然在半路撞上
-# `ERROR 1060 Duplicate column name` —— 20261003 在空库上实测，40 个文件里 **17 个**
-# 会红（`note_cover_crop_20260912` / `note_author_20261001` / `user_chat_quota_20260929`…），
-# `chat_conversation_20260903.sql` 还会撞 `ERROR 1050 Table 'conversation' already exists`。
-# （撞错的那 17 个不是"坏迁移"：它们在快照之前、本来就该在快照之前跑完。）
-#
-# 正确规则：**基架即快照，之后只补快照日期之后的迁移**。日期就是文件名里的
-# `_YYYYMMDD.sql` 后缀，本脚本按它筛。加了新迁移**不需要**动本脚本；将来重新导出基架时，
-# 只需把下面的 `SNAPSHOT` 改成新的导出日。
-#
-# ⚠️ 这条规则有个前提：**快照是完整的**。它并不总是——快照是生产库的导出，生产库漏跑过的
-# 迁移，快照里自然也没有，而日期规则会把那份迁移静默跳过（`password_reset_token` 就是这么
-# 从 20260921 一直漏到 20261004 的）。这类迁移登记在下面的 `apply_despite_snapshot` 名单里强制补跑。
-#
-# ── ⚠️ 关于 `USE saudade_blog;`（本目录最危险的一条约定）────────────────────
-# 每个迁移文件开头都写死 `USE saudade_blog;`。本脚本把它**一律剥掉**，并且库名永远用
-# 位置参数显式传给 `mysql`。不剥的话，`mysql <你的库> < 某个迁移.sql` 会在读到那一行的
-# 瞬间切到**生产库**——那不是"跑错库"，那是把生产库改了，而且 mysql 不会报错。
-# 剥完还有一道 grep 复查：残留 `USE` 行直接中止，不让它有机会执行。
-#
-# 另：本脚本**拒绝**把 `saudade_blog` 当目标库（下面第 ① 步）。理由是同一件事的兜底：
-# 万一上面的剥离哪天失效，最坏也只是打在一个凭空建不出来的名字上，而不是生产库。
-# =============================================================================
+# Legacy MySQL archive helper; not an installation path for the PostgreSQL application.
+# Current schema and migration steps: CONTRIBUTING.md, database configuration.
+
 set -euo pipefail
 
 # 基架快照日：`0000_base_schema.sql` 中已包含**这一天（含）之前**所有迁移的效果。
 # 重新导出基架时改这里，并把 0000 那份文件整体替换（它自己的头注写着这条纪律）。
 SNAPSHOT=20261001
 
-# 夹具与作者的一次性脚本：不是站点运行所需的结构（清单与 CONTRIBUTING §2.1 的表同源）。
-# ⚠️ 这张表**只能写成字面 pattern**，不许改成 `case "$name" in $FIXTURES)` ——case 的 `|`
-# 是语法、不是被展开出来的分隔符：变量展开后整串只是一个 pattern（`a|b` 当成字面
-# `a|b` 去匹配），于是**一个都跳不过去**，而且不报错。20261003 就是这么把
-# `zako_role_20261002.sql` 放进空库跑了一遍（它是空转脚本，没造成后果）。
+
 skip_fixture() {
     case "$1" in
         golden_*.sql|test_accounts_*.sql|user_rename_sora_*.sql) return 0 ;;
@@ -65,21 +18,7 @@ skip_fixture() {
     return 1
 }
 
-# 日期 ≤ SNAPSHOT、但**基架里确实没有它的效果**的迁移：必须补跑（20261004）。
-#
-# "基架 = 快照 ⇒ 快照日前的迁移一律跳过"这条规则**默认快照是完整的**。快照就是一份
-# 生产库的导出，于是它只包含"生产库当时真有的东西"——而 `password_reset_token` 这张表
-# 生产上**从来没建成过**：迁移文件 20260921 就写好了、代码（`routes/auth.rs` 的
-# `reset_password`、`routes/temp_user.rs` 的 `create_password_reset_token`）一直在引用它，
-# 但那一次迁移漏跑了。快照里因此也没有它，而日期规则又把这份迁移静默吃掉
-# ⇒ **从零建库的人建不出这张表，一路建到线上仍然是坏的**（20261004 实测：生产库
-# 28 张表里没有 `password_reset_token`，`fresh_install.sh` 的产物同样没有）。
-#
-# 加进本名单的门槛只有一条：**脚本必须幂等**——它会被无条件跑一遍，不看日期。
-# （这里是 `CREATE TABLE IF NOT EXISTS`。）重新导出基架、`SNAPSHOT` 前移之后，
-# 名单里的项要逐条核对：效果进了新快照的就删掉。
-#
-# ⚠️ 同 `skip_fixture`：`|` 是 case 的语法，只能写成字面 pattern，不许 `$变量` 展开。
+
 apply_despite_snapshot() {
     case "$1" in
         password_reset_token_*.sql) return 0 ;;
@@ -100,18 +39,7 @@ if [ $# -lt 1 ]; then
 fi
 DB=$1
 shift
-# 连库命令组装成**数组**：`${MYSQL_BIN}` 故意不加引号（按空格拆词，多词前缀才成立），
-# 而 mysql 自己的位置参数原样跟在后面。⚠️ 必须**在 `shift` 之后**组装（`$@` 此时才是
-# mysql 的参数），否则库名会被重复塞进数组；也别在 `apply` 里用 `"$@"` 取它们——函数内的
-# `$@` 是该函数自己的位置参数（=那个 SQL 文件名），拿它当 mysql 的参数会把文件名当库名。
-#
-# 客户端字符集**由脚本自己钉死**（20261003 CI 首跑抓出来的）：迁移文件是 UTF-8，里面大量
-# 出现中文标识符（列别名 `AS 行数`）、`GROUP BY 昵称组`、中文字面量与列注释，而 mysql 客户端的
-# 默认字符集取自**运行环境的 locale**——本机是 UTF-8，CI 的 `docker exec` 进容器时 LANG 为空、
-# 回落成 latin1，同一份文件在那边被按 latin1 解释 ⇒ 多字节标识符被拆出"看着像空白"的字节
-# ⇒ `ERROR 1064 … near '一组, COUNT(*) AS 行数'`（本机用 `--default-character-set=latin1`
-# 复现过）。跟 SQL 写得好不好无关，只跟谁在读它有关；钉死 utf8mb4 后两边一致。
-# 放在 `"$@"` 之前 ⇒ 调用方仍可自己传一个来覆盖。
+
 MYSQL=( ${MYSQL_BIN} --default-character-set=utf8mb4 "$@" )
 if [ -z "$DB" ]; then
     echo "库名不能为空" >&2

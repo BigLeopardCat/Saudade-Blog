@@ -1,66 +1,30 @@
-<!--
-提交前请确认下面几件事。这份模板不是在收表格，它对应的是本仓真实踩过的失效：
-每一条后面都写着"漏了会怎样"。
--->
+## 问题与结果
 
-## 这条 PR 做了什么
+<!-- 描述触发条件、改动后的行为与必要取舍。 -->
 
-<!-- 一两句。写"为什么"，不写"改了哪几行"——diff 自己会说改了哪几行。 -->
+## 验证
 
-## 跑过的
+<!-- 只勾选本提交实际完成的检查，附命令或 CI 链接；说明跳过、未运行与失败项。 -->
 
-```bash
-cd frontend && npm run fetch:widget && cd ..   # cargo test 的编译期前提，见下
-cargo test
-cd frontend
-npx --no-install tsc --noEmit -p tsconfig.json
-npm run typecheck:tests
-npm test
-npm run test:browser
-npm run lint
-```
+- [ ] Rust / PostgreSQL：使用独立测试库；需要编译期组件时先运行 `npm run fetch:widget`
+- [ ] 前端：类型检查、相关单元/浏览器测试和 lint
+- [ ] 纯文档/配置：链接、格式及适用的配置校验
+- [ ] 提交信息符合 CONTRIBUTING.md
 
-- [ ] `cargo test` —— 绿（**先跑过 `npm run fetch:widget`**：`src/routes/chat.rs` 有一条
-      `include_str!` 是编译期读看板娘那个 `chat-stream.js` 的，没取回来会在这里报一个
-      看不出前因后果的编译错）
-- [ ] `tsc --noEmit` —— 干净
-- [ ] `typecheck:tests` —— 单元/浏览器 TS 类型检查通过
-- [ ] `test:browser` —— 浏览器行为与河灯路由检查通过（失败产物只作为 CI artifact）
-- [ ] `npm test` —— 绿（它**不包含** ESLint，两者是分开的两道门）
-- [ ] `npm run lint` —— 干净（脚本自带 `--report-unused-disable-directives`：
-      一条**多余的** `eslint-disable-next-line` 在这里判 error，而它会让 CI 红——
-      **CI 红就意味着这次 push 什么都没部署**）
-- [ ] 提交信息过了闸门（首行 ≤60 字符、type 在白名单里、首行后有空行、没有 `Co-Authored-By`）
+完整检查在 CI 或独立开发环境运行；共享生产主机遵循 AGENTS.md 的资源约束。
 
-> PR 与主分支 push 都运行 `check`、独立 `browser` job；任一失败阻止部署。
-> PR 还在 GitHub runner 验证前端生产构建，不执行部署。共享生产主机禁止本地生产构建。
+## 跨仓与交接
 
-## 需要同步的另一头
+- 本仓基线与提交：
+- 配套 Agent PR / 完整 commit（无则写不涉及）：
+- 组件子树、`frontend/widget.lock.json` 或宿主契约锁是否需要更新及验证结果：
+- 协议兼容、合并/发布顺序、迁移与回滚要求：
+- 当前状态：已推送 / 已合并 / 已部署（各自说明实际版本与证据）：
+- 后续工作及未纳入本 PR 的其他会话改动：
 
-- [ ] 改了三端契约（SSE 帧协议 / Python ↔ Rust 的字段名 / 提示词里的工具清单）——
-      **另一侧也改了**，并在下面说明怎么核对的。这几处都是"改一处必须同步另一处"的地方
-- [ ] 动了看板娘前端（`live2d-widgets/`、`live2d_model/`）—— 那些文件的**源码不在本仓**，
-      得先去 [saudade-blog-agent](https://github.com/BigLeopardCat/saudade-blog-agent) 改，
-      再回来把 `frontend/widget.lock.json` 里的 pin 换掉。
-      **忘了换 pin，改动永远不会上线，而且没有任何东西会变红**
-- [ ] 加了迁移脚本 —— 它是**幂等**的，并且想清楚了 `fresh_install.sh` 的日期规则
-      （快照日当天的会跳过）与 `apply_despite_snapshot()` 名单要不要动
-
-## 影响面
-
-- [ ] 我**没有**在本地跑 `vite build` / `cargo build --release`（这台机器同时是生产机）
-- [ ] 我**没有**用 `git add -A` / `git commit -a`（工作区里可能挂着别的会话的改动）
-- [ ] 若改了 `src/**` 或前端：我知道这次 push 会触发一次**真的部署**（按提交号打包上传、
-      落地后重启服务），而不是只跑 CI
-
-## 需要 reviewer 特别注意的
-
-<!--
-例如：这条改动碰了某个既成事实的前提；这条只在某个开关打开时才生效而我这边开不了；
-我改了一处契约文本，但不确定"这一格是否还装得下原来的病"。
-写"我不知道"比写"应该没问题"有用得多。
--->
+PR 只检查和生成验证产物；主线 push（包括文档提交）及手动发布会部署完整快照。
+前端 build-info、Rust 二进制产物与 Agent `/version` 分别核对。
 
 ## 关联
 
-Closes #
+<!-- 相关 issue、PR 或讨论；不粘贴密钥、私信和私有运行配置。 -->

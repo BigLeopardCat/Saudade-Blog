@@ -5,6 +5,10 @@
 
 ## 装
 
+本目录 REST 配置脚本维护的是旧 JWT + 设备 HTTP 双认证模式，会把博客登录密钥交给 broker。
+它不适合作为独立设备密钥方案的自动安装入口；HTTP 网关迁移也不会自动迁移 MQTT JWT 链。
+新部署先核对[独立服务账号与鉴权](../../deploy/service-isolation.md)，不要直接运行下面的旧模式命令。
+
 ```bash
 # 1. 装 5.x 发行版（见 EMQX 官方安装文档），然后：
 sudo cp iot/emqx/emqx.conf.template /etc/emqx/emqx.conf
@@ -43,7 +47,7 @@ EMQX_ADMIN_PASS='<dashboard 管理员口令>' python3 iot/emqx/configure_emqx.py
 ### 规则是**全量替换**的
 
 EMQX 5.8 的 `/authorization/sources/built_in_database/rules/all` 那个 POST 是**替换**不是
-追加（实测：只发"新增的那条"会把没包含的旧规则全清掉，然后设备发布被静默拒绝）。
+追加；仅发送新增项会删除未包含的规则。
 所以脚本的做法是：先读现有规则的 topic 集合，**不一致才**清空重写全量。改规则时改
 `needed` 那一个列表就行，别在别处手加。
 

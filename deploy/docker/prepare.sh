@@ -80,13 +80,7 @@ die()  { printf '\n❌ %s\n' "$*" >&2; exit 1; }
 rand_hex() { openssl rand -hex "${1:-32}"; }
 rand_pw()  { openssl rand -hex "${1:-16}"; }
 
-# 连接串里的 userinfo 必须转义（20261007）。生成的口令是纯 hex、碰不到，但 `DB_PASS` 可以是
-# 任何人手给的东西（--db-pass / .credentials），而 `mysql://账号:口令@主机/库` 这个形状里
-# 口令中的 `@ : / ? # %` 每一个都能把连接串切到别的意思上 —— 症状是后端连不上库，或者更坏：
-# 静默连到一个"看起来对"的库。上面的 check_env_value 放行这几个字符（它们在 .env 的值里是
-# 合法内容），所以**必须在这里转义**。按 RFC 3986 的 unreserved 集合放行，其余逐字节转义。
-# 与 deploy/install.sh 里那份是同一个实现（那一路的对象是 dotenvy，这一路还多穿两层解析器）
-# —— check.sh 有一条判据钉住两份实现对同一批恶心口令**输出逐字相同**。
+
 urlenc() {
     local s=$1 out= c hex i
     local LC_ALL=C        # 逐**字节**走：多字节字符整体放进 %XX 序列里，不能被按字符掰开
@@ -278,7 +272,7 @@ if [ -n "$PRINT_WHAT" ]; then
     [ "$PRINT_WHAT" = "blog.conf" ] || die "--print 只认 blog.conf（给的是 $PRINT_WHAT）"
     [ -n "$DOMAIN" ] || die "--print 也要 --domain（server_name 与 SAN 都取自它）"
     CERT_NAME="${CERT_NAME:-selfsigned}"
-    # 与落地那次**逐字同一组输入**（APP_DIR=/srv 是容器里的路径约定，见 Dockerfile.frontend）
+
     DEPLOY_DIR="$REPO_DIR/deploy"; APP_DIR=/srv; WITH_IOT=0
     # shellcheck source=deploy/nginx/render.sh
     source "$RENDER_LIB"

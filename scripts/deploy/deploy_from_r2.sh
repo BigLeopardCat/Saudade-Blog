@@ -1,24 +1,9 @@
 #!/bin/bash
-# 部署脚本（服务器侧）：从 R2 拉取**指定提交**的部署包并落地。
-#
-# 20260923 改造（此前的问题：部署哪一版由"谁最后上传"决定，两个 run 并行时产物互相覆盖，
-# 后端那一半可能根本没落地，而 CI 一直是绿的）：
-#   · 产物按提交号归档 deploy/<sha>/deploy.tar.gz，sha 由 CI 显式传进来（DEPLOY_SHA）；
-#     没传就按 R2 上的 deploy/latest.txt 解析（手动部署路径，见 CLAUDE.md §6）。
-#   · flock 串行化：两个部署同时解压同一份 frontend/dist 时，nginx 可能服务到半写文件。
-#   · 后端**按源码是否变化**决定要不要重启（`git diff src/ Cargo.*` 比较上一版与本次的提交），
-#     没变就不动服务——"每个 run 都重启一次"会白掐在途对话。
-#   · 落地后做存活探测，并写 frontend/dist/build-info.json（线上 curl 即知跑的是哪个提交）。
-#   · 落地后清掉上一代的前端死哈希块（20260925 补，见下方"清上一代死块"一节）：
-#     解包是直接覆盖、从不清理 ⇒ 实测一天涨约 100MB、累积到 1.15G（手工清出 737MB）。
-#     判据 = 解压时记下的本代清单（logs/.deploy_manifest.txt）做集合差，精确、不猜。
-#
-# ⚠️ 改这个文件之前先确认没有部署在跑（pgrep -af deploy_from_r2）：
-#    bash 是按字节偏移增量读脚本的，执行中被覆盖会读到半截。
+# Deploy an immutable R2 artifact under a deployment lock; verify readiness before pruning known old assets.
+# Do not edit this script while a deployment is running.
+
 set -e
-# PROJECT_DIR 可覆盖（20261001 开源前准备）：默认仍是原开发机的绝对路径 ⇒ 线上（CI 调用
-# trigger_deploy.sh，两者都不带这个变量）行为零变化。**注意它是路径、不是仓库根配置**：
-# 下面的 `git diff` 判据、logs/ 与 frontend/dist/ 都相对于这个目录。
+
 cd "${PROJECT_DIR:-/home/ubuntu/Saudade-Blog}"
 
 python3 scripts/check_disk_capacity.py .
@@ -68,23 +53,7 @@ try:
 except Exception as exc:
     sys.exit(f'❌ 取不到部署包 {key}：{exc}（该提交没有产物？或上传还没完成）')
 with tarfile.open('/tmp/deploy.tar.gz') as tar:
-    # A10 修复：filter='data' 拒绝 ../ 等路径穿越条目（Python 3.12 默认值，显式声明防回归）
-    # 顺手记下包里的前端文件清单——它就是"本代"的权威定义（CI 每次全新构建，包里
-    # 的 frontend/dist 全部来自这一次构建），下一步清死块直接拿它做集合差，不猜
-    #
-    # 20261002：清单从"三个目录"扩到 **frontend/dist/ 整棵**。此前只记
-    # js/、vendor/（20260925）与 live2d-widgets/（20261001），于是**别的目录从来没被扫过**：
-    # 实测线上积了 104 个 / 24.3MB 本代之外的残留，其中 92 个是 `css/index-<hash>.css`
-    # （约 250–300KB × 每次部署），另有 mp4/、graph/、woff2/、icons/ 与 **dist 顶层**。
-    # 顶层那两个的教训最硬：`8854cd4`（2026-09-30）为开源把 `public/QQ.png` /
-    # `QQ-Email.png`（含真名与真号的个人二维码）从源码里删了，源码删了、**线上仍在公网 200**，
-    # 因为顶层不在任何 DIRS 里。清单只记被扫的目录 = 那些文件永远不在"本代"里 = 永远清不掉。
-    # 同一条坑 20261001 已经以"live2d-widgets 改名后旧名字永不消失"的形态出现过一次。
-    # 用 getmembers() 按**类型**排目录，不用 `endswith('/')`：包里那 18 个目录项的名字
-    # 并不带尾斜杠（`frontend/dist/css`），所以那个写法是死代码——20261002 把前缀放宽到
-    # `frontend/dist/` 之后，它们就混进"文件清单"里了（251 条里 18 条是目录）。集合差本身
-    # 不受影响（目录名永远不等于某个文件路径），但清单是排障时给人读的，多 18 行幽灵条目
-    # 只会让人以为自己数错了。
+
     members = [m.name for m in tar.getmembers()
                if m.name.startswith('frontend/dist/') and not m.isdir()]
     require_capacity('.', extra_bytes=sum(m.size for m in tar.getmembers() if m.isfile()))
@@ -207,12 +176,7 @@ printf '{"sha":"%s","deployed_at":"%s"}\n' "$SHA" "$(date '+%Y-%m-%d %H:%M:%S%z'
   > frontend/dist/build-info.json
 echo "✅ $(date '+%H:%M:%S') 部署完成（sha=${SHA:0:12}）"
 
-# ── R2 产物清理（20260924，用户报"R2 会被写爆产生账单"）────────────────────
-# 放到**落地成功之后**：这一步跑到了就说明这次的包已经不需要留在云上了，R2 回到
-# 「latest.txt + 最近 3 个提交包」这个不变量（保留 3 = 留一条约 3 次部署的手动回滚
-# 窗口；被删的包只能重跑 CI 用那个提交号重建）。--keep-sha 是双保险：本次部署的包
-# 无论如何不删（正常情况下它本来就是最新的那个）。
-# **清理失败不影响部署结果**——账单卫生不该把一次成功的部署标红，只记一行警告。
+
 if [ -f scripts/deploy/prune_r2.py ]; then
   if python3 scripts/deploy/prune_r2.py --keep 3 --keep-sha "$SHA" --apply; then
     echo "✅ $(date '+%H:%M:%S') R2 产物已清理（保留 latest.txt + 最近 3 个包）"
@@ -223,11 +187,7 @@ else
   echo "⚠️ 找不到 scripts/deploy/prune_r2.py，跳过 R2 产物清理"
 fi
 
-# ── 安全响应头复核（20261015）：非致命，待遇同上面的 R2 清理 ──────────────
-# 这五条头只活在 /etc/nginx（不在部署包里、不受任何测试覆盖），而"部署"正是
-# nginx 配置最可能被动过的时刻（同一批人、同一台机器、同一段时间）。**不改部署结果**：
-# 配置漂移不该把一次成功的部署标红——真正喊人靠探针（healthcheck 第 8 项，写 health.log）。
-# 判据只有一份，就是下面这个脚本（探针跑的是同一个）。
+
 if [ -f scripts/check_security_headers.sh ]; then
   if out=$(bash scripts/check_security_headers.sh 2>&1); then
     echo "✅ $(date '+%H:%M:%S') 安全响应头齐备"

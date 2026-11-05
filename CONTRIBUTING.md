@@ -1,6 +1,6 @@
 # 参与开发
 
-项目概览见 [README.md](README.md)。运行和接口文档与代码不一致时，以代码为准并同步修正文档。
+共享会话规则见 [AGENTS.md](AGENTS.md)，项目概览见 [README.md](README.md)。运行和接口文档与代码不一致时，以代码为准并同步修正文档。
 
 ## 1. 仓库边界
 
@@ -75,6 +75,8 @@ git config core.hooksPath .githooks
 
 ## 4. 验证
 
+下面是 CI 或独立开发环境的完整检查；共享生产主机只运行适用的轻量定向检查。
+
 ```bash
 cd frontend
 npm run fetch:widget
@@ -88,7 +90,9 @@ npm run test:browser
 npm run lint
 ```
 
-PostgreSQL 集成测试需要独立的 `TEST_PG_URL` 和测试专用 `JWT_SECRET`。
+PostgreSQL 集成测试需要独立的 `TEST_PG_URL` 和测试专用 `JWT_SECRET`；鉴权/代理测试另设
+独立的 `AGENT_ASSERTION_SECRET`、`BLOG_DELEGATION_SECRET`，设备网关测试设 `DEVICE_SIGNING_SECRET`。
+配置使用合成值，不复用部署密钥。
 单独运行时缺少环境配置不代表已验证数据库行为；CI 使用独立数据库服务。
 前端测试分层、超时和夹具要求见 [前端测试规范](docs/frontend-testing.md)。
 
@@ -105,3 +109,22 @@ Cubism Core 为专有运行时，不提交到源码树，由 `vendor:live2d` 从
 - [部署与运维](docs/deployment-and-ops.md)：拓扑、服务管理、日志、回滚与备份。
 - [路线图](ROADMAP.md)：当前工作、待办和约束。
 - 各接口契约保留在 `docs/`；一次性审计、修复记录和生成过程可从 Git 历史查阅，不另留副本。
+
+## 7. 跨仓协作与交接
+
+每个任务使用独立工作树，先核对用户给定的完整提交或配套 PR；未指定时更新本仓主线
+`cn_sora_blog` 和 Agent 主线 `main`。不要以本机另一个旧 checkout 的 HEAD 代替任务基线。
+会话间通过已推送的分支、完整提交和 PR 交接，不相互复制未提交文件或覆盖共享分支。
+
+| 固定版本文件 | 作用 | 何时更新 |
+| --- | --- | --- |
+| 本仓 `frontend/widget.lock.json` | Agent 的组件提交及两棵子树哈希 | 采用组件或模型资源变更时 |
+| Agent 的 `.github/host-contract.json` | Agent 离线测试读取的公开宿主源码 | 采用宿主测试契约变更时 |
+
+先推送源仓提交，再更新消费方的锁。组件提交与当前 Agent 服务提交可以不同；仅改 Python、
+配置或文档，不要求组件 pin 追到 HEAD。更新组件 pin 后用 `npm run fetch:widget -- --check`
+验证提交和子树，实际构建前按 `fetch:widget`、`vendor:live2d` 顺序准备资源。
+
+三端协议改动在配套 PR 中列出兼容范围与合并/发布顺序；鉴权配置等不兼容变更须协调切换，
+不能以某一仓 CI 通过替代两仓接线验收。交接说明该提交的检查结果、未运行项、推送/合并/
+部署各自状态及剩余工作，不把聊天中的“已完成”当作版本证明。
