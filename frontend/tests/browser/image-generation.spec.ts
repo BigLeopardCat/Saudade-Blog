@@ -35,7 +35,8 @@ test('image generation requires request approval and a separate visible-result a
   await page.goto(sandboxURL)
   await page.getByRole('button',{name:'AI 生图'}).click()
   const dialog=page.getByRole('dialog',{name:'AI 生图',exact:true})
-  await expect(dialog).toHaveCSS('transform','none')
+  // Clicking waits for Playwright's visibility/stability checks, including the opening motion.
+  await page.getByLabel('提示词',{exact:true}).click()
   const initialHeight=(await dialog.boundingBox())!.height
   await page.getByLabel('提示词',{exact:true}).fill(prompt.repeat(100))
   await expect.poll(async()=>Math.abs((await dialog.boundingBox())!.height-initialHeight)).toBeLessThan(2)
