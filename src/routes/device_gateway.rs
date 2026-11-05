@@ -116,6 +116,12 @@ pub async fn proxy(
     if let Some(value) = headers.get("content-type") {
         request = request.header("content-type", value);
     }
+    if let Some(value) = headers
+        .get("x-request-id")
+        .filter(|v| v.as_bytes().len() <= 128)
+    {
+        request = request.header("x-request-id", value);
+    }
     let Ok(mut upstream) = request.send().await else {
         return StatusCode::BAD_GATEWAY.into_response();
     };

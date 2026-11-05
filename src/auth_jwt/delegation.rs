@@ -57,7 +57,8 @@ pub fn verify(token: &str) -> Option<Grant> {
     let mut validation = Validation::default();
     validation.leeway = 0;
     validation.set_audience(&["blog-tools"]);
-    validation.set_required_spec_claims(&["exp", "aud", "sub"]);
+    // Numeric sub is mandatory through Grant deserialization, not the library string-sub parser.
+    validation.set_required_spec_claims(&["exp", "aud"]);
     let grant = decode::<Grant>(
         token,
         &DecodingKey::from_secret(secret.as_bytes()),
