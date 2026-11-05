@@ -1,20 +1,5 @@
-// ═ 站内跳转桥（20260926）══
-//   node tests/spa-navigate.test.mjs
-//
-// 现场（用户报的）：「我希望 agent 带着转跳页面时对话窗口不变。还有不要弹出泠月喵建议转跳
-// XXX，暂时注释掉」。前半句的成因不是"跳转逻辑错"，而是**跳转方式**：前端两条导航出路都是
-// `window.location.href = …`（整页装载），而对话面板挂在 `#root` 之外（boot.js 注入），
-// 整页重载会把它连同输入框里没发出去的半句话整个重建。后半句是确认卡被停用（用户拍板
-// 「agent 回复文本就有超链接根本用不着弹窗」）。
-//
-// 本套件锁三件：
-//   ① 判据（`spaNavReason`/`spaNavTarget` 纯函数）——该接管的接管、不该接管的原样拒绝；
-//   ② 桥的接线（`registerSpaNavigate` 挂 `window.__spaNavigate`，路由跳失败必须回落 false，
-//      绝不静默吞掉一次跳转）；
-//   ③ 源码契约——**两份白名单不许悄悄漂移**（widget 是不经打包的独立脚本，import 不到这个
-//      TS 模块，只能各存一份）、确认卡真的被注释掉且留着一行恢复路径、气泡链接委托在位。
-//
-// spaNavigate.ts 是纯 TS（只在**调用时**才碰 window，模块加载零副作用），esbuild 摊平后直接 import。
+// SPA navigation preserves the chat panel and rejects retired or external routes.
+// Run: node tests/spa-navigate.test.mjs
 import * as esbuild from 'esbuild';
 import { mkdtempSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
@@ -63,6 +48,8 @@ console.log('\n① 该接管的：同源 + 站内白名单 ⇒ 给出站内相�
 }
 
 console.log('\n② 不该接管的：一律原样拒绝（判据是原因码，不是"跳不跳"的猜测）');
+eq(reason('/friends'), 'off-whitelist', '退役友链不再接管');
+eq(reason('/he'), 'off-whitelist', '退役 /he 不再接管');
 {
     eq(reason('/iot'), 'off-whitelist', '白名单外的站内路径（agent 幻觉出的页面）');
     eq(reason('/api/protected/tag/move'), 'denied-prefix', '/api* 不是页面');
@@ -73,7 +60,7 @@ console.log('\n② 不该接管的：一律原样拒绝（判据是原因码，�
     eq(reason('javascript:alert(1)'), 'not-http', 'javascript: 伪协议');
     eq(reason('http://['), 'unparsable', '解析不了就拒绝');
     eq(target('/api/login'), null, '拒绝时没有可交给路由的目标');
-    ok(M.BLOG_PATH_PATTERNS.length >= 10, '白名单条目数正常（写死成空数组会让所有跳转退化成整页）',
+    ok(M.BLOG_PATH_PATTERNS.length >= 9, '白名单条目数正常（写死成空数组会让所有跳转退化成整页）',
         { n: M.BLOG_PATH_PATTERNS.length });
     ok(M.SPA_NAV_DENY.length === 2, 'deny 表就两条（api / device-console）', { n: M.SPA_NAV_DENY.length });
 }

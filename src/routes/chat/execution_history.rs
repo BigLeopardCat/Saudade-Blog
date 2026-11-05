@@ -1,4 +1,4 @@
-//! Render persisted execution receipts for subsequent chat turns.
+//! Render audit details when persisting confirmed execution receipts.
 
 pub(super) fn actor_prefix(row: &serde_json::Value) -> String {
     match row["principal_role"].as_str().unwrap_or("") {
@@ -49,9 +49,6 @@ pub(super) fn render_exec_row(row: &serde_json::Value) -> String {
             .collect()
     }
 }
-
-/// A distinct recent action: timestamp, display text and repetition count.
-pub(super) type ExecRow<'a> = (String, &'a str, usize);
 
 pub(super) fn legacy_exec_row(row: &serde_json::Value) -> String {
     let tool = row["tool"].as_str().unwrap_or("");

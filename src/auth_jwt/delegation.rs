@@ -110,6 +110,7 @@ pub fn allows(scope: Scope, method: &Method, path: &str) -> bool {
                     path,
                     "/api/protected/automation-results"
                         | "/api/protected/automation-announcements"
+                        | "/api/protected/automation-changes"
                         | "/api/protected/catalog/search"
                 ));
     }

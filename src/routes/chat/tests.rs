@@ -100,44 +100,6 @@ fn image_budget_skips_imageless_without_breaking_the_fill() {
 }
 
 #[test]
-fn agent_reply_rejects_reported_failure() {
-    let body = json!({"reply": "", "success": false,
-                          "error": "服务这边出了点问题，这一轮没能生成回复，请再说一次。"});
-    let err = agent_reply_of(&body).unwrap_err();
-    assert_eq!(err, "服务这边出了点问题，这一轮没能生成回复，请再说一次。");
-}
-
-/// `success: false` 但没给原因（旧版 agent / 字段为空串）⇒ 也要判失败，
-/// 用一句兜底说明，而不是回落成"成功"。
-#[test]
-fn agent_reply_reported_failure_without_reason() {
-    assert!(agent_reply_of(&json!({"reply": "x", "success": false})).is_err());
-    assert!(agent_reply_of(&json!({"reply": "x", "success": false, "error": "  "})).is_err());
-}
-
-/// **空回复不算成功**（哪怕 agent 说 success:true）：落库那一格前面必须有这道闸。
-#[test]
-fn agent_reply_rejects_empty_reply() {
-    assert!(agent_reply_of(&json!({"reply": "", "success": true})).is_err());
-    assert!(agent_reply_of(&json!({"reply": "   \n", "success": true})).is_err());
-    assert!(agent_reply_of(&json!({"success": true})).is_err());
-}
-
-/// `success` 字段**缺失**时按"回复非空"判（兼容不带这个字段的旧版 agent）；
-/// 正常回复原样返回，并去掉首尾空白。
-#[test]
-fn agent_reply_accepts_plain_reply() {
-    assert_eq!(
-        agent_reply_of(&json!({"reply": "喵呜～"})).unwrap(),
-        "喵呜～"
-    );
-    assert_eq!(
-        agent_reply_of(&json!({"reply": " 喵呜～ ", "success": true})).unwrap(),
-        "喵呜～"
-    );
-}
-
-#[test]
 fn exec_row_prefers_python_action() {
     let row = json!({
         "tool": "create_tag",
@@ -379,38 +341,6 @@ fn py_int_list_parses_python_repr_only() {
     assert_eq!(py_int_list(""), Vec::<String>::new());
 }
 
-/// 待办行的构造器（测试用：只填被测字段，其余给"空档"）。
-fn pa_model(target: &str, tool: &str, skill: &str, args: Option<&str>) -> pending_action::Model {
-    pending_action::Model {
-        id: 1,
-        task_id: "pa_20260923_000000001".to_string(),
-        conversation_id: 42,
-        user_id: 7,
-        skill: skill.to_string(),
-        tool: tool.to_string(),
-        args: args.map(|a| a.to_string()),
-        target: target.to_string(),
-        question: "".to_string(),
-        options: "".to_string(),
-        jti: "".to_string(),
-        expires_at: None,
-        claimed_at: None,
-        requested_by: "user".to_string(),
-        source_event: "confirm_popup".to_string(),
-        confirmation_required: true,
-        confirmation_status: "awaiting".to_string(),
-        status: "pending".to_string(),
-        created_at: chrono::NaiveDate::from_ymd_opt(2026, 9, 23)
-            .unwrap()
-            .and_hms_opt(13, 19, 0)
-            .unwrap(),
-        updated_at: chrono::NaiveDate::from_ymd_opt(2026, 9, 23)
-            .unwrap()
-            .and_hms_opt(13, 19, 0)
-            .unwrap(),
-    }
-}
-
 #[test]
 fn token_jti_reads_payload_without_verifying() {
     const SYNTHETIC: &str = "eyJ2IjoyLCJ1aWQiOjEsImNvbnYiOjEsImV4cCI6MTkwMDAwMDAwMCwianRpIjoiMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDEiLCJza2lsbCI6ImZhdm9yaXRlX2FkZCIsInNwZWNzIjpbeyJ0b29sIjoiYWRkX2Zhdm9yaXRlIiwiYXJncyI6eyJhcnRpY2xlX2lkIjoxMn19XX0.FAKE-SIG";
@@ -440,63 +370,6 @@ fn b64url_decode_handles_agent_encoding() {
     );
     assert_eq!(b64url_decode("").unwrap(), Vec::<u8>::new());
     assert!(b64url_decode("中文").is_none());
-}
-
-#[test]
-fn pending_action_render_marks_awaiting_not_done() {
-    let row = pa_model(
-        "复核留言 #94（double9）为 驳回",
-        "board_audit_talk",
-        "board_audit",
-        Some("[{\"tool\": \"board_audit_talk\"}]"),
-    );
-    let s = render_pending_action(&row);
-    assert!(s.starts_with("复核留言 #94（double9）为 驳回"), "{s}");
-    assert!(s.contains("；动作 board_audit_talk"), "{s}");
-    assert!(s.contains("（技能 board_audit）"), "{s}");
-    assert!(
-        s.contains("；参数 [{\"tool\": \"board_audit_talk\"}]"),
-        "{s}"
-    );
-    assert!(s.contains("；提出于 09-23 13:19"), "{s}");
-    assert!(s.contains("状态 awaiting（等主人点头，尚未执行）"), "{s}");
-}
-
-/// 缺字段不编：工具/技能/参数为空就没有那一段（待办是辅助事实，宁可少说），
-/// 而**时效与状态**是判据本身、任何情况下都在。
-#[test]
-fn pending_action_render_omits_empty_segments() {
-    let s = render_pending_action(&pa_model("把文章 12 设为私密", "", "", None));
-    assert_eq!(
-        s,
-        "把文章 12 设为私密；提出于 09-23 13:19；状态 awaiting（等主人点头，尚未执行）"
-    );
-    // 空串的 args 与 None 同待遇（DEFAULT '' 落库的行不该多出一截「；参数 」）
-    let e = render_pending_action(&pa_model("x", "", "", Some("")));
-    assert!(!e.contains("；参数"), "{e}");
-}
-
-/// 两级截断：参数在行内只留 PENDING_ARGS_INLINE_MAX 个字符（审计线索在库里是全的），
-/// 整行再夹到 PENDING_INLINE_MAX（注入进 planner 的上下文，不能撑爆）。
-#[test]
-fn pending_action_render_caps_args_and_total() {
-    let long = "参".repeat(500);
-    let s = render_pending_action(&pa_model(&"标".repeat(900), "t", "s", Some(&long)));
-    assert!(
-        s.chars().count() <= PENDING_INLINE_MAX,
-        "{}",
-        s.chars().count()
-    );
-    let row = pa_model("短", "t", "s", Some(&long));
-    let s2 = render_pending_action(&row);
-    assert!(
-        s2.contains(&"参".repeat(PENDING_ARGS_INLINE_MAX)),
-        "{}",
-        s2.chars().count()
-    );
-    assert!(!s2.contains(&"参".repeat(PENDING_ARGS_INLINE_MAX + 1)));
-    // 截断按**字符**不按字节（中文参数名截成半个字会落进 planner 的上下文）
-    assert!(s2.contains(&format!("；参数 {}", "参".repeat(PENDING_ARGS_INLINE_MAX))));
 }
 
 /// `__PENDING__:` 帧的字段读取：缺字段/类型不对一律空串，绝不 panic

@@ -70,27 +70,15 @@ const front = strip(read('src/frontHome/Content/Talk/index.tsx'));
 const adminFront = strip(read('src/pages/Dashboard/Talks/index.tsx'));
 const typeFile = read('src/interface/TalkType.d.ts');
 
-console.log('\n① 标题：按来源分派（说说用自己的标题，河灯保持 title = 印章）');
+console.log('\n① 说说标题写入共用版本化事务，河灯保持独立');
 {
-    ok(insert.length > 0, '取到 insert_talk 的函数体（判据都跑在函数体里，不是整个文件）');
-    // ★ 主判据：写 `title` 的那一处必须按 src 分叉
-    ok(/let title = if src == "talk"/.test(insert),
-        '★ 落库的 title 按 src 分派（src=talk 用自己的标题）',
-        insert.match(/let title[\s\S]{0,200}/)?.[0]);
-    ok(insert.includes('payload.title'), '说说那一支取的是 payload.title（后台表单的"标题"）');
-    ok(insert.includes('title: Set(Some(title))'), 'ActiveModel 用的是分派后的 title');
-    // 负空间：旧的那一行不许回来
-    ok(!/title:\s*Set\(Some\(cat/.test(insert),
-        '★ title 不再等于 cat（"说说标题取 1 变成愿了"就是这一行）');
-    // 河灯那一侧保持原样：换掉它会让 agent 的 list_guestbook 摘要与存量数据形状变样
-    ok(/cat\.clone\(\)/.test(insert), '河灯那一支仍是 title = cat.clone()（原样保留）');
-
-    // 同一列的两个写者必须对同一个字段负责：新建写 payload.title、编辑也写 payload.title。
-    // 一个说"标题"、另一个说"印章"的话，症状就是"新建时叫愿、编辑一次才对"。
-    ok(/active_model\.title = Set\(Some\(payload\.title\)\)/.test(update),
-        'update_talk 也写 payload.title（新建与编辑对同一字段负责）');
-    // 长度封顶：DB 列是 varchar(255)，别让 100 字以上的标题进去把整行写失败
-    ok(/chars\(\)\.count\(\) > 100/.test(insert), '说说标题有长度上限（100 字，远低于列宽 255）');
+    const actions = strip(readRepo('src/routes/talk_actions.rs'));
+    ok(insert.includes('super::talk_actions::Action::Create') && insert.includes('title:Some(payload.title)'),
+        '新建说说将标题交给共用事务');
+    ok(update.includes('super::talk_actions::Action::Update') && update.includes('title:Some(payload.title)'),
+        '编辑说说将标题交给同一事务');
+    ok(actions.includes('v.chars().count() > 100'), '共用事务拒绝超过100字标题（真实数据库回归另验）');
+    ok(insert.includes('let title = cat.clone();'), '河灯标题保持印章，不进入说说事务');
 }
 
 console.log('\n② 发布者身份：说说带 nickname/avatar，河灯留言不带');

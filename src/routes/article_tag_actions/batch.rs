@@ -58,7 +58,7 @@ async fn plans<C: ConnectionTrait>(
     Ok(rows)
 }
 
-pub(super) async fn apply<C: ConnectionTrait>(
+pub(in crate::routes) async fn apply<C: ConnectionTrait>(
     db: &C,
     change: &Change,
 ) -> Result<Vec<Outcome>, DbErr> {

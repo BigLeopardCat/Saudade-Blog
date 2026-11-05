@@ -485,7 +485,7 @@ const NewNotes = () => {
         const tagsData = formValues.noteTags;
         const tagsString = Array.isArray(tagsData) ? tagsData.join(',') : (tagsData || '');
 
-        const now = dayjs(new Date()).format('YYYY-MM-DD hh:mm:ss');
+        const now = dayjs(new Date()).format('YYYY-MM-DD HH:mm:ss');
         const data = {
             noteTitle: formValues.noteTitle,
             noteContent: editorRef.current?.read() ?? noteContent,
@@ -627,10 +627,8 @@ const NewNotes = () => {
 
     return <>
         <div className="notes-container">
-            <div className="article_title">
-                <label style={{width:115,fontSize:18,fontWeight:600}}>文章标题</label>
-                <Input maxLength={255} style={{background: 'transparent', width: '95%', marginRight: 10}} onChange={handleInputChange} value={noteTitle}/>
-                <Button type="primary" onClick={showModal} style={{float: "right"}}>
+            <div className="article-toolbar">
+                <Button type="primary" onClick={showModal}>
                     提交
                 </Button>
                 <span style={{
@@ -715,14 +713,15 @@ const NewNotes = () => {
 
                 <Form {...formItemLayout} variant="filled" style={{ maxWidth: 600 }} form={form} onFinish={onFinish}
                       onValuesChange={() => scheduleAutosave()}>
-                    <Form.Item label="文章标题" name="noteTitle" >
-                        <Input disabled={true} />
+                    <Form.Item label="文章标题" name="noteTitle"
+                        rules={[{required: true, whitespace: true, message: '请输入文章标题'},
+                            {max: 255, message: '标题最多 255 字'}]}>
+                        <Input maxLength={255} onChange={handleInputChange} />
                     </Form.Item>
 
                     <Form.Item
                         label="文章描述"
                         name="description"
-                        rules={[{ required: true, message: 'Please input!' }]}
                     >
                         <Input.TextArea autoSize={{ minRows: 4, maxRows: 8 }} value={aiContent} onChange={(v) => {
                             setAiContent(v.target.value);

@@ -56,11 +56,6 @@ const router = createBrowserRouter([
                 element: routePage(<AboutMe />)
             },
             {
-                // 原友链页已废弃：/friends 重定向到留言板（河灯留言）
-                path: 'friends',
-                element: <Navigate to="/guestbook" replace />
-            },
-            {
                 path: "talk",
                 element: routePage(<Talk />)
             },
@@ -91,11 +86,6 @@ const router = createBrowserRouter([
     {
         path: 'guestbook',
         element: <Suspense fallback={<div style={{ minHeight: "100dvh", background: "#081723" }} />}><RiverBoard /></Suspense>
-    },
-    // 兼容旧地址 /he（早期隐藏路由），重定向到留言板
-    {
-        path: 'he',
-        element: <Navigate to="/guestbook" replace />,
     },
     {
         path: '/dashboard',

@@ -2,7 +2,6 @@ pub mod auth;
 pub mod notes;
 pub mod categories;
 pub mod tags;
-pub mod friends;
 pub mod web_info;
 pub mod announcements;
 pub mod talks;
@@ -28,6 +27,8 @@ pub mod catalog;
 pub mod own_reads;
 pub mod public_catalog;
 pub mod article_actions;
+pub mod article_deletions;
+pub mod talk_actions;
 pub mod article_tag_actions;
 pub mod category_actions;
 pub mod account_actions;
@@ -37,6 +38,7 @@ pub mod removal_actions;
 pub mod notice_actions;
 pub mod automation_results;
 pub mod automation_announcements;
+pub mod automation_changes;
 pub mod quota_actions;
 pub mod moderation_actions;
 pub mod public_activity;
@@ -174,10 +176,6 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/public/announcements", get(announcements::list_announcements))
         .route("/sitemap.xml", get(sitemap::sitemap_xml))
         
-        // Friends
-        .route("/api/friends", get(friends::list_friends))
-        // A6 修复：下线公开 POST（友链申请只走管理员后台 /api/protected/friend），杜绝匿名提交 javascript: 协议 XSS
-        .route("/api/public/friends", get(friends::list_public_friends))
         
         // Talks（说说）：前台说说页仅展示 src=talk；/api/talk 保留全量（统计口径）
         .route("/api/talk", get(talks::list_all_talks))
@@ -273,6 +271,12 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/protected/article-tag-actions/batch", post(article_tag_actions::batch::change))
         .route("/api/protected/article-tag-actions/{id}/prepare", post(article_tag_actions::prepare))
         .route("/api/protected/article-tag-actions/{id}", post(article_tag_actions::change))
+        .route("/api/protected/article-deletions/prepare", post(article_deletions::prepare))
+        .route("/api/protected/article-deletions", post(article_deletions::change))
+        .route("/api/protected/talk-actions/prepare", post(talk_actions::prepare))
+        .route("/api/protected/talk-actions", get(talk_actions::list).post(talk_actions::change))
+        .route("/api/protect/gallery/folder-actions/prepare", post(gallery::folder_actions::prepare))
+        .route("/api/protect/gallery/folder-actions", post(gallery::folder_actions::change))
         .route("/api/protected/article-actions/batch/prepare", post(article_actions::batch::prepare))
         .route("/api/protected/article-actions/batch", post(article_actions::batch::change))
         .route("/api/protected/article-actions/{id}", get(article_actions::target).post(article_actions::change))
@@ -304,6 +308,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/protected/automation-actor", get(automation_results::actor))
         .route("/api/protected/automation-results", post(automation_results::deliver))
         .route("/api/protected/automation-announcements", post(automation_announcements::publish))
+        .route("/api/protected/automation-changes", post(automation_changes::change))
         .route("/api/protected/notice-actions/prepare", post(notice_actions::prepare))
         .route("/api/protected/notice-actions", post(notice_actions::change))
         .route("/api/protected/announcement-deletions/prepare", post(removal_actions::prepare_announcements))
@@ -333,19 +338,6 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/protected/announcements/{id}", put(announcements::update_announcement))
         .route("/api/protected/tagone/{id}", put(tags::update_tag_one))
         .route("/api/protected/tagtwo/{id}", put(tags::update_tag_two))
-
-        // Friends
-        .route("/api/protected/friend", post(friends::create_friend)) 
-        .route("/api/protected/friends", 
-             delete(friends::delete_friends) 
-        )
-         .route("/api/protected/friend/{id}",
-            delete(friends::delete_friend)
-            .put(friends::update_friend) 
-        )
-        .route("/api/protected/friends/{id}", 
-             post(friends::update_friend) 
-        )
 
         // Talks
         .route("/api/protect/talk", post(talks::create_talk))

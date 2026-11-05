@@ -17,20 +17,22 @@ use crate::entity::{chat_history, execution_log, pending_action};
 pub(super) const PERSISTENCE_ERROR: &str =
     "本轮回复或操作记录未能完整保存，请先刷新核对结果，避免重复操作。";
 
-pub(super) async fn run<F>(trace_id: &str, write: F) -> Result<(), ()>
+pub(super) async fn run<F, T>(trace_id: &str, write: F) -> Result<T, ()>
 where
-    F: Future<Output = Result<(), DbErr>> + Send + 'static,
+    F: Future<Output = Result<T, DbErr>> + Send + 'static,
+    T: Send + 'static,
 {
     run_tracked(crate::lifecycle::task_tracker(), trace_id, write).await
 }
 
-async fn run_tracked<F>(
+async fn run_tracked<F, T>(
     tasks: tokio_util::task::TaskTracker,
     trace_id: &str,
     write: F,
-) -> Result<(), ()>
+) -> Result<T, ()>
 where
-    F: Future<Output = Result<(), DbErr>> + Send + 'static,
+    F: Future<Output = Result<T, DbErr>> + Send + 'static,
+    T: Send + 'static,
 {
     let trace_id = trace_id.to_owned();
     let write_trace = trace_id.clone();

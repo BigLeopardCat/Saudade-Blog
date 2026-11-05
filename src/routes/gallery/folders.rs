@@ -1,7 +1,7 @@
 use super::*;
 use sea_orm::TransactionTrait;
 
-#[derive(Default, FromQueryResult, Serialize)]
+#[derive(Clone, Debug, Default, FromQueryResult, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Folder {
     pub id: i32,
@@ -51,11 +51,15 @@ pub async fn list(
     response(result)
 }
 
-pub(super) async fn create_in<C: ConnectionTrait>(db: &C, input: Create) -> Result<Folder, DbErr> {
+pub(super) async fn creation_name<C: ConnectionTrait>(
+    db: &C,
+    input: &Create,
+) -> Result<String, DbErr> {
     let name = input.name.trim();
     if name.is_empty()
         || name.chars().count() > 80
         || name.contains(['/', '\\'])
+        || name.chars().any(char::is_control)
         || matches!(name, "." | "..")
         || input.parent_id < 0
     {
@@ -63,8 +67,8 @@ pub(super) async fn create_in<C: ConnectionTrait>(db: &C, input: Create) -> Resu
     }
     if input.parent_id > 0 {
         let row = db.query_one(Statement::from_sql_and_values(DatabaseBackend::Postgres,
-            "WITH RECURSIVE parents AS (SELECT id,parent_id FROM image_folder WHERE id=$1 \
-             UNION ALL SELECT f.id,f.parent_id FROM image_folder f JOIN parents p ON f.id=p.parent_id) \
+            "WITH RECURSIVE parents AS (SELECT id,parent_id,1 AS depth FROM image_folder WHERE id=$1 \
+             UNION ALL SELECT f.id,f.parent_id,p.depth+1 FROM image_folder f JOIN parents p ON f.id=p.parent_id WHERE p.depth<9) \
              SELECT count(*)::bigint AS depth FROM parents", vec![input.parent_id.into()])).await?
             .ok_or_else(|| DbErr::Custom("folder unavailable".into()))?;
         let depth: i64 = row.try_get("", "depth")?;
@@ -72,6 +76,11 @@ pub(super) async fn create_in<C: ConnectionTrait>(db: &C, input: Create) -> Resu
             return Err(DbErr::Custom("invalid folder depth".into()));
         }
     }
+    Ok(name.to_owned())
+}
+
+pub(super) async fn create_in<C: ConnectionTrait>(db: &C, input: Create) -> Result<Folder, DbErr> {
+    let name = creation_name(db, &input).await?;
     Folder::find_by_statement(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
         "INSERT INTO image_folder(parent_id,name) VALUES(NULLIF($1,0),$2) \

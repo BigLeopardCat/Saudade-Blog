@@ -58,12 +58,12 @@ async fn persistence_waits_for_commit_but_survives_waiter_cancellation() {
 
 #[tokio::test]
 async fn write_and_task_failures_are_observed() {
-    assert!(run("write-error", async {
+    assert!(run::<_, ()>("write-error", async {
         Err(DbErr::Custom("fixture".into()))
     })
     .await
     .is_err());
-    assert!(run("task-error", async { panic!("fixture") })
+    assert!(run::<_, ()>("task-error", async { panic!("fixture") })
         .await
         .is_err());
 }

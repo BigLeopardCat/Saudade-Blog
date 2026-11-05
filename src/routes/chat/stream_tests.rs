@@ -1,4 +1,5 @@
 use super::*;
+use crate::entity::pending_action;
 use axum::body::Body;
 use eventsource_stream::Eventsource;
 use protocol::{Empty, Frame};
@@ -230,17 +231,31 @@ async fn pending_write_failure_never_reports_done() {
 
 #[tokio::test]
 async fn retired_summary_event_is_rejected_as_an_unknown_protocol_frame() {
-    let events = transcript(state(), 0,
-        "event: text\ndata: \"reply\"\n\nevent: summary\ndata: {}\n\nevent: done\ndata: {}\n\n".into()).await;
-    assert!(matches!(events.as_slice(), [Frame::Text(_), Frame::Error(_)]));
+    let events = transcript(
+        state(),
+        0,
+        "event: text\ndata: \"reply\"\n\nevent: summary\ndata: {}\n\nevent: done\ndata: {}\n\n"
+            .into(),
+    )
+    .await;
+    assert!(matches!(
+        events.as_slice(),
+        [Frame::Text(_), Frame::Error(_)]
+    ));
 }
 
 #[tokio::test]
 async fn text_reset_replaces_prose_without_erasing_receipts_or_other_events() {
     let db = sea_orm::MockDatabase::new(sea_orm::DatabaseBackend::Postgres)
         .append_exec_results([
-            sea_orm::MockExecResult { last_insert_id: 1, rows_affected: 1 },
-            sea_orm::MockExecResult { last_insert_id: 2, rows_affected: 1 },
+            sea_orm::MockExecResult {
+                last_insert_id: 1,
+                rows_affected: 1,
+            },
+            sea_orm::MockExecResult {
+                last_insert_id: 2,
+                rows_affected: 1,
+            },
         ])
         .append_query_results([Vec::<pending_action::Model>::new()])
         .into_connection();
@@ -279,21 +294,33 @@ async fn reset_without_replacement_never_persists_retracted_text() {
         "event: done\ndata: {}\n\n",
     );
     let events = transcript(state.clone(), 7, wire.into()).await;
-    assert!(matches!(events.as_slice(), [Frame::Text(_), Frame::TextReset(_), Frame::Done(_)]));
+    assert!(matches!(
+        events.as_slice(),
+        [Frame::Text(_), Frame::TextReset(_), Frame::Done(_)]
+    ));
     let state = Arc::try_unwrap(state).ok().unwrap();
     assert!(state.db.into_transaction_log().is_empty());
 }
 
 #[tokio::test]
 async fn invalid_reset_data_is_rejected_without_committing_partial_prose() {
-    for payload in [json!({"clear": true}), json!([]), json!(null), json!(""), json!(0)] {
+    for payload in [
+        json!({"clear": true}),
+        json!([]),
+        json!(null),
+        json!(""),
+        json!(0),
+    ] {
         let state = state();
         let wire = format!(
             "event: text\ndata: \"partial\"\n\nevent: text_reset\ndata: {payload}\n\n\
              event: done\ndata: {{}}\n\n",
         );
         let events = transcript(state.clone(), 7, wire).await;
-        assert!(matches!(events.as_slice(), [Frame::Text(_), Frame::Error(_)]));
+        assert!(matches!(
+            events.as_slice(),
+            [Frame::Text(_), Frame::Error(_)]
+        ));
         let state = Arc::try_unwrap(state).ok().unwrap();
         assert!(state.db.into_transaction_log().is_empty());
     }
@@ -310,8 +337,25 @@ async fn reset_after_error_is_neither_forwarded_nor_persisted() {
         "event: done\ndata: {}\n\n",
     );
     let events = transcript(state.clone(), 7, wire.into()).await;
-    assert!(matches!(events.as_slice(), [Frame::Text(_), Frame::Error(message)]
-        if message == "failed"));
+    assert!(
+        matches!(events.as_slice(), [Frame::Text(_), Frame::Error(message)]
+        if message == "failed")
+    );
     let state = Arc::try_unwrap(state).ok().unwrap();
     assert!(state.db.into_transaction_log().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn host_keeps_client_alive_while_the_agent_has_no_application_event() {
+    let upstream = futures::stream::once(async {
+        tokio::time::sleep(std::time::Duration::from_secs(20)).await;
+        Ok(Bytes::from_static(b"event: done\ndata: {}\n\n"))
+    });
+    let forwarded = forward_agent_stream(state(), 0, 42, None, "keepalive-test".into(), upstream);
+    let mut body = agent_sse_response(forwarded).into_body().into_data_stream();
+    let first = body.next().await.unwrap().unwrap();
+    assert_eq!(first.as_ref(), b": ping\n\n");
+    let second = body.next().await.unwrap().unwrap();
+    assert_eq!(second.as_ref(), b"event: done\ndata: {}\n\n");
+    assert!(body.next().await.is_none());
 }
