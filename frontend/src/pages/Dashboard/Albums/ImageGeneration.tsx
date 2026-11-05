@@ -1,5 +1,5 @@
 import {useEffect,useState} from 'react'
-import {Alert,Button,Card,Input,InputNumber,Modal,Select,Space,Spin,Typography,message} from 'antd'
+import {Alert,Button,Card,Input,InputNumber,Modal,Select,Space,Spin,Typography,Tooltip,message} from 'antd'
 import {useDispatch} from 'react-redux'
 import type {AppDispatch} from '../../../store'
 import {imageGenerationApi as api,type GenerationJob} from '../../../apis/imageGenerationApi'
@@ -50,14 +50,17 @@ export default function ImageGeneration({onClose}:{onClose:()=>void}){
     }catch(e){fail(e)}finally{setLoadingArticle(false)}
   }
   const rows=images.data?.pages.flatMap(p=>p.items)??[]
-  return <Modal title="AI 生图" open width={1040} onCancel={onClose} footer={<Button onClick={onClose}>关闭</Button>}>
+  return <Modal title="AI 生图" className="generationModal" open width={1040} onCancel={onClose} footer={<Button onClick={onClose}>关闭</Button>}>
     <div className="generationLayout">
       <aside className="generationHistory"><Space direction="vertical" style={{width:'100%'}}>
         <Button block onClick={()=>setActive(null)}>新建图片</Button>
         {jobs.isError&&<Alert type="error" message="任务列表加载失败" action={<Button onClick={()=>void jobs.refetch()}>重试</Button>}/>}
-        {jobs.data?.map(item=><Button key={item.id} block type={job?.id===item.id?'primary':'default'} onClick={()=>setActive(item)}>
-          {statusNames[item.status]||item.status} · {item.title.slice(0,14)}
-        </Button>)}
+        {jobs.data?.map(item=><Tooltip key={item.id} title={item.title} placement="right">
+          <button type="button" className="generationHistoryItem" aria-current={active?.id===item.id?'true':undefined} onClick={()=>setActive(item)}>
+            <span className="generationHistoryStatus">{statusNames[item.status]||item.status}</span>
+            <span className="generationHistoryTitle">{item.title||'未命名图片'}</span>
+          </button>
+        </Tooltip>)}
       </Space></aside>
       <main className="generationMain">
         {!options.data?.configured&&<Alert type="info" showIcon message="请先在服务器配置生图 API 密钥和可用模型列表"/>}
