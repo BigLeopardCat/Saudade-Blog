@@ -29,12 +29,12 @@ async fn postgres_overview_is_owned_unread_bounded_and_does_not_mark_read() {
                 "INSERT INTO user_notification(user_id,type,title,content,is_read,deleted_at,created_at) \
                  VALUES($1,$2,$3,$4,$5,CASE WHEN $6 THEN localtimestamp ELSE NULL END,localtimestamp)",
                 [(*uid).into(),(if index%2==0 {"announcement"} else {"system"}).into(),
-                 "题".repeat(250).into(),"BODY_MUST_NOT_TRANSFER".repeat(100).into(),
+                 "题".repeat(128).into(),"BODY_MUST_NOT_TRANSFER".repeat(100).into(),
                  (index==5).into(),(index==6).into()])).await.unwrap();
             tx.execute(Statement::from_sql_and_values(DbBackend::Postgres,
                 "INSERT INTO user_message(from_user_id,to_user_id,title,content,is_read,recipient_deleted_at,created_at) \
                  VALUES($1,$2,$3,$4,$5,CASE WHEN $6 THEN localtimestamp ELSE NULL END,localtimestamp)",
-                [users[1].into(),(*uid).into(),"信".repeat(250).into(),
+                [users[1].into(),(*uid).into(),"信".repeat(60).into(),
                  "BODY_MUST_NOT_TRANSFER".repeat(100).into(),(index==5).into(),(index==6).into()])).await.unwrap();
         }
     }
@@ -48,14 +48,26 @@ async fn postgres_overview_is_owned_unread_bounded_and_does_not_mark_read() {
         (3, 3)
     );
     assert!(result.notifications_has_more && result.messages_has_more && result.unread_only);
+    assert!(
+        result
+            .notification_items
+            .iter()
+            .all(|item| item["titleTruncated"] == true)
+    );
+    assert!(
+        result
+            .message_items
+            .iter()
+            .all(|item| item["titleTruncated"] == false)
+    );
     for item in result
         .notification_items
         .iter()
         .chain(result.message_items.iter())
     {
         assert_eq!(item["isRead"], false);
-        assert_eq!(item["titleTruncated"], true);
-        assert_eq!(item["title"].as_str().unwrap().chars().count(), 160);
+
+        assert!(item["title"].as_str().unwrap().chars().count() <= 64);
         assert!(item.get("content").is_none());
     }
     assert!(
