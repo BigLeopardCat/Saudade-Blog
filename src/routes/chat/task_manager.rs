@@ -22,7 +22,7 @@ fn failure(status: StatusCode, error: &str) -> Response {
 fn success(value: Value) -> Response {
     ([("Cache-Control", "no-store")], Json(value)).into_response()
 }
-async fn actor(state: &AppState, headers: &HeaderMap) -> Result<(i32, String), Response> {
+async fn actor(state: &AppState, headers: &HeaderMap) -> Result<(i32, String, i32), Response> {
     let uid = auth_jwt::auth_uid(&state.db, headers)
         .await
         .map_err(|_| failure(StatusCode::UNAUTHORIZED, "unauthorized"))?;
@@ -33,9 +33,18 @@ async fn actor(state: &AppState, headers: &HeaderMap) -> Result<(i32, String), R
         .flatten()
         .filter(|row| crate::authz::is_known_role(&row.role))
         .ok_or_else(|| failure(StatusCode::SERVICE_UNAVAILABLE, "identity_unavailable"))?;
-    Ok((uid, row.role))
+    let version = auth_jwt::claims_from_headers(headers).and_then(|c| c.ver);
+    crate::authz::check_token(row.status, row.token_version, version)
+        .map_err(|_| failure(StatusCode::UNAUTHORIZED, "unauthorized"))?;
+    Ok((uid, row.role, row.token_version))
 }
-async fn call(path: &str, uid: i32, role: &str, body: Option<Value>) -> Result<Value, Response> {
+async fn call(
+    path: &str,
+    uid: i32,
+    role: &str,
+    version: i32,
+    body: Option<Value>,
+) -> Result<Value, Response> {
     let client = reqwest::Client::builder()
         .no_proxy()
         .build()
@@ -49,7 +58,7 @@ async fn call(path: &str, uid: i32, role: &str, body: Option<Value>) -> Result<V
     let mut response = req
         .header(
             "X-Agent-Assertion",
-            auth_jwt::create_agent_assertion(uid, Some(role)),
+            auth_jwt::create_tool_assertion(uid, Some(role), version),
         )
         .timeout(Duration::from_secs(5))
         .send()
@@ -95,7 +104,7 @@ pub async fn service_status() -> Response {
 }
 
 pub async fn list(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
-    let (uid, role) = match actor(&state, &headers).await {
+    let (uid, role, version) = match actor(&state, &headers).await {
         Ok(v) => v,
         Err(r) => return r,
     };
@@ -103,6 +112,7 @@ pub async fn list(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Res
         &format!("tasks/paused?user_id={uid}&limit=20"),
         uid,
         &role,
+        version,
         None,
     )
     .await
@@ -112,7 +122,15 @@ pub async fn list(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Res
     };
     let schedules = if crate::authz::can_access_console(&role) {
         // The scheduling service is optional; a failure is exposed, never an empty success.
-        match call("automations?limit=20&active_only=true", uid, &role, None).await {
+        match call(
+            "automations?limit=20&active_only=true",
+            uid,
+            &role,
+            version,
+            None,
+        )
+        .await
+        {
             Ok(v) => v,
             Err(_) => json!({"items":[],"unavailable":true}),
         }
@@ -135,7 +153,7 @@ pub async fn cancel(
     headers: HeaderMap,
     Json(req): Json<CancelPaused>,
 ) -> Response {
-    let (uid, role) = match actor(&state, &headers).await {
+    let (uid, role, version) = match actor(&state, &headers).await {
         Ok(v) => v,
         Err(r) => return r,
     };
@@ -158,6 +176,7 @@ pub async fn cancel(
         "tasks/cancel",
         uid,
         &role,
+        version,
         Some(json!({"user_id":uid,"conversation_id":req.conversation_id,"task_id":req.task_id})),
     )
     .await
@@ -178,7 +197,7 @@ pub async fn cancel_schedule(
     headers: HeaderMap,
     Json(req): Json<ScheduleControl>,
 ) -> Response {
-    let (uid, role) = match actor(&state, &headers).await {
+    let (uid, role, version) = match actor(&state, &headers).await {
         Ok(v) => v,
         Err(r) => return r,
     };
@@ -197,6 +216,7 @@ pub async fn cancel_schedule(
         "automations/control",
         uid,
         &role,
+        version,
         Some(json!({"schedule_id":req.schedule_id,"action":"cancel","version":req.version})),
     )
     .await

@@ -34,10 +34,19 @@ location /mqtt {
     proxy_connect_timeout 10s;
 }
 
-# 设备管理 API：/device-api/xxx → 127.0.0.1:3100/xxx
-# （device-service 自己再校验一次博客 JWT；它不在本仓，见 iot/device-service/README.md）
+# 设备管理请求经博客鉴权网关交换专用短期令牌。
+# OTA devices authenticate with their device key, independently of browser sessions.
+location = /device-api/api/ota/info {
+    proxy_pass http://127.0.0.1:3100/api/ota/info;
+    include /etc/nginx/snippets/blog-headers/security.conf;
+}
+location ^~ /device-api/api/ota/fw/ {
+    proxy_pass http://127.0.0.1:3100/api/ota/fw/;
+    include /etc/nginx/snippets/blog-headers/security.conf;
+}
+
 location /device-api/ {
-    proxy_pass http://127.0.0.1:3100/;
+    proxy_pass http://127.0.0.1:3000/api/device-gateway/;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;

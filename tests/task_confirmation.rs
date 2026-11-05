@@ -77,6 +77,10 @@ async fn request(router: Router, body: Value, authenticated: bool) -> axum::resp
 async fn confirmation_status_authenticates_ownership_and_proxies_without_executing() {
     // This integration target has one test: its private endpoint cannot race other targets' env.
     std::env::set_var("JWT_SECRET", "task-confirmation-isolated-fixture-secret");
+    std::env::set_var(
+        "AGENT_ASSERTION_SECRET",
+        "task-assertion-isolated-fixture-secret",
+    );
     let calls = Arc::new(Mutex::new(Vec::new()));
     let received = calls.clone();
     let agent = Router::new().route("/tasks/confirmation", post(move |headers: HeaderMap, Json(body): Json<Value>| {
@@ -84,7 +88,7 @@ async fn confirmation_status_authenticates_ownership_and_proxies_without_executi
         async move {
             let mut validation = jsonwebtoken::Validation::default(); validation.set_audience(&["agent"]);
             let claims = jsonwebtoken::decode::<Value>(headers["x-agent-assertion"].to_str().unwrap(),
-                &jsonwebtoken::DecodingKey::from_secret(b"task-confirmation-isolated-fixture-secret"), &validation).unwrap().claims;
+                &jsonwebtoken::DecodingKey::from_secret(b"task-assertion-isolated-fixture-secret"), &validation).unwrap().claims;
             assert_eq!(claims["sub"], 7); assert_eq!(claims["role"], "user");
             received.lock().unwrap().push(body);
             Json(json!({"task_id":"task", "confirmation":{"id":"operation", "task_id":"task", "token":"fixture-grant"}}))

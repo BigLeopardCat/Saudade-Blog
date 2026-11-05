@@ -1,0 +1,4 @@
+d /srv/saudade-device 0755 root root -
+f /srv/saudade-device/device-service 0755 root root -
+d /var/lib/saudade-device 0750 saudade-device saudade-device -
+d /var/log/saudade-device 0750 saudade-device saudade-device -

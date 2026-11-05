@@ -52,7 +52,7 @@ bash scripts/deploy_release.sh "$REVISION" /srv/saudade-agent \
 ```
 
 后续发布仍使用上述服务组、状态目录和新 release/config/data 参数。配置了固定 tokenizer
-的站点还需传 `DEPLOY_EMBEDDING_TOKENIZER=1` 并检查检索健康，不能仅以 HTTP 就绪代替。
+的站点会自动安装固定分词器依赖，仍须检查检索健康，不能仅以 HTTP 就绪代替。
 复制模式避免发布权限整理修改 uv 缓存硬链接。外置的是建图运行报告，归档中的评测基线保留。
 
 ## 验证与切换
@@ -89,5 +89,29 @@ Agent 诊断只挂载已授权的 health/rust 日志，不暴露整个工作区�
 保留迁移后的同一份数据和旧路径兼容链接，恢复原账号所需的目录权限。不要用迁移前的数据
 覆盖新上传或会话。恢复稳定后再清理临时 unit；不在回滚中删除账号、备份或数据。
 
-操作系统隔离不代替业务授权。Agent 仍持有共享 JWT 签名密钥；登录与工具委托的用途、scope
-和撤销规则需要两仓另行迁移，本次不直接拒绝无 ver 令牌而破坏工具调用。
+## 独立鉴权与 IoT
+
+登录 `JWT_SECRET` 与工具委托 `BLOG_DELEGATION_SECRET` 仅交给 Rust。Rust 和 Agent 共享
+另一个 `AGENT_ASSERTION_SECRET` 传递身份；确认卡使用仅 Agent 持有的 `AGENT_CONFIRM_SECRET`。
+每个密钥独立生成至少 32 随机字节，按用途限制账号读取。依据
+[RFC 8725](https://www.rfc-editor.org/rfc/rfc8725.html#section-3.12) 使用独立密钥和互斥校验规则。
+新登录态带 `aud=blog-session` 和 ver；既有带 ver 的七天登录态自然过期，无 ver 令牌拒绝。
+
+真实登录的聊天与任务面板请求签发五分钟 tools 委托，包含当前 uid、ver、scope 和 `aud=blog-tools`。
+宿主每次检查当前账号冻结、代次和角色。工具委托不能进入登录、密码、聊天、图谱代理或
+委托交换接口。管理员后台授权最长三十天，只读及投递自己的自动化结果，后续真实聊天刷新；
+过期或改密需要重新认证。切换前为已有批准计划的当前拥有者迁移有限后台授权，不重新批准计划。
+
+IoT 使用锁定的 `saudade-device` 账号，配置模板在 `iot/deploy`。二进制只读挂载，数据库及
+固件迁入 `/var/lib/saudade-device`，日志写 `/var/log/saudade-device`。SQLite 迁移需停服务并
+用 backup API 包含 WAL，保留原始数据及 unit；回滚须保留迁移后新增数据。只有设备专用
+`DEVICE_SIGNING_SECRET` 被映射为旧二进制固定路径读取的 JWT_SECRET，真实 home 被 tmpfs 隐藏。
+
+浏览器和 Agent 的设备请求经过 Rust `/api/device-gateway/`：校验用户与允许路径后签发
+三十秒设备令牌，保留命令的 X-Request-Id。设备自身 OTA Basic 下载与同机 MQTT 认证继续
+直连设备服务；公网 broker 认证回调仍拒绝。配套 nginx 模板在 `iot/nginx/iot.conf.template`。
+先验证候选网关、Agent、设备密钥，再协调切换配置、二进制及 nginx；失败一起回滚，避免新旧协议混用。
+
+旧 `local-embedding.conf` 等文件可能晚于数字 drop-in 排序；生成的 `zz-runtime-env.conf`
+最后重置 EnvironmentFile 列表，防止覆盖私有状态路径。参见
+[systemd.exec](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html#EnvironmentFile=)。

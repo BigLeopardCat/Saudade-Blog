@@ -18,38 +18,67 @@ async fn main() {
 
     // Login rate limits apply before password verification.
     let max_attempts = env::var("LOGIN_MAX_ATTEMPTS")
-        .ok().and_then(|v| v.parse().ok()).unwrap_or(5);
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(5);
     let window_secs = env::var("LOGIN_WINDOW_SECS")
-        .ok().and_then(|v| v.parse().ok()).unwrap_or(300);
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(300);
     let lockout_secs = env::var("LOGIN_LOCKOUT_SECS")
-        .ok().and_then(|v| v.parse().ok()).unwrap_or(900);
-    let rate_limiter = saudade_blog::rate_limiter::LoginRateLimiter::new(
-        max_attempts, window_secs, lockout_secs,
-    );
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(900);
+    let rate_limiter =
+        saudade_blog::rate_limiter::LoginRateLimiter::new(max_attempts, window_secs, lockout_secs);
 
     let post_limiter = saudade_blog::risk::PostRateLimiter::new();
 
     let report_max = env::var("MONITOR_REPORT_MAX")
-        .ok().and_then(|v| v.parse().ok()).unwrap_or(120);
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(120);
     let report_window_secs = env::var("MONITOR_REPORT_WINDOW_SECS")
-        .ok().and_then(|v| v.parse().ok()).unwrap_or(60);
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(60);
     let report_lockout_secs = env::var("MONITOR_REPORT_LOCKOUT_SECS")
-        .ok().and_then(|v| v.parse().ok()).unwrap_or(300);
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(300);
     let report_limiter = saudade_blog::rate_limiter::LoginRateLimiter::new(
-        report_max, report_window_secs, report_lockout_secs,
+        report_max,
+        report_window_secs,
+        report_lockout_secs,
     );
 
     saudade_blog::checkpoint_cleanup::start(SqlxPostgresConnector::from_sqlx_postgres_pool(pool));
-    let app_state = AppState { db, rate_limiter, post_limiter, report_limiter };
+    let app_state = AppState {
+        db,
+        rate_limiter,
+        post_limiter,
+        report_limiter,
+    };
     let app = create_router(app_state);
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+    let port = env::var("BLOG_PORT")
+        .ok()
+        .and_then(|v| v.parse::<u16>().ok())
+        .filter(|p| *p > 0)
+        .unwrap_or(3000);
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
     tracing::info!(service = "saudade-blog", pid = std::process::id(), address = %addr,
         event = "service_started", "HTTP server ready");
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    saudade_blog::lifecycle::serve(listener, app,
-        saudade_blog::lifecycle::task_tracker(), async {
+    saudade_blog::lifecycle::serve(
+        listener,
+        app,
+        saudade_blog::lifecycle::task_tracker(),
+        async {
             saudade_blog::lifecycle::shutdown_signal().await;
             saudade_blog::routes::image_generation::stop_accepting();
-        }).await.unwrap();
+        },
+    )
+    .await
+    .unwrap();
 }

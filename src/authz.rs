@@ -188,11 +188,7 @@ pub fn check_token(status: i16, token_version: i32, claims_ver: Option<i32>) -> 
     if is_frozen(status) {
         return Err(TokenDenial::Frozen);
     }
-    if let Some(v) = claims_ver {
-        if token_version != v {
-            return Err(TokenDenial::Revoked);
-        }
-    }
+    if claims_ver != Some(token_version) { return Err(TokenDenial::Revoked); }
     Ok(())
 }
 
@@ -521,11 +517,9 @@ mod tests {
     }
 
     #[test]
-    fn 没有代次声明的令牌只判冻结不判代次() {
-        // agent 的 60 秒代调令牌与部署前的旧令牌都是这一支：库里代次无论多少都放行…
-        assert_eq!(check_token(STATUS_ACTIVE, 0, None), Ok(()));
-        assert_eq!(check_token(STATUS_ACTIVE, 5, None), Ok(()));
-        // …但**冻结判据照旧生效**（这是"代码里没有豁免通道"的那半）
+    fn 没有代次声明的令牌拒绝访问() {
+        assert_eq!(check_token(STATUS_ACTIVE, 0, None), Err(TokenDenial::Revoked));
+        assert_eq!(check_token(STATUS_ACTIVE, 5, None), Err(TokenDenial::Revoked));
         assert_eq!(check_token(STATUS_FROZEN, 0, None), Err(TokenDenial::Frozen));
         assert_eq!(check_token(9, 0, None), Err(TokenDenial::Frozen));
     }

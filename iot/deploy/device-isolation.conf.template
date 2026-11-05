@@ -1,0 +1,19 @@
+[Service]
+User=saudade-device
+Group=saudade-device
+SupplementaryGroups=
+EnvironmentFile=
+EnvironmentFile=/etc/saudade/device-runtime.env
+WorkingDirectory=/var/lib/saudade-device
+ExecStart=
+ExecStart=/srv/saudade-device/device-service
+BindReadOnlyPaths=__DEVICE_ROOT__/target/release/device-service:/srv/saudade-device/device-service
+# The existing binary reads this fixed path; expose only its dedicated verifier key.
+ProtectHome=tmpfs
+BindReadOnlyPaths=/etc/saudade/device-jwt.env:/home/ubuntu/Saudade-Blog/.env
+StateDirectory=saudade-device
+StateDirectoryMode=0750
+LogsDirectory=saudade-device
+LogsDirectoryMode=0750
+ReadWritePaths=/var/lib/saudade-device /var/log/saudade-device
+InaccessiblePaths=-/etc/saudade/blog-runtime.env -/etc/saudade/agent-runtime.env -/etc/saudade/agent.env
