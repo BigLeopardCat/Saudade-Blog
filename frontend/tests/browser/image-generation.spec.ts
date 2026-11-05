@@ -35,8 +35,9 @@ test('image generation requires request approval and a separate visible-result a
   await page.goto(sandboxURL)
   await page.getByRole('button',{name:'AI 生图'}).click()
   const dialog=page.getByRole('dialog',{name:'AI 生图',exact:true})
-  // Clicking waits for Playwright's visibility/stability checks, including the opening motion.
+  // Finish the opening motion before comparing content-driven size changes.
   await page.getByLabel('提示词',{exact:true}).click()
+  await dialog.screenshot({animations:'disabled'});
   const initialHeight=(await dialog.boundingBox())!.height
   await page.getByLabel('提示词',{exact:true}).fill(prompt.repeat(100))
   await expect.poll(async()=>Math.abs((await dialog.boundingBox())!.height-initialHeight)).toBeLessThan(2)
