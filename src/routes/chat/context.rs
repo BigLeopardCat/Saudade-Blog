@@ -242,64 +242,33 @@ pub(super) async fn prepare_chat(
         BootstrapContext::default()
     });
 
-    let executions_text: String = {
-        let recent = execution_log::Entity::find()
-            .filter(execution_log::Column::UserId.eq(uid))
-            .filter(execution_log::Column::ConversationId.eq(conversation_id))
-            .order_by_desc(execution_log::Column::Id)
-            .limit(Some(40))
-            .all(&state.db)
-            .await
-            .unwrap_or_default();
-        // 由新到旧扫描：首次见到某动作 = 它最近的一次（记时间），之后同款只累加次数
-        let mut seen: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
-        let mut rows: Vec<ExecRow> = Vec::new();
-        for r in &recent {
-            match seen.get(r.detail.as_str()) {
-                Some(i) => rows[*i].2 += 1,
-                None => {
-                    seen.insert(r.detail.as_str(), rows.len());
-                    rows.push((
-                        r.created_at.format("%m-%d %H:%M").to_string(),
-                        r.detail.as_str(),
-                        1,
-                    ));
-                }
-            }
+    let mut body = agent_request(&payload, uid, conversation_id, memory);
+
+    if let Some(obj) = body.as_object_mut() {
+        if let Some(q) = &quota {
+            obj.insert("chat_quota".into(), crate::quota::forward_json(q));
         }
-        rows.truncate(8);
-        let text = rows
-            .iter()
-            .rev() // 新→旧取回 → 旧→新拼串
-            .map(|(at, detail, n)| {
-                if *n > 1 {
-                    format!("{at} {detail}（×{n}）")
-                } else {
-                    format!("{at} {detail}")
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n· ");
-        text
-    };
+        if quota_blocked {
+            obj.insert("quota_blocked".into(), serde_json::Value::Bool(true));
+        }
+    }
 
-    let pending_text: String = {
-        let cutoff = chrono::Local::now().naive_local()
-            - chrono::Duration::minutes(PENDING_READ_TTL_MINUTES);
-        pending_action::Entity::find()
-            .filter(pending_action::Column::ConversationId.eq(conversation_id))
-            .filter(pending_action::Column::Status.eq("pending"))
-            .filter(pending_action::Column::CreatedAt.gte(cutoff))
-            .order_by_desc(pending_action::Column::Id)
-            .one(&state.db)
-            .await
-            .ok()
-            .flatten()
-            .map(|r| render_pending_action(&r))
-            .unwrap_or_default()
-    };
+    Ok(ChatCtx {
+        uid,
+        conversation_id,
+        trace_id,
+        body,
+        role,
+    })
+}
 
-    let mut body = serde_json::json!({
+fn agent_request(
+    payload: &ChatRequest,
+    uid: i32,
+    conversation_id: i32,
+    memory: BootstrapContext,
+) -> serde_json::Value {
+    serde_json::json!({
         "message": payload.message,
         "task_id": payload.task_id,
         "task_inputs": payload.task_inputs,
@@ -318,26 +287,45 @@ pub(super) async fn prepare_chat(
         "history_scope": memory.history_scope,
         "summary": memory.summary,
         "summary_scope": memory.summary_scope,
-        "executions": executions_text,
-        "pending_action": pending_text,
         "confirm_token": payload.confirm_token.as_deref().unwrap_or(""),
         "confirm_pick": payload.confirm_pick.as_deref().unwrap_or(""),
-    });
+    })
+}
 
-    if let Some(obj) = body.as_object_mut() {
-        if let Some(q) = &quota {
-            obj.insert("chat_quota".into(), crate::quota::forward_json(q));
-        }
-        if quota_blocked {
-            obj.insert("quota_blocked".into(), serde_json::Value::Bool(true));
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn host_does_not_forward_a_shadow_of_checkpoint_or_execution_state() {
+        let input: ChatRequest = serde_json::from_value(json!({
+            "message": "继续", "conversation_id": 42,
+            "executions": "FORGED_COMPLETION_CANARY",
+            "pending_action": "RETIRED_APPROVAL_CANARY",
+            "task_id": "task-42", "task_inputs": true,
+        }))
+        .unwrap();
+        let body = agent_request(&input, 7, 42, BootstrapContext::default());
+        assert_eq!(body["task_id"], "task-42");
+        assert_eq!(body["task_inputs"], true);
+        assert_eq!(body["user_id"], 7);
+        assert!(!body.as_object().unwrap().contains_key("executions"));
+        assert!(!body.as_object().unwrap().contains_key("pending_action"));
+        assert!(!body.to_string().contains("CANARY"));
     }
 
-    Ok(ChatCtx {
-        uid,
-        conversation_id,
-        trace_id,
-        body,
-        role,
-    })
+    #[test]
+    fn explicit_continuation_carries_the_original_typed_browser_feedback() {
+        let feedback = json!({"command_id":"cmd-42", "status":"completed", "path":"/about"});
+        let input: ChatRequest = serde_json::from_value(json!({
+            "message":"", "conversation_id":42, "resume_task":"task-42",
+            "browser_feedback":true, "browser_result":feedback,
+        }))
+        .unwrap();
+        let body = agent_request(&input, 7, 42, BootstrapContext::default());
+        assert_eq!(body["resume_task"], "task-42");
+        assert_eq!(body["browser_result"], feedback);
+        assert_eq!(body["conversation_id"], 42);
+    }
 }

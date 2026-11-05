@@ -362,38 +362,11 @@ fn derive_conv_title(content: &str) -> Option<String> {
 }
 
 
-const PENDING_READ_TTL_MINUTES: i64 = 60;
-/// 注入行里工具参数最多带多少字符：planner 要靠它原样重建动作，但一行不该被
-/// 一个长参数撑爆。
-const PENDING_ARGS_INLINE_MAX: usize = 200;
-/// 注入行整体上限（与 recent_executions 同一量级）。
-const PENDING_INLINE_MAX: usize = 600;
 /// Complete proposal JSON and display text are rejected above these bounds, never truncated.
 const PENDING_ARGS_COL_MAX: usize = 32_768;
 const PENDING_QUESTION_COL_MAX: usize = 32_768;
 /// Legacy choice lists and native confirmation/cancellation buttons share this bound.
 const PENDING_OPTIONS_COL_MAX: usize = 600;
-
-fn render_pending_action(r: &pending_action::Model) -> String {
-    let mut s = r.target.clone();
-    if !r.tool.is_empty() {
-        s.push_str(&format!("；动作 {}", r.tool));
-    }
-    if !r.skill.is_empty() {
-        s.push_str(&format!("（技能 {}）", r.skill));
-    }
-    if let Some(a) = r.args.as_deref().filter(|a| !a.is_empty()) {
-        s.push_str(&format!(
-            "；参数 {}",
-            a.chars().take(PENDING_ARGS_INLINE_MAX).collect::<String>()
-        ));
-    }
-    s.push_str(&format!(
-        "；提出于 {}；状态 awaiting（等主人点头，尚未执行）",
-        r.created_at.format("%m-%d %H:%M")
-    ));
-    s.chars().take(PENDING_INLINE_MAX).collect()
-}
 
 /// 取 JSON 字段并限长（缺字段/类型不对一律空串——待办是辅助事实，宁可少说）。
 fn json_capped(v: &serde_json::Value, key: &str, cap: usize) -> String {
