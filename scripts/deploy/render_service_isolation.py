@@ -22,6 +22,10 @@ def render(app_dir: str, release_root: str, output: Path) -> None:
         text = (templates / (kind + "-isolation.conf.template")).read_text()
         text = text.replace("__APP_DIR__", app_dir).replace("__RELEASE_ROOT__", release_root)
         (directory / "91-isolation.conf").write_text(text)
+        if kind == "agent":
+            # Legacy local-embedding.conf sorts after numeric drop-ins.
+            (directory / "zz-runtime-env.conf").write_text(
+                "[Service]\nEnvironmentFile=\nEnvironmentFile=/etc/saudade/agent-runtime.env\n")
         if service == "saudade-scheduler":
             text = (templates / "scheduler-isolation.conf.template").read_text()
             (directory / "99-entry.conf").write_text(text.replace("__RELEASE_ROOT__", release_root))
