@@ -126,19 +126,54 @@
   .albumLibrary
     padding: 8px
 
+.generationModal .ant-modal-body
+  height: min(70dvh, 680px)
+  overflow: hidden
+
 .generationLayout
+  height: 100%
+  min-height: 0
   display: grid
   grid-template-columns: 200px minmax(0, 1fr)
   gap: 20px
   min-width: 0
 .generationHistory
-  max-height: 65dvh
-  overflow: auto
-  button
-    overflow: hidden
-    text-overflow: ellipsis
+  min-height: 0
+  overflow-y: auto
+  scrollbar-gutter: stable
+.generationHistoryItem
+  width: 100%
+  text-align: start
+  border: 1px solid var(--washi-border, #eadde8)
+  border-radius: 10px
+  background: transparent
+  color: inherit
+  padding: 10px 12px
+  cursor: pointer
+  &:hover, &[aria-current='true']
+    background: color-mix(in srgb, currentColor 7%, transparent)
+    border-color: #d89ac5
+  &:focus-visible
+    outline: 2px solid #b085cf
+    outline-offset: 2px
+.generationHistoryStatus
+  display: block
+  font-size: 12px
+  opacity: .7
+  margin-bottom: 4px
+.generationHistoryTitle
+  display: -webkit-box
+  -webkit-box-orient: vertical
+  -webkit-line-clamp: 2
+  overflow: hidden
+  overflow-wrap: anywhere
+  line-height: 1.5
 .generationMain
   min-width: 0
+  min-height: 0
+  overflow-y: auto
+  scrollbar-gutter: stable
+  padding-inline-end: 8px
 .generationPrompt
   white-space: pre-wrap
   overflow-wrap: anywhere
@@ -163,6 +198,7 @@
 @media (max-width: 680px)
   .generationLayout
     grid-template-columns: minmax(0, 1fr)
+    grid-template-rows: 130px minmax(0, 1fr)
   .generationHistory
     max-height: 150px
 
