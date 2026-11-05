@@ -1,0 +1,2 @@
+u saudade-blog - "Saudade Blog runtime" /var/lib/saudade-blog /usr/sbin/nologin
+u saudade-agent - "Saudade Agent runtime" /var/lib/saudade-agent /usr/sbin/nologin
