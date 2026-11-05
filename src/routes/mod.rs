@@ -8,6 +8,7 @@ pub mod announcements;
 pub mod talks;
 pub mod upload;
 pub mod gallery;
+pub mod device_gateway;
 pub mod image_generation;
 pub mod temp_user;
 pub mod knowledge;
@@ -144,6 +145,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/public/tags", get(public_catalog::tags::list))
         .route("/api/public/image-generation/{id}/preview", get(image_generation::preview))
         .route("/api/public/notes", get(notes::list_public_notes))
+        .route("/api/protected/agent/delegation", get(crate::auth_jwt::delegation::exchange))
+        .route("/api/device-gateway/{*path}", axum::routing::any(device_gateway::proxy)
+            .layer(axum::extract::DefaultBodyLimit::max(16 * 1024 * 1024)))
         .route("/api/public/rag/corpus", get(rag_corpus::export))
         .route("/api/public/notes/page", get(notes::list_public_notes)) 
         .route("/api/public/notes/search", post(notes::search_notes))
@@ -396,6 +400,7 @@ pub fn create_router(state: AppState) -> Router {
 
     let app = public_routes
         .merge(protected_routes)
+        .layer(middleware::from_fn(crate::auth_jwt::delegation::boundary))
         .layer(cors)
         .with_state(state_arc);
     crate::observability::http(app)

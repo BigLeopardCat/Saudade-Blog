@@ -331,6 +331,8 @@ jobs:
         env:
           TEST_PG_URL: postgres://postgres:ci-root-pw@127.0.0.1:5432/saudade_blog
           JWT_SECRET: isolated-ci-consistency-test-secret
+          AGENT_ASSERTION_SECRET: isolated-ci-assertion-key-at-least-32-bytes
+          BLOG_DELEGATION_SECRET: isolated-ci-delegation-key-at-least-32-bytes
         run: cargo test
 
       - name: Operations regression tests
@@ -372,6 +374,44 @@ jobs:
           npm run vendor:live2d
           npm run build
         working-directory: ./frontend
+
+      - name: Detect backend candidate changes
+        if: github.event_name == 'pull_request'
+        id: candidate
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if git diff --quiet "$BASE" HEAD -- src Cargo.toml Cargo.lock; then
+            echo 'build=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'build=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build reviewable backend candidate
+        if: steps.candidate.outputs.build == 'true'
+        env:
+          SOURCE_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          cargo build --release
+          mkdir backend-candidate
+          cp target/release/saudade_blog_bin backend-candidate/
+          python3 - <<'PY'
+          import hashlib,json,os,subprocess
+          from pathlib import Path
+          binary=Path('backend-candidate/saudade_blog_bin')
+          Path('backend-candidate/provenance.json').write_text(json.dumps({
+            'source_head':os.environ['SOURCE_HEAD'],
+            'tested_merge':subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),
+            'sha256':hashlib.sha256(binary.read_bytes()).hexdigest()}))
+          PY
+
+      - name: Upload backend candidate
+        if: steps.candidate.outputs.build == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: backend-candidate-${{ github.event.pull_request.head.sha }}
+          path: backend-candidate/
+          retention-days: 7
 
   browser:
     runs-on: ubuntu-24.04

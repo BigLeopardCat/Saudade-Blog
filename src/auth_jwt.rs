@@ -1,8 +1,9 @@
-use jsonwebtoken::{encode, decode, Header, Validation, EncodingKey, DecodingKey};
-use serde::{Deserialize, Serialize};
-use axum::http::{HeaderMap, header};
+use axum::http::{header, HeaderMap};
+use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use sea_orm::{DatabaseConnection, EntityTrait};
+use serde::{Deserialize, Serialize};
 use std::env;
+pub mod delegation;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
@@ -11,6 +12,8 @@ pub struct Claims {
     pub role: String,
     #[serde(default)]
     pub ver: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aud: Option<String>,
 }
 
 /// Parse a validated login token for transaction services that recheck the locked actor row.
@@ -33,9 +36,15 @@ pub fn create_token(user_id: i32, role: &str, token_version: i32) -> String {
         role: role.to_string(),
         // 本函数签的令牌**一定带代次**（`Some`）——`None` 只出现在旧令牌与 agent 代理令牌上
         ver: Some(token_version),
+        aud: Some("blog-session".into()),
     };
 
-    encode(&Header::default(), &claims, &EncodingKey::from_secret(secret.as_ref())).unwrap()
+    encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(secret.as_ref()),
+    )
+    .unwrap()
 }
 
 #[derive(Debug, Serialize)]
@@ -46,27 +55,102 @@ struct AssertionClaims {
     iat: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     role: Option<String>,
+    delegation: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    background_delegation: Option<String>,
 }
 
 pub fn create_agent_assertion(user_id: i32, role: Option<&str>) -> String {
-    let secret = env::var("JWT_SECRET").expect("JWT_SECRET must be set in environment");
+    sign_assertion(user_id, role, String::new(), None)
+}
+
+pub async fn create_chat_assertion(
+    db: &DatabaseConnection,
+    user_id: i32,
+    role: Option<&str>,
+    expected_version: i32,
+) -> String {
+    let Some(actor) = crate::entity::user::Entity::find_by_id(user_id)
+        .one(db)
+        .await
+        .ok()
+        .flatten()
+        .filter(|u| !crate::authz::is_frozen(u.status) && u.token_version == expected_version)
+    else {
+        return String::new();
+    };
+    create_tool_assertion(
+        user_id,
+        role.map(|_| actor.role.as_str()),
+        actor.token_version,
+    )
+}
+
+/// Only call after validating a real browser session against the current actor row.
+/// Delegated credentials cannot reach chat/task proxy routes to renew themselves.
+pub(crate) fn create_tool_assertion(user_id: i32, role: Option<&str>, version: i32) -> String {
+    let now = chrono::Utc::now().timestamp() as usize;
+    let Some(token) = delegation::issue(
+        user_id,
+        role.unwrap_or("user"),
+        version,
+        delegation::Scope::Tools,
+        now,
+    ) else {
+        return String::new();
+    };
+    let background = role
+        .filter(|role| crate::authz::can_access_console(role))
+        .and_then(|role| {
+            delegation::issue(user_id, role, version, delegation::Scope::Background, now)
+        });
+    sign_assertion(user_id, role, token, background)
+}
+
+fn sign_assertion(
+    user_id: i32,
+    role: Option<&str>,
+    delegation: String,
+    background_delegation: Option<String>,
+) -> String {
+    let Some(secret) = env::var("AGENT_ASSERTION_SECRET")
+        .ok()
+        .filter(|s| s.len() >= 32)
+    else {
+        return String::new();
+    };
     let now = chrono::Utc::now().timestamp() as usize;
     let claims = AssertionClaims {
         sub: user_id,
         aud: "agent".to_string(),
         exp: now + 60,
         iat: now,
-        role: role.map(|r| r.to_string()),
+        role: role.map(str::to_string),
+        delegation,
+        background_delegation,
     };
-    encode(&Header::default(), &claims, &EncodingKey::from_secret(secret.as_ref()))
-        .expect("断言签名失败（key 已校验）")
+    encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(secret.as_bytes()),
+    )
+    .expect("assertion signing failed")
 }
 
 pub fn verify_token(token: &str) -> Option<Claims> {
     let secret = env::var("JWT_SECRET").expect("JWT_SECRET must be set in environment");
-    decode::<Claims>(token, &DecodingKey::from_secret(secret.as_ref()), &Validation::default())
-        .map(|data| data.claims)
-        .ok()
+    let mut validation = Validation::default();
+    validation.set_audience(&["blog-session"]);
+    // Existing seven-day sessions have ver but no aud; they expire naturally.
+    decode::<Claims>(
+        token,
+        &DecodingKey::from_secret(secret.as_ref()),
+        &validation,
+    )
+    .map(|data| data.claims)
+    .ok()
+    .filter(|claims| claims.sub > 0 && claims.ver.is_some())
+    .or_else(|| delegation::verify(token).map(|grant| grant.claims()))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
