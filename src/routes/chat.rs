@@ -1,3 +1,5 @@
+mod task_manager;
+pub use task_manager::{list as tasks_handler, cancel as cancel_task_handler, cancel_schedule as cancel_schedule_handler, service_status};
 mod weather;
 pub use weather::WeatherSnapshot;
 mod context;
