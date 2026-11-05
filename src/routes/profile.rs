@@ -5,6 +5,8 @@ mod mailbox;
 mod message_reads;
 mod notifications;
 mod unread;
+mod inbox_overview;
+pub use inbox_overview::get_inbox_overview;
 mod visibility;
 pub use deletion::{delete_message, delete_notification};
 pub use notifications::{list_notifications, pending_announcement, read_notifications};
