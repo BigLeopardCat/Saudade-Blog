@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 pub struct Model {
     #[sea_orm(primary_key)]
     pub id: i32,
-    pub note_id: i32, // 所属文章 id（note.id）。无外键：文章可删，评论留着更好考古
+    pub note_id: i32, // 所属文章，永久删除文章时级联清理
     pub user_id: i32, // 评论者 uid（恒 >0：发言强制登录）
     #[sea_orm(column_type = "Text")]
     pub content: String, // 正文（≤300 字）。**不转义存储**，XSS 防线在渲染侧的 markdown 管线

@@ -1,6 +1,7 @@
 //! Curated image metadata; storage URLs and article references remain stable.
 
 pub mod covers;
+pub mod folder_actions;
 pub mod folders;
 pub mod metadata;
 

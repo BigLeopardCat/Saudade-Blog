@@ -497,7 +497,7 @@ const AllNotes = () => {
                     </Fab>
                     <Popconfirm
                         title="删除确认"
-                        description="确定删除此文章？"
+                        description="永久删除此文章及修改稿、评论和互动记录？图片文件会保留。"
                         icon={<QuestionCircleOutlined style={{ color: 'red' }} />}
                         okText='删除'
                         onConfirm={() => DeleteNote(item.key)}
@@ -669,7 +669,7 @@ const AllNotes = () => {
         </Modal>
 
         <Modal title="删除确认" open={isModalOpen} onOk={handledelOk} onCancel={handledelCancel}  okText="确定" cancelText="取消">
-            是否删除选中所有文章?
+            永久删除所选文章及修改稿、评论和互动记录？图片文件会保留。
         </Modal>
     </>
 }

@@ -218,6 +218,11 @@ async fn insert_talk(
     payload: UpsertTalk,
     src: &str,
 ) -> Json<ApiResponse<String>> {
+    if src=="talk" {
+        return admin_post(state,headers,super::talk_actions::Intent{
+            action:super::talk_actions::Action::Create,id:None,fields:super::talk_actions::Fields{
+                title:Some(payload.title),content:Some(payload.content)}},"Created").await;
+    }
     // 发布必须登录（昵称/匿名都会在 user_id 留存，供溯源与维护）
     let Some(uid) = current_uid(&state.db, &headers).await else {
         return Json(ApiResponse::error("请先登录后再发布"));
@@ -232,18 +237,7 @@ async fn insert_talk(
         0..=2 => payload.v,
         _ => 0,
     };
-    let title = if src == "talk" {
-        let t = payload.title.trim();
-        // 上限 100 字：DB 列是 varchar(255)，留足余量；换行/控制字符不在这里处理，
-        // 前端渲染走 markdown 管线的安全分支（同 comments.rs 的 XSS 边界说明）。
-        if t.chars().count() > 100 {
-            t.chars().take(100).collect::<String>()
-        } else {
-            t.to_string()
-        }
-    } else {
-        cat.clone()
-    };
+    let title = cat.clone();
     if content.is_empty() {
         return Json(ApiResponse::error("留言不能为空"));
     }
@@ -517,49 +511,25 @@ pub async fn create_talk(
     insert_talk(&state, &headers, payload, "talk").await
 }
 
-pub async fn delete_talk(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Path(id): Path<i32>,
-) -> Json<ApiResponse<String>> {
-    // 删除说说：须登录（后台说说管理入口）
-    let Some(_uid) = current_uid(&state.db, &headers).await else {
-        return Json(ApiResponse::error("请先登录"));
-    };
-    if let Err(e) = talk::Entity::delete_by_id(id).exec(&state.db).await {
-        return super::db_error("删除说说", &e);
+async fn admin_post(state:&AppState,headers:&HeaderMap,intent:super::talk_actions::Intent,
+                    label:&str)->Json<ApiResponse<String>>{
+    match super::talk_actions::direct(state,headers,intent).await{
+        Ok(_)=>Json(ApiResponse::success(label.to_owned())),
+        Err(e)=>{tracing::warn!(error=%e,"administrator post did not commit");
+            Json(ApiResponse::error(match &e{sea_orm::DbErr::Custom(message)=>message,_=>"说说操作未完成，请重新查询"}))}
     }
-    Json(ApiResponse::success("Deleted".to_string()))
 }
 
-pub async fn update_talk(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Path(id): Path<i32>,
-    Json(payload): Json<UpsertTalk>,
-) -> Json<ApiResponse<String>> {
-    // 编辑说说：须登录
-    let Some(_uid) = current_uid(&state.db, &headers).await else {
-        return Json(ApiResponse::error("请先登录"));
-    };
-    let talk_model = match talk::Entity::find_by_id(id).one(&state.db).await {
-        Ok(v) => v,
-        Err(e) => return super::db_error("读取说说", &e),
-    };
+pub async fn delete_talk(State(state):State<Arc<AppState>>,headers:HeaderMap,Path(id):Path<i32>)
+    ->Json<ApiResponse<String>>{
+    admin_post(&state,&headers,super::talk_actions::Intent{action:super::talk_actions::Action::Delete,
+        id:Some(id),fields:Default::default()},"Deleted").await
+}
 
-    if let Some(t) = talk_model {
-        let mut active_model: talk::ActiveModel = t.into();
-        active_model.title = Set(Some(payload.title));
-        active_model.content = Set(payload.content);
-        active_model.updated_at = Set(chrono::Local::now().naive_local());
-
-        if let Err(e) = talk::Entity::update(active_model).exec(&state.db).await {
-            return super::db_error("更新说说", &e);
-        }
-        Json(ApiResponse::success("Updated".to_string()))
-    } else {
-        Json(ApiResponse { code: 404, message: "Talk not found".to_string(), data: String::default() })
-    }
+pub async fn update_talk(State(state):State<Arc<AppState>>,headers:HeaderMap,Path(id):Path<i32>,
+                         Json(payload):Json<UpsertTalk>)->Json<ApiResponse<String>>{
+    admin_post(&state,&headers,super::talk_actions::Intent{action:super::talk_actions::Action::Update,
+        id:Some(id),fields:super::talk_actions::Fields{title:Some(payload.title),content:Some(payload.content)}},"Updated").await
 }
 
 /// 后台留言管理：一条河灯留言的管理视图（精确到发布用户，供溯源/维护）。
