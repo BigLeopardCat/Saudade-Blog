@@ -18,7 +18,7 @@ mod protocol;
 mod stream_tests;
 use protocol::{Frame, event as stream_event};
 use eventsource_stream::Eventsource;
-use axum::response::sse::Sse;
+use axum::response::sse::{KeepAlive, Sse};
 mod approval;
 pub use approval::cancel_handler;
 use approval::claim_confirm_token;
@@ -524,6 +524,16 @@ fn early_exit_response(status: StatusCode, body: ChatResponse, from: &str) -> Re
      Sse::new(stream)).into_response()
 }
 
+fn agent_sse_response(
+    stream: impl futures::Stream<Item = Result<axum::response::sse::Event, axum::Error>>
+        + Send
+        + 'static,
+) -> Response {
+    Sse::new(stream)
+        .keep_alive(KeepAlive::new().text("ping"))
+        .into_response()
+}
+
 pub async fn chat_stream_handler(
     State(state): State<Arc<AppState>>,
     req: Request,
@@ -604,7 +614,7 @@ pub async fn chat_stream_handler(
             // 链路追踪：透传 trace id 给前端（前端可在网络面板按此 id 关联全链路日志）
             (header::HeaderName::from_static("x-request-id"), &ctx.trace_id),
         ],
-        Sse::new(body_stream),
+        agent_sse_response(body_stream),
     ).into_response()
 }
 
