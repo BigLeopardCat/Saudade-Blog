@@ -1,0 +1,13 @@
+d /srv/saudade-blog 0755 root root -
+f /srv/saudade-blog/saudade_blog_bin 0755 root root -
+d /var/lib/saudade-blog 0750 saudade-blog saudade-blog -
+d /var/lib/saudade-blog/uploads 0750 saudade-blog saudade-blog -
+d /var/lib/saudade-agent 0750 saudade-agent saudade-agent -
+d /var/lib/saudade-agent/data 0750 saudade-agent saudade-agent -
+d /var/lib/saudade-agent/logs 0750 saudade-agent saudade-agent -
+d /var/lib/saudade-agent/output_audio 0750 saudade-agent saudade-agent -
+d /var/lib/saudade-agent/eval 0750 saudade-agent saudade-agent -
+d /var/lib/saudade-agent/eval/cache 0750 saudade-agent saudade-agent -
+d /var/lib/saudade-agent/eval/report 0750 saudade-agent saudade-agent -
+d /var/lib/saudade-agent/eval/report/wordgraph 0750 saudade-agent saudade-agent -
+d /var/cache/saudade-agent 0750 saudade-agent saudade-agent -

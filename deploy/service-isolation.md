@@ -21,6 +21,7 @@ Rust 使用 `saudade-blog`；Agent HTTP、scheduler 和 trace 保留任务使用
 
 ```bash
 sudo systemd-sysusers deploy/systemd/saudade.sysusers
+sudo systemd-tmpfiles --create deploy/systemd/saudade.tmpfiles
 sudo install -d -o "$DEPLOY_USER" -g saudade-agent -m 2750 /srv/saudade-agent
 sudo usermod -aG saudade-agent "$DEPLOY_USER"
 ```
@@ -78,7 +79,8 @@ python3 scripts/deploy/render_service_isolation.py \
 首次先用相同沙箱只读统计，确认可读取私有 trace。
 
 Rust 将原部署二进制只读 bind 到 `/srv/saudade-blog/saudade_blog_bin`，原发布脚本继续负责
-替换二进制及重启。Agent 诊断只挂载已授权的 health/rust 日志，不暴露整个工作区；日志轮转
+替换二进制及重启。tmpfiles 创建可执行目标占位文件，实际执行的是服务沙箱内挂载的发布二进制。
+Agent 诊断只挂载已授权的 health/rust 日志，不暴露整个工作区；日志轮转
 须保留这两份文件的服务组读权限。
 
 ## 回滚
