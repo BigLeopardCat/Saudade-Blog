@@ -84,9 +84,7 @@ pub struct ChatResponse {
 
 use sea_orm::{EntityTrait, Set, QueryOrder, QueryFilter, ColumnTrait, QuerySelect, ActiveModelTrait};
 use sea_orm::sea_query::Expr; // Expr 不在 sea-orm 根（0.12.15 仅 pub use sea_query 全名）
-use crate::entity::{
-    chat_history, chat_image, conversation, execution_log, pending_action,
-};
+use crate::entity::{chat_history, chat_image, conversation};
 use crate::routes::conversation::resolve_conversation_id;
 use super::chat_context::{self, BootstrapContext};
 use futures::StreamExt;
