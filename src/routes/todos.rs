@@ -35,6 +35,7 @@ pub struct TodoDto {
     pub text: String,
     #[serde(default)]
     pub done: bool,
+    #[serde(default)]
     pub date: Option<String>,
 }
 
@@ -141,7 +142,8 @@ async fn begin_list_write(
         .lock_exclusive()
         .one(&txn)
         .await?;
-    let actor = actor.ok_or_else(|| sea_orm::DbErr::RecordNotFound("actor no longer exists".into()))?;
+    let actor =
+        actor.ok_or_else(|| sea_orm::DbErr::RecordNotFound("actor no longer exists".into()))?;
     Ok((txn, actor))
 }
 

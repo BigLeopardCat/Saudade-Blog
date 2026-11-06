@@ -434,6 +434,7 @@ async fn early_exit_with_reply_becomes_a_normal_answer() {
 }
 
 /// 没有原因也不能发出一个空载荷的 `__ERROR__` 帧——
+#[tokio::test]
 async fn early_exit_never_sends_an_empty_error_frame() {
     let body = body_of(early(StatusCode::OK, "", false, Some("   "))).await;
     assert!(body.starts_with("event: error\ndata: \""), "{body}");

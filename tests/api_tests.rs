@@ -1,18 +1,18 @@
-use saudade_blog::rate_limiter::LoginRateLimiter;
-use saudade_blog::{create_router, AppState};
-use sea_orm::{DatabaseBackend, MockDatabase};
 use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
+use saudade_blog::rate_limiter::LoginRateLimiter;
+use saudade_blog::{create_router, AppState};
+use sea_orm::{DatabaseBackend, MockDatabase};
 use tower::ServiceExt; // for `oneshot`
 
 fn test_state(db: sea_orm::DatabaseConnection) -> AppState {
     AppState {
         db,
         rate_limiter: LoginRateLimiter::new(5, 60, 300),
-                post_limiter: saudade_blog::risk::PostRateLimiter::new(),
-                report_limiter: LoginRateLimiter::new(120, 60, 300),
+        post_limiter: saudade_blog::risk::PostRateLimiter::new(),
+        report_limiter: LoginRateLimiter::new(120, 60, 300),
     }
 }
 
@@ -22,7 +22,12 @@ async fn test_404_not_found() {
     let app = create_router(test_state(db));
 
     let response = app
-        .oneshot(Request::builder().uri("/api/wrong_path").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/api/wrong_path")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
 
@@ -31,13 +36,17 @@ async fn test_404_not_found() {
 
 #[tokio::test]
 async fn test_public_notes_route_structure() {
-    let db = MockDatabase::new(DatabaseBackend::Postgres)
-        .into_connection();
+    let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
 
     let app = create_router(test_state(db));
 
     let response = app
-        .oneshot(Request::builder().uri("/api/public/notes").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/api/public/notes")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
 
@@ -62,7 +71,7 @@ async fn req_status(app: axum::Router, method: &str, uri: &str) -> StatusCode {
     .status()
 }
 
-/// 带 JSON body 的请求。**带 `Json<T>` 提取器的路由必须走这个**：axum 的提取器在
+/// JSON 提取器需要正文和 Content-Type，避免在鉴权前返回 415。
 async fn req_status_json(app: axum::Router, method: &str, uri: &str, body: &str) -> StatusCode {
     app.oneshot(
         Request::builder()
@@ -81,19 +90,31 @@ async fn req_status_json(app: axum::Router, method: &str, uri: &str, body: &str)
 async fn test_conversations_require_auth() {
     let app = mock_app();
     // GET /api/chat/conversations 列表
-    assert_eq!(req_status(app.clone(), "GET", "/api/chat/conversations").await, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        req_status(app.clone(), "GET", "/api/chat/conversations").await,
+        StatusCode::UNAUTHORIZED
+    );
     // POST /api/chat/conversations 新建
-    assert_eq!(req_status(app.clone(), "POST", "/api/chat/conversations").await, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        req_status(app.clone(), "POST", "/api/chat/conversations").await,
+        StatusCode::UNAUTHORIZED
+    );
     // DELETE /api/chat/conversations/:id 删除
-    assert_eq!(req_status(app.clone(), "DELETE", "/api/chat/conversations/1").await, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        req_status(app.clone(), "DELETE", "/api/chat/conversations/1").await,
+        StatusCode::UNAUTHORIZED
+    );
     // PATCH /api/chat/conversations/:id 重命名/置顶（体是 `Json<UpdateConversationReq>`：
     // `{}` 合法且可反序列化——只是缺 token，所以判据仍是"鉴权发生在碰 DB 之前"）
-    assert_eq!(req_status_json(app, "PATCH", "/api/chat/conversations/1", "{}").await, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        req_status_json(app, "PATCH", "/api/chat/conversations/1", "{}").await,
+        StatusCode::UNAUTHORIZED
+    );
 }
 
 #[tokio::test]
 async fn test_tag_move_requires_auth() {
-        let app = mock_app();
+    let app = mock_app();
     assert_eq!(
         req_status(app, "POST", "/api/protected/tag/move").await,
         StatusCode::UNAUTHORIZED
@@ -103,13 +124,19 @@ async fn test_tag_move_requires_auth() {
 #[tokio::test]
 async fn test_chat_history_requires_auth() {
     let app = mock_app();
-    assert_eq!(req_status(app, "GET", "/api/chat/history").await, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        req_status(app, "GET", "/api/chat/history").await,
+        StatusCode::UNAUTHORIZED
+    );
 }
 
 #[tokio::test]
 async fn test_chat_discard_requires_auth() {
     let app = mock_app();
-    assert_eq!(req_status(app, "POST", "/api/chat/discard").await, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        req_status(app, "POST", "/api/chat/discard").await,
+        StatusCode::UNAUTHORIZED
+    );
 }
 
 async fn req_api_code(app: axum::Router, method: &str, uri: &str, body: &str) -> (StatusCode, i64) {
@@ -125,7 +152,9 @@ async fn req_api_code(app: axum::Router, method: &str, uri: &str, body: &str) ->
         .await
         .unwrap();
     let status = res.status();
-    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
+        .await
+        .unwrap();
     let code = serde_json::from_slice::<serde_json::Value>(&bytes)
         .ok()
         .and_then(|v| v.get("code").and_then(|c| c.as_i64()))
@@ -151,10 +180,16 @@ async fn req_api_envelope(
         .await
         .unwrap();
     let status = res.status();
-    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
+        .await
+        .unwrap();
     let v = serde_json::from_slice::<serde_json::Value>(&bytes).unwrap_or(serde_json::Value::Null);
     let code = v.get("code").and_then(|c| c.as_i64()).unwrap_or(-1);
-    let msg = v.get("message").and_then(|m| m.as_str()).unwrap_or("").to_string();
+    let msg = v
+        .get("message")
+        .and_then(|m| m.as_str())
+        .unwrap_or("")
+        .to_string();
     (status, code, msg)
 }
 
@@ -174,7 +209,11 @@ async fn test_profile_center_requires_login() {
         ("DELETE", "/api/protected/favorites/1", ""),
         ("GET", "/api/protected/notifications", ""),
         ("GET", "/api/protected/notifications/summary", ""),
-        ("POST", "/api/protected/notifications/read", r#"{"ids":[1]}"#),
+        (
+            "POST",
+            "/api/protected/notifications/read",
+            r#"{"ids":[1]}"#,
+        ),
         ("GET", "/api/protected/messages", ""),
         (
             "POST",
@@ -183,16 +222,27 @@ async fn test_profile_center_requires_login() {
         ),
         ("POST", "/api/protected/messages/read", r#"{"ids":[1]}"#),
         ("GET", "/api/protected/my/talks", ""),
-                ("GET", "/api/protected/quota", ""),
-        ("POST", "/api/protected/quota/apply", r#"{"reason":"想接着问"}"#),
+        ("GET", "/api/protected/quota", ""),
+        (
+            "POST",
+            "/api/protected/quota/apply",
+            r#"{"reason":"想接着问"}"#,
+        ),
     ];
     for (method, uri, body) in cases {
         let (status, code) = req_api_code(mock_app(), method, uri, body).await;
-        assert_eq!(status, StatusCode::OK, "{} {} 应返回 HTTP 200 信封", method, uri);
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "{} {} 应返回 HTTP 200 信封",
+            method,
+            uri
+        );
         assert_ne!(code, 200, "{} {} 未登录不该成功", method, uri);
     }
 }
 
+#[tokio::test]
 async fn test_quota_admin_routes_require_console() {
     let app = mock_app();
     assert_eq!(
@@ -215,34 +265,60 @@ async fn test_quota_admin_routes_require_console() {
     );
 }
 
+#[tokio::test]
 async fn test_点赞取消点赞走信封错误而不是401() {
-    for (method, uri) in [("POST", "/api/public/notes/1/like"), ("DELETE", "/api/public/notes/1/like")] {
+    for (method, uri) in [
+        ("POST", "/api/public/notes/1/like"),
+        ("DELETE", "/api/public/notes/1/like"),
+    ] {
         let (status, code, _) = req_api_envelope(mock_app(), method, uri, None).await;
-        assert_eq!(status, StatusCode::OK, "{} {} 应返回 HTTP 200 信封", method, uri);
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "{} {} 应返回 HTTP 200 信封",
+            method,
+            uri
+        );
         assert_ne!(code, 200, "{} {} 没有身份不该成功", method, uri);
     }
 }
 
 /// 匿名点赞：这道门是**访客标识**开的，不是把鉴权放宽了。
+#[tokio::test]
 async fn test_匿名点赞靠访客标识开门而不是放宽鉴权() {
     const OK_KEY: (&str, &str) = ("x-visitor-key", "0123456789abcdef");
 
     // ① 两样都没有 ⇒ 「未登录」
-    let (status, code, msg) = req_api_envelope(mock_app(), "POST", "/api/public/notes/1/like", None).await;
+    let (status, code, msg) =
+        req_api_envelope(mock_app(), "POST", "/api/public/notes/1/like", None).await;
     assert_eq!(status, StatusCode::OK);
     assert_ne!(code, 200);
     assert_eq!(msg, "未登录", "没身份时应当被拦在身份这一关");
 
     // ② 合法标识 ⇒ 不再是「未登录」（门开了）
-    let (status, _, msg) = req_api_envelope(mock_app(), "POST", "/api/public/notes/1/like", Some(OK_KEY)).await;
+    let (status, _, msg) =
+        req_api_envelope(mock_app(), "POST", "/api/public/notes/1/like", Some(OK_KEY)).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(msg, "这篇文章不存在", "有标识就该走到可见性判定，而不是被当成未登录");
+    assert_eq!(
+        msg, "这篇文章不存在",
+        "有标识就该走到可见性判定，而不是被当成未登录"
+    );
 
     // ③ 标识不合格（太短 / 字符集越界 / 超长）⇒ 一律当"没有标识"
-    for bad in ["short", "abc", "has space here", "0123456789abc!@#$%^&*()", &"a".repeat(65)] {
+    for bad in [
+        "short",
+        "abc",
+        "has space here",
+        "0123456789abc!@#$%^&*()",
+        &"a".repeat(65),
+    ] {
         let (_, _, msg) = req_api_envelope(
-            mock_app(), "POST", "/api/public/notes/1/like", Some(("x-visitor-key", bad)),
-        ).await;
+            mock_app(),
+            "POST",
+            "/api/public/notes/1/like",
+            Some(("x-visitor-key", bad)),
+        )
+        .await;
         assert_eq!(msg, "未登录", "非法标识 {:?} 不该被当成身份", bad);
     }
 
@@ -269,16 +345,25 @@ async fn test_匿名点赞靠访客标识开门而不是放宽鉴权() {
             .await
             .unwrap();
         let st = res.status();
-        let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
-        let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        let v: serde_json::Value =
+            serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
         (
             st,
             v.get("code").and_then(|c| c.as_i64()).unwrap_or(-1),
-            v.get("message").and_then(|m| m.as_str()).unwrap_or("").to_string(),
+            v.get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("")
+                .to_string(),
         )
     };
     assert_eq!(status, StatusCode::OK, "坏令牌 + 好标识不该是 401");
-    assert_eq!(msg, "这篇文章不存在", "坏令牌应当**退回访客身份**，而不是当成未登录");
+    assert_eq!(
+        msg, "这篇文章不存在",
+        "坏令牌应当**退回访客身份**，而不是当成未登录"
+    );
 }
 
 /// 后台文章报表挂守卫域 ⇒ 无 token 是 **401**（与 `/api/protected/stats/users` 同族）。
@@ -312,6 +397,7 @@ async fn test_分期报表需要管理员() {
 }
 
 /// 阅读求和（`SUM(cnt)`）**必须**走 `note_stats::sum_views()`——它是唯一一处
+#[test]
 fn test_阅读求和不许绕开_sum_views_那一手_cast() {
     let src = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/routes/note_stats.rs"),
@@ -327,7 +413,10 @@ fn test_阅读求和不许绕开_sum_views_那一手_cast() {
         .map(|(i, l)| (i + 1, l.trim()))
         .collect();
 
-    assert!(!sql_sums.is_empty(), "没找到任何 SQL 求和——判据空了，改成实际写法再锁");
+    assert!(
+        !sql_sums.is_empty(),
+        "没找到任何 SQL 求和——判据空了，改成实际写法再锁"
+    );
     for (line, text) in &sql_sums {
         assert!(
             text.contains("cast_as"),
@@ -352,13 +441,22 @@ async fn test_额度扣减的判据是_rows_affected_而不是猜的() {
     use saudade_blog::quota::{self, ConsumeOutcome};
     use sea_orm::MockExecResult;
 
-    let cases: [(u64, ConsumeOutcome); 2] =
-        [(1, ConsumeOutcome::Consumed), (0, ConsumeOutcome::Exhausted)];
+    let cases: [(u64, ConsumeOutcome); 2] = [
+        (1, ConsumeOutcome::Consumed),
+        (0, ConsumeOutcome::Exhausted),
+    ];
     for (rows, want) in cases {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_exec_results([MockExecResult { last_insert_id: 0, rows_affected: rows }])
+            .append_exec_results([MockExecResult {
+                last_insert_id: 0,
+                rows_affected: rows,
+            }])
             .into_connection();
-        assert_eq!(quota::try_consume(&db, 126, 500).await, want, "rows_affected={rows}");
+        assert_eq!(
+            quota::try_consume(&db, 126, 500).await,
+            want,
+            "rows_affected={rows}"
+        );
     }
 
     // DB 故障 ⇒ fail-open（放行、不计数），**不是**当成"用完了"——
@@ -366,11 +464,17 @@ async fn test_额度扣减的判据是_rows_affected_而不是猜的() {
     let boom = MockDatabase::new(DatabaseBackend::Postgres)
         .append_exec_errors([sea_orm::DbErr::Custom("模拟 DB 故障".into())])
         .into_connection();
-    assert_eq!(quota::try_consume(&boom, 126, 500).await, ConsumeOutcome::Degraded);
+    assert_eq!(
+        quota::try_consume(&boom, 126, 500).await,
+        ConsumeOutcome::Degraded
+    );
 
     // 语句本身：原地 +1，且带"还没到上限"这道条件
     let db = MockDatabase::new(DatabaseBackend::Postgres)
-        .append_exec_results([MockExecResult { last_insert_id: 0, rows_affected: 1 }])
+        .append_exec_results([MockExecResult {
+            last_insert_id: 0,
+            rows_affected: 1,
+        }])
         .into_connection();
     let _ = quota::try_consume(&db, 126, 500).await;
     // 整条语句连同绑定值一起断言（`+ 1` 是以绑定参数下发的，不是字面量）。
@@ -415,7 +519,9 @@ async fn req_api_json(app: axum::Router, body: &str) -> (StatusCode, serde_json:
         .await
         .unwrap();
     let status = res.status();
-    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
+        .await
+        .unwrap();
     let v = serde_json::from_slice::<serde_json::Value>(&bytes).unwrap_or(serde_json::Value::Null);
     (status, v)
 }
@@ -440,15 +546,18 @@ async fn test_聚合搜索路由已挂载且体解析在碰库之前() {
 #[tokio::test]
 async fn test_聚合搜索空关键词与不可用关键词都回空且不查库() {
     let cases: [&str; 4] = [
-        "{}",                      // 字段缺席
-        r#"{"keyword":null}"#,     // 显式 null
-        r#"{"keyword":"   "}"#,    // 全空白
-        r#"{"keyword":"第1章"}"#,  // 非空，但切完一个可用 term 都不剩
+        "{}",                     // 字段缺席
+        r#"{"keyword":null}"#,    // 显式 null
+        r#"{"keyword":"   "}"#,   // 全空白
+        r#"{"keyword":"第1章"}"#, // 非空，但切完一个可用 term 都不剩
     ];
     for body in cases {
         let (status, v) = req_api_json(mock_app(), body).await;
         assert_eq!(status, StatusCode::OK, "{body} 不该在 HTTP 层失败");
-        assert_eq!(v["code"], 200, "{body} 该是成功信封（空结果是结果，不是错误）");
+        assert_eq!(
+            v["code"], 200,
+            "{body} 该是成功信封（空结果是结果，不是错误）"
+        );
         assert_eq!(v["data"]["total"], 0, "{body} 命中总数必须是 0");
         for k in ["note", "talk", "board", "comment"] {
             assert_eq!(v["data"]["counts"][k], 0, "{body} 的 {k} 计数必须是 0");
@@ -467,14 +576,20 @@ async fn test_聚合搜索空关键词与不可用关键词都回空且不查库
 async fn aggregate_search_rejects_unbounded_input_before_database() {
     for body in [
         serde_json::json!({"keyword":"博".repeat(129)}),
-        serde_json::json!({"page":0}), serde_json::json!({"page":101}),
-        serde_json::json!({"pageSize":0}), serde_json::json!({"pageSize":51}),
+        serde_json::json!({"page":0}),
+        serde_json::json!({"page":101}),
+        serde_json::json!({"pageSize":0}),
+        serde_json::json!({"pageSize":51}),
         serde_json::json!({"keyword":(0..17).map(|n|format!("word{n}")).collect::<Vec<_>>().join(" ")}),
     ] {
         let (status, _) = req_api_json(mock_app(), &body.to_string()).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     }
-    let (status, _) = req_api_json(mock_app(), &serde_json::json!({"keyword":"x".repeat(3000)}).to_string()).await;
+    let (status, _) = req_api_json(
+        mock_app(),
+        &serde_json::json!({"keyword":"x".repeat(3000)}).to_string(),
+    )
+    .await;
     assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
     let (status, _) = req_api_json(mock_app(), r#"{"type":"private"}"#).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);

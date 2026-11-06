@@ -2,15 +2,15 @@ use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
+use saudade_blog::auth_jwt;
+use saudade_blog::quota::{self, ConsumeOutcome};
+use saudade_blog::routes::note_stats::counts_for;
+use saudade_blog::routes::quota::{NOTICE_APPROVED_TITLE, NO_REASON_FALLBACK};
+use saudade_blog::{create_router, AppState};
 use sea_orm::{
     ConnectOptions, ConnectionTrait, Database, DatabaseConnection, DbBackend, Statement,
     TransactionTrait,
 };
-use saudade_blog::auth_jwt;
-use saudade_blog::quota::{self, ConsumeOutcome};
-use saudade_blog::routes::note_stats::counts_for;
-use saudade_blog::routes::quota::{NO_REASON_FALLBACK, NOTICE_APPROVED_TITLE};
-use saudade_blog::{create_router, AppState};
 use tower::ServiceExt; // for `oneshot`
 
 /// 前五个用例各占一个 note id（见文件头注）
@@ -59,7 +59,8 @@ async fn connect() -> Option<DatabaseConnection> {
     // `ConnectOptions::new` 对畸形 URL 会直接 panic（它内部 `Url::parse(...).unwrap()`），
     // 上面那条前缀断言把最常见的一种畸形挡在了它前面。
     let mut opt = ConnectOptions::new(url);
-        opt.connect_timeout(Duration::from_secs(5)).max_connections(1);
+    opt.connect_timeout(Duration::from_secs(5))
+        .max_connections(1);
     let db = Database::connect(opt).await.unwrap_or_else(|e| {
         panic!(
             "TEST_PG_URL 在场但连不上库：{e}\n\
@@ -74,7 +75,7 @@ async fn connect() -> Option<DatabaseConnection> {
 /// 库里的结构得像 `scripts/migration/pg/0000_schema.sql` 建出来的那套。
 /// 缺表就带着"怎么补"的提示失败，别让它退化成一个看不出前因后果的 SQL 报错。
 async fn ensure_schema(db: &DatabaseConnection) {
-        let want = [
+    let want = [
         "note",
         "note_view",
         "note_like",
@@ -188,7 +189,8 @@ async fn one_text<C: ConnectionTrait>(db: &C, sql: &str) -> Option<String> {
         .await
         .unwrap_or_else(|e| panic!("SQL 失败：{e}\n  {sql}"))
         .expect("这道查询连一行都没回来");
-    row.try_get_by_index::<Option<String>>(0).expect("这一列不是文本")
+    row.try_get_by_index::<Option<String>>(0)
+        .expect("这一列不是文本")
 }
 
 async fn count_of<C: ConnectionTrait>(db: &C, sql: &str) -> i64 {
@@ -233,7 +235,7 @@ fn test_app(db: DatabaseConnection) -> axum::Router {
         db,
         rate_limiter: saudade_blog::rate_limiter::LoginRateLimiter::new(5, 60, 300),
         post_limiter: saudade_blog::risk::PostRateLimiter::new(),
-                report_limiter: saudade_blog::rate_limiter::LoginRateLimiter::new(120, 60, 300),
+        report_limiter: saudade_blog::rate_limiter::LoginRateLimiter::new(120, 60, 300),
     })
 }
 
@@ -373,7 +375,10 @@ async fn sum_views_decodes_as_integer() {
          出去（它把结果 cast 成 `BIGINT`，sea-orm 才按 `Option<i64>` 解得回）——见该处头注 \
          与 tests/pg_integration.rs 的头注",
     );
-    assert_eq!(got[&NOTE_SUM].views, 7, "3 + 4 要等于 7（多行求和走的是 SUM）");
+    assert_eq!(
+        got[&NOTE_SUM].views, 7,
+        "3 + 4 要等于 7（多行求和走的是 SUM）"
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -385,7 +390,9 @@ async fn counts_for_zero_fills_untouched_note() {
     let Some(db) = connect().await else { return };
     make_note(&db, NOTE_EMPTY).await;
 
-    let got = counts_for(&db, &[NOTE_EMPTY]).await.expect("counts_for 报错");
+    let got = counts_for(&db, &[NOTE_EMPTY])
+        .await
+        .expect("counts_for 报错");
     let c = got.get(&NOTE_EMPTY).expect(
         "传进去的 id 必须**一定有**一条（SQL 不会为没人读过的文章造行，折零是调用侧的责任）",
     );
@@ -428,7 +435,9 @@ async fn counts_for_comments_filters_visibility() {
     )
     .await;
 
-    let got = counts_for(&db, &[NOTE_COMMENTS]).await.expect("counts_for 报错");
+    let got = counts_for(&db, &[NOTE_COMMENTS])
+        .await
+        .expect("counts_for 报错");
     assert_eq!(
         got[&NOTE_COMMENTS].comments, 1,
         "四行里只该数那一行 approved=1 AND is_deleted=0 的"
@@ -445,7 +454,11 @@ async fn counts_for_comments_filters_visibility() {
 async fn counts_for_likes_and_favorites_use_count() {
     let Some(db) = connect().await else { return };
     make_note(&db, NOTE_LIKES).await;
-    exec(&db, &format!("DELETE FROM note_like WHERE note_id = {NOTE_LIKES}")).await;
+    exec(
+        &db,
+        &format!("DELETE FROM note_like WHERE note_id = {NOTE_LIKES}"),
+    )
+    .await;
     exec(
         &db,
         &format!("DELETE FROM user_favorite WHERE note_id = {NOTE_LIKES}"),
@@ -463,7 +476,7 @@ async fn counts_for_likes_and_favorites_use_count() {
     )
     .await;
 
-        exec(
+    exec(
         &db,
         &format!(
             "INSERT INTO note_like (note_id, user_id, visitor_key) VALUES \
@@ -478,7 +491,9 @@ async fn counts_for_likes_and_favorites_use_count() {
     )
     .await;
 
-    let got = counts_for(&db, &[NOTE_LIKES]).await.expect("counts_for 报错");
+    let got = counts_for(&db, &[NOTE_LIKES])
+        .await
+        .expect("counts_for 报错");
     let c = got[&NOTE_LIKES];
     assert_eq!(c.likes, 2, "登录一票 + 匿名一票，COUNT 都算（不按身份分）");
     assert_eq!(c.favorites, 1);
@@ -602,7 +617,9 @@ async fn try_consume_reports_zero_rows_as_exhausted_not_degraded() {
 /// 搜 "a_b" 会连带命中 "aXb"。这条判据只有真库能出——LIKE 的语义在 SQL 里。
 #[tokio::test]
 async fn conversation_search_escapes_like_wildcards() {
-    let Some((db, db_app)) = connect_pair().await else { return };
+    let Some((db, db_app)) = connect_pair().await else {
+        return;
+    };
     make_user(&db, CONV_SEARCH_UID, "user").await;
     clear_conversations(&db, CONV_SEARCH_UID).await;
 
@@ -653,8 +670,11 @@ async fn conversation_search_escapes_like_wildcards() {
     );
 }
 
+#[tokio::test]
 async fn conversation_search_is_case_insensitive() {
-    let Some((db, db_app)) = connect_pair().await else { return };
+    let Some((db, db_app)) = connect_pair().await else {
+        return;
+    };
     make_user(&db, CONV_CI_UID, "user").await;
     clear_conversations(&db, CONV_CI_UID).await;
 
@@ -709,7 +729,9 @@ async fn conversation_search_is_case_insensitive() {
 
 #[tokio::test]
 async fn conversation_list_pins_first_and_anchors_hits() {
-    let Some((db, db_app)) = connect_pair().await else { return };
+    let Some((db, db_app)) = connect_pair().await else {
+        return;
+    };
     make_user(&db, CONV_LIST_UID, "user").await;
     clear_conversations(&db, CONV_LIST_UID).await;
 
@@ -753,7 +775,14 @@ async fn conversation_list_pins_first_and_anchors_hits() {
     let token = auth_jwt::create_token(CONV_LIST_UID, "user", 0);
 
     // 不搜索：置顶优先，组内按最后活动倒序
-    let (st, j) = call(app.clone(), "GET", "/api/chat/conversations", Some(&token), None).await;
+    let (st, j) = call(
+        app.clone(),
+        "GET",
+        "/api/chat/conversations",
+        Some(&token),
+        None,
+    )
+    .await;
     assert_eq!(st, StatusCode::OK);
     assert_eq!(
         conv_ids(&j),
@@ -774,11 +803,7 @@ async fn conversation_list_pins_first_and_anchors_hits() {
         None,
     )
     .await;
-    assert_eq!(
-        conv_ids(&j),
-        vec![new, mid],
-        "置顶那条不含这个词，不该出现"
-    );
+    assert_eq!(conv_ids(&j), vec![new, mid], "置顶那条不含这个词，不该出现");
     assert_eq!(
         hit_id_of(&j, mid),
         Some(mid_newest_hit),
@@ -799,7 +824,9 @@ async fn conversation_list_pins_first_and_anchors_hits() {
 /// 这里逐条钉住"认领不到就什么都不做"：第二刀既不许再清零，也不许多发一条通知。
 #[tokio::test]
 async fn quota_review_claims_once_and_touches_nothing_on_the_second_call() {
-    let Some((db, db_app)) = connect_pair().await else { return };
+    let Some((db, db_app)) = connect_pair().await else {
+        return;
+    };
     make_user(&db, ADMIN_UID, "admin").await;
     make_user(&db, APPLY_UID, "user").await;
     exec(
@@ -880,7 +907,11 @@ async fn quota_review_claims_once_and_touches_nothing_on_the_second_call() {
         Some(r#"{"approved":true}"#),
     )
     .await;
-    assert_eq!(st2, StatusCode::OK, "重复处理是正常结局，不是 500 级的服务器错误");
+    assert_eq!(
+        st2,
+        StatusCode::OK,
+        "重复处理是正常结局，不是 500 级的服务器错误"
+    );
     assert_eq!(j2["code"], 500, "信封里如实说「已经处理过了」：{j2}");
     assert_eq!(
         j2["message"], "这条申请已经处理过了",
@@ -976,7 +1007,8 @@ async fn quota_review_claims_once_and_touches_nothing_on_the_second_call() {
 // Keep this visibility fixture distinct from concurrent partial-match fixtures.
 const AGG_KW: &str = "qqzzaggregatevisibility";
 
-const AGG_NOTE_OK: i32 = 900000021;const AGG_NOTE_DRAFT: i32 = 900000022; // is_public=0 + status='draft' ⇒ 不许出现
+const AGG_NOTE_OK: i32 = 900000021;
+const AGG_NOTE_DRAFT: i32 = 900000022; // is_public=0 + status='draft' ⇒ 不许出现
 const AGG_NOTE_HIDDEN: i32 = 900000023; // is_public=0 ⇒ 不许出现
 
 const AGG_TALK_TITLE: i32 = 900000031; // approved=1，**标题**命中
@@ -1012,11 +1044,7 @@ async fn test_聚合搜索的四类命中集合与可见性谓词() {
     };
 
     // ── 播种（先清自己的残留：上次跑挂了会留下行）────────────────────────
-    for id in [
-        AGG_NOTE_OK,
-        AGG_NOTE_DRAFT,
-        AGG_NOTE_HIDDEN,
-    ] {
+    for id in [AGG_NOTE_OK, AGG_NOTE_DRAFT, AGG_NOTE_HIDDEN] {
         exec(&db, &format!("DELETE FROM note WHERE id = {id}")).await;
     }
     for id in [
@@ -1104,12 +1132,23 @@ async fn test_聚合搜索的四类命中集合与可见性谓词() {
 
     // ── 真链路 ────────────────────────────────────────────────────────
     let body = format!(r#"{{"keyword":"{AGG_KW}"}}"#);
-    let (st, j) = call(test_app(db_app), "POST", "/api/public/search", None, Some(&body)).await;
+    let (st, j) = call(
+        test_app(db_app),
+        "POST",
+        "/api/public/search",
+        None,
+        Some(&body),
+    )
+    .await;
     assert_eq!(st, StatusCode::OK, "聚合搜索不该在 HTTP 层失败：{j}");
     assert_eq!(j["code"], 200, "信封 code 必须是 200：{j}");
 
     // 四个数组的**精确** id 集合（多一行少一行都红）
-    assert_eq!(agg_keys(&j, "notes"), vec![AGG_NOTE_OK], "文章：只有公开+已发布那一篇该出现");
+    assert_eq!(
+        agg_keys(&j, "notes"),
+        vec![AGG_NOTE_OK],
+        "文章：只有公开+已发布那一篇该出现"
+    );
     assert_eq!(
         agg_keys(&j, "talks"),
         vec![AGG_TALK_TITLE, AGG_TALK_BODY],
@@ -1155,24 +1194,36 @@ async fn test_聚合搜索的四类命中集合与可见性谓词() {
         "评论行不带 noteId，前端就拼不出 /article/<id>?cid=<id>"
     );
     assert_eq!(
-        c0["title"], format!("{AGG_KW} 可见文章"),
+        c0["title"],
+        format!("{AGG_KW} 可见文章"),
         "评论行的行首标题该是**它挂在哪篇文章**上（不是评论自己的正文）"
     );
     // 其余三类的 noteId 恒缺席（前端凭它是否存在判"能不能跳"）
-    for (bucket, k) in [("notes", AGG_NOTE_OK), ("talks", AGG_TALK_TITLE), ("board", AGG_BOARD_OK)] {
+    for (bucket, k) in [
+        ("notes", AGG_NOTE_OK),
+        ("talks", AGG_TALK_TITLE),
+        ("board", AGG_BOARD_OK),
+    ] {
         let row = j["data"][bucket]
             .as_array()
             .unwrap()
             .iter()
             .find(|h| h["key"] == k)
             .unwrap_or_else(|| panic!("{bucket} 里没有 {k}：{j}"));
-        assert!(row["noteId"].is_null(), "{bucket} 的 noteId 该是 null：{row}");
+        assert!(
+            row["noteId"].is_null(),
+            "{bucket} 的 noteId 该是 null：{row}"
+        );
     }
     // 留言行的行首标题恒空串（`title` 那一列是印章，不能当标题显示）
     let b0 = &j["data"]["board"][0];
     assert_eq!(b0["type"], "board");
     assert_eq!(b0["title"], "", "留言行的标题必须留空");
-    assert_eq!(b0["snippet"], format!("河灯正文里也有 {AGG_KW}"), "摘要该是正文（折平空白后）");
+    assert_eq!(
+        b0["snippet"],
+        format!("河灯正文里也有 {AGG_KW}"),
+        "摘要该是正文（折平空白后）"
+    );
     // 留言的作者是**自由留名**，不是账号身份
     assert_eq!(b0["author"], "留名甲");
 
@@ -1253,8 +1304,7 @@ fn board_ids(j: &serde_json::Value) -> Vec<i32> {
         .map(|r| {
             r["talkKey"]
                 .as_i64()
-                .unwrap_or_else(|| panic!("留言行没有整数 talkKey：{r}"))
-                as i32
+                .unwrap_or_else(|| panic!("留言行没有整数 talkKey：{r}")) as i32
         })
         .collect()
 }
@@ -1274,7 +1324,10 @@ async fn test_后台留言列表的服务端筛选分页与连接语义() {
     // ── 播种（先清自己的残留：上次跑挂了会留下行）────────────────────────
     // `talk` 的孤儿行指向 `BOARDQ_GHOST_UID`，它**没有** user 行可删——别在这里
     // "顺手"把它也塞进 DELETE：那行删不掉的 SQL 会让播种当场 panic。
-    for id in BOARDQ_HITS.into_iter().chain([BOARDQ_DECOY, BOARDQ_OTHER_SRC]) {
+    for id in BOARDQ_HITS
+        .into_iter()
+        .chain([BOARDQ_DECOY, BOARDQ_OTHER_SRC])
+    {
         exec(&db, &format!("DELETE FROM talk WHERE id = {id}")).await;
     }
     for id in [BOARDQ_UID_ADMIN, BOARDQ_UID_A, BOARDQ_UID_B] {
@@ -1437,7 +1490,11 @@ async fn test_后台留言列表的服务端筛选分页与连接语义() {
         None,
     )
     .await;
-    assert_eq!(board_ids(&j), vec![BOARDQ_SIGN], "`cat=寄` 只有留名那条：{j}");
+    assert_eq!(
+        board_ids(&j),
+        vec![BOARDQ_SIGN],
+        "`cat=寄` 只有留名那条：{j}"
+    );
     assert_eq!(j["total"], 1, "两组之和必须回到 7：{j}");
 
     // ⑥ `like_escape` 的 `%` 那一面。搜 `qqzzboardkw%`（查询串里 `%25`）时，未转义的
@@ -1487,7 +1544,7 @@ async fn test_后台留言列表的服务端筛选分页与连接语义() {
     );
     assert_eq!(j["total"], 7, "{j}");
 
-        let (st, j) = call(app, "GET", "/api/protect/board", Some(&token), None).await;
+    let (st, j) = call(app, "GET", "/api/protect/board", Some(&token), None).await;
     assert_eq!(st, StatusCode::OK);
     assert!(
         j.get("total").is_none(),
@@ -1510,8 +1567,11 @@ async fn test_后台留言列表的服务端筛选分页与连接语义() {
     );
 }
 
+#[tokio::test]
 async fn view_report_upserts_instead_of_violating_the_unique_key() {
-    let Some((db, db_app)) = connect_pair().await else { return };
+    let Some((db, db_app)) = connect_pair().await else {
+        return;
+    };
     const NOTE_VIEW_UPSERT: i32 = 900000005;
     make_note(&db, NOTE_VIEW_UPSERT).await;
     let app = test_app(db_app);
@@ -1539,7 +1599,10 @@ async fn view_report_upserts_instead_of_violating_the_unique_key() {
         &format!("SELECT COUNT(*) FROM note_view WHERE note_id = {NOTE_VIEW_UPSERT}"),
     )
     .await;
-    assert_eq!(rows, 1, "三次上报只该留一行（唯一键 (note_id, view_date) 的语义）");
+    assert_eq!(
+        rows, 1,
+        "三次上报只该留一行（唯一键 (note_id, view_date) 的语义）"
+    );
     // ⚠️ `cnt` 是 `integer`（int4）⇒ 只能走 `one_i32`；用 `one_i64` 会当场报
     // `Rust type i64 … is not compatible with SQL type INT4`（分宽的理由见 `one_i64` 的注）
     let cnt = one_i32(
@@ -1592,8 +1655,11 @@ async fn img_count(db: &DatabaseConnection, mid: i32) -> i64 {
 }
 
 /// **dataURL 进库、出库必须逐字相等**——这是"图片落库"这件事唯一诚实的判据。
+#[tokio::test]
 async fn chat_history_returns_images_byte_for_byte() {
-    let Some((db, db_app)) = connect_pair().await else { return };
+    let Some((db, db_app)) = connect_pair().await else {
+        return;
+    };
     make_user(&db, IMG_ROUNDTRIP_UID, "user").await;
     clear_conversations(&db, IMG_ROUNDTRIP_UID).await;
     let cid = make_conversation(&db, IMG_ROUNDTRIP_UID, Some("带图的会话")).await;
@@ -1640,8 +1706,15 @@ async fn chat_history_returns_images_byte_for_byte() {
     let none = items[1]["images"]
         .as_array()
         .expect("没有图的消息也要给 `images: []`（缺键会让前端多一条降级路径）");
-    assert!(none.is_empty(), "没有图的消息 images 该是空数组，拿到 {none:?}");
-    assert_eq!(img_count(&db, plain).await, 0, "空数组要对应「库里真没有图」");
+    assert!(
+        none.is_empty(),
+        "没有图的消息 images 该是空数组，拿到 {none:?}"
+    );
+    assert_eq!(
+        img_count(&db, plain).await,
+        0,
+        "空数组要对应「库里真没有图」"
+    );
 }
 
 /// **外键级联删**——这是本表破例用 DB 外键（而不是照 chat 家族惯例走应用层级联）的
@@ -1653,7 +1726,9 @@ async fn chat_history_returns_images_byte_for_byte() {
 /// 后者只是把 5 处人工同步又抄了一遍。
 #[tokio::test]
 async fn deleting_a_message_cascades_to_its_images() {
-    let Some((db, _db_app)) = connect_pair().await else { return };
+    let Some((db, _db_app)) = connect_pair().await else {
+        return;
+    };
     make_user(&db, IMG_CASCADE_UID, "user").await;
     clear_conversations(&db, IMG_CASCADE_UID).await;
     let cid = make_conversation(&db, IMG_CASCADE_UID, Some("级联")).await;
@@ -1679,7 +1754,9 @@ async fn deleting_a_message_cascades_to_its_images() {
 /// 就是第二次写（同族事故见 `quota::try_consume` 的头注）。
 #[tokio::test]
 async fn chat_image_unique_key_blocks_a_replayed_seq() {
-    let Some((db, _db_app)) = connect_pair().await else { return };
+    let Some((db, _db_app)) = connect_pair().await else {
+        return;
+    };
     make_user(&db, IMG_UNIQUE_UID, "user").await;
     clear_conversations(&db, IMG_UNIQUE_UID).await;
     let cid = make_conversation(&db, IMG_UNIQUE_UID, Some("唯一键")).await;
@@ -1754,7 +1831,9 @@ fn note_sql(id: i32, is_public: bool, status: Option<&str>) -> String {
 
 #[tokio::test]
 async fn note_status_visibility_check_rejects_and_accepts() {
-    let Some((db, _app)) = connect_pair().await else { return };
+    let Some((db, _app)) = connect_pair().await else {
+        return;
+    };
     assert!(
         constraint_exists(&db, "note_status_visibility_ck", "note").await,
         "库上没有 `note_status_visibility_ck` —— 先跑 scripts/migration/pg/0004_note_visibility.sql。\
@@ -1762,7 +1841,11 @@ async fn note_status_visibility_check_rejects_and_accepts() {
          会红在「库结构不全」这种与代码无关的原因上）。"
     );
     for i in 0..6 {
-        exec(&db, &format!("DELETE FROM note WHERE id = {}", VIS_NOTE_BASE + i)).await;
+        exec(
+            &db,
+            &format!("DELETE FROM note WHERE id = {}", VIS_NOTE_BASE + i),
+        )
+        .await;
     }
 
     // ── 负控三条：都必须被拒 ──────────────────────────────────────────────
@@ -1807,14 +1890,21 @@ async fn note_status_visibility_check_rejects_and_accepts() {
     assert_eq!(
         count_of(
             &db,
-            &format!("SELECT COUNT(*) FROM note WHERE id BETWEEN {VIS_NOTE_BASE} AND {}", VIS_NOTE_BASE + 5)
+            &format!(
+                "SELECT COUNT(*) FROM note WHERE id BETWEEN {VIS_NOTE_BASE} AND {}",
+                VIS_NOTE_BASE + 5
+            )
         )
         .await,
         3,
         "负控三条一条都不该落库，正控三条都该在"
     );
     for i in 0..6 {
-        exec(&db, &format!("DELETE FROM note WHERE id = {}", VIS_NOTE_BASE + i)).await;
+        exec(
+            &db,
+            &format!("DELETE FROM note WHERE id = {}", VIS_NOTE_BASE + i),
+        )
+        .await;
     }
 }
 
@@ -1824,7 +1914,9 @@ const UPD_VIS_NOTE: i32 = 900000057;
 
 #[tokio::test]
 async fn update_note_refuses_public_flag_on_non_public_status() {
-    let Some((db, db_app)) = connect_pair().await else { return };
+    let Some((db, db_app)) = connect_pair().await else {
+        return;
+    };
     make_user(&db, UPD_VIS_UID, "admin").await;
     exec(&db, &format!("DELETE FROM note WHERE id = {UPD_VIS_NOTE}")).await;
     exec(&db, &note_sql(UPD_VIS_NOTE, false, Some("private"))).await;
@@ -1857,7 +1949,11 @@ async fn update_note_refuses_public_flag_on_non_public_status() {
         &format!("SELECT status || '|' || is_public::text FROM note WHERE id = {UPD_VIS_NOTE}"),
     )
     .await
-    .map(|s| s.split_once('|').map(|(a, b)| (a.to_string(), b.to_string())).unwrap())
+    .map(|s| {
+        s.split_once('|')
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .unwrap()
+    })
     .expect("夹具行不见了");
     assert_eq!(
         (status_after.as_str(), public_after.as_str()),
@@ -1877,7 +1973,12 @@ async fn update_note_refuses_public_flag_on_non_public_status() {
     assert_eq!(st, StatusCode::OK, "{j}");
     assert_eq!(j["code"], 200, "状态词给对了就该成功：{j}");
     assert_eq!(
-        one_text(&db, &format!("SELECT status FROM note WHERE id = {UPD_VIS_NOTE}")).await.as_deref(),
+        one_text(
+            &db,
+            &format!("SELECT status FROM note WHERE id = {UPD_VIS_NOTE}")
+        )
+        .await
+        .as_deref(),
         Some("public"),
         "`published` 是兼容别名，落库必须归一成 `public`（库里只该有一个「公开」词）"
     );
@@ -1895,7 +1996,12 @@ async fn update_note_refuses_public_flag_on_non_public_status() {
     assert_eq!(st, StatusCode::OK, "{j}");
     assert_eq!(j["code"], 500, "未知状态词必须拒收：{j}");
     assert_eq!(
-        one_text(&db, &format!("SELECT status FROM note WHERE id = {UPD_VIS_NOTE}")).await.as_deref(),
+        one_text(
+            &db,
+            &format!("SELECT status FROM note WHERE id = {UPD_VIS_NOTE}")
+        )
+        .await
+        .as_deref(),
         Some("public"),
         "被拒的未知词不许落库"
     );
@@ -1909,7 +2015,9 @@ const CASCADE_ADMIN_UID: i32 = 900000054;
 
 #[tokio::test]
 async fn deleting_a_temp_user_purges_all_six_chat_tables() {
-    let Some((db, db_app)) = connect_pair().await else { return };
+    let Some((db, db_app)) = connect_pair().await else {
+        return;
+    };
     // 发起人得是管理员（`/api/temp-users/*` 那一组在 auth_guard 后面），被删的那个是普通用户。
     make_user(&db, CASCADE_ADMIN_UID, "admin").await;
     make_user(&db, CASCADE_UID, "user").await;
@@ -1963,21 +2071,49 @@ async fn deleting_a_temp_user_purges_all_six_chat_tables() {
         ),
     )
     .await;
-    assert_eq!(seeded, 6, "夹具六张表各该有一行，实际 {seeded} 行（没种进去 ⇒ 下面全 0 是空真）");
+    assert_eq!(
+        seeded, 6,
+        "夹具六张表各该有一行，实际 {seeded} 行（没种进去 ⇒ 下面全 0 是空真）"
+    );
 
     let app = test_app(db_app);
     let admin = auth_jwt::create_token(CASCADE_ADMIN_UID, "admin", 0);
-    let (st, j) = call(app, "DELETE", &format!("/api/temp-users/{CASCADE_UID}"), Some(&admin), None).await;
+    let (st, j) = call(
+        app,
+        "DELETE",
+        &format!("/api/temp-users/{CASCADE_UID}"),
+        Some(&admin),
+        None,
+    )
+    .await;
     assert_eq!(st, StatusCode::OK, "删账号请求该成功：{j}");
     assert_eq!(j["code"], 200, "{j}");
 
     for (label, sql) in [
-        ("chat_history", format!("SELECT COUNT(*) FROM chat_history WHERE user_id = {CASCADE_UID}")),
-        ("chat_summary", format!("SELECT COUNT(*) FROM chat_summary WHERE user_id = {CASCADE_UID}")),
-        ("execution_log", format!("SELECT COUNT(*) FROM execution_log WHERE user_id = {CASCADE_UID}")),
-        ("pending_action", format!("SELECT COUNT(*) FROM pending_action WHERE user_id = {CASCADE_UID}")),
-        ("agent_task", format!("SELECT COUNT(*) FROM agent_task WHERE user_id = {CASCADE_UID}")),
-        ("conversation", format!("SELECT COUNT(*) FROM conversation WHERE user_id = {CASCADE_UID}")),
+        (
+            "chat_history",
+            format!("SELECT COUNT(*) FROM chat_history WHERE user_id = {CASCADE_UID}"),
+        ),
+        (
+            "chat_summary",
+            format!("SELECT COUNT(*) FROM chat_summary WHERE user_id = {CASCADE_UID}"),
+        ),
+        (
+            "execution_log",
+            format!("SELECT COUNT(*) FROM execution_log WHERE user_id = {CASCADE_UID}"),
+        ),
+        (
+            "pending_action",
+            format!("SELECT COUNT(*) FROM pending_action WHERE user_id = {CASCADE_UID}"),
+        ),
+        (
+            "agent_task",
+            format!("SELECT COUNT(*) FROM agent_task WHERE user_id = {CASCADE_UID}"),
+        ),
+        (
+            "conversation",
+            format!("SELECT COUNT(*) FROM conversation WHERE user_id = {CASCADE_UID}"),
+        ),
     ] {
         assert_eq!(
             count_of(&db, &sql).await,
@@ -2019,10 +2155,14 @@ fn fixture_uids_are_unique() {
         if !line.starts_with("const ") {
             continue;
         }
-        let Some((lhs, rhs)) = line.split_once(':') else { continue };
+        let Some((lhs, rhs)) = line.split_once(':') else {
+            continue;
+        };
         let name = lhs.trim_start_matches("const ").trim().to_string();
-        let Some(value) = rhs.split('=').nth(1) else { continue };
-                let value = value.split("//").next().unwrap_or("").trim();
+        let Some(value) = rhs.split('=').nth(1) else {
+            continue;
+        };
+        let value = value.split("//").next().unwrap_or("").trim();
         let value = value.trim_end_matches(';').trim();
         if let Some(n) = value.parse::<i32>().ok() {
             all.insert(name, n);
@@ -2052,7 +2192,10 @@ fn fixture_uids_are_unique() {
     let points: Vec<(String, i32)> = all
         .iter()
         .filter(|(n, _)| {
-            n.contains("_UID") || n.contains("TAGONE") || n.contains("TAGTWO") || n.ends_with("_NOTE")
+            n.contains("_UID")
+                || n.contains("TAGONE")
+                || n.contains("TAGTWO")
+                || n.ends_with("_NOTE")
         })
         .map(|(n, v)| (n.clone(), *v))
         .collect();
@@ -2109,7 +2252,9 @@ const LIST_CAT: i32 = 900000058;
 
 #[tokio::test]
 async fn 公开文章列表里找得到自己刚种的那一篇() {
-    let Some((db, db_app)) = connect_pair().await else { return };
+    let Some((db, db_app)) = connect_pair().await else {
+        return;
+    };
     exec(&db, &format!("DELETE FROM note WHERE id = {LIST_NOTE}")).await;
     exec(&db, &format!("DELETE FROM category WHERE id = {LIST_CAT}")).await;
     exec(
@@ -2127,7 +2272,14 @@ async fn 公开文章列表里找得到自己刚种的那一篇() {
     .await;
 
     let app = test_app(db_app);
-    let (st, j) = call(app, "GET", "/api/public/notes?page=1&page_size=1000", None, None).await;
+    let (st, j) = call(
+        app,
+        "GET",
+        "/api/public/notes?page=1&page_size=1000",
+        None,
+        None,
+    )
+    .await;
     assert_eq!(st, StatusCode::OK, "{j}");
     let rows = j["data"]
         .as_array()
@@ -2145,7 +2297,11 @@ async fn 公开文章列表里找得到自己刚种的那一篇() {
     // 列表**不给正文**（`map_note_summary` 本来就把两个正文键置空）—— 这条同时钉住
     // "partial model 只摘了 content、没有把别的列一起摘掉"。
     assert_eq!(mine["noteContent"].as_str(), Some(""), "列表不给正文：{j}");
-    assert_eq!(mine["content"].as_str(), Some(""), "列表不给正文（另一个键）：{j}");
+    assert_eq!(
+        mine["content"].as_str(),
+        Some(""),
+        "列表不给正文（另一个键）：{j}"
+    );
     assert_eq!(
         mine["noteTitle"].as_str(),
         Some("公开列表夹具"),
@@ -2237,7 +2393,8 @@ fn 不许用_select_two_那版_partial_model() {
         "正控失败：真代码里的 `::<M, N>` 都没被抓到 ⇒ 下面那条扫不出东西不算数"
     );
     // 反控：注释里的、以及单实体那版，都不许报。
-    let comments = "// 以前是 into_partial_model::<M, N>()\n/* 也曾是 into_partial_model::<M, N>() */";
+    let comments =
+        "// 以前是 into_partial_model::<M, N>()\n/* 也曾是 into_partial_model::<M, N>() */";
     assert!(
         partial_model_two_hits(&strip_rust_comments(comments)).is_empty(),
         "反控失败：注释里的举例被当成真代码了"
@@ -2319,7 +2476,8 @@ const TAGGUARD_NOTE: i32 = 900000077;
 /// 存在的理由只有一个：0006 的守卫是扫全表的，红起来时得能一眼看出**是谁**把它绊倒的
 /// （多半是上一次跑挂的残留）。它刻意写得比迁移里那条预检**简单** —— 诊断不该长得像判据，
 /// 免得哪天有人把它当成"另一份口径"去同步。
-const DIAG_DIRTY_TAGS: &str = "SELECT coalesce(string_agg(n.id::text || ':' || n.tags, ' | '), '（无）') \
+const DIAG_DIRTY_TAGS: &str =
+    "SELECT coalesce(string_agg(n.id::text || ':' || n.tags, ' | '), '（无）') \
      FROM note n \
     WHERE coalesce(n.tags, '') <> '' \
       AND EXISTS (SELECT 1 FROM unnest(string_to_array(n.tags, ',')) AS t(piece) \
@@ -2393,13 +2551,18 @@ async fn wire_note_tags(app: axum::Router, id: i32) -> String {
     let (st, j) = call(app, "GET", &format!("/api/public/notes/{id}"), None, None).await;
     assert_eq!(st, StatusCode::OK, "公开详情应当 200：{j}");
     let v = &j["data"]["noteTags"];
-    assert!(v.is_string(), "`noteTags` 必须是字符串（缺键或 null 都会让前端解析炸）：{j}");
+    assert!(
+        v.is_string(),
+        "`noteTags` 必须是字符串（缺键或 null 都会让前端解析炸）：{j}"
+    );
     v.as_str().unwrap().to_string()
 }
 
 #[tokio::test]
 async fn note_tags_写路径往返逐字一致且归属按列() {
-    let Some((db, db_app)) = connect_pair().await else { return };
+    let Some((db, db_app)) = connect_pair().await else {
+        return;
+    };
     make_user(&db, TAGRT_ADMIN_UID, "admin").await;
     // 建：先标签、再文章（本节头注）。
     make_tag_one(&db, TAGRT_TAGONE, "往返一级").await;
@@ -2427,7 +2590,12 @@ async fn note_tags_写路径往返逐字一致且归属按列() {
     // 重复的去掉、空片丢掉、顺序照原样（**不是**按 id 排序）。
     let want = format!("{TAGRT_TAGONE},{TAGRT_TAGTWO}");
     assert_eq!(
-        one_text(&db, &format!("SELECT tags FROM note WHERE id = {TAGRT_NOTE}")).await.as_deref(),
+        one_text(
+            &db,
+            &format!("SELECT tags FROM note WHERE id = {TAGRT_NOTE}")
+        )
+        .await
+        .as_deref(),
         Some(want.as_str()),
         "那一列必须落成解析结果（去重、保序），不是原串"
     );
@@ -2437,7 +2605,11 @@ async fn note_tags_写路径往返逐字一致且归属按列() {
         "关联表按 seq 拼出来必须与那一列**逐字**相同（`0007` 预检用的就是这条）"
     );
     assert_eq!(
-        count_of(&db, &format!("SELECT COUNT(*) FROM note_tag WHERE note_id = {TAGRT_NOTE}")).await,
+        count_of(
+            &db,
+            &format!("SELECT COUNT(*) FROM note_tag WHERE note_id = {TAGRT_NOTE}")
+        )
+        .await,
         2,
         "重复的 id 只许落一行"
     );
@@ -2453,30 +2625,39 @@ async fn note_tags_写路径往返逐字一致且归属按列() {
     );
     // 归属按**列**，不按数字大小：一级那个落 `tag_one_id`，二级那个落 `tag_two_id`。
     assert_eq!(
-        one_text(&db, &format!(
-            "SELECT tag_one_id::text || '/' || coalesce(tag_two_id::text, '-') \
+        one_text(
+            &db,
+            &format!(
+                "SELECT tag_one_id::text || '/' || coalesce(tag_two_id::text, '-') \
                FROM note_tag WHERE note_id = {TAGRT_NOTE} AND seq = 0"
-        ))
+            )
+        )
         .await
         .as_deref(),
         Some(format!("{TAGRT_TAGONE}/-").as_str()),
         "id 更大的那个是**一级**（tag_one_id），归属只能按列判、不能按数字猜"
     );
     assert_eq!(
-        one_text(&db, &format!(
-            "SELECT coalesce(tag_one_id::text, '-') || '/' || tag_two_id::text \
+        one_text(
+            &db,
+            &format!(
+                "SELECT coalesce(tag_one_id::text, '-') || '/' || tag_two_id::text \
                FROM note_tag WHERE note_id = {TAGRT_NOTE} AND seq = 1"
-        ))
+            )
+        )
         .await
         .as_deref(),
         Some(format!("-/{TAGRT_TAGTWO}").as_str())
     );
     // `num_nonnulls = 1` 这条约束（"这一行恰好指向一张表"）在**真数据**上没有被绕过。
     assert_eq!(
-        count_of(&db, &format!(
-            "SELECT COUNT(*) FROM note_tag WHERE note_id = {TAGRT_NOTE} \
+        count_of(
+            &db,
+            &format!(
+                "SELECT COUNT(*) FROM note_tag WHERE note_id = {TAGRT_NOTE} \
               AND num_nonnulls(tag_one_id, tag_two_id) <> 1"
-        ))
+            )
+        )
         .await,
         0
     );
@@ -2500,7 +2681,11 @@ async fn note_tags_写路径往返逐字一致且归属按列() {
     assert_eq!(st, StatusCode::OK, "{j}");
     assert_eq!(j["code"], 200, "{j}");
     assert_eq!(
-        count_of(&db, &format!("SELECT COUNT(*) FROM note_tag WHERE note_id = {TAGRT_NOTE}")).await,
+        count_of(
+            &db,
+            &format!("SELECT COUNT(*) FROM note_tag WHERE note_id = {TAGRT_NOTE}")
+        )
+        .await,
         0,
         "空串 = 一个标签都没有 ⇒ 关联行必须全清掉"
     );
@@ -2518,14 +2703,28 @@ async fn note_tags_写路径往返逐字一致且归属按列() {
 
     // 收尾：**先删文章、再删标签**（本节头注那条不变量）。
     exec(&db, &format!("DELETE FROM note WHERE id = {TAGRT_NOTE}")).await;
-    exec(&db, &format!("DELETE FROM tag_one WHERE id = {TAGRT_TAGONE}")).await;
-    exec(&db, &format!("DELETE FROM tag_two WHERE id = {TAGRT_TAGTWO}")).await;
-    exec(&db, &format!("DELETE FROM \"user\" WHERE id = {TAGRT_ADMIN_UID}")).await;
+    exec(
+        &db,
+        &format!("DELETE FROM tag_one WHERE id = {TAGRT_TAGONE}"),
+    )
+    .await;
+    exec(
+        &db,
+        &format!("DELETE FROM tag_two WHERE id = {TAGRT_TAGTWO}"),
+    )
+    .await;
+    exec(
+        &db,
+        &format!("DELETE FROM \"user\" WHERE id = {TAGRT_ADMIN_UID}"),
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn note_tags_外键级联是按列生效的() {
-    let Some((db, db_app)) = connect_pair().await else { return };
+    let Some((db, db_app)) = connect_pair().await else {
+        return;
+    };
     make_user(&db, TAGCAS_ADMIN_UID, "admin").await;
     make_tag_one(&db, TAGCAS_TAGONE, "级联一级").await;
     make_tag_two(&db, TAGCAS_TAGTWO, "级联二级").await;
@@ -2566,23 +2765,29 @@ async fn note_tags_外键级联是按列生效的() {
     // ① 同篇里指向二级的那一行**还在**（旧 `prune_note_tags` 是"扫全表 + 按数字判"，
     //    它和"按列级联"在这条上会给出不同的结果 —— 这条就是两者的分界线）。
     assert_eq!(
-        count_of(&db, &format!("SELECT COUNT(*) FROM note_tag WHERE note_id = {TAGCAS_NOTE}")).await,
+        count_of(
+            &db,
+            &format!("SELECT COUNT(*) FROM note_tag WHERE note_id = {TAGCAS_NOTE}")
+        )
+        .await,
         1,
         "删一级标签只该带走指向它的那一行，同篇指向二级的行必须留着"
     );
     assert_eq!(
-        one_text(&db, &format!(
-            "SELECT tag_two_id::text FROM note_tag WHERE note_id = {TAGCAS_NOTE}"
-        ))
+        one_text(
+            &db,
+            &format!("SELECT tag_two_id::text FROM note_tag WHERE note_id = {TAGCAS_NOTE}")
+        )
         .await
         .as_deref(),
         Some(format!("{TAGCAS_TAGTWO}").as_str())
     );
     // ② 另一篇引用的是**别的标签**，一行都不该动。
     assert_eq!(
-        count_of(&db, &format!(
-            "SELECT COUNT(*) FROM note_tag WHERE note_id = {TAGCAS_OTHER_NOTE}"
-        ))
+        count_of(
+            &db,
+            &format!("SELECT COUNT(*) FROM note_tag WHERE note_id = {TAGCAS_OTHER_NOTE}")
+        )
         .await,
         1,
         "删一个标签不该波及引用别的标签的文章"
@@ -2591,7 +2796,12 @@ async fn note_tags_外键级联是按列生效的() {
     assert_mirror_matches(&db, TAGCAS_NOTE).await;
     assert_mirror_matches(&db, TAGCAS_OTHER_NOTE).await;
     assert_eq!(
-        one_text(&db, &format!("SELECT tags FROM note WHERE id = {TAGCAS_NOTE}")).await.as_deref(),
+        one_text(
+            &db,
+            &format!("SELECT tags FROM note WHERE id = {TAGCAS_NOTE}")
+        )
+        .await
+        .as_deref(),
         Some(format!("{TAGCAS_TAGTWO}").as_str()),
         "被删掉的那个 id 必须从那一列里消失（否则 0007 的预检会红）"
     );
@@ -2601,14 +2811,28 @@ async fn note_tags_外键级联是按列生效的() {
     );
 
     // 收尾：先删文章、再删标签。
-    exec(&db, &format!("DELETE FROM note WHERE id IN ({TAGCAS_NOTE}, {TAGCAS_OTHER_NOTE})")).await;
-    exec(&db, &format!("DELETE FROM tag_two WHERE id = {TAGCAS_TAGTWO}")).await;
-    exec(&db, &format!("DELETE FROM \"user\" WHERE id = {TAGCAS_ADMIN_UID}")).await;
+    exec(
+        &db,
+        &format!("DELETE FROM note WHERE id IN ({TAGCAS_NOTE}, {TAGCAS_OTHER_NOTE})"),
+    )
+    .await;
+    exec(
+        &db,
+        &format!("DELETE FROM tag_two WHERE id = {TAGCAS_TAGTWO}"),
+    )
+    .await;
+    exec(
+        &db,
+        &format!("DELETE FROM \"user\" WHERE id = {TAGCAS_ADMIN_UID}"),
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn note_tags_撞号时归一级且只出现一次() {
-    let Some((db, db_app)) = connect_pair().await else { return };
+    let Some((db, db_app)) = connect_pair().await else {
+        return;
+    };
     make_user(&db, TAGCOL_ADMIN_UID, "admin").await;
     // 同一个数字在两张表里各建一行：两条自增序列互相独立，同号完全合法（`0006` 头注）。
     make_tag_one(&db, TAGCOL_TAGONE, "撞号一级").await;
@@ -2630,15 +2854,22 @@ async fn note_tags_撞号时归一级且只出现一次() {
 
     // 关联表落地之后这件事**结构性**不再含糊：一行自己知道指向哪张表。
     assert_eq!(
-        count_of(&db, &format!("SELECT COUNT(*) FROM note_tag WHERE note_id = {TAGCOL_NOTE}")).await,
+        count_of(
+            &db,
+            &format!("SELECT COUNT(*) FROM note_tag WHERE note_id = {TAGCOL_NOTE}")
+        )
+        .await,
         1,
         "撞号的 id 只许落一行（同一个标签在一篇里出现两次是脏数据）"
     );
     assert_eq!(
-        one_text(&db, &format!(
-            "SELECT coalesce(tag_one_id::text, '-') || '/' || coalesce(tag_two_id::text, '-') \
+        one_text(
+            &db,
+            &format!(
+                "SELECT coalesce(tag_one_id::text, '-') || '/' || coalesce(tag_two_id::text, '-') \
                FROM note_tag WHERE note_id = {TAGCOL_NOTE}"
-        ))
+            )
+        )
         .await
         .as_deref(),
         Some(format!("{TAGCOL_TAGONE}/-").as_str()),
@@ -2647,18 +2878,36 @@ async fn note_tags_撞号时归一级且只出现一次() {
     // 线上也必须是**一个** id，不是两个、也不是空。
     let wire = wire_note_tags(app, TAGCOL_NOTE).await;
     assert_eq!(wire, format!("{TAGCOL_TAGONE}"));
-    assert_eq!(wire.split(',').count(), 1, "撞号不许在线上变成两个标签：{wire}");
+    assert_eq!(
+        wire.split(',').count(),
+        1,
+        "撞号不许在线上变成两个标签：{wire}"
+    );
     assert_mirror_matches(&db, TAGCOL_NOTE).await;
 
     exec(&db, &format!("DELETE FROM note WHERE id = {TAGCOL_NOTE}")).await;
-    exec(&db, &format!("DELETE FROM tag_one WHERE id = {TAGCOL_TAGONE}")).await;
-    exec(&db, &format!("DELETE FROM tag_two WHERE id = {TAGCOL_TAGTWO}")).await;
-    exec(&db, &format!("DELETE FROM \"user\" WHERE id = {TAGCOL_ADMIN_UID}")).await;
+    exec(
+        &db,
+        &format!("DELETE FROM tag_one WHERE id = {TAGCOL_TAGONE}"),
+    )
+    .await;
+    exec(
+        &db,
+        &format!("DELETE FROM tag_two WHERE id = {TAGCOL_TAGTWO}"),
+    )
+    .await;
+    exec(
+        &db,
+        &format!("DELETE FROM \"user\" WHERE id = {TAGCOL_ADMIN_UID}"),
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn note_tags_跨表移动后标签仍挂在原文章上() {
-    let Some((db, db_app)) = connect_pair().await else { return };
+    let Some((db, db_app)) = connect_pair().await else {
+        return;
+    };
     make_user(&db, TAGMOVE_ADMIN_UID, "admin").await;
     make_tag_two(&db, TAGMOVE_TAGTWO, "移动二级").await;
     make_owned_note(&db, TAGMOVE_NOTE, TAGMOVE_ADMIN_UID).await;
@@ -2689,7 +2938,10 @@ async fn note_tags_跨表移动后标签仍挂在原文章上() {
     .await;
     assert_eq!(st, StatusCode::OK, "{j}");
     assert_eq!(j["code"], 200, "移动应当成功：{j}");
-    assert_eq!(j["data"]["idChanged"], true, "id ≥ 10000 时不许沿用旧 id：{j}");
+    assert_eq!(
+        j["data"]["idChanged"], true,
+        "id ≥ 10000 时不许沿用旧 id：{j}"
+    );
     let new_id = j["data"]["toId"].as_i64().expect("toId 必须是数字") as i32;
     assert_ne!(new_id, TAGMOVE_TAGTWO);
 
@@ -2697,15 +2949,22 @@ async fn note_tags_跨表移动后标签仍挂在原文章上() {
     // 顺序反了（先删旧标签行、再改指向）的话外键 `ON DELETE CASCADE` 会把关联行静默带走 ——
     // 事务照常提交、接口回 200、标签从 API 上消失，没有任何东西报错。
     assert_eq!(
-        count_of(&db, &format!("SELECT COUNT(*) FROM note_tag WHERE note_id = {TAGMOVE_NOTE}")).await,
+        count_of(
+            &db,
+            &format!("SELECT COUNT(*) FROM note_tag WHERE note_id = {TAGMOVE_NOTE}")
+        )
+        .await,
         1,
         "跨表移动之后标签必须还在原来那篇文章上（没了 = 改指向与删旧行的顺序反了）"
     );
     assert_eq!(
-        one_text(&db, &format!(
-            "SELECT coalesce(tag_one_id::text, '-') || '/' || coalesce(tag_two_id::text, '-') \
+        one_text(
+            &db,
+            &format!(
+                "SELECT coalesce(tag_one_id::text, '-') || '/' || coalesce(tag_two_id::text, '-') \
                FROM note_tag WHERE note_id = {TAGMOVE_NOTE}"
-        ))
+            )
+        )
         .await
         .as_deref(),
         Some(format!("{new_id}/-").as_str()),
@@ -2716,18 +2975,28 @@ async fn note_tags_跨表移动后标签仍挂在原文章上() {
     assert_eq!(wire_note_tags(app, TAGMOVE_NOTE).await, format!("{new_id}"));
     // 旧行真的没了（否则 `tag_two` 里会留一行孤儿标签）。
     assert_eq!(
-        count_of(&db, &format!("SELECT COUNT(*) FROM tag_two WHERE id = {TAGMOVE_TAGTWO}")).await,
+        count_of(
+            &db,
+            &format!("SELECT COUNT(*) FROM tag_two WHERE id = {TAGMOVE_TAGTWO}")
+        )
+        .await,
         0
     );
 
     exec(&db, &format!("DELETE FROM note WHERE id = {TAGMOVE_NOTE}")).await;
     exec(&db, &format!("DELETE FROM tag_one WHERE id = {new_id}")).await;
-    exec(&db, &format!("DELETE FROM \"user\" WHERE id = {TAGMOVE_ADMIN_UID}")).await;
+    exec(
+        &db,
+        &format!("DELETE FROM \"user\" WHERE id = {TAGMOVE_ADMIN_UID}"),
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn note_tag_回填逐字往返且悬空会被守卫拦下() {
-    let Some((db, _app)) = connect_pair().await else { return };
+    let Some((db, _app)) = connect_pair().await else {
+        return;
+    };
     // `include_str!` 而不是把回填 SQL 抄一遍：抄一份出来就等于"第二个实现"，
     // 而这份迁移只跑一次 —— 抄本会静静地与真本漂开，谁也不会发现。
     let migration = include_str!("../scripts/migration/pg/0006_note_tag.sql");
@@ -2765,29 +3034,38 @@ async fn note_tag_回填逐字往返且悬空会被守卫拦下() {
 
     let want = format!("{TAGBACK_TAGONE},{TAGBACK_TAGTWO}");
     assert_eq!(
-        one_text(&txn, &format!(
-            "SELECT string_agg(coalesce(tag_one_id, tag_two_id)::text, ',' ORDER BY seq) \
+        one_text(
+            &txn,
+            &format!(
+                "SELECT string_agg(coalesce(tag_one_id, tag_two_id)::text, ',' ORDER BY seq) \
                FROM note_tag WHERE note_id = {TAGBACK_NOTE}"
-        ))
+            )
+        )
         .await
         .as_deref(),
         Some(want.as_str()),
         "回填必须**逐字**复原（去重取首次出现、顺序照原串、两级按列归属）"
     );
     assert_eq!(
-        one_text(&txn, &format!(
-            "SELECT coalesce(tag_one_id::text,'-') || '/' || coalesce(tag_two_id::text,'-') \
+        one_text(
+            &txn,
+            &format!(
+                "SELECT coalesce(tag_one_id::text,'-') || '/' || coalesce(tag_two_id::text,'-') \
                FROM note_tag WHERE note_id = {TAGBACK_NOTE} AND seq = 0"
-        ))
+            )
+        )
         .await
         .as_deref(),
         Some(format!("{TAGBACK_TAGONE}/-").as_str())
     );
     assert_eq!(
-        one_text(&txn, &format!(
-            "SELECT coalesce(tag_one_id::text,'-') || '/' || coalesce(tag_two_id::text,'-') \
+        one_text(
+            &txn,
+            &format!(
+                "SELECT coalesce(tag_one_id::text,'-') || '/' || coalesce(tag_two_id::text,'-') \
                FROM note_tag WHERE note_id = {TAGBACK_NOTE} AND seq = 1"
-        ))
+            )
+        )
         .await
         .as_deref(),
         Some(format!("-/{TAGBACK_TAGTWO}").as_str())
@@ -2795,14 +3073,25 @@ async fn note_tag_回填逐字往返且悬空会被守卫拦下() {
     // 回填**不碰**那一列（它只插关联行）：soak 期那一列本来就还是原样，
     // 而 `0007` 的预检比的是"两边逐字相等"—— 这里顺带把"回填之后两边仍然相等"钉住。
     assert_eq!(
-        one_text(&txn, &format!("SELECT tags FROM note WHERE id = {TAGBACK_NOTE}")).await.as_deref(),
+        one_text(
+            &txn,
+            &format!("SELECT tags FROM note WHERE id = {TAGBACK_NOTE}")
+        )
+        .await
+        .as_deref(),
         Some(legacy.as_str()),
         "回填只插关联行、不改那一列（那一列由「预检保证两边本来就一致」承接）"
     );
     // 重跑一次必须**一行都不加**（幂等：`NOT EXISTS` 那半）。
-    txn.execute_unprepared(migration).await.expect("重跑 0006 不该失败");
+    txn.execute_unprepared(migration)
+        .await
+        .expect("重跑 0006 不该失败");
     assert_eq!(
-        count_of(&txn, &format!("SELECT COUNT(*) FROM note_tag WHERE note_id = {TAGBACK_NOTE}")).await,
+        count_of(
+            &txn,
+            &format!("SELECT COUNT(*) FROM note_tag WHERE note_id = {TAGBACK_NOTE}")
+        )
+        .await,
         2,
         "0006 重跑必须是 no-op（`NOT EXISTS` 那半）—— 它会被跑第二遍（改了库结构再跑一次是常态）"
     );
@@ -2832,19 +3121,37 @@ async fn note_tag_回填逐字往返且悬空会被守卫拦下() {
     txn.rollback().await.expect("回滚失败");
 
     // 收尾：先删文章（上面两次都回滚了，这里其实没有残留）、再删标签。
-    exec(&db, &format!("DELETE FROM note WHERE id IN ({TAGBACK_NOTE}, {TAGGUARD_NOTE})")).await;
-    exec(&db, &format!("DELETE FROM tag_one WHERE id = {TAGBACK_TAGONE}")).await;
-    exec(&db, &format!("DELETE FROM tag_two WHERE id = {TAGBACK_TAGTWO}")).await;
+    exec(
+        &db,
+        &format!("DELETE FROM note WHERE id IN ({TAGBACK_NOTE}, {TAGGUARD_NOTE})"),
+    )
+    .await;
+    exec(
+        &db,
+        &format!("DELETE FROM tag_one WHERE id = {TAGBACK_TAGONE}"),
+    )
+    .await;
+    exec(
+        &db,
+        &format!("DELETE FROM tag_two WHERE id = {TAGBACK_TAGTWO}"),
+    )
+    .await;
 }
 
 #[tokio::test]
 async fn note_tags_修改稿从原行复制标签() {
-    let Some((db, db_app)) = connect_pair().await else { return };
+    let Some((db, db_app)) = connect_pair().await else {
+        return;
+    };
     make_user(&db, TAGAS_ADMIN_UID, "admin").await;
     make_tag_one(&db, TAGAS_TAGONE, "修改稿一级").await;
     make_owned_note(&db, TAGAS_NOTE, TAGAS_ADMIN_UID).await;
     // 上一次跑挂留下的修改稿（`draft_of` 指着源行）。
-    exec(&db, &format!("DELETE FROM note WHERE draft_of = {TAGAS_NOTE}")).await;
+    exec(
+        &db,
+        &format!("DELETE FROM note WHERE draft_of = {TAGAS_NOTE}"),
+    )
+    .await;
 
     let app = test_app(db_app);
     let admin = auth_jwt::create_token(TAGAS_ADMIN_UID, "admin", 0);
@@ -2860,8 +3167,17 @@ async fn note_tags_修改稿从原行复制标签() {
     assert_eq!(st, StatusCode::OK, "{j}");
     assert_eq!(j["code"], 200, "{j}");
 
-    let (_, editor) = call(app.clone(), "GET", &format!("/api/protected/draft/editor/{TAGAS_NOTE}"), Some(&admin), None).await;
-    let version = editor["data"]["version"].as_str().expect("草稿读取必须提供版本");
+    let (_, editor) = call(
+        app.clone(),
+        "GET",
+        &format!("/api/protected/draft/editor/{TAGAS_NOTE}"),
+        Some(&admin),
+        None,
+    )
+    .await;
+    let version = editor["data"]["version"]
+        .as_str()
+        .expect("草稿读取必须提供版本");
     // 自动保存一个**非草稿**的源行 ⇒ `resolve_autosave_target` 克隆出一行修改稿。
     // 这一笔**不带** `noteTags`（编辑器平时就是这么发的），所以修改稿的标签只能来自
     // "从源行复制"那条路 —— 漏了的话"继续编辑"打开时标签栏是空的，用户一保存就把标签清光。
@@ -2870,7 +3186,9 @@ async fn note_tags_修改稿从原行复制标签() {
         "POST",
         "/api/protected/draft/autosave",
         Some(&admin),
-        Some(&format!(r#"{{"id":{TAGAS_NOTE},"expectedVersion":"{version}","noteTitle":"自动保存夹具"}}"#)),
+        Some(&format!(
+            r#"{{"id":{TAGAS_NOTE},"expectedVersion":"{version}","noteTitle":"自动保存夹具"}}"#
+        )),
     )
     .await;
     assert_eq!(st, StatusCode::OK, "{j}");
@@ -2878,7 +3196,10 @@ async fn note_tags_修改稿从原行复制标签() {
     // ⚠️ 键名是 **`draftId`**（驼峰，有 serde rename），不是 `draft_id`：写成下划线会拿到
     // `None`，而 `expect` 至少会当场报出来（静默版是 `unwrap_or(0)`，那会去查一篇不存在的文章）。
     let rev = j["data"]["draftId"].as_i64().expect("draftId 必须是数字") as i32;
-    assert_ne!(rev, TAGAS_NOTE, "源行不是草稿 ⇒ 应当克隆出一行**新的**修改稿");
+    assert_ne!(
+        rev, TAGAS_NOTE,
+        "源行不是草稿 ⇒ 应当克隆出一行**新的**修改稿"
+    );
     assert_eq!(
         one_i32(&db, &format!("SELECT draft_of FROM note WHERE id = {rev}")).await,
         Some(TAGAS_NOTE),
@@ -2901,14 +3222,30 @@ async fn note_tags_修改稿从原行复制标签() {
     assert_mirror_matches(&db, TAGAS_NOTE).await;
     // 源行的标签一个都没被改动（克隆是"复制"，不是"搬走"）。
     assert_eq!(
-        count_of(&db, &format!("SELECT COUNT(*) FROM note_tag WHERE note_id = {TAGAS_NOTE}")).await,
+        count_of(
+            &db,
+            &format!("SELECT COUNT(*) FROM note_tag WHERE note_id = {TAGAS_NOTE}")
+        )
+        .await,
         1
     );
 
     // 收尾：先删文章（源行 + 修改稿）、再删标签。
-    exec(&db, &format!("DELETE FROM note WHERE id = {rev} OR id = {TAGAS_NOTE}")).await;
-    exec(&db, &format!("DELETE FROM tag_one WHERE id = {TAGAS_TAGONE}")).await;
-    exec(&db, &format!("DELETE FROM \"user\" WHERE id = {TAGAS_ADMIN_UID}")).await;
+    exec(
+        &db,
+        &format!("DELETE FROM note WHERE id = {rev} OR id = {TAGAS_NOTE}"),
+    )
+    .await;
+    exec(
+        &db,
+        &format!("DELETE FROM tag_one WHERE id = {TAGAS_TAGONE}"),
+    )
+    .await;
+    exec(
+        &db,
+        &format!("DELETE FROM \"user\" WHERE id = {TAGAS_ADMIN_UID}"),
+    )
+    .await;
 }
 
 /// 夹具关键词：**刻意是个真实内容里不可能出现的怪串**（同 `AGG_KW` 的理由 —— 断言里
@@ -2942,7 +3279,9 @@ async fn search_notes_of(app: axum::Router, keyword: &str) -> serde_json::Value 
 
 #[tokio::test]
 async fn test_搜索预筛的四类命中与档内顺序() {
-    let Some((db, db_app)) = connect_pair().await else { return };
+    let Some((db, db_app)) = connect_pair().await else {
+        return;
+    };
 
     // 先清自己的残留（上次跑挂了会留下行）。**先删文章、再删标签**（⑲ 头注那条不变量）。
     exec(
@@ -2952,7 +3291,11 @@ async fn test_搜索预筛的四类命中与档内顺序() {
         ),
     )
     .await;
-    exec(&db, &format!("DELETE FROM tag_one WHERE id = {SRCH_TAGONE}")).await;
+    exec(
+        &db,
+        &format!("DELETE FROM tag_one WHERE id = {SRCH_TAGONE}"),
+    )
+    .await;
 
     // 建：先标签、再文章（同 ⑲）。
     make_tag_one(&db, SRCH_TAGONE, &format!("{SRCH_KW}标签名")).await;
@@ -3001,7 +3344,11 @@ async fn test_搜索预筛的四类命中与档内顺序() {
         ),
     )
     .await;
-    exec(&db, &format!("DELETE FROM tag_one WHERE id = {SRCH_TAGONE}")).await;
+    exec(
+        &db,
+        &format!("DELETE FROM tag_one WHERE id = {SRCH_TAGONE}"),
+    )
+    .await;
 }
 
 const SRCH_UPPER_NOTE: i32 = 900000104; // 正文写的是大写 `ESP32` ⇒ 搜 `esp32` 必须找得到
@@ -3016,15 +3363,27 @@ const SRCH_TALK_UPPER: i32 = 900000131; // 说说，正文含大写 `VBN`
 
 #[tokio::test]
 async fn test_搜索预筛的大小写可见集合与转义() {
-    let Some((db, db_app)) = connect_pair().await else { return };
+    let Some((db, db_app)) = connect_pair().await else {
+        return;
+    };
 
-    for id in [SRCH_UPPER_NOTE, SRCH_BSLASH_NOTE, SRCH_CMT_HOST_NOTE, SRCH_PCT_NOTE, SRCH_UNDER_NOTE] {
+    for id in [
+        SRCH_UPPER_NOTE,
+        SRCH_BSLASH_NOTE,
+        SRCH_CMT_HOST_NOTE,
+        SRCH_PCT_NOTE,
+        SRCH_UNDER_NOTE,
+    ] {
         exec(&db, &format!("DELETE FROM note WHERE id = {id}")).await;
     }
     for id in [SRCH_CMT_PLAIN, SRCH_CMT_UPPER] {
         exec(&db, &format!("DELETE FROM note_comment WHERE id = {id}")).await;
     }
-    exec(&db, &format!("DELETE FROM talk WHERE id = {SRCH_TALK_UPPER}")).await;
+    exec(
+        &db,
+        &format!("DELETE FROM talk WHERE id = {SRCH_TALK_UPPER}"),
+    )
+    .await;
 
     // 正文里是**大写** `ESP32`（`ILIKE` 的判据）；`c:\path` 是**单个**反斜杠 ——
     // PG 默认 `standard_conforming_strings = on`，字符串字面量里的反斜杠就是反斜杠，
@@ -3134,13 +3493,23 @@ async fn test_搜索预筛的大小写可见集合与转义() {
     );
 
     // 收尾：先文章、再评论/说说（评论与文章之间没有外键，得各自删）。
-    for id in [SRCH_UPPER_NOTE, SRCH_BSLASH_NOTE, SRCH_CMT_HOST_NOTE, SRCH_PCT_NOTE, SRCH_UNDER_NOTE] {
+    for id in [
+        SRCH_UPPER_NOTE,
+        SRCH_BSLASH_NOTE,
+        SRCH_CMT_HOST_NOTE,
+        SRCH_PCT_NOTE,
+        SRCH_UNDER_NOTE,
+    ] {
         exec(&db, &format!("DELETE FROM note WHERE id = {id}")).await;
     }
     for id in [SRCH_CMT_PLAIN, SRCH_CMT_UPPER] {
         exec(&db, &format!("DELETE FROM note_comment WHERE id = {id}")).await;
     }
-    exec(&db, &format!("DELETE FROM talk WHERE id = {SRCH_TALK_UPPER}")).await;
+    exec(
+        &db,
+        &format!("DELETE FROM talk WHERE id = {SRCH_TALK_UPPER}"),
+    )
+    .await;
 }
 
 /// 讨论区夹具的文章与作者（见 ⑰：每个用例一个 uid，`make_user` 先删后插）。
@@ -3183,23 +3552,27 @@ async fn clear_hot_fixture(db: &DatabaseConnection) {
 /// **保持服务端给的顺序**（要钉排序就不能在这边再排一遍——那会把判据变成"我自己排的
 /// 顺序对不对"）。顶层按 `rootId == null` 认，**不靠"数组前半段是顶层"**：那是个实现
 /// 细节，哪天它变了，这里应该红而不是跟着一起变。
-async fn comment_order_of(
-    app: axum::Router,
-    query: &str,
-    root: i32,
-) -> (Vec<i32>, Vec<i32>) {
+async fn comment_order_of(app: axum::Router, query: &str, root: i32) -> (Vec<i32>, Vec<i32>) {
     let uri = format!("/api/public/notes/{HOT_NOTE}/comments{query}");
     let (st, j) = call(app, "GET", &uri, None, None).await;
     // 未知的 `sort` 值**绝不能在 HTTP 层失败**：`Query` 抽取器遇反序列化失败会回
     // 400 + 纯文本、**不走信封**，而前端判的是 `code === 200` ⇒ 一个过期的分享链接
     // 就能把整段讨论区变成"读取失败"。所以这里连状态码一起断言。
-    assert_eq!(st, StatusCode::OK, "公开评论列表不该在 HTTP 层失败（`{uri}`）：{j}");
+    assert_eq!(
+        st,
+        StatusCode::OK,
+        "公开评论列表不该在 HTTP 层失败（`{uri}`）：{j}"
+    );
     assert_eq!(j["code"], 200, "信封 code 必须是 200（`{uri}`）：{j}");
     let rows = j["data"]
         .as_array()
         .unwrap_or_else(|| panic!("data 不是数组（`{uri}`）：{j}"));
     let id_of = |c: &serde_json::Value| c["id"].as_i64().expect("评论行没有整数 id") as i32;
-    let tops = rows.iter().filter(|c| c["rootId"].is_null()).map(id_of).collect();
+    let tops = rows
+        .iter()
+        .filter(|c| c["rootId"].is_null())
+        .map(id_of)
+        .collect();
     let replies = rows
         .iter()
         .filter(|c| c["rootId"].as_i64() == Some(root as i64))
@@ -3210,7 +3583,9 @@ async fn comment_order_of(
 
 #[tokio::test]
 async fn comment_sort_hot_default_and_new_differ() {
-    let Some((db, db_app)) = connect_pair().await else { return };
+    let Some((db, db_app)) = connect_pair().await else {
+        return;
+    };
     clear_hot_fixture(&db).await;
     make_note(&db, HOT_NOTE).await;
     make_user(&db, HOT_UID, "user").await;
@@ -3295,7 +3670,10 @@ async fn comment_sort_hot_default_and_new_differ() {
     // 这条是"过期的分享链接 / 别人手打的参数"那道防线。它红了通常不是排序坏了，
     // 而是有人把 `Option<String>` 改成了会 reject 的强类型枚举（见 `CommentListQuery`）。
     let (garbage, _) = comment_order_of(app.clone(), "?sort=zzz", HOT_CMT_REPLY).await;
-    assert_eq!(garbage, dflt, "未知 sort 值必须回落 hot（且 HTTP 200 + code 200，不是 400）");
+    assert_eq!(
+        garbage, dflt,
+        "未知 sort 值必须回落 hot（且 HTTP 200 + code 200，不是 400）"
+    );
 
     // ── ④ `?sort=new` 是**另一个顺序**（时间降序），且与 hot 无一条同位 ──────
     let (new, replies) = comment_order_of(app.clone(), "?sort=new", HOT_CMT_REPLY).await;
@@ -3305,7 +3683,10 @@ async fn comment_sort_hot_default_and_new_differ() {
         "`?sort=new` 必须按 created_at 降序（10h / 20h / 30h / 40h 前）"
     );
     for (i, (a, b)) in dflt.iter().zip(new.iter()).enumerate() {
-        assert_ne!(a, b, "第 {i} 位上 hot 与 new 排到了同一条 —— 夹具失去了分辨力，改夹具");
+        assert_ne!(
+            a, b,
+            "第 {i} 位上 hot 与 new 排到了同一条 —— 夹具失去了分辨力，改夹具"
+        );
     }
 
     // ── ⑤ 回复：恒时间正序，且**只含公开可见的** ─────────────────────────────
@@ -3324,8 +3705,14 @@ async fn comment_sort_hot_default_and_new_differ() {
     // REPLY 是**零票**的，却压在"一个赞"的 ONE 前面 —— 只可能来自回复项。
     // 少了这一条，把 `hot_score` 的回复项删掉（只剩 Wilson）时，① 仍然会绿
     // ——因为 0 票的 REPLY 与 ONE 只差在回复数上，而那正是本条要钉的东西。
-    let reply_pos = dflt.iter().position(|&x| x == HOT_CMT_REPLY).expect("REPLY 不在列表里");
-    let one_pos = dflt.iter().position(|&x| x == HOT_CMT_ONE).expect("ONE 不在列表里");
+    let reply_pos = dflt
+        .iter()
+        .position(|&x| x == HOT_CMT_REPLY)
+        .expect("REPLY 不在列表里");
+    let one_pos = dflt
+        .iter()
+        .position(|&x| x == HOT_CMT_ONE)
+        .expect("ONE 不在列表里");
     assert!(
         reply_pos < one_pos,
         "0 票 + 15 条回复必须压过 1 票 + 0 回复（0.495 vs 0.208）—— \
