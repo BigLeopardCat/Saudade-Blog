@@ -134,7 +134,13 @@ async fn test_chat_history_requires_auth() {
 async fn test_chat_discard_requires_auth() {
     let app = mock_app();
     assert_eq!(
-        req_status(app, "POST", "/api/chat/discard").await,
+        req_status_json(
+            app,
+            "POST",
+            "/api/chat/discard",
+            r#"{"conversation_id":42,"turn_id":"auth-probe"}"#
+        )
+        .await,
         StatusCode::UNAUTHORIZED
     );
 }
