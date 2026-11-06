@@ -26,6 +26,33 @@ pub struct ArticleQuery {
     pub keyword: Option<String>,
     pub category: Option<String>,
     pub category_id: Option<i32>,
+    pub view: Option<CatalogView>,
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CatalogView {
+    Summary,
+    Full,
+}
+
+#[derive(FromQueryResult, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArticleSummary {
+    pub id: i32,
+    pub title: String,
+    pub status: Option<String>,
+    pub is_public: bool,
+    pub is_top: Option<i32>,
+    pub category_id: Option<i32>,
+    pub category_name: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+pub enum ArticleItem {
+    Summary(ArticleSummary),
+    Full(Article),
 }
 
 #[derive(FromQueryResult, Serialize)]
@@ -173,6 +200,23 @@ async fn read_view<C: ConnectionTrait>(
     public_only: bool,
     top_only: bool,
 ) -> Result<(Vec<Article>, i64), DbErr> {
+    let query = scoped_query(db, params, public_only, top_only).await?;
+    let total = query.clone().count(db).await? as i64;
+    let mut items = metadata_query(query.limit(limit).offset(offset))
+        .columns([note::Column::CreatedAt, note::Column::UpdatedAt])
+        .into_model::<Article>()
+        .all(db)
+        .await?;
+    attach_tags(db, &mut items).await?;
+    Ok((items, total))
+}
+
+async fn scoped_query<C: ConnectionTrait>(
+    db: &C,
+    params: &ArticleQuery,
+    public_only: bool,
+    top_only: bool,
+) -> Result<sea_orm::Select<note::Entity>, DbErr> {
     let cat_id = if let Some(name) = &params.category {
         let ids = category::Entity::find()
             .select_only()
@@ -196,10 +240,11 @@ async fn read_view<C: ConnectionTrait>(
     if top_only {
         query = query.filter(note::Column::IsTop.eq(1));
     }
-    let total = query.clone().count(db).await? as i64;
-    let mut items = query
-        .limit(limit)
-        .offset(offset)
+    Ok(query)
+}
+
+fn metadata_query(query: sea_orm::Select<note::Entity>) -> sea_orm::Select<note::Entity> {
+    query
         .left_join(category::Entity)
         .select_only()
         .columns([
@@ -209,24 +254,32 @@ async fn read_view<C: ConnectionTrait>(
             note::Column::IsPublic,
             note::Column::IsTop,
             note::Column::CategoryId,
-            note::Column::CreatedAt,
-            note::Column::UpdatedAt,
         ])
         .column_as(
             Expr::col((category::Entity, category::Column::Name)),
             "category_name",
         )
-        .into_model::<Article>()
+}
+
+pub(super) async fn read_summary<C: ConnectionTrait>(
+    db: &C,
+    params: &ArticleQuery,
+    limit: u64,
+    offset: u64,
+) -> Result<(Vec<ArticleSummary>, i64), DbErr> {
+    let query = scoped_query(db, params, false, false).await?;
+    let total = query.clone().count(db).await? as i64;
+    let items = metadata_query(query.limit(limit).offset(offset))
+        .into_model::<ArticleSummary>()
         .all(db)
         .await?;
-    attach_tags(db, &mut items).await?;
     Ok((items, total))
 }
 
 pub async fn list(
     State(state): State<Arc<AppState>>,
     Query(params): Query<ArticleQuery>,
-) -> Json<ApiResponsePage<Vec<Article>>> {
+) -> Json<ApiResponsePage<Vec<ArticleItem>>> {
     if !super::valid_text(params.keyword.as_deref())
         || !super::valid_text(params.category.as_deref())
         || params.id.is_some_and(|id| id <= 0)
@@ -238,5 +291,17 @@ pub async fn list(
         Ok(value) => value,
         Err(message) => return Json(ApiResponsePage::error(message)),
     };
-    super::response(read(&state.db, &params, limit, offset).await)
+    if matches!(params.view, Some(CatalogView::Summary)) {
+        super::response(
+            read_summary(&state.db, &params, limit, offset)
+                .await
+                .map(|(rows, total)| (rows.into_iter().map(ArticleItem::Summary).collect(), total)),
+        )
+    } else {
+        super::response(
+            read(&state.db, &params, limit, offset)
+                .await
+                .map(|(rows, total)| (rows.into_iter().map(ArticleItem::Full).collect(), total)),
+        )
+    }
 }

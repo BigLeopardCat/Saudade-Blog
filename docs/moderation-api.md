@@ -18,11 +18,15 @@
 最终审核状态与 AI 判定是独立维度。评论后台保留软删除记录，并通过 `isDeleted` 标识。
 
 不传 `page_size` 时保留原有响应形状，不含 `total`：留言返回全量，评论保留 500 条上限。
-这是既有前端与旧执行图的迁移接口；新的 Agent 读取始终显式分页。
+Agent 读取始终显式分页；统计问题使用下方汇总接口。
 
 ## 审核汇总
 
-`GET /api/protected/moderation/summary` 只聚合 `src=board` 的河灯留言，不读取正文。
-`data` 包含 `total`、`pending`、`passed`、`rejected`、`aiPassed`、`aiFlagged`、
-`aiRejected`、`aiUnreviewed`。两组分布各自与总数对应，不能把 AI 通过当成人工最终通过。
+`GET /api/protected/moderation/summary` 在一条 SQL、同一数据库快照中返回两组计数，不读取正文：
+
+- `data.board`：全部 `src=board` 的河灯留言，`scope=all`。
+- `data.comments`：`is_deleted=0` 的文章评论，`scope=not_deleted`。后台记录列表仍可包含软删除项，统计范围因此可能不同。
+
+每组包含 `total`、`pending`、`passed`、`rejected`、`aiPassed`、`aiFlagged`、
+`aiRejected`、`aiUnreviewed`。两组分布各自与所属资源总数对应；AI 未处理不证明已经人工审核。
 数据库失败、未知状态返回错误，不能转成零计数。

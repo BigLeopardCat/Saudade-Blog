@@ -1,6 +1,6 @@
 use super::*;
 use sea_orm::{
-    Database, DatabaseBackend, MockDatabase, PaginatorTrait, QueryTrait, Statement,
+    Database, DatabaseBackend, MockDatabase, PaginatorTrait, QuerySelect, QueryTrait, Statement,
     TransactionTrait,
 };
 use serde_json::json;
@@ -22,6 +22,61 @@ fn review_filters_are_closed_and_page_offsets_cannot_overflow() {
     assert_eq!(page_window(Some(0), Some(0)).unwrap(), Some((1, 0)));
     assert_eq!(page_window(None, Some(999)).unwrap(), Some((200, 0)));
     assert!(page_window(Some(u64::MAX), Some(200)).is_err());
+}
+
+#[test]
+fn aggregate_keeps_resource_scopes_and_review_axes_separate() {
+    let rows = vec![
+        GroupCount {
+            resource: "board".into(),
+            approved: 0,
+            ai_result: Some("reject".into()),
+            count: 2,
+        },
+        GroupCount {
+            resource: "board".into(),
+            approved: 1,
+            ai_result: None,
+            count: 3,
+        },
+        GroupCount {
+            resource: "comments".into(),
+            approved: 2,
+            ai_result: Some("pass".into()),
+            count: 1,
+        },
+    ];
+    let result = aggregate(rows).unwrap();
+    assert_eq!(result.board.total, 5);
+    assert_eq!(result.board.pending, 2);
+    assert_eq!(result.board.ai_rejected, 2);
+    assert_eq!(result.board.ai_unreviewed, 3);
+    assert_eq!(result.comments.total, 1);
+    assert_eq!(result.comments.rejected, 1);
+    assert_eq!(result.comments.ai_passed, 1);
+    let empty = aggregate(vec![]).unwrap();
+    assert_eq!(empty.board.total, 0);
+    assert_eq!(empty.comments.total, 0);
+    assert_eq!(empty.board.scope, "all");
+    assert_eq!(empty.comments.scope, "not_deleted");
+}
+
+#[test]
+fn invalid_groups_fail_instead_of_becoming_zero_or_partial_results() {
+    for (resource, approved, ai, count) in [
+        ("unknown", 0, None, 1),
+        ("board", 3, None, 1),
+        ("comments", 0, Some("unknown"), 1),
+        ("board", 0, None, -1),
+    ] {
+        assert!(aggregate(vec![GroupCount {
+            resource: resource.into(),
+            approved,
+            ai_result: ai.map(str::to_owned),
+            count,
+        }])
+        .is_err());
+    }
 }
 
 #[test]
@@ -52,8 +107,11 @@ async fn aggregate_failure_remains_unknown_and_does_not_fetch_content() {
         .append_query_errors([DbErr::Custom("offline database failure".into())])
         .into_connection();
     assert!(summary(&db).await.is_err());
-    let sql = format!("{:?}", db.into_transaction_log());
+    let log = db.into_transaction_log();
+    assert_eq!(log.len(), 1);
+    let sql = format!("{log:?}");
     assert!(sql.contains("COUNT") && sql.contains("GROUP BY"));
+    assert!(sql.contains("UNION ALL") && sql.contains("is_deleted = 0"));
     assert!(!sql.contains("content"));
 }
 
@@ -69,7 +127,7 @@ async fn postgres_review_counts_and_pages_use_the_same_filtered_rows() {
         "INSERT INTO \"user\" (username,nickname,password,role) VALUES ($1,$1,$2,'user') RETURNING id",
         vec![name.clone().into(), uuid::Uuid::new_v4().to_string().into()])).await.unwrap().unwrap();
     let uid: i32 = row.try_get("", "id").unwrap();
-    let before = summary(&txn).await.unwrap();
+    let before = summary(&txn).await.unwrap().board;
     for _ in 0..7 {
         txn.execute(Statement::from_sql_and_values(DatabaseBackend::Postgres,
             "INSERT INTO talk (title,content,cat,v,author,user_id,src,approved,ai_result,created_at,updated_at) \
@@ -81,7 +139,7 @@ async fn postgres_review_counts_and_pages_use_the_same_filtered_rows() {
         "INSERT INTO talk (title,content,cat,v,author,user_id,src,approved,created_at,updated_at) \
          VALUES ('test','unrelated body','愿',0,'display only',$1,'talk',1,localtimestamp,localtimestamp)",
         vec![uid.into()])).await.unwrap();
-    let after = summary(&txn).await.unwrap();
+    let after = summary(&txn).await.unwrap().board;
     assert_eq!(after.total, before.total + 7);
     assert_eq!(after.pending, before.pending + 7);
     assert_eq!(after.ai_rejected, before.ai_rejected + 7);
@@ -114,11 +172,23 @@ async fn postgres_review_counts_and_pages_use_the_same_filtered_rows() {
         "INSERT INTO note (title,content,created_at,updated_at) VALUES ('test','',localtimestamp,localtimestamp) RETURNING id".to_string()))
         .await.unwrap().unwrap();
     let note_id: i32 = row.try_get("", "id").unwrap();
+    let comments_before = summary(&txn).await.unwrap().comments;
     for _ in 0..7 {
         txn.execute(Statement::from_sql_and_values(DatabaseBackend::Postgres,
             "INSERT INTO note_comment (note_id,user_id,content,approved,is_deleted) VALUES ($1,$2,'body without author name',0,0)",
             vec![note_id.into(), uid.into()])).await.unwrap();
     }
+    txn.execute(Statement::from_sql_and_values(DatabaseBackend::Postgres,
+        "INSERT INTO note_comment (note_id,user_id,content,approved,is_deleted) VALUES ($1,$2,'deleted review',0,1)",
+        vec![note_id.into(), uid.into()])).await.unwrap();
+    let comments_after = summary(&txn).await.unwrap().comments;
+    assert_eq!(comments_after.total, comments_before.total + 7);
+    assert_eq!(comments_after.pending, comments_before.pending + 7);
+    assert_eq!(
+        comments_after.ai_unreviewed,
+        comments_before.ai_unreviewed + 7
+    );
+    assert_eq!(comments_after.scope, "not_deleted");
     let comment = serde_json::from_value(
         json!({"status":"pending", "q":name.to_uppercase(), "note_id":note_id}),
     )
@@ -128,7 +198,7 @@ async fn postgres_review_counts_and_pages_use_the_same_filtered_rows() {
             .count(&txn)
             .await
             .unwrap(),
-        7
+        8
     );
     assert_eq!(
         super::super::comments::comment_admin_filter(&comment)
@@ -138,7 +208,7 @@ async fn postgres_review_counts_and_pages_use_the_same_filtered_rows() {
             .await
             .unwrap()
             .len(),
-        2
+        3
     );
     txn.rollback().await.unwrap();
 }
