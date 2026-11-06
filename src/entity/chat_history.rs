@@ -11,6 +11,7 @@ pub struct Model {
     pub conversation_id: i32,
     /// 产生记录时已核实的调用者角色；未知来源的旧记录为 None。
     pub source_role: Option<String>,
+    pub turn_id: Option<String>,
     pub role: String,
     #[sea_orm(column_type = "Text")]
     pub content: String,

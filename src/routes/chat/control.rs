@@ -83,7 +83,8 @@ pub(super) fn valid(payload: &ChatRequest) -> bool {
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
     };
-    identifier(&payload.task_id)
+    identifier(&payload.turn_id)
+        && identifier(&payload.task_id)
         && identifier(&payload.resume_task)
         && payload.browser_result.as_ref().is_none_or(|result| {
             !payload.resume_task.is_empty()

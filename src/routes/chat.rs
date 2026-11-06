@@ -1,5 +1,8 @@
 mod task_manager;
-pub use task_manager::{list as tasks_handler, cancel as cancel_task_handler, cancel_schedule as cancel_schedule_handler, service_status};
+pub use task_manager::{
+    cancel as cancel_task_handler, cancel_schedule as cancel_schedule_handler,
+    list as tasks_handler, service_status,
+};
 mod weather;
 pub use weather::WeatherSnapshot;
 mod context;
@@ -8,8 +11,10 @@ use context::prepare_chat;
 use execution_history::*;
 mod control;
 mod task_inputs;
-pub use task_inputs::{submit_handler as task_input_handler, status_handler as task_input_status_handler};
 pub use task_inputs::confirmation_handler as task_confirmation_handler;
+pub use task_inputs::{
+    status_handler as task_input_status_handler, submit_handler as task_input_handler,
+};
 mod pending;
 mod persistence;
 use persistence::{save_assistant_reply, save_execution_log, PERSISTENCE_ERROR};
@@ -18,27 +23,27 @@ mod synchronous;
 pub use synchronous::chat_handler;
 #[cfg(test)]
 mod stream_tests;
-use protocol::{Frame, event as stream_event};
-use eventsource_stream::Eventsource;
 use axum::response::sse::{KeepAlive, Sse};
+use eventsource_stream::Eventsource;
+use protocol::{event as stream_event, Frame};
 mod approval;
 pub use approval::cancel_handler;
 use approval::claim_confirm_token;
 #[cfg(test)]
 use approval::{b64url_decode, token_jti};
 
+use crate::auth_jwt;
+use crate::entity::user;
+use crate::routes::AppState;
 use axum::{
-    Json,
     body::Bytes,
     extract::{Query, Request, State},
-    http::{HeaderMap, StatusCode, header},
+    http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
+    Json,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use crate::routes::AppState;
-use crate::auth_jwt;
-use crate::entity::user;
 use tracing::{info, warn};
 
 pub use control::BrowserResult;
@@ -50,6 +55,8 @@ pub struct ChatRequest {
     pub task_id: String,
     #[serde(default)]
     pub task_inputs: bool,
+    #[serde(default)]
+    pub turn_id: String,
     #[serde(default)]
     pub resume_task: String,
     #[serde(default)]
@@ -64,7 +71,7 @@ pub struct ChatRequest {
     pub current_effects: Option<String>,
     #[serde(default)]
     pub current_darkmode: Option<String>,
-    #[serde(default, deserialize_with="weather::optional")]
+    #[serde(default, deserialize_with = "weather::optional")]
     pub current_weather: Option<WeatherSnapshot>,
     #[serde(default)]
     pub image: Option<Vec<String>>,
@@ -84,19 +91,20 @@ pub struct ChatResponse {
     pub error: Option<String>,
 }
 
-use sea_orm::{EntityTrait, Set, QueryOrder, QueryFilter, ColumnTrait, QuerySelect, ActiveModelTrait};
-use sea_orm::sea_query::Expr; // Expr 不在 sea-orm 根（0.12.15 仅 pub use sea_query 全名）
+use super::chat_context::{self, BootstrapContext};
 use crate::entity::{chat_history, chat_image, conversation};
 use crate::routes::conversation::resolve_conversation_id;
-use super::chat_context::{self, BootstrapContext};
-use futures::StreamExt;
 use async_stream::stream;
+use futures::StreamExt;
+use sea_orm::sea_query::Expr;
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set};
 
 /// 对话上下文：由 prepare_chat 组装，/chat 与 /chat/stream 共用
 struct ChatCtx {
     uid: i32,
     conversation_id: i32,
     trace_id: String,
+    turn_id: String,
     body: serde_json::Value,
     role: Option<String>,
 }
@@ -117,6 +125,8 @@ fn trace_id_of(req: &Request) -> String {
 #[derive(Serialize)]
 pub struct HistoryItem {
     pub id: i32,
+    pub turn_id: Option<String>,
+    pub parent_turn_id: Option<String>,
     pub role: String,
     pub content: String,
     pub time: i64,
@@ -125,10 +135,7 @@ pub struct HistoryItem {
 
 const CHAT_HISTORY_IMAGE_BUDGET: usize = 8 * 1024 * 1024;
 
-/// 按预算裁剪图片（纯函数，判据在下面的 `mod tests`）。
-/// 输入**从新到旧**的 `(消息 id, 该条图片总字节)`，返回允许带图的 id 集合。
-/// 装不下的那条**与比它更早的全部**不给图 —— 给"残缺数组"（本该 3 张只给 1 张）
-/// 会让用户以为图丢了，空数组走的是前端既有的"这条没图"路径，是诚实的那一个。
+/// 从新到旧保留完整消息的图片；预算不足时省略该条及更早消息的全部图片。
 fn fit_image_budget(newest_first: &[(i32, usize)]) -> std::collections::HashSet<i32> {
     let mut out = std::collections::HashSet::new();
     let mut used = 0usize;
@@ -152,7 +159,9 @@ async fn load_history_images(
     recent: &[chat_history::Model],
 ) -> Result<std::collections::HashMap<i32, Vec<String>>, sea_orm::DbErr> {
     let mut out = std::collections::HashMap::new();
-    if recent.is_empty() { return Ok(out); }
+    if recent.is_empty() {
+        return Ok(out);
+    }
     let ids: Vec<i32> = recent.iter().map(|h| h.id).collect();
     let sizes = chat_image::Entity::find()
         .select_only()
@@ -161,24 +170,35 @@ async fn load_history_images(
         .column_as(Expr::cust("octet_length(\"data\")"), "bytes")
         .filter(chat_image::Column::MessageId.is_in(ids))
         .into_tuple::<(i32, i32, i32)>()
-        .all(db).await?;
+        .all(db)
+        .await?;
     let mut totals = std::collections::HashMap::<i32, usize>::new();
     for (_, mid, bytes) in &sizes {
         *totals.entry(*mid).or_default() += (*bytes).max(0) as usize;
     }
-    let budget_in: Vec<(i32, usize)> = recent.iter()
-        .map(|h| (h.id, totals.get(&h.id).copied().unwrap_or(0))).collect();
+    let budget_in: Vec<(i32, usize)> = recent
+        .iter()
+        .map(|h| (h.id, totals.get(&h.id).copied().unwrap_or(0)))
+        .collect();
     let allowed = fit_image_budget(&budget_in);
-    let image_ids: Vec<i32> = sizes.into_iter()
-        .filter(|(_, mid, _)| allowed.contains(mid)).map(|(id, _, _)| id).collect();
-    if image_ids.is_empty() { return Ok(out); }
+    let image_ids: Vec<i32> = sizes
+        .into_iter()
+        .filter(|(_, mid, _)| allowed.contains(mid))
+        .map(|(id, _, _)| id)
+        .collect();
+    if image_ids.is_empty() {
+        return Ok(out);
+    }
     let rows = chat_image::Entity::find()
         .filter(chat_image::Column::Id.is_in(image_ids))
         .order_by_asc(chat_image::Column::MessageId)
         .order_by_asc(chat_image::Column::Seq)
-        .all(db).await?;
+        .all(db)
+        .await?;
     for row in rows {
-        out.entry(row.message_id).or_insert_with(Vec::new).push(row.data);
+        out.entry(row.message_id)
+            .or_insert_with(Vec::new)
+            .push(row.data);
     }
     Ok(out)
 }
@@ -209,22 +229,27 @@ pub async fn chat_history_handler(
         }
     };
     // 会话解析（GET 不自动建会话，保持无副作用）：无会话 → 200 空列表
-    let conv_id = match resolve_conversation_id(&state.db, uid, query.conversation_id, false).await {
+    let conv_id = match resolve_conversation_id(&state.db, uid, query.conversation_id, false).await
+    {
         Ok(Some(c)) => c,
         Ok(None) => {
-            return (StatusCode::OK, Json(serde_json::json!({"items": [], "count": 0}))).into_response();
+            return (
+                StatusCode::OK,
+                Json(serde_json::json!({"items": [], "count": 0})),
+            )
+                .into_response();
         }
         Err(()) => {
             return (
                 StatusCode::NOT_FOUND,
-                Json(serde_json::json!({"items": [], "count": 0, "error": "conversation_not_found"})),
+                Json(
+                    serde_json::json!({"items": [], "count": 0, "error": "conversation_not_found"}),
+                ),
             )
                 .into_response();
         }
     };
-    // 会话内最近 50 条（与前端显示上限一致）；会话内 order_by_desc(Id) 单调唯一、
-    // 即时间序（单会话串行写入，CreatedAt 排序从此退役），命中 idx_conv_id 索引。
-    // before_id 时改为"该 id 之前最近 50 条"（更早窗口翻页，仍升序回传）
+    // 以主键游标读取最近 50 条；before_id 向更早历史翻页，响应按升序展示。
     let mut finder = chat_history::Entity::find()
         .filter(chat_history::Column::UserId.eq(uid))
         .filter(chat_history::Column::ConversationId.eq(conv_id));
@@ -241,9 +266,31 @@ pub async fn chat_history_handler(
     let mut imgs_by_msg = match imgs {
         Ok(v) => v,
         Err(e) => {
-            warn!(user_id = uid, conversation_id = conv_id,
-                "chat: 历史图片查询失败（本轮历史不带图）: {}", e);
+            warn!(
+                user_id = uid,
+                conversation_id = conv_id,
+                "chat: 历史图片查询失败（本轮历史不带图）: {}",
+                e
+            );
             std::collections::HashMap::new()
+        }
+    };
+    let parents = match task_inputs::history_tasks(
+        &state.db,
+        uid,
+        conv_id,
+        &recent.iter().map(|row| row.id).collect::<Vec<_>>(),
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err(error) => {
+            warn!(%error,conversation_id=conv_id,"history task identities unavailable");
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error":"history_unavailable"})),
+            )
+                .into_response();
         }
     };
     let items: Vec<HistoryItem> = recent
@@ -251,9 +298,16 @@ pub async fn chat_history_handler(
         .rev() // 时间升序（聊天软件阅读序）
         .map(|h| HistoryItem {
             id: h.id,
+            turn_id: h.turn_id.clone(),
+            parent_turn_id: parents.get(&h.id).cloned(),
             role: h.role.clone(),
             content: h.content.clone(),
-            time: h.created_at.and_local_timezone(chrono::Local).single().map(|dt| dt.timestamp_millis()).unwrap_or(0),
+            time: h
+                .created_at
+                .and_local_timezone(chrono::Local)
+                .single()
+                .map(|dt| dt.timestamp_millis())
+                .unwrap_or(0),
             images: imgs_by_msg.remove(&h.id).unwrap_or_default(),
         })
         .collect();
@@ -268,104 +322,30 @@ pub async fn chat_history_handler(
         .into_response()
 }
 
-#[derive(Deserialize)]
-pub struct DiscardReq {
-    #[serde(default)]
-    pub text: Option<String>,
-    #[serde(default)]
-    pub conversation_id: Option<i32>,
-}
-
-pub async fn discard_handler(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    payload: Option<Json<DiscardReq>>,
-) -> Response {
-    let uid = match auth_jwt::auth_uid(&state.db, &headers).await {
-        Ok(uid) => uid,
-        // 401 保持原样，多带一句 message（同上）
-        Err(e) => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({
-                    "success": false, "error": "unauthorized", "message": e.message()
-                })),
-            )
-                .into_response();
-        }
-    };
-    let conv_opt = payload.as_ref().and_then(|p| p.conversation_id);
-    // 会话解析：显式 id 已删 / 无任何会话 → 空操作 success（幂等设计，见上注释）
-    let conv_id = match resolve_conversation_id(&state.db, uid, conv_opt, false).await {
-        Ok(Some(c)) => c,
-        _ => return (StatusCode::OK, Json(serde_json::json!({"success": true}))).into_response(),
-    };
-    let last_user = chat_history::Entity::find()
-        .filter(chat_history::Column::UserId.eq(uid))
-        .filter(chat_history::Column::ConversationId.eq(conv_id))
-        .filter(chat_history::Column::Role.eq("user"))
-        .order_by_desc(chat_history::Column::Id)
-        .one(&state.db)
-        .await;
-    let Ok(Some(u)) = last_user else {
-        return (StatusCode::OK, Json(serde_json::json!({"success": true}))).into_response();
-    };
-    if let Some(Json(DiscardReq { text: Some(t), .. })) = payload {
-        if !t.is_empty()
-            && u.content != t
-            && !u
-                .content
-                .strip_prefix(t.as_str())
-                .map(|rest| rest.is_empty() || rest.starts_with("\n[图片"))
-                .unwrap_or(false)
-        {
-            // 不匹配：期间已发新消息或原文不一致——不删任何记录（保留新轮）
-            return (
-                StatusCode::OK,
-                Json(serde_json::json!({
-                    "success": false,
-                    "reason": "mismatch",
-                    "error": "最后一条消息不是重发原文（可能已发送新消息），未删除"
-                })),
-            )
-                .into_response();
-        }
-    }
-    if let Err(error) = chat_context::discard(&state.db, uid, conv_id, u.id).await {
-        warn!(%error, user_id=uid, conversation_id=conv_id, "chat discard failed");
-        return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-            "success": false, "error": "未能保存本次丢弃，请稍后重试"
-        }))).into_response();
-    }
-    // 历史提交后同步清理执行内核上下文；带原文防止误删较新的轮次。
-    crate::routes::conversation::drop_checkpoint_turn(conv_id, &u.content, uid).await;
-    (StatusCode::OK, Json(serde_json::json!({"success": true}))).into_response()
-}
-
-/// 鉴权 + 请求体解析 + 会话解析 + 保存用户消息 + 加载历史/摘要 + 组装 agent 请求体。
-/// 错误形态：Err(OK, …) = 历史 200 语义的 JSON 错误（合规文案/解析失败，前端既有
-/// 分支不变）；Err(NOT_FOUND, …) = 会话不存在/非本人（404；前端按 body.error ==
-/// conversation_not_found 恢复流程，与状态码无关）
-
-
+mod discard;
+pub use discard::discard_handler;
 
 fn derive_conv_title(content: &str) -> Option<String> {
     let mut lines: Vec<&str> = content.lines().collect();
     while let Some(last) = lines.last() {
-        let is_marker = *last == "[图片]"
-            || (last.starts_with("[图片×") && last.ends_with(']'));
-        if is_marker { lines.pop(); } else { break; }
+        let is_marker = *last == "[图片]" || (last.starts_with("[图片×") && last.ends_with(']'));
+        if is_marker {
+            lines.pop();
+        } else {
+            break;
+        }
     }
     let text = lines.join("\n").trim().to_string();
-    if text.is_empty() { return None; }
+    if text.is_empty() {
+        return None;
+    }
     Some(text.chars().take(40).collect())
 }
-
 
 /// Complete proposal JSON and display text are rejected above these bounds, never truncated.
 const PENDING_ARGS_COL_MAX: usize = 32_768;
 const PENDING_QUESTION_COL_MAX: usize = 32_768;
-/// Legacy choice lists and native confirmation/cancellation buttons share this bound.
+/// Bound serialized choice and confirmation controls.
 const PENDING_OPTIONS_COL_MAX: usize = 600;
 
 /// 取 JSON 字段并限长（缺字段/类型不对一律空串——待办是辅助事实，宁可少说）。
@@ -384,16 +364,29 @@ fn early_exit_response(status: StatusCode, body: ChatResponse, from: &str) -> Re
     }
     info!(stage = from, status = %status, "chat: early stream outcome");
     let events = if body.success && !body.reply.is_empty() {
-        vec![stream_event("text", body.reply), stream_event("done", serde_json::json!({}))]
+        vec![
+            stream_event("text", body.reply),
+            stream_event("done", serde_json::json!({})),
+        ]
     } else {
-        let message = body.error.filter(|s| !s.trim().is_empty())
+        let message = body
+            .error
+            .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| "服务暂时不可用，这一轮没有生成回复，请稍后再试。".to_string());
         vec![stream_event("error", message)]
     };
     let stream = futures::stream::iter(events.into_iter().map(Ok::<_, std::convert::Infallible>));
-    ([(header::HeaderName::from_static("x-accel-buffering"), "no"),
-      (header::HeaderName::from_static("x-agent-stream-version"), "2")],
-     Sse::new(stream)).into_response()
+    (
+        [
+            (header::HeaderName::from_static("x-accel-buffering"), "no"),
+            (
+                header::HeaderName::from_static("x-agent-stream-version"),
+                "2",
+            ),
+        ],
+        Sse::new(stream),
+    )
+        .into_response()
 }
 
 fn agent_sse_response(
@@ -406,18 +399,27 @@ fn agent_sse_response(
         .into_response()
 }
 
-pub async fn chat_stream_handler(
-    State(state): State<Arc<AppState>>,
-    req: Request,
-) -> Response {
+pub async fn chat_stream_handler(State(state): State<Arc<AppState>>, req: Request) -> Response {
     // Reject cached v1 clients before creating messages or consuming confirmation grants.
-    if req.headers().get("x-agent-stream-version").and_then(|v| v.to_str().ok()) != Some("2") {
-        return (StatusCode::CONFLICT, Json(ChatResponse {
-            reply: String::new(), success: false,
-            error: Some("聊天版本已更新，请刷新页面后重试。".to_string()),
-        })).into_response();
+    if req
+        .headers()
+        .get("x-agent-stream-version")
+        .and_then(|v| v.to_str().ok())
+        != Some("2")
+    {
+        return (
+            StatusCode::CONFLICT,
+            Json(ChatResponse {
+                reply: String::new(),
+                success: false,
+                error: Some("聊天版本已更新，请刷新页面后重试。".to_string()),
+            }),
+        )
+            .into_response();
     }
-    let expected_version = crate::auth_jwt::claims_from_headers(req.headers()).and_then(|c| c.ver).unwrap_or(-1);
+    let expected_version = crate::auth_jwt::claims_from_headers(req.headers())
+        .and_then(|c| c.ver)
+        .unwrap_or(-1);
     let ctx = match prepare_chat(&state, req).await {
         Ok(c) => c,
         // 早退一律转成 SSE 帧（见 early_exit_response 的头注）：`e.into_response()`
@@ -425,17 +427,30 @@ pub async fn chat_stream_handler(
         Err((status, Json(body))) => return early_exit_response(status, body, "prepare_chat"),
     };
 
-    let stream_url = agent_chat_url().strip_suffix("/chat").unwrap_or("").to_string() + "/chat/stream/v2";
+    let stream_url = agent_chat_url()
+        .strip_suffix("/chat")
+        .unwrap_or("")
+        .to_string()
+        + "/chat/stream/v2";
     info!(trace_id = %ctx.trace_id, user_id = ctx.uid, "chat: 转发 agent 流式");
     // 流式连接不设整体超时（长回答可达数分钟），connect/首字节由 reqwest 默认处理
     let upstream = match reqwest::Client::new()
         .post(&stream_url)
-        // 身份断言（同上）：流式这条路同样要带，否则 agent 打开强制校验后它会 401
-        .header("X-Agent-Assertion", crate::auth_jwt::create_chat_assertion(&state.db, ctx.uid, ctx.role.as_deref(), expected_version).await)
+        .header(
+            "X-Agent-Assertion",
+            crate::auth_jwt::create_chat_assertion(
+                &state.db,
+                ctx.uid,
+                ctx.role.as_deref(),
+                expected_version,
+            )
+            .await,
+        )
         .header("X-Request-ID", &ctx.trace_id)
         .json(&ctx.body)
         .send()
-        .await {
+        .await
+    {
         Ok(r) => r,
         Err(e) => {
             warn!(trace_id = %ctx.trace_id, error = %e, phase = "agent_connect",
@@ -474,7 +489,15 @@ pub async fn chat_stream_handler(
     // 帧循环里的告警要用（stream! 生成器闭包不能借用 ctx——它后面还要用 ctx 写响应头）
     let trace_id = ctx.trace_id.clone();
 
-    let body_stream = forward_agent_stream(state, uid, conversation_id, ctx.role, trace_id, upstream.bytes_stream());
+    let body_stream = forward_agent_stream(
+        state,
+        uid,
+        conversation_id,
+        ctx.role,
+        ctx.turn_id,
+        trace_id,
+        upstream.bytes_stream(),
+    );
 
     (
         [
@@ -484,10 +507,14 @@ pub async fn chat_stream_handler(
             // 关键：告知 nginx 不要缓冲此响应，否则 SSE 会被攒到结束才一次性下发
             (header::HeaderName::from_static("x-accel-buffering"), "no"),
             // 链路追踪：透传 trace id 给前端（前端可在网络面板按此 id 关联全链路日志）
-            (header::HeaderName::from_static("x-request-id"), &ctx.trace_id),
+            (
+                header::HeaderName::from_static("x-request-id"),
+                &ctx.trace_id,
+            ),
         ],
         agent_sse_response(body_stream),
-    ).into_response()
+    )
+        .into_response()
 }
 
 fn forward_agent_stream(
@@ -495,6 +522,7 @@ fn forward_agent_stream(
     uid: i32,
     conversation_id: i32,
     source_role: Option<String>,
+    turn_id: String,
     trace_id: String,
     upstream_stream: impl futures::Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
 ) -> impl futures::Stream<Item = Result<axum::response::sse::Event, axum::Error>> + Send {
@@ -525,7 +553,7 @@ fn forward_agent_stream(
                     if uid > 0 && !reply.is_empty() {
                         let state = state.clone();
                         if persistence::run(&trace_id, async move {
-                            save_assistant_reply(&state.db, uid, conversation_id, source_role, reply).await
+                            save_assistant_reply(&state.db, uid, conversation_id, source_role, &turn_id, reply).await
                         }).await.is_err() {
                             yield Ok(stream_event("error", PERSISTENCE_ERROR));
                             break;
@@ -554,8 +582,9 @@ fn forward_agent_stream(
                 Frame::Pending(value) => {
                     if uid > 0 {
                         let state = state.clone();
+                        let turn_id=turn_id.clone();
                         if persistence::run(&trace_id, async move {
-                            if pending::save_pending_action(&state.db, uid, conversation_id, &value.into()).await {
+                            if pending::save_pending_action(&state.db, uid, conversation_id, &turn_id, &value.into()).await {
                                 Ok(())
                             } else {
                                 Err(sea_orm::DbErr::Custom("pending state was not saved".into()))
@@ -600,6 +629,9 @@ fn forward_agent_stream(
         }
     }
 }
+
+#[cfg(test)]
+mod test_support;
 
 #[cfg(test)]
 mod tests;

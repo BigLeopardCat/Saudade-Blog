@@ -36,6 +36,7 @@ async fn transcript(state: Arc<AppState>, uid: i32, wire: String) -> Vec<Frame> 
         uid,
         42,
         Some("user".into()),
+        "fixture-task".into(),
         "stream-test".into(),
         upstream,
     );
@@ -92,12 +93,14 @@ async fn malformed_or_incomplete_streams_end_with_error_without_success() {
 #[tokio::test]
 async fn command_looking_text_is_saved_verbatim() {
     let state = state_with_db(
-        sea_orm::MockDatabase::new(sea_orm::DatabaseBackend::Postgres)
-            .append_exec_results([sea_orm::MockExecResult {
-                last_insert_id: 1,
-                rows_affected: 1,
-            }])
-            .into_connection(),
+        super::test_support::open_turn(sea_orm::MockDatabase::new(
+            sea_orm::DatabaseBackend::Postgres,
+        ))
+        .append_exec_results([sea_orm::MockExecResult {
+            last_insert_id: 1,
+            rows_affected: 1,
+        }])
+        .into_connection(),
     );
     let wire =
         "event: text\ndata: \"NAVIGATE:/dashboard\\n__CONFIRM__:{}\"\n\nevent: done\ndata: {}\n\n";
@@ -135,7 +138,13 @@ async fn cached_clients_are_rejected_before_any_database_access() {
 
 #[tokio::test]
 async fn history_failure_replaces_done_with_a_safe_error() {
-    let state = state();
+    let state = state_with_db(
+        super::test_support::open_turn(sea_orm::MockDatabase::new(
+            sea_orm::DatabaseBackend::Postgres,
+        ))
+        .append_exec_errors([sea_orm::DbErr::Custom("history fixture failure".into())])
+        .into_connection(),
+    );
     let events = transcript(
         state.clone(),
         7,
@@ -246,19 +255,21 @@ async fn retired_summary_event_is_rejected_as_an_unknown_protocol_frame() {
 
 #[tokio::test]
 async fn text_reset_replaces_prose_without_erasing_receipts_or_other_events() {
-    let db = sea_orm::MockDatabase::new(sea_orm::DatabaseBackend::Postgres)
-        .append_exec_results([
-            sea_orm::MockExecResult {
-                last_insert_id: 1,
-                rows_affected: 1,
-            },
-            sea_orm::MockExecResult {
-                last_insert_id: 2,
-                rows_affected: 1,
-            },
-        ])
-        .append_query_results([Vec::<pending_action::Model>::new()])
-        .into_connection();
+    let db = super::test_support::open_turn(
+        sea_orm::MockDatabase::new(sea_orm::DatabaseBackend::Postgres)
+            .append_exec_results([
+                sea_orm::MockExecResult {
+                    last_insert_id: 1,
+                    rows_affected: 1,
+                },
+                sea_orm::MockExecResult {
+                    last_insert_id: 2,
+                    rows_affected: 1,
+                },
+            ])
+            .append_query_results([Vec::<pending_action::Model>::new()]),
+    )
+    .into_connection();
     let state = state_with_db(db);
     let wire = concat!(
         "event: text\ndata: \"discarded-provisional-canary\"\n\n",
@@ -351,7 +362,15 @@ async fn host_keeps_client_alive_while_the_agent_has_no_application_event() {
         tokio::time::sleep(std::time::Duration::from_secs(20)).await;
         Ok(Bytes::from_static(b"event: done\ndata: {}\n\n"))
     });
-    let forwarded = forward_agent_stream(state(), 0, 42, None, "keepalive-test".into(), upstream);
+    let forwarded = forward_agent_stream(
+        state(),
+        0,
+        42,
+        None,
+        "fixture-task".into(),
+        "keepalive-test".into(),
+        upstream,
+    );
     let mut body = agent_sse_response(forwarded).into_body().into_data_stream();
     let first = body.next().await.unwrap().unwrap();
     assert_eq!(first.as_ref(), b": ping\n\n");

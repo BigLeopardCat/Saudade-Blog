@@ -10,8 +10,7 @@ pub(super) async fn prepare_chat(
     let trace_id = trace_id_of(&req);
     let auth = auth_jwt::auth_uid(&state.db, req.headers()).await;
 
-    // 解析请求体（8MB：多模态多图 base64 数据（最多 6 张 × 每张 ≤1MB dataURL），
-    // 原 2MB 会拒掉多图）
+    // Bound inline images before forwarding the request.
     let body_bytes = match axum::body::to_bytes(req.into_body(), 8 * 1024 * 1024).await {
         Ok(b) => b,
         Err(_) => {
@@ -25,7 +24,7 @@ pub(super) async fn prepare_chat(
             ))
         }
     };
-    let payload: ChatRequest = match serde_json::from_slice(&body_bytes) {
+    let mut payload: ChatRequest = match serde_json::from_slice(&body_bytes) {
         Ok(p) => p,
         Err(e) => {
             return Err((
@@ -110,6 +109,69 @@ pub(super) async fn prepare_chat(
         .map(|s| !s.trim().is_empty())
         .unwrap_or(false);
 
+    if payload.resume_task.is_empty() && !is_confirm {
+        if payload.turn_id.is_empty() {
+            payload.turn_id = if payload.task_id.is_empty() {
+                uuid::Uuid::new_v4().simple().to_string()
+            } else {
+                payload.task_id.clone()
+            };
+        }
+        if payload.task_id.is_empty() {
+            payload.task_id = payload.turn_id.clone();
+        }
+    }
+    match crate::checkpoint_cleanup::has_pending_turn(&state.db, conversation_id).await {
+        Ok(false) => {}
+        other => {
+            return Err((
+                if other.is_ok() {
+                    StatusCode::CONFLICT
+                } else {
+                    StatusCode::SERVICE_UNAVAILABLE
+                },
+                Json(ChatResponse {
+                    reply: String::new(),
+                    success: false,
+                    error: Some("历史上下文正在同步，请稍后重试。".into()),
+                }),
+            ))
+        }
+    }
+    if is_confirm || !payload.resume_task.is_empty() {
+        let source = chat_history::Entity::find()
+            .filter(chat_history::Column::UserId.eq(uid))
+            .filter(chat_history::Column::ConversationId.eq(conversation_id))
+            .filter(chat_history::Column::Role.eq("user"))
+            .filter(chat_history::Column::TurnId.is_not_null())
+            .order_by_desc(chat_history::Column::Id)
+            .one(&state.db)
+            .await;
+        let authoritative = match source {
+            Ok(Some(message)) => message.turn_id.unwrap_or_default(),
+            _ => {
+                return Err((
+                    StatusCode::CONFLICT,
+                    Json(ChatResponse {
+                        reply: String::new(),
+                        success: false,
+                        error: Some("原始轮次标识不可用，请重新发起请求。".into()),
+                    }),
+                ))
+            }
+        };
+        if !payload.turn_id.is_empty() && payload.turn_id != authoritative {
+            return Err((
+                StatusCode::CONFLICT,
+                Json(ChatResponse {
+                    reply: String::new(),
+                    success: false,
+                    error: Some("该轮次已被替换，没有继续执行。".into()),
+                }),
+            ));
+        }
+        payload.turn_id = authoritative;
+    }
     let (quota, quota_blocked) = if is_confirm {
         (None, false)
     } else {
@@ -118,10 +180,7 @@ pub(super) async fn prepare_chat(
             (Some(crate::quota::view(0, 0, true)), false)
         } else {
             let limit = crate::quota::limit();
-            // 这一行的用量：只用于**注入一行事实**，不是判据——判据是那条带
-            // `WHERE chat_quota_used < ?` 的 UPDATE。并发下它可能比真实值小一两轮
-            // （读到之后、扣之前另一轮先扣了），代价是 agent 报的剩余轮数略偏高；
-            // 为此多查一次库不值得（多一次查询 = 多一处失败面）。
+            // 展示用量可能因并发略有滞后；额度准入以原子 try_consume 结果为准。
             let seen_used = user_row.as_ref().map(|u| u.chat_quota_used).unwrap_or(0);
             match crate::quota::try_consume(&state.db, uid, limit).await {
                 crate::quota::ConsumeOutcome::Consumed => {
@@ -139,7 +198,7 @@ pub(super) async fn prepare_chat(
         }
     };
 
-    // Legacy cards retain the host claim; signed native executors own replay.
+    // Signed confirmations have their own durable replay ledger.
     if is_confirm {
         if let Some(tok) = payload.confirm_token.as_deref() {
             if let Some(reason) = claim_confirm_token(&state.db, uid, tok).await {
@@ -167,18 +226,39 @@ pub(super) async fn prepare_chat(
     let user_msg_id = if is_confirm || !payload.resume_task.is_empty() {
         None
     } else {
-        chat_history::ActiveModel {
-            user_id: Set(uid),
-            conversation_id: Set(conversation_id),
-            role: Set("user".into()),
-            source_role: Set(role.clone()),
-            content: Set(stored_content.clone()),
-            ..Default::default()
-        }
-        .insert(&state.db)
+        match chat_context::append_user(
+            &state.db,
+            uid,
+            conversation_id,
+            role.as_deref(),
+            &payload.turn_id,
+            &stored_content,
+        )
         .await
-        .ok()
-        .map(|m| m.id)
+        {
+            Ok(Some(id)) => Some(id),
+            Ok(None) => {
+                return Err((
+                    StatusCode::CONFLICT,
+                    Json(ChatResponse {
+                        reply: String::new(),
+                        success: false,
+                        error: Some("该轮次已丢弃或历史正在同步，请重新发送。".into()),
+                    }),
+                ))
+            }
+            Err(error) => {
+                warn!(%error,conversation_id,"user message was not persisted");
+                return Err((
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(ChatResponse {
+                        reply: String::new(),
+                        success: false,
+                        error: Some("未能保存请求，请稍后重试。".into()),
+                    }),
+                ));
+            }
+        }
     };
 
     // 图片按消息批量原子写入；失败保留已保存的用户文本并告警。
@@ -257,6 +337,7 @@ pub(super) async fn prepare_chat(
         uid,
         conversation_id,
         trace_id,
+        turn_id: payload.turn_id.clone(),
         body,
         role,
     })
@@ -271,6 +352,7 @@ fn agent_request(
     serde_json::json!({
         "message": payload.message,
         "task_id": payload.task_id,
+        "turn_id": payload.turn_id,
         "task_inputs": payload.task_inputs,
         "resume_task": payload.resume_task,
         "browser_feedback": payload.browser_feedback,

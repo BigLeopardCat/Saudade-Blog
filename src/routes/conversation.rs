@@ -1,24 +1,23 @@
+use crate::auth_jwt;
+use crate::entity::{chat_history, conversation};
+use crate::routes::AppState;
+use crate::search_core::like_escape;
 use axum::{
-    Json,
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
+    Json,
 };
-use sea_orm::{ActiveModelTrait, ColumnTrait, Condition, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set, TransactionTrait};
 use sea_orm::sea_query::extension::postgres::PgExpr;
 use sea_orm::sea_query::{Alias, Expr};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, Condition, EntityTrait, QueryFilter, QueryOrder, QuerySelect,
+    Set, TransactionTrait,
+};
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
-use crate::routes::AppState;
-use crate::auth_jwt;
-use crate::search_core::like_escape;
-use crate::entity::{
-    chat_history, conversation,
-};
-
 
 /// DB 时间戳（+08:00 本地钟面，NaiveDateTime）→ 毫秒时间戳（与 HistoryItem.time 同约定）
 fn naive_ms(dt: chrono::NaiveDateTime) -> i64 {
@@ -58,7 +57,10 @@ pub(crate) async fn resolve_conversation_id(
         .filter(chat_history::Column::UserId.eq(uid))
         .order_by_desc(chat_history::Column::Id)
         .into_tuple::<i32>()
-        .one(db).await.ok().flatten();
+        .one(db)
+        .await
+        .ok()
+        .flatten();
     match last {
         Some(id) => Ok(Some(id)),
         None if create_if_none => {
@@ -84,7 +86,6 @@ pub struct ListQuery {
     q: Option<String>,
 }
 
-
 pub async fn list_conversations(
     State(state): State<Arc<AppState>>,
     Query(query): Query<ListQuery>,
@@ -108,7 +109,9 @@ pub async fn list_conversations(
             .select_only()
             .column(chat_history::Column::ConversationId)
             .column_as(
-                Expr::col(chat_history::Column::Id).max().cast_as(Alias::new("BIGINT")),
+                Expr::col(chat_history::Column::Id)
+                    .max()
+                    .cast_as(Alias::new("BIGINT")),
                 "max_id",
             )
             .filter(chat_history::Column::UserId.eq(uid))
@@ -142,23 +145,25 @@ pub async fn list_conversations(
         };
         finder = finder.filter(cond);
     }
-    let convs = finder
-        .limit(200)
-        .all(&state.db)
-        .await
-        .unwrap_or_default();
+    let convs = finder.limit(200).all(&state.db).await.unwrap_or_default();
     // 标题命中的首条消息一次聚合取回，避免最多 200 次串行往返和重复读取正文。
     if q.is_some() {
-        let need: Vec<i32> = convs.iter().filter(|c| !hit_by_conv.contains_key(&c.id))
-            .map(|c| c.id).collect();
+        let need: Vec<i32> = convs
+            .iter()
+            .filter(|c| !hit_by_conv.contains_key(&c.id))
+            .map(|c| c.id)
+            .collect();
         if !need.is_empty() {
-            let firsts = chat_history::Entity::find().select_only()
+            let firsts = chat_history::Entity::find()
+                .select_only()
                 .column(chat_history::Column::ConversationId)
                 .column_as(Expr::col(chat_history::Column::Id).min(), "first_id")
                 .filter(chat_history::Column::UserId.eq(uid))
                 .filter(chat_history::Column::ConversationId.is_in(need))
                 .group_by(chat_history::Column::ConversationId)
-                .into_tuple::<(i32, i32)>().all(&state.db).await;
+                .into_tuple::<(i32, i32)>()
+                .all(&state.db)
+                .await;
             match firsts {
                 Ok(rows) => hit_by_conv.extend(rows),
                 Err(e) => tracing::warn!("[会话] 加载标题命中定位失败: {e}"),
@@ -228,7 +233,10 @@ pub(crate) async fn purge_conversation_data<C: sea_orm::ConnectionTrait>(
         ConvScope::ConversationId(id) => finder.filter(conversation::Column::Id.eq(id)),
         ConvScope::UserId(uid) => finder.filter(conversation::Column::UserId.eq(uid)),
     };
-    let conversations = finder.lock(sea_orm::sea_query::LockType::Update).all(db).await?;
+    let conversations = finder
+        .lock(sea_orm::sea_query::LockType::Update)
+        .all(db)
+        .await?;
     for row in &conversations {
         crate::checkpoint_cleanup::enqueue(db, row.id, row.user_id).await?;
     }
@@ -239,39 +247,12 @@ pub(crate) async fn purge_conversation_data<C: sea_orm::ConnectionTrait>(
         }
         ConvScope::UserId(uid) => {
             conversation::Entity::delete_many()
-                .filter(conversation::Column::UserId.eq(uid)).exec(db).await?;
+                .filter(conversation::Column::UserId.eq(uid))
+                .exec(db)
+                .await?;
         }
     }
     Ok(ids)
-}
-
-pub(crate) async fn drop_checkpoint_turn(conversation_id: i32, text: &str, uid: i32) {
-    let url = format!("{}/checkpoint/{conversation_id}/drop_turn",
-                      crate::routes::graph::agent_base_url());
-    let sent = reqwest::Client::new()
-        .post(&url)
-        .header("X-Agent-Assertion", crate::auth_jwt::create_agent_assertion(uid, None))
-        .json(&serde_json::json!({ "text": text, "uid": uid }))
-        .timeout(Duration::from_secs(3))
-        .send()
-        .await;
-    match sent {
-        Ok(r) => {
-            let ok = r.status().is_success();
-            let v = r.json::<serde_json::Value>().await
-                .unwrap_or_else(|_| serde_json::json!({}));
-            if !ok {
-                tracing::warn!("[会话] 丢弃那一轮的钩子非 2xx conv={conversation_id}");
-            } else if !v["dropped"].as_bool().unwrap_or(false) {
-                // `no_text` / `mismatch` 都落这里——它们是"没动手"，**不是成功**。
-                tracing::warn!(
-                    "[会话] 丢弃那一轮没生效 conv={} why={}（图里那条 user 还在，下一轮它还看得见）",
-                    conversation_id, v["why"].as_str().unwrap_or("?")
-                );
-            }
-        }
-        Err(e) => tracing::warn!("[会话] 丢弃那一轮的钩子失败 conv={conversation_id}: {e}"),
-    }
 }
 
 /// DELETE /api/chat/conversations/:id：删除会话 + 级联删其历史与摘要（用户级清洗手段）。
@@ -459,8 +440,7 @@ pub async fn search_chat_messages(
     // 命中消息的会话元信息批量补查（标题 + 最后活动时间）
     let mut meta_by_conv: HashMap<i32, (Option<String>, i64)> = HashMap::new();
     {
-        let ids: std::collections::HashSet<i32> =
-            rows.iter().map(|r| r.conversation_id).collect();
+        let ids: std::collections::HashSet<i32> = rows.iter().map(|r| r.conversation_id).collect();
         if !ids.is_empty() {
             let convs = conversation::Entity::find()
                 .filter(conversation::Column::Id.is_in(ids.iter().copied()))
@@ -500,13 +480,16 @@ pub async fn search_chat_messages(
             })
         })
         .collect();
-    (StatusCode::OK, Json(json!({"hits": hits, "count": hits.len()}))).into_response()
+    (
+        StatusCode::OK,
+        Json(json!({"hits": hits, "count": hits.len()})),
+    )
+        .into_response()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
 
     // DB 时间戳 → 毫秒
     #[test]

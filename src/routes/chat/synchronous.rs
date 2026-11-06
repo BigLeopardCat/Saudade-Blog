@@ -99,7 +99,16 @@ pub async fn chat_handler(State(state): State<Arc<AppState>>, req: Request) -> R
         let reply = response.reply.clone();
         // The existing tracked persistence survives a disconnected HTTP waiter.
         let public = persistence::run(&ctx.trace_id, async move {
-            persist(&write_state.db, uid, cid, role, &reply, events).await
+            persist(
+                &write_state.db,
+                uid,
+                cid,
+                role,
+                &ctx.turn_id,
+                &reply,
+                events,
+            )
+            .await
         })
         .await
         .map_err(|_| PERSISTENCE_ERROR.to_owned())?;
@@ -125,6 +134,7 @@ async fn persist(
     uid: i32,
     cid: i32,
     role: Option<String>,
+    turn_id: &str,
     reply: &str,
     events: Vec<ControlEvent>,
 ) -> Result<Vec<ControlEvent>, sea_orm::DbErr> {
@@ -141,7 +151,9 @@ async fn persist(
                 continue;
             }
             Frame::Pending(value) => {
-                if uid > 0 && !pending::save_pending_action(db, uid, cid, &value.into()).await {
+                if uid > 0
+                    && !pending::save_pending_action(db, uid, cid, turn_id, &value.into()).await
+                {
                     return Err(sea_orm::DbErr::Custom("pending state was not saved".into()));
                 }
                 continue;
@@ -157,7 +169,7 @@ async fn persist(
         public.push(event);
     }
     if uid > 0 && !reply.is_empty() {
-        save_assistant_reply(db, uid, cid, role, reply.to_owned()).await?;
+        save_assistant_reply(db, uid, cid, role, turn_id, reply.to_owned()).await?;
     }
     Ok(public)
 }
@@ -191,9 +203,17 @@ mod tests {
         ]});
         let response = AgentResponse::parse(body).unwrap();
         let db = sea_orm::MockDatabase::new(sea_orm::DatabaseBackend::Postgres).into_connection();
-        let public = persist(&db, 0, 0, None, &response.reply, response.events)
-            .await
-            .unwrap();
+        let public = persist(
+            &db,
+            0,
+            0,
+            None,
+            "fixture-task",
+            &response.reply,
+            response.events,
+        )
+        .await
+        .unwrap();
         assert_eq!(response.reply, "AUTO_NAVIGATE:/quoted");
         assert_eq!(public.len(), 3);
         assert_eq!(public[0].data["url"], "/article/1");
