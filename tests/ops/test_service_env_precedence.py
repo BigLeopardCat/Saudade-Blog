@@ -33,6 +33,9 @@ class ServiceConfiguration(unittest.TestCase):
                     self.assertIn("Environment=SAUDADE_IGNORE_ENV_FILE=1", unit)
                     self.assertIn("WorkingDirectory=/srv/agent/current", unit)
                     self.assertIn("ReadWritePaths=/var/lib/saudade-agent /var/cache/saudade-agent", unit)
+                    target = "append:/home/operator/blog/logs/agent/agent.log" if service == "saudade-agent" else "journal"
+                    self.assertIn("StandardOutput=" + target + "\n", unit)
+                    self.assertIn("StandardError=" + target + "\n", unit)
             self.assertIn("ExecStart=/srv/agent/current/scripts/serve.sh\n", (root / "saudade-agent.service").read_text())
             self.assertIn("ExecStart=/srv/agent/current/scripts/serve_scheduler.sh\n", (root / "saudade-scheduler.service").read_text())
             maintenance = (root / "saudade-agent-maintenance.service").read_text()

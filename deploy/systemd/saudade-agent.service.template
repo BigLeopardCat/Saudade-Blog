@@ -31,8 +31,8 @@ ReadWritePaths=/var/lib/saudade-agent /var/cache/saudade-agent
 BindReadOnlyPaths=-__APP_DIR__/logs/health.log:/run/saudade-host/logs/health.log
 BindReadOnlyPaths=-__APP_DIR__/logs/rust.log:/run/saudade-host/logs/rust.log
 InaccessiblePaths=-/etc/saudade/blog-runtime.env -/etc/saudade/embedding-api-key
-StandardOutput=append:__APP_DIR__/logs/agent/agent.log
-StandardError=append:__APP_DIR__/logs/agent/agent.log
+StandardOutput=__LOG_TARGET__
+StandardError=__LOG_TARGET__
 
 [Install]
 WantedBy=multi-user.target

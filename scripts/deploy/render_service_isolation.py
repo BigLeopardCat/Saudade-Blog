@@ -29,6 +29,8 @@ def render(app_dir: str, release_root: str, output: Path) -> None:
         text = agent.replace("__DESCRIPTION__", description).replace("__TYPE__", kind)
         text = text.replace("__COMMAND__", release_root + "/current/" + command)
         text = text.replace("__RESTART__", restart)
+        text = text.replace("__LOG_TARGET__", "append:" + app_dir + "/logs/agent/agent.log"
+                            if service == "saudade-agent" else "journal")
         (output / (service + ".service")).write_text(
             text.replace("__APP_DIR__", app_dir).replace("__RELEASE_ROOT__", release_root))
     (output / "saudade-rust.service").write_text(
