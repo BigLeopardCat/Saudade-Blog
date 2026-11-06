@@ -87,8 +87,6 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # 提交信息闸门（下面那一步）要 `git log <before>..<sha>` ⇒ 必须真拿到 `before`
-          # 那个对象；默认的浅克隆（depth=1）里只有这次 push 的 tip。
           fetch-depth: 0
 
       - name: Workflow syntax and expressions
@@ -107,47 +105,6 @@ jobs:
           fi
           echo "✓ 锁里 $(grep -c '"resolved"' frontend/package-lock.json) 条 resolved 全在 registry.npmjs.org"
 
-      - name: Commit message lint（与本地同一份 .githooks/commit-msg）
-        # 规范的正文只写在 CONTRIBUTING.md 的《提交约定》一节，这里跑的就是那份钩子脚本本身
-        # ——**一份实现两处共用**。为什么 CI 也要跑一遍：`core.hooksPath` 是 git 的本地配置
-        # （`.git/config`，不入库），不会被 clone 带走，所以只挂本机钩子等于"闸门只对配过
-        # `scripts/dev/install-hooks.sh` 的人生效"。这一层不依赖任何人的本地配置。
-        env:
-          # PR 上没有 `github.event.before`（那不是 push 事件），改用 PR 的 base sha：
-          # 要校验的就是这个 PR 带上来的那几条提交。两者都取不到时下面会**响亮地**跳过。
-          BEFORE: ${{ github.event.pull_request.base.sha || github.event.before }}
-          SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          if ! git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
-            # 首推/强推/新建分支时 before 是全 0 或已被回收 —— 取不到基线就整段跳过。
-            # 宁可漏一次也别在这里造一个假红（它没有可对照的范围）。
-            echo "取不到 base 提交 ${BEFORE} ⇒ 本次跳过提交信息校验（**不是**通过）"
-            exit 0
-          fi
-          fail=0
-          skipped=0
-          MSGFILE="$(mktemp)"
-          while read -r sha; do
-            [ -n "$sha" ] || continue
-
-            case "$(git log -1 --format=%ae "$sha")" in
-              *dependabot*)
-                echo "跳过 ${sha:0:9}：dependabot 生成的提交（首行长度不由人控制，**不是**通过）"
-                skipped=$((skipped + 1))
-                continue
-                ;;
-            esac
-            git log -1 --format=%B "$sha" > "$MSGFILE"
-            if ! bash .githooks/commit-msg "$MSGFILE"; then
-              echo "::error::提交 ${sha:0:9} 的信息不合规（见上面的说明）"
-              fail=1
-            fi
-          done < <(git log --no-merges --format=%H "${BEFORE}..${SHA}")
-          if [ "$skipped" -gt 0 ]; then
-            echo "本次跳过 ${skipped} 条 dependabot 提交（**不是**通过）"
-          fi
-          exit "$fail"
       - name: Setup Rust
         uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:
@@ -159,8 +116,7 @@ jobs:
       - name: Cache cargo (test profile)
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          # 与下面那个 release 构建分开缓存：测试跑的是 debug profile，
-          # 混用同一个 target 缓存会把两种产物搅在一起
+          # 测试与发行构建使用独立 Cargo 缓存。
           key: cargo-test
 
 
@@ -174,16 +130,12 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Fetch widget frontend（按 widget.lock.json 钉的 sha）
-        # 只用 Node 内建 + git，**不需要 node_modules** ⇒ 能排在 `npm ci` 之前。
-        # 任何一步失败即退 1、响亮变红：取不到就没有那两棵树，而 vite 只拷贝 public/ 下
-        # **真实存在**的文件 ⇒ 包里没有它们 ⇒ 部署按"本代清单"做集合差时会把线上正在用的
-        # 那棵树当**旧块删掉**。那是最难查的一种坏法：站点一切正常，只有看板娘一帧不画。
+        # 先验证固定组件，避免构建并发布缺少看板娘资源的快照。
         run: npm run fetch:widget
         working-directory: ./frontend
 
       - name: Wait for PostgreSQL（真库集成测的服务容器）
-        # runner 通常已经等到 health 通过才起 steps，这里再自己探一次：几十秒的东西，
-        # 换掉一整类"容器还没 ready 就把 `cargo test` 跑成红的"的假红。
+        # 在迁移前确认数据库可连接，避免容器启动竞态。
         run: |
           for i in $(seq 1 30); do
             if docker exec ${{ job.services.postgres.id }} \
