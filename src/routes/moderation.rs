@@ -81,6 +81,21 @@ pub struct Overview {
     comments: Summary,
 }
 
+impl Default for Overview {
+    fn default() -> Self {
+        Self {
+            board: Summary {
+                scope: "all",
+                ..Summary::default()
+            },
+            comments: Summary {
+                scope: "not_deleted",
+                ..Summary::default()
+            },
+        }
+    }
+}
+
 #[derive(FromQueryResult)]
 struct GroupCount {
     resource: String,
@@ -90,16 +105,7 @@ struct GroupCount {
 }
 
 fn aggregate(rows: Vec<GroupCount>) -> Result<Overview, DbErr> {
-    let mut out = Overview {
-        board: Summary {
-            scope: "all",
-            ..Summary::default()
-        },
-        comments: Summary {
-            scope: "not_deleted",
-            ..Summary::default()
-        },
-    };
+    let mut out = Overview::default();
     for row in rows {
         let target = match row.resource.as_str() {
             "board" => &mut out.board,
