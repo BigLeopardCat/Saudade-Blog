@@ -6,12 +6,12 @@
 使用 --keep 调整窗口，确认后加 --apply；不处理 deploy/ 之外的数据。
 """
 import argparse
-import os
 import re
 import sys
 
 import boto3
 from botocore.config import Config
+from deployment_config import read_deployment_config
 
 PREFIX = "deploy/"
 LATEST_KEY = "deploy/latest.txt"
@@ -27,17 +27,15 @@ def main() -> int:
     ap.add_argument("--apply", action="store_true", help="真删；不加则只打印将要删的内容")
     args = ap.parse_args()
 
-    for k in ("R2_ENDPOINT", "R2_ACCESS_KEY", "R2_SECRET_KEY", "R2_BUCKET"):
-        if not os.environ.get(k):
-            sys.exit(f"❌ 缺环境变量 {k}，请按 docs/deployment-and-ops.md 配置私有发布环境")
+    credentials = read_deployment_config()
 
     s3 = boto3.client("s3",
-                      endpoint_url=os.environ["R2_ENDPOINT"],
-                      aws_access_key_id=os.environ["R2_ACCESS_KEY"],
-                      aws_secret_access_key=os.environ["R2_SECRET_KEY"],
+                      endpoint_url=credentials["R2_ENDPOINT"],
+                      aws_access_key_id=credentials["R2_ACCESS_KEY"],
+                      aws_secret_access_key=credentials["R2_SECRET_KEY"],
                       config=Config(signature_version="s3v4"),
                       region_name="auto")
-    bucket = os.environ["R2_BUCKET"]
+    bucket = credentials["R2_BUCKET"]
 
     objs = []
     for page in s3.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=PREFIX):
@@ -53,7 +51,6 @@ def main() -> int:
     keep = packages[:max(args.keep, 0)]
     if args.keep_sha:
         keep += [o for o in packages if o["Key"].split("/")[1] == args.keep_sha]
-    # 去重（--keep-sha 通常就在最近 N 个里）：不按 Key 去重会把同一个包数两遍
     keep = list({o["Key"]: o for o in keep}.values())
     keep_keys = {o["Key"] for o in keep}
     drop = [o for o in packages if o["Key"] not in keep_keys] + [
@@ -72,7 +69,6 @@ def main() -> int:
         print(f"    del   {str(o['LastModified'])[:16]}  {o['Key']}  {mb(o['Size'])}")
     if len(drop) > 20:
         print(f"    …其余 {len(drop) - 20} 个（同一族）")
-    # 留一份计数便于在部署日志里一眼看出"这一族清了没有"
     if not args.apply:
         print("（只列不删；要真删加 --apply）")
         return 0

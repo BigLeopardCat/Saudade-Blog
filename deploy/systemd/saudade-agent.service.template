@@ -1,21 +1,38 @@
-# Render __APP_DIR__ and <你的用户名> before installation.
-# Application settings come from the Agent's .env; Uvicorn flags configure the server.
 [Unit]
-Description=Saudade Blog Agent
+Description=__DESCRIPTION__
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
-User=<你的用户名>
-Group=<你的用户名>
-WorkingDirectory=__APP_DIR__/saudade-blog-agent
-ExecStart=/usr/bin/env PYTHONFAULTHANDLER=1 PYTHONUNBUFFERED=1 __APP_DIR__/saudade-blog-agent/.venv/bin/python -m uvicorn agent.main:app --host 127.0.0.1 --port 8010 --workers 1 --timeout-worker-healthcheck 30 --no-access-log
-Restart=always
+Type=__TYPE__
+User=saudade-agent
+Group=saudade-agent
+EnvironmentFile=/etc/saudade/agent-runtime.env
+Environment=SAUDADE_IGNORE_ENV_FILE=1
+Environment=HOME=/var/lib/saudade-agent
+Environment=XDG_CACHE_HOME=/var/cache/saudade-agent
+Environment=UV_CACHE_DIR=/var/cache/saudade-agent/uv
+Environment=UV_PYTHON_INSTALL_DIR=/var/cache/saudade-agent/python
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONFAULTHANDLER=1
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+WorkingDirectory=__RELEASE_ROOT__/current
+ExecStart=__COMMAND__
+Restart=__RESTART__
 RestartSec=5
 TimeoutStopSec=120
-StandardOutput=append:__APP_DIR__/logs/agent/agent.log
-StandardError=append:__APP_DIR__/logs/agent/agent.log
+KillMode=control-group
+StateDirectory=saudade-agent
+StateDirectoryMode=0750
+CacheDirectory=saudade-agent
+CacheDirectoryMode=0750
+ReadWritePaths=/var/lib/saudade-agent /var/cache/saudade-agent
+BindReadOnlyPaths=-__APP_DIR__/logs/health.log:/run/saudade-host/logs/health.log
+BindReadOnlyPaths=-__APP_DIR__/logs/rust.log:/run/saudade-host/logs/rust.log
+InaccessiblePaths=-/etc/saudade/blog-runtime.env -/etc/saudade/embedding-api-key
+StandardOutput=__LOG_TARGET__
+StandardError=__LOG_TARGET__
 
 [Install]
 WantedBy=multi-user.target

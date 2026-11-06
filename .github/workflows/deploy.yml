@@ -4,7 +4,6 @@ name: Deploy Blog
 on:
   push:
     branches: [cn_sora_blog]
-  # 手动补发当前 HEAD；常规主分支 push 也发布完整快照，见 check-changes.deploy。
   workflow_dispatch:
 
   pull_request:
@@ -43,7 +42,6 @@ jobs:
         with:
           base: ${{ github.event.before }}
           ref: ${{ github.sha }}
-          # 仅分类变更；所有主线 push 都发布完整快照，不由这些分类决定是否部署。
           filters: |
             backend:
               - 'src/**'
@@ -62,7 +60,6 @@ jobs:
 
               - 'frontend/widget.lock.json'
               - 'frontend/scripts/**'
-            # 部署管线本身：改了它就跑一次完整部署，顺带把新管线真跑一遍（别让改动只躺在仓库里）
             infra:
               - '.github/workflows/**'
               - 'scripts/deploy/**'
@@ -123,7 +120,6 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          # 开发、测试和发布统一使用受支持的 Node 24 LTS。
           node-version-file: .node-version
           package-manager-cache: false
           cache: npm
@@ -135,7 +131,6 @@ jobs:
         working-directory: ./frontend
 
       - name: Wait for PostgreSQL（真库集成测的服务容器）
-        # 在迁移前确认数据库可连接，避免容器启动竞态。
         run: |
           for i in $(seq 1 30); do
             if docker exec ${{ job.services.postgres.id }} \
@@ -147,7 +142,6 @@ jobs:
           echo "PostgreSQL 服务容器 60 秒内没起来" >&2; exit 1
 
       - name: Bootstrap PostgreSQL schema（真库集成测的库）
-        # -i 传递 SQL 标准输入；ON_ERROR_STOP 确保迁移错误使检查失败。
         run: |
           set -euo pipefail
 
@@ -156,22 +150,14 @@ jobs:
             docker exec -i ${{ job.services.postgres.id }} \
               psql -U postgres -d saudade_blog -X -q -v ON_ERROR_STOP=1 -f - < "$f"
           done
-          # ⚠️ 这一步以 `postgres` 跑 ⇒ **CI 的 owner 语义与生产不同**（生产必须归
-          # `saudade_app`，见 0002/0003 的头注）。CI 绿**不代表** owner 对。
+          # CI uses postgres; production ownership is established by the deployment role migrations.
           echo "✓ 结构就绪：$(docker exec ${{ job.services.postgres.id }} \
             psql -U postgres -d saudade_blog -X -q -t -A \
             -c "SELECT count(*) FROM pg_tables WHERE schemaname='public'") 张表"
       - name: 迁移清单自检（磁盘上每个编号迁移都归过类）
-        # 与上一步同一份事实源。放在这里是为了让"加了 0004 却没说它进不进 CI"
-        # 变成一条**当场可读的红**，而不是三个月后某个集成测的假红。
         run: python3 scripts/migration/pg/ci_schema_files.py --self-test
 
       - name: Uploads verifier（纯函数自检 + 真库冒烟）
-        # `scripts/verify_uploads.py` 核对"库里引用的本地图"与"盘上真实文件"，
-        # 是迁移/恢复的验收判据。它的 SQL 属于"没有真库就一个字都验不了"那一类
-        # （`cargo check` 全绿对它没意义：列名写错、`IFNULL` 少一层，本机不跑就永远不知道），
-        # 所以借 job 里这个真 PG 跑一遍。空库 + 空目录 ⇒ 没有缺图 ⇒ 退出码必须是 0。
-        # runner 上没有 psql ⇒ 与上一步同一条路（`PSQL_BIN` 容器前缀）。
         env:
           PSQL_BIN: docker exec -i ${{ job.services.postgres.id }} psql -U postgres
           # 随 runner 消亡的一次性容器口令，与生产库无关
@@ -184,9 +170,6 @@ jobs:
           python3 scripts/verify_uploads.py
 
       - name: Rust tests（MockDatabase + 真 PG 两层）
-        # TEST_PG_URL 在场 ⇒ tests/pg_integration.rs 真连库跑；缺席 ⇒ 它自己跳过
-        # （贡献者本机 `cargo test` 因此不受影响）。**在场但连不上是失败、不是跳过**，
-        # 见那个文件的头注。
         env:
           TEST_PG_URL: postgres://postgres:ci-root-pw@127.0.0.1:5432/saudade_blog
           JWT_SECRET: isolated-ci-consistency-test-secret
@@ -195,7 +178,9 @@ jobs:
         run: cargo test
 
       - name: Operations regression tests
-        run: python3 -m unittest discover -s tests/ops -v
+        run: |
+          python3 -m pip install -r scripts/deploy/requirements.txt
+          python3 -m unittest discover -s tests/ops -v
 
       - name: Install frontend deps
         run: npm ci
@@ -285,11 +270,9 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
       - run: npm run fetch:widget
-      # apt 的默认下载等待可能耗尽整个 job；限制网络超时且有限重试，失败仍拦截。
       - name: Install browser system dependencies
         timeout-minutes: 6
         run: |
-          # hosted runner 的 HTTP Azure 镜像多次仅几十 KB/s；使用 Ubuntu 官方 HTTPS 源。
           sudo tee /etc/apt/saudade-ci.sources.list >/dev/null <<'EOF'
           deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://archive.ubuntu.com/ubuntu noble main universe restricted multiverse
           deb [signed-by=/usr/share/keyrings/ubuntu-archive-keyring.gpg] https://archive.ubuntu.com/ubuntu noble-updates main universe restricted multiverse
@@ -354,28 +337,17 @@ jobs:
         if: needs.check-changes.outputs.deploy == 'true'
         env:
           NODE_OPTIONS: "--max-old-space-size=4096"
-          # CDN 域名走仓库 **Variable**（不是 Secret——VITE_ 变量会打进前端包，本来就是公开的）。
-          # 未设置时为空串，行为与未接 CDN 完全一致。本地构建会读 frontend/.env.production（不入库）。
           VITE_CDN_BASEURL: ${{ vars.VITE_CDN_BASEURL }}
-          # 站点身份（canonical / og:url / robots.txt 的 Sitemap 行）也走 Variable。
-          # **不设不会报错，只会静默生成 http://localhost:5173 的地址** —— 所以线上必须设它；
-          # 代码侧的中性默认值是为了 fork 不要指向本项目的域名（见 frontend/vite.config.ts）。
           VITE_SITE_URL: ${{ vars.VITE_SITE_URL }}
-          # 站点署名（index.html 的 <meta name="author">）。与 SITE_URL 同理走 Variable：
-          # 代码侧的缺省是**空串**（fork 不该继承本项目作者的署名），没配时构建会把那一行
-          # 整条删掉。⚠️ **这个 Variable 必须设**，否则线上的署名会消失。
           VITE_SITE_AUTHOR: ${{ vars.VITE_SITE_AUTHOR }}
 
           VITE_SITE_TITLE: ${{ vars.VITE_SITE_TITLE }}
           VITE_SITE_DESCRIPTION: ${{ vars.VITE_SITE_DESCRIPTION }}
-          # keywords（<meta name="keywords">）。**缺省空串 ⇒ 构建时整行删掉**：主流搜索
-          # 引擎早就不看它，留一份泛泛词表只会让人以为 SEO 靠它。要留就设自己的词表。
           VITE_SITE_KEYWORDS: ${{ vars.VITE_SITE_KEYWORDS }}
         run: |
           npm ci
 
           npm run fetch:widget
-          # fetch 后再准备第三方运行时；校验通过后才能构建，避免发布缺失的资源。
           npm run vendor:live2d
           npm run build
 
@@ -394,7 +366,7 @@ jobs:
           R2_SECRET_KEY: ${{ secrets.R2_SECRET_KEY }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
         run: |
-          pip3 install boto3 -q
+          python3 -m pip install -r scripts/deploy/requirements.txt
           python3 scripts/deploy/upload_to_r2.py
 
 
