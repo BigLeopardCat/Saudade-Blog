@@ -56,8 +56,10 @@ fn headers(uid: i32) -> HeaderMap {
 #[tokio::test]
 async fn invalid_chat_content_never_creates_conversations_or_consumes_quota() {
     for body in [
-        json!({"message":"字".repeat(32769)}),
+        json!({"message":"字".repeat(4001)}),
         json!({"message":"hello", "image":["data:image/png;base64,%%%"]}),
+        json!({"message":"hello", "page_title":"x".repeat(501)}),
+        json!({"message":"hello", "confirm_token":"x".repeat(16385)}),
         json!({"message":"hello", "image":["http://127.0.0.1/private"]}),
         json!({"message":"hello", "image":vec!["x"; 7]}),
     ] {

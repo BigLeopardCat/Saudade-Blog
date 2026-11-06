@@ -1,13 +1,32 @@
 //! Bound user content before quota consumption, conversation creation or persistence.
 use super::ChatRequest;
 use base64::{engine::general_purpose::STANDARD, Engine};
-const MAX_TEXT_CHARS: usize = 32_768;
+const MAX_TEXT_CHARS: usize = 4000;
 const MAX_IMAGES: usize = 6;
 const MAX_IMAGE_BYTES: usize = 1024 * 1024;
 
 pub(super) fn validate(payload: &ChatRequest) -> Result<(), &'static str> {
     if payload.message.chars().count() > MAX_TEXT_CHARS {
-        return Err("消息最多 32768 个字符");
+        return Err("消息最多 4000 个字符");
+    }
+    // Mirror the Agent schema here so rejection happens before host-side effects.
+    for value in [
+        &payload.current_url,
+        &payload.page_title,
+        &payload.current_effects,
+        &payload.current_darkmode,
+        &payload.confirm_pick,
+    ] {
+        if value.as_deref().is_some_and(|s| s.chars().count() > 500) {
+            return Err("页面上下文或确认选项最多 500 个字符");
+        }
+    }
+    if payload
+        .confirm_token
+        .as_deref()
+        .is_some_and(|s| s.len() > super::approval::MAX_CONFIRM_TOKEN_CHARS)
+    {
+        return Err("确认凭据过长");
     }
     let Some(images) = &payload.image else {
         return Ok(());
@@ -65,6 +84,17 @@ mod tests {
             vec!["data:image/svg+xml;base64,PHN2Zz4=".into()],
         ] {
             assert!(validate(&request("test", images)).is_err());
+        }
+        for field in [
+            "current_url",
+            "page_title",
+            "current_effects",
+            "current_darkmode",
+            "confirm_pick",
+        ] {
+            let request: ChatRequest =
+                serde_json::from_value(json!({"message":"ok", field:"字".repeat(501)})).unwrap();
+            assert!(validate(&request).is_err());
         }
         assert!(validate(&request(&"字".repeat(MAX_TEXT_CHARS), vec![])).is_ok());
         assert!(validate(&request(&"字".repeat(MAX_TEXT_CHARS + 1), vec![])).is_err());
