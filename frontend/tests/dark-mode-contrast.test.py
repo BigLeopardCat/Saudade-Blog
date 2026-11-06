@@ -178,7 +178,7 @@ def build_sandbox() -> pathlib.Path:
 
     # esbuild 的 `--loader:.css=text` 把 CSS 吞成字符串、**不会注入页面**，所以每一份
     # "从 TSX import 进来的 .css"都得自己链进去，否则那些按钮是**裸 UA 样式**：
-    # 实测后果是 `<button>` 拿到 Chrome 默认脸 rgb(239,239,239)，配白色字被算成
+    # 后果是 `<button>` 拿到 Chrome 默认脸 rgb(239,239,239)，配白色字被算成
     # 1.40:1 的"浅底浅字"——一条彻头彻尾的假警报，差点去改一个没问题的组件。
     # 逐份 verbatim 拼接（不过 sass，避免动到语义），顺序按路径定死。
     (sb / "vendor.css").write_text(

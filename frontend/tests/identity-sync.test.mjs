@@ -33,7 +33,7 @@ await esbuild.build({
     }],
 });
 
-// ── 假浏览器（模块加载时就会读 window/document/localStorage，所以必须先装好再 import）──
+// 假浏览器（模块加载时就会读 window/document/localStorage，所以必须先装好再 import）
 const store = {};
 /** `drop` 里的那几种事件**不登记**——反向对照用（模拟"没听过 storage"的改动前模块） */
 function fakeEventTarget(bag, drop = []) {

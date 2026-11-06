@@ -29,7 +29,7 @@ def check(desc, cond, detail=""):
 DEFINE = ('import.meta.env={"VITE_HTTP_BASEURL":"","VITE_CDN_BASEURL":"",'
           '"MODE":"production","DEV":false,"PROD":true,"BASE_URL":"/"}')
 
-# ── axios 桩 ────────────────────────────────────────────────────────────────
+# axios 桩
 # 桩必须**同时**是"可调用的函数"和"带方法的对象"（`axios.create()` 出来的实例本来
 # 就是这两者的合体），而这一页两种写法都有：账号管理写 `http.get(...)`，
 # 个人中心那一族写 `http({url, method})`。只做对象 ⇒ 后者 TypeError，而组件里
@@ -79,7 +79,7 @@ export const Provider = ({ children }: any) => children;
 export const connect = () => (C: any) => C;
 """
 
-# ── 入口：真路由 + 真外壳 + 真页面 ──────────────────────────────────────────
+# 入口：真路由 + 真外壳 + 真页面
 # 三层都要真：只挂 `Users` 的话容器宽度就是视口宽（390），而线上后台在 390px 视口下
 # 卡片内只有约 318px —— **沙箱比线上宽 72px**，缺陷会在沙箱里假绿（本仓"环境失真
 # 伪装成真缺陷"的反面：环境比线上宽松，伪装成"已经好了"）。挂上真外壳，`.Card`
@@ -279,7 +279,7 @@ def clip_fails(g, label):
 with sync_playwright() as p:
     br = p.chromium.launch()
 
-    # ══ 一、390×844：动作按钮必须全在列表盒子里 ══
+    # 一、390×844：动作按钮必须全在列表盒子里
     print(f"\n【一】{VW}×{VH}（手机档）：账号行的动作按钮一颗都不许被裁")
     pg = mount(br)
     g = pg.evaluate(GEO)
@@ -322,7 +322,7 @@ with sync_playwright() as p:
     check("全程无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
-    # ══ 二、宽屏对照：一个像素都不许变 ══
+    # 二、宽屏对照：一个像素都不许变
     print(f"\n【二】{DW}×{DH}（宽屏对照）：修法不许动到大屏")
     pg = mount(br, size=(DW, DH))
     g = pg.evaluate(GEO)
@@ -334,8 +334,8 @@ with sync_playwright() as p:
     check("宽屏下没有行内容溢出", all(r["scrollW"] <= r["clientW"] + 1 for r in g["rows"]))
     pg.close()
 
-    # ══ 三、负控：判据自己得先被证明是敏感的 ══
-    # 把当年的坏形状（不换行）假回去 —— 主判据必须当场转红，否则它可能只是恒真。
+    # 三、负控：判据自己得先被证明是敏感的
+    # 把坏形状（不换行）假回去 —— 主判据必须当场转红，否则它可能只是恒真。
     print("\n【三】负控（判据自带牙）")
     nc = mount(br)
     nc.evaluate("""() => {
@@ -354,13 +354,13 @@ with sync_playwright() as p:
 
     # 负控②：把**线上那个坏形状整套**假回去（`nowrap` + 列表的 `overflow: hidden`），
     # 再单独摘掉 `hidden` 那一半 ⇒ 溢出改由外层 `.tu-list-wrap`（本来就是 `overflow: auto`）
-    # **横滚**接住。这条量的是"那个 hidden 当初在替我们做什么"：它把"滚一滚还够得着"
+    # **横滚**接住。这条量的是"那个 hidden 在替我们做什么"：它把"滚一滚还够得着"
     # 换成了"根本够不着"。
     # ⚠️ 两条走过的弯路都留在这儿：
-    #   · 只摘 `hidden`、不假回 `nowrap` —— 修完之后**没有溢出可接**，
-    #     `wrap.scrollWidth == clientWidth` 恒成立，这条控制永远红（控制本身失效了，
-    #     它验的是修之前的机制，就得把修之前那半也一起假回去）；
-    #   · 第一版写的是"整页被撑宽" —— 实测是**假的**：`.tu-list-wrap` 是滚动容器，
+    #   · 只摘 `hidden`、不假回 `nowrap` —— 此时**没有溢出可接**，
+    #     `wrap.scrollWidth == clientWidth` 恒成立，这条控制永远红（控制本身失效了；
+    #     它验的是旧机制，就得把旧机制那半也一起假回去）；
+    #   · "整页被撑宽"是**假**的：`.tu-list-wrap` 是滚动容器，
     #     溢出被它吸收了，页面永远不会变宽。判据问错了对象时就是这样：恒红，
     #     而红的原因是它问的那件事本来就不成立。
     nc = mount(br)

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(path.join(here, '../public/live2d-widgets/chat-session.js'), 'utf8');
 
-// ── 从真实源里抠出 rowSince 的函数表达式（不复制实现，改了源测试就跟着变）──
+// 从真实源里抠出 rowSince 的函数表达式（不复制实现，改了源测试就跟着变）
 const mark = 'const rowSince = ';
 const s0 = src.indexOf(mark);
 if (s0 < 0) throw new Error('chat-session.js 里找不到 rowSince 定义');

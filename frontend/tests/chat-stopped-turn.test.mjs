@@ -42,7 +42,7 @@ globalThis.Live2DCubismCore = {};
 globalThis.__chatRenderMarkdown = (t) => String(t);
 globalThis.__chatEnhance = () => {};
 
-// ── 夹具 ──
+// 夹具
 const NOW = Date.now();
 const CONV_ID = 7;
 const M1 = '帮我看看这篇';        // 第一次被打断的那条

@@ -1,7 +1,6 @@
-// ══════════════════════════════════════════════════════════════════════════
 // 后台文章列表的状态：**URL query 是唯一真源**
 //
-// 用户诉求原文：「翻到一页改完文章配置，页码又回到第一页了」。根因有两条，都要堵：
+// 两条会回退到第一页的路径，都要堵：
 //   ① 组件挂载时机 —— 编辑器 `navigate('/dashboard/notes')` 会把列表整棵重挂，
 //      分页组件的 useState 回到初始值（这条靠"从编辑器回列表时带上票据"解决，见
 //      `readListReturn`）；
@@ -18,7 +17,6 @@
 //
 // 这个文件单独存在（而不是写在组件里）是为了能在本机不 build 的前提下直接单测：
 // `frontend/tests/unit/notes-list-state.test.ts` 直接导入真实模块，以 Vitest 验证状态与请求契约。
-// ══════════════════════════════════════════════════════════════════════════
 
 import { parseNoteTags } from '../../../../utils/noteTags';
 import type { NoteType } from '../../../../interface/NoteType';
@@ -74,8 +72,8 @@ function asString(value: unknown): string {
 }
 
 /**
- * 读 URL。容忍缺参、脏值、以及历史深链：
- * - `keyword` 是 `kw` 的**旧别名**（`Dashboard/index.tsx` 的搜索框曾直接跳 `?keyword=`），
+ * 读 URL。容忍缺参、脏值、以及旧深链：
+ * - `keyword` 是 `kw` 的**旧别名**（`Dashboard/index.tsx` 的搜索框会直接跳 `?keyword=`），
  *   两者同时存在时以 `kw` 为准 —— 已存在的 bookmark 不能失效；
  * - `page` 非正整数 → 1；`tab` 非 1/2/3/4 → '1'；日期不合法 → 丢弃。
  */

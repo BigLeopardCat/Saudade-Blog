@@ -41,7 +41,7 @@ const rustMod = read('src/routes/mod.rs');
 
 // 标签与实际面板对应由 users-credentials.test.tsx 的真实组件点击测试验证。
 
-// ── ① 页签接线 ─────────────────────────────────────────────────────────────
+// ① 页签接线
 console.log('页签 —— 标签名与内容这次必须对上：');
 ok(users.includes("import CommentManage from '../CommentManage';"), 'Users 页引入了评论管理页');
 {
@@ -59,7 +59,7 @@ ok(/t === 'review' \|\| t === 'comment' \|\| t === 'quota' \? t : 'accounts'/.te
     '?tab= 深链白名单放行了 comment（漏一项会静默落回账号管理）');
 ok(/import '\.\/index\.sass'/.test(comp), '本页带自己的样式表（不加这行整页是裸表格）');
 
-// ── ② 接口面相：打的是评论那两条，不是留言板那两条 ──────────────────────────
+// ② 接口面相：打的是评论那两条，不是留言板那两条
 console.log('\n接口 —— 四个动作各自打到哪条路径：');
 ok(comp.includes("http.get('/api/protect/comments')"), '列表 = GET /api/protect/comments');
 ok(/http\.put\(`\/api\/protect\/comments\/\$\{id\}\/audit`, \{ approved, reason \}\)/.test(comp),

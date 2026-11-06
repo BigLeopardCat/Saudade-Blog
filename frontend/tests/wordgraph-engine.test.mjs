@@ -1,4 +1,4 @@
-// ═ 图谱引擎纯逻辑回归 ══
+// 图谱引擎纯逻辑回归
 //   node tests/wordgraph-engine.test.mjs
 // 覆盖投影（中心/方向/深度序/近裁剪）、pickNode 命中、locateLocal 关键词兜底、
 // cameraFor 取景。engine.ts / locate.ts 是 TS，用 esbuild 打成 ESM 再 import
@@ -32,7 +32,7 @@ const W = 'src/components/ArticleGraph/';
 const engine = await import(bundle(W + 'engine.ts', 'engine.mjs'));
 const locate = await import(bundle(W + 'locate.ts', 'locate.mjs'));
 
-// ── 断言小工具（与 chat-core.test.mjs 同款）──
+// 断言小工具（与 chat-core.test.mjs 同款）
 let passed = 0, failed = 0;
 const ok = (cond, name, detail) => {
     if (cond) passed++;
@@ -42,7 +42,7 @@ const eq = (got, exp, name) => ok(got === exp, name, { got, exp });
 const near = (got, exp, tol, name) => ok(Math.abs(got - exp) <= tol, name, { got, exp, tol });
 const truthy = (v, name) => ok(!!v, name, { got: v });
 
-// ── 固定夹具：两个簇，方便测"定位到某个簇"──
+// 固定夹具：两个簇，方便测"定位到某个簇"
 const ART = [{ id: 12, t: '异步架构', g: ['Rust'], c: '后端' }, { id: 14, t: '嵌入式笔记', g: ['IoT'], c: '硬件' }];
 const mk = (i, w, x, y, z, n, a = 0) => ({ i, w, x, y, z, n, a, a2: a });
 const NODES = [
@@ -62,7 +62,7 @@ const GRAPH = {
 
 const CAM0 = { yaw: 0, pitch: 0, dist: 5, target: [0, 0, 0] };
 
-// ══════════════════════════════════════════════ 投影
+// 投影
 console.log('== projectNodes ==');
 {
     const p = new engine.Projection(1);
@@ -113,7 +113,7 @@ console.log('== projectNodes ==');
     ok(pn.r[0] <= BASE * 1.4 + 1e-6, '贴脸点的半径有上限', { r: pn.r[0] });
 }
 
-// ══════════════════════════════════════════════ 命中
+// 命中
 console.log('== pickNode ==');
 {
     const p = new engine.Projection(NODES.length);
@@ -129,7 +129,7 @@ console.log('== pickNode ==');
     eq(engine.pickNode(p2, 400, 300), 1, '重叠时命中离相机更近的那个');
 }
 
-// ══════════════════════════════════════════════ 本地关键词兜底
+// 本地关键词兜底
 console.log('== locateLocal ==');
 {
     const hit = locate.locateLocal('异步编程', GRAPH);
@@ -157,7 +157,7 @@ console.log('== locateLocal ==');
     eq(locate.locateLocal('', GRAPH).length, 0, '空串 → 空结果（不瞎猜）');
 }
 
-// ══════════════════════════════════════════════ 缩放区间
+// 缩放区间
 console.log('== zoomBy ==');
 {
     const MIN = 0.4;
@@ -177,7 +177,7 @@ console.log('== zoomBy ==');
     near(engine.zoomBy(engine.zoomBy(4.3, -400), 400), 4.3, 1e-9, '拉近再拉远精确回到原距离');
 }
 
-// ══════════════════════════════════════════════ 穿云（滚轮到底之后继续前进）
+// 穿云（滚轮到底之后继续前进）
 console.log('== dollyBy / wheelStep ==');
 {
     const MIN = 0.4;
@@ -222,7 +222,7 @@ console.log('== dollyBy / wheelStep ==');
     ok(n <= 34, `穿团总格数 ${n} ≤ 34（别让人滚到手酸）`, { n });
 }
 
-// ══════════════════════════════════════════════ 取景
+// 取景
 console.log('== cameraFor ==');
 {
     eq(engine.cameraFor(GRAPH, [], CAM0), CAM0, '无命中 → 相机原样不动（同一对象引用）');

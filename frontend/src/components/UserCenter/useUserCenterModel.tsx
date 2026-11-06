@@ -214,7 +214,7 @@ export function useUserCenterModel({open,onClose}: {open:boolean; onClose:()=>vo
         void loadTabRef.current(tab, true)
     }, [open, loggedIn, tab])
 
-    // ── 用户设置 ────────────────────────────────────────────────────────────
+    // 用户设置
 
     const handlePickFile = (f: File) => {
         setCropFile(f)
@@ -305,7 +305,7 @@ export function useUserCenterModel({open,onClose}: {open:boolean; onClose:()=>vo
         }
     }
 
-    // ── 收藏 ────────────────────────────────────────────────────────────────
+    // 收藏
 
     const dropFavorite = async (noteId: number) => {
         try {
@@ -327,7 +327,7 @@ export function useUserCenterModel({open,onClose}: {open:boolean; onClose:()=>vo
         navigate(`/article/${id}`)
     }
 
-    // ── 通知 ────────────────────────────────────────────────────────────────
+    // 通知
 
     const removeNoticeButton = (id: number) => <DeleteInboxItem item={{ kind: 'notification', id }}
         onRemoved={counts => {
@@ -372,7 +372,7 @@ export function useUserCenterModel({open,onClose}: {open:boolean; onClose:()=>vo
         navigate(link)
     }
 
-    // ── 信箱 ────────────────────────────────────────────────────────────────
+    // 信箱
 
     const doSend = async () => {
         if (!to.trim()) {
@@ -429,7 +429,7 @@ export function useUserCenterModel({open,onClose}: {open:boolean; onClose:()=>vo
         }
     }
 
-    // ── 草稿箱 ──────────────────────────────────────────────────────────────
+    // 草稿箱
 
     const doSaveDraft = async () => {
         if (!to.trim() && !mailTitle.trim() && !body.trim()) {

@@ -594,7 +594,7 @@ pub(super) fn board_admin_filter(q: &BoardAdminQuery) -> Select<talk::Entity> {
                 .add(user::Column::Nickname.into_expr().ilike(&pat)),
         );
     }
-    // 排序与前端原来那三条断言逐条对齐：created_at 为主、id 为同秒内的次序。
+    // 排序与前端断言逐条对齐：created_at 为主、id 为同秒内的次序。
     // **id 那一层不能省**：created_at 精度到秒，同秒多行没有确定次序 ⇒ 翻页会重复/漏行
     // （同 `list_by_src` 的那两行 order_by）。
     if q.order.as_deref().map(|o| o.eq_ignore_ascii_case("asc")).unwrap_or(false) {
@@ -642,7 +642,7 @@ pub async fn list_board_admin(
             return Json(ApiResponsePage::error("查询失败，请稍后再试"));
         }
     };
-    // 去重后再 is_in：同一用户放多盏灯时原来会生成 IN (1,1,1,5,5,...)（19 行 → 19 个占位符，
+    // 去重后再 is_in：同一用户放多盏灯时不去重会生成 IN (1,1,1,5,5,...)（19 行 → 19 个占位符，
     // 去重后 1 个）。sort+dedup 保持首次出现顺序（SQL 可读、执行计划稳定）
     let mut user_ids: Vec<i32> = talks.iter().map(|t| t.user_id).collect();
     user_ids.sort_unstable();

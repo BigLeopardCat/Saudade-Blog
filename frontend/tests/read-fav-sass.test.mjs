@@ -100,8 +100,8 @@ console.log('\n② 四件共用一份几何（.readStat）');
 
 console.log('\n③ 「大小不一」的回归锁：几何只许声明一次');
 {
-    // 这条是本轮改动的**本体**。上一版的病是 `.readFavBtn` / `.readViews` / `.readLikeBtn`
-    // 各自声明了 height/padding/font-size/border（值各不相同）⇒ 三件永远对不齐。
+    // 这条是核心判据。`.readFavBtn` / `.readViews` / `.readLikeBtn`
+    // 各自声明 height/padding/font-size/border（值各不相同）⇒ 三件永远对不齐。
     // 判据：在簇的这四支里，这几条属性只许出现在 `.readStat` 一处。
     const GEOM = ['height', 'padding', 'font-size', 'border', 'border-radius', 'line-height'];
     for (const prop of GEOM) {

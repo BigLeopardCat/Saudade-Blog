@@ -11,7 +11,7 @@ const CUBISM_DIR = path.join(PUBLIC, 'cubism5');
 
 const CHECK_ONLY = process.argv.includes('--check');
 
-// ── ① ② node_modules 里现成的两份 UMD ────────────────────────────────────────
+// ① ② node_modules 里现成的两份 UMD
 // 必须是 UMD/IIFE 形态（挂 window.PIXI / window.PIXI.live2d），这样 boot.js 能用
 // 普通 <script> 加载它们——看板娘那批文件是不经打包的，没有 bundler 可用。
 const VENDORED = [
@@ -19,7 +19,7 @@ const VENDORED = [
   ['pixi-live2d-display', 'dist/cubism4.min.js', 'cubism4.min.js', 'MIT'],
 ];
 
-// ── ③ Cubism Core：官方地址 + 钉死的哈希 ─────────────────────────────────────
+// ③ Cubism Core：官方地址 + 钉死的哈希
 // 官方页面上这份是"最新版"（无版本化 URL）⇒ 哈希是唯一的版本锚点。
 // 换版本的正确姿势：确认新核心能渲染 agent_2（跑 tests/live2d-render.test.py），
 // 再更新这两行常量——**不要**为了让它变绿而删掉校验。
@@ -33,7 +33,7 @@ const kb = (n) => (n / 1024).toFixed(1) + 'KB';
 let failed = 0;
 const bad = (msg) => { console.error('  ✗ ' + msg); failed++; };
 
-// ── 拷贝 node_modules 里的两份 ───────────────────────────────────────────────
+// 拷贝 node_modules 里的两份
 mkdirSync(VENDOR, { recursive: true });
 for (const [pkg, from, to, license] of VENDORED) {
   const src = path.join(FRONTEND, 'node_modules', pkg, from);
@@ -53,7 +53,7 @@ for (const [pkg, from, to, license] of VENDORED) {
   console.log(`  ✅ ${to.padEnd(20)} ${kb(statSync(dst).size).padStart(9)}  ${license}`);
 }
 
-// ── Cubism Core：先看本地的，再决定要不要下载 ────────────────────────────────
+// Cubism Core：先看本地的，再决定要不要下载
 mkdirSync(CUBISM_DIR, { recursive: true });
 const corePath = path.join(CUBISM_DIR, CORE_NAME);
 const coreNow = existsSync(corePath) ? sha256(readFileSync(corePath)) : null;

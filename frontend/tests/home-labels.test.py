@@ -101,7 +101,7 @@ with sync_playwright() as p:
     def probe(sel):
         return pg.evaluate("(sel) => (" + PROBE + ")(sel)", sel)
 
-    # ── 一、置顶缎带 ──────────────────────────────────────────────────────────
+    # 一、置顶缎带
     print("\n【一】置顶：漫画缎带（右端尾尖）")
     tape = probe("#tape")
     # 尾尖的判据 = 顶点里有一个 **100% 50%**（右缘正中收成一点）+ 共 5 个顶点。
@@ -111,13 +111,13 @@ with sync_playwright() as p:
           clip.count(",") == 4 and "100%50%" in clip, tape["clip"])
     # 左端两个顶点必须**同为 0**（上下各一，中间不开豁口）——「直边」= x 一路是 0。
     # ⚠️ 别按源码里写的字面去比：`0` 到这一步已经算成 `0px`，源码那串 `0 100%`
-    # 在 computedStyle 里是 `0px100%`（本套件初版就栽在这个字面差上）。
+    # 在 computedStyle 里是 `0px100%`。
     check("左端是直边（`0 0` 起、`0 100%` 收 —— 那一头贴在卡片上）",
           clip.startswith("polygon(0px0px,") and clip.endswith("0px100%)"), tape["clip"][:60])
     check("纸上那枚 ✦ 在尾尖后（`::after` 的 content 是 ✦、有呼吸动画）",
           "✦" in tape["after"]["content"] and tape["after"]["anim"] == "tag-twinkle",
           f'{tape["after"]["content"]} / {tape["after"]["anim"]}')
-    # ── 八轮的第 4 条：**缎带自己不许再动** ──────────────────────────────────
+    # 八轮的第 4 条：**缎带自己不许再动**
     # 原话「动效上下晃动给人不稳定失去掌控的心理感觉」。判据分两半，缺一不可：
     #   ① `animationName` 没有常驻动画（`ribbon-float` 已撤）；
     #   ② 斜贴的角度仍在 —— 它现在由基规则的 `transform` 给。只撤动画不补角度的话
@@ -142,7 +142,7 @@ with sync_playwright() as p:
     check("高度仍由内容撑开（缎带不该被钉死成一张固定尺寸的片）",
           20 <= tape["h"] <= 34, f'{tape["w"]:.1f}×{tape["h"]:.1f}')
 
-    # ── 二、「文章」段落签（八轮大改：一张和纸条）──────────────────────────────
+    # 二、「文章」段落签（八轮大改：一张和纸条）
     print("\n【二】文章：和纸条（左直边 + 平涂装订边 + 墨色线性图标 + 右端圆角）")
     plate = probe("#plate")
     # 装订边：八轮从 `::before`（5px 渐变竖脊）改成 `border-left`（4px 平涂）。
@@ -177,7 +177,7 @@ with sync_playwright() as p:
           and icon["anim"] == "none",
           f'{plate["anim"]} / {plate["after"]["anim"]} / {icon["anim"]}')
 
-    # ── 三、More ─────────────────────────────────────────────────────────────
+    # 三、More
     print("\n【三】More：右端一枚 chevron（指向下、静置不动，悬停才走）")
     more = probe("#more")
     # chevron = 一个 8×8 的盒子 + 只画右边和下边 + 转 +45°。
@@ -187,7 +187,7 @@ with sync_playwright() as p:
     check("箭头是两条边（右 2px + 下 2px，比牌子自己那 1px 粗）",
           more["after"]["borderRight"] == "2px" and more["after"]["borderBottom"] == "2px",
           f'{more["after"]["borderRight"]}/{more["after"]["borderBottom"]}')
-    # ⚠️ 这一条是八轮最容易做错的地方：原来那个 -45° 是 **keyframe 给的**，动画一撤、
+    # ⚠️ 这一条是最容易做错的地方：那个 -45° 是 **keyframe 给的**，动画一撤、
     # 基规则里不补 `transform` 的话，箭头就摊平成一个直角（`border-right` +
     # `border-bottom` 就是个 L，不是箭头）。所以这里判的是**撤掉动画之后它还是斜的**。
     check("★ 箭头静置时不动、但**仍是斜的**（角度已从 keyframe 搬进基规则）",
@@ -206,7 +206,7 @@ with sync_playwright() as p:
     check("牌子本身也没有常驻动画", more["anim"] == "none", more["anim"])
 
     # 悬停：箭头往前送一点。八轮撤掉 `more-nudge` 之后没有"动画恒压声明"那层了，
-    # 这条 `transform` 直接生效 —— 但仍要实测，因为 `:hover` 的链一旦写错就静默失效。
+    # 这条 `transform` 直接生效 —— 但仍要验证，因为 `:hover` 的链一旦写错就静默失效。
     pg.hover("#more")
     pg.wait_for_timeout(400)
     hov = probe("#more")
@@ -215,7 +215,7 @@ with sync_playwright() as p:
           and hov["after"]["transform"] != "none",
           f'{more["after"]["transform"]} → {hov["after"]["transform"]}')
 
-    # ── 四、减少动效 ─────────────────────────────────────────────────────────
+    # 四、减少动效
     print("\n【四】减少动效档")
     pg.mouse.move(0, 0)
     pg.wait_for_timeout(200)

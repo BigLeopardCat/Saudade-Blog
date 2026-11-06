@@ -95,7 +95,7 @@ def pg_query(sql: str) -> list[list[str]]:
     return [ln.split("\t") for ln in r.stdout.split("\n") if ln != ""]
 
 
-# ── PG 侧归一 ────────────────────────────────────────────────────────────────
+# PG 侧归一
 def pg_norm_type(r: dict) -> str:
     t = r["data_type"]
     if t == "character varying":
@@ -198,7 +198,7 @@ def norm_cols(s: str) -> str:
     return s
 
 
-# ── 对账 ────────────────────────────────────────────────────────────────────
+# 对账
 def main() -> int:
     my = load_catalog()
     bools = entity_bools()
@@ -317,8 +317,7 @@ def main() -> int:
             print("  - " + b)
         return 1
     print("✓ 结构逐项一致（表 / 列 / 类型 / 可空 / 默认 / 自增 / 索引 / 主键 / 外键 / 注释 / 触发器 / 时区）")
-    # 豁免掉的那几张**各有各的判据**，别一句话带过（以前这里写死了"由
-    # verify_vectors.py 管"，加 chat_image 之后那句话就成了错的）。
+    # 豁免掉的那几张**各有各的判据**，别一句话带过。
     # ⚠️ 这里点的是**库里真的有的**那几张（与上面那行计数同一个口径）。写 `HAND_WRITTEN`
     # 全集的话，会印出"3 张"却列 4 个名字 —— 迁移还没跑（`note_tag` 还没建）时就是这样。
     print("  （手写的 %s 不在上面这条判据的射程内，各有各的判据："

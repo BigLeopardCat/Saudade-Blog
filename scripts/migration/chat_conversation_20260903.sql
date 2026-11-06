@@ -11,18 +11,14 @@ CREATE TABLE conversation (
   KEY idx_user_updated (user_id, updated_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
--- ************************************************************
 -- 第 2 段：两表加列（先 NULL，回填校验后才收紧）
--- ************************************************************
 ALTER TABLE chat_history
   ADD COLUMN conversation_id int NULL AFTER user_id,
   ADD KEY idx_conv_id (conversation_id, id);
 ALTER TABLE chat_summary
   ADD COLUMN conversation_id int NULL AFTER user_id;
 
--- ************************************************************
 -- 第 3 段：gaps-and-islands 分段（>3600s 间隔 = 新会话）
--- ************************************************************
 DROP TABLE IF EXISTS _conv_island;
 CREATE TABLE _conv_island (
   user_id int NOT NULL,
@@ -54,18 +50,14 @@ SELECT user_id, COUNT(*) AS islands FROM _conv_island GROUP BY user_id ORDER BY 
 SELECT user_id, first_id, last_id, min_ts, max_ts FROM _conv_island
 WHERE user_id = 7 ORDER BY first_id;
 
--- ************************************************************
 -- 第 4 段：插入 conversation（ORDER BY 保证 id 自增与 first_id 同序、确定）
--- ************************************************************
 INSERT INTO conversation (user_id, title, created_at, updated_at)
 SELECT user_id, NULL, min_ts, max_ts
 FROM _conv_island
 ORDER BY user_id, first_id;
 
--- ************************************************************
 -- 第 5 段：_conv_island 回填 conv_id（锚点 user_id + min_ts + max_ts：
 -- 同用户会话的 min_ts 至少相差 3601s，锚点无歧义）
--- ************************************************************
 UPDATE _conv_island i
 JOIN conversation c
   ON c.user_id = i.user_id AND c.created_at = i.min_ts AND c.updated_at = i.max_ts
@@ -75,10 +67,8 @@ SET i.conv_id = c.id;
 SELECT '⑤-1 未匹配岛屿(应为空)' AS gate, user_id, first_id FROM _conv_island WHERE conv_id IS NULL;
 SELECT '⑤-2 一会话多岛锚定(应为空)' AS gate, conv_id, COUNT(*) AS n FROM _conv_island GROUP BY conv_id HAVING COUNT(*) > 1;
 
--- ************************************************************
 -- 第 6 段：chat_history 回填（id 区间 + user_id 双限定 = 岛屿行集；
 -- 全表 id 与 user_id 独立自增，跨用户 id 交错，必须带 user_id 过滤）
--- ************************************************************
 UPDATE chat_history h
 JOIN _conv_island i
   ON i.user_id = h.user_id AND h.id BETWEEN i.first_id AND i.last_id
@@ -94,12 +84,10 @@ JOIN chat_history h ON h.conversation_id = c.id
 WHERE c.user_id = 7
 GROUP BY c.id ORDER BY c.id;
 
--- ************************************************************
 -- 第 7 段：标题派生 = 每会话第一条 user 消息，剥尾部图片标记后 LEFT 40。
 -- 正则转义说明：MySQL 字符串里 \[ 会丢反斜杠（非标准转义），必须写 \\[ 保留给
 -- ICU 正则；剥离逻辑与 Rust derive_conv_title 对齐（干跑已确认 37 条全剥净）。
 -- NULLIF：纯图首条剥空 → NULL（前端显示"新对话"）
--- ************************************************************
 UPDATE conversation c
 JOIN (
   SELECT i.conv_id, MIN(h.id) AS first_user_id
@@ -113,11 +101,9 @@ SET c.title = NULLIF(LEFT(TRIM(REGEXP_REPLACE(h.content, '\\n?\\[图片(×[0-9]+
 -- 标题抽样（期望：中文截断 ≤40 字符；纯图首条会话标题 NULL）
 SELECT id, user_id, title FROM conversation ORDER BY id LIMIT 15;
 
--- ************************************************************
 -- 第 8 段：摘要 nearest-below 归位（归属 = 该用户 updated_at <= 摘要.updated_at
 -- 的最新会话；ROW_NUMBER 取每摘要最近者，同秒并列 id 兜底）
 -- 干跑结论：6 条摘要全部有归属（无孤儿），未命中分支不会触发
--- ************************************************************
 WITH ranked AS (
   SELECT s.id AS summary_id, c.id AS conv_id,
          ROW_NUMBER() OVER (PARTITION BY s.id ORDER BY c.updated_at DESC, c.id DESC) AS rn
@@ -139,9 +125,7 @@ SELECT s.id AS summary_id, s.user_id, s.updated_at AS sum_ts, s.conversation_id,
 FROM chat_summary s JOIN conversation c ON c.id = s.conversation_id
 ORDER BY s.user_id;
 
--- ************************************************************
 -- 第 9 段：收紧（三处都过前面校验门才执行）
--- ************************************************************
 ALTER TABLE chat_history MODIFY conversation_id int NOT NULL;
 ALTER TABLE chat_summary MODIFY conversation_id int NOT NULL;
 -- 摘要唯一键从 user_id 迁到 conversation_id（每会话一条摘要）
@@ -156,9 +140,7 @@ JOIN chat_history h2
  AND h1.id < h2.id
  AND h1.created_at > h2.created_at;
 
--- ************************************************************
 -- 第 10 段：打迁移标记（防重跑）
--- ************************************************************
 INSERT INTO migration_flags (flag_name) VALUES ('chat_conv_20260903');
 SELECT '完成' AS done, flag_name, applied_at FROM migration_flags WHERE flag_name = 'chat_conv_20260903';
 

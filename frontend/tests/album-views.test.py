@@ -25,10 +25,10 @@ def check(desc, cond, detail=""):
 DEFINE = ('import.meta.env={"VITE_HTTP_BASEURL":"","VITE_CDN_BASEURL":"",'
           '"MODE":"production","DEV":false,"PROD":true,"BASE_URL":"/"}')
 
-# ── 夹具（Python 侧是期望值，JS 侧 ENTRY 里按同一份造数据；超长名那份由 Python 注入，
-#    保证两侧逐字相同）────────────────────────────────────────────────────────
+# 夹具（Python 侧是期望值，JS 侧 ENTRY 里按同一份造数据；超长名那份由 Python 注入，
+# 保证两侧逐字相同）
 # 超长名**刻意用 ASCII**：本机无中文字体（`fc-list :lang=zh` 为空），汉字在沙箱里渲染成
-# 窄窄的缺字框——实测 124 个汉字只占 1039px，**比那一格还窄**。拿它量"溢出"等于在量字体、
+# 窄窄的缺字框——124 个汉字只占 1039px，**比那一格还窄**。拿它量"溢出"等于在量字体、
 # 不是在量布局。ASCII 有真实字宽：316 字符 ≈ 2200px，一定超出那一格（1440 视口下约 1255px）。
 LONG_TAIL = "very_long_screenshot_name_" * 12   # 312 字符 + ".png"
 # (盘上的名字, 给人看的名字)
@@ -41,11 +41,11 @@ NAMED = [
 ]
 LONG_URL = "/api/protect/download/20261001000000_" + LONG_TAIL + ".png"
 
-# ── 第七节要的两份样式 ───────────────────────────────────────────────────────────
-# ① 后台的**全局** CSS。它从来没进过这个沙箱，而上传按钮那件事故的真凶就住在这里：
+# 第七节要的两份样式
+# ① 后台的**全局** CSS。它从来没进过这个沙箱，而上传按钮的问题就出在这里：
 #    `.icon{min-width:60px}`（以及 `.image,.icon` 那条同款）。只有把它拼进页面，
 #    按钮里的 `<span class="icon">` 才会被撑成 60px、才会真的压出按钮右缘 ——
-#    不注入它的话几何断言**必然假绿**（那正是这次要补的缺口）。
+#    不注入它的话几何断言**必然假绿**。
 DASH_CSS = (FE / "src/pages/Dashboard/index.css").read_text(encoding="utf-8")
 
 OLD_DIVIDER_CSS = """
@@ -191,7 +191,7 @@ def build_sandbox() -> pathlib.Path:
     base_css = css_out.read_text() + "\n" + (sb / "bundle.css").read_text() + "\n" + DASH_CSS
     write_html(sb, "bundle.js", base_css)
 
-    # ── 负控（第四节）：另打一份**把 `e.stopPropagation()` 抹掉**的包 ────────────────
+    # 负控（第四节）：另打一份**把 `e.stopPropagation()` 抹掉**的包
     bad = sb / "bad"
     shutil.copytree(sb / "src", bad / "src")
     (bad / "node_modules").symlink_to(FE / "node_modules")
@@ -390,7 +390,7 @@ def to_grid(pg):
 
 
 # ⚠️ 「已选中 N 张」那格挂着 `transition: 0.3s`（切透明/切回）——写完立刻量到的还是
-# **动画中间档**（实测点了之后 250ms 量到 0.98）。量透明度必须等过这个时长。
+# **动画中间档**（点了之后 250ms 量到 0.98）。量透明度必须等过这个时长。
 WAIT_ANIM = 500
 
 
@@ -409,7 +409,7 @@ def click_box(pg, idx):
 with sync_playwright() as p:
     br = p.chromium.launch()
 
-    # ── 一、默认是「平铺」，两种方式互斥 ──────────────────────────────────────
+    # 一、默认是「平铺」，两种方式互斥
     print("\n【一】默认平铺：网格在、列表不在（两种方式是互斥的，不是叠着渲染）")
     pg = mount(br)
     g = geo(pg)
@@ -431,7 +431,7 @@ with sync_playwright() as p:
     check("第一节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
-    # ── 二、行 = 缩略图 + 图片名 ─────────────────────────────────────────────
+    # 二、行 = 缩略图 + 图片名
     print("\n【二】行内容：56×56 缩略图 + 剥掉时间戳前缀的图片名")
     pg = mount(br, view="list")
     g = geo(pg)
@@ -461,7 +461,7 @@ with sync_playwright() as p:
     check("第二节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
-    # ── 三、行点击 ⇒ 勾选 + 计数；「已选中」那格只变淡、不消失 ──────────────────
+    # 三、行点击 ⇒ 勾选 + 计数；「已选中」那格只变淡、不消失
     print("\n【三】行点击：勾选 + 计数；「已选中 N 张」在位不可见（不占位消失、不绝对定位）")
     pg = mount(br, view="list")
     g = geo(pg)
@@ -493,7 +493,7 @@ with sync_playwright() as p:
     check("第三节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
-    # ── 四、勾选框自己点：只翻一次（含真负控）──────────────────────────────────
+    # 四、勾选框自己点：只翻一次（含真负控）
     print("\n【四】点勾选框本体只翻一次（负控：抹掉 stopPropagation 的那份包必须复现「点了没反应」）")
     pg = mount(br, view="list")
     click_box(pg, 1)
@@ -525,7 +525,7 @@ with sync_playwright() as p:
           gb["selCount"] != "已选中1张图片", gb["selCount"])
     pg.close()
 
-    # ── 五、展示方式记在本地，刷新后还在 ──────────────────────────────────────
+    # 五、展示方式记在本地，刷新后还在
     print("\n【五】切一次就记住：刷新后仍是列表；再切回平铺，刷新后也记住")
     pg = mount(br)
     check("前置：一次都没选过时是平铺", geo(pg)["listWrap"] is False)
@@ -547,7 +547,7 @@ with sync_playwright() as p:
           g["gridImgs"] == N and g["rows"] == 0, f'rows={g["rows"]} grid={g["gridImgs"]}')
     pg.close()
 
-    # ── 六、列表方式不打乱原有的删除路径 ─────────────────────────────────────
+    # 六、列表方式不打乱原有的删除路径
     print("\n【六】选中后走原样的删除弹窗：body = 被选中那张图的 URL")
     pg = mount(br, view="list")
     # ① 未选中就点删除：一个写请求都不许发
@@ -598,7 +598,7 @@ with sync_playwright() as p:
           g["lineY"] >= g["btn"]["b"], f'lineY={g["lineY"]} btn.bottom={g["btn"]["b"]}')
 
     # ② 上传钮里的图标槽：全局 `.icon{min-width:60px}` 会把它撑成 60px（min-width 恒胜 width），
-    #    实测槽的右缘 180 > 按钮右缘 170 —— 图标被推出按钮框、整体右移 10px。
+    #    槽的右缘 180 > 按钮右缘 170 —— 图标被推出按钮框、整体右移 10px。
     check("上传钮仍是 150×50", g["btn"]["w"] == 150 and g["btn"]["h"] == 50, str(g["btn"]))
     check("  图标槽真的被 `min-width:0` 收回了 40px（全局那条 min-width 不再生效）",
           g["iconMinW"] == "0px" and g["icon"]["w"] == 40,

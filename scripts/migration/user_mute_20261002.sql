@@ -19,7 +19,7 @@ SELECT '账号总数' AS done, COUNT(*) AS 行数 FROM `user`;
 SELECT 'flag 已存在?' AS done, flag_name, applied_at FROM migration_flags
  WHERE flag_name = 'user_mute_20261002';
 
--- ── ② 加列 ─────────────────────────────────────────────────────────────────
+-- ② 加列
 -- `datetime NULL DEFAULT NULL`：显式写出 NULL 语义（迁移注释见文件头注）。
 -- 不建索引：禁言的读取只有两种——"某个 uid 现在是否被禁"（主键查，取整行时顺手带出）
 -- 与后端账号列表的**全表扫描**（个位数行）。没有"按到期时间扫全表解禁"这条路径
@@ -29,7 +29,7 @@ ALTER TABLE `user`
     COMMENT '禁言到期时间（+08:00 钟面）。NULL=从未禁言；9999-12-31 23:59:59=永久。判据在 authz::is_muted'
     AFTER `chat_quota_used`;
 
--- ── ③ 验收 ─────────────────────────────────────────────────────────────────
+-- ③ 验收
 -- 3a) 列与默认值：期望 1 行，`IS_NULLABLE=YES`、`COLUMN_DEFAULT` 为 NULL。
 SELECT '列' AS done, ORDINAL_POSITION AS pos, COLUMN_NAME, COLUMN_TYPE,
        IS_NULLABLE, COLUMN_DEFAULT, COLUMN_COMMENT
@@ -43,18 +43,17 @@ SELECT '被禁言行数' AS done,
        SUM(CASE WHEN muted_until IS NOT NULL THEN 1 ELSE 0 END) AS 已禁言
   FROM `user`;
 
--- ── ④ 打 flag ──────────────────────────────────────────────────────────────
+-- ④ 打 flag
 -- 重复执行会因主键冲突报错 ⇒ 那说明已经打过，忽略即可。
 INSERT INTO migration_flags (flag_name) VALUES ('user_mute_20261002');
 
 SELECT 'flag' AS done, flag_name, applied_at FROM migration_flags
  WHERE flag_name = 'user_mute_20261002';
 
--- ── 回滚（如需）────────────────────────────────────────────────────────────
+-- 回滚（如需）
 -- **先回滚代码、再删列**：反了的话 `entity::user` 会 SELECT 一个不存在的列，
 -- 每一次用户查询都报错（登录直接挂）。
 --   ALTER TABLE `user` DROP COLUMN `muted_until`;
 --   DELETE FROM migration_flags WHERE flag_name = 'user_mute_20261002';
 -- ⚠️ 删列会把**禁言记录一起删掉**（谁被禁到什么时候，取不回来）——回滚前自行留档：
 --   SELECT id, username, muted_until FROM `user` WHERE muted_until IS NOT NULL;
--- =============================================================================

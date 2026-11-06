@@ -13,7 +13,7 @@ SELECT '可投票的评论数' AS done, COUNT(*) AS 行数
 SELECT 'flag 已存在?' AS done, flag_name, applied_at FROM migration_flags
  WHERE flag_name = 'note_comment_vote_20261003';
 
--- ── ② 建表 ─────────────────────────────────────────────────────────────────
+-- ② 建表
 -- 字符集/排序规则显式跟随全库（`utf8mb4_0900_ai_ci`）——`visitor_key` 要与
 -- `note_like.visitor_key` 比得起来（那张表也是这个排序规则），不显式写就会跟
 -- 库默认走，哪天默认改了就是"同一串 key 在两张表上算不等"这种鬼故事。
@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS `note_comment_vote` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
   COMMENT='评论点赞/踩（20261003）：一票一行，两种身份并排，见迁移文件头注';
 
--- ── ③ 验收 ─────────────────────────────────────────────────────────────────
+-- ③ 验收
 -- 3a) 列与默认值：期望 7 行，逐列肉眼过一遍。**重点看 `user_id`/`visitor_key`
 --     两列 IS_NULLABLE 都是 YES**（那是"两种身份并排"的全部机制）与 `value`
 --     的 NOT NULL（没有 0 这一档，但**也没有默认值**：写票必须显式给 ±1）。
@@ -53,14 +53,14 @@ SELECT '索引' AS done, INDEX_NAME, SEQ_IN_INDEX, COLUMN_NAME, NON_UNIQUE
 --     本文件不造任何票，能写出票的代码在本次部署之后才存在。
 SELECT '空表' AS done, COUNT(*) AS 行数 FROM `note_comment_vote`;
 
--- ── ④ 打 flag ──────────────────────────────────────────────────────────────
+-- ④ 打 flag
 -- 重复执行会因主键/唯一键报错 ⇒ 那说明已经打过，忽略即可。
 INSERT INTO migration_flags (flag_name) VALUES ('note_comment_vote_20261003');
 
 SELECT 'flag' AS done, flag_name, applied_at FROM migration_flags
  WHERE flag_name = 'note_comment_vote_20261003';
 
--- ── 回滚（如需）────────────────────────────────────────────────────────────
+-- 回滚（如需）
 -- **先回滚代码、再删表**：反了的话投票端点在表没了之后 500。讨论区读取那条路
 -- 只是少两个数（`vote_counts_for` 查失败按空表处理），不会整页打挂——但别依赖这个。
 --   DROP TABLE IF EXISTS `note_comment_vote`;
@@ -69,4 +69,3 @@ SELECT 'flag' AS done, flag_name, applied_at FROM migration_flags
 --    `SELECT * FROM note_comment_vote`）。
 -- ⚠️ 与 `note_like_anon` 那条不同，这里**没有"必须删掉某半边行才能回滚"的坑**：
 --    本文件从头就是两张可空列，回滚只是 drop 一整张表。
--- =============================================================================

@@ -24,7 +24,7 @@ def check(desc, cond, detail=""):
 DEFINE = ('import.meta.env={"VITE_HTTP_BASEURL":"","VITE_CDN_BASEURL":"",'
           '"MODE":"production","DEV":false,"PROD":true,"BASE_URL":"/"}')
 
-# ── 假后端之一：axios（评论管理用的那个）──────────────────────────────────────
+# 假后端之一：axios（评论管理用的那个）
 FAKE_AXIOS = r"""
 const calls: any[] = (window as any).__calls = [];
 (window as any).__axiosStub = true;
@@ -714,8 +714,8 @@ def notices(pg):
 
 with sync_playwright() as p:
     br = p.chromium.launch()
-    # ── 一、账号管理：固定壳 + 只有列表滚 ─────────────────────────────────────
-    # 用户报的原始症状就在这里（"文章列表的逻辑"）。判据取"头不动、行动"这一对：
+    # 一、账号管理：固定壳 + 只有列表滚
+    # 原始症状就在这里（"文章列表的逻辑"）。判据取"头不动、行动"这一对：
     # 只看"列表能滚"是假绿——整页滚的时候列表**也**能滚。
     print("\n【一】账号管理：筛选检索的头固定，只有账号列表在窗口内滚")
     pg = mount(br)
@@ -772,7 +772,7 @@ with sync_playwright() as p:
     check("第一节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
-    # ── 二、角色筛选 + 用户名检索 ─────────────────────────────────────────────
+    # 二、角色筛选 + 用户名检索
     print("\n【二】账号管理的角色筛选与检索")
     pg = mount(br)
     n_all = pg.evaluate("() => document.querySelectorAll('.tu-row').length")
@@ -832,7 +832,7 @@ with sync_playwright() as p:
     check("第二节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
-    # ── 三、密码框摘挂（浏览器回填的根因）──────────────────────────────────────
+    # 三、密码框摘挂（浏览器回填的根因）
     # Chrome 的规则：判定为凭据的字段忽略 `autocomplete="off"`；页面没有 `<form>` 时
     # 它把整页散落的输入框当成一个**合成表单**——于是"页面上常驻一个密码框"就等于
     # "本页是登录页"，它便去回填页面上最裸的文本框（这里就是新建账号那两格）。
@@ -868,7 +868,7 @@ with sync_playwright() as p:
     check("第三节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
-    # ── 四、评论管理：同款内滚动 + 表头吸顶 + 分页条钉底 ────────────────────────
+    # 四、评论管理：同款内滚动 + 表头吸顶 + 分页条钉底
     print("\n【四】评论管理：工具栏固定、表头吸顶、分页条钉底")
     pg = mount(br, path="/dashboard/users?tab=review", wait=".BoardManage .ant-table-row")
     pg.wait_for_timeout(400)
@@ -1051,7 +1051,7 @@ with sync_playwright() as p:
 
     # ⑤ 反向再来一次：冻结一个正常账号 ⇒ 它进冻结档。
     # 行定位用 `:text-is("guest1")` 精确匹配——`has_text` 是包含匹配，
-    # 会同时命中 guest1/guest10../guest19（本文件第二节也踩过同一个坑）。
+    # 会同时命中 guest1/guest10../guest19（第二节有同样的坑）。
     pg.locator(".tu-tabs button", has_text="全部").first.click()
     pg.wait_for_timeout(250)
     pg.locator('.tu-row:has(strong:text-is("guest1")) .tu-freeze-btn').click()

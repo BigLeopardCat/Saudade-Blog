@@ -97,7 +97,7 @@ def _self_test():
     ck("连库串解析", parse_pg_url("postgres://u:p%40w@127.0.0.1:5432/blog"),
        ("u", "p@w", "127.0.0.1", "5432", "blog"))
     ck("缺端口回落 5432", parse_pg_url("postgres://u:p@db/blog")[3], "5432")
-    # 负控：切库前那条 URL 现在必须**不被接受**——留着它当"前缀真的只认一种"的判据，
+    # 负控：`mysql://` 那条 URL 必须**不被接受**——留着它当"前缀真的只认一种"的判据，
     # 否则把正则写宽成 `postgres(ql)?://` 也没人知道。
     ck("mysql 串不再被接受", parse_pg_url("mysql://u:p@127.0.0.1:3306/blog"), None)
     ck("postgresql:// 长写也不接受", parse_pg_url("postgresql://u:p@h/blog"), None)
@@ -130,7 +130,7 @@ def pg_rows(conn, sql):
     out = subprocess.run(
         # ⚠️ 端口是**小写 `-p`**。大写 `-P` 在 psql 里是 `\pset`（打印选项），
         # 传个端口号进去会报 `\pset: unknown option: 5432` —— 与 mysql 客户端的
-        # `-P` 大写端口**正好相反**，从 MySQL 那边照抄过来必踩。
+        # `-P` 大写端口**正好相反**，照抄必踩。
         prefix + ["-U", user, "-h", host, "-p", port, "-d", db,
                   # `-X` 不读 ~/.psqlrc（本机可能有影响输出的设置）；`-q` 静音。
                   "-X", "-q",
@@ -174,7 +174,7 @@ def collect(conn):
     # ⚠️ `user` 在 PostgreSQL 里是**保留字**（裸写等于 `current_user`），必须加双引号：
     # `FROM user` 在 PG 上报 `column "id" does not exist`（它把 `user` 读成了一个表达式
     # 而不是表名，于是 `id` 找不到）——报错信息完全指不到真正的原因。MySQL 侧允许裸写，
-    # 所以这是切库时**只会在这里踩到**的一处。
+    # 所以这是迁移时**只会在这里踩到**的一处。
     for row in pg_rows(conn,
                           "SELECT id, COALESCE(avatar, '') FROM \"user\" "
                           f"WHERE avatar LIKE '%{LOCAL_PREFIX}%'"):

@@ -212,7 +212,7 @@ with sync_playwright() as p:
         page.errs = errs
         return page
 
-    # ══ 一、收起态：侧栏真的把全宽还给内容，且整块（含跟随的 fixed nav）都在屏外 ══
+    # 一、收起态：侧栏真的把全宽还给内容，且整块（含跟随的 fixed nav）都在屏外
     print("\n【一】390×844 收起态：内容占满全宽、侧栏整块在屏外")
     pg = fresh_page()
     g = pg.evaluate(GEO)
@@ -237,7 +237,7 @@ with sync_playwright() as p:
     check(f"内层 fixed nav 跟着一起滑出屏外（nav.right={g['nav']['right']:.1f} ≤ 0）",
           g["nav"]["right"] <= 0.5, f"right={g['nav']['right']:.1f}")
 
-    # ══ 二、抽屉交互：汉堡钮开、点遮罩关 ══
+    # 二、抽屉交互：汉堡钮开、点遮罩关
     print("\n【二】抽屉交互（汉堡钮 / 遮罩）")
     check("汉堡钮渲染出来了", g["btn"] is not None)
     check("汉堡钮真的可见（display:flex 生效）",
@@ -269,7 +269,7 @@ with sync_playwright() as p:
           g["shell"]["right"] <= 0.5, f"right={g['shell']['right']:.1f}")
     check("遮罩跟着收起", not g["backdropShown"])
 
-    # ══ 三、整页滚得到底 ══
+    # 三、整页滚得到底
     print("\n【三】内容高于视口时滚得到底（「每个菜单展开后被截断」那条）")
     g = pg.evaluate(GEO)
     check(f"卡片不再裁溢出（computed overflow={g['cardOverflow']} ≠ hidden）",
@@ -286,11 +286,11 @@ with sync_playwright() as p:
     check("全程无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
-    # ══ 四、负控：把三条判据各自的"坏形状"假回去，必须当场转红 ══
+    # 四、负控：把三条判据各自的"坏形状"假回去，必须当场转红
     # 照 dashboard-sidebar.test.py 的"对照"写法：判据自己得先被证明是敏感的。
     print("\n【四】负控（判据自带牙）")
 
-    # ① 当年那个内联 marginLeft:80 加回去 ⇒ "卡片贴左" 与 "不横向溢出" 两条必须红。
+    # ① 把内联 marginLeft:80 加回去 ⇒ "卡片贴左" 与 "不横向溢出" 两条必须红。
     nc = fresh_page()
     nc.evaluate("() => { document.querySelector('.Card').style.marginLeft = '80px'; }")
     nc.wait_for_timeout(80)

@@ -67,7 +67,7 @@ if [ -f "$SITE_CONF" ]; then
     else
         no "站点配置里只有 $n 处 include（本站有两个 443 server 块 ⇒ 要 2 处）"
     fi
-    # 旧写法残留：具体文件名 include 会在"没装 IoT"的机器上直接 nginx -t 失败
+    # 具体文件名 include 会在"没装 IoT"的机器上直接让 nginx -t 失败
     if grep -qE 'snippets/(mqtt|device)\.conf' "$SITE_CONF"; then
         info "站点配置里还有旧的具体文件 include（snippets/mqtt.conf / device.conf）——"
         info "  别人克隆部署时那两个文件不存在，nginx -t 会直接失败。该换成通配那行。"

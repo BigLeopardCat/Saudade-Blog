@@ -18,7 +18,7 @@ SELECT
 SELECT id, username, role, status FROM `user`
  WHERE role IN ('admin', 'superadmin') ORDER BY id;
 
--- ── ② 建夹具管理员 756 ─────────────────────────────────────────────────────
+-- ② 建夹具管理员 756
 -- 口令配方与 `test_accounts_rotate_20260924.sql` / `fixture_admin_closeout_20261017.sql`
 -- **逐字相同**：四个随机 UUID 拼起来的原文从来没有被任何人看到过（不经过终端、不落任何
 -- 文件、不进 shell 历史、不写进本文件）⇒ `utils.rs::verify_password` 拿输入算 SHA-256
@@ -45,7 +45,7 @@ SELECT 756, 'agent_golden_admin_20261017', '', NULL,
  WHERE NOT EXISTS (SELECT 1 FROM `user` WHERE id = 756)
    AND NOT EXISTS (SELECT 1 FROM `user` WHERE username = 'agent_golden_admin_20261017');
 
--- ── ③ 待办夹具搬到 756 名下 ────────────────────────────────────────────────
+-- ③ 待办夹具搬到 756 名下
 -- 待办列表**按 uid 过滤**（`src/routes/todos.rs` 每个 handler 都做 `UserId.eq(uid)`），
 -- 而夹具闸与用例读的都是**发起人自己**那份列表（`eval/golden_fixture_todo.py` 用
 -- `GOLDEN_ADMIN_UID` 签令牌）⇒ 主人必须等于 `GOLDEN_ADMIN_UID`。
@@ -58,7 +58,7 @@ SELECT 756, 'agent_golden_admin_20261017', '', NULL,
 UPDATE dashboard_todo SET user_id = 756
  WHERE user_id = 721 AND `text` LIKE 'agent\_fixture\_%';
 
--- ── ④ 验收：四件事都必须成立 ────────────────────────────────────────────────
+-- ④ 验收：四件事都必须成立
 -- 期望一行：id=756、role=admin、status=0、token_version=0、
 --           pw_len=64、looks_like_sha256=1、pw_empty=0、nickname_empty=1。
 SELECT id, username, role, status, token_version,
@@ -90,7 +90,7 @@ SELECT id, user_id, sort_order, `text`, `done`, due_date, created_at, updated_at
 SELECT id, username, role FROM `user`
  WHERE role IN ('admin', 'superadmin') ORDER BY id;
 
--- ── ⑤ flag：**两件事都成立才登记** ─────────────────────────────────────────
+-- ⑤ flag：**两件事都成立才登记**
 -- 条件写全（同另两份夹具迁移的写法）：756 的形态合法、且夹具真的在它名下、且 721 已清空。
 -- 任一不满足 ⇒ 不写 flag（flag 的含义是"这次收尾做成了"，不是"本文件被打开过"）。
 INSERT INTO migration_flags (flag_name)

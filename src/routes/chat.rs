@@ -420,8 +420,8 @@ pub async fn chat_stream_handler(
     let expected_version = crate::auth_jwt::claims_from_headers(req.headers()).and_then(|c| c.ver).unwrap_or(-1);
     let ctx = match prepare_chat(&state, req).await {
         Ok(c) => c,
-        // 早退一律转成 SSE 帧（见 early_exit_response 的头注）：这里原本是
-        // `e.into_response()`，会把 200 + JSON 原样吐给一个只认 SSE 的客户端
+        // 早退一律转成 SSE 帧（见 early_exit_response 的头注）：`e.into_response()`
+        // 会把 200 + JSON 原样吐给一个只认 SSE 的客户端
         Err((status, Json(body))) => return early_exit_response(status, body, "prepare_chat"),
     };
 

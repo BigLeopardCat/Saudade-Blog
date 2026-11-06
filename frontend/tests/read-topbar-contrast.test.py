@@ -23,7 +23,7 @@ SASS_JS = 'const sass=require("sass");process.stdout.write(sass.compile(process.
 
 SASS_FILE = FE / "src/frontHome/Head/index.sass"
 
-# 实测的横幅亮度（`/article/54`，导航文字带 y 30..56 / x 290..1050，逐帧采样 8 帧同值）：
+# 横幅亮度（`/article/54`，导航文字带 y 30..56 / x 290..1050，逐帧采样 8 帧同值）：
 #   中位 58/255、p90 72、p99 119。取中位与最亮那 1% 两档当判据的两端。
 BANNER_MEDIAN = "rgb(58, 58, 59)"
 BANNER_BRIGHT = "rgb(119, 119, 119)"

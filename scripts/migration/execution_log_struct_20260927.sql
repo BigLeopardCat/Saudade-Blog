@@ -14,7 +14,7 @@ ALTER TABLE `execution_log`
         COMMENT '回执原文 JSON 文本（skill/tool/args/result/ts + cmd/digest/title/审计 meta）；NULL=结构化之前的存量行'
         AFTER `tool`;
 
--- ── ① 自检：两列都在、类型对得上、都是可空 ───────────────────────────────────
+-- ① 自检：两列都在、类型对得上、都是可空
 -- 期望：恰好 2 行，is_nullable 全为 YES，ORDINAL_POSITION 依次为 skill 之后的两格。
 SELECT '列已存在' AS done, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, ORDINAL_POSITION
   FROM information_schema.COLUMNS
@@ -22,7 +22,7 @@ SELECT '列已存在' AS done, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, ORDINAL_PO
    AND COLUMN_NAME IN ('tool', 'payload')
  ORDER BY ORDINAL_POSITION;
 
--- ── ② 存量行核对：本文件不回填任何数据 ───────────────────────────────────────
+-- ② 存量行核对：本文件不回填任何数据
 -- 期望：`结构化之前的存量行` = 总行数（两列全 NULL），且 `不该有值的行` = 0。
 -- **若 `不该有值的行` 不为 0，先停手查清是谁写的**——本文件之外此刻没有任何代码
 -- 能写这两列（写侧代码在这次部署之后才上线）。
@@ -34,7 +34,7 @@ SELECT '存量行（预期全部为 NULL）' AS done,
        MAX(created_at)                 AS 最晚
   FROM `execution_log`;
 
--- ── ③ 列宽与现值对照（跑完本文件后随时可查这一条看积累了没有）───────────────
+-- ③ 列宽与现值对照（跑完本文件后随时可查这一条看积累了没有）
 -- 读法：`最长 detail` 接近 300 就说明截断已经在发生（结构列落库后这条压力消失）。
 SELECT '现状快照' AS done,
        COUNT(*)                                AS 回执总数,
@@ -48,7 +48,7 @@ INSERT INTO migration_flags (flag_name) VALUES ('execution_log_struct_20260927')
 SELECT 'flag' AS done, flag_name, applied_at FROM migration_flags
  WHERE flag_name = 'execution_log_struct_20260927';
 
--- ── 回滚（如需）────────────────────────────────────────────────────────────
+-- 回滚（如需）
 -- 两列一起撤（撤列会丢掉"哪次执行用了哪个工具"这条事实，撤回前先导出）：
 --   ALTER TABLE `execution_log` DROP COLUMN `payload`;
 --   ALTER TABLE `execution_log` DROP COLUMN `tool`;

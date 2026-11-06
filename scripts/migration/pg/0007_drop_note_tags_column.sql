@@ -24,5 +24,5 @@ ALTER TABLE "note" DROP COLUMN IF EXISTS "tags";
 --
 --   SELECT count(*) FROM information_schema.columns
 --    WHERE table_name = 'note' AND column_name = 'tags';        -- 期望 0
---   SELECT count(*) FROM "note_tag";                            -- 期望 18（产线实测）
+--   SELECT count(*) FROM "note_tag";                            -- 期望 18
 --   python3 scripts/migration/pg/verify_parity.py               -- 期望仍绿（靠那条单列豁免）

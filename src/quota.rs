@@ -125,7 +125,7 @@ pub async fn try_consume(db: &DatabaseConnection, uid: i32, limit: i32) -> Consu
 mod tests {
     use super::*;
 
-    // ── 上限的读法 ────────────────────────────────────────────────────────
+    // 上限的读法
     #[test]
     fn 上限没设或设坏了一律回落() {
         assert_eq!(parse_limit(None), 500);
@@ -151,7 +151,7 @@ mod tests {
         assert_eq!(parse_limit(Some("1")), 1);
     }
 
-    // ── 谁不限量 ──────────────────────────────────────────────────────────
+    // 谁不限量
     #[test]
     fn 只有能进后台的人不限量() {
         assert!(is_unlimited(Some(authz::ROLE_ADMIN)));
@@ -164,7 +164,7 @@ mod tests {
         assert!(!is_unlimited(None));
     }
 
-    // ── 视图与饱和 ────────────────────────────────────────────────────────
+    // 视图与饱和
     #[test]
     fn 剩余就是上限减已用() {
         let v = view(137, 500, false);
@@ -195,7 +195,7 @@ mod tests {
         assert_eq!(v, QuotaView { used: 0, limit: 0, remaining: 0, unlimited: true });
     }
 
-    // ── C1 契约的形状 ─────────────────────────────────────────────────────
+    // C1 契约的形状
     #[test]
     fn 转发对象恰好是那四个键() {
         let v = view(137, 500, false);

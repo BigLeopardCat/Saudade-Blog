@@ -21,7 +21,7 @@ def check(desc, cond, detail=""):
 DEFINE = ('import.meta.env={"VITE_HTTP_BASEURL":"","VITE_CDN_BASEURL":"",'
           '"MODE":"production","DEV":false,"PROD":true,"BASE_URL":"/"}')
 
-# ── 假后端：只桩 axios 这一个边界 ─────────────────────────────────────────────
+# 假后端：只桩 axios 这一个边界
 FAKE_AXIOS = r"""
 // 假后端。`window.__calls` 记录每一次请求，测试按它断言"该发的发了、没发的没发"。
 type Call = { url: string; method: string; data: any };
@@ -447,7 +447,7 @@ with sync_playwright() as p:
         errs = []
         page.on("pageerror", lambda e: errs.append(str(e)))
         # 主题源就是 localStorage.isDarkMode（theme.ts readDarkMode：裸 'true' 与
-        # JSON 的 '"true"' 两种历史格式都认），挂载时 useIsDarkMode 会补读一次。
+        # JSON 的 '"true"' 两种旧格式都认），挂载时 useIsDarkMode 会补读一次。
         page.add_init_script(
             f"window.__role = '{role}';"
             f"window.__profileRole = '{profile_role or role}';"
@@ -787,7 +787,7 @@ with sync_playwright() as p:
     check("关窗前：通知列表只拉了一次", n1 == 1, str(n1))
     # agent 在**窗关着**的时候发了一条公告（真调后台、改的是服务端状态）。agent-turn-done
     # 派发时订阅没挂上（上面那条订阅只在 open 时才挂），这次更新谁也接不住——这正是
-    # 用户实测的现象：红点（60 秒轮询 + 共享 store）会亮，列表却停在旧数据上。
+    # 现象：红点（60 秒轮询 + 共享 store）会亮，列表却停在旧数据上。
     pg.evaluate("() => window.__setOpen(false)")
     pg.wait_for_timeout(300)
     # 关窗要真等到 React 重渲染完（订阅的卸载在 effect 里）：同一次 evaluate 里"先关窗再派发"
@@ -869,7 +869,7 @@ with sync_playwright() as p:
     pg.click(".ant-tabs-tab >> nth=3")
     pg.wait_for_selector(PANE + " .ucNoticeRow", timeout=10000)
 
-    # ── 表情包：冒号语法必须消失、换成 <img class="sticker"> ──
+    # 表情包：冒号语法必须消失、换成 <img class="sticker">
     list_txt = pg.locator(PANE).inner_text()
     st = pg.locator(PANE + " .ucNoticeRow img.sticker").first
     check("通知正文里的 :头疼: 渲染成表情（img.sticker 在列表行里）",
@@ -893,7 +893,7 @@ with sync_playwright() as p:
     check("表情取的是本尊素材、alt 是名字（不是裂图/占位）",
           sgeo["loaded"] and sgeo["src"].endswith("/stickers/v2/touteng-cardigan.webp") and sgeo["alt"] == "头疼", str(sgeo))
 
-    # ── 整行可点 ⇒ 占满窗口的详情 ──
+    # 整行可点 ⇒ 占满窗口的详情
     lgeo = pg.evaluate("""() => {
       const row = document.querySelector('.ucNoticeRow');
       return { fs: parseFloat(getComputedStyle(row.querySelector('.ucBodyText')).fontSize) };
@@ -958,7 +958,7 @@ with sync_playwright() as p:
           and pg.locator(PANE + " .ucNoticeRow").count() == 3,
           str(pg.locator(PANE + " .ucNoticeRow").count()))
 
-    # ── stopPropagation：行内那颗按钮有自己的动作，别顺手把详情也打开了 ──
+    # stopPropagation：行内那颗按钮有自己的动作，别顺手把详情也打开了
     n_rd = len(find_call(pg, "/api/protected/notifications/read", "POST"))
     pg.locator(PANE + " .ucNoticeRow").filter(has_text="留言未通过审核").locator("button", has_text="标记已读").click()
     pg.wait_for_timeout(700)

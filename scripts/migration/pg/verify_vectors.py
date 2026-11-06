@@ -72,7 +72,7 @@ def main() -> int:
             for i, (k, g) in enumerate(entries)}
     got = {r[0]: (int(r[1]), int(r[2]), r[3]) for r in pg_rows(PG_MD5_SQL)}
 
-    # ── 行 ────────────────────────────────────────────────────────────────
+    # 行
     print("── 向量行 ─────────────────────────────────────────────────────")
     miss = [k for k in want if k not in got]
     extra = [k for k in got if k not in want]
@@ -95,7 +95,7 @@ def main() -> int:
     if not (miss or extra or diff or dimbad or genbad):
         print("   ✓ 逐位一致：%d 行 × %d 维，每一行都按 float4 的二进制比过" % (len(want), dim))
 
-    # ── 空间行（manifest）────────────────────────────────────────────────
+    # 空间行（manifest）
     print("── 空间行（manifest）──────────────────────────────────────────")
     rows = pg_rows(
         "SELECT schema, model, base_url, space_dim, cache_dim, fingerprint, gen, count,"

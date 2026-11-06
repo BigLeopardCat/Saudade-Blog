@@ -22,7 +22,7 @@ const sliceBetween = (startAnchor, endAnchor, label, withEnd = false) => {
     return SRC.slice(i, withEnd ? j + endAnchor.length : j);
 };
 
-// ── 切出真源码：① 内容类型守卫 ② catch 里的 errMsg 取值 ──────────────────────
+// 切出真源码：① 内容类型守卫 ② catch 里的 errMsg 取值
 const guardSrc = sliceBetween(
     "const ctype = String(resp.headers.get('content-type') || '');",
     'throw ctErr;',
@@ -53,7 +53,7 @@ const errMsgOf = new Function('e', errMsgSrc + "\nreturn errMsg;");
 
 const SERVER_TEXT = '服务这边暂时联系不上，这一轮没有生成回复，请稍后再说一次。';
 
-// ── ① agent 不可用：200 + JSON 错误体（事故当天的真形态）────────────────────
+// ① agent 不可用：200 + JSON 错误体（线上真形态）
 let thrown = null;
 try { await guardOf('application/json', JSON.stringify({ reply: '', success: false, error: SERVER_TEXT })); }
 catch (e) { thrown = e; }
@@ -65,7 +65,7 @@ if (thrown) {
        '① 展示文本不带「网络错误: 」前缀（这不是网络故障）');
 }
 
-// ── ② 访客合规告知：200 + success:true + reply（有正文的早退）───────────────
+// ② 访客合规告知：200 + success:true + reply（有正文的早退）
 // 这一支没有 error 字段，取 reply。判据仍是"抛出去"，展示的仍是服务端原话。
 const NOTICE = '尊敬的访客：本站部署的AI虚拟形象Agent仅供技术学习交流…';
 thrown = null;
@@ -74,7 +74,7 @@ catch (e) { thrown = e; }
 ok(thrown !== null, '② 200 + success:true + reply 也抛（它同样是"没有流"）');
 if (thrown) eq(thrown.userText, NOTICE, '② 取不到 error 时回落到 reply（合规文案照常展示）');
 
-// ── ③ 200 + text/html（nginx 把未知路径兜成 index.html）─────────────────────
+// ③ 200 + text/html（nginx 把未知路径兜成 index.html）
 // 这种响应 JSON.parse 必然失败 ⇒ 走兜底话术，且**必须**带上 userText，
 // 否则用户又会读到「网络错误: Unexpected token '<'」那种看不懂的东西。
 thrown = null;
@@ -87,13 +87,13 @@ if (thrown) {
     ok(!errMsgOf(thrown).includes('Unexpected token'), '③ 不把 JSON.parse 的英文异常摆给用户');
 }
 
-// ── ④ 判据自检：正常的 SSE 响应**不**被误伤（否则这条守卫会把全部对话打死）───
+// ④ 判据自检：正常的 SSE 响应**不**被误伤（否则这条守卫会把全部对话打死）
 thrown = null;
 try { await guardOf('text/event-stream; charset=utf-8', 'event: done\ndata: {}\n\n'); }
 catch (e) { thrown = e; }
 eq(thrown, null, '④ text/event-stream（带 charset 参数）照常放行 —— 守卫不误伤正常流');
 
-// ── ⑤ 判据自检：没有 userText 的异常确实被套上「网络错误: 」─────────────────
+// ⑤ 判据自检：没有 userText 的异常确实被套上「网络错误: 」
 // （证明①的"不带前缀"不是因为 errMsg 那段坏了，而是真被 userText 挡住了）
 const oldShape = new Error('boom');
 eq(errMsgOf(oldShape), '网络错误: boom',

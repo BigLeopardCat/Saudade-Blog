@@ -29,7 +29,7 @@ RESET_CSS = FE / "src/frontHome/main.css"
 # ⇒ 线上对每一个 `.markdown-body` 都生效）。第 ⑦ 节量的那种缺陷**就是它漏进来的**
 #（`.markdown-body{padding:45px}` + 媒体档 15px，打在正文那两层嵌套上 ⇒ 桌面 45+45、
 # 手机 15+15 全叠）——不把它放进沙箱，判据测的是一个"没有编辑器样式表的世界"，
-# 上一轮那句"手机档内边距 12px 10px 已经对了"就是这么落在空处的。
+# "手机档内边距 12px 10px 已经对了"这类断言就是这么落在空处的。
 # 次序照线上：编辑器表在前、本仓 sass 在后（产物里 `components/Editor` 在 ReadArticle 之前）。
 EDITOR_CSS = FE / "src/components/Editor/index.css"
 
@@ -48,7 +48,7 @@ MARKUP = """
 """
 
 # 判据 ⑥ 的夹具：一个**宽原子**（一整行不折行的代码）。真页面上 `code` 的
-# `white-space: pre` 来自 bytemd/hljs（线上实测 computed：`pre` = pre-wrap、`code` = pre），
+# `white-space: pre` 来自 bytemd/hljs（computed：`pre` = pre-wrap、`code` = pre），
 # 本沙箱只加载本仓那份 sass + 复位表，所以这一条由夹具自己写 —— 这是**补沙箱缺的那张表**，
 # 不是给被测规则开后门：`.readBody` 与 `pre` 那两条都不碰 `code` 的 white-space。
 WIDE_ATOM = '<pre><code style="white-space: pre">' + ('abcdefghij' * 60) + '</code></pre>'
@@ -84,7 +84,7 @@ MQ = "@media only screen and (max-width: 768px)"
 # 判据 ⑧ 的夹具：底色 + 描边。比 ⑦ 多两件东西 ——
 #   ① 外面套一层 `.frontRoot`：底色那两条规则的祖先选择器就是它
 #     （`.frontRoot:not(.frontDark) &` / `.frontDark &`），夹具里没有它，这两条**一条都不命中**，
-#      量到的永远是"没有背景"（上一版沙箱就是这样，"白天底色"这个缺陷它根本看不见）；
+#      量到的永远是"没有背景"（"白天底色"这类缺陷根本看不见）；
 #   ② 一只**会折行的长段落** + 一只 `li` + 一段行内 `code` + 一个 `pre > code`：
 #      描边要覆盖正文（含列表），要**避开**代码；而"不重排"这一条必须有会折行的段落才量得出来
 #      —— 单行段落摘掉描边也还是单行，行数判据恒真。段落里混排中英，让断行点不是某个整数。
@@ -472,7 +472,7 @@ with sync_playwright() as p:
     SB_NO_STROKE = build_color_sandbox(NO_STROKE, "bare")
 
     # ⑧c 的反向对照：把夜间那支**按行为**改回旧写法（transparent）⇒ 判据必须当场红。
-    # 为什么非要这一臂：本轮修的病**全在"不透明"这三个字上**，而"不透明"在源码文本里
+    # 为什么非要这一臂：要测的病**全在"不透明"这三个字上**，而"不透明"在源码文本里
     # 看不出来（`background: transparent` 与 `background: #121a27` 都是一行合法 sass，
     # 而前者在脱离泄漏之后会静默变成浅灰底）。剥掉行为、量到的也必须是行为。
     # 取法是锚点（正则命中那一块 + 块内那条 background）而不是写死字符串：dart-sass

@@ -19,7 +19,7 @@ NULL_SENTINEL = "@@SAUDADE_NULL@@"
 STR_TYPES = ("varchar", "char", "text", "longtext")
 
 
-# ── 读 MySQL ────────────────────────────────────────────────────────────────
+# 读 MySQL
 def query_raw(sql: str) -> list[list[str]]:
     """读 MySQL。**走字节**（头注 ①）：`text=True` 的 universal-newlines 会把裸 CR 翻成 LF。
 
@@ -76,7 +76,7 @@ def read_rows(cat: dict, table: str) -> list[list[str | None]]:
     return out
 
 
-# ── 写 PG ───────────────────────────────────────────────────────────────────
+# 写 PG
 _COPY_ESC = {"\\": "\\\\", "\t": "\\t", "\n": "\\n", "\r": "\\r",
              "\b": "\\b", "\f": "\\f", "\v": "\\v"}
 
@@ -162,7 +162,7 @@ def pg_scalar(sql: str) -> list[list[str]]:
     return [ln.split("\t") for ln in r.stdout.decode("utf-8").split("\n") if ln != ""]
 
 
-# ── 切流之后不许误跑（`--apply` 的第二道点名）────────────────────────────────
+# 切流之后不许误跑（`--apply` 的第二道点名）
 # 本脚本开头是 `TRUNCATE TABLE 那 29 张表 RESTART IDENTITY CASCADE`。PG 今天没有任何读方
 # ⇒ 误跑一次爆炸半径为零；**切流那天起，误跑一次就是把生产库清空**。
 # 所以 `--apply` 不再够用，真搬要再点一次名。
@@ -192,7 +192,7 @@ def live_readers() -> list[str]:
         " GROUP BY 1, 2 ORDER BY 1, 2" % q_lit(PG_DB))]
 
 
-# ── 干跑：只查不写 ──────────────────────────────────────────────────────────
+# 干跑：只查不写
 def dry_run(cat: dict, bools: dict) -> int:
     tables = sorted(cat["cols"])
     bad = 0

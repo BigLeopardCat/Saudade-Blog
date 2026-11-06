@@ -25,7 +25,7 @@ def check(desc, cond, detail=""):
 DEFINE = ('import.meta.env={"VITE_HTTP_BASEURL":"","VITE_CDN_BASEURL":"",'
           '"MODE":"production","DEV":false,"PROD":true,"BASE_URL":"/"}')
 
-# ── 夹具与契约值（Python 侧；JS 侧 FAKE_AXIOS/ENTRY 里各有一份同名的，改一处要一起改）──
+# 夹具与契约值（Python 侧；JS 侧 FAKE_AXIOS/ENTRY 里各有一份同名的，改一处要一起改）
 REJECT_ROWS = ["驳回靶子A", "驳回靶子B", "驳回靶子C", "驳回靶子D"]  # approved=0
 PASS_ROWS = ["通过甲", "通过乙", "通过丙", "通过丁"]                # approved=1
 BAD_ROWS = ["已驳回甲", "已驳回乙"]                                  # approved=2
@@ -254,7 +254,7 @@ def mount(br, board_n=None, size=(1440, 900), pre=None):
         page.wait_for_selector(".ant-table-row", timeout=10000)
     except Exception:
         # 等不到就别只说"超时"：把关键节点、行数、请求记录与页面异常一起打出来。
-        # 本仓最像"选择器写错了"的那种事故其实是整页白屏（组件新接一条读
+        # 本仓最像"选择器写错了"的情况其实是整页白屏（组件新接一条读
         # import.meta.env 的依赖链，或桩里缺一个导出）——那时只有这条能点出真因。
         print("  ⚠ 等不到 .ant-table-row，现场：")
         print("    " + page.evaluate("""() => JSON.stringify({
@@ -464,7 +464,7 @@ def cancel_modal(pg):
 with sync_playwright() as p:
     br = p.chromium.launch()
 
-    # ── 一、列表加载：行数与「驳回」入口 ──────────────────────────────────────
+    # 一、列表加载：行数与「驳回」入口
     print("\n【一】列表加载：行数 = 假后端返回的条数，驳回入口只给待审行")
     pg = mount(br)
     g = pg.evaluate(GEO_LIST)
@@ -513,7 +513,7 @@ with sync_playwright() as p:
     check("第一节b无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
-    # ── 二、先弹窗、弹窗开着零请求、空理由禁用 ─────────────────────────────────
+    # 二、先弹窗、弹窗开着零请求、空理由禁用
     print("\n【二】驳回：先弹窗 + 弹窗开着零请求 + 理由为空时主按钮禁用")
     pg = mount(br)
     d0 = open_reject(pg, "驳回靶子B")   # 这一行 aiReason 为 null，顺带当"无 AI 说明"的载体
@@ -559,7 +559,7 @@ with sync_playwright() as p:
     check("第二节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
-    # ── 三、常见违规类型预设 + 采用 AI 说明（两侧）─────────────────────────────
+    # 三、常见违规类型预设 + 采用 AI 说明（两侧）
     print("\n【三】预设按钮组 + 「采用 AI 说明」（按钮亮灭取决于这一行的数据）")
     pg = mount(br)
     d = open_reject(pg, "驳回靶子A")    # 这一行有 aiReason
@@ -601,7 +601,7 @@ with sync_playwright() as p:
     check("第三节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
-    # ── 四、已有理由的回显 + 沿用 ─────────────────────────────────────────────
+    # 四、已有理由的回显 + 沿用
     print("\n【四】已有理由：弹窗里回显 + 「沿用」填回去")
     pg = mount(br)
     # 列表侧：已驳回的行把理由回显在正文下面；没写理由的那一行不许把 null 打出来
@@ -630,7 +630,7 @@ with sync_playwright() as p:
     check("第四节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
-    # ── 五、确认驳回：恰好一条 PUT，body 严格相等 ──────────────────────────────
+    # 五、确认驳回：恰好一条 PUT，body 严格相等
     print("\n【五】确认驳回：恰好一条 PUT /api/protect/board/<id>/audit，body 严格相等")
     pg = mount(br)
     d = open_reject(pg, "驳回靶子A")
@@ -669,7 +669,7 @@ with sync_playwright() as p:
     check("第五节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
-    # ── 六、「AI 审核」列的 tooltip 含 aiReason 全文 ────────────────────────────
+    # 六、「AI 审核」列的 tooltip 含 aiReason 全文
     # 取法说明（别假装它是 hover 出来的）：antd Tooltip 只在 hover 后把内容挂到 body 上的
     # portal（`.ant-tooltip-inner`）里，所以这里**真的 hover** 那一列标签，再读 portal
     # 里的文字；`>= 1` 那条是"hover 真的把 tooltip 挂出来了"的非空前置（否则下面的
@@ -878,7 +878,7 @@ with sync_playwright() as p:
           str(sorted(set(r["seal"] for r in g_f["rowInfo"]))))
 
     # 删除之后总数跟着减：这一页是**本地剔除、不重拉**（连审 10 条不重发 10 次全量），
-    # 以前 N 就是数组长度、自洽；现在 N 来自服务端，必须自己跟着减一，否则「共 N 条」与
+    # N 来自服务端，必须自己跟着减一，否则「共 N 条」与
     # 分页器会停在旧数上直到下一次重拉。
     g_b = pg.evaluate(GEO_LIST)
     n_gets = board_gets(pg)
@@ -896,7 +896,7 @@ with sync_playwright() as p:
     check("第九②无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
-    # ── 九③ 关键词：防抖 / 清空取消 / 乱序回包 ────────────────────────────────
+    # 九③ 关键词：防抖 / 清空取消 / 乱序回包
     # 打字是这一页唯一"会连发"的条件（类型/时序/页码都是点一下）。搬到服务端之后不防抖
     # 就是每敲一个字发一次查询。三条判据逐条对照站内检索框那一套（site-search.test.py 的
     # ①b/①c/①d）——那边是同一种坑，这一页是同一个坑的第二处。

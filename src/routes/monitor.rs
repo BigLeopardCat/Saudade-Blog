@@ -285,7 +285,7 @@ fn truncate(s: &str, max: usize) -> String {
 mod tests {
     use super::*;
 
-    /// 审计 A1 的两种实测输入：ASCII 落在边界（对照）与多字节落在字符中间（原 panic）。
+    /// 两种边界输入：ASCII 落在边界（对照）与多字节落在字符中间（回归点）。
     /// 判据是"任何时候不出现 `&str[..n]` 的裸切片"——这个用例是它的回归锁。
     #[test]
     fn truncate_never_splits_a_char() {

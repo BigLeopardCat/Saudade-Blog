@@ -698,7 +698,7 @@ function connectMqtt(deviceId) {
       toast('✅ 设备已确认配置' + v);
       setTimeout(refreshDevices, 1500);
     } else if (topic.endsWith('/cmd/ack')) {
-      // 指令回执（20260828 图改进Ⅰ）：设备执行完 cmd 的确认，绿标 + toast
+      // 指令回执：设备执行完 cmd 的确认，绿标 + toast
       log('in', topic, text, 'ack');
       if (devId) updateDeviceOnline(devId, true);
       let what = '指令';

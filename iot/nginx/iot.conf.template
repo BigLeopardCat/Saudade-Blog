@@ -8,8 +8,8 @@
 # 为什么整块可选：站点配置里 include 的是
 #   include /etc/nginx/snippets/blog-iot/*.conf;
 # 通配符匹配不到文件时 nginx **不报错**——所以"没装 IoT"的部署里这个目录空着就行，
-# 三个入口一起不存在。反过来如果直接 include 两个具体文件（本站过去就是这样），
-# 别人克隆下来 `nginx -t` 会直接失败（那两个文件不在仓库里）。
+# 三个入口一起不存在。如果直接 include 两个具体文件，别人克隆下来 `nginx -t` 会直接
+# 失败（那两个文件不在仓库里）。
 #
 # 改这里的端口/路径时，三处消费面必须同源（见 iot/README.md 的《开关与三处消费面》）：
 #   · Rust sitemap 列不列 /device-console/  → 读 .env 的 IOT_ENABLED（src/utils.rs::iot_enabled）

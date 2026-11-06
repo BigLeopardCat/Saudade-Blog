@@ -111,8 +111,8 @@ const AdvancedSearchForm = ({search, query, onSearch, onReset}: AdvancedSearchFo
         });
     };
 
-    // 一行放下：`layout="inline"` 自带换行（窄屏自动折行），不再靠定高 140px 硬撑 ——
-    // 原来那条约死的行高一旦少一个控件就在表单底部留一块空白。
+    // 一行放下：`layout="inline"` 自带换行（窄屏自动折行），不靠定高 140px 硬撑 ——
+    // 固定行高一旦少一个控件就会在表单底部留一块空白。
     const formStyle: React.CSSProperties = {
         maxWidth: '98%',
         borderRadius: token.borderRadiusLG,
@@ -202,7 +202,7 @@ const AllNotes = () => {
         [query],
     );
 
-    // ── 取数：**只读** URL，绝不回写（回写就是 URL→effect→URL 死循环）──────────────
+    // 取数：**只读** URL，绝不回写（回写就是 URL→effect→URL 死循环）
     // `reloadSeq` 是"再来一遍"的序号（跨端同步用，见下面 `useLiveRefresh`）：它进 deps，
     // 于是背景重拉走的就是**这一条**取数路径——条件、竞态守卫、失败提示全都同一份，
     // 不会再长出一条"只把这一页拉对、换个 tab 就拉错"的旁路。
@@ -325,7 +325,7 @@ const AllNotes = () => {
             return;   // 校验失败的提示由 antd 自己弹
         }
         // 与服务端 DTO 同一个格式（`%Y-%m-%d %H:%M:%S`）。
-        // 既有显示 bug：这里原来是 `hh`（12 小时制），下午 3 点会显示成 03:00:00。
+        // 必须用 `HH`（24 小时制）：`hh` 会把下午 3 点显示成 03:00:00。
         const updateTime = dayjs().format('YYYY-MM-DD HH:mm:ss');
         const patch: Partial<NoteType> = {
             isTop: Number(values.top ?? 0),
@@ -397,7 +397,7 @@ const AllNotes = () => {
             // className 落到 th/td 上，供验证脚本按列定位（别用 td:nth-child —— rowSelection
             // 会插一列，序号会错位）
             className: 'note-title-col',
-            // 省略号必须自己写：antd 的 ellipsis 对 flex 子项无效（实测 computed 仍是 clip），
+            // 省略号必须自己写：antd 的 ellipsis 对 flex 子项无效（computed 仍是 clip），
             // 见 index.sass 的 .note-title-cell / .note-title-txt（两处 min-width:0 缺一不可）。
             render: (title: string, record: NoteType) => (
                 <div className="note-title-cell">
@@ -458,7 +458,7 @@ const AllNotes = () => {
             width: '12%',
             align: "center",
             responsive: ['lg'],
-            // 以前这里写死 width:160 —— 在 fixed 布局里就是个会撑破列的隐患
+            // 别写死 width —— 在 fixed 布局里会撑破列
             render: (time) => <span style={{fontWeight:600, whiteSpace:'nowrap'}}>{time}</span>,
         },
         {
@@ -567,8 +567,7 @@ const AllNotes = () => {
                             </>
                         ),
                     }}
-                    // onChange 里原来那一大坨分支（各自发请求、还顺手 filter 一遍本地数据）
-                    // 全部删掉：切 tab 只是改 URL，取数由 effect 统一做。
+                    // 切 tab 只改 URL，取数由 effect 统一做；不要在这里各发请求或本地 filter。
                     onChange={(value) => setParam({tab: value as ListTab, page: 1})}
                 />
                 <div className='custom-scroll-container' ref={tableBoxRef}>

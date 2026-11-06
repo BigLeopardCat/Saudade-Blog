@@ -54,12 +54,8 @@ STAGE=""
 
 # ── 输出 ──────────────────────────────────────────────────────────────────────
 # ⚠️ **给人看的字一律走 stderr，stdout 只留给渲染出来的文件内容。**
-#   这不是洁癖：`render_nginx | put_root …` 这种管道会把被调函数的 stdout
-#   整个当成文件内容写下去。第一版就是这么错的——`note` 那行字被写进了
-#   /etc/nginx/sites-available/blog 的第一行，写成 `· 没给域名 ⇒ …`，
-#   而它长在开头、`nginx -t` 报的是后面某个行号，很容易读成别的问题。
-#     （修法是让 note 走 stderr；以后在这类被管道的函数里加任何打印，
-#      都必须用下面这几个 helper，别裸 printf。）
+#   `render_nginx | put_root …` 会把被调函数的 stdout 整体当成文件内容；
+#   这类函数里的打印必须走下面的 helper，不要裸 printf。
 if [ -t 2 ]; then C_R=$'\033[31m'; C_G=$'\033[32m'; C_Y=$'\033[33m'; C_B=$'\033[1m'; C_0=$'\033[0m'
 else C_R=; C_G=; C_Y=; C_B=; C_0=; fi
 STEP_N=0
@@ -105,10 +101,8 @@ put_root() {   # 需要 root 的文件写入，内容从 stdin 来 → put_root 
 
 # ── 提问 ──────────────────────────────────────────────────────────────────────
 HAVE_TTY=0
-# 探测有没有终端可问。用一个子 shell 把重定向**整个**包起来再丢弃 stderr ——
-# 写成 `: >/dev/tty 2>/dev/null` 的话，'open /dev/tty 失败' 是重定向本身报的，
-# 消息在 2>/dev/null 生效**之前**就出去了，于是每次无终端运行都先冒一行
-# "line NN: /dev/tty: No such device or address"，看着像脚本坏了。
+# 探测终端：整个重定向必须在子 shell 里丢弃 stderr。写成 `: >/dev/tty 2>/dev/null`
+# 会让重定向自身的报错漏出来，无终端运行时多一行 "/dev/tty: No such device"。
 if { true >/dev/tty; } 2>/dev/null; then HAVE_TTY=1; fi
 
 ask() {   # ask <变量名> <提示> [默认值] —— 已经有值（flag/env）就不问
@@ -206,11 +200,9 @@ rand_hex() { openssl rand -hex "${1:-32}"; }
 rand_pw()  { openssl rand -hex "${1:-16}"; }   # 纯 hex ⇒ 一定不含空格/引号/#，可安全进 .env
 
 # ── 连接串里的 userinfo 必须转义 ───────────────────────────────────────────────
-# 口令是本脚本生成的（纯 hex，安全），但 `DB_PASS=... ` 可以由用户给（`--db-pass` /
-# 环境变量），而 `mysql://账号:口令@主机:端口/库` 这个形状里，口令中的 `@ : / ? # %`
-# 每一个都能把连接串切到别的意思上 —— 症状是后端连不上、或连到一个"看起来对"的错库，
-# 而且驱动报的错五花八门。转义后 raw 值照旧进 `.credentials` 与 SQL（那两处要原文），
-# **只有拼进 URL 的那一次**走它。按 RFC 3986 的 unreserved 集合放行，其余逐字节转义。
+# `mysql://账号:口令@主机:端口/库` 中，口令里的 `@ : / ? # %` 会改变连接串含义。
+# 按 RFC 3986 的 unreserved 集合放行、其余逐字节转义；raw 值仍进 `.credentials`
+# 与 SQL，只有拼 URL 时转义。
 urlenc() {
     local s=$1 out= c hex i
     local LC_ALL=C        # 逐**字节**走：多字节字符整体放进 %XX 序列里，不能被按字符掰开
@@ -240,8 +232,7 @@ read_env() {
 # ── 渲染模板 ──────────────────────────────────────────────────────────────────
 # `esc` / `render` / `render_nginx` 都住在 deploy/nginx/render.sh —— 那是**唯一实现**，
 # Docker 那条安装路的宿主侧脚本（deploy/docker/prepare.sh）source 的也是同一份，只是把
-# APP_DIR 传成容器里的 /srv。别把函数体抄回来：抄回来的那一刻，「按结构标记切掉乙块」的
-# awk 就有两个版本了（症状是 nginx -t 失败，或者静默留着 <你的域名> 占位符）。
+# APP_DIR 传成容器里的 /srv。别把函数体抄回来：按结构标记切乙块的 awk 只能有一份。
 # 这里只负责 source，输入全靠上面的变量。
 # 判据：`bash deploy/docker/prepare.sh --print blog.conf --domain X` 与
 #       `APP_DIR=/srv bash deploy/install.sh --dry-run -y --domain X` 的产物**逐字节相同**
@@ -797,8 +788,7 @@ setup_env() {
             # 重跑时 LLM_API_KEY 是空的（.credentials 里刻意不记它）—— 已有的那份**没被动过**，
             # 所以这里不能报"没配"：那会把一个配好的站点说成没配。
             # ⚠️ 必须排掉模板占位串 `your-api-key-here`（`.env.example` 里那一行是**未注释**的）：
-            #    不排的话，"这次刚 cp 出来的 .env 里抄着一句模板说明"会被说成"已在沿用"——
-            #    那是把"没配"报成"配好了"，症状是看板娘不答话而安装器说一切就绪。
+            #    否则模板说明会被当成已配置，安装器误报一切就绪而看板娘不答话。
             note "沿用 .env 里已有的 $prov_key（这次没给 --llm-key，它就没被改过）"
         else
             warn "没配模型 API Key —— 站点一切正常，只有看板娘不会答话"
@@ -807,8 +797,8 @@ setup_env() {
 
         if [ -n "$LLM_BASE_URL" ]; then
             # 这里**故意用 set_env 而不是 put_env**（同 IOT_ENABLED 的理由）：`--llm-base-url`
-            # 是显式表态，而 keep 分支"有键就不写"会让重跑时的这个参数变成一个静默空操作
-            # —— 症状正是"我明明给了地址，它还是打旧端点"。已有值要保住的话，别传这个参数。
+            # 是显式表态，keep 分支"有键就不写"会让该参数静默失效、仍打旧端点。
+            # 要保留已有值就不要传这个参数。
             set_env "$aenv" "$(printf '%s' "$LLM_PROVIDER" | tr '[:lower:]' '[:upper:]')_BASE_URL" "$LLM_BASE_URL"
         elif [ "$LLM_PROVIDER" != "qwen" ]; then
             note "没给 --llm-base-url ⇒ $LLM_PROVIDER 用它自己的默认端点；要换端点就补一个"
@@ -1123,9 +1113,8 @@ verify() {
     if [ -f "$APP_DIR/frontend/dist/index.html" ]; then ok "dist 就位"
     else warn "frontend/dist/index.html 不在"; rc=1; fi
 
-    # ⑤ 两个单元**开机自启**了吗。上面 start_services 里 enable 失败只会打一行 ⚠️
-    #    （它失败的样子平时完全看不出来 —— 机器重启之后服务全不在），所以这里再判一次：
-    #    这是唯一能在重启之前就发现它的地方。
+    # ⑤ 两个单元**开机自启**了吗。start_services 里 enable 失败只打一行 ⚠️，
+    #    平时看不出来；这里再判一次，确保重启前能发现。
     local u enabled_ok=1
     for u in saudade-rust saudade-agent; do
         if $SUDO systemctl is-enabled --quiet "$u" 2>/dev/null; then :; else
@@ -1254,9 +1243,8 @@ setup_iot() {
     fi
 
     step "nginx 三个入口与两处开关"
-    # 再渲染一次站点配置。--iot-only 那趟上面根本没有渲染过，这里是唯一一次；
-    # 全量跑这一趟是**幂等的重复**（第 9 步渲染时就带了 --with-iot），留着图的是
-    # "选了 IoT 就必定有一份带 include 的站点配置"这件事不依赖调用顺序。
+    # 再渲染一次站点配置：--iot-only 这趟前面没有渲染过；全量跑时是幂等的重复，
+    # 保证"选了 IoT 就必定有一份带 include 的站点配置"，且不依赖调用顺序。
     setup_nginx
     if [ "$DRY_RUN" != 1 ]; then
         run_in "$APP_DIR" ./iot/toggle.sh on

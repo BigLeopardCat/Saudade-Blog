@@ -46,8 +46,8 @@ const userReducer = userSlice.reducer;
 
 const fetchToken = (data: UserData) => {
     return async (dispatch: Dispatch<PayloadAction<{ token: string }>>) => {
-        // 原来是 try/catch 里 `throw error`（纯转抛）：调用方照样收到 rejected promise，
-        // 包一层只是把同一个异常多搬一次手，去掉后行为不变。
+        // 不要在 try/catch 里只写 `throw error`：调用方照样收到 rejected promise，
+        // 包一层只是把同一个异常多搬一次手。
         const res = await http({
             url: '/api/login',
             method: 'POST',

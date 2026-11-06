@@ -28,7 +28,7 @@ export const ok = (res: { status: number; data: Envelope<any> }): boolean =>
 export const errMsg = (res: { data?: Envelope<any> }, fallback = "操作失败，请稍后再试"): string =>
     (res?.data?.message || "").trim() || fallback;
 
-// ── 用户设置 ────────────────────────────────────────────────────────────────
+// 用户设置
 
 function getProfile() {
     return http<Envelope<ProfileInfo>>({
@@ -66,7 +66,7 @@ function uploadAvatar(file: File) {
     });
 }
 
-// ── 收藏的文章 ──────────────────────────────────────────────────────────────
+// 收藏的文章
 
 function getFavorites() {
     return http<Envelope<FavoriteItem[]>>({
@@ -90,7 +90,7 @@ function removeFavorite(noteId: number) {
     });
 }
 
-// ── 公告与通知（红点） ──────────────────────────────────────────────────────
+// 公告与通知（红点）
 
 function getUnreadSummary() {
     return http<Envelope<UnreadSummary>>({
@@ -133,7 +133,7 @@ function readNotifications(payload: { ids?: number[]; all?: boolean }) {
     });
 }
 
-// ── 站内信箱 ────────────────────────────────────────────────────────────────
+// 站内信箱
 
 function getMailbox() {
     return http<Envelope<Mailbox>>({
@@ -189,7 +189,7 @@ function deleteDraft(id: number) {
     });
 }
 
-// ── 我的留言记录 ────────────────────────────────────────────────────────────
+// 我的留言记录
 
 function getMyTalks() {
     return http<Envelope<MyTalk[]>>({

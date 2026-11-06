@@ -87,7 +87,7 @@ def plan(root: pathlib.Path, sandbox_tmp: pathlib.Path, min_age_h: float) -> "li
     prefixes = derive_prefixes(TESTS)
     drop = []
 
-    # ── 规则 1：root 直接子项，名字以派生前缀开头，且够老 ────────────────────────
+    # 规则 1：root 直接子项，名字以派生前缀开头，且够老
     sandbox_tmp_res = _resolved(sandbox_tmp)
     for p in _children(root):
         if p.is_symlink():
@@ -101,7 +101,7 @@ def plan(root: pathlib.Path, sandbox_tmp: pathlib.Path, min_age_h: float) -> "li
             continue                        # 年龄闸：可能是正在跑的套件
         drop.append((p, _size(p), f"套件残留（前缀 {hit}）"))
 
-    # ── 规则 2：sandbox_tmp 下够老的轮次目录（被 kill 的那一轮留下的整格）──────
+    # 规则 2：sandbox_tmp 下够老的轮次目录（被 kill 的那一轮留下的整格）
     for p in _children(sandbox_tmp):
         if p.is_symlink() or not p.is_dir():
             continue

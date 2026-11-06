@@ -32,7 +32,7 @@ export const isStaleChunkError = (err: unknown): boolean => isStaleChunkMessage(
  * 兜底卡 —— 否则就是"刷—坏—刷"的死循环。
  * 调用方（ErrorBoundary）据此决定是"正在刷新"还是"请你手动刷新"。
  *
- * 落日志就在这一处（**一次事故一行**）：`module_load_fail` 是白名单里现成的一档，
+ * 落日志就在这一处（**一次失败一行**）：`module_load_fail` 是白名单里现成的一档，
  * 语义正好（`type` 是闭集，见 `utils/report.ts` 头注）。所以 ErrorBoundary 那边遇到
  * 这一类错误**不再另报** react_error —— 两行说的是同一件事，而 componentStack 在这个
  * 场景恒是 `at Lazy at Suspense`，没有信息量。`fetch(keepalive)` 活得比这次导航长，

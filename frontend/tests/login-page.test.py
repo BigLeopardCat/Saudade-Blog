@@ -48,7 +48,7 @@ def jwt_with_role(role: str) -> str:
     return "x." + payload + ".y"
 
 
-# ── ① 搭沙箱：拷贝 src、就地替换四个边界模块、软链 node_modules ──────────
+# ① 搭沙箱：拷贝 src、就地替换四个边界模块、软链 node_modules
 def build_sandbox() -> pathlib.Path:
     sb = pathlib.Path(tempfile.mkdtemp(prefix="login-verify-"))
     shutil.copytree(FE / "src", sb / "src")
@@ -351,7 +351,7 @@ with sync_playwright() as p:
     check("聚焦有粉色外发光环", "217, 79, 154" in foc["boxShadow"], foc["boxShadow"][:60])
 
     # 主按钮的对比度：**从渲染结果里读**两个渐变色标与字色（不写死在测试里），逐个算 WCAG。
-    # 这条是"浅粉渐变 + 墨字"这个选择的守门人 —— 计划里原本写的白字压在 #d94f9a 上只有
+    # 这条是"浅粉渐变 + 墨字"这个选择的守门人 —— 白字压在 #d94f9a 上只有
     # 3.8:1、压 #8e63e0 上 4.2:1，都过不了 4.5:1（15px/600 够不到大字号）。哪天有人把
     # 渐变换回深粉或把字色改白，这里当场红。
     sub_day = styles(pg, ".login-submit", None, ("backgroundImage", "color"))

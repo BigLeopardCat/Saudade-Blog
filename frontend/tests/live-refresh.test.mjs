@@ -26,7 +26,7 @@ await esbuild.build({
     }],
 });
 
-// ── 假浏览器 + 可控定时器（模块加载时就挂 window/document 监听，必须先装好再 import）──
+// 假浏览器 + 可控定时器（模块加载时就挂 window/document 监听，必须先装好再 import）
 const winEvents = {}, docEvents = {};
 function fakeEventTarget(bag) {
     return {

@@ -16,7 +16,7 @@ use crate::entity::{quota_request, user};
 use crate::routes::AppState;
 use crate::utils::{ApiResponse, ApiResponsePage};
 
-// ── C6 通知文案（跨语言契约，见模块头注）─────────────────────────────────────
+// C6 通知文案（跨语言契约，见模块头注）
 
 pub const NOTICE_APPROVED_TITLE: &str = "额度重置申请已通过";
 pub const NOTICE_REJECTED_TITLE: &str = "额度重置申请未通过";
@@ -56,7 +56,7 @@ pub(crate) fn limit_of(role: &str) -> i32 {
     }
 }
 
-// ── 用户侧两条 ──────────────────────────────────────────────────────────────
+// 用户侧两条
 
 /// GET /api/protected/quota：我的额度现状（个人中心「对话额度」页签）。
 ///
@@ -185,7 +185,7 @@ pub async fn apply_quota_reset(
     }
 }
 
-// ── 后台三条 ────────────────────────────────────────────────────────────────
+// 后台三条
 
 /// 申请行的后台视图（跨语言契约：字段名与语义见 agent 的 `render_quota_requests`
 /// 与 `quota_used/quota_limit`，改一侧要同步另一侧）。

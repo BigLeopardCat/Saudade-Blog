@@ -30,7 +30,7 @@ await esbuild.build({
     }],
 });
 
-// ── 假浏览器（模块加载时就会挂 window/document 监听，所以必须先装好再 import）──
+// 假浏览器（模块加载时就会挂 window/document 监听，所以必须先装好再 import）
 const store = {};
 function fakeEventTarget(bag) {
     return {
@@ -85,7 +85,7 @@ const ids = (mod) => (mod.favoritesDebug().list || []).map((f) => f.noteId);
 const login = () => { store.tokenKey = TOKEN };
 const logout = () => { delete store.tokenKey };
 
-// ── ① 谁在拉、什么时候拉 ────────────────────────────────────────────────────
+// ① 谁在拉、什么时候拉
 {
     const { mod, ctl } = await fresh();
     login();
@@ -123,7 +123,7 @@ const logout = () => { delete store.tokenKey };
     eq(getCalls(ctl).length, 4, '没人看收藏时再来事件也不拉（白花流量）');
 }
 
-// ── ② 未登录：不发请求，也不当成"没有收藏" ─────────────────────────────────
+// ② 未登录：不发请求，也不当成"没有收藏"
 {
     const { mod, ctl } = await fresh();
     logout();
@@ -134,7 +134,7 @@ const logout = () => { delete store.tokenKey };
     eq(mod.favoritesDebug().list, null, '未登录时 store 里没有列表可言（不是"空列表"）');
 }
 
-// ── ③ 写成功后的即时结果 + 在途读数作废（竞态）──────────────────────────────
+// ③ 写成功后的即时结果 + 在途读数作废（竞态）
 {
     const { mod, ctl } = await fresh();
     login();
@@ -168,7 +168,7 @@ const logout = () => { delete store.tokenKey };
     eq(mod.favoritesDebug().failed, false, '成功读数不该被标成"没读到"');
 }
 
-// ── ④ 写成功后的列表对齐（取消收藏当场摘行 / 新增不塞空行）─────────────────
+// ④ 写成功后的列表对齐（取消收藏当场摘行 / 新增不塞空行）
 {
     const { mod } = await fresh();
     login();
@@ -182,7 +182,7 @@ const logout = () => { delete store.tokenKey };
     eq(mod.hasFavorite(30), true, '但★当场就是已收藏');
 }
 
-// ── ⑤ 读不到 ≠ 空 ──────────────────────────────────────────────────────────
+// ⑤ 读不到 ≠ 空
 {
     const { mod, ctl } = await fresh();
     login();
@@ -227,7 +227,7 @@ const logout = () => { delete store.tokenKey };
     void ctl;
 }
 
-// ── ⑦ 跨文件契约（这些引用点改一处、忘一处就会静默失效）───────────────────
+// ⑦ 跨文件契约（这些引用点改一处、忘一处就会静默失效）
 {
     const js = readFileSync(path.join(root, 'public/live2d-widgets/chat-stream.js'), 'utf8');
     ok(js.includes("new CustomEvent('agent-turn-done')"),

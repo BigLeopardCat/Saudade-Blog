@@ -94,7 +94,7 @@ html
         min-width: 0
 
         // 头像 + 名字那一行。三件事都写在这里（而不是只靠 JSX 上 antd `Flex` 的
-        // 内联样式）：`display: flex` 与 `gap` 与被替换掉的那份内联样式逐字相同，
+        // 内联样式）：`display: flex` 与 `gap` 与原内联样式逐字相同，
         // 但**这一份在源码里看得见**，无头夹具也不用假装 antd 的 CSS-in-JS 已注入。
         // `min-width: 0` 是让下面的省略号真的生效的前提（flex 项默认 `min-width: auto`
         // = 不肯缩到内容宽以下，于是长昵称会把整行顶宽而不是被截断）。
@@ -105,8 +105,8 @@ html
           min-width: 0
 
           // ⚠️ 头像必须 `flex: 0 0 auto`：它是 flex 项、默认 `flex-shrink: 1`，而名字
-          // 那一头已经 `min-width: 0` 了 ⇒ 宽度不够时**先被压扁的是头像**（实测 40 → 33px，
-          // 一个椭圆）。该缩的只有名字。
+          // 那一头已经 `min-width: 0` 了 ⇒ 宽度不够时**先被压扁的是头像**（40 → 33px，
+          // 变成椭圆）。该缩的只有名字。
           .frontAvatar
             flex: 0 0 auto
 
@@ -131,7 +131,7 @@ html
         h1
           text-align: center
           // 两行封顶：再长就截断（`.readInfo` 的高度由左区那个"头像 + 两个时间"的
-          // 竖列决定，标题一旦超过两行就把整张卡拉高 —— 实测三行时卡片 124 → 146px，
+          // 竖列决定，标题一旦超过两行就把整张卡拉高 —— 三行时卡片 124 → 146px，
           // 底边跟着往下挪，同一页的两篇文章点来点去会上下跳）。
           display: -webkit-box
           -webkit-line-clamp: 2
@@ -167,8 +167,7 @@ html
         line-height: 1
         color: #fff1eb
         background: transparent
-        // 描边同一条：四件里有三件是按钮、两件是读数，边框粗细/深浅不一致正是
-        // 上一版看着散的原因之一
+        // 描边同一条：四件里有三件是按钮、两件是读数，边框粗细/深浅不一致会让整组显散
         border: 1px solid rgba(255, 241, 235, 0.55)
         border-radius: 999px
         white-space: nowrap
@@ -190,7 +189,7 @@ html
       .readViews, .readComments
         color: rgba(255, 241, 235, 0.85)
 
-      // ── 两个按钮的交互态（几何全在上面 `.readStat` 里，这里只加"能点"这件事）──
+      // 两个按钮的交互态（几何全在上面 `.readStat` 里，这里只加"能点"这件事）
       // ⚠️ 这两组必须写在 `.readStat` **之后**：同特异性（0,3,0），靠源码顺序覆盖。
       .readFavBtn, .readLikeBtn
         cursor: pointer
@@ -442,7 +441,7 @@ html
       color: var(--font-title-color)
       line-height: 1.85
       margin: 1rem 0 1rem 0
-    // 列表项原来被 github-markdown-light 按 `.markdown-body li`（0,1,1）压成 24px，
+    // 列表项会被 github-markdown-light 按 `.markdown-body li`（0,1,1）压成 24px，
     // 与相邻段落 30px 打架（那段正文看着一紧一松）。本条 (0,3,1) 稳压它。
     li
       line-height: 1.85

@@ -38,7 +38,7 @@ def th_bg_alpha(css_color):
 DEFINE = ('import.meta.env={"VITE_HTTP_BASEURL":"","VITE_CDN_BASEURL":"",'
           '"MODE":"production","DEV":false,"PROD":true,"BASE_URL":"/"}')
 
-# ── 假后端：只桩 axios 这一个边界 ─────────────────────────────────────────────
+# 假后端：只桩 axios 这一个边界
 # 20 行 = 2.5 页（每页 8）⇒ 分页组件真的有多页可翻，"切第 2 页"才有意义。
 FAKE_AXIOS = r"""
 // 假后端。`window.__calls` 记每一次请求 —— 本轮的硬判据（"切页有没有重新拉"）只能从它读。
@@ -222,7 +222,7 @@ def form_items(page):
 with sync_playwright() as p:
     br = p.chromium.launch()
 
-    # ── 一、筛选栏收成一行 ─────────────────────────────────────────────────────
+    # 一、筛选栏收成一行
     # 判据取"四个控件的 rect.top 是不是同一个值"而不是"表单高度 < N"：高度会被 padding
     # 和字号带偏，而 top 同不同一行是布局的直接后果。（1440 与 1280 各来一遍 —— inline
     # 布局窄屏会折行，1280 是后台侧栏展开后最常见的工作宽度。）
@@ -253,7 +253,7 @@ with sync_playwright() as p:
         check(f"{w}px：无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
         pg.close()
 
-    # ── 二、新增文章按钮：缩小 + 挪到「全部文章」标签之前 ────────────────────────
+    # 二、新增文章按钮：缩小 + 挪到「全部文章」标签之前
     print("\n【二】「新增文章」按钮的位置与形态")
     pg = mount(br)
     geo = pg.evaluate("""() => {
@@ -309,7 +309,7 @@ with sync_playwright() as p:
           str(pg.evaluate("() => window.__loc")))
     pg.close()
 
-    # ── 三、切页不再重新请求（本轮唯一的**行为**变化）───────────────────────────
+    # 三、切页不再重新请求
     # 视口压到 700 高：列表区是 flex 撑满的，20 行 × 70px 必然溢出，否则"回顶"这条
     # 断言是空转（scrollTop 本来就没得滚）。前置条件单独断言。
     print("\n【三】切页不再重新请求 + 回顶")
@@ -375,7 +375,7 @@ with sync_playwright() as p:
     check("三·补节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
-    # ── 四、深链里的日期条件点搜索会被清掉 ─────────────────────────────────────
+    # 四、深链里的日期条件点搜索会被清掉
     # 「发布时间」控件撤了，但 `?from=&to=` 仍在 URL 契约里（老深链要能进来）。风险在于
     # setParam 是合并语义：从深链进来再点搜索，旧日期会隐形地继续生效，而页面上已经
     # 没有任何控件能看见或清掉它 —— 所以 onFinish 里那两行显式清空必须有回归锁。
@@ -445,7 +445,7 @@ with sync_playwright() as p:
     th_alpha = th_bg_alpha(geo["thBg"])
     check("吸顶表头底色不透明（行不会从表头里透出来）", th_alpha >= 1.0,
           f'th 底色 = {geo["thBg"]}（alpha={th_alpha}）')
-    # 对照：就地覆上当年那个 22% 的粉线，走完"浏览器算值 → 探针读回"整条路，
+    # 对照：就地覆上那个 22% 的粉线，走完"浏览器算值 → 探针读回"整条路，
     # 必须当场判成透明 —— 否则上面那条"不透明"可能只是判据自己不敏感（比如
     # 读到的根本不是这条规则的底色）。
     # ⚠️ 表头带 `transition: background .2s`（antd 给的）——**过渡优先级高于一切**，
@@ -463,7 +463,7 @@ with sync_playwright() as p:
     check("对照：把那层 22% 的粉线覆回去，探针当场判成透明 ⇒ 判据对透明度敏感",
           th_bg_alpha(back_to_old) < 1.0, f'覆回后读到 {back_to_old}')
     # 表头吸顶了还不够：行内那三颗 MUI Fab 自带 z-index:1050，会**画在表头上面**
-    # （实测截图里第一行的操作按钮浮在表头上）。断言的是叠放次序本身，不是某张截图。
+    # （截图里第一行的操作按钮浮在表头上）。断言的是叠放次序本身，不是某张截图。
     zs = pg.evaluate("""() => {
         const th = document.querySelector('.AllCard .ant-table-thead th');
         const fab = document.querySelector('.AllCard .ant-table-row .MuiFab-root');
@@ -509,7 +509,7 @@ with sync_playwright() as p:
     for path, want in (("/dashboard/notes", "全部文章"),
                        ("/dashboard/notes/alltags", "全部标签"),
                        ("/dashboard/notes/allcategorize", "全部分类"),
-                       # 带参路径：老实现只认精确串，这条同样落进「未知页面」
+                       # 带参路径：只认精确串的实现会落进「未知页面」
                        ("/dashboard/notes/newnote/123", "编辑文章")):
         got, errs = notes_crumb(path)
         check(f"{path} → 面包屑「{want}」", got == want, f"得到「{got}」")

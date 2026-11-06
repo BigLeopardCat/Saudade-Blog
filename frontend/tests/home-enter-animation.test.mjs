@@ -64,7 +64,7 @@ console.log('\n④ 延迟封顶：最坏 0.5s，不是"按下标线性长"');
     ok(/ENTER_DELAY_STEP\s*=\s*0\.1/.test(article) && /ENTER_DELAY_MAX_STEPS\s*=\s*5/.test(article),
         '两个常量是 0.1 / 5');
     // 取到行尾而不是"到下一个逗号"：`Math.min(index, …)` 自己就带逗号，
-    // 用 `[^,]+` 会在括号里切断、把一条正确的写法判红（初版踩过）。
+    // 用 `[^,]+` 会在括号里切断、把一条正确的写法判红。
     const d = article.match(/delay:\s*([^\n]+)/)?.[1] || '';
     ok(/Math\.min\(\s*index\s*,\s*ENTER_DELAY_MAX_STEPS\s*\)\s*\*\s*ENTER_DELAY_STEP/.test(d),
         '`delay: Math.min(index, ENTER_DELAY_MAX_STEPS) * ENTER_DELAY_STEP`', d);

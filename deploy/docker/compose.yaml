@@ -5,15 +5,15 @@
 #  `deploy/docker/.env`（compose 自动读同目录下这一份），四个 env_file 也由它生成。
 #  **没有 prepare.sh 的产品，这个文件一行都跑不起来**（下面那几个 `:?` 就是为此设的）。
 #
-#  ── 网络拓扑（一个刻意的取舍，改之前先读这段）────────────────────────────────
+#  ── 网络拓扑 ─────────────────────────────────────────────────────────────────
 #  backend / agent / nginx 用 **host 网络**，只有 mysql 走桥接 + 只发布到 127.0.0.1。
-#  原因是两处硬编码的回环监听：`src/main.rs` 绑 `127.0.0.1:3000`（A9 起，安全加固的一部分）
-#  与 uvicorn 的 `--host 127.0.0.1`。桥接网络下 nginx 容器**够不到**它们，唯一的替代是
-#  改那两行代码——而那是"为了迁就容器"去松开一条安全边界，不值当。
-#  代价（README 里也写了）：**Linux-only**（host 网络在 Docker Desktop 上不成立）、
-#  占用宿主 80/443，以及宿主上不能已经有服务占着 3000/8010/3306。
+#  两处硬编码的回环监听决定这一点：`src/main.rs` 绑 `127.0.0.1:3000`，uvicorn 用
+#  `--host 127.0.0.1`；桥接网络下 nginx 容器够不到它们。代价：**Linux-only**
+#  （host 网络在 Docker Desktop 上不成立）、占用宿主 80/443，且宿主上不能已有服务
+#  占着 3000/8010/3306。
 #
 #  ── 配置住在哪（一个键只有一个写者）──────────────────────────────────────────
+
 #    站点身份 / 数据目录 / 属主 / MySQL root 口令 → deploy/docker/.env（compose 插值用）
 #    后端应用配置（DATABASE_URL、JWT_SECRET…）  → generated/backend.env（env_file）
 #    agent 应用配置（BLOG_API_BASE、密钥…）      → generated/agent.env（env_file）
@@ -51,8 +51,8 @@ services:
       # **故意不带口令**：`mysqladmin ping` 在"认证被拒"时也返回 0（文档明写），
       # 所以它恰恰是我们要的信号——"server 已经在 TCP 上听着了"，而不是"口令对不对"。
       # 顺带避开一个坑：口令写在 healthcheck 里会出现在 `docker inspect` 的输出里。
-      # 首次初始化时官方镜像跑的是 `--skip-networking` 的临时 server ⇒ 那时 TCP 连不上，
-      # 这个探针自然是红的，等正式 server 起来才转绿 ✓
+      # 首次初始化时官方镜像跑 `--skip-networking` 的临时 server，TCP 连不上；正式
+      # server 起来后探针才转绿。
       test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1"]
       interval: 5s
       timeout: 5s
@@ -132,12 +132,11 @@ services:
     restart: unless-stopped
     network_mode: host
     user: "${SAUDADE_UID:-1000}:${SAUDADE_GID:-1000}"
-    # init: true（tini 当 1 号进程）：uvicorn 自己会收 SIGTERM，但中间的 shell 不会有
-    # 僵尸进程回收 —— 这条不是为了 "更规范"，是为了让下面的 stop_grace_period 真的生效。
+    # init: true（tini 当 1 号进程）：回收中间 shell 留下的僵尸进程，让下面的
+    # stop_grace_period 生效。
     init: true
     # 与 `deploy/systemd/saudade-agent.service.template` 的 TimeoutStopSec=120 对齐：
-    # SIGTERM 之后等在途 SSE 对话自然收尾（回复通常 10-30s）。docker 默认的 10s 会把
-    # 正在进行的对话**当场砍掉**，而用户看到的只是"回复断了"。
+    # SIGTERM 后等在途 SSE 对话自然收尾（通常 10-30s）；docker 默认 10s 会直接中断回复。
     stop_grace_period: 120s
     env_file:
       - ./generated/agent.env
@@ -192,9 +191,8 @@ services:
     # ⚠️ 改配置要分清改的是哪一种 —— 判据在 README 的《改配置》一节：
     #    · 改了挂进来的**文件内容**（blog.conf / 证书）：`docker compose restart nginx` 就够
     #      —— 进程重跑会重读文件。
-    #    · 改了 `.env` / `env_file` 里的**变量**：必须 `docker compose up -d`。环境变量是
-    #      容器**创建时**定死的，`restart` 复用的是同一个容器，改不动它们（这也是为什么
-    #      "改了没生效"往往不是配置写错了，是没重建）。
+    #    · 改了 `.env` / `env_file` 里的**变量**：必须 `docker compose up -d`。环境变量在
+    #      容器**创建时**定死，`restart` 复用同一容器，不会重新读取。
     volumes:
       - ./generated/blog.conf:/etc/nginx/conf.d/blog.conf:ro
       - ./generated/ssl:/etc/nginx/ssl:ro
@@ -206,8 +204,8 @@ services:
       # ⚠️ 这是**目录**挂载 ⇒ 万一这个基础镜像自带 `/etc/nginx/snippets/`，它那一份会被
       # 整个盖住（本文件里的 include 只引用 blog-headers/ 这一个子目录，不碰其它）。
       - ../nginx/snippets/blog-headers:/etc/nginx/snippets/blog-headers:ro
-    # 故意**不依赖 db-init**：nginx 只服静态文件，站点先能打开、API 那半边随后就位，
-    # 与裸机那套（nginx 常驻，Rust 没起来就 502）的行为一致。
+    # 故意**不依赖 db-init**：nginx 只服静态文件，站点先能打开、API 随后就位，
+    # 与裸机那套（nginx 常驻，Rust 没起来就 502）一致。
     logging: *log-limits
 
 volumes:

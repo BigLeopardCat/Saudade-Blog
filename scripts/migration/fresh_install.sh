@@ -31,7 +31,7 @@ HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # **故意不加引号**：${MYSQL_BIN} 按空格拆词，这样多词的命令前缀才成立。
 MYSQL_BIN=${MYSQL_BIN:-mysql}
 
-# ── ① 参数 ──────────────────────────────────────────────────────────────────
+# ① 参数
 if [ $# -lt 1 ]; then
     echo "用法：bash scripts/migration/fresh_install.sh <库名> [mysql 的位置参数…]" >&2
     echo "例：  bash scripts/migration/fresh_install.sh saudade_dev -uroot -p" >&2
@@ -62,7 +62,7 @@ case "$DB" in
         exit 2 ;;
 esac
 
-# ── ② 目标库必须还不存在或为空 ──────────────────────────────────────────────
+# ② 目标库必须还不存在或为空
 # 非空的话说明这个库已经有结构了：基架是 `IF NOT EXISTS`（静默 no-op），而快照后的迁移
 # 会在已有的列上撞重复 —— 报错信息会指向迁移文件，读起来像是迁移坏了。提前拦住更省事。
 EXISTING=$("${MYSQL[@]}" -N -B -e \
@@ -77,7 +77,7 @@ echo "== 目标库：$DB（快照日 $SNAPSHOT，只跑快照之后的迁移）"
 "${MYSQL[@]}" -e \
     "CREATE DATABASE IF NOT EXISTS \`$DB\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 
-# ── ③ 应用一个 SQL 文件（剥 USE + 显式点名库名）──────────────────────────────
+# ③ 应用一个 SQL 文件（剥 USE + 显式点名库名）
 apply() {
     local f=$1
     # 剥掉 `USE xxx;` 整行（允许前后空白、行尾注释）。剩下的 `-- USE xx` 之类是注释，不动。
@@ -120,7 +120,7 @@ while IFS= read -r f; do
     n=$((n + 1))
 done < <(ls "$HERE"/*.sql | sort)
 
-# ── ④ 收尾核对 ─────────────────────────────────────────────────────────────
+# ④ 收尾核对
 TABLES=$("${MYSQL[@]}" -N -B -e \
     "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA='$DB';")
 echo "== 完成：基架 26 张 + $n 份迁移 ⇒ 库里共 $TABLES 张表"

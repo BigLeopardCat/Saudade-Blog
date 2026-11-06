@@ -19,7 +19,7 @@ PREV_SHA="$(cat logs/.last_deploy_sha 2>/dev/null || true)"
 
 echo "=== $(date '+%Y-%m-%d %H:%M:%S') 从 R2 拉取更新（DEPLOY_SHA=${DEPLOY_SHA:-未指定}）==="
 
-# ── 解析 key + 下载 + 解压（key 由提交号决定）────────────────────────────
+# 解析 key + 下载 + 解压（key 由提交号决定）
 DEPLOY_SHA="${DEPLOY_SHA:-}" python3 <<'PYEOF2'
 import os, re, sys
 import boto3, tarfile
@@ -68,11 +68,11 @@ PYEOF2
 
 SHA="$(cat logs/.last_deploy_sha)"
 
-# ── 前端：至少得有一个 index.html 才算落地 ───────────────────────────────
+# 前端：至少得有一个 index.html 才算落地
 [ -f frontend/dist/index.html ] || { echo "❌ 部署包里没有 frontend/dist/index.html"; exit 1; }
 echo "✅ $(date '+%H:%M:%S') 前端已更新"
 
-# ── 清理不再使用的前端资源 ───────────────────────────────────────────
+# 清理不再使用的前端资源
 # 内容哈希 JS/CSS 保留 24 小时，供部署前已打开的页面加载懒模块。
 # 本代清单、build-info 与符号链接受保护；其他过期文件按清单清理。
 # 清单缺失、过小或缺少 index.html 时中止清理。
@@ -128,7 +128,7 @@ if dead:
     print('   ' + '、'.join(os.path.basename(p) for p in dead[:5]) + ('…' if len(dead) > 5 else ''))
 PYEOF3
 
-# ── 后端：ELF 校验 → 按源码变化决定要不要重启 ────────────────────────────
+# 后端：ELF 校验 → 按源码变化决定要不要重启
 RESTART=0
 if [ -f saudade_blog_bin ]; then
   # A10 修复补充：后端二进制必须是 ELF 可执行文件，拒绝被替换为任意脚本/文件
@@ -152,7 +152,7 @@ else
   echo "⚠️ 部署包里没有后端二进制（这一步只构建了前端？）"
 fi
 
-# ── 存活探测：该重启就重启；不响应就补一次；仍不响应即失败 ────────────────
+# 存活探测：该重启就重启；不响应就补一次；仍不响应即失败
 alive() {
   code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:3000/api/login || true)
   [ -n "$code" ] && [ "$code" != "000" ]
@@ -171,7 +171,7 @@ else
   echo "✅ $(date '+%H:%M:%S') 后端无需变动（存活探测 HTTP $code）"
 fi
 
-# ── 构建信息：线上 curl 这个文件即知部署的是哪个提交 ──────────────────────
+# 构建信息：线上 curl 这个文件即知部署的是哪个提交
 printf '{"sha":"%s","deployed_at":"%s"}\n' "$SHA" "$(date '+%Y-%m-%d %H:%M:%S%z')" \
   > frontend/dist/build-info.json
 echo "✅ $(date '+%H:%M:%S') 部署完成（sha=${SHA:0:12}）"

@@ -1,7 +1,7 @@
 # 本人活动读取
 
 两个 GET 接口都在 handler 内验 JWT 并从数据库核对账号；没有可指定其他用户的 uid 参数。
-原有前端接口保持原契约。新代码位于 routes/own_reads，不向旧聊天或留言大模块继续追加。
+前端接口保持原契约；本人读取实现在 routes/own_reads，不并入聊天或留言模块。
 
 ## GET /api/protected/my/board/page
 

@@ -18,9 +18,8 @@ END $$;
 
 -- ② 建表。三个外键都是 `ON DELETE CASCADE`：
 --    · `note_id` → `note`：删文章，关联行跟着走（`delete_note` 一行都不用改）；
---    · `tag_one_id` / `tag_two_id` → 标签：删标签，关联行跟着走 —— 这正是
---      `tags.rs::prune_note_tags`（每删一次标签就扫全表 + 逐行重写 `note.tags`）**整个退休**
---      的原因。它是本 Stage 删掉的第二处全表读放大。
+--    · `tag_one_id` / `tag_two_id` → 标签：删标签，关联行跟着走 —— 因此不再需要
+--      `tags.rs::prune_note_tags`（每删一次标签就扫全表 + 逐行重写 `note.tags`）。
 --    `num_nonnulls(...) = 1` 是"这一行**恰好**指向一张表"的判据：两个都填或都不填都是错的。
 CREATE TABLE IF NOT EXISTS "note_tag" (
   "note_id"    integer  NOT NULL,

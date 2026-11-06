@@ -8,15 +8,14 @@
   color: var(--band-foot-ink, #ece4f4)
   box-sizing: border-box
 
-  // 版权行：封底上最重的一行，给足对比度（深底上的浅字，实测 ≥ 10:1）
+  // 版权行：封底上最重的一行，给足对比度（深底上的浅字，≥ 10:1）
   .footLine
     width: 100%
     text-align: center
     color: var(--band-foot-ink, #ece4f4)
 
-  // 次级说明行：小一号、淡一档。原来靠行内 `opacity: 0.8` 压暗——`opacity` 会把
-  // 整行连**子元素**一起调透明（那两处技术名的高亮色也被一起打了八折），
-  // 现在改成调**字色**，两个技术名保持全亮。
+  // 次级说明行：小一号、淡一档。用**字色**压暗而不是 `opacity`：后者会把整行连
+  // **子元素**一起调透明（技术名的高亮色也会被打八折）。
   .footNote
     width: 100%
     margin-top: 5px
@@ -58,8 +57,7 @@
     margin-right: 4px
 
   // 链接：封底上的字要亮一档，悬停换成粉（与全站那套"悬停变粉"一致）。
-  // 原来那条 `transition: text-decoration 0.6s` 是空转——`text-decoration` 在
-  // Chromium 里不参与过渡，写它等于没写；改成过渡颜色（真正会变的那一项）。
+  // 只过渡颜色：`text-decoration` 在 Chromium 里不参与过渡，写它等于没写。
   .link
     color: var(--band-foot-ink-2, rgba(236, 228, 244, 0.66))
     text-decoration-line: none
@@ -72,7 +70,7 @@
     display: flex
     // ⚠️ 必须能换行：`.footerContainer` 是 `align-items: center` 的列 flex，
     // 子元素宽度按**内容**算（不是撑满）⇒ 窄屏上这一排会宽过容器而后**两边同时溢出**
-    // （实测 306px 的一排，320px 屏上去掉内边距只剩 280px）。它与 `overflow: hidden`
+    // （一排约 306px，320px 屏去掉内边距只剩 280px）。它与 `overflow: hidden`
     // 不同：不会切掉，是直接探到视口外多出一条横向滚动条。
     flex-wrap: wrap
     justify-content: center

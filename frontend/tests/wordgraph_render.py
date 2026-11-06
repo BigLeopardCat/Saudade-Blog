@@ -80,7 +80,7 @@ JS_STATS = """() => {
 }"""
 
 # "画面变了没有"用**逐像素差异**而不是质心位移：点云近似一个球，转它的时候
-# 亮的像素在球面上换了一批，质心却几乎不动（实测拖动 120px 只移动 4.9px < 5）。
+# 亮的像素在球面上换了一批，质心却几乎不动（拖动 120px 只移动 4.9px < 5）。
 # 差异比例才是"画面确实换了"的忠实度量。
 JS_SNAP = """() => {
   const cv = document.getElementById('c');
@@ -244,7 +244,7 @@ def run(browser, manifest, artifact, js):
     cam2 = page.evaluate("window.__eng.getCamera()")
     ok(abs(cam2["target"][0]) + abs(cam2["target"][1]) + abs(cam2["target"][2]) > 1e-6,
        "定位后相机 target 离开了原点", cam2["target"])
-    home_dist = page.evaluate("() => WG.HOME_CAM.dist")      # 别写死：默认机位会随实测调整
+    home_dist = page.evaluate("() => WG.HOME_CAM.dist")      # 别写死：默认机位会随测量调整
     ok(cam2["dist"] < home_dist - 1e-6, "定位后推近了（dist < 首页机位）", cam2["dist"])
     placed = page.evaluate("""() => {
       const d = window.__data, cam = window.__eng.getCamera();
@@ -333,8 +333,8 @@ def run(browser, manifest, artifact, js):
 
     print("== 6c. 悬浮时，邻居的名字也画在点上（N 层由悬停驱动）==")
     # ⚠️ 这条必须挑一个"不悬浮时确实没有名字"的邻居——否则 A 层（重要度前 22 常驻）
-    #    或 B 层（按深度补位）早就把它画上了，断言会**空转**（第一版就是这么空转的：
-    #    挑中的 Bearer 本来就在 A 层里，把引擎改动暂存掉测试照样绿）。
+    #    或 B 层（按深度补位）早就把它画上了，断言会**空转**
+    #    （挑中的 Bearer 本来就在 A 层里，把引擎改动暂存掉测试照样绿）。
     page.evaluate("() => { window.__rec.texts = []; }")
     page.mouse.move(3, 3)                        # 先把光标挪开，取"没有悬浮"的基线
     page.wait_for_timeout(250)

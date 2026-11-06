@@ -55,11 +55,11 @@ const transform = (cfg, html) => pluginOf(cfg).transformIndexHtml.handler(html);
 const htmlIn = readFileSync(path.join(root, 'index.html'), 'utf8');
 
 try {
-    // ── ① 什么都不设（= 别人 fork 走、没配任何变量）──────────────
+    // ① 什么都不设（= 别人 fork 走、没配任何变量）
     clearSiteVars();
     const cfgDefault = await bundle('default');
 
-    // ── ② 全设（= 自己的站点，值从仓库 Variable 来）──────────────
+    // ② 全设（= 自己的站点，值从仓库 Variable 来）
     process.env.VITE_SITE_URL = 'https://example.org';
     process.env.VITE_SITE_AUTHOR = '某位部署者';
     process.env.VITE_SITE_TITLE = '示例站名';
@@ -67,7 +67,7 @@ try {
     process.env.VITE_SITE_KEYWORDS = '甲, 乙, 丙';
     const cfgConfigured = await bundle('configured');
 
-    // ── ③ 值里有引号 / 尖括号（属性注入的形态）────────────────────
+    // ③ 值里有引号 / 尖括号（属性注入的形态）
     process.env.VITE_SITE_TITLE = '带"引号"与<script>的站名';
     process.env.VITE_SITE_DESCRIPTION = 'a"b<c>d&e';
     const cfgQuoted = await bundle('quoted');

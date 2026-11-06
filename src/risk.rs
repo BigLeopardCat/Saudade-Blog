@@ -260,8 +260,8 @@ pub async fn notify_rate_limited(state: &AppState, uid: i32, count: i64, window_
 /// 那条是"你被拒了"的当面回执，这条是事后留档的通知（所以带上了触发原因与条数）。
 fn mute_notice_body(count: i64, until: NaiveDateTime, now: NaiveDateTime) -> String {
     // 期限的措辞**整块交给 `authz::mute_span_text`**（"（永久）" / "至 X（还剩约 Y）"）：
-    // 这个函数原来自己判了一次哨兵、自己 `format!` 了一次日期，于是"至 X"在仓库里
-    // 有了第三份实现——哨兵值或格式一改，后台回执与个人中心横幅跟着变，这里不会。
+    // 本函数不再自己判哨兵、自己 `format!` 日期，避免同一措辞出现第三份实现——
+    // 哨兵值或格式一改，后台回执与个人中心横幅跟着变，这里不会。
     let how_long = crate::authz::mute_span_text(until, now);
     format!(
         "你在短时间内发布了 {count} 条评论或留言，已被临时禁言{how_long}。\
@@ -328,7 +328,7 @@ impl PostRateLimiter {
     /// `gap_secs <= 0` = **这一档显式关闭**（同 [`parse_config`] 的取值规则）⇒ 恒放行。
     ///
     /// "关闭"这条规则**只在本函数里实现一次**，调用方不再自己判一遍（`screen` 直接调）。
-    /// 原来写的是 `gap_secs.max(1)`——那把 0 悄悄变成"1 秒"，即**一个关不掉的闸**：
+    /// 不能用 `gap_secs.max(1)`——那会把 0 悄悄变成"1 秒"，即**一个关不掉的闸**：
     /// 管理员把 `contentMinIntervalSecs` 设成 0 本意是关掉间隔限制，实际仍在拦人。
     pub fn check_and_mark(&self, uid: i32, gap_secs: i64) -> Result<(), i64> {
         if gap_secs <= 0 {

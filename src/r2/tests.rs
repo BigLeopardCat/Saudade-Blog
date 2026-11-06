@@ -10,11 +10,10 @@ fn cfg(bucket: &str, prefix: &str, base: &str) -> R2Config {
     }
 }
 
-// ── ① SigV4：AWS 官方测试向量 ───────────────────────────────────────────
+// ① SigV4：AWS 官方测试向量
 // 官方向量集里的 `get-vanilla`：GET / 到 example.amazonaws.com，只签 host 与
-// x-amz-date。**这三条常量（规范请求哈希、签名、以及 IAM 那条签名）在写代码之前
-// 先用一份独立实现（Python 标准库 hashlib/hmac）逐字算过一遍**，所以它们钉的是
-// 算法，不是"我们自己跑出来的结果"。
+// x-amz-date。**这三条常量（规范请求哈希、签名、以及 IAM 那条签名）用一份独立实现
+// （Python 标准库 hashlib/hmac）逐字算过**，所以它们钉的是算法，不是实现自身产出的结果。
 //
 // ⚠️ 官方向量用的范围是 `us-east-1` + `service`，R2 用的是 `auto` + `s3`。
 // 签名值由这个范围参与派生 —— 所以下面显式传官方的范围，最后再单测一条
@@ -202,7 +201,7 @@ fn r2_scope_is_used() {
     );
 }
 
-// ── ② 编码 ──────────────────────────────────────────────────────────────
+// ② 编码
 #[test]
 fn uri_encode_rules() {
     assert_eq!(uri_encode("abcXYZ019-_.~", false), "abcXYZ019-_.~");
@@ -234,7 +233,7 @@ fn canonical_query_sorts_and_encodes() {
     );
 }
 
-// ── ③ 归一化 / 键 / URL ─────────────────────────────────────────────────
+// ③ 归一化 / 键 / URL
 #[test]
 fn normalize_prefix_and_base() {
     assert_eq!(normalize_prefix("/gallery/"), "gallery");
@@ -331,7 +330,7 @@ fn public_url_and_reverse() {
     );
 }
 
-// ── ④ 配额 ──────────────────────────────────────────────────────────────
+// ④ 配额
 #[test]
 fn quota_boundaries() {
     let limit = (DEFAULT_QUOTA_GB * GIB) as u64;
@@ -350,7 +349,7 @@ fn quota_boundaries() {
     assert!(quota_exceeded(u64::MAX - 1, 5, limit));
 }
 
-// ── ⑤ 配置解析 ──────────────────────────────────────────────────────────
+// ⑤ 配置解析
 fn kv<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
     move |k: &str| {
         pairs
@@ -445,7 +444,7 @@ fn active_needs_all_four() {
     }
 }
 
-// ── ⑥ ListObjectsV2 解析 ────────────────────────────────────────────────
+// ⑥ ListObjectsV2 解析
 const LIST_OK: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
 <Name>bucket</Name><Prefix>gallery/</Prefix><KeyCount>2</KeyCount><MaxKeys>1000</MaxKeys>
@@ -532,7 +531,7 @@ fn xml_unescape_covers_five_entities() {
     assert_eq!(xml_unescape("&amp;lt;"), "&lt;");
 }
 
-// ── ⑦ 凭据 ──────────────────────────────────────────────────────────────
+// ⑦ 凭据
 #[test]
 fn creds_host_and_path() {
     let c = Creds {

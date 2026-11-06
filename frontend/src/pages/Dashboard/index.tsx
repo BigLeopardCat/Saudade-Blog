@@ -155,8 +155,8 @@ const Dashboard = () => {
         setTier(0);
     };
 
-    /* 点搜索框要能打字 ⇒ 把它所在的侧栏展开（沿用原来 `setShellClosed(false)` 的语义：
-       那是"展开到 250"，不是"收起"）。 */
+    /* 点搜索框要能打字 ⇒ 把它所在的侧栏展开（对应 `setShellClosed(false)` 的语义：
+       是"展开到 250"，不是"收起"）。 */
     const handleSearchClick = () => {
         setTier(2);
     };

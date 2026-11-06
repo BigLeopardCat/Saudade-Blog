@@ -55,7 +55,7 @@ globalThis.Live2DCubismCore = {};
 globalThis.__chatRenderMarkdown = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 globalThis.__chatEnhance = () => {};
 
-// ── 真实 DB 数据（2026-08-28 导出 chat_history id 1846-1895，+08:00 钟面）──
+// 真实 DB 数据（chat_history id 1846-1895，+08:00 钟面）
 // 期望 TD（间隔 >5min）：1846上"昨天 20:42"、1847上"00:36"、1853上"01:56"、
 // 1865上"02:19"、1867上"02:27"、1869上"02:36"、1871上"10:24"、1879上"10:56"、
 // 1881上"12:30"、1883上"12:45"、1889上"14:09"、1893上"14:46"（共 12 个）

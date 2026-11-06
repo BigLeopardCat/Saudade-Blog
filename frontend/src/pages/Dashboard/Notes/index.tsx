@@ -80,11 +80,11 @@ const Notes = () => {
                     items={items}
                     className="twoMenu"
                     onClick={ClickMenu}
-                    // 受控：原来写死 `defaultSelectedKeys={['1']}`，进哪个子页都只有「全部文章」亮
-                    // （且它只认初次挂载那一次）。改成按路径派生。
+                    // 受控：按路径派生选中项；写死 `defaultSelectedKeys` 只认初次挂载，
+                    // 进哪个子页都只有「全部文章」亮。
                     selectedKeys={notePage ? [notePage.key] : []}
-                    // 原来是写死的 `theme="light"`：壳上挂了 darkAlgorithm 之后，这一块左侧
-                    // 子菜单仍会是一块浅色砖（Menu 的 theme 优先于 token）。
+                    // 必须跟随主题；写死 `theme="light"` 时，壳上挂了 darkAlgorithm 之后
+                    // 这块左侧子菜单仍会是一块浅色砖（Menu 的 theme 优先于 token）。
                     theme={isDark ? 'dark' : 'light'}
                 />
                 <Breadcrumb style={{ marginLeft: 10 }}>

@@ -36,7 +36,7 @@ use crate::utils::{
 /// 前端只能看到一句英文。
 pub const AVATAR_MAX_BYTES: usize = 2 * 1024 * 1024;
 
-// ── 用户设置 ────────────────────────────────────────────────────────────────
+// 用户设置
 
 #[derive(Deserialize)]
 pub struct UpdateProfileRequest {
@@ -294,7 +294,7 @@ pub async fn upload_avatar(
     Json(ApiResponse::success(AvatarDto { avatar: url }))
 }
 
-// ── 收藏的文章 ──────────────────────────────────────────────────────────────
+// 收藏的文章
 
 fn visible_flags(is_public: bool, status: Option<&str>) -> bool {
     is_public && matches!(status, Some("public") | Some("published"))
@@ -459,7 +459,7 @@ pub async fn remove_favorite(
     }
 }
 
-// ── 通知（红点数据源）与站内公告 ────────────────────────────────────────────
+// 通知（红点数据源）与站内公告
 
 #[derive(Serialize, Default)]
 pub struct NotificationDto {
@@ -507,7 +507,7 @@ async fn is_console_user(db: &sea_orm::DatabaseConnection, uid: i32) -> bool {
 
 /// 等人工裁决的河灯留言条数（`src='board'` 且 `approved=0`）。
 /// 后台留言管理页看的是同一批数据（`talks::list_board_admin` 不过滤 approved、那页自己分档），
-/// 这里只要一个数——**不为一行提示把整张表拉进内存**（原来后台首页就是这么干的）。
+/// 这里只要一个数——**不为一行提示把整张表拉进内存**。
 async fn board_pending_count(db: &sea_orm::DatabaseConnection) -> i64 {
     talk::Entity::find()
         .filter(talk::Column::Src.eq("board"))
@@ -542,7 +542,7 @@ pub struct ReadRequest {
 }
 
 
-// ── 站内信箱 ────────────────────────────────────────────────────────────────
+// 站内信箱
 
 #[derive(Serialize, Default)]
 pub struct MessageDto {
@@ -756,7 +756,7 @@ pub async fn read_messages(
     list_messages(State(state), headers, Query(MailboxQuery::default())).await
 }
 
-// ── 我的留言记录 ────────────────────────────────────────────────────────────
+// 我的留言记录
 
 #[derive(Serialize, Default)]
 pub struct MyTalkDto {
@@ -929,7 +929,7 @@ pub async fn save_draft(
         return Json(ApiResponse::error("草稿是空的，先写点什么再存"));
     }
     match payload.id {
-        // ── 改：必须是自己那条（越权在这里被 SQL 挡住，不是靠前端"不传别人的 id"）──
+        // 改：必须是自己那条（越权在这里被 SQL 挡住，不是靠前端"不传别人的 id"）
         Some(id) => {
             let owned = user_message_draft::Entity::find()
                 .filter(user_message_draft::Column::Id.eq(id))
@@ -958,7 +958,7 @@ pub async fn save_draft(
                 }
             }
         }
-        // ── 新建 ──
+        // 新建
         None => {
             let count = user_message_draft::Entity::find()
                 .filter(user_message_draft::Column::UserId.eq(uid))

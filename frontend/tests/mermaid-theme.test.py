@@ -145,7 +145,7 @@ with sync_playwright() as p:
     check(f'★节点底 = 纸白 #fffdfa（实测 {fixed["nodeFill"]}）',
           fixed["nodeFill"] == "rgb(255, 253, 250)", str(fixed["nodeFill"]))
     # flowchart 的节点描边走 `nodeBorder`（#c9b8d2）而不是 `primaryBorderColor`（#d8cfe0）——
-    # 两个键都配着（别的图种吃另一个），这里断言的是**真生效的那一个**（实测得出，不是照抄配置）
+    # 两个键都配着（别的图种吃另一个），这里断言的是**真生效的那一个**（不是照抄配置）
     check(f'★节点描边 = 藕紫 #c9b8d2（实测 {fixed["nodeStroke"]}）',
           fixed["nodeStroke"] == "rgb(201, 184, 210)", str(fixed["nodeStroke"]))
     check(f'★分组底 = 淡粉 #faf4f7（实测 {fixed["clusterFill"]}）',

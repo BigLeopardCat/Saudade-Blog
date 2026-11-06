@@ -15,7 +15,7 @@ const Live2dAgent = lazy(() => import("../../components/Live2dAgent"));
 /* 业务状态、Canvas 场景与一次性灯体贴图分别维护。
    场景预算和生命周期见 sceneBudget.ts / useRiverScene.ts。 */
 
-/* ------------------------- 心愿文案 ------------------------- */
+/* 心愿文案 */
 
 const DEMO_MESSAGES = [
     "愿所有等待，终将迎来相逢。",
@@ -101,7 +101,7 @@ interface LanternMeta {
 
 }
 
-/* ------------------------- 组件 ------------------------- */
+/* 组件 */
 
 export default function RiverBoard() {
     const navigate = useNavigate();
@@ -891,8 +891,8 @@ export default function RiverBoard() {
     };
 
     /* QA 钩子：暴露批次推进，供自动化验证轮播（生产环境无害）。
-       advanceMsg 已 useCallback 稳定身份 → 这个 effect 只在挂载时跑一次（原来是
-       没有依赖数组，每次 render 都新建一个对象写 window） */
+       advanceMsg 已 useCallback 稳定身份 → 这个 effect 只在挂载时跑一次。
+       依赖数组不能省，否则每次 render 都新建一个对象写 window。 */
     useEffect(() => {
         (window as unknown as { __qaBoard?: { advanceMsg: (id: number) => void } }).__qaBoard = { advanceMsg };
     }, [advanceMsg]);
@@ -1246,7 +1246,7 @@ export default function RiverBoard() {
                                 onClick={() => {
                                     setAlbumTabs("mine");
                                     // 「我的河灯」按需拉取：只在真的切到这个页签时请求
-                                    //（原来一开灯影集就无条件拉一次 /api/protect/board/mine）
+                                    //（不要一开灯影集就无条件拉 /api/protect/board/mine）
                                     if (!albumMineLoadedRef.current) {
                                         albumMineLoadedRef.current = true;
                                         fetchMyAlbum();

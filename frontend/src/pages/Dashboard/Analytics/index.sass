@@ -120,7 +120,7 @@
     box-shadow: 0 1px 22px -8px rgba(26, 26, 26, .6)
     padding: 14px 18px
 
-    // 面板底同样要换档：深色页上留一块半透明白会是「白底白字」的那类事故
+    // 面板底同样要换档：深色页上留一块半透明白会是「白底白字」
     .dark &
       background: rgba(255, 255, 255, 0.06)
 
@@ -132,7 +132,7 @@
   .akPanelWide
     width: 100%
 
-  // ── 周报 / 月报 / 年报 ──────────────────────────────────────────────────────
+  // 周报 / 月报 / 年报
   .akPeriods
     .akPeriodsHead
       display: flex
@@ -148,7 +148,7 @@
   // 期列表用 antd 的 `Collapse ghost`：它的底色本来就是透明的，
   // 文字落在 `.akPanel` 那层上（深色档也是）⇒ 对比度探针量到的就是这块的底色。
   // ⚠️ 别给 `ghost` 换掉：非 ghost 的 Collapse 自带一层白底，
-  // 深色档会变成"白底白字"那一族事故（本页的历史坑之一）。
+  // 深色档会变成"白底白字"。
   .akPeriodList
     .ant-collapse-item
       border-bottom: 1px solid rgba(140, 140, 140, 0.22)
@@ -276,8 +276,8 @@
       font-size: 13px
       font-weight: 600
       font-variant-numeric: tabular-nums
-      // 同一条理由：数字是**文字**，深色档必须换成亮一档的色（原来那支 #7880d1
-      // 在深色面板上 2.83:1，探针抓到的第二处）
+      // 同一条理由：数字是**文字**，深色档必须换成亮一档的色（#7880d1
+      // 在深色面板上只有 2.83:1）
       color: var(--ak-accent)
 
       .dark &

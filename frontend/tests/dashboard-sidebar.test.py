@@ -197,7 +197,7 @@ with sync_playwright() as p:
                 "window.addEventListener('auth-change', () => { window.__auth++; });"
                 "localStorage.setItem('tokenKey', 'x.y.z');")
         if dark:
-            # 主题源就是 localStorage.isDarkMode（theme.ts 两种历史格式都认）
+            # 主题源就是 localStorage.isDarkMode（theme.ts 两种旧格式都认）
             init += "localStorage.setItem('isDarkMode', 'true');"
         page.add_init_script(init)
         page.goto(URL)
@@ -206,7 +206,7 @@ with sync_playwright() as p:
         page.errs = errs
         return page
 
-    # ── 一、夜间悬停：从"变黑隐身"改成登录页那支河灯金 ──────────────────────────
+    # 一、夜间悬停：从"变黑隐身"改成登录页那支河灯金
     print("\n【一】夜间侧栏悬停配色")
     dk = fresh_page(dark=True)
     check("夜间模式真的生效（.shell 带上 dark 类）",
@@ -221,7 +221,7 @@ with sync_playwright() as p:
           got_sel["selected"] and got_sel["icon"] == "rgb(0, 0, 0)", got_sel["icon"])
     dk.close()
 
-    # ── 二、浅色悬停：维持原样（黑，与选中态同色）─────────────────────────────
+    # 二、浅色悬停：维持原样（黑，与选中态同色）
     print("\n【二】浅色侧栏悬停配色（回归）")
     lt = fresh_page(dark=False)
     got = probe_hover(lt, UNSELECTED)
@@ -229,7 +229,7 @@ with sync_playwright() as p:
     check("浅色下没有光晕", got["shadow"] == "none", got["shadow"])
     lt.close()
 
-    # ── 三、主题开关右侧不再被裁 ──────────────────────────────────────────────
+    # 三、主题开关右侧不再被裁
     print("\n【三】侧栏主题开关几何")
     geo_page = fresh_page(dark=True)
 
@@ -251,7 +251,7 @@ with sync_playwright() as p:
     check("点 toggle 后侧栏确实展开了（.menu-bar 88 → 250）", abs(bar_w - 250) < 1, f"bar width={bar_w:.1f}")
     clip_report("展开态（250px 侧栏）")
 
-    # 判据的**对照**：把当年那行 translateX(8%) 加回去，必须立刻测出"越界"——
+    # 判据的**对照**：把 translateX(8%) 加回去，必须立刻测出"越界"——
     # 否则上面两条"没越界"可能只是判据本身不敏感。
     geo_page.evaluate("() => { document.querySelector('.toggle-switch').style.transform = 'translateX(8%)'; }")
     geo_page.wait_for_timeout(60)
@@ -315,7 +315,7 @@ with sync_playwright() as p:
     check("从极简档点那颗钮：回到收起档（88）而不是展开档",
           "close" in g["tier"] and abs(g["barW"] - 88) < 1, f'{g["tier"]} barW={g["barW"]:.1f}')
 
-    # ── 四、那颗按钮：返回外部首页，不再退出登录 ────────────────────────────────
+    # 四、那颗按钮：返回外部首页，不再退出登录
     print("\n【四】侧栏「返回首页」按钮（原「退出登录」）")
     btn = geo_page.locator(".bottom-content .nav-links").filter(has_text="返回首页")
     check("侧栏里有一颗「返回首页」", btn.count() == 1, f"count={btn.count()}")
@@ -333,7 +333,7 @@ with sync_playwright() as p:
     check("全程无页面异常", not geo_page.errs, "; ".join(geo_page.errs[:3]))
     geo_page.close()
 
-    # ── 五、两枚填充型 SVG 图标（公告 / 用户管理）──────────────────────────────
+    # 五、两枚填充型 SVG 图标（公告 / 用户管理）
     # 换图标这件事的坑全在"看不到的那一半"：path 上留着原设计稿的 `fill="#77808F"` 时，
     # 平时看着一切正常，只有夜间悬停**染色只变一半**——所以判据必须是 computedStyle 的
     # svg.fill（继承自 .icon 的 color），外加"path 上没有写死 fill"。
@@ -392,15 +392,15 @@ with sync_playwright() as p:
     check("带 #/dashboard/albums 打开：高亮落在「图库」", got["menu"] == ["图库"], str(got))
     check("反面：没有回落点亮「主页」（老实现脱掉 hash 后就是这个症状）", "主页" not in got["menu"], str(got))
 
-    # ③ 旧用例（原来在新夹具下会假绿——它只是永远停在主页）：点一下就跟着走
+    # ③ 用例（在新夹具下会假绿——它只是永远停在主页）：点一下就跟着走
     sc.locator(".menu-links .nav-links").first.click()
     sc.wait_for_timeout(200)
     check("点「主页」后唯一高亮就是主页",
           sc.evaluate(HIGH)["menu"] == ["主页"], str(sc.evaluate(HIGH)))
 
     # ① 不经侧栏的跳转：图库页那颗「R2 配置」`navigate('/dashboard/usercontrol')`，
-    #    点完高亮原来仍停在图库图标上（用户报的那条）。**本节的对照就是它**：
-    #    老实现（点一下才 setState）走这条路径时高亮不会动 ⇒ 这条必然红。
+    #    点完高亮仍停在图库图标上。**本节的对照就是它**：
+    #    只靠点击后 setState 的实现走这条路径时高亮不会动 ⇒ 这条必然红。
     sc.evaluate("() => window.__setPath('/dashboard/usercontrol')")
     sc.wait_for_timeout(200)
     got = sc.evaluate(HIGH)
@@ -462,7 +462,7 @@ with sync_playwright() as p:
           abs(ink[0]["h"] - ink[1]["h"]) <= 2.5,
           f'{ink[0]["h"]:.2f} vs {ink[1]["h"]:.2f}')
     # 对照：把旧稿那个 1097 宽的 viewBox 假回去，必须当场测出"偏小"——否则上面那条
-    # "落在带里"可能只是判据本身不敏感（旧稿实测 20.5，落在带内，所以要挑更窄的带验证）。
+    # "落在带里"可能只是判据本身不敏感（旧稿量到 20.5，落在带内，所以要挑更窄的带验证）。
     stale = ink_page.evaluate("""() => {
         const li = document.querySelectorAll('.menu-links .nav-links')[5];
         const svg = li.querySelector('svg');

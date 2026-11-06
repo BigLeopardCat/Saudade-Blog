@@ -12,7 +12,7 @@
   // 兜住任何残余的横向溢出。
   //
   // 横向滚动条的真正根因不是"文本太长"，是表格的 `scroll={{x:'max-content'}}`：rc-table
-  // 把它写成内联 `width:max-content`，表的宽度就固定成内容宽（实测 1314px）与视口无关 ——
+  // 把它写成内联 `width:max-content`，表的宽度就固定成内容宽（约 1314px）与视口无关 ——
   // 1280 宽溢出 164px、1440 溢出 20px、1920 反而右侧空 412px。那个 prop 已经删掉（表回到
   // CSS `width:100%`），这里再兜一道。
   .searchRes
@@ -38,7 +38,7 @@
       z-index: 2
 
   // 行内那三颗 MUI Fab 自带 `z-index: 1050`（来自 MUI 的 MuiFab-root），滚动时
-  // **会盖住吸顶的表头**（实测截图：滚到底后第一行的操作按钮浮在表头上面）。
+  // **会盖住吸顶的表头**（滚到底后第一行的操作按钮浮在表头上面）。
   // 它们本来就是行内小按钮、不需要压在任何人上面，就地归零 ——
   // 否则只能把表头的 z-index 抬到 1051 去跟 MUI 对冲。
   .ant-table-row .MuiFab-root
@@ -71,7 +71,7 @@
     margin-inline-end: 0
 
 // 标题列的省略号必须自己写：antd 的 `ellipsis` 对 flex 子项无效（复合 render 里的 Space
-// 是 inline-flex），实测 computed `textOverflow` 仍是 `clip`，长标题只会被硬裁。
+// 是 inline-flex），computed `textOverflow` 仍是 `clip`，长标题只会被硬裁。
 // `min-width:0` 在**容器和文本两处**都要有，缺一个省略号都不生效。
 .note-title-cell
   display: flex
@@ -89,7 +89,7 @@
   white-space: nowrap
 
 // 改完配置后不再属于当前 tab 的行：留在原地但压暗（而不是 Filter 掉 —— 那会改 total、
-// 触发分页钳制，就是用户说的"页码跳回第一页"）
+// 触发分页钳制，就是"页码跳回第一页"）
 .note-row-off-tab
   opacity: 0.55
 

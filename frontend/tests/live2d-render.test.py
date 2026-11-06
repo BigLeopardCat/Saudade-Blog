@@ -38,7 +38,7 @@ def check(desc, cond, detail=""):
         FAILS.append(desc)
 
 
-# ── 前置：三份运行时产物必须在场（不在场时给的是"去跑哪条命令"，不是一片红）──
+# 前置：三份运行时产物必须在场（不在场时给的是"去跑哪条命令"，不是一片红）
 def preflight():
     missing = [p for p in (
         WIDGET / "vendor" / "pixi.min.js",
@@ -108,7 +108,7 @@ def start_server():
     return httpd, httpd.server_address[1]
 
 
-# ── 像素工具：数"不是背景色"的像素 ────────────────────────────────────────────
+# 像素工具：数"不是背景色"的像素
 def shot(page, box):
     return Image.open(io.BytesIO(page.screenshot(clip=box))).convert("RGB")
 
@@ -138,7 +138,7 @@ def ink_bbox(img, bg=(255, 255, 255), tol=12):
     return (l, t, r, b), n
 
 
-# ── ⑦ 用的探针：把一段行内代码塞进真气泡，量它的底与字 ────────────────────────
+# ⑦ 用的探针：把一段行内代码塞进真气泡，量它的底与字
 # 底色是**半透明**的（`rgba(...)`）⇒ getComputedStyle 给的是字面量，直接拿它算对比度
 # 得到的是个假数。这里沿着祖先链把每一层的 background-color 从底往上复合，直到遇到
 # 不透明的一层为止——复合完的才是屏幕上那个像素。
@@ -281,7 +281,7 @@ DOM_STATE = """() => {
 # ⚠️ `elementFromPoint` **会跳过 `pointer-events:none` 的元素** —— 正因为它会跳，
 # 这个探针必须配一条**正控**：点在角色墨迹上要落回 `#waifu`。只有正控绿了，
 # "空白处落到了正文"才说明盒子那部分真的透过去了，而不是探针本身恒返回"不是 #waifu"
-# （本仓记过这一族假绿：`pointer-events:none` 让命中测试与红基线**一起**哑掉）。
+# （这一族假绿：`pointer-events:none` 让命中测试与红基线**一起**哑掉）。
 # 传入的 bb 是 ⑨ 量出来的"盒"与"墨迹"两组坐标，点由它们派生 —— 写死坐标会在
 # 模型/尺寸一动时变成"点在哪儿都不知道"的断言。
 MOBILE_HIT = """(bb) => {
@@ -300,7 +300,7 @@ MOBILE_HIT = """(bb) => {
 }"""
 
 
-# ── ⑩ 用：`#waifu-tips` 里那段欢迎语的实况（innerHTML / 文本 / 里面真有几个元素）──
+# ⑩ 用：`#waifu-tips` 里那段欢迎语的实况（innerHTML / 文本 / 里面真有几个元素）
 # 读 innerHTML 而不是只看 textContent：这段文本最后是 `el.innerHTML = …` 写进去的，
 # 判"标题里的标签有没有被当成标签"必须看在 **DOM 里造出了什么元素**。
 TIPS_PROBE = """() => {
@@ -367,7 +367,7 @@ def main():
             httpd.shutdown()
             return finish()
 
-        # ── ① DOM 骨架与外接框 ────────────────────────────────────────────
+        # ① DOM 骨架与外接框
         st = page.evaluate(DOM_STATE)
         check("① #waifu 带 waifu-active（可见态）", st["active"])
         # 只断言前三个：后面还有 chat-stream/chat-render 追加的 #waifu-chat 与
@@ -381,7 +381,7 @@ def main():
               f"{st['canvasW']}×{st['canvasH']} style={st['canvasStyleW']}")
         check("① #waifu 高度恒 300px（中间态塌陷的回归锁）", st["waifuH"] == 300, st["waifuH"])
 
-        # ── ② 工具条 ──────────────────────────────────────────────────────
+        # ② 工具条
         # 只锁**渲染层那五个的相对顺序**，不锁 hitokoto 的位次：chat-stream 的
         # repurposeHitokoto 与 registerTools 之间有真实竞态（前者只要 #waifu-tool 在
         # DOM 里就 append，而它在模型加载完成前就已存在）⇒ 线上 hitokoto 有时在最前、
@@ -395,20 +395,20 @@ def main():
         check("② 每个按钮都带 svg 图标", st["toolSvgs"] == len(st["toolOrder"]),
               f"{st['toolSvgs']}/{len(st['toolOrder'])}")
 
-        # ── ③ 角色真的画出来了 ────────────────────────────────────────────
+        # ③ 角色真的画出来了
         check("③ 模型加载完成（滑入闸门已放行）",
               wait(page, "() => { const w = document.getElementById('waifu');"
                          " return !!(w && w.dataset.slideInOnce); }"))
         page.wait_for_timeout(1400)          # 等滑入动画（800ms）走完
         # 外接框必须**滑到位之后**再取：滑入前 #waifu 停在 bottom:-500px，
-        # 画布的 rect 落在视口之外，clip 截图会直接报"区域在图像外"（首跑踩过）
+        # 画布的 rect 落在视口之外，clip 截图会直接报"区域在图像外"
         box = page.locator("#live2d").bounding_box()
         img = shot(page, box)
         n_ink = ink(img)
         print(f"      · 画布非背景像素 {n_ink} / {img.width * img.height}")
         check("③ 画布上有角色（非背景像素 > 5000）", n_ink > 5000, n_ink)
 
-        # ── ④ 口型接口（chat-stream.js 直接写这三个名字）────────────────────
+        # ④ 口型接口（chat-stream.js 直接写这三个名字）
         check("④ __setMouthOpen / __setMouthClose 都在", st["hasMouthApi"])
         check("④ __mouthOverride 初值 = -1（交还空闲动画）", st["mouth"] == -1, st["mouth"])
 
@@ -427,7 +427,7 @@ def main():
                 d = abs(a[i] - b[i])
                 if d > mx[i]:
                     mx[i] = d
-        mask = [v <= 6 for v in mx]          # 阈值 6：同状态两张实测逐像素相同，留点余量
+        mask = [v <= 6 for v in mx]          # 阈值 6：同状态两张逐像素相同，留点余量
         print(f"      · 静止掩膜 {sum(mask)}/{len(mask)} 像素（{sum(mask) * 100 // len(mask)}% 不动）")
 
         def moved(g, c):
@@ -443,7 +443,7 @@ def main():
 
         d_noise, d_open, d_direct = probe("close"), probe("open"), probe("direct")
         nz, op, di = (statistics.median(v) for v in (d_noise, d_open, d_direct))
-        gate = max(25, 5 * nz)               # 噪声底自校准（实测噪声中位恒 ≤4）
+        gate = max(25, 5 * nz)               # 噪声底自校准（噪声中位恒 ≤4）
         print(f"      · 掩膜内变化像素（配对中位）  同状态 {nz:.0f}"
               f"（均值 {statistics.mean(d_noise):.0f}）  张嘴 {op:.0f}  直接写 {di:.0f}"
               f"  闸门 {gate:.0f}")
@@ -461,7 +461,7 @@ def main():
               page.evaluate("() => window.__mouthOverride"))
         page.evaluate("() => { window.__mouthOverride = -1; }")   # 交还空闲动画，免得影响 ⑤
 
-        # ── ⑤ 入场 / 拖拽 / 收起唤回 ──────────────────────────────────────
+        # ⑤ 入场 / 拖拽 / 收起唤回
         st_now = page.evaluate(DOM_STATE)
         check("⑤ 滑入后 bottom 归零（角色停在最终位置，不是停在半路）",
               st_now["waifuBottom"] == "0px", st_now["waifuBottom"])
@@ -540,7 +540,7 @@ def main():
         check("⑤ 唤回：waifu-active 回来、waifu-hidden 摘掉",
               st5["active"] and not st5["hidden"], st5)
 
-        # ── ⑥ 聊天面板还在（渲染层替换不许连坐）────────────────────────────
+        # ⑥ 聊天面板还在（渲染层替换不许连坐）
         check("⑥ 聊天面板仍被建出来（#waifu-chat）", st5["chatPanel"])
         page.evaluate("() => document.getElementById('waifu-tool-hitokoto').click()")
         page.wait_for_timeout(300)
@@ -591,8 +591,8 @@ def main():
             check("⑨ 手机档角色仍画得出来（非背景像素 > 3000；半尺寸下修前是 20791）",
                   n9 > 3000, n9)
             # 界都留了余量，因为模型**每隔一会儿有一次大动作**（抬手/跳跃，④ 段量过）。
-            # 实测静态帧 x≤100 / y≥695；界给 140 / 640 —— 大动作那一帧也进不来，
-            # 而修前的 249 / 558（A 臂实测 248 / 546）离这两条界都还差得远。
+            # 静态帧 x≤100 / y≥695；界给 140 / 640 —— 大动作那一帧也进不来。
+            # 修前的 249 / 558（A 臂 248 / 546）离这两条界都还差得远。
             check("⑨ 角色墨迹右缘收到左半屏（≤140px；修前 248）", ir <= 140, f"右缘 {ir}")
             check("⑨ 角色整体下移到屏底（墨迹顶 ≥640px；修前 546）", it >= 640, f"顶 {it}")
             check("⑨ 墨迹没顶出视口", ir < 390 and ib <= 844, f"x{il}..{ir} y{it}..{ib}")
@@ -611,7 +611,7 @@ def main():
                   f"{mst['canvasW']}×{mst['canvasH']}")
             check("⑨ #live2d 的 CSS 尺寸仍是 300×300（缩放是 transform，不是改盒模型）",
                   mst["canvasStyleW"] == "300px", str(mst["canvasStyleW"]))
-            # 工具条要跟着缩小的角色走：原来锚在 300px 盒的右缘（A 臂实测视口 x294），
+            # 工具条要跟着缩小的角色走：锚在 300px 盒的右缘（A 臂视口 x294），
             # 缩小后必须挪到角色那一带，否则六个钮会飘在没有角色的空处。
             # 判据只写"挪到左边来了"（x≤140），**不写"在角色右缘之外"** ——
             # 后者会与大动作帧的墨迹右缘耦合（模型一抬手就红），而它想抓的只是"没重锚"。

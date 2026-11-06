@@ -21,14 +21,14 @@ UPDATE talk
  WHERE content LIKE 'agent\_fixture\_%'
    AND approved <> 0;
 
--- ── ③ 回读：确认**恰好一行**、字段如预期 ────────────────────────────────────
+-- ③ 回读：确认**恰好一行**、字段如预期
 -- 期望：1 行，approved = 0，三个审核列都是 NULL，must_be_1 = 1。
 SELECT 'fixture' AS done, id, approved, src, user_id, author,
        ai_result, ai_reason, reject_reason, created_at, updated_at,
        (SELECT COUNT(*) FROM talk WHERE content LIKE 'agent\_fixture\_%') AS must_be_1
   FROM talk WHERE content LIKE 'agent\_fixture\_%';
 
--- ── ④ 写后复核：这一行**真的能被后台接口看到、且是待审态** ──────────────────
+-- ④ 写后复核：这一行**真的能被后台接口看到、且是待审态**
 -- 用例的台账帧读的是 `GET /api/protect/board`（`tools/base._board_index`），所以"在位"
 -- 的定义就是**那个接口读得到它、且 approved = 0**。SQL 里读不到 HTTP，这一条用一枚
 -- **只读的管理员令牌**验：
@@ -37,7 +37,7 @@ SELECT 'fixture' AS done, id, approved, src, user_id, author,
 -- ⚠️ 库里改对了、闸仍判 wrong_state ⇒ 先查身份与路由（管理员 uid 今天还通不通），
 --    不要改用例去迁就。
 
--- ── ⑤ 登记 flag（**不参与幂等**，只记"本文件被应用过至少一次"）────────────────
+-- ⑤ 登记 flag（**不参与幂等**，只记"本文件被应用过至少一次"）
 -- 同其余夹具文件：真正的门是 §② 的 `approved <> 0` 与用例侧的夹具在位检查，flag 不参与
 -- 判断（否则"用例复核掉它之后想复位"这条正常循环会静默不动）。
 INSERT INTO migration_flags (flag_name)

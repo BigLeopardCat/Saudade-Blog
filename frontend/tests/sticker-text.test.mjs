@@ -34,7 +34,7 @@ const mdastImages = (value) => {
 };
 const stickerCount = (value) => splitStickers(value).filter((p) => p.kind === 'sticker').length;
 
-// ═══ 一、片段层的形状 ═══
+// 一、片段层的形状
 console.log('\n── splitStickers ──');
 {
     eq(splitStickers(''), [{ kind: 'text', text: '' }], '空串 ⇒ 一个空文本片段（不是空数组：调用方不必特判）');
@@ -62,7 +62,7 @@ console.log('\n── splitStickers ──');
     eq(splitStickers('a:b:c').map((p) => p.kind), ['text'], '半截冒号对（名字为空/含冒号）不误判');
 }
 
-// ═══ 二、清单本身：每个名字都能双向命中 ═══
+// 二、清单本身：每个名字都能双向命中
 console.log('\n── 清单 ──');
 {
     ok(STICKER_NAMES.length === 24, `清单 24 个，实测 ${STICKER_NAMES.length}`,
@@ -88,7 +88,7 @@ for (const asset of manifest.assets) {
     ok(bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP', `${asset.name}：有效WebP文件头`);
 }
 
-// ═══ 三、两条路一致（本套件的中心判据）═══
+// 三、两条路一致（本套件的中心判据）
 console.log('\n── mdast 侧 ⇄ 片段侧 ──');
 {
     const samples = [
@@ -115,7 +115,7 @@ console.log('\n── mdast 侧 ⇄ 片段侧 ──');
         '代码块里的 :头疼: 不动（叶子节点没有 children，遍历自动跳过）');
 }
 
-// ═══ 四、接线锁：新宿主确实用了这条渲染器 ═══
+// 四、接线锁：新宿主确实用了这条渲染器
 // 判据再对，没接上也白搭——这三处是本次改动的真实落点。
 console.log('\n── 接线 ──');
 {

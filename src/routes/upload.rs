@@ -363,7 +363,7 @@ pub async fn upload_image(
         }
     }
 
-    // ── 本机盘 ────────────────────────────────────────────────────────────
+    // 本机盘
     if let Err(e) = fs::create_dir_all(&upload_dir).await {
         tracing::error!("[upload] 建上传目录失败 {:?}: {}", upload_dir, e);
         return Json(ApiResponse::error("服务端存储不可用，请稍后再试"));
@@ -525,7 +525,7 @@ pub async fn delete_images(
     Json(ApiResponse::success("Deleted".to_string()))
 }
 
-// ── R2 用量（面板用量条的数据源）────────────────────────────────────────────
+// R2 用量（面板用量条的数据源）
 /// ⚠️ `used_bytes` 在**列表失败时是 0**，而 `0` 不是"用量是 0"的意思 ——
 /// 前端必须看 `list_error` 分支：非空 ⇒ 用量条转灰、显示原因，**不许**显示 0%。
 /// （这是本仓反复出现过的那类坑：缺键/缺数当成 0，于是"读不到"被读成"很空"。）

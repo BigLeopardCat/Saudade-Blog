@@ -87,7 +87,7 @@ export const openZoomOverlay = (source: HTMLElement): void => {
     padY = f(cs.paddingTop) + f(cs.paddingBottom) + f(cs.borderTopWidth) + f(cs.borderBottomWidth)
   }
 
-  // ── 浮层骨架 ──
+  // 浮层骨架
   overlay = document.createElement("div")
   overlay.className = "md-zoom-overlay"
   overlay.setAttribute("role", "dialog")
@@ -122,7 +122,7 @@ export const openZoomOverlay = (source: HTMLElement): void => {
   document.body.appendChild(overlay)
   closeBtn.focus({preventScroll:true})
 
-  // ── 变换状态:content 居中,translate+scale(transform-origin: center) ──
+  // 变换状态:content 居中,translate+scale(transform-origin: center)
   let scale = 1
   let tx = 0
   let ty = 0
@@ -175,14 +175,14 @@ export const openZoomOverlay = (source: HTMLElement): void => {
       ? '双指缩放 · 拖拽移动 · 双击切换「整图 / 细节」 · 单击空白关闭'
       : '滚轮 / 捏合缩放 · 拖拽移动 · 双击还原 · 单击空白关闭 · Esc'
 
-  // ── 滚轮缩放(以光标为中心) ──
+  // 滚轮缩放(以光标为中心)
   const onWheel = (e: WheelEvent): void => {
     e.preventDefault()
     zoomAt(Math.exp(-e.deltaY * 0.0016), e.clientX, e.clientY)
   }
   stage.addEventListener("wheel", onWheel, { passive: false })
 
-  // ── 指针:拖拽平移 / 双指捏合缩放 / 轻点空白关闭 ──
+  // 指针:拖拽平移 / 双指捏合缩放 / 轻点空白关闭
   const onPointerDown = (e: PointerEvent): void => {
     if (closeTimer) {
       clearTimeout(closeTimer)
@@ -245,7 +245,7 @@ export const openZoomOverlay = (source: HTMLElement): void => {
   stage.addEventListener("pointerup", onPointerUp)
   stage.addEventListener("pointercancel", onPointerUp)
 
-  // ── 双击:适配 ↔ 2.5×适配 ──
+  // 双击:适配 ↔ 2.5×适配
   const onDblClick = (e: MouseEvent): void => {
     if (closeTimer) {
       clearTimeout(closeTimer)
@@ -271,7 +271,7 @@ export const openZoomOverlay = (source: HTMLElement): void => {
   }
   stage.addEventListener("dblclick", onDblClick)
 
-  // ── 关闭:Escape / × ──
+  // 关闭:Escape / ×
   keydownHandler = (e: KeyboardEvent) => {
     if (e.key === "Escape") closeZoomOverlay()
     if (e.key === "Tab") { e.preventDefault(); closeBtn.focus() }

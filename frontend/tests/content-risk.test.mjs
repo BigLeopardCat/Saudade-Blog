@@ -19,8 +19,8 @@ const count = (s, needle) => strip(s).split(needle).length - 1;
 /** 按花括号配对取一段（从 marker 后第一个 `{` 起）。取函数体/impl 块用。
  *  ⚠️ **必须跳过参数表里的括号**：`State(state): State<Arc<AppState>>` 这类 axum 提取器
  *  参数本身带括号，第一个 `{` 若取错位置（取到参数表内部），配对会从那里开始跑，
- *  一切"函数体里有什么/没有什么"的断言就全部对着半截签名说话——本套件第一版就是这样
- *  **假绿**了一整组（`token_version` 断言失败才发现）。 */
+ *  一切"函数体里有什么/没有什么"的断言就全部对着半截签名说话——整组会**假绿**
+ *  （`token_version` 断言失败才发现）。 */
 function bodyOf(src, marker) {
     const i = src.indexOf(marker);
     if (i < 0) return '';
@@ -65,7 +65,7 @@ const ucPage = read('frontend/src/components/UserCenter/index.tsx') + read('fron
 const profileType = read('frontend/src/interface/ProfileType.d.ts');
 const migration = read('scripts/migration/user_mute_20261002.sql');
 
-// ── ① 五组键名：Rust 常量 ⇄ web_info 的 JSON 契约 ⇄ 前端设置卡 ⇄ setter 的位置配对 ──
+// ① 五组键名：Rust 常量 ⇄ web_info 的 JSON 契约 ⇄ 前端设置卡 ⇄ setter 的位置配对
 console.log('\n① 风控键名四处同源');
 
 const keysBlock = risk.slice(
@@ -311,7 +311,7 @@ ok(/pub muted: bool/.test(tempUser) && /pub muted_until: Option<String>/.test(te
     'TempUserInfo 加了 muted / mutedUntil（只加字段，不改形状）');
 ok(/原样回库值|原始库值|原样回/.test(tempUser), '注释写明 mutedUntil 是原始库值（永久是那个哨兵）');
 
-// ── ⑥ 迁移：纯加列、无需回填 ───────────────────────────────────────────────
+// ⑥ 迁移：纯加列、无需回填
 console.log('\n⑥ 迁移 C');
 
 ok(/ALTER TABLE\s+`?user`?\s+ADD COLUMN\s+`?muted_until`?\s+datetime\s+NULL/i.test(migration),

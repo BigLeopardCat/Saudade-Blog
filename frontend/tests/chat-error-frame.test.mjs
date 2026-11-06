@@ -26,7 +26,7 @@ const sliceBetween = (startAnchor, endAnchor, label, withEnd = false) => {
     return SRC.slice(i, withEnd ? j + endAnchor.length : j);
 };
 
-// ── 切出真源码：① 帧分支（抛异常那一段） ② catch 里的 errMsg 取值 ──────────────
+// 切出真源码：① 帧分支（抛异常那一段） ② catch 里的 errMsg 取值
 const branchSrc = sliceBetween(
     "if (type === 'error')",
     "if (type === 'done')",
@@ -51,7 +51,7 @@ const errMsgOf = new Function('e', errMsgSrc + "\nreturn errMsg;");
 /** 服务端现在会发的那句话（`server.PRODUCER_ERROR_TEXT` 的当前值，只为可读）。 */
 const SERVER_TEXT = '服务这边出了点问题，这一轮没能生成回复，请再说一次。';
 
-// ── ① JSON 编码的载荷：解出来 → userText 原样，不套前缀 ──────────────────────
+// ① JSON 编码的载荷：解出来 → userText 原样，不套前缀
 const frameOf = (text) => 'event: error\ndata: ' + JSON.stringify(text) + '\n\n';
 
 let thrown = null;
@@ -64,15 +64,15 @@ if (thrown) {
        '① 展示文本不带「网络错误: 」前缀（这不是网络故障）');
 }
 
-// ── ② 判据自检：坏形态确实会被套上前缀（上面那条才有牙）──────────────────────
-// 用**事故当天的真形态**：`new Error('pending_confirm')`，没有 userText。
+// ② 判据自检：坏形态确实会被套上前缀（上面那条才有牙）
+// 用**线上真形态**：`new Error('pending_confirm')`，没有 userText。
 const oldShape = new Error('pending_confirm');
 eq(errMsgOf(oldShape), '网络错误: pending_confirm',
    '② 判据自检：没有 userText 的异常确实被套上「网络错误: 」（老形态复现）');
 ok(errMsgOf(oldShape) !== errMsgOf(thrown || oldShape),
    '② 判据自检：加了 userText 与没加**取值不同**（这一格真被测到了）');
 
-// ── ③ 载荷不是合法 JSON 时按原文兜底（别把载荷吃了）──────────────────────────
+// ③ 载荷不是合法 JSON 时按原文兜底（别把载荷吃了）
 okThrowsMalformed();
 function okThrowsMalformed() {
   let error;
@@ -89,7 +89,7 @@ if (nastyThrown) {
        '④ 展示文本里不残留协议前缀（帧头已剥掉）');
 }
 
-// ── ⑤ 契约对齐：与 409 那条先例同形（服务端自己写的话都不套前缀）────────────
+// ⑤ 契约对齐：与 409 那条先例同形（服务端自己写的话都不套前缀）
 // 409 分支用 `usedErr.userText`，本分支用 `errFrame.userText` —— 两处取的是同一个字段，
 // 这一条锁的是"别将来只改一处、另一处又退回带前缀"。判据 = 两个 error 走同一个 errMsgOf。
 const usedErr = new Error('这张确认卡片已经用过一次了');

@@ -8,8 +8,8 @@
     border-radius: 5px;
     box-shadow: 1px 1px 3px rgba(0,0,0,0.15);
     background: var(--washi-pink-deep, #d94f9a);
-    /* 给下面那条绝对定位的 `.icon` 一个**正确的包含块**（这之前是 `.allin` ——
-       后台里唯一带 `transform` 的祖先，于是这个图标槽的落点跟着整个面板走） */
+    /* 给下面那条绝对定位的 `.icon` 一个**正确的包含块**（不要依赖 `.allin`：
+       它是后台里唯一带 `transform` 的祖先，会让图标槽的落点跟着整个面板走） */
     position: relative;
 }
 
@@ -32,7 +32,7 @@
     /* ⚠️ 必须写 `min-width: 0`。全局样式里有一条 `.icon{min-width: 60px}`
        （`pages/Dashboard/index.css`，是给侧栏导航那个图标槽写的），它是**另一个属性**
        —— 特异性再高也压不住 `width: 40px`：min-width 恒胜 width。于是这个 40px 的
-       槽被撑成 60px，图标整体右移 10px、槽的右缘到了按钮框外（实测 180 > 170）。
+       槽被撑成 60px，图标整体右移 10px、槽的右缘到了按钮框外（180 > 170）。
        写在这里 (0,2,0) 稳胜过全局那条 (0,1,0)，不需要 `!important`。 */
     min-width: 0;
     display: flex;
@@ -107,7 +107,7 @@
     white-space: nowrap;
 }
 
-/* ── 墨色那一档（第二颗钮：R2 图床）──────────────────────────────────────────
+/* 墨色那一档（第二颗钮：R2 图床）
    ⚠️ 这里**不能**用 `--washi-sky` / `--washi-lav`（同族的浅色令牌）：它们配
    `--washi-paper-3` 只有 1.7:1 左右，白天等于看不见字。`--washi-ink` 与
    `--washi-paper-3` 是成对的**互为反色**（浅色档深墨底 + 粉白字、夜间档粉白底 +

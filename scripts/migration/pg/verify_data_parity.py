@@ -13,7 +13,7 @@ from mysql2pg_data import (PG_BIN, PG_DB, identity_col,  # noqa: E402
                            is_str, pg_scalar, query_raw, read_rows)
 
 
-# ── 读 PG ───────────────────────────────────────────────────────────────────
+# 读 PG
 def pg_run(sql: str) -> bytes:
     argv = PG_BIN.split() + ["-d", PG_DB, "-X", "-q", "-v", "ON_ERROR_STOP=1", "-c", sql]
     r = subprocess.run(argv, capture_output=True)
@@ -75,7 +75,7 @@ def read_pg(cat: dict, table: str) -> list[list[str | None]]:
     return rows
 
 
-# ── 归一 ────────────────────────────────────────────────────────────────────
+# 归一
 def canon(v: str | None, c: dict, is_bool: bool, side: str):
     """把一个字段归到「两边都该长成同一个样子」的形状。**两侧共用这一个函数** ——
     各写一份的话，两份口径一漂，对账就变成自己骗自己。"""
@@ -100,11 +100,11 @@ def sort_key(r):
     return tuple("\x00N\x00" if x is None else x for x in r)
 
 
-# ── 外键孤儿扫描 ────────────────────────────────────────────────────────────
+# 外键孤儿扫描
 # **为什么非有不可**：装载时 `SET session_replication_role = replica` 把外键**关掉**了
 # （否则没法按任意顺序 COPY）。于是载进去的数据**从来没有被 PG 独立验证过外键完整性** ——
-# 上面那轮"逐行对账"比的是**内容**，不比"这行指向的父行在不在"。源数据来自带 FK 的 InnoDB，
-# 所以今天大概率是干净的；但那是**靠前提对**，不是靠判据对。这一节把它补成判据。
+# "逐行对账"比的是**内容**，不比"这行指向的父行在不在"。源数据来自带 FK 的 InnoDB，
+# 大概率是干净的；但那是**靠前提对**，不是靠判据对。这一节把它补成判据。
 #
 # **两侧都扫、看方向**（与本文开头那条同一口径）：PG 孤儿数 == MySQL 孤儿数 ⇒ 是**源数据里
 # 本来就有**的事实（MySQL 那边也可能是 FK 事后才加的、或 `foreign_key_checks=0` 写进去的），
@@ -137,7 +137,7 @@ def orphan_sql(fk: dict, side: str) -> str:
             % (tbl(fk["child"]), notnull, tbl(fk["parent"]), match))
 
 
-# ── 主 ──────────────────────────────────────────────────────────────────────
+# 主
 def main() -> int:
     cat = load_catalog()
     bools = entity_bools()
