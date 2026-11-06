@@ -6,7 +6,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 const script = readFileSync(new URL('../../scripts/deploy/deploy_from_r2.sh', import.meta.url), 'utf8');
-const body = script.match(/python3 - <<'PYEOF3'.*?\n([\s\S]*?)\nPYEOF3/)[1];
+const cleanup = script.match(/<<'PYEOF3'[^\n]*\n([\s\S]*?)\nPYEOF3/);
+assert.ok(cleanup, 'deployment script must include the asset cleanup block');
+const body = cleanup[1];
 const root = mkdtempSync(path.join(tmpdir(), 'deploy-assets-'));
 try {
   mkdirSync(path.join(root, 'frontend/dist/vendor'), { recursive: true });

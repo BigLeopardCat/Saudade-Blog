@@ -1,6 +1,7 @@
 # Archive deployment artifacts under deploy/<full-sha>/deploy.tar.gz.
 import boto3, io, os, re, subprocess, sys, tarfile
 from botocore.config import Config
+from deployment_config import read_deployment_config
 
 
 def resolve_sha() -> str:
@@ -15,15 +16,16 @@ def resolve_sha() -> str:
     return sha
 
 
+credentials = read_deployment_config()
 s3 = boto3.client('s3',
-    endpoint_url=os.environ['R2_ENDPOINT'],
-    aws_access_key_id=os.environ['R2_ACCESS_KEY'],
-    aws_secret_access_key=os.environ['R2_SECRET_KEY'],
+    endpoint_url=credentials['R2_ENDPOINT'],
+    aws_access_key_id=credentials['R2_ACCESS_KEY'],
+    aws_secret_access_key=credentials['R2_SECRET_KEY'],
     config=Config(signature_version='s3v4'),
     region_name='auto')
 
 sha = resolve_sha()
-bucket = os.environ['R2_BUCKET']
+bucket = credentials['R2_BUCKET']
 key = f'deploy/{sha}/deploy.tar.gz'
 
 buf = io.BytesIO()
@@ -51,8 +53,7 @@ buf.seek(0)
 s3.upload_fileobj(buf, bucket, key)
 print(f'✅ 已上传 {key}')
 
-# latest.txt 只供未显式指定提交的手动部署使用。
-# CI 的部署不读它——CI 显式传 sha，否则就回到"谁最后上传谁说了算"。
+# CI pins DEPLOY_SHA; latest.txt is only for manual deployments without a revision.
 s3.put_object(Bucket=bucket, Key='deploy/latest.txt', Body=sha.encode(),
               ContentType='text/plain', CacheControl='no-store')
 print(f'✅ 已更新 deploy/latest.txt = {sha[:12]}')

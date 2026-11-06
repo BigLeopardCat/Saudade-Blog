@@ -3,7 +3,7 @@
 部署要求、数据库迁移、配置、日志、停机及回滚见[部署与运维](../docs/deployment-and-ops.md)，不在此重复维护参数表。
 
 - `install.sh`：旧 MySQL 安装器，不适用于当前 PostgreSQL 部署。使用开发指南的 PostgreSQL 迁移步骤和本目录模板，不直接执行旧安装器。
-- `systemd/`：服务模板，安装前替换实际用户和路径。
+- `systemd/`：完整服务模板和共享沙箱设置，由 `scripts/deploy/render_service_isolation.py` 生成；运行账号与配置入口固定，发布路径显式传入。
 - [独立服务账号](service-isolation.md)：Rust、Agent、后台任务的账号隔离、可写状态、验收和回滚。
 - `nginx/`：反向代理模板，按站点证书和资源路径核对。
 - `docker/`：未支持的容器草案，不可用于当前 PostgreSQL 版本。
