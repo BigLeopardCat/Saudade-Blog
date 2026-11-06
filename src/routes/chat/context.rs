@@ -111,33 +111,66 @@ pub(super) async fn prepare_chat(
 
     if payload.resume_task.is_empty() && !is_confirm {
         if payload.turn_id.is_empty() {
-            payload.turn_id=if payload.task_id.is_empty() { uuid::Uuid::new_v4().simple().to_string() }
-                else { payload.task_id.clone() };
+            payload.turn_id = if payload.task_id.is_empty() {
+                uuid::Uuid::new_v4().simple().to_string()
+            } else {
+                payload.task_id.clone()
+            };
         }
-        if payload.task_id.is_empty() { payload.task_id=payload.turn_id.clone(); }
+        if payload.task_id.is_empty() {
+            payload.task_id = payload.turn_id.clone();
+        }
     }
-    match crate::checkpoint_cleanup::has_pending_turn(&state.db,conversation_id).await {
-        Ok(false)=>{},
-        other=>return Err((if other.is_ok() { StatusCode::CONFLICT } else { StatusCode::SERVICE_UNAVAILABLE },
-            Json(ChatResponse { reply:String::new(),success:false,
-                error:Some("历史上下文正在同步，请稍后重试。".into()) }))),
+    match crate::checkpoint_cleanup::has_pending_turn(&state.db, conversation_id).await {
+        Ok(false) => {}
+        other => {
+            return Err((
+                if other.is_ok() {
+                    StatusCode::CONFLICT
+                } else {
+                    StatusCode::SERVICE_UNAVAILABLE
+                },
+                Json(ChatResponse {
+                    reply: String::new(),
+                    success: false,
+                    error: Some("历史上下文正在同步，请稍后重试。".into()),
+                }),
+            ))
+        }
     }
     if is_confirm || !payload.resume_task.is_empty() {
-        let source=chat_history::Entity::find().filter(chat_history::Column::UserId.eq(uid))
+        let source = chat_history::Entity::find()
+            .filter(chat_history::Column::UserId.eq(uid))
             .filter(chat_history::Column::ConversationId.eq(conversation_id))
             .filter(chat_history::Column::Role.eq("user"))
             .filter(chat_history::Column::TurnId.is_not_null())
-            .order_by_desc(chat_history::Column::Id).one(&state.db).await;
-        let authoritative=match source {
-            Ok(Some(message))=>message.turn_id.unwrap_or_default(),
-            _=>return Err((StatusCode::CONFLICT,Json(ChatResponse {reply:String::new(),success:false,
-                error:Some("原始轮次标识不可用，请重新发起请求。".into())}))),
+            .order_by_desc(chat_history::Column::Id)
+            .one(&state.db)
+            .await;
+        let authoritative = match source {
+            Ok(Some(message)) => message.turn_id.unwrap_or_default(),
+            _ => {
+                return Err((
+                    StatusCode::CONFLICT,
+                    Json(ChatResponse {
+                        reply: String::new(),
+                        success: false,
+                        error: Some("原始轮次标识不可用，请重新发起请求。".into()),
+                    }),
+                ))
+            }
         };
-        if !payload.turn_id.is_empty() && payload.turn_id!=authoritative {
-            return Err((StatusCode::CONFLICT,Json(ChatResponse {reply:String::new(),success:false,
-                error:Some("该轮次已被替换，没有继续执行。".into())})));
+        if !payload.turn_id.is_empty() && payload.turn_id != authoritative {
+            return Err((
+                StatusCode::CONFLICT,
+                Json(ChatResponse {
+                    reply: String::new(),
+                    success: false,
+                    error: Some("该轮次已被替换，没有继续执行。".into()),
+                }),
+            ));
         }
-        payload.turn_id=authoritative;
+        payload.turn_id = authoritative;
     }
     let (quota, quota_blocked) = if is_confirm {
         (None, false)
@@ -196,15 +229,37 @@ pub(super) async fn prepare_chat(
     let user_msg_id = if is_confirm || !payload.resume_task.is_empty() {
         None
     } else {
-        match chat_context::append_user(&state.db,uid,conversation_id,role.as_deref(),
-                                        &payload.turn_id,&stored_content).await {
-            Ok(Some(id))=>Some(id),
-            Ok(None)=>return Err((StatusCode::CONFLICT,Json(ChatResponse { reply:String::new(),
-                success:false,error:Some("该轮次已丢弃或历史正在同步，请重新发送。".into()) }))),
-            Err(error)=>{
+        match chat_context::append_user(
+            &state.db,
+            uid,
+            conversation_id,
+            role.as_deref(),
+            &payload.turn_id,
+            &stored_content,
+        )
+        .await
+        {
+            Ok(Some(id)) => Some(id),
+            Ok(None) => {
+                return Err((
+                    StatusCode::CONFLICT,
+                    Json(ChatResponse {
+                        reply: String::new(),
+                        success: false,
+                        error: Some("该轮次已丢弃或历史正在同步，请重新发送。".into()),
+                    }),
+                ))
+            }
+            Err(error) => {
                 warn!(%error,conversation_id,"user message was not persisted");
-                return Err((StatusCode::SERVICE_UNAVAILABLE,Json(ChatResponse { reply:String::new(),
-                    success:false,error:Some("未能保存请求，请稍后重试。".into()) })));
+                return Err((
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(ChatResponse {
+                        reply: String::new(),
+                        success: false,
+                        error: Some("未能保存请求，请稍后重试。".into()),
+                    }),
+                ));
             }
         }
     };

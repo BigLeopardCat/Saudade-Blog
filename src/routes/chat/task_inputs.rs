@@ -112,7 +112,8 @@ async fn control(
     };
     if (!(action == Action::Confirmation && req.task_id.is_empty()) && !identifier(&req.task_id))
         || (submit
-            && (!req.turn_id.as_deref().is_some_and(identifier) || !req.input_id.as_deref().is_some_and(identifier)
+            && (!req.turn_id.as_deref().is_some_and(identifier)
+                || !req.input_id.as_deref().is_some_and(identifier)
                 || !req
                     .text
                     .as_deref()
@@ -244,9 +245,14 @@ pub(super) async fn save<C: ConnectionTrait + TransactionTrait>(
         return Err(invalid());
     }
     let txn = db.begin().await?;
-    let owner=txn.query_one(Statement::from_sql_and_values(DbBackend::Postgres,
-        "SELECT id FROM conversation WHERE id=$1 AND user_id=$2 FOR UPDATE",[cid.into(),uid.into()])).await?;
-    if owner.is_none() || crate::checkpoint_cleanup::turn_discarded(&txn,cid,turn_id).await? {
+    let owner = txn
+        .query_one(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT id FROM conversation WHERE id=$1 AND user_id=$2 FOR UPDATE",
+            [cid.into(), uid.into()],
+        ))
+        .await?;
+    if owner.is_none() || crate::checkpoint_cleanup::turn_discarded(&txn, cid, turn_id).await? {
         return Err(DbErr::Custom("turn_discarded".into()));
     }
     txn.execute(Statement::from_sql_and_values(DbBackend::Postgres,
@@ -268,7 +274,7 @@ pub(super) async fn save<C: ConnectionTrait + TransactionTrait>(
     {
         return Err(invalid());
     }
-    if row.try_get::<Option<String>>("", "turn_id")?.as_deref()!=Some(turn_id) {
+    if row.try_get::<Option<String>>("", "turn_id")?.as_deref() != Some(turn_id) {
         return Err(invalid());
     }
     let mut message_id: Option<i32> = row.try_get("", "message_id")?;
@@ -331,7 +337,18 @@ pub(super) async fn persist_event(
         .unwrap_or_default();
     let mut saved = Vec::new();
     for item in items {
-        saved.push(save(db, uid, cid, role, &task, item["turn_id"].as_str().unwrap_or(""), &item).await?);
+        saved.push(
+            save(
+                db,
+                uid,
+                cid,
+                role,
+                &task,
+                item["turn_id"].as_str().unwrap_or(""),
+                &item,
+            )
+            .await?,
+        );
     }
     if value.contains_key("input") {
         value.insert("input".into(), saved.remove(0));
@@ -341,10 +358,16 @@ pub(super) async fn persist_event(
     Ok(value)
 }
 
-pub(super) async fn history_tasks(db: &DatabaseConnection,uid: i32,cid: i32,
-                                  ids: &[i32]) -> Result<std::collections::HashMap<i32,String>,DbErr> {
-    let mut tasks=std::collections::HashMap::new();
-    let (Some(first),Some(last))=(ids.iter().min(),ids.iter().max()) else { return Ok(tasks); };
+pub(super) async fn history_tasks(
+    db: &DatabaseConnection,
+    uid: i32,
+    cid: i32,
+    ids: &[i32],
+) -> Result<std::collections::HashMap<i32, String>, DbErr> {
+    let mut tasks = std::collections::HashMap::new();
+    let (Some(first), Some(last)) = (ids.iter().min(), ids.iter().max()) else {
+        return Ok(tasks);
+    };
     for row in db.query_all(Statement::from_sql_and_values(DbBackend::Postgres,
         "SELECT message_id,turn_id FROM chat_task_input WHERE user_id=$1 AND conversation_id=$2 \
          AND turn_id IS NOT NULL AND message_id BETWEEN $3 AND $4",[uid.into(),cid.into(),(*first).into(),(*last).into()])).await? {
@@ -395,30 +418,78 @@ mod tests {
         .await
         .unwrap();
         let queued = json!({"id":"one","text":"只列标题","status":"queued"});
-        let pending = save(&db, actor.id, conv.id, "user", "task", "fixture-turn", &queued)
-            .await
-            .unwrap();
+        let pending = save(
+            &db,
+            actor.id,
+            conv.id,
+            "user",
+            "task",
+            "fixture-turn",
+            &queued,
+        )
+        .await
+        .unwrap();
         assert!(pending["message_id"].is_null());
         let mut applied = queued.clone();
         applied["status"] = json!("applied");
         let (left, right) = tokio::join!(
-            save(&db, actor.id, conv.id, "user", "task", "fixture-turn", &applied),
-            save(&db, actor.id, conv.id, "user", "task", "fixture-turn", &applied)
+            save(
+                &db,
+                actor.id,
+                conv.id,
+                "user",
+                "task",
+                "fixture-turn",
+                &applied
+            ),
+            save(
+                &db,
+                actor.id,
+                conv.id,
+                "user",
+                "task",
+                "fixture-turn",
+                &applied
+            )
         );
         let left = left.unwrap();
         let right = right.unwrap();
         assert_eq!(left["message_id"], right["message_id"]);
-        let stale = save(&db, actor.id, conv.id, "user", "task", "fixture-turn", &queued)
-            .await
-            .unwrap();
+        let stale = save(
+            &db,
+            actor.id,
+            conv.id,
+            "user",
+            "task",
+            "fixture-turn",
+            &queued,
+        )
+        .await
+        .unwrap();
         assert_eq!(stale["status"], "applied");
-        assert!(save(&db, actor.id, conv.id, "admin", "task", "fixture-turn", &applied)
-            .await
-            .is_err());
+        assert!(save(
+            &db,
+            actor.id,
+            conv.id,
+            "admin",
+            "task",
+            "fixture-turn",
+            &applied
+        )
+        .await
+        .is_err());
         let changed = json!({"id":"one","text":"另一个正文","status":"applied"});
-        assert!(save(&db, actor.id, conv.id, "user", "task", "fixture-turn", &changed)
-            .await
-            .is_err());
+        assert!(save(
+            &db,
+            actor.id,
+            conv.id,
+            "user",
+            "task",
+            "fixture-turn",
+            &changed
+        )
+        .await
+        .is_err());
         assert_eq!(
             chat_history::Entity::find()
                 .filter(chat_history::Column::ConversationId.eq(conv.id))

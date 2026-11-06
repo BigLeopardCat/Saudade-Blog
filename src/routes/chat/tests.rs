@@ -52,7 +52,8 @@ async fn over_budget_history_images_are_not_loaded_from_database() {
         user_id: 7,
         conversation_id: 1,
         role: "user".into(),
-        source_role: Some("user".into()), turn_id: None,
+        source_role: Some("user".into()),
+        turn_id: None,
         content: "image".into(),
         created_at: chrono::Local::now().naive_local(),
     }];

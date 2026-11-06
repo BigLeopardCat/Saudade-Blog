@@ -70,7 +70,7 @@ pub(crate) async fn turn_discarded<C: ConnectionTrait>(
 async fn claim_matching<C: ConnectionTrait>(
     db: &C,
     id: Option<i32>,
-    task: Option<&str>,
+    turn_id: Option<&str>,
 ) -> Result<Option<Job>, DbErr> {
     // Short atomic lease; no database lock spans the HTTP call.
     let row = db
@@ -83,7 +83,7 @@ async fn claim_matching<C: ConnectionTrait>(
          next_attempt_at=CURRENT_TIMESTAMP+interval '90 seconds' FROM due \
          WHERE j.conversation_id=due.conversation_id AND j.turn_id=due.turn_id \
          RETURNING j.conversation_id,j.user_id,j.attempts,j.turn_id",
-            vec![id.into(),task.into()],
+            vec![id.into(),turn_id.into()],
         ))
         .await?;
     row.map(|row| Job::from_query_result(&row, "")).transpose()
@@ -188,9 +188,9 @@ async fn deliver(
     db: &DatabaseConnection,
     client: &reqwest::Client,
     id: Option<i32>,
-    task: Option<&str>,
+    turn_id: Option<&str>,
 ) -> Result<bool, DbErr> {
-    let Some(job) = claim_matching(db, id, task).await? else {
+    let Some(job) = claim_matching(db, id, turn_id).await? else {
         return Ok(false);
     };
     let assertion = crate::auth_jwt::create_agent_assertion(job.user_id, None);
@@ -218,9 +218,9 @@ pub(crate) async fn dispatch(db: &DatabaseConnection, ids: &[i32]) {
     }
 }
 
-pub(crate) async fn dispatch_turn(db: &DatabaseConnection, id: i32, task: &str) {
-    if let Err(error) = deliver(db, &client(), Some(id), Some(task)).await {
-        tracing::warn!(%error,conversation_id=id,turn_id=task,"turn cleanup remains queued");
+pub(crate) async fn dispatch_turn(db: &DatabaseConnection, id: i32, turn_id: &str) {
+    if let Err(error) = deliver(db, &client(), Some(id), Some(turn_id)).await {
+        tracing::warn!(%error,conversation_id=id,turn_id=turn_id,"turn cleanup remains queued");
     }
 }
 

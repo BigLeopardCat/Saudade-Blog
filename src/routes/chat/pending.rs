@@ -1,6 +1,6 @@
 //! Persistence of confirmation proposals and explicit cancellation events.
 
-use super::{PENDING_ARGS_COL_MAX, PENDING_OPTIONS_COL_MAX, PENDING_QUESTION_COL_MAX, json_capped};
+use super::{json_capped, PENDING_ARGS_COL_MAX, PENDING_OPTIONS_COL_MAX, PENDING_QUESTION_COL_MAX};
 use crate::entity::pending_action;
 use sea_orm::sea_query::Expr;
 use sea_orm::{
@@ -71,7 +71,7 @@ pub(super) async fn save_pending_action<C: ConnectionTrait + TransactionTrait>(
     };
     let result = async {
         let txn = db.begin().await?;
-        if !super::persistence::lock_turn(&txn,uid,conversation_id,source_turn).await? {
+        if !super::persistence::lock_turn(&txn, uid, conversation_id, source_turn).await? {
             return Err(sea_orm::DbErr::Custom("turn_discarded".into()));
         }
         pending_action::Entity::delete_many()
@@ -276,7 +276,10 @@ mod tests {
         storage_failure["skill"] = json!("invalid\0fixture");
         for rejected in [oversized, storage_failure] {
             // PostgreSQL rejects NUL after deletion; the savepoint must retain the old card.
-            assert!(!save_pending_action(&txn, owner.id, conversation.id, "fixture-task", &rejected).await);
+            assert!(
+                !save_pending_action(&txn, owner.id, conversation.id, "fixture-task", &rejected)
+                    .await
+            );
             let retained = pending_action::Entity::find_by_id(row.id)
                 .one(&txn)
                 .await
@@ -285,12 +288,10 @@ mod tests {
             assert_eq!(retained.question, value["question"].as_str().unwrap());
         }
         txn.rollback().await.unwrap();
-        assert!(
-            pending_action::Entity::find_by_id(row.id)
-                .one(&db)
-                .await
-                .unwrap()
-                .is_none()
-        );
+        assert!(pending_action::Entity::find_by_id(row.id)
+            .one(&db)
+            .await
+            .unwrap()
+            .is_none());
     }
 }

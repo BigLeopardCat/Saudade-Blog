@@ -6,12 +6,18 @@ use tokio::sync::{oneshot, Notify};
 
 #[tokio::test]
 async fn visible_reply_requires_a_successful_insert() {
-    let db = super::super::test_support::open_turn(MockDatabase::new(DatabaseBackend::Postgres)).into_connection();
-    assert!(
-        save_assistant_reply(&db, 7, 42, Some("user".into()), "fixture-task", "reply".into())
-            .await
-            .is_err()
-    );
+    let db = super::super::test_support::open_turn(MockDatabase::new(DatabaseBackend::Postgres))
+        .into_connection();
+    assert!(save_assistant_reply(
+        &db,
+        7,
+        42,
+        Some("user".into()),
+        "fixture-task",
+        "reply".into()
+    )
+    .await
+    .is_err());
     let log = format!("{:?}", db.into_transaction_log());
     assert!(log.contains("INSERT INTO") && log.contains("chat_history"));
 }
@@ -137,15 +143,23 @@ async fn postgres_receipt_batches_are_atomic_and_survive_reply_failure() {
 #[tokio::test]
 async fn reply_records_its_verified_source_even_without_summary() {
     for role in [None, Some("admin")] {
-        let db = super::super::test_support::open_turn(MockDatabase::new(DatabaseBackend::Postgres))
-            .append_exec_results([MockExecResult {
-                last_insert_id: 1,
-                rows_affected: 1,
-            }])
-            .into_connection();
-        save_assistant_reply(&db, 7, 42, role.map(str::to_owned), "fixture-task", "reply".into())
-            .await
-            .unwrap();
+        let db =
+            super::super::test_support::open_turn(MockDatabase::new(DatabaseBackend::Postgres))
+                .append_exec_results([MockExecResult {
+                    last_insert_id: 1,
+                    rows_affected: 1,
+                }])
+                .into_connection();
+        save_assistant_reply(
+            &db,
+            7,
+            42,
+            role.map(str::to_owned),
+            "fixture-task",
+            "reply".into(),
+        )
+        .await
+        .unwrap();
         let log = format!("{:?}", db.into_transaction_log());
         assert!(log.contains("source_role"));
         if let Some(role) = role {
@@ -162,9 +176,16 @@ async fn storing_a_reply_never_writes_summary_or_deletes_history() {
             rows_affected: 1,
         }])
         .into_connection();
-    save_assistant_reply(&db, 7, 42, Some("user".into()), "fixture-task", "reply".into())
-        .await
-        .unwrap();
+    save_assistant_reply(
+        &db,
+        7,
+        42,
+        Some("user".into()),
+        "fixture-task",
+        "reply".into(),
+    )
+    .await
+    .unwrap();
     let log = db.into_transaction_log();
     assert_eq!(log.len(), 1);
     let sql = format!("{log:?}");

@@ -1,8 +1,8 @@
 //! Scoped bootstrap history for the Agent; live memory belongs to its checkpoint.
 
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, ConnectionTrait, DbBackend, DbErr, EntityTrait, QueryFilter, QueryOrder, Set,
-    QuerySelect, Statement, TransactionTrait,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DbBackend, DbErr, EntityTrait, QueryFilter,
+    QueryOrder, QuerySelect, Set, Statement, TransactionTrait,
 };
 use serde::Serialize;
 
@@ -98,21 +98,37 @@ fn source_messages(
 
 /// Serialize host inserts with discard; no network or model call holds this transaction.
 pub(super) async fn append_user<C: ConnectionTrait + TransactionTrait>(
-    db: &C, uid: i32, cid: i32, role: Option<&str>, task: &str, content: &str,
-) -> Result<Option<i32>,DbErr> {
-    let txn=db.begin().await?;
-    let owner=conversation::Entity::find_by_id(cid).filter(conversation::Column::UserId.eq(uid))
-        .lock(sea_orm::sea_query::LockType::Update).one(&txn).await?;
-    if owner.is_none() || crate::checkpoint_cleanup::has_pending_turn(&txn,cid).await?
-        || crate::checkpoint_cleanup::turn_discarded(&txn,cid,task).await? {
+    db: &C,
+    uid: i32,
+    cid: i32,
+    role: Option<&str>,
+    turn_id: &str,
+    content: &str,
+) -> Result<Option<i32>, DbErr> {
+    let txn = db.begin().await?;
+    let owner = conversation::Entity::find_by_id(cid)
+        .filter(conversation::Column::UserId.eq(uid))
+        .lock(sea_orm::sea_query::LockType::Update)
+        .one(&txn)
+        .await?;
+    if owner.is_none()
+        || crate::checkpoint_cleanup::has_pending_turn(&txn, cid).await?
+        || crate::checkpoint_cleanup::turn_discarded(&txn, cid, turn_id).await?
+    {
         txn.rollback().await?;
         return Ok(None);
     }
-    let saved=chat_history::ActiveModel {
-        user_id:Set(uid), conversation_id:Set(cid), role:Set("user".into()),
-        source_role:Set(role.map(str::to_owned)), turn_id:Set(Some(task.to_owned())),
-        content:Set(content.to_owned()),..Default::default()
-    }.insert(&txn).await?;
+    let saved = chat_history::ActiveModel {
+        user_id: Set(uid),
+        conversation_id: Set(cid),
+        role: Set("user".into()),
+        source_role: Set(role.map(str::to_owned)),
+        turn_id: Set(Some(turn_id.to_owned())),
+        content: Set(content.to_owned()),
+        ..Default::default()
+    }
+    .insert(&txn)
+    .await?;
     txn.commit().await?;
     Ok(Some(saved.id))
 }
@@ -123,27 +139,34 @@ pub(super) async fn discard<C: ConnectionTrait + TransactionTrait>(
     uid: i32,
     conversation_id: i32,
     from_id: i32,
-    task: &str,
+    turn_id: &str,
 ) -> Result<(), DbErr> {
-    if from_id <= 0 || task.is_empty() {
+    if from_id <= 0 || turn_id.is_empty() {
         return Err(DbErr::Custom("invalid discard boundary".into()));
     }
     let txn = db.begin().await?;
-    txn.execute(Statement::from_sql_and_values(DbBackend::Postgres,
+    txn.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
         "DELETE FROM chat_history h WHERE h.user_id=$1 AND h.conversation_id=$2 \
          AND (h.turn_id=$3 OR h.id IN (SELECT message_id FROM chat_task_input \
               WHERE user_id=$1 AND conversation_id=$2 AND turn_id=$3))",
-        vec![uid.into(),conversation_id.into(),task.into()])).await?;
-    txn.execute(Statement::from_sql_and_values(DbBackend::Postgres,
+        vec![uid.into(), conversation_id.into(), turn_id.into()],
+    ))
+    .await?;
+    txn.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
         "DELETE FROM chat_task_input WHERE user_id=$1 AND conversation_id=$2 AND turn_id=$3",
-        vec![uid.into(),conversation_id.into(),task.into()])).await?;
+        vec![uid.into(), conversation_id.into(), turn_id.into()],
+    ))
+    .await?;
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "UPDATE chat_summary SET summary='',message_count=0,covered_through_id=0, \
          source_role=NULL,updated_at=localtimestamp,lock_version=lock_version+1 \
          WHERE user_id=$1 AND conversation_id=$2 AND covered_through_id >= $3",
         vec![uid.into(), conversation_id.into(), from_id.into()],
-    )).await?;
+    ))
+    .await?;
     txn.commit().await
 }
 
