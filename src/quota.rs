@@ -93,24 +93,6 @@ pub fn forward_json(v: &QuotaView) -> serde_json::Value {
 }
 
 /// 扣掉一轮——**一条语句，没有"先查后写"的窗口**。
-///
-/// ```sql
-/// UPDATE user SET chat_quota_used = chat_quota_used + 1
-///  WHERE id = ? AND chat_quota_used < ?
-/// ```
-///
-/// 三件必须写下来的事（每一条都是"下一个人顺手改一下"就会静默翻转的那种）：
-///
-/// ① `rows_affected == 1` **可靠地**等于"抢到了"。MySQL 默认下 `rows_affected` 数的是
-///    **真正改变的行**，而这里的 `SET` 恒递增 ⇒ 匹配到就一定改变 ⇒ 1 就是匹配到、
-///    0 就是被 `WHERE ... < ?` 挡住。**不许把它"优化"成可能匹配而不改变的写法**
-///    （例如用 `CASE` 把超限行的值写成原值）——那时 0 的含义会在"没抢到"与"抢到了但
-///    没变"之间漂移，而漂移的表现是最后一格额度被扣两次。
-/// ② `Degraded` **fail-open**（放行、不计数、只 `warn!`）：与它上方几十行那次角色查询
-///    同一取向——**DB 故障只降级，不阻断对话**。反过来（fail-closed）等于"数据库抖
-///    一下全站不能说话"，代价远大于"极少数轮次不计费"。
-/// ③ 结论**由调用点决定**（`chat.rs`）：`Degraded` 时 `chat_quota` **整个键缺席**，
-///    绝不发零值——理由同 `forward_json` 的注释。
 pub async fn try_consume(db: &DatabaseConnection, uid: i32, limit: i32) -> ConsumeOutcome {
     let res = user::Entity::update_many()
         .col_expr(

@@ -1,25 +1,5 @@
 # -*- coding: utf-8 -*-
-"""首页三块标签（置顶 / 文章 / More）的解剖学验收：真 sass + 真类名 + 量计算的样式。
-
-20261001 八轮（用户第 4 条：「那三个标签丑死了，大改，其中置顶的标签还可以，但是动效
-上下晃动给人不稳定失去掌控的心理感觉」）把这三块又重排了一次。它们**全是纯 CSS 的形状
-与动效**，没有一处能用"源码里有没有这段字符串"证明对了：
-
-  · 置顶的尾尖是 `clip-path` 切出来的 —— 源码写着 `polygon(...)` 不代表浏览器算出来的
-    就是一枚箭头尾尖（写成四角手撕边也是合法的 `polygon`）；
-  · 「文章」左缘那道装订边（`border-left`）与右端的圆角，是**实测盒子**；
-  · More 那枚 chevron 是"两条边 + 转 +45°"（指向下，20261004 由 -45° 改来），
-    靠 `::after` 的宽高与 border 判定；
-  · **三块牌子静置时一律不许动**（八轮的总纲，也是用户这句话的落点）：常驻循环
-    （`ribbon-float` / `tag-twinkle` / `more-nudge`）撤得只剩置顶尾尖那枚 ✦ 的呼吸，
-    且它只动 opacity、不产生位移。这条判据是 `animationName` + `transform` 一起读的
-    —— "不动"不是一个能在源码里 grep 到的事实，得问浏览器要计算后的值；
-  · **减少动效档下 ✦ 必须还在**（六轮那里是 `opacity: 0`——当时 `::after` 是高光，
-    藏着对；七轮换成了 ✦，藏掉就等于把记号删了）。这一条只有真跑 reduce 档才看得见。
-
-本机无中文字体（汉字渲染成 .notdef 方块），所以断言全走**盒子与计算值**，不比字形；
-箭头/星号这类非汉字符号不受影响。用法：python3 frontend/tests/home-labels.test.py
-"""
+"""首页三块标签（置顶 / 文章 / More）的解剖学验收：真 sass + 真类名 + 量计算的样式。"""
 import functools
 import http.server
 import pathlib
@@ -177,7 +157,6 @@ with sync_playwright() as p:
     check("左端直角、右端圆角（`0 10px 10px 0`）",
           plate["radius"].replace(" ", "") in ("0px10px10px0px", "0px10px10px0"),
           plate["radius"])
-    # ★ 母题归置顶独占：这块牌子上**不许**再出现 ✦（原来的撞车正是"丑"的一部分）
     check("★ 这块牌子上没有 ✦（右端那枚记号归置顶独占，不再两处撞车）",
           "✦" not in plate["after"]["content"], plate["after"]["content"])
     icon = pg.evaluate("""() => {
@@ -214,10 +193,6 @@ with sync_playwright() as p:
     check("★ 箭头静置时不动、但**仍是斜的**（角度已从 keyframe 搬进基规则）",
           more["after"]["anim"] == "none" and more["after"]["transform"] != "none",
           f'{more["after"]["anim"]} / {more["after"]["transform"]}')
-    # 方向（20261004 用户第十报：「刷新卡片是向下展示，按钮箭头向右不合适」）。
-    # **只判"斜的"是不够的**——−45° 也是斜的，而它画的正是那枚向右的箭头。
-    # 角度只能从计算值的矩阵里读：`matrix(a, b, c, d, e, f)`，CSS 正角 = 顺时针
-    # ⇒ `b > 0`（顺时针 45°）才是"右 + 下两条边"读成的 ↓；`b < 0` 就是 →。
     _m = more["after"]["transform"]
     _nums = [float(x) for x in _m[_m.index("(") + 1:-1].split(",")] if "matrix" in _m else []
     check("★ 箭头指向**下**（旋转矩阵的 b > 0 = 顺时针；−45° 那枚是向右的）",
@@ -242,9 +217,6 @@ with sync_playwright() as p:
 
     # ── 四、减少动效 ─────────────────────────────────────────────────────────
     print("\n【四】减少动效档")
-    # ⚠️ `page.hover` 的悬停态**会一直粘着**，除非把指针挪走（或页面重挂）。
-    # 上面那一步悬停在 `#more` 上，这里不挪开的话量到的是 `.more:hover::after`
-    # ——它的 `animation: none` 会让下面的"箭头停住"**假绿**（初版就是这么骗过去的）。
     pg.mouse.move(0, 0)
     pg.wait_for_timeout(200)
     pg.emulate_media(reduced_motion="reduce")

@@ -140,11 +140,6 @@ export function refreshUnread(): Promise<void> {
     return p
 }
 
-/**
- * 订阅未读数。
- * @param enabled 该显示位置现在是否真的要看红点（未登录 / 窗没开 / 这一页不显示红点 → false）。
- *                `false` 时**不登记**（一次请求都不发）且返回 0，与旧的"未登录红点不亮"一致。
- */
 export function useUnread(enabled: boolean): { counts: UnreadSummary; refresh: () => void } {
     const [seen, setSeen] = useState<UnreadSummary>(() => snap)
 

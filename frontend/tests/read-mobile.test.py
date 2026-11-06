@@ -1,53 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""文章阅读页手机档真的生效（20261001）。
-
-  python3 tests/read-mobile.test.py
-
-现场：`ReadArticle/index.sass` 末尾那段 `@media (max-width:768px)` 从写下那天
-（`f207b6d`，commit message 写着「移动端正文全宽显示、封面/标题瘦身」）**一次都没生效过**
-——媒体查询不改特异性，块里裸写的 `.readContent`(0,1,0) 输给桌面那条
-`.readContainer .readContent`(0,2,0)。375px 真机上量的结果是：正文 300px 宽（＝桌面的
-80%）、封面 400px 高、内边距 20px，与这一档想要的 100%/200px/12px 全不一样。
-**它是"半死"**：同块里 `.readInfo h1` 的 `font-size` 没有桌面规则跟它抢，是活的 ⇒ 肉眼看
-"字确实变小了"，会以为整块都在工作——所以判据只能是量几何，不能靠读代码。
-
-为什么用无头浏览器而不是 node 桩：这是布局（百分比宽度、绝对定位、媒体查询命中），
-真 CSS = node 侧真编译的 `.sass` + 仓库那份 `* { box-sizing: border-box }` 重置。
-
-锁五件：
-  ① 编译产物里那几条**确实带着 `!important`**（这一档能不能赢全靠它——判据 ④ 的反向对照
-     会证明没有它就回落）；
-  ② 375px：正文满宽（= 视口）且内边距 12px 10px、封面 260px、描述卡满宽、`.readInfo`
-     bottom 12px 且**宽度 343px（视口 − 32）居中**、`.markdown-body` max-width 100%；
-  ③ 768/769 边界：媒体档只到 768px（769 起必须回到桌面值，否则是"溢出到桌面上"的另一种病）；
-  ④ **反向对照**：把编译产物里这一段的 `!important` 剥掉再量一次 ⇒ 正文**确实**掉回
-     80%（300px）、封面掉回 400px、`.readInfo` 掉回 880px（宽出屏幕）。证明 ② 不是空断言。
-  ⑤ 1200px 桌面档一字未动：正文 880px / 内边距 20px / 封面 400px / 描述卡内边距 25px；
-  ⑥ **正文包裹层不被宽原子顶出视口**（20261005 新档，与媒体档无关、病根在基础层那条
-     `display:flex; flex-direction:column; align-items:center`）——夹具复现真 DOM 的三层
-     嵌套 + 一整行不折行的代码，量包裹层宽度与 `documentElement.scrollWidth`；**红基线**
-     单独摘掉 `.readBody` 那条规则（它没有 `!important`，④ 的剥法够不到它），必须当场
-     顶到 2000px 以外。线上根因与实测数字写在 ⑥ 的小节头注里。
-
-⚠️ 20261003：`.readInfo` 那三条（宽 880 → `calc(100% - 32px)`、三列 → 单列、bottom 45 → 12）
-是**顺带修掉的既有缺陷**：它从来就没有宽度覆盖，`left: 50%` + 横向 −50% 让这个 880px 的
-定宽盒在 375px 上两边各伸出屏幕 236px/540px —— 三列时屏幕上"剩的正好是中间那条标题"所以
-看不出来，改成单列（20261003 用户第 2 条）就全露馅了。本套件因此多量一条**盒子宽度**。
-
-（判据 ④ 之所以连"剥掉之后掉到哪"都钉住：剥完必须**恰好**回到 `.readContainer` 那条的值，
-说明压死它的是那条规则、而不是别的什么。根因的形状由 CI 的
-`sass-media-shadow.test.mjs`（特异性档）全仓盯着，这一份只管"渲染出来是什么"。）
-
-20261005 加了两节（同一处两个不同的病，见各自小节头注）：
-  ⑦ 正文列内边距只留一处 + 手机档那三条死声明的**渲染值**（⑦b 是字面删规则的反向对照）；
-  ⑧ 阅读面底色**两档**（20261008 换：白天 = 主题底 `--washi-theme-bg`（粉紫天青那张，
-     首页首屏/登录页同一支）、夜间 = 不透明 `#121a27`）/ 正文补 0.2px 描边且**不重排**
-     （摘掉描边那条后同段落的宽/高/行数必须逐项相同）。白天那支读的是 `var(--washi-theme-bg)`
-     （出处 `src/index.css`，沙箱拷成 tokens.css）⇒ 夹具外面要套一层 `.frontRoot`
-     （那两条规则的祖先选择器），暗色档另用 `.frontRoot.frontDark` 臂。本节另有一臂**反向
-     对照**（⑧c）：把夜间那支按行为改回 `transparent`（旧写法）⇒ "不透明"那条判据当场红。
-"""
+"""文章阅读页手机档真的生效。"""
 import pathlib
 import subprocess
 import tempfile
@@ -80,16 +33,6 @@ RESET_CSS = FE / "src/frontHome/main.css"
 # 次序照线上：编辑器表在前、本仓 sass 在后（产物里 `components/Editor` 在 ReadArticle 之前）。
 EDITOR_CSS = FE / "src/components/Editor/index.css"
 
-# 与 index.tsx 同形：.readContainer > (.readCover > .readInfo) + .readDescription
-# + .readContent.markdown-body（正文那两个类在同一个元素上，见 index.tsx:622）
-# `.readInfo` 里只渲染中区（标题那一格）：本套件量的是正文/描述卡/封面的几何与标题字号，
-# 左区（作者+时间）与右区（读数四件）不参与任何一条判据 —— 它们的几何在
-# `read-stats-cluster.test.py` 里是主角，那边有完整的三区夹具。
-# 20261005 起夹具里补上了真 DOM 的**三层嵌套**（`.readContent > .readBody > #content`）：
-# 正文包裹层那一条（判据 ⑥）只有在子项真的挂在 `.readContent` 下面时才量得出来。
-# 旧夹具把 `<p>正文</p>` 直接挂在 `.readContent` 上，`.readBody` 整层不存在 ⇒ 那一类
-# 缺陷它一条都看不见。②–⑤ 量的是 `.readContent`/`.readDescription`/`.readCover`/`.readInfo`
-# 自己的盒子，加一层 `width:100%` 的包裹不影响它们。
 MARKUP = """
 <div class="readContainer">
   <div class="readCover">
@@ -121,9 +64,6 @@ MARKUP_WIDE = """
 </div>
 """
 
-# 判据 ⑦ 的夹具：正文那两层嵌套里放齐"会被手机档那几条声明改到"的三种块
-#（h1 / p / pre），量它们的**渲染值**。h1 与 p 是 20261005 之前"写了但被压死"的那几条，
-# pre 是只有 `overflow-x` 活着的那一条。
 MARKUP_TEXT = """
 <div class="readContainer">
   <div class="readContent markdown-body">
@@ -189,8 +129,6 @@ STRIP = [
     "bottom: 12px !important",
     "padding: 12px 16px !important",
     "max-width: 100% !important",
-    # 20261005：`pre` 这条由 `hidden` 改成 `auto`（长代码行改成可横向滑，理由见 sass 同处
-    # 注释）。反向对照要剥的仍然是**这一条**，只是取的值变了。
     "overflow-x: auto !important",
 ]
 
@@ -255,11 +193,6 @@ SB_LEGACY = build_sandbox(LEGACY, "legacy")
 SB_NO_BODY = build_sandbox(NO_BODY, "nobody")
 
 
-# 判据 ⑦b 的反向对照：**删掉** 20261005 新加的那两条内边距规则，其余一字不动
-#（编辑器表在、手机档的 !important 也全在）⇒ 手机档正文列必须掉回 310px。
-# 这是"改动前那一臂"的取法：按**字面**删本次新增的规则，**不读 `git show HEAD:`**
-#（提交之后它取到的就是改动后那份，两条臂逐字相同、红基线恒真 —— 同族教训见
-# `mermaid-mobile-zoom.test.py` 的换臂注释）。
 def drop_rules(css: str, sel: str) -> str:
     needle = sel + " {"
     n = css.count(needle)
@@ -328,10 +261,6 @@ with sync_playwright() as p:
     check("封面高 260px（不是 400）", abs(m["cover"]["h"] - 260) < 1, f"h={m['cover']['h']}")
     check("封面信息条 bottom 12px（不是 45）",
           abs(float(m["info"]["bottom"].rstrip("px")) - 12) < 0.5, m["info"]["bottom"])
-    # ★ 20261003 顺带修掉的那条既有缺陷：`.readInfo` 基础规则写死 880px（桌面三列的账），
-    # 手机档从来没有宽度覆盖 ⇒ `left: 50%` + 横向 −50% 让这个 880px 的盒子两边各伸出屏幕
-    # 一大截，靠 `overflow: hidden` 裁掉。三列时屏幕上剩的正好是中间那条标题（看不出来），
-    # 改成单列之后左区/右区会全部跑到屏幕外 —— 所以单列必须与这条宽度一起改。
     check("★信息条宽 = 视口 − 32（343px，不是桌面的 880）",
           abs(m["info"]["w"] - 343) < 1, f"w={m['info']['w']}")
     check("  且两侧各留 16px 居中（左缘 16 / 右缘 359）",
@@ -363,8 +292,6 @@ with sync_playwright() as p:
     check("  封面掉回 400px", abs(l["cover"]["h"] - 400) < 1, f"h={l['cover']['h']}")
     check("  封面信息条掉回 45px",
           abs(float(l["info"]["bottom"].rstrip("px")) - 45) < 0.5, l["info"]["bottom"])
-    # 顺带把"手机上原来是什么样"钉住：880px 的定宽盒在 375px 视口里左缘 −252.5px
-    # （= 187.5 − 440），两边各伸出屏幕一大截 —— 这就是 20261003 顺带修掉的那条缺陷。
     check("  信息条掉回 880px 宽、左缘 −252.5px（整块宽出屏幕，靠裁切才看得见）",
           abs(l["info"]["w"] - 880) < 1 and l["info"]["left"] < -200,
           f'w={l["info"]["w"]} left={l["info"]["left"]:.1f}')
@@ -384,18 +311,6 @@ with sync_playwright() as p:
           d["desc"]["padL"])
 
     print("⑥ 正文包裹层：宽原子不许把整层顶出视口（20261005 新档）")
-    # 现场：手机档文章页正文被左右切开。根因**不在媒体档**，在基础规则那条
-    # `.readContent { display:flex; flex-direction:column; align-items:center }` ——
-    # flex 竖列 + 居中 ⇒ 子项在**交叉轴**上按 fit-content 定尺，而 fit-content 的下限是
-    # min-content。正文里只要有**一个** min-content 超过视口的原子，这一层就被顶宽、
-    # 左右对称溢出；`html { overflow-x: hidden }` 把两边裁掉 ⇒ 症状是"正文被切了"，
-    # 不是"能左右滑"（浏览器连滚动条都不给）。
-    # 线上实测（20261005 05:5x，`/article/16`，390×844 DPR2 移动 UA）：
-    #   `.readContent` = 390px(x=0)，**它的子项 = 658.7px(x=−134.4)**，`window.innerWidth`
-    #   被撑到 524（视觉视口缩小）。触发它的原子就是 `<pre><code>`——`code` 拿到
-    #   `white-space: pre` 之后，**最长那一行代码的宽度就是这一层的 min-content**
-    #   （该文最长行 69 字符 ⇒ 598.7px > 370px 可用宽度）。
-    # 修法 = 基础层给包裹层一条 `width: 100%`（`.readBody`，见 sass 同处注释）。
     WIDE_MEASURE = """(markup) => {
       document.getElementById('root').innerHTML = markup;
       const w = document.querySelector('.readBody');
@@ -445,13 +360,6 @@ with sync_playwright() as p:
           nb["preScrollW"] == fx["preScrollW"], f'{nb["preScrollW"]} vs {fx["preScrollW"]}')
 
     print("⑦ 正文列的内边距只留一处 + 手机档那三条死声明真的活了（20261005 新档）")
-    # 现场：正文是**两层** `.markdown-body` 嵌套（`#content` + bytemd Viewer 自己那层），
-    # 而编辑器样式表那两条 padding 是 class 选择器 —— 不管你在第几层都命中
-    # ⇒ 桌面 45+45、手机 15+15 **全部叠加**。用户报的「左右两侧空白还多」就是它：
-    # 线上实测 390px 左右各 40px，正文列只剩 310px。
-    # 同一族的另一副面孔：媒体档里 `.markdown-body h1/p/pre` 那几条 (0,1,x) 被基础层的
-    # (0,2,1)/(0,3,1) 压死，**一条都没生效过**（头注却写着"它们是干净的"）。所以本节
-    # 只读 computed 值 —— "源码里写着"与"渲染成这样"在这一族里根本不是一回事。
     LAYOUT = """(markup) => {
       document.getElementById('root').innerHTML = markup;
       const cs = (s) => {
@@ -503,11 +411,6 @@ with sync_playwright() as p:
     check(f'  桌面档 `h1` 仍是 3.5rem = {d["h1"]["fs"]}（媒体档没有漏到桌面）',
           d["h1"]["fs"] == "56px", d["h1"]["fs"])
 
-    # 20261010 补：这一条钉的是**跨组件**的不变量——正文列与讨论区（`CommentSection`）
-    # 正文列同宽。它靠的是"两边容器横向内边距同值（各 22px）"，而讨论区是**另一个组件**
-    # 的 sass，本套件默认不编译它。只钉自己这侧的 836 是钉不住的：哪天讨论区把 22 改成
-    # 别的一档，两栏就悄悄错开、而上面那条判据照样全绿。所以现场编译那份 sass，量它
-    # **渲染后**的内容盒宽（`clientWidth` 已去掉卡片那 1px 边框，再减左右内边距）。
     CMT_SASS = FE / "src/components/CommentSection/index.sass"
     cmt = subprocess.run(["node", "-e", SASS_JS, str(CMT_SASS)], cwd=str(FE),
                          capture_output=True)
@@ -545,31 +448,7 @@ with sync_playwright() as p:
           nl["pW"][0] <= 320, str(nl["pW"]))
 
     print("⑧ 阅读面底色两档（20261008 换底）+ 正文补 0.2px 描边（20261005 第二轮）")
-    # 同一处几轮反馈、两个不同的病：
-    #   ① 底色。20261008 用户：「夜间模式什么时候改的文章详情页的背景颜色，文本都看不清了，
-    #      该回去，白天模式背景也改成博客主题背景」——两档一起改，改掉的其实是同一个病：
-    #      这一支从前**夜间写 transparent**，等于把阅读面的底抵押给了 `body`；而 `body` 上
-    #      那张深色底是登录页一条裸 `body` 规则漏出来的。ca6b9b0（20261006）把它收成
-    #      `body.login-route` ⇒ 泄漏断了，`body` 退回后台模板的 #E4E9F7 ⇒ 夜间阅读面成了
-    #      33% 黑压在浅紫蓝上的 rgb(153,156,165)（白字 2.76:1）。成因全在 sass 那段注释里。
-    #      本节钉**渲染值**：白天那支必须是主题底那条渐变（两端色值都在 computed 里）、
-    #      **且不再等于站内内容页那支**（用户第二轮就是否掉了那支："白天怎么文章详情页是
-    #      纯白，不是博客主题色系背景"——半透明白遮罩叠出来是 rgb(246,248,251) 的近白，
-    #      铺满一篇长文就是一整幅白）；夜间那支必须**不透明**且是 rgb(18,26,39)。"不透明"
-    #      是夜间那条判据的关键：旧写法 transparent 的 computed 值是 rgba(0,0,0,0) ⇒ 当场红
-    #      （⑧c 的反向对照证明这一点）。另加一条**可读性**判据：深色正文与渐变**每一个色停**
-    #      的对比度都要 ≥4.5:1 —— 主题底可以花，但不能把字压到看不清。
-    #   ② 描边（20261005 第二轮「文章页字体还是看起来比讨论区细」）——正文与讨论区正文是
-    #      **同一条字体栈、同一个字重(400)、同一种颜色**，差别只有字号（17 vs 14.72px）。
-    #      DPR2 下量中心扫描线上的墨迹宽，两者都是 1 CSS px：CJK 在小字号被格点吸附、
-    #      大字号不吸附 ⇒ 相对笔画 0.0588 vs 0.0679，字越大反而显得越细。`font-weight`
-    #      在微软雅黑上推不动（只有 Light/Regular/Bold），只剩描边这一根杠杆。
-    #      不重排是"能上"的前提：描边若参与排版，全站行数/分页都会动。
     def build_color_sandbox(css: str, name: str) -> pathlib.Path:
-        # 与 ①②⑦ 那个沙箱**只差**一张表：`src/index.css`。底色那支 20261008 第二轮起读的是
-        # `--washi-theme-bg`（出处就是这张表，线上它由 main.tsx 第一行 import）——**少一张
-        # 就量不出东西**：令牌没定义时 `var()` 整条 background 落空，白天那支会变成透明
-        # （而"透明"正好是旧写法，判据会以为改回去了）。
         sb = pathlib.Path(tempfile.mkdtemp(prefix=f"readcol-{name}-"))
         (sb / "read.css").write_text(css, encoding="utf-8")
         shutil.copy(RESET_CSS, sb / "main.css")
@@ -655,9 +534,6 @@ with sync_playwright() as p:
     _nz = lambda s: re.sub(r"\s+", "", s or "")  # noqa: E731 —— 归一化空白后再比字面
 
     def _norm_bg(s: str) -> str:
-        # 令牌的**声明值**是 `#fff6fa` 这种十六进制，浏览器把它**算**成 `rgb(255, 246, 250)`
-        # 才放进 background-image。要比"渲染出来的就是那一支"，就得先归一到同一种写法，
-        # 否则比的是"十六进制 ≠ rgb()"这种格式差异（20261008 当场踩到，两条判据假红）。
         s = (s or "").lower()
         s = re.sub(r"#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})",
                    lambda m: "rgb(%d,%d,%d)" % tuple(int(v, 16) for v in m.groups()), s)
@@ -724,11 +600,6 @@ with sync_playwright() as p:
     check(f'  夹具自检：那一段真的折成了多行（{cl["lines"]} 行 ≥ 3，否则行数判据无分辨力）',
           cl["lines"] >= 3, str(cl["lines"]))
 
-    # 负空间一：主题底那张纸是**跨文件同源**的（ReadArticle / 首页首屏 `.collageBg` /
-    # 登录页两条），20261008 收成 `--washi-theme-bg` 一支。只量这一页，量得再对也不代表
-    # 那三处还牵着手 ⇒ 这里按**源码**数：三处都只写 `var(--washi-theme-bg)`、都不再写那张
-    # 渐变的字面值（写着字面值就是"改一处必须同步另一处"的形状，那正是收令牌要治的病）。
-    # 只有 `src/index.css` 该出现字面值，且只出现一次。
     _CONSUMERS = ["src/pages/Login/index.sass",
                   "src/frontHome/Content/ContentHome/index.sass",
                   "src/frontHome/Content/ReadArticle/index.sass"]
@@ -747,17 +618,12 @@ with sync_playwright() as p:
     # （后台/浮层用），而 var() 是继承来的 —— 一旦给它一个暗值，白天臂会被一个挂在 body 上的
     # `.washiDark` 悄悄翻黑（令牌不看你自己那支是不是夜间臂）。
     _nightblock = re.search(r"\.frontDark,\s*\.dark,\s*\.washiDark\s*\{([\s\S]*?)\n\}", _tok)
-    # 比之前先**剥掉块内注释**：这条判的是"夜间档里不许**定义/引用**这一支"，不是"不许
-    # 提它的名字"。20261014 实测踩到——给 `--washi-page-bg` 写夜间臂那轮，紧随其后的
-    # 警告注释（"别把两者合并，那一支刻意不给夜间档"）里提到了这个令牌名 ⇒ 判据在**注释处
-    # 假红**（同族教训：注释会关掉断言/在注释处截断，见 sass-media-shadow 那条）。
     _nb = _nightblock.group(1) if _nightblock else None
     _nb_code = None if _nb is None else re.sub(r"/\*[\s\S]*?\*/", "", _nb)
     check("★主题底**只定义在这一档**（`.frontDark, .dark, .washiDark` 那档里不许出现它）",
           _nb_code is not None and "--washi-theme-bg" not in _nb_code,
           "夜间档里也定义了它" if _nightblock else "找不到夜间令牌块")
 
-    # 负空间二：米白那个令牌 20261008 随它的唯一用处一起删了。判据同样只认编译产物。
     check("★`--washi-paper-warm` 在编译产物里一次都不出现（零引用的令牌不许留）",
           "--washi-paper-warm" not in CSS, "还在")
 

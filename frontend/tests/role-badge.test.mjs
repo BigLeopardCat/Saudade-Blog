@@ -1,17 +1,3 @@
-// ═ 身份徽章：扶正 + 换装（20261003）跨文件契约 ══
-//   node tests/role-badge.test.mjs
-//
-// 这一批改动只有两处文件（`components/RoleBadge/index.tsx` 与 `utils/auth.ts`），但它是
-// **形状最容易被悄悄改回去**的那一类：整枚徽章由一张 `SPECS` 表驱动，改一个数字不会有
-// 任何编译期反馈，而它的消费方（个人中心 `.ucRoleTag`、后台账号行、评论区）全是靠
-// **源码断言**配着无头沙箱在看的——沙箱只在夜间跑，白天改错了没人会知道。
-//
-// 所以这里把主人这次点的三件事钉成可执行的判据：
-//   ① **扶正**：除杂鱼外倾角一律 0（20261003 之前各档各不相同，"歪多少"本身就是特征）；
-//   ② **换装**：`admin` 接手原 `superadmin` 那一套（薰衣草→粉、双层白边、两端小星）；
-//   ③ **站长的文本只有两个字**：不带表情，且文案只从 `ROLE_LABEL` 取（组件里不许另写一份）。
-//
-// 不跑浏览器：几何与配色由 `scripts/nightly_sandboxes.sh` 里的 `.test.py` 串在真页面上量。
 import { readFileSync } from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
@@ -99,8 +85,6 @@ const glyphs = `${field(specs.superadmin, 'lead') || ''}${field(specs.superadmin
 ok([...glyphs].every((ch) => (ch.codePointAt(0) ?? 0) < 0x2000),
     '站长那两条表情位上一个表情/符号字符都没有（emoji 有个"悄悄混进 from/to"的同族错法）',
     glyphs)
-// 20261003 主人看过对照图后否掉了"把原管理员那对给站长"的写法：那等于管理员接手超管那套
-// 的同时、超管穿上管理员刚脱下的那套，两档成了衣服对调。锁死它，别在调色时又绕回去。
 const su = `${field(specs.superadmin, 'from')}→${field(specs.superadmin, 'to')}`
 ok(su !== '#d94f9a→#ffb38a',
     '站长**不穿**原管理员那对（玫粉→蜜桃）——那一眼看过去像谁也没换新，主人否过', su)

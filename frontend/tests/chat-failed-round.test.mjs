@@ -1,33 +1,8 @@
-// ═ 失败轮"刷新后仍可重发/编辑"：CI 断言套件（20260927）══
-//   node tests/chat-failed-round.test.mjs
-//
-// 缘起（用户报的覆盖缺口）：后端出错时那条消息**不进 chat_history**，但错误气泡
-// 显示在对话框里；而重发/编辑按钮只有部分场景才挂得上——刷新一次就只剩一句
-// 「未收到回复」，主人既不知道为什么、也没法重来。用户拍板的口径是
-// **"不入库，但要能刷新后存活"**：DB 与历史注入保持干净（不把系统话术冒充成
-// assistant 说过的话），失败轮连同**原因**存 localStorage，刷新后照旧渲染带原因
-// 的错误气泡并挂回两个按钮。
-//
-// 本套件钉住的四件事（每一件都是"改坏了没人知道"的类型）：
-//   ① 刷新后提示条带**原因**（`reason`；旧记录没有这个字段 ⇒ 回退到笼统说法，
-//      历史记录不迁移）；
-//   ② 提示条里的空槽被 `onFailedResync` 钩子挂上两个按钮，且**幂等**——每趟
-//      reconcile 都会把提示条（无 mid、不进 items）当孤儿删掉重建，钩子跟着重挂；
-//      不幂等就是按钮越挂越多；
-//   ③ 按钮点了**必须有话说**：discard 三种失败（原文对不上 / 登录失效 / 连不上）
-//      各自回一句能指导下一步的话，而不是闪一下复原；
-//   ④ 成功那条路真的办成了事：带原文与 conversation_id 的 discard + 原文回填输入框
-//      + 摘掉那条旧用户气泡（否则重发会在历史里重复）。
-//
-// 为什么用真 boot（而不是切片求值）：这些行为横跨三个模块的接线——引擎渲染槽位、
-// 钩子在 reconcile 末尾被调、交互层闭包里的 discard/回填。切片只能证明"函数写得对"，
-// 证明不了"这条线接上了"。本仓已有两次"能力有测试、接线没人测"的前科。
 import { readFileSync } from 'fs';
 import vm from 'vm';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import { installDom, installScriptLoader } from './stubs/dom.mjs';
-// SSE 桩要带 content-type：20261002 起前端据它判"这是不是流"
 import { sseHeaders } from './stubs/sse.mjs';
 
 const W = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../public/live2d-widgets');
@@ -64,10 +39,6 @@ globalThis.Image = class {};
 globalThis.Live2DCubismCore = {};
 globalThis.__chatRenderMarkdown = (t) => String(t);
 globalThis.__chatEnhance = () => {};
-// 看板娘在这里**不打桩**（20261001 渲染层换自研）：上游 initWidget 与 __cubism5model 那套
-// 嵌套结构已随 GPL 实现一起从仓库移除，现在由 renderer.js 自己建 #waifu 骨架。
-// 真 renderer 在 Node 下会死在 PIXI 未定义处、被它自己的 .catch 兜住（模型画不出来，但工具条
-// 照建、waifu-active 照加）——这正是本 harness 要覆盖的形状，别再加桩把它盖回假绿。
 
 // ── 夹具：一条已答复的往返 + 末条"没收到回复"的 user 消息 ──
 // 末条必须是**最后一条 item**（引擎的失败判据是"最后一条是匹配标记的 user 且其后

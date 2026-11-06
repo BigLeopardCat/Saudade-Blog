@@ -1,32 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""z-index 阶梯：两份值逐值相等 + 四层真实堆叠次序（20261002，用户第 5 条）。
-
-  python3 tests/z-index.test.py
-
-用户原话：「首页手账贴纸打开后要在最顶层否者会被遮挡视线，向量空间页面打开左下角缺角了，
-不需要锁定功能和按钮了。个人中心打开时也是在最顶层不要被agent对话框遮挡，当然他们都在
-公告的层级下，不能遮挡公告弹窗。」
-
-**为什么只能问浏览器**：这件事全是层叠上下文算出来的，读源码看不出谁赢。
-  · 前台整站被 `.frontRoot { isolation: isolate }` 封在 body 层级的一个层叠上下文里 ⇒
-    里面写的 z-index 再大也只跟层内元素比大小，跟挂在 body 上的 `#waifu` 不是一个牌桌；
-  · 看板娘原先写死 `z-index: 2147483000`（agent 仓 widget.css）——它不是"最高"，
-    是"比谁都大"，个人中心与公告（两个 antd Modal，默认 `zIndexPopupBase=1000`）一律被压死；
-  · 改完之后 `#waifu` 是 `var(--z-agent, 1000)`：**值来自本仓**（agent 仓那份只是兜底），
-    所以"看板娘到底在第几层"这件事只有把两份文件一起加载起来才算得出来。
-
-三组判据：
-  ① **两份值逐值相等**：`src/index.css` 的 `:root` 阶梯 vs `src/zIndex.ts` 的 `Z`。
-     antd 只认 `zIndex` prop、CSS 只认 `var()`，同一个数必须有两个人写 —— 这是本批
-     唯一的新约定，也就是唯一会漂移的地方（漂了之后界面上什么异常都看不出来）。
-  ② **真实堆叠次序**：把真 `index.css` + 真 `App.sass`（编译后）+ 真 `widget.css`
-     （`public/live2d-widgets/`，由 pin 取回）一起加载，用 `document.elementFromPoint`
-     问"这一个像素点上谁在最上面"。四层各问一次。
-  ③ `.frontRoot` 的抬升是**开关式**的：`body.exhibit-zoomed` 挂着时它是
-     `position: relative; z-index: 1100`，摘掉之后必须回到 `static/auto`
-     —— 平时保持 static 是刻意的，定位元素会给所有 absolute 后代换包含块。
-"""
+"""z-index 阶梯：两份值逐值相等 + 四层真实堆叠次序。"""
 import functools
 import http.server
 import pathlib
@@ -109,17 +83,6 @@ if not WIDGET_CSS.exists():
     raise SystemExit(f"缺 {WIDGET_CSS}：先跑 `npm run fetch:widget`（它不在 git 里）")
 shutil.copyfile(WIDGET_CSS, SB / "widget.css")
 
-# DOM 的**结构**照抄真页面，盒子尺寸只求"都在同一个点上重叠"：
-#   · `.frontRoot` 是整站那层（App.tsx:67），里面放一张写满视口的页；
-#   · `#waifu` 是 agent 仓的根节点（`position:fixed; height:300px`，left 由那份
-#     widget.css 说了算——20261011 回退后是 15px，本套件**不抄这个数**）。
-#     两处夹具补偿，都写在夹具的 <style>/DOM 里，真 widget.css 一字未改：
-#     ① `bottom:-500px` 是收起态（滑出屏外），覆盖成 0 —— 本套件量的是层级不是位置；
-#     ② 它没有 `width`，真页面里宽度由子节点（canvas / 对话面板）撑出来，
-#        夹具里塞一个 60×47 的子块，否则盒子宽 0、指针永远命不中它。
-#   · 个人中心与公告都是 antd Modal ⇒ portal 到 body、铺满视口的 wrap + mask；
-#     这里用同样形状的 fixed 满屏 div 代替，`z-index` 取**阶梯变量**（和 tsx 里
-#     `zIndex={Z.panel}` 同源，antd 写的就是这个数）。
 HTML = """<!doctype html><html><head><meta charset="utf-8">
 <link rel="stylesheet" href="index.css">
 <link rel="stylesheet" href="app.css">
@@ -179,12 +142,6 @@ with sync_playwright() as p:
     pg.goto(URL)
     pg.wait_for_timeout(200)
 
-    # 探针点**按实测盒子现算**，不硬写坐标：硬写的那版是 (40, 375)，靠 "#waifu 在
-    # left:15px" 才成立——20261003 把它挪到 165px（= 板块半宽）、再收到 145px 之后，
-    # 那个点当场落到了页面层上，而断言只会红一句、看不出是探针自己失效。
-    # （20261011 位置回退到 15px，硬写那版**碰巧**又能命中了；照样不用它——现算这条
-    #  路的价值就在于与位置解耦，下次它再挪去哪儿都不必回来改这个探针。）
-    # 现算：横向取盒子中心，纵向取盒底往上 25px（盒子 300px 高、贴视口底缘）。
     PX, PY = pg.evaluate("""() => {
         const r = document.getElementById('waifu').getBoundingClientRect();
         return [r.left + r.width / 2, r.top + r.height - 25];

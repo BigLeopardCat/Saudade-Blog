@@ -10,26 +10,11 @@
   const EFFECTS = {};
   let sakuraAnimId = null, rainAnimId = null, snowAnimId = null;
 
-  // 三个特效的容器都挂在 body 上（跨层），层级走宿主页面的阶梯——**必须低于看板娘与对话
-  // 面板**（`--z-agent`，见 frontend/src/index.css 的 z-index 阶梯，那里是全站层级值的唯一
-  // 出处）。它们以前写死 99999，那是"比谁都大"、不是"最高"：花瓣、雨点、雪花一律盖在对话
-  // 面板前面（用户 20261005 报的）。兜底 950 与 `--z-effect` 同值，脱离本站也能独立用。
   const EFFECT_Z = 'var(--z-effect, 950)';
 
   // 真实樱花花瓣图片（来源 github.com/WRXinYue/sakura_fall 的 sakura_fall1，保留原始宽高比）
   const PETAL_SRC = ['/icons/sakura/1.png', '/icons/sakura/2.png', '/icons/sakura/3.png', '/icons/sakura/4.png'];
 
-  // ========== 樱花（DOM <img> 飘落）==========
-  //
-  // 运动模型（20261005 重做）：**风带着花瓣走**，不是"沿一条固定对角线平移"。
-  //  - 水平分量 = 每片自己的**风偏**（bias，≈0）+ 一层低频**阵风**（windAmp·cos）。
-  //    它在空中左右荡、方向自己会变——既不是一条斜线，也不是直上直下。
-  //    旧版是 `speedX` 恒定负值，于是所有花瓣排着队往左下扫，这就是"怪"的来源。
-  //  - 竖直分量 = 每片自己的下落速度 vy，再乘一层很轻的"呼吸"（flutter），
-  //    下落速度本身在微微起伏——像被风托着，而不是匀速坠。
-  //  - 三个频率（阵风/呼吸/翻面）都是**低频**：周期 4–17 秒，肉眼看到的是"飘"而不是"抖"。
-  //  - ⚠️ 所有增量都乘 dt（按 60fps 归一）：**刷新率不改变观感**。旧版是"每帧加固定值"，
-  //    120Hz 屏上整体快一倍（"速度怪怪的"的另一半来源），别退回那种写法。
   const SAKURA = { initial: 50, max: 80, spawnEvery: 6 };
 
   function makePetal(container, seedAcrossScreen) {
@@ -45,7 +30,6 @@
     const lifeFactor = 1.3 + Math.random() * 0.7; // 寿命 = 落完整屏所需帧数 × 这个系数
     return {
       el: img,
-      // 从**整幅宽度**里出生（旧版固定从右缘外进来，屏幕左侧永远看不到花瓣从天而降）
       x: -120 + Math.random() * (window.innerWidth + 240),
       // 起始那一批直接铺满整屏：慢速下落要二三十秒才落到底，否则开场是一片空白
       y: seedAcrossScreen ? -60 + Math.random() * (window.innerHeight + 120)
@@ -59,11 +43,10 @@
       flipFreq: 0.008 + Math.random() * 0.020,  // 翻面（scaleX）频率
       swingPhase: Math.random() * Math.PI * 2,
       rot: Math.random() * 360,
-      rotSpeed: (Math.random() - 0.5) * 2.4,    // 慢转（旧版 ±4°/帧，转得像贴纸）
+      rotSpeed: (Math.random() - 0.5) * 2.4,
       opacity: 0.5 + Math.random() * 0.5,
       life: 0,
-      lifeFactor, // 窗口尺寸一变要按新的视口高重算寿命，系数得留着（见 handleResize）
-      // 寿命按"落完整屏要多久"折算：速度慢的花瓣才不会被寿命提前收走（旧版是写死的 800–1400 帧）
+      lifeFactor,
       maxLife: Math.round((window.innerHeight + 360) / vy * lifeFactor),
     };
   }

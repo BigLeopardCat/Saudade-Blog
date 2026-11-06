@@ -1,23 +1,3 @@
-// ═ 前端错误上报：type 防漂 + 采集面 + 纯函数（20261004）══
-//   node tests/monitor-report.test.mjs
-//
-// 现场（用户原话）："rust测试需要补吗，前端日志覆盖不够吧，甚至是无效状态。"
-//
-// 「无效状态」不是感觉，是一个数：生产 monitor.log 里 `type=other` 占 66%（193/292 行）。
-// 成因是**白名单没跟得上客户端**——审计（20260925 A2）当时只登记了 boot.js 那五种，
-// 之后客户端又加了七种，白名单没长，于是新类型全被收敛成 `other`，
-// 「可枚举」这个前提无声失效（漏登记与真·未知类型长得一模一样）。
-//
-// 这套件锁四件：
-//   ① ★ 客户端源码里所有上报点的 type ⊆ 服务端 MONITOR_KINDS（防漂主判据）；
-//   ② 反向：白名单里没有"没人会发"的死条目（两边是同一份清单，不是子集关系）；
-//   ③ 三处新采集面真的接上了（axios 拦截器 / 资源 error 的 capture 监听 / React 边界），
-//      且**判据先于上报**（比如资源失败的判别式必须在 reportError 之前，否则运行时
-//      JS 异常会被报两遍）；
-//   ④ 服务端落盘行的字段顺序（追加在尾部，对账侧按位置解析）、webgl 的宽容类型、
-//      去重窗口、以及 UA 在 into_body 之前取。
-//
-// ⚠️ 依赖被替换/刷新过：断言的是"当前源码"，不替换就断言不了。缺了会显式报错。
 import * as esbuild from 'esbuild';
 import { existsSync, mkdtempSync, readFileSync, readdirSync } from 'fs';
 import { tmpdir } from 'os';

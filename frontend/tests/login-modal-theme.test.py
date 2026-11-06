@@ -1,21 +1,5 @@
 # -*- coding: utf-8 -*-
-"""登录页弹窗**真 antd** 渲染验收（20260922）：底色 / 文字对比度 / 关闭图标 / 遮罩。
-
-为什么另起一个脚本（而不是并进 login-page.test.py）：
-  那个脚本把 antd 整个换成桩（只为断言结构与交互，快）；而本轮修的正是"弹窗看起来
-  不对"，桩里没有 antd 的样式，量不出观感——**结构对了不等于接线对了**。
-  这里不 alias antd，让它真渲染（antd v5 是 CSS-in-JS，无外部样式表要引），
-  Playwright 里按 WCAG 相对亮度算对比度：底色够不够暗、字够不够亮，是数值判据不是眼感。
-
-**昼夜两档（20261006 用户第 3 条）**：登录页从前恒深色、现在跟随全站 ⇒ 弹窗底色也跟着
-切（白天 = antd 浅色算法 + 和纸粉主色，夜间 = 原来那套墨蓝 + 河灯金）。
-`fresh_page(dark=True)` 在挂载前写 `localStorage.isDarkMode = 'true'`，两档各量一遍——
-这一节的重点正是"浅字落在白底上"这类**只有渲染出来才看得见**的事故，只测一档等于只守一半。
-
-用法：python3 frontend/tests/login-modal-theme.test.py
-注意：本机无中文字体（fc-list CJK = 0）⇒ 截图里的汉字是豆腐块，属环境限制；
-      对比度与几何不受影响（量的都是颜色与盒模型）。
-"""
+"""登录页弹窗**真 antd** 渲染验收：底色 / 文字对比度 / 关闭图标 / 遮罩。"""
 import datetime as dt
 import pathlib
 import shutil
@@ -79,10 +63,6 @@ import Login from './src/pages/Login/index.tsx';
     subprocess.run([str(FE / "node_modules/.bin/esbuild"), "entry.tsx",
                     "--bundle", "--format=iife", "--outfile=bundle.js",
                     "--loader:.sass=text", "--jsx=automatic",
-                    # 20260924 起品牌区挂了 useViewerAvatar（经 utils/runtimeApi.ts 读
-                    # import.meta.env）；iife 输出里 import.meta 是空对象 ⇒ 不给这个替身
-                    # 就 `undefined.VITE_HTTP_BASEURL` 当场抛错、整页白屏。串与
-                    # login-page / dark-mode-contrast 那几个沙箱保持一致。
                     f"--define:{DEFINE}",
                     f"--alias:react-router-dom={sb}/stub-router.tsx",
                     f"--alias:react-redux={sb}/stub-redux.tsx"],
@@ -92,9 +72,6 @@ import Login from './src/pages/Login/index.tsx';
 
     (sb / "index.html").write_text(
         '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
-        # index.css 必须在前面：登录页自 20261006 起按昼夜两档用 `--washi-*`，
-        # 不引全站令牌的话 `getComputedStyle` 量到的是 `var()` 的**回退值**——
-        # 那样"改令牌也照样绿"，白天那几条判据就成了假绿。
         '<link rel="stylesheet" href="index.css">'
         '<link rel="stylesheet" href="login.css"></head><body><div id="root"></div>'
         '<script src="bundle.js"></script><script>window.__mount && window.__mount();</script>'
@@ -170,16 +147,7 @@ with sync_playwright() as p:
 
     def fresh_page(dark=False):
         """每个弹窗用**新开的页面**测：弹窗关了再开会有 antd 的退场动画与遮罩残留，
-        点下一个入口会被上一个弹窗的输入框拦（实测 60 次重试都不通），不如各测各的。
-
-        `dark=True` ⇒ 挂载前写下 `isDarkMode`（这份夹具没写 = 全站默认的白天档）。
-        必须在 goto 之前下笔：`useIsDarkMode()` 的初值在**挂载时**读一次 localStorage。
-
-        ⚠️ 20261013：这一页现在**自己会跟着钟面切档**（挂了 `useAutoThemeSwitch()`，见
-        login-page.test.py 的 ③d），于是"不写 isDarkMode = 白天档"这条夹具会把**跑套件的
-        那一刻**带进判据——23:00-06:00 之间跑，页面在挂载后一分钟内自动切夜，白天档那几条
-        当场变红（20261013 23:4x 实测红 2 条）。钉在本地 14:00（ticker 的设计无动作时段）。
-        `time=` 传 datetime：传**数字时单位是秒**，传毫秒会落到公元 58753 年而套件照样绿。"""
+点下一个入口会被上一个弹窗的输入框拦（实测 60 次重试都不通），不如各测各的。"""
         page = br.new_page(viewport={"width": 1280, "height": 900})
         page.clock.install(time=dt.datetime(2026, 10, 13, 14, 0, 0))
         page.on("pageerror", lambda e: errs.append(str(e)))
@@ -298,9 +266,6 @@ with sync_playwright() as p:
     pg.screenshot(path="/tmp/login-modal-reset.png")
     pg.close()
 
-    # ②b 夜间档的重置表单：这一批控件（`.login-reset-form` 那几条字色/底色）自 20261006 起
-    # 挪到 `body.login-dark` 底下（弹窗挂在 body 上，够不着页面里的 `.frontDark`）——
-    # **换了作用域就要重量一遍**，否则"没生效"与"生效了"在白天夹具里长得一模一样。
     print("②b 重置密码弹窗 · 夜间档（浅字不许落在浅底上）")
     pg = fresh_page(dark=True)
     pg.click(".login-links button:nth-child(1)")
@@ -338,9 +303,6 @@ with sync_playwright() as p:
     pg.screenshot(path="/tmp/login-page-full.png")
     pg.close()
 
-    # ④ 品牌区头像的尺寸与上下间距（20260924 用户反馈"有点小、与上方文本和下方输入框距离不协调"）。
-    # 这一节必须在本套件量（**不桩 antd**）：边长来自 antd Avatar 的 size prop，打成 inline
-    # width/height 落在 .ant-avatar 上——桩会把它吃掉，量出来永远是 0。
     print("④ 品牌区头像（尺寸 84 + 与标题/输入框的间距）")
     pg = fresh_page()
     # className 是直接传给 antd Avatar 的 ⇒ 根 span 自己就同时带 `.login-avatar` 与 `.ant-avatar`

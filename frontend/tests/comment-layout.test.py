@@ -1,43 +1,5 @@
 # -*- coding: utf-8 -*-
-"""讨论区几何与深链沙箱（20261003）：计数搬进输入框 / 按钮贴着输入框 / 未登录态 / ?cid= 定位
-/ 回复标记另起一行。
-
-## 这个沙箱为什么必须有
-
-`antd` 的 `showCount` 计数是**挂在输入框下方、不占布局空间**的绝对定位元素——
-`rc-textarea` 渲染 `span.ant-input-data-count`，`antd/es/input/style/textarea.js` 给它
-`position: absolute; bottom: -(fontSize × lineHeight) = -22px; insetInlineEnd: 0`。
-原来为了不让它压住下一行，给输入框挂了全站那 22px 的 `counter-room`（`src/index.css`）
-——**那一整行空白正是「发表评论按钮离输入框太远」**（用户 20261003 第 3 条原话：
-「把字数统计文本移入输入框就能腾出空间，减小按钮到输入框的缝隙了」）。
-
-修法 = 把计数按进框内的右下角（`CommentSection/index.sass` 里那三条），
-输入框挂的 `counter-room` 随之摘掉。于是本文件判**两件事，缺一不可**：
-  ① fixed 变体：计数**整个落在输入框盒子里**，且输入框到按钮行的缝隙很小；
-  ② broken 变体（还原改之前的形态：挂回 `counter-room` + 摘掉按进框内那条 `bottom`）：
-     计数**必须落到框外**、**必须压住按钮行**、缝隙**必须变回 30px**。
-没有 ②，① 就有可能是永真的——"计数在框里"这类断言最容易在元素根本不存在时也是绿的。
-
-## 沙箱三件事（与既有 .test.py 同recipe；本机不能 vite build，见 CLAUDE.md §2）
-
-  · `src` 整棵拷进临时目录，**就地**替换 `apis/CommentMethods.tsx` 与 `apis/getToken.tsx`
-    两个叶子模块（相对路径的模块没法用 `--alias:` 桩）；
-  · **antd 用真身**——被测的就是它的计数几何，桩掉等于把判据桩掉；
-    组件的 `.sass` 用 programmatic API 编译，**并把 `src/index.css` 原样 <link> 进来**
-    （20260929 教训：沙箱里没有全站样式表时 `.counter-room` 这类全局规则压根不存在，
-    几何断言会红，而线上是好的）；
-  · 真 react-dom 渲染 → Playwright 断言。
-
-另外 ⑫（20261005 用户第 3 条「赞和踩不在同一水平线，好像踩高了一点」）量的是**图标
-墨迹的重心**：把真 `<svg>` 栅格化到 canvas，按 alpha 加权求重心。**口径是重心，不是
-外框**——这条修过两次，第一次修的就是外框：把两个 svg 盒子的几何弄成逐项相等（同 14px、
-同 viewBox、镜像路径，外框中心都落在 12.0），用户仍然说踩偏高。因为墨迹质量不是均匀
-分布的（朝上那颗压在下半、镜像后压在上半），外框对齐得再准也盖不住重心差。带一条
-**冻结字面**（20261005 改动前那版几何）的红基线——基线的取法钉在时间上，不钉在当前
-提交上（见下面 `OLD_ICON` 的头注）。
-
-用法（仓库任意位置）：python3 frontend/tests/comment-layout.test.py
-"""
+"""讨论区几何与深链沙箱：计数搬进输入框 / 按钮贴着输入框 / 未登录态 / ?cid= 定位。"""
 import json
 import pathlib
 import re
@@ -65,19 +27,7 @@ def check(desc, cond, detail=""):
 
 # ── 夹具：30 条顶层 + 两条回复（回复的回复仍挂在第一条回复的顶层下，测分组） ──────
 def fixture_comments():
-    """30 条顶层 + 2 条回复。
-
-    每行那三个投票字段（`up`/`down`/`myVote`，20261003 用户第 4 条）**不是随手填的**——
-    取值刻意造成"按票数高亮"与"按 `myVote` 高亮"给出**相反**答案的那一组，
-    于是 ⑪ 里那条断言真能分辨两种写法（否则它只是"class 里有 isOn"这种谁都能过的空话）：
-
-      · #1  up=3  down=7  myVote= 1 ⇒ 票多的是**踩**，我投的是**赞**
-      · #30 up=12 down=0  myVote=-1 ⇒ 票多的是**赞**，我投的是**踩**（#1 的反向）
-      · #2  up=0  down=0  myVote= 0 ⇒ 两个计数都是 0 ⇒ 数字必须**一颗都不显示**
-      · 其余全 0（同上，一排 `👍0 👎0` 正是要量掉的那种噪声）
-
-    #2 与 #30 的 `mine` 都是 True ⇒ 它们同时充当"按钮顺序 回复 → 赞 → 踩 → 删除"的样本。
-    """
+    """30 条顶层 + 2 条回复。"""
     items = []
     votes = {1: (3, 7, 1), 30: (12, 0, -1)}
     for i in range(1, 31):
@@ -213,9 +163,6 @@ TA_REF = "                        ref={taRef}\n"
 ROOM_ATTR = '                        className="counter-room"\n'
 COUNT_BOTTOM = "                bottom: 4px\n"
 
-# ── 红基线 C（⑨b）：把「回复 @某人」退回**身份行行首**（20261003 用户第 3 条报的那一版）。
-# 两处一起退才算真还原：DOM 退回 `.commentMeta` 的首位，CSS 退回"行内小字"（不带 display/边距）。
-# 只在沙箱拷贝上打补丁，`FE` 里一字不动。
 TSX_META_OPEN = '                <div className="commentMeta">\n'
 TSX_REPLY_NEW = """                {isReply && (
                     <div className="commentReplyTo">
@@ -238,12 +185,6 @@ SASS_REPLY_OLD = """        .commentReplyTo
             font-size: 0.8rem
 """
 
-# ── 红基线 D（⑩b）：把「回复」退回**只能开在页面顶部那个输入框**——20261003 用户第 3 条
-# 报的那一版（「评论很靠下时每次回复都要滚到顶部输入框」）。四处在沙箱拷贝上打补丁，
-# `FE` 里一字不动：点「回复」设回顶层状态、顶层框渲染回那条「正在回复 @xx」、
-# state 声明补回来、提交时带上被回复的那条 id。
-# **它翻的是 ⑩ 的结构判据**（行内框不存在 ⇒ "住在这一行的 .commentMain 里"当场红），
-# 以及"顶层框里没有那条回复栏"。
 TSX_OPEN_INLINE = "onClick={() => openReply(c)}"
 TSX_OPEN_TOP = "onClick={() => setTopReply(c)}"
 TSX_TOP_COMPOSER = '                <div className="commentComposer">\n'
@@ -260,17 +201,9 @@ TSX_TOPREPLY_STATE = TSX_BUSY_STATE + \
 TSX_POST_NULL = "await postComment(text, null)"
 TSX_POST_TOP = "await postComment(text, topReply?.id ?? null)"
 
-# ── 红基线 E（⑪e）：把「我投过没投过」换成**票多的那一侧**高亮——这是同族网页里最常见的
-# 那种写法，也正是用户第 4 条要量掉的那件事（读者会把它读成"这是我投的"）。只改一句，
-# 其余一字不动 ⇒ 对照组红的只可能是 ⑪ 里那两条高亮判据（同一页的计数判据仍该是绿的）。
 TSX_VOTE_ON = "                        const on = c.myVote === dir\n"
 TSX_VOTE_BY_COUNT = "                        const on = dir === 1 ? c.up > c.down : c.down > c.up\n"
 
-# ── 红基线 F（⑬b）：把"清空"与"重拉"两个 effect 合回一个（20261020 排序页签之前的样子）。
-# 合起来之后，切排序会先把列表清掉 ⇒ 整个讨论区闪一下「正在读取讨论…」再长回来。
-# **这条红基线是 ⑬ 里"不闪"那条判据的全部依据**：不闪是一个"没发生的事"，而"没发生的事"
-# 用断言是证不出来的（观测器没装好、或者根本没在跑，看起来一样是绿的）——只有让它在
-# 对照组里**真的发生一次**，那条绿才有牙。
 TSX_EFFECTS_SPLIT = (
     "    useEffect(() => { setItems(null); setFailed(false) }, [key])\n"
     "    useEffect(() => { void load() }, [load])\n"
@@ -279,19 +212,7 @@ TSX_EFFECTS_JOINED = "    useEffect(() => { setItems(null); setFailed(false); vo
 
 
 def build(variant: str) -> pathlib.Path:
-    """variant:
-    'fixed'  src 原样；
-    'broken' 改之前的样子（tsx 挂回 counter-room + sass 摘掉按进框内那条）——红基线 A；
-    'bare'   只摘掉按进框内那条（= 20261003 早上用户报重叠时的样子）——红基线 B；
-    'replyto-old' 「回复 @某人」退回身份行行首（20261003 用户第 3 条报的那一版）——红基线 C；
-    'reply-top'  「回复」退回"只能开在页面顶部那个输入框"——红基线 D；
-    'vote-by-count' 高亮从 `myVote` 换成"票多的那一侧"——红基线 E；
-    'sort-joined' 把"清空列表"与"重拉"两个 effect 合回一个——红基线 F。
-    六个红基线各自翻的是不同的那几条判据，所以六个都要跑：
-    A 翻的是「缝隙」与「落在框内」，B 翻的是「计数与按钮不相交」（当年那 22px 就是为它加的），
-    C 翻的是 ⑨ 里「回复标记另有自己的一行」，D 翻的是 ⑩ 里「回复框住在被回复的那一行里」，
-    E 翻的是 ⑪ 里「高亮跟着 myVote 走」（夹具里 #1/#30 的票数与 myVote 方向**相反**，
-    就是为了让这一条分辨得出两种写法），F 翻的是 ⑬ 里「切排序不闪空态」。"""
+    """构造正常布局与六种负控：计数位置、框内间距、回复标记、就地回复、投票高亮和排序空态。"""
     sb = pathlib.Path(tempfile.mkdtemp(prefix=f"comment-layout-{variant}-"))
     shutil.copytree(FE / "src", sb / "src")
     (sb / "node_modules").symlink_to(FE / "node_modules")
@@ -306,7 +227,7 @@ def build(variant: str) -> pathlib.Path:
         assert src.count(TSX_REPLY_NEW) == 1, "红基线 C 没找到「另起一行」那段 JSX"
         assert src.count(TSX_META_OPEN) == 1, "红基线 C 没找到 `.commentMeta` 的开标签"
         src = src.replace(TSX_REPLY_NEW, "", 1)                     # 新的删掉
-        src = src.replace(TSX_META_OPEN, TSX_META_OPEN + TSX_REPLY_OLD, 1)  # 旧的插回行首
+        src = src.replace(TSX_META_OPEN, TSX_META_OPEN + TSX_REPLY_OLD, 1)
         p.write_text(src, encoding="utf-8")
         s = sb / "src/components/CommentSection/index.sass"
         txt = s.read_text(encoding="utf-8")
@@ -503,24 +424,6 @@ OLD_INK = """(html) => {
   return svg ? window.__inkOf(svg) : null;
 }"""
 
-# ⑫ 的红基线 = **"外框居中"那一版**两枚拇指的几何（下面两段字面，逐字抄自 20261005 那次
-# 改动后的 `NoteStatIcons/index.tsx`，也就是**重心对齐之前**的形态）。与
-# `mermaid-mobile-zoom.test.py` 同一取法：换臂跑同一套判据，读几何不读"看起来对"。
-#
-# 它证明的正是这一节口径换代的必要性：这一版外框中心两颗都精确落在 12.0（盒子逐项相等、
-# 镜像关系完好），**重心**却差 3.93 个单位（14px 下 2.29px）——用户报的就是它。红基线
-# 必须量到这个数，否则说明判据又退回"量外框"，那套口径上一轮已经证明是瞎的。
-#
-# ⚠️ 它**不能**写成 `git show HEAD:`：这条基线要的是"改动前那个形状"，而 `git show HEAD`
-# 在改动**提交之后**取到的就是改动后的文件 —— 两条臂逐字相同，红基线当场失效
-# （20261005 实测：提交前绿、提交后红，报的是"赞 12 / 踩 12"）。基线的取法必须钉在
-# **时间**上（一个冻结的字面），不能钉在"当前提交"上。要换这两段，就是**改判据本身**
-# （说明对齐的基准变了），不能顺手跟着工作区刷新。
-#
-# 属性写成连字符小写：这一臂把 svg 源码塞进 `innerHTML`，驼峰属性名在 HTML 里不生效
-# （`strokeWidth` 不在 HTML 解析器的 SVG 属性修正表里，认不出来就整条丢掉 ⇒ 描边退回
-# 默认的 1），量到的就不是"改动前的几何"而是"改动前的几何 + 一个错的描边"（实测墨迹高
-# 20.8 而不是 21.6，红基线就成了假红）。`viewBox` 例外：它在修正表里，保持驼峰。
 _SVG_HEAD = ('<svg aria-hidden="true" viewBox="0 0 24 24" width="14" height="14" fill="none"'
              ' stroke="currentColor" stroke-width="1.8" stroke-linejoin="round">')
 OLD_ICON = {
@@ -831,10 +734,6 @@ with sync_playwright() as p:
           f'uid {idrow["uidFont"]}px vs 昵称 {idrow["nameFont"]}px')
 
     print("\n⑨ 「回复 @某人」另起一行，不再隔断头像与昵称（20261003 用户第 3 条）")
-    # 用户原话：「回复评论，应该是头像右上角是对应用户昵称，徽章，UID，另起一行回复 @xxx，
-    # 现在的布局回复 @xx 直接把头像和昵称隔断了」。根因是**纯 DOM 顺序**：那个节点当年挂在
-    # `.commentMeta` 的**首位**，于是它排在昵称之前、左边紧挨头像。
-    # 这一组量三件事：身份行里没有它、它自己占一行、它不在头像与昵称之间。
     rg = pg.evaluate(REPLY_GEOM)
     check("前提：回复行有两条（夹具里 41 / 42）", rg["rows"] == 2, rg["rows"])
     check("顶层评论不渲染这个节点（只有回复才有）", rg["topRowsWithRt"] == 0,
@@ -859,7 +758,6 @@ with sync_playwright() as p:
           bool(rg["rt"]) and abs(rg["rt"]["x"] - rg["meta"]["x"]) < 1.5,
           f'rt.x={rg["rt"] and round(rg["rt"]["x"], 1)} meta.x={round(rg["meta"]["x"], 1)}')
 
-    # ══ ⑪ 赞 / 踩（20261003 用户第 4 条「讨论区评论增加点赞和踩」）══════════════════
     print("\n⑪ 赞 / 踩：高亮跟 myVote（不是票多的那侧）、计数为 0 不显示数字、按钮顺序")
     # 夹具那三个数是这组判据的**前提**，所以先把它本身量一遍：如果哪天有人"顺手"把
     # #1 改成 up=7/down=3，⑪ 里"高亮跟 myVote"那条会变成按票数高亮也照样通过
@@ -999,7 +897,6 @@ with sync_playwright() as p:
           f"fixed={t and round(t['y'], 1)} broken={tb and round(tb['y'], 1)}")
     pg2.close()
 
-    # ══ 三、红基线 B：只摘掉「按进框内」那条（= 20261003 早上用户报重叠时的样子）══════
     print("\n⑧b 红基线 B（bare 变体）：计数落到框外**并且**压住按钮行")
     pg3 = br.new_page(viewport={"width": 1280, "height": 900})
     errs3 = []
@@ -1105,16 +1002,6 @@ with sync_playwright() as p:
           b1["nums"] == ["3", "7"], b1["nums"])
     pg6.close()
 
-    # ══ 七、赞 / 踩图标的墨迹重心在同一水平线（20261005 用户第 3 条）══════════════════
-    # 用户原话：「讨论区赞和踩图标视觉上不在同一水平线，好像踩高了一点。」（第二次报）
-    # 根因**不在** `.commentVote`，也**不在**外框：上一轮已经把两个 svg 盒子的几何做成
-    # 逐项相等、外框中心都落在 12.0，用户仍说偏高。差在**墨迹重心**——朝上那颗的质量压在
-    # 下半（掌根 + 腕带两块实心区），镜像过去之后朝下那颗的质量压在上半，于是"看起来"
-    # 一个偏下一个偏上。实测重心：赞 13.83 / 踩 9.90（用户单位），差 **3.93 个单位**
-    # = 14px 下 **2.29px**（手机 DPR3 上是 7 个物理像素）。
-    # 修法 = 两颗各走一个方向相反的整体平移（赞 −0.8、踩 +1.1，写成 `<g transform>`），
-    # 把重心差收到 ~2.0 个单位；这是平移的极限（字框余量用尽：赞上沿剩 1.0、踩下沿剩 1.2）。
-    # ⚠️ 判据只能量**重心**：量盒子（或量 viewBox、量 `d` 里的数字）在上一稿里全绿。
     print("\n⑫ 赞 / 踩图标：墨迹重心落在同一水平线上（量栅格化后的 alpha 加权重心，不量外框）")
     pg7 = br.new_page(viewport={"width": 1280, "height": 900})
     errs7 = []
@@ -1174,10 +1061,6 @@ with sync_playwright() as p:
     check("无 JS 运行时报错（第 ⑦ 节这一页）", not errs7, "; ".join(errs7[:2]))
     pg7.close()
 
-    # ══ 八、排序页签（20261020 主人点名：默认「最热」，可切「最新」）════════════════
-    # 这一组量三件事，缺一件就有一条静默的坏法：① 首屏发的是 `hot`（默认档 ——
-    # 发错了在界面上完全看不出来，页面照样渲染）；② 点「最新」**真的重拉并重排**
-    # （只发参数不重排 = 页签点了没反应，而它看起来是活的）；③ 切排序**不闪空态**。
     print("\n⑬ 排序页签：默认发 hot、点「最新」发 new 且真的重拉、切排序不闪空态")
     pg8 = br.new_page(viewport={"width": 1280, "height": 900})
     errs8 = []

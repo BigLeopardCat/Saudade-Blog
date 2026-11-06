@@ -1,35 +1,5 @@
 #!/usr/bin/env python3
-"""图谱渲染数值断言（本机不能 vite build 的替代手段：esbuild 单文件打包 + CDP 断言）。
-
-    python3 tests/wordgraph_render.py
-
-不起服务：`page.route` 把 /graph/manifest.json 与产物文件从磁盘直接喂回去，
-所以**真实的 loader.ts 也一并被验了**（manifest 校验 → 动态 import → export default）。
-
-⚠️ 两条**必须先喂回去**的事实（20261003 产物改由 API 供出之后）：
-  ①  `/api/public/graph/manifest` 一律回 **200 + `{}`** —— 本沙箱没有 Rust/agent，
-      这正是"从没重建过的站点"在生产上拿到的东西 ⇒ 顺带把 loader 的**回落**那条腿
-      验到了（`HITS`）。**别改成 404**：那会让首页每次加载都往控制台扔一条红字，
-      第一节"无 console error"那条断言会红，而红得与它声称在测的东西没关系。
-  ②  manifest 里的 `site` 要**改写成沙箱页面自己的 origin**。committed 那份产物署名的是
-      `https://saudade.site`，而沙箱页面住在 `http://vitrine.test` —— 照原样喂进去，
-      运行期的语料归属闸会（正确地）判"不是本站"，`loadGraph()` 直接拒绝，下面每条断言
-      都会因为"没画"而红，而红得与它们声称在测的东西一个字都没关系。第 9 节专门验这条闸。
-
-断言，第 4 条是性能硬门槛：
-  1. 画布真的画了东西（非透明像素 > 阈值、颜色 ≥ 2）
-  2. 拖动改变画面
-  3. 定位后视图确实朝命中簇移动，且命中簇被摆到画面中心
-  4. **空闲 3 秒 rAF 计数增量为 0**（定位动画与辉光结束后必须彻底停下来）
-  5. prefers-reduced-motion 下不抛错且瞬移到位
-
-第 8 条是**滚轮归属**的判据（20260923 加，20261002 随"锁定态删除"反转）：画布吃到滚轮
-必须缩放图谱并 `preventDefault`（相机 dist 变、`window.scrollY` 不变）。旧版验的是相反的
-行为——"锁定"那套机制已按用户要求整体删除，未放大时页面照常滚动改由外壳的
-`.vit-body{pointer-events:none}` 承担（滚轮也是指针事件），那一半只能在真页面里量，
-见 frontend/tests/vitrine-tear.test.py。页面仍带一条 1600px 的占位块：没有可滚动的文档，
-"scrollY 必须为 0"这条腿就是空转。
-"""
+"""图谱渲染数值断言（本机不能 vite build 的替代手段：esbuild 单文件打包 + CDP 断言）。"""
 from __future__ import annotations
 
 import json
@@ -130,9 +100,6 @@ JS_DIFF = """() => {
 }"""
 
 
-# 画布调用录音器：把 moveTo/lineTo/stroke 的坐标与当时的描边色记下来，用来验
-# "热边在近平面裁剪下仍然被画出来"——这条只能在真实 ctx 调用层观察
-# （像素法分不清"线被裁短"和"线整条没了"）。
 JS_REC_INSTALL = """() => {
   if (window.__recInstalled) { window.__rec.strokes = []; window.__rec.bad = 0; window.__rec.texts = []; return; }
   window.__recInstalled = true;
@@ -237,8 +204,6 @@ def run(browser, manifest, artifact, js):
     ok(s["n"] > 2000, "画布画出了内容（非透明像素 > 2000）", s)
     ok(s["colors"] >= 2, "至少 2 种颜色（点按文章着色）", s)
     ok(errors == [], "首屏无 console error / pageerror", errors)
-    # loader 的两条腿各走了一次（20261003）：先问 API（重建产物优先），API 说"还没有"
-    # 再回落仓库里的种子。计数而不是打桩 —— 这条判据读的是**真发出去的请求**。
     ok(HITS["api_manifest"] == 1, "先问 API 那条路（后台重建的产物优先）", HITS)
     ok(HITS["seed_manifest"] == 1, "API 缺席时回落到仓库里那份种子", HITS)
     ok(HITS["artifact"] == 1, "产物只拉一次（模块级缓存在起作用）", HITS)
@@ -296,9 +261,6 @@ def run(browser, manifest, artifact, js):
               words: window.__hits.map(h => h.w)};
     }""")
     ok(placed["n"] >= 3, "命中 ≥3 个词（'线程协程并发'）", placed)
-    # 阈值只要"远大于同一个点"即可——这条是**防恒真**，不是测布局质量：命中簇
-    # 塌成一个点时质心居中就成了同义反复。20260917 换 UMAP 后 线程/协程/并发 从
-    # 0.19 收到 0.135（相关词更聚，正是换布局的目的），阈值随之从 0.15 放到 0.08。
     ok(placed["spread"] > 0.08, "命中簇在世界空间里是散开的（否则居中检查恒真）", placed)
     ok(abs(placed["cx"] - 310) < 60 and abs(placed["cy"] - 230) < 60,
        "命中簇的投影质心落在画面中心附近（±60px）", placed)
@@ -407,12 +369,6 @@ def run(browser, manifest, artifact, js):
         ok(pick["wa"] in texts, "被悬浮那个词自己的名字也在", texts[:12])
 
     print("== 8. 滚轮归画布：缩放图谱、页面不动 ==")
-    # ⚠️ 20261002 反转了：这里是"锁定态"的判据，而锁定整套已按用户要求删除
-    # （"不需要锁定功能和按钮了"）⇒ 断言从"锁定时滚轮穿透到页面"改成下面这两条。
-    # 页面为什么还能正常滚：靠外壳的 `.vitrine:not(.is-zoomed) .vit-body{pointer-events:none}`
-    # （见 Vitrine/index.sass），滚轮也是指针事件 ⇒ 未放大时根本到不了画布。
-    # 那个规则在真实页面里成立、在这里**不成立**（本页只有一张裸画布，没有 `.vit-body` 祖先），
-    # 所以这条腿只能验引擎这一半：画布吃到滚轮 ⇒ 缩放 + preventDefault。
     page.evaluate("() => { window.scrollTo(0, 0); }")
     d0 = page.evaluate("() => window.__eng.getCamera().dist")
     page.mouse.move(310, 230)
@@ -424,9 +380,6 @@ def run(browser, manifest, artifact, js):
     ok(sc1 == 0, "页面不被滚轮带走（onWheel 里 preventDefault 生效）", {"scrollY": sc1})
 
     print("== 8b. 拖拽改机位（没有锁定态挡着了）==")
-    # 同样反转自旧的"锁定时拖拽不改变机位"。现在引擎没有 `locked` 这道闸，
-    # 指针事件到达画布就一定生效——第三、四条的性能前提是"出帧只由交互驱动"，
-    # 这条坏掉的话图谱会变成一块不吃任何操作的静态图。
     cam0 = page.evaluate("() => window.__eng.getCamera()")
     page.mouse.move(300, 220)
     page.mouse.down()
@@ -465,19 +418,7 @@ def run(browser, manifest, artifact, js):
 
 
 def run_site_gate(browser, manifest, artifact, js):
-    """第 9 节：产物属于**别的站点** ⇒ 不画别人的文章。
-
-    20261003 那道语料归属闸从构建期搬到了运行期（判据见 `loader.ts::siteMatches`）。
-    搬家的理由是"别人用不了"：构建期比的是构建机上的 `SITE_URL`，迁移到新域名的人
-    **永远**过不了闸。搬完之后必须确认它仍然拦得住——这正是本节。
-
-    这里 manifest **原样喂**（`site=None`）：committed 那份署名 `https://saudade.site`，
-    而页面住在 `http://vitrine.test` ⇒ 判据必须拒绝。两条腿都要验：
-
-      ① `loadGraph()` 抛 `SiteMismatchError`（不是别的错，也不是静默画出来）；
-      ② **产物一个字节都没被请求**——归属判断在取产物**之前**。"先下载了再判断"
-         等于先把别人的文章搬进访客的浏览器，那是这道闸唯一真正要防的事。
-    """
+    """验证站点不匹配的图谱不展示其他站点文章。"""
     print("== 9. 别人的产物不画（运行期语料归属闸）==")
     ctx, page, errors = new_page(browser, manifest, artifact, js, site=None)
     page.evaluate("""async () => {

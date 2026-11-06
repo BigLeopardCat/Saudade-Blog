@@ -90,8 +90,6 @@ const NoteTagSelect: React.FC<NoteTagSelectProps> = ({
             if (Number.isInteger(newId) && newId > 0) {
                 onChange?.([...safeValue, newId]);
             } else {
-                // 后端没回 id（旧版返回的死字符串 "Created"）：标签建出来了但选不上，
-                // 如实提示，别让用户以为没建成。
                 message.warning(`标签「${title}」已创建，请在下拉里再次选择它`);
             }
             setNewTagName('');

@@ -23,10 +23,6 @@ const SITE_URL = (process.env.VITE_SITE_URL || 'http://localhost:5173').replace(
 // 署名同理：**缺省是空串**，不预设任何人的名字。fork 出去的人不设它，页面上就没有署名，
 // 而不是继承本项目作者的。线上由 CI 的仓库 Variable `VITE_SITE_AUTHOR` 显式传入。
 const SITE_AUTHOR = process.env.VITE_SITE_AUTHOR || '';
-// 站名与描述（20261007 改）：**缺省是中性占位，不是本项目的文案** —— 与 SITE_URL 同理。
-// 改之前这两项是写死在 index.html 与 SeoHelmet.tsx 里的字面量：谁 clone 部署，谁的站就叫
-// 同一个名字、用同一句描述（品牌被带走，搜索引擎还可能把两个站按近重复内容处理）。
-// 现在默认值仍然只有这一份，HTML 与 TS 两侧都从这里取。
 const SITE_TITLE = process.env.VITE_SITE_TITLE || '个人博客';
 const SITE_DESCRIPTION = process.env.VITE_SITE_DESCRIPTION || '本站开发地址，尚未配置站点描述。';
 // keywords：**缺省空串 ⇒ 把那一整行删掉**（与署名同一处理）。主流搜索引擎早就不看它
@@ -99,11 +95,6 @@ export default defineConfig(() => ({
         siteIdentity(),
     ],
 
-    // `vite dev` 的 API 代理（20261003）。图谱产物改由 API 供出后，开发态的
-    // `loadManifest()` 会先打 `/api/public/graph/manifest`——不代理的话那条路
-    // 永远 404（dev server 不认识 /api），本机看到的就永远是静态种子那份，
-    // "后台重建 → 刷新首页即新图"这条链在开发态根本验不了。Rust 在本机 3000。
-    // 注意只影响 dev（`vite build` 不看这个键），线上仍是 nginx 反代 /api。
     server: {
         // 远程开发容器需要监听所有网卡，VS Code 才能发现并转发 5173。
         host: '0.0.0.0',
@@ -114,10 +105,6 @@ export default defineConfig(() => ({
         },
     },
 
-    // 站点身份注入给 TS（类型声明在 `src/vite-env.d.ts`，读法在 `src/utils/siteUrl.ts`）。
-    // 与上面插件里的 HTML 占位符**同一个名字、同一个值**，只是注入目标不同。
-    // （图谱的语料归属闸 20261003 从构建期搬到了运行期，不再有 `__GRAPH_LOCAL__`；
-    //   判据见 `Vitrine/wordgraph/loader.ts` 的 `siteMatches`。）
     define: {
         __SITE_URL__: JSON.stringify(SITE_URL),
         __SITE_AUTHOR__: JSON.stringify(SITE_AUTHOR),
@@ -134,8 +121,6 @@ export default defineConfig(() => ({
         assetsInlineLimit: 4096,
         sourcemap: false,
         reportCompressedSize: false,
-        // 20261013：`vite@8` 的内核从 rollup+esbuild 换成 **Rolldown**（oxc 转译）。
-        // `rollupOptions` 已成 `rolldownOptions` 的**弃用别名**，这里改用它本身。
         rolldownOptions: {
             output: {
                 chunkFileNames: 'vendor/[name]-[hash].js',

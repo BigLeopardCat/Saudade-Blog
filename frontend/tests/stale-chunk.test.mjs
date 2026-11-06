@@ -1,23 +1,3 @@
-// ═ 换代后的悬空 chunk：识别 + 带闸自愈（20261005，A 案）══
-//   node tests/stale-chunk.test.mjs
-//
-// 现场：部署换代时 dist 按"本次构建的清单"做集合差，把上一代的带哈希分块删掉；而一个
-// **一直开着**的标签页还停在老一代（它的 index.html 与主包都是老的），点开首页展示柜
-// 时那条 `import()` 指向的文件已经不存在 ⇒ 404 ⇒ `Failed to fetch dynamically imported
-// module: …/WordGraphExhibit-<hash>.js`。用户看到兜底卡，而卡上那颗「重试」永远好不了
-// （重新挂载子树拿的还是同一个 URL）。
-//
-// 这套件锁四件：
-//   ① 措辞识别 —— 认浏览器**真会这么说**的四句，且不认"看着像"的（误伤 = 好好的页面被刷掉）；
-//   ② 自愈闸 —— 一分钟一次、时钟倒退不放行、存储被禁也要能刷（否则就是"刷—坏—刷"死循环）；
-//   ③ 两个触发点真接上了，且**判据先于上报**（stale 那一支不许再报 react_error，否则一次
-//      事故两行日志；白名单那边看 `monitor-report.test.mjs`）；
-//   ④ 兜底卡本身 —— stale 分支给的是「刷新页面」+ `location.reload()`，**不是**「重试」+
-//      `setState`（那一颗在这个场景是骗人的）。
-//
-// ⚠️ 行为测试必须把 `location` / `sessionStorage` / `fetch` 三样替换掉再 import ——
-// `staleChunk.ts` 拉进 `utils/report.ts`，而后者按设计"永远不抛"：它会把 ReferenceError
-// 吞掉，于是"没刷""没报"在断言里长得一模一样。缺了会显式报错。
 import * as esbuild from 'esbuild';
 import { mkdtempSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';

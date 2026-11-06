@@ -19,16 +19,6 @@ const ok = (cond, name, detail) => {
 const eq = (got, exp, name) => ok(got === exp, name, { got, exp });
 const truthy = (v, name) => ok(!!v, name, { got: v });
 
-// 产物文件的缓存头**两条路各归各的**（20261003 起产物改由 API 供出）：
-//   ① 仓库里 committed 的种子（public/graph/ → dist/graph/）：由 nginx 决定 ——
-//      它只对形如 -<8位以上hash>.<白名单扩展名> 的文件给 1 年 immutable，白名单里有
-//      js、没有 json。文件名一旦不合规就会掉进 no-store 每次刷新全量重下 ——
-//      性能事故，但页面看起来完全正常（这就是它值得被断言的原因）。
-//   ② 后台重建的产物（agent 的 data/word_graph/web/）：由 Rust 的
-//      `/api/public/graph/artifact/:file` 供出，Content-Type / Cache-Control 全在
-//      `src/routes/graph.rs` 里 —— nginx 那两个 443 块的 `^~ /api/` 前缀 location
-//      跳过所有正则 location，`\.(js|css|json)$` 那条抢不走。
-// 两边**同一条文件名形状**：前端 loader.ts 的动态 import 与 Rust 的白名单校验共用它。
 const FILE_RE = /^graph-[A-Za-z0-9_-]{8,}\.js$/;
 /** 建图脚本把坐标缩放到 98 分位后 clip 到 ±WORLD_R。前端相机参数按这个尺度定死 */
 const WORLD_R = 1.6;
@@ -110,10 +100,6 @@ console.log('== 质量指标 ==');
     const fid = stats.fidelity, rho = stats.len_sim_rho;
     truthy(typeof fid === 'number', 'stats.fidelity 存在', stats);
     truthy(typeof rho === 'number', 'stats.len_sim_rho 存在', stats);
-    // 主门 = **保真度**：视图里的近邻是否还是 1024 维处理空间里的近邻。这是访客
-    // 实际感受到的东西（点一个词、它周围的词相不相关）。随机基线 10/(n-1)≈0.025，
-    // 20260917 的离线 A/B（scripts/layout_ab.py）实测：UMAP 0.433 / PCA+弹簧 0.255 /
-    // Isomap 0.18~0.21 / SMACOF（只优化边集）0.027≈随机。
     ok(fid >= 0.30, '近邻保真度 ≥ 0.30（UMAP 布局实测 0.43）', fid);
     if (stats.fidelity_k) {
         // 多 k 曲线：k 从 5 到 20 不该塌（塌了说明只有最近的一圈被保住）

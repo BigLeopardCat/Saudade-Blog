@@ -143,17 +143,6 @@ class Element {
   click() { (this._listeners.click || []).forEach(fn => fn({ target: this, stopPropagation() {}, preventDefault() {} })); }
 }
 
-/**
- * 选择器判定：`,` 列表 + 标签名 + `.class` + `#id` + `[attr]` / `[attr="值"]`
- * （含 `data-*` ↔ `dataset` 的映射）。**认不出来的写法一律 false。**
- *
- * 20260927 修：属性选择器此前是 `return true`（"只当存在性用"），于是
- * `querySelector('[data-mtype="user"][data-mid="…"]')` **返回注册表里第一个元素**，
- * 与条件毫无关系——`restoreAndCleanup` 拿它去 `removeChild`，"删掉那条用户气泡"
- * 这条链路要么删错人、要么（父节点为空时）静默不删，两种都让判据假绿。
- * 属性选择器在本仓只用于三类真实取值（`[data-mid=…]` 定位消息、`[data-mtype=…]`
- * 与 `[data-ask-value]`），值匹配比"存在性"更接近真机，不存在"故意恒真"的用法。
- */
 function matchesSel(el, sel) {
   return String(sel).split(',').some(one => matchesSimple(el, one.trim()));
 }
@@ -203,9 +192,6 @@ const document = {
   _byId: {},
   _listeners: {},
   head: new Element('head'),
-  // 真机恒有 body（看板娘渲染层把 #waifu 骨架 insertAdjacentHTML 到 body 上）。
-  // 此前没有它是因为没有任何被测模块用过 document.body —— 不是"故意不提供"，
-  // 而是直到 20261001 渲染层换自研才第一次被用到。
   body: new Element('body'),
   createElement(tag) { return new Element(tag); },
   createTextNode(t) {

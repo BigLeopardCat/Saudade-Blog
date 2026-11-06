@@ -1,16 +1,3 @@
-// ═ 昵称唯一（20261002）跨层契约 ══
-//   node tests/nickname-unique.test.mjs
-//
-// 用户原话：「昵称也启用唯一不可重复。」这条特性跨了四层，而**每一层单独看都像做完了**：
-//   迁移（函数索引 + 存量去重改名）→ Rust 写入侧（预检 + 1062 兜底 + 清标记）
-//   → DTO（nicknameAutoRenamed）→ 前端（个人中心横幅）
-// 任何一层漏掉，症状都是"看起来对但没生效"：索引漏了就静默允许重名；预检漏了就每次
-// 改动都弹"保存失败"（其实是 1062）；DTO 漏了横幅永远不出现（`undefined` 是 falsy，
-// 渲染分支安静地不走）；迁移的 `IS NOT NULL` 漏了，"三个人都没设昵称"会被当成重名组，
-// 执行者在建索引前白白停手。
-//
-// 这里不跑 DB、不跑浏览器，只做**源码契约**（同 `agent-cmd-program-only.test.mjs` 的形态）：
-// 把"改一处忘一处就会静默失效"的那几处逐条钉住。真正的行为验证在迁移执行与无头沙箱。
 import { readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -27,7 +14,6 @@ const ok = (cond, name, detail) => {
     if (cond) { passed++; console.log('  ✓ ' + name); }
     else { failed++; console.log('  ✗ FAIL: ' + name + (detail !== undefined ? '  → ' + JSON.stringify(detail) : '')); }
 };
-/** 剥注释后再断言"代码里没有 X"（本仓的文件头注里**刻意**写着旧实现/反例） */
 const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').replace(/^\s*--.*$/gm, '');
 
 const profileRs = read('src/routes/profile.rs');
@@ -42,18 +28,10 @@ console.log('迁移 —— 函数索引与存量去重：');
 ok(/ADD UNIQUE KEY `uk_user_nickname` \(\(NULLIF\(TRIM\(nickname\), ''\)\)\)/.test(migration),
     '唯一索引是**函数索引**且表达式外有双层括号（单层会被 MySQL 当成列名）');
 ok(migration.includes('VERSION()'), '先打印 MySQL 版本（函数索引需要 ≥ 8.0.13）');
-// 判据是"归一后非空"，且**必须经别名**引用：MySQL 8 在 HAVING 里把 GROUP BY 那个表达式
-// 原样重写一遍会报 `ERROR 1054 Unknown column 'nickname' in 'having clause'`（20261003 实跑
-// 发现——这文件从写出来到跑之前从没被执行过）。别名只是给它起个名字，判据一字未改。
 ok(/NULLIF\(TRIM\(nickname\), ''\) AS 归一组/.test(migration),
     '分组表达式被**命名**（`AS 归一组`）——HAVING 里只能引别名，重写表达式会 1054');
 ok(migration.includes('GROUP BY 归一组') && migration.includes('HAVING COUNT(*) > 1 AND 归一组 IS NOT NULL'),
     '重复组判据带 IS NOT NULL——没设昵称的账号会一起落进 NULL 组，少了它"三个人都没设昵称"会被报成重名组');
-// ④ 的**分组口径必须与 ①/⑤ 和索引逐字相同**。20261003 生产实跑踩到：原来写的是
-// `PARTITION BY nickname`（原始值），4 个没设昵称的账号共享空串 ⇒ 落进同一分区、
-// rn = 1..4 ⇒ 其中 3 行被改成 `_<id>` 并置了自动改名标记。而 ①/⑤ 都带 `IS NOT NULL`、
-// 报"0 个重名组"——**两句并列出现而不矛盾**，正是这个 bug 最难自己发现的地方。
-// 所以这两条不是"把字符串换成新的"，而是把"全文件只有一种口径"变成可执行的判据。
 ok(migration.includes("ROW_NUMBER() OVER (PARTITION BY NULLIF(TRIM(nickname), '') ORDER BY id)"),
     '存量去重的**分组口径 == 索引口径**（不是原始的 nickname）——按原始值分组会把空昵称账号算成一族');
 ok(/WHERE NULLIF\(TRIM\(nickname\), ''\) IS NOT NULL/.test(migration),
@@ -71,8 +49,6 @@ ok(migration.indexOf('ADD UNIQUE KEY') < migration.indexOf("VALUES ('nickname_un
 ok(/回滚[\s\S]*DROP INDEX `uk_user_nickname`/.test(migration), '回滚段里有 DROP INDEX');
 
 console.log('\nRust 实体 —— 列必须与迁移同时在场：');
-// 20261018 切库到 PG：`tinyint(1)` → `smallint`，`sqlx-postgres` 按 OID 精确匹配
-// ⇒ 这一格必须跟着变 i16（i8 在 PG 侧映射 `"char"` oid 18，整片路由读不出来）。
 ok(/pub nickname_auto_renamed: i16,/.test(entityRs),
     'entity 有 nickname_auto_renamed: i16（PG smallint）');
 

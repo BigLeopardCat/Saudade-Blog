@@ -51,16 +51,6 @@ const nextId = (list: Todo[]) => (list.length ? Math.max(...list.map(t => t.id))
 const rowKey = (r: {text: string; date?: string | null}) =>
     r.text.trim() + '\u0000' + (r.date ?? '');
 
-/** 把**库里新多出来的行**（agent 用追加通道写进去的）并进本地列表。
- *
- * 判据 = 「库里现在有」而「上一次与库里同步时有的那份」里没有（`snapshot` = 那次
- * 同步的 payload），**不是**「库里现在有、本地没有」：主人删掉的行是只在本地没了的，
- * 拿本地当判据会把它当成"别人新加的"复活回来——主人删掉的东西自己冒回列表，比一时
- * 看不到 agent 新加的那条糟糕得多。差集只朝"新出现的"这一个方向取，这一点就成立。
- *
- * 没有任何新行时**原样返回 `local`**（同一个引用）：调用方靠这个引用判"要不要多绕
- * 一圈 setState"，见下面保存 effect 里的用法。
- */
 const mergeServerRows = (server: DashboardTodo[], local: Todo[],
                          snapshot: DashboardTodo[]): Todo[] => {
     const had = new Set(snapshot.map(rowKey));
@@ -305,13 +295,6 @@ const Home = () => {
         setDraft('');   // 快添栏留着不关，方便连着加第二条
     };
 
-    // 点了日历上某一天 → 待办卡里若有那天的分组，就把它带到视野里。
-    // 只滚不改数据：点日期的主语义仍是"给这天加一条"（下面那条快添栏），
-    // 这里只是让"那天都有什么"不用自己翻。
-    //
-    // 锚点用的是分组自己的 key，而**已经逾期的那几天在卡里是并成一组的**（key='overdue'，
-    // 见上面的 groups）——所以过去的日期要落到 'overdue' 上；直接拿 ISO 日期去找
-    // 会一个也匹配不上（点红点那天什么都不会发生）。
     useEffect(() => {
         if (!pendingDate) return;
         const key = pendingDate < today ? 'overdue' : pendingDate;

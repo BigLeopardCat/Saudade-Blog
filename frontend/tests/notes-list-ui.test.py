@@ -1,27 +1,5 @@
 # -*- coding: utf-8 -*-
-"""后台「全部文章」列表页改版的无头验收：真组件 + 真 antd + 假后端。
-
-20260924 追加【五】：列表区铺满卡片、分页条移出滚动区钉在底部、`scroll.y` 撤掉后
-表头改靠 `position: sticky` 吸顶、每页条数可调（写进 URL）。四条都只有真跑一遍才
-看得见（几何、层级、以及"改每页条数会不会又去拉一次数据"），且它们**互相牵连**
-——少写 `tableLayout="fixed"` 列宽就失效、分页条留在滚动区里就会被滚走。
-
-20260923 那轮的四处改动**也都只有真跑一遍才看得见**——
-  · 「筛选栏收成一行」是布局结果：`layout="inline"` 下四个控件的 rect.top 是不是同一个值，
-    读代码看不出来（`Col span={8}` 换掉之后，谁也不敢保证 antd 的 inline 一定不折行）；
-  · 「新增文章按钮挪到标签按钮前」是个**顺序**判据：得拿两者的 getBoundingClientRect 比左右；
-  · 「切页不再重新请求」是本轮唯一的**行为**变化，而且判据只有一个——桩里记的请求条数。
-    光看"界面上页码变了"完全区分不出"前端切片"和"又拉了一遍整表"；
-  · 「深链里的日期会被点搜索清掉」更是只有发出去的那份请求体说了算。
-
-沿用既定手段（本机不能 vite build，见 CLAUDE.md §2）：esbuild 把**真组件**打成 bundle，
-**只桩 axios 这一个边界**（路由用真的 MemoryRouter —— 这页的分页/筛选全靠 URL 真源，
-桩掉路由等于把被测对象换掉）；sass 用 programmatic API 单独编译后用 `--loader:.sass=text`
-收下。本机无中文字体（截图里汉字是豆腐块），断言全走数值与请求，不受影响。
-
-用法：python3 frontend/tests/notes-list-ui.test.py
-依赖：frontend/node_modules（esbuild/react/react-dom/antd/react-router-dom/@mui）、playwright(python)。
-"""
+"""后台「全部文章」列表页改版的无头验收：真组件 + 真 antd + 假后端。"""
 import functools
 import http.server
 import pathlib
@@ -186,10 +164,6 @@ def build_sandbox() -> pathlib.Path:
         # 宽容解码：esbuild 会在中文那行按字节截断，严格 utf-8 解会先炸在解码上、盖住真报错
         raise SystemExit("esbuild 打包失败：\n%s" % r.stderr.decode("utf-8", "replace"))
 
-    # 20260924：给页面一个**真实的高度上下文**。这页的列表区是 flex 撑满的
-    # （`.AllCard{height:100%}`，真实环境里那一 100% 是后台壳的 `.Card` 给的 95vh），
-    # 沙箱只挂了一个裸组件，没有父高度可继承 ⇒ 列表区退化成内容高、"铺满卡片"
-    # 这类断言全是空转。这里用 `#root{height:100%}` 补上那一层。
     (sb / "index.html").write_text(
         '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
         '<style>html,body,#root{height:100%;margin:0}</style>'
@@ -224,11 +198,6 @@ def mount(br, path="/dashboard/notes/allnotes", size=(1440, 900), dash_css=False
     page.on("pageerror", lambda e: errs.append(str(e)))
     page.goto(URL)
     if dash_css:
-        # 20261001：**后台壳那份样式表**（`Dashboard/index.css`）平时不在这个沙箱里——
-        # 本脚本只编译被测组件自己的 sass。可"表头底透不透光"这条规则的**出处**正是
-        # 那份文件（`body.dash-skin .ant-table-wrapper … thead th`），不把它挂上就
-        # 只能在 antd 自带的浅灰底上问一句"透不透"，**问到的是别人**。
-        # 只挂在这一节自己的页面上（前面几节的页面不带），把全局选择器串味的面缩到最小。
         page.evaluate("() => document.body.classList.add('dash-skin')")
         page.add_style_tag(path=str(FE / "src/pages/Dashboard/index.css"))
     page.evaluate("(p) => window.__mount(p)", path)
@@ -302,19 +271,11 @@ with sync_playwright() as p:
     check("是 antd 的小号按钮（不再是 40px 的圆形 Fab）",
           geo["small"] and geo["btn"]["h"] <= 26, f'h={geo["btn"]["h"]:.1f}')
     check("点它之前没有别的 add 按钮残留（旧 Fab 已删）", geo["fabAdd"] == 0, str(geo["fabAdd"]))
-    # 20261006：「页面上的第一个页签」现在是**公开文章**（它排在「全部文章」前面），
-    # 这条判据比的是"按钮在所有页签之前"，与第一个页签叫什么无关，故数值判据不动、
-    # 只把措辞改准（页签顺序另有【三·补】专节锁）。
     check("按钮在第一个页签（公开文章）之前（right <= tab.left）",
           geo["btn"]["right"] <= geo["tab"]["left"] + 0.5,
           f'btn.right={geo["btn"]["right"]:.1f} tab.left={geo["tab"]["left"]:.1f}')
     check("按钮与标签条同一行（垂直重叠）",
           geo["btn"]["bottom"] > geo["tab"]["top"] and geo["btn"]["top"] < geo["tab"]["bottom"])
-    # 20260927 用户报「刷新按钮和后面的页标签太挤了」：tab 条左侧的附加内容里有两颗按钮
-    # （新增文章 / 刷新），新增文章自带 margin-right、刷新没有 ⇒ 刷新与第一个标签之间
-    # 只剩 antd 的默认值。判据取**刷新按钮右缘到第一个标签左缘的距离**，与页内既有的
-    # 12px 节奏对齐（新增文章 → 刷新 就是 12px）。改成量距离而不是"某处有个 margin"：
-    # margin 写在谁身上、被谁吃掉，读代码看不出来。
     rgeo = pg.evaluate("""() => {
         const btn = [...document.querySelectorAll('.AllCard .ant-btn')]
             .find((b) => b.textContent.includes('刷新'));
@@ -381,12 +342,6 @@ with sync_playwright() as p:
     check("第三节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
-    # ── 三·补、「公开文章」页签（20261006 用户第 5 条）─────────────────────────
-    # 用户原话：「不要给文章标签位置加个公开文章标签，是多余的…在『全部文章』页标签前加个
-    # 『公开文章』，或者再加个筛选项。」→ 绿标撤掉、页签排在**最前**。
-    # 两条判据分开：① 顺序与 key（`key` 仍是 '4'，页签顺序变了但 `?tab=` 的契约没变）；
-    # ② 切过去时**发出去的请求体** —— 公开与否必须由后端判（前端一个条件都不加，
-    #   只有 `only_public` 能表达"这个集合"）。光看界面看不出这两件事。
     print("\n【三·补】「公开文章」页签：排最前，筛选由后端做")
     pg = mount(br)
     tabs = pg.evaluate("""() => [...document.querySelectorAll('.AllCard .ant-tabs-tab')]
@@ -431,8 +386,6 @@ with sync_playwright() as p:
           first["url"] == '/api/protected/notes/search'
           and first["data"].get('start_date') == '2026-09-01'
           and first["data"].get('end_date') == '2026-09-10', str(first))
-    # ⚠️ 不能用 has_text="搜索"：antd 会给**两个汉字**的按钮自动插一个空格（渲染成「搜 索」），
-    # 按整词匹配永远命中不了（20260922 在 user-center.test.py 上踩过同一个坑）。按 type 定位。
     pg.locator('.AllCard form button[type="submit"]').first.click()
     pg.wait_for_timeout(700)
     last = pg.evaluate("() => window.__calls[window.__calls.length - 1]")
@@ -443,10 +396,6 @@ with sync_playwright() as p:
     check("第四节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
-    # ── 五、列表区铺满卡片、分页条钉底、表头吸顶（20260924 重排）────────────────
-    # 这一轮撤掉了 `scroll={{y:'56vh'}}`：那个定高滚动区在 900 高的窗口上只有 504px、
-    # 刚好把每页最后一条藏进滚动区，而卡片下方还空着 150px。下面每条都只有真跑一遍
-    # 才看得见（几何、层级、以及"改每页条数会不会又去拉一次数据"）。
     print("\n【五】列表区铺满卡片 + 分页条钉底 + 表头吸顶")
     pg = mount(br, size=(1440, 900), dash_css=True)
     geo = pg.evaluate("""() => {
@@ -493,12 +442,6 @@ with sync_playwright() as p:
     }""")
     check("列表滚到底时表头仍吸在滚动区顶部",
           stuck["scrolled"] and stuck["gap"] < 2, str(stuck))
-    # 吸顶表头的底色**必须不透明**。20260930 那轮把表头底改成了
-    # `var(--washi-line-2)`（22% 的粉线）——它压掉了 antd 自带的实体底，
-    # 于是滚上来的行**从表头里透出来**（用户实测："表头背景不要透明，会透过
-    # 下方列表干扰视觉"）。判据只能读计算值：把 alpha 抽出来看是不是 1
-    # （不写"有没有 rgba 字样"——`rgba(…, 1)` 同样是实体色，那样会假红）。
-    # 三张吸顶表（文章/额度/留言）共用这条规则，这里量的是文章页。
     th_alpha = th_bg_alpha(geo["thBg"])
     check("吸顶表头底色不透明（行不会从表头里透出来）", th_alpha >= 1.0,
           f'th 底色 = {geo["thBg"]}（alpha={th_alpha}）')
@@ -547,10 +490,6 @@ with sync_playwright() as p:
     check("第五节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
-    # ── 六、面包屑与子菜单选中按路径派生（20261006 修）─────────────────────────
-    # 病根与侧栏高亮是**同一个**：路由是 `createBrowserRouter`（真实 path、全仓无人写
-    # hash），而这段原来读 `location.hash` ⇒ 恒不命中，面包屑**永远**是「未知页面」。
-    # 旧实现下本节的每一条都必然红（它连 '全部文章' 都显示不出来），所以这里不需要另设对照。
     print("\n【六】笔记页面包屑（原来恒显示「未知页面」）")
     CRUMB = ("() => { const li = document.querySelectorAll('.header .ant-breadcrumb li');"
              " return li.length ? li[li.length - 1].textContent.trim() : ''; }")
@@ -576,25 +515,6 @@ with sync_playwright() as p:
         check(f"{path} → 面包屑「{want}」", got == want, f"得到「{got}」")
         check(f"{path} → 无页面异常", not errs, "; ".join(errs[:3]))
 
-    # ── 七、文章分类列的标签：文字要落在标签容器正中间 ──────────────────────────
-    # 20261014 用户第 2 条。原来那一格是个行内 style 的居中 div，看着像居中、两轴其实都偏，
-    # **两处偏移都是量出来的**（不是估的）：
-    #   · 水平 −4.00px：antd 的 `.ant-tag` 自带 `margin-inline-end: 8px`，而 flex 的
-    #     `justify-content:center` 居的是**外边距盒** ⇒ 边框盒整体左移 8/2；
-    #   · 垂直 −1.50px：Tag 的 `line-height:20px` 里塞了个 antd `Space`（inline-flex），
-    #     行盒被撑到 23px 而内容只有 20px ⇒ 图标+文字贴着内容盒上沿、底下空 3px，
-    #     标签也比平时高 3px（25px vs 22px）。
-    # （这两个数是**挂了 iconfont 在真页面上**量到的。本套件的沙箱不挂字体，`<i>` 是零宽
-    #   空盒，同一处改回来只会读到 dx=−4.00px / dy=+2.00px / 内容盒 24px —— 方向与结论一样，
-    #   数值别照抄。）
-    # 判据取"标签边框盒中心 == 所在单元格中心"与"图标+文字这一组的中心 == 标签内容盒中心"
-    # —— 两轴各一条，都在半像素内。**不判字面量高度**：22px 只是 antd 默认值的另一种写法，
-    # 内容真居中了高度自然就回去了。
-    #
-    # 量的是 antd 的 `Space`（`.ant-space`）盒子，不是"图标盒 ∪ 文字盒"的并集 —— 这个沙箱
-    # **不挂 iconfont**（本套件的 index.html 里没有那两份字体样式表），`<i>` 是个零宽空盒，
-    # 拿它算并集等于只量了文字。`Space` 本来就是那个被撑开的 inline-flex 盒子，两处的偏差
-    # （外边距盒居中的 −4px、行盒被撑开的那些余量）都落在它身上。
     print("\n【七】文章分类列的标签文本居中")
     pg = mount(br)
     CAT = """() => {

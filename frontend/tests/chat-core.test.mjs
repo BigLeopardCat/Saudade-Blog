@@ -1,7 +1,3 @@
-// ═ ChatCore 回归锚点（20260828o 结构拆分后固化）══
-// node tests/chat-core.test.mjs 运行。覆盖：时间标签（微信式分组）、
-// mergeItems/replaceWithIncoming/capItems/migrateItem/matchText、命令正则权威定义。
-// chat-core.js 是纯函数模块（window/globalThis 双挂载），node 直接 require 可测。
 import { readFileSync } from 'fs';
 import vm from 'vm';
 import { fileURLToPath } from 'url';

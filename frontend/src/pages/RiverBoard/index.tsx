@@ -506,8 +506,6 @@ export default function RiverBoard() {
             });
         }
     };
-    /* 触屏打开弹窗后，同一次点按的合成 click 会落在遮罩上误关；
-       800ms 内的遮罩点击视为那次点按的跟随事件，忽略 */
     const dismissModal = () => {
         if (Date.now() - lastWishTouch.current < 800) return;
         closeModal();
@@ -817,8 +815,6 @@ export default function RiverBoard() {
                 talkKey: Number(x?.talkKey ?? 0),
             }))
             .filter((t) => t.msg);
-        // 空池子**什么都不动**：留言板真的清空是极端情况，而"拉回来一份空"更可能是上游
-        // 抽风——那时把河面写空（或把灯全换掉）比留一河旧灯坏得多。挂载那次另有演示灯兜底。
         if (items.length === 0) return;
         if (allTalksRef.current.length === 0) batchPtr.current = lanternCountRef.current;
         allTalksRef.current = items;

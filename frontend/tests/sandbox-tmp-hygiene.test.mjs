@@ -1,30 +1,3 @@
-// ═ 沙箱临时目录卫生：两个运行器的 TMPDIR 隔离 + 清扫脚本的判据（20261006）══
-//   node tests/sandbox-tmp-hygiene.test.mjs
-//
-// 现场：`frontend/tests/` 下的套件用 `tempfile.mkdtemp(prefix=…)` 建临时目录，**跑完基本不删**
-// （37 个 .py 里只有 10 个在 happy path 末尾删一次；.mjs 侧 24 个建目录的套件里只有
-// `wordgraph-artifact.test.mjs` 有 finally）。实测 /tmp 因此堆到 **5.6G**，其中 2249 个目录 /
-// 4.47G 是这批套件的残留——占整个 /tmp 的八成。最大一族 `comment-layout-` 141 个 / 2.5G；
-// 次大 `cmt-` 60 个 / 588M（来自 .mjs 侧，而 `nightly_sandboxes.sh` 只枚举 `*.py`
-// ⇒ 那条路漏出来的目录**从来没有东西管**）。
-//
-// 修法（用户 20261006 拍板：只修运行器 + 夜间清扫，**不动 61 个套件的源码**）：
-//   ① 两个运行器给每个套件一个**专属 TMPDIR**——通过就删、失败就**留下**（排障材料）。
-//      选这个而不是"每个套件自己清"，因为运行器知道**过没过**，套件自己分不出这两种结局；
-//   ② 一个独立清扫脚本收走隔离盖不住的（手跑单套件、被 kill 的轮次），夜跑末尾调它。
-//
-// ⚠️ 这套东西的**失效方式全是静默的**，所以必须有这份锁：
-//   · `mkdir -p` 漏了 ⇒ TMPDIR 指向不存在的目录 ⇒ `tempfile.gettempdir()` **静默回落到 /tmp**，
-//     隔离看着生效、实际一行没生效；
-//   · 失败那一支误删 ⇒ 排障材料没了（没有别的地方留）；
-//   · 清扫脚本"默认就删" ⇒ 半夜自己动手，而它判据错了没人知道；
-//   · 前缀改回**手写名单** ⇒ 漏一族就再也不会被扫，**且没有任何东西会变红**
-//     （本轮手写的第一个版本就漏了 ann-verify- / comment-layout- / mmzoom- / readcol- /
-//      readmob- / uc-verify- 六族，合计 700M+）。
-//
-// 为什么只做**源码锁**、不去真跑那个 python 脚本：本仓 51 个 .mjs 套件从来没有 spawn 过
-// python/bash（只用过 vendored 的 esbuild 二进制），不新开这个口子。真正的**行为**验证
-// （诱饵目录、年龄闸、干跑不删）在 `tests/sandbox-tmp-prune.test.py` 里，那一条进了夜跑。
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

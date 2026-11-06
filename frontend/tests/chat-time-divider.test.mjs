@@ -1,24 +1,8 @@
-// ═ 时间标签（TD）位置与相对时间：CI 断言套件（20260927 由 `repro-timegap.mjs` 升格）══
-//   node tests/chat-time-divider.test.mjs
-//
-// 缘起（20260828o 浏览器回归）——用户现场：主窗口"天气消息下方显示昨天20:42"、
-// 后台窗口"网络错误消息上方显示昨天20:42"。链条：50 条真实历史（首条昨天 20:42）
-// → 发消息 → SSE 断流 → catch 转正（l 轮，今天）→ saveHistory → storage 触发 pullHistory
-// （60s 窗口内外两种）→ reconcileDOM 孤儿清理 → **标签必须仍钉在各自消息正上方**。
-//
-// 升格理由：它此前长期是"手工排查工具"，20260927 修好两处陈旧（时钟没钉死 ⇒
-// 「首 TD 文本」随跑测日期漂移；storage 触发用了 20260903 之前的单桶键 ⇒ 整条拉取
-// 链路静默空转，看着像渲染错了）之后**每条都确定可判**，于是进 CI（`npm test` 的
-// glob 收录）——这类"渲染物位置"的回归恰恰是手工跑才会漏掉的。
-//
-// 时钟：整支 `Date` 被钉在 2026-08-28 14:52:30（见下方假时钟块），与 fixture 的
-// 末条 DB 记录 1895@14:51:56 配套 ⇒ TD 文本（`昨天 20:42`）与 60s 窗口全部确定。
 import { readFileSync, existsSync } from 'fs';
 import vm from 'vm';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import { installDom, installScriptLoader } from './stubs/dom.mjs';
-// SSE 桩要带 content-type：20261002 起前端据它判"这是不是流"
 import { sseHeaders } from './stubs/sse.mjs';
 
 const W = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../public/live2d-widgets');
@@ -34,9 +18,6 @@ const dump = (label) => {
   console.log('  ' + label + ':\n    ' + line);
 };
 
-// ── 最小 DOM stub：20260927 起与 smoke 那支共用 tests/stubs/dom.mjs ──
-// （两份各复制一份时，两份都没有 document.querySelector —— 谁也没跑到自己声称的
-//   地方；抽出去的完整理由与三处真机语义见 stubs/dom.mjs 头注）
 installDom();
 installScriptLoader(W);
 
@@ -73,10 +54,6 @@ globalThis.Image = class {};
 globalThis.Live2DCubismCore = {};
 globalThis.__chatRenderMarkdown = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 globalThis.__chatEnhance = () => {};
-// 看板娘在这里**不打桩**（20261001 渲染层换自研）：上游 initWidget 与 __cubism5model 那套
-// 嵌套结构已随 GPL 实现一起从仓库移除，现在由 renderer.js 自己建 #waifu 骨架。
-// 真 renderer 在 Node 下会死在 PIXI 未定义处、被它自己的 .catch 兜住（模型画不出来，但工具条
-// 照建、waifu-active 照加）——这正是本 harness 要覆盖的形状，别再加桩把它盖回假绿。
 
 // ── 真实 DB 数据（2026-08-28 导出 chat_history id 1846-1895，+08:00 钟面）──
 // 期望 TD（间隔 >5min）：1846上"昨天 20:42"、1847上"00:36"、1853上"01:56"、
@@ -142,18 +119,6 @@ const EXPECT_TD_ABOVE = [1846, 1847, 1853, 1857, 1865, 1867, 1869, 1871, 1875, 1
 let pullCount = 0;
 let streamMode = 'ok'; // 'ok' | 'error-frame' | 'fetch-fail'
 let itemsCb = null;
-// ── 假时钟（20260927 重做）──
-// **必须换掉 `Date` 本身，不是只盖 `Date.now`**：两处取"现在"的写法不同——
-//   · `replaceWithIncoming` 的 60s 窗口用 `Date.now()`；
-//   · `__chatCore.formatTimeLabel` 用 **`new Date()`**（chat-core.js:207，算本地日界差，
-//     决定 TD 是 `HH:mm` / `昨天 HH:mm` / `M月D日 HH:mm`）。
-// 旧版只盖了 `Date.now` ⇒ TD 文本始终按**真实跑测日期**渲染：2026-08-28 那天跑是
-// "昨天 20:42"，今天（09-27）跑变成"8月27日 20:42"——「首 TD 文本」这条断言于是
-// 依赖跑测日期（而且它当年能过，只是因为写它的那天正好是 8-28）。
-// 现在整支 `Date` 都是偏移过的：带参构造照旧（`T(y,m,d,…)` 造的是绝对时刻），
-// 无参构造 = 现在。**先钉死再加载**，全部场景一律从 2026-08-28 14:52:30 起算——
-// 它同时满足场景 2 的口径（与末条 DB 记录 1895@14:51:56 间隔 <5min ⇒ user 消息上方
-// 不新增 TD，TD 总数恒为 14）。
 const RealDate = Date;
 const realNow = RealDate.now.bind(RealDate);
 let nowOffset = T(2026, 8, 28, 14, 52, 30) - realNow();
@@ -171,9 +136,6 @@ globalThis.fetch = async (url, opts) => {
   }
   if (String(url).includes('/api/chat/discard')) return { ok: true, json: async () => ({}) };
   if (String(url).includes('/api/chat/conversations')) {
-    // 会话化（20260903）新增：空白新对话态发送前先建会话（`ensureConversation`）。
-    // 缺这个桩 ⇒ fetch 抛"unexpected fetch" ⇒ 被它的 catch 吞成 false ⇒ 每轮都停在
-    // 「创建新会话失败」气泡上：期望的 50/51/52 条一律 +2，全场景判红（20260927 修）。
     return { ok: true, json: async () => ({ id: 1 }) };
   }
   if (String(url).includes('/api/monitor/log')) return { ok: true, json: async () => ({}) };
@@ -193,8 +155,6 @@ globalThis.fetch = async (url, opts) => {
   }
   throw new Error('unexpected fetch: ' + url);
 };
-// ── 等待工具（20260927）：固定 sleep 在慢机器/CI 上就是**偶发红**的来源，
-// 偶发红比没有测试更坏（会训练人忽略红）。等不到就照旧交给断言判红。
 const msgsOf = () => {
   const m = document.getElementById('chat-messages');
   return m ? [...m.children].filter(c => c.classList.contains('chat-msg')) : [];
@@ -217,18 +177,11 @@ const assert = (cond, name, detail) => {
 };
 
 const fireStorage = async (label) => {
-  // 键自 20260903 起按会话分桶（`chat_history_<token>_(auto|<convId>)`），而监听器是
-  // **全键相等**比较（JWT 自带 '_'，前缀判断会误收别的会话的写入）⇒ 写死旧单桶键
-  // `chat_history_<token>` 等于**什么都没触发**：pullHistory 不跑、reconcile 不做孤儿
-  // 清理，于是"无 mid 的错误气泡被收敛"这组期望全部落空（20260927 修）。
-  // 取当前真实键 = 最近一次写入的那个（本文件不用精确指定会话，视图只有一个）。
   const keys = [...store.keys()].filter(k => k.startsWith('chat_history_') && !k.includes('backup'));
   const key = keys[keys.length - 1] || ('chat_history_' + store.get('tokenKey'));
   const before = pullCount;
   const fns = document._listeners['storage'] || [];
   fns.forEach(fn => fn({ key }));
-  // 等**拉取真的发生**（而非"睡够 500ms 希望它发生"）：这是监听器认没认这个键的
-  // 直接证据——此前正是这条链路静默空转，导致后面所有断言看着像"渲染错了"。
   await waitFor(() => pullCount > before);
   await settle();
 };
@@ -264,8 +217,6 @@ dump('加载后');
 console.log('\n== 场景 2：发消息 → __ERROR__ 帧（agent 重启断流）→ 网络错误气泡（无 mid，不转正）==');
 streamMode = 'error-frame';
 {
-  // 时钟已在文件头钉死为 2026-08-28 14:52:30（此处原有的那行赋值是场景 1 之后才生效的，
-  // 正是「首 TD 文本」随跑测日期漂移的成因，20260927 上移）。
   const input = document.getElementById('chat-input');
   input.value = '可以呀帮我看看杭州钱塘区天气';
   document.getElementById('chat-send').click();
@@ -276,10 +227,6 @@ streamMode = 'error-frame';
   const last = msgs[msgs.length - 1];
   assert(msgs.length === 52, '50 历史 + user + 网络错误气泡 = 52 条', msgs.length);
   assert(!last.dataset.mid, '网络错误气泡无 mid（__ERROR__ 帧无回复内容不转正——设计行为，与真实 DB 一致）', last.dataset.mid);
-  // 错误文案住**子节点** `div.chat-msg-err-note`（renderFailed：正文照常渲染，提示作为独立节点追加），
-  // 不在 `.msg-text` 自己的 textContent 里；且 20260927 起服务端自写的那句话**不套**
-  // 「网络错误: 」前缀（这个帧是终止帧的一种、不是连接故障）⇒ 这里断的是**帧里的原文**。
-  // 注：本 stub 的 textContent 是普通字段、不聚合子节点（真机是聚合的），所以直接读提示节点。
   const note = last.querySelector('.chat-msg-err-note');
   const t = last.querySelector('.msg-text');
   assert(!!note && note.textContent === '与 Agent 的连接中断，回复可能不完整',
@@ -294,10 +241,6 @@ streamMode = 'error-frame';
     if (!el || !(el.previousSibling && el.previousSibling.classList.contains('chat-time-divider'))) { tdBad++; }
   }
   assert(tdBad === 0, '原有 14 个 TD 位置未被破坏', tdBad);
-  // 20260927：错误气泡现在也挂重发/编辑 + 失败原因落 localStorage（此前只有超时那
-  // 两支有按钮，而 __ERROR__ 帧与真网络错误恰是线上最常见的失败形态）。判据的完整
-  // 版本在 tests/chat-failed-round.test.mjs（刷新存活 + 三种 discard 失败各自回话），
-  // 这里只钉"这一支接上了"——它是**同一份代码的另一条分支**。
   const retry = last.querySelector('.chat-msg-retry');
   assert(!!retry && retry.querySelectorAll('.chat-retry-btn').length === 2,
          '__ERROR__ 帧的错误气泡挂出重发/编辑',
@@ -328,7 +271,6 @@ streamMode = 'fetch-fail';
   assert(!!note && note.textContent === '网络错误: Failed to fetch',
          '错误文案已渲染（认不出的异常套「网络错误: 」前缀）', note && note.textContent);
   assert(tdsOf().length === EXPECT_TD_ABOVE.length, 'TD 数量不变', tdsOf().length);
-  // 连接级失败（自建气泡那条路）同样要有按钮 + 原因（20260927；与场景 2 是姊妹分支）
   const retry8 = last.querySelector('.chat-msg-retry');
   assert(!!retry8 && retry8.querySelectorAll('.chat-retry-btn').length === 2,
          '连接层失败的自建错误气泡同样挂出重发/编辑',

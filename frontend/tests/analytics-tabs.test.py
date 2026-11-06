@@ -1,28 +1,5 @@
 # -*- coding: utf-8 -*-
-"""后台「数据统计」页的无头验收：真组件 + 真 antd + 假后端。
-
-20261001 这一轮把这一页从"一张假的月更折线 + 一张假饼图"改成了**两个页签**：
-  · 文章数据 —— 阅读量 / 点赞量 / 收藏量 / 讨论量（四个汇总卡 + 四个榜 + 30 天趋势）
-    + **周报 / 月报 / 年报**（按期一张可展开的列表）；
-  · 用户活跃 —— 直接渲染 `GET /api/protected/stats/users`。
-
-这些东西里**只有真跑一遍才看得见**的占大多数：
-  · 页标题上那条波浪线（`text-decoration: underline wavy`）删没删干净——
-    是 computedStyle，不是源码文本；
-  · 切粒度到底发没发对请求（`kind` / `limit` 有没有跟着走）——
-    只有桩里记的请求条数说了算；
-  · **`since` 为 null 与"统计了但都是 0"** 是两件事，界面上必须分开说——
-    前者是「还没有统计数据」的空态，后者是一行行的 0；写错了从界面上看不出来；
-  · 「部分统计」那枚 Tag 只在 `partial` 期上出现（上线那一周只有半截数据，
-    不标出来会被读成"那周流量掉了"）。
-
-沿用既定手段（本机不能 vite build，见 CLAUDE.md §2）：esbuild 把**真组件**打成一个
-bundle、只桩 axios 这一个边界；sass 用 programmatic API 单独编译。
-本机无中文字体（截图里汉字是豆腐块），断言全走数值与请求，不受影响。
-
-用法：python3 frontend/tests/analytics-tabs.test.py
-依赖：frontend/node_modules（esbuild/react/react-dom/antd/@ant-design/plots/recharts）、playwright(python)。
-"""
+"""后台「数据统计」页的无头验收：真组件 + 真 antd + 假后端。"""
 import functools
 import http.server
 import pathlib
@@ -135,8 +112,6 @@ import Analytics from './src/pages/Dashboard/Analytics/index.tsx';
 (window as any).__mount = () => createRoot(document.getElementById('root')!).render(<Analytics />);
 """
 
-# 汇总卡的形状探针（20261011 第五轮，两个页签共用一份 —— 它们同一套类，
-# 判据分开写容易只改一侧）。量的是**渲染值**，不是 sass 源码文本。
 SUMMARY_JS = """() => {
     const pane = document.querySelector('.analyticsBody .ant-tabs-tabpane-active');
     const sum = pane.querySelector('.akSummary');
@@ -254,16 +229,6 @@ with sync_playwright() as p:
     check("四个汇总卡：总阅读量 / 总点赞量 / 总收藏量 / 总讨论量",
           cards == ["总阅读量", "总点赞量", "总收藏量", "总讨论量"], str(cards))
 
-    # ── 二·b 汇总卡的形状（20261011 第五轮「容器比内容大」）─────────────────────
-    # 用户原话：「带数字的容器或者卡片就一个数值，容器却那么大」。改之前实测 **121px 高**
-    # —— 内容只有 73px（14px 标签的 22px 行高 + 4px + 30px 数字的 47px 行高），
-    # 剩下的 48px 全是 antd body 默认的 24px×2 内边距，而且标签与数字分两行。
-    # 这一轮定成 56px 高的一行统计条。
-    #
-    # ⚠️ 判据为什么是这五条而不是"变矮了"：78px 也"变矮了"，而用户要的是**一行统计条**。
-    #    所以高度（设计的量）、同行、并线、不再吃 24px 内边距、标签不截断，一起判；
-    #    另外那条"四张等宽铺满"是**反向**的：宽度这一层刻意没动（用户说的是容器相对内容
-    #    太大，不是太宽），写成判据免得后来人顺手把铺满也收掉。
     geo = pg.evaluate(SUMMARY_JS)
     check("四张汇总卡压成一行统计条（56px 高）",
           [h for h in geo["h"] if abs(h - 56) > 0.6] == [], str(geo["h"]))
@@ -407,9 +372,6 @@ with sync_playwright() as p:
     check("七张汇总卡（活跃 7 天/30 天 + 用户/会话/消息/执行/讨论）",
           u_cards == ["活跃用户（7 天）", "活跃用户（30 天）", "用户总数", "总会话数", "总消息数", "总执行数", "总讨论数"],
           str(u_cards))
-    # 同一套类 ⇒ 同一副形状（20261011）。这里**只判形状不判行数**：七张卡在这个宽度下
-    # 本来就折行，折成几行取决于面板有多宽（沙箱是 1440 独立挂载，真后台还要减掉侧栏
-    # 与两级内边距），把行数写成判据等于把某一次量到的视口宽度钉进测试。
     u_geo = pg.evaluate(SUMMARY_JS)
     check("用户活跃页七张卡也是同一种一行统计条（56px、并线、不截断）",
           u_geo["n"] == 7 and [h for h in u_geo["h"] if abs(h - 56) > 0.6] == []

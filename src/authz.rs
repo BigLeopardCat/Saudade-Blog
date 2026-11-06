@@ -129,9 +129,7 @@ pub fn check_role_change(
     if !is_assignable_role(new_role) {
         return Err(RoleChangeDenial::NotAssignable);
     }
-    // 最后两道闸**只对管理员生效**（超管的两条判在 `is_superadmin` 上，与从前相同）。
-    // 目标那一侧先判：被拒的人先要知道"这个账号不归我管"，而不是"你要给的身份不对"。
-    if !is_superadmin(op_role) {
+        if !is_superadmin(op_role) {
         if !is_admin_tier(target_role) {
             return Err(RoleChangeDenial::AdminTargetTier);
         }

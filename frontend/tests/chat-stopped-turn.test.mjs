@@ -5,7 +5,6 @@ import vm from 'vm';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import { installDom, installScriptLoader } from './stubs/dom.mjs';
-// SSE 桩要带 content-type：20261002 起前端据它判"这是不是流"
 import { sseHeaders } from './stubs/sse.mjs';
 
 const W = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../public/live2d-widgets');
@@ -42,10 +41,6 @@ globalThis.Image = class {};
 globalThis.Live2DCubismCore = {};
 globalThis.__chatRenderMarkdown = (t) => String(t);
 globalThis.__chatEnhance = () => {};
-// 看板娘在这里**不打桩**（20261001 渲染层换自研）：上游 initWidget 与 __cubism5model 那套
-// 嵌套结构已随 GPL 实现一起从仓库移除，现在由 renderer.js 自己建 #waifu 骨架。
-// 真 renderer 在 Node 下会死在 PIXI 未定义处、被它自己的 .catch 兜住（模型画不出来，但工具条
-// 照建、waifu-active 照加）——这正是本 harness 要覆盖的形状，别再加桩把它盖回假绿。
 
 // ── 夹具 ──
 const NOW = Date.now();
@@ -66,7 +61,7 @@ let pullCount = 0;
 let discardCalls = [];
 let streamCalls = 0;
 let seq = [];                     // 请求顺序与继续控制的请求体
-let wantSnapshot = false;         // 下一次拉历史时先抓一份现场（= 停下那一刻的屏幕）
+let wantSnapshot = false;
 let atStopSnapshot = null;
 
 const snapshot = () => ({

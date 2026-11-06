@@ -1,25 +1,3 @@
-// ═ 看板娘运行时的第三方产物就位（20261001 开源前准备）══
-//
-//   node frontend/scripts/vendor-live2d.mjs        （或 npm run vendor:live2d）
-//   CI 在 `npm ci` 之后、`vite build` 之前自动跑一次（deploy.yml）。
-//
-// 为什么需要这一步：看板娘渲染层要用三份**不能进 git 的二进制/构建产物**——
-// 两份是体积（进仓库等于每次 clone 拖 576KB，且与 node_modules 重复），
-// 一份是许可（Live2D 专有运行时，进了仓库就等于被本仓的 GPL-2.0 声称覆盖）。
-// 三者都落到 `frontend/public/live2d-widgets/vendor/` 与 `public/cubism5/`，
-// 这两个位置本身被 .gitignore 排除（见仓根 .gitignore 的说明块）。
-//
-//   ① pixi.min.js        ← node_modules/pixi.js（MIT）
-//   ② cubism4.min.js     ← node_modules/pixi-live2d-display（MIT 包；注意它内联了
-//                          Live2D 的 Cubism Web Framework，所以同样不进 git）
-//   ③ live2dcubismcore.min.js ← 官方 CDN（Live2D 专有许可，非本仓协议覆盖范围）
-//
-// ③ 是从**官方地址**取的，不是本仓的副本 —— 这就是"移出仓库 + 文档指引"的落地形态。
-// 取回来后按 sha256 逐字节校验：官方哪天换版本，这里会**响亮地红**，而不是悄没声地
-// 把一个新版本的渲染核心塞进生产（Cubism Core 换版本的差异不会报错，只会画得不一样）。
-//
-// 只想校验、不想下载：`node frontend/scripts/vendor-live2d.mjs --check`
-// （CI 的 dry 校验用；文件缺失或哈希不符即退出码 1）。
 import { createHash } from 'crypto';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'fs';
 import path from 'path';

@@ -1,25 +1,5 @@
 # -*- coding: utf-8 -*-
-"""登录页无头验收（20260921 改版）：结构 / 几何 / 聚焦样式 / 弹窗交互 / 提交契约。
-
-跳转契约（20260922）也在这里锁：管理员 token → /dashboard，普通用户/无 token → /。
-两岔都要在，只锁一岔就会漏掉"普通用户被送进后台吃一次无权限再弹回来"那类问题。
-
-**昼夜两档（20261006 用户第 3 条）**：这一页从前恒深色，现在跟随全站
-（白天 = 主页那套和纸配色，夜间 = 原来的墨蓝 + 河灯金，见 src/pages/Login/index.sass
-的头注）。判据因此分两套夹具跑：主页面**不带 isDarkMode**（= 全站默认的白天档），
-另开一个 `pg_d` 在挂载前写 `localStorage.isDarkMode = 'true'` 当夜间夹具。
-③ 那一节里量色值的那几条因此住到 `pg_d` 上 —— 它们量的正是"夜间档还是原来那副样子"。
-
-本机不能 vite build（3.7GB 内存会 OOM，见 CLAUDE.md §2），沿用既定替代手段：
-  · sass 用 programmatic API 编译（`node_modules/.bin/sass` 在 Node 18 上会因
-    chokidar 的 ERR_REQUIRE_ESM 直接崩，别用 CLI）；
-  · esbuild 把**真组件**打成一个 bundle，配桩掉 antd / react-router-dom /
-    react-redux / 取 token 与 fetchToken 的模块（只桩边界，不桩被测逻辑）；
-  · 真 react-dom 渲染 → Playwright 断言。
-
-用法（仓库任意位置）：python3 frontend/tests/login-page.test.py
-依赖：frontend/node_modules（esbuild + react + react-dom）、playwright（python）。
-"""
+"""登录页无头验收：结构 / 几何 / 聚焦样式 / 弹窗交互 / 提交契约。"""
 import base64
 import datetime as dt
 import json
@@ -34,10 +14,6 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]          # 仓库根
 FE = ROOT / "frontend"
 LOGIN_SASS = "src/pages/Login/index.sass"
 
-# `import.meta.env` 的替身（与 dark-mode-contrast / dashboard-sidebar / notes-list-ui 同一个串）。
-# 必须显式给：esbuild 的 iife 输出里 `import.meta` 是空对象，`import.meta.env.X` 会当场
-# **抛 TypeError**——20260924 品牌区接上 useViewerAvatar（它经 utils/runtimeApi.ts 读 env）
-# 那一刻起，这一页整页白屏、所有断言连"元素在不在"都问不出来。
 DEFINE = ('import.meta.env={"VITE_HTTP_BASEURL":"","VITE_CDN_BASEURL":"",'
           '"MODE":"production","DEV":false,"PROD":true,"BASE_URL":"/"}')
 
@@ -66,9 +42,7 @@ def contrast_ratio(fg, bg):
 
 
 def jwt_with_role(role: str) -> str:
-    """造一个 payload 段合法的 JWT。前端 `isAdminToken`（src/utils/auth.ts）只解码 payload
-    的 role 来做界面分流、**不验签**（真正的授权在 Rust），所以签名段可以是假的。
-    用途：登录页自 20260922 起跳转分两岔——管理员 token → /dashboard，其余 → /，两条都要锁。"""
+    """构造可解码的 JWT 夹具；前端按角色分流，授权由后端验签和检查。"""
     payload = base64.urlsafe_b64encode(
         json.dumps({"sub": 721, "role": role}).encode()).decode().rstrip("=")
     return "x." + payload + ".y"
@@ -166,10 +140,6 @@ import Login from './src/pages/Login/index.tsx';
                     "require('fs').writeFileSync(process.argv[2],r.css);",
                     str(FE / LOGIN_SASS), str(sb / "login.css")],
                    cwd=str(FE), check=True)
-    # ②b 全站令牌（`src/index.css` 的 `:root` 与夜间档）。
-    # **必须一起引**：登录页自 20261006 起用 `--washi-*` 分昼夜两档，不引这份的话
-    # `getComputedStyle` 拿到的是 `var()` 的**回退值**（写在各处的字面量）——白天那几条
-    # 断言会变成"量回退值"，改令牌也照样绿，是一条假绿的判据。
     shutil.copyfile(FE / "src/index.css", sb / "tokens.css")
 
     # ③ esbuild 打包（.sass 的裸 import 会被 text loader 吞掉，CSS 由页面单独引入）
@@ -198,17 +168,6 @@ from playwright.sync_api import sync_playwright  # noqa: E402
 with sync_playwright() as p:
     br = p.chromium.launch()
 
-    # ── 时钟夹具（20261013）──────────────────────────────────────────────────
-    # 这一页现在**自己会跟着钟面切档**（挂 `useAutoThemeSwitch()`，判据见 ③d），于是
-    # "没写 isDarkMode ⇒ 白天档"这类夹具必须**把时间钉住**：不钉的话，套件在 23:00-06:00
-    # 之间跑时页面的分钟 ticker 会把冷启动的浅色页切成夜间，③a 那一整段（白天档）当场
-    # 全红 —— 20261013 23:42 实测，连带红 10 项，而那是**夹具随时辰变**，不是样式坏了。
-    # 钉在本地 14:00：正是 ticker 的设计无动作时段（06:00-23:00 只认访客），夹具回到
-    # "测的是样式、不是钟表"。
-    # ⚠️ `install(time=)` 传**数字时单位是秒**（`_impl/_clock.py::parse_time` 内部再 ×1000）
-    #    —— 传毫秒会落到公元 58753 年：时段判据静默走错，而套件照样一片绿。传 datetime 最稳。
-    # ⚠️ `install` 只设起始时刻、时钟照常自己走（实测 300ms 的 setTimeout 照常触发）；要冻住
-    #    得再 `pause_at()`。③d 靠 `fast_forward` 跳，不需要冻。
     DAYTIME = dt.datetime(2026, 10, 13, 14, 0, 0)
 
     def new_page(t=DAYTIME, **kw):
@@ -234,9 +193,6 @@ with sync_playwright() as p:
     check("无 JS 运行时报错", not errs, "; ".join(errs[:2]))
     check(".login-box 存在", pg.locator(".login-box").count() == 1)
     check("标题 Saudade Blog", "Saudade Blog" in pg.locator(".login-brand h2").inner_text())
-    # 20260924：品牌区那行小字「登录后体验完整服务」换成访客自己的三态头像（同一个
-    # useViewerAvatar）。旧断言锁的是已被删掉的那行字 ⇒ 当轮改判据，不是删断言：
-    # 这一页从没登录过（无 token、localStorage 空）⇒ 三态里的第③态 = 默认头像。
     check("品牌区小字已撤（不再有 .login-sub）", pg.locator(".login-sub").count() == 0)
     check("品牌区是头像（.login-avatar 一个）", pg.locator(".login-avatar").count() == 1)
     check("新访客 → 默认头像 /default-avatar.png",
@@ -277,12 +233,6 @@ with sync_playwright() as p:
           not [u for u in reqs_b if "protected/profile" in u],
           json.dumps(reqs_b, ensure_ascii=False)[:200])
 
-    # ①c 头像跟着输入框走（20260924 拍板：**只认本机登录过的账号**）。用户报的是"换账号输入时，
-    # 头像还是显示上次账号的头像"。治本不能是"按输入的名字去后端查头像"——那等于给所有人一个
-    # 账号枚举 oracle（输 sora 出猫头像、输 soraa 出默认 ⇒ 一次请求就知道账号存不存在）。
-    # 所以判据全是**本地**的：命中本机那份清单才显示它的头像，一偏离就回默认。
-    # 这一节同时还锁**旧数据兼容**：上面只写了 `saudade.lastUser`、没有清单（= 20260924 之前的
-    # 老访客的浏览器），读侧要能用它合成清单——不然升级那一刻所有人都认不出来。
     def avatar_src(page):
         return page.get_attribute(".login-avatar img", "src")
 
@@ -308,10 +258,6 @@ with sync_playwright() as p:
           avatar_src(pg_b) == AVATAR_2, str(avatar_src(pg_b)))
     pg_b.close()
 
-    # ①d 清单（20260924 用户实测报回来的洞）：这台机器上登录过**不止一个**账号时，输上一个用过的
-    # 账号也该认出它自己那张头像——先前只记了最近一个（`saudade.lastUser`），于是"换账号输入"
-    # 永远只能得到默认头像。这里预置**两条**（较新的 kohaku、较旧的 sora），三条断言分别锁：
-    # 认得较旧的那个 / 认得较新的那个 / 认不得的仍回默认。
     print("①d 本机登录过的多个账号：输哪个认哪个（清单，不是只记最近一个）")
     AVATAR_3 = "/api/protect/download/avatar-kohaku-20260924.png"
     pg_c = new_page(viewport={"width": 1280, "height": 900})
@@ -371,8 +317,6 @@ with sync_playwright() as p:
                }""", [sel, pseudo, list(props)])
 
     page_bg = pg.evaluate("() => getComputedStyle(document.querySelector('.login-page')).backgroundImage")
-    # 判据是"这条渐变就是主页首屏 `.collageBg` 那条"：两端色值都在。只断言"有渐变"是不够的
-    # —— 换成墨蓝那条也是渐变（20261006 之前的样子）。
     check("页面底是主页那套拼贴渐变（#fff6fa → #e9f4ff 两端都在）",
           "255, 246, 250" in page_bg and "233, 244, 255" in page_bg, page_bg[:120])
     tex = styles(pg, ".login-page", "::after", ("backgroundImage", "backgroundSize"))
@@ -465,13 +409,6 @@ with sync_playwright() as p:
     pg_d.close()
 
     print("③d 跨 23:00：这一页在 App 壳之外，自己也得做边界动作（20261013 修）")
-    # 从前只有 App.tsx 调 `autoThemeDecision`，而 `login` 是顶层路由（`router/index.tsx`
-    # 里与 `/` 平级，不在那层 `.frontDark` 底下）⇒ 夜里直达这一页**整晚浅色**、停在页上
-    # 跨 23:00 也不切（20261013 线上实测：留白亮度 234/228/243，同刻首页 26/26/12）。
-    # 判据只能是"把钟推到边界上真跑一遍"——③a/③b 那两套夹具都**先预置 isDarkMode 再
-    # goto**，无论这一页有没有 ticker 都会绿，测不到这条。修法是挂 `useAutoThemeSwitch()`。
-    # ⚠️ 传 datetime 而不是毫秒：theme 的 isNightHour/currentThemeDay 走**浏览器本地钟面**，
-    #    而 install 的数字单位是秒（见 new_page 的头注）。这一页故意**不**钉 14:00。
     pg_e = new_page(dt.datetime(2026, 10, 13, 22, 58, 0), viewport={"width": 1280, "height": 900})
     pg_e.goto(URL)
     pg_e.wait_for_timeout(400)
@@ -609,9 +546,6 @@ with sync_playwright() as p:
     check("登录中按钮文案/状态合法", pg.locator("button.login-submit").inner_text().strip() in ("登 录", "登录中…"))
     pg.wait_for_timeout(600)
     check("成功后提示「登录成功」", any("success:登录成功" in m for m in pg.evaluate("() => window.__msgLog")))
-    # 20260922 起跳转分两岔（此前一律送 /dashboard，普通用户到了只会吃一次"无权限访问后台"
-    # 再被弹回首页）：管理员 token → /dashboard，其余（含拿不到 token）→ /。
-    # 本段登录前没设 token ⇒ getToken() 得 null ⇒ 走首页那一岔。
     check("成功后无 token/普通用户 → 首页 /",
           pg.evaluate("() => (window.__nav || []).join(',')") == '/',
           json.dumps(pg.evaluate("() => window.__nav"), ensure_ascii=False))
@@ -632,8 +566,6 @@ with sync_playwright() as p:
     pg.wait_for_timeout(1200)
     check("失败提示走 error 通道", any(m.startswith("error:") for m in pg.evaluate("() => window.__msgLog")),
           json.dumps(pg.evaluate("() => window.__msgLog"), ensure_ascii=False))
-    # 判据从"不含 /dashboard"改成"一次都没跳"：20260922 起成功分支普通用户也不去 /dashboard，
-    # 旧写法在新契约下恒真（纯空转），锁不住任何东西。
     check("失败不跳转（一次都没跳）", pg.evaluate("() => (window.__nav || []).length") == 0,
           json.dumps(pg.evaluate("() => window.__nav"), ensure_ascii=False))
 
@@ -654,16 +586,6 @@ with sync_playwright() as p:
     check("图标按钮横向不吃掉输入框（右内边距 ≥ 40）", pg.evaluate(
         "() => parseFloat(getComputedStyle(document.querySelector('input#password')).paddingRight) >= 40"))
 
-    # 20260927 用户报「填写密码时会**多出来**一个眼睛的图标」：本框已经有一只自绘的
-    # `.pwd-toggle`，多出来的那只来自 **Edge** 对 type=password 渲染的原生显隐按钮
-    # （`::-ms-reveal`，IE/Edge 的遗留伪元素，Edge Chromium 至今仍支持；access log 的
-    # UA 实测是 `Edg/152`）。修法 = 用 CSS 藏掉原生那只，只留自绘的。
-    #
-    # **这条判据只能是源码锁**：本机没有 msedge channel（`playwright install msedge`
-    # 未装），Chromium 根本不渲染 `::-ms-reveal` ⇒ 无从渲染验证。取编译产物而不是
-    # 源文件，至少要保证那条规则真的穿过了 sass 编译（`::-ms-*` 是历史上有过解析
-    # 事故的写法）。作用域也必须一起锁：只藏主登录框那一个——重置密码弹窗的两个密码
-    # 框没有自绘眼睛，原生那只对它们是有用的。
     css = (SANDBOX / "login.css").read_text(encoding="utf-8")
     flat = "".join(css.split())
     sels = re.findall(r"([^{}]+?)::\-ms\-reveal\s*\{([^}]*)\}", flat)

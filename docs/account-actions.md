@@ -81,21 +81,3 @@ TEST_PG_URL=postgres://postgres@127.0.0.1:55437/saudade_blog \
 ```
 
 测试复用现有 CI 的 `TEST_PG_URL`，在独立 UUID schema 创建最小 user/notification 表并应用真实 0017，结束删除该 schema。PR 的标准 `cargo test` 会运行本测试；无环境变量时打印跳过原因并返回，配置后连接或断言失败均使 CI 失败。该 URL 只能指向一次性测试库；禁止配置成生产连接。本机不运行旧整套 PostgreSQL 集成测试。
-
-2026-10-24 初次交付验证（独立 checkout，基线 `05b8da4`；以下为接入标准 CI 前的历史结果）：
-
-- 原生领域离线套件：4 passed、1 ignored，ignored 明确指向独立 PostgreSQL 套件。
-- 既有 `api_tests`：17 passed、0 failed。
-- 完整离线 `cargo test --lib`：281 passed、1 ignored；显式移除 TEST_PG_URL 和 TEST_ACCOUNT_PG_URL，没有执行旧 PostgreSQL 门控用例。
-- 既有离线 `cargo test --test api_tests`：17 passed，0 failed。
-- 本领域专属 PostgreSQL 套件：1 passed，0 failed、0 ignored。使用临时 postgres:16 容器、独立 UUID schema；真实执行了准备只读、身份精确匹配、权限变化、版本及双方 ABA、禁言到期、冻结撤销、临时/永久/no-op、事务故障回滚、全 Router 鉴权与新旧入口成功、并发重复确认和提交后结果丢弃的模拟。
-- 0017 独立新建/重复应用探针通过：重跑不回拨已有版本，quota 更新不增加版本。CI 迁移分类自测通过（18 份迁移均已归类）。
-- 新模块 rustfmt 检查、git diff --check 通过。
-
-“响应丢失”是数据库已提交后丢弃返回结果，再使用旧 version 提交的确定性模拟；没有进行真实网络故障压测。未对生产库执行迁移、请求或旧整套 PostgreSQL 集成测试。专属临时容器已停止并自动删除。
-
-## 集成验证（2026-10-24）
-
-与个人通知事务服务合并后，离线 Rust 库 284 项返回成功，前端 62 组脚本及 180 项单测通过。
-本机未配置 `TEST_PG_URL`，此结果不代表数据库用例已执行；真实事务测试由标准 PR CI 的临时 PostgreSQL 执行。
-删除前端对旧禁言 handler 函数体的写法断言，权限、状态隔离和到期/no-op 行为由数据库测试验证。

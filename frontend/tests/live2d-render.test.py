@@ -1,36 +1,5 @@
 # -*- coding: utf-8 -*-
-"""看板娘渲染层的**真浏览器行为锁**（20261001 开源前准备，渲染层替换前先落）。
-
-为什么必须在上层真跑一遍：
-  渲染层换了实现以后，**坏了不会报错**。模型没画出来时聊天面板照常工作、工具条照常
-  在那儿、日志一行不红——用户看到的是"看板娘不见了"，而所有静态断言、所有 `*.test.mjs`
-  都是绿的（它们只读源码文本，看不见一块空画布）。20260923 那次"三跳全绿、UI 上什么
-  都没有"是同一族教训。所以这条锁跑的是**真页面 + 真模型 + 真 WebGL**，断言落在像素与
-  计算样式上。
-
-它锁的是"渲染层对外的契约"，不是"渲染层怎么实现的"——所以上游实现（waifu-tips +
-chunk）与自研实现（pixi-live2d-display）都必须全绿，替换前后各跑一次，前后都绿才算
-换对了。契约为五组：
-
-  ① DOM 骨架与外接框：#waifu/#waifu-tips/#waifu-canvas/canvas#live2d 的存在、顺序、
-     尺寸。**#live2d 必须是 300×300、#waifu 必须恒 300px 高**——后者是 20260828 那次
-     "收起→展开中间态 canvas 塌陷、面板掉到按钮位置"的回归锁。
-  ② 工具条：前五个按钮的顺序与形态（switch-model / switch-texture / photo / info / quit），
-     第六个 `hitokoto` 是 chat-stream.js **追加**的对话开关（渲染层只负责前五个）。
-  ③ **角色真的画在画布上**：截图数非背景像素。这一条是整条锁的核心——其余都可能在
-     "画布全白"的同时全绿。
-  ④ 口型接口：`__setMouthOpen` / `__setMouthClose` / `window.__mouthOverride` 三个名字
-     是 chat-stream.js 直接写的（流式输出时控制口型），签名与净效果一字不能改；
-     断言落在"嘴巴真的动了"（画面差异）而不是"变量被赋值了"。
-     **只在动画不动的像素上比**（静止掩膜，做法与实测数字见 ④ 段注释）。
-  ⑤ 入场/拖拽/收起唤回：dataset.slideInOnce、dataset.waifuBottom、waifu-active /
-     waifu-hidden / waifu-toggle-active 四个类、`waifu-display` 这个 24h 标记。
-     这些是 boot.js 与 widget.css 两边共同依赖的对外状态。
-
-用法：python3 frontend/tests/live2d-render.test.py
-依赖：playwright(python) + Pillow（见 tests/requirements.txt），以及
-      `npm run vendor:live2d` 就位过的三份运行时产物（缺了会明确报出来，不是猜）。
-"""
+"""看板娘渲染层的**真浏览器行为锁**。"""
 import functools
 import http.server
 import io
@@ -50,13 +19,6 @@ WIDGET = PUBLIC / "live2d-widgets"
 TITLE = "回归台标题A1"          # 欢迎语要把它填进「」里，用个不会自然出现的串
 PAGE_PATH = "/article/16"        # 文章页才会出现"欢迎阅读"（首页走的是时段问候）
 
-# ⑩ 用：一个**带标签的标题**（20261015）。走的是与 PAGE_PATH 同一条路径——文章页，
-# 于是 renderer.js 的欢迎语会把 `document.title` 原样填进 `#waifu-tips` 的 innerHTML。
-# 载荷选这条是因为它同时钉三件事：① 真能造出元素（`<img>`，旧的未转义实现会把它当真标签
-# 解析）；② 真能执行（`onerror` 在 img 加载失败时触发，落一个可读的标记）；
-# ③ 里面还有一个 `<b>`，用来区分"转义了值"与"把整条文案连同模板一起转义"
-# （模板自带的那个 `<span>` 必须还在，否则强调色就没了）。**不含 `</title`**——
-# 那会提前结束 harness 的 `<title>`，让标题变成别的东西。
 EVIL_TITLE = '回归台标题B9<img src=x onerror="window.__xss=1"><b>B</b>'
 EVIL_PATH = "/article/17"
 
@@ -390,10 +352,6 @@ def main():
         page = browser.new_page(viewport={"width": 900, "height": 720})
         page.goto(url, wait_until="load")
 
-        # ── 初始化闸门 ────────────────────────────────────────────────────
-        # #live2d 只是骨架先到，**五个工具按钮与 waifu-active 在模型加载完之后才出现**
-        # （上游 registerTools 跟在 loadModel 后面；自研实现同理）。提前采样会把
-        # "还没初始化完"读成"这一条坏了"——这个套件 20261001 首跑就踩了这个坑。
         ok = wait(page, "() => !!document.getElementById('live2d')")
         check("① 看板娘 DOM 已注入（#live2d 存在）", ok)
         if not ok:
@@ -454,29 +412,6 @@ def main():
         check("④ __setMouthOpen / __setMouthClose 都在", st["hasMouthApi"])
         check("④ __mouthOverride 初值 = -1（交还空闲动画）", st["mouth"] == -1, st["mouth"])
 
-        # 判据为什么要绕这么大一圈——**看板娘身上一直有动画，而且比嘴巴大得多**。
-        # 这个模型挂着六个以 performance.now() 为时钟的循环动画参数（ParamTail /
-        # Param3 / ParamDaiMao / ParamHairFront / ParamHairSide / ParamEyeL|ROpen，周期
-        # 3.0 / 3.8 / 4.5 / 5.0 / 7.5 / 8.8 秒），尾巴和头发一直在摆 ⇒ 整幅画布的墨迹
-        # 在两秒里能漂 ±600，而"张嘴"只值 +40 上下。20261001 实测四种估计器
-        # （逐帧差分 / 中位图 / 长批次均值 / 相邻张配对）**全被这层噪声淹掉**：
-        # "open − close" 在 −739..+665 之间随机翻符号，因为漂移是准周期的、批次落在哪个
-        # 相位就偏向哪边。**冻时钟也不行**（cubism 自己的 update 同样读 performance.now，
-        # 冻住等于整个渲染停摆，口型跟着不动）。
-        #
-        # 两条出路都不选"更长的平均"，而是**换统计量 + 只看静止的像素**：
-        #   ① 静止掩膜：先拿 14 对"同状态对"（close vs close）求每个像素的最大灰度变化，
-        #      ≤6 的算静止。实测掩膜占 95% 的像素（动的只有尾巴/头发那一小块）。掩膜
-        #      松一寸噪声涨一大截——8 对时噪声极差 300，14 对只剩 10，所以这个 14 不能省。
-        #   ② 判据 = 掩膜内**灰度变化超过 24 级**的像素数，而不是"墨迹增减"。嘴腔那几十个
-        #      像素是**整块翻色**，动画漏进来的像素只是边缘抖动。
-        #   ③ 取**中位数**而不是均值。这个模型每隔一会儿有一次大动作（实测某一对会整体
-        #      跳 300~400 像素，噪声对信号对都中招），均值被单个离群对拉垮：20261001 实测
-        #      同一批数据噪声均值 0.2~19.1 乱跳、而中位恒 ≤4；信号中位 49~59、16 对里
-        #      15 对一模一样是 49。**中位数让噪声那一列的离群值完全失效**。
-        # 实测跨 4 遍：噪声中位 0/4/0/0，张嘴中位 49/59/49/49，直接写 49/52/49/49。
-        # 同批数据换成"墨迹增减"或均值，噪声与信号区间直接重叠，判不了。
-        # 掩膜是每次跑的时候现算的 ⇒ 锁的是"口型能改动画面"，不是"这个模型的脸在哪"。
         def gray(pg):
             return list(Image.open(io.BytesIO(pg.screenshot(clip=box))).convert("L").getdata())
 
@@ -538,13 +473,6 @@ def main():
               bool(st["tipsText"]) and "欢迎阅读" in st["tipsText"] and TITLE in st["tipsText"],
               repr(st["tipsText"])[:90])
 
-        # 拖拽（20261002 整改）。旧判据只问"left 变了没有"，而它对**两种真缺陷都是绿的**：
-        #   · 拖反方向 —— 位置照样变，只是往反的走；
-        #   · 点一下原地不动却"飞上去" —— 一次按下/抬起之间只要有 1px 抖动就会走到
-        #     旧的 `bottom = clientY - offsetY`（把绝对坐标当成了"从视口底量的偏移"），
-        #     算出来的值恰好被钳到上限 ⇒ 元素直接顶到视口顶。**位置也变了。**
-        # 所以判据必须量**方向**与**原地不动的 Δ**，不能只量"变了没有"。
-        # mousedown 必须落在 canvas 上（#waifu 上的监听自己判 target）。
         cx, cy = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
         wf = lambda: page.locator("#waifu").bounding_box()
 
@@ -619,18 +547,6 @@ def main():
         check("⑥ 点对话按钮能切到 active（跨模块的那条线没断）",
               page.evaluate("() => document.getElementById('waifu-chat').classList.contains('active')"))
 
-        # ── ⑦ 气泡里的行内代码：两档都要读得出来（20261002 主人报的第三条）──────
-        # 报的是「白日看不出高亮痕迹、夜间高亮直接糊住文本」。两者是同一个洞的两面：
-        # `.chat-msg.agent .msg-text code` 的底是**写死的 #f5f5f5**，没跟 .washiDark 翻
-        # ⇒ 白日 #f5f5f5 压在纸面 #fffdfa 上只有 1.07:1（看不出），夜里浅底压浅字
-        # #f3e8f6 只有 1.09:1（字没了）。判据因此要**两个对比度都量**，且两档都量。
-        # 底色是半透明的 ⇒ 必须把祖先逐层复合成屏幕上真正的那个颜色再算，直接读
-        # getComputedStyle 拿到的是 rgba 字面量，算出来的对比度是假的。
-        # ⚠️ 深色档的令牌**不住在本文件加载的那张表里**：`--washi-paper` 等定义在
-        # `frontend/src/index.css`（真页面由 main.tsx 引入）。不把它引进来，`.washiDark`
-        # 就只翻了一半——面板底色仍落回 widget.css 里的浅色兜底，量出来的"深色档"是
-        # 一个生产上不存在的状态。那正是本仓记过的那类假绿（"全局规则不在场 ⇒ 把没生效
-        # 读成页面缺陷"，反过来也一样能把缺陷读成正常）。所以按真页面把令牌表引进来。
         page.add_style_tag(path=str(ROOT / "frontend" / "src" / "index.css"))
         for mode in ("light", "dark"):
             page.evaluate("(d) => document.getElementById('waifu-chat')"
@@ -645,16 +561,6 @@ def main():
                   legible >= 4.5, f"{legible:.2f}:1  text={fmt(m['text'])} chip={fmt(m['chip'])}")
         page.evaluate("() => document.getElementById('waifu-chat').classList.remove('washiDark')")
 
-        # ── ⑧ 面板里带图标的按钮：两档都得读得清（20261005）────────────────────
-        # 报的是「夜间模式侧边栏的选择图片按钮图标看不清」。它不是配色没跟上主题，而是
-        # **那颗 `<button>` 自己没写 `color`**：表单控件的 UA 样式表给的是
-        # `color: buttontext`（元素上的具名值、不是继承值）⇒ 外层 `#waifu-chat` 的
-        # `color: var(--washi-ink)` 传不进去，恒解析成黑。上面那条
-        # `#waifu-chat svg path { fill: currentColor }` 本意是"让图标跟着各自按钮的 color
-        # 走"，遇上它就跟着黑走了 —— 白日黑压粉纸看不出问题（15:1），夜里黑压深紫纸面
-        # 只有 1.69:1。判据因此**只能落在真浏览器算出来的色上**：源码里 `fill="#203042"`
-        # 明明写着深蓝，静态断言看不出它已经被 CSS 盖掉。地板取 3:1，与
-        # `dark-mode-contrast.test.py` 同一把尺。
         for mode in ("light", "dark"):
             page.evaluate("(d) => document.getElementById('waifu-chat')"
                           ".classList.toggle('washiDark', d)", mode == "dark")
@@ -668,19 +574,6 @@ def main():
                   f"icon={fmt(worst['fill'])} bg={fmt(worst['bg'])}")
         page.evaluate("() => document.getElementById('waifu-chat').classList.remove('washiDark')")
 
-        # ── ⑨ 手机档：整块缩到半尺寸、贴住左缘（20261005 主人报的第四条）──────────
-        # 报的是「手机上盖住大半个正文与表格」。修前 390×844 实测：300×300 的盒子落在
-        # x15..315，**角色墨迹**本身就有 165×278px（x84..249、y558..836）——正压在正文栏
-        # 中间，而且盒子里没画东西的地方也吃点击（正文在那 300×300 矩形内一律点不到）。
-        # 这一节在**真视口 + 真模型**上量两件事：
-        #   ① 墨迹外接框（在哪儿、多大）。用空 body 的白页 ⇒ 整屏非背景像素就是角色本体
-        #      （工具条 opacity:0、唤回钮在视口外、对话面板 display:none、#waifu-tips 恒
-        #      `display:none !important`），不必再猜哪儿是画布哪儿是正文。
-        #   ② 盒子里那些**没内容**的地方点得到底下的正文。
-        # 判据的上下界都留了余量（新值 x≤100 / y≥696，界给 130 / 660；修前是 249 / 558），
-        # 所以它锁的是"整块真的小了、真的下移了"，不是某一帧的像素。
-        # 红基线：② 那组点在"把 `#waifu{pointer-events:auto}` 加回来"之后必须**全落回
-        # #waifu** —— 既证明探针不是恒返回 'out' 的哑探针，也证明这一条真的在判新行为。
         mp = browser.new_page(viewport={"width": 390, "height": 844})
         mp.goto(url, wait_until="load")
         ok9 = wait(mp, "() => { const w = document.getElementById('waifu');"
@@ -745,11 +638,6 @@ def main():
                   hit_red["blank"] == ["waifu", "waifu", "waifu"], str(hit_red["blank"]))
             mp.close()
 
-        # ── ⑩ 欢迎语里的标题不许被当标记解析（20261015）───────────────────────
-        # 链路：`document.title` → renderer.js 的 `subst(MSG.welcome, document.title)` →
-        # `#waifu-tips` 的 `innerHTML`。模板自带 `<span>`（强调色），所以**不能**整段转义，
-        # 只能转义填进去的那个值——而值来自页面之外。这条锁的就是"值没被当标记"。
-        # 同一条欢迎语还会被 boot.js 的 observeTips 抄进对话面板（同一份实现，两个消费点）。
         evil_url = url.replace(PAGE_PATH, EVIL_PATH)
         ep = browser.new_page(viewport={"width": 900, "height": 720})
         ep.goto(evil_url, wait_until="load")

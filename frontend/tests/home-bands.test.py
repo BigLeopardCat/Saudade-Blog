@@ -1,27 +1,5 @@
 # -*- coding: utf-8 -*-
-"""首页「段落带」+ 页脚封底的验收（用户 20261001 第 4 条）。
-
-原话：「不止第一页主页，下面包括脚页也做风格适配，主页段落感和配色搭配撞色感，
-不要一股脑一个首页顶部颜色配到底。」
-
-改版前的实况：`.SelfDescription`（首屏）/ `.ContentContainer`（正文）/ `.footerContainer`
-（页脚）三段的 `background` **都是 `var(--container-background-color)`**（半透明白铺在
-页面底图上）⇒ 从上到下没有一处换色。这正是"一个颜色配到底"，也是本套件要钉死的那条回归。
-
-20261001 第二轮（用户第 3 条）在同一片区域改了两件事，判据也一并更新：
-  · **页脚不再有接缝胶带**（「页脚不需要加胶带」）——原「页脚胶带骑缝（top < 0）」那条
-    断言反了过来，现在是「`::before` 的 content 是 none」；
-  · **赞助方 logo 换成不透明的浅色贴片**（「链接和图标字体是黑色，深色页脚看不清」）——
-    旧值 `rgba(255,255,255,0.07)` 压在深底上仍是深色，新增"贴片浅且不透明 + 贴合 logo"两条。
-
-为什么必须真跑浏览器：这条改造的正确性全在**渲染结果**里 —— 源码写着
-`background-image: …, var(--band-content)` 不代表那条渐变真的画出来了（先写
-`background: var(--band-content)` 再补 `background-image` 就会把它整条顶掉，
-两条声明改的是同一个属性）；页脚字色对封底的对比度、窄屏 logo 排有没有溢出，
-都只有量像素/量盒子才看得见。**源码锁只做补充，主判据是计算值与像素。**
-
-用法：python3 frontend/tests/home-bands.test.py
-"""
+"""首页「段落带」+ 页脚封底的验收。"""
 import functools
 import http.server
 import io
@@ -111,8 +89,6 @@ for tok in ["--band-content:", "--band-foot:", "--band-foot-ink:", "--band-foot-
 
 check("页脚 logo 排能换行（窄屏不探出容器）", "flex-wrap: wrap" in foot_sass)
 
-# 页脚的接缝胶带 20261001 已删（用户：「页脚不需要加胶带」）——胶带是"两张内页相接"
-# 的道具，封底不贴。这条**反断言**防的是"哪天看着空又贴回去"。
 check("页脚 sass 里没有胶带规则（`&::before` 整块删除）", "&::before" not in foot_sass)
 
 # 赞助方贴片：封底深浅两档都是深色，而这四张图里阿里云百炼是深藏青字、Live2D 是黑字，
@@ -383,9 +359,6 @@ with sync_playwright() as p:
     content = pg.evaluate("(sel) => (" + PROBE + ")(sel)", "#content")
     foot = pg.evaluate("(sel) => (" + PROBE + ")(sel)", "#foot")
 
-    # `.ContentContainer` 有 `overflow-x: hidden` ⇒ 按规范 `overflow-y` 计算成 `auto`
-    # ⇒ 它是个**裁剪盒**。胶带一旦探出上沿（`top: -8px`）就会被裁掉，只剩贴着上沿的
-    # 一条横杠（20261001 出图核对时抓到的）。所以这里同时钉住"是裁剪盒"与"胶带没探出去"。
     check("正文带是裁剪盒（overflow-y 计算成 auto）——胶带不许骑缝",
           content["overflowY"] == "auto", content["overflowY"])
     check("正文带胶带贴在上沿（top ≥ 0）且真有 15px 高",

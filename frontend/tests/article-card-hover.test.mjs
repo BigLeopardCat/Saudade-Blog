@@ -1,33 +1,3 @@
-// ═ 文章卡片悬浮简介 / 页脚钉底 · 源码与 sass 结构契约（20260930）══
-//   node tests/article-card-hover.test.mjs      （CI 秒级套件，靠 `npm test` 自动带上）
-//
-// 现场（用户一次报的三条）：
-//   1. 分类行与封面的空隙要缩小；"卡片底部的作者署名头像和发布修改时间"要**定死在卡底**；
-//   2. 悬浮展开简介：最后一行只露上半；简介滚过之后再移开，静置态停在全文**中段**；
-//   3. 置顶卡悬浮标题/简介会抖动布局，且它没有悬浮展开。
-//
-// 布局行为（几何、真事件）由 `article-card-hover.test.py` 在无头 Chrome 里量——那支要
-// Playwright，进不了 CI 的秒级 job。**本套件管的是另一半：结构有没有写在该在的地方。**
-// 这两类缺陷都曾经真实发生过，且都是"页面不报错、只是静默失效"：
-//   · 类名/结构对不上（sass 写了 `.descSlot`、tsx 没挂 → 页脚照旧跑）；
-//   · sass 缩进错一级（真 sass 编译，断言规则落在**完整选择器链**上）；
-//   · 有人"顺手"把已删的规则加回来（标题 `:hover` 解除行数限制 = 抖动源；
-//     裸 `.ArticleDescription:hover` 的 `padding-bottom: 10px` = 半行源）。
-//
-// 最后一条尤其要留着：那条裸规则**不是废弃代码**——它的 max-height/overflow 被嵌套规则
-// 压掉了，但 `padding-bottom` 谁也没声明过，于是一直生效：展开盒高 = 内容 + 10，
-// 而 `box-sizing: border-box` 让上限（当年 200px）里只剩 190px 给正文 ⇒ 第 10 行切一半。
-// 是 `.test.py` 里读出 `padding-bottom` 非 0 才回头找到它的。
-//
-// 20260930 二轮（用户："卡片比例有点不好看，重新调整卡片样式"）：封面 200→240、
-// 卡片下限 600→520、普通卡展开上限 200→**140**（7 行）——三个数联动，本套件底部
-// 两条断言跟着改。**判据别只改数字**：`140` 必须仍是 `line-height: 20px` 的整数倍
-// （半行 = 用户报过的"最后一行只露上半"，见第 ③ 组）。
-//
-// 20261001（用户："卡片太细高了"）：封面 240→**200**、卡片下限 520→**470**、
-// 标题 30→26px、左右内边距 48→28px、容器 80%→90%、网格最小列 300→340px。
-// **展开上限 140 没动**——几何那半（`.test.py` 第 ⑫ 组）实测过了：卡底与浮层顶一起
-// 上移同样的量、相减抵消，最挤那档仍是 150px 可用。所以这里只有"下限"那一条跟着改。
 import { readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -40,7 +10,6 @@ const repo = path.resolve(root, '..');            // 仓库根（Rust 在那儿�
 const SASS_FILE = path.join(root, 'src/frontHome/Content/ContentHome/index.sass');
 const ARTICLE_TSX = path.join(root, 'src/frontHome/Content/ContentHome/Article.tsx');
 const HOME_TSX = path.join(root, 'src/frontHome/Content/ContentHome/index.tsx');
-// 卡片与置顶卡共用的那条页脚（头像/署名/两个日期），20261001 从上面两个文件里抽出来的
 const BYLINE_TSX = path.join(root, 'src/components/NoteByline/index.tsx');
 const WEB_INFO_RS = path.join(repo, 'src/routes/web_info.rs');
 
@@ -198,13 +167,6 @@ console.log('\n⑦ 署名取昵称（用户点名"卡片上的 Sora 换成真正
 
 console.log('\n⑧ 标签换行：卡片按内容长高（470 是**下限**），页脚那条「更新于」是被裁的第一个');
 {
-    // 现场：标签换到第二/第三行时，"作者信息时间信息跑出卡片"（用户第四报）。
-    // 根因是**定高**：`.ArticleCard{height:600px}` + `overflow:hidden`，而「更新于」那行是
-    // `position:absolute; top:100%` 挂在页脚盒子**外面**的（页脚盒子只有一行高，那行靠内容区
-    // 32px 下内边距兜着）⇒ 收支一为负，它第一个被切。判据分三层：
-    //   ① 网格项是 flex（同排等高靠这层，否则长高会把同排弄参差）；
-    //   ② 卡片写 min-height 而**不是** height；内容区写 `flex: 1 1 auto` 而**不是** `height: 100%`；
-    //   ③ 移动档把下限撤干净——`height: auto !important` 管不到 `min-height`（两个是不同的属性）。
     const item = decl('.ContentContainer .allArticles > .article', 'display', 'flex');
     ok(item.found && item.match,
         '.allArticles > .article 是 display: flex（网格只拉网格项 ⇒ 少了这层同排卡片不等高）', item);
@@ -230,9 +192,6 @@ console.log('\n⑧ 标签换行：卡片按内容长高（470 是**下限**）�
     // 源码接线：那条「更新于」是**几何套件唯一量得到**的东西（桩里也照着它写）。
     // 两个卡各自的 JSX 里都得是"同一个日期列里的第二个 span、绝对定位挂在列外面"。
     const dateColRe = /<div style=\{\{\s*position:\s*'relative',\s*display:\s*'flex',\s*flexDirection:\s*'column'\s*\}\}>\s*<span[^>]*className='post-date'>[\s\S]{0,300}?发布于[\s\S]{0,700}?position:\s*'absolute',\s*top:\s*'100%'[\s\S]{0,400}?更新于/;
-    // 20261001：这段标记**不再是两份**。加文章作者时发现卡片与置顶卡的那 12 行逐字相同
-    // （连行内样式里的空格都一样），已抽成 `components/NoteByline`——所以断言从"两个文件
-    // 各有一份"改成"实现只有一份、两处卡片都吃它"，并把"谁都不许再内联一份"钉住。
     const byline = readFileSync(BYLINE_TSX, 'utf8');
     ok(dateColRe.test(byline),
         'NoteByline：日期列里「发布于」+「更新于」两行，后者绝对定位挂在列外（溢出时第一个被裁）');

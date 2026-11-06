@@ -1,12 +1,3 @@
-// ═ 主题边界语义回归 ══
-//   node tests/theme-choice.test.mjs
-// 测的是 20260916 用户口述的语义（**边界一次性**，取代旧的每分钟状态收敛）：
-//   23:00 进窗 → 自动切夜一次；窗内访客手动改 → 本窗口让位；
-//   06:00 出窗 → 若夜间则切回日间 + 清意愿；06:00-23:00 → 完全遵循访客。
-// 载体是 theme.ts 的 autoThemeDecision（闩式，会写 localStorage）× recordUserChoice。
-// 全站四个入口都走这两个函数：App.tsx 的分钟 ticker（边界探测）、Head 的桌面开关、
-// PhoneSwitch 的移动开关、看板娘 chat-stream.js 的 DARKMODE 命令。
-// theme.ts 是 TS，用 esbuild 单文件打包（本机禁止 vite build，见 CLAUDE.md §2）。
 import { execFileSync } from 'child_process';
 import { mkdtempSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
@@ -108,7 +99,7 @@ console.log('== 窗口内访客自己改：让位，本窗口不再自动改 =='
     // 反过来：进窗那一刻访客的意愿就已经在了（先表态、边界后到）→ 边界不动作
     store.clear(); at(22, 50);
     localStorage.setItem('isDarkMode', '"false"');
-    theme.recordUserChoice('dark');                  // 窗口外切夜间：任何时段都记（20260915）
+    theme.recordUserChoice('dark');
     at(23, 0);
     eq(tick(new Date()), null, '进窗前已有的意愿 → 边界让位，不改成夜间');
 }
@@ -155,8 +146,6 @@ console.log('== 06:00 出窗：切回白天 + 清意愿与闩 ==');
 
 console.log('== 06:00-23:00 完全遵循访客：旧 bug 的防线 ==');
 {
-    // 修复前（每分钟状态收敛）这里返回 false → 白天手动开的夜间 60 秒后被顶回。
-    // 现在非窗口时间恒为 null，怎么跑都不动。
     store.clear(); at(14, 0);
     localStorage.setItem('isDarkMode', '"true"');
     eq(tick(new Date()), null, '白天无意愿的夜间模式：不动它');
@@ -169,7 +158,6 @@ console.log('== 06:00-23:00 完全遵循访客：旧 bug 的防线 ==');
     }
     eq(cur, true, '连跑 3 分钟仍是夜间');
 
-    // 白天切浅色仍然不记意愿（20260914 语义不许回退）
     store.clear(); at(14, 0);
     localStorage.setItem('darkModeUserChoice', 'dark');   // 假设上一晚留下的标记
     localStorage.setItem('darkModeChoiceDay', theme.currentThemeDay());
@@ -183,8 +171,6 @@ console.log('== 06:00-23:00 完全遵循访客：旧 bug 的防线 ==');
 
 console.log('== 页面整夜关着 / 窗口内才打开 ==');
 {
-    // 关机一晚：23:00 那次切夜发生在关页之前（闩='1' 留在存储里），天亮后才重新打开。
-    // 出窗动作在下一个 tick 补上——这正是 ticker 必须每分钟跑、而不是只在挂载时跑的原因。
     store.clear(); at(23, 0, 15);
     localStorage.setItem('isDarkMode', '"false"');
     eq(tick(new Date()), true, '睡前 23:00 切夜');
@@ -252,7 +238,7 @@ console.log('== 陈旧闩不许吃掉下一晚的入场（20261013 修）==');
 console.log('== 旧版残留 / agent 侧的值 ==');
 {
     store.clear(); at(23, 30);
-    localStorage.setItem('darkModeUserChoice', 'true');   // 旧版写入，无 darkModeChoiceDay
+    localStorage.setItem('darkModeUserChoice', 'true');
     ok(!theme.userChoiceActive(), '无日期的旧标记不生效（20260908 语义）');
     eq(tick(new Date()), true, '夜间无有效意愿 → 进窗自动切夜');
 }
@@ -270,9 +256,6 @@ console.log('== 旧版残留 / agent 侧的值 ==');
 
 console.log('== 与 chat-stream.js 的 markVisitorChoice 对齐 ==');
 {
-    // agent 侧是同一份语义的第二个副本（public/live2d-widgets/chat-stream.js，IIFE，
-    // node 里 import 不了）。20260915 这个 bug 的形态就是"两处不同步"，所以按源码把
-    // 函数抽出来真跑一遍做对齐断言；抽不到直接抛（改名/重构必须同步这里，不静默跳过）。
     const streamSrc = readFileSync(path.join(root, 'public/live2d-widgets/chat-stream.js'), 'utf8');
     const grab = (name) => {
         const decl = 'const ' + name + ' = ';

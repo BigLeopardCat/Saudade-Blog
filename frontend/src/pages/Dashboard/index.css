@@ -999,11 +999,6 @@ body.dash-skin .MuiFormHelperText-root {
     color: var(--washi-ink-3, #a08ba8);
 }
 
-/* ⑩ 说说页右上那枚搜索胶囊（`components/Buttons/SearchButton`）。它的底色写死
-      `rgb(19, 168, 168)` 一支青绿 —— 组件本身**首页顶栏也在用**，所以不能改它的
-      `index.css`（那会连首页一起动，而首页是上一批已经定稿的）。这里靠范围根
-      只收后台这一份：`.mainbox` 是那个组件的根类，`body.dash-skin` 一挡，
-      首页顶栏那枚仍是原来的青绿。 */
 body.dash-skin .mainbox {
     background-color: var(--washi-pink-deep, #d94f9a);
 }

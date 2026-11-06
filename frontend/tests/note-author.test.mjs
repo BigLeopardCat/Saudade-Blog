@@ -1,23 +1,3 @@
-// ═ 文章卡片的作者（20261001）══
-//   node tests/note-author.test.mjs
-//
-// 现场（用户原话）："文章发布的卡片没有作者信息，管理员发的文章还是超级管理员的
-//   头像和署名在文章卡片上。"
-//
-// 根因是**数据不存在**（`note` 表从来没有作者列），所以修复横跨两仓：
-//   后端加 `note.user_id`（迁移 `scripts/migration/note_author_20261001.sql`）
-//   → 列表/详情接口多回 `authorName`/`authorAvatar`
-//   → 前端 `utils/noteAuthor.ts` 判"用作者那份还是回退站点级"。
-// 这套件锁三件（几何那半边不在这里：DOM 与改造前逐字相同，由
-// `article-card-hover.test.py` / `home-hero.test.py` 那几支继续量）：
-//   ① ★ 判据本身：有作者记录时**不许**再印站点级那份（这就是本轮报的那个 bug）；
-//   ② 判据的判据是**键在不在场**（不是值空不空）：键在场=后端定过稿，空头像就画默认
-//      头像，**绝不顶站长的脸**——这是用户第二个报障（"作者头像不对，还是硬编码的？"：
-//      jingbao 没上传过头像 ⇒ 后端老回退链把 Sora Saudade 的头像顶了上来）；
-//   ③ 接线：四处消费方走同一条判据，且**没有第二份 `|| 站点级`**——改造前正是
-//      "两处各拿 redux 的 name/avatar 直接渲染"才让这个 bug 要修两遍；
-//   ④ 跨语言契约：Rust 侧真的在回这两个键（`conv-row-since.test.mjs` 同款手法，
-//      直接读 `../../src/`），**每一条列表/详情路径都挂了作者**，且**两个键成对写**。
 import * as esbuild from 'esbuild';
 import { mkdtempSync, readFileSync, readdirSync, statSync } from 'fs';
 import { tmpdir } from 'os';
@@ -73,9 +53,6 @@ console.log('\n② 键整个缺席 ⇒ 回退站点级（老文章 / 发布者�
 
 console.log('\n③ 键在场 = 后端定过稿：空头像不许借站长的脸');
 {
-    // ★ 本轮用户报的第二个 bug。现场（线上库实测）：note 54「我，管理员！」的作者是
-    // jingbao（user_id=6），而 `user.avatar` 是 NULL ⇒ 老判据 `given(头像) || 站点头像`
-    // 把站长 Sora Saudade 那张照片顶了上来，卡片上就成了「jingbao 的名字 + 站长的脸」。
     const noAvatar = M.noteAuthor({ authorName: '管理员甲', authorAvatar: '' }, SITE);
     ok(noAvatar.name === '管理员甲' && noAvatar.avatar === '',
         '★ 有名字没头像（发布者没上传过）⇒ 头像**留空**（antd 画默认头像），不顶站长的脸',

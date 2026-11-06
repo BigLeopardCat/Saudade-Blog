@@ -28,7 +28,7 @@ apply_despite_snapshot() {
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # 连库命令。默认本机 mysql 客户端；CI 里是 `docker exec <容器> mysql`。
-# **故意不加引号**：${MYSQL_BIN} 按空格拆词，这样多词的命令前缀才成立（见头注的用法）。
+# **故意不加引号**：${MYSQL_BIN} 按空格拆词，这样多词的命令前缀才成立。
 MYSQL_BIN=${MYSQL_BIN:-mysql}
 
 # ── ① 参数 ──────────────────────────────────────────────────────────────────

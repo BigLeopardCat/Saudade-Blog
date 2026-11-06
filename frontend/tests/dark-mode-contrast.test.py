@@ -1,33 +1,5 @@
 # -*- coding: utf-8 -*-
-"""后台夜间模式：11 个页面逐个量"字色 vs 它真正的底色"的 WCAG 对比度。
-
-为什么值得单起一个脚本：20260923 后台在壳上接了 antd 的 `darkAlgorithm`（页面文字由
-**黑色 token 翻成白色**），而组件里那些**写死的浅色底**（内联 style / 普通类）不跟着变
-——于是"白字压浅底"，实测 1.26:1，等同看不见。这类问题：
-
-  · 读代码看不出来 —— 谁压谁取决于层叠（内联 > 类规则 > antd 的 `:where()` token），
-    而 `.contentDark` 那层底又是**不透明渐变**（computed backgroundColor 恒透明），
-    静态分析根本不知道它参与了合成；
-  · lint / tsc / 单测全绿也照样漏；
-  · 一个组件一个组件地"目视点过去"才是原来的做法，人一累就漏。
-
-判据 = 每个文本元素与它**合成后**的底色对比度 ≥ 3:1（低于 3:1 谁都读不清）。
-排除两类 antd 刻意的低对比：占位符（`ant-select-selection-placeholder`）与禁用态。
-
-已知项（会打出来但不判失败，见 KNOWN）**20261001 批 E 起为空**：
-  · UserControl（站点设置）—— MUI 组件不吃 antd 深色 token。20261001 批 E 在
-    `Dashboard/index.css` 里按 MUI 的语义类补了一层手账皮，已转绿、从 KNOWN 摘掉。
-  · Analytics —— 20260930 报表重写时清掉（G2 主题那一项）。
-两页现在**都在判失败之列**：再变红就是真回归，别再往 KNOWN 里塞回去。
-
-沿用 dashboard-sidebar.test.py 那套既定手段（本机不能 vite build，见 CLAUDE.md §2）：
-esbuild 把**真组件**打成一个 bundle、只桩边界（axios / react-redux / react-router-dom），
-antd / react / react-dom 全用真的；CSS = 仓库里那 11 份真 `.css` verbatim 拼接 + 真编译的 sass。
-
-用法：python3 frontend/tests/dark-mode-contrast.test.py            # 全部页
-      python3 frontend/tests/dark-mode-contrast.test.py Home Users # 只跑指定页
-依赖：frontend/node_modules（esbuild/react/react-dom/antd/sass）、playwright(python)。
-"""
+"""后台夜间模式：11 个页面逐个量"字色 vs 它真正的底色"的 WCAG 对比度。"""
 import functools
 import http.server
 import pathlib
@@ -68,30 +40,8 @@ PAGES = {
     "Announcement": "src/pages/Dashboard/Announcement/index.tsx",
 }
 
-# 建这个探针时就已经存在、本轮不修的一项。列在这里是为了"探针别哑掉"——
-# 它仍然会被打印出来，但不算失败；**任何别的页面**出现不可读文字一律判失败。
-#
-# Analytics（文章数据报表）**已于 20260930 摘掉**，两条原因都清了：
-#   · 图表主题 —— 重写时从 `useIsDarkMode()` 显式传 `theme: {type:'classicDark'}`；
-#   · ExpressionError —— 那个是**假后端喂空数组**喂出来的（这一页的读数全在一个对象里，
-#     空数组等于整页只剩标题），stub 现在按 URL 给一份真实形状的报表（见 FAKE_AXIOS）。
-#     **前提由此变了**：这一页能进普查，靠的是 stub 里有数据，改 stub 时别把它改回去。
-# ⚠️ 本探针扫的是 DOM 文本，**G2 画在 canvas 上的字它看不见**（坐标轴、图例、tooltip）。
-#    也就是说"图表内部在深色底上读不读得清"仍然没有判据，那部分只能人眼看——
-#    不要因为这一行是绿的，就以为整页的配色都被守住了。
-# 20261001 批 E 起**空**：原本唯一的一条是 UserControl（站点设置页是 MUI 写的，
-# MUI 不吃 antd 的 darkAlgorithm ⇒ 深色页上 label 是纯黑 1.29:1）。那一批把
-# `Dashboard/index.css` 的 ⑧⑨ 两节按 MUI 的语义类重写了一层（Fab / Button /
-# InputLabel / OutlinedInput 描边），对比度回到 3:1 以上，这条已知项随之摘掉。
-# ⚠️ 摘得掉是因为它真绿了，不是因为"看腻了"——下次要再往里塞，先确认那一页本地跑不绿。
 KNOWN = {}
 
-# 边界①：假后端。返回的列表必须是**空数组**而不是 null —— 后台好几个组件拿到列表直接
-# `.map()`，null 会让那棵子树整个抛异常 ⇒ 少渲染一块 ⇒ 普查"没扫全"，读数不可信。
-#
-# 唯一的例外是文章数据报表（20260930）：它整页的读数都在一个**对象**里，喂空数组等于
-# 只渲染出标题栏 ⇒ 探针扫不到"卡片上的数字、图例在深色底上读不读得清"，那是假绿。
-# 给一份最小可信样本（两行排行 + 后端那样补过零的 30 天），图表也就真被渲染出来了。
 FAKE_AXIOS = """\
 const REPORT = {
   generatedAt: '2026-09-30 12:00:00',
@@ -422,9 +372,6 @@ with sync_playwright() as p:
                   % (t, b["r"], b["g"], b["b"], b["a"])
                   for t, b in zip(r[1]["tags"], r[1]["chain"])))
             print("         DOM：" + r[1]["html"].replace("\n", " "))
-    # ── 附加（20260924 三轮）：Users 页认 ?tab=review ──
-    # 后台首页待办卡上那行"3 条留言待人工审核"点过来就落到这里；这个沙箱是**唯一**
-    # 会渲染真 Users 页的地方，所以这条接线断言寄在这里（它不关心配色，关心落点）。
     def active_tab():
         return page.evaluate("""() => {
           const t = document.querySelector('.ant-tabs-tab-active');
@@ -435,8 +382,6 @@ with sync_playwright() as p:
     page.wait_for_timeout(1800)
     check("Users 页认 ?tab=review（待审留言那行跳过来直接落在「留言管理」上）",
           active_tab() == "留言管理", str(active_tab()))
-    # 20261002：第四个页签（评论管理）同样认深链。**必须与上面那条分开跑**——两条都写成
-    # 看 active_tab 的话，一次 goto 只能验一个取值，而这里正是"白名单漏一项"最可能发生的地方。
     page.goto(f"{URL}?page=Users&tab=comment")
     page.wait_for_timeout(1800)
     check("Users 页认 ?tab=comment（落在「评论管理」上，不是落回账号管理）",

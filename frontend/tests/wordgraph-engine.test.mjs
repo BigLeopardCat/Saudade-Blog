@@ -96,10 +96,6 @@ console.log('== projectNodes ==');
     ok(p.x[0] < -1e5, '背后点坐标被踢出屏幕', { x: p.x[0] });
 }
 {
-    // 点半径的夹取带（20260916b 用户：「明明在外面看得见的向量点，视角飞进去反而变小
-    // 看不见了」）。探针放在世界 -z 上 ⇒ depth = dist + 1，ratio = dist/(dist+1)：
-    //   团外 dist=5   → 5/6 = 0.833（未触带，逐像素与改动前一致）
-    //   团内 dist=0.4 → 0.4/1.4 = 0.286 → 必须被抬到下限 0.62
     const probe = [mk(0, 'far', 0, 0, -1, 1)];
     const proj = (dist) => {
         const p = new engine.Projection(1);
@@ -164,9 +160,6 @@ console.log('== locateLocal ==');
 // ══════════════════════════════════════════════ 缩放区间
 console.log('== zoomBy ==');
 {
-    // 20260915 用户报「图谱放大范围太小，还没放大多数就到极限了」。点云半径实测
-    // max 1.066 / p90 0.937（当前 400 词产物 1d1323374540）：旧 DIST_MIN=1.7 连最外层
-    // 点都够不到，相机永远在球外——判据就是"放大到底必须能进到点云内部"。
     const MIN = 0.4;
     near(engine.zoomBy(4.3, -1e6), MIN, 1e-9, '一直放大到底 = 0.4（旧值 1.7）');
     ok(engine.zoomBy(4.3, -1e6) < 1.066, '放大到底能进到点云内部（< 实测 max 半径 1.066）');
@@ -187,9 +180,6 @@ console.log('== zoomBy ==');
 // ══════════════════════════════════════════════ 穿云（滚轮到底之后继续前进）
 console.log('== dollyBy / wheelStep ==');
 {
-    // 20260915 用户报「滚轮不能穿出向量空间，深处向量要旋转视角才看得到」：
-    // 只缩 dist 的话相机永远绕着锚点 0.4 打转，团中央的词只能转到正面才看得见。
-    // 判据：dist 到底之后继续上滚 → dist 不变、沿视线前进；下滚先退回锚点。
     const MIN = 0.4;
     ok(engine.dollyBy(-100) > 0, '上滚一格 = 前进（正位移）');
     ok(engine.dollyBy(100) < 0, '下滚一格 = 后退（负位移）');
@@ -331,7 +321,6 @@ console.log('== 近平面裁剪（clipEdge）==');
     ok(inFront !== null && inFront[0] === p.x[0] && inFront[2] === p.x[1],
        '两端都在前方：原样返回屏幕坐标', inFront);
 
-    // 一端在相机后方：**旧实现是整条丢掉**（用户顺着高亮线飞过去时线凭空消失）。
     const clipped = engine.clipEdge(p, nodes, 1, 2);
     ok(clipped !== null, '一端在近平面内：仍然返回一段（不再整条丢）', clipped);
     if (clipped) {

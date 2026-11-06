@@ -29,7 +29,7 @@ let list: TempUser[] | null = null
 let failed = false
 /** 去重：同一时刻只发一次 GET（页签挂载时的刷新与 `useLiveRefresh` 的轮询可能同时要） */
 let inflight: Promise<void> | null = null
-/** 请求代次：只有"最后一次发出"的那份读数才作数（见头注纪律 4） */
+/** 请求代次：只有"最后一次发出"的那份读数才作数 */
 let seq = 0
 /** 活着的订阅者数：0 时不发请求（没人在看账号列表，拉它干嘛） */
 let active = 0
@@ -103,7 +103,7 @@ export function refreshTempUsers(): Promise<void> {
         })
         .catch(() => {
             if (mine !== seq) return
-            // 失败：保留上一次的 list（见头注纪律 3——清空是在说谎），但记住这次没读到
+            // 失败：保留上一次的 list，但记住这次没读到
             failed = true
             emit()
         })
@@ -112,13 +112,6 @@ export function refreshTempUsers(): Promise<void> {
     return p
 }
 
-/**
- * 写操作**成功之后**调用：作废在途读数、通知所有显示位置、立刻重拉。
- *
- * 与 `favorites.ts` 的 `applyLocalFavorite` 不同，这里**不塞本地推测值**：账号行的字段
- * 由后端算（额度上限走 `quota::limit_of`、状态是库里的数字），前端猜一个不如让那次重拉
- * 说话；代价只是这一行晚一个往返才更新，而列表本身**当场就是可见的**（不会空屏）。
- */
 export function invalidateTempUsers(): void {
     seq += 1          // 在途的那份读数可能是写入之前的快照 ⇒ 作废它
     inflight = null

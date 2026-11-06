@@ -1,26 +1,3 @@
-// ═ 默认 import 一个「带 __esModule 的 CJS 包」必须过 cjsDefault ═══════════════
-//   node tests/cjs-default-interop.test.mjs
-//
-// 背景（20261013 真实事故，用户报的）：Vite 8 把打包内核换成 Rolldown 之后，后台
-//   `/dashboard/notes/allcategorize` 与 `/dashboard/usercontrol` 整页炸成
-//   `Unexpected Application Error! Minified React error #130 … args[]=object`，
-//   文章详情页 likewise。根因逐字读得出来——`vendor/rolldown-runtime-*.js` 里那个
-//   `__toESM`：节点模式（产物里写成 `X=n(module(),1)`）下 `X.default` 是
-//   **整个 `module.exports`**，而不是 `.default` 那个组件。`__esModule` 是
-//   `Object.defineProperty` 定义的**不可枚举**属性，所以抛错信息里
-//   `Object.keys(type)` 只剩 `["default"]`——这就是这条判据的指纹。
-//
-// 判据 = 「这个包的**入口**（含子路径入口）里有 `__esModule`」。
-//   ⚠️ **别只扫包根**：`@mui/icons-material/Add`、`antd/lib/locale/zh_CN` 这类子路径
-//   要按**文件**解析。第一版补丁只按包根的 `module`/`main` 解析，把
-//   `@mui/icons-material/Add` 读成了包根的 `esm/index.js`（那里没有 `__esModule`），
-//   于是盘点结论是"只有三个包受影响"——**九个图标就是这么漏掉的**。
-//
-// 为什么这条判据住在一个 **node 静态测试**里、而不是浏览器测试里：
-//   `tests/*.test.py` 那一族是 esbuild 打包后挂无头浏览器的（`scripts/nightly_*`），
-//   而 **esbuild 的 CJS 互操作是对的**——同一段源码在那边永远是绿的。
-//   把断言写进那边 = 假绿。（这条与 `sass-media-shadow` 那族的教训同源：
-//   判据要落在**真正会坏的那一层**上。）
 import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';

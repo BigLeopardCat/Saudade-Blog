@@ -1,26 +1,3 @@
-// ═ 首页卡片入场动画：**缓存命中时不许再放一遍**（20261004 用户第十一报）══
-//   node tests/home-enter-animation.test.mjs      （CI 秒级套件，靠 `npm test` 自动带上）
-//
-// 现场（用户原话）：「每次回到首页都有卡片一张张出来的动画，明明已经加载缓存好了吧，
-// 那过渡动画纯纯耗时影响体验」。
-//
-// 根因是两层的，两边都得钉住：
-//   ① `Article` 的 `isVisible` 初值是 `false`、由 IntersectionObserver 置位，且
-//      framer-motion 的 `initial={{opacity:0,y:-20}}` + `delay: index * 0.2` 在**每次挂载**
-//      都跑一遍 —— 包括数据本来就是从模块级缓存同步拿到的那些挂载。卡片于是"先一片空白、
-//      再一张张冒出来"，纯等待、零信息。
-//   ② 延迟**不封顶**：`delay: index * 0.2` 按序号线性长，第 20 张卡要等 4 秒才淡入，
-//      而它的 `isVisible` 又是"滚到它跟前"才置位的 —— 到底等多久由一个跟可见性无关的
-//      序号决定。
-//
-// 这两条都**不会**让页面报错、也不会让任何东西崩，只是"白白多花几秒"：除了拿秒表量
-// （`article-card-hover.test.py` 那类几何沙箱量不了时间轴），就只剩源码结构能拦。所以本套件
-// 判的是"那条决策写在该在的地方"，尤其是**负空间**：`initial` 一旦从 `false` 那支退回
-// 对象字面量，或者延迟那条 `Math.min` 被拿掉，这里必须当场红。
-//
-// ⚠️ 不测"缓存里到底存了什么"：那是 `ContentHome` 的运行期行为，桩一份 `location`/`redux`
-// 进来只会测到桩自己。这里只锁**接线**，与 `browser/article-grid.spec.ts` / `article-card-hover.test.mjs`
-// 的分工一致。
 import { readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -36,10 +13,6 @@ const ok = (cond, name, detail) => {
     else { fail++; console.log('  ✗ FAIL: ' + name + (detail !== undefined ? '  → ' + JSON.stringify(detail) : '')); }
 };
 
-/** 剥掉注释再判结构。⚠️ 不是洁癖：`Article.tsx` 的注释里**逐字写着**旧写法
- *  （"原来是 `delay: index * 0.2` 且不封顶"），不剥的话每一条负空间断言都会
- *  命中注释自己 —— 判据变成"注释里有没有这句话"，跟代码写没写对无关。
- *  这套件的初版就是这么假红的（`delay: index *` 那条量到的是注释）。 */
 const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
 const home = strip(readFileSync(HOME_TSX, 'utf8'));
 const article = strip(readFileSync(ARTICLE_TSX, 'utf8'));

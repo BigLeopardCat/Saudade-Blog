@@ -1,28 +1,3 @@
-// ═ 展示身份（头像/昵称）的跨标签页同步（20261001 用户第 5 条）══
-//   node tests/identity-sync.test.mjs
-//
-// 现场（用户报的）：「主页右上角头像变更不及时，切换登录帐号了还显示着上次账号的头像，
-// 必须刷新网页才同步」。
-//
-// 根因不是"没拉"，而是"**别的标签页**拉了没人听"：`useViewerProfile` 此前是普通 hook，
-// 每实例一份 useState，刷新时机只有挂载 + `auth-change` + `profile-change`——后两个都是
-// 挂在 `window` 上的自定义事件，**只在本 document 里跑**。用户在另一个标签页登录/退出之后，
-// 本标签页唯一能知道这件事的通道是 `storage` 事件（同源 localStorage 是共享的），
-// 而全仓没有任何一处听过它（`grep -rn "'storage'" src/` 曾为空）⇒ 头像停在旧账号、
-// 必须刷新网页。现在身份收成 `identity.ts` 里一个 store（与 favorites/unread 同一套形态），
-// 监听在模块加载时挂一次，本套件锁它的行为：
-//   · **★ 别的标签页换了账号 ⇒ 当场重拉、头像当场换**（本轮改动本体）
-//   · 反向对照：不挂 storage 监听（= 改动前的模块）⇒ 同一串动作下去头像纹丝不动
-//   · **不许跟着自己写的那两把键一起反应**（`lastUser`/`knownUsers` 每次拉取成功都回写，
-//     跟着反应会让两个标签页 ping-pong 不停）
-//   · 在途读数会作废（退登/换账号之后姗姗来迟的旧回包不许把旧账号写回 `mine`）
-//   · 三态不回归（未登录访客不打后端、退回本机记住的那个账号、没有记录才用默认头像）
-//
-// identity.ts 是 TS 且 import 了 axios 单例与 `import.meta.env`：本机不能 vite build
-// （3.7GB 内存，见 CLAUDE.md §2），用 esbuild JS API 把 axios 换成受测可控的假后端、
-// 把 `import.meta.env` 定义成空对象（= 两个环境变量都没配，仓库默认档）。
-// `window`/`document`/`localStorage` 是**模块加载时**就被读的，必须先装好再 import；
-// store 状态是模块级的，所以每个场景用 `?boot=N` 取一份全新实例。
 import * as esbuild from 'esbuild';
 import { mkdtempSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';

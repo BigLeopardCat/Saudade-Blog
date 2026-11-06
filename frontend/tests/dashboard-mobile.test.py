@@ -1,30 +1,5 @@
 # -*- coding: utf-8 -*-
-"""后台窄屏（≤1024px）适配的验收：真组件 + 真 CSS + 390×844 真几何（20261006 用户第 6 条）。
-
-用户原话：
-  "dashboard页面移动端适配简直是灾难，左侧边栏完全收起却没有腾出空间，每个选项菜单展开后，
-   具体页面直接被屏幕截断，文章页面移动端尤为严重，其他各项也没好到哪去"
-
-这三句话对应三组判据，**每一组都只有真跑一遍才看得见**：
-  · "收起却不腾空间"是盒模型的差几十像素——`.Card` 原先挂着一对内联的 `width:90%` /
-    `marginLeft:80px`，而侧栏是 `position:fixed` 的浮动层（从设计上就不占布局）⇒
-    390px 视口下卡片外框 351+80 再被父级居中，两侧一起溢出。读代码看不出，得问浏览器要 rect。
-  · "被屏幕截断"是高度链：`.Card{height:95%; overflow:hidden}` + `.content` 的 flex 居中
-    ⇒ 内容高于视口时**上下同时溢出**，顶上那半截在文档流之外、滚动条也够不着
-    （本仓 "flex 居中撑破视口" 那一族的老坑）。量 scrollHeight / scrollY 才判得出来。
-  · "抽屉把侧栏整块搬走了"牵涉一条规范边角：**`transform` 使外层成为内层
-    `position:fixed` 的包含块** ⇒ 内层那颗 fixed 的 `nav.shell-nav` 必须跟着一起位移。
-    这条静态读不出来，必须量 nav 的 rect —— 只量外层 `.shell.slider` 的话，
-    "nav 留在原地继续盖住内容"这个坏法会**假绿**。
-
-沿用 dashboard-sidebar.test.py 那套既定手段（本机不能 vite build，见 CLAUDE.md §2）：
-esbuild 把**真组件**打成一个 bundle、只桩边界（axios / react-router-dom / react-redux），
-antd 与 react-dom 用真的。CSS 必须**显式 link 仓库里那份真文件**：`import './index.css'`
-在 esbuild 里被 `--loader:.css=text` 吞成字符串，不生效。
-
-用法：python3 frontend/tests/dashboard-mobile.test.py
-依赖：frontend/node_modules（esbuild/react/react-dom/antd）、playwright(python)。
-"""
+"""后台窄屏（≤1024px）适配的验收：真组件 + 真 CSS + 390×844 真几何。"""
 import functools
 import http.server
 import pathlib
@@ -153,8 +128,6 @@ def build_sandbox() -> pathlib.Path:
                         f"--alias:react-redux={sb}/stub-redux.tsx"],
                        cwd=str(sb), capture_output=True)
     if r.returncode != 0:
-        # 宽容解码：esbuild 会在中文那行按字节截断，严格 utf-8 解会先炸在解码上、
-        # 把真正的报错盖掉（20260922 在 user-center.test.py 上实测）。
         raise SystemExit("esbuild 打包失败：\n%s" % r.stderr.decode("utf-8", "replace"))
 
     # link 的顺序就是层叠顺序：reset 与 tokens 在前（前者全是 `*` 通配，特异度最低；

@@ -1,18 +1,3 @@
-// ═ 收藏状态单一真源回归（20260923 三轮）══
-//   node tests/favorites-sync.test.mjs
-//
-// 背景（用户报的）：详情页那颗★与个人中心「收藏的文章」列表各拉各的、各存各的 state，
-// 一处改了另一处永远不变（组件常挂载 + `xxx === null` 门控 ⇒ 一次页面生命周期里只拉一次）。
-// 现在两份显示共用 src/components/UserCenter/favorites.ts 这一个 store，本套件锁它的行为：
-//   · 谁在拉、什么时候拉（0 个消费者一次请求都不发；事件驱动只在有人看时才拉）
-//   · 写成功之后的即时结果（取消收藏当场摘行）与**在途读数的作废**（竞态：进页面即拉、
-//     用户趁没回来就点掉收藏——不丢旧读数就会把刚点掉的★又点亮）
-//   · 读不到 ≠ 空（失败不清空 list，只标记 failed）
-//   · chat-stream.js 派发的 'agent-turn-done' 与 store 订阅的常量同名（跨文件契约）
-//
-// favorites.ts 是 TS 且 import 了 axios 单例：本机不能 vite build（3.7GB 内存，见 CLAUDE.md §2），
-// 用 esbuild JS API 把 axios 换成受测可控的假后端（其余依赖都是纯 TS，不需要 stub）。
-// 假后端可以**挂起**（`ctl.pending`）——竞态那条腿必须能把"写入之前发出的那份读数"按在手里。
 import * as esbuild from 'esbuild';
 import { mkdtempSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
@@ -226,11 +211,6 @@ const logout = () => { delete store.tokenKey };
     eq(mod.favoritesDebug().failed, false, '未登录不算"读失败"');
 }
 
-// ── ⑥ 每次成功读数都换**新数组实例**（否则界面静默停在旧条数）───────────────
-// 20260923 无头沙箱抓到的：假后端把同一个 `state.favorites` 交回来两次，读侧原样存下
-// ⇒ 新旧快照 `Object.is` 相等 ⇒ 订阅者的 setSnap 被 React 判为无变化、**不重渲染**：
-// store 里已经是 3 条，界面上还是 2 条（列表与页签条数都不动）。真后端一次往返是新对象，
-// 但"读接口交回同一个实例"完全可以由缓存/桩/就地改造成，所以拷贝是 store 的责任。
 {
     const { mod, ctl } = await fresh();
     login();
@@ -252,8 +232,6 @@ const logout = () => { delete store.tokenKey };
     const js = readFileSync(path.join(root, 'public/live2d-widgets/chat-stream.js'), 'utf8');
     ok(js.includes("new CustomEvent('agent-turn-done')"),
         "chat-stream.js 在流收尾派发 'agent-turn-done'");
-    // 20260924：订阅方从一个变成三个（收藏 / 未读红点 / 个人中心各页签）⇒ 常量搬到
-    // agentTurn.ts 单一定义处，三处 import 同一个名字（改名字要三处一起改）
     const turn = readFileSync(path.join(root, 'src/components/UserCenter/agentTurn.ts'), 'utf8');
     ok(turn.includes("AGENT_TURN_DONE_EVENT = 'agent-turn-done'"),
         'agentTurn.ts 是与 chat-stream.js 同名的单一定义处');

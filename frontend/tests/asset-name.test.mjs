@@ -1,17 +1,3 @@
-// ═ 图库列表模式：图片展示名（20261001，用户第 2 条）══
-//   node tests/asset-name.test.mjs
-//
-// 现场（用户要求）：后台图库加一种列表展示，行首是缩略图、后面跟着图片名。
-// 盘上存的名字是 `/api/protect/download/20260912013218_EMQX.png` —— 上传时给原名压了一个
-// **14 位时间戳前缀**（同一张图可以反复上传，靠它区分），给人看的应当只有 `EMQX.png`。
-//
-// 这条规则不是前端发明的：Rust `src/routes/upload.rs::strip_timestamp_prefix` 早就在用
-// 同一条判据（上传去重时把盘上的名字还原成原名）。**两处必须同形**，否则会出现"图库里
-// 显示 EMQX.png、去重逻辑却认不出它"这种对不上的状态 —— 本套件第 ③ 组就是钉这条的
-// 跨语言守卫（读 Rust 源码，形状一变就红）。
-//
-// 为什么这项进 CI：这两条判据都是纯函数（无 DOM 无 React），而在页面上它是"显示得对不对"
-// 的问题 —— 边界一错就是把时间戳当图名展示给用户，或者把中文名截断成乱码。
 import { readFileSync } from 'node:fs';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';

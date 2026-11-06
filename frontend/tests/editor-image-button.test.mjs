@@ -1,29 +1,3 @@
-// ═ 编辑器图片按钮：改为「图库优先，也能电脑本地上传」（20261006，用户要求）══
-//   node tests/editor-image-button.test.mjs
-//
-// 现场：`/dashboard/notes/newnote/` 正文编辑器（bytemd）工具栏里那颗图片按钮点下去直接弹
-// 系统文件选择框，而图库里已经攒了一堆图 —— 写文章时更常见的动作是「从已有的图里挑一张」。
-//
-// 那颗按钮是 bytemd 的**内置 action**（`getBuiltinActions` 的 `leftActions[5]`），bytemd 没有
-// 任何口子能换掉它：插件的 action 只能 `leftActions.push(...)` 追加到**末尾**（不能插位、不能
-// 覆盖、不能删）；不传 `uploadImages` 虽然能让那颗图标消失，但同一个 prop 还闸着**拖拽与粘贴**
-// 上传（`editor.svelte` 里 `if (!uploadImages) return`）。所以按钮原样留着，由
-// `src/components/Editor/index.tsx` 在**捕获阶段**拦下它的点击、改开我们自己的图库弹窗 ——
-// 工具栏的 DOM 与几何一行不动。
-//
-// **这个做法整个建在 bytemd 的内部形状上**，而它全是没写进文档、没进类型定义的细节：
-// 下标 `5`、`bytemd-tippy-path` 这个属性名、左组图标是 `.bytemd-toolbar-left` 的**直接子元素**、
-// 点击走 `.bytemd-toolbar` 上的冒泡 `on:click`。上游任何一个 `npm update` 都能把其中一条挪走，
-// 而挪走之后**页面照样能打开、只是那颗按钮又变成弹系统文件框**（静默退回旧行为，没人会报错）。
-// 本套件就是为这一刻准备的：读 bytemd 的源码把这几条逐字钉住，形状一变立刻红。
-//
-// ⚠️ 三个必须知道的前提（第 ⓿ 组钉的就是它们）：
-//   1. 读的必须是**真正生效的那一份** bytemd —— 从 `@bytemd/react` 自己解析，比对本机顶层
-//      目录（若哪天 npm 嵌了一套，本套件读的源码与页面跑的就不是同一份 = 什么都没证明）。
-//   2. 选择器**必须**带 `.bytemd-toolbar-left` 前缀：右组（toc/帮助/写入/预览/全屏/**源码**）
-//      也用同一个 `bytemd-tippy-path` 属性，而右组下标 5 是「源码」那颗（第 ② 组钉这条）。
-//   3. 左组的图标**只在 `split` 时**渲染（容器 ≥800px），否则那一格是「书写/预览」两个页签
-//      —— 我们的拦截器在这两种形态下都不会命中，这是预期（文章页编辑器是全宽）。
 import { readFileSync, existsSync, realpathSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
@@ -321,9 +295,6 @@ console.log('\n④ 我们自己的组件仍钉着这套契约（换了写法这�
             '监听器挂在编辑器外层那个 div 上（bytemd 工具栏在它里面）');
         ok(/editorEffect: \(ctx\) => \{ ctxRef\.current = ctx/.test(f),
             'ctx 从 editorEffect 里取（bytemd 只把上下文交给插件）');
-        // 20261006：插入前先过一遍 `encodeAssetUrl`（地址里带空格时裸拼会整段退化成纯文本，
-        // 见 `tests/asset-url.test.mjs` 与 `src/utils/assetUrl.ts`）。变的是**编码**，不是形状：
-        // alt 仍是空串、url 仍是那一个 —— 所以下面第 ③ 组"与拖拽上传同形"的前提不变。
         ok(/appendBlock\(`!\[\]\(\$\{encodeAssetUrl\(url\)\}\)`\)/.test(f),
             '插入用 `appendBlock(\'![](encodeAssetUrl(url))\')`（地址先编码再拼 markdown）');
         ok(/setSelection\(pos, ctx\.codemirror\.Pos\(pos\.line\)\)/.test(f), '光标落在刚插入的那一行上');
@@ -349,8 +320,6 @@ console.log('\n④ 我们自己的组件仍钉着这套契约（换了写法这�
         ok(/onPick\(img\.imageUrl\)/.test(f), '图库选中时递出去的是**库里那个原始地址**');
         ok(!/onPick\(resolveApiAssetUrl/.test(f), '递出去的不是 CDN 化后的地址（换公开域名就认不回桶了）');
         ok(/src=\{resolveApiAssetUrl\(img\.imageUrl\)\}/.test(f), 'CDN 化只用在缩略图 src 上');
-        // 20261014：图库列表的取数与判据搬进共用的取数钩子（三处消费方一份，见 galleryPager.ts）。
-        // 判据跟着实现走 —— 在这一处钉住"弹窗确实用那份钩子"，业务码那两条改钉钩子本身。
         ok(/useGalleryPager\(\)/.test(f), '图库列表经 useGalleryPager 取（分页/判据的唯一一处在 utils/galleryPager.ts）');
         ok(/accept="image\/\*"/.test(f) && /Upload\.Dragger/.test(f), '本地上传仍是拖拽/点选（accept=image/*）');
     }

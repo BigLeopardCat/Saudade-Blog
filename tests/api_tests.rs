@@ -11,13 +11,8 @@ fn test_state(db: sea_orm::DatabaseConnection) -> AppState {
     AppState {
         db,
         rate_limiter: LoginRateLimiter::new(5, 60, 300),
-        // 内容风控的发布间隔刹车（20261002）：路由结构测试不碰这条链路，
-        // 给一个空计数器即可（阈值由 risk::load_config 每请求现读）。
-        post_limiter: saudade_blog::risk::PostRateLimiter::new(),
-        // 错误上报的每 IP 计数闸（20261015）：与 `rate_limiter` 是同一个类型、另一套阈值。
-        // 这里照抄生产口径——本文件没有用例打 `/api/monitor/log`，取哪一档都不影响断言，
-        // 给生产值是为了将来加用例时不会莫名其妙撞上自己设的限流。
-        report_limiter: LoginRateLimiter::new(120, 60, 300),
+                post_limiter: saudade_blog::risk::PostRateLimiter::new(),
+                report_limiter: LoginRateLimiter::new(120, 60, 300),
     }
 }
 
@@ -49,10 +44,6 @@ async fn test_public_notes_route_structure() {
     assert_ne!(response.status(), StatusCode::NOT_FOUND);
 }
 
-// ---- 会话管理端点（20260903 会话化）401 用例 ----
-// 全部 handler 内 auth_jwt::auth_uid 在碰 DB 之前返回 401，
-// MockDatabase（无预期）下不触发任何查询，纯鉴权路径断言。
-
 fn mock_app() -> axum::Router {
     let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
     create_router(test_state(db))
@@ -72,9 +63,6 @@ async fn req_status(app: axum::Router, method: &str, uri: &str) -> StatusCode {
 }
 
 /// 带 JSON body 的请求。**带 `Json<T>` 提取器的路由必须走这个**：axum 的提取器在
-/// handler 之前执行，空 body + 无 content-type 会先被拒成 415，handler 里那行鉴权根本
-/// 轮不到（20260923 质量闸首次跑就撞上：`PATCH /api/chat/conversations/1` 断言 401 实得 415
-/// ——此前 CI 只 `cargo build`，这个目标从没被编译运行过）。
 async fn req_status_json(app: axum::Router, method: &str, uri: &str, body: &str) -> StatusCode {
     app.oneshot(
         Request::builder()
@@ -105,9 +93,7 @@ async fn test_conversations_require_auth() {
 
 #[tokio::test]
 async fn test_tag_move_requires_auth() {
-    // 换层级/换父级（20260921）：挂 protected_routes ⇒ auth_guard 全 admin，
-    // handler 内 auth_uid 在碰 DB 之前就返回 401（MockDatabase 零查询预期）。
-    let app = mock_app();
+        let app = mock_app();
     assert_eq!(
         req_status(app, "POST", "/api/protected/tag/move").await,
         StatusCode::UNAUTHORIZED
@@ -126,14 +112,6 @@ async fn test_chat_discard_requires_auth() {
     assert_eq!(req_status(app, "POST", "/api/chat/discard").await, StatusCode::UNAUTHORIZED);
 }
 
-// ---- 个人中心一期（20260922）自助接口的未登录行为 ----
-// 这一族与上面 chat 系**故意不同**：它们挂 `public_routes`（面向任意登录用户，不能进
-// admin 守卫域）+ handler 内自身鉴权，无 token 时返回的是**信封错误**
-// （HTTP 200 + code=500「未登录」），与同族的 `GET /api/protected/profile`、
-// `/api/protect/board/mine` 完全一致——**不是 401**。契约写死在这里，防后人"顺手改成 401"
-// 而把前端（按 code 判）打穿。
-// 断言本身仍在验证"鉴权发生在碰 DB 之前"：MockDatabase 没有任何查询预期，
-// handler 只要先查库再鉴权，这个测试就会以 panic 失败。
 async fn req_api_code(app: axum::Router, method: &str, uri: &str, body: &str) -> (StatusCode, i64) {
     let res = app
         .oneshot(
@@ -205,9 +183,7 @@ async fn test_profile_center_requires_login() {
         ),
         ("POST", "/api/protected/messages/read", r#"{"ids":[1]}"#),
         ("GET", "/api/protected/my/talks", ""),
-        // 对话额度（20260929）用户侧两条：查的/写的都是本人那一行（没有 uid 参数可传），
-        // 所以它们同样是"public_routes + handler 自身鉴权"，**不是** 401
-        ("GET", "/api/protected/quota", ""),
+                ("GET", "/api/protected/quota", ""),
         ("POST", "/api/protected/quota/apply", r#"{"reason":"想接着问"}"#),
     ];
     for (method, uri, body) in cases {
@@ -217,17 +193,6 @@ async fn test_profile_center_requires_login() {
     }
 }
 
-// ---- 对话额度（20260929）管理员三条 ----
-// 这一族与上面**故意不同**：它们挂在守卫域内（`protected_routes` 的
-// `route_layer(auth_guard)`），无 token 时是 **401**，且鉴权发生在任何查询之前
-// （MockDatabase 零查询预期 ⇒ handler 只要先查库再鉴权，这个测试就会 panic 失败）。
-//
-// 三条判据的分工写在这里，免得后人以为"测过了"：
-//   · **鉴权在哪一层** = 本文件；
-//   · **算术、角色表、C1 形状** = `src/quota.rs` 的 `#[cfg(test)] mod tests`（纯函数）；
-//   · **那条条件 UPDATE 真的会拦人**（并发下最后一格不超发）= 只有真机探针验得了，
-//     mock 的 `rows_affected` 是喂进去的。
-#[tokio::test]
 async fn test_quota_admin_routes_require_console() {
     let app = mock_app();
     assert_eq!(
@@ -250,19 +215,6 @@ async fn test_quota_admin_routes_require_console() {
     );
 }
 
-// ---- 文章阅读量 / 点赞量（20260930）：两个族故意不同 ----
-//
-// **读**（stats/view）不需要登录，因此"无 token"这件事在这里根本不是错误分支：
-// 访客照样拿得到 `{views,likes,liked:false}`。所以这两条**没有**"未登录"用例可写
-// ——它们的形状由 MockDatabase 的零查询预期顶着（handler 在查到文章之前不会成功，
-// 这里只断言路由存在且没被守卫误伤）。
-//
-// **写**（like/unlike）**20261001 起也不再要求登录**（用户第 2 条：点赞改为非登录
-// 用户也可以点赞）：身份 = 登录账号，或浏览器自报的 `X-Visitor-Key`（`identify`）。
-// 但**仍然不是 401**：它挂 `public_routes` + handler 内自身鉴权，走的是上面 profile
-// 那一族的信封错误契约。判据写死在这里，防后人"顺手挪进 protected_routes"——那会把
-// 普通用户全部 403 掉（auth_guard 判的是管理员）。
-#[tokio::test]
 async fn test_点赞取消点赞走信封错误而不是401() {
     for (method, uri) in [("POST", "/api/public/notes/1/like"), ("DELETE", "/api/public/notes/1/like")] {
         let (status, code, _) = req_api_envelope(mock_app(), method, uri, None).await;
@@ -271,14 +223,7 @@ async fn test_点赞取消点赞走信封错误而不是401() {
     }
 }
 
-/// 匿名点赞（20261001）：这道门是**访客标识**开的，不是把鉴权放宽了。
-///
-/// 判据靠**信封里的那句话**区分走到了哪一关（两个分支都是 HTTP 200 + code≠200，
-/// 只看状态码分不出来）：
-///   · 「未登录」      = 身份这一关没过；
-///   · 「这篇文章不存在」= 身份过了，卡在"文章可见性"那一关（MockDatabase 没有任何
-///     查询预期 ⇒ `visible_note_id` 恒 false）。**这就是"门真的开了"的证据。**
-#[tokio::test]
+/// 匿名点赞：这道门是**访客标识**开的，不是把鉴权放宽了。
 async fn test_匿名点赞靠访客标识开门而不是放宽鉴权() {
     const OK_KEY: (&str, &str) = ("x-visitor-key", "0123456789abcdef");
 
@@ -367,14 +312,6 @@ async fn test_分期报表需要管理员() {
 }
 
 /// 阅读求和（`SUM(cnt)`）**必须**走 `note_stats::sum_views()`——它是唯一一处
-/// `CAST(... AS SIGNED)`。理由是**真解码出来的**教训，不是风格洁癖：
-/// MySQL 的 `SUM(<整数列>)` 返回 `DECIMAL`，sea-orm 按 `i64` 解会当场报
-/// "not compatible with SQL type DECIMAL"。这条错**编译期发现不了**（本套件的
-/// MockDatabase 根本不经过 MySQL 的类型回传），20260930 实测症状是"卡片上三个数
-/// 一个都不显示、`GET .../stats` 直接 500"，而日志里只有一行 WARN ⇒ 得有人盯着才看得见。
-/// 所以这里锁的是**"别再写第二处裸 `.sum()`"**：全文件只允许出现一次，
-/// 且那一次必须在 `sum_views()` 里（`.count()` 不受影响，COUNT 本来就是 BIGINT）。
-#[test]
 fn test_阅读求和不许绕开_sum_views_那一手_cast() {
     let src = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/routes/note_stats.rs"),
@@ -463,18 +400,6 @@ async fn test_额度扣减的判据是_rows_affected_而不是猜的() {
         "绑定值必须是「+1、uid=126、上限=500」这个顺序：{log}"
     );
 }
-
-// ---- 站内聚合搜索（20261006）----
-//
-// 这一节只钉三件事，都是 MockDatabase（**没有任何查询预期**）下能确定的：
-//   ① 路由真的挂上了，且体解析在碰库之前（拿非法 JSON 探，见下）；
-//   ② 「没给关键词 / 给了但切不出可用 term」这两条路**根本不查库**——所以它们能在
-//      零预期的 MockDatabase 上跑通。handler 只要把任何一次查询提到短路之前，这组立刻 panic；
-//   ③ 信封的形状（total / counts / 四个数组），前端就是按它渲染的。
-//
-// ⚠️ **真库上的命中口径（谁该出现、谁不许出现）不在这里**——MockDatabase 只会比对一个
-// 字符串、不会真的执行 LIKE，可见性谓词（is_public / approved / is_deleted / 父文章可见）
-// 在它面前全是"通过"。那些判据在 `tests/pg_integration.rs`，两半合起来才算数。
 
 /// 与 `req_api_code` 同源，但把整个信封带回来（聚合搜索的判据要看 `data` 里的数）。
 async fn req_api_json(app: axum::Router, body: &str) -> (StatusCode, serde_json::Value) {

@@ -1,29 +1,5 @@
 # -*- coding: utf-8 -*-
-"""后台首页右栏（日历 + 待办）的无头验收。
-
-后台首页是**唯一一个没有沙箱的常驻页面**，而它恰好是最难用眼睛看出问题的那类：
-右栏三段（原「每日箴言」卡 / 日历 / 待办卡）靠百分比高度 + `space-between` 撑着，
-撤掉任何一段都不会报错，只是剩下的两段悄悄散开或压扁；日历往上挪还是往下挪，
-也只有在几何断言里才说得清。
-
-沿用既定装配手段（见 talk-time.test.py 头注）：sass 用 programmatic API 编译
-（CLI 在 Node 18 上会因 chokidar 的 ERR_REQUIRE_ESM 崩）、esbuild 打真组件、
-只桩边界（react-redux / 两个重量级兄弟组件 / 主题变量）。
-
-两个兄弟组件（左栏统计卡、中栏文章记录）用空 div 顶替：它们各自要拉接口、开图，
-而本沙箱只关心**右栏**——被断言的就是右栏自己。
-
-待办自 20260924 起**落库**（GET/PUT /api/protected/todos，整份列表覆盖），所以这里桩掉
-`src/apis/DashboardMethods.tsx` 这一层（内存里那份"服务端"），Home 里的读写路径
-——600ms 防抖、加载闸、失败提示——都还是真的。桩同时记下每次 PUT 的载荷，
-用来验"改动真的发出去了"，以及最要命的那条：**列表没读出来时绝不出网**。
-注意视口必须 > 1530px：`.right` 在 1530px 以下整块 `display:none`（媒体查询）。
-
-**样本日期全部相对"今天"生成**：逾期/今天/未来三档要验"按日期分组 + 逾期高亮"，
-写死日期的话这份用例过一天就会自己变红。
-
-用法：python3 frontend/tests/dashboard-home.test.py
-"""
+"""后台首页右栏（日历 + 待办）的无头验收。"""
 import datetime
 import json
 import pathlib
@@ -35,13 +11,6 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 FE = ROOT / "frontend"
 HOME_SASS = "src/pages/Dashboard/Home/index.sass"
 
-# 20260924 四轮：**必须连博客头那份 sass 一起编译**。原因是实测出来的一个真事故——
-# `frontHome/Head/index.sass` 里留着一整块**过期的** `.home {...}`（日历 + 右栏 + 待办卡
-# 的老版本，140 行），它选择器与 Home/index.sass 逐字相同、特异性也相同，而在生产
-# bundle 里**排在后面**（证据：线上 CSS 里 `.home .cardInfo` 出现在字节 100983 与 203888
-# 两处，后者的 padding/height/overflow 把新的那份盖掉了）。只编译 Home 一份 =
-# 复现不了这条级联，于是"待办卡右移 30px、内边距 10px"这种线上真缺陷在沙箱里全绿。
-# 顺序按生产实证：Home 在前、Head 在后。
 SASS_FILES = [HOME_SASS, "src/frontHome/Head/index.sass"]
 
 DEFINE = ('import.meta.env={"VITE_HTTP_BASEURL":"","VITE_CDN_BASEURL":"",'
@@ -56,14 +25,6 @@ def check(desc, cond, detail=""):
         FAILS.append(desc)
 
 
-# ── 样本：日期全部相对"今天" ────────────────────────────────────────────────
-# 「今天」**钉死**在这一天（页面的钟也一起钉，见 CLOCK_JS），不再取真实日期。
-# 为什么：日历只画**当月**格子，而这套样本的跨度是 TODAY-4 … TODAY+2 —— 用真实日期跑，
-# 每月 1-4 号 day(-4) 滑进上个月、每月最后两天 day(+2) 滑进下个月，`cell()` 取不到格子
-# 返回 None，⑤ 组当场 TypeError 崩掉（20261001 实测，那天正好是 1 号）；末月那半此前
-# 只治了症状（`show_today_month` 把面板翻回来，见它的说明），月初这半没治。
-# 钉死之后样本与「今天」恒在同一个月里，全年跑的是同一套数据，也不再是"每月有几天假红"。
-# ⚠️ 改这个常量必须同步改 CLOCK_JS 里的时间串，否则页面里的今天与样本错位。
 TODAY = datetime.date(2026, 10, 15)
 CN_WEEK = "一二三四五六日"
 
@@ -95,9 +56,6 @@ def cn_label(offset: int) -> str:
     return f"{d.month}月{d.day}日 星期{CN_WEEK[d.isoweekday() - 1]}"
 
 
-# 个性签名（`web_info.userTalk` → redux `user.talk`）。**桩里必须给**：空签名时组件
-# 整块不渲染 `.typed`，而"头像被签名挤扁"这件事只在 `.typed` 在场时才量得到
-# （20260930 二轮实测——这条正是本套件原来漏掉它的原因，见第 ⑲ 组）。
 TALK = "慢慢来比较快：把每一件小事做扎实，剩下的交给时间，别急。"
 
 OVERDUE, TOMORROW, LATER = day(-4), day(1), day(2)
@@ -200,14 +158,6 @@ export function saveTodos(todos: any) {
 (window as any).__setServer = (rows: any[]) => { server = rows; };
 ''' % json.dumps(SEED, ensure_ascii=False), encoding="utf-8")
 
-    # 边界④b：未读汇总接口层（20260924 四轮起，待审数从这条接口拿）。
-    # 桩的是"服务端那份计数"，`__pending` 由页面上现改——与另外两处同一种手法。
-    #
-    # 20260930：这一页的头像/昵称改走 `components/UserCenter/identity.ts`（用户要求"头像不要
-    # 硬编码"），而 identity.ts 在模块顶层 import 了 `getProfile` ⇒ 桩里没有这个导出，
-    # esbuild 直接报 "No matching export"。桩它只是为了**能被 import**：本沙箱的
-    # localStorage 里没有 `tokenKey`，`useViewerProfile` 的 effect 在发请求前就返回了，
-    # 这个函数一次都不会被调用（页面显示的是默认头像 + 空签名那条路）。
     (sb / "src/apis/ProfileMethods.tsx").write_text('''\
 const env = (data: any) => ({status: 200, data: {code: 200, message: 'ok', data}});
 export const ok = (res: any) => res.status === 200 && !!res.data && res.data.code === 200;
@@ -328,19 +278,7 @@ def _ym_num(pair):
 
 
 def show_today_month(pgx):
-    """把面板翻回「今天」所在的月份（**不动已选中的那一天**）。
-
-    为什么需要它 —— **点一个属于邻月的格子会把面板整块翻过去**（rc-picker 的既有行为：
-    选中的日子不在当前面板月里就 onPanelChange），于是「今天」那格从"当月的格子"变成
-    一格**邻月填充格**：既没有 `ant-picker-cell-today`（那圈环跟它一起没了，读到的
-    border/border-radius/position 全是初始值），也没有当月格子的字色。种子数据里
-    「后天」那条是 TODAY+2 ⇒ **每月最后两天跑这个套件必然假红**（20260930 实测：面板被
-    翻到 10 月，环读成 `0px none / static`）。
-
-    这是**套件的日期依赖**，不是页面缺陷：真站点上今天 9/30、待办排在 10/2 时点它，
-    面板翻到 10 月也是对的行为（那格本来就在邻月填充区里）。所以修的是测量方式：
-    量环之前先把面板翻回今天那一月，今天那格重新是当月格、环才是真的那道环。
-    """
+    """把面板翻回「今天」所在的月份（**不动已选中的那一天**）。"""
     want = _ym_num([str(TODAY.year), f"{TODAY.month}月"])
     for _ in range(24):          # 上限是防死循环；正常最多点两下
         cur = panel_ym(pgx)
@@ -392,9 +330,6 @@ with sync_playwright() as p:
     check("待办卡标题仍是本地存的那份（默认「开发进度」）",
           pg.input_value(".right .cardInfo input") == "开发进度")
 
-    # 20260924 三轮：两块内容共用同一条左右边。原先「卡片 10px + 卡体 14px」让待办
-    # 从比日历窄 25px 的地方起笔（实测 1168.3 vs 1193.3），右栏看着像两个人各写各的。
-    # 留 2px 容差：卡片自己有 1px 边框，那 1px 不值得为对齐去动卡片本身的观感。
     align = pg.evaluate("""() => {
       const b = (sel) => { const el = document.querySelector(sel);
         if (!el) return null; const r = el.getBoundingClientRect();
@@ -409,10 +344,6 @@ with sync_playwright() as p:
     check("待办行与日历网格左边对齐",
           abs(align["row"]["l"] - align["grid"]["l"]) <= 2,
           f"待办 {align['row']['l']:.1f} / 日历 {align['grid']['l']:.1f}")
-    # 20260924 四轮：上面那条断言曾经**假绿**过。真事故是 .cardInfo 被 Head 那份过期
-    # 拷贝盖住：`margin:30px` 把卡片整体右移 30px（左边比日历多 30、右边还探出右栏），
-    # `padding:10px` 再让内容多缩 10px。只量"行 vs 网格"在有 1px 边框的那一版恰好够用，
-    # 量不到"卡片盒本身跑了"。这两条直接钉卡片自己的盒：左右都要与日历严格同边。
     check("待办卡与日历同左边（卡片自己没有把盒推开的外边距）",
           abs(align["card"]["l"] - align["cal"]["l"]) <= 1,
           f"卡片 {align['card']['l']:.1f} / 日历 {align['cal']['l']:.1f}")
@@ -441,9 +372,6 @@ with sync_playwright() as p:
           f"日历底 {geo['cal']['b']:.0f} / 待办顶 {geo['todo']['t']:.0f}")
     # 旧布局（space-between）下这个缝实测近 300px：日历被顶到最上、待办被压到最下。
     check("两段之间只隔一个 gap（≤ 40px），不再是撑出来的空档", gap <= 40, f"{gap:.0f}px")
-    # 年度进度条已删（20260924）：它一直量出 0 高度、在生产里根本不可见
-    # （height:15% 挂在由内容决定高度的父块上 ⇒ 解析成 auto，孩子又全是绝对定位），
-    # 主人拍板撤掉。这里锁"日历紧贴右栏顶部"，别再让它上面凭空多出一段。
     check("日历紧贴右栏顶部（上面没有多余的一段）",
           geo["cal"]["t"] - geo["right"]["t"] <= 40,
           f"日历顶 {geo['cal']['t']:.0f} / 右栏顶 {geo['right']['t']:.0f}")
@@ -459,18 +387,12 @@ with sync_playwright() as p:
           and geo["todo"]["r"] <= geo["right"]["r"] + 1)
     check("日历有实际高度（不是被压成 0）", geo["cal"]["h"] > 200,
           f"{geo['cal']['h']:.0f}px")
-    # 20260924 二轮：格子从 46px 收到 26px、表体高度也不再被 antd 的 256px 定死，
-    # 整块日历 383px → 261px。省下来的高度归待办卡（它是 flex:1，自动吃掉）。
     check("日历收小了（< 300px，上一轮 383px）", geo["cal"]["h"] < 300,
           f"{geo['cal']['h']:.0f}px")
     check("待办卡明显比日历高（省下来的空间确实给了待办）",
           geo["todo"]["h"] > geo["cal"]["h"] * 2,
           f"日历 {geo['cal']['h']:.0f} / 待办 {geo['todo']['h']:.0f}")
 
-    # 20260926：卡片顶上那两层叠出来的死白（卡片体上内边距 12px + 标题上边距 5px）
-    # 收掉了 —— 那个**可编辑的标题**与它下面整份待办列表一起上提。旧值实测：标题
-    # 输入框离卡片顶沿 28px（文字 ~37px）、第一条待办 96.6px；现在 11px / 77.6px
-    # （上面那张日历卡的内容离它自己的顶沿是 4px，两者从此是同一个尺度）。
     top = pg.evaluate("""() => {
       const card = document.querySelector('.right .cardInfo');
       const c = card.getBoundingClientRect();
@@ -630,8 +552,6 @@ with sync_playwright() as p:
     pg.click(".calHead .calToday")
     pg.wait_for_timeout(250)
 
-    # 点日期 ↔ 待办卡的锚点契约。分组行的 data-date 就是那一组的 key：逾期那几天
-    # 在卡里并成了一组（key='overdue'），所以**过去的日期要落到 'overdue' 上**。
     keys = pg.eval_on_selector_all(".cardInfo .todo-group",
                                    "els => els.map(e => e.dataset.date)")
     check("每个待办分组都带 data-date（就是它在卡里的 key）",
@@ -689,8 +609,6 @@ with sync_playwright() as p:
           pg.eval_on_selector(".todo-group-head.is-overdue",
                               "el => getComputedStyle(el).color") == "rgb(212, 56, 13)",
           pg.eval_on_selector(".todo-group-head.is-overdue", "el => getComputedStyle(el).color"))
-    # 20260924 三轮：那个只读的红字 .todo-date 换成了每行自己的排期按钮，
-    # 日期从此写在按钮里（值读 input.value，不是 textContent）
     check("逾期组里每条都标了自己是哪天（M/D，写在它自己的排期按钮上）",
           pg.eval_on_selector_all(".todo-group-head.is-overdue ~ .todo-row .todo-due input",
                                   "els => els.map(e => e.value)") ==
@@ -698,8 +616,6 @@ with sync_playwright() as p:
 
     print("⑩ 新建日程 / 空行自动回收")
     before = len(row_texts(pg))
-    # 按钮上只有字（20260924 二轮：撤掉那个 + 号图标；20260926 文案从「新增一行」
-    # 改成「新建日程」——那句空列表提示里点名的就是它，两处必须同名）
     check("「新建日程」按钮上没有图标",
           pg.locator(".todo-add .anticon").count() == 0
           and pg.locator(".todo-add").inner_text().strip() == "新建日程",
@@ -722,7 +638,6 @@ with sync_playwright() as p:
           bool(sent2) and all(r["text"].strip() for r in sent2))
     check("打勾这个改动本身在发出的那份里（不是发了份旧的）",
           bool(sent2) and [r for r in sent2 if r["text"] == "逾期的一条"][0]["done"] is True)
-    # 焦点已经被那次点击带走 ⇒ 空行在这一刻就已回收
     pg.wait_for_timeout(200)
     check("空行失焦后自动收掉，不留空壳", len(row_texts(pg)) == before,
           f"{len(row_texts(pg))}")
@@ -954,9 +869,6 @@ with sync_playwright() as p:
     check("60 秒轮询接上了（切回标签页另有一条立即刷的通道）",
           60000 in (pg.evaluate("() => window.__intervals") or []),
           str(pg.evaluate("() => window.__intervals")))
-    # 20260924 四轮：数字的来源换成了未读汇总接口（原来这一页自己每 60 秒拉一次
-    # **整张留言表**再数 approved=0）。判据 = 汇总接口真的被调过，且这条读数
-    # 是**活**的：改服务端的数、派发看板娘那个收尾信号，界面跟着变。
     check("待审数来自未读汇总接口（不是自己拉整张留言表再数）",
           (pg.evaluate("() => window.__sumCalls") or 0) >= 1,
           str(pg.evaluate("() => window.__sumCalls")))
@@ -993,12 +905,6 @@ with sync_playwright() as p:
           pg.locator(".todo-review").count() == 0)
     check("待办本身一条没少", len(row_texts(pg)) == 8, str(len(row_texts(pg))))
 
-    # ────────────────────────────────────────────────────────────────────────
-    # ⑯ 额度重置申请：顶上**第二行**提示（20260929）
-    #
-    # 与待审留言同构（不进 todos、不落库、不能拖不能删），但**是两件事**：一个进留言管理
-    # 裁决、一个进额度管理裁决。本段最要紧的断言是「`.todo-review` 仍然恰好一条」——
-    # 复用类名会把两种提示数成同一件事（既有断言锁着那个数），所以新行另起 `.todo-quota`。
     print("⑯ 额度重置申请：顶上第二行提示（与待审留言同形、不同色、去另一个页签）")
     pg.evaluate("""() => {
       localStorage.setItem('__pending', '1');
@@ -1061,15 +967,6 @@ with sync_playwright() as p:
     check("两个数都是 0 时，两行提示都不画（不是画一行空壳）",
           pg.locator(".todo-quota").count() == 0 and pg.locator(".todo-review").count() == 0)
 
-    # ────────────────────────────────────────────────────────────────────────
-    # ⑰ agent 也能往这份列表里加东西（20260926）
-    #
-    # 它是**只追加**的：服务端给它开的是 `POST /api/protected/todos/item`（一次一条），
-    # 而这份界面是**整份**读写（PUT 的 payload 就是库里的全部，见 apis/DashboardMethods
-    # 头注）——所以危险在于「库里多了一条而本地不知道」：下一次自动保存会把它抹掉。
-    # 组件对着 agent 收尾那一下重读一次（`agent-turn-done`）；本地有没落库的改动时
-    # 只挂记号，等那份改动真要发之前先 GET 一次、把库里新多出来的行并进来再发。
-    # 下面两段就是这两条路：一段走"重读"，一段走"先并再发"。
     print("⑰ agent 往这份列表里加东西（追加通道）：界面要认，且不许反过来把它覆盖掉")
 
     def puts():
@@ -1157,9 +1054,6 @@ with sync_playwright() as p:
           row_texts(pg)[0] == "逾期的一条" and len(row_texts(pg)) == 9,
           str(row_texts(pg)))
 
-    # ── 丁：那次「先读」自己读失败 → 绝不发（发出去就是确定的删除）
-    # 手上这份没有 agent 那条，发上去就是把它删掉；而本地改动只是"晚一点保存"。
-    # 记号还挂着 ⇒ 主人下一次改动会把整件事重做一遍（先读、再并、再发）。
     pg.reload()
     pg.wait_for_timeout(900)
     pg.evaluate("""() => {
@@ -1199,11 +1093,6 @@ with sync_playwright() as p:
     check("读失败那次没有留下的半截（服务端那份 = 发出去的那份）",
           server_texts() == [r["text"] for r in sent2], str(server_texts()))
 
-    # ── ⑱ 一条待办都没有时的空态（20260926）────────────────────────────────
-    # 空列表只有新账号才见得到，所以那句提示平时没人看；而它偏偏是界面上**唯一**会
-    # 念出按钮名字的地方——按钮改了名、这句话没跟着改，新账号读到的就是"点下面的
-    # 「新增一行」"，而他眼前那颗按钮叫别的（找不到）。这里把服务端那份清空、
-    # 走 agent 收尾那条通道重读一次，拿真实空态把两处对起来。
     pg.reload()
     pg.wait_for_timeout(900)
     pg.evaluate("() => window.__setServer([])")
@@ -1226,19 +1115,6 @@ with sync_playwright() as p:
               const e = document.querySelector('.todo-empty').getBoundingClientRect();
               return e.top - c.top; }""") <= 90)
 
-    # ── ⑲ 欢迎卡头像：必须是正方形（20260930 二轮）──────────────────────────
-    # 用户报「dashboard 头像被挤压扁了」。根因不在头像那几条样式里，而在 `.about_me`
-    # 这条 flex 行上：`.typed`（Typed.js 的打字机容器）的 `flex-basis` 是 auto ⇒
-    # **基准尺寸 = 签名不换行时的整行宽度**；签名一超，亏空按基准尺寸加权分摊到两个
-    # 子项上，头像跟着被按比例压窄（实测 1600px 视口下 130×130 的盒子量到 60×130，
-    # 1280px 下 57×130 ⇒ 裁成一条竖缝）。
-    #
-    # 判据是"盒子是正方形"（几何），不是"那两句 CSS 还在不在"——但那两句必须**能被
-    # 证明有用**，所以下面有牙齿那一验：把修复撤掉，这条几何断言必须立刻变红。
-    #
-    # ⚠️ 这一组的前提是**签名真的渲染出来**（`.typed` 在场）。空签名时组件整块不渲染
-    # `.typed`，头像也永远不会被挤——本套件的桩原来就没给 `talk`，所以"头像被压扁"
-    # 在这里**根本量不到**（判据两边一样坏 ⇒ 照旧全绿）。桩里已补 `talk`。
     pg.reload()
     pg.wait_for_timeout(400)
     # 打字机是**逐字**打的（typeSpeed 60ms），`.typed` 的行数随字符增长 ⇒ 没打完就量
@@ -1300,16 +1176,6 @@ with sync_playwright() as p:
     pg.reload()
     pg.wait_for_timeout(600)
 
-    # ────────────────────────────────────────────────────────────────────────
-    # ⑳ 长待办：文字要换行把行撑开，不许在单行框里被切掉（20261007）
-    #
-    # 缺陷形态：待办文字此前住在一个**单行** `<Input>` 里，而单行输入框按定义不换行 ——
-    # 长待办只在框里露出前十几字，剩下的要聚焦后用方向键一个个挪才看得见，实际等于
-    # 「看不到这条待办是什么」。修法是把它换成 `Input.TextArea` + `autoSize`（行高随内容涨）。
-    #
-    # 判据故意写成一句**与元素类型无关**的话：**内容既不横向溢出、也不纵向溢出**（= 全在框里）。
-    # 原来那个 `<input>` 必然横向溢出；换行正常的 textarea 两个方向都不溢出 —— 所以这条
-    # 判据既抓得住旧形态，也不会因为将来换别的实现而失效。
     print("⑳ 长待办读得全：文字换行把行撑开，不许被切掉")
 
     LONG = ("把这一季度所有文章的分类与标签重新梳理一遍，顺便核对每篇的封面还在不在，"

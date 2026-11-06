@@ -1,19 +1,4 @@
 USE saudade_blog;
--- 20260919 清理 note.tags 里的悬空标签 id（**会改生产文章数据**，执行前先跑下面的预演 SELECT）。
---
--- 背景：`note.tags` 是逗号分隔的裸 id 串，没有外键、删除标签时也从不回写引用。于是删掉
---   一个标签后，引用它的文章还留着那个 id —— 后台列表上渲染成一排**空白标签小块**、
---   公开页卡片上同理（线上实测 23 篇里 12 篇有这种悬空 id：`12` 出现在 10 篇、`1` 出现在 2 篇，
---   而字典里只剩 tag_one 10/11/13/14 与 tag_two 5/6/7/8）。
---
--- 判据：一个 id 只要**既不在 tag_one 也不在 tag_two** 就是悬空，剔除；同时按数值升序去重
---   （旧数据里没有重复，但顺手把不变量立起来）。全被剔除的行写空串 `''`（=应用里"清空标签"
---   的写法，`joinNoteTags([])` 就产 `''`），而不是 NULL —— 前后端都按"空串/空值都算没有标签"处理
---   （`parseNoteTags`、`as_deref()`），写空串与用户手动清空后的状态一致。
---
--- 为什么不直接用 `UPDATE note ... JOIN (SELECT ... FROM note)`：MySQL 会报 ERROR 1093
---   （不能在子查询里读正在更新的表）。所以先落一张临时表算好变更集，再回写；临时表里**先**
---   打印出来给人看，最后才 UPDATE —— 审计线索留在执行输出里。
 DROP TEMPORARY TABLE IF EXISTS `_tag_clean`;
 CREATE TEMPORARY TABLE `_tag_clean` (
     `id`      int      NOT NULL PRIMARY KEY,

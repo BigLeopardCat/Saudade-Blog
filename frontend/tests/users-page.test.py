@@ -1,65 +1,5 @@
 # -*- coding: utf-8 -*-
-"""后台「用户管理」页（账号管理 + 评论管理）的无头验收：真组件 + 真 antd + 假后端。
-
-20260926 这一轮四件事，每件都只有真跑一遍才看得见：
-
-  · **筛选/检索的头不再滚走** —— 这是用户报的症状（"向下滚动会丢失筛选检索的头"）。
-    判据是几何：滚列表前后，工具栏那一条的 `rect.top` 一动不动，而行/表头的 top 变了。
-    光读 CSS 看不出这个（少写 `min-height: 0`，flex 项的自动最小高度按内容算，
-    整块会被内容撑高、自己永远不出滚动条，反而退回"整页滚"——那时两条断言都假过）。
-  · **账号列表的角色筛选/检索** —— 判据是**行数**：筛"管理员账号"后留下的行必须
-    恰好是 role=admin 的那些，且管理员行不给"删除"按钮。
-  · **新建账号框不再被浏览器回填** —— 根因不在缺 `autocomplete`（Chrome 对判定为
-    凭据的字段忽略 `off`），而在**页面里常驻着一个密码框**：没有 `<form>` 时 Chrome
-    把整页散落的输入框当成一个合成表单，"页面上有密码框"就等于"本页是登录页"。
-    所以判据是**页面上密码框的条数**：常态 1 个（新建表单那个）、打开改密弹窗 2 个、
-    关掉回到 1 个。这条同时锁住了 `forceRender`（关窗时 children 不更新那个坑）。
-  · **评论管理同款内滚动 + 分页条钉底 + 表头吸顶** —— 与文章列表同一套做法。
-  · **冻结 / 解冻账号**（同日晚些，第 5 件）—— 判据分三层：行上的「已冻结」标签、
-    按钮的**极性**（冻结行上写着"解冻"、未冻结行上写着"冻结"）与**配色**（danger 只给
-    "冻结"那一侧）、以及筛"冻结账号"这一档时行的归属会**跟着状态走**。请求侧锁三件事：
-    POST 到 `/api/temp-users/<id>/status`、body 传的是**目标状态**而非"切换一下"、
-    成功后会重新拉一次列表。另有两条刻意锁住的语义：`status` 缺失按 0 算（部署顺序
-    兜底），而 `status = 2` 这种**未登记取值按冻结处理**（与后端 `is_frozen` 同一条）。
-    同日晚些再加一层（用户点名「把 OK 换成对应具体事务」）：**冻结/解冻要先弹确认框，
-    且确认按钮上的字是这一下的动作词**（「冻结」/「解冻」，不是「确定/OK」；标题、正文
-    里的后果说明、danger 极性都跟着方向走）。三条不变量跟着一起锁：弹窗开着时**零请求**、
-    点取消**零请求**、只有点确认才发出那一条 POST。
-    两个坑写在下面的探针里：antd 的 `autoInsertSpace` 会在两个汉字之间插空格
-    （拿到的是「解 冻」——**弹窗确认按钮上同样会**，所以认定文案前一律抹空白），
-    以及假响应每次 GET 必须返回**深拷贝**——返回同一个数组
-    引用会让 React 的 `Object.is` 直接跳过重渲染，症状是"POST 成功了但行没动"。
-  · **超级管理员视角**（第六节）—— 页面上有两个按钮的亮灭取决于"我是谁"：同级
-    管理员不可互冻（后端 `check_freeze` 的 PeerAdmin）、不能冻自己（SelfTarget）、
-    只有超管看得见「变更身份」。**三条判据各验一次**——混成一条实现（例如"对方是
-    管理员就挡"）会在"自己那一行"和"超管看管理员"这两处同时出错，只看一条是看不出来的。
-    顺带锁住令牌的两种边界：`sub` 解析出来才知道"哪一行是我"（不再为这件事去拉
-    /profile），而令牌解析不出时页面照常渲染、按钮按最保守的界面给（不白屏、不崩）。
-  · **账号管理改走共享 axios 客户端**（同日晚些的第 6 件）——六处 `fetch` + 手拼
-    `'Bearer ' + token` 全部撤掉。判据是运行时的：`window.__fetchCalls` 恒空
-    （`zero_bare_fetch`），而账号请求出现在 `__calls` 里且**请求头**由客户端的
-    请求拦截器补（桩只记 url/method/body，头不在记录里——本页锁的是"走没走那条
-    通道"，头的事归 `src/apis/axios.tsx` 自己的测试管）。桩的形状也照真后端改：
-    GET 回**裸数组**、写接口回 `{code,message,data}`——两半不一致时"把 `res.data`
-    写成 `res.data.data`"这类缺陷会被桩掩盖成"没有账号"。
-  · **发通知**（第七节，同日晚些的第 7 件）—— 每行一个入口 + 受控弹窗（标题可空、
-    正文必填）。四层判据：每行都有入口、**弹窗开着时零请求**、**正文为空时主按钮
-    禁用**（且点它真不发请求）、请求体是 `{title, content}` 的**真填值**（标题留空
-    原样传空串，默认标题由后端给）。顺带锁两条：关窗后两个输入框从 DOM 摘掉
-    （`forceRender` + 条件渲染——本页 20260926 已被 Chrome 的合成表单回填坑过一次），
-    以及成功/被拒两侧信息**方位相反**（`data` vs `message`）。
-
-沿用既定手段（本机不能 vite build，见 CLAUDE.md §2）：esbuild 把真组件打成 bundle，
-只桩两个边界（`src/apis/axios.tsx` 与 `window.fetch`——20260926 起这一页**整页都走
-axios**：账号管理原来六处自拼 `fetch` + `'Bearer ' + token`，已迁到共享客户端，于是
-令牌失效时才有那条"清 token + 跳登录"的全局处理）；`window.fetch` 那个桩留着当**哨兵**：
-它一旦非空就说明有人把某处改回了裸 fetch（判据见 zero_bare_fetch）。
-sass 用 programmatic API 单独编译后用 `--loader:.sass=text` 收下。
-本机无中文字体（汉字渲染成豆腐块），断言全走数值与条数。
-
-用法：python3 frontend/tests/users-page.test.py
-依赖：frontend/node_modules（esbuild/react/react-dom/antd/react-router-dom）、playwright(python)。
-"""
+"""后台「用户管理」页（账号管理 + 评论管理）的无头验收：真组件 + 真 antd + 假后端。"""
 import functools
 import http.server
 import pathlib
@@ -371,9 +311,6 @@ def build_sandbox() -> pathlib.Path:
 
     sass_files = ["src/pages/Dashboard/Users/index.sass",
                   "src/pages/Dashboard/BoardManage/index.sass",
-                  # 额度管理页签（20260929）：它自己那份 .sass 也要编译进来——不编译
-                  # 就是"样式静默失效"（页面上那三段固定壳/内滚动全部塌成内容高度），
-                  # 而几何断言会把它读成"页面缺陷"。同 BoardManage 那条。
                   "src/pages/Dashboard/QuotaManage/index.sass"]
     css = []
     for rel in sass_files:
@@ -384,9 +321,6 @@ def build_sandbox() -> pathlib.Path:
                         str(FE / rel), str(out)], cwd=str(FE), check=True)
         css.append(out.read_text())
 
-    # 全站样式表：`src/main.tsx` 第一行就 import 它，所有页面都吃得到（`.counter-room` 那条
-    # 给 showCount 计数腾地方的规则就住在里面）。沙箱此前只编译上面那几份 .sass ⇒ 全局规则
-    # 在沙箱里根本不存在，几何断言会把"规则没生效"读成"页面缺陷"。真站有它，沙箱就得有它。
     css.append((sb / "src/index.css").read_text())
 
     r = subprocess.run([str(FE / "node_modules/.bin/esbuild"), "entry.tsx",
@@ -537,11 +471,6 @@ GEO = """() => {
 }"""
 
 
-# 冻结/解冻的确认框（20260926 用户点名：「把 OK 换成对应具体事务」）。
-# 取的是**弹窗页脚**那个按钮，不是行上那个同名的——两者文案一样（冻结/解冻），
-# 只有作用域能区分（行上 `.tu-freeze-btn` / 弹窗 `.tu-status-ok`）。
-# 按类名认弹窗而不是按 `title` 认：这一页同时挂着三个 `.ant-modal-wrap`
-# （改密码、恢复码、本框），关着的那些是 display:none 但仍在 DOM 里。
 STATUS_DIALOG = """() => {
     const m = [...document.querySelectorAll('.ant-modal-wrap')].find(
         (w) => getComputedStyle(w).display !== 'none' && w.querySelector('.tu-status-ok'));
@@ -557,7 +486,6 @@ STATUS_DIALOG = """() => {
 }"""
 
 
-# 删除账号的确认框（20261001）：与上面两支同形，按类名认（`.tu-del-ok`）。
 DEL_DIALOG = """() => {
     const m = [...document.querySelectorAll('.ant-modal-wrap')].find(
         (w) => getComputedStyle(w).display !== 'none' && w.querySelector('.tu-del-ok'));
@@ -589,9 +517,6 @@ ROLE_DIALOG = """() => {
 }"""
 
 
-# 发通知的弹窗（20260926）：与 STATUS_DIALOG/ROLE_DIALOG 同形，按类名认
-# （`.tu-notify-ok`）。额外取**两个输入框里现有的值**——"预设/校验"这类行为
-# 只有真读 DOM 才知道，光看请求体分不清"填对了"和"凑巧传对了"。
 NOTIFY_DIALOG = """() => {
     const m = [...document.querySelectorAll('.ant-modal-wrap')].find(
         (w) => getComputedStyle(w).display !== 'none' && w.querySelector('.tu-notify-ok'));
@@ -635,10 +560,6 @@ def role_posts(pg):
         .map((c) => ({ url: c.url, body: c.data }))""")
 
 
-# ── 额度（20260929）──────────────────────────────────────────────────────────
-# 主动重置的确认框：与 STATUS_DIALOG/ROLE_DIALOG/NOTIFY_DIALOG 同形，按类名认
-# （`.tu-quota-ok`）。这一处的正文要把两件事说清（清零后他立刻能问；界面上撤不回来），
-# 所以连正文一起取出来——文案是这一族里唯一没有别的判据的东西。
 QUOTA_RESET_DIALOG = """() => {
     const m = [...document.querySelectorAll('.ant-modal-wrap')].find(
         (w) => getComputedStyle(w).display !== 'none' && w.querySelector('.tu-quota-ok'));
@@ -774,31 +695,19 @@ def tooltips(pg, selector):
 
 
 def status_posts(pg):
-    """本页发出的状态请求条数（POST …/status）。断言"确认之前一个都不许发"用它。
-
-    20260926 起账号管理走共享 axios 客户端 ⇒ 记录在 `__calls`（原来在 `__fetchCalls`）。
-    记录里请求体那一栏两个桩叫法不同（fetch 桩叫 `body`、axios 桩叫 `data`），这里
-    统一成 `body`——断言只该关心"发了什么"，不该关心它走的是哪个桩。"""
+    """本页发出的状态请求条数（POST …/status）。断言"确认之前一个都不许发"用它。"""
     return pg.evaluate("""() => window.__calls.filter((c) =>
         c.method === 'POST' && /\\/status$/.test(c.url))
         .map((c) => ({ url: c.url, body: c.data }))""")
 
 
 def zero_bare_fetch(pg):
-    """这一页**一条裸 `fetch` 都不该有**（20260926 迁移的回归锁）。
-
-    `window.fetch` 的桩还在（见 ENTRY），但它现在只该是空的：账号管理原来六处都
-    自己 fetch + 手拼 `'Bearer ' + token`，于是绕过了共享客户端的 401 处理。
-    谁把某一处改回 fetch，这条立刻红——而不是等到"令牌过期时后台不跳登录"那天。"""
+    """验证页面请求统一经过认证适配器，不直接使用裸 fetch。"""
     return pg.evaluate("() => window.__fetchCalls.map((c) => c.method + ' ' + c.url)")
 
 
 def notices(pg):
-    """当前屏上的 antd message 文案（抹空白——antd 会在两个汉字间插空格）。
-
-    冻结/解冻那一侧的判据：后端把人类可读的那句放在 **`data`**、`message` 恒为
-    `"ok"`，所以"弹的是不是那句中文"这件事只有真看 DOM 才知道（用户 20260926
-    报的就是这里弹了一个只有「ok」的条）。"""
+    """当前屏上的 antd message 文案（抹空白——antd 会在两个汉字间插空格）。"""
     return pg.evaluate("""() => [...document.querySelectorAll('.ant-message-notice-content')]
         .map((e) => e.textContent.replace(/\\s+/g, ''))""")
 
@@ -886,10 +795,6 @@ with sync_playwright() as p:
     check("筛「普通用户账号」：管理员被排除、杂鱼也在这一档（非管理员）",
           "root_admin" not in names and "guest20" in names and len(names) == 29,
           f'{len(names)} 行，含杂鱼={"guest20" in names}')
-    # 删除按钮只给**普通用户**那一档（后端 `delete_temp_user` 也这么判：不是 user 就拒，
-    # 理由是"该账号不是普通用户，不能在这里删除"）。夹具里非普通用户的只剩 guest20
-    # 一行（20261011 撤掉 secretary 之后，杂鱼是唯一一种非普通用户角色）——正反两侧
-    # 仍要一起断言，只看一半的话"全有"或"全没有"都能单过。
     check("普通账号行**有**删除按钮（杂鱼不是普通用户，同样没有）",
           all(r["del"] for r in g["delBtns"] if r["u"] != "guest20")
           and not any(r["del"] for r in g["delBtns"] if r["u"] == "guest20"),
@@ -913,9 +818,6 @@ with sync_playwright() as p:
     check("检索/筛选**不发新请求**（只筛本地已有的那份）",
           pg.evaluate("() => window.__calls.filter(c => c.method === 'GET').length") == 1,
           str(pg.evaluate("() => window.__calls")))
-    # ID 检索（20260926 用户点名）：行上一直显示着 `ID: N`，但检索框只认用户名——
-    # 拿着一个 ID 来查（工单/日志里通常只有 ID）永远查不到。判据与用户名同一套（子串），
-    # 所以 `10` 会同时命中 ID 100..109 与 ID 210 之外的用户名含 10 的行。
     pg.locator(".tu-filter .ant-input").first.fill("126")
     pg.wait_for_timeout(300)
     g = pg.evaluate(GEO)
@@ -925,8 +827,6 @@ with sync_playwright() as p:
           [r["u"] for r in g["delBtns"]] == ["guest27"], str([r["u"] for r in g["delBtns"]]))
     pg.locator(".tu-filter .ant-input").first.fill("")
     pg.wait_for_timeout(200)
-    # 迁移锁（20260926）：这一页从"六处裸 fetch + 手拼 Bearer"改成走共享 axios 客户端，
-    # 判据不是"代码里没有 fetch 这个词"，而是**运行时一条都没发出去**。
     check("账号管理不再走裸 fetch（一条都没有）", zero_bare_fetch(pg) == [],
           str(zero_bare_fetch(pg)))
     check("第二节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
@@ -1076,11 +976,6 @@ with sync_playwright() as p:
     check("第四节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
-    # ── 五、冻结账号（20260926）────────────────────────────────────────────────
-    # 这一节要证明的是一条**端到端**的事：点「冻结」真的会让那一行从"正常"变成
-    # "冻结"，而这件事在页面上看得见、在库里（这里是桩）也真的改了。
-    # 只断言"按钮文案变成解冻"是不够的——文案可以由本地 state 翻转出来，
-    # 而后端一个字节都没收到。
     print("\n【五】账号管理的冻结账号筛选与冻结/解冻")
     pg = mount(br)
 
@@ -1173,10 +1068,6 @@ with sync_playwright() as p:
     last = status_posts(pg)[-1] if status_posts(pg) else None
     check("点「冻结」发出 {frozen:true}（与解冻走同一个接口、只换请求体）",
           last and last["body"] == {"frozen": True}, str(last))
-    # ④d 成功提示弹的必须是**后端那句中文**，不是字面量 "ok"（20260926 用户报的现场）。
-    # 后端 `ApiResponse::success(data)` 的 `message` 恒为 "ok"、人类可读的那句在 `data`
-    # —— 读错字段的写法（`message.success(res.data.message)`）弹出来就是一个只有
-    # 「ok」的条，而且它**不会报错、不会红**，只有真看 DOM 才发现。
     _n = notices(pg)
     check("成功提示是后端那句中文（账号已冻结…）",
           any("账号已冻结" in x for x in _n), str(_n))
@@ -1205,18 +1096,6 @@ with sync_playwright() as p:
     check("第五节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
-    # ── 六、超级管理员视角（20260926）──────────────────────────────────────────
-    # 这一节验的是**按钮亮不亮**这条界面分流，而它有**三个**分支、三条判据各不相同：
-    #   ① 我是管理员、这一行是我自己        → 挡（后端 `check_freeze` 的 SelfTarget）
-    #   ② 我是管理员、这一行是另一个管理员  → 挡（PeerAdmin）
-    #   ③ 我是超管、这一行是管理员          → **放行**（超管冻管理员是允许的）
-    # 三条混成一条实现（例如"对方是管理员就挡"）会在①③上同时出错：①的说明会说成
-    # "管理员之间"（答非所问），③会把超管的能力一起挡掉。所以三条各验一次。
-    #
-    # ⚠️ 夹具里**没有超管那一行**，而且这不是漏了：超管不进后台列表是**后端**的过滤
-    # （`authz::is_listable_role`，见 src/routes/temp_user.rs），接口根本不返回它。
-    # 在这里塞一行再断言"它没显示"，测的是前端有没有自己再滤一遍——前端**不该**有
-    # 那一层：真漏出来时，看得见比悄悄吞掉好得多（那正是后端那道闸坏了的证据）。
     print("\n【六】超级管理员视角：谁该挡、谁该放行、变更身份")
     # ① 管理员看自己那一行（夹具里的 root_admin 就是 uid 1 = 默认令牌的 sub）
     pg = mount(br)
@@ -1227,9 +1106,6 @@ with sync_playwright() as p:
     tips = tooltips(pg, '.tu-row:has(strong:text-is("root_admin")) .tu-freeze-btn')
     check("自己那一行的说明是「不能冻结自己的账号」（与后端同一句话，不是「管理员之间」）",
           any("不能冻结自己的账号" in t for t in tips), str(tips))
-    # 变更身份（20261002 下放）：管理员**能改的只有低两档**——
-    # 够得着的行有入口、够不着的行连按钮都不渲染（不是禁用：禁用会让人以为"本可以有"）。
-    # 两半一起断言，只看一半都测不出判据写反（"全都有"或"全都没有"都能单过一半）。
     _low = [r for r in g["roleBtns"] if r["role"] in ("user", "zako")]
     _high = [r for r in g["roleBtns"] if r["role"] not in ("user", "zako")]
     check("管理员视角：普通用户/杂鱼那些行**有**「变更身份」入口",
@@ -1241,7 +1117,6 @@ with sync_playwright() as p:
     check("合起来 = 恰好 29 行有入口（30 行里排除管理员那一行）",
           sum(1 for r in g["roleBtns"] if r["has"]) == 29,
           str(sum(1 for r in g["roleBtns"] if r["has"])))
-    # 徽章（20261002 B 件）在后台行上也要认得出身份——杂鱼行是唯一一枚非「已冻结」标签
     check("杂鱼那一行挂着「杂鱼」徽章（data-role=zako，文案走 aria-label）",
           pg.get_attribute('.tu-row:has(strong:text-is("guest20")) [data-role]', 'aria-label') == "杂鱼"
           and pg.get_attribute('.tu-row:has(strong:text-is("guest20")) [data-role]', 'data-role') == "zako",
@@ -1381,16 +1256,6 @@ with sync_playwright() as p:
     check("第六节④无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
-    # ── 七、发通知（20260926）──────────────────────────────────────────────────
-    # 这一节锁的是"给单个账号发一条站内通知"这条新通道在界面上的形状。判据分四层：
-    #   ① **每一行都有入口**（收件人合不合法由后端判，这一页不按角色分流）；
-    #   ② **先弹窗、弹窗开着时零请求**（与冻结/改身份同一个"点下去才发"的纪律）；
-    #   ③ **正文为空时主按钮禁用**——这是"必填"在界面上的形态。后端也会拒，但那要
-    #      往返一趟；前端这道只是"别让人白填一次"；
-    #   ④ 请求体是 `{title, content}` 的**真填值**（标题留空就原样传空串，默认标题
-    #      由后端给——"系统自己写的字"只有那一处来源）。
-    # 另锁两条本页已经踩过的坑：成功那句中文在 `data` 里（弹的不能是一个只有「ok」
-    # 的条）、被拒那句在 `message` 里（方位正好相反）。
     print("\n【七】发通知：每行一个入口 + 先弹窗 + 正文必填 + 请求体形状")
     pg = mount(br)
     g = pg.evaluate(GEO)
@@ -1426,11 +1291,6 @@ with sync_playwright() as p:
     d = pg.evaluate(NOTIFY_DIALOG)
     check("填了正文 ⇒ 主按钮可用", d and d["okDisabled"] is False, str(d))
 
-    # ★「字数计数遮挡发送按钮」（20260929 用户反馈）：antd 的 showCount 把计数
-    #   **绝对定位**在输入框下方约 22px 处（不占布局空间），而 Modal footer 的
-    #   `margin-top` 只有 12px ⇒ 计数整条压在下面那颗按钮上。修法是给 TextArea 挂
-    #   `.counter-room`（值在 src/index.css 一处）。这里量**几何重叠**——
-    #   "CSS 写对了"和"真的没被压住"是两件事（同个人中心那条断言的理由）。
     cnt = pg.evaluate("""() => {
         const m = [...document.querySelectorAll('.ant-modal-wrap')].find(
             (w) => getComputedStyle(w).display !== 'none' && w.querySelector('.tu-notify-ok'));
@@ -1511,17 +1371,10 @@ with sync_playwright() as p:
     check("第七节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
-    # ── 八、账号行上的额度 + 主动重置（20260929）───────────────────────────────
-    # 「重置额度」是账号族第四个动作（前三个：修改密码 / 生成恢复码 / 发通知），同一条
-    # 纪律：**不需要对方申请过**——按申请的裁决住在额度管理页签里（第九节）。这一节验
-    # 三件事：行上那枚 chip 的**三种形态**（普通 / 不限额 / 字段缺席）、按钮的亮灭、
-    # 以及受控弹窗那三条（先弹窗、确认前零请求、请求没有 body）。
     print("\n【八】账号行上的额度 chip 与「重置额度」")
     pg = mount(br)
     pg.wait_for_timeout(800)   # 账号列表是挂载后 500ms 拉的，chip 跟着那一份数据出来
     chips = quota_chips(pg)
-    # 口径是**余额**（20260929b 用户拍板：从 500 往下减才符合直觉）。数字从行上读，
-    # 前端不写死 500——137 用掉 ⇒ 印「剩 363」，减法只做一次（`utils/quota.ts`）。
     check("普通账号行上是「额度：剩 N / 上限」（是余额不是已用；数字从行上读，前端不写死 500）",
           chips.get("guest1") == "额度：剩363/500", str(chips.get("guest1")))
     check("不限额的账号显示「不限额」而不是 0/0（0 是「不限」，不是「上限为零」）",
@@ -1547,7 +1400,6 @@ with sync_playwright() as p:
     check("正文写明额度回到满额、他立刻能继续对话、且界面上撤不回来",
           d and "回到满额" in d["body"] and "可以继续对话" in d["body"]
           and "撤不回来" in d["body"], str(d and d["body"]))
-    # 措辞是「恢复到上限」不是「清零」（20260929 用户指出）：主人看到的是递减的余额。
     check("正文与标题里**不出现**「清零」（那是库里的实现，不是他看到的那个数）",
           d and "清零" not in d["body"] and "清零" not in d["title"],
           str(d and (d["title"], d["body"])))
@@ -1573,20 +1425,11 @@ with sync_playwright() as p:
     check("第八节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
-    # ── 九、额度管理页签：申请队列 + 驳回理由必填（20260929）────────────────────
-    # 这一页只管**裁决队列**（与评论管理只管审核队列同构）；按账号的动作住在账号行上
-    # （第八节）。两条最要紧的判据：① 筛选是**服务端**的事（桩按 status 过滤，所以
-    # "切到待处理真的少一行"是端到端成立的）；② 驳回**理由必填**是这一层保证的
-    # （后端只做回落，不做硬闸）。
     print("\n【九】额度管理：申请队列、三种状态、驳回理由必填")
     pg = mount(br, path="/dashboard/users?tab=quota", wait=".QuotaManage .ant-table-row")
     pg.wait_for_timeout(400)
     tabs = pg.evaluate("""() => [...document.querySelectorAll('.ant-tabs-tab')]
         .map((t) => t.textContent.replace(/\\s+/g, ''))""")
-    # 四个页签（20261002 起；此前三条，本轮断言跟着改）：`fe849d2` 把 BoardManage 那一页
-    # 从「评论管理」改回它本来的名字「留言管理」，文章评论另开了「评论管理」页签
-    # （`CommentManage`，读 note_comment）。**顺序也是判据**——页签顺序变了就等于
-    # 用户在侧栏/深链上看到的入口变了，所以这里逐字比整个列表，不写"包含"。
     check("四个页签都在（账号管理 / 留言管理 / 评论管理 / 额度管理）",
           tabs == ["账号管理", "留言管理", "评论管理", "额度管理"], str(tabs))
     check("`?tab=quota` 深链落在额度管理上",
@@ -1681,10 +1524,6 @@ with sync_playwright() as p:
           pg.locator(".qm-scroll .ant-table-row").nth(0).locator(".ant-btn-dangerous").count() == 0,
           str(pg.locator(".qm-scroll .ant-table-row").nth(0).locator(".ant-btn").count()))
 
-    # 批准：清零 + 不可逆，所以要二次确认；确认后 body 是 approved=true 且不带理由
-    # ⚠️ "零请求"要比**增量**：这一页此前已经成功发过一条驳回（同一条断言在驳回那
-    # 一步能写 `== []`，因为那时还是 0）。写成 `== []` 会恒红——而它红的那句读起来
-    # 像"批准弹窗发了请求"，其实是断言自己写错了（分辨成本极高）。
     _n0 = len(quota_review_posts(pg))
     pg.locator(".qm-scroll .ant-table-row").nth(1).locator(".ant-btn-link").first.click()
     pg.wait_for_timeout(300)
@@ -1694,9 +1533,6 @@ with sync_playwright() as p:
           d and d["ok"] == "批准并恢复满额", str(d and d["ok"]))
     check("正文写明恢复到上限、他立刻能问、且撤不回来",
           d and "恢复到上限" in d["body"] and "撤不回来" in d["body"], str(d and d["body"]))
-    # 「清零」是**库里的实现**（`chat_quota_used = 0`），不是主人看到的那个东西——
-    # 他看到的是递减的余额（20260929 用户指出）。这一条把措辞钉在这里，免得下次
-    # 又有谁"顺手"改回计数器口径。
     check("正文里**不出现**「清零」（主人看到的是递减的余额，不是计数器）",
           d and "清零" not in d["body"], str(d and d["body"]))
     # 这一句说的是**已用**（被退掉的那样东西），所以括号里也印已用：沿用列表那列的余额
@@ -1721,16 +1557,6 @@ with sync_playwright() as p:
     check("第九节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
-    # ── 十、删除账号的二次确认（20261001）──────────────────────────────────────
-    # 现场（用户原话）：「账号删除竟然没有二次确认功能导致我误删几个账号，增加二次确认」。
-    # 这一下是全页**唯一一个点一下就下手的写操作**（其它五个都有受控 Modal），而它偏偏
-    # 最不可逆——后端是硬删：`user` 行连同 chat_history/chat_summary/conversation 三张
-    # 会话表一起清，没有软删、没有回收站、没有回滚入口。所以判据与第五节的冻结同款三层：
-    #   ① 点一下 ⇒ **先弹框**，且框里的字是这一下的动作词（「删除」）＋ danger 极性；
-    #   ② **弹窗开着、点取消 ⇒ 零请求**（"取消也要真的取消"是最容易写成样子货的一条）；
-    #   ③ 只有点确认才发那一条 DELETE，且发完那一行真的从列表里消失。
-    # 第四条是这一节比冻结多出来的：**正文必须写明不可恢复与连带清掉什么**——只说
-    # "确定要删除吗"是把一个不可逆操作说成了可逆操作，而这正是用户误删时的处境。
     def del_calls(pg):
         """本页发出的删除请求（DELETE /api/temp-users/<id>）。"""
         return pg.evaluate("""() => window.__calls.filter((c) =>

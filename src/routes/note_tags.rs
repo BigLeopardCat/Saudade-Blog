@@ -422,14 +422,6 @@ async fn tag_names<C: ConnectionTrait>(
     out
 }
 
-/// 给一批 DTO 挂上 `noteTags`（**线格式仍然是逗号分隔的 id 串**，见模块头注）。
-///
-/// 与 `attach_authors` / `attach_stats` 同一分工：`map_note` 是纯函数不查库，
-/// 挂载由 handler 显式调一次。
-///
-/// ⚠️ **查不到时把 `tags` 置成空串**（不是留着旧值）：`NoteDto.tags` 默认是 `String::new()`，
-/// 而"这一篇真的没有标签"与"这一路没挂"在连线上本来就同形（都是 `""`）——
-/// 前端 `parseNoteTags("")` 得空数组，两者行为一致。
 pub(crate) async fn attach_tags<C: ConnectionTrait>(db: &C, dtos: &mut [NoteDto]) {
     let ids: Vec<i32> = dtos.iter().map(|d| d.id).collect();
     if ids.is_empty() {

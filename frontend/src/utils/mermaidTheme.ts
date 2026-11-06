@@ -24,7 +24,6 @@ export const MERMAID_CONFIG = {
     textColor: '#4a3550',
     titleColor: '#4a3550',
     lineColor: '#9b8fa6',
-    // 分组（subgraph）：原来是淡黄底 + 土黄框，最像"零几年"的一处
     clusterBkg: '#faf4f7',
     clusterBorder: '#e2cfe0',
     // 连线上的标签：原来 #e8e8e8 的灰块，压在线上像补丁

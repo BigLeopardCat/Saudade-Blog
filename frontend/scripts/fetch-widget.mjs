@@ -1,30 +1,3 @@
-// ═ 看板娘前端就位（20261002：agent 前端拆进 agent 仓）══
-//
-//   node frontend/scripts/fetch-widget.mjs        （或 npm run fetch:widget）
-//   CI 在 `npm ci` 之后、`vite build` 之前自动跑一次（deploy.yml）。
-//
-// 为什么需要这一步：看板娘与对话面板的**源码不住在本仓**了。它搬进了 agent 仓
-// （BigLeopardCat/saudade-blog-agent，那边以 MIT 分发），本仓只留
-// `frontend/widget.lock.json` 里钉死的那个提交号，构建前按它稀疏检出、落到
-// **和以前完全一样的路径**（frontend/public/live2d-widgets/ 与 .../live2d_model/）。
-//
-// 路径不变是**有意的**：nginx 那两个 1 年 immutable 的 location 块、仓库外的设备控制台、
-// 一批按路径读文件的测试、以及 src/routes/chat.rs 的 `include_str!`，全都因此零改动。
-//
-// ⚠️ 顺序：**必须在 `npm run vendor:live2d` 之前跑**。后者往 live2d-widgets/vendor/ 里写
-// 三份第三方产物，而本脚本整树替换 live2d-widgets/ ⇒ 顺序反了的话，刚取到的 vendor/ 会被
-// 这次替换抹掉（脚本会保留**已存在**的 vendor/ 兜底，并把这件事打出来，但那是兜底不是契约）。
-//
-// ⚠️ 这一层是本仓**唯一**的静默失效点：取不到就不会有这两棵树，而 vite 只拷贝 public/ 下
-// **真实存在**的文件 ⇒ 打出来的包里没有它们 ⇒ 部署按"本代清单"做集合差时会把线上正在用的
-// 那棵树当**旧块删掉**。症状是站点一切正常、只有看板娘一帧不画。所以本脚本任何一步失败都
-// **退出码 1**，CI 里 build 之后还有两条 `test -f` 兜底。
-//
-// ⚠️ 目标树里**不属于 pin** 的文件一律不删：`vendor/` 原样保留，`*.bak`/`*.orig` 就地留着，
-// 其余挪去临时区并打印路径。这个脚本只负责把 pin 的那一份放到位，不负责清理你的工作区。
-//
-// 只校验、不写盘：`node frontend/scripts/fetch-widget.mjs --check`
-// 写到别处（冷克隆验证用）：`node frontend/scripts/fetch-widget.mjs --dest /tmp/probe`
 import { spawnSync } from 'child_process';
 import { createHash } from 'crypto';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync } from 'fs';
@@ -169,9 +142,6 @@ try {
   } else {
     let placed = 0;
     let orphaned = 0;
-    // 目标树里"不在 pin 里"的文件一律**不删**：搬到这里，打印出来让人自己处置。
-    // （曾经就近删过一份 `agent_2.physics3.json.bak`——那是主人自己留的手工备份，
-    //  不属于 pin，这个脚本没有处置它的权力。历史里有，但那是侥幸。）
     const orphansDir = path.join(os.tmpdir(), `saudade-widget-orphans-${Date.now()}`);
     for (const rel of rels) {
       const dstDir = path.join(DEST, rel);

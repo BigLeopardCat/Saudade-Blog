@@ -1,33 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""核对"库里引用的本地图"与"盘上真实存在的文件"。
-
-**为什么需要它**：上传件的字节是本项目**唯一一件只在盘上、不在库里**的数据
-（文章正文与封面存的是指向它的 URL）。迁移或恢复时漏拷那个目录，表现不是报错，
-而是"某几篇文章的图静默 404"——往往几周后才被人发现。这个脚本把那条隐性风险
-变成一个数字：**有多少张正在被引用的图，在盘上找不到**。
-它同时是迁移/恢复的**验收判据**：跑出「严重 0」就说明这次搬家是完整的。
-
-**缺图分两类，严重程度不同**：
-  · 严重 —— 文章封面或正文正在引用的本地图，盘上没有 ⇒ 访客看到的就是破图；
-  · 提示 —— 只在图库表里挂着、没有任何文章用它，盘上也没有 ⇒ 多半是删过的
-            孤儿记录，不影响站点。
-R2 的图是绝对 URL（`http(s)://…`），字节不在本机盘上，**单独计数、不判缺失**。
-
-**退出码**：有严重缺图 ⇒ 1；否则 0。（「盘上有、库里没记录」不算失败。）
-
-**用法**：
-    python3 scripts/verify_uploads.py                # 人看
-    python3 scripts/verify_uploads.py --json         # 机器读
-    python3 scripts/verify_uploads.py --uploads-dir /srv/uploads   # 覆盖 .env 的 UPLOAD_DIR
-    python3 scripts/verify_uploads.py --self-test    # 只跑纯函数自检，不连库
-
-**凭据**只从仓库根的 `.env`（或同名环境变量）读，**不打印、也不进 argv**：一律走
-`PGPASSWORD` 环境变量交给子进程（20261018 切库时把 MySQL 那版的 0600 临时
-`--defaults-extra-file` 整个换掉了——psql 有 `PGPASSWORD` 这个更直接的机制）。
-`PSQL_BIN` 给前缀时（CI 用 `docker exec -i -e PGPASSWORD <容器> psql`）**`-e PGPASSWORD`
-不能少**，理由见 `pg_rows()` 的 docstring。
-"""
+"""核对"库里引用的本地图"与"盘上真实存在的文件"。"""
 import argparse
 import csv
 import io
@@ -70,12 +43,7 @@ def load_env(root=ROOT):
 
 
 def parse_pg_url(url):
-    """`postgres://user:pass@host:port/db` → (user, password, host, port, db)。
-    口令按 URL 规则解码（`@` `:` 等会被百分号转义），所以先从**最后一个** `@` 切。
-
-    ⚠️ 20261018 切库：前缀只认 `postgres://`。`postgresql://` 也合法、但本仓
-    `.env` 与 CI 一律用短的那个——**只认一种**，另一种会在这里静默返回 `None`
-    （调用方的处理是"没有 DATABASE_URL ⇒ 报错退出"，不是"跳过"，所以不会假绿）。"""
+    """解析 PostgreSQL URL 并解码账号口令，返回连接字段。"""
     m = re.match(r"^postgres://(.+)$", url or "")
     if not m:
         return None
@@ -155,18 +123,7 @@ def _self_test():
 
 
 def pg_rows(conn, sql):
-    """跑一条查询，返回按 tab 切好的行。
-
-    **凭据一律走 `PGPASSWORD` 环境变量，绝不进 argv**（20261018 切库时重写过这一段）。
-    MySQL 那版靠一个 0600 的临时 `--defaults-extra-file`，因为 `mysql -p<密码>` 在本机
-    `ps` 里对同机其他用户可见；psql 有更直接的机制：`PGPASSWORD` 就是为这件事存在的，
-    子进程环境不落盘、不进 `ps`、不用建临时文件，所以切库时把那条路整个换掉了。
-
-    `PSQL_BIN` 给前缀时（CI 用 `docker exec -i -e PGPASSWORD <容器> psql`）——
-    **`-e PGPASSWORD` 不能少**：`docker exec` 不继承客户端环境，少了它容器里的 psql
-    会去要口令，而 CI 的 stdin 不是终端 ⇒ 它直接失败。`-e` 不带 `=值` 的形式是把
-    **客户端这边**的变量透进去，所以口令照样不进 argv。
-    """
+    """执行查询并返回按 tab 分隔的行；口令经环境变量传递，不进入命令行。"""
     user, password, host, port, db = conn
     prefix = shlex.split(os.environ.get("PSQL_BIN", "psql"))
 

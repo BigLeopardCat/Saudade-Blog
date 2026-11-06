@@ -1,23 +1,3 @@
-// ═ 会话级联删的清单只有一份（20261018）══
-//   node tests/chat-cascade-single-source.test.mjs
-//
-// ## 盯的是什么
-//
-// 「删一个会话/删一个账号时，该跟着走的表有哪些」这份清单，此前在**两处各写一遍**，而两处
-// 写的不是同一份：`routes/conversation.rs::delete_conversation` 删五张子表，
-// `routes/temp_user.rs::delete_temp_user` 只删三张 —— 漏掉的 `execution_log` /
-// `pending_action` / `agent_task` 在账号删除后全部变成**孤儿**：这三张表都按
-// `conversation_id` 读，会话没了就再也没有任何读取路径，**也没有任何东西会红**。
-//
-// 修法不是"给漏的那处补三行"（那只是把同一份清单再抄一遍、等下一次再漏），是把清单收成
-// 一处 `conversation::purge_conversation_data`，两处都调它。本文件锁住"收成一处"这件事。
-//
-// ## ⚠️ 源码锁**单独不算数**
-//
-// 本文件只证明"没有第二份清单"，**证明不了"清单本身是全的"** —— 一份漏了某张表的
-// 唯一清单照样能让本文件全绿。所以它必须与行为判据**配对**：
-// `tests/pg_integration.rs` 里"删临时账号后六张表该 uid 计数全 0"那条（它在收口之前是红的）。
-// 只留源码锁 = 把"函数被调用了"当成"表被删干净了"，那是本仓明确不要的那种假绿。
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -102,8 +82,6 @@ console.log('\n② 两个调用方都调它，且没有谁自己再抄一份');
 
 console.log('\n③ 三张"曾经漏掉"的表在整个 routes 里只有清单一处能删');
 {
-    // 这三张表此前只被 `delete_conversation` 删；漏掉它们的那一处（temp_user）就是本 bug。
-    // 现在全仓（routes 下）删这三张表的地方只该有 `purge_conversation_data`。
     const conv = rust('src/routes/conversation.rs');
     const body = fnBody(conv, 'purge_conversation_data') || '';
     const rest = conv.replace(body, '');

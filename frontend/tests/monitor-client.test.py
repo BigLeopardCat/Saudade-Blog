@@ -1,26 +1,5 @@
 # -*- coding: utf-8 -*-
-"""SPA 侧错误上报的**真链路**沙箱（20261004）：真浏览器、真
-`src/utils/report.ts`、真事件（不桩 fetch、不桩监听器），网络那一层被 Playwright 拦住。
-
-为什么必须有一条这样的：`tests/monitor-report.test.mjs` 验的是纯函数与源码接线，
-**它证明不了"事件真的会走到上报"**——而这恰好是这次要修的东西。用户原话是
-"前端日志覆盖不够吧，甚至是无效状态"，而"无效"的成因之一就是：以前那套全局捕获
-（boot.js）包的是 `fetch`、`error` 监听又没带 capture，于是**资源加载失败从来没进过日志**。
-"没进过"这件事，只有让浏览器真的加载一张 404 的图才能验。
-
-六条判据：
-  ① ★ 资源加载失败 ⇒ 真的发出一条 `resource_error`（含 url 与 webgl 标记）——这次修的主洞；
-  ② ★ **运行时 JS 异常不许被这里再报一遍**（负空间：那归 boot.js 的 `js_error` 管，
-     重复上报会把 `dup` 的语义糊掉）；
-  ③ 同一处失败重复触发 ⇒ **只发一条**（页内去重，别把一个坏图刷成一百行）；
-  ④ 上报端点自己挂掉 ⇒ 不报（否则 401/500 时是自激循环）；
-  ⑤ 非资源标签（比如 div 上的 error）不误报；
-  ⑥ 请求体形状：`type/message/stack/url/webgl` 四个字段，且 body 里没有换行。
-
-用法：python3 frontend/tests/monitor-client.test.py
-依赖：frontend/node_modules（esbuild）、playwright(python)。**低内存机器上串行跑**
-（这条与其它沙箱同款要求：无头 Chrome 一次只起一个）。
-"""
+"""浏览器错误上报的真实组件与网络适配回归。"""
 import functools
 import http.server
 import json

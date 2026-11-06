@@ -69,11 +69,6 @@ const DeleteForeverIcon = cjsDefault(DeleteForeverIconDefault)
 const EditIcon = cjsDefault(EditIconDefault)
 const ChangeCircleIcon = cjsDefault(ChangeCircleIconDefault)
 
-/**
- * 状态归一：DTO 在 status 为 NULL 时给的是 `"published"`（`map_note` 的兜底），
- * 而单选框只有 公开/私密/草稿 三个值 —— 不归一的话遇到这种行会**三个都不选中**
- * （旧版"弹窗打开是空的"就是这么来的），保存时还会把 undefined 原样发出去。
- */
 function normalizeStatus(status?: string): 'public' | 'private' | 'draft' {
     if (status === 'private') return 'private';
     if (status === 'draft') return 'draft';
@@ -88,11 +83,6 @@ interface AdvancedSearchFormProps {
     onReset: () => void;
 }
 
-/**
- * 搜索表单：**不再自己发请求**，只把条件交给父级写进 URL（唯一真源），
- * 再由取数 effect 统一发。旧版它自己 `setSearchNotes` 塞结果、又和父级的取数 effect
- * 抢同一份 state，切 tab / 翻页时两边互相覆盖。
- */
 const AdvancedSearchForm = ({search, query, onSearch, onReset}: AdvancedSearchFormProps) => {
     const { token } = theme.useToken();
     const [form] = Form.useForm();
@@ -186,7 +176,6 @@ const AllNotes = () => {
     const [rows, setRows] = useState<NoteType[]>([])
     const [loading, setLoading] = useState(false)
     const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
-    /** 行内「文章配置」的目标行。持有**整行**（旧版只存一个 key 字符串，回填无从谈起） */
     const [editRow, setEditRow] = useState<NoteType | null>(null);
     const [isModalOpen, setIsModalOpen] = useState(false);
 
@@ -317,10 +306,6 @@ const AllNotes = () => {
         setEditRow(value)
     }
 
-    // 回填**必须放在 effect 里**：antd v5 的 Modal 首次打开前不渲染 children，
-    // 同一帧里调 form.setFieldsValue 会报 "useForm is not connected to any Form element"
-    // 并**静默失败** —— 这就是旧版弹窗打开时单选按钮全空的原因。
-    // 回填也不只是体验问题：后端对 noteTags 是"传了就写"，不预填就保存会把标签清空。
     useEffect(() => {
         if (!editRow) return;
         form.setFieldsValue({

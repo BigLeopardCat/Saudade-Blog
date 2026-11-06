@@ -1,40 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""手机档：mermaid 图真的能读（20261005）。
-
-  python3 tests/mermaid-mobile-zoom.test.py
-
-现场（用户报「移动端文章页有很大问题」后逐个量出来的第三条）：文章页在 390px 视口里，
-mermaid 图被压到 **276px 宽、图上标签 ~5px 高**（`/article/19` 那张流程图，viewBox
-1112×598）——图还在、边框还在，就是**没人读得了**。两条路一起断：
-
-  ① 图上那枚「🔍 点击放大」角标写的是 `&:hover::after`（`index.sass`）。**触屏没有 hover**
-     ⇒ 手机上一个入口提示都不出现，看图的人根本不知道能点。同族坑在本仓不是第一次
-     （`Vitrine/index.sass` 的 `@media (hover: none)` 一段写着「触屏没有 hover：直接常亮，
-     否则这个功能等于不存在」）。
-  ② 就算他瞎点开了浮层，浮层起点是"整图适配"（`zoomOverlay.ts` 的 `fitScale`）：1112px 的
-     图在 334px 舞台里适配成 **0.291** ⇒ 摊开还是 5px 的字，**点开放大与不点开一样看不清**，
-     白点。
-
-所以这一档把手机上的"点开"接成一条真能读的路：角标常亮（②）+ 窄屏起点让给"能读"
-（③，折算 ≥720px 显示宽，标签 ≈12px），双击在「能读 ↔ 整图」之间切（④）。桌面档一字不动。
-
-为什么要真浏览器：两条都只在**布局完成后**才成立（`getBoundingClientRect` / 媒体查询命中 /
-浮层的 `transform` 缩放）。夹具 = 真编译的 `.sass` + 真打包的 `zoomOverlay.ts`（esbuild，
-与 `favorites-sync.test.mjs` 同一个取法）+ 一份复现真 DOM 的 mermaid 图框。
-
-锁五件：
-  ① 前提：本套件用的"触屏"上下文真的把 `(hover: none)` 打开了（不成立则下面全绿也是假的）；
-  ② 角标：触屏档常亮、桌面档仍藏着；**红基线**单独摘掉 `@media (hover: none)` 那一块 ⇒
-     触屏档当场回到 `opacity: 0`；
-  ③ 浮层起点：窄屏点开后图上标签 ≥10px（≈行内的 2 倍）；**红基线**换臂——把起点那一行
-     逐字回退成改动前的 `fitScale()` 再跑同一个夹具，标签必须 ≤7px（证明 ③ 不是空断言，
-     而是这次真的把 0.291 换掉了）；换臂不读 `git show HEAD:`（提交之后它就等于被测对象，
-     见下面锚点那段注释）；
-  ④ 双击的两个端点：窄屏「能读 ↔ 整图」来回切；桌面档仍是「适配 ↔ 2.5× 适配」；
-  ⑤ 负空间：`index.tsx` 里那个点击委托还在（模块是好的、没接上照样没人能点开）、
-     沙箱里行内那张图**确实**是小的（否则"放大后可读"在夹具里本来就成立，判据是空的）。
-"""
+"""手机档：mermaid 图真的能读。"""
 import pathlib
 import shutil
 import subprocess
@@ -89,10 +55,6 @@ MOBILE_UA = ("Mozilla/5.0 (Linux; Android 12; NOH-AN00) AppleWebKit/537.36"
 DESKTOP_UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36"
               " Chrome/120 Safari/537.36")
 
-# 与线上一致的取值：`.readContent` 390 − 左右各 10 内边距 = 370，正文列再吃那**一处**
-# 内边距 12+12 = 346（20261005 起；此前是两层编辑器内边距各 15 ⇒ 310），图框再吃
-# 16+16 padding 与 1+1 border ⇒ 行内 svg ≈312px；浮层里 content = viewBox + 34 = 1146、
-# 桌面舞台适配比例 1.21 ⇒ clamp 到 1。
 HOVER_NONE_RE = None  # 编译后才知道字面，见下
 
 
@@ -161,13 +123,6 @@ if HOVER_HEAD not in CSS:
 _hi, _hj = block_region(CSS, HOVER_HEAD)
 NO_HOVER = CSS[:_hi] + CSS[_hj:]
 
-# 判据 ③ 的红基线 = **换臂**：改动前那一版模块，同一个夹具同一套判据。与
-# `saudade-golden-ab-interleave-method` 同一取法：读**计数/几何**，不读"看起来对"。
-#
-# 换臂的方式是**逐字回退那处分歧**（把起点从「能读」改回 `fitScale()`），不是
-# `git show HEAD:` —— 后者在改动**提交之后**取到的就是改动后的那份文件，两条臂逐字
-# 相同、红基线当场失效（20261005 实测：提交前绿，提交后两条臂都量到 698.6px）。
-# 换臂的判据必须钉在**时间**上（一个写在测试里的逆变换），不能钉在"当前提交"上。
 _ts = ZOOM_TS.read_text(encoding="utf-8")
 _PREV_ANCHOR, _PREV_BEFORE = "scale = readableScale()", "scale = fitScale()"
 # 必须**恰好命中一处**：`readableScale()` 在改后那份模块里出现三次（起点 / 提示语 /

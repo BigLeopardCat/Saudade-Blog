@@ -133,7 +133,6 @@ pub fn password_reject(pw: &str) -> Option<&'static str> {
 }
 
 /// 用户名字符数上限。**建号是管理员专用入口**，所以这个数只需要挡住"手滑贴进来一段
-/// 文本"，不需要当公开注册的防滥用闸（那种闸得住字符集白名单，本批刻意不做）。
 pub const USERNAME_MAX_CHARS: usize = 32;
 
 /// 账号名不合格时给出那句话，合格返回 `None`。**入参是已经 `trim()` 过的值**——

@@ -16,7 +16,7 @@ let failed = false
 let overrides = new Map<string, boolean>()
 /** 去重：同一时刻只发一次 GET（详情页与个人中心可能同时要） */
 let inflight: Promise<void> | null = null
-/** 请求代次：只有"最后一次发出"的那份读数才作数（见头注 seq） */
+/** 请求代次：只有"最后一次发出"的那份读数才作数 */
 let seq = 0
 /** 活着的订阅者数：0 时不发请求（没人在看收藏，拉它干嘛） */
 let active = 0
@@ -56,7 +56,7 @@ if (typeof window !== 'undefined') {
     })
 }
 
-/** 某篇是否已收藏（本地写入的结果优先——见头注 overrides） */
+/** 某篇是否已收藏（本地写入的结果优先） */
 export function hasFavorite(id: number | string | null | undefined): boolean {
     if (id === null || id === undefined || id === '') return false
     const k = key(id)
@@ -72,9 +72,6 @@ export function hasFavorite(id: number | string | null | undefined): boolean {
 export function applyLocalFavorite(noteId: number, faved: boolean): void {
     overrides.set(key(noteId), faved)
     if (list && !faved) {
-        // 取消收藏：手里就有那一行，直接摘掉（列表当场对得上，不用等一个往返）。
-        // 新增则**不塞行**——这里拿不到 title/createdAt，塞一行空的会在个人中心列表里
-        // 显示成一条没有标题的记录；交给随后那次全量拉取补上。
         list = list.filter((f) => key(f.noteId) !== key(noteId))
     }
     // 在途的那份读数可能是**写入之前**的快照（进页面即拉、用户趁没回来就点收藏）⇒
@@ -111,7 +108,7 @@ export function refreshFavorites(): Promise<void> {
                 overrides = new Map()   // 全量读数到手，本地判断功成身退
                 failed = false
             } else {
-                // 失败：保留上一次的 list（见头注——清空是在说谎），但记住这次没读到
+                // 失败：保留上一次的 list，但记住这次没读到
                 failed = true
             }
             emit()

@@ -1,29 +1,5 @@
 # -*- coding: utf-8 -*-
-"""说说页（/talk）时间显示与卡片版式的无头验收（20260924 起，20261006 扩充）。
-
-锁三件事：
-  ① 日期链条上带**年份**——原来是只有 `MM.DD` 的单行，跨年的说说在列表里长得一模一样；
-  ② 卡片上带精确 `HH:mm:ss`（20260924 起在卡片**左下角**，20261006 随署名行上移到**首行右侧**）；
-  ③ **卡片版式**（20261006 用户第 4 条）：头像 → 署名同一行、标题另起一行、正文在标题下面。
-     时刻的位置在 ② 与 ③ 之间来回动过一次，本文件同时钉住"挪到哪了"，避免下次静默漂走。
-  ④ **深链定位**（20261006 站内聚合搜索）：`/talk?tk=<id>` 要落到那一条上。
-     走的是**同一条路由内换地址**那条路（`window.__nav`）——"挂载时读一次地址栏"的实现在
-     这里必然静默失效，而那正是留言板 `?lid=` 的写法、也是本轮最容易抄错的一处。
-
-为什么值得单独一个沙箱：这两处都是"看着像对了、其实拿的是错值"的地方——
-年份若是从 `new Date()` 取（而不是从每条数据的 createTime），页面看起来完全正常，
-只有跨年那条会错。所以样本里刻意放一条**去年**的说说。
-
-本机不能 vite build（3.7GB 内存会 OOM，见 CLAUDE.md §2），沿用既定替代手段：
-  · sass 用 programmatic API 编译（`node_modules/.bin/sass` 在 Node 18 上会因 chokidar
-    的 ERR_REQUIRE_ESM 直接崩，别用 CLI）；
-  · esbuild 把**真组件**打成一个 bundle，只桩边界（axios / react-redux / SEO 组件），
-    **不桩 antd**——卡片几何要靠真 antd 的卡片内边距；
-  · 真 react-dom 渲染 → Playwright 断言。
-
-用法（仓库任意位置）：python3 frontend/tests/talk-time.test.py
-依赖：frontend/node_modules（esbuild + react + react-dom）、playwright（python）。
-"""
+"""说说页（/talk）时间显示与卡片版式的无头验收。"""
 import pathlib
 import shutil
 import subprocess
@@ -69,10 +45,6 @@ def tiny_png(rgb: tuple) -> str:
     return "data:image/png;base64," + base64.b64encode(png).decode()
 
 
-# 样本：第 2 条刻意是**去年**的（跨年）。若年份取的是"当前年"，这条会当场露馅。
-# 20261005 追加：每条带自己的 `nickname`/`avatar`（后端 `src=talk` 的列表现在带发布者
-# 信息），且两条**刻意不同** —— 若实现回头去取"看的人自己"的头像（历史 bug），
-# 两张卡会同时变成下面那个探针值，⑤ 的断言当场红。
 TALKS = [
     {"talkKey": 1, "talkTitle": "今天的说说", "content": "第一条正文",
      "createTime": "2026-09-24 12:34:56", "updateTime": "2026-09-24 12:34:56",
@@ -82,10 +54,6 @@ TALKS = [
      "nickname": "泠月喵", "avatar": tiny_png((80, 120, 220))},
 ]
 
-# redux 桩里的"当前登录用户"。20261005 起组件**不该**再读它（头像/名字都该来自每行数据）；
-# 留一个**可辨认、且真的加载得出来**的第三张图，就是为了让"又回去读登录用户"这件事
-# 在断言里现形：给个 404 的路径的话，antd 会把 `<img>` 撤掉，红基线只能红出"没有 img"，
-# 分不清"取错了头像"和"压根没渲染头像"（20261005 红基线第一版就踩了这个）。
 VIEWER_AVATAR = tiny_png((60, 180, 90))
 
 
@@ -266,8 +234,6 @@ with sync_playwright() as p:
     check("日期块与卡片之间留了缝（≥ 20px），不是贴着",
           g0["card"]["l"] - g0["time"]["r"] >= 20,
           f"{g0['card']['l'] - g0['time']['r']:.0f}px")
-    # 一轮修完当时的实测缺陷：日期块原来钉左缘（left:-120px），内容变宽后向右长、
-    # 月日压到了竖线和圆点上（右缘 423 vs 竖线 391）。改成钉右缘后必须留在这条线**左边**。
     check("日期块没压到竖线与圆点上（右缘 ≤ 圆点左缘）",
           g0["time"]["r"] <= g0["dotL"] + 1,
           f"日期右缘 {g0['time']['r']:.0f} / 圆点左缘 {g0['dotL']:.0f}")
@@ -279,8 +245,6 @@ with sync_playwright() as p:
           - (g0["card"]["t"] + g0["card"]["b"]) / 2 <= 12,
           f"日期中心 {(g0['time']['t'] + g0['time']['b']) / 2:.0f} / "
           f"卡片中线 {(g0['card']['t'] + g0['card']['b']) / 2:.0f}")
-    # 20260924 四轮：年份 12px → 16px（主人嫌小），不透明度 .65 → .8。仍必须**严格小于**
-    # 月日的 20px：两个数字一样大的话，"2026 09.24" 会被读成一串平铺的数字，看不出主次。
     check("年份字号 = 16px（四轮从 12px 提上来）", g0["yearFs"] == "16px", g0["yearFs"])
     check("月日字号 = 20px（主次关系没被这轮改掉）", g0["dayFs"] == "20px", g0["dayFs"])
     check("年份仍比月日小（16 < 20：年份是量级信息，不抢月日）",
@@ -289,8 +253,6 @@ with sync_playwright() as p:
     # 不透明度一起提上来之后别又倒回去（.65 → .8）：字号大了再压那么淡就只是发灰。
     check("年份不透明度 = 0.8（四轮从 .65 提上来，字号变大后不再压那么淡）",
           g0["yearOpacity"] == "0.8", g0["yearOpacity"])
-    # 20261006：时刻从"卡片底部的独立一行"（`.talk-foot`）挪进了**正文块的首行**，
-    # 与署名同一行右端。所以这里锁的不再是"在 Meta 下方"，而是"在 Meta 之内"。
     check("时刻进了正文块（Meta）内部，仍在卡片里",
           g0["meta"]["t"] - 1 <= g0["clock"]["t"] and g0["clock"]["b"] <= g0["meta"]["b"] + 1
           and g0["clock"]["l"] >= g0["card"]["l"]
@@ -303,13 +265,9 @@ with sync_playwright() as p:
     check("时刻右缘与正文块右缘对齐（右对齐没被这轮挪位改掉）",
           abs((g0["body"]["r"] - g0["clock"]["r"]) - (g0["body"]["r"] - g0["meta"]["r"])) <= 1,
           f"时刻右缘 {g0['clock']['r']:.0f} / 正文块右缘 {g0['meta']['r']:.0f}")
-    # 旧的那一行整块撤了：`.talk-foot` 一旦被加回来，时刻就会被它拉回卡片底部（两条红线）。
     check("旧的那一行整块撤了（页面上不再有 `.talk-foot`）",
           pg.locator(".talk-foot").count() == 0, str(pg.locator(".talk-foot").count()))
 
-    # ⑥ 卡片版式（20261006 用户第 4 条）：头像 → 署名同一行、标题另起一行。
-    # 这是**新几何**：改动前 `.talk-head`/`.talk-title`/`.talk-content` 三个元素都不存在
-    # （署名在卡片底部单独一行、标题在 `Card.Meta` 的 title 槽里），下面每条都会红。
     print("⑥ 卡片版式：头像→署名同一行，标题另起一行")
     # 元素缺席时探针给 None ⇒ 先判结构，再判几何：分开才知道红的是"没落地"还是"位置不对"。
     missing = [k for k in ("av", "head", "who", "title", "content") if g0[k] is None]
@@ -348,11 +306,6 @@ with sync_playwright() as p:
           abs(g0["time"]["r"] - g1["time"]["r"]) <= 1,
           f"{g0['time']['r']:.0f} vs {g1['time']['r']:.0f}")
 
-    # ⑤ 发布者身份（20261005 用户报："不是以登录用户发的，说说卡片显示对应用户信息"）。
-    # 修之前这里取的是 `state.user.avatar`（**看的人自己**的头像）：未登录时它为空串，
-    # 每张卡都是个空头像；登录了则每条都显示自己的脸。现在取每行的 `nickname`/`avatar`。
-    # 红基线：把组件换回 HEAD 版（react-redux 那条 `useSelector` 仍在），这两条都会红
-    # ——头像变成下面那个探针值、`.talk-who` 整个元素不存在。
     print("⑤ 发布者身份（每条说说用自己的 nickname/avatar，不是看的人自己的）")
     # 头像 src 取的是属性里的原值（浏览器不会把相对路径补成绝对路径，读 attribute 稳妥）
     avatar_srcs = pg.eval_on_selector_all(
@@ -365,9 +318,6 @@ with sync_playwright() as p:
     whos = pg.eval_on_selector_all(".talk-who", "els => els.map(e => e.textContent.trim())")
     check("每条说说的卡片上有发布者展示名", whos == [TALKS[0]["nickname"], TALKS[1]["nickname"]],
           str(whos))
-    # 20261006：这条原来是"左右两端对齐（名字在卡片底、时刻在右下角）"，现在锁的是**同一行**
-    # 里的左右关系 —— 与 ⑥ 的区别是它要求**每一条**都成立（⑥ 只看第一条），名字长短不同的
-    # 两条都必须把时刻留在右边（长名字若没吃到 flex 的收缩，会把时刻挤出卡片）。
     check("每条都是署名在左、时刻在右，且在同一行（两端对齐，名字没把时刻挤走）",
           pg.evaluate("""() => {
             const rows = [...document.querySelectorAll('.article')];
@@ -384,15 +334,9 @@ with sync_playwright() as p:
                      && who.top < clk.bottom && clk.top < who.bottom;
             });
           }"""))
-    # 空态与读失败态是两件事（20261005）：本样本有数据，两者都不该出现——
-    # 这条同时钉住"正常路径没被新加的状态机误伤"。
     check("有数据时不显示空态/读失败态", pg.locator(".talkEmpty").count() == 0,
           str(pg.locator(".talkEmpty").count()))
 
-    # ⑦ 深链定位（`?tk=`，20261006 站内聚合搜索）：点一条说说进来要落到那一条上并闪一下。
-    # **另开一页、视口压到 400 高**：本样本只有两张卡，900 高的视口里页面根本滚不动，
-    # "有没有滚过去"这件事就无从断言（`scrollIntoView` 会是个静默的空操作）。
-    # 压到 400 让页面真的溢出，几何断言才有内容。
     print("⑦ 深链定位（?tk=）：同一条路由内换地址也要落到那一条上")
     pg2 = br.new_page(viewport={"width": 1280, "height": 400})
     errs2 = []
@@ -449,9 +393,6 @@ with sync_playwright() as p:
     check("页面确实滚下去了（不是停在顶部）", pg2.evaluate("() => window.scrollY") > 0,
           str(pg2.evaluate("() => window.scrollY")))
 
-    # 高亮是**一闪而过**的：1.8s 后自己摘掉，不然列表里永远圈着一条。
-    # 先把"摘掉之前确实亮着"记下来：只断言"1.8s 后没有高亮"的话，**从没亮过**也是绿的
-    # （负控里这条就是靠这个假通过混过去的——高亮那条链整个没跑起来，它照样 ✅）。
     lit_before_wait = pg2.locator(".talk-hit").count()
     pg2.wait_for_timeout(2000)
     check("高亮亮过、且 1.8s 后自己摘掉（不留一条永远圈着的卡）",

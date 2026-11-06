@@ -77,9 +77,6 @@ export interface PeriodRow {
     /** 期界，闭区间，`YYYY-MM-DD` */
     start: string;
     end: string;
-    /** **本期不是整期统计**：起始日早于 `since`（统计功能上线那天）。
-     *  界面必须把这类期的数字标出来——否则"上线那一周只有两天数据"会被读成
-     *  "那周流量掉了"。这是后端 `partial` 键的原样透传。 */
     partial: boolean;
     views: number;
     likes: number;

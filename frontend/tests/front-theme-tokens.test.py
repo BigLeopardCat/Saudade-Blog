@@ -1,61 +1,5 @@
 # -*- coding: utf-8 -*-
-"""前台内容页（归档 / 说说 / 分类 / 关于）＋首页轮播圆点：配色必须走和纸令牌，且深浅两档要真的分档。
-
-20261014 配色专项的判据。用户原话：「归档页，说说等等风格也同步到博客主题配色风格」
-—— 这三页（都是 `frontHome/Content/*` 下的列表页）一直没跟上 20261001 那批和纸改版，
-色值写死在样式里，于是有两个后果：① 与站点其余部分的粉紫天青不是一套；② **深浅两档
-拿到同一个值**，其中两条在白天/夜里直接是坏掉的：
-  · 归档页时间轴的竖线 `rgba(255,255,255,0.3)` —— 白线压在浅色页面上 **白天等于看不见**；
-  · 分类页 `.articleFooter` 的 `rgba(31,41,55,.9)` —— 夜间深灰字压在深底上，同样看不见。
-
-## 为什么判据要真渲染（而不是读源码）
-"半死最难自查"：令牌写对、选择器写错、被 antd 的运行时样式压过去 —— 这三种在源码里
-**看着都是对的**。本套件因此只读 `getComputedStyle`。实测就抓到过一例：归档页
-`.ant-timeline-item-head-blue` 那三条（color/border-color/background）写在那儿好几年，
-**一次都没生效过**（computed 仍是 antd 的 `#1677ff` 与白点底）—— 因为 antd v5 的
-cssinjs 是运行时注入的，同权重（0,1,0）时后写者赢。这一条只有渲染出来才看得见。
-
-## 判据的形状：拿令牌当期望，不拿字面量当期望
-每条断言的期望值是**同场景下现场解析出来的令牌值**（`expected = 渲染一个
-`color: var(--washi-x)` 的元素再读它`），不是写死的十六进制。这样调色板整体换了颜色，
-本套件仍然是绿的（它判的是"这个位置跟着令牌走"）；而有人把色值重新写死，它立刻红。
-配套一条**自证**：day 与 night 两档的读值必须**不相等** —— "写死"这件事的直接症状就是
-两档同值，这条比任何字面量比对都稳。反过来它也能自证套件本身没瞎：两档读数若相同，
-说明令牌没被解析（环境坏了），下面那些"等于令牌"的断言全是空转。
-
-## 手段
-沿用 `notes-list-ui.test.py` 那套（本机不能 vite build，见 CLAUDE.md §2）：esbuild 打**真组件**，
-只桩 axios / redux 两个边界（`react-router-dom` 用真的 MemoryRouter），sass 用 programmatic
-API 单独编译后拼进沙箱的 index.html，再由 Playwright 读计算值。
-与那份套件的两处必要差别，都是为了这一问：① 必须挂上**真的 iconfont 样式表**（那页的
-`<i>` 才有宽度）；② 必须把 `index.css`（令牌定义）与 `frontHome/main.css`（老令牌）一起挂上
-—— 不挂的话 `var()` 全部落空，量到的是浏览器默认值，还是看不出问题。
-
-用法：python3 frontend/tests/front-theme-tokens.test.py
-依赖：frontend/node_modules（esbuild/react/react-dom/antd/react-router-dom/react-helmet-async）、
-      playwright(python)。本套件不进 CI（要无头 Chrome），由 `scripts/nightly_sandboxes.sh`
-      每天 04:40 串行跑，结果在 ~/sandbox_regression.log。
-
-第五节（20261014 同一批的第二轮）量的是**内容页的整页底**，也是用户回话的那半条：
-「背景色对不上，一片白茫茫和灰色，说说卡片颜色白天米白色也不对」。这四页
-（归档 / 说说 / 分类 / 关于）的容器底一直是 `--container-background-color`
-（60% 白 / 60% 黑，压在 `.frontRoot` 那条老渐变上 ⇒ 白天叠成一片近白、夜间叠成
-一块 rgb(74,74,74) 的平灰），而首页首屏、登录页、文章页用的是 `--washi-theme-bg`
-那张粉紫天青的纸。修法与文章页 20261008 那次同源（见 ReadArticle/index.sass 头注）：
-四页容器底改走 `--washi-page-bg`（日 = `var(--washi-theme-bg)`、夜 = 墨紫近黑那一支，
-两档成对写在 src/index.css —— 夜里漏写就会"白天的粉紫纸配夜间的白字"，所以这一节
-**专门判夜间臂在场**）。
-
-这一节的量法与前面有一处不同：判的是 **background-image** 而不是 background-color
-——令牌值是 `linear-gradient(...)`，落到计算样式里只有 `backgroundImage` 有值。
-`backgroundColor` **也判**（判它是不是 transparent）：那正是"底被换掉了"而不是
-"又叠了一层半透明白"的证据，而这四页原来的毛病就在"叠加"。
-
-第四节（20261014 追加）量的是**首页轮播的「当前圆点」** —— 同一批里最后一处写死的强调色
-（`#7880d1`，与说说那个圆点同一个色值）。首页挂不起来（import 了 mp4/jpg，还拉进画布
-组件），所以取本仓对首页既有套件的老办法：**真 sass + 同形标记**、单独一份 dots.html
-（不与那三个真页面共用一份 style —— 它们有 `.post-date` 这类同名选择器，串在一起会互相压）。
-"""
+"""前台内容页（归档 / 说说 / 分类 / 关于）＋首页轮播圆点：配色必须走和纸令牌，且深浅两档要真的分档。"""
 import functools
 import http.server
 import pathlib
@@ -92,10 +36,6 @@ SITE_DEFINES = [
     '--define:__SITE_KEYWORDS__=\'"探针"\'',
 ]
 
-# 假后端：三个页面各要一份列表，字段取并集（归档要 noteTitle/createTime/noteKey，
-# 说说要 talkKey/talkTitle/nickname/content/createTime，分类要 noteTitle/description/
-# updateTime/isTop/cover）。`isTop: 1` 是**刻意**的 —— 分类页那颗置顶图钉只在置顶行渲染，
-# 不给它就等于那一处配色（原来是写死的 `red`）没有判据。
 FAKE_AXIOS = r"""
 localStorage.setItem('tokenKey', 'x.y.z');
 const ROWS = [
@@ -459,11 +399,6 @@ with sync_playwright() as p:
           readings["Categories/day"]["retired"] == "",
           "读到 %r" % readings["Categories/day"]["retired"])
 
-    # ── 四、首页轮播的「当前圆点」（20261014 同一批：它是最后一个写死的强调色）──────
-    # 用户原话里的「等等」覆盖到了这里：`.dotCurrent` 写死 `#7880d1`（蓝紫）——**与说说那个
-    # 圆点同一个色值**，也是深浅两档同一个颜色，而站里的强调色是 `--washi-pink-deep`。
-    # 未选中那颗仍是白的（压在封面图上，白色才读得出），**不跟着改** —— 那条也判，免得日后
-    # 有人"顺手统一"把两颗都染成粉的。
     print("\n【四】首页轮播的当前圆点走 --washi-pink-deep")
     DOTS = r"""() => {
       const host = document.querySelector('.frontRoot');
