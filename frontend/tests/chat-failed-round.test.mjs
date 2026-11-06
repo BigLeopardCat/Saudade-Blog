@@ -115,8 +115,8 @@ const assert = (cond, name, detail) => {
   else { failed++; console.log('  ✗ FAIL: ' + name + (detail !== undefined ? '  → ' + JSON.stringify(detail) : '')); }
 };
 
-// 预置失败标记（新形态带 reason），再真启动整条加载链
-store.set('saudade-chat-failed', JSON.stringify([{ text: FAIL_TEXT, ts: NOW, reason: FAIL_REASON }]));
+// Restore a conversation-bound failure through the production boot sequence.
+store.set('saudade-chat-failed', JSON.stringify([{ conv_id: CONV_ID, text: FAIL_TEXT, ts: NOW, reason: FAIL_REASON }]));
 
 vm.runInThisContext(readFileSync(path.join(W, 'boot.js'), 'utf8'), { filename: 'boot.js' });
 if (!await waitFor(() => !!globalThis.__waifuChatCore)) { console.error('chat-core 未注册（子模块加载失败）'); process.exit(1); }
@@ -130,13 +130,28 @@ console.log('== 场景 1：刷新后（预置 marker + DB 末条 = 那条 user�
   const s = slot();
   assert(!!s && s.dataset.failedText === FAIL_TEXT, '槽位带原文（钩子要拿它去走带原文校验的 discard）', s && s.dataset.failedText);
   const wrap = note().querySelector('.chat-msg-retry');
-  assert(!!wrap, '按钮组已挂上（刷新前这是缺的那一环）', !!wrap);
+  assert(!!wrap, '按钮组已挂上', !!wrap);
   assert(btns().length === 2, '两个按钮：重发 + 编辑', btns().map(b => b.textContent));
   assert(!!btnByText('↻ 重发') && !!btnByText('✎ 编辑'), '按钮文案即动作（↻ 重发 / ✎ 编辑）', btns().map(b => b.textContent));
   assert(note().querySelectorAll('.chat-retry-hint').length === 0, '初始无提示语（没点过按钮不该有话说）');
 }
 
-console.log('\n== 场景 2：再来一趟 reconcile（提示条被当孤儿删掉重建）→ 按钮仍只有一组 ==');
+console.log('\n== 恢复标记按会话隔离，忽略未绑定或其他会话的同文请求 ==');
+{
+  const own = { conv_id: CONV_ID, text: FAIL_TEXT, ts: NOW, reason: FAIL_REASON };
+  const foreign = { ...own, conv_id: CONV_ID + 1, reason: 'other conversation' };
+  const unbound = { text: FAIL_TEXT, ts: NOW, reason: 'unbound' };
+  store.set('saudade-chat-failed', JSON.stringify([unbound, foreign, own]));
+  await fireStorage();
+  assert(noteText().includes(FAIL_REASON), '只恢复当前会话的标记');
+  store.set('saudade-chat-failed', JSON.stringify([unbound, foreign]));
+  await fireStorage();
+  assert(notes().length === 0, '其他会话和未绑定标记不显示恢复操作');
+  store.set('saudade-chat-failed', JSON.stringify([own]));
+  await fireStorage();
+}
+
+console.log('\n== 场景 2：重新同步后按钮仍只有一组 ==');
 {
   await fireStorage();
   assert(!!note(), '提示条重建');
@@ -185,18 +200,18 @@ console.log('\n== 场景 5：discard 成功 → 编辑真的办了事（原文�
 
 console.log('\n== 场景 6：24h 过期的标记不再渲染提示条（陈旧失败不吓人）==');
 {
-  store.set('saudade-chat-failed', JSON.stringify([{ text: FAIL_TEXT, ts: NOW - 25 * 3600 * 1000, reason: FAIL_REASON }]));
+  store.set('saudade-chat-failed', JSON.stringify([{ conv_id: CONV_ID, text: FAIL_TEXT, ts: NOW - 25 * 3600 * 1000, reason: FAIL_REASON }]));
   await fireStorage();
   assert(!note(), '过期标记不渲染提示条', note() && noteText());
   assert(midEls().length === 2, '历史照旧（DB 视图把那条 user 消息带回来了）', midEls().map(el => el.dataset.mid));
 }
 
-console.log('\n== 场景 7：旧形态记录（没有 reason 字段）→ 回退到笼统说法，但按钮照旧有 ==');
+console.log('\n== 场景 7：缺少 reason 的会话记录→ 回退到笼统说法，但按钮照旧有 ==');
 {
-  store.set('saudade-chat-failed', JSON.stringify([{ text: FAIL_TEXT, ts: Date.now() }]));
+  store.set('saudade-chat-failed', JSON.stringify([{ conv_id: CONV_ID, text: FAIL_TEXT, ts: Date.now() }]));
   await fireStorage();
-  assert(noteText() === '⏳ 该条消息未收到回复（可能已超时或网络中断）', '缺 reason ⇒ 回退原话术（历史记录不迁移）', noteText());
-  assert(btns().length === 2, '旧记录同样挂得出重发/编辑', btns().map(b => b.textContent));
+  assert(noteText() === '⏳ 该条消息未收到回复（可能已超时或网络中断）', '缺 reason 使用默认错误提示', noteText());
+  assert(btns().length === 2, '缺少原因仍能重发或编辑', btns().map(b => b.textContent));
 }
 
 console.log('\n== 场景 8：连接不上（discard 抛）→ 也有一句能指导下一步的话 ==');

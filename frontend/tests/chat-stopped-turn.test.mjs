@@ -169,23 +169,23 @@ const assert = (cond, name, detail) => {
   else { failed++; console.log('  ✗ FAIL: ' + name + (detail !== undefined ? '  → ' + JSON.stringify(detail) : '')); }
 };
 
-// 刷新那条腿（场景 1）的前提：标记与那行 DB 记录**在开机之前**就位（见文件头注）
+// Restore a conversation-bound marker alongside the persisted user message.
 store.set('saudade-chat-failed', JSON.stringify([
-  { text: REFRESH_TEXT, ts: NOW, reason: '已停止生成', kind: 'stopped' }]));
+  { conv_id: CONV_ID, text: REFRESH_TEXT, ts: NOW, reason: '已停止生成', kind: 'stopped' }]));
 
 vm.runInThisContext(readFileSync(path.join(W, 'boot.js'), 'utf8'), { filename: 'boot.js' });
 if (!await waitFor(() => !!globalThis.__waifuChatCore)) { console.error('chat-core 未注册（子模块加载失败）'); process.exit(1); }
 await waitFor(() => midEls().length === 2);
 
-console.log('== 场景 1：旧暂停记录提供重发/编辑；缺 kind 的记录保留错误提示 ==');
+console.log('== 场景 1：无任务 ID 的暂停记录提供重发/编辑；错误记录保留原因 ==');
 {
-  assert(failedText() === '可以重新发送或编辑这条消息。', '旧记录明确可以重发或编辑', failedText());
+  assert(failedText() === '可以重新发送或编辑这条消息。', '无任务 ID 时可重发或编辑', failedText());
   assert(btnsIn(failedNotes()[0]).length === 2, '按钮挂回来（刷新不是死路）', btnsIn(failedNotes()[0]).map(b => b.textContent));
   assert(slotOf(failedNotes()[0]) && slotOf(failedNotes()[0]).dataset.failedText === REFRESH_TEXT, '槽位带原文（补删/重发都要拿它去走原文校验）', slotOf(failedNotes()[0]) && slotOf(failedNotes()[0]).dataset.failedText);
 
-  // 反向对照：没有 kind 的旧记录 ⇒ 旧话术（历史记录不迁移）
+  // A regular failure shows its reason rather than checkpoint continuation.
   store.set('saudade-chat-failed', JSON.stringify([
-    { text: REFRESH_TEXT, ts: NOW, reason: '网络错误: Failed to fetch' }]));
+    { conv_id: CONV_ID, text: REFRESH_TEXT, ts: NOW, reason: '网络错误: Failed to fetch' }]));
   await fireStorage();
   assert(failedText() === '⏳ 该条消息未收到回复：网络错误: Failed to fetch', '缺 kind 的记录保留未收到回复提示', failedText());
 
