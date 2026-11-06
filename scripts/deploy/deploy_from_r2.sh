@@ -6,7 +6,8 @@ set -euo pipefail
 
 cd "${PROJECT_DIR:-/home/ubuntu/Saudade-Blog}"
 
-DEPLOY_PYTHON="${SAUDADE_DEPLOY_PYTHON:-python3}"
+DEPLOY_PYTHON="${SAUDADE_DEPLOY_PYTHON:-${XDG_DATA_HOME:-$HOME/.local/share}/saudade/deploy-venv/bin/python}"
+[ -x "$DEPLOY_PYTHON" ] || { echo "部署工具环境不存在，请先安装 scripts/deploy/requirements.txt" >&2; exit 1; }
 "$DEPLOY_PYTHON" scripts/check_disk_capacity.py .
 
 mkdir -p logs

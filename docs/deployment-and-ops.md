@@ -29,6 +29,7 @@ SAUDADE_DEPLOY_PYTHON=~/.local/share/saudade/deploy-venv/bin/python \
   bash scripts/deploy/trigger_deploy.sh FULL_COMMIT_SHA
 ```
 
+服务器默认使用上述独立 venv，可由 `SAUDADE_DEPLOY_PYTHON` 指定其他已安装依赖的解释器；
 CI 安装同一份固定版本依赖。部署控制脚本不在业务产物中；更新脚本或工具依赖时，
 应在没有发布任务运行时单独安装已审查版本，再触发发布，不覆盖其他工作树的未提交改动。
 
