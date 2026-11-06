@@ -62,16 +62,38 @@ Python Agent 是可选服务，配置和启动方式见其独立仓库的 README
 
 ## 3. 提交约定
 
-提交使用 `type(scope): 描述`，首行不超过 60 字符，正文与首行空一行。
-允许 `feat`、`fix`、`refactor`、`docs`、`test`、`chore`、`perf`、`ci`，不加共同作者署名。
-正文写清最终行为、必要取舍和验证范围，省略讨论过程和废弃方案。
+采用 [Conventional Commits 1.0](https://www.conventionalcommits.org/zh-hans/v1.0.0/)。维护者默认使用中文描述，类型和 scope 使用英文；接受英文贡献，不要求逐行双语。
 
-```bash
-git config core.hooksPath .githooks
+```text
+type(scope): 描述
+type(scope)!: 不兼容变更的描述
 ```
 
-前端与协议变更提交 PR，填写仓库模板中的验证结果。没有运行的检查保持未勾选；
-涉及另一仓库时附上配套 PR 和固定版本。部署链路见 [运维手册](docs/deployment-and-ops.md)。
+类型使用小写：
+
+`feat` · `fix` · `refactor` · `perf` · `test` · `docs` · `style` · `build` · `ci` · `chore` · `revert`
+
+- 标题不超过 60 个字符，说明最终变化；模块明确时使用小写 scope，如 `chat`、`auth`、`rag`、`ui`、`eval`。整个仓库的改动可省略 scope。
+- `feat` 表示新增能力，`fix` 表示修复缺陷，`perf` 表示性能或成本改善，`refactor` 表示保持行为的结构调整。`style` 仅用于代码格式，界面变化按功能或修复归类。
+- 正文按需说明原因、必要取舍和影响，与标题空一行；可以使用自然段或列表。保留真实贡献者信息和标准 Git trailers。
+- 不兼容的接口、配置或数据变化使用 `!` 或 `BREAKING CHANGE:`，并在 PR 中说明迁移与发布顺序。
+
+示例：`fix(chat): 恢复暂停任务后的执行状态`、`perf(rag): 减少重复向量化请求`、`docs: 更新本地开发说明`。
+
+功能、修复、接口、依赖、数据库和 CI 改动通过 PR；维护者的小范围文档勘误可直接提交主线。分支使用清晰的功能前缀，编码助手默认使用 `codex/`。
+
+PR 标题与主线提交使用同一格式，默认 Squash Merge。PR 内的临时提交不要求逐条整理；合并时由维护者确认最终标题和正文。本地钩子和 CI 共享 `.githooks/commit-msg`；PR 校验标题，主线校验新提交。
+
+PR 描述围绕最终实现：
+
+- 说明具体问题、改动后的行为及必要取舍；小改动一两句话即可。
+- 记录实际验证命令、结果及未运行或跳过项。CI 通过、已合并和已部署分别表述。
+- 涉及跨仓契约、数据迁移或发布时，列出配套 PR、固定版本、发布顺序和必要回滚步骤；不涉及的模板段落直接删除。
+- 关联实际处理的 issue；保持描述与最终差异一致，省略开发过程、废弃方案和与评审无关的工作记录。
+
+提交前检查差异、注释和敏感信息。安全问题按 [SECURITY.md](SECURITY.md) 报告，凭据及真实私有用户内容留在私有环境。
+
+本地安装钩子：`git config core.hooksPath .githooks`。
 
 ## 4. 验证
 
