@@ -21,13 +21,21 @@ def render(app_dir: str, release_root: str, output: Path) -> None:
     sandbox = (templates / "service-sandbox.conf").read_text()
     agent = (templates / "saudade-agent.service.template").read_text()
     services = {
-        "saudade-agent": ("Saudade Blog Agent", "simple", "scripts/serve.sh", "always"),
-        "saudade-scheduler": ("Saudade administrator background tasks", "exec", "scripts/serve_scheduler.sh", "on-failure"),
-        "saudade-agent-maintenance": ("Saudade Agent private trace retention", "oneshot", ".venv/bin/python -m eval.trace_retention --apply", "no"),
+        "saudade-agent": ("Saudade Blog Agent", "simple", ["scripts/serve.sh"], "always"),
+        "saudade-scheduler": ("Saudade administrator background tasks", "exec",
+                             ["scripts/serve_scheduler.sh"], "on-failure"),
+        "saudade-agent-maintenance": ("Saudade Agent retention", "oneshot", [
+            ".venv/bin/python -m eval.trace_retention --apply",
+            ".venv/bin/python -m eval.pg_retention --apply",
+            ".venv/bin/python -m agent.scheduling.retention --apply",
+        ], "no"),
     }
-    for service, (description, kind, command, restart) in services.items():
+    for service, (description, kind, commands, restart) in services.items():
         text = agent.replace("__DESCRIPTION__", description).replace("__TYPE__", kind)
-        text = text.replace("__COMMAND__", release_root + "/current/" + command)
+        command = "\nExecStart=".join(release_root + "/current/" + item for item in commands)
+        text = text.replace("__COMMAND__", command)
+        if kind == "oneshot":
+            text = text.replace("Type=oneshot", "Type=oneshot\nTimeoutStartSec=600")
         text = text.replace("__RESTART__", restart)
         text = text.replace("__LOG_TARGET__", "append:" + app_dir + "/logs/agent/agent.log"
                             if service == "saudade-agent" else "journal")

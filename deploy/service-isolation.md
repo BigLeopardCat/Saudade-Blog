@@ -1,6 +1,6 @@
 # 独立服务账号
 
-Rust 使用 `saudade-blog`；Agent HTTP、scheduler 和 trace 保留任务使用
+Rust 使用 `saudade-blog`；Agent HTTP、scheduler 和保留清理任务使用
 `saudade-agent`。两个账号都是锁定密码、nologin 的系统账号，不加入 sudo 或部署用户组。
 部署账号拥有发布代码，运行账号只读代码、写各自状态。
 
@@ -22,7 +22,7 @@ python3 scripts/deploy/render_service_isolation.py \
   --app-dir "$APP_DIR" --release-root /srv/saudade-agent --output /tmp/saudade-units
 ```
 
-输出目录必须为空。生成器输出四个完整单元、每日 trace 保留 timer，以及每个服务的
+输出目录必须为空。生成器输出四个完整单元、每日保留清理 timer，以及每个服务的
 `90-sandbox.conf`；它不修改账号、凭据或线上服务。安装前运行 `systemd-analyze verify`，
 并检查实际路径、执行账号、唯一 EnvironmentFile、可写目录及停机超时。
 
@@ -49,6 +49,12 @@ Agent 设置 `TRACE_DIR=/var/lib/saudade-agent/traces`、`BLOG_ROOT=/run/saudade
 EnvironmentFiles、ExecStart 和可写路径，再重启正式服务。验证就绪、版本、检索、持久会话、
 受保护身份读取、公开图片/图谱及 scheduler 存活；启用维护 timer，首次只读检查 trace 清单。
 账号沙箱应拒绝 home/SSH、其他服务密钥和 sudo，进程 `NoNewPrivs=1`、有效 capabilities 为零。
+
+维护单元从当前固定 release 依次清理 trace、过期且不可恢复的 checkpoint、已结束的 DBOS
+执行树；任一步失败会使单元失败，日志留在 journal。启用前以运行账号和相同配置执行
+`python -m eval.pg_retention --json` 与 `python -m agent.scheduling.retention`，核对只读候选。
+运行时必须支持带会话锁与恢复状态复查的保留清理。旧 cron 若调用开发目录下的回归或清理
+脚本，先备份 crontab，再仅移除被新 timer 接管的条目；线上维护不执行模型评测和测试套件。
 
 Rust 将已发布二进制只读 bind 到 `/srv/saudade-blog/saudade_blog_bin`，图谱挂载可选，
 核心博客无需安装 Agent。Agent 只挂载授权的 health/rust 日志；日志文件名和轮转策略保留。
