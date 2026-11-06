@@ -17,7 +17,7 @@ use tower::ServiceExt;
 fn history_application(status: i16, version: i32, owned: bool) -> Router {
     use saudade_blog::{create_router, entity::user, AppState};
     use sea_orm::{DatabaseBackend, MockDatabase, Value};
-    use std::{collections::BTreeMap, sync::Arc};
+    use std::collections::BTreeMap;
     let actor = user::Model {
         id: 7,
         username: "history-fixture".into(),
