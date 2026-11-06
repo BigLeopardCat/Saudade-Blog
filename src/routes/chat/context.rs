@@ -109,8 +109,12 @@ pub(super) async fn prepare_chat(
         .map(|s| !s.trim().is_empty())
         .unwrap_or(false);
 
-    if payload.task_id.is_empty() && payload.resume_task.is_empty() && !is_confirm {
-        payload.task_id=uuid::Uuid::new_v4().simple().to_string();
+    if payload.resume_task.is_empty() && !is_confirm {
+        if payload.turn_id.is_empty() {
+            payload.turn_id=if payload.task_id.is_empty() { uuid::Uuid::new_v4().simple().to_string() }
+                else { payload.task_id.clone() };
+        }
+        if payload.task_id.is_empty() { payload.task_id=payload.turn_id.clone(); }
     }
     match crate::checkpoint_cleanup::has_pending_turn(&state.db,conversation_id).await {
         Ok(false)=>{},
@@ -118,14 +122,23 @@ pub(super) async fn prepare_chat(
             Json(ChatResponse { reply:String::new(),success:false,
                 error:Some("历史上下文正在同步，请稍后重试。".into()) }))),
     }
-    let source_task=if !payload.resume_task.is_empty() { payload.resume_task.clone() }
-        else if !payload.task_id.is_empty() { payload.task_id.clone() }
-        else { chat_history::Entity::find().filter(chat_history::Column::UserId.eq(uid))
+    if is_confirm || !payload.resume_task.is_empty() {
+        let source=chat_history::Entity::find().filter(chat_history::Column::UserId.eq(uid))
             .filter(chat_history::Column::ConversationId.eq(conversation_id))
             .filter(chat_history::Column::Role.eq("user"))
-            .filter(chat_history::Column::TaskId.is_not_null())
-            .order_by_desc(chat_history::Column::Id).one(&state.db).await.ok().flatten()
-            .and_then(|message|message.task_id).unwrap_or_default() };
+            .filter(chat_history::Column::TurnId.is_not_null())
+            .order_by_desc(chat_history::Column::Id).one(&state.db).await;
+        let authoritative=match source {
+            Ok(Some(message))=>message.turn_id.unwrap_or_default(),
+            _=>return Err((StatusCode::CONFLICT,Json(ChatResponse {reply:String::new(),success:false,
+                error:Some("原始轮次标识不可用，请重新发起请求。".into())}))),
+        };
+        if !payload.turn_id.is_empty() && payload.turn_id!=authoritative {
+            return Err((StatusCode::CONFLICT,Json(ChatResponse {reply:String::new(),success:false,
+                error:Some("该轮次已被替换，没有继续执行。".into())})));
+        }
+        payload.turn_id=authoritative;
+    }
     let (quota, quota_blocked) = if is_confirm {
         (None, false)
     } else {
@@ -184,7 +197,7 @@ pub(super) async fn prepare_chat(
         None
     } else {
         match chat_context::append_user(&state.db,uid,conversation_id,role.as_deref(),
-                                        &payload.task_id,&stored_content).await {
+                                        &payload.turn_id,&stored_content).await {
             Ok(Some(id))=>Some(id),
             Ok(None)=>return Err((StatusCode::CONFLICT,Json(ChatResponse { reply:String::new(),
                 success:false,error:Some("该轮次已丢弃或历史正在同步，请重新发送。".into()) }))),
@@ -272,7 +285,7 @@ pub(super) async fn prepare_chat(
         uid,
         conversation_id,
         trace_id,
-        task_id: source_task,
+        turn_id: payload.turn_id.clone(),
         body,
         role,
     })
@@ -287,6 +300,7 @@ fn agent_request(
     serde_json::json!({
         "message": payload.message,
         "task_id": payload.task_id,
+        "turn_id": payload.turn_id,
         "task_inputs": payload.task_inputs,
         "resume_task": payload.resume_task,
         "browser_feedback": payload.browser_feedback,

@@ -24,6 +24,7 @@ pub struct Control {
     conversation_id: i32,
     task_id: String,
     input_id: Option<String>,
+    turn_id: Option<String>,
     text: Option<String>,
 }
 
@@ -90,6 +91,7 @@ pub async fn confirmation_handler(
             conversation_id: req.conversation_id,
             task_id: req.task_id.unwrap_or_default(),
             input_id: None,
+            turn_id: None,
             text: None,
         },
         Action::Confirmation,
@@ -110,7 +112,7 @@ async fn control(
     };
     if (!(action == Action::Confirmation && req.task_id.is_empty()) && !identifier(&req.task_id))
         || (submit
-            && (!req.input_id.as_deref().is_some_and(identifier)
+            && (!req.turn_id.as_deref().is_some_and(identifier) || !req.input_id.as_deref().is_some_and(identifier)
                 || !req
                     .text
                     .as_deref()
@@ -135,6 +137,7 @@ async fn control(
         payload.as_object_mut().unwrap().remove("task_id");
     }
     if submit {
+        payload["turn_id"] = json!(req.turn_id);
         payload["input_id"] = json!(req.input_id);
         payload["text"] = json!(req.text.as_deref().unwrap_or("").trim());
     }
@@ -187,6 +190,7 @@ async fn control(
                 req.conversation_id,
                 &role,
                 &req.task_id,
+                item["turn_id"].as_str().unwrap_or(""),
                 &item,
             )
             .await
@@ -220,6 +224,7 @@ pub(super) async fn save<C: ConnectionTrait + TransactionTrait>(
     cid: i32,
     role: &str,
     task: &str,
+    turn_id: &str,
     item: &Value,
 ) -> Result<Value, DbErr> {
     let invalid = || DbErr::Custom("invalid task input".into());
@@ -235,23 +240,23 @@ pub(super) async fn save<C: ConnectionTrait + TransactionTrait>(
         .as_str()
         .filter(|s| ["queued", "applied", "not_applied"].contains(s))
         .ok_or_else(invalid)?;
-    if !identifier(task) || !crate::authz::is_known_role(role) {
+    if !identifier(turn_id) || !identifier(task) || !crate::authz::is_known_role(role) {
         return Err(invalid());
     }
     let txn = db.begin().await?;
     let owner=txn.query_one(Statement::from_sql_and_values(DbBackend::Postgres,
         "SELECT id FROM conversation WHERE id=$1 AND user_id=$2 FOR UPDATE",[cid.into(),uid.into()])).await?;
-    if owner.is_none() || crate::checkpoint_cleanup::turn_discarded(&txn,cid,task).await? {
+    if owner.is_none() || crate::checkpoint_cleanup::turn_discarded(&txn,cid,turn_id).await? {
         return Err(DbErr::Custom("turn_discarded".into()));
     }
     txn.execute(Statement::from_sql_and_values(DbBackend::Postgres,
-        "INSERT INTO chat_task_input (user_id,conversation_id,task_id,input_id,content,source_role,status) \
-         VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING",
-        [uid.into(),cid.into(),task.into(),id.into(),text.into(),role.into(),status.into()])).await?;
+        "INSERT INTO chat_task_input (user_id,conversation_id,task_id,input_id,content,source_role,status,turn_id) \
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING",
+        [uid.into(),cid.into(),task.into(),id.into(),text.into(),role.into(),status.into(),turn_id.into()])).await?;
     let row = txn
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "SELECT task_id,content,source_role,status,message_id FROM chat_task_input \
+            "SELECT task_id,turn_id,content,source_role,status,message_id FROM chat_task_input \
          WHERE user_id=$1 AND conversation_id=$2 AND input_id=$3 FOR UPDATE",
             [uid.into(), cid.into(), id.into()],
         ))
@@ -261,6 +266,9 @@ pub(super) async fn save<C: ConnectionTrait + TransactionTrait>(
         || row.try_get::<String>("", "content")? != text
         || row.try_get::<String>("", "source_role")? != role
     {
+        return Err(invalid());
+    }
+    if row.try_get::<Option<String>>("", "turn_id")?.as_deref()!=Some(turn_id) {
         return Err(invalid());
     }
     let mut message_id: Option<i32> = row.try_get("", "message_id")?;
@@ -297,7 +305,7 @@ pub(super) async fn save<C: ConnectionTrait + TransactionTrait>(
     ))
     .await?;
     txn.commit().await?;
-    Ok(json!({"id":id,"text":text,"status":status,"message_id":message_id}))
+    Ok(json!({"id":id,"text":text,"status":status,"message_id":message_id,"turn_id":turn_id}))
 }
 
 pub(super) async fn persist_event(
@@ -323,7 +331,7 @@ pub(super) async fn persist_event(
         .unwrap_or_default();
     let mut saved = Vec::new();
     for item in items {
-        saved.push(save(db, uid, cid, role, &task, &item).await?);
+        saved.push(save(db, uid, cid, role, &task, item["turn_id"].as_str().unwrap_or(""), &item).await?);
     }
     if value.contains_key("input") {
         value.insert("input".into(), saved.remove(0));
@@ -338,9 +346,9 @@ pub(super) async fn history_tasks(db: &DatabaseConnection,uid: i32,cid: i32,
     let mut tasks=std::collections::HashMap::new();
     let (Some(first),Some(last))=(ids.iter().min(),ids.iter().max()) else { return Ok(tasks); };
     for row in db.query_all(Statement::from_sql_and_values(DbBackend::Postgres,
-        "SELECT message_id,task_id FROM chat_task_input WHERE user_id=$1 AND conversation_id=$2 \
-         AND message_id BETWEEN $3 AND $4",[uid.into(),cid.into(),(*first).into(),(*last).into()])).await? {
-        tasks.insert(row.try_get("","message_id")?,row.try_get("","task_id")?);
+        "SELECT message_id,turn_id FROM chat_task_input WHERE user_id=$1 AND conversation_id=$2 \
+         AND turn_id IS NOT NULL AND message_id BETWEEN $3 AND $4",[uid.into(),cid.into(),(*first).into(),(*last).into()])).await? {
+        tasks.insert(row.try_get("","message_id")?,row.try_get("","turn_id")?);
     }
     Ok(tasks)
 }
@@ -387,28 +395,28 @@ mod tests {
         .await
         .unwrap();
         let queued = json!({"id":"one","text":"只列标题","status":"queued"});
-        let pending = save(&db, actor.id, conv.id, "user", "task", &queued)
+        let pending = save(&db, actor.id, conv.id, "user", "task", "fixture-turn", &queued)
             .await
             .unwrap();
         assert!(pending["message_id"].is_null());
         let mut applied = queued.clone();
         applied["status"] = json!("applied");
         let (left, right) = tokio::join!(
-            save(&db, actor.id, conv.id, "user", "task", &applied),
-            save(&db, actor.id, conv.id, "user", "task", &applied)
+            save(&db, actor.id, conv.id, "user", "task", "fixture-turn", &applied),
+            save(&db, actor.id, conv.id, "user", "task", "fixture-turn", &applied)
         );
         let left = left.unwrap();
         let right = right.unwrap();
         assert_eq!(left["message_id"], right["message_id"]);
-        let stale = save(&db, actor.id, conv.id, "user", "task", &queued)
+        let stale = save(&db, actor.id, conv.id, "user", "task", "fixture-turn", &queued)
             .await
             .unwrap();
         assert_eq!(stale["status"], "applied");
-        assert!(save(&db, actor.id, conv.id, "admin", "task", &applied)
+        assert!(save(&db, actor.id, conv.id, "admin", "task", "fixture-turn", &applied)
             .await
             .is_err());
         let changed = json!({"id":"one","text":"另一个正文","status":"applied"});
-        assert!(save(&db, actor.id, conv.id, "user", "task", &changed)
+        assert!(save(&db, actor.id, conv.id, "user", "task", "fixture-turn", &changed)
             .await
             .is_err());
         assert_eq!(

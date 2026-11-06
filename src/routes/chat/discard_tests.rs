@@ -91,6 +91,7 @@ async fn postgres_retry_keeps_previous_identical_turn_and_blocks_late_projection
         cid,
         "user",
         "second",
+        "second",
         &serde_json::json!({"id":"late","text":"迟到补充","status":"applied"})
     )
     .await

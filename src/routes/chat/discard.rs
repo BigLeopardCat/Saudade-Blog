@@ -6,7 +6,7 @@ use sea_orm::{ConnectionTrait, DatabaseConnection, DbErr, TransactionTrait};
 #[derive(Deserialize)]
 pub struct DiscardReq {
     conversation_id: i32,
-    task_id: String,
+    turn_id: String,
 }
 
 #[derive(Debug, PartialEq)]
@@ -20,7 +20,7 @@ async fn discard<C: ConnectionTrait + TransactionTrait>(
     db: &C,
     uid: i32,
     cid: i32,
-    task_id: &str,
+    turn_id: &str,
 ) -> Result<Discarded, DbErr> {
     let txn = db.begin().await?;
     if conversation::Entity::find_by_id(cid)
@@ -33,7 +33,7 @@ async fn discard<C: ConnectionTrait + TransactionTrait>(
         txn.rollback().await?;
         return Ok(Discarded::MissingConversation);
     }
-    if crate::checkpoint_cleanup::turn_discarded(&txn, cid, task_id).await?
+    if crate::checkpoint_cleanup::turn_discarded(&txn, cid, turn_id).await?
         || crate::checkpoint_cleanup::has_pending_turn(&txn, cid).await?
     {
         txn.commit().await?;
@@ -43,7 +43,7 @@ async fn discard<C: ConnectionTrait + TransactionTrait>(
         .filter(chat_history::Column::UserId.eq(uid))
         .filter(chat_history::Column::ConversationId.eq(cid))
         .filter(chat_history::Column::Role.eq("user"))
-        .filter(chat_history::Column::TaskId.eq(task_id))
+        .filter(chat_history::Column::TurnId.eq(turn_id))
         .one(&txn)
         .await?;
     if let Some(target) = target {
@@ -51,7 +51,7 @@ async fn discard<C: ConnectionTrait + TransactionTrait>(
             .filter(chat_history::Column::UserId.eq(uid))
             .filter(chat_history::Column::ConversationId.eq(cid))
             .filter(chat_history::Column::Role.eq("user"))
-            .filter(chat_history::Column::TaskId.is_not_null())
+            .filter(chat_history::Column::TurnId.is_not_null())
             .order_by_desc(chat_history::Column::Id)
             .one(&txn)
             .await?;
@@ -59,7 +59,7 @@ async fn discard<C: ConnectionTrait + TransactionTrait>(
             txn.rollback().await?;
             return Ok(Discarded::NotLast);
         }
-        chat_context::discard(&txn, uid, cid, target.id, task_id).await?;
+        chat_context::discard(&txn, uid, cid, target.id, turn_id).await?;
     } else {
         let last = chat_history::Entity::find()
             .filter(chat_history::Column::UserId.eq(uid))
@@ -68,13 +68,13 @@ async fn discard<C: ConnectionTrait + TransactionTrait>(
             .order_by_desc(chat_history::Column::Id)
             .one(&txn)
             .await?;
-        if last.is_some_and(|message| message.task_id.is_none()) {
+        if last.is_some_and(|message| message.turn_id.is_none()) {
             txn.rollback().await?;
             return Ok(Discarded::NotLast);
         }
     }
     // Even an absent target needs a fence: its original HTTP request may arrive later.
-    crate::checkpoint_cleanup::enqueue_turn(&txn, cid, uid, task_id).await?;
+    crate::checkpoint_cleanup::enqueue_turn(&txn, cid, uid, turn_id).await?;
     txn.commit().await?;
     Ok(Discarded::Queued)
 }
@@ -97,16 +97,16 @@ pub async fn discard_handler(
         Err(_) => return response(StatusCode::UNAUTHORIZED, "unauthorized", false),
     };
     if req.conversation_id <= 0
-        || req.task_id.is_empty()
-        || req.task_id.len() > 100
+        || req.turn_id.is_empty()
+        || req.turn_id.len() > 100
         || !req
-            .task_id
+            .turn_id
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
     {
         return response(StatusCode::BAD_REQUEST, "invalid_target", false);
     }
-    match discard(&state.db, uid, req.conversation_id, &req.task_id).await {
+    match discard(&state.db, uid, req.conversation_id, &req.turn_id).await {
         Ok(Discarded::NotLast) => return response(StatusCode::CONFLICT, "not_last_turn", false),
         Ok(Discarded::MissingConversation) => {
             return response(StatusCode::NOT_FOUND, "conversation_not_found", false)
@@ -121,11 +121,11 @@ pub async fn discard_handler(
         }
         Ok(Discarded::Queued) => {}
     }
-    dispatch(&state.db, req.conversation_id, &req.task_id).await
+    dispatch(&state.db, req.conversation_id, &req.turn_id).await
 }
 
-async fn dispatch(db: &DatabaseConnection, cid: i32, task_id: &str) -> Response {
-    crate::checkpoint_cleanup::dispatch_turn(db, cid, task_id).await;
+async fn dispatch(db: &DatabaseConnection, cid: i32, turn_id: &str) -> Response {
+    crate::checkpoint_cleanup::dispatch_turn(db, cid, turn_id).await;
     match crate::checkpoint_cleanup::has_pending_turn(db, cid).await {
         Ok(false) => response(StatusCode::OK, "discarded", true),
         Ok(true) => response(StatusCode::ACCEPTED, "cleanup_pending", false),

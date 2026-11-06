@@ -4,7 +4,7 @@ use sea_orm::{Database, DatabaseBackend, MockDatabase, MockExecResult};
 fn message(id: i32, role: &str) -> chat_history::Model {
     chat_history::Model {
         id, user_id: 7, conversation_id: 42, role: role.into(),
-        source_role: Some("user".into()), task_id: None, content: format!("message {id}"),
+        source_role: Some("user".into()), turn_id: None, content: format!("message {id}"),
         created_at: chrono::Local::now().naive_local(),
     }
 }
@@ -107,7 +107,7 @@ async fn postgres_discard_preserves_unaffected_archive_and_invalidates_deleted_c
     let mut ids = Vec::new();
     for index in 0..6 {
         let row = txn.query_one(Statement::from_sql_and_values(DbBackend::Postgres,
-            "INSERT INTO chat_history(user_id,conversation_id,role,content,source_role,task_id) \
+            "INSERT INTO chat_history(user_id,conversation_id,role,content,source_role,turn_id) \
              VALUES($1,$2,$3,'rollback probe','user',$4) RETURNING id",
             vec![uid.into(), cid.into(), (if index % 2 == 0 { "user" } else { "assistant" }).into(), format!("case{}", index-index%2).into()],
         )).await.unwrap().unwrap();

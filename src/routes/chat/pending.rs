@@ -59,7 +59,7 @@ pub(super) async fn save_pending_action<C: ConnectionTrait + TransactionTrait>(
     db: &C,
     uid: i32,
     conversation_id: i32,
-    source_task: &str,
+    source_turn: &str,
     v: &serde_json::Value,
 ) -> bool {
     if v.get("event").is_some() {
@@ -71,7 +71,7 @@ pub(super) async fn save_pending_action<C: ConnectionTrait + TransactionTrait>(
     };
     let result = async {
         let txn = db.begin().await?;
-        if !super::persistence::lock_turn(&txn,uid,conversation_id,source_task).await? {
+        if !super::persistence::lock_turn(&txn,uid,conversation_id,source_turn).await? {
             return Err(sea_orm::DbErr::Custom("turn_discarded".into()));
         }
         pending_action::Entity::delete_many()

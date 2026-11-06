@@ -51,6 +51,8 @@ pub struct ChatRequest {
     #[serde(default)]
     pub task_inputs: bool,
     #[serde(default)]
+    pub turn_id: String,
+    #[serde(default)]
     pub resume_task: String,
     #[serde(default)]
     pub browser_feedback: bool,
@@ -84,7 +86,7 @@ pub struct ChatResponse {
     pub error: Option<String>,
 }
 
-use sea_orm::{EntityTrait, Set, QueryOrder, QueryFilter, ColumnTrait, QuerySelect, ActiveModelTrait};
+use sea_orm::{EntityTrait, Set, QueryOrder, QueryFilter, ColumnTrait, QuerySelect};
 use sea_orm::sea_query::Expr; // Expr 不在 sea-orm 根（0.12.15 仅 pub use sea_query 全名）
 use crate::entity::{chat_history, chat_image, conversation};
 use crate::routes::conversation::resolve_conversation_id;
@@ -97,7 +99,7 @@ struct ChatCtx {
     uid: i32,
     conversation_id: i32,
     trace_id: String,
-    task_id: String,
+    turn_id: String,
     body: serde_json::Value,
     role: Option<String>,
 }
@@ -118,8 +120,8 @@ fn trace_id_of(req: &Request) -> String {
 #[derive(Serialize)]
 pub struct HistoryItem {
     pub id: i32,
-    pub task_id: Option<String>,
-    pub parent_task_id: Option<String>,
+    pub turn_id: Option<String>,
+    pub parent_turn_id: Option<String>,
     pub role: String,
     pub content: String,
     pub time: i64,
@@ -262,8 +264,8 @@ pub async fn chat_history_handler(
         .rev() // 时间升序（聊天软件阅读序）
         .map(|h| HistoryItem {
             id: h.id,
-            task_id: h.task_id.clone(),
-            parent_task_id: parents.get(&h.id).cloned(),
+            turn_id: h.turn_id.clone(),
+            parent_turn_id: parents.get(&h.id).cloned(),
             role: h.role.clone(),
             content: h.content.clone(),
             time: h.created_at.and_local_timezone(chrono::Local).single().map(|dt| dt.timestamp_millis()).unwrap_or(0),
@@ -409,7 +411,7 @@ pub async fn chat_stream_handler(
     // 帧循环里的告警要用（stream! 生成器闭包不能借用 ctx——它后面还要用 ctx 写响应头）
     let trace_id = ctx.trace_id.clone();
 
-    let body_stream = forward_agent_stream(state, uid, conversation_id, ctx.role, ctx.task_id, trace_id, upstream.bytes_stream());
+    let body_stream = forward_agent_stream(state, uid, conversation_id, ctx.role, ctx.turn_id, trace_id, upstream.bytes_stream());
 
     (
         [
@@ -430,7 +432,7 @@ fn forward_agent_stream(
     uid: i32,
     conversation_id: i32,
     source_role: Option<String>,
-    task_id: String,
+    turn_id: String,
     trace_id: String,
     upstream_stream: impl futures::Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
 ) -> impl futures::Stream<Item = Result<axum::response::sse::Event, axum::Error>> + Send {
@@ -461,7 +463,7 @@ fn forward_agent_stream(
                     if uid > 0 && !reply.is_empty() {
                         let state = state.clone();
                         if persistence::run(&trace_id, async move {
-                            save_assistant_reply(&state.db, uid, conversation_id, source_role, &task_id, reply).await
+                            save_assistant_reply(&state.db, uid, conversation_id, source_role, &turn_id, reply).await
                         }).await.is_err() {
                             yield Ok(stream_event("error", PERSISTENCE_ERROR));
                             break;
@@ -490,9 +492,9 @@ fn forward_agent_stream(
                 Frame::Pending(value) => {
                     if uid > 0 {
                         let state = state.clone();
-                        let task_id=task_id.clone();
+                        let turn_id=turn_id.clone();
                         if persistence::run(&trace_id, async move {
-                            if pending::save_pending_action(&state.db, uid, conversation_id, &task_id, &value.into()).await {
+                            if pending::save_pending_action(&state.db, uid, conversation_id, &turn_id, &value.into()).await {
                                 Ok(())
                             } else {
                                 Err(sea_orm::DbErr::Custom("pending state was not saved".into()))

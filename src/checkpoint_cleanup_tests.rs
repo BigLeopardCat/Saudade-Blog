@@ -44,7 +44,7 @@ async fn delivery_requires_verified_deletion_and_always_sends_identity() {
             conversation_id: 42,
             user_id: 7,
             attempts: 1,
-            task_id: String::new(),
+            turn_id: String::new(),
         };
         assert_eq!(
             request(&client(), &base, &job, "test.signed.assertion").await,
@@ -64,7 +64,7 @@ async fn delivery_requires_verified_deletion_and_always_sends_identity() {
                 conversation_id: 42,
                 user_id: 7,
                 attempts: 1,
-                task_id: String::new()
+                turn_id: String::new()
             },
             "test.signed.assertion"
         )
@@ -169,7 +169,7 @@ async fn turn_delivery_uses_stable_identity_and_requires_an_explicit_ack() {
         Json(body): Json<serde_json::Value>,
     ) -> Json<serde_json::Value> {
         assert!(headers.contains_key("X-Agent-Assertion"));
-        assert_eq!(body, json!({"uid":7,"task_id":"turn-2"}));
+        assert_eq!(body, json!({"uid":7,"turn_id":"turn-2"}));
         assert!(body.get("text").is_none());
         Json(json!({"dropped":true}))
     }
@@ -187,7 +187,7 @@ async fn turn_delivery_uses_stable_identity_and_requires_an_explicit_ack() {
         conversation_id: 42,
         user_id: 7,
         attempts: 1,
-        task_id: "turn-2".into(),
+        turn_id: "turn-2".into(),
     };
     assert_eq!(
         request(&client(), &base, &job, "signed.assertion.fixture").await,

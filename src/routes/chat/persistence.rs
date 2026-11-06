@@ -46,11 +46,11 @@ where
     })?
 }
 
-pub(super) async fn lock_turn<C: ConnectionTrait>(db: &C,uid: i32,cid: i32,task_id: &str) -> Result<bool,DbErr> {
+pub(super) async fn lock_turn<C: ConnectionTrait>(db: &C,uid: i32,cid: i32,turn_id: &str) -> Result<bool,DbErr> {
     use sea_orm::{DbBackend,Statement};
     let owner=db.query_one(Statement::from_sql_and_values(DbBackend::Postgres,
         "SELECT id FROM conversation WHERE id=$1 AND user_id=$2 FOR UPDATE",[cid.into(),uid.into()])).await?;
-    Ok(owner.is_some() && !crate::checkpoint_cleanup::turn_discarded(db,cid,task_id).await?)
+    Ok(owner.is_some() && !crate::checkpoint_cleanup::turn_discarded(db,cid,turn_id).await?)
 }
 
 pub(super) async fn save_assistant_reply<C: ConnectionTrait + TransactionTrait>(
@@ -58,11 +58,11 @@ pub(super) async fn save_assistant_reply<C: ConnectionTrait + TransactionTrait>(
     uid: i32,
     conversation_id: i32,
     source_role: Option<String>,
-    task_id: &str,
+    turn_id: &str,
     reply: String,
 ) -> Result<(), DbErr> {
     let txn=db.begin().await?;
-    if !lock_turn(&txn,uid,conversation_id,task_id).await? {
+    if !lock_turn(&txn,uid,conversation_id,turn_id).await? {
         return Err(DbErr::Custom("turn_discarded".into()));
     }
     chat_history::Entity::insert(chat_history::ActiveModel {
@@ -70,7 +70,7 @@ pub(super) async fn save_assistant_reply<C: ConnectionTrait + TransactionTrait>(
         conversation_id: Set(conversation_id),
         role: Set("assistant".into()),
         source_role: Set(source_role),
-        task_id: Set((!task_id.is_empty()).then(|| task_id.to_owned())),
+        turn_id: Set((!turn_id.is_empty()).then(|| turn_id.to_owned())),
         content: Set(reply),
         ..Default::default()
     })

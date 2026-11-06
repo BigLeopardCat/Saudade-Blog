@@ -21,7 +21,7 @@ pub(super) struct MemoryScope {
 pub(super) struct HistoryMessage {
     pub role: String,
     pub content: String,
-    pub task_id: Option<String>,
+    pub turn_id: Option<String>,
 }
 
 #[derive(Default, Serialize)]
@@ -73,7 +73,7 @@ pub(super) async fn load_bootstrap<C: ConnectionTrait>(
             .map(|row| HistoryMessage {
                 role: row.role.clone(),
                 content: row.content.clone(),
-                task_id: row.task_id.clone(),
+                turn_id: row.turn_id.clone(),
             })
             .collect(),
         summary: matching.map_or_else(String::new, |row| row.summary.clone()),
@@ -110,7 +110,7 @@ pub(super) async fn append_user<C: ConnectionTrait + TransactionTrait>(
     }
     let saved=chat_history::ActiveModel {
         user_id:Set(uid), conversation_id:Set(cid), role:Set("user".into()),
-        source_role:Set(role.map(str::to_owned)), task_id:Set(Some(task.to_owned())),
+        source_role:Set(role.map(str::to_owned)), turn_id:Set(Some(task.to_owned())),
         content:Set(content.to_owned()),..Default::default()
     }.insert(&txn).await?;
     txn.commit().await?;
@@ -131,11 +131,11 @@ pub(super) async fn discard<C: ConnectionTrait + TransactionTrait>(
     let txn = db.begin().await?;
     txn.execute(Statement::from_sql_and_values(DbBackend::Postgres,
         "DELETE FROM chat_history h WHERE h.user_id=$1 AND h.conversation_id=$2 \
-         AND (h.task_id=$3 OR h.id IN (SELECT message_id FROM chat_task_input \
-              WHERE user_id=$1 AND conversation_id=$2 AND task_id=$3))",
+         AND (h.turn_id=$3 OR h.id IN (SELECT message_id FROM chat_task_input \
+              WHERE user_id=$1 AND conversation_id=$2 AND turn_id=$3))",
         vec![uid.into(),conversation_id.into(),task.into()])).await?;
     txn.execute(Statement::from_sql_and_values(DbBackend::Postgres,
-        "DELETE FROM chat_task_input WHERE user_id=$1 AND conversation_id=$2 AND task_id=$3",
+        "DELETE FROM chat_task_input WHERE user_id=$1 AND conversation_id=$2 AND turn_id=$3",
         vec![uid.into(),conversation_id.into(),task.into()])).await?;
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,

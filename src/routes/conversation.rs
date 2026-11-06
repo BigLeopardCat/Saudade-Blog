@@ -11,7 +11,6 @@ use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 use crate::routes::AppState;
 use crate::auth_jwt;
 use crate::search_core::like_escape;
