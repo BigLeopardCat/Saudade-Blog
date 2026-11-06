@@ -1,6 +1,6 @@
 //! Independent signing keys and purpose restrictions, without production credentials.
 use axum::{
-    body::Body,
+    body::{to_bytes, Body},
     http::{Method, Request, StatusCode},
     middleware,
     routing::any,
@@ -13,6 +13,47 @@ use saudade_blog::auth_jwt::{
 };
 use serde_json::json;
 use tower::ServiceExt;
+
+fn history_application(status: i16, version: i32, owned: bool) -> Router {
+    use saudade_blog::{create_router, entity::user, AppState};
+    use sea_orm::{DatabaseBackend, MockDatabase, Value};
+    use std::{collections::BTreeMap, sync::Arc};
+    let actor = user::Model {
+        id: 7,
+        username: "history-fixture".into(),
+        nickname: "History".into(),
+        nickname_auto_renamed: 0,
+        avatar: None,
+        password: "unused".into(),
+        role: "user".into(),
+        status,
+        token_version: version,
+        chat_quota_used: 0,
+        muted_until: None,
+    };
+    let owners: Vec<BTreeMap<&str, Value>> = if owned {
+        vec![BTreeMap::from([("id", 9.into())])]
+    } else {
+        vec![]
+    };
+    let row: BTreeMap<&str, Value> = BTreeMap::from([
+        ("id", 31.into()),
+        ("role", "user".into()),
+        ("content", "owned-history".into()),
+        ("content_length", 13.into()),
+        ("created_at", chrono::NaiveDateTime::default().into()),
+    ]);
+    create_router(AppState {
+        db: MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([vec![actor]])
+            .append_query_results([owners])
+            .append_query_results([vec![row]])
+            .into_connection(),
+        rate_limiter: saudade_blog::rate_limiter::LoginRateLimiter::new(5, 60, 300),
+        post_limiter: saudade_blog::risk::PostRateLimiter::new(),
+        report_limiter: saudade_blog::rate_limiter::LoginRateLimiter::new(120, 60, 300),
+    })
+}
 
 #[tokio::test]
 async fn keys_audiences_expiry_and_scope_are_independent() {
@@ -61,6 +102,30 @@ async fn keys_audiences_expiry_and_scope_are_independent() {
     let app = Router::new()
         .route("/{*path}", any(|| async { StatusCode::OK }))
         .layer(middleware::from_fn(delegation::boundary));
+    for token in [&tools, &background] {
+        for path in ["/api/chat/history", "/api/chat/history/text"] {
+            for method in [Method::GET, Method::POST, Method::DELETE, Method::PATCH] {
+                let expected = if token == &tools && method == Method::GET {
+                    StatusCode::OK
+                } else {
+                    StatusCode::FORBIDDEN
+                };
+                let response = app
+                    .clone()
+                    .oneshot(
+                        Request::builder()
+                            .method(method.clone())
+                            .uri(format!("{path}?conversation_id=9"))
+                            .header("authorization", format!("Bearer {token}"))
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), expected, "{method} {path}");
+            }
+        }
+    }
     for (token, method, path, expected) in [
         (
             &background,
@@ -100,6 +165,31 @@ async fn keys_audiences_expiry_and_scope_are_independent() {
         ),
         (
             &tools,
+            Method::GET,
+            "/api/chat/conversations",
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            &tools,
+            Method::GET,
+            "/api/chat/search",
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            &tools,
+            Method::GET,
+            "/api/chat/stream",
+            StatusCode::FORBIDDEN,
+        ),
+        (&tools, Method::POST, "/api/chat", StatusCode::FORBIDDEN),
+        (
+            &tools,
+            Method::GET,
+            "/api/chat/history/text/extra",
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            &tools,
             Method::POST,
             "/api/protected/auth/password",
             StatusCode::FORBIDDEN,
@@ -121,4 +211,31 @@ async fn keys_audiences_expiry_and_scope_are_independent() {
     }
     assert!(saudade_blog::authz::check_token(0, 5, Some(4)).is_err());
     assert!(saudade_blog::authz::check_token(-1, 4, Some(4)).is_err());
+    for (status, version, owned, allowed) in [
+        (0, 4, true, true),
+        (0, 4, false, false),
+        (1, 4, true, false),
+        (0, 5, true, false),
+    ] {
+        let response = history_application(status, version, owned)
+            .oneshot(
+                Request::builder()
+                    .uri("/api/chat/history/text?conversation_id=9&limit=5")
+                    .header("authorization", format!("Bearer {tools}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+        assert_eq!(body["code"] == 200, allowed, "{body}");
+        if allowed {
+            assert_eq!(body["data"]["ownerId"], 7);
+            assert_eq!(body["data"]["conversationId"], 9);
+            assert_eq!(body["data"]["items"][0]["content"], "owned-history");
+        } else {
+            assert!(body["data"].is_null());
+        }
+    }
 }

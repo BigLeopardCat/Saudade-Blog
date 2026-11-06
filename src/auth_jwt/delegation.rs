@@ -82,6 +82,10 @@ impl Grant {
 }
 
 pub fn allows(scope: Scope, method: &Method, path: &str) -> bool {
+    // These owner-checked read endpoints serve Agent history tools, not chat control.
+    if matches!(path, "/api/chat/history" | "/api/chat/history/text") {
+        return scope == Scope::Tools && method == Method::GET;
+    }
     if !(path.starts_with("/api/protected/")
         || path.starts_with("/api/protect/")
         || path.starts_with("/api/knowledge")
