@@ -37,6 +37,16 @@ pub(super) async fn prepare_chat(
             ))
         }
     };
+    if let Err(message) = input::validate(&payload) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ChatResponse {
+                reply: String::new(),
+                success: false,
+                error: Some(message.into()),
+            }),
+        ));
+    }
     if !control::valid(&payload) {
         return Err((
             StatusCode::BAD_REQUEST,

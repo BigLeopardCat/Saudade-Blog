@@ -414,9 +414,13 @@ pub(crate) async fn note_keyword_prefilter(
     Ok(Some(pre))
 }
 
-pub async fn search_notes(
-    State(state): State<Arc<AppState>>,
-    Json(payload): Json<SearchRequest>,
+mod legacy_search;
+pub use legacy_search::search_notes;
+
+async fn search_notes_query(
+    state: Arc<AppState>,
+    payload: SearchRequest,
+    terms: Vec<String>,
 ) -> Json<ApiResponse<Vec<NoteDto>>> {
     let mut condition = Condition::all();
 
@@ -430,11 +434,6 @@ pub async fn search_notes(
         }
     }
 
-    let terms = payload
-        .keyword
-        .as_deref()
-        .map(split_terms)
-        .unwrap_or_default();
     if keyword_given(payload.keyword.as_deref()) && terms.is_empty() {
         return Json(ApiResponse::success(vec![]));
     }
@@ -442,30 +441,41 @@ pub async fn search_notes(
         Ok(Some(pre)) => condition = condition.add(pre),
         // 没有可用 term（此时上面的短路已经放过去了 ⇒ 真的没给关键词）⇒ 不加条件。
         Ok(None) => {}
-        // ⚠️ 标签那一维**读不到就不许用预筛**：少收一行是**静默的错误答案**，
-        // 多收几行只是慢一点。回退到全量加载 + 内存判定，并留一行 WARN。
-        Err(e) => tracing::warn!("[search_notes] 关键词预筛失败，本轮回退到全量加载: {e}"),
+        Err(e) => return crate::routes::db_error("公开文章搜索预筛", &e),
     }
 
-     if let Some(ref cat_name) = payload.categories {
+    if let Some(ref cat_name) = payload.categories {
         let cat_model = category::Entity::find()
             .filter(category::Column::Name.eq(cat_name))
             .one(&state.db)
-            .await
-            .unwrap_or(None);
-            
+            .await;
+        let cat_model = match cat_model {
+            Ok(row) => row,
+            Err(e) => return crate::routes::db_error("搜索分类", &e),
+        };
+
         if let Some(c) = cat_model {
             condition = condition.add(note::Column::CategoryId.eq(c.id));
         } else {
-             return Json(ApiResponse::success(vec![]));
+            return Json(ApiResponse::success(vec![]));
         }
     }
-    
-        if terms.is_empty() {
-        let rows = note::Entity::find().filter(condition)
+
+    if terms.is_empty() {
+        let rows = note::Entity::find()
+            .filter(condition)
             .order_by_asc(note::Column::Id)
-            .into_partial_model::<NoteSummary>().all(&state.db).await;
-        let rows = or_empty_warn(rows, "公开文章筛选");
+            .limit(legacy_search::CANDIDATE_LIMIT + 1)
+            .into_partial_model::<NoteSummary>()
+            .all(&state.db)
+            .await;
+        let rows = match rows {
+            Ok(rows) => rows,
+            Err(e) => return crate::routes::db_error("公开文章筛选", &e),
+        };
+        if rows.len() as u64 > legacy_search::CANDIDATE_LIMIT {
+            return legacy_search::too_broad();
+        }
         let cats = category_names(&state.db, rows.iter().filter_map(|r| r.category_id)).await;
         let mut dtos: Vec<NoteDto> = rows.into_iter().map(|r| summary_to_dto(r, &cats)).collect();
         attach_tags(&state.db, &mut dtos).await;
@@ -477,10 +487,17 @@ pub async fn search_notes(
     let notes = note::Entity::find()
         .filter(condition)
         .order_by_asc(note::Column::Id)
+        .limit(legacy_search::CANDIDATE_LIMIT + 1)
         .find_with_related(category::Entity)
         .all(&state.db)
-        .await
-        .unwrap_or(vec![]);
+        .await;
+    let notes = match notes {
+        Ok(rows) => rows,
+        Err(e) => return crate::routes::db_error("公开文章搜索", &e),
+    };
+    if notes.len() as u64 > legacy_search::CANDIDATE_LIMIT {
+        return legacy_search::too_broad();
+    }
 
     let notes = if terms.is_empty() {
         notes
@@ -516,9 +533,10 @@ pub async fn search_notes(
         scored.into_iter().map(|(_, _, r)| r).collect()
     };
 
-    let mut dtos: Vec<NoteDto> = notes.into_iter().map(|(n, cats)| {
-        map_note_summary(n, cats.into_iter().next().map(|c| (c.id, c.name)))
-    }).collect();
+    let mut dtos: Vec<NoteDto> = notes
+        .into_iter()
+        .map(|(n, cats)| map_note_summary(n, cats.into_iter().next().map(|c| (c.id, c.name))))
+        .collect();
     attach_tags(&state.db, &mut dtos).await;
     attach_stats(&state.db, &mut dtos).await;
     attach_authors(&state.db, &mut dtos).await;
@@ -782,21 +800,31 @@ pub async fn create_note(
         Ok(m) => m,
         Err(e) => {
             let _ = txn.rollback().await;
-            return Json(ApiResponse::error(&format!("Error: {}", e)));
+            return write_error(&e);
         }
     };
     if let Err(e) = note_tags::replace_note_tags(&txn, inserted.id, new_tags.as_deref()).await {
         tracing::error!("[notes] 建文章 {}：写标签失败: {e}", inserted.id);
         let _ = txn.rollback().await;
-        return Json(ApiResponse::error(&format!("Error: {}", e)));
+        return write_error(&e);
     }
     match txn.commit().await {
         Ok(_) => Json(ApiResponse::success("Note created successfully".to_string())),
         Err(e) => {
             tracing::error!("[notes] 建文章：提交失败: {e}");
-            Json(ApiResponse::error(&format!("Error: {}", e)))
+            write_error(&e)
         }
     }
+}
+
+fn write_error<T: Default>(e: &sea_orm::DbErr) -> Json<ApiResponse<T>> {
+    if let sea_orm::DbErr::RecordNotFound(message) = e {
+        if matches!(message.as_str(), "文章不存在" | "原文章已删除") {
+            return Json(ApiResponse::error(message));
+        }
+    }
+    tracing::error!(error = %e, "article transaction failed");
+    Json(ApiResponse::error("操作结果未确认，请先查询实际状态后重试"))
 }
 
 fn should_backfill_author(author_missing: bool, from_editor: bool) -> bool {
@@ -819,17 +847,17 @@ pub async fn update_note(
 
     let txn = match state.db.begin().await {
         Ok(t) => t,
-        Err(e) => return Json(ApiResponse::error(&e.to_string())),
+        Err(e) => return write_error(&e),
     };
     let (root, draft) = match drafts::locked_document(&txn, id).await {
         Ok(rows) => rows,
-        Err(e) => return Json(ApiResponse::error(&e.to_string())),
+        Err(e) => return write_error(&e),
     };
     if from_editor {
         match drafts::document_version(&txn, &root, draft.as_ref()).await {
             Ok(version) if payload.expected_version.as_deref() == Some(&version) => {},
             Ok(_) => return drafts::conflict(),
-            Err(e) => return Json(ApiResponse::error(&e.to_string())),
+            Err(e) => return write_error(&e),
         }
     }
     let note_data = if from_editor || id == root.id { Some(root) } else { draft };
@@ -892,7 +920,7 @@ pub async fn update_note(
 
         if let Err(e) = active_model.update(&txn).await {
             let _ = txn.rollback().await;
-            return Json(ApiResponse::error(&format!("Error: {}", e)));
+            return write_error(&e);
         }
         if new_tags.is_some() {
             if let Err(e) =
@@ -900,13 +928,13 @@ pub async fn update_note(
             {
                 tracing::error!("[notes] 更新文章 {target_id}：写标签失败: {e}");
                 let _ = txn.rollback().await;
-                return Json(ApiResponse::error(&format!("Error: {}", e)));
+                return write_error(&e);
             }
         }
         if from_editor {
             if let Err(e) = note::Entity::delete_many()
                 .filter(note::Column::DraftOf.eq(target_id)).exec(&txn).await {
-                return Json(ApiResponse::error(&e.to_string()));
+                return write_error(&e);
             }
         }
         match txn.commit().await {
@@ -915,7 +943,7 @@ pub async fn update_note(
             }
             Err(e) => {
                 tracing::error!("[notes] 更新文章 {target_id}：提交失败: {e}");
-                Json(ApiResponse::error(&format!("Error: {}", e)))
+                write_error(&e)
             }
         }
     } else {

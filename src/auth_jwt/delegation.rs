@@ -81,45 +81,9 @@ impl Grant {
     }
 }
 
+mod permissions;
 pub fn allows(scope: Scope, method: &Method, path: &str) -> bool {
-    // These owner-checked read endpoints serve Agent history tools, not chat control.
-    if matches!(path, "/api/chat/history" | "/api/chat/history/text") {
-        return scope == Scope::Tools && method == Method::GET;
-    }
-    if !(path.starts_with("/api/protected/")
-        || path.starts_with("/api/protect/")
-        || path.starts_with("/api/knowledge")
-        || path.starts_with("/api/temp-users")
-        || path.starts_with("/api/device-gateway/"))
-    {
-        return false;
-    }
-    if path.starts_with("/api/protected/auth/")
-        || path.starts_with("/api/protected/draft/")
-        || path.contains("password")
-        || path.contains("/chat")
-        || path.contains("/conversation")
-        || path.starts_with("/api/protected/graph/")
-        || path.starts_with("/api/protected/agent/")
-    {
-        return false;
-    }
-    if scope == Scope::Background {
-        if path.starts_with("/api/device-gateway/") {
-            return false;
-        }
-        return method == Method::GET
-            || (method == Method::POST
-                && matches!(
-                    path,
-                    "/api/protected/automation-results"
-                        | "/api/protected/automation-announcements"
-                        | "/api/protected/automation-changes"
-                        | "/api/protected/catalog/search"
-                ));
-    }
-    // Authentication, proxy transport and credential issuance are never tool APIs.
-    !path.starts_with("/api/protected/automations")
+    permissions::allows(scope, method, path)
 }
 
 pub async fn boundary(request: Request, next: Next) -> Result<Response, StatusCode> {

@@ -80,7 +80,7 @@ async fn resolve_autosave_target(
     db: &DatabaseTransaction,
     root: Option<note::Model>,
     draft: Option<note::Model>,
-) -> Result<note::Model, String> {
+) -> Result<note::Model, sea_orm::DbErr> {
     let now = chrono::Local::now().naive_local();
 
     let Some(n) = root else {
@@ -93,10 +93,7 @@ async fn resolve_autosave_target(
             updated_at: Set(now),
             ..Default::default()
         };
-        return row
-            .insert(db)
-            .await
-            .map_err(|e| format!("Create draft failed: {}", e));
+        return row.insert(db).await;
     };
 
     let id = n.id;
@@ -117,13 +114,8 @@ async fn resolve_autosave_target(
     am.is_public = Set(false);
     am.created_at = Set(now);
     am.updated_at = Set(now);
-    let rev = am
-        .insert(db)
-        .await
-        .map_err(|e| format!("Create revision failed: {}", e))?;
-    note_tags::copy_note_tags(db, id, rev.id)
-        .await
-        .map_err(|e| format!("Create revision failed: {}", e))?;
+    let rev = am.insert(db).await?;
+    note_tags::copy_note_tags(db, id, rev.id).await?;
     Ok(rev)
 }
 
@@ -178,17 +170,17 @@ pub async fn autosave_note(
 
     let txn = match state.db.begin().await {
         Ok(t) => t,
-        Err(e) => return Json(ApiResponse::error(&e.to_string())),
+        Err(e) => return write_error(&e),
     };
     let (root, draft) = if let Some(id) = payload.id {
         let (root, draft) = match locked_document(&txn, id).await {
             Ok(rows) => rows,
-            Err(e) => return Json(ApiResponse::error(&e.to_string())),
+            Err(e) => return write_error(&e),
         };
         match document_version(&txn, &root, draft.as_ref()).await {
             Ok(version) if payload.expected_version.as_deref() == Some(&version) => {}
             Ok(_) => return conflict(),
-            Err(e) => return Json(ApiResponse::error(&e.to_string())),
+            Err(e) => return write_error(&e),
         }
         (Some(root), draft)
     } else {
@@ -196,7 +188,7 @@ pub async fn autosave_note(
     };
     let target = match resolve_autosave_target(&txn, root, draft).await {
         Ok(t) => t,
-        Err(e) => return Json(ApiResponse::error(&e)),
+        Err(e) => return write_error(&e),
     };
 
     let is_revision = target.draft_of.is_some();
@@ -270,21 +262,21 @@ pub async fn autosave_note(
         Ok(s) => s,
         Err(e) => {
             let _ = txn.rollback().await;
-            return Json(ApiResponse::error(&format!("Error: {}", e)));
+            return write_error(&e);
         }
     };
     if let Err(e) = note_tags::replace_note_tags(&txn, saved.id, eff_tags.as_deref()).await {
         tracing::error!("[notes] 自动保存 {}：写标签失败: {e}", saved.id);
         let _ = txn.rollback().await;
-        return Json(ApiResponse::error(&format!("Error: {}", e)));
+        return write_error(&e);
     }
     let (root, draft) = match locked_document(&txn, saved.id).await {
         Ok(rows) => rows,
-        Err(e) => return Json(ApiResponse::error(&e.to_string())),
+        Err(e) => return write_error(&e),
     };
     let version = match document_version(&txn, &root, draft.as_ref()).await {
         Ok(v) => v,
-        Err(e) => return Json(ApiResponse::error(&e.to_string())),
+        Err(e) => return write_error(&e),
     };
     match txn.commit().await {
         Ok(_) => Json(ApiResponse::success(AutosaveDraftResult {
@@ -296,7 +288,7 @@ pub async fn autosave_note(
         })),
         Err(e) => {
             tracing::error!("[notes] 自动保存：提交失败: {e}");
-            Json(ApiResponse::error(&format!("Error: {}", e)))
+            write_error(&e)
         }
     }
 }
