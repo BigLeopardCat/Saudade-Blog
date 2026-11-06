@@ -41,6 +41,13 @@ class ServiceConfiguration(unittest.TestCase):
             maintenance = (root / "saudade-agent-maintenance.service").read_text()
             self.assertIn("Type=oneshot", maintenance)
             self.assertIn("-m eval.trace_retention --apply", maintenance)
+            self.assertEqual([line for line in maintenance.splitlines()
+                              if line.startswith("ExecStart=")], [
+                "ExecStart=/srv/agent/current/.venv/bin/python -m eval.trace_retention --apply",
+                "ExecStart=/srv/agent/current/.venv/bin/python -m eval.pg_retention --apply",
+                "ExecStart=/srv/agent/current/.venv/bin/python -m agent.scheduling.retention --apply",
+            ])
+            self.assertIn("TimeoutStartSec=600", maintenance)
             self.assertIn("Restart=no", maintenance)
             rust = (root / "saudade-rust.service").read_text()
             self.assertIn("TimeoutStopSec=360", rust)
