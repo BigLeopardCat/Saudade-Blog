@@ -1,17 +1,3 @@
-// ═ 跨端同步触发器（20260926）══
-//   node tests/live-refresh.test.mjs
-//
-// 现场（用户报的）：后台开着评论管理页，让看板娘驳回一条留言 —— 页面不动，得刷新网页。
-// 同族的毛病散在用户列表 / 文章 / 标签 / 分类 / 前台河灯，成因同一个：那些列表只在挂载时
-// 拉一次，而 agent 是从服务端改的那一笔，浏览器没有任何理由知道。
-//
-// 本套件锁 `src/utils/liveRefresh.ts` 的**四条纪律**（挂载不拉 / 在途不叠加 / 事件与轮询
-// 共用节流窗口 / skip 优先），以及消费者的生命周期（第一个出现才挂定时器、最后一个离开
-// 就撤）。判据全是"发了几次请求"与"定时器在不在"，不锁任何页面文案。
-//
-// liveRefresh.ts 是 TS，唯一的外部依赖是 agentTurn.ts（纯常量）。先摊平成一个 .mjs 再 import
-// ——本机不能 vite build（3.7GB 内存，见 CLAUDE.md §2），模块级监听又必须在 import 之前
-// 装好假 window/document（同 favorites-sync.test.mjs 的姿势）。
 import * as esbuild from 'esbuild';
 import { mkdtempSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';

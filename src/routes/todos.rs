@@ -35,7 +35,6 @@ pub struct TodoDto {
     pub text: String,
     #[serde(default)]
     pub done: bool,
-    /// 排期那天 `YYYY-MM-DD`；null / 空串 = 未排期（两种"没填"在这里归一成一串 None）
     #[serde(default)]
     pub date: Option<String>,
 }
@@ -143,7 +142,8 @@ async fn begin_list_write(
         .lock_exclusive()
         .one(&txn)
         .await?;
-    let actor = actor.ok_or_else(|| sea_orm::DbErr::RecordNotFound("actor no longer exists".into()))?;
+    let actor =
+        actor.ok_or_else(|| sea_orm::DbErr::RecordNotFound("actor no longer exists".into()))?;
     Ok((txn, actor))
 }
 

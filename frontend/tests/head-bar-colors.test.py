@@ -1,28 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""顶栏「原来的显示逻辑 + 白天换字色」的两态字色锁（20261001 六轮，用户第 6 条）。
-
-  python3 tests/head-bar-colors.test.py
-
-用户原话：「顶部栏依旧做回原来的显示逻辑，只不过字体颜色白天模式需要换色否则看不清。」
-
-"原来的显示逻辑" = 默认整条**透明**，只有「悬停」与「页面已滚动」（`.is-stuck`）两态
-才落 `rgba(0,0,0,0.66)` 深底（`d85311e` 之前的形态）。那两态是**两档主题共用一层黑**，
-所以字必须跟着换浅；而透明态压的是页底 —— 白天是淡彩首屏（白字 ≈ 1.2:1，就是主人说的
-"看不清"），夜里是深色页底（浅字才对）。
-
-**为什么只能问浏览器**：这件事全是 CSS 层叠的结果，读代码看不出谁赢 ——
-  · 字色是 `var(--washi-ink)` 走**令牌分档**（白天深墨紫 / 夜间浅色），令牌本身住
-    `src/index.css`，浅色档在 `:root`、深色档在选择器列表里；
-  · 深底态那条覆盖 `&:hover, &.is-stuck { .webTitle, .headBar li { color: … } }` 与
-    `.headBar li:hover`（和纸 chip）是**同特异性 (0,3,1)**，靠源码顺序定胜负 ——
-    谁在前谁在后，只有 computedStyle 说了算；
-  · `.headContainer` 是 `z-index:-1`，没有外面那层 `position:sticky; z-index:999` 的
-    `<header>` 它连 hover 都收不到（本脚本第一版就栽在这上，量出一片"悬停没生效"）。
-
-取自真文件：`src/frontHome/Head/index.sass`（现编译）+ `src/index.css`（令牌）。
-DOM 结构照抄 `Head/index.tsx:262` 那层 `<header>`。
-"""
+"""公共导航栏的主题配色与对比度回归。"""
 import functools
 import http.server
 import pathlib
@@ -146,7 +124,6 @@ with sync_playwright() as p:
             pg.evaluate("() => window.__dark(true)")
         pg.wait_for_timeout(200)
 
-        # ── ① 未滚动 = 透明态（这就是"原来的显示逻辑"）────────────────────────
         v = pg.evaluate(READ)
         check("未滚动：整条是透明的（不是常驻纸底）",
               v["bg"] in ("rgba(0, 0, 0, 0)", "transparent"), v["bg"])

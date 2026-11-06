@@ -1,21 +1,5 @@
 # -*- coding: utf-8 -*-
-"""后台侧栏三处修复（20260923）的无头验收：真组件 + 真 CSS + 真几何。
-
-为什么值得单起一个脚本：这三处**都只有真跑一遍才看得见**——
-  · 悬停配色是 CSS 层叠的结果：`Dashboard/index.css` 里 V13/V14/V16 三批 `!important`
-    互相打架（其中 V14/V16 那几条 `html[data-theme='dark']` 是**死规则**，全站没有
-    任何地方设过 data-theme），谁赢光读代码看不出来，得问浏览器要 computedStyle；
-  · 开关被裁是盒模型的差几个像素（`.toggle-switch` 的 translateX(8%) 顶出
-    `.menu-bar` 的 overflow-x:hidden）；
-  · 那颗按钮是"点下去到底删没删 token"——删了就是会把管理员踢出去。
-
-沿用 user-center.test.py 那套既定手段（本机不能 vite build，见 CLAUDE.md §2）：
-esbuild 把**真组件**打成一个 bundle、只桩边界（axios / react-redux / react-router-dom），
-antd 与 react-dom 用真的；CSS 用**仓库里那份真文件**（link 进去，不复制样式）。
-
-用法：python3 frontend/tests/dashboard-sidebar.test.py
-依赖：frontend/node_modules（esbuild/react/react-dom/antd）、playwright(python)。
-"""
+"""后台侧栏的布局、交互和主题回归。"""
 import functools
 import http.server
 import pathlib
@@ -59,14 +43,6 @@ const http: any = () => Promise.resolve({ status: 200, data: { code: 200, data: 
 export default http;
 """
 
-# 边界②：路由。只记 navigate 的入参；Outlet 渲染空（后台各页不在本脚本关注面内）。
-#
-# ⚠️ 20261006：这个桩**必须是个会响应的迷你路由**，不能再返回写死的 pathname。
-# 侧栏高亮原来是「点一下才 setState」，那版桩能跑；改成**按 pathname 派生**之后，
-# 写死的桩会让所有"点击后高亮"停在原地——测试会以「假绿」的形式通过（永远停在主页）。
-# 于是这里维护一份真实 path + 订阅集合：navigate 与 window.__setPath 都改它并通知订阅者。
-# 初值取 URL 上的 `#/...`（本套件用 `URL + "#/dashboard/albums"` 模拟深链），
-# 这样"带路径打开就该亮对"也能测（老代码这里恒回落「主页」）。
 STUB_ROUTER = """\
 import * as React from 'react';
 
@@ -136,9 +112,6 @@ def build_sandbox() -> pathlib.Path:
                      ("src/components/Switch/index.css", "switch.css")):
         shutil.copyfile(FE / rel, sb / out)
 
-    # 20261001：公告卡那轮起，后台壳的依赖图里出现了 `import './index.sass'`
-    # （components/AnnouncementModal）——本套件只验侧栏 DOM，不看那份样式，
-    # 所以照全仓惯例收成 text 即可；缺这个 loader 是**打包直接失败**，不是样式缺失。
     r = subprocess.run([str(FE / "node_modules/.bin/esbuild"), "entry.tsx",
                         "--bundle", "--format=iife", "--outfile=bundle.js",
                         "--loader:.css=text", "--loader:.sass=text", "--jsx=automatic",
@@ -147,8 +120,6 @@ def build_sandbox() -> pathlib.Path:
                         f"--alias:react-redux={sb}/stub-redux.tsx"],
                        cwd=str(sb), capture_output=True)
     if r.returncode != 0:
-        # 宽容解码：esbuild 会在中文那行按字节截断，严格 utf-8 解会先炸在解码上、
-        # 把真正的报错盖掉（20260922 在 user-center.test.py 上实测）。
         raise SystemExit("esbuild 打包失败：\n%s" % r.stderr.decode("utf-8", "replace"))
 
     (sb / "index.html").write_text(
@@ -290,13 +261,6 @@ with sync_playwright() as p:
           f'超出 {g["sw"]["right"] - g["bar"]["right"]:.1f}px')
     geo_page.evaluate("() => { document.querySelector('.toggle-switch').style.transform = ''; }")
 
-    # ── 三b、第三档「极简」（20261006 用户第 3 条）───────────────────────────────
-    #
-    # 三档 = 0 / 88 / 250，类名互斥（`.mini` / `.close` / 无）。判据全部只有真跑一遍才看得见：
-    #   · 收到 0 宽时**底色带留不留**取决于要不要连 padding 一起收（`.shell` 是 content-box）；
-    #   · 两颗圆钮是 `position:absolute; right:-25px`，只要有人顺手给 `.shell` 加一句
-    #     `overflow:hidden`，它们会当场消失 —— 而"钮不见了"光看代码是想不到的。
-    # 此刻 geo_page 停在**展开态（250）**（上一节刚点过 `.toggle`）。
     print("\n【三b】侧栏第三档（极简）")
     ROT = """() => {
         const rot = (sel) => {
@@ -408,15 +372,6 @@ with sync_playwright() as p:
               all(f is None for f in g["pathFills"]), str(g["pathFills"]))
     svg_dk.close()
 
-    # ── 六、高亮**按路径派生**（点一下才亮那套是死的）────────────────────────────
-    #
-    # 20261006 改。老实现的病根：路由早就是 `createBrowserRouter`（真实 path），全仓没有
-    # 任何地方写 hash，而侧栏高亮读的是 `location.hash` ⇒ 那份 HASH_INDEX **在线上恒不
-    # 命中**，任何一次刷新/程序化跳转都回落成「主页」。
-    # ⚠️ 本节里**真正区分新旧实现的只有第 ① 条**（下面那条 `__setPath`）：本夹具的桩是
-    # 从 URL 上的 `#/...` 播种 path 的，而老实现恰好也认得那个 hash ⇒ 第 ② 条在老代码上
-    # 也能过，它是「路径没变时不回归」的锁，不是对照。②③ 的价值在于：改成按 pathname 派生
-    # 之后，"点一下才亮"这条老路被彻底删掉了，得有人钉住它别又退回去。
     print("\n【六】侧栏高亮跟随路径（含不经侧栏的跳转）")
     HIGH = """() => ({
         menu: [...document.querySelectorAll('.menu-links .nav-links.nav_select')]
@@ -465,13 +420,6 @@ with sync_playwright() as p:
     check("第六节全程无页面异常", not sc_errs, "; ".join(sc_errs[:3]))
     sc.close()
 
-    # ── 七、后台夜间最小闭环：壳上那层 ConfigProvider(darkAlgorithm) 真的落地了 ─────
-    #
-    # 锁的是 20260923 那条根因：`/dashboard` 与 `/` 是**兄弟顶层路由**，命中后台时 <App/>
-    # 不在树上 ⇒ App.tsx 的 frontDark 永远落不到后台，而 isDarkMode 只长在这个壳里。
-    # 不在壳上挂 ConfigProvider，antd 就恒为 defaultAlgorithm —— 面板、表格、日历全是浅色，
-    # 用户看到的就是"后台夜间一点不夜间"。判据只能问浏览器要 computedStyle：这个文件之外
-    # 还有一批 `html[data-theme='dark']` 死规则和几条互相打架的 !important，读代码看不出谁赢。
     print("\n【七】后台夜间：antd 组件在深色壳里真的变深")
     PROBE_ANTD = ("() => { const el = document.querySelector('.image .ant-avatar');"
                   " if (!el) return null; const cs = getComputedStyle(el);"
@@ -495,18 +443,6 @@ with sync_playwright() as p:
     check("第七节全程无页面异常", not dk7.errs, "; ".join(dk7.errs[:3]))
     dk7.close()
 
-    # ── 八、两枚 SVG 的**墨迹尺寸**与相邻字体图标对齐 ──────────────────────────────
-    #
-    # 为什么单起一节：`.nav-svg` 定的是**画布** 22×22，不是**画出来的那一块**。path 在
-    # 自己 viewBox 里画多大，光读代码看不出来 —— 旧稿的用户管理图标 viewBox 是
-    # `0 0 1097 1024`（横着多出 73 个单位），默认 preserveAspectRatio 居中后**纵向只有
-    # 20.5px**；换成 1024² 的新稿后纵横都吃满 22px。用户这次点名"大小要和侧边栏其他
-    # 图标保持一致"，而这一条只有量 getBBox 才知道有没有做到。
-    #
-    # 参照系是**同一侧栏里那七枚字体图标**在同一字号下的墨迹高度（本机实测，20261001）：
-    #   主页 20 / 笔记 22 / 说说 25 / 图库 23 / 数据板 20 / 站点设置 20 / 返回首页 22
-    # 即 20~25、主体落在 20~22。判据取这个带 —— 本脚本**不链 iconfont 的 CDN**
-    # （离线也要能跑），所以只能把实测值钉在这里当下界/上界，而不是当场量。
     print("\n【八】两枚 SVG 的墨迹尺寸与相邻字体图标对齐")
     ink_page = fresh_page(dark=False)
     ink = ink_page.evaluate("""() => {

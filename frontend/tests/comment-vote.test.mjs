@@ -1,25 +1,3 @@
-// ═ 评论点赞/踩的**跨语言契约**（20261003 用户第 4 条）══
-//   node tests/comment-vote.test.mjs
-//
-// 交互本身由 `tests/comment-layout.test.py` 的 ⑪ 组在真浏览器里量（高亮跟 myVote、
-// 计数为 0 不显示、乐观更新、失败回滚、发出去的 value）。**本套件量的是它量不到的那一半**：
-// 那些"两边必须写成同一个值、写错了不会报错只会静默走错路"的地方。
-//
-// 四族静默失败，每一族都只有把两侧字面钉在一起才拦得住：
-//   · **端点/路由域**：`POST /api/public/comments/:id/vote` 落到 `protected_routes`，
-//     症状是"访客点不动、普通用户 403"，而根因在路由表里——评论区看上去一切正常；
-//   · **身份**：少带一个 `X-Visitor-Key`，游客就退化成"没有身份"⇒ 每次都被回「未登录」；
-//     而投票与发评论**在同一个文件里**有相反的要求（评论强制登录、票对访客开放），
-//     谁抄谁一句话就反了，且反了以后本地登录态测试全绿；
-//   · **键名/值域**：`myVote` 与 `up`/`down` 两头对不上 ⇒ 前端静默读到 undefined
-//     （高亮永不亮、数字恒 0）；`0` 被当成"缺省"而不是"撤回" ⇒ 想撤回反而投了一票；
-//   · **排序（20261020 新增，且是本套件里最容易"判据被架空"的一族）**：热度排序搬进了
-//     **内存**，于是"扫 SQL 的 `order_by_*` 参数"那条老判据**照常绿而语义已经没了**——
-//     把整个排序块删掉，SQL 一个字都不用改。所以这里改判"函数里到底有没有真的排序"
-//     （见 ⑤），并把跨语言的 `hot`/`new` 字面钉住。
-//
-// 另一半是**迁移**：本套件只钉"文件在不在、表名键名 flag 与 entity 张不张嘴一致"。
-// 跑没跑是另一回事——按本仓约定，迁移要用户点名（库名 + 文件）才执行，跑之前不 push。
 import { readFileSync, existsSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -71,9 +49,6 @@ console.log('\n路由 —— 一条公开写路由，挂在 public 域内：');
     const pub = rustMod.indexOf('let public_routes = Router::new()');
     const prot = rustMod.indexOf('let protected_routes = Router::new()');
     ok(/pub mod comment_votes;/.test(rustMod), '模块已登记（漏了这句 handler 根本挂不上）');
-    // ⚠️ 读的是 **axum 路由模式字面量**（20261013 axum 0.8 起是 `{id}`；旧写法 `:id`
-    // 在 0.8 里是注册期 panic）。**实际 HTTP URL 一个字没变**——所以下一行的前端断言
-    // 仍然是 `${id}`，两边不用改成同一种写法。
     const at = rustMod.indexOf('"/api/public/comments/{id}/vote"');
     ok(at > pub && at < prot,
         '投票路由留在 public 域内（挂到 protected 上 = auth_guard 对全体普通用户 403，'
@@ -115,8 +90,6 @@ console.log('\n值域 —— ±1 是票，0 是撤回（不是缺省）：');
         '后端校验三种取值，0 被显式认成合法（当缺省处理 ⇒ 想撤回反而投了一票）');
     ok(/0 => withdraw_vote\(/.test(rustVotes) && /=> set_vote\(/.test(rustVotes),
         '0 走撤回（DELETE 行）、±1 走 upsert —— 库里没有"0 分票"这一档');
-    // 20261018 切库到 PG：`tinyint(1)` 变成 `smallint`，`sqlx-postgres` 按 OID 精确匹配
-    // ⇒ 实体这一格必须跟着从 i8 变 i16（i8 在 PG 侧映射的是 `"char"` oid 18，读不出来）。
     ok(/pub value: i16/.test(rustEntityVote), 'entity 的 value 是 i16（PG smallint，够放 ±1）');
     ok(/const next: -1 \| 0 \| 1 = c\.myVote === dir \? 0 : dir/.test(bodyOf(tsComment, 'const vote = async')),
         '前端"再点一次已点亮的那一侧 = 撤回"发的是 0（不是再投一遍）');
@@ -148,11 +121,6 @@ console.log('\n键名 —— 列表行与投票回执是**同一种东西**（�
 console.log('\n排序 —— 默认热度（20261020 改口径），且判据不许被架空：');
 {
     const listBody = bodyOf(rustComments, 'pub async fn list_comments');
-    // ⚠️ **这一组 20261020 整组重写，原因是"判据被架空"**。旧版只扫 SQL 的
-    // `order_by_*(...)` 参数是不是 CreatedAt/Id——而热度排序是在**内存**里做的
-    // （`hot_key` + `sort_by`）。把整个排序块删掉，那些 ORDER BY 一个字都不变
-    // ⇒ 旧判据**照常全绿**。判据被架空比判据红了更坏：红了有人去查，绿了没人看。
-    // 现在判的是"这个函数里到底有没有真的排序"。
     ok(/hot_score\(/.test(listBody),
         'list_comments 真的**调用**了 hot_score（只在别处定义不调用 ⇒ 默认档静默退回时间序）');
     ok(/\.sort_by\(/.test(listBody) && /hot_key\(/.test(listBody),

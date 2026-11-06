@@ -68,8 +68,6 @@ fn 周期是一整周从周一到周日() {
         );
         assert_eq!(p.end.weekday(), chrono::Weekday::Sun, "第 {back} 期");
         assert_eq!((p.end - p.start).num_days(), 6);
-        // key 与 label 都取自**周一那天**的 ISO 周 —— 跨年那一周边界上，
-        // "周的年份"与"日期的年份"会不一样，这一条就是防有人改成 `start.year()`
         let iso = p.start.iso_week();
         assert_eq!(p.key, format!("{}-W{:02}", iso.year(), iso.week()));
     }

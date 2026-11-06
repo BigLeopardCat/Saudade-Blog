@@ -110,14 +110,6 @@ console.log('\n② 没有第二条路能写那张表 / 那一列');
     ok(colWrites.length === 1 && colWrites[0] === NT,
         `  写那一列的地方只有 ${NT} 一处（现在：${colWrites.join(', ') || '无'}）`, colWrites);
 
-    // ⚠️ **`note` 模型上的 `tags` 字段读**（`.tags.clone()` / `.tags.as_deref()` 这一族）
-    // 也要一起管住：`Column::Tags` 那条断言只看 sea-orm 的**列枚举**，而
-    // `let x = n.tags.clone();`（`n` 是 `note::Model`）走的是**模型字段**，它读的是同一列
-    // 却一个字都不含 `Column::Tags` —— 这个洞 20261018 真的存在过两处
-    // （`resolve_autosave_target` 克隆修改稿、`autosave_note` 沿用现有标签），
-    // 两条都在 soak 期把"那一列可能已经陈旧"请进了读路径。
-    // 认法 = `.tags` 后面跟着一个**取值**动作；不认裸 `.tags`，因为 DTO 侧
-    // （`payload.tags` / `req.tags`）也长这样，那半边是合法的（它的来源是请求体，不是库）。
     const READ = /\.tags\s*\.\s*(?:clone|as_deref|as_ref|is_some|is_none|unwrap|map|take|to_owned)\b/;
     // DTO 侧（`payload.tags` / `req.tags`）长着一模一样的形状，但它的来源是**请求体**，
     // 不是库 —— 这一条排除是"认得出模型字段读"这件事的一半（另一半是 `READ` 那个形状）。
@@ -195,7 +187,6 @@ console.log('\n④ 移动标签：**先改指向、再删旧标签行**（顺序
         ok((dm.match(/move_tag_refs\(/g) || []).length === 2,
             `  降级与升级两个分支各调一次（现在 ${(dm.match(/move_tag_refs\(/g) || []).length} 次）`);
     }
-    // 旧的那一族字符串助手不许回来（它们的活已经由关联表接管）。
     const dead = ['remap_tag_ids', 'note_refs_tag', 'swap_tag_refs', 'prune_note_tags']
         .filter((n) => new RegExp(`fn\\s+${n}\\b`).test(moveSrc));
     ok(dead.length === 0, '  四个字符串助手（重映射 / 引用判定 / 改写引用 / 清理悬空）没有回来', dead);

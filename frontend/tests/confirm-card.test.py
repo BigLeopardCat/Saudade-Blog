@@ -1,48 +1,5 @@
 # -*- coding: utf-8 -*-
-"""写操作确认卡片（#chat-ask）的**真模块 + 真帧**回归台。
-
-为什么必须单起一层（而不是再加一条静态断言）：
-  20260923 的事故是"**三跳全绿、UI 上什么都没有**"——agent 侧确认帧签发正常
-  （trace 里 consent_popup 在案）、Rust 真转发了（nginx 记的 body_bytes 与按帧重算
-  的字节数只差 1）、真前端模块也能把真帧渲染成卡片，**唯一的问题出在时序**：
-  卡片挂上去之后几十毫秒，另一次 `reconcileDOM()`（别的窗口写了会话缓存 ⇒ 本轮
-  收尾补拉历史）把它当成"无 data-mid 的孤儿"删掉了。这类洞静态读代码看不出来
-  （两段代码各自都对），HTTP 探针也看不见（探针不发浏览器点击、不看 DOM），
-  只有"真模块 + 真帧 + 真时序"这一层能抓住。
-
-本脚本因此不做断言层，做**行为层**：把真帧喂进真 widget（public/live2d-widgets/
-下的五个文件，不打包不转译，浏览器直接跑），然后在浏览器里问 DOM 与 ctx.state。
-
-断言（每条都对应一个具体的失败形态）：
-  ① 渲染：确认帧 ⇒ 卡片在 .chat-messages 内、末位、可见、按钮/文案与帧一致；
-  ② **收尾补拉之后卡片仍在场**——20260923 那个洞的回归锁（触发路径用真路径：
-     流式中收到 storage 事件 ⇒ pendingPull ⇒ 收尾补拉 → reconcileDOM）；
-  ③ 卡片被摘掉后，下一次 reconcile 自动接回（自愈钩子 onAskResync）；
-  ④ 缺 q/token 的确认帧：**上报**（此前静默丢弃）且不弹卡；
-  ⑤ 终止帧之后又收到帧：**上报**（三端语义不同：Rust 收 __END__ 即 break，
-     前端 continue 继续读——真出现尾部帧时其中一端必然看不见，此前完全无声）；
-  ⑥ **点下「确定」之后**（20260924 补）：请求真的发出去（看请求体、不看卡片上的字）、
-     点下去写的是「确认中…」而非乐观的「已确认」、成功→已确认 / 失败→不确定（不放行
-     重试）/ 忙时挡下→回滚成可重试；
-  ⑦ 帧带 exp 时令牌到期自动结算成「已过期」，卡片不会永远停在乐观态；
-  ⑧ **正常分支的逐跳埋点**（20260924）：frame→card→click→sent→settle 五跳同 id，
-     取消/忙挡/竞态回滚/到期/改口打字（hideAsk）各自该缺哪一跳就缺哪一跳，
-     且**任何上报都不含令牌**；
-  ⑨ **卡片跨刷新**（20260924）：刷新后从存档接回（stage=card + restored=1）、
-     已经结算过的卡片刷新后**不许**再回来（存档随结算作废）、过期的存档刷新后
-     既不接回也不留在 localStorage 里；接回来的那张点下去撞上服务端的"令牌已用过"
-     时，卡片如实写着「已经用过一次了」而不是「网络错误」也不是「已确认」。
-
-★ 两类上报必须分开看（本文件的断言一律按类型过滤，不许写 `reports == []`）：
-  `confirm_card` = **失败**（帧坏掉/点了没反应/轮次失败收尾），跨源对账按它数异常
-  （eval/trace_reconcile.py 的 MON_FAILURE_TYPES）；`confirm_flow` = **正常链路的逐跳
-  记录**。混用会把"用户点了一次确定"数成"一次异常"，判据当天就失准。所以"这条正常
-  路径没有静默失败"的断言现在写成 `by_fail(reports) == []`，而"这条路径该有哪几跳"
-  写成 `flow_stages(...)`。
-
-用法：python3 frontend/tests/confirm-card.test.py
-依赖：playwright(python)。不需要 node_modules（widget 是 ES5 风格的 IIFE）。
-"""
+"""写操作确认卡片（#chat-ask）的**真模块 + 真帧**回归台。"""
 import functools
 import http.server
 import json
@@ -73,12 +30,7 @@ def text_frame(s):
 
 def confirm_frame(q="要把《Python asyncio 异步并发》加进收藏吗？",
                   token="FAKE_TOKEN_FOR_TEST_ONLY", with_token=True, exp=0):
-    """exp = 令牌失效时刻（UTC 秒）。0 = 帧里不带 exp（旧服务端形态，前端按无倒计时处理）。
-
-    opts 照抄 agent 侧 `adminops.confirm_opts(1)` 的**当前形态**（20261006 起是三枚：
-    确定 / 其他（我来说）/ 取消）。夹具与生产同形是本沙箱的老规矩——两枚的夹具会让
-    上游加了按钮之后这里仍然全绿（那样测的是线上不存在的形态）。
-    """
+    """exp = 令牌失效时刻（UTC 秒）。0 = 帧里不带 exp（旧服务端形态，前端按无倒计时处理）。"""
     ask = {"q": q, "id": "c1", "summary": "收藏文章 23",
            "opts": [{"label": "确定", "value": "yes", "kind": "primary"},
                     {"label": "其他（我来说）", "value": "other", "kind": "default"},
@@ -363,9 +315,6 @@ def reset_evidence(pg):
 
 ASK_ID = "c1"        # confirm_frame 里签发的待办标识（逐跳埋点靠它串成同一件事）
 
-# 卡片**可点**时的按钮清单 = agent 侧 adminops.confirm_opts(1) 的当前字面（20261006
-# 起是三枚）。夹具与断言共用这一份：形态再变时只改这里，不会出现"夹具加了一枚、
-# 断言还按两枚写"这种一处改一处忘的假红（也别各写各的字面）。
 BTNS_LIVE = ["确定", "其他（我来说）", "取消"]
 
 
@@ -512,12 +461,6 @@ def main():
             check("本轮回复文本渲染进了气泡", "好的，我来帮你收藏这篇。" in st["agentText"],
                   repr(st["agentText"]))
 
-            # ── ② 收尾补拉（reconcile）之后卡片仍在场 ← 20260923 那个洞 ──
-            # 真触发路径：流式中收到 storage 事件（另一窗口写了会话缓存）⇒ 置
-            # pendingPull ⇒ 收尾 finally 补拉 → reconcileDOM。补拉响应延迟 150ms，
-            # 帧间隔 150ms 让轮次长到"派发时还在流里"。两条时刻证人（cardShownAt /
-            # historyResolvedAt）用来证明 reconcile 真的落在弹卡之后——否则这条腿
-            # 可能因为时序不对而变成永真（事故当时卡片与 reconcile 相差约 70ms）。
             print("\n② 收尾补拉之后卡片仍在场（本次事故的回归锁）")
             pg2, errs2 = open_page(b, url)
             pg2.evaluate("() => { window.__stub.historyDelay = 150; window.__stub.historyCalls = 0; }")
@@ -567,10 +510,6 @@ def main():
             check("回来时仍在末位", st["isLast"], str(st["isLast"]))
             check("自愈过程无**失败**上报（这是修复后的正常路径）", by_fail(st["reports"]) == [],
                   flow_message(st["reports"]))
-            # 接回这件事本身要留痕（①那轮的 frame→card，加上这一跳接回的 card）：
-            # 20260923 的形态是"卡片悄悄不见了"，只记首次挂载则事后只能看到"挂过"。
-            # 第二次 card 的**序号必须与第一次不同**——真上报链按 `type|message|url`
-            # 去重，序号相同就会被整条吃掉（沙箱绿、线上没有的那种假绿）。
             _seq3 = flow_stages(st["reports"], ASK_ID)
             check("自愈接回也进埋点（第二次 card，同一 id、序号递增没被去重吃掉）",
                   [s for s, _ in _seq3] == ["frame", "card", "card"]
@@ -603,10 +542,6 @@ def main():
             check("尾部帧照常渲染（行为不变，只是响亮）", "尾巴" in st5["agentText"], repr(st5["agentText"]))
             check("⑤腿页面无未捕获异常", errs5 == [], " | ".join(errs5[:4]))
 
-            # ── ⑥ 点「确定」这条链路：请求真的发出去、卡片按轮次结果结算 ──
-            # 20260924 事故本体：卡片写着「已确认」，而那条隐藏请求被忙守卫丢了
-            # （跨窗远端轮期间必现），系统里零执行。旧断言全在"渲染"那一侧，点击
-            # 之后发生了什么**一个字都没测**——这一腿补的就是这段空白。
             print("\n⑥ 点「确定」：请求真的发出去、卡片按轮次结果结算")
             pg6, errs6 = open_page(b, url)
             run_round(pg6, ROUND)
@@ -614,7 +549,6 @@ def main():
             check("前置：卡片可点（askState=live，按钮与帧里的 opts 逐字一致）",
                   st["askState"] == "live" and st["btns"] == BTNS_LIVE, str(st))
 
-            # ⑥a 忙守卫：跨窗远端轮期间点确定（此前**必现**丢包）
             reset_evidence(pg6)            # 弹卡那一轮自己也发过请求，先清零
             pg6.evaluate("() => { window.__ctx.state.remoteRounds = { other: 1 }; }")
             st = pg6.evaluate(CLICK, "yes")
@@ -668,10 +602,6 @@ def main():
                   any("以失败收尾" in r.get("message", "") for r in st["reports"]),
                   json.dumps(st["reports"], ensure_ascii=False))
 
-            # ⑥d 竞态窗口：点击时守卫放行、请求起飞前才变忙 ⇒ 回滚成可重试
-            # 这一支从外面点不出来（忙态要在两步之间翻面），用"给 ensureConversation
-            # 塞一个慢 Promise"把这个窗口撑开——它是 sendMessage 里 onDropped 那三个
-            # 出口唯一的触发方式，而这三个出口此前正是**静默 return**。
             run_round(pg6, ROUND)
             reset_evidence(pg6)
             pg6.evaluate("""() => {
@@ -753,12 +683,6 @@ def main():
             pg7.evaluate("() => { window.setTimeout = window.__origST; }")
             check("⑦腿页面无未捕获异常", errs7 == [], " | ".join(errs7[:4]))
 
-            # ── ⑧ 正常分支的逐跳埋点（20260924）：这条链的失败形态全在屏幕上 ——
-            # 帧到了卡片没挂上、点了没发出去、发出去了没有任何结论。只报失败分支
-            # 等于**只在事后取证**（用户不截图就无据可查）；有了逐跳记录，跨源对账
-            # 能直接看出"点了几次 / 发出去几次 / 结算几次"该相等而不等的那一次。
-            # 这一节锁的就是"该有哪几跳、该缺哪几跳"——埋点漂了（少报一跳、id 丢了、
-            # 把正常链路混进 confirm_card）在这里全会红。
             print("\n⑧ 正常分支埋点：五跳同 id，不该有的跳不出现（且全程不带令牌）")
             pg8, errs8 = open_page(b, url)
 
@@ -883,9 +807,6 @@ def main():
                   flow_message(st["reports"]))
             check("⑧f 期间无失败上报", by_fail(st["reports"]) == [], flow_message(st["reports"]))
 
-            # ⑧g 未点击的收场：用户改口打字（没说"确定"，说了别的）⇒ 卡片作废
-            # 这是五个 chain 终点里唯一既不来自点击、也不来自到期的一条，此前**零覆盖**
-            # （本轮补埋点时才撞见它：上一腿留下的卡片被下一轮的输入事件取消了）
             set_frames(pg8, [text_frame("好，那我换个说法。"), "__END__"])
             pg8.evaluate(SEND, MSG)
             pg8.wait_for_function("() => !window.__ctx.state.isSending", timeout=10000)
@@ -906,11 +827,6 @@ def main():
                   str(pg8.evaluate("() => window.__reportsDropped")))
             check("⑧腿页面无未捕获异常", errs8 == [], " | ".join(errs8[:4]))
 
-            # ── ⑨ 卡片跨刷新：接回来 / 结算过的不回来 / 过期的清掉 ──────────
-            # 这张卡此前只活在**当轮的那条 SSE 流**里：刷新、断流、切会话回来，
-            # 卡片就永远消失了——而令牌其实还在有效期内（600 秒），主人手里那张
-            # "同意问句"被浏览器吃掉了。存档放在主人自己的 localStorage（与登录
-            # JWT 同一处，访客连键都建不出来），服务端依旧零状态。
             print("\n⑨ 卡片跨刷新")
             pg9, errs9 = open_page(b, url)
             run_round(pg9, ROUND)
@@ -1017,16 +933,6 @@ def main():
             check("⑨d 缺件存档同样被清掉", store["raw"] is None,
                   json.dumps(store, ensure_ascii=False)[:300])
 
-            # ── ⑩ 卡片的位置：夹在问句气泡与**结果气泡**之间 ──────────────
-            # 用户报的形态（20260925）：点完确定，结果回复渲染在卡片**上面**，而卡片
-            # 自己写着"已确认，结果见下方回复"——屏幕上的事实与卡片上的话正好相反。
-            # 真路径：结果气泡是 appendChild 上来的（此时卡片在末位 ⇒ 结果天然在它
-            # 下面），随后任何一次 reconcile（收尾补拉/别的窗口写缓存/切会话回来）的
-            # "位置对齐"按 items 顺序挪气泡，而卡片不参与 items 循环——插入点算在卡片
-            # 身上，结果气泡就被插到了卡片**之前**。
-            # 这一腿先按真实路径点一次确定，再走一次真 reconcile，两步都判先后。
-            # 判据用 idx 而不是 isLast：结果气泡到达后卡片必然不是末位，isLast 表达
-            # 不了"在上面还是下面"。
             print("\n⑩ 卡片位置：在问句气泡之后、结果气泡之前")
             pg10, errs10 = open_page(b, url)
             run_round(pg10, ROUND)
@@ -1067,9 +973,6 @@ def main():
             # 且屏幕上**看不到**井号星号（只判前者会被"渲染了但没生效"骗过）。
             print("\n⑪ 问句渲染 markdown（不再显示 ** 原样）")
             pg11, errs11 = open_page(b, url)
-            # 问句逐字取自生产（adminops.render_confirm_question 的 read_notifications
-            # ·全部那一支，20261019 卡面改版后：整条动作加粗 + 句尾动词「处理」）
-            # ——夹具与线上文案同字，改文案时这里跟着红，不会悄悄漂走。
             md_round = [text_frame("好的，我来帮你标记。"), "__PROCESS__:正在准备操作…",
                         confirm_frame(q="要**把全部未读通知标记为已读（不可撤销：标的就"
                                         "不再是未读，头顶的红点会消失）**吗？点「确定」"
@@ -1087,16 +990,6 @@ def main():
                   and st["q"].endswith("点「确定」我就去处理。"), repr(st["q"]))
             check("⑪腿页面无未捕获异常", errs11 == [], " | ".join(errs11[:4]))
 
-            # ── ⑫ 待决定的卡片永远在末位（迟到的气泡不许压在它上面）────────────
-            # 用户报的形态（20261001，"卡片怎么飞上面去了"）：屏幕上的顺序成了
-            # "用户消息 → 卡片 → 回复"。生产实证（monitor.log 同日）：
-            #   02:40:45.922 stage=card id=d451cad4（挂在 / 的对话流末位）
-            #   02:40:46.937 stage=card id=d451cad4 restored=1（整页重开在 /dashboard/users）
-            # 卡片由存档接回（restoreAsk）那一刻，消息流里只有**已渲染的那部分**历史
-            # （本地缓存桶与 DB 那一趟拉取的先后差）；接回之后 DB 那趟补齐的气泡经
-            # appendMsg 挂在末尾 = 卡片下面，而 reconcileDOM 的"位置对齐"按 items 顺序
-            # 挪气泡、chat-keep 的卡片在它眼里是空气（contentRef 跳过它）⇒ 这个错序
-            # 永远不会自愈。旧行为下本腿必红。
             print("\n⑫ 待决定的卡片永远在末位（接回之后历史才补齐）")
             pg12, errs12 = open_page(b, url)
             run_round(pg12, ROUND)
@@ -1147,13 +1040,6 @@ def main():
             check("⑫腿页面无未捕获异常", errs12 == [], " | ".join(errs12[:4]))
             pg12.close()
 
-            # ── ⑬ 卡片内改口：「其他（我来说）」就地打字，按**普通新轮**发出去 ──
-            # 用户原话（20261006）："弹窗是否用改给个 other 选项输入框，而不是点了
-            # 否再重新输入会话。" 这一腿要证三件事，缺一件都不算成立：
-            #   ① 点它**什么都不结算**——卡片仍 live、零请求、零 click 埋点；
-            #   ② 提交之后卡片结算成 amend（与 cancel 分开记），输入行收起、内容清空；
-            #   ③ 那段话是作为**普通新轮**发出去的：请求体里有它、**没有**确认令牌。
-            # ③ 是核心——"一次点头只兑现一次"那条不变量全靠"改口不走确认通道"。
             print("\n⑬ 卡片内改口：点「其他（我来说）」→ 就地输入 → 回车")
             pg13, errs13 = open_page(b, url)
             run_round(pg13, ROUND)

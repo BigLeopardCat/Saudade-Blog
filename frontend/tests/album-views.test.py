@@ -1,52 +1,5 @@
 # -*- coding: utf-8 -*-
-"""后台「图库」页的两种展示方式（20261001，用户第 2 条）无头验收。
-
-用户原话：「后台图库提供两种展示方式，一种当前的直接展开，另一种以列表的方式展开，
-头部是略缩图后面跟着图片名。」
-
-判据只有"真跑一遍"才看得见，所以本文件锁四组事：
-
-  · **两种方式真的互斥**（第一节）—— 切到列表时网格那批图必须**整个不在 DOM 里**。
-    只断言"列表出来了"会被"两套叠着渲染"蒙过（真叠着时页面看着也对，只是白渲染一遍）。
-  · **行 = 缩略图 + 图片名**（第二节）—— 缩略图 56×56、名字是**盘上名的展示名**
-    （剥掉上传时压的 14 位时间戳前缀，规则与 Rust `strip_timestamp_prefix` 同形，
-    由 `asset-name.test.mjs` 在纯函数层钉死；这里钉的是"列表真的用了它"）。这一节的
-    两个几何断言是**反的**：缩略图**不许被挤小**（`flex: 0 0 auto`），名字那一格才是
-    被截断的那个（超长名必须 `scrollWidth > clientWidth`）——只断言其中一个，
-    "两个都让一让"的实现也能过。
-  · **勾选与计数**（第三、四节）—— 行点击与勾选框点击都要能翻，且各只翻**一次**。
-    第四节是**真负控**：另打一份把 `e.stopPropagation()` 抹掉的包，在同一个沙箱里跑
-    同一次点击 —— 它必须复现"点了没反应"（勾选框的 change 与冒泡到行的 click 各翻一次，
-    净效果归零）。没有这条负控，"点了勾上了"这个断言证明不了 `stopPropagation` 在起作用。
-  · **展示方式记在本地**（第五节）—— 刷新后还是列表（`localStorage.albumViewMode`）。
-  · **列表方式不打乱页面上原有的那条写路径**（第六节）—— 选中后走原样的删除弹窗，
-    `DELETE /api/protect/delImg` 的 body 是被选中那张图的 URL。
-  · **工具栏那条分隔线**（第七节）—— 线必须是工具栏**自己的下边框**（在流内、随几何走），
-    不许是"按魔法数 `top: 90px` 落位"的绝对定位线；上传钮/删除钮里的图标槽必须 40px 且
-    整个落在按钮框里（真凶是全局 `.icon{min-width:60px}`，所以这一节把 `pages/Dashboard/index.css`
-    与真站的图标字体一并注入——少了任一个，这条几何断言都会**假绿**）。第七节自带负控：
-    另打一份"把那条绝对定位线拼回去"的页面，上面那几条必须红。
-  · **R2 那颗按钮是够到配置的唯一一条路**（第八节，20261006）——配置表单搬到站点设置
-    （`#/dashboard/usercontrol` 的「图库存储」页签）之后，图库页只剩这颗按钮：它要没跳、
-    或跳错页签，用户就永远改不了配置，而页面上不会有任何报错。所以这一节真点一次、
-    读 Router 的 location（探针见 `ENTRY`）。⚠️ 挂载因此必须包在 `MemoryRouter` 里
-    （`useNavigate()` 在 Router 外会当场抛 ⇒ 整页白屏、所有断言超时）。
-  · **上传的两条通道各是一颗钮**（七之二节，20261006 用户第 1 条）——用户原话
-    「不要让 R2 开启存储图片时服务器上传途径失效」。判据钉的是**那颗服务器钮不许被
-    R2 的状态牵连**：本沙箱里 R2 是没配全的（假后端给 `configured: false`），正是从前
-    会把唯一那颗钮灰掉的两种情形之一 —— 它必须照样可点，被灰的只该是 R2 那颗，
-    且旁边要写清为什么。两颗钮的底色也必须不同（读**计算色**，不读源码）。
-
-见 CLAUDE.md §2：本机不能 vite build。esbuild 把**真组件**打成 bundle，只桩一个边界
-（`src/apis/axios.tsx`）；页面 sass 用 programmatic API 单独编译后注入（顺带过一遍编译，
-本机唯一拦得下构建级缺陷的环节）。两个必踩的坑：① `src/apis/ImageMethods.tsx` 调的是
-`http({...})`（默认导出**当函数用**），所以桩必须是"可调用对象"，只给 `.get/.post`
-会 TypeError 并被组件里那个 `.catch` 静静吃掉（症状 = 列表永远是空的）；
-② 假响应一律深拷贝。本机无中文字体（汉字渲染成豆腐块），断言全走数值、条数与请求体。
-
-用法：python3 frontend/tests/album-views.test.py
-依赖：frontend/node_modules（esbuild/react/react-dom/antd/sass）、playwright(python)。
-"""
+"""后台「图库」页的两种展示方式无头验收。"""
 import functools
 import http.server
 import pathlib
@@ -95,10 +48,6 @@ LONG_URL = "/api/protect/download/20261001000000_" + LONG_TAIL + ".png"
 #    不注入它的话几何断言**必然假绿**（那正是这次要补的缺口）。
 DASH_CSS = (FE / "src/pages/Dashboard/index.css").read_text(encoding="utf-8")
 
-# ② 修复前的分隔线（字面量内嵌，负控专用，见 build_sandbox 尾注）：
-#    `.action_img` 自己没有线，线是一条 `position:absolute; top:90px` 的伪元素
-#    —— 它按 `.allin`（唯一带 `transform` 的祖先）定位，所以线落在"面板顶往下 90px"，
-#    与工具栏的真实高度无关。
 OLD_DIVIDER_CSS = """
 .action_img{position:static;padding-bottom:0;border-bottom:none}
 .action_img::before{content:'';position:absolute;width:98%;height:3px;
@@ -203,10 +152,6 @@ def esbuild(sb: pathlib.Path, entry: str, outfile: str):
 def write_html(sb: pathlib.Path, bundle: str, css: str, extra: str = ""):
     (sb / "index.html").write_text(
         '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
-        # 图标字体：**真站就是自托管的这三行**（index.html 的 `<link>` + `.iconfont` 内联块，
-        # 20261001 起不再引 CDN）。沙箱里少了它，工具栏那个 `<i class="iconfont icon-xiangce">`
-        # 就**没有字形**（空盒子、高 0）⇒ 工具栏比真站矮一截，而"分隔线压不压按钮"这件事
-        # 只由工具栏高度决定（线钉在面板顶往下 90px）—— 少了字体就是那条几何断言假绿。
         '<link rel="stylesheet" href="/fonts/font_4335817_6gqxzh34cy.css">'
         '<style>.iconfont{font-family:"iconfont" !important;font-size:24px;font-style:normal;'
         '-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}</style>'
@@ -215,7 +160,6 @@ def write_html(sb: pathlib.Path, bundle: str, css: str, extra: str = ""):
         # 后台页面同样吃它；不照搬的话几何断言会在沙箱里失真。
         '*{box-sizing:border-box;margin:0;padding:0}</style>'
         '<style>' + css + '</style>'
-        # `extra` 逐字节排在最后：给负控档留着"把某条规则覆盖回修复前"的位置
         + ('<style>' + extra + '</style>' if extra else '')
         + '</head><body><div id="root"></div>'
         '<script src="' + bundle + '"></script></body></html>', encoding="utf-8")
@@ -263,12 +207,6 @@ def build_sandbox() -> pathlib.Path:
     esbuild(bad, "entry.tsx", "bundle.js")
     write_html(bad, "bundle.js", base_css)
 
-    # ── 负控（第七节）：另打一份**把工具栏分隔线还原成修复前形态**的包 ──────────────
-    # 目的：第七节那几条几何断言必须**能红**。这里不是"再打一份会挂的包"，而是把
-    # **修复前那条规则**原样拼回去（`OLD_DIVIDER_CSS` 是内嵌字面量，**不读 `git show HEAD`**
-    # ——测试的红基线不许钉在某次提交上）。
-    # 覆盖分两半，缺一不可：① `.action_img` 自己那条 `border-bottom` 要去掉（修复前工具栏
-    # 自己没有线），② 把那条绝对定位的 `::before` 加回来。
     old = sb / "olddiv"
     shutil.copytree(sb / "src", old / "src")
     (old / "node_modules").symlink_to(FE / "node_modules")
@@ -638,13 +576,7 @@ with sync_playwright() as p:
     check("第六节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
-    # ── 七、工具栏分隔线与按钮里的图标（20261006，用户第 2 条）─────────────────
     print("\n【七】工具栏：线是工具栏自己的下边框；上传钮的图标槽没被全局 `.icon` 撑出按钮")
-    # 这一节的**真凶住在全局 CSS 里**（`pages/Dashboard/index.css` 的 `.icon{min-width:60px}`，
-    # 那是给侧栏导航写的），而这个沙箱此前从不注入它 ⇒ 断言会假绿。两个补丁一起做的：
-    #   · `build_sandbox` 把那份全局 CSS 拼进页面（连同真站的图标字体，见 `write_html` 注释）；
-    #   · 下面第一条守卫读源码，确认那条规则**还在**（它被删/改名时，这一节就失去了
-    #     它存在的理由，得自己红 —— 而不是在缺少真凶的页面上继续"通过"）。
     dash = (FE / "src/pages/Dashboard/index.css").read_text(encoding="utf-8")
     check("前置守卫：`pages/Dashboard/index.css` 里那条 `.icon{min-width:60px}` 还在"
           "（沙箱要靠它复现真凶；哪天它没了，本节断言等于没在测东西）",
@@ -685,10 +617,6 @@ with sync_playwright() as p:
           and d["icon"]["rt"] <= d["btn"]["rt"],
           str(d))
 
-    # ④ 悬停那一下（图标槽展开铺满按钮）不许被上面的 min-width 改动弄坏。
-    #    ⚠️ 20261006 起工具栏有**两颗** `.select`（传到本站 / 传到 R2），`querySelector`
-    #    取的是第一颗（= 传到本站，与上面 `g["btn"]` 量的同一颗），但 playwright 的
-    #    locator 在 strict 模式下会为"两个都命中"直接抛错 ⇒ 这里必须点名一颗。
     pg.locator(".action_img .select").first.hover()
     pg.wait_for_timeout(400)
     h = geo(pg)["bar"]["icon"]
@@ -697,12 +625,6 @@ with sync_playwright() as p:
     check("第七节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
-    # ── 七之二、上传的两条通道各是一颗钮（20261006，用户第 1 条）───────────────
-    # 用户原话：「将上传服务器和上传R2做两个按钮分别上传，不要让R2开启存储图片时
-    # 服务器上传途径失效」。所以这一节的判据是**那颗服务器钮不许被 R2 的状态牵连**：
-    # 这个沙箱里 R2 是**没配全**的（假后端给 `configured: false`）—— 正是从前会把
-    # 唯一那颗钮灰掉的两种情形之一。它必须照样可点；被灰的只该是 R2 那颗，且旁边
-    # 要写清为什么（只藏在 title 里、触屏看不见，等于没说）。
     print("\n【七之二】两颗上传钮：R2 没配好时，服务器那颗照样能点")
     pg = mount(br)
     ups = pg.locator(".action_img button.select")
@@ -726,7 +648,6 @@ with sync_playwright() as p:
     check("第七之二节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
-    # 负控：把分隔线还原成修复前那条绝对定位的线（字面量内嵌，不读 git 历史）—— 必须复现
     print("\n【七-负控】同一份页面、只把分隔线还原成修复前那条绝对定位线 ⇒ 上面那几条必须红")
     pg = mount(br, url=OLDDIV_URL)
     ob = geo(pg)["bar"]
@@ -739,19 +660,12 @@ with sync_playwright() as p:
           "（旧线钉在面板顶 +90px，工具栏一长高就切进按钮）",
           not (0 <= ob["bar"]["b"] - ob["lineY"] <= 3),
           f'bar.bottom={ob["bar"]["b"]} lineY={ob["lineY"]}')
-    # 旧的线是**绝对定位**的，它的包含块是 `.allin`（唯一带 transform 的祖先）：
-    # 线到按钮底边的距离 = 60 - (工具栏高 + 50)/2 ⇒ 工具栏高过 70px 就翻负、横穿按钮。
-    # 把这条关系写进负控，是为了说明"为什么这不是换个数字（90→110）的事"。
     gap = ob["lineY"] - ob["btn"]["b"]
     check(f"  且这条距离由工具栏高度决定（实测间距 {gap}px = 60 - (高 {ob['bar']['h']} + 50)/2，"
           "工具栏一长高就翻负）",
           abs(gap - (60 - (ob["bar"]["h"] + 50) / 2)) <= 1, str(gap))
     pg.close()
 
-    # ── 八、R2 那颗按钮是「去站点设置改配置」的真入口（20261006，用户第 3 条）──────
-    # 20261006 用户拍板「配置挪到站点设置，单一入口」⇒ 图库页从此**没有** R2 表单，
-    # 只剩这颗按钮。于是它成了从图库够到配置的**唯一一条路**：它要是没跳（或跳错页签），
-    # 用户就永远改不了配置，而页面上不会有任何报错 —— 这正是必须真跑一遍才看得见的东西。
     print("\n【八】「R2 存储」按钮真的跳到站点设置的「图库存储」页签")
     pg = mount(br)
     check("前置：起始路由是图库页", (probe(pg) or {}).get("path") == "/dashboard/albums", str(probe(pg)))

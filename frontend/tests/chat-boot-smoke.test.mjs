@@ -1,24 +1,12 @@
-// ═ 看板娘集成冒烟：CI 断言套件（20260828o 结构拆分回归）══
-// node tests/chat-boot-smoke.test.mjs：最小 DOM stub + 完整 loader（boot.js）加载链 +
-// 一次真实 SSE 对话往返（发送 → 流式帧 → 转正 → 命令解析）。验证：
-// ① 6 个文件按依赖序加载不抛错、工厂依赖校验通过；
-// ② engine.init/stream.init 时序（#waifu 由 renderer.init 创建后执行）无引用错误；
-// ③ sendMessage 全流程：乐观插入 → live 气泡（msg-streaming）→ 收尾转正 →
-//    saveHistory（localStorage 含 2 条）→ 时间标签（首条出现、第二条不重复）；
-// ④ 停止按钮复位 / 输入框恢复 / broadcast 帧无异常。
 import { readFileSync, existsSync } from 'fs';
 import vm from 'vm';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import { installDom, installScriptLoader } from './stubs/dom.mjs';
-// SSE 桩要带 content-type：20261002 起前端据它判"这是不是流"（缺了会被当成非流响应）
 import { sseHeaders } from './stubs/sse.mjs';
 
 const W = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../public/live2d-widgets');
 
-// ── 最小 DOM stub（20260927 起与时间标签那支共用 tests/stubs/dom.mjs）──
-// 抽出去的理由与三处真机语义见该文件头注；此前两份各复制一份、"同构"靠人记，
-// 结果两支都没有 document.querySelector，一起死在 chat-stream.js:1896。
 installDom();
 installScriptLoader(W);   // head.appendChild → 真读 live2d-widgets/ 下的子模块执行
 
@@ -59,11 +47,6 @@ globalThis.Image = class {};
 globalThis.Live2DCubismCore = {};
 globalThis.__chatRenderMarkdown = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 globalThis.__chatEnhance = () => {};
-// 看板娘在这里**不打桩**（20261001 渲染层换自研）：上游 initWidget 与 __cubism5model 那套
-// 嵌套结构已随 GPL 实现一起从仓库移除，现在由 renderer.js 自己建 #waifu 骨架。
-// 真 renderer 在 Node 下会死在 PIXI 未定义处、被它自己的 .catch 兜住（模型画不出来，但工具条
-// 照建、waifu-active 照加）——这正是本 harness 要覆盖的形状，别再加桩把它盖回假绿。
-// fetch 桩：history 空 + 一次 SSE 流（过程帧 + 正文帧 + 结束标记）
 const FRAMES = [
   'event: progress\ndata: ' + JSON.stringify('🧭 计划') + '\n\n',
   'event: text\ndata: ' + JSON.stringify('喵呜～测试回复') + '\n\n',
@@ -75,10 +58,6 @@ globalThis.fetch = async (url, opts) => {
     return { ok: true, json: async () => ({ items: [] }) };
   }
   if (String(url).includes('/api/chat/conversations')) {
-    // 会话化（20260903）：空白新对话态发送前先建会话（`ensureConversation`）。
-    // 此前这个 URL 没有桩 ⇒ fetch 抛"unexpected fetch" ⇒ 被 ensureConversation 的
-    // catch 吞成 false ⇒ **每一轮都停在"创建新会话失败"气泡上**：harness 自称在测
-    // SSE 往返，其实一次都没发出去（20260927 修）。
     return { ok: true, json: async () => ({ id: 1 }) };
   }
   if (String(url).includes('/api/monitor/log')) {
@@ -154,8 +133,6 @@ assert(msgs[1].querySelector('.msg-text').textContent.includes('喵呜～测试�
 assert(!!msgs[1].querySelector('.agent-process-body'), '过程行已渲染（🧭 计划帧）');
 assert(sendBtn.title === '发送' && !sendBtn.classList.contains('stop-mode'), '发送按钮已复位');
 assert(input.disabled === false, '输入框已恢复');
-// 缓存键自 20260903 起按会话分桶（`chat_history_<token>_(auto|<convId>)`）：写死
-// `chat_history_<token>` 是那份键存在时的形状，现在只会读到空数组——那不是"没存"。
 const histKeys = [...store.keys()].filter((k) => k.startsWith('chat_history_'));
 assert(histKeys.length > 0, '本地缓存已写入（键按会话分桶）', [...store.keys()]);
 const hist = histKeys.map((k) => JSON.parse(store.get(k) || '[]'))

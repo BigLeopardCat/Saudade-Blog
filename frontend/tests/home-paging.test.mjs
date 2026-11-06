@@ -1,23 +1,3 @@
-// ═ 首页每页条数：窄屏一次给四行（20261006 用户第 5 条）══
-//   node tests/home-paging.test.mjs      （CI 秒级套件，靠 `npm test` 自动带上）
-//
-// 现场（用户原话）：「在移动端点 MORE 按钮文章卡片只多加载两行，让人很容易失去耐心，
-// 一次加载卡片数量太少」。
-//
-// 这个数**不是配置项、是算出来的**：`ContentHome/index.tsx` 的 `colsOf()` 量出栅格真实
-// 列数，`pageSizeFor(cols)` 再按列数折算 —— 所以"一次几张"在手机上等于"一次几行 × 2 列"，
-// 写死一个 8 会在换断点/换列数的那天静默错位。本套件因此**执行那个真表达式**（把它从
-// 源码里抠出来求值），而不是核对"源码里有没有 8 这个字面量"。
-//
-// 分工与本仓其它套件一致：
-//   · 栅格几何（列宽、同排等宽）由 `browser/article-grid.spec.ts` 量；
-//   · 这里管**折算规则**与它的**前提**——前提之一（手机档是 2 列）住在 `index.sass` 里，
-//     判据在这边就得**连前提一起看着**：哪天手机档改成 3 列，"8 张 = 四行"这句话就失效了，
-//     而代码一个字都不用改（同族教训：判据的前提住在别人手里，搬家时没人提醒）。
-//
-// 为什么要抠出来求值而不是只做正则：`cols <= NARROW_COLS ? NARROW_ROWS : DESKTOP_ROWS`
-// 这种式子写错了（比如三元两头调换、或漏掉 `Math.min` 钳位）在源码里**长得仍然很像**，
-// 只有把它跑一遍才知道 2 列的屏到底会拉几张。
 import { readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -33,8 +13,6 @@ const ok = (cond, name, detail) => {
     else { fail++; console.log('  ✗ FAIL: ' + name + (detail !== undefined ? '  → ' + JSON.stringify(detail) : '')); }
 };
 
-/** 剥注释：下面既要"读出常量值"又要判"有没有第二处折算"，
- *  注释里逐字写着用户原话与旧写法，不剥就会量到注释自己。 */
 const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
 const tsx = strip(readFileSync(HOME_TSX, 'utf8'));
 const sass = strip(readFileSync(HOME_SASS, 'utf8'));

@@ -1,38 +1,5 @@
 # -*- coding: utf-8 -*-
-"""后台首页左栏三张统计条（文章 / 分类 / 标签）的布局验收。
-
-两轮用户意见叠在同一处，判据也叠在这一个脚本里：
-
-· **20260930**「文章总数分类总数，标签总数这三个卡片布局优化」。改之前那套是
-  **三处百分比高度串成一条链**：`.analyticsCard{height:75%}` + 每张 `.akCard{height:22%}`
-  + `.akCard{width:75%}`（≤1530px 干脆钉成 `width:210px`），而同一个盒子的
-  `padding/height/display/flex` 又同时写在 TSX 的 `bodyStyle` 内联里 —— 最终高度是谁定的，
-  读代码看不出来，列一变宽就宽窄对不齐、一变矮就把内容挤出去。那一轮把它收成
-  "这一列是竖向 flex，三张卡等分、宽度 100% 跟着列走"。
-
-· **20261001**「改成书签的样式大小就是细条书签贴在边上不需要占这么大地方」。
-  上一轮把"高度是谁定的"理清楚了，但**卡本身还是三张大卡**（实测吃掉左栏 ~380px）。
-  这一轮换成**书签条**：每条 34px、左缘贴在列的左缘（不留圆角）、右端切一道燕尾
-  （`clip-path` 挖 V 口），整组 ~122px。标签与数字也从**上下两行**并成**一条线**。
-
-· **20261006**「这三个书签太细长了」。第三轮压扁了，横向却还铺满整列（320px 列 ⇒
-  一条 320px）—— 于是"书签"读起来像一道横线。这一轮**加高收窄**：56px 高、列宽的
-  **78%**，徽章/字号各抬一档（燕尾跟着从 11px 加深到 14px，否则那道口读起来像缺角）。
-  判据因此从"宽度 == 列宽"改成"宽度 == 列宽 × 0.78"——**只断言"变窄了"是不够的**：
-  78% 与 60% 都"变窄了"，而用户要的是这个比例。
-
-为什么值得单起一个脚本而不是靠眼睛：这个组件的缺陷**全是几何的**（等不等高、越没越界、
-内容有没有被裁、燕尾是不是真切出来了），而它在页面里长什么样取决于列有多高多宽 ——
-只在"某一档视口"下看过一次，换个高度就变了。所以这里量四档：常规 / 窄列 / 被压矮 /
-压到极限，外加一档 `.dark`，并且**带一个对照**（把"大卡"那套规则注入回去，验"判据真的
-会红"——判据没牙就等于没测）。
-
-沿用 `dashboard-home.test.py` 那套装配手段（esbuild 打真组件 + 真 sass + 只桩边界）：
-react / react-dom / antd 都是真的，react-redux 与 react-countup 是桩。
-
-用法：python3 frontend/tests/dashboard-kpi-cards.test.py
-依赖：frontend/node_modules（esbuild/react/react-dom/antd/sass）、playwright(python)。
-"""
+"""后台首页左栏三张统计条（文章 / 分类 / 标签）的布局验收。"""
 import functools
 import http.server
 import io
@@ -57,8 +24,8 @@ DEFINE = ('import.meta.env={"VITE_HTTP_BASEURL":"","VITE_CDN_BASEURL":"","MODE":
 COUNTS = {"noteCount": 1024, "tagCount": 128, "categoryCount": 9}
 
 # 设计量（与 index.sass 是同一个数，改一处要改两处）。
-STRIP_H = 56          # 一条书签的高度（20261006：34 → 56，"太细长"那一轮）
-STRIP_W_PCT = 0.78    # 条宽占列宽的比例（20261006 新增：从前是铺满 100%）
+STRIP_H = 56
+STRIP_W_PCT = 0.78
 STRIP_GAP = 10        # 条间距
 GROUP_H = 3 * STRIP_H + 2 * STRIP_GAP   # 188
 BATCH = 30            # 徽章边长（22 → 30）
@@ -266,8 +233,6 @@ def main():
             ws = [round(c["w"], 1) for c in cards]
             check(f"三条等高（{hs}）", max(hs) - min(hs) < 1, f"max-min={max(hs) - min(hs):.1f}")
             check(f"三条等宽（{ws}）", max(ws) - min(ws) < 1, f"max-min={max(ws) - min(ws):.1f}")
-            # 20261006：宽度的判据从"跟着列走（== 列宽）"改成"**列宽的 78%**"。
-            # 只断言"比列窄"是不够的 —— 78% 与 60% 都通过，而用户要的是这个比例。
             check(f"宽度是列宽的 {STRIP_W_PCT:.0%}（列 320px ⇒ 条 {320 * STRIP_W_PCT:.0f}px，"
                   f"不再是铺满整列、也不再是 75% / 固定 210px）",
                   abs(ws[0] - 320 * STRIP_W_PCT) < 1, f"card={ws[0]:.1f}")
@@ -276,8 +241,6 @@ def main():
             check(f"整组高 {GROUP_H}px（三条 + 两道 10px 缝）",
                   abs((max(c["bottom"] for c in cards) - min(c["top"] for c in cards)) - GROUP_H) < 2,
                   f"{max(c['bottom'] for c in cards) - min(c['top'] for c in cards):.1f}")
-            # 用户原话是「不需要占这么大地方」。旧版三张大卡实测吃掉左栏 ~380px，
-            # 这里把它钉住：整组必须**远小于**列高。
             group = max(c["bottom"] for c in cards) - min(c["top"] for c in cards)
             col_h = cont["bottom"] - cont["top"]
             check(f"整组只占列高的一小块（{group:.0f}/{col_h:.0f}px）",
@@ -330,8 +293,6 @@ def main():
                   cards[i]["value"] == value, cards[i]["value"])
         if len(cards) == 3:
             c0 = cards[0]
-            # `+22` 是数字那一档的字号（20261006 从 18 抬到 22）：`valueTop` 是行盒顶，
-            # 加一个字号约等于它的下缘；用旧字号配新字号会在容差里慢慢漂到红。
             check("数字与标签在同一行（条子放不下两行）",
                   abs((c0["valueTop"] + 22) - c0["labelBottom"]) < 12
                   and c0["valueTop"] < c0["labelBottom"],

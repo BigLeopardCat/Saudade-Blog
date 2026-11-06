@@ -1,26 +1,5 @@
 # -*- coding: utf-8 -*-
-"""个人中心一期（20260922）无头验收：真 antd + 假后端，走**真组件**的接线与交互。
-
-为什么值得单起一个脚本：
-  个人中心是这轮新增的最大一块前端（六个页签 + 头像裁剪 + 红点），而它的风险几乎全在
-  **接线**上而不是观感上——「点确定到底发没发那个 multipart」「点了全部已读红点掉不掉」
-  「后端那句中文有没有弹出来」都是只有真跑一遍才知道的事。本机不能 vite build（3.7GB 内存
-  会 OOM，见 CLAUDE.md §2），沿用既定替代手段（frontend/tests/* 的既有做法）：
-    · sass 用 programmatic API 编译（`node_modules/.bin/sass` 在 Node 18 上崩）；
-    · esbuild 把真组件打成一个 bundle，**只桩边界**（axios 假后端 / 路由），antd 与
-      react-dom 都用真的（antd v5 是 CSS-in-JS，无外部样式表要引）；
-    · Playwright 真渲染后按"发了什么请求 + 界面变成什么样"断言。
-
-假后端（替换 src/apis/axios.tsx）**刻意照抄后端的两个口径**，否则测了也白测：
-  1. 失败是 HTTP 200 + code=500 + 中文 message（不是 4xx）；
-  2. 未登录是同一形状（message=未登录）。
-它同时把 `localStorage.tokenKey` 写成一张真形状的 JWT——`getToken()` 读的就是这个键，
-个人中心与红点轮询都靠它判登录态。
-
-用法：python3 frontend/tests/user-center.test.py
-依赖：frontend/node_modules（esbuild/react/react-dom/antd）、playwright(python)、Pillow。
-注意：本机无中文字体（fc-list CJK = 0）⇒ 截图里汉字是豆腐块，结构与请求判据不受影响。
-"""
+"""个人中心真实组件、请求归属与交互回归。"""
 import pathlib
 import shutil
 import subprocess
@@ -270,10 +249,6 @@ const http = async (cfg: any) => {
 export default http;
 """
 
-# ⚠️ 桩是**真模块表面的手抄副本**：`src/` 里从 react-router-dom 多 import 一个名字，
-# 而这里没跟着补 —— esbuild 当场 `No matching export` 整包失败（不是静默失效，但同样要人记得）。
-# 20261001 就撞过一次：Head 加了 `useLocation`（文章页顶部栏挂 `.over-dark` 那批），
-# 这个桩没补 ⇒ 本套件在 52be3d9 之后整支打包失败。改 Head/侧栏的路由用法时一并看这里。
 STUB_ROUTER = (
     # 恒返回首页路径：本套件渲染的是「用户中心」场景下的头部，不是文章页（`.over-dark` 不挂）
     "export const useLocation = () => ({ pathname: '/', search: '', hash: '' });\n"
@@ -356,10 +331,6 @@ def build_sandbox() -> pathlib.Path:
                         str(FE / rel), str(out)], cwd=str(FE), check=True)
         css.append(out.read_text())
 
-    # 全站样式表：`src/main.tsx` 第一行就 import 它，所有页面都吃得到。沙箱此前只编译
-    # 组件那三份 .sass ⇒ **写在 index.css 里的全局规则在沙箱里根本不存在**，几何断言
-    # 于是把"规则没生效"读成"页面缺陷"（20260929 的 `.counter-room` 就是被这条抓出来的：
-    # 两个"计数被遮挡"断言在沙箱里假红，而真站上它是好的）。真站有它，沙箱就得有它。
     css.append((sb / "src/index.css").read_text())
 
     def bundle(entry: str, outfile: str):
@@ -372,8 +343,6 @@ def build_sandbox() -> pathlib.Path:
                             f"--alias:react-router-dom={sb}/stub-router.tsx"],
                            cwd=str(sb), capture_output=True)
         if r.returncode != 0:
-            # 按字节收、宽容解码：esbuild 会在中文那行按字节截断，严格 utf-8 解会先炸在
-            # 解码上、把真正的报错盖掉（20260922 实测）。
             raise SystemExit("esbuild 打包 %s 失败：\n%s"
                              % (entry, r.stderr.decode("utf-8", "replace")))
 
@@ -501,11 +470,6 @@ with sync_playwright() as p:
     check("昵称来自 /api/protected/profile 的回包",
           pg.locator(".ucNickName").inner_text() == "泠月喵",
           pg.locator(".ucNickName").inner_text())
-    # 权限身份标签（20260926 用户要求「个人中心里面，用户昵称后面显示权限身份标签」）。
-    # 判据三条：标签**在昵称后面**（不是另起一行/跑到头像那边）、文案是中文身份、
-    # 且取的是 profile 那份角色而不是令牌快照。
-    # 量的是**昵称那一层**（`.ucNickName`）不是外层容器：容器是行盒，宽度恒撑满
-    # 可用宽度，拿它当"昵称右缘"的话标签永远落在它里面（这个断言就是这么写错一次的）。
     name_box = pg.locator(".ucNickName").bounding_box()
     tag_box = pg.locator(".ucRoleTag").bounding_box()
     check("昵称后面挂着权限身份标签（同一行、在昵称右缘之后）",
@@ -513,10 +477,6 @@ with sync_playwright() as p:
           and abs(tag_box["y"] - name_box["y"]) < name_box["height"]
           and tag_box["x"] >= name_box["x"] + name_box["width"],
           f'name={name_box} tag={tag_box}')
-    # 20261002 起身份标签是 `RoleBadge`（整枚内联 SVG）⇒ **文案一律读 `aria-label`**：
-    #   · `inner_text()` 现在返回「🍃 普 通 用 户」——Chromium 会把 SVG `<text>` 读进来，
-    #     且那是**逐字加空格**的字距风（实测「🐟 杂 鱼 🐟」）；
-    #   · 不改成"抹掉空白再比"：那条判据分不清"文案多了一个字"和"字距变化"。
     check("普通用户显示「普通用户」",
           pg.get_attribute(".ucRoleTag", "aria-label") == "普通用户",
           str(pg.get_attribute(".ucRoleTag", "aria-label")))
@@ -525,13 +485,10 @@ with sync_playwright() as p:
     _visible = "".join(pg.locator(".ucRoleTag").inner_text().split())
     check("可见文字（去掉字距空格）与 aria-label 一致",
           _visible.endswith("普通用户") and "普通用户" in _visible, _visible)
-    # `.ucAvatarAccount` 现在有**两个**（UID 一行 + 账号一行，20260922 晚加的）⇒ 必须
-    # 指名要哪一个；此前这里直接 inner_text() 会撞 Playwright 的 strict mode 而中断整脚本
     check("账号只读展示（没有任何可改账号的输入框）",
           "sora" in pg.locator(".ucAvatarAccount").nth(1).inner_text()
           and pg.locator(".ucAvatarAccount input").count() == 0,
           pg.locator(".ucAvatarAccount").nth(1).inner_text())
-    # 20260922 用户要求：**没上传过头像就用默认头像**，不再退回站点主人那张。
     check("没设头像时用默认头像（不再回退到站点主人头像）",
           pg.get_attribute(".ucAvatar img", "src") == "/default-avatar.png",
           str(pg.get_attribute(".ucAvatar img", "src")))
@@ -543,13 +500,6 @@ with sync_playwright() as p:
     # 标签认的是**后端现读库**的角色，不是令牌里那份快照——这是这条改动最容易写反的地方
     # （令牌是无状态的，被人改过角色之后旧令牌会一直自称旧角色；标签跟着令牌就会骗人）。
     print("①b 角色标签认 profile 而不是令牌快照（两个方向各造一个世界）")
-    # 第三个用例是**超级管理员**（20260926）：它的标签走的是同一张表
-    # （`utils/auth.ts::ROLE_LABEL`），但取值域加了一个人的时候，漏改的正是这类
-    # "角色 → 文案"的映射——漏了它会原样显示 `superadmin` 这串英文。
-    # 20261003 起这一档的站上名字是**「站长」**（键名仍是 superadmin）：主人点名"超管
-    # 徽章的文本内容只写站长"，而文案只有 `ROLE_LABEL` 一处实现 ⇒ 徽章也跟着变。
-    # 判据特意写全字符串而不是"包含站长"——漏改映射时这里读到的是英文 `superadmin`，
-    # 用包含式断言同样会红，但红得看不出是漏改还是写错了一个字。
     for tok_role, prof_role, want in (("admin", "user", "普通用户"),
                                       ("user", "admin", "管理员"),
                                       ("admin", "superadmin", "站长"),
@@ -568,13 +518,6 @@ with sync_playwright() as p:
     pg.wait_for_timeout(600)
     check("裁剪弹窗弹出来了（1:1 舞台 + 缩放滑块）",
           pg.locator(".acStage").count() == 1 and pg.locator(".acZoom .ant-slider").count() == 1)
-    # ★ 它必须**压得住个人中心那个窗口**（20261002 全站层级阶梯那一批）。
-    #   antd 的 `useZIndex` 只在**同一个 React 子树**里继承父级（Modal 会 provide
-    #   `zIndexContext`），而 `AvatarCropModal` 是那个 Modal 的**兄弟节点** ⇒ 继承链断了：
-    #   不显式给 `zIndex` 它就落回默认的 1000，比有明确层级的父亲（`Z.panel` = 1200）低。
-    #   症状极具迷惑性——弹窗看着好好地出来了，可**什么都点不动**（父亲的 pane 拦在前面
-    #   吃掉了指针事件），本套件当时是以"拖动没反应/点击重试 62 次超时"的样子红的。
-    #   所以这里直接量两个 wrap 的层级，把那条不变量钉在它真正的名字上。
     wraps = pg.evaluate("""() => {
         const z = (sel) => {const el=document.querySelector(sel);
             return el ? +getComputedStyle(el).zIndex : null;};
@@ -596,8 +539,6 @@ with sync_playwright() as p:
                       "return {x:r.left, y:r.top, w:r.width, h:r.height};}")
     check("舞台是正方形（1:1 裁剪窗）", abs(box["w"] - box["h"]) <= 1,
           f'{box["w"]:.0f}×{box["h"]:.0f}')
-    # ★ 20260922 用户反馈「方形框裁出来圆形算什么」⇒ 改成 GitHub 那套：方舞台不动，
-    #   叠一个内切圆遮罩、圆外压暗。几何一个字节没改（内切圆 = 方框的边 = 头像展示形状）。
     check("裁剪窗改成圆形遮罩（方舞台 + 内切圆 + 圆外压暗）",
           pg.locator(".acCircle").count() == 1 and pg.locator(".acCorner").count() == 0,
           f'acCircle={pg.locator(".acCircle").count()} acCorner={pg.locator(".acCorner").count()}')
@@ -706,14 +647,9 @@ with sync_playwright() as p:
     pg.wait_for_timeout(700)
     check("改成功后输入框清空（密码不留在表单里）",
           pg.input_value(f"{pwd_in} >> nth=0") == "" and pg.input_value(f"{pwd_in} >> nth=1") == "")
-    # 写回新令牌（20260926）。这条断言是**端到端**的：改密码让该账号所有旧令牌当场作废
-    # （包括本机这枚），不写回 ⇒ 本机下一个请求带着刚被自己作废的令牌出去 ⇒ 立刻被登出。
-    # 断言读的是 localStorage 那个键本身，不是"组件里某个 state 变了"。
     check("改密码后把后端返回的新令牌写回了 localStorage",
           pg.evaluate("() => localStorage.getItem('tokenKey') === window.__tokens.fresh"),
           str(pg.evaluate("() => (localStorage.getItem('tokenKey') || '').slice(0, 12)")) + "…")
-    # 反向：后端**没**给新令牌时不许把旧的那枚抹掉——那会把人凭空登出。
-    # 写回那句是 `if (fresh) setItem(...)`，条件写反/写成无条件在这里各红一次。
     pg.evaluate("() => { window.__pwdNoToken = true; }")
     pg.fill(f"{pwd_in} >> nth=0", "old-pass-123")
     pg.fill(f"{pwd_in} >> nth=1", "new-pass-456")
@@ -725,13 +661,6 @@ with sync_playwright() as p:
           str(pg.evaluate("() => localStorage.getItem('tokenKey')")))
     pg.evaluate("() => { window.__pwdNoToken = false; }")
 
-    # 关窗即摘框（20260924 修复）。判据刻意是**结构性**的、与浏览器启发式无关：
-    # 只要首页 DOM 里还留着一个密码框，Chrome 的密码管理器就会把这页认成登录页
-    # （它对判为凭据的字段忽略 autocomplete="off"，且**没有 <form> 的页面会被当成
-    # 一个"合成表单"**），然后去回填页面上最"裸"的文本框——实测受害者是看板娘
-    # 对话框的会话检索框与展示柜的向量检索框，给那两处补 name/厂商 data-*-ignore
-    # 全都无效。本弹窗 destroyOnClose={false}（保住五个页签的缓存），所以只能由
-    # `open &&` 摘挂；这条断言就是那行代码的锁。
     check("开窗时三个密码框都在（原密码/新密码/再输一次）",
           pg.locator("input[type=password]").count() == 3,
           f"{pg.locator('input[type=password]').count()} 个 type=password")
@@ -901,7 +830,6 @@ with sync_playwright() as p:
     pg.click(".ant-tabs-tab >> nth=3")
     pg.wait_for_selector(PANE + " .ant-list-item", timeout=10000)
     pane_txt = pg.locator(PANE).inner_text()
-    # type 分流（20260923 起既有公告也有站内通知）：两类标签都要出，未读 2 条都带标记
     check("列表按 type 显示「公告」/「通知」两种标签，未读的两条都带标记",
           "公告" in pane_txt and "通知" in pane_txt
           and pg.locator(PANE + " .ant-badge-status-processing").count() == 2,
@@ -1048,8 +976,6 @@ with sync_playwright() as p:
     pg.wait_for_selector(PANE + " .ucMailRow", timeout=10000)
     sub = pg.locator(PANE + " .ant-tabs-tab")
     labels = [sub.nth(i).inner_text().strip() for i in range(sub.count())]
-    # 用户原话：「收件箱，发件箱和写站内信在一个层级，再加上草稿箱，这四个作为站内信箱的
-    # 二级签页排在当前的写站内信那一行」⇒ 四个签页按他说的顺序，写信表单降级成其中一个。
     check("信箱里是四个二级签页，顺序 = 收件箱/发件箱/草稿箱/写站内信",
           len(labels) == 4 and labels[0].startswith("收件箱") and labels[1] == "发件箱"
           and labels[2].startswith("草稿箱") and labels[3] == "写站内信", str(labels))
@@ -1061,13 +987,6 @@ with sync_playwright() as p:
     rows = pg.locator(PANE + " .ucMailRow:visible")
     check("收件箱两封都在（整行可点）", rows.count() == 2, str(rows.count()))
 
-    # ── 条目栏带对方头像（20260927 用户要求）────────────────────────────────────
-    # 假后端里两封信的 `peerAvatar` 都是 **null**（照抄 Rust 侧 `u.avatar` 的真形状），
-    # 所以这一格同时验两件事：每一行都有头像、且没有头像的人落到**站点默认头像**上。
-    # 判据取 src 的**文件名末段**：页面里写的是根相对路径 `/default-avatar.png`，
-    # 浏览器会把 attribute 原样留着（所以这里读 attribute 而不是 el.src）。
-    # 反面形态是空的 `<img src="">`——antd 的 Avatar 拿到空串会照渲染一个 <img>，
-    # 既不显示默认头像、也不触发 children 兜底（用户看到的就是"不是默认头像"）。
     avs = pg.evaluate("""() => [...document.querySelectorAll('.ucPane .ucMailRow')]
         .map((r) => { const img = r.querySelector('.ucMailAvatar img');
                      return img ? img.getAttribute('src') : null; })""")
@@ -1163,9 +1082,6 @@ with sync_playwright() as p:
     check("详情里是**完整正文**（列表预览里被截掉的那截尾巴也在）",
           "尾巴在这里" in dgeo["text"], dgeo["text"][-26:])
     check("详情上方有返回列表的按钮", pg.locator(PANE + " .ucMailDetailBar button").count() == 1)
-    # 20260927 用户要求：按钮文案去掉向左的箭头（原来写的是「← 返回收件箱」）。
-    # 断言前抹掉空白：antd Button 对**两字**中文会插一个空格（autoInsertSpace），
-    # 这里虽然四字不触发，但判据不该依赖这个细节。
     back_text = pg.locator(PANE + " .ucMailDetailBar button").inner_text()
     check("返回按钮的文案是「返回收件箱」，没有左箭头",
           back_text.replace(" ", "").replace("\n", "") == "返回收件箱", repr(back_text))
@@ -1313,9 +1229,6 @@ with sync_playwright() as p:
     pg.click(".ant-tabs-tab >> nth=2")
     pg.wait_for_selector(PANE + " .ant-list-item", timeout=10000)
     txt = pg.locator(PANE).inner_text()
-    # 用户 20260922 原话「说说不是留言，为什么还出现在这里并且有审核状态」⇒ 本页只列 board。
-    # 后端已加 src='board' 过滤，前端显示层再兜一道（假后端故意两类都回，验的就是这一条）。
-    # 3 行 = 已通过 1 + 未通过 2（20260923 为驳回理由加的 fixture）
     check("说说不出现在留言记录里（后端过滤 + 前端显示层兜底）",
           pg.locator(PANE + " .ant-list-item").count() == 3
           and "今天写了点东西" not in txt and "随笔" not in txt,
@@ -1323,10 +1236,6 @@ with sync_playwright() as p:
                               txt.replace("\n", " ")[:140]))
     check("河灯留言照常在，审核状态如实显示",
           "河灯一盏" in txt and "已通过" in txt, txt.replace("\n", " ")[:140])
-    # 印章必须是**留言板那个红**（.rz-seal = #a33f30 底 / #ffe8c8 暖金字 + 衬线 + 0.22em 字距）。
-    # 此前这里是 antd 的蓝色 Tag，用户原话「留言的印章颜色不是留言板的红色」。
-    # 两处色值是跨组件的视觉契约，改一处必须改另一处（留言板那份在 riverboard 样式里）。
-    # 且印章里放的必须是**留言类型**（cat：诉/寄/愿/忆）——用户第二轮纠正的就是这一点。
     seal = pg.evaluate("""() => {
         const s = document.querySelectorAll('.ucSeal');
         if (!s.length) return null;
@@ -1341,9 +1250,6 @@ with sync_playwright() as p:
           str(seal))
     check("印章保留了 .rz-seal 的字形特征（衬线 + 0.22em 字距）",
           bool(seal) and seal["ls"] == "2.42px" and "serif" in seal["ff"].lower(), str(seal))
-    # 驳回理由（20260923）：未通过的行显示理由，**没写理由的如实显示「未填写」**
-    # ——理由可能来自 AI 判定、也可能来自管理员手填，前端只负责照抄（不许编替代文案）。
-    # 3 行里只有 2 行是未通过 ⇒ 理由块必须**只在未通过的行上出现**（已通过那行不带）。
     rej = pg.locator(PANE + " .ucReject")
     rej_txt = [rej.nth(i).inner_text() for i in range(rej.count())]
     check("未通过的留言显示驳回理由，没写理由的如实显示「未填写」",
@@ -1380,8 +1286,6 @@ with sync_playwright() as p:
     print("⑩ 窗口观感：六个页签尺寸一致 / 标题栏分割线 / 关闭钮贴右上 / 字数计数不被遮挡")
     pg = fresh_page()
     geo = []
-    # 20260929 起是**六**个页签（新的「对话额度」）。这一圈一起量：额度页若把窗口撑高，
-    # 这条会红——它是"换个页签就变形"的回归锁，新页签没有豁免。
     for i in range(6):
         pg.click(f".ant-tabs-tab >> nth={i}")
         pg.wait_for_timeout(450)
@@ -1416,13 +1320,7 @@ with sync_playwright() as p:
     }""")
     check("关闭钮往右上角挪了（离内容框上/右各约 9px，antd 默认各约 17px）",
           4 <= close["gapTop"] <= 14 and 4 <= close["gapRight"] <= 14 and close["w"] > 0, str(close))
-    # ★「字数限制文本被遮挡」（20260922 用户反馈）：antd 的 showCount 把计数绝对定位在
-    #   输入框下方约 22px 处，而 .ucField 的行距只有 12px ⇒ 计数整条被下一行压住。
-    #   修法是给 TextArea 套一层 `counter-room` 吃 margin-bottom（那个 22px 20260929 起
-    #   收到 src/index.css 一处，见那里的长注释；此前是这一处的 .ucMsgBody 私有类）。
-    #   这里量**几何重叠**，因为"CSS 写对了"和"真的没被压住"是两件事。
     pg.click(".ant-tabs-tab >> nth=4")
-    # 写信表单 20260923 起是信箱里的第四个二级签页（不再是常驻那一行）⇒ 先点进去
     pg.wait_for_selector(".ucMailPane", timeout=10000)
     pg.locator(PANE + " .ant-tabs-tab").nth(3).click()
     pg.wait_for_selector(".ucCompose", timeout=10000)
@@ -1495,8 +1393,6 @@ with sync_playwright() as p:
     check("主角那个数是余额（「剩 363 / 500」，不是「已用 137」）",
           lv_ok["nums"] == "剩 363 / 500", str(lv_ok["nums"]))
 
-    # 申请弹窗（20260929 用户反馈「字数计数也有一点遮挡」）：同一个 showCount 绝对定位，
-    # 这里下面跟的是那句说明文字（.ucHint）⇒ 量的是计数与它的**几何重叠**。
     reason = "额度用完了，想接着问架构那篇"
     # 弹窗有**两层**（个人中心本身也是一个 .ant-modal-wrap，申请弹窗是它的兄弟节点）⇒
     # 一律按"里面那个有内容的 textarea 属于谁"来认窗，不靠"第一个可见的"。这句挂到 window
@@ -1530,9 +1426,6 @@ with sync_playwright() as p:
           bool(acnt) and acnt["countBottom"] <= acnt["hintTop"], str(acnt))
     check("计数内容如实反映输入长度",
           bool(acnt) and acnt["text"].startswith(f"{len(reason)} / 500"), str(acnt and acnt["text"]))
-    # ★「申请重置弹出的是 ok」（20260929 用户反馈）：`ApiResponse::success` 的 message 恒为
-    #   字面量 "ok"，人话在 `data` 里——照抄 message 弹出来就是那个 "ok"。
-    #   断言**弹的是后端那句中文**，不许是 "ok" 也不许是前端兜底的那句。
     qp.evaluate("() => window.__applyWrap().querySelector('.ant-btn-primary').click()")
     qp.wait_for_timeout(800)
     toast = qp.evaluate("() => [...document.querySelectorAll('.ant-message-notice-content')]"
@@ -1556,9 +1449,6 @@ with sync_playwright() as p:
         return {shadow: cs.boxShadow, border: cs.borderTopWidth, bg: cs.backgroundColor,
                 lum: lum(cs.backgroundColor)};
     }""")
-    # 20261001：上一套"河灯金漏光描边"（rgba(240,196,110,·)）整块删掉了——窗口换手账皮，
-    # 描边与投影由那条**共用**的 `.ant-modal-content` 规则给（它取 var(--washi-*)，而
-    # `.washiDark` 与 `.ucRoot` 挂在同一个 root 上 ⇒ 一条规则自己就分了两档）。
     check("夜间窗口是手账深紫纸（底色亮度 < 0.35 ⇒ 不是浅色兜底值砸下来）",
           glow["lum"] < 0.35, f'{glow["bg"]} lum={glow["lum"]:.3f}')
     check("夜间投影取 --washi-shadow-lg 的深色档（不再有金色漏光）",
@@ -1582,9 +1472,6 @@ with sync_playwright() as p:
           "255, 179, 217" in btn["bgImage"] and "203, 182, 255" in btn["bgImage"], str(btn))
     check("按钮文字是深紫褐、无边框（粉白底上可读）",
           btn["color"] == "rgb(64, 38, 63)" and btn["border"] == "0px", str(btn))
-    # 20260922 第二轮定下的范围仍然有效：三个主行动按钮共用 `.ucPrimaryBtn` 一个类
-    # ——断言"是同一套配方"而不是各写一遍色值（20261001 类名从 `.ucGoldBtn` 改过来：
-    # 配方已经不是金色了，叫 Gold 会误导）。
     prim = dk.evaluate("""() => {
         const btns = [...document.querySelectorAll('.ucSettings .ucPrimaryBtn')];
         return btns.map((b) => {
@@ -1619,16 +1506,8 @@ with sync_playwright() as p:
     check("红点不抢走头像的 hover（pointer-events: none）",
           hp.evaluate("() => getComputedStyle(document.querySelector('.homeRight .avatarDot'))"
                       ".pointerEvents") == "none")
-    # 「个人中心」按钮在 hover 出来的登录卡里（showStatus 有 300ms 防抖）。
-    # ⚠️ 几何断言必须放在 hover **之后**：登录卡平时是 display:none，getBoundingClientRect
-    # 全 0，量出来只会是"没歪也判失败"（20260922 实测踩过）。
     hp.hover(".homeRight .homeLogo")
     hp.wait_for_timeout(900)
-    # ★ 回归锁（20260922 事故）：`.loginCard` 丢掉 position:absolute 就掉回文档流，
-    #   把头像与登录/退出按钮整片挤歪。根因是 sass 的**缩进嵌套**——有人在 .loginCard
-    #   上面插了个顶格规则块，编译器就把 .loginCard 挂到那个选择器下面去了（DOM 里两者
-    #   是兄弟，选择器一旦变成 `.X .loginCard` 就一条都不命中）。这条断言直接量几何，
-    #   比"看着没歪"可靠：登录卡必须贴着头部右缘浮在上面。
     pg_geo = hp.evaluate("""() => {
         const c = document.querySelector('.homeRight .loginCard');
         const r = c.getBoundingClientRect();
@@ -1670,11 +1549,6 @@ with sync_playwright() as p:
     hp.screenshot(path="/tmp/head-user-center.png")
     hp.close()
 
-    # 后台入口（`cd91879` 起的现行形态：**双击头像**直跳，两枚「后台」按钮已删）。
-    # 这条判据在 20260923 之前判的是那两枚已不存在的按钮（`.homeAdminBtn`）——旧断言
-    # 点空元素直接超时，会把整轮探针掐断在 ⑫b、后面的腿一条都跑不到。改成判现行契约，
-    # 并补一条「非管理员双击没反应」——否则"谁双击都能进后台"这种回归这条腿是看不见的。
-    # token 由 FAKE_AXIOS 按 window.__role 现造，要在 go 之前用 add_init_script 放好角色。
     print("⑫b 后台入口＝双击头像（仅管理员有反应）")
     ap = br.new_page(viewport={"width": 1280, "height": 900})
     aerrs = []
@@ -1711,9 +1585,6 @@ with sync_playwright() as p:
     up.close()
     head_errs.extend(aerrs + aerrs2)
 
-    # 头部头像三态（20260922 用户原话：「右上角头像若过期登录，或者退出登录有账号挂着
-    # 等待输入密码，以及正常登录状态显示用户头像。没有账号登录记录，未上传头像使用默认
-    # 头像显示」）。四种情形都真挂 Head 组件跑一遍——这里判的是**地址**，不是"看着像"。
     print("⑫c 头部头像三态：登录 / 退出但有账号记录 / 从没登录过 / 登录但没上传过头像")
     HEAD_AVATAR = ".homeRight .avatarDotWrap img"
 
@@ -1774,15 +1645,6 @@ with sync_playwright() as p:
     v.close()
     head_errs.extend(ve)
 
-    # 主页搜索框的上边缘黑线（20260927 用户报「搜索框上边缘有一圈黑线」）。
-    # `.searchModalInput` 此前只写了 border-radius / outline、**没写 border** ⇒ 吃到浏览器对
-    # `<input>` 的默认 `2px inset rgb(118,118,118)`（实测 computed style）；inset 是**斜角**
-    # 渲染：上/左缘取边框色的暗调、下/右缘取亮调 —— 药丸顶上那条"黑线"就是这么来的。
-    # 这条与上面那只 `::-ms-reveal` 不同：本机 Chromium 与访客的 Edge 用的是同一个 UA 默认值，
-    # 所以**能真渲染验证**，判据也就直接量像素。
-    # 判据取"左右对称"而不是"有没有边框"：修完仍要留一条刻意画的细边——它直接压在模态遮罩的
-    # 模糊图上，把边框删成 `border: 0` 会让药丸在浅色背景上整个消失（那是另一种退货）。
-    # 挂的是**真 Head 组件**（搜索入口 = .homeRight 的第一个 div，见 index.tsx `onClick={showModal}`）。
     print("⑫d 主页搜索框：上边缘那条黑线来自 UA 默认边框（inset 斜角）")
     sp = br.new_page(viewport={"width": 1280, "height": 900})
     serrs = []

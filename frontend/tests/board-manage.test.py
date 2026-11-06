@@ -1,47 +1,5 @@
 # -*- coding: utf-8 -*-
-"""后台「评论管理」页（BoardManage）20260926 那批改动的无头验收：真组件 + 真 antd + 假后端。
-
-这一批三件事，判据都只有"真跑一遍"才看得见：
-
-  · **「AI 审核」列的 tooltip 带上 aiReason 全文** —— 此前那一列只显示裁决词，AI 的说明
-    在整个系统里只存在于 AI 服务那一次的 HTTP 响应里。**两侧都要验**：有 aiReason 的行
-    hover 出来的 tooltip 里含那句全文；aiReason 为 null 的行，tooltip **照常出现**（先断
-    它真挂出来了，否则下一条是空转）但里面**没有** .bm-ai-reason 那一块。只验一侧会被
-    "永远显示（占位/空串）"的实现蒙过。
-  · **理由必填** —— 文本框空（或只有空白）时「确认驳回」禁用，点它**一个写请求都不发**。
-    "必填"锁的是行为（disabled + 零请求），不锁那句话的写法。
-  · **常见违规类型预设 / 采用 AI 说明** —— 点一下把文案填进**可编辑**的文本框；「采用 AI
-    说明」只在**这一行**有 aiReason 时出现。"可编辑"不能只看 readOnly 属性：填一个自定义
-    值、看主按钮跟着变可用，才证明它真接回了 state（只读回显也能把值显示出来）。
-  · **已有理由的回显 + 沿用** —— 弹窗里多一行回显（含那条已有理由原文）与一个「沿用」按钮。
-  · **跨端同步**（第八节，用户报「评论状态变更前端跟不上 agent，也要刷新网页」）—— 看板娘
-    一轮收尾的事件到达 ⇒ 这一页自己多拉一次列表；驳回弹窗开着时那一次不许拉；手动「刷新」
-    按钮照旧给 loading 反馈，背景那一次不给。`utils/liveRefresh.ts` 的四条纪律由模块级
-    `live-refresh.test.mjs` 锁，本节锁的是**这一页真的接了它、而且接对了**。
-  · **已通过的留言也能驳回**（20260930，第七③节）—— 此前 `approved === 1` 的行操作区只有
-    「删除」，改不了结论；现在挂上同一个驳回入口（同一档 `audit(id, 0, reason)`、同一个
-    「理由必填」弹窗），点完那一行当场翻成「未通过」。后端 `audit_board` 从来没有状态守卫
-    （只查登录/存在性/`src=="board"`），所以这一改的**全部风险面就在这排按钮的渲染条件 +
-    本地写回**上，两处都在本文件里被判。注意这与"通过与否决是一对互斥入口"是**两件事**：
-    互斥指的是"同一行不会同时给出两颗方向相反的立即动作按钮"，而改判入口在每一档恰好一个
-    （待审/已通过 → 驳回；已驳回 → 恢复通过）。
-
-驳回请求的契约是 `PUT /api/protect/board/<id>/audit`、body **严格等于**
-`{approved: 0, reason: "<填的值>"}`——键集合也要对（多传/少传都算红）。注意 approved 传的是
-**0**（"驳回"这个动作码），不是落库的 2：后端 `audit_board`（src/routes/talks.rs:670）把
-`approved == 0` 翻成写 `approved = 2`「未通过」。所以断言必须按**请求**那一侧的契约写。
-
-沿用既定手段（本机不能 vite build，见 CLAUDE.md §2）：esbuild 把真组件打成 bundle，
-只桩一个边界（`src/apis/axios.tsx`）；sass 用 programmatic API 单独编译后 `--loader:.sass=text`
-收下（顺带让这个文件过一次编译——本机唯一拦得下构建级缺陷的环节）。两个必踩的坑写在下面：
-假响应一律走**深拷贝**（把同一个数组引用丢回去会被 React 的 Object.is 判等拦下、界面纹丝
-不动，症状是"请求成功了但行没动"），以及 antd 的 autoInsertSpace 会在两个汉字之间插空格
-（「驳 回」/「沿 用」）⇒ 认定按钮文案前一律抹空白。本机无中文字体（汉字渲染成豆腐块），
-断言全走数值、条数与请求体。
-
-用法：python3 frontend/tests/board-manage.test.py
-依赖：frontend/node_modules（esbuild/react/react-dom/antd）、playwright(python)。
-"""
+"""后台留言管理的筛选、审核与布局回归。"""
 import functools
 import http.server
 import pathlib
@@ -520,10 +478,6 @@ with sync_playwright() as p:
           str(get_urls(pg)))
     check("每行的操作区都有「删除」入口", all(r["del_"] == 1 for r in g["rowInfo"]),
           str([r["content"] for r in g["rowInfo"] if r["del_"] != 1]))
-    # 「驳回」入口按状态给（20260930 起）：待审(0) 与**已通过(1)** 都有，未通过(2) 没有
-    #（那一档给的是「恢复通过」）。已通过那档是 20260930 新增的能力：**把已经放行的留言
-    # 收回来**——后端 handler 从来没有状态守卫（`audit_board` 只查登录/存在性/src=="board"），
-    # 卡点一直只在这排按钮的渲染条件上。
     check("待审的 4 行各有一个「驳回」入口",
           all(by_content(g, c)["reject"] == 1 for c in REJECT_ROWS),
           str({c: by_content(g, c)["reject"] for c in REJECT_ROWS}))
@@ -746,16 +700,6 @@ with sync_playwright() as p:
     check("第六节②无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
-    # ── 七、裁决成功后**那一行当场变样**（本地写回，不靠 load() 重拉）──────────
-    # 这一节是一个真实缺陷的回归锁（20260926 修）：`audit()` 把**入参**当落库值写回本地行，
-    # 而入参 0 是"驳回"这个**动作码**、后端落的是 2「未通过」（src/routes/talks.rs::audit_board
-    # 的 `Set(if reject { 2 } else { 1 })`）⇒ 驳回成功后那一行仍停在待审：标签还是金色「待审」、
-    # 操作列还挂着「通过/驳回」（能再点一次驳回）、正文下面的驳回理由一个字都不显示
-    # （那一段的渲染条件是 `approved === 2`）。**后端其实已经改完了**，是界面撒谎；
-    # 而"只改本地那一行、不 load() 重拉全量"这个优化的全部意义就是不去重拉 ⇒ 一旦写回写错，
-    # 没有任何后续请求能把它纠正过来（要等下次进页面）。桩只回成功、从不回写列表。
-    #
-    # 两个方向都锁：驳回（入参 0 → 落库 2）与通过（入参 1 → 落库 1，本来就同值）。
     print("\n【七】裁决成功后那一行当场变样（本地写回用的是落库值，不是动作码）")
     pg = mount(br)
     g0 = by_content(pg.evaluate(GEO_LIST), "驳回靶子B")
@@ -798,11 +742,6 @@ with sync_playwright() as p:
     check("第七节②无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
-    # 第三个方向（20260930 新能力）：**已通过 → 驳回**（收回展示）。
-    # 走的是同一条 `audit(id, 0, reason)`、同一个弹窗，但入口此前不存在：已通过的行
-    # 操作区只有「删除」，点不到驳回 ⇒ 这一节存在的意义就是"入口真的挂上了、而且
-    # 点完那一行当场翻面"。选「通过乙」（approved=1 且 ai_result='reject'）——它是
-    # "AI 驳回被人改判放行"那一档，正是最可能被反悔的一条。
     print("\n【七③】已通过的留言也能驳回（收回展示）：入口挂得上、写完当场翻面")
     pg = mount(br)
     g3 = by_content(pg.evaluate(GEO_LIST), "通过乙")
@@ -834,20 +773,6 @@ with sync_playwright() as p:
     check("第七③节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
-    # ── 八、跨端同步：看板娘改的那一笔，页面自己跟上 ────────────────────────────
-    # 现场（用户报的）：后台开着这一页，让看板娘驳回一条留言 —— 页面不动，得刷新网页。
-    # 这一页此前只在挂载时拉一次，agent 是从服务端改的账，浏览器没有任何理由知道。
-    # 现在接 `utils/liveRefresh.ts`（`live-refresh.test.mjs` 在模块级锁它的四条纪律），
-    # 这一节锁的是**这一页真的接了它、而且接对了**：
-    #   · 看板娘收尾事件 ⇒ 多发一次 `GET /api/protect/board`；
-    #   · 那一次是**背景式**的（在途时不亮表格 loading）——后台每 20 秒抖一下 spinner，
-    #     会让人以为页面自己在动；而主人**手动**点「刷新」时必须照旧有反馈。两侧都要验：
-    #     只验一侧的话，"永远 loading" 与 "永远不 loading" 都能蒙过一条。
-    #   · 驳回弹窗开着 ⇒ 一次都不拉（弹窗认的是那一行对象，底下列表在它下面换掉很危险）。
-    #     ⚠️ 这一条的判据必须是 `skip`，不能是节流窗口：所以派发前**先等过** MIN_GAP_MS
-    #     （2000ms），否则它"通过"只是因为上一次刚拉完。反过来，弹窗关掉之后**不等**就
-    #     派发 —— 那一次若被节流吃掉，说明 `skip` 把窗口也吃掉了（实现里刻意把 skip 判在
-    #     节流之前，见 liveRefresh.ts 的注释），那时这一条会真红。
     print("\n【八】跨端同步：看板娘收尾事件 ⇒ 重拉；驳回弹窗开着 ⇒ 一次都不拉")
     pg = mount(br)
     base = board_gets(pg)
@@ -896,19 +821,6 @@ with sync_playwright() as p:
     check("第八节无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
-    # ── 九、筛选/搜索/排序/分页搬到服务端（20261014）──────────────────────────
-    # 现场（用户问的）：「好多数据库表的调用是不是根本不符合行业规范，我是直接整页拉」。
-    # 这一页此前是 `GET /api/protect/board` **整表拉回来、在前端 filter + sort + slice**。
-    # 三个后果都不是"慢一点"：
-    #   · 搜到的只是"**已经拉到的那一份**里符合条件的"，而那一份随留言增长只会变大；
-    #   · 翻到第 3 页要先下载全部留言正文（每条最多 200 字）；
-    #   · 「共 N 条」是本地的数组长度，服务端有多少条它并不知道（下面 `共25条留言` 那条
-    #     就是它的正控：**本页 10 行 vs 总数 25**，后者客户端算不出来，只能来自信封）。
-    # 现在条件与页码都发给服务端，判据只有一处（`talks.rs::board_admin_filter`）。
-    #
-    # 桩必须**真的**照服务端做（见 FAKE_AXIOS 的 `boardPage`）——否则"表格里只剩愿/只剩
-    # 10 行"判的是桩自己的行为。所以每条判据都成对：**参数发出去了没有**（`board_params`）
-    # ＋**界面认了没有**（`GEO_LIST`）。
     print("\n【九】筛选/搜索/排序/分页搬到服务端：条件真的发出去了、表格只装这一页")
     pg = mount(br, board_n=25)
     g9 = pg.evaluate(GEO_LIST)
@@ -951,10 +863,6 @@ with sync_playwright() as p:
     check("第九①无页面异常", not pg.errs, "; ".join(pg.errs[:3]))
     pg.close()
 
-    # ── 九② 背景重拉照带条件 ──────────────────────────────────────────────────
-    # 条件搬到服务端之后才会坏的地方：背景重拉（看板娘收尾 / 20 秒轮询）若走的是**不带
-    # 条件**的那条取数，主人正看着「愿」这一档，底下列表会被悄悄换成全部留言——上面的
-    # 页签还亮着，数据已经不是它那一份了（这一页此前整表拉，所以从来没有这个问题）。
     print("\n【九②】背景重拉带的仍是当前条件（不是一次无条件全量重取）")
     pg = mount(br, board_n=25)
     click_cat(pg, "愿")
@@ -1007,15 +915,13 @@ with sync_playwright() as p:
           pg.evaluate(GEO_LIST)["rows"] == 4, str(pg.evaluate(GEO_LIST)["rows"]))
     pg.close()
 
-    # 清空：防御的是"清空之后挂着的那次防抖到点，用一个已经不在框里的旧关键词又发一次"。
-    # 注意症状在 DOM 里**看不见**（框空了、列表还是那一份），判据只能落在请求本身。
     pg = mount(br)
     n0 = len(board_params(pg))
     pg.click(".bm-toolbar input")
     pg.keyboard.type("驳回", delay=40)
     pg.wait_for_timeout(60)                    # 仍在 400ms 防抖窗口内
     pg.fill(".bm-toolbar input", "")
-    pg.wait_for_timeout(900)                   # 足够让那次防抖到点（若没被 cancel）
+    pg.wait_for_timeout(900)
     check("清空之后一次请求都没发（挂着的那次被 cancel 掉了）",
           len(board_params(pg)) == n0, str([x.get("q") for x in board_params(pg)[n0:]]))
     pg.close()

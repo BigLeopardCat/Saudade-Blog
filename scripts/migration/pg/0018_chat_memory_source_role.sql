@@ -1,4 +1,3 @@
--- 只记录产生当时核实的角色；旧行保留 NULL，不能按账号当前角色推断历史来源。
 BEGIN;
 
 ALTER TABLE chat_history ADD COLUMN IF NOT EXISTS source_role varchar(32);

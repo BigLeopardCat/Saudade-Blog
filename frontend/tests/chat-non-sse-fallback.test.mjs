@@ -1,26 +1,3 @@
-// ═ 「HTTP 200 不等于成功」——非 SSE 响应的前端兜底（20261002）══
-//   node tests/chat-non-sse-fallback.test.mjs
-//
-// 为什么这条套件存在（生产事故复盘）：
-//   agent 服务炸掉不断重启那段时间，主人的两次对话**前端一行异常都没有**——用户那句话
-//   照常进了对话框，然后什么都没有。查下来是一条把三端都骗过去的链：
-//     · Rust 的流式早退路径（agent 连不上 / 上游非 2xx / 请求体过大 / 会话创建失败）
-//       返回的是 `Json(ChatResponse{success:false, error:…})`，而 axum 的 `Json` 默认
-//       **HTTP 200**；
-//     · 浏览器侧唯一的失败判据是 `if (!resp.ok)` ⇒ 全部当作成功；
-//     · 于是它照常建气泡、去读一个 JSON body——里面没有 `\n\n`，一帧都切不出来——
-//       一路走到"空回复"那一支：气泡删掉、`console.warn` 一句，**用户零提示**；
-//     · 服务端 rust.log 里它和一次成功完全同形（`status=200`），agent 侧连 trace 都没有
-//       （请求根本没到 agent）⇒ 谁都没发现。
-//   实测：20261002 08:37:54 / 08:39:30 两次请求 rust.log 记 200、agent 无对应 trace。
-//
-// 两道防线：① Rust 侧改成发 `__ERROR__` 帧（`src/routes/chat.rs::early_exit_response`，
-// 由那边的单测锁）；② **本套件锁的这一道**——前端不依赖服务端自觉，发现响应不是
-// `text/event-stream` 就如实报错。将来谁再加一条 JSON 出口，也不会再静默。
-//
-// 手法沿用 `chat-error-frame.test.mjs`：**求值真源码**而不是扫字符串。扫
-// `'text/event-stream'` 这种子串对"判反了/取错字段/忘了设 userText"完全无感。
-// 两个切片锚点都做非空校验：找不到就退出，否则正则漂了会变成"零断言通过"。
 import { readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';

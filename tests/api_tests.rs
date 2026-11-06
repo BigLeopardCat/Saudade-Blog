@@ -1,22 +1,17 @@
-use saudade_blog::rate_limiter::LoginRateLimiter;
-use saudade_blog::{create_router, AppState};
-use sea_orm::{DatabaseBackend, MockDatabase};
 use axum::{
     body::Body,
     http::{Request, StatusCode},
 };
+use saudade_blog::rate_limiter::LoginRateLimiter;
+use saudade_blog::{create_router, AppState};
+use sea_orm::{DatabaseBackend, MockDatabase};
 use tower::ServiceExt; // for `oneshot`
 
 fn test_state(db: sea_orm::DatabaseConnection) -> AppState {
     AppState {
         db,
         rate_limiter: LoginRateLimiter::new(5, 60, 300),
-        // 内容风控的发布间隔刹车（20261002）：路由结构测试不碰这条链路，
-        // 给一个空计数器即可（阈值由 risk::load_config 每请求现读）。
         post_limiter: saudade_blog::risk::PostRateLimiter::new(),
-        // 错误上报的每 IP 计数闸（20261015）：与 `rate_limiter` 是同一个类型、另一套阈值。
-        // 这里照抄生产口径——本文件没有用例打 `/api/monitor/log`，取哪一档都不影响断言，
-        // 给生产值是为了将来加用例时不会莫名其妙撞上自己设的限流。
         report_limiter: LoginRateLimiter::new(120, 60, 300),
     }
 }
@@ -27,7 +22,12 @@ async fn test_404_not_found() {
     let app = create_router(test_state(db));
 
     let response = app
-        .oneshot(Request::builder().uri("/api/wrong_path").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/api/wrong_path")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
 
@@ -36,22 +36,22 @@ async fn test_404_not_found() {
 
 #[tokio::test]
 async fn test_public_notes_route_structure() {
-    let db = MockDatabase::new(DatabaseBackend::Postgres)
-        .into_connection();
+    let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
 
     let app = create_router(test_state(db));
 
     let response = app
-        .oneshot(Request::builder().uri("/api/public/notes").body(Body::empty()).unwrap())
+        .oneshot(
+            Request::builder()
+                .uri("/api/public/notes")
+                .body(Body::empty())
+                .unwrap(),
+        )
         .await
         .unwrap();
 
     assert_ne!(response.status(), StatusCode::NOT_FOUND);
 }
-
-// ---- 会话管理端点（20260903 会话化）401 用例 ----
-// 全部 handler 内 auth_jwt::auth_uid 在碰 DB 之前返回 401，
-// MockDatabase（无预期）下不触发任何查询，纯鉴权路径断言。
 
 fn mock_app() -> axum::Router {
     let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
@@ -71,10 +71,7 @@ async fn req_status(app: axum::Router, method: &str, uri: &str) -> StatusCode {
     .status()
 }
 
-/// 带 JSON body 的请求。**带 `Json<T>` 提取器的路由必须走这个**：axum 的提取器在
-/// handler 之前执行，空 body + 无 content-type 会先被拒成 415，handler 里那行鉴权根本
-/// 轮不到（20260923 质量闸首次跑就撞上：`PATCH /api/chat/conversations/1` 断言 401 实得 415
-/// ——此前 CI 只 `cargo build`，这个目标从没被编译运行过）。
+/// JSON 提取器需要正文和 Content-Type，避免在鉴权前返回 415。
 async fn req_status_json(app: axum::Router, method: &str, uri: &str, body: &str) -> StatusCode {
     app.oneshot(
         Request::builder()
@@ -93,20 +90,30 @@ async fn req_status_json(app: axum::Router, method: &str, uri: &str, body: &str)
 async fn test_conversations_require_auth() {
     let app = mock_app();
     // GET /api/chat/conversations 列表
-    assert_eq!(req_status(app.clone(), "GET", "/api/chat/conversations").await, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        req_status(app.clone(), "GET", "/api/chat/conversations").await,
+        StatusCode::UNAUTHORIZED
+    );
     // POST /api/chat/conversations 新建
-    assert_eq!(req_status(app.clone(), "POST", "/api/chat/conversations").await, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        req_status(app.clone(), "POST", "/api/chat/conversations").await,
+        StatusCode::UNAUTHORIZED
+    );
     // DELETE /api/chat/conversations/:id 删除
-    assert_eq!(req_status(app.clone(), "DELETE", "/api/chat/conversations/1").await, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        req_status(app.clone(), "DELETE", "/api/chat/conversations/1").await,
+        StatusCode::UNAUTHORIZED
+    );
     // PATCH /api/chat/conversations/:id 重命名/置顶（体是 `Json<UpdateConversationReq>`：
     // `{}` 合法且可反序列化——只是缺 token，所以判据仍是"鉴权发生在碰 DB 之前"）
-    assert_eq!(req_status_json(app, "PATCH", "/api/chat/conversations/1", "{}").await, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        req_status_json(app, "PATCH", "/api/chat/conversations/1", "{}").await,
+        StatusCode::UNAUTHORIZED
+    );
 }
 
 #[tokio::test]
 async fn test_tag_move_requires_auth() {
-    // 换层级/换父级（20260921）：挂 protected_routes ⇒ auth_guard 全 admin，
-    // handler 内 auth_uid 在碰 DB 之前就返回 401（MockDatabase 零查询预期）。
     let app = mock_app();
     assert_eq!(
         req_status(app, "POST", "/api/protected/tag/move").await,
@@ -117,23 +124,21 @@ async fn test_tag_move_requires_auth() {
 #[tokio::test]
 async fn test_chat_history_requires_auth() {
     let app = mock_app();
-    assert_eq!(req_status(app, "GET", "/api/chat/history").await, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        req_status(app, "GET", "/api/chat/history").await,
+        StatusCode::UNAUTHORIZED
+    );
 }
 
 #[tokio::test]
 async fn test_chat_discard_requires_auth() {
     let app = mock_app();
-    assert_eq!(req_status(app, "POST", "/api/chat/discard").await, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        req_status(app, "POST", "/api/chat/discard").await,
+        StatusCode::UNAUTHORIZED
+    );
 }
 
-// ---- 个人中心一期（20260922）自助接口的未登录行为 ----
-// 这一族与上面 chat 系**故意不同**：它们挂 `public_routes`（面向任意登录用户，不能进
-// admin 守卫域）+ handler 内自身鉴权，无 token 时返回的是**信封错误**
-// （HTTP 200 + code=500「未登录」），与同族的 `GET /api/protected/profile`、
-// `/api/protect/board/mine` 完全一致——**不是 401**。契约写死在这里，防后人"顺手改成 401"
-// 而把前端（按 code 判）打穿。
-// 断言本身仍在验证"鉴权发生在碰 DB 之前"：MockDatabase 没有任何查询预期，
-// handler 只要先查库再鉴权，这个测试就会以 panic 失败。
 async fn req_api_code(app: axum::Router, method: &str, uri: &str, body: &str) -> (StatusCode, i64) {
     let res = app
         .oneshot(
@@ -147,7 +152,9 @@ async fn req_api_code(app: axum::Router, method: &str, uri: &str, body: &str) ->
         .await
         .unwrap();
     let status = res.status();
-    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
+        .await
+        .unwrap();
     let code = serde_json::from_slice::<serde_json::Value>(&bytes)
         .ok()
         .and_then(|v| v.get("code").and_then(|c| c.as_i64()))
@@ -173,10 +180,16 @@ async fn req_api_envelope(
         .await
         .unwrap();
     let status = res.status();
-    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
+        .await
+        .unwrap();
     let v = serde_json::from_slice::<serde_json::Value>(&bytes).unwrap_or(serde_json::Value::Null);
     let code = v.get("code").and_then(|c| c.as_i64()).unwrap_or(-1);
-    let msg = v.get("message").and_then(|m| m.as_str()).unwrap_or("").to_string();
+    let msg = v
+        .get("message")
+        .and_then(|m| m.as_str())
+        .unwrap_or("")
+        .to_string();
     (status, code, msg)
 }
 
@@ -196,7 +209,11 @@ async fn test_profile_center_requires_login() {
         ("DELETE", "/api/protected/favorites/1", ""),
         ("GET", "/api/protected/notifications", ""),
         ("GET", "/api/protected/notifications/summary", ""),
-        ("POST", "/api/protected/notifications/read", r#"{"ids":[1]}"#),
+        (
+            "POST",
+            "/api/protected/notifications/read",
+            r#"{"ids":[1]}"#,
+        ),
         ("GET", "/api/protected/messages", ""),
         (
             "POST",
@@ -205,28 +222,26 @@ async fn test_profile_center_requires_login() {
         ),
         ("POST", "/api/protected/messages/read", r#"{"ids":[1]}"#),
         ("GET", "/api/protected/my/talks", ""),
-        // 对话额度（20260929）用户侧两条：查的/写的都是本人那一行（没有 uid 参数可传），
-        // 所以它们同样是"public_routes + handler 自身鉴权"，**不是** 401
         ("GET", "/api/protected/quota", ""),
-        ("POST", "/api/protected/quota/apply", r#"{"reason":"想接着问"}"#),
+        (
+            "POST",
+            "/api/protected/quota/apply",
+            r#"{"reason":"想接着问"}"#,
+        ),
     ];
     for (method, uri, body) in cases {
         let (status, code) = req_api_code(mock_app(), method, uri, body).await;
-        assert_eq!(status, StatusCode::OK, "{} {} 应返回 HTTP 200 信封", method, uri);
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "{} {} 应返回 HTTP 200 信封",
+            method,
+            uri
+        );
         assert_ne!(code, 200, "{} {} 未登录不该成功", method, uri);
     }
 }
 
-// ---- 对话额度（20260929）管理员三条 ----
-// 这一族与上面**故意不同**：它们挂在守卫域内（`protected_routes` 的
-// `route_layer(auth_guard)`），无 token 时是 **401**，且鉴权发生在任何查询之前
-// （MockDatabase 零查询预期 ⇒ handler 只要先查库再鉴权，这个测试就会 panic 失败）。
-//
-// 三条判据的分工写在这里，免得后人以为"测过了"：
-//   · **鉴权在哪一层** = 本文件；
-//   · **算术、角色表、C1 形状** = `src/quota.rs` 的 `#[cfg(test)] mod tests`（纯函数）；
-//   · **那条条件 UPDATE 真的会拦人**（并发下最后一格不超发）= 只有真机探针验得了，
-//     mock 的 `rows_affected` 是喂进去的。
 #[tokio::test]
 async fn test_quota_admin_routes_require_console() {
     let app = mock_app();
@@ -250,54 +265,60 @@ async fn test_quota_admin_routes_require_console() {
     );
 }
 
-// ---- 文章阅读量 / 点赞量（20260930）：两个族故意不同 ----
-//
-// **读**（stats/view）不需要登录，因此"无 token"这件事在这里根本不是错误分支：
-// 访客照样拿得到 `{views,likes,liked:false}`。所以这两条**没有**"未登录"用例可写
-// ——它们的形状由 MockDatabase 的零查询预期顶着（handler 在查到文章之前不会成功，
-// 这里只断言路由存在且没被守卫误伤）。
-//
-// **写**（like/unlike）**20261001 起也不再要求登录**（用户第 2 条：点赞改为非登录
-// 用户也可以点赞）：身份 = 登录账号，或浏览器自报的 `X-Visitor-Key`（`identify`）。
-// 但**仍然不是 401**：它挂 `public_routes` + handler 内自身鉴权，走的是上面 profile
-// 那一族的信封错误契约。判据写死在这里，防后人"顺手挪进 protected_routes"——那会把
-// 普通用户全部 403 掉（auth_guard 判的是管理员）。
 #[tokio::test]
 async fn test_点赞取消点赞走信封错误而不是401() {
-    for (method, uri) in [("POST", "/api/public/notes/1/like"), ("DELETE", "/api/public/notes/1/like")] {
+    for (method, uri) in [
+        ("POST", "/api/public/notes/1/like"),
+        ("DELETE", "/api/public/notes/1/like"),
+    ] {
         let (status, code, _) = req_api_envelope(mock_app(), method, uri, None).await;
-        assert_eq!(status, StatusCode::OK, "{} {} 应返回 HTTP 200 信封", method, uri);
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "{} {} 应返回 HTTP 200 信封",
+            method,
+            uri
+        );
         assert_ne!(code, 200, "{} {} 没有身份不该成功", method, uri);
     }
 }
 
-/// 匿名点赞（20261001）：这道门是**访客标识**开的，不是把鉴权放宽了。
-///
-/// 判据靠**信封里的那句话**区分走到了哪一关（两个分支都是 HTTP 200 + code≠200，
-/// 只看状态码分不出来）：
-///   · 「未登录」      = 身份这一关没过；
-///   · 「这篇文章不存在」= 身份过了，卡在"文章可见性"那一关（MockDatabase 没有任何
-///     查询预期 ⇒ `visible_note_id` 恒 false）。**这就是"门真的开了"的证据。**
+/// 匿名点赞：这道门是**访客标识**开的，不是把鉴权放宽了。
 #[tokio::test]
 async fn test_匿名点赞靠访客标识开门而不是放宽鉴权() {
     const OK_KEY: (&str, &str) = ("x-visitor-key", "0123456789abcdef");
 
     // ① 两样都没有 ⇒ 「未登录」
-    let (status, code, msg) = req_api_envelope(mock_app(), "POST", "/api/public/notes/1/like", None).await;
+    let (status, code, msg) =
+        req_api_envelope(mock_app(), "POST", "/api/public/notes/1/like", None).await;
     assert_eq!(status, StatusCode::OK);
     assert_ne!(code, 200);
     assert_eq!(msg, "未登录", "没身份时应当被拦在身份这一关");
 
     // ② 合法标识 ⇒ 不再是「未登录」（门开了）
-    let (status, _, msg) = req_api_envelope(mock_app(), "POST", "/api/public/notes/1/like", Some(OK_KEY)).await;
+    let (status, _, msg) =
+        req_api_envelope(mock_app(), "POST", "/api/public/notes/1/like", Some(OK_KEY)).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(msg, "这篇文章不存在", "有标识就该走到可见性判定，而不是被当成未登录");
+    assert_eq!(
+        msg, "这篇文章不存在",
+        "有标识就该走到可见性判定，而不是被当成未登录"
+    );
 
     // ③ 标识不合格（太短 / 字符集越界 / 超长）⇒ 一律当"没有标识"
-    for bad in ["short", "abc", "has space here", "0123456789abc!@#$%^&*()", &"a".repeat(65)] {
+    for bad in [
+        "short",
+        "abc",
+        "has space here",
+        "0123456789abc!@#$%^&*()",
+        &"a".repeat(65),
+    ] {
         let (_, _, msg) = req_api_envelope(
-            mock_app(), "POST", "/api/public/notes/1/like", Some(("x-visitor-key", bad)),
-        ).await;
+            mock_app(),
+            "POST",
+            "/api/public/notes/1/like",
+            Some(("x-visitor-key", bad)),
+        )
+        .await;
         assert_eq!(msg, "未登录", "非法标识 {:?} 不该被当成身份", bad);
     }
 
@@ -324,16 +345,25 @@ async fn test_匿名点赞靠访客标识开门而不是放宽鉴权() {
             .await
             .unwrap();
         let st = res.status();
-        let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
-        let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        let v: serde_json::Value =
+            serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
         (
             st,
             v.get("code").and_then(|c| c.as_i64()).unwrap_or(-1),
-            v.get("message").and_then(|m| m.as_str()).unwrap_or("").to_string(),
+            v.get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("")
+                .to_string(),
         )
     };
     assert_eq!(status, StatusCode::OK, "坏令牌 + 好标识不该是 401");
-    assert_eq!(msg, "这篇文章不存在", "坏令牌应当**退回访客身份**，而不是当成未登录");
+    assert_eq!(
+        msg, "这篇文章不存在",
+        "坏令牌应当**退回访客身份**，而不是当成未登录"
+    );
 }
 
 /// 后台文章报表挂守卫域 ⇒ 无 token 是 **401**（与 `/api/protected/stats/users` 同族）。
@@ -367,13 +397,6 @@ async fn test_分期报表需要管理员() {
 }
 
 /// 阅读求和（`SUM(cnt)`）**必须**走 `note_stats::sum_views()`——它是唯一一处
-/// `CAST(... AS SIGNED)`。理由是**真解码出来的**教训，不是风格洁癖：
-/// MySQL 的 `SUM(<整数列>)` 返回 `DECIMAL`，sea-orm 按 `i64` 解会当场报
-/// "not compatible with SQL type DECIMAL"。这条错**编译期发现不了**（本套件的
-/// MockDatabase 根本不经过 MySQL 的类型回传），20260930 实测症状是"卡片上三个数
-/// 一个都不显示、`GET .../stats` 直接 500"，而日志里只有一行 WARN ⇒ 得有人盯着才看得见。
-/// 所以这里锁的是**"别再写第二处裸 `.sum()`"**：全文件只允许出现一次，
-/// 且那一次必须在 `sum_views()` 里（`.count()` 不受影响，COUNT 本来就是 BIGINT）。
 #[test]
 fn test_阅读求和不许绕开_sum_views_那一手_cast() {
     let src = std::fs::read_to_string(
@@ -390,7 +413,10 @@ fn test_阅读求和不许绕开_sum_views_那一手_cast() {
         .map(|(i, l)| (i + 1, l.trim()))
         .collect();
 
-    assert!(!sql_sums.is_empty(), "没找到任何 SQL 求和——判据空了，改成实际写法再锁");
+    assert!(
+        !sql_sums.is_empty(),
+        "没找到任何 SQL 求和——判据空了，改成实际写法再锁"
+    );
     for (line, text) in &sql_sums {
         assert!(
             text.contains("cast_as"),
@@ -415,13 +441,22 @@ async fn test_额度扣减的判据是_rows_affected_而不是猜的() {
     use saudade_blog::quota::{self, ConsumeOutcome};
     use sea_orm::MockExecResult;
 
-    let cases: [(u64, ConsumeOutcome); 2] =
-        [(1, ConsumeOutcome::Consumed), (0, ConsumeOutcome::Exhausted)];
+    let cases: [(u64, ConsumeOutcome); 2] = [
+        (1, ConsumeOutcome::Consumed),
+        (0, ConsumeOutcome::Exhausted),
+    ];
     for (rows, want) in cases {
         let db = MockDatabase::new(DatabaseBackend::Postgres)
-            .append_exec_results([MockExecResult { last_insert_id: 0, rows_affected: rows }])
+            .append_exec_results([MockExecResult {
+                last_insert_id: 0,
+                rows_affected: rows,
+            }])
             .into_connection();
-        assert_eq!(quota::try_consume(&db, 126, 500).await, want, "rows_affected={rows}");
+        assert_eq!(
+            quota::try_consume(&db, 126, 500).await,
+            want,
+            "rows_affected={rows}"
+        );
     }
 
     // DB 故障 ⇒ fail-open（放行、不计数），**不是**当成"用完了"——
@@ -429,11 +464,17 @@ async fn test_额度扣减的判据是_rows_affected_而不是猜的() {
     let boom = MockDatabase::new(DatabaseBackend::Postgres)
         .append_exec_errors([sea_orm::DbErr::Custom("模拟 DB 故障".into())])
         .into_connection();
-    assert_eq!(quota::try_consume(&boom, 126, 500).await, ConsumeOutcome::Degraded);
+    assert_eq!(
+        quota::try_consume(&boom, 126, 500).await,
+        ConsumeOutcome::Degraded
+    );
 
     // 语句本身：原地 +1，且带"还没到上限"这道条件
     let db = MockDatabase::new(DatabaseBackend::Postgres)
-        .append_exec_results([MockExecResult { last_insert_id: 0, rows_affected: 1 }])
+        .append_exec_results([MockExecResult {
+            last_insert_id: 0,
+            rows_affected: 1,
+        }])
         .into_connection();
     let _ = quota::try_consume(&db, 126, 500).await;
     // 整条语句连同绑定值一起断言（`+ 1` 是以绑定参数下发的，不是字面量）。
@@ -464,18 +505,6 @@ async fn test_额度扣减的判据是_rows_affected_而不是猜的() {
     );
 }
 
-// ---- 站内聚合搜索（20261006）----
-//
-// 这一节只钉三件事，都是 MockDatabase（**没有任何查询预期**）下能确定的：
-//   ① 路由真的挂上了，且体解析在碰库之前（拿非法 JSON 探，见下）；
-//   ② 「没给关键词 / 给了但切不出可用 term」这两条路**根本不查库**——所以它们能在
-//      零预期的 MockDatabase 上跑通。handler 只要把任何一次查询提到短路之前，这组立刻 panic；
-//   ③ 信封的形状（total / counts / 四个数组），前端就是按它渲染的。
-//
-// ⚠️ **真库上的命中口径（谁该出现、谁不许出现）不在这里**——MockDatabase 只会比对一个
-// 字符串、不会真的执行 LIKE，可见性谓词（is_public / approved / is_deleted / 父文章可见）
-// 在它面前全是"通过"。那些判据在 `tests/pg_integration.rs`，两半合起来才算数。
-
 /// 与 `req_api_code` 同源，但把整个信封带回来（聚合搜索的判据要看 `data` 里的数）。
 async fn req_api_json(app: axum::Router, body: &str) -> (StatusCode, serde_json::Value) {
     let res = app
@@ -490,7 +519,9 @@ async fn req_api_json(app: axum::Router, body: &str) -> (StatusCode, serde_json:
         .await
         .unwrap();
     let status = res.status();
-    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20).await.unwrap();
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
+        .await
+        .unwrap();
     let v = serde_json::from_slice::<serde_json::Value>(&bytes).unwrap_or(serde_json::Value::Null);
     (status, v)
 }
@@ -515,15 +546,18 @@ async fn test_聚合搜索路由已挂载且体解析在碰库之前() {
 #[tokio::test]
 async fn test_聚合搜索空关键词与不可用关键词都回空且不查库() {
     let cases: [&str; 4] = [
-        "{}",                      // 字段缺席
-        r#"{"keyword":null}"#,     // 显式 null
-        r#"{"keyword":"   "}"#,    // 全空白
-        r#"{"keyword":"第1章"}"#,  // 非空，但切完一个可用 term 都不剩
+        "{}",                     // 字段缺席
+        r#"{"keyword":null}"#,    // 显式 null
+        r#"{"keyword":"   "}"#,   // 全空白
+        r#"{"keyword":"第1章"}"#, // 非空，但切完一个可用 term 都不剩
     ];
     for body in cases {
         let (status, v) = req_api_json(mock_app(), body).await;
         assert_eq!(status, StatusCode::OK, "{body} 不该在 HTTP 层失败");
-        assert_eq!(v["code"], 200, "{body} 该是成功信封（空结果是结果，不是错误）");
+        assert_eq!(
+            v["code"], 200,
+            "{body} 该是成功信封（空结果是结果，不是错误）"
+        );
         assert_eq!(v["data"]["total"], 0, "{body} 命中总数必须是 0");
         for k in ["note", "talk", "board", "comment"] {
             assert_eq!(v["data"]["counts"][k], 0, "{body} 的 {k} 计数必须是 0");
@@ -542,14 +576,20 @@ async fn test_聚合搜索空关键词与不可用关键词都回空且不查库
 async fn aggregate_search_rejects_unbounded_input_before_database() {
     for body in [
         serde_json::json!({"keyword":"博".repeat(129)}),
-        serde_json::json!({"page":0}), serde_json::json!({"page":101}),
-        serde_json::json!({"pageSize":0}), serde_json::json!({"pageSize":51}),
+        serde_json::json!({"page":0}),
+        serde_json::json!({"page":101}),
+        serde_json::json!({"pageSize":0}),
+        serde_json::json!({"pageSize":51}),
         serde_json::json!({"keyword":(0..17).map(|n|format!("word{n}")).collect::<Vec<_>>().join(" ")}),
     ] {
         let (status, _) = req_api_json(mock_app(), &body.to_string()).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     }
-    let (status, _) = req_api_json(mock_app(), &serde_json::json!({"keyword":"x".repeat(3000)}).to_string()).await;
+    let (status, _) = req_api_json(
+        mock_app(),
+        &serde_json::json!({"keyword":"x".repeat(3000)}).to_string(),
+    )
+    .await;
     assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
     let (status, _) = req_api_json(mock_app(), r#"{"type":"private"}"#).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);

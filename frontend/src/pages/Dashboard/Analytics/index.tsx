@@ -150,7 +150,6 @@ const NoteData = () => {
     // 在真数据下会变成"渲染 → 请求 → setState → 渲染"的循环。
     // 依赖写 `[load]`（`load` 已被 useCallback 固定）——**不要再写成 `[]` + 一条
     // eslint-disable**：那条注释在本仓会被 `--report-unused-disable-directives`
-    // 判成 error，整个 check job 变红 ⇒ 那次 push 一个字节都不会部署（吃过一次）。
     useEffect(() => {
         load()
     }, [load])

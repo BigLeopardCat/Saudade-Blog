@@ -1,28 +1,8 @@
 #!/usr/bin/env bash
-# ═══════════════════════════════════════════════════════════════════════════════
-#  Docker 安装路：宿主侧的一次性准备（**不需要 docker 就能跑**，这正是它可离线自检的原因）
-#
-#  它做四件事，产物只落在两处 —— `deploy/docker/generated/` 与 `$SAUDADE_DATA_DIR`：
-#    ① 渲染 nginx 站点配置（复用 deploy/nginx/render.sh，与裸机 install.sh **同一份实现**）
-#    ② 自签一张**带 SAN** 的证书（或装入你已有的证书）
-#    ③ 写三份配置：compose 用 `.env`、后端 `generated/backend.env`、agent `generated/agent.env`
-#       ＋ `generated/.credentials`（0600，同时当 db-init 的 env_file 用）
-#    ④ 建宿主数据目录（uploads / logs / traces / agent-data）
-#
-#  **它绝不碰**：仓库根 `.env`、`deploy/.credentials`、`deploy/nginx/*` —— 那三样是裸机那套的。
-#  判据在 check.sh 里（跑完 `git status` 必须干净）。
-#
-#  用法：
-#    bash prepare.sh                          # 交互向导
-#    bash prepare.sh --domain blog.example.com --provider deepseek --api-key sk-xxx
-#    bash prepare.sh --dry-run                # 只打印要做什么，一个字都不写
-#    bash prepare.sh --print blog.conf        # 只把渲染结果打到 stdout（check.sh 做字节比对用）
-#
-#  幂等：再跑一次**不会**换口令/密钥，只会按新输入重渲染 conf 与两份 .env。三条口令各有各的
-#  改法（README 的《改口令》一节）：应用账号跟着 .credentials 收敛、root 与管理员口令不会。
-#  ⚠️ 输入校验比 install.sh 更严（多禁 `$`/反引号/反斜杠）：这些值还要穿过 compose 的 .env
-#     插值与 env_file 解析，那两个解析器对 `$` 的处理与本仓的 dotenvy 不是一套。
-# ═══════════════════════════════════════════════════════════════════════════════
+# 生成容器安装配置、凭据和 nginx 模板，不依赖 Docker 守护进程。
+# 已有凭据和配置按脚本约定复用，不将占位说明当有效配置。
+# 此路径仍使用 MySQL，不能直接部署当前 PostgreSQL 后端。
+
 set -euo pipefail
 
 # ── 路径基准 ──────────────────────────────────────────────────────────────────

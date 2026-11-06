@@ -95,9 +95,6 @@ case "$AGENT_FLAG" in
 esac
 
 head_ "④ 一致性（三处必须同档，不一致**不会报错**，只会说假话）"
-# nginx 这一面的"实际生效档"要按**线上真在跑的东西**算，不能只看新 snippet：
-# 迁移还没做的机器上，入口是旧的"具体文件名 include"顶着（那正是本次要换掉的写法）。
-# 只看 snippet 会得出"三处同档 off"的假结论——而站点上那三个入口明明通着。
 NGINX_STATE=off
 [ -f "$SNIPPET" ] && NGINX_STATE=on
 LEGACY=off

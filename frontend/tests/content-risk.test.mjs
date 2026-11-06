@@ -1,17 +1,3 @@
-// ═ 内容风控与分级禁言：跨语言契约（20261002）══
-//   node tests/content-risk.test.mjs
-//
-// 这一批的代码横跨四门语言/四层（Rust 判据 / Rust 数据库列 / 前端后台页 / 前端个人中心），
-// 而它们之间**全是靠"同一个字符串"连起来的**——键名、哨兵值、两句拒绝话术。这类契约
-// 的共同失败模式是**静默的**：改一侧不改另一侧，编译全过、测试全绿，只是那一档再也
-// 没生效（或"永久禁言"在某处显示成 9999 年）。
-//
-// 所以本套件只干两件事：
-//   ① **同源断言**：五组键名 / 默认值 / 哨兵值，在各自的语言里各自解析出来，然后
-//      **互相比对**——不是各自"包含某个字面量"，那种断言在两边一起改字面量时照样绿。
-//   ② **分野断言**：禁言与冻结最容易被后来者顺手合并（"反正都是限制账号"），
-//      而合并之后的症状是**假话**（通知里说"登录已失效"）与**越权**（把令牌作废、
-//      把读也挡了）。这一半把"禁言绝不碰 status/token_version/middleware"钉死。
 import { readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -146,16 +132,6 @@ ok(count(risk, 'pub async fn screen') === 1 && count(risk, 'pub async fn apply_v
 ok(/src == "board"/.test(talks) && /if src == "board" \{\s*\n\s*let cfg = crate::risk::load_config/.test(talks),
     '留言侧只在 src=board 过闸（管理员的说说不受限流）');
 
-// 闸的位置：comments.rs 里必须在**审核裁决之前**（限流的那条不该白烧一次 AI 审核），
-// 且在 uid 落地之后（要按人计数）
-//
-// ⚠️ **三个位置都必须在 `create_comment` 的函数体里取**（20261003 修）。原来直接用
-// `comments.indexOf` 在全文件找，看着是"文件里这行在屏幕那行之前"，其实找到的是
-// **`list_comments`（读路径）里的同一句鉴权**——它天然排在文件更靠前的位置，于是这条
-// 断言一直在**替另一个函数**做担保：`create_comment` 就算把闸提到鉴权之前，它照样绿。
-// 触发条件是 20261003 加投票时读路径换了身份写法（`optional_who`，匿名也要能亮自己那票），
-// 那句字面量消失，假绿才露出来——**这类"判据的前提住在别人手里"的坑，本仓已经吃过多次**：
-// 判据要锚在被判的那段代码上，不能锚在"文件里正好也有这么一行"。
 const cmBody = bodyOf(comments, 'pub async fn create_comment');
 const cmAuthIdx = cmBody.indexOf('super::talks::current_uid');
 const cmScreenIdx = cmBody.indexOf('crate::risk::screen');
@@ -173,10 +149,6 @@ eq(count(talks, 'if forced && approved == 1 { 0 } else { approved }'), 1,
 ok(count(strip(codeOnly(risk)), 'forced && approved') === 0,
     '压 0 的判据不在 risk.rs（它只回 verdict，不碰 approved）');
 
-// 「`<= 0` = 这一档显式关闭」这条规则**只许住一处**。20261003 CI 抓到的真实缺陷：
-// 原来调用方判 `min_interval_secs > 0`，而 `check_and_mark` 内部又写 `gap_secs.max(1)`
-// —— 同一个规则两份实现、且下面那份把 0 悄悄变成"1 秒"（一个关不掉的闸）。
-// 这类 bug 本地 `cargo check` 永远看不见（测试跑不了），只有 CI 的 Rust 用例能抓。
 const limiter = bodyOf(risk, 'fn check_and_mark');
 ok(/gap_secs <= 0/.test(limiter) && /return Ok\(\(\)\)/.test(limiter),
     'check_and_mark 自己认「<= 0 = 关闭」（不是 `gap_secs.max(1)` 那种把 0 变 1 秒的写法）');

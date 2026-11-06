@@ -1,24 +1,3 @@
-// ═ 文章横幅「读数四件」共用几何 · sass 编译契约（20260926 起；20261001 三件同形）══
-//   node tests/read-fav-sass.test.mjs
-//
-// 现场：用户第 1 条「详情页三图标样式和布局太丑了，大小不一，排列奇怪」。
-// 实测下来那三件确实是三套几何：收藏 32×62（竖排胶囊）、浏览 59×24、点赞 64×30；
-// 内边距 6px 8px / 2px 8px / 4px 10px、字号 13 / 12 / 13、描边 α .55 / .35 / .55。
-//
-// 修法：各件共用一份 `.readStat`（同高同距同字号同描边），整簇住 `.readStats`。
-// 20261003 用户第 5 条把它由**行**改成**列**（`flex-direction: column`）并补上第四件
-// 「讨论数」——几何那一份原样不动，改的只是它摆的方向（横排为什么把标题挤偏，推导
-// 写在 sass 里 `.readStats` 那一段）。
-// 所以本套件现在锁的核心是一条**否定式**判据：几何属性只许出现在 `.readStat` 一处
-//（后面 ③ 组）——"大小不一"的回归方式就是有人又给某一个加了 height/padding/font-size。
-//
-// 为什么这条要进 CI（而这套的其它判据在 `.test.py` 沙箱里）：**sass 缩进嵌套已经咬过两次**
-// （见记忆里那条"个人中心/红点"的根因）——缩进错一级，编译产物里选择器就挂到别的父级下面，
-// 语法完全合法、构建不报错、页面也不会崩，只是样式静默失效。这里用真 sass 编译真 `.sass`，
-// 断言每条规则落在**完整的选择器链**上：缩进错了链就变了，链对不上即红。
-//
-// 布局行为（四件真的等高同宽、挤不挤）由 tests/read-stats-cluster.test.py 在无头 Chrome 里验，
-// 那边能量 flex 收缩后的真实盒子；本套件只管"CSS 有没有写在该在的地方"。
 import { readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -83,8 +62,6 @@ const CLUSTER_MEMBERS = [STAT, FAV, LIKE, VIEWS, COMMENTS];
 console.log('\n① 整簇：住一个 wrapper、2×2 两列等宽');
 {
     ok(decl(CLUSTER, 'display', 'grid').found, '  四件同簇（display: grid）');
-    // 20261003 用户第 2 条「右侧是四个数据组件 2*2 排布」：两列等宽 ⇒ 四件落在
-    // 左上/右上/左下/右下四个等大的格子里（DOM 顺序即阅读顺序，无需 grid-area）。
     ok(decl(CLUSTER, 'grid-template-columns', '1fr 1fr').found,
         '  2×2：两列 `1fr 1fr`（等宽，不是"内容多宽就多宽"）');
     const g = decl(CLUSTER, 'gap', '6px');
@@ -209,7 +186,6 @@ console.log('\n⑥ 源码契约：四件是真的同一个簇的四个孩子');
     const hits = tsx.match(/(?<![.\w])readStat\b(?!s)/g) || [];
     ok(hits.length === 4, '  恰好四处挂 readStat（多一处就是有第五件偷偷混进来）', hits);
     ok(!/readFavWrap|readLikeWrap/.test(tsx), '  旧的 .readFavWrap / .readLikeWrap 已从 tsx 拆掉');
-    // 20261001（用户第 4 条「三图标风格不一致」）：图标从文本字形换成 NoteStatIcons 同源 14px
     ok(/\{faved\s*\?\s*<StarIcon size=\{14\} \/>\s*:\s*<StarOutlineIcon size=\{14\} \/>\}/.test(tsx),
         '收藏图标走 NoteStatIcons（选中实心星 / 未选中描边星，14px）');
     ok(!/(['"`])[★☆♥♡]\1/.test(tsx), '  不再有 ★☆♥♡ 这类文本字形（注释里的考古引用不算）');

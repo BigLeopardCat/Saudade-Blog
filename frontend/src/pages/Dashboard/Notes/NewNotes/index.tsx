@@ -571,8 +571,6 @@ const NewNotes = () => {
                             scheduleAutosave();
                         }
                     } else {
-                        // 发布完成 → 关掉自动保存：否则卸载时那次补发会给刚发布的文章建出一行
-                        // 内容相同的「修改稿」，草稿箱里凭空多一个副本
                         stopAutosaveRef.current = true;
                         if (autosaveTimer.current) { clearTimeout(autosaveTimer.current); autosaveTimer.current = null; }
                         goBackToList()

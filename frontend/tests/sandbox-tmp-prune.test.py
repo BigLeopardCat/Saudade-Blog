@@ -1,24 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""沙箱临时目录清扫脚本 `scripts/prune_sandbox_tmp.py` 的行为回归（20261006）。
-
-  python3 tests/sandbox-tmp-prune.test.py
-
-为什么要有它：清扫脚本的判据是"**删东西**"，而它最重要的性质是"**未知一律不删**"——
-这类性质**只能靠真跑 + 诱饵**验证：盯着代码看永远说不出"`health_state` 会不会被它顺手收走"。
-所以这里在**夹具目录**上跑真脚本（`tempfile.mkdtemp` 建的，**绝不指向真 /tmp**），
-诱饵按真 /tmp 上实际住着的东西摆。
-
-锁四件事：
-  ① **前缀是从套件源码推出来的**（`--list-prefixes` 里必须同时出现 .py 侧与 .mjs 侧各一族）
-     ——手写名单漏一族就等于那一族再也不会被扫，而**没有任何东西会变红**；
-  ② 命中前缀 + 够老 ⇒ 删；命中前缀 + **太新** ⇒ 活（年龄闸，防误伤正在跑的套件）；
-  ③ **诱饵全活**：`health_state` / `claude-1000` / `systemd-private-*` /
-     `verify-clone-*.git` / `bundle5`，以及"名字**中间**含前缀"的（前缀必须在开头）、
-     以及一条指向根外的符号链接（不跟随）；
-  ④ 默认**只列不删**（不加 `--apply` 时磁盘上一个都不能少），三种跑法退出码恒 0
-     （清扫失败对调用方必须非致命，否则会把一次真实的套件失败搅浑）。
-"""
+"""沙箱临时目录清扫脚本 `scripts/prune_sandbox_tmp.py` 的行为回归。"""
 import os
 import pathlib
 import shutil

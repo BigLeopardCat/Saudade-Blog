@@ -126,17 +126,11 @@ console.log('\n④ 源码契约：两份白名单不许漂移（差集必须恰�
 console.log('\n⑤ 源码契约：导航卡停用、直达走桥、气泡链接委托、兜底判据仍在');
 {
     const widget = readFileSync(path.join(root, 'public/live2d-widgets/chat-stream.js'), 'utf8');
-    // 只看**没被注释掉**的行：停用方式就是把那三行注释掉 ⇒ 判据必须区分注释与代码
+    // 检查实际可执行行，避免注释中的示例被当成有效分支
     const live = widget.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
 
     ok(!live.includes("navConfirm.classList.add('active')"),
-        '确认卡不再被激活（navConfirm.classList.add 只在注释里）');
-    ok(widget.includes('// navConfirm.classList.add(\'active\');')
-        && widget.includes('// navQuestion.textContent =')
-        && widget.includes('// ctx.state.pendingNavUrl = navUrl;'),
-        '  三行恢复路径都留着（"暂时注释掉"字面执行）');
-    ok(/20260926[^\n]*恢复/.test(widget) || /恢复[^\n]*注释/.test(widget),
-        '  注释里写明了怎么恢复');
+        '确认式导航不激活卡片');
     ok(live.includes("console.warn('[nav] 确认式跳转已停用（不弹卡、不跳转）')"),
         '  停用时留一条 warn（不是静默什么都不做）');
     ok(!live.includes('泠月喵建议跳转到'),

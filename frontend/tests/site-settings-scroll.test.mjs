@@ -14,8 +14,6 @@ const check = (desc, cond, detail = '') => {
     if (!cond) FAILS.push(desc);
 };
 
-/** 取编译产物里某条规则的声明块（**编译后没有注释**——判"没有"时这一步必须做，
- *  否则源码注释里的示例文本会被当成声明，本仓 20260923 在这上面吃过一次假绿）。 */
 function ruleOf(css, selector) {
     const re = new RegExp(`(?:^|[}{])\\s*${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{([^}]*)\\}`, 'm');
     const m = re.exec(css);
@@ -26,8 +24,6 @@ function ruleOf(css, selector) {
 const hasDecl = (decls, prop, valueRe) =>
     new RegExp(`(?:^|;)\\s*${prop}\\s*:\\s*${valueRe}\\s*(?:;|$)`, 'm').test(decls);
 
-/** ① 的判据本体：一个盒子要真能滚，必须**两件同时在场**——确切高度 + 非 visible 的溢出。
- *  抽成函数是为了能拿"修复前的真实形状"再跑一遍（反向对照）。 */
 function scrollable(decls) {
     const height = hasDecl(decls, 'height', '(100%|100vh|\\d+(px|vh|rem))');
     const over = hasDecl(decls, 'overflow(-y)?', '(auto|scroll)');
@@ -42,8 +38,6 @@ const sc = scrollable(allin);
 check('★ .allin 同时有确切高度与 overflow ⇒ 内容超高时是"滚"，不是"被裁"',
     sc.ok, `height=${sc.height} overflow=${sc.over}`);
 
-// 反向对照（无头验证法）：把**修复前的真实形状**（内联 style 只写了 overflowY、无高度）
-// 喂给同一个判据，必须当场判红 —— 否则这条判据是空的，它只是恒真。
 const BEFORE = 'padding: 20px; overflow-y: scroll;';
 check('★ 反向对照：只写 overflow、没有高度的那个旧形状会被判红（判据不是恒真）',
     scrollable(BEFORE).ok === false, JSON.stringify(scrollable(BEFORE)));

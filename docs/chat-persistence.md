@@ -34,7 +34,7 @@ Agent `/tasks/confirmation` 并返回 `Cache-Control: no-store`。此查询不�
 `widget.lock.json`，使查询适配和对话组件随同一博客版本上线，无新增数据库迁移。
 
 
-新装仍需应用来源列迁移 `scripts/migration/pg/0018_chat_memory_source_role.sql`。迁移不回填未知来源；本轮没有新增数据库迁移。
+新装仍需应用来源列迁移 `scripts/migration/pg/0018_chat_memory_source_role.sql`。迁移不回填未知来源。
 
 ## 验证
 

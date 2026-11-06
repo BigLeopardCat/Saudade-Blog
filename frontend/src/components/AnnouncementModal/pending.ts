@@ -72,7 +72,6 @@ export async function fetchPendingAnnouncement(): Promise<PendingAnnouncement | 
         source: 'local',
         title: latest.title,
         content: latest.content,
-        // 有编辑时间就显示编辑时间（旧实现同款）；通知行那条只有发布时间，见文件头
         time: latest.updatedAt || latest.createdAt || '',
     }
 }

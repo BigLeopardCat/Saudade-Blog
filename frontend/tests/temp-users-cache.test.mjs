@@ -1,22 +1,3 @@
-// ═ 后台账号列表内存缓存回归（20261002）══
-//   node tests/temp-users-cache.test.mjs
-//
-// 背景（用户报的）：「后台管理的用户管理是不是每次点都重新拉数据」——这一页原来在挂载时
-// `setTimeout(loadTempUsers, 500)` 拉一次，切走再切回来又是同一套"先空一下再填上"，
-// 而两次的数据几乎一模一样。现在列表本体住 `src/pages/Dashboard/Users/tempUsers.ts`
-// 这一个 module 级 store，本套件锁它的行为：
-//   · 谁在拉、什么时候拉（0 个消费者一次请求都不发；事件驱动只在有人看时才拉）
-//   · 消费者登记时发一次刷新 → **切回页签首帧就是缓存值**（`useTempUsers` 的初值取模块级
-//     `list`，所以这里断言 store 的 list 在登记后**当场**就非空，而不是等一个往返）
-//   · 写成功之后 `invalidateTempUsers()`：**作废在途读数**（竞态：点了冻结、恰好一个 20 秒前
-//     的读数晚到——不丢旧读数就会把界面翻回旧状态）且**只发一次**新请求（事件与直接调用去重）
-//   · 读不到 ≠ 空（失败不清空 list，只标记 failed）
-//   · **裸数组**契约：这一页的接口回的是数组本身，不是 `{code,message,data}` 那层壳
-//     （判据写错成 `res.data.data` 会恒空，而 axios 不报错、页面不红）
-//
-// tempUsers.ts 是 TS 且 import 了 axios 单例：本机不能 vite build（3.7GB 内存，见 CLAUDE.md §2），
-// 用 esbuild JS API 把 axios 换成受测可控的假后端。假后端可以**挂起**（`ctl.pending`）——
-// 竞态那条腿必须能把"写入之前发出的那份读数"按在手里。
 import * as esbuild from 'esbuild';
 import { mkdtempSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
@@ -218,7 +199,6 @@ const logout = () => { delete store.tokenKey };
     eq(ctl.pending.length, 2, '作废之后另发一次：在途那份作废，**不复用**');
     eq(calls(ctl), 3, '总数 = 首次 + 在途那次 + 作废后这次（事件与直接调用**去重成一次**）');
 
-    // 在途的那份是**写入之前**的快照（7 还没被冻结/还是旧的样子）：它回来时不许覆盖新读数
     ctl.pending[0](answer());
     await tick();
     eq(ids(mod), [2, 7], '在途旧读数被丢弃（不把界面翻回旧状态）');
@@ -281,9 +261,6 @@ const logout = () => { delete store.tokenKey };
 {
     const page = readFileSync(path.join(root, 'src/pages/Dashboard/Users/index.tsx'), 'utf8');
     const store = readFileSync(path.join(root, 'src/pages/Dashboard/Users/tempUsers.ts'), 'utf8');
-    // 断言"代码里没有 X"时必须先剥注释：这两个文件的头注里**刻意**写着旧实现的样子
-    // （"原来这里 `setTimeout(loadTempUsers, 500)`"、"别顺手写成 `res.data.data`"），
-    // 那是给后来人看的护栏，不是残留代码。不剥就会把护栏本身判成违规。
     const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
     const pageCode = strip(page), storeCode = strip(store);
 

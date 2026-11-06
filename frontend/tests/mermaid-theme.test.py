@@ -1,24 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""mermaid 图的配色是站点这套和纸色，不是 mermaid 内置 default（20261005）。
-
-  python3 tests/mermaid-theme.test.py
-
-现场（用户报「mermaid渲染的图配色给人一种零几年风格的古早感觉」）：文章页
-（`ReadArticle/index.tsx` 的 plugins）与看板娘对话框（`utils/chatMarkdown.ts`
-的 viewerEffect）都调裸 `mermaid()`，于是吃的是 mermaid 内置 `default` 主题——
-淡紫节点 `#ECECFF`、淡黄分组 `#ffffde`、紫描边 `#9370DB`、字体 `trebuchet ms`
-（那套取色是 mermaid 2014 年的默认值）。修法：两处共传 `utils/mermaidTheme.ts`
-的 `MERMAID_CONFIG`（mermaid 是**全局单例**，两处必须同一个值）。
-
-判据怎么算数：**真渲染**（mermaid 在真浏览器里跑出一张图），读节点/分组/连线/
-标签的 computed 色与字体；并且同时跑**改动前那一臂**（`initialize({})` = 内置默认）
-——那一臂必须量到 `#ECECFF`，否则说明这套探针根本看不见古早配色，前一条的绿是假的
-（同族纪律：正控不红不算数）。
-
-两臂都是**当场渲染**出来的，不读 `git show HEAD:`（提交之后它就等于被测对象，
-见 mermaid-mobile-zoom.test.py 里那段注释）。
-"""
+"""mermaid 图的配色是站点这套和纸色，不是 mermaid 内置 default。"""
 import pathlib
 import shutil
 import subprocess

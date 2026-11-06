@@ -270,11 +270,7 @@ pub async fn send_user_notice(
 
 #[derive(Deserialize)]
 pub struct SetRoleReq {
-    /// 目标身份。**取值域分两档**（`authz::check_role_change` 才是判据，这里只是
-    /// 说明它长什么样）：超管发起时 = `KNOWN_ROLES` 里除 superadmin 外的四个
-    /// （`authz::is_assignable_role`——界面上加不出第二个超管）；管理员发起时再收窄到
-    /// `authz::is_admin_tier` 那两档（普通用户 / 杂鱼）。**这里不重复判**：
-    /// 多一份判据就会在"改政策"那天与 `authz.rs` 漂移。
+/// 目标身份。**取值域分两档**（`authz::check_role_change` 才是判据，这里只是
     pub role: String,
 }
 

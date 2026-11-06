@@ -127,9 +127,6 @@ pub struct PeriodRow {
     /// 期界，`YYYY-MM-DD`（闭区间）
     pub start: String,
     pub end: String,
-    /// **本期不是整期统计**：起始日早于 `since`（统计功能上线那天）。
-    /// 前端据此把数字标成"部分"，否则"上线那一周只有两天数据"会被读成
-    /// "那周流量掉了"——这正是本模块反复强调的"缺数 ≠ 零"。
     pub partial: bool,
     pub views: i64,
     pub likes: i64,

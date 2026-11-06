@@ -195,16 +195,6 @@ export type ListRequest =
     | { mode: 'list' }
     | { mode: 'search'; body: Record<string, unknown> };
 
-/**
- * 该发哪个请求：
- * - 「全部文章」且**零条件** → `/notes/list`（它排除 `draft_of` 影子行，与搜索端点语义不同，
- *   不能合并成一个）；
- * - 其余 → `/notes/search`，把 URL 里的条件翻译成后端字段。**「公开文章」页签（'4'）永远
- *   走这一支**：它编号就不是 '1'，而且它本体自带 `only_public` 条件（零筛选也非空请求）。
- *
- * 注意 `tags` 是前端过滤，**不进 body**（后端 `SearchRequest` 没有这个字段，
- * 而且它过去是"填了也白填"的静默空操作）。
- */
 export function listRequest(query: ListQuery): ListRequest {
     const hasFilter =
         query.kw !== '' ||

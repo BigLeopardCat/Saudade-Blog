@@ -1,17 +1,4 @@
--- =============================================================================
--- 会话化一期迁移（20260903）：chat_history/chat_summary 挂 conversation_id
--- 存量语义：60 分钟无消息间隔 = 会话边界（gaps-and-islands）；摘要 nearest-below 归位
---
--- 执行前提（重要，见计划"部署顺序"）：
---   1. systemctl stop saudade-rust     -- 旧二进制会写 NULL conversation_id 行
---   2. mysqldump 备份 chat_history/chat_summary 完成
---   3. 逐段执行本脚本；每段间的 校验门 SELECT 输出必须符合标注的期望，不符即停
 -- flag: chat_conv_20260903（migration_flags 最后插入，勿重跑）
--- =============================================================================
-
--- ************************************************************
--- 第 1 段：建 conversation 表
--- ************************************************************
 CREATE TABLE conversation (
   id int NOT NULL AUTO_INCREMENT,
   user_id int NOT NULL,

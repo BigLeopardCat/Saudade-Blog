@@ -272,12 +272,6 @@ async fn try_r2_upload(
     Some(ApiResponse::success(url))
 }
 
-// POST /api/protect/upload
-//
-// multipart 字段：`file`（必给，第一个带 file_name 的段）+ 可选的 `target`
-// （`local` / `r2`；不传 = 跟面板开关走）。**先收字段、后处理**：各段的顺序由客户端
-// 决定，而这里原来是一边收一边处理、碰到第一个文件段就 `return` —— 那样"target 必须
-// 排在 file 前面"就成了一个没人写下来的隐式契约，前端换个 append 顺序就静默失效。
 pub async fn upload_image(
     State(state): State<Arc<AppState>>,
     mut multipart: Multipart,
@@ -299,9 +293,7 @@ pub async fn upload_image(
         let file_name = field.file_name().map(|s| s.to_string());
 
         if let Some(raw_name) = file_name {
-            // 只取第一个文件段（与从前"碰到第一个文件段就处理"的行为一致）。
-            // 其余的段必须读掉：不读完，后面的段边界解析不出来。
-            let data = match field.bytes().await {
+                        let data = match field.bytes().await {
                 Ok(b) => b,
                 Err(e) => {
                     tracing::warn!("[upload] 读文件体失败：{}", e);

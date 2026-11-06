@@ -1,21 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""对话框色块装饰器 `decorateColorSwatches` 回归（真 DOM 跑，20260921）。
-
-  python3 tests/color-swatch.test.py
-
-为什么用无头浏览器而不是 node 桩：这个装饰器**整个逻辑都在 DOM 上**
-（TreeWalker 遍历文本节点、`closest('pre, code, a, …')` 判父级、把文本节点换成
-`<span>` 片段）。手搓 DOM 桩只会测到桩本身，测不出 `closest` 匹配与树遍历的真实行为
-（无头验证法的既有坑之一，见 docs）。esbuild 把 `src/utils/chatMarkdown.ts` 真源码
-打成一个 IIFE bundle，页面里直接调，无桩。
-
-锁两件事：
-  ① **放宽后的口径**（20260921 用户拍板）：任意 6 位色值都画色块——此前只认站内 8 色板，
-     结果是 agent 答"配色建议"这类站外色值时一个色块都不渲染（用户实测反馈）；
-  ② **不许越界**：`pre`/`code`/`a` 内部不画、8 位色值（带 alpha）不许被截半画、
-     5 位/3 位非完整 6 位色值不画、重复调用不许叠加（幂等）。
-"""
+"""对话框色块装饰器 `decorateColorSwatches` 回归。"""
 import pathlib
 import shutil
 import subprocess

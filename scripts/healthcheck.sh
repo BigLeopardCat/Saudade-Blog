@@ -95,7 +95,7 @@ fi
 METRICS_DAY="$PROJECT_DIR/logs/.health_metrics_day"
 TODAY=$(date +%Y%m%d)
 if [ "$(cat "$METRICS_DAY" 2>/dev/null)" != "$TODAY" ]; then
-  echo "$TODAY" > "$METRICS_DAY"     # 先落印再跑：跑挂了也不重试（理由见上）
+  echo "$TODAY" > "$METRICS_DAY"     # 先落印再跑：当天失败不重复执行，避免每分钟刷告警
   AGENT_DIR="$PROJECT_DIR/saudade-blog-agent"
   dm="$AGENT_DIR/eval/daily_metrics.py"
   if [ -f "$dm" ]; then

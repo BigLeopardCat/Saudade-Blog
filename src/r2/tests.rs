@@ -579,8 +579,7 @@ fn creds_prefer_image_token_with_per_key_fallback() {
     assert_eq!(c.endpoint, "https://acc.r2.cloudflarestorage.com");
     assert!(c.image_token);
 
-    // ② 一个都不加 ⇒ 完全走部署那组（**行为与从前逐字节相同**）
-    let c = creds_from(map(&[
+        let c = creds_from(map(&[
         ("R2_ENDPOINT", "https://acc.r2.cloudflarestorage.com"),
         ("R2_ACCESS_KEY", "d-ak"),
         ("R2_SECRET_KEY", "d-sk"),

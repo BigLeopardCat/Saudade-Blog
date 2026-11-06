@@ -1,21 +1,3 @@
-// ═ 评论管理页（后台第四个页签）源码契约（20261002）══
-//   node tests/comment-admin.test.mjs
-//
-// 这一页的全部风险都不在"画得对不对"，而在**它和留言管理长得太像**：两张表、两条接口、
-// 两对审核开关、两套驳回理由预设，界面结构几乎逐行同构。所以抄错一个接口路径、抄错一对
-// 键名、抄错一次本地写回，**都不会报错**——页面照常渲染，只是：
-//   · 接口抄成 `/api/protect/board` ⇒ 管理员在「评论管理」里审的是河灯留言；
-//   · 键名抄成留言板那对 ⇒ 点「AI 审核」开关把河灯那一侧的开关翻了个个儿；
-//   · 本地写回抄成入参值 ⇒ 驳回之后那一行永远停在「待审」（后端其实已改成未通过）。
-// 这三条都是"静默"的，只有把两边的字面钉在一起比对才拦得住。
-//
-// 因此本套件分成两半：
-//   ① **前端↔后端同源**：键名、上限、接口路径、落库值，凡是「两侧必须是同一个值」的地方，
-//      都从**两边的源码里各取一次**再比对，而不是把期望值写死在断言里（写死的话，
-//      将来两侧一起漂移时它仍然是绿的）。
-//   ② **路由挂在哪一半**：`/api/protect/comments` 三条必须在 `protected_routes`（后台管理员），
-//      公开三条必须在 `public_routes`——挂错了由 `auth_guard` 对**全体普通用户** 403，
-//      而"评论区对访客关闭"这个症状出现在文章页、根因在路由表里，最不好找。
 import { readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -161,7 +143,6 @@ ok(count(rustWebInfo, '= COMMENT_REVIEW_KEYS;') === 2,
     '读写两面都走同一个常量（读 get_web_settings / 写 update_web_info 各一处解构）',
     count(rustWebInfo, '= COMMENT_REVIEW_KEYS;'));
 
-// ── ④ 已删除的行：留着、标出来、不可审（前端 + 后端两处）────────────────────
 console.log('\n已删除的评论 —— 评论是软删，这一页必须如实显示"它已经没了"：');
 ok(comp.includes('已删除（公开侧不再显示）'), '已删除的行在列表里带一句标记（不是无声消失）');
 {
@@ -249,8 +230,6 @@ console.log('\n路由 —— 后台三条在 protected 域内，公开三条在 
     const pub = rustMod.indexOf('let public_routes = Router::new()');
     const prot = rustMod.indexOf('let protected_routes = Router::new()');
     ok(pub > 0 && prot > pub, '路由表里两半的起点都找得到', { pub, prot });
-    // ⚠️ 读的是 **axum 路由模式字面量**（20261013 axum 0.8 起是 `{id}`；旧写法 `:id`
-    // 在 0.8 里是注册期 panic）。**实际 HTTP URL 一个字没变**，变的只是模式语法。
     for (const r of ['/api/protect/comments', '/api/protect/comments/{id}/audit', '/api/protect/comments/{id}']) {
         const at = rustMod.indexOf(`"${r}"`);
         ok(at > prot, `后台那条 ${r} 在 protected 域内（admin 守卫）`, at);
@@ -265,12 +244,6 @@ console.log('\n路由 —— 后台三条在 protected 域内，公开三条在 
         '作者自删与管理员删除是两个 handler，没并成一个');
 }
 
-// ── ⑧ 首页待办那两行各自的数从哪来 ─────────────────────────────────────────
-// ⚠️ 这一节 20261019 **改窄过**（原来是整份文件级的一条 `!home.includes('条评论待人工审核')`）。
-// 那条写法在"评论真的有了自己的一行"之后就成了**恒红**，而它当初要挡的其实是**另一件事**：
-// 评论那个数被并进 `pendingReview`（那一个数来自 `profile.rs::board_pending_count`，是河灯
-// 留言的量）。恒红会被人删掉，删掉之后真正要挡的那件事就没人挡了 —— 所以改成**按块判**：
-// 每一行各自认自己的字段与文案。**没有放宽**：把评论那一行并回 `pendingReview` 仍然红。
 console.log('\n后台首页待办卡 —— 三行各自数各自的量，各自说各自的话：');
 
 /** 从 `home` 里切出某个 className 那一块的 JSX 源码。

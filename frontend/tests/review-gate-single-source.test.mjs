@@ -14,7 +14,6 @@ const ok = (cond, name, detail) => {
     if (cond) { passed++; console.log('  ✓ ' + name); }
     else { failed++; console.log('  ✗ FAIL: ' + name + (detail !== undefined ? '  → ' + JSON.stringify(detail) : '')); }
 };
-/** 剥注释后再计数/断言——本仓的注释**刻意**引用旧实现与反例，注释里的字不算数 */
 const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 const count = (s, needle) => strip(s).split(needle).length - 1;
 
@@ -122,10 +121,6 @@ ok(comments.includes('super::talks::decide_review("comment", uid'),
     '评论调的是 talks::decide_review（tag=\"comment\"）');
 for (const [needle, why] of [
     ['AGENT_URL', 'AI 端点地址'],
-    // ⚠️ 判据是**带引号的 JSON 键** `"verdict"`，不是裸词：评论模块 20261002 起有
-    // 一个同名的局部变量（`Ok(risk_verdict) =>`，是 `risk::RiskVerdict` 的**风控三档**，
-    // 与 agent 回的裁决词毫无关系）。裸词判据会把那个变量误判成"照抄了一份裁决"，
-    // 而这条断言的真正对象一直是 `v.get("verdict")` 那一步。
     ['"verdict"', '裁决词的读取'],
     ['"pass"', 'pass 分支'],
     ['AiReason', 'AI 说明的裁决映射'],
@@ -136,8 +131,6 @@ for (const [needle, why] of [
 const routes = read('src/routes/mod.rs');
 const pubBlock = routes.slice(routes.indexOf('let public_routes'), routes.indexOf('let protected_routes'));
 const protBlock = routes.slice(routes.indexOf('let protected_routes'));
-// ⚠️ 判据读的是 **axum 路由模式字面量**（20261013 axum 0.8 起是 `{id}`；旧写法 `:id`
-// 在 0.8 里是注册期 panic）。**实际 HTTP URL 一个字没变**，变的只是模式语法。
 ok(pubBlock.includes('/api/public/notes/{id}/comments'),
     '评论的公开读写挂在 public_routes（挂进 protected 域就是普通用户 403）');
 ok(pubBlock.includes('/api/public/comments/{id}'), '自删也挂在 public_routes');

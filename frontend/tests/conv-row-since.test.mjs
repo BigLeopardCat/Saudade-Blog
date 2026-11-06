@@ -1,15 +1,3 @@
-// ═ 会话列表行「起点标记」回归（20260918 A 方案）══
-//   node tests/conv-row-since.test.mjs
-// 背景：会话标题只从**首条用户消息**派生一次且不再变，长会话会一直挂着旧标题
-//   （现网实例：09-05 开的一句"你都能做些上面"聊到今天共 240 条），而时间是当前
-//   → 用户读成"我点开的历史会话被自动更新成了当前时间"。A 方案 = 跨天会话在行内
-//   时间后补"9-5 起"，一眼分辨"开了 N 天一直在聊"与"旧会话"。
-// 判据重点在**同日零变化**：创建日 = 最后活动日的会话（绝大多数）不加标记，
-//   行宽与观感与改动前完全一致；缺字段/脏值也一律不显示，绝不让异常时间冒出"起"。
-// 取的是**线上真实源文件**（chat-session.js）里那段纯函数，不是抄一份副本。
-// 20260919 追加：检索态命中行的行时间（hitActTime）——行上时间必须是**会话最后
-//   活动时间**（与服务端排序同源），命中轮次自身的时间移到引文前。测法同上：从真实
-//   源里抠函数实跑，并断言前端渲染/Rust 回传两侧都在（只改一半 = 恒定走兜底）。
 import { readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -60,9 +48,6 @@ eq('无陈旧"点 ＋ 开始新对话"（无方位）', /点\s＋\s开始新对�
 // rail 新对话按钮确实存在（文案指向的对象不能消失）
 eq('rail 有 #conv-new-btn', /id="conv-new-btn"/.test(readFileSync(path.join(here, '../public/live2d-widgets/chat-render.js'), 'utf8')), true);
 
-// ══ 检索态命中行的行时间（20260919 用户拍板）══
-//  行上时间 = **会话最后活动时间**（与服务端排序同源），命中轮次自身的时间移到
-//  引文前。此前两者混用 → 同一会话在列表里一会儿"刚刚"一会儿"9-5"。
 const mark2 = 'const hitActTime = ';
 const h0 = src.indexOf(mark2);
 if (h0 < 0) throw new Error('chat-session.js 里找不到 hitActTime 定义');

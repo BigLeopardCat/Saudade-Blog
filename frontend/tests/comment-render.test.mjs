@@ -83,15 +83,12 @@ console.log('渲染管线 —— 危险输入被剥掉：');
     ok(/<br\s*\/?>/.test(s), '换行照常渲染（breaks 插件）', s);
 }
 {
-    // **整条评论只有一个表情**——用表情回一句"贴贴"是最常见的用法，
-    // 也正是 20261002 修掉的那个判据洞（旧代码 `pieces.length > 1` 会跳过替换）
     const s = renderBlogMarkdown(':头疼:');
     ok(/<img[^>]*src="\/stickers\/v2\/touteng-cardigan\.webp"/.test(s), '单独一个 :名字: 也渲染成 <img>（不留字面文本）', s);
     ok(/class="sticker"/.test(s), '表情 img 带 class="sticker"（尺寸样式靠它）', s);
     const s2 = renderBlogMarkdown('贴贴 :贴贴: 啦');
     ok(/<img[^>]*src="\/stickers\/v2\/tietie-hoodie\.webp"/.test(s2) && /贴贴\s/.test(s2),
         '句子中间的表情同样转换，前后文字保留', s2);
-    // 20261008 新增那四枚：名字在清单里、素材路径也接上了（只加名字忘了放图会在这里露）
     const s3 = renderBlogMarkdown(':比心: :困困: :躺平: :嫌弃:');
     ok(['bixin-cardigan', 'kunkun-hoodie', 'tangping-hoodie', 'xianqi-jacket'].every((f) => s3.includes(`/stickers/v2/${f}.webp`)),
         '比心、困困、躺平、嫌弃均使用新版图片', s3);
@@ -102,16 +99,6 @@ console.log('渲染管线 —— 危险输入被剥掉：');
     ok(!/<img/.test(s), '清单外的 :名字: 不转换', s);
 }
 
-// ── ①b 回退路径：管线抛异常时，产物也不许是原文（20261015）─────────────────
-// `renderBlogMarkdown` 的 catch 原来 `return text`。产物有两个消费点都是
-// `dangerouslySetInnerHTML`（CommentSection 与看板娘对话框）⇒ 交回原文等于
-// "因为渲染失败，所以这次不消毒"，方向正好是反的。
-// 这一条**必须真让管线抛**再断言（读源码文本那种写法对这个洞是瞎的：写错的那版
-// 也有 try/catch，只是 catch 里返回的东西不同）。可控的抛异常输入：`<div>` 嵌套到
-// 足够深会让 rehype-raw 的树遍历爆栈（`Maximum call stack size exceeded`）。
-// ⚠️ 深度门槛**不是单调的**，别按"几百层够用"写：20261015 实测 400/2000/3000 层都不抛
-// （各自跑通并正常消毒），1600/4000 抛、6000 与 8000 连跑 3 次稳定抛。爆不爆栈取决于
-// 那个深度在树遍历里刚好要多深的调用栈，取 6000 是踩着实测的安全边距（约 300ms/次）。
 console.log('\n回退路径 —— 渲染失败时降级成纯文本：');
 {
     const deep = '<div>'.repeat(6000) + '<img src=x onerror="alert(1)">' + '</div>'.repeat(6000);
@@ -191,10 +178,6 @@ ok(readArticle.includes('<CommentSection noteId={id} />'), '挂在文章详情�
     ok(contentDiv > 0 && contentDiv < at, '出现在正文容器之后');
 }
 
-// ── ③ 回复通知与深链定位（20261002 第二笔）────────────────────────────────
-// 通知这条链路最容易出的不是"发不出去"，而是**发重了**或**发早了**：
-// 创建即通过与人工复核 0→1 是两条到达路径，各写一遍必然变成两条通知；
-// 而"评论还没公开就通知"会把收件人送到一个找不到东西的页面上。
 console.log('\n回复通知 —— 两条路径一个函数，判据都在函数外：');
 const calls = count(rustComments, 'notify_comment_reply(');
 ok(calls === 3, 'notify_comment_reply 共 3 次出现：1 处定义 + 2 处调用（创建 / 复核）', calls);

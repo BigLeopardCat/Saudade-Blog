@@ -13,7 +13,6 @@ pub struct Model {
     /// 待办正文（写前已 trim；空行的行不会被写进来）
     pub text: String,
     pub done: bool,
-    /// 排期那天；None = 未排期（前端按它分组：逾期 / 今天 / 未来 / 未排期）
     pub due_date: Option<Date>,
     /// +08:00 本地钟面（与全库时间列一致，见 CLAUDE.md 时区约定）
     pub created_at: DateTime,

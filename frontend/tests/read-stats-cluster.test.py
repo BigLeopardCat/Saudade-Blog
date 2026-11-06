@@ -1,58 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""文章横幅「读数四件」= 2×2 的四个等大格子（20260926 起；20261001 改形态；20261003 改排布）。
-
-  python3 tests/read-stats-cluster.test.py
-
-沿革：本文件原名 `read-fav-vertical.test.py`，锁的是"收藏按钮竖排"那套（20260926）。
-20261001 用户第 1 条把那一版整体否了 ——「详情页三图标样式和布局太丑了，大小不一，
-排列奇怪」：
-
-    实测（1280×900，线上）            宽 × 高    内边距      字号   描边 α
-    .readFavWrap  .readFavBtn        32 × 62    6px 8px     13    .55   ← 竖排
-    .readViews                       59 × 24    2px 8px     12    .35
-    .readLikeBtn                     64 × 30    4px 10px    13    .55
-
-一件竖的、两件横的，高度差到 2.6 倍 —— 排在一行里怎么摆都对不齐。所以 20261001 改成
-一簇 `.readStats` + 三件共用几何 `.readStat`。此后这一簇的**排布**改过三次，`.readStat`
-那份几何**一次都没动**（"大小不一"的判据因此一直有效）：
-
-    20261001  一行三件      —— 治"大小不一"
-    20261003a 竖排一列四件  —— 治"横排 260px 把标题挤偏"
-    20261003b **2×2 四件**  —— 用户第 2 条「右侧是四个数据组件 2*2 排布」
-
-为什么 2×2 之后就**不必再管簇的宽度**了：挤偏的成因是"中区吃余量 ⇒ 中区中线 =
-卡片中线 + (左区宽 − 右区宽)/2"，它成立的前提是`.readInfo` 是 **flex 行**。本轮改成
-**三列车格**、两条侧轨写同一个变量（`.readInfo` 的 `--read-side`）⇒ 中区中线与卡片
-中线**结构上重合**，与两边装什么都无关。判据因此升级成一条更强的不变量：
-**中区中线与卡片中线差 < 1px**（①c 与 ⑦ 两组都量它），且**左区与右区的宽度逐字相等**（②）。
-
-为什么用无头浏览器而不是 node 桩：这是**布局**问题（行盒、等高、格子的宽高、绝对定位盒
-是否越出 overflow:hidden 的父盒），桩里算不出这些。真 CSS = node 侧真编译的 `.sass` +
-仓库里那份 `* { box-sizing: border-box }` 重置（`src/frontHome/main.css`），页面里手写与
-`index.tsx` 同形的标记（不挂 React——类名与结构就是全部接口）。
-
-锁十二组：
-  ① **四件同形**（正面判据）：高度/圆角/描边宽/描边色/内边距/字号六项逐项相等，且换内容
-     也不变（收藏 ⇄ 已收藏、数字一位 ⇄ 四位）；
-     ①b 反向对照：把旧的三套几何内联写回去 ⇒ 高度当场不等（证明 ① 抓得住"大小不一"）；
-     ①c ★**2×2**：横向中心恰好两个值、纵向中心恰好两个值、四个格子等大，且按 DOM 顺序
-     落在左上/右上/左下/右下；**反向对照**：把列数写回 1 ⇒ ①c 当场不成立；
-  ② ★**两条侧轨等宽**（结构性居中的唯一来源）：左区、右区宽度逐字相等，簇高 = 2×件高 +
-     间距；**中区中线与卡片中线差 < 1px**；
-     ②b 文案/数字变长时**件内内容**不挪（`.readFavLabel{min-width:3em}`、数字 `4ch`），
-     且内容始终装得下格子（`scrollWidth ≤ clientWidth`）；**反向对照**：把两条定宽一起
-     抹掉 ⇒ 文案当场宽 13px（图标跟着跳）；
-  ③ **挤压回归**（20260926 那件事）：超长标题下四个格子与两条侧轨逐字不动；
-     ③b 反向对照：把中区轨道写成 `1fr`（少了 `minmax(0, …)`）⇒ 一格长词当场把整行顶出卡片；
-  ④ 图标：四件的 svg 同尺寸 14px、`aria-hidden`，文案仍在 `span.readFavLabel` 里；
-  ⑤ 三态色一字未改；讨论数是**读数不是按钮**（字色与浏览同档、比两个按钮淡）；
-  ⑥ ★手机档（327px / 768px 两档）：`.readInfo` 落成**单列**（手机的三列放不下）、
-     四件收成 24px 高 / 4px 间距，**且整个信息盒不越出封面顶**；
-     **反向对照**：把封面高撤回 200px ⇒ 上沿当场越界；
-  ⑦ 布局锁死：四种标题长度下中区、右区、左区、卡片高的坐标逐字相同，且每次中区都居中；
-     ⑦b 反向对照：把两条侧轨写成**不等宽** ⇒ 中区当场偏 40px（居中靠的就是"等宽"这一条）。
-"""
+"""文章横幅「读数四件」= 2×2 的四个等大格子。"""
 import pathlib
 import subprocess
 import tempfile
@@ -122,8 +70,6 @@ MARKUP = """
 
 LONG_TITLE = "一篇标题特别长的文章：从零开始把站内对话助手接进个人博客的完整记录与踩坑清单（下篇）"
 
-# 旧形态的三套几何（20261001 之前写死在 `.readFavBtn` / `.readViews` / `.readLikeBtn` 上）。
-# 只在 ①b 反向对照里内联写回去——用 id 选择器（1,0,0）压过 `.readInfo .readStat`（0,4,0）。
 LEGACY_GEOM = """
 #btn { height: 62px; width: 32px; flex-direction: column; padding: 6px 8px; }
 #views { height: 24px; padding: 2px 8px; font-size: 12px;
@@ -143,9 +89,6 @@ LEGACY_MINW = ("#label { min-width: 0 !important; }"
 # 这一条比"当年那套 flex 到底漂多少"更直接：居中靠的就是"等宽"这一条，不是别的。
 LEGACY_ASYM = "#info { grid-template-columns: 180px 1fr 260px !important; }"
 
-# ⑥ 的反向对照：把手机档那三条覆盖撤回 20261003 之前的 200px 那一版
-# （封面高、`.readInfo` 的 bottom/内边距、四件的 24px/4px）。
-# 全部用 id 选择器 + `!important`：与 sass 里那几条同是 `!important`，靠**特异性**取胜。
 LEGACY_MOBILE = """
 #cover { height: 200px !important; }
 #info { bottom: 25px !important; padding: 16px 24px !important; }
@@ -282,9 +225,6 @@ with sync_playwright() as p:
           len({round(r[k]["w"], 1) for k in ITEMS}) == 1
           and len({round(r[k]["h"], 1) for k in ITEMS}) == 1,
           str([(round(r[k]["w"], 1), round(r[k]["h"], 1)) for k in ITEMS]))
-    # ★ 用户第 2 条第一句就是「现在标题没有居中」。这条判据量的是**结构**：
-    # 中区的中线是不是落在这张卡的中线上。旧 flex 版这里偏 ±30px 都算"看着还行"
-    # （因为靠"两边碰巧差不多宽"），所以阈值从 30px 收到 1px。
     off = r["main"]["cx"] - r["info"]["cx"]
     check(f"  ★中区中线与卡片中线差 {off:+.1f}px（< 1px —— 结构性居中，不是「看着还行」）",
           abs(off) < 1, f"{off:+.1f}px")
@@ -297,9 +237,6 @@ with sync_playwright() as p:
     check("  且四件的竖直中心各不相同（①c「恰好两个值」当场不成立）",
           len({round(r1[k]["cy"], 1) for k in ITEMS}) == len(ITEMS),
           str([round(r1[k]["cy"], 1) for k in ITEMS]))
-    # ⚠️ 这里曾经有一条"整簇变窄 ⇒ 标题归位"的因果判据。**现在没有了**：簇的宽度由
-    # 侧轨定死（180px），它在列里怎么排都不影响中区。这正是本轮的结构性改善——
-    # 标题的居中不再依赖"簇有多宽"，所以也没有"簇一变宽标题就偏"这条回归路径。
     check("  一列时整簇的宽度/左缘逐字不变（标题居中不再受簇的排布影响）",
           abs(r1["wrap"]["w"] - r["wrap"]["w"]) < 0.5
           and abs(r1["wrap"]["left"] - r["wrap"]["left"]) < 0.5,
@@ -423,9 +360,6 @@ with sync_playwright() as p:
           and r6["main"]["bottom"] <= r6["wrap"]["top"] + 0.5,
           str([(k, round(r6[k]["left"], 1), round(r6[k]["top"], 1)) for k in
                ("author", "main", "wrap")]))
-    # ★ 这条是 20261003 把封面从 200 抬到 260 的全部理由：`.readInfo` 是
-    # `bottom: B` + `translateX(-50%)` 的绝对定位盒，`.readCover` 又是 `overflow: hidden`
-    # ⇒ 上沿 = 封面高 − B − 盒高（三区竖着叠起来之后盒高从 68 涨到 226）。
     check(f"  ★整个信息盒不越出封面顶（信息盒上沿 {r6['info']['top']:.0f} / 封面 top 0）",
           r6["wrap"]["top"] >= 0 and r6["info"]["top"] >= 0,
           f'info top {r6["info"]["top"]:.1f} / wrap top {r6["wrap"]["top"]:.1f}')

@@ -1,22 +1,3 @@
-// ═ `__ERROR__` 终止帧的展示契约（20260927）══
-//   node tests/chat-error-frame.test.mjs
-//
-// 为什么这条套件存在：`__ERROR__` 是三种终止帧之一（另两种 `__END__` / `__NAV_END__`），
-// 但**只有超时与异常路径可达**——正常对话永远碰不到。于是它是全链路里最没人走的一段，
-// 前端这一格此前**没有任何断言**（当时那支时间标签排查脚本在"创建新会话失败"那一步
-// 就早退了，根本到不了这个分支；它已于 20260927 修好并升格为
-// `chat-time-divider.test.mjs`）。
-//
-// 20260927 07:29 生产事故：服务端在这一帧里发了 `'pending_confirm'`（一个内部 KeyError
-// 的名字），前端把**任何**异常都套上「网络错误: 」前缀 ⇒ 主人读到「网络错误: 'pending_confirm'」。
-// 两处都错：名字错（不是网络问题）、内容也看不懂。服务端那一半已改成中文话术
-// （`server.PRODUCER_ERROR_TEXT`，由 agent 仓 `tests/test_error_frame.py` 锁）；
-// 这一半（前端**不把服务端自己的话读成网络故障**）由本套件锁。
-//
-// 手法沿用 `chat-user-label.test.mjs`：**求值真源码**而不是扫字符串。扫 `'userText'`
-// 这种子串对"括号优先级写反了 / 回退档位反了"完全无感——而那正是这一格全部的内容。
-// 两处切片锚点都做非空校验：找不到就退出，否则正则漂了会变成"零断言通过"，
-// 那种绿比红更坏。
 import { readFileSync } from 'fs';
 import '../public/live2d-widgets/chat-protocol.js';
 import path from 'path';

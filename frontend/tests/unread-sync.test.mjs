@@ -1,20 +1,3 @@
-// ═ 未读红点单一真源回归（20260924 四轮）══
-//   node tests/unread-sync.test.mjs
-//
-// 背景：红点有**两处**显示位置——头部头像（常驻）与个人中心「公告和通知」页签角标
-// （开窗时）。此前 `useUnread` 是普通 hook，每个调用点各持一份 state + 各挂一个
-// `setInterval` ⇒ 开着个人中心时同一张表每分钟被同一个浏览器打两次（实测：站内真轮询
-// 只有两条接口、一天约 1300 次请求，99.4% 来自主人自己那一个 IP）。现在两份显示共用
-// src/components/UserCenter/unread.ts 这一个 store、一个定时器、一个在途请求，本套件锁它：
-//   · **全站只有一个轮询定时器**（挂几次？撤没撤？）——这是本轮改动的本体
-//   · 谁在拉、什么时候拉（0 个消费者一次请求都不发；事件驱动只在有人看时才拉）
-//   · 未登录/失败按 0 处理（红点是提示不是状态，读不到就不显示）
-//   · 没有新事实就不换引用（EMPTY 复用）——否则订阅者会被 React 判为"变了"而白渲染
-//
-// unread.ts 是 TS 且 import 了 axios 单例：本机不能 vite build（3.7GB 内存，见 CLAUDE.md §2），
-// 用 esbuild JS API 把 axios 换成受测可控的假后端（其余依赖都是纯 TS，不需要 stub）。
-// `setInterval` 换成受测自己触发的假实现：不假的话这条套件要么真等 60 秒、要么根本
-// 验不出"到底挂了一个还是两个定时器"。
 import * as esbuild from 'esbuild';
 import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
@@ -73,7 +56,6 @@ globalThis.setInterval = (fn, ms) => {
     timers.push(handle);
     return handle;
 };
-// 按**句柄身份**撤（真实现的语义：撤的是那次 setInterval 返回的那个东西）
 globalThis.clearInterval = (handle) => {
     const i = timers.indexOf(handle);
     if (i >= 0) timers.splice(i, 1);
@@ -83,10 +65,6 @@ let timers = [];
 const tickTimer = () => timers.forEach((t) => t.fn());
 
 const TOKEN = 'x.y.z';
-// ⚠️ 键序必须与 unread.ts `pick()` 的书写顺序一致（下面 `eq` 用 JSON.stringify 比字面量）。
-// `pendingQuota`（20260929 额度申请数）与 `pendingComments`（20261019 文章评论待审数）
-// **必须跟着一起写**：pick() 现在恒产出它们，而 `same()` 也拿它们判等——漏在期望值里
-// 只会得到一串"读数对不上"的假红（同 `EMPTY` 那条注释说的"漏一个键不报错"的反面）。
 const ROWS = { notifications: 2, messages: 1, total: 3, pendingReview: 0, pendingQuota: 0,
                pendingComments: 0 };
 const ROWS2 = { notifications: 0, messages: 0, total: 0, pendingReview: 3, pendingQuota: 0,
@@ -139,7 +117,6 @@ const logout = () => { delete store.tokenKey };
 
     const modal = mod.retainUnread();
     await tick();
-    // ★ 这就是本轮修的东西：旧实现里每个 useUnread 各挂一个 setInterval ⇒ 这里是 2
     eq(timers.length, 1, '第二个消费者**不再**多挂一个定时器（旧实现这里 = 2）');
     eq(mod.unreadDebug().active, 2, '活着的消费者数 = 2');
 
@@ -233,11 +210,6 @@ const logout = () => { delete store.tokenKey };
     eq(mod.unreadDebug().counts, EMPTY_COUNTS, '退登（无 token）→ 清空');
 }
 
-// ── ⑤ 只有额度申请数变了，也必须算新事实（20260929）────────────────────────
-// 日程面板那行「N 条额度重置申请待处理」读的就是这个 store 的 pendingQuota，而它能不能
-// 冒出来只靠一件事：`same()` 判出"变了" ⇒ setSnap 换引用 ⇒ useUnread 的订阅者重渲染。
-// 漏掉 `same()` 里那一条 `&&` 的后果**不是报错**——读回来的数一直是对的，界面一直不动，
-// 于是那一行永远不出现。所以这里**正面**断言它换了引用（反向那条在第 ⑥ 节）。
 {
     const { mod, ctl } = await fresh();
     login();
@@ -264,10 +236,6 @@ const logout = () => { delete store.tokenKey };
     ok(mod.unreadDebug().counts === after, '读数没变（含额度）⇒ 同一个引用');
 }
 
-// ── ⑤b 只有**评论待审数**变了，也必须算新事实（20261019）────────────────────
-// 与 ⑤ 逐条同构，理由也一样：后台首页第三行「N 条评论待人工审核」读的是这个 store 的
-// `pendingComments`，它能不能冒出来只靠 `same()` 判出"变了"。**这条是反控**——
-// 加字段时最容易漏的就是 `same()` 里那一项，而漏了不报错，只是那一行永远不出现。
 {
     const { mod, ctl } = await fresh();
     login();

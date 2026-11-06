@@ -2,7 +2,6 @@
 export interface DashboardTodo {
     text: string;
     done: boolean;
-    /** 排期那天 `YYYY-MM-DD`；null / 缺省 = 未排期 */
     date?: string | null;
 }
 

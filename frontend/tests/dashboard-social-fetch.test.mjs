@@ -1,21 +1,3 @@
-// ═ 后台首页那张 GitHub 贡献图，谁负责把用户名取回来（20261009）══
-//   node tests/dashboard-social-fetch.test.mjs
-//
-// 用户问：「后台的 github 积分板不会是硬编码我的账号吧」。查下来链条本身是干净的
-// （20261001 开源前准备把写死的 `ghchart.rshah.org/409ba5/BigLeopardCat` 换成了
-// 「从站点设置的 Github 链接里现取用户名」），但**取数方不在后台**：
-// `state.user.social` 全仓只有前台壳的 `frontHome/Head` 在拉，而后台是另一颗壳
-// （`/dashboard` 不在 `<App>` 路由树下，也不渲染 Head）。
-//
-// 症状的恶劣之处在于它**只在某些入口出现**，而且不报错：
-//   · 先前台逛一圈 → 双击头像进后台：normal（redux store 在 SPA 导航里是同一个）
-//   · 直接刷新 / 收藏夹打开后台：图没了，只剩 `.articleRecordImg` 那个定高空框
-//   · 登录页登录后直接跳后台：同上（`/login` 也是独立顶层路由）
-// 所以判据钉的不是"图能显示"，而是**每颗壳自己把这份数据拉回来**——
-// 后台壳的挂载 effect 里必须有这一句，前台壳那一句也不许被搬走。
-//
-// 同 `review-gate-single-source.test.mjs` 的形态：不跑浏览器、不跑 DB，只读源码做契约断言
-// （真要跑端到端得伪造 admin JWT 过 AuthRouter，那是 `/tmp` 里探针的活）。
 import { readFileSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';

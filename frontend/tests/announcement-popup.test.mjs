@@ -156,7 +156,6 @@ console.log('\n── 登录用户（有 token）──');
         '登录：取最新那条公告行，id 是**通知行 id**（已读要 POST 的就是它）');
     eq(urls(), ['GET /api/protected/notifications/announcement'], '登录用户只读取单条最新公告，不拉完整通知列表');
 
-    // 多条未读：只弹最新的那条，且**不把更旧的标成已读**——它们照旧在个人中心里未读
     eq(ctl.calls[0].data, undefined, '登录：列表是 GET，没有请求体');
 
     reset({ token: 'x.y.z', responder: (c) => (c.url === '/api/protected/notifications/announcement' ? notifRes([annRow(9, { isRead: true }), annRow(4)]) : failRes) });
@@ -277,9 +276,6 @@ console.log('\n── 接线与机制锁（源码层）──');
     const home = read('src/frontHome/Content/ContentHome/index.tsx');
     ok(!/AnnouncementModal/.test(home), '首页 ContentHome 那个旧挂载点已摘（挂着它就只能刷新才查一次）');
 
-    // 两个出口的分工（20260926 用户拍板）：点「我知道了」才记已读；从弹窗外关掉
-    // **不**记已读（那行照旧未读 ⇒ 红点与个人中心照旧未读、下次刷新照旧会弹）。
-    // 源码层锁：这两个函数体里各只该出现一次 markAnnouncementRead，且在 handleRead 里。
     const modal = read('src/components/AnnouncementModal/index.tsx');
     const body = (startMarker, endMarker) => modal.slice(modal.indexOf(startMarker), modal.indexOf(endMarker));
     const closeFn = body('const handleClose = () => {', 'return (');

@@ -461,11 +461,7 @@ pub async fn search_notes(
         }
     }
     
-    // Public search likely doesn't need detailed time/top status filters, but no harm logic-wise. 
-    // They are omitted here for simplicity and focus on keyword search.
-
-    // 分类/标题筛选不需要正文；旧实现全量读取 content 后又清空，浪费传输与内存。
-    if terms.is_empty() {
+        if terms.is_empty() {
         let rows = note::Entity::find().filter(condition)
             .order_by_asc(note::Column::Id)
             .into_partial_model::<NoteSummary>().all(&state.db).await;

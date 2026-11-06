@@ -45,7 +45,6 @@ console.log('\n── splitStickers ──');
     eq(splitStickers(':1234567890123:'), [{ kind: 'text', text: ':1234567890123:' }],
         '名字超过 12 字 ⇒ 正则不认（长度上限就是为此设的：别把正文里的普通冒号对吃进来）');
 
-    // 整段只有一个表情：**没有空文本片段**（20261002 那个缺陷的形状）
     eq(splitStickers(':头疼:'), [{ kind: 'sticker', name: '头疼', url: STICKERS.头疼 }],
         '整段只有一个表情 ⇒ 恰好一个 sticker 片段，不留空文本（此前正是这条渲染成了字面文本）');
 

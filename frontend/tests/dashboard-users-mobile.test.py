@@ -1,36 +1,5 @@
 # -*- coding: utf-8 -*-
-"""后台「用户管理 → 账号管理」窄屏验收：真组件 + 真 CSS + 390×844 真几何（20261017）。
-
-用户原话：
-  "博客后台移动端的用户列表的操作展示不全，右侧被截断。"
-
-这一条**只有真跑一遍才看得见**，而且它的坏法是本仓最安静的那一种：账号行是一个
-`justify-content: space-between` 的 flex 行，右边那组动作按钮（最多 **8 颗**：修改密码 /
-生成恢复码 / 发通知 / 重置额度 / 冻结|解冻 / 禁言|解除禁言 / 变更身份 / 删除）挂在一条
-内联的 `display:flex; gap:8` 上——**没有 flex-wrap**。手机上整行只有约 268px 可用，
-而那 8 颗按钮的最小宽度加起来约 550px，于是右侧一大截被 `.tu-list` 的 `overflow: hidden`
-**静静裁掉**：DOM 里都在、`querySelector` 都取得到、控制台一个字不报，只是**看不见也点不着**。
-所以判据不能是"按钮存在"，必须是**几何**：每颗按钮的外框都要落在列表盒子的横向范围内。
-
-三条判据：
-  · 页面无横向溢出（`.tu-list` 的裁切不会把整页撑宽——这正是它安静的原因）；
-  · **每颗按钮的左右缘都在 `.tu-list` 的左右缘之内**（用户报的那条）；
-  · 每行都渲染出全部 8 颗（少了哪一颗也是"展示不全"，只是换了个方向）。
-
-外加两条不许退化的：
-  · **宽屏（1440）一个像素都不许变**——修法若是"窄屏才换行"或"永远换行"，这里会红；
-  · 负控：把 `flex-wrap: nowrap !important` 假回去 ⇒ 上面那条必须当场转红
-    （判据自己得先被证明是敏感的，否则它可能只是恒真）。
-
-沿用 `dashboard-mobile.test.py` 那套既定手段（本机不能 vite build，见 CLAUDE.md §2）：
-esbuild 把**真组件**打成一个 bundle、只桩边界（axios / react-redux），antd 与
-react-dom 用真的，路由用**真的** `MemoryRouter`（这一页读 `useSearchParams` 的深链，
-桩掉路由就把被测对象一起桩掉了）。CSS 一律 link 仓库里那几份**真文件**，
-`.tu-*` 那份 sass 用 programmatic API 单独编译。
-
-用法：python3 frontend/tests/dashboard-users-mobile.test.py
-依赖：frontend/node_modules（esbuild/react/react-dom/antd/react-router-dom）、playwright(python)。
-"""
+"""后台「用户管理 → 账号管理」窄屏验收：真组件 + 真 CSS + 390×844 真几何。"""
 import functools
 import http.server
 import pathlib
@@ -182,8 +151,6 @@ def build_sandbox() -> pathlib.Path:
                         f"--alias:react-redux={sb}/stub-redux.tsx"],
                        cwd=str(sb), capture_output=True)
     if r.returncode != 0:
-        # 宽容解码：esbuild 会在中文那行按字节截断，严格 utf-8 解会先炸在解码上、
-        # 把真正的报错盖掉（20260922 在 user-center.test.py 上实测）。
         raise SystemExit("esbuild 打包失败：\n%s" % r.stderr.decode("utf-8", "replace"))
 
     (sb / "index.html").write_text(

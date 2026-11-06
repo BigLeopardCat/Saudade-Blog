@@ -1,12 +1,3 @@
-// ═ 标签树/标签渲染回归 ══
-//   node tests/tag-tree.test.mjs
-// 覆盖 20260919「标签设置交互难用而且有错误」背后的纯逻辑：
-//   · 建树按 fatherKey（一级改名后二级标签不许消失、同名一级标签不许共享子标签）
-//   · 扁平选项（二级显示自己的名字、`keywords` 里带父名、两级 id 重号丢弃后者）
-//   · 渲染加固（悬空 id 不渲染空白块、去重、折叠 +N、载体是管理页那套 antd Tag）
-// 载体是 src/apis/TagMethods.tsx —— 它 import 了 antd 与 axios 单例，本机不能在 node 里
-// 真加载 antd（cssinjs/DOM），所以用 esbuild JS API + onResolve 把它们换成极简 stub，
-// 只断言数据结构（React 元素是普通对象，直接走 props 即可）。
 import * as esbuild from 'esbuild';
 import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
@@ -42,9 +33,6 @@ const TM = await import(file);
 // ⚠️ 不能拿 stub 模块对象做身份比较：它已被 esbuild 打进 bundle，bundle 里是**另一份副本**；
 // 也不能靠函数名（重名时 esbuild 会把内部函数改名 Tag → Tag2），所以认 stub 上的标记属性。
 const isTag = (n) => n?.type?.__isTag === true;
-// 20260930 五轮曾把**公开面**的标签（首页卡片 + articleRecord，走 `renderNoteTags`）换成
-// 手账 chip `<span className="tagChip">`；20261001 用户要求「回到标签管理页的样式」，
-// 于是全仓（公开面 + 后台折叠渲染）统一回 antd `<Tag color=…>` —— 只剩一种载体。
 const labelOf = (n) => String(n.props.children);
 
 let passed = 0, failed = 0;
@@ -127,7 +115,6 @@ console.log('== 扁平选项：二级标签显示自己的名字、重号丢弃�
        opts.map(o => o.label));
 }
 {
-    // tag_two 的 id 5 与某个 tag_one 的 id 5 重号（两张表各自自增，迁移前的真实风险）
     const one = [{ key: 5, title: '重号一级', level: 1, color: '#000' }, { key: 10, title: '编程', level: 1, color: '#1677ff' }];
     const tree = TM.buildTagTree(one.map(t => ({ ...t })), TWO.map(t => ({ ...t })));
     const warn = console.warn; const seen = [];
