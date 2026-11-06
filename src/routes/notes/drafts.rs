@@ -1,5 +1,6 @@
 //! Versioned editor drafts; publication stays a separate operation.
 
+use super::write_error;
 use super::{clamp01, clamp_zoom, map_note, NoteDto};
 use crate::{
     entity::{category, note},

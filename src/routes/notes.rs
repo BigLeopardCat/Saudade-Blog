@@ -364,7 +364,6 @@ pub struct SearchRequest {
     pub title: Option<String>,
     pub categories: Option<String>,
     pub status: Option<String>,
-    // NEW FILTERS ADDED
     pub is_top: Option<i32>,
     pub start_date: Option<String>,
     pub end_date: Option<String>,
