@@ -180,10 +180,7 @@ pub(super) async fn prepare_chat(
             (Some(crate::quota::view(0, 0, true)), false)
         } else {
             let limit = crate::quota::limit();
-            // 这一行的用量：只用于**注入一行事实**，不是判据——判据是那条带
-            // `WHERE chat_quota_used < ?` 的 UPDATE。并发下它可能比真实值小一两轮
-            // （读到之后、扣之前另一轮先扣了），代价是 agent 报的剩余轮数略偏高；
-            // 为此多查一次库不值得（多一次查询 = 多一处失败面）。
+            // 展示用量可能因并发略有滞后；额度准入以原子 try_consume 结果为准。
             let seen_used = user_row.as_ref().map(|u| u.chat_quota_used).unwrap_or(0);
             match crate::quota::try_consume(&state.db, uid, limit).await {
                 crate::quota::ConsumeOutcome::Consumed => {

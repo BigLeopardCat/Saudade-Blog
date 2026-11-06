@@ -96,7 +96,7 @@ use crate::entity::{chat_history, chat_image, conversation};
 use crate::routes::conversation::resolve_conversation_id;
 use async_stream::stream;
 use futures::StreamExt;
-use sea_orm::sea_query::Expr; // Expr 不在 sea-orm 根（0.12.15 仅 pub use sea_query 全名）
+use sea_orm::sea_query::Expr;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set};
 
 /// 对话上下文：由 prepare_chat 组装，/chat 与 /chat/stream 共用
@@ -135,10 +135,7 @@ pub struct HistoryItem {
 
 const CHAT_HISTORY_IMAGE_BUDGET: usize = 8 * 1024 * 1024;
 
-/// 按预算裁剪图片（纯函数，判据在下面的 `mod tests`）。
-/// 输入**从新到旧**的 `(消息 id, 该条图片总字节)`，返回允许带图的 id 集合。
-/// 装不下的那条**与比它更早的全部**不给图 —— 给"残缺数组"（本该 3 张只给 1 张）
-/// 会让用户以为图丢了，空数组走的是前端既有的"这条没图"路径，是诚实的那一个。
+/// 从新到旧保留完整消息的图片；预算不足时省略该条及更早消息的全部图片。
 fn fit_image_budget(newest_first: &[(i32, usize)]) -> std::collections::HashSet<i32> {
     let mut out = std::collections::HashSet::new();
     let mut used = 0usize;
@@ -252,9 +249,7 @@ pub async fn chat_history_handler(
                 .into_response();
         }
     };
-    // 会话内最近 50 条（与前端显示上限一致）；会话内 order_by_desc(Id) 单调唯一、
-    // 即时间序（单会话串行写入，CreatedAt 排序从此退役），命中 idx_conv_id 索引。
-    // before_id 时改为"该 id 之前最近 50 条"（更早窗口翻页，仍升序回传）
+    // 以主键游标读取最近 50 条；before_id 向更早历史翻页，响应按升序展示。
     let mut finder = chat_history::Entity::find()
         .filter(chat_history::Column::UserId.eq(uid))
         .filter(chat_history::Column::ConversationId.eq(conv_id));
@@ -350,7 +345,7 @@ fn derive_conv_title(content: &str) -> Option<String> {
 /// Complete proposal JSON and display text are rejected above these bounds, never truncated.
 const PENDING_ARGS_COL_MAX: usize = 32_768;
 const PENDING_QUESTION_COL_MAX: usize = 32_768;
-/// Legacy choice lists and native confirmation/cancellation buttons share this bound.
+/// Bound serialized choice and confirmation controls.
 const PENDING_OPTIONS_COL_MAX: usize = 600;
 
 /// 取 JSON 字段并限长（缺字段/类型不对一律空串——待办是辅助事实，宁可少说）。
@@ -441,7 +436,6 @@ pub async fn chat_stream_handler(State(state): State<Arc<AppState>>, req: Reques
     // 流式连接不设整体超时（长回答可达数分钟），connect/首字节由 reqwest 默认处理
     let upstream = match reqwest::Client::new()
         .post(&stream_url)
-        // 身份断言（同上）：流式这条路同样要带，否则 agent 打开强制校验后它会 401
         .header(
             "X-Agent-Assertion",
             crate::auth_jwt::create_chat_assertion(
