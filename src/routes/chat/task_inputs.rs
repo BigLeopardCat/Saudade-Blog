@@ -214,8 +214,8 @@ async fn control(
     (status, Json(body)).into_response()
 }
 
-pub(super) async fn save(
-    db: &DatabaseConnection,
+pub(super) async fn save<C: ConnectionTrait + TransactionTrait>(
+    db: &C,
     uid: i32,
     cid: i32,
     role: &str,
@@ -239,6 +239,11 @@ pub(super) async fn save(
         return Err(invalid());
     }
     let txn = db.begin().await?;
+    let owner=txn.query_one(Statement::from_sql_and_values(DbBackend::Postgres,
+        "SELECT id FROM conversation WHERE id=$1 AND user_id=$2 FOR UPDATE",[cid.into(),uid.into()])).await?;
+    if owner.is_none() || crate::checkpoint_cleanup::turn_discarded(&txn,cid,task).await? {
+        return Err(DbErr::Custom("turn_discarded".into()));
+    }
     txn.execute(Statement::from_sql_and_values(DbBackend::Postgres,
         "INSERT INTO chat_task_input (user_id,conversation_id,task_id,input_id,content,source_role,status) \
          VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING",
@@ -326,6 +331,18 @@ pub(super) async fn persist_event(
         value.insert("inputs".into(), json!(saved));
     }
     Ok(value)
+}
+
+pub(super) async fn history_tasks(db: &DatabaseConnection,uid: i32,cid: i32,
+                                  ids: &[i32]) -> Result<std::collections::HashMap<i32,String>,DbErr> {
+    let mut tasks=std::collections::HashMap::new();
+    let (Some(first),Some(last))=(ids.iter().min(),ids.iter().max()) else { return Ok(tasks); };
+    for row in db.query_all(Statement::from_sql_and_values(DbBackend::Postgres,
+        "SELECT message_id,task_id FROM chat_task_input WHERE user_id=$1 AND conversation_id=$2 \
+         AND message_id BETWEEN $3 AND $4",[uid.into(),cid.into(),(*first).into(),(*last).into()])).await? {
+        tasks.insert(row.try_get("","message_id")?,row.try_get("","task_id")?);
+    }
+    Ok(tasks)
 }
 
 #[cfg(test)]

@@ -44,6 +44,7 @@ async fn delivery_requires_verified_deletion_and_always_sends_identity() {
             conversation_id: 42,
             user_id: 7,
             attempts: 1,
+            task_id: String::new(),
         };
         assert_eq!(
             request(&client(), &base, &job, "test.signed.assertion").await,
@@ -62,7 +63,8 @@ async fn delivery_requires_verified_deletion_and_always_sends_identity() {
             &Job {
                 conversation_id: 42,
                 user_id: 7,
-                attempts: 1
+                attempts: 1,
+                task_id: String::new()
             },
             "test.signed.assertion"
         )
@@ -106,14 +108,26 @@ async fn postgres_delete_enqueues_atomically_and_retries_without_stale_acknowled
         "INSERT INTO chat_history(user_id,conversation_id,role,content) VALUES(2147483647,$1,'assistant','late probe')",
         vec![cid.into()])).await.is_err());
     late.rollback().await.unwrap();
-    let first = claim(&txn, Some(cid)).await.unwrap().unwrap();
+    let first = claim_matching(&txn, Some(cid), None)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(first.user_id, i32::MAX);
-    assert!(claim(&txn, Some(cid)).await.unwrap().is_none());
+    assert!(claim_matching(&txn, Some(cid), None)
+        .await
+        .unwrap()
+        .is_none());
     finish(&txn, &first, Err("transport")).await.unwrap();
-    assert!(claim(&txn, Some(cid)).await.unwrap().is_none());
+    assert!(claim_matching(&txn, Some(cid), None)
+        .await
+        .unwrap()
+        .is_none());
     txn.execute(Statement::from_sql_and_values(DbBackend::Postgres,
         "UPDATE agent_checkpoint_cleanup SET next_attempt_at=CURRENT_TIMESTAMP WHERE conversation_id=$1",vec![cid.into()])).await.unwrap();
-    let second = claim(&txn, Some(cid)).await.unwrap().unwrap();
+    let second = claim_matching(&txn, Some(cid), None)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(second.attempts, first.attempts + 1);
     finish(&txn, &first, Ok(())).await.unwrap();
     let remaining = txn
@@ -145,4 +159,77 @@ async fn postgres_delete_enqueues_atomically_and_retries_without_stale_acknowled
         .await
         .unwrap();
     assert!(remaining.is_none());
+}
+
+#[tokio::test]
+async fn turn_delivery_uses_stable_identity_and_requires_an_explicit_ack() {
+    use axum::routing::post;
+    async fn endpoint(
+        headers: HeaderMap,
+        Json(body): Json<serde_json::Value>,
+    ) -> Json<serde_json::Value> {
+        assert!(headers.contains_key("X-Agent-Assertion"));
+        assert_eq!(body, json!({"uid":7,"task_id":"turn-2"}));
+        assert!(body.get("text").is_none());
+        Json(json!({"dropped":true}))
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            Router::new().route("/checkpoint/42/drop_turn", post(endpoint)),
+        )
+        .await
+        .unwrap()
+    });
+    let job = Job {
+        conversation_id: 42,
+        user_id: 7,
+        attempts: 1,
+        task_id: "turn-2".into(),
+    };
+    assert_eq!(
+        request(&client(), &base, &job, "signed.assertion.fixture").await,
+        Ok(())
+    );
+    server.abort();
+}
+
+#[tokio::test]
+async fn postgres_turn_retry_retains_acknowledged_fence_and_rejects_stale_ack() {
+    let Ok(url) = std::env::var("TEST_PG_URL") else {
+        return;
+    };
+    let db = Database::connect(url).await.unwrap();
+    let txn = db.begin().await.unwrap();
+    let row=txn.query_one(Statement::from_sql_and_values(DbBackend::Postgres,
+        "INSERT INTO conversation(user_id,title) VALUES(2147483647,'turn outbox fixture') RETURNING id",[]))
+        .await.unwrap().unwrap();
+    let cid: i32 = row.try_get("", "id").unwrap();
+    enqueue_turn(&txn, cid, 7, "turn-2").await.unwrap();
+    enqueue_turn(&txn, cid, 7, "turn-2").await.unwrap();
+    let first = claim_matching(&txn, Some(cid), Some("turn-2"))
+        .await
+        .unwrap()
+        .unwrap();
+    finish(&txn, &first, Err("transport")).await.unwrap();
+    assert!(has_pending_turn(&txn, cid).await.unwrap());
+    txn.execute(Statement::from_sql_and_values(DbBackend::Postgres,
+        "UPDATE agent_checkpoint_cleanup SET next_attempt_at=CURRENT_TIMESTAMP WHERE conversation_id=$1",
+        vec![cid.into()])).await.unwrap();
+    let second = claim_matching(&txn, Some(cid), Some("turn-2"))
+        .await
+        .unwrap()
+        .unwrap();
+    finish(&txn, &first, Ok(())).await.unwrap();
+    assert!(has_pending_turn(&txn, cid).await.unwrap());
+    finish(&txn, &second, Ok(())).await.unwrap();
+    assert!(!has_pending_turn(&txn, cid).await.unwrap());
+    assert!(turn_discarded(&txn, cid, "turn-2").await.unwrap());
+    assert!(claim_matching(&txn, Some(cid), Some("turn-2"))
+        .await
+        .unwrap()
+        .is_none());
+    txn.rollback().await.unwrap();
 }

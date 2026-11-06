@@ -245,35 +245,6 @@ pub(crate) async fn purge_conversation_data<C: sea_orm::ConnectionTrait>(
     Ok(ids)
 }
 
-pub(crate) async fn drop_checkpoint_turn(conversation_id: i32, text: &str, uid: i32) {
-    let url = format!("{}/checkpoint/{conversation_id}/drop_turn",
-                      crate::routes::graph::agent_base_url());
-    let sent = reqwest::Client::new()
-        .post(&url)
-        .header("X-Agent-Assertion", crate::auth_jwt::create_agent_assertion(uid, None))
-        .json(&serde_json::json!({ "text": text, "uid": uid }))
-        .timeout(Duration::from_secs(3))
-        .send()
-        .await;
-    match sent {
-        Ok(r) => {
-            let ok = r.status().is_success();
-            let v = r.json::<serde_json::Value>().await
-                .unwrap_or_else(|_| serde_json::json!({}));
-            if !ok {
-                tracing::warn!("[会话] 丢弃那一轮的钩子非 2xx conv={conversation_id}");
-            } else if !v["dropped"].as_bool().unwrap_or(false) {
-                // `no_text` / `mismatch` 都落这里——它们是"没动手"，**不是成功**。
-                tracing::warn!(
-                    "[会话] 丢弃那一轮没生效 conv={} why={}（图里那条 user 还在，下一轮它还看得见）",
-                    conversation_id, v["why"].as_str().unwrap_or("?")
-                );
-            }
-        }
-        Err(e) => tracing::warn!("[会话] 丢弃那一轮的钩子失败 conv={conversation_id}: {e}"),
-    }
-}
-
 /// DELETE /api/chat/conversations/:id：删除会话 + 级联删其历史与摘要（用户级清洗手段）。
 /// 归属校验合并为一个查询：不存在或非本人统一 404（防枚举）。
 pub async fn delete_conversation(

@@ -1,4 +1,4 @@
-//! Transactional outbox for conversation checkpoint deletion.
+//! Transactional outbox for conversation and stable user-turn cleanup.
 
 use sea_orm::{ConnectionTrait, DatabaseConnection, DbBackend, DbErr, FromQueryResult, Statement};
 use std::time::Duration;
@@ -8,6 +8,7 @@ struct Job {
     conversation_id: i32,
     user_id: i32,
     attempts: i32,
+    task_id: String,
 }
 
 fn client() -> reqwest::Client {
@@ -24,27 +25,65 @@ pub(crate) async fn enqueue<C: ConnectionTrait>(
 ) -> Result<(), DbErr> {
     db.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
-        "INSERT INTO agent_checkpoint_cleanup(conversation_id,user_id) VALUES($1,$2) \
-         ON CONFLICT(conversation_id) DO NOTHING",
-        vec![conversation_id.into(), uid.into()],
+        "DELETE FROM agent_checkpoint_cleanup WHERE conversation_id=$1 AND task_id<>''",
+        vec![conversation_id.into()],
+    ))
+    .await?;
+    enqueue_turn(db, conversation_id, uid, "").await
+}
+
+pub(crate) async fn enqueue_turn<C: ConnectionTrait>(
+    db: &C,
+    conversation_id: i32,
+    uid: i32,
+    task_id: &str,
+) -> Result<(), DbErr> {
+    db.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO agent_checkpoint_cleanup(conversation_id,user_id,task_id) VALUES($1,$2,$3) \
+         ON CONFLICT(conversation_id,task_id) DO NOTHING",
+        vec![conversation_id.into(), uid.into(), task_id.into()],
     ))
     .await?;
     Ok(())
 }
 
-async fn claim<C: ConnectionTrait>(db: &C, id: Option<i32>) -> Result<Option<Job>, DbErr> {
-    // Short atomic lease; a crashed worker releases no lock across the HTTP call.
+pub(crate) async fn has_pending_turn<C: ConnectionTrait>(
+    db: &C,
+    conversation_id: i32,
+) -> Result<bool, DbErr> {
+    Ok(db.query_one(Statement::from_sql_and_values(DbBackend::Postgres,
+        "SELECT 1 FROM agent_checkpoint_cleanup WHERE conversation_id=$1 AND task_id<>'' AND delivered_at IS NULL LIMIT 1",
+        vec![conversation_id.into()])).await?.is_some())
+}
+
+pub(crate) async fn turn_discarded<C: ConnectionTrait>(
+    db: &C,
+    conversation_id: i32,
+    task_id: &str,
+) -> Result<bool, DbErr> {
+    Ok(db.query_one(Statement::from_sql_and_values(DbBackend::Postgres,
+        "SELECT 1 FROM agent_checkpoint_cleanup WHERE conversation_id=$1 AND task_id=$2 LIMIT 1",
+        vec![conversation_id.into(),task_id.into()])).await?.is_some())
+}
+
+async fn claim_matching<C: ConnectionTrait>(
+    db: &C,
+    id: Option<i32>,
+    task: Option<&str>,
+) -> Result<Option<Job>, DbErr> {
+    // Short atomic lease; no database lock spans the HTTP call.
     let row = db
         .query_one(Statement::from_sql_and_values(
             DbBackend::Postgres,
-            "WITH due AS (SELECT conversation_id FROM agent_checkpoint_cleanup \
-         WHERE next_attempt_at<=CURRENT_TIMESTAMP AND ($1::integer IS NULL OR conversation_id=$1) \
-         ORDER BY next_attempt_at,conversation_id LIMIT 1 FOR UPDATE SKIP LOCKED) \
+            "WITH due AS (SELECT conversation_id,task_id FROM agent_checkpoint_cleanup \
+         WHERE delivered_at IS NULL AND next_attempt_at<=CURRENT_TIMESTAMP AND ($1::integer IS NULL OR conversation_id=$1) \
+         AND ($2::text IS NULL OR task_id=$2) ORDER BY next_attempt_at,conversation_id,task_id LIMIT 1 FOR UPDATE SKIP LOCKED) \
          UPDATE agent_checkpoint_cleanup j SET attempts=attempts+1, \
          next_attempt_at=CURRENT_TIMESTAMP+interval '90 seconds' FROM due \
-         WHERE j.conversation_id=due.conversation_id \
-         RETURNING j.conversation_id,j.user_id,j.attempts",
-            vec![id.into()],
+         WHERE j.conversation_id=due.conversation_id AND j.task_id=due.task_id \
+         RETURNING j.conversation_id,j.user_id,j.attempts,j.task_id",
+            vec![id.into(),task.into()],
         ))
         .await?;
     row.map(|row| Job::from_query_result(&row, "")).transpose()
@@ -56,11 +95,20 @@ async fn request(
     job: &Job,
     assertion: &str,
 ) -> Result<(), &'static str> {
-    let response = client
-        .delete(format!(
+    let request = if job.task_id.is_empty() {
+        client.delete(format!(
             "{base}/checkpoint/{}?uid={}",
             job.conversation_id, job.user_id
         ))
+    } else {
+        client
+            .post(format!(
+                "{base}/checkpoint/{}/drop_turn",
+                job.conversation_id
+            ))
+            .json(&serde_json::json!({"uid":job.user_id,"task_id":job.task_id}))
+    };
+    let response = request
         .header("X-Agent-Assertion", assertion)
         .timeout(Duration::from_secs(3))
         .send()
@@ -70,7 +118,15 @@ async fn request(
         return Err("http_status");
     }
     let body: serde_json::Value = response.json().await.map_err(|_| "invalid_response")?;
-    if body.get("deleted").and_then(|value| value.as_bool()) != Some(true) {
+    if body
+        .get(if job.task_id.is_empty() {
+            "deleted"
+        } else {
+            "dropped"
+        })
+        .and_then(|value| value.as_bool())
+        != Some(true)
+    {
         return Err("deletion_unverified");
     }
     Ok(())
@@ -83,10 +139,21 @@ async fn finish<C: ConnectionTrait>(
 ) -> Result<(), DbErr> {
     match outcome {
         Ok(()) => {
+            // Acknowledged turn rows fence delayed requests until the conversation is deleted.
+            let query = if job.task_id.is_empty() {
+                "DELETE FROM agent_checkpoint_cleanup WHERE conversation_id=$1 AND task_id=$2 AND attempts=$3"
+            } else {
+                "UPDATE agent_checkpoint_cleanup SET delivered_at=CURRENT_TIMESTAMP,last_error=NULL \
+                 WHERE conversation_id=$1 AND task_id=$2 AND attempts=$3"
+            };
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Postgres,
-                "DELETE FROM agent_checkpoint_cleanup WHERE conversation_id=$1 AND attempts=$2",
-                vec![job.conversation_id.into(), job.attempts.into()],
+                query,
+                vec![
+                    job.conversation_id.into(),
+                    job.task_id.clone().into(),
+                    job.attempts.into(),
+                ],
             ))
             .await?;
         }
@@ -94,11 +161,12 @@ async fn finish<C: ConnectionTrait>(
             let delay = (5_i32.saturating_mul(2_i32.pow(job.attempts.clamp(0, 6) as u32))).min(300);
             db.execute(Statement::from_sql_and_values(
                 DbBackend::Postgres,
-                "UPDATE agent_checkpoint_cleanup SET last_error=$3, \
-                 next_attempt_at=CURRENT_TIMESTAMP+($4*interval '1 second') \
-                 WHERE conversation_id=$1 AND attempts=$2",
+                "UPDATE agent_checkpoint_cleanup SET last_error=$4, \
+                 next_attempt_at=CURRENT_TIMESTAMP+($5*interval '1 second') \
+                 WHERE conversation_id=$1 AND task_id=$2 AND attempts=$3",
                 vec![
                     job.conversation_id.into(),
+                    job.task_id.clone().into(),
                     job.attempts.into(),
                     reason.into(),
                     delay.into(),
@@ -120,8 +188,9 @@ async fn deliver(
     db: &DatabaseConnection,
     client: &reqwest::Client,
     id: Option<i32>,
+    task: Option<&str>,
 ) -> Result<bool, DbErr> {
-    let Some(job) = claim(db, id).await? else {
+    let Some(job) = claim_matching(db, id, task).await? else {
         return Ok(false);
     };
     let assertion = crate::auth_jwt::create_agent_assertion(job.user_id, None);
@@ -143,9 +212,15 @@ pub(crate) async fn dispatch(db: &DatabaseConnection, ids: &[i32]) {
         if tokio::time::Instant::now() >= deadline {
             break;
         }
-        if let Err(error) = deliver(db, &client, Some(*id)).await {
+        if let Err(error) = deliver(db, &client, Some(*id), None).await {
             tracing::warn!(%error, conversation_id=id, "checkpoint 删除交付失败，任务仍在队列中");
         }
+    }
+}
+
+pub(crate) async fn dispatch_turn(db: &DatabaseConnection, id: i32, task: &str) {
+    if let Err(error) = deliver(db, &client(), Some(id), Some(task)).await {
+        tracing::warn!(%error,conversation_id=id,task_id=task,"turn cleanup remains queued");
     }
 }
 
@@ -157,7 +232,7 @@ pub fn start(db: DatabaseConnection) {
         loop {
             ticks.tick().await;
             for _ in 0..20 {
-                match deliver(&db, &client, None).await {
+                match deliver(&db, &client, None, None).await {
                     Ok(true) => {}
                     Ok(false) => break,
                     Err(error) => {

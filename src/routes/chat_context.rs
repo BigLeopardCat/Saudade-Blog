@@ -1,12 +1,12 @@
 //! Scoped bootstrap history for the Agent; live memory belongs to its checkpoint.
 
 use sea_orm::{
-    ColumnTrait, ConnectionTrait, DbBackend, DbErr, EntityTrait, QueryFilter, QueryOrder,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DbBackend, DbErr, EntityTrait, QueryFilter, QueryOrder, Set,
     QuerySelect, Statement, TransactionTrait,
 };
 use serde::Serialize;
 
-use crate::entity::{chat_history, chat_summary};
+use crate::entity::{chat_history, chat_summary, conversation};
 
 const HISTORY_MESSAGES: u64 = 20;
 
@@ -21,6 +21,7 @@ pub(super) struct MemoryScope {
 pub(super) struct HistoryMessage {
     pub role: String,
     pub content: String,
+    pub task_id: Option<String>,
 }
 
 #[derive(Default, Serialize)]
@@ -72,6 +73,7 @@ pub(super) async fn load_bootstrap<C: ConnectionTrait>(
             .map(|row| HistoryMessage {
                 role: row.role.clone(),
                 content: row.content.clone(),
+                task_id: row.task_id.clone(),
             })
             .collect(),
         summary: matching.map_or_else(String::new, |row| row.summary.clone()),
@@ -94,23 +96,47 @@ fn source_messages(
         .filter(chat_history::Column::Role.is_in(["user", "assistant"]))
 }
 
+/// Serialize host inserts with discard; no network or model call holds this transaction.
+pub(super) async fn append_user<C: ConnectionTrait + TransactionTrait>(
+    db: &C, uid: i32, cid: i32, role: Option<&str>, task: &str, content: &str,
+) -> Result<Option<i32>,DbErr> {
+    let txn=db.begin().await?;
+    let owner=conversation::Entity::find_by_id(cid).filter(conversation::Column::UserId.eq(uid))
+        .lock(sea_orm::sea_query::LockType::Update).one(&txn).await?;
+    if owner.is_none() || crate::checkpoint_cleanup::has_pending_turn(&txn,cid).await?
+        || crate::checkpoint_cleanup::turn_discarded(&txn,cid,task).await? {
+        txn.rollback().await?;
+        return Ok(None);
+    }
+    let saved=chat_history::ActiveModel {
+        user_id:Set(uid), conversation_id:Set(cid), role:Set("user".into()),
+        source_role:Set(role.map(str::to_owned)), task_id:Set(Some(task.to_owned())),
+        content:Set(content.to_owned()),..Default::default()
+    }.insert(&txn).await?;
+    txn.commit().await?;
+    Ok(Some(saved.id))
+}
+
 /// Delete a turn and invalidate any archived summary containing that range.
 pub(super) async fn discard<C: ConnectionTrait + TransactionTrait>(
     db: &C,
     uid: i32,
     conversation_id: i32,
     from_id: i32,
+    task: &str,
 ) -> Result<(), DbErr> {
-    if from_id <= 0 {
+    if from_id <= 0 || task.is_empty() {
         return Err(DbErr::Custom("invalid discard boundary".into()));
     }
     let txn = db.begin().await?;
-    chat_history::Entity::delete_many()
-        .filter(chat_history::Column::UserId.eq(uid))
-        .filter(chat_history::Column::ConversationId.eq(conversation_id))
-        .filter(chat_history::Column::Id.gte(from_id))
-        .exec(&txn)
-        .await?;
+    txn.execute(Statement::from_sql_and_values(DbBackend::Postgres,
+        "DELETE FROM chat_history h WHERE h.user_id=$1 AND h.conversation_id=$2 \
+         AND (h.task_id=$3 OR h.id IN (SELECT message_id FROM chat_task_input \
+              WHERE user_id=$1 AND conversation_id=$2 AND task_id=$3))",
+        vec![uid.into(),conversation_id.into(),task.into()])).await?;
+    txn.execute(Statement::from_sql_and_values(DbBackend::Postgres,
+        "DELETE FROM chat_task_input WHERE user_id=$1 AND conversation_id=$2 AND task_id=$3",
+        vec![uid.into(),conversation_id.into(),task.into()])).await?;
     txn.execute(Statement::from_sql_and_values(
         DbBackend::Postgres,
         "UPDATE chat_summary SET summary='',message_count=0,covered_through_id=0, \

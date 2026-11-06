@@ -32,6 +32,7 @@ LOAD = [
     "0025_automation_announcements.sql",
     "0026_automation_changes.sql",
     "0027_article_reference_integrity.sql",
+    "0028_turn_cleanup.sql",
 ]
 
 EXCLUDED = {

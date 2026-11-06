@@ -4,7 +4,7 @@ use sea_orm::{Database, DatabaseBackend, MockDatabase, MockExecResult};
 fn message(id: i32, role: &str) -> chat_history::Model {
     chat_history::Model {
         id, user_id: 7, conversation_id: 42, role: role.into(),
-        source_role: Some("user".into()), content: format!("message {id}"),
+        source_role: Some("user".into()), task_id: None, content: format!("message {id}"),
         created_at: chrono::Local::now().naive_local(),
     }
 }
@@ -67,8 +67,8 @@ async fn role_change_cannot_import_a_different_roles_archive() {
 #[tokio::test]
 async fn discard_and_archive_invalidation_are_one_transaction() {
     let db = MockDatabase::new(DatabaseBackend::Postgres)
-        .append_exec_results([exec(2), exec(1)]).into_connection();
-    discard(&db, 7, 42, 15).await.unwrap();
+        .append_exec_results([exec(2), exec(1), exec(1)]).into_connection();
+    discard(&db, 7, 42, 15, "fixture-task").await.unwrap();
     let sql = format!("{:?}", db.into_transaction_log());
     assert!(sql.contains("BEGIN") && sql.contains("COMMIT"));
     assert!(sql.contains("DELETE FROM") && sql.contains("UPDATE chat_summary"));
@@ -79,8 +79,8 @@ async fn discard_and_archive_invalidation_are_one_transaction() {
 #[tokio::test]
 async fn failed_archive_invalidation_rolls_back_raw_history_deletion() {
     let db = MockDatabase::new(DatabaseBackend::Postgres)
-        .append_exec_results([exec(2)]).into_connection();
-    assert!(discard(&db, 7, 42, 15).await.is_err());
+        .append_exec_results([exec(2), exec(1)]).into_connection();
+    assert!(discard(&db, 7, 42, 15, "fixture-task").await.is_err());
     let sql = format!("{:?}", db.into_transaction_log());
     assert!(sql.contains("ROLLBACK") && !sql.contains("COMMIT"));
 }
@@ -89,7 +89,7 @@ async fn failed_archive_invalidation_rolls_back_raw_history_deletion() {
 async fn invalid_discard_boundaries_do_not_write() {
     let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
     for boundary in [0, -1] {
-        assert!(discard(&db, 7, 42, boundary).await.is_err());
+        assert!(discard(&db, 7, 42, boundary, "fixture-task").await.is_err());
     }
     assert!(db.into_transaction_log().is_empty());
 }
@@ -107,9 +107,9 @@ async fn postgres_discard_preserves_unaffected_archive_and_invalidates_deleted_c
     let mut ids = Vec::new();
     for index in 0..6 {
         let row = txn.query_one(Statement::from_sql_and_values(DbBackend::Postgres,
-            "INSERT INTO chat_history(user_id,conversation_id,role,content,source_role) \
-             VALUES($1,$2,$3,'rollback probe','user') RETURNING id",
-            vec![uid.into(), cid.into(), (if index % 2 == 0 { "user" } else { "assistant" }).into()],
+            "INSERT INTO chat_history(user_id,conversation_id,role,content,source_role,task_id) \
+             VALUES($1,$2,$3,'rollback probe','user',$4) RETURNING id",
+            vec![uid.into(), cid.into(), (if index % 2 == 0 { "user" } else { "assistant" }).into(), format!("case{}", index-index%2).into()],
         )).await.unwrap().unwrap();
         ids.push(row.try_get::<i32>("", "id").unwrap());
     }
@@ -117,12 +117,12 @@ async fn postgres_discard_preserves_unaffected_archive_and_invalidates_deleted_c
         "INSERT INTO chat_summary(user_id,conversation_id,summary,message_count,covered_through_id,source_role) \
          VALUES($1,$2,'archive',4,$3,'user')", vec![uid.into(), cid.into(), ids[3].into()],
     )).await.unwrap();
-    discard(&txn, uid, cid, ids[4]).await.unwrap();
+    discard(&txn, uid, cid, ids[4], "case4").await.unwrap();
     let preserved = chat_summary::Entity::find().filter(chat_summary::Column::ConversationId.eq(cid))
         .one(&txn).await.unwrap().unwrap();
     assert_eq!(preserved.summary, "archive");
     assert_eq!(preserved.covered_through_id, ids[3]);
-    discard(&txn, uid, cid, ids[2]).await.unwrap();
+    discard(&txn, uid, cid, ids[2], "case2").await.unwrap();
     let invalidated = chat_summary::Entity::find().filter(chat_summary::Column::ConversationId.eq(cid))
         .one(&txn).await.unwrap().unwrap();
     assert!(invalidated.summary.is_empty() && invalidated.source_role.is_none());

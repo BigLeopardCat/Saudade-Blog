@@ -97,6 +97,7 @@ struct ChatCtx {
     uid: i32,
     conversation_id: i32,
     trace_id: String,
+    task_id: String,
     body: serde_json::Value,
     role: Option<String>,
 }
@@ -117,6 +118,8 @@ fn trace_id_of(req: &Request) -> String {
 #[derive(Serialize)]
 pub struct HistoryItem {
     pub id: i32,
+    pub task_id: Option<String>,
+    pub parent_task_id: Option<String>,
     pub role: String,
     pub content: String,
     pub time: i64,
@@ -246,11 +249,21 @@ pub async fn chat_history_handler(
             std::collections::HashMap::new()
         }
     };
+    let parents=match task_inputs::history_tasks(&state.db,uid,conv_id,
+        &recent.iter().map(|row|row.id).collect::<Vec<_>>()).await {
+        Ok(value)=>value,
+        Err(error)=>{
+            warn!(%error,conversation_id=conv_id,"history task identities unavailable");
+            return (StatusCode::SERVICE_UNAVAILABLE,Json(serde_json::json!({"error":"history_unavailable"}))).into_response();
+        }
+    };
     let items: Vec<HistoryItem> = recent
         .iter()
         .rev() // 时间升序（聊天软件阅读序）
         .map(|h| HistoryItem {
             id: h.id,
+            task_id: h.task_id.clone(),
+            parent_task_id: parents.get(&h.id).cloned(),
             role: h.role.clone(),
             content: h.content.clone(),
             time: h.created_at.and_local_timezone(chrono::Local).single().map(|dt| dt.timestamp_millis()).unwrap_or(0),
@@ -268,86 +281,8 @@ pub async fn chat_history_handler(
         .into_response()
 }
 
-#[derive(Deserialize)]
-pub struct DiscardReq {
-    #[serde(default)]
-    pub text: Option<String>,
-    #[serde(default)]
-    pub conversation_id: Option<i32>,
-}
-
-pub async fn discard_handler(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    payload: Option<Json<DiscardReq>>,
-) -> Response {
-    let uid = match auth_jwt::auth_uid(&state.db, &headers).await {
-        Ok(uid) => uid,
-        // 401 保持原样，多带一句 message（同上）
-        Err(e) => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(serde_json::json!({
-                    "success": false, "error": "unauthorized", "message": e.message()
-                })),
-            )
-                .into_response();
-        }
-    };
-    let conv_opt = payload.as_ref().and_then(|p| p.conversation_id);
-    // 会话解析：显式 id 已删 / 无任何会话 → 空操作 success（幂等设计，见上注释）
-    let conv_id = match resolve_conversation_id(&state.db, uid, conv_opt, false).await {
-        Ok(Some(c)) => c,
-        _ => return (StatusCode::OK, Json(serde_json::json!({"success": true}))).into_response(),
-    };
-    let last_user = chat_history::Entity::find()
-        .filter(chat_history::Column::UserId.eq(uid))
-        .filter(chat_history::Column::ConversationId.eq(conv_id))
-        .filter(chat_history::Column::Role.eq("user"))
-        .order_by_desc(chat_history::Column::Id)
-        .one(&state.db)
-        .await;
-    let Ok(Some(u)) = last_user else {
-        return (StatusCode::OK, Json(serde_json::json!({"success": true}))).into_response();
-    };
-    if let Some(Json(DiscardReq { text: Some(t), .. })) = payload {
-        if !t.is_empty()
-            && u.content != t
-            && !u
-                .content
-                .strip_prefix(t.as_str())
-                .map(|rest| rest.is_empty() || rest.starts_with("\n[图片"))
-                .unwrap_or(false)
-        {
-            // 不匹配：期间已发新消息或原文不一致——不删任何记录（保留新轮）
-            return (
-                StatusCode::OK,
-                Json(serde_json::json!({
-                    "success": false,
-                    "reason": "mismatch",
-                    "error": "最后一条消息不是重发原文（可能已发送新消息），未删除"
-                })),
-            )
-                .into_response();
-        }
-    }
-    if let Err(error) = chat_context::discard(&state.db, uid, conv_id, u.id).await {
-        warn!(%error, user_id=uid, conversation_id=conv_id, "chat discard failed");
-        return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
-            "success": false, "error": "未能保存本次丢弃，请稍后重试"
-        }))).into_response();
-    }
-    // 历史提交后同步清理执行内核上下文；带原文防止误删较新的轮次。
-    crate::routes::conversation::drop_checkpoint_turn(conv_id, &u.content, uid).await;
-    (StatusCode::OK, Json(serde_json::json!({"success": true}))).into_response()
-}
-
-/// 鉴权 + 请求体解析 + 会话解析 + 保存用户消息 + 加载历史/摘要 + 组装 agent 请求体。
-/// 错误形态：Err(OK, …) = 历史 200 语义的 JSON 错误（合规文案/解析失败，前端既有
-/// 分支不变）；Err(NOT_FOUND, …) = 会话不存在/非本人（404；前端按 body.error ==
-/// conversation_not_found 恢复流程，与状态码无关）
-
-
+mod discard;
+pub use discard::discard_handler;
 
 fn derive_conv_title(content: &str) -> Option<String> {
     let mut lines: Vec<&str> = content.lines().collect();
@@ -474,7 +409,7 @@ pub async fn chat_stream_handler(
     // 帧循环里的告警要用（stream! 生成器闭包不能借用 ctx——它后面还要用 ctx 写响应头）
     let trace_id = ctx.trace_id.clone();
 
-    let body_stream = forward_agent_stream(state, uid, conversation_id, ctx.role, trace_id, upstream.bytes_stream());
+    let body_stream = forward_agent_stream(state, uid, conversation_id, ctx.role, ctx.task_id, trace_id, upstream.bytes_stream());
 
     (
         [
@@ -495,6 +430,7 @@ fn forward_agent_stream(
     uid: i32,
     conversation_id: i32,
     source_role: Option<String>,
+    task_id: String,
     trace_id: String,
     upstream_stream: impl futures::Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
 ) -> impl futures::Stream<Item = Result<axum::response::sse::Event, axum::Error>> + Send {
@@ -525,7 +461,7 @@ fn forward_agent_stream(
                     if uid > 0 && !reply.is_empty() {
                         let state = state.clone();
                         if persistence::run(&trace_id, async move {
-                            save_assistant_reply(&state.db, uid, conversation_id, source_role, reply).await
+                            save_assistant_reply(&state.db, uid, conversation_id, source_role, &task_id, reply).await
                         }).await.is_err() {
                             yield Ok(stream_event("error", PERSISTENCE_ERROR));
                             break;
@@ -554,8 +490,9 @@ fn forward_agent_stream(
                 Frame::Pending(value) => {
                     if uid > 0 {
                         let state = state.clone();
+                        let task_id=task_id.clone();
                         if persistence::run(&trace_id, async move {
-                            if pending::save_pending_action(&state.db, uid, conversation_id, &value.into()).await {
+                            if pending::save_pending_action(&state.db, uid, conversation_id, &task_id, &value.into()).await {
                                 Ok(())
                             } else {
                                 Err(sea_orm::DbErr::Custom("pending state was not saved".into()))
@@ -600,6 +537,9 @@ fn forward_agent_stream(
         }
     }
 }
+
+#[cfg(test)]
+mod test_support;
 
 #[cfg(test)]
 mod tests;
