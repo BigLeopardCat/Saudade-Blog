@@ -1,3 +1,0 @@
-[Service]
-ExecStart=
-ExecStart=__RELEASE_ROOT__/current/scripts/serve_scheduler.sh

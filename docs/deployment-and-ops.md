@@ -2,7 +2,7 @@
 
 ## 配置
 
-后端读取工作目录 `.env` 和进程环境。必需 `DATABASE_URL`、随机 `JWT_SECRET`；公开部署设置 `SITE_URL`，前端构建设置对应 `VITE_SITE_URL`。完整配置样例见[环境模板](../.env.example)。配置文件不入库，前端不得持有模型或对象存储密钥。
+开发环境由 dotenv 读取本地 `.env`，进程环境优先；生产由 systemd 注入 `/etc/saudade/blog-runtime.env`，工作目录为独立状态目录，不读取开发 checkout。必需 `DATABASE_URL`、随机 `JWT_SECRET`；公开部署设置 `SITE_URL`，前端构建设置对应 `VITE_SITE_URL`。完整配置样例见[环境模板](../.env.example)。配置文件不入库，前端不得持有模型或对象存储密钥。
 
 启用 Agent 时另配 `BLOG_DELEGATION_SECRET`、`AGENT_ASSERTION_SECRET`；设备网关另配
 `DEVICE_SIGNING_SECRET`。密钥用途见[安全边界](security-boundary.md)，不复制整份博客 .env 给 Agent。
@@ -10,6 +10,27 @@
 [独立服务账号](../deploy/service-isolation.md)。
 
 Rust 默认监听 loopback 3000，前端静态文件由 nginx 提供。Agent、模型服务和设备演示仅在启用时安装；不要将内部管理端口直接暴露公网。
+
+### 发布工具配置
+
+CI 通过环境注入四个 R2 发布字段；服务器部署账号使用独立的
+`~/.config/saudade/deploy.env`（目录 0700、文件 0600、归部署账号所有），样例见
+[`deploy/deploy.env.example`](../deploy/deploy.env.example)。自定义绝对路径可设置
+`SAUDADE_DEPLOY_ENV_FILE`。字段仅含 `R2_ENDPOINT`、`R2_ACCESS_KEY`、`R2_SECRET_KEY`、
+`R2_BUCKET`，不得混入博客业务、图库或 Agent 的密钥。显式指定的文件不存在即失败。
+
+发布工具使用 python-dotenv 解析引号，禁止 shell 执行和变量插值；进程环境优先。
+CI 配齐四项时不读取机器文件。配置不会写入发布包或修改 `DEPLOY_SHA`。
+
+```sh
+python3 -m venv ~/.local/share/saudade/deploy-venv
+~/.local/share/saudade/deploy-venv/bin/python -m pip install -r scripts/deploy/requirements.txt
+SAUDADE_DEPLOY_PYTHON=~/.local/share/saudade/deploy-venv/bin/python \
+  bash scripts/deploy/trigger_deploy.sh FULL_COMMIT_SHA
+```
+
+CI 安装同一份固定版本依赖。部署控制脚本不在业务产物中；更新脚本或工具依赖时，
+应在没有发布任务运行时单独安装已审查版本，再触发发布，不覆盖其他工作树的未提交改动。
 
 ## PostgreSQL
 

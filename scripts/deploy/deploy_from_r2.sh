@@ -2,38 +2,39 @@
 # Deploy an immutable R2 artifact under a deployment lock; verify readiness before pruning known old assets.
 # Do not edit this script while a deployment is running.
 
-set -e
+set -euo pipefail
 
 cd "${PROJECT_DIR:-/home/ubuntu/Saudade-Blog}"
 
-python3 scripts/check_disk_capacity.py .
+DEPLOY_PYTHON="${SAUDADE_DEPLOY_PYTHON:-python3}"
+"$DEPLOY_PYTHON" scripts/check_disk_capacity.py .
 
 mkdir -p logs
 exec 9>logs/.deploy.lock
 flock -w 300 9 || { echo "❌ $(date '+%H:%M:%S') 等了 300 秒仍拿不到部署锁（有另一个部署在跑）"; exit 1; }
 
-export $(grep -v '^\s*#' .env | grep -v '^\s*$' | xargs) 2>/dev/null || true
 
-# 上一版是哪个提交（后端要不要重启的判据），必须赶在下面 python 覆盖它之前读
 PREV_SHA="$(cat logs/.last_deploy_sha 2>/dev/null || true)"
 
 echo "=== $(date '+%Y-%m-%d %H:%M:%S') 从 R2 拉取更新（DEPLOY_SHA=${DEPLOY_SHA:-未指定}）==="
 
-# ── 解析 key + 下载 + 解压（key 由提交号决定）────────────────────────────
-DEPLOY_SHA="${DEPLOY_SHA:-}" python3 <<'PYEOF2'
+DEPLOY_SHA="${DEPLOY_SHA:-}" "$DEPLOY_PYTHON" <<'PYEOF2'
 import os, re, sys
 import boto3, tarfile
+sys.path.insert(0, "scripts/deploy")
+from deployment_config import read_deployment_config
 sys.path.insert(0, "scripts")
 from check_disk_capacity import require_capacity
 from botocore.config import Config
 
+credentials = read_deployment_config()
 s3 = boto3.client('s3',
-    endpoint_url=os.environ['R2_ENDPOINT'],
-    aws_access_key_id=os.environ['R2_ACCESS_KEY'],
-    aws_secret_access_key=os.environ['R2_SECRET_KEY'],
+    endpoint_url=credentials['R2_ENDPOINT'],
+    aws_access_key_id=credentials['R2_ACCESS_KEY'],
+    aws_secret_access_key=credentials['R2_SECRET_KEY'],
     config=Config(signature_version='s3v4'),
     region_name='auto')
-bucket = os.environ['R2_BUCKET']
+bucket = credentials['R2_BUCKET']
 
 sha = os.environ.get('DEPLOY_SHA', '').strip()
 if not sha:
@@ -68,15 +69,12 @@ PYEOF2
 
 SHA="$(cat logs/.last_deploy_sha)"
 
-# ── 前端：至少得有一个 index.html 才算落地 ───────────────────────────────
 [ -f frontend/dist/index.html ] || { echo "❌ 部署包里没有 frontend/dist/index.html"; exit 1; }
 echo "✅ $(date '+%H:%M:%S') 前端已更新"
 
-# ── 清理不再使用的前端资源 ───────────────────────────────────────────
 # 内容哈希 JS/CSS 保留 24 小时，供部署前已打开的页面加载懒模块。
-# 本代清单、build-info 与符号链接受保护；其他过期文件按清单清理。
 # 清单缺失、过小或缺少 index.html 时中止清理。
-python3 - <<'PYEOF3' || echo "⚠️ $(date '+%H:%M:%S') 前端死块清理失败（不影响本次部署，下次部署再清）"
+"$DEPLOY_PYTHON" - <<'PYEOF3' || echo "⚠️ $(date '+%H:%M:%S') 前端死块清理失败（不影响本次部署，下次部署再清）"
 import os, re, time
 ROOT = 'frontend/dist'
 GRACE_SECONDS = 24 * 3600
@@ -121,17 +119,15 @@ for root, _subdirs, _files in os.walk(ROOT, topdown=False):
         os.rmdir(root)
         empty += 1
     except OSError:
-        pass   # 非空（还有本代文件）或权限问题 ⇒ 留着
+        pass
 print(f'🧹 前端死块：清掉上一代 {len(dead)} 个 / {freed / 1048576:.1f}MB'
       f'（本代 {len(current)} 个保留；宽限期旧块 {retained} 个；删除 {empty} 个空目录）')
 if dead:
     print('   ' + '、'.join(os.path.basename(p) for p in dead[:5]) + ('…' if len(dead) > 5 else ''))
 PYEOF3
 
-# ── 后端：ELF 校验 → 按源码变化决定要不要重启 ────────────────────────────
 RESTART=0
 if [ -f saudade_blog_bin ]; then
-  # A10 修复补充：后端二进制必须是 ELF 可执行文件，拒绝被替换为任意脚本/文件
   if ! file saudade_blog_bin | grep -q "ELF"; then
     echo "❌ $(date '+%H:%M:%S') saudade_blog_bin 不是 ELF 可执行文件，部署中止"
     rm -f saudade_blog_bin
@@ -152,7 +148,6 @@ else
   echo "⚠️ 部署包里没有后端二进制（这一步只构建了前端？）"
 fi
 
-# ── 存活探测：该重启就重启；不响应就补一次；仍不响应即失败 ────────────────
 alive() {
   code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 http://127.0.0.1:3000/api/login || true)
   [ -n "$code" ] && [ "$code" != "000" ]
@@ -171,14 +166,13 @@ else
   echo "✅ $(date '+%H:%M:%S') 后端无需变动（存活探测 HTTP $code）"
 fi
 
-# ── 构建信息：线上 curl 这个文件即知部署的是哪个提交 ──────────────────────
 printf '{"sha":"%s","deployed_at":"%s"}\n' "$SHA" "$(date '+%Y-%m-%d %H:%M:%S%z')" \
   > frontend/dist/build-info.json
 echo "✅ $(date '+%H:%M:%S') 部署完成（sha=${SHA:0:12}）"
 
 
 if [ -f scripts/deploy/prune_r2.py ]; then
-  if python3 scripts/deploy/prune_r2.py --keep 3 --keep-sha "$SHA" --apply; then
+  if "$DEPLOY_PYTHON" scripts/deploy/prune_r2.py --keep 3 --keep-sha "$SHA" --apply; then
     echo "✅ $(date '+%H:%M:%S') R2 产物已清理（保留 latest.txt + 最近 3 个包）"
   else
     echo "⚠️ $(date '+%H:%M:%S') R2 产物清理失败（不影响本次部署，可手动跑 scripts/deploy/prune_r2.py）"

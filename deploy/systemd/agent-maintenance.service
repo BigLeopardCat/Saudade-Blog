@@ -1,8 +1,0 @@
-[Unit]
-Description=Saudade Agent private trace retention
-After=saudade-agent.service
-
-[Service]
-Type=oneshot
-WorkingDirectory=/srv/saudade-agent/current
-ExecStart=/srv/saudade-agent/current/.venv/bin/python -m eval.trace_retention --apply
