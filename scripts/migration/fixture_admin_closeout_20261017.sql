@@ -22,7 +22,7 @@ SELECT
   (@old722 IS NOT NULL) AS row722_present,
   (@old_role721 = 'admin') AS role721_is_admin;
 
--- ── ② A：口令轮换（配方与 `test_accounts_rotate_20260924.sql` **逐字相同**）──
+-- ② A：口令轮换（配方与 `test_accounts_rotate_20260924.sql` **逐字相同**）
 -- 四个随机 UUID 拼起来的原文**从来没有被任何人看到过**：不经过终端、不落任何文件、
 -- 不进 shell 历史、不写进本文件。此后这两行在**结构上**登录不进去
 -- （`utils.rs::verify_password` 会拿输入算 SHA-256 去比对，而原文不可知 ⇒ 永不相等）。
@@ -40,7 +40,7 @@ UPDATE `user`
    SET role = 'user'
  WHERE id = 721 AND username = 'agent_test_admin_721' AND role = 'admin';
 
--- ── ③ 验收：三件事都必须成立 ────────────────────────────────────────────────
+-- ③ 验收：三件事都必须成立
 -- 期望一行：pw_changed721=1、pw_changed722=1、pw_len=64、looks_like_sha256=1、
 --           pw_empty=0、role_now=user、role_changed=1。
 -- ⚠️ 任一为 0/NULL ⇒ 那一件事**没做成**（行不在 / 用户名不匹配 / @old 取不到），
@@ -67,7 +67,7 @@ SELECT id, username, role, (@old_role721 = 'admin' AND role = 'user') AS role_ch
 SELECT id, username, role FROM `user`
  WHERE role IN ('admin', 'superadmin') ORDER BY id;
 
--- ── ④ flag：**三件事都成立才登记** ─────────────────────────────────────────
+-- ④ flag：**三件事都成立才登记**
 -- 条件写全（同 `test_accounts_rotate_20260924.sql` 的写法）：两行口令都变了、形状合法、
 -- 且 721 的 role 真的成了 user。任一不满足 ⇒ 不写 flag（flag 的含义是"这次收口做成了"，
 -- 不是"本文件被打开过"）。

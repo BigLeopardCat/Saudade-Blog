@@ -85,7 +85,7 @@ Live2D Cubism Core 不属于本仓库 GPL-2.0 的覆盖范围，它由 Live2D �
 | 樱花花瓣 PNG（`frontend/public/icons/sakura/1–4.png`） | **上游仓库未声明许可**（见下） |
 | `frontend/public/sakura.js`（jQuery 3.1.1 + JQuery-Snowfall + 上游自写代码的打包件，**当前无人引用**） | jQuery / JQuery-Snowfall：MIT；**上游自写部分未声明许可**（见下） |
 
-### 樱花素材的来路（20261005 查实）
+### 樱花素材的来路
 
 五份文件同出一个仓库：[WRXinYue/sakura_fall](https://github.com/WRXinYue/sakura_fall)
 的 `sakura_fall1/`，与本仓逐字节相同；下表可用 `git hash-object <文件>` 逐条复核：
@@ -98,29 +98,20 @@ Live2D Cubism Core 不属于本仓库 GPL-2.0 的覆盖范围，它由 Live2D �
 | `frontend/public/icons/sakura/4.png` | `sakura_fall1/js/img/4.png` | `b7f99c6123041e0a8709153d990d391594820d69` |
 | `frontend/public/sakura.js` | `sakura_fall1/js/sakura.js` | `9f3a29ae443b7af239d3894c8106ec743de7d851` |
 
-但那个仓库没有许可。 根目录只有 `README.md`（空）、`sakura_fall1/`、`sakura_fall2/`；
-GitHub 的 license 接口对该仓返回 404，仓库元数据里 `license: null`；仓库建于 2022-08-06
-之后再没更新过。按默认版权规则即保留所有权利，本项目并没有取得再分发这五份文件的授权。
+但那个仓库没有许可：根目录只有空的 `README.md`、`sakura_fall1/`、`sakura_fall2/`；
+GitHub 的 license 接口返回 404，仓库元数据为 `license: null`，也没有更新记录。按默认
+版权规则即保留所有权利，本项目未取得再分发这五份文件的授权。Live2D 是另有条款约束的
+专有软件，这里是根本没有条款。
 
-它和 §1 的 Live2D 不是一类问题：Live2D 是"另有条款约束的专有软件"，这里是"根本没有条款"。
-三件事可以分开处理：
+当前处理：`sakura.js` 无人引用，随 `public/` 进产物，可直接删除；四张花瓣 PNG 仍被
+`frontend/public/effects.js` 的 `PETAL_SRC` 使用，需替换为自制或明确许可的同尺寸素材
+（`effects.js` 按原始宽高比缩放，不必改代码）。商业使用前须取得原作者授权或替换素材。
 
-- `sakura.js` 删掉最省事：它当前无人引用（见下），只是随 `public/` 一起进产物、
-  白白发出去的 100KB。删掉它既去掉一份来路不明的文件，也顺带免掉"它里面 JQuery-Snowfall
-  的 MIT 声明已被剥掉"这个隐患。
-- 四张花瓣 PNG 在用（`frontend/public/effects.js` 的 `PETAL_SRC`），删不得。要清干净就
-  换成自制或明确许可的花瓣图；`effects.js` 按原始宽高比缩放（`width` + `height:auto`），
-  同尺寸的替代图可以直接顶替，不必改代码。
-- 保留现状也可以，但拿去做商业站点之前得先解决：授权只有原作者能给，最直接的办法是
-  到上游仓库开个 issue 问一句，或者换成自制素材。
-
-`frontend/public/sakura.js` 并不是页面上那个樱花特效。 这个 100KB 的打包件内容 =
-jQuery 3.1.1 + [JQuery-Snowfall](https://github.com/loktar00/JQuery-Snowfall)（作者 Jason
-Brown，GitHub `loktar00`）+ 上游作者自己的一段代码。页面上真正生效的樱花是 `effects.js` 里
-自己重写的一份（`window.startSakura`），两者没有调用关系：**全仓代码与已发布文章里都
-搜不到 `sakura.js` 的加载点，它只是随 `public/` 被打进产物。它里面 JQuery-Snowfall 的
-许可声明已被剥掉**（只剩 jQuery 那行 banner），而 MIT 要求声明随分发一起带上；
-这也是"删掉比修补它更省事"的理由。
+`frontend/public/sakura.js` 是 jQuery 3.1.1 + [JQuery-Snowfall](https://github.com/loktar00/JQuery-Snowfall)（作者 Jason
+Brown，GitHub `loktar00`）+ 上游自写代码的 100KB 打包件，不是页面生效的樱花特效。页面使用
+`effects.js` 的 `window.startSakura`；全仓代码与已发布文章都没有 `sakura.js` 的加载点，
+它只随 `public/` 进入产物。其中 JQuery-Snowfall 的 MIT 声明已被剥掉（只剩 jQuery banner），
+而 MIT 要求声明随分发保留。
 
 ## 5. Rust crates
 

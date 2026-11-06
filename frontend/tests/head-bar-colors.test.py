@@ -23,7 +23,7 @@ def check(desc, cond, detail=""):
         FAILS.append(desc)
 
 
-# ── 编译真 sass ──────────────────────────────────────────────────────────────
+# 编译真 sass
 # CLI（node_modules/.bin/sass）在本机是坏的（chokidar 的 ERR_REQUIRE_ESM），
 # 走 node API —— 与 sass-media-shadow.test.mjs 同一条通路。
 COMPILE = """\
@@ -137,8 +137,8 @@ with sync_playwright() as p:
               ratio(v["title"], page_bg) >= 3.0, f"{ratio(v['title'], page_bg):.2f}:1")
         check("未滚动：导航项与站名同色", v["li"] == v["title"], f"{v['li']} / {v['title']}")
 
-        # ── ② 悬停整条落深底 ───────────────────────────────────────────────────
-        # 过渡 0.6s：读太早会量到中间帧（本脚本第一版就吃到过 rgba(0,0,0,0.19)）。
+        # ② 悬停整条落深底
+        # 过渡 0.6s：读太早会量到中间帧（如 rgba(0,0,0,0.19)）。
         pg.hover("#hc")
         pg.wait_for_timeout(800)
         vh = pg.evaluate(READ)
@@ -155,7 +155,7 @@ with sync_playwright() as p:
         pg.mouse.move(0, 0)
         pg.wait_for_timeout(800)
 
-        # ── ③ 已滚动 = .is-stuck（贴满整幅、去圆角、深底）───────────────────────
+        # ③ 已滚动 = .is-stuck（贴满整幅、去圆角、深底）
         pg.evaluate("() => document.getElementById('hc').classList.add('is-stuck')")
         pg.wait_for_timeout(800)
         vs = pg.evaluate(READ)

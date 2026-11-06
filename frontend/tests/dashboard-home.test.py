@@ -370,7 +370,7 @@ with sync_playwright() as p:
     gap = geo["todo"]["t"] - geo["cal"]["b"]
     check("日历在待办卡上方", gap >= 0,
           f"日历底 {geo['cal']['b']:.0f} / 待办顶 {geo['todo']['t']:.0f}")
-    # 旧布局（space-between）下这个缝实测近 300px：日历被顶到最上、待办被压到最下。
+    # space-between 布局下这个缝近 300px：日历被顶到最上、待办被压到最下。
     check("两段之间只隔一个 gap（≤ 40px），不再是撑出来的空档", gap <= 40, f"{gap:.0f}px")
     check("日历紧贴右栏顶部（上面没有多余的一段）",
           geo["cal"]["t"] - geo["right"]["t"] <= 40,
@@ -419,7 +419,7 @@ with sync_playwright() as p:
     later_cell = cell(pg, LATER)
     empty_cell = cell(pg, EMPTY_DAY)
 
-    # 上一轮是"把待办文字塞进格子"（.events 里一行一条）。那条路的代价是格子得撑到
+    # "把待办文字塞进格子"（.events 里一行一条）的代价是格子得撑到
     # 46px 以上，而 antd 的「今天」环是挂在格子上的 —— 格子一大环就跟着放大成方框。
     check("格子里不再有待办文字（.events 那条路已撤）",
           not any(c["hasText"] for c in (today_cell, late_cell, later_cell)),
@@ -451,7 +451,7 @@ with sync_playwright() as p:
           later_cell["dotsBox"]["t"] >= later_cell["inner"]["b"] - 1,
           f"点顶 {later_cell['dotsBox']['t']:.1f} / 数字底 {later_cell['inner']['b']:.1f}")
 
-    # 「今天」默认是**选中态**（rc-picker 的面板值默认就是今天，实测今天那格同时带
+    # 「今天」默认是**选中态**（rc-picker 的面板值默认就是今天，今天那格同时带
     # -selected 与 -today）⇒ 它是一枚实心紫圆 + 白字，不是 antd 默认那圈蓝框。
     # 这不是"环丢了"：环（`.ant-picker-cell-inner::before`）本来就只在今天**不是**
     # 选中项时才露出来，那一段放到 ⑥ 点了别的日期之后再验。
@@ -663,7 +663,7 @@ with sync_playwright() as p:
     # 拖拽要**分步、跨帧**发：dragstart 里 setDragId 是 React 状态更新，
     # 四个事件挤在同一个同步任务里时（连续事件优先级不进同步 flush），
     # drop 处理器闭包里读到的 dragId 还是 null，整段拖拽会静默失效——
-    # 那是我第一版用例的假失败（组件本身没问题）。步与步之间留一帧。
+    # 这是用例自身的假失败（组件本身没问题）。步与步之间留一帧。
     def drag_start(src_text):
         pg.evaluate("""(srcText) => {
           const src = [...document.querySelectorAll('.todo-row')]
@@ -975,7 +975,7 @@ with sync_playwright() as p:
     def server_texts():
         return [r["text"] for r in pg.evaluate("() => window.__serverDump()")]
 
-    # ── 甲：本地干净 → 收到 agent 收尾信号 → 重读一遍就够了
+    # 甲：本地干净 → 收到 agent 收尾信号 → 重读一遍就够了
     pg.reload()
     pg.wait_for_timeout(900)
     pg.evaluate("() => localStorage.setItem('__puts', '0')")
@@ -1001,7 +1001,7 @@ with sync_playwright() as p:
     check("重读没动服务端那份（读不是写：还是 9 条）", len(server_texts()) == 9,
           f"{len(server_texts())} 条")
 
-    # ── 乙：本地脏（主人刚删掉一条，正处在 600ms 防抖窗口里）→ agent 也加了一条
+    # 乙：本地脏（主人刚删掉一条，正处在 600ms 防抖窗口里）→ agent 也加了一条
     # 这一刻直接发手上的那份 = 整份覆盖语义下的删除，agent 那条会被抹掉；
     # 而先 GET 再并，又绝不能把主人**自己删掉**的那条当"新出现的"复活回来。
     pg.reload()
@@ -1034,7 +1034,7 @@ with sync_playwright() as p:
     check("服务端那份 = 发出去的那份（合并结果真的落库了，不是只在手里绕了一圈）",
           server_texts() == sent_texts, str(server_texts()))
 
-    # ── 丙：记号挂着的时候主人自己把改动撤回去了 → 那一刻是安全读时机，立刻补读
+    # 丙：记号挂着的时候主人自己把改动撤回去了 → 那一刻是安全读时机，立刻补读
     pg.reload()
     pg.wait_for_timeout(900)
     pg.evaluate("""() => {
@@ -1225,7 +1225,7 @@ with sync_playwright() as p:
           abs(after_short["rowH"] - before_short["rowH"]) <= 1 and after_short["rowH"] <= 36,
           f"{before_short['rowH']} → {after_short['rowH']}px")
 
-    # 牙齿：把换行关掉（`wrap=off` 就是原来那个单行框的行为），同一段长文本必须立刻溢出。
+    # 牙齿：把换行关掉（`wrap=off` 就是单行框的行为），同一段长文本必须立刻溢出。
     # 这条红了说明上面「不溢出」那两条测的是空气（比如框被撑宽成整屏、或文本根本没进去）。
     broken = pg.evaluate("""(i) => {
       const el = document.querySelectorAll('.todo-row')[i].querySelector('.todo-text');

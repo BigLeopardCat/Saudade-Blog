@@ -135,7 +135,7 @@
     }
   };
 
-  // ========== 大雨（Canvas 2D）==========
+  // 大雨（Canvas 2D）
   window.startRain = function() {
     if (EFFECTS.rain) return;
     
@@ -258,7 +258,7 @@
     }
   };
 
-  // ========== 雪花（DOM 粒子）==========
+  // 雪花（DOM 粒子）
   window.startSnow = function() {
     if (EFFECTS.snow) return;
     const container = document.createElement('div');

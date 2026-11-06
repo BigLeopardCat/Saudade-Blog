@@ -262,7 +262,7 @@ pub(crate) async fn load_note_tags<C: ConnectionTrait>(
 
 /// 把这一批文章的 `note.tags` 那一列**按关联表重算一遍**（soak 期两处同源的不变量）。
 ///
-/// ── 什么时候需要它 ─────────────────────────────────────────────────────────
+/// 什么时候需要它
 /// 关联行有**三条不经过 `replace_note_tags`** 的改动路径，它们都会让那一列**静默变陈旧**：
 ///   · 删标签（`tags.rs::delete_tags`）：外键 `ON DELETE CASCADE` 把关联行带走；
 ///   · 跨表移动改了 id（`move_tag_refs` + `do_move` 的 `id_changed` 支）：换的是列与值；
@@ -272,7 +272,7 @@ pub(crate) async fn load_note_tags<C: ConnectionTrait>(
 /// 拦下来，而那时你拿到的是一句"两边漂了"、却找不到漂在哪 —— 判据恒红之后就没人看了。
 /// 所以这几条路必须自己把它算回来。
 ///
-/// ── 为什么走 `replace_note_tags` 而不是直接 UPDATE 这一列 ──────────────────
+/// 为什么走 `replace_note_tags` 而不是直接 UPDATE 这一列
 /// "写这一列的地方只有一处"是 `frontend/tests/note-tag-single-source.test.mjs` 钉着的
 /// 源码锁，也是"两处同源"能成立的前提（同一个函数写、写的是同一份解析结果）。
 /// 这里重算出来的 id 列表本来就从关联表读的，`replace_note_tags` 的删+插因此是**幂等**的。
@@ -443,7 +443,7 @@ pub(crate) async fn attach_tags<C: ConnectionTrait>(db: &C, dtos: &mut [NoteDto]
 /// 口径与 `notes.rs::list_public_notes` **逐字一致**（`is_public = true` 且 status 在白名单里）
 /// —— 改一处必须同步另一处，否则标签上写着「5 篇」、点进去只有 3 篇。
 /// 同一篇里重复出现的标签只算一次（关联表的主键 `(note_id, seq)` 不禁止同一标签两行，
-/// 所以这里仍然去重 —— 与旧实现同一个口径）。
+/// 所以这里去重）。
 pub(crate) async fn public_tag_counts(db: &DatabaseConnection) -> HashMap<i32, i64> {
     let visible: Vec<i32> = match note::Entity::find()
         .select_only()

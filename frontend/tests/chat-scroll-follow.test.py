@@ -22,7 +22,7 @@ def check(desc, cond, detail=""):
         FAILS.append(desc)
 
 
-# ── 真帧：一段段**增量**正文（chat-stream 是 `displayText += text`，帧即 delta）──
+# 真帧：一段段**增量**正文（chat-stream 是 `displayText += text`，帧即 delta）
 CHUNK = ("看板娘把这一段接着往上摞，用来模拟流式回复里一次到达一大段正文的情形，"
          "这一段大约一百二十个字，落在面板里就是八九行的高度。") * 2
 ROUND = [json.dumps(CHUNK, ensure_ascii=False) for _ in range(8)] + ["__END__"]
@@ -269,7 +269,7 @@ def main():
             print("=== 基线 ===")
             print("  ", pg.evaluate(STATE))
 
-            # ── ① 真流式（在底部）：对照组，不是缺陷判据 ──
+            # ① 真流式（在底部）：对照组，不是缺陷判据
             print("\n=== ① 真流式 · 在底部（对照组） ===")
             pg.evaluate(SET_TOP, None)
             pg.wait_for_timeout(80)
@@ -282,7 +282,7 @@ def main():
             check("①c 这一路不该亮提示条（主人没离开底部）", not s1["noteActive"],
                   f"noteActive={s1['noteActive']}")
 
-            # ── ② 竞态 · 在底部：缺陷本体 ──
+            # ② 竞态 · 在底部：缺陷本体
             print("\n=== ② 竞态泵 · 在底部（缺陷本体） ===")
             pg.evaluate(SET_TOP, None)
             pg.wait_for_timeout(80)
@@ -298,7 +298,7 @@ def main():
             check("②d 这一路也不该亮提示条（主人没离开底部）", not s2["noteActive"],
                   f"noteActive={s2['noteActive']}")
 
-            # ── ③ 竞态 · 主人在历史区：不拽回 + 亮提示条（负控） ──
+            # ③ 竞态 · 主人在历史区：不拽回 + 亮提示条（负控）
             print("\n=== ③ 竞态泵 · 主人在历史区（负控） ===")
             pg.evaluate(SET_TOP, 0)
             pg.wait_for_timeout(150)
@@ -315,7 +315,7 @@ def main():
             check("③c 提醒的是「有新消息」而不是把主人拉回去（距底仍远）", s3["dist"] > 60,
                   f"距底={s3['dist']}")
 
-            # ── ④ 主人自己滚回底部 ⇒ 跟随恢复 ──
+            # ④ 主人自己滚回底部 ⇒ 跟随恢复
             print("\n=== ④ 滚回底部后恢复 ===")
             pg.evaluate(SET_TOP, None)
             pg.wait_for_timeout(150)
@@ -328,7 +328,7 @@ def main():
             check("④c 回底那一下提示条已收起", not s4["noteActive"],
                   f"noteActive={s4['noteActive']}")
 
-            # ── ⑤ 提示条点一下 ⇒ 回底且收起 ──
+            # ⑤ 提示条点一下 ⇒ 回底且收起
             print("\n=== ⑤ 提示条点击 ===")
             pg.evaluate(SET_TOP, 0)
             pg.wait_for_timeout(150)

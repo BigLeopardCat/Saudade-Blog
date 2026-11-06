@@ -77,7 +77,7 @@ LEGACY_GEOM = """
 #likebtn { height: 30px; padding: 4px 10px; }
 """
 
-# ①c 的反向对照：把列数写回 1（= 20261003a 那一版竖排一列）。四条列宽判据当场不成立。
+# ①c 的反向对照：把列数写回 1（竖排一列）。四条列宽判据当场不成立。
 LEGACY_ONE_COL = "#wrap { grid-template-columns: 1fr !important; }"
 
 # ②b 的反向对照：把两件定宽一起抹掉（文案 3em + 数字 4ch）。判的是**件内内容**的宽度
@@ -86,7 +86,7 @@ LEGACY_MINW = ("#label { min-width: 0 !important; }"
                "#viewsnum, #likenum, #commentnum { min-width: 0 !important; }")
 
 # ⑦b 的反向对照：两条侧轨**不等宽**（左 180 / 右 260）⇒ 中区中线当场偏 40px。
-# 这一条比"当年那套 flex 到底漂多少"更直接：居中靠的就是"等宽"这一条，不是别的。
+# 这一条比"flex 布局漂多少"更直接：居中靠的就是"等宽"这一条，不是别的。
 LEGACY_ASYM = "#info { grid-template-columns: 180px 1fr 260px !important; }"
 
 LEGACY_MOBILE = """
@@ -381,8 +381,7 @@ with sync_playwright() as p:
           "——⑥ 那条判据确实有牙",
           rm["info"]["top"] < -5, f'info top {rm["info"]["top"]:.1f}')
     # 绝对定位盒是**底边锚定**的：越界时被裁掉的是**最上面那一区**（作者行），
-    # 不是读数簇（它在最下面，反而还在页面里）。这条断言与上一版正好相反——
-    # 上一版三区还并排、读数簇贴着上边。
+    # 不是读数簇（它在最下面，反而还在页面里）。三区上下排布时，读数簇不在最上面。
     check(f"  裁掉的正好是最上面那一区（作者行 top {rm['author']['top']:.0f}px）",
           rm["author"]["top"] < 0, f'{rm["author"]["top"]:.1f}')
 

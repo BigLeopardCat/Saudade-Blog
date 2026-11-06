@@ -281,7 +281,7 @@ pub async fn graph_artifact(Path(file): Path<String>) -> Response {
 }
 
 
-// ── 后台重建的代理（浏览器 → Rust → agent 8010）───────────────────────────
+// 后台重建的代理（浏览器 → Rust → agent 8010）
 //
 // 挂 `protected_routes`（auth_guard 已经保证只有管理员进得来）。这里再以**发起人身份**
 // 现签一张断言给 agent —— agent 侧 `_require_console` 拿它判 `admin.console`。

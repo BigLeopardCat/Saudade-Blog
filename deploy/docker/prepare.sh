@@ -45,10 +45,9 @@ ASSUME_YES=0; DRY_RUN=0; PRINT_WHAT=""
 HAVE_TTY=0; [ -t 0 ] && [ -t 1 ] && HAVE_TTY=1
 
 # ── 日志与输入 ────────────────────────────────────────────────────────────────
-# 与 install.sh 是同一套口吻与同一批函数名，但**刻意不共享实现**：那一边的函数住在
-# install.sh 顶层，source 进去会连着它的参数循环与 `main "$@"` 一起跑（见 install.sh 里
-# 那段注释）。就这几个 printf，抄一份比抽一个共享库的收益大 —— 抽出去反而要动正在跑生产
-# 的那条安装路。**唯一的例外是 render_nginx**：它里面那段按结构标记切块的 awk 必须只有一份。
+# 与 install.sh 同名同风格，但不共享实现：install.sh 的函数在顶层，source 会连带它的
+# 参数循环与 `main "$@"` 一起执行。**唯一的例外是 render_nginx**：按结构标记切块的 awk
+# 必须只有一份。
 STEP_N=0   # set -u 下必须先落地再自增（step 的第一步就是读它）
 step() { STEP_N=$((STEP_N + 1)); printf '\n── %d. %s ──\n' "$STEP_N" "$*" >&2; }
 say()  { printf '   %s\n' "$*" >&2; }
@@ -181,9 +180,8 @@ done
 mkdir_p() { if [ "$DRY_RUN" = 1 ]; then say "[dry-run] mkdir -p $*"; else mkdir -p "$@"; fi; }
 # write_file <路径> <<'EOF' … EOF   —— 内容从 stdin 进
 # ⚠️ 三个写文件的 heredoc 都是**不带引号**的（正文里要展开 $DOMAIN、$DB_PASS…），于是正文
-#    里的反引号会被当**命令替换**真的执行一遍（写完这一版的第一次 dry-run 就撞上了：
-#    「`ALTER USER …`」被执行成 `ALTER: command not found`，好消息是它只是被吃掉）。
-#    ⇒ 正文里要"引号强调"就用「」，不要用反引号；真要用就得逐个 `\`` 转义，那太容易漏。
+#    里的反引号会被当**命令替换**执行。正文里要"引号强调"就用「」，不要用反引号；
+#    真要用就得逐个 `\`` 转义。
 write_file() {
     local path=$1
     if [ "$DRY_RUN" = 1 ]; then
@@ -208,9 +206,9 @@ ok "仓库根 $REPO_DIR"
 ok "agent 仓 $AGENT_DIR"
 
 # ── 1. 收集（已有秘密优先复用）────────────────────────────────────────────────
-# 复用表：**先读已有文件**，再问人。理由不是省事，是"换了就等于自锁"——
-# MySQL 的口令只在**第一次**初始化数据卷时生效（见 db-init.sh 头注），
-# JWT_SECRET 一换所有已登录的令牌立即失效。所以默认一律沿用，要换得明说。
+# 复用表：**先读已有文件**，再问人。MySQL 口令只在**第一次**初始化数据卷时生效
+# （见 db-init.sh 头注），JWT_SECRET 一换所有已登录令牌立即失效。默认一律沿用，
+# 要换得明说。
 OLD_DB_PASS="$(read_key "$CRED_FILE" DB_PASS)"
 OLD_ROOT_PASS="$(read_key "$CRED_FILE" MYSQL_ROOT_PASSWORD)"
 OLD_ADMIN_PASS="$(read_key "$CRED_FILE" ADMIN_PASS)"
@@ -417,7 +415,7 @@ else
     if [ ! -f "$GEN_DIR/agent.env" ]; then
         grep -vE '^[[:space:]]*IOT_ENABLED=' "$AGENT_DIR/.env.example" > "$GEN_DIR/agent.env"
     else
-        # 已有那份也要扫一遍：早期版本或手改过的文件里可能留着空串那一行
+        # 已有那份也要扫一遍：手改过的文件可能留着空串那一行
         sed -i -E '/^[[:space:]]*IOT_ENABLED=[[:space:]]*$/d' "$GEN_DIR/agent.env"
     fi
     chmod 600 "$GEN_DIR/agent.env"

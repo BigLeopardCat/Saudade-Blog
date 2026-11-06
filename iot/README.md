@@ -106,7 +106,7 @@ sudo systemctl restart saudade-agent && sleep 8
 
 ## 运行要求
 
-EMQX 和设备服务独立运行，按当前版本及负载测量内存、磁盘和连接数，不套用旧样本。
+EMQX 和设备服务独立运行，按当前版本及负载测量内存、磁盘和连接数。
 设备 MQTTS 需要开放 8883；broker 管理和服务 HTTP 端口只在内部使用。
 HTTPS 与 MQTTS 证书续期须分别验证，服务限额以实际 systemd 配置为准。
 设备服务源码不在本仓，其构建与发布需要独立验证；共享生产主机不执行 release 编译。

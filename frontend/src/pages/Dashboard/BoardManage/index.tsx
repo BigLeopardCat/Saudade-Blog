@@ -174,7 +174,7 @@ const BoardManage = () => {
             if (res.data?.code === 200) {
                 message.success(approved === 1 ? '已通过，留言板展示' : '已驳回（未通过），不展示');
                 const stored = approved === 1 ? 1 : 2;
-                // 只改本地那一行（接口已确认成功）：原来每次都 load() 重拉全量列表，
+                // 只改本地那一行（接口已确认成功）：不要每条都 load() 重拉全量列表，
                 // 连审 10 条就是 11 次全量请求、每次带全部content
                 // 驳回后的理由以后端为准：本次没填而后端回落到已有理由/AI 说明时，
                 // 本地不能显示成空（回落链与后端一致：人工 > reject_reason > aiReason）

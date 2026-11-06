@@ -24,7 +24,7 @@ def check(desc, cond, detail=""):
 DEFINE = ('import.meta.env={"VITE_HTTP_BASEURL":"","VITE_CDN_BASEURL":"",'
           '"MODE":"production","DEV":false,"PROD":true,"BASE_URL":"/"}')
 
-# ── 假后端 ────────────────────────────────────────────────────────────────────
+# 假后端
 # 三份数据刻意做出**三处不同的边界情形**，判据才不是空转：
 #   · 文章报表：四个榜各有内容，总数非零；
 #   · 期报：week 三期（第一期 partial）、month 一期、year **since=null**（一行记录都没有）
@@ -202,7 +202,7 @@ with sync_playwright() as p:
     br = p.chromium.launch()
     pg = mount(br)
 
-    # ── 一、页标题与页签 ──────────────────────────────────────────────────────
+    # 一、页标题与页签
     print("\n【一】页标题「数据统计」与两个页签")
     head = pg.evaluate("""() => {
         const h2 = document.querySelector('.analyticsBody .akTitle');
@@ -222,7 +222,7 @@ with sync_playwright() as p:
           head["tabs"] == ["文章数据", "用户活跃"], str(head["tabs"]))
     check("默认落在「文章数据」", head["active"] == "文章数据", str(head["active"]))
 
-    # ── 二、文章数据页：四个汇总卡 + 四个榜 ────────────────────────────────────
+    # 二、文章数据页：四个汇总卡 + 四个榜
     print("\n【二】文章数据：阅读量 / 点赞量 / 收藏量 / 讨论量")
     cards = pg.evaluate("""() => [...document.querySelectorAll('.analyticsBody .akCard .ant-statistic-title')]
         .map((el) => el.textContent.trim())""")
@@ -269,7 +269,7 @@ with sync_playwright() as p:
     }""")
     check("趋势图画出来了（有 canvas）", lines["hasChart"] and lines["w"] > 0, str(lines))
 
-    # ── 三、期报列表：折叠态 / 展开态 / partial 标记 ───────────────────────────
+    # 三、期报列表：折叠态 / 展开态 / partial 标记
     print("\n【三】周报列表与展开")
     rows = pg.evaluate("""() => [...document.querySelectorAll('.analyticsBody .akPeriodList .ant-collapse-item')]
         .map((el) => ({
@@ -317,7 +317,7 @@ with sync_playwright() as p:
     }""")
     check("零数据那一期展开后明说「没有数据」", "没有数据" in empty_txt, empty_txt[:40])
 
-    # ── 四、切粒度：请求参数必须跟着走 ─────────────────────────────────────────
+    # 四、切粒度：请求参数必须跟着走
     print("\n【四】周报 / 月报 / 年报 切换")
     pg.locator(".analyticsBody .ant-segmented-item", has_text="月报").click()
     pg.wait_for_timeout(600)
@@ -343,7 +343,7 @@ with sync_playwright() as p:
     check("since=null 时给的是「还没有统计数据」空态（**不是**一排 0）",
           "还没有统计数据" in year["txt"], year["txt"][:60])
 
-    # ── 五、用户活跃页签 ──────────────────────────────────────────────────────
+    # 五、用户活跃页签
     print("\n【五】用户活跃页签")
     n_before = pg.evaluate("() => window.__calls.length")
     pg.locator(".analyticsBody .ant-tabs-tab", has_text="用户活跃").click()

@@ -20,7 +20,7 @@ const truthy = (v, name) => ok(!!v, name, { got: v });
 const falsy = (v, name) => ok(!v, name, { got: v });
 const assert = { ok, eq, truthy, falsy };
 
-// ── 构造相对"今天"的固定时间点（测试独立于运行日期）──
+// 构造相对"今天"的固定时间点（测试独立于运行日期）
 const now = new Date();
 const hmOf = (d) => String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
 const atToday = (h, m) => { const d = new Date(); d.setHours(h, m, 0, 0); return d.getTime(); };
@@ -175,7 +175,7 @@ console.log('== 聊天图片（20261018：DB 行 → 气泡，images 不许被�
   const DB_IMG = 'data:image/png;base64,iVBORw0KGgo+/x==';
   const DECOY_THUMB = 'data:image/jpeg;base64,DECOY-DECOY-DECOY==';
 
-  // ── dbRowToItem：DB 行的字段映射 ──────────────────────────────────────────
+  // dbRowToItem：DB 行的字段映射
   const row = { id: 42, role: 'user', content: '看这张\n[图片]', time: 1700000000000, images: [DB_IMG] };
   const bare = core.dbRowToItem(row);
   assert.eq(bare.id, 'd42', 'id 加 d 前缀（前端稳定去重 id）');
@@ -184,7 +184,7 @@ console.log('== 聊天图片（20261018：DB 行 → 气泡，images 不许被�
   eqArr(bare.images, [DB_IMG], '**images 原样带过去**（这一格以前被白名单吃掉）');
   assert.eq(core.dbRowToItem({ ...row, role: 'assistant' }).type, 'agent', 'assistant → agent');
 
-  // ── mapDbItems：漏传 lookupProcess 必须**抛**，不许静默默认 ────────────────
+  // mapDbItems：漏传 lookupProcess 必须**抛**，不许静默默认
   // 漏传的后果是 pullHistory 的 catch 静默降级成本地缓存（只有一行 console），
   // 症状是"图不显示"——所以这里要响亮。
   let threw = false;
@@ -194,7 +194,7 @@ console.log('== 聊天图片（20261018：DB 行 → 气泡，images 不许被�
   eqArr(mapped[0].images, [DB_IMG], '经 mapDbItems → migrateItem 之后 images 仍在');
   assert.eq(mapped[0].process, undefined, 'user 行不查过程行');
 
-  // ── replaceWithIncoming：DB 有图 ⇒ 不许回填、不许补占位 ────────────────────
+  // replaceWithIncoming：DB 有图 ⇒ 不许回填、不许补占位
   // ⚠️ 两个"空真"陷阱，缺一个这条判据就是假的：
   //   ① 夹具 content **必须**以 `\n[图片]` 结尾 —— needFill 要求文本匹配 /\[图片(?:×\d+)?\]/，
   //      不带标记的话回填分支根本不进，"没触发回填"就成了空真；
@@ -215,7 +215,7 @@ console.log('== 聊天图片（20261018：DB 行 → 气泡，images 不许被�
     '有图就不该有 hasImg —— 置位会让前端渲染"ⓘ图片已过期"占位块盖住真图');
   assert.eq(out[0].text, '看这张', 'DB 文本里的 [图片] 标记要剥掉（否则图文重复展示）');
 
-  // ── 老轮次（DB 没图，只有标记）：走占位块，是诚实的那一条路径 ──────────────
+  // 老轮次（DB 没图，只有标记）：走占位块，是诚实的那一条路径
   const lost = core.mapDbItems(
     [{ id: 7, role: 'user', content: '早就丢了\n[图片×2]', time: 1600000000000, images: [] }],
     () => undefined,

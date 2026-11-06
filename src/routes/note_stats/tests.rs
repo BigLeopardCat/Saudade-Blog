@@ -9,7 +9,7 @@ fn dt(y: i32, m: u32, day: u32, h: u32) -> NaiveDateTime {
     d(y, m, day).and_hms_opt(h, 0, 0).expect("夹具时刻写错了")
 }
 
-// ── 月末：闰年不许靠查表 ────────────────────────────────────────────────
+// 月末：闰年不许靠查表
 #[test]
 fn 月末由_chrono_算闰年不查表() {
     assert_eq!(last_day_of_month(2024, 2), d(2024, 2, 29), "2024 是闰年");
@@ -115,7 +115,7 @@ fn 年期是整年() {
     );
 }
 
-// ── collect：NULL 折零，错误原样透传 ────────────────────────────────────
+// collect：NULL 折零，错误原样透传
 #[test]
 fn 零行折成零而不是丢掉这个_id() {
     let m = collect(Ok(vec![(1, Some(5)), (2, None)])).expect("不该报错");
@@ -136,7 +136,7 @@ fn collect_把错误原样透传() {
     );
 }
 
-// ── rank：数值倒序、并列按 id 升序、截断到 TOP_N ────────────────────────
+// rank：数值倒序、并列按 id 升序、截断到 TOP_N
 fn row(id: i32, views: i64, likes: i64) -> NoteRankRow {
     NoteRankRow {
         note_id: id,
@@ -184,7 +184,7 @@ fn 排行榜截断到_top_n() {
     assert_eq!(r[TOP_N - 1].note_id, 16);
 }
 
-// ── bucket_by_day：只往窗口里已有的日子累加 ─────────────────────────────
+// bucket_by_day：只往窗口里已有的日子累加
 #[test]
 fn 分桶只落进窗口内的日子() {
     let mut daily: HashMap<NaiveDate, DailyRow> = HashMap::new();
@@ -214,7 +214,7 @@ fn 分桶只落进窗口内的日子() {
     );
 }
 
-// ── 访客标识：白名单字符集与长度 ────────────────────────────────────────
+// 访客标识：白名单字符集与长度
 fn key_of(raw: &str) -> Option<String> {
     let mut h = HeaderMap::new();
     h.insert(VISITOR_HEADER, raw.parse().expect("头值不合规"));

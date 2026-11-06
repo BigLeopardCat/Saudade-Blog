@@ -25,7 +25,7 @@ def check(desc, cond, detail=""):
         FAILS.append(desc)
 
 
-# ── 夹具：30 条顶层 + 两条回复（回复的回复仍挂在第一条回复的顶层下，测分组） ──────
+# 夹具：30 条顶层 + 两条回复（回复的回复仍挂在第一条回复的顶层下，测分组）
 def fixture_comments():
     """30 条顶层 + 2 条回复。"""
     items = []
@@ -157,7 +157,7 @@ const boot = (window as any).__BOOT || {};
 
 SASS_SRC = FE / "src/components/CommentSection/index.sass"
 # 红基线只动两处，正是"改之前的样子"——两处都在沙箱那份拷贝上打，`FE` 里一字不动：
-#   ① tsx：输入框挂回全站那 22px 的 `.counter-room`（当年给吊在框下方的计数腾的地方）；
+#   ① tsx：输入框挂回全站那 22px 的 `.counter-room`（给吊在框下方的计数腾的地方）；
 #   ② sass：摘掉把计数按进框内右下角的那条 `bottom: 4px` ⇒ 落回 antd 的 `bottom: -22px`。
 TA_REF = "                        ref={taRef}\n"
 ROOM_ATTR = '                        className="counter-room"\n'
@@ -458,7 +458,7 @@ from playwright.sync_api import sync_playwright  # noqa: E402
 with sync_playwright() as p:
     br = p.chromium.launch()
 
-    # ══ 一、fixed 变体 ══════════════════════════════════════════════════════
+    # 一、fixed 变体
     pg = br.new_page(viewport={"width": 1280, "height": 900})
     errs = []
     pg.on("pageerror", lambda e: errs.append(str(e)))
@@ -601,7 +601,7 @@ with sync_playwright() as p:
     check("再点一次收起", pg.locator(".commentPreview").count() == 0)
 
     print("\n⑩ 回复框就地展开（用户 20261003 第 3 条：评论很靠下时不必滚回顶部输入框）")
-    # 先把最后一条顶层评论（#30）滚到视野中间——**这正是用户说的"很靠下"那个位置**。
+    # 先把最后一条顶层评论（#30）滚到视野中间——**这正是"很靠下"那个位置**。
     # 不先滚下去，下面那条"视线没被甩回顶部"就测不出东西来（页面本来就在顶部）。
     pg.evaluate("document.querySelector('#c-30').scrollIntoView({block:'center',behavior:'auto'})")
     pg.wait_for_timeout(250)
@@ -869,7 +869,7 @@ with sync_playwright() as p:
     check("★提示语用的是服务端那一句（errMsg，不是本地编的通用话）", msg == "投票没成功", msg)
     pg.close()
 
-    # ══ 二、红基线 A：还原改之前的形态（counter-room 挂回来 + 计数落回框外）══════════
+    # 二、红基线 A：还原改之前的形态（counter-room 挂回来 + 计数落回框外）
     print("\n⑧ 红基线 A（broken 变体）：计数落回框外、缝隙变回 30px")
     pg2 = br.new_page(viewport={"width": 1280, "height": 900})
     errs2 = []
@@ -918,7 +918,7 @@ with sync_playwright() as p:
           f"相交 {overlap(c3, box(pg3, FOOT)):.1f}px")
     pg3.close()
 
-    # ══ 四、红基线 C：把「回复 @某人」退回身份行行首 ═══════════════════════════════
+    # 四、红基线 C：把「回复 @某人」退回身份行行首
     print("\n⑨b 红基线 C（replyto-old 变体）：回复标记回到行首，头像与昵称被它隔断")
     pg4 = br.new_page(viewport={"width": 1280, "height": 900})
     errs4 = []
@@ -934,7 +934,7 @@ with sync_playwright() as p:
           o["rtInsideMeta"] is True, o["rtInsideMeta"])
     check("★对照组里昵称排在它**之后**（⑨ 那条 DOM 顺序判据有牙）",
           o["nameBeforeRt"] is False, o["nameBeforeRt"])
-    # 这条是用户报的那句话的**几何翻译**：它横插在头像右缘与昵称左缘之间，
+    # 这条是症状的**几何翻译**：它横插在头像右缘与昵称左缘之间，
     # 且与昵称处在同一水平带 —— 于是"头像 / 回复@xx / 昵称"排成一行。
     check("★对照组里头像与昵称确实被它隔开（它落在两者的水平之间、同一水平带）",
           bool(o["av"]) and bool(o["rt"]) and bool(o["name"])
@@ -947,7 +947,7 @@ with sync_playwright() as p:
           f'name.x={round(o["name"]["x"], 1)}')
     pg4.close()
 
-    # ══ 五、红基线 D：把「回复」退回只能开在页面顶部那个输入框 ═══════════════════════
+    # 五、红基线 D：把「回复」退回只能开在页面顶部那个输入框
     print("\n⑩d 红基线 D（reply-top 变体）：点「回复」时框还在页面顶部，靠下的那条够不着")
     pg5 = br.new_page(viewport={"width": 1280, "height": 900})
     errs5 = []
@@ -979,7 +979,7 @@ with sync_playwright() as p:
           pg5.evaluate("() => document.activeElement.tagName"))
     pg5.close()
 
-    # ══ 六、红基线 E：高亮从「我投的那一票」换成「票多的那一侧」══════════════════════
+    # 六、红基线 E：高亮从「我投的那一票」换成「票多的那一侧」
     print("\n⑪e 红基线 E（vote-by-count 变体）：高亮跟着票数走")
     pg6 = br.new_page(viewport={"width": 1280, "height": 900})
     errs6 = []
@@ -1020,7 +1020,7 @@ with sync_playwright() as p:
     def gap_px(a, b):
         return abs(b["cym"] - a["cym"]) / 24 * 14
 
-    # 阈值取 1.4px：实测 1.13px（= 平移余量用尽后的地板），留一点渲染噪声。
+    # 阈值取 1.4px：量到 1.13px（= 平移余量用尽后的地板），留一点渲染噪声。
     # 它比「外框居中」那一版的 2.24px 小一半——这就是两次修法的差别，不是"差不多"。
     check("★两颗墨迹重心互差 ≤ 1.4px @14px（同一条视线；外框居中那一版是 2.24px）",
           gap_px(up, dn) <= 1.4,
@@ -1134,7 +1134,7 @@ with sync_playwright() as p:
     check("无 JS 运行时报错（排序这一页）", not errs8, "; ".join(errs8[:2]))
     pg8.close()
 
-    # ══ 九、红基线 F：把两个 effect 合回一个 ⇒ 切排序**真的**闪一次空态 ══════════════
+    # 九、红基线 F：把两个 effect 合回一个 ⇒ 切排序**真的**闪一次空态
     print("\n⑬b 红基线 F（sort-joined 变体）：切排序闪一下「正在读取讨论…」")
     pg9 = br.new_page(viewport={"width": 1280, "height": 900})
     errs9 = []

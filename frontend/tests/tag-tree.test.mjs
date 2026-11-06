@@ -72,7 +72,6 @@ const TWO = [
     { key: 6, title: 'Rust', level: 2, color: '#eb2f96', fatherKey: 10, fatherTag: '编程' },
 ];
 
-// ══════════════════════════════════════════════
 console.log('== 建树：fatherKey 权威（一级标签改名后二级标签不许消失）==');
 {
     const renamed = [{ ...ONE[0], title: '编程语言' }, ONE[1]];
@@ -106,7 +105,7 @@ console.log('== 扁平选项：二级标签显示自己的名字、重号丢弃�
        '顺序与标签文案（二级不再拼成「父 / 子」）');
     eq(opts.map(o => o.level), [1, 2, 2, 1], '层级标注正确');
     // ⚠️ 显示名与搜索词是**两个字段**：显示名去掉了父名，但"搜父名也能列出子标签"
-    // 这条能力必须留着（原来靠 `编程 / Python` 那个拼接串白捡的）。
+    // 这条能力必须留着（`编程 / Python` 的拼接串能白捡它）。
     // `NoteTagSelect` 的 `optionFilterProp` 指的就是 `keywords`。
     eq(opts.map(o => o.keywords), ['编程', '编程 Python', '编程 Rust', '生活'],
        '搜索词仍带父名（二级标签搜得到父名）');

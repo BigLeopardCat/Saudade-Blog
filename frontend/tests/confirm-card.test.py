@@ -23,7 +23,7 @@ def check(desc, cond, detail=""):
         FAILS.append(desc)
 
 
-# ── 真帧（形状与线上一致：JSON 编码的文本帧 / __ 前缀的协议帧 / 终止帧）──
+# 真帧（形状与线上一致：JSON 编码的文本帧 / __ 前缀的协议帧 / 终止帧）
 def text_frame(s):
     return json.dumps(s, ensure_ascii=False)
 
@@ -442,7 +442,7 @@ def main():
         with sync_playwright() as p:
             b = p.chromium.launch()
 
-            # ── ① 渲染：真确认帧 ⇒ 真卡片 ────────────────────────────────
+            # ① 渲染：真确认帧 ⇒ 真卡片
             # （③ 复用同一个页面：它要在"① 刚弹出来的卡片"上做自愈实验）
             print("\n① 确认帧 → 卡片（在对话流内、末位、可见）")
             pg, errs = open_page(b, url)
@@ -493,7 +493,7 @@ def main():
                   flow_message(st2["reports"]))
             check("②腿页面无未捕获异常", errs2 == [], " | ".join(errs2[:4]))
 
-            # ── ③ 卡片被摘掉 ⇒ 下一次 reconcile 自动接回（自愈钩子）────
+            # ③ 卡片被摘掉 ⇒ 下一次 reconcile 自动接回（自愈钩子）
             print("\n③ 卡片被摘掉后自动接回（onAskResync 自愈）")
             pg.evaluate("""() => {
               const box = document.getElementById('chat-ask');
@@ -515,7 +515,7 @@ def main():
                   [s for s, _ in _seq3] == ["frame", "card", "card"]
                   and _seq3[1][1].get("n") != _seq3[2][1].get("n"), flow_message(st["reports"]))
 
-            # ── ④ 缺 token 的确认帧：上报而不是静默丢弃 ────────────────
+            # ④ 缺 token 的确认帧：上报而不是静默丢弃
             print("\n④ 缺 token 的确认帧 → 上报（此前静默丢弃）")
             pg4, errs4 = open_page(b, url)
             run_round(pg4, [text_frame("好的。"), "__PROCESS__:准备中…",
@@ -530,7 +530,7 @@ def main():
             check("坏帧不弹卡（待办仍为空）", st4["pending"] is None and not st4["active"], str(st4))
             check("④腿页面无未捕获异常", errs4 == [], " | ".join(errs4[:4]))
 
-            # ── ⑤ 终止帧之后又收到帧：上报（行为不变）──────────────────
+            # ⑤ 终止帧之后又收到帧：上报（行为不变）
             print("\n⑤ 终止帧之后再收到帧 → 上报（三端语义漂移的探照灯）")
             pg5, errs5 = open_page(b, url)
             run_round(pg5, [text_frame("第一段。"), "__END__", text_frame("终止帧之后的尾巴。")])
@@ -626,7 +626,7 @@ def main():
             }""")
             check("⑥腿页面无未捕获异常", errs6 == [], " | ".join(errs6[:4]))
 
-            # ── ⑦ 到期：卡片不会永远停在乐观态（帧带 exp）───────────────────
+            # ⑦ 到期：卡片不会永远停在乐观态（帧带 exp）
             print("\n⑦ 令牌到期：卡片自动结算（此前那张卡会永远写着乐观结论）")
             pg7, errs7 = open_page(b, url)
             exp_future = int(time.time()) + 2
@@ -967,7 +967,7 @@ def main():
             check("⑩c 期间无失败上报", by_fail(st["reports"]) == [], flow_message(st["reports"]))
             check("⑩腿页面无未捕获异常", errs10 == [], " | ".join(errs10[:4]))
 
-            # ── ⑪ 问句渲染走 markdown（用户报"卡片没有渲染 markdown 文本"）──
+            # ⑪ 问句渲染走 markdown
             # 问句是 agent 写的正文（写工具的确认文案里就有 `**全部**`、`「」`、列表），
             # 纯 textContent 会把星号原样显示。判据两条：渲染器真的产出了强调标签，
             # 且屏幕上**看不到**井号星号（只判前者会被"渲染了但没生效"骗过）。

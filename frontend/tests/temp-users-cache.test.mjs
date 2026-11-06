@@ -36,7 +36,7 @@ await esbuild.build({
     }],
 });
 
-// ── 假浏览器（模块加载时就会挂 window/document 监听，所以必须先装好再 import）──
+// 假浏览器（模块加载时就会挂 window/document 监听，所以必须先装好再 import）
 const store = {};
 function fakeEventTarget(bag) {
     return {
@@ -105,7 +105,7 @@ const ids = (mod) => (mod.tempUsersDebug().list || []).map((u) => u.id);
 const login = () => { store.tokenKey = TOKEN };
 const logout = () => { delete store.tokenKey };
 
-// ── ① 谁在拉、什么时候拉 ────────────────────────────────────────────────────
+// ① 谁在拉、什么时候拉
 {
     const { mod, ctl } = await fresh();
     login();
@@ -144,7 +144,7 @@ const logout = () => { delete store.tokenKey };
     eq(mod.tempUsersDebug().active, 2, '登记/撤销成对，计数回到 2（不会因为一次撤销就误判成没人看）');
 }
 
-// ── ② 没人看了：计数归零 → 事件不再发请求（白花流量）────────────────────────
+// ② 没人看了：计数归零 → 事件不再发请求（白花流量）
 {
     const { mod, ctl } = await fresh();
     login();
@@ -159,7 +159,7 @@ const logout = () => { delete store.tokenKey };
     eq(calls(ctl), 1, '没人看账号列表时再来事件也不拉');
 }
 
-// ── ③ 切回页签：**首帧就是缓存值**（这正是"每次点都重新拉"要修的那件事）──────
+// ③ 切回页签：**首帧就是缓存值**（这正是"每次点都重新拉"要修的那件事）
 {
     const { mod, ctl } = await fresh();
     login();
@@ -181,7 +181,7 @@ const logout = () => { delete store.tokenKey };
     stop2();
 }
 
-// ── ④ 写成功后的作废：在途旧读数不许把界面翻回去，且只发一次新请求 ───────────
+// ④ 写成功后的作废：在途旧读数不许把界面翻回去，且只发一次新请求
 {
     const { mod, ctl } = await fresh();
     login();
@@ -211,7 +211,7 @@ const logout = () => { delete store.tokenKey };
     eq(mod.tempUsersDebug().failed, false, '成功读数不该被标成"没读到"');
 }
 
-// ── ⑤ 读不到 ≠ 空（失败清空会让账号列表空一屏，比"旧数据"糟得多）────────────
+// ⑤ 读不到 ≠ 空（失败清空会让账号列表空一屏，比"旧数据"糟得多）
 {
     const { mod, ctl } = await fresh();
     login();
@@ -240,7 +240,7 @@ const logout = () => { delete store.tokenKey };
     eq(mod.tempUsersDebug().failed, false, '未登录不算"读失败"');
 }
 
-// ── ⑥ 每次成功读数都换**新数组实例**（否则界面静默停在旧条数）───────────────
+// ⑥ 每次成功读数都换**新数组实例**（否则界面静默停在旧条数）
 {
     const { mod, ctl } = await fresh();
     login();
@@ -257,7 +257,7 @@ const logout = () => { delete store.tokenKey };
     void ctl;
 }
 
-// ── ⑦ 源码契约（这些引用点改一处、忘一处就会静默失效）─────────────────────
+// ⑦ 源码契约（这些引用点改一处、忘一处就会静默失效）
 {
     const page = readFileSync(path.join(root, 'src/pages/Dashboard/Users/index.tsx'), 'utf8');
     const store = readFileSync(path.join(root, 'src/pages/Dashboard/Users/tempUsers.ts'), 'utf8');

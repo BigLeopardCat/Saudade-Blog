@@ -43,7 +43,7 @@ FIXTURE = pathlib.Path(tempfile.mkdtemp(prefix="prune-fix-"))
 ROOT = FIXTURE / "root"          # 假装是 /tmp：只扫它的**直接子项**
 SB = FIXTURE / "sb"              # 假装是 $SANDBOX_TMP：轮次目录住这儿
 
-# ── 夹具：命名刻意用**真前缀**（从套件源码里推出来的那批）────────────────────────
+# 夹具：命名刻意用**真前缀**（从套件源码里推出来的那批）
 OLD_PY = "comment-layout-v1-old"     # .py 侧前缀 comment-layout-
 OLD_MJS = "cmt-oldone"               # .mjs 侧前缀 cmt-
 FRESH = "comment-layout-v1-fresh"    # 命中前缀但刚建（年龄闸必须挡住）

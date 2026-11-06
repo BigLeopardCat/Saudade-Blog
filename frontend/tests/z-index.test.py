@@ -23,7 +23,7 @@ def check(desc, cond, detail=""):
         FAILS.append(desc)
 
 
-# ── ① 两份值逐值相等（纯文本，不需要浏览器）────────────────────────────────
+# ① 两份值逐值相等（纯文本，不需要浏览器）
 LADDER_RE = re.compile(r"^\s*--z-([a-z-]+):\s*(\d+);", re.M)
 TS_RE = re.compile(r"^\s*([a-z-]+):\s*(\d+),", re.M)
 
@@ -62,7 +62,7 @@ check("effects.js 三个特效容器都不再写死 99999",
       _eff.count("z-index:99999") == 0 and _eff.count("${EFFECT_Z}") == 3,
       f'99999×{_eff.count("z-index:99999")} / EFFECT_Z×{_eff.count("${EFFECT_Z}")}')
 
-# ── ②③ 真实堆叠（无头 Chrome）──────────────────────────────────────────────
+# ②③ 真实堆叠（无头 Chrome）
 # Compile the real application and shared image-viewer styles.
 SB = pathlib.Path(tempfile.mkdtemp(prefix="z-index-"))
 out_css = SB / "app.css"

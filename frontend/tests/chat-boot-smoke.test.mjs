@@ -10,7 +10,7 @@ const W = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../public/
 installDom();
 installScriptLoader(W);   // head.appendChild → 真读 live2d-widgets/ 下的子模块执行
 
-// ── 浏览器全局 stub ──
+// 浏览器全局 stub
 const store = new Map();
 const store2 = new Map();
 globalThis.window = globalThis;
@@ -81,7 +81,7 @@ globalThis.fetch = async (url, opts) => {
   throw new Error('unexpected fetch: ' + url);
 };
 
-// ── 加载 boot.js（它内部按依赖序动态加载其余子模块——真实加载路径）──
+// 加载 boot.js（它内部按依赖序动态加载其余子模块——真实加载路径）
 vm.runInThisContext(readFileSync(path.join(W, 'boot.js'), 'utf8'), { filename: 'boot.js' });
 // boot.js 是 async IIFE：先等子模块 script onload 链完成再检查注册
 await new Promise(r => setTimeout(r, 100));
@@ -118,7 +118,7 @@ assert(!!sendBtn && !!input, '发送按钮/输入框存在');
 // children.length，那是扁平 stub（把 html 里的 id 一律挂成直接子节点）才成立的形状。
 assert(msgsOf().length === 0, '初始无消息', msgsOf().length);
 
-// ── 第一轮对话（时间标签应出现：首条恒显示）──
+// 第一轮对话（时间标签应出现：首条恒显示）
 input.value = '你好喵';
 sendBtn.click();
 const round1 = await waitFor(() => msgsOf().length === 2);
@@ -142,7 +142,7 @@ assert(hist.length === 2 && hist[0].type === 'user' && hist[1].type === 'agent',
 assert(hist.length === 2 && !hist[0].text.includes('__PROCESS__'), '过程帧未入库');
 assert(streamCount === 1, 'SSE 请求发起 1 次', streamCount);
 
-// ── 第二轮对话（间隔 <5 分钟 → 不新增时间标签）──
+// 第二轮对话（间隔 <5 分钟 → 不新增时间标签）
 input.value = '再发一条';
 sendBtn.click();
 const round2 = await waitFor(() => msgsOf().length === 4);

@@ -41,7 +41,7 @@ const STICKER_RE = /:([^:\s]{1,12}):/g
 /**
  * remark 插件（attacher 模式）：返回 transformer，把 :名字: 文本节点拆分为
  * text + image 节点序列。自写递归遍历（不用 unist-util-visit：v4 的 visitor
- * 返回约定与原地 splice 组合会破坏其迭代，已实测崩溃）；
+ * 返回约定与原地 splice 组合会破坏其迭代）；
  * 跳过代码块/行内代码（代码里的 :xx: 不应转表情）。
  */
 export function remarkStickers(this: unknown) {

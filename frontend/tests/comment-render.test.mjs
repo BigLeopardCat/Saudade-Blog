@@ -34,7 +34,7 @@ function bodyOf(src, marker) {
     return '';
 }
 
-// ── ① 真跑管线 ─────────────────────────────────────────────────────────────
+// ① 真跑管线
 // chatMarkdown.ts 顶层会往 window 上挂两个全局（:271-273），import 前先备好壳
 globalThis.window ??= {};
 const out = mkdtempSync(path.join(tmpdir(), 'cmt-'));
@@ -122,7 +122,7 @@ console.log('\n回退路径 —— 渲染失败时降级成纯文本：');
         'escapeHtmlText 把 & < > " \' 五个字符全部转义', escapeHtmlText(`&<>"'`));
 }
 
-// ── ② 源码契约 ─────────────────────────────────────────────────────────────
+// ② 源码契约
 const comp = read('frontend/src/components/CommentSection/index.tsx');
 const picker = read('frontend/src/components/CommentSection/StickerPicker.tsx');
 const readArticle = read('frontend/src/frontHome/Content/ReadArticle/index.tsx');

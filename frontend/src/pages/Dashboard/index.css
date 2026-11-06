@@ -713,7 +713,7 @@ li.search-box input {
     --anime-ink-dark: #ffb3d9;
 }
 
-/* ── 侧栏身份块：头像光环 + 昵称渐变字 ──────────────────────────────────────
+/* 侧栏身份块：头像光环 + 昵称渐变字
    `.image-text` / `.image` 这两个类名**全站只有后台侧栏用**（grep 过），所以不带
    `.contain` 前缀也安全；带上前缀反而要担心"本文件也进首页 bundle"。 */
 .image-text .name {
@@ -1052,7 +1052,7 @@ body.dash-skin .mainbox .search_icon {
 
 @media only screen and (max-width: 1024px) {
 
-    /* ── ① 整页滚动：外壳不再锁视口高 ─────────────────────────────────────────────
+    /* ① 整页滚动：外壳不再锁视口高
        .contain 是 100vh、.content 是 height:100% + display:flex + align-items:center。
        内容高于视口时，flex 居中会让卡片**上下同时溢出**——顶上那半截在文档流之外，
        滚动条也够不着（本仓 "flex 居中溢出" 那一族的老坑）。窄屏改成"从顶部开始、向下滚"。
@@ -1077,7 +1077,7 @@ body.dash-skin .mainbox .search_icon {
         padding: 64px 12px 12px;
     }
 
-    /* ── ② 内容卡：占满全宽、高度交给内容 ─────────────────────────────────────────
+    /* ② 内容卡：占满全宽、高度交给内容
        宽 / 高 / 左距 已从内联搬到基础规则（内联压过一切普通声明；不搬的话下面这几条
        是**静默失效**的，这正是本条改动的第一个前提）。
        `overflow:visible` 覆盖基础规则那条 overflow:hidden —— 基础规则一个字没动，
@@ -1098,7 +1098,7 @@ body.dash-skin .mainbox .search_icon {
         overflow: visible;
     }
 
-    /* ── ③ 侧栏：离屏抽屉 ───────────────────────────────────────────────────────
+    /* ③ 侧栏：离屏抽屉
        `.shell` **嵌套两层**、两层带同样的 tier 类名，只有外层多一个 `slider`
        （第 883-885 行那条注释说的就是它）。**transform 只加在外层**：它成为内层
        position:fixed 的包含块，nav 跟着一起位移 —— 推两层会位移两倍。
@@ -1127,7 +1127,7 @@ body.dash-skin .mainbox .search_icon {
         padding: 10px 14px;
     }
 
-    /* ── ④ 窄屏下 tier 三档整体作废 ───────────────────────────────────────────────
+    /* ④ 窄屏下 tier 三档整体作废
        抽屉只有"开/关"，88px 那两档没有意义。`.shell.slider` 与 `.shell.shell-nav` 都是
        两个类（0,2,0）：对 `.shell.mini`（0,2,0）同特异度、本块在最后 ⇒ 后写者赢；
        对 `.close`（0,1,0）直接碾压。**所以这里一条 !important 都不需要。**
@@ -1157,14 +1157,14 @@ body.dash-skin .mainbox .search_icon {
         display: none;
     }
 
-    /* ── ⑤ 全屏钮让位 ─────────────────────────────────────────────────────────────
+    /* ⑤ 全屏钮让位
        .content 不再是定位上下文后，position:absolute 的它会挂到初始包含块、随页面滚走；
        而触屏上全屏本来也没什么用，右下角还与看板娘抢位置。 */
     .setting_btn {
         display: none;
     }
 
-    /* ── ⑥ 两个新件：基础样式在上面的普通规则里，这里只翻可见性 ──────────────────── */
+    /* ⑥ 两个新件：基础样式在上面的普通规则里，这里只翻可见性 */
     .pad-menu-btn {
         display: flex;
     }

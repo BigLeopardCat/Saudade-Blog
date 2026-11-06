@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS `quota_request` (
     KEY `idx_qr_user` (`user_id`, `status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
--- ── ① 自检：列在、表在、类型与默认值对得上 ──────────────────────────────────
+-- ① 自检：列在、表在、类型与默认值对得上
 -- 期望：列恰好 1 行（is_nullable=NO、column_default=0、紧挨 token_version 之后）；
 --       表恰好 1 行（InnoDB + utf8mb4_0900_ai_ci）。
 SELECT '列已存在' AS done, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT,
@@ -40,7 +40,7 @@ SELECT '列清单' AS done, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAUL
  WHERE TABLE_SCHEMA = 'saudade_blog' AND TABLE_NAME = 'quota_request'
  ORDER BY ORDINAL_POSITION;
 
--- ── ② 存量行核对：不得出现非默认值（本文件不回填任何数据）──────────────────
+-- ② 存量行核对：不得出现非默认值（本文件不回填任何数据）
 -- 期望：`不是默认值的行数` = 0。**若不为 0，先停手查清是谁写的**——
 -- 本文件之外没有任何代码能写出非 0 的值（只有 chat.rs 那条原子 UPDATE 会产生，
 -- 而它在本次部署后才存在）。
@@ -49,7 +49,7 @@ SELECT '存量行（预期 0）' AS done,
        SUM(chat_quota_used <> 0)         AS chat_quota_used_不是默认值的行数
   FROM `user`;
 
--- ── ③ 申请表现状（跑完本文件后随时可查这一条看现状）────────────────────────
+-- ③ 申请表现状（跑完本文件后随时可查这一条看现状）
 -- 期望：此刻 0 行（新表；本文件不搬任何历史数据）。
 SELECT '当前申请行数（预期 0）' AS done, COUNT(*) AS 申请行数 FROM `quota_request`;
 
@@ -61,7 +61,7 @@ INSERT INTO migration_flags (flag_name) VALUES ('user_chat_quota_20260929');
 SELECT 'flag' AS done, flag_name, applied_at FROM migration_flags
  WHERE flag_name = 'user_chat_quota_20260929';
 
--- ── 回滚（如需）────────────────────────────────────────────────────────────
+-- 回滚（如需）
 -- 撤列 + 删表 + 清 flag：
 --   ALTER TABLE `user` DROP COLUMN `chat_quota_used`;
 --   DROP TABLE `quota_request`;

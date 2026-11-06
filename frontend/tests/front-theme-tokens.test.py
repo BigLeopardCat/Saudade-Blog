@@ -102,7 +102,7 @@ const AT: any = { Times: '/times', Talk: '/talk', Categories: '/categories/code'
 """
 
 # 量取脚本。`expected()` 是这套判据的关键：它把 `var(--token)` **在同一个级联里**渲染成
-# 一个真实的计算色（挂进 `.frontRoot`，才拿得到夜间档），于是期望值与实测值同源同格式。
+# 一个真实的计算色（挂进 `.frontRoot`，才拿得到夜间档），于是期望值与实际值同源同格式。
 MEASURE = r"""([name, dark]) => {
   const host = document.querySelector('.frontRoot');
   const expected = (tok) => {
@@ -329,7 +329,7 @@ def norm(c):
 
 def near(a, b, tol=1.0):
     # `None`（元素缺席 / 值读不出来）**必须判红**，不能落进 norm 的空值分支变成
-    # "transparent == transparent"。这条实测踩到过：路由没配好时三个页面里只有一页
+    # "transparent == transparent"。路由没配好时三个页面里只有一页
     # 渲染出来，另外两页的每一条断言都在拿 None 跟自己比 —— 看着全绿，其实什么都没判。
     if a is None or b is None:
         return False, "取不到值：%r vs %r" % (a, b)
@@ -446,12 +446,12 @@ with sync_playwright() as p:
           norm(dots["day"]["cur"]) != norm(dots["night"]["cur"]),
           "day=%s night=%s" % (dots["day"]["cur"], dots["night"]["cur"]))
 
-    # ── 五、内容页的整页底（承【二】里那 8 条"等于 --washi-page-bg"，这里判控制）────
+    # 五、内容页的整页底（承【二】里那 8 条"等于 --washi-page-bg"，这里判控制）
     # 【二】已经钉住"这四页的底**等于**那支令牌"；三条控制各自堵一个具体的坏法：
     #   ① 白天与夜间不同 → 堵"夜间臂漏写"（漏了就是白天档继承下去，两档同值）。
     #      这条不是形式主义：`--washi-theme-bg` 那支**刻意只有白天档**，本支是它的
     #      成对版本，两者挨着放，下一个人很容易把夜间那行删掉"去掉重复"。
-    #   ② background-color 是 transparent → 堵"又叠了一层"：原来那套毛病就是
+    #   ② background-color 是 transparent → 堵"又叠了一层"：
     #      半透明白压在别处底色上叠出来的（白天近白、夜间平灰），叠加式修法同样能让
     #      ① 变绿而用户看到的还是一层灰。
     #   ③ 两档都真的挂上了图 → 堵"令牌解析不出来"（那种情形下 ①② 都可能空转绿）。

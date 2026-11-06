@@ -11,7 +11,7 @@ SELECT '文章总数' AS done, COUNT(*) AS 行数 FROM note;
 SELECT 'flag 已存在?' AS done, flag_name, applied_at FROM migration_flags
  WHERE flag_name = 'note_comment_20261002';
 
--- ── ② 建表 ─────────────────────────────────────────────────────────────────
+-- ② 建表
 -- 字符集/排序规则显式跟随全库（`utf8mb4_0900_ai_ci`）——`content` 与 `ai_reason`
 -- 都要能存中文与表情。**不写 `COLLATE` 以外的排序规则**，避免与 `talk` 的文本比较
 -- 行为出现第二套口径。
@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS `note_comment` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
   COMMENT='文章评论（20261002）：两层结构 root_id/parent_id，见迁移文件头注';
 
--- ── ③ 验收 ─────────────────────────────────────────────────────────────────
+-- ③ 验收
 -- 3a) 列与默认值：期望 14 行，逐列肉眼过一遍。**重点看 `approved` 默认 1**
 --     （与 talk 一致：审核开关全关时评论照常可见）与 `is_deleted` 默认 0。
 SELECT '列' AS done, ORDINAL_POSITION AS pos, COLUMN_NAME, COLUMN_TYPE,
@@ -57,17 +57,16 @@ SELECT '索引' AS done, INDEX_NAME, SEQ_IN_INDEX, COLUMN_NAME, NON_UNIQUE
 -- 3c) 空表核对：期望 行数 = 0。
 SELECT '空表' AS done, COUNT(*) AS 行数 FROM `note_comment`;
 
--- ── ④ 打 flag ──────────────────────────────────────────────────────────────
+-- ④ 打 flag
 -- 重复执行会因主键/唯一键报错 ⇒ 那说明已经打过，忽略即可。
 INSERT INTO migration_flags (flag_name) VALUES ('note_comment_20261002');
 
 SELECT 'flag' AS done, flag_name, applied_at FROM migration_flags
  WHERE flag_name = 'note_comment_20261002';
 
--- ── 回滚（如需）────────────────────────────────────────────────────────────
+-- 回滚（如需）
 -- **先回滚代码、再删表**（反了的话评论接口在表没了之后 500，虽然不影响站内其它功能）：
 --   DROP TABLE IF EXISTS `note_comment`;
 --   DELETE FROM migration_flags WHERE flag_name = 'note_comment_20261002';
 -- ⚠️ DROP TABLE 会**连评论一起删**，且取不回来（回滚前请自行
 --    `SELECT * FROM note_comment` 留档，如需）。
--- =============================================================================

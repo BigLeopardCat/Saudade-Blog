@@ -38,7 +38,7 @@ const moveOut = (from, to) => {
 let failed = 0;
 const bad = (msg) => { console.error('  ✗ ' + msg); failed++; };
 
-// ── 读锁 ────────────────────────────────────────────────────────────────────
+// 读锁
 if (!existsSync(LOCK_PATH)) {
   console.error(`❌ 缺 ${path.relative(process.cwd(), LOCK_PATH)} —— 没有它就无法确定要取哪一版`);
   process.exit(1);
@@ -70,7 +70,7 @@ const rels = paths.map((p) => {
   return p.slice(BASE.length + 1);
 });
 
-// ── 跑 git（任何一步非 0 退出即失败）────────────────────────────────────────
+// 跑 git（任何一步非 0 退出即失败）
 function git(args, cwd) {
   const r = spawnSync('git', args, { cwd, encoding: 'utf8' });
   if (r.error) return { ok: false, err: r.error.message };
@@ -96,7 +96,7 @@ try {
     throw new Error('checkout');
   }
 
-  // ── 强判据：HEAD 与两棵子树的 tree sha 必须逐条相符 ──────────────────────
+  // 强判据：HEAD 与两棵子树的 tree sha 必须逐条相符
   // 一次抓住三件事：pin 挪了、锥配错了、agent 仓那一侧被改写了。
   r = git(['rev-parse', 'HEAD'], tmp);
   const headGot = r.ok ? r.out : '(取不到)';
@@ -112,7 +112,7 @@ try {
   if (failed) throw new Error('verify');
   console.log(`  ✅ ${REPO.split('/').pop()} @ ${SHA.slice(0, 12)}  两棵子树 tree sha 相符`);
 
-  // ── 列出两边各有哪些文件（vendor/ 不算）────────────────────────────────
+  // 列出两边各有哪些文件（vendor/ 不算）
   const listFiles = (dir) => {
     const out = [];
     const walk = (d, prefix) => {
@@ -127,7 +127,7 @@ try {
     return out;
   };
 
-  // ── 落位 / 校验 ─────────────────────────────────────────────────────────
+  // 落位 / 校验
   if (CHECK_ONLY) {
     let ok = 0;
     for (const rel of rels) {

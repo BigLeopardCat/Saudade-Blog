@@ -40,7 +40,7 @@ function walk(dir, exts, out = []) {
   return out;
 }
 
-// ── ① 全仓零命中 ───────────────────────────────────────────────────────────
+// ① 全仓零命中
 // ⚠️ **本文件自己要被排除**：它正文里就写着这个 API 名（正控那行合成了 `document.write(`），
 // 不排掉的话这条判据恒红。这与 `run_all.py` 排除自己同源。
 const SELF = fileURLToPath(import.meta.url);
@@ -55,14 +55,14 @@ const hits = files.flatMap((f) =>
 ok(hits.length === 0, '全仓没有 document.write（用 appendChild / createElement 代替）',
   hits.map(([f, l, t]) => `${f}:${l}  ${t}`).join('\n      '));
 
-// ── ② 覆盖率自检 ──────────────────────────────────────────────────────────
+// ② 覆盖率自检
 // 没有这一条，"零命中"可能只是路径写错了、或者 walk 扫了个空目录——本仓最贵的失效形状。
 const changed = path.relative(front, path.join(front, 'src/pages/Dashboard/Notes/NewNotes/index.tsx'));
 ok(files.length > 200, `扫描面不为空（现 ${files.length} 个文件）`, `files=${files.length}`);
 ok(files.some((f) => path.relative(front, f) === changed),
   `扫描面包含本次改动的那个文件（${changed}）`);
 
-// ── ③ 正控：判据本身能红 ──────────────────────────────────────────────────
+// ③ 正控：判据本身能红
 const planted = 'const w = window.open(src);\nw.document.write(image.outerHTML);\n';
 ok(findDocumentWrite(planted, 'planted').length === 1,
   '正控：合成的一行 document.write 必须被报出来');

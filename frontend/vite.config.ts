@@ -43,9 +43,9 @@ if (!process.env.VITE_SITE_TITLE || !process.env.VITE_SITE_DESCRIPTION) {
 }
 
 /**
- * HTML 属性值与元素文本的转义。站名与描述以前是仓库里的字面量（天然安全），现在是
- * **配置注入**（仓库 Variable，部署者自己填）—— 一个没转义的 `"` 就能把 meta 标签撕成
- * 两半，而产物照样构建成功、CI 照样绿。URL 那几处不动，保持原行为。
+ * HTML 属性值与元素文本的转义。站名与描述是**配置注入**（仓库 Variable，部署者自己填）
+ * —— 一个没转义的 `"` 就能把 meta 标签撕成两半，而产物照样构建成功、CI 照样绿。
+ * URL 那几处不动，保持原行为。
  */
 const esc = (s: string) => s
     .replace(/&/g, '&amp;')
@@ -72,7 +72,7 @@ const siteIdentity = (): Plugin => ({
             return out;
         },
     },
-    // robots.txt 整份由这里生成（`public/robots.txt` 已删）。
+    // robots.txt 整份由这里生成（`public/` 下不放静态副本）。
     //
     // 为什么不能像 index.html 那样留占位符了事：`Sitemap:` 那一行**必须是绝对 URL**
     // ——Google 的文档明确要求 fully qualified，写相对路径 `/sitemap.xml` 该行会被忽略，

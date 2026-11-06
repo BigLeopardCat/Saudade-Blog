@@ -31,7 +31,7 @@ pub const EMPTY_SHA256: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934c
 const REGION: &str = "auto";
 const SERVICE: &str = "s3";
 
-// ══ 配置 ════════════════════════════════════════════════════════════════════
+// 配置
 
 /// 图库 R2 的配置面（不含凭据）。
 #[derive(Debug, Clone, PartialEq)]
@@ -115,7 +115,7 @@ pub async fn load_config(db: &DatabaseConnection) -> R2Config {
     parse_config(|k| map.get(k).cloned())
 }
 
-// ══ 归一化 / 键 / URL（纯函数）═══════════════════════════════════════════════
+// 归一化 / 键 / URL（纯函数）
 
 /// 前缀归一：去两端空白与 `/`。`"/gallery/"` ⇒ `"gallery"`。
 pub fn normalize_prefix(raw: &str) -> String {
@@ -211,7 +211,7 @@ pub fn quota_exceeded(used: u64, incoming: u64, limit: u64) -> bool {
     used.saturating_add(incoming) > limit
 }
 
-// ══ SigV4（纯函数）══════════════════════════════════════════════════════════
+// SigV4（纯函数）
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -304,10 +304,9 @@ pub struct Signature {
 /// 签一次请求。**纯函数**（`amz_date` / region / service 全由调用方给）⇒
 /// AWS 的官方向量能原样进单测。
 ///
-/// ⚠️ region/service **是参数而不是常量**，理由不是"以后可能换"：官方那两组测试向量
-/// 用的是 `us-east-1` + `service`／`iam`，R2 用的是 `auto` + `s3` —— 签名值由这个
-/// 范围参与派生，任何一组常量写进函数体，另一组的向量就永远对不上（第一版就是这么
-/// 写的：向量看着"验证过了"，其实签出来是另一串）。常量只留在 [`REGION`]/[`SERVICE`]，
+/// ⚠️ region/service **是参数而不是常量**：官方那两组测试向量用的是 `us-east-1` +
+/// `service`／`iam`，R2 用的是 `auto` + `s3` —— 签名值由这个范围参与派生，任何一组
+/// 常量写进函数体，另一组的向量就永远对不上。常量只留在 [`REGION`]/[`SERVICE`]，
 /// 由网络层显式传进来。
 #[allow(clippy::too_many_arguments)]
 pub fn sign_request(
@@ -344,7 +343,7 @@ fn amz_date_now() -> String {
     Utc::now().format("%Y%m%dT%H%M%SZ").to_string()
 }
 
-// ══ 凭据（只从 .env 读）══════════════════════════════════════════════════════
+// 凭据（只从 .env 读）
 
 pub const IMAGE_ENV_KEYS: [&str; 3] = [
     "R2_IMAGE_ENDPOINT",
@@ -439,7 +438,7 @@ pub fn load_creds() -> Option<Creds> {
     creds_from(|k| std::env::var(k).ok())
 }
 
-// ══ 网络 ════════════════════════════════════════════════════════════════════
+// 网络
 
 /// 进程内单例（与 `routes/talks.rs::review_http` 同一形态）：每次请求新建 client
 /// 等于每次重建连接池、放弃 keep-alive。**不动 `AppState`**（一个静态就够了，
@@ -748,7 +747,7 @@ pub async fn delete_object(creds: &Creds, bucket: &str, key: &str) -> Result<(),
     }
 }
 
-// ══ 单测 ════════════════════════════════════════════════════════════════════
+// 单测
 
 #[cfg(test)]
 mod tests;

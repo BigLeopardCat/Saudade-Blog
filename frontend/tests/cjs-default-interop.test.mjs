@@ -14,7 +14,7 @@ const ok = (cond, name, extra) => {
   console.log('  ✗ ' + name + (extra ? '\n      ' + extra : ''));
 };
 
-// ── 解析：把一个 import specifier 解析到它真正的入口文件 ──────────────────────
+// 解析：把一个 import specifier 解析到它真正的入口文件
 // 覆盖：`type: "module"`（纯 ESM，不走互操作）、`exports["."]` 的
 // import/module/default/require 四档、`module` / `main`、以及子路径。
 const CANDIDATE_EXT = ['', '.js', '.mjs', '.cjs', '/index.js', '/index.mjs', '/index.cjs'];
@@ -76,7 +76,7 @@ function walk(dir, out = []) {
   return out;
 }
 
-// ── ① 反面控制：解析器本身有效，别让下面整段变成空转 ─────────────────────────
+// ① 反面控制：解析器本身有效，别让下面整段变成空转
 //   没有这一条，任何"解析不出来 ⇒ 不报"的退化都会让测试**全绿**。
 {
   ok(isEsModuleCjs('@mui/icons-material/Add'),
@@ -88,7 +88,7 @@ function walk(dir, out = []) {
   ok(!isEsModuleCjs('antd'), '反控：antd 包根不判危（type/module 指到 ESM 那份）');
 }
 
-// ── ② 每一个危险的默认 import 都要被 cjsDefault 包住 ─────────────────────────
+// ② 每一个危险的默认 import 都要被 cjsDefault 包住
 {
   const guarded = [], offenders = [];
   for (const file of walk(SRC)) {
@@ -111,7 +111,7 @@ function walk(dir, out = []) {
      `扫到的守卫处数不为空（实测 14 处，>=10 才不算空转）`, `实际 ${guarded.length}`);
 }
 
-// ── ③ cjsDefault 三种形态都要兜住（行为级，不是读源码文本） ─────────────────
+// ③ cjsDefault 三种形态都要兜住（行为级，不是读源码文本）
 //   直接把 `src/utils/cjsDefault.ts` 的类型标注摘掉求值——**摘不掉就抛错**，
 //   于是"改了签名忘了改这里"会红，不会静默变成没测。
 {
@@ -127,7 +127,7 @@ function walk(dir, out = []) {
 
   if (typeof cjsDefault === 'function') {
     const Comp = function Icon() {};
-    // ① 实测形态：拿到的是整个 module.exports
+    // ① 实际形态：拿到的是整个 module.exports
     ok(cjsDefault({ __esModule: true, default: Comp }) === Comp,
        '① 名字空间形态 {__esModule, default: Comp} → Comp（本次事故的形态）');
     // ② 文档写的形态

@@ -30,7 +30,7 @@ await esbuild.build({
     }],
 });
 
-// ── 假浏览器（模块加载时就会挂 window/document 监听，所以必须先装好再 import）──
+// 假浏览器（模块加载时就会挂 window/document 监听，所以必须先装好再 import）
 const store = {};
 function fakeEventTarget(bag) {
     return {
@@ -48,7 +48,7 @@ globalThis.localStorage = {
     removeItem: (k) => { delete store[k] },
 };
 
-// ── 假 setInterval：谁挂了定时器、挂了几次，测试说了算 ──────────────────────
+// 假 setInterval：谁挂了定时器、挂了几次，测试说了算
 // 只换 setInterval（不换 setTimeout——那会把下面的 `tick()` 一起换掉）。
 const realSetInterval = globalThis.setInterval;
 globalThis.setInterval = (fn, ms) => {
@@ -102,7 +102,7 @@ const gets = (ctl) => ctl.calls.filter((c) => !c.method || c.method === 'GET').l
 const login = () => { store.tokenKey = TOKEN };
 const logout = () => { delete store.tokenKey };
 
-// ── ① 全站只有一个轮询定时器（本轮的改动本体）──────────────────────────────
+// ① 全站只有一个轮询定时器
 {
     const { mod, ctl } = await fresh();
     login();
@@ -136,7 +136,7 @@ const logout = () => { delete store.tokenKey };
     eq(mod.unreadDebug().active, 0, '计数仍是 0');
 }
 
-// ── ② 谁在拉：没人在看就一次都不发 ─────────────────────────────────────────
+// ② 谁在拉：没人在看就一次都不发
 {
     const { mod, ctl } = await fresh();
     login();
@@ -166,7 +166,7 @@ const logout = () => { delete store.tokenKey };
     eq(gets(ctl), 4, '切回前台补一次（后台标签页里定时器会被降频）');
 }
 
-// ── ③ 未登录：不发请求，红点按 0 处理 ──────────────────────────────────────
+// ③ 未登录：不发请求，红点按 0 处理
 {
     const { mod, ctl } = await fresh();
     logout();
@@ -176,7 +176,7 @@ const logout = () => { delete store.tokenKey };
     eq(mod.unreadDebug().counts, EMPTY_COUNTS, '未登录时读数是 0');
 }
 
-// ── ④ 读不到 ≠ 没有（失败保留上一次的读数）────────────────────────────────
+// ④ 读不到 ≠ 没有（失败保留上一次的读数）
 // 与 favorites.ts「拉取失败不清空已有的 list」同一条：失败本身没有改变任何事实。
 // 对红点：通知没被读掉，红点凭什么灭。对后台那行待审提示：一次抖动就让"3 条待审"
 // 变成"没有待审"，是把读失败演成了审完了。
@@ -259,7 +259,7 @@ const logout = () => { delete store.tokenKey };
        '两格是**各自独立**的读数（把评论并进 pendingReview 是这条要挡的那件事）');
 }
 
-// ── ⑥ 没有新事实就不换引用（否则订阅者白渲染一轮）──────────────────────────
+// ⑥ 没有新事实就不换引用（否则订阅者白渲染一轮）
 {
     const { mod, ctl } = await fresh();
     login();

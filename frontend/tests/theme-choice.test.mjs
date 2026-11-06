@@ -8,7 +8,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
 const out = mkdtempSync(path.join(tmpdir(), 'thm-'));
 
-// ── 假钟：theme.ts 读 new Date()（isNightHour）与 Date.now()（currentThemeDay）──
+// 假钟：theme.ts 读 new Date()（isNightHour）与 Date.now()（currentThemeDay）
 const RealDate = Date;
 let NOW = 0;
 class FakeDate extends RealDate {
@@ -19,7 +19,7 @@ globalThis.Date = FakeDate;
 /** 把钟面拨到 2026-09-15 起的第 day 天的 h:m（本地时区，与 theme 的判据同源） */
 const at = (h, m = 0, day = 15) => { NOW = new RealDate(2026, 8, day, h, m, 0).getTime(); };
 
-// ── 假 localStorage ──
+// 假 localStorage
 const store = new Map();
 globalThis.localStorage = {
     getItem: (k) => (store.has(k) ? store.get(k) : null),
@@ -48,7 +48,6 @@ const ok = (cond, name, detail) => {
 };
 const eq = (got, want, name) => ok(got === want, name, { got, want });
 
-// ══════════════════════════════════════════════
 // 把 App.tsx 的分钟 ticker 复刻成一个可单步的驱动器：只有返回非 null 才"真的切了"，
 // 并把新状态写回存储（真实链路里这一步是 darkmode-change 事件的监听者做的）。
 function tick(now) {

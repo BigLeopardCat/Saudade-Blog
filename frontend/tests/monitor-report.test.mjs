@@ -17,7 +17,7 @@ const ok = (cond, name, detail) => {
 const read = (rel) => readFileSync(path.join(root, rel), 'utf8');
 const readRepo = (rel) => readFileSync(path.join(repo, rel), 'utf8');
 
-// ── 取服务端白名单 ─────────────────────────────────────────────────────────
+// 取服务端白名单
 function monitorWhitelist() {
     const src = readRepo('src/routes/monitor.rs');
     const m = /const MONITOR_KINDS: \[&str; (\d+)\] = \[([\s\S]*?)\n\];/.exec(src);
@@ -28,7 +28,7 @@ function monitorWhitelist() {
     };
 }
 
-// ── 取客户端上报点 ─────────────────────────────────────────────────────────
+// 取客户端上报点
 // 形状 `report({ type: 'x'` / `__reportError({ type: 'x'` / `reportError({ type: 'x'`
 // ⚠️ 字符类必须含数字：写成 `[a-z_]+` 会**静默漏掉** `live2d_load_fail`（里面有 2）。
 //    下面 ① 里有一条专门钉这一点。

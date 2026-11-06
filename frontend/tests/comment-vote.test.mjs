@@ -43,7 +43,7 @@ const tsComment = read('frontend/src/components/CommentSection/index.tsx');
 const MIGRATION = 'scripts/migration/note_comment_vote_20261003.sql';
 const sql = has(MIGRATION) ? read(MIGRATION) : '';
 
-// ── ① 路由与域 ─────────────────────────────────────────────────────────────
+// ① 路由与域
 console.log('\n路由 —— 一条公开写路由，挂在 public 域内：');
 {
     const pub = rustMod.indexOf('let public_routes = Router::new()');
@@ -62,7 +62,7 @@ console.log('\n路由 —— 一条公开写路由，挂在 public 域内：');
         '前端拼的是同一条路径（前后端各写一份字面量，这是它们必须逐字相同的地方）');
 }
 
-// ── ② 身份：一个实现、一个头 ───────────────────────────────────────────────
+// ② 身份：一个实现、一个头
 console.log('\n身份 —— 复用文章点赞那一份，不另写一遍：');
 {
     ok(/use super::note_stats::\{identify, Who\}/.test(rustVotes),
@@ -83,7 +83,7 @@ console.log('\n身份 —— 复用文章点赞那一份，不另写一遍：');
         + '两条接口在同一个文件里要求相反，正是最容易"顺手统一"掉的一处）');
 }
 
-// ── ③ 值域：−1 / 0 / 1，且 0 是撤回 ────────────────────────────────────────
+// ③ 值域：−1 / 0 / 1，且 0 是撤回
 console.log('\n值域 —— ±1 是票，0 是撤回（不是缺省）：');
 {
     ok(/matches!\(payload\.value, -1 \| 0 \| 1\)/.test(rustVotes),
@@ -97,7 +97,7 @@ console.log('\n值域 —— ±1 是票，0 是撤回（不是缺省）：');
         'TS 那一侧 myVote 的类型写着 −1 | 0 | 1（写宽成 number，改主意那支就没人管了）');
 }
 
-// ── ④ 键名：DTO ↔ DTO ↔ TS ────────────────────────────────────────────────
+// ④ 键名：DTO ↔ DTO ↔ TS
 console.log('\n键名 —— 列表行与投票回执是**同一种东西**（前端只写一份解析）：');
 {
     for (const [name, src] of [['投票回执', rustVotes], ['列表行', rustComments]]) {
@@ -117,7 +117,7 @@ console.log('\n键名 —— 列表行与投票回执是**同一种东西**（�
         '列表用**批量**计数（一次 GROUP BY），不是每行一次查询');
 }
 
-// ── ⑤ 排序：默认「最热」，公式在后端、前端一个字都不算 ─────────────────────
+// ⑤ 排序：默认「最热」，公式在后端、前端一个字都不算
 console.log('\n排序 —— 默认热度（20261020 改口径），且判据不许被架空：');
 {
     const listBody = bodyOf(rustComments, 'pub async fn list_comments');
@@ -129,9 +129,9 @@ console.log('\n排序 —— 默认热度（20261020 改口径），且判据不
         '口径：**缺省与未知值都当 hot**（`Option<String>` + matches，不是会 reject 的强类型枚举'
         + '——枚举遇非法值回 HTTP 400 纯文本、不走信封，前端判 code===200 ⇒ 整段讨论区显示"读取失败"）');
 
-    // 「排序只看时间与 id」这条**收窄到 SQL**：它现在证明的是"票没有漏进 SQL 排序"，
-    // 而**不再是**"讨论区按时间序"（那句话已经作废）。顶层那两条 ORDER BY 也从契约降级为
-    // "内存排序的确定性前置"——所以它们**在不在都不影响用户看到的顺序**，别拿它当判据。
+    // 「排序只看时间与 id」这条**收窄到 SQL**：它证明的是"票没有漏进 SQL 排序"，
+    // 而不是"讨论区按时间序"。顶层那两条 ORDER BY 只是
+    // "内存排序的确定性前置"——它们**在不在都不影响用户看到的顺序**，别拿它当判据。
     const orders = [...listBody.matchAll(/order_by_\w+\(([^)]*)\)/g)].map((m) => m[1]);
     ok(orders.length > 0, '列表仍带 SQL 前置排序', orders);
     ok(orders.every((o) => /CreatedAt|Id/.test(o)),
@@ -148,7 +148,7 @@ console.log('\n排序 —— 默认热度（20261020 改口径），且判据不
 
 }
 
-// ── ⑤b 跨语言契约：`hot` / `new` 两边逐字相同，默认 hot ────────────────────
+// ⑤b 跨语言契约：`hot` / `new` 两边逐字相同，默认 hot
 console.log('\n排序契约 —— 字面量、默认值、传参：');
 {
     const listApi = bodyOf(tsApis, 'function listComments');
@@ -168,7 +168,7 @@ console.log('\n排序契约 —— 字面量、默认值、传参：');
         '选中态跟着 sort 走（写成"点了才亮"的本地态 ⇒ 刷新/切文章后页签与实际顺序对不上）');
 }
 
-// ── ⑥ 迁移与 entity 同源 ──────────────────────────────────────────────────
+// ⑥ 迁移与 entity 同源
 console.log('\n迁移 —— 文件、表名、键名、flag 四处对得上：');
 {
     ok(has(MIGRATION), `迁移文件在（${MIGRATION}）`);

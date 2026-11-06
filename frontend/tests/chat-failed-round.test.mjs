@@ -40,7 +40,7 @@ globalThis.Live2DCubismCore = {};
 globalThis.__chatRenderMarkdown = (t) => String(t);
 globalThis.__chatEnhance = () => {};
 
-// ── 夹具：一条已答复的往返 + 末条"没收到回复"的 user 消息 ──
+// 夹具：一条已答复的往返 + 末条"没收到回复"的 user 消息
 // 末条必须是**最后一条 item**（引擎的失败判据是"最后一条是匹配标记的 user 且其后
 // 没有 agent 回复"）——这正是刷新后 DB 里的真实形状：user 消息入库了，回复没有。
 const NOW = Date.now();

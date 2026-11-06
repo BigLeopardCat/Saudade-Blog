@@ -16,7 +16,7 @@ const DIST_MAX = 9;
  *  单个词的包围球半径取 0.22，1.9 时它只占画面 1/4，看着像没飞过去。0.8 ≈ 占 6 成。 */
 const LOCATE_DIST_MIN = 0.8;
 
-/** 穿云步长的世界尺度。取点云半径量级（当前 400 词产物实测 max 1.066）：一格 ≈ 0.18 世界单位，
+/** 穿云步长的世界尺度。取点云半径量级（400 词产物约 1.066）：一格 ≈ 0.18 世界单位，
  *  穿过整团（直径 ≈2.13）约 12 格，与「从当前默认机位 2.6 滚到底的 12 格」同一手感。
  *  ⚠️ 别用 dist(0.4) 当尺度：那样一格只走 0.06，穿团要 37 格，等于没解决「进不去」。 */
 const DOLLY_SCALE = 1.2;
@@ -32,9 +32,8 @@ const LABEL_MAX = 50;
 const NEAR_LABEL_D = 1.5;
 const POINT_SCALE_MIN = 0.62;
 const POINT_SCALE_MAX = 1.4;
-/** 点透明度的下限。**旧**默认机位 4.3 下最远的点算出来 ≈0.57 > 0.5 ⇒ 那时团外视角不变；
- *  但**当前**默认 2.6 下 α min 已经掉到 0.470（11/400 被它抬起），所以"团外不生效"只对 4.3 成立。
- *  它兜的是"飞进团里、远点算式早就为负"那一段，别让点淡成背景。 */
+/** 点透明度的下限。默认机位 2.6 下 α min 会掉到 0.470（11/400 被它抬起）；
+ *  它兜的是"飞进团里、远点算式早已为负"那一段，别让点淡成背景。 */
 const POINT_ALPHA_MIN = 0.5;
 const LABEL_NEAR = 10;
 /** 拖动后多久内忽略 dblclick（ms）。没有这个守卫，"拖两下"会误触跳转。 */
@@ -45,8 +44,8 @@ const PULSE_MS = 1800;
 
 export function wordKey(w: string): string { return w.toLowerCase(); }
 
-/** 某个节点的直接邻居（按边权=相似度降序）。读数卡片用它列出"这个词连着谁"——
- *  以前只能靠肉眼顺着高亮线找。纯函数，便于单测。 */
+/** 某个节点的直接邻居（按边权=相似度降序）。读数卡片用它列出"这个词连着谁"。
+ *  纯函数，便于单测。 */
 export function neighborsOf(g: GraphData, idx: number): { w: string; s: number }[] {
     const best = new Map<string, number>();          // 同一个邻居留最大的那条边
     for (const e of g.edges) {
@@ -166,7 +165,7 @@ export class WordGraphEngine {
         this.resize();
     }
 
-    // ------------------------------------------------------------ 生命周期
+    // 生命周期
 
     private attach() {
         const c = this.canvas;
@@ -241,7 +240,7 @@ export class WordGraphEngine {
         this.invalidate();
     }
 
-    // ------------------------------------------------------------ 对外状态
+    // 对外状态
 
     setHighlight(list: LocateHit[] | null) {
         this.hits.clear();
@@ -298,7 +297,7 @@ export class WordGraphEngine {
     /** 回到默认视角：机位 + 清穿云位移 + 清查询高亮（选中保留，它是对"哪个词"的注意，与视角无关） */
     home(ms = 720) { this.setHighlight(null); this.flyTo(HOME_CAM, ms); }
 
-    // ------------------------------------------------------------ 穿云（滚轮到底之后继续前进）
+    // 穿云（滚轮到底之后继续前进）
 
     private flightLen(): number {
         const f = this.flight;
@@ -326,7 +325,7 @@ export class WordGraphEngine {
         this.cam.target = [this.anchor[0] + f[0], this.anchor[1] + f[1], this.anchor[2] + f[2]];
     }
 
-    // ------------------------------------------------------------ 渲染调度
+    // 渲染调度
 
     /** 标脏并按需排一帧。空闲时 rAF 计数为 0 是这个组件的硬要求
      *  （首页是全站最重的页面），所以这里没有常驻渲染循环。 */
@@ -372,13 +371,13 @@ export class WordGraphEngine {
         if (again) this.invalidate();
     };
 
-    // ------------------------------------------------------------ 投影
+    // 投影
 
     private project() {
         projectNodes(this.data.nodes, this.cam, this.w, this.h, this.proj);
     }
 
-    // ------------------------------------------------------------ 绘制
+    // 绘制
 
     private draw() {
         const ctx = this.ctx;
@@ -437,7 +436,7 @@ export class WordGraphEngine {
             ctx.stroke();
         }
 
-        // ---- 点：远 → 近（画家算法）
+        // 点：远 → 近（画家算法）
         this.order.sort((a, b) => this.proj.d[b] - this.proj.d[a]);
         for (let oi = 0; oi < this.order.length; oi++) {
             const i = this.order[oi];
@@ -466,7 +465,7 @@ export class WordGraphEngine {
         }
         ctx.globalAlpha = 1;
 
-        // ---- 标签：分层 + 贪心 AABB 防重叠
+        // 标签：分层 + 贪心 AABB 防重叠
         const placed = this.placed;
         placed.length = 0;
         const labeled = this.labeled;
@@ -504,7 +503,7 @@ export class WordGraphEngine {
                 let cx = c[0], cy = c[1];
                 if (cx < 2 || cx + tw > w - 2 || cy < 2 || cy + size > h - 2) {
                     if (!hard) continue;
-                    // 贴边的词硬拉回画布内（原来这里直接放弃——画面边缘的词因此永远没名字）
+                    // 贴边的词硬拉回画布内，否则画面边缘的词永远没有名字
                     cx = Math.max(2, Math.min(cx, w - tw - 2));
                     cy = Math.max(2, Math.min(cy, h - size - 2));
                 }
@@ -563,7 +562,7 @@ export class WordGraphEngine {
         ctx.globalAlpha = 1;
     }
 
-    // ------------------------------------------------------------ 交互
+    // 交互
 
     private hitTest(cx: number, cy: number): number | null {
         return pickNode(this.proj, cx, cy);
@@ -708,10 +707,8 @@ export function cameraFor(g: GraphData, hits: LocateHit[], cur: Camera): Camera 
     return { yaw: cur.yaw, pitch: cur.pitch, dist, target: [cx, cy, cz] };
 }
 
-// ==================================================================
 // 投影与命中测试。抽成纯函数（不碰 DOM、不碰类状态）是为了能在 node 里
 // 直接断言——这是整套渲染的数学核心，错了画面会静默地歪掉。
-// ==================================================================
 
 /** 一帧的屏幕坐标。x/y 是 CSS 像素（不是 DPR backing store），d 是到相机的距离 */
 export class Projection {

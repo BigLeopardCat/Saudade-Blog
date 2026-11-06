@@ -46,7 +46,7 @@ MYSQL_BIN = os.environ.get("MYSQL_BIN", "sudo -n mysql")
 NO_DEFAULT = "@@NO_DEFAULT@@"
 
 
-# ── 读 MySQL ────────────────────────────────────────────────────────────────
+# 读 MySQL
 def _unescape(s: str) -> str:
     """MySQL `--batch` 把 tab/换行/反斜杠转义成 `\\t` `\\n` `\\\\`；这里还原。"""
     if "\\" not in s:
@@ -155,7 +155,7 @@ def entity_bools() -> dict:
     return out
 
 
-# ── 翻译 ────────────────────────────────────────────────────────────────────
+# 翻译
 def q_ident(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 

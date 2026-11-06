@@ -63,7 +63,7 @@ console.log('\n① 定高槽：两张卡都要有（页脚定死在卡底的**�
     // 普通卡的槽还要能抗 flex 收缩：槽位一变压的就是简介的顶
     const fs = decl(SLOT, 'flex-shrink', '0');
     ok(fs.found && fs.match, '普通卡：槽 flex-shrink: 0（内容区余量不够时不许压槽）', fs);
-    // 顶卡那 20px 原本是简介的行内 marginBottom（内联样式会压掉绝对定位方案），现在归槽管
+    // 顶卡那 20px 不能写成简介的行内 marginBottom（内联样式会压掉绝对定位方案），归槽管
     const mb = decl(TOP_SLOT, 'margin-bottom', '20px');
     ok(mb.found && mb.match, '置顶卡：槽 margin-bottom: 20px（原本那 20px 间距搬到这里）', mb);
 }

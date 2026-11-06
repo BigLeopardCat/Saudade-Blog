@@ -1,4 +1,4 @@
-// ═ 图谱产物质量门（前端侧）══
+// 图谱产物质量门（前端侧）
 //   node tests/wordgraph-artifact.test.mjs
 // 建图脚本自己有一道质量门（fidelity / len_sim_rho / 节点数），这里是从**产物**
 // 反着再验一遍：契约（manifest → 带 hash 的文件名 → export default）、几何合法性、
@@ -119,7 +119,7 @@ console.log('== 质量指标 ==');
     ok(stats.n_nodes === nodes.length, 'stats.n_nodes 与实际节点数一致', { stats: stats.n_nodes, real: nodes.length });
 }
 
-// ── 后台重建的产物（存在才验）────────────────────────────────────────────
+// 后台重建的产物（存在才验）
 // 上面那一整段验的是**仓库里 committed 的种子**：从没重建过的站点走的就是它。
 // 重建过的站点走另一份（agent 的 data/word_graph/web/，由 Rust 供出）——那份不在
 // 版本控制里、本机也不一定有（没重建过就整个目录不存在），所以整段按"存在才验"。
@@ -146,7 +146,7 @@ if (!existsSync(prodManifestPath)) {
         // ⚠️ **不能直接 import 这个路径**：Node 按**最近的 package.json** 决定 `.js` 是不是
         //    ESM，而 `saudade-blog-agent/` 下没有 package.json（种子那份能直接 import，
         //    只是因为 `frontend/package.json` 里写了 `"type": "module"`）——直接 import 会
-        //    按 CommonJS 解析，`export default` 当场语法错，**整段崩在断言之前**：本机实测
+        //    按 CommonJS 解析，`export default` 当场语法错，**整段崩在断言之前**：
         //    连一行 FAIL 都打不出来，进程带栈退出（CI 上这段恒跳过，所以只有生产机上看得见）。
         //    但"它必须是合法的 ES module"这条本身要验（浏览器里 `loader.ts` 就是
         //    `await import(url)` 拿它的）⇒ 复制成 `.mjs` 再 import：既真验了 ESM 可解析性，

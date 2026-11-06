@@ -16,7 +16,7 @@ const ok = (cond, name, detail) => {
 
 const read = (rel) => readFileSync(path.join(root, rel), 'utf8');
 
-// ── 打包两个模块 ───────────────────────────────────────────────────────────
+// 打包两个模块
 // `import.meta.env` 在 node 里是 undefined ⇒ `runtimeApi.ts` 那句
 // `import.meta.env.VITE_HTTP_BASEURL || window.location.port …` 在 import 期就 TypeError。
 // 用 define 把它替换成空对象（值仍是 undefined ⇒ 走 `||` 右边），与构建期行为一致。
@@ -32,7 +32,7 @@ async function bundle(entry, name) {
     return pathToFileURL(file).href;
 }
 
-// ── 替身环境（顺序要紧：先摆好再 import）────────────────────────────────────
+// 替身环境（顺序要紧：先摆好再 import）
 const FLAG = 'staleChunkReloadAt';
 function fakeEnv({ stamp = null, readThrows = false, writeThrows = false } = {}) {
     const store = new Map();
@@ -73,7 +73,6 @@ const guardUrl = await bundle('src/utils/staleChunk.ts', 'guard.mjs');
 fakeEnv();                                   // 第一份替身必须在 import 之前到位
 const G = await import(guardUrl);
 
-// ────────────────────────────────────────────────────────────────────────────
 console.log('\n① 措辞识别（认浏览器真会说的那几句，不认"看着像"的）');
 {
     // 生产日志里那一行就是第一句（含真实分块名与哈希）
@@ -156,7 +155,7 @@ console.log('\n③ 两个触发点接上了，且判据先于上报');
         ok(judge > 0, '先判是不是换代');
         ok(report > 0 && judge < report, '★ 判据在 reportError 之前（换代那一支不报 react_error）',
             { judge, report });
-        // 负空间：stale 分支体内不许出现 reportError（一次事故两行日志的来源就是这个）
+        // 负空间：stale 分支体内不许出现 reportError（否则同一次失败会落两行日志）
         const branch = /if\s*\(\s*isStaleChunkError\([\s\S]*?return\s*\}/.exec(body);
         ok(!!branch && !branch[0].includes('reportError'),
             'stale 分支体内没有 reportError', branch ? branch[0].replace(/\s+/g, ' ').slice(0, 120) : null);

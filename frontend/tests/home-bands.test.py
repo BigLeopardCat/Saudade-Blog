@@ -43,7 +43,7 @@ def strip_comments(text, line_comments=True):
     return text
 
 
-# ═══ 一、源码锁 ════════════════════════════════════════════════════════════════
+# 一、源码锁
 # 这几条不是"渲染对不对"，是"别把这次拆开的三段又合回去"。合回去的写法每次都很自然
 # （把色值直接写进组件、把 import 挪回一行、给 logo 排去掉 flex-wrap），所以钉住。
 print("【一】源码锁：三段不许再合回去")
@@ -99,7 +99,7 @@ check("logo 贴片是实体浅色（旧的 `rgba(255, 255, 255, 0.07)` 不许回
       "rgba(255, 255, 255, 0.07)" not in foot_sass and "#f7f3fb" in foot_sass)
 
 
-# ═══ 二、沙箱 ═════════════════════════════════════════════════════════════════
+# 二、沙箱
 # 真 sass（三份）+ 真令牌（index.css / main.css）+ 真类名。页面底图在沙箱里换成一个
 # 不透明的近白/近黑 —— 真站上它是 `--front-body-color`（33% 的白/黑）压在**已 404 的**
 # 背景图上，纵向本来就没有变化，换成纯色只是把"底"这件事写得确定一点。
@@ -179,7 +179,7 @@ PORT = _server.server_address[1]
 from playwright.sync_api import sync_playwright  # noqa: E402
 
 
-# ── 颜色工具（与 `tests/dark-mode-contrast.test.py` 同一套口径）──────────────────
+# 颜色工具（与 `tests/dark-mode-contrast.test.py` 同一套口径）
 def P(s):
     """`rgb(r, g, b)` / `rgba(r, g, b, a)` → 元组。"""
     nums = [float(x) for x in re.findall(r"-?\d*\.?\d+", s)]
@@ -306,7 +306,7 @@ with sync_playwright() as p:
                   f"L(首屏)={lin(hero_c):.3f} L(正文)={lin(content_c):.3f} L(封底)={lin(foot_c):.3f}")
 
         # ④ 像素判据：上面比的是**声明的色标**，这一条比的是**渲染出来的像素** ——
-        #    "背景层被后一条声明顶掉"这类事故只有像素看得出来（声明还在，画不出来）。
+        #    "背景层被后一条声明顶掉"这类问题只有像素看得出来（声明还在，画不出来）。
         #    取样点全取在各段左缘、且**贴着接缝**（首屏贴下沿、正文带贴上沿、封底贴上沿）：
         #    这是最严的位置 —— 相邻两段在别处拉开、在接缝处却同色，等于没有分段。
         #    先量字色（下一步要把文字调成透明，之后就读不到真字色了）。
@@ -317,7 +317,7 @@ with sync_playwright() as p:
             for name, sel in TEXT_SEL.items()}
         # ⚠️ 连 `transition` 一起关掉：`.link` 有 `transition: color .25s`，只把颜色改成
         # `transparent` 的话那一刻它正**过渡到一半**，截到的仍是灰字 —— 量出来的对比度
-        # 只有 2.4:1（本套件初版就被这个假红骗过一次）。
+        # 只有 2.4:1（会被这个假红骗过）。
         pg.add_style_tag(content=".footerContainer *{color:transparent !important;"
                                  "transition:none !important}")
         shot = Image.open(io.BytesIO(pg.screenshot(full_page=True))).convert("RGB")
@@ -351,7 +351,7 @@ with sync_playwright() as p:
         pg.close()
         check(f"{theme}：无 JS 报错", not errs, str(errs[:1]))
 
-    # ── 三、几何：胶带的位置、logo 贴片、窄屏 logo 排 ──────────────────────────
+    # 三、几何：胶带的位置、logo 贴片、窄屏 logo 排
     print("\n【三】几何：接缝胶带 / logo 贴片 / 窄屏 logo 排")
     pg = br.new_page(viewport={"width": 1280, "height": 900})
     pg.goto(f"http://127.0.0.1:{PORT}/light.html")
@@ -365,7 +365,7 @@ with sync_playwright() as p:
           float(content["before"]["top"].replace("px", "")) >= 0
           and content["before"]["h"] == "15px",
           f"top={content['before']['top']} h={content['before']['h']}")
-    # 页脚的胶带已删。判据取伪元素的计算 `content`：删掉整条规则后它是默认的 `none`
+    # 页脚的胶带不应存在。判据取伪元素的计算 `content`：没有整条规则时它是默认的 `none`
     # （**不是空串**）—— 「`top` 读不出来」那种写法分不清"压根没有伪元素"与"伪元素没写 top"。
     check("页脚没有接缝胶带（::before 的 content 是 none）",
           foot["before"]["content"] in ("none", ""), foot["before"]["content"])

@@ -10,7 +10,7 @@ ALTER TABLE `note_like`
 
 INSERT INTO migration_flags (flag_name) VALUES ('note_like_anon_20261001');
 
--- ── ① 自检：两列的形状对得上 ────────────────────────────────────────────────
+-- ① 自检：两列的形状对得上
 -- 期望：2 行。`user_id` IS_NULLABLE=YES、类型 int；
 --       `visitor_key` IS_NULLABLE=YES、varchar(64)、紧排在 user_id 之后。
 SELECT '列' AS done, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, ORDINAL_POSITION
@@ -19,7 +19,7 @@ SELECT '列' AS done, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE, ORDINAL_POSITION
    AND COLUMN_NAME IN ('user_id', 'visitor_key')
  ORDER BY ORDINAL_POSITION;
 
--- ── ② 自检：两条唯一键都在，且各自的分列对得上 ──────────────────────────────
+-- ② 自检：两条唯一键都在，且各自的分列对得上
 -- 期望：uq_like_note_user = (note_id, user_id) 两条分列；
 --       uq_like_note_visitor = (note_id, visitor_key) 两条分列。
 SELECT '唯一键' AS done, INDEX_NAME, SEQ_IN_INDEX, COLUMN_NAME
@@ -28,7 +28,7 @@ SELECT '唯一键' AS done, INDEX_NAME, SEQ_IN_INDEX, COLUMN_NAME
    AND INDEX_NAME IN ('uq_like_note_user', 'uq_like_note_visitor')
  ORDER BY INDEX_NAME, SEQ_IN_INDEX;
 
--- ── ③ 存量行核对：跑完本文件（还没上代码）时，匿名行必须是 0 行 ──────────────
+-- ③ 存量行核对：跑完本文件（还没上代码）时，匿名行必须是 0 行
 -- 期望：总数不变、`匿名的行数` = 0。**若不为 0，先停手查清是谁写的**——
 -- 本文件不造任何匿名行，能写出 visitor_key 的代码在本次部署之后才存在。
 SELECT '存量行' AS done,
@@ -40,7 +40,7 @@ SELECT '存量行' AS done,
 SELECT 'flag' AS done, flag_name, applied_at FROM migration_flags
  WHERE flag_name = 'note_like_anon_20261001';
 
--- ── 回滚（如需）────────────────────────────────────────────────────────────
+-- 回滚（如需）
 -- 顺序有讲究：**先删匿名行**，否则 `MODIFY ... NOT NULL` 会因为 user_id 为 NULL
 -- 的行而失败（或按 sql_mode 被静默填 0 —— 那更糟，会凭空造出指向 user 0 的点赞）。
 --   DELETE FROM `note_like` WHERE `user_id` IS NULL;

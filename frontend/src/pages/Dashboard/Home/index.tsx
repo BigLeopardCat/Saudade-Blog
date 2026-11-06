@@ -74,8 +74,7 @@ const Home = () => {
     const typedRef = useRef(null);
     const avatar = useViewerProfile().avatar;
     // 个性签名：站点设置 → `web_info.userTalk` → `GET /api/public/user` → redux `talk`。
-    // 以前这里写死「遇事不决可问春风 / 春风不语即随本心」——那是某一位部署者的口味，
-    // 不该长在仓库里（同 A3/A4 的处置）。**空签名就整块不渲染**，不拿别的话顶上。
+    // 不在仓库里写死默认签名（那是部署者的口味）。**空签名就整块不渲染**，不拿别的话顶上。
     const signature = useSelector((state: { user: UserState }) => state.user.talk || '').trim();
     const dispatch = useDispatch();
 

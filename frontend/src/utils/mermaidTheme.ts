@@ -26,7 +26,7 @@ export const MERMAID_CONFIG = {
     lineColor: '#9b8fa6',
     clusterBkg: '#faf4f7',
     clusterBorder: '#e2cfe0',
-    // 连线上的标签：原来 #e8e8e8 的灰块，压在线上像补丁
+    // 连线上的标签：#e8e8e8 的灰块压在线上像补丁
     edgeLabelBackground: '#fffdfa',
     labelBackgroundColor: '#fffdfa',
     labelTextColor: '#4a3550',

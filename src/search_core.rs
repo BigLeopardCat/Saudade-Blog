@@ -196,7 +196,7 @@ mod split_terms_tests {
 mod like_escape_tests {
     use super::like_escape;
 
-    // ── LIKE 转义：用户输入里的通配符必须变成字面量 ─────────────────────────
+    // LIKE 转义：用户输入里的通配符必须变成字面量
     //
     // 这些只钉"转义函数"这一半；**另一半（真库真的按字面匹配）在
     // `tests/pg_integration.rs` 里**——LIKE 的语义在 SQL 里，这里证明不了它。
@@ -344,8 +344,7 @@ mod keyword_prefilter_tests {
     /// 模式串必须是 `%<like_escape(term)>%`：`%` / `_` / `\` 三个字符都要转义成字面量。
     ///
     /// ⚠️ 这条判的是**绑定值**，不是 SQL 文本 —— sea-query 默认把值渲染成占位符
-    /// （`$1`），文本里根本没有那个串。第一版写成 `sql.contains("100\\%")` 时它恒假，
-    /// 而那看起来像是"预筛坏了"。
+    /// （`$1`），文本里根本没有那个串；写成 `sql.contains("100\\%")` 会恒假。
     #[test]
     fn 模式串转义成字面量() {
         let cases = [

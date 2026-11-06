@@ -130,7 +130,7 @@ console.log('\n⑥ 接线：首屏与 MORE 用同一个折算，没有第二处"
 
 console.log('\n⑦ 负控：把窄屏那一档摘掉，① ② 的断言必须变红（判据没牙 = 没测）');
 {
-    // 把三元里"窄屏给四行"那半摘掉（留着桌面那半），模拟"有人把这一轮改回去了"。
+    // 把三元里"窄屏给四行"那半摘掉（留着桌面那半），模拟"有人把它改回去了"。
     const patch = expr.replace(/cols\s*<=\s*NARROW_COLS\s*\?\s*NARROW_ROWS\s*:\s*/,'');
     ok(patch !== expr, '负控真的改动到了源码表达式（改不动说明形状变了，这条负控本身要修）', patch);
     const before = buildPageSizeFor(patch);

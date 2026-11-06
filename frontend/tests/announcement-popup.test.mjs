@@ -32,7 +32,7 @@ await esbuild.build({
     }],
 });
 
-// ── 假浏览器（模块加载时就会挂 window/document 监听，所以必须先装好再 import）──
+// 假浏览器（模块加载时就会挂 window/document 监听，所以必须先装好再 import）
 const store = {};
 function fakeEventTarget(bag) {
     return {
@@ -57,7 +57,7 @@ globalThis.CustomEvent = class CustomEvent {
     constructor(type, init) { this.type = type; this.detail = init && init.detail; }
 };
 
-// ── 假 setInterval：挂没挂、多久、撤没撤，测试说了算 ───────────────────────
+// 假 setInterval：挂没挂、多久、撤没撤，测试说了算
 const intervals = [];
 globalThis.setInterval = (fn, ms) => {
     const rec = { ms, cleared: false, fn: () => { if (!rec.cleared) fn(); } };
@@ -78,7 +78,7 @@ const failRes = { status: 200, data: { code: 500, message: '未登录' } };
 /**
  * 失败信封**带着一份能弹的内容**——这是"读不到 ≠ 没有"唯一有杀伤力的形态。
  * 真实的 200+code=500 正文里没有 data，所以"去掉那道判据"也能碰巧不弹（data 取到 undefined
- * ⇒ 没有可弹的），测试就会变成假绿：实测把那道判据改成 `if (false)` 时，只带 message 的
+ * ⇒ 没有可弹的），测试就会变成假绿：把判据改成 `if (false)` 时，只带 message 的
  * 失败样例**杀不掉**。token 过期/后端半死时正文里带不带旧数据不由前端决定，所以这里按
  * 最坏形态锁：`code !== 200` 就是读不到，正文里有什么都不许当真。
  */
@@ -119,7 +119,7 @@ const ok = (cond, name, detail) => {
 const eq = (got, want, name) => ok(JSON.stringify(got) === JSON.stringify(want), name, { got, want });
 const urls = () => ctl.calls.map((c) => c.method + ' ' + c.url);
 
-// ═══ 一、游客：没有账号可挂，仍按本机水位（键名沿用）═══
+// 一、游客：没有账号可挂，仍按本机水位（键名沿用）
 console.log('\n── 游客（无 token）──');
 {
     const withUpdates = [{ id: 7, title: 'T7', content: 'C7', createdAt: '2026-09-26 09:00:00', updatedAt: '2026-09-26 12:00:00' }];
@@ -145,7 +145,7 @@ console.log('\n── 游客（无 token）──');
     eq(await fetchPendingAnnouncement(), null, '游客：失败信封里**带着一份能弹的公告**也不弹（code ≠ 200 就是读不到）');
 }
 
-// ═══ 二、登录用户：读服务端通知行，已读 POST 回服务端（按账号）═══
+// 二、登录用户：读服务端通知行，已读 POST 回服务端（按账号）
 console.log('\n── 登录用户（有 token）──');
 {
     const items = [noticeRow(20), annRow(9, { title: 'T9', content: 'C9' }), annRow(4)];
@@ -201,7 +201,7 @@ console.log('\n── 登录用户关窗 = 标服务端已读 ──');
     ok(unreadChange === 0, '关窗：写失败就不派发 unread-change（没有新事实，别骗红点重算）', { unreadChange });
 }
 
-// ═══ 三、复查时机（"只有刷新才弹"的落点）═══
+// 三、复查时机（"只有刷新才弹"的落点）
 console.log('\n── 复查时机 ──');
 {
     reset({});
@@ -257,7 +257,7 @@ console.log('\n── 发布事件能送达（跨文件契约）──');
     stop();
 }
 
-// ═══ 四、接线锁：判据再对，没接上也白搭 ═══
+// 四、接线锁：判据再对，没接上也白搭
 console.log('\n── 接线与机制锁（源码层）──');
 {
     const read = (p) => readFileSync(path.join(root, p), 'utf8');

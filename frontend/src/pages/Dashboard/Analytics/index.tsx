@@ -98,7 +98,7 @@ const rankPanel = (
     )
 }
 
-/** ── 页签一：文章数据 ─────────────────────────────────────────────────────── */
+/* * 页签一：文章数据 */
 const NoteData = () => {
     const isDarkMode = useIsDarkMode()
     const [report, setReport] = useState<NoteStatsReport | null>(null)
@@ -145,7 +145,7 @@ const NoteData = () => {
         }).finally(() => setLoading(false))
     }, [])
 
-    // 依赖数组是**必须的**：这个 effect 里会发起请求，写成上一版那样
+    // 依赖数组是**必须的**：这个 effect 里会发起请求，写成
     // `useEffect(() => { setData(notes) })`（无依赖数组）等于每轮渲染都跑一遍，
     // 在真数据下会变成"渲染 → 请求 → setState → 渲染"的循环。
     // 依赖写 `[load]`（`load` 已被 useCallback 固定）——**不要再写成 `[]` + 一条
@@ -344,7 +344,7 @@ const USER_COLUMNS: ColumnsType<UserActivityRow> = [
     },
 ]
 
-/** ── 页签二：用户活跃 ─────────────────────────────────────────────────────── */
+/* * 页签二：用户活跃 */
 const UserActivity = () => {
     const [data, setData] = useState<UserStatsReport | null>(null)
     const [loading, setLoading] = useState(true)

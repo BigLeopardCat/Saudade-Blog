@@ -16,13 +16,13 @@ HAVING COUNT(*) > 1 AND 归一组 IS NOT NULL;
 SELECT '空昵称' AS done, COUNT(*) AS 行数
   FROM `user` WHERE NULLIF(TRIM(nickname), '') IS NULL;
 
--- ── ② 空白归一：先把 `' '` 与 `''`、`' a'` 与 `'a'` 拉平成同一种形态 ─────────
+-- ② 空白归一：先把 `' '` 与 `''`、`' a'` 与 `'a'` 拉平成同一种形态
 -- 不做这一步的话：`' '` 与 `''` 会各自成组（TRIM 后都是空 ⇒ 其实都归 NULL，OK），
 -- 但 `' a'` 与 `'a'` 是两个不同的非空值 ⇒ **逃过唯一性**，与"昵称不可重复"的意图相悖。
 -- 幂等：已经 TRIM 过的行不满足 `nickname <> TRIM(nickname)`，影响 0 行。
 UPDATE `user` SET nickname = TRIM(nickname) WHERE nickname <> TRIM(nickname);
 
--- ── ③ 自动改名标记列（个人中心的横幅判据）──────────────────────────────────
+-- ③ 自动改名标记列（个人中心的横幅判据）
 -- 1 = 这个昵称是**迁移自动改的**（原名与别人重复，系统给它加了 `_<id>` 后缀），
 -- 本人改一次昵称就会被 `update_profile` 清 0。存量行默认 0 ⇒ 正常情况下没人看到横幅。
 ALTER TABLE `user`
@@ -40,7 +40,7 @@ UPDATE `user` AS u
    SET u.nickname = CONCAT(LEFT(TRIM(u.nickname), 64 - CHAR_LENGTH(CONCAT('_', u.id))), '_', u.id),
        u.nickname_auto_renamed = 1;
 
--- ── ⑤ 建索引**之前**的最后一道核对：仍必须为 0 组 ──────────────────────────
+-- ⑤ 建索引**之前**的最后一道核对：仍必须为 0 组
 -- 为什么可能不为 0：后缀会撞上一条**本来就叫 `X_7`** 的合法昵称（那个人不是重名者，
 -- 所以第 ④ 段没动它）。这种情况**就地处理，不要带着重复去建索引**（索引会建失败，
 -- 而失败信息只说 duplicate entry，看不出是哪一组、为什么）。
@@ -56,13 +56,13 @@ SELECT '重复组（建索引前必须为空）' AS done,
  GROUP BY 归一组
 HAVING COUNT(*) > 1 AND 归一组 IS NOT NULL;
 
--- ── ⑥ 建唯一索引 ───────────────────────────────────────────────────────────
+-- ⑥ 建唯一索引
 -- 函数索引：表达式外**必须再套一层括号**（`((expr))`），单层会被当成列名。
 -- 唯一性只作用在非空昵称上（NULL 不进唯一索引）。
 ALTER TABLE `user`
     ADD UNIQUE KEY `uk_user_nickname` ((NULLIF(TRIM(nickname), '')));
 
--- ── ⑦ 验收 + 打 flag ───────────────────────────────────────────────────────
+-- ⑦ 验收 + 打 flag
 -- 7a) 索引在：期望恰好 1 行，`非唯一` = 0，表达式与上面那条逐字一致。
 SELECT '索引已存在' AS done, INDEX_NAME, NON_UNIQUE, COLUMN_NAME, EXPRESSION
   FROM information_schema.STATISTICS
@@ -92,7 +92,7 @@ INSERT INTO migration_flags (flag_name) VALUES ('nickname_unique_20261002');
 SELECT 'flag' AS done, flag_name, applied_at FROM migration_flags
  WHERE flag_name = 'nickname_unique_20261002';
 
--- ── 回滚（如需）────────────────────────────────────────────────────────────
+-- 回滚（如需）
 -- 顺序与正向相反：
 --   ALTER TABLE `user` DROP INDEX `uk_user_nickname`;
 --   ALTER TABLE `user` DROP COLUMN `nickname_auto_renamed`;
@@ -102,4 +102,3 @@ SELECT 'flag' AS done, flag_name, applied_at FROM migration_flags
 -- ⚠️ 回滚**不会**把已经加过后缀的昵称改回去——原名已被覆盖，本文件不保留原值副本
 --    （改名前请自行 `SELECT id, username, nickname FROM user` 留一份，如需）。
 --    但 `nickname_auto_renamed = 1` 这一列留档了"哪些是被系统改的"，本人仍可自行改回。
--- =============================================================================

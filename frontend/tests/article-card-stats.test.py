@@ -259,7 +259,7 @@ with sync_playwright() as p:
               f"卡高 {s['card']['h']} vs {l['card']['h']}")
         # 卡片宽度必须由列数决定、与分类名长短无关。这条是 `.allArticles > .article`
         # / `.ArticleCard` 那两条 `min-width: 0` 的锁：不给它，长分类名会把网格轨道的
-        # `auto` 下限顶上去（沙箱实测容器 341px 时长名卡曾变成 **396px**）。
+        # `auto` 下限顶上去（容器 341px 时长名卡会变成 **396px**）。
         check(f"{tag} · 两张卡同宽且等于容器宽（分类名长短不改卡片宽度）",
               abs(s["card"]["w"] - w) < 1 and abs(l["card"]["w"] - w) < 1,
               f"短名 {s['card']['w']} / 长名 {l['card']['w']} / 容器 {w}")

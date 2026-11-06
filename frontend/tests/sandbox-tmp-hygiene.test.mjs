@@ -28,9 +28,7 @@ const SH = read('scripts/nightly_sandboxes.sh');
 const MJS = read('frontend/tests/run-suites.mjs');
 const PY = read('scripts/prune_sandbox_tmp.py');
 
-// ═══════════════════════════════════════════════════════════════════════════════
 console.log('\n① nightly_sandboxes.sh：每个套件一个专属 TMPDIR');
-// ═══════════════════════════════════════════════════════════════════════════════
 if (SH) {
     const f = flat(SH);
     ok(f.includes('SANDBOX_TMP=${SANDBOX_TMP:-/tmp/saudade-sandboxes}'),
@@ -64,9 +62,7 @@ if (SH) {
     ok(f.includes('SANDBOX_TMP') && f.includes('export PATH='), '仍然是 cron 友好（PATH 显式给全那几条没被碰掉）');
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 console.log('\n② run-suites.mjs：同一套约定（.mjs 侧此前没有任何东西管）');
-// ═══════════════════════════════════════════════════════════════════════════════
 if (MJS) {
     const f = flat(MJS);
     ok(f.includes("process.env.SANDBOX_TMP"), '共用同一个 SANDBOX_TMP（清扫脚本的第二条规则对两侧一视同仁）');
@@ -85,9 +81,7 @@ if (MJS) {
     ok(f.includes('rmdirSync(runDir)'), '轮次目录只收空的（rmdirSync 对非空抛错 ⇒ 留着失败现场）');
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
 console.log('\n③ prune_sandbox_tmp.py：判据是白名单 + 年龄闸 + 路径必须在根之下');
-// ═══════════════════════════════════════════════════════════════════════════════
 let pyRe = null;
 if (PY) {
     const f = flat(PY);
