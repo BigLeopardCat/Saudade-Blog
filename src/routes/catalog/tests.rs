@@ -3,6 +3,15 @@ use sea_orm::{DatabaseBackend, DbErr, MockDatabase, QueryTrait};
 use serde_json::json;
 
 #[test]
+fn article_view_is_explicit_and_unknown_projections_are_rejected() {
+    let default: articles::ArticleQuery = serde_json::from_value(json!({})).unwrap();
+    assert!(default.view.is_none());
+    let brief: articles::ArticleQuery = serde_json::from_value(json!({"view":"summary"})).unwrap();
+    assert!(matches!(brief.view, Some(articles::CatalogView::Summary)));
+    assert!(serde_json::from_value::<articles::ArticleQuery>(json!({"view":"invented"})).is_err());
+}
+
+#[test]
 fn projections_exclude_bodies_and_credentials_and_filters_are_bound() {
     let params = serde_json::from_value(json!({"username":"exact_%'", "id":17})).unwrap();
     let statement = accounts::query(&params)
@@ -125,6 +134,25 @@ async fn postgres_catalog_pages_and_metadata_are_bounded_and_filtered() {
     let params = serde_json::from_value(json!({"category":prefix})).unwrap();
     let (first, total) = articles::read(&txn, &params, 5, 0).await.unwrap();
     let (second, tail_total) = articles::read(&txn, &params, 5, 5).await.unwrap();
+    let (brief, brief_total) = articles::read_summary(&txn, &params, 5, 0).await.unwrap();
+    assert_eq!(brief_total, total);
+    assert_eq!(
+        brief.iter().map(|row| row.id).collect::<Vec<_>>(),
+        first.iter().map(|row| row.id).collect::<Vec<_>>()
+    );
+    for (summary, full) in brief.iter().zip(&first) {
+        assert_eq!(summary.status, full.status);
+        assert_eq!(summary.is_public, full.is_public);
+        assert_eq!(summary.category_id, full.category_id);
+    }
+    let encoded = serde_json::to_value(&brief).unwrap();
+    assert!(encoded
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|row| row.get("tags").is_none()
+            && row.get("createdAt").is_none()
+            && row.get("content").is_none()));
     assert_eq!((total, tail_total, first.len(), second.len()), (7, 7, 5, 2));
     assert!(first.iter().all(|a| second.iter().all(|b| a.id != b.id)));
     let output = serde_json::to_string(&first).unwrap();

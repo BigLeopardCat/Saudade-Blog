@@ -348,7 +348,7 @@ pub fn create_router(state: AppState) -> Router {
 
         // 留言管理（后台）：河灯留言列表/删除/内容审核（审核机制预留，暂未启用）
         .route("/api/protect/board", get(talks::list_board_admin))
-        .route("/api/protected/moderation/summary", get(moderation::board_summary))
+        .route("/api/protected/moderation/summary", get(moderation::overview))
         .route("/api/protect/board/{id}", delete(talks::delete_board))
         .route("/api/protect/board/{id}/audit", put(talks::audit_board))
 

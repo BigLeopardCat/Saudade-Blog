@@ -1,11 +1,11 @@
-//! Review filters, bounded list windows and aggregate board counts.
+//! Review filters, bounded list windows and content-free aggregate counts.
 
 use axum::{extract::State, Json};
-use sea_orm::{ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter, QuerySelect};
+use sea_orm::{ConnectionTrait, DbErr, FromQueryResult, Statement};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::{entity::talk, routes::AppState, utils::ApiResponse};
+use crate::{routes::AppState, utils::ApiResponse};
 
 #[derive(Clone, Copy, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -64,6 +64,7 @@ pub fn page_window(
 #[derive(Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Summary {
+    scope: &'static str,
     total: u64,
     pending: u64,
     passed: u64,
@@ -74,40 +75,73 @@ pub struct Summary {
     ai_unreviewed: u64,
 }
 
-pub(super) async fn summary(db: &impl ConnectionTrait) -> Result<Summary, DbErr> {
-    let rows: Vec<(i16, Option<String>, i64)> = talk::Entity::find()
-        .select_only()
-        .column(talk::Column::Approved)
-        .column(talk::Column::AiResult)
-        .column_as(talk::Column::Id.count(), "count")
-        .filter(talk::Column::Src.eq("board"))
-        .group_by(talk::Column::Approved)
-        .group_by(talk::Column::AiResult)
-        .into_tuple()
-        .all(db)
-        .await?;
-    let mut out = Summary::default();
-    for (approved, ai, count) in rows {
-        let count = u64::try_from(count).map_err(|_| DbErr::Custom("invalid count".into()))?;
-        match approved {
-            0 => out.pending += count,
-            1 => out.passed += count,
-            2 => out.rejected += count,
+#[derive(Serialize)]
+pub struct Overview {
+    board: Summary,
+    comments: Summary,
+}
+
+#[derive(FromQueryResult)]
+struct GroupCount {
+    resource: String,
+    approved: i16,
+    ai_result: Option<String>,
+    count: i64,
+}
+
+fn aggregate(rows: Vec<GroupCount>) -> Result<Overview, DbErr> {
+    let mut out = Overview {
+        board: Summary {
+            scope: "all",
+            ..Summary::default()
+        },
+        comments: Summary {
+            scope: "not_deleted",
+            ..Summary::default()
+        },
+    };
+    for row in rows {
+        let target = match row.resource.as_str() {
+            "board" => &mut out.board,
+            "comments" => &mut out.comments,
+            _ => return Err(DbErr::Custom("unknown review resource".into())),
+        };
+        let count = u64::try_from(row.count).map_err(|_| DbErr::Custom("invalid count".into()))?;
+        match row.approved {
+            0 => target.pending += count,
+            1 => target.passed += count,
+            2 => target.rejected += count,
             _ => return Err(DbErr::Custom("unknown review status".into())),
         }
-        match ai.as_deref() {
-            Some("pass") => out.ai_passed += count,
-            Some("flag") => out.ai_flagged += count,
-            Some("reject") => out.ai_rejected += count,
-            None => out.ai_unreviewed += count,
+        match row.ai_result.as_deref() {
+            Some("pass") => target.ai_passed += count,
+            Some("flag") => target.ai_flagged += count,
+            Some("reject") => target.ai_rejected += count,
+            None => target.ai_unreviewed += count,
             _ => return Err(DbErr::Custom("unknown AI decision".into())),
         }
-        out.total += count;
+        target.total += count;
     }
     Ok(out)
 }
 
-pub async fn board_summary(State(state): State<Arc<AppState>>) -> Json<ApiResponse<Summary>> {
+pub(super) async fn summary(db: &impl ConnectionTrait) -> Result<Overview, DbErr> {
+    // One statement gives both resources the same database snapshot, without reading bodies.
+    let rows = GroupCount::find_by_statement(Statement::from_string(
+        db.get_database_backend(),
+        "SELECT 'board' AS resource, approved, ai_result, COUNT(*) AS count \
+         FROM talk WHERE src = 'board' GROUP BY approved, ai_result \
+         UNION ALL \
+         SELECT 'comments' AS resource, approved, ai_result, COUNT(*) AS count \
+         FROM note_comment WHERE is_deleted = 0 GROUP BY approved, ai_result"
+            .to_owned(),
+    ))
+    .all(db)
+    .await?;
+    aggregate(rows)
+}
+
+pub async fn overview(State(state): State<Arc<AppState>>) -> Json<ApiResponse<Overview>> {
     match summary(&state.db).await {
         Ok(value) => Json(ApiResponse::success(value)),
         Err(error) => {
