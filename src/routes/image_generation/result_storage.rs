@@ -41,7 +41,7 @@ async fn save_once<C: ConnectionTrait>(
     if let Some(row) = current {
         let status: String = row.try_get("", "status")?;
         let stored: Option<String> = row.try_get("", "output_hash")?;
-        if matches!(status.as_str(), "review" | "accepted")
+        if matches!(status.as_str(), "review" | "saving" | "accepted")
             && stored.as_deref() == Some(output_hash)
         {
             return Ok(Saved::AlreadyStored);

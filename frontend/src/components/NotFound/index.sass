@@ -68,6 +68,14 @@
       left: 40%
       color: #ce8caa
 
+  // The static 404 stays visible while the first face is unavailable.
+  &__scene[data-ready='false'] &__digit
+    opacity: 1
+    animation: none
+    > span
+      animation: none
+      transform: translate(var(--digit-rest-x), -53%)
+
   &__bump
     --bump-angle: -16deg
     position: absolute

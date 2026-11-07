@@ -174,7 +174,7 @@ async fn pg_review_ownership_stale_result_and_replay() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(refs.try_get::<i64>("", "n").unwrap(), 0);
+    assert_eq!(refs.try_get::<i64>("", "n").unwrap(), 1);
     let image_url = format!("https://example.test/{name}.png");
     let image_id = state
         .db
