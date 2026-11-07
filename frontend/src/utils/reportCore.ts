@@ -61,6 +61,7 @@ export function shouldReportStatus(status: number | undefined): boolean {
 
 /** Retain the resource origin/path, never credentials, query secrets or inline data. */
 export function diagnosticUrl(value: string): string {
+    value = value.trim()
     if (/^(data|blob):/i.test(value)) return value.slice(0, value.indexOf(':')).toLowerCase() + ':[redacted]'
     if (/^(https?:)?\/\//i.test(value)) {
         try {
@@ -75,7 +76,7 @@ export function diagnosticUrl(value: string): string {
 function diagnosticText(value: unknown, source: string, safeSource: string): string {
     const text = String(value ?? '')
     const replaced = source ? text.split(source).join(safeSource) : text
-    return replaced.replace(/data:[\s\S]*|blob:[^\s<>"']+|https?:\/\/[^\s<>"']+|\/api\/[^\s<>"']+/gi, diagnosticUrl)
+    return replaced.replace(/\bdata:[\s\S]*|blob:[^\s<>"']+|https?:\/\/[^\s<>"']+|\/api\/[^\s<>"']+/gi, diagnosticUrl)
 }
 
 /** 组装请求体：截断 + `webgl` 归一（`null` = 没探到 ⇒ `unknown`，**不是 `no`**）。 */

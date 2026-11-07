@@ -8,6 +8,7 @@ describe('resource diagnostics privacy', () => {
         expect(diagnosticUrl(signed)).toBe(safe)
         expect(resourceFailure({target: {tagName: 'IMG', currentSrc: signed}})).toEqual({tag: 'IMG', url: safe})
         expect(diagnosticUrl('/article/54?draft=secret#heading')).toBe('/article/54')
+        expect(diagnosticUrl('  data:image/png,PRIVATE_PIXELS  ')).toBe('data:[redacted]')
         expect(diagnosticUrl('//user:password@images.example/a.png?token=secret')).toBe('//images.example/a.png')
     })
     it('removes signed sources from every report field, including message and stack', () => {
@@ -28,6 +29,7 @@ describe('resource diagnostics privacy', () => {
     it('sanitizes embedded links even when the explicit report URL is the page', () => {
         const report = shapeReport({type: 'resource_error', message: signed, stack: '/api/image_review/123?token=PRIVATE_REVIEW_TOKEN'}, '/article/54?preview=secret', null)
         expect(report.message).toBe(safe)
+        expect(shapeReport({type: 'resource_error', message: 'metadata: unchanged'}, '/article/54', null).message).toBe('metadata: unchanged')
         expect(report.stack).toBe('/api/image_review/123')
         expect(report.url).toBe('/article/54')
         expect(diagnosticUrl('https://[invalid?token=secret')).toBe('[invalid-url]')
