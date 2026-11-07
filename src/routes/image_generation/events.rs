@@ -35,9 +35,9 @@ pub async fn observe(
     Path(id): Path<String>,
     Query(query): Query<WatchQuery>,
 ) -> Result<impl IntoResponse, JobError> {
-    let seconds = query.wait_seconds.unwrap_or(60);
-    if !(1..=60).contains(&seconds) {
-        return Err(JobError::Invalid("等待时间须为 1 至 60 秒"));
+    let seconds = query.wait_seconds.unwrap_or(240);
+    if !(1..=240).contains(&seconds) {
+        return Err(JobError::Invalid("等待时间须为 1 至 240 秒"));
     }
     let uid = crate::routes::gallery::actor(&state, &headers)
         .await
@@ -137,7 +137,7 @@ mod tests {
 
     #[tokio::test]
     async fn invalid_deadlines_and_missing_identity_fail_before_opening_a_stream() {
-        for seconds in [0, 61] {
+        for seconds in [0, 241] {
             let result = observe(
                 State(state()),
                 HeaderMap::new(),
@@ -151,7 +151,7 @@ mod tests {
             assert!(matches!(error, JobError::Invalid(_)));
             assert_eq!(error.into_response().status(), StatusCode::BAD_REQUEST);
         }
-        for seconds in [Some(1), Some(60), None] {
+        for seconds in [Some(1), Some(240), None] {
             let result = observe(
                 State(state()),
                 HeaderMap::new(),
