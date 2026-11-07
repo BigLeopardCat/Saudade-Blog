@@ -69,3 +69,5 @@ Rust 接收 SIGTERM 后停止接受 HTTP 请求，拒绝新的付费生图，排
 - 代码回滚不等于数据回滚。保留上一版本产物、数据库备份及恢复步骤；涉及不兼容 schema 时先评估回退条件。
 
 AI 生图通过 `OPENAI_IMAGE_API_KEY`、`OPENAI_IMAGE_BASE_URL`、`OPENAI_IMAGE_MODELS` 配置，仅后端读取。列表需与账号权限匹配；密钥未配置时不允许付费调用。不要用真实付费生成验证普通 CI。
+
+生图需要专用出站代理时，设置 `OPENAI_IMAGE_PROXY_URL=http://127.0.0.1:17891`，支持 HTTP/HTTPS 代理。只作用于生图服务请求，图库参考图下载使用独立直连客户端；不设置全局 `HTTP_PROXY`、`HTTPS_PROXY` 或 TUN。代理不可用时请求失败，不自动改走直连或重复付费请求。HTTPS 通过 CONNECT 保持服务端证书校验，代理配置及订阅凭据保存在仓库外私有文件中。留空即恢复直连。

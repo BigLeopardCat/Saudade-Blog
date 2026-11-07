@@ -64,7 +64,8 @@ pub async fn generate(
     } else {
         "edits"
     };
-    let client = Settings::client().map_err(|_| "无法初始化生图客户端")?;
+    let client =
+        super::transport::client(settings.proxy.as_ref()).map_err(|_| "无法初始化生图客户端")?;
     let response = client
         .post(format!("{}/images/{endpoint}", settings.base))
         .bearer_auth(&settings.key)
