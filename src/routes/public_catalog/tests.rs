@@ -148,9 +148,24 @@ async fn postgres_public_counts_exclude_hidden_drafts_and_shadow_versions() {
         }
     }
 
-    assert!(!serde_json::to_string(&first)
-        .unwrap()
-        .contains("SECRET BODY"));
+    let site = reqwest::Url::parse("https://canonical.example:8443/subdirectory/?ignored=yes#top")
+        .unwrap();
+    let first_id = first[0].id;
+    let second_id = second[0].id;
+    let linked = with_sources(first, Some(&site));
+    let linked = serde_json::to_value(linked).unwrap();
+    assert_eq!(linked[0]["id"], first_id);
+    assert_eq!(
+        linked[0]["sourceUrl"],
+        format!("https://canonical.example:8443/article/{first_id}")
+    );
+    assert_eq!(linked[0]["isPublic"], true);
+    assert!(!linked[0].as_object().unwrap().contains_key("content"));
+    let unconfigured = serde_json::to_value(with_sources(second, None)).unwrap();
+    assert_eq!(unconfigured[0]["id"], second_id);
+    assert!(unconfigured[0]["sourceUrl"].is_null());
+    assert!(!linked.to_string().contains("SECRET BODY"));
+
     let (cats, _) = categories::read(&txn, 10000, 0).await.unwrap();
     assert_eq!(
         cats.iter()

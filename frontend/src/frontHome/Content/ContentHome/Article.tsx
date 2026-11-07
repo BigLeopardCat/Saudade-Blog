@@ -1,3 +1,4 @@
+import SweepLoading from '../../../components/SweepLoading'
 import AssetImage from "../../../components/AssetImage";
 import NoteByline from "../../../components/NoteByline";
 import {motion} from "framer-motion";
@@ -92,7 +93,7 @@ const Article:React.FC<ArticleOption> = ({ item, index, Categories, avatar, name
         >
             <div className="ArticleCard" onClick={() => window.open(`/article/${item.key}`, "_blank")}>
                 <div className="ArticleCover">
-                    {isVisible && <AssetImage alt={item.noteTitle} src={item.cover} style={coverCropStyle(cropFromRow(item))} />}
+                    {isVisible && <AssetImage pending={<SweepLoading/>} alt={item.noteTitle} src={item.cover} style={coverCropStyle(cropFromRow(item))} />}
                 </div>
 
                 <div className="ArticleContent">

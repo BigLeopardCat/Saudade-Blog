@@ -9,24 +9,15 @@ use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect};
 use std::sync::Arc;
 
 use crate::entity::{category, note};
-use crate::routes::AppState;
+use crate::routes::{
+    page_links::{page_url, site_base},
+    AppState,
+};
 
 fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
-}
-
-fn page_url(site: &reqwest::Url, segments: &[&str]) -> String {
-    let mut url = site.clone();
-    url.set_query(None);
-    url.set_fragment(None);
-    // The caller validates that site is an HTTP(S) base URL.
-    url.path_segments_mut()
-        .expect("validated site URL")
-        .clear()
-        .extend(segments);
-    url.to_string()
 }
 
 async fn entries(
@@ -67,10 +58,7 @@ async fn entries(
 }
 
 pub async fn sitemap_xml(State(st): State<Arc<AppState>>) -> Result<Response, StatusCode> {
-    let site = reqwest::Url::parse(&crate::utils::site_url())
-        .ok()
-        .filter(|url| matches!(url.scheme(), "http" | "https") && url.has_host())
-        .ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
+    let site = site_base().ok_or(StatusCode::SERVICE_UNAVAILABLE)?;
     let rows = entries(&st.db, &site).await.map_err(|error| {
         tracing::error!(event = "sitemap_query_failed", %error, "Could not read public sitemap entries");
         StatusCode::SERVICE_UNAVAILABLE

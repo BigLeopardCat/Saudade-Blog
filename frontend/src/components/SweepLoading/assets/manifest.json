@@ -1,0 +1,19 @@
+{
+  "source_sha256": "c1b2b467e919e85340f60b0e324aa172cc1a955ef6a599a7eebe6ee3826ac1a7",
+  "sha256": "0e385b35b9394ca41157f73fd958e80e3dff22862bb7df5c5e1916ac17e94cc2",
+  "width": 768,
+  "height": 384,
+  "columns": 4,
+  "rows": 2,
+  "frames": 8,
+  "frame_width": 192,
+  "frame_height": 192,
+  "order": "row-major",
+  "encoding": {
+    "format": "webp",
+    "quality": 88,
+    "method": 6,
+    "transparent_rgb": "preserved"
+  },
+  "license": "CC-BY-NC-SA-4.0"
+}
