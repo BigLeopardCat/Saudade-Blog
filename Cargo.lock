@@ -2411,6 +2411,7 @@ dependencies = [
  "http-body-util",
  "jieba-rs",
  "jsonwebtoken",
+ "percent-encoding",
  "pulldown-cmark",
  "regex",
  "reqwest",

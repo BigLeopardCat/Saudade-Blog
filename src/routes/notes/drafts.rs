@@ -25,7 +25,7 @@ use std::sync::Arc;
 pub struct AutosaveDraftRequest {
     #[serde(rename = "expectedVersion")]
     pub expected_version: Option<String>,
-    /// 正在编辑的文章 id；None/缺省 = 新建文章（还没落过库）→ 新建一行独立草稿
+    /// Article id; omission creates a new standalone draft.
     pub id: Option<i32>,
     #[serde(rename = "noteTitle")]
     pub title: Option<String>,
@@ -65,18 +65,14 @@ pub struct AutosaveDraftResult {
     /// 本次实际写入了哪一行（原文章行 / 独立草稿行 / 修改稿行）
     #[serde(rename = "draftId")]
     pub draft_id: i32,
-    /// true = 写的是「原文章的修改稿」，原文章线上内容一个字没动
+    /// Whether this save updated a shadow draft without changing its published root.
     #[serde(rename = "isRevision")]
     pub is_revision: bool,
     #[serde(rename = "updateTime")]
     pub update_time: String,
 }
 
-/// 解析这次自动保存该写哪一行：
-/// - `id = None`            → 新建一行独立草稿（status='draft'，进草稿箱）
-/// - 目标行 status='draft'  → 原地更新（它本来就是草稿箱里的一行）
-/// - 其他（public/private） → 取它的修改稿行（draft_of = id）；没有就克隆原行建一行。
-///   原行在此期间**一个列都不动**，线上访客看到的仍是旧内容。
+/// New articles create drafts; published roots are edited through a separate shadow draft.
 async fn resolve_autosave_target(
     db: &DatabaseTransaction,
     root: Option<note::Model>,
@@ -169,7 +165,11 @@ pub async fn autosave_note(
 ) -> Json<ApiResponse<AutosaveDraftResult>> {
     let client_id = payload.id;
 
-    let txn = match state.db.begin().await {
+    let txn = match state
+        .db
+        .begin_with_config(Some(sea_orm::IsolationLevel::ReadCommitted), None)
+        .await
+    {
         Ok(t) => t,
         Err(e) => return write_error(&e),
     };
@@ -259,6 +259,9 @@ pub async fn autosave_note(
     // Draft saves preserve publication state; typed tag associations are written below.
     am.updated_at = Set(chrono::Local::now().naive_local());
 
+    if let Err(error) = crate::routes::gallery::references::guard_model(&txn, &am).await {
+        return write_error(&error);
+    }
     let saved = match am.update(&txn).await {
         Ok(s) => s,
         Err(e) => {

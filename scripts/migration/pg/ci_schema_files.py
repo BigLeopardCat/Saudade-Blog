@@ -34,6 +34,7 @@ LOAD = [
     "0027_article_reference_integrity.sql",
     "0028_turn_cleanup.sql",
     "0029_image_job_lifecycle.sql",
+    "0030_gallery_image_deletion.sql",
 ]
 
 EXCLUDED = {

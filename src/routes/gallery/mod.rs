@@ -1,9 +1,12 @@
 //! Curated image metadata; storage URLs and article references remain stable.
 
+pub mod actions;
 pub mod covers;
+pub(crate) mod deletions;
 pub mod folder_actions;
 pub mod folders;
 pub mod metadata;
+pub(crate) mod references;
 
 use crate::{auth_jwt, routes::AppState, utils::ApiResponse};
 use axum::{
@@ -60,7 +63,7 @@ pub(super) fn valid_version(value: &str) -> bool {
 pub(crate) async fn read<C: ConnectionTrait>(db: &C, uid: i32, id: i32) -> Result<Image, DbErr> {
     Image::find_by_statement(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
-        format!("{SELECT} WHERE i.image_key=$2"),
+        format!("{SELECT} WHERE i.image_key=$2 AND NOT EXISTS(SELECT 1 FROM image_deletion d WHERE d.image_id=i.image_key)"),
         vec![uid.into(), id.into()],
     ))
     .one(db)
@@ -99,7 +102,9 @@ pub(super) async fn page<C: ConnectionTrait>(
     {
         return Err(DbErr::Custom("invalid gallery page".into()));
     }
-    let mut sql = format!("{SELECT} WHERE true");
+    let mut sql = format!(
+        "{SELECT} WHERE NOT EXISTS(SELECT 1 FROM image_deletion d WHERE d.image_id=i.image_key)"
+    );
     let mut args: Vec<Value> = vec![uid.into()];
     if let Some(before) = q.before {
         args.push(before.into());
@@ -164,3 +169,112 @@ pub async fn detail(
 
 #[cfg(test)]
 mod tests;
+
+pub(super) fn placeholders(start: usize, count: usize) -> String {
+    (start..start + count)
+        .map(|i| format!("${i}"))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+pub fn start_cleanup(db: sea_orm::DatabaseConnection) {
+    deletions::start(db);
+}
+pub fn stop_cleanup() {
+    deletions::stop();
+}
+
+pub(crate) async fn is_retired_url<C: ConnectionTrait>(db: &C, url: &str) -> Result<bool, DbErr> {
+    Ok(db
+        .query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "SELECT 1 FROM image_deletion WHERE image_url=$1 LIMIT 1",
+            [url.into()],
+        ))
+        .await?
+        .is_some())
+}
+
+fn valid_url(url: &str) -> bool {
+    if url.is_empty() || url.len() > 2048 || url.chars().any(char::is_control) {
+        return false;
+    }
+    if let Some(name) = url.strip_prefix("/api/protect/download/") {
+        return deletions::safe_filename(name);
+    }
+    reqwest::Url::parse(url).is_ok_and(|value| {
+        matches!(value.scheme(), "http" | "https")
+            && value.has_host()
+            && value.username().is_empty()
+            && value.password().is_none()
+            && value.query().is_none()
+            && value.fragment().is_none()
+    })
+}
+
+async fn register(
+    db: &sea_orm::DatabaseConnection,
+    url: &str,
+    name: Option<&str>,
+) -> Result<i32, DbErr> {
+    use sea_orm::TransactionTrait;
+    if !valid_url(url)
+        || name.is_some_and(|name| {
+            name.trim().is_empty()
+                || name.chars().count() > 255
+                || name.chars().any(char::is_control)
+        })
+    {
+        return Err(DbErr::Custom("invalid gallery image identity".into()));
+    }
+    let txn = db
+        .begin_with_config(Some(sea_orm::IsolationLevel::ReadCommitted), None)
+        .await?;
+    references::fence(&txn, false).await?;
+    // Serialize same-URL registration without blocking unrelated uploads or holding I/O in the transaction.
+    txn.query_one(Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        "SELECT pg_advisory_xact_lock(hashtextextended($1, $2))",
+        [url.into(), 0x53415544494d47_i64.into()],
+    ))
+    .await?;
+    if is_retired_url(&txn, url).await? {
+        return Err(DbErr::Custom("image storage URL is retired".into()));
+    }
+    let row=txn.query_one(Statement::from_sql_and_values(DatabaseBackend::Postgres,
+        "SELECT image_key FROM images WHERE image_url=$1 ORDER BY image_key LIMIT 1 FOR KEY SHARE",[url.into()])).await?;
+    let id = if let Some(row) = row {
+        row.try_get::<i32>("", "image_key")?
+    } else {
+        txn.query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "INSERT INTO images(image_url) VALUES($1) RETURNING image_key",
+            [url.into()],
+        ))
+        .await?
+        .ok_or_else(|| DbErr::Custom("image registration missing".into()))?
+        .try_get("", "image_key")?
+    };
+    if let Some(name) = name {
+        txn.execute(Statement::from_sql_and_values(DatabaseBackend::Postgres,
+            "INSERT INTO image_metadata(image_id,display_name) VALUES($1,$2) ON CONFLICT(image_id) \
+             DO UPDATE SET display_name=COALESCE(image_metadata.display_name,EXCLUDED.display_name)",
+            [id.into(),name.into()])).await?;
+    }
+    txn.commit().await?;
+    Ok(id)
+}
+
+pub(crate) async fn register_image(
+    db: &sea_orm::DatabaseConnection,
+    url: &str,
+) -> Result<i32, DbErr> {
+    register(db, url, None).await
+}
+pub(crate) async fn register_named_image(
+    db: &sea_orm::DatabaseConnection,
+    url: &str,
+    name: &str,
+) -> Result<i32, DbErr> {
+    register(db, url, Some(name)).await
+}

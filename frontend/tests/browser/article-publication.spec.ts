@@ -105,3 +105,38 @@ for (const viewport of [{width:1280,height:720}, {width:390,height:660}]) {
     expect(publications[0]).toMatchObject({noteTitle:'对话框里的新标题',description:''})
   })
 }
+
+test('the cover picker reads gallery metadata and autosaves the immutable stored URL',async({page,sandboxURL})=>{
+  const url='/api/protect/download/c0465315155f4e638361f7b512e06255.png'
+  const saves:Record<string,unknown>[]=[]
+  let version='v1'
+  await page.route('**/api/protected/draft/editor/7',route=>route.fulfill({json:{code:200,data:{version,
+    note:{id:7,noteTitle:'原标题',noteContent:'原始正文',description:'原摘要',noteCategory:1,
+      noteTags:'',status:'private',isTop:0,cover:''},draft:null}}}))
+  await page.route('**/api/public/tags*',route=>route.fulfill({json:{code:200,data:[]}}))
+  await page.route('**/api/protected/draft/autosave',route=>{
+    const body=route.request().postDataJSON()
+    saves.push(body)
+    expect(body.expectedVersion).toBe(version)
+    version='v'+(saves.length+1)
+    return route.fulfill({json:{code:200,data:{id:7,draftId:70,isRevision:true,version,updateTime:'2026-11-04 12:00:00'}}})
+  })
+  await page.route('**/api/protect/gallery/images**',route=>route.fulfill({json:{code:200,data:{items:[{
+    imageKey:31,imageUrl:url,displayName:'清晨原图.png',description:'清晨封面',folderId:0,isFavorite:false,version:'a'.repeat(64),
+  }],nextCursor:null}}}))
+  await page.route('**/api/protect/download/**',route=>route.fulfill({contentType:'image/svg+xml',
+    body:'<svg xmlns="http://www.w3.org/2000/svg" width="300" height="200"><rect width="300" height="200" fill="pink"/></svg>'}))
+  await page.goto(sandboxURL)
+  await expect(page.locator('.CodeMirror')).toContainText('原始正文')
+  await page.getByRole('button',{name:/^提\s*交$/}).click()
+  const publish=page.getByRole('dialog',{name:'发布文章',exact:true})
+  await publish.getByRole('button',{name:/图库选择/}).click()
+  const picker=page.getByRole('dialog',{name:'选择图库图片',exact:true})
+  await expect(picker.getByText('清晨原图.png',{exact:true})).toBeVisible()
+  await picker.getByRole('img',{name:'清晨原图.png',exact:true}).click()
+  const crop=page.getByRole('dialog',{name:'封面显示方式',exact:true})
+  await expect(crop).toBeVisible()
+  await crop.getByRole('button',{name:/^确\s*定$/}).click()
+  await expect.poll(()=>saves.some(save=>save.cover===url)).toBe(true)
+  expect(saves.at(-1)?.cover).toBe(url)
+})

@@ -2,7 +2,7 @@ import Editor_, {type EditorHandle} from "../../../../components/Editor";
 import ArticleCollaboration from '../../../../components/ArticleCollaboration';
 import './index.sass'
 import {
-    Button,
+    Alert, Button,
     Input,
     Form,
     Modal,
@@ -21,6 +21,7 @@ import {ok, errMsg} from "../../../../apis/ProfileMethods.tsx";
 import {postDraftKeepalive} from "./draftTransport";
 import ImageCompression from "../../../../apis/ImageCompression.tsx";
 import {uploadImages} from "../../../../apis/ImageMethods.tsx";
+import {assetDisplayName} from '../../../../utils/assetName';
 import { resolveApiAssetUrl, runtimeBaseURL } from '../../../../utils/runtimeApi';
 import {useGalleryPager} from "../../../../utils/galleryPager.ts";
 import CoverCropModal from '../../../../components/CoverCropModal';
@@ -32,8 +33,6 @@ type FileType = Parameters<GetProp<UploadProps, 'beforeUpload'>>[0];
 
 
 const NewNotes = () => {
-    //hooks区域
-    //文章提交表单
     const [open, setOpen] = useState(false);
     const [noteTitle,setTitle] = useState('')
     const [noteContent, setNoteContent] = useState('')
@@ -53,13 +52,7 @@ const NewNotes = () => {
     const { id } = useParams();
     const [form] = Form.useForm();
 
-    // 编辑草稿自动保存（服务端，落到草稿箱）
-    // 停止输入 AUTOSAVE_DELAY 后自动落库：新建文章 → 草稿箱里多一行独立草稿；
-    // 编辑草稿 → 原地更新；编辑已发布/私密文章 → 落到它的「修改稿」行（原文章线上内容一个字
-    // 不动，点「提交」发布时才覆盖）。转跳 URL/切界面时立刻补一次，关标签页时尽力再补一次。
-    // 打开编辑页直接回填服务端草稿，不读本机草稿、也没有「是否恢复」提示。
-    // 本机草稿方案不可用：保存成功后 removeItem，紧接着 navigate 触发的卸载又写回，
-    // 草稿永远清不掉，二次进编辑页必弹恢复提示，而且换设备就丢。
+    // Autosave updates a draft or revision; published content changes only on publication.
     const AUTOSAVE_DELAY = 2000;
 
     // 实际在编辑的文章 id：编辑页 = 路由 id；新建页首次自动保存建出草稿行后就地采纳它的 id。
@@ -250,12 +243,11 @@ const NewNotes = () => {
         };
     }, []);
 
-    // 标签字典现在由 NoteTagSelect 自己从 redux 取（编辑器不再直接读 tagList）
     const categories = useSelector((state: {categories: any}) => state.categories.categories);
 
     const [galleryOpen, setGalleryOpen] = useState(false);
     const { images: galleryImages, loading: galleryLoading, loadingMore: galleryLoadingMore,
-            error: galleryError, hasMore: galleryHasMore, reload: reloadGallery, loadMore: loadMoreGallery } = useGalleryPager();
+            error: galleryError, pageError: galleryPageError, hasMore: galleryHasMore, reload: reloadGallery, loadMore: loadMoreGallery } = useGalleryPager(galleryOpen);
 
     const formItemLayout = {
         labelCol: {
@@ -288,19 +280,10 @@ const NewNotes = () => {
         if (!id) setHydrated(true)
     },[id])
 
-    // 打开选图弹窗时重拉第一页（`status === 200` 那条老判据换成了信封里的 `code`——
-    // 见 utils/galleryPager.ts：本仓的失败一律是 HTTP 200 + code 500）。
-    useEffect(() => {
-        if (!galleryOpen) return;
-        void reloadGallery();
-    }, [galleryOpen, reloadGallery]);
-
     async function initNote(){
         if(id){
             try {
-                // 编辑器专用接口：公开的 /api/public/notes/:id 会挡掉草稿/私密文章（A4 过滤），
-                // 草稿箱点进来必然 404、编辑器打不开自己的草稿。
-                // 返回 { note, draft }，有未发布的修改稿就用它回填（它才是最新内容）。
+                // The authorized editor endpoint returns the latest unpublished revision.
                 const res = await getNoteForEdit(id)
                 const data = res.data.data
                 if (!ok(res) || typeof data?.version !== 'string') throw new Error('无效草稿版本')
@@ -320,7 +303,6 @@ const NewNotes = () => {
                 setTitle(row.noteTitle)
                 setNoteContent(row.noteContent)
 
-                // Safe parsing of tags to avoid NaN
                 const tagsStr = row.noteTags;
                 let parsedTags: number[] = [];
                 if (tagsStr && tagsStr.trim() !== '') {
@@ -331,12 +313,10 @@ const NewNotes = () => {
                 setNoteTag(parsedTags);
                 form.setFieldValue('noteTags', parsedTags);
 
-                // Set cover if exists
                 if(row.cover) {
                     setCoverImg(row.cover);
                     setCoverCrop(cropFromRow(row) ?? {...DEFAULT_CROP});
-                    // 轮播那套：老文章没有独立参数（NULL）→ 回填成卡片那套的值，
-                    // 否则一开弹窗「置顶轮播」页签会显示默认居中，与线上实际渲染不符
+                    // Unset carousel parameters inherit the article-card crop.
                     setCoverCropCarousel(carouselCropFromRow(row) ?? cropFromRow(row) ?? {...DEFAULT_CROP});
                     setCropDirty({carousel: false, card: false});
                     setFileList([{
@@ -361,7 +341,6 @@ const NewNotes = () => {
     }
 
 
-    //回调函数区域
 
     const openCropper = (fresh: boolean) => {
         cropSnap.current = fresh
@@ -397,7 +376,6 @@ const NewNotes = () => {
 
     const showModal = async () => {
         setOpen(true);
-        // Ensure noteTitle in form is up to date with state
         form.setFieldsValue({noteTitle: noteTitle});
     };
 
@@ -410,11 +388,9 @@ const NewNotes = () => {
 
     const handleOk = async () => {
         try {
-            // Validate first
             const values = await form.validateFields();
             setConfirmLoading(true);
             await onFinish(values);
-            // setOpen(false); // Moved to onFinish logic to avoid closing on error
             setConfirmLoading(false);
         } catch (info) {
             console.log('Validate Failed:', info);
@@ -481,7 +457,6 @@ const NewNotes = () => {
         }
         if (publishingRef.current) return;
         publishingRef.current = true; // 同帧互斥，挡住重复点击/回车提交
-        // Safe string conversion for tags
         const tagsData = formValues.noteTags;
         const tagsString = Array.isArray(tagsData) ? tagsData.join(',') : (tagsData || '');
 
@@ -538,7 +513,7 @@ const NewNotes = () => {
                     savedIdRef.current = targetId;
                 } else throw new Error(errMsg(r, "草稿创建失败"));
             } catch (error) {
-                // 不再跨接口再发一次 create：丢失首个响应时服务端可能已经建好草稿。
+                // Reuse the acknowledged draft after a potentially lost create response.
                 publishingRef.current = false;
                 scheduleAutosave();
                 message.error("草稿尚未确认保存，请稍后重试：" + error);
@@ -555,7 +530,7 @@ const NewNotes = () => {
                     dispatch<any>(fetchNoteList(true))
                     const stayInEditor = data.status === 'draft';
                     message.success(stayInEditor ? "已保存到草稿箱" : "文章更新成功")
-                    setOpen(false); // Close modal
+                    setOpen(false);
                     if (stayInEditor) {
                         const refreshed = await getNoteForEdit(targetId);
                         if (!ok(refreshed) || typeof refreshed.data.data?.version !== 'string')
@@ -670,23 +645,25 @@ const NewNotes = () => {
                     {galleryLoading ? (
                         <div style={{ textAlign: 'center', padding: 24 }}><Spin /></div>
                     ) : galleryError ? (
-                        <div style={{ color: '#d94f9a' }}>{galleryError}</div>
+                        <Alert type="error" showIcon message={galleryError} action={<Button onClick={()=>void reloadGallery()}>重试</Button>}/>
                     ) : galleryImages.length === 0 ? (
                         <Empty description="图库里还没有图片，可以去「图库」页传一张" />
                     ) : (
                         <>
                             <Row gutter={[16, 16]}>
-                                {galleryImages.map((img: any) => (
+                                {galleryImages.map((img) => (
                                     <Col span={6} key={img.imageKey}>
                                         <Card
                                             hoverable
-                                            cover={<img alt="example" src={resolveApiAssetUrl(img.imageUrl)} style={{ height: 100, objectFit: 'cover' }} />}
+                                            cover={<img alt={img.displayName||assetDisplayName(img.imageUrl)} src={resolveApiAssetUrl(img.imageUrl)} style={{ height: 100, objectFit: 'cover' }} />}
                                             onClick={() => selectGalleryImage(img.imageUrl)}
                                         >
+                                            <Card.Meta title={img.displayName||assetDisplayName(img.imageUrl)}/>
                                         </Card>
                                     </Col>
                                 ))}
                             </Row>
+                            {galleryPageError&&<Alert type="error" showIcon message={galleryPageError} action={<Button onClick={()=>void reloadGallery()}>重试</Button>}/>}
                             {galleryHasMore && (
                                 <div style={{ textAlign: 'center', marginTop: 12 }}>
                                     <Button type="link" loading={galleryLoadingMore} onClick={() => { void loadMoreGallery() }}>

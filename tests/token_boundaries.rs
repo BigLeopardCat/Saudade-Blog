@@ -84,7 +84,7 @@ async fn keys_audiences_expiry_and_scope_are_independent() {
         assert!(delegation::verify(&forged).is_none());
         assert!(auth_jwt::verify_token(&forged).is_none());
     }
-    // Old Agent tokens omitted ver; legacy browser sessions carried ver and remain valid until expiry.
+    // Browser sessions require a token version; assertions are not login credentials.
     assert!(
         auth_jwt::verify_token(&mint(login, json!({"sub":7,"role":"admin","exp":now+300})))
             .is_none()
@@ -183,8 +183,32 @@ async fn keys_audiences_expiry_and_scope_are_independent() {
         ),
         (
             &background,
+            Method::POST,
+            "/api/protect/gallery/image-actions",
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            &background,
+            Method::POST,
+            "/api/protect/gallery/image-actions/prepare",
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            &tools,
+            Method::POST,
+            "/api/protect/gallery/image-actions/prepare",
+            StatusCode::OK,
+        ),
+        (
+            &tools,
+            Method::POST,
+            "/api/protect/gallery/image-actions",
+            StatusCode::OK,
+        ),
+        (
+            &tools,
             Method::DELETE,
-            "/api/protect/delImg",
+            "/api/protect/gallery/image-actions",
             StatusCode::FORBIDDEN,
         ),
         (

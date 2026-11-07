@@ -5,8 +5,8 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 import * as esbuild from 'esbuild';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const root = path.resolve(here, '..');            // frontend/
-const repo = path.resolve(root, '..');            // 父仓根
+const root = path.resolve(here, '..');
+const repo = path.resolve(root, '..');
 
 let pass = 0, fail = 0;
 const ok = (cond, name, detail) => {
@@ -14,7 +14,6 @@ const ok = (cond, name, detail) => {
     else { fail++; console.log('  ✗ FAIL: ' + name + (detail !== undefined ? '  → ' + JSON.stringify(detail) : '')); }
 };
 
-// 纯 TS（无 DOM 无 React）⇒ 摊平成 .mjs 直接 import
 const out = mkdtempSync(path.join(tmpdir(), 'r2quota-'));
 const file = path.join(out, 'r2Quota.mjs');
 await esbuild.build({
@@ -25,10 +24,9 @@ const { DEFAULT_QUOTA_GB, gibToBytes, bytesToGib, usagePercent, isOverQuota,
         uploadBlocked, usageText, formatGib } = await import(pathToFileURL(file).href);
 
 const GIB = 1024 ** 3;
-/** 1 GiB 的字节数（**不是** 10^9：本仓"GB"一律按 1024³ 算，见 ①）。 */
+// 配额使用 GiB（1024³ 字节）。
 const ONE_GB = GIB;
 
-/** 造一份读数（默认是一份"一切正常、用了一半"的读数，用例只覆盖自己关心的字段）。 */
 const usage = (over = {}) => ({
     enabled: true, configured: true, credentials: true,
     bucket: 'b', prefix: 'gallery', publicBase: 'https://img.example.com',
@@ -39,14 +37,12 @@ const usage = (over = {}) => ({
 console.log('\n① 单位：GB 实为 GiB（1024³），与 Rust 同一把尺子');
 {
     ok(gibToBytes(1) === GIB, '1 GB = 1024³ 字节（不是 10^9）', gibToBytes(1));
-    // ⚠️ 这个数在两处各钉一次：这里与 src/r2.rs 的 quota_boundaries。
-    // 两边一起改才算改对 —— 只改一处时，这条断言会红。
     ok(gibToBytes(DEFAULT_QUOTA_GB) === 10200547328,
         `默认配额 ${DEFAULT_QUOTA_GB} GB = 10200547328 字节（= 10.2 个十进制 GB）`,
         gibToBytes(DEFAULT_QUOTA_GB));
     ok(bytesToGib(GIB) === 1, 'bytesToGib(1024³) = 1');
     ok(Math.abs(bytesToGib(gibToBytes(0.5)) - 0.5) < 1e-9, '往返无漂移');
-    ok(DEFAULT_QUOTA_GB === 9.5, '默认配额就是用户点名的那条线：9.5');
+    ok(DEFAULT_QUOTA_GB === 9.5, '默认配额为 9.5 GiB');
 }
 
 console.log('\n② 用量条百分比：恒在 0..100，算不出来时不许显示成"很空"');
@@ -73,7 +69,6 @@ console.log('\n③ 超限判据：与服务端 `quota_exceeded` 同一条（严�
 
 console.log('\n④ 上传按钮的灰态（返回原因串是要给人看的）');
 {
-    // 没配 / 还没拉到读数 ⇒ 不灰：界面不抢在数据前面拦人（拉取失败多半是刚打开页面）
     ok(uploadBlocked(null).blocked === false, '读数还没到 ⇒ 不灰');
     ok(uploadBlocked(usage({ configured: false })).blocked === false, 'R2 未配置 ⇒ 不灰（走本地盘）');
     ok(uploadBlocked(usage({ enabled: false, configured: false })).blocked === false, '开关关着 ⇒ 不灰');
@@ -95,8 +90,6 @@ console.log('\n⑤ 用量文案：读数不可信时只显示原因，绝不显�
     const bad = usageText(usage({ listError: 'R2 凭据没配', usedBytes: 0 }));
     ok(bad.ok === false, '读数不可信 ⇒ ok=false（调用方据此转灰）');
     ok(bad.text === 'R2 凭据没配', '显示的就是原因原文', bad.text);
-    // 判据落在"体积/百分比"上而不是"整串无数字"：原因原文里出现 "R2"、端口号之类的数字是
-    // 合法的，不该为此变红 —— 要拦住的是 "0.00 GB"「0%」这种会被读成"用量是 0"的形状。
     ok(!/[\d.]+\s*(GB|GiB|MB)|%/.test(bad.text), '**不许出现用量数字或百分比**（"0.00 GB" 会被读成"用量是 0"）', bad.text);
 
     const good = usageText(usage({ usedBytes: gibToBytes(5), limitBytes: gibToBytes(10) }));
@@ -117,15 +110,13 @@ console.log('\n⑥ 跨语言守卫：前端的判据/键名/单位必须与 Rust
     const self = readFileSync(path.join(root, 'src/utils/r2Quota.ts'), 'utf8');
 
     ok(/pub const DEFAULT_QUOTA_GB: f64 = 9\.5;/.test(rust),
-        'Rust `DEFAULT_QUOTA_GB` 仍是 9.5（用户点名的那条线）');
+        'Rust 默认配额与前端一致：9.5 GiB');
     ok(/pub fn quota_exceeded\(used: u64, incoming: u64, limit: u64\) -> bool \{[\s\S]*?saturating_add\(incoming\) > limit/.test(rust),
         'Rust `quota_exceeded` 仍是 `used + incoming > limit`（严格大于；`>=` 会让等于上限的那一张被拒）');
-    // 单位必须两边都是 1024³：Rust 那边算字节、前端这边算显示
     ok(rust.includes('1024.0 * 1024.0 * 1024.0'), 'Rust 侧的 GiB 是 1024³');
     ok(upload.includes('bytes as f64 / (1024.0 * 1024.0 * 1024.0)'), 'Rust 把字节换算回 GB 用的是同一个 1024³');
     ok(/const GIB = 1024 \* 1024 \* 1024;/.test(self), '前端这份也是 1024³（改成 1000 会与服务端分家）');
 
-    // 五个键名：Rust 常量是本仓的唯一事实源，页面提交的载荷必须逐字与它一致
     const keys = [...rust.matchAll(/"(r2Image[A-Za-z]+)"/g)].map((m) => m[1]);
     const declared = [...new Set(keys)].sort();
     ok(declared.length === 5, `Rust \`R2_KEYS\` 仍是五个键名`, declared);
@@ -135,18 +126,14 @@ console.log('\n⑥ 跨语言守卫：前端的判据/键名/单位必须与 Rust
         { declared, used });
     ok(!/r2Image[A-Za-z]*/.test(albums),
         '图库页不再出现任何 r2Image* 键（配置的唯一入口是站点设置·图库存储）');
-    // 那颗按钮必须真的跳过去（它现在只是入口，跳错地方 = 点开啥也改不了）
     ok(albums.includes("navigate('/dashboard/usercontrol'") && /tab:\s*'4'/.test(albums),
         '图库页那颗「R2 存储」按钮跳向站点设置的图库存储页签');
     ok(form.includes("getR2Usage") && form.includes("'/api/protected/websetting'"),
         '图库存储页签自己读用量（/api/protect/images/r2）与存值（/api/protected/websetting）');
 
-    // 读取用的路由名与 Rust 挂的那条必须一致（否则用量永远读不到，条子恒显示"读取中"）
     const api = readFileSync(path.join(root, 'src/apis/ImageMethods.tsx'), 'utf8');
     ok(mod.includes('"/api/protect/images/r2"') && api.includes("'/api/protect/images/r2'"),
         '用量接口的路径两边一致（Rust 挂载点 vs 前端请求）');
-    // 这条路由必须挂在"要登录"的那组上：用量是运维读数，别顺手挪到公开组
-    // （按行号切出 protected_routes 那一块来判，不是全文找一遍关键字 —— 那样挪走了也照样绿）
     const lines = mod.split('\n');
     const pstart = lines.findIndex((l) => l.includes('let protected_routes'));
     const tail = lines.slice(pstart + 1);
@@ -155,13 +142,10 @@ console.log('\n⑥ 跨语言守卫：前端的判据/键名/单位必须与 Rust
     ok(pstart >= 0 && block.some((l) => l.includes('"/api/protect/images/r2"')),
         '用量接口挂在 `protected_routes` 那一块里（挪出这一块 = 匿名可读运维读数）');
 
-    // JSON 字段名：Rust 用 camelCase 序列化，前端按 camelCase 读
     ok(/#\[serde\(rename_all = "camelCase"\)\]/.test(upload) && /pub list_error: Option<String>/.test(upload),
         'Rust `R2Usage` 用 camelCase 序列化 `list_error`');
     ok(self.includes('listError'),
         '前端那份读的就是 `listError`（缺它就会把"读不到"当"很空"）');
-    // 前端不许绕过那份判据自己写"能不能传"（第二份判据 = 条子与按钮迟早各说各话）。
-    // 两个面都查：图库页（灰态）与站点设置那页（条子）。
     for (const [where, src] of [['图库页', albums], ['图库存储页签', form]]) {
         ok(!/limitBytes\s*[<>]=?|>=?\s*\w*\.?limitBytes/.test(src),
             `${where}没有第二份超限判据（一律走 utils/r2Quota）`);
@@ -172,12 +156,8 @@ console.log('\n⑥ 跨语言守卫：前端的判据/键名/单位必须与 Rust
         'Rust 的 `target` 认 `local` / `r2` 两个字面量');
     ok(/Some\(_\)\s*=>\s*None/.test(upload),
         '认不出的 target 返回 None ⇒ 调用方**报错**（不是按缺省处理）');
-    // 结构判据：`local` 那一次必须**整段跳过** R2 —— 这正是"R2 开着时服务器那条路还能用"
-    // 的实现。哪天有人把这段合并回"先试 R2、失败再本地"，这条会红。
     ok(/if target != UploadTarget::Local \{[\s\S]*?try_r2_upload\(/.test(upload),
         '`target=local` 时不走 try_r2_upload（R2 开着也照样存本机盘）');
-    ok(/async fn try_r2_upload\([\s\S]{0,300}?required: bool/.test(upload) && upload.includes('if required {'),
-        '`try_r2_upload` 收 `required`：点名 R2 却没配全时返回错误，**绝不回落本机盘**');
     ok(/formData\.append\('target'/.test(api) && /'local' \| 'r2'/.test(api),
         '前端只在 ImageMethods 一处拼 `target` 字段名，取值就是那两个（改名漏一处 = 静默走缺省）');
     ok(/uploadImages\(formData,\s*uploadTarget\)/.test(albums),

@@ -3,11 +3,10 @@ use std::sync::OnceLock;
 
 use chrono::Utc;
 use hmac::{Hmac, KeyInit, Mac};
-use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
+use sea_orm::{ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter};
 use sha2::{Digest, Sha256};
 
-/// R2 图床的五个配置键（`web_info` KV）。**只在这里列一次**：读取、写入、前端设置
-/// 卡都引用这一组，谁都不许手抄字面量（抄错一个字符的症状是"面板里填了但没生效"）。
+/// 图库配置使用的 web_info 键集合。
 pub const R2_KEYS: [&str; 5] = [
     "r2ImageBucket",
     "r2ImagePrefix",
@@ -16,18 +15,15 @@ pub const R2_KEYS: [&str; 5] = [
     "r2ImageEnabled",
 ];
 
-/// 配额兜底值（GiB）。键缺席/填坏都落在这里——**不是 0、也不是无上限**：
-/// 0 会让上传当场全停，无上限等于把"防账单"这件事交给运气。
+/// 缺失或无效配额的默认 GiB 上限。
 pub const DEFAULT_QUOTA_GB: f64 = 9.5;
 
 const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
 
-/// 空 body 的 sha256（S3 的集合请求/无体请求都用它）。写死是惯例：
-/// 它是常量，不该每次上传都重算一遍。
+/// 空请求体的 SHA-256，用于无体 S3 请求。
 pub const EMPTY_SHA256: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
-/// R2 的签名范围。**R2 不看 region 的值**（它只做 SigV4 的形状校验），但这一串会参与
-/// 密钥派生 ⇒ 必须与"服务端按同一串重算"一致才可能对上；`auto` 是 Cloudflare 文档给的写法。
+/// R2 请求使用的 SigV4 区域与服务。
 const REGION: &str = "auto";
 const SERVICE: &str = "s3";
 
@@ -39,8 +35,7 @@ pub struct R2Config {
     /// 面板上的总开关。**只有它是 `true` 且三样都填全了才会走 R2**（见 [`Self::active`]）
     pub enabled: bool,
     pub bucket: String,
-    /// 对象键前缀（归一后两端无 `/`）。**留空视为未配置**：前缀是这套图床的命名空间，
-    /// 留空等于与同桶里的别的用途（部署包、别的项目）混在一层，误配一次就互相踩。
+    /// 对象键命名空间，归一后两端无斜杠；空值视为未配置。
     pub prefix: String,
     /// 公开访问域名（归一后无尾 `/`，必须 `http(s)://`）。
     pub public_base: String,
@@ -61,27 +56,16 @@ impl Default for R2Config {
 }
 
 impl R2Config {
-    /// 这次上传该不该走 R2。**四样齐备才算配好**：开关开着、桶名/前缀/公开域名都填了。
-    /// 任何一样缺 ⇒ 回落本地盘（**与今天逐字节相同**），不存在"配了一半就往上写"。
+    /// 开关、桶、命名空间及公开地址均有效时启用 R2。
     pub fn active(&self) -> bool {
         self.enabled
             && !self.bucket.is_empty()
             && !self.prefix.is_empty()
             && !self.public_base.is_empty()
     }
-
 }
 
-/// 从 KV 读到的原始字符串解析出配置。**纯函数**（不碰库、不碰环境），
-/// 所以三条取值规则可以被单测逐格钉住：
-///
-///   · **缺键** ⇒ 出厂状态：开关关着、桶名/前缀/域名空 ⇒ [`R2Config::active`] 为假
-///     （**未配置就是"照旧走本地盘"**，不是"报错"）；
-///   · **填错** ⇒ 该字段按空/默认处理（脏配额回落 [`DEFAULT_QUOTA_GB`]）；
-///     一个填错的键不该让上传当场全停，也不该意外把配额顶成无上限；
-///   · **开关只认 `true`**：`1`/`yes`/`on`/`True` 一律算关。这个开关是**我们自己的
-///     面板**在写（不是人工编辑的配置文件），严格反而更安全——它管的是"要不要往外
-///     写文件"，含糊的取值会让"我以为关了"变成"其实一直开着"。
+/// 纯配置解析；缺失或无效字段使用默认值，true 不区分大小写。
 pub fn parse_config(get: impl Fn(&str) -> Option<String>) -> R2Config {
     let raw = |key: &str| get(key).unwrap_or_default();
     let d = R2Config::default();
@@ -102,17 +86,14 @@ fn parse_quota_bytes(raw: &str, fallback: u64) -> u64 {
     }
 }
 
-/// 从库里读一次配置（图库页的用量接口与每次上传各一次，一条 `SELECT`）。
-/// 读库失败 ⇒ 全默认（**未配置**）⇒ 走本地盘：故障时宁可"图还在本机"，
-/// 也不要"配置读不到就当它是开着的、往一个不知道哪个桶里写"。
-pub async fn load_config(db: &DatabaseConnection) -> R2Config {
+/// Missing keys use configuration defaults; database failures remain errors.
+pub async fn load_config<C: ConnectionTrait>(db: &C) -> Result<R2Config, DbErr> {
     let rows = crate::entity::web_info::Entity::find()
         .filter(crate::entity::web_info::Column::KeyName.is_in(R2_KEYS.to_vec()))
         .all(db)
-        .await
-        .unwrap_or_default();
+        .await?;
     let map: HashMap<String, String> = rows.into_iter().map(|r| (r.key_name, r.value)).collect();
-    parse_config(|k| map.get(k).cloned())
+    Ok(parse_config(|k| map.get(k).cloned()))
 }
 
 // 归一化 / 键 / URL（纯函数）
@@ -122,9 +103,7 @@ pub fn normalize_prefix(raw: &str) -> String {
     raw.trim().trim_matches('/').trim().to_string()
 }
 
-/// 公开域名归一：必须是 `http(s)://`（别的 scheme 一律 `None` —— 存进库的就是
-/// 浏览器要直开的地址，`ftp://` 之类只会变成一条打不开的图），去掉尾 `/`。
-/// 域名里带路径是允许的（`https://img.example.com/blog`）。
+/// 公开地址必须使用 HTTP(S)，可包含路径；移除尾斜杠。
 pub fn normalize_base(raw: &str) -> Option<String> {
     let t = raw.trim().trim_end_matches('/').trim();
     let lower = t.to_ascii_lowercase();
@@ -140,26 +119,8 @@ pub fn normalize_base(raw: &str) -> Option<String> {
     }
 }
 
-/// 对象键 = `<前缀>/<sha256 前 16 位>/<归一后的原名>`。
-///
-/// 内容寻址的理由见模块头注：同一份字节 + 同名 ⇒ 同一个键 ⇒ HEAD 命中即复用，
-/// 与本地盘那条"字节相同就复用"的判据同形；哈希前缀同时把"不同内容同名"分开。
-/// 取前 16 位（64 bit）是取舍：再长对象键难看且没必要，再短在几十万张图上就开始
-/// 有碰撞余地 —— 而碰撞的表现是**一张图覆盖另一张**，不是报错。
-pub fn object_key(prefix: &str, digest_hex: &str, file_name: &str) -> String {
-    let short: String = digest_hex.chars().take(16).collect();
-    let name = sanitize_file_name(file_name);
-    let p = normalize_prefix(prefix);
-    if p.is_empty() {
-        format!("{short}/{name}")
-    } else {
-        format!("{p}/{short}/{name}")
-    }
-}
-
 pub fn sanitize_file_name(raw: &str) -> String {
-    // 先砍掉路径成分（`field.file_name()` 通常已经只有名字，但 `/` 一旦漏进来
-    // 就会在桶里凭空多出一层目录）
+    // 只保留安全文件名，不允许路径分隔符创建额外层级。
     let base = raw.rsplit(['/', '\\']).next().unwrap_or("");
     let mut out = String::with_capacity(base.len());
     for ch in base.chars() {
@@ -171,7 +132,7 @@ pub fn sanitize_file_name(raw: &str) -> String {
             c => out.push(c),
         }
     }
-    // 太长的主键名（>120 字符）截断：桶里的键没有长度上限，但人读不了、日志也放不下
+    // 限制文件名长度以控制对象键和日志规模。
     let trimmed: String = out.chars().take(120).collect();
     if trimmed.is_empty() || trimmed.chars().all(|c| c == '_') {
         "image".to_string()
@@ -185,9 +146,7 @@ pub fn public_url(base: &str, key: &str) -> String {
     format!("{}/{}", base.trim_end_matches('/'), key)
 }
 
-/// 存进库的地址 ⇒ 对象键。**判据是"前缀逐字相同"**：换了公开域名之后，存量地址
-/// 与当前配置对不上（`None`）—— 这是刻意的，见 `routes/upload.rs` 里删除路径的
-/// 处理（宁可什么都不删、如实报出来，也不能按猜测去别的桶里删）。
+/// 只解析当前公开地址下的对象键，无法匹配时返回 None。
 pub fn r2_key_of(url: &str, cfg: &R2Config) -> Option<String> {
     if cfg.public_base.is_empty() {
         return None;
@@ -201,12 +160,7 @@ pub fn r2_key_of(url: &str, cfg: &R2Config) -> Option<String> {
     }
 }
 
-/// 超限判据：`used + incoming > limit`。
-///
-/// **严格大于**：恰好等于上限放行（"9.5G 就是 9.5G"，把等号判成超限会让面板上的
-/// 用量条与上传按钮互相打架——条子显示 100%，按钮却已经灰了）。
-/// `saturating_add`：两个 u64 相加在极端值上会回绕成小数，那会把"早就爆了"读成
-/// "还很空"，是整个模块里唯一能导致账单的那类错误。
+/// 仅在 used + incoming 超过上限时拒绝；饱和相加避免整数回绕。
 pub fn quota_exceeded(used: u64, incoming: u64, limit: u64) -> bool {
     used.saturating_add(incoming) > limit
 }
@@ -215,8 +169,7 @@ pub fn quota_exceeded(used: u64, incoming: u64, limit: u64) -> bool {
 
 type HmacSha256 = Hmac<Sha256>;
 
-/// SHA-256 的十六进制小写（与 `routes/upload.rs::sha256_hex` 同一条，但那份是私有函数；
-/// 两边算的都是"内容的指纹"，语义相同）。
+/// SHA-256 的小写十六进制编码。
 pub fn sha256_hex(data: &[u8]) -> String {
     let mut h = Sha256::new();
     h.update(data);
@@ -230,9 +183,7 @@ pub fn hmac_sha256(key: &[u8], msg: &[u8]) -> Vec<u8> {
     mac.finalize().into_bytes().to_vec()
 }
 
-/// SigV4 的签名密钥链：`HMAC(HMAC(HMAC(HMAC("AWS4"+secret, date), region), service), "aws4_request")`。
-/// 用它的意义是：派生的密钥只对那一天的、那一个区域与服务的请求有效，日密钥泄露
-/// 不等于长期凭据泄露（这是 SigV4 相对"直接把 secret 当 HMAC 密钥"的全部增量）。
+/// 按日期、区域和服务派生 SigV4 请求签名密钥。
 pub fn signing_key(secret: &str, date: &str, region: &str, service: &str) -> Vec<u8> {
     let k = hmac_sha256(format!("AWS4{secret}").as_bytes(), date.as_bytes());
     let k = hmac_sha256(&k, region.as_bytes());
@@ -240,9 +191,7 @@ pub fn signing_key(secret: &str, date: &str, region: &str, service: &str) -> Vec
     hmac_sha256(&k, b"aws4_request")
 }
 
-/// SigV4 的百分号编码：只有 `A-Za-z0-9-_.~` 原样，其余逐字节 `%XX`（**大写**十六进制）。
-/// `keep_slash` 给路径用（`/` 是分隔符，编码了就变成对象名的一部分，签名会与
-/// 服务端算出来的不一致 ⇒ 403）。
+/// SigV4 百分号编码；路径可以保留斜杠，其余按字节使用大写十六进制。
 pub fn uri_encode(raw: &str, keep_slash: bool) -> String {
     let mut out = String::with_capacity(raw.len());
     for b in raw.as_bytes() {
@@ -258,27 +207,26 @@ pub fn uri_encode(raw: &str, keep_slash: bool) -> String {
     out
 }
 
-/// 规范请求（canonical request）。`headers` 会在这里**按名排序、名转小写、值做空白归一**
-/// —— 调用方只管传，顺序与大小写错了就是 403（SigV4 规定的四种"看起来一样但签名不同"
-/// 的输入：头顺序、头名大小写、值两侧空白、值中间连续空白）。
-pub fn canonical_request(method: &str, path: &str, query: &str, headers: &[(&str, String)], payload_hash: &str) -> String {
+/// 规范请求按名称排序请求头，并归一名称大小写与头值空白。
+pub fn canonical_request(
+    method: &str,
+    path: &str,
+    query: &str,
+    headers: &[(&str, String)],
+    payload_hash: &str,
+) -> String {
     let mut hs: Vec<(String, String)> = headers
         .iter()
         .map(|(k, v)| (k.to_ascii_lowercase(), collapse_ws(v)))
         .collect();
     hs.sort_by(|a, b| a.0.cmp(&b.0));
-    let canonical_headers: String = hs
-        .iter()
-        .map(|(k, v)| format!("{k}:{v}\n"))
-        .collect();
+    let canonical_headers: String = hs.iter().map(|(k, v)| format!("{k}:{v}\n")).collect();
     let signed_headers = hs
         .iter()
         .map(|(k, _)| k.as_str())
         .collect::<Vec<_>>()
         .join(";");
-    format!(
-        "{method}\n{path}\n{query}\n{canonical_headers}\n{signed_headers}\n{payload_hash}"
-    )
+    format!("{method}\n{path}\n{query}\n{canonical_headers}\n{signed_headers}\n{payload_hash}")
 }
 
 /// 头值的空白归一：去两端、中间连续空白折成一个空格（SigV4 规范要求）。
@@ -301,13 +249,7 @@ pub struct Signature {
     pub authorization: String,
 }
 
-/// 签一次请求。**纯函数**（`amz_date` / region / service 全由调用方给）⇒
-/// AWS 的官方向量能原样进单测。
-///
-/// ⚠️ region/service **是参数而不是常量**：官方那两组测试向量用的是 `us-east-1` +
-/// `service`／`iam`，R2 用的是 `auto` + `s3` —— 签名值由这个范围参与派生，任何一组
-/// 常量写进函数体，另一组的向量就永远对不上。常量只留在 [`REGION`]/[`SERVICE`]，
-/// 由网络层显式传进来。
+/// 纯 SigV4 签名函数；日期、区域与服务由调用方显式传入。
 #[allow(clippy::too_many_arguments)]
 pub fn sign_request(
     access_key: &str,
@@ -325,7 +267,10 @@ pub fn sign_request(
     let canonical = canonical_request(method, path, query, headers, payload_hash);
     let chash = sha256_hex(canonical.as_bytes());
     // 参与签名的头名（排序后的小写列表）必须与规范请求里那一行**逐字相同**
-    let mut names: Vec<String> = headers.iter().map(|(k, _)| k.to_ascii_lowercase()).collect();
+    let mut names: Vec<String> = headers
+        .iter()
+        .map(|(k, _)| k.to_ascii_lowercase())
+        .collect();
     names.sort();
     let signed_headers = names.join(";");
     let sc = scope(date, region, service);
@@ -343,7 +288,7 @@ fn amz_date_now() -> String {
     Utc::now().format("%Y%m%dT%H%M%SZ").to_string()
 }
 
-// 凭据（只从 .env 读）
+// 凭据由进程环境提供。
 
 pub const IMAGE_ENV_KEYS: [&str; 3] = [
     "R2_IMAGE_ENDPOINT",
@@ -351,8 +296,7 @@ pub const IMAGE_ENV_KEYS: [&str; 3] = [
     "R2_IMAGE_SECRET_KEY",
 ];
 
-/// 部署链那组（`scripts/deploy/upload_to_r2.py` 与 `deploy_from_r2.sh` 读的同一组）。
-/// 图库里它只作回落 —— **别把图片桶加进它**（那等于让部署令牌多担一份权限，见文件头）。
+/// 部署凭据作为图库专用凭据缺失时的回落来源。
 pub const DEPLOY_ENV_KEYS: [&str; 3] = ["R2_ENDPOINT", "R2_ACCESS_KEY", "R2_SECRET_KEY"];
 
 /// R2 凭据。**不进 `web_info`、不进任何接口、不进日志**。
@@ -362,9 +306,7 @@ pub struct Creds {
     pub endpoint: String,
     pub access_key: String,
     pub secret_key: String,
-    /// 这对凭据里有没有「图库专用」的成分（三项里任意一项取自 `R2_IMAGE_*`）。
-    /// **只用于面板上那行"凭据来源"**：配错令牌时一眼看出用的是哪一对，
-    /// 不必再去猜"列桶为什么 403"。
+    /// 是否使用图库专用凭据，用于面板展示配置来源。
     pub image_token: bool,
 }
 
@@ -385,14 +327,7 @@ impl Creds {
     }
 }
 
-/// 从"取变量"的闭包解析凭据（纯函数 —— 单测直接喂一个 map，不碰进程环境）。
-///
-/// **逐项回落**：每项先看 `R2_IMAGE_<X>`，缺席或空串则用 `R2_<X>`。于是 `.env` 只加
-/// `R2_IMAGE_ACCESS_KEY` / `R2_IMAGE_SECRET_KEY` 两行就能生效（endpoint 同一个账号、
-/// 照旧回落），**一个都不加 ⇒ 与从前逐字节相同**（部署那组照旧）。
-///
-/// **三项全无 ⇒ `None`**（= 没配 R2 ⇒ 走本地盘）。endpoint 补 scheme：R2 控制台给的
-/// 那串不带 `https://`，手抄时也常被漏掉。
+/// 逐项优先使用 R2_IMAGE_*，否则回落 R2_*；缺少必需凭据时返回 None。
 pub fn creds_from(get: impl Fn(&str) -> Option<String>) -> Option<Creds> {
     // 逐项回落。返回 (值, 是否来自 R2_IMAGE_*)
     let pick = |i: usize| {
@@ -409,13 +344,20 @@ pub fn creds_from(get: impl Fn(&str) -> Option<String>) -> Option<Creds> {
     let (access_key, ak_image) = pick(1)?;
     let (secret_key, sk_image) = pick(2)?;
 
-    // 混搭的令牌对（一半图库、一半部署）几乎一定是配置事故：签出来的名对不上，
-    // 失败长相（SignatureDoesNotMatch）与"密钥抄错"分不开。当场喊一声。
+    // 图库专用与部署凭据混用时记录配置警告，不输出凭据。
     if ak_image != sk_image {
         tracing::warn!(
             "[r2] 凭据混搭：access key 来自 {}，secret 来自 {} —— 请成对配置（否则签名必失败）",
-            if ak_image { IMAGE_ENV_KEYS[1] } else { DEPLOY_ENV_KEYS[1] },
-            if sk_image { IMAGE_ENV_KEYS[2] } else { DEPLOY_ENV_KEYS[2] },
+            if ak_image {
+                IMAGE_ENV_KEYS[1]
+            } else {
+                DEPLOY_ENV_KEYS[1]
+            },
+            if sk_image {
+                IMAGE_ENV_KEYS[2]
+            } else {
+                DEPLOY_ENV_KEYS[2]
+            },
         );
     }
 
@@ -440,9 +382,7 @@ pub fn load_creds() -> Option<Creds> {
 
 // 网络
 
-/// 进程内单例（与 `routes/talks.rs::review_http` 同一形态）：每次请求新建 client
-/// 等于每次重建连接池、放弃 keep-alive。**不动 `AppState`**（一个静态就够了，
-/// 加字段会把"每个用到 state 的地方都要改"这件事扩散出去）。
+/// 复用进程内 HTTP 连接池。
 fn http() -> &'static reqwest::Client {
     static C: OnceLock<reqwest::Client> = OnceLock::new();
     C.get_or_init(|| {
@@ -453,14 +393,17 @@ fn http() -> &'static reqwest::Client {
     })
 }
 
-/// 列表/HEAD/DELETE 的超时。**每次请求都设**（挪进 builder 会变成全局默认值，
-/// 语义不同，见 `routes/talks.rs` 同款注释）。
+/// 列表、HEAD 和 DELETE 的单请求超时。
 const TIMEOUT_SHORT: std::time::Duration = std::time::Duration::from_secs(15);
 /// PUT 的超时（要传 body，给宽一点）。
 const TIMEOUT_PUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// 一次签名请求所需的头（`host` / `x-amz-content-sha256` / `x-amz-date`）。
-fn signed_headers(creds: &Creds, payload_hash: &str, amz_date: &str) -> Vec<(&'static str, String)> {
+fn signed_headers(
+    creds: &Creds,
+    payload_hash: &str,
+    amz_date: &str,
+) -> Vec<(&'static str, String)> {
     vec![
         ("host", creds.host().to_string()),
         ("x-amz-content-sha256", payload_hash.to_string()),
@@ -526,14 +469,7 @@ pub struct ListPage {
     pub next_token: Option<String>,
 }
 
-/// 解析 ListObjectsV2 的响应。**只认三个字段**，任何一处读不出来 ⇒ `Err`
-/// （fail-closed：宁可"暂时传不了图"，绝不"漏算用量"）。理由见模块头注。
-///
-/// 会被判红的形状（都有单测）：
-///   · 响应里没有 `ListBucketResult`（多半是 `<Error>`）⇒ Err；
-///   · `<Size>` 的内容不是数字 ⇒ Err（跳过一个就等于少算一个对象）；
-///   · `IsTruncated=true` 却没有 `NextContinuationToken` ⇒ Err
-///     （少了它就会把第一页当成全部，用量被低估 —— 这正是"账单"那类事故的形状）。
+/// 解析列表大小和分页信息；缺少必需字段或非法值时返回错误。
 pub fn parse_list_v2(xml: &str) -> Result<ListPage, String> {
     if !xml.contains("<ListBucketResult") {
         return Err(format!("不是 ListObjectsV2 的响应：{}", first_tag(xml)));
@@ -544,7 +480,10 @@ pub fn parse_list_v2(xml: &str) -> Result<ListPage, String> {
     let mut page = ListPage::default();
     for raw in all_tags(xml, "Size") {
         let v = raw.trim().parse::<u64>().map_err(|_| {
-            format!("<Size> 不是数字：{:?}", raw.chars().take(40).collect::<String>())
+            format!(
+                "<Size> 不是数字：{:?}",
+                raw.chars().take(40).collect::<String>()
+            )
         })?;
         page.sizes.push(v);
     }
@@ -556,14 +495,14 @@ pub fn parse_list_v2(xml: &str) -> Result<ListPage, String> {
         .first()
         .map(|v| xml_unescape(v.trim()));
     if page.truncated && page.next_token.as_deref().unwrap_or("").is_empty() {
-        return Err("IsTruncated=true 但没有 NextContinuationToken（会漏算后面的对象）".to_string());
+        return Err(
+            "IsTruncated=true 但没有 NextContinuationToken（会漏算后面的对象）".to_string(),
+        );
     }
     Ok(page)
 }
 
-/// 取一个标签的全部内容（`<Size>123</Size>` ⇒ `["123"]`）。
-/// **只看原始字节里的标签**：S3 会把对象键里的 `<`/`&` 实体转义，所以键名里
-/// 写不出一个真的 `<Size>` 标签（敌意样本见单测）。
+/// 提取原始 XML 中指定标签的内容；键中的实体不作为标签。
 fn all_tags<'a>(xml: &'a str, tag: &str) -> Vec<&'a str> {
     let open = format!("<{tag}>");
     let close = format!("</{tag}>");
@@ -582,19 +521,14 @@ fn all_tags<'a>(xml: &'a str, tag: &str) -> Vec<&'a str> {
     out
 }
 
-/// 响应里第一个标签名（错误信息用，别把整段 XML 打进日志）。
-///
-/// ⚠️ 按**字符**截断而不是按字节：`&t[..120]` 在 120 号字节正好落在一个汉字的
-/// 中间时会 panic —— 而这个函数只在"服务端返回了非预期内容"时才跑，那正是
-/// 最容易被塞进一段中文错误页的时刻。少写一个 `chars()` 就是"错误信息本身引发 500"。
+/// 为错误诊断提取首个 XML 标签，按字符截断。
 fn first_tag(xml: &str) -> String {
     let t = xml.trim_start();
     let end = t.find('>').map(|i| i + 1).unwrap_or(t.len());
     t[..end].chars().take(120).collect()
 }
 
-/// 解开 XML 的五个实体（S3 的续传 token 是 base64，可能带 `+`/`=`，一般不转义；
-/// 但键名里出现 `&amp;` 是常态，token 里真出现也要能还原成原文才敢回传）。
+/// 还原 XML 的五种基本实体。
 fn xml_unescape(s: &str) -> String {
     s.replace("&lt;", "<")
         .replace("&gt;", ">")
@@ -603,11 +537,7 @@ fn xml_unescape(s: &str) -> String {
         .replace("&amp;", "&")
 }
 
-/// 桶里**所有**对象的大小之和（翻页累加）。前缀只算这套图床自己那一层。
-///
-/// 失败 ⇒ `Err`（**fail-closed**，调用方必须拒绝本次上传）。翻页带上限：
-/// 每页 1000 个，200 页就是 20 万个对象——远超本机规模，超过就报错而不是继续翻
-/// （真正的死循环发生在"服务端一直说 truncated"这种病态情况下）。
+/// 分页累计图库命名空间内的对象大小；失败或超过页数上限时拒绝上传。
 pub async fn list_used_bytes(creds: &Creds, bucket: &str, prefix: &str) -> Result<u64, String> {
     let path = format!("/{bucket}");
     let mut total: u64 = 0;
@@ -640,7 +570,10 @@ pub async fn list_used_bytes(creds: &Creds, bucket: &str, prefix: &str) -> Resul
         if !resp.status().is_success() {
             return Err(format!("列桶失败：{}", brief_body(resp).await));
         }
-        let body = resp.text().await.map_err(|e| format!("读取列表响应失败：{e}"))?;
+        let body = resp
+            .text()
+            .await
+            .map_err(|e| format!("读取列表响应失败：{e}"))?;
         let page = parse_list_v2(&body)?;
         total = total.saturating_add(page.sizes.iter().sum::<u64>());
         if !page.truncated {
@@ -668,32 +601,7 @@ fn canonical_query(pairs: &[(String, String)]) -> String {
         .join("&")
 }
 
-/// 对象是否存在。`404` ⇒ `false`（不存在）；`200` ⇒ `true`；其余 ⇒ `Err`
-/// （**不许把 403/超时当成"不存在"**：那会导致"明明有却重新 PUT 一份"）。
-pub async fn head_object(creds: &Creds, bucket: &str, key: &str) -> Result<bool, String> {
-    let path = creds.path_of(bucket, key);
-    let url = format!("{}{}", creds.endpoint, path);
-    let resp = send(
-        creds,
-        reqwest::Method::HEAD,
-        url,
-        &path,
-        "",
-        EMPTY_SHA256,
-        None,
-        None,
-        TIMEOUT_SHORT,
-    )
-    .await?;
-    match resp.status().as_u16() {
-        200..=299 => Ok(true),
-        404 => Ok(false),
-        _ => Err(format!("HEAD 失败：{}", brief_body(resp).await)),
-    }
-}
-
-/// 上传对象。**失败就是失败**：调用方不许回落本地盘（见 `routes/upload.rs`），
-/// 否则"面板上写着存 R2、图其实在本机盘上"这件事没人看得出来。
+/// 上传失败保持错误，不切换存储目标。
 pub async fn put_object(
     creds: &Creds,
     bucket: &str,
@@ -704,7 +612,7 @@ pub async fn put_object(
     let path = creds.path_of(bucket, key);
     let url = format!("{}{}", creds.endpoint, path);
     let hash = sha256_hex(&body);
-    // ⚠️ body 在这里被移动进请求；payload_hash 必须先算好（签名要它）
+    // 移动请求体之前先计算用于签名的摘要。
     let resp = send(
         creds,
         reqwest::Method::PUT,
@@ -724,8 +632,7 @@ pub async fn put_object(
     }
 }
 
-/// 删除对象。**`404` 也算成功**（对象本来就不在 = 目的已达成），
-/// 其余非 2xx ⇒ `Err`（调用方据此**不删库里的行**）。
+/// 2xx 或 404 表示删除完成，其余响应返回错误。
 pub async fn delete_object(creds: &Creds, bucket: &str, key: &str) -> Result<(), String> {
     let path = creds.path_of(bucket, key);
     let url = format!("{}{}", creds.endpoint, path);

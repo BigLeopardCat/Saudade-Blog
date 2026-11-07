@@ -12,6 +12,8 @@ struct Row {
     status: String,
     output_hash: Option<String>,
     image_id: Option<i32>,
+    image_removed: bool,
+    gallery_url: Option<String>,
     error: Option<String>,
     usage: Option<JsonValue>,
     created_at: String,
@@ -21,7 +23,11 @@ struct Row {
 pub(super) const STATUS: &str = "CASE WHEN status='generating' AND approved_at<now()-interval '5 minutes' THEN 'unknown' WHEN status='saving' AND reviewed_at<now()-interval '5 minutes' THEN 'review' WHEN status='pending' AND created_at<now()-interval '1 hour' THEN 'expired' ELSE status END";
 
 pub async fn read(state: &AppState, uid: i32, id: &str) -> Result<Job, DbErr> {
-    let row = Row::find_by_statement(stmt(format!("SELECT id::text AS id,request,request_hash,{STATUS} AS status,output_hash,image_id,CASE WHEN status='saving' AND reviewed_at<now()-interval '5 minutes' THEN '上次保存已中断，图片仍可预览，可重新确认保留。' ELSE error END AS error,usage,created_at::text AS created_at,retry_of::text AS retry_of,retry_source_status FROM image_generation WHERE id::text=$1 AND owner_id=$2"), vec![id.into(), uid.into()]))
+    let row = Row::find_by_statement(stmt(format!("SELECT id::text AS id,request,request_hash,{STATUS} AS status,output_hash,image_id,CASE WHEN status='saving' AND reviewed_at<now()-interval '5 minutes' THEN '上次保存已中断，图片仍可预览，可重新确认保留。' ELSE error END AS error,usage,created_at::text AS created_at,retry_of::text AS retry_of,retry_source_status, \
+        (status='accepted' AND (image_id IS NULL OR EXISTS(SELECT 1 FROM image_deletion d WHERE d.image_id=image_generation.image_id))) AS image_removed, \
+        (SELECT i.image_url FROM images i WHERE i.image_key=image_generation.image_id \
+         AND NOT EXISTS(SELECT 1 FROM image_deletion d WHERE d.image_id=i.image_key)) AS gallery_url \
+        FROM image_generation WHERE id::text=$1 AND owner_id=$2"), vec![id.into(), uid.into()]))
         .one(&state.db)
         .await?
         .ok_or_else(|| DbErr::RecordNotFound("image job missing".into()))?;
@@ -37,12 +43,8 @@ pub async fn read(state: &AppState, uid: i32, id: &str) -> Result<Job, DbErr> {
             .as_ref()
             .map(|hash| preview_url(uid, id, -1, hash))
             .transpose()?
-    } else if let Some(image_id) = row.image_id {
-        match crate::routes::gallery::read(&state.db, uid, image_id).await {
-            Ok(image) => Some(image.image_url),
-            Err(DbErr::RecordNotFound(_)) => None,
-            Err(error) => return Err(error),
-        }
+    } else if row.status == "accepted" && !row.image_removed {
+        row.gallery_url
     } else {
         None
     };
@@ -53,6 +55,7 @@ pub async fn read(state: &AppState, uid: i32, id: &str) -> Result<Job, DbErr> {
         status: row.status,
         output_hash: row.output_hash,
         image_id: row.image_id,
+        image_removed: row.image_removed,
         error: row.error,
         usage: row.usage,
         preview_url: preview,

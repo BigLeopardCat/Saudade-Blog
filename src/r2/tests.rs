@@ -1,5 +1,20 @@
 use super::*;
 
+#[tokio::test]
+async fn config_lookup_distinguishes_missing_settings_from_database_failure() {
+    use sea_orm::{DatabaseBackend, MockDatabase};
+
+    let empty = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_results([Vec::<crate::entity::web_info::Model>::new()])
+        .into_connection();
+    assert_eq!(load_config(&empty).await.unwrap(), R2Config::default());
+
+    let failed = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_errors([DbErr::Custom("fixture database unavailable".into())])
+        .into_connection();
+    assert!(load_config(&failed).await.is_err());
+}
+
 fn cfg(bucket: &str, prefix: &str, base: &str) -> R2Config {
     R2Config {
         enabled: true,
@@ -10,16 +25,7 @@ fn cfg(bucket: &str, prefix: &str, base: &str) -> R2Config {
     }
 }
 
-// ① SigV4：AWS 官方测试向量
-// 官方向量集里的 `get-vanilla`：GET / 到 example.amazonaws.com，只签 host 与
-// x-amz-date。**这三条常量（规范请求哈希、签名、以及 IAM 那条签名）用一份独立实现
-// （Python 标准库 hashlib/hmac）逐字算过**，所以它们钉的是算法，不是实现自身产出的结果。
-//
-// ⚠️ 官方向量用的范围是 `us-east-1` + `service`，R2 用的是 `auto` + `s3`。
-// 签名值由这个范围参与派生 —— 所以下面显式传官方的范围，最后再单测一条
-// "网络层确实用 R2 的范围在签"（[`r2_scope_is_used`]）。把常量写死进函数体的
-// 版本会让这组向量永远对不上，而"对不上"的表现只是 CI 里一条红——比线上 403 好抓，
-// 但仍然是一次白跑。
+// 固定 SigV4 测试向量；日期、区域和服务显式指定。
 #[test]
 fn sigv4_aws_get_vanilla_vector() {
     let headers = vec![
@@ -66,8 +72,7 @@ fn sigv4_aws_get_vanilla_vector() {
     );
 }
 
-/// AWS 文档里那个 IAM ListUsers 例子（带查询串与 content-type 头）。
-/// 它把"规范查询串要不要排序/编码"这件事也钉住了。
+/// IAM ListUsers 签名向量包含查询串与 content-type。
 #[test]
 fn sigv4_aws_list_users_vector() {
     let headers = vec![
@@ -99,8 +104,7 @@ fn sigv4_aws_list_users_vector() {
     );
 }
 
-/// 头顺序 / 头名大小写 / 值两侧空白 / 值中间连续空白 —— 这四种"看着一样"的输入
-/// 在 SigV4 里必须算出同一个规范请求（不然会出现"本地算对了、服务端 403"）。
+/// 请求头排序、大小写与空白归一保持签名一致。
 #[test]
 fn canonical_request_normalizes_headers() {
     let a = canonical_request(
@@ -150,8 +154,7 @@ fn hmac_rfc4231_long_key() {
     );
 }
 
-/// 派生密钥对日期/区域/服务敏感（换一个就变）—— 这三样是签名的上下文，
-/// 写错任何一样都会 403，而 403 的消息（SignatureDoesNotMatch）不说哪里错了。
+/// 派生密钥绑定日期、区域和服务。
 #[test]
 fn signing_key_is_scoped() {
     let base = signing_key("secret", "20150830", "auto", "s3");
@@ -163,8 +166,7 @@ fn signing_key_is_scoped() {
     assert_eq!(base.len(), 32);
 }
 
-/// 网络层确实拿 R2 的范围在签（`auto` / `s3`）：官方向量走的是别的范围，
-/// 这条负责把"常量被谁用"这件事钉住，免得有人觉得那两条常量没人引用就删掉。
+/// 网络请求使用 R2 的 auto/s3 签名范围。
 #[test]
 fn r2_scope_is_used() {
     assert_eq!(REGION, "auto");
@@ -258,46 +260,15 @@ fn normalize_prefix_and_base() {
 }
 
 #[test]
-fn object_key_is_content_addressed() {
-    let digest = "a".repeat(64);
-    assert_eq!(
-        object_key("gallery", &digest, "EMQX.png"),
-        format!("gallery/{}/EMQX.png", "a".repeat(16))
-    );
-    // 同一份字节 + 同一个名字 ⇒ 同一个键（这就是"重传复用"的立足点）
-    assert_eq!(
-        object_key("gallery", &digest, "EMQX.png"),
-        object_key("/gallery/", &digest, "EMQX.png")
-    );
-    // 不同字节 ⇒ 不同键（同名也不覆盖）
-    assert_ne!(
-        object_key("gallery", &digest, "EMQX.png"),
-        object_key("gallery", "b", "EMQX.png")
-    );
-    // 名字里的危险字符被换掉；路径成分被砍掉（否则会在桶里凭空多一层）
-    assert_eq!(
-        object_key("g", &digest, "a b#c?d%e.png"),
-        format!("g/{}/a_b_c_d_e.png", "a".repeat(16))
-    );
-    assert_eq!(
-        object_key("g", &digest, "dir/sub/evil.png"),
-        format!("g/{}/evil.png", "a".repeat(16))
-    );
-    // 汉字留着（库里的地址要给人看）
-    assert!(object_key("g", &digest, "封面.png").ends_with("/封面.png"));
-    // 名字空了 / 或被换成了一串下划线 ⇒ 兜底名（对象键不许以 `/` 结尾）
+fn file_names_preserve_unicode_and_remove_path_controls() {
+    assert_eq!(sanitize_file_name("a b#c?d%e.png"), "a_b_c_d_e.png");
+    assert_eq!(sanitize_file_name("dir/sub/evil.png"), "evil.png");
+    assert_eq!(sanitize_file_name("封面.png"), "封面.png");
     for junk in ["", "   ", "#", "///", "??"] {
-        assert_eq!(
-            object_key("g", &digest, junk),
-            format!("g/{}/image", "a".repeat(16)),
-            "{junk:?} 应落到兜底名"
-        );
+        assert_eq!(sanitize_file_name(junk), "image", "{junk:?}");
     }
-    // 有点怪但正常的名字照留
-    assert!(object_key("g", &digest, "....").ends_with("/...."));
-    assert!(object_key("g", &digest, "-_-").ends_with("/-_-"));
-    // 前缀留空时不留前导斜杠
-    assert!(object_key("", &digest, "a.png").starts_with(&"a".repeat(16)));
+    assert_eq!(sanitize_file_name("...."), "....");
+    assert_eq!(sanitize_file_name("-_-"), "-_-");
 }
 
 #[test]
@@ -316,7 +287,7 @@ fn public_url_and_reverse() {
         r2_key_of("https://old.example.com/gallery/abc/a.png", &c),
         None
     );
-    // 本地那套地址也认不出来（上面没有公开域名前缀）
+    // 本地文件地址不匹配 R2 的公开地址。
     assert_eq!(
         r2_key_of("/api/protect/download/20260912013218_a.png", &c),
         None
@@ -462,9 +433,7 @@ fn parse_list_ok() {
     assert_eq!(p.next_token, None);
 }
 
-/// 敌意样本：**对象键里写着一串字面的 `<Size>999</Size>`**。S3 会把键里的 `<`
-/// 转义成 `&lt;`，所以原始字节里那个 `<Size>` 只可能是真标签 —— 这条用例证明
-/// "只扫标签"这个简化是安全的，也证明我们确实按原始字节在扫。
+/// 对象键中的 XML 实体不能伪造 Size 标签。
 #[test]
 fn parse_list_hostile_key_is_not_counted() {
     let xml = r#"<ListBucketResult>
@@ -578,7 +547,7 @@ fn creds_prefer_image_token_with_per_key_fallback() {
     assert_eq!(c.endpoint, "https://acc.r2.cloudflarestorage.com");
     assert!(c.image_token);
 
-        let c = creds_from(map(&[
+    let c = creds_from(map(&[
         ("R2_ENDPOINT", "https://acc.r2.cloudflarestorage.com"),
         ("R2_ACCESS_KEY", "d-ak"),
         ("R2_SECRET_KEY", "d-sk"),
@@ -587,7 +556,7 @@ fn creds_prefer_image_token_with_per_key_fallback() {
     assert_eq!(c.access_key, "d-ak");
     assert!(!c.image_token);
 
-    // ③ 图库那组显式给 endpoint ⇒ 用它（换成别的账号也配得出来），尾斜杠照旧归一
+    // 图库专用 endpoint 优先，尾斜杠归一。
     let c = creds_from(map(&[
         ("R2_IMAGE_ENDPOINT", "https://img.example.com/"),
         ("R2_IMAGE_ACCESS_KEY", "i"),

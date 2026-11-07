@@ -94,7 +94,10 @@ pub async fn change(
 ) -> Json<ApiResponse<Outcome>> {
     let result = async {
         let uid = actor(&state, &headers).await?;
-        let txn = state.db.begin().await?;
+        let txn = state
+            .db
+            .begin_with_config(Some(sea_orm::IsolationLevel::ReadCommitted), None)
+            .await?;
         let outcome = apply(&txn, uid, id, input).await?;
         txn.commit().await?;
         Ok(outcome)

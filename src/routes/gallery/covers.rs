@@ -60,6 +60,7 @@ pub(super) async fn apply(
     if before.article_id != id || before.version != input.version {
         return Err(DbErr::Custom("article changed".into()));
     }
+    super::references::fence(db, false).await?;
     db.query_one(Statement::from_sql_and_values(
         DatabaseBackend::Postgres,
         "SELECT image_key FROM images WHERE image_key=$1 FOR UPDATE",
@@ -108,7 +109,10 @@ pub async fn change(
 ) -> Json<ApiResponse<Outcome>> {
     let result = async {
         let uid = actor(&state, &headers).await?;
-        let txn = state.db.begin().await?;
+        let txn = state
+            .db
+            .begin_with_config(Some(sea_orm::IsolationLevel::ReadCommitted), None)
+            .await?;
         let outcome = apply(&txn, uid, id, input).await?;
         txn.commit().await?;
         Ok(outcome)

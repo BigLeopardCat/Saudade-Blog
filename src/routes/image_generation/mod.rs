@@ -97,6 +97,7 @@ pub struct Job {
     pub preview_url: Option<String>,
     pub output_hash: Option<String>,
     pub image_id: Option<i32>,
+    pub image_removed: bool,
     pub error: Option<String>,
     pub usage: Option<JsonValue>,
     pub created_at: String,
