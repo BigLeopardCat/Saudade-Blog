@@ -4,12 +4,17 @@ mod deletion;
 mod mailbox;
 mod message_reads;
 mod notifications;
+mod favorites;
+pub use favorites::{add_favorite, favorite_state, list_favorites, remove_favorite};
 mod unread;
 mod inbox_overview;
 pub use inbox_overview::get_inbox_overview;
 mod visibility;
 pub use deletion::{delete_message, delete_notification};
-pub use notifications::{list_notifications, pending_announcement, read_notifications};
+pub use notifications::{
+    list_notifications, notification_detail, notification_state, pending_announcement,
+    read_notifications,
+};
 pub use unread::notification_summary;
 pub use message_reads::{message_detail, recent_messages};
 pub use mailbox::{list_messages, MailboxQuery};
@@ -22,9 +27,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 
-use crate::entity::{
-    note, note_comment, talk, user, user_favorite, user_message, user_message_draft,
-};
+use crate::entity::{note_comment, talk, user, user_message, user_message_draft};
 use crate::routes::AppState;
 use crate::utils::{
     hash_password_async, sniff_image_ext, upload_dir, verify_password_async, ApiResponse,
@@ -294,12 +297,6 @@ pub async fn upload_avatar(
     Json(ApiResponse::success(AvatarDto { avatar: url }))
 }
 
-// 收藏的文章
-
-fn visible_flags(is_public: bool, status: Option<&str>) -> bool {
-    is_public && matches!(status, Some("public") | Some("published"))
-}
-
 #[derive(Serialize, Default)]
 pub struct FavoriteDto {
     #[serde(rename = "noteId")]
@@ -308,155 +305,6 @@ pub struct FavoriteDto {
     pub status: String,
     #[serde(rename = "createdAt")]
     pub created_at: String,
-}
-
-/// GET /api/protected/favorites：我的收藏（个人中心「收藏的文章」）。
-pub async fn list_favorites(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-) -> Json<ApiResponse<Vec<FavoriteDto>>> {
-    let uid = match crate::auth_jwt::auth_uid(&state.db, &headers).await {
-        Ok(uid) => uid,
-        Err(e) => return Json(ApiResponse::error(e.message())),
-    };
-    let favs = match user_favorite::Entity::find()
-        .filter(user_favorite::Column::UserId.eq(uid))
-        .order_by_desc(user_favorite::Column::CreatedAt)
-        .order_by_desc(user_favorite::Column::Id)
-        .all(&state.db)
-        .await
-    {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::error!("[profile] 收藏列表查询失败 uid={}: {}", uid, e);
-            return Json(ApiResponse::error("查询失败，请稍后再试"));
-        }
-    };
-    if favs.is_empty() {
-        return Json(ApiResponse::success(vec![]));
-    }
-    let ids: Vec<i32> = favs.iter().map(|f| f.note_id).collect();
-    let notes: Vec<(i32, String, Option<String>, bool)> = note::Entity::find()
-        .select_only()
-        .column(note::Column::Id)
-        .column(note::Column::Title)
-        .column(note::Column::Status)
-        .column(note::Column::IsPublic)
-        .filter(note::Column::Id.is_in(ids))
-        .into_tuple::<(i32, String, Option<String>, bool)>()
-        .all(&state.db)
-        .await
-        .unwrap_or_default();
-    let mut by_id: HashMap<i32, (String, Option<String>, bool)> = notes
-        .into_iter()
-        .map(|(id, title, status, is_public)| (id, (title, status, is_public)))
-        .collect();
-    let dtos = favs
-        .into_iter()
-        // 文章被隐藏/转草稿/删掉的不再列出（删掉的连行都没了，这里管的是"还在但不公开"）
-        .filter_map(|f| {
-            let (title, status, is_public) = by_id.remove(&f.note_id)?;
-            if !visible_flags(is_public, status.as_deref()) {
-                return None;
-            }
-            Some(FavoriteDto {
-                note_id: f.note_id,
-                title,
-                status: status.unwrap_or_else(|| "published".to_string()),
-                created_at: f.created_at.format("%Y-%m-%d %H:%M:%S").to_string(),
-            })
-        })
-        .collect();
-    Json(ApiResponse::success(dtos))
-}
-
-#[derive(Deserialize)]
-pub struct FavoriteRequest {
-    #[serde(rename = "noteId")]
-    pub note_id: i32,
-}
-
-/// POST /api/protected/favorites：收藏（重复收藏幂等成功——`uq_favorite_user_note` 是
-/// 数据库那一层的保证，这里先查一次是为了给出稳定的语义，不靠捕获唯一键冲突的错码）。
-pub async fn add_favorite(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Json(payload): Json<FavoriteRequest>,
-) -> Json<ApiResponse<String>> {
-    let uid = match crate::auth_jwt::auth_uid(&state.db, &headers).await {
-        Ok(uid) => uid,
-        Err(e) => return Json(ApiResponse::error(e.message())),
-    };
-    let Some((is_public, status)) = note::Entity::find_by_id(payload.note_id)
-        .select_only()
-        .column(note::Column::IsPublic)
-        .column(note::Column::Status)
-        .into_tuple::<(bool, Option<String>)>()
-        .one(&state.db)
-        .await
-        .unwrap_or(None)
-    else {
-        return Json(ApiResponse::error("这篇文章不存在"));
-    };
-    if !visible_flags(is_public, status.as_deref()) {
-        return Json(ApiResponse::error("这篇文章不可见，无法收藏"));
-    }
-    let existed = user_favorite::Entity::find()
-        .filter(user_favorite::Column::UserId.eq(uid))
-        .filter(user_favorite::Column::NoteId.eq(payload.note_id))
-        .one(&state.db)
-        .await
-        .unwrap_or(None)
-        .is_some();
-    if !existed {
-        let am = user_favorite::ActiveModel {
-            user_id: Set(uid),
-            note_id: Set(payload.note_id),
-            ..Default::default()
-        };
-        if let Err(e) = am.insert(&state.db).await {
-            // 并发下两个请求同时走到这里 → `uq_favorite_user_note` 拦下第二个。
-            // **不能只看错误类型断言"是撞唯一键"**（MySQL 侧是 sqlx 的数据库错误，
-            // 各驱动形状不一）——回查一次：现在真有一行就是"已收藏"，否则才是真失败。
-            let now_exists = user_favorite::Entity::find()
-                .filter(user_favorite::Column::UserId.eq(uid))
-                .filter(user_favorite::Column::NoteId.eq(payload.note_id))
-                .one(&state.db)
-                .await
-                .unwrap_or(None)
-                .is_some();
-            if !now_exists {
-                tracing::error!("[profile] 收藏失败 uid={} note={}: {}", uid, payload.note_id, e);
-                return Json(ApiResponse::error("收藏失败，请稍后再试"));
-            }
-        }
-    }
-    Json(ApiResponse::success("已收藏".to_string()))
-}
-
-/// DELETE /api/protected/favorites/:noteId：取消收藏（没收藏过也返回成功——同一个按钮
-/// 点两次不该出错）。
-pub async fn remove_favorite(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    axum::extract::Path(note_id): axum::extract::Path<i32>,
-) -> Json<ApiResponse<String>> {
-    let uid = match crate::auth_jwt::auth_uid(&state.db, &headers).await {
-        Ok(uid) => uid,
-        Err(e) => return Json(ApiResponse::error(e.message())),
-    };
-    match user_favorite::Entity::delete_many()
-        .filter(user_favorite::Column::UserId.eq(uid))
-        .filter(user_favorite::Column::NoteId.eq(note_id))
-        .exec(&state.db)
-        .await
-    {
-        Ok(_) => Json(ApiResponse::success("已取消收藏".to_string())),
-        Err(e) => {
-            tracing::error!("[profile] 取消收藏失败 uid={} note={}: {}", uid, note_id, e);
-            Json(ApiResponse::error("取消失败，请稍后再试"))
-        }
-    }
 }
 
 // 通知（红点数据源）与站内公告
@@ -468,17 +316,13 @@ pub struct NotificationDto {
     pub kind: String,
     pub title: String,
     pub content: String,
+    #[serde(rename = "contentTruncated")]
+    pub content_truncated: bool,
     pub link: Option<String>,
     #[serde(rename = "isRead")]
     pub is_read: bool,
     #[serde(rename = "createdAt")]
     pub created_at: String,
-}
-
-#[derive(Serialize, Default)]
-pub struct NotificationListDto {
-    pub unread: i64,
-    pub items: Vec<NotificationDto>,
 }
 
 /// 未读汇总：头像红点的唯一数据源（一次请求拿全，前端不必并发几次）。

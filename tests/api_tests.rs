@@ -211,9 +211,12 @@ async fn test_profile_center_requires_login() {
             r#"{"oldPassword":"a","newPassword":"bbbbbbbb"}"#,
         ),
         ("GET", "/api/protected/favorites", ""),
+        ("GET", "/api/protected/favorites/1", ""),
         ("POST", "/api/protected/favorites", r#"{"noteId":1}"#),
         ("DELETE", "/api/protected/favorites/1", ""),
         ("GET", "/api/protected/notifications", ""),
+        ("GET", "/api/protected/notifications/1", ""),
+        ("GET", "/api/protected/notifications/state?ids=1", ""),
         ("GET", "/api/protected/notifications/summary", ""),
         (
             "POST",

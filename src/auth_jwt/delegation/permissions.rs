@@ -96,7 +96,10 @@ const READS: &[&str] = &[
     "/api/protected/todos",
     "/api/protected/todos/item/:id",
     "/api/protected/favorites",
+    "/api/protected/favorites/:id",
     "/api/protected/notifications",
+    "/api/protected/notifications/state",
+    "/api/protected/notifications/:id",
     "/api/protected/notifications/summary",
     "/api/protected/notifications/announcement",
     "/api/protected/inbox/overview",
@@ -198,6 +201,9 @@ mod tests {
     fn existing_tools_keep_reads_preparation_and_bound_writes() {
         for (method, path) in [
             (Method::GET, "/api/protected/accounts"),
+            (Method::GET, "/api/protected/favorites/19"),
+            (Method::GET, "/api/protected/notifications/19"),
+            (Method::GET, "/api/protected/notifications/state"),
             (Method::GET, "/api/category"),
             (Method::GET, "/api/chat/history/text"),
             (Method::POST, "/api/protected/account-actions/prepare"),
@@ -215,6 +221,12 @@ mod tests {
             "/api/protected/article-actions/%34%32",
         ] {
             assert!(!allows(Scope::Tools, &Method::POST, path));
+        }
+        for path in [
+            "/api/protected/favorites/0", "/api/protected/notifications/-1",
+            "/api/protected/notifications/%31", "/api/protected/favorites/1/other",
+        ] {
+            assert!(!allows(Scope::Tools, &Method::GET, path));
         }
         assert!(!allows(
             Scope::Background,
