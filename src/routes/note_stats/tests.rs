@@ -254,3 +254,58 @@ fn 访客标识必定是纯_ascii_因此可以按字节切() {
     assert!(k.is_ascii());
     assert_eq!(&k[..k.len().min(8)], "abcdefgh");
 }
+
+fn stats_state(db: sea_orm::DatabaseConnection) -> Arc<AppState> {
+    Arc::new(AppState {
+        db,
+        rate_limiter: crate::rate_limiter::LoginRateLimiter::new(5, 300, 900),
+        post_limiter: crate::risk::PostRateLimiter::new(),
+        report_limiter: crate::rate_limiter::LoginRateLimiter::new(120, 60, 300),
+    })
+}
+
+#[tokio::test]
+async fn visible_lookup_failure_is_unavailable_and_missing_article_does_not_read_counts() {
+    use sea_orm::{DatabaseBackend, DbErr, MockDatabase};
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_errors([DbErr::Custom("offline".into())])
+        .into_connection();
+    let response = note_stats(State(stats_state(db)), Path(19), HeaderMap::new()).await;
+    assert_eq!(
+        response.status(),
+        axum::http::StatusCode::SERVICE_UNAVAILABLE
+    );
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_results([Vec::<std::collections::BTreeMap<String, sea_orm::Value>>::new()])
+        .into_connection();
+    let response = note_stats(State(stats_state(db)), Path(19), HeaderMap::new()).await;
+    assert_eq!(response.status(), axum::http::StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn postgres_metrics_refuse_nonpublic_and_shadow_articles() {
+    use sea_orm::{ConnectionTrait, Database, DatabaseBackend, Statement, TransactionTrait};
+    let Ok(url) = std::env::var("TEST_PG_URL") else {
+        eprintln!("SKIP article metric visibility PostgreSQL: TEST_PG_URL not set");
+        return;
+    };
+    let db = Database::connect(url).await.unwrap();
+    let tx = db.begin().await.unwrap();
+    let mut root = None;
+    for (status, public, shadow, visible) in [
+        ("public", true, false, true),
+        ("draft", true, false, false),
+        ("published", false, false, false),
+        ("public", true, true, false),
+    ] {
+        let row=tx.query_one(Statement::from_sql_and_values(DatabaseBackend::Postgres,
+            "INSERT INTO note(title,content,status,is_public,draft_of,created_at,updated_at) VALUES ('metric fixture','body',$1,$2,$3,localtimestamp,localtimestamp) RETURNING id",
+            vec![status.into(),public.into(),if shadow {root}else{None}.into()])).await.unwrap().unwrap();
+        let id: i32 = row.try_get("", "id").unwrap();
+        if root.is_none() {
+            root = Some(id)
+        }
+        assert_eq!(visible_note_id(&tx, id).await.unwrap(), visible);
+    }
+    tx.rollback().await.unwrap();
+}
