@@ -4,6 +4,7 @@ mod provider;
 mod references;
 mod result_storage;
 mod settings;
+mod transport;
 #[cfg(test)]
 mod tests;
 
