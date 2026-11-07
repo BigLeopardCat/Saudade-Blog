@@ -136,7 +136,7 @@ fn normalize_file_name(raw: &str, sniffed: &str) -> String {
 // Quota listing and PUT share a process-local critical section.
 static R2_UPLOAD_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-/// 体积给人看的 GB（GiB 口径，与面板上的 `r2ImageQuotaGB` 同一把尺子）。
+/// 字节换算为面板使用的 GiB。
 fn gib(bytes: u64) -> f64 {
     bytes as f64 / (1024.0 * 1024.0 * 1024.0)
 }
@@ -334,11 +334,11 @@ pub async fn upload_image(
 #[derive(Default, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct R2Usage {
-    /// 面板里的总开关（用户点的那一个）
+    /// 面板启用状态。
     pub enabled: bool,
-    /// 四样是否齐备（开关 + 桶名 + 前缀 + 公开域名）——即"这次上传会不会走 R2"
+    /// 启用状态、桶名、前缀和公开地址是否齐备。
     pub configured: bool,
-    /// 服务端 .env 里的凭据在不在（不在 ⇒ 配了也传不上去）
+    /// 服务端凭据是否可用。
     pub credentials: bool,
     /// Credential source label only, never credential values.
     pub creds_source: Option<String>,
@@ -348,12 +348,10 @@ pub struct R2Usage {
     pub quota_gb: f64,
     pub limit_bytes: u64,
     pub used_bytes: u64,
-    /// **为什么没有可信读数**（未启用 / 没配全 / 没凭据 / 列表失败）。
-    /// `None` 才代表 `used_bytes` 可信；非 `None` 时前端据它分支（先看 enabled/configured）。
+    /// 非空时用量读数无效，前端显示此原因。
     pub list_error: Option<String>,
 }
 
-// GET /api/protect/images/r2
 pub async fn r2_usage(State(state): State<Arc<AppState>>) -> Json<ApiResponse<R2Usage>> {
     let cfg = match r2::load_config(&state.db).await {
         Ok(config) => config,
@@ -409,7 +407,6 @@ pub async fn r2_usage(State(state): State<Arc<AppState>>) -> Json<ApiResponse<R2
 mod tests {
     use super::*;
 
-    /// `target` 的三态 + **非法值必须能被认出来**（调用方据此报错而不是按缺省处理）。
     #[test]
     fn upload_target_parse() {
         assert_eq!(UploadTarget::parse(None), Some(UploadTarget::FollowPanel));
@@ -450,16 +447,17 @@ mod tests {
     fn normalize_file_name_rewrites_only_on_mismatch() {
         assert_eq!(normalize_file_name("photo.png", "png"), "photo.png");
         assert_eq!(normalize_file_name("photo.JPEG", "jpg"), "photo.JPEG");
+        for name in ["文章封面_最终版.png", "20260912013218_EMQX.png"] {
+            assert_eq!(normalize_file_name(name, "png"), name);
+        }
         assert_eq!(normalize_file_name("photo.png", "jpg"), "photo.jpg");
         assert_eq!(normalize_file_name("photo.html", "png"), "photo.png");
         assert_eq!(normalize_file_name("noext", "png"), "noext.png");
-        // 名字退化的情况不许产出 ".png" 这种无名文件
         assert_eq!(normalize_file_name(".png", "jpg"), "image.jpg");
         assert_eq!(normalize_file_name("", "png"), "image.png");
     }
 
-    /// 出图侧的 content-type 只认白名单里的后缀；**`svg` 必须落到 `octet-stream`**
-    /// （它由本站同源直出，当 `image/svg+xml` 出图就是一条同源 XSS）。
+    /// SVG 不能作为本站同源图片响应，避免脚本执行。
     #[test]
     fn guess_content_type_has_no_svg() {
         assert_eq!(guess_content_type("a.png"), "image/png");
@@ -521,6 +519,38 @@ mod tests {
             post_limiter: crate::risk::PostRateLimiter::new(),
             report_limiter: crate::rate_limiter::LoginRateLimiter::new(120, 60, 300),
         })
+    }
+
+    #[tokio::test]
+    async fn unconfigured_r2_requires_an_error_only_for_an_explicit_r2_target() {
+        let database = || {
+            sea_orm::MockDatabase::new(DatabaseBackend::Postgres)
+                .append_query_results([Vec::<crate::entity::web_info::Model>::new()])
+                .into_connection()
+        };
+        let response = try_r2_upload(
+            &state(database()),
+            "original.png",
+            "fresh.png",
+            b"bytes",
+            true,
+            true,
+        )
+        .await
+        .expect("an explicit R2 target must not fall through to local storage");
+        assert_ne!(response.code, 200);
+        assert!(response.data.is_empty());
+        assert_eq!(response.message, "R2 图库尚未完整配置，请检查存储设置");
+        assert!(try_r2_upload(
+            &state(database()),
+            "original.png",
+            "fresh.png",
+            b"bytes",
+            false,
+            true,
+        )
+        .await
+        .is_none());
     }
 
     #[tokio::test]

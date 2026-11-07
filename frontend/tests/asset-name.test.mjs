@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -14,7 +13,7 @@ const ok = (cond, name, detail) => {
     else { fail++; console.log('  ✗ FAIL: ' + name + (detail !== undefined ? '  → ' + JSON.stringify(detail) : '')); }
 };
 
-// 纯 TS（无 DOM 无 React）⇒ 摊平成 .mjs 直接 import
+// 直接执行前端文件名回退函数。
 const out = mkdtempSync(path.join(tmpdir(), 'assetname-'));
 const file = path.join(out, 'assetName.mjs');
 await esbuild.build({
@@ -30,7 +29,6 @@ console.log('\n① 剥掉 14 位时间戳前缀');
     ok(assetDisplayName(DL + '20260912013218_EMQX.png') === 'EMQX.png',
         '`20260912013218_EMQX.png` → `EMQX.png`',
         assetDisplayName(DL + '20260912013218_EMQX.png'));
-    // 这串数字必须是**日期形态**的：前缀是上传时 `%Y%m%d%H%M%S` 打出来的
     ok(assetDisplayName(DL + '20200101000000_a.png') === 'a.png', '另一串合法的 14 位也剥');
     ok(assetDisplayName(DL + '20260912013218_中文名.png') === '中文名.png', '原名里有中文也照剥');
 }
@@ -63,19 +61,19 @@ console.log('\n③ 只取路径最后一段：带 CDN 域名、带 query 都拿�
     ok(assetDisplayName('EMQX.png') === 'EMQX.png', '不是路径、只有名字');
 }
 
-console.log('\n④ 跨语言守卫：Rust 那条同款规则还在（改一侧必须改另一侧）');
+console.log('\n④ 不从不可变对象键推断上传文件名');
 {
-    const rust = readFileSync(path.join(root, '..', 'src/routes/upload.rs'), 'utf8');
-    ok(/fn strip_timestamp_prefix/.test(rust), 'Rust 侧 `strip_timestamp_prefix` 还在');
-    ok(/bytes\.len\(\)\s*>\s*15\s*&&\s*bytes\[14\]\s*==\s*b'_'/.test(rust),
-        '  判据还是「长度 > 15 且第 15 个字节是 `_`」（与这边 `name[14] === "_"` 同形）');
-    ok(/bytes\[\.\.14\]\.iter\(\)\.all\(\|b\| b\.is_ascii_digit\(\)\)/.test(rust),
-        '  前 14 个字节全是 ASCII 数字（等价于这边的 `/^\\d{14}$/`）');
-    ok(/&name\[15\.\.\]/.test(rust), '  截断从第 15 个字符起（与这边 `slice(15)` 对齐）');
-    // 前端这一侧也钉一下：上面那些用例只有在"真的按 14/15 这两个数字实现"时才全绿，
-    // 但如果有人把实现改成"见到下划线就切"，② 组里 `2026-09-12_EMQX.png` 那条会红。
-    ok(/assetDisplayName/.test(readFileSync(path.join(root, 'src/pages/Dashboard/Albums/index.tsx'), 'utf8')),
-        '图库列表真的用了这个函数（写了没人用 = 白写）');
+    const object = 'd56fbad038994af2b981c605c95c1367.png';
+    for (const url of [
+        DL + object,
+        'https://cdn.example.com/gallery/' + object,
+        'https://cdn.example.com/gallery/' + object + '?download=1#preview',
+    ]) {
+        ok(assetDisplayName(url) === object, 'UUID 对象键完整保留，原始名称由图库元数据提供', assetDisplayName(url));
+    }
+    const generated = 'generated-' + 'a'.repeat(64) + '-' + object;
+    ok(assetDisplayName(DL + generated) === generated,
+        '生成图片对象键不按连字符或下划线截断', assetDisplayName(DL + generated));
 }
 
 console.log(`\n${fail === 0 ? '全部通过' : `失败 ${fail} 项`}（通过 ${pass}）`);
