@@ -2412,6 +2412,7 @@ dependencies = [
  "jieba-rs",
  "jsonwebtoken",
  "pulldown-cmark",
+ "regex",
  "reqwest",
  "sea-orm",
  "serde",
