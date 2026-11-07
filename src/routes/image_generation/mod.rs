@@ -2,6 +2,7 @@
 mod jobs;
 mod provider;
 mod references;
+mod result_storage;
 mod settings;
 #[cfg(test)]
 mod tests;
@@ -304,4 +305,6 @@ pub async fn article_context(
 }
 
 static STOPPING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-pub fn stop_accepting() { STOPPING.store(true, std::sync::atomic::Ordering::SeqCst); }
+pub fn stop_accepting() {
+    STOPPING.store(true, std::sync::atomic::Ordering::SeqCst);
+}

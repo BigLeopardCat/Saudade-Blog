@@ -100,7 +100,9 @@ pub async fn approve(
     id: &str,
     input: Approval,
 ) -> Result<Job, DbErr> {
-    if STOPPING.load(std::sync::atomic::Ordering::SeqCst) {return Err(error("service is draining"));}
+    if STOPPING.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err(error("service is draining"));
+    }
     let settings = settings::Settings::load().map_err(error)?;
     let current = read(&state, uid, id).await?;
     if current.request_hash != input.version {
@@ -151,16 +153,31 @@ pub async fn approve(
         let _permit = permit;
         tracing::info!(job_id=%job_id,owner_id=uid,model=%request.model,"approved image generation started");
         let result = provider::generate(settings, &request, &refs).await;
-        let saved=match result {
-            Ok((bytes,usage))=>worker.db.execute(stmt("UPDATE image_generation SET status='review',output=$2,output_hash=$3,usage=$4,finished_at=now() WHERE id::text=$1 AND status='generating'",vec![job_id.clone().into(),bytes.clone().into(),digest(&bytes).into(),usage.into()])).await,
-            Err(message)=>worker.db.execute(stmt("UPDATE image_generation SET status='unknown',error=$2,finished_at=now() WHERE id::text=$1 AND status='generating'",vec![job_id.clone().into(),message.into()])).await,
-        };
-        match saved {
-            Ok(_) => {
-                tracing::info!(job_id=%job_id,"image generation finished; awaiting user review or reconciliation")
+        match result {
+            Ok((bytes, usage)) => {
+                match result_storage::save(&worker.db, &job_id, uid, &current.request_hash, &bytes, &usage).await {
+                    Ok(result_storage::Saved::Review) => {
+                        tracing::info!(job_id=%job_id,"image result saved; awaiting user review");
+                    }
+                    Ok(result_storage::Saved::AlreadyStored) => {
+                        tracing::info!(job_id=%job_id,"image result was already stored; existing job state preserved");
+                    }
+                    Ok(result_storage::Saved::Superseded) => {
+                        tracing::warn!(job_id=%job_id,"image result not saved because the job state changed");
+                    }
+                    Err(failure) => {
+                        tracing::error!(job_id=%job_id,error=%failure,"generated image persistence exhausted; outcome unknown; generation will not be repeated");
+                        if let Err(failure) = result_storage::unknown(&worker.db, &job_id, uid, &current.request_hash,
+                            "生图结果保存失败，结果未知。请按任务编号核对服务商记录后再创建付费任务。").await {
+                            tracing::error!(job_id=%job_id,error=%failure,"image unknown-state persistence failed");
+                        }
+                    }
+                }
             }
-            Err(e) => {
-                tracing::error!(job_id=%job_id,error=%e,"image generation result persistence failed")
+            Err(message) => {
+                if let Err(failure) = result_storage::unknown(&worker.db, &job_id, uid, &current.request_hash, &message).await {
+                    tracing::error!(job_id=%job_id,error=%failure,"image provider failure could not be persisted; outcome unknown");
+                }
             }
         }
     });
