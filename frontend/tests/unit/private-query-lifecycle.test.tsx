@@ -160,6 +160,28 @@ function Profile() {
         <output data-testid="counts">{unread.counts.total}</output><output data-testid="faved">{String(faved)}</output></>
 }
 describe('mounted private consumers', () => {
+    it('shares unread polling, pauses when unfocused and stops after unmount', async () => {
+        vi.useFakeTimers()
+        const Badge=()=>{const {counts}=useUnread(true);return <output>{counts.pendingQuota}</output>}
+        http.mockResolvedValue(envelope(counts(1)))
+        const mounted=render(<Provider store={store}><Badge/><Badge/></Provider>)
+        try {
+            await act(async()=>{await vi.advanceTimersByTimeAsync(1000)})
+            expect(http).toHaveBeenCalledTimes(1)
+            await act(async()=>{await vi.advanceTimersByTimeAsync(61_000)})
+            expect(http).toHaveBeenCalledTimes(2)
+            act(()=>window.dispatchEvent(new Event('blur')))
+            await act(async()=>{await vi.advanceTimersByTimeAsync(61_000)})
+            expect(http).toHaveBeenCalledTimes(2)
+            act(()=>window.dispatchEvent(new Event('focus')))
+            await act(async()=>{await vi.advanceTimersByTimeAsync(1000)})
+            expect(http).toHaveBeenCalledTimes(3)
+            mounted.unmount()
+            await act(async()=>{await vi.advanceTimersByTimeAsync(121_000)})
+            expect(http).toHaveBeenCalledTimes(3)
+        } finally {mounted.unmount();vi.useRealTimers()}
+    })
+
     it('never renders A data as B while B requests are pending', async () => {
         http.mockImplementation(config => Promise.resolve(envelope(config.url.endsWith('/summary') ? counts(5)
             : config.url.endsWith('/54') ? stateFact() : [favorite(54, 'A')])) )
