@@ -58,10 +58,41 @@ struct AssertionClaims {
     delegation: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     background_delegation: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    checkpoint: Option<CheckpointGrant>,
+}
+
+#[derive(Debug, Serialize)]
+struct CheckpointGrant {
+    conversation_id: i32,
+    operation: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    turn_id: Option<String>,
+}
+
+/// Issued only for an owned target persisted in the transactional cleanup outbox.
+pub(crate) fn create_checkpoint_assertion(
+    user_id: i32,
+    conversation_id: i32,
+    turn_id: &str,
+) -> String {
+    if user_id <= 0 || conversation_id <= 0 {
+        return String::new();
+    }
+    let checkpoint = CheckpointGrant {
+        conversation_id,
+        operation: if turn_id.is_empty() {
+            "delete_conversation"
+        } else {
+            "drop_turn"
+        },
+        turn_id: (!turn_id.is_empty()).then(|| turn_id.to_owned()),
+    };
+    sign_assertion(user_id, None, String::new(), None, Some(checkpoint))
 }
 
 pub fn create_agent_assertion(user_id: i32, role: Option<&str>) -> String {
-    sign_assertion(user_id, role, String::new(), None)
+    sign_assertion(user_id, role, String::new(), None, None)
 }
 
 pub async fn create_chat_assertion(
@@ -104,7 +135,7 @@ pub(crate) fn create_tool_assertion(user_id: i32, role: Option<&str>, version: i
         .and_then(|role| {
             delegation::issue(user_id, role, version, delegation::Scope::Background, now)
         });
-    sign_assertion(user_id, role, token, background)
+    sign_assertion(user_id, role, token, background, None)
 }
 
 fn sign_assertion(
@@ -112,6 +143,7 @@ fn sign_assertion(
     role: Option<&str>,
     delegation: String,
     background_delegation: Option<String>,
+    checkpoint: Option<CheckpointGrant>,
 ) -> String {
     let Some(secret) = env::var("AGENT_ASSERTION_SECRET")
         .ok()
@@ -122,12 +154,18 @@ fn sign_assertion(
     let now = chrono::Utc::now().timestamp() as usize;
     let claims = AssertionClaims {
         sub: user_id,
-        aud: "agent".to_string(),
+        aud: if checkpoint.is_some() {
+            "agent-checkpoint"
+        } else {
+            "agent"
+        }
+        .to_string(),
         exp: now + 60,
         iat: now,
         role: role.map(str::to_string),
         delegation,
         background_delegation,
+        checkpoint,
     };
     encode(
         &Header::default(),

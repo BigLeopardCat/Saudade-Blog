@@ -193,7 +193,11 @@ async fn deliver(
     let Some(job) = claim_matching(db, id, turn_id).await? else {
         return Ok(false);
     };
-    let assertion = crate::auth_jwt::create_agent_assertion(job.user_id, None);
+    let assertion = crate::auth_jwt::create_checkpoint_assertion(
+        job.user_id,
+        job.conversation_id,
+        &job.turn_id,
+    );
     let outcome = request(
         client,
         &crate::routes::graph::agent_base_url(),

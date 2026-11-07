@@ -8,22 +8,53 @@ use axum::{
 use sea_orm::{Database, TransactionTrait};
 use serde_json::json;
 
+fn verify_cleanup_assertion(headers: &HeaderMap, conversation_id: i32, turn_id: Option<&str>) {
+    use jsonwebtoken::{decode, DecodingKey, Validation};
+    let secret = std::env::var("AGENT_ASSERTION_SECRET")
+        .expect("configure the isolated assertion key as documented in CONTRIBUTING.md");
+    let token = headers.get("X-Agent-Assertion").unwrap().to_str().unwrap();
+    let mut validation = Validation::default();
+    validation.set_audience(&["agent-checkpoint"]);
+    let claims = decode::<serde_json::Value>(
+        token,
+        &DecodingKey::from_secret(secret.as_bytes()),
+        &validation,
+    )
+    .unwrap()
+    .claims;
+    assert_eq!(claims["sub"], 7);
+    assert_eq!(claims["checkpoint"]["conversation_id"], conversation_id);
+    assert_eq!(
+        claims["checkpoint"]["operation"],
+        if turn_id.is_some() {
+            "drop_turn"
+        } else {
+            "delete_conversation"
+        }
+    );
+    assert_eq!(
+        claims["checkpoint"].get("turn_id").and_then(|v| v.as_str()),
+        turn_id
+    );
+    assert_eq!(claims["delegation"], "");
+    assert!(claims.get("background_delegation").is_none());
+    assert!(claims.get("role").is_none());
+    validation.set_audience(&["agent"]);
+    assert!(decode::<serde_json::Value>(
+        token,
+        &DecodingKey::from_secret(secret.as_bytes()),
+        &validation
+    )
+    .is_err());
+}
+
 #[tokio::test]
 async fn delivery_requires_verified_deletion_and_always_sends_identity() {
     async fn endpoint(
         State(body): State<serde_json::Value>,
         headers: HeaderMap,
     ) -> Json<serde_json::Value> {
-        assert!(
-            headers
-                .get("X-Agent-Assertion")
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .split('.')
-                .count()
-                == 3
-        );
+        verify_cleanup_assertion(&headers, 42, None);
         Json(body)
     }
     for (body, expected) in [
@@ -47,7 +78,13 @@ async fn delivery_requires_verified_deletion_and_always_sends_identity() {
             turn_id: String::new(),
         };
         assert_eq!(
-            request(&client(), &base, &job, "test.signed.assertion").await,
+            request(
+                &client(),
+                &base,
+                &job,
+                &crate::auth_jwt::create_checkpoint_assertion(7, 42, "")
+            )
+            .await,
             expected
         );
         server.abort();
@@ -66,7 +103,7 @@ async fn delivery_requires_verified_deletion_and_always_sends_identity() {
                 attempts: 1,
                 turn_id: String::new()
             },
-            "test.signed.assertion"
+            &crate::auth_jwt::create_checkpoint_assertion(7, 42, "")
         )
         .await,
         Err("http_status")
@@ -168,7 +205,7 @@ async fn turn_delivery_uses_stable_identity_and_requires_an_explicit_ack() {
         headers: HeaderMap,
         Json(body): Json<serde_json::Value>,
     ) -> Json<serde_json::Value> {
-        assert!(headers.contains_key("X-Agent-Assertion"));
+        verify_cleanup_assertion(&headers, 42, Some("turn-2"));
         assert_eq!(body, json!({"uid":7,"turn_id":"turn-2"}));
         assert!(body.get("text").is_none());
         Json(json!({"dropped":true}))
@@ -190,7 +227,13 @@ async fn turn_delivery_uses_stable_identity_and_requires_an_explicit_ack() {
         turn_id: "turn-2".into(),
     };
     assert_eq!(
-        request(&client(), &base, &job, "signed.assertion.fixture").await,
+        request(
+            &client(),
+            &base,
+            &job,
+            &crate::auth_jwt::create_checkpoint_assertion(7, 42, "turn-2")
+        )
+        .await,
         Ok(())
     );
     server.abort();
@@ -232,4 +275,10 @@ async fn postgres_turn_retry_retains_acknowledged_fence_and_rejects_stale_ack() 
         .unwrap()
         .is_none());
     txn.rollback().await.unwrap();
+}
+
+#[test]
+fn cleanup_grants_reject_invalid_owner_or_conversation() {
+    assert!(crate::auth_jwt::create_checkpoint_assertion(0, 42, "").is_empty());
+    assert!(crate::auth_jwt::create_checkpoint_assertion(7, -1, "turn").is_empty());
 }
