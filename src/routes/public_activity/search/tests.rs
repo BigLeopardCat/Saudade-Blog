@@ -236,6 +236,24 @@ async fn postgres_batch_search_keeps_union_counts_pages_and_visibility() {
             .collect::<Vec<_>>(),
         [3, 1]
     );
+    let short_marker = format!("short_{}", uuid::Uuid::new_v4().simple());
+    let short_body = format!("{}{}tail", "x".repeat(120), short_marker);
+    assert!(short_body.chars().count() < 240);
+    tx.execute(Statement::from_sql_and_values(
+        DbBackend::Postgres,
+        "INSERT INTO announcement(title,content) VALUES ('fixture',$1)",
+        [short_body.clone().into()],
+    ))
+    .await
+    .unwrap();
+    let short = read(&tx, &[short_marker.clone()], 5, 0).await.unwrap();
+    assert_eq!(short.total, 1);
+    assert!(short.items[0]["content"]
+        .as_str()
+        .unwrap()
+        .contains(&short_marker));
+    assert_ne!(short.items[0]["content"], short_body);
+    assert_eq!(short.items[0]["contentTruncated"], true);
     tx.rollback().await.unwrap();
 }
 

@@ -13,7 +13,8 @@ WITH keywords AS MATERIALIZED (
     SELECT source, id, left(title, 120) AS title, char_length(title) > 120 AS title_truncated,
            substring(content FROM greatest(COALESCE(matched.content_position, 1) - 60, 1)
                      FOR 240) AS content,
-           char_length(content) > 240 AS content_truncated,
+           (char_length(content) > 240
+            OR greatest(COALESCE(matched.content_position, 1) - 60, 1) > 1) AS content_truncated,
            left(display_name, 80) AS display_name,
            char_length(display_name) > 80 AS display_name_truncated, created_at,
            matched.keyword_indices AS matched_keyword_indices
