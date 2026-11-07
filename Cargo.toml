@@ -23,6 +23,7 @@ uuid = { version = "1", features = ["v4"] }
 sha2 = "0.11"
 argon2 = { version = "0.5", features = ["std"] }
 hex = "0.4"
+pulldown-cmark = { version = "=0.13.6", default-features = false }
 jsonwebtoken = { version = "11.1.0", default-features = false, features = ["aws_lc_rs"] }
 # R2 SigV4：hmac 0.13 / sha2 0.11 共享 digest 0.11，须成对迁移；0.x minor 不保证兼容。
 hmac = "0.13"

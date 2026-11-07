@@ -254,3 +254,97 @@ fn 访客标识必定是纯_ascii_因此可以按字节切() {
     assert!(k.is_ascii());
     assert_eq!(&k[..k.len().min(8)], "abcdefgh");
 }
+
+fn stats_state(db: sea_orm::DatabaseConnection) -> Arc<AppState> {
+    Arc::new(AppState {
+        db,
+        rate_limiter: crate::rate_limiter::LoginRateLimiter::new(5, 300, 900),
+        post_limiter: crate::risk::PostRateLimiter::new(),
+        report_limiter: crate::rate_limiter::LoginRateLimiter::new(120, 60, 300),
+    })
+}
+
+#[tokio::test]
+async fn visible_lookup_failure_is_unavailable_and_missing_article_does_not_read_counts() {
+    use sea_orm::{DatabaseBackend, DbErr, MockDatabase};
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_errors([DbErr::Custom("offline".into())])
+        .into_connection();
+    let response = note_stats(State(stats_state(db)), Path(19), HeaderMap::new()).await;
+    assert_eq!(
+        response.status(),
+        axum::http::StatusCode::SERVICE_UNAVAILABLE
+    );
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_results([Vec::<std::collections::BTreeMap<String, sea_orm::Value>>::new()])
+        .into_connection();
+    let response = note_stats(State(stats_state(db)), Path(19), HeaderMap::new()).await;
+    assert_eq!(response.status(), axum::http::StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn postgres_metrics_refuse_nonpublic_and_shadow_articles() {
+    use sea_orm::{ConnectionTrait, Database, DatabaseBackend, Statement, TransactionTrait};
+    let Ok(url) = std::env::var("TEST_PG_URL") else {
+        eprintln!("SKIP article metric visibility PostgreSQL: TEST_PG_URL not set");
+        return;
+    };
+    let db = Database::connect(url).await.unwrap();
+    let tx = db.begin().await.unwrap();
+    let mut root = None;
+    for (status, public, shadow, visible) in [
+        ("public", true, false, true),
+        ("draft", false, false, false),
+        ("published", false, false, false),
+        ("public", true, true, false),
+    ] {
+        let row=tx.query_one(Statement::from_sql_and_values(DatabaseBackend::Postgres,
+            "INSERT INTO note(title,content,status,is_public,draft_of,created_at,updated_at) VALUES ('metric fixture','body',$1,$2,$3,localtimestamp,localtimestamp) RETURNING id",
+            vec![status.into(),public.into(),if shadow {root}else{None}.into()])).await.unwrap().unwrap();
+        let id: i32 = row.try_get("", "id").unwrap();
+        if root.is_none() {
+            root = Some(id)
+        }
+        assert_eq!(visible_note_id(&tx, id).await.unwrap(), visible);
+    }
+    tx.rollback().await.unwrap();
+}
+
+#[tokio::test]
+async fn view_sum_preserves_database_errors_instead_of_returning_zero() {
+    use sea_orm::{DatabaseBackend, DbErr, MockDatabase};
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_errors([DbErr::Custom("offline fixture".into())])
+        .into_connection();
+    assert!(views_of(&db, 19).await.is_err());
+}
+
+#[tokio::test]
+async fn postgres_view_sum_decodes_large_totals_and_empty_counts_without_mutating_rows() {
+    use sea_orm::{ConnectionTrait, Database, DatabaseBackend, Statement, TransactionTrait};
+    let Ok(url) = std::env::var("TEST_PG_URL") else {
+        eprintln!("SKIP view aggregate PostgreSQL: TEST_PG_URL not set");
+        return;
+    };
+    let db = Database::connect(url)
+        .await
+        .expect("configured test database is reachable");
+    let tx = db.begin().await.unwrap();
+    let row = tx.query_one(Statement::from_string(DatabaseBackend::Postgres,
+        "INSERT INTO note(title,content,status,is_public,created_at,updated_at) VALUES ('view aggregate fixture','body','public',true,localtimestamp,localtimestamp) RETURNING id"
+    )).await.unwrap().unwrap();
+    let id: i32 = row.try_get("", "id").unwrap();
+    assert_eq!(views_of(&tx, id).await.unwrap(), 0);
+    tx.execute(Statement::from_sql_and_values(DatabaseBackend::Postgres,
+        "INSERT INTO note_view(note_id,view_date,cnt) VALUES ($1,'2026-01-01',2000000000),($1,'2026-01-02',2000000000)",
+        vec![id.into()])).await.unwrap();
+    assert_eq!(views_of(&tx, id).await.unwrap(), 4_000_000_000i64);
+    let rows = note_view::Entity::find()
+        .filter(note_view::Column::NoteId.eq(id))
+        .all(&tx)
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().all(|row| row.cnt == 2_000_000_000));
+    tx.rollback().await.unwrap();
+}

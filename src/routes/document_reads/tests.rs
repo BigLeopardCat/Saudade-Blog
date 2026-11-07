@@ -1,0 +1,255 @@
+use super::*;
+
+fn source(body: &str) -> Document {
+    Document {
+        kind: Kind::Note,
+        id: 19,
+        title: "标题".into(),
+        body: body.into(),
+        metadata: json!({}),
+    }
+}
+
+#[test]
+fn shared_commonmark_sources_have_identical_offsets_and_document_hashes() {
+    let cases: Vec<Value> = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/document-reading.json"
+    ))
+    .unwrap();
+    for case in cases {
+        let title = case["title"].as_str().unwrap();
+        let body = case["content"].as_str().unwrap();
+        assert_eq!(
+            serde_json::to_value(sections::outline(body, title)).unwrap(),
+            case["sections"],
+            "{}",
+            case["name"]
+        );
+        assert_eq!(content_revision(title, body), case["contentRevision"]);
+        assert_eq!(sections::SCHEMA, case["sectionSchema"]);
+    }
+}
+
+#[test]
+fn bounded_unicode_reads_roundtrip_all_kinds_and_keep_images_verbatim() {
+    let body = "![猫](https://example.test/猫.png)\r\n🐈 é，原始正文。";
+    for kind in [Kind::Note, Kind::Talk, Kind::Board, Kind::Announcement] {
+        let revision = content_revision("标题", body);
+        let mut offset = 0;
+        let mut joined = String::new();
+        loop {
+            let mut doc = source(body);
+            doc.kind = kind;
+            let value = frame(
+                doc,
+                ReadQuery {
+                    offset: Some(offset),
+                    limit: Some(7),
+                    revision: Some(revision.clone()),
+                    section_schema: Some(sections::SCHEMA.into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            let fragment = value["content"].as_str().unwrap();
+            assert!(fragment.chars().count() <= 7);
+            assert_eq!(value["source"]["offset"], offset);
+            joined.push_str(fragment);
+            let Some(next) = value["nextOffset"].as_u64() else {
+                assert_eq!(value["readComplete"], true);
+                break;
+            };
+            assert!(next as usize > offset);
+            offset = next as usize;
+        }
+        assert_eq!(joined, body);
+    }
+}
+
+#[test]
+fn ambiguous_titles_and_stale_section_views_never_read_an_arbitrary_section() {
+    let body = "## Parent\n### Repeat\nfirst\n### Repeat\nsecond\n## Empty\n";
+    let first = frame(source(body), ReadQuery::default()).unwrap();
+    let duplicate = frame(
+        source(body),
+        ReadQuery {
+            section: Some("Repeat".into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(duplicate["content"], "");
+    assert!(duplicate["source"].is_null());
+    let selected = frame(
+        source(body),
+        ReadQuery {
+            section: Some("s3".into()),
+            revision: Some(first["contentRevision"].as_str().unwrap().into()),
+            section_schema: Some(sections::SCHEMA.into()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(selected["content"], "second\n");
+    let missing = frame(
+        source(body),
+        ReadQuery {
+            section: Some("s3".into()),
+            ..Default::default()
+        },
+    );
+    assert_eq!(missing.unwrap_err().0, StatusCode::BAD_REQUEST);
+    for query in [
+        ReadQuery {
+            revision: Some("a".repeat(64)),
+            ..Default::default()
+        },
+        ReadQuery {
+            section_schema: Some("future-parser".into()),
+            ..Default::default()
+        },
+    ] {
+        assert_eq!(
+            frame(source(body), query).unwrap_err().0,
+            StatusCode::CONFLICT
+        );
+    }
+}
+
+fn state(db: sea_orm::DatabaseConnection) -> Arc<AppState> {
+    Arc::new(AppState {
+        db,
+        rate_limiter: crate::rate_limiter::LoginRateLimiter::new(5, 300, 900),
+        post_limiter: crate::risk::PostRateLimiter::new(),
+        report_limiter: crate::rate_limiter::LoginRateLimiter::new(120, 60, 300),
+    })
+}
+
+#[tokio::test]
+async fn bad_ranges_fail_before_database_and_missing_rows_remain_404() {
+    use sea_orm::{DatabaseBackend, MockDatabase, MockExecResult};
+    for query in [
+        ReadQuery {
+            limit: Some(24001),
+            ..Default::default()
+        },
+        ReadQuery {
+            offset: Some(1),
+            ..Default::default()
+        },
+    ] {
+        let db = MockDatabase::new(DatabaseBackend::Postgres).into_connection();
+        assert_eq!(
+            read(State(state(db)), Path((Kind::Note, 19)), Query(query))
+                .await
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_exec_results([MockExecResult::default()])
+        .append_query_results([Vec::<note::Model>::new()])
+        .into_connection();
+    let response = read(
+        State(state(db)),
+        Path((Kind::Note, 19)),
+        Query(ReadQuery::default()),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn postgres_public_reads_keep_source_type_and_visibility_without_private_metadata() {
+    use sea_orm::{ConnectionTrait, Database, DatabaseBackend, Statement, TransactionTrait};
+    let Ok(url) = std::env::var("TEST_PG_URL") else {
+        eprintln!("SKIP bounded document read PostgreSQL: TEST_PG_URL not set");
+        return;
+    };
+    let db = Database::connect(url).await.unwrap();
+    let tx = db.begin().await.unwrap();
+    let prefix = format!("document_read_{}", uuid::Uuid::new_v4().simple());
+    let user=tx.query_one(Statement::from_sql_and_values(DatabaseBackend::Postgres,
+        "INSERT INTO \"user\" (username,nickname,password,role) VALUES ($1,$1,'fixture','user') RETURNING id",
+        vec![prefix.clone().into()])).await.unwrap().unwrap();
+    let uid: i32 = user.try_get("", "id").unwrap();
+    let text = "## 标题\r\n![🐈](https://example.test/a.png) é👩🏽‍💻\r\n".repeat(80);
+    let article=tx.query_one(Statement::from_sql_and_values(DatabaseBackend::Postgres,
+        "INSERT INTO note(title,content,status,is_public,created_at,updated_at) VALUES ($1,$2,'public',true,localtimestamp,localtimestamp) RETURNING id",
+        vec![prefix.clone().into(),text.clone().into()])).await.unwrap().unwrap();
+    let article_id: i32 = article.try_get("", "id").unwrap();
+    let note = document(&tx, Kind::Note, article_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let part = frame(
+        note,
+        ReadQuery {
+            limit: Some(23),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(part["content"], text.chars().take(23).collect::<String>());
+    assert_eq!(part["contentRevision"], content_revision(&prefix, &text));
+    tx.execute(Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        "UPDATE note SET is_public=false WHERE id=$1",
+        vec![article_id.into()],
+    ))
+    .await
+    .unwrap();
+    assert!(document(&tx, Kind::Note, article_id)
+        .await
+        .unwrap()
+        .is_none());
+    for (kind, src) in [(Kind::Board, "board"), (Kind::Talk, "talk")] {
+        for approved in [1i16, 0, 2] {
+            let row=tx.query_one(Statement::from_sql_and_values(DatabaseBackend::Postgres,
+                "INSERT INTO talk(title,content,cat,v,author,user_id,src,approved,created_at,updated_at) VALUES ($1,$2,'愿',0,'public display',$3,$4,$5,localtimestamp,localtimestamp) RETURNING id",
+                vec![prefix.clone().into(),text.clone().into(),uid.into(),src.into(),approved.into()])).await.unwrap().unwrap();
+            let id: i32 = row.try_get("", "id").unwrap();
+            let doc = document(&tx, kind, id).await.unwrap();
+            assert_eq!(doc.is_some(), approved == 1);
+            if let Some(doc) = doc {
+                let part = frame(
+                    doc,
+                    ReadQuery {
+                        limit: Some(23),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+                assert_eq!(part["content"], text.chars().take(23).collect::<String>());
+                assert!(part["metadata"].get("userId").is_none());
+                assert!(part["metadata"].get("username").is_none());
+            }
+            let wrong = if kind == Kind::Talk {
+                Kind::Board
+            } else {
+                Kind::Talk
+            };
+            assert!(document(&tx, wrong, id).await.unwrap().is_none());
+        }
+    }
+    let announcement=tx.query_one(Statement::from_sql_and_values(DatabaseBackend::Postgres,
+        "INSERT INTO announcement(title,content,created_at,updated_at) VALUES ($1,$2,localtimestamp,localtimestamp) RETURNING id",
+        vec![prefix.clone().into(),text.clone().into()])).await.unwrap().unwrap();
+    let id: i32 = announcement.try_get("", "id").unwrap();
+    let doc = document(&tx, Kind::Announcement, id)
+        .await
+        .unwrap()
+        .unwrap();
+    let part = frame(
+        doc,
+        ReadQuery {
+            limit: Some(23),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(part["content"], text.chars().take(23).collect::<String>());
+    assert_eq!(part["readComplete"], false);
+    assert_eq!(part["nextOffset"], 23);
+    tx.rollback().await.unwrap();
+}

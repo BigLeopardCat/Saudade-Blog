@@ -1,0 +1,215 @@
+[
+  {
+    "name": "crlf_sources",
+    "title": "文章",
+    "content": "前言🐾\r\n\r\nIntro\r\n=====\r\n> # quoted\r\n> 引用\r\n\r\n- # listed\r\n\r\n## Actual ##\r\n正文👩🏽‍💻é\r\n```md\r\n# code\r\n```\r\nend",
+    "contentRevision": "d53db5c582b6d145b14de0119cc1f7136b7f5bad7d794d712a375400597462e6",
+    "sectionSchema": "commonmark-top-level-source-v1",
+    "sections": [
+      {
+        "id": "s1",
+        "title": "文章",
+        "level": 0,
+        "path": [],
+        "bodyStart": 0,
+        "bodyEnd": 7
+      },
+      {
+        "id": "s2",
+        "title": "Intro",
+        "level": 1,
+        "path": [
+          "Intro"
+        ],
+        "bodyStart": 21,
+        "bodyEnd": 55
+      },
+      {
+        "id": "s3",
+        "title": "Actual",
+        "level": 2,
+        "path": [
+          "Intro",
+          "Actual"
+        ],
+        "bodyStart": 69,
+        "bodyEnd": 102
+      }
+    ]
+  },
+  {
+    "name": "empty_parents_duplicates",
+    "title": "目录",
+    "content": "## Parent\n### Duplicate\nfirst\n### Duplicate\nsecond\n## Empty\n",
+    "contentRevision": "524e7960f7756298413e2130a59df50bd49ec4813865d4afaeb6645572be93d4",
+    "sectionSchema": "commonmark-top-level-source-v1",
+    "sections": [
+      {
+        "id": "s1",
+        "title": "Parent",
+        "level": 2,
+        "path": [
+          "Parent"
+        ],
+        "bodyStart": 10,
+        "bodyEnd": 10
+      },
+      {
+        "id": "s2",
+        "title": "Duplicate",
+        "level": 3,
+        "path": [
+          "Parent",
+          "Duplicate"
+        ],
+        "bodyStart": 24,
+        "bodyEnd": 30
+      },
+      {
+        "id": "s3",
+        "title": "Duplicate",
+        "level": 3,
+        "path": [
+          "Parent",
+          "Duplicate"
+        ],
+        "bodyStart": 44,
+        "bodyEnd": 51
+      },
+      {
+        "id": "s4",
+        "title": "Empty",
+        "level": 2,
+        "path": [
+          "Empty"
+        ],
+        "bodyStart": 60,
+        "bodyEnd": 60
+      }
+    ]
+  },
+  {
+    "name": "inline_syntax",
+    "title": "标题",
+    "content": "## **粗体** `code` &amp;\n![图片](https://example.test/猫.png)\n正文\n---\n子节内容\n",
+    "contentRevision": "c926d4d75217853027ae1a800099828182e981291e0fa81b788bfaa38d3821b3",
+    "sectionSchema": "commonmark-top-level-source-v1",
+    "sections": [
+      {
+        "id": "s1",
+        "title": "**粗体** `code` &amp;",
+        "level": 2,
+        "path": [
+          "**粗体** `code` &amp;"
+        ],
+        "bodyStart": 23,
+        "bodyEnd": 23
+      },
+      {
+        "id": "s2",
+        "title": "![图片](https://example.test/猫.png)\n正文",
+        "level": 2,
+        "path": [
+          "![图片](https://example.test/猫.png)\n正文"
+        ],
+        "bodyStart": 64,
+        "bodyEnd": 69
+      }
+    ]
+  },
+  {
+    "name": "plain_unicode",
+    "title": "简介",
+    "content": "原始图片 ![猫](https://example.test/a.png)\r\nEmoji 🐈 é，没有标题。\r\n",
+    "contentRevision": "3f6a1186fd91e169ee9ebe3fbaa128baab172e1fc5b2d2b59aecef7119ba16c4",
+    "sectionSchema": "commonmark-top-level-source-v1",
+    "sections": [
+      {
+        "id": "s1",
+        "title": "简介",
+        "level": 0,
+        "path": [],
+        "bodyStart": 0,
+        "bodyEnd": 57
+      }
+    ]
+  },
+  {
+    "name": "indented_and_crlf_multiline",
+    "title": "标题",
+    "content": "   # Heading\r\nbody\r\n first\r\n second\r\n===\r\n尾声",
+    "contentRevision": "6845d86caac7fafa42f68258c6fe67cc5a6c4128cc27c5d5c12c3312da690bae",
+    "sectionSchema": "commonmark-top-level-source-v1",
+    "sections": [
+      {
+        "id": "s1",
+        "title": "Heading",
+        "level": 1,
+        "path": [
+          "Heading"
+        ],
+        "bodyStart": 14,
+        "bodyEnd": 14
+      },
+      {
+        "id": "s2",
+        "title": "body\n first\n second",
+        "level": 1,
+        "path": [
+          "body\n first\n second"
+        ],
+        "bodyStart": 42,
+        "bodyEnd": 44
+      }
+    ]
+  },
+  {
+    "name": "carriage_returns",
+    "title": "标题",
+    "content": "# head\rbody\r## child\rtail",
+    "contentRevision": "a9a493c8a64417b812081547cd7fca5f88c341d154d720667107255e1627ce38",
+    "sectionSchema": "commonmark-top-level-source-v1",
+    "sections": [
+      {
+        "id": "s1",
+        "title": "head",
+        "level": 1,
+        "path": [
+          "head"
+        ],
+        "bodyStart": 7,
+        "bodyEnd": 12
+      },
+      {
+        "id": "s2",
+        "title": "child",
+        "level": 2,
+        "path": [
+          "head",
+          "child"
+        ],
+        "bodyStart": 21,
+        "bodyEnd": 25
+      }
+    ]
+  },
+  {
+    "name": "escaped_heading",
+    "title": "标题",
+    "content": "# \\*x\\*\nbody",
+    "contentRevision": "919d56ef645b2e4f990145e7d869565c9aa0a097ab835387a761ee5f7afecfb0",
+    "sectionSchema": "commonmark-top-level-source-v1",
+    "sections": [
+      {
+        "id": "s1",
+        "title": "\\*x\\*",
+        "level": 1,
+        "path": [
+          "\\*x\\*"
+        ],
+        "bodyStart": 8,
+        "bodyEnd": 12
+      }
+    ]
+  }
+]

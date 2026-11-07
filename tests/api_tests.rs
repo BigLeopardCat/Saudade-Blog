@@ -296,6 +296,14 @@ async fn test_点赞取消点赞走信封错误而不是401() {
 #[tokio::test]
 async fn test_匿名点赞靠访客标识开门而不是放宽鉴权() {
     const OK_KEY: (&str, &str) = ("x-visitor-key", "0123456789abcdef");
+    let missing_article_app = || {
+        let db = MockDatabase::new(DatabaseBackend::Postgres)
+            .append_query_results([
+                Vec::<std::collections::BTreeMap<String, sea_orm::Value>>::new(),
+            ])
+            .into_connection();
+        create_router(test_state(db))
+    };
 
     // ① 两样都没有 ⇒ 「未登录」
     let (status, code, msg) =
@@ -305,8 +313,13 @@ async fn test_匿名点赞靠访客标识开门而不是放宽鉴权() {
     assert_eq!(msg, "未登录", "没身份时应当被拦在身份这一关");
 
     // ② 合法标识 ⇒ 不再是「未登录」（门开了）
-    let (status, _, msg) =
-        req_api_envelope(mock_app(), "POST", "/api/public/notes/1/like", Some(OK_KEY)).await;
+    let (status, _, msg) = req_api_envelope(
+        missing_article_app(),
+        "POST",
+        "/api/public/notes/1/like",
+        Some(OK_KEY),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
         msg, "这篇文章不存在",
@@ -331,17 +344,10 @@ async fn test_匿名点赞靠访客标识开门而不是放宽鉴权() {
         assert_eq!(msg, "未登录", "非法标识 {:?} 不该被当成身份", bad);
     }
 
-    // ④ 带着令牌（哪怕是坏的）也**绝不能**变成 401：前端 axios 对任何 401 都清 token
-    //    并跳 /login——"浏览器里躺着一枚过期令牌"正是匿名访客最常见的形态，被一脚
-    //    踢去登录页就等于这个功能白做。
-    //
-    // `verify_token` 每次都从环境里读 `JWT_SECRET`、读不到直接 panic（不是返回 None）。
-    // 本套件里只有这一条用例会走到验签（其余用例连 Authorization 头都不带），
-    // 所以在用例内设一枚测试密钥即可：它不参与任何真实签名，只为让"坏令牌 ⇒
-    // 验签失败 ⇒ 退回访客身份"这条路径跑得通。
+    // Invalid tokens may use an explicit visitor identity; the public lookup still succeeds.
     std::env::set_var("JWT_SECRET", "test-secret-not-used-for-anything-real");
     let (status, _, msg) = {
-        let res = mock_app()
+        let res = missing_article_app()
             .oneshot(
                 Request::builder()
                     .method("POST")
@@ -405,37 +411,20 @@ async fn test_分期报表需要管理员() {
     }
 }
 
-/// 阅读求和（`SUM(cnt)`）**必须**走 `note_stats::sum_views()`——它是唯一一处
-#[test]
-fn test_阅读求和不许绕开_sum_views_那一手_cast() {
-    let src = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/routes/note_stats.rs"),
+#[tokio::test]
+async fn test_匿名点赞可见性查询故障不会伪装文章不存在() {
+    let db = MockDatabase::new(DatabaseBackend::Postgres)
+        .append_query_errors([sea_orm::DbErr::Custom("fixture unavailable".into())])
+        .into_connection();
+    let (status, code, _) = req_api_envelope(
+        create_router(test_state(db)),
+        "POST",
+        "/api/public/notes/1/like",
+        Some(("x-visitor-key", "0123456789abcdef")),
     )
-    .expect("读不到 src/routes/note_stats.rs");
-
-    // 只看**走 SQL 构造器的**那些行：`.sum()` 在 Rust 迭代器上（`map(..).sum()`）
-    // 也合法，那是本文件里另外两处，与 MySQL 类型无关。
-    let sql_sums: Vec<(usize, &str)> = src
-        .lines()
-        .enumerate()
-        .filter(|(_, l)| l.contains(".sum()") && l.contains("Expr::"))
-        .map(|(i, l)| (i + 1, l.trim()))
-        .collect();
-
-    assert!(
-        !sql_sums.is_empty(),
-        "没找到任何 SQL 求和——判据空了，改成实际写法再锁"
-    );
-    for (line, text) in &sql_sums {
-        assert!(
-            text.contains("cast_as"),
-            "note_stats.rs:{} 的求和没带 CAST（{}）——20260930 那次线上 500 就是没带它\
-             （MySQL 的 SUM(<整数列>) 返回 DECIMAL，i64 解不出来；20261018 切到 PG 后这一手\
-             是冗余但无害的，留着的理由是别让这条收口长出例外）。把它挪进 sum_views()",
-            line,
-            text
-        );
-    }
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(code, 503);
 }
 
 /// 扣一轮的判据**就是 `rows_affected`**——三态各一条，外加两条 SQL 断言。

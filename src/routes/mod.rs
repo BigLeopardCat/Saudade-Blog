@@ -1,6 +1,7 @@
 pub mod auth;
 pub mod notes;
 pub mod document_visibility;
+pub mod document_reads;
 pub mod categories;
 pub mod tags;
 pub mod web_info;
@@ -160,6 +161,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/device-gateway/{*path}", axum::routing::any(device_gateway::proxy)
             .layer(axum::extract::DefaultBodyLimit::max(16 * 1024 * 1024)))
         .route("/api/public/rag/corpus", get(rag_corpus::export))
+        .route("/api/public/documents/{kind}/{id}/read", get(document_reads::read))
         .route("/api/public/documents/validate", post(document_visibility::validate).layer(DefaultBodyLimit::max(32768)))
         .route("/api/public/notes/page", get(notes::list_public_notes)) 
         .route("/api/public/notes/search", post(notes::search_notes).layer(DefaultBodyLimit::max(4096)))

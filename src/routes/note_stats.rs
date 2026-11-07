@@ -1,17 +1,17 @@
 mod periods;
-pub use periods::{note_period_report, PeriodReportDto, PeriodRow};
-#[cfg(test)]
-use periods::{Granularity, last_day_of_month, period_at};
 use axum::{
     extract::{Path, State},
     http::HeaderMap,
     response::{IntoResponse, Response},
     Json,
 };
+#[cfg(test)]
+use periods::{last_day_of_month, period_at, Granularity};
+pub use periods::{note_period_report, PeriodReportDto, PeriodRow};
 use sea_orm::{
     sea_query::{Alias, Condition, Expr, OnConflict, SimpleExpr},
-    ColumnTrait, DatabaseConnection, DbErr, EntityTrait, PaginatorTrait, QueryFilter, QuerySelect,
-    Set,
+    ColumnTrait, ConnectionTrait, DatabaseConnection, DbErr, EntityTrait, PaginatorTrait,
+    QueryFilter, QuerySelect, Set,
 };
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
@@ -21,17 +21,17 @@ use crate::entity::{note, note_comment, note_like, note_view, user_favorite};
 use crate::routes::AppState;
 use crate::utils::ApiResponse;
 
-/// 排行榜长度（阅读榜、点赞榜、收藏榜各取前 N；**Python 侧 `reports._RANK_TOP` 是同一个
-/// 数**，报表里那句"下列前 N 名"按它写，改一侧必须同步另一侧）。
+/// Global leaderboards contain at most ten entries per metric.
 const TOP_N: usize = 10;
 
-/// 周报/月报/年报里每期带几篇（**不是** `TOP_N`：那是全局榜的长度，一页十行是榜单该有的
-/// 样子；期报里这块是折叠面板展开后的内容，5 行能一屏看完，再多就该去全局榜看）。
+/// Each natural-period report contains at most five ranked articles.
 const PERIOD_TOP_N: usize = 5;
 
 // Fix the SQL result type so every view-total query decodes as i64.
 fn sum_views() -> SimpleExpr {
-    Expr::col(note_view::Column::Cnt).sum().cast_as(Alias::new("BIGINT"))
+    Expr::col(note_view::Column::Cnt)
+        .sum()
+        .cast_as(Alias::new("BIGINT"))
 }
 
 /// 日趋势窗口（含今天，向前共 30 天）。
@@ -45,7 +45,7 @@ pub struct NoteStatsDto {
     pub likes: i64,
     pub favorites: i64,
     pub comments: i64,
-    /// 未登录 / 令牌已收回 / 账号被冻结 ⇒ false。**这不表示"请求失败"**（见模块头注 1）。
+    /// An absent or invalid identity has no actor-specific liked state.
     pub liked: bool,
 }
 
@@ -59,24 +59,33 @@ pub struct LikeDto {
 
 // 读取（公开，无需登录）
 
-/// 文章是否"读者能打开"。与 `notes.rs::get_note_detail` 的两行 filter 同源——
-/// **改这里必须同时改那里**（两边不一致会让"能打开的文章读不到数"或反之）。
-async fn visible_note_id(db: &DatabaseConnection, id: i32) -> bool {
+/// Metrics share the published-root boundary with public content reads.
+async fn visible_note_id<C: ConnectionTrait>(db: &C, id: i32) -> Result<bool, DbErr> {
     note::Entity::find_by_id(id)
-        .filter(note::Column::IsPublic.eq(true))
-        .filter(note::Column::Status.is_in(super::notes::public_status_words()))
+        .filter(super::notes::public_condition())
         .select_only()
         .column(note::Column::Id)
         .into_tuple::<i32>()
         .one(db)
         .await
-        .unwrap_or(None)
-        .is_some()
+        .map(|row| row.is_some())
 }
 
-/// 单篇阅读总量。没有任何行时 `SUM()` 是 NULL ⇒ 归零。
-/// 用 `Option<i64>` 接住是**必须**的：直接 `into_tuple::<i64>()` 在零行时会解码失败。
-async fn views_of(db: &DatabaseConnection, note_id: i32) -> Result<i64, DbErr> {
+fn stats_unavailable(error: &DbErr) -> Response {
+    tracing::warn!(error=%error, "article statistics unavailable");
+    (
+        axum::http::StatusCode::SERVICE_UNAVAILABLE,
+        Json(ApiResponse::<serde_json::Value> {
+            code: 503,
+            message: "统计暂不可用，请稍后重试".into(),
+            data: serde_json::Value::Null,
+        }),
+    )
+        .into_response()
+}
+
+/// An empty SUM is NULL, represented as zero only after a successful database read.
+async fn views_of<C: ConnectionTrait>(db: &C, note_id: i32) -> Result<i64, DbErr> {
     note_view::Entity::find()
         .select_only()
         .column_as(sum_views(), "total")
@@ -95,8 +104,7 @@ async fn likes_of(db: &DatabaseConnection, note_id: i32) -> Result<i64, DbErr> {
         .map(|n| n as i64)
 }
 
-/// 收藏数。`COUNT(*)`（BIGINT）而非 `SUM`——**没有 `sum_views` 那个 DECIMAL 陷阱**
-/// （见 `sum_views` 的注释：只有求和要过 `CAST`）。
+/// Favorite totals count rows rather than summing a mutable counter.
 async fn favorites_of(db: &DatabaseConnection, note_id: i32) -> Result<i64, DbErr> {
     user_favorite::Entity::find()
         .filter(user_favorite::Column::NoteId.eq(note_id))
@@ -133,14 +141,20 @@ fn visitor_key(headers: &HeaderMap) -> Option<String> {
     if k.len() < VISITOR_MIN || k.len() > VISITOR_MAX {
         return None;
     }
-    if !k.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_') {
+    if !k
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
         return None;
     }
     Some(k.to_string())
 }
 
 pub(super) enum Who {
-    User { uid: i32, key: Option<String> },
+    User {
+        uid: i32,
+        key: Option<String>,
+    },
     /// 匿名访客：只有浏览器自报的标识。
     Visitor(String),
 }
@@ -210,10 +224,11 @@ pub(super) async fn identify(
     headers: &HeaderMap,
 ) -> Result<Option<Who>, crate::auth_jwt::AuthError> {
     match crate::auth_jwt::auth_uid(db, headers).await {
-        Ok(uid) => Ok(Some(Who::User { uid, key: visitor_key(headers) })),
-        Err(crate::auth_jwt::AuthError::Missing) => {
-            Ok(visitor_key(headers).map(Who::Visitor))
-        }
+        Ok(uid) => Ok(Some(Who::User {
+            uid,
+            key: visitor_key(headers),
+        })),
+        Err(crate::auth_jwt::AuthError::Missing) => Ok(visitor_key(headers).map(Who::Visitor)),
         Err(e) => Err(e),
     }
 }
@@ -274,30 +289,31 @@ pub async fn note_stats(
     Path(id): Path<i32>,
     headers: HeaderMap,
 ) -> Response {
-    if !visible_note_id(&state.db, id).await {
-        return note_gone();
+    match visible_note_id(&state.db, id).await {
+        Ok(true) => {}
+        Ok(false) => return note_gone(),
+        Err(error) => return stats_unavailable(&error),
     }
     let who = optional_who(&state.db, &headers).await;
     match read_stats(&state.db, id, who.as_ref()).await {
         Ok(dto) => Json(ApiResponse::success(dto)).into_response(),
-        Err(e) => {
-            tracing::error!("[note_stats] 读取读数失败 note={}: {}", id, e);
-            Json(ApiResponse::<NoteStatsDto>::error("统计查询失败，请稍后再试")).into_response()
-        }
+        Err(error) => stats_unavailable(&error),
     }
 }
 
 /// POST /api/public/notes/:id/view —— 记一次阅读（**同一访客同一天只该调用一次**，
 /// 去重在前端；这里不做访客级去重，因为服务端没有"访客"这个身份）。
 ///
-/// 顺手把读数一并回给前端（省一次往返：上报与取数是同一个时刻的事实）。
+/// Return the resulting counters after the view mutation.
 pub async fn report_view(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i32>,
     headers: HeaderMap,
 ) -> Response {
-    if !visible_note_id(&state.db, id).await {
-        return note_gone();
+    match visible_note_id(&state.db, id).await {
+        Ok(true) => {}
+        Ok(false) => return note_gone(),
+        Err(error) => return stats_unavailable(&error),
     }
     // 一篇文章一天一行；撞唯一键就 `cnt = cnt + 1`。
     // **不在 Rust 侧算 "上次 + 1"**——那需要先读后写，两个并发请求会互相覆盖。
@@ -313,13 +329,10 @@ pub async fn report_view(
             OnConflict::columns([note_view::Column::NoteId, note_view::Column::ViewDate])
                 .values([(
                     note_view::Column::Cnt,
-                    // ⚠️ **必须带上表名**：PG 的 `ON CONFLICT … DO UPDATE SET` 里，右侧
-                    // 裸写列名是**歧义**的 —— 目标行与 `excluded` 都有 `cnt`，PG 直接报
-                    // `column reference "cnt" is ambiguous`。MySQL 的
-                    // `ON DUPLICATE KEY UPDATE` 把裸名解析成"既有那一行"，不报错。
-                    // 症状极隐蔽：这条 upsert 的 Err 分支只 `tracing::warn!`（设计如此：
-                    // 统计失败不该让读者看不了正文），于是**阅读数静默不涨、接口照回 200**。
-                    Expr::col((note_view::Entity, note_view::Column::Cnt)).add(1).into(),
+                    // Qualify the accumulated value to distinguish it from EXCLUDED.
+                    Expr::col((note_view::Entity, note_view::Column::Cnt))
+                        .add(1)
+                        .into(),
                 )])
                 .to_owned(),
         )
@@ -335,11 +348,13 @@ pub async fn report_view(
         Ok(dto) => Json(ApiResponse::success(dto)).into_response(),
         Err(e) => {
             tracing::error!("[note_stats] 上报后回读失败 note={}: {}", id, e);
-            Json(ApiResponse::<NoteStatsDto>::error("统计查询失败，请稍后再试")).into_response()
+            Json(ApiResponse::<NoteStatsDto>::error(
+                "统计查询失败，请稍后再试",
+            ))
+            .into_response()
         }
     }
 }
-
 
 /// 点赞与取消点赞共用的一段：先认身份，再确认文章可见。
 /// 返回 `Err(响应)` 表示已经可以原样返回给前端了。
@@ -353,12 +368,14 @@ async fn like_prelude(
         // 令牌在、但已经不能用（过期/收回/冻结）：如实回原因，**不降级成匿名**
         Err(e) => return Err(Json(ApiResponse::<LikeDto>::error(e.message())).into_response()),
         // 既没登录也没带访客标识（正常前端永远带）——只有直接 curl 的用户见得到
-        Ok(None) => {
-            return Err(Json(ApiResponse::<LikeDto>::error("未登录")).into_response())
-        }
+        Ok(None) => return Err(Json(ApiResponse::<LikeDto>::error("未登录")).into_response()),
     };
-    if !visible_note_id(&state.db, id).await {
-        return Err(Json(ApiResponse::<LikeDto>::error("这篇文章不存在")).into_response());
+    match visible_note_id(&state.db, id).await {
+        Ok(true) => {}
+        Ok(false) => {
+            return Err(Json(ApiResponse::<LikeDto>::error("这篇文章不存在")).into_response())
+        }
+        Err(error) => return Err(stats_unavailable(&error)),
     }
     Ok(who)
 }
@@ -388,7 +405,10 @@ async fn insert_like(db: &DatabaseConnection, note_id: i32, who: &Who) -> Result
         visitor_key: Set(visitor_key),
         ..Default::default()
     };
-    if let Err(e) = note_like::Entity::insert(am).exec_without_returning(db).await {
+    if let Err(e) = note_like::Entity::insert(am)
+        .exec_without_returning(db)
+        .await
+    {
         // 并发下两个请求同时走到这里 → 对应的那条唯一键拦下第二个
         // （登录行撞 `uq_like_note_user`、匿名行撞 `uq_like_note_visitor`）。
         // **不能只看错误类型断言"是撞唯一键"**（同 `profile.rs::add_favorite` 的取舍）：
@@ -449,7 +469,12 @@ pub async fn unlike_note(
         .exec(&state.db)
         .await
     {
-        tracing::error!("[note_stats] 取消点赞失败 note={} who={}: {}", id, who.tag(), e);
+        tracing::error!(
+            "[note_stats] 取消点赞失败 note={} who={}: {}",
+            id,
+            who.tag(),
+            e
+        );
         return Json(ApiResponse::<LikeDto>::error("操作失败，请稍后再试")).into_response();
     }
     like_dto(&state.db, id, false).await.into_response()
@@ -921,7 +946,6 @@ pub async fn note_report(
         daily_window,
     }))
 }
-
 
 /// 期粒度。**白名单**：`kind` 是查询参数，认不出的一律报错，不做"猜一个最像的"。
 #[cfg(test)]
