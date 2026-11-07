@@ -488,6 +488,77 @@ async fn isolated_connection() -> (DatabaseConnection, i32) {
     (db, pid)
 }
 
+#[tokio::test]
+async fn postgres_gallery_bulk_uses_read_committed_with_repeatable_read_connection_default() {
+    let Some(f) = Fixture::new(1).await else {
+        return;
+    };
+    let (worker, _) = isolated_connection().await;
+    worker
+        .execute(Statement::from_string(
+            DatabaseBackend::Postgres,
+            "SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL REPEATABLE READ"
+                .to_string(),
+        ))
+        .await
+        .unwrap();
+    let default_isolation: String = worker
+        .query_one(Statement::from_string(
+            DatabaseBackend::Postgres,
+            "SELECT current_setting('default_transaction_isolation') AS isolation".to_string(),
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "isolation")
+        .unwrap();
+    assert_eq!(default_isolation, "repeatable read");
+    let prepared = prepare_change(
+        &worker,
+        f.uid,
+        intent(json!({"action":"favorite","imageIds":f.ids,"isFavorite":true})),
+    )
+    .await
+    .unwrap();
+    let name = format!("bulk_isolation_{}", uuid::Uuid::new_v4().simple());
+    for sql in [
+        format!(
+            "CREATE FUNCTION {name}() RETURNS trigger LANGUAGE plpgsql AS $$ \
+             BEGIN IF current_setting('transaction_isolation') <> 'read committed' THEN \
+             RAISE EXCEPTION 'gallery write must use a fresh statement snapshot'; \
+             END IF; RETURN NEW; END; $$"
+        ),
+        format!(
+            "CREATE TRIGGER {name} BEFORE INSERT OR UPDATE ON image_favorite \
+             FOR EACH ROW WHEN (NEW.image_id={} AND NEW.user_id={}) EXECUTE FUNCTION {name}()",
+            f.ids[0], f.uid
+        ),
+    ] {
+        f.db.execute(Statement::from_string(DatabaseBackend::Postgres, sql))
+            .await
+            .unwrap();
+    }
+    let result = execute_change(&worker, f.uid, change(&prepared)).await;
+    for sql in [
+        format!("DROP TRIGGER {name} ON image_favorite"),
+        format!("DROP FUNCTION {name}()"),
+    ] {
+        f.db.execute(Statement::from_string(DatabaseBackend::Postgres, sql))
+            .await
+            .unwrap();
+    }
+    worker.close().await.unwrap();
+    let outcome = result.unwrap();
+    assert_eq!(outcome.changed_ids, f.ids);
+    assert!(
+        super::super::read(&f.db, f.uid, f.ids[0])
+            .await
+            .unwrap()
+            .is_favorite
+    );
+    f.cleanup().await;
+}
+
 async fn wait_for_block(db: &DatabaseConnection, waiter: i32, holder: i32) {
     tokio::time::timeout(Duration::from_secs(3), async {
         loop {
@@ -550,6 +621,14 @@ async fn postgres_gallery_comment_commit_before_delete_blocks_the_entire_deletio
         .await
         .unwrap();
     let (worker, waiter) = isolated_connection().await;
+    worker
+        .execute(Statement::from_string(
+            DatabaseBackend::Postgres,
+            "SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL REPEATABLE READ"
+                .to_string(),
+        ))
+        .await
+        .unwrap();
     let uid = f.uid;
     let input = change(&prepared);
     let task = tokio::spawn(async move {
