@@ -204,7 +204,7 @@ async fn postgres_batch_search_keeps_union_counts_pages_and_visibility() {
             .contains(&marker));
         assert!(item["content"].as_str().unwrap().chars().count() <= 240);
         assert_eq!(item["contentTruncated"], true);
-        assert_eq!(item["matchedKeywords"], json!(&keywords[..2]));
+        assert_eq!(item["matchedKeywordIndices"], json!([0, 1]));
         assert!(
             !item.to_string().contains("userId") && !item.to_string().contains("private reason")
         );
@@ -237,4 +237,73 @@ async fn postgres_batch_search_keeps_union_counts_pages_and_visibility() {
         [3, 1]
     );
     tx.rollback().await.unwrap();
+}
+
+#[test]
+fn projection_preserves_maximum_batch_metadata_and_default_page_under_escaping() {
+    let keywords: Vec<_> = (0..8)
+        .map(|i| format!("{}{}", "\"".repeat(127), i))
+        .collect();
+    for text in ["\"", "\u{0001}"] {
+        let counts = || Counts {
+            announcements: 3_000_000_000_000_000_000,
+            board: 3_000_000_000_000_000_000,
+            talk: 3_000_000_000_000_000_000,
+        };
+        let data = SearchData {
+            keywords: keywords.clone(), keyword_mode: "any", match_mode: "literal_case_insensitive",
+            sources: ["announcements", "board", "talk"], counts: counts(),
+            total: 9_000_000_000_000_000_000, page: 10000, page_size: 5, has_more: true,
+            keyword_counts: keywords.iter().map(|keyword| KeywordCounts {
+                keyword: keyword.clone(), counts: counts(), total: 9_000_000_000_000_000_000
+            }).collect(),
+            items: (0..5).map(|i| json!({
+                "id": i32::MAX-i, "source": "board", "title": text.repeat(120),
+                "content": text.repeat(240), "displayName": text.repeat(80),
+                "titleTruncated": false, "contentTruncated": false,
+                "displayNameTruncated": false, "approved": 1,
+                "createdAt": "2026-11-07T12:34:56.123456", "matchedKeywordIndices": [0,1,2,3,4,5,6,7]
+            })).collect(),
+        };
+        let keyword_counts = serde_json::to_value(&data.keyword_counts).unwrap();
+        assert!(serde_json::to_string(&data).unwrap().chars().count() > MAX_RESULT_CHARS);
+        let projected = data.bounded_projection().unwrap();
+        assert!(serde_json::to_string(&projected).unwrap().chars().count() <= MAX_RESULT_CHARS);
+        assert_eq!(projected.keywords, keywords);
+        assert_eq!(
+            serde_json::to_value(&projected.keyword_counts).unwrap(),
+            keyword_counts
+        );
+        assert_eq!(projected.total, 9_000_000_000_000_000_000);
+        assert_eq!(projected.items.len(), 5);
+        assert!(projected.has_more && projected.page == 10000 && projected.page_size == 5);
+        for item in projected.items {
+            assert_eq!(
+                item["matchedKeywordIndices"],
+                json!([0, 1, 2, 3, 4, 5, 6, 7])
+            );
+            assert_eq!(item["titleTruncated"], true);
+            assert_eq!(item["contentTruncated"], true);
+            assert_eq!(item["displayNameTruncated"], true);
+        }
+    }
+}
+
+#[test]
+fn ordinary_batch_projection_keeps_readable_excerpts_unchanged() {
+    let data = SearchData {
+        keywords: vec!["猫咪".into(), "cat".into()],
+        items: vec![
+            json!({"id": 1, "source": "board", "title": "题".repeat(120),
+                          "content": "文".repeat(240), "displayName": "名".repeat(80),
+                          "matchedKeywordIndices": [0,1], "titleTruncated": false,
+                          "contentTruncated": true, "displayNameTruncated": false}),
+        ],
+        ..Default::default()
+    };
+    let before = serde_json::to_value(&data).unwrap();
+    assert_eq!(
+        serde_json::to_value(data.bounded_projection().unwrap()).unwrap(),
+        before
+    );
 }

@@ -46,6 +46,39 @@ pub struct SearchData {
     pub has_more: bool,
 }
 
+const MAX_RESULT_CHARS: usize = 7500;
+
+impl SearchData {
+    fn bounded_projection(mut self) -> Result<Self, DbErr> {
+        // Match scope, counts and page membership remain unchanged; only display text shrinks.
+        for content_limit in [240_usize, 120, 60, 30, 15, 0] {
+            for item in &mut self.items {
+                for (key, flag, limit) in [
+                    ("title", "titleTruncated", content_limit / 2),
+                    ("content", "contentTruncated", content_limit),
+                    ("displayName", "displayNameTruncated", content_limit / 3),
+                ] {
+                    if let Some(text) = item.get(key).and_then(Value::as_str) {
+                        if text.chars().count() > limit {
+                            let visible: String = text.chars().take(limit).collect();
+                            item[key] = json!(visible);
+                            item[flag] = json!(true);
+                        }
+                    }
+                }
+            }
+            let encoded = serde_json::to_string(&self)
+                .map_err(|_| DbErr::Custom("Invalid activity search projection".into()))?;
+            if encoded.chars().count() <= MAX_RESULT_CHARS {
+                return Ok(self);
+            }
+        }
+        Err(DbErr::Custom(
+            "Activity search metadata exceeds the result limit".into(),
+        ))
+    }
+}
+
 impl SearchQuery {
     fn normalized_keywords(&self) -> Result<Vec<String>, &'static str> {
         if !(1..=8).contains(&self.keywords.len()) {
@@ -132,7 +165,7 @@ pub(super) async fn read<C: ConnectionTrait>(
             "content": row.try_get::<String>("", "content")?,
             "contentTruncated": row.try_get::<bool>("", "content_truncated")?,
             "createdAt": created,
-            "matchedKeywords": row.try_get::<Value>("", "matched_keywords")?});
+            "matchedKeywordIndices": row.try_get::<Value>("", "matched_keyword_indices")?});
         if source != "announcements" {
             item["approved"] = json!(1);
             item["displayName"] = json!(row.try_get::<String>("", "display_name")?);
@@ -143,7 +176,7 @@ pub(super) async fn read<C: ConnectionTrait>(
     }
     data.total = data.counts.announcements + data.counts.board + data.counts.talk;
     data.has_more = offset + (data.items.len() as u64) < data.total as u64;
-    Ok(data)
+    data.bounded_projection()
 }
 
 pub async fn search(

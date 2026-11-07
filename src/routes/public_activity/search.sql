@@ -16,14 +16,14 @@ WITH keywords AS MATERIALIZED (
            char_length(content) > 240 AS content_truncated,
            left(display_name, 80) AS display_name,
            char_length(display_name) > 80 AS display_name_truncated, created_at,
-           matched.keywords AS matched_keywords
+           matched.keyword_indices AS matched_keyword_indices
     FROM documents
     CROSS JOIN LATERAL (
-        SELECT array_agg(keyword ORDER BY ordinal) AS keywords,
+        SELECT array_agg(ordinal - 1 ORDER BY ordinal) AS keyword_indices,
                min(nullif(strpos(lower(content), lower(keyword)), 0)) AS content_position
         FROM keywords WHERE title ILIKE pattern OR content ILIKE pattern
     ) matched
-    WHERE matched.keywords IS NOT NULL
+    WHERE matched.keyword_indices IS NOT NULL
 ), counts AS (
     SELECT count(*) FILTER (WHERE source = 'announcements') AS announcements,
            count(*) FILTER (WHERE source = 'board') AS board,
@@ -39,13 +39,13 @@ WITH keywords AS MATERIALIZED (
                count(matches.id) FILTER (WHERE source = 'announcements') AS announcements,
                count(matches.id) FILTER (WHERE source = 'board') AS board,
                count(matches.id) FILTER (WHERE source = 'talk') AS talk
-        FROM keywords LEFT JOIN matches ON keywords.keyword = ANY(matches.matched_keywords)
+        FROM keywords LEFT JOIN matches ON keywords.ordinal - 1 = ANY(matches.matched_keyword_indices)
         GROUP BY keywords.keyword, keywords.ordinal
     ) per_keyword
 ), page AS (
     SELECT source, id, title, title_truncated, content, content_truncated,
            display_name, display_name_truncated, created_at,
-           to_jsonb(matched_keywords) AS matched_keywords
+           to_jsonb(matched_keyword_indices) AS matched_keyword_indices
     FROM matches ORDER BY created_at DESC NULLS LAST, source ASC, id DESC
     LIMIT $2 OFFSET $3
 )
