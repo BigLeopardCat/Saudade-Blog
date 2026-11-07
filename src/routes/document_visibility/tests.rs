@@ -152,7 +152,7 @@ async fn postgres_canonical_hash_visibility_and_revocation_match_corpus_export()
     let body = "# 标题\r\n正文\t é🐈\u{000b} ![img](/cat.png)";
     for (status, public, shadow) in [
         ("public", true, false),
-        ("draft", true, false),
+        ("draft", false, false),
         ("published", false, false),
         ("public", true, true),
     ] {
