@@ -223,8 +223,10 @@ mod tests {
             assert!(!allows(Scope::Tools, &Method::POST, path));
         }
         for path in [
-            "/api/protected/favorites/0", "/api/protected/notifications/-1",
-            "/api/protected/notifications/%31", "/api/protected/favorites/1/other",
+            "/api/protected/favorites/0",
+            "/api/protected/notifications/-1",
+            "/api/protected/notifications/%31",
+            "/api/protected/favorites/1/other",
         ] {
             assert!(!allows(Scope::Tools, &Method::GET, path));
         }
