@@ -34,7 +34,7 @@
     position: relative
     @media only screen and (max-width: 800px)
       width: 100%
-      img
+      .asset-image
         display: none
     .coverItem
       position: absolute
@@ -53,10 +53,11 @@
         transition: 1s
         background: var(--washi-head, #f2e7ed)
         border-radius: 10px
-    img
+    .asset-image
       border-radius: 10px
       width: 32%
-      max-height: 120px
+      height: 120px
+      flex: 0 0 32%
     .article
       width: 784px
       height: max-content
