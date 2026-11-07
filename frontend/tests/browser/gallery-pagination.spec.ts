@@ -121,7 +121,7 @@ test('a failed page retains existing images, stops automatic retries and retries
   await scrollBottom(page)
   await settleLayout(page)
   expect(calls.map(call=>call.before)).toEqual([null,11])
-  await page.getByRole('alert').getByRole('button',{name:'重试',exact:true}).click()
+  await page.getByRole('alert').getByRole('button',{name:/^重\s*试$/}).click()
   await expect.poll(()=>calls.length).toBe(3)
   await page.evaluate(()=>{
     for(let index=0;index<5;index++)window.dispatchEvent(new Event('resize'))
@@ -147,7 +147,7 @@ test('a failed first page retries the initial request without inventing an empty
   await settleLayout(page)
   expect(calls.map(call=>call.before)).toEqual([null])
   failed=false
-  await page.getByRole('alert').getByRole('button',{name:'重试',exact:true}).click()
+  await page.getByRole('alert').getByRole('button',{name:/^重\s*试$/}).click()
   await expect(page.getByRole('button',{name:'查看图片 图片1',exact:true})).toBeVisible()
   await expect(page.getByRole('alert')).toHaveCount(0)
   expect(calls.map(call=>call.before)).toEqual([null,null])
