@@ -1,3 +1,4 @@
+import AssetImage from '../../../components/AssetImage'
 import {useEffect, useMemo, useState} from 'react'
 import {useDispatch} from 'react-redux'
 import {Alert, Breadcrumb, Button, Card, Checkbox, Empty, Input, Modal, Segmented, Space, Spin, TreeSelect, Upload, message} from 'antd'
@@ -10,7 +11,6 @@ import {delImages, getR2Usage, uploadImages, type UploadTarget} from '../../../a
 import ImageCompression from '../../../apis/ImageCompression'
 import type {R2Usage} from '../../../interface/Setting'
 import {uploadBlocked, usagePercent} from '../../../utils/r2Quota'
-import {resolveApiAssetUrl} from '../../../utils/runtimeApi'
 import {assetDisplayName} from '../../../utils/assetName'
 import ImageDetail, {folderOptions} from './ImageDetail'
 import ImageGeneration from './ImageGeneration'
@@ -136,11 +136,11 @@ export default function Albums() {
         {images.map(image=>{
           const name=image.displayName||assetDisplayName(image.imageUrl)
           return <Card key={image.imageKey} size="small" className={'albumTile '+(selected.has(image.imageKey)?'is-checked':'')}>
-            <button type="button" className="albumOpen" aria-label={'查看图片 '+name} onClick={()=>setDetail(image)}>
-              <img className="albumThumb" src={resolveApiAssetUrl(image.imageUrl)} alt={name} loading="lazy"/>
-              <span className="albumText"><span className="albumName">{image.isFavorite&&<StarFilled/>}{name}</span>
-                {image.description&&<span className="albumCaption">{image.description}</span>}</span>
-            </button>
+            <div className="albumOpen">
+              <AssetImage className="albumThumb" src={image.imageUrl} alt={name} onClick={()=>setDetail(image)}/>
+              <button type="button" className="albumText albumTextOpen" aria-label={'查看图片 '+name} onClick={()=>setDetail(image)}><span className="albumName">{image.isFavorite&&<StarFilled/>}{name}</span>
+                {image.description&&<span className="albumCaption">{image.description}</span>}</button>
+            </div>
             <Checkbox aria-label={'选择图片 '+name} checked={selected.has(image.imageKey)} onChange={e=>toggle(image.imageKey,e.target.checked)}/>
           </Card>
         })}
