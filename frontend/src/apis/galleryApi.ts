@@ -10,15 +10,15 @@ export interface GalleryImage {
 export interface GalleryFolder {id:number; parentId:number; name:string; imageCount:number}
 export interface GalleryFilters {folderId?:number; search?:string; favorite?:boolean}
 export interface GalleryPage {items:GalleryImage[]; nextCursor:number|null}
-export const GALLERY_MOVE_LIMIT=100
-export interface GalleryMoveIntent {action:'move';imageIds:number[];folderId:number}
-export interface GalleryMovePreview {
-  version:string;expiresAt:number;intent:GalleryMoveIntent;matchedIds:number[]
+export const GALLERY_ACTION_LIMIT=100
+export type GalleryImageActionIntent={action:'move';imageIds:number[];folderId:number}|{action:'delete';imageIds:number[]}
+export interface GalleryImageActionPreview {
+  version:string;expiresAt:number;intent:GalleryImageActionIntent;matchedIds:number[]
   preview:{imageId:number;displayName:string|null;folderId:number;isFavorite:boolean}[]
   previewTruncated:boolean;destination:{id:number;name:string;parentId:number}|null
 }
-export interface GalleryMoveResult {
-  action:'move';changed:boolean;beforeVersion:string;matchedIds:number[];changedIds:number[];cleanupPendingIds:number[]
+export interface GalleryImageActionResult {
+  action:'move'|'delete';changed:boolean;beforeVersion:string;matchedIds:number[];changedIds:number[];cleanupPendingIds:number[]
 }
 export type GalleryPatch = Partial<Pick<GalleryImage,'displayName'|'description'|'folderId'|'isFavorite'>>
 
@@ -31,7 +31,10 @@ const baseQuery:BaseQueryFn<string|FetchArgs,unknown,{status:string|number;error
   const token=getToken()
   const result=await request(args,api,extra)
   if(result.error?.status===401) clearAuthToken(token)
-  if(result.error) return {error:{status:result.error.status,error:'图库请求失败，请稍后重试'}}
+  if(result.error){
+    const failure='data' in result.error?result.error.data as {message?:unknown}:undefined
+    return {error:{status:result.error.status,error:typeof failure?.message==='string'?failure.message:'图库请求失败，请稍后重试'}}
+  }
   const body=result.data as {code?:number;message?:string;data?:unknown}
   if(body?.code!==200) return {error:{status:body?.code??500,error:body?.message||'图库请求失败'}}
   return {data:body.data}
@@ -50,10 +53,10 @@ export const galleryApi=createApi({
       query:({id,version,patch})=>({url:`/api/protect/gallery/images/${id}`,method:'PUT',body:{version,...patch}}),
       invalidatesTags:['Images','Folders'],
     }),
-    prepareMove:builder.mutation<GalleryMovePreview,GalleryMoveIntent>({
+    prepareImageAction:builder.mutation<GalleryImageActionPreview,GalleryImageActionIntent>({
       query:body=>({url:'/api/protect/gallery/image-actions/prepare',method:'POST',body}),
     }),
-    moveImages:builder.mutation<GalleryMoveResult,Pick<GalleryMovePreview,'version'|'expiresAt'|'intent'>>({
+    changeImages:builder.mutation<GalleryImageActionResult,Pick<GalleryImageActionPreview,'version'|'expiresAt'|'intent'>>({
       query:body=>({url:'/api/protect/gallery/image-actions',method:'POST',body}),
       invalidatesTags:['Images','Folders'],
     }),

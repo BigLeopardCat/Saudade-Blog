@@ -131,9 +131,12 @@ test('folder navigation keeps sibling categories and moves directory deletion in
       await route.fulfill({json:{code:200,data:true}})
     }else await route.fulfill({json:{code:200,data:folders}})
   })
+  await page.route('**/fixture/all-only.svg',route=>route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="100" height="80"/>'}))
   await page.route('**/api/protect/gallery/images**',route=>{
-    visits.push(new URL(route.request().url()).searchParams.get('folderId'))
-    return route.fulfill({json:{code:200,data:{items:[],nextCursor:null}}})
+    const folder=new URL(route.request().url()).searchParams.get('folderId')
+    visits.push(folder)
+    return route.fulfill({json:{code:200,data:{items:folder===null?[{imageKey:1,imageUrl:'/fixture/all-only.svg',
+      displayName:'未分类样例',description:'',folderId:0,isFavorite:false,version:'a'.repeat(64)}]:[],nextCursor:null}}})
   })
   await page.goto(sandboxURL)
   const navigation=page.getByRole('navigation',{name:'图库分类'})
@@ -164,7 +167,9 @@ test('folder navigation keeps sibling categories and moves directory deletion in
   await expect(treeItem('旅行')).toHaveCount(0)
   await expect(treeItem('插画')).toBeVisible()
   await navigation.getByRole('treeitem').filter({hasText:'全部图片'}).click()
-  await expect.poll(()=>visits.at(-1)).toBe(null)
+  await expect(page.getByRole('button',{name:'查看图片 未分类样例'})).toBeVisible()
+  await expect(page.locator('.albumContents .ant-breadcrumb').getByRole('button')).toHaveCount(1)
+  expect(visits.filter(folder=>folder===null)).toHaveLength(1)
   await page.setViewportSize({width:390,height:760})
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
   await expect(treeItem('插画')).toBeVisible()
@@ -256,3 +261,79 @@ for(const conflict of [false,true]){
     await expect(page.getByRole('navigation',{name:'图库分类'}).locator('.albumFolderLabel small')).toHaveText('2')
   })
 }
+
+for(const detail of [false,true]){
+  test(`${detail?'image detail':'batch'} deletion freezes an explicit preview and reports pending storage cleanup`,async({page,sandboxURL})=>{
+    let rows:GalleryImage[]=[1,2].map(id=>({imageKey:id,imageUrl:'/fixture/delete-'+id+'.svg',
+      displayName:'删除样例'+id,description:'',folderId:0,isFavorite:false,version:'a'.repeat(64)}))
+    const imageIds=detail?[1]:[1,2]
+    const intent={action:'delete',imageIds}
+    const frozen={version:'d'.repeat(64),expiresAt:4_000_000_000,intent}
+    let preparations=0,writes=0,legacyDeletes=0
+    await page.route('**/fixture/delete-*',route=>route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="100" height="80"/>'}))
+    await page.route('**/api/protect/images/r2',route=>route.fulfill({json:{code:200,data:{configured:false}}}))
+    await page.route('**/api/protect/gallery/folders',route=>route.fulfill({json:{code:200,data:[]}}))
+    await page.route('**/api/protect/gallery/images**',route=>route.fulfill({json:{code:200,data:{items:rows,nextCursor:null}}}))
+    await page.route('**/api/protect/delImg',route=>{legacyDeletes++;return route.fulfill({json:{code:200,data:'legacy'}})})
+    await page.route('**/api/protect/gallery/image-actions/prepare',route=>{
+      preparations++
+      expect(route.request().postDataJSON()).toEqual(intent)
+      return route.fulfill({json:{code:200,data:{...frozen,matchedIds:imageIds,destination:null,previewTruncated:false,
+        preview:rows.filter(row=>imageIds.includes(row.imageKey)).map(row=>({imageId:row.imageKey,
+          displayName:row.displayName,folderId:row.folderId,isFavorite:row.isFavorite}))}}})
+    })
+    await page.route('**/api/protect/gallery/image-actions',route=>{
+      writes++
+      expect(route.request().postDataJSON()).toEqual(frozen)
+      rows=rows.filter(row=>!imageIds.includes(row.imageKey))
+      return route.fulfill({json:{code:200,data:{action:'delete',changed:true,beforeVersion:frozen.version,
+        matchedIds:imageIds,changedIds:imageIds,cleanupPendingIds:imageIds}}})
+    })
+    await page.goto(sandboxURL)
+    if(detail){
+      await page.getByRole('button',{name:'查看图片 删除样例1'}).click()
+      await page.getByRole('dialog',{name:'删除样例1',exact:true}).getByRole('button',{name:'删除',exact:true}).click()
+    }else{
+      for(const id of imageIds)await page.getByRole('checkbox',{name:'选择图片 删除样例'+id}).check()
+      await page.getByRole('button',{name:'删除选中',exact:true}).click()
+    }
+    const modal=page.getByRole('dialog',{name:'删除图片',exact:true})
+    expect(preparations).toBe(0)
+    expect(writes).toBe(0)
+    await modal.getByRole('button',{name:'查看预览',exact:true}).click()
+    await expect(modal.getByRole('region',{name:'删除预览'})).toContainText('删除样例1')
+    await expect(modal.getByRole('region',{name:'删除预览'})).toContainText('共 '+imageIds.length+' 张')
+    await expect(modal.getByRole('combobox')).toHaveCount(0)
+    expect(writes).toBe(0)
+    await modal.getByRole('button',{name:'确认删除',exact:true}).click()
+    await expect(modal).toHaveCount(0)
+    await expect(page.getByText(`已从图库移除 ${imageIds.length} 张图片；${imageIds.length} 张文件待后台清理`,{exact:true})).toBeVisible()
+    expect(preparations).toBe(1)
+    expect(writes).toBe(1)
+    expect(legacyDeletes).toBe(0)
+    await expect(page.getByRole('button',{name:'查看图片 删除样例1'})).toHaveCount(0)
+    if(detail)await expect(page.getByRole('dialog',{name:'删除样例1',exact:true})).toHaveCount(0)
+  })
+}
+
+test('a referenced-image deletion cannot advance without a valid prepared preview',async({page,sandboxURL})=>{
+  let writes=0
+  await page.route('**/api/protect/images/r2',route=>route.fulfill({json:{code:200,data:{configured:false}}}))
+  await page.route('**/api/protect/gallery/folders',route=>route.fulfill({json:{code:200,data:[]}}))
+  await page.route('**/fixture/referenced.svg',route=>route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="100" height="80"/>'}))
+  await page.route('**/api/protect/gallery/images**',route=>route.fulfill({json:{code:200,data:{items:[{
+    imageKey:1,imageUrl:'/fixture/referenced.svg',displayName:'已引用图片',description:'',folderId:0,isFavorite:false,version:'a'.repeat(64),
+  }],nextCursor:null}}}))
+  await page.route('**/api/protect/gallery/image-actions/prepare',route=>route.fulfill({status:409,json:{code:409,message:'图片仍被文章引用，不能删除'}}))
+  await page.route('**/api/protect/gallery/image-actions',route=>{writes++;return route.fulfill({status:500,json:{code:500}})})
+  await page.goto(sandboxURL)
+  await page.getByRole('checkbox',{name:'选择图片 已引用图片'}).check()
+  await page.getByRole('button',{name:'删除选中',exact:true}).click()
+  const modal=page.getByRole('dialog',{name:'删除图片',exact:true})
+  await modal.getByRole('button',{name:'查看预览',exact:true}).click()
+  await expect(modal.getByRole('alert')).toContainText('图片仍被文章引用，不能删除')
+  await expect(modal.getByRole('button',{name:'确认删除',exact:true})).toHaveCount(0)
+  expect(writes).toBe(0)
+  await modal.getByRole('button',{name:/^取\s*消$/}).click()
+  await expect(page.getByRole('checkbox',{name:'选择图片 已引用图片'})).toBeChecked()
+})

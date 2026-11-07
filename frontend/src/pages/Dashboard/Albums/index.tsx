@@ -6,8 +6,8 @@ import type {UploadProps, UploadFile} from 'antd'
 import {AppstoreOutlined, FolderAddOutlined, InboxOutlined, StarFilled, UnorderedListOutlined} from '@ant-design/icons'
 import {useNavigate} from 'react-router-dom'
 import type {AppDispatch} from '../../../store'
-import {galleryApi, galleryError, GALLERY_MOVE_LIMIT, type GalleryFolder, type GalleryImage} from '../../../apis/galleryApi'
-import {delImages, getR2Usage, uploadImages, type UploadTarget} from '../../../apis/ImageMethods'
+import {galleryApi, galleryError, GALLERY_ACTION_LIMIT, type GalleryFolder, type GalleryImage} from '../../../apis/galleryApi'
+import {getR2Usage, uploadImages, type UploadTarget} from '../../../apis/ImageMethods'
 import ImageCompression from '../../../apis/ImageCompression'
 import type {R2Usage} from '../../../interface/Setting'
 import {uploadBlocked, usagePercent} from '../../../utils/r2Quota'
@@ -15,7 +15,7 @@ import {assetDisplayName} from '../../../utils/assetName'
 import ImageDetail from './ImageDetail'
 import ImageGeneration from './ImageGeneration'
 import FolderNavigation from './FolderNavigation'
-import MoveImages from './MoveImages'
+import ImageActionConfirmation from './ImageActionConfirmation'
 import './index.sass'
 
 export default function Albums() {
@@ -31,7 +31,6 @@ export default function Albums() {
   const [selected,setSelected]=useState<Set<number>>(new Set())
   const [detail,setDetail]=useState<GalleryImage|null>(null)
   const [deleteItems,setDeleteItems]=useState<GalleryImage[]>([])
-  const [deleting,setDeleting]=useState(false)
   const [moveItems,setMoveItems]=useState<GalleryImage[]>([])
   const [deleteFolderTarget,setDeleteFolderTarget]=useState<GalleryFolder|null>(null)
   const [removingFolder,setRemovingFolder]=useState(false)
@@ -64,22 +63,10 @@ export default function Albums() {
     const next=new Set(before);if(checked)next.add(id);else next.delete(id);return next
   })
   const chooseFolder=(id:number|undefined)=>{setSelected(new Set());setFolderId(id)}
-  const beginMove=()=>{
+  const beginAction=(action:'move'|'delete')=>{
     const items=images.filter(image=>selected.has(image.imageKey))
     if(items.length!==selected.size){void message.warning('所选图片已变化，请重新选择');return}
-    setMoveItems(items)
-  }
-  const remove=async()=>{
-    setDeleting(true)
-    try {
-      const res=await delImages(deleteItems.map(image=>image.imageUrl))
-      if(res.data?.code!==200) throw new Error(res.data?.message||'删除失败')
-      if(deleteItems.some(item=>item.imageKey===detail?.imageKey))setDetail(null)
-      setDeleteItems([]);setSelected(new Set())
-      dispatch(galleryApi.util.invalidateTags(['Images','Folders']))
-      void loadR2();void message.success('图片已删除')
-    } catch(error){void message.error(error instanceof Error?error.message:'删除失败')}
-    finally {setDeleting(false)}
+    if(action==='move')setMoveItems(items);else setDeleteItems(items)
   }
   const addFolder=async()=>{
     try {
@@ -143,9 +130,10 @@ export default function Albums() {
       ...(folderId===0?[{title:'未分类'}]:paths.map(folder=>({title:<button type="button" onClick={()=>chooseFolder(folder.id)}>{folder.name}</button>})))]}/>
     <div className="albumBatchActions">
       <span aria-live="polite">已选 {selected.size} 张</span>
-      <Button disabled={!selected.size||selected.size>GALLERY_MOVE_LIMIT}
-        title={selected.size>GALLERY_MOVE_LIMIT?`每批最多移动 ${GALLERY_MOVE_LIMIT} 张图片`:undefined} onClick={beginMove}>移动选中</Button>
-      <Button danger disabled={!selected.size} onClick={()=>setDeleteItems(images.filter(i=>selected.has(i.imageKey)))}>删除选中</Button>
+      <Button disabled={!selected.size||selected.size>GALLERY_ACTION_LIMIT}
+        title={selected.size>GALLERY_ACTION_LIMIT?`每批最多移动 ${GALLERY_ACTION_LIMIT} 张图片`:undefined} onClick={()=>beginAction('move')}>移动选中</Button>
+      <Button danger disabled={!selected.size||selected.size>GALLERY_ACTION_LIMIT}
+        title={selected.size>GALLERY_ACTION_LIMIT?`每批最多删除 ${GALLERY_ACTION_LIMIT} 张图片`:undefined} onClick={()=>beginAction('delete')}>删除选中</Button>
       <Button type="text" disabled={!selected.size} onClick={()=>setSelected(new Set())}>清除选择</Button>
     </div>
     {(query.isError||foldersQuery.isError)&&<Alert type="error" showIcon message={galleryError(query.error||foldersQuery.error)}
@@ -168,12 +156,12 @@ export default function Albums() {
     </div></div>
     {generation&&<ImageGeneration onClose={()=>setGeneration(false)}/>}
     {detail&&<ImageDetail key={detail.imageKey} image={detail} folders={folders} onClose={()=>setDetail(null)} onDelete={image=>setDeleteItems([image])}/>}
-    <Modal title="删除图片" open={!!deleteItems.length} confirmLoading={deleting} okButtonProps={{danger:true,style:{width:100}}}
-      cancelButtonProps={{disabled:deleting}} closable={!deleting} maskClosable={!deleting} keyboard={!deleting} okText="删除" cancelText="取消"
-      onOk={()=>void remove()} onCancel={()=>{if(!deleting)setDeleteItems([])}}>
-      确认删除这 {deleteItems.length} 张图片？如有图片仍被文章使用，本次删除将全部取消。
-    </Modal>
-    {!!moveItems.length&&<MoveImages items={moveItems} folders={folders} onClose={()=>setMoveItems([])}
+    {!!deleteItems.length&&<ImageActionConfirmation action="delete" items={deleteItems} folders={folders}
+      onClose={()=>setDeleteItems([])} onComplete={()=>{
+        if(deleteItems.some(item=>item.imageKey===detail?.imageKey))setDetail(null)
+        setDeleteItems([]);setSelected(new Set())
+      }}/>}
+    {!!moveItems.length&&<ImageActionConfirmation action="move" items={moveItems} folders={folders} onClose={()=>setMoveItems([])}
       onComplete={()=>{setMoveItems([]);setSelected(new Set())}}/>}
     <Modal title="删除文件夹" open={!!deleteFolderTarget} confirmLoading={removingFolder}
       okText="删除文件夹" cancelText="取消" okButtonProps={{danger:true,style:{width:120}}}
