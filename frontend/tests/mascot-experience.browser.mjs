@@ -30,9 +30,10 @@ const sources = {
     createRoot(document.getElementById('root')).render(<Preview/>);`,
 };
 const files = {};
+const imagePaths = new Set();
 for (const [name, contents] of Object.entries(sources)) {
   const result = await build({stdin:{contents,resolveDir:root,loader:'tsx'},bundle:true,write:false,
-    outfile:'bundle.js',jsx:'automatic',loader:{'.svg':'dataurl','.png':'dataurl','.woff':'dataurl','.woff2':'dataurl','.ttf':'dataurl','.jpg':'dataurl','.gif':'dataurl','.mp4':'empty'},
+    absWorkingDir:root,outfile:'bundle.js',assetNames:'assets/[name]-[hash]',publicPath:'/',jsx:'automatic',loader:{'.webp':'file','.svg':'dataurl','.png':'dataurl','.woff':'dataurl','.woff2':'dataurl','.ttf':'dataurl','.jpg':'dataurl','.gif':'dataurl','.mp4':'empty'},
     define:{'__SITE_AUTHOR__':'"示例作者"','__SITE_KEYWORDS__':'""','__SITE_URL__':'"https://example.test"','__SITE_TITLE__':'"示例博客"','__SITE_DESCRIPTION__':'"博客简介"','process.env.NODE_ENV':'"production"','import.meta.env':JSON.stringify({BASE_URL:'/',VITE_HTTP_BASEURL:'',MODE:'production'})},
     plugins:[
       // Keep the real route hierarchy and NotFound. Stub only unrelated destinations
@@ -51,6 +52,11 @@ for (const [name, contents] of Object.entries(sources)) {
       }},
       {name:'sass',setup(builder){builder.onLoad({filter:/\.(sass|scss)$/},args=>({contents:compile(args.path).css,loader:'css',resolveDir:path.dirname(args.path)}))}}
     ]});
+  for(const file of result.outputFiles.filter(file=>file.path.endsWith('.webp'))) {
+    const url='/'+path.relative(root,file.path).split(path.sep).join('/');
+    imagePaths.add(url);
+    files[url]={type:'image/webp',body:file.contents};
+  }
   files[`/${name}.js`] = {type:'text/javascript',body:result.outputFiles.find(f=>f.path.endsWith('.js')).text};
   files[`/${name}.css`] = {type:'text/css',body:result.outputFiles.find(f=>f.path.endsWith('.css'))?.text||''};
   files[`/${name}`] = {type:'text/html',body:`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/${name}.css">${name==='mascot'?'':'<style>body{margin:0;background:#fbf6fa;font-family:system-ui,sans-serif}</style>'}<div id="root"></div><script src="/${name}.js"></script>`};
@@ -61,7 +67,6 @@ let imageBytes = 0;
 for (const name of ['neutral','pain','cry','bump-small','bump-medium','bump-large']) {
   const body=await readFile(path.join(root,'public/mascot-404',name+'.webp'));
   imageBytes+=body.length;
-  files[`/mascot-404/${name}.webp`] = {type:'image/webp',body};
 }
 assert.ok(imageBytes<256*1024,`404 image budget exceeded: ${imageBytes} bytes`);
 const server=createServer((req,res)=>{const file=files[req.url];if(!file){res.writeHead(404).end();return}res.writeHead(200,{'Content-Type':file.type}).end(file.body)});
@@ -105,18 +110,34 @@ try {
   await page.waitForFunction(()=>document.querySelector('.mascot-error__scene')?.dataset.ready==='true');
   assert.equal(await page.locator('.mascot-error__scene').getAttribute('data-expression'),'cry');
   assert.equal(await page.getByRole('button',{name:'再看一次'}).count(),0);
-  const cold=await browser.newPage({viewport:{width:375,height:1000}});
+  const cold=await browser.newPage({viewport:{width:375,height:1000},deviceScaleFactor:2});
+  await cold.emulateMedia({reducedMotion:'reduce'});
   const cdp=await cold.context().newCDPSession(cold);
   await cdp.send('Network.enable');
   await cdp.send('Network.setCacheDisabled',{cacheDisabled:true});
   await cdp.send('Network.emulateNetworkConditions',{offline:false,latency:60,downloadThroughput:3_000_000/8,uploadThroughput:3_000_000/8});
   await cold.goto(origin+'/mascot');
   await cold.waitForFunction(()=>document.querySelector('.mascot-error__scene')?.dataset.ready==='true');
-  const coldAssets=await cold.evaluate(()=>performance.getEntriesByType('resource').filter(r=>r.name.includes('/mascot-404/')).map(r=>({url:r.name,bytes:r.encodedBodySize,start:r.startTime,end:r.responseEnd})));
+  // Wait for all resources only to measure bytes; page usability has no image barrier.
+  await cold.waitForFunction(paths=>performance.getEntriesByType('resource').filter(r=>paths.includes(new URL(r.name).pathname)).length===6,[...imagePaths]);
+  const coldAssets=await cold.evaluate(paths=>performance.getEntriesByType('resource').filter(r=>paths.includes(new URL(r.name).pathname)).map(r=>({url:r.name,bytes:r.encodedBodySize,start:r.startTime,end:r.responseEnd})),[...imagePaths]);
+  assert.ok(coldAssets.every(resource=>resource.bytes>0),'Cold-image measurements must contain actual response bytes');
+  const mobileImageBytes=coldAssets.reduce((sum,r)=>sum+r.bytes,0);
+  assert.ok(mobileImageBytes<=imageBytes*.8,`Responsive images saved less than 20%: ${mobileImageBytes}/${imageBytes}`);
+  assert.ok(await cold.locator('.mascot-error__sprite').evaluateAll(images=>images.every(image=>
+    image.complete&&image.naturalWidth>0&&getComputedStyle(image).objectFit==='contain'&&image.currentSrc.includes('-672-')&&
+    Math.abs(image.getBoundingClientRect().width-335)<1&&Math.abs(image.getBoundingClientRect().width/image.getBoundingClientRect().height-1.5)<.01)));
+  const desktop=await browser.newPage({viewport:{width:1440,height:1000},deviceScaleFactor:2});
+  await desktop.emulateMedia({reducedMotion:'reduce'});
+  await desktop.goto(origin+'/mascot');
+  assert.ok(await desktop.locator('.mascot-error__sprite').evaluateAll(images=>images.every(image=>
+    image.complete&&image.naturalWidth>0&&!image.currentSrc.includes('-672-')&&Math.abs(image.getBoundingClientRect().width-660)<1)));
+  await desktop.close();
   assert.equal(coldAssets.length,6);
   assert.ok(coldAssets.every(r=>r.url.endsWith('.webp')));
   assert.ok(coldAssets.reduce((sum,r)=>sum+r.bytes,0)<256*1024);
   const coldImageMs=Math.round(Math.max(...coldAssets.map(r=>r.end))-Math.min(...coldAssets.map(r=>r.start)));
+  await cold.screenshot({path:path.join(output,'404-mobile-2dpr.png'),fullPage:true});
   await cold.close();
   const stalled=await browser.newPage({viewport:{width:375,height:1000}});
   const heldImages=[];
@@ -125,7 +146,7 @@ try {
     const url=route.request().url();
     if(!url.startsWith(origin+'/'))return route.abort();
     // Leave images pending: a failed-fast stub would not exercise this cold-start boundary.
-    if(url.startsWith(origin+'/mascot-404/')){heldImages.push(url);return;}
+    if(imagePaths.has(new URL(url).pathname)){heldImages.push(url);return;}
     return route.continue();
   });
   await stalled.goto(origin+'/mascot',{waitUntil:'domcontentloaded'});
@@ -154,5 +175,5 @@ try {
   await page.setViewportSize({width:375,height:900});
   assert.equal(await page.locator('.dashboardPage').evaluate(el=>getComputedStyle(el).overflowY),'visible');
   assert.deepEqual(errors,[]);
-  console.log(JSON.stringify({passed:['real router: standalone 404, no header/footer, return home and SPA back','404 ordered impacts and crying ending at desktop/mobile sizes','404 replay and reduced motion','3Mbps cold cache: six WebP assets under 256KiB','stalled images: static 404 and return-home link remain usable','long review scroll reaches editor bottom','mobile document flow'],imageBytes,coldImageMs,screenshots:output},null,2));
+  console.log(JSON.stringify({passed:['real router: standalone 404, no header/footer, return home and SPA back','404 ordered impacts and crying ending at desktop/mobile sizes','404 replay and reduced motion','3Mbps cold cache: six hashed WebP assets, mobile 2DPR saves at least 20%, desktop preserves full dimensions','stalled images: static 404 and return-home link remain usable','long review scroll reaches editor bottom','mobile document flow'],imageBytes,mobileImageBytes,coldImageMs,screenshots:output},null,2));
 } finally {await browser?.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve))}
