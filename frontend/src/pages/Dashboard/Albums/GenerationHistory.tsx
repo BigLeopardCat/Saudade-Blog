@@ -24,6 +24,7 @@ export default function GenerationHistory({items,active,detail,failed,statusName
   const [deleteJob]=api.useDeleteGenerationMutation()
   const [retryJob]=api.useRetryGenerationMutation()
   const [working,setWorking]=useState<string|null>(null)
+  const [openMenu,setOpenMenu]=useState<string|null>(null)
   const act=async(item:GenerationJobSummary,key:string)=>{
     if(working)return
     setWorking(item.id)
@@ -61,18 +62,26 @@ export default function GenerationHistory({items,active,detail,failed,statusName
     {items.map(item=>{
       const status=active?.id===item.id?active.status:item.status
       const running=status==='generating'||status==='saving'
-      return <div key={item.id} className="generationHistoryItem" data-job-id={item.id} data-running={running?'true':undefined} data-active={active?.id===item.id?'true':undefined}>
+      return <div key={item.id} className="generationHistoryItem" data-job-id={item.id} data-running={running?'true':undefined} data-active={active?.id===item.id?'true':undefined}
+        onKeyDownCapture={event=>{
+          if(event.key==='Escape'&&openMenu===item.id){
+            event.preventDefault()
+            event.stopPropagation()
+            setOpenMenu(null)
+            event.currentTarget.querySelector<HTMLButtonElement>('.generationHistoryMore')?.focus()
+          }
+        }}>
         <Tooltip title={item.title} placement="right">
           <button type="button" className="generationHistorySelect" aria-current={active?.id===item.id?'true':undefined} onClick={()=>onSelect({...item,status})}>
             <span className="generationHistoryStatus">{running&&<LoadingOutlined spin/>}{statusNames[status]||status}</span>
             <span className="generationHistoryTitle">{item.title||'未命名图片'}</span>
           </button>
         </Tooltip>
-        <Dropdown autoFocus trigger={['click']} placement="bottomRight" menu={{items:[
+        <Dropdown autoFocus trigger={['click']} placement="bottomRight" open={openMenu===item.id} onOpenChange={open=>setOpenMenu(open?item.id:null)} menu={{items:[
           {key:'copy',label:'复制完整提示词'},
           {key:'retry',label:'重试',disabled:running},
           {key:'delete',label:'删除记录',danger:true,disabled:running},
-        ],onClick:({key})=>void act(item,key)}}>
+        ],onClick:({key})=>{setOpenMenu(null);void act(item,key)}}}>
           <Button type="text" size="small" className="generationHistoryMore" aria-label={'生图记录操作 '+(item.title||'未命名图片')} icon={<MoreOutlined/>} loading={working===item.id} disabled={!!working}/>
         </Dropdown>
       </div>
