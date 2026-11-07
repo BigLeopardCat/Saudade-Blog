@@ -141,7 +141,7 @@ test('real cover pending art unmounts on error, retries the same URL and stops a
     await expect(cover.locator('.readCoverFallback')).toBeVisible()
     await cover.getByRole('button', {name: '重新加载图片：文章封面'}).click()
     await expect(pending).toBeVisible()
-    await expect(cover).toHaveCSS('height', `${bounds!.height}px`)
+    await expect.poll(async () => Math.abs((await cover.boundingBox())!.height - bounds!.height)).toBeLessThan(0.1)
     releaseSuccess()
     await expect(cover.getByRole('img', {name: '文章封面'})).toHaveJSProperty('naturalHeight', 900)
     await expect(pending).toHaveCount(0)
