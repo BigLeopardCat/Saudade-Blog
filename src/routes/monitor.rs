@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use crate::auth_jwt;
 use crate::routes::AppState;
 
-/// 上报载荷（前端 boot.js 全局捕获打包；落盘时 message 截 2000 / stack 截 4000）。
+/// 前端错误报告；消息和堆栈落盘上限分别为 2000、4000 字节。
 #[derive(Deserialize)]
 pub struct ReportPayload {
     /// 取值必须落在 MONITOR_KINDS 里，否则在落盘时收敛成 `other`。
@@ -24,10 +24,7 @@ pub struct ReportPayload {
     pub stack: Option<String>,
     #[serde(default)]
     pub url: Option<String>,
-    /// WebGL 可用性标记（前端探测后随载荷上报）。
-    ///
-    /// This anonymous endpoint retains valid report fields when webgl is malformed.
-    /// Missing and invalid values remain unknown rather than claiming WebGL is absent.
+    /// WebGL 缺失或无效时记为 unknown，不影响其他报告字段。
     #[serde(default)]
     pub webgl: Option<serde_json::Value>,
 }
@@ -44,10 +41,7 @@ fn clean(s: &str) -> String {
         .collect()
 }
 
-/// 零宽 / 双向控制字符（Unicode `Cf` 里会改变终端观感的那一批）。
-///
-/// 只列"能在终端里把已打印文本重排/隐藏"的：ZWSP/ZWNJ/ZWJ、LRM/RLM、LRE…RLO、LRI…PDI、
-/// 以及 BOM。它们不是控制字符（`is_control()` 判不出来），但危害与 ANSI 转义同类。
+/// 清除 is_control() 未覆盖的零宽、双向重排和 BOM 字符，避免伪造终端输出。
 fn is_invisible_format(c: char) -> bool {
     matches!(c,
         '\u{200b}'..='\u{200f}'
@@ -86,11 +80,7 @@ fn normalize_kind(raw: Option<&str>) -> String {
     }
 }
 
-/// `User-Agent` 归一：清换行 + 截 300 字节。
-///
-/// 它是**请求头**、不是载荷里的字段 ⇒ 访客没法在 JSON 里伪造它（伪造只能改自己发的
-/// 头，那是另一回事：它仍然如实描述了"谁在报"）。但正因为它来自客户端，照样要清洗
-/// 截断——头里塞换行就能整行伪造，这条纪律与 `type` 一样。
+/// 客户端 User-Agent 同样需要清洗，并按 UTF-8 字符边界截至 300 字节。
 fn normalize_ua(raw: Option<&str>) -> String {
     truncate(&clean(raw.unwrap_or("")), 300)
 }
@@ -109,11 +99,7 @@ const DEDUPE_WINDOW: Duration = Duration::from_secs(60);
 /// 表容量上限（防被刷爆内存：每个 key 只占一个短字符串 + 两个计数器）。
 const DEDUPE_MAX_KEYS: usize = 512;
 
-/// 去重决策的**纯函数**内核（`now` 注入 ⇒ 窗口过期能被测到，不用 sleep）。
-///
-/// 语义：**固定窗口**——命中一次就记下第一次的时间戳，窗口内再来只加计数、**不推后**时间戳。
-/// 因此持续发生的错误每 60 秒会重新落一行（"现在还在发生"看得见），而不是永远只留第一行。
-/// 返回本次落盘行应记的 `dup`：首次 1，之后 2、3…
+/// 固定窗口内累加 dup，不延后首次时间；持续错误每个窗口重新记录。
 fn dedupe_hit(map: &mut HashMap<String, (Instant, u32)>, key: &str, now: Instant) -> u32 {
     match map.get_mut(key) {
         Some((first, n)) if now.duration_since(*first) < DEDUPE_WINDOW => {
@@ -127,19 +113,13 @@ fn dedupe_hit(map: &mut HashMap<String, (Instant, u32)>, key: &str, now: Instant
     }
 }
 
-/// 全局去重表的加锁入口。
-///
-/// **跨访客**去重（key 里不含 uid）：同一个 bug 一百个访客各报一次，落盘仍是一行 + 计数。
-/// 代价要记住：第一个报的人决定了这一行的 uid/ua，后来者的身份不落盘——所以 `dup>1`
-/// 是"至少这么多访客/次数"，不是"这个人报了 N 次"。
-///
-/// 表满了先按窗口过期清理；清完还满就整体清空（宁可丢窗口也不能让内存无界增长）。
-/// 这把锁只在同步的极小临界区里持有、里面没有 `.await` ⇒ 不会卡住 tokio worker。
+/// 跨访客去重；dup 是报告次数，不归属于首条记录的 uid/ua。
+/// 表满时先清过期项，再清空以限制内存；锁内不执行异步操作。
 fn dedupe_count(key: &str) -> u32 {
     static TABLE: OnceLock<Mutex<HashMap<String, (Instant, u32)>>> = OnceLock::new();
     let table = TABLE.get_or_init(|| Mutex::new(HashMap::new()));
     let now = Instant::now();
-    // 锁中毒（某个线程在临界区里 panic）⇒ 退化成不去重，但**绝不吞掉这条上报**。
+    // 锁不可用时保留本次报告，不去重。
     let Ok(mut map) = table.lock() else { return 1 };
     if map.len() >= DEDUPE_MAX_KEYS {
         map.retain(|_, (first, _)| now.duration_since(*first) < DEDUPE_WINDOW);
@@ -165,14 +145,14 @@ pub async fn report_log(State(state): State<Arc<AppState>>, req: Request<Body>) 
         Err(_) => "guest".to_string(),
     };
 
-    // UA 与 uid 同理：必须在 `into_body()` 之前从 headers 取出（之后 req 只剩 body）。
+    // 消费请求体前读取 User-Agent。
     let ua = normalize_ua(
         req.headers()
             .get(header::USER_AGENT)
             .and_then(|v| v.to_str().ok()),
     );
 
-    // 照抄 chat.rs 模式：手动限体 + serde_json::from_slice
+    // 报告请求体限制为 8 KiB。
     let body_bytes = match axum::body::to_bytes(req.into_body(), 8 * 1024).await {
         Ok(b) => b,
         Err(_) => {
@@ -199,9 +179,7 @@ pub async fn report_log(State(state): State<Arc<AppState>>, req: Request<Body>) 
     let stack = truncate(&clean(payload.stack.as_deref().unwrap_or("")), 4000);
     let url = truncate(&clean(payload.url.as_deref().unwrap_or("")), 500);
 
-    // 去重 key：只由**已清洗截断**的三个字段拼成（原始载荷进不来）⇒ 访客没法用超长
-    // msg 掏空表，也没法把 uid/ua 拼进去制造互相干扰的 key。
-    // `msg` 只取前 80 字：同一类错误的正文尾部常带变址（id/时间），全串相同才是少数。
+    // 去重仅使用清洗后的 kind、url 和消息前 80 字节；不按 uid/ua 分组。
     let dup = dedupe_count(&format!("{kind}|{}|{url}", truncate(msg.as_str(), 80)));
 
     let level = if kind == "http_status" {
@@ -211,7 +189,7 @@ pub async fn report_log(State(state): State<Arc<AppState>>, req: Request<Body>) 
     };
     let webgl = normalize_webgl(payload.webgl.as_ref());
     let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
-    // 字段顺序是对账契约：`type=`/`uid=` 后面**只能追加**，见文件头注。
+    // 日志字段顺序供现有解析器使用；扩展字段只在末尾追加。
     let line = format!(
         "{ts} {level} [monitor] type={kind} uid={uid} url={url} msg={msg} stack={stack} ua={ua} webgl={webgl} dup={dup}\n"
     );
@@ -251,15 +229,10 @@ async fn append_line(path: &str, line: &str) {
     }
 }
 
-/// 落盘失败的 WARNING 间隔。
-///
-/// 限频是必需的：盘满时**每一条上报都会失败**，不限频就会用 WARNING 把 `rust.log`
-/// 也写满（次生灾害：真线索被淹没在同一个错误的重复里）。语义与 `dedupe_count` 同族——
-/// 固定窗口，窗口内只记第一条，被压掉的条数在下一个窗口的首条里报出来。
+/// 写入告警采用固定窗口限频，并在下个窗口首条告警报告被抑制数量。
 const WRITE_WARN_WINDOW: Duration = Duration::from_secs(60);
 
-/// 限频决策（纯函数，`now` 注入 ⇒ 窗口行为可测，不用 sleep）。
-/// 返回 `(这次记不记, 新的 last, 新的被压条数)`。
+/// 返回本次是否记录、窗口起点和新的抑制计数。
 fn warn_decision(
     last: Option<Instant>,
     suppressed: u32,
@@ -274,7 +247,7 @@ fn warn_decision(
 fn warn_write_failed(path: &str, err: &std::io::Error) {
     static STATE: OnceLock<Mutex<(Option<Instant>, u32)>> = OnceLock::new();
     let state = STATE.get_or_init(|| Mutex::new((None, 0)));
-    // 锁中毒（临界区里 panic）⇒ 退化成不限频地记一条，**绝不因为"限频器坏了"而不留痕**。
+    // 告警限频锁不可用时仍记录本次失败。
     let Ok(mut g) = state.lock() else {
         tracing::warn!("[monitor] 落盘失败 path={path} err={err}");
         return;
@@ -339,8 +312,7 @@ mod tests {
         tokio::fs::remove_dir_all(root).await.unwrap();
     }
 
-    /// 两种边界输入：ASCII 落在边界（对照）与多字节落在字符中间（回归点）。
-    /// 判据是"任何时候不出现 `&str[..n]` 的裸切片"——这个用例是它的回归锁。
+    /// ASCII 与多字节输入均按有效 UTF-8 边界截断。
     #[test]
     fn truncate_never_splits_a_char() {
         let ascii = "A".repeat(2500);
@@ -376,15 +348,12 @@ mod tests {
         // 长度不变（去重 key 与截断口径都按清洗后的串算）
         assert_eq!(clean(ansi).chars().count(), ansi.chars().count());
 
-        // 反控：正常中英数标点原样通过（换错就是"把真日志改花"）
+        // 普通中英文、数字和标点保持原样。
         let normal = "普通的一句「话」— 42% / path?a=1";
         assert_eq!(clean(normal), normal);
     }
 
-    /// 审计 SAU-022：落盘失败的限频决策。
-    ///
-    /// 窗口内只记第一条、被压掉的条数在下一条里报出来；窗口一过又能记。
-    /// 反控：把窗口判据去掉（永远记）⇒ 第三条断言当场红。
+    /// 写入告警窗口内合并计数，过期后恢复记录。
     #[test]
     fn write_warn_is_rate_limited() {
         let t0 = Instant::now();
@@ -405,14 +374,14 @@ mod tests {
         assert_eq!(n, 0);
     }
 
-    /// 审计 A2：`type` 是匿名可写字段，原样插值可被整行伪造。
+    /// 匿名 type 字段只接受封闭枚举，不能注入日志字段。
     #[test]
     fn kind_is_a_closed_enum() {
         assert_eq!(normalize_kind(Some("js_error")), "js_error");
         assert_eq!(normalize_kind(Some("http_status")), "http_status");
         assert_eq!(normalize_kind(None), "other");
         assert_eq!(normalize_kind(Some("SECAUDIT_FORGED")), "other");
-        // 换行与空格都不许把值撑出白名单（审计那条伪造行就是靠 \n 撑进来的）
+        // 换行和空格不能扩展类型白名单。
         assert_eq!(
             normalize_kind(Some("js_error\n2026-01-01 ERROR x")),
             "other"
@@ -438,12 +407,7 @@ mod tests {
         }
     }
 
-    /// 清单本身不许有重复项：重复项不会报错，只会让"清单长度 = 类型数"这个前提悄悄失真
-    /// （前端那条防漂测试按集合比对，重复项会让两边看起来一致而实际各少一种）。
-    /// 顺带钉住形状：小写 ASCII 字母 / **数字** / 下划线——数字这一格必须有，
-    /// `live2d_load_fail` 里就带着个 `2`（前端那条提取规则 `monitor-report.test.mjs`
-    /// 的头注写明了"写成 `[a-z_]+` 会静默漏掉它"）：两边必须是同一个形状，
-    /// 否则防漂测试会一边漏、一边不认。
+    /// 报告类型唯一，并采用小写 ASCII 字母、数字和下划线。
     #[test]
     fn whitelist_shape_is_sane() {
         let mut seen = std::collections::HashSet::new();
@@ -459,7 +423,7 @@ mod tests {
         assert_eq!(seen.len(), MONITOR_KINDS.len());
     }
 
-    /// `ua` 是请求头来的、一样是客户端可控 ⇒ 清洗截断一条不能少（头里塞 `\n` 能整行伪造）。
+    /// User-Agent 中的控制字符和超长内容不能破坏日志行。
     #[test]
     fn ua_is_cleaned_and_truncated() {
         assert_eq!(
@@ -472,12 +436,11 @@ mod tests {
             "curl/8.5.0  X-Forged: 1"
         );
         assert_eq!(normalize_ua(Some(&"u".repeat(500))).len(), 300);
-        // 多字节也要落在字符边界上（复用 truncate 的那条回归锁）
+        // 多字节 User-Agent 保持有效 UTF-8。
         assert_eq!(normalize_ua(Some(&"猫".repeat(200))).len(), 300);
     }
 
-    /// 缺席与脏值都是 `unknown`：`unknown`（没说）与 `no`（探针说不可用）是两件事，
-    /// 混起来会让"多少访客没有 WebGL"这个数凭空变大。
+    /// 未知 WebGL 状态与明确不可用保持区分。
     #[test]
     fn webgl_absent_is_unknown_not_no() {
         use serde_json::json;
@@ -489,7 +452,7 @@ mod tests {
         assert_eq!(normalize_webgl(Some(&serde_json::Value::Null)), "unknown");
     }
 
-    /// 局部脏值不许毁掉整条载荷：`webgl` 是 Value 而不是 bool 就是为了这个。
+    /// 无效 webgl 值不影响其他载荷字段。
     #[test]
     fn bad_webgl_value_does_not_fail_the_whole_payload() {
         let p: ReportPayload =
@@ -499,9 +462,7 @@ mod tests {
         assert_eq!(normalize_webgl(p.webgl.as_ref()), "unknown");
     }
 
-    /// 60 秒**固定**窗口：窗口内累加计数，窗口一过重新从 1 起。
-    /// 断言"不推后时间戳"是有意的——推后的话持续发生的错误会永远停在第一行，
-    /// "现在还在发生"就看不出来了。
+    /// 去重计数使用固定窗口，不随重复报告延后窗口起点。
     #[test]
     fn dedupe_counts_within_window_and_resets_after() {
         let mut m: HashMap<String, (Instant, u32)> = HashMap::new();
