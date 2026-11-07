@@ -1,158 +1,48 @@
-import { useCallback, useEffect, useState } from 'react'
-import getToken from '../../apis/getToken.tsx'
-import { getFavorites, ok } from '../../apis/ProfileMethods.tsx'
-import type { FavoriteItem } from '../../interface/ProfileType'
-import { AGENT_TURN_DONE_EVENT } from './agentTurn.ts'
+import {useCallback} from 'react'
+import {privateApi, currentPrivateOwner} from '../../apis/privateApi'
+import type {FavoriteMutation} from '../../apis/ProfileMethods'
+import {getUidFromToken} from '../../utils/auth'
+import {useAuthToken} from '../../utils/useAuthToken'
+import store from '../../store'
+export {FAVORITES_CHANGED_EVENT} from '../../apis/privateApi'
 
-/** 收藏变了 → 让所有显示收藏的地方立刻重算（调用方不用知道谁在看收藏） */
-export const FAVORITES_CHANGED_EVENT = 'favorites-change'
-
-/** 收藏列表（null = 还没成功读到过）。**同一个引用**只在拉到新数据时被替换。 */
-let list: FavoriteItem[] | null = null
-/** 上一次拉取是不是失败了。**必须与"读到的是空的"分开**：读不到却显示"还没有收藏的文章"
- * 是同一族谎（本仓纪律：未登录/读不到 ≠ 空，见 narrator 纪律 20 的同一判据）。 */
-let failed = false
-/** 本地已知的写入结果（noteId → 是否已收藏），一次"写入之后发出"的读成功即清空 */
-let overrides = new Map<string, boolean>()
-/** 去重：同一时刻只发一次 GET（详情页与个人中心可能同时要） */
-let inflight: Promise<void> | null = null
-/** 请求代次：只有"最后一次发出"的那份读数才作数 */
-let seq = 0
-/** 活着的订阅者数：0 时不发请求（没人在看收藏，拉它干嘛） */
-let active = 0
-const subs = new Set<() => void>()
-
-const key = (id: number | string) => String(id)
-
-function emit(): void {
-    subs.forEach((fn) => { try { fn() } catch { /* 一个订阅者抛错不该拖垮其余 */ } })
+/** Apply only a confirmed result belonging to the currently authenticated account. */
+export async function applyLocalFavorite(result: FavoriteMutation): Promise<boolean> {
+    const owner = currentPrivateOwner()
+    if (!owner || result?.ownerUserId !== owner || !Number.isSafeInteger(result.noteId)
+        || result.noteId <= 0 || typeof result.isFavorite !== 'boolean') return false
+    const arg = {ownerUserId: owner, noteId: result.noteId}
+    const stateRead = store.dispatch(privateApi.util.getRunningQueryThunk('favoriteState', arg))
+    const listRead = store.dispatch(privateApi.util.getRunningQueryThunk('favorites', owner))
+    stateRead?.abort()
+    listRead?.abort()
+    await Promise.all([stateRead, listRead])
+    if (currentPrivateOwner() !== owner) return false
+    store.dispatch(privateApi.util.upsertQueryEntries([{endpointName: 'favoriteState', arg,
+        value: {ownerUserId: owner, noteId: result.noteId, isFavorite: result.isFavorite}}]))
+    if (!result.isFavorite) store.dispatch(privateApi.util.updateQueryData('favorites', owner,
+        rows => rows.filter(row => row.noteId !== result.noteId)))
+    store.dispatch(privateApi.util.invalidateTags([{type: 'Favorites', id: owner}]))
+    // A cancelled first read may not have registered tags yet.
+    if (listRead) void listRead.refetch()
+    return true
 }
 
-/** 订阅本 store（组件不要直接调，走 useFavorites） */
-function subscribe(fn: () => void): () => void {
-    subs.add(fn)
-    return () => { subs.delete(fn) }
-}
-
-/**
- * 登记一个"此刻真的在看收藏"的消费者（`useFavorites(enabled)` 生效时调用），
- * 返回取消登记的函数。**登记期间**事件驱动（agent 轮次结束/收藏变更/切回标签页）
- * 才会真去拉——没人在看收藏时拉它是白花流量。0 个消费者时一次请求都不发。
- */
-export function retainFavorites(): () => void {
-    active += 1
-    refreshFavorites()
-    return () => { active = Math.max(0, active - 1) }
-}
-
-// 全局监听在**模块加载时**挂一次（本模块被详情页/个人中心任一引用即生效）：
-// 事件可能在任何时刻到达（用户在看公告页时看板娘改了收藏），挂载点不该由"这一刻谁在
-// 显示收藏"决定——要不要真去拉，由 refreshFavorites 里的 active 判据决定。
-if (typeof window !== 'undefined') {
-    window.addEventListener(FAVORITES_CHANGED_EVENT, () => { refreshFavorites() })
-    window.addEventListener(AGENT_TURN_DONE_EVENT, () => { refreshFavorites() })
-    document.addEventListener('visibilitychange', () => {
-        if (!document.hidden) refreshFavorites()
-    })
-}
-
-/** 某篇是否已收藏（本地写入的结果优先） */
-export function hasFavorite(id: number | string | null | undefined): boolean {
-    if (id === null || id === undefined || id === '') return false
-    const k = key(id)
-    const local = overrides.get(k)
-    if (local !== undefined) return local
-    return (list || []).some((f) => key(f.noteId) === k)
-}
-
-/**
- * 写侧**成功之后**调用：立刻把这次写入的结果落到本地，再拉一次全量对齐。
- * `faved` 是写入后的真实状态（不是"翻转一下"——并发两次点击时翻转会算错）。
- */
-export function applyLocalFavorite(noteId: number, faved: boolean): void {
-    overrides.set(key(noteId), faved)
-    if (list && !faved) {
-        list = list.filter((f) => key(f.noteId) !== key(noteId))
-    }
-    // 在途的那份读数可能是**写入之前**的快照（进页面即拉、用户趁没回来就点收藏）⇒
-    // 作废它（代次 +1）并允许立刻发一份新的，否则它会拿旧 list 把刚点掉的那颗★又点亮。
-    seq += 1
-    inflight = null
-    emit()
-    refreshFavorites()
-}
-
-/**
- * 拉一次全量（并发去重 + 未登录即清空 + 丢弃过期读数）。
- * 返回的 promise 在两个调用点都被 await/忽略，语义是"这次对齐结束"。
- */
-export function refreshFavorites(): Promise<void> {
-    if (typeof window === 'undefined' || !active) return Promise.resolve()
-    if (!getToken()) {
-        if (list !== null || overrides.size || failed) {
-            list = null
-            overrides.clear()
-            failed = false
-            emit()
-        }
-        return Promise.resolve()
-    }
-    if (inflight) return inflight
-    const mine = ++seq
-    const p: Promise<void> = getFavorites()
-        .then((res) => {
-            // 期间有过本地写入（或更新的请求）⇒ 这份读数是旧快照，丢掉
-            if (mine !== seq) return
-            if (ok(res)) {
-                list = [...(res.data.data || [])]
-                overrides = new Map()   // 全量读数到手，本地判断功成身退
-                failed = false
-            } else {
-                // 失败：保留上一次的 list，但记住这次没读到
-                failed = true
-            }
-            emit()
-        })
-        .catch(() => {
-            if (mine !== seq) return
-            failed = true
-            emit()
-        })
-        .finally(() => { if (inflight === p) inflight = null })
-    inflight = p
-    return p
-}
-
-/**
- * 订阅收藏状态。
- * @param enabled 该显示位置现在是否真的要看收藏（未登录 / 窗没开 / 这一页不显示收藏 → false）。
- *                至少一个订阅者是 true 时才会发请求。
- */
-export function useFavorites(enabled: boolean): {
-    list: FavoriteItem[] | null
-    failed: boolean
-    has: (id: number | string | null | undefined) => boolean
-    refresh: () => void
-} {
-    const [snap, setSnap] = useState<FavoriteItem[] | null>(() => list)
-    const [bad, setBad] = useState<boolean>(() => failed)
-
-    useEffect(() => subscribe(() => { setSnap(list); setBad(failed) }), [])
-
-    useEffect(() => {
-        if (!enabled) return
-        return retainFavorites()
-    }, [enabled])
-
+export function useFavorites(enabled: boolean) {
+    const owner = getUidFromToken(useAuthToken())
+    const active = enabled && owner !== null
+    const query = privateApi.useFavoritesQuery(owner ?? 0, {skip: !active, refetchOnMountOrArgChange: true})
     return {
-        list: snap,
-        failed: bad,
-        has: useCallback((id: number | string | null | undefined) => hasFavorite(id), []),
-        refresh: useCallback(() => { refreshFavorites() }, []),
+        list: active ? query.currentData ?? null : null,
+        failed: active && query.isError,
+        refresh: useCallback(() => {if (!query.isUninitialized) void query.refetch()},
+            [query.isUninitialized, query.refetch]),
     }
 }
 
-/** 供测试与排障：当前 store 的快照（`active` = 有几个消费者在看；0 时一次请求都不发） */
-export function favoritesDebug(): { list: FavoriteItem[] | null; failed: boolean; active: number } {
-    return { list, failed, active }
+export function useFavoriteState(noteId: number): boolean {
+    const owner = getUidFromToken(useAuthToken())
+    const active = owner !== null && Number.isSafeInteger(noteId) && noteId > 0
+    const query = privateApi.useFavoriteStateQuery({ownerUserId: owner ?? 0, noteId}, {skip: !active})
+    return active && !!query.currentData?.isFavorite
 }
