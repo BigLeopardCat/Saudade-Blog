@@ -45,7 +45,7 @@ fn selection_rejects_ambiguous_empty_and_invalid_id_sets() {
         Selection::AllUnread
     );
     let mut query = update(7).filter(user_notification::Column::Id.is_in([1, 2]));
-    query.query().returning_col(user_notification::Column::Id);
+    QueryTrait::query(&mut query).returning_col(user_notification::Column::Id);
     let sql = query.build(DatabaseBackend::Postgres).sql;
     assert!(sql.contains("RETURNING \"id\"") && !sql.contains("content"));
     assert!(

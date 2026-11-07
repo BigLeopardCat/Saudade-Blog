@@ -110,7 +110,7 @@ pub(super) async fn selected<C: ConnectionTrait>(
     }
     // These locks protect both ownership and deletion until commit; only unread rows change.
     let mut query = update(uid).filter(user_notification::Column::Id.is_in(ids.iter().copied()));
-    query.query().returning_col(user_notification::Column::Id);
+    QueryTrait::query(&mut query).returning_col(user_notification::Column::Id);
     let returned = db.query_all(query.build(db.get_database_backend())).await?;
     let mut changed: Vec<i32> = returned
         .iter()
