@@ -53,6 +53,16 @@ pub(super) fn endpoint(value: &str) -> Option<String> {
     Some(value.trim_end_matches('/').to_string())
 }
 
+pub(super) fn r2_key(url: &str, cfg: &r2::R2Config) -> Option<String> {
+    let key = r2::r2_key_of(url, cfg)?;
+    let boundary = format!("{}/", cfg.prefix);
+    let filename = key.strip_prefix(&boundary)?;
+    if filename.is_empty() || key.split('/').any(|part| !safe_filename(part)) {
+        return None;
+    }
+    Some(key)
+}
+
 pub(crate) async fn targets(
     db: &DatabaseTransaction,
     images: &[Image],
@@ -88,10 +98,7 @@ pub(crate) async fn targets(
             if !cfg.active() {
                 return Err(ActionError::Storage);
             }
-            let key = r2::r2_key_of(&image.image_url, &cfg).ok_or(ActionError::Storage)?;
-            if key.is_empty() || key.split('/').any(|v| !safe_filename(v)) {
-                return Err(ActionError::Storage);
-            }
+            let key = r2_key(&image.image_url, &cfg).ok_or(ActionError::Storage)?;
             let credentials = creds.as_ref().ok_or(ActionError::Storage)?;
             let scope = endpoint(&credentials.endpoint).ok_or(ActionError::Storage)?;
             result.push(Target {

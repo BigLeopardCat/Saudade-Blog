@@ -165,7 +165,11 @@ pub async fn autosave_note(
 ) -> Json<ApiResponse<AutosaveDraftResult>> {
     let client_id = payload.id;
 
-    let txn = match state.db.begin().await {
+    let txn = match state
+        .db
+        .begin_with_config(Some(sea_orm::IsolationLevel::ReadCommitted), None)
+        .await
+    {
         Ok(t) => t,
         Err(e) => return write_error(&e),
     };

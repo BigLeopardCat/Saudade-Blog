@@ -227,7 +227,9 @@ async fn register(
     {
         return Err(DbErr::Custom("invalid gallery image identity".into()));
     }
-    let txn = db.begin().await?;
+    let txn = db
+        .begin_with_config(Some(sea_orm::IsolationLevel::ReadCommitted), None)
+        .await?;
     references::fence(&txn, false).await?;
     // Serialize same-URL registration without blocking unrelated uploads or holding I/O in the transaction.
     txn.query_one(Statement::from_sql_and_values(

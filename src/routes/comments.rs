@@ -400,7 +400,11 @@ pub async fn create_comment(
     };
     let notice_src = reply_target.map(|_| content.clone());
     // External moderation is complete before taking the gallery reference fence.
-    let transaction = match state.db.begin().await {
+    let transaction = match state
+        .db
+        .begin_with_config(Some(sea_orm::IsolationLevel::ReadCommitted), None)
+        .await
+    {
         Ok(transaction) => transaction,
         Err(error) => {
             tracing::error!("comment transaction failed uid={uid} note={note_id}: {error}");

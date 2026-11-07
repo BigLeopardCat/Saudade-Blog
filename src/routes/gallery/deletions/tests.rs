@@ -49,6 +49,24 @@ fn cleanup_targets_reject_paths_and_endpoint_credentials() {
         target::endpoint("https://objects.invalid/"),
         Some("https://objects.invalid".into())
     );
+    let cfg = crate::r2::R2Config {
+        prefix: "gallery".into(),
+        public_base: "https://images.invalid".into(),
+        ..Default::default()
+    };
+    assert_eq!(
+        target::r2_key("https://images.invalid/gallery/a.png", &cfg),
+        Some("gallery/a.png".into())
+    );
+    for url in [
+        "https://images.invalid/private/a.png",
+        "https://images.invalid/gallery-other/a.png",
+        "https://images.invalid/gallery/",
+        "https://images.invalid/gallery/../private/a.png",
+        "https://other.invalid/gallery/a.png",
+    ] {
+        assert!(target::r2_key(url, &cfg).is_none(), "{url}");
+    }
 }
 
 #[tokio::test]

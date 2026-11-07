@@ -99,7 +99,10 @@ async fn complete(
         storage_seconds = started.elapsed().as_secs_f64(),
         "generated image storage ready"
     );
-    let txn = state.db.begin().await?;
+    let txn = state
+        .db
+        .begin_with_config(Some(sea_orm::IsolationLevel::ReadCommitted), None)
+        .await?;
     crate::routes::gallery::references::guard_texts(&txn, &[&url]).await?;
     let image = txn
         .query_one(stmt(

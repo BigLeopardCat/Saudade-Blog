@@ -115,7 +115,9 @@ pub(crate) async fn prepare_change(
         return Err(ActionError::Unauthorized);
     }
     let intent = intent.normalize().map_err(|_| ActionError::Invalid)?;
-    let txn = db.begin().await?;
+    let txn = db
+        .begin_with_config(Some(sea_orm::IsolationLevel::ReadCommitted), None)
+        .await?;
     let expires_at = chrono::Utc::now().timestamp() + input::APPROVAL_SECONDS;
     let prepared = plan::build(&txn, uid, intent, expires_at, false)
         .await?
@@ -140,7 +142,9 @@ pub(crate) async fn execute_change(
         return Err(ActionError::Invalid);
     }
     let intent = input.intent.normalize().map_err(|_| ActionError::Invalid)?;
-    let txn = db.begin().await?;
+    let txn = db
+        .begin_with_config(Some(sea_orm::IsolationLevel::ReadCommitted), None)
+        .await?;
     let planned = plan::build(&txn, uid, intent, input.expires_at, true).await?;
     if planned.prepared.version != input.version {
         return Err(ActionError::Conflict);

@@ -785,7 +785,11 @@ pub async fn create_note(
     };
 
     // Article content and tag associations commit atomically.
-    let txn = match state.db.begin().await {
+    let txn = match state
+        .db
+        .begin_with_config(Some(sea_orm::IsolationLevel::ReadCommitted), None)
+        .await
+    {
         Ok(t) => t,
         Err(e) => {
             tracing::error!("[notes] 建文章：开启事务失败: {e}");
@@ -843,7 +847,11 @@ pub async fn update_note(
     // Omitted tags preserve associations; an explicit empty list clears them.
     let new_tags = payload.tags.clone();
 
-    let txn = match state.db.begin().await {
+    let txn = match state
+        .db
+        .begin_with_config(Some(sea_orm::IsolationLevel::ReadCommitted), None)
+        .await
+    {
         Ok(t) => t,
         Err(e) => return write_error(&e),
     };
