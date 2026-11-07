@@ -3,30 +3,22 @@ import CountUpDefault from "react-countup";
 import { cjsDefault } from "../../utils/cjsDefault";
 import './index.sass'
 import {useSelector} from "react-redux";
-import {noteList} from "../../store/components/note.tsx";
+import {adminNotesApi} from "../../apis/adminNotesApi";
 import React from "react";
 import {useNavigate} from "react-router-dom";
 import WordCloud from "../wordCloud";
-
-// react-countup 的 build 是 CJS，Vite 8 之后默认 import 可能拿到名字空间对象而不是组件
-// （症状是 `Minified React error #130 … got: object`，判据与三种形态见 utils/cjsDefault.ts）。
-// **不要改回 `import CountUp from "react-countup"`。**
 const CountUp = cjsDefault(CountUpDefault)
 
 const ArticleAnalytics = () => {
     const tagCount = useSelector((state: {tags: any}) => state.tags.tagCount)
-    const noteCount = useSelector((state: { notes:noteList  }) => state.notes.noteCount);
-    // @ts-ignore
+    const notes = adminNotesApi.useAdminNoteCountQuery();
     const categoryCount = useSelector((state) => state.categories.categoryCount)
     const navigate = useNavigate();
-
-    // isComponent 目前没有任何一项设为 true（WordCloud 那个分支因此不渲染），
-    // 但字段保留在类型里：分支是既有行为，收口类型不等于删功能
     const list: {
         index: number
         icon: string
         label: string
-        value: number
+        value: number | undefined
         bgColor: string
         bgColorDark: string
         badgeColor: string
@@ -37,7 +29,7 @@ const ArticleAnalytics = () => {
             index: 1,
             icon: '✨️',
             label: '文章总数',
-            value: noteCount,
+            value: notes.data,
             bgColor: '#f1dfba',
             bgColorDark: 'rgba(241, 223, 186, 0.16)',
             badgeColor: 'rgba(230,240,0,0.3)',
@@ -91,7 +83,10 @@ const ArticleAnalytics = () => {
                             <span className="akBadge" aria-hidden="true">{item.icon}</span>
                             <div className="akText">
                                 <span className="akLabel">{item.label}</span>
-                                <Statistic value={item.value} formatter={formatter}/>
+                                {item.index === 1 && notes.isError
+                                    ? <button type="button" onClick={() => void notes.refetch()}>数量读取失败，重试</button>
+                                    : item.value === undefined ? <span role="status">加载中…</span>
+                                    : <Statistic value={item.value} formatter={formatter}/>}
                             </div>
                         </>
                     )}

@@ -1,3 +1,4 @@
+pub mod admin_list;
 pub(crate) mod authors;
 
 use crate::entity::{category, note};
@@ -15,8 +16,9 @@ use axum::{
 };
 use sea_orm::sea_query::{Expr, SimpleExpr};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, Condition, DatabaseConnection, DerivePartialModel, EntityTrait,
-    PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set, TransactionTrait,
+    ActiveModelTrait, ColumnTrait, Condition, ConnectionTrait, DatabaseConnection,
+    DerivePartialModel, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set,
+    TransactionTrait,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -253,42 +255,26 @@ impl NoteSummary {
     }
 }
 
-async fn category_names(
-    db: &sea_orm::DatabaseConnection,
+async fn category_names<C: ConnectionTrait>(
+    db: &C,
     ids: impl Iterator<Item = i32>,
-) -> HashMap<i32, String> {
+) -> Result<HashMap<i32, String>, sea_orm::DbErr> {
     let ids: Vec<i32> = ids
         .collect::<std::collections::HashSet<i32>>()
         .into_iter()
         .collect();
     if ids.is_empty() {
-        return HashMap::new();
+        return Ok(HashMap::new());
     }
-    match category::Entity::find()
+    let rows = category::Entity::find()
         .select_only()
         .column(category::Column::Id)
         .column(category::Column::Name)
         .filter(category::Column::Id.is_in(ids))
         .into_tuple::<(i32, String)>()
         .all(db)
-        .await
-    {
-        Ok(v) => v.into_iter().collect(),
-        Err(e) => {
-            tracing::warn!("[notes] 分类查询失败，本页不挂分类名: {e}");
-            HashMap::new()
-        }
-    }
-}
-
-fn or_empty_warn<T>(r: Result<Vec<T>, sea_orm::DbErr>, what: &str) -> Vec<T> {
-    match r {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::warn!("[notes] {what} 查询失败，已降级成空列表（接口仍 200）: {e}");
-            Vec::new()
-        }
-    }
+        .await?;
+    Ok(rows.into_iter().collect())
 }
 
 /// Map summaries with a category only when its referenced row exists.
@@ -318,42 +304,27 @@ pub async fn list_public_notes(
     let notes = note::Entity::find()
         .filter(condition)
         .order_by_desc(note::Column::CreatedAt)
+        .order_by_desc(note::Column::Id)
         // Select summary columns only; category names are attached in one batch query.
         .into_partial_model::<NoteSummary>()
         .paginate(&state.db, per_page)
         .fetch_page(page - 1)
         .await;
-    let notes = or_empty_warn(notes, "公开文章列表");
+    let notes = match notes {
+        Ok(rows) => rows,
+        Err(error) => return crate::routes::db_error("公开文章列表", &error),
+    };
 
-    let cats = category_names(&state.db, notes.iter().filter_map(|r| r.category_id)).await;
+    let cats = match category_names(&state.db, notes.iter().filter_map(|r| r.category_id)).await {
+        Ok(rows) => rows,
+        Err(error) => return crate::routes::db_error("文章分类", &error),
+    };
     let mut dtos: Vec<NoteDto> = notes
         .into_iter()
         .map(|r| summary_to_dto(r, &cats))
         .collect();
     attach_tags(&state.db, &mut dtos).await;
     attach_stats(&state.db, &mut dtos).await;
-    attach_authors(&state.db, &mut dtos).await;
-
-    Json(ApiResponse::success(dtos))
-}
-
-pub async fn list_all_notes(State(state): State<Arc<AppState>>) -> Json<ApiResponse<Vec<NoteDto>>> {
-    // The administrator article list excludes editor shadows; the drafts filter includes them.
-    let notes = note::Entity::find()
-        .filter(note::Column::DraftOf.is_null())
-        .order_by_desc(note::Column::CreatedAt)
-        // Summaries omit article bodies and attach categories separately.
-        .into_partial_model::<NoteSummary>()
-        .all(&state.db)
-        .await;
-    let notes = or_empty_warn(notes, "全部文章列表");
-
-    let cats = category_names(&state.db, notes.iter().filter_map(|r| r.category_id)).await;
-    let mut dtos: Vec<NoteDto> = notes
-        .into_iter()
-        .map(|r| summary_to_dto(r, &cats))
-        .collect();
-    attach_tags(&state.db, &mut dtos).await;
     attach_authors(&state.db, &mut dtos).await;
 
     Json(ApiResponse::success(dtos))
@@ -381,11 +352,6 @@ pub(crate) fn note_hits_keyword(n: &note::Model, kw: &str, tag_names: &[String])
 /// 前台按「全中优先、无全中才降级到部分命中」分档（见 search_notes）。
 fn term_hit_count(n: &note::Model, terms: &[String], tag_names: &[String]) -> usize {
     count_terms(terms, |t| note_hits_keyword(n, t, tag_names))
-}
-
-/// 多词命中：任一 term 命中即算（后台筛选用——召回优先，后台列表自己排序）。
-fn note_hits_terms(n: &note::Model, terms: &[String], tag_names: &[String]) -> bool {
-    term_hit_count(n, terms, tag_names) > 0
 }
 
 fn search_score_terms(note: &note::Model, terms: &[String], tag_names: &[String]) -> i64 {
@@ -473,7 +439,11 @@ async fn search_notes_query(
         if rows.len() as u64 > legacy_search::CANDIDATE_LIMIT {
             return legacy_search::too_broad();
         }
-        let cats = category_names(&state.db, rows.iter().filter_map(|r| r.category_id)).await;
+        let cats = match category_names(&state.db, rows.iter().filter_map(|r| r.category_id)).await
+        {
+            Ok(rows) => rows,
+            Err(error) => return crate::routes::db_error("文章分类", &error),
+        };
         let mut dtos: Vec<NoteDto> = rows.into_iter().map(|r| summary_to_dto(r, &cats)).collect();
         attach_tags(&state.db, &mut dtos).await;
         attach_stats(&state.db, &mut dtos).await;
@@ -536,115 +506,6 @@ async fn search_notes_query(
         .collect();
     attach_tags(&state.db, &mut dtos).await;
     attach_stats(&state.db, &mut dtos).await;
-    attach_authors(&state.db, &mut dtos).await;
-
-    Json(ApiResponse::success(dtos))
-}
-
-pub async fn search_all_notes(
-    State(state): State<Arc<AppState>>,
-    Json(payload): Json<SearchRequest>,
-) -> Json<ApiResponse<Vec<NoteDto>>> {
-    let mut condition = Condition::all();
-
-    if let Some(ref t) = payload.title {
-        let t = t.trim();
-        if !t.is_empty() {
-            condition = condition.add(note::Column::Title.contains(t));
-        }
-    }
-
-    if let Some(ref cat_name) = payload.categories {
-        let cat_model = category::Entity::find()
-            .filter(category::Column::Name.eq(cat_name))
-            .one(&state.db)
-            .await
-            .unwrap_or(None);
-
-        if let Some(c) = cat_model {
-            condition = condition.add(note::Column::CategoryId.eq(c.id));
-        } else {
-            return Json(ApiResponse::success(vec![]));
-        }
-    }
-
-    if let Some(ref s) = payload.status {
-        // Allow filtering by specific status
-        condition = condition.add(note::Column::Status.eq(s));
-    }
-
-    if let Some(true) = payload.only_public {
-        condition = condition.add(public_condition());
-    }
-
-    if let Some(top) = payload.is_top {
-        condition = condition.add(note::Column::IsTop.eq(top));
-    }
-
-    if let Some(ref start) = payload.start_date {
-        if let Ok(date) = chrono::NaiveDate::parse_from_str(start, "%Y-%m-%d") {
-            let datetime = date.and_hms_opt(0, 0, 0).unwrap();
-            condition = condition.add(note::Column::CreatedAt.gte(datetime));
-        }
-    }
-
-    if let Some(ref end) = payload.end_date {
-        if let Ok(date) = chrono::NaiveDate::parse_from_str(end, "%Y-%m-%d") {
-            let datetime = date.and_hms_opt(23, 59, 59).unwrap();
-            condition = condition.add(note::Column::CreatedAt.lte(datetime));
-        }
-    }
-
-    let terms = payload
-        .keyword
-        .as_deref()
-        .map(split_terms)
-        .unwrap_or_default();
-    if keyword_given(payload.keyword.as_deref()) && terms.is_empty() {
-        return Json(ApiResponse::success(vec![]));
-    }
-    // The SQL prefilter is a superset and remains ANDed with the visibility boundary.
-    match note_keyword_prefilter(&state.db, &terms).await {
-        Ok(Some(pre)) => condition = condition.add(pre),
-        Ok(None) => {}
-        // 标签那一维读不到就不许用预筛（少收一行是静默的错误答案），回退全量加载。
-        Err(e) => {
-            tracing::warn!("[search_all_notes] 关键词预筛失败，本轮回退到全量加载: {e}")
-        }
-    }
-
-    let notes = note::Entity::find()
-        .filter(condition)
-        .order_by_desc(note::Column::CreatedAt)
-        .find_with_related(category::Entity)
-        .all(&state.db)
-        .await
-        .unwrap_or(vec![]);
-
-    // 关键词命中：标题 / 正文 / 标签**名字**（标签名从 `note_tag` 关联表取）。后台列表不按
-    // 相关度排序（它有自己的列排序/时间序），所以这里只做过滤，不打分。
-    let notes = if terms.is_empty() {
-        notes
-    } else {
-        let ids: Vec<i32> = notes.iter().map(|(n, _)| n.id).collect();
-        let tag_map = note_tags::load_note_tags(&state.db, &ids).await;
-        notes
-            .into_iter()
-            .filter(|(n, _)| {
-                let names: Vec<String> = tag_map
-                    .get(&n.id)
-                    .map(|v| v.iter().map(|t| t.name.clone()).collect())
-                    .unwrap_or_default();
-                note_hits_terms(n, &terms, &names)
-            })
-            .collect()
-    };
-
-    let mut dtos: Vec<NoteDto> = notes
-        .into_iter()
-        .map(|(n, cats)| map_note_summary(n, cats.into_iter().next().map(|c| (c.id, c.name))))
-        .collect();
-    attach_tags(&state.db, &mut dtos).await;
     attach_authors(&state.db, &mut dtos).await;
 
     Json(ApiResponse::success(dtos))
@@ -719,9 +580,15 @@ pub async fn get_top_notes(State(state): State<Arc<AppState>>) -> Json<ApiRespon
         .into_partial_model::<NoteSummary>()
         .all(&state.db)
         .await;
-    let notes = or_empty_warn(notes, "置顶文章列表");
+    let notes = match notes {
+        Ok(rows) => rows,
+        Err(error) => return crate::routes::db_error("置顶文章列表", &error),
+    };
 
-    let cats = category_names(&state.db, notes.iter().filter_map(|r| r.category_id)).await;
+    let cats = match category_names(&state.db, notes.iter().filter_map(|r| r.category_id)).await {
+        Ok(rows) => rows,
+        Err(error) => return crate::routes::db_error("文章分类", &error),
+    };
     let mut dtos: Vec<NoteDto> = notes
         .into_iter()
         .map(|r| summary_to_dto(r, &cats))

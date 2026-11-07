@@ -116,8 +116,7 @@ console.log('\n⑤ 跨语言契约：Rust 真的在回这两个键，且每条�
         const j = rest.search(/\nasync fn |\npub async fn /);
         return j < 0 ? rest : rest.slice(0, j);
     };
-    for (const fn of ['list_public_notes', 'search_notes_query', 'get_top_notes', 'get_note_detail',
-        'list_all_notes', 'search_all_notes']) {
+    for (const fn of ['list_public_notes', 'search_notes_query', 'get_top_notes', 'get_note_detail']) {
         const body = bodyOf(fn);
         ok(body !== null && /attach_authors\(/.test(body), `${fn} 挂了作者`);
     }

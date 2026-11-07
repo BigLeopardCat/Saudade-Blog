@@ -17,7 +17,6 @@ import { useViewerProfile } from '../../../components/UserCenter/identity';
 import MainContext from "../../../components/conText.tsx";
 import {useDispatch, useSelector} from "react-redux";
 import UserState from "../../../interface/UserState";
-import {fetchNoteList} from "../../../store/components/note.tsx";
 import {getTodos, saveTodos, ok, errMsg} from "../../../apis/DashboardMethods.tsx";
 import {useNavigate} from "react-router-dom";
 import type {DashboardTodo} from "../../../interface/DashboardType";
@@ -25,29 +24,14 @@ import {fetchCategories} from "../../../store/components/categories.tsx";
 import {fetchTags} from "../../../store/components/tags.tsx";
 import {useUnread} from "../../../components/UserCenter/unread";
 import {AGENT_TURN_DONE_EVENT} from "../../../components/UserCenter/agentTurn";
-
-// antd 的 locale 包是 CJS，Vite 8 之后默认 import 拿到的是名字空间对象而不是那份 locale
-// （antd 读不到内置文案就**静默**退回英文，不报错、不崩）。判据与三种形态见
-// utils/cjsDefault.ts。**不要改回 `import zhCN from "antd/lib/locale/zh_CN"`。**
 const zhCN = cjsDefault(zhCNDefault)
 
 type Todo = {id: number, text: string, done: boolean, date?: string};
-
-// 逾期 = 有日期、还没做完、且日期在今天之前
 const isOverdue = (t: Todo, today: string) => !!t.date && !t.done && t.date < today;
-
-// 本地列表 → 发往服务端的那份（线上口径 {text, done, date}）：
-// 空行是前端的临时态（「新建日程」里还没写字），**不发也不存**——服务端同样会跳过。
-// 放在模块作用域（不是组件里）：它没有状态，也就没有闭包过期的问题。
 const toPayload = (list: Todo[]): DashboardTodo[] =>
     list.filter(t => t.text.trim())
         .map(t => ({text: t.text.trim(), done: t.done, date: t.date ?? null}));
-
-// 本地行号（React 的 key）——服务端不认行 id，这只是"新加的行排在哪"。
 const nextId = (list: Todo[]) => (list.length ? Math.max(...list.map(t => t.id)) : 0) + 1;
-
-// 一行的判等键（正文 + 排期）。分隔符用 `\u0000`：它是文本里不会出现的字符，
-// 拼接不会把两条不同的行拼成同一个键（"ab" + "c" 与 "a" + "bc" 那种撞键）。
 const rowKey = (r: {text: string; date?: string | null}) =>
     r.text.trim() + '\u0000' + (r.date ?? '');
 
@@ -70,29 +54,18 @@ const escapeHtml = (s: string): string =>
 
 const Home = () => {
     const [modal, modalContext] = Modal.useModal();
-    //hooks区域
     const typedRef = useRef(null);
     const avatar = useViewerProfile().avatar;
-    // 个性签名：站点设置 → `web_info.userTalk` → `GET /api/public/user` → redux `talk`。
-    // 不在仓库里写死默认签名（那是部署者的口味）。**空签名就整块不渲染**，不拿别的话顶上。
     const signature = useSelector((state: { user: UserState }) => state.user.talk || '').trim();
     const dispatch = useDispatch();
-
-    // Init Data for Analytics
     useEffect(() => {
-        dispatch<any>(fetchNoteList(true));
         dispatch<any>(fetchCategories());
         dispatch<any>(fetchTags());
     }, [dispatch]);
-
-    // Toggle List State
-    // 卡片标题仍存在本机（`dashboard_list_title`）——它是这块面板的显示名，
-    // 不跟着账号走；待办本身已落库（见下）。
     const [listTitle, setListTitle] = useState(() => localStorage.getItem('dashboard_list_title') || '开发进度');
     const [todos, setTodos] = useState<Todo[]>([]);
     const [loaded, setLoaded] = useState(false);
     const [loadErr, setLoadErr] = useState('');
-    // 库里"此刻的样子"的指纹：与它一致的本地状态不触发写（读一次不会立刻写回去）
     const lastSaved = useRef('');
     const [pendingDate, setPendingDate] = useState<string | null>(null);
     const [draft, setDraft] = useState('');
@@ -108,8 +81,6 @@ const Home = () => {
     const todosRef = useRef<Todo[]>(todos);
     todosRef.current = todos;
     const pendingReload = useRef(false);
-
-    // 读一次：库里的整份列表（按位次）。读失败就如实说、给个重试，不假装"没有待办"。
     const loadTodos = useCallback(async () => {
         setLoadErr('');
         const res = await getTodos();
@@ -129,12 +100,6 @@ const Home = () => {
     }, []);
 
     useEffect(() => { void loadTodos(); }, [loadTodos]);
-
-    // agent 收尾 → 重读一次（它可能刚用追加通道记了一条日程）。
-    // **本地干净才读**：本地还有没落库的改动（600ms 防抖窗口内）时直接重读会把主人
-    // 刚敲的字丢掉，所以那一刻只留记号——等那份改动真要发上去之前，先 GET 一次把
-    // agent 加的行并进来再发（见下面的保存 effect）。记号不会一直挂着：本地改动一旦
-    // 与库一致（保存成功、或主人自己撤回去了），保存 effect 里那条分支会把它销掉并重读。
     useEffect(() => {
         const onTurnDone = () => {
             if (JSON.stringify(toPayload(todosRef.current)) !== lastSaved.current) {
@@ -146,21 +111,11 @@ const Home = () => {
         window.addEventListener(AGENT_TURN_DONE_EVENT, onTurnDone);
         return () => window.removeEventListener(AGENT_TURN_DONE_EVENT, onTurnDone);
     }, [loadTodos]);
-
-    // 待审评论数的刷新时机、失败语义、去重都在 unread.ts 那个 store 里（别在这儿再写一遍）：
-    // 读失败保持上一次的数（一个提示不该因为一次网络抖动就自己消失），真审完了读回来是 0，
-    // 这一行自然就不画了。
-
-    // 每次改动 → 整份发上去（600ms 防抖；不做行级 diff，服务端也不认行 id）。
-    // 失败不回滚本地编辑（主人刚敲的字不该被悄悄撤掉），提示一句即可：
-    // 下一次改动会把整份重新发上去。
     useEffect(() => {
         if (!loaded) return;
         const rows = toPayload(todos);
         const payload = JSON.stringify(rows);
         if (payload === lastSaved.current) {
-            // 本地与库一致（主人的改动被撤回去了/刚保存完），而 agent 在这中间加过一条：
-            // 此刻是**安全**的读时机，把它读出来显示，记号销掉。
             if (pendingReload.current) {
                 pendingReload.current = false;
                 void loadTodos();
@@ -169,13 +124,8 @@ const Home = () => {
         }
         const timer = setTimeout(async () => {
             if (pendingReload.current) {
-                // agent 加过一条、而本地还有没发上去的改动：**先读、再并、再发**。
-                // 直接发手上这份就是整份覆盖语义下的删除——agent 那条会被抹掉。
                 const res0 = await getTodos();
                 if (!ok(res0)) {
-                    // 读不到就**不发**：这一次发出去有确定的删除风险（抹掉 agent 那条），
-                    // 而本地改动留在手里只是"晚一点保存"（同既有的失败语义：下一次改动
-                    // 会把整份重新发上去，记号也还在，下次会再试一遍）。
                     message.error(errMsg(res0, '待办没保存上（没能先跟服务端核对一次）'));
                     return;
                 }
@@ -183,9 +133,6 @@ const Home = () => {
                 const merged = mergeServerRows(res0.data?.data ?? [], todos, snapshot);
                 pendingReload.current = false;
                 if (merged !== todos) {
-                    // 真并进来了新行：把并完的列表放回状态，让这个 effect 再跑一遍去保存
-                    // （状态是唯一真源——在这里顺手自己发一次请求，会让"界面上的列表"与
-                    // "已发出去的那份"变成两个来源，下次保存又得对账一遍）。
                     setTodos(merged);
                     return;
                 }
@@ -227,7 +174,6 @@ const Home = () => {
         if (!text2) return;
         setTodos(prev => [...prev, {id: nextId(prev), text: text2, done: false, date}]);
     };
-    // 「新建日程」：先落一条空行并让它自动聚焦；失焦时仍为空就自动收掉，不留空壳
     const addBlankRow = () => {
         setTodos(prev => {
             const id = nextId(prev);
@@ -238,8 +184,6 @@ const Home = () => {
     const dropIfEmpty = (todo: Todo) => {
         if (!todo.text.trim()) deleteTodo(todo.id);
     };
-    // 拖拽排序。只在同一分组内换位——跨组拖等于顺带改日期，那是另一个动作，
-    // 这里不做（宁可不动，也不要"拖过去日期没变、看着又跳回原组"的怪状态）。
     const moveTodo = (fromId: number, toId: number) => {
         if (fromId === toId) return;
         setTodos(prev => {
@@ -252,8 +196,6 @@ const Home = () => {
             return arr;
         });
     };
-
-    // 分组：逾期的那几天并成一组排最前（标红），今天一组，之后按日期升序，没日期的垫底
     const groups = useMemo(() => {
         const byDate = new Map<string, Todo[]>();
         const noDate: Todo[] = [];
@@ -276,14 +218,11 @@ const Home = () => {
         if (noDate.length) out.push({key: 'none', label: '未排期', items: noDate});
         return out;
     }, [todos, today]);
-    // 拖拽时"这条属于哪一组"（跨组不接）
     const groupOf = useMemo(() => {
         const m = new Map<number, string>();
         groups.forEach(g => g.items.forEach(t => m.set(t.id, g.key)));
         return m;
     }, [groups]);
-
-    // Calendar Logic
     const onSelectDate = (value: Dayjs) => {
         setPendingDate(value.format('YYYY-MM-DD'));
         setDraft('');
@@ -305,7 +244,6 @@ const Home = () => {
         const dateStr = value.format('YYYY-MM-DD');
         const list = todos.filter(t => t.date === dateStr);
         if (!list.length) return null;
-        // 点最多三个：先显示要紧的（逾期 → 未完成 → 已完成）
         const rank = (t: Todo) => (isOverdue(t, today) ? 0 : t.done ? 2 : 1);
         const dots = [...list].sort((a, b) => rank(a) - rank(b)).slice(0, 3);
         return (
@@ -317,15 +255,9 @@ const Home = () => {
             </span>
         );
     };
-
-
-    //初次渲染
-    // **依赖签名本身**：`talk` 是 `/api/public/user` 异步取回来的，挂载那一帧还是空串；
-    // 写成 `[]` 会让 typed 拿着空签名初始化（等于这块永远是空的）。
     useEffect(() => {
         if (!signature || !typedRef.current) return;
         const options = {
-            // 换行当换行用（签名是主人自己填的一段文本，允许分行）
             strings: [escapeHtml(signature).replace(/\n/g, '<br>')],
             typeSpeed: 60,
             backSpeed: 0,
@@ -371,8 +303,6 @@ const Home = () => {
                                 const months: string[] = [];
                                 const localeData = value.localeData();
                                 for (let i = 0; i < 12; i++) {
-                                    // monthsShort 的返回类型是 dayjs 的 MonthNames 联合（单月时是
-                                    // 字符串，但类型没这么窄），String() 一下省去一处 as
                                     months.push(String(localeData.monthsShort(value.month(i))));
                                 }
                                 const year = value.year();
@@ -510,9 +440,6 @@ const Home = () => {
                                             className="todo-grip"
                                             draggable
                                             onDragStart={(e) => {
-                                                // 让拖影是整行而不是那个小图标。setDragImage 只在
-                                                // 真实拖拽里可用，合成的 DragEvent 会抛
-                                                // InvalidStateError —— 抛了也不能带崩拖拽本身。
                                                 const row = (e.currentTarget as HTMLElement).closest('.todo-row');
                                                 try {
                                                     if (row) e.dataTransfer.setDragImage(row, 20, 20);
