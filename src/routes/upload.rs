@@ -215,7 +215,7 @@ async fn try_r2_upload(
     }
     if let Err(error) = register(state, &url, named.then_some(name)).await {
         // A failed commit response is ambiguous; never delete a possibly registered object.
-        tracing::error!("uploaded image registration failed: {error}");
+        tracing::error!(storage_key = %key, "uploaded image registration failed: {error}");
         return Some(ApiResponse::error(
             "图片未完成图库登记，请刷新图库核对后重试",
         ));
@@ -326,7 +326,7 @@ pub async fn upload_image(
     match result {
         Ok(url) => Json(ApiResponse::success(url)),
         Err(error) => {
-            tracing::error!("local image upload failed: {error}");
+            tracing::error!(storage_key = %object, "local image upload failed: {error}");
             Json(ApiResponse::error(
                 "图片未完成保存或图库登记，请刷新图库核对后重试",
             ))
