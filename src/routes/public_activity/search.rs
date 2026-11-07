@@ -1,34 +1,41 @@
-//! Literal full-text filtering and per-source totals in one PostgreSQL snapshot.
+//! Batch literal matching, deduplicated pagination and counts in one PostgreSQL snapshot.
 
 use crate::{routes::AppState, utils::ApiResponse};
-use axum::{
-    Json,
-    extract::{Query, State},
-};
+use axum::{extract::State, Json};
 use sea_orm::{ConnectionTrait, DbBackend, DbErr, Statement, TransactionTrait};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
-use std::{sync::Arc, time::Duration};
+use serde_json::{json, Value};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::sync::Semaphore;
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SearchQuery {
-    pub keyword: String,
+    pub keywords: Vec<String>,
     pub page: Option<u64>,
     pub page_size: Option<u64>,
 }
 
-#[derive(Default, Serialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 pub struct Counts {
     pub announcements: i64,
     pub board: i64,
     pub talk: i64,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+pub struct KeywordCounts {
+    pub keyword: String,
+    pub total: i64,
+    pub counts: Counts,
+}
+
 #[derive(Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchData {
-    pub keyword: String,
+    pub keywords: Vec<String>,
+    pub keyword_mode: &'static str,
+    pub keyword_counts: Vec<KeywordCounts>,
     pub match_mode: &'static str,
     pub sources: [&'static str; 3],
     pub counts: Counts,
@@ -40,14 +47,28 @@ pub struct SearchData {
 }
 
 impl SearchQuery {
-    fn window(&self) -> Result<(u64, u64), &'static str> {
-        let keyword = self.keyword.trim();
-        if keyword.is_empty()
-            || keyword.chars().count() > 128
-            || keyword.chars().any(char::is_control)
-        {
-            return Err("搜索词须为1至128个字符，不含控制字符");
+    fn normalized_keywords(&self) -> Result<Vec<String>, &'static str> {
+        if !(1..=8).contains(&self.keywords.len()) {
+            return Err("每次检索须提供1至8个关键词");
         }
+        let mut seen = HashSet::new();
+        let mut keywords = Vec::new();
+        for value in &self.keywords {
+            let keyword = value.trim();
+            if keyword.is_empty()
+                || keyword.chars().count() > 128
+                || value.chars().any(char::is_control)
+            {
+                return Err("搜索词须为1至128个字符，不含控制字符");
+            }
+            if seen.insert(keyword.to_lowercase()) {
+                keywords.push(keyword.to_string());
+            }
+        }
+        Ok(keywords)
+    }
+
+    fn window(&self) -> Result<(u64, u64), &'static str> {
         let window = super::super::pagination::bounded_window(self.page, self.page_size)?;
         if window.0 > 10 {
             return Err("每页最多10条");
@@ -58,7 +79,7 @@ impl SearchQuery {
 
 pub(super) async fn read<C: ConnectionTrait>(
     db: &C,
-    keyword: &str,
+    keywords: &[String],
     limit: u64,
     offset: u64,
 ) -> Result<SearchData, DbErr> {
@@ -67,27 +88,39 @@ pub(super) async fn read<C: ConnectionTrait>(
             DbBackend::Postgres,
             include_str!("search.sql"),
             [
-                format!("%{}%", crate::search_core::like_escape(keyword)).into(),
+                json!(keywords
+                    .iter()
+                    .map(|keyword| json!({
+                        "keyword": keyword,
+                        "pattern": format!("%{}%", crate::search_core::like_escape(keyword))
+                    }))
+                    .collect::<Vec<_>>())
+                .into(),
                 (limit as i64).into(),
                 (offset as i64).into(),
-                keyword.into(),
             ],
         ))
         .await?;
     let mut data = SearchData {
-        keyword: keyword.into(),
+        keywords: keywords.to_vec(),
+        keyword_mode: "any",
         match_mode: "literal_case_insensitive",
         sources: ["announcements", "board", "talk"],
         page: offset / limit + 1,
         page_size: limit,
         ..Default::default()
     };
+    let summary = rows
+        .first()
+        .ok_or_else(|| DbErr::Custom("Missing activity search totals".into()))?;
+    data.counts = Counts {
+        announcements: summary.try_get("", "announcements")?,
+        board: summary.try_get("", "board")?,
+        talk: summary.try_get("", "talk")?,
+    };
+    data.keyword_counts = serde_json::from_value(summary.try_get::<Value>("", "keyword_counts")?)
+        .map_err(|_| DbErr::Custom("Invalid activity keyword counts".into()))?;
     for row in rows {
-        data.counts = Counts {
-            announcements: row.try_get("", "announcements")?,
-            board: row.try_get("", "board")?,
-            talk: row.try_get("", "talk")?,
-        };
         let Some(id) = row.try_get::<Option<i32>>("", "id")? else {
             continue;
         };
@@ -98,7 +131,8 @@ pub(super) async fn read<C: ConnectionTrait>(
             "titleTruncated": row.try_get::<bool>("", "title_truncated")?,
             "content": row.try_get::<String>("", "content")?,
             "contentTruncated": row.try_get::<bool>("", "content_truncated")?,
-            "createdAt": created});
+            "createdAt": created,
+            "matchedKeywords": row.try_get::<Value>("", "matched_keywords")?});
         if source != "announcements" {
             item["approved"] = json!(1);
             item["displayName"] = json!(row.try_get::<String>("", "display_name")?);
@@ -114,8 +148,12 @@ pub(super) async fn read<C: ConnectionTrait>(
 
 pub async fn search(
     State(state): State<Arc<AppState>>,
-    Query(params): Query<SearchQuery>,
+    Json(params): Json<SearchQuery>,
 ) -> Json<ApiResponse<SearchData>> {
+    let keywords = match params.normalized_keywords() {
+        Ok(value) => value,
+        Err(message) => return Json(ApiResponse::error(message)),
+    };
     let (limit, offset) = match params.window() {
         Ok(value) => value,
         Err(message) => return Json(ApiResponse::error(message)),
@@ -129,7 +167,7 @@ pub async fn search(
         tx.execute_unprepared("SET TRANSACTION READ ONLY").await?;
         tx.execute_unprepared("SET LOCAL statement_timeout = '2000ms'")
             .await?;
-        let data = read(&tx, params.keyword.trim(), limit, offset).await?;
+        let data = read(&tx, &keywords, limit, offset).await?;
         tx.commit().await?;
         Ok::<_, DbErr>(data)
     };
