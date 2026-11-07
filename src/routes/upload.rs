@@ -1,4 +1,3 @@
-use crate::entity::image;
 use crate::r2;
 use crate::routes::AppState;
 use crate::utils::{
@@ -8,10 +7,7 @@ use axum::{
     extract::{Multipart, State},
     Json,
 };
-use sea_orm::{
-    ColumnTrait, ConnectionTrait, DatabaseBackend, DbErr, EntityTrait, QueryFilter, QueryOrder,
-    QuerySelect, Statement,
-};
+use sea_orm::{ConnectionTrait, DatabaseBackend, DbErr, Statement};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::sync::Arc;
@@ -332,42 +328,6 @@ pub async fn upload_image(
             ))
         }
     }
-}
-
-#[derive(serde::Deserialize)]
-pub struct ImageListQuery {
-    /// 只回 `image_key < before` 的行；首页不传。取的是**上一页最后一张**的 key。
-    #[serde(default)]
-    pub before: Option<i32>,
-    /// Requested page size; short pages indicate the end of the cursor stream.
-    #[serde(default)]
-    pub limit: Option<u64>,
-}
-
-pub async fn list_images(
-    State(state): State<Arc<AppState>>,
-    axum::extract::Query(q): axum::extract::Query<ImageListQuery>,
-) -> Json<ApiResponse<Vec<image::Model>>> {
-    let mut finder = image::Entity::find()
-        .filter(sea_orm::sea_query::Expr::cust(
-            "NOT EXISTS (SELECT 1 FROM image_deletion d WHERE d.image_id=images.image_key)",
-        ))
-        .order_by_desc(image::Column::ImageKey);
-    if let Some(before) = q.before {
-        finder = finder.filter(image::Column::ImageKey.lt(before));
-    }
-    if let Some(limit) = q.limit {
-        finder = finder.limit(limit);
-    }
-    let images = match finder.all(&state.db).await {
-        Ok(images) => images,
-        Err(error) => {
-            tracing::warn!("gallery picker query failed: {error}");
-            return Json(ApiResponse::error("图库暂时无法读取，请稍后重试"));
-        }
-    };
-
-    Json(ApiResponse::success(images))
 }
 
 /// `used_bytes` is authoritative only when `list_error` is absent.
