@@ -22,15 +22,9 @@ interface ImagePickerProps {
 const ImagePicker = ({ open, onCancel, onPick, upload }: ImagePickerProps) => {
     const [tab, setTab] = useState('gallery')
     const [uploading, setUploading] = useState(false)
-    const { images, loading, loadingMore, error, hasMore, reload, loadMore } = useGalleryPager()
+    const { images, loading, loadingMore, error, pageError, hasMore, reload, loadMore } = useGalleryPager(open)
 
-    // 每次打开都回到「图库」页签并重拉一次列表：图库是主入口，别让上一次的选择粘住，
-    // 也别用上次那份可能已经过时的列表（别人刚传的图应该看得见）。
-    useEffect(() => {
-        if (!open) return
-        setTab('gallery')
-        void reload()
-    }, [open, reload])
+    useEffect(() => {if (open) setTab('gallery')}, [open])
 
     const localUpload = async (file: File) => {
         setUploading(true)
@@ -55,7 +49,7 @@ const ImagePicker = ({ open, onCancel, onPick, upload }: ImagePickerProps) => {
             {loading ? (
                 <div className="editor-image-picker-center"><Spin /></div>
             ) : error ? (
-                <Alert type="error" showIcon message={error} />
+                <Alert type="error" showIcon message={error} action={<Button onClick={()=>void reload()}>重试</Button>}/>
             ) : images.length === 0 ? (
                 <Empty description="图库里还没有图片，可以用「本地上传」传一张" />
             ) : (
@@ -70,7 +64,7 @@ const ImagePicker = ({ open, onCancel, onPick, upload }: ImagePickerProps) => {
                                     cover={
                                         <img
                                             className="editor-gallery-item"
-                                            alt={assetDisplayName(img.imageUrl)}
+                                            alt={img.displayName||assetDisplayName(img.imageUrl)}
                                             // 缩略图懒加载：图库可能有几十上百张，而本地盘的
                                             // `/api/protect/download/` 走的就是这台机器 3M 的上行
                                             loading="lazy"
@@ -80,11 +74,12 @@ const ImagePicker = ({ open, onCancel, onPick, upload }: ImagePickerProps) => {
                                     }
                                     onClick={() => onPick(img.imageUrl)}
                                 >
-                                    <div className="editor-gallery-name">{assetDisplayName(img.imageUrl)}</div>
+                                    <div className="editor-gallery-name">{img.displayName||assetDisplayName(img.imageUrl)}</div>
                                 </Card>
                             </Col>
                         ))}
                     </Row>
+                    {pageError&&<Alert type="error" showIcon message={pageError} action={<Button onClick={()=>void reload()}>重试</Button>}/>}
                     {hasMore && (
                         <div className="editor-image-picker-more">
                             <Button

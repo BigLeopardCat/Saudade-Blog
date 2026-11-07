@@ -1,16 +1,5 @@
 import http from "./axios.tsx";
 
-const GALLERY_PAGE_SIZE = 60;
-
-/** Read the next image page using its last imageKey cursor. */
-function getImageList(before?: number){
-    return http({
-        url: '/api/protect/images',
-        method: 'GET',
-        params: { limit: GALLERY_PAGE_SIZE, ...(before != null ? { before } : {}) },
-    })
-}
-
 export type UploadTarget = 'local' | 'r2';
 
 function uploadImages(formData: FormData, target?: UploadTarget){
@@ -29,4 +18,4 @@ function getR2Usage(){
     })
 }
 
-export {getImageList, uploadImages, getR2Usage, GALLERY_PAGE_SIZE};
+export {uploadImages, getR2Usage};

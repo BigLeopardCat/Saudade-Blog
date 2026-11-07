@@ -2,7 +2,7 @@ import type {Page} from '@playwright/test'
 import {test, expect} from './sandbox'
 
 test.use({entry: 'editor-images', cdnBaseURL: 'https://images.example.test', viewport: {width: 1280, height: 900}})
-const galleryAPI = '**/api/protect/images?*'
+const galleryAPI = '**/api/protect/gallery/images?*'
 const uploadAPI = '**/api/protect/upload'
 const imageAction = '.bytemd-toolbar-left > .bytemd-toolbar-icon[bytemd-tippy-path="5"]'
 const localURL = '/api/protect/download/20260912013218_EMQX.png'
@@ -14,12 +14,15 @@ const images = [
   {imageKey: 901, imageUrl: '/api/protect/download/old_pic.png'},
 ]
 
-async function gallery(page: Page, data: typeof images = images, code = 200) {
+type PickerImage={imageKey:number;imageUrl:string;displayName?:string|null}
+const row=(image:PickerImage)=>({displayName:null,description:'',folderId:0,isFavorite:false,version:'a'.repeat(64),...image})
+
+async function gallery(page: Page, data: PickerImage[] = images, code = 200) {
   const requests: URL[] = []
   await page.route(galleryAPI, route => {
     expect(route.request().method()).toBe('GET')
     requests.push(new URL(route.request().url()))
-    return route.fulfill({json: {code, data, message: code === 200 ? 'ok' : '图库暂时不可用'}})
+    return route.fulfill({json: {code, data:{items:data.map(row),nextCursor:null}, message: code === 200 ? 'ok' : '图库暂时不可用'}})
   })
   return requests
 }
@@ -196,16 +199,19 @@ test('pagination sends the last image key, appends without duplicates, and block
     const url = new URL(route.request().url())
     requests.push(url)
     const limit = Number(url.searchParams.get('limit'))
+    if(!pageSize)pageSize=limit
     expect(limit).toBe(pageSize)
     const before = url.searchParams.get('before')
     if (requests.length === 2) await pending
     const all = Array.from({length: pageSize + 5}, (_, i) => ({imageKey: 3000 - i, imageUrl: `/api/protect/download/image${3000 - i}.png`}))
-    return route.fulfill({json: {code: 200, data: all.filter(image => before === null || image.imageKey < Number(before)).slice(0, limit)}})
+    const remaining=all.filter(image=>before===null||image.imageKey<Number(before))
+    const items=remaining.slice(0,limit)
+    return route.fulfill({json:{code:200,data:{items:items.map(row),nextCursor:remaining.length>limit?items.at(-1)!.imageKey:null}}})
   })
   await page.goto(sandboxURL)
-  pageSize = Number(await page.getByLabel('图库页大小').textContent())
-  expect(Number.isSafeInteger(pageSize) && pageSize > 0).toBe(true)
   const dialog = await openPicker(page)
+  await expect.poll(()=>pageSize).toBeGreaterThan(0)
+  expect(Number.isSafeInteger(pageSize)&&pageSize<=100).toBe(true)
   const thumbnails = dialog.locator('.editor-gallery-item')
   await expect(thumbnails).toHaveCount(pageSize)
   expect(requests[0].searchParams.has('before')).toBe(false)
@@ -225,4 +231,41 @@ test('pagination sends the last image key, appends without duplicates, and block
   const names = await dialog.locator('.editor-gallery-name').allTextContents()
   expect(names).toEqual(Array.from({length: pageSize + 5}, (_, i) => `image${3000 - i}.png`))
   expect(new Set(names).size).toBe(names.length)
+})
+
+test('UUID-backed images display their original metadata name and keep the stored URL on insertion',async({page,sandboxURL})=>{
+  const url='/api/protect/download/54fc8b80c1304d1e94d2c1815122b3e7.png'
+  await gallery(page,[{imageKey:930,imageUrl:url,displayName:'猫咪的原始封面.png'}])
+  await page.goto(sandboxURL)
+  const dialog=await openPicker(page)
+  await expect(dialog.locator('.editor-gallery-name')).toHaveText('猫咪的原始封面.png')
+  await dialog.getByAltText('猫咪的原始封面.png').click()
+  await expect(page.getByLabel('草稿状态')).toHaveJSProperty('textContent',`\n![](${url})`)
+})
+
+test('an explicit cursor continues a short page and a failed continuation retains prior images for retry',async({page,sandboxURL})=>{
+  const cursors:(string|null)[]=[]
+  const items=[{imageKey:9,imageUrl:'/api/protect/download/a.png',displayName:'海边'},
+    {imageKey:8,imageUrl:'/api/protect/download/b.png',displayName:'山景'},
+    {imageKey:7,imageUrl:'/api/protect/download/c.png',displayName:'夜空'}]
+  await page.route(galleryAPI,route=>{
+    const before=new URL(route.request().url()).searchParams.get('before')
+    cursors.push(before)
+    if(cursors.length===2)return route.fulfill({status:503,json:{code:503,message:'后续页暂不可用'}})
+    return route.fulfill({json:{code:200,data:{items:(before===null?items.slice(0,2):items.slice(2)).map(row),nextCursor:before===null?8:null}}})
+  })
+  await page.goto(sandboxURL)
+  const dialog=await openPicker(page)
+  const thumbnails=dialog.locator('.editor-gallery-item')
+  await expect(thumbnails).toHaveCount(2)
+  const more=dialog.getByRole('button',{name:'载入更多'})
+  await more.click()
+  await expect(dialog.getByRole('alert')).toContainText('后续页暂不可用')
+  await expect(thumbnails).toHaveCount(2)
+  await expect(dialog.locator('.editor-gallery-name')).toHaveText(['海边','山景'])
+  await more.click()
+  await expect(thumbnails).toHaveCount(3)
+  await expect(dialog.locator('.editor-gallery-name')).toHaveText(['海边','山景','夜空'])
+  await expect(more).toHaveCount(0)
+  expect(cursors).toEqual([null,'8','8'])
 })
