@@ -5,6 +5,10 @@ export interface AgentTurnDetail {
     articleIdsToRefresh: number[]
 }
 
+export function isConfirmationAttempt(event: Event): boolean {
+    return (event as CustomEvent<Partial<AgentTurnDetail> | undefined>).detail?.confirmationAttempted === true
+}
+
 /** Invalidation hints request a read; they never assert that a write succeeded. */
 export function hasArticleInvalidation(event: Event): boolean {
     const detail = (event as CustomEvent<Partial<AgentTurnDetail> | undefined>).detail

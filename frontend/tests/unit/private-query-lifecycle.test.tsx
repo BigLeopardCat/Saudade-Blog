@@ -118,6 +118,38 @@ describe('private query identity and framework lifecycle', () => {
         http.mockResolvedValueOnce(envelope(stateFact(2)))
         await expect(store.dispatch(privateApi.endpoints.favoriteState.initiate(stateArg())).unwrap()).rejects.toBeTruthy()
     })
+
+    it('does not refresh private queries for chat, reads, preparations or inactive subscribers', async () => {
+        http.mockResolvedValue(envelope(counts(3)))
+        const read = store.dispatch(privateApi.endpoints.unread.initiate(1))
+        await read.unwrap()
+        for (const detail of [undefined, {}, {confirmationAttempted:false}])
+            window.dispatchEvent(new CustomEvent('agent-turn-done',{detail}))
+        await flush()
+        expect(http).toHaveBeenCalledTimes(1)
+        window.dispatchEvent(new CustomEvent('agent-turn-done',{detail:{confirmationAttempted:true}}))
+        await waitFor(() => expect(http).toHaveBeenCalledTimes(2))
+        await store.dispatch(privateApi.util.getRunningQueriesThunk())[0]
+        reset()
+        http.mockClear()
+        http.mockResolvedValue(envelope([favorite(54)]))
+        await store.dispatch(privateApi.endpoints.favorites.initiate(1,{subscribe:false})).unwrap()
+        window.dispatchEvent(new Event('favorites-change'))
+        await flush()
+        expect(http).toHaveBeenCalledTimes(1)
+        expect(privateApi.endpoints.favorites.select(1)(store.getState()).isUninitialized).toBe(true)
+        read.unsubscribe()
+    })
+
+    it('retains every unread counter, including isolated moderation and quota changes', async () => {
+        http.mockResolvedValueOnce(envelope(counts()))
+            .mockResolvedValueOnce(envelope({...counts(),pendingQuota:2,pendingComments:4}))
+        const read=store.dispatch(privateApi.endpoints.unread.initiate(1))
+        await read.unwrap();await read.refetch().unwrap()
+        expect(privateApi.endpoints.unread.select(1)(store.getState()).data)
+            .toEqual({...counts(),pendingQuota:2,pendingComments:4})
+        read.unsubscribe()
+    })
 })
 
 function Profile() {
