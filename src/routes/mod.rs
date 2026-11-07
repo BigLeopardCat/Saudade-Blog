@@ -152,7 +152,7 @@ pub fn create_router(state: AppState) -> Router {
             .layer(axum::extract::DefaultBodyLimit::max(16 * 1024 * 1024)))
         .route("/api/public/rag/corpus", get(rag_corpus::export))
         .route("/api/public/notes/page", get(notes::list_public_notes)) 
-        .route("/api/public/notes/search", post(notes::search_notes))
+        .route("/api/public/notes/search", post(notes::search_notes).layer(DefaultBodyLimit::max(4096)))
         .route("/api/public/search", post(search::search_all).layer(DefaultBodyLimit::max(2048)))
         .route("/api/public/notes/{id}", get(notes::get_note_detail))
         .route("/api/public/topnotes", get(notes::get_top_notes))

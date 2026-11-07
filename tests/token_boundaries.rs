@@ -128,6 +128,48 @@ async fn keys_audiences_expiry_and_scope_are_independent() {
     }
     for (token, method, path, expected) in [
         (
+            &tools,
+            Method::DELETE,
+            "/api/temp-users/42",
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            &tools,
+            Method::POST,
+            "/api/temp-users/42/status",
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            &tools,
+            Method::POST,
+            "/api/protected/websetting",
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            &tools,
+            Method::DELETE,
+            "/api/protected/notes",
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            &tools,
+            Method::POST,
+            "/api/protected/account-actions/prepare",
+            StatusCode::OK,
+        ),
+        (
+            &tools,
+            Method::POST,
+            "/api/protected/account-actions",
+            StatusCode::OK,
+        ),
+        (
+            &tools,
+            Method::GET,
+            "/api/protected/future-secret",
+            StatusCode::FORBIDDEN,
+        ),
+        (
             &background,
             Method::GET,
             "/api/protected/profile",

@@ -6,6 +6,8 @@ pub use task_manager::{
 mod weather;
 pub use weather::WeatherSnapshot;
 mod context;
+mod input;
+mod transport;
 mod execution_history;
 use context::prepare_chat;
 use execution_history::*;
@@ -433,23 +435,24 @@ pub async fn chat_stream_handler(State(state): State<Arc<AppState>>, req: Reques
         .to_string()
         + "/chat/stream/v2";
     info!(trace_id = %ctx.trace_id, user_id = ctx.uid, "chat: 转发 agent 流式");
-    // 流式连接不设整体超时（长回答可达数分钟），connect/首字节由 reqwest 默认处理
-    let upstream = match reqwest::Client::new()
-        .post(&stream_url)
-        .header(
-            "X-Agent-Assertion",
-            crate::auth_jwt::create_chat_assertion(
-                &state.db,
-                ctx.uid,
-                ctx.role.as_deref(),
-                expected_version,
+    // Active streams may run for minutes; only stalled phases expire.
+    let upstream = match transport::send(
+        transport::client()
+            .post(&stream_url)
+            .header(
+                "X-Agent-Assertion",
+                crate::auth_jwt::create_chat_assertion(
+                    &state.db,
+                    ctx.uid,
+                    ctx.role.as_deref(),
+                    expected_version,
+                )
+                .await,
             )
-            .await,
-        )
-        .header("X-Request-ID", &ctx.trace_id)
-        .json(&ctx.body)
-        .send()
-        .await
+            .header("X-Request-ID", &ctx.trace_id)
+            .json(&ctx.body),
+    )
+    .await
     {
         Ok(r) => r,
         Err(e) => {
@@ -531,7 +534,16 @@ fn forward_agent_stream(
         futures::pin_mut!(upstream);
         let mut reply = String::new();
         let mut terminal = false;
-        while let Some(incoming) = upstream.next().await {
+        loop {
+            let incoming = match tokio::time::timeout(transport::IDLE, upstream.next()).await {
+                Ok(Some(incoming)) => incoming,
+                Ok(None) => break,
+                Err(_) => {
+                    warn!(trace_id = %trace_id, user_id = uid, conversation_id,
+                        phase = "agent_idle", "Agent SSE event idle timeout");
+                    break;
+                }
+            };
             let incoming = match incoming {
                 Ok(value) => value,
                 Err(error) => {
@@ -624,7 +636,7 @@ fn forward_agent_stream(
         }
         if !terminal {
             warn!(trace_id = %trace_id, user_id = uid, conversation_id,
-                phase = "upstream_eof", "Agent SSE ended without a terminal event");
+                phase = "upstream_incomplete", "Agent SSE ended without a terminal event");
             yield Ok::<_, axum::Error>(stream_event("error", "与 Agent 的连接中断，回复可能不完整"));
         }
     }

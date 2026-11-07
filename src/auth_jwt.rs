@@ -4,6 +4,7 @@ use sea_orm::{DatabaseConnection, EntityTrait};
 use serde::{Deserialize, Serialize};
 use std::env;
 pub mod delegation;
+pub mod secret;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
@@ -176,7 +177,7 @@ fn sign_assertion(
 }
 
 pub fn verify_token(token: &str) -> Option<Claims> {
-    let secret = env::var("JWT_SECRET").expect("JWT_SECRET must be set in environment");
+    let secret = env::var("JWT_SECRET").ok()?;
     let mut validation = Validation::default();
     validation.set_audience(&["blog-session"]);
     // Existing seven-day sessions have ver but no aud; they expire naturally.

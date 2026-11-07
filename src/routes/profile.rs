@@ -675,6 +675,16 @@ pub async fn send_message(
             return Json(ApiResponse::error("标题过长（最多 60 字）"));
         }
     }
+    // Reserve before target lookup: concurrent sends and changing recipients share one budget.
+    static SEND_LIMITER: std::sync::OnceLock<crate::rate_limiter::LoginRateLimiter> =
+        std::sync::OnceLock::new();
+    if SEND_LIMITER
+        .get_or_init(|| crate::rate_limiter::LoginRateLimiter::new(20, 60, 60))
+        .hit("private-message", &uid.to_string())
+        .is_err()
+    {
+        return Json(ApiResponse::error("站内信发送过于频繁，请稍后再试"));
+    }
     let who = payload.to_username.trim();
     if who.is_empty() {
         return Json(ApiResponse::error("请填写收件人"));
@@ -716,10 +726,19 @@ pub async fn send_message(
             return Json(ApiResponse::error("发送失败，请稍后再试"));
         }
     };
-    let name = if t.nickname.trim().is_empty() { t.username.clone() } else { t.nickname.clone() };
+    let name = if t.nickname.trim().is_empty() {
+        t.username.clone()
+    } else {
+        t.nickname.clone()
+    };
     let peers = HashMap::from([(
         t.id,
-        PeerInfo { name, username: t.username.clone(), avatar: t.avatar.clone(), role: t.role.clone() },
+        PeerInfo {
+            name,
+            username: t.username.clone(),
+            avatar: t.avatar.clone(),
+            role: t.role.clone(),
+        },
     )]);
     Json(ApiResponse::success(to_message_dto(saved, uid, &peers)))
 }

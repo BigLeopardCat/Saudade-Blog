@@ -83,7 +83,7 @@ pub async fn create_category(
 
     match new_cat.insert(&state.db).await {
         Ok(_) => Json(ApiResponse::success("Category created".to_string())),
-        Err(e) => Json(ApiResponse::error(&format!("Error: {}", e))),
+        Err(e) => crate::routes::db_error("分类写入", &e),
     }
 }
 
@@ -128,7 +128,7 @@ pub async fn update_category(
         
         match active.update(&state.db).await {
             Ok(_) => Json(ApiResponse::success("Updated".to_string())),
-            Err(e) => Json(ApiResponse::error(&format!("Error: {}", e))),
+            Err(e) => crate::routes::db_error("分类写入", &e),
         }
     } else {
         Json(ApiResponse::error("Not found"))
@@ -144,6 +144,6 @@ pub async fn delete_category(
         .exec(&state.db)
         .await {
         Ok(_) => Json(ApiResponse::success("Deleted".to_string())),
-        Err(e) => Json(ApiResponse::error(&format!("Error: {}", e))),
+        Err(e) => crate::routes::db_error("分类写入", &e),
     }
 }

@@ -378,3 +378,57 @@ async fn host_keeps_client_alive_while_the_agent_has_no_application_event() {
     assert_eq!(second.as_ref(), b"event: done\ndata: {}\n\n");
     assert!(body.next().await.is_none());
 }
+
+#[tokio::test(start_paused = true)]
+async fn stalled_upstream_emits_one_error_and_never_saves_partial_reply() {
+    let state = state();
+    let upstream = futures::stream::once(async {
+        Ok(Bytes::from_static(b"event: text\ndata: \"partial\"\n\n"))
+    })
+    .chain(futures::stream::pending());
+    let response = Sse::new(forward_agent_stream(
+        state.clone(),
+        7,
+        42,
+        Some("user".into()),
+        "idle-test".into(),
+        "idle-test".into(),
+        upstream,
+    ))
+    .into_response();
+    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    let text = String::from_utf8(bytes.to_vec()).unwrap();
+    assert_eq!(text.matches("event: error").count(), 1);
+    assert!(!text.contains("event: done"));
+    let db = Arc::try_unwrap(state).ok().unwrap().db;
+    assert!(db.into_transaction_log().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn active_stream_can_exceed_one_idle_window() {
+    let upstream = stream! {
+        for _ in 0..3 {
+            tokio::time::sleep(std::time::Duration::from_secs(100)).await;
+            yield Ok(Bytes::from_static(b"event: text\ndata: \"working\"\n\n"));
+        }
+        yield Ok(Bytes::from_static(b"event: done\ndata: {}\n\n"));
+    };
+    let response = Sse::new(forward_agent_stream(
+        state(),
+        0,
+        42,
+        None,
+        "long-test".into(),
+        "long-test".into(),
+        upstream,
+    ))
+    .into_response();
+    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    let text = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(text.contains("event: done"));
+    assert!(!text.contains("event: error"));
+}

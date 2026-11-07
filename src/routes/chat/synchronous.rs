@@ -66,7 +66,7 @@ pub async fn chat_handler(State(state): State<Arc<AppState>>, req: Request) -> R
     info!(trace_id = %ctx.trace_id, user_id = ctx.uid, "chat: forwarding aggregate turn");
     let result = async {
         // A lost response cannot prove whether the Agent executed; never replay the turn here.
-        let upstream = reqwest::Client::new()
+        let upstream = transport::client()
             .post(agent_chat_url())
             .header(
                 "X-Agent-Assertion",
