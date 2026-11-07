@@ -294,7 +294,7 @@ async fn postgres_metrics_refuse_nonpublic_and_shadow_articles() {
     let mut root = None;
     for (status, public, shadow, visible) in [
         ("public", true, false, true),
-        ("draft", true, false, false),
+        ("draft", false, false, false),
         ("published", false, false, false),
         ("public", true, true, false),
     ] {
