@@ -65,6 +65,8 @@ jobs:
               - 'scripts/deploy/**'
   check:
     runs-on: ubuntu-latest
+    outputs:
+      backend_candidate: ${{ steps.candidate.outputs.build }}
 
     services:
       postgres:
@@ -218,7 +220,7 @@ jobs:
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
         run: |
-          if git diff --quiet "$BASE" HEAD -- src Cargo.toml Cargo.lock; then
+          if git diff --quiet "$BASE" HEAD -- src Cargo.toml Cargo.lock .github/workflows/deploy.yml frontend/widget.lock.json; then
             echo 'build=false' >> "$GITHUB_OUTPUT"
           else
             echo 'build=true' >> "$GITHUB_OUTPUT"
@@ -251,7 +253,24 @@ jobs:
           retention-days: 7
 
   browser:
+    needs: check
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    services:
+      stack-postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: isolated-stack-ci-password
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
     timeout-minutes: 20
     env:
       TZ: Asia/Shanghai
@@ -295,6 +314,56 @@ jobs:
           PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT: 45000
         run: npx --no-install playwright install chromium
       - run: npm run test:browser
+      - name: Checkout fixed Agent stack fixture
+        if: needs.check.outputs.backend_candidate == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: BigLeopardCat/saudade-blog-agent
+          ref: 6e7a0e412c559f2755092a3598ddd597c24c69bf
+          path: _agent-stack
+          persist-credentials: false
+      - name: Setup stack Python
+        if: needs.check.outputs.backend_candidate == 'true'
+        uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
+        with:
+          python-version: '3.12'
+          enable-cache: true
+          cache-dependency-glob: _agent-stack/uv.lock
+      - name: Prepare isolated stack dependencies and candidate
+        if: needs.check.outputs.backend_candidate == 'true'
+        timeout-minutes: 6
+        working-directory: ${{ github.workspace }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          sudo apt-get install --no-install-recommends -y nginx postgresql-client
+          gh run download '${{ github.run_id }}' -R '${{ github.repository }}' \
+            -n 'backend-candidate-${{ github.event.pull_request.head.sha }}' \
+            -D '${{ runner.temp }}/chat-stack-bin'
+          chmod +x '${{ runner.temp }}/chat-stack-bin/saudade_blog_bin'
+          uv sync --locked --no-dev --project _agent-stack
+          npm ci --ignore-scripts --prefix _agent-stack/frontend
+      - name: Real HTTP stack disconnect and checkpoint drill
+        if: needs.check.outputs.backend_candidate == 'true'
+        timeout-minutes: 4
+        working-directory: _agent-stack
+        env:
+          CHAT_STACK_PG_ADMIN_DSN: postgres://postgres:isolated-stack-ci-password@127.0.0.1:5432/postgres
+          CHAT_STACK_ARTIFACT_DIR: ${{ runner.temp }}/chat-stack-logs
+          SAUDADE_IGNORE_ENV_FILE: '1'
+        run: |
+          uv run --frozen --no-dev python scripts/ci/chat_stack.py \
+            --blog '${{ github.workspace }}' \
+            --backend '${{ runner.temp }}/chat-stack-bin/saudade_blog_bin'
+      - name: Keep synthetic stack evidence
+        if: ${{ always() && needs.check.outputs.backend_candidate == 'true' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: chat-stack-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/chat-stack-logs
+          retention-days: 7
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
