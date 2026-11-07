@@ -16,7 +16,7 @@ use axum::{
     Json,
 };
 use sea_orm::{DbErr, EntityTrait, QueryFilter};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 #[derive(Default, Deserialize)]
@@ -31,10 +31,33 @@ pub(super) fn visible_notes() -> sea_orm::Select<note::Entity> {
     note::Entity::find().filter(super::notes::public_condition())
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PublicArticle {
+    #[serde(flatten)]
+    article: Article,
+    source_url: Option<String>,
+}
+
+fn with_sources(items: Vec<Article>, site: Option<&reqwest::Url>) -> Vec<PublicArticle> {
+    items
+        .into_iter()
+        .map(|article| {
+            let source_url = site.map(|site| {
+                super::page_links::page_url(site, &["article", &article.id.to_string()])
+            });
+            PublicArticle {
+                article,
+                source_url,
+            }
+        })
+        .collect()
+}
+
 pub async fn articles(
     State(state): State<Arc<AppState>>,
     Query(params): Query<ListQuery>,
-) -> Json<ApiResponsePage<Vec<Article>>> {
+) -> Json<ApiResponsePage<Vec<PublicArticle>>> {
     if params.category_id.is_some_and(|id| id <= 0) {
         return Json(ApiResponsePage::error("分类编号无效"));
     }
@@ -54,7 +77,11 @@ pub async fn articles(
             offset,
             params.top_only.unwrap_or(false),
         )
-        .await,
+        .await
+        .map(|(items, total)| {
+            let site = super::page_links::site_base();
+            (with_sources(items, site.as_ref()), total)
+        }),
     )
 }
 

@@ -1,3 +1,4 @@
+import SweepLoading from '../../../components/SweepLoading'
 import './index.sass'
 import { useEffect, useRef, useState } from "react";
 import {useNavigate, useParams} from "react-router-dom";
@@ -11,7 +12,7 @@ import {searchNotes} from "../../../apis/NoteMethods.tsx";
 import {useLiveRefresh} from "../../../utils/liveRefresh.ts";
 import {ok} from "../../../apis/ProfileMethods";
 import {createRequestScope} from "../../../utils/requestScope";
-import LazyImage from "../../../components/LazyImage";
+import AssetImage from "../../../components/AssetImage";
 import SeoHelmet from "../../../components/SeoHelmet";
 const CategoryResource = ({id, categoryTitle}: {id: string, categoryTitle?: string}) => {
     const [articleList, setArticleList] = useState<NoteType[]>([]);
@@ -67,7 +68,7 @@ const CategoryResource = ({id, categoryTitle}: {id: string, categoryTitle?: stri
                         onClick={() => navigate(`/article/${item.noteKey}`)}
                     >
                     <li>
-                        <LazyImage src={item.cover}/>
+                        <AssetImage pending={<SweepLoading/>} alt={item.noteTitle} src={item.cover}/>
                         <div className='article'>
                             <div className="articleTop">
                                 <h2>{item.noteTitle}</h2>

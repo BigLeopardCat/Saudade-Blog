@@ -10,10 +10,11 @@ import dayjs from "dayjs";
 import MarkdownNavbarDefault from 'markdown-navbar'
 import 'markdown-navbar/dist/navbar.css'
 import { cjsDefault } from "../../../utils/cjsDefault";
-import Loading from "../../Loading";
+import AssetImage from "../../../components/AssetImage";
+import SweepLoading from "../../../components/SweepLoading";
 import scrollToTop from "../../../utils/scrollToTop.tsx";
 import { noteAuthor } from "../../../utils/noteAuthor";
-import { coverCropMotionStyle, cropFromRow } from "../../../utils/coverCrop";
+import { coverCropStyle, cropFromRow } from "../../../utils/coverCrop";
 import { resolveApiAssetUrl } from "../../../utils/runtimeApi";
 import {getNoteById} from "../../../apis/NoteMethods.tsx";
 import {getNoteStats, likeNote, reportNoteView, unlikeNote} from "../../../apis/NoteStatsMethods.tsx";
@@ -41,8 +42,8 @@ import { decorateCodeBlocks } from "../../../utils/chatMarkdown";
 import { bytemdStickers } from "../../../utils/stickers";
 import 'bytemd/dist/index.css'
 import 'github-markdown-css/github-markdown-light.css'
-import 'highlight.js/styles/atom-one-dark.css' // Import Highlight.js styles
-import 'katex/dist/katex.css' // KaTeX 公式样式（与编辑器一致，公式在外部展示页正常渲染）
+import 'highlight.js/styles/atom-one-dark.css'
+import 'katex/dist/katex.css'
 
 const READ_LOG_KEY = 'saudaReadLog';
 
@@ -130,7 +131,6 @@ const ArticleResource = ({id}: {id: string}) => {
     }
 
     const coverSource = resolveApiAssetUrl(article?.cover || '')
-    const [failedCover, setFailedCover] = useState<string | null>(null)
 
     // Lock ref to prevent TOC auto-scroll during manual click
     const isClickingTocRef = useRef(false);
@@ -171,7 +171,7 @@ const ArticleResource = ({id}: {id: string}) => {
             const token = scope.begin('stats');
             getNoteStats(noteId, token.signal).then((res) => {
                 if (token.current() && ok(res)) applyStats(res.data.data);
-            }).catch(() => { /* 读不到就不显示，见上面 views 的注释 */ });
+            }).catch(() => { /* Unavailable counts do not hide the article. */ });
             return;
         }
         const token = scope.begin('stats');
@@ -307,7 +307,6 @@ const ArticleResource = ({id}: {id: string}) => {
         };
     }, []);
 
-    // Effect for TOC auto-scroll
     useEffect(() => {
         if (isLoading) return;
         let rafId = 0;
@@ -339,11 +338,9 @@ const ArticleResource = ({id}: {id: string}) => {
         };
     }, [isLoading]);
 
-    // Effect for TOC auto-scroll
     useEffect(() => {
         if (isLoading) return;
         
-        // Add click listener to TOC container to detect manual interaction
         const handleTocClick = () => {
             isClickingTocRef.current = true;
             // Unlock after animation/scroll finishes (approx 1s safe buffer)
@@ -366,7 +363,6 @@ const ArticleResource = ({id}: {id: string}) => {
                 navContainer.addEventListener('click', handleTocClick);
 
                 observer = new MutationObserver((mutations) => {
-                    // Specific check: if user is manually clicking TOC, do not auto-scroll sidebar
                     if (isClickingTocRef.current) return;
 
                     let targetElement: HTMLElement | null = null;
@@ -443,29 +439,17 @@ const ArticleResource = ({id}: {id: string}) => {
                     <button type="button" onClick={() => loadArticle()}>重新加载</button>
                 </div>
             ) : isLoading ? (
-                <div style={{width:'100vw',height:'100vh',display:'flex',justifyContent:'center',alignItems:'center'}}>
-                    <Loading />
+                <div className="readPending" role="status" aria-label="正在加载文章">
+                    <SweepLoading />
                 </div>
             ) : (
                 <>
                     {loadError && <p role="alert">文章同步失败，当前显示上次加载的内容。<button type="button" onClick={() => loadArticle({silent: true})}>重试</button></p>}
                     <div className="readCover">
-                        {coverSource && coverSource !== failedCover ? (
-                            <motion.img
-                                key={coverSource}
-                                className="readCoverPoster"
-                                src={coverSource}
-                                alt=""
-                                aria-hidden="true"
-                                onError={() => setFailedCover(coverSource)}
-                                style={coverCropMotionStyle(cropFromRow(article))}
-                                initial={{ filter: "blur(10px)" }}
-                                animate={{ filter: "blur(0px)" }}
-                                transition={{ duration: 1 }}
-                            />
-                        ) : (
-                            <div className="readCoverPoster readCoverFallback" aria-hidden="true" />
-                        )}
+                        <div className="readCoverPoster readCoverFallback" aria-hidden="true" />
+                        {coverSource && <AssetImage className="readCoverPoster" src={coverSource}
+                            alt="文章封面" loading="eager" pending={<SweepLoading/>}
+                            style={coverCropStyle(cropFromRow(article))}/>}
                         <motion.div
                             initial={{ opacity: 0, x: -30 }}
                             animate={{ opacity: 1, x: 0 }}

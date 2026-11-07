@@ -257,3 +257,24 @@
       outline: 2px solid var(--washi-lav, #b9a7f5)
       outline-offset: 2px
       border-radius: 4px
+
+.albumTextOpen
+  flex: 1
+  padding: 0
+  border: 0
+  background: none
+  color: inherit
+  text-align: left
+  cursor: zoom-in
+  &:focus-visible
+    outline: 2px solid var(--washi-lav, #b9a7f5)
+    outline-offset: 3px
+
+.albumThumb:has(.asset-image-failure)
+  cursor: default
+
+.albumDetailImage .asset-image-failure
+  min-height: 180px
+
+.albumThumb .sweep-loading
+  transform: scale(.7)

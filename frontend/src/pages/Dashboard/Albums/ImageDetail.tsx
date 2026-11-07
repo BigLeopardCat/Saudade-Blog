@@ -1,9 +1,10 @@
+import SweepLoading from '../../../components/SweepLoading'
 import {useState} from 'react'
 import {Button, Input, Modal, Space, TreeSelect, message} from 'antd'
 import {StarFilled, StarOutlined} from '@ant-design/icons'
 import {galleryApi, galleryError, type GalleryImage, type GalleryFolder, type GalleryPatch} from '../../../apis/galleryApi'
 import {assetDisplayName} from '../../../utils/assetName'
-import {resolveApiAssetUrl} from '../../../utils/runtimeApi'
+import AssetImage from '../../../components/AssetImage'
 
 type FolderOption={value:number;title:string;children?:FolderOption[]}
 
@@ -38,7 +39,7 @@ export default function ImageDetail({image,folders,onClose,onDelete}:{
       <Button danger disabled={isLoading} onClick={()=>onDelete(current)}>删除</Button>
       <Button onClick={onClose}>关闭</Button>
     </Space>}>
-    <img className="albumDetailImage" src={resolveApiAssetUrl(current.imageUrl)} alt={current.displayName||assetDisplayName(current.imageUrl)}/>
+    <AssetImage pending={<SweepLoading/>} className="albumDetailImage" loading="eager" src={current.imageUrl} alt={current.displayName||assetDisplayName(current.imageUrl)}/>
     {mode==='name'&&<div className="albumDetailEdit"><Input aria-label="图片显示名" value={name} maxLength={255}
       onChange={e=>setName(e.target.value)} onPressEnter={()=>void save({displayName:name})}/>
       <Button type="primary" disabled={!name.trim()} loading={isLoading} onClick={()=>void save({displayName:name})}>保存名称</Button></div>}

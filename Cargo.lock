@@ -2413,6 +2413,7 @@ dependencies = [
  "jsonwebtoken",
  "percent-encoding",
  "pulldown-cmark",
+ "regex",
  "reqwest",
  "sea-orm",
  "serde",

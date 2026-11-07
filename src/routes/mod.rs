@@ -18,6 +18,7 @@ mod chat_context;
 pub mod conversation;
 pub mod monitor;
 pub mod sitemap;
+mod page_links;
 pub mod graph;
 pub mod stats;
 pub mod profile;
