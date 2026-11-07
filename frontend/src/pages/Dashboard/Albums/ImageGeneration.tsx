@@ -1,20 +1,21 @@
 import {useEffect,useState} from 'react'
-import {Alert,Button,Card,Input,InputNumber,Modal,Select,Space,Spin,Typography,Tooltip,message} from 'antd'
+import {Alert,Button,Card,Input,InputNumber,Modal,Select,Space,Spin,Typography,message} from 'antd'
 import {useDispatch} from 'react-redux'
 import type {AppDispatch} from '../../../store'
 import {imageGenerationApi as api,type GenerationJob} from '../../../apis/imageGenerationApi'
 import {galleryApi,galleryError} from '../../../apis/galleryApi'
 import {resolveApiAssetUrl} from '../../../utils/runtimeApi'
 import {assetDisplayName} from '../../../utils/assetName'
+import GenerationHistory from './GenerationHistory'
 
-const statusNames:Record<string,string>={pending:'等待确认提示词',generating:'正在生成',review:'等待审阅图片',accepted:'已存入图库',rejected:'已放弃',failed:'生成失败',unknown:'结果待核实',expired:'审批已过期'}
+const statusNames:Record<string,string>={pending:'等待确认提示词',generating:'正在生成',saving:'正在保存',review:'等待审阅图片',accepted:'已存入图库',rejected:'已放弃',failed:'生成失败',unknown:'结果待核实',expired:'审批已过期'}
 export default function ImageGeneration({onClose}:{onClose:()=>void}){
   const dispatch=useDispatch<AppDispatch>()
   const options=api.useGenerationOptionsQuery()
   const jobs=api.useGenerationJobsQuery(undefined,{pollingInterval:15000})
   const [active,setActive]=useState<Pick<GenerationJob,'id'|'status'>|null>(null)
-  const current=api.useGenerationJobQuery(active?.id??'',{skip:!active,pollingInterval:active?.status==='generating'?3000:0})
-  const job=current.data?.id===active?.id?current.data:null
+  const current=api.useGenerationJobQuery(active?.id??'',{skip:!active,pollingInterval:['generating','saving'].includes(active?.status??'')?3000:0})
+  const job=current.data&&current.data.id===active?.id?current.data:null
   useEffect(()=>{if(job&&active?.status!==job.status)setActive({id:job.id,status:job.status})},[job,active?.status])
   const images=galleryApi.useImagesInfiniteQuery({})
   const [prompt,setPrompt]=useState('')
@@ -30,14 +31,18 @@ export default function ImageGeneration({onClose}:{onClose:()=>void}){
   const [reject,{isLoading:rejecting}]=api.useRejectGenerationMutation()
   const busy=creating||approving||accepting||rejecting
   const fail=(e:unknown)=>void message.error(galleryError(e))
+  const showJob=async(value:GenerationJob)=>{
+    await dispatch(api.util.upsertQueryData('generationJob',value.id,value))
+    setActive(value)
+  }
   const updated=async(action:Promise<GenerationJob>)=>{
-    try{const value=await action;setActive(value);await current.refetch();void jobs.refetch()}
+    try{await showJob(await action);void jobs.refetch()}
     catch(e){fail(e)}
   }
   const prepare=async()=>{
     try{
       const value=await create({prompt,model:model||options.data?.defaultModel||'',size,quality,referenceIds}).unwrap()
-      setActive(value);void jobs.refetch()
+      await showJob(value);void jobs.refetch()
     }catch(e){fail(e)}
   }
   const fromArticle=async()=>{
@@ -52,16 +57,9 @@ export default function ImageGeneration({onClose}:{onClose:()=>void}){
   const rows=images.data?.pages.flatMap(p=>p.items)??[]
   return <Modal title="AI 生图" className="generationModal" open width={1040} onCancel={onClose} footer={<Button onClick={onClose}>关闭</Button>}>
     <div className="generationLayout">
-      <aside className="generationHistory"><Space direction="vertical" style={{width:'100%'}}>
-        <Button block onClick={()=>setActive(null)}>新建图片</Button>
-        {jobs.isError&&<Alert type="error" message="任务列表加载失败" action={<Button onClick={()=>void jobs.refetch()}>重试</Button>}/>}
-        {jobs.data?.map(item=><Tooltip key={item.id} title={item.title} placement="right">
-          <button type="button" className="generationHistoryItem" aria-current={active?.id===item.id?'true':undefined} onClick={()=>setActive(item)}>
-            <span className="generationHistoryStatus">{statusNames[item.status]||item.status}</span>
-            <span className="generationHistoryTitle">{item.title||'未命名图片'}</span>
-          </button>
-        </Tooltip>)}
-      </Space></aside>
+      <GenerationHistory items={jobs.data??[]} active={active} detail={job} failed={jobs.isError} statusNames={statusNames}
+        onNew={()=>setActive(null)} onSelect={setActive} onRetry={showJob}
+        onDeleted={id=>setActive(value=>value?.id===id?null:value)} onRefresh={()=>void jobs.refetch()}/>
       <main className="generationMain">
         {!options.data?.configured&&<Alert type="info" showIcon message="请先在服务器配置生图 API 密钥和可用模型列表"/>}
         {options.isError&&<Alert type="error" message="生图配置读取失败"/>}
@@ -93,9 +91,11 @@ export default function ImageGeneration({onClose}:{onClose:()=>void}){
               <figcaption>{ref.name}</figcaption>
             </figure>)}</div>
           </Card>
+          {job.status==='pending'&&job.retrySourceStatus==='unknown'&&<Alert type="warning" showIcon message="原请求结果尚未核实。批准这个新草稿可能再次计费，请先核对服务商调用记录。"/>}
           {job.status==='pending'&&<Space wrap><Button type="primary" disabled={busy} loading={approving} onClick={()=>void updated(approve({id:job.id,version:job.requestHash}).unwrap())}>确认提示词与参考图，开始生成</Button>
             <Button disabled={busy} onClick={()=>{setPrompt(job.request.prompt);setModel(job.request.model);setSize(job.request.size);setQuality(job.request.quality);setReferences(job.request.references.map(r=>r.imageId));setActive(null)}}>返回修改</Button></Space>}
           {job.status==='generating'&&<Alert type="info" icon={<Spin size="small"/>} showIcon message="正在生成图片，可以关闭窗口，稍后回来审阅。请勿重复创建相同任务。"/>}
+          {job.status==='saving'&&<Alert type="info" icon={<Spin size="small"/>} showIcon message="正在保存图片，可以关闭窗口，稍后回来核对入库结果。"/>}
           {job.previewUrl&&<img className="generationResult" src={resolveApiAssetUrl(job.previewUrl)} alt="本次生成结果"/>}
           {job.status==='review'&&<><Alert type="info" message="请查看实际生成结果。确认入库后才会出现在图库中；不会自动修改文章封面。"/>
             <Button type="primary" loading={accepting} disabled={busy||!job.outputHash} onClick={()=>void updated(accept({id:job.id,version:job.outputHash!}).unwrap())}>确认结果并存入图库</Button></>}

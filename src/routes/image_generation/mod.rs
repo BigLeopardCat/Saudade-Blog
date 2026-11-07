@@ -1,12 +1,18 @@
 //! Human approval owns paid generation and acceptance; Agent proposes only immutable jobs.
+mod acceptance;
+mod errors;
+pub mod events;
+mod history;
 mod jobs;
+#[cfg(test)]
+mod lifecycle_tests;
 mod provider;
 mod references;
 mod result_storage;
 mod settings;
-mod transport;
 #[cfg(test)]
 mod tests;
+mod transport;
 
 use crate::{routes::AppState, utils::ApiResponse};
 use axum::{
@@ -27,7 +33,7 @@ fn error(message: impl Into<String>) -> DbErr {
 fn digest(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
-fn stmt(sql: &str, args: Vec<Value>) -> Statement {
+fn stmt(sql: impl Into<String>, args: Vec<Value>) -> Statement {
     Statement::from_sql_and_values(DatabaseBackend::Postgres, sql, args)
 }
 
@@ -81,7 +87,7 @@ pub struct Request {
     pub quality: String,
     pub references: Vec<Reference>,
 }
-#[derive(Default, Serialize)]
+#[derive(Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Job {
     pub id: String,
@@ -94,6 +100,8 @@ pub struct Job {
     pub error: Option<String>,
     pub usage: Option<JsonValue>,
     pub created_at: String,
+    pub retry_of: Option<String>,
+    pub retry_source_status: Option<String>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -132,7 +140,19 @@ pub async fn create(
     response(
         async {
             let uid = crate::routes::gallery::actor(&state, &headers).await?;
-            jobs::create(&state, uid, input).await
+            jobs::create(
+                &state,
+                uid,
+                input,
+                if crate::auth_jwt::claims_from_headers(&headers)
+                    .is_some_and(|claims| claims.aud.as_deref() == Some("blog-tools"))
+                {
+                    "agent"
+                } else {
+                    "dashboard"
+                },
+            )
+            .await
         }
         .await,
     )
@@ -163,7 +183,7 @@ pub async fn list(
 ) -> Json<ApiResponse<Vec<Summary>>> {
     response(async {
         let uid=crate::routes::gallery::actor(&state,&headers).await?;
-        Summary::find_by_statement(stmt("SELECT id::text AS id,left(request->>'prompt',80) AS title,CASE WHEN status='generating' AND approved_at<now()-interval '5 minutes' THEN 'unknown' WHEN status='pending' AND created_at<now()-interval '1 hour' THEN 'expired' ELSE status END AS status FROM image_generation WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 30",vec![uid.into()])).all(&state.db).await
+        Summary::find_by_statement(stmt(format!("SELECT id::text AS id,left(request->>'prompt',80) AS title,{} AS status FROM image_generation WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 30", jobs::STATUS),vec![uid.into()])).all(&state.db).await
     }.await)
 }
 pub async fn approve(
@@ -185,15 +205,42 @@ pub async fn accept(
     headers: HeaderMap,
     Path(id): Path<String>,
     Json(input): Json<Approval>,
-) -> Json<ApiResponse<Job>> {
-    response(
-        async {
-            let uid = crate::routes::gallery::actor(&state, &headers).await?;
-            jobs::accept(&state, uid, &id, input).await
-        }
-        .await,
-    )
+) -> Result<Json<ApiResponse<Job>>, errors::JobError> {
+    let uid = crate::routes::gallery::actor(&state, &headers)
+        .await
+        .map_err(|_| errors::JobError::Unauthorized)?;
+    Ok(Json(ApiResponse::success(
+        jobs::accept(&state, uid, &id, input).await?,
+    )))
 }
+
+pub async fn remove(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<ApiResponse<()>>, errors::JobError> {
+    let uid = crate::routes::gallery::actor(&state, &headers)
+        .await
+        .map_err(|_| errors::JobError::Unauthorized)?;
+    history::remove(&state, uid, &id).await?;
+    Ok(Json(ApiResponse::success(())))
+}
+
+pub async fn retry(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<ApiResponse<Job>>, errors::JobError> {
+    let uid = crate::routes::gallery::actor(&state, &headers)
+        .await
+        .map_err(|_| errors::JobError::Unauthorized)?;
+    let settings =
+        settings::Settings::load().map_err(|_| errors::JobError::Invalid("生图服务配置不可用"))?;
+    Ok(Json(ApiResponse::success(
+        history::retry(&state, uid, &id, &settings).await?,
+    )))
+}
+
 pub async fn reject(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -267,9 +314,9 @@ pub async fn preview(
         if claims.job!=id{return Err(());}
         let uid=claims.sub.parse::<i32>().map_err(|_|())?;
         let query=if claims.slot<0 {
-            stmt("SELECT output AS bytes,'image/png' AS mime FROM image_generation WHERE id::text=$1 AND owner_id=$2 AND output_hash=$3 AND status='review'",vec![id.into(),uid.into(),claims.digest.clone().into()])
+            stmt("SELECT output AS bytes,'image/png' AS mime FROM image_generation WHERE id::text=$1 AND owner_id=$2 AND output_hash=$3 AND status IN ('review','saving')",vec![id.into(),uid.into(),claims.digest.clone().into()])
         }else{
-            stmt("SELECT r.bytes,r.mime FROM image_generation_reference r JOIN image_generation j ON j.id=r.job_id WHERE j.id::text=$1 AND j.owner_id=$2 AND r.ordinal=$3 AND j.status IN ('pending','generating','review')",vec![id.into(),uid.into(),claims.slot.into()])
+            stmt("SELECT r.bytes,r.mime FROM image_generation_reference r JOIN image_generation j ON j.id=r.job_id WHERE j.id::text=$1 AND j.owner_id=$2 AND r.ordinal=$3 AND j.status IN ('pending','generating','review','saving')",vec![id.into(),uid.into(),claims.slot.into()])
         };
         let row=state.db.query_one(query).await.map_err(|_|())?.ok_or(())?;
         let bytes:Vec<u8>=row.try_get("","bytes").map_err(|_|())?;
