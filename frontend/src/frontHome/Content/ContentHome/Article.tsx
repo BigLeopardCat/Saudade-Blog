@@ -6,7 +6,7 @@ import React, {useEffect, useRef, useState} from "react";
 import {NoteType} from "../../../interface/NoteType";
 import {CategoriesType} from "../../../interface/CategoriesType";
 import {renderNoteTags} from "../../../apis/TagMethods.tsx";
-import { coverCropStyle, cropFromRow } from "../../../utils/coverCrop";
+import { CARD_ASPECT, coverCropStyle, cropFromRow } from "../../../utils/coverCrop";
 import { CommentIcon, EyeIcon, HeartIcon, StarIcon } from "../../../components/NoteStatIcons/index.tsx";
 import { statCells } from "../../../utils/noteStats";
 import { resetDescScroll } from "../../../utils/descHover";
@@ -92,7 +92,7 @@ const Article:React.FC<ArticleOption> = ({ item, index, Categories, avatar, name
             className="article"
         >
             <div className="ArticleCard" onClick={() => window.open(`/article/${item.key}`, "_blank")}>
-                <div className="ArticleCover">
+                <div className="ArticleCover" style={{aspectRatio: CARD_ASPECT}}>
                     {isVisible && <AssetImage pending={<SweepLoading/>} alt={item.noteTitle} src={item.cover} style={coverCropStyle(cropFromRow(item))} />}
                 </div>
 

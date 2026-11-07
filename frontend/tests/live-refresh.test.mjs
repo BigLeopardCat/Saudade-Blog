@@ -12,8 +12,7 @@ const file = path.join(out, 'liveRefresh.mjs');
 await esbuild.build({
     entryPoints: [path.join(root, 'src/utils/liveRefresh.ts')],
     bundle: true, format: 'esm', platform: 'node', outfile: file, logLevel: 'error',
-    // react 只是 `useLiveRefresh` 那层薄壳用的；本套件测的是不依赖 React 的 `retainLive`，
-    // 但仍要把 import 解析掉（否则整个模块 import 不进来）。
+    // Exercise retainLive without mounting React.
     plugins: [{
         name: 'stub-react',
         setup(build) {
@@ -58,7 +57,7 @@ let nowMs = 1_000_000;
 const realNow = Date.now;
 Date.now = () => nowMs;
 const advance = (ms) => { nowMs += ms; };
-const fireWin = (t) => (winEvents[t] || []).forEach((f) => f({ type: t }));
+const fireWin = (t, detail) => (winEvents[t] || []).forEach((f) => f({ type: t, detail }));
 const fireDoc = (t) => (docEvents[t] || []).forEach((f) => f({ type: t }));
 
 let boot = 0;
@@ -224,6 +223,70 @@ console.log('\n⑧ 跨文件契约：事件名与 chat-stream.js 派发的那个
     const mod = await fresh();
     fireWin('agent-turn-done');
     ok(mod.liveRefreshDebug().consumers === 0, '（本场景只为读常量，无消费者）');
+}
+
+
+console.log('\n⑨ Agent 变更在途合并，完成后只补一次');
+{
+    const mod = await fresh();
+    const c = counter();
+    c.hang = true;
+    const off = mod.retainLive(c.fn, { poll: false });
+    fireWin('agent-turn-done');
+    fireWin('agent-turn-done');
+    fireWin('agent-turn-done');
+    eq(c.n, 1, '在途期间不并发刷新');
+    c.pending.shift()();
+    await tick();
+    eq(c.n, 2, '多个变更合并成一次补拉，绕过两秒节流');
+    c.pending.shift()();
+    await tick();
+    eq(c.n, 2, '没有继续追加变更时不循环刷新');
+    off();
+}
+{
+    const mod = await fresh();
+    let reject;
+    let calls = 0;
+    const off = mod.retainLive(() => {
+        calls++;
+        return calls === 1 ? new Promise((_resolve, fail) => { reject = fail; }) : undefined;
+    });
+    fireWin('agent-turn-done');
+    fireWin('agent-turn-done');
+    reject(new Error('offline'));
+    await tick();
+    eq(calls, 2, '当前请求失败仍消费待刷新标记');
+    off();
+}
+{
+    const mod = await fresh();
+    const c = counter();
+    c.hang = true;
+    const off = mod.retainLive(c.fn);
+    fireWin('agent-turn-done');
+    fireWin('agent-turn-done');
+    off();
+    c.pending.shift()();
+    await tick();
+    eq(c.n, 1, '卸载后不启动已排队的刷新');
+}
+
+
+{
+    const mod = await fresh();
+    const c = counter();
+    c.hang = true;
+    const off = mod.retainLive(c.fn, {poll: false, agentEvent: event => event.detail?.article === true});
+    fireWin('agent-turn-done');
+    fireWin('agent-turn-done', {article: false});
+    eq(c.n, 0, '普通闲聊与无关变更不刷新文章');
+    fireWin('agent-turn-done', {article: true});
+    fireWin('agent-turn-done', {article: false});
+    c.pending.shift()();
+    await tick();
+    eq(c.n, 1, '被过滤事件不会设置待刷新标记');
+    off();
 }
 
 Date.now = realNow;

@@ -210,6 +210,78 @@ async fn postgres_gallery_metadata_folders_favorites_versions_and_cover_integrit
         Some(original_url.as_str())
     );
     assert_eq!(cover.state.fit.as_deref(), Some("contain"));
+    txn.execute(Statement::from_sql_and_values(
+        DatabaseBackend::Postgres,
+        "UPDATE note SET cover_focus_x=0.1,cover_focus_y=0.9,cover_zoom=2, \
+         carousel_fit='cover',carousel_focus_x=0.2,carousel_focus_y=0.8,carousel_zoom=3 \
+         WHERE id=$1 OR draft_of=$1",
+        vec![root.into()],
+    ))
+    .await
+    .unwrap();
+    let manual = covers::read_target(&txn, root).await.unwrap();
+    let reset = covers::apply(
+        &txn,
+        uid,
+        root,
+        covers::Change {
+            version: manual.version.clone(),
+            image_id: ids[0],
+            image_version: read(&txn, uid, ids[0]).await.unwrap().version,
+            fit: crate::routes::notes::CoverFit::Contain,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        reset.changed,
+        "same image and fit must still reset customized crops"
+    );
+    assert_eq!(reset.before_version, manual.version);
+    assert_ne!(reset.state.version, reset.before_version);
+    let rows = txn
+        .query_all(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "SELECT cover_fit,carousel_fit,cover_focus_x,cover_focus_y,cover_zoom, \
+         carousel_focus_x,carousel_focus_y,carousel_zoom FROM note WHERE id=$1 OR draft_of=$1",
+            vec![root.into()],
+        ))
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 2);
+    for row in rows {
+        assert_eq!(row.try_get::<String>("", "cover_fit").unwrap(), "contain");
+        assert_eq!(
+            row.try_get::<String>("", "carousel_fit").unwrap(),
+            "contain"
+        );
+        for field in [
+            "cover_focus_x",
+            "cover_focus_y",
+            "carousel_focus_x",
+            "carousel_focus_y",
+        ] {
+            assert_eq!(row.try_get::<f64>("", field).unwrap(), 0.5);
+        }
+        for field in ["cover_zoom", "carousel_zoom"] {
+            assert_eq!(row.try_get::<f64>("", field).unwrap(), 1.0);
+        }
+    }
+    let unchanged = covers::apply(
+        &txn,
+        uid,
+        root,
+        covers::Change {
+            version: reset.state.version.clone(),
+            image_id: ids[0],
+            image_version: read(&txn, uid, ids[0]).await.unwrap().version,
+            fit: crate::routes::notes::CoverFit::Contain,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(!unchanged.changed);
+    assert_eq!(unchanged.state.version, reset.state.version);
     assert!(covers::apply(
         &txn,
         uid,

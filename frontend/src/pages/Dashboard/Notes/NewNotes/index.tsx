@@ -27,7 +27,7 @@ import {useGalleryPager} from "../../../../utils/galleryPager.ts";
 import CoverCropModal from '../../../../components/CoverCropModal';
 import NoteTagSelect from '../../../../components/NoteTagSelect/index.tsx';
 import {readListReturn} from '../AllNotes/listState';
-import { COMPLETE_COVER, DEFAULT_CROP, carouselCropFromRow, cropFromRow, type CoverCrop } from '../../../../utils/coverCrop';
+import { DEFAULT_CROP, carouselCropFromRow, cropFromRow, type CoverCrop } from '../../../../utils/coverCrop';
 
 type FileType = Parameters<GetProp<UploadProps, 'beforeUpload'>>[0];
 
@@ -38,8 +38,8 @@ const NewNotes = () => {
     const [noteContent, setNoteContent] = useState('')
     const [coverImg,setCoverImg] = useState('')
     // 两个展示位分别保存显示方式与裁切参数。
-    const [coverCrop, setCoverCrop] = useState<CoverCrop>({...COMPLETE_COVER})
-    const [coverCropCarousel, setCoverCropCarousel] = useState<CoverCrop>({...COMPLETE_COVER})
+    const [coverCrop, setCoverCrop] = useState<CoverCrop>({...DEFAULT_CROP})
+    const [coverCropCarousel, setCoverCropCarousel] = useState<CoverCrop>({...DEFAULT_CROP})
     const [cropDirty, setCropDirty] = useState({carousel: false, card: false})
     const [cropOpen, setCropOpen] = useState(false)
     const cropSnap = useRef<{carousel: CoverCrop; card: CoverCrop}>({carousel: {...DEFAULT_CROP}, card: {...DEFAULT_CROP}})
@@ -212,7 +212,7 @@ const NewNotes = () => {
         return () => { mountedRef.current = false; };
     }, []);
 
-    // 转跳 URL/切界面（组件卸载）：立刻补一次，别等防抖；本次会话新建且一直空白的行顺手删掉
+    // Flush on navigation; discard an empty draft created in this editor session.
     useEffect(() => () => {
         if (autosaveTimer.current) { clearTimeout(autosaveTimer.current); autosaveTimer.current = null; }
         if (stopAutosaveRef.current || getToken() !== sessionTokenRef.current) return;
@@ -294,8 +294,7 @@ const NewNotes = () => {
                     noteTitle: row.noteTitle,
                     noteCategory: row.noteCategory,
                     isTop: row.isTop,
-                    // 状态取**原文章**的：修改稿自身恒为 draft，拿它回填会让弹窗默认「草稿」，
-                    // 用户不改直接点发布就把已发布文章撤下来了
+                    // Publish controls use the root status, not the shadow draft status.
                     status: data.note.status,
                     description: row.description,
                 })
@@ -344,11 +343,11 @@ const NewNotes = () => {
 
     const openCropper = (fresh: boolean) => {
         cropSnap.current = fresh
-            ? {carousel: {...COMPLETE_COVER}, card: {...COMPLETE_COVER}}
+            ? {carousel: {...DEFAULT_CROP}, card: {...DEFAULT_CROP}}
             : {carousel: coverCropCarousel, card: coverCrop};
         if (fresh) {
-            setCoverCrop({...COMPLETE_COVER});
-            setCoverCropCarousel({...COMPLETE_COVER});
+            setCoverCrop({...DEFAULT_CROP});
+            setCoverCropCarousel({...DEFAULT_CROP});
             setCropDirty({carousel: true, card: true});
         }
         setCropOpen(true);
@@ -370,7 +369,7 @@ const NewNotes = () => {
             };
             setFileList([newFile]);
             form.setFieldValue('cover', [newFile]);
-            openCropper(true); // 新图 → 打开裁剪窗，从默认居中开始
+            openCropper(true);
         }
     }
 
@@ -411,8 +410,7 @@ const NewNotes = () => {
              setCoverImg('');
              setCoverCrop({...DEFAULT_CROP});
              setCoverCropCarousel({...DEFAULT_CROP});
-             // 封面被删：库里可能还留着旧图的焦点值（后端无法清空列），标脏以保证
-             // 之后再选新图时会把两套参数覆盖写一遍，不残留旧图焦点
+             // Reset both crop targets when the cover is removed.
              setCropDirty({carousel: true, card: true});
         }
     };
@@ -447,7 +445,7 @@ const NewNotes = () => {
         form.setFieldValue('cover', [newFile]);
         setGalleryOpen(false);
         message.success('已选择封面');
-        openCropper(true); // 新图 → 打开裁剪窗
+        openCropper(true);
     };
 
     const onFinish = async (formValues: any) => {
@@ -470,8 +468,7 @@ const NewNotes = () => {
             coverFocusY: coverImg ? coverCrop.y : null,
             coverZoom: coverImg ? coverCrop.z : null,
             coverFit: coverImg ? (coverCrop.fit ?? 'cover') : null,
-            // 轮播那套只在用户动过时才回传：三列同进同出（后端按原子三元组判定，
-            // 只发一列会让整组被渲染端忽略 = 写入静默失效），未动则发 null 保持回退链
+            // Send carousel coordinates together; null keeps the card fallback.
             carouselFocusX: coverImg && cropDirty.carousel ? coverCropCarousel.x : null,
             carouselFocusY: coverImg && cropDirty.carousel ? coverCropCarousel.y : null,
             carouselZoom: coverImg && cropDirty.carousel ? coverCropCarousel.z : null,
@@ -536,9 +533,7 @@ const NewNotes = () => {
                         if (!ok(refreshed) || typeof refreshed.data.data?.version !== 'string')
                             throw new Error('保存成功，但无法读取最新草稿版本，请重新打开文章');
                         versionRef.current = refreshed.data.data.version;
-                        // 留在编辑器接着写：草稿箱里已经有这一行，跳走反而打断写作。
-                        // 把「已保存」基准对齐到当前内容，卸载时就不会再白发一次；
-                        // 若提交期间内容又变了（弹窗里还能改描述），则不对齐、再排一发把最新全文写回去
+                        // Acknowledge only the submitted snapshot; later edits still need autosaving.
                         publishingRef.current = false;
                         if (JSON.stringify(buildPayloadRef.current()) === snapBeforePublish) {
                             lastSavedRef.current = snapBeforePublish;
@@ -566,18 +561,7 @@ const NewNotes = () => {
             message.error("文章保存失败：" + error)
         }
     }
-    /**
-     * 回列表页：**带上列表原来的查询条件**。
-     *
-     * 列表页每次 URL 变化都会把 query 串写进 sessionStorage（`notes:listReturn`）。直接
-     * `navigate('/dashboard/notes')` 会把 tab / 页码 / 搜索条件全丢掉，用户从编辑器回来
-     * 又得重翻一遍 —— 就是「翻到一页改完文章配置，页码又回到第一页」的另一半原因
-     * （前半是改配置后整表重拉触发的分页钳制，见 AllNotes 的 onOk）。
-     *
-     * 三级兜底：有票据 → 回那个 URL；没票据但历史里有上一页 → 后退；直接打开编辑器
-     * （新标签页 / 书签）→ 回列表首页。
-     * 一律 `{replace:true}`：否则再按一次后退又回到刚提交完的编辑器。
-     */
+    /** Restore the list query, then browser history, otherwise the list root. */
     const goBackToList = () => {
         const ticket = readListReturn();
         if (ticket !== null) {
