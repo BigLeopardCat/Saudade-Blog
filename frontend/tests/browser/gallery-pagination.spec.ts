@@ -2,6 +2,10 @@ import {test,expect} from './sandbox'
 import type {Page} from '@playwright/test'
 import type {GalleryFolder,GalleryImage,GalleryPage} from '../../src/apis/galleryApi'
 
+declare global {
+  interface Window {readonly galleryObservers?:{root:string|null}[]}
+}
+
 test.use({entry:'dashboard-pages',viewport:{width:1280,height:540}})
 
 type Listing={before:number|null;folderId:number|null;search:string|null}
@@ -205,7 +209,7 @@ test('changing between internal and document scrolling rebinds the observer and 
   const calls=await mockGallery(page,({before})=>before===null
     ?{items:rows(60,30),nextCursor:31}:{items:rows(30,30),nextCursor:null})
   await page.goto(sandboxURL)
-  const observers=()=>page.evaluate(()=>(window as Window&{galleryObservers:{root:string|null}[]}).galleryObservers)
+  const observers=()=>page.evaluate(()=>window.galleryObservers)
   await expect.poll(observers).toEqual([{root:'dashboardPage'}])
   await page.setViewportSize({width:390,height:660})
   await expect.poll(observers).toEqual([{root:null}])
