@@ -1,4 +1,5 @@
 pub mod auth;
+mod health;
 pub mod notes;
 pub mod document_visibility;
 pub mod document_reads;
@@ -99,6 +100,8 @@ pub fn create_router(state: AppState) -> Router {
     let state_arc = std::sync::Arc::new(state);
 
     let public_routes = Router::new()
+        .route("/api/health/live", get(health::live))
+        .route("/api/health/ready", get(health::ready))
         // Auth
         .route("/api/login", post(auth::login))
         .route("/api/password/reset", post(auth::reset_password))

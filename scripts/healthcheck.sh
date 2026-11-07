@@ -14,9 +14,8 @@ if [ -f "$STAMP" ]; then . "$STAMP"; fi
 capacity=$(python3 "$PROJECT_DIR/scripts/check_disk_capacity.py" "$PROJECT_DIR" --max-used-percent 90 2>&1) ||
   { fail "WARN $capacity"; logger -t saudade-health -- "$capacity"; }
 
-# GET on the POST-only login route verifies that the router is reachable.
-code=$(curl --noproxy '*' -s -o /dev/null -w "%{http_code}" --max-time 5 http://127.0.0.1:3000/api/login)
-[ "$code" != "405" ] && [ "$code" != "200" ] && fail "FAIL Rust 3000 HTTP $code"
+source "$(dirname "${BASH_SOURCE[0]}")/deploy/backend_checks.sh"
+backend_ready || fail "FAIL Rust 3000 /api/health/ready"
 agent_code=$(curl --noproxy '*' -s -o /dev/null -w "%{http_code}" --max-time 5 http://127.0.0.1:8010/ready)
 [ "$agent_code" != "200" ] && fail "FAIL agent 8010 /ready HTTP $agent_code"
 
@@ -76,7 +75,7 @@ agent_size=$(stat -c %s "$AGENT_LOG" 2>/dev/null || echo 0)
 if [ "$agent_size" -gt "${AGENT_LOG_SIZE:-0}" ]; then
   wire=$(tail -c $((agent_size - ${AGENT_LOG_SIZE:-0})) "$AGENT_LOG" \
          | grep -c "wire_illegal" || true)
-  [ "${wire:-0}" -gt 0 ] && fail "WARN agent 出站序列不合严格服务商协议 ${wire} 次（绊线只报不修；查 graph._frame_id 与 context.with_tool_call_pairs 的配对）"
+  [ "${wire:-0}" -gt 0 ] && fail "WARN agent 出站序列不合严格服务商协议 ${wire} 次；请核对对应 trace 与服务商响应"
 fi
 echo "AGENT_LOG_SIZE=$agent_size" >> "$STAMP"
 
@@ -86,8 +85,6 @@ if [ -f "$hdr_sh" ]; then
   hdr_out=$(bash "$hdr_sh" 2>&1) || \
     fail "WARN 安全响应头缺失：$(printf '%s' "$hdr_out" | tr '\n' '; ' | cut -c1-180)"
 else
-  # 判据不在场 ≠ 头齐备（本仓的老账：**缺键绝不读成 0**）。这条 WARN 说的是"这一项
-  # 这轮没验"，不是"头没了"——两种情况的话得分开说，否则修错方向。
   fail "WARN 安全响应头这一项没验（找不到 $hdr_sh）"
 fi
 
@@ -107,9 +104,7 @@ if [ "$(cat "$METRICS_DAY" 2>/dev/null)" != "$TODAY" ]; then
       fail "WARN 每日观测没跑出来（rc=$dm_rc）：$(printf '%s' "$dm_out" | tail -2 | tr '\n' ';' | cut -c1-200)"
     fi
   else
-    # 「判据不在场」≠「没问题」（同第 8 项那条纪律）。它在 agent 仓的 main 上，
-    # 生产树 pull 之后才有——这条 WARN 说的是"这一项这轮没验"，不是"线上坏了"。
-    fail "WARN 每日观测脚本不在场（$dm）——它在 agent 仓 main 上，生产树 pull 之后才有"
+    fail "WARN 每日观测脚本不在场（$dm），本轮未采集每日观测"
   fi
 fi
 exit 0

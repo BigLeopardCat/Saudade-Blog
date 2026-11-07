@@ -52,6 +52,13 @@ Agent 的 `CHECKPOINT_DSN` 指向独立数据库；不要把框架 schema 建到
 
 主线 `cn_sora_blog` 的发布工作流先运行 Rust、PostgreSQL、前端及浏览器检查，再构建固定提交产物、上传 R2 并通知服务器部署。PR 不部署，也不读取生产 secret。主线文档提交同样触发完整快照发布。发布后分别核对 `/build-info.json`、Rust 二进制产物来源及校验值、Agent `/version`，再查探针、静态资源和服务日志；本地 HEAD、组件 pin 和 CI 绿灯不能代替实际运行版本。
 
+后端公开 `GET /api/health/live`（进程可响应）及 `GET /api/health/ready`（两秒内完成数据库只读探测）。
+就绪检查成功返回 HTTP 200 与 `{"ready":true}`，失败或超时返回 503 与 `{"ready":false}`；
+响应禁止缓存，不包含连接配置。部署与巡检只接受明确就绪，不把登录路由的 405 或错误页面当作成功。
+这不验证模型、对象存储、迁移完整性或业务任务完成率。首次采用此探针时，先发布包含端点的二进制，
+再于没有部署任务运行时同步安装 `deploy_from_r2.sh`、`backend_checks.sh` 和巡检脚本。
+探针默认访问 `http://127.0.0.1:3000`；自定义端口时为部署和巡检设置 `SAUDADE_BACKEND_BASE_URL`。
+
 Agent 服务独立发布，操作见 [Agent 部署](https://github.com/BigLeopardCat/saudade-blog-agent/blob/main/docs/deployment.md)。只有采用组件子树更新时才修改 `frontend/widget.lock.json` 的提交和子树哈希；构建前执行 `fetch:widget`、`vendor:live2d`。
 
 ## 停机与任务
