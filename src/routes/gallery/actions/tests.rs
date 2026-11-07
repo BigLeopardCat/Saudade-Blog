@@ -684,7 +684,9 @@ async fn postgres_gallery_batch_http_uses_admin_auth_and_real_transaction_routes
     .await
     .unwrap();
     let app = crate::routes::create_router(crate::routes::AppState {
-        db: f.db.clone(),
+        db: Database::connect(std::env::var("TEST_PG_URL").unwrap())
+            .await
+            .unwrap(),
         rate_limiter: crate::rate_limiter::LoginRateLimiter::new(5, 60, 300),
         post_limiter: crate::risk::PostRateLimiter::default(),
         report_limiter: crate::rate_limiter::LoginRateLimiter::new(120, 60, 300),

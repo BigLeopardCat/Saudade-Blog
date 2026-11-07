@@ -3,7 +3,10 @@ use crate::r2;
 use sea_orm::{
     ConnectionTrait, DatabaseBackend, DatabaseConnection, DbErr, FromQueryResult, Statement,
 };
-use std::{sync::LazyLock, time::Duration};
+use std::{
+    sync::{Arc, LazyLock},
+    time::Duration,
+};
 use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 
@@ -138,18 +141,26 @@ async fn drain(db: &DatabaseConnection) {
     }
 }
 
-pub(crate) fn wake(db: DatabaseConnection) {
+pub(crate) fn wake(state: Arc<crate::routes::AppState>) {
     crate::lifecycle::task_tracker().spawn(async move {
-        drain(&db).await;
+        drain(&state.db).await;
     });
 }
 
 pub(crate) fn start(db: DatabaseConnection) {
+    let db = Arc::new(db);
     crate::lifecycle::task_tracker().spawn(async move {
         let mut ticks = tokio::time::interval(Duration::from_secs(5));
         ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
-            tokio::select! {biased;_ = STOP.cancelled()=>break,_ = ticks.tick()=>wake(db.clone())}
+            tokio::select! {
+                biased;
+                _ = STOP.cancelled() => break,
+                _ = ticks.tick() => {
+                    let db = db.clone();
+                    crate::lifecycle::task_tracker().spawn(async move { drain(&db).await; });
+                }
+            }
         }
     });
 }

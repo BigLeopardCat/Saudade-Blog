@@ -56,7 +56,9 @@ async fn main() {
         report_lockout_secs,
     );
 
-    saudade_blog::routes::gallery::start_cleanup(db.clone());
+    saudade_blog::routes::gallery::start_cleanup(SqlxPostgresConnector::from_sqlx_postgres_pool(
+        pool.clone(),
+    ));
     saudade_blog::checkpoint_cleanup::start(SqlxPostgresConnector::from_sqlx_postgres_pool(pool));
     let app_state = AppState {
         db,

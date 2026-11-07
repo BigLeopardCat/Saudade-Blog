@@ -176,7 +176,7 @@ pub async fn change(
             .map_err(|_| ActionError::Unauthorized)?;
         let outcome = execute_change(&state.db, uid, input).await?;
         if !outcome.cleanup_pending_ids.is_empty() {
-            super::deletions::wake(state.db.clone());
+            super::deletions::wake(state.clone());
         }
         Ok(outcome)
     }
