@@ -1,6 +1,10 @@
 use super::*;
-use sea_orm::{ConnectionTrait, Database, DatabaseBackend, DatabaseConnection, Statement};
+use sea_orm::{
+    ConnectOptions, ConnectionTrait, Database, DatabaseBackend, DatabaseConnection, Statement,
+    TransactionTrait,
+};
 use serde_json::{json, Value};
+use std::time::Duration;
 
 struct Fixture {
     db: DatabaseConnection,
@@ -94,7 +98,37 @@ impl Fixture {
         })).collect()
     }
 
+    async fn article(&self) -> i32 {
+        self.db
+            .query_one(Statement::from_sql_and_values(
+                DatabaseBackend::Postgres,
+                "INSERT INTO note(title,content,status,is_public,created_at,updated_at) \
+             VALUES($1,'fixture','public',true,localtimestamp,localtimestamp) RETURNING id",
+                vec![self.prefix.clone().into()],
+            ))
+            .await
+            .unwrap()
+            .unwrap()
+            .try_get("", "id")
+            .unwrap()
+    }
+
     async fn cleanup(self) {
+        for sql in [
+            "DELETE FROM note_comment WHERE note_id IN (SELECT id FROM note WHERE title=$1)",
+            "DELETE FROM note WHERE title=$1",
+            "DELETE FROM image_deletion WHERE image_id IN (SELECT image_key FROM images \
+             WHERE position($1::text in image_url)>0)",
+        ] {
+            self.db
+                .execute(Statement::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    sql,
+                    vec![self.prefix.clone().into()],
+                ))
+                .await
+                .unwrap();
+        }
         self.db
             .execute(Statement::from_sql_and_values(
                 DatabaseBackend::Postgres,
@@ -265,7 +299,7 @@ async fn postgres_gallery_bulk_metadata_keeps_urls_and_all_per_image_fields() {
     )
     .await
     .unwrap();
-    assert!(unclassified.destination.is_none());
+    assert_eq!(unclassified.destination.as_ref().unwrap().id, 0);
     let moved = execute_change(&f.db, f.uid, change(&unclassified))
         .await
         .unwrap();
@@ -434,5 +468,200 @@ async fn postgres_gallery_bulk_database_failure_rolls_back_earlier_changes() {
     .unwrap();
     assert!(result.is_err());
     assert_eq!(f.snapshot().await, before);
+    f.cleanup().await;
+}
+
+async fn isolated_connection() -> (DatabaseConnection, i32) {
+    let mut options = ConnectOptions::new(std::env::var("TEST_PG_URL").unwrap());
+    options.max_connections(1).min_connections(1);
+    let db = Database::connect(options).await.unwrap();
+    let pid = db
+        .query_one(Statement::from_string(
+            DatabaseBackend::Postgres,
+            "SELECT pg_backend_pid() AS pid".to_string(),
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "pid")
+        .unwrap();
+    (db, pid)
+}
+
+async fn wait_for_block(db: &DatabaseConnection, waiter: i32, holder: i32) {
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let blocked: bool = db
+                .query_one(Statement::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    "SELECT $2::int = ANY(pg_blocking_pids($1::int)) AS blocked",
+                    vec![waiter.into(), holder.into()],
+                ))
+                .await
+                .unwrap()
+                .unwrap()
+                .try_get("", "blocked")
+                .unwrap();
+            if blocked {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the competing transaction must actually wait on the reference fence");
+}
+
+#[tokio::test]
+async fn postgres_gallery_comment_commit_before_delete_blocks_the_entire_deletion() {
+    let Some(f) = Fixture::new(1).await else {
+        return;
+    };
+    let note = f.article().await;
+    let image = super::super::read(&f.db, f.uid, f.ids[0]).await.unwrap();
+    let prepared = prepare_change(
+        &f.db,
+        f.uid,
+        intent(json!({
+            "action":"delete","imageIds":f.ids,
+        })),
+    )
+    .await
+    .unwrap();
+    let comment = f.db.begin().await.unwrap();
+    let holder = comment
+        .query_one(Statement::from_string(
+            DatabaseBackend::Postgres,
+            "SELECT pg_backend_pid() AS pid".to_string(),
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "pid")
+        .unwrap();
+    let text = format!("![fixture]({})", image.image_url);
+    references::guard_texts(&comment, &[&text]).await.unwrap();
+    comment
+        .execute(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "INSERT INTO note_comment(note_id,user_id,content) VALUES($1,$2,$3)",
+            vec![note.into(), f.uid.into(), text.into()],
+        ))
+        .await
+        .unwrap();
+    let (worker, waiter) = isolated_connection().await;
+    let uid = f.uid;
+    let input = change(&prepared);
+    let task = tokio::spawn(async move {
+        let result = execute_change(&worker, uid, input).await;
+        worker.close().await.unwrap();
+        result
+    });
+    wait_for_block(&f.db, waiter, holder).await;
+    comment.commit().await.unwrap();
+    let result = tokio::time::timeout(Duration::from_secs(3), task)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(result, Err(ActionError::Referenced(_))));
+    assert!(super::super::read(&f.db, f.uid, f.ids[0]).await.is_ok());
+    let tombstone =
+        f.db.query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "SELECT image_id FROM image_deletion WHERE image_id=$1",
+            vec![f.ids[0].into()],
+        ))
+        .await
+        .unwrap();
+    assert!(tombstone.is_none());
+    f.cleanup().await;
+}
+
+#[tokio::test]
+async fn postgres_gallery_delete_commit_before_comment_rejects_the_new_reference() {
+    let Some(f) = Fixture::new(1).await else {
+        return;
+    };
+    let note = f.article().await;
+    let image = super::super::read(&f.db, f.uid, f.ids[0]).await.unwrap();
+    let prepared = prepare_change(
+        &f.db,
+        f.uid,
+        intent(json!({
+            "action":"delete","imageIds":f.ids,
+        })),
+    )
+    .await
+    .unwrap();
+    let deletion = f.db.begin().await.unwrap();
+    let holder = deletion
+        .query_one(Statement::from_string(
+            DatabaseBackend::Postgres,
+            "SELECT pg_backend_pid() AS pid".to_string(),
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "pid")
+        .unwrap();
+    let planned = plan::build(
+        &deletion,
+        f.uid,
+        prepared.intent.clone(),
+        prepared.expires_at,
+        true,
+    )
+    .await
+    .unwrap();
+    assert_eq!(planned.prepared.version, prepared.version);
+    let outcome = changes::apply(&deletion, f.uid, planned, &prepared.version)
+        .await
+        .unwrap();
+    assert_eq!(outcome.cleanup_pending_ids, f.ids);
+    let (worker, waiter) = isolated_connection().await;
+    let uid = f.uid;
+    let text = format!("![fixture]({})", image.image_url);
+    let task = tokio::spawn(async move {
+        let transaction = worker.begin().await.unwrap();
+        let result = async {
+            references::guard_texts(&transaction, &[&text]).await?;
+            transaction
+                .execute(Statement::from_sql_and_values(
+                    DatabaseBackend::Postgres,
+                    "INSERT INTO note_comment(note_id,user_id,content) VALUES($1,$2,$3)",
+                    vec![note.into(), uid.into(), text.into()],
+                ))
+                .await?;
+            Ok::<_, sea_orm::DbErr>(())
+        }
+        .await;
+        if result.is_ok() {
+            transaction.commit().await.unwrap();
+        } else {
+            transaction.rollback().await.unwrap();
+        }
+        worker.close().await.unwrap();
+        result
+    });
+    wait_for_block(&f.db, waiter, holder).await;
+    deletion.commit().await.unwrap();
+    assert!(tokio::time::timeout(Duration::from_secs(3), task)
+        .await
+        .unwrap()
+        .unwrap()
+        .is_err());
+    let comments =
+        f.db.query_one(Statement::from_sql_and_values(
+            DatabaseBackend::Postgres,
+            "SELECT count(*) AS count FROM note_comment WHERE note_id=$1",
+            vec![note.into()],
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get::<i64>("", "count")
+        .unwrap();
+    assert_eq!(comments, 0);
+    assert!(super::super::read(&f.db, f.uid, f.ids[0]).await.is_err());
     f.cleanup().await;
 }
