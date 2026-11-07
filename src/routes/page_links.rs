@@ -2,9 +2,16 @@
 use reqwest::Url;
 
 pub(super) fn site_base() -> Option<Url> {
-    Url::parse(&crate::utils::site_url())
-        .ok()
-        .filter(|url| matches!(url.scheme(), "http" | "https") && url.has_host())
+    parse_site_base(&crate::utils::site_url())
+}
+
+fn parse_site_base(value: &str) -> Option<Url> {
+    Url::parse(value).ok().filter(|url| {
+        matches!(url.scheme(), "http" | "https")
+            && url.has_host()
+            && url.username().is_empty()
+            && url.password().is_none()
+    })
 }
 
 pub(super) fn page_url(site: &Url, segments: &[&str]) -> String {
@@ -22,6 +29,25 @@ pub(super) fn page_url(site: &Url, segments: &[&str]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn site_base_rejects_embedded_credentials_and_non_http_locations() {
+        for value in [
+            "https://operator:private@example.test/blog/",
+            "https://operator@example.test/",
+            "https://:private@example.test/",
+            "ftp://example.test/",
+            "file:///tmp/site",
+            "/relative-site",
+        ] {
+            assert!(parse_site_base(value).is_none());
+        }
+        let base = parse_site_base("https://example.test:8443/blog/?ref=test#section").unwrap();
+        assert_eq!(
+            base.as_str(),
+            "https://example.test:8443/blog/?ref=test#section"
+        );
+    }
 
     #[test]
     fn article_locations_use_the_configured_origin_and_existing_rooted_routes() {
