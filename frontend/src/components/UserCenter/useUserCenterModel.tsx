@@ -350,7 +350,7 @@ export function useUserCenterModel({open,onClose}: {open:boolean; onClose:()=>vo
         try {
             const res = await readNotifications(ids && ids.length ? { ids } : { all: true })
             if (ok(res)) {
-                const left = res.data.data?.notifications ?? 0
+                const left = res.data.data?.unreadCount ?? 0
                 setNoticeUnread(left)
                 setNotices((list) =>
                     (list || []).map((n) => (!ids || ids.includes(n.id) ? { ...n, isRead: true } : n)),
