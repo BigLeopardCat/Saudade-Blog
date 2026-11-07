@@ -29,6 +29,77 @@ pub struct ReportPayload {
     pub webgl: Option<serde_json::Value>,
 }
 
+fn diagnostic_url(value: &str) -> String {
+    let value = value.trim();
+    let lower = value.to_ascii_lowercase();
+    if lower.starts_with("data:") || lower.starts_with("blob:") {
+        return format!("{}:[redacted]", lower.split(':').next().unwrap_or("data"));
+    }
+    if lower.starts_with("http://") || lower.starts_with("https://") || value.starts_with("//") {
+        let absolute = if value.starts_with("//") {
+            format!("https:{value}")
+        } else {
+            value.to_string()
+        };
+        return match reqwest::Url::parse(&absolute) {
+            Ok(url) if url.has_host() => {
+                let origin = url.origin().ascii_serialization();
+                let origin = if value.starts_with("//") {
+                    origin.trim_start_matches("https:")
+                } else {
+                    &origin
+                };
+                format!("{origin}{}", url.path())
+            }
+            _ => "[invalid-url]".to_string(),
+        };
+    }
+    if let Some((scheme, _)) = value.split_once(':') {
+        if scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+            && scheme
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+        {
+            return "[unsupported-url]".to_string();
+        }
+    }
+    value.split(['?', '#']).next().unwrap_or("").to_string()
+}
+
+fn diagnostic_text(value: &str, source: &str, safe_source: &str) -> String {
+    static URLS: OnceLock<regex::Regex> = OnceLock::new();
+    let urls = URLS.get_or_init(|| {
+        regex::Regex::new(r#"(?i)\bdata:[\s\S]*|\bblob:[^\s<>"']+|\bhttps?://[^\s<>"']+|//[^\s<>"']+|/api/[^\s<>"']+"#)
+            .expect("fixed diagnostic URL expression")
+    });
+    let text = if source.is_empty() {
+        value.to_string()
+    } else {
+        value.replace(source, safe_source)
+    };
+    urls.replace_all(&text, |capture: &regex::Captures<'_>| {
+        diagnostic_url(&capture[0])
+    })
+    .into_owned()
+}
+
+/// Client payloads are untrusted; sanitize before truncation and deduplication.
+fn report_fields(payload: &ReportPayload) -> (String, String, String) {
+    let source = payload.url.as_deref().unwrap_or("");
+    let safe_source = diagnostic_url(source);
+    let message = diagnostic_text(
+        payload.message.as_deref().unwrap_or(""),
+        source,
+        &safe_source,
+    );
+    let stack = diagnostic_text(payload.stack.as_deref().unwrap_or(""), source, &safe_source);
+    (
+        truncate(&clean(&message), 2000),
+        truncate(&clean(&stack), 4000),
+        truncate(&clean(&safe_source), 500),
+    )
+}
+
 fn clean(s: &str) -> String {
     s.chars()
         .map(|c| {
@@ -175,9 +246,7 @@ pub async fn report_log(State(state): State<Arc<AppState>>, req: Request<Body>) 
     };
 
     let kind = normalize_kind(payload.kind.as_deref());
-    let msg = truncate(&clean(payload.message.as_deref().unwrap_or("")), 2000);
-    let stack = truncate(&clean(payload.stack.as_deref().unwrap_or("")), 4000);
-    let url = truncate(&clean(payload.url.as_deref().unwrap_or("")), 500);
+    let (msg, stack, url) = report_fields(&payload);
 
     // 去重仅使用清洗后的 kind、url 和消息前 80 字节；不按 uid/ua 分组。
     let dup = dedupe_count(&format!("{kind}|{}|{url}", truncate(msg.as_str(), 80)));
@@ -310,6 +379,82 @@ mod tests {
             "existing fixture"
         );
         tokio::fs::remove_dir_all(root).await.unwrap();
+    }
+
+    #[test]
+    fn untrusted_report_fields_strip_signed_sources_from_all_log_fields() {
+        let source = "https://user:password@images.example/api/image_review/123?token=PRIVATE_TOKEN#fragment";
+        let safe = "https://images.example/api/image_review/123";
+        let payload: ReportPayload = serde_json::from_value(serde_json::json!({
+            "type": "resource_error", "url": source,
+            "message": format!("image failed {source} https://other.example/a.png?signature=SECOND_SECRET"),
+            "stack": format!("at image {source}")
+        })).unwrap();
+        let (message, stack, url) = report_fields(&payload);
+        assert_eq!(url, safe);
+        assert_eq!(
+            message,
+            format!("image failed {safe} https://other.example/a.png")
+        );
+        assert_eq!(stack, format!("at image {safe}"));
+        for value in [&message, &stack, &url] {
+            for secret in ["PRIVATE_TOKEN", "SECOND_SECRET", "password", "fragment"] {
+                assert!(!value.contains(secret));
+            }
+        }
+    }
+
+    #[test]
+    fn report_urls_redact_inline_data_credentials_and_queries_without_losing_paths() {
+        for source in [
+            "data:image/svg+xml,<svg>PRIVATE_PIXELS</svg>",
+            "blob:https://blog.example/PRIVATE_BLOB",
+        ] {
+            let payload: ReportPayload = serde_json::from_value(serde_json::json!({
+                "type":"resource_error", "url":source,"message":format!("failed {source}"),"stack":source
+            })).unwrap();
+            let (message, stack, url) = report_fields(&payload);
+            assert!(!format!("{message}{stack}{url}").contains("PRIVATE_"));
+            assert!(url.ends_with(":[redacted]"));
+        }
+        assert_eq!(
+            diagnostic_url("/article/54?preview=secret#section"),
+            "/article/54"
+        );
+        assert_eq!(
+            diagnostic_url("//user:password@images.example/a.png?token=secret"),
+            "//images.example/a.png"
+        );
+        assert_eq!(
+            diagnostic_url("https://[invalid?token=secret"),
+            "[invalid-url]"
+        );
+        assert_eq!(
+            diagnostic_text("metadata: unchanged", "", ""),
+            "metadata: unchanged"
+        );
+        assert_eq!(
+            diagnostic_text(
+                "/api/image_review/123?token=secret //images.example/a?key=secret",
+                "",
+                ""
+            ),
+            "/api/image_review/123 //images.example/a"
+        );
+    }
+
+    #[test]
+    fn sanitized_fields_keep_existing_utf8_size_limits() {
+        let payload: ReportPayload = serde_json::from_value(serde_json::json!({
+            "type":"resource_error", "message":"汉".repeat(1000), "stack":"字".repeat(2000),
+            "url":format!("/{}?token=PRIVATE_TOKEN", "a".repeat(600))
+        }))
+        .unwrap();
+        let (message, stack, url) = report_fields(&payload);
+        assert_eq!(message.len(), 1998);
+        assert_eq!(stack.len(), 3999);
+        assert_eq!(url.len(), 500);
+        assert!(!url.contains("PRIVATE_TOKEN"));
     }
 
     /// ASCII 与多字节输入均按有效 UTF-8 边界截断。
