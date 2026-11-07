@@ -264,7 +264,6 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/protect/images/r2", get(upload::r2_usage))
 
         // Notes Protected
-        // NEW ADMIN ROUTE for listing all notes
         .route("/api/protected/articles", get(catalog::articles::list))
         .route("/api/protected/accounts", get(catalog::accounts::list))
         .route("/api/protected/notes/list", get(notes::list_all_notes))
@@ -330,6 +329,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/protected/announcement-deletions", post(removal_actions::change_announcements))
         .route("/api/protected/announcement-actions/prepare", post(announcement_actions::prepare))
         .route("/api/protected/announcement-actions", post(announcement_actions::change))
+        .route("/api/protected/account-actions/eligibility", get(account_actions::eligibility::read))
         .route("/api/protected/account-actions/prepare", post(account_actions::prepare))
         .route("/api/protected/account-actions", post(account_actions::change))
         .route("/api/protected/category-actions/prepare", post(category_actions::prepare))
