@@ -117,6 +117,28 @@ try {
   assert.ok(coldAssets.reduce((sum,r)=>sum+r.bytes,0)<256*1024);
   const coldImageMs=Math.round(Math.max(...coldAssets.map(r=>r.end))-Math.min(...coldAssets.map(r=>r.start)));
   await cold.close();
+  const stalled=await browser.newPage({viewport:{width:375,height:1000}});
+  const heldImages=[];
+  stalled.on('pageerror',error=>errors.push(error.message));
+  await stalled.route('**/*',route=>{
+    const url=route.request().url();
+    if(!url.startsWith(origin+'/'))return route.abort();
+    // Leave images pending: a failed-fast stub would not exercise this cold-start boundary.
+    if(url.startsWith(origin+'/mascot-404/')){heldImages.push(url);return;}
+    return route.continue();
+  });
+  await stalled.goto(origin+'/mascot',{waitUntil:'domcontentloaded'});
+  await stalled.getByRole('heading',{name:'呜…页面不见了'}).waitFor({state:'visible',timeout:3000});
+  assert.ok(heldImages.length>0,'Cold-image fixture did not hold any request');
+  assert.equal(await stalled.locator('.mascot-error__scene').getAttribute('data-ready'),'false');
+  assert.equal(await stalled.locator('.mascot-error__digit').allTextContents().then(x=>x.join('')),'404');
+  assert.ok(await stalled.locator('.mascot-error__digit').evaluateAll(items=>items.length===3&&items.every(item=>
+    getComputedStyle(item).opacity==='1'&&getComputedStyle(item).animationName==='none')));
+  await stalled.screenshot({path:path.join(output,'404-stalled-images.png'),fullPage:true});
+  await stalled.getByRole('link',{name:'带她回首页'}).click({timeout:3000});
+  await stalled.waitForURL(origin+'/',{waitUntil:'domcontentloaded'});
+  await stalled.locator('header').waitFor();
+  await stalled.close();
   await page.setViewportSize({width:1440,height:900});
   await page.goto(origin+'/editor');
   await page.waitForFunction(()=>!!window.__saudadeArticleEditor);
@@ -131,5 +153,5 @@ try {
   await page.setViewportSize({width:375,height:900});
   assert.equal(await page.locator('.dashboardPage').evaluate(el=>getComputedStyle(el).overflowY),'visible');
   assert.deepEqual(errors,[]);
-  console.log(JSON.stringify({passed:['real router: standalone 404, no header/footer, return home and SPA back','404 ordered impacts and crying ending at desktop/mobile sizes','404 replay and reduced motion','3Mbps cold cache: six WebP assets under 256KiB','long review scroll reaches editor bottom','mobile document flow'],imageBytes,coldImageMs,screenshots:output},null,2));
+  console.log(JSON.stringify({passed:['real router: standalone 404, no header/footer, return home and SPA back','404 ordered impacts and crying ending at desktop/mobile sizes','404 replay and reduced motion','3Mbps cold cache: six WebP assets under 256KiB','stalled images: static 404 and return-home link remain usable','long review scroll reaches editor bottom','mobile document flow'],imageBytes,coldImageMs,screenshots:output},null,2));
 } finally {await browser?.close();server.closeAllConnections();await new Promise(resolve=>server.close(resolve))}
