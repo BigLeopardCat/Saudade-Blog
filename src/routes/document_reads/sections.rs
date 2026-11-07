@@ -36,7 +36,13 @@ pub fn outline(content: &str, title: &str) -> Vec<Section> {
             Event::End(TagEnd::Heading(_)) if depth == 1 => {
                 if let Some((start, end, level, inner)) = current.take() {
                     let heading = inner
-                        .map(|(a, b)| content[a..b].replace("\r\n", "\n").replace('\r', "\n"))
+                        .map(|(mut a, b)| {
+                            // Text event spans omit the leading CommonMark escape marker.
+                            if a > start && content.as_bytes()[a - 1] == b'\\' {
+                                a -= 1;
+                            }
+                            content[a..b].replace("\r\n", "\n").replace('\r', "\n")
+                        })
                         .unwrap_or_default();
                     headings.push((start, end, level, heading));
                 }
