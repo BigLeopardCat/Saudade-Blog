@@ -123,10 +123,8 @@ export default function Albums() {
         {r2&&!r2.listError?'R2 存储 · '+usagePercent(r2.usedBytes,r2.limitBytes)+'%':'R2 存储'}
       </Button>
     </div>
-    <div className="albumWorkspace">
     <FolderNavigation folders={folders} selected={folderId} onSelect={chooseFolder}
       onDelete={setDeleteFolderTarget}/>
-    <div className="albumContents">
     <Breadcrumb items={[{title:<button type="button" onClick={()=>chooseFolder(undefined)}>全部图片</button>},
       ...(folderId===0?[{title:'未分类'}]:paths.map(folder=>({title:<button type="button" onClick={()=>chooseFolder(folder.id)}>{folder.name}</button>})))]}/>
     <div className="albumBatchActions">
@@ -154,7 +152,6 @@ export default function Albums() {
         })}
       </div>}
     {query.hasNextPage&&<div className="albumMore"><Button loading={query.isFetchingNextPage} onClick={()=>void query.fetchNextPage()}>加载更多</Button></div>}
-    </div></div>
     {generation&&<ImageGeneration onClose={()=>setGeneration(false)}/>}
     {detail&&<ImageDetail key={detail.imageKey} image={detail} folders={folders} onClose={()=>setDetail(null)} onDelete={image=>setDeleteItems([image])}/>}
     {!!deleteItems.length&&<ImageActionConfirmation action="delete" items={deleteItems} folders={folders}

@@ -277,38 +277,11 @@
   min-height: 180px
 
 
-.albumWorkspace
-  display: grid
-  grid-template-columns: 190px minmax(0, 1fr)
-  gap: 16px
-  align-items: start
-
-.albumContents
-  min-width: 0
-
 .albumFolderNavigation
-  position: sticky
-  top: 0
-  padding: 10px
-  border: 1px solid var(--washi-line, #e7d6e6)
-  border-radius: 12px
-  max-height: min(520px, 60dvh)
-  overflow: auto
-  .ant-tree
-    background: transparent
-    color: inherit
-  .ant-tree-node-content-wrapper
-    min-width: 0
-    display: flex
-  .ant-tree-title
-    flex: 1
-    min-width: 0
-
-.albumFolderHeading
-  display: flex
-  align-items: center
-  justify-content: space-between
-  margin-bottom: 8px
+  .ant-tabs-nav
+    margin-bottom: 12px
+  .ant-tabs-tab
+    padding-block: 10px
 
 .albumFolderLabel
   display: flex
@@ -334,13 +307,6 @@
     font-variant-numeric: tabular-nums
   .ant-btn
     min-width: 100px
-
-@media (max-width: 760px)
-  .albumWorkspace
-    grid-template-columns: minmax(0, 1fr)
-  .albumFolderNavigation
-    position: static
-    max-height: 220px
 
 .albumActionBody
   min-height: 230px

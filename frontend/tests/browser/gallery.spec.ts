@@ -85,7 +85,7 @@ test('gallery opens details, selects explicitly, uses two list columns and updat
   await page.getByRole('button',{name:'新建文件夹'}).click()
   await page.getByLabel('文件夹名称').fill('旅行')
   await page.getByRole('dialog',{name:'新建文件夹'}).getByRole('button',{name:/^创\s*建$/}).click()
-  await expect(page.getByRole('treeitem').filter({hasText:'旅行'})).toBeVisible()
+  await expect(page.getByRole('tab').filter({hasText:'旅行'})).toBeVisible()
   await page.setViewportSize({width:390,height:900})
   await expect.poll(()=>page.locator('.albumList').evaluate(el=>getComputedStyle(el).gridTemplateColumns.split(' ').length)).toBe(1)
   expect(rows[0].imageUrl).toBe('/fixture/image-1.svg')
@@ -117,7 +117,7 @@ test('mobile gallery separates failed-image retry from viewing and deletion', as
   await expect(page.locator('.albumDetailImage img')).toBeVisible()
 })
 
-test('folder navigation keeps sibling categories and moves directory deletion into an explicit menu',async({page,sandboxURL})=>{
+test('top folder tabs preserve hierarchy, sibling switching and explicit directory deletion',async({page,sandboxURL})=>{
   const folders=[{id:10,parentId:0,name:'封面',imageCount:0},
     {id:11,parentId:10,name:'旅行',imageCount:0},{id:12,parentId:0,name:'插画',imageCount:1}]
   const visits:(string|null)[]=[]
@@ -140,19 +140,28 @@ test('folder navigation keeps sibling categories and moves directory deletion in
   })
   await page.goto(sandboxURL)
   const navigation=page.getByRole('navigation',{name:'图库分类'})
-  const treeItem=(name:string)=>navigation.getByRole('treeitem').filter({has:page.locator('.ant-tree-title').filter({hasText:name})})
-  await treeItem('旅行').click()
+  const folderTab=(name:string)=>navigation.getByRole('tab').filter({
+    has:page.locator('.albumFolderLabel > span').filter({hasText:new RegExp('(^| / )'+name+'$')})})
+  const navigationBox=(await navigation.boundingBox())!
+  const imageBox=(await page.locator('.albumGrid').boundingBox())!
+  expect(navigationBox.y+navigationBox.height).toBeLessThanOrEqual(imageBox.y)
+  expect(navigationBox.x).toBe(imageBox.x)
+  expect(imageBox.width).toBe(navigationBox.width)
+  await expect(folderTab('旅行')).toContainText('封面 / 旅行')
+  await folderTab('旅行').focus()
+  await page.keyboard.press('Enter')
   await expect.poll(()=>visits.at(-1)).toBe('11')
-  await expect(treeItem('封面')).toBeVisible()
-  await expect(treeItem('插画')).toBeVisible()
+  await expect(folderTab('旅行')).toHaveAttribute('aria-selected','true')
+  await expect(folderTab('封面')).toBeVisible()
+  await expect(folderTab('插画')).toBeVisible()
   await expect(page.getByRole('button',{name:'删除空文件夹'})).toHaveCount(0)
   await expect(page.getByRole('menuitem',{name:'删除文件夹'})).toHaveCount(0)
-  await treeItem('插画').click()
+  await folderTab('插画').click()
   await expect.poll(()=>visits.at(-1)).toBe('12')
   await navigation.getByRole('button',{name:'文件夹操作'}).click()
   await expect(page.getByRole('menuitem',{name:'删除文件夹'})).toHaveAttribute('aria-disabled','true')
   await page.keyboard.press('Escape')
-  await treeItem('旅行').click()
+  await folderTab('旅行').click()
   await navigation.getByRole('button',{name:'文件夹操作'}).click()
   await page.getByRole('menuitem',{name:'删除文件夹'}).click()
   const modal=page.getByRole('dialog',{name:'删除文件夹',exact:true})
@@ -164,15 +173,36 @@ test('folder navigation keeps sibling categories and moves directory deletion in
   await page.getByRole('menuitem',{name:'删除文件夹'}).click()
   await modal.getByRole('button',{name:'删除文件夹',exact:true}).click()
   await expect.poll(()=>deletes).toBe(1)
-  await expect(treeItem('旅行')).toHaveCount(0)
-  await expect(treeItem('插画')).toBeVisible()
-  await navigation.getByRole('treeitem').filter({hasText:'全部图片'}).click()
+  await expect(folderTab('旅行')).toHaveCount(0)
+  await expect(folderTab('插画')).toBeVisible()
+  await navigation.getByRole('tab',{name:'全部图片',exact:true}).click()
   await expect(page.getByRole('button',{name:'查看图片 未分类样例'})).toBeVisible()
-  await expect(page.locator('.albumContents .ant-breadcrumb').getByRole('button')).toHaveCount(1)
+  await expect(page.locator('.albumLibrary .ant-breadcrumb').getByRole('button')).toHaveCount(1)
   expect(visits.filter(folder=>folder===null)).toHaveLength(1)
   await page.setViewportSize({width:390,height:760})
   expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
-  await expect(treeItem('插画')).toBeVisible()
+  await expect(navigation).toBeVisible()
+  await expect(navigation.getByRole('tab',{name:'全部图片',exact:true})).toHaveAttribute('aria-selected','true')
+})
+
+test('mobile folder tabs expose overflow categories without widening the gallery',async({page,sandboxURL})=>{
+  await page.setViewportSize({width:390,height:760})
+  const folders=Array.from({length:12},(_,index)=>({id:index+1,parentId:0,name:`旅行相册分类${index+1}`,imageCount:0}))
+  const visits:(string|null)[]=[]
+  await page.route('**/api/protect/images/r2',route=>route.fulfill({json:{code:200,data:{configured:false}}}))
+  await page.route('**/api/protect/gallery/folders',route=>route.fulfill({json:{code:200,data:folders}}))
+  await page.route('**/api/protect/gallery/images**',route=>{
+    visits.push(new URL(route.request().url()).searchParams.get('folderId'))
+    return route.fulfill({json:{code:200,data:{items:[],nextCursor:null}}})
+  })
+  await page.goto(sandboxURL)
+  const navigation=page.getByRole('navigation',{name:'图库分类'})
+  await navigation.locator('.ant-tabs-nav-more').hover()
+  await page.getByRole('menuitem').filter({hasText:'旅行相册分类12'}).click()
+  await expect.poll(()=>visits.at(-1)).toBe('12')
+  await expect(navigation.getByRole('tab').filter({hasText:'旅行相册分类12'})).toHaveAttribute('aria-selected','true')
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(390)
+  await expect(page.getByRole('button',{name:'新建文件夹'})).toBeVisible()
 })
 
 for(const conflict of [false,true]){
@@ -255,7 +285,7 @@ for(const conflict of [false,true]){
     expect(singleWrites).toBe(0)
     expect(rows.map(row=>row.isFavorite)).toEqual([true,false])
     expect((await action.boundingBox())!.width).toBe(actionWidth)
-    await page.getByRole('navigation',{name:'图库分类'}).getByRole('treeitem').filter({hasText:'封面'}).click()
+    await page.getByRole('navigation',{name:'图库分类'}).getByRole('tab').filter({hasText:'封面'}).click()
     await expect(page.getByRole('button',{name:'查看图片 图片1'})).toBeVisible()
     await expect(page.getByRole('button',{name:'查看图片 图片2'})).toBeVisible()
     await expect(page.getByRole('navigation',{name:'图库分类'}).locator('.albumFolderLabel small')).toHaveText('2')
