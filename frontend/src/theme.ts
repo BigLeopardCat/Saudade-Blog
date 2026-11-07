@@ -74,12 +74,7 @@ export function autoThemeDecision(now: Date = new Date()): boolean | null {
     return null;
 }
 
-/**
- * 组件内实时跟随主题。全仓唯一在 React 里响应主题变化的写法是 App.tsx 的
- * useState(readDarkMode()) + 监听 'darkmode-change'（头部按钮 / agent 的 DARKMODE 命令 /
- * 23:00-6:00 自动切换都派发这个自定义事件），这里抽成 hook 复用——
- * 需要按主题切换媒体源（如详情页顶部日夜背景视频）的组件用它，不要各写一份。
- */
+/** React consumers follow the shared theme event and its persisted state. */
 export function useIsDarkMode(): boolean {
     const [isDark, setDark] = useState(readDarkMode);
     useEffect(() => {

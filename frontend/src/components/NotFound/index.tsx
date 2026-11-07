@@ -2,21 +2,45 @@ import SeoHelmet from '../SeoHelmet'
 import {useEffect, useRef, useState, type CSSProperties} from 'react'
 import {Link} from 'react-router-dom'
 import {useAutoThemeSwitch, useIsDarkMode} from '../../theme'
+import neutral from './assets/neutral.webp'
+import neutralSmall from './assets/neutral-672.webp'
+import pain from './assets/pain.webp'
+import painSmall from './assets/pain-672.webp'
+import cry from './assets/cry.webp'
+import crySmall from './assets/cry-672.webp'
+import bumpSmall from './assets/bump-small.webp'
+import bumpMedium from './assets/bump-medium.webp'
+import bumpLarge from './assets/bump-large.webp'
 import './index.sass'
 
-const asset = (name: string) => `/mascot-404/${name}.webp`
-const bumps = ['small', 'medium', 'large']
-const sprites = ['neutral', 'pain', 'cry', ...bumps.map(size => `bump-${size}`)]
+const faces = [
+    {name: 'neutral', full: neutral, small: neutralSmall},
+    {name: 'pain', full: pain, small: painSmall},
+    {name: 'cry', full: cry, small: crySmall},
+]
+const bumps = [
+    {name: 'small', image: bumpSmall},
+    {name: 'medium', image: bumpMedium},
+    {name: 'large', image: bumpLarge},
+]
 
 const NotFound = () => {
     useAutoThemeSwitch()
     const isDark = useIsDarkMode()
     const [run, setRun] = useState(0)
-    const [ready, setReady] = useState(false)
+    const [decodedFaces, setDecodedFaces] = useState<string[]>([])
     const [reduced, setReduced] = useState(false)
     const [hits, setHits] = useState(0)
     const [expression, setExpression] = useState('neutral')
     const timer = useRef<ReturnType<typeof setTimeout>>()
+    const ready = decodedFaces.includes('neutral')
+    const visibleFace = decodedFaces.includes(expression) ? expression : 'neutral'
+
+    const decodeFace = (face: string, image: HTMLImageElement) => {
+        void image.decode().then(() => {
+            setDecodedFaces(current => current.includes(face) ? current : [...current, face])
+        }).catch(() => {})
+    }
 
     useEffect(() => {
         const media = window.matchMedia('(prefers-reduced-motion: reduce)')
@@ -27,19 +51,10 @@ const NotFound = () => {
     }, [])
 
     useEffect(() => {
-        let cancelled = false
         clearTimeout(timer.current)
-        setReady(false)
         setHits(reduced ? 3 : 0)
         setExpression(reduced ? 'cry' : 'neutral')
-        // Decode every layer before starting so a late image cannot skip an expression.
-        Promise.all(sprites.map(name => new Promise<void>(resolve => {
-            const image = new Image()
-            image.onload = () => { image.decode().catch(() => {}).then(() => resolve()) }
-            image.onerror = () => resolve()
-            image.src = asset(name)
-        }))).then(() => { if (!cancelled) setReady(true) })
-        return () => { cancelled = true; clearTimeout(timer.current) }
+        return () => clearTimeout(timer.current)
     }, [run, reduced])
 
     const impact = (index: number) => {
@@ -55,14 +70,18 @@ const NotFound = () => {
              data-expression={expression} aria-hidden="true">
             <div className="mascot-error__shadow" />
             <div className="mascot-error__character">
-                {['neutral', 'pain', 'cry'].map(face => <img key={face} src={asset(face)} alt=""
+                {faces.map(face => <img key={face.name}
+                    srcSet={`${face.small} 672w, ${face.full} 960w`}
+                    sizes="(max-width: 700px) calc(100vw - 40px), 660px" src={face.full} alt=""
                     width="960" height="640" decoding="async" draggable={false}
-                    className={`mascot-error__sprite${expression === face ? ' is-visible' : ''}`} />)}
-                {bumps.map((size, index) => <span key={`${run}-${size}`}
-                    className={`mascot-error__bump mascot-error__bump--${size}${hits > index ? ' is-visible' : ''}`}
-                    style={{backgroundImage: `url(${asset(`bump-${size}`)})`}} />)}
+                    fetchPriority={face.name === 'neutral' ? 'high' : 'low'}
+                    onLoad={event => decodeFace(face.name, event.currentTarget)}
+                    className={`mascot-error__sprite${visibleFace === face.name ? ' is-visible' : ''}`} />)}
+                {bumps.map((size, index) => <span key={`${run}-${size.name}`}
+                    className={`mascot-error__bump mascot-error__bump--${size.name}${hits > index ? ' is-visible' : ''}`}
+                    style={{backgroundImage: `url(${size.image})`}} />)}
             </div>
-            {ready && ['4', '0', '4'].map((digit, index) => <span key={`${run}-${index}`}
+            {['4', '0', '4'].map((digit, index) => <span key={`${run}-${index}`}
                 className={`mascot-error__digit mascot-error__digit--${index}`}
                 style={{'--drop-delay': `${550 + index * 950}ms`} as CSSProperties}
                 onAnimationEnd={event => {

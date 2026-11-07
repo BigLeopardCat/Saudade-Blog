@@ -25,13 +25,7 @@ export interface ReportBody {
     webgl: 'yes' | 'no' | 'unknown'
 }
 
-/**
- * 按**码点**截断。
- *
- * 不能用 `String.prototype.slice`：它按 UTF-16 码元切，会把一个 emoji（代理对）切成
- * 两半，落盘就是一个孤立代理。Rust 那头同一个坑（审计 A1）会直接 panic —— 这里不会
- * 崩，但会产生一串谁也不认识的乱码，而且是**静默**的。
- */
+/** 按 Unicode 码点截断，避免拆开代理对。 */
 export function clip(s: string, max: number): string {
     if (s.length <= max) return s
     return Array.from(s).slice(0, max).join('')
@@ -52,21 +46,12 @@ export function urlPath(url: string): string {
     return url.slice(0, end)
 }
 
-/**
- * 上报端点自己发的请求不许被上报。
- *
- * 没有这道闸就是死循环：上报失败 → 捕获到失败 → 再上报（boot.js 的 fetch 包装与
- * 这里的 axios 拦截器各有一条同样的排除，三处都要有）。
- */
+/** 排除日志端点自身，避免报告失败递归。 */
 export function isOwnReport(url: string): boolean {
     return urlPath(url).indexOf(REPORT_URL) === 0
 }
 
-/**
- * 401 不进日志：它有专门处理（清 token + 跳登录）且**必然发生**——过期令牌的访客
- * 每开一个页面就报一次，真异常会被它淹掉。403 不在这里（角色不足是"谁在点"的问题，
- * 值得看得见）。与 `apis/axios.tsx` 里那段注释是同一件事的两半。
- */
+/** 401 由登录失效流程处理，不重复记录。 */
 const QUIET_STATUS = [401]
 
 /** 这个状态码值不值得进日志。`undefined`（网络层失败、无响应）不算状态码。 */
@@ -74,23 +59,40 @@ export function shouldReportStatus(status: number | undefined): boolean {
     return typeof status === 'number' && status >= 400 && !QUIET_STATUS.includes(status)
 }
 
+/** Retain the resource origin/path, never credentials, query secrets or inline data. */
+export function diagnosticUrl(value: string): string {
+    value = value.trim()
+    if (/^(data|blob):/i.test(value)) return value.slice(0, value.indexOf(':')).toLowerCase() + ':[redacted]'
+    if (/^(https?:)?\/\//i.test(value)) {
+        try {
+            const url = new URL(value, 'https://diagnostic.invalid')
+            return (value.startsWith('//') ? '//' + url.host : url.origin) + url.pathname
+        } catch { return '[invalid-url]' }
+    }
+    if (/^[a-z][a-z0-9+.-]*:/i.test(value)) return '[unsupported-url]'
+    return urlPath(value)
+}
+
+function diagnosticText(value: unknown, source: string, safeSource: string): string {
+    const text = String(value ?? '')
+    const replaced = source ? text.split(source).join(safeSource) : text
+    return replaced.replace(/\bdata:[\s\S]*|blob:[^\s<>"']+|https?:\/\/[^\s<>"']+|\/api\/[^\s<>"']+/gi, diagnosticUrl)
+}
+
 /** 组装请求体：截断 + `webgl` 归一（`null` = 没探到 ⇒ `unknown`，**不是 `no`**）。 */
 export function shapeReport(p: ReportPayload, pageUrl: string, webgl: boolean | null): ReportBody {
+    const source = p.url || pageUrl
+    const safeSource = diagnosticUrl(source)
     return {
         type: p.type,
-        message: clip(String(p.message ?? ''), MAX_MESSAGE),
-        stack: clip(String(p.stack ?? ''), MAX_STACK),
-        url: clip(p.url || pageUrl, MAX_URL),
+        message: clip(diagnosticText(p.message, source, safeSource), MAX_MESSAGE),
+        stack: clip(diagnosticText(p.stack, source, safeSource), MAX_STACK),
+        url: clip(safeSource, MAX_URL),
         webgl: webgl === true ? 'yes' : webgl === false ? 'no' : 'unknown',
     }
 }
 
-/**
- * 本页会话内的去重键（刷新即重置）。
- *
- * 与服务端那 60 秒计数是**两道不同用途的闸**：这一道防的是"同一个渲染循环里报一万次"
- * （在那之前就把网络请求省掉），服务端那道跨访客合并。两边都用同一套 key 形状。
- */
+/** 本页去重独立于服务端跨访客窗口，键包含错误类型、消息前缀及资源路径。 */
 export function dedupeKey(b: { type: string; message: string; url: string }): string {
     return b.type + '|' + b.message.slice(0, KEY_MESSAGE) + '|' + b.url
 }
@@ -103,16 +105,7 @@ export interface ResourceFailure {
     tag: string
 }
 
-/**
- * 从 `error` 事件里认出"资源加载失败"，认不出返回 `null`。
- *
- * 这个判别式是必需的：**运行时 JS 异常也走 window 的 error 事件**，那种情况下
- * `target` 是 window 自己（没有 tagName）⇒ 返回 null，不会被这里重复报一遍
- * （`boot.js` 已经在报 `js_error` 了）。
- *
- * 参数故意写成鸭子类型而不是 `ErrorEvent`：单测里可以用一个普通对象驱动它，
- * 不用起 DOM。
- */
+/** 仅识别资源元素错误；window 上的运行时异常不归入此类。 */
 export function resourceFailure(evt: { target?: unknown }): ResourceFailure | null {
     const el = (evt && typeof evt === 'object' ? evt.target : null) as {
         tagName?: unknown
@@ -124,7 +117,7 @@ export function resourceFailure(evt: { target?: unknown }): ResourceFailure | nu
     const tag = typeof el.tagName === 'string' ? el.tagName.toUpperCase() : ''
     if (!RESOURCE_TAGS.has(tag)) return null
     for (const v of [el.currentSrc, el.src, el.href]) {
-        if (typeof v === 'string' && v) return { url: v, tag }
+        if (typeof v === 'string' && v) return { url: diagnosticUrl(v), tag }
     }
     return { url: '', tag }
 }

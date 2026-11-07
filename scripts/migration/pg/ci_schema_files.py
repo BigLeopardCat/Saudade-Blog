@@ -33,6 +33,7 @@ LOAD = [
     "0026_automation_changes.sql",
     "0027_article_reference_integrity.sql",
     "0028_turn_cleanup.sql",
+    "0029_image_job_lifecycle.sql",
 ]
 
 EXCLUDED = {
@@ -43,7 +44,7 @@ EXCLUDED = {
 
 
 def classified() -> dict[str, str]:
-    """磁盘上每一个编号迁移 → 它的归属（`load` / `excluded`）。"""
+    """Map numbered migrations to their CI schema classification."""
     out: dict[str, str] = {}
     for f in sorted(HERE.glob("0[0-9][0-9][0-9]_*.sql")):
         name = f.name
@@ -55,18 +56,14 @@ def classified() -> dict[str, str]:
 
 
 def self_test() -> int:
-    """判据自己：**每一个编号迁移都被归过类**，且清单里的文件真的在。"""
+    """Require complete classification, existing files, and ordered schema loading."""
     bad: list[str] = []
     on_disk = sorted(f.name for f in HERE.glob("0[0-9][0-9][0-9]_*.sql"))
     known = classified()
 
     for name in on_disk:
         if name not in known:
-            bad.append(
-                f"{name} 既不在 LOAD 也不在 EXCLUDED 里 —— 新加的编号迁移必须归类："
-                "要么让 CI 加载它（写进 LOAD），要么写进 EXCLUDED 并说明为什么。"
-                "不归类的话，CI 里就没有这张表，而依赖它的集成测会红在"
-                "「库结构不全」上，与本刀代码无关。")
+            bad.append(f"{name} 未归类；加入 LOAD，或在 EXCLUDED 中说明排除原因")
 
     for name in LOAD:
         if not (HERE / name).exists():
