@@ -1,0 +1,46 @@
+.sweep-loading
+  display: inline-block
+  width: 96px
+  height: 96px
+  flex: none
+  contain: paint
+  pointer-events: none
+  user-select: none
+
+  .sweep-loading__sprite
+    display: block
+    width: 100%
+    height: 100%
+    background-size: 384px 192px
+    background-repeat: no-repeat
+    background-position: 0 0
+    animation: saudade-sweep-loading 1.2s steps(1, end) infinite
+
+  &[data-paused='true'] .sweep-loading__sprite
+    animation-play-state: paused
+
+// The approved sheet is four columns by two rows, read left to right per row.
+@keyframes saudade-sweep-loading
+  0%
+    background-position: 0 0
+  12.5%
+    background-position: -96px 0
+  25%
+    background-position: -192px 0
+  37.5%
+    background-position: -288px 0
+  50%
+    background-position: 0 -96px
+  62.5%
+    background-position: -96px -96px
+  75%
+    background-position: -192px -96px
+  87.5%
+    background-position: -288px -96px
+  100%
+    background-position: 0 0
+
+@media (prefers-reduced-motion: reduce)
+  .sweep-loading .sweep-loading__sprite
+    animation: none
+    background-position: 0 0
