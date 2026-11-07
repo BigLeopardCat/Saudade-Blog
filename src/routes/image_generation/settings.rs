@@ -1,5 +1,4 @@
 use serde::Serialize;
-use std::time::Duration;
 
 #[derive(Default, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -13,6 +12,7 @@ pub struct Settings {
     pub key: String,
     pub base: String,
     pub models: Vec<String>,
+    pub proxy: Option<reqwest::Url>,
 }
 
 impl Settings {
@@ -43,14 +43,9 @@ impl Settings {
             key,
             base: base.trim_end_matches('/').into(),
             models,
+            proxy: super::transport::proxy_url(
+                &std::env::var("OPENAI_IMAGE_PROXY_URL").unwrap_or_default(),
+            )?,
         })
-    }
-
-    pub fn client() -> Result<reqwest::Client, reqwest::Error> {
-        reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(240))
-            .build()
     }
 }

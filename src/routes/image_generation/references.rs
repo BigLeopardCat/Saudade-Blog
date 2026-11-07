@@ -33,7 +33,7 @@ pub async fn snapshot(
         {
             return Err(error("参考图片不在配置的图库存储中"));
         }
-        let response = settings::Settings::client()
+        let response = super::transport::client(None)
             .map_err(|_| error("图片客户端不可用"))?
             .get(url)
             .send()

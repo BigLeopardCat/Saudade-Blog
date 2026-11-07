@@ -226,6 +226,7 @@ async fn successful_provider_is_called_once_while_result_storage_retries() {
         key: "synthetic".into(),
         base,
         models: vec!["fixture".into()],
+        proxy: None,
     };
     let (bytes, usage) = provider::generate(config, &request, &[]).await.unwrap();
     let db = MockDatabase::new(DatabaseBackend::Postgres)

@@ -117,6 +117,7 @@ async fn paid_provider_request_is_single_attempt_and_exact() {
         key: "test-only".into(),
         base,
         models: vec!["fixture".into()],
+        proxy: None,
     };
     let error = provider::generate(config, &request, &[]).await.unwrap_err();
     assert_eq!(count.load(Ordering::SeqCst), 1);
