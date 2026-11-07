@@ -746,6 +746,112 @@ async fn postgres_gallery_delete_commit_before_comment_rejects_the_new_reference
 }
 
 #[tokio::test]
+async fn postgres_gallery_single_image_handler_rejects_a_stale_concurrent_edit() {
+    use crate::routes::gallery::metadata;
+    use axum::{
+        extract::{Path, State},
+        http::{header, HeaderMap},
+        Json,
+    };
+    use std::sync::Arc;
+
+    let Some(f) = Fixture::new(1).await else {
+        return;
+    };
+    let original = super::super::read(&f.db, f.uid, f.ids[0]).await.unwrap();
+    let transaction = f.db.begin().await.unwrap();
+    let holder: i32 = transaction
+        .query_one(Statement::from_string(
+            DatabaseBackend::Postgres,
+            "SELECT pg_backend_pid() AS pid".to_string(),
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get("", "pid")
+        .unwrap();
+    let first = metadata::apply(
+        &transaction,
+        f.uid,
+        f.ids[0],
+        metadata::Change {
+            version: original.version.clone(),
+            display_name: None,
+            description: Some("first writer".into()),
+            folder_id: None,
+            is_favorite: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(first.changed);
+    let (worker, waiter) = isolated_connection().await;
+    worker
+        .execute(Statement::from_string(
+            DatabaseBackend::Postgres,
+            "SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL REPEATABLE READ"
+                .to_string(),
+        ))
+        .await
+        .unwrap();
+    let state = Arc::new(crate::routes::AppState {
+        db: worker,
+        rate_limiter: crate::rate_limiter::LoginRateLimiter::new(5, 60, 300),
+        post_limiter: crate::risk::PostRateLimiter::default(),
+        report_limiter: crate::rate_limiter::LoginRateLimiter::new(120, 60, 300),
+    });
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::AUTHORIZATION,
+        format!(
+            "Bearer {}",
+            crate::auth_jwt::create_token(f.uid, "admin", 0)
+        )
+        .parse()
+        .unwrap(),
+    );
+    let id = f.ids[0];
+    let worker_state = state.clone();
+    let task = tokio::spawn(async move {
+        metadata::change(
+            State(worker_state),
+            headers,
+            Path(id),
+            Json(metadata::Change {
+                version: original.version,
+                display_name: None,
+                description: Some("stale second writer".into()),
+                folder_id: None,
+                is_favorite: None,
+            }),
+        )
+        .await
+        .0
+    });
+    wait_for_block(&f.db, waiter, holder).await;
+    transaction.commit().await.unwrap();
+    let response = tokio::time::timeout(Duration::from_secs(3), task)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(
+        response.code, 200,
+        "stale metadata must not overwrite the first writer"
+    );
+    let after = super::super::read(&f.db, f.uid, id).await.unwrap();
+    assert_eq!(after.description, "first writer");
+    assert_eq!(after.version, first.state.version);
+    Arc::try_unwrap(state)
+        .ok()
+        .unwrap()
+        .db
+        .close()
+        .await
+        .unwrap();
+    f.cleanup().await;
+}
+
+#[tokio::test]
 async fn postgres_gallery_batch_http_uses_admin_auth_and_real_transaction_routes() {
     use axum::{
         body::{to_bytes, Body},
