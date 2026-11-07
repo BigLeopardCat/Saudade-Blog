@@ -447,10 +447,10 @@ const ArticleResource = ({id}: {id: string}) => {
                     {loadError && <p role="alert">文章同步失败，当前显示上次加载的内容。<button type="button" onClick={() => loadArticle({silent: true})}>重试</button></p>}
                     <div className="readCover">
                         <div className="readCoverMedia" style={{aspectRatio: DETAIL_ASPECT}}>
-                        <div className="readCoverPoster readCoverFallback" aria-hidden="true" />
-                        {coverSource && <AssetImage className="readCoverPoster" src={coverSource}
-                            alt="文章封面" loading="eager" pending={<SweepLoading/>}
-                            style={coverCropStyle(cropFromRow(article))}/>}
+                            <div className="readCoverPoster readCoverFallback" aria-hidden="true" />
+                            {coverSource && <AssetImage className="readCoverPoster" src={coverSource}
+                                alt="文章封面" loading="eager" pending={<SweepLoading/>}
+                                style={coverCropStyle(cropFromRow(article))}/>}
                         </div>
                         <motion.div className="readInfoFrame"
                             initial={{ opacity: 0, x: -30 }}

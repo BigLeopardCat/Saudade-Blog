@@ -122,7 +122,7 @@ test('Agent completion during the initial carousel fetch queues one fresh read',
     await page.goto(sandboxURL)
     await expect(page.locator('.ArticleCard')).toHaveCount(1)
     await expect.poll(() => topRequests).toBe(1)
-    await page.evaluate(() => window.dispatchEvent(new CustomEvent('agent-turn-done', {detail: {confirmationAttempted: true, articleIdsToRefresh: [100]}})))
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent('agent-turn-done', {detail: {confirmationAttempted: true, articleIdsToRefresh: [1]}})))
   } finally {release()}
   await expect(page.locator('.TopCover img')).toHaveAttribute('src', '/new-cover.svg')
   expect(topRequests).toBe(2)
