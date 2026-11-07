@@ -132,3 +132,63 @@ describe('homepage paging', () => {
         expect(feed.snapshot()).toMatchObject({ items: [], page: 1, loaded: true, hasMore: false })
     })
 })
+
+
+describe('homepage invalidation', () => {
+    it('refreshes every loaded page without resetting the next More offset', async () => {
+        const request = vi.fn(async (page: number) => [`${page}a`, `${page}b`])
+        const { feed } = setup(request)
+        await feed.more()
+        request.mockClear()
+        await feed.refresh()
+        expect(request.mock.calls).toEqual([[1, 2], [2, 2]])
+        expect(feed.snapshot()).toMatchObject({ items: ['1a', '1b', '2a', '2b'], page: 2, hasMore: true })
+        await feed.more()
+        expect(request.mock.calls[request.mock.calls.length - 1]).toEqual([3, 2])
+    })
+
+    it('coalesces invalidations while More is pending and includes that completed page', async () => {
+        const pending = deferred<string[]>()
+        const request = vi.fn<(page: number, size: number) => Promise<string[]>>()
+            .mockImplementationOnce(() => pending.promise)
+            .mockResolvedValueOnce(['new-a', 'new-b']).mockResolvedValueOnce(['new-c'])
+        const { feed } = setup(request)
+        const more = feed.more()
+        const refresh = feed.refresh()
+        expect(feed.refresh()).toBe(refresh)
+        pending.resolve(['old-c', 'old-d'])
+        await more
+        await refresh
+        expect(request.mock.calls).toEqual([[2, 2], [1, 2], [2, 2]])
+        expect(feed.snapshot()).toMatchObject({ items: ['new-a', 'new-b', 'new-c'], page: 2, hasMore: false })
+    })
+
+    it('preserves all loaded rows on a partial refresh failure and retries the whole range', async () => {
+        const request = vi.fn<(page: number, size: number) => Promise<string[]>>()
+            .mockResolvedValueOnce(['old-c', 'old-d'])
+            .mockResolvedValueOnce(['new-a', 'new-b']).mockRejectedValueOnce(new Error('offline'))
+            .mockResolvedValueOnce(['new-a', 'new-b']).mockResolvedValueOnce(['new-c', 'new-d'])
+        const { feed, commit } = setup(request)
+        await feed.more()
+        await feed.refresh()
+        expect(feed.snapshot()).toMatchObject({ items: ['cached', 'old-c', 'old-d'], page: 2, error: expect.any(String) })
+        expect(commit).toHaveBeenCalledTimes(1)
+        await feed.retry()
+        expect(request.mock.calls).toEqual([[2, 2], [1, 2], [2, 2], [1, 2], [2, 2]])
+        expect(feed.snapshot()).toMatchObject({ items: ['new-a', 'new-b', 'new-c', 'new-d'], page: 2, error: null })
+    })
+
+    it('drops a queued invalidation after the consumer has unmounted', async () => {
+        const pending = deferred<string[]>()
+        const request = vi.fn(() => pending.promise)
+        const { feed, commit } = setup(request)
+        const more = feed.more()
+        const refresh = feed.refresh()
+        feed.invalidate()
+        pending.resolve(['stale'])
+        await more
+        await refresh
+        expect(request).toHaveBeenCalledTimes(1)
+        expect(commit).not.toHaveBeenCalled()
+    })
+})

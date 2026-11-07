@@ -402,7 +402,7 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
     position: relative
     cursor: pointer
     width: 80%
-    height: 640px
+    height: auto
     background: var(--pic-background-cover)
     --tw-shadow: 0 10px 15px -3px rgba(0, 0, 0, .1), 0 4px 6px -2px rgba(0, 0, 0, .05)
     border-radius: 15px
@@ -452,27 +452,15 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
           animation: tag-twinkle 2.6s ease-in-out infinite
 
     .TopCover
+      flex-shrink: 0
       border-radius: 15px 0 0 15px
       position: relative
-      height: 100%
+      height: auto
+      align-self: start
       overflow: hidden
-      overflow: hidden
-      .topDots
-        position: absolute
-        bottom: 20px
-        left: 50%
-        display: flex
-        transform: translate(-50%,-50%)
-        .topDot
-          cursor: pointer
-          width: 10px
-          height: 10px
-          background: white
-          border-radius: 50%
-          margin-left: 10px
-        .dotCurrent
-          background: var(--washi-pink-deep, #d94f9a)
       img
+        position: absolute
+        inset: 0
         background-repeat: no-repeat
         background-size: cover
         display: block
@@ -494,7 +482,7 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
       display: flex
       flex-direction: column
       justify-content: center
-      padding: 3rem
+      padding: clamp(16px, 3vw, 48px)
       justify-content: center
       align-items: flex-start
       position: relative
@@ -513,8 +501,8 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
         overflow: hidden
       .contentTitle
         font-weight: 900
-        font-size: 40px
-        margin-bottom: 60px
+        font-size: clamp(24px, 3vw, 40px)
+        margin-bottom: 24px
         overflow: hidden
         text-overflow: ellipsis
         display: -webkit-box
@@ -525,7 +513,7 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
         color: var(--font-p-color)
         text-indent: 1em
       .topFooter
-        margin-top: 60px
+        margin-top: 24px
         .post-date
           background-color: #1e73be26
           font-size: 12px
@@ -592,7 +580,7 @@ $container-background-color-dark: linear-gradient(to left, rgba(0, 0, 0,0.6), rg
 
       .ArticleCover
         position: relative
-        height: 200px
+        height: auto
         flex-shrink: 0
         overflow: hidden
         border-radius: 1rem 1rem 0 0
@@ -929,7 +917,7 @@ html[data-theme='dark'] .SayWords h2
     flex-direction: column !important
     
     .ArticleCover
-      height: 200px !important
+      height: auto !important
       width: 100% !important
       position: relative !important
       img
@@ -965,26 +953,16 @@ html[data-theme='dark'] .SayWords h2
   display: grid
   grid-template-columns: 6fr 4fr
   width: 100%
-  height: 100%
+  height: auto
+  align-items: start
   @media screen and (max-width: 768px)
     display: flex
     flex-direction: column
 
-@media screen and (max-width: 768px)
-  .TopCover
-    height: 200px !important
-    border-radius: 15px 15px 0 0 !important
-    width: 100% !important
-  .TopArticleInner
-    display: flex !important
-    flex-direction: column !important
-  .TopArticle
-    height: auto !important
-    display: block !important
 
 @media screen and (max-width: 768px)
   .TopCover
-    height: 200px !important
+    height: auto !important
     border-radius: 15px 15px 0 0 !important
     width: 100% !important
   .TopArticleInner
@@ -996,7 +974,7 @@ html[data-theme='dark'] .SayWords h2
 .topDotsContainer
   position: absolute
   bottom: 20px
-  left: 30%
+  left: 50%
   display: flex
   transform: translate(-50%,-50%)
   z-index: 10
@@ -1006,6 +984,8 @@ html[data-theme='dark'] .SayWords h2
     width: 10px
     height: 10px
     background: white
+    border: 0
+    padding: 0
     border-radius: 50%
     margin-left: 10px
   .dotCurrent
@@ -1016,7 +996,7 @@ html[data-theme='dark'] .SayWords h2
     gap: 20px
     .ArticleCard
       .ArticleCover
-        height: 150px !important
+        height: auto !important
       .ArticleContent
         padding: 1rem !important
         gap: 8px !important
@@ -1038,7 +1018,7 @@ html[data-theme='dark'] .SayWords h2
             padding: 3px 8px !important
   .TopArticle
     .TopCover
-      height: 150px !important
+      height: auto !important
     .topContent
       padding: 1rem !important
       .contentTitle
@@ -1063,7 +1043,7 @@ html[data-theme='dark'] .SayWords h2
     gap: 12px !important
     .ArticleCard
       .ArticleCover
-        height: 90px !important
+        height: auto !important
       .ArticleContent
         padding: 0.75rem !important
         gap: 6px !important

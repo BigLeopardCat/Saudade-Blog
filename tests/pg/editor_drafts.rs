@@ -149,3 +149,60 @@ async fn editor_versions_serialize_autosaves_and_publication_without_losing_draf
     .await;
     exec(&db, &format!("DELETE FROM \"user\" WHERE id={ADMIN}")).await;
 }
+
+#[tokio::test]
+async fn new_cover_defaults_do_not_replace_an_explicit_contain_setting() {
+    let Some((db, app_db)) = connect_pair().await else {
+        return;
+    };
+    let uid = 910040011;
+    make_user(&db, uid, "admin").await;
+    let app = test_app(app_db);
+    let token = auth_jwt::create_token(uid, "admin", 0);
+    let mut ids = Vec::new();
+    for fit in [None, Some("contain")] {
+        let title = format!("cover_default_{}", uuid::Uuid::new_v4().simple());
+        let mut body = json!({"noteTitle":title,"noteContent":"cover fixture","cover":"https://images.invalid/new-cover.png","status":"draft"});
+        if let Some(fit) = fit {
+            body["coverFit"] = json!(fit);
+        }
+        let (_, result) = call(
+            app.clone(),
+            "POST",
+            "/api/protected/notes",
+            Some(&token),
+            Some(&body.to_string()),
+        )
+        .await;
+        assert_eq!(result["code"], 200, "{result}");
+        let id = one_i32(&db, &format!("SELECT id FROM note WHERE title='{title}'"))
+            .await
+            .unwrap();
+        ids.push(id);
+        assert_eq!(
+            one_text(&db, &format!("SELECT cover_fit FROM note WHERE id={id}"))
+                .await
+                .as_deref(),
+            Some(fit.unwrap_or("cover"))
+        );
+        let (_, updated) = call(
+            app.clone(),
+            "POST",
+            &format!("/api/protected/notes/{id}"),
+            Some(&token),
+            Some(&json!({"description":"metadata only"}).to_string()),
+        )
+        .await;
+        assert_eq!(updated["code"], 200, "{updated}");
+        assert_eq!(
+            one_text(&db, &format!("SELECT cover_fit FROM note WHERE id={id}"))
+                .await
+                .as_deref(),
+            Some(fit.unwrap_or("cover"))
+        );
+    }
+    for id in ids {
+        exec(&db, &format!("DELETE FROM note WHERE id={id}")).await;
+    }
+    exec(&db, &format!("DELETE FROM \"user\" WHERE id={uid}")).await;
+}

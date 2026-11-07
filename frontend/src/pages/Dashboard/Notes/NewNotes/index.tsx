@@ -27,7 +27,7 @@ import CoverCropModal from '../../../../components/CoverCropModal';
 import NoteTagSelect from '../../../../components/NoteTagSelect/index.tsx';
 import {adminNotesApi} from "../../../../apis/adminNotesApi";
 import {readListReturn} from '../AllNotes/listState';
-import { COMPLETE_COVER, DEFAULT_CROP, carouselCropFromRow, cropFromRow, type CoverCrop } from '../../../../utils/coverCrop';
+import { DEFAULT_CROP, carouselCropFromRow, cropFromRow, type CoverCrop } from '../../../../utils/coverCrop';
 
 type FileType = Parameters<GetProp<UploadProps, 'beforeUpload'>>[0];
 
@@ -37,8 +37,8 @@ const NewNotes = () => {
     const [noteTitle,setTitle] = useState('')
     const [noteContent, setNoteContent] = useState('')
     const [coverImg,setCoverImg] = useState('')
-    const [coverCrop, setCoverCrop] = useState<CoverCrop>({...COMPLETE_COVER})
-    const [coverCropCarousel, setCoverCropCarousel] = useState<CoverCrop>({...COMPLETE_COVER})
+    const [coverCrop, setCoverCrop] = useState<CoverCrop>({...DEFAULT_CROP})
+    const [coverCropCarousel, setCoverCropCarousel] = useState<CoverCrop>({...DEFAULT_CROP})
     const [cropDirty, setCropDirty] = useState({carousel: false, card: false})
     const [cropOpen, setCropOpen] = useState(false)
     const cropSnap = useRef<{carousel: CoverCrop; card: CoverCrop}>({carousel: {...DEFAULT_CROP}, card: {...DEFAULT_CROP}})
@@ -261,6 +261,7 @@ const NewNotes = () => {
                     noteTitle: row.noteTitle,
                     noteCategory: row.noteCategory,
                     isTop: row.isTop,
+                    // Publish controls use the root status, not the shadow draft status.
                     status: data.note.status,
                     description: row.description,
                 })
@@ -307,11 +308,11 @@ const NewNotes = () => {
 
     const openCropper = (fresh: boolean) => {
         cropSnap.current = fresh
-            ? {carousel: {...COMPLETE_COVER}, card: {...COMPLETE_COVER}}
+            ? {carousel: {...DEFAULT_CROP}, card: {...DEFAULT_CROP}}
             : {carousel: coverCropCarousel, card: coverCrop};
         if (fresh) {
-            setCoverCrop({...COMPLETE_COVER});
-            setCoverCropCarousel({...COMPLETE_COVER});
+            setCoverCrop({...DEFAULT_CROP});
+            setCoverCropCarousel({...DEFAULT_CROP});
             setCropDirty({carousel: true, card: true});
         }
         setCropOpen(true);
@@ -333,7 +334,7 @@ const NewNotes = () => {
             };
             setFileList([newFile]);
             form.setFieldValue('cover', [newFile]);
-            openCropper(true); // 新图 → 打开裁剪窗，从默认居中开始
+            openCropper(true);
         }
     }
 
@@ -407,7 +408,7 @@ const NewNotes = () => {
         form.setFieldValue('cover', [newFile]);
         setGalleryOpen(false);
         message.success('已选择封面');
-        openCropper(true); // 新图 → 打开裁剪窗
+        openCropper(true);
     };
 
     const onFinish = async (formValues: any) => {
@@ -429,6 +430,7 @@ const NewNotes = () => {
             coverFocusY: coverImg ? coverCrop.y : null,
             coverZoom: coverImg ? coverCrop.z : null,
             coverFit: coverImg ? (coverCrop.fit ?? 'cover') : null,
+            // Send carousel coordinates together; null keeps the card fallback.
             carouselFocusX: coverImg && cropDirty.carousel ? coverCropCarousel.x : null,
             carouselFocusY: coverImg && cropDirty.carousel ? coverCropCarousel.y : null,
             carouselZoom: coverImg && cropDirty.carousel ? coverCropCarousel.z : null,
@@ -490,6 +492,7 @@ const NewNotes = () => {
                         if (!ok(refreshed) || typeof refreshed.data.data?.version !== 'string')
                             throw new Error('保存成功，但无法读取最新草稿版本，请重新打开文章');
                         versionRef.current = refreshed.data.data.version;
+                        // Acknowledge only the submitted snapshot; later edits still need autosaving.
                         publishingRef.current = false;
                         if (JSON.stringify(buildPayloadRef.current()) === snapBeforePublish) {
                             lastSavedRef.current = snapBeforePublish;
