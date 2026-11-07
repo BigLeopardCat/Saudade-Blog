@@ -75,8 +75,10 @@ function getFavorites() {
     });
 }
 
+type FavoriteMutation = { ownerUserId: number; noteId: number; isFavorite: boolean; changed: boolean }
+
 function addFavorite(noteId: number) {
-    return http<Envelope<string>>({
+    return http<Envelope<FavoriteMutation>>({
         url: "/api/protected/favorites",
         method: "POST",
         data: { noteId },
@@ -84,7 +86,7 @@ function addFavorite(noteId: number) {
 }
 
 function removeFavorite(noteId: number) {
-    return http<Envelope<string>>({
+    return http<Envelope<FavoriteMutation>>({
         url: `/api/protected/favorites/${noteId}`,
         method: "DELETE",
     });
