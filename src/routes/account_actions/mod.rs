@@ -1,4 +1,5 @@
 //! Exact account actions: read-only plans and independently authorized, atomic changes.
+pub mod eligibility;
 mod model;
 mod preparation;
 pub use preparation::{Preparation, PrepareRequest};
@@ -60,7 +61,7 @@ pub async fn change(
 ) -> Json<ApiResponse<Outcome>> {
     response(execute(&state, &headers, &change.intent, Some(&change.version)).await)
 }
-/// Legacy handlers use the same locks, policy, update verification and mandatory notice transaction.
+/// Direct console handlers share locks, policy, verification and the notice transaction.
 /// Only signed Agent confirmation uses an expected version; direct admin UI writes remain direct.
 pub(super) async fn execute(
     state: &AppState,
