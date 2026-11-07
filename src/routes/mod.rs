@@ -114,13 +114,20 @@ pub fn create_router(state: AppState) -> Router {
             "/api/protected/favorites",
             get(profile::list_favorites).post(profile::add_favorite),
         )
-        .route("/api/protected/favorites/{note_id}", delete(profile::remove_favorite))
+        .route(
+            "/api/protected/favorites/{note_id}",
+            get(profile::favorite_state).delete(profile::remove_favorite),
+        )
         .route("/api/protected/notification-deletions/prepare", post(removal_actions::prepare_notifications))
         .route("/api/protected/notification-deletions", post(removal_actions::change_notifications))
         .route("/api/protected/notifications", get(profile::list_notifications))
-        .route("/api/protected/notifications/{id}", delete(profile::delete_notification))
+        .route(
+            "/api/protected/notifications/{id}",
+            get(profile::notification_detail).delete(profile::delete_notification),
+        )
         .route("/api/protected/notifications/announcement", get(profile::pending_announcement))
         .route("/api/protected/notifications/summary", get(profile::notification_summary))
+        .route("/api/protected/notifications/state", get(profile::notification_state))
         .route("/api/protected/inbox/overview", get(profile::get_inbox_overview))
         .route("/api/protected/notifications/read", post(profile::read_notifications))
         .route("/api/protected/messages", get(profile::list_messages).post(profile::send_message))

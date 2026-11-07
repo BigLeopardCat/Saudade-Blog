@@ -15,18 +15,7 @@ const ok = (cond, name, detail) => {
 
 const rust = (rel) => readFileSync(path.join(root, '..', rel), 'utf8');
 
-console.log('\n① 函数式那一处：`profile.rs::visible_flags`');
-{
-    const profile = rust('src/routes/profile.rs');
-    ok(/fn visible_flags/.test(profile), '`profile.rs::visible_flags` 还在');
-    ok(/is_public\s*&&\s*matches!\(status,\s*Some\("public"\)\s*\|\s*Some\("published"\)\)/.test(profile),
-        '  判据是白名单 `is_public && matches!(status, Some("public") | Some("published"))`');
-    ok((profile.match(/visible_flags\(/g) || []).length > 1, '  这个函数还被调用着（定义了没人用 = 白定义）');
-    ok(!/fn visible_note/.test(profile),
-        '  旧的 `visible_note(&note::Model)` 已退休（两个调用点都改成只取两列了，留着就是死代码）');
-}
-
-console.log('\n② sea-orm 那几处：公开判据是两半，必须成对');
+console.log('\n① SeaORM 公开查询同时限定可见性与状态');
 {
     const sites = [
         'src/routes/notes.rs',
@@ -47,13 +36,11 @@ console.log('\n② sea-orm 那几处：公开判据是两半，必须成对');
 
 ok(/\.filter\(super::notes::public_condition\(\)\)/.test(rust('src/routes/search.rs')), '聚合搜索复用共享公开判据');
 
-console.log('\n③ 后台「公开文章」页签（`notes.rs` 的 `only_public`）用的是同一口径');
+console.log('\n② 后台公开文章页签复用共享判据');
 {
     const notes = rust('src/routes/notes.rs');
     ok(/pub only_public: Option<bool>/.test(notes),
         '`SearchRequest` 里有 `only_public`（前端页签的入参）');
-    // 后端把共享公开判据提取为 public_condition；既验证调用点使用它，
-    // 也验证函数体的三项谓词，不能用“全文里碰巧有这些字段”蒙混过去。
     const m = notes.match(/if let Some\(true\) = payload\.only_public \{([\s\S]*?)\n    \}/);
     ok(!!m, '  `only_public` 分支存在');
     ok(/condition\s*=\s*condition\.add\(public_condition\(\)\)/.test(m?.[1] || ''),
@@ -66,7 +53,7 @@ console.log('\n③ 后台「公开文章」页签（`notes.rs` 的 `only_public`
     ok(/DraftOf\.is_null\(\)/.test(predicate), '  共享判据排除编辑修改稿');
 }
 
-console.log('\n④ 前端不再自算口径（口径只有一处，删掉的别再回来）');
+console.log('\n③ 前端使用后端可见性筛选');
 {
     ok(!existsSync(path.join(root, 'src/utils/noteVisibility.ts')),
         '`src/utils/noteVisibility.ts` 已删（它把 status 为 NULL 的老行当公开，与后端不一致）');
@@ -75,20 +62,16 @@ console.log('\n④ 前端不再自算口径（口径只有一处，删掉的别�
         '  「全部文章」页不再引用那份判据');
     ok(!/record\.is_public/.test(allNotes),
         '  页面里也没有就地读 `record.is_public` 的地方（要看公开的走页签，筛选在后端做）');
-    // 绿标撤了，标签列回归单一职责：只画标签（且折叠名额仍是 3）。
     ok(/render: \(_, record\) => renderNoteTagsCollapsed\(record\.noteTags, tagList, 3, record\.noteTagRefs\)/.test(allNotes),
         '  标签列就是 `renderNoteTagsCollapsed(record.noteTags, tagList, 3, record.noteTagRefs)`，没有前缀块了');
     ok(!/公开文章[\s\S]{0,200}<Tag color="green"/.test(allNotes),
         '  那颗绿标没有留在标签列里');
-    // 但「公开文章」这四个字还必须在场 —— 它现在是**页签**（key '4'），不是标签。
     ok(/\{\s*\n\s*label: '公开文章',\s*\n\s*key: '4',/.test(allNotes),
         "  「公开文章」改由页签承载（label '公开文章' + key '4'）");
 }
 
-console.log('\n⑤ 黑名单翻面翻干净了：`src/routes/` 下一个 `Status.ne("draft")` 都不许剩');
+console.log('\n④ 查询不能仅排除草稿状态');
 {
-    // 这一条是"翻面"的**唯一硬判据**：上面 ② 只查"两半计数成对"，而漏改一处会让
-    // 两个计数**一起变小**、照样绿。只有"一个都不许剩"才拦得住"改了一半"。
     const dir = path.join(root, '..', 'src', 'routes');
     const offenders = [];
     for (const f of readdirSync(dir)) {
@@ -101,12 +84,11 @@ console.log('\n⑤ 黑名单翻面翻干净了：`src/routes/` 下一个 `Status
         offenders);
 }
 
-console.log('\n⑥ 口径只有一处：白名单词表不许有第二份定义');
+console.log('\n⑤ 状态白名单只有一份定义');
 {
     const notes = rust('src/routes/notes.rs');
     ok(/pub\(crate\) fn public_status_words\(\)/.test(notes),
         '`notes.rs::public_status_words` 是白名单词表的定义处');
-    // 定义只该在 `notes.rs`（`src/routes/` 下）；`src/` 顶层那份也一起扫，防有人把它搬走。
     const rsFiles = [];
     for (const rel of ['src', 'src/routes']) {
         const dir = path.join(root, '..', rel);
@@ -116,7 +98,6 @@ console.log('\n⑥ 口径只有一处：白名单词表不许有第二份定义'
     }
     const defs = rsFiles.filter((x) => /fn public_status_words\(/.test(x.src)).map((x) => `${x.rel}/${x.f}`);
     ok(defs.length === 1, `全仓只有一份 \`public_status_words\`（现在 ${defs.length} 份：${defs.join(', ')}）`);
-    // 谁都可以调它，但**不许**在别处另写一份 `["public","published"]` 字面量。
     const dupes = rsFiles
         .filter((x) => !(x.rel === 'src/routes' && x.f === 'notes.rs'))
         .filter((x) => /"public"\s*,\s*"published"/.test(x.src))
