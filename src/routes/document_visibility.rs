@@ -125,13 +125,13 @@ fn reserve(slots: &Arc<Semaphore>) -> Result<OwnedSemaphorePermit, Response> {
 }
 
 async fn read_current(
-    db: sea_orm::DatabaseConnection,
+    state: Arc<AppState>,
     ids: Vec<i32>,
     permit: OwnedSemaphorePermit,
 ) -> Result<Value, sea_orm::DbErr> {
     // The worker owns admission until its transaction finishes, even after HTTP disconnects.
     let _permit = permit;
-    let tx = tokio::time::timeout(Duration::from_secs(1), db.begin())
+    let tx = tokio::time::timeout(Duration::from_secs(1), state.db.begin())
         .await
         .map_err(|_| sea_orm::DbErr::Custom("document database wait timed out".into()))??;
     tx.execute_unprepared("SET TRANSACTION READ ONLY").await?;
@@ -160,7 +160,7 @@ pub async fn validate(
         Ok(permit) => permit,
         Err(response) => return response,
     };
-    let worker = tokio::spawn(read_current(state.db.clone(), ids, permit));
+    let worker = tokio::spawn(read_current(state, ids, permit));
     match tokio::time::timeout(Duration::from_secs(3), worker).await {
         Ok(Ok(Ok(value))) => Json(ApiResponse::success(value)).into_response(),
         Ok(Ok(Err(err))) => {
