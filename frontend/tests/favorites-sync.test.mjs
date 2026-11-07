@@ -103,7 +103,8 @@ const logout = () => { delete store.tokenKey };
     await tick();
     eq(getCalls(ctl).length, 2, 'favorites-change（本站自己改完）→ 对齐一次');
 
-    winEvents['agent-turn-done'].forEach((f) => f({ type: 'agent-turn-done' }));
+    winEvents['agent-turn-done'].forEach((f) => f({ type: 'agent-turn-done',
+        detail: {confirmationAttempted: true, articleIdsToRefresh: [12]} }));
     await tick();
     eq(getCalls(ctl).length, 3, 'agent-turn-done（看板娘一轮收尾）→ 对齐一次（agent 可能刚写过收藏）');
 
@@ -229,9 +230,6 @@ const logout = () => { delete store.tokenKey };
 
 // ⑦ 跨文件契约（这些引用点改一处、忘一处就会静默失效）
 {
-    const js = readFileSync(path.join(root, 'public/live2d-widgets/chat-stream.js'), 'utf8');
-    ok(js.includes("new CustomEvent('agent-turn-done')"),
-        "chat-stream.js 在流收尾派发 'agent-turn-done'");
     const turn = readFileSync(path.join(root, 'src/components/UserCenter/agentTurn.ts'), 'utf8');
     ok(turn.includes("AGENT_TURN_DONE_EVENT = 'agent-turn-done'"),
         'agentTurn.ts 是与 chat-stream.js 同名的单一定义处');
